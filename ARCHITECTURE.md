@@ -1,4 +1,4 @@
-# sa-agc Architecture & Design Document
+# sxygc — s-χ-GC: Suffixient-χ over Genome Collections
 
 *Suffixient-array indexing of AGC collections: measured constants, scaling model,
 and phase plan. All numbers below were measured on the target workstation

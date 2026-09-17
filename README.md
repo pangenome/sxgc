@@ -1,4 +1,4 @@
-# sa-agc — Suffixient-Array Indexing of AGC Genome Collections
+# sxygc — Suffixient-χ indexing of AGC Genome Collections
 
 Integration workspace for building **suffixient-array (sA) indexes** directly on
 **AGC-compressed genome collections** (via `ragc`), with all query results mapped
