@@ -669,6 +669,7 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 [[package]]
 name = "ragc-common"
 version = "0.1.1"
+source = "git+https://github.com/ekg/ragc?rev=40e5cad11cab7d4df07a72d6b16d68c2d60b0742#40e5cad11cab7d4df07a72d6b16d68c2d60b0742"
 dependencies = [
  "ahash",
  "anyhow",
@@ -683,6 +684,7 @@ dependencies = [
 [[package]]
 name = "ragc-core"
 version = "0.1.1"
+source = "git+https://github.com/ekg/ragc?rev=40e5cad11cab7d4df07a72d6b16d68c2d60b0742#40e5cad11cab7d4df07a72d6b16d68c2d60b0742"
 dependencies = [
  "ahash",
  "anyhow",

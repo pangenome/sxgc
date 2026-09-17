@@ -6,7 +6,7 @@ description = "Stream an AGC genome collection to flat text + name-space sidecar
 license = "MIT"
 
 [dependencies]
-ragc-core = { git = "https://github.com/ekg/ragc" }
+ragc-core = { git = "https://github.com/ekg/ragc", rev = "40e5cad11cab7d4df07a72d6b16d68c2d60b0742" }
 anyhow = "1"
 
 [profile.release]
