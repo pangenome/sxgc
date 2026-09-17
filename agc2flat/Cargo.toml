@@ -1,0 +1,11 @@
+[package]
+name = "agc2flat"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ragc-core = { path = "/home/erikg/ragc/ragc-core" }
+anyhow = "1"
+
+[profile.release]
+debug = false
