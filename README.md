@@ -9,7 +9,7 @@ into the **sample/contig name space**.
 | Milestone | Status |
 |---|---|
 | yeast235 (235 strains, 3.34 Gbp) end-to-end | ✅ **validated** — χ=85.4 M, 975/975 banded indexes, 1000/1000 verified locate hits |
-| HPRC v2 smoke (3 samples, 9.03 Gbp, 313 shards) | 🔄 312/313 built; final verification in progress (CM086560 segfault under bisect) |
+| HPRC v2 smoke (3 samples, 9.03 Gbp, 313 shards) | ✅ **313/313 built (30.8 min wall @ 48-way)** — Σ.sA 15.6 GB + Σ.lz77 3.85 GB = 43.1% of full SA; **500/500 verified** locate+MEM anchors mapped (`HG02647#1#CM086560.1:offset`). Small-k regime: index 215% of text — compresses at scale. CM086560 forensics: heap corruption in legacy lz77index permutation builder (gdb backtrace); rebuilt with `-o plain-text`; 3rd strike vs lz77 — Phase-1 AGC oracle strengthened |
 | AGC random-access oracle (`oracle-agc`) | 📋 spec'd (Phase 1) |
 | HPRC v2 full (466 samples, 1.4 Tbp) | 📋 Phase 3, **disk-gated** |
 
