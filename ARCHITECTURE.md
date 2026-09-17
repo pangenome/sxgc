@@ -129,6 +129,14 @@ Banded builds 48–96-way; χ via PFP parse (~2 h) + scan (whole-collection 74
 CPU-h, or per-band ~20 min wall at full node). Acceptance: χ reported; banded
 MEMs verified; comparison vs 19 h r-index and human579.fmd footprint.
 
+### Phase 6 — tag-array graph projection (`tag-array/`)
+Sequence-space -> graph-space: occurrences -> unique graph locations (node,
+offset, strand) via WABI-2025 tag arrays over the HPRC v2 .gbz; dedup across
+haplotypes, coordinate translation, graph-coordinate GAF. Measured: 86 GiB
+tag array @ HPRC v2 (sublinear: tag runs 9.86B -> 11.1B with 5x sequence).
+Requires the graph (.gbz) — AGC sequences alone insufficient. Spec:
+`tag-array/README.md`.
+
 ### Phase 5 — r-index toehold hybrid (`r-index-toehold/`)
 All occurrences per MEM: sA anchor -> banded r-index toehold -> LF-step
 enumeration -> mappos -> GAF seed records. Footprint: r-index ~ BWT runs
