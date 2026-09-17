@@ -54,6 +54,7 @@ and the AGC-oracle spec.
 | `tools/mappos.py` | flat-offset → `sample#contig:offset` mapper (occs/mems aware) | Python |
 | `oracle-agc/` | **AGC random-access oracle** for the sA toolchain (Phase 1) | C++ ↔ ragc-core FFI |
 | `r-index-toehold/` | **all occurrences per MEM**: sA anchor -> r-index toehold -> GAF (Phase 5) | C++/Rust |
+| `RESEARCH.md` | **research notes** — χ_tag: suffixient sets over (context, tag) pairs, the graph-space χ idea | — |
 | `tag-array/` | **graph-space projection**: occurrences -> (node, offset, strand) via WABI-2025 tag arrays; dedup + coordinate translation (Phase 6) | C++ |
 | `ARCHITECTURE.md` | **Design document** — measured constants, scaling model, phase plan, decision log | — |
 

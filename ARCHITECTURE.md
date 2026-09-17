@@ -173,6 +173,13 @@ enumeration -> mappos -> GAF seed records. Footprint: r-index ~ BWT runs
   segment-granular partial reads, LRU cache. Must handle multi-contig access and
   report archive-relative contig identity for mapper coordination.
 
+## 6b. Research to-do
+
+χ_tag — suffixient sets over (context, tag) pairs: a suffixient characterization
+of the tag array (document listing) with query-by-binary-search; plausibly
+bounded by graph-branching contexts — a new repetitiveness measure for
+variation graphs. Notes + first experiment: `RESEARCH.md`.
+
 ## 7. Risk register
 
 | Risk | Severity | Mitigation |
