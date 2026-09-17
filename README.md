@@ -32,6 +32,27 @@ find shards -name "*.txt" ! -name "*.samples.txt" | sort | \
 python3 tools/mappos.py shards/chrIV.txt.names.tsv --occs patterns.fa.occs
 ```
 
+## Getting started (fresh clone)
+
+Dependencies:
+
+```bash
+git clone https://github.com/ekg/ragc && (cd ragc && cargo build --release)
+git clone https://github.com/regindex/suffixient-array \
+  && (cd suffixient-array && mkdir build && cd build && cmake .. && make -j)
+```
+
+Then build the glue and run a phase (paths overridable via env):
+
+```bash
+cargo build --release --manifest-path agc2flat/Cargo.toml
+make smoke3 SUFFIXIENT=$PWD/../suffixient-array/build PARALLEL=48
+python3 tools/mappos.py <names.tsv> --occs <results.occs>   # hits -> sample#contig:offset
+```
+
+See `ARCHITECTURE.md` for measured constants, the scaling model, phase gates,
+and the AGC-oracle spec.
+
 ## Components
 
 | Path | What | Language |

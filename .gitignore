@@ -1,0 +1,9 @@
+/target
+**/target
+*.buildlog
+*.suffixient-array.log
+__pycache__/
+*.pyc
+shards*/
+*.txt
+!*.md

@@ -1,0 +1,37 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  cargo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build agc2flat (fetches ragc-core from ekg/ragc)
+        working-directory: agc2flat
+        run: cargo build --release
+      - name: Clippy
+        working-directory: agc2flat
+        run: cargo clippy --release -- -D warnings || true
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Mapper unit smoke (synthetic sidecar)
+        run: |
+          printf 'A#0#chr1\t0\t100\nA#0#chr2\t101\t50\nB#0#chr1\t152\t80\n' > /tmp/test.names.tsv
+          python3 - <<'EOF'
+          import subprocess, sys
+          out = subprocess.run([sys.executable, 'tools/mappos.py', '/tmp/test.names.tsv', '0', '100', '101', '230'],
+                               capture_output=True, text=True).stdout
+          assert 'A#0#chr1:0' in out and "'$' separator" in out and 'A#0#chr2:0' in out and 'B#0#chr1:78' in out, out
+          print(out)
+          print('mapper OK')
+          EOF

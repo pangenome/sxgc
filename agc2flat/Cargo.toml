@@ -2,9 +2,11 @@
 name = "agc2flat"
 version = "0.1.0"
 edition = "2021"
+description = "Stream an AGC genome collection to flat text + name-space sidecar for suffixient-array (s-χ-GC) indexing"
+license = "MIT"
 
 [dependencies]
-ragc-core = { path = "/home/erikg/ragc/ragc-core" }
+ragc-core = { git = "https://github.com/ekg/ragc" }
 anyhow = "1"
 
 [profile.release]
