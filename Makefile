@@ -2,7 +2,7 @@
 #
 # External dependencies (set to your local checkouts/builds):
 #   RAGC            github.com/ekg/ragc               (built: cargo build --release)
-#   SUFFIXIENT      github.com/regindex/suffixient-array (built: cmake + make)
+#   SUFFIXIENT      pangenome/suffixient-array fork (submodule at sA/, built: cmake + make)
 #
 # Data defaults point at local HPRC v2 smoke collections; override via env.
 

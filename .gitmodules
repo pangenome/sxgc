@@ -1,0 +1,4 @@
+[submodule "sA"]
+	path = sA
+	url = https://github.com/pangenome/suffixient-array
+	branch = main
