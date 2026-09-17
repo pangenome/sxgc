@@ -9,7 +9,7 @@ into the **sample/contig name space**.
 | Milestone | Status |
 |---|---|
 | yeast235 (235 strains, 3.34 Gbp) end-to-end | ✅ **validated** — χ=85.4 M, 975/975 banded indexes, 1000/1000 verified locate hits |
-| HPRC v2 smoke (3 samples, 9.03 Gbp, 313 shards) | 🔄 building — interim: Σ.sA 6.59 GB, Σ.lz77 3.10 GB (small-k regime: index > text; compresses at scale) |
+| HPRC v2 smoke (3 samples, 9.03 Gbp, 313 shards) | 🔄 312/313 built; final verification in progress (CM086560 segfault under bisect) |
 | AGC random-access oracle (`oracle-agc`) | 📋 spec'd (Phase 1) |
 | HPRC v2 full (466 samples, 1.4 Tbp) | 📋 Phase 3, **disk-gated** |
 
@@ -53,6 +53,7 @@ and the AGC-oracle spec.
 | `tools/shard_by_contig.py` | Per-contig sharding with shard-relative offset sidecars | Python |
 | `tools/mappos.py` | flat-offset → `sample#contig:offset` mapper (occs/mems aware) | Python |
 | `oracle-agc/` | **AGC random-access oracle** for the sA toolchain (Phase 1) | C++ ↔ ragc-core FFI |
+| `r-index-toehold/` | **all occurrences per MEM**: sA anchor -> r-index toehold -> GAF (Phase 5) | C++/Rust |
 | `ARCHITECTURE.md` | **Design document** — measured constants, scaling model, phase plan, decision log | — |
 
 ## Why this exists

@@ -13,6 +13,13 @@ collections** with results mapped into the **sample/contig name space**, scaling
 from 235 yeast strains (validated) through HPRC v2 (466 samples, 1.4 Tbp) to
 collections of ~10,000 haplotypes.
 
+**Capability contract**: the sA layer returns **all MEMs with one verified
+anchor each** (never all occurrences — the χ-sampling definition forbids it).
+All-occurrence enumeration is the **r-index toehold hybrid** (Phase 5,
+`r-index-toehold/`): the sA anchor is fed to a banded r-index as its toehold,
+which enumerates every occurrence without re-doing pattern matching
+(O(occ·log n/log w) per MEM), mapped and emitted as GAF.
+
 Roles in the existing index stack (impg/syng syncmer sparse index, ropebwt3 FMD):
 the sA is the **dense-but-tiny locate-one-occurrence / MEMs index** — complement,
 not replacement.
@@ -121,6 +128,11 @@ Prerequisites: **~4–5 TB scratch** (flat 1.4 TB + temps + banded indexes
 Banded builds 48–96-way; χ via PFP parse (~2 h) + scan (whole-collection 74
 CPU-h, or per-band ~20 min wall at full node). Acceptance: χ reported; banded
 MEMs verified; comparison vs 19 h r-index and human579.fmd footprint.
+
+### Phase 5 — r-index toehold hybrid (`r-index-toehold/`)
+All occurrences per MEM: sA anchor -> banded r-index toehold -> LF-step
+enumeration -> mappos -> GAF seed records. Footprint: r-index ~ BWT runs
+(HPRC v2: 2.53 B runs -> 5-8 GB class). Spec: `r-index-toehold/README.md`.
 
 ### Phase 4 (optional) — whole-collection minimality
 1. **M64 rebuild** (switch exists in `common.hpp`; gsacak64/divsufsort64 already
