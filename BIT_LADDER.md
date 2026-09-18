@@ -8,7 +8,8 @@ no flat text; no interim full-collection baseline.**
 | 1 | Lean: Defs + one-pass scan + executable checks | 10/10 random texts (done) | ✅ |
 | 1b | **Exhaustive** verification: all texts over {1,2}, |T| ≤ 8 — covering AND minimality | 0 failures, exhaustive | 🔄 |
 | 2 | Rust `scan-rs`: consumes (c,lcp,sa) triples, emits χ-set; fork patch `--dump-triples` | **GREEN**: tiny (baa) + yeast235 **exact vs C++ pfp route** (7,501,037 byte-identical); cross-route vs one-pass differs ONLY by tie-breaking (611,520 positions, 92% overlap — smallest sets non-unique, Bit-1-established) + one-pass ±1 terminator convention | ✅ |
-| 3 | FIFO pscan: AGC stream → dict/parse (no flat) | dict/parse byte-equal vs flat-mode | ⏳ |
+| 3 | **AGC-native sharded construction**: `agc2flat --groups` (metadata, 0.003 s) + `--group/--band` (targeted `get_contig`/`get_contig_range`) → temp shard → build → delete | **GREEN**: CM086560.1 AGC-extracted shard **byte-identical** to flat-mode shard + sidecar + **χ identical (78,742,930)** | ✅ |
+| 3b | *(optional, re-scoped)* whole-collection χ via streamed pscan — FIFO probe failed: `mt_process_file` splits by file size (`ifstream::ate` + per-thread seek ranges); needs a streaming-mode pscan patch (spec'd, not built) | dict/parse byte-equal vs flat-mode | 📋 |
 | 4 | PFP-aux emission in streamed scan (lens/lcs/alph) | differential vs `one-pass-build-index` components | ⏳ |
 | 5 | `-o agc` oracle (ragc FFI + LRU) | byte-verify vs flat text; 0 oracle disk | ⏳ |
 | 6 | full-466 run (AGC-native, streamed) | memory profile + χ + verified MEMs; no flat text ever | ⏳ |
@@ -24,6 +25,18 @@ non-unique — tie-breaking). Gates: (a) **same-route exact match** (scan-rs vs
 the C++ route that produced the stream), (b) χ equality, (c) covering —
 machine-gated in Lean (511 exhaustive). one-pass additionally emits the
 terminator-run candidate (±1 entry vs Def. 9's alphabet-only extensions).
+
+## Smoke k-scaling curve (human, measured)
+
+| k (haplotypes) | flat | Σ.sA | Σ.lz77 | index/text | index/full-SA |
+|---|---|---|---|---|---|
+| 6 (3 samples) | 9.03 Gbp | 15.6 GB | 3.85 GB | 215.4% | 43.1% |
+| 20 (10 samples) | 30.15 Gbp | 52.3 GB | 12.9 GB | 216.4% | 43.3% |
+
+Small-k regime persists at 20 haplotypes; compression kicks in at much larger k
+(yeast at 235 samples: 41% of full SA; HPRC v2 runs sublinear). NOTE: the
+target artifact (.sA + AGC oracle) excludes lz77 entirely. smoke10: 862/865
+(3 lz77-corruption stragglers — plain-text workaround as CM086560).
 
 ## Stream-convention contract (discovered in Bit 1 — binding for Bits 2/4)
 
