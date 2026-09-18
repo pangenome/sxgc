@@ -49,15 +49,19 @@ struct Args {
     groups: bool,
     group: Option<String>,
     band: Option<(u64, u64)>,
+    reverse: bool,
+    stdout: bool,
 }
 
 fn parse_args() -> Result<Args> {
-    let mut a = Args { archive: String::new(), out: String::new(), upper: false, groups: false, group: None, band: None };
+    let mut a = Args { archive: String::new(), out: String::new(), upper: false, groups: false, group: None, band: None, reverse: false, stdout: false };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "-o" => a.out = it.next().context("-o needs a value")?,
             "--upper" => a.upper = true,
+            "--reverse" => a.reverse = true,
+            "--stdout" => a.stdout = true,
             "--groups" => a.groups = true,
             "--group" => a.group = Some(it.next().context("--group needs a contig name")?),
             "--band" => {
@@ -87,6 +91,10 @@ fn main() -> Result<()> {
             let names = dec.list_contigs(s)?;
             for cname in &names {
                 let len = dec.get_contig_length(s, cname)? as u64;
+                if std::env::var("SXGC_RAW_NAMES").is_ok() {
+                    println!("{s}\t{cname}\t{len}");
+                    continue;
+                }
                 let e = groups.entry(group_key(&cname).to_string()).or_insert((0, 0));
                 e.0 += 1;
                 e.1 += len;
@@ -101,7 +109,8 @@ fn main() -> Result<()> {
     if let Some(contig) = &args.group {
         let mut out_path = args.out.clone();
         if out_path.is_empty() { out_path = format!("{contig}.txt"); }
-        let tsv_path = format!("{contig}.names.tsv");
+        let tsv_base = out_path.strip_suffix(".txt").unwrap_or(out_path.as_str());
+        let tsv_path = format!("{tsv_base}.names.tsv");
         let mut text = BufWriter::with_capacity(1 << 22, File::create(&out_path)?);
         let mut tsv = BufWriter::with_capacity(1 << 16, File::create(&tsv_path)?);
         let mut offset: u64 = 0;
@@ -135,6 +144,66 @@ fn main() -> Result<()> {
     }
 
     // whole-collection mode (validated on yeast235)
+    // --reverse --stdout: stream the byte-exact mirror of the forward flat text
+    // ('$' + reversed contig, last contig first) so pscan -S can parse the
+    // reversed text without any materialization. Sidecar keeps FORWARD offsets.
+    if args.reverse {
+        // stream the byte-exact mirror of the forward flat text ('$' + reversed
+        // contig, last contig first). Sidecar written at EOF from ACTUAL stream
+        // positions (metadata lengths can disagree with decompressed bytes).
+        let mut out_path = args.out.clone();
+        if out_path.is_empty() {
+            out_path = Path::new(&args.archive).file_stem().unwrap().to_string_lossy().to_string() + ".txt";
+        }
+        let tsv_path = format!("{out_path}.names.tsv");
+        let mut stdout_out: Option<BufWriter<std::io::Stdout>> = None;
+        let mut file_out: Option<BufWriter<File>> = None;
+        if args.stdout {
+            use std::io::Write as _;
+            stdout_out = Some(BufWriter::with_capacity(1 << 22, std::io::stdout()));
+        } else {
+            file_out = Some(BufWriter::with_capacity(1 << 22, File::create(&out_path)?));
+        }
+        let mut n_contigs: u64 = 0;
+        let mut streamed: u64 = 0;
+        let mut rows: Vec<(String, u64, u64)> = Vec::new(); // (cname, stream_off, len)
+        let mut samples_rev = samples.clone();
+        samples_rev.reverse();
+        for s in &samples_rev {
+            let mut names = dec.list_contigs(s)?;
+            names.reverse();
+            for cname in &names {
+                let numeric = dec.get_contig(s, cname)?;
+                let mut seq = ascii_of(&numeric, args.upper)?;
+                let len = seq.len() as u64;
+                seq.reverse();
+                { use std::io::Write as _;
+                  if let Some(w) = stdout_out.as_mut() { w.write_all(b"$")?; w.write_all(&seq)?; }
+                  else if let Some(w) = file_out.as_mut() { w.write_all(b"$")?; w.write_all(&seq)?; }
+                }
+                rows.push((cname.clone(), streamed, len));
+                streamed += len + 1;
+                n_contigs += 1;
+            }
+        }
+        let total = streamed; // == forward flat length (exact mirror)
+        eprintln!("TOTAL {total}");
+        { use std::io::Write as _;
+          if let Some(w) = stdout_out.as_mut() { w.flush()?; }
+          if let Some(w) = file_out.as_mut() { w.flush()?; }
+        }
+        let mut tsv = BufWriter::with_capacity(1 << 16, File::create(&tsv_path)?);
+        for (cname, soff, len) in &rows {
+            // stream: [soff]='$', [soff+1 .. soff+len)=rev(contig)
+            // forward: [fstart .. fstart+len)=contig, [fstart+len]='$'
+            // byte i of stream == byte total-1-i of forward
+            let fstart = total - 1 - soff - len;
+            writeln!(tsv, "{cname}\t{fstart}\t{len}")?;
+        }
+        tsv.flush()?;
+        eprintln!("reversed flat: {total} bytes, {n_contigs} contigs\nnames: {tsv_path}");
+        return Ok(());
+    }
     let mut out_path = args.out.clone();
     if out_path.is_empty() {
         out_path = Path::new(&args.archive).file_stem().unwrap().to_string_lossy().to_string() + ".txt";

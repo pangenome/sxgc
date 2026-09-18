@@ -46,3 +46,32 @@ positions); `eval` iterates chars **1..σ** (sentinel never emitted); chars are
 remapped to 1..σ by first appearance in the reversed text (scan output is
 invariant to relabeling — per-char state machine). The pfp route streams the
 same colex-order triples via the PFP iterator.
+
+## Bit 6 progress — whole-collection streamed construction + query (yeast235 gated)
+
+- **Zero-materialization construction**: `agc2flat --reverse --stdout | pscan -S`
+  (new streamed single-thread pscan mode; agc2flat emits the byte-exact mirror
+  of the forward flat text). PFP outputs byte-identical to the file-based route.
+- **64-bit fix**: `-n` was `atoi` — collection length 3,336,986,760 > 2^31 wrapped
+  negative; every emitted position was garbage. `N` is now `uint64_t`.
+- **N-from-sidecar**: build read text length from a text file that no longer
+  exists; `text_length()` added across the oracle family, baseline falls back
+  to it when the text file is absent (1-bit positions bug).
+- **Sorted-extract build**: positions extracted in sorted order (one sequential
+  AGC sweep, warm window cache), then bucketed in original colex order.
+  Build 5+ h (and OOM-died) → **9 min**.
+- **Whole-collection yeast235 index**: χ = 85,404,240 (= phase-0 reference);
+  .sA = 341 MB (10.2% of 3.34 Gbp); `locate -o agc` 50/50 byte-verified.
+- **Window-granular oracle cache** (64 KiB windows, 256 MiB byte-budget LRU,
+  partial-range fills): replaces 4-slot whole-contig LRU. Query 427 → 121 ms
+  (50 scattered-cold patterns); 50/50 byte-verified.
+- **Reader A/B** (same archive, same 300 random 64-KiB fetches):
+  ragc FFI **2.4 ms/fetch (26 MiB/s)** vs upstream C++ libagc **53-58 ms/fetch
+  (1.2 MiB/s)** — upstream ~25x slower at random access and it segfaults on
+  ragc-written archives. ragc backend stays.
+- **Query cost structure** (oracle stats): 595 byte_at + 37 window fills per
+  scattered-cold pattern; fills = AGC segment decompressions dominate. Warm
+  repetitions: fills stay at 1,841 total (identical) → per-pattern drops to
+  ~10-35 ms class. Batch locality = the friend. Text-access-heavy binary search
+  is intrinsic to sA; the r-index toehold (LF-mapping search, no text access)
+  is the designed path for the 10-20 GB target's query side.
