@@ -10,7 +10,7 @@ no flat text; no interim full-collection baseline.**
 | 2 | Rust `scan-rs`: consumes (c,lcp,sa) triples, emits χ-set; fork patch `--dump-triples` | **GREEN**: tiny (baa) + yeast235 **exact vs C++ pfp route** (7,501,037 byte-identical); cross-route vs one-pass differs ONLY by tie-breaking (611,520 positions, 92% overlap — smallest sets non-unique, Bit-1-established) + one-pass ±1 terminator convention | ✅ |
 | 3 | **AGC-native sharded construction**: `agc2flat --groups` (metadata, 0.003 s) + `--group/--band` (targeted `get_contig`/`get_contig_range`) → temp shard → build → delete | **GREEN**: CM086560.1 AGC-extracted shard **byte-identical** to flat-mode shard + sidecar + **χ identical (78,742,930)** | ✅ |
 | 3b | *(optional, re-scoped)* whole-collection χ via streamed pscan — FIFO probe failed: `mt_process_file` splits by file size (`ifstream::ate` + per-thread seek ranges); needs a streaming-mode pscan patch (spec'd, not built) | dict/parse byte-equal vs flat-mode | 📋 |
-| 4 | PFP-aux emission in streamed scan (lens/lcs/alph) | differential vs `one-pass-build-index` components | ⏳ |
+| 4 | PFP-aux emission in streamed scan: `-A` emits .suff/.lcs/.mult (0-based, lcs+1, per-char counts, sigma=max_byte+1) | **GREEN**: byte-identical vs `one-pass-build-index -t sA` on baa + CM086554.1 (244.6 MB human shard, chi=122,370,548) | ✅ |
 | 5 | `-o agc` oracle (ragc FFI + LRU) | byte-verify vs flat text; 0 oracle disk | ⏳ |
 | 6 | full-466 run (AGC-native, streamed) | memory profile + χ + verified MEMs; no flat text ever | ⏳ |
 
