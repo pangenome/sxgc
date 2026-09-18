@@ -1,0 +1,13 @@
+[package]
+name = "ragc-ffi"
+version = "0.1.0"
+edition = "2021"
+description = "C ABI over ragc-core for the sxgc AGC text oracle (Bit 5)"
+
+[lib]
+name = "ragc_ffi"
+crate-type = ["cdylib"]
+
+[dependencies]
+ragc-core = { git = "https://github.com/ekg/ragc", rev = "40e5cad11cab7d4df07a72d6b16d68c2d60b0742" }
+anyhow = "1"
