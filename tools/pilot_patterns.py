@@ -55,6 +55,7 @@ def main():
             fstart, ln = int(fstart), int(ln)
             rows.append((cname, fstart, ln))
             total = max(total, fstart + ln)
+    rows.sort(key=lambda r: r[1])   # bisect needs offset-sorted rows
     flatlen = total + 1  # trailing '$'
     rows.sort(key=lambda r: r[1])
 

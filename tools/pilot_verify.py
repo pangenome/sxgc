@@ -40,12 +40,14 @@ def main():
     args = ap.parse_args()
 
     # sidecar, sorted by forward offset, with binary search index
-    starts, meta = [], []
+    rows = []
     with open(args.sidecar) as f:
         for line in f:
             cname, fstart, ln = line.rstrip("\n").split("\t")
-            starts.append(int(fstart))
-            meta.append((cname, int(fstart), int(ln)))
+            rows.append((cname, int(fstart), int(ln)))
+    rows.sort(key=lambda r: r[1])   # bisect needs offset-sorted rows
+    meta = rows
+    starts = [r[1] for r in rows]
 
     # patterns
     pats, cur = {}, None
