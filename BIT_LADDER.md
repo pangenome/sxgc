@@ -75,3 +75,24 @@ same colex-order triples via the PFP iterator.
   ~10-35 ms class. Batch locality = the friend. Text-access-heavy binary search
   is intrinsic to sA; the r-index toehold (LF-mapping search, no text access)
   is the designed path for the 10-20 GB target's query side.
+
+## Rung 1 gate GREEN — r-index over the same streamed PFP, zero text access (yeast235)
+
+- **One stream, two indexes**: the same `agc2flat --reverse --stdout | pscan -S`
+  PFP stream feeds both the sA (χ = 85.4M) and now the r-index
+  (`rindex_build` RLEs the streamed BWT, samples SA at run ends).
+- **Query side is pure index arithmetic**: `rindex_query` = backward search +
+  LF-walk locate — **no oracle, no AGC touch**, answering the cost problem the
+  sA measurement exposed (37 scattered AGC decompressions per cold pattern).
+- **Bug found & fixed**: `rank(c, i)` with `i` past the last c-run returned
+  garbage (`lower_bound` → `end()`, OOB `csum[c][j]`); per-char sentinel totals
+  appended to the prefix arrays. Symptom: 8/50 patterns reported empty search
+  though all were present (trace: `rank('T', 3336986757)` → 0).
+- **Gate**: R = 100,904,881 runs (3.0% of the 3.34-Gbp text — the pessimistic
+  diverse-yeast regime; HPRC v2 ≈ 0.18% = 2.53B runs per WABI 2025);
+  867 MiB raw layout; **5991/5991 occurrences byte-verified** vs flat text
+  (full occurrence sets — sA reports 1/pattern, r-index enumerates all,
+  e.g. p14 = 197 copies); 50/50 patterns match brute-force `t.count()`.
+- **Full enumeration timing**: 6m20s for 50 patterns / 5,991 occurrences
+  (2.7 GHz-class single core) — correctness first; query-side optimization
+  (toehold sampling, `r-index-toehold/`) is the next rung.
