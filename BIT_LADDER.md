@@ -153,3 +153,28 @@ same colex-order triples via the PFP iterator.
   33 GB); scratch peak ~2.4 TB on the work mount (3.6 TB free), falling to
   ~1.9 TB after load-time unlinks; pscan -S streaming pass ~74 h
   single-threaded (the zero-materialization price).
+
+## Rung 4 — grlBWT becomes the production r-index constructor (k=10 head-to-head)
+
+- **Decision (user)**: the PFP r-index route is retired from production. It
+  remains the χ/sA construction (exhaustively gated on yeast) and the
+  reference machinery.
+- **k=10 HPRC head-to-head (identical 30.15 Gbp, 10 haps)**:
+  | | PFP route (out-of-core, M64) | grlBWT route |
+  |---|---|---|
+  | peak RAM | 147 GB (killed at 3 h 11 m, unfinished) | **5.95 GB** |
+  | wall | > 3 h | **43.5 min** |
+  | R | — | **1,859,825,801** (n/r = 16.2) |
+- **R(k) grounding**: 1.86 B runs at k=10 vs WABI's 2.53 B at k=464 — the
+  sublinear run growth is real; the 466 index lands in the projected ~15 GB.
+- **grlBWT k=10 construction quirk**: it stages the output in TMPDIR and
+  rename()s it — TMPDIR must share a filesystem with the output (cross-device
+  rename aborts AFTER construction; the BWT was salvaged intact from /tmp).
+  Fixed in the runner (TMPDIR=$W/tmp).
+- **v4 pipeline pieces, all gated**: agc2flat --revlines (BCR collection
+  format, rotation-cancelling sidecar formula); rlbwt_sampler (parallel
+  per-string LF walks, zero text access, S = fstart+L-j run-end samples;
+  712/712 vs brute force); rindex_query v4 (S - m locate; S INCREASES per LF
+  step — sa_at uses sample - steps, sign caught by the yeast gate).
+  Yeast AAA#0 end-to-end: 114/114 oracle byte-verified, 100/100 planted
+  truths. k=10 v4 chain (sampler → query → oracle gate) in flight.
