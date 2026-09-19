@@ -96,3 +96,28 @@ same colex-order triples via the PFP iterator.
 - **Full enumeration timing**: 6m20s for 50 patterns / 5,991 occurrences
   (2.7 GHz-class single core) — correctness first; query-side optimization
   (toehold sampling, `r-index-toehold/`) is the next rung.
+
+## Rung 2 gate GREEN — layout v3: SA samples wide, packed, sized for HPRC (yeast235 gated)
+
+- **Blocker found**: rung 1's `sa_sample` was u32 — HPRC v2 (1.4 Tbp) needs
+  **41-bit** SA values; the full-466 run would have silently corrupted every
+  sample past 2^32 (same bug family as the Bit 6 `atoi` overflow).
+- **Target accepted (user)**: ~23 GB class for the human index; "we have to
+  use more bits" — SA width goes up, not down, and that is fine.
+- **Format versions** (query reads all three):
+  - v1: u32 SA (broken at scale) — 9 B/run
+  - v2: u64 SA, 13 B/run — 1250 MiB on yeast, gate 5991/5991 byte-verified,
+    50/50 patterns
+  - v3: SA packed to `bits(n)` via sdsl `int_vector` — 41 bits at HPRC scale,
+    **6.125 B/run → ~15.5 GB projected** (R = 2.53 B); gate 5991/5991
+    byte-verified, 50/50; yeast file 866 MiB (sa_w=32 — the v3 win
+    materializes at human scale)
+- **run_len u32 guard**: a single BWT run ≥ 2^32 aborts the build loudly.
+- **Measured build cost** (yeast, 3.34 Gbp): RLE pass peak RAM 10.5 GB,
+  wall ~10 min (PFP-stream-bound); query peak RAM 3.07 GB, full-enumeration
+  6m25s for 50 patterns / 5,991 occurrences.
+- **Open (later rungs)**: build-side RAM at human scale (raw vectors in RAM
+  during RLE ≈ 30+ GB — needs streaming-out or the compressed write path
+  built incrementally); query-side RAM at human scale (csum arrays dominate);
+  EF-compressed run_len (measured H = 4.96 bits vs 32 stored — optional
+  further ~2.6 B/run of headroom if we ever want deep compression).
