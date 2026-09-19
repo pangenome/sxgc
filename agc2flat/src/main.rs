@@ -11,6 +11,11 @@
 //       stream ONE contig group (all samples' copies, sample order) to
 //       out.txt + out.names.tsv; --band S:E slices [S,E) of every copy
 //       (AGC-native sharded construction: extract -> build -> delete)
+//   agc2flat <archive.agc> [--samples <file>] [--reverse] [--stdout] ...
+//       --samples restricts ALL modes to the listed AGC sample names
+//       (one per line, '#' starts a comment); unknown names abort loudly;
+//       archive order is preserved so a subset stream is a subsequence of
+//       the whole-collection stream.
 //
 // Uses targeted per-contig extraction (get_contig / get_contig_range) —
 // never get_sample (which decompresses every contig of a sample at once).
@@ -51,10 +56,11 @@ struct Args {
     band: Option<(u64, u64)>,
     reverse: bool,
     stdout: bool,
+    samples: Option<String>,
 }
 
 fn parse_args() -> Result<Args> {
-    let mut a = Args { archive: String::new(), out: String::new(), upper: false, groups: false, group: None, band: None, reverse: false, stdout: false };
+    let mut a = Args { archive: String::new(), out: String::new(), upper: false, groups: false, group: None, band: None, reverse: false, stdout: false, samples: None };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -62,6 +68,7 @@ fn parse_args() -> Result<Args> {
             "--upper" => a.upper = true,
             "--reverse" => a.reverse = true,
             "--stdout" => a.stdout = true,
+            "--samples" => a.samples = Some(it.next().context("--samples needs a file of sample names")?),
             "--groups" => a.groups = true,
             "--group" => a.group = Some(it.next().context("--group needs a contig name")?),
             "--band" => {
@@ -74,7 +81,7 @@ fn parse_args() -> Result<Args> {
         }
     }
     if a.archive.is_empty() {
-        anyhow::bail!("usage: agc2flat <archive.agc> [-o out.txt] [--upper] [--groups] [--group <contig>] [--band S:E]");
+        anyhow::bail!("usage: agc2flat <archive.agc> [-o out.txt] [--upper] [--groups] [--group <contig>] [--band S:E] [--samples <file>] [--reverse] [--stdout]");
     }
     Ok(a)
 }
@@ -82,7 +89,34 @@ fn parse_args() -> Result<Args> {
 fn main() -> Result<()> {
     let args = parse_args()?;
     let mut dec = Decompressor::open(&args.archive, DecompressorConfig::default())?;
-    let samples = dec.list_samples();
+    let all_samples = dec.list_samples();
+
+    // --samples: restrict to the listed AGC sample names (archive order kept,
+    // unknown names abort). Applies to every mode.
+    let samples: Vec<String> = match &args.samples {
+        Some(path) => {
+            let text = std::fs::read_to_string(path)
+                .with_context(|| format!("--samples: cannot read {path}"))?;
+            let wanted: std::collections::BTreeSet<String> = text
+                .lines()
+                .map(|l| l.trim())
+                .filter(|l| !l.is_empty() && !l.starts_with('#')) // '#' ONLY starts a comment; sample names contain '#' (PanSN)
+                .map(|l| l.to_string())
+                .collect();
+            anyhow::ensure!(!wanted.is_empty(), "--samples: file has no names");
+            let have: std::collections::BTreeSet<String> = all_samples.iter().cloned().collect();
+            for w in &wanted {
+                anyhow::ensure!(have.contains(w), "--samples: sample not in archive: {w}");
+            }
+            let filtered: Vec<String> = all_samples
+                .into_iter()
+                .filter(|s| wanted.contains(s))
+                .collect();
+            eprintln!("--samples: {}/{} selected from {path}", filtered.len(), have.len());
+            filtered
+        }
+        None => all_samples,
+    };
 
     // --groups: metadata only (list_contigs + get_contig_length — no decompression)
     if args.groups {
@@ -169,22 +203,31 @@ fn main() -> Result<()> {
         let mut rows: Vec<(String, u64, u64)> = Vec::new(); // (cname, stream_off, len)
         let mut samples_rev = samples.clone();
         samples_rev.reverse();
-        for s in &samples_rev {
-            let mut names = dec.list_contigs(s)?;
-            names.reverse();
-            for cname in &names {
-                let numeric = dec.get_contig(s, cname)?;
-                let mut seq = ascii_of(&numeric, args.upper)?;
-                let len = seq.len() as u64;
-                seq.reverse();
-                { use std::io::Write as _;
-                  if let Some(w) = stdout_out.as_mut() { w.write_all(b"$")?; w.write_all(&seq)?; }
-                  else if let Some(w) = file_out.as_mut() { w.write_all(b"$")?; w.write_all(&seq)?; }
+        let total_samples = samples_rev.len();
+        for (sidx, s) in samples_rev.iter().enumerate() {
+            let t0 = std::time::Instant::now();
+            let sample_contigs: u64 = {
+                let mut names = dec.list_contigs(s)?;
+                names.reverse();
+                let mut c = 0u64;
+                for cname in &names {
+                    let numeric = dec.get_contig(s, cname)?;
+                    let mut seq = ascii_of(&numeric, args.upper)?;
+                    let len = seq.len() as u64;
+                    seq.reverse();
+                    { use std::io::Write as _;
+                      if let Some(w) = stdout_out.as_mut() { w.write_all(b"$")?; w.write_all(&seq)?; }
+                      else if let Some(w) = file_out.as_mut() { w.write_all(b"$")?; w.write_all(&seq)?; }
+                    }
+                    rows.push((cname.clone(), streamed, len));
+                    streamed += len + 1;
+                    c += 1;
                 }
-                rows.push((cname.clone(), streamed, len));
-                streamed += len + 1;
-                n_contigs += 1;
-            }
+                c
+            };
+            n_contigs += sample_contigs;
+            eprintln!("[{}/{}] sample {s}: {sample_contigs} contigs, streamed {streamed} bytes ({:.0}s)",
+                      total_samples - sidx, total_samples, t0.elapsed().as_secs_f32());
         }
         let total = streamed; // == forward flat length (exact mirror)
         eprintln!("TOTAL {total}");
