@@ -7,6 +7,8 @@ AGC=/home/erikg/hprcv2/HPRC_r2_assemblies_0.6.1.agc
 A2F=/home/erikg/sxgc/agc2flat/target/release/agc2flat
 GRL=/home/erikg/grlBWT/build/grlbwt-cli
 cd "$W"
+export TMPDIR="$W/tmp"
+mkdir -p "$TMPDIR"   # grlBWT renames its temp output -> must share a filesystem with $W
 
 echo "=== STAGE prep: revlines collection from AGC ($(date -Is))"
 /usr/bin/time -f "prep wall %e s, maxRSS %M KB" \
