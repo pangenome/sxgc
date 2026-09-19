@@ -1,209 +1,265 @@
-# sxgc — s-χ-GC: Suffixient-χ over Genome Collections
+# sxgc — Suffixient/Run-indexed Genome Collections
 
-*Suffixient-array indexing of AGC collections: measured constants, scaling model,
-and phase plan. All numbers below were measured on the target workstation
-(256 cores, 1 TB RAM, 14 TB NVMe) unless attributed to external sources.*
+*Indexes over AGC-compressed genome collections, constructed by streaming
+directly from the archive with zero materialization, queried in the
+`sample#contig:offset` namespace. All numbers measured on the target
+workstation (256 cores, 1 TB RAM, 14 TB NVMe) unless attributed externally.
+Living status document — the gate-level record is `BIT_LADDER.md`; this file
+describes the architecture and the plan.*
 
 ---
 
 ## 1. Mission
 
-Build and query **suffixient-array (sA) indexes** over **AGC-compressed genome
-collections** with results mapped into the **sample/contig name space**, scaling
-from 235 yeast strains (validated) through HPRC v2 (466 samples, 1.4 Tbp) to
-collections of ~10,000 haplotypes.
+Build and query text indexes over **AGC-compressed genome collections** —
+working **directly from the archive**, never materializing the flat text —
+with all results mapped into the **`sample#contig:offset`** namespace.
+Scaling: 235 yeast strains (validated end-to-end) → HPRC v2 (466 haplotypes,
+1.4 Tbp, one 3.3 GB AGC) → ~10,000 haplotypes (cluster port).
 
-**Capability contract**: the sA layer returns **all MEMs with one verified
-anchor each** (never all occurrences — the χ-sampling definition forbids it).
-All-occurrence enumeration is the **r-index toehold hybrid** (Phase 5,
-`r-index-toehold/`): the sA anchor is fed to a banded r-index as its toehold,
-which enumerates every occurrence without re-doing pattern matching
-(O(occ·log n/log w) per MEM), mapped and emitted as GAF.
+**Two query capabilities, two layers:**
 
-Roles in the existing index stack (impg/syng syncmer sparse index, ropebwt3 FMD):
-the sA is the **dense-but-tiny locate-one-occurrence / MEMs index** — complement,
-not replacement.
+| Layer | Answers | Text access | Artifact size (HPRC v2 proj.) |
+|---|---|---|---|
+| **r-index** (`.ri`, rungs 1–3) | **all occurrences**, exact | **zero** — pure index arithmetic (backward search + LF-walk) | **~15.5 GB** (6.125 B/run × 2.53 B runs) |
+| **sA + AGC oracle** (Bits 4–6) | **MEMs + one anchor each** | probes the text via ragc FFI, window-cached, served from the 3.3 GB archive | sA ≈ 10% of text; oracle = the archive itself |
 
-## 2. Measured constants (yeast235: 235 strains, 9,901 contigs, 3.34 Gbp)
+The sA layer's binary search intrinsically touches the text (~37 scattered
+AGC window-fetches per cold pattern at collection scale, ~121 ms); the
+r-index's all-occurrence enumeration needs none. The eventual hybrid (sA finds
+MEMs fast, feeds an anchor to the r-index as toehold) composes both.
 
-### 2.1 Construction
+## 2. Architecture
 
-| Stage | Measured | Constant |
-|---|---|---|
-| AGC → flat (agc2flat) | 51 s incl. compile; ~40 s run | ~80 MB/s single-thread |
-| PFP parse (pscan, 32 t) | 49 s | 68 MB/s aggregate; dictionary 3.17 M words (519 MB), parse 32.9 M phrases |
-| PFP χ scan (single-thread) | ~636 s | **5.25 MB/s per core** — the bottleneck constant |
-| Peak RAM (whole PFP stage) | 8.8 GB | 2.6× n for this collection; scales with dict+parse (novelty), not n |
-| χ (whole collection, PFP) | 85,404,240 (2.56% of n) | `.suff` 427 MB |
-| Banded indexes (975 shards, 48-way) | **236 s wall** | Σ.sA 1.23 GB + Σ.lz77 0.40 GB = **1.63 GB = 9.8% of full SA, 0.49× text** |
-| Whole-collection index build | ❌ segfault | lz77 oracle: divsufsort `saidx_t=int32` → 2³¹ cap (3.34 Gbp > 2.147 Gbp) |
+The sequence lives in exactly two forms: **compressed inside the AGC**, or
+**transient in a pipe**. Everything else is derived structure.
 
-### 2.2 Queries (chrIV shard, 265 MB text, 37.7 MB .sA)
+```
+AGC archive (3.3 GB @ 466 haps)          ── only source of sequence
+ │  ragc (Rust): segment-granular random access (~26 MiB/s; 2.4 ms/64KiB)
+ ▼
+agc2flat --samples K.txt --reverse --stdout   ── streaming adapter
+ │  byte-exact mirror of the forward flat text ('$'+rev(contig), last first),
+ │  bounded RAM, no files; sidecar (.names.tsv, forward offsets) same-pass
+ ▼  (64 KB pipe; pscan paces at ~5.25 MB/s/core)
+pscan -S                                 ── prefix-free parsing
+ │  single sequential pass → .parse/.dict/.occ on disk
+ │  (k=10: 5.7 GB dict; k=466: ~99 GB projected)
+ ▼
+rindex_build (r-index)  or  pfp_suffixient -A (sA components)
+ │  pfp_iterator computes the BWT in suffix order ON THE FLY from the PFP —
+ │  BWT/SA never materialize. Out-of-core (rung 3): d/saD/lcpD/isaD/p/saP/
+ │  isaP/ilist/pos_T/s_lcp_T are mmap-backed scratch (`disk_vector`),
+ │  unlinked when dead; RAM keeps succinct structures + sacak workspaces.
+ ▼
+hK.ri (format v3)   /   .suff/.lcs/.mult → one-pass-build-index → .sA
+    run-length BWT + SA samples packed to bits(n)
+```
 
-1,000 random 100-mers: **1000/1000 byte-verified correct**, 0.26 ms/pattern,
-2.55 µs/char, 38 MB RAM. Hits mapped via `mappos.py` to `sample#contig:offset`.
+Query side:
+- `rindex_query` — backward search + LF-walk over `.ri`; zero text access;
+  reports forward-flat positions (sidecar maps them to `sample#contig:offset`).
+- `locate`/`mems -o agc` — sA binary search probing text through
+  `agc_text_oracle` (dlopen of `libragc_ffi.so`, sidecar flat-offset mapping,
+  64 KiB window LRU, 256 MiB budget).
 
-### 2.3 Cross-validation
+### Why this shape (constraints → consequences)
 
-- PFP χ = one-pass χ exactly (7,501,037 for single-genome yeast; sets differ only
-  by Lemma-34 tie-breaking, 92% overlap).
-- ragc reads C++-AGC archives (yeast235, HPRC v2 0.6.1) bit-compatibly.
-- `get_sample()` returns **numeric base encoding (0–15)** — must convert via
-  `CNV_NUM` (fixed in agc2flat; forbidden-byte validation caught it).
+| Constraint | Consequence |
+|---|---|
+| AGC as only source; near-zero temp disk | streaming build (`pscan -S` stdin; the FIFO probe failed: `mt_process_file` seeks by file size) |
+| 1.4 Tbp text vs 1 TB RAM | PFP instead of a real SA; **out-of-core disk_vector** for all PFP arrays (dict alone ~99 GB → 2.4 TB of arrays at k=466) |
+| ≤ ~23 GB artifact (accepted target) | r-index over full-text structures; runs are sublinear (2.53 B at 466 haps vs n = 1.4 T) |
+| reproducible subset science | `agc2flat --samples` (archive order preserved, loud unknown-name abort) + staged pilots |
 
-## 3. External reference points (HPRC v2)
+## 3. Measured constants
 
-From "Lossless Pangenome Indexing Using Tag Arrays" (Eskandar/Paten/Sirén,
-WABI 2025) on equivalent hardware:
+### 3.1 Construction (yeast235: 3.34 Gbp, unless noted)
+
+| Stage | Measured |
+|---|---|
+| χ (whole collection) | 85,404,240 (2.56% of n); `.sA` = 341 MB (10.2%) |
+| BWT runs | 100,904,881 (3.0% of n — diverse-yeast pessimistic; HPRC v2 = 0.18%) |
+| r-index build (out-of-core) | wall 639 s; anonymous peak **2.56 GB** (10.5 GB before rung 3) |
+| pscan -S χ scan rate | **5.25 MB/s per core** — the bottleneck constant |
+| ragc random access | 2.4 ms per 64 KiB fetch (26 MiB/s); **~25× faster than upstream C++ libagc**, which also segfaults on ragc-written archives |
+
+### 3.2 Queries (yeast235 whole-collection)
+
+| | |
+|---|---|
+| sA `locate -o agc` | 50/50 byte-verified; 121 ms/pattern scattered-cold (427 ms before window cache); warm class 10–35 ms |
+| r-index full enumeration | 5991/5991 occurrences byte-verified, 50/50 vs brute force; 6m20 s for 50 patterns / 5,991 occs — correctness first, query-side optimization is open |
+
+### 3.3 Human dict scaling (measured on real HPRC subsets, w=10 p=100)
+
+| k (haplotypes) | n | \|D\| | \|D\|/n | pscan peak RSS |
+|---|---|---|---|---|
+| 3 | 9.03 Gbp | 4.24 GB | 47% | 7.85 GB |
+| 10 | 30.15 Gbp | 5.68 GB | 18.8% | 10.0 GB |
+| 466 (linear extrapolation) | 1.4 Tbp | **~99 GB** | ~7% | ~200 GB |
+
+Novel dictionary growth is only **~205 MB/sample** (3→10) and sublinear;
+occ/n steady at 1.01% (avg phrase ~99 bp).
+
+### 3.4 k=466 projections (out-of-core design)
+
+| Resource | Projection |
+|---|---|
+| Anonymous RAM (workspaces + succinct + run arrays) | **~350–450 GB** |
+| Scratch on work mount | peak ~2.4 TB → ~1.9 TB after load-time unlinks |
+| pscan -S streaming pass | **~74 h single-threaded** (the zero-materialization price) |
+| `.ri` artifact | **~15.5 GB** (v3 layout) |
+| Query-side RAM | ~60–70 GB (per-run csum/cruns materialization) — fits, optimization open |
+
+### 3.5 External reference points (WABI 2025, Eskandar/Paten/Sirén)
 
 | | HPRC v1.1 | HPRC v2.0 |
 |---|---|---|
-| Haplotypes / sequence | 90 / 257 Gbp | 464 / 1,317 Gbp |
-| BWT runs | 3.89 B | 2.53 B (sublinear in n!) |
-| Whole-genome r-index build | 5.3 h | **19 h** |
-| FMD bidirectional (parallel per-chr) | 33 h | 133 h; peak 1.04 TiB |
+| Sequence | 257 Gbp | 1,317 Gbp |
+| BWT runs | 3.89 B | 2.53 B |
+| Whole-genome r-index build | 5.3 h | 19 h |
+| FMD bidirectional | — | 133 h; peak 1.04 TiB |
 
-Local prior work on this box: impg syng whole-HPRC pipeline (May 13–19, staged
-+ repair passes, days wall-clock; pstep stage alone 6,719 s); ropebwt3
-`human579.fmd` 30.5 GB. **Expect sA-class builds in the same order as the 19 h
-r-index, not the 1.9 h stage figure.**
-
-## 4. Scaling model
-
-Aggregate wall-clock for the build phase, given S shards/bands kept ≥ core count:
-
-```
-wall(scan)   ≈ n / (cores × 5.25 MB/s)        # per-shard single-thread, parallel across shards
-wall(parse)  ≈ n / (threads × ~2 MB/s)         # scales with threads
-RAM(per job) ≈ O(band novelty), ≪ 2 GB at 2.1 GB bands   # NOT O(collection)
-RAM(whole-collection χ) ≈ 200–600 GB @ 1.4 Tbp # grows with novelty accumulation
-Disk         ≈ flat text + ~5–10% text temps + banded indexes (0.49× text measured)
-```
-
-Projected (banded, full node):
-
-| Collection | n | Scan wall | RAM/job | Banded index |
-|---|---|---|---|---|
-| yeast235 ✅ | 3.34 Gbp | done | ≤1.5 GB | 1.63 GB |
-| HPRC v2 | 1.4 Tbp | **~20 min scan + ~2 h parse ≈ 3–4 h** | ≪2 GB | ~200–700 GB |
-| 10,000 hap (31 Tbp) | 31 Tbp | ~9 h wall (~2,200 CPU-h) | ≪2 GB | ~15 TB → cluster port |
-
-**Verdict**: one big shared-memory multicore node + NVMe scales through several
-thousand haplotypes with the banded architecture; band jobs port trivially to
-SLURM beyond that. χ itself grows sublinearly (novelty coalescing — HPRC v2 runs
-*decreased* vs v1.1 with 5× sequence).
-
-## 5. Phase plan
-
-### Phase 0 ✅ — yeast235 end-to-end (done)
-Validated: agc2flat (CNV_NUM fix), sharding, 975/975 builds, 1000/1000 verified
-mapped hits. Failure forensics: lz77 2³¹ segfault characterized.
-
-### Phase 1 — AGC random-access oracle (`oracle-agc/`)  ← *next*
-Replace the lz77 text oracle with random access served from the AGC archive via
-ragc-core FFI. **Eliminates the 2³¹ blocker entirely and cuts the queryable
-footprint ~10×** (no lz77 = no 12%-of-text oracle; 300–400 GB → 30–60 GB).
-
-Spec:
-- Build `ragc-core` as cdylib; C++ oracle class implementing the toolchain's
-  random-access interface (`-o agc` alongside lz77/rlz/bitpacked).
-- Partial extraction at segment granularity via the existing FFI
-  (`ffi/segment_helpers.rs`, `test_get_part.cpp`) — **not** `get_sample` (which
-  decompresses 3 Gbp contigs).
-- LRU segment cache (few hundred MB); MEMs/locate access is per-read-window and
-  cache-friendly. Expect slower queries than lz77 (decompress per miss) — queries
-  are the cheap phase.
-- Acceptance: yeast235 banded queries through the AGC oracle byte-verified
-  1000/1000; then HPRC v2 3-sample smoke (Phase 2) with zero lz77 files.
-
-### Phase 2 — HPRC v2 smoke (3-sample, then 10-sample AGC)
-End-to-end on real human data: flat (19/62 Gbp), shard, banded builds with the
-AGC oracle, MEMs + verified mapped positions. Fits current free disk (1.4 TB).
-Acceptance: χ measured; MEMs byte-verified; name-space mapping exact; constants
-refreshed for the human scaling model.
-
-### Phase 3 — HPRC v2 full (466 samples, 1.4 Tbp)  — *disk-gated*
-Prerequisites: **~4–5 TB scratch** (flat 1.4 TB + temps + banded indexes
-~0.2–0.7 TB). Current free: 1.4 TB (disk 90% full) — cleanup/addition required.
-Banded builds 48–96-way; χ via PFP parse (~2 h) + scan (whole-collection 74
-CPU-h, or per-band ~20 min wall at full node). Acceptance: χ reported; banded
-MEMs verified; comparison vs 19 h r-index and human579.fmd footprint.
-
-### Phase 6 — tag-array graph projection (`tag-array/`)
-Sequence-space -> graph-space: occurrences -> unique graph locations (node,
-offset, strand) via WABI-2025 tag arrays over the HPRC v2 .gbz; dedup across
-haplotypes, coordinate translation, graph-coordinate GAF. Measured: 86 GiB
-tag array @ HPRC v2 (sublinear: tag runs 9.86B -> 11.1B with 5x sequence).
-Requires the graph (.gbz) — AGC sequences alone insufficient. Spec:
-`tag-array/README.md`.
-
-### Phase 5 — r-index toehold hybrid (`r-index-toehold/`)
-All occurrences per MEM: sA anchor -> banded r-index toehold -> LF-step
-enumeration -> mappos -> GAF seed records. Footprint: r-index ~ BWT runs
-(HPRC v2: 2.53 B runs -> 5-8 GB class). Spec: `r-index-toehold/README.md`.
-
-### Phase 4 (optional) — whole-collection minimality
-1. **M64 rebuild** (switch exists in `common.hpp`; gsacak64/divsufsort64 already
-   linked) — mandatory only if n > 2³².
-2. **PFP-based emission of `.sA` aux vectors** (lens/lcs/alph) — replaces the
-   O(n)-RAM `one-pass-build-index`; verify vs one-pass on small collections.
-   Buys whole-collection .sA (8–20 GB total) vs banded (30–60 GB); cost: 74 h
-   scan wall unless the per-BWT-run-parallel scan is engineered (runs are
-   independent; merge by character).
-
-## 6. Component contracts
+## 4. Component contracts
 
 ### agc2flat (Rust, ragc-core)
-- Input: `.agc`; Output: `<out>.txt` (flat, `$`-separated, ASCII via `CNV_NUM`,
-  0x00–0x02 rejected post-conversion) + `<out>.names.tsv` (`name \t start \t len`).
-- Invariant: `Σ(contig lens) + #separators = flat length` (verified exact).
-- TODO: parallel extraction via `Decompressor::clone_for_thread` (~1 h work, ×10).
+- Modes: whole-collection; `--group <contig>` (+`--band S:E`); `--groups`
+  (metadata); `--reverse --stdout` (the build stream, **validated byte-exact
+  mirror**); `--samples <file>` (restrict to listed AGC sample names —
+  one per line, leading-`#` comments; archive order preserved; unknown names
+  abort; applies to all modes).
+- Sidecar invariant: written in the same pass as the stream (metadata lengths
+  can disagree with decompressed bytes — sidecar is ground truth);
+  `cname \t fstart \t len` in forward flat coordinates.
+- `CNV_NUM` conversion post-numeric-decode; 0x00–0x02 rejected.
 
-### shard_by_contig.py / future banding
-- Groups by contig part (text after 2nd `#`); shard-relative sidecars.
-- Band mode (Phase 3): position-wise split keeping shards < 2.1 GB
-  (yeast chr-shards ≤ 265 MB; human chr1 @464 hap ≈ 116 GB → ~55 bands).
+### pscan -S (C++, upstream PFP toolchain, fork)
+- Streamed single-thread parse from stdin: `agc2flat ... --stdout | pscan <base> -S -w 10 -p 100 -t 1 -s`.
+- Produces `.parse/.dict/.occ/.0.sai/.0.last` at `<base>` on the work mount.
 
-### mappos.py
-- Binary search over sidecar; offset on `$` reported as boundary (never
-  misattributed); occs/mems modes.
+### rindex_build / rindex_query (C++ fork, `sA/suff-set-src/`)
+- `.ri` format v3: `"SXRI"` u32, version, n, sigma, R, C[256] u64,
+  `run_char[R]` u8, `run_len[R]` u32, then sdsl `int_vector` SA samples
+  packed to `bits(n)` (41 bits at HPRC scale). Query reads v1/v2/v3.
+  v1 (u32 SA) **overflows past 4.29 Gbp** — never use at scale.
+- `-n` convention: build takes n = stream symbols + 1 (sentinel-inclusive);
+  query takes `-N` = stream symbols. Mismatching them shifts every reported
+  position by 1 (caught by the planted-truth gate).
+- Known sentinel fix: `rank(c, i)` past the last c-run reads `csum[c]` out of
+  bounds without per-char sentinel totals — do not regress.
 
-### oracle-agc (Phase 1)
-- C++ class, toolchain oracle interface (`-o agc`), ragc-core cdylib FFI,
-  segment-granular partial reads, LRU cache. Must handle multi-contig access and
-  report archive-relative contig identity for mapper coordination.
+### disk_vector (`sA/include/pfp_iterator/disk_vector.hpp`, rung 3)
+- mmap-backed file vector; **stable element addresses** (the pfp priority
+  queue holds raw pointers into `ilist`); scratch = unlinked on close;
+  scratch names `<base>.dv.<what>.<pid>`.
+- Big arrays out-of-core; RAM keeps only: `b_d`, `ilist_s`, both rmq's,
+  sacak/gsacak workspaces, run arrays. Anonymous peak at yeast: 2.56 GB.
 
-## 6b. Research to-do
+### agc_text_oracle + ragc-ffi (`-o agc`, Bit 5)
+- `libragc_ffi.so` cdylib over ragc-core pinned rev
+  `40e5cad11cab7d4df07a72d6b16d68c2d60b0742`; C ABI:
+  `sxgc_agc_open/len/range/close`; stored-cname addressing (CNV_NUM inside).
+- 64 KiB window LRU, byte-budgeted; sidecar binary search for flat→contig mapping;
+  `$` boundaries served by the oracle.
 
-χ_tag — suffixient sets over (context, tag) pairs: a suffixient characterization
-of the tag array (document listing) with query-by-binary-search; plausibly
-bounded by graph-branching contexts — a new repetitiveness measure for
-variation graphs. Notes + first experiment: `RESEARCH.md`.
+### sA route (Bits 4–6)
+- `pfp_suffixient -A -o <base> -w 10 -n <symbols+1>` → `.suff/.lcs/.mult`
+  (5-byte-truncated LE records), byte-identical gates vs one-pass references.
+- `one-pass-build-index -t sA` consumes the components (+ `-o agc` oracle);
+  not PFP-dependent — unaffected by rung 3.
+- Sorted-extract build discipline (positions extracted in sorted order, one
+  sequential AGC sweep): build 5+ h → 9 min on yeast whole-collection.
 
-## 7. Risk register
+### Pilot tooling (`tools/`, `bit6/`)
+- `pilot_patterns.py`: weighted-random windows over the sidecar, extracted via
+  ragc-ffi — zero materialization; writes patterns + planted-truth positions.
+- `pilot_verify.py`: byte-verifies every reported occurrence through the AGC
+  (precision) + planted-truth recall; single `PILOT VERDICT` line.
+- `bit6/pilot_run.sh K SAMPLES`: staged runner — stream → build → patterns →
+  query → verify, with df guards (400/300/250/200 GB floors) between stages.
+- HPRC AGC sample names are assembly-style
+  (e.g. `HG03927_pat_hprc_r2_v1.0.1`); contig names are PanSN
+  (`sample#hap#accession`).
+
+## 5. Status and plan
+
+### Proven (gate record in BIT_LADDER.md)
+- **Bits 1–4**: Lean formalization (Def. 9, 511/511 exhaustive); scan-rs ==
+  C++ byte-exact; AGC-native group construction; streamed `-A` components
+  byte-identical.
+- **Bit 5**: `-o agc` oracle — locate+MEMs 500/500 byte-verified, zero oracle disk.
+- **Bit 6**: whole-collection yeast end-to-end, zero materialization:
+  `.sA` = 341 MB, 50/50 verified; reader A/B (ragc stays); query cost structure
+  measured; three critical build bugs found via small-scale discipline
+  (u32 `atoi` overflow, N-from-absent-file, cache thrash).
+- **Rungs 1–3**: r-index from the same streamed PFP (5991/5991, zero text
+  access); layout v3 packed SA (u32 overflow blocker found; ~15.5 GB @ 466);
+  out-of-core `disk_vector` machinery (byte-identical gates ×2; anonymous
+  10.5 → 2.56 GB).
+
+### In flight
+- **HPRC pilots**: k=10 (the smoke set — cross-checks the 5.68 GB measured dict)
+  streaming→build→oracle gate; then k=50 (deterministic stride selection,
+  `bit6-k50.samples.txt`). Decide full-466 from measured R, build RAM, wall.
+
+### Next
+1. k=50 pilot; read the R(k) curve against the 2.53 B WABI number.
+2. Full-466 run (single campaign): `--samples` all 466 → pscan -S (~74 h) →
+   rindex_build (out-of-core, ~2.4 TB scratch peak, df-guarded) → query gate.
+3. Query-side: toehold sampling for faster locate; EF `run_len` headroom
+   (~2.6 B/run measured, H = 4.96 bits) if deep compression is ever wanted;
+   csum materialization (~60–70 GB) → rank structures if needed.
+4. sA anchor → r-index toehold hybrid (`r-index-toehold/`); GAF emitter
+   (`tools/mappos.py` namespace mapping exists).
+5. Lean `sorry` discharge (covering/minimality via Lemma 34); χ_tag research
+   (`RESEARCH.md`); tag arrays over the .gbz (Phase 6, unchanged).
+
+### Beyond
+- ~10,000 haplotypes / 31 Tbp: per-band scan parallelism (runs are
+  independent; merge by character) or cluster port; the out-of-core machinery
+  is what makes a single-node 466 run possible and is the port unit.
+
+## 6. Risk register
 
 | Risk | Severity | Mitigation |
 |---|---|---|
-| Scratch disk for Phase 3 | blocker | cleanup/add ~4–5 TB before launch |
-| FFI partial-read correctness (oracle-agc) | medium | byte-verify vs flat text on smoke |
-| PFP-aux emission semantics (Phase 4) | medium | differential test vs one-pass-build-index |
-| Scan wall (74 CPU-h @ HPRC v2, whole-collection) | low | banded (~20 min wall) or per-run-parallel scan |
-| ragc numeric-encoding regressions | low | forbidden-byte validation + CNV_NUM round-trip test |
-| Disk 90% full now | blocker (P3) | Phase 2 smoke fits in 1.4 TB free |
+| **gsacak/PFP int32 cap crossed at k=10 (FOUND, fixed)** | was blocker | dict > 2^32 chars SIGSEGVs the int32 build; PFP tools now link **gsacak64** (`-DM64` propagates); re-gated byte-identical on yeast. Analogue of the lz77/divsufsort caps. |
+| pscan own int-widths at k=466 (occ = 14.2e9 > 2^32) | **must audit before 466** | k=10/k=50 safe (305M/1.5e9 < 2^32); audit pscan parse/SA internals before the full run |
+| 74 h single-threaded pscan wall @ 466 | certain cost, accepted | one long run; per-run-parallel scan is the known escape hatch |
+| Scratch peak ~2.4 TB vs 3.6 TB free | medium | df guards in runner; prompt unlinks (isaD/saP/isaP/p ≈ 1 TB freed after load) |
+| First out-of-core run at 10× yeast scale | medium | pilots k=10/k=50 before 466; byte-identical gates already proven |
+| `rindex_query` full-enumeration speed | low | correctness first; toehold sampling next |
+| gsacak/sacak workspace growth at \|D\|≈99 GB | medium | measured ~2×\|D\| at k=3/10 → ~200 GB projected; fits |
+| ragc numeric-encoding regressions | low | forbidden-byte validation + CNV_NUM round-trip |
+| Lean `sorry`s outstanding (covering/minimality) | low | discharge via Lemma 34 planned |
 
-## 8. Decision log
+## 7. Decision log
 
-1. **Banded (per-contig) indexes, not whole-collection** — 2³¹ lz77 limit (measured
-   segfault); banded = 975/975 success, 236 s, parallel; matches WABI 2025
-   per-chromosome HPRC pattern.
-2. **`-v sA -o lz77` config, not opt-sA/rlz** — N's + IUPAC in real collections
-   violate DNA-only oracles; any-ASCII variant is also the minimal-space one.
-3. **AGC oracle over lz77-64 rebuild** — removes the limit instead of raising it;
-   10× smaller queryable footprint; reuses existing FFI surface. lz77-64 buys
-   nothing AGC doesn't (RAM ~10n for whole-chr SAs is unaffordable anyway).
-4. **Minimal-χ `.suff` kept as artifact** even when banded indexes are the
-   queryable form (427 MB vs 1.63 GB on yeast).
-5. **`$` separators per contig** — prevents cross-boundary chimeric substrings;
-   `$` (0x24) legal (only 0x00–0x02 forbidden).
-6. **Names from AGC headers, same-pass sidecar** — mapping can never diverge from
-   the indexed text (single validation+write pass).
+1. **AGC-native zero-materialization streaming** over flat materialization
+   (disk constraint + artifact discipline); `pscan -S` stdin is the only route
+   (FIFO probe failed: size-seeking parsers).
+2. **ragc (Rust FFI) over upstream C++ libagc** — 25× faster at random
+   substring access (26 vs 1.2 MiB/s), and upstream segfaults on
+   ragc-written archives. A/B measured on the official HPRC archive.
+3. **r-index (whole-collection) as the target artifact**; banded sA remains
+   the fallback/baseline structure. Target band **≤ ~23 GB accepted**;
+   v3 layout projects ~15.5 GB.
+4. **Out-of-core disk-backed arrays** — essential, not an optimization:
+   dict structures alone exceed RAM at 466 (~2.4 TB).
+5. **Packed SA samples (v3)** — u32 samples silently corrupt past 4.29 Gbp
+   (same family as the Bit-6 `atoi` bug); widths follow `bits(n)`.
+6. **Differential-gate convention**: cross-route set comparisons are never
+  exact (tie-breaking); gates = same-route byte-identical match + χ equality
+  + Lean covering + planted-truth/oracle byte-verification.
+7. **`$` separators per contig** (no chimeric cross-boundary substrings);
+   **sidecar written in the same pass** as the stream — single source of
+   coordinate truth.
+8. **`-n`/`-N` conventions documented** (build: symbols+1 sentinel-inclusive;
+   query: symbols) — mismatches shift positions by exactly 1 and are caught
+   by planted truths.
+9. **Yeast-first development; human scale touched only via staged pilots**
+   (k=10 → k=50 → 466), each with oracle byte-verification gates.
+10. **PFP tools build with M64 (gsacak64)** — the int32 build is capped at a
+    2^32-char dictionary (k=10 HPRC dict = 5.68 G chars SIGSEGVs); 64-bit
+    widths are the default for all future runs.
