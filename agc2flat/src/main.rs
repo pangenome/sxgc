@@ -11,6 +11,10 @@
 //       stream ONE contig group (all samples' copies, sample order) to
 //       out.txt + out.names.tsv; --band S:E slices [S,E) of every copy
 //       (AGC-native sharded construction: extract -> build -> delete)
+//   agc2flat <archive.agc> [--samples <file>] [--revlines] [-o out.txt]
+//       one reversed contig per line, '\n'-terminated (no '$'): the BCR-BWT
+//       collection format (grlBWT and friends). Sidecar keeps FORWARD flat
+//       offsets (same-pass ground truth). '\n' is the per-string sentinel.
 //   agc2flat <archive.agc> [--samples <file>] [--reverse] [--stdout] ...
 //       --samples restricts ALL modes to the listed AGC sample names
 //       (one per line, '#' starts a comment); unknown names abort loudly;
@@ -57,16 +61,18 @@ struct Args {
     reverse: bool,
     stdout: bool,
     samples: Option<String>,
+    revlines: bool,
 }
 
 fn parse_args() -> Result<Args> {
-    let mut a = Args { archive: String::new(), out: String::new(), upper: false, groups: false, group: None, band: None, reverse: false, stdout: false, samples: None };
+    let mut a = Args { archive: String::new(), out: String::new(), upper: false, groups: false, group: None, band: None, reverse: false, stdout: false, samples: None, revlines: false };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "-o" => a.out = it.next().context("-o needs a value")?,
             "--upper" => a.upper = true,
             "--reverse" => a.reverse = true,
+            "--revlines" => a.revlines = true,
             "--stdout" => a.stdout = true,
             "--samples" => a.samples = Some(it.next().context("--samples needs a file of sample names")?),
             "--groups" => a.groups = true,
@@ -174,6 +180,52 @@ fn main() -> Result<()> {
         text.flush()?; tsv.flush()?;
         eprintln!("group {contig}: {copies} copies, shard length {offset} (band {:?})", args.band);
         eprintln!("text: {out_path}\nnames: {tsv_path}");
+        return Ok(());
+    }
+
+    // --revlines: one reversed contig per line ('\n' sentinel) — BCR-BWT
+    // collection format for grlBWT. Contigs in FORWARD archive order (each
+    // string is independent in BCR; the sidecar is the coordinate truth).
+    if args.revlines {
+        let mut out_path = args.out.clone();
+        if out_path.is_empty() {
+            out_path = Path::new(&args.archive).file_stem().unwrap().to_string_lossy().to_string() + ".revlines.txt";
+        }
+        let tsv_path = format!("{out_path}.names.tsv");
+        let mut text = BufWriter::with_capacity(1 << 22, File::create(&out_path)?);
+        let mut tsv = BufWriter::with_capacity(1 << 16, File::create(&tsv_path)?);
+        let mut rows: Vec<(String, u64, u64)> = Vec::new(); // (cname, stream_off, len)
+        let mut streamed: u64 = 0;
+        let mut n_contigs: u64 = 0;
+        let total_samples = samples.len();
+        for (sidx, s) in samples.iter().enumerate() {
+            let names = dec.list_contigs(s)?;
+            for cname in &names {
+                let numeric = dec.get_contig(s, cname)?;
+                let mut seq = ascii_of(&numeric, args.upper)?;
+                let len = seq.len() as u64;
+                seq.reverse();
+                rows.push((cname.clone(), streamed, len));
+                text.write_all(&seq)?;
+                text.write_all(b"\n")?;
+                streamed += len + 1;
+                n_contigs += 1;
+            }
+            eprintln!("[{}/{}] sample {s}: streamed {streamed} bytes, {n_contigs} contigs",
+                      sidx + 1, total_samples);
+        }
+        text.flush()?;
+        let total = streamed; // == forward flat length (incl separators)
+        eprintln!("TOTAL {total}");
+        for (cname, soff, len) in &rows {
+            // stream block: rev(contig) at [soff, soff+len), '\n' at soff+len.
+            // The stream is the '$'-mirror rotated per block; the rotation
+            // cancels, giving the same forward-start formula as --reverse:
+            let fstart = total - 1 - soff - len;
+            writeln!(tsv, "{cname}\t{fstart}\t{len}")?;
+        }
+        tsv.flush()?;
+        eprintln!("revlines collection: {total} bytes, {n_contigs} strings\ntext: {out_path}\nnames: {tsv_path}");
         return Ok(());
     }
 
