@@ -121,3 +121,35 @@ same colex-order triples via the PFP iterator.
   built incrementally); query-side RAM at human scale (csum arrays dominate);
   EF-compressed run_len (measured H = 4.96 bits vs 32 stored — optional
   further ~2.6 B/run of headroom if we ever want deep compression).
+
+## Rung 3 gate GREEN — out-of-core PFP machinery (disk_vector), dict scaling measured
+
+- **Decision (user)**: go out-of-core with disk-backed arrays — essential for
+  HPRC v2, not an optimization.
+- **Measured dict scaling** (real HPRC subsets, pscan w=10 p=100 -t 4):
+  | k | n | \|D\| | \|D\|/n | pscan peak RSS |
+  |---|---|---|---|---|
+  | 3 | 9.03 Gbp | 4.24 GB | 47% | 7.85 GB |
+  | 10 | 30.15 Gbp | 5.68 GB | 18.8% | 10.0 GB |
+  - novel dict growth only ~205 MB/sample (3→10); k=466 extrapolates to
+    **|D| ≈ 99 GB** (conservative linear; real growth is sublinear).
+    occ/n steady at 1.01% (avg phrase ~99 bp).
+- **disk_vector<T>** (`sA/include/pfp_iterator/disk_vector.hpp`): mmap-backed
+  file vector; **stable element addresses** so the pfp priority queue's raw
+  pointers into `ilist` keep working; scratch files unlinked on close;
+  stream-in loads for `.dict`/`.parse`. Big arrays out-of-core:
+  `d, saD, isaD, lcpD` (isaD freed after load), `p, saP, isaP` (freed),
+  `ilist, pos_T, s_lcp_T, poss` (transient). RAM keeps only succinct
+  structures (b_d, ilist_s, both rmq's) + sacak/gsacak workspaces.
+- **Gates (yeast235)**:
+  - `rindex_build` → `.ri` **byte-identical** to v3; anonymous peak
+    **10.5 → 2.56 GB (−4.1×)**; wall 639 s (+7%).
+  - `pfp_suffixient -A` → `.suff/.lcs/.mult` **byte-identical** to the
+    Bit-6 references, χ = 85,404,240; peak **10.9 → 2.96 GB**.
+    (First run "differed" by exactly +1 per record: `-n` convention —
+    the reference uses N = sentinel-inclusive 3,336,986,760; noted.)
+- **k=466 projection with disk_vector**: anonymous ~350-450 GB (gsacak
+  workspace ~2×|D|, sacak_int workspace, succinct ~45 GB, run arrays
+  33 GB); scratch peak ~2.4 TB on the work mount (3.6 TB free), falling to
+  ~1.9 TB after load-time unlinks; pscan -S streaming pass ~74 h
+  single-threaded (the zero-materialization price).
