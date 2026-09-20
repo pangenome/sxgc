@@ -1,0 +1,18 @@
+diff --git a/src/TeraLCP/TeraLCP.cpp b/src/TeraLCP/TeraLCP.cpp
+index 629bc25..7f70e70 100644
+--- a/src/TeraLCP/TeraLCP.cpp
++++ b/src/TeraLCP/TeraLCP.cpp
+@@ -211,7 +211,12 @@ static rld_t* buildRldFromRlbwt(const std::string& base) {
+         std::cerr << "ERROR: RLBWT alphabet size " << k << " exceeds RB3_ASIZE (" << RB3_ASIZE << ")\n";
+         std::exit(1);
+     }
+-    rld_t* e = rld_init(RB3_ASIZE, 3);
++    // vendored patch (sxgc): small-block words must fit the counter header for
++    // the widened alphabet: type-1/2 headers need asize1*4/8 bytes = up to
++    // asize1 words; bbits=3 (ssize=8) is exactly right for the DNA-6 default
++    // but overflows for RB3_ASIZE=16, corrupting the heap (rld_rank_index then
++    // spins over a garbage block count).
++    rld_t* e = rld_init(RB3_ASIZE, RB3_ASIZE > 8 ? 5 : 3);
+     rlditr_t ei;
+     rld_itr_init(e, &ei, 0);
+     for (uint64_t i = 0; i < runs; ++i) {

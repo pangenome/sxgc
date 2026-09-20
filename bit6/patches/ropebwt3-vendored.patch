@@ -1,0 +1,30 @@
+diff --git a/fm-index.h b/fm-index.h
+index c071711..3500bb4 100644
+--- a/fm-index.h
++++ b/fm-index.h
+@@ -12,7 +12,10 @@
+ extern "C" {
+ #endif
+ 
+-#define RB3_ASIZE 6
++#define RB3_ASIZE 16  /* patched (vendored, sxgc): soft-masked collections carry mixed-case DNA (10 syms) */
++#ifndef RLD_MAX_ASIZE
++#define RLD_MAX_ASIZE 31
++#endif
+ 
+ typedef enum { RB3_PLAIN, RB3_FMD, RB3_FMR, RB3_TREE, RB3_BRE } rb3_fmt_t;
+ 
+diff --git a/rld0.h b/rld0.h
+index d0fa5b0..f0a98a6 100644
+--- a/rld0.h
++++ b/rld0.h
+@@ -1,7 +1,8 @@
+ #ifndef RLDELTA0_H
+ #define RLDELTA0_H
+ 
+-#define _DNA_ONLY
++/* vendored patch (sxgc): use the general-alphabet path (_DNA_ONLY hardcodes 6-symbol decoding) */
++/* #define _DNA_ONLY */
+ 
+ #include <stdint.h>
+ #include <stdlib.h>
