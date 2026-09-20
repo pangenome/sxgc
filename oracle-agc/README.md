@@ -1,5 +1,11 @@
 # oracle-agc — Phase 1 specification + skeleton
 
+> **Status: PRODUCTION — this is the sA query oracle.** The `-o agc` oracle
+> (`agc_text_oracle` + `ragc-ffi`, 64 KiB window LRU) is the production text
+> path for the sA layer; queries are byte-verified against it (Bit 5:
+> 500/500; yeast whole-collection: 50/50). The Phase-1 checklist below is
+> the original spec's plan, retained unedited.
+
 **Goal**: replace the sA toolchain's lz77 random-access text oracle with reads
 served directly from the AGC archive, eliminating the 2³¹ text limit and the
 12%-of-text lz77 files.

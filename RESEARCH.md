@@ -1,5 +1,16 @@
 # Research notes — sxgc
 
+## 0. Production-path update (substrate pivot)
+
+χ derivation from **compressed-space LCP via TeraLCP thresholds** is now the
+sA **production path**: TeraLCP's `--thr-pfp` 5-byte threshold files feed the
+one-pass suffixient scan (rung 4a.3; yeast χ gate = 85,404,240), replacing
+the PFP-era component route for production. The in-house PFP machinery
+remains the byte-gated yeast reference and the χ-legacy path. The χ_tag
+research below is unchanged by this pivot — its open problems (Def. 9-analog
+for annotated suffix arrays, (char, tag)-pair construction) are now framed
+against the RLBWT/TeraLCP substrate instead of the PFP scan.
+
 ## 1. Tag-suffixed sA (near-term, engineering): graph-space anchors at χ scale
 
 The sA already samples χ positions — one occurrence per right-extension. Each

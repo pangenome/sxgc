@@ -1,73 +1,64 @@
-# sxgc — Suffixient-χ indexing of AGC Genome Collections
+# sxgc — suffixient arrays for fast search at HPRC v3 scale
 
-Integration workspace for building **suffixient-array (sA) indexes** directly on
-**AGC-compressed genome collections** (via `ragc`), with all query results mapped
-into the **sample/contig name space**.
+**Objective**: build and query **suffixient-array (χ) indexes** at HPRC v3
+scale. **HPRC v2** (466 haplotypes, 1.4 Tbp, one AGC archive on disk) is the
+development vehicle; **yeast235** (235 strains, 3.34 Gbp) is the unit gate —
+χ = 85,404,240 (2.56% of n), `.sA` artifact = 341 MB (10.2% of text). The
+suffixient array itself — the minimal-χ definition (Lean-proved
+covering/minimality), χ as a repetitiveness measure, χ_tag for graphs — is
+the project's novel contribution; everything else is substrate.
 
-## Status
+## Architecture at a glance
 
-| Milestone | Status |
-|---|---|
-| yeast235 (235 strains, 3.34 Gbp) end-to-end | ✅ **validated** — χ=85.4 M, 975/975 banded indexes, 1000/1000 verified locate hits |
-| HPRC v2 smoke (3 samples, 9.03 Gbp, 313 shards) | ✅ **313/313 built (30.8 min wall @ 48-way)** — Σ.sA 15.6 GB + Σ.lz77 3.85 GB = 43.1% of full SA; **500/500 verified** locate+MEM anchors mapped (`HG02647#1#CM086560.1:offset`). Small-k regime: index 215% of text — compresses at scale. CM086560 forensics: heap corruption in legacy lz77index permutation builder (gdb backtrace); rebuilt with `-o plain-text`; 3rd strike vs lz77 — Phase-1 AGC oracle strengthened |
-| AGC random-access oracle (`oracle-agc`) | 📋 spec'd (Phase 1) |
-| HPRC v2 full (466 samples, 1.4 Tbp) | 📋 Phase 3, **disk-gated** |
-
-## Quickstart (validated on yeast235)
-
-```bash
-# 1. AGC -> flat text + name-space sidecar
-agc2flat/target/release/agc2flat yeast235.agc -o yeast/yeast235.txt
-
-# 2. Shard by contig (each shard < 2^31 bytes for the lz77 oracle path)
-tools/shard_by_contig.py yeast235.txt yeast235.txt.names.tsv yeast/shards/
-
-# 3. Banded index builds (48-way on 256 cores; 975 shards in 236 s)
-find shards -name "*.txt" ! -name "*.samples.txt" | sort | \
-  xargs -P 48 -I{} sh -c 'python3 sA/build/suffixient-array-index.py --build-index "{}"'
-
-# 4. Queries + name-space mapping
-./sA/build/sA-index-src/locate -i shards/chrIV.txt -t suffixient-array -o lz77 -p patterns.fa
-python3 tools/mappos.py shards/chrIV.txt.names.tsv --occs patterns.fa.occs
+```
+AGC archive (ragc, Rust)            the only sequence source; random access ~26 MiB/s
+ │
+ ▼  agc2flat --revlines [--samples K.txt]        (sxgc's own)
+ │  one reversed contig per line ('\n' sentinel) = BCR collection format;
+ │  same-pass sidecar with forward flat offsets; haplotype-subset CLI
+ │  preserving archive order, aborting loudly on unknown names
+ ▼  grlBWT                                        (adopted, GPL-3, external tool)
+ │  semi-external BCR-BWT construction (Díaz-Domínguez & Navarro, CPM 2022);
+ │  grammar+run-length compressed intermediates → RLBWT
+ ▼  grlbwt2rle                                    (sxgc's own glue)
+ │  runs as .syms/.len → renamed .bwt.heads/.bwt.len = TeraLCP rlbwt input format
+ ▼  TeraTools: TeraLCP / TeraIndex                (adopted, MIT)
+ │  LF, ψ, φ, φ⁻¹, LCP, PLCP and samples from the RLBWT in O(r) space, O(n)
+ │  time, parallel; "Phi+samples" phase; --thr-pfp → pfp-thresholds-style
+ │  5-byte threshold files; TeraIndex adds LF + inverse-φ (matching-statistics index)
+ ▼  sxgc χ layer                                  (the product)
+    one-pass suffixient scan over threshold/LCP structures → minimal-χ set;
+    queries via the AGC text oracle (`-o agc`, 64 KiB window LRU);
+    mappos → sample#contig:offset; anchor→φ-locate hybrid for
+    all-occurrence enumeration
 ```
 
-## Getting started (fresh clone)
+## Roles
 
-```bash
-git clone --recurse-submodules https://github.com/pangenome/sxgc && cd sxgc
-cargo build --release --manifest-path agc2flat/Cargo.toml   # fetches ragc-core from ekg/ragc
-cd sA && mkdir build && cd build && cmake .. && make -j && cd ../..
-make smoke3 SUFFIXIENT=$PWD/sA/build PARALLEL=48
-python3 tools/mappos.py <names.tsv> --occs <results.occs>   # hits -> sample#contig:offset
-```
-
-See `ARCHITECTURE.md` for measured constants, the scaling model, phase gates,
-and the AGC-oracle spec.
-
-## Components
-
-| Path | What | Language |
+| Layer | What | Provenance / license |
 |---|---|---|
-| `agc2flat/` | AGC → flat text + `names.tsv` (name-space sidecar); forbidden-byte validation; `--upper` | Rust (`ragc-core`) |
-| `sA/` | **submodule → pangenome/suffixient-array** (fork of regindex/suffixient-array). Integration patches land here: `-o agc` oracle, M64 build, PFP-aux emission | C++ |
-| `tools/shard_by_contig.py` | Per-contig sharding with shard-relative offset sidecars | Python |
-| `tools/mappos.py` | flat-offset → `sample#contig:offset` mapper (occs/mems aware) | Python |
-| `oracle-agc/` | **AGC random-access oracle** for the sA toolchain (Phase 1) | C++ ↔ ragc-core FFI |
-| `r-index-toehold/` | **all occurrences per MEM**: sA anchor -> r-index toehold -> GAF (Phase 5) | C++/Rust |
-| `RESEARCH.md` | **research notes** — χ_tag: suffixient sets over (context, tag) pairs, the graph-space χ idea | — |
-| `tag-array/` | **graph-space projection**: occurrences -> (node, offset, strand) via WABI-2025 tag arrays; dedup + coordinate translation (Phase 6) | C++ |
-| `ARCHITECTURE.md` | **Design document** — measured constants, scaling model, phase plan, decision log | — |
+| `agc2flat/` | **sxgc's own** — AGC → flat text / `--revlines` BCR stream + `names.tsv` sidecar; `--samples` subset CLI | Rust (`ragc-core`) |
+| `grlbwt2rle` | **sxgc's own** — grlBWT runs → TeraLCP rlbwt input (`.bwt.heads`/`.bwt.len`) | glue |
+| χ layer (scan, sA builder, AGC oracle, `mappos.py`, Lean proofs) | **sxgc's own** — the product: minimal-χ suffixient arrays over the substrate | C++/Rust/Lean |
+| AGC archive | adopted — the only sequence source; random access via ragc FFI | upstream: github.com/ekg/ragc |
+| grlBWT | adopted — semi-external BCR-BWT construction; **external tool, not linked**; GPL-3 | Díaz-Domínguez & Navarro, CPM 2022 |
+| TeraTools (TeraLCP, TeraIndex, TeraMEM/TeraMS) | adopted — RLBWT → (LCP, φ, samples, thresholds); matching-statistics index; MEMs | UCF S. Zhang Lab; MIT |
+| `sA/` | submodule → pangenome/suffixient-array (fork of regindex/suffixient-array); integration patches land here | upstream fork |
 
-## Why this exists
+The in-house PFP machinery (`pscan -S`, `pfp_suffixient`, `rindex_build`,
+`rlbwt_sampler`) remains the **yeast-gated reference constructor** and the
+χ-legacy path; it is superseded for production by the substrate above,
+pending gates.
 
-The suffixient-array toolchain has no AGC integration,
-no name-space mapping, and three scaling blockers we hit and characterized on real
-data: the 2³¹ lz77-oracle limit, the O(n)-RAM in-RAM index step, and the
-single-threaded χ scan. sxgc integrates the glue that works around the
-first two today, and specs the AGC-backed oracle that eliminates the 2³¹ problem
-entirely while cutting the queryable footprint ~10×.
+## Where to read next
 
-Upstream: `ragc` (github.com/ekg/ragc, Cargo git dep), `suffixient-array`
-(forked to pangenome/suffixient-array, pinned as the `sA/` submodule —
-integration branch lives there). See `ARCHITECTURE.md` for the full
-picture, measured constants, and phase gates.
+- **`ARCHITECTURE.md`** — the architecture (substrate chain, component
+  contracts), the full measured-constants tables, the risk register, the
+  decision log, and the active rung-4a plan.
+- **`BIT_LADDER.md`** — the gate record: current objective and state at the
+  top, followed by the append-only history of every gate run.
+- **`RESEARCH.md`** — χ_tag (suffixient sets over (context, tag) pairs) and
+  graph-space research notes.
+- Subproject specs: `oracle-agc/README.md` (AGC query oracle),
+  `r-index-toehold/README.md` (all-occurrence enumeration),
+  `tag-array/README.md` (graph-space projection).

@@ -1,5 +1,13 @@
 # r-index-toehold — Phase 5 spec: MEM anchors → all occurrences, GAF out
 
+> **Status: superseded by φ-locate, pending rung 4a.2 validation.** The
+> substrate pivot routes all-occurrence enumeration through TeraIndex's
+> φ + inverse-φ (and the r-index side generally) rather than the in-house
+> toehold chain; this spec is kept as the reference design for the
+> anchor→all-occurrences contract and the GAF emitter shape. If 4a.2
+> validates φ-based locate, the toehold lemma machinery here stays as
+> reference only.
+
 **Goal**: enumerate **all** text occurrences of every MEM found by the sA layer.
 The sA returns, per MEM, `(pattern_start, mem_length, one_anchor)` — the anchor
 is fed to an r-index as its **toehold**, skipping pattern matching entirely.

@@ -1,3 +1,36 @@
+## ============================================================
+## CURRENT OBJECTIVE & STATE  (prepend — everything below is the
+## append-only gate history, unchanged)
+## ============================================================
+
+**Objective**: suffixient arrays (χ) for fast search at HPRC v3 scale;
+HPRC v2 (466 haplotypes, 1.4 Tbp, AGC archive on disk) is the development
+vehicle; yeast235 (3.34 Gbp) is the unit gate (χ = 85,404,240 = 2.56% of n).
+
+**Active rung: 4a — yeast-scale validation of the adopted substrate.**
+Nothing scales past k=10 until 4a is green.
+
+Substrate chain: **AGC (ragc) → agc2flat --revlines → grlBWT (GPL-3,
+external tool) → grlbwt2rle → TeraLCP/TeraIndex (TeraTools, MIT) → sxgc χ
+layer**. The in-house PFP machinery (pscan -S, pfp_suffixient,
+rindex_build, rlbwt_sampler) is the yeast-gated reference constructor and
+the χ-legacy path; superseded for production, pending gates.
+
+Rung 4a ladder: 4a.1 TeraLCP yeast gate (validate LCP/PLCP against the
+in-house PFP-era byte-gated references) → 4a.2 φ+samples validation (if SA
+samples come at r-space cost, retire the O(n) sampler; locate goes φ-based)
+→ 4a.3 --thr-pfp thresholds → one-pass sA builder → χ gate = 85,404,240 at
+yeast → k=10 rework validation → k=50 → full-466 v2 → v3.
+
+Open risks: grlBWT needs a seekable input file (at 466 that is a 1.4 TB
+revlines temp on nvme — policy decision or shard+merge); TeraTools is fresh
+code ("cite: TBA") — everything must pass sxgc's differential gates
+(byte-gated yeast references exist); TeraLCP's test data uses ropebwt3 FMD
+(bidirectional) while ours is BCR (forward-only) — sentinel/convention
+handling must be gate-checked.
+
+---
+
 # The Bit Ladder — serial execution plan (one bit green before the next starts)
 
 Constraints of record: **AGC as only source; minimal RAM; near-zero scratch;
@@ -178,3 +211,25 @@ same colex-order triples via the PFP iterator.
   step — sa_at uses sample - steps, sign caught by the yeast gate).
   Yeast AAA#0 end-to-end: 114/114 oracle byte-verified, 100/100 planted
   truths. k=10 v4 chain (sampler → query → oracle gate) in flight.
+
+## k=10 grl-v4 chain gate GREEN (2026-09-19) — first full human-scale validation
+
+- **Pipeline**: AGC → agc2flat --revlines → grlBWT (R=1,859,825,801; 43.5 min;
+  5.95 GB) → grlbwt2rle → rlbwt_sampler (parallel LF walks, S-samples) →
+  rindex_query v4 → oracle verification.
+- **Gate**: 200 oracle-planted forward 120-mers; **12,034/12,034 occurrences
+  byte-verified against the AGC**, 0 bad; **200/200 planted truths found**.
+- **Measured costs at k=10 (30.15 Gbp)**: sampler wall 7,927 s (2.2 h),
+  maxRSS 69.7 GB — the O(n) walk is the chain's least scalable stage, which
+  motivates retiring it via TeraLCP's Phi+samples (rung 4a.2). Query:
+  110 s for 12,034 full-occurrence enumerations, maxRSS 45.6 GB.
+- **Cross-construction validation at yeast235**: grlBWT R = 100,902,972 vs
+  the in-house PFP route's R = 100,904,881 — agreement within 1,909 runs
+  (0.002%), the expected sentinel-convention delta. grlBWT yeast build:
+  246 s wall, 1.0 GB peak RSS.
+- **TeraTools integration notes (rung 4a)**: rlbwt format needs 5-byte LE run
+  lengths (grlbwt2rle emits u32 — converter added); TeraLCP assumes a DNA
+  6-symbol alphabet (RB3_ASIZE) — vendored patch to 16 (soft-masked yeast
+  carries mixed-case; human HPRC is 6-symbol unmodified); grlBWT needs
+  --tmp-dir on the output filesystem (stages + rename), else it aborts after
+  construction completes (salvageable from its temp dir).

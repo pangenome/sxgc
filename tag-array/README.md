@@ -1,5 +1,12 @@
 # tag-array — Phase 6 spec: sequence-space → graph-space projection
 
+> **Status: substrate is now RLBWT-based; goal unchanged.** Following the
+> substrate pivot, BWT/r-index construction feeding this layer comes from the
+> grlBWT → grlbwt2rle → TeraLCP/TeraIndex chain (see `ARCHITECTURE.md`), not
+> the in-house PFP route. The tag-array goal — sequence-space seeds projected
+> to graph coordinates, deduplicated to unique graph locations — is
+> unchanged, as is the WABI 2025 reference implementation it adopts.
+
 **Goal**: project seeds/matches from haplotype-sequence coordinates
 (`sample#contig:offset`) into **pangenome-graph coordinates** (node, offset,
 strand) — lossless, haplotype-aware, with cross-haplotype deduplication at
