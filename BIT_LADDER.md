@@ -10,17 +10,54 @@ vehicle; yeast235 (3.34 Gbp) is the unit gate (χ = 85,404,240 = 2.56% of n).
 **Active rung: 4a — yeast-scale validation of the adopted substrate.**
 Nothing scales past k=10 until 4a is green.
 
+**4a.1 GREEN (2026-09-20)**: TeraLCP runs the full yeast235 in 3,000.9 s /
+8.10 GB peak (LCP index construction 257.8 s incl. 36 s parallel LCP walk;
+thresholds sweep 2,733.8 s single-threaded = 91% of wall — human projection
+≈ 5 h for that phase; writing 1.6 s). Outputs: `y2.lcp_index.lcp_index`
+2.46 GB; `thr.thr`/`thr.thr_pos` 504,527,365 B = 100,905,473 entries = R +
+(9,901 endmarkers − 7,400 merged '\n' runs) — exact endmarker-split identity.
+Differential gates: fresh crafted 30-string tiny collection (duplicates,
+prefix ties, homopolymers; `bit6/teralcp_gate_tiny.py`) — BCR convention
+re-derived from rlbwt_sampler.cpp semantics (multi-string sentinels $₁<…<$ₖ,
+smallest, string order; reproduced grlBWT's BWT byte-identically) and TeraLCP
+thresholds+positions byte-identical vs Python AND C brute (2,487/2,487); s200
+mid-scale (145 Mbp, 200 strings, 11.54M split runs, the input that hung
+pre-fix) — TeraLCP byte-identical vs divsufsort+Kasai brute
+(`bit6/teralcp_brute_thr.c`, 18.5 s/2.0 GB) on thr AND thr_pos
+(11,541,094/11,541,094). TeraLCP's endmarker-split/\n model == BCR convention
+exactly (the FMD-vs-BCR sentinel risk is dead empirically).
+
+**Three vendored TeraTools patches, all load-bearing and now gate-validated**:
+(1) `RB3_ASIZE 6→16` (soft-masked yeast = 10 symbols); (2) `_DNA_ONLY`
+disabled in ropebwt3/rld0.h (hardcoded 6-symbol decoders stack-smashed the
+portable path); (3) **rld block geometry** — `rld_init(asize, bbits)` must
+size small blocks to the alphabet: type-1/2 counter headers need asize1×4/8
+bytes = up to 17 words at asize=16, but bbits=3 gives 8-word blocks; DNA-6
+fits exactly, asize=16 silently corrupts the heap and rld_rank_index spins
+forever over a garbage block count (found via SIGALRM self-backtrace in a
+repro probe: the 100.9M-run encode loop was innocent — 6.4 s; the spin was
+in rld_enc_finish→rld_rank_index). Fix: `rld_init(RB3_ASIZE,
+RB3_ASIZE > 8 ? 5 : 3)` in TeraLCP.cpp. Small inputs stay in type-0 blocks
+and survive — which is why the 12-Mbp diagnostic passed pre-fix and only
+real scale hung.
+
+Operational note: pkill -x on the process name kills ALL TeraLCP instances —
+the healthy yeast4 run was killed at its thresholds phase that way and cost
+a clean 50-min rerun (yeast5). proc stop by id is the only safe kill.
+
 Substrate chain: **AGC (ragc) → agc2flat --revlines → grlBWT (GPL-3,
 external tool) → grlbwt2rle → TeraLCP/TeraIndex (TeraTools, MIT) → sxgc χ
 layer**. The in-house PFP machinery (pscan -S, pfp_suffixient,
 rindex_build, rlbwt_sampler) is the yeast-gated reference constructor and
 the χ-legacy path; superseded for production, pending gates.
 
-Rung 4a ladder: 4a.1 TeraLCP yeast gate (validate LCP/PLCP against the
-in-house PFP-era byte-gated references) → 4a.2 φ+samples validation (if SA
-samples come at r-space cost, retire the O(n) sampler; locate goes φ-based)
-→ 4a.3 --thr-pfp thresholds → one-pass sA builder → χ gate = 85,404,240 at
-yeast → k=10 rework validation → k=50 → full-466 v2 → v3.
+Rung 4a ladder: 4a.1 TeraLCP yeast gate **GREEN** (see above) → 4a.2 φ+samples
+validation (if SA samples come at r-space cost, retire the O(n) sampler;
+locate goes φ-based) → 4a.3 --thr-pfp thresholds → one-pass sA builder → χ
+gate = 85,404,240 at yeast → k=10 rework validation → k=50 → full-466 v2 →
+v3. Full-scale value gates at yeast need k>255 byte-sentinel suffix
+sorting (gsacak64 route) — optional depth, only if 4a.2/4a.3 find
+anomalies.
 
 Open risks: grlBWT needs a seekable input file (at 466 that is a 1.4 TB
 revlines temp on nvme — policy decision or shard+merge); TeraTools is fresh
