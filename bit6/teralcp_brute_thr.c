@@ -20,8 +20,11 @@ typedef int32_t saidx_t;
 
 static void die(const char* m) { fprintf(stderr, "brute_thr: %s\n", m); exit(1); }
 
+int chi_mode(int argc, char** argv);
+
 int main(int argc, char** argv) {
-    if (argc != 3) { fprintf(stderr, "usage: %s <text> <outprefix>\n", argv[0]); return 1; }
+    if (argc == 4 && !strcmp(argv[2], "chi")) return chi_mode(argc, argv);
+    if (argc != 3) { fprintf(stderr, "usage: %s <text> <outprefix>\n       %s <text> chi <out.chi>\n", argv[0], argv[0]); return 1; }
     FILE* f = fopen(argv[1], "rb");
     if (!f) die("open text");
     fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
@@ -123,5 +126,82 @@ int main(int argc, char** argv) {
     fclose(fthr); fclose(fpos);
     fprintf(stderr, "split runs=%llu\n", (unsigned long long)cnt);
     free(T); free(BWT); free(LCP);
+    return 0;
+}
+
+// (chi_mode appended at end of file; forward-declared here)
+
+// ---- chi mode: brute-force per-row scan machine (scan-rs port, Bit-2 gated
+// semantics; sentinel chars map to 0, never emitted). Usage:
+//   teralcp_brute_thr <text> <outprefix> chi <out.chi>
+// Emits u64 LE positions (N - sa convention, N = n + 1) in emission order.
+int chi_mode(int argc, char** argv) {
+    const char* textPath = argv[1];
+    FILE* f = fopen(textPath, "rb");
+    if (!f) die("open text");
+    fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
+    unsigned char* T = malloc(n);
+    if (fread(T, 1, n, f) != (size_t)n) die("read text");
+    fclose(f);
+    int k = 0; int present[256]; memset(present, 0, sizeof present);
+    for (long i = 0; i < n; ++i) { if (T[i] == '\n') ++k; else present[T[i]] = 1; }
+    int nsym = 0;
+    for (int c = 0; c < 256; ++c) if (present[c]) ++nsym;
+    unsigned char remap[256]; int next = k + 1;
+    for (int c = 0; c < 256; ++c) if (present[c]) remap[c] = (unsigned char)(next++);
+    k = 0;
+    for (long i = 0; i < n; ++i) {
+        if (T[i] == '\n') { ++k; T[i] = (unsigned char)k; }
+        else T[i] = remap[T[i]];
+    }
+    saidx_t* SA = malloc(n * sizeof(saidx_t));
+    if (divsufsort(T, SA, (saidx_t)n) != 0) die("divsufsort");
+    int32_t* RANK = malloc(n * sizeof(int32_t));
+    for (long i = 0; i < n; ++i) RANK[SA[i]] = i;
+    int32_t* LCP = calloc(n, sizeof(int32_t));
+    long h = 0;
+    for (long i = 0; i < n; ++i) {
+        if (RANK[i] > 0) {
+            long j = SA[RANK[i] - 1];
+            while (i+h < n && j+h < n && T[i+h] == T[j+h]) ++h;
+            LCP[RANK[i]] = (int32_t)h;
+            if (h) --h;
+        } else h = 0;
+    }
+    // machine
+    #define CHI_SIGMA 256
+    long long rlen[CHI_SIGMA]; long long rpos[CHI_SIGMA]; int ract[CHI_SIGMA];
+    for (int c = 0; c < CHI_SIGMA; ++c) { rlen[c] = -1; rpos[c] = 0; ract[c] = 0; }
+    long long MAXI = (long long)0x7fffffffffffffffLL;
+    FILE* fo = fopen(argv[3], "wb");
+    if (!fo) die("open chi out");
+    uint64_t N = (uint64_t)n + 1;
+    long long m = MAXI; long long p = -1; uint64_t p_sa = 0;
+    uint64_t cnt = 0;
+    // buffered emit
+    uint64_t buf[65536]; int bn = 0;
+    #define EMIT(x) do { buf[bn++] = (x); if (bn == 65536) { fwrite(buf, 8, bn, fo); bn = 0; } ++cnt; } while (0)
+    for (long i = 0; i < n; ++i) {
+        int c = (SA[i] > 0) ? T[SA[i] - 1] : T[n - 1];   // BWT char (mapped)
+        if (c <= k) c = 0;                                // sentinels -> 0
+        long long l = LCP[i]; uint64_t s = (uint64_t)SA[i];
+        if (p < 0) { p = c; p_sa = s; continue; }
+        long long m2 = m < l ? m : l;
+        if (c != p) {
+            // eval
+            for (int cc = 1; cc < CHI_SIGMA; ++cc)
+                if (m2 < rlen[cc]) { if (ract[cc]) EMIT(rpos[cc]); rlen[cc] = m2; rpos[cc] = 0; ract[cc] = 0; }
+            // upds
+            if (l > rlen[p]) { rlen[p] = l; rpos[p] = (long long)(N - p_sa); ract[p] = 1; }
+            if (l > rlen[c]) { rlen[c] = l; rpos[c] = (long long)(N - s); ract[c] = 1; }
+            m = MAXI;
+        } else m = m2;
+        p = c; p_sa = s;
+    }
+    for (int cc = 1; cc < CHI_SIGMA; ++cc)
+        if (-1 < rlen[cc]) { if (ract[cc]) EMIT(rpos[cc]); }
+    if (bn) fwrite(buf, 8, bn, fo);
+    fclose(fo);
+    fprintf(stderr, "chi brute: %llu positions\n", (unsigned long long)cnt);
     return 0;
 }
