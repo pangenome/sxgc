@@ -7,7 +7,36 @@
 HPRC v2 (466 haplotypes, 1.4 Tbp, AGC archive on disk) is the development
 vehicle; yeast235 (3.34 Gbp) is the unit gate (χ = 85,404,240 = 2.56% of n).
 
-**Active rung: 4a — GREEN (2026-09-20). Next: k=10 rework validation.**
+**Active rung: k=10 rework validation — GREEN (2026-09-21). Next: k=50.**
+
+**k=10 human rework GREEN**: the full substrate chain replaces every O(n)
+component at human scale. TeraLCP k=10 index: 1,206 s / 59.2 GB peak /
+51.1 GB on disk (construction only; R=1,859,825,801, n=30,151,407,545,
+865 contigs). teralcp_chi: **χ(k=10) = 1,627,063,183** (5.4% of n;
+χ/r = 0.87, consistent with yeast's 0.85 across an 18× r jump) + **v4 SA
+samples in the same pass** (h10new.ri4, byte-identical format) in
+6,753 s / 195.9 GB peak (fat mode). **Locate gate**: rindex_query v4 on the
+new samples reproduces the oracle-verified v4 reference output
+byte-for-byte; **pilot oracle verdict GREEN: 12,034/12,034 occurrences
+byte-verified vs the AGC archive + 200/200 planted truths** (the first
+re-verify printed 0/12,034 — my wrong-sidecar invocation, full-archive
+sidecar instead of the k=10 revlines sidecar; the correct invocation is
+GREEN, matching the original chain exactly). The standalone
+rlbwt_sampler (2.2 h / 69.7 GB at k=10) is formally retired: samples are
+a free O(r)-space byproduct of the χ walk.
+
+**--slim memory trim (load side)**: skips Psi+intAtTop at deserialize
+(+ two pinned sdsl format facts: int_vector headers store size IN BITS;
+bit_vector/int_vector<1> headers omit the width byte) + stride-16 accel
+φ lookup instead of the full 8B/run start copy — byte-identical outputs
+at s200 (χ + all 11.5M samples). Walk-side aggregates stay native u64:
+sdsl packed cells share 64-bit words across runs, so single-writer-per-run
+races (caught twice by byte gates: corrupted bitmap via non-atomic
+bit_vector RMW, then 5 wrong χ positions via packed-cell lost updates);
+CAS-packed cells or fat cells are the only safe options. slim-vs-fat k=10
+memory/time comparison pending a quiet box.
+
+**Active rung before this (4a) — GREEN**: see the 4a.1–4a.3 records below.
 
 **4a.3 χ GATE GREEN — the decisive result**: the full adopted chain
 (grlBWT → TeraLCP → teralcp_chi) under the PFP-era reference convention
@@ -91,13 +120,11 @@ layer**. The in-house PFP machinery (pscan -S, pfp_suffixient,
 rindex_build, rlbwt_sampler) is the yeast-gated reference constructor and
 the χ-legacy path; superseded for production, pending gates.
 
-Rung 4a ladder: 4a.1 TeraLCP yeast gate **GREEN** → 4a.2 φ+samples **GREEN**
-(sampler retired; ms_index built) → 4a.3 χ wiring **GREEN** (χ = 85,404,240
-exact + set-identical vs phase-0 reference) → **NEXT: k=10 rework
-validation** (rebuild the k=10 chain via the adopted substrate: χ + φ-locate
-vs the AGC oracle; the v4 reference chain has 12,034/12,034 + 200/200 gates)
-→ k=50 → full-466 v2 → v3. Remaining policy item before 466: grlBWT needs a
-seekable revlines input (1.4 TB temp at 466 — shard+merge or policy call).
+Rung ladder: 4a fully **GREEN** → **k=10 rework GREEN** (χ = 1,627,063,183;
+locate byte-identical + 12,034/12,034 AGC oracle + 200/200 truths; sampler
+retired at human scale) → **NEXT: k=50** → full-466 v2 → v3. Remaining
+policy item before 466: grlBWT needs a seekable revlines input (1.4 TB temp
+at 466 — shard+merge or policy call).
 
 Open risks: grlBWT needs a seekable input file (at 466 that is a 1.4 TB
 revlines temp on nvme — policy decision or shard+merge); TeraTools is fresh
