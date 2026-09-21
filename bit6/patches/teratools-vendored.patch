@@ -16,3 +16,28 @@ index 629bc25..7f70e70 100644
      rlditr_t ei;
      rld_itr_init(e, &ei, 0);
      for (uint64_t i = 0; i < runs; ++i) {
+diff --git a/src/include/TeraIndex/TeraIndex.h b/src/include/TeraIndex/TeraIndex.h
+index b8b76c1..d5003c2 100644
+--- a/src/include/TeraIndex/TeraIndex.h
++++ b/src/include/TeraIndex/TeraIndex.h
+@@ -848,12 +848,18 @@ private:
+     // ================================ General helper functions ================================
+     // Make static contexpr, but this is probably fine
+     static uint8_t charToBits(const char c) {
++        // vendored patch (sxgc): buildRldFromRlbwt assigns internal codes in
++        // BYTE order (newline=0, then sorted present bytes), so with N present
++        // the codes are A=1,C=2,G=3,N=4,T=5 — the upstream A,C,G,T,N mapping
++        // swapped N and T and corrupted matching statistics on any text
++        // containing N (e.g. HPRC N-runs). Caught by the sxgc s200 MS gate
++        // (9,722/10,000 mismatched lens).
+         switch (c) {
+             case  'A': return 1;
+             case  'C': return 2;
+             case  'G': return 3;
+-            case  'T': return 4;
+-            case  'N': return 5;
++            case  'N': return 4;
++            case  'T': return 5;
+             default: throw std::invalid_argument("Invalid character: " + std::string(1, c));
+         };
+     }
