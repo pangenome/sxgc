@@ -307,52 +307,107 @@ int main(int argc, char** argv) {
     std::vector<uint64_t> saV4;                                 // run-end samples (.ri4 v4)
     if (!samplesPath.empty()) saV4.assign(R.R, INF);
     std::vector<uint64_t> fsFwd;               // sidecar forward-flat starts
+    std::vector<uint64_t> sideLen;            // sidecar contig lengths
     if (!sidecarPath.empty()) {
         FILE* sf = fopen(sidecarPath.c_str(), "r");
         if (!sf) { fprintf(stderr, "cannot open sidecar %s\n", sidecarPath.c_str()); return 1; }
         char name[4096]; unsigned long long fs, fl;
-        while (fscanf(sf, "%4095s\t%llu\t%llu", name, &fs, &fl) == 3)
+        while (fscanf(sf, "%4095s\t%llu\t%llu", name, &fs, &fl) == 3) {
             fsFwd.push_back(fs);
+            sideLen.push_back(fl);
+        }
         fclose(sf);
         if (fsFwd.size() != K) {
             fprintf(stderr, "FATAL: sidecar rows %llu != strings %llu\n",
                     (unsigned long long)fsFwd.size(), (unsigned long long)K);
             return 1;
         }
-        fprintf(stderr, "sidecar: %llu rows loaded\n", (unsigned long long)fsFwd.size());
+        fprintf(stderr, "sidecar: %llu rows loaded (len column: measure walk skipped)\n",
+                (unsigned long long)fsFwd.size());
     }
 
-    // ---- per-string self-terminating LF walks (two phases) ----
+    // ---- per-string self-terminating LF walks (optimized) ----
     // Every BWT row is visited exactly once across all strings' walks: the
     // walk of string i visits its bare-sentinel row i (position p_i) and the
     // suffixes at positions p_i-1 .. fstart[i] (rows reached by LF steps).
     // Rows 0..K-1 are the bare sentinels in string order (BCR convention,
     // rlbwt_sampler-gated), so a walk terminates when LF lands on a row < K.
-    // Phase 1 measures len_i; phase 2 (after prefix-summing fstart) fills the
-    // per-run aggregates with absolute positions and PLCP lookups.
+    //
+    // With --sidecar the per-string lengths come from the sidecar len column
+    // (the same source the retired rlbwt_sampler trusted) and the measure
+    // walk is skipped entirely; without it, a first pass measures len_i.
+    // Inner-loop optimizations (all gated byte-identical at s200):
+    //   * run lookup via a 1-of-16 coarse sample table (2-3 cache misses
+    //     instead of a full log(r) search over the 8B/run starts array)
+    //   * the phi-interval is tracked incrementally: positions descend by
+    //     exactly 1 within a string walk and phi intervals tile the position
+    //     domain, so the interval index only ever steps down — one init
+    //     search per string, then O(1) amortized steps
+    //   * the run/offset is computed once per row in the walk loop and
+    //     passed into the aggregate update (no duplicate lookup)
     std::vector<uint64_t> len(K, 0), fstart(K, 0);
+    bool haveLens = false;
+    if (!sidecarPath.empty()) {
+        for (uint64_t i = 0; i < K; ++i) len[i] = sideLen[i];
+        haveLens = true;
+    }
 
-    // visit(row, pos): aggregate lcp/sa into run stats; single-writer for
-    // topLCP/saFirst/saLast (first/last row visited once), atomic-min for
-    // interiorMin. Row k's lcp is PLCP[SA[k]] and counts as interior iff
-    // k is not the run's first row (scan-rs's m accumulates rows s+1..e).
-    auto visit = [&](uint64_t row, uint64_t pos, uint64_t si) {
-        uint64_t run = run_of_row(R, row);
-        uint64_t l = lcp_at_pos(idx, P, pos);
-        if (row == R.starts[run]) {
-            A.topLCP[run] = l; A.saFirst[run] = pos;
-        } else {
-            atomic_min_u64(&A.interiorMin[run], l);
+    // two-level run lookup
+    const uint64_t RUN_STRIDE = 16;
+    std::vector<uint64_t> runCoarse;
+    runCoarse.reserve(R.R / RUN_STRIDE + 1);
+    for (uint64_t q = 0; q * RUN_STRIDE < R.R; ++q)
+        runCoarse.push_back(R.starts[q * RUN_STRIDE]);
+    auto run_of_row_fast = [&](uint64_t row) -> uint64_t {
+        uint64_t a = 0, h = runCoarse.size() - 1;
+        while (a < h) {
+            uint64_t mid = (a + h + 1) / 2;
+            if (runCoarse[mid] <= row) a = mid; else h = mid - 1;
         }
-        if (row == R.starts[run] + R.l[run] - 1) {
-            A.saLast[run] = pos;
-            __atomic_fetch_or(&A.written[run >> 6], 1ULL << (run & 63), __ATOMIC_RELAXED);
-            if (!samplesPath.empty())
-                saV4[run] = fsFwd[si] + (fstart[si] + len[si] - pos);
+        uint64_t lo = a * RUN_STRIDE;
+        uint64_t hi = std::min(lo + RUN_STRIDE - 1, R.R - 1);
+        while (lo < hi) {
+            uint64_t mid = (lo + hi + 1) / 2;
+            if (R.starts[mid] <= row) lo = mid; else hi = mid - 1;
         }
+        return lo;
     };
 
-    {
+    // phi-interval position helpers
+    auto start_at = [&](uint64_t j) -> uint64_t {
+        return P.slim ? P.phi->data.get<2>(j) : P.start[j];
+    };
+    auto phi_init = [&](uint64_t pos) -> uint64_t {
+        // largest j with start[j] <= pos (one search per string walk)
+        if (P.slim) {
+            uint64_t a = 0, h = P.accel.size() - 1;
+            while (a < h) {
+                uint64_t mid = (a + h + 1) / 2;
+                if (P.accel[mid] <= pos) a = mid; else h = mid - 1;
+            }
+            uint64_t blo = a * PhiLookup::ACCEL_STRIDE;
+            uint64_t bhi = std::min(blo + PhiLookup::ACCEL_STRIDE - 1, P.nInt);
+            while (blo < bhi) {
+                uint64_t mid = (blo + bhi + 1) / 2;
+                if (P.phi->data.get<2>(mid) <= pos) blo = mid; else bhi = mid - 1;
+            }
+            return blo;
+        }
+        uint64_t lo = 0, hi = P.nInt;
+        while (lo < hi) {
+            uint64_t mid = (lo + hi + 1) / 2;
+            if (P.start[mid] <= pos) lo = mid; else hi = mid - 1;
+        }
+        return lo;
+    };
+    // incremental: positions descend by 1; interval only steps down
+    auto lcp_step = [&](uint64_t& j, uint64_t pos) -> uint64_t {
+        while (pos < start_at(j)) --j;
+        uint64_t st = start_at(j);
+        return idx.PLCPsamples[j] - (pos - st);
+    };
+
+    if (!haveLens) {
         std::atomic<uint64_t> next{0};
         auto measure = [&](void) {
             for (;;) {
@@ -360,7 +415,7 @@ int main(int argc, char** argv) {
                 if (i >= K) return;
                 uint64_t row = i, steps = 0;
                 for (;;) {
-                    uint64_t run = run_of_row(R, row);
+                    uint64_t run = run_of_row_fast(row);
                     row = lf_of(R, run, row - R.starts[run]);
                     ++steps;
                     if (row < K) break;
@@ -385,11 +440,25 @@ int main(int argc, char** argv) {
                 uint64_t i = next.fetch_add(1);
                 if (i >= K) return;
                 uint64_t row = i, pos = fstart[i] + len[i];
+                uint64_t run = run_of_row_fast(row);
+                uint64_t j = phi_init(pos);
                 for (uint64_t t = 0; ; ++t) {
-                    visit(row, pos, i);
+                    uint64_t off = row - R.starts[run];
+                    uint64_t l = lcp_step(j, pos);
+                    if (off == 0) {
+                        A.topLCP[run] = l; A.saFirst[run] = pos;
+                    } else {
+                        atomic_min_u64(&A.interiorMin[run], l);
+                    }
+                    if (off == R.l[run] - 1) {
+                        A.saLast[run] = pos;
+                        __atomic_fetch_or(&A.written[run >> 6], 1ULL << (run & 63), __ATOMIC_RELAXED);
+                        if (!samplesPath.empty())
+                            saV4[run] = fsFwd[i] + (fstart[i] + len[i] - pos);
+                    }
                     if (t == len[i]) break;
-                    uint64_t run = run_of_row(R, row);
-                    row = lf_of(R, run, row - R.starts[run]);
+                    row = lf_of(R, run, off);
+                    run = run_of_row_fast(row);
                     --pos;
                 }
             }
