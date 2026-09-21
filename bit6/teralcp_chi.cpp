@@ -68,13 +68,34 @@ struct ChiIndex {
     sdsl::int_vector<> intAtTop;
     MoveStructureStartTable Phi;   // phi move structure over positions
     sdsl::int_vector<> PLCPsamples; // PLCP at phi-interval starts
-    void load(std::istream& in) {
+    void load(std::istream& in, bool slim = false) {
         sdsl::load(totalLen, in);
         sdsl::load(F, in);
-        sdsl::load(Psi, in);
-        sdsl::load(intAtTop, in);
+        if (slim) skip_packed_triple(in); else sdsl::load(Psi, in);
+        if (slim) skip_int_vector(in); else sdsl::load(intAtTop, in);
         sdsl::load(Phi, in);
         sdsl::load(PLCPsamples, in);
+    }
+    // sdsl int_vector<> on-disk layout (this vendored sdsl): u64 size IN
+    // BITS, u8 width, then ceil(bits/64)*8 bytes of data. Seek past it
+    // without loading. (Validated position-for-position vs a fat load.)
+    static void skip_int_vector(std::istream& in) {
+        uint64_t size; uint8_t width;
+        in.read((char*)&size, 8);
+        in.read((char*)&width, 1);
+        uint64_t bytes = ((size + 63) / 64) * 8;
+        in.seekg((std::streamoff)bytes, std::ios::cur);
+    }
+    // packedTripleVector layout: 4 raw u8 (a,b,c,width) then a bit_vector
+    // = int_vector<1>: header is u64 size ONLY (fixed-width t_width=1 skips
+    // the width byte — see sdsl int_vector::read_header), then
+    // ceil(size/64)*8 bytes of data.
+    static void skip_packed_triple(std::istream& in) {
+        in.seekg(4, std::ios::cur);
+        uint64_t size;
+        in.read((char*)&size, 8);
+        uint64_t bytes = ((size + 63) / 64) * 8;
+        in.seekg((std::streamoff)bytes, std::ios::cur);
     }
 };
 
@@ -151,14 +172,25 @@ static uint64_t run_of_row(const Runs& R, uint64_t row) {
 
 // ---- position -> phi interval by binary search on Phi starts ----
 struct PhiLookup {
-    std::vector<uint64_t> start;   // get<2>(j) for j in 0..numIntervals (incl. terminal)
+    std::vector<uint64_t> start;   // fat: full copy of get<2>(j), j in 0..nInt
+    std::vector<uint64_t> accel;  // slim: every ACCEL_STRIDE-th start
+    static const uint64_t ACCEL_STRIDE = 16;
     const MoveStructureStartTable* phi;
     uint64_t nInt;
+    bool slim = false;
 };
 
-static void build_phi_lookup(const ChiIndex& idx, PhiLookup& P) {
+static void build_phi_lookup(const ChiIndex& idx, PhiLookup& P, bool slim = false) {
     P.phi = &idx.Phi;
+    P.slim = slim;
     P.nInt = idx.Phi.data.size() - 1;
+    if (slim) {
+        const uint64_t nblocks = P.nInt / PhiLookup::ACCEL_STRIDE;
+        P.accel.resize(nblocks + 1);
+        for (uint64_t j = 0; j <= nblocks; ++j)
+            P.accel[j] = idx.Phi.data.get<2>(j * PhiLookup::ACCEL_STRIDE);
+        return;
+    }
     P.start.resize(P.nInt + 1);
     for (uint64_t j = 0; j <= P.nInt; ++j)
         P.start[j] = idx.Phi.data.get<2>(j);
@@ -172,13 +204,33 @@ static void build_phi_lookup(const ChiIndex& idx, PhiLookup& P) {
 }
 
 static inline uint64_t lcp_at_pos(const ChiIndex& idx, const PhiLookup& P, uint64_t pos) {
-    // binary search: largest j with start[j] <= pos
-    uint64_t lo = 0, hi = P.nInt;
-    while (lo < hi) {
-        uint64_t mid = (lo + hi + 1) / 2;
-        if (P.start[mid] <= pos) lo = mid; else hi = mid - 1;
+    // find largest j with start[j] <= pos
+    uint64_t lo;
+    if (P.slim) {
+        // coarse: largest sample block whose start <= pos, then refine in the
+        // packed structure (<= ACCEL_STRIDE get<2> probes, binary search)
+        uint64_t a = 0, h = P.accel.size() - 1;
+        while (a < h) {
+            uint64_t mid = (a + h + 1) / 2;
+            if (P.accel[mid] <= pos) a = mid; else h = mid - 1;
+        }
+        uint64_t blo = a * PhiLookup::ACCEL_STRIDE;
+        uint64_t bhi = std::min(blo + PhiLookup::ACCEL_STRIDE - 1, P.nInt);
+        lo = blo;
+        while (lo < bhi) {
+            uint64_t mid = (lo + bhi + 1) / 2;
+            if (P.phi->data.get<2>(mid) <= pos) lo = mid; else bhi = mid - 1;
+        }
+    } else {
+        uint64_t hi = P.nInt;
+        lo = 0;
+        while (lo < hi) {
+            uint64_t mid = (lo + hi + 1) / 2;
+            if (P.start[mid] <= pos) lo = mid; else hi = mid - 1;
+        }
     }
-    return idx.PLCPsamples[lo] - (pos - P.start[lo]);
+    uint64_t st = P.slim ? P.phi->data.get<2>(lo) : P.start[lo];
+    return idx.PLCPsamples[lo] - (pos - st);
 }
 
 // ---- per-run aggregates ----
@@ -191,27 +243,33 @@ int main(int argc, char** argv) {
         fprintf(stderr, "usage: %s <file.lcp_index.lcp_index> --rlbwt BASE [-o OUT] [-t N] [--triples] [-A]\n", argv[0]);
         return 1;
     }
-    std::string inPath = argv[1], outPath, rlbwtBase;
+    std::string inPath = argv[1], outPath, rlbwtBase, sidecarPath, samplesPath;
     int nthreads = std::thread::hardware_concurrency();
-    bool dumpTriples = false, convA = false;
+    bool dumpTriples = false, convA = false, slim = false;
     for (int i = 2; i < argc; ++i) {
         if (!strcmp(argv[i], "-o") && i + 1 < argc) outPath = argv[++i];
         else if (!strcmp(argv[i], "-t") && i + 1 < argc) nthreads = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--triples")) dumpTriples = true;
         else if (!strcmp(argv[i], "-A")) convA = true;
         else if (!strcmp(argv[i], "--rlbwt") && i + 1 < argc) rlbwtBase = argv[++i];
+        else if (!strcmp(argv[i], "--sidecar") && i + 1 < argc) sidecarPath = argv[++i];
+        else if (!strcmp(argv[i], "--samples") && i + 1 < argc) samplesPath = argv[++i];
+        else if (!strcmp(argv[i], "--slim")) slim = true;
         else { fprintf(stderr, "unknown arg %s\n", argv[i]); return 1; }
     }
     if (rlbwtBase.empty()) { fprintf(stderr, "--rlbwt is required\n"); return 1; }
+    if (!samplesPath.empty() && sidecarPath.empty()) {
+        fprintf(stderr, "--samples requires --sidecar (forward-flat offsets)\n"); return 1;
+    }
 
     ChiIndex idx;
     {
         std::ifstream in(inPath, std::ios::binary);
         if (!in.is_open()) { fprintf(stderr, "cannot open %s\n", inPath.c_str()); return 1; }
-        idx.load(in);
+        idx.load(in, slim);
     }
     Runs R; build_runs_files(rlbwtBase, R);
-    PhiLookup P; build_phi_lookup(idx, P);
+    PhiLookup P; build_phi_lookup(idx, P, slim);
     const uint64_t n = idx.totalLen;
     if (R.n != n) { fprintf(stderr, "FATAL: run total %llu != totalLen %llu\n",
                             (unsigned long long)R.n, (unsigned long long)n); return 1; }
@@ -228,9 +286,41 @@ int main(int argc, char** argv) {
     fprintf(stderr, "loaded: n=%llu runs=%llu strings=%llu\n",
             (unsigned long long)n, (unsigned long long)R.R, (unsigned long long)K);
 
-    RunAgg A;
-    A.topLCP.assign(R.R, INF); A.interiorMin.assign(R.R, INF);
-    A.saFirst.assign(R.R, INF); A.saLast.assign(R.R, INF);
+    // ---- per-run aggregates ----
+    // fat: native u64 vectors (INF sentinels). slim: topLCP/saFirst/saLast
+    // packed to bits(n-1) (single-writer cells, written bitmap for
+    // validation), interiorMin stays native for the atomic-min CAS loop.
+    const uint8_t wpos = [&]{ uint8_t w = 1; while (((uint64_t)1 << w) <= (n ? n - 1 : 1)) ++w; return w; }();
+    struct RunAgg {
+        // walk-side aggregates stay native u64: distinct runs use distinct
+        // cells (no false sharing races), while packed cells would share
+        // 64-bit words across runs and require CAS loops. The slim memory
+        // win is on the load side (Psi/intAtTop skipped) and the phi lookup
+        // (accelerated binary search instead of the full start copy).
+        std::vector<uint64_t> topLCP, saFirst, saLast, interiorMin;
+        std::vector<uint64_t> written;       // atomic-OR bitmap (samples check)
+    } A;
+    (void)wpos;
+    A.topLCP.assign(R.R, INF); A.saFirst.assign(R.R, INF);
+    A.saLast.assign(R.R, INF); A.interiorMin.assign(R.R, INF);
+    A.written.assign(R.R/64 + 1, 0);
+    std::vector<uint64_t> saV4;                                 // run-end samples (.ri4 v4)
+    if (!samplesPath.empty()) saV4.assign(R.R, INF);
+    std::vector<uint64_t> fsFwd;               // sidecar forward-flat starts
+    if (!sidecarPath.empty()) {
+        FILE* sf = fopen(sidecarPath.c_str(), "r");
+        if (!sf) { fprintf(stderr, "cannot open sidecar %s\n", sidecarPath.c_str()); return 1; }
+        char name[4096]; unsigned long long fs, fl;
+        while (fscanf(sf, "%4095s\t%llu\t%llu", name, &fs, &fl) == 3)
+            fsFwd.push_back(fs);
+        fclose(sf);
+        if (fsFwd.size() != K) {
+            fprintf(stderr, "FATAL: sidecar rows %llu != strings %llu\n",
+                    (unsigned long long)fsFwd.size(), (unsigned long long)K);
+            return 1;
+        }
+        fprintf(stderr, "sidecar: %llu rows loaded\n", (unsigned long long)fsFwd.size());
+    }
 
     // ---- per-string self-terminating LF walks (two phases) ----
     // Every BWT row is visited exactly once across all strings' walks: the
@@ -246,17 +336,20 @@ int main(int argc, char** argv) {
     // topLCP/saFirst/saLast (first/last row visited once), atomic-min for
     // interiorMin. Row k's lcp is PLCP[SA[k]] and counts as interior iff
     // k is not the run's first row (scan-rs's m accumulates rows s+1..e).
-    auto visit = [&](uint64_t row, uint64_t pos) {
+    auto visit = [&](uint64_t row, uint64_t pos, uint64_t si) {
         uint64_t run = run_of_row(R, row);
         uint64_t l = lcp_at_pos(idx, P, pos);
         if (row == R.starts[run]) {
-            A.topLCP[run] = l;
-            A.saFirst[run] = pos;
+            A.topLCP[run] = l; A.saFirst[run] = pos;
         } else {
             atomic_min_u64(&A.interiorMin[run], l);
         }
-        if (row == R.starts[run] + R.l[run] - 1)
+        if (row == R.starts[run] + R.l[run] - 1) {
             A.saLast[run] = pos;
+            __atomic_fetch_or(&A.written[run >> 6], 1ULL << (run & 63), __ATOMIC_RELAXED);
+            if (!samplesPath.empty())
+                saV4[run] = fsFwd[si] + (fstart[si] + len[si] - pos);
+        }
     };
 
     {
@@ -293,7 +386,7 @@ int main(int argc, char** argv) {
                 if (i >= K) return;
                 uint64_t row = i, pos = fstart[i] + len[i];
                 for (uint64_t t = 0; ; ++t) {
-                    visit(row, pos);
+                    visit(row, pos, i);
                     if (t == len[i]) break;
                     uint64_t run = run_of_row(R, row);
                     row = lf_of(R, run, row - R.starts[run]);
@@ -308,20 +401,24 @@ int main(int argc, char** argv) {
     // validation: every run filled (interiorMin may stay INF for
     // single-row runs — the empty interior min)
     for (uint64_t i = 0; i < R.R; ++i) {
-        if (A.topLCP[i] == INF || A.saFirst[i] == INF || A.saLast[i] == INF) {
-            fprintf(stderr, "FATAL: run %llu unfilled (top=%llu f=%llu l=%llu)\n",
-                    (unsigned long long)i, (unsigned long long)A.topLCP[i],
-                    (unsigned long long)A.saFirst[i], (unsigned long long)A.saLast[i]);
+        bool ok = (A.topLCP[i] != INF && A.saFirst[i] != INF && A.saLast[i] != INF);
+        if (!ok) {
+            fprintf(stderr, "FATAL: run %llu unfilled\n", (unsigned long long)i);
             return 1;
         }
     }
     fprintf(stderr, "all %llu runs aggregated\n", (unsigned long long)R.R);
 
+    // accessor shims (slim/fat)
+    auto getTop  = [&](uint64_t i) { return A.topLCP[i]; };
+    auto getFirst= [&](uint64_t i) { return A.saFirst[i]; };
+    auto getLast = [&](uint64_t i) { return A.saLast[i]; };
+
     if (dumpTriples) {
         for (uint64_t i = 0; i < R.R; ++i)
             printf("%u %llu %llu %llu %llu %llu\n", R.a[i],
-                   (unsigned long long)A.topLCP[i], (unsigned long long)A.interiorMin[i],
-                   (unsigned long long)A.saFirst[i], (unsigned long long)A.saLast[i],
+                   (unsigned long long)getTop(i), (unsigned long long)A.interiorMin[i],
+                   (unsigned long long)getFirst(i), (unsigned long long)getLast(i),
                    (unsigned long long)R.l[i]);
     }
 
@@ -348,9 +445,8 @@ int main(int argc, char** argv) {
     uint64_t p_saLast = 0;      // saLast of the previous run
     for (uint64_t i = 0; i < R.R; ++i) {
         int c = (R.a[i] == 0x0A) ? 0 : (int)R.a[i];
-        uint64_t top = A.topLCP[i];
-        int64_t lcpB = (top == INF) ? (int64_t)0 : (int64_t)top; // boundary lcp
-        if (i == 0) { p = c; p_saLast = A.saLast[i]; m = INT64_MAX; continue; }
+        int64_t lcpB = (int64_t)getTop(i);   // boundary lcp
+        if (i == 0) { p = c; p_saLast = getLast(i); m = INT64_MAX; continue; }
         int64_t m2 = (A.interiorMin[i - 1] == INF) ? INT64_MAX
                                                       : (int64_t)A.interiorMin[i - 1];
         int64_t mm = std::min(m, m2);
@@ -358,16 +454,46 @@ int main(int argc, char** argv) {
             int64_t m3 = std::min(mm, lcpB);
             eval(m3, r, out);
             upd(r, p, lcpB, N - p_saLast);
-            upd(r, c, lcpB, N - A.saFirst[i]);
+            upd(r, c, lcpB, N - getFirst(i));
             m = INT64_MAX;
         } else {
             m = std::min(mm, lcpB);
         }
-        p = c; p_saLast = A.saLast[i];
+        p = c; p_saLast = getLast(i);
     }
     eval(-1, r, out);
     fprintf(stderr, "chi: %llu positions (N=%llu)\n",
             (unsigned long long)out.size(), (unsigned long long)N);
+
+    if (!samplesPath.empty()) {
+        // v4 .ri4: "SXRI" u32, version=4, n u64, k u64, R u64, C[256] u64,
+        // run_char[R] u8, run_len[R] u32, sa_sample packed to bits(n-1)
+        FILE* f = fopen(samplesPath.c_str(), "wb");
+        if (!f) { fprintf(stderr, "cannot open %s\n", samplesPath.c_str()); return 1; }
+        for (uint64_t i = 0; i < R.R; ++i)
+            if (!((A.written[i >> 6] >> (i & 63)) & 1)) { fprintf(stderr, "FATAL: run %llu unsampled\n", (unsigned long long)i); return 1; }
+        uint32_t magic = 0x52585349;  // matches rlbwt_sampler byte stream ("ISXR")
+        uint32_t version = 4;
+        fwrite(&magic, 4, 1, f); fwrite(&version, 4, 1, f);
+        fwrite(&R.n, 8, 1, f); fwrite(&K, 8, 1, f); fwrite(&R.R, 8, 1, f);
+        fwrite(R.C.data(), 8, 256, f);
+        fwrite(R.a.data(), 1, R.R, f);
+        fwrite(R.l.data(), 4, R.R, f);
+        uint8_t w = 1;
+        while (w < 64 && ((uint64_t)1 << w) <= (R.n ? R.n - 1 : 1)) ++w;
+        {   // write fixed header via FILE*, then the packed samples via ofstream
+            long hdr_end = ftell(f);
+            (void)hdr_end;
+            fclose(f);
+            std::ofstream of(samplesPath, std::ios::binary | std::ios::app);
+            sdsl::int_vector<> sa_iv(R.R, 0, w);
+            for (uint64_t r = 0; r < R.R; ++r) sa_iv[r] = saV4[r];
+            sa_iv.serialize(of);
+            of.close();
+        }
+        fprintf(stderr, "wrote %s (R=%llu, sa_w=%u)\n",
+                samplesPath.c_str(), (unsigned long long)R.R, (unsigned)w);
+    }
 
     if (!outPath.empty()) {
         std::ofstream o(outPath, std::ios::binary);
