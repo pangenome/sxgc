@@ -311,8 +311,20 @@ int main(int argc, char** argv) {
     if (!sidecarPath.empty()) {
         FILE* sf = fopen(sidecarPath.c_str(), "r");
         if (!sf) { fprintf(stderr, "cannot open sidecar %s\n", sidecarPath.c_str()); return 1; }
-        char name[4096]; unsigned long long fs, fl;
-        while (fscanf(sf, "%4095s\t%llu\t%llu", name, &fs, &fl) == 3) {
+        char linebuf[8192];
+        while (fgets(linebuf, sizeof linebuf, sf)) {
+            // cname may contain spaces (AGC contig descriptions); split on
+            // tabs: name \t fstart \t len
+            char* t1 = strchr(linebuf, '\t');
+            if (!t1) continue;
+            char* t2 = strchr(t1 + 1, '\t');
+            if (!t2) continue;
+            *t1 = 0; *t2 = 0;
+            char* endp = nullptr;
+            unsigned long long fs = strtoull(t1 + 1, &endp, 10);
+            if (*endp != 0) continue;
+            unsigned long long fl = strtoull(t2 + 1, &endp, 10);
+            if (*endp != 0 && !isspace((unsigned char)*endp)) continue;
             fsFwd.push_back(fs);
             sideLen.push_back(fl);
         }
