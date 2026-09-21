@@ -62,10 +62,11 @@ struct Args {
     stdout: bool,
     samples: Option<String>,
     revlines: bool,
+    list_samples: bool,
 }
 
 fn parse_args() -> Result<Args> {
-    let mut a = Args { archive: String::new(), out: String::new(), upper: false, groups: false, group: None, band: None, reverse: false, stdout: false, samples: None, revlines: false };
+    let mut a = Args { archive: String::new(), out: String::new(), upper: false, groups: false, group: None, band: None, reverse: false, stdout: false, samples: None, revlines: false, list_samples: false };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -75,6 +76,7 @@ fn parse_args() -> Result<Args> {
             "--revlines" => a.revlines = true,
             "--stdout" => a.stdout = true,
             "--samples" => a.samples = Some(it.next().context("--samples needs a file of sample names")?),
+            "--list-samples" => a.list_samples = true,
             "--groups" => a.groups = true,
             "--group" => a.group = Some(it.next().context("--group needs a contig name")?),
             "--band" => {
@@ -96,6 +98,10 @@ fn main() -> Result<()> {
     let args = parse_args()?;
     let mut dec = Decompressor::open(&args.archive, DecompressorConfig::default())?;
     let all_samples = dec.list_samples();
+    if args.list_samples {
+        for s in &all_samples { println!("{s}"); }
+        return Ok(());
+    }
 
     // --samples: restrict to the listed AGC sample names (archive order kept,
     // unknown names abort). Applies to every mode.
