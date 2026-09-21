@@ -7,23 +7,43 @@
 HPRC v2 (466 haplotypes, 1.4 Tbp, AGC archive on disk) is the development
 vehicle; yeast235 (3.34 Gbp) is the unit gate (χ = 85,404,240 = 2.56% of n).
 
-**Active rung: k=10 rework validation — GREEN (2026-09-21). Next: k=50.**
+**Active rung: k=50 — GREEN (2026-09-21). Next: full-466 v2.**
 
-**k=10 human rework GREEN**: the full substrate chain replaces every O(n)
-component at human scale. TeraLCP k=10 index: 1,206 s / 59.2 GB peak /
-51.1 GB on disk (construction only; R=1,859,825,801, n=30,151,407,545,
-865 contigs). teralcp_chi: **χ(k=10) = 1,627,063,183** (5.4% of n;
-χ/r = 0.87, consistent with yeast's 0.85 across an 18× r jump) + **v4 SA
-samples in the same pass** (h10new.ri4, byte-identical format) in
-6,753 s / 195.9 GB peak (fat mode). **Locate gate**: rindex_query v4 on the
-new samples reproduces the oracle-verified v4 reference output
-byte-for-byte; **pilot oracle verdict GREEN: 12,034/12,034 occurrences
-byte-verified vs the AGC archive + 200/200 planted truths** (the first
-re-verify printed 0/12,034 — my wrong-sidecar invocation, full-archive
-sidecar instead of the k=10 revlines sidecar; the correct invocation is
-GREEN, matching the original chain exactly). The standalone
-rlbwt_sampler (2.2 h / 69.7 GB at k=10) is formally retired: samples are
-a free O(r)-space byproduct of the χ walk.
+**k=50 human rung GREEN**: χ(k=50) = **1,754,597,135** (n = 150.95 Gbp,
+R = 2,033,460,666, 4,108 contigs; χ/n = 1.16%, **χ/r = 0.863**). Full
+substrate chain + oracle verdict: 200 planted 120-mers, **17,527/17,527
+occurrences byte-verified vs the AGC archive, 200/200 truths**. Chain:
+prep 22 min; grlBWT 2h (artifacts reused across the resume);
+TeraLCP 38 min / 56.4 GB index; χ+samples walk **10,227 s / 216.5 GB
+peak** (the 2,033,460,666-run .ri4, sa_w=38, same pass); query 1,067 s /
+52.6 GB. The sidecar parser learned the k=50 lesson: AGC contig names
+may contain spaces (chm13 descriptions) — tab-split fields now.
+
+**χ ≈ 0.86·r across three scales**: 0.846 (yeast, R=100.9M), 0.874 (k=10,
+R=1.86B), 0.863 (k=50, R=2.03B) — three independent constructions,
+±1.5%. χ growth is saturating like r: k=50 is +8% χ over k=10 for 5×
+sequence. Projection for 466 (R≈2.53B): **χ ≈ 2.2 B**.
+
+**MEM/MS rung GREEN at s200 (2026-09-21)**: TeraMS matching statistics
+(the read-query seed engine for pangenome mapping) — 50 mutated 200bp
+reads, MS lens **10,000/10,000 byte-exact** vs the divsufsort brute force,
+all pos values positionally valid (phi-reposition ties are legitimate).
+**Vendored patch #4** (charToBits N/T swap: byte-order codes assign
+N=4,T=5 but charToBits mapped T=4,N=5 — corrupted MS on ANY text with
+N, i.e. production human; pre-patch 9,722/10,000 lens wrong). MS scope:
+uppercase ACGTN production path proven; soft-masked pattern queries need
+a generic alphabet map (future patch, non-production).
+
+**Active rung before this (k=10 rework) — GREEN (2026-09-21)**: the full
+substrate chain replaces every O(n) component at human scale. TeraLCP
+k=10 index: 1,206 s / 59.2 GB peak / 51.1 GB on disk (construction only;
+R=1,859,825,801, n=30,151,407,545, 865 contigs). teralcp_chi: **χ(k=10)
+= 1,627,063,183** (5.4% of n; χ/r = 0.87) + **v4 SA samples in the same
+pass** in 6,753 s / 195.9 GB peak (pre-optimization; the optimized walk
+re-gated the same outputs in **1,657 s — 4.1×**, byte-identical, 18.2M
+rows/s). **Locate gate**: rindex_query v4 on the new samples reproduces
+the oracle-verified v4 reference byte-for-byte; **pilot oracle verdict
+GREEN: 12,034/12,034 + 200/200**.
 
 **--slim memory trim (load side)**: skips Psi+intAtTop at deserialize
 (+ two pinned sdsl format facts: int_vector headers store size IN BITS;
@@ -120,11 +140,12 @@ layer**. The in-house PFP machinery (pscan -S, pfp_suffixient,
 rindex_build, rlbwt_sampler) is the yeast-gated reference constructor and
 the χ-legacy path; superseded for production, pending gates.
 
-Rung ladder: 4a fully **GREEN** → **k=10 rework GREEN** (χ = 1,627,063,183;
-locate byte-identical + 12,034/12,034 AGC oracle + 200/200 truths; sampler
-retired at human scale) → **NEXT: k=50** → full-466 v2 → v3. Remaining
-policy item before 466: grlBWT needs a seekable revlines input (1.4 TB temp
-at 466 — shard+merge or policy call).
+Rung ladder: 4a fully **GREEN** → **k=10 rework GREEN** → **MEM/MS gate
+GREEN at s200 (patch #4: production-relevant N/T bug fixed)** → **k=50
+GREEN (χ = 1,754,597,135; 17,527/17,527 + 200/200)** → **NEXT:
+full-466 v2** (~1.44 Tbp, R≈2.53B, χ≈2.2B projected; ~1.5 days wall,
+~230 GB peak RAM, 1.44 TB transient revlines on nvme — the policy item:
+spend the disk, it's one-time and deleted after grlBWT) → v3.
 
 Open risks: grlBWT needs a seekable input file (at 466 that is a 1.4 TB
 revlines temp on nvme — policy decision or shard+merge); TeraTools is fresh
