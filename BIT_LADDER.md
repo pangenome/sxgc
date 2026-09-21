@@ -7,8 +7,33 @@
 HPRC v2 (466 haplotypes, 1.4 Tbp, AGC archive on disk) is the development
 vehicle; yeast235 (3.34 Gbp) is the unit gate (χ = 85,404,240 = 2.56% of n).
 
-**Active rung: 4a — yeast-scale validation of the adopted substrate.**
-Nothing scales past k=10 until 4a is green.
+**Active rung: 4a — GREEN (2026-09-20). Next: k=10 rework validation.**
+
+**4a.3 χ GATE GREEN — the decisive result**: the full adopted chain
+(grlBWT → TeraLCP → teralcp_chi) under the PFP-era reference convention
+(reverse-of-flat, one sentinel, R=100,904,881 single-string) yields
+**χ = 85,404,240 — EXACTLY the phase-0 anchor, and SET-IDENTICAL position
+for position (100.00% of 85,404,240) vs `yeastA_str.txt.suff`** from the
+independent PFP-era one-pass construction, modulo the single explained
+offset (their .suff = (N−sa)−1 with their N one smaller: reference =
+our (N−sa)−2). Chain cost at K=1: grlBWT 342 s/0.5 GB, TeraLCP 111 s/6.2 GB,
+χ walk 5,637 s/9.5 GB single-threaded (K=1 kills walk parallelism — only the
+reference-convention gate pays this; production BCR runs parallel).
+
+**Production-convention anchor**: χ_BCR(yeast235) = **85,350,673** in
+505 s/9.5 GB (9,901-way parallel). The BCR-vs-PFP count delta 53,567 is the
+convention term (sentinel structure + contig order), calibrated at s200
+(BCR 10,099,867 vs true-PFP 10,100,779 vs no-leading-sep 10,100,777);
+content orientation also matters (forward-vs-rev content = 10,100,521 vs
+10,100,779 at s200 — the first yeast attempt's off-by-3 was this: built with
+forward per-contig content; corrected by building the stream as
+'!' + reversed-line-order revlines + single '\n' sentinel).
+
+**4a.2 sampler retired**: teralcp_chi's walks produce run-boundary SA
+samples (saFirst/saLast per run) at O(r) space as a byproduct; the O(n)
+rlbwt_sampler (2.2 h/69.7 GB at k=10) is retired for builds. Locate goes
+φ-based: TeraIndex ms_index (LF+φ⁻¹) built at yeast in 186 s/4.9 GB;
+query-side locate gate lands with the k=10 rework validation.
 
 **4a.1 GREEN (2026-09-20)**: TeraLCP runs the full yeast235 in 3,000.9 s /
 8.10 GB peak (LCP index construction 257.8 s incl. 36 s parallel LCP walk;
@@ -26,6 +51,21 @@ pre-fix) — TeraLCP byte-identical vs divsufsort+Kasai brute
 (`bit6/teralcp_brute_thr.c`, 18.5 s/2.0 GB) on thr AND thr_pos
 (11,541,094/11,541,094). TeraLCP's endmarker-split/\n model == BCR convention
 exactly (the FMD-vs-BCR sentinel risk is dead empirically).
+
+teralcp_chi (`bit6/`): loads the lcp_index by direct sdsl deserialize
+(the class members are private; layout pinned: totalLen, F, Psi, intAtTop,
+Phi, PLCPsamples — and **F is the SORTED F-column, not the BWT**; run
+structure comes from `--rlbwt`), per-string self-terminating LF walks
+(sidebar-free: walk until landing on a bare-sentinel row), per-row LCP via
+PLCP (φ-start binary search + samples−offset), per-run aggregates (topLCP,
+interiorMin-excl-top, saFirst, saLast), inline scan-rs state machine (Bit-2
+Lean-gated semantics; '
+' → sentinel char 0; char-change logic merges split
+runs). Gates: ft30 2,187/2,187 value+order byte-identical (found a convention
+bug in the old triples harness: sentinel rows must be char 0 — a stray
+distinct-sentinel encoding made scan-rs emit 29 spurious positions); s200
+byte-identical in ALL THREE conventions (BCR 10,099,867; forward-content
+single-string 10,100,521; true-PFP 10,100,779) vs independent brute force.
 
 **Three vendored TeraTools patches, all load-bearing and now gate-validated**:
 (1) `RB3_ASIZE 6→16` (soft-masked yeast = 10 symbols); (2) `_DNA_ONLY`
@@ -51,13 +91,13 @@ layer**. The in-house PFP machinery (pscan -S, pfp_suffixient,
 rindex_build, rlbwt_sampler) is the yeast-gated reference constructor and
 the χ-legacy path; superseded for production, pending gates.
 
-Rung 4a ladder: 4a.1 TeraLCP yeast gate **GREEN** (see above) → 4a.2 φ+samples
-validation (if SA samples come at r-space cost, retire the O(n) sampler;
-locate goes φ-based) → 4a.3 --thr-pfp thresholds → one-pass sA builder → χ
-gate = 85,404,240 at yeast → k=10 rework validation → k=50 → full-466 v2 →
-v3. Full-scale value gates at yeast need k>255 byte-sentinel suffix
-sorting (gsacak64 route) — optional depth, only if 4a.2/4a.3 find
-anomalies.
+Rung 4a ladder: 4a.1 TeraLCP yeast gate **GREEN** → 4a.2 φ+samples **GREEN**
+(sampler retired; ms_index built) → 4a.3 χ wiring **GREEN** (χ = 85,404,240
+exact + set-identical vs phase-0 reference) → **NEXT: k=10 rework
+validation** (rebuild the k=10 chain via the adopted substrate: χ + φ-locate
+vs the AGC oracle; the v4 reference chain has 12,034/12,034 + 200/200 gates)
+→ k=50 → full-466 v2 → v3. Remaining policy item before 466: grlBWT needs a
+seekable revlines input (1.4 TB temp at 466 — shard+merge or policy call).
 
 Open risks: grlBWT needs a seekable input file (at 466 that is a 1.4 TB
 revlines temp on nvme — policy decision or shard+merge); TeraTools is fresh
