@@ -358,3 +358,33 @@ same colex-order triples via the PFP iterator.
   carries mixed-case; human HPRC is 6-symbol unmodified); grlBWT needs
   --tmp-dir on the output filesystem (stages + rename), else it aborts after
   construction completes (salvageable from its temp dir).
+
+## PFP-BWT adoption: two-scale gates GREEN (2026-09-22) — v3 construction route
+
+Motivation: grlBWT needs the flat text (1.44 TB at 466) plus ~2x-text
+temporaries (~2 TB) — transient, but intolerable as a repeatable cost
+("3 TB of disk is intolerable; get this right"). PFP-BWT (pfp++ parse →
+r-pfbwt BWT) replaces it: construction substrate proportional to r,
+no flat text needed with a streaming front-end.
+
+- **s200 pilot GATE GREEN** (145 Mbp): rpfbwt reproduces grlBWT's BWT
+  run-for-run — 11,541,090 runs, ordered identical — modulo the pinned
+  convention: pfp++ pads the text end with 10 rows of internal 0x02
+  (sorted first; strip) and remaps the trailing sentinel to 0x02 (map
+  back). rlebwt record format = u32 LE len<<8|char with NEXT_RECORD
+  escapes. Disk profile ~72 MB vs grlBWT ~2x text. rpfbwt also emits
+  run-head SA samples for free. (PFP-eBWT evaluated and REJECTED: cyclic
+  omega-order eBWT, wrong shape for BCR.)
+- **k=10 head-to-head GATE GREEN** (30 Gbp single-string h10ss.txt,
+  8 threads): **ordered run sequence identical, R = 1,859,825,860
+  both constructors.** grlBWT 1h32m; pfp++/rpfbwt 3h04m total (2.0x)
+  — parse 21 min was SINGLE-threaded (~24 MB/s) and rpfbwt was
+  thread-capped; this is the low-repetitivity worst case (n/r=16).
+  PFP scratch ~8 GB = dict 5.5 + parse 1.3 + L2 1.1 (26% of text here;
+  collapses at pangenome-scale redundancy) vs grlBWT's flat input +
+  temporaries. Run-head SA samples: 14.9 GB, free.
+- **VERDICT (pre-set 2x rule)**: PFP-BWT adopted for v3 construction.
+  Remaining engineering: streaming AGC → parse front-end (zero flat
+  text; pfp++ is single-threaded — the in-house pscan -S parser is the
+  parallelizable replacement), byte-alphabet ingestion (see
+  ROADMAP-WEBSCALE.md), and rpfbwt thread scaling at -t 96.

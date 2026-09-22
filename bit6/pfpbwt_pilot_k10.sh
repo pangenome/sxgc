@@ -28,12 +28,12 @@ EOF
 fi
 
 echo "=== PILOT STAGE grlbwt reference ($(date -Is))"
-if [ ! -f h10ss_rl.rl_bwt ]; then
+if [ ! -f h10ss.rl_bwt ]; then
   /usr/bin/time -f "grlbwt-ref wall %e s, maxRSS %M KB" \
     /home/erikg/grlBWT/build/grlbwt-cli h10ss.txt -t $PT -T "$TMPDIR" > grl_ref.log 2>&1 \
     || { echo "GRLBWT REF FAILED"; tail -3 grl_ref.log; exit 1; }
 fi
-/home/erikg/grlBWT/build/grlbwt2rle h10ss_rl.rl_bwt h10ssr
+/home/erikg/grlBWT/build/grlbwt2rle h10ss.rl_bwt h10ssr
 grep -E "Number of runs" grl_ref.log | tail -1 || true
 
 echo "=== PILOT STAGE pfp++ parse ($(date -Is))"
