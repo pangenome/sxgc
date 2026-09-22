@@ -7,7 +7,7 @@
 set -euo pipefail
 W=/mnt/nvme3n1/erikg/sxgc-pilot/k466
 AGC=/home/erikg/hprcv2/HPRC_r2_assemblies_0.6.1.agc
-SAMPLES=/home/erikg/sxgc/bit6-466.samples.txt
+SAMPLES=/home/erikg/sxgc/bit6/h466.samples.txt
 A2F=/home/erikg/sxgc/agc2flat/target/release/agc2flat
 GRL=/home/erikg/grlBWT/build/grlbwt-cli
 RLE=/home/erikg/grlBWT/build/grlbwt2rle
@@ -17,7 +17,12 @@ RQ=/home/erikg/suffixient-array/build/suff-set-src/rindex_query
 TOOLS=/home/erikg/sxgc/tools
 NTHREADS=96
 mkdir -p "$W"; cd "$W"
+# grlBWT construction temporaries reach ~2 TB at 466 scale. The first
+# attempt kept them on nvme3n1 next to the 1.4 TB revlines and hit ENOSPC
+# (99% full -> SIGSEGV in parsing round 2). Root fs has ~3.9 TB free:
+# grlBWT temps live there; everything else stays on nvme3n1.
 export TMPDIR="$W/tmp"; mkdir -p "$W/tmp"
+GRLTMP=/home/erikg/grl_tmp; mkdir -p "$GRLTMP"
 export OMP_NUM_THREADS=$NTHREADS
 
 df -h /mnt/nvme3n1 | tail -1
@@ -33,7 +38,7 @@ df -h /mnt/nvme3n1 | tail -1
 echo "=== STAGE grlbwt -t $NTHREADS ($(date -Is))"
 if [ ! -f h466_rl.rl_bwt ]; then
   /usr/bin/time -f "grlbwt wall %e s, maxRSS %M KB" \
-    $GRL h466_rl.txt -t $NTHREADS -T "$TMPDIR" > grl.log 2>&1 \
+    $GRL h466_rl.txt -t $NTHREADS -T "$GRLTMP" > grl.log 2>&1 \
     || { echo "GRLBWT FAILED"; tail -5 grl.log; exit 1; }
 fi
 grep -E "Number of runs|BWT size" grl.log | tail -2 || tail -3 grl.log
