@@ -36,6 +36,11 @@ tail -2 prep.log
 df -h /mnt/nvme3n1 | tail -1
 
 echo "=== STAGE grlbwt -t $NTHREADS ($(date -Is))"
+# NOTE (2026-09-22 lesson, 46k s in): grlBWT's LAST step is a rename() of the
+# staged BWT (bwt_lev_0_EL1) onto the output path -> -T MUST be on the same
+# filesystem as the output, else EXDEV abort AFTER construction completes.
+# Salvage (done): copy grl.bwt.*/bwt_lev_0_EL1 to <out>.rl_bwt, verify size ==
+# R*6+16, grlbwt2rle to confirm R. v3 replaces this whole stage (PFP-BWT).
 if [ ! -f h466_rl.rl_bwt ]; then
   /usr/bin/time -f "grlbwt wall %e s, maxRSS %M KB" \
     $GRL h466_rl.txt -t $NTHREADS -T "$GRLTMP" > grl.log 2>&1 \
