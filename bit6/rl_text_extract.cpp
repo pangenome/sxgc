@@ -146,8 +146,11 @@ int main(int argc, char** argv) {
     std::string ri4Path = argv[1], flatPath = argv[2];
     uint64_t K = strtoull(argv[3], nullptr, 10);
     uint64_t W = 32;
-    for (int i = 4; i < argc; ++i)
+    uint64_t capThreads = 0;   // 0 = min(hardware_concurrency, K)
+    for (int i = 4; i < argc; ++i) {
         if (!strcmp(argv[i], "--steps") && i + 1 < argc) W = strtoull(argv[++i], nullptr, 10);
+        else if (!strcmp(argv[i], "--threads") && i + 1 < argc) capThreads = strtoull(argv[++i], nullptr, 10);
+    }
 
     Ri4 idx;
     idx.load(ri4Path);
@@ -204,6 +207,7 @@ int main(int argc, char** argv) {
         std::atomic<int> bad{0};
         std::atomic<uint64_t> done{0};
         uint64_t nthreads = std::min<uint64_t>(std::thread::hardware_concurrency(), K ? K : 1);
+        if (capThreads) nthreads = std::min(nthreads, capThreads);   // shared-box citizenship
         std::vector<std::thread> th;
         auto worker = [&](uint64_t tid) {
             for (uint64_t i = tid; i < K; i += nthreads) {
