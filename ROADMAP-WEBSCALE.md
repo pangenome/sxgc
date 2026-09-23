@@ -244,3 +244,51 @@ distinct substring (χ + tags); an r-index for everything between the
 extremes; the same pair applied recursively to its own metadata — all
 proportional to novelty, never to bytes. The HPRC v2 466 build is this
 system's reference implementation in DNA.
+
+## 12. Naming (decided 2026-09-23) and the xsa front door
+
+- Repo name `sxgc` (pangenome/sxgc) stays: historical, 83 MB of git history,
+  the paper's artifact repo. GitHub redirects cover any later rename.
+  "suffixient genome compressor" is preserved as a backronymic footnote only.
+- The science carries **chi**: measure, law, and headline are chi(HPRC v2).
+- Users type **`xsa`** — a Rust multiplexer binary (multiplexer precedent:
+  git/samtools/bcftools/vg/odgi/impg). XsA = chi * sA ("the chi-stamped
+  suffixient array"); artifact family `.XsA` (e.g. `h466.XsA`); tagline
+  "xsa -- chi sa" (it/it: the store answers *who knows*).
+  Collision audit 2026-09-23: free in Debian (nearest: xsane), crates.io,
+  PyPI; "XSA" exists only as Xilinx Support Archive, SAP XS Advanced, and
+  Xen Security Advisory numbering — all domain-disjoint. Precedent: `vg`
+  collides with LVM on every Linux box and survives.
+- Subcommand map (veneer-first; each shell-wraps the gated binary, then
+  absorbs a native Rust implementation when warranted):
+  `xsa build` (chain: agc2flat -> grlBWT/PFP-BWT -> TeraLCP -> teralcp_chi),
+  `xsa stats` (chi/r/n-r + law check), `xsa query` (v4 count/locate),
+  `xsa project` (MS seeds + leftmost stamps = seed_project),
+  `xsa tags` (first-appearance sidecars, asc/desc extrema),
+  `xsa ms` (standalone matching statistics), `xsa graph` (impg fusion,
+  later). Short aliases q/p/t.
+- Do NOT rewrite the 96-core C++ that is gated and running (teralcp_chi on
+  the sdsl substrate, vendored TeraLCP patches, grlBWT, rpfbwt): the veneer
+  calls them; native Rust absorbs the format readers first (.XsA/.ri4/sdsl
+  deserialization, sidecars), then tags (post-pass), then the LF machinery
+  only if a rewrite is ever justified.
+
+## 13. syng = a sparse suffixient array (the impg bridge, made precise)
+
+syng (Durbin; embedded in impg) is structurally the suffixient/decision
+structure of the *syncmer-projected* corpus: project each haplotype onto
+its (k=63, s=8) syncmer tokens; the dictionary = the projected corpus's
+distinct-content set, the edges = its (context, choice) transitions, the
+GBWT = its run-compressed BWT. (k,s) is the sparsification kernel; chi is
+the full-resolution limit. Three real differences: (1) syng is tunable but
+quantization-bound; chi is parameter-free and exact; (2) syng localizes
+variation only to +/-k (a SNP destroys every containing syncmer; the walk
+breaks but cannot say where within the syncmer); MS/chi anchors are exact,
+tightening impg's ends-only BiWFA "trust the interior" pattern; (3) inverted
+storage: syng materializes anchor content (khash dictionary), chi stores
+positions and demands text access — each pays where the other doesn't.
+Testable slogan (gate-sized, cheap, after the 466 walk): build syng + chi
+at yeast235 and k=10; verify every syng graph branch projects into a
+chi-witnessed fork and measure the fork content that (63,8) quantization
+misses. If the projection is clean, the slogan is a lemma — the bridge
+section of the impg/xsa paper.
