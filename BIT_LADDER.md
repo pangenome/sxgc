@@ -387,7 +387,7 @@ no flat text needed with a streaming front-end.
   Remaining engineering: streaming AGC → parse front-end (zero flat
   text; pfp++ is single-threaded — the in-house pscan -S parser is the
   parallelizable replacement), byte-alphabet ingestion (see
-  ROADMAP-WEBSCALE.md), and rpfbwt thread scaling at -t 96.
+  ROADMAP.md), and rpfbwt thread scaling at -t 96.
 
 ## LF-walk text accessor: the .ri4 is sovereign (2026-09-23) — GATE GREEN at ft30 + s200
 
