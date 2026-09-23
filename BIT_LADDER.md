@@ -420,3 +420,45 @@ Consequence recorded: the AGC demotes to build-time input; query modes
 chi .sA + boundary sidecar alone. The LF-walk accessor is the
 text-free fallback for the chi verify clause (~100 us-class per seed
 at 466: L rank steps + a short hop to the nearest run-head sample).
+
+## Session-continuity notes (2026-09-23) — for any fresh agent/human picking this up
+
+Repo state is always the source of truth: everything below is committed and
+pushed. If a session dies mid-run, the OS processes keep running; check with
+`ps aux | grep -E "teralcp_chi|rl_text_extract"`. Both chains are
+stage-guarded: rerunning the script skips completed stages.
+
+- **IN FLIGHT #1 — 466 chi walk** (`bit6/grl_v4_466.sh`, cwd
+  /mnt/nvme3n1/erikg/sxgc-pilot/k466): teralcp_chi over h466rt.lcp_index,
+  -t 96, ~255 GB RSS, started 2026-09-22T22:25Z. It emits, in order:
+  h466.ri4 (samples), chi_h466.sA (chi positions), then the chain
+  continues: patterns -> query -> AGC oracle verdict ("PILOT VERDICT").
+  On completion: record chi(HPRC v2) here, law check chi vs 0.86*R
+  (R=2,739,735,806), commit. h466_rl.txt (1.44 TB revlines) must be
+  KEPT until iteration 2 (PFP-BWT at 466) completes — it is iteration 2's
+  parse input; delete only after that gate.
+- **IN FLIGHT #2 — k=10 accessor gate**: /tmp/grl_gate/rl_text_extract
+  h10new2.ri4 h10_rl.txt 865 --threads 32 (30.15 Gbp, 865 contig
+  strings, ~90 GB RSS, tens of minutes). Verdict goes to this ladder.
+  NOTE k in .ri4 = strings (contigs), not haplotypes.
+- **Gate binaries live in /tmp/grl_gate (tmpfs — wiped on reboot)**;
+  rebuild from committed source with the vendored sdsl:
+    SDSL=/home/erikg/TeraTools/src/thirdparty/sdsl-lite
+    g++ -O2 -std=c++17 -I $SDSL/include -I $SDSL/build/include \
+        bit6/rl_text_extract.cpp -o /tmp/grl_gate/rl_text_extract \
+        -L $SDSL/build/lib -lsdsl -pthread
+  (teralcp_chi/teralcp_ms_brute/teralcp_brute_thr: same pattern; proven
+  by the 2025-09 power outage.)
+- **Where things live**: /mnt/nvme3n1/erikg/sxgc-pilot/{k466,k50,k10}/
+  (artifacts + chain scripts' cwd), /mnt/nvme3n1/erikg/sxgc-yeast/grl/
+  (yeast), /tmp/grl_gate (gates + s200/ft30 fixtures), lean/ (Bit 1),
+  bit6/ (production tools + chain scripts + vendored patch README).
+- **Standing rules**: kill processes by id, NEVER pkill by name (it has
+  killed a healthy run and once the issuing shell); 96-core policy
+  while the 466 build runs (gates: --threads caps); grlBWT -T must
+  share the output filesystem (EXDEV, 2026-09-22); every claim gets a
+  byte/oracle gate before it enters this ladder; timings on this shared
+  box are order-of-magnitude only — correctness and feasibility only.
+- **Next rungs**: ROADMAP.md §14 (T0 -> T1: xsa veneer, chi_tags,
+  names index, seed_project, syng cross-measure -> T2: iteration 2 +
+  streaming front-end).
