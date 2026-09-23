@@ -483,3 +483,12 @@ Gate: run against every fixture scale, all values EXACT vs this ledger:
 New recorded fact: k50's k = 4,108 contig strings (50 haps).
 Next T1 rungs: chi_tags, names index, seed_project (each gated at
 yeast/ft30/s200 first, applied at k=10, then 466 when the walk lands).
+
+k=10 accessor gate GATE GREEN (2026-09-23, completes the rung above):
+30,151,407,545 bp, 865/865 contig strings reconstructed byte-exactly
+from h10new2.ri4 alone (CHECK1 structural + CHECK2 inversion), 32
+threads, ~1 h. The index-is-sovereign claim now holds at yeast, s200,
+ft30, and full k=10 (30 Gbp) scale; the AGC is demoted to build-time
+input across the board. Production sidecar-window mode (emitted bytes
+vs S-coords, no brute SA) remains the next accessor increment, folding
+into seed_project.
