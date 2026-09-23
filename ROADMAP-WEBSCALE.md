@@ -146,3 +146,101 @@ Honest caveats:
 
 The 466 result and the χ≈0.86·r law are the credibility for everything in
 this document; nothing here should delay them.
+
+---
+
+## 7. The extrema theorem: "first appearance" is a build-time choice (2026-09-22, second session)
+
+The suffixient set answers, for every distinct substring, its *extremal*
+occurrence in text order. In a multi-string BCR collection, text order IS
+the concatenation order — i.e., **the document sort**. Therefore:
+
+- documents ordered **oldest-first** → χ + tag sidecar = first-ever
+  publication of every distinct string in the corpus;
+- **newest-first** → same binary, same walk, same gates → most recent
+  mention of everything;
+- by source quality → canonical/most-authoritative occurrence per string;
+- by population/phylogeny (pangenome) → novelty attribution along a
+  biological ordering.
+
+Two builds (asc, desc) give both endpoints of every string's lifetime and
+enable **phrase extinction**: not "when did this sentence first appear"
+but "when did it die" — the last snapshot containing it. No existing
+system answers that over a whole corpus at r-space cost.
+
+Footnotes: string permutation changes the BWT (BCR sentinel convention is
+what makes the order matter); R and χ shift only marginally under
+permutation; with PFP-BWT adopted, one more build is ~8 GB scratch at
+k=10-class scale, not TB. Anything BETWEEN the extremes (all mentions,
+timelines, per-document lists) is interval enumeration = the r-index's
+home turf (.ri4 samples) — χ gives O(1) endpoints, r-index the interior.
+
+## 8. Sortable columnar extrema store; the χ-parallel tag sidecar
+
+Framing: one build = one column = one sort order; each column precomputes
+the extremal fact for every distinct substring; query = predecessor +
+array lookup. With fast construction, per-quarter re-sorting of a whole
+corpus becomes an operational routine.
+
+Sidecar taxonomy (tags hang off true positions; the index stores only
+what must be true):
+
+- **(a) Boundary sidecar, O(#strings)** — tag per string + sorted
+  boundaries; any position resolves by binary search. Already in the
+  chain (--sidecar names.tsv). Always shipped.
+- **(b) χ-parallel tag sidecar, O(χ)** — for every first-occurrence
+  position, the tag of where/when it first appeared: at 466 ≈ 2.36 B
+  entries x 8 B ≈ 19 GB (haplotype id / string ordinal); at web scale,
+  keyed by (document, snapshot, date) this IS the first-appearance
+  product table. χ query + sidecar = "when did this first appear" with
+  zero text reads. The walk already holds names.tsv, so this is a
+  post-pass, not new machinery. For the pangenome paper: the
+  **novelty-attribution map** — which haplotype every novel substring
+  first appears in — is a scientific artifact (population hotspots of new
+  content), not just plumbing.
+- **(c) Row-space tags (which documents contain P, un-located) = the
+  document-listing problem** — does not compress for free (per-row
+  storage is n-sized; per-run tags conflate documents across a run's
+  rows). Real research line; park it. (a)+(b) cover the product promise.
+
+Proposed rungs after the 466 walk lands:
+- **chi_tags**: resolve χ positions through the boundary sidecar, emit
+  per-novelty (string, haplotype) stamps; gate by independent
+  re-derivation of sampled positions.
+- **seed_project**: query sequence → MS walk (BWT, text-free) → maximal
+  seeds → per-seed leftmost/stamped position (pred_S + verify); the
+  mapper story and the web provenance story in one binary, oracle-gated.
+
+## 9. The names are a corpus too: recursive r-indexing of metadata
+
+At web scale the sidecar's *content* is itself TB-scale, wildly repetitive
+text: Reddit usernames/subreddits/permalinks over 15.7 B items; Common
+Crawl's 2.5 B URLs (~200 GB of domain-structured paths); Wikipedia page
+titles shared across a billion revisions; repo/package names in SWH.
+Feed the names as a multi-string collection into the SAME chain → a
+second r-index sized by the names' novelty (GB-class), buying:
+substring search over metadata ("all documents whose URL contains
+/wiki/Talk:", prefix/autocomplete, seed-fuzzy match); and a trivial
+join: name-index string ordinal ↔ boundary sidecar ↔ position ranges in
+the main corpus, both directions O(log k).
+
+The recursion terminates: the tag sidecar of the name index is a few
+scalars. Every byte in the system is either raw public archive or an
+r-space index proportional to novelty.
+
+## 10. Construction speed as the operating lever
+
+GPU-driven construction: nothing in the chain is fundamentally serial —
+PFP/grlBWT phases parallelize; the χ walk's per-run-block structure is a
+streaming memory pattern (a port, not a research problem). The research
+problem that would trivialize it: O(r)-time χ (per-run interior LCP
+minima without row visits). Fast construction makes the column store
+operational: new snapshot → incremental parse → new columns per quarter.
+
+## 11. System summary (one sentence)
+
+A corpus of versioned text; per sort-order, an extrema store over every
+distinct substring (χ + tags); an r-index for everything between the
+extremes; the same pair applied recursively to its own metadata — all
+proportional to novelty, never to bytes. The HPRC v2 466 build is this
+system's reference implementation in DNA.
