@@ -131,7 +131,7 @@ Honest caveats:
   ~10% of text instead of ~2×text. s200 gate already GREEN (r-pfbwt ==
   grlBWT run-for-run; see BIT_LADDER).
 
-## 6. Sequencing (does not disturb the current ladder)
+## 6. Sequencing (2026-09-22; superseded by the §14 execution ladder)
 
 1. **Now**: finish the 466 rung (χ(HPRC v2) + oracle verdicts) — the
    reference implementation and the paper's headline.
@@ -292,3 +292,37 @@ at yeast235 and k=10; verify every syng graph branch projects into a
 chi-witnessed fork and measure the fork content that (63,8) quantization
 misses. If the projection is clean, the slogan is a lemma — the bridge
 section of the impg/xsa paper.
+
+## 14. Execution ladder (2026-09-23; supersedes the §6 ordering)
+
+PFP-BWT is adopted (two-scale gates GREEN, BIT_LADDER 2026-09-22) and the
+.ri4 sovereignty is gated (ft30 5/5, s200 inversion, sentinel-identity
+erasure law recorded) — so the ladder reshapes around what is now proven:
+
+- **T0 (in flight)**: 466 chi walk -> chain completes (samples, patterns,
+  query, AGC oracle verdict) -> record chi(HPRC v2), law check at
+  R=2.74B, commit. k=10 accessor gate (30 Gbp inversion, parallel).
+  Then: sidecar-based window mode of rl_text_extract (production
+  configuration: emitted bytes vs S-coords via names.tsv, no brute SA).
+- **T1 (post-466 rungs, dependency order)**:
+  1. `xsa` veneer — Rust multiplexer scaffolding; `stats`/`query` over
+     the h466 artifacts. Everything else lands as subcommands.
+  2. `chi_tags` — first-appearance (haplotype) stamps over chi +
+     names.tsv (~19 GB post-pass). Paper figure + product table in one.
+  3. **`names` index — the metadata r-index (rung, from §9)**: run the
+     same chain over the name/metadata collection; at 466 it is trivial
+     (38,790 names) but the rung ships the recursion — every index build
+     emits its own names index, so substring search over metadata and
+     the ordinal join (names -> boundary sidecar -> corpus ranges) are
+     always present. Real target: web scale, where names are TB-scale
+     (URLs, titles, permalinks). `xsa names` subcommand.
+  4. `seed_project` — MS walk + stamped positions, oracle-gated vs AGC;
+     the mapper + provenance engine in one binary.
+  5. syng cross-measure — dictionary size vs chi vs r at yeast/k10;
+     the impg bridge lemma.
+- **T2 (strategic builds)**: PFP-BWT streaming front-end (kill the
+  1.44 TB revlines + 2 TB temps); iteration-2 466 PFP-BWT rebuild
+  (full-scale differential gate + v3 dress rehearsal + optional
+  asc/desc extrema pair).
+- **Parked research, merit order**: O(r)-time chi walk -> byte-alphabet
+  substrate (web unlock) -> Lean Bit-1 proof completion.
