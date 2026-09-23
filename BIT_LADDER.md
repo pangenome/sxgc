@@ -462,3 +462,24 @@ stage-guarded: rerunning the script skips completed stages.
 - **Next rungs**: ROADMAP.md §14 (T0 -> T1: xsa veneer, chi_tags,
   names index, seed_project, syng cross-measure -> T2: iteration 2 +
   streaming front-end).
+
+## T1 rung 1: `xsa stats` GREEN (2026-09-23) — the tool lane opens
+
+`xsa` Rust crate scaffolded (xsa/Cargo.toml, src/main.rs, std-only).
+First subcommand `stats`: reads the .ri4 v4 header (magic ISXR, n, k, R),
+the rlbwt pair (heads = R, u40 lens summed = n), and the chi .sA
+(filesize/8); prints n/k/r/chi, n/r, chi/r against the 0.86 law.
+
+Gate: run against every fixture scale, all values EXACT vs this ledger:
+- ft30:   n=3,527 k=30 R=2,483 chi=2,187 (matches the accessor-gate run)
+- yeast:  n=3,336,986,759 R=100,902,972 chi=85,350,673 (BCR anchor,
+  exact) chi/r=0.846
+- s200:   R=11,541,085 chi=10,099,867 (BCR, exact); all seven chi_s200
+  convention variants agree byte-for-byte in count (80.8 MB each)
+- k=10:   n=30,151,407,545 k=865 R=1,859,825,801 chi=1,627,063,183
+  (exact) chi/r=0.875
+- k=50:   n=150,950,436,067 k=4,108 R=2,033,460,666 chi=1,754,597,135
+  (exact) chi/r=0.863
+New recorded fact: k50's k = 4,108 contig strings (50 haps).
+Next T1 rungs: chi_tags, names index, seed_project (each gated at
+yeast/ft30/s200 first, applied at k=10, then 466 when the walk lands).

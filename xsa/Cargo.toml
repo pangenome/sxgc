@@ -1,0 +1,13 @@
+[package]
+name = "xsa"
+version = "0.1.0"
+edition = "2021"
+description = "xsa - chi sa. Suffixient-array tools over r-space artifacts (.ri4, .sA, rlbwt)."
+license = "MIT"
+
+[[bin]]
+name = "xsa"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
