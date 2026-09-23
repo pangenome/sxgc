@@ -388,3 +388,35 @@ no flat text needed with a streaming front-end.
   text; pfp++ is single-threaded — the in-house pscan -S parser is the
   parallelizable replacement), byte-alphabet ingestion (see
   ROADMAP-WEBSCALE.md), and rpfbwt thread scaling at -t 96.
+
+## LF-walk text accessor: the .ri4 is sovereign (2026-09-23) — GATE GREEN at ft30 + s200
+
+Claim gated: the .ri4 alone (rlbwt + C + run-end SA samples — one
+self-contained artifact) serves every text access the xsa query layer
+needs. No AGC, no flat text at query time. New tool: bit6/rl_text_extract
+(build: g++ vs vendored sdsl-lite; same flags as teralcp_chi).
+
+- **ft30 (3,527 B, 30 strings, 2,483 runs): 5/5 checks GREEN** —
+  structural (sum/C/totals); inversion (LF from bare-sentinel row i
+  reconstructs string i backward — 30/30); LF-decrement law
+  sa[LF^j(e)] == sa[e]-j (69,749 steps over all run ends); v4 sample
+  formula S = fsFwd + (fend - sa[run_end_row]) at 2,483/2,483 runs;
+  window emission from run-end anchors (72,232 chars).
+- **s200 (145 Mbp, 200 strings): structural + inversion GREEN (200/200)**,
+  full text reconstructed from BWT+LF alone, 7 min single-thread.
+- **LAW (new, discovered by this gate): sentinel-identity erasure.**
+  grlbwt2rle remaps all k BCR sentinels to byte 0x0A, so an LF step
+  *from* a string-start row (whose BWT byte is a sentinel) permutes the
+  sentinel rows and violates sa[lf] = sa-1 there. Within a string the LF
+  law is exact. Pattern search never steps from a sentinel row (patterns
+  contain no 0x0A) — which is why locate passed 12,034/12,034; and the
+  accessor contract (verify m bytes at a position inside one contig,
+  windows bounded by the owning string) never crosses one either.
+  First-pass ft30 CHECK3 failure was this law, not a bug: the gate was
+  corrected to bound windows to the owning string (w = s - fstart[i]).
+- k=10 (30 Gbp) inversion gate running in background (proc_e8b0).
+Consequence recorded: the AGC demotes to build-time input; query modes
+(witness / leftmost / tags / enumerate / MS) run from rlbwt + .ri4 +
+chi .sA + boundary sidecar alone. The LF-walk accessor is the
+text-free fallback for the chi verify clause (~100 us-class per seed
+at 466: L rank steps + a short hop to the nearest run-head sample).
