@@ -326,3 +326,68 @@ erasure law recorded) — so the ladder reshapes around what is now proven:
   asc/desc extrema pair).
 - **Parked research, merit order**: O(r)-time chi walk -> byte-alphabet
   substrate (web unlock) -> Lean Bit-1 proof completion.
+
+## 15. CLI consolidation, xsa placement, and the r-space construction research program (2026-09-24)
+
+### 15.1 One engine, four readouts: `xsa query` is the CLI
+
+DECISION (supersedes the seed_project-as-separate-tool framing in §14):
+all question-asking lives in ONE engine with escalating readouts of a
+single backward walk:
+    xsa query            exact:   all occurrences of whole strings (done,
+                                  byte-identical at k=10)
+    xsa query --ms        lengths: per-position longest match (the walk
+                                  tracks survival instead of all-or-nothing)
+    xsa query --mem       MEMs:    --ms seeds + one left-extension probe
+    xsa query --project   stamps:  MEMs + chi/sidecar first-appearance
+                                  join (the provenance readout)
+`stats` and `tags` remain separate (reports over artifacts, not
+questions to the index). Exact is the special case of --ms where
+length = m everywhere. Gate order: --ms byte-exact vs the s200 brute
+fixtures (tera_ms.len/pos, 10,000 reads), then --mem, then --project
+oracle-stamped at k=10 vs the AGC (which also closes the revlines
+forward-orientation caveat from chi_tags).
+
+### 15.2 xsa placement: build here, graduate at release
+
+DECISION: `sxgc/xsa` stays embedded during development — it is the
+reference front door, and its development pace (several gated modes per
+day) argues against repo friction. Graduation plan: when (a) the query
+mode set stabilizes post---ms/--mem/--project and (b) the 466 result
+is published, xsa moves to its own repo (pangenome/xsa) carrying the
+Rust crate + format specs; sxgc remains the construction chain, gates,
+and artifacts of record. Until then: users meet xsa through the sxgc
+README's tool section. Naming already survives the move (xsa is
+namespace-clean: Debian/crates/PyPI free, .XsA artifact family).
+
+### 15.3 r-space construction of the whole thing: the open problem, stated
+
+The remaining O(n)-time piece is the chi walk (per-row visits over the
+r-index to find per-run interior LCP minima). If chi could be computed
+in O(r) TIME from the rlbwt + phi structure, construction cost becomes
+proportional to novelty: the v3+ refresh loop, GPU construction, and
+the whole operating-cost story change shape. World-changing is the
+correct adjective.
+
+What we know now:
+- PLCP along TEXT order is piecewise-LINEAR with O(r) pieces, slope -1
+  per piece (the phi-interval machinery: lcp = PLCPsamples[interval] -
+  (pos - start) inside each interval). The walk exploits this
+  (incremental tracking), but still pays one step per row.
+- Per-run interior minima reduce, on this structure, to: for each
+  (run, phi-interval) intersection, the EXTREME text position in the
+  intersection (min of a decreasing linear piece is at its largest
+  covered position). So O(r)-time chi requires deriving, for every
+  (run, interval) pair that intersects, that extreme position --
+  WITHOUT enumerating the rows of the run (the scatter of a run's rows
+  across intervals is where the O(n) hides).
+- Unknown: whether the (run, interval) incidence can be compressed. The
+  scatter encodes the run/DAWG structure; no known bound either way.
+  Research program, in order: (1) prove or refute O(r) enumerability
+  of (run, interval) extreme points (lower-bound attempt is honest
+  progress: an impossibility result would redirect to O(r log r)
+  approximations or sublinear-time chi); (2) if possible, build it;
+  (3) Lean Bit-1 carries the definitions either way.
+Both outcomes publish: an O(r) algorithm is a landmark; an Ω(n) lower
+bound in a stated model closes the question the field will otherwise
+keep asking. The current walk (38 h at 466) is the cost of not knowing.
