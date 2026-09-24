@@ -714,3 +714,48 @@ parallel delegated agents:
   scaffolds).
 - Gates stay absolute-path (/tmp/grl_gate, nvme fixtures) — worktree-
   independent by construction.
+
+## 466 oracle verdict: FAIL — 313/2,008,756 bad; root-cause hunt (2026-09-24, IN PROGRESS)
+
+The 466 chain's verify: occurrences 2,008,756, byte-verified 2,008,443,
+bad 313; planted truths 200/200 FOUND. Query stage stats: 25,707 s,
+67.9 GB peak (index load dominated; satellite patterns: p150 921,960,
+p197 303,551, p37 209,547, p60 198,270 occurrences).
+
+DIAGNOSIS SO FAR (honest, hypothesis-driven):
+- FIRST HYPOTHESIS (sentinel-boundary toehold, the documented latent
+  edge) REFUTED by direct test: only 517/2M occurrences live within
+  walk-distance of a contig boundary (38,790 contigs, n/r=512); of
+  those, 515 verify GOOD, only 2 bad (near-END = stream-start zone,
+  consistent with the erasure law as a minor contributor).
+- The bad are NOT boundary-clustered: sampled mid-contig control shows
+  ~0.012% bad rate MID-CONTIG, concentrated in the HIGH-OCCURRENCE
+  satellite patterns (p39/p150/p197 in the sample).
+- LEADING HYPOTHESIS: a few hundred of the 2,739,735,806 run-end
+  samples in h466.ri4 are wrong (chain-side: teralcp_chi's parallel
+  walk or an upstream grlBWT/rlbwt edge), surfacing only where
+  occurrence counts are large enough to hit them. The 466 build never
+  had a sample-formula check (brute SA impossible at 1.4 Tbp; ft30's
+  CHECK4 gate validated the formula, not this build's data).
+- DISCRIMINATOR RUNNING (proc_9ac3): xsa query (independent Rust s_at)
+  over p39 on the SAME h466.ri4, position-set diff vs the C++ output.
+  Same bads -> data; different -> C++ tool. Next steps follow the
+  outcome: if data, re-emit samples (rerun teralcp_chi --samples only,
+  ~hours, walk-only) with the suspect patterns as the regression gate;
+  if tool, fix rindex_query and rerun query+verify (~9 h).
+
+NOT AFFECTED (stated for the record): chi_h466.sA — the chi walk is
+per-string bounded (breaks at t == len[i]; never LF-steps from a
+string-start row), so the headline chi(HPRC v2) = 2,249,968,075 and the
+chi_tags table do not depend on locate. The FAIL is in locate only.
+
+## xsa query --ms: GATE GREEN (2026-09-24, delegated+verified)
+
+Matching statistics in the query engine: byte-identical vs the
+s200 brute oracle (10,000 reads / 10,000 positions, 0.42 s; my own
+re-verification run before commit), ft30 10/10 regression, k=10
+byte-identical regression (79 s), 10 random ft30 reads vs Python brute.
+Orientation law discovered and documented: the oracle is standard
+PREFIX-MS; reproduced via whole-read reversal (--plain) + forward
+consumption + position-reversed emission. The --mem/--project readouts
+build on ms_vector; seed_project's engine exists.
