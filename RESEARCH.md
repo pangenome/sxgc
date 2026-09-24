@@ -139,3 +139,19 @@ REFRESH: quarterly re-sort/rebuild of a 10 TB corpus in hours instead
 of the ~week the O(n) walk implies at that scale. Byte-alphabet
 substrate (specced, ROADMAP 5) + O(r) construction + this query engine
 = the laptop-web stack, complete.
+
+### Conjecture (2026-09-24, session): O(r log r) chi via the FM route
+
+Working bet, sharpened by the slice-2 negative result (chi selection is
+NOT a per-row predicate -> any r-space route must be global): the
+FM/PSV-NSV characterization (sA/suff-set-src/fm.cpp; reproduces the scan
+exactly on all tested texts) is the declarative spec to target. If
+PSV/NSV structure of the LCP stream can be computed from the
+run-compressed representation (piecewise-linear PLCP pieces + run
+boundaries + range-minima over the O(r) pieces), a divide-and-conquer
+suggests O(r log r) — the plausible landing zone between the O(n) walk
+and the possibly-unreachable exact O(r). Slice 3 (in flight) formalizes
+the scan<->FM equivalence and states the r-space bridge lemma. If the
+equivalence closes, the O(r log r) question becomes a well-posed
+complexity question about PSV/NSV over run-compressed streams — attack
+with the piecewise-linear handle (Bit 2a) + RMQ machinery.
