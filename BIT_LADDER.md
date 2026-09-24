@@ -679,3 +679,20 @@ machine simulation entirely; prove each machine independently computes
 the CANONICAL (tie-broken, Lemma 34) smallest suffixient set, then
 conclude equality via its uniqueness. Uniqueness of the canonical
 minimum is the linchpin lemma — add it to the Bit-1b target list.
+
+## xsa query --sample: seeded random occurrence sampling (2026-09-24)
+
+--sample K [--seed S]: instead of enumerating all occ occurrences of a
+pattern (O(occ) toeholds — the 7h p150 case, 921,960+ occurrences of a
+satellite 120-mer), pick K rows uniformly at random from the pattern's
+BWT interval (each row IS one distinct occurrence, so uniform rows =
+uniform occurrences) and toehold each: O(K) instead of O(occ). Same
+primitive as ropebwt3's user-requested sampled-occurrence retrieval —
+ours sovereign and reproducible (xorshift64*, per-pattern seed mixing).
+GATE GREEN at ft30: 4 seeds x 5 samples -> 10 distinct positions, every
+one a subset of the 10 grep-verified occurrences; identical output for
+identical seeds.
+Use: bounded oracle verification at scale (truths + K sampled
+occurrences per pattern), and any "give me n of them" query. The 466
+verify stage (verify-ALL, currently headed for millions of AGC checks)
+can degrade gracefully to this if needed — deviations recorded if used.

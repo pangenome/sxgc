@@ -274,6 +274,8 @@ fn cmd_query(args: &[String]) {
     let mut out: Option<String> = None;
     let mut sidecar: Option<String> = None;
     let mut plain = false;
+    let mut sample: Option<u64> = None;
+    let mut seed: u64 = 0;
     let mut i = 0;
     while i < args.len() {
         let step;
@@ -282,6 +284,8 @@ fn cmd_query(args: &[String]) {
             "--patterns" if i + 1 < args.len() => { pats = Some(args[i + 1].clone()); step = 2; }
             "--output" if i + 1 < args.len() => { out = Some(args[i + 1].clone()); step = 2; }
             "--sidecar" if i + 1 < args.len() => { sidecar = Some(args[i + 1].clone()); step = 2; }
+            "--sample" if i + 1 < args.len() => { sample = Some(args[i + 1].parse::<u64>().unwrap_or_else(|_| die("--sample: integer expected"))); step = 2; }
+            "--seed" if i + 1 < args.len() => { seed = args[i + 1].parse::<u64>().unwrap_or_else(|_| die("--seed: integer expected")); step = 2; }
             "--plain" => { plain = true; step = 1; }
             other => die(&format!("query: unknown arg {}", other)),
         }
@@ -343,7 +347,12 @@ fn cmd_query(args: &[String]) {
     };
     let mut noccs = 0u64;
     let mut nabs = 0u64;
-    for (name, seq) in &patterns {
+    // xorshift64*: deterministic per-pattern row sampler for --sample
+    let mut next_rng = |mut x: u64| -> u64 {
+        x ^= x >> 12; x ^= x << 25; x ^= x >> 27;
+        x.wrapping_mul(0x2545F4914F6CDD1D)
+    };
+    for (pi, (name, seq)) in patterns.iter().enumerate() {
         let m = seq.len();
         // consume pattern chars in INDEXED-text order: revlines (default) =
         // forward-original; plain = reversed
@@ -357,6 +366,35 @@ fn cmd_query(args: &[String]) {
         if l >= r {
             writeln!(w, "-1 {}", m).unwrap();
             nabs += 1;
+            continue;
+        }
+        let occ = r - l;
+        if let Some(k) = sample {
+            // k (or occ if fewer) uniformly random occurrences via seeded rows:
+            // row j in the interval IS one distinct occurrence; sampling rows
+            // uniformly samples occurrences uniformly. O(k) toeholds, not O(occ).
+            let kk = k.min(occ);
+            let mut rng = seed ^ (pi as u64).wrapping_mul(0x9E3779B97F4A7C15) ^ 0xA0761D6478BD642F;
+            let mut rows: Vec<u64> = (l..r).collect();   // interval rows, not [0,occ)
+            for t in 0..kk {
+                rng = next_rng(rng);
+                let j = (rng % (occ - t)) + t;
+                rows.swap(t as usize, j as usize);
+            }
+            rows.truncate(kk as usize);
+            for j in rows {
+                let s = idx.s_at(j);
+                let pos: i64 = if plain {
+                    let ii = p_fstart.partition_point(|&x| x <= s);
+                    let si = if ii == 0 { usize::MAX } else { ii - 1 };
+                    if si == usize::MAX || s > p_fend[si] { die(&format!("query: S={} outside any string", s)); }
+                    (p_fstart[si] + p_fend[si] - s) as i64
+                } else {
+                    s.wrapping_sub(m as u64) as i64
+                };
+                writeln!(w, "{} {}", pos, m).unwrap();
+                noccs += 1;
+            }
             continue;
         }
         for j in l..r {
@@ -376,7 +414,8 @@ fn cmd_query(args: &[String]) {
             noccs += 1;
         }
     }
-    eprintln!("xsa query: {} occurrences over {} patterns ({} absent)", noccs, patterns.len(), nabs);
+    eprintln!("xsa query: {} occurrences over {} patterns ({} absent){}", noccs, patterns.len(), nabs,
+        if sample.is_some() { " [sampled]" } else { "" });
 }
 
 fn cmd_stats(args: &[String]) {
