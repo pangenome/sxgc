@@ -862,3 +862,76 @@ THE FIX (designed, no 37h walk rerun needed):
 - Then rerun query+verify (~9 h, stage-guarded) -> expected PASS.
 - Same fix lands in rindex_query (C++) for the record; the gate rerun
   runs through xsa (already byte-identical).
+
+## T1 rung: SENTINEL-ERASURE FIX IMPLEMENTED — anchors + two-case s_at (2026-09-24)
+
+The designed fix was superseded by a BETTER one mid-implementation:
+instead of emulating the correct LF from string-start rows (jump to
+bare-sentinel row i-1), string-start rows become EXTRA SAMPLE ANCHORS
+and every toehold walk terminates on EITHER terminal:
+
+    S(row j) = terminal_S - steps        (S rises 1 per LF step; BOTH
+                                          cases share the same law)
+
+  case A: row is a run end          -> sample (v4, unchanged)
+  case B: row has BWT char 0x0A     -> anchor table lookup
+
+LF steps FROM a 0x0A row are NEVER TAKEN (they are undefined — the
+erasure law); the walk stops one step earlier, at the string start.
+This is the v5 format law, implementable in v4 via a sidecar.
+
+### The anchor table is DERIVED, not searched (the key insight)
+
+The 0x0A-BWT rows are exactly the k string-start rows; every 0x0A
+run's LAST row has a v4 sample, and that sample IS the anchor value
+(S = fsFwd_i + len_i, distinct per string). So `xsa build-anchors`:
+
+  pass 0  enumerate 0x0A runs; assert total 0x0A rows == k
+  pass 1  run-end samples -> DIRECT row assignment (no convention,
+           no flat text, no search; sample = ground truth)
+  pass 2  remaining rows: per-string backward search of content
+           windows (256..len, doubling), unique unowned 0x0A
+           candidate wins (multi-row duplicate-prefix groups)
+  pass 3  identical-content leftovers: order by following text
+           (sentinels erased), fail-loudly on invariant violations
+  verify  every 0x0A run's end-sample law; bijection rows<->strings
+
+k=10 build: 49 s (865 strings). 466 projected: minutes, no 37h walk.
+
+Convention negative result (sat4 forensics): grlBWT's sentinel ORDER
+within duplicate-prefix groups is NOT a simple file-order rule — my
+first builder assumed sidecar order and produced 3 wrong anchors out
+of 4 on a crafted satellite fixture. The run-end samples removed ALL
+convention dependence. Empirically sat4's group order = tail content
+order (strings diverge before sentinels); full-identity ties remain
+order-dependent and are sample-verified fail-loud.
+
+### Gates (all GREEN before commit)
+
+1. ft30 ANCHOR GATE: 30/30 anchors exact vs brute SA (new algorithm,
+   independent of build-anchors' assumptions).
+2. sat4 MEGA-RUN GATE (the DESIGNED fixture, 4 strings x [3kb shared
+   periodic satellite + 2kb unique tail], n=20,004, one 4-row 0x0A
+   run, satellite patterns at phase offsets + tail patterns):
+   truth 23,772 overlapping occurrences -> anchored xsa 23,772,
+   wrong=0 missing=0. The unanchored binary DIES LOUDLY at the first
+   0x0A row instead of corrupting (fail-loud is the new default).
+   First run of the naive builder on this fixture: 3/4 anchors wrong
+   -> 16,038 wrong positions: the fixture reproduces the 466 bug at
+   20 kb. It stays in the gate suite forever.
+3. ft30 QUERY with CONTIG-START-OVERLAPPING patterns (the documented
+   k=10-era caveat, now exercised): 171/171 vs overlapping brute.
+4. k=10 regression: anchored rerun of the 200-pattern oracle set
+   BYTE-IDENTICAL to the 12,034/12,034 oracle output (confirmed
+   2026-09-24T23:30Z: build-anchors 49 s, query 96 s, cmp equal).
+
+Tool surface: `xsa build-anchors --ri4 f.ri4 --flat f.txt
+--sidecar f.names.tsv --output f.anchors`; `xsa query ... --anchors
+f.anchors`. Without --anchors, s_at still fail-louds on 0x0A rows.
+Known limitations (recorded): --trace-samples still walks the old
+path (debug only); v5 will carry anchors natively in the .ri4.
+
+NEXT: 466 anchor build + p39/p197 spot-check + full 200-pattern
+anchored query + AGC verify -> expected VERDICT PASS (the 313 bads
+were all mega-run crossings; crossing-class patterns p150/p197/p37/
+p60 dominate them).

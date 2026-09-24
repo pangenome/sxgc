@@ -126,8 +126,40 @@ impl PackedSa {
     }
 }
 
+// ---------- string-start anchor table (the .ri4 sentinel-erasure fix) ----------
+// The 466 autopsy (2026-09-24): remapped sentinels make LF steps FROM a
+// 0x0A row undefined (sentinel-identity erasure); mega-run toehold walks
+// cross string starts and land on foreign samples. FUNDAMENTAL FIX:
+// string-start rows become extra sample anchors (k entries) and every
+// walk terminates on EITHER a run-end sample OR a string-start anchor:
+//   S(row j) = terminal_S - steps      (both cases; S rises 1 per LF step)
+struct Anchors { rows: Vec<u64>, s: Vec<u64> }
+impl Anchors {
+    fn load(path: &str) -> Anchors {
+        let mut f = File::open(path).unwrap_or_else(|e| die(&format!("open {}: {}", path, e)));
+        let mut b = [0u8; 12];
+        f.read_exact(&mut b).unwrap_or_else(|e| die(&format!("read {}: {}", path, e)));
+        let magic = u32::from_le_bytes(b[0..4].try_into().unwrap());
+        if magic != 0x434E4158 { die("anchors: bad magic"); }
+        let k = u64::from_le_bytes(b[4..12].try_into().unwrap());
+        let mut rows = Vec::with_capacity(k as usize);
+        let mut s = Vec::with_capacity(k as usize);
+        for _ in 0..k {
+            let mut e = [0u8; 16];
+            f.read_exact(&mut e).unwrap_or_else(|e| die(&format!("read {}: {}", path, e)));
+            rows.push(u64::from_le_bytes(e[0..8].try_into().unwrap()));
+            s.push(u64::from_le_bytes(e[8..16].try_into().unwrap()));
+        }
+        Anchors { rows, s }
+    }
+    fn lookup(&self, row: u64) -> Option<u64> {
+        self.rows.binary_search(&row).ok().map(|i| self.s[i])
+    }
+}
+
 struct Ri4 {
     n: u64,
+    k: u64,
     r: u64,
     c: Vec<u64>,
     run_char: Vec<u8>,
@@ -196,7 +228,8 @@ impl Ri4 {
         }
         let total = acc256.clone();
         for c in 0..256 { csum[c].push(total[c]); }
-        Ri4 { n, r, c, run_char, run_len, sa, run_start_blk, cruns, csum, total }
+        let _ = k;   // stored
+        Ri4 { n, k, r, c, run_char, run_len, sa, run_start_blk, cruns, csum, total }
     }
 
     fn run_start(&self, r: u64) -> u64 {
@@ -261,6 +294,12 @@ impl Ri4 {
     /// v4 sample value at BWT position j: walk LF to the nearest run end;
     /// S decreases by 1 per LF step from the run-end sample.
     fn s_at(&self, j: u64) -> u64 {
+        self.s_at_opt(j, None)
+    }
+    /// Two-case toehold (the fundamental fix): terminate on a run-end
+    /// sample OR a string-start anchor. LF from a 0x0A row is undefined
+    /// (erasure law) — anchors make that step never happen.
+    fn s_at_opt(&self, j: u64, anc: Option<&Anchors>) -> u64 {
         let mut pos = j;
         let mut steps = 0u64;
         loop {
@@ -268,6 +307,12 @@ impl Ri4 {
             let e = self.run_start(r) + self.run_len[r as usize] as u64;
             if pos == e - 1 {
                 return self.sa.get(r).wrapping_sub(steps);
+            }
+            if self.run_char[r as usize] == 0x0A {
+                match anc.and_then(|a| a.lookup(pos)) {
+                    Some(s0) => return s0.wrapping_sub(steps),
+                    None => die("s_at: walk reached a 0x0A row with no anchor table (--anchors)"),
+                }
             }
             pos = self.lf(pos);
             steps += 1;
@@ -358,6 +403,8 @@ fn cmd_query(args: &[String]) {
     let mut sidecar: Option<String> = None;
     let mut plain = false;
     let mut ms = false;
+    let mut trace = false;
+    let mut anchor_path: Option<String> = None;
     let mut ms_out: Option<String> = None;
     let mut sample: Option<u64> = None;
     let mut seed: u64 = 0;
@@ -373,6 +420,8 @@ fn cmd_query(args: &[String]) {
             "--sample" if i + 1 < args.len() => { sample = Some(args[i + 1].parse::<u64>().unwrap_or_else(|_| die("--sample: integer expected"))); step = 2; }
             "--seed" if i + 1 < args.len() => { seed = args[i + 1].parse::<u64>().unwrap_or_else(|_| die("--seed: integer expected")); step = 2; }
             "--plain" => { plain = true; step = 1; }
+            "--trace-samples" => { trace = true; step = 1; }
+            "--anchors" if i + 1 < args.len() => { anchor_path = Some(args[i + 1].clone()); step = 2; }
             "--ms" => { ms = true; step = 1; }
             other => die(&format!("query: unknown arg {}", other)),
         }
@@ -461,6 +510,7 @@ fn cmd_query(args: &[String]) {
     }
 
     let stdout = std::io::stdout();
+    let anchors = anchor_path.map(|p| Anchors::load(&p));
     let mut w: Box<dyn Write> = match &out {
         Some(p) => Box::new(File::create(p).unwrap_or_else(|e| die(&format!("create {}: {}", p, e)))),
         None => Box::new(stdout.lock()),
@@ -503,7 +553,7 @@ fn cmd_query(args: &[String]) {
             }
             rows.truncate(kk as usize);
             for j in rows {
-                let s = idx.s_at(j);
+                let s = idx.s_at_opt(j, anchors.as_ref());
                 let pos: i64 = if plain {
                     let ii = p_fstart.partition_point(|&x| x <= s);
                     let si = if ii == 0 { usize::MAX } else { ii - 1 };
@@ -518,7 +568,30 @@ fn cmd_query(args: &[String]) {
             continue;
         }
         for j in l..r {
-            let s = idx.s_at(j);
+            let mut trow = j;
+            let mut tsteps = 0u64;
+            let mut tanchor = 0u64;
+            let mut tsample = 0u64;
+            let s = if trace {
+                // re-derive s while capturing the anchor run + raw sample
+                loop {
+                    let r = idx.run_of(trow);
+                    let e = idx.run_start(r) + idx.run_len[r as usize] as u64;
+                    if trow == e - 1 {
+                        tanchor = r;
+                        tsample = idx.sa.get(r);
+                        break;
+                    }
+                    trow = idx.lf(trow);
+                    tsteps += 1;
+                }
+                if trace {
+                    writeln!(w, "TRACE\t{}\t{}\t{}\t{}\t{}", name, j, tanchor, tsample, tsteps).unwrap();
+                }
+                tsample.wrapping_sub(tsteps)
+            } else {
+                idx.s_at_opt(j, anchors.as_ref())
+            };
             let pos: i64 = if plain {
                 // S lies in [fstart_i, fend_i] of the owning string (mirror)
                 let ii = p_fstart.partition_point(|&x| x <= s);
@@ -594,6 +667,218 @@ fn cmd_stats(args: &[String]) {
         println!("chi/r        = {}   (law: ~0.86)", fmt_ratio(xc as f64, r as f64));
     }
     println!("index bytes  ~ {} (rlbwt 6R + samples 8R)", r * 14);
+}
+
+fn cmd_build_anchors(args: &[String]) {
+    let mut ri4: Option<String> = None;
+    let mut flat: Option<String> = None;
+    let mut sidecar: Option<String> = None;
+    let mut out: Option<String> = None;
+    let mut i = 0;
+    while i < args.len() {
+        let step;
+        match args[i].as_str() {
+            "--ri4" if i + 1 < args.len() => { ri4 = Some(args[i + 1].clone()); step = 2; }
+            "--flat" if i + 1 < args.len() => { flat = Some(args[i + 1].clone()); step = 2; }
+            "--sidecar" if i + 1 < args.len() => { sidecar = Some(args[i + 1].clone()); step = 2; }
+            "--output" if i + 1 < args.len() => { out = Some(args[i + 1].clone()); step = 2; }
+            other => die(&format!("build-anchors: unknown arg {}", other)),
+        }
+        i += step;
+    }
+    let (ri4p, flatp, scp, outp) = (
+        ri4.unwrap_or_else(|| die("build-anchors: need --ri4")),
+        flat.unwrap_or_else(|| die("build-anchors: need --flat (the indexed stream text)")),
+        sidecar.unwrap_or_else(|| die("build-anchors: need --sidecar")),
+        out.unwrap_or_else(|| die("build-anchors: need --output")),
+    );
+    eprintln!("xsa build-anchors: loading {}", ri4p);
+    let idx = Ri4::load(&ri4p);
+    // sidecar: name \t fsFwd \t len  (stream fstarts derived from lens)
+    let mut fs: Vec<u64> = Vec::new();
+    let mut lens: Vec<u64> = Vec::new();
+    {
+        let sf = File::open(&scp).unwrap_or_else(|e| die(&format!("open {}: {}", scp, e)));
+        for line in BufReader::new(sf).lines() {
+            let line = line.unwrap_or_else(|e| die(&format!("read {}: {}", scp, e)));
+            if line.is_empty() { continue; }
+            let c: Vec<&str> = line.split('\t').collect();
+            if c.len() < 3 { die("build-anchors: bad sidecar line"); }
+            fs.push(c[1].trim().parse().unwrap_or_else(|_| die("bad fsFwd")));
+            lens.push(c[2].trim().parse().unwrap_or_else(|_| die("bad len")));
+        }
+    }
+    let k = lens.len() as u64;
+    if k != idx.k { die(&format!("build-anchors: sidecar k {} != ri4 k {}", k, idx.k)); }
+    let mut flatf = File::open(&flatp).unwrap_or_else(|e| die(&format!("open {}: {}", flatp, e)));
+    use std::io::Seek;
+    let mut read_flat = |flatf: &mut File, pos: u64, want: usize| -> Vec<u8> {
+        flatf.seek(std::io::SeekFrom::Start(pos)).unwrap();
+        let mut buf = vec![0u8; want];
+        flatf.read_exact(&mut buf).unwrap_or_else(|e| die(&format!("flat read: {}", e)));
+        buf
+    };
+    // ---- pass 0: enumerate ALL 0x0A runs; assert total rows == k ----
+    let mut runs: Vec<(u64, u64, u64)> = Vec::new();  // (run index, row start, row end excl)
+    {
+        let mut rs = 0u64;
+        for ri in 0..idx.r as usize {
+            let re = rs + idx.run_len[ri] as u64;
+            if idx.run_char[ri] == 0x0A { runs.push((ri as u64, rs, re)); }
+            rs = re;
+        }
+    }
+    let total_na = runs.iter().map(|&(_, a, b)| b - a).sum::<u64>();
+    if total_na != k { die(&format!("build-anchors: 0x0A rows {} != k {} — run structure violated", total_na, k)); }
+    // ---- pass 1: SAMPLE-DIRECT assignment: every run end's sample IS the S of its row ----
+    let mut s_to_string: std::collections::HashMap<u64, usize> = std::collections::HashMap::new();
+    for si in 0..k as usize {
+        let s_val = fs[si] + lens[si];
+        if s_to_string.insert(s_val, si).is_some() { die("build-anchors: duplicate S values in sidecar"); }
+    }
+    let mut assigned: Vec<Option<u64>> = vec![None; k as usize];   // string -> start row
+    let mut owner: std::collections::HashMap<u64, usize> = std::collections::HashMap::new(); // row -> string
+    let mut multi: Vec<(u64, u64, u64)> = Vec::new();              // multi-row 0x0A runs
+    for &(ri, rs, re) in &runs {
+        let last = re - 1;
+        let s_val = idx.sa.get(ri);
+        let si = *s_to_string.get(&s_val).unwrap_or_else(|| die(&format!("build-anchors: run-end sample S={} matches no string — corrupt samples?", s_val)));
+        if assigned[si].is_some() { die(&format!("build-anchors: string {} assigned twice by samples", si)); }
+        assigned[si] = Some(last);
+        owner.insert(last, si);
+        if re - rs > 1 { multi.push((ri, rs, re)); }
+    }
+    let n_multi: u64 = multi.iter().map(|&(_, a, b)| b - a - 1).sum();
+    eprintln!("build-anchors: {} runs; {} multi-row ({} rows to resolve by search)", runs.len(), multi.len(), n_multi);
+    // ---- pass 2: content-extension search for every still-unassigned string ----
+    let mut leftovers: Vec<usize> = Vec::new();
+    for si in 0..k as usize {
+        if assigned[si].is_some() { continue; }
+        let len = lens[si] as usize;
+        let fstart: u64 = (0..si as u64).map(|j| lens[j as usize] + 1).sum();
+        let mut window: usize = 256;
+        let mut done = false;
+        loop {
+            let w = window.min(len);
+            let pat = read_flat(&mut flatf, fstart, w);
+            let rev: Vec<u8> = pat.iter().rev().copied().collect();
+            let (l, r) = idx.search(&rev);
+            if l >= r { die(&format!("build-anchors: string {} search empty at window {}", si, w)); }
+            let mut cands: Vec<u64> = Vec::new();
+            let mut run = idx.run_of(l);
+            loop {
+                let rs2 = idx.run_start(run);
+                let re2 = rs2 + idx.run_len[run as usize] as u64;
+                if idx.run_char[run as usize] == 0x0A {
+                    let lo = rs2.max(l); let hi = re2.min(r);
+                    for row in lo..hi { if !owner.contains_key(&row) { cands.push(row); } }
+                }
+                if re2 >= r { break; }
+                run += 1;
+            }
+            if cands.len() == 1 {
+                let row = cands[0];
+                if owner.contains_key(&row) { die(&format!("build-anchors: internal: owned candidate for string {}", si)); }
+                assigned[si] = Some(row);
+                owner.insert(row, si);
+                done = true;
+                break;
+            }
+            if cands.len() == 0 { die(&format!("build-anchors: string {} has no unowned 0x0A row at window {} — table inconsistent", si, w)); }
+            if w >= len { break; }
+            window *= 2;
+        }
+        if !done { leftovers.push(si); }
+    }
+    // ---- pass 3: identical-content leftovers — order by following text (sentinels erased),
+    //      rows ascending; fail loudly if the run-end law is violated ----
+    if !leftovers.is_empty() {
+        eprintln!("build-anchors: {} identical-content strings to order by following text", leftovers.len());
+        // per multi-run, zip leftover rows (ascending, minus owned) with leftover strings sorted by following bytes
+        let mut left_by_run: std::collections::HashMap<u64, Vec<u64>> = std::collections::HashMap::new();
+        for &(ri, rs, re) in &multi {
+            let free: Vec<u64> = (rs..re).filter(|row| !owner.contains_key(row)).collect();
+            if !free.is_empty() { left_by_run.insert(ri, free); }
+        }
+        let total_free: usize = left_by_run.values().map(|v| v.len()).sum();
+        if total_free != leftovers.len() { die(&format!("build-anchors: leftover mismatch ({} free rows vs {} leftover strings)", total_free, leftovers.len())); }
+        // which run does each leftover string belong to? its full-content search interval
+        // group leftover strings by run via full-content search, then order by following text
+        let mut groups: std::collections::HashMap<u64, Vec<usize>> = std::collections::HashMap::new();
+        for &si in &leftovers {
+            let len = lens[si] as usize;
+            let fstart: u64 = (0..si as u64).map(|j| lens[j as usize] + 1).sum();
+            let pat = read_flat(&mut flatf, fstart, len);
+            let rev: Vec<u8> = pat.iter().rev().copied().collect();
+            let (l, r) = idx.search(&rev);
+            let mut hit: Option<u64> = None;
+            for (&ri, rows) in left_by_run.iter() {
+                if rows.iter().any(|&row| l <= row && row < r) { hit = Some(ri); break; }
+            }
+            let ri = hit.unwrap_or_else(|| die(&format!("build-anchors: leftover string {} unmappable", si)));
+            groups.entry(ri).or_default().push(si);
+        }
+        for (ri, mut g) in groups {
+            g.sort_by_key(|&si| {
+                let len = lens[si] as usize;
+                let fstart: u64 = (0..si as u64).map(|j| lens[j as usize] + 1).sum();
+                // following text starts right after this string's sentinel; EOF-ending (last string) = empty = smallest
+                let after = fstart + len as u64 + 1;
+                let want = 512usize;
+                let file_len = flatf.seek(std::io::SeekFrom::End(0)).unwrap();
+                let avail = if after >= file_len { 0 } else { (file_len - after).min(want as u64) as usize };
+                read_flat(&mut flatf, after, avail)
+            });
+            let mut rows = left_by_run.remove(&ri).unwrap();
+            if rows.len() != g.len() { die(&format!("build-anchors: run {} has {} free rows but {} member strings", ri, rows.len(), g.len())); }
+            rows.sort();
+            for (&si, &row) in g.iter().zip(rows.iter()) {
+                assigned[si] = Some(row);
+                owner.insert(row, si);
+            }
+        }
+    }
+    // ---- final invariants ----
+    for si in 0..k as usize {
+        if assigned[si].is_none() { die(&format!("build-anchors: string {} never assigned", si)); }
+    }
+    if owner.len() != k as usize { die("build-anchors: owner map size mismatch"); }
+    // every 0x0A row must be owned, and the run-end sample law must hold
+    let mut checked = 0u64;
+    for &(ri, rs, re) in &runs {
+        for row in rs..re {
+            let si = *owner.get(&row).unwrap_or_else(|| die(&format!("build-anchors: 0x0A row {} unowned", row)));
+            if assigned[si] != Some(row) { die("build-anchors: invariant violated"); }
+        }
+        let last = re - 1;
+        let si = owner[&last];
+        if idx.sa.get(ri) != fs[si] + lens[si] { die(&format!("build-anchors: run {} end law violated (sample {} != S of string {})", ri, idx.sa.get(ri), si)); }
+        checked += re - rs;
+    }
+    let mut anchors: Vec<(u64, u64)> = Vec::with_capacity(k as usize);
+    for si in 0..k as usize {
+        anchors.push((assigned[si].unwrap(), fs[si] + lens[si]));
+    }
+    anchors.sort();
+    for w in anchors.windows(2) { if w[0].0 == w[1].0 { die("build-anchors: duplicate anchor rows"); } }
+    let mut f = File::create(&outp).unwrap_or_else(|e| die(&format!("create {}: {}", outp, e)));
+    f.write_all(&b"XANC"[..]).unwrap();
+    f.write_all(&k.to_le_bytes()).unwrap();
+    for (row, s) in &anchors {
+        f.write_all(&row.to_le_bytes()).unwrap();
+        f.write_all(&s.to_le_bytes()).unwrap();
+    }
+    eprintln!("xsa build-anchors: {} runs checked; wrote {} anchors to {}", checked, k, outp);
+    anchors.sort();
+    for w in anchors.windows(2) { if w[0].0 == w[1].0 { die("build-anchors: duplicate anchor rows"); } }
+    let mut f = File::create(&outp).unwrap_or_else(|e| die(&format!("create {}: {}", outp, e)));
+    f.write_all(&b"XANC"[..]).unwrap();
+    f.write_all(&k.to_le_bytes()).unwrap();
+    for (row, s) in &anchors {
+        f.write_all(&row.to_le_bytes()).unwrap();
+        f.write_all(&s.to_le_bytes()).unwrap();
+    }
+    eprintln!("xsa build-anchors: wrote {} anchors to {}", k, outp);
 }
 
 fn cmd_tags(args: &[String]) {
@@ -744,6 +1029,7 @@ fn main() {
         Some("stats") => cmd_stats(&args[1..]),
         Some("tags") => cmd_tags(&args[1..]),
         Some("query") => cmd_query(&args[1..]),
+        Some("build-anchors") => cmd_build_anchors(&args[1..]),
         Some("-h") | Some("--help") | None => usage(),
         Some(other) => die(&format!("unknown subcommand '{}' (try --help)", other)),
     }
