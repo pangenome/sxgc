@@ -492,3 +492,17 @@ ft30, and full k=10 (30 Gbp) scale; the AGC is demoted to build-time
 input across the board. Production sidecar-window mode (emitted bytes
 vs S-coords, no brute SA) remains the next accessor increment, folding
 into seed_project.
+
+k=10 chi_tags application GREEN (2026-09-23): all 1,627,063,183 chi
+positions attributed (virtual_end=1, zero unattributed), 31 min.
+Per-haplotype first-occurrence table (top: HG03927#1 212.9M = 13.1%;
+bottom: NA20850#1 131.7M = 8.1%; four haplotypes above 11%).
+Two observations for the paper:
+(1) even the LAST haplotype in concatenation order contributes ~132M
+novel decisions (8%) — no haplotype is redundant at k=10 diversity;
+(2) CAVEAT (the extrema theorem in action): first-appearance shares are
+a function of the DOCUMENT ORDER — early strings absorb shared content
+by construction. The table is novelty attribution UNDER THIS SORT; a
+reverse-order build would hand the early-string share to the last
+haplotypes. The order-free statistic (mean share over orders, or both
+endpoints from the asc/desc pair) is the follow-up analysis.
