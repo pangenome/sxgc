@@ -696,3 +696,21 @@ Use: bounded oracle verification at scale (truths + K sampled
 occurrences per pattern), and any "give me n of them" query. The 466
 verify stage (verify-ALL, currently headed for millions of AGC checks)
 can degrade gracefully to this if needed — deviations recorded if used.
+
+## Delegation protocol v2 (2026-09-24, recorded for future lanes)
+
+Tonight's parallel lanes (Lean slice 4 + MS port agent + chi-tags job)
+used INSTRUCTED isolation (one writer per directory, no commits). It
+held, but it is convention, not mechanism. Future protocol for
+parallel delegated agents:
+- Code/Rust agents: launch with isolation:worktree (mechanical
+  disconnection; clean per-lane diffs via `git diff main`; no shared
+  target/ build-lock contention). Review = worktree diff; merge on
+  gate-pass; squash per slice with an honest message.
+- Lean agents: worktree PLUS shared .lake packages (symlink) or accept
+  one cold mathlib/lake rebuild — do not multiply that cost per slice.
+- Agents never commit (unchanged); review IS the squash; split commits
+  when a diff carries separable meaning (corrections vs lemmas vs
+  scaffolds).
+- Gates stay absolute-path (/tmp/grl_gate, nvme fixtures) — worktree-
+  independent by construction.
