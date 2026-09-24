@@ -789,3 +789,29 @@ compressed structure, that is a second O(r)-candidate alongside the FM
 route — and arguably the cleaner one, since classes are objects of the
 requirement lattice, not of row enumeration. The private-requirement
 structure says the minimum is exactly witnessed class-by-class.
+
+## chi_tags at 466: the novelty-attribution table (2026-09-24) — GATE GREEN
+
+All 2,249,968,075 chi positions attributed across 466 haplotypes
+(zero unattributed; virtual_end = 0 — unlike k=10's single n-witness).
+Artifact: k466/h466.novelty_by_haplotype.tsv. 46 min.
+
+TWO STRIKING FACTS:
+1. **CHM13#0 — FIRST in concatenation order — carries only 7,303,880
+   witnesses (0.325%).** Since it is first, its share is order-free:
+   ~7.3M = the candidate measurement of a single complete human
+   genome's decision space — one witness per ~410 bp of its 3.05 Gbp.
+   Follow-up rung to make it exact: standalone CHM13 build (grlBWT on
+   CHM13 alone ~30 min + TeraLCP + walk) -> chi(single human genome).
+   Caveat recorded: within the collection the minimal set could trade
+   CHM13 witnesses for later-string witnesses of the same
+   requirements, so the standalone build is the exact number.
+2. **NA18505#2 carries 12,156,565 (0.54%) — 66% MORE than the entire
+   first genome.** An alt haplotype, deep in the sort order, brings
+   more novel decisions than CHM13 did as the whole first genome.
+   Order-caveat applies (novel relative to predecessors in THIS
+   sort), but the magnitude is a strong diversity statement.
+Distribution is remarkably flat: every one of the 466 haplotypes
+contributes 0.10%-0.54% (max/min ~5.2x); mean ~4.8M each. No
+haplotype is redundant at 466 diversity — the k=10 conclusion,
+confirmed at full scale.
