@@ -242,14 +242,21 @@ impl Ri4 {
         let mut l = 0u64;
         let mut r = self.n;
         for &ch in tchars {
-            let c = ch as usize;
-            let rl = self.rank(c as u8, l);
-            let rr = self.rank(c as u8, r);
-            l = self.c[c] + rl;
-            r = self.c[c] + rr;
+            let (nl, nr) = self.step(l, r, ch);
+            l = nl;
+            r = nr;
             if l >= r { return (l, r); }
         }
         (l, r)
+    }
+    /// one backward-search step: rank-extend the half-open interval [l, r) by
+    /// char `ch`. The result is the interval of `ch` immediately preceding the
+    /// current indexed-text match. Empty (nl >= nr) means no such extension.
+    fn step(&self, l: u64, r: u64, ch: u8) -> (u64, u64) {
+        let c = ch as usize;
+        let rl = self.rank(ch, l);
+        let rr = self.rank(ch, r);
+        (self.c[c] + rl, self.c[c] + rr)
     }
     /// v4 sample value at BWT position j: walk LF to the nearest run end;
     /// S decreases by 1 per LF step from the run-end sample.
@@ -268,12 +275,90 @@ impl Ri4 {
     }
 }
 
+/// interval of the substring `s` in the indexed text, feeding `s` forward
+/// (the same convention the exact-mode caller uses for a default/revlines
+/// read: a forward-fed match grows to the right).
+fn search_sub(idx: &Ri4, s: &[u8]) -> (u64, u64) {
+    idx.search(s)
+}
+
+/// Matching-statistics length vector for one (already orientation-normalised)
+/// read `seq`.
+///
+/// ms[i] = length of the longest suffix of seq[..=i] that occurs in the
+/// indexed text (0 if not even seq[i] occurs). The result is returned in the
+/// emitted (position-reversed) order: out[k] = ms[m-1-k].
+///
+/// Exact v0: we keep the interval [l, r) of the current longest match ending
+/// at i-1 and first try the O(1) rank-extension by c = seq[i]. On failure we
+/// shorten to every shorter suffix ending at i-1, recomputing each candidate's
+/// interval by a fresh backward search, and try extending it by c; the first
+/// success wins. Each read is <= ~150bp, so the worst-case O(m^2) is fine.
+///
+/// ORIENTATION (empirically gated): the corpus matches the brute oracle only
+/// when the read is consumed in its REVERSED orientation — equivalent to a
+/// plain-chain read, i.e. exactly what exact-mode `--plain` does (reverse the
+/// whole pattern once) — and the resulting vector is emitted position-reversed.
+/// The caller performs that whole-read reversal; this routine always feeds
+/// forward, which keeps the interval extension O(1).
+fn ms_vector(idx: &Ri4, seq: &[u8]) -> Vec<u32> {
+    let m = seq.len();
+    let mut ms = vec![0u32; m];
+    // interval of the empty match is the whole text; len is the match length
+    let (mut l, mut r) = (0u64, idx.n);
+    let mut len: u64 = 0;
+    for i in 0..m {
+        let c = seq[i];
+        // 1. extend the current match to the right by c
+        let (el, er) = idx.step(l, r, c);
+        if el < er {
+            l = el;
+            r = er;
+            len += 1;
+            ms[i] = len as u32;
+            continue;
+        }
+        // 2. shorten: candidate match seq[i-j..i] of length j, then extend by c
+        let mut found = false;
+        let mut j = len.saturating_sub(1);
+        loop {
+            let s = &seq[(i - j as usize)..i];
+            let (cl, cr) = search_sub(idx, s);
+            if cl < cr {
+                let (fl, fr) = idx.step(cl, cr, c);
+                if fl < fr {
+                    l = fl;
+                    r = fr;
+                    len = j + 1;
+                    ms[i] = len as u32;
+                    found = true;
+                    break;
+                }
+            }
+            if j == 0 {
+                break;
+            }
+            j -= 1;
+        }
+        if !found {
+            // c does not occur: reset to the empty match for the next round
+            l = 0;
+            r = idx.n;
+            len = 0;
+            ms[i] = 0;
+        }
+    }
+    ms
+}
+
 fn cmd_query(args: &[String]) {
     let mut ri4: Option<String> = None;
     let mut pats: Option<String> = None;
     let mut out: Option<String> = None;
     let mut sidecar: Option<String> = None;
     let mut plain = false;
+    let mut ms = false;
+    let mut ms_out: Option<String> = None;
     let mut sample: Option<u64> = None;
     let mut seed: u64 = 0;
     let mut i = 0;
@@ -284,9 +369,11 @@ fn cmd_query(args: &[String]) {
             "--patterns" if i + 1 < args.len() => { pats = Some(args[i + 1].clone()); step = 2; }
             "--output" if i + 1 < args.len() => { out = Some(args[i + 1].clone()); step = 2; }
             "--sidecar" if i + 1 < args.len() => { sidecar = Some(args[i + 1].clone()); step = 2; }
+            "--ms-out" if i + 1 < args.len() => { ms_out = Some(args[i + 1].clone()); step = 2; }
             "--sample" if i + 1 < args.len() => { sample = Some(args[i + 1].parse::<u64>().unwrap_or_else(|_| die("--sample: integer expected"))); step = 2; }
             "--seed" if i + 1 < args.len() => { seed = args[i + 1].parse::<u64>().unwrap_or_else(|_| die("--seed: integer expected")); step = 2; }
             "--plain" => { plain = true; step = 1; }
+            "--ms" => { ms = true; step = 1; }
             other => die(&format!("query: unknown arg {}", other)),
         }
         i += step;
@@ -295,7 +382,7 @@ fn cmd_query(args: &[String]) {
         ri4.unwrap_or_else(|| die("query: need --ri4")),
         pats.unwrap_or_else(|| die("query: need --patterns (FASTA)")),
     );
-    if plain && sidecar.is_none() {
+    if plain && sidecar.is_none() && !ms {
         die("query: --plain needs --sidecar (v4 samples mirror positions on plain chains)");
     }
     eprintln!("xsa query: loading {} ...", ri4);
@@ -339,6 +426,39 @@ fn cmd_query(args: &[String]) {
         if !name.is_empty() { patterns.push((name, seq)); }
     }
     eprintln!("  {} patterns", patterns.len());
+
+    if ms {
+        // matching statistics: binary lens per read, no occurrence output
+        let stdout = std::io::stdout();
+        let mut w: Box<dyn Write> = match &ms_out {
+            Some(p) => Box::new(File::create(p).unwrap_or_else(|e| die(&format!("create {}: {}", p, e)))),
+            None => Box::new(stdout.lock()),
+        };
+        let mut npos = 0u64;
+        for (name, seq) in patterns.iter() {
+            // ORIENTATION: the corpus matches the brute oracle only when the
+            // read is consumed reversed (mirrors exact-mode --plain: reverse
+            // the whole pattern once). The MS routine itself always feeds
+            // forward so its interval extension stays O(1).
+            let work: Vec<u8> = if plain {
+                seq.iter().rev().copied().collect()
+            } else {
+                seq.clone()
+            };
+            let msv = ms_vector(&idx, &work);
+            // emitted order: position-reversed (out[k] = ms[m-1-k])
+            w.write_all(format!(">{}\n", name).as_bytes()).unwrap();
+            w.write_all(&(msv.len() as u64).to_le_bytes()).unwrap();
+            for &v in msv.iter().rev() {
+                w.write_all(&v.to_le_bytes()).unwrap();
+            }
+            w.write_all(b"\n").unwrap();
+            npos += msv.len() as u64;
+        }
+        eprintln!("xsa query: MS {} reads, {} positions{}", patterns.len(), npos,
+            if plain { " [plain]" } else { " [revlines]" });
+        return;
+    }
 
     let stdout = std::io::stdout();
     let mut w: Box<dyn Write> = match &out {
@@ -611,6 +731,8 @@ fn usage() -> ! {
     eprintln!("  xsa tags --chi <f.sA> --sidecar <names.tsv> [--revlines]");
     eprintln!("           [--output tags.tsv]                  first-appearance attribution");
     eprintln!("  xsa query --ri4 <f.ri4> --patterns <p.fa> [--output occs.txt]");
+    eprintln!("  xsa query --ri4 <f.ri4> --patterns <p.fa> --ms [--ms-out lens.bin] [--plain]");
+    eprintln!("           --ms: matching-statistics length vector per read (binary)");
     eprintln!();
     eprintln!("artifacts: .ri4 (v4: rlbwt + C + run-end SA samples), .sA (chi, u64 LE)");
     exit(2);
