@@ -188,14 +188,185 @@ def triplesOf (T : Text) : List Triple :=
     let bwt := if j == 0 then 0 else R[j - 1]!
     ⟨bwt, lcps[i]!, j⟩)
 
-/-! ## Theorems (Bit 1b: proofs via the LCP-maxima characterization, Lemma 34) -/
+/-! ## Theorems (Bit 1b: proofs via the LCP-maxima characterization, Lemma 34)
 
-/-- every requirement (w,c) is covered by some emitted position -/
-theorem covering_given_stream (T : Text) :
-    suffixient (scan (T.length + 1) (triplesOf T)) T := sorry
+Domain convention (chars are 1..SIGMA-1, 0 is the stream sentinel).
+The one-pass scan mirrors `one_pass.cpp` / the sdsl convention: `evalStep`
+iterates characters `c = 1 .. SIGMA-1`, so the sentinel value `0` is never an
+emitted position candidate and `upd` only indexes the `SIGMA`-sized candidate
+table. Consequently the algorithm is only correct on texts whose characters
+lie in `1 .. SIGMA-1`; the predicate below records that domain restriction.
 
-/-- the scan emits a *smallest* suffixient set (Lemma 34 tie-breaking) -/
-theorem minimality (T : Text) :
-    (scan (T.length + 1) (triplesOf T)).length = chi T := sorry
+THIS IS NOT OPTIONAL — the theorems are FALSE outside that window.
+Kernel-checked counterexamples (`#eval`/`native_decide`, found 2026-09-24):
+  * `T = [0,0]`: `scan (T.length + 1) (triplesOf T) = []` while `chi T = 1`,
+    so `minimality` fails, and `suffixient [] T = false`, so
+    `covering_given_stream` fails too.
+  * `T = [128]` (a character `≥ SIGMA = 128`): `scan … = []` while `chi T = 1`
+    → both theorems fail (evalStep only scans `c = 1 .. SIGMA-1`).
+(The exhaustive Bit-1b gate only ranges over the alphabet {1,2}, which is why
+it never caught either.)
+
+The upper bound is an artifact of the fixed `SIGMA = 128` candidate table in
+this executable model, not of the mathematics: the underlying LCP-maxima
+characterization is alphabet-parametric. `evalStep` iterates `1 .. SIGMA-1`
+and `upd` indexes the `SIGMA`-sized table, so the model needs an alphabet
+bound; the production scan is likewise alphabet-bounded (RB3_ASIZE patched to
+16 for the DNA chain, byte alphabet 256 for the web route), and bytes are
+remapped into range before the scan rather than making out-of-range values
+legal here. -/
+
+/-- Domain predicate: every character lies in `1 .. SIGMA-1` (the sentinel `0`
+is reserved, and the candidate table has only `SIGMA` slots). -/
+def positive (T : Text) : Bool := T.all (fun c => 1 ≤ c ∧ c < SIGMA)
+
+/-! ### Bit 1b verified helper lemmas
+
+Elementary facts about the definitions, proven so that the main theorems can be
+reduced to the single algorithmic characterization (LCP-maxima / Lemma 34). -/
+
+/-- Membership in the local dedup is unchanged (it only removes duplicates). -/
+theorem mem_dedupAux (seen l : List Nat) (a : Nat) :
+    a ∈ dedup.dedupAux seen l ↔ a ∈ l ∧ ¬ a ∈ seen := by
+  induction l generalizing seen with
+  | nil => simp [dedup.dedupAux]
+  | cons x xs ih =>
+    simp only [dedup.dedupAux]
+    by_cases hx : seen.contains x = true
+    · rw [if_pos hx]
+      have hxmem : x ∈ seen := (List.contains_iff_mem).mp hx
+      simp only [List.mem_cons]
+      rw [ih seen]
+      constructor
+      · intro h; exact ⟨Or.inr h.1, h.2⟩
+      · intro h
+        refine ⟨?_, h.2⟩
+        rcases h.1 with h' | h'
+        · exact absurd (h' ▸ hxmem) h.2
+        · exact h'
+    · rw [if_neg hx]
+      have hxmem : ¬ x ∈ seen := fun hm => hx ((List.contains_iff_mem).mpr hm)
+      simp only [List.mem_cons]
+      rw [ih (x :: seen)]
+      constructor
+      · intro h
+        rcases h with h' | h'
+        · subst h'; exact ⟨Or.inl rfl, hxmem⟩
+        · exact ⟨Or.inr h'.1, fun hm => h'.2 (List.mem_cons_of_mem x hm)⟩
+      · intro h
+        rcases h with ⟨h1, h2⟩
+        rcases h1 with h' | h'
+        · exact Or.inl h'
+        · by_cases hxa : a = x
+          · exact Or.inl hxa
+          · refine Or.inr ⟨h', ?_⟩
+            intro hm
+            rcases List.mem_cons.mp hm with heq | hseen
+            · exact hxa heq
+            · exact h2 hseen
+
+theorem mem_dedup (l : List Nat) (a : Nat) : a ∈ dedup l ↔ a ∈ l := by
+  unfold dedup
+  rw [mem_dedupAux]
+  simp
+
+/-- A character is in `T` whenever it ends an occurring word. -/
+theorem occurs_append_last (w : List Nat) (c : Nat) (T : Text)
+    (h : occurs (w ++ [c]) T = true) : c ∈ T := by
+  unfold occurs at h
+  split at h
+  · exact absurd h (by simp)
+  · rw [Bool.or_eq_true] at h
+    rcases h with h | h
+    · have := List.isEmpty_iff.mp h; exact absurd this (by simp)
+    · rw [List.any_eq_true] at h
+      obtain ⟨i, hi, htake⟩ := h
+      have heq : (T.drop i).take (w ++ [c]).length = (w ++ [c]) := beq_iff_eq.mp htake
+      have hmem : c ∈ (T.drop i).take (w ++ [c]).length := by
+        rw [heq]; exact List.mem_append_right _ (List.mem_singleton_self c)
+      exact List.mem_of_mem_drop (List.mem_of_mem_take hmem)
+
+/-- Characterisation of membership in the right-extension set. -/
+theorem mem_rightExts (w : List Nat) (c : Nat) (T : Text) :
+    c ∈ rightExts w T ↔ occurs (w ++ [c]) T = true := by
+  unfold rightExts
+  rw [mem_dedup, List.mem_filter]
+  constructor
+  · intro ⟨_, hc⟩; exact hc
+  · intro h; exact ⟨occurs_append_last w c T h, h⟩
+
+/-- Characterisation of membership in the requirement list. -/
+theorem mem_requirements (w : List Nat) (c : Nat) (T : Text) :
+    (w, c) ∈ requirements T ↔
+      w ∈ subStrings T ∧ rightMaximal w T = true ∧ c ∈ rightExts w T := by
+  unfold requirements
+  rw [List.mem_flatMap]
+  constructor
+  · rintro ⟨w', hw', hw'c⟩
+    rw [List.mem_flatMap] at hw'c
+    obtain ⟨c', hc', hmem⟩ := hw'c
+    by_cases hr : rightMaximal w' T = true
+    · rw [if_pos hr] at hmem
+      simp only [List.mem_singleton, Prod.mk.injEq] at hmem
+      obtain ⟨rfl, rfl⟩ := hmem
+      exact ⟨hw', hr, hc'⟩
+    · rw [if_neg hr] at hmem
+      exact absurd hmem (List.not_mem_nil)
+  · rintro ⟨hw, hr, hc⟩
+    exact ⟨w, hw, by
+      rw [List.mem_flatMap]
+      exact ⟨c, hc, by rw [if_pos hr]; exact List.mem_singleton_self _⟩⟩
+
+/-- `suffixient` holds as soon as every requirement has a covering witness. -/
+theorem suffixient_of_witnesses (S : List Nat) (T : Text)
+    (h : ∀ p, p ∈ requirements T → ∃ x, x ∈ S ∧ coversAt (p.1 ++ [p.2]) x T = true) :
+    suffixient S T = true := by
+  rw [show suffixient S T =
+        (requirements T).all (fun p => S.any (fun x => coversAt (p.1 ++ [p.2]) x T)) from rfl,
+      List.all_eq_true]
+  intro p hp
+  obtain ⟨x, hx, hc⟩ := h p hp
+  rw [List.any_eq_true]
+  exact ⟨x, hx, hc⟩
+
+/-- The positivity domain predicate yields a per-character lower bound. -/
+theorem positive_of_mem (T : Text) (hT : positive T = true) {c : Nat} (hc : c ∈ T) :
+    1 ≤ c ∧ c < SIGMA := by
+  unfold positive at hT
+  rw [List.all_eq_true] at hT
+  have := hT c hc
+  exact decide_eq_true_eq.mp this
+
+/-- `suffixient` is monotone in the position set: a superset stays suffixient. -/
+theorem suffixient_mono (S S' : List Nat) (T : Text)
+    (hsub : ∀ x, x ∈ S → x ∈ S') (h : suffixient S T = true) :
+    suffixient S' T = true := by
+  rw [suffixient] at h ⊢
+  rw [List.all_eq_true] at h ⊢
+  intro p hp
+  obtain ⟨x, hx, hc⟩ := List.any_eq_true.mp (h p hp)
+  exact List.any_eq_true.mpr ⟨x, hsub x hx, hc⟩
+
+/-- every requirement (w,c) is covered by some emitted position.
+Requires `positive T` (see the domain-convention note above). -/
+theorem covering_given_stream (T : Text) (hT : positive T = true) :
+    suffixient (scan (T.length + 1) (triplesOf T)) T := by
+  apply suffixient_of_witnesses
+  intro p hp
+  -- Remaining (Bit 1b, covering direction of the LCP-maxima characterisation):
+  -- for every requirement p = (w,c), the one-pass scan emits some position x
+  -- with `wc` a suffix of `T[0:x)`.  This is the core of Lemma 34 and is not
+  -- yet formalised.
+  sorry
+
+/-- the scan emits a *smallest* suffixient set (Lemma 34 tie-breaking).
+Requires `positive T` (see the domain-convention note above). -/
+theorem minimality (T : Text) (hT : positive T = true) :
+    (scan (T.length + 1) (triplesOf T)).length = chi T := by
+  -- Remaining (Bit 1b, minimality): the emitted set is suffixient (covering
+  -- direction) and has minimum cardinality among all suffixient subsets of
+  -- positions 1..T.length.  Combined with `chi` being the brute-force minimum
+  -- this pins `|scan| = chi T`.  This is the remaining content of Lemma 34.
+  sorry
 
 end Sxgc

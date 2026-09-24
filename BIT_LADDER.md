@@ -592,3 +592,35 @@ the correction. Headline reading: one first-occurrence witness per 624
 bases of pangenome; the entire decision space of 466 human genomes =
 2.25 B positions = 0.16% of n.
 Chain continues: patterns -> query -> AGC oracle verdict (watch armed).
+
+## Bit 1b partial (2026-09-24, delegated): domain correction + reduction to Lemma 34 core
+
+Delegation pilot (worker on lunaroute/deepseek-4.1-flash-background,
+fresh context, kernel gate + statement-lock + supervision): CLEAN PARTIAL.
+
+Landed (kernel-verified, supervisor-reviewed, committed):
+- DOMAIN CORRECTION — the Bit 1b theorems were FALSE as stated, found by
+  the agent, not by us: (1) 0 is the hard-coded stream sentinel
+  (T=[0,0] counterexample, native_decide); (2) chars must be < SIGMA=128
+  (T=[128] counterexample; evalStep iterates 1..SIGMA-1). Our own #eval
+  gates missed both (they only ever tested {1,2,3}). Fix: explicit
+  `positive T := T.all (1 <= c < SIGMA)` hypothesis on both theorems +
+  doc note (production encodes the same convention: pfp++ remaps bytes
+  +3; RB3_ASIZE patch; the math is alphabet-parametric, the bound is
+  the executable model's).
+- 7 HELPER LEMMAS PROVEN (no sorry): mem_dedup, occurs_append_last,
+  mem_rightExts, mem_requirements, suffixient_of_witnesses,
+  positive_of_mem, suffixient_mono.
+- REDUCTION: covering_given_stream -> one sorry (every requirement
+  (w,c) is witnessed by an emitted position = covering direction of
+  Lemma 34); minimality -> one sorry (emitted set is minimum-cardinality
+  suffixient = Lemma 34 tie-breaking).
+- Gates: lake build exit 0; Main.lean exhaustive 511 pass / 0 fail
+  ("BIT 1B GATE: GREEN"); sorry count = 2 (both the Lemma 34 core).
+
+Delegation verdict: the pattern works. Kernel + statement-lock +
+supervision stress-tested the SPECIFICATION against the implementation
+(two real convention gaps found and fixed, zero weakening beyond the
+approved domain hypotheses) — this is Bit-2-ladder-grade value from a
+flash-tier model. Next slice: saOrder/lcpOf correctness + the scanAux
+interior-maxima invariant (the actual math; honest multi-session scope).
