@@ -815,3 +815,50 @@ Distribution is remarkably flat: every one of the 466 haplotypes
 contributes 0.10%-0.54% (max/min ~5.2x); mean ~4.8M each. No
 haplotype is redundant at 466 diversity — the k=10 conclusion,
 confirmed at full scale.
+
+## 466 verdict FAIL: ROOT CAUSE CONFIRMED (2026-09-24) — sentinel-erasure via mega-run walks
+
+The 313 bad occurrences are the sentinel-identity erasure law (recorded
+twice) reached through a path nobody had modeled: LONG WALKS.
+
+Chain of evidence, all measured:
+1. Discriminator: xsa (independent Rust s_at) == rindex_query on p39,
+   209,547/209,547 positions identical, bads included -> TOOLS EXONERATED;
+   the data path is deterministic -> the ALGORITHM is at fault, not bits.
+2. Trace audit of 5 known bads: walks of 1,556-393,160 steps (vs ~256
+   typical) — satellite occurrences live inside MEGA-RUNS (p150's
+   interval alone spans ~921K rows); anchors: runs 17241 (row 24,405)
+   and 26270 (row 37,155) are LENGTH-1 runs INSIDE the bare-sentinel
+   region (rows 0..38,789) with DNA chars — exactly where a corrupted
+   walk lands and dies.
+3. Crossing law: the walk starts at the SUFFIX (m positions past the
+   pattern start); crossing condition = d_end - m <= steps. ALL 5/5
+   bads cross; margins 1-4 steps = the bare-sentinel bounce.
+4. Mechanism: long walk crosses the owning string's start row (BWT
+   0x0A) -> remapped-LF lands on a bare-sentinel row (WRONG string,
+   region of length-1 runs) -> walk terminates on a foreign sample ->
+   S = foreign sample - mismatched steps -> garbage position.
+
+RETRACTION (mine, recorded): the earlier "boundary hypothesis REFUTED"
+was MY error, twice: wrong variable (occurrence distance-to-boundary
+instead of walk-length) and wrong zone (720bp instead of walk-scaled);
+plus the off-by-m in the distance. The documented latent bug was right
+all along; k=10/k50 never saw it because their satellite runs (and
+walks) were ~50x shorter.
+
+WHY chi IS UNAFFECTED (already recorded): the chi walk is per-string
+bounded (breaks at t==len[i]; never steps from a string-start row).
+
+THE FIX (designed, no 37h walk rerun needed):
+- Build the 0x0A-row -> string map WITHOUT the walk: for each string
+  i, backward-search a long prefix of its content (read from
+  h466_rl.txt at its stream fstart); within the interval, the string's
+  START row is the unique row with BWT char 0x0A (start rows are
+  exactly the 0x0A-BWT rows; extend prefix until unique). O(k) searches.
+- Sentinel-aware s_at: when the walk's current row has BWT 0x0A, look
+  up its string i and JUMP to bare-sentinel row i-1 (the flat-model
+  correct LF from a string-start row), steps += 1, continue. Bare
+  rows' LF is valid (their BWT chars are real DNA).
+- Then rerun query+verify (~9 h, stage-guarded) -> expected PASS.
+- Same fix lands in rindex_query (C++) for the record; the gate rerun
+  runs through xsa (already byte-identical).
