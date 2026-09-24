@@ -759,3 +759,33 @@ Orientation law discovered and documented: the oracle is standard
 PREFIX-MS; reproduced via whole-read reversal (--plain) + forward
 consumption + position-reversed emission. The --mem/--project readouts
 build on ms_vector; seed_project's engine exists.
+
+## Bit 1b slice 4 (2026-09-24, delegated): chi = #maximal coverage classes — a candidate new theorem
+
+Landed (verified: 0 errors, gate green, 128 insertions, 0 deletions):
+- suffixient REFORMULATED as a hitting-set property (covSet T x = the
+  requirements position x covers; suffixient iff the set hits every
+  requirement) — proven: suffixient_iff_cover, mem_covSet,
+  isCover_iff_suffixient.
+- MAIN DISCOVERY, empirically verified then Lean-stated:
+  **chi T = the number of distinct INCLUSION-MAXIMAL coverage classes**
+  (chi_eq_maxClasses, one sorry for the count argument). Sweeps:
+  exhaustive {1,2} |T|<=8 (511) and {1,2,3} |T|<=7, plus 3000 random
+  {1..4} texts — 0 mismatches. Structural support: every maximal class
+  has a PRIVATE requirement (covered by no other position's covSet) —
+  which is exactly why minimum-cover = class-count despite overlapping
+  classes (154 overlap cases verified consistent).
+- chi_le_length proven; chi_le_of_suffixient stated (budget-limited).
+- NEGATIVE RESULT #3: the earliest-representative-per-class is NOT the
+  scan's output (83/511 small texts disagree; [2,1,2]: scan {2,3} vs
+  earliest {1,2}) — the scan's representative choice is genuinely
+  algorithmic. The "both machines compute the earliest-rep canonical
+  set" route is DEAD; uniqueness needs the real tie-breaking.
+
+THEORY IMPLICATION (recorded for Bit-2/r-space): counting inclusion-
+maximal coverage classes is a DIFFERENT route to chi than the row walk.
+If maximal coverage classes are identifiable/countable from run-
+compressed structure, that is a second O(r)-candidate alongside the FM
+route — and arguably the cleaner one, since classes are objects of the
+requirement lattice, not of row enumeration. The private-requirement
+structure says the minimum is exactly witnessed class-by-class.

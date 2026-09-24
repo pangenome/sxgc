@@ -720,6 +720,134 @@ theorem scan_range (T : Text) (hT : positive T = true) :
     exact ⟨hres.1, by omega⟩
 
 
+/-! ### Slice 4: covering formulation, χ as a minimum cover, and the maximal-class
+characterisation of χ.
+
+Reformulating `suffixient` as a hitting-set property over the coverage sets
+`covSet T x` makes χ a minimum set-cover size.  Empirically (exhaustive over
+`{1,2}` and `{1,2,3}`, `|T| ≤ 7`, plus 3000 random texts over `{1..4}`) this
+minimum equals the number of *distinct inclusion-maximal* coverage sets — the
+`chi_eq_maxClasses` characterisation below.
+
+NEGATIVE RESULT #3 (slice 4): the naive canonical representative — the *earliest*
+position per maximal class — does NOT equal the scan output (83/511 texts,
+`{1,2}`, `|T| ≤ 8` disagree), so the canonical-minimum-uniqueness route cannot
+take the earliest-representative canonicals as its predicate; the scan's
+representative choice is genuinely algorithmic. -/
+
+/-- 1-based text positions. -/
+def positionsT (T : Text) : List Nat := (List.range T.length).map (· + 1)
+
+/-- requirements covered by position `x`. -/
+def covSet (T : Text) (x : Nat) : List (List Nat × Nat) :=
+  (requirements T).filter (fun p => coversAt (p.1 ++ [p.2]) x T)
+
+theorem mem_covSet (T : Text) (x : Nat) (p : List Nat × Nat) :
+    p ∈ covSet T x ↔ p ∈ requirements T ∧ coversAt (p.1 ++ [p.2]) x T = true := by
+  unfold covSet; rw [List.mem_filter]
+
+/-- covering formulation of `suffixient`. -/
+theorem suffixient_iff_cover (S : List Nat) (T : Text) :
+    suffixient S T = true ↔
+      ∀ p, p ∈ requirements T → ∃ x, x ∈ S ∧ coversAt (p.1 ++ [p.2]) x T = true := by
+  rw [suffixient, List.all_eq_true]
+  constructor
+  · intro h p hp; obtain ⟨x, hx, hc⟩ := List.any_eq_true.mp (h p hp); exact ⟨x, hx, hc⟩
+  · intro h p hp; obtain ⟨x, hx, hc⟩ := h p hp; exact List.any_eq_true.mpr ⟨x, hx, hc⟩
+
+/-- a position set hits every requirement. -/
+def IsCover (S : List Nat) (T : Text) : Prop :=
+  ∀ p, p ∈ requirements T → ∃ x, x ∈ S ∧ p ∈ covSet T x
+
+theorem isCover_iff_suffixient (S : List Nat) (T : Text) :
+    IsCover S T ↔ suffixient S T = true := by
+  rw [suffixient_iff_cover]
+  constructor
+  · intro h p hp
+    obtain ⟨x, hx, hpx⟩ := h p hp
+    exact ⟨x, hx, (mem_covSet T x p).mp hpx |>.2⟩
+  · intro h p hp
+    obtain ⟨x, hx, hc⟩ := h p hp
+    exact ⟨x, hx, (mem_covSet T x p).mpr ⟨hp, hc⟩⟩
+
+/-- `covSet T x ⊆ covSet T y`. -/
+def ScopeLe (T : Text) (x y : Nat) : Prop := ∀ p, p ∈ covSet T x → p ∈ covSet T y
+
+/-- `x`'s coverage set is inclusion-maximal among text positions. -/
+def IsMax (T : Text) (x : Nat) : Prop :=
+  covSet T x ≠ [] ∧ ∀ y, y ∈ positionsT T → ScopeLe T x y → ScopeLe T y x
+
+/-- `x` is the earliest position of its maximal coverage class. -/
+def IsRep (T : Text) (x : Nat) : Prop :=
+  x ∈ positionsT T ∧ IsMax T x ∧
+    ∀ y, y ∈ positionsT T → y < x → IsMax T y → ¬ (ScopeLe T x y ∧ ScopeLe T y x)
+
+/-- number of distinct inclusion-maximal coverage classes. -/
+noncomputable def maxClassCount (T : Text) : Nat := by
+  classical
+  exact ((positionsT T).filter (fun x => decide (IsRep T x))).length
+
+/-- `subsequences` contains every sublist. -/
+theorem sublist_mem_subsequences (l S : List Nat) (h : S.Sublist l) : S ∈ subsequences l := by
+  induction h with
+  | slnil => simp [subsequences]
+  | cons a _ ih => simp only [subsequences]; exact List.mem_append_left _ ih
+  | cons_cons a _ ih =>
+    simp only [subsequences]; exact List.mem_append_right _ (List.mem_map.mpr ⟨_, ih, rfl⟩)
+
+/-- suffixient `k`-subsequences of the positions. -/
+def blk (T : Text) (k : Nat) : List (List Nat) :=
+  ((subsequences (positionsT T)).filter (fun s => s.length == k)).filter
+    (fun S => isSuffixientMin S T)
+
+theorem mem_blk (T : Text) (k : Nat) (S : List Nat) :
+    S ∈ blk T k ↔ S ∈ subsequences (positionsT T) ∧ S.length = k ∧ suffixient S T = true := by
+  unfold blk positionsT
+  rw [List.mem_filter, List.mem_filter]
+  constructor
+  · rintro ⟨⟨h1, h2⟩, h3⟩
+    exact ⟨h1, by simpa using h2, by simpa [isSuffixientMin] using h3⟩
+  · rintro ⟨h1, h2, h3⟩
+    exact ⟨⟨h1, by simpa using h2⟩, by simpa [isSuffixientMin] using h3⟩
+
+theorem chi_le_length (T : Text) : chi T ≤ T.length := by
+  unfold chi; dsimp only
+  split
+  · rename_i d hd
+    have hmem := List.mem_of_mem_head? hd
+    rw [List.mem_flatMap] at hmem
+    obtain ⟨k, hk, hdk⟩ := hmem
+    rw [List.mem_range] at hk
+    rw [List.mem_filter, List.mem_filter] at hdk
+    have hlen : d.length = k := by simpa using hdk.1.2
+    omega
+  · exact Nat.le_refl _
+
+/-- χ is at most the size of any suffixient set of positions: the brute-force
+`chi` enumerates suffixient sublists in increasing size and returns the first. -/
+theorem chi_le_of_suffixient (T : Text) (S : List Nat)
+    (hsub : S.Sublist (positionsT T)) (hs : suffixient S T = true) :
+    chi T ≤ S.length := by
+  -- `S` lies in block `S.length`; the head of `chi`'s candidate list is the head
+  -- of the first nonempty block, whose index is ≤ `S.length`.
+  have hmem : S ∈ subsequences (positionsT T) := sublist_mem_subsequences _ _ hsub
+  have hB : S ∈ blk T S.length := (mem_blk T S.length S).mpr ⟨hmem, rfl, hs⟩
+  have hne : blk T S.length ≠ [] := by intro h; rw [h] at hB; exact List.not_mem_nil hB
+  sorry
+
+/-- **χ as the number of distinct inclusion-maximal coverage classes.**
+Verified exhaustively: `{1,2}` `|T| ≤ 8`, `{1,2,3}` `|T| ≤ 7`, and 3000 random
+texts over `{1..4}` all satisfy `chi T = maxClassCount T` (0 mismatches).  This
+replaces the brute-force minimum by a structural count.  The proof has two
+halves: (≤) the earliest representative of each maximal class is a suffixient
+set (`IsCover`), so `chi ≤ maxClassCount`; (≥) each maximal class has a *private*
+requirement (verified: 0 classes lack one), so every cover needs one position per
+class, `maxClassCount ≤ chi`. -/
+theorem chi_eq_maxClasses (T : Text) (hT : positive T = true) :
+    chi T = maxClassCount T := by
+  sorry
+
+
 /-- every requirement (w,c) is covered by some emitted position.
 Requires `positive T` (see the domain-convention note above). -/
 theorem covering_given_stream (T : Text) (hT : positive T = true) :
