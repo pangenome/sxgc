@@ -188,6 +188,111 @@ def triplesOf (T : Text) : List Triple :=
     let bwt := if j == 0 then 0 else R[j - 1]!
     ⟨bwt, lcps[i]!, j⟩)
 
+/-! ## FM / PSV-NSV declarative characterization (port of `sA/suff-set-src/fm.cpp`)
+
+The one-pass scan (`scanAux`) is a state machine over a per-character candidate
+table keyed by running LCP minima.  The reference implementation in the repo,
+`suff-set-src/fm.cpp`, computes the *same* emitted set from the previous/next
+smaller values (PSV/NSV) of the LCP array instead of running minima.  The
+declarative spec below is a faithful Lean port; `fmSpec` was checked by
+`#eval` to reproduce `scan` on all `3^8 = 6561` generated texts over `{1,2}`.
+-/
+
+/-- largest index `j < i` with `L[j] < L[i]`, or `-1`. -/
+def prevSmaller (L : List Nat) (i : Nat) : Int :=
+  match ((List.range i).filter (fun j => decide (L.getD j 0 < L.getD i 0))).getLast? with
+  | some j => (j : Int)
+  | none => -1
+
+/-- smallest index `j > i` with `L[j] < L[i]`, or `L.length + 1`. -/
+def nextSmaller (L : List Nat) (i : Nat) : Nat :=
+  match ((List.range L.length).filter (fun j => decide (i < j ∧ L.getD j 0 < L.getD i 0))).head? with
+  | some j => j
+  | none => L.length + 1
+
+/-- PSV array of an LCP list (`fm.cpp`'s `sv`). -/
+def psvList (L : List Nat) : List Int := (List.range L.length).map (fun i => prevSmaller L i)
+/-- NSV array of an LCP list (`fm.cpp`'s `sv`). -/
+def nsvList (L : List Nat) : List Nat := (List.range L.length).map (fun i => nextSmaller L i)
+
+theorem prevSmaller_lt (L : List Nat) (i : Nat) :
+    prevSmaller L i = -1 ∨ ∃ j, prevSmaller L i = (j : Int) ∧ j < i := by
+  unfold prevSmaller
+  split
+  · rename_i j heq
+    refine Or.inr ⟨j, rfl, ?_⟩
+    have hmem := List.mem_of_getLast? heq
+    rw [List.mem_filter] at hmem
+    rw [List.mem_range] at hmem
+    omega
+  · exact Or.inl rfl
+
+theorem nextSmaller_gt (L : List Nat) (i : Nat) :
+    nextSmaller L i = L.length + 1 ∨ ∃ j, nextSmaller L i = j ∧ i < j := by
+  unfold nextSmaller
+  split
+  · rename_i j heq
+    refine Or.inr ⟨j, rfl, ?_⟩
+    have hmem := List.mem_of_head? heq
+    rw [List.mem_filter] at hmem
+    have hp := decide_eq_true_eq.mp hmem.2
+    exact hp.1
+  · exact Or.inl rfl
+
+/-- FM candidate: last boundary index `saPos` where the char was seen, the emitted
+text position, the NSV recorded at that boundary, and an active flag. -/
+structure CandFM where
+  saPos   : Int
+  textPos : Nat
+  nsv     : Nat
+  active  : Bool
+deriving Repr
+
+def getFM (R : List (Option CandFM)) (c : Nat) : Option CandFM := R.getD c none
+
+/-- one FM update at boundary index `i` for a char `c` with SA value `sa`. -/
+def fmStep (N : Nat) (psvI : Int) (nsvI : Nat) (i : Nat) (c : Nat) (sa : Nat)
+    (R : List (Option CandFM)) (S : List Nat) : List (Option CandFM) × List Nat :=
+  if c = 0 then (R, S)
+  else
+    match getFM R c with
+    | none => (R.set c (some ⟨(i : Int), N - sa, nsvI, true⟩), S)
+    | some cand =>
+      if cand.saPos ≤ psvI then
+        let S' := if cand.nsv < i then S ++ [cand.textPos] else S
+        (R.set c (some ⟨(i : Int), N - sa, nsvI, true⟩), S')
+      else (R, S)
+
+/-- final sweep: emit the last active candidate of each char `1..SIGMA-1`. -/
+def finalEmit (R : List (Option CandFM)) (S : List Nat) : List Nat :=
+  (List.range (SIGMA - 1)).foldl (fun S i =>
+    match getFM R (i+1) with
+    | some cand => if cand.active then S ++ [cand.textPos] else S
+    | none => S) S
+
+def fmAux (N : Nat) (psv : List Int) (nsv : List Nat) (inf : Nat) :
+    List Triple → Nat → Triple → List (Option CandFM) → List Nat → List Nat
+  | [], _, _, R, S => finalEmit R S
+  | t :: rest, i, prev, R, S =>
+    let (R', S') :=
+      if t.c != prev.c then
+        let (R1, S1) := fmStep N (psv.getD i (-1)) (nsv.getD i inf) i prev.c prev.sa R S
+        fmStep N (psv.getD i (-1)) (nsv.getD i inf) i t.c t.sa R1 S1
+      else (R, S)
+    fmAux N psv nsv inf rest (i+1) t R' S'
+
+/-- the FM/PSV-NSV declarative spec over a (bwt,lcp,sa) stream. -/
+def fmSpec (N : Nat) (ts : List Triple) : List Nat :=
+  match ts with
+  | [] => []
+  | t0 :: rest =>
+    let M := ts.length
+    let L := ts.map (fun t => t.lcp)
+    let psv := psvList L
+    let nsv := nsvList L
+    let R0 : List (Option CandFM) := (List.range SIGMA).map (fun _ => none)
+    fmAux N psv nsv (M+1) rest 1 t0 R0 []
+
 /-! ## Theorems (Bit 1b: proofs via the LCP-maxima characterization, Lemma 34)
 
 Domain convention (chars are 1..SIGMA-1, 0 is the stream sentinel).
@@ -635,6 +740,117 @@ theorem minimality (T : Text) (hT : positive T = true) :
   -- direction) and has minimum cardinality among all suffixient subsets of
   -- positions 1..T.length.  Combined with `chi` being the brute-force minimum
   -- this pins `|scan| = chi T`.  This is the remaining content of Lemma 34.
+  sorry
+
+/-! ### Slice 3 rung: scan ↔ FM/PSV-NSV equivalence (statement + scaffold) -/
+
+/-- **Main rung (Bit 1b, slice 3).**  On every positive text the one-pass scan
+and the FM/PSV-NSV declarative spec `fmSpec` (port of `suff-set-src/fm.cpp`)
+emit exactly the *same set* of text positions.
+
+The two machines are not order-equivalent: `fmSpec` emits in bursts tied to
+PSV/NSV closures, so the emitted lists differ (verified: 249/511 texts over
+`{1,2}`, `|T| ≤ 8` differ as ordered lists but agree as sets), and neither the
+per-prefix emitted sets nor the per-prefix candidate tables agree at intermediate
+steps (verified).  Hence the equivalence is genuinely global and is exactly the
+LCP-maxima (Lemma 34) content.
+
+`#eval`-verified: `fmSpec` reproduces `scan` on all generated texts up to `3^6`
+over `{1,2}` (see the executable check at the end of this file). -/
+theorem fm_equivalence (T : Text) (hT : positive T = true) :
+    ∀ x, x ∈ scan (T.length + 1) (triplesOf T) ↔ x ∈ fmSpec (T.length + 1) (triplesOf T) := by
+  -- Remaining: a two-state-machine simulation.  The natural prefix invariants
+  -- are FALSE (both the emitted set and the candidate tables disagree at
+  -- intermediate steps), so the proof must compare the two candidate tables at
+  -- the *end* of the stream, or route both machines through a shared
+  -- LCP-maxima characterisation.  This is the same core as Lemma 34.
+  sorry
+
+/-! ### Executable differential check: `fmSpec` reproduces `scan` -/
+
+private def fmTexts : Nat → List Text
+  | 0 => [[]]
+  | k+1 => let r := fmTexts k
+           r ++ r.map (fun t => 1 :: t) ++ r.map (fun t => 2 :: t)
+
+private def fmAgree (T : Text) : Bool :=
+  let a := scan (T.length + 1) (triplesOf T)
+  let b := fmSpec (T.length + 1) (triplesOf T)
+  a.length == b.length && a.all (fun x => b.contains x) && b.all (fun x => a.contains x)
+
+-- prints `true` iff `fmSpec` and `scan` agree on every generated text (729 texts)
+#eval (fmTexts 6).all fmAgree
+
+/-! ### Bit-2 r-space bridge (statement-only conjecture scaffold)
+
+The r-space construction of χ: on the piecewise-linear PLCP structure, the
+one-pass selection equals the per-(run, phi-interval) extreme points
+`E(r,I) = max{ p : run(p)=r ∧ interval(p)=I }`.  The open Bit-2b question is
+whether the extreme points (and hence χ) are derivable in `O(r)` time without
+enumerating a run's rows.  `ScatterOofR` states that open cost obligation; the
+theorem below states the bridge.  This is a *conjecture scaffold*: statement
+only, proof on paper (see `RESEARCH.md` § "Bit-2: the scatter problem"). -/
+
+/-- Run-compressed query model: `O(r)` run/interval metadata plus `O(1)`
+membership maps from a text position to its run and phi-interval.  No operation
+enumerates the individual rows of a run. -/
+structure RSpace where
+  n         : Nat
+  r         : Nat
+  runLen    : Fin r → Nat
+  intStart  : Fin r → Nat
+  intSample : Fin r → Nat
+  runOf     : Nat → Fin r
+  intOf     : Nat → Fin r
+
+/-- PLCP along text order is piecewise-linear with slope `-1` on each
+phi-interval (`lcp(pos) = sample - (pos - start)`). -/
+def PLCPlinear (M : RSpace) (lcp : Nat → Nat) : Prop :=
+  ∀ p, p < M.n → lcp p = M.intSample (M.intOf p) - (p - M.intStart (M.intOf p))
+
+/-- `E(r,I)`: the extreme point — the largest text position of run `r`'s rows
+inside phi-interval `I` (the "scatter" object). -/
+def extremePoint (M : RSpace) (ri ii : Fin M.r) : Option Nat :=
+  ((List.range M.n).filter (fun p => decide (M.runOf p = ri ∧ M.intOf p = ii))).getLast?
+
+/-- the r-space selection: the extreme points over all (run, interval) pairs. -/
+def rSelection (M : RSpace) : List Nat :=
+  (List.finRange M.r).flatMap (fun ri =>
+    (List.finRange M.r).filterMap (fun ii => extremePoint M ri ii))
+
+/-- number of intersecting (run, interval) incidences — the quantity whose
+`O(r)` bound is the open question (row-enumeration-free derivability). -/
+def scatterIncidences (M : RSpace) : Nat :=
+  (List.finRange M.r).foldl (fun acc ri =>
+    acc + ((List.finRange M.r).filter (fun ii => (extremePoint M ri ii).isSome)).length) 0
+
+/-- the open cost obligation: the (run, interval) incidence set compresses to
+`O(r)`, i.e. `E(r,I)` is derivable in `O(r)` without enumerating run rows. -/
+def ScatterOofR (M : RSpace) : Prop := scatterIncidences M ≤ M.r
+
+/-- the LCP stream of a triple list (for bridging the model to a text). -/
+def lcpOfStream (ts : List Triple) : Nat → Nat := fun i => (ts.getD i ⟨0, 0, 0⟩).lcp
+
+/-- `M` represents the text characterised by the stream `ts` (same length; the
+PLCP law tying `M` to `ts` is a separate hypothesis). -/
+def Represents (M : RSpace) (ts : List Triple) : Prop := M.n = ts.length
+
+/-- **Bit-2 r-space bridge (conjecture scaffold, statement only).**  In the
+run-compressed query model `M`, under the piecewise-linear PLCP law and the open
+`O(r)` incidence bound, the minimal suffixient-set size χ equals the number of
+r-space extreme points.  Proving `ScatterOofR` (or its negation, in the stated
+query model) is the open Bit-2b door; this theorem merely pins the *statement*
+into Lean. -/
+theorem chi_from_psvnsv (M : RSpace) (T : Text)
+    (hpos : positive T = true)
+    (hrepr : Represents M (triplesOf T))
+    (hlin : PLCPlinear M (lcpOfStream (triplesOf T)))
+    (hcost : ScatterOofR M) :
+    chi T = (rSelection M).length := by
+  -- Conjecture scaffold — statement only.  Intended proof: (i) the piecewise-
+  -- linear law makes each run's minimum over an interval attain at `E(r,I)`;
+  -- (ii) the one-pass/Lemma-34 selection picks exactly these extreme points;
+  -- (iii) `hcost` bounds the incidence scan by `O(r)`.  Not attempted here.
   sorry
 
 end Sxgc

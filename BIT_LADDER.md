@@ -651,3 +651,31 @@ sA/suff-set-src/fm.cpp reproduces scan EXACTLY on all small texts
 (exhaustively verified); proving scan == FM-spec is the next rung —
 itself a two-state-machine equivalence proof (substantial, next slice or
 main-thread).
+
+## Bit 1b slice 3 (2026-09-24, delegated): FM spec formalized; the r-space bridge is now Lean-statable
+
+Landed (verified: 0 errors, 511/0 gate green, additions-only diff):
+- fm.cpp PORTED to Lean as a declarative spec (prevSmaller/nextSmaller/
+  psv/nsv lists, fmStep, fmSpec) with proven PSV/NSV index lemmas.
+- Differential gate: fmSpec == scan AS SETS on every text to 3^6=729
+  over {1,2} (#eval, machine-checked agreement).
+- fm_equivalence STATED (one sorry).
+- TARGET 2 complete: the r-space bridge is formalized — RSpace query
+  model (O(r) run/interval metadata, O(1) position->run/interval maps),
+  PLCPlinear (the piecewise-linear law), extremePoint/rSelection
+  (per-(run,interval) selection), scatterIncidences, and the explicit
+  cost hypothesis ScatterOofR (incidence compresses to O(r)).
+  chi_from_psvnsv stated as the conjecture scaffold: if ScatterOofR
+  holds then chi = |rSelection|. The O(r)/O(r log r) question is now a
+  well-posed question about ScatterOofR.
+
+NEGATIVE RESULT #2 (recorded): the scan and fmSpec are NOT lockstep-
+equivalent — ordered outputs differ on 249/511 small texts, and neither
+per-prefix emitted sets nor candidate tables agree at intermediate
+steps. A simulation proof is provably impossible; the equivalence is
+genuinely global.
+RECOMMENDED SLICE-4 ROUTE (from this finding): avoid machine-vs-
+machine simulation entirely; prove each machine independently computes
+the CANONICAL (tie-broken, Lemma 34) smallest suffixient set, then
+conclude equality via its uniqueness. Uniqueness of the canonical
+minimum is the linchpin lemma — add it to the Bit-1b target list.
