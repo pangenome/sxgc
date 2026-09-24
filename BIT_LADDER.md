@@ -541,3 +541,24 @@ patterns deliberately (ft30's s200-era sentinel-identity-erasure law
 is the same phenomenon).
 Tool lane now: stats, tags, query — all gated. seed_project's MS walk
 is the remaining T1 piece above the xsa veneer.
+
+## T1 rung 4a: syng cross-measure at yeast — the "sparse suffixient array" quantified (2026-09-23)
+
+impg syng built on yeast235 (9,901 contig strings, 3.39 GB forward FASTA
+from the revlines + sidecar): (k=63, s=8, seed 7), 4m14s at -t 32;
+129,915,680 syncmer steps; dictionary = **10,024,605 oriented syncmer
+nodes** (read from impg map's pack universe).
+
+Cross-measure table (same collection):
+  n = 3,336,986,759   r = 100,902,972   chi(BCR) = 85,350,673
+  syng dictionary = 10,024,605   (= chi/8.51, = r/10.07)
+  syncmer spacing ~25.7 bp
+
+Reading: syncmer quantization collapses the novelty set ~8.5x relative
+to full-resolution chi, and syng's node count sits at r/10 — the
+"sparse suffixient array" slogan with numbers. Cost (recorded earlier):
++/-63 bp localization blur, shared-anchor restrictions; benefit: a
+4-minute, quarter-GB build vs the full chain. k=10 build running
+(proc_f0b2) for the second point of the ratio (chi=1,627,063,183 there;
+projected dictionary ~190M if the ratio holds). Oriented-vs-canonical
+node convention to be pinned when comparing across scales.
