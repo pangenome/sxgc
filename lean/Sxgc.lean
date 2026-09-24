@@ -347,6 +347,274 @@ theorem suffixient_mono (S S' : List Nat) (T : Text)
   obtain ⟨x, hx, hc⟩ := List.any_eq_true.mp (h p hp)
   exact List.any_eq_true.mpr ⟨x, hsub x hx, hc⟩
 
+/-! ### Bit 1b structural invariant: emitted positions are valid text positions
+
+The following lemma proves that, for a positive text, every position emitted by
+the one-pass scan lies in `1 .. T.length`.  The proof is by an explicit
+invariant (`scanAux_pres`) over the state machine: every active candidate's
+stored position, and every already-emitted position, stays in `1 .. N-1`; the
+initial `defaultR` is all-inactive and every update writes `N - sa` for a
+triple whose `sa` lies in `1 .. N-1` (because a BWT char is `0` exactly for the
+sentinel row, `sa = 0`).  This is the "interior LCP maxima" invariant from the
+task: the scan only ever emits run-edge positions. -/
+
+def PosGood (N x : Nat) : Prop := 1 ≤ x ∧ x ≤ N - 1
+def Rgood (N : Nat) (R : List Cand) : Prop :=
+  ∀ c, 1 ≤ c → (getR R c).active → PosGood N (getR R c).pos
+def Outgood (N : Nat) (out : List Nat) : Prop := ∀ x ∈ out, PosGood N x
+
+theorem getR_set_eq (R : List Cand) (c : Nat) (a : Cand) :
+    getR (R.set c a) c = if c < R.length then a else getR R c := by
+  unfold getR
+  rw [List.getElem?_set]
+  by_cases h : c < R.length
+  · simp [h]
+  · have h2 : ¬ c < (R.set c a).length := by rw [List.length_set]; exact h
+    simp [h]
+
+theorem getR_set_ne (R : List Cand) (c d : Nat) (a : Cand) (h : c ≠ d) :
+    getR (R.set c a) d = getR R d := by
+  unfold getR
+  rw [List.getElem?_set]
+  simp [h]
+
+theorem foldl_pres {α : Type} (g : α → Nat → α) (P : α → Prop)
+    (h : ∀ a i, P a → P (g a i)) : ∀ (l : List Nat) (a : α), P a → P (List.foldl g a l) := by
+  intro l
+  induction l with
+  | nil => intro a hp; exact hp
+  | cons x xs ih =>
+    intro a hp
+    simp only [List.foldl_cons]
+    exact ih (g a x) (h a x hp)
+
+def evalStepGo (l : Int) : List Nat × List Cand → Nat → List Nat × List Cand
+  | (out, R), i =>
+    let c := i + 1
+    let cand := getR R c
+    if l < cand.len then
+      let out' := if cand.active then out ++ [cand.pos] else out
+      (out', R.set c ⟨l, 0, false⟩)
+    else (out, R)
+
+theorem evalStep_eq (l : Int) (R : List Cand) (out : List Nat) :
+    evalStep l R out = (List.range (SIGMA - 1)).foldl (evalStepGo l) (out, R) := rfl
+
+theorem evalStepGo_pres (N : Nat) (l : Int) :
+    ∀ acc i, Outgood N acc.1 → Rgood N acc.2 →
+      Outgood N (evalStepGo l acc i).1 ∧ Rgood N (evalStepGo l acc i).2 := by
+  intro acc i ho hR
+  obtain ⟨out, R⟩ := acc
+  rw [evalStepGo]
+  split
+  · rename_i hl
+    constructor
+    · intro x hx
+      split at hx
+      · rename_i ha
+        rw [List.mem_append] at hx
+        rcases hx with hx | hx
+        · exact ho x hx
+        · rw [List.mem_singleton] at hx; subst hx
+          exact hR (i+1) (Nat.le_add_left 1 i) ha
+      · exact ho x hx
+    · intro c hc hact
+      by_cases hceq : i + 1 = c
+      · subst hceq
+        rw [getR_set_eq] at hact ⊢
+        by_cases hlt : i + 1 < R.length
+        · rw [if_pos hlt] at hact; simp at hact
+        · rw [if_neg hlt] at hact ⊢
+          exact hR (i+1) hc hact
+      · rw [getR_set_ne R (i+1) c ⟨l,0,false⟩ hceq] at hact ⊢
+        exact hR c hc hact
+  · exact ⟨ho, hR⟩
+
+theorem evalStep_pres (N : Nat) (l : Int) (R : List Cand) (out : List Nat)
+    (ho : Outgood N out) (hR : Rgood N R) :
+    Outgood N (evalStep l R out).1 ∧ Rgood N (evalStep l R out).2 := by
+  rw [evalStep_eq]
+  refine foldl_pres (evalStepGo l) (fun acc => Outgood N acc.1 ∧ Rgood N acc.2) ?_ (List.range (SIGMA-1)) (out,R) ⟨ho,hR⟩
+  intro a i h
+  exact evalStepGo_pres N l a i h.1 h.2
+
+theorem upd_pres (N : Nat) (R : List Cand) (c : Nat) (l : Nat) (pos : Nat)
+    (hR : Rgood N R) (hpos : 1 ≤ c → PosGood N pos) : Rgood N (upd R c l pos) := by
+  unfold upd
+  split
+  · intro d hd hact
+    by_cases hdeq : c = d
+    · subst hdeq
+      rw [getR_set_eq] at hact ⊢
+      by_cases hlt : c < R.length
+      · rw [if_pos hlt] at hact ⊢; exact hpos hd
+      · rw [if_neg hlt] at hact ⊢; exact hR c hd hact
+    · rw [getR_set_ne R c d ⟨l,pos,true⟩ hdeq] at hact ⊢
+      exact hR d hd hact
+  · exact hR
+
+theorem posGood_sub (N pSa : Nat) (h : PosGood N pSa) : PosGood N (N - pSa) := by
+  unfold PosGood at h ⊢; omega
+
+def StreamGood (N : Nat) (ts : List Triple) : Prop :=
+  ∀ t ∈ ts, t.sa ≤ N - 1 ∧ (t.c = 0 ↔ t.sa = 0)
+
+theorem getR_defaultR (c : Nat) : getR defaultR c = (⟨-1,0,false⟩ : Cand) := by
+  unfold getR defaultR
+  rw [List.getElem?_map]
+  by_cases h : c < SIGMA
+  · rw [List.getElem?_eq_getElem (by simpa using h)]; simp
+  · have h2 : (List.range SIGMA).length ≤ c := by rw [List.length_range]; omega
+    rw [List.getElem?_eq_none h2]; simp
+
+theorem defaultR_good (N : Nat) : Rgood N defaultR := by
+  intro c hc hact
+  rw [getR_defaultR c] at hact
+  simp at hact
+
+theorem scanAux_pres (N : Nat) :
+    ∀ (ts : List Triple) (p pSa : Nat) (m : Int) (R : List Cand) (out : List Nat),
+      StreamGood N ts →
+      (p = 0 ∨ PosGood N pSa) →
+      Outgood N out → Rgood N R →
+      Outgood N (scanAux N ts p pSa m R out) := by
+  intro ts
+  induction ts with
+  | nil =>
+    intro p pSa m R out hstream hp ho hR
+    simp only [scanAux]
+    exact (evalStep_pres N (-1) R out ho hR).1
+  | cons t rest ih =>
+    intro p pSa m R out hstream hp ho hR
+    have hstream_rest : StreamGood N rest := fun x hx => hstream x (List.mem_cons_of_mem t hx)
+    have ht : t.sa ≤ N - 1 ∧ (t.c = 0 ↔ t.sa = 0) := hstream t (List.mem_cons_self)
+    have hsa_pos : 1 ≤ t.c → 1 ≤ t.sa := by
+      intro h1
+      have hne0 : t.c ≠ 0 := by omega
+      have := ht.2
+      omega
+    have hp_t : t.c = 0 ∨ PosGood N t.sa := by
+      rcases Nat.eq_zero_or_pos t.c with h0 | hpos
+      · exact Or.inl h0
+      · exact Or.inr ⟨hsa_pos hpos, ht.1⟩
+    simp only [scanAux]
+    split
+    · apply ih
+      · exact hstream_rest
+      · exact hp_t
+      · exact (evalStep_pres N (min m t.lcp) R out ho hR).1
+      · apply upd_pres
+        · apply upd_pres
+          · exact (evalStep_pres N (min m t.lcp) R out ho hR).2
+          · intro h1
+            rcases hp with h0 | hpv
+            · omega
+            · exact posGood_sub N pSa hpv
+        · intro h1
+          exact posGood_sub N t.sa ⟨hsa_pos h1, ht.1⟩
+    · apply ih
+      · exact hstream_rest
+      · exact hp_t
+      · exact ho
+      · exact hR
+
+theorem insSort_length (T : Text) (l : List Nat) : (saOrder.insSort T l).length = l.length := by
+  induction l with
+  | nil => simp [saOrder.insSort]
+  | cons a rest ih =>
+    simp only [saOrder.insSort]
+    have h : (List.takeWhile (fun b => lexLE (T.drop b) (T.drop a)) (saOrder.insSort T rest)).length
+        + (List.dropWhile (fun b => lexLE (T.drop b) (T.drop a)) (saOrder.insSort T rest)).length
+        = (saOrder.insSort T rest).length := by
+      have hh := congrArg List.length (List.takeWhile_append_dropWhile
+        (p := fun b => lexLE (T.drop b) (T.drop a)) (l := saOrder.insSort T rest))
+      rw [List.length_append] at hh; exact hh
+    simp only [List.length_append, List.length_cons, List.length_nil]
+    omega
+
+theorem insSort_mem (T : Text) (l : List Nat) (x : Nat) : x ∈ saOrder.insSort T l → x ∈ l := by
+  induction l with
+  | nil => intro hx; simp [saOrder.insSort] at hx
+  | cons a rest ih =>
+    intro hx
+    simp only [saOrder.insSort] at hx
+    rw [List.mem_append, List.mem_append] at hx
+    rcases hx with (hx | hx) | hx
+    · exact List.mem_cons_of_mem a (ih (List.takeWhile_subset (fun b => lexLE (T.drop b) (T.drop a)) hx))
+    · rw [List.mem_singleton] at hx; subst hx; exact List.mem_cons_self
+    · exact List.mem_cons_of_mem a (ih (List.dropWhile_subset (fun b => lexLE (T.drop b) (T.drop a)) hx))
+
+theorem saOrder_length (T : Text) : (saOrder T).length = T.length := by
+  unfold saOrder; rw [insSort_length, List.length_range]
+
+theorem saOrder_lt (T : Text) (x : Nat) (hx : x ∈ saOrder T) : x < T.length := by
+  unfold saOrder at hx
+  have := insSort_mem T (List.range T.length) x hx
+  rw [List.mem_range] at this; exact this
+
+theorem triplesOf_streamGood (T : Text) (hT : positive T = true) :
+    StreamGood (T.length+1) (triplesOf T) := by
+  intro t ht
+  simp only [triplesOf] at ht
+  rw [List.mem_map] at ht
+  obtain ⟨i, hi, rfl⟩ := ht
+  rw [List.mem_range] at hi
+  have hlenord : i < (saOrder (T.reverse ++ [0])).length := by
+    rw [saOrder_length]; exact hi
+  have hsa : (saOrder (T.reverse ++ [0]))[i]! = (saOrder (T.reverse ++ [0]))[i] :=
+    getElem!_pos (saOrder (T.reverse ++ [0])) i hlenord
+  simp only [hsa]
+  generalize hj : (saOrder (T.reverse ++ [0]))[i] = j
+  have hjmem : j ∈ saOrder (T.reverse ++ [0]) := by rw [← hj]; exact List.getElem_mem hlenord
+  have hjlt : j < (T.reverse ++ [0]).length := saOrder_lt _ j hjmem
+  have hjle : j ≤ T.length := by
+    have hRlen : (T.reverse ++ [0]).length = T.length + 1 := by simp
+    rw [hRlen] at hjlt; omega
+  constructor
+  · show j ≤ T.length + 1 - 1
+    omega
+  · show (if (j == 0) = true then 0 else (T.reverse ++ [0])[j-1]!) = 0 ↔ j = 0
+    by_cases hj0 : j = 0
+    · subst hj0; simp
+    · rw [if_neg (by simp [hj0])]
+      have hRne : (T.reverse ++ [0])[j-1]! ≠ 0 := by
+        have hj1 : j - 1 < T.length := by omega
+        have hj1rev : j - 1 < (T.reverse).length := by rw [List.length_reverse]; exact hj1
+        have hj1R : j - 1 < (T.reverse ++ [0]).length := by
+          have hRlen : (T.reverse ++ [0]).length = T.length + 1 := by simp
+          rw [hRlen]; omega
+        have hget : (T.reverse ++ [0])[j-1]! = T.reverse[j-1] := by
+          rw [getElem!_pos (T.reverse ++ [0]) (j-1) hj1R]
+          exact List.getElem_append_left hj1rev
+        have hmemrev : T.reverse[j-1] ∈ T.reverse := List.getElem_mem hj1rev
+        have hmemT : T.reverse[j-1] ∈ T := List.mem_reverse.mp hmemrev
+        have hp := positive_of_mem T hT hmemT
+        rw [hget]; omega
+      exact ⟨fun h => absurd h hRne, fun h => absurd h hj0⟩
+
+theorem scan_range (T : Text) (hT : positive T = true) :
+    ∀ x ∈ scan (T.length+1) (triplesOf T), 1 ≤ x ∧ x ≤ T.length := by
+  intro x hx
+  have hsg := triplesOf_streamGood T hT
+  cases hts : triplesOf T with
+  | nil => rw [hts] at hx; simp [scan] at hx
+  | cons t rest =>
+    rw [hts] at hx
+    simp only [scan] at hx
+    have hsg' : StreamGood (T.length+1) rest := fun u hu => hsg u (by rw [hts]; exact List.mem_cons_of_mem t hu)
+    have ht : t.sa ≤ (T.length+1) - 1 ∧ (t.c = 0 ↔ t.sa = 0) := hsg t (by rw [hts]; exact List.mem_cons_self)
+    have hp : t.c = 0 ∨ PosGood (T.length+1) t.sa := by
+      rcases Nat.eq_zero_or_pos t.c with h0 | hpos
+      · exact Or.inl h0
+      · have h1 : 1 ≤ t.sa := by have := ht.2; omega
+        exact Or.inr ⟨h1, ht.1⟩
+    have hout := scanAux_pres (T.length+1) rest t.c t.sa MAXINT defaultR [] hsg' hp
+      (by intro y hy; simp at hy) (defaultR_good _)
+    have hres := hout x hx
+    unfold PosGood at hres
+    exact ⟨hres.1, by omega⟩
+
+
 /-- every requirement (w,c) is covered by some emitted position.
 Requires `positive T` (see the domain-convention note above). -/
 theorem covering_given_stream (T : Text) (hT : positive T = true) :

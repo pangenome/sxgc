@@ -624,3 +624,30 @@ supervision stress-tested the SPECIFICATION against the implementation
 approved domain hypotheses) — this is Bit-2-ladder-grade value from a
 flash-tier model. Next slice: saOrder/lcpOf correctness + the scanAux
 interior-maxima invariant (the actual math; honest multi-session scope).
+
+## Bit 1b slice 2 (2026-09-24, delegated): the invariant lands; a real negative result
+
+Landed (verified: build green, 511/0 gate green, sorry count still 2 = the
+Lemma 34 core):
+- The scanAux STATE-MACHINE INVARIANT, proven: StreamGood (c=0 <-> sa=0,
+  sa <= N-1) is preserved by the scan; every candidate position and every
+  emitted position lies in 1..N-1; corollary scan_range: for positive T,
+  every emitted x satisfies 1 <= x <= |T| — the structural half of
+  minimality's side conditions. Supporting machinery: getR/foldl/evalStep/
+  upd preservation, defaultR goodness, triplesOf_streamGood,
+  saOrder_length/saOrder_lt/insSort_*.
+
+NEGATIVE RESULT (empirical, exhaustive over {1,2}, |T|<=8; recorded for
+the theory): **the scan's emitted set is NOT a function of any local
+per-row feature vector** — not chars/lcp/run structure, not even
+augmented with PSV/NSV indices; a decision-tree fit fails consistently.
+The candidate table is genuinely global/stateful. Consequence for Bit-2:
+any r-space characterization of chi selection must route through a
+GLOBAL declarative spec, not a per-row predicate — evidence the scatter
+problem is genuinely global (consistent with the O(n) walk's cost
+residing in the scatter).
+Positive lead found: the FM/PSV-NSV characterization in
+sA/suff-set-src/fm.cpp reproduces scan EXACTLY on all small texts
+(exhaustively verified); proving scan == FM-spec is the next rung —
+itself a two-state-machine equivalence proof (substantial, next slice or
+main-thread).
