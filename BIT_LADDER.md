@@ -562,3 +562,33 @@ to full-resolution chi, and syng's node count sits at r/10 — the
 (proc_f0b2) for the second point of the ratio (chi=1,627,063,183 there;
 projected dictionary ~190M if the ratio holds). Oriented-vs-canonical
 node convention to be pinned when comparing across scales.
+
+## chi(HPRC v2) = 2,249,968,075 (2026-09-24) — the full-466 rung: chi over the complete human pangenome
+
+The 466 chain's walk completed (~38 h at -t 96, 247 GB RSS):
+    n = 1,403,220,684,481   k = 38,790 contig strings
+    R = 2,739,735,806 runs  chi = 2,249,968,075 positions
+Artifacts flushed and xsa-stats-verified on the spot:
+    chi_h466.sA = 18.00 GB (the decision-space witness set)
+    h466.ri4    = 27.74 GB (sovereign core: rlbwt + C + run-end samples)
+
+THE LAW, REVISED BY ITS OWN MEASUREMENT — chi/r across all five scales:
+    yeast235 (n=3.34 Gbp)   chi/r = 0.846   (n/r = 33)
+    k=10     (n=30.15 Gbp)  chi/r = 0.875   (n/r = 16)
+    k=50     (n=151 Gbp)    chi/r = 0.863   (n/r = 74)
+    466      (n=1.403 Tbp)  chi/r = 0.821   (n/r = 512)
+The "flat 0.86" was a two-decimal illusion: the ratio DRIFTS DOWN as the
+collection grows (0.875 -> 0.863 -> 0.821 over 10 -> 50 -> 466 humans).
+Working interpretation: later haplotypes add BWT runs faster than they
+add first-occurrence witnesses — new runs increasingly come from
+RECOMBINATION of known content into new left-contexts (new BWT runs)
+without new substrings. Monotone in collection size so far; yeast (235
+strains, 0.846) sits between k=50 and 466, consistent with strain-count
+rather than n driving the drift. The honest measured claim: chi/r in
+[0.82, 0.88] over five orders of magnitude, decreasing with sample
+count; chi < r always (theory: chi <= 2r).
+Our own projection (0.86*2.74B = 2.36B) missed by -4.7% — the drift is
+the correction. Headline reading: one first-occurrence witness per 624
+bases of pangenome; the entire decision space of 466 human genomes =
+2.25 B positions = 0.16% of n.
+Chain continues: patterns -> query -> AGC oracle verdict (watch armed).
