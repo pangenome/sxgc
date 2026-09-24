@@ -74,3 +74,68 @@ bound chi_tag's plausible size before building anything.
 - [ ] chi_tag brute-force experiment on smoke chroms
 - [ ] chi_tag: formal definition (annotated-suffix-array Def. 9-analog)
 - [ ] streamed PFP construction emitting (char, tag) pairs
+
+## Bit-2: r-space construction of chi — the scatter problem, formal program (2026-09-24)
+
+North star: construct chi from the rlbwt + phi structure in O(r) TIME.
+Search was closed in r-space by the r-index; chi closed the MEASURE;
+r-space CONSTRUCTION is the missing chapter. Either resolution closes it:
+an O(r) algorithm, or an impossibility theorem in a stated model.
+
+### The structural fact (the handle)
+
+PLCP along text order is piecewise-LINEAR with O(r) pieces, slope -1
+per piece: within phi-interval I starting at text position st,
+lcp(pos) = PLCPsamples[I] - (pos - st). (This is exactly lcp_step in
+teralcp_chi — already load-bearing in production.)
+
+### The reduction (what needs proving in Bit-2)
+
+chi-selection = per-run interior LCP minima. On the piecewise-linear
+structure, the minimum of a run r's rows restricted to one interval I
+is attained at the LARGEST text position of r's rows inside I (the
+piece decreases). Therefore:
+
+  chi is computable in O(r) time  <=>  the extreme points
+  E(r, I) = argmax{ pos in run r's rows within interval I }
+  over all intersecting (r, I) pairs are derivable in O(r) time
+  (value + position, without enumerating run rows).
+
+The O(n) cost of the current walk hides ENTIRELY in the scatter: a
+run's rows are distributed across phi-intervals in a pattern that
+encodes the run/DAWG structure. The question is whether that incidence
+compresses.
+
+### Theorem targets, in order
+
+- Bit 1b (prerequisite, sorry-elimination): prove `covering_given_stream`
+  and `minimality` — the LCP-maxima characterization (Lemma 34 analog)
+  connecting the one-pass scan's selected set to Def. 9's suffixient
+  property. This is the foundation both targets stand on.
+- Bit 2a (formalize the handle): define phi-intervals over (rlbwt,
+  PLCPsamples), prove lcp(pos) equals the piecewise-linear evaluation,
+  and prove the reduction: interior-min selection equiv. per-(r, I)
+  extreme points. Pure definitional work; Lean-suitable end to end;
+  executable-testable on small texts (Bit-1 pattern: #eval verification).
+- Bit 2b (the open theorem, two doors):
+  (A) constructive: exhibit an O(r)-time procedure computing E(r, I)
+      — verify the bound and the correctness in Lean; ship it in
+      teralcp_chi as --rspace; the walk's 38 h collapses.
+  (B) impossibility: prove that row-enumeration is necessary in a
+      stated model (e.g., access to lcp only via interval queries and
+      run boundaries) — formalize the STATEMENT in Lean, prove on
+      paper; redirects to O(r log r) / sampled chi.
+
+Both doors publish. Lean's role: 1b and 2a fully formal; 2a makes the
+scatter question precise enough to attack; 2b(A) fully verifiable if
+we win; 2b(B) statement-formal, proof on paper.
+
+### Motivation, recorded verbatim as the product claim
+
+"the whole web fits on my laptop, searched in real time": FineWeb-EDU
+~10 TB -> ~1 TB index (measured ratios) -> a fat laptop's SSD; queries
+already microsecond-class (gated); what O(r) construction buys is the
+REFRESH: quarterly re-sort/rebuild of a 10 TB corpus in hours instead
+of the ~week the O(n) walk implies at that scale. Byte-alphabet
+substrate (specced, ROADMAP 5) + O(r) construction + this query engine
+= the laptop-web stack, complete.
