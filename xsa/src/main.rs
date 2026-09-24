@@ -97,6 +97,288 @@ fn fmt_ratio(num: f64, den: f64) -> String {
     if den == 0.0 { "n/a".to_string() } else { format!("{:.3}", num / den) }
 }
 
+// ---------- full .ri4 index (rank/LF/search/locate) ----------
+
+/// sdsl int_vector bitstream: entries of `width` bits, LSB-first per u64 word.
+struct PackedSa {
+    bits: u64,          // total size IN BITS
+    width: u8,
+    data: Vec<u8>,      // little-endian u64 words
+}
+impl PackedSa {
+    fn get(&self, i: u64) -> u64 {
+        let w = self.width as u64;
+        let off = i * w;
+        let wi = ((off / 64) * 8) as usize;   // BYTE offset of the u64 word
+        let bi = off % 64;
+        let words: &[u8] = &self.data;
+        let rd = |k: usize| -> u64 {
+            if k + 8 > words.len() { 0 } else { u64::from_le_bytes(words[k..k + 8].try_into().unwrap()) }
+        };
+        let mask: u64 = if w >= 64 { u64::MAX } else { (1u64 << w) - 1 };
+        if bi + w <= 64 {
+            (rd(wi) >> bi) & mask
+        } else {
+            let lo = rd(wi) >> bi;
+            let hi = rd(wi + 8) << (64 - bi);
+            (lo | hi) & mask
+        }
+    }
+}
+
+struct Ri4 {
+    n: u64,
+    r: u64,
+    c: Vec<u64>,
+    run_char: Vec<u8>,
+    run_len: Vec<u32>,
+    sa: PackedSa,
+    run_start_blk: Vec<u64>,
+    cruns: Vec<Vec<u32>>,
+    csum: Vec<Vec<u64>>,
+    total: Vec<u64>,
+}
+const BLK: u64 = 64;
+
+impl Ri4 {
+    fn load(path: &str) -> Ri4 {
+        let mut f = File::open(path).unwrap_or_else(|e| die(&format!("open {}: {}", path, e)));
+        let mut b = [0u8; 32];
+        f.read_exact(&mut b).unwrap_or_else(|e| die(&format!("read {}: {}", path, e)));
+        let magic = u32::from_le_bytes(b[0..4].try_into().unwrap());
+        if magic != 0x52585349 { die(&format!("{}: bad magic", path)); }
+        let version = u32::from_le_bytes(b[4..8].try_into().unwrap());
+        if version != 4 { die(&format!("{}: need v4, got v{}", path, version)); }
+        let n = u64::from_le_bytes(b[8..16].try_into().unwrap());
+        let k = u64::from_le_bytes(b[16..24].try_into().unwrap());
+        let r = u64::from_le_bytes(b[24..32].try_into().unwrap());
+        let _ = k;
+        let mut c = vec![0u64; 256];
+        f.read_exact(unsafe { std::slice::from_raw_parts_mut(c.as_mut_ptr() as *mut u8, 2048) })
+            .unwrap_or_else(|e| die(&format!("read C: {}", e)));
+        let mut run_char = vec![0u8; r as usize];
+        f.read_exact(&mut run_char).unwrap_or_else(|e| die(&format!("read runs: {}", e)));
+        let mut rl = vec![0u8; (r * 4) as usize];
+        f.read_exact(&mut rl).unwrap_or_else(|e| die(&format!("read lens: {}", e)));
+        let mut run_len = Vec::with_capacity(r as usize);
+        for i in 0..r as usize {
+            run_len.push(u32::from_le_bytes(rl[4 * i..4 * i + 4].try_into().unwrap()));
+        }
+        drop(rl);
+        // sdsl int_vector header: u64 size-in-bits, u8 width, then words
+        let mut hb = [0u8; 9];
+        f.read_exact(&mut hb).unwrap_or_else(|e| die(&format!("read sa header: {}", e)));
+        let bits = u64::from_le_bytes(hb[0..8].try_into().unwrap());
+        let width = hb[8];
+        if width == 0 || width > 64 || bits != r * width as u64 {
+            die(&format!("{}: bad sa array (bits={} width={}?)", path, bits, width));
+        }
+        let nbytes = ((bits + 63) / 64 * 8) as usize;
+        let mut data = vec![0u8; nbytes];
+        f.read_exact(&mut data).unwrap_or_else(|e| die(&format!("read sa data: {}", e)));
+        let sa = PackedSa { bits, width, data };
+
+        let mut run_start_blk = Vec::with_capacity((r / BLK + 2) as usize);
+        let mut acc = 0u64;
+        for x in 0..r {
+            if x % BLK == 0 { run_start_blk.push(acc); }
+            acc += run_len[x as usize] as u64;
+        }
+        run_start_blk.push(acc);
+        let mut cruns: Vec<Vec<u32>> = vec![Vec::new(); 256];
+        let mut csum: Vec<Vec<u64>> = vec![Vec::new(); 256];
+        let mut acc256 = vec![0u64; 256];
+        for x in 0..r as usize {
+            let c = run_char[x] as usize;
+            cruns[c].push(x as u32);
+            csum[c].push(acc256[c]);
+            acc256[c] += run_len[x] as u64;
+        }
+        let total = acc256.clone();
+        for c in 0..256 { csum[c].push(total[c]); }
+        Ri4 { n, r, c, run_char, run_len, sa, run_start_blk, cruns, csum, total }
+    }
+
+    fn run_start(&self, r: u64) -> u64 {
+        let mut s = self.run_start_blk[(r / BLK) as usize];
+        let mut q = (r / BLK) * BLK;
+        while q < r { s += self.run_len[q as usize] as u64; q += 1; }
+        s
+    }
+    fn run_of(&self, i: u64) -> u64 {
+        let mut lo = 0usize;
+        let mut hi = self.run_start_blk.len() - 1;
+        while lo + 1 < hi {
+            let mid = (lo + hi) / 2;
+            if self.run_start_blk[mid] <= i { lo = mid; } else { hi = mid; }
+        }
+        let mut r = lo as u64 * BLK;
+        let mut s = self.run_start_blk[lo];
+        while r + 1 < self.r && s + self.run_len[r as usize] as u64 <= i {
+            s += self.run_len[r as usize] as u64; r += 1;
+        }
+        r
+    }
+    fn rank(&self, c: u8, i: u64) -> u64 {
+        if i == 0 { return 0; }
+        if i >= self.n { return self.total[c as usize]; }
+        let r = self.run_of(i);
+        let s = self.run_start(r);
+        let v = &self.cruns[c as usize];
+        let j = v.partition_point(|&x| (x as u64) < r);
+        if self.run_char[r as usize] == c { self.csum[c as usize][j] + (i - s) }
+        else { self.csum[c as usize][j] }
+    }
+    fn lf(&self, i: u64) -> u64 {
+        let c = self.run_char[self.run_of(i) as usize];
+        self.c[c as usize] + self.rank(c, i)
+    }
+    /// backward search; returns half-open [l, r) of suffixes prefixed by p.
+    /// Chars are consumed LEFT-TO-RIGHT AS GIVEN, extending the match leftward
+    /// in the INDEXED text (the v4 chain convention: revlines chains index
+    /// reversed contigs, so forward-original patterns are consumed forward;
+    /// plain chains must pass the pattern reversed — handled by the caller).
+    fn search(&self, tchars: &[u8]) -> (u64, u64) {
+        let mut l = 0u64;
+        let mut r = self.n;
+        for &ch in tchars {
+            let c = ch as usize;
+            let rl = self.rank(c as u8, l);
+            let rr = self.rank(c as u8, r);
+            l = self.c[c] + rl;
+            r = self.c[c] + rr;
+            if l >= r { return (l, r); }
+        }
+        (l, r)
+    }
+    /// v4 sample value at BWT position j: walk LF to the nearest run end;
+    /// S decreases by 1 per LF step from the run-end sample.
+    fn s_at(&self, j: u64) -> u64 {
+        let mut pos = j;
+        let mut steps = 0u64;
+        loop {
+            let r = self.run_of(pos);
+            let e = self.run_start(r) + self.run_len[r as usize] as u64;
+            if pos == e - 1 {
+                return self.sa.get(r).wrapping_sub(steps);
+            }
+            pos = self.lf(pos);
+            steps += 1;
+        }
+    }
+}
+
+fn cmd_query(args: &[String]) {
+    let mut ri4: Option<String> = None;
+    let mut pats: Option<String> = None;
+    let mut out: Option<String> = None;
+    let mut sidecar: Option<String> = None;
+    let mut plain = false;
+    let mut i = 0;
+    while i < args.len() {
+        let step;
+        match args[i].as_str() {
+            "--ri4" if i + 1 < args.len() => { ri4 = Some(args[i + 1].clone()); step = 2; }
+            "--patterns" if i + 1 < args.len() => { pats = Some(args[i + 1].clone()); step = 2; }
+            "--output" if i + 1 < args.len() => { out = Some(args[i + 1].clone()); step = 2; }
+            "--sidecar" if i + 1 < args.len() => { sidecar = Some(args[i + 1].clone()); step = 2; }
+            "--plain" => { plain = true; step = 1; }
+            other => die(&format!("query: unknown arg {}", other)),
+        }
+        i += step;
+    }
+    let (ri4, pats) = (
+        ri4.unwrap_or_else(|| die("query: need --ri4")),
+        pats.unwrap_or_else(|| die("query: need --patterns (FASTA)")),
+    );
+    if plain && sidecar.is_none() {
+        die("query: --plain needs --sidecar (v4 samples mirror positions on plain chains)");
+    }
+    eprintln!("xsa query: loading {} ...", ri4);
+    let idx = Ri4::load(&ri4);
+    eprintln!("  n={} R={}", idx.n, idx.r);
+
+    // plain-chain decode: v4 samples are mirrored (S = fstart+fend-pos);
+    // undo per owning string: pos = fstart_i + fend_i - S
+    let (mut p_fstart, mut p_fend): (Vec<u64>, Vec<u64>) = (Vec::new(), Vec::new());
+    if let Some(sc) = &sidecar {
+        let sf = File::open(sc).unwrap_or_else(|e| die(&format!("open {}: {}", sc, e)));
+        let mut acc = 0u64;
+        for line in BufReader::new(sf).lines() {
+            let line = line.unwrap_or_else(|e| die(&format!("read {}: {}", sc, e)));
+            if line.is_empty() { continue; }
+            let c: Vec<&str> = line.split('\t').collect();
+            if c.len() < 3 { die(&format!("{}: need name\\tfstart\\tlen", sc)); }
+            let len: u64 = c[2].trim().parse().unwrap_or_else(|_| die("bad len"));
+            p_fstart.push(acc);
+            p_fend.push(acc + len);
+            acc += len + 1;
+        }
+        if acc != idx.n { die(&format!("{}: lens sum {} != n {}", sc, acc, idx.n)); }
+    }
+
+    // FASTA patterns
+    let mut patterns: Vec<(String, Vec<u8>)> = Vec::new();
+    {
+        let pf = File::open(&pats).unwrap_or_else(|e| die(&format!("open {}: {}", pats, e)));
+        let mut name = String::new();
+        let mut seq: Vec<u8> = Vec::new();
+        for line in BufReader::new(pf).lines() {
+            let line = line.unwrap_or_else(|e| die(&format!("read {}: {}", pats, e)));
+            if let Some(r) = line.strip_prefix('>') {
+                if !name.is_empty() { patterns.push((std::mem::take(&mut name), std::mem::take(&mut seq))); }
+                name = r.trim_end().to_string();
+            } else if !line.is_empty() {
+                seq.extend_from_slice(line.trim_end().as_bytes());
+            }
+        }
+        if !name.is_empty() { patterns.push((name, seq)); }
+    }
+    eprintln!("  {} patterns", patterns.len());
+
+    let stdout = std::io::stdout();
+    let mut w: Box<dyn Write> = match &out {
+        Some(p) => Box::new(File::create(p).unwrap_or_else(|e| die(&format!("create {}: {}", p, e)))),
+        None => Box::new(stdout.lock()),
+    };
+    let mut noccs = 0u64;
+    let mut nabs = 0u64;
+    for (name, seq) in &patterns {
+        let m = seq.len();
+        // consume pattern chars in INDEXED-text order: revlines (default) =
+        // forward-original; plain = reversed
+        let (l, r) = if plain {
+            let rev: Vec<u8> = seq.iter().rev().copied().collect();
+            idx.search(&rev)
+        } else {
+            idx.search(seq)
+        };
+        writeln!(w, ">{}", name).unwrap();
+        if l >= r {
+            writeln!(w, "-1 {}", m).unwrap();
+            nabs += 1;
+            continue;
+        }
+        for j in l..r {
+            let s = idx.s_at(j);
+            let pos: i64 = if plain {
+                // S lies in [fstart_i, fend_i] of the owning string (mirror)
+                let ii = p_fstart.partition_point(|&x| x <= s);
+                let i = if ii == 0 { usize::MAX } else { ii - 1 };
+                if i == usize::MAX || s > p_fend[i] {
+                    die(&format!("query: S={} outside any string", s));
+                }
+                (p_fstart[i] + p_fend[i] - s) as i64
+            } else {
+                s.wrapping_sub(m as u64) as i64
+            };
+            writeln!(w, "{} {}", pos, m).unwrap();
+            noccs += 1;
+        }
+    }
+    eprintln!("xsa query: {} occurrences over {} patterns ({} absent)", noccs, patterns.len(), nabs);
+}
+
 fn cmd_stats(args: &[String]) {
     let mut ri4: Option<String> = None;
     let mut rlbwt: Option<String> = None;
@@ -289,6 +571,7 @@ fn usage() -> ! {
     eprintln!("  xsa stats --rlbwt <prefix> [--chi ...]   from rlbwt pair");
     eprintln!("  xsa tags --chi <f.sA> --sidecar <names.tsv> [--revlines]");
     eprintln!("           [--output tags.tsv]                  first-appearance attribution");
+    eprintln!("  xsa query --ri4 <f.ri4> --patterns <p.fa> [--output occs.txt]");
     eprintln!();
     eprintln!("artifacts: .ri4 (v4: rlbwt + C + run-end SA samples), .sA (chi, u64 LE)");
     exit(2);
@@ -299,6 +582,7 @@ fn main() {
     match args.first().map(|s| s.as_str()) {
         Some("stats") => cmd_stats(&args[1..]),
         Some("tags") => cmd_tags(&args[1..]),
+        Some("query") => cmd_query(&args[1..]),
         Some("-h") | Some("--help") | None => usage(),
         Some(other) => die(&format!("unknown subcommand '{}' (try --help)", other)),
     }

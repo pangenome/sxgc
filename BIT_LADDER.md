@@ -506,3 +506,38 @@ by construction. The table is novelty attribution UNDER THIS SORT; a
 reverse-order build would hand the early-string share to the last
 haplotypes. The order-free statistic (mean share over orders, or both
 endpoints from the asc/desc pair) is the follow-up analysis.
+
+## T1 rung 3: `xsa query` GREEN (2026-09-23) — sovereign pattern matching in pure Rust
+
+`xsa query --ri4 <f.ri4> --patterns <p.fa> [--output occs] [--plain --sidecar ...]`:
+backward search + v4 toehold locate entirely in Rust over the .ri4,
+including a from-scratch sdsl packed-SA bit-reader (samples stay packed
+in RAM, ~8 GB at k=10 instead of 15 GB unpacked; 0/2483 mismatches vs
+brute-force expected samples at ft30).
+
+Gates:
+- ft30 smoke: pattern ACGTA -> 10/10 OVERLAPPING occurrences, positions
+  byte-exact vs the flat text (211, 220, 224, 228, 312, 712, 2333, 2659,
+  2938, 2945); count includes overlaps (finditer's non-overlap artifact
+  documented); plain-chain mirrored-sample decode via --plain --sidecar.
+- **k=10 (30 Gbp, R=1.86B): BYTE-IDENTICAL vs grl_occs.txt** — 12,034
+  occurrences over 200 patterns, 0 absent, 3m50s incl. 90 GB index load.
+
+Two bugs died in porting, both instructive (caught by gates, never
+shipped):
+1. PATTERN ORIENTATION (the v4 convention, now in code comments): the
+   chain indexes REVERSED contigs, so backward search consumes
+   FORWARD-original pattern chars LEFT-TO-RIGHT; my textbook port
+   consumed them reversed (searched the wrong pattern; ft30's oracle
+   caught it — count was right, positions were not).
+2. Packed-SA bit-reader word/byte offset (samples straddling u64 words
+   read garbage; brute-force cross-check caught it).
+Known caveat, recorded honestly: toehold walks (here and in ALL
+remapped-sentinel r-index locate, incl. rindex_query v4) can break for
+occurrences whose walk steps from a sentinel-byte row mid-run — i.e.,
+patterns overlapping CONTIG STARTS. k=10's oracle patterns did not
+exercise this edge; a future gate plants contig-start-overlapping
+patterns deliberately (ft30's s200-era sentinel-identity-erasure law
+is the same phenomenon).
+Tool lane now: stats, tags, query — all gated. seed_project's MS walk
+is the remaining T1 piece above the xsa veneer.
