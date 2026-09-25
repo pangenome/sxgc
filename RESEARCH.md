@@ -155,3 +155,54 @@ the scan<->FM equivalence and states the r-space bridge lemma. If the
 equivalence closes, the O(r log r) question becomes a well-posed
 complexity question about PSV/NSV over run-compressed streams — attack
 with the piecewise-linear handle (Bit 2a) + RMQ machinery.
+
+## Bit-2 measurements (2026-09-25 night): the scatter is O(r); LF-images are
+## free on balanced texts, degenerate on mega-runs (tools/scatter_probe.py,
+## tools/lf_image_probe.py; brute SA/LCP, fm.cpp port, production phi law)
+
+Three measurements, all at <=500k brute-verified scale:
+
+1. THE SCATTER IS LINEAR. #(BWT-run x phi-interval) incidence pairs
+   P = ~1.2r on EVERY family (random bin 1.33-1.38r, random 4-letter
+   1.23-1.26r, periodic satellites 1.24-1.28r, (ab)^k 1.15r, run-length
+   1.2r), flat in n. The answer set of any per-pair chi algorithm is
+   O(r)-sized. The pieces themselves are O(r) (production phi law
+   phi(p-1) != phi(p)-1; slope law verified exact, law-bad=0 everywhere;
+   an earlier stronger text-adjacency condition was WRONG and inflated
+   pieces to Theta(n) on repetitive texts — condition corrected).
+
+2. BIT 2a AS STATED IS FALSE (negative result, caught by experiment).
+   "FM witness = per-(run, piece) argmax text position" fails for ~22%
+   of witnesses on every family. The FM selection is decided in ROW
+   order (PSV/NSV over the LCP stream; witnesses are run-HEAD rows),
+   not text order. Restatement required before Lean grinding:
+   chi_from_run_heads.
+
+3. LF-IMAGE RESOLUTION IS TWO-REGIME. LF maps a run's rows onto a
+   consecutive row block computable in O(1) from C + run lengths
+   (.ri4 data, no walking); a run-end sample at (or a toehold walk from)
+   the image's end resolves the run's tail position (image start -> head).
+   Measured aggregate walk cost over all runs:
+     random-4 100k/500k:  0.67r / 0.66r total, max walk 7/8, 75% instant
+     random-bin-100k:     5.99r total, one max-walk=n orbit (2-letter
+                          rotation effect), 49.9% instant
+     satellite-100k:     518.79r, max walk = n   (r=771: mega-runs)
+     (ab)^50k:           25,001r, max walk = n   (r=4: total degeneracy)
+   Reading: balanced texts (n/r = O(1)) get a TRUE O(r) construction
+   shape; the blowup is carried entirely by MEGA-RUNS — the same objects
+   that broke 466 locate (walks to 393,160 steps). P stays 1.2r even on
+   satellites: the ANSWER is always O(r); position-RESOLUTION cost is
+   what degenerates. HPRC (n/r = 512) is a mixed regime.
+
+DECISIVE NEXT MEASUREMENT: port the walk simulation into xsa (pure
+r-space work on the .ri4: C, runs, samples, optional --anchors) and run
+at k=10 (R=1.86B) and 466 (R=2.74B): sum-walk/r with and without the
+anchor table. Anchors terminate exactly the walks that cross string
+starts — the same class as the 466 locate bads. If 466 sum-walk/r is
+O(1)-ish, the O(r) construction is real for pangenomes and the theorem
+program is: (i) LF-image lemma (image blocks O(1) from C+runs), (ii)
+chi_from_run_heads (restated Bit 2a), (iii) balanced-case O(r) theorem,
+(iv) mega-run handle (the named open problem — periodicity structure of
+long runs is the candidate lead; anchors are the engineering mitigation).
+Worst case is never worse than production's Theta(n) walk: mega-runs
+are few; hybrid = LF-image for the many + walk for the few.
