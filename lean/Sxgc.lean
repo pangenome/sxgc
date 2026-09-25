@@ -1051,6 +1051,527 @@ theorem scan_mem_positionsT (T : Text) (hT : positive T = true) :
   obtain ⟨h1, h2⟩ := scan_range T hT x hx
   exact mem_positionsT h1 h2
 
+theorem le_foldl_max {α : Type} (f : α → Nat) (l : List α) (v : Nat) :
+    v ≤ l.foldl (fun acc a => max acc (f a)) v := by
+  induction l generalizing v with
+  | nil => simp
+  | cons a t ih =>
+    simp only [List.foldl_cons]
+    exact Nat.le_trans (by omega) (ih (max v (f a)))
+
+theorem elem_le_foldl_max {α : Type} (f : α → Nat) (l : List α) (v : Nat) (a : α) (ha : a ∈ l) :
+    f a ≤ l.foldl (fun acc a => max acc (f a)) v := by
+  induction l generalizing v with
+  | nil => exact absurd ha (List.not_mem_nil)
+  | cons b t ih =>
+    rw [List.mem_cons] at ha
+    rcases ha with heq | ha
+    · rw [heq]
+      simp only [List.foldl_cons]
+      exact Nat.le_trans (by omega) (le_foldl_max f t (max v (f b)))
+    · simp only [List.foldl_cons]
+      exact ih (max v (f b)) ha
+
+theorem exists_ge_foldl_max {α : Type} (f : α → Nat) (l : List α) (h : l ≠ []) (v : Nat) :
+    ∃ a ∈ l, l.foldl (fun acc a => max acc (f a)) v ≤ max v (f a) := by
+  induction l generalizing v with
+  | nil => exact absurd rfl h
+  | cons b t ih =>
+    by_cases ht : t = []
+    · subst ht
+      exact ⟨b, by simp, by simp⟩
+    · obtain ⟨c, hc, hle⟩ := ih ht (max v (f b))
+      rcases Nat.le_total (f c) (f b) with hcb | hbc
+      · refine ⟨b, by simp, ?_⟩
+        simp only [List.foldl_cons] at hle ⊢
+        omega
+      · refine ⟨c, by simp [hc], ?_⟩
+        simp only [List.foldl_cons] at hle ⊢
+        omega
+
+theorem exists_argmax_f (l : List Nat) (h : l ≠ []) (f : Nat → Nat) :
+    ∃ m ∈ l, ∀ y ∈ l, f y ≤ f m := by
+  induction l with
+  | nil => exact absurd rfl h
+  | cons a t ih =>
+    by_cases ht : t = []
+    · subst ht
+      refine ⟨a, by simp, ?_⟩
+      intro y hy
+      rw [List.mem_cons] at hy
+      rcases hy with rfl | hy
+      · omega
+      · exact absurd hy (List.not_mem_nil)
+    · obtain ⟨m, hm, hmax⟩ := ih ht
+      rcases Nat.le_total (f a) (f m) with ham | hma
+      · refine ⟨m, by simp [hm], ?_⟩
+        intro y hy
+        rw [List.mem_cons] at hy
+        rcases hy with rfl | hy
+        · exact ham
+        · exact hmax y hy
+      · refine ⟨a, by simp, ?_⟩
+        intro y hy
+        rw [List.mem_cons] at hy
+        rcases hy with rfl | hy
+        · omega
+        · exact Nat.le_trans (hmax y hy) hma
+
+theorem exists_min_le (l : List Nat) (h : l ≠ []) : ∃ m ∈ l, ∀ y ∈ l, m ≤ y := by
+  induction l with
+  | nil => exact absurd rfl h
+  | cons a t ih =>
+    by_cases ht : t = []
+    · subst ht
+      refine ⟨a, by simp, ?_⟩
+      intro y hy
+      rw [List.mem_cons] at hy
+      rcases hy with rfl | hy
+      · omega
+      · exact absurd hy (List.not_mem_nil)
+    · obtain ⟨m, hm, hmin⟩ := ih ht
+      rcases Nat.le_total a m with ham | hma
+      · refine ⟨a, by simp, ?_⟩
+        intro y hy
+        rw [List.mem_cons] at hy
+        rcases hy with rfl | hy
+        · omega
+        · exact Nat.le_trans ham (hmin y hy)
+      · refine ⟨m, by simp [hm], ?_⟩
+        intro y hy
+        rw [List.mem_cons] at hy
+        rcases hy with rfl | hy
+        · omega
+        · exact hmin y hy
+
+theorem nodup_map_of_inj {α β : Type} (f : α → β) :
+    ∀ (l : List α), l.Nodup → (∀ a ∈ l, ∀ b ∈ l, f a = f b → a = b) → (l.map f).Nodup := by
+  intro l
+  induction l with
+  | nil => intro _ _; exact List.nodup_nil
+  | cons a t ih =>
+    intro hnd hinj
+    simp only [List.map_cons, List.nodup_cons] at hnd ⊢
+    obtain ⟨hat, ht⟩ := hnd
+    refine ⟨?_, ih ht (fun x hx y hy => hinj x (by simp [hx]) y (by simp [hy]))⟩
+    intro hmem
+    rw [List.mem_map] at hmem
+    obtain ⟨b, hb, hfb⟩ := hmem
+    exact hat ((hinj a (by simp) b (by simp [hb]) hfb.symm) ▸ hb)
+
+theorem count_le_of_disjoint_witnesses :
+    ∀ (S L : List Nat) (D : Nat → Nat → Prop),
+      L.Nodup → (∀ r ∈ L, ∃ x ∈ S, D r x) →
+      (∀ r1 ∈ L, ∀ r2 ∈ L, r1 ≠ r2 → ∀ x, D r1 x → D r2 x → False) →
+      L.length ≤ S.length := by
+  intro S L D
+  induction L generalizing S with
+  | nil => intro _ _ _; simp
+  | cons r t ih =>
+    intro hnd hw hd
+    rw [List.nodup_cons] at hnd
+    obtain ⟨hrt, htnd⟩ := hnd
+    obtain ⟨x, hxS, hxD⟩ := hw r (by simp)
+    have hle : t.length ≤ (S.erase x).length := by
+      refine ih (S.erase x) htnd ?_ ?_
+      · intro r' hr'
+        obtain ⟨y, hyS, hyD⟩ := hw r' (by simp [hr'])
+        have hyx : y ≠ x := by
+          intro hyx
+          exact hd r (by simp) r' (by simp [hr'])
+            (fun h => hrt (h ▸ hr')) x hxD (hyx ▸ hyD)
+        refine ⟨y, ?_, hyD⟩
+        rw [List.mem_erase_of_ne hyx]
+        exact hyS
+      · intro r1 hr1 r2 hr2 hne y h1 h2
+        exact hd r1 (by simp [hr1]) r2 (by simp [hr2]) hne y h1 h2
+    have hpos : 0 < S.length := List.length_pos_of_mem hxS
+    have hlen : (S.erase x).length = S.length - 1 := List.length_erase_of_mem hxS
+    simp only [List.length_cons]
+    omega
+
+
+
+theorem pref_length (T : Text) (x : Nat) : (pref T x).length = min x T.length := by
+  simp [pref, List.length_take]
+
+theorem coversAt_eq_true (wc : List Nat) (x : Nat) (T : Text) :
+    coversAt wc x T = true ↔
+      wc.length ≤ (pref T x).length ∧ (pref T x).drop ((pref T x).length - wc.length) = wc := by
+  unfold coversAt
+  rw [Bool.and_eq_true]
+  constructor
+  · rintro ⟨h1, h2⟩
+    exact ⟨of_decide_eq_true h1, (beq_iff_eq.mp h2).symm⟩
+  · rintro ⟨h1, h2⟩
+    exact ⟨decide_eq_true h1, beq_iff_eq.mpr h2.symm⟩
+
+theorem coversAt_iff_suffix (wc : List Nat) (x : Nat) (T : Text) :
+    coversAt wc x T = true ↔ ∃ u, pref T x = u ++ wc := by
+  constructor
+  · intro h
+    obtain ⟨hlen, hdrop⟩ := (coversAt_eq_true wc x T).mp h
+    refine ⟨(pref T x).take ((pref T x).length - wc.length), ?_⟩
+    have htad := List.take_append_drop ((pref T x).length - wc.length) (pref T x)
+    rw [hdrop] at htad
+    exact htad.symm
+  · rintro ⟨u, hu⟩
+    rw [coversAt_eq_true]
+    constructor
+    · rw [hu, List.length_append]; omega
+    · rw [hu, List.length_append]
+      have : u.length + wc.length - wc.length = u.length := by omega
+      rw [this, List.drop_left]
+
+theorem drop_suffix_suffix {p a b : List Nat} (ha : p.drop (p.length - a.length) = a)
+    (hb : p.drop (p.length - b.length) = b) (hlen : a.length ≤ b.length) :
+    b.drop (b.length - a.length) = a := by
+  have hlb : b.length ≤ p.length := by
+    have := congrArg List.length hb
+    rw [List.length_drop] at this
+    omega
+  have h2 : (p.length - b.length) + (b.length - a.length) = p.length - a.length := by omega
+  calc b.drop (b.length - a.length)
+      = (p.drop (p.length - b.length)).drop (b.length - a.length) :=
+          congrArg (fun z => z.drop (b.length - a.length)) hb.symm
+    _ = p.drop ((p.length - b.length) + (b.length - a.length)) := List.drop_drop
+    _ = p.drop (p.length - a.length) := by rw [h2]
+    _ = a := ha
+
+theorem coversAt_suffix_of_coversAt {T : Text} {x : Nat} {a b : List Nat}
+    (ha : coversAt a x T = true) (hb : coversAt b x T = true) (hlen : a.length ≤ b.length) :
+    b.drop (b.length - a.length) = a := by
+  obtain ⟨_, hda⟩ := (coversAt_eq_true a x T).mp ha
+  obtain ⟨_, hdb⟩ := (coversAt_eq_true b x T).mp hb
+  exact drop_suffix_suffix hda hdb hlen
+
+theorem coversAt_of_suffix {T : Text} {x : Nat} {a b : List Nat}
+    (hb : coversAt b x T = true) (h : b.drop (b.length - a.length) = a) :
+    coversAt a x T = true := by
+  obtain ⟨u, hu⟩ := (coversAt_iff_suffix b x T).mp hb
+  rw [coversAt_iff_suffix]
+  have hb_decomp : b = b.take (b.length - a.length) ++ a := by
+    have htad := List.take_append_drop (b.length - a.length) b
+    rw [h] at htad
+    exact htad.symm
+  refine ⟨u ++ b.take (b.length - a.length), ?_⟩
+  rw [hu]
+  conv =>
+    lhs
+    rw [hb_decomp]
+  exact (List.append_assoc u (b.take (b.length - a.length)) a).symm
+
+def wlen (p : List Nat × Nat) : Nat := p.1.length + 1
+
+def maxW (T : Text) (x : Nat) : Nat := (covSet T x).foldl (fun acc p => max acc (wlen p)) 0
+
+theorem wlen_congr (p : List Nat × Nat) : wlen p = (p.1 ++ [p.2]).length := by
+  simp [wlen, List.length_append]
+
+theorem wlen_le_maxW (T : Text) (x : Nat) (p : List Nat × Nat) (hp : p ∈ covSet T x) :
+    wlen p ≤ maxW T x := elem_le_foldl_max wlen (covSet T x) 0 p hp
+
+theorem exists_maxW {T : Text} {x : Nat} (hne : covSet T x ≠ []) :
+    ∃ p ∈ covSet T x, maxW T x ≤ wlen p := by
+  obtain ⟨p, hp, hle⟩ := exists_ge_foldl_max wlen (covSet T x) hne 0
+  exact ⟨p, hp, by simpa [maxW, Nat.zero_max] using hle⟩
+
+theorem maxW_pos {T : Text} {x : Nat} (hne : covSet T x ≠ []) : 1 ≤ maxW T x := by
+  obtain ⟨p, hp, _⟩ := exists_maxW (T := T) (x := x) hne
+  have h1 : 1 ≤ wlen p := by simp [wlen]
+  exact Nat.le_trans h1 (wlen_le_maxW T x p hp)
+
+theorem maxW_eq_zero {T : Text} {x : Nat} (h : covSet T x = []) : maxW T x = 0 := by
+  simp [maxW, h]
+
+theorem ScopeLe_refl (T : Text) (x : Nat) : ScopeLe T x x := fun _ hp => hp
+
+theorem ScopeLe_trans (T : Text) {x y z : Nat} (hxy : ScopeLe T x y) (hyz : ScopeLe T y z) :
+    ScopeLe T x z := fun p hp => hyz p (hxy p hp)
+
+theorem maxW_le_of_ScopeLe {T : Text} {x y : Nat} (hne : covSet T x ≠ [])
+    (hxy : ScopeLe T x y) : maxW T x ≤ maxW T y := by
+  obtain ⟨p, hp, hle⟩ := exists_maxW (T := T) (x := x) hne
+  exact Nat.le_trans hle (wlen_le_maxW T y p (hxy p hp))
+
+theorem covSet_subset_of_maxW_witness {T : Text} {x y : Nat} {p : List Nat × Nat}
+    (hmax : maxW T x ≤ wlen p)
+    (hp_cov : coversAt (p.1 ++ [p.2]) x T = true)
+    (hpy : coversAt (p.1 ++ [p.2]) y T = true) (hy : y ∈ positionsT T) (hx : IsMax T x) :
+    ScopeLe T y x := by
+  have hkey : ∀ q ∈ covSet T y, wlen q ≤ wlen p := by
+    intro q hq
+    by_cases hle : wlen q ≤ wlen p
+    · exact hle
+    · have hcon' : wlen p < wlen q := by omega
+      have h1 : ScopeLe T x y := by
+        intro s hs
+        have hs_req : s ∈ requirements T := ((mem_covSet T x s).mp hs).1
+        have hs_cov : coversAt (s.1 ++ [s.2]) x T = true := ((mem_covSet T x s).mp hs).2
+        have hlen_s : (s.1 ++ [s.2]).length ≤ (p.1 ++ [p.2]).length := by
+          have hle' : wlen s ≤ wlen p := Nat.le_trans (wlen_le_maxW T x s hs) hmax
+          simpa [wlen] using hle'
+        have hdrop := coversAt_suffix_of_coversAt hs_cov hp_cov hlen_s
+        exact (mem_covSet T y s).mpr ⟨hs_req, coversAt_of_suffix hpy hdrop⟩
+      have h2 : ScopeLe T y x := hx.2 y hy h1
+      have hun : wlen q ≤ maxW T x := wlen_le_maxW T x q (h2 q hq)
+      omega
+  intro q hq
+  have hq_req : q ∈ requirements T := ((mem_covSet T y q).mp hq).1
+  have hq_cov : coversAt (q.1 ++ [q.2]) y T = true := ((mem_covSet T y q).mp hq).2
+  have hlen_q : (q.1 ++ [q.2]).length ≤ (p.1 ++ [p.2]).length := by
+    have h := hkey q hq
+    simpa [wlen] using h
+  have hdrop := coversAt_suffix_of_coversAt hq_cov hpy hlen_q
+  exact (mem_covSet T x q).mpr ⟨hq_req, coversAt_of_suffix hp_cov hdrop⟩
+
+theorem privacy_of_rep {T : Text} {r y : Nat} (hr : IsRep T r) (hy : y ∈ positionsT T)
+    {p : List Nat × Nat} (hp : p ∈ covSet T r) (hmax : maxW T r ≤ wlen p) :
+    p ∈ covSet T y → ScopeLe T y r := by
+  intro hpy
+  have hp_cov : coversAt (p.1 ++ [p.2]) r T = true := ((mem_covSet T r p).mp hp).2
+  have hpy_cov : coversAt (p.1 ++ [p.2]) y T = true := ((mem_covSet T y p).mp hpy).2
+  exact covSet_subset_of_maxW_witness hmax hp_cov hpy_cov hy hr.2.1
+
+
+theorem occurs_eq_true (w : List Nat) (T : Text) (hw : w ≠ []) :
+    occurs w T = true ↔ ∃ i, i + w.length ≤ T.length ∧ (T.drop i).take w.length = w := by
+  unfold occurs
+  by_cases hlen : w.length > T.length
+  · rw [if_pos hlen]
+    constructor
+    · intro h; exact absurd h (by simp)
+    · rintro ⟨i, hi, _⟩; omega
+  · rw [if_neg hlen, Bool.or_eq_true, List.any_eq_true]
+    constructor
+    · rintro (h | ⟨i, hi, htake⟩)
+      · exact absurd (List.isEmpty_iff.mp h) hw
+      · rw [List.mem_range] at hi
+        exact ⟨i, by omega, beq_iff_eq.mp htake⟩
+    · rintro ⟨i, hi, htake⟩
+      exact Or.inr ⟨i, by rw [List.mem_range]; omega, beq_iff_eq.mpr htake⟩
+
+theorem exists_covers_of_occurs (w : List Nat) (T : Text) (hw : occurs w T = true)
+    (hne : w ≠ []) : ∃ x, x ∈ positionsT T ∧ coversAt w x T = true := by
+  obtain ⟨i, hi, htake⟩ := (occurs_eq_true w T hne).mp hw
+  have hwlen : 1 ≤ w.length := by
+    cases w with
+    | nil => exact absurd rfl hne
+    | cons a t => simp
+  refine ⟨i + w.length, ?_, ?_⟩
+  · rw [positionsT, List.mem_map]
+    refine ⟨i + w.length - 1, ?_, by omega⟩
+    rw [List.mem_range]
+    omega
+  · rw [coversAt_iff_suffix]
+    refine ⟨T.take i, ?_⟩
+    show pref T (i + w.length) = T.take i ++ w
+    rw [pref, List.take_add, htake]
+
+
+theorem exists_max_above (T : Text) (x : Nat) (hx : x ∈ positionsT T) (hne : covSet T x ≠ []) :
+    ∃ m, m ∈ positionsT T ∧ ScopeLe T x m ∧ IsMax T m := by
+  classical
+  let d := (positionsT T).filter (fun y => decide (ScopeLe T x y))
+  have hxd : x ∈ d := by
+    refine List.mem_filter.mpr ⟨hx, ?_⟩
+    exact decide_eq_true (ScopeLe_refl T x)
+  obtain ⟨m, hmd, hmax⟩ := exists_argmax_f d (List.ne_nil_of_mem hxd) (maxW T)
+  have hmP : m ∈ positionsT T := (List.mem_filter.mp hmd).1
+  have hxm : ScopeLe T x m := of_decide_eq_true (List.mem_filter.mp hmd).2
+  have hmne : covSet T m ≠ [] := by
+    intro hemp
+    have h0 : maxW T m = 0 := maxW_eq_zero hemp
+    have hpos : 1 ≤ maxW T x := maxW_pos hne
+    have hle : maxW T x ≤ maxW T m := hmax x hxd
+    omega
+  refine ⟨m, hmP, hxm, hmne, ?_⟩
+  intro y hyP hym
+  have hyd : y ∈ d := by
+    refine List.mem_filter.mpr ⟨hyP, ?_⟩
+    exact decide_eq_true (ScopeLe_trans T hxm hym)
+  have hle : maxW T y ≤ maxW T m := hmax y hyd
+  obtain ⟨pm, hpm, hmaxpm⟩ := exists_maxW (T := T) (x := m) hmne
+  intro q hq
+  have hq_req : q ∈ requirements T := ((mem_covSet T y q).mp hq).1
+  have hq_cov : coversAt (q.1 ++ [q.2]) y T = true := ((mem_covSet T y q).mp hq).2
+  have hpm_cov_y : coversAt (pm.1 ++ [pm.2]) y T = true :=
+    ((mem_covSet T y pm).mp (hym pm hpm)).2
+  have hlen : (q.1 ++ [q.2]).length ≤ (pm.1 ++ [pm.2]).length := by
+    have h1 : wlen q ≤ maxW T y := wlen_le_maxW T y q hq
+    have h2 : wlen q ≤ wlen pm := Nat.le_trans (Nat.le_trans h1 hle) hmaxpm
+    simpa [wlen] using h2
+  have hdrop := coversAt_suffix_of_coversAt hq_cov hpm_cov_y hlen
+  have hpm_cov_m : coversAt (pm.1 ++ [pm.2]) m T = true := ((mem_covSet T m pm).mp hpm).2
+  exact (mem_covSet T m q).mpr ⟨hq_req, coversAt_of_suffix hpm_cov_m hdrop⟩
+
+theorem exists_rep_of_max (T : Text) (m : Nat) (hm : m ∈ positionsT T) (hmax : IsMax T m) :
+    ∃ r, r ∈ positionsT T ∧ IsRep T r ∧ ScopeLe T r m ∧ ScopeLe T m r := by
+  classical
+  let c := (positionsT T).filter
+    (fun y => decide (IsMax T y ∧ ScopeLe T m y ∧ ScopeLe T y m))
+  have hmc : m ∈ c := by
+    refine List.mem_filter.mpr ⟨hm, ?_⟩
+    exact decide_eq_true ⟨hmax, ScopeLe_refl T m, ScopeLe_refl T m⟩
+  obtain ⟨r, hrc, hmin⟩ := exists_min_le c (List.ne_nil_of_mem hmc)
+  have hrP : r ∈ positionsT T := (List.mem_filter.mp hrc).1
+  have hrc' : IsMax T r ∧ ScopeLe T m r ∧ ScopeLe T r m :=
+    of_decide_eq_true (List.mem_filter.mp hrc).2
+  obtain ⟨hrmax, hmr, hrm⟩ := hrc'
+  refine ⟨r, hrP, ⟨hrP, hrmax, ?_⟩, hrm, hmr⟩
+  intro y hyP hylt hymax hsc
+  have hyc : y ∈ c := by
+    refine List.mem_filter.mpr ⟨hyP, ?_⟩
+    exact decide_eq_true ⟨hymax, ScopeLe_trans T hmr hsc.1, ScopeLe_trans T hsc.2 hrm⟩
+  have := hmin y hyc
+  omega
+
+theorem sublist_of_mem_subsequences : ∀ (l S : List Nat), S ∈ subsequences l → S.Sublist l := by
+  intro l
+  induction l with
+  | nil =>
+    intro S h
+    simp only [subsequences, List.mem_singleton] at h
+    rw [h]
+    exact List.Sublist.slnil
+  | cons a t ih =>
+    intro S h
+    simp only [subsequences, List.mem_append, List.mem_map] at h
+    rcases h with h | ⟨S', hS', hS'eq⟩
+    · exact List.Sublist.cons a (ih S h)
+    · rw [← hS'eq]
+      exact List.Sublist.cons_cons a (ih S' hS')
+
+
+noncomputable def reps (T : Text) : List Nat := by
+  classical
+  exact (positionsT T).filter (fun x => decide (IsRep T x))
+
+theorem reps_suffixient (T : Text) : suffixient (reps T) T = true := by
+  classical
+  apply suffixient_of_witnesses
+  intro p hp
+  obtain ⟨_hsub, _hmaxw, hcext⟩ := (mem_requirements p.1 p.2 T).mp hp
+  have hocc : occurs (p.1 ++ [p.2]) T = true := (mem_rightExts p.1 p.2 T).mp hcext
+  have hne : p.1 ++ [p.2] ≠ [] := by simp
+  obtain ⟨x0, hx0P, hx0cov⟩ := exists_covers_of_occurs (p.1 ++ [p.2]) T hocc hne
+  have hcov0 : p ∈ covSet T x0 := (mem_covSet T x0 p).mpr ⟨hp, hx0cov⟩
+  obtain ⟨m, hmP, hx0m, hmaxm⟩ :=
+    exists_max_above T x0 hx0P (List.ne_nil_of_mem hcov0)
+  obtain ⟨r, hrP, hrep, _hrm, hmr⟩ := exists_rep_of_max T m hmP hmaxm
+  refine ⟨r, ?_, ?_⟩
+  · exact List.mem_filter.mpr ⟨hrP, decide_eq_true hrep⟩
+  · have hx0r : ScopeLe T x0 r := ScopeLe_trans T hx0m hmr
+    exact ((mem_covSet T r p).mp (hx0r p hcov0)).2
+
+theorem maxClassCount_eq_reps (T : Text) : maxClassCount T = (reps T).length := by
+  unfold maxClassCount reps
+  rfl
+
+theorem maxClassCount_le_of_suffixient (T : Text) (S : List Nat)
+    (hsub : S.Sublist (positionsT T)) (hs : suffixient S T = true) :
+    maxClassCount T ≤ S.length := by
+  classical
+  have hposT : (positionsT T).Nodup := by
+    unfold positionsT
+    refine nodup_map_of_inj (fun x => x + 1) (List.range T.length) List.nodup_range ?_
+    intro a _ b _ hab
+    omega
+  have hrepnd : (reps T).Nodup := by
+    unfold reps
+    exact hposT.filter _
+  let D : Nat → Nat → Prop := fun r x =>
+    x ∈ S ∧ ∃ p ∈ covSet T r, maxW T r ≤ wlen p ∧ p ∈ covSet T x
+  have hw : ∀ r ∈ reps T, ∃ x ∈ S, D r x := by
+    intro r hr
+    have hrep : IsRep T r := of_decide_eq_true (List.mem_filter.mp hr).2
+    have hne : covSet T r ≠ [] := hrep.2.1.1
+    obtain ⟨p, hp, hmaxp⟩ := exists_maxW (T := T) (x := r) hne
+    have hp_req : p ∈ requirements T := ((mem_covSet T r p).mp hp).1
+    have hcover : IsCover S T := (isCover_iff_suffixient S T).mpr hs
+    obtain ⟨x, hxS, hpx⟩ := hcover p hp_req
+    exact ⟨x, hxS, hxS, p, hp, hmaxp, hpx⟩
+  have hd : ∀ r1 ∈ reps T, ∀ r2 ∈ reps T, r1 ≠ r2 → ∀ x, D r1 x → D r2 x → False := by
+    intro r1 hr1 r2 hr2 hne x h1 h2
+    obtain ⟨hxS, p1, hp1, hmax1, hpx1⟩ := h1
+    obtain ⟨_hxS2, p2, hp2, hmax2, hpx2⟩ := h2
+    have hrep1 : IsRep T r1 := of_decide_eq_true (List.mem_filter.mp hr1).2
+    have hrep2 : IsRep T r2 := of_decide_eq_true (List.mem_filter.mp hr2).2
+    have hP1 : r1 ∈ positionsT T := (List.mem_filter.mp hr1).1
+    have hP2 : r2 ∈ positionsT T := (List.mem_filter.mp hr2).1
+    have hxP : x ∈ positionsT T := hsub.subset hxS
+    have hs1 : ScopeLe T x r1 := privacy_of_rep hrep1 hxP hp1 hmax1 hpx1
+    have hs2 : ScopeLe T x r2 := privacy_of_rep hrep2 hxP hp2 hmax2 hpx2
+    have h12 : ScopeLe T r1 r2 := privacy_of_rep hrep2 hP1 hp2 hmax2 (hs1 p2 hpx2)
+    have h21 : ScopeLe T r2 r1 := privacy_of_rep hrep1 hP2 hp1 hmax1 (hs2 p1 hpx1)
+    rcases Nat.lt_trichotomy r1 r2 with hlt | heq | hgt
+    · exact hrep2.2.2 r1 hP1 hlt hrep1.2.1 ⟨h21, h12⟩
+    · exact hne heq
+    · exact hrep1.2.2 r2 hP2 hgt hrep2.2.1 ⟨h12, h21⟩
+  have hlen := count_le_of_disjoint_witnesses S (reps T) D hrepnd hw hd
+  rw [maxClassCount_eq_reps]
+  exact hlen
+
+
+
+
+private theorem head_flatMap_le_aux (g : Nat → List (List Nat)) :
+    ∀ (n : Nat), (∀ k, k < n → ∀ y ∈ g k, y.length = k) →
+    ∀ (j : Nat), j < n → ∀ (x : List Nat), x ∈ g j →
+      List.flatMap g (List.range n) ≠ [] ∧
+      ∀ y, (List.flatMap g (List.range n)).head? = some y → y.length ≤ j := by
+  intro n
+  induction n with
+  | zero =>
+    intro hlen j hj
+    omega
+  | succ n ih =>
+    intro hlen j hj x hx
+    rw [List.range_succ, List.flatMap_append]
+    simp only [List.flatMap_cons, List.flatMap_nil, List.append_nil]
+    have hlen' : ∀ k, k < n → ∀ y ∈ g k, y.length = k := fun k hk => hlen k (by omega)
+    by_cases hj' : j < n
+    · have hIH := ih hlen' j hj' x hx
+      constructor
+      · intro h
+        exact hIH.1 (List.append_eq_nil_iff.mp h).1
+      · intro y hy
+        rw [List.head?_append] at hy
+        cases h1 : (List.flatMap g (List.range n)).head? with
+        | none =>
+          rw [h1, Option.none_or] at hy
+          exact absurd (List.head?_eq_none_iff.mp h1) hIH.1
+        | some y1 =>
+          rw [h1, Option.some_or] at hy
+          injection hy with hyy
+          subst hyy
+          exact hIH.2 y1 h1
+    · have hjn : j = n := by omega
+      constructor
+      · intro h
+        have hmem : x ∈ List.flatMap g (List.range n) ++ g n :=
+          List.mem_append.mpr (Or.inr (hjn ▸ hx))
+        rw [h] at hmem
+        exact List.not_mem_nil hmem
+      · intro y hy
+        rw [List.head?_append] at hy
+        cases h1 : (List.flatMap g (List.range n)).head? with
+        | none =>
+          rw [h1, Option.none_or] at hy
+          have hy' : y ∈ g n := List.mem_of_mem_head? hy
+          have := hlen n (by omega) y hy'
+          omega
+        | some y1 =>
+          rw [h1, Option.some_or] at hy
+          injection hy with hyy
+          subst hyy
+          have hy1 : y1 ∈ List.flatMap g (List.range n) := List.mem_of_mem_head? h1
+          rw [List.mem_flatMap] at hy1
+          obtain ⟨k, hk, hyk⟩ := hy1
+          rw [List.mem_range] at hk
+          have := hlen k (by omega) y1 hyk
+          omega
+
 /-- **χ as the number of distinct inclusion-maximal coverage classes.**
 Verified exhaustively: `{1,2}` `|T| ≤ 8`, `{1,2,3}` `|T| ≤ 7`, and 3000 random
 texts over `{1..4}` all satisfy `chi T = maxClassCount T` (0 mismatches).  This
@@ -1061,7 +1582,25 @@ requirement (verified: 0 classes lack one), so every cover needs one position pe
 class, `maxClassCount ≤ chi`. -/
 theorem chi_eq_maxClasses (T : Text) (hT : positive T = true) :
     chi T = maxClassCount T := by
-  sorry
+  apply Nat.le_antisymm
+  · exact chi_le_of_suffixient T (reps T) List.filter_sublist (reps_suffixient T)
+  · unfold chi
+    dsimp only
+    split
+    · rename_i d hd
+      have hdmem : d ∈ List.flatMap (blk T) (List.range (T.length + 1)) :=
+        List.mem_of_mem_head? hd
+      rw [List.mem_flatMap] at hdmem
+      obtain ⟨k, _hk, hdk⟩ := hdmem
+      obtain ⟨hsub_seq, _hlen_d, hsuff_d⟩ := (mem_blk T k d).mp hdk
+      have hsub : d.Sublist (positionsT T) := sublist_of_mem_subsequences _ _ hsub_seq
+      exact maxClassCount_le_of_suffixient T d hsub hsuff_d
+    · rename_i _hd
+      have hthis : maxClassCount T ≤ (positionsT T).length := by
+        rw [maxClassCount_eq_reps]
+        unfold reps
+        exact List.length_filter_le _ _
+      simpa [positionsT] using hthis
 
 
 /-- every requirement (w,c) is covered by some emitted position.

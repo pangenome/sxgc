@@ -282,3 +282,18 @@ the IDENTICAL (char,pos) event multiset, 3,226 texts 0 mismatches),
 witnesses_at_run_edges (corrected Layer 1, 0/729, provable),
 chi_from_events (open door). Statements corrected: ScatterOofR <= 3r,
 witnesses boundary-only RETIRED (false), isRunEdge restatement locked.
+
+Depth-ladder appendix (correct SA, 2026-09-30): nested satellites at
+repetition depth 1-4 measure P/r = 1.34-1.39, iv = r exactly — the
+nested-sat P/r = 3.20 in the 500k battery was the SA bug's last
+artifact (that process had loaded the pre-fix module). No
+depth-dependent scatter inflation through depth 4; ScatterOofR <= 3r
+comfortable. Lane A landed both targets the same night: chi_eq_maxClasses
+PROVED (privacy lemma: distinct maximal-class representatives have
+DISJOINT witness sets), plus chi_le via the ordered-blocks head bound.
+Ledger after all three lanes: PROVEN chi_eq_maxClasses,
+chi_le_of_suffixient, lf_image_consecutive; minimality half-proven;
+remaining: covering_given_stream (needs lcpOf correctness + saOrder
+sortedness), minimality lower half, fm_equivalence (event-bridge
+route), witnesses_at_run_edges (corrected L1), chi_from_events (open
+door, 121/124).
