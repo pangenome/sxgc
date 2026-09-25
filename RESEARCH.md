@@ -509,3 +509,48 @@ Both components of the construction are now gated independently:
 Remaining: the END-TO-END ASSEMBLY (events -> resolve -> pieces -> LCP ->
 sweep -> sA), gated at battery scale vs the fm oracle, then multi-string
 adaptation (anchors as events — the locate-fix law), then yeast.
+
+## ASSEMBLY + C-LANE RESULTS (2026-09-25): the construction works on 4
+## regimes; TWO claims die honestly; R3 (pos->row) SOLVED
+
+END-TO-END ASSEMBLY (tools/chi_rspace_proto.py, gated): full r-space
+pipeline (runs -> resolve run edges -> cells -> piece-law LCPs ->
+restricted sweep -> sA) gives EXACT SET EQUALITY with the FM oracle on
+random-4-20k, satellite-18k, HOR-nested, dup+unique-120k. The
+piece-law LCP interface and the resolver are exact on EVERY row of
+every text. The assembly is real.
+
+TWO CLAIMS RETIRED (counterexamples, recorded honestly):
+1. Model-v3-universal ("events = boundary + both cell extremes suffice")
+   is FALSE: on duplicates-600k the true PSV interposer at boundary row
+   574179 is an INTERIOR row of a size-3 cell — one witness missed
+   (13004 vs 13003, missing value 184398, no spurious). The 124/124 was
+   an artifact: on random-4-20k ALL 20,001 cells have size 1.
+2. P = O(r) (scatter small) is FALSE under DIRECT-LAW pieces: cells are
+   Theta(n) on random (P = n) and duplicates (P = 595,474 = 40.5r).
+   The earlier P <= 3r was measured under the superseded phi-condition
+   pieces. Correctness target: the SWEEP RESULT, not pointwise PSV/NSV.
+
+R3 SOLVED (tools/c_probe_r3.py, gated 100%): resolve_inv(pos) ->
+row from PFP artifacts in O(log) — the row<->position bijection now
+exists in BOTH directions from parse structures. Gated on EVERY row of
+every battery text incl. duplicates.
+
+RULE D (C-term, random/satellite/HOR/mixed regimes): candidate set =
+boundary U run-ends U row-window w=8 U position-window d (enumerated
+via R3): EXACT at sizes 1.33-2.23r (d=1, w=8) — C is dead for these
+regimes; construction O((r + iv) polylog) there.
+R2 DEAD STANDALONE: LF-image recursion needs range-min/max of SA over
+arbitrary row intervals of a permutation — no representation in the
+available structures. But 78-92% of per-run extremes ARE run-end rows
+(the v4 samples) — hybrid ingredient retained.
+
+DUPLICATES REGIME (web text): still no o(n) rule — blocked by long
+pieces (p90=298: the long pieces ARE the 300-byte copy spans; 962/9656
+piece starts exactly on the copy grid, ~30x enriched), 23% run-end
+capture, row-gaps to 149K. TWO LEADS: (a) copy spans are enumerable
+from the parse directly (the piece structure IS the copy structure) —
+duplicate-aware candidates need no d-guessing; (b) the class-internal
+RMQ reduction — within a parse class, row ranges <-> k-ranges with
+m.len fixed, so class-internal min over a row range may reduce to min
+over occurrences — if it closes: exact NSV/PSV in O(r log^2).
