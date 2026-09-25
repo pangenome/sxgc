@@ -31,12 +31,14 @@ def read_samples():
         raw = np.fromfile(f, dtype=np.uint64, count=nbytes // 8)
     # unpack 41-bit values
     vals = np.zeros(r, dtype=np.uint64)
-    idx = np.arange(r, dtype=np.uint64) * W
-    w_i = (idx >> 6).astype(np.int64)
-    sh = (idx & 63).astype(np.int64)
+    idx = np.arange(r, dtype=np.uint64) * np.uint64(W)
+    w_i = (idx >> np.uint64(6)).astype(np.int64)
+    sh = (idx & np.uint64(63)).astype(np.uint64)
     lo = raw[w_i] >> sh
-    hi = np.where(sh + W > 64, raw[np.minimum(w_i + 1, len(raw) - 1)] << np.maximum(0, 64 - sh), 0)
-    vals = (lo | hi) & ((1 << W) - 1)
+    over = sh + np.uint64(W) > np.uint64(64)
+    nxt = raw[np.minimum(w_i + 1, len(raw) - 1)]
+    hi = np.where(over, nxt << np.maximum(np.uint64(64) - sh, np.uint64(0)), np.uint64(0))
+    vals = (lo | hi.astype(np.uint64)) & np.uint64((1 << W) - 1)
     return vals, n, k, r
 
 
