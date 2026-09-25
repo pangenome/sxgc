@@ -2068,7 +2068,7 @@ theorem fm_equivalence_of_event_bridge (T : Text)
 
 /-! ### Slice 3 rung: scan ↔ FM/PSV-NSV equivalence (statement + scaffold) -/
 
-/-- **Main rung (Bit 1b, slice 3).**  On every positive text the one-pass scan
+/-! **Main rung (Bit 1b, slice 3).**  On every positive text the one-pass scan
 and the FM/PSV-NSV declarative spec `fmSpec` (port of `suff-set-src/fm.cpp`)
 emit exactly the *same set* of text positions.
 
@@ -2095,8 +2095,35 @@ recommended proof route: prove each machine's output equals the event process
 (`events : Nat → List (Nat × Nat)`) by unwinding the per-character candidate
 lifecycles, then compare the two event processes (the emission *timing* differs,
 so an invariant on emitted SETS at each prefix is false). -/
-theorem fm_equivalence (T : Text) (hT : positive T = true) :
-    ∀ x, x ∈ scan (T.length + 1) (triplesOf T) ↔ x ∈ fmSpec (T.length + 1) (triplesOf T) := by
+/-! **RETIRED-FALSE RECORD (2026-09-26, statement-lock).** The unbounded
+form below is REFUTED AS STATED: saturation counterexample (supervisor-
+verified eval, lean/counterexamples/saturation_refutation.lean): the triple stream
+  [⟨1,M+4,6⟩, ⟨2,M+3,5⟩, ⟨1,M+2,4⟩, ⟨2,M+1,3⟩, ⟨1,M,2⟩, ⟨2,M-1,1⟩]
+with M = MAXINT.toNat gives scan = [94, 95, 95, 96, 96, 97] vs
+fmSpec = [94, 95] — the machines GENUINELY DIVERGE strictly above M
+(scan's running-min saturates at M and emits spurious DUPLICATE
+positions — O2/Nodup also fails in that regime; fmSpec's PSV/NSV
+arithmetic stays exact). At M exactly and below, both machines agree
+(the boundary is sharp).  Every physically realizable text satisfies
+`lcp ≤ |T| < 2^63`, so the divergence is a model-arifact regime only.
+SUCCESSOR: `fm_equivalence_bounded` (the operative form). -/
+
+-- theorem fm_equivalence (T : Text) (hT : positive T = true) :
+--   ∀ x, x ∈ scan (T.length + 1) (triplesOf T) ↔
+--     x ∈ fmSpec (T.length + 1) (triplesOf T)
+
+/-- The operative (bounded) form of the FM-equivalence pillar: the scan
+machine and the fmSpec machine emit the same suffixient set for every
+text whose LCP values respect the model's Int arithmetic (side-condition
+`hsat` is vacuous for real texts: lcp ≤ |T| ≤ 2^63).  Proof route: the
+proven `fm_equivalence_of_event_bridge` reduction + the FmJoint joint
+induction (`coupled_step_inv`, sorry-free) + the HANDOFF assembly steps
+(boundary-step interleave, non-boundary row, final flush, main
+induction over JointInv). -/
+theorem fm_equivalence_bounded (T : Text) (hT : positive T = true)
+    (hsat : ∀ t ∈ triplesOf T, t.lcp ≤ MAXINT.toNat) :
+    ∀ x, x ∈ scan (T.length + 1) (triplesOf T) ↔
+      x ∈ fmSpec (T.length + 1) (triplesOf T) := by
   -- REDUCED (2026-10-02 lane): `fm_equivalence_of_event_bridge` proves this
   -- from the sorted-outputs (multiset) equality
   --   (scan …).mergeSort ≤ = (fmSpec …).mergeSort ≤,
