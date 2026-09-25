@@ -734,3 +734,33 @@ objects — they are different texts (separator structure differs).
 Files: bit6/chi_rspace_dump.cpp, ri4_from_rle.cpp, sa_decode.cpp,
 chi_rspace_battery_chain.sh, YEAST_LANE_REPORT.md; xsa/src/main.rs
 (+102: the chi-rspace subcommand).
+
+## 2026-09-26 — FmJoint milestone + STATEMENT EVENT: fm_equivalence retired-false, bounded successor locked
+
+Lane (strong model, 3 revivals) drove FmJoint.lean — the joint induction
+backing the event-bridge — to ZERO errors, ZERO sorries. The load-bearing
+`coupled_step_inv` is fully proven across its case lattice, including a
+genuine invariant repair en route (FM ALWAYS overwrites when vi > v; the
+old "FM holds" claim was wrong; repaired form re-validated on 740 random
+streams, 0 disagreements). File-level O3: adjudicated CLEAN (0 violations
+on 729/1092/1364 + 3-chunk stress) — stands as-is; the O3 "event" was a
+FmJoint-internal lemma shape (disjunctive fix = ordinary proof
+engineering, not statement-lock territory — SCOPE RULING recorded).
+
+STATEMENT-LOCK EVENT (8th): unbounded `fm_equivalence` REFUTED AS STATED.
+Saturation counterexample, supervisor-verified and now repo-resident
+(lean/counterexamples/saturation_refutation.lean): with lcps strictly
+above MAXINT (a model-arifact regime; every real text has lcp ≤ |T| <
+2^63), scan's running-min saturates and emits spurious DUPLICATE
+positions — scan [94,95,95,96,96,97] vs fmSpec [94,95]. Boundary SHARP:
+at MAXINT exactly and below, both machines agree. (Note: O2/Nodup also
+fails in that regime — recorded for the next lane's adjudication.)
+SUCCESSOR locked: `fm_equivalence_bounded` (hsat : ∀ t ∈ triplesOf T,
+t.lcp ≤ MAXINT.toNat) — the operative form, vacuous side-condition for
+real texts. Sorry ledger: 5 (composition unchanged: one retired-false
+record swapped for its bounded successor).
+
+Remaining for fm_equivalence_bounded (enumerated in FmJoint.lean
+HANDOFF): boundary-step assembly, non-boundary row step, final flush,
+main induction over JointInv, then the bounded statement. FmJoint.lean
+committed (1744 lines incl. HANDOFF; supervisor typecheck clean).
