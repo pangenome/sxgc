@@ -630,3 +630,39 @@ O(r+parse) candidate set exists, M3 builds the pieces in parse space,
 partition-identical to brute — and the ENTIRE pipeline (BWT, samples,
 pieces, parse, chi/sA) becomes r+parse time with exactly ONE Omega(n):
 the single pfp++ text read. Build and refresh become the same claim.
+
+## PIECES IN PARSE SPACE: GREEN (2026-09-25) — the last n-term has a
+## replacement, correctness-gated end to end (tools/teralcp_m*.py)
+
+M1 (confirmation): TeraLCP time is linear in n at fixed r (8x n -> 7.9x
+time, r~300): the O(n) verdict from source-reading, now also measured.
+
+M2 GREEN — THE CANDIDATE STRUCTURE (the gate): the direct-law piece
+starts are CONTAINED in the resolved BWT run-boundary rows:
+    C = { resolve(row i) : BWT[i] != BWT[i-1] }  union  {N-1},
+|C| = r EXACTLY. Exhaustive: 511 small texts, 0 containment failures;
+all 7 battery texts: containment 1.000. Negative note: the phi-parallel
+break set is NOT safe (misses 22/255 ascending-chain texts) — the
+run-boundary set is the right structure. Elegant closure: this is
+EXACTLY the resolution work the chi/sA sweep already does for run
+edges — pieces and sweep share one O(r) resolution budget.
+
+M3 GREEN — PIECES BUILT FROM PARSE COORDINATES ALONE: candidates ->
+parse-space PLCP (via resolve/resolve_inv, phi(p) = resolve(resolve_inv
+(p)-1)) -> starts + samples. Partition IDENTICAL to brute direct-law
+on all 7 texts; samples exact to the value; slope law clean (1000
+spot-checks/text); parse-space LCP 0/400 vs brute. No text scan, no
+brute PLCP.
+
+THE HONEST COST CAVEAT (the one remaining engineering item): LCP CALL
+COUNT is O(r) (~2-3r) — the parse-time SHAPE is right — but the
+prototype's phrase-walk LCP primitive costs O(lcp value)/call, so
+periodic-text totals exceed n (satellite: 188n steps). The fix is the
+STANDARD PFP-LCP primitive (dictionary LCP + parse ISA + bounded
+within-phrase compare -> O(polylog)/call), giving O(r polylog) total.
+Named, standard, portable — the only thing between the build and
+"one Omega(n) total (the pfp++ read)".
+
+Claim ledger: piece sidecar constructible from parse coordinates alone
+— CORRECTNESS GATED; wall-clock parse time pending the PFP-LCP
+primitive port.
