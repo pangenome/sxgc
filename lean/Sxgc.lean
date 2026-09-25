@@ -940,6 +940,46 @@ theorem insSort_mem' (T : Text) (l : List Nat) (x : Nat) (h : x ∈ l) :
       · exact List.mem_append_left _ (List.mem_append_left _ h1)
       · exact List.mem_append_right _ h2
 
+
+/-- `insSort` preserves distinctness (it is a permutation of its input). -/
+theorem insSort_nodup (T : Text) : ∀ l : List Nat, l.Nodup → (saOrder.insSort T l).Nodup := by
+  intro l
+  induction l with
+  | nil => intro _; simp [saOrder.insSort]
+  | cons a rest ih =>
+    intro hnd
+    rw [List.nodup_cons] at hnd
+    obtain ⟨ha, hrest⟩ := hnd
+    have hnd_rest : (saOrder.insSort T rest).Nodup := ih hrest
+    have ha' : ¬ a ∈ saOrder.insSort T rest := fun hx => ha (insSort_mem T rest a hx)
+    simp only [saOrder.insSort]
+    rw [List.nodup_append]
+    constructor
+    · rw [List.nodup_append]
+      refine ⟨List.Nodup.sublist (List.takeWhile_sublist _) hnd_rest, by simp, ?_⟩
+      intro b hb c hc hbc
+      rw [List.mem_singleton] at hc
+      subst hc
+      subst hbc
+      exact ha' (List.takeWhile_subset _ hb)
+    · refine ⟨List.Nodup.sublist (List.dropWhile_sublist _) hnd_rest, ?_⟩
+      intro b hb c hc hbc
+      rw [List.mem_append, List.mem_singleton] at hb
+      rcases hb with hb | hb
+      · have hS : (List.takeWhile (fun b => lexLE (T.drop b) (T.drop a)) (saOrder.insSort T rest)
+            ++ List.dropWhile (fun b => lexLE (T.drop b) (T.drop a)) (saOrder.insSort T rest)).Nodup := by
+          rw [List.takeWhile_append_dropWhile]; exact hnd_rest
+        rw [List.nodup_append] at hS
+        exact hS.2.2 b hb c hc hbc
+      · rw [← hbc] at hc
+        rw [hb] at hc
+        exact ha' (List.dropWhile_subset _ hc)
+
+/-- `saOrder T` is duplicate-free: each text position occurs exactly once. -/
+theorem saOrder_nodup (T : Text) : (saOrder T).Nodup := by
+  unfold saOrder
+  exact insSort_nodup T (List.range T.length) List.nodup_range
+
 /-- Every valid index occurs in the suffix-array order (the converse of
 `saOrder_lt`): `saOrder` is a permutation of `range T.length`. -/
 theorem saOrder_mem (T : Text) (x : Nat) (h : x < T.length) : x ∈ saOrder T := by
@@ -1858,6 +1898,12 @@ theorem covering_given_stream (T : Text) (hT : positive T = true) :
   --     `lcp` field of `triplesOf T` is the true LCP of SA-adjacent suffixes;
   --   * `saOrder_pairwise` / `saOrder_sorted_getElem` — `saOrder` really is the
   --     lexicographic suffix order.
+  -- REDUCED (2026-10-02 lane): `covering_of_domination` proves this from the
+  -- domination property (O1) of the scan — see the "Reductions isolating the
+  -- remaining obligations" block below.  The open obligation is (O1):
+  --   ∀ x ∈ positionsT T, ∃ y ∈ scan …, ScopeLe T x y
+  -- (0 counterexamples on 729 exhaustive + 320 random/binary/repetitive texts).
+  --
   -- PRECISE REMAINING OBLIGATION: a "scan-covers-requirements" invariant over
   -- `scanAux`: for every requirement (w,c) occurring in `T`, some emitted
   -- position x has `w ++ [c]` as a suffix of `T.take x`.  The invariant must be
@@ -1878,12 +1924,147 @@ theorem minimality (T : Text) (hT : positive T = true) :
       (fun x hx => scan_mem_positionsT T hT x hx)
       (covering_given_stream T hT)
   apply Nat.le_antisymm
-  · -- REMAINING (Lemma 34 tie-breaking / minima lower bound): |scan| ≤ chi T,
+  · -- REDUCED (2026-10-02 lane): `minimality_lower_of_scan_classes` proves
+    -- |scan| ≤ chi T from (O2) no duplicates, (O3) maximality, (O4) distinct
+    -- classes; combined with the upper half (covering) this completes minimality
+    -- via `minimality_of_scan_classes`.  Those are the open obligations (0
+    -- counterexamples on 729 exhaustive + 320 random/binary/repetitive texts).
+    --
+    -- REMAINING (Lemma 34 tie-breaking / minima lower bound): |scan| ≤ chi T,
     -- i.e. no suffixient set of positions 1..T.length is smaller than the
     -- emitted one.  Requires the LCP-maxima characterisation; see the lane
     -- report for the precise missing statement and the FM event bridge.
     sorry
   · exact hle
+
+
+/-! ### Reductions isolating the remaining obligations (statement-locked)
+
+Each of the three open theorems above reduces to a single stream-level
+characterization of the one-pass scan.  The reductions below are PROVED; the
+obligations they isolate are empirically verified (0 counterexamples) by the
+in-file `#eval`s below (exhaustive `{1,2}`, `|T| ≤ 6`: 729 texts) and by scratch
+probes (320 texts: random 4-letter, random binary, single-symbol `[1]^k`,
+periodic/repeated-pattern; `|T|` up to 100).
+
+  (O1) DOMINATION — for `covering_given_stream`: every text position is
+       `ScopeLe`-dominated by some emitted position,
+       `∀ x ∈ positionsT T, ∃ y ∈ scan …, ScopeLe T x y`;
+  (O2) NO DUPLICATES — `(scan …).Nodup`;
+  (O3) MAXIMALITY — every emitted position is coverage-maximal (`IsMax T`);
+  (O4) DISTINCT CLASSES — distinct emitted positions are never mutually
+       `ScopeLe` (they sit in distinct maximal classes).
+
+Intuitively (O1) says the scan emits a witness for every right-extension
+context, and (O2)–(O4) say the emitted positions are one per maximal coverage
+class.  Both are statements about the LCP-maxima semantics of `scanAux`; see
+the `fmAux_good` provenance pattern for the style of invariant that proves
+`isRunEdge`-style facts, and `scan_emits_run_edges` for the scan-side analogue. -/
+
+/-- Counting: a duplicate-free list whose members carry pairwise-disjoint
+witnesses in `m` is no longer than `m`. -/
+theorem length_le_of_rel_inj :
+    ∀ (l m : List Nat) (R : Nat → Nat → Prop),
+      l.Nodup → (∀ x ∈ l, ∃ r ∈ m, R x r) →
+      (∀ x ∈ l, ∀ y ∈ l, x ≠ y → ∀ r, R x r → R y r → False) →
+      l.length ≤ m.length := by
+  intro l
+  induction l with
+  | nil => intro m R _ _ _; simp
+  | cons x t ih =>
+    intro m R hnd hw hd
+    rw [List.nodup_cons] at hnd
+    obtain ⟨hxt, htnd⟩ := hnd
+    obtain ⟨r, hrm, hxr⟩ := hw x (by simp)
+    have hle : t.length ≤ (m.erase r).length := by
+      refine ih (m.erase r) R htnd ?_ ?_
+      · intro y hy
+        obtain ⟨r', hr'm, hyr'⟩ := hw y (by simp [hy])
+        have hne : r' ≠ r := by
+          intro heq
+          exact hd x (by simp) y (by simp [hy]) (fun hxy => hxt (hxy ▸ hy)) r hxr (heq ▸ hyr')
+        exact ⟨r', (List.mem_erase_of_ne hne).mpr hr'm, hyr'⟩
+      · intro y hy z hz hyz r' hyr' hzr'
+        exact hd y (by simp [hy]) z (by simp [hz]) hyz r' hyr' hzr'
+    have hpos : 0 < m.length := List.length_pos_of_mem hrm
+    have hlen : (m.erase r).length = m.length - 1 := List.length_erase_of_mem hrm
+    simp only [List.length_cons]
+    omega
+
+/-- **(O1) Domination implies covering.** -/
+theorem covering_of_domination (T : Text) (hT : positive T = true)
+    (hdom : ∀ x ∈ positionsT T, ∃ y, y ∈ scan (T.length + 1) (triplesOf T) ∧ ScopeLe T x y) :
+    suffixient (scan (T.length + 1) (triplesOf T)) T = true := by
+  apply suffixient_of_witnesses
+  intro p hp
+  obtain ⟨_hw, _hr, hcext⟩ := (mem_requirements p.1 p.2 T).mp hp
+  have hocc : occurs (p.1 ++ [p.2]) T = true := (mem_rightExts p.1 p.2 T).mp hcext
+  have hne : p.1 ++ [p.2] ≠ [] := by simp
+  obtain ⟨x0, hx0, hcov0⟩ := exists_covers_of_occurs (p.1 ++ [p.2]) T hocc hne
+  obtain ⟨y, hy, hle⟩ := hdom x0 hx0
+  exact ⟨y, hy, ((mem_covSet T y p).mp (hle p ((mem_covSet T x0 p).mpr ⟨hp, hcov0⟩))).2⟩
+
+/-- **(O2)+(O3)+(O4) imply the minimality lower bound** `|scan| ≤ χ` (the half
+that Lemma 34 supplies).  The upper half `χ ≤ |scan|` is `chi_le_of_suffixient_mem`
+instantiated at the scan, i.e. requires only covering. -/
+theorem minimality_lower_of_scan_classes (T : Text) (hT : positive T = true)
+    (hnd : (scan (T.length + 1) (triplesOf T)).Nodup)
+    (hmax : ∀ x ∈ scan (T.length + 1) (triplesOf T), IsMax T x)
+    (hdisj : ∀ x ∈ scan (T.length + 1) (triplesOf T),
+      ∀ y ∈ scan (T.length + 1) (triplesOf T), ScopeLe T x y → ScopeLe T y x → x = y) :
+    (scan (T.length + 1) (triplesOf T)).length ≤ chi T := by
+  classical
+  rw [chi_eq_maxClasses T hT, maxClassCount_eq_reps]
+  refine length_le_of_rel_inj (scan (T.length + 1) (triplesOf T)) (reps T)
+    (fun x r => r ∈ positionsT T ∧ IsRep T r ∧ ScopeLe T r x ∧ ScopeLe T x r) hnd ?_ ?_
+  · intro x hx
+    obtain ⟨r, hrP, hrep, hrx, hxr⟩ :=
+      exists_rep_of_max T x (scan_mem_positionsT T hT x hx) (hmax x hx)
+    exact ⟨r, List.mem_filter.mpr ⟨hrP, decide_eq_true hrep⟩, hrP, hrep, hrx, hxr⟩
+  · intro x hx y hy hxy r hxr hyr
+    obtain ⟨_hrP, _hrep, hrx, hxrle⟩ := hxr
+    obtain ⟨_hrP2, _hrep2, hry, hyrle⟩ := hyr
+    have hxy' : ScopeLe T x y := ScopeLe_trans T hxrle hry
+    have hyx' : ScopeLe T y x := ScopeLe_trans T hyrle hrx
+    exact hxy (hdisj x hx y hy hxy' hyx')
+
+/-- Consolidated: covering plus the three scan-side class facts give
+`minimality` (χ = |scan|). -/
+theorem minimality_of_scan_classes (T : Text) (hT : positive T = true)
+    (hnd : (scan (T.length + 1) (triplesOf T)).Nodup)
+    (hmax : ∀ x ∈ scan (T.length + 1) (triplesOf T), IsMax T x)
+    (hdisj : ∀ x ∈ scan (T.length + 1) (triplesOf T),
+      ∀ y ∈ scan (T.length + 1) (triplesOf T), ScopeLe T x y → ScopeLe T y x → x = y)
+    (hcover : suffixient (scan (T.length + 1) (triplesOf T)) T = true) :
+    (scan (T.length + 1) (triplesOf T)).length = chi T := by
+  apply Nat.le_antisymm
+  · exact minimality_lower_of_scan_classes T hT hnd hmax hdisj
+  · exact chi_le_of_suffixient_mem T _ (fun x hx => scan_mem_positionsT T hT x hx) hcover
+
+/-- Reduction for `fm_equivalence` via the Lane-B **event bridge**: if `scan`
+and `fmSpec` emit the same multiset of `(char, position)` events and the
+per-character candidate tables agree at the end of the stream, their output
+sets agree.  Stated so the next lane can attack the two machines' event
+processes (the 3,226-text differential in the file header) instead of the
+machines themselves. -/
+theorem fm_equivalence_of_event_bridge (T : Text)
+    (hperm : (scan (T.length + 1) (triplesOf T)).mergeSort (· ≤ ·)
+      = (fmSpec (T.length + 1) (triplesOf T)).mergeSort (· ≤ ·)) :
+    ∀ x, x ∈ scan (T.length + 1) (triplesOf T) ↔ x ∈ fmSpec (T.length + 1) (triplesOf T) := by
+  intro x
+  have hm : (scan (T.length + 1) (triplesOf T)).mergeSort (· ≤ ·)
+      = (fmSpec (T.length + 1) (triplesOf T)).mergeSort (· ≤ ·) := hperm
+  constructor
+  · intro hx
+    have : x ∈ (scan (T.length + 1) (triplesOf T)).mergeSort (· ≤ ·) :=
+      List.mem_mergeSort.mpr hx
+    rw [hm] at this
+    exact List.mem_mergeSort.mp this
+  · intro hx
+    have : x ∈ (fmSpec (T.length + 1) (triplesOf T)).mergeSort (· ≤ ·) :=
+      List.mem_mergeSort.mpr hx
+    rw [← hm] at this
+    exact List.mem_mergeSort.mp this
 
 /-! ### Slice 3 rung: scan ↔ FM/PSV-NSV equivalence (statement + scaffold) -/
 
@@ -1916,6 +2097,13 @@ lifecycles, then compare the two event processes (the emission *timing* differs,
 so an invariant on emitted SETS at each prefix is false). -/
 theorem fm_equivalence (T : Text) (hT : positive T = true) :
     ∀ x, x ∈ scan (T.length + 1) (triplesOf T) ↔ x ∈ fmSpec (T.length + 1) (triplesOf T) := by
+  -- REDUCED (2026-10-02 lane): `fm_equivalence_of_event_bridge` proves this
+  -- from the sorted-outputs (multiset) equality
+  --   (scan …).mergeSort ≤ = (fmSpec …).mergeSort ≤,
+  -- i.e. from the Lane-B event bridge: both machines emit the same multiset of
+  -- (char, position) events.  The open obligation is exhibiting that common
+  -- per-character event process for the two state machines.
+  --
   -- Remaining: a two-state-machine simulation.  The natural prefix invariants
   -- are FALSE (both the emitted set and the candidate tables disagree at
   -- intermediate steps), so the proof must compare the two candidate tables at
@@ -1937,6 +2125,35 @@ private def fmAgree (T : Text) : Bool :=
 
 -- prints `true` iff `fmSpec` and `scan` agree on every generated text (729 texts)
 #eval (fmTexts 6).all fmAgree
+
+/-! ### Statement-lock evals for the isolated obligations (O1)–(O4)
+
+Computable (polynomial) restatements of the obligations, evaluated on the
+729-text battery so the evidence travels with the code. -/
+
+private def covSL (T : Text) (x : Nat) : List (List Nat × Nat) :=
+  (requirements T).filter (fun p => coversAt (p.1 ++ [p.2]) x T)
+
+private def subSL (T : Text) (x y : Nat) : Bool := (covSL T x).all (fun p => (covSL T y).contains p)
+
+private def maxSL (T : Text) (x : Nat) : Bool :=
+  !(covSL T x).isEmpty && (positionsT T).all (fun y => subSL T x y → subSL T y x)
+
+private def obls (T : Text) : Bool × Bool × Bool × Bool :=
+  let S := scan (T.length + 1) (triplesOf T)
+  ((positionsT T).all (fun x => S.any (fun y => subSL T x y)),
+   S.Nodup,
+   S.all (maxSL T),
+   S.all (fun x => S.all (fun y => x == y || !(subSL T x y && subSL T y x))))
+
+#eval ("O1 domination counterexamples / 729: "
+  ++ toString ((fmTexts 6).filter (fun T => !(obls T).1)).length)
+#eval ("O2 nodup counterexamples / 729: "
+  ++ toString ((fmTexts 6).filter (fun T => !(obls T).2.1)).length)
+#eval ("O3 maximality counterexamples / 729: "
+  ++ toString ((fmTexts 6).filter (fun T => !(obls T).2.2.1)).length)
+#eval ("O4 distinct-class counterexamples / 729: "
+  ++ toString ((fmTexts 6).filter (fun T => !(obls T).2.2.2)).length)
 
 /-! ### Bit-2 r-space bridge (statement-only conjecture scaffold)
 
@@ -2508,6 +2725,150 @@ theorem witnesses_at_boundaries_FALSE_AS_STATED (N : Nat) (ts : List Triple)
   ++ toString ((fmTexts 6).filter (fun T => !(witnessBoundaryOk T))).length)
 #eval ("run-edge-witness counterexamples / 729: "
   ++ toString ((fmTexts 6).filter (fun T => !(witnessRunEdgeOk T))).length)
+
+/-! ### scan-side run-edge provenance (mirror of `witnesses_at_run_edges`)
+
+`scanAux` stores a position only at a char change (`t.c != p`): for the row
+just processed (`t`, a run HEAD) and its predecessor (`prev`, a run TAIL), with
+value `N - sa` in both cases; emitted positions are stored positions.  Hence
+every position emitted by `scan` is `N - sa` of a run-edge row.  Statement
+locked by `#eval` over the 729-text battery (0 counterexamples). -/
+
+def EdgeGood (ts : List Triple) (N : Nat) (x : Nat) : Prop :=
+  ∃ k, isRunEdge ts k = true ∧ x = N - (ts.getD k ⟨0,0,0⟩).sa
+
+def Redge (ts : List Triple) (N : Nat) (R : List Cand) : Prop :=
+  ∀ c, 1 ≤ c → (getR R c).active → EdgeGood ts N (getR R c).pos
+
+def Oedge (ts : List Triple) (N : Nat) (out : List Nat) : Prop :=
+  ∀ x ∈ out, EdgeGood ts N x
+
+theorem redge_defaultR (ts : List Triple) (N : Nat) : Redge ts N defaultR := by
+  intro c _ hact
+  rw [getR_defaultR c] at hact
+  exact absurd hact (by simp)
+
+theorem upd_edge (ts : List Triple) (N : Nat) (R : List Cand) (c l pos : Nat)
+    (hR : Redge ts N R) (hpos : EdgeGood ts N pos) : Redge ts N (upd R c l pos) := by
+  unfold upd
+  split
+  · intro d hd hact
+    by_cases hdeq : c = d
+    · subst hdeq
+      rw [getR_set_eq] at hact ⊢
+      by_cases hlt : c < R.length
+      · rw [if_pos hlt] at hact ⊢; exact hpos
+      · rw [if_neg hlt] at hact ⊢; exact hR c hd hact
+    · rw [getR_set_ne R c d ⟨l,pos,true⟩ hdeq] at hact ⊢
+      exact hR d hd hact
+  · exact hR
+
+theorem evalStepGo_edge (ts : List Triple) (N : Nat) (l : Int) :
+    ∀ acc i, Oedge ts N acc.1 → Redge ts N acc.2 →
+      Oedge ts N (evalStepGo l acc i).1 ∧ Redge ts N (evalStepGo l acc i).2 := by
+  intro acc i ho hR
+  obtain ⟨out, R⟩ := acc
+  rw [evalStepGo]
+  split
+  · rename_i hl
+    constructor
+    · intro x hx
+      split at hx
+      · rename_i ha
+        rw [List.mem_append] at hx
+        rcases hx with hx | hx
+        · exact ho x hx
+        · rw [List.mem_singleton] at hx; subst hx
+          exact hR (i+1) (Nat.le_add_left 1 i) ha
+      · exact ho x hx
+    · intro c hc hact
+      by_cases hceq : i + 1 = c
+      · subst hceq
+        rw [getR_set_eq] at hact ⊢
+        by_cases hlt : i + 1 < R.length
+        · rw [if_pos hlt] at hact; simp at hact
+        · rw [if_neg hlt] at hact ⊢
+          exact hR (i+1) hc hact
+      · rw [getR_set_ne R (i+1) c ⟨l,0,false⟩ hceq] at hact ⊢
+        exact hR c hc hact
+  · exact ⟨ho, hR⟩
+
+theorem evalStep_edge (ts : List Triple) (N : Nat) (l : Int) (R : List Cand) (out : List Nat)
+    (ho : Oedge ts N out) (hR : Redge ts N R) :
+    Oedge ts N (evalStep l R out).1 ∧ Redge ts N (evalStep l R out).2 := by
+  rw [evalStep_eq]
+  refine foldl_pres (evalStepGo l) (fun acc => Oedge ts N acc.1 ∧ Redge ts N acc.2) ?_
+    (List.range (SIGMA-1)) (out,R) ⟨ho,hR⟩
+  intro a i h
+  exact evalStepGo_edge ts N l a i h.1 h.2
+
+theorem scanAux_edge (N : Nat) (ts : List Triple) :
+    ∀ (i : Nat) (rest : List Triple) (prev : Triple) (m : Int) (R : List Cand) (out : List Nat),
+      1 ≤ i → rest = ts.drop i → prev = ts.getD (i-1) ⟨0,0,0⟩ →
+      Redge ts N R → Oedge ts N out →
+      Oedge ts N (scanAux N rest prev.c prev.sa m R out) := by
+  intro i rest
+  induction rest generalizing i with
+  | nil =>
+    intro prev m R out hi hdrop hprev hR ho
+    simp only [scanAux]
+    exact (evalStep_edge ts N (-1) R out ho hR).1
+  | cons t rest' ih =>
+    intro prev m R out hi hdrop hprev hR ho
+    have hdrop' : ts.drop i = t :: rest' := hdrop.symm
+    have hlen : i < ts.length := by
+      have h2 : (ts.drop i).length ≠ 0 := by rw [hdrop']; simp
+      rw [List.length_drop] at h2
+      omega
+    have ht : ts.getD i ⟨0,0,0⟩ = t := getD_of_drop_eq_cons hdrop'
+    have hrest' : rest' = ts.drop (i+1) := (drop_succ_of_drop_eq_cons hdrop').symm
+    have hprev' : t = ts.getD (i+1-1) ⟨0,0,0⟩ := by
+      rw [show i + 1 - 1 = i from by omega]; exact ht.symm
+    simp only [scanAux]
+    by_cases hbc : (t.c != prev.c) = true
+    · rw [if_pos hbc]
+      have hne : t.c ≠ prev.c := bne_iff_ne.mp hbc
+      have hbnd_i : isBoundary ts i = true := by
+        unfold isBoundary
+        rw [if_neg (show ¬ ts.length ≤ i by omega), if_neg (show ¬ i = 0 by omega)]
+        rw [ht, ← hprev]
+        exact bne_iff_ne.mpr hne
+      have hedge_i : isRunEdge ts i = true := by
+        unfold isRunEdge; rw [Bool.or_eq_true]; exact Or.inl hbnd_i
+      have hedge_prev : isRunEdge ts (i-1) = true := by
+        unfold isRunEdge
+        rw [Bool.or_eq_true]; right
+        rw [Bool.and_eq_true]
+        constructor
+        · exact decide_eq_true (by omega)
+        · rw [Bool.or_eq_true]; right
+          rw [show i - 1 + 1 = i from by omega, ht, ← hprev]
+          exact bne_iff_ne.mpr (Ne.symm hne)
+      have hpos_prev : EdgeGood ts N (N - prev.sa) := ⟨i-1, hedge_prev, by rw [hprev]⟩
+      have hpos_t : EdgeGood ts N (N - t.sa) := ⟨i, hedge_i, by rw [ht]⟩
+      obtain ⟨ho1, hR1⟩ := evalStep_edge ts N (min m t.lcp) R out ho hR
+      have hR2 := upd_edge ts N (evalStep (min m t.lcp) R out).2 prev.c t.lcp (N - prev.sa) hR1 hpos_prev
+      have hR3 := upd_edge ts N (upd (evalStep (min m t.lcp) R out).2 prev.c t.lcp (N - prev.sa)) t.c t.lcp (N - t.sa) hR2 hpos_t
+      exact ih (i+1) t MAXINT
+        (upd (upd (evalStep (min m t.lcp) R out).2 prev.c t.lcp (N - prev.sa)) t.c t.lcp (N - t.sa))
+        (evalStep (min m t.lcp) R out).1 (by omega) hrest' hprev' hR3 ho1
+    · rw [if_neg hbc]
+      exact ih (i+1) t (min m t.lcp) R out (by omega) hrest' hprev' hR ho
+
+/-- every position emitted by the one-pass scan is `N - sa` of a run-edge row
+(run HEAD or run TAIL) — the scan-side Layer 1, mirror of
+`witnesses_at_run_edges` for `fmSpec`. -/
+theorem scan_emits_run_edges (N : Nat) (ts : List Triple) :
+    ∀ x ∈ scan N ts, EdgeGood ts N x := by
+  intro x hx
+  cases ts with
+  | nil => simp [scan] at hx
+  | cons t0 rest =>
+    simp only [scan] at hx
+    have hgood := scanAux_edge N (t0 :: rest) 1 rest t0 MAXINT defaultR []
+      (by omega) rfl rfl (redge_defaultR (t0 :: rest) N)
+      (by intro y hy; simp at hy)
+    exact hgood x hx
 
 /-! ### FINDINGS
 

@@ -554,3 +554,51 @@ duplicate-aware candidates need no d-guessing; (b) the class-internal
 RMQ reduction — within a parse class, row ranges <-> k-ranges with
 m.len fixed, so class-internal min over a row range may reduce to min
 over occurrences — if it closes: exact NSV/PSV in O(r log^2).
+
+## THE COUNTEREXAMPLE IS CLOSED (2026-09-25): endpoint-rule sweep EXACT
+## on all 7 regimes; the formal pillars reduced to named obligations
+
+EMPIRICAL (tools/endpoint_*.py, ENDPOINT_REPORT.md, gate GREEN from
+main tree): the whitelist replaced by exact range-min semantics —
+class blocks (min from 2 endpoint rows, each resolve O(log) + piece
+law) -> segment tree over |M| block-minima -> exact PSV/NSV -> FM
+sweep. RESULT: exact SET equality with the FM oracle on all 7 regimes
+incl. duplicates-600k at 13,004/13,004 (the missed witness found;
+zero spurious).
+
+HONEST HYPOTHESIS CORRECTION (the agent's, retained verbatim in spirit):
+the raw endpoint law is NOT a universal data law (interior dips exist;
+the seductive 0-violations number was partly carried by cross-block
+boundary values). The OPERATIVE law that holds — exhaustively, 1.5M
+query-parts checked, 0 violations — is: for every threshold tau the
+sweep queries and every block in range, if the block contains any
+sub-tau row then an endpoint row is sub-tau too. Plus a never-wrongly-
+skip fallback (skip iff endpoint-min >= tau AND tau <= block mlen).
+
+ARCHITECTURE + COST: no whitelist, no O(n) slices, no SA, no text.
+New honest third parameter |M| (dictionary-suffix classes): 1.3r
+(random) .. 50r (satellite — singleton degeneration where rule D at
+1.5r is the better rule). Sweep probes 5.7r-104r by regime. NET:
+min(endpoint-sweep, rule D) is O(r)-constant on every regime measured,
+exact, gated end-to-end. The construction story at battery scale:
+CLOSED.
+
+FORMAL (formal lane 2): no pillar fully closed, but all three reduced
+to single named obligations with the reductions PROVEN (8 new
+theorems; sorry ledger unchanged at 5; all gates green):
+- covering_given_stream  <=>  (O1) domination: every position is
+  scope-dominated by some scan emission
+- minimality              <=>  (O2)-(O4): no duplicates, maximality,
+  distinct classes
+- fm_equivalence         <=>  the event-bridge multiset equality
+  (route: per-character candidate lifecycles, style in-file)
+(O1)-(O4) statement-locked: 0 counterexamples on 729 + 320 stress
+texts. Next formal lane: the event bridge first (needs no coverage
+theory), then (O1)-(O4) as the crystallized characterization problem.
+The provable core the endpoint rule rides on: the classic sorted-
+suffix identity min LCP over (a,b] = LCP(S_a, S_b) — statement-lock
+candidate for the successor of chi_from_events.
+
+NEXT: the YEAST FULL TEST — all inputs ready (parse 34.1M occ, .ri4,
+lcp_index pieces, chi oracle 85,404,240). Requires the Rust port
+(Python cannot sweep 100.9M runs) + the multi-string convention.
