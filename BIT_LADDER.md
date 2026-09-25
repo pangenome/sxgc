@@ -935,3 +935,35 @@ NEXT: 466 anchor build + p39/p197 spot-check + full 200-pattern
 anchored query + AGC verify -> expected VERDICT PASS (the 313 bads
 were all mega-run crossings; crossing-class patterns p150/p197/p37/
 p60 dominate them).
+
+## T1 rung: 466 PILOT VERDICT GREEN (2026-09-25 11:20) — the sentinel-erasure class is DEAD
+
+The full-scale gate, after the fundamental fix (anchors + two-case s_at,
+commit 663e6dc):
+
+    occurrences: 2008756, byte-verified: 2008756, bad: 0
+    planted truths found: 200/200
+    PILOT VERDICT GREEN
+
+Before: 313/2,008,756 bad (0.0156%), all mega-run toehold crossings.
+After: zero, with the crossing class EXERCISED (satellite patterns
+p150/p197/p37/p60 = 1.63M of the occurrences) and verified against the
+AGC-served forward text, plus 200/200 recall.
+
+Chain accounting (all background, stage-guarded):
+- build-anchors: 86 s, 38,790 anchors, 620 KB (37,760 0x0A runs; 791
+  multi-row groups resolved by content search; 2 identical-content
+  strings ordered by following text; every run-end sample law checked)
+- p39/p197 spot-check: 342,992/342,992 count-identical, all 5 known-bad
+  garbage positions gone (sanity: 5/5 present in the old trace)
+- full 200-pattern anchored query: 32,018 s (~8.9 h) single-threaded
+  Rust, 59.5 GB RSS
+- AGC verify: ~1.5 h
+- total chain: 42,602 s (~11.8 h)
+
+The pilot ladder is now fully green at 1.4 Tbp: chi(HPRC v2) =
+2,249,968,075 (gated), novelty table (gated), LF-walk text accessor
+(gated), locate 2,008,756/2,008,756 exact (this rung), 200/200 recall.
+Next per plan: xsa --mem/--project readouts, names index, standalone
+CHM13, then iteration 2 (PFP-BWT 466 differential gate). The same fix
+is noted for rindex_query (C++); v5 carries anchors natively.
