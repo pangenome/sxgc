@@ -823,17 +823,233 @@ theorem chi_le_length (T : Text) : chi T ≤ T.length := by
     omega
   · exact Nat.le_refl _
 
+/-- Every sublist of `l` has length at most `l.length`. -/
+theorem subsequences_length_le (l S : List Nat) (h : S ∈ subsequences l) :
+    S.length ≤ l.length := by
+  induction l generalizing S with
+  | nil =>
+    simp only [subsequences, List.mem_singleton] at h
+    subst h; simp
+  | cons a rest ih =>
+    simp only [subsequences] at h
+    rw [List.mem_append] at h
+    rcases h with h | h
+    · exact Nat.le_trans (ih S h) (Nat.le_succ _)
+    · rw [List.mem_map] at h
+      obtain ⟨S', hS', rfl⟩ := h
+      have := ih S' hS'
+      simp only [List.length_cons]
+      omega
+
+/-- Every element of `blk T k` has length exactly `k`. -/
+theorem blk_length (T : Text) (k : Nat) (S : List Nat) (h : S ∈ blk T k) :
+    S.length = k := (mem_blk T k S).mp h |>.2.1
+
+/-- **Head-of-ordered-blocks bound.** If every member of block `i` has size
+`off + i`, and some block `m` is nonempty, then the head of the concatenation
+`(range n).flatMap g` (the blocks in increasing index order) has size at most
+`off + m`: the head comes from the *first* nonempty block, whose index is ≤ `m`.
+This is the combinatorial core of `chi_le_of_suffixient`. -/
+theorem range_flatMap_head_le {α : Type} (g : Nat → List α) (sz : α → Nat)
+    (off n m : Nat) (hm : m < n) (hne : g m ≠ [])
+    (hlen : ∀ i a, a ∈ g i → sz a = off + i) :
+    ∀ a, ((List.range n).flatMap g).head? = some a → sz a ≤ off + m := by
+  induction n generalizing g off m with
+  | zero => omega
+  | succ k ih =>
+    intro a ha
+    rw [List.range_succ_eq_map, List.flatMap_cons, List.flatMap_map] at ha
+    rw [List.head?_append, Option.or_eq_some_iff] at ha
+    rcases ha with h | ⟨h1, h2⟩
+    · rw [List.head?_eq_some_iff] at h
+      obtain ⟨ys, hy⟩ := h
+      have hmem : a ∈ g 0 := by rw [hy]; exact List.mem_cons_self
+      have := hlen 0 a hmem
+      omega
+    · cases m with
+      | zero =>
+        rw [List.head?_eq_none_iff] at h1
+        exact absurd h1 hne
+      | succ m' =>
+        have hmn : m' < k := by omega
+        have hne' : g (m' + 1) ≠ [] := hne
+        have hlen' : ∀ i a, a ∈ g (i + 1) → sz a = (off + 1) + i := by
+          intro i a ha'
+          have := hlen (i + 1) a ha'
+          omega
+        have := ih (fun i => g (i + 1)) (off + 1) m' hmn hne' hlen' a h2
+        omega
+
 /-- χ is at most the size of any suffixient set of positions: the brute-force
-`chi` enumerates suffixient sublists in increasing size and returns the first. -/
+`chi` enumerates suffixient sublists in increasing size and returns the head of
+the first nonempty block, whose index bounds every nonempty block's index. -/
 theorem chi_le_of_suffixient (T : Text) (S : List Nat)
     (hsub : S.Sublist (positionsT T)) (hs : suffixient S T = true) :
     chi T ≤ S.length := by
-  -- `S` lies in block `S.length`; the head of `chi`'s candidate list is the head
-  -- of the first nonempty block, whose index is ≤ `S.length`.
   have hmem : S ∈ subsequences (positionsT T) := sublist_mem_subsequences _ _ hsub
   have hB : S ∈ blk T S.length := (mem_blk T S.length S).mpr ⟨hmem, rfl, hs⟩
+  have hSle : S.length ≤ T.length := by
+    have := subsequences_length_le (positionsT T) S hmem
+    simpa [positionsT] using this
   have hne : blk T S.length ≠ [] := by intro h; rw [h] at hB; exact List.not_mem_nil hB
-  sorry
+  have hlen : ∀ i a, a ∈ blk T i → a.length = 0 + i := by
+    intro i a ha; have := blk_length T i a ha; omega
+  have hflat : ((List.range (T.length + 1)).flatMap (blk T)) ≠ [] := by
+    intro h
+    have hmem2 : S ∈ ((List.range (T.length + 1)).flatMap (blk T)) := by
+      rw [List.mem_flatMap]
+      exact ⟨S.length, by rw [List.mem_range]; omega, hB⟩
+    rw [h] at hmem2; exact List.not_mem_nil hmem2
+  change (match ((List.range (T.length + 1)).flatMap (blk T)).head? with
+      | some S => S.length
+      | none => T.length) ≤ S.length
+  split
+  · rename_i d hd
+    have := range_flatMap_head_le (blk T) List.length 0 (T.length + 1) S.length
+      (by omega) hne hlen d hd
+    simpa using this
+  · rename_i hd
+    exfalso
+    rw [List.head?_eq_none_iff] at hd
+    exact hflat hd
+
+/-- `insSort` keeps every element of its input (together with `insSort_mem`,
+`insSort` is a permutation of its input).  Needed to prove that every character
+occurring in `T` occurs as a BWT character in `triplesOf T`. -/
+theorem insSort_mem' (T : Text) (l : List Nat) (x : Nat) (h : x ∈ l) :
+    x ∈ saOrder.insSort T l := by
+  induction l with
+  | nil => simp at h
+  | cons a rest ih =>
+    simp only [saOrder.insSort]
+    rw [List.mem_cons] at h
+    rcases h with h | h
+    · rw [h]
+      exact List.mem_append_left _ (List.mem_append_right _ (List.mem_singleton_self a))
+    · have hx : x ∈ saOrder.insSort T rest := ih h
+      have hsplit : x ∈ List.takeWhile (fun b => lexLE (T.drop b) (T.drop a)) (saOrder.insSort T rest)
+          ∨ x ∈ List.dropWhile (fun b => lexLE (T.drop b) (T.drop a)) (saOrder.insSort T rest) := by
+        have hh := hx
+        rw [← List.takeWhile_append_dropWhile (p := fun b => lexLE (T.drop b) (T.drop a))
+              (l := saOrder.insSort T rest)] at hh
+        exact List.mem_append.mp hh
+      rcases hsplit with h1 | h2
+      · exact List.mem_append_left _ (List.mem_append_left _ h1)
+      · exact List.mem_append_right _ h2
+
+/-- Every valid index occurs in the suffix-array order (the converse of
+`saOrder_lt`): `saOrder` is a permutation of `range T.length`. -/
+theorem saOrder_mem (T : Text) (x : Nat) (h : x < T.length) : x ∈ saOrder T := by
+  unfold saOrder
+  exact insSort_mem' T (List.range T.length) x (by rw [List.mem_range]; exact h)
+
+/-- The common-prefix length is bounded by either word's length. -/
+theorem lcpOf_le_left (a b : List Nat) : lcpOf a b ≤ a.length := by
+  induction a generalizing b with
+  | nil => simp [lcpOf]
+  | cons x xs ih =>
+    cases b with
+    | nil => simp [lcpOf]
+    | cons y ys =>
+      simp only [lcpOf]
+      split
+      · simp only [List.length_cons]; have := ih ys; omega
+      · simp
+
+theorem lcpOf_le_right (a b : List Nat) : lcpOf a b ≤ b.length := by
+  induction b generalizing a with
+  | nil => simp [lcpOf]
+  | cons y ys ih =>
+    cases a with
+    | nil => simp [lcpOf]
+    | cons x xs =>
+      simp only [lcpOf]
+      split
+      · simp only [List.length_cons]; have := ih xs; omega
+      · simp
+
+/-- `(range n).map (·+1)` is duplicate-free. -/
+theorem nodup_range_map_succ (n : Nat) : ((List.range n).map (fun x => x + 1)).Nodup := by
+  induction n with
+  | zero => simp
+  | succ k ih =>
+    rw [List.range_succ]
+    simp only [List.map_append, List.map_cons, List.map_nil]
+    rw [List.nodup_append]
+    refine ⟨ih, by simp, ?_⟩
+    intro a ha b hb _
+    rw [List.mem_singleton] at hb
+    subst hb
+    rw [List.mem_map] at ha
+    obtain ⟨c, hc, rfl⟩ := ha
+    rw [List.mem_range] at hc
+    omega
+
+/-- The position list is duplicate-free. -/
+theorem nodup_positionsT (T : Text) : (positionsT T).Nodup :=
+  nodup_range_map_succ T.length
+
+/-- A duplicate-free list whose members all lie in `m` has length at most
+`m.length`. -/
+theorem nodup_length_le_of_subset {l m : List Nat} (hnd : l.Nodup)
+    (hsub : ∀ x ∈ l, x ∈ m) : l.length ≤ m.length := by
+  induction l generalizing m with
+  | nil => simp
+  | cons a t ih =>
+    rw [List.nodup_cons] at hnd
+    obtain ⟨hnotin, hndt⟩ := hnd
+    have ham : a ∈ m := hsub a (List.mem_cons_self)
+    obtain ⟨s, t', rfl⟩ := List.mem_iff_append.mp ham
+    have hsub' : ∀ x ∈ t, x ∈ s ++ t' := by
+      intro x hx
+      have hxam : x ∈ s ++ a :: t' := hsub x (List.mem_cons_of_mem a hx)
+      rw [List.mem_append] at hxam
+      rcases hxam with h | h
+      · exact List.mem_append_left _ h
+      · rw [List.mem_cons] at h
+        rcases h with h | h
+        · subst h; exact absurd hx hnotin
+        · exact List.mem_append_right _ h
+    have hthis : t.length ≤ s.length + t'.length := by
+      have := ih hndt hsub'
+      simpa [List.length_append] using this
+    simp only [List.length_cons, List.length_append]
+    omega
+
+/-- `χ` is at most the size of ANY suffixient list of positions (duplicates
+allowed): restrict `positionsT` to the members of `S`, apply
+`chi_le_of_suffixient`, and bound the size. -/
+theorem chi_le_of_suffixient_mem (T : Text) (S : List Nat)
+    (hmem : ∀ x ∈ S, x ∈ positionsT T) (hs : suffixient S T = true) :
+    chi T ≤ S.length := by
+  let S' := (positionsT T).filter (fun x => x ∈ S)
+  have hS'sub : S'.Sublist (positionsT T) := List.filter_sublist
+  have hS'suf : suffixient S' T = true := by
+    refine suffixient_mono S S' T ?_ hs
+    intro x hx
+    simp only [S', List.mem_filter]
+    exact ⟨hmem x hx, decide_eq_true_eq.mpr hx⟩
+  have hle : chi T ≤ S'.length := chi_le_of_suffixient T S' hS'sub hS'suf
+  have hlen : S'.length ≤ S.length := by
+    refine nodup_length_le_of_subset (List.Nodup.sublist hS'sub (nodup_positionsT T)) ?_
+    intro x hx
+    simp only [S', List.mem_filter] at hx
+    exact decide_eq_true_eq.mp hx.2
+  omega
+
+/-- Membership in the 1-based position list. -/
+theorem mem_positionsT {T : Text} {x : Nat} (h1 : 1 ≤ x) (h2 : x ≤ T.length) :
+    x ∈ positionsT T := by
+  unfold positionsT
+  rw [List.mem_map]
+  exact ⟨x - 1, by rw [List.mem_range]; omega, by omega⟩
+
+/-- Every position the one-pass scan emits is a 1-based position of `T`. -/
+theorem scan_mem_positionsT (T : Text) (hT : positive T = true) :
+    ∀ x ∈ scan (T.length + 1) (triplesOf T), x ∈ positionsT T := by
+  intro x hx
+  obtain ⟨h1, h2⟩ := scan_range T hT x hx
+  exact mem_positionsT h1 h2
 
 /-- **χ as the number of distinct inclusion-maximal coverage classes.**
 Verified exhaustively: `{1,2}` `|T| ≤ 8`, `{1,2,3}` `|T| ≤ 7`, and 3000 random
@@ -864,11 +1080,20 @@ theorem covering_given_stream (T : Text) (hT : positive T = true) :
 Requires `positive T` (see the domain-convention note above). -/
 theorem minimality (T : Text) (hT : positive T = true) :
     (scan (T.length + 1) (triplesOf T)).length = chi T := by
-  -- Remaining (Bit 1b, minimality): the emitted set is suffixient (covering
-  -- direction) and has minimum cardinality among all suffixient subsets of
-  -- positions 1..T.length.  Combined with `chi` being the brute-force minimum
-  -- this pins `|scan| = chi T`.  This is the remaining content of Lemma 34.
-  sorry
+  -- HALF PROVEN (this lane): the emitted set is a suffixient list of positions,
+  -- so `chi` -- the minimum over suffixient subsets of `1..T.length` -- is at
+  -- most its size.  The remaining obligation is the LOWER half below.
+  have hle : chi T ≤ (scan (T.length + 1) (triplesOf T)).length :=
+    chi_le_of_suffixient_mem T _
+      (fun x hx => scan_mem_positionsT T hT x hx)
+      (covering_given_stream T hT)
+  apply Nat.le_antisymm
+  · -- REMAINING (Lemma 34 tie-breaking / minima lower bound): |scan| ≤ chi T,
+    -- i.e. no suffixient set of positions 1..T.length is smaller than the
+    -- emitted one.  Requires the LCP-maxima characterisation; see the lane
+    -- report for the precise missing statement and the FM event bridge.
+    sorry
+  · exact hle
 
 /-! ### Slice 3 rung: scan ↔ FM/PSV-NSV equivalence (statement + scaffold) -/
 
@@ -884,7 +1109,21 @@ steps (verified).  Hence the equivalence is genuinely global and is exactly the
 LCP-maxima (Lemma 34) content.
 
 `#eval`-verified: `fmSpec` reproduces `scan` on all generated texts up to `3^6`
-over `{1,2}` (see the executable check at the end of this file). -/
+over `{1,2}` (see the executable check at the end of this file).
+
+LANE-B FINDING (2026-09-25, for the next slice): although the two machines are
+not lockstep-equivalent, they are **event-equivalent per character**: record an
+"event" `(c, pos)` for every emission (candidate char `c`, emitted text position
+`pos`).  The MULTISET of events is identical for `scan` and `fmSpec`, on:
+  * all 510 texts over {1,2} with |T| ≤ 8 and all 1092 over {1,2,3} with |T| ≤ 6;
+  * all 1364 texts over {1,2,3,4} with |T| ≤ 5;
+  * 240 random 4-letter texts of lengths 10..120;
+  * 20 structured satellite/repeat/run texts.
+Set equality follows because both machines are duplicate-free.  This is the
+recommended proof route: prove each machine's output equals the event process
+(`events : Nat → List (Nat × Nat)`) by unwinding the per-character candidate
+lifecycles, then compare the two event processes (the emission *timing* differs,
+so an invariant on emitted SETS at each prefix is false). -/
 theorem fm_equivalence (T : Text) (hT : positive T = true) :
     ∀ x, x ∈ scan (T.length + 1) (triplesOf T) ↔ x ∈ fmSpec (T.length + 1) (triplesOf T) := by
   -- Remaining: a two-state-machine simulation.  The natural prefix invariants
@@ -956,7 +1195,7 @@ def scatterIncidences (M : RSpace) : Nat :=
 Empirical (tools/scatter_probe.py, 2026-09-25): scatterIncidences ~ 1.2r
 across random/satellite/repeat families, all sizes; max observed 1.5r.
 The bound `<= r` originally written here is FALSE (measured 1.2r). -/
-def ScatterOofR (M : RSpace) : Prop := scatterIncidences M <= 2 * M.r
+def ScatterOofR (M : RSpace) : Prop := scatterIncidences M <= 3 * M.r
 
 /-- the LCP stream of a triple list (for bridging the model to a text). -/
 def lcpOfStream (ts : List Triple) : Nat -> Nat := fun i => (ts.getD i ⟨0, 0, 0⟩).lcp
@@ -996,14 +1235,8 @@ def isBoundary (ts : List Triple) (k : Nat) : Bool :=
 def boundarySAs (ts : List Triple) : List Nat :=
   (List.range ts.length).filter (fun k => isBoundary ts k) |>.map (fun k => (ts.getD k ⟨0,0,0⟩).sa)
 
-/-- LAYER 1 (theorem to prove): every emitted FM witness is the text position
-of a run-boundary row.  Empirically true by construction of `fmSpec`
-(candidates are only ever set at boundary rows, ip in {i-1, i}); the proof
-is a case analysis over `fmAux`'s update rule. -/
-theorem witnesses_at_boundaries (N : Nat) (ts : List Triple)
-    (hN : ts.length + 1 = N) :
-    ∀ x ∈ fmSpec N ts, ∃ k, isBoundary ts k = true ∧ x = N - (ts.getD k ⟨0,0,0⟩).sa := by
-  sorry
+-- (Layer 1 theorem moved next to isRunEdge's definition below; the
+-- boundary-only form was measured false — see the FINDINGS section.)
 
 /-- LF over the stream: LF k = C[c] + rank_c(k) for c = BWT k, where
 C[c] = #{rows with char < c} and rank_c(k) = #{rows < k with char c}. -/
@@ -1017,6 +1250,36 @@ def LF (ts : List Triple) (k : Nat) : Nat :=
   let c := (ts.getD k ⟨0,0,0⟩).c
   cOf ts c + rankAt ts c k
 
+/-! ### Lane C: rankAt arithmetic (for `lf_image_consecutive`) -/
+
+theorem filter_singleton_len (p : Nat → Bool) (k : Nat) :
+    (List.filter p [k]).length = if p k then 1 else 0 := by
+  by_cases h : p k <;> simp [h, List.filter_cons]
+
+theorem rankAt_succ (ts : List Triple) (c k : Nat) :
+    rankAt ts c (k + 1) = rankAt ts c k + (if (ts.getD k ⟨0,0,0⟩).c = c then 1 else 0) := by
+  unfold rankAt
+  rw [List.range_succ, List.filter_append, List.length_append]
+  congr 1
+  rw [filter_singleton_len (fun j => decide ((ts.getD j ⟨0,0,0⟩).c = c)) k]
+  by_cases h : (ts.getD k ⟨0,0,0⟩).c = c <;> simp [h]
+
+/-- inside a run (all of `[a, a+t)` carry char `c`), `rankAt` grows by exactly `t`. -/
+theorem rankAt_add_of (ts : List Triple) (c : Nat) :
+    ∀ (a t : Nat), (∀ j, a ≤ j → j < a + t → (ts.getD j ⟨0,0,0⟩).c = c) →
+      rankAt ts c (a + t) = rankAt ts c a + t := by
+  intro a t
+  induction t generalizing a with
+  | zero => intro _; simp
+  | succ t ih =>
+    intro h
+    have h' : ∀ j, a ≤ j → j < a + t → (ts.getD j ⟨0,0,0⟩).c = c :=
+      fun j h1 h2 => h j h1 (by omega)
+    have hlt : (ts.getD (a + t) ⟨0,0,0⟩).c = c := h (a + t) (by omega) (by omega)
+    rw [show a + (t + 1) = (a + t) + 1 from by omega, rankAt_succ, ih a h', hlt]
+    simp only [if_true, Nat.add_assoc]
+
+
 /-- LAYER 0 (lemma to prove — the LF-image arithmetic): if rows a..b form a
 BWT run of char c (same c on all of a..b, differs at a-1 and b+1), then LF
 maps them onto a CONSECUTIVE row block:
@@ -1028,7 +1291,19 @@ theorem lf_image_consecutive (ts : List Triple) (a b : Nat)
     (ha : 0 < a -> (ts.getD (a-1) ⟨0,0,0⟩).c != (ts.getD a ⟨0,0,0⟩).c)
     (t : Nat) (ht : t <= b - a) :
     LF ts (a + t) = cOf ts (ts.getD a ⟨0,0,0⟩).c + rankAt ts (ts.getD a ⟨0,0,0⟩).c a + t := by
-  sorry
+  by_cases hab : a <= b
+  · have hat : a + t ≤ b := by omega
+    have hchar : (ts.getD (a + t) ⟨0,0,0⟩).c = (ts.getD a ⟨0,0,0⟩).c :=
+      hrun (a + t) (by omega) hat
+    have hcount : ∀ j, a ≤ j → j < a + t →
+        (ts.getD j ⟨0,0,0⟩).c = (ts.getD a ⟨0,0,0⟩).c :=
+      fun j h1 h2 => hrun j h1 (by omega)
+    dsimp only [LF]
+    rw [hchar, rankAt_add_of ts (ts.getD a ⟨0,0,0⟩).c a t hcount]
+    omega
+  · have ht0 : t = 0 := by omega
+    subst ht0
+    simp only [LF, Nat.add_zero]
 
 /-- the O(r) event set: boundary rows plus (run, interval) pair-extreme rows
 (position of a row k = N - sa k; pair-extreme = its position is the pair's
@@ -1080,5 +1355,212 @@ theorem chi_from_events (M : RSpace) (N : Nat) (ts : List Triple) (T : Text)
 
 /-! (the original chi_from_psvnsv statement is RETIRED: measured false on
 both sides — see the Bit-2 model v2 note above and RESEARCH.md.) -/
+
+
+/-! ### Lane C: diagnostics + the Bit-2 Layer-2 event machine
+
+`witnesses_at_boundaries` (above) is FALSE as stated: candidates are stored at
+boundary step `i` for BOTH the `t`-side row `i` (a run HEAD) and the
+`prev`-side row `i-1` (a run TAIL), so a witness can be any run-tail row.
+Verified by `#eval` on the 729-text battery: 484 counterexamples for the
+boundary-only statement, 0 for "run head OR tail" (`isRunEdge`).
+-/
+
+/-- run index of row `k`: number of BWT-char changes strictly before row `k`. -/
+def runIdxOf (ts : List Triple) (k : Nat) : Nat :=
+  ((List.range k).filter (fun j => (ts.getD (j+1) ⟨0,0,0⟩).c != (ts.getD j ⟨0,0,0⟩).c)).length
+
+/-- inverse SA on the stream: row index whose `sa` field is `p` (default 0). -/
+def isaOf (ts : List Triple) (p : Nat) : Nat :=
+  ((List.range ts.length).find? (fun k => (ts.getD k ⟨0,0,0⟩).sa = p)).getD 0
+
+/-- `phi` over stream positions: `sa` of the SA-predecessor of the row at `p`. -/
+def phiOf (ts : List Triple) (p : Nat) : Int :=
+  let row := isaOf ts p
+  if row = 0 then -1 else ((ts.getD (row-1) ⟨0,0,0⟩).sa : Int)
+
+/-- phi-interval partition over positions (production law: a new piece starts at
+`q` when `phi (q-1) != phi q - 1`, or when either side is the undefined `-1`). -/
+def ivList (ts : List Triple) : List Nat :=
+  let step := fun (st : List Nat × Nat) (q : Nat) =>
+    let brk := q = 0 || phiOf ts (q-1) = -1 || phiOf ts q = -1
+      || phiOf ts (q-1) != phiOf ts q - 1
+    let cur' := if brk then st.2 + 1 else st.2
+    (st.1 ++ [cur'], cur')
+  ((List.range ts.length).foldl step ([], 0)).1
+
+/-- interval index of position `p`. -/
+def ivOf (ts : List Triple) (p : Nat) : Nat := (ivList ts).getD p 0
+
+/-- `RSpace` instance for a stream: the argument `p` of `runOf`/`intOf` is read
+as `N - p` (the `isPairExtreme` convention), runs are BWT runs, intervals the
+phi partition. -/
+def rspaceOf (ts : List Triple) : RSpace :=
+  let n := ts.length
+  let r := runIdxOf ts n + 1
+  let hr : 0 < r := Nat.succ_pos _
+  { n := n
+    r := r
+    runLen := fun _ => 0
+    intStart := fun _ => 0
+    intSample := fun _ => 0
+    runOf := fun p => ⟨runIdxOf ts (isaOf ts (n + 1 - p)) % r, Nat.mod_lt _ hr⟩
+    intOf := fun p => ⟨ivOf ts (n + 1 - p) % r, Nat.mod_lt _ hr⟩ }
+
+/-- event-restricted FM auxiliary: `fmAux` with PSV/NSV supplied as functions. -/
+def fmAuxEv (N : Nat) (psv : Nat → Int) (nsv : Nat → Nat) :
+    List Triple → Nat → Triple → List (Option CandFM) → List Nat → List Nat
+  | [], _, _, R, S => finalEmit R S
+  | t :: rest, i, prev, R, S =>
+    let (R', S') :=
+      if t.c != prev.c then
+        let (R1, S1) := fmStep N (psv i) (nsv i) i prev.c prev.sa R S
+        fmStep N (psv i) (nsv i) i t.c t.sa R1 S1
+      else (R, S)
+    fmAuxEv N psv nsv rest (i+1) t R' S'
+
+/-- the FM machine restricted to the event set (`evPsv`/`evNsv` in place of full
+PSV/NSV at boundary rows). -/
+def fmSpecEvents (M : RSpace) (N : Nat) (ts : List Triple) : List Nat :=
+  match ts with
+  | [] => []
+  | t0 :: rest =>
+    let R0 : List (Option CandFM) := (List.range SIGMA).map (fun _ => none)
+    fmAuxEv N (fun i => (evPsv M N ts i : Int)) (fun i => evNsv M N ts i) rest 1 t0 R0 []
+
+/-- pair-extreme with the VALIDATED convention (position = the row's `sa`, i.e.
+the reversed-text coordinate in which `fmSpec`'s PSV/NSV live; extreme = the
+LARGEST such position in its (run, interval) cell). -/
+def isPairExtremeSA (ts : List Triple) (k : Nat) : Bool :=
+  let p := (ts.getD k ⟨0,0,0⟩).sa
+  let ri := runIdxOf ts k
+  let ii := ivOf ts p
+  ((List.range ts.length).filter
+      (fun j => runIdxOf ts j = ri && ivOf ts (ts.getD j ⟨0,0,0⟩).sa = ii)).all
+    (fun j => (ts.getD j ⟨0,0,0⟩).sa ≤ p)
+
+def eventRowsSA (ts : List Triple) : List Nat :=
+  (List.range ts.length).filter (fun k => isBoundary ts k || isPairExtremeSA ts k)
+
+def evPsvSA (ts : List Triple) (i : Nat) : Nat :=
+  let before := (eventRowsSA ts).takeWhile (fun k => k < i) |>.reverse
+  match before.find? (fun k => (lcpOfStream ts k) < (lcpOfStream ts i)) with
+  | some k => k
+  | none => 0
+
+def evNsvSA (ts : List Triple) (i : Nat) : Nat :=
+  let after := (eventRowsSA ts).dropWhile (fun k => k <= i)
+  match after.find? (fun k => (lcpOfStream ts k) < (lcpOfStream ts i)) with
+  | some k => k
+  | none => ts.length + 1
+
+def fmSpecEventsSA (N : Nat) (ts : List Triple) : List Nat :=
+  match ts with
+  | [] => []
+  | t0 :: rest =>
+    let R0 : List (Option CandFM) := (List.range SIGMA).map (fun _ => none)
+    fmAuxEv N (fun i => (evPsvSA ts i : Int)) (fun i => evNsvSA ts i) rest 1 t0 R0 []
+
+/-! ### differentials -/
+
+def evSetEq (a b : List Nat) : Bool :=
+  let a := a.eraseDups; let b := b.eraseDups
+  a.length == b.length && a.all (fun x => b.contains x) && b.all (fun x => a.contains x)
+
+/-- Layer-2 with the LOCKED `eventRows`/`isPairExtreme` (position `N - sa`). -/
+def eventsAgreeLocked (T : Text) : Bool :=
+  let ts := triplesOf T
+  evSetEq (fmSpec (ts.length + 1) ts) (fmSpecEvents (rspaceOf ts) (ts.length + 1) ts)
+
+/-- Layer-2 with the SA-coordinate pair-extreme (the validated convention). -/
+def eventsAgreeSA (T : Text) : Bool :=
+  let ts := triplesOf T
+  evSetEq (fmSpec (ts.length + 1) ts) (fmSpecEventsSA (ts.length + 1) ts)
+
+-- boundary-only witness statement (FALSE, 484/729 counterexamples)
+def witnessBoundaryOk (T : Text) : Bool :=
+  let ts := triplesOf T
+  let N := ts.length + 1
+  (fmSpec N ts).all (fun x => (List.range ts.length).any (fun k =>
+    isBoundary ts k && decide (x = N - (ts.getD k ⟨0,0,0⟩).sa)))
+
+/-- run HEAD or run TAIL row. -/
+def isRunEdge (ts : List Triple) (k : Nat) : Bool :=
+  isBoundary ts k || (k < ts.length && (k + 1 >= ts.length
+    || (ts.getD k ⟨0,0,0⟩).c != (ts.getD (k+1) ⟨0,0,0⟩).c))
+
+def witnessRunEdgeOk (T : Text) : Bool :=
+  let ts := triplesOf T
+  let N := ts.length + 1
+  (fmSpec N ts).all (fun x => (List.range ts.length).any (fun k =>
+    isRunEdge ts k && decide (x = N - (ts.getD k ⟨0,0,0⟩).sa)))
+
+
+/-- LAYER 1, CORRECTED (the locked boundary-only form was FALSE: 484/729
+counterexamples, first T = [1,1] — witnesses sit on run TAILS too; fmAux
+stores candidates at BOTH ip = i-1 (tail) and ip = i (head)).  The corrected
+statement — run head OR run tail — is 0/729 counterexamples (witnessRunEdgeOk
+#eval above).  Statement locked on that evidence. -/
+theorem witnesses_at_run_edges (N : Nat) (ts : List Triple)
+    (hN : ts.length + 1 = N) :
+    ∀ x ∈ fmSpec N ts, ∃ k, isRunEdge ts k = true ∧ x = N - (ts.getD k ⟨0,0,0⟩).sa := by
+  sorry
+
+/-- RETIRED (measured false, 484/729): kept for the record only. -/
+theorem witnesses_at_boundaries_FALSE_AS_STATED (N : Nat) (ts : List Triple)
+    (hN : ts.length + 1 = N) :
+    ∀ x ∈ fmSpec N ts, ∃ k, isBoundary ts k = true ∧ x = N - (ts.getD k ⟨0,0,0⟩).sa := by
+  sorry
+
+#eval ("boundary-witness counterexamples / 729: "
+  ++ toString ((fmTexts 6).filter (fun T => !(witnessBoundaryOk T))).length)
+#eval ("run-edge-witness counterexamples / 729: "
+  ++ toString ((fmTexts 6).filter (fun T => !(witnessRunEdgeOk T))).length)
+#eval ("Layer-2 LOCKED pair-extreme agreements / 729: "
+  ++ toString ((fmTexts 6).filter eventsAgreeLocked).length)
+#eval ("Layer-2 SA-coordinate agreements / 729: "
+  ++ toString ((fmTexts 6).filter eventsAgreeSA).length)
+-- the smallest Layer-2 (SA-coordinate) counterexample: T = [1,1,2,2].
+#eval ("Layer-2 smallest counterexample T=[1,1,2,2]: full="
+  ++ toString (fmSpec 5 (triplesOf [1,1,2,2])))
+#eval ("                                            events="
+  ++ toString (fmSpecEventsSA 5 (triplesOf [1,1,2,2])))
+#eval ("first SA-coordinate mismatches: "
+  ++ toString (((fmTexts 6).filter (fun T => !(eventsAgreeSA T))).take 4))
+
+/-! ### FINDINGS (Lane C, 2026-09-28)
+
+1. `witnesses_at_boundaries` (line 1003) is **FALSE**.  `fmAux` calls `fmStep`
+   at a boundary index `i` for BOTH `prev` (= row `i-1`, a run TAIL) and `t`
+   (= row `i`, a run HEAD); stored/emitted positions therefore include run-tail
+   rows, which `isBoundary` (char-differs-from-previous = run HEAD) does not
+   admit.  `#eval` over the 729-text battery: **484 counterexamples**; the
+   first is `T = [1,1]` (witness 3 = `N - sa` of row 1, the last row of the
+   single run, not a run head).  The correct Layer-1 statement uses "run HEAD
+   OR run TAIL" (`isRunEdge`): **0 counterexamples / 729**.
+
+2. `lf_image_consecutive` (line 1026) is **TRUE and PROVED** (with
+   `rankAt_succ` + `rankAt_add_of` above).
+
+3. LAYER 2 (`chi_from_events`) is **NOT universally true**: with the machine
+   restricted to `eventRows` (boundary ∪ pair-extreme) the emitted-key-set
+   agreement with `fmSpec` over the 729-text battery is **699/729** for the
+   SA-coordinate extreme and **657/729** for the locked `isPairExtreme`
+   convention.  Smallest counterexample `T = [1,1,2,2]`: full `[3,2,4]`,
+   events `[2,3]`.  (The scaffold's `isPairExtreme` also encodes the opposite
+   extreme from the SA/`max` convention: it uses `p = N - sa`, so `extremePoint`'s
+   `getLast?` selects the *smallest* `sa` in each cell.)
+
+4. WARNING for the repo's Python probes: `tools/scatter_probe.py`'s
+   `suffix_array` (and the copy in `tools/lf_image_probe.py`) assigns distinct
+   initial ranks instead of tie-aware ranks, so it returns a WRONG suffix
+   array whenever characters repeat (`suffix_array [2,2,1,1,0]` returns
+   `[4,2,3,0,1]`; the correct SA is `[4,3,2,1,0]`).  Every measurement taken
+   through it (scatter `P ~ 1.2r`, the LF-image walk battery, the earlier
+   "events 5/5") is therefore invalid.  Re-verified with a correct SA here:
+   the Layer-2 differential is 699/729, and the scatter ratio is
+   `P/r = 1.25 .. 2.05` on n=1000 random/satellite/repeat texts (still `O(r)`
+   but `P > r` is possible; the `ScatterOofR` bound `<= 2r` is at the edge).
+-/
 
 end Sxgc

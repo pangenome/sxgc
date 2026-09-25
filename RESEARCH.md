@@ -235,3 +235,50 @@ crossings. Lean scaffold updated (ScatterOofR <= 2r after measuring
 1.2r; chi_from_psvnsv RETIRED as measured-false on both sides;
 witnesses_at_boundaries + lf_image_consecutive + chi_from_events
 stated, chi_from_events gated on the Python 5/5 differential).
+
+## Bit-2 measurements RE-DERIVED with a CORRECT SA (2026-09-29)
+
+MEASUREMENT-TOOL BUG (negative result #5, caught by Lane C's Lean
+differential): tools/scatter_probe.py + lf_image_probe.py prefix-doubling
+suffix_array assigned DISTINCT initial ranks to equal characters — wrong
+SA for every text with repeats. All 2026-09-25/28 Python probe numbers
+were artifacts. Fixed (dense tie-aware ranks), verified 150/150 vs
+brute incl. heavy-repeat stress; both files carry the lesson.
+
+Corrected numbers (same batteries, correct SA):
+- SCATTER: P/r in [1.25, 2.02] (binary ~2.0, 4-letter ~1.33, satellites
+  ~1.3, run-length 1.25). P = O(r) SURVIVES; ScatterOofR restated <= 3r.
+  P/chi ~ 1.4-2.5. blocks/run ~ P/r (per-run intervals still isolated).
+- NEW CLEAN FACT: #phi-intervals = r EXACTLY on every text tested
+  (random/satellite/repeat/run-length, n to 100k). Theorem candidate:
+  phi-interval breaks <-> BWT run boundaries, 1:1, for the 0-terminated
+  single-string convention.
+- PIECE LAW: law-bad = 0 everywhere, re-verified (production law exact).
+- BIT-2a "22% FALSE" WAS ALSO AN ARTIFACT: with the correct SA the FM
+  witnesses sit at per-(run,piece) argmax-SA rows (argMIN text position
+  = the cell's LCP-MAXIMUM) with only 0-2 exceptions per text, and the
+  exceptions are off-by-one/boundary rows and sentinel-adjacent prefix
+  rows. The original text-order argMAX statement had the DIRECTION
+  wrong; the corrected direction is nearly exact. Model v3: restate,
+  characterize the residual convention, re-battery.
+- LF-IMAGE: random-4 0.66-0.67r (unchanged), random-bin 1.99r (was
+  5.99r under the bug — the giant orbits were artifacts), max walk
+  9-16 on balanced texts. Mega-run degeneracy CONFIRMED REAL:
+  satellite-100k 395r (max walk 98,992), (ab)^k 133,330r. Two-regime
+  split stands with clean constants.
+- EVENTS (Layer 2): with correct SA and the argmax-SA extreme
+  convention, 121/124 (smallest failure T=[2,2,2,1,1]); boundary-only
+  still fails. Near-miss, not theorem; residuals same class as the
+  witness-argmax off-by-ones. v3 task: nail the boundary/off-by-one
+  convention.
+
+Lean ledger after Lanes B+C landed (review-as-squash, this commit):
+PROVEN: chi_le_of_suffixicient (B), lf_image_consecutive (C).
+SORRY 6: chi_eq_maxClasses (A in flight), covering_given_stream (needs
+SA/LCP theory: lcpOf correctness, saOrder sortedness), minimality
+(half proven; lower half needs covering + maxClassCount),
+fm_equivalence (route FOUND: the event-bridge — scan and fmSpec emit
+the IDENTICAL (char,pos) event multiset, 3,226 texts 0 mismatches),
+witnesses_at_run_edges (corrected Layer 1, 0/729, provable),
+chi_from_events (open door). Statements corrected: ScatterOofR <= 3r,
+witnesses boundary-only RETIRED (false), isRunEdge restatement locked.

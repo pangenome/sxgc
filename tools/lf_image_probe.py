@@ -18,11 +18,15 @@ import sys
 
 
 def suffix_array(x):
+    # dense tie-aware initial ranks (see scatter_probe.suffix_array note)
     n = len(x)
     sa = sorted(range(n), key=lambda i: x[i])
     rank = [0] * n
-    for i, p in enumerate(sa):
-        rank[p] = i
+    for idx, p in enumerate(sa):
+        if idx > 0 and x[p] == x[sa[idx - 1]]:
+            rank[p] = rank[sa[idx - 1]]
+        else:
+            rank[p] = idx
     k = 1
     while True:
         key = lambda i: (rank[i], rank[i + k] if i + k < n else -1)

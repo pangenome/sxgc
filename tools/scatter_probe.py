@@ -16,12 +16,18 @@ from collections import defaultdict
 
 
 def suffix_array(x):
-    # prefix doubling, O(n log^2 n)
+    # prefix doubling, O(n log^2 n). Initial ranks are DENSE (equal chars
+    # share rank) — distinct initial ranks silently break the doubling for
+    # any text with repeated characters (caught 2026-09-29 by a Lean
+    # differential; verify against brute on every change).
     n = len(x)
     sa = sorted(range(n), key=lambda i: x[i])
     rank = [0] * n
-    for i, p in enumerate(sa):
-        rank[p] = i
+    for idx, p in enumerate(sa):
+        if idx > 0 and x[p] == x[sa[idx - 1]]:
+            rank[p] = rank[sa[idx - 1]]
+        else:
+            rank[p] = idx
     k = 1
     tmp = [0] * n
     while True:
