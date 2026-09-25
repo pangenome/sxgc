@@ -484,3 +484,28 @@ CONSEQUENCES, honest:
 4. The user's duplicates instinct generalized further than human
    text: diverged repeats (approximate copies) are the universal hard
    class — and phrase-jump is the right jump for them.
+
+## LANE 1 GREEN (2026-09-25): parse-coordinate resolution engine —
+## row-exact, O(log)/row, no walking (tools/parse_resolve_proto.py)
+
+The primitive that replaces toehold-walking exists and is brute-gated:
+resolve(row) -> text position from PFP artifacts ALONE (dictionary +
+parse + class boundary structures), verified against the brute SA on
+EVERY row of every battery text:
+- random-4-20k: 20,010/20,010 rows exact
+- satellite-18k: 18,510/18,510 exact (|parse| = 4 — the whole periodic
+  text parses to FOUR occurrences, all rows still resolve in O(log))
+- HOR-nested, dup+unique-120k: all rows exact
+- duplicates-600k: all 14,700 run-boundary rows + 100 random exact
+Per-resolution cost: O(log |M|) bisect + O(1) array reads; no LF walk,
+no SA, no text access. Conventions pinned in the file ($^w linear text,
+colex wavelet semantics, phrase-start arithmetic — two off-by-ones found
+and fixed by the agent via brute calibration; recorded).
+
+Both components of the construction are now gated independently:
+  (1) the event model: exact 124/124 (direct-law pieces + both cell
+      extremes + restricted FM sweep -> chi);
+  (2) the resolution primitive: row-exact on the full battery.
+Remaining: the END-TO-END ASSEMBLY (events -> resolve -> pieces -> LCP ->
+sweep -> sA), gated at battery scale vs the fm oracle, then multi-string
+adaptation (anchors as events — the locate-fix law), then yeast.
