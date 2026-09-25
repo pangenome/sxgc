@@ -666,3 +666,29 @@ Named, standard, portable — the only thing between the build and
 Claim ledger: piece sidecar constructible from parse coordinates alone
 — CORRECTNESS GATED; wall-clock parse time pending the PFP-LCP
 primitive port.
+
+## Verification-ladder rung (user's call, 2026-09-25): implementation-vs-
+## Lean-spec differential — the missing weld
+
+Honest status: the construction implementation (resolve/resolve_inv,
+endpoint sweep, parse-space pieces) is NOT proven; its warrant is brute
+differential gating (row-exact, set-exact, partition-identical). The
+mathematical core is proven in Lean; the spec pillars (O1-O4, event
+bridge) are open with a lane queued.
+
+Why differentials-first was right THIS time: four false models died to
+batteries in hours each this week (boundary-only, events-5/5 artifact,
+argmax direction, both-extremes whitelist); Lean-first would have
+formalized corpses. The convention-bug class (SA bug, orientations,
+off-by-ones, the yeast trailing-newline seam) is however exactly what
+a formalized spec eliminates — the user's methodology point stands.
+
+THE MISSING RUNG (added to the ledger): once O1-O4 + the event bridge
+are proven, RUN THE LEAN SPEC AS CODE on the full battery (the #eval
+machinery already executes it) and diff the Rust construction against
+it. Ladder from bottom to top: (1) brute differentials = ground truth;
+(2) Lean theorems = the model; (3) implementation-vs-Lean-spec
+differential = the weld that makes "the implementation follows the
+proven model" a gate, not a hope. The convention-seam class (pfp file
+formats, dollar padding) stays differential-gated by design — it is
+engineering, not mathematics.
