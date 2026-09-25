@@ -384,3 +384,41 @@ and the parse-granularity resolution algorithm (PFP internals; prototype
 next at yeast). v5 FREEZE GATE: only after the yeast prototype proves
 which structures are actually consumed (anchors decided; parse sidecar
 now likely; pieces).
+
+## Literature placement + the PFP bridge (2026-10-01, checked before claiming)
+
+The suffixient-array construction frontier (as of the checked literature):
+- Cenzato et al.: linear-time, compressed-space; testing sets; online
+- Olivares & Navarro (SPIRE 26): first linear one-pass PRACTICAL
+- Urbina (arXiv 2607.00204): SUBLINEAR — O(n log sigma / sqrt(log n) +
+  min(r, rbar) log^eps n) — the n-term remains
+- Navarro et al. 2025: chi <= 2r PROVEN; near-tightness paper exists
+
+PFP literature: build-time substrate only — BWTs (Boucher et al. WABI18/
+AMB19), SA, suffix trees, BWT merging, recursive PFP, pangenome aligners,
+higher-order parse-size theory (DCC 2026); one query-side use (FM-index
+acceleration via word parsing, WABI 2023). Field's own assessment: PFP
+"lacking good worst-case guarantees" — parse size is parameter- and
+text-dependent; no theorem parse = O(r).
+
+THE GAP (our lane, checked twice, proper survey still owed at paper
+time): no work connects PFP to suffixient arrays, and nobody RETAINS
+the parse as a coordinate sidecar for secondary constructions. The
+mechanism claim: row -> (phrase occurrence, offset) -> position, from
+parse structures, O(1)/event — the sA construction then runs in
+O(r + parse) from compressed artifacts with NO n-term.
+
+MEASURED, real scale (k=10 pilot parse, on disk from the PFP pilot):
+parse = 333,531,726 occurrences; parse/r = 0.18; avg phrase 90 bp;
+parse/n = 0.011. Battery: 0.01-0.49r. Both parameters small in every
+regime measured.
+
+THEORY FRAMING (the "parts stand in for each other" observation):
+witnesses (chi), phi-pieces (iv = r exactly), BWT runs (r), and PFP
+phrases (parse) are all CONTEXT-BOUNDARY SAMPLERS of one underlying
+object — each samples the text where a comparison-context changes
+(right-extension contexts for chi; SA-predecessor chains for pieces;
+left-contexts for runs; repeated w-contexts for phrases). Measured
+ratios: chi/r in [0.82,0.88], P/r 1.2-2, iv/r = 1.0, parse/r 0.18
+(human scale). The unification is not an analogy: it is why parse
+coordinates resolve witnesses.
