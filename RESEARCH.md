@@ -422,3 +422,34 @@ left-contexts for runs; repeated w-contexts for phrases). Measured
 ratios: chi/r in [0.82,0.88], P/r 1.2-2, iv/r = 1.0, parse/r 0.18
 (human scale). The unification is not an analogy: it is why parse
 coordinates resolve witnesses.
+
+## MODEL v3 EXACT (2026-10-01): 124/124 — the predicate is CLOSED
+
+The 121/24 residual, dissected on T=[2,2,2,1,1]: TWO convention bugs,
+both mine, both now fixed and measured:
+1. PIECES must be defined DIRECTLY by the law (a piece continues at p
+   iff PLCP(p-1) = PLCP(p)+1). The phi-parallel-shift condition
+   (phi(p-1) = phi(p)-1) was an approximation that happens to hold on
+   the large batteries but glues wrong pieces on ascending-chain texts
+   (phi(p) = p+1: no descending chain exists at all -> pieces are
+   singletons). Direct-law pieces: slope law holds by construction;
+   piece count <= 2r+2 on all 124 texts (theory-bound shape).
+2. The event set needs BOTH per-cell extremes: witnesses sit at the
+   cell argmax-SA row (LCP-max), interposers enter at the argmin-SA row
+   (LCP-min). One extreme is not enough (maxsa-only: 121/124).
+
+With both fixes: FM with event-restricted PSV/NSV reproduces chi
+EXACTLY, 124/124 (729-family battery + satellites + repeats +
+[2,2,2,1,1]). The sweep is: event set size <= 2r boundary + 2P extremes
+(P<=3r) = O(r); one stack pass; chi and the witness set both fall out.
+Lean statement-lock for chi_from_events v3: pieces-by-law, both-extreme
+event set, restricted-FM = chi.
+
+REDUCTION STATEMENT (frozen, the paper's core): given the compressed
+artifacts (rlbwt + C + run-end samples + direct-law phi-pieces + PFP
+artifacts), the smallest suffixient set sA is constructible in
+O(r + parse) time and O(r + parse) space. Parse is the named open
+parameter (measured 0.18r at human pangenome scale, <= 0.5r on all
+batteries incl. duplicates; no worst-case bound known — Boucher
+question). Both doors publish: parse = O(r polylog) closes the no-n-term
+construction; a construction lower bound separates parse from r.

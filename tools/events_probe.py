@@ -34,6 +34,12 @@ def phi_intervals(N, sa, isa):
     return iv
 
 
+# MODEL v3 (124/124, 2026-10-01): pieces defined DIRECTLY by the law
+# (PLCP(p-1) = PLCP(p)+1 continues the piece; the phi-parallel-shift
+# approximation is wrong on ascending-chain texts); event set = boundary
+# rows UNION per-(run,piece) argmax-SA UNION argmin-SA rows (BOTH cell
+# extremes: witnesses sit at LCP-max side, interposers enter at the
+# LCP-min side); FM restricted to event PSV/NSV reproduces chi EXACTLY.
 def chi_events(x, extreme="maxpos"):
     N, sa, LCP, BWT = build(x)
     bnd = set(i for i in range(1, N) if BWT[i] != BWT[i - 1])
