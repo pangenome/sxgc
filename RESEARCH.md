@@ -692,3 +692,45 @@ differential = the weld that makes "the implementation follows the
 proven model" a gate, not a hope. The convention-seam class (pfp file
 formats, dollar padding) stays differential-gated by design — it is
 engineering, not mathematics.
+
+## 2026-09-25 — YEAST FULL TEST GREEN: the r-space χ/sA construction at
+## real scale, EXACT (the session's headline claim banked)
+
+`xsa chi-rspace` (Rust) + `chi_rspace_dump` (C++ aggregates) constructed
+χ/sA on real yeast — 3.34 Gbp, R = 100,904,881, multi-string (9,901
+'!'-joined), erasure regime — from compressed artifacts only: **no text
+scan, no SA, no LF walks.**
+
+**χ = 85,404,240 — EXACT; witness SET EQUALITY vs the production
+oracle chi_yeast_pfp2.sA (numpy sorted-compare True).** Main-tree
+re-verification by supervisor: dumper rebuilt from committed source
+(aggregate output byte-identical to the lane's), calibration 512/512
+zero-bad at ROW_OFF=10, LCE cross-checks 1,190,377 mismatches 0.
+
+Cost split at yeast: chi-rspace core = **99 s wall / 6.0 GB RSS**
+(r-dominated); dumper pass = 901 s / 29.7 GB (the residual O(n)
+lcp_index read — this is the piece the PFP-LCP primitive port retires;
+after it, the only Ω(n) left in the system is the single pfp++ text
+read). Battery chain (bit6/chi_rspace_battery_chain.sh): 7/7 texts,
+G1 (aggregates == production --triples) + G2 (Rust chi/witness-set ==
+oracle) green, including duplicates-600k.
+
+**The 2.9% bad-rows mystery resolved as provenance, not machinery:**
+two complete yeast chains on disk had been cross-mixed — y2new.ri4 +
+y2.lcp_index = the yeast235.rl.txt chain (χ = 85,350,673), while the
+parse + gate 85,404,240 = the yeast_pfp2.txt chain. The lane built the
+pfp2 chain's missing .ri4 from its rlbwt pair (ri4_from_rle.cpp,
+battery-byte-identical converter). The file-end-seam hypothesis:
+REFUTED by the discriminators (round-trip / row-direction /
+LF-consistency all ran clean on the correctly-paired chain). Negative
+result #7 recorded: scale-only debugging reached a WRONG hypothesis
+(one chain) before the data forced the right one (two chains).
+
+Chain of custody for the gate value: the syng-table 85,404,240 is the
+yeast_pfp2 (PFP-chain, '!'-joined) χ; 85,350,673 is the BCR-chain
+('\n'-joined revlines) χ. Both are correct for their respective text
+objects — they are different texts (separator structure differs).
+
+Files: bit6/chi_rspace_dump.cpp, ri4_from_rle.cpp, sa_decode.cpp,
+chi_rspace_battery_chain.sh, YEAST_LANE_REPORT.md; xsa/src/main.rs
+(+102: the chi-rspace subcommand).

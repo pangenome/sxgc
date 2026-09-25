@@ -881,6 +881,107 @@ fn cmd_build_anchors(args: &[String]) {
     eprintln!("xsa build-anchors: wrote {} anchors to {}", k, outp);
 }
 
+// ---------- chi-rspace: the r-space chi/sA construction ----------
+// Consumes the per-run aggregates sidecar (bit6/chi_rspace_dump.cpp:
+// topLCP, saFirst, saLast, interiorMin per run -- all computed r-space via
+// PFP resolve + LCE + the phi-piece law) and runs the production scan-rs
+// state machine VERBATIM (bit6/teralcp_chi.cpp): no walks, no SA, no text
+// access. Witness values = N - pos (N = n + 1 convention).
+fn cmd_chi_rspace(args: &[String]) {
+    let mut ri4p: Option<String> = None;
+    let mut aggp: Option<String> = None;
+    let mut outp: Option<String> = None;
+    let mut i = 0;
+    while i < args.len() {
+        let step;
+        match args[i].as_str() {
+            "--ri4" if i + 1 < args.len() => { ri4p = Some(args[i + 1].clone()); step = 2; }
+            "--agg" if i + 1 < args.len() => { aggp = Some(args[i + 1].clone()); step = 2; }
+            "-o" | "--output" if i + 1 < args.len() => { outp = Some(args[i + 1].clone()); step = 2; }
+            other => die(&format!("chi-rspace: unknown arg {}", other)),
+        }
+        i += step;
+    }
+    let (rp, ap) = (
+        ri4p.unwrap_or_else(|| die("chi-rspace: need --ri4")),
+        aggp.unwrap_or_else(|| die("chi-rspace: need --agg")),
+    );
+    let idx = Ri4::load(&rp);
+    let mut f = File::open(&ap).unwrap_or_else(|e| die(&format!("open {}: {}", ap, e)));
+    let mut hdr = [0u8; 12];
+    f.read_exact(&mut hdr).unwrap_or_else(|e| die(&format!("read {}: {}", ap, e)));
+    let magic = u32::from_le_bytes(hdr[0..4].try_into().unwrap());
+    if magic != 0x31415243 { die("agg: bad magic (need CRA1)"); }
+    let r = u64::from_le_bytes(hdr[4..12].try_into().unwrap());
+    if r != idx.r { die(&format!("agg R {} != ri4 R {}", r, idx.r)); }
+    let rd_u64 = |f: &mut File, n: usize| -> Vec<u64> {
+        let mut v = vec![0u8; n * 8];
+        f.read_exact(&mut v).unwrap_or_else(|e| die(&format!("read agg: {}", e)));
+        v.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect()
+    };
+    let top_lcp = rd_u64(&mut f, r as usize);
+    let sa_first = rd_u64(&mut f, r as usize);
+    let sa_last = rd_u64(&mut f, r as usize);
+    let interior_min = rd_u64(&mut f, r as usize);
+    const INF: u64 = u64::MAX;
+    const IINF: i64 = i64::MAX;
+    let big_n = idx.n + 1;
+    const SIGMA: usize = 128;
+    let mut rr_len = vec![-1i64; SIGMA];
+    let mut rr_pos = vec![0u64; SIGMA];
+    let mut rr_act = vec![false; SIGMA];
+    let mut out: Vec<u64> = Vec::new();
+    let mut m: i64 = IINF;
+    let mut p: i32 = -1;
+    let mut p_sa_last: u64 = 0;
+    for i in 0..idx.r as usize {
+        let c: i32 = if idx.run_char[i] == 0x0A { 0 } else { idx.run_char[i] as i32 };
+        let lcp_b = top_lcp[i] as i64;
+        if i == 0 {
+            p = c;
+            p_sa_last = sa_last[0];
+            m = IINF;
+            continue;
+        }
+        let m2: i64 = if interior_min[i - 1] == INF { IINF } else { interior_min[i - 1] as i64 };
+        let mm = m.min(m2);
+        if c != p {
+            let m3 = mm.min(lcp_b);
+            for cc in 1..SIGMA {
+                if m3 < rr_len[cc] {
+                    if rr_act[cc] { out.push(rr_pos[cc]); }
+                    rr_len[cc] = m3; rr_pos[cc] = 0; rr_act[cc] = false;
+                }
+            }
+            if lcp_b > rr_len[p as usize] { rr_len[p as usize] = lcp_b; rr_pos[p as usize] = big_n - p_sa_last; rr_act[p as usize] = true; }
+            if lcp_b > rr_len[c as usize] { rr_len[c as usize] = lcp_b; rr_pos[c as usize] = big_n - sa_first[i]; rr_act[c as usize] = true; }
+            m = IINF;
+        } else {
+            m = mm.min(lcp_b);
+        }
+        p = c;
+        p_sa_last = sa_last[i];
+    }
+    for cc in 1..SIGMA {
+        if -1i64 < rr_len[cc] {
+            if rr_act[cc] { out.push(rr_pos[cc]); }
+            rr_len[cc] = -1; rr_pos[cc] = 0; rr_act[cc] = false;
+        }
+    }
+    let chi = out.len();
+    eprintln!("xsa chi-rspace: chi = {} (N={}, R={})", chi, big_n, idx.r);
+    match &outp {
+        Some(path) => {
+            let mut o = File::create(path).unwrap_or_else(|e| die(&format!("create {}: {}", path, e)));
+            for v in &out {
+                o.write_all(&v.to_le_bytes()).unwrap();
+            }
+            eprintln!("xsa chi-rspace: wrote {} witness values to {}", chi, path);
+        }
+        None => { for v in &out { println!("{}", v); } }
+    }
+}
+
 fn cmd_tags(args: &[String]) {
     let mut chi: Option<String> = None;
     let mut sidecar: Option<String> = None;
@@ -1030,6 +1131,7 @@ fn main() {
         Some("tags") => cmd_tags(&args[1..]),
         Some("query") => cmd_query(&args[1..]),
         Some("build-anchors") => cmd_build_anchors(&args[1..]),
+        Some("chi-rspace") => cmd_chi_rspace(&args[1..]),
         Some("-h") | Some("--help") | None => usage(),
         Some(other) => die(&format!("unknown subcommand '{}' (try --help)", other)),
     }
