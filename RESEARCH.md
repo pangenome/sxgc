@@ -453,3 +453,34 @@ parameter (measured 0.18r at human pangenome scale, <= 0.5r on all
 batteries incl. duplicates; no worst-case bound known — Boucher
 question). Both doors publish: parse = O(r polylog) closes the no-n-term
 construction; a construction lower bound separates parse from r.
+
+## 466 gap scan RESULTS (2026-10-01): the real hard case is DIVERGED
+## repeats — exact cycle-jump would have FAILED at 466; the parse pivot
+## is validated by the data itself
+
+Gap quantiles (2,739,736,836 resolving positions = samples + anchors):
+  median 1 | p90 154 | p99 13,412 | p99.9 48,995 | p99.99 115,858 |
+  max 18,168,834
+Top-50 gaps: 6.8M-18.2M positions, clustering in two stream regions
+(~0.72B, ~1.07B) — centromeric alpha-satellite arrays in the complete
+HPRC assemblies.
+CRITICAL FINDING: the top-20 gaps are NOT EXACTLY PERIODIC — periods
+up to 4096 rejected; near-match fraction at candidate periods (171/342/
+1717/3434) only 0.26-0.49 (chance is 0.25). Real alpha-satellite
+monomers are 20-30% DIVERGED: alignable, not byte-identical.
+
+CONSEQUENCES, honest:
+1. The exact-periodicity cycle-jump (my first mechanism) would have
+   failed at full scale. The synthetic-satellite experiments (exact
+   (ATC)^k) were an idealization; real satellites are diverged.
+2. The PARSE is the covering mechanism for the real hard case: PFP
+   needs shared w-mers, which diverged monomers still produce
+   (~10% of 10-mers survive 25% divergence); k=10 already measured
+   parse/r = 0.18 including centromeres.
+3. Cost shape at 466: top-20 gaps = 215M positions = 7.8% of r —
+   even a pure walk over the worst gaps is sublinear in r; the median
+   position is depth 1. The walk's worst case is concentrated exactly
+   where the parse lives.
+4. The user's duplicates instinct generalized further than human
+   text: diverged repeats (approximate copies) are the universal hard
+   class — and phrase-jump is the right jump for them.
