@@ -2188,14 +2188,19 @@ def fmSpecEvents (N : Nat) (ts : List Triple) : List Nat :=
     let R0 : List (Option CandFM) := (List.range SIGMA).map (fun _ => none)
     fmAuxEv N (fun i => (evPsv ts i : Int)) (fun i => evNsv ts i) rest 1 t0 R0 []
 
-/-- **Bit-2 Layer 2, MODEL v3 (measured EXACT, 2026-10-01).**  The FM machine
-restricted to the O(r) event set (`≤ 2r` boundary rows + `≤ 2P` per-cell
-extremes, `P ≤ 3r` measured) emits the same set as the full FM machine, hence
-the emitted count is χ.  Evidence: `eventsAgreeV3` is true on the whole
-729-text battery (all distinct texts over `{1,2}`, `|T| ≤ 6`; the Python
-battery at `tools/events_probe.py` extends this to 254/254 over `|T| ≤ 7`).
-The remaining link to χ itself is `fm_equivalence`/`minimality` (open). -/
-theorem chi_from_events (M : RSpace) (N : Nat) (ts : List Triple) (T : Text)
+/-- **Bit-2 Layer 2, MODEL v3 — REFUTED AT SCALE (2026-09-25), statement
+RETAINED for the record, NOT provable as stated.**  The in-file differential
+(`eventsAgreeV3`, 729/729) is green ONLY because small texts have size-1
+cells and cannot exercise the refutation: on the 600K copy-heavy text
+duplicates-600k, the restricted machine UNDERCOUNTS (13,003 vs 13,004 —
+one true interposer row is an interior row of a size-3 cell, neither a
+run edge nor a cell extreme; see RESEARCH.md "ASSEMBLY + C-LANE RESULTS"
+and tools/chi_rspace_proto.py's gate log).  The CORRECT statement is the
+successor model: restricted-FM with exact range-min semantics (the
+class-internal RMQ / endpoint rule) — pending measurement.  Do not
+attempt to prove this statement; do not cite its #eval as evidence at
+scale. -/
+theorem chi_from_events_REFUTED_AT_SCALE (M : RSpace) (N : Nat) (ts : List Triple) (T : Text)
     (hpos : positive T = true)
     (hrepr : Represents M ts)
     (hN : ts.length + 1 = N)
