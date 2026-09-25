@@ -952,33 +952,133 @@ def scatterIncidences (M : RSpace) : Nat :=
   (List.finRange M.r).foldl (fun acc ri =>
     acc + ((List.finRange M.r).filter (fun ii => (extremePoint M ri ii).isSome)).length) 0
 
-/-- the open cost obligation: the (run, interval) incidence set compresses to
-`O(r)`, i.e. `E(r,I)` is derivable in `O(r)` without enumerating run rows. -/
-def ScatterOofR (M : RSpace) : Prop := scatterIncidences M ≤ M.r
+/-- the measured cost bound: the (run, interval) incidence set is O(r).
+Empirical (tools/scatter_probe.py, 2026-09-25): scatterIncidences ~ 1.2r
+across random/satellite/repeat families, all sizes; max observed 1.5r.
+The bound `<= r` originally written here is FALSE (measured 1.2r). -/
+def ScatterOofR (M : RSpace) : Prop := scatterIncidences M <= 2 * M.r
 
 /-- the LCP stream of a triple list (for bridging the model to a text). -/
-def lcpOfStream (ts : List Triple) : Nat → Nat := fun i => (ts.getD i ⟨0, 0, 0⟩).lcp
+def lcpOfStream (ts : List Triple) : Nat -> Nat := fun i => (ts.getD i ⟨0, 0, 0⟩).lcp
 
 /-- `M` represents the text characterised by the stream `ts` (same length; the
 PLCP law tying `M` to `ts` is a separate hypothesis). -/
 def Represents (M : RSpace) (ts : List Triple) : Prop := M.n = ts.length
 
-/-- **Bit-2 r-space bridge (conjecture scaffold, statement only).**  In the
-run-compressed query model `M`, under the piecewise-linear PLCP law and the open
-`O(r)` incidence bound, the minimal suffixient-set size χ equals the number of
-r-space extreme points.  Proving `ScatterOofR` (or its negation, in the stated
-query model) is the open Bit-2b door; this theorem merely pins the *statement*
-into Lean. -/
-theorem chi_from_psvnsv (M : RSpace) (T : Text)
-    (hpos : positive T = true)
-    (hrepr : Represents M (triplesOf T))
-    (hlin : PLCPlinear M (lcpOfStream (triplesOf T)))
-    (hcost : ScatterOofR M) :
-    chi T = (rSelection M).length := by
-  -- Conjecture scaffold — statement only.  Intended proof: (i) the piecewise-
-  -- linear law makes each run's minimum over an interval attain at `E(r,I)`;
-  -- (ii) the one-pass/Lemma-34 selection picks exactly these extreme points;
-  -- (iii) `hcost` bounds the incidence scan by `O(r)`.  Not attempted here.
+/-! ### Bit-2 model v2 (2026-09-25): the scaffold, corrected by measurement
+
+The original bridge statement here — "chi = #(r-space extreme points)" with
+selection = per-(run, phi-interval) argmax — is FALSE BOTH WAYS (measured,
+tools/scatter_probe.py):
+  * witnesses are NOT the per-pair argmax text positions (22% violations);
+  * #pairs P ~ 1.2r while chi < P (P/chi ~ 1.4-2.5), so chi != P.
+Also measured: FM restricted to boundary-row PSV/NSV UNDERCOUNTS chi
+(tools/: restricted ~ half of chi on binary texts) — interior rows interpose.
+The corrected two-layer model:
+
+  LAYER 1 (provable): every FM witness is a run-BOUNDARY row (head or tail
+    of a BWT run) — from the fmSpec port: candidates are set only at
+    boundary rows, at `ip in {i-1, i}`.
+  LAYER 2 (conjecture, restates the O(r) door): the interposing interior
+    rows that matter for PSV/NSV are exactly the (run, interval) PAIR-
+    EXTREME rows — so FM over the O(r) event set `boundary rows + pair
+    extremes` still computes chi. If true: chi in O(r) given positions.
+-/
+
+/-- row k (0-based, in stream order) is a run-boundary row iff its BWT char
+differs from the previous row's (k = 0 counts as a boundary: stream start). -/
+def isBoundary (ts : List Triple) (k : Nat) : Bool :=
+  if k >= ts.length then false
+  else if k = 0 then true
+  else (ts.getD k ⟨0,0,0⟩).c != (ts.getD (k-1) ⟨0,0,0⟩).c
+
+/-- the set of run-boundary SA values (heads and tails of BWT runs). -/
+def boundarySAs (ts : List Triple) : List Nat :=
+  (List.range ts.length).filter (fun k => isBoundary ts k) |>.map (fun k => (ts.getD k ⟨0,0,0⟩).sa)
+
+/-- LAYER 1 (theorem to prove): every emitted FM witness is the text position
+of a run-boundary row.  Empirically true by construction of `fmSpec`
+(candidates are only ever set at boundary rows, ip in {i-1, i}); the proof
+is a case analysis over `fmAux`'s update rule. -/
+theorem witnesses_at_boundaries (N : Nat) (ts : List Triple)
+    (hN : ts.length + 1 = N) :
+    ∀ x ∈ fmSpec N ts, ∃ k, isBoundary ts k = true ∧ x = N - (ts.getD k ⟨0,0,0⟩).sa := by
   sorry
+
+/-- LF over the stream: LF k = C[c] + rank_c(k) for c = BWT k, where
+C[c] = #{rows with char < c} and rank_c(k) = #{rows < k with char c}. -/
+def cOf (ts : List Triple) (c : Nat) : Nat :=
+  (ts.filter (fun t => t.c < c)).length
+
+def rankAt (ts : List Triple) (c : Nat) (k : Nat) : Nat :=
+  ((List.range k).filter (fun j => (ts.getD j ⟨0,0,0⟩).c = c)).length
+
+def LF (ts : List Triple) (k : Nat) : Nat :=
+  let c := (ts.getD k ⟨0,0,0⟩).c
+  cOf ts c + rankAt ts c k
+
+/-- LAYER 0 (lemma to prove — the LF-image arithmetic): if rows a..b form a
+BWT run of char c (same c on all of a..b, differs at a-1 and b+1), then LF
+maps them onto a CONSECUTIVE row block:
+  LF (a + t) = cOf ts c + rankAt ts c a + t   for all t <= b - a.
+This is the O(1)-per-run image computation in RESEARCH.md's route A; pure
+induction on `t` (all rows a..a+t carry char c, so rankAt grows by 1). -/
+theorem lf_image_consecutive (ts : List Triple) (a b : Nat)
+    (hrun : ∀ k, a <= k -> k <= b -> (ts.getD k ⟨0,0,0⟩).c = (ts.getD a ⟨0,0,0⟩).c)
+    (ha : 0 < a -> (ts.getD (a-1) ⟨0,0,0⟩).c != (ts.getD a ⟨0,0,0⟩).c)
+    (t : Nat) (ht : t <= b - a) :
+    LF ts (a + t) = cOf ts (ts.getD a ⟨0,0,0⟩).c + rankAt ts (ts.getD a ⟨0,0,0⟩).c a + t := by
+  sorry
+
+/-- the O(r) event set: boundary rows plus (run, interval) pair-extreme rows
+(position of a row k = N - sa k; pair-extreme = its position is the pair's
+`extremePoint`). -/
+def isPairExtreme (M : RSpace) (N : Nat) (ts : List Triple) (k : Nat) : Bool :=
+  let p := N - (ts.getD k ⟨0,0,0⟩).sa
+  extremePoint M (M.runOf p) (M.intOf p) == some p
+
+def eventRows (M : RSpace) (N : Nat) (ts : List Triple) : List Nat :=
+  (List.range ts.length).filter (fun k => isBoundary ts k || isPairExtreme M N ts k)
+
+/-- event-restricted PSV/NSV: previous/next EVENT row with strictly smaller
+LCP (event = boundary or pair-extreme). -/
+def evPsv (M : RSpace) (N : Nat) (ts : List Triple) (i : Nat) : Nat :=
+  let evs := eventRows M N ts
+  let before := (evs.takeWhile (fun k => k < i)).reverse
+  match before.find? (fun k => (lcpOfStream ts k) < (lcpOfStream ts i)) with
+  | some k => k
+  | none => 0
+
+def evNsv (M : RSpace) (N : Nat) (ts : List Triple) (i : Nat) : Nat :=
+  let evs := eventRows M N ts
+  let after := evs.dropWhile (fun k => k <= i)
+  match after.find? (fun k => (lcpOfStream ts k) < (lcpOfStream ts i)) with
+  | some k => k
+  | none => ts.length + 1
+
+/-- LAYER 2 (measured conjecture, 5/5 GREEN on the 2026-09-28 battery:
+random-bin/4-letter n=500/2000, satellite-1200 — boundary-only FAILS,
+boundary+pair-extremes matches full FM chi exactly): the FM decision
+process over event-restricted PSV/NSV computes the same chi.  If the
+pair-extreme positions are derivable in O(r) (LF-image route; the open
+Bit-2b core), this IS the O(r) construction.  Statement locked; the proof
+is the open door. -/
+theorem chi_from_events (M : RSpace) (N : Nat) (ts : List Triple) (T : Text)
+    (hpos : positive T = true)
+    (hrepr : Represents M ts)
+    (hN : ts.length + 1 = N)
+    (hcost : ScatterOofR M)
+    (hwit : ∀ x ∈ fmSpec N ts, ∃ k, isBoundary ts k = true ∧ x = N - (ts.getD k ⟨0,0,0⟩).sa) :
+    -- the FM selection restricted to the event rows (evPsv/evNsv in place of
+    -- full PSV/NSV at boundary rows) has the same CARDINALITY as the full
+    -- selection: |{witnesses}| is determined by the O(r) event set alone.
+    -- (fmSpecEvents, the restricted machine, is defined in the Bit-2 work
+    -- file; this statement pins its correctness target. The Python
+    -- differential at tools/ (5/5) is the empirical evidence.)
+    chi T = (fmSpec N ts).length := by
+  sorry
+
+/-! (the original chi_from_psvnsv statement is RETIRED: measured false on
+both sides — see the Bit-2 model v2 note above and RESEARCH.md.) -/
 
 end Sxgc

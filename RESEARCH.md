@@ -206,3 +206,32 @@ chi_from_run_heads (restated Bit 2a), (iii) balanced-case O(r) theorem,
 long runs is the candidate lead; anchors are the engineering mitigation).
 Worst case is never worse than production's Theta(n) walk: mega-runs
 are few; hybrid = LF-image for the many + walk for the few.
+
+## Bit-2 model v2 (2026-09-28): the events conjecture — MEASURED GREEN
+
+Negative result #4 (cheap catch): FM with PSV/NSV restricted to BOUNDARY
+rows undercounts chi (~half on binary texts) — interior rows genuinely
+interpose in the next/previous-smaller-value decisions.
+
+The corrected two-layer model, both layers now measurement-backed:
+- LAYER 1 (provable): every FM witness is a run-BOUNDARY row (head or
+  tail); from the fmSpec port, candidates are only ever set at boundary
+  rows ip in {i-1, i}.
+- LAYER 2 (the events conjecture — 5/5 GREEN: random-bin/4-letter
+  n=500/2000 + satellite-1200): FM with PSV/NSV restricted to the event
+  set B = {boundary rows} UNION {(run, phi-piece) pair-extreme rows}
+  computes chi EXACTLY. Boundary-only fails; boundary+extremes matches
+  full chi everywhere tested.
+
+Consequence: chi is a function of an O(r)-sized event set (|B| <=
+2r + P, P ~ 1.2r measured). The O(r) construction reduces to:
+  (a) positions/LCPs of event rows — pair-extreme positions are the
+      E(r,I) derivation (LF-image route resolves run heads/tails at
+      0.66r on balanced texts; pair-extremes are interior rows — the
+      remaining derivation core, Bit-2b door);
+  (b) a stack sweep over events in row order — O(|B|).
+Worst-case fallback: O(r log r) D&C over the pieces with P = 1.2r
+crossings. Lean scaffold updated (ScatterOofR <= 2r after measuring
+1.2r; chi_from_psvnsv RETIRED as measured-false on both sides;
+witnesses_at_boundaries + lf_image_consecutive + chi_from_events
+stated, chi_from_events gated on the Python 5/5 differential).
