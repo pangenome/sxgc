@@ -297,3 +297,52 @@ remaining: covering_given_stream (needs lcpOf correctness + saOrder
 sortedness), minimality lower half, fm_equivalence (event-bridge
 route), witnesses_at_run_edges (corrected L1), chi_from_events (open
 door, 121/124).
+
+## Bit-2 cost model v3 (2026-10-01): the gap conjecture — measured, and the
+## human-text obstacle found where predicted (tools/gap_probe.py)
+
+CORRECTION (from working the lockstep accounting honestly): lockstep
+block-walking saves NOTHING asymptotically over the production walk —
+unresolved members are not contiguous, so block-splits track member
+resolutions one-for-one; both are the O(n) walk in different clothes.
+The ONLY structural saving is JUMPABLE GAPS:
+
+    construction cost = O(r + sum of NON-JUMPABLE sample-gap lengths)
+
+Walk identity (validated 50/50): walk depth == position - sample,
+i.e. every toehold walk is a linear scan of a sample gap in text space.
+
+THE REFINED CONJECTURE: sum |non-jumpable gaps| = O(r).  Battery:
+- random-4/bin 20k: 0.34r / 0.95r (trivial: n ~ r)
+- satellite-18k: 0.29r — the 17,994-byte mega-gap is PERIODIC
+  (period 3): cycle-jumpable. HOLDS spectacularly.
+- HOR-nested (alpha-sat analog): 0.34r — 17,755-byte gap period 301.
+  HOLDS.
+- repeat-ab: 0.00r after a terminator-pollution fix (the text is
+  maximally periodic).
+- **duplicates-600k (the HUMAN-TEXT analog: 40 unique paragraphs x 50
+  shuffled copies): 39.91r = 0.976n — the conjecture FAILS by 40x.**
+  Copies are non-periodic: pure periodicity does not compress
+  duplicate-driven repetitiveness.  Exactly the regime web text lives
+  in (boilerplate, quotes, licenses — copies, not satellites).
+- dup+unique 120k: 1.31r (mixed: fine because r is high).
+
+UNIFIED THEORY OF GAPS (the construction's cost model):
+  gaps come in three kinds —
+  (1) PERIODIC (DNA satellites, HOR): cycle-jump, cost O(period);
+      validated mechanism (walk identity + period detection).
+  (2) DUPLICATE (human text): a copy's walk is row-space-CONJUGATE to
+      the first copy's walk — the phrase-jump.  This is exactly the
+      structure PFP already parses (duplicates = repeated phrases;
+      PFP parse of duplicate-heavy text ~ O(distinct phrases) ~ O(r)).
+      We own the machinery (pfp++ heritage, the sA PFP chain).
+  (3) IRREDUCIBLE (random-ish): gaps are tiny anyway; sum ~ O(r).
+  Theorem target: cost = O(r + sum periods + sum phrase costs), and
+  both jump families cover the measured degenerate cases.
+NEXT: (a) 466 gap scan (running: .ri4 samples + anchors + flat reads,
+  pure O(r) work) — gap quantiles + top-gap periodicity at 2.74B runs;
+  (b) prototype the cycle-jump engine on the battery (satellite: gaps
+  resolve in O(period) — validate positions vs brute);
+  (c) prototype the phrase-jump on the duplicates battery (PFP parse
+  of the duplicate text; positions via phrase-index arithmetic);
+  (d) then yeast; 466 only for confirmation.
