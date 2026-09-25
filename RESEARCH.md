@@ -602,3 +602,31 @@ candidate for the successor of chi_from_events.
 NEXT: the YEAST FULL TEST — all inputs ready (parse 34.1M occ, .ri4,
 lcp_index pieces, chi oracle 85,404,240). Requires the Rust port
 (Python cannot sweep 100.9M runs) + the multi-string convention.
+
+## TeraLCP code-reading verdict (2026-09-25): O(r) space, O(n) time —
+## the n-term has one address, and we own its replacement parts
+
+Read from the source (/home/erikg/TeraTools/src/include/TeraLCP/TeraLCP.h):
+1. Its own comment (line ~738): "4 O(n) traversals for construction +
+   1 O(n) for minLCP" — compressed SPACE is the design goal, time never
+   was (they weigh optimizations by added-% of the O(n) traversals).
+2. The O(n) is ONE phase: ConstructPhiAndSamples — an OpenMP loop
+   walking EVERY suffix position to build the Phi move structure +
+   samples, ISA checkpoints every n/r positions. All other phases
+   (ConstructPsi from rlbwt, aux/repair, ComputePLCPSamples) loop over
+   run/interval-sized arrays.
+3. TeraLCP never consumes the parse: input = rlbwt (r-sized); the
+   -othresholds flags EMIT pfp-compatible files downstream. r-space in,
+   n-time middle, r-space out.
+
+THE OBVIOUS WIN (user's call, confirmed): the Phi structure is
+per-INTERVAL data (<= 2r+2 intervals: a start + pointer values each);
+the n-walk exists only to DISCOVER the intervals position-by-position.
+Our gated parse machinery (resolve + resolve_inv, O(log) both ways)
+builds the same structure per-interval: enumerate starts -> resolve
+endpoints -> fill pointers = O(r polylog) replacing O(n).
+THE GATE: start enumeration (lane M2, running). If a 100%-containing
+O(r+parse) candidate set exists, M3 builds the pieces in parse space,
+partition-identical to brute — and the ENTIRE pipeline (BWT, samples,
+pieces, parse, chi/sA) becomes r+parse time with exactly ONE Omega(n):
+the single pfp++ text read. Build and refresh become the same claim.
