@@ -346,3 +346,41 @@ NEXT: (a) 466 gap scan (running: .ri4 samples + anchors + flat reads,
   (c) prototype the phrase-jump on the duplicates battery (PFP parse
   of the duplicate text; positions via phrase-index arithmetic);
   (d) then yeast; 466 only for confirmation.
+
+## Bit-2 unification (2026-10-01): the taxonomy dissolves into the parse
+
+CORRECTION (user's call, conceded): the three-kind gap taxonomy was
+handwavy — gap_probe's "non-jumpable" was really "non-PERIODIC under the
+only test implemented." Duplicates were never unjumpable; the probe was
+too weak. The 39.9r number measured the test, not the data.
+
+THE UNIFIED REPLACEMENT, measured (tools/parse_probe.py):
+
+    text            n       r     parse   =r     (old 'nonper')
+    satellite-18k   18500   369    3      0.01   140
+    HOR-nested      18360   227    66     0.29   86
+    duplicates-600k 600000  14835  7195   0.49   585161
+    dup+unique-120k 120000  58948  1273   0.02   61013
+    random-20k      20000   15045  199    0.01   4951
+
+PARSE LENGTH is small in EVERY regime measured — satellites parse to
+three phrases; the "obstacle" duplicates text parses to 0.49r. ONE
+mechanism covers both degenerate families: phrase-occurrence
+coordinates (the parse lists every occurrence's position; positions
+inside an occurrence = base + offset, native PFP-BWT machinery).
+
+THE PIPELINE REALIZATION: the adopted v3 chain is PFP-BWT — the parse
+ALREADY EXISTS as a build-time artifact. The chi/sA construction should
+CONSUME it (positions via occurrence coordinates, O(1)/event; LCPs via
+the pieces; the event sweep on top) instead of re-walking the text:
+the 37.7h O(n) walk becomes an O(r + parse) pass with no new
+lower-level machinery — we own every piece (pfp++, rpfbwt, .ri4,
+pieces, anchors).
+
+Cost model, final form: construction = O(r + parse) given the build-time
+parse + rlbwt + pieces; both parameters measured small across all
+regimes. Open items unchanged: the 121/124 event-predicate convention,
+and the parse-granularity resolution algorithm (PFP internals; prototype
+next at yeast). v5 FREEZE GATE: only after the yeast prototype proves
+which structures are actually consumed (anchors decided; parse sidecar
+now likely; pieces).
