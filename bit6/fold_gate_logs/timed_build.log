@@ -1,0 +1,47 @@
+ri4: n=3336986760 k=1 R=100904881
+lcp_index: NONE (PFP-artifacts-only topLCP mode)
+pfp mode: BUILD (in-process)
+[2026-09-26 01:15:17.741] [info] Using 8 bytes for computing SA of the dictionary
+[2026-09-26 01:16:25.452] [info] Using 4 bytes for storing SA of the dictionary
+[2026-09-26 01:16:27.487] [info] Elapsed time (s): 69.745333991
+[2026-09-26 01:16:27.869] [info] Using 3 bytes for DA of the dictionary
+[2026-09-26 01:16:49.101] [info] Elapsed time (s): 21.231556582
+[2026-09-26 01:16:49.101] [info] Using 4 bytes for ISA of the dictionary
+[2026-09-26 01:17:07.944] [info] Elapsed time (s): 18.842904155
+[2026-09-26 01:17:07.944] [info] Using 2 bytes for LCP of the dictionary
+[2026-09-26 01:17:36.839] [info] Elapsed time (s): 28.895406275
+[2026-09-26 01:17:36.839] [info] Computing RMQ over LCP of dictionary
+[2026-09-26 01:17:50.629] [info] Elapsed time (s): 13.789751936
+[2026-09-26 01:17:50.629] [info] Using 3 bytes for colex DA of the dictionary
+[2026-09-26 01:17:51.371] [info] Using 3 bytes for colex id and inverse colex id array of the dictionary
+[2026-09-26 01:18:36.286] [info] Elapsed time (s): 45.656594523
+PHASE dict-BUILD           202.45 s
+dict: phrases=3159456 size=513395745
+[2026-09-26 01:18:36.484] [info] Using 8 bytes for computing SA of the parsing
+[2026-09-26 01:18:49.048] [info] Using 4 bytes for storing SA of the parsing
+[2026-09-26 01:18:49.210] [info] Elapsed time (s): 12.726322026
+[2026-09-26 01:18:49.232] [info] Using 4 bytes for ISA of the parsing
+[2026-09-26 01:18:50.359] [info] Elapsed time (s): 1.126424261
+[2026-09-26 01:18:50.359] [info] Using 4 bytes for LCP of the parsing
+[2026-09-26 01:18:53.158] [info] Elapsed time (s): 2.798767764
+[2026-09-26 01:18:53.158] [info] Computing RMQ over LCP of the parsing
+[2026-09-26 01:18:54.187] [info] Elapsed time (s): 1.029932303
+PHASE parse-read/build     220.35 s
+[2026-09-26 01:19:10.660] [info] Computing b_p
+[2026-09-26 01:19:36.090] [info] Computing b_bwt and M of the parsing
+[2026-09-26 01:23:27.443] [info] Computing W of BWT(P)
+PHASE pf_parsing-BUILD     536.26 s
+pfp: n=3336986770 parse=34134006 |M|=317476865
+calib off=8: bad=27/511
+calib off=9: bad=15/511
+calib off=10: bad=0/511
+calib off=11: bad=13/511
+calib off=12: bad=20/511
+calibration: ROW_OFF=10 (zero-bad offsets: 1)
+flat spot-check: ok=512 bad=0 sentinel-skipped=0 (badRunStart=0 badInterior=0) lfOk=0 lfBad=0
+PHASE calibration+spotchk   537.60 s
+PHASE queries (r-scaled)   808.84 s
+aggregates: 100904881 runs; LCE cross-checks=1190377 mismatches=0
+PHASE write-agg            812.78 s
+wrote /tmp/laneJ/yeast/yeast.timed.build.agg (100904881 runs x 4 u64)
+TIME dump-build wall=819.70 s maxRSS=26522180 KB

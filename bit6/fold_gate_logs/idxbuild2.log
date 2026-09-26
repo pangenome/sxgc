@@ -1,0 +1,49 @@
+[   0.00s] building dictionary (flags: b_d only)...
+[   3.05s] dict: phrases=3159456 size=513395745
+[   3.05s] reading parse p...
+[   3.25s] parse: p=34134007
+[   3.25s] building parse SA/ISA/LCP/RMQ...
+[2026-09-26 01:30:48.402] [info] Using 8 bytes for computing SA of the parsing
+[2026-09-26 01:30:58.401] [info] Using 4 bytes for storing SA of the parsing
+[2026-09-26 01:30:58.564] [info] Elapsed time (s): 10.162710878
+[2026-09-26 01:30:58.591] [info] Using 4 bytes for ISA of the parsing
+[2026-09-26 01:30:59.576] [info] Elapsed time (s): 0.985209199
+[2026-09-26 01:30:59.576] [info] Using 4 bytes for LCP of the parsing
+[2026-09-26 01:31:02.318] [info] Elapsed time (s): 2.741716202
+[2026-09-26 01:31:02.318] [info] Computing RMQ over LCP of the parsing
+[2026-09-26 01:31:03.202] [info] Elapsed time (s): 0.883585974
+[  18.05s]   parse build: 14.80s
+[  18.05s] building dictionary SA/ISA/DA/LCP/RMQ/colex...
+[2026-09-26 01:31:05.482] [info] Using 8 bytes for computing SA of the dictionary
+[2026-09-26 01:32:08.301] [info] Using 4 bytes for storing SA of the dictionary
+[2026-09-26 01:32:10.353] [info] Elapsed time (s): 64.871507989
+[2026-09-26 01:32:10.734] [info] Using 3 bytes for DA of the dictionary
+[2026-09-26 01:32:31.077] [info] Elapsed time (s): 20.34230266
+[2026-09-26 01:32:31.077] [info] Using 4 bytes for ISA of the dictionary
+[2026-09-26 01:32:48.477] [info] Elapsed time (s): 17.399753831
+[2026-09-26 01:32:48.477] [info] Using 2 bytes for LCP of the dictionary
+[2026-09-26 01:33:17.227] [info] Elapsed time (s): 28.750275337
+[2026-09-26 01:33:17.227] [info] Computing RMQ over LCP of dictionary
+[2026-09-26 01:33:31.228] [info] Elapsed time (s): 14.000715038
+[2026-09-26 01:33:31.228] [info] Using 3 bytes for colex DA of the dictionary
+[2026-09-26 01:33:32.016] [info] Using 3 bytes for colex id and inverse colex id array of the dictionary
+[2026-09-26 01:34:15.071] [info] Elapsed time (s): 43.843275698
+[ 209.92s]   dict build: 191.87s
+[ 209.92s] building pf_parsing (b_p, b_bwt, M, W-WT)...
+[2026-09-26 01:34:28.032] [info] Computing b_p
+[2026-09-26 01:34:51.291] [info] Computing b_bwt and M of the parsing
+[2026-09-26 01:38:58.022] [info] Computing W of BWT(P)
+[ 535.27s]   pf_parsing build: 325.36s
+[ 564.36s] wrote /tmp/laneJ/yeast/yeast2.idx (8.460 GB)
+    b_bwt         397.800 MB  (  4.59%)
+    b_p           397.800 MB  (  4.59%)
+    w_wt          844.718 MB  (  9.75%)
+    saP           130.211 MB  (  1.50%)
+    isaP          130.211 MB  (  1.50%)
+    lcpP          130.211 MB  (  1.50%)
+    b_d            61.202 MB  (  0.71%)
+    isaD         1958.449 MB  ( 22.61%)
+    lcpD          979.225 MB  ( 11.30%)
+    M            3633.234 MB  ( 41.94%)
+[ 564.36s] INDEX BUILD DONE: n=3336986770 |M|=317476865 |D|=513395745 |P|=34134007 |wt|=34134006 W=10
+TIME index-build wall=568.54 s maxRSS=25822132 KB

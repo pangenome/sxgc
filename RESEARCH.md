@@ -836,3 +836,47 @@ fm_equivalence did.
 Lean-without-Mathlib traps recorded in lean/ASSEMBLY_LANE_REPORT.md:
 cases-on-getFM substitutes without iota-reduction (use simp only [h]);
 pair-projection through an unreduced ite is not defeq.
+
+## 2026-09-26 — PFP-INDEX FOLD GREEN (yeast); the 466 binding constraint
+## is SPACE, not time — retention decision recorded
+
+The dump phase no longer builds the PFP query index in-process:
+bit6/pfp_index_build.cpp (standalone "parse -> XPF1 v2 index" tool,
+per-component sizes) + --pfp-index load mode in chi_rspace_dump.cpp
+(chunked M load, fail-loud cross-checks, FNV digests over the logical
+values of all ten structures). Two vendored headers gain a documented
+defer-build ctor (pfp.hpp, dictionary.hpp); five byte-identical to
+upstream. Two self-caught bugs BEFORE gates: M block written 2x
+oversize (reading past buffer — byte-gates would have passed on UB),
+tellp() after close().
+
+GATES (supervisor re-verified from main-tree binaries): G1 load == build
+byte-identical on battery incl. duplicates-600k; G2 yeast: lane index
+(8.460 GB) -> load-dump 204 s / 19.5 GB RSS -> .agg BYTE-IDENTICAL to
+the standing baseline -> chi = 85,404,240, set-equality True; G2d
+mispaired index dies loudly both directions. G3: construction 536-626 s
+-> ~37 s (15-17x); whole dump 820-913 s -> 204-347 s; RSS 25.3 -> 19.5 GB.
+
+RETENTION DECISION (supervisor):
+- YEAST: retain (8.46 GB trivial; every re-dump is 204 s + no build).
+- 466: DO NOT RETAIN. Index projected 2.60 B/symbol -> 3.74 TB
+  (M 1.57 TB, isaD 845 GB, lcpD 423 GB, w_wt 365 GB, b_bwt+b_p 344 GB)
+  vs 1.9 TB free on the volume; AND load-path RSS is linear in n
+  (19.5 GB at yeast -> ~8.4 TB at 466) vs 1 TB RAM: the pf_parsing
+  route CANNOT RUN at 466 on this machine, load mode or build mode.
+  The 66 h -> 6 h refresh projection is therefore not actionable at
+  466 on this hardware without an external-memory LCE design (named
+  open item: chunked/offline M answering ~R polylog queries, external
+  RMQ; OR the minimal-subset question — the dump's only parse-side
+  query is topLCP, a smaller persistent structure may exist).
+- 466 CONFIRMATION ROUTE: the lcp_index path (O(r) space, streaming
+  O(n) time) ALREADY RAN at 466 — h466.lcp_index (82.5 GB) is on disk.
+  The port removed --lcp-index; resurrect it from history behind an
+  explicit compatibility flag for the 466 run: one streaming O(n)
+  pass (already paid once, reusable per re-dump) + the r-space
+  chi-rspace core (~160 GB RSS at 466, fits). This is the honest
+  466 cost statement until/unless an external-memory LCE exists.
+
+Honest scope note: the "only Omega(n) is the single pfp++ text read"
+endgame claim holds ARCHITECTURALLY (index is build-time, persistable,
+polylog-queryable) but NOT YET on this machine at 466 scale.

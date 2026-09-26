@@ -1,5 +1,14 @@
 # PORT_HANDOFF — PFP-LCP primitive port (lcp_index eliminated)
 
+> **SEE ALSO (2026-09-26):** item 3 below ("Decide on the residual
+> O(n)-scaled construction") is DONE — see `bit6/PFP_INDEX_FOLD_REPORT.md`
+> and `bit6/PFP_INDEX_FOLD_HANDOFF.md`: the dictionary/parse/pf_parsing
+> build is now a persisted index sidecar (`bit6/pfp_index_build.cpp`) that
+> the dump loads with `--pfp-index`; construction phase at yeast
+> 536.26 s -> 32.29 s, whole dump 819.70 s -> 341.02 s, .agg
+> byte-identical, chi gate green.  Item 1's harness update is now
+> possible end-to-end (commands in the fold handoff).
+
 State written for the next lane/session. No git commits made (protocol).
 
 ## What is DONE

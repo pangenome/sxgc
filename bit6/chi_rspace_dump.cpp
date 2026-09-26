@@ -39,13 +39,20 @@
 #include <iostream>
 #include <cassert>
 #include <mutex>
+#include <memory>
+#include <chrono>
 
 #include <sdsl/int_vector.hpp>
 #include "pfp/utils.hpp"
 typedef pfpds::long_type long_type;
 #include "moveStructure/moveStructure.h"
 
-// pfp_ds (vendored in r-pfbwt) + gsacak
+// pfp_ds (vendored in r-pfbwt) + gsacak.  bit6/pfp_ds_vendor/pfp/ is a
+// verbatim copy of the vendored headers EXCEPT pfp.hpp, which gains a
+// defer-build constructor: the standard one cannot skip
+// build_b_bwt_and_M() (O(n)-bit b_bwt + |M| ~ 0.1n), which is exactly the
+// cost the --pfp-index load path exists to avoid.  The vendor dir must be
+// FIRST on the include path so "pfp/*.hpp" resolves there.
 #include "pfp/pfp.hpp"
 #include "pfp/sa_support.hpp"
 #include "pfp/lce_support.hpp"
@@ -54,6 +61,18 @@ extern "C" {
 }
 
 static const uint64_t INF = std::numeric_limits<uint64_t>::max();
+static const uint32_t IDX_MAGIC = 0x31465058; // "XPF1" (bit6/pfp_index_build.cpp)
+static const uint32_t IDX_VERSION = 2;
+
+// phase timing (G3 cost table)
+static int64_t G_T0;
+static double tnow() {
+    using namespace std::chrono;
+    return duration<double>(steady_clock::now().time_since_epoch()).count();
+}
+static void phase(const char* what) {
+    fprintf(stderr, "PHASE %-18s %8.2f s\n", what, tnow() - (double)G_T0);
+}
 
 // ---------------- .ri4 loader (runs only) ----------------
 struct Ri4 {
@@ -122,14 +141,148 @@ static inline uint64_t lcp_at_pos(const ChiIndex& idx, const PhiLookup& P, uint6
     return idx.PLCPsamples[lo] - (pos - P.start[lo]);
 }
 
+// ---------------- persisted PFP query index (bit6/pfp_index_build.cpp) ----------------
+// Restores exactly the members the two support classes read.  D and PP are
+// constructed with build flags OFF by the caller (D still builds b_d + its
+// rank/select, an O(|D|) scan with no suffix sort; PP reads .parse only).
+// The load overwrites every other queried member with the persisted copy.
+static void load_pfp_index(const std::string& path,
+                           pfpds::dictionary<uint8_t>& D,
+                           pfpds::parse& PP,
+                           pfpds::pf_parsing<uint8_t>& PF) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) { fprintf(stderr, "cannot open pfp index %s\n", path.c_str()); exit(1); }
+    uint32_t magic = 0, ver = 0;
+    uint64_t W = 0, pf_n = 0, m_count = 0, d_size = 0, p_size = 0, wt_size = 0;
+    in.read((char*)&magic, 4); in.read((char*)&ver, 4);
+    if (magic != IDX_MAGIC || ver != IDX_VERSION) {
+        fprintf(stderr, "FATAL: bad pfp index magic/version (%08x,%u)\n", magic, ver); exit(1);
+    }
+    in.read((char*)&W, 8); in.read((char*)&pf_n, 8); in.read((char*)&m_count, 8);
+    in.read((char*)&d_size, 8); in.read((char*)&p_size, 8); in.read((char*)&wt_size, 8);
+
+    sdsl::load(PF.b_bwt, in);
+    PF.b_bwt_rank_1 = sdsl::bit_vector::rank_1_type(&PF.b_bwt);
+    PF.b_bwt_select_1 = sdsl::bit_vector::select_1_type(&PF.b_bwt);
+    sdsl::load(PF.b_p, in);
+    PF.rank_b_p = sdsl::bit_vector::rank_1_type(&PF.b_p);
+    PF.select_b_p = sdsl::bit_vector::select_1_type(&PF.b_p);
+    PF.w_wt.load(in);
+    sdsl::load(PP.saP, in);
+    sdsl::load(PP.isaP, in);
+    sdsl::load(PP.lcpP, in);
+    PP.rmq_lcp_P = sdsl::rmq_succinct_sct<>(&PP.lcpP);
+    PP.saP_flag = PP.isaP_flag = PP.lcpP_flag = PP.rmq_lcp_P_flag = true;
+    sdsl::load(D.b_d, in);
+    D.rank_b_d = sdsl::bit_vector::rank_1_type(&D.b_d);
+    D.select_b_d = sdsl::bit_vector::select_1_type(&D.b_d);
+    sdsl::load(D.isaD, in);
+    sdsl::load(D.lcpD, in);
+    D.rmq_lcp_D = sdsl::rmq_succinct_sct<>(&D.lcpD);
+    D.isaD_flag = D.lcpD_flag = D.rmq_lcp_D_flag = true;
+    PF.M.resize((size_t)m_count);
+    {
+        // Chunked: a single 3*m_count u32 temp is ~3.8 GB at yeast.
+        const size_t CHUNK = 1u << 20;
+        std::vector<uint32_t> buf(3 * CHUNK);
+        uint64_t done = 0;
+        while (done < m_count) {
+            size_t n = (size_t)std::min<uint64_t>(CHUNK, m_count - done);
+            in.read((char*)buf.data(), (std::streamsize)(4 * 3 * n));
+            if (!in) { fprintf(stderr, "FATAL: pfp index truncated at M entry %llu\n",
+                              (unsigned long long)done); exit(1); }
+            for (size_t i = 0; i < n; ++i) {
+                PF.M[done + i].len = (long_type)buf[3 * i + 0];
+                PF.M[done + i].left = (long_type)buf[3 * i + 1];
+                PF.M[done + i].right = (long_type)buf[3 * i + 2];
+            }
+            done += n;
+        }
+    }
+    PF.n = (long_type)pf_n;
+    PF.w = (long_type)W;
+    PF.W_flag = true;
+
+    // Cross-checks: the loaded index must agree with the (cheap) artifacts
+    // it is meant to stand in for.  A mismatch here means mispaired inputs.
+    if (PF.b_bwt.size() != (size_t)pf_n || PF.b_p.size() != (size_t)pf_n)
+        { fprintf(stderr, "FATAL: index b_bwt/b_p size mismatch n=%llu\n", (unsigned long long)pf_n); exit(1); }
+    if (PP.p.size() != (size_t)p_size)
+        { fprintf(stderr, "FATAL: index parse p size %llu != .parse %zu (mispaired index?)\n",
+                  (unsigned long long)p_size, PP.p.size()); exit(1); }
+    if (D.b_d.size() != (size_t)d_size)
+        { fprintf(stderr, "FATAL: index b_d size %zu != recorded |D| %llu\n",
+                  D.b_d.size(), (unsigned long long)d_size); exit(1); }
+    if ((uint64_t)PF.w_wt.size() != wt_size)
+        { fprintf(stderr, "FATAL: index w_wt size %llu != header %llu\n",
+                  (unsigned long long)PF.w_wt.size(), (unsigned long long)wt_size); exit(1); }
+    fprintf(stderr, "pfp index LOADED: n=%llu |M|=%llu |D|=%llu |P|=%llu |wt|=%llu W=%llu (no build)\n",
+            (unsigned long long)PF.n, (unsigned long long)PF.M.size(),
+            (unsigned long long)d_size, (unsigned long long)PP.p.size(),
+            (unsigned long long)wt_size, (unsigned long long)W);
+}
+
+// ---------------- structural digest (build-vs-load equality) ----------------
+// The .agg is the semantic gate, but it only exercises the rows a given
+// text happens to visit (plus calibration).  This digest covers EVERY value
+// of every structure the queries read, so a build run and a --pfp-index run
+// can be shown to hold identical state.  FNV-1a over logical values (not
+// raw words) so packing/padding cannot mask or invent differences.
+static uint64_t fnv(uint64_t h, uint64_t v) {
+    h ^= v;
+    h *= 1099511628211ULL;
+    return h;
+}
+
+static void pfp_digest(const pfpds::dictionary<uint8_t>& D,
+                       pfpds::parse& PP,
+                       pfpds::pf_parsing<uint8_t>& PF) {
+    uint64_t h;
+    h = 1469598103934665603ULL;
+    for (size_t i = 0; i < PF.b_bwt.size(); ++i) h = fnv(h, PF.b_bwt[i]);
+    fprintf(stderr, "digest b_bwt    %016llx\n", (unsigned long long)h);
+    h = 1469598103934665603ULL;
+    for (size_t i = 0; i < PF.b_p.size(); ++i) h = fnv(h, PF.b_p[i]);
+    fprintf(stderr, "digest b_p      %016llx\n", (unsigned long long)h);
+    h = 1469598103934665603ULL;
+    for (size_t i = 0; i < PF.M.size(); ++i)
+        h = fnv(fnv(fnv(h, (uint64_t)PF.M[i].len), (uint64_t)PF.M[i].left), (uint64_t)PF.M[i].right);
+    fprintf(stderr, "digest M        %016llx (%llu entries)\n",
+            (unsigned long long)h, (unsigned long long)PF.M.size());
+    h = 1469598103934665603ULL;
+    for (size_t i = 0; i < PP.saP.size(); ++i) h = fnv(h, (uint64_t)PP.saP[i]);
+    fprintf(stderr, "digest saP      %016llx\n", (unsigned long long)h);
+    h = 1469598103934665603ULL;
+    for (size_t i = 0; i < PP.isaP.size(); ++i) h = fnv(h, (uint64_t)PP.isaP[i]);
+    fprintf(stderr, "digest isaP     %016llx\n", (unsigned long long)h);
+    h = 1469598103934665603ULL;
+    for (size_t i = 0; i < PP.lcpP.size(); ++i) h = fnv(h, (uint64_t)PP.lcpP[i]);
+    fprintf(stderr, "digest lcpP     %016llx\n", (unsigned long long)h);
+    h = 1469598103934665603ULL;
+    for (size_t i = 0; i < D.isaD.size(); ++i) h = fnv(h, (uint64_t)D.isaD[i]);
+    fprintf(stderr, "digest isaD     %016llx\n", (unsigned long long)h);
+    h = 1469598103934665603ULL;
+    for (size_t i = 0; i < D.lcpD.size(); ++i) h = fnv(h, (uint64_t)D.lcpD[i]);
+    fprintf(stderr, "digest lcpD     %016llx\n", (unsigned long long)h);
+    h = 1469598103934665603ULL;
+    for (size_t i = 0; i < D.b_d.size(); ++i) h = fnv(h, D.b_d[i]);
+    fprintf(stderr, "digest b_d      %016llx\n", (unsigned long long)h);
+    h = 1469598103934665603ULL;
+    for (long_type i = 0; i < PF.w_wt.size(); ++i) h = fnv(h, (uint64_t)PF.w_wt[i]);
+    fprintf(stderr, "digest w_wt     %016llx (size %llu)\n",
+            (unsigned long long)h, (unsigned long long)PF.w_wt.size());
+}
+
 int main(int argc, char** argv) {
-    std::string ri4Path, parsePrefix, lcpIndexPath, outPath, flatPath;
+    G_T0 = (int64_t)tnow();
+    std::string ri4Path, parsePrefix, lcpIndexPath, pfpIndexPath, outPath, flatPath;
     int nthreads = std::thread::hardware_concurrency();
     uint64_t calibRows = 256;
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--ri4") && i + 1 < argc) ri4Path = argv[++i];
         else if (!strcmp(argv[i], "--parse") && i + 1 < argc) parsePrefix = argv[++i];
         else if (!strcmp(argv[i], "--lcp-index") && i + 1 < argc) lcpIndexPath = argv[++i];
+        else if (!strcmp(argv[i], "--pfp-index") && i + 1 < argc) pfpIndexPath = argv[++i];
         else if (!strcmp(argv[i], "-o") && i + 1 < argc) outPath = argv[++i];
         else if (!strcmp(argv[i], "--flat") && i + 1 < argc) flatPath = argv[++i];
         else if (!strcmp(argv[i], "-t") && i + 1 < argc) nthreads = atoi(argv[++i]);
@@ -137,7 +290,7 @@ int main(int argc, char** argv) {
         else { fprintf(stderr, "unknown arg %s\n", argv[i]); return 1; }
     }
     if (ri4Path.empty() || parsePrefix.empty() || outPath.empty()) {
-        fprintf(stderr, "usage: chi_rspace_dump --ri4 F.ri4 --parse PFP_PREFIX -o OUT.agg [-t N] [--flat F] [--calib-rows N] [--lcp-index F.lcp_index.lcp_index (LEGACY cross-check only)]\n");
+        fprintf(stderr, "usage: chi_rspace_dump --ri4 F.ri4 --parse PFP_PREFIX -o OUT.agg [-t N] [--flat F] [--calib-rows N] [--pfp-index INDEX (load instead of building; bit6/pfp_index_build.cpp)] [--lcp-index F.lcp_index.lcp_index (LEGACY cross-check only)]\n");
         return 1;
     }
 
@@ -167,16 +320,47 @@ int main(int argc, char** argv) {
     }
 
     // ---- PFP machinery ----
+    // Two paths, same structures:
+    //   BUILD (default): construct D/PP/PF exactly as before (suffix sorts,
+    //     O(n)-bit b_p/b_bwt, |M| ~ 0.1n) — all of it a function of the
+    //     parse alone, none of it dependent on the .ri4.
+    //   LOAD (--pfp-index): construct D (b_d + rank/select only, no suffix
+    //     sort) and PP (.parse read only), then restore every queried
+    //     member from the persisted index.  The .agg must be byte-identical.
     const long_type W = 10;
     std::less<uint8_t> u8comp;
-    fprintf(stderr, "building pfpds dictionary...\n");
-    pfpds::dictionary<uint8_t> D(parsePrefix, W, u8comp, true, true, true, true, true, true, true);
-    fprintf(stderr, "dict: phrases=%llu size=%llu\n",
-            (unsigned long long)D.n_phrases(), (unsigned long long)D.d.size());
-    fprintf(stderr, "building parse (saP/isaP/lcpP/rmq)...\n");
-    pfpds::parse PP(parsePrefix, D.n_phrases() + 1, true, true, true, true);
-    fprintf(stderr, "building pf_parsing (b_p, b_bwt, M, W-wavelet)...\n");
-    pfpds::pf_parsing<uint8_t> PF(D, PP, true, false);
+    const bool loadIdx = !pfpIndexPath.empty();
+    if (loadIdx) fprintf(stderr, "pfp mode: LOAD (--pfp-index %s)\n", pfpIndexPath.c_str());
+    else         fprintf(stderr, "pfp mode: BUILD (in-process)\n");
+    // LOAD: defer-construct D (no .dict read, no b_d scan, no d materialized)
+    // and PP (.parse read only, alphabet_size unused because no build runs),
+    // then restore everything from the persisted index.  n_phrases() reads
+    // d.size() and is therefore BUILD-path-only on purpose (see the ctor
+    // comment in bit6/pfp_ds_vendor/pfp/dictionary.hpp).
+    std::unique_ptr<pfpds::dictionary<uint8_t>> Dp;
+    if (!loadIdx)
+        Dp = std::make_unique<pfpds::dictionary<uint8_t>>(
+                 parsePrefix, W, u8comp, true, true, true, true, true, true, true);
+    else
+        Dp = std::make_unique<pfpds::dictionary<uint8_t>>(
+                 W, u8comp, pfpds::dictionary<uint8_t>::defer_build_t{});
+    pfpds::dictionary<uint8_t>& D = *Dp;
+    phase(loadIdx ? "dict-defer" : "dict-BUILD");
+    if (!loadIdx)
+        fprintf(stderr, "dict: phrases=%llu size=%llu\n",
+                (unsigned long long)D.n_phrases(), (unsigned long long)D.d.size());
+    const long_type alpha = loadIdx ? (long_type)256 : (D.n_phrases() + 1);
+    pfpds::parse PP(parsePrefix, alpha, !loadIdx, !loadIdx, !loadIdx, !loadIdx);
+    phase("parse-read/build");
+    std::unique_ptr<pfpds::pf_parsing<uint8_t>> PFp;
+    if (!loadIdx)
+        PFp = std::make_unique<pfpds::pf_parsing<uint8_t>>(D, PP, true, false);
+    else
+        PFp = std::make_unique<pfpds::pf_parsing<uint8_t>>(
+                  D, PP, pfpds::pf_parsing<uint8_t>::defer_build_t{});
+    pfpds::pf_parsing<uint8_t>& PF = *PFp;
+    if (loadIdx) load_pfp_index(pfpIndexPath, D, PP, PF);
+    phase(loadIdx ? "index-LOAD" : "pf_parsing-BUILD");
     if ((long_type)PF.n != ri4.n + W) {
         fprintf(stderr, "WARNING: pfp n %llu != ri4 n+W %llu (separators/endmarker "
                 "convention differs; the flat calibration below is authoritative)\n",
@@ -187,6 +371,7 @@ int main(int argc, char** argv) {
             (unsigned long long)PF.M.size());
     pfpds::pfp_sa_support<uint8_t> SA_sup(PF);
     pfpds::pfp_lce_support<uint8_t> LCE_sup(PF);
+    if (getenv("PFP_DIGEST")) { pfp_digest(D, PP, PF); phase("digest"); }
 
     const uint64_t n = ri4.n;
     // ---- row-space convention (empirically pinned via DUMP_ROWS on
@@ -428,6 +613,7 @@ int main(int argc, char** argv) {
     }
 
     // ---- per-run aggregates (parallel) ----
+    phase("calibration+spotchk");
     std::vector<uint64_t> topLCP(ri4.R, INF), saFirst(ri4.R, INF),
         saLast(ri4.R, INF), interiorMin(ri4.R, INF);
     std::atomic<uint64_t> lceChecks{0}, lceMismatch{0};
@@ -490,6 +676,7 @@ int main(int argc, char** argv) {
         for (int t = 0; t < nt; ++t) th.emplace_back(worker);
         for (auto& t : th) t.join();
     }
+    phase("queries (r-scaled)");
     uint64_t unfilled = 0;
     for (uint64_t i = 0; i < ri4.R; ++i)
         if (topLCP[i] == INF || saFirst[i] == INF || saLast[i] == INF) unfilled++;
@@ -512,6 +699,7 @@ int main(int argc, char** argv) {
         o.write((const char*)saLast.data(), 8 * ri4.R);
         o.write((const char*)interiorMin.data(), 8 * ri4.R);
     }
+    phase("write-agg");
     fprintf(stderr, "wrote %s (%llu runs x 4 u64)\n", outPath.c_str(), (unsigned long long)ri4.R);
     return 0;
 }

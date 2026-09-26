@@ -1,0 +1,21 @@
+ri4: n=3336986760 k=1 R=100904881
+lcp_index: NONE (PFP-artifacts-only topLCP mode)
+pfp mode: LOAD (--pfp-index /tmp/laneJ/yeast/yeast2.idx)
+PHASE dict-defer             0.95 s
+PHASE parse-read/build       1.16 s
+pfp index LOADED: n=3336986770 |M|=317476865 |D|=513395745 |P|=34134007 |wt|=34134006 W=10 (no build)
+PHASE index-LOAD            36.72 s
+pfp: n=3336986770 parse=34134006 |M|=317476865
+calib off=8: bad=27/511
+calib off=9: bad=15/511
+calib off=10: bad=0/511
+calib off=11: bad=13/511
+calib off=12: bad=20/511
+calibration: ROW_OFF=10 (zero-bad offsets: 1)
+flat spot-check: ok=512 bad=0 sentinel-skipped=0 (badRunStart=0 badInterior=0) lfOk=0 lfBad=0
+PHASE calibration+spotchk    38.37 s
+PHASE queries (r-scaled)   335.84 s
+aggregates: 100904881 runs; LCE cross-checks=1190377 mismatches=0
+PHASE write-agg            340.23 s
+wrote /tmp/laneJ/yeast/yeast2.timed.load.agg (100904881 runs x 4 u64)
+TIME dump-load wall=346.59 s maxRSS=20457812 KB
