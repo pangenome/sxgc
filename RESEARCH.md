@@ -880,3 +880,25 @@ RETENTION DECISION (supervisor):
 Honest scope note: the "only Omega(n) is the single pfp++ text read"
 endgame claim holds ARCHITECTURALLY (index is build-time, persistable,
 polylog-queryable) but NOT YET on this machine at 466 scale.
+
+## CORRECTION (2026-09-26, user caught it): "can't run 466 here" was WRONG
+
+The retention-decision entry above conflated the pf_parsing OPTIMIZATION
+route with the only route. Precise statement: the 466 confirmation is
+O(r)-SPACE IN RAM and RUNS FINE on this machine (1 TB) — TeraLCP is
+O(r)-space streaming (it already ran at 466; the 82.5 GB lcp_index is
+on disk), the dump streams it at O(1) RAM, chi-rspace needs ~160 GB.
+The only O(n)-SPACE structure is inside the NEW pf_parsing/LCE route
+(a yeast-class refresh optimization, NOT on the 466 critical path).
+The O(n) term at 466 is TIME ONLY (one streaming pass, already paid).
+
+What TRUE O(r)-space-AND-time would need: an O(r)-space LCE oracle for
+the ~2r query points. Three routes: (1) MEASURE |M| scaling — the
+3.74 TB projection assumed Theta(n); at yeast Theta(n) and Theta(r)
+are indistinguishable (n/r = 33); at 466 (n/r = 526) they diverge:
+Theta(n) -> |M| ~ 1.1 TB, Theta(r) -> ~70 GB. The k10 466 parse is on
+disk, so the index-build probe (700 GB ulimit, self-terminating) gives
+the verdict cheaply. (2) External-memory/offline LCE (sort R queries,
+stream M once, O(r) RAM). (3) r-index LCE from the literature (O(r)
+space, polylog query). Lanes fired: 466 confirmation (lcp_index route)
++ |M| scaling probe.
