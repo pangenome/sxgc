@@ -1023,3 +1023,34 @@ FRONT door again. LESSON recorded: profile the DEPENDENCY SET of the
 primitive, not the RAM of the object its constructor forces you to
 build. Immediate action: k10 standalone-LCE dump (build only the true
 dependencies), gate .agg byte-identical, measure REAL component sizes.
+
+## 2026-09-26 — BUILD DIRECTIVE LOCKED (user): the memory-lean parse-space
+## construction IS the product — yeast first, then humans
+
+THE TARGET (the "this we're building"): chi/sA construction over 466-class
+corpora with peak RAM <= 200 GB (hard ceiling 300), in parse time and
+space, via:
+- standalone LCE: only lce_support's true Theta(P + dict) dependency set
+  (M/b_bwt/w_wt never built or loaded)
+- fingerprint-LCE on the parse (sampled Karp-Rabin suffix hashes,
+  tau ~ P/r; direct-parse-read VERIFICATION makes answers deterministic;
+  no saP/isaP/lcpP materialized anywhere, not even on disk)
+- streamed .agg sweep (row-order chunks; -32 B/run)
+- fixed-width parse ids; compressed SA samples; delta-compressed chi output
+Memory ledger at 466 (projected, to be measured): seed phase ~120-160 GB;
+sweep phase ~90 GB streamed (~170 unstreamed); retained index ~45-55 GB.
+62 B/run observed today; retained floor ~18 B/run.
+
+THE LADDER (law): yeast first (all gates minutes; .agg oracle + chi =
+85,404,240 + witness-set equality standing), then k10 (chi = 1,627,063,183;
+RAM watch live), THEN the 466/human decision with measured constants.
+laneN (running) = the standalone-LCE baseline; the fingerprint+streaming
+lane fires on its output and re-gates byte-identity at each rung.
+
+PROOF EXPECTATIONS (user set them): we will NOT have Lean proof of most
+of this build machinery (fingerprints, streaming, IO). Warrant grading
+stands as designed: PROVEN = characterization, scan=FM, consumer side;
+DIFFERENTIAL-GATED = this entire build path (byte-identity gates at every
+rung, the measurement IS the warrant); the Phi-decode bridge stays as the
+one formal rung worth keeping on the consumer side. Never claim above
+warrant.
