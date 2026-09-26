@@ -8,7 +8,7 @@
 //! The index is sovereign: every subcommand runs from these artifacts alone.
 
 use std::fs::File;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::process::exit;
 
 fn die(msg: &str) -> ! {
@@ -891,11 +891,13 @@ fn cmd_chi_rspace(args: &[String]) {
     let mut ri4p: Option<String> = None;
     let mut aggp: Option<String> = None;
     let mut outp: Option<String> = None;
+    let mut stream_agg = false;
     let mut i = 0;
     while i < args.len() {
         let step;
         match args[i].as_str() {
             "--ri4" if i + 1 < args.len() => { ri4p = Some(args[i + 1].clone()); step = 2; }
+            "--stream-agg" => { stream_agg = true; step = 1; }
             "--agg" if i + 1 < args.len() => { aggp = Some(args[i + 1].clone()); step = 2; }
             "-o" | "--output" if i + 1 < args.len() => { outp = Some(args[i + 1].clone()); step = 2; }
             other => die(&format!("chi-rspace: unknown arg {}", other)),
@@ -906,70 +908,118 @@ fn cmd_chi_rspace(args: &[String]) {
         ri4p.unwrap_or_else(|| die("chi-rspace: need --ri4")),
         aggp.unwrap_or_else(|| die("chi-rspace: need --agg")),
     );
-    let idx = Ri4::load(&rp);
+    let header = read_ri4_header(&rp);
+    // Streaming sweep needs only the run characters, not LF tables/samples.
+    let idx = if stream_agg { None } else { Some(Ri4::load(&rp)) };
+    let mut char_file = BufReader::with_capacity(1 << 20, File::open(&rp).unwrap());
+    char_file.seek(SeekFrom::Start(32 + 256 * 8)).unwrap();
     let mut f = File::open(&ap).unwrap_or_else(|e| die(&format!("open {}: {}", ap, e)));
     let mut hdr = [0u8; 12];
     f.read_exact(&mut hdr).unwrap_or_else(|e| die(&format!("read {}: {}", ap, e)));
     let magic = u32::from_le_bytes(hdr[0..4].try_into().unwrap());
     if magic != 0x31415243 { die("agg: bad magic (need CRA1)"); }
     let r = u64::from_le_bytes(hdr[4..12].try_into().unwrap());
-    if r != idx.r { die(&format!("agg R {} != ri4 R {}", r, idx.r)); }
+    if r != header.r { die(&format!("agg R {} != ri4 R {}", r, header.r)); }
     let rd_u64 = |f: &mut File, n: usize| -> Vec<u64> {
         let mut v = vec![0u8; n * 8];
         f.read_exact(&mut v).unwrap_or_else(|e| die(&format!("read agg: {}", e)));
         v.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect()
     };
-    let top_lcp = rd_u64(&mut f, r as usize);
-    let sa_first = rd_u64(&mut f, r as usize);
-    let sa_last = rd_u64(&mut f, r as usize);
-    let interior_min = rd_u64(&mut f, r as usize);
+    let expected = r.checked_mul(32).and_then(|x| x.checked_add(12))
+        .unwrap_or_else(|| die("agg length overflow"));
+    if f.metadata().unwrap().len() != expected { die("agg: truncated or trailing data"); }
+    let arrays: Vec<Vec<u64>> = if stream_agg { Vec::new() }
+        else { (0..4).map(|_| rd_u64(&mut f, r as usize)).collect() };
+    // Independent descriptors: cloned File handles would SHARE seek offsets.
+    let mut streams: Vec<BufReader<File>> = if stream_agg {
+        (0..4).map(|field| {
+            let mut file = File::open(&ap).unwrap();
+            file.seek(SeekFrom::Start(12 + field * r * 8)).unwrap();
+            BufReader::with_capacity(512 * 1024, file)
+        }).collect()
+    } else { Vec::new() };
     const INF: u64 = u64::MAX;
     const IINF: i64 = i64::MAX;
-    let big_n = idx.n + 1;
+    let big_n = header.n + 1;
     const SIGMA: usize = 128;
     let mut rr_len = vec![-1i64; SIGMA];
     let mut rr_pos = vec![0u64; SIGMA];
     let mut rr_act = vec![false; SIGMA];
     let mut out: Vec<u64> = Vec::new();
+    let mut streamed_out: Option<Box<dyn Write>> = if stream_agg {
+        Some(match &outp {
+            Some(path) => Box::new(BufWriter::with_capacity(1 << 20,
+                File::create(path).unwrap_or_else(|e| die(&format!("create {}: {}", path, e))))),
+            None => Box::new(BufWriter::new(std::io::stdout())),
+        })
+    } else { None };
+    let mut chi: usize = 0;
+    let mut emit = |value: u64| {
+        chi += 1;
+        if let Some(writer) = streamed_out.as_mut() {
+            if outp.is_some() { writer.write_all(&value.to_le_bytes()).unwrap(); }
+            else { writeln!(writer, "{}", value).unwrap(); }
+        } else { out.push(value); }
+    };
+    let mut previous_interior = INF;
     let mut m: i64 = IINF;
     let mut p: i32 = -1;
     let mut p_sa_last: u64 = 0;
-    for i in 0..idx.r as usize {
-        let c: i32 = if idx.run_char[i] == 0x0A { 0 } else { idx.run_char[i] as i32 };
-        let lcp_b = top_lcp[i] as i64;
+    for i in 0..header.r as usize {
+        let mut values = [0u64; 4];
+        for field in 0..4 {
+            values[field] = if stream_agg {
+                let mut bytes = [0u8; 8];
+                streams[field].read_exact(&mut bytes).unwrap_or_else(|e| die(&format!("agg read: {}", e)));
+                u64::from_le_bytes(bytes)
+            } else { arrays[field][i] };
+        }
+        let mut ch = [0u8; 1];
+        let raw = if let Some(ref index) = idx { index.run_char[i] }
+            else { char_file.read_exact(&mut ch).unwrap(); ch[0] };
+        let c: i32 = if raw == 0x0A { 0 } else { raw as i32 };
+        if c as usize >= SIGMA { die("chi-rspace: character outside supported alphabet"); }
+        let lcp_b = values[0] as i64;
         if i == 0 {
             p = c;
-            p_sa_last = sa_last[0];
+            p_sa_last = values[2];
+            previous_interior = values[3];
             m = IINF;
             continue;
         }
-        let m2: i64 = if interior_min[i - 1] == INF { IINF } else { interior_min[i - 1] as i64 };
+        let m2: i64 = if previous_interior == INF { IINF } else { previous_interior as i64 };
+        previous_interior = values[3];
         let mm = m.min(m2);
         if c != p {
             let m3 = mm.min(lcp_b);
             for cc in 1..SIGMA {
                 if m3 < rr_len[cc] {
-                    if rr_act[cc] { out.push(rr_pos[cc]); }
+                    if rr_act[cc] { emit(rr_pos[cc]); }
                     rr_len[cc] = m3; rr_pos[cc] = 0; rr_act[cc] = false;
                 }
             }
             if lcp_b > rr_len[p as usize] { rr_len[p as usize] = lcp_b; rr_pos[p as usize] = big_n - p_sa_last; rr_act[p as usize] = true; }
-            if lcp_b > rr_len[c as usize] { rr_len[c as usize] = lcp_b; rr_pos[c as usize] = big_n - sa_first[i]; rr_act[c as usize] = true; }
+            if lcp_b > rr_len[c as usize] { rr_len[c as usize] = lcp_b; rr_pos[c as usize] = big_n - values[1]; rr_act[c as usize] = true; }
             m = IINF;
         } else {
             m = mm.min(lcp_b);
         }
         p = c;
-        p_sa_last = sa_last[i];
+        p_sa_last = values[2];
     }
     for cc in 1..SIGMA {
         if -1i64 < rr_len[cc] {
-            if rr_act[cc] { out.push(rr_pos[cc]); }
+            if rr_act[cc] { emit(rr_pos[cc]); }
             rr_len[cc] = -1; rr_pos[cc] = 0; rr_act[cc] = false;
         }
     }
-    let chi = out.len();
-    eprintln!("xsa chi-rspace: chi = {} (N={}, R={})", chi, big_n, idx.r);
+    drop(emit);
+    if let Some(mut writer) = streamed_out {
+        writer.flush().unwrap();
+        eprintln!("xsa chi-rspace: chi = {} (N={}, R={}) stream-agg=true buffers=4194304", chi, big_n, header.r);
+        return;
+    }
+    eprintln!("xsa chi-rspace: chi = {} (N={}, R={})", chi, big_n, header.r);
     match &outp {
         Some(path) => {
             let mut o = File::create(path).unwrap_or_else(|e| die(&format!("create {}: {}", path, e)));

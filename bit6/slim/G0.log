@@ -1,0 +1,36 @@
+COMMAND /usr/bin/time -v /tmp/laneQ/slim_dump --slim --resolve-ri4 --ri4 /tmp/laneY/bat/duplicates-600k.ri4 --parse /tmp/laneY/bat/duplicates-600k_pfp --flat /tmp/laneY/bat/duplicates-600k.txt -o /tmp/laneQ/duplicates-600k.agg -t 8
+BYTE-IDENTICAL /tmp/laneQ/duplicates-600k.agg /tmp/laneY/bat/duplicates-600k.agg
+COMMAND /tmp/laneQ/slim_dump --slim --resolve-ri4 --dict-stream --ri4 /tmp/laneY/bat/duplicates-600k.ri4 --parse /tmp/laneY/bat/duplicates-600k_pfp --flat /tmp/laneY/bat/duplicates-600k.txt -o /tmp/laneQ/duplicates-600k.stream.agg -t 8
+BYTE-IDENTICAL /tmp/laneQ/duplicates-600k.stream.agg /tmp/laneY/bat/duplicates-600k.agg
+COMMAND /usr/bin/time -v /tmp/laneQ/slim_dump --slim --resolve-ri4 --ri4 /tmp/laneY/bat/random-4-2k.ri4 --parse /tmp/laneY/bat/random-4-2k_pfp --flat /tmp/laneY/bat/random-4-2k.txt -o /tmp/laneQ/random-4-2k.agg -t 8
+BYTE-IDENTICAL /tmp/laneQ/random-4-2k.agg /tmp/laneY/bat/random-4-2k.agg
+COMMAND /tmp/laneQ/slim_dump --slim --resolve-ri4 --dict-stream --ri4 /tmp/laneY/bat/random-4-2k.ri4 --parse /tmp/laneY/bat/random-4-2k_pfp --flat /tmp/laneY/bat/random-4-2k.txt -o /tmp/laneQ/random-4-2k.stream.agg -t 8
+BYTE-IDENTICAL /tmp/laneQ/random-4-2k.stream.agg /tmp/laneY/bat/random-4-2k.agg
+COMMAND /usr/bin/time -v /tmp/laneQ/slim_dump --slim --resolve-ri4 --ri4 /tmp/laneY/bat/random-4-20k.ri4 --parse /tmp/laneY/bat/random-4-20k_pfp --flat /tmp/laneY/bat/random-4-20k.txt -o /tmp/laneQ/random-4-20k.agg -t 8
+BYTE-IDENTICAL /tmp/laneQ/random-4-20k.agg /tmp/laneY/bat/random-4-20k.agg
+COMMAND /tmp/laneQ/slim_dump --slim --resolve-ri4 --dict-stream --ri4 /tmp/laneY/bat/random-4-20k.ri4 --parse /tmp/laneY/bat/random-4-20k_pfp --flat /tmp/laneY/bat/random-4-20k.txt -o /tmp/laneQ/random-4-20k.stream.agg -t 8
+BYTE-IDENTICAL /tmp/laneQ/random-4-20k.stream.agg /tmp/laneY/bat/random-4-20k.agg
+COMMAND /usr/bin/time -v /tmp/laneQ/slim_dump --slim --resolve-ri4 --ri4 /tmp/laneY/bat/random-bin-20k.ri4 --parse /tmp/laneY/bat/random-bin-20k_pfp --flat /tmp/laneY/bat/random-bin-20k.txt -o /tmp/laneQ/random-bin-20k.agg -t 8
+BYTE-IDENTICAL /tmp/laneQ/random-bin-20k.agg /tmp/laneY/bat/random-bin-20k.agg
+COMMAND /tmp/laneQ/slim_dump --slim --resolve-ri4 --dict-stream --ri4 /tmp/laneY/bat/random-bin-20k.ri4 --parse /tmp/laneY/bat/random-bin-20k_pfp --flat /tmp/laneY/bat/random-bin-20k.txt -o /tmp/laneQ/random-bin-20k.stream.agg -t 8
+BYTE-IDENTICAL /tmp/laneQ/random-bin-20k.stream.agg /tmp/laneY/bat/random-bin-20k.agg
+COMMAND /usr/bin/time -v /tmp/laneQ/slim_dump --slim --resolve-ri4 --ri4 /tmp/laneY/bat/random-4-200k.ri4 --parse /tmp/laneY/bat/random-4-200k_pfp --flat /tmp/laneY/bat/random-4-200k.txt -o /tmp/laneQ/random-4-200k.agg -t 8
+BYTE-IDENTICAL /tmp/laneQ/random-4-200k.agg /tmp/laneY/bat/random-4-200k.agg
+COMMAND /tmp/laneQ/slim_dump --slim --resolve-ri4 --dict-stream --ri4 /tmp/laneY/bat/random-4-200k.ri4 --parse /tmp/laneY/bat/random-4-200k_pfp --flat /tmp/laneY/bat/random-4-200k.txt -o /tmp/laneQ/random-4-200k.stream.agg -t 8
+BYTE-IDENTICAL /tmp/laneQ/random-4-200k.stream.agg /tmp/laneY/bat/random-4-200k.agg
+COMMAND /usr/bin/time -v /tmp/laneQ/slim_dump --slim --resolve-ri4 --ri4 /tmp/laneY/bat/satellite-18k.ri4 --parse /tmp/laneY/bat/satellite-18k_pfp --flat /tmp/laneY/bat/satellite-18k.txt -o /tmp/laneQ/satellite-18k.agg -t 8
+BYTE-IDENTICAL /tmp/laneQ/satellite-18k.agg /tmp/laneY/bat/satellite-18k.agg
+COMMAND /tmp/laneQ/slim_dump --slim --resolve-ri4 --dict-stream --ri4 /tmp/laneY/bat/satellite-18k.ri4 --parse /tmp/laneY/bat/satellite-18k_pfp --flat /tmp/laneY/bat/satellite-18k.txt -o /tmp/laneQ/satellite-18k.stream.agg -t 8
+BYTE-IDENTICAL /tmp/laneQ/satellite-18k.stream.agg /tmp/laneY/bat/satellite-18k.agg
+COMMAND /usr/bin/time -v /tmp/laneQ/slim_dump --slim --resolve-ri4 --ri4 /tmp/laneY/bat/HOR-nested.ri4 --parse /tmp/laneY/bat/HOR-nested_pfp --flat /tmp/laneY/bat/HOR-nested.txt -o /tmp/laneQ/HOR-nested.agg -t 8
+BYTE-IDENTICAL /tmp/laneQ/HOR-nested.agg /tmp/laneY/bat/HOR-nested.agg
+COMMAND /tmp/laneQ/slim_dump --slim --resolve-ri4 --dict-stream --ri4 /tmp/laneY/bat/HOR-nested.ri4 --parse /tmp/laneY/bat/HOR-nested_pfp --flat /tmp/laneY/bat/HOR-nested.txt -o /tmp/laneQ/HOR-nested.stream.agg -t 8
+BYTE-IDENTICAL /tmp/laneQ/HOR-nested.stream.agg /tmp/laneY/bat/HOR-nested.agg
+COMMAND /usr/bin/time -v /tmp/laneQ/slim_dump --slim --resolve-ri4 --ri4 /tmp/laneY/bat/dup+unique-120k.ri4 --parse /tmp/laneY/bat/dup+unique-120k_pfp --flat /tmp/laneY/bat/dup+unique-120k.txt -o /tmp/laneQ/dup+unique-120k.agg -t 8
+BYTE-IDENTICAL /tmp/laneQ/dup+unique-120k.agg /tmp/laneY/bat/dup+unique-120k.agg
+COMMAND /tmp/laneQ/slim_dump --slim --resolve-ri4 --dict-stream --ri4 /tmp/laneY/bat/dup+unique-120k.ri4 --parse /tmp/laneY/bat/dup+unique-120k_pfp --flat /tmp/laneY/bat/dup+unique-120k.txt -o /tmp/laneQ/dup+unique-120k.stream.agg -t 8
+BYTE-IDENTICAL /tmp/laneQ/dup+unique-120k.stream.agg /tmp/laneY/bat/dup+unique-120k.agg
+COMMAND /tmp/sxgc-laneQ/xsa/target/release/xsa chi-rspace --ri4 /tmp/laneY/bat/duplicates-600k.ri4 --agg /tmp/laneQ/duplicates-600k.agg -o /tmp/laneQ/duplicates-600k.old.sA
+COMMAND /tmp/sxgc-laneQ/xsa/target/release/xsa chi-rspace --ri4 /tmp/laneY/bat/duplicates-600k.ri4 --agg /tmp/laneQ/duplicates-600k.agg -o /tmp/laneQ/duplicates-600k.stream.sA --stream-agg
+BYTE-IDENTICAL /tmp/laneQ/duplicates-600k.old.sA /tmp/laneQ/duplicates-600k.stream.sA
+G0 PASS 8/8 (seven named baseline cases plus dup+unique), resident+streamed dict; witness byte identity

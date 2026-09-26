@@ -1,0 +1,9 @@
+G0 PASS 8/8 resident + streamed dict; duplicates mandatory included.
+G1 BLOCKED: all 100904881 input SA samples are INF.
+G1 independent diagnostics: primitive sample check and baseline sweep pass; NOT end-to-end.
+G2 NOT COMPLETE: conditional component measurements and projection only.
+G3 NOT RUN: ladder awaits G1.
+Unit exact LCE: 216000 comparisons pass.
+Yeast baseline witness old/streamed: cmp exit 0.
+Yeast baseline stream/oracle: numpy sorted-set equality True.
+Final checks: C++ build passed; Rust release build passed (existing warnings); git diff --check passed; git diff --cached --quiet passed (no staged files).

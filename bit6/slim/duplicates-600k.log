@@ -1,0 +1,41 @@
+ri4: n=600001 k=1 R=14701
+SLIM_PHASE dict-read wall=0.000 cumulative=0.579 peak_rss_kib=2048
+SLIM_PHASE dict-boundaries wall=0.002 cumulative=0.581 peak_rss_kib=2048
+SLIM_PHASE parse+boundaries wall=0.001 cumulative=0.582 peak_rss_kib=2048
+SLIM_PHASE parse-fingerprints wall=0.000 cumulative=0.582 peak_rss_kib=2048
+SLIM_PHASE dict-fingerprints wall=0.001 cumulative=0.584 peak_rss_kib=2048
+SLIM_STRUCT n=600011 P=5246 D=287733 phrases=1226 parse_bytes=20988 bd_bytes=1950 bp_bytes=6816 dict_resident=287724 dict_cache_per_thread=262144 no_SA_ISA_LCP_RMQ=1 no_M_b_bwt_w_wt=1
+SLIM_PHASE lce-build-total wall=0.005 cumulative=0.584 peak_rss_kib=2048
+SLIM_PHASE lf-build wall=0.000 cumulative=0.584 peak_rss_kib=2048
+SLIM_RI runs=73505 starts=117608 samples=36760 lf_capacity=183188
+SLIM_CALIBRATION ri4_ROW_OFF=0 PFP_text_shift=10 checked=512 bad=0
+SLIM_PHASE flat-calibration wall=0.016 cumulative=0.600 peak_rss_kib=2048
+SLIM_PROGRESS runs=14701/14701
+SLIM_PHASE query-chunks wall=0.099 cumulative=0.699 peak_rss_kib=6144
+SLIM_PHASE queries+stream-write-final wall=0.001 cumulative=0.700 peak_rss_kib=6144
+SLIM_FP parse tau=3 bytes=14000 queries=8762 verified_symbols=24698 hash_probes=6498
+SLIM_FP dict tau=157 bytes=14664 queries=31944 verified_symbols=2012140 hash_probes=113658
+SLIM_RESOLVE walks=41318 steps=1928308 max=601 anchor=0 failed=0
+	Command being timed: "/tmp/laneQ/slim_dump --slim --resolve-ri4 --ri4 /tmp/laneY/bat/duplicates-600k.ri4 --parse /tmp/laneY/bat/duplicates-600k_pfp --flat /tmp/laneY/bat/duplicates-600k.txt -o /tmp/laneQ/duplicates-600k.agg -t 8"
+	User time (seconds): 0.77
+	System time (seconds): 0.01
+	Percent of CPU this job got: 632%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:00.12
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 6144
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 1480
+	Voluntary context switches: 34
+	Involuntary context switches: 3
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 928
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

@@ -1,0 +1,8 @@
+COMMAND /usr/bin/time -v /tmp/laneQ/slim_dump --slim --resolve-ri4 --ri4 /tmp/laneY/yp2new.ri4 --parse /mnt/nvme3n1/erikg/sxgc-yeast/grl/yeast2_pfp --flat /mnt/nvme3n1/erikg/sxgc-yeast/grl/yeast_pfp2.txt -o /tmp/laneQ/yeast.slim.agg -t 32
+Traceback (most recent call last):
+  File "/tmp/sxgc-laneQ/tools/slim_gate.py", line 32, in <module>
+    run(['/usr/bin/time','-v',dump,'--slim','--resolve-ri4','--ri4',args.yeast_ri4,'--parse',grl/'yeast2_pfp','--flat',grl/'yeast_pfp2.txt','-o',work/'yeast.slim.agg','-t','32'],'yeast.dump.log')
+  File "/tmp/sxgc-laneQ/tools/slim_gate.py", line 11, in run
+    assert (r.returncode!=0 if fail else r.returncode==0),(cmd,r.returncode,log)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: (['/usr/bin/time', '-v', PosixPath('/tmp/laneQ/slim_dump'), '--slim', '--resolve-ri4', '--ri4', '/tmp/laneY/yp2new.ri4', '--parse', PosixPath('/mnt/nvme3n1/erikg/sxgc-yeast/grl/yeast2_pfp'), '--flat', PosixPath('/mnt/nvme3n1/erikg/sxgc-yeast/grl/yeast_pfp2.txt'), '-o', PosixPath('/tmp/laneQ/yeast.slim.agg'), '-t', '32'], 2, 'yeast.dump.log')

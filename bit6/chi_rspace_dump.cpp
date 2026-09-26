@@ -397,12 +397,15 @@ static void pfp_digest(const pfpds::dictionary<uint8_t>& D,
             (unsigned long long)h, (unsigned long long)PF.w_wt.size());
 }
 
+#include "slim_lce.hpp"
+
 int main(int argc, char** argv) {
     G_T0 = (int64_t)tnow();
     std::string ri4Path, parsePrefix, lcpIndexPath, pfpIndexPath, outPath, flatPath, anchorsPath;
     int nthreads = std::thread::hardware_concurrency();
     uint64_t calibRows = 256;
-    bool resolveRi4 = false;
+    bool resolveRi4 = false, slim = false, dictStream = false, injectFault = false, profileOnly = false;
+    uint64_t tau1=0, tau2=0;
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--ri4") && i + 1 < argc) ri4Path = argv[++i];
         else if (!strcmp(argv[i], "--parse") && i + 1 < argc) parsePrefix = argv[++i];
@@ -413,17 +416,31 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "-t") && i + 1 < argc) nthreads = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--calib-rows") && i + 1 < argc) calibRows = strtoull(argv[++i], nullptr, 10);
         else if (!strcmp(argv[i], "--resolve-ri4")) resolveRi4 = true;
+        else if (!strcmp(argv[i], "--slim")) slim = true;
+        else if (!strcmp(argv[i], "--slim-profile-build")) profileOnly = true;
+        else if (!strcmp(argv[i], "--dict-stream")) dictStream = true;
+        else if (!strcmp(argv[i], "--inject-fingerprint-error")) injectFault = true;
+        else if (!strcmp(argv[i], "--tau1") && i+1<argc) tau1=strtoull(argv[++i],nullptr,10);
+        else if (!strcmp(argv[i], "--tau2") && i+1<argc) tau2=strtoull(argv[++i],nullptr,10);
         else if (!strcmp(argv[i], "--anchors") && i + 1 < argc) anchorsPath = argv[++i];
         else { fprintf(stderr, "unknown arg %s\n", argv[i]); return 1; }
     }
+    if ((profileOnly || dictStream || injectFault || tau1 || tau2) && !slim)
+        slim_fail("slim options require --slim");
     if (ri4Path.empty() || parsePrefix.empty() || outPath.empty()) {
-        fprintf(stderr, "usage: chi_rspace_dump --ri4 F.ri4 --parse PFP_PREFIX -o OUT.agg [-t N] [--flat F] [--calib-rows N] [--pfp-index INDEX (load instead of building; bit6/pfp_index_build.cpp)] [--lcp-index F.lcp_index.lcp_index (LEGACY cross-check only)] [--resolve-ri4 (positions from pfp_ds_vendor/pfp/pfp.hpp defer_build_t; NO M/b_bwt/w_wt; SA via the .ri4 sample array + LF walk)] [--anchors F (string-start anchors for walks that reach an interior 0x0A row)]\n");
+        fprintf(stderr, "usage: chi_rspace_dump [--slim --resolve-ri4 [--dict-stream] [--tau1 N] [--tau2 N] [--slim-profile-build] [--inject-fingerprint-error (TEST ONLY)]] --ri4 F.ri4 --parse PFP_PREFIX -o OUT.agg [-t N] [--flat F] [--calib-rows N] [--pfp-index INDEX (load instead of building; bit6/pfp_index_build.cpp)] [--lcp-index F.lcp_index.lcp_index (LEGACY cross-check only)] [--resolve-ri4 (positions from pfp_ds_vendor/pfp/pfp.hpp defer_build_t; NO M/b_bwt/w_wt; SA via the .ri4 sample array + LF walk)] [--anchors F (string-start anchors for walks that reach an interior 0x0A row)]\n");
         return 1;
     }
 
     Ri4 ri4; ri4.load(ri4Path);
     fprintf(stderr, "ri4: n=%llu k=%llu R=%llu\n",
             (unsigned long long)ri4.n, (unsigned long long)ri4.k, (unsigned long long)ri4.R);
+
+    if (slim) {
+        if (!resolveRi4 || !pfpIndexPath.empty() || !lcpIndexPath.empty())
+            slim_fail("--slim requires --resolve-ri4 and excludes legacy indexes");
+        return slim_dump(ri4,parsePrefix,outPath,anchorsPath,nthreads,tau1,tau2,dictStream,injectFault,profileOnly,flatPath,calibRows);
+    }
 
     // ---- LEGACY lcp_index: OPTIONAL.  When absent, topLCP is computed
     // from PFP artifacts alone (see the worker below).  When present it

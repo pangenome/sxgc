@@ -1131,3 +1131,41 @@ kill per user decision (ledger 5436ee0), not external.
 
 Artifacts: tools/sample_decode_probe.py, walk_decode_probe.py,
 bit6/gate_logs/G0_G1_gate.log, k10 parse h10rl_pfp.{parse,dict}.
+
+## 2026-09-26 — SLIM LANE (astra) first pass: G0 GREEN 8/8; streamed sweep
+## is a monster win; TWO honest corrections recorded
+
+DELIVERED (supervisor re-verified from main tree): bit6/slim_lce.hpp
+(two-level verified fingerprints, sparse boundaries, bounded dict caching),
+slim mode in the dumper, --stream-agg chunked sweep in xsa, gate tooling.
+- G0: 8/8 battery byte-identical (resident AND streamed dictionary).
+- STREAMED SWEEP AT YEAST (over baseline .agg): chi = 85,404,240 correct,
+  witness byte-identity + set equality — in 15.36 s / 4 MiB peak RSS
+  (vs 99 s / 6 GB resident: ~6x faster, ~1500x less RAM).
+- Slim structure-only build at yeast: 21.56 s / 3.3 GB peak.
+- 466 projection: 191.9 GB with streamed dict + 8x-class sampling —
+  UNDER the 200 GB target, ~8 GB margin, conditional.
+
+CORRECTION #4 (supervisor design overreach, lane caught it): deterministic
+two-sided direct verification of an l-phrase match costs O(l) reads —
+the O(tau) per-query bound holds only for the probabilistic hash-jump
+PROPOSAL. The O(tau)-deterministic claim in the slim design is RETIRED.
+Honest form: deterministic-exact with measured average verification
+length (seed adjacent-row LCEs average ~n/chi/avg-phrase phrases —
+small); probabilistic O(tau) available as an option with a second
+independent hash (collision^2). The Lean "VerifiedLCE determinism"
+statement is UNAFFECTED (correctness, not cost).
+
+CORRECTION #5 (data finding, lane): /tmp/laneY/yp2new.ri4 is a runs-only
+artifact — ALL 100,904,881 SA samples are INF placeholders (supervisor
+verified: 499/500 INF u64s in the sample region; ri4_from_rle.cpp built
+it from the rlbwt pair, which carries no SA). k10/battery .ri4s have
+real samples — which is why resolve worked there. ARCHITECTURAL FIX:
+slim mode should resolve positions from the PARSE it already holds
+(parse-resolve is the committed, yeast-gated machinery; at 466 the parse
+exists by construction). The .ri4 sample table becomes irrelevant to
+the slim dump; the sweep needs only run structure (PROVEN by the yeast
+streamed sweep passing on the placeholder .ri4).
+
+G1 resumes with: --resolve-parse in slim mode, G0 re-gate both paths,
+yeast end-to-end, G2 final cost table, G3 fail-loud.

@@ -1,0 +1,27 @@
+{
+  "n466": 1403000000000.0,
+  "r466": 2740000000.0,
+  "p466_human": 15519839552.120651,
+  "p466_yeast_ratio": 14351273727.558931,
+  "d466": 255169096836.86874,
+  "dict_phrases466": 1754492302.1271179,
+  "tau1": 46,
+  "tau2": 746,
+  "bytes": {
+    "parse": 62079358208.482605,
+    "parse_sparse_boundaries": 18739826949.80878,
+    "dict_sparse_boundaries": 2171284846.9025836,
+    "parse_fingerprints": 2699102536,
+    "dict_fingerprints": 2736397824,
+    "ri4_runs": 13700000000.0,
+    "ri4_starts": 21920000000.0,
+    "ri4_samples": 14042500000.0,
+    "LF_capacity_upper_bound": 43840000000.0,
+    "chunks_and_dict_caches": 18874368
+  },
+  "base_GB": 181.94734473319397,
+  "reserve_GB": 10,
+  "projected_peak_GB": 191.94734473319397,
+  "resident_dict_peak_GB": 447.11644157006276,
+  "class1_tau_peak_GB": 228.92148265575503
+}
