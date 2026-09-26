@@ -1,0 +1,21 @@
+=== G0 BATTERY GATE (standalone-LCE vs committed dumper baselines) 2026-09-26T18:58:06+00:00
+G0 duplicates-600k: BYTE-IDENTICAL
+G0 random-4-2k: BYTE-IDENTICAL
+G0 random-4-20k: BYTE-IDENTICAL
+G0 random-bin-20k: BYTE-IDENTICAL
+G0 random-4-200k: BYTE-IDENTICAL
+G0 satellite-18k: BYTE-IDENTICAL
+G0 HOR-nested: BYTE-IDENTICAL
+G0 dup+unique-120k: BYTE-IDENTICAL
+
+=== G1-EQUIV AT K10 2026-09-26T18:58:06+00:00
+/tmp/h10.sample.log:SAMPLE_RUNS: checked=200003 step=9299 badFirst=0 badLast=0 walk0aFailures=0 walks=394068 sumSteps=849727721 maxSteps=933995
+/tmp/h10rl.standalone.log:flat spot-check: ok=512 bad=0 sentinel-skipped=0 (badRunStart=0 badInterior=0) lfOk=0 lfBad=0
+
+=== k10 construction phases:
+PHASE dict-BUILD          6264.82 s
+freed dict saD build-intermediate: 27418772030 B
+PHASE parse-read/build    6509.14 s
+PHASE pf-minimal-BUILD    7048.42 s
+PHASE lf-index            7096.29 s
+PHASE calibration+spotchk  7145.96 s

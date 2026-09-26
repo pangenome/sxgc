@@ -1089,3 +1089,45 @@ core-hours were not worth a convenience. 245 GB + 96 cores freed;
 watcher stopped. The pilot ladder's 466 rung via the old route is
 RETIRED; the 466 construction will happen via the slim build with its
 own gates when the program reaches the human rung.
+
+## 2026-09-26 — STANDALONE-LCE lane committed; dict structures are the
+## new space hog (correction to correction #3); v5 head-samples MEASURED
+
+bit6/chi_rspace_dump.cpp +326/-29: --resolve-ri4 mode — builds ONLY
+lce_support's true deps (|M|=0, no b_bwt/w_wt, no pfp_sa_support, saD
+freed after build), resolves positions from .ri4's own per-run SA
+samples via LF walk + XANC anchor fallback (mirrors xsa's gated s_at).
+Supervisor re-verified from main-tree source: battery byte-identical.
+
+GATES: G0 7/7 battery byte-identical (incl. duplicates-600k), flat spot
+512/512. G1 k10 full byte-identity INFEASIBLE AS-BUILT (position
+resolution = LF walk from TAIL samples: 2,156 steps/run-head avg, max
+933,995 — the mega-run degeneracy; ~333 core-days) -> substituted
+200,003-run sampled gate vs h10.walk.agg: 0 saFirst/saLast mismatches,
+flat spot 512/512 at 30 Gbp. THE MEASURED JUSTIFICATION FOR V5 HEAD
+SAMPLES: with head-SA samples, resolution is O(1)/run-head and k10
+full byte-identity becomes feasible (~104 min construction + ~83 min
+queries). V5 head-sample field: ADOPTED on this measurement.
+
+THE BIG FINDING (corrects correction #3's constant): the route's space
+is Theta(|D|) with |D| ~ 0.18n on k10 human — dict structures measured
+3.3 B/symbol -> ~3.1 TB projected at 466 as-built (isaD 1.53 + lcpD
+0.77 + dict text 0.26 = 83%). The no-M win was real but ~2x, not
+asymptotic: the DICTIONARY of real human DNA is a fat fraction of the
+text. Error bar: |D|/n at 466 unknown (may halve with more shared
+content). ANSWER ALREADY DESIGNED: fingerprint-LCE applies at BOTH
+levels — the dict-LCE queries are also ~2r known-in-advance questions;
+fingerprints on the dictionary text replace isaD/lcpD/rmqD (O(|D|/tau)
+~ O(r)), with dict text read directly only for block verification.
+This two-level fingerprint design is the slim build lane's brief.
+
+Cost table (k10 baseline): peak 164 GB, structures ~105 GB (vs walk
+178.6 GB); dict build 6,265 s; parse 244 s; b_p 539 s. The k10
+newline-joined parse: 333,531,723 phrases in 27.4 min, 10 GB RAM
+(pfp++ FAST on human — syng contamination fully confirmed dead).
+
+Walk SIGTERM mystery (laneN flagged): RESOLVED — it was the supervisor's
+kill per user decision (ledger 5436ee0), not external.
+
+Artifacts: tools/sample_decode_probe.py, walk_decode_probe.py,
+bit6/gate_logs/G0_G1_gate.log, k10 parse h10rl_pfp.{parse,dict}.
