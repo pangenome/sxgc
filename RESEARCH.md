@@ -764,3 +764,42 @@ Remaining for fm_equivalence_bounded (enumerated in FmJoint.lean
 HANDOFF): boundary-step assembly, non-boundary row step, final flush,
 main induction over JointInv, then the bounded statement. FmJoint.lean
 committed (1744 lines incl. HANDOFF; supervisor typecheck clean).
+
+## 2026-09-26 — PFP-LCP PORT GREEN: TeraLCP OFF THE CRITICAL PATH
+## (the lcp_index is dead for this consumer)
+
+Key insight (smaller than briefed): the dumper's ONLY lcp_index use was
+topLCP = PLCP at the run-head row = LCP(SA[a-1], SA[a]) — the classic
+adjacent-row LCP — computable directly as clamp(LCE_sup(resolve_row(a-1),
+resolve_row(a))) via the vendored pfpds::pfp_lce_support (dictionary RMQ +
+parse ISA/RMQ + rank/select, polylog/call, NO phrase-walk loop; the
+O(LCP-value) walk existed only in the M3 Python prototype). The lcp_index
+was REDUNDANT for this consumer. bit6/chi_rspace_dump.cpp now takes
+--ri4 --parse ONLY (PFP artifacts, no --lcp-index).
+
+Gates (supervisor re-verified from main-tree sources):
+- G0: 997,000 positions, 7 battery texts, 0 mismatches vs lcp_index
+  (ALL positions, incl. duplicates-600k)
+- G1: .agg byte-identical 7/7 vs lcp_index baseline
+- G2: yeast .agg byte-identical (3,228,956,204 B); xsa chi-rspace ->
+  chi = 85,404,240, witness set-equality vs oracle True. NO lcp_index
+  anywhere in the chain.
+- G3: 841.6 s / 25.3 GB vs 901.0 s / 28.4 GB baseline.
+
+HONEST COST CAVEAT (the next decision, in bit6/PORT_HANDOFF.md): the
+dump still calls pf_parsing::build_b_bwt_and_M() — O(n)-bit b_bwt
+allocation + |M| = 317,476,865 ≈ 0.1n entries (~9 of the 14.5 min at
+yeast). That is PFP-index CONSTRUCTION (one-off parse-build work), not
+a per-query scan; the query phase itself is O(r polylog). The "only
+Omega(n) is the single pfp++ text read" claim requires folding this
+construction into the pfp++ parse build and persisting the artifacts
+(the same RETAIN-THE-PARSE doctrine). Until then the honest statement:
+no lcp_index, no TeraLCP, one foldable O(n)-space construction phase.
+
+Also recorded: ft30/sat4 fixtures UNUSABLE for pfp gates (regenerated
+parses don't match their .ri4 texts — the same cross-chain mispairing
+class as the yeast lane; baseline also core-dumped). Excluded, not
+counterexamples.
+
+Files: bit6/chi_rspace_dump.cpp (+91/-16), PFP_LCP_PORT_REPORT.md,
+PORT_HANDOFF.md.

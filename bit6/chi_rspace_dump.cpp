@@ -1,6 +1,13 @@
-// chi_rspace_dump.cpp — YEAST LANE Stage A+B: per-run aggregates from
-// r-space structures ONLY (.ri4 + lcp_index + PFP artifacts). No O(n)
-// pass, no per-position walks, no SA materialization.
+// chi_rspace_dump.cpp — per-run aggregates from PFP artifacts ONLY
+// (.ri4 + PFP parse/dict; NO lcp_index required).  No O(n) pass, no
+// per-position walks, no SA materialization.
+//
+// topLCP is PLCP at the run-head row = LCP(SA[a-1], SA[a]) (the classic
+// adjacent-row LCP), computed with the vendored pfp LCE support
+// (dictionary RMQ + parse ISA/RMQ + rank/select: polylog/call).  The
+// former lcp_index lookup was redundant: PLCP(sa_row a) IS that LCP.
+// --lcp-index is retained ONLY for an optional cross-check (CHECK_TOP),
+// and G0_ALL validates the identity at every row/position.
 //
 // Per BWT run i (rows [a,b]):
 //   posFirst/posLast  = pfp_sa_support(resolve) of rows a,b   [O(log)]
@@ -31,6 +38,7 @@
 #include <fstream>
 #include <iostream>
 #include <cassert>
+#include <mutex>
 
 #include <sdsl/int_vector.hpp>
 #include "pfp/utils.hpp"
@@ -128,8 +136,8 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--calib-rows") && i + 1 < argc) calibRows = strtoull(argv[++i], nullptr, 10);
         else { fprintf(stderr, "unknown arg %s\n", argv[i]); return 1; }
     }
-    if (ri4Path.empty() || parsePrefix.empty() || lcpIndexPath.empty() || outPath.empty()) {
-        fprintf(stderr, "usage: chi_rspace_dump --ri4 F.ri4 --parse PFP_PREFIX --lcp-index F.lcp_index.lcp_index -o OUT.agg [-t N] [--flat F] [--calib-rows N]\n");
+    if (ri4Path.empty() || parsePrefix.empty() || outPath.empty()) {
+        fprintf(stderr, "usage: chi_rspace_dump --ri4 F.ri4 --parse PFP_PREFIX -o OUT.agg [-t N] [--flat F] [--calib-rows N] [--lcp-index F.lcp_index.lcp_index (LEGACY cross-check only)]\n");
         return 1;
     }
 
@@ -137,20 +145,26 @@ int main(int argc, char** argv) {
     fprintf(stderr, "ri4: n=%llu k=%llu R=%llu\n",
             (unsigned long long)ri4.n, (unsigned long long)ri4.k, (unsigned long long)ri4.R);
 
-    ChiIndex idx;
-    {
+    // ---- LEGACY lcp_index: OPTIONAL.  When absent, topLCP is computed
+    // from PFP artifacts alone (see the worker below).  When present it
+    // is loaded only for the cross-checks (CHECK_TOP / G0_ALL). ----
+    const bool haveIdx = !lcpIndexPath.empty();
+    ChiIndex idx; PhiLookup P;
+    if (haveIdx) {
         std::ifstream in(lcpIndexPath, std::ios::binary);
         if (!in.is_open()) { fprintf(stderr, "cannot open %s\n", lcpIndexPath.c_str()); return 1; }
         idx.load(in);
+        if (idx.totalLen != ri4.n) {
+            fprintf(stderr, "FATAL: lcp_index totalLen %llu != ri4 n %llu\n",
+                    (unsigned long long)idx.totalLen, (unsigned long long)ri4.n);
+            return 1;
+        }
+        build_phi_lookup(idx, P);
+        fprintf(stderr, "lcp_index (LEGACY cross-check): pieces=%llu totalLen=%llu\n",
+                (unsigned long long)(P.nInt), (unsigned long long)idx.totalLen);
+    } else {
+        fprintf(stderr, "lcp_index: NONE (PFP-artifacts-only topLCP mode)\n");
     }
-    if (idx.totalLen != ri4.n) {
-        fprintf(stderr, "FATAL: lcp_index totalLen %llu != ri4 n %llu\n",
-                (unsigned long long)idx.totalLen, (unsigned long long)ri4.n);
-        return 1;
-    }
-    PhiLookup P; build_phi_lookup(idx, P);
-    fprintf(stderr, "lcp_index: pieces=%llu totalLen=%llu\n",
-            (unsigned long long)(P.nInt), (unsigned long long)idx.totalLen);
 
     // ---- PFP machinery ----
     const long_type W = 10;
@@ -379,10 +393,46 @@ int main(int argc, char** argv) {
         }
     }
 
+    // ---- G0 (all-rows / all-positions) primitive validation ----
+    // PLCP(SA[m]) must equal the clamped LCE of SA[m-1] and SA[m] at
+    // EVERY row m (rows cover every position exactly once).
+    if (getenv("G0_ALL")) {
+        std::atomic<uint64_t> mism{0}, checks{0}, nextR{1};
+        auto wk = [&]() {
+            for (;;) {
+                uint64_t m = nextR.fetch_add(1);
+                if (m >= ri4.n) return;
+                uint64_t pos = (uint64_t)SA_sup((long_type)m + ROW_OFF);
+                uint64_t prev = (uint64_t)SA_sup((long_type)(m - 1) + ROW_OFF);
+                uint64_t topIdx = lcp_at_pos(idx, P, pos);
+                long_type lce = LCE_sup((long_type)prev, (long_type)pos);
+                uint64_t topLce = std::min((uint64_t)lce, ri4.n - std::max(prev, pos));
+                checks++;
+                if (topIdx != topLce) {
+                    uint64_t c = ++mism;
+                    if (c <= 20)
+                        fprintf(stderr, "G0MIS row=%llu pos=%llu prev=%llu idx=%llu lce=%llu\n",
+                                (unsigned long long)m, (unsigned long long)pos,
+                                (unsigned long long)prev, (unsigned long long)topIdx,
+                                (unsigned long long)topLce);
+                }
+            }
+        };
+        std::vector<std::thread> th;
+        int nt = std::max(1, std::min(nthreads, 64));
+        for (int t = 0; t < nt; ++t) th.emplace_back(wk);
+        for (auto& t : th) t.join();
+        fprintf(stderr, "G0_ALL: checks=%llu mismatches=%llu\n",
+                (unsigned long long)checks.load(), (unsigned long long)mism.load());
+        return mism.load() ? 2 : 0;
+    }
+
     // ---- per-run aggregates (parallel) ----
     std::vector<uint64_t> topLCP(ri4.R, INF), saFirst(ri4.R, INF),
         saLast(ri4.R, INF), interiorMin(ri4.R, INF);
     std::atomic<uint64_t> lceChecks{0}, lceMismatch{0};
+    std::mutex mtx;
+    uint64_t topChecks = 0, topMismatch = 0;
     {
         std::atomic<uint64_t> next{0};
         auto worker = [&](void) {
@@ -395,7 +445,29 @@ int main(int argc, char** argv) {
                 uint64_t pl = (b == a) ? pf : resolve_row(b);
                 saFirst[i] = pf;
                 saLast[i] = pl;
-                topLCP[i] = (a == 0) ? 0 : lcp_at_pos(idx, P, pf);
+                // topLCP = PLCP at the run-head row = LCP(SA[a-1], SA[a]).
+                // PFP-artifacts-only: resolve the previous row and call the
+                // vendored pfp LCE support (polylog/call).
+                if (a == 0) {
+                    topLCP[i] = 0;
+                } else {
+                    uint64_t pa1 = resolve_row(a - 1);
+                    long_type lce1 = LCE_sup((long_type)pa1, (long_type)pf);
+                    topLCP[i] = std::min((uint64_t)lce1, n - std::max(pa1, pf));
+                }
+                if (haveIdx && (getenv("CHECK_TOP") || (i & 1023) == 0)) {
+                    uint64_t top_idx = (a == 0) ? 0 : lcp_at_pos(idx, P, pf);
+                    std::lock_guard<std::mutex> lk(mtx);
+                    topChecks++;
+                    if (top_idx != topLCP[i]) {
+                        topMismatch++;
+                        if (topMismatch <= 20)
+                            fprintf(stderr, "TOPMIS run=%llu a=%llu pf=%llu idx=%llu lce=%llu\n",
+                                    (unsigned long long)i, (unsigned long long)a,
+                                    (unsigned long long)pf, (unsigned long long)top_idx,
+                                    (unsigned long long)topLCP[i]);
+                    }
+                }
                 if (ri4.l[i] > 1) {
                     // classic identity: min over rows (a,b] = LCP(S_a, S_b)
                     long_type lce = LCE_sup((long_type)pf, (long_type)pl);
@@ -422,6 +494,9 @@ int main(int argc, char** argv) {
     for (uint64_t i = 0; i < ri4.R; ++i)
         if (topLCP[i] == INF || saFirst[i] == INF || saLast[i] == INF) unfilled++;
     if (unfilled) { fprintf(stderr, "FATAL: %llu runs unfilled\n", (unsigned long long)unfilled); return 1; }
+    if (haveIdx)
+        fprintf(stderr, "TOPID vs lcp_index: checks=%llu mismatches=%llu\n",
+                (unsigned long long)topChecks, (unsigned long long)topMismatch);
     fprintf(stderr, "aggregates: %llu runs; LCE cross-checks=%llu mismatches=%llu\n",
             (unsigned long long)ri4.R, (unsigned long long)lceChecks.load(),
             (unsigned long long)lceMismatch.load());
