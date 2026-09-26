@@ -1191,3 +1191,22 @@ produce a REAL-samples .ri4 for the pfp2 chain via one teralcp_chi
 ~1 h at yeast scale) — the old world produces the v5-class artifact
 the new world consumes, once. Then slim G1 = --ri4 yp2real.ri4
 --resolve-ri4 --slim -> byte-identity -> sweep -> chi = 85,404,240.
+
+## V5 PROVENANCE CLARIFICATION (user caught muddled framing): SA samples
+## are a FRONT-END OUTPUT — TeraLCP never runs in the end-state, not even
+## once per corpus
+
+The pass-3 yeast teralcp_chi walk is LEGACY REMEDIATION ONLY: the pfp2
+chain's .ri4 was born runs-only (converter had no SA; the samples file
+was a by-product of the production walk we retired). One-time fix for a
+pilot-era artifact, nothing more — never validation, never architecture.
+
+END-STATE (binding): the pfp++/RLBWT build — the single mandatory pass —
+EMITS RLBWT + SA samples (head+tail, the v5 field) + anchors together,
+using its internal construction structures legitimately at build time.
+The slim construction consumes (RLBWT + samples + parse + dict):
+fingerprints -> LCE -> aggregates -> sweep -> chi/sA. NO TeraLCP, NO
+lcp_index, NO separate O(n) walk, EVER. The seed pass's original job
+(LCP values) died to fingerprint LCE; its lingering second job (samples)
+belongs to the front-end. Iteration-2 chains (PFP-BWT over 466) ship
+samples from the build directly.
