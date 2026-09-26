@@ -974,3 +974,24 @@ Related recorded red flag (unchanged): any pfp++/syng-class front-end at
 466 scale has unresolved practical constants — the reason the parse
 door's BUILD cost, not just its support space, stays on the adverse
 side of the ledger on this machine.
+
+## CORRECTION to negative #8 (supervisor error, recorded): the killed syng
+## run was NOT the anomalous one — it was the healthy retry, mid-flight
+
+Facts corrected: the 2d9.5h process I killed was the RETRY (launched
+2026-09-24 with -t 32 --parallel-dictionary): its dictionary phase SUCCEEDED
+(61 min, 151,318,172 unique syncmer nodes — the retry FIXED the original
+single-core dictionary anomaly). It then spent 56.5 h in the per-sequence
+phase: silent (one log line total), single-core despite -t 32, no
+checkpoint, output only written at completion. I killed it based on STALE
+evidence from the original run, and the wrapper's `| tail -5; echo $?`
+plumbing masked the kill as "SYNG EXIT: 0" (tail's exit code, not impg's).
+
+Amended assessment: the experiment's real defect is OBSERVABILITY (no
+progress signal, no resume, unknown ETA — could be hours or months).
+Bridge point 2 remains retired-unmeasured per user decision; the yeast
+point stands. IF revisited: restart with -v 2 on a 20-50-sequence SLICE
+first to measure the per-sequence rate before committing a full run
+(the only disciplined route to this data point). The original dictionary
+anomaly is RESOLVED (parallel build works); the per-sequence phase is
+the unmeasured part.
