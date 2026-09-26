@@ -1,3 +1,11 @@
+# Current state: pass 3 gates complete
+
+G1, G0, G2 measurements, and G3 passed. See SLIM_ACCEPTANCE.md
+and SLIM_COST.md for current results and 466 conditionality.
+Evidence: bit6/gate_logs/slim/pass3/. Artifacts: /tmp/laneQ/pass3/.
+The earlier blocked entries below are preserved as history.
+
+
 # SLIM lane — in progress
 
 Sources: bit6/slim_lce.hpp (two-level fingerprint LCE, sparse position maps,
@@ -108,3 +116,118 @@ changed in pass 2, and no pass-1 gates were rerun. Ordered downstream tasks
 (G0 re-gate, G1 end-to-end, G2 final, G3) remain not run. Pass-1 files and logs
 are preserved. Evidence: bit6/gate_logs/slim/pass2-resolver-audit.log.
 Reviewer approval remains outstanding. No staging or commits.
+
+## Pass 3 — active (2026-09-26)
+
+The supplied correction #6 retires the incompatible parse-resolver mandate.
+Correction #6 is absent from this checkout of RESEARCH.md; the task itself
+is authoritative. No contact_supervisor tool is available in ALL_TOOLS.
+
+Matched yp2t.lcp_index.lcp_index with yp2t.bwt.{heads,len}: R=100,904,881.
+Text audit: n=3,336,986,760, one trailing newline, 9,901 internal ! symbols.
+BWT has exactly one newline endmarker; this is ONE string, not 9,901
+strings. Derived /tmp/laneQ/pass3/yp2real.sc = s0\t0\t3336986759.
+The production sample walk is running independently of either oracle.
+Watcher pid 2247122; status /tmp/laneQ/pass3/yeast.samples.status.json;
+command and timing /tmp/laneQ/pass3/yeast.samples.log. Watcher monitors
+only its own process group, with a 150 GB RSS stop threshold.
+G1, G0 revalidation, G2 final, and G3 are pending in the ordered ladder.
+
+Gate automation watcher pid 2252640. /tmp/laneQ/pass3/gates.status.json
+tracks the ordered runner, which waits for sample validation, then runs G1
+(streamed dictionary, both sweeps), G0 (three texts, slim resident/streamed
+and standalone --resolve-ri4), G2 sensitivity, and G3 (eight texts).
+New query instrumentation separates chunk resolve/LCE/write wall time and
+records mean/max directly verified phrase positions. The legacy resolver
+and production sample binary remain unchanged.
+
+Located and read correction #6 in the main worktree, read-only:
+/home/erikg/sxgc/RESEARCH.md:1173. Its adjacent binding provenance
+clarification says the current production walk is PILOT LEGACY REMEDIATION
+ONLY. End-state PFP/RLBWT front-end must emit head/tail SA samples and
+anchors during the mandatory build: no TeraLCP, no lcp_index, no separate
+O(n) walk. This pass gates the consumer, not that future front-end
+integration. Exact text saved in pass3/correction6-source.log.
+
+Pass-3 progress: Production sample artifact validated: n/R match; every sample < n; BWT byte-identical to the paired runs-only ri4.
+
+Pass-3 performance finding: the uncached first 65,536-run yeast chunk
+spent 259.065 s resolving versus 0.347 s in LCE. The next chunk is also
+slow. A bounded, opt-in exact LF-position cache is being tested before
+restarting G1; it memoizes only independently sample-derived answers, uses
+full-key checks and synchronized slots, and adds no M/b_bwt/w_wt.
+The original uncached attempt is still running while this is verified.
+
+Pass-3 progress: Gate runner stopped on AssertionError(('yeast.dump', 143)); no downstream gates claimed.
+
+Intentional performance restart: stopped only our uncached dump pid
+2293735 after the first chunk measured 259.065 s resolve vs 0.347 s LCE.
+The ordered runner aborted as designed; its failed-exit entry above is
+this deliberate stop, not a correctness mismatch. Evidence retained as
+pass3/yeast.dump.uncached-attempt.log and gates.uncached-attempt.log.
+The bounded exact cache passed 833,579 explicit-SA checks (collision
+eviction, 100,001-step walk, 8-thread access). Restarted G1 with
+--resolve-cache, preserving independent yp2real.ri4. New watcher pid 2307517;
+status /tmp/laneQ/pass3/gates.cached.status.json. Cache maximum 201,326,592
+bytes, checkpoint stack bounded at 64 KiB per active resolver call.
+No M/b_bwt/w_wt, no oracle seeds, no front-end scope change.
+
+Pass-3 progress: Production sample artifact validated: n/R match; every sample < n; BWT byte-identical to the paired runs-only ri4.
+
+Pass-3 progress: Gate runner stopped on AssertionError(('yeast.dump', 143)); no downstream gates claimed.
+
+Final cache configuration: 2^26 slots, 1,610,612,736 bytes at yeast;
+full keys and locked values, with read-only atomic-tag rejection of misses.
+Final implementation again passed 833,579 explicit-SA/concurrency checks.
+The 8m-slot pilot reached >5.3m runs, but resolution remained dominant;
+its partial evidence is retained under yeast.dump.cache8m-attempt.log.
+Stopped only own pid 2307586 and restarted G1 with the larger fixed cap.
+Final gate watcher pid 2334223; /tmp/laneQ/pass3/gates.final.status.json.
+No correctness failure preceded either intentional performance restart.
+
+Pass-3 progress: Production sample artifact validated: n/R match; every sample < n; BWT byte-identical to the paired runs-only ri4.
+
+Pass-3 progress: G1 PASS. See bit6/gate_logs/slim/pass3/gates.log and yeast phase logs.
+
+Pass-3 progress: G0 PASS on the three requested texts, both LCE paths, plus streamed dictionary. Retired --resolve-parse was not run.
+
+Pass-3 progress: G2 measurements complete; final interpretation and conditional 466 projection awaiting report review.
+
+Pass-3 progress: G3 PASS 8/8. Ordered execution complete; acceptance report and final cost interpretation remain.
+
+## Pass 3 complete
+
+**Yeast acceptance gates passed. 466 feasibility remains conditional.**
+
+- Real samples: independent production walk completed in 3237.03 s,
+  10.599 GB peak; n=3,336,986,760, R=100,904,881;
+  every sample below n. The chain has one newline-delimited string.
+- G1: new slim aggregate byte-identical to the reference; streamed and
+  resident sweeps both chi=85,404,240; witnesses byte-identical and NumPy
+  sorted-set equal to the supplied oracle. Full dump 1209.93 s,
+  4.925 GB peak.
+- G0: all three requested battery texts passed both LCE paths with
+  `--resolve-ri4`; streamed dictionary also passed. No forbidden resolver.
+- G2: full per-phase resolve/LCE/write wall and cumulative peak RSS,
+  verification mean 15.329365891 phrases/seed and maximum
+  22262, tau sensitivity, and corrected 466 model
+  recorded in SLIM_COST.md. O(tau) and legacy parse-resolver mandates retired.
+- Runtime change: a bounded 1.611 GB exact LF-position cache avoids repeated
+  sample walks; verified against explicit suffix arrays and uncached resolution.
+  The original uncached partial attempt is retained, not counted as a full gate.
+- G3: 8/8 tau1=2 clean runs matched; 8/8 induced wrong candidates failed
+  loudly. Lowering tau alone does not induce errors.
+
+V5 head samples are the adopted O(1)/run-head fix for the measured k10
+2,156-step tail-walk mean. Adding them to the current LF memory model gives
+205.990 GB; an unimplemented no-LF variant is conditionally 162.150 GB.
+No 466 or v5 implementation acceptance is claimed. This walk is pilot-only
+legacy remediation. The binding end-state requires head/tail samples and
+anchors from the mandatory front-end build, with no TeraLCP, lcp_index, or
+separate O(n) sample walk; that integration remains ungated here.
+All observed peaks were below 150 GB.
+
+Evidence: `bit6/gate_logs/slim/pass3/gates.log`, individual phase/gate logs,
+and `SLIM_COST.md`. Large outputs are in `/tmp/laneQ/pass3/`. No commits,
+no M/b_bwt/w_wt, and no interference with the separate Lean worktree.
+This report records gate results; it does not substitute for reviewer approval.

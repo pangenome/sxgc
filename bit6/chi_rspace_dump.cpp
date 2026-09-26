@@ -66,7 +66,7 @@ static const uint32_t IDX_MAGIC = 0x31465058; // "XPF1" (bit6/pfp_index_build.cp
 static const uint32_t IDX_VERSION = 2;
 
 // phase timing (G3 cost table)
-static int64_t G_T0;
+static double G_T0;
 static double tnow() {
     using namespace std::chrono;
     return duration<double>(steady_clock::now().time_since_epoch()).count();
@@ -190,32 +190,92 @@ struct Anchors {
     }
 };
 
+// Optional bounded exact memoization of LF-derived positions. Hash collisions
+// only evict entries: full row keys are compared under a per-slot lock. This
+// is neither a text-row map nor a dense n-sized structure; its cap is explicit.
+struct ResolveCache {
+    struct Entry {
+        std::atomic_flag busy=ATOMIC_FLAG_INIT;
+        std::atomic<uint64_t> row{INF};
+        uint64_t sa=INF;
+    };
+    size_t slots;
+    std::unique_ptr<Entry[]> entries;
+    explicit ResolveCache(size_t count):slots(count),entries(new Entry[count]) {
+        if(!count || (count&(count-1))) {fprintf(stderr,"invalid resolve cache size\n");exit(2);}
+    }
+    size_t slot(uint64_t row)const {
+        row^=row>>30;row*=0xbf58476d1ce4e5b9ULL;row^=row>>27;
+        row*=0x94d049bb133111ebULL;row^=row>>31;
+        return row&(slots-1);
+    }
+    bool lookup(uint64_t row,uint64_t& sa) {
+        auto& e=entries[slot(row)];
+        // Most probes miss. Reading an atomic tag first avoids dirtying a
+        // random cache line for every LF step. Recheck after taking the lock.
+        if(e.row.load(std::memory_order_relaxed)!=row)return false;
+        if(e.busy.test_and_set(std::memory_order_acquire))return false;
+        bool found=e.row.load(std::memory_order_relaxed)==row;if(found)sa=e.sa;
+        e.busy.clear(std::memory_order_release);return found;
+    }
+    void put(uint64_t row,uint64_t sa) {
+        auto& e=entries[slot(row)];
+        if(e.busy.test_and_set(std::memory_order_acquire))return;
+        e.sa=sa;e.row.store(row,std::memory_order_relaxed);e.busy.clear(std::memory_order_release);
+    }
+    size_t bytes()const{return slots*sizeof(Entry);}
+};
+
 struct SampleResolver {
     const Ri4* ri = nullptr;
     const LfIndex* lf = nullptr;
     const Anchors* anc = nullptr;
-    mutable std::atomic<uint64_t> nWalks{0}, sumSteps{0}, maxSteps{0}, hit0a{0}, viaAnchor{0};
+    ResolveCache* cache = nullptr;
+    mutable std::atomic<uint64_t> nWalks{0}, sumSteps{0}, maxSteps{0}, hit0a{0}, viaAnchor{0}, viaCache{0};
     inline uint64_t sa_at(uint64_t row) const {
         uint64_t pos = row, steps = 0;
+        struct Point {uint64_t row, distance;};
+        Point path[4096]; // uninitialized; bounded 64 KiB of stack per worker
+        size_t used=0;uint64_t stride=8;
+        auto finish=[&](uint64_t sample)->uint64_t {
+            nWalks++;sumSteps+=steps;
+            uint64_t mx=maxSteps.load();
+            while(steps>mx && !maxSteps.compare_exchange_weak(mx,steps)) {}
+            uint64_t answer=(ri->n-1)-(sample-steps);
+            if(cache && answer<ri->n) {
+                for(size_t i=0;i<used;++i)
+                    if(answer>=path[i].distance)cache->put(path[i].row,answer-path[i].distance);
+            }
+            return answer;
+        };
         for (;;) {
             uint64_t r = lf->run_of(pos);
             uint64_t e = ri->starts[r] + ri->l[r];
             if (pos == e - 1) {
-                nWalks++; sumSteps += steps;
-                uint64_t mx = maxSteps.load();
-                while (steps > mx && !maxSteps.compare_exchange_weak(mx, steps)) {}
-                uint64_t S = ri->sample(r) - steps;          // wrapping, as xsa
-                return (ri->n - 1) - S;
+                return finish(ri->sample(r));
+            }
+            uint64_t cached;
+            if(cache && cache->lookup(pos,cached)) {
+                viaCache++;
+                return finish((ri->n-1)-cached);
             }
             if (ri->a[r] == 0x0A) {
                 uint64_t s0;
                 if (anc && anc->lookup(pos, s0)) {
-                    viaAnchor++; nWalks++; sumSteps += steps;
-                    uint64_t S = s0 - steps;
-                    return (ri->n - 1) - S;
+                    viaAnchor++;
+                    return finish(s0);
                 }
                 hit0a++;
                 return INF;
+            }
+            if(cache && steps%stride==0) {
+                if(used==4096) {
+                    // Double checkpoint spacing, preserving coverage of the
+                    // whole walk without an unbounded path allocation.
+                    for(size_t i=0;i<2048;++i)path[i]=path[2*i];
+                    used=2048;stride*=2;
+                }
+                if(steps%stride==0)path[used++]={pos,steps};
             }
             pos = lf->lf(pos);
             steps++;
@@ -400,11 +460,11 @@ static void pfp_digest(const pfpds::dictionary<uint8_t>& D,
 #include "slim_lce.hpp"
 
 int main(int argc, char** argv) {
-    G_T0 = (int64_t)tnow();
+    G_T0 = tnow();
     std::string ri4Path, parsePrefix, lcpIndexPath, pfpIndexPath, outPath, flatPath, anchorsPath;
     int nthreads = std::thread::hardware_concurrency();
     uint64_t calibRows = 256;
-    bool resolveRi4 = false, slim = false, dictStream = false, injectFault = false, profileOnly = false;
+    bool resolveRi4 = false, slim = false, dictStream = false, injectFault = false, profileOnly = false, resolveCache = false;
     uint64_t tau1=0, tau2=0;
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--ri4") && i + 1 < argc) ri4Path = argv[++i];
@@ -416,6 +476,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "-t") && i + 1 < argc) nthreads = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--calib-rows") && i + 1 < argc) calibRows = strtoull(argv[++i], nullptr, 10);
         else if (!strcmp(argv[i], "--resolve-ri4")) resolveRi4 = true;
+        else if (!strcmp(argv[i], "--resolve-cache")) resolveCache = true;
         else if (!strcmp(argv[i], "--slim")) slim = true;
         else if (!strcmp(argv[i], "--slim-profile-build")) profileOnly = true;
         else if (!strcmp(argv[i], "--dict-stream")) dictStream = true;
@@ -425,10 +486,10 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--anchors") && i + 1 < argc) anchorsPath = argv[++i];
         else { fprintf(stderr, "unknown arg %s\n", argv[i]); return 1; }
     }
-    if ((profileOnly || dictStream || injectFault || tau1 || tau2) && !slim)
+    if ((profileOnly || dictStream || injectFault || tau1 || tau2 || resolveCache) && !slim)
         slim_fail("slim options require --slim");
     if (ri4Path.empty() || parsePrefix.empty() || outPath.empty()) {
-        fprintf(stderr, "usage: chi_rspace_dump [--slim --resolve-ri4 [--dict-stream] [--tau1 N] [--tau2 N] [--slim-profile-build] [--inject-fingerprint-error (TEST ONLY)]] --ri4 F.ri4 --parse PFP_PREFIX -o OUT.agg [-t N] [--flat F] [--calib-rows N] [--pfp-index INDEX (load instead of building; bit6/pfp_index_build.cpp)] [--lcp-index F.lcp_index.lcp_index (LEGACY cross-check only)] [--resolve-ri4 (positions from pfp_ds_vendor/pfp/pfp.hpp defer_build_t; NO M/b_bwt/w_wt; SA via the .ri4 sample array + LF walk)] [--anchors F (string-start anchors for walks that reach an interior 0x0A row)]\n");
+        fprintf(stderr, "usage: chi_rspace_dump [--slim --resolve-ri4 [--dict-stream] [--resolve-cache] [--tau1 N] [--tau2 N] [--slim-profile-build] [--inject-fingerprint-error (TEST ONLY)]] --ri4 F.ri4 --parse PFP_PREFIX -o OUT.agg [-t N] [--flat F] [--calib-rows N] [--pfp-index INDEX (load instead of building; bit6/pfp_index_build.cpp)] [--lcp-index F.lcp_index.lcp_index (LEGACY cross-check only)] [--resolve-ri4 (positions from pfp_ds_vendor/pfp/pfp.hpp defer_build_t; NO M/b_bwt/w_wt; SA via the .ri4 sample array + LF walk)] [--anchors F (string-start anchors for walks that reach an interior 0x0A row)]\n");
         return 1;
     }
 
@@ -439,7 +500,8 @@ int main(int argc, char** argv) {
     if (slim) {
         if (!resolveRi4 || !pfpIndexPath.empty() || !lcpIndexPath.empty())
             slim_fail("--slim requires --resolve-ri4 and excludes legacy indexes");
-        return slim_dump(ri4,parsePrefix,outPath,anchorsPath,nthreads,tau1,tau2,dictStream,injectFault,profileOnly,flatPath,calibRows);
+        double begin=G_T0;slim_phase("ri4-load",begin);
+        return slim_dump(ri4,parsePrefix,outPath,anchorsPath,nthreads,tau1,tau2,dictStream,injectFault,profileOnly,flatPath,calibRows,resolveCache);
     }
 
     // ---- LEGACY lcp_index: OPTIONAL.  When absent, topLCP is computed

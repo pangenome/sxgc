@@ -73,7 +73,12 @@ template<class Seq> struct SlimFingerprint {
     const Seq& s; uint64_t tau; std::vector<uint64_t> hashes;
     static constexpr uint64_t BASE=0x9e3779b185ebca87ULL;
     bool inject;
-    mutable std::atomic<uint64_t> calls{0}, checked{0}, jumps{0};
+    mutable std::atomic<uint64_t> calls{0}, checked{0}, jumps{0}, maxChecked{0};
+    void record_checked(uint64_t count) const {
+        checked.fetch_add(count,std::memory_order_relaxed);
+        uint64_t mx=maxChecked.load(std::memory_order_relaxed);
+        while(count>mx && !maxChecked.compare_exchange_weak(mx,count,std::memory_order_relaxed)) {}
+    }
     SlimFingerprint(const Seq& seq,uint64_t t,bool fault=false):s(seq),tau(std::max<uint64_t>(1,t)),inject(fault) {
         hashes.resize(s.size()/tau+1);
         uint64_t h=0;
@@ -98,7 +103,7 @@ template<class Seq> struct SlimFingerprint {
         // Cheap short mismatch path; no probabilistic answer is returned.
         uint64_t lo=0, quick=std::min<uint64_t>(cap,std::min<uint64_t>(tau,16));
         while(lo<quick && s[i+lo]==s[j+lo])++lo;
-        if(lo<quick && !inject){checked+=lo+1;return lo;}
+        if(lo<quick && !inject){record_checked(lo+1);return lo;}
         uint64_t hi=cap;
         // Exponential search avoids log(|D|) probes on short phrase tails.
         uint64_t step=std::max<uint64_t>(1,quick);
@@ -119,16 +124,18 @@ template<class Seq> struct SlimFingerprint {
             slim_fail("fingerprint verification mismatch inside proposed prefix");
         if(guess<cap && s[i+guess]==s[j+guess])
             slim_fail("fingerprint verification mismatch at boundary");
-        checked+=guess+(guess<cap);
+        record_checked(guess+(guess<cap));
         return guess;
     }
-    void report(const char* name)const {fprintf(stderr,"SLIM_FP %s tau=%llu bytes=%llu queries=%llu verified_symbols=%llu hash_probes=%llu\n",name,
+    void report(const char* name)const {fprintf(stderr,"SLIM_FP %s tau=%llu bytes=%llu queries=%llu verified_symbols=%llu hash_probes=%llu mean_verified=%.9f max_verified=%llu\n",name,
         (unsigned long long)tau,(unsigned long long)(hashes.size()*8),(unsigned long long)calls.load(),
-        (unsigned long long)checked.load(),(unsigned long long)jumps.load());}
+        (unsigned long long)checked.load(),(unsigned long long)jumps.load(),
+        calls.load()?double(checked.load())/calls.load():0.0,(unsigned long long)maxChecked.load());}
 };
 
 struct SlimLCE {
     double started=tnow();
+    mutable std::atomic<uint64_t> seedQueries{0};
     SlimDict d; std::vector<uint32_t> p;
     sdsl::sd_vector<> bd,bp;
     sdsl::sd_vector<>::select_1_type ds,ps;
@@ -171,6 +178,7 @@ struct SlimLCE {
             (unsigned long long)n,p.size()-1,(unsigned long long)d.size(),(unsigned long long)(count-1),p.size()*4,sdsl::size_in_bytes(bd),sdsl::size_in_bytes(bp),d.resident.size());
     }
     uint64_t operator()(uint64_t i,uint64_t j)const {
+        seedQueries.fetch_add(1,std::memory_order_relaxed);
         i=(i+w)%n;j=(j+w)%n;if(i==j)return n-i;
         uint64_t pi=pr(i+1),pj=pr(j+1), oi=i-ps(pi),oj=j-ps(pj);
         uint64_t a=p[pi-1],b=p[pj-1],k=std::min(length(a)-oi,length(b)-oj);
@@ -190,7 +198,7 @@ struct SlimLCE {
 static int slim_dump(Ri4& ri,const std::string& prefix,const std::string& out,
                      const std::string& anchorsPath,int threads,uint64_t t1,uint64_t t2,
                      bool stream,bool fault,bool profileOnly=false,
-                     const std::string& flatPath="",uint64_t calibRows=256) {
+                     const std::string& flatPath="",uint64_t calibRows=256,bool useResolveCache=false) {
     if(!profileOnly && (!ri.haveSa||ri.sampleAllInf()))slim_fail("usable ri4 samples required");
     double last=tnow();
     SlimLCE lce(prefix,ri.R,t1,t2,stream,fault);
@@ -199,6 +207,13 @@ static int slim_dump(Ri4& ri,const std::string& prefix,const std::string& out,
     LfIndex lf;lf.build(ri);Anchors anc;if(!anchorsPath.empty())anc.load(anchorsPath);
     SampleResolver resolver;resolver.ri=&ri;resolver.lf=&lf;resolver.anc=anchorsPath.empty()?nullptr:&anc;
     slim_phase("lf-build",last);
+    std::unique_ptr<ResolveCache> resolveCache;
+    if(useResolveCache) {
+        size_t slots=1;while(slots<std::min<uint64_t>(ri.R,1ULL<<26))slots*=2;
+        resolveCache=std::make_unique<ResolveCache>(slots);resolver.cache=resolveCache.get();
+        fprintf(stderr,"SLIM_RESOLVE_CACHE slots=%zu bytes=%zu checkpoint_bytes_per_worker=65536 exact_keys=1\n",slots,resolveCache->bytes());
+        slim_phase("resolve-cache-build",last);
+    }
     uint64_t lfbytes=0;for(auto& v:lf.charRuns)lfbytes+=v.capacity()*4;for(auto& v:lf.charSum)lfbytes+=v.capacity()*8;
     fprintf(stderr,"SLIM_RI runs=%llu starts=%llu samples=%llu lf_capacity=%llu\n",(unsigned long long)(ri.R*5),(unsigned long long)(ri.R*8),(unsigned long long)(ri.saWords.size()*8),(unsigned long long)lfbytes);
     if(profileOnly){ lce.ph->report("parse");lce.dh->report("dict");fprintf(stderr,"SLIM_PROFILE_ONLY no queries or aggregate produced\n");return 0; }
@@ -229,22 +244,40 @@ static int slim_dump(Ri4& ri,const std::string& prefix,const std::string& out,
     put(&magic,4,0);put(&ri.R,8,4);
     constexpr uint64_t CHUNK=65536;
     std::array<std::vector<uint64_t>,4> buf;for(auto& b:buf)b.resize(CHUNK);
+    double resolveWall=0,lceWall=0,writeWall=0;
+    long resolvePeak=0,lcePeak=0,writePeak=0;
+    auto measure=[&](double began,double& wall,long& peak){
+        wall+=tnow()-began;struct rusage u{};getrusage(RUSAGE_SELF,&u);peak=std::max(peak,u.ru_maxrss);
+    };
     for(uint64_t start=0;start<ri.R;start+=CHUNK){
         uint64_t count=std::min(CHUNK,ri.R-start);std::atomic<uint64_t> next{0};
-        auto worker=[&](){for(;;){uint64_t k=next.fetch_add(1);if(k>=count)return;uint64_t run=start+k,a=ri.starts[run],b=a+ri.l[run]-1;
+        // Separate chunk phases permit real wall-time accounting without a
+        // timer at every seed. Reuse the topLCP buffer for the previous SA.
+        auto resolveWorker=[&](){for(;;){uint64_t k=next.fetch_add(1);if(k>=count)return;uint64_t run=start+k,a=ri.starts[run],b=a+ri.l[run]-1;
             uint64_t first=resolver.sa_at(a),tail=a==b?first:resolver.sa_at(b);
             if(first>=ri.n||tail>=ri.n)slim_fail("position resolution failed");
-            uint64_t top=0;if(a){uint64_t prev=resolver.sa_at(a-1);if(prev>=ri.n)slim_fail("previous position resolution failed");top=std::min(lce(prev,first),ri.n-std::max(prev,first));}
-            buf[0][k]=top;buf[1][k]=first;buf[2][k]=tail;
+            uint64_t prev=a?resolver.sa_at(a-1):0;
+            if(prev>=ri.n)slim_fail("previous position resolution failed");
+            buf[0][k]=prev;buf[1][k]=first;buf[2][k]=tail;
+        }};
+        auto lceWorker=[&](){for(;;){uint64_t k=next.fetch_add(1);if(k>=count)return;uint64_t run=start+k,a=ri.starts[run],b=a+ri.l[run]-1;
+            uint64_t prev=buf[0][k],first=buf[1][k],tail=buf[2][k];
+            buf[0][k]=a?std::min(lce(prev,first),ri.n-std::max(prev,first)):0;
             buf[3][k]=a==b?INF:std::min(lce(first,tail),ri.n-std::max(first,tail));
         }};
-        std::vector<std::thread> ts;for(int t=0;t<std::max(1,std::min(threads,64));++t)ts.emplace_back(worker);for(auto& t:ts)t.join();
+        auto parallel=[&](auto& worker){next=0;std::vector<std::thread> ts;for(int t=0;t<std::max(1,std::min(threads,64));++t)ts.emplace_back(worker);for(auto& t:ts)t.join();};
+        double began=tnow();parallel(resolveWorker);measure(began,resolveWall,resolvePeak);
+        began=tnow();parallel(lceWorker);measure(began,lceWall,lcePeak);
+        began=tnow();
         for(uint64_t field=0;field<4;++field)put(buf[field].data(),count*8,12+8*(field*ri.R+start));
-        if(start%(CHUNK*64)==0){fprintf(stderr,"SLIM_PROGRESS runs=%llu/%llu\n",(unsigned long long)(start+count),(unsigned long long)ri.R);slim_phase("query-chunks",last);}
+        measure(began,writeWall,writePeak);
+        if(start%(CHUNK*16)==0){fprintf(stderr,"SLIM_PROGRESS runs=%llu/%llu resolve_wall=%.3f lce_wall=%.3f write_wall=%.3f lf_steps=%llu cache_hits=%llu\n",(unsigned long long)(start+count),(unsigned long long)ri.R,resolveWall,lceWall,writeWall,(unsigned long long)resolver.sumSteps.load(),(unsigned long long)resolver.viaCache.load());slim_phase("query-chunks",last);}
     }
     if(close(fd)||rename(tmp.c_str(),out.c_str()))slim_fail("publish aggregate");
     slim_phase("queries+stream-write-final",last);
     lce.ph->report("parse");lce.dh->report("dict");
-    fprintf(stderr,"SLIM_RESOLVE walks=%llu steps=%llu max=%llu anchor=%llu failed=%llu\n",(unsigned long long)resolver.nWalks.load(),(unsigned long long)resolver.sumSteps.load(),(unsigned long long)resolver.maxSteps.load(),(unsigned long long)resolver.viaAnchor.load(),(unsigned long long)resolver.hit0a.load());
+    fprintf(stderr,"SLIM_QUERY_PHASE resolve_wall=%.6f resolve_peak_kib=%ld lce_wall=%.6f lce_peak_kib=%ld write_wall=%.6f write_peak_kib=%ld\n",resolveWall,resolvePeak,lceWall,lcePeak,writeWall,writePeak);
+    fprintf(stderr,"SLIM_SEEDS queries=%llu mean_verified_phrases=%.9f max_verified_phrases=%llu (includes_zero_parse_work_seeds; boundary_included)\n",(unsigned long long)lce.seedQueries.load(),lce.seedQueries.load()?double(lce.ph->checked.load())/lce.seedQueries.load():0.0,(unsigned long long)lce.ph->maxChecked.load());
+    fprintf(stderr,"SLIM_RESOLVE walks=%llu steps=%llu max=%llu anchor=%llu failed=%llu cache_hits=%llu\n",(unsigned long long)resolver.nWalks.load(),(unsigned long long)resolver.sumSteps.load(),(unsigned long long)resolver.maxSteps.load(),(unsigned long long)resolver.viaAnchor.load(),(unsigned long long)resolver.hit0a.load(),(unsigned long long)resolver.viaCache.load());
     return 0;
 }

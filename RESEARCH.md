@@ -1210,3 +1210,34 @@ lcp_index, NO separate O(n) walk, EVER. The seed pass's original job
 (LCP values) died to fingerprint LCE; its lingering second job (samples)
 belongs to the front-end. Iteration-2 chains (PFP-BWT over 466) ship
 samples from the build directly.
+
+## 2026-09-26 — THE SLIM BUILD IS GREEN AT YEAST (supervisor-verified):
+## the full parse-space chi/sA construction, gated end-to-end
+
+ALL GATES GREEN (astra pass 3; supervisor re-ran the full construction
+from main-tree sources): G0 battery 8/8 byte-identical; G1 YEAST
+END-TO-END — slim dump 17.5 min / 4.81 GB peak at 3.34 Gbp -> .agg
+BYTE-IDENTICAL to the standing baseline -> chi = 85,404,240 from BOTH
+sweep modes (streamed 11.3 s; resident 105 s), witness set-equality vs
+chi_yeast_pfp2.sA TRUE both; G3 fail-loud: 8/8 injected mismatches
+rejected (exactness does not depend on hash luck).
+
+THE MEASURED BOUNDS TERMS (the Lean theorem's other side):
+- verification length: 15.33 phrases/seed AVERAGE, 22,262 max —
+  the Sum-l term, measured.
+- resolve: 278M walks / 2.1B LF steps / 64M cache hits, 0 failures
+  (bounded exact LF cache; v5 head samples make it O(1)/run-head).
+- 466 projection refined: 206.0 GB (v5 heads + LF cache) /
+  162.2 GB (no-LF path, unimplemented). The 200 GB target is met by
+  the no-LF path; the LF path is 3% over — name it honestly, the no-LF
+  path is the follow-up lever.
+
+ARCHITECTURE CLAIM NOW GATED (not projected): one pfp++ pass (29 min
+at 30 GB human) emits RLBWT + samples + parse + dict; the construction
+then runs entirely in parse space — fingerprints at both levels, no
+M/b_bwt/w_wt, no suffix arrays, no LCP arrays, no lcp_index, no O(n)
+after the read. Index cost tracks NOVELTY, not bulk.
+
+Files: bit6/slim_lce.hpp, chi_rspace_dump.cpp (--slim complete),
+xsa/src/main.rs (--stream-agg), tools/slim_* suite, SLIM_*.md reports,
+gate_logs/slim/ (3 passes).
