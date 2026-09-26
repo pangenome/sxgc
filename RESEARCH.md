@@ -995,3 +995,31 @@ first to measure the per-sequence rate before committing a full run
 (the only disciplined route to this data point). The original dictionary
 anomaly is RESOLVED (parallel build works); the per-sequence phase is
 the unmeasured part.
+
+## CORRECTION #3 (user-driven, 2026-09-26): the |M| verdict measured the
+## WRONG OBJECT — lce_support is Theta(P + dict), NOT Theta(n)
+
+Code-read of pfpds::pfp_lce_support (all 150 lines): its ENTIRE query
+path touches only parse structures (rank/select on b_p, pars.p, isaP,
+lcpP, rmq_lcp_P — Theta(P)) and dictionary structures (select_b_d,
+isaD, lcpD, rmq_lcp_D, length_of_phrase — Theta(dict)). M, b_bwt, w_wt
+appear NOWHERE — they are r-pfbwt TEXT-BWT construction machinery that
+the LCE primitive never queries. The probe (and the 3.74 TB projection,
+and "Theta(r) refuted") measured pf_parsing-THE-OBJECT because its ctor
+demands build_b_bwt_and_M; the construction never used those parts.
+The parse-space LCP route was killed by a measurement artifact.
+
+Second artifact: the "pfp++ slow at scale" red flag was SYNG
+contamination (syncmer-GBWT tool, different beast; its own retry built
+the k10 dictionary in 61 min parallel). pfp++ itself built the k10
+parse without incident — it is on disk.
+
+Corrected state: LCE supports = Theta(P + dict) (the accepted classes);
+at k10 approx 20-30 GB; at 466 approx 300-700 GB raw (P ~ 7-16e9
+phrases), feasible esp. with compressed isaP/lcpP. Seeds = r polylog
+LCE queries from parse space. The construction claim upgrades back to
+O((r + parse + dict) polylog) after one pfp++ pass — parse door is the
+FRONT door again. LESSON recorded: profile the DEPENDENCY SET of the
+primitive, not the RAM of the object its constructor forces you to
+build. Immediate action: k10 standalone-LCE dump (build only the true
+dependencies), gate .agg byte-identical, measure REAL component sizes.
