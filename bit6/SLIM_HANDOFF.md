@@ -75,3 +75,36 @@ slim yeast aggregate was produced. G0 witness output is byte-identical.
 Reviewable logs are copied under bit6/gate_logs/slim. Original external
 inputs were not edited. No staging or commits. Reviewer approval remains
 required; this handoff does not declare approval.
+
+## Pass 2 — blocked at resolver dependency audit (2026-09-26)
+
+Task 1 cannot be implemented by reusing the supplied legacy resolver while
+also obeying “never build M/b_bwt/w_wt.” The committed C++ legacy mode calls
+`pfpds::pfp_sa_support` (`chi_rspace_dump.cpp:619,656`). Its query directly
+reads `b_bwt_rank_1`, `b_bwt_select_1`, `M`, `w_wt.range_select`, and `saP`
+(`bit6/pfp_ds_vendor/pfp/sa_support.hpp:55-66`). ROW_OFF=10 changes the row
+coordinate only; it does not eliminate these dependencies.
+
+The named `resolve` and `resolve_inv` functions are Python prototypes, not
+a separate slim-compatible C++ resolver. `tools/parse_resolve_proto.py`
+builds M and text-row boundaries (lines 126 onward), parse SA, and colex
+BWT occurrence lists; resolve (line 217) queries them. `tools/c_probe_r3.py`
+inherits that builder (line 32), constructs parse ISA, and adds a dictionary
+suffix-to-M-class map. Porting or renaming those structures would not satisfy
+the stated reuse/no-M requirement.
+
+The requested RESEARCH.md “SLIM LANE (astra) first pass” entry and correction
+#4 are absent from this checkout at c0e81d3. The supplied pass-2 instruction
+is accepted as the adjudication retiring O(tau); that is no longer a blocker.
+The remaining blocker is the resolver dependency conflict, not verification
+complexity. A compatible resolver source or a revised resolver constraint is
+needed to continue task 1. This is a source-availability finding, not a claim
+that an alternative algorithm is impossible.
+
+No contact_supervisor/intercom tool is exposed in this runtime's ALL_TOOLS,
+so the required decision escalation could not be delivered. No forbidden
+structures were built, no samples were fabricated from oracles, no code was
+changed in pass 2, and no pass-1 gates were rerun. Ordered downstream tasks
+(G0 re-gate, G1 end-to-end, G2 final, G3) remain not run. Pass-1 files and logs
+are preserved. Evidence: bit6/gate_logs/slim/pass2-resolver-audit.log.
+Reviewer approval remains outstanding. No staging or commits.

@@ -1169,3 +1169,25 @@ streamed sweep passing on the placeholder .ri4).
 
 G1 resumes with: --resolve-parse in slim mode, G0 re-gate both paths,
 yeast end-to-end, G2 final cost table, G3 fail-loud.
+
+## 2026-09-26 — CORRECTION #6 (astra caught supervisor overreach #2 of the
+## slim arc): the legacy parse-resolver REQUIRES M/b_bwt/w_wt — the two
+## pass-2 constraints were incompatible
+
+Audit (bit6/gate_logs/slim/pass2-resolver-audit.log): pfp_ds_vendor's
+sa_support.hpp resolve path directly requires the forbidden structures
+(lines 55-66) — they ENCODE the row->position mapping; the parse alone
+gives position->phrase, not row->position. The "--resolve-parse without
+M/b_bwt/w_wt" instruction was unsatisfiable and astra refused to
+fabricate oracle-derived samples. Correct call.
+
+ADJUDICATION: the slim build's position machinery is --resolve-ri4
+(SA samples + LF walk + anchors — laneN's battery-gated path, which
+astra's own pass-1 G0 gated 8/8). v5 head-SA samples (ALREADY ADOPTED,
+measured justification: 2,156-step walks at k10) make it O(1)/run-head
+at scale. For yeast G1: yp2new.ri4 is runs-only (all-INF samples) ->
+produce a REAL-samples .ri4 for the pfp2 chain via one teralcp_chi
+--samples walk over the EXISTING yp2t.lcp_index (2.48 GB, on disk;
+~1 h at yeast scale) — the old world produces the v5-class artifact
+the new world consumes, once. Then slim G1 = --ri4 yp2real.ri4
+--resolve-ri4 --slim -> byte-identity -> sweep -> chi = 85,404,240.

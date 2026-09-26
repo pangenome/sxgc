@@ -164,3 +164,24 @@ is about 18 GB. The streamed sweep retains approximately 4 MiB of buffers,
 independent of their sizes. The parser creating P and D, filesystem cache,
 and artifact staging disk space are outside these process-RSS figures.
 No 466 build was attempted. All measured process peaks are below 150 GB.
+
+## Pass-2 resolver audit — no new cost claim
+
+The proposed replacement for LF is blocked by its actual dependencies:
+`pfp_sa_support` reads M, b_bwt, w_wt and saP (sa_support.hpp:55-66).
+The Python parse resolver has equivalent dependencies. Reusing either
+would violate the pass-2 no-M/b_bwt/w_wt constraint. Consequently the
+191.947 GB pass-1 projection above remains conditional on the LF/sample
+route; it is **not** a projection for a demonstrated parse-resolve build.
+Subtracting LF/sample bytes without adding a measured replacement would
+understate memory. No parse-resolve wall time, RSS, or 466 projection has
+been measured or established.
+
+Existing primitive logs yield 2,684,569 / 35,978 = 74.61696 verified phrase
+positions per counted parse fingerprint query, including an unequal boundary
+when present. This is an arithmetic summary of the pass-1 oracle-seeded
+100,005-run probe, not an average over a completed yeast construction.
+The query maximum was not instrumented in those logs and cannot be inferred
+from the total; the requested full seed-query mean and maximum remain
+unmeasured. No final G2 acceptance is claimed. See the pass-2 section of
+SLIM_HANDOFF.md and pass2-resolver-audit.log for the blocking source evidence.
