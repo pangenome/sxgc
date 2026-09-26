@@ -1259,3 +1259,24 @@ production walk baseline h10.walk.agg -> streamed sweep -> chi ==
 1,627,063,183 + set equality vs chi_h10.sA. The resolve phase pays
 the known 2,156-steps/head LF tax (tail samples) — measured as part of
 the pilot; v5 head samples are the adopted fix.
+
+## 2026-09-26 — THE PILE recon (user's web-scale corpus, sequenced after
+## the human rung): /mnt/nvme2n1/erikg/pile.txt — 1.31 TB web text
+
+USER SEQUENCING: k10 pilot (running) -> 466 human -> THE PILE.
+
+RECON (supervisor probes, ~1.1 GB read): 1.31 TB, 207 distinct byte
+values, English-dominant natural UTF-8 text. Local 32-gram duplication
+1-7%; cross-window 64-gram overlap ~1-2/8000; SYSTEMATIC block scan:
+5 duplicate 4KB blocks of 263,520 (0.002%) across 540 sparse windows.
+VERDICT: unique-dominant single-snapshot-style text — the ADVERSARIAL
+regime, not the showcase. Expected n/r ~ 5-50 (roadmap's caveat line),
+so a pile chi-index would run ~3-25% of text size (30-300 GB) — real
+compression with random access (a legitimate FM-class artifact at
+1.31 TB), but NOT the 500x novelty-priced pangenome story.
+
+The pile's scientific value: the graceful-degradation test (high
+entropy, sigma=207, no mega-runs, short natural-text LCEs — the
+opposite stress from satellites). PLAN when its turn comes: slice-first
+(50-100 GB slice, one day) to measure r/n, P, dict on real pile text
+BEFORE any full-scale commitment — the syng lesson, generalized.
