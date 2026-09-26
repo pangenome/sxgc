@@ -803,3 +803,36 @@ counterexamples.
 
 Files: bit6/chi_rspace_dump.cpp (+91/-16), PFP_LCP_PORT_REPORT.md,
 PORT_HANDOFF.md.
+
+## 2026-09-26 — PILLAR CLOSED: fm_equivalence_bounded PROVEN (sorry ledger 5 -> 4)
+
+The FM-equivalence pillar is now KERNEL-VERIFIED in its operative (bounded)
+form: the scan machine and the fmSpec machine emit the same suffixient set
+for every text with lcps ≤ MAXINT (vacuous side-condition for real texts).
+#print axioms: propext, Classical.choice, Quot.sound ONLY — no sorryAx;
+supervisor additionally PURGED three native_decide axioms the lane had used
+for the trivial (0:Int) ≤ MAXINT (native_decide trusts code generation,
+not the kernel — replaced with decide, kernel-checked). House rule going
+forward: flagship theorems admit no native_decide axioms.
+
+Proof architecture (merged into lean/Sxgc.lean, +2973/-13; FmJoint.lean
+deleted after verbatim merge): bound_coupled (per-char boundary assembly
+over the sorry-free coupled_step_inv/coupled_step_notinv), bound_mem (the
+emission-accounting MEM iff, incl. the overwrite-without-emit
+impossibility via the prevSmaller witness vs the armed NSV), joint_stream
+(lockstep induction carrying JointInv + running-min alignment), and the
+top-level assembly. Statement byte-identical to the locked form.
+
+Sorry ledger now 4: O1 covering_given_stream (the largest open pillar),
+minimality, chi_from_events (retired-at-scale record kept deliberately),
+witnesses_at_boundaries_FALSE_AS_STATED (retired-false record).
+
+NEXT FORMAL QUESTION (lane flagged, needs supervisor adjudication before
+any edit): O2/Nodup unbounded is presumably FALSE AS STATED — the
+saturation counterexample shows scan emitting DUPLICATE positions above
+MAXINT. If O2 is next, it likely takes an hsat-bounded successor like
+fm_equivalence did.
+
+Lean-without-Mathlib traps recorded in lean/ASSEMBLY_LANE_REPORT.md:
+cases-on-getFM substitutes without iota-reduction (use simp only [h]);
+pair-projection through an unreduced ite is not defeq.
