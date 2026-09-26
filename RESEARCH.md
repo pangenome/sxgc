@@ -1054,3 +1054,25 @@ DIFFERENTIAL-GATED = this entire build path (byte-identity gates at every
 rung, the measurement IS the warrant); the Phi-decode bridge stays as the
 one formal rung worth keeping on the consumer side. Never claim above
 warrant.
+
+## 2026-09-26 — FORMAL QUEUE EXTENDED (user directive: develop proofs);
+## k10's job pinned (measured human constants, not correctness)
+
+Two new Lean statements queued into the formal batch (proof of the
+ALGORITHM; code stays differential-gated per the weld architecture):
+1. FINGERPRINT-LCE DETERMINISM: if direct parse reads confirm l matching
+   phrases at (p,q) and phrase l+1 differs, then LCE_parse(p,q) = l —
+   the verification step removes all probability from the statement.
+2. LCE COMPOSITION: parse-LCE + dict-LCE compose to text-LCE (the
+   structure of lce_support's query path, as a lemma) — together with
+   the piece law and Phi-decode it gives "seeds determine aggregates,"
+   the construction theorem's formal skeleton.
+
+K10'S ROLE (pinned, answer to "what is k10 for"): NOT another correctness
+rung (yeast settles correctness). Its product = measured human constants
+that make the 466 decision arithmetic: avg phrase length on real human
+DNA (-> P_466), dict growth (-> dict_466), the RAM curve at 18x yeast
+with lean structures resident. The newline-joined k10 parse (laneN,
+building now) delivers the first of these. Rationale recorded: after
+three projection-corrections this week, 466 commitments run on measured
+constants only.
