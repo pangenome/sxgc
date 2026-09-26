@@ -902,3 +902,37 @@ the verdict cheaply. (2) External-memory/offline LCE (sort R queries,
 stream M once, O(r) RAM). (3) r-index LCE from the literature (O(r)
 space, polylog query). Lanes fired: 466 confirmation (lcp_index route)
 + |M| scaling probe.
+
+## 2026-09-26 — k10 FULL-PIPELINE GREEN (R=1.86e9); 466 walk running;
+## |M| probe verdict: Theta(r) REFUTED at k10 ratio (probe killed to protect walk)
+
+K10 GATE (lane K, supervisor re-verified --agg-out from main-tree source):
+walk (--agg-out in teralcp_chi, byte-identical .agg vs committed dumper
+8/8 battery) 1:01:56 / 178.6 GB; xsa chi-rspace 43:19 / 111.7 GB;
+chi = 1,627,063,183 EXACT + sorted-set equality vs chi_h10.sA. The r-space
+sweep is now gated at R = 1.86e9 (18x yeast). Another cross-chain trap
+caught pre-mortem: h10new2.ri4 = newline-joined 865-contig chain,
+h10ss_pfp = '!'-joined single string — pairing would have been wrong;
+lane gated on the walk route instead.
+
+466 WALK (route A): pid 286620, launched 05:25:45Z, ~38 h projected,
+245 GB RSS at 15 min, watcher armed on the DONE marker; then sweep
+(~1.5-2 h, ~160 GB) -> gate chi == 2,249,968,075 + set equality vs
+chi_h466.sA. Pre-confirmations green (n, runs, strings, sidecar,
+run-chars == bwt.heads pairing).
+
+|M| PROBE VERDICT (supervisor decision): killed by pid at 210 GB RSS /
+2h19m on the 30 GB k10 corpus — it had already BREACHED the Theta(r)
+prediction ceiling (~47 GB for M + ~150 GB total) and was still
+climbing; extrapolation to 466 ~10+ TB. Theta(r) refuted at the k10
+ratio; the pf_parsing/parse-space LCE route is a yeast/k10-class
+solution only (this machine). The 466 refresh path = retained sidecars
+(.agg + .ri4 + head samples per the v5 decision) + pure sweep —
+door-independent, O(r) space/time. Parse-space LCE remains the paper's
+conditional no-n-term construction claim, with BOTH conditions now
+measured adverse at 466 scale on this hardware (supports Theta(n)-class;
+pfp++ front-end cost at terabase unresolved — the k10 syng build's 40+h
+dictionary phase is the red flag to diagnose).
+
+Files: bit6/teralcp_chi.cpp (+35: --agg-out CRA1 sidecar), bit6/
+H466_LANE_HANDOFF.md (state, cost tables, next commands).

@@ -243,7 +243,7 @@ int main(int argc, char** argv) {
         fprintf(stderr, "usage: %s <file.lcp_index.lcp_index> --rlbwt BASE [-o OUT] [-t N] [--triples] [-A]\n", argv[0]);
         return 1;
     }
-    std::string inPath = argv[1], outPath, rlbwtBase, sidecarPath, samplesPath;
+    std::string inPath = argv[1], outPath, rlbwtBase, sidecarPath, samplesPath, aggOutPath;
     int nthreads = std::thread::hardware_concurrency();
     bool dumpTriples = false, convA = false, slim = false;
     for (int i = 2; i < argc; ++i) {
@@ -254,6 +254,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--rlbwt") && i + 1 < argc) rlbwtBase = argv[++i];
         else if (!strcmp(argv[i], "--sidecar") && i + 1 < argc) sidecarPath = argv[++i];
         else if (!strcmp(argv[i], "--samples") && i + 1 < argc) samplesPath = argv[++i];
+        else if (!strcmp(argv[i], "--agg-out") && i + 1 < argc) aggOutPath = argv[++i];
         else if (!strcmp(argv[i], "--slim")) slim = true;
         else { fprintf(stderr, "unknown arg %s\n", argv[i]); return 1; }
     }
@@ -494,6 +495,39 @@ int main(int argc, char** argv) {
     auto getTop  = [&](uint64_t i) { return A.topLCP[i]; };
     auto getFirst= [&](uint64_t i) { return A.saFirst[i]; };
     auto getLast = [&](uint64_t i) { return A.saLast[i]; };
+
+    // ---- CRA1 sidecar writer (--agg-out): the four per-run aggregate
+    // columns in the exact layout the r-space sweep (xsa chi-rspace and
+    // bit6/chi_rspace_dump.cpp) consumes: u32 magic "CRA1", u64 R, then
+    // R*4 u64 LE = topLCP[], saFirst[], saLast[], interiorMin[] (u64max =
+    // INF).  Written here so the production O(n) walk can emit the .agg
+    // directly, without the O(R) text dump of --triples. ----
+    if (!aggOutPath.empty()) {
+        FILE* af = fopen(aggOutPath.c_str(), "wb");
+        if (!af) { fprintf(stderr, "cannot open %s\n", aggOutPath.c_str()); return 1; }
+        const uint32_t magic = 0x31415243;   // "CRA1"
+        const uint64_t RR = R.R;
+        if (fwrite(&magic, 4, 1, af) != 1 || fwrite(&RR, 8, 1, af) != 1) {
+            fprintf(stderr, "FATAL: write %s header failed\n", aggOutPath.c_str()); return 1;
+        }
+        std::vector<uint64_t> buf(1ull << 20);
+        auto dump_col = [&](auto get) {
+            for (uint64_t i = 0; i < R.R; ) {
+                size_t m = std::min<uint64_t>(buf.size(), R.R - i);
+                for (size_t t = 0; t < m; ++t) buf[t] = get(i + (uint64_t)t);
+                if (fwrite(buf.data(), 8, m, af) != m) {
+                    fprintf(stderr, "FATAL: write %s col failed at %llu\n",
+                            aggOutPath.c_str(), (unsigned long long)i); return;
+                }
+                i += (uint64_t)m;
+            }
+        };
+        dump_col(getTop); dump_col(getFirst); dump_col(getLast);
+        dump_col([&](uint64_t i) { return A.interiorMin[i]; });
+        fclose(af);
+        fprintf(stderr, "wrote %s (CRA1 agg, %llu runs)\n",
+                aggOutPath.c_str(), (unsigned long long)R.R);
+    }
 
     if (dumpTriples) {
         for (uint64_t i = 0; i < R.R; ++i)
