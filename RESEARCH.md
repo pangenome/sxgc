@@ -936,3 +936,27 @@ dictionary phase is the red flag to diagnose).
 
 Files: bit6/teralcp_chi.cpp (+35: --agg-out CRA1 sidecar), bit6/
 H466_LANE_HANDOFF.md (state, cost tables, next commands).
+
+## 2026-09-26 — v5 (.ri5) freeze spec drafted (pending 466 gate) + Lean/LCE division recorded
+
+V5 FORMAT (freeze AFTER the 466 gate lands — do not churn mid-gate; every
+field below is justified by a gate that ran):
+- IN: anchors native (620 KB, no sidecar); run-HEAD SA samples alongside
+  tail samples (the saFirst fix — proven needed by the 466 walk route;
+  kills the walk dependency for any future re-aggregation); chi set as a
+  delta-compressed sibling (raw 18 GB u64 at 466 -> compress; positions
+  cluster on run structure; measure the ratio at freeze time).
+- OUT (build scaffolding, deletable after the sweep): .agg, lcp_index,
+  XPF1 index. Parse = dev-side artifact only where it exists.
+- UNTOUCHED: rlbwt, run table, names sidecar.
+
+LEAN/LCE DIVISION (architectural, recorded): the Lean formalism models
+the CONSUMER of the (bwt, lcp, sa) stream — machines, classes, pieces,
+equivalence — and deliberately sits one level above the seed/LCE
+producer (nothing in Sxgc.lean knows phrases/dictionaries/LCE). Mirrors
+the implementation: consumer proven, producer = open corner
+(differential-gated). NEXT LEAN RUNG when the pillars land: the
+Phi-interval decode lemma (within a run interval, PLCP(row) =
+seed[head] - steps) — the formal bridge from O(r) seeds to the n-row
+stream; completes "chi/sA from r seeds" on the consumer side in Lean
+and connects our theorem side to the move-structure machinery formally.
