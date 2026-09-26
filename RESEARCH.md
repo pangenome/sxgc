@@ -960,3 +960,17 @@ Phi-interval decode lemma (within a run interval, PLCP(row) =
 seed[head] - steps) — the formal bridge from O(r) seeds to the n-row
 stream; completes "chi/sA from r seeds" on the consumer side in Lean
 and connects our theorem side to the move-structure machinery formally.
+
+## 2026-09-26 — syng k10 bridge run ABANDONED (negative result #8)
+
+Killed by pid after 2d 9.5h: single-core (101% CPU), 101 GB RSS, on the
+~30 GB human-subset corpus, with NO output materialized (no h10.syng
+file) — past every core-hour estimate, cause UNDIAGNOSED (tool scaling
+vs bug; not worth diagnosing now). Bridge ratio point 2 (syncmer-dict
+count at human scale) retired-unmeasured; point 1 (yeast) stands. syng
+as a line stays open on other experiments, but this run is dead.
+
+Related recorded red flag (unchanged): any pfp++/syng-class front-end at
+466 scale has unresolved practical constants — the reason the parse
+door's BUILD cost, not just its support space, stays on the adverse
+side of the ledger on this machine.
