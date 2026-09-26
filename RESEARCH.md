@@ -1076,3 +1076,16 @@ with lean structures resident. The newline-joined k10 parse (laneN,
 building now) delivers the first of these. Rationale recorded: after
 three projection-corrections this week, 466 commitments run on measured
 constants only.
+
+## 2026-09-26 — 466 walk KILLED (user decision: no free-oracle-bait needed)
+
+Killed pid 286620 at ~14 h of its projected 38 h. Rationale (user's
+correct audit): the oracles that matter for the future human rung —
+chi = 2,249,968,075 and the 18 GB witness set chi_h466.sA — are ALREADY
+on disk. h466.agg was a debugging convenience regenerable on demand
+(pay the 38 h then, only if needed); the sweep it would have fed is
+already validated at k10 (R = 1.86e9, real human DNA, exact). ~3,650
+core-hours were not worth a convenience. 245 GB + 96 cores freed;
+watcher stopped. The pilot ladder's 466 rung via the old route is
+RETIRED; the 466 construction will happen via the slim build with its
+own gates when the program reaches the human rung.
