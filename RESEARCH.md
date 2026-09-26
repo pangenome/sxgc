@@ -1241,3 +1241,21 @@ after the read. Index cost tracks NOVELTY, not bulk.
 Files: bit6/slim_lce.hpp, chi_rspace_dump.cpp (--slim complete),
 xsa/src/main.rs (--stream-agg), tools/slim_* suite, SLIM_*.md reports,
 gate_logs/slim/ (3 passes).
+
+## 2026-09-26 — PUSHED (all 40 session commits to github.com:pangenome/sxgc,
+## ea2ae0a..c82718d); k10 SLIM HUMAN PILOT running; v5 = ONE index file
+
+V5 CONTAINER DECISION (user directive: minimal representation, one file):
+the QUERY-SIDE artifacts bundle into a single v5 container — RLBWT +
+run table + head/tail SA samples + anchors + the (delta-compressed)
+chi set. That is THE index: one file, ~62 GB raw at 466 (~40-45 GB
+compressed). BUILD-side artifacts (parse, dict, fingerprints, .agg)
+stay separate by design — construction-time inputs, not the product.
+Two lives: the index (ships, queries) and the crane (builds).
+
+K10 SLIM PILOT (running, proc k10-slim-pilot): slim dump on the real-
+human chain (h10new2.ri4 + laneN's h10rl_pfp parse) -> .agg vs the
+production walk baseline h10.walk.agg -> streamed sweep -> chi ==
+1,627,063,183 + set equality vs chi_h10.sA. The resolve phase pays
+the known 2,156-steps/head LF tax (tail samples) — measured as part of
+the pilot; v5 head samples are the adopted fix.
