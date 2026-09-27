@@ -1486,3 +1486,9 @@ The 466 milestone IS the pure build; no inherited-artifact shortcut.
 ## running it at ALL THREE SCALES in exactly its final UX form (text/AGC
 ## input -> .sxi), supervisor-gated against the production oracles:
 ## yeast (chi 85,404,240), k10 (1,627,063,183), 466 (2,249,968,075).
+
+## Correction #8 (supervisor, self-caught): the 466 walk kill was never verified.
+The "walk killed" claim (turn of the syng retreat) killed the parent shell only;
+teralcp_chi_agg ran orphaned (init-reparented) for ~2h15m at 267 GB RSS, contending
+with pfp466 for disk before a second kill (verified this time: pids gone, RAM freed).
+House rule reinforced: every kill is followed by a ps of the target pids + RSS delta.
