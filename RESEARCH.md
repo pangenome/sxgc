@@ -1505,3 +1505,9 @@ k10 from scratch RUNNING (self-gated: expect-chi 1,627,063,183 + heads/tails byt
 also the 466 RAM slice measurement). Honest limits recorded: upstream empty-chunk .ssa
 merge bug worked around by chunk config (not fixed); newline-joined vs BCR collection
 ordering to be adjudicated by k10's real byte gates.
+
+## 466 pfp++ parse COMPLETE (h466rl_pfp): 15,517,244,887 phrases, dict 89,908,623
+## phrases / 18.52 Gbp total length, 10h35m wall, 28.7 GB peak RSS, exit 0. Rate
+## doubled after the walk-orphan kill freed the disk (finished ~3h early). File
+## set matches k10's exactly; feeds the 466 xsa build, which is QUEUED behind
+## k10 green (k10's per-stage RAM profile parameterizes the 466 run).
