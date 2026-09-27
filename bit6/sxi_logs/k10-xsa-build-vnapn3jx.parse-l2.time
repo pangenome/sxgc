@@ -1,0 +1,23 @@
+	Command being timed: "/home/erikg/pfp/build/pfp++ -i /mnt/nvme3n1/erikg/sxgc-laneV/xsa-build-vnapn3jx/parse.parse -w 5 -p 11 -j 8 --tmp-dir /mnt/nvme3n1/erikg/sxgc-laneV/xsa-build-vnapn3jx"
+	User time (seconds): 54.08
+	System time (seconds): 3.55
+	Percent of CPU this job got: 99%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:57.65
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 2714380
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 1
+	Minor (reclaiming a frame) page faults: 872759
+	Voluntary context switches: 64
+	Involuntary context switches: 108
+	Swaps: 0
+	File system inputs: 2156176
+	File system outputs: 2626768
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

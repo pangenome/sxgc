@@ -1,0 +1,804 @@
+-- The C compiler identification is GNU 13.3.0
+-- The CXX compiler identification is GNU 13.3.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/cc - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/c++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Build type: Release
+-- Git current branch: main
+-- Git commit hash: 1fea5c3
+-- Generating version.cpp
+CMake Deprecation Warning at build/_deps/sdsl-src/CMakeLists.txt:1 (cmake_minimum_required):
+  Compatibility with CMake < 3.5 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value or use a ...<max> suffix to tell
+  CMake that the project does not need compatibility with older versions.
+
+
+CMake Warning (dev) at build/_deps/sdsl-src/CMakeLists.txt:6 (project):
+  Policy CMP0048 is not set: project() command manages VERSION variables.
+  Run "cmake --help-policy CMP0048" for policy details.  Use the cmake_policy
+  command to set the policy and suppress this warning.
+
+  The following variable(s) would be set to empty:
+
+    PROJECT_VERSION
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+-- Compiler is recent enough to support C++11.
+-- Performing Test HAVE_GCC_STD=C__11__WALL__WEXTRA__DNDEBUG
+-- Performing Test HAVE_GCC_STD=C__11__WALL__WEXTRA__DNDEBUG - Success
+-- Performing Test HAVE_GCC_O3__FFAST_MATH__FUNROLL_LOOPS
+-- Performing Test HAVE_GCC_O3__FFAST_MATH__FUNROLL_LOOPS - Success
+-- Performing Test HAVE_GCC_MSSE4.2__MARCH=NATIVE
+-- Performing Test HAVE_GCC_MSSE4.2__MARCH=NATIVE - Success
+-- Performing Test HAVE_CLANG_MSSE4.2__MARCH=NATIVE
+-- Performing Test HAVE_CLANG_MSSE4.2__MARCH=NATIVE - Success
+-- Performing Test HAVE_CXA_DEMANGLE
+-- Performing Test HAVE_CXA_DEMANGLE - Success
+-- Compiler supports DEMANGLE.
+-- Performing Test HAVE_GCC_DHAVE_CXA_DEMANGLE
+-- Performing Test HAVE_GCC_DHAVE_CXA_DEMANGLE - Success
+-- Found Git: /usr/bin/git (found version "2.43.0") 
+git found: /usr/bin/git
+CMake Deprecation Warning at build/_deps/sdsl-src/external/libdivsufsort/CMakeLists.txt:2 (cmake_minimum_required):
+  Compatibility with CMake < 3.5 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value or use a ...<max> suffix to tell
+  CMake that the project does not need compatibility with older versions.
+
+
+CMake Warning (dev) at build/_deps/sdsl-src/external/libdivsufsort/CMakeLists.txt:7 (project):
+  Policy CMP0048 is not set: project() command manages VERSION variables.
+  Run "cmake --help-policy CMP0048" for policy details.  Use the cmake_policy
+  command to set the policy and suppress this warning.
+
+  The following variable(s) would be set to empty:
+
+    PROJECT_VERSION
+    PROJECT_VERSION_MAJOR
+    PROJECT_VERSION_MINOR
+    PROJECT_VERSION_PATCH
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+-- Performing Test HAVE_GCC_WALL
+-- Performing Test HAVE_GCC_WALL - Success
+-- Performing Test HAVE_GCC_FOMIT_FRAME_POINTER
+-- Performing Test HAVE_GCC_FOMIT_FRAME_POINTER - Success
+-- Looking for inttypes.h
+-- Looking for inttypes.h - found
+-- Looking for memory.h
+-- Looking for memory.h - found
+-- Looking for stddef.h
+-- Looking for stddef.h - found
+-- Looking for stdint.h
+-- Looking for stdint.h - found
+-- Looking for stdlib.h
+-- Looking for stdlib.h - found
+-- Looking for string.h
+-- Looking for string.h - found
+-- Looking for strings.h
+-- Looking for strings.h - found
+-- Looking for sys/types.h
+-- Looking for sys/types.h - found
+-- Performing Test HAVE_INLINE
+-- Performing Test HAVE_INLINE - Success
+-- Performing Test HAVE___INLINE
+-- Performing Test HAVE___INLINE - Success
+-- Performing Test HAVE___INLINE__
+-- Performing Test HAVE___INLINE__ - Success
+-- Performing Test HAVE___DECLSPEC_DLLEXPORT_
+-- Performing Test HAVE___DECLSPEC_DLLEXPORT_ - Failed
+-- Performing Test HAVE___DECLSPEC_DLLIMPORT_
+-- Performing Test HAVE___DECLSPEC_DLLIMPORT_ - Failed
+-- Check size of uint8_t
+-- Check size of uint8_t - done
+-- Check size of int32_t
+-- Check size of int32_t - done
+-- Looking for PRId32
+-- Looking for PRId32 - found
+-- Check size of int64_t
+-- Check size of int64_t - done
+-- Looking for PRId64
+-- Looking for PRId64 - found
+CMake Warning (dev) at build/_deps/sdsl-src/external/googletest/googletest/CMakeLists.txt:47 (project):
+  Policy CMP0048 is not set: project() command manages VERSION variables.
+  Run "cmake --help-policy CMP0048" for policy details.  Use the cmake_policy
+  command to set the policy and suppress this warning.
+
+  The following variable(s) would be set to empty:
+
+    PROJECT_VERSION
+    PROJECT_VERSION_MAJOR
+    PROJECT_VERSION_MINOR
+    PROJECT_VERSION_PATCH
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+CMake Deprecation Warning at build/_deps/sdsl-src/external/googletest/googletest/CMakeLists.txt:48 (cmake_minimum_required):
+  Compatibility with CMake < 3.5 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value or use a ...<max> suffix to tell
+  CMake that the project does not need compatibility with older versions.
+
+
+CMake Warning (dev) at build/_deps/sdsl-src/external/googletest/googletest/cmake/internal_utils.cmake:211 (find_package):
+  Policy CMP0148 is not set: The FindPythonInterp and FindPythonLibs modules
+  are removed.  Run "cmake --help-policy CMP0148" for policy details.  Use
+  the cmake_policy command to set the policy and suppress this warning.
+
+Call Stack (most recent call first):
+  build/_deps/sdsl-src/external/googletest/googletest/CMakeLists.txt:60 (include)
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+-- Found PythonInterp: /usr/bin/python (found version "3.12.3") 
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+-- Found Threads: TRUE  
+-- Looking for C++ include cstdio
+-- Looking for C++ include cstdio - found
+-- Could NOT find Doxygen (missing: DOXYGEN_EXECUTABLE) 
+CMake Deprecation Warning at build/_deps/divsufsort-src/CMakeLists.txt:2 (cmake_minimum_required):
+  Compatibility with CMake < 3.5 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value or use a ...<max> suffix to tell
+  CMake that the project does not need compatibility with older versions.
+
+
+CMake Warning (dev) at build/_deps/divsufsort-src/CMakeLists.txt:19 (project):
+  Policy CMP0048 is not set: project() command manages VERSION variables.
+  Run "cmake --help-policy CMP0048" for policy details.  Use the cmake_policy
+  command to set the policy and suppress this warning.
+
+  The following variable(s) would be set to empty:
+
+    PROJECT_VERSION
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+CMake Warning (dev) at build/_deps/divsufsort-src/lib/CMakeLists.txt:7 (add_library):
+  Policy CMP0002 is not set: Logical target names must be globally unique.
+  Run "cmake --help-policy CMP0002" for policy details.  Use the cmake_policy
+  command to set the policy and suppress this warning.
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+CMake Warning (dev) at build/_deps/divsufsort-src/lib/CMakeLists.txt:20 (add_library):
+  Policy CMP0002 is not set: Logical target names must be globally unique.
+  Run "cmake --help-policy CMP0002" for policy details.  Use the cmake_policy
+  command to set the policy and suppress this warning.
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+CMake Warning (dev) at build/_deps/divsufsort-src/CMakeLists.txt:100 (ADD_CUSTOM_TARGET):
+  Policy CMP0002 is not set: Logical target names must be globally unique.
+  Run "cmake --help-policy CMP0002" for policy details.  Use the cmake_policy
+  command to set the policy and suppress this warning.
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+-- Build type: Release
+-- Git current branch: main
+-- Git commit hash: 56d4520
+-- Generating version.hpp
+-- Found OpenMP_C: -fopenmp (found version "4.5") 
+-- Found OpenMP_CXX: -fopenmp (found version "4.5") 
+-- Found OpenMP: TRUE (found version "4.5")  
+-- HAVE_OPENMP: OpenMP
+-- Configuring done (3.9s)
+-- Generating done (0.1s)
+-- Build files have been written to: /tmp/rpfbwt-sxgc/build-sxgc
+[  9%] Building C object CMakeFiles/gsacak64.dir/build/_deps/gsacak-src/gsacak.c.o
+[  9%] Building C object CMakeFiles/gsacak.dir/build/_deps/gsacak-src/gsacak.c.o
+[  9%] Building C object _deps/divsufsort-build/lib/CMakeFiles/divsufsort64.dir/trsort.o
+[  9%] Building C object _deps/divsufsort-build/lib/CMakeFiles/divsufsort64.dir/sssort.o
+[  9%] Building C object _deps/divsufsort-build/lib/CMakeFiles/divsufsort64.dir/divsufsort.o
+[ 18%] Building C object _deps/divsufsort-build/lib/CMakeFiles/divsufsort.dir/divsufsort.o
+[ 18%] Building C object CMakeFiles/malloc_count.dir/build/_deps/malloc_count-src/malloc_count.c.o
+[ 27%] Building CXX object _deps/sdsl-build/lib/CMakeFiles/sdsl.dir/bits.cpp.o
+[ 27%] Built target malloc_count
+[ 27%] Building CXX object _deps/sdsl-build/lib/CMakeFiles/sdsl.dir/bp_support_algorithm.cpp.o
+[ 36%] Building C object _deps/divsufsort-build/lib/CMakeFiles/divsufsort64.dir/utils.o
+[ 36%] Building C object _deps/divsufsort-build/lib/CMakeFiles/divsufsort.dir/sssort.o
+[ 36%] Building C object _deps/divsufsort-build/lib/CMakeFiles/divsufsort.dir/trsort.o
+[ 36%] Building C object _deps/divsufsort-build/lib/CMakeFiles/divsufsort.dir/utils.o
+[ 36%] Building CXX object _deps/sdsl-build/lib/CMakeFiles/sdsl.dir/coder_elias_delta.cpp.o
+[ 36%] Linking C static library libdivsufsort64.a
+[ 36%] Building CXX object _deps/sdsl-build/lib/CMakeFiles/sdsl.dir/coder_elias_gamma.cpp.o
+[ 36%] Built target divsufsort64
+[ 45%] Building CXX object _deps/sdsl-build/lib/CMakeFiles/sdsl.dir/config.cpp.o
+[ 45%] Building CXX object _deps/sdsl-build/lib/CMakeFiles/sdsl.dir/coder_fibonacci.cpp.o
+In file included from /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/bp_support_algorithm.hpp:24,
+                 from /tmp/rpfbwt-sxgc/build/_deps/sdsl-src/lib/bp_support_algorithm.cpp:1:
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1402:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1402 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1410:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1410 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1418:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1418 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1426:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1426 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1434:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1434 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1442:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1442 | inline auto
+      |        ^~~~
+[ 45%] Linking C static library libdivsufsort.a
+[ 45%] Built target divsufsort
+[ 45%] Building CXX object _deps/sdsl-build/lib/CMakeFiles/sdsl.dir/construct_config.cpp.o
+[ 45%] Building CXX object _deps/sdsl-build/lib/CMakeFiles/sdsl.dir/construct_isa.cpp.o
+In file included from /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/coder_elias_delta.hpp:24,
+                 from /tmp/rpfbwt-sxgc/build/_deps/sdsl-src/lib/coder_elias_delta.cpp:1:
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1402:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1402 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1410:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1410 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1418:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1418 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1426:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1426 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1434:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1434 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1442:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1442 | inline auto
+      |        ^~~~
+In file included from /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/coder_elias_gamma.hpp:24,
+                 from /tmp/rpfbwt-sxgc/build/_deps/sdsl-src/lib/coder_elias_gamma.cpp:1:
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1402:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1402 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1410:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1410 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1418:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1418 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1426:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1426 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1434:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1434 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1442:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1442 | inline auto
+      |        ^~~~
+In file included from /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:24:
+In static member function ‘static uint64_t sdsl::bits::read_unary(const uint64_t*, uint8_t)’,
+    inlined from ‘static uint64_t sdsl::bits::read_unary(const uint64_t*, uint8_t)’ at /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/bits.hpp:531:17,
+    inlined from ‘sdsl::coder::elias_delta::impl::impl()’ at /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/coder_elias_delta.hpp:87:66:
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/bits.hpp:537:18: warning: array subscript 1 is outside array bounds of ‘uint64_t [1]’ {aka ‘long unsigned int [1]’} [-Warray-bounds=]
+  537 |         if (0!=(w=*(++word)))
+      |                ~~^~~~~~~~~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/coder_elias_delta.hpp: In constructor ‘sdsl::coder::elias_delta::impl::impl()’:
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/coder_elias_delta.hpp:82:35: note: at offset 8 into object ‘x’ of size 8
+   82 |                     for (uint64_t x=0; x < (1<<8); ++x) {
+      |                                   ^
+In static member function ‘static uint64_t sdsl::bits::read_int(const uint64_t*, uint8_t, uint8_t)’,
+    inlined from ‘sdsl::coder::elias_delta::impl::impl()’ at /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/coder_elias_delta.hpp:94:53:
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/bits.hpp:506:18: warning: array subscript 1 is outside array bounds of ‘uint64_t [1]’ {aka ‘long unsigned int [1]’} [-Warray-bounds=]
+  506 |                ((*(word+1) & bits::lo_set[(offset+len)&0x3F])   // set higher bits zero
+      |                  ^~~~~~~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/coder_elias_delta.hpp: In constructor ‘sdsl::coder::elias_delta::impl::impl()’:
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/coder_elias_delta.hpp:82:35: note: at offset 8 into object ‘x’ of size 8
+   82 |                     for (uint64_t x=0; x < (1<<8); ++x) {
+      |                                   ^
+In static member function ‘static uint64_t sdsl::bits::read_int(const uint64_t*, uint8_t, uint8_t)’,
+    inlined from ‘sdsl::coder::elias_delta::impl::impl()’ at /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/coder_elias_delta.hpp:97:60:
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/bits.hpp:506:18: warning: array subscript 1 is outside array bounds of ‘uint64_t [1]’ {aka ‘long unsigned int [1]’} [-Warray-bounds=]
+  506 |                ((*(word+1) & bits::lo_set[(offset+len)&0x3F])   // set higher bits zero
+      |                  ^~~~~~~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/coder_elias_delta.hpp: In constructor ‘sdsl::coder::elias_delta::impl::impl()’:
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/coder_elias_delta.hpp:82:35: note: at offset 8 into object ‘x’ of size 8
+   82 |                     for (uint64_t x=0; x < (1<<8); ++x) {
+      |                                   ^
+In static member function ‘static uint64_t sdsl::bits::read_unary(const uint64_t*, uint8_t)’,
+    inlined from ‘static uint64_t sdsl::bits::read_unary(const uint64_t*, uint8_t)’ at /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/bits.hpp:531:17,
+    inlined from ‘sdsl::coder::elias_delta::impl::impl()’ at /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/coder_elias_delta.hpp:56:62:
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/bits.hpp:537:18: warning: array subscript 1 is outside array bounds of ‘uint64_t [1]’ {aka ‘long unsigned int [1]’} [-Warray-bounds=]
+  537 |         if (0!=(w=*(++word)))
+      |                ~~^~~~~~~~~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/coder_elias_delta.hpp: In constructor ‘sdsl::coder::elias_delta::impl::impl()’:
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/coder_elias_delta.hpp:51:31: note: at offset 8 into object ‘x’ of size 8
+   51 |                 for (uint64_t x=0; x < (1<<16); ++x) {
+      |                               ^
+In static member function ‘static uint64_t sdsl::bits::read_int(const uint64_t*, uint8_t, uint8_t)’,
+    inlined from ‘sdsl::coder::elias_delta::impl::impl()’ at /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/coder_elias_delta.hpp:63:49:
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/bits.hpp:506:18: warning: array subscript 1 is outside array bounds of ‘uint64_t [1]’ {aka ‘long unsigned int [1]’} [-Warray-bounds=]
+  506 |                ((*(word+1) & bits::lo_set[(offset+len)&0x3F])   // set higher bits zero
+      |                  ^~~~~~~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/coder_elias_delta.hpp: In constructor ‘sdsl::coder::elias_delta::impl::impl()’:
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/coder_elias_delta.hpp:51:31: note: at offset 8 into object ‘x’ of size 8
+   51 |                 for (uint64_t x=0; x < (1<<16); ++x) {
+      |                               ^
+In static member function ‘static uint64_t sdsl::bits::read_int(const uint64_t*, uint8_t, uint8_t)’,
+    inlined from ‘sdsl::coder::elias_delta::impl::impl()’ at /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/coder_elias_delta.hpp:66:56:
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/bits.hpp:506:18: warning: array subscript 1 is outside array bounds of ‘uint64_t [1]’ {aka ‘long unsigned int [1]’} [-Warray-bounds=]
+  506 |                ((*(word+1) & bits::lo_set[(offset+len)&0x3F])   // set higher bits zero
+      |                  ^~~~~~~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/coder_elias_delta.hpp: In constructor ‘sdsl::coder::elias_delta::impl::impl()’:
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/coder_elias_delta.hpp:51:31: note: at offset 8 into object ‘x’ of size 8
+   51 |                 for (uint64_t x=0; x < (1<<16); ++x) {
+      |                               ^
+In file included from /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:24:
+In static member function ‘static uint64_t sdsl::bits::read_unary(const uint64_t*, uint8_t)’,
+    inlined from ‘static uint64_t sdsl::bits::read_unary(const uint64_t*, uint8_t)’ at /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/bits.hpp:531:17,
+    inlined from ‘sdsl::coder::elias_gamma::impl::impl()’ at /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/coder_elias_gamma.hpp:85:62:
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/bits.hpp:537:18: warning: array subscript 1 is outside array bounds of ‘uint64_t [1]’ {aka ‘long unsigned int [1]’} [-Warray-bounds=]
+  537 |         if (0!=(w=*(++word)))
+      |                ~~^~~~~~~~~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/coder_elias_gamma.hpp: In constructor ‘sdsl::coder::elias_gamma::impl::impl()’:
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/coder_elias_gamma.hpp:80:35: note: at offset 8 into object ‘x’ of size 8
+   80 |                     for (uint64_t x=0; x < (1<<8); ++x) {
+      |                                   ^
+In static member function ‘static uint64_t sdsl::bits::read_int(const uint64_t*, uint8_t, uint8_t)’,
+    inlined from ‘sdsl::coder::elias_gamma::impl::impl()’ at /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/coder_elias_gamma.hpp:93:60:
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/bits.hpp:506:18: warning: array subscript 1 is outside array bounds of ‘uint64_t [1]’ {aka ‘long unsigned int [1]’} [-Warray-bounds=]
+  506 |                ((*(word+1) & bits::lo_set[(offset+len)&0x3F])   // set higher bits zero
+      |                  ^~~~~~~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/coder_elias_gamma.hpp: In constructor ‘sdsl::coder::elias_gamma::impl::impl()’:
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/coder_elias_gamma.hpp:80:35: note: at offset 8 into object ‘x’ of size 8
+   80 |                     for (uint64_t x=0; x < (1<<8); ++x) {
+      |                                   ^
+In static member function ‘static uint64_t sdsl::bits::read_unary(const uint64_t*, uint8_t)’,
+    inlined from ‘static uint64_t sdsl::bits::read_unary(const uint64_t*, uint8_t)’ at /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/bits.hpp:531:17,
+    inlined from ‘sdsl::coder::elias_gamma::impl::impl()’ at /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/coder_elias_gamma.hpp:56:58:
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/bits.hpp:537:18: warning: array subscript 1 is outside array bounds of ‘uint64_t [1]’ {aka ‘long unsigned int [1]’} [-Warray-bounds=]
+  537 |         if (0!=(w=*(++word)))
+      |                ~~^~~~~~~~~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/coder_elias_gamma.hpp: In constructor ‘sdsl::coder::elias_gamma::impl::impl()’:
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/coder_elias_gamma.hpp:51:31: note: at offset 8 into object ‘x’ of size 8
+   51 |                 for (uint64_t x=0; x < (1<<16); ++x) {
+      |                               ^
+In static member function ‘static uint64_t sdsl::bits::read_int(const uint64_t*, uint8_t, uint8_t)’,
+    inlined from ‘sdsl::coder::elias_gamma::impl::impl()’ at /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/coder_elias_gamma.hpp:64:56:
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/bits.hpp:506:18: warning: array subscript 1 is outside array bounds of ‘uint64_t [1]’ {aka ‘long unsigned int [1]’} [-Warray-bounds=]
+  506 |                ((*(word+1) & bits::lo_set[(offset+len)&0x3F])   // set higher bits zero
+      |                  ^~~~~~~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/coder_elias_gamma.hpp: In constructor ‘sdsl::coder::elias_gamma::impl::impl()’:
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/coder_elias_gamma.hpp:51:31: note: at offset 8 into object ‘x’ of size 8
+   51 |                 for (uint64_t x=0; x < (1<<16); ++x) {
+      |                               ^
+In file included from /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/coder_fibonacci.hpp:24,
+                 from /tmp/rpfbwt-sxgc/build/_deps/sdsl-src/lib/coder_fibonacci.cpp:1:
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1402:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1402 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1410:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1410 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1418:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1418 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1426:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1426 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1434:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1434 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1442:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1442 | inline auto
+      |        ^~~~
+[ 45%] Building CXX object _deps/sdsl-build/lib/CMakeFiles/sdsl.dir/construct_lcp.cpp.o
+In file included from /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:24:
+In static member function ‘static void sdsl::bits::write_int(uint64_t*, uint64_t, uint8_t, uint8_t)’,
+    inlined from ‘static void sdsl::memory_manager::resize(t_vec&, typename t_vec::size_type) [with t_vec = sdsl::int_vector<0>]’ at /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/memory_management.hpp:364:36,
+    inlined from ‘void sdsl::int_vector<<anonymous> >::bit_resize(size_type) [with unsigned char t_width = 0]’ at /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1327:27,
+    inlined from ‘void sdsl::int_vector<<anonymous> >::resize(size_type) [with unsigned char t_width = 0]’ at /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:379:23,
+    inlined from ‘sdsl::int_vector<<anonymous> >::int_vector(size_type, value_type, uint8_t) [with unsigned char t_width = 0]’ at /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1254:11,
+    inlined from ‘sdsl::excess::impl::impl()’ at /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/bp_support_algorithm.hpp:114:46:
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/bits.hpp:460:9: warning: ‘*temp’ may be used uninitialized [-Wmaybe-uninitialized]
+  460 |         *word &=
+      |         ^~~~~
+[ 54%] Building CXX object _deps/sdsl-build/lib/CMakeFiles/sdsl.dir/construct_lcp_helper.cpp.o
+[ 54%] Building CXX object _deps/sdsl-build/lib/CMakeFiles/sdsl.dir/construct_sa.cpp.o
+[ 54%] Building CXX object _deps/sdsl-build/lib/CMakeFiles/sdsl.dir/construct_sa_se.cpp.o
+[ 54%] Built target gsacak
+[ 54%] Building CXX object _deps/sdsl-build/lib/CMakeFiles/sdsl.dir/csa_alphabet_strategy.cpp.o
+In file included from /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/construct_isa.hpp:24,
+                 from /tmp/rpfbwt-sxgc/build/_deps/sdsl-src/lib/construct_isa.cpp:4:
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1402:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1402 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1410:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1410 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1418:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1418 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1426:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1426 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1434:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1434 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1442:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1442 | inline auto
+      |        ^~~~
+[ 63%] Building CXX object _deps/sdsl-build/lib/CMakeFiles/sdsl.dir/io.cpp.o
+[ 63%] Built target gsacak64
+[ 63%] Building CXX object _deps/sdsl-build/lib/CMakeFiles/sdsl.dir/lcp_support_tree.cpp.o
+In file included from /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/construct_lcp.hpp:26,
+                 from /tmp/rpfbwt-sxgc/build/_deps/sdsl-src/lib/construct_lcp.cpp:6:
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1402:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1402 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1410:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1410 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1418:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1418 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1426:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1426 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1434:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1434 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1442:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1442 | inline auto
+      |        ^~~~
+In file included from /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/construct_lcp_helper.hpp:4,
+                 from /tmp/rpfbwt-sxgc/build/_deps/sdsl-src/lib/construct_lcp_helper.cpp:1:
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1402:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1402 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1410:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1410 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1418:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1418 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1426:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1426 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1434:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1434 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1442:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1442 | inline auto
+      |        ^~~~
+In file included from /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/construct_sa.hpp:26,
+                 from /tmp/rpfbwt-sxgc/build/_deps/sdsl-src/lib/construct_sa.cpp:1:
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1402:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1402 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1410:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1410 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1418:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1418 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1426:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1426 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1434:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1434 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1442:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1442 | inline auto
+      |        ^~~~
+In file included from /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/construct_sa_se.hpp:5,
+                 from /tmp/rpfbwt-sxgc/build/_deps/sdsl-src/lib/construct_sa_se.cpp:1:
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1402:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1402 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1410:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1410 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1418:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1418 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1426:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1426 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1434:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1434 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1442:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1442 | inline auto
+      |        ^~~~
+In file included from /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/csa_alphabet_strategy.hpp:50,
+                 from /tmp/rpfbwt-sxgc/build/_deps/sdsl-src/lib/csa_alphabet_strategy.cpp:17:
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1402:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1402 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1410:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1410 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1418:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1418 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1426:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1426 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1434:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1434 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1442:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1442 | inline auto
+      |        ^~~~
+In file included from /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/lcp.hpp:26,
+                 from /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/lcp_support_tree.hpp:4,
+                 from /tmp/rpfbwt-sxgc/build/_deps/sdsl-src/lib/lcp_support_tree.cpp:1:
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1402:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1402 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1410:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1410 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1418:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1418 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1426:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1426 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1434:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1434 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1442:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1442 | inline auto
+      |        ^~~~
+[ 63%] Building CXX object _deps/sdsl-build/lib/CMakeFiles/sdsl.dir/louds_tree.cpp.o
+[ 63%] Building CXX object _deps/sdsl-build/lib/CMakeFiles/sdsl.dir/memory_management.cpp.o
+[ 72%] Building CXX object _deps/sdsl-build/lib/CMakeFiles/sdsl.dir/nn_dict_dynamic.cpp.o
+[ 72%] Building CXX object _deps/sdsl-build/lib/CMakeFiles/sdsl.dir/ram_filebuf.cpp.o
+In file included from /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/louds_tree.hpp:11,
+                 from /tmp/rpfbwt-sxgc/build/_deps/sdsl-src/lib/louds_tree.cpp:1:
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1402:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1402 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1410:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1410 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1418:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1418 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1426:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1426 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1434:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1434 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1442:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1442 | inline auto
+      |        ^~~~
+[ 72%] Building CXX object _deps/sdsl-build/lib/CMakeFiles/sdsl.dir/ram_fs.cpp.o
+[ 72%] Building CXX object _deps/sdsl-build/lib/CMakeFiles/sdsl.dir/rrr_vector_15.cpp.o
+[ 81%] Building CXX object _deps/sdsl-build/lib/CMakeFiles/sdsl.dir/sd_vector.cpp.o
+In file included from /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/nn_dict_dynamic.hpp:25,
+                 from /tmp/rpfbwt-sxgc/build/_deps/sdsl-src/lib/nn_dict_dynamic.cpp:1:
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1402:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1402 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1410:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1410 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1418:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1418 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1426:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1426 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1434:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1434 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1442:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1442 | inline auto
+      |        ^~~~
+[ 81%] Building CXX object _deps/sdsl-build/lib/CMakeFiles/sdsl.dir/sfstream.cpp.o
+[ 81%] Building CXX object _deps/sdsl-build/lib/CMakeFiles/sdsl.dir/structure_tree.cpp.o
+In file included from /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/rrr_vector_15.hpp:25,
+                 from /tmp/rpfbwt-sxgc/build/_deps/sdsl-src/lib/rrr_vector_15.cpp:1:
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1402:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1402 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1410:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1410 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1418:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1418 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1426:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1426 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1434:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1434 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1442:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1442 | inline auto
+      |        ^~~~
+In file included from /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/sd_vector.hpp:26,
+                 from /tmp/rpfbwt-sxgc/build/_deps/sdsl-src/lib/sd_vector.cpp:1:
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1402:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1402 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1410:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1410 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1418:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1418 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1426:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1426 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1434:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1434 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1442:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1442 | inline auto
+      |        ^~~~
+[ 81%] Building CXX object _deps/sdsl-build/lib/CMakeFiles/sdsl.dir/uint128_t.cpp.o
+[ 81%] Building CXX object _deps/sdsl-build/lib/CMakeFiles/sdsl.dir/uint256_t.cpp.o
+[ 90%] Building CXX object _deps/sdsl-build/lib/CMakeFiles/sdsl.dir/util.cpp.o
+[ 90%] Building CXX object _deps/sdsl-build/lib/CMakeFiles/sdsl.dir/wt_helper.cpp.o
+In file included from /tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/wt_helper.hpp:4,
+                 from /tmp/rpfbwt-sxgc/build/_deps/sdsl-src/lib/wt_helper.cpp:1:
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1402:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1402 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1410:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1410 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1418:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1418 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1426:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1426 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1434:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1434 | inline auto
+      |        ^~~~
+/tmp/rpfbwt-sxgc/build-sxgc/_deps/sdsl-build/lib/../include/sdsl/int_vector.hpp:1442:8: warning: type qualifiers ignored on function return type [-Wignored-qualifiers]
+ 1442 | inline auto
+      |        ^~~~
+[ 90%] Linking CXX static library libsdsl.a
+[ 90%] Built target sdsl
+[ 90%] Building CXX object _deps/rlestring-build/CMakeFiles/rlestring.dir/src/bitvector.cpp.o
+[ 90%] Building CXX object _deps/rlestring-build/CMakeFiles/rlestring.dir/src/rle_string.cpp.o
+[100%] Building CXX object _deps/rlestring-build/CMakeFiles/rlestring.dir/src/utils.cpp.o
+In file included from /tmp/rpfbwt-sxgc/build/_deps/sdsl-src/include/sdsl/int_vector.hpp:27,
+                 from /tmp/rpfbwt-sxgc/build/_deps/sdsl-src/include/sdsl/bit_vectors.hpp:8,
+                 from /tmp/rpfbwt-sxgc/build/_deps/rlestring-src/include/rle/utils.hpp:42,
+                 from /tmp/rpfbwt-sxgc/build/_deps/rlestring-src/include/rle/bitvector.hpp:10,
+                 from /tmp/rpfbwt-sxgc/build/_deps/rlestring-src/src/bitvector.cpp:7:
+/tmp/rpfbwt-sxgc/build/_deps/sdsl-src/include/sdsl/io.hpp:123:30: warning: ‘template<class _Tp> struct std::is_pod’ is deprecated: use 'is_standard_layout && is_trivial' instead [-Wdeprecated-declarations]
+  123 | typename std::enable_if<std::is_pod<X>::value,uint64_t>::type
+      |                              ^~~~~~
+In file included from /usr/include/c++/13/bits/stl_pair.h:60,
+                 from /usr/include/c++/13/bits/stl_algobase.h:64,
+                 from /usr/include/c++/13/algorithm:60,
+                 from /tmp/rpfbwt-sxgc/build/_deps/rlestring-src/include/rle/utils.hpp:28:
+/usr/include/c++/13/type_traits:819:5: note: declared here
+  819 |     is_pod
+      |     ^~~~~~
+/tmp/rpfbwt-sxgc/build/_deps/sdsl-src/include/sdsl/io.hpp:151:30: warning: ‘template<class _Tp> struct std::is_pod’ is deprecated: use 'is_standard_layout && is_trivial' instead [-Wdeprecated-declarations]
+  151 | typename std::enable_if<std::is_pod<X>::value,void>::type
+      |                              ^~~~~~
+/usr/include/c++/13/type_traits:819:5: note: declared here
+  819 |     is_pod
+      |     ^~~~~~
+In file included from /tmp/rpfbwt-sxgc/build/_deps/sdsl-src/include/sdsl/int_vector.hpp:27,
+                 from /tmp/rpfbwt-sxgc/build/_deps/sdsl-src/include/sdsl/bit_vectors.hpp:8,
+                 from /tmp/rpfbwt-sxgc/build/_deps/rlestring-src/include/rle/utils.hpp:42,
+                 from /tmp/rpfbwt-sxgc/build/_deps/rlestring-src/src/utils.cpp:26:
+/tmp/rpfbwt-sxgc/build/_deps/sdsl-src/include/sdsl/io.hpp:123:30: warning: ‘template<class _Tp> struct std::is_pod’ is deprecated: use 'is_standard_layout && is_trivial' instead [-Wdeprecated-declarations]
+  123 | typename std::enable_if<std::is_pod<X>::value,uint64_t>::type
+      |                              ^~~~~~
+In file included from /usr/include/c++/13/bits/stl_pair.h:60,
+                 from /usr/include/c++/13/bits/stl_algobase.h:64,
+                 from /usr/include/c++/13/algorithm:60,
+                 from /tmp/rpfbwt-sxgc/build/_deps/rlestring-src/include/rle/utils.hpp:28:
+/usr/include/c++/13/type_traits:819:5: note: declared here
+  819 |     is_pod
+      |     ^~~~~~
+/tmp/rpfbwt-sxgc/build/_deps/sdsl-src/include/sdsl/io.hpp:151:30: warning: ‘template<class _Tp> struct std::is_pod’ is deprecated: use 'is_standard_layout && is_trivial' instead [-Wdeprecated-declarations]
+  151 | typename std::enable_if<std::is_pod<X>::value,void>::type
+      |                              ^~~~~~
+/usr/include/c++/13/type_traits:819:5: note: declared here
+  819 |     is_pod
+      |     ^~~~~~
+In file included from /tmp/rpfbwt-sxgc/build/_deps/sdsl-src/include/sdsl/int_vector.hpp:27,
+                 from /tmp/rpfbwt-sxgc/build/_deps/sdsl-src/include/sdsl/bit_vectors.hpp:8,
+                 from /tmp/rpfbwt-sxgc/build/_deps/rlestring-src/include/rle/utils.hpp:42,
+                 from /tmp/rpfbwt-sxgc/build/_deps/rlestring-src/include/rle/rle_string.hpp:11,
+                 from /tmp/rpfbwt-sxgc/build/_deps/rlestring-src/src/rle_string.cpp:8:
+/tmp/rpfbwt-sxgc/build/_deps/sdsl-src/include/sdsl/io.hpp:123:30: warning: ‘template<class _Tp> struct std::is_pod’ is deprecated: use 'is_standard_layout && is_trivial' instead [-Wdeprecated-declarations]
+  123 | typename std::enable_if<std::is_pod<X>::value,uint64_t>::type
+      |                              ^~~~~~
+In file included from /usr/include/c++/13/bits/stl_pair.h:60,
+                 from /usr/include/c++/13/bits/stl_algobase.h:64,
+                 from /usr/include/c++/13/algorithm:60,
+                 from /tmp/rpfbwt-sxgc/build/_deps/rlestring-src/include/rle/utils.hpp:28:
+/usr/include/c++/13/type_traits:819:5: note: declared here
+  819 |     is_pod
+      |     ^~~~~~
+/tmp/rpfbwt-sxgc/build/_deps/sdsl-src/include/sdsl/io.hpp:151:30: warning: ‘template<class _Tp> struct std::is_pod’ is deprecated: use 'is_standard_layout && is_trivial' instead [-Wdeprecated-declarations]
+  151 | typename std::enable_if<std::is_pod<X>::value,void>::type
+      |                              ^~~~~~
+/usr/include/c++/13/type_traits:819:5: note: declared here
+  819 |     is_pod
+      |     ^~~~~~
+/tmp/rpfbwt-sxgc/build/_deps/sdsl-src/include/sdsl/int_vector.hpp:855:45: warning: ‘template<class _Category, class _Tp, class _Distance, class _Pointer, class _Reference> struct std::iterator’ is deprecated [-Wdeprecated-declarations]
+  855 | class int_vector_iterator_base: public std::iterator<std::random_access_iterator_tag, typename t_int_vector::value_type, typename t_int_vector::difference_type>
+      |                                             ^~~~~~~~
+In file included from /usr/include/c++/13/bits/stl_algobase.h:65:
+/usr/include/c++/13/bits/stl_iterator_base_types.h:127:34: note: declared here
+  127 |     struct _GLIBCXX17_DEPRECATED iterator
+      |                                  ^~~~~~~~
+In file included from /tmp/rpfbwt-sxgc/build/_deps/sdsl-src/include/sdsl/int_vector_buffer.hpp:25,
+                 from /tmp/rpfbwt-sxgc/build/_deps/sdsl-src/include/sdsl/int_vector.hpp:1599:
+/tmp/rpfbwt-sxgc/build/_deps/sdsl-src/include/sdsl/iterators.hpp:33:49: warning: ‘template<class _Category, class _Tp, class _Distance, class _Pointer, class _Reference> struct std::iterator’ is deprecated [-Wdeprecated-declarations]
+   33 | class random_access_const_iterator: public std::iterator<std::random_access_iterator_tag, typename t_rac::value_type, typename t_rac::difference_type>
+      |                                                 ^~~~~~~~
+/usr/include/c++/13/bits/stl_iterator_base_types.h:127:34: note: declared here
+  127 |     struct _GLIBCXX17_DEPRECATED iterator
+      |                                  ^~~~~~~~
+/tmp/rpfbwt-sxgc/build/_deps/sdsl-src/include/sdsl/int_vector_buffer.hpp:489:37: warning: ‘template<class _Category, class _Tp, class _Distance, class _Pointer, class _Reference> struct std::iterator’ is deprecated [-Wdeprecated-declarations]
+  489 |         class iterator: public std::iterator<std::random_access_iterator_tag, value_type, difference_type, value_type*, reference>
+      |                                     ^~~~~~~~
+/usr/include/c++/13/bits/stl_iterator_base_types.h:127:34: note: declared here
+  127 |     struct _GLIBCXX17_DEPRECATED iterator
+      |                                  ^~~~~~~~
+/tmp/rpfbwt-sxgc/build/_deps/sdsl-src/include/sdsl/int_vector.hpp:855:45: warning: ‘template<class _Category, class _Tp, class _Distance, class _Pointer, class _Reference> struct std::iterator’ is deprecated [-Wdeprecated-declarations]
+  855 | class int_vector_iterator_base: public std::iterator<std::random_access_iterator_tag, typename t_int_vector::value_type, typename t_int_vector::difference_type>
+      |                                             ^~~~~~~~
+In file included from /usr/include/c++/13/bits/stl_algobase.h:65:
+/usr/include/c++/13/bits/stl_iterator_base_types.h:127:34: note: declared here
+  127 |     struct _GLIBCXX17_DEPRECATED iterator
+      |                                  ^~~~~~~~
+In file included from /tmp/rpfbwt-sxgc/build/_deps/sdsl-src/include/sdsl/int_vector_buffer.hpp:25,
+                 from /tmp/rpfbwt-sxgc/build/_deps/sdsl-src/include/sdsl/int_vector.hpp:1599:
+/tmp/rpfbwt-sxgc/build/_deps/sdsl-src/include/sdsl/iterators.hpp:33:49: warning: ‘template<class _Category, class _Tp, class _Distance, class _Pointer, class _Reference> struct std::iterator’ is deprecated [-Wdeprecated-declarations]
+   33 | class random_access_const_iterator: public std::iterator<std::random_access_iterator_tag, typename t_rac::value_type, typename t_rac::difference_type>
+      |                                                 ^~~~~~~~
+/usr/include/c++/13/bits/stl_iterator_base_types.h:127:34: note: declared here
+  127 |     struct _GLIBCXX17_DEPRECATED iterator
+      |                                  ^~~~~~~~
+/tmp/rpfbwt-sxgc/build/_deps/sdsl-src/include/sdsl/int_vector.hpp:855:45: warning: ‘template<class _Category, class _Tp, class _Distance, class _Pointer, class _Reference> struct std::iterator’ is deprecated [-Wdeprecated-declarations]
+  855 | class int_vector_iterator_base: public std::iterator<std::random_access_iterator_tag, typename t_int_vector::value_type, typename t_int_vector::difference_type>
+      |                                             ^~~~~~~~
+In file included from /usr/include/c++/13/bits/stl_algobase.h:65:
+/usr/include/c++/13/bits/stl_iterator_base_types.h:127:34: note: declared here
+  127 |     struct _GLIBCXX17_DEPRECATED iterator
+      |                                  ^~~~~~~~
+/tmp/rpfbwt-sxgc/build/_deps/sdsl-src/include/sdsl/int_vector_buffer.hpp:489:37: warning: ‘template<class _Category, class _Tp, class _Distance, class _Pointer, class _Reference> struct std::iterator’ is deprecated [-Wdeprecated-declarations]
+  489 |         class iterator: public std::iterator<std::random_access_iterator_tag, value_type, difference_type, value_type*, reference>
+      |                                     ^~~~~~~~
+/usr/include/c++/13/bits/stl_iterator_base_types.h:127:34: note: declared here
+  127 |     struct _GLIBCXX17_DEPRECATED iterator
+      |                                  ^~~~~~~~
+In file included from /tmp/rpfbwt-sxgc/build/_deps/sdsl-src/include/sdsl/int_vector_buffer.hpp:25,
+                 from /tmp/rpfbwt-sxgc/build/_deps/sdsl-src/include/sdsl/int_vector.hpp:1599:
+/tmp/rpfbwt-sxgc/build/_deps/sdsl-src/include/sdsl/iterators.hpp:33:49: warning: ‘template<class _Category, class _Tp, class _Distance, class _Pointer, class _Reference> struct std::iterator’ is deprecated [-Wdeprecated-declarations]
+   33 | class random_access_const_iterator: public std::iterator<std::random_access_iterator_tag, typename t_rac::value_type, typename t_rac::difference_type>
+      |                                                 ^~~~~~~~
+/usr/include/c++/13/bits/stl_iterator_base_types.h:127:34: note: declared here
+  127 |     struct _GLIBCXX17_DEPRECATED iterator
+      |                                  ^~~~~~~~
+/tmp/rpfbwt-sxgc/build/_deps/sdsl-src/include/sdsl/int_vector_buffer.hpp:489:37: warning: ‘template<class _Category, class _Tp, class _Distance, class _Pointer, class _Reference> struct std::iterator’ is deprecated [-Wdeprecated-declarations]
+  489 |         class iterator: public std::iterator<std::random_access_iterator_tag, value_type, difference_type, value_type*, reference>
+      |                                     ^~~~~~~~
+/usr/include/c++/13/bits/stl_iterator_base_types.h:127:34: note: declared here
+  127 |     struct _GLIBCXX17_DEPRECATED iterator
+      |                                  ^~~~~~~~
+[100%] Linking CXX static library librlestring.a
+[100%] Built target rlestring
+[100%] Building CXX object CMakeFiles/rpfbwt.dir/rpfbwt.cpp.o
+[100%] Building CXX object CMakeFiles/rpfbwt.dir/generated/version.cpp.o
+[100%] Linking CXX executable rpfbwt
+[100%] Built target rpfbwt

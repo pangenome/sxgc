@@ -1,0 +1,27 @@
+[
+  {
+    "file": "bit6/phi_inverse_heads.cpp",
+    "unchanged": true,
+    "sha256": "8ac4a15ddc6cb0b3371976b4fd10d30227e8ba084595dd4abe74768f85bbcb3a"
+  },
+  {
+    "file": "bit6/sxi_write.cpp",
+    "unchanged": true,
+    "sha256": "09dd6c3b9efdc9d0da84dde1f26bef0d475100919a5842e2ddd1ab825a2e1693"
+  },
+  {
+    "file": "bit6/sxi_format.hpp",
+    "unchanged": true,
+    "sha256": "976202cabcd133ca83052ccf07c88f34825a90ae0a94409ef76f01c749c99bdc"
+  },
+  {
+    "file": "bit6/slim_lce.hpp",
+    "unchanged": true,
+    "sha256": "ee33c8863b06ec56c7c3bf2acf42ec624818835f15a7dd01b4814ec8a06a1d8a"
+  },
+  {
+    "file": "bit6/chi_rspace_dump.cpp",
+    "unchanged": true,
+    "sha256": "34eb3e4163e4d86151561ebc050df82621429116c66a44834fb4688fb66a3971"
+  }
+]

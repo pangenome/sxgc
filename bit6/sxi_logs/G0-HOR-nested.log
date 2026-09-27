@@ -1,0 +1,7 @@
+xsa build: work=/tmp/laneV/xsa-build-k6gw9br0 log=/tmp/sxgc-laneV/bit6/sxi_logs/HOR-nested-xsa-build-k6gw9br0.jsonl
+parse: /home/erikg/pfp/build/pfp++ -t /tmp/laneY/bat/HOR-nested.txt -o /tmp/laneV/xsa-build-k6gw9br0/parse -w 10 -p 100 -j 8 --tmp-dir /tmp/laneV/xsa-build-k6gw9br0
+parse-l2: /home/erikg/pfp/build/pfp++ -i /tmp/laneV/xsa-build-k6gw9br0/parse.parse -w 5 -p 11 -j 8 --tmp-dir /tmp/laneV/xsa-build-k6gw9br0
+rpfbwt: /tmp/rpfbwt-sxgc/build-sxgc/rpfbwt --l1-prefix /tmp/laneV/xsa-build-k6gw9br0/parse --w1 10 --w2 5 --threads 8 --tmp-dir /tmp/laneV/xsa-build-k6gw9br0
+endpoints: /tmp/laneV/tools/rpfbwt_endpoints /tmp/laneV/xsa-build-k6gw9br0/parse /tmp/laneV/xsa-build-k6gw9br0/fresh.ri4 /tmp/laneV/xsa-build-k6gw9br0/fresh.head_sa
+xsa build: endpoints failed (1); see /tmp/sxgc-laneV/bit6/sxi_logs/HOR-nested-xsa-build-k6gw9br0.endpoints.log; no final SXI published
+xsa: error: build: pipeline failed: exit status: 1

@@ -1,0 +1,10 @@
+xsa build: work=/tmp/laneV/xsa-build-k1_lscp4 log=/tmp/sxgc-laneV/bit6/sxi_logs/random-4-20k-xsa-build-k1_lscp4.jsonl
+parse: /home/erikg/pfp/build/pfp++ -t /tmp/laneY/bat/random-4-20k.txt -o /tmp/laneV/xsa-build-k1_lscp4/parse -w 10 -p 100 -j 8 --tmp-dir /tmp/laneV/xsa-build-k1_lscp4
+parse-l2: /home/erikg/pfp/build/pfp++ -i /tmp/laneV/xsa-build-k1_lscp4/parse.parse -w 5 -p 11 -j 8 --tmp-dir /tmp/laneV/xsa-build-k1_lscp4
+rpfbwt: /tmp/rpfbwt-sxgc/build-sxgc/rpfbwt --l1-prefix /tmp/laneV/xsa-build-k1_lscp4/parse --w1 10 --w2 5 --threads 8 --tmp-dir /tmp/laneV/xsa-build-k1_lscp4
+endpoints: /tmp/laneV/tools/rpfbwt_endpoints /tmp/laneV/xsa-build-k1_lscp4/parse /tmp/laneV/xsa-build-k1_lscp4/fresh.ri4 /tmp/laneV/xsa-build-k1_lscp4/fresh.head_sa
+slim: /tmp/laneV/tools/slim_dump --slim --resolve-ri4 --dict-stream --ri4 /tmp/laneV/xsa-build-k1_lscp4/fresh.ri4 --head-sa /tmp/laneV/xsa-build-k1_lscp4/fresh.head_sa --parse /tmp/laneV/xsa-build-k1_lscp4/parse -t 8 -o /tmp/laneV/xsa-build-k1_lscp4/fresh.agg
+sweep: /tmp/sxgc-laneV/xsa/target/release/xsa chi-rspace --stream-agg --ri4 /tmp/laneV/xsa-build-k1_lscp4/fresh.ri4 --agg /tmp/laneV/xsa-build-k1_lscp4/fresh.agg -o /tmp/laneV/xsa-build-k1_lscp4/fresh.sA
+write: /tmp/laneV/tools/sxi_write --ri4 /tmp/laneV/xsa-build-k1_lscp4/fresh.ri4 --heads /tmp/laneV/xsa-build-k1_lscp4/fresh.head_sa --chi /tmp/laneV/xsa-build-k1_lscp4/fresh.sA --output /tmp/laneV/.xsa-publish-4eccpla8/candidate.sxi
+validate: /tmp/sxgc-laneV/xsa/target/release/xsa sxi-info /tmp/laneV/.xsa-publish-4eccpla8/candidate.sxi
+{"sxi": "/tmp/laneV/random-4-20k.sxi", "chi": 13423, "work": "/tmp/laneV/xsa-build-k1_lscp4", "log": "/tmp/sxgc-laneV/bit6/sxi_logs/random-4-20k-xsa-build-k1_lscp4.jsonl"}

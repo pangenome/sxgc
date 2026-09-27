@@ -1,0 +1,210 @@
+{
+  "G0": {
+    "status": "PASS",
+    "texts": 7,
+    "evidence": "bit6/sxi_logs/G0-final.log",
+    "artifacts": {
+      "duplicates-600k": {
+        "name": "duplicates-600k",
+        "status": "PASS",
+        "aggregate_bytes_equal": true,
+        "sxi": "/tmp/laneV/g0-final/duplicates-600k.sxi",
+        "chi": 13004,
+        "work": "/tmp/laneV/g0-final/xsa-build-h5l0vis5",
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/duplicates-600k-xsa-build-h5l0vis5.jsonl"
+      },
+      "random-4-2k": {
+        "name": "random-4-2k",
+        "status": "PASS",
+        "aggregate_bytes_equal": true,
+        "sxi": "/tmp/laneV/g0-final/random-4-2k.sxi",
+        "chi": 1307,
+        "work": "/tmp/laneV/g0-final/xsa-build-0kghlxs1",
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/random-4-2k-xsa-build-0kghlxs1.jsonl"
+      },
+      "random-4-20k": {
+        "name": "random-4-20k",
+        "status": "PASS",
+        "aggregate_bytes_equal": true,
+        "sxi": "/tmp/laneV/g0-final/random-4-20k.sxi",
+        "chi": 13423,
+        "work": "/tmp/laneV/g0-final/xsa-build-i0a61zfw",
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/random-4-20k-xsa-build-i0a61zfw.jsonl"
+      },
+      "random-bin-20k": {
+        "name": "random-bin-20k",
+        "status": "PASS",
+        "aggregate_bytes_equal": true,
+        "sxi": "/tmp/laneV/g0-final/random-bin-20k.sxi",
+        "chi": 9653,
+        "work": "/tmp/laneV/g0-final/xsa-build-lwqoz_vb",
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/random-bin-20k-xsa-build-lwqoz_vb.jsonl"
+      },
+      "random-4-200k": {
+        "name": "random-4-200k",
+        "status": "PASS",
+        "aggregate_bytes_equal": true,
+        "sxi": "/tmp/laneV/g0-final/random-4-200k.sxi",
+        "chi": 135968,
+        "work": "/tmp/laneV/g0-final/xsa-build-ce11f4_r",
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/random-4-200k-xsa-build-ce11f4_r.jsonl"
+      },
+      "satellite-18k": {
+        "name": "satellite-18k",
+        "status": "PASS",
+        "aggregate_bytes_equal": true,
+        "sxi": "/tmp/laneV/g0-final/satellite-18k.sxi",
+        "chi": 322,
+        "work": "/tmp/laneV/g0-final/xsa-build-8awkbr3j",
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/satellite-18k-xsa-build-8awkbr3j.jsonl"
+      },
+      "HOR-nested": {
+        "name": "HOR-nested",
+        "status": "PASS",
+        "aggregate_bytes_equal": true,
+        "sxi": "/tmp/laneV/g0-final/HOR-nested.sxi",
+        "chi": 214,
+        "work": "/tmp/laneV/g0-final/xsa-build-8gchfroh",
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/HOR-nested-xsa-build-8gchfroh.jsonl"
+      }
+    }
+  },
+  "G1": {
+    "gate": "G1",
+    "status": "PASS",
+    "r": 14703,
+    "n": 600011,
+    "ssa_byte_identical": true,
+    "rlebwt_byte_identical": true,
+    "ssa_t_count": 14703,
+    "ssa_t_bytes": 117632,
+    "ssa_sha256": "a871815e79525a8ee454a08d6504ee038616b2eb5680373d947a358ceb63f243",
+    "upstream_header_sha256": "06cedebe3f271ec88d7a14a1bb5b2624426d1adc9df4b09c9e4f7c20471df91b",
+    "patch_sha256": "3b718217ec9280187da2c6db307500facac53543f5bd65f0b8e3701d25a0a4e9",
+    "patched_binary": "/tmp/rpfbwt-sxgc/build-sxgc/rpfbwt"
+  },
+  "G2": {
+    "status": "PASS",
+    "log": "bit6/sxi_logs/G2-yeast.log",
+    "journal": "bit6/sxi_logs/yeast-xsa-build-fjj6okbg.jsonl",
+    "endpoint_checks": [
+      {
+        "check": "heads",
+        "status": "PASS",
+        "fresh": "/mnt/nvme3n1/erikg/sxgc-laneV/xsa-build-fjj6okbg/fresh.head_sa",
+        "oracle": "/tmp/laneS/yp2.phi.head_sa",
+        "bytes": 807239048
+      },
+      {
+        "check": "runs-and-packed-tails",
+        "status": "PASS",
+        "fresh": "/mnt/nvme3n1/erikg/sxgc-laneV/xsa-build-fjj6okbg/fresh.ri4",
+        "oracle": "/tmp/laneQ/pass3/yp2real.ri4",
+        "bytes": 908146022
+      },
+      {
+        "check": "raw-endpoint-counts",
+        "status": "PASS",
+        "n": 3336986770,
+        "r": 100904883
+      }
+    ],
+    "chi": 85404240,
+    "output": "/mnt/nvme3n1/erikg/sxgc-laneV/yeast.sxi",
+    "work": "/mnt/nvme3n1/erikg/sxgc-laneV/xsa-build-fjj6okbg",
+    "aggregate_bytes_equal": true,
+    "witness_bytes_equal": true,
+    "members": [
+      {
+        "id": 1,
+        "codec": 1,
+        "offset": 264,
+        "bytes": 504526453,
+        "count": 100904881,
+        "crc32": 515975207
+      },
+      {
+        "id": 2,
+        "codec": 2,
+        "offset": 504526720,
+        "bytes": 403619537,
+        "count": 100904881,
+        "crc32": 1066406448
+      },
+      {
+        "id": 3,
+        "codec": 3,
+        "offset": 908146264,
+        "bytes": 807239048,
+        "count": 100904881,
+        "crc32": 3071207896
+      },
+      {
+        "id": 4,
+        "codec": 4,
+        "offset": 1715385312,
+        "bytes": 12,
+        "count": 0,
+        "crc32": 822617187
+      },
+      {
+        "id": 5,
+        "codec": 5,
+        "offset": 1715385328,
+        "bytes": 88746976,
+        "count": 85404240,
+        "crc32": 2540787377
+      }
+    ]
+  },
+  "G3": {
+    "pid": 4170892,
+    "command": [
+      "/usr/bin/prlimit",
+      "--as=139000000000",
+      "/tmp/sxgc-laneV/xsa/target/release/xsa",
+      "build",
+      "--text",
+      "/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10_rl.txt",
+      "-o",
+      "/mnt/nvme3n1/erikg/sxgc-laneV/k10.sxi",
+      "--scratch",
+      "/mnt/nvme3n1/erikg/sxgc-laneV",
+      "--threads",
+      "8",
+      "--expect-chi",
+      "1627063183",
+      "--expect-heads",
+      "/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.head_sa",
+      "--expect-ri4",
+      "/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10new2.ri4",
+      "--verbose"
+    ],
+    "start": 1790508259.9382203,
+    "log": "/tmp/sxgc-laneV/bit6/sxi_logs/G3-k10.log",
+    "status": "RUNNING_INCOMPLETE",
+    "address_space_ceiling_bytes": 139000000000,
+    "journal": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-xsa-build-vnapn3jx.jsonl",
+    "completed_stages": [
+      {
+        "stage": "parse",
+        "returncode": 0,
+        "wall_seconds": 850.9631874309853,
+        "peak_rss_kib": 10199376,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-xsa-build-vnapn3jx.parse.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-xsa-build-vnapn3jx.parse.time"
+      },
+      {
+        "stage": "parse-l2",
+        "returncode": 0,
+        "wall_seconds": 57.65588781796396,
+        "peak_rss_kib": 2714380,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-xsa-build-vnapn3jx.parse-l2.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-xsa-build-vnapn3jx.parse-l2.time"
+      }
+    ],
+    "current_stages": [
+      "rpfbwt"
+    ]
+  }
+}

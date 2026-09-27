@@ -1,0 +1,10 @@
+[  0%] Built target gsacak
+[  9%] Built target gsacak64
+[  9%] Built target malloc_count
+[ 18%] Built target divsufsort
+[ 27%] Built target divsufsort64
+[ 90%] Built target sdsl
+[100%] Built target rlestring
+[100%] Building CXX object CMakeFiles/rpfbwt.dir/rpfbwt.cpp.o
+[100%] Linking CXX executable rpfbwt
+[100%] Built target rpfbwt

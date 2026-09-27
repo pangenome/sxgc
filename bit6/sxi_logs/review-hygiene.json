@@ -1,0 +1,38 @@
+[
+  {
+    "check": "whitespace",
+    "command": [
+      "git",
+      "diff",
+      "--check"
+    ],
+    "returncode": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "check": "staged-files",
+    "command": [
+      "git",
+      "diff",
+      "--cached",
+      "--name-only"
+    ],
+    "returncode": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "check": "upstream-tracked-diff",
+    "command": [
+      "git",
+      "-C",
+      "/home/erikg/r-pfbwt",
+      "diff",
+      "--name-only"
+    ],
+    "returncode": 0,
+    "stdout": "",
+    "stderr": ""
+  }
+]

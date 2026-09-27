@@ -1,18 +1,18 @@
-//! Source-build CLI boundary. Construction is fail-closed until the missing
-//! front-end endpoint/Phi contract is implemented; see SXI_CONSTRUCTION_BLOCKER.md.
-//! This module deliberately does not disguise pilot-artifact conversion as a
-//! fresh build, or launch a large parse whose next required stage cannot run.
+//! Timed, fail-closed source pipeline with endpoint samples from the vendored tap.
 use std::path::PathBuf;
 
 const USAGE: &str = "usage:
-  xsa build --agc   <archive.agc> -o <out.sxi> [--verbose]
-  xsa build --fasta <refs.fa>     -o <out.sxi> [--verbose]
-  xsa build --text  <file.txt>    -o <out.sxi> [--verbose]
+  xsa build --text <collection.txt> -o <out.sxi> [--threads N] [--scratch DIR] [--expect-chi N] [--verbose]
+  xsa build --agc <archive.agc> -o <out.sxi> [same options]
 
-Source construction is currently unavailable: the unchanged r-pfbwt emits
-head samples, not the tail samples required by the proposed Phi post-step.
-No source build is published until that dependency and the chi gate pass.
-See bit6/SXI_CONSTRUCTION_BLOCKER.md.";
+Text uses newline-terminated pilot collection conventions, already oriented.
+AGC uses agc2flat --revlines --upper, materialized beside its source.
+Stages: PFP (w1=10,p1=100; w2=5,p2=11), endpoint-tap rpfbwt,
+slim streaming aggregates, streamed chi sweep/gate, checked SXI publication.
+Scratch must share the source filesystem. Timings and peak RSS are logged.
+Multi-string inputs require --expect-heads RAW --expect-ri4 FILE byte gates
+because linear PFP ordering is not established as BCR collection ordering.
+--fasta is recognized but needs explicit conversion to the collection convention.";
 
 #[derive(Debug)]
 struct Options {
@@ -20,12 +20,14 @@ struct Options {
     input: PathBuf,
     output: PathBuf,
     verbose: bool,
+    extra: Vec<String>,
 }
 
 fn parse(args: &[String]) -> Result<Options, String> {
     let mut source = None;
     let mut output = None;
     let mut verbose = false;
+    let mut extra = Vec::new();
     let mut i = 0;
     while i < args.len() {
         let flag = &args[i];
@@ -42,6 +44,12 @@ fn parse(args: &[String]) -> Result<Options, String> {
                     return Err("choose exactly one of --agc, --fasta, --text".into());
                 }
             }
+            "--threads" | "--scratch" | "--log-dir" | "--expect-chi" | "--expect-heads" | "--expect-ri4" => {
+                i += 1;
+                let value = args.get(i).filter(|s| !s.is_empty() && !s.starts_with('-'))
+                    .ok_or_else(|| format!("{flag} requires a value"))?;
+                extra.extend([flag.clone(), value.clone()]);
+            }
             "--verbose" => verbose = true,
             _ => return Err(format!("unknown option {flag}")),
         }
@@ -49,7 +57,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
     }
     let (kind, input) = source.ok_or("need one of --agc, --fasta, --text")?;
     let output = output.ok_or("need -o <out.sxi>")?;
-    Ok(Options { kind, input, output, verbose })
+    Ok(Options { kind, input, output, verbose, extra })
 }
 
 fn run(args: &[String]) -> Result<(), String> {
@@ -66,14 +74,15 @@ fn run(args: &[String]) -> Result<(), String> {
     if !input.metadata().map_err(|e| format!("inspect input: {e}"))?.is_file() {
         return Err("input must be a regular file".into());
     }
-    eprintln!("xsa build: preflight ({})", options.kind);
-    if options.verbose {
-        eprintln!("  input: {}", options.input.display());
-        eprintln!("  output: {}", options.output.display());
-        eprintln!("  required stages: parse -> front-end/RLBWT -> Phi^-1 heads -> slim aggregates -> sweep -> chi gate -> SXI write");
-        eprintln!("  no stage subprocess launched: required endpoint construction is unavailable");
-    }
-    Err("source construction blocked: the unchanged r-pfbwt produces run-head .ssa samples, not tails; no validated r-space tail-only Phi constructor is implemented. headFromTail assumes a sound Phi index. No .sxi was written. See bit6/SXI_CONSTRUCTION_BLOCKER.md".into())
+    let script = std::env::var_os("XSA_PIPELINE").map(PathBuf::from).unwrap_or_else(||
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../bit6/sxi_pipeline.py"));
+    let mut command = std::process::Command::new("python3");
+    command.arg(script).arg(format!("--{}", options.kind)).arg(options.input)
+        .arg("--output").arg(options.output).args(options.extra)
+        .arg("--xsa").arg(std::env::current_exe().map_err(|e| e.to_string())?);
+    if options.verbose { command.arg("--verbose"); }
+    let status = command.status().map_err(|e| format!("launch pipeline: {e}"))?;
+    if status.success() { Ok(()) } else { Err(format!("pipeline failed: {status}")) }
 }
 
 pub fn command(args: &[String]) {

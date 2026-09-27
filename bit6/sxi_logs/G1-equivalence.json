@@ -1,0 +1,14 @@
+{
+  "gate": "G1",
+  "status": "PASS",
+  "r": 14703,
+  "n": 600011,
+  "ssa_byte_identical": true,
+  "rlebwt_byte_identical": true,
+  "ssa_t_count": 14703,
+  "ssa_t_bytes": 117632,
+  "ssa_sha256": "a871815e79525a8ee454a08d6504ee038616b2eb5680373d947a358ceb63f243",
+  "upstream_header_sha256": "06cedebe3f271ec88d7a14a1bb5b2624426d1adc9df4b09c9e4f7c20471df91b",
+  "patch_sha256": "3b718217ec9280187da2c6db307500facac53543f5bd65f0b8e3701d25a0a4e9",
+  "patched_binary": "/tmp/rpfbwt-sxgc/build-sxgc/rpfbwt"
+}

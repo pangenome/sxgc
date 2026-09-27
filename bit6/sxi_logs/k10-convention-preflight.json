@@ -1,0 +1,12 @@
+{
+  "input": "/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10_rl.txt",
+  "text_bytes": 30151407545,
+  "last_byte": "0a",
+  "oracle_n": 30151407545,
+  "oracle_k": 865,
+  "oracle_r": 1859825801,
+  "oracle_first_head": 242892443,
+  "predicted_linear_pfp_first_head": 30151407544,
+  "conclusion": "newline concatenation does not establish BCR collection ordering; byte gate required",
+  "status": "preflight inference, not a fresh G3 measurement"
+}

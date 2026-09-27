@@ -1,0 +1,28 @@
+{
+  "pid": 4170892,
+  "command": [
+    "/usr/bin/prlimit",
+    "--as=139000000000",
+    "/tmp/sxgc-laneV/xsa/target/release/xsa",
+    "build",
+    "--text",
+    "/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10_rl.txt",
+    "-o",
+    "/mnt/nvme3n1/erikg/sxgc-laneV/k10.sxi",
+    "--scratch",
+    "/mnt/nvme3n1/erikg/sxgc-laneV",
+    "--threads",
+    "8",
+    "--expect-chi",
+    "1627063183",
+    "--expect-heads",
+    "/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.head_sa",
+    "--expect-ri4",
+    "/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10new2.ri4",
+    "--verbose"
+  ],
+  "start": 1790508259.9382203,
+  "log": "/tmp/sxgc-laneV/bit6/sxi_logs/G3-k10.log",
+  "status": "RUNNING",
+  "address_space_ceiling_bytes": 139000000000
+}

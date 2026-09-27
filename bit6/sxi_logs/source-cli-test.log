@@ -1,0 +1,1 @@
+PASS CLI validation; missing tool, stage failure, chi/head mismatch and unvalidated multi-string input publish no SXI; existing files/symlinks preserved

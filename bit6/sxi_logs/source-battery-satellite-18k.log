@@ -1,0 +1,12 @@
+xsa build: work=/tmp/laneV/g0-final/xsa-build-8awkbr3j log=/tmp/sxgc-laneV/bit6/sxi_logs/satellite-18k-xsa-build-8awkbr3j.jsonl
+parse: /home/erikg/pfp/build/pfp++ -t /tmp/laneY/bat/satellite-18k.txt -o /tmp/laneV/g0-final/xsa-build-8awkbr3j/parse -w 10 -p 100 -j 8 --tmp-dir /tmp/laneV/g0-final/xsa-build-8awkbr3j
+parse-l2: /home/erikg/pfp/build/pfp++ -i /tmp/laneV/g0-final/xsa-build-8awkbr3j/parse.parse -w 5 -p 11 -j 8 --tmp-dir /tmp/laneV/g0-final/xsa-build-8awkbr3j
+rpfbwt: /tmp/rpfbwt-sxgc/build-sxgc/rpfbwt --l1-prefix /tmp/laneV/g0-final/xsa-build-8awkbr3j/parse --w1 10 --w2 5 --threads 8 --chunks 1 --tmp-dir /tmp/laneV/g0-final/xsa-build-8awkbr3j
+endpoints: /tmp/laneV/tools/rpfbwt_endpoints /tmp/laneV/g0-final/xsa-build-8awkbr3j/parse /tmp/laneV/g0-final/xsa-build-8awkbr3j/fresh.ri4 /tmp/laneV/g0-final/xsa-build-8awkbr3j/fresh.head_sa
+gate-heads: /usr/bin/cmp /tmp/laneV/g0-final/xsa-build-8awkbr3j/fresh.head_sa /tmp/laneQ/pass4/satellite-18k.head_sa
+gate-runs-tails: /usr/bin/cmp /tmp/laneV/g0-final/xsa-build-8awkbr3j/fresh.ri4 /tmp/laneY/bat/satellite-18k.ri4
+slim: /tmp/laneV/tools/slim_dump --slim --resolve-ri4 --dict-stream --ri4 /tmp/laneV/g0-final/xsa-build-8awkbr3j/fresh.ri4 --head-sa /tmp/laneV/g0-final/xsa-build-8awkbr3j/fresh.head_sa --parse /tmp/laneV/g0-final/xsa-build-8awkbr3j/parse -t 8 -o /tmp/laneV/g0-final/xsa-build-8awkbr3j/fresh.agg
+sweep: /tmp/sxgc-laneV/xsa/target/release/xsa chi-rspace --stream-agg --ri4 /tmp/laneV/g0-final/xsa-build-8awkbr3j/fresh.ri4 --agg /tmp/laneV/g0-final/xsa-build-8awkbr3j/fresh.agg -o /tmp/laneV/g0-final/xsa-build-8awkbr3j/fresh.sA
+write: /tmp/laneV/tools/sxi_write --ri4 /tmp/laneV/g0-final/xsa-build-8awkbr3j/fresh.ri4 --heads /tmp/laneV/g0-final/xsa-build-8awkbr3j/fresh.head_sa --chi /tmp/laneV/g0-final/xsa-build-8awkbr3j/fresh.sA --output /tmp/laneV/g0-final/.xsa-publish-a8v_cz27/candidate.sxi
+validate: /tmp/sxgc-laneV/xsa/target/release/xsa sxi-info /tmp/laneV/g0-final/.xsa-publish-a8v_cz27/candidate.sxi
+{"sxi": "/tmp/laneV/g0-final/satellite-18k.sxi", "chi": 322, "work": "/tmp/laneV/g0-final/xsa-build-8awkbr3j", "log": "/tmp/sxgc-laneV/bit6/sxi_logs/satellite-18k-xsa-build-8awkbr3j.jsonl"}

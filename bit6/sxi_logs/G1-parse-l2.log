@@ -1,0 +1,75 @@
+[2026-09-27 11:06:09.636] [info] Current Configuration:
+; PFP++
+
+; Integers file to parse.
+int32t="/tmp/laneV/g1/p.parse"
+
+; Sliding window size.
+window-size=5
+
+; Modulo used during parsing.
+modulo=11
+
+; Number of threads.
+threads=8
+
+; Temporary files directory.
+tmp-dir="/tmp/laneV/g1/tmp"
+
+; Also output compressed the dictionary.
+compress-dictionary=false
+
+; Use reference parse to avoid re-parsing.
+use-vcf-acceleration=false
+
+; Print out csv containing stats.
+print-statistics=false
+
+; Output count for each dictionary phrase.
+output-occurrences=false
+
+; Output sai array.
+output-sai=false
+
+; Output last array.
+output-last=false
+
+; Convert all non ACGT characters from a VCF or FASTA file to N.
+acgt-only=false
+
+; Verbose output.
+verbose=false
+
+; Version number.
+version=false
+
+[2026-09-27 11:06:09.636] [info] Parsing /tmp/laneV/g1/p.parse
+[2026-09-27 11:06:09.637] [info] Main parser: Replacing hash values with ranks.
+[2026-09-27 11:06:09.637] [info] Main parser: writing dictionary on disk NOT COMPRESSED
+[2026-09-27 11:06:09.637] [info] No properties requested.
+[2026-09-27 11:06:09.637] [info] Main parser: closed
+[2026-09-27 11:06:09.637] [info] Parser Integers -	Parse size: 489	Dic Size: 481 Dic Total Length: 30568
+[Disk Write (bytes): 38364]
+	Command being timed: "/home/erikg/pfp/build/pfp++ -i /tmp/laneV/g1/p.parse -w 5 -p 11 -j 8 --tmp-dir /tmp/laneV/g1/tmp"
+	User time (seconds): 0.00
+	System time (seconds): 0.00
+	Percent of CPU this job got: 100%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:00.00
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 4096
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 245
+	Voluntary context switches: 1
+	Involuntary context switches: 0
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 88
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

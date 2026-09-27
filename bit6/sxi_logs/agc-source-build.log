@@ -1,0 +1,11 @@
+xsa build: work=/tmp/laneV/agc-test/xsa-build-lwxvwicj log=/tmp/sxgc-laneV/bit6/sxi_logs/tiny-xsa-build-lwxvwicj.jsonl
+prepare-agc: /tmp/sxgc-laneV/agc2flat/target/release/agc2flat /tmp/laneV/agc-test/tiny.agc --revlines --upper -o /tmp/laneV/agc-test/xsa-build-lwxvwicj/collection.txt
+parse: /home/erikg/pfp/build/pfp++ -t /tmp/laneV/agc-test/xsa-build-lwxvwicj/collection.txt -o /tmp/laneV/agc-test/xsa-build-lwxvwicj/parse -w 10 -p 100 -j 8 --tmp-dir /tmp/laneV/agc-test/xsa-build-lwxvwicj
+parse-l2: /home/erikg/pfp/build/pfp++ -i /tmp/laneV/agc-test/xsa-build-lwxvwicj/parse.parse -w 5 -p 11 -j 8 --tmp-dir /tmp/laneV/agc-test/xsa-build-lwxvwicj
+rpfbwt: /tmp/rpfbwt-sxgc/build-sxgc/rpfbwt --l1-prefix /tmp/laneV/agc-test/xsa-build-lwxvwicj/parse --w1 10 --w2 5 --threads 8 --chunks 1 --tmp-dir /tmp/laneV/agc-test/xsa-build-lwxvwicj
+endpoints: /tmp/laneV/tools/rpfbwt_endpoints /tmp/laneV/agc-test/xsa-build-lwxvwicj/parse /tmp/laneV/agc-test/xsa-build-lwxvwicj/fresh.ri4 /tmp/laneV/agc-test/xsa-build-lwxvwicj/fresh.head_sa
+slim: /tmp/laneV/tools/slim_dump --slim --resolve-ri4 --dict-stream --ri4 /tmp/laneV/agc-test/xsa-build-lwxvwicj/fresh.ri4 --head-sa /tmp/laneV/agc-test/xsa-build-lwxvwicj/fresh.head_sa --parse /tmp/laneV/agc-test/xsa-build-lwxvwicj/parse -t 8 -o /tmp/laneV/agc-test/xsa-build-lwxvwicj/fresh.agg
+sweep: /tmp/sxgc-laneV/xsa/target/release/xsa chi-rspace --stream-agg --ri4 /tmp/laneV/agc-test/xsa-build-lwxvwicj/fresh.ri4 --agg /tmp/laneV/agc-test/xsa-build-lwxvwicj/fresh.agg -o /tmp/laneV/agc-test/xsa-build-lwxvwicj/fresh.sA
+write: /tmp/laneV/tools/sxi_write --ri4 /tmp/laneV/agc-test/xsa-build-lwxvwicj/fresh.ri4 --heads /tmp/laneV/agc-test/xsa-build-lwxvwicj/fresh.head_sa --chi /tmp/laneV/agc-test/xsa-build-lwxvwicj/fresh.sA --output /tmp/laneV/agc-test/.xsa-publish-1x2wunxp/candidate.sxi --names /tmp/laneV/agc-test/xsa-build-lwxvwicj/collection.txt.names.tsv
+validate: /tmp/sxgc-laneV/xsa/target/release/xsa sxi-info /tmp/laneV/agc-test/.xsa-publish-1x2wunxp/candidate.sxi
+{"sxi": "/tmp/laneV/agc-test/tiny.sxi", "chi": 13559, "work": "/tmp/laneV/agc-test/xsa-build-lwxvwicj", "log": "/tmp/sxgc-laneV/bit6/sxi_logs/tiny-xsa-build-lwxvwicj.jsonl"}

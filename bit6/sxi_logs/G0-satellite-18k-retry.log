@@ -1,0 +1,10 @@
+xsa build: work=/tmp/laneV/xsa-build-nu8mhvrl log=/tmp/sxgc-laneV/bit6/sxi_logs/satellite-18k-xsa-build-nu8mhvrl.jsonl
+parse: /home/erikg/pfp/build/pfp++ -t /tmp/laneY/bat/satellite-18k.txt -o /tmp/laneV/xsa-build-nu8mhvrl/parse -w 10 -p 100 -j 8 --tmp-dir /tmp/laneV/xsa-build-nu8mhvrl
+parse-l2: /home/erikg/pfp/build/pfp++ -i /tmp/laneV/xsa-build-nu8mhvrl/parse.parse -w 5 -p 11 -j 8 --tmp-dir /tmp/laneV/xsa-build-nu8mhvrl
+rpfbwt: /tmp/rpfbwt-sxgc/build-sxgc/rpfbwt --l1-prefix /tmp/laneV/xsa-build-nu8mhvrl/parse --w1 10 --w2 5 --threads 8 --chunks 1 --tmp-dir /tmp/laneV/xsa-build-nu8mhvrl
+endpoints: /tmp/laneV/tools/rpfbwt_endpoints /tmp/laneV/xsa-build-nu8mhvrl/parse /tmp/laneV/xsa-build-nu8mhvrl/fresh.ri4 /tmp/laneV/xsa-build-nu8mhvrl/fresh.head_sa
+slim: /tmp/laneV/tools/slim_dump --slim --resolve-ri4 --dict-stream --ri4 /tmp/laneV/xsa-build-nu8mhvrl/fresh.ri4 --head-sa /tmp/laneV/xsa-build-nu8mhvrl/fresh.head_sa --parse /tmp/laneV/xsa-build-nu8mhvrl/parse -t 8 -o /tmp/laneV/xsa-build-nu8mhvrl/fresh.agg
+sweep: /tmp/sxgc-laneV/xsa/target/release/xsa chi-rspace --stream-agg --ri4 /tmp/laneV/xsa-build-nu8mhvrl/fresh.ri4 --agg /tmp/laneV/xsa-build-nu8mhvrl/fresh.agg -o /tmp/laneV/xsa-build-nu8mhvrl/fresh.sA
+write: /tmp/laneV/tools/sxi_write --ri4 /tmp/laneV/xsa-build-nu8mhvrl/fresh.ri4 --heads /tmp/laneV/xsa-build-nu8mhvrl/fresh.head_sa --chi /tmp/laneV/xsa-build-nu8mhvrl/fresh.sA --output /tmp/laneV/.xsa-publish-aguv_t3h/candidate.sxi
+validate: /tmp/sxgc-laneV/xsa/target/release/xsa sxi-info /tmp/laneV/.xsa-publish-aguv_t3h/candidate.sxi
+{"sxi": "/tmp/laneV/satellite-18k.sxi", "chi": 322, "work": "/tmp/laneV/xsa-build-nu8mhvrl", "log": "/tmp/sxgc-laneV/bit6/sxi_logs/satellite-18k-xsa-build-nu8mhvrl.jsonl"}

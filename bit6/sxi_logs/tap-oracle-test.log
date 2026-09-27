@@ -1,0 +1,7 @@
+{"text": "random-4-2k", "chunks": 1, "ssa_identical": true, "tail_oracle": true, "r": 1476}
+{"text": "random-4-2k", "chunks": 7, "ssa_identical": true, "tail_oracle": true, "r": 1476}
+{"text": "random-4-2k", "chunks": 50, "ssa_identical": true, "tail_oracle": true, "r": 1476}
+{"text": "satellite-18k", "chunks": 1, "ssa_identical": true, "tail_oracle": true, "r": 366}
+{"text": "satellite-18k", "chunks": 7, "ssa_identical": true, "tail_oracle": true, "r": 366}
+{"text": "satellite-18k", "chunks": 50, "ssa_identical": true, "tail_oracle": true, "r": 366}
+PASS tap: original head bytes unchanged, all tails match independent cyclic-SA oracle

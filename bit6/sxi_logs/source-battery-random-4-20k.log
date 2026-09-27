@@ -1,0 +1,12 @@
+xsa build: work=/tmp/laneV/g0-final/xsa-build-i0a61zfw log=/tmp/sxgc-laneV/bit6/sxi_logs/random-4-20k-xsa-build-i0a61zfw.jsonl
+parse: /home/erikg/pfp/build/pfp++ -t /tmp/laneY/bat/random-4-20k.txt -o /tmp/laneV/g0-final/xsa-build-i0a61zfw/parse -w 10 -p 100 -j 8 --tmp-dir /tmp/laneV/g0-final/xsa-build-i0a61zfw
+parse-l2: /home/erikg/pfp/build/pfp++ -i /tmp/laneV/g0-final/xsa-build-i0a61zfw/parse.parse -w 5 -p 11 -j 8 --tmp-dir /tmp/laneV/g0-final/xsa-build-i0a61zfw
+rpfbwt: /tmp/rpfbwt-sxgc/build-sxgc/rpfbwt --l1-prefix /tmp/laneV/g0-final/xsa-build-i0a61zfw/parse --w1 10 --w2 5 --threads 8 --chunks 1 --tmp-dir /tmp/laneV/g0-final/xsa-build-i0a61zfw
+endpoints: /tmp/laneV/tools/rpfbwt_endpoints /tmp/laneV/g0-final/xsa-build-i0a61zfw/parse /tmp/laneV/g0-final/xsa-build-i0a61zfw/fresh.ri4 /tmp/laneV/g0-final/xsa-build-i0a61zfw/fresh.head_sa
+gate-heads: /usr/bin/cmp /tmp/laneV/g0-final/xsa-build-i0a61zfw/fresh.head_sa /tmp/laneQ/pass4/random-4-20k.head_sa
+gate-runs-tails: /usr/bin/cmp /tmp/laneV/g0-final/xsa-build-i0a61zfw/fresh.ri4 /tmp/laneY/bat/random-4-20k.ri4
+slim: /tmp/laneV/tools/slim_dump --slim --resolve-ri4 --dict-stream --ri4 /tmp/laneV/g0-final/xsa-build-i0a61zfw/fresh.ri4 --head-sa /tmp/laneV/g0-final/xsa-build-i0a61zfw/fresh.head_sa --parse /tmp/laneV/g0-final/xsa-build-i0a61zfw/parse -t 8 -o /tmp/laneV/g0-final/xsa-build-i0a61zfw/fresh.agg
+sweep: /tmp/sxgc-laneV/xsa/target/release/xsa chi-rspace --stream-agg --ri4 /tmp/laneV/g0-final/xsa-build-i0a61zfw/fresh.ri4 --agg /tmp/laneV/g0-final/xsa-build-i0a61zfw/fresh.agg -o /tmp/laneV/g0-final/xsa-build-i0a61zfw/fresh.sA
+write: /tmp/laneV/tools/sxi_write --ri4 /tmp/laneV/g0-final/xsa-build-i0a61zfw/fresh.ri4 --heads /tmp/laneV/g0-final/xsa-build-i0a61zfw/fresh.head_sa --chi /tmp/laneV/g0-final/xsa-build-i0a61zfw/fresh.sA --output /tmp/laneV/g0-final/.xsa-publish-58q104k1/candidate.sxi
+validate: /tmp/sxgc-laneV/xsa/target/release/xsa sxi-info /tmp/laneV/g0-final/.xsa-publish-58q104k1/candidate.sxi
+{"sxi": "/tmp/laneV/g0-final/random-4-20k.sxi", "chi": 13423, "work": "/tmp/laneV/g0-final/xsa-build-i0a61zfw", "log": "/tmp/sxgc-laneV/bit6/sxi_logs/random-4-20k-xsa-build-i0a61zfw.jsonl"}

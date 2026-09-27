@@ -1,0 +1,17 @@
+.sxi      /tmp/laneV/agc-test/tiny.sxi  (v1: n=20001, k=1 strings, R=14995 runs)
+member=1 count=14995 bytes=77023 crc32=8540cd15
+member=2 count=14995 bytes=28129 crc32=5ebba0f0
+member=3 count=14995 bytes=119960 crc32=ef923dbe
+member=4 count=0 bytes=12 crc32=31082463
+member=5 count=13559 bytes=13559 crc32=4da2f6cc
+member=6 count=12 bytes=12 crc32=abc93b15
+chi_complete=true
+chi_delta_ratio=0.125000000
+
+n            = 20001
+k (strings)  = 1
+r (runs)     = 14995
+chi          = 13559
+n/r          = 1.334
+chi/r        = 0.904   (law: ~0.86)
+index bytes  = 239012

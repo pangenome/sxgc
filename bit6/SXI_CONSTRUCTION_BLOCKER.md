@@ -1,3 +1,22 @@
+# Endpoint-tap revision (2026-09-27)
+
+The user-approved endpoint tap supersedes the earlier front-end-untouched
+restriction below. Fresh builds now obtain both endpoints directly from the
+vendored merge; no Phi construction or legacy extractor is involved.
+See [SXI_ACCEPTANCE.md](SXI_ACCEPTANCE.md) for current measured gates.
+The historical dependency analysis is retained below; it describes the
+previous tail-only proposal, not the implemented endpoint route.
+
+The current adapter removes the ten PFP padding rows and maps producer byte
+2 to newline in O(r) streaming passes. It never reorders collection suffixes.
+Consequently newline-joined text is necessary for the pilot convention but
+is not by itself proof of BCR collection row/sample equivalence. The k10
+endpoint byte gates remain authoritative; any mismatch must fail, rather
+than substituting pilot samples. The installed `contact_supervisor` tool
+was again absent from the available tool catalog in this revision.
+
+---
+
 # Fresh construction: unresolved dependency (2026-09-27)
 
 The revised tail-only Phi construction has **not** been implemented. No

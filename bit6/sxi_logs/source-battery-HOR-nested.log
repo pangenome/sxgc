@@ -1,0 +1,12 @@
+xsa build: work=/tmp/laneV/g0-final/xsa-build-8gchfroh log=/tmp/sxgc-laneV/bit6/sxi_logs/HOR-nested-xsa-build-8gchfroh.jsonl
+parse: /home/erikg/pfp/build/pfp++ -t /tmp/laneY/bat/HOR-nested.txt -o /tmp/laneV/g0-final/xsa-build-8gchfroh/parse -w 10 -p 100 -j 8 --tmp-dir /tmp/laneV/g0-final/xsa-build-8gchfroh
+parse-l2: /home/erikg/pfp/build/pfp++ -i /tmp/laneV/g0-final/xsa-build-8gchfroh/parse.parse -w 5 -p 11 -j 8 --tmp-dir /tmp/laneV/g0-final/xsa-build-8gchfroh
+rpfbwt: /tmp/rpfbwt-sxgc/build-sxgc/rpfbwt --l1-prefix /tmp/laneV/g0-final/xsa-build-8gchfroh/parse --w1 10 --w2 5 --threads 8 --chunks 1 --tmp-dir /tmp/laneV/g0-final/xsa-build-8gchfroh
+endpoints: /tmp/laneV/tools/rpfbwt_endpoints /tmp/laneV/g0-final/xsa-build-8gchfroh/parse /tmp/laneV/g0-final/xsa-build-8gchfroh/fresh.ri4 /tmp/laneV/g0-final/xsa-build-8gchfroh/fresh.head_sa
+gate-heads: /usr/bin/cmp /tmp/laneV/g0-final/xsa-build-8gchfroh/fresh.head_sa /tmp/laneQ/pass4/HOR-nested.head_sa
+gate-runs-tails: /usr/bin/cmp /tmp/laneV/g0-final/xsa-build-8gchfroh/fresh.ri4 /tmp/laneY/bat/HOR-nested.ri4
+slim: /tmp/laneV/tools/slim_dump --slim --resolve-ri4 --dict-stream --ri4 /tmp/laneV/g0-final/xsa-build-8gchfroh/fresh.ri4 --head-sa /tmp/laneV/g0-final/xsa-build-8gchfroh/fresh.head_sa --parse /tmp/laneV/g0-final/xsa-build-8gchfroh/parse -t 8 -o /tmp/laneV/g0-final/xsa-build-8gchfroh/fresh.agg
+sweep: /tmp/sxgc-laneV/xsa/target/release/xsa chi-rspace --stream-agg --ri4 /tmp/laneV/g0-final/xsa-build-8gchfroh/fresh.ri4 --agg /tmp/laneV/g0-final/xsa-build-8gchfroh/fresh.agg -o /tmp/laneV/g0-final/xsa-build-8gchfroh/fresh.sA
+write: /tmp/laneV/tools/sxi_write --ri4 /tmp/laneV/g0-final/xsa-build-8gchfroh/fresh.ri4 --heads /tmp/laneV/g0-final/xsa-build-8gchfroh/fresh.head_sa --chi /tmp/laneV/g0-final/xsa-build-8gchfroh/fresh.sA --output /tmp/laneV/g0-final/.xsa-publish-24zzg35x/candidate.sxi
+validate: /tmp/sxgc-laneV/xsa/target/release/xsa sxi-info /tmp/laneV/g0-final/.xsa-publish-24zzg35x/candidate.sxi
+{"sxi": "/tmp/laneV/g0-final/HOR-nested.sxi", "chi": 214, "work": "/tmp/laneV/g0-final/xsa-build-8gchfroh", "log": "/tmp/sxgc-laneV/bit6/sxi_logs/HOR-nested-xsa-build-8gchfroh.jsonl"}

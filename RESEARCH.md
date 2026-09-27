@@ -1492,3 +1492,16 @@ The "walk killed" claim (turn of the syng retreat) killed the parent shell only;
 teralcp_chi_agg ran orphaned (init-reparented) for ~2h15m at 267 GB RSS, contending
 with pfp466 for disk before a second kill (verified this time: pids gone, RAM freed).
 House rule reinforced: every kill is followed by a ps of the target pids + RSS delta.
+
+## MILESTONE: yeast born fully from scratch via `xsa build` (G0/G1/G2 GREEN, commit follows).
+Endpoint-tap lane (user decision A) landed: 27-line vendored patch on r-pfbwt (upstream
+untouched, .ssa byte-identical, .ssa_t = run-tail SA values the merge already computes);
+xsa build pipeline real (parse -> front-end -> slim -> sweep -> internal chi gate -> .sxi,
+fail-closed). Yeast: xsa build --text -> yeast.sxi (1.80 GB, chi=85,404,240 embedded,
+delta-chi 12.99%); fresh heads byte-equal /tmp/laneS/yp2.phi.head_sa and ENTIRE fresh .ri4
+byte-equal yp2real.ri4 (908 MB) - oracles gated, never consumed. Per-stage yeast profile:
+rpfbwt 624s/8.8GB, slim 833s/3.7GB, sweep 15s/6MB, total ~26 min, ZERO LF walks.
+k10 from scratch RUNNING (self-gated: expect-chi 1,627,063,183 + heads/tails byte gates;
+also the 466 RAM slice measurement). Honest limits recorded: upstream empty-chunk .ssa
+merge bug worked around by chunk config (not fixed); newline-joined vs BCR collection
+ordering to be adjudicated by k10's real byte gates.

@@ -1,0 +1,22 @@
+[
+  {
+    "check": "heads",
+    "status": "PASS",
+    "fresh": "/mnt/nvme3n1/erikg/sxgc-laneV/xsa-build-fjj6okbg/fresh.head_sa",
+    "oracle": "/tmp/laneS/yp2.phi.head_sa",
+    "bytes": 807239048
+  },
+  {
+    "check": "runs-and-packed-tails",
+    "status": "PASS",
+    "fresh": "/mnt/nvme3n1/erikg/sxgc-laneV/xsa-build-fjj6okbg/fresh.ri4",
+    "oracle": "/tmp/laneQ/pass3/yp2real.ri4",
+    "bytes": 908146022
+  },
+  {
+    "check": "raw-endpoint-counts",
+    "status": "PASS",
+    "n": 3336986770,
+    "r": 100904883
+  }
+]
