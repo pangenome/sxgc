@@ -1,0 +1,2 @@
+xsa build: work=/tmp/sxi-input-modes-T3DUT2/acceptance/xsa-build-s7msp5xy log=/tmp/sxgc-laneV/bit6/sxi_logs/input-modes/random-4-2k-text-xsa-build-s7msp5xy.jsonl
+{"sxi": "/tmp/sxi-input-modes-T3DUT2/acceptance/random-4-2k-text.sxi", "chi": 1299, "work": "/tmp/sxi-input-modes-T3DUT2/acceptance/xsa-build-s7msp5xy", "log": "/tmp/sxgc-laneV/bit6/sxi_logs/input-modes/random-4-2k-text-xsa-build-s7msp5xy.jsonl"}

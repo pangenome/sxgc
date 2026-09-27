@@ -8,6 +8,10 @@ bash tools/build_sxi_tools.sh /tmp/laneV/tools
 xsa/target/release/xsa build --text collection.txt -o collection.sxi \
   --threads 8 --scratch /path/on/source/filesystem --verbose
 xsa/target/release/xsa build --agc collection.agc -o collection.sxi --verbose
+xsa/target/release/xsa build --fasta oriented.fa -o collection.sxi --verbose \
+  --expect-heads accepted.head_sa --expect-ri4 accepted.ri4
+xsa/target/release/xsa build --fastq oriented.fq -o collection.sxi --verbose \
+  --expect-heads accepted.head_sa --expect-ri4 accepted.ri4
 ```
 
 The copy destination must not exist. `build_rpfbwt_tap.sh` copies upstream
@@ -27,9 +31,12 @@ requires installing the script/tools and setting these paths.
 
 Exact stages:
 
-1. AGC only: committed `agc2flat --revlines --upper -o SCRATCH/collection.txt`.
+1. Prepare the input. AGC: committed `agc2flat --revlines --upper -o SCRATCH/collection.txt`.
    It streams one reversed contig per line and writes `collection.txt.names.tsv`.
    The text is materialized on the same filesystem as the archive.
+   FASTA/FASTQ: stream extracted sequences into the same `collection.txt` path,
+   joining wrapped FASTA lines and terminating every record with newline.
+   Both then enter exactly the same stages as `--text`.
 2. `pfp++ -t TEXT -o PREFIX -w 10 -p 100 -j THREADS --tmp-dir SCRATCH`.
 3. `pfp++ -i PREFIX.parse -w 5 -p 11 -j THREADS --tmp-dir SCRATCH` (second level).
 4. Patched `rpfbwt --l1-prefix PREFIX --w1 10 --w2 5 --threads THREADS
@@ -53,6 +60,9 @@ Each subprocess has its own `/usr/bin/time -v` file and stage log under
 code, wall seconds, and stage peak RSS. Stages run sequentially with a 149 GB
 address-space ceiling. Scratch is intentionally retained for independent
 review. Failed stages or gates never publish the requested output path.
+FASTA/FASTQ preparation runs in the Python process, recording elapsed time and
+process peak RSS in the journal; each completed record logs its identifier,
+sequence length and cumulative collection size to stderr and the journal.
 
 `--expect-heads RAW` and `--expect-ri4 FILE` are acceptance-only comparisons,
 run **after** constructing fresh endpoints. The latter checks the entire
@@ -66,8 +76,27 @@ establish equivalence for each collection. The adapter does not repair that
 ordering. For more than one string, both `--expect-heads` and `--expect-ri4`
 must pass; otherwise publication is refused. General oracle-free multi-contig
 AGC construction is therefore still unavailable with this front end.
-`--fasta` is recognized but rejected with a conversion instruction because
-its orientation/separator contract is unspecified by this task.
+
+`--fasta` accepts multiple records and wrapped sequence lines. `--fastq`
+accepts four-line records, validates the `@`/`+` headers and equal sequence
+and quality lengths, and discards quality scores after validation. Extraction
+preserves sequence bytes, case, order and orientation, just like `--text`;
+unlike AGC's explicit `--revlines --upper` conversion, it does not reverse or
+uppercase sequences. Supply the desired pilot orientation. LF and CRLF are
+accepted, including a final sequence/quality line without a line terminator.
+Sequence lines accept ASCII letters, `*`, `.` and `-`; blanks, whitespace,
+control bytes, empty records, missing identifiers, truncated FASTQ records and
+invalid quality characters fail before PFP or final publication. FASTQ quality
+bytes must be printable ASCII (`!` through `~`); an optional repeated `+`
+header must match the identifier or full `@` header.
+
+The names member contains one `identifier<TAB>start<TAB>length` row per record,
+in input order. The identifier is the first whitespace-delimited header token;
+descriptions are omitted and duplicate identifiers are retained. Headers must
+be UTF-8 and at most 1 MiB. As in `agc2flat --revlines`, the coordinate is
+`start = total_collection_bytes - 1 - record_stream_offset - sequence_length`.
+Extraction and the names metadata spool use bounded 1 MiB buffers on disk;
+neither a whole sequence nor the collection's names are retained in RAM.
 
 Reproduction tests:
 
@@ -75,8 +104,33 @@ Reproduction tests:
 python3 bit6/test_endpoint_tap.py
 python3 bit6/test_sxi_build.py
 python3 bit6/test_source_battery.py --work /tmp/laneV/new-battery
+python3 bit6/test_sxi_input_modes.py --work /tmp/new-input-modes \
+  --xsa xsa/target/release/xsa
 ```
 
 The tiny suffix-array oracle in `test_endpoint_tap.py` is test-only; no such
 algorithm is used by the production pipeline. The legacy Phi extractor and
 the existing SXI format remain unchanged.
+
+Acceptance (2026-09-27): FASTA and FASTQ each passed five three-record battery
+fixtures (`random-4-2k`, `random-4-20k`, `random-bin-20k`, `random-4-200k`,
+`satellite-18k`). Battery bytes 11..14 were mapped to A/C/G/T before wrapping.
+All five core SXI members (runs/RLBWT, packed tails, heads, anchors, chi), the
+raw RI4/chi files, extracted text and names passed exact byte comparisons.
+The multi-record endpoint gates use the equivalent text's freshly constructed
+endpoints; this establishes input-mode equivalence, not independent BCR order.
+The original binary `random-4-2k --text` passed its existing endpoint/aggregate
+oracles; `--agc` matched all six members of the accepted tiny AGC artifact.
+The committed format regression, CLI regression, 15 valid parser cases and
+25 malformed parser cases passed. Late malformed records published no SXI.
+See `sxi_logs/input-modes/acceptance.log`, `format-regression.log` and
+`cli-regression.log`. Gate peak RSS was 26,624 KiB (individual pipeline stages:
+12,288 KiB), under a 9,000,000 KiB address-space ceiling. The isolated release
+build peaked at 208,896 KiB. Binary and scratch were isolated under
+`/tmp/sxi-input-modes-T3DUT2`; shared executables, k10 processes and k10 scratch
+were untouched, and no commits were made.
+
+An exploratory broader run is retained as `sxi_logs/input-modes/full-battery.log`:
+the DNA-transcoded, three-record `HOR-nested` fixture fails the existing
+`--text` PFP second parse (`A sequence doesn't have w DOLLAR at the end!`).
+No algorithm or existing publication gate was changed to accommodate it.

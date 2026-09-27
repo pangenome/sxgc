@@ -1,0 +1,2 @@
+xsa build: work=/tmp/sxi-input-modes-T3DUT2/acceptance/xsa-build-ic7e_832 log=/tmp/sxgc-laneV/bit6/sxi_logs/input-modes/satellite-18k-text-xsa-build-ic7e_832.jsonl
+{"sxi": "/tmp/sxi-input-modes-T3DUT2/acceptance/satellite-18k-text.sxi", "chi": 323, "work": "/tmp/sxi-input-modes-T3DUT2/acceptance/xsa-build-ic7e_832", "log": "/tmp/sxgc-laneV/bit6/sxi_logs/input-modes/satellite-18k-text-xsa-build-ic7e_832.jsonl"}

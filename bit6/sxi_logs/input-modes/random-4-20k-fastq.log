@@ -1,0 +1,5 @@
+xsa build: work=/tmp/sxi-input-modes-T3DUT2/acceptance/xsa-build-bdo2b0md log=/tmp/sxgc-laneV/bit6/sxi_logs/input-modes/random-4-20k-fastq-xsa-build-bdo2b0md.jsonl
+prepare-fastq: record=1 name=record-1 sequence_bytes=6666 collection_bytes=6667
+prepare-fastq: record=2 name=record-2 sequence_bytes=6667 collection_bytes=13335
+prepare-fastq: record=3 name=record-3 sequence_bytes=6667 collection_bytes=20003
+{"sxi": "/tmp/sxi-input-modes-T3DUT2/acceptance/random-4-20k-fastq.sxi", "chi": 13417, "work": "/tmp/sxi-input-modes-T3DUT2/acceptance/xsa-build-bdo2b0md", "log": "/tmp/sxgc-laneV/bit6/sxi_logs/input-modes/random-4-20k-fastq-xsa-build-bdo2b0md.jsonl"}

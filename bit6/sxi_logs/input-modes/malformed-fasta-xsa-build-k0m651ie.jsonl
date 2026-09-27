@@ -1,0 +1,3 @@
+{"stage": "prepare-fasta", "source": "/tmp/sxi-input-modes-T3DUT2/gates/malformed.fasta", "work": "/tmp/sxi-input-modes-T3DUT2/gates/xsa-build-k0m651ie", "start": 1790513120.5392475}
+{"stage": "prepare-fasta", "record": 1, "name": "ok", "sequence_bytes": 4, "collection_bytes": 5}
+{"stage": "prepare-fasta", "returncode": 1, "error": "fasta record 2: empty sequence"}

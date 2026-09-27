@@ -1,0 +1,2 @@
+xsa build: work=/tmp/sxi-input-modes-T3DUT2/acceptance/xsa-build-m636mcd4 log=/tmp/sxgc-laneV/bit6/sxi_logs/input-modes/random-4-20k-text-xsa-build-m636mcd4.jsonl
+{"sxi": "/tmp/sxi-input-modes-T3DUT2/acceptance/random-4-20k-text.sxi", "chi": 13417, "work": "/tmp/sxi-input-modes-T3DUT2/acceptance/xsa-build-m636mcd4", "log": "/tmp/sxgc-laneV/bit6/sxi_logs/input-modes/random-4-20k-text-xsa-build-m636mcd4.jsonl"}

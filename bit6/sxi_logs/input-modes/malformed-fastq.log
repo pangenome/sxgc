@@ -1,0 +1,4 @@
+xsa build: work=/tmp/sxi-input-modes-T3DUT2/acceptance/xsa-build-38vovfqb log=/tmp/sxgc-laneV/bit6/sxi_logs/input-modes/malformed-fastq-xsa-build-38vovfqb.jsonl
+prepare-fastq: record=1 name=ok sequence_bytes=4 collection_bytes=5
+xsa build: fastq record 2: sequence/quality length mismatch; no final SXI published
+xsa: error: build: pipeline failed: exit status: 1

@@ -1,0 +1,2 @@
+xsa build: work=/tmp/sxi-input-modes-T3DUT2/acceptance/xsa-build-a6t985op log=/tmp/sxgc-laneV/bit6/sxi_logs/input-modes/existing-agc-xsa-build-a6t985op.jsonl
+{"sxi": "/tmp/sxi-input-modes-T3DUT2/acceptance/existing-agc.sxi", "chi": 13559, "work": "/tmp/sxi-input-modes-T3DUT2/acceptance/xsa-build-a6t985op", "log": "/tmp/sxgc-laneV/bit6/sxi_logs/input-modes/existing-agc-xsa-build-a6t985op.jsonl"}

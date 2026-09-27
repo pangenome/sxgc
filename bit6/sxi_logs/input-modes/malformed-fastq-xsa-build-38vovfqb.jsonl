@@ -1,0 +1,3 @@
+{"stage": "prepare-fastq", "source": "/tmp/sxi-input-modes-T3DUT2/acceptance/malformed.fastq", "work": "/tmp/sxi-input-modes-T3DUT2/acceptance/xsa-build-38vovfqb", "start": 1790513280.9233005}
+{"stage": "prepare-fastq", "record": 1, "name": "ok", "sequence_bytes": 4, "collection_bytes": 5}
+{"stage": "prepare-fastq", "returncode": 1, "error": "fastq record 2: sequence/quality length mismatch"}

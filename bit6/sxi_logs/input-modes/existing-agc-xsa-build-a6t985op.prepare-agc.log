@@ -1,0 +1,7 @@
+Loaded archive with 1 samples
+Sample names: ["tiny"]
+[1/1] sample tiny: streamed 20001 bytes, 1 contigs
+TOTAL 20001
+revlines collection: 20001 bytes, 1 strings
+text: /tmp/sxi-input-modes-T3DUT2/acceptance/xsa-build-a6t985op/collection.txt
+names: /tmp/sxi-input-modes-T3DUT2/acceptance/xsa-build-a6t985op/collection.txt.names.tsv

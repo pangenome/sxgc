@@ -1,0 +1,2 @@
+xsa build: work=/tmp/sxi-input-modes-T3DUT2/acceptance/xsa-build-ok4xtf9q log=/tmp/sxgc-laneV/bit6/sxi_logs/input-modes/original-battery-text-xsa-build-ok4xtf9q.jsonl
+{"sxi": "/tmp/sxi-input-modes-T3DUT2/acceptance/original-battery-text.sxi", "chi": 1307, "work": "/tmp/sxi-input-modes-T3DUT2/acceptance/xsa-build-ok4xtf9q", "log": "/tmp/sxgc-laneV/bit6/sxi_logs/input-modes/original-battery-text-xsa-build-ok4xtf9q.jsonl"}

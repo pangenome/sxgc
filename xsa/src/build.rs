@@ -4,15 +4,19 @@ use std::path::PathBuf;
 const USAGE: &str = "usage:
   xsa build --text <collection.txt> -o <out.sxi> [--threads N] [--scratch DIR] [--expect-chi N] [--verbose]
   xsa build --agc <archive.agc> -o <out.sxi> [same options]
+  xsa build --fasta <records.fa> -o <out.sxi> [same options]
+  xsa build --fastq <reads.fq> -o <out.sxi> [same options]
 
 Text uses newline-terminated pilot collection conventions, already oriented.
+FASTA (wrapped lines allowed) and FASTQ (four-line records) extract sequences
+verbatim in input order, one per line; supply already oriented sequences.
+Record identifiers populate the SXI names member. Malformed records fail closed.
 AGC uses agc2flat --revlines --upper, materialized beside its source.
 Stages: PFP (w1=10,p1=100; w2=5,p2=11), endpoint-tap rpfbwt,
 slim streaming aggregates, streamed chi sweep/gate, checked SXI publication.
 Scratch must share the source filesystem. Timings and peak RSS are logged.
 Multi-string inputs require --expect-heads RAW --expect-ri4 FILE byte gates
-because linear PFP ordering is not established as BCR collection ordering.
---fasta is recognized but needs explicit conversion to the collection convention.";
+because linear PFP ordering is not established as BCR collection ordering.";
 
 #[derive(Debug)]
 struct Options {
@@ -32,7 +36,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
     while i < args.len() {
         let flag = &args[i];
         match flag.as_str() {
-            "--agc" | "--fasta" | "--text" | "-o" | "--output" => {
+            "--agc" | "--fasta" | "--fastq" | "--text" | "-o" | "--output" => {
                 i += 1;
                 let value = args.get(i).filter(|s| !s.is_empty() && !s.starts_with('-'))
                     .ok_or_else(|| format!("{flag} requires a path"))?;
@@ -41,7 +45,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
                         return Err("specify the output only once".into());
                     }
                 } else if source.replace((flag[2..].to_string(), PathBuf::from(value))).is_some() {
-                    return Err("choose exactly one of --agc, --fasta, --text".into());
+                    return Err("choose exactly one of --agc, --fasta, --fastq, --text".into());
                 }
             }
             "--threads" | "--scratch" | "--log-dir" | "--expect-chi" | "--expect-heads" | "--expect-ri4" => {
@@ -55,7 +59,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         }
         i += 1;
     }
-    let (kind, input) = source.ok_or("need one of --agc, --fasta, --text")?;
+    let (kind, input) = source.ok_or("need one of --agc, --fasta, --fastq, --text")?;
     let output = output.ok_or("need -o <out.sxi>")?;
     Ok(Options { kind, input, output, verbose, extra })
 }

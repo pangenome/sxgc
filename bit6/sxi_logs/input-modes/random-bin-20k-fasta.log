@@ -1,0 +1,5 @@
+xsa build: work=/tmp/sxi-input-modes-T3DUT2/acceptance/xsa-build-7caxcbro log=/tmp/sxgc-laneV/bit6/sxi_logs/input-modes/random-bin-20k-fasta-xsa-build-7caxcbro.jsonl
+prepare-fasta: record=1 name=record-1 sequence_bytes=6666 collection_bytes=6667
+prepare-fasta: record=2 name=record-2 sequence_bytes=6667 collection_bytes=13335
+prepare-fasta: record=3 name=record-3 sequence_bytes=6667 collection_bytes=20003
+{"sxi": "/tmp/sxi-input-modes-T3DUT2/acceptance/random-bin-20k-fasta.sxi", "chi": 9642, "work": "/tmp/sxi-input-modes-T3DUT2/acceptance/xsa-build-7caxcbro", "log": "/tmp/sxgc-laneV/bit6/sxi_logs/input-modes/random-bin-20k-fasta-xsa-build-7caxcbro.jsonl"}

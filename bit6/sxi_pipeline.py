@@ -3,6 +3,7 @@
 
 Collection input is newline-terminated, already in the pilot orientation.
 AGC preparation uses agc2flat --revlines --upper (one reversed contig/line).
+FASTA/FASTQ extract already oriented sequences verbatim, one per line.
 Scratch defaults beside the input, on the same filesystem; retained for audit.
 """
 import argparse
@@ -23,7 +24,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     source = p.add_mutually_exclusive_group(required=True)
-    for kind in ('text', 'agc', 'fasta'):
+    for kind in ('text', 'agc', 'fasta', 'fastq'):
         source.add_argument('--' + kind)
     p.add_argument('--output', required=True)
     p.add_argument('--threads', type=int, default=8)
@@ -37,14 +38,12 @@ def main():
     a = p.parse_args()
     if not 1 <= a.threads <= 64:
         p.error('--threads must be 1..64')
-    source_path = pathlib.Path(a.text or a.agc or a.fasta).absolute()
+    source_path = pathlib.Path(a.text or a.agc or a.fasta or a.fastq).absolute()
     out = pathlib.Path(a.output).absolute()
     if os.path.lexists(out):
         p.error('output exists: ' + str(out))
     if not source_path.is_file():
         p.error('input must be a regular file')
-    if a.fasta:
-        p.error('--fasta requires an explicit collection preparation convention; use --text or --agc')
     tools = pathlib.Path(os.environ.get('XSA_TOOLS', '/tmp/laneV/tools'))
     pfp = os.environ.get('XSA_PFP', '/home/erikg/pfp/build/pfp++')
     rpf = os.environ.get('XSA_RPFBWT', '/tmp/rpfbwt-sxgc/build-sxgc/rpfbwt')
@@ -93,6 +92,27 @@ def main():
     print(f'xsa build: work={work} log={journal}', file=sys.stderr, flush=True)
     text = source_path
     names = None
+    if a.fasta or a.fastq:
+        from sxi_sequence_input import prepare
+        kind = 'fasta' if a.fasta else 'fastq'
+        stage = 'prepare-' + kind
+        text = work / 'collection.txt'
+        names = work / 'collection.txt.names.tsv'
+        begin = time.monotonic()
+        record(dict(stage=stage, source=str(source_path), work=str(work), start=time.time()))
+        def progress(value):
+            record(dict(stage=stage, **value))
+            print(f'{stage}: record={value["record"]} name={value["name"]} '
+                  f'sequence_bytes={value["sequence_bytes"]} '
+                  f'collection_bytes={value["collection_bytes"]}', file=sys.stderr, flush=True)
+        try:
+            records, size = prepare(kind, source_path, text, names, progress)
+        except (OSError, RuntimeError) as error:
+            record(dict(stage=stage, returncode=1, error=str(error)))
+            raise
+        record(dict(stage=stage, returncode=0, records=records, collection_bytes=size,
+                    wall_seconds=time.monotonic()-begin,
+                    peak_rss_kib=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss))
     if a.agc:
         text = work / 'collection.txt'
         # The committed streamer emits the names sidecar beside this -o path.

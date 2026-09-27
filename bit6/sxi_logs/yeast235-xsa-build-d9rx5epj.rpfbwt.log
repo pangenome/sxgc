@@ -1,0 +1,24 @@
+[2026-09-27 12:47:56.635] [info] Using 8 bytes for computing SA of the dictionary
+[2026-09-27 12:48:53.623] [info] Using 4 bytes for storing SA of the dictionary
+[2026-09-27 12:48:56.018] [info] Elapsed time (s): 59.383218449
+[2026-09-27 12:48:56.323] [info] Using 3 bytes for DA of the dictionary
+[2026-09-27 12:49:14.869] [info] Elapsed time (s): 18.54636652
+[2026-09-27 12:49:14.869] [info] Using 4 bytes for ISA of the dictionary
+[2026-09-27 12:49:31.918] [info] Elapsed time (s): 17.048815239
+[2026-09-27 12:49:31.918] [info] Using 2 bytes for LCP of the dictionary
+[2026-09-27 12:49:53.612] [info] Elapsed time (s): 21.693846653
+[2026-09-27 12:49:53.612] [info] Using 3 bytes for colex id and inverse colex id array of the dictionary
+[2026-09-27 12:49:58.130] [info] Elapsed time (s): 4.518080013
+[2026-09-27 12:49:58.369] [info] Using 8 bytes for computing SA of the dictionary
+[2026-09-27 12:50:03.194] [info] Using 4 bytes for storing SA of the dictionary
+[2026-09-27 12:50:03.310] [info] Elapsed time (s): 4.940966628
+[2026-09-27 12:50:03.324] [info] Using 3 bytes for DA of the dictionary
+[2026-09-27 12:50:03.595] [info] Elapsed time (s): 0.271645898
+[2026-09-27 12:50:03.595] [info] Using 4 bytes for ISA of the dictionary
+[2026-09-27 12:50:04.289] [info] Elapsed time (s): 0.693667033
+[2026-09-27 12:50:04.289] [info] Using 2 bytes for LCP of the dictionary
+[2026-09-27 12:50:05.515] [info] Elapsed time (s): 1.225603553
+[2026-09-27 12:50:05.515] [info] Computing RMQ over LCP of dictionary
+[2026-09-27 12:50:06.011] [info] Elapsed time (s): 0.49641665
+[2026-09-27 12:50:06.011] [info] Using 3 bytes for colex DA of the dictionary
+[2026-09-27 12:50:06.049] [info] Using 3 bytes for colex id and inverse colex id array of the dictionary

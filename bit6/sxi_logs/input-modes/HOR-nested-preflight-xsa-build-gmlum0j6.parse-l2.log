@@ -1,0 +1,48 @@
+[2026-09-27 12:47:18.970] [info] Current Configuration:
+; PFP++
+
+; Integers file to parse.
+int32t="/tmp/sxi-input-modes-T3DUT2/full-battery/xsa-build-gmlum0j6/parse.parse"
+
+; Sliding window size.
+window-size=5
+
+; Modulo used during parsing.
+modulo=11
+
+; Number of threads.
+threads=2
+
+; Temporary files directory.
+tmp-dir="/tmp/sxi-input-modes-T3DUT2/full-battery/xsa-build-gmlum0j6"
+
+; Also output compressed the dictionary.
+compress-dictionary=false
+
+; Use reference parse to avoid re-parsing.
+use-vcf-acceleration=false
+
+; Print out csv containing stats.
+print-statistics=false
+
+; Output count for each dictionary phrase.
+output-occurrences=false
+
+; Output sai array.
+output-sai=false
+
+; Output last array.
+output-last=false
+
+; Convert all non ACGT characters from a VCF or FASTA file to N.
+acgt-only=false
+
+; Verbose output.
+verbose=false
+
+; Version number.
+version=false
+
+[2026-09-27 12:47:18.970] [info] Parsing /tmp/sxi-input-modes-T3DUT2/full-battery/xsa-build-gmlum0j6/parse.parse
+[2026-09-27 12:47:18.970] [error] A sequence doesn't have w DOLLAR at the end!
+[Disk Write (bytes): 0]

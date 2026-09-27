@@ -1,0 +1,52 @@
+[2026-09-27 12:47:50.511] [info] Current Configuration:
+; PFP++
+
+; Integers file to parse.
+int32t="/home/erikg/yeast/xsa-build-d9rx5epj/parse.parse"
+
+; Sliding window size.
+window-size=5
+
+; Modulo used during parsing.
+modulo=11
+
+; Number of threads.
+threads=16
+
+; Temporary files directory.
+tmp-dir="/home/erikg/yeast/xsa-build-d9rx5epj"
+
+; Also output compressed the dictionary.
+compress-dictionary=false
+
+; Use reference parse to avoid re-parsing.
+use-vcf-acceleration=false
+
+; Print out csv containing stats.
+print-statistics=false
+
+; Output count for each dictionary phrase.
+output-occurrences=false
+
+; Output sai array.
+output-sai=false
+
+; Output last array.
+output-last=false
+
+; Convert all non ACGT characters from a VCF or FASTA file to N.
+acgt-only=false
+
+; Verbose output.
+verbose=false
+
+; Version number.
+version=false
+
+[2026-09-27 12:47:50.512] [info] Parsing /home/erikg/yeast/xsa-build-d9rx5epj/parse.parse
+[2026-09-27 12:47:51.971] [info] Main parser: Replacing hash values with ranks.
+[2026-09-27 12:47:53.515] [info] Main parser: writing dictionary on disk NOT COMPRESSED
+[2026-09-27 12:47:53.848] [info] No properties requested.
+[2026-09-27 12:47:53.848] [info] Main parser: closed
+[2026-09-27 12:47:53.967] [info] Parser Integers -	Parse size: 3067773	Dic Size: 1313677 Dic Total Length: 97605192
+[Disk Write (bytes): 139673180]

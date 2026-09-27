@@ -1,0 +1,33 @@
+{
+  "status": "PASS",
+  "modes": [
+    "fasta",
+    "fastq"
+  ],
+  "multi_record_member_gates": 10,
+  "parser_valid": 15,
+  "parser_invalid": 25,
+  "format_regression": "PASS",
+  "cli_regression": "PASS",
+  "text_regression": "PASS",
+  "agc_regression": "PASS",
+  "gate_peak_rss_kib": 26624,
+  "build_peak_rss_kib": 208896,
+  "address_space_limit_kib": 9000000,
+  "binary": "/tmp/sxi-input-modes-T3DUT2/target/release/xsa",
+  "scratch": "/tmp/sxi-input-modes-T3DUT2/acceptance",
+  "orientation": "FASTA/FASTQ preserve sequence bytes, case and orientation like --text",
+  "retained_constraints": [
+    "multi-string endpoint byte gates",
+    "existing PFP limitations"
+  ],
+  "exploratory_failure": "full-battery.log: DNA-transcoded three-record HOR-nested fails --text parse-l2",
+  "files_sha256": {
+    "xsa/src/build.rs": "eb8b5f70e7cbc08fa2029b616243a0af28c614acd752cef363652c46bc4f6b95",
+    "bit6/sxi_pipeline.py": "561ec9a35a1142c89d7d366a2a2c8f40cc669080aa285a0229c4c570f98b5c92",
+    "bit6/sxi_sequence_input.py": "5f7745343f9d9a0472626761f2f2154305545d45d0ff04c0fac92b4be6c6ca82",
+    "bit6/test_sxi_input_modes.py": "bfe67260ce9926014e88e0ef1207aa1b6c5c0771dfbeb8cac15956e286c7e47d",
+    "bit6/test_sxi_build.py": "6c86aef76e4646128ad4cc123574409bc17e11c6bdddcadcbd41da215909cdfd",
+    "bit6/SXI_BUILD.md": "140aede74bba0a3df895aa7a858bd987aa696a6b59e49017f9b24e5e7e14fd9c"
+  }
+}

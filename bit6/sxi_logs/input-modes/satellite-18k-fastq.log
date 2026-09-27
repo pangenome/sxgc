@@ -1,0 +1,5 @@
+xsa build: work=/tmp/sxi-input-modes-T3DUT2/acceptance/xsa-build-mk3_b27m log=/tmp/sxgc-laneV/bit6/sxi_logs/input-modes/satellite-18k-fastq-xsa-build-mk3_b27m.jsonl
+prepare-fastq: record=1 name=record-1 sequence_bytes=6166 collection_bytes=6167
+prepare-fastq: record=2 name=record-2 sequence_bytes=6167 collection_bytes=12335
+prepare-fastq: record=3 name=record-3 sequence_bytes=6167 collection_bytes=18503
+{"sxi": "/tmp/sxi-input-modes-T3DUT2/acceptance/satellite-18k-fastq.sxi", "chi": 323, "work": "/tmp/sxi-input-modes-T3DUT2/acceptance/xsa-build-mk3_b27m", "log": "/tmp/sxgc-laneV/bit6/sxi_logs/input-modes/satellite-18k-fastq-xsa-build-mk3_b27m.jsonl"}

@@ -1,0 +1,1 @@
+PASS packed widths 2..64, nonempty anchors/names, virtual-end chi, empty/stage chi, overwrite, duplicate chi, singleton mismatch, malformed metadata/members
