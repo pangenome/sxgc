@@ -1401,3 +1401,30 @@ tooling. No chain ever needs a walk.
 
 EXTRACTOR GATE: k10's walk-derived head-sa sidecar (on disk) is the
 BYTE-IDENTITY gate for the phi^-1 extractor before it touches 466.
+
+## 2026-09-27 — THE WELD IS CLOSED + PHI-INVERSE PROVEN (correctness lane)
+
+lean/SxgcPhi.lean (19 theorems, 0 sorries, axioms = standard trio):
+headFromTail (THE EXTRACTOR'S CORE LEMMA: adjacent BWT rows -> head
+position = phiInv(previous tail position) — the SA-successor algebra),
+phiInv_phi (permutation inverse law), list-level interval-lookup
+correctness (the extractor's binary-search semantics at the function
+level). Phi battery: 0 mismatches across 381 positions.
+
+THE WELD DIFFERENTIAL (the verification-ladder rung from the user's
+original Lean-first directive — now EXECUTED AND GREEN): the executable
+Lean reference (parseChi machinery, #eval) vs the Rust slim pipeline on
+the 8 battery texts: 8/8 FULL WITNESS AGREEMENTS (sorted-list equality,
+multiplicity preserved — stronger than set equality), aggregate files
+byte-identical, coordinate conversion documented. "The implementation
+follows the proven model" is now a GATE RESULT, not a claim.
+
+Honest scope: the compiled binary-search refinement stays outside the
+proof scope (differential-gated as always); the list-level semantics
+are proven. Protected files (Sxgc/SxgcBuild/SxgcBounds) unchanged.
+
+FORMAL LEDGER NOW: characterization, validity, scan=FM, parse weld,
+LCE composition, capstone (conditional on named O1-O4), determinism,
+bounds with constants, hash-scheme weld, phi-inverse extractor, AND
+the implementation-vs-model differential — all green. OPEN: O1,
+minimality (O2-O4 outright), O2_bounded, chi-necessity lower bound.
