@@ -1481,3 +1481,8 @@ SEQUENCING DIRECTIVE (user, supersedes the sunk-artifact 466 route):
 3. THEN 466 fully from scratch in .sxi from the AGC stream (the
    running h466rl_pfp parse feeds it — same bytes). chi == 2,249,968,075.
 The 466 milestone IS the pure build; no inherited-artifact shortcut.
+
+## ACCEPTANCE TEST DIRECTIVE (user, 2026-09-27): xsa build is tested by
+## running it at ALL THREE SCALES in exactly its final UX form (text/AGC
+## input -> .sxi), supervisor-gated against the production oracles:
+## yeast (chi 85,404,240), k10 (1,627,063,183), 466 (2,249,968,075).
