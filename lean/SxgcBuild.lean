@@ -37,18 +37,13 @@ particular correction #3 — `lce_support` is Θ(P + dict)):
    reduction theorems; the unconditional scan≡χ equivalence remains the
    named open obligation, exactly as in `Sxgc`).
 
-4. **Fingerprint LCE** (`krs`, `chunkHash`, `fpParseLCE`): the sampled
-   Karp-Rabin scheme on the phrase-id sequence — grid-aligned chunk hashes
-   from τ-spaced suffix hashes, O(1) per jump, direct reads for the ≤τ
-   boundary.  Deterministic statements only: `VerifiedLCE` (two-sided, no
-   hash assumption), and `fpParseLCE_correct` under the explicit
-   no-false-equality hypothesis `chunkHashGood` (verified per-instance by
-   eval).  Step counts are explicit (`fpSteps`, `textLCESteps`) with proven
-   O-bounds.
+4. **Bounds and fingerprints** live in the importing `SxgcBounds.lean`:
+   branch-faithful instrumentation, explicit primitive-cost inequalities,
+   sampled suffix hash algebra, a full-prefix + boundary verifier, and
+   functional substitution into this reference. See its HANDOFF for scope.
 
-5. **Executable gates** (`#eval`): battery agreement including a
-   duplicates-heavy family (the duplicates text has caught two false greens),
-   fingerprint-vs-brute LCE differentials, and step-count sanity.
+5. **Executable gates** live in `BuildEval.lean` (unchanged reference
+   gates), `BoundsEval.lean`, and `O2Eval.lean`.
 
 Proof hygiene: NO `native_decide` (house rule: flagship theorems admit only
 `propext`/`Classical.choice`/`Quot.sound`); no modification to `Sxgc.lean`.
@@ -1264,6 +1259,15 @@ theorem VerifiedLCE_determinism (T : Text) (P : Parse) (hWF : ParseWF P T)
     (hf : T.length - i ≤ fuel) :
     textLCEvia P T fuel i j = lcpOf (T.drop i) (T.drop j) :=
   textLCEvia_correct P T hWF fuel i j hf hi hj
+
+/-! ### HANDOFF addendum (laneR, 2026-09-27)
+
+The committed reference implementation and proofs below this module's
+header are unchanged. New work imports it in SxgcBounds.lean; see that
+module's HANDOFF for bounds, fingerprint substitution, O2 adjudication,
+validation commands, and explicit limitations. No claims in the historical
+laneP handoff below should be read as the current laneR status.
+-/
 
 /-! ### HANDOFF (laneP state at end of this segment)
 

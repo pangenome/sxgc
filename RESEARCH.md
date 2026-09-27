@@ -1280,3 +1280,71 @@ entropy, sigma=207, no mega-runs, short natural-text LCEs — the
 opposite stress from satellites). PLAN when its turn comes: slice-first
 (50-100 GB slice, one day) to measure r/n, P, dict on real pile text
 BEFORE any full-scale commitment — the syng lesson, generalized.
+
+## 2026-09-26 — THE LEAN REFERENCE IMPLEMENTATION LANDS: the construction
+## capstone PROVEN (kernel-verified; the "proof of it" delivered)
+
+lean/SxgcBuild.lean (1,324 lines, 0 sorries, 0 native_decide) — the full
+chain, axioms = propext/Classical.choice/Quot.sound on every theorem
+(supervisor-audited):
+- textLCEvia_correct: the LCE composition theorem — parse-space phrase-
+  walk-with-id-jumps = ground-truth lcpOf on any well-formed parse.
+- parseTriplesOf_eq: the parse-built triples stream IS triplesOf T —
+  THE CONSTRUCTION WELD.
+- parseScan_eq: the parse-based scan = the production scan.
+- parseChi_eq (CAPSTONE): (parse scan).length = chi T, conditional on
+  the four named pillars as EXPLICIT hypotheses (hcover=O1, hnd=O2,
+  hmax=O3, hdisj=O4) — the honest conditional form: given the open
+  pillars, the parse-space construction computes chi. Not hidden,
+  named.
+- VerifiedLCE_determinism: the named two-sided determinism wrapper.
+lean/BuildEval.lean: the differential battery — 45 runs (15 texts x
+k in {2,3,5}), parse-triples = triplesOf TRUE, parse-scan = scan TRUE,
+|parse-chi| = chi oracle TRUE, negative control (wrong parse) FALSE
+(non-vacuity). Mandatory duplicates text included. GLM also fixed a
+real fuel-wiring flaw in the executable during the proof (mutual-def
+lexicographic termination; supervisor-reviewed at ~line 860).
+
+HONEST NOT-STARTED (next formal lane's queue): (1) step-count bounds
+for textLCEvia/textLCEwalk — the work-accounting inequality whose
+measured side we already have (15.33 phrases/seed avg, 22,262 max);
+(2) the fingerprint-hash section (krs/chunkHash/fpParseLCE) — the
+Rust oracle is now textLCEvia, only hash plumbing remains; (3) O2
+adjudication (Nodup below saturation). In-Lean chi oracle = the
+powerset minimality oracle (tiny texts only; scale oracle stays Rust/
+sA — documented in HANDOFF).
+
+## 2026-09-26 — BOUNDS PROVEN (astra lane): explicit step accounting
+## with constants; the hash-scheme weld; O2 adjudicated with warrant
+
+lean/SxgcBounds.lean (+ BoundsEval/BoundsAxioms/O2Eval): 32 kernel-
+checked theorems, 0 sorries, axioms restricted to
+propext/Classical.choice/Quot.sound (supervisor-audited from main tree).
+
+THE BOUNDS THEOREMS (the retired O(tau) claim's honest replacement):
+- explicit indexed-primitive step accounting over the reference
+  implementation; reference per-query constant 8, total-work constant 16;
+  fingerprint-scheme per-query constant 12, total-work constant 24 —
+  bounds of the shape C*(1 + tau + l_i) per query with the verification
+  length l_i EXPLICIT (correction #4's honest form, now a theorem).
+- numerical spot checks pass (e.g. answer 12, steps 112, bound 180).
+- HASH-SUBSTITUTION WELD: the sampled-hash + direct-read-verification
+  scheme = the proven textLCEvia oracle, hash kept abstract (the SCHEME
+  is proven, not a hash function). The Rust LCE primitive's semantics
+  are now welded: Rust = Lean scheme = proven oracle.
+
+O2 ADJUDICATION (statement-lock, with warrant): 729/729 bounded
+battery entries (127 distinct texts), ZERO Nodup violations below
+saturation; the saturation witness reproduces (duplicate emissions
+above MAXINT). O2_bounded (hsat side-condition) is LOCKED as the
+successor statement per house rules — remains OPEN (unproved), named
+honestly. Note (lane's own residual): saturation refutes arbitrary-
+stream Nodup; a TEXT-DERIVED counterexample for unbounded O2 is not
+established — the retired-false record says "presumably false"; the
+measured warrant covers the bounded form only.
+
+HONEST SCOPE (lane-recorded): bounds are indexed-primitive accounting
+(not Lean list runtime); fixed-block jumps modeled (production uses
+binary search); reference counts not proved identical to yeast
+telemetry; compiled C++/Rust refinement bridges remain the weld's
+differential half.
