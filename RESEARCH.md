@@ -1459,3 +1459,25 @@ The extractor (bit6/phi_inverse_heads.cpp, -fopenmp): mines the sunk
 lcp_index's O(r) phi table, sorted-image binary search, O(log r)/head.
 Files: phi_inverse_check.py, phi_inverse_pipeline.py, README,
 ACCEPTANCE, gate logs.
+
+## 2026-09-27 — FORMAT DECISION + SEQUENCING DIRECTIVE (user): .sxi, and
+## the from-scratch ladder — k10 then 466, from the AGC stream, in-format
+
+NAME: .ri5 was the wrong name (r-index lineage, component-named). THE
+FORMAT IS .sxi — "suffixient index", magic SXI1, VERSIONED INTERNALLY so
+the filename never changes again. ONE FILE: RLBWT + run table + head &
+tail SA samples + anchors + the delta-compressed chi set. The .ri4
+family stays loadable (pilot-era artifacts); everything born after the
+format lane writes .sxi.
+
+SEQUENCING DIRECTIVE (user, supersedes the sunk-artifact 466 route):
+1. Fix the format: front-end .ssa HEAD+TAIL emission (r-pfbwt,
+   localized per the audit) + the .sxi container writer + the xsa
+   .sxi loader. [astra engineering lane]
+2. THEN k10 FULLY FROM SCRATCH in .sxi format, from the AGC stream —
+   the complete one-pass recipe at 30 GB: front-end -> .sxi -> slim ->
+   chi == 1,627,063,183. This is ALSO the RAM slice-measurement for
+   the PFP-BWT build profile before the 466 commitment.
+3. THEN 466 fully from scratch in .sxi from the AGC stream (the
+   running h466rl_pfp parse feeds it — same bytes). chi == 2,249,968,075.
+The 466 milestone IS the pure build; no inherited-artifact shortcut.
