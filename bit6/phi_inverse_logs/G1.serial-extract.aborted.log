@@ -1,0 +1,25 @@
+PHI_META n=30151407545 intervals=1859825807 offset=25805083138 bits_per_interval=87 image_bytes=44635819368 threads=64
+Command terminated by signal 15
+	Command being timed: "/tmp/laneS/phi_inverse_heads /mnt/nvme3n1/erikg/sxgc-pilot/k10/h10rt.lcp_index.lcp_index /mnt/nvme3n1/erikg/sxgc-pilot/k10/h10new2.ri4 /tmp/laneS/h10.phi.head_sa 64"
+	User time (seconds): 791.36
+	System time (seconds): 191.43
+	Percent of CPU this job got: 98%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 16:38.01
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 63250932
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 100270
+	Minor (reclaiming a frame) page faults: 29409104
+	Voluntary context switches: 100306
+	Involuntary context switches: 1451
+	Swaps: 0
+	File system inputs: 39500672
+	File system outputs: 8
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

@@ -1,0 +1,86 @@
+PHI_META n=30151407545 intervals=1859825807 offset=25805083138 bits_per_interval=87 image_bytes=44635819368 threads=64
+PHI_PHASE decode-images elapsed=66.728275 peak_kib=63246900
+PHI_PHASE sort-images elapsed=348.072965 peak_kib=63246900
+PHI_PHASE validate-permutation elapsed=385.637391 peak_kib=63246900
+RI4_META n=30151407545 runs=1859825801 sample_width=35
+PHI_PROGRESS heads=1048576/1859825801
+PHI_PHASE query elapsed=386.286937 peak_kib=63246900
+PHI_PROGRESS heads=68157440/1859825801
+PHI_PHASE query elapsed=411.820081 peak_kib=63246900
+PHI_PROGRESS heads=135266304/1859825801
+PHI_PHASE query elapsed=431.131324 peak_kib=63246900
+PHI_PROGRESS heads=202375168/1859825801
+PHI_PHASE query elapsed=450.906841 peak_kib=63246900
+PHI_PROGRESS heads=269484032/1859825801
+PHI_PHASE query elapsed=471.303389 peak_kib=63246900
+PHI_PROGRESS heads=336592896/1859825801
+PHI_PHASE query elapsed=484.746465 peak_kib=63246900
+PHI_PROGRESS heads=403701760/1859825801
+PHI_PHASE query elapsed=496.359325 peak_kib=63246900
+PHI_PROGRESS heads=470810624/1859825801
+PHI_PHASE query elapsed=507.168131 peak_kib=63246900
+PHI_PROGRESS heads=537919488/1859825801
+PHI_PHASE query elapsed=517.966469 peak_kib=63246900
+PHI_PROGRESS heads=605028352/1859825801
+PHI_PHASE query elapsed=529.175096 peak_kib=63246900
+PHI_PROGRESS heads=672137216/1859825801
+PHI_PHASE query elapsed=540.549691 peak_kib=63246900
+PHI_PROGRESS heads=739246080/1859825801
+PHI_PHASE query elapsed=551.989673 peak_kib=63246900
+PHI_PROGRESS heads=806354944/1859825801
+PHI_PHASE query elapsed=563.558833 peak_kib=63246900
+PHI_PROGRESS heads=873463808/1859825801
+PHI_PHASE query elapsed=574.738010 peak_kib=63246900
+PHI_PROGRESS heads=940572672/1859825801
+PHI_PHASE query elapsed=585.800964 peak_kib=63246900
+PHI_PROGRESS heads=1007681536/1859825801
+PHI_PHASE query elapsed=603.684565 peak_kib=63246900
+PHI_PROGRESS heads=1074790400/1859825801
+PHI_PHASE query elapsed=619.269931 peak_kib=63246900
+PHI_PROGRESS heads=1141899264/1859825801
+PHI_PHASE query elapsed=631.051178 peak_kib=63246900
+PHI_PROGRESS heads=1209008128/1859825801
+PHI_PHASE query elapsed=642.404145 peak_kib=63246900
+PHI_PROGRESS heads=1276116992/1859825801
+PHI_PHASE query elapsed=653.626547 peak_kib=63246900
+PHI_PROGRESS heads=1343225856/1859825801
+PHI_PHASE query elapsed=664.101106 peak_kib=63246900
+PHI_PROGRESS heads=1410334720/1859825801
+PHI_PHASE query elapsed=674.747190 peak_kib=63246900
+PHI_PROGRESS heads=1477443584/1859825801
+PHI_PHASE query elapsed=684.900231 peak_kib=63246900
+PHI_PROGRESS heads=1544552448/1859825801
+PHI_PHASE query elapsed=694.597587 peak_kib=63246900
+PHI_PROGRESS heads=1611661312/1859825801
+PHI_PHASE query elapsed=705.977576 peak_kib=63246900
+PHI_PROGRESS heads=1678770176/1859825801
+PHI_PHASE query elapsed=715.862386 peak_kib=63246900
+PHI_PROGRESS heads=1745879040/1859825801
+PHI_PHASE query elapsed=727.189366 peak_kib=63246900
+PHI_PROGRESS heads=1812987904/1859825801
+PHI_PHASE query elapsed=737.386037 peak_kib=63246900
+PHI_PHASE complete elapsed=743.975499 peak_kib=63246900
+PHI_PASS all_values_in_range=1 permutation_validated=1 lf_steps=0 heads=1859825801
+	Command being timed: "/tmp/laneS/phi_inverse_heads /mnt/nvme3n1/erikg/sxgc-pilot/k10/h10rt.lcp_index.lcp_index /mnt/nvme3n1/erikg/sxgc-pilot/k10/h10new2.ri4 /tmp/laneS/h10.phi.head_sa 64"
+	User time (seconds): 18200.37
+	System time (seconds): 944.45
+	Percent of CPU this job got: 2547%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 12:31.48
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 63246900
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 99336
+	Minor (reclaiming a frame) page faults: 108204540
+	Voluntary context switches: 297750
+	Involuntary context switches: 43229
+	Swaps: 0
+	File system inputs: 15895248
+	File system outputs: 29059904
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

@@ -1,0 +1,24 @@
+PASS all 2739735806 heads < n=1403221068481; anchor head_checks=37760 tail_checks=37760 interior_unchecked=239 anchors=38790
+	Command being timed: "python3 /tmp/sxgc-laneS/bit6/phi_inverse_check.py anchors /mnt/nvme3n1/erikg/sxgc-pilot/k466/h466.ri4 /tmp/laneS/h466.head_sa /mnt/nvme3n1/erikg/sxgc-pilot/k466/h466.anchors"
+	User time (seconds): 208.95
+	System time (seconds): 25.26
+	Percent of CPU this job got: 103%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 3:45.80
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 33578932
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 3
+	Minor (reclaiming a frame) page faults: 666991
+	Voluntary context switches: 291
+	Involuntary context switches: 337
+	Swaps: 0
+	File system inputs: 21406008
+	File system outputs: 8
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

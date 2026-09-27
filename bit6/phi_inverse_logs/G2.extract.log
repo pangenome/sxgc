@@ -1,0 +1,112 @@
+PHI_META n=1403221068481 intervals=2739736836 offset=40411118394 bits_per_interval=98 image_bytes=65753684064 threads=64
+PHI_PHASE decode-images elapsed=125.069154 peak_kib=96919004
+PHI_PHASE sort-images elapsed=316.082344 peak_kib=96919004
+PHI_PHASE validate-permutation elapsed=394.292322 peak_kib=96919004
+RI4_META n=1403221068481 runs=2739735806 sample_width=41
+PHI_PROGRESS heads=1048576/2739735806
+PHI_PHASE query elapsed=394.945597 peak_kib=96919004
+PHI_PROGRESS heads=68157440/2739735806
+PHI_PHASE query elapsed=430.234019 peak_kib=96919004
+PHI_PROGRESS heads=135266304/2739735806
+PHI_PHASE query elapsed=445.948862 peak_kib=96919004
+PHI_PROGRESS heads=202375168/2739735806
+PHI_PHASE query elapsed=458.942573 peak_kib=96919004
+PHI_PROGRESS heads=269484032/2739735806
+PHI_PHASE query elapsed=472.178512 peak_kib=96919004
+PHI_PROGRESS heads=336592896/2739735806
+PHI_PHASE query elapsed=483.939220 peak_kib=96919004
+PHI_PROGRESS heads=403701760/2739735806
+PHI_PHASE query elapsed=495.736324 peak_kib=96919004
+PHI_PROGRESS heads=470810624/2739735806
+PHI_PHASE query elapsed=506.723730 peak_kib=96919004
+PHI_PROGRESS heads=537919488/2739735806
+PHI_PHASE query elapsed=516.975843 peak_kib=96919004
+PHI_PROGRESS heads=605028352/2739735806
+PHI_PHASE query elapsed=527.269138 peak_kib=96919004
+PHI_PROGRESS heads=672137216/2739735806
+PHI_PHASE query elapsed=537.277844 peak_kib=96919004
+PHI_PROGRESS heads=739246080/2739735806
+PHI_PHASE query elapsed=546.259112 peak_kib=96919004
+PHI_PROGRESS heads=806354944/2739735806
+PHI_PHASE query elapsed=555.698161 peak_kib=96919004
+PHI_PROGRESS heads=873463808/2739735806
+PHI_PHASE query elapsed=564.998051 peak_kib=96919004
+PHI_PROGRESS heads=940572672/2739735806
+PHI_PHASE query elapsed=573.770806 peak_kib=96919004
+PHI_PROGRESS heads=1007681536/2739735806
+PHI_PHASE query elapsed=582.804298 peak_kib=96919004
+PHI_PROGRESS heads=1074790400/2739735806
+PHI_PHASE query elapsed=591.655926 peak_kib=96919004
+PHI_PROGRESS heads=1141899264/2739735806
+PHI_PHASE query elapsed=600.339274 peak_kib=96919004
+PHI_PROGRESS heads=1209008128/2739735806
+PHI_PHASE query elapsed=609.023054 peak_kib=96919004
+PHI_PROGRESS heads=1276116992/2739735806
+PHI_PHASE query elapsed=617.750391 peak_kib=96919004
+PHI_PROGRESS heads=1343225856/2739735806
+PHI_PHASE query elapsed=626.432859 peak_kib=96919004
+PHI_PROGRESS heads=1410334720/2739735806
+PHI_PHASE query elapsed=635.013746 peak_kib=96919004
+PHI_PROGRESS heads=1477443584/2739735806
+PHI_PHASE query elapsed=643.792669 peak_kib=96919004
+PHI_PROGRESS heads=1544552448/2739735806
+PHI_PHASE query elapsed=652.573240 peak_kib=96919004
+PHI_PROGRESS heads=1611661312/2739735806
+PHI_PHASE query elapsed=662.518997 peak_kib=96919004
+PHI_PROGRESS heads=1678770176/2739735806
+PHI_PHASE query elapsed=671.452491 peak_kib=96919004
+PHI_PROGRESS heads=1745879040/2739735806
+PHI_PHASE query elapsed=680.146251 peak_kib=96919004
+PHI_PROGRESS heads=1812987904/2739735806
+PHI_PHASE query elapsed=688.622811 peak_kib=96919004
+PHI_PROGRESS heads=1880096768/2739735806
+PHI_PHASE query elapsed=697.183635 peak_kib=96919004
+PHI_PROGRESS heads=1947205632/2739735806
+PHI_PHASE query elapsed=706.884531 peak_kib=96919004
+PHI_PROGRESS heads=2014314496/2739735806
+PHI_PHASE query elapsed=716.160196 peak_kib=96919004
+PHI_PROGRESS heads=2081423360/2739735806
+PHI_PHASE query elapsed=725.564347 peak_kib=96919004
+PHI_PROGRESS heads=2148532224/2739735806
+PHI_PHASE query elapsed=735.169083 peak_kib=96919004
+PHI_PROGRESS heads=2215641088/2739735806
+PHI_PHASE query elapsed=744.652910 peak_kib=96919004
+PHI_PROGRESS heads=2282749952/2739735806
+PHI_PHASE query elapsed=754.024326 peak_kib=96919004
+PHI_PROGRESS heads=2349858816/2739735806
+PHI_PHASE query elapsed=763.235885 peak_kib=96919004
+PHI_PROGRESS heads=2416967680/2739735806
+PHI_PHASE query elapsed=772.337224 peak_kib=96919004
+PHI_PROGRESS heads=2484076544/2739735806
+PHI_PHASE query elapsed=781.107001 peak_kib=96919004
+PHI_PROGRESS heads=2551185408/2739735806
+PHI_PHASE query elapsed=790.013938 peak_kib=96919004
+PHI_PROGRESS heads=2618294272/2739735806
+PHI_PHASE query elapsed=800.317424 peak_kib=96919004
+PHI_PROGRESS heads=2685403136/2739735806
+PHI_PHASE query elapsed=809.238470 peak_kib=96919004
+PHI_PHASE complete elapsed=817.010098 peak_kib=96919004
+PHI_PASS all_values_in_range=1 permutation_validated=1 lf_steps=0 heads=2739735806
+	Command being timed: "/tmp/laneS/phi_inverse_heads /mnt/nvme3n1/erikg/sxgc-pilot/k466/h466rt.lcp_index.lcp_index /mnt/nvme3n1/erikg/sxgc-pilot/k466/h466.ri4 /tmp/laneS/h466.head_sa 64"
+	User time (seconds): 23115.76
+	System time (seconds): 1095.00
+	Percent of CPU this job got: 2918%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 13:49.65
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 96919004
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 148885
+	Minor (reclaiming a frame) page faults: 111783978
+	Voluntary context switches: 422706
+	Involuntary context switches: 51504
+	Swaps: 0
+	File system inputs: 27424888
+	File system outputs: 42808520
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

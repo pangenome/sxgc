@@ -1433,3 +1433,29 @@ minimality (O2-O4 outright), O2_bounded, chi-necessity lower bound.
 ## errors and bugs; job-running and gate management = glm-5.3 / flash
 ## models. (Matches the evidence: astra excelled at design-judgment work;
 ## process-running is cheap-model territory.)
+
+## 2026-09-27 — PHI-INVERSE EXTRACTOR: ALL GATES GREEN AT ALL THREE
+## SCALES; YEAST IS THE FIRST-EVER WALK-FREE SOUP-TO-NUTS CORPUS
+
+SUPERVISOR-VERIFIED (main-tree rebuild; supervisor initially raised a
+FALSE ALARM on the baseline column by misreading the .agg as row-major
+— it is COLUMN-MAJOR: 12-byte header + four 8R columns; corrected and
+confirmed):
+- YEAST (G0): THE FIRST COMPLETE WALK-FREE RUN — phi^-1 sidecar ->
+  slim dump -> streamed sweep -> chi = 85,404,240, numpy witness
+  equality, ZERO LF steps, head byte-identity vs the walk-derived
+  saFirst column (100,904,881 values, supervisor-cmp'd).
+- K10 (G1): ALL 1,859,825,801 heads BYTE-IDENTICAL to the walk-derived
+  sidecar — 751 s / 64.8 GB (vs the walk's 38 h: 165x, no O(n)).
+- 466 (G2): all 2,739,735,806 heads in range, 38,551 boundary anchors
+  matched (239 interior unchecked — noted), 830 s / 99 GB.
+  h466.head_sa EXISTS at /tmp/laneS/h466.head_sa — the 466 slim run's
+  position input is READY; only the parse remains.
+- G3 correctly skipped (parse incomplete; pfp++ untouched).
+- .ssa audit: localized HEAD+TAIL front-end emission change is
+  feasible (the permanent from-scratch fix — queued engineering).
+
+The extractor (bit6/phi_inverse_heads.cpp, -fopenmp): mines the sunk
+lcp_index's O(r) phi table, sorted-image binary search, O(log r)/head.
+Files: phi_inverse_check.py, phi_inverse_pipeline.py, README,
+ACCEPTANCE, gate logs.

@@ -1,0 +1,34 @@
+PHI_META n=3336986760 intervals=100904881 offset=1185632418 bits_per_interval=81 image_bytes=2421717144 threads=32
+PHI_PHASE decode-images elapsed=22.773545 peak_kib=3362784
+PHI_PHASE sort-images elapsed=25.694739 peak_kib=3362784
+PHI_PHASE validate-permutation elapsed=25.947892 peak_kib=3362784
+RI4_META n=3336986760 runs=100904881 sample_width=32
+PHI_PROGRESS heads=1048576/100904881
+PHI_PHASE query elapsed=26.124081 peak_kib=3362784
+PHI_PROGRESS heads=68157440/100904881
+PHI_PHASE query elapsed=38.707969 peak_kib=3362784
+PHI_PHASE complete elapsed=44.199157 peak_kib=3362784
+PHI_PASS all_values_in_range=1 permutation_validated=1 lf_steps=0 heads=100904881
+	Command being timed: "/tmp/laneS/phi_inverse_heads /mnt/nvme3n1/erikg/sxgc-yeast/grl/yp2t.lcp_index.lcp_index /tmp/laneQ/pass3/yp2real.ri4 /tmp/laneS/yp2.phi.head_sa 32"
+	User time (seconds): 485.51
+	System time (seconds): 12.61
+	Percent of CPU this job got: 1120%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:44.46
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 3362784
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 7050
+	Minor (reclaiming a frame) page faults: 1284899
+	Voluntary context switches: 12664
+	Involuntary context switches: 863
+	Swaps: 0
+	File system inputs: 2730376
+	File system outputs: 1576656
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

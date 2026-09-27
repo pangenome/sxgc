@@ -1,0 +1,27 @@
+2026-09-27T02:14:08Z START G0.agg-diagnostic: cmp /tmp/laneS/yeast.phi.agg /tmp/laneY/yeast_pfp2.agg
+2026-09-27T02:14:13Z END G0.agg-diagnostic: {'exit': 0, 'wall_seconds': 4.634478298947215}
+2026-09-27T02:14:13Z START G0.sweep: /tmp/sxgc-laneS/xsa/target/release/xsa chi-rspace --stream-agg --ri4 /tmp/laneQ/pass3/yp2real.ri4 --agg /tmp/laneS/yeast.phi.agg -o /tmp/laneS/yeast.phi.sA
+2026-09-27T02:14:26Z END G0.sweep: {'exit': 0, 'wall_seconds': 13.493142411927693}
+2026-09-27T02:14:26Z START G0.sets: python3 /tmp/sxgc-laneS/bit6/phi_inverse_check.py sets /tmp/laneS/yeast.phi.sA /mnt/nvme3n1/erikg/sxgc-yeast/grl/chi_yeast_pfp2.sA 85404240 /tmp/laneS/yeast-sets
+2026-09-27T02:14:48Z END G0.sets: {'exit': 0, 'wall_seconds': 21.872855060035363}
+2026-09-27T02:14:48Z G0 PASS END-TO-END chi=85404240 witness sorted-set equality=True
+2026-09-27T02:14:48Z START G1.extract: /tmp/laneS/phi_inverse_heads /mnt/nvme3n1/erikg/sxgc-pilot/k10/h10rt.lcp_index.lcp_index /mnt/nvme3n1/erikg/sxgc-pilot/k10/h10new2.ri4 /tmp/laneS/h10.phi.head_sa 64
+2026-09-27T02:31:26Z END G1.extract: {'exit': 143, 'wall_seconds': 998.0201682680054}
+Traceback (most recent call last):
+  File "/tmp/sxgc-laneS/bit6/phi_inverse_pipeline.py", line 50, in <module>
+    run('G1.extract', [EXTRACT, K10/'h10rt.lcp_index.lcp_index', K10/'h10new2.ri4', OUT/'h10.phi.head_sa', '64'])
+  File "/tmp/sxgc-laneS/bit6/phi_inverse_pipeline.py", line 35, in run
+    raise RuntimeError(f'STOP: gate {name} failed; see {LOG/(name+".log")}')
+RuntimeError: STOP: gate G1.extract failed; see /tmp/sxgc-laneS/bit6/phi_inverse_logs/G1.extract.log
+2026-09-27T02:31:55Z RESUME G1 after parallel decoder re-gate: yeast heads byte-identical; retained successful G0 end-to-end result
+2026-09-27T02:31:55Z START G1.extract: /tmp/laneS/phi_inverse_heads /mnt/nvme3n1/erikg/sxgc-pilot/k10/h10rt.lcp_index.lcp_index /mnt/nvme3n1/erikg/sxgc-pilot/k10/h10new2.ri4 /tmp/laneS/h10.phi.head_sa 64
+2026-09-27T02:44:26Z END G1.extract: {'exit': 0, 'wall_seconds': 751.4928474880289}
+2026-09-27T02:44:26Z START G1.byte: cmp /tmp/laneS/h10.phi.head_sa /mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.head_sa
+2026-09-27T02:44:38Z END G1.byte: {'exit': 0, 'wall_seconds': 11.68036825908348}
+2026-09-27T02:44:38Z G1 PASS head-SA byte identity
+2026-09-27T02:44:38Z START G2.extract: /tmp/laneS/phi_inverse_heads /mnt/nvme3n1/erikg/sxgc-pilot/k466/h466rt.lcp_index.lcp_index /mnt/nvme3n1/erikg/sxgc-pilot/k466/h466.ri4 /tmp/laneS/h466.head_sa 64
+2026-09-27T02:58:28Z END G2.extract: {'exit': 0, 'wall_seconds': 829.6617709690472}
+2026-09-27T02:58:28Z START G2.anchors: python3 /tmp/sxgc-laneS/bit6/phi_inverse_check.py anchors /mnt/nvme3n1/erikg/sxgc-pilot/k466/h466.ri4 /tmp/laneS/h466.head_sa /mnt/nvme3n1/erikg/sxgc-pilot/k466/h466.anchors
+2026-09-27T03:02:13Z END G2.anchors: {'exit': 0, 'wall_seconds': 225.80675955908373}
+2026-09-27T03:02:13Z G2 PASS range and anchor checks
+2026-09-27T03:02:14Z G3 NOT RUN: 466 parse incomplete; stopped after G2 as instructed

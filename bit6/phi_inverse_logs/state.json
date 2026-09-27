@@ -1,0 +1,39 @@
+{
+  "G0.agg-diagnostic": {
+    "exit": 0,
+    "wall_seconds": 4.634478298947215
+  },
+  "G0.sweep": {
+    "exit": 0,
+    "wall_seconds": 13.493142411927693
+  },
+  "G0.sets": {
+    "exit": 0,
+    "wall_seconds": 21.872855060035363
+  },
+  "G1.extract": {
+    "exit": 0,
+    "wall_seconds": 751.4928474880289
+  },
+  "G1.byte": {
+    "exit": 0,
+    "wall_seconds": 11.68036825908348
+  },
+  "G2.extract": {
+    "exit": 0,
+    "wall_seconds": 829.6617709690472
+  },
+  "G2.anchors": {
+    "exit": 0,
+    "wall_seconds": 225.80675955908373
+  },
+  "G3.parse": {
+    "exists": false,
+    "size": null,
+    "active_producers": [
+      "2690607 bash -c  cd /mnt/nvme3n1/erikg/sxgc-pilot/k466 echo \"=== 466 PFP++ PARSE START (correct CLI) $(date -Is) (-j 48)\" /usr/bin/time -v /home/erikg/pfp/build/pfp++ -t h466_rl.txt -o h466rl_pfp -w 10 -p 100 -j 48 --tmp-dir /mnt/nvme3n1/erikg/sxgc-pilot/k466/tmp > h466rl_pfp.log 2>&1 echo \"PFP466 EXIT: $? at $(date -Is)\" ",
+      "2690615 /usr/bin/time -v /home/erikg/pfp/build/pfp++ -t h466_rl.txt -o h466rl_pfp -w 10 -p 100 -j 48 --tmp-dir /mnt/nvme3n1/erikg/sxgc-pilot/k466/tmp",
+      "2690616 /home/erikg/pfp/build/pfp++ -t h466_rl.txt -o h466rl_pfp -w 10 -p 100 -j 48 --tmp-dir /mnt/nvme3n1/erikg/sxgc-pilot/k466/tmp"
+    ]
+  }
+}
