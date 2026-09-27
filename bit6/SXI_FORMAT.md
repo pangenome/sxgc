@@ -1,9 +1,9 @@
 # SXI1, internal version 1
 
 All integers are little endian. Readers detect magic, independent of suffix;
-`.ri4` v4 remains supported. This implementation is a container/consumer
-bridge; fresh endpoint construction is blocked as recorded in
-[SXI_CONSTRUCTION_BLOCKER.md](SXI_CONSTRUCTION_BLOCKER.md).
+`.ri4` v4 remains supported. Fresh source construction is described in
+[SXI_BUILD.md](SXI_BUILD.md); checked seam-repair evidence is in
+[sxi_logs/sep-convention/repair2/ACCEPTANCE.md](sxi_logs/sep-convention/repair2/ACCEPTANCE.md).
 
 The 64-byte header is:
 
@@ -11,10 +11,10 @@ The 64-byte header is:
 |---|---|
 | 0 | four bytes `SXI1` |
 | 4 | u32 version = 1 |
-| 8, 16, 24 | u64 n, string count k, run count R |
+| 8, 16, 24 | u64 n, named record count k, run count R |
 | 32, 36 | u32 member count, total header+directory bytes |
 | 40 | u64 exact file length |
-| 48 | u64 flags: bit 0 = chi completed; other bits must be zero |
+| 48 | u64 flags: bit 0 = chi completed; bit 1 = DNA mode; bit 2 = reversed records; bit 3 = record metadata present; other bits zero |
 | 56 | u32 IEEE CRC32 of header+directory, this field zeroed |
 | 60 | u32 reserved = 0 |
 
@@ -50,7 +50,29 @@ uniqueness and sizes. CRC validation and section bounds precede consumer
 use. Rust validates all member semantics, including canonical varints.
 Native C++ slim maps the embedded head member directly, reads embedded
 anchors and tails, and does not need an extracted `.ri4` or head sidecar.
-Optional names feed Rust plain-query coordinate decoding automatically.
+Names feed all SXI query/MEM coordinates automatically. TSV rows contain
+`name<TAB>fstart<TAB>length`; fstart is mirrored, so
+`stream_start = n - 1 - fstart - length`. Rows must partition the stream in
+order, including one reserved separator byte after each named record.
+The sorted array `stream_start + length` is the 0x1E boundary array.
+A predecessor/rank search gives the record ID; offsets exclude separators.
+For reversed storage, offsets are converted back to the original record.
+
+**Records versus byte strings:** `k` is the number of named records, e.g.
+9,901 for yeast235. The RLBWT still indexes ONE cyclic byte string
+`T = s1 0x1E ... sk 0x1E`; `.ri4` transport k remains the core string count.
+The native SXI-to-core loader separates these counts. A names-free text
+container retains its transport k and queries use the synthetic name `text`.
+No text scan or sequence-content rewrite is introduced by this metadata fix.
+
+Writers set bit 3 and validate k against the names rows. The source pipeline
+sets bit 1 for FASTA/FASTQ/AGC, clears it for text, and sets bit 2 for AGC's
+reversed storage. Build `--mode dna|text` overrides the automatic mode.
+Legacy flags 0/1 remain readable: the loader derives record k from names,
+without modifying the file; legacy auto mode is text/forward because the old
+header does not encode provenance. Use `--mode dna --revlines` for a legacy
+AGC container. New flags require upgraded readers; old readers fail closed.
+The five core members and verbatim names bytes are unchanged.
 
 Cost: writer O(R + chi log chi + names bytes), O(chi) working memory plus
 bounded I/O buffers. Sorting is over witness positions, never text positions.
@@ -70,42 +92,18 @@ The writer is C++ (`bit6/sxi_write.cpp`); Rust consumes SXI directly.
 all member sizes, delta/raw chi ratio and exact file size. `--ri4` remains
 accepted, with magic detection determining the actual format.
 
-The final source-build interface is recognized:
+Source build and query interfaces:
 
 ```sh
-xsa build --agc archive.agc -o out.sxi
+xsa build --agc archive.agc -o out.sxi --verify-text-sample 32
 xsa build --fasta refs.fa -o out.sxi
-xsa build --text file.txt -o out.sxi --verbose
+xsa build --text collection.txt -o out.sxi
+xsa mems --sxi out.sxi --reads reads.fq.gz -j 4 --min-len 20
+xsa serve --sxi out.sxi -j 4 --bind 127.0.0.1:7331
 ```
 
-These commands currently **fail preflight without writing output**. The
-Rust module is a CLI boundary only; it does not implement the missing
-endpoint construction or the requested internal stage orchestration/chi
-gate. This must not be presented as a working source-build UX.
-
-Endpoint-ready development pipeline (distinct from a fresh source build):
-
-```sh
-python3 bit6/sxi_pipeline.py --ri4 input.ri4 --heads input.head_sa \
-  --parse input_pfp --names input.names.tsv --output output.sxi \
-  --writer /tmp/laneU/sxi-tools/sxi_write --dump /tmp/laneU/sxi-tools/slim_dump
-```
-
-This writes a stage container, builds slim aggregates using its embedded
-heads, sweeps chi to `output.sxi.sA`, and writes the completed container.
-It retains logs and intermediates and refuses overwrites. Child address
-space is capped at 149 GB; mmap-heavy stages can hit that conservative cap
-before physical RAM does. No process outside this tree is controlled.
-`--source PATH --output output.sxi` explicitly fails preflight until the
-endpoint dependency is resolved; it is **not** an implemented G2.
-
-AGC input boundary: `agc2flat ARCHIVE.agc --samples samples.txt --revlines
--o SOURCE` is the existing streaming collection-text producer. The inspected
-`--revlines` branch writes `-o` directly and ignores `--stdout`; use a named
-FIFO at SOURCE with a reader already running to avoid storing the flat text.
-The names file is written as `SOURCE.names.tsv` at EOF. It emits reversed
-contigs in archive order, newline-terminated, plus names metadata. Preserve
-those exact bytes for the PFP parse and endpoint producer; substituting the
-single-string `h10ss` conversion changes the index. The missing normalized
-endpoint producer must be supplied before this stream can be wired to the
-source entry point. The running pfp466 process is never a pipeline target.
+See [SXI_QUERY.md](SXI_QUERY.md) for the query/server contract and limitations.
+`xsa stats --sxi FILE` labels k as records, validates names and reports exact
+embedded chi and member sizes. Repacking yeast235 with the new writer reports
+k=9901 while all six members retain their original hashes. Published legacy
+artifacts are not edited.

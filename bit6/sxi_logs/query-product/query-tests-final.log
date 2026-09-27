@@ -1,0 +1,24 @@
+{"test": "dna", "reads": 53, "mems": 900, "status": "PASS"}
+{"test": "reversed", "reads": 53, "mems": 900, "status": "PASS"}
+{"test": "text", "reads": 1, "mems": 10, "status": "PASS"}
+{"test": "periodic", "reads": 1, "mems": 203, "status": "PASS"}
+{"test": "random0", "reads": 5, "mems": 1294, "status": "PASS"}
+{"test": "random1", "reads": 5, "mems": 1646, "status": "PASS"}
+{"test": "random2", "reads": 5, "mems": 1099, "status": "PASS"}
+{"test": "random3", "reads": 5, "mems": 1516, "status": "PASS"}
+{"test": "random4", "reads": 5, "mems": 1223, "status": "PASS"}
+{"test": "random5", "reads": 5, "mems": 802, "status": "PASS"}
+{"test": "random6", "reads": 5, "mems": 1501, "status": "PASS"}
+{"test": "random7", "reads": 5, "mems": 1850, "status": "PASS"}
+{"test": "random8", "reads": 5, "mems": 1453, "status": "PASS"}
+{"test": "random9", "reads": 5, "mems": 1575, "status": "PASS"}
+{"test": "random10", "reads": 5, "mems": 1754, "status": "PASS"}
+{"test": "random11", "reads": 5, "mems": 1701, "status": "PASS"}
+{"test": "battery-duplicates-600k", "reads": 3, "mems": 150, "status": "PASS"}
+{"test": "battery-random-4-2k", "reads": 3, "mems": 3, "status": "PASS"}
+{"test": "battery-random-4-20k", "reads": 3, "mems": 3, "status": "PASS"}
+{"test": "battery-random-bin-20k", "reads": 3, "mems": 223, "status": "PASS"}
+{"test": "battery-random-4-200k", "reads": 3, "mems": 3, "status": "PASS"}
+{"test": "battery-satellite-18k", "reads": 3, "mems": 12011, "status": "PASS"}
+{"test": "battery-HOR-nested", "reads": 3, "mems": 12661, "status": "PASS"}
+PASS all MEMs brute verified, deterministic threads, gzip/FASTQ, modes, IUPAC, HTTP byte parity and error survival

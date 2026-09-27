@@ -1,5 +1,10 @@
 # Fresh-source SXI build
 
+**Current construction evidence:** the repaired separator path is checked in
+[sxi_logs/sep-convention/repair2/ACCEPTANCE.md](sxi_logs/sep-convention/repair2/ACCEPTANCE.md).
+Query-product gates and residual limits are recorded separately in
+[sxi_logs/query-product/ACCEPTANCE.md](sxi_logs/query-product/ACCEPTANCE.md).
+
 Build tools (no commits and no upstream edits):
 
 ```sh
@@ -31,18 +36,18 @@ requires installing the script/tools and setting these paths.
 
 Exact stages:
 
-1. Prepare the input. AGC: committed `agc2flat --revlines --upper -o SCRATCH/collection.txt`.
-   It streams one reversed contig per line and writes `collection.txt.names.tsv`.
+1. Prepare the input. AGC: committed `agc2flat --revlines --upper --sep 1e -o SCRATCH/collection.txt`.
+   It streams one reversed contig per 0x1E-terminated record and writes `collection.txt.names.tsv`.
    The text is materialized on the same filesystem as the archive.
    FASTA/FASTQ: stream extracted sequences into the same `collection.txt` path,
-   joining wrapped FASTA lines and terminating every record with newline.
+   joining wrapped FASTA lines and separating and terminating every record with 0x1E.
    Both then enter exactly the same stages as `--text`.
 2. `pfp++ -t TEXT -o PREFIX -w 10 -p 100 -j THREADS --tmp-dir SCRATCH`.
 3. `pfp++ -i PREFIX.parse -w 5 -p 11 -j THREADS --tmp-dir SCRATCH` (second level).
 4. Patched `rpfbwt --l1-prefix PREFIX --w1 10 --w2 5 --threads THREADS
    --chunks CHUNKS --tmp-dir SCRATCH`.
-5. `rpfbwt_endpoints PREFIX fresh.ri4 fresh.head_sa`: bounded-buffer O(r)
-   normalization, remove ten padding rows, remap byte 2 to newline, coalesce
+5. `rpfbwt_endpoints PREFIX fresh.ri4 fresh.head_sa TERMINAL_HEX`: bounded-buffer O(r)
+   normalization, remove ten padding rows, remap byte 2 to the input terminal byte (0x1E under the contract), coalesce
    adjacent normalized runs, convert tails to `n-1-SA`, pack the existing v4
    transport. The `.ssa` and `.ssa_t` source files are retained untouched.
 6. Committed `slim_dump --slim --resolve-ri4 --dict-stream --ri4 fresh.ri4
@@ -68,14 +73,40 @@ sequence length and cumulative collection size to stderr and the journal.
 run **after** constructing fresh endpoints. The latter checks the entire
 run table and packed tails. Neither oracle supplies construction inputs.
 
-Collection text must already have the pilot orientation and end in newline.
-Do not replace inter-contig newlines by `!` or use the old single-string pilot
-as a collection oracle. PFP's suffix order over concatenated newline text can
-still differ from BCR's independent-string ordering; endpoint gates must
-establish equivalence for each collection. The adapter does not repair that
-ordering. For more than one string, both `--expect-heads` and `--expect-ri4`
-must pass; otherwise publication is refused. General oracle-free multi-contig
-AGC construction is therefore still unavailable with this front end.
+## Reserved collection separator contract
+
+`xsa build` indexes **one byte string** `T = s1 0x1E s2 0x1E ... sk 0x1E`.
+The reserved separator is **0x1E (ASCII record separator, decimal 30)**, both
+between records and terminally. It must never appear in sequence content.
+The intended suffix structure is cyclic over T, with one byte string in the `.ri4` core transport (`k=1`). SXI header `k`
+counts named records instead (9,901 for yeast235). The writer derives k from
+validated names; the native loader keeps record count separate from the
+core byte-string count. This changes metadata, not BWT/endpoints/chi.
+
+The rationale for this convention is theory-faithful single-string chi semantics: it uses a byte
+native to rpfbwt, makes every record boundary uniform, and is pile-compatible:
+the web corpus already uses 0x1E separators. Genomic sequence bytes never
+contain 0x1E. FASTA/FASTQ and AGC input preparation reject a reserved separator
+in sequence content with a `corpus contract` error before PFP/publication.
+AGC decodes numeric nucleotide symbols; a literal 30 in that decoded numeric
+stream is rejected before the legacy fallback-to-N conversion can hide it.
+An archive creator may have discarded invalid source characters already;
+preparation cannot recover information absent from the archive.
+
+`--text` passes the supplied raw bytes **as-is**, with no O(n) contract scan,
+separator insertion, newline conversion, reversal or uppercasing. The caller
+owns the contract: using 0x1E as content is user error. A constant-time final-byte
+read only configures endpoint padding normalization. Existing parser/alphabet
+limitations still apply (the current backend supports bytes 6..127). Historical
+newline-terminated raw pilots retain their legacy transport/gates; they are
+outside the new corpus contract. In particular, old BCR newline collection
+oracles do not establish correctness for the new T.
+
+`agc2flat --sep <hexbyte>` accepts `1e` or `0x1E` and defaults to 0x1E for
+flat, group, reverse and `--revlines` output. `--sep 0a` is an explicit legacy
+newline escape hatch for external consumers; `xsa build --agc` always requests
+`--sep 1e`. Names sidecar offsets still count one separator byte per record
+and retain their previous orientation semantics.
 
 `--fasta` accepts multiple records and wrapped sequence lines. `--fastq`
 accepts four-line records, validates the `@`/`+` headers and equal sequence
@@ -102,6 +133,12 @@ Reproduction tests:
 
 ```sh
 python3 bit6/test_endpoint_tap.py
+# Separator acceptance (currently fails at the documented downstream blockers):
+RAYON_NUM_THREADS=2 cargo run --release --manifest-path agc2flat/Cargo.toml \
+  --example reserved_fixture -- /tmp/reserved.agc
+python3 bit6/test_sxi_separator.py --work /tmp/new-separator-gates \
+  --xsa xsa/target/release/xsa --agc2flat /path/to/new/agc2flat \
+  --reserved-agc /tmp/reserved.agc --log-dir bit6/sxi_logs/sep-convention
 python3 bit6/test_sxi_build.py
 python3 bit6/test_source_battery.py --work /tmp/laneV/new-battery
 python3 bit6/test_sxi_input_modes.py --work /tmp/new-input-modes \
@@ -112,7 +149,7 @@ The tiny suffix-array oracle in `test_endpoint_tap.py` is test-only; no such
 algorithm is used by the production pipeline. The legacy Phi extractor and
 the existing SXI format remain unchanged.
 
-Acceptance (2026-09-27): FASTA and FASTQ each passed five three-record battery
+Historical input-modes acceptance (2026-09-27, prior newline convention): FASTA and FASTQ each passed five three-record battery
 fixtures (`random-4-2k`, `random-4-20k`, `random-bin-20k`, `random-4-200k`,
 `satellite-18k`). Battery bytes 11..14 were mapped to A/C/G/T before wrapping.
 All five core SXI members (runs/RLBWT, packed tails, heads, anchors, chi), the
@@ -134,3 +171,26 @@ An exploratory broader run is retained as `sxi_logs/input-modes/full-battery.log
 the DNA-transcoded, three-record `HOR-nested` fixture fails the existing
 `--text` PFP second parse (`A sequence doesn't have w DOLLAR at the end!`).
 No algorithm or existing publication gate was changed to accommodate it.
+
+## Query mode and sampled ground-truth gate
+
+`--mode auto|dna|text` defaults to auto: FASTA/FASTQ/AGC builds mark the
+container DNA; `--text` marks it generic text. AGC also records reversed
+storage. These flags change only the final container header; source bytes,
+producer, adapter and sweep are unchanged. See [SXI_QUERY.md](SXI_QUERY.md).
+
+`--verify-text-sample N` (0 by default, maximum 100000) runs
+`sxi_text_audit TEXT fresh.ri4 fresh.agg fresh.sA N` immediately after the
+sweep and before publication. It selects up to N evenly spaced emitted chi
+witnesses, replays compressed sweep candidates, and compares their shared
+context, exact LCP endpoint, and distinct following characters directly
+against the materialized scratch text. The reversed/cyclic coordinate map
+is `(n - SA) % n`. No dense SA, inverse SA or BWT is constructed.
+
+The audit logs `TEXT_SAMPLE_PASS requested=... verified=... chi=...` or
+`TEXT_SAMPLE_FAIL ...`; any failure prevents publication. It uses five bounded sequential streams, 64 KiB direct-text comparison
+buffers, and O(N + alphabet) state. Runtime is the compressed sweep plus
+the total sampled context lengths. Neither text nor aggregates are mapped
+or expanded; memory is independent of corpus size. This is a sampled witness-grounding gate, not a proof of
+complete chi-set equality. Legacy newline multi-string convention fails
+loudly if this optional cyclic audit is requested.

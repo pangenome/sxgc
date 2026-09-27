@@ -1545,3 +1545,15 @@ ordering to be adjudicated by k10's real byte gates.
 ## loudly per policy). Witness n+1 fixed (zero-based cyclic). Residual flag:
 ## container k semantics inconsistent (k=1 byte-strings vs records 9,901) -
 ## query lane to pin. Open: k10 canonical + 466 under the repaired frame.
+
+## QUERY PRODUCT LANDED (supervisor-verified): xsa is now a pangenome searcher.
+- xsa mems --sxi ... --reads fq|fa|gz -j N: bounded-memory rayon streaming, MEM(len,
+  qstart, name, offset, strand); 46K+ MEMs brute-verified (23 fixtures + yeast 1,720).
+- name+offset annotation via boundary array; container k = named records (yeast235
+  k=9901, members unchanged); native SXI loader byte-identical aggregates to RI4 path.
+- --mode auto: fasta/fastq/agc => dna (revcomp, strand), --text => generic; explicit
+  overrides; fail-loud on non-IUPAC query bytes in dna mode.
+- xsa serve: POST /query /ms /batch, GET /stats; HTTP byte-identical to CLI.
+- --verify-text-sample N: in-flight ground-truth witness audit vs the materialized
+  text (32/32 at gates; corrupted text blocks publication) - the 466 gate.
+- Terminal-byte check generalized (any separator flows to the endpoints adapter).

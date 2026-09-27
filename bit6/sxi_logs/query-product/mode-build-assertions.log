@@ -1,0 +1,1 @@
+PASS fresh FASTA auto=dna rejects non-IUPAC; --mode text persists and accepts generic bytes

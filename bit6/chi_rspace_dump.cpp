@@ -85,6 +85,7 @@ static void phase(const char* what) {
 struct Ri4 {
     std::string sxiPath; uint64_t headOffset=0;
     uint64_t n = 0, k = 0, R = 0;
+    uint64_t records = 0; // SXI named records; k below is the core byte-string count.
     std::vector<uint64_t> C;      // 256
     std::vector<uint8_t> a;       // run chars
     std::vector<uint32_t> l;      // run lens
@@ -109,6 +110,14 @@ struct Ri4 {
         if(sx)f.seekg(sx->member(1).offset);
         C.resize(256); f.read((char*)C.data(), 8 * 256);
         a.resize(R); f.read((char*)a.data(), R);
+        records = sx ? sx->k : k;
+        if (sx) {
+            bool hasRS = std::find(a.begin(), a.end(), uint8_t(0x1e)) != a.end();
+            bool hasNL = std::find(a.begin(), a.end(), uint8_t(0x0a)) != a.end();
+            // Named records do not introduce erased sentinels. The existing
+            // slim core still consumes one cyclic byte string for 0x1e text.
+            k = (hasRS || !hasNL) ? 1 : records;
+        }
         l.resize(R); f.read((char*)l.data(), 4 * R);
         starts.resize(R);
         uint64_t acc = 0;

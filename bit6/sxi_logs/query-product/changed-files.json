@@ -1,0 +1,23 @@
+[
+  "xsa/Cargo.toml",
+  "xsa/Cargo.lock",
+  "xsa/src/main.rs",
+  "xsa/src/sxi.rs",
+  "xsa/src/build.rs",
+  "xsa/src/product.rs",
+  "bit6/sxi_write.cpp",
+  "bit6/sxi_format.hpp",
+  "bit6/chi_rspace_dump.cpp",
+  "bit6/sxi_pipeline.py",
+  "bit6/sxi_text_audit.cpp",
+  "bit6/query_brute.cpp",
+  "bit6/test_query_product.py",
+  "bit6/test_query_metadata.py",
+  "bit6/test_query_yeast.py",
+  "bit6/test_query_http.py",
+  "bit6/test_text_audit.py",
+  "tools/build_sxi_tools.sh",
+  "bit6/SXI_FORMAT.md",
+  "bit6/SXI_BUILD.md",
+  "bit6/SXI_QUERY.md"
+]

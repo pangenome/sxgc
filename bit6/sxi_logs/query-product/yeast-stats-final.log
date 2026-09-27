@@ -1,0 +1,17 @@
+.sxi      /tmp/sxi-query-yeast235.sxi  (v1: n=3336986759, k=9901 records, R=100905045 runs)
+member=1 count=100905045 bytes=504527273 crc32=21589c38
+member=2 count=100905045 bytes=403620193 crc32=40fda135
+member=3 count=100905045 bytes=807240360 crc32=b9dae855
+member=4 count=0 bytes=12 crc32=31082463
+member=5 count=85404336 bytes=88747090 crc32=33edd72a
+member=6 count=351876 bytes=351876 crc32=f72c1bca
+chi_complete=true
+chi_delta_ratio=0.129892541
+
+n            = 3336986759
+k (records)  = 9901
+r (runs)     = 100905045
+chi          = 85404336
+n/r          = 33.071
+chi/r        = 0.846   (law: ~0.86)
+index bytes  = 1804487132

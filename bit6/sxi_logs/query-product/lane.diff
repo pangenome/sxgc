@@ -1,0 +1,2137 @@
+--- a/xsa/Cargo.toml
++++ b/xsa/Cargo.toml
+@@ -11,3 +11,11 @@
+ 
+ [profile.release]
+ opt-level = 3
++
++[dependencies]
++rayon = "1.11"
++flate2 = "1.1"
++memmap2 = "0.9"
++serde_json = "1.0"
++tiny_http = "0.12"
++tempfile = "3.23"
+--- a/xsa/Cargo.lock
++++ b/xsa/Cargo.lock
+@@ -3,5 +3,356 @@
+ version = 4
+ 
+ [[package]]
++name = "adler2"
++version = "2.0.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
++
++[[package]]
++name = "ascii"
++version = "1.1.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "d92bec98840b8f03a5ff5413de5293bfcd8bf96467cf5452609f939ec6f5de16"
++
++[[package]]
++name = "bitflags"
++version = "2.13.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06"
++
++[[package]]
++name = "cfg-if"
++version = "1.0.5"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
++
++[[package]]
++name = "chunked_transfer"
++version = "1.5.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "6e4de3bc4ea267985becf712dc6d9eed8b04c953b3fcfb339ebc87acd9804901"
++
++[[package]]
++name = "crc32fast"
++version = "1.5.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "01a7799fd6b852db0e61728dde9a204c423b44d689dbd432522543614b490e78"
++dependencies = [
++ "cfg-if",
++]
++
++[[package]]
++name = "crossbeam-deque"
++version = "0.8.8"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "622f3fc73690be383c7214310406f28a90e6edeadc3cea882f9d71e495b9711a"
++dependencies = [
++ "crossbeam-epoch",
++ "crossbeam-utils",
++]
++
++[[package]]
++name = "crossbeam-epoch"
++version = "0.9.21"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "dc74980687109a3b14c72fd458107bf0baa1da1a1a805e178d15501ba9b86d9d"
++dependencies = [
++ "crossbeam-utils",
++]
++
++[[package]]
++name = "crossbeam-utils"
++version = "0.8.23"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "a31eee39dddec8330830986fcd7625edb5a24ec90ea038215273bbc3adb08ac6"
++
++[[package]]
++name = "either"
++version = "1.18.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "252afb9ae5eaa683babdc6a068b3f5726eb19e05070c731f9b2a23a7c3e8ed34"
++
++[[package]]
++name = "errno"
++version = "0.3.14"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
++dependencies = [
++ "libc",
++ "windows-sys",
++]
++
++[[package]]
++name = "fastrand"
++version = "2.5.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
++
++[[package]]
++name = "flate2"
++version = "1.1.10"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "6e634e2e0ebac1ee034020da1ca582e17ffe4e0f5e985823721e168928136dcb"
++dependencies = [
++ "crc32fast",
++ "miniz_oxide",
++ "zlib-rs",
++]
++
++[[package]]
++name = "getrandom"
++version = "0.4.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "300e883d756b2e4ec94e02791f39b04b522276138852cfc41d9fb7e904106099"
++dependencies = [
++ "cfg-if",
++ "libc",
++ "r-efi",
++]
++
++[[package]]
++name = "httpdate"
++version = "1.0.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
++
++[[package]]
++name = "itoa"
++version = "1.0.18"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
++
++[[package]]
++name = "libc"
++version = "0.2.189"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
++
++[[package]]
++name = "linux-raw-sys"
++version = "0.12.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
++
++[[package]]
++name = "log"
++version = "0.4.34"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
++
++[[package]]
++name = "memchr"
++version = "2.8.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
++
++[[package]]
++name = "memmap2"
++version = "0.9.11"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "d1219ed1b7f229ee7104d281dd01d6802fe28bb6e95d292942c4daacdeb798c0"
++dependencies = [
++ "libc",
++]
++
++[[package]]
++name = "miniz_oxide"
++version = "0.9.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "b63fbc4a50860e98e7b2aa7804ded1db5cbc3aff9193adaff57a6931bf7c4b4c"
++dependencies = [
++ "adler2",
++ "simd-adler32",
++]
++
++[[package]]
++name = "once_cell"
++version = "1.21.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
++
++[[package]]
++name = "proc-macro2"
++version = "1.0.107"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9"
++dependencies = [
++ "unicode-ident",
++]
++
++[[package]]
++name = "quote"
++version = "1.0.47"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "1fbf4db142a473a8d80c26bbf18454ed458bf8d26c8219c331daecfdbd079001"
++dependencies = [
++ "proc-macro2",
++]
++
++[[package]]
++name = "r-efi"
++version = "6.0.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
++
++[[package]]
++name = "rayon"
++version = "1.12.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "fb39b166781f92d482534ef4b4b1b2568f42613b53e5b6c160e24cfbfa30926d"
++dependencies = [
++ "either",
++ "rayon-core",
++]
++
++[[package]]
++name = "rayon-core"
++version = "1.13.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "22e18b0f0062d30d4230b2e85ff77fdfe4326feb054b9783a3460d8435c8ab91"
++dependencies = [
++ "crossbeam-deque",
++ "crossbeam-utils",
++]
++
++[[package]]
++name = "rustix"
++version = "1.1.5"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "891efababe418670775f199f0d233d84843c227a0949a883ce15b37c78d6629d"
++dependencies = [
++ "bitflags",
++ "errno",
++ "libc",
++ "linux-raw-sys",
++ "windows-sys",
++]
++
++[[package]]
++name = "serde"
++version = "1.0.229"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba"
++dependencies = [
++ "serde_core",
++]
++
++[[package]]
++name = "serde_core"
++version = "1.0.229"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "67dca2c9c51e58a4791a4b1ed58308b39c64224d349a935ab5039aa360942a48"
++dependencies = [
++ "serde_derive",
++]
++
++[[package]]
++name = "serde_derive"
++version = "1.0.229"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "e7a5d71263a5a7d47b41f6b3f06ba276f10cc18b0931f1799f710578e2309348"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn",
++]
++
++[[package]]
++name = "serde_json"
++version = "1.0.151"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14"
++dependencies = [
++ "itoa",
++ "memchr",
++ "serde",
++ "serde_core",
++ "zmij",
++]
++
++[[package]]
++name = "simd-adler32"
++version = "0.3.10"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "3a219298ac11a56ea9a6d2120044824d6f01aeb034955e7af7bc16858527deea"
++
++[[package]]
++name = "syn"
++version = "3.0.6"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "8593e8e72159ed2257d083c7a454a85cbf854f37a0966d8d483aff8c8a3ebcee"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "unicode-ident",
++]
++
++[[package]]
++name = "tempfile"
++version = "3.27.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
++dependencies = [
++ "fastrand",
++ "getrandom",
++ "once_cell",
++ "rustix",
++ "windows-sys",
++]
++
++[[package]]
++name = "tiny_http"
++version = "0.12.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "389915df6413a2e74fb181895f933386023c71110878cd0825588928e64cdc82"
++dependencies = [
++ "ascii",
++ "chunked_transfer",
++ "httpdate",
++ "log",
++]
++
++[[package]]
++name = "unicode-ident"
++version = "1.0.26"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "d245f478577f809a851594d02313b640fb437e0bb33866753cff937863096954"
++
++[[package]]
++name = "windows-link"
++version = "0.2.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5"
++
++[[package]]
++name = "windows-sys"
++version = "0.61.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc"
++dependencies = [
++ "windows-link",
++]
++
++[[package]]
+ name = "xsa"
+ version = "0.1.0"
++dependencies = [
++ "flate2",
++ "memmap2",
++ "rayon",
++ "serde_json",
++ "tempfile",
++ "tiny_http",
++]
++
++[[package]]
++name = "zlib-rs"
++version = "0.6.8"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "b268e58e7c693d7c271f93ffc4ba3b380412554231c85bf61ca7af91042a4112"
++
++[[package]]
++name = "zmij"
++version = "1.0.23"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
+--- a/xsa/src/main.rs
++++ b/xsa/src/main.rs
+@@ -10,6 +10,7 @@
+ 
+ mod sxi;
+ mod build;
++mod product;
+ 
+ use std::fs::File;
+ use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
+@@ -105,11 +106,28 @@
+ 
+ // ---------- full .ri4 index (rank/LF/search/locate) ----------
+ 
++/// Immutable file-backed members shared by all query workers.
++enum Bytes { Owned(Vec<u8>), Mapped(memmap2::Mmap, usize, usize) }
++impl Bytes {
++    fn mapped(path: &str, offset: u64, len: usize) -> Self {
++        let file = File::open(path).unwrap_or_else(|e| die(&e.to_string()));
++        // Published containers are immutable for the lifetime of the index.
++        let map = unsafe { memmap2::Mmap::map(&file) }.unwrap_or_else(|e| die(&e.to_string()));
++        Self::Mapped(map, offset as usize, len)
++    }
++}
++impl std::ops::Deref for Bytes {
++    type Target = [u8];
++    fn deref(&self) -> &[u8] { match self {
++        Self::Owned(v) => v, Self::Mapped(m, o, n) => &m[*o..*o + *n],
++    }}
++}
++
+ /// sdsl int_vector bitstream: entries of `width` bits, LSB-first per u64 word.
+ struct PackedSa {
+     bits: u64,          // total size IN BITS
+     width: u8,
+-    data: Vec<u8>,      // little-endian u64 words
++    data: Bytes,      // little-endian u64 words
+ }
+ impl PackedSa {
+     fn get(&self, i: u64) -> u64 {
+@@ -170,7 +188,8 @@
+     k: u64,
+     r: u64,
+     c: Vec<u64>,
+-    run_char: Vec<u8>,
++    run_char: Bytes,
++    cyclic: bool,
+     run_len: Vec<u32>,
+     sa: PackedSa,
+     run_start_blk: Vec<u64>,
+@@ -182,7 +201,9 @@
+ 
+ impl Ri4 {
+     fn load(path: &str) -> Ri4 {
+-        let container = sxi::Container::open(path);
++        Self::load_validated(path, sxi::Container::open(path))
++    }
++    fn load_validated(path: &str, container: Option<sxi::Container>) -> Ri4 {
+         let mut f = File::open(path).unwrap_or_else(|e| die(&format!("open {}: {}", path, e)));
+         let mut b = [0u8; 32];
+         f.read_exact(&mut b).unwrap_or_else(|e| die(&format!("read {}: {}", path, e)));
+@@ -219,6 +240,9 @@
+         let nbytes = ((bits + 63) / 64 * 8) as usize;
+         let mut data = vec![0u8; nbytes];
+         f.read_exact(&mut data).unwrap_or_else(|e| die(&format!("read sa data: {}", e)));
++        let data = if let Some(ref sx) = container {
++            Bytes::mapped(path, sx.member(2).offset + 9, nbytes)
++        } else { Bytes::Owned(data) };
+         let sa = PackedSa { bits, width, data };
+ 
+         let mut run_start_blk = Vec::with_capacity((r / BLK + 2) as usize);
+@@ -238,12 +262,16 @@
+             acc256[c] += run_len[x] as u64;
+         }
+         let total = acc256.clone();
++        let cyclic = total[0x1e] > 0 || total[0x0a] == 0;
++        let run_char = if let Some(ref sx) = container {
++            Bytes::mapped(path, sx.member(1).offset + 2048, r as usize)
++        } else { Bytes::Owned(run_char) };
+         for c in 0..256 { csum[c].push(total[c]); }
+         let _ = k;   // stored
+         let embedded_anchors = container.as_ref().map(|sx| sx.anchors(path));
+         let names = container.as_ref().and_then(|sx| sx.members.iter().find(|m| m.id == 6))
+             .map(|m| (path.to_string(), m.offset, m.bytes));
+-        Ri4 { embedded_anchors, names, n, k, r, c, run_char, run_len, sa, run_start_blk, cruns, csum, total }
++        Ri4 { cyclic, embedded_anchors, names, n, k, r, c, run_char, run_len, sa, run_start_blk, cruns, csum, total }
+     }
+ 
+     fn run_start(&self, r: u64) -> u64 {
+@@ -320,9 +348,10 @@
+             let r = self.run_of(pos);
+             let e = self.run_start(r) + self.run_len[r as usize] as u64;
+             if pos == e - 1 {
+-                return self.sa.get(r).wrapping_sub(steps);
+-            }
+-            if self.run_char[r as usize] == 0x0A {
++                return if self.cyclic { (self.sa.get(r) + self.n - steps % self.n) % self.n }
++                    else { self.sa.get(r).wrapping_sub(steps) };
++            }
++            if !self.cyclic && self.run_char[r as usize] == 0x0A {
+                 match anc.and_then(|a| a.lookup(pos)) {
+                     Some(s0) => return s0.wrapping_sub(steps),
+                     None => die("s_at: walk reached a 0x0A row with no anchor table (--anchors)"),
+@@ -330,6 +359,19 @@
+             }
+             pos = self.lf(pos);
+             steps += 1;
++            if self.cyclic && pos == j && steps < self.n && self.n % steps == 0 {
++                // Periodic text has equal-rotation classes of n/period rows.
++                // An interior lane can be an LF cycle without an endpoint.
++                // The final lane reaches a run tail. Resolve its rotation,
++                // then enumerate equivalent coordinates in increasing order.
++                let copies = self.n / steps;
++                let representative = (j / copies + 1) * copies - 1;
++                if representative == j { die("locate: unsampled periodic representative"); }
++                let last = self.n - 1 - self.s_at_opt(representative, anc);
++                let coordinate = last % steps + (j % copies) * steps;
++                return self.n - 1 - coordinate;
++            }
++            if steps >= self.n { die("locate: LF cycle has no sample"); }
+         }
+     }
+ }
+@@ -665,7 +707,7 @@
+         n = h.n;
+         k = h.k;
+         r = h.r;
+-        println!("{}      {}  (v{}: n={}, k={} strings, R={} runs)", if h.version == 1 { ".sxi" } else { ".ri4" }, p, h.version, h.n, h.k, h.r);
++        println!("{}      {}  (v{}: n={}, k={} {}, R={} runs)", if h.version == 1 { ".sxi" } else { ".ri4" }, p, h.version, h.n, h.k, if h.version == 1 { "records" } else { "strings" }, h.r);
+         if let Some(c) = container { c.print_members(); }
+     }
+     if let Some(p) = &rlbwt {
+@@ -688,7 +730,7 @@
+ 
+     println!();
+     println!("n            = {}", n);
+-    if k > 0 { println!("k (strings)  = {}", k); }
++    if k > 0 { println!("k ({})  = {}", if index_bytes.is_some() { "records" } else { "strings" }, k); }
+     println!("r (runs)     = {}", r);
+     if let Some(xc) = x {
+         println!("chi          = {}", xc);
+@@ -1216,7 +1258,8 @@
+     eprintln!("  xsa build --agc <archive.agc> -o <out.sxi> [--verbose]");
+     eprintln!("  xsa build --fasta <refs.fa> -o <out.sxi> [--verbose]");
+     eprintln!("  xsa build --text <file.txt> -o <out.sxi> [--verbose]");
+-    eprintln!("    source build currently blocked; see xsa build --help");
++    eprintln!("  xsa mems --sxi FILE --reads FA|FQ|GZ [-j N] [--min-len 20] [--mode auto|dna|text]");
++    eprintln!("  xsa serve --sxi FILE [-j N] [--bind 127.0.0.1:7331]");
+     eprintln!("  xsa sxi-info <f.sxi> [--chi-out sorted.sA]");
+     eprintln!("  --sxi is an alias for --ri4; format is detected by magic");
+     eprintln!("  xsa stats --ri4 <f.ri4> [--chi <f.sA>]   header + law check");
+@@ -1239,7 +1282,12 @@
+         Some("sxi-info") => sxi::command(&args[1..]),
+         Some("stats") => cmd_stats(&args[1..]),
+         Some("tags") => cmd_tags(&args[1..]),
++        Some("query") if args.windows(2).any(|a| matches!(a[0].as_str(), "--sxi" | "--ri4") && {
++            let mut magic = [0;4]; File::open(&a[1]).and_then(|mut f| f.read_exact(&mut magic)).is_ok() && &magic == b"SXI1"
++        }) => product::command("query", &args[1..]),
+         Some("query") => cmd_query(&args[1..]),
++        Some("mems") => product::command("mems", &args[1..]),
++        Some("serve") => product::command("serve", &args[1..]),
+         Some("build-anchors") => cmd_build_anchors(&args[1..]),
+         Some("chi-rspace") => cmd_chi_rspace(&args[1..]),
+         Some("-h") | Some("--help") | None => usage(),
+--- a/xsa/src/sxi.rs
++++ b/xsa/src/sxi.rs
+@@ -52,6 +52,7 @@
+     pub k: u64,
+     pub r: u64,
+     pub complete: bool,
++    pub flags: u64,
+     pub members: Vec<Member>,
+ }
+ impl Container {
+@@ -96,7 +97,7 @@
+             (5..=6).contains(&count)
+                 && hs == 64 + 40 * count
+                 && u64at(&b, 40) == length
+-                && flags <= 1
++                && (flags <= 1 || (8..=15).contains(&flags))
+                 && u32at(&b, 60) == 0,
+             "invalid header",
+         );
+@@ -136,11 +137,12 @@
+             !hc == expected && end == length,
+             "header CRC or trailing bytes",
+         );
+-        let c = Self {
++        let mut c = Self {
+             n,
+             k,
+             r,
+-            complete: flags == 1,
++            complete: flags & 1 != 0,
++            flags,
+             members,
+         };
+         need(
+@@ -239,6 +241,14 @@
+             need(value < (n as u128), "tail range");
+             reservoir >>= w;
+             available -= w as u32;
++        }
++        if c.members.len() == 6 {
++            let m = c.member(6);
++            at(&mut f, m.offset);
++            let mut bytes = vec![0; m.bytes as usize]; rd(&mut f, &mut bytes);
++            let records = super::product::names(&bytes, n).unwrap_or_else(|e| die(&e));
++            need(flags & 8 == 0 || records.len() as u64 == k, "record count mismatch");
++            c.k = records.len() as u64;
+         }
+         c.anchors(path);
+         c.write_chi(path, &mut std::io::sink());
+--- a/xsa/src/build.rs
++++ b/xsa/src/build.rs
+@@ -2,7 +2,7 @@
+ use std::path::PathBuf;
+ 
+ const USAGE: &str = "usage:
+-  xsa build --text <collection.txt> -o <out.sxi> [--threads N] [--scratch DIR] [--expect-chi N] [--verbose]
++  xsa build --text <collection.txt> -o <out.sxi> [--threads N] [--scratch DIR] [--expect-chi N] [--verify-text-sample N] [--mode auto|dna|text] [--verbose]
+   xsa build --agc <archive.agc> -o <out.sxi> [same options]
+   xsa build --fasta <records.fa> -o <out.sxi> [same options]
+   xsa build --fastq <reads.fq> -o <out.sxi> [same options]
+@@ -51,7 +51,7 @@
+                     return Err("choose exactly one of --agc, --fasta, --fastq, --text".into());
+                 }
+             }
+-            "--threads" | "--scratch" | "--log-dir" | "--expect-chi" | "--expect-heads" | "--expect-ri4" => {
++            "--mode" | "--verify-text-sample" | "--threads" | "--scratch" | "--log-dir" | "--expect-chi" | "--expect-heads" | "--expect-ri4" => {
+                 i += 1;
+                 let value = args.get(i).filter(|s| !s.is_empty() && !s.starts_with('-'))
+                     .ok_or_else(|| format!("{flag} requires a value"))?;
+--- a/xsa/src/product.rs
++++ b/xsa/src/product.rs
+@@ -0,0 +1,704 @@
++//! Annotated, deterministic JSONL queries over a shared immutable SXI index.
++use super::{die, ms_vector, sxi, Ri4};
++use flate2::read::MultiGzDecoder;
++use rayon::prelude::*;
++use serde_json::{json, Value};
++use std::fs::File;
++use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
++
++const MAX_READ: usize = 65536;
++const BATCH_BYTES: usize = 1 << 20;
++const HTTP_BYTES: usize = 2 << 20;
++
++#[derive(Debug)]
++pub struct Record {
++    pub name: String,
++    pub start: u64,
++    pub len: u64,
++}
++/// Sidecar fstart is in mirrored coordinates. Transform it back to stream
++/// coordinates; record ends are precisely the sorted separator positions.
++pub fn names(bytes: &[u8], n: u64) -> Result<Vec<Record>, String> {
++    let text = std::str::from_utf8(bytes).map_err(|_| "names must be UTF-8")?;
++    let mut records = Vec::new();
++    let mut next = 0;
++    for line in text.lines() {
++        let fields: Vec<_> = line.split('\t').collect();
++        if fields.len() != 3 || fields[0].is_empty() {
++            return Err("invalid names TSV".into());
++        }
++        let fs: u64 = fields[1].parse().map_err(|_| "invalid names start")?;
++        let len: u64 = fields[2].parse().map_err(|_| "invalid names length")?;
++        let start = n
++            .checked_sub(1)
++            .and_then(|v| v.checked_sub(fs))
++            .and_then(|v| v.checked_sub(len))
++            .ok_or("names coordinates outside text")?;
++        if start != next {
++            return Err("names must partition text in stream order".into());
++        }
++        next = start
++            .checked_add(len)
++            .and_then(|x| x.checked_add(1))
++            .ok_or("names overflow")?;
++        records.push(Record {
++            name: fields[0].into(),
++            start,
++            len,
++        });
++    }
++    if records.is_empty() || next != n {
++        return Err("names lengths disagree with n".into());
++    }
++    Ok(records)
++}
++
++pub struct Engine {
++    idx: Ri4,
++    records: Vec<Record>,
++    boundaries: Vec<u64>,
++    dna: bool,
++    reversed: bool,
++    chi: u64,
++}
++impl Engine {
++    fn open(path: &str, mode: &str, orientation: Option<bool>) -> Result<Self, String> {
++        let meta = sxi::Container::open(path).ok_or("need an SXI container")?;
++        let flags = meta.flags;
++        let chi = meta.member(5).count;
++        let idx = Ri4::load_validated(path, Some(meta));
++        let records = if let Some((path, offset, len)) = &idx.names {
++            use std::io::{Seek, SeekFrom};
++            let mut f = File::open(path).map_err(|e| e.to_string())?;
++            f.seek(SeekFrom::Start(*offset))
++                .map_err(|e| e.to_string())?;
++            let mut data = Vec::new();
++            f.take(*len)
++                .read_to_end(&mut data)
++                .map_err(|e| e.to_string())?;
++            names(&data, idx.n)?
++        } else {
++            vec![Record {
++                name: "text".into(),
++                start: 0,
++                len: idx.n,
++            }]
++        };
++        let dna = match mode {
++            "auto" => flags & 2 != 0,
++            "dna" => true,
++            "text" => false,
++            _ => return Err("--mode must be auto, dna or text".into()),
++        };
++        let reversed = orientation.unwrap_or(flags & 4 != 0);
++        let boundaries = records.iter().map(|r| r.start + r.len).collect();
++        Ok(Self {
++            idx,
++            records,
++            boundaries,
++            dna,
++            reversed,
++            chi,
++        })
++    }
++    fn annotate(&self, pos: u64, len: usize) -> Option<(usize, &Record, u64)> {
++        let doc = self.boundaries.partition_point(|&end| end < pos);
++        let record = self.records.get(doc)?;
++        let offset = pos.checked_sub(record.start)?;
++        if offset.checked_add(len as u64)? > record.len {
++            return None;
++        }
++        let offset = if self.reversed {
++            record.len - offset - len as u64
++        } else {
++            offset
++        };
++        Some((doc, record, offset))
++    }
++    fn validate(&self, seq: &[u8]) -> Result<(), String> {
++        if seq.is_empty() || seq.len() > MAX_READ {
++            return Err(format!("read length must be 1..{MAX_READ}"));
++        }
++        if seq.contains(&0x1e) {
++            return Err("query contains reserved separator 0x1E".into());
++        }
++        if self.dna && seq.iter().any(|&c| complement(c).is_none()) {
++            return Err("dna mode: non-IUPAC query byte".into());
++        }
++        Ok(())
++    }
++    fn orientations(&self, seq: &[u8]) -> Vec<(Vec<u8>, &'static str)> {
++        let mut out = vec![(seq.to_vec(), "+")];
++        if self.dna {
++            out.push((
++                seq.iter().rev().map(|&c| complement(c).unwrap()).collect(),
++                "-",
++            ));
++        }
++        for (seq, _) in &mut out {
++            if self.reversed {
++                seq.reverse();
++            }
++        }
++        out
++    }
++    fn interval(&self, seq: &[u8]) -> (u64, u64) {
++        self.idx
++            .search(&seq.iter().rev().copied().collect::<Vec<_>>())
++    }
++    fn ms(&self, seq: &[u8]) -> Vec<u32> {
++        let mut values = ms_vector(&self.idx, &seq.iter().rev().copied().collect::<Vec<_>>());
++        values.reverse();
++        values
++    }
++    fn position(&self, row: u64) -> u64 {
++        self.idx.n - 1 - self.idx.s_at_opt(row, self.idx.embedded_anchors.as_ref())
++    }
++    fn hit(
++        &self,
++        read: &str,
++        row: u64,
++        len: usize,
++        qstart: Option<usize>,
++        strand: &str,
++    ) -> Option<Value> {
++        let (doc, record, offset) = self.annotate(self.position(row), len)?;
++        let mut v =
++            json!({"read": read, "name": record.name, "offset": offset, "len": len, "doc_id": doc});
++        if let Some(qstart) = qstart {
++            v["qstart"] = json!(qstart);
++        }
++        if self.dna {
++            v["strand"] = json!(strand);
++        }
++        Some(v)
++    }
++    fn query(
++        &self,
++        read: &str,
++        seq: &[u8],
++        out: &mut impl Write,
++        sample: Option<usize>,
++        seed: u64,
++        trace: bool,
++    ) -> Result<(), String> {
++        self.validate(seq)?;
++        for (seq, strand) in self.orientations(seq) {
++            let (l, r) = self.interval(&seq);
++            if let Some(limit) = sample {
++                // Floyd's O(sample) selection: never allocate the full interval.
++                let k = (limit as u64).min(r.saturating_sub(l));
++                let mut chosen = std::collections::BTreeSet::new();
++                let mut state = seed ^ 0xa0761d6478bd642f;
++                for j in (r - l - k)..(r - l) {
++                    state ^= state >> 12;
++                    state ^= state << 25;
++                    state ^= state >> 27;
++                    let pick = state.wrapping_mul(0x2545f4914f6cdd1d) % (j + 1);
++                    if !chosen.insert(pick) {
++                        chosen.insert(j);
++                    }
++                }
++                for row in chosen {
++                    if let Some(mut v) = self.hit(read, l + row, seq.len(), None, strand) {
++                        if trace {
++                            v["row"] = json!(l + row);
++                        }
++                        line(out, &v)?;
++                    }
++                }
++            } else {
++                for row in l..r {
++                    if let Some(mut v) = self.hit(read, row, seq.len(), None, strand) {
++                        if trace {
++                            v["row"] = json!(row);
++                        }
++                        line(out, &v)?;
++                    }
++                }
++            }
++        }
++        Ok(())
++    }
++    fn matching_statistics(
++        &self,
++        read: &str,
++        seq: &[u8],
++        out: &mut impl Write,
++    ) -> Result<(), String> {
++        self.validate(seq)?;
++        for (seq, strand) in self.orientations(seq) {
++            let mut values = self.ms(&seq);
++            // MS is indexed by start in the oriented query. For reversed
++            // reference storage compute forward-oriented starts explicitly.
++            if self.reversed {
++                values = (0..seq.len())
++                    .map(|i| {
++                        let end = seq.len() - i;
++                        (1..=end)
++                            .rev()
++                            .find(|&len| {
++                                let (l, r) = self.interval(&seq[end - len..end]);
++                                l < r
++                            })
++                            .unwrap_or(0) as u32
++                    })
++                    .collect();
++            }
++            let mut v = json!({"read": read, "ms": values});
++            if self.dna {
++                v["strand"] = json!(strand);
++            }
++            line(out, &v)?;
++        }
++        Ok(())
++    }
++    fn mems(
++        &self,
++        read: &str,
++        seq: &[u8],
++        min_len: usize,
++        out: &mut impl Write,
++    ) -> Result<(), String> {
++        self.validate(seq)?;
++        for (work, strand) in self.orientations(seq) {
++            let ms = self.ms(&work);
++            for (start, &max) in ms.iter().enumerate() {
++                // MS bounds the search. Shorter maximal matches at OTHER text
++                // occurrences must also be emitted; longest-only loses MEMs.
++                for len in min_len..=max as usize {
++                    let (l, r) = self.interval(&work[start..start + len]);
++                    let (el, er) = if start + len < work.len() {
++                        self.interval(&work[start..start + len + 1])
++                    } else {
++                        (0, 0)
++                    };
++                    for row in l..r {
++                        if row >= el && row < er {
++                            continue;
++                        } // right extendible at this occurrence
++                        if start > 0
++                            && self.idx.run_char[self.idx.run_of(row) as usize] == work[start - 1]
++                        {
++                            continue;
++                        }
++                        let reverse_query = self.reversed ^ (strand == "-");
++                        let qstart = if reverse_query {
++                            work.len() - start - len
++                        } else {
++                            start
++                        };
++                        if let Some(v) = self.hit(read, row, len, Some(qstart), strand) {
++                            line(out, &v)?;
++                        }
++                    }
++                }
++            }
++        }
++        Ok(())
++    }
++    fn stats(&self) -> Value {
++        json!({"n": self.idx.n, "k": self.records.len(), "runs": self.idx.r, "chi": self.chi,
++               "mode": if self.dna { "dna" } else { "text" }, "reversed": self.reversed})
++    }
++}
++fn complement(c: u8) -> Option<u8> {
++    let b = match c.to_ascii_uppercase() {
++        b'A' => b'T',
++        b'T' => b'A',
++        b'C' => b'G',
++        b'G' => b'C',
++        b'R' => b'Y',
++        b'Y' => b'R',
++        b'S' => b'S',
++        b'W' => b'W',
++        b'K' => b'M',
++        b'M' => b'K',
++        b'B' => b'V',
++        b'V' => b'B',
++        b'D' => b'H',
++        b'H' => b'D',
++        b'N' => b'N',
++        _ => return None,
++    };
++    Some(if c.is_ascii_lowercase() {
++        b.to_ascii_lowercase()
++    } else {
++        b
++    })
++}
++fn line(out: &mut impl Write, value: &Value) -> Result<(), String> {
++    serde_json::to_writer(&mut *out, value).map_err(|e| e.to_string())?;
++    out.write_all(b"\n").map_err(|e| e.to_string())
++}
++
++/// Bounded reader: wrapped FASTA and strict four-line FASTQ, gzip by magic.
++struct Reads {
++    input: Box<dyn BufRead>,
++    pending: Option<Vec<u8>>,
++}
++impl Reads {
++    fn open(path: &str) -> Result<Self, String> {
++        let mut f = BufReader::new(File::open(path).map_err(|e| e.to_string())?);
++        let gz = f
++            .fill_buf()
++            .map_err(|e| e.to_string())?
++            .starts_with(&[31, 139]);
++        let input: Box<dyn BufRead> = if gz {
++            Box::new(BufReader::new(MultiGzDecoder::new(f)))
++        } else {
++            Box::new(f)
++        };
++        Ok(Self {
++            input,
++            pending: None,
++        })
++    }
++    fn physical(&mut self) -> Result<Option<Vec<u8>>, String> {
++        let mut b = Vec::new();
++        self.input
++            .by_ref()
++            .take((MAX_READ + 2) as u64)
++            .read_until(b'\n', &mut b)
++            .map_err(|e| e.to_string())?;
++        if b.is_empty() {
++            return Ok(None);
++        }
++        if b.len() > MAX_READ + 1 {
++            return Err("input line too long".into());
++        }
++        if b.last() == Some(&b'\n') {
++            b.pop();
++        }
++        if b.last() == Some(&b'\r') {
++            b.pop();
++        }
++        Ok(Some(b))
++    }
++    fn next(&mut self) -> Result<Option<(String, Vec<u8>)>, String> {
++        let h = match self
++            .pending
++            .take()
++            .map(Ok)
++            .unwrap_or_else(|| self.physical().and_then(|x| x.ok_or("EOF".into())))
++        {
++            Ok(v) => v,
++            Err(e) if e == "EOF" => return Ok(None),
++            Err(e) => return Err(e),
++        };
++        if h.len() < 2 || !matches!(h[0], b'>' | b'@') {
++            return Err("expected FASTA/FASTQ header".into());
++        }
++        let name = std::str::from_utf8(&h[1..])
++            .map_err(|_| "header must be UTF-8")?
++            .to_owned();
++        let mut seq = Vec::new();
++        if h[0] == b'@' {
++            seq = self.physical()?.ok_or("truncated FASTQ sequence")?;
++            let plus = self.physical()?.ok_or("truncated FASTQ +")?;
++            let quality = self.physical()?.ok_or("truncated FASTQ quality")?;
++            if !plus.starts_with(b"+")
++                || quality.len() != seq.len()
++                || quality.iter().any(|&x| !(33..=126).contains(&x))
++            {
++                return Err("malformed FASTQ +/quality".into());
++            }
++            if plus.len() > 1 && plus[1..] != h[1..] {
++                return Err("FASTQ + identifier mismatch".into());
++            }
++        } else {
++            while let Some(b) = self.physical()? {
++                if b.starts_with(b">") {
++                    self.pending = Some(b);
++                    break;
++                }
++                seq.extend_from_slice(&b);
++                if seq.len() > MAX_READ {
++                    return Err("read too long".into());
++                }
++            }
++        }
++        Ok(Some((name, seq)))
++    }
++}
++struct Options {
++    path: String,
++    reads: Option<String>,
++    pattern: Option<String>,
++    mode: String,
++    orientation: Option<bool>,
++    jobs: usize,
++    min: usize,
++    bind: String,
++    ms: bool,
++    output: Option<String>,
++    sample: Option<usize>,
++    seed: u64,
++    trace: bool,
++}
++fn parse(args: &[String]) -> Result<Options, String> {
++    let mut o = Options {
++        path: String::new(),
++        reads: None,
++        pattern: None,
++        mode: "auto".into(),
++        orientation: None,
++        jobs: 1,
++        min: 20,
++        bind: "127.0.0.1:7331".into(),
++        ms: false,
++        output: None,
++        sample: None,
++        seed: 0,
++        trace: false,
++    };
++    let mut i = 0;
++    while i < args.len() {
++        let flag = &args[i];
++        i += 1;
++        match flag.as_str() {
++            "--trace-samples" => {
++                o.trace = true;
++                continue;
++            }
++            "--ms" => {
++                o.ms = true;
++                continue;
++            }
++            "--plain" => {
++                o.orientation = Some(false);
++                continue;
++            }
++            "--revlines" => {
++                o.orientation = Some(true);
++                continue;
++            }
++            _ => {}
++        }
++        let v = args.get(i).ok_or_else(|| format!("{flag} needs a value"))?;
++        i += 1;
++        match flag.as_str() {
++            "--sxi" | "--ri4" => o.path = v.clone(),
++            "--reads" | "--patterns" => o.reads = Some(v.clone()),
++            "--pattern" => o.pattern = Some(v.clone()),
++            "--mode" => o.mode = v.clone(),
++            "--bind" => o.bind = v.clone(),
++            "--output" | "--ms-out" => o.output = Some(v.clone()),
++            "-j" | "--threads" => o.jobs = v.parse().map_err(|_| "invalid threads")?,
++            "--min-len" => o.min = v.parse().map_err(|_| "invalid min-len")?,
++            "--sample" => o.sample = Some(v.parse().map_err(|_| "invalid sample")?),
++            "--seed" => o.seed = v.parse().map_err(|_| "invalid seed")?,
++            _ => return Err(format!("unknown option {flag}")),
++        }
++    }
++    if o.path.is_empty() || !(1..=64).contains(&o.jobs) || o.min == 0 {
++        return Err("need --sxi; threads 1..64; min-len > 0".into());
++    }
++    Ok(o)
++}
++fn process(
++    e: &Engine,
++    kind: &str,
++    o: &Options,
++    name: &str,
++    seq: &[u8],
++    out: &mut impl Write,
++) -> Result<(), String> {
++    if kind == "mems" {
++        e.mems(name, seq, o.min, out)
++    } else if o.ms {
++        e.matching_statistics(name, seq, out)
++    } else {
++        e.query(name, seq, out, o.sample, o.seed, o.trace)
++    }
++}
++fn run(kind: &str, args: &[String]) -> Result<(), String> {
++    let o = parse(args)?;
++    let engine = Engine::open(&o.path, &o.mode, o.orientation)?;
++    let pool = rayon::ThreadPoolBuilder::new()
++        .num_threads(o.jobs)
++        .build()
++        .map_err(|e| e.to_string())?;
++    if kind == "serve" {
++        return serve(engine, o, pool);
++    }
++    let mut out: Box<dyn Write> = if let Some(path) = &o.output {
++        Box::new(BufWriter::new(
++            File::create(path).map_err(|e| e.to_string())?,
++        ))
++    } else {
++        Box::new(BufWriter::new(io::stdout()))
++    };
++    if let Some(pattern) = &o.pattern {
++        process(&engine, kind, &o, "query", pattern.as_bytes(), &mut out)?;
++    } else {
++        let mut reads = Reads::open(o.reads.as_deref().ok_or("need --reads or --pattern")?)?;
++        loop {
++            let mut batch = Vec::new();
++            let mut bytes = 0;
++            while bytes < BATCH_BYTES && batch.len() < 256 {
++                if let Some((name, seq)) = reads.next()? {
++                    engine.validate(&seq)?;
++                    bytes += name.len() + seq.len();
++                    batch.push((name, seq));
++                } else {
++                    break;
++                }
++            }
++            if batch.is_empty() {
++                break;
++            }
++            // Spool output per read: abundant/repetitive hits cannot inflate RAM.
++            let results: Vec<Result<File, String>> = pool.install(|| {
++                batch
++                    .par_iter()
++                    .map(|(name, seq)| {
++                        let mut file = tempfile::tempfile().map_err(|e| e.to_string())?;
++                        {
++                            let mut w = BufWriter::new(&mut file);
++                            process(&engine, kind, &o, name, seq, &mut w)?;
++                            w.flush().map_err(|e| e.to_string())?;
++                        }
++                        Ok(file)
++                    })
++                    .collect()
++            });
++            for result in results {
++                use std::io::{Seek, SeekFrom};
++                let mut f = result?;
++                f.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
++                io::copy(&mut f, &mut out).map_err(|e| e.to_string())?;
++            }
++        }
++    }
++    out.flush().map_err(|e| e.to_string())
++}
++fn request(
++    e: &Engine,
++    o: &Options,
++    method: &str,
++    path: &str,
++    value: Value,
++    out: &mut impl Write,
++) -> Result<(), String> {
++    if method == "GET" && path == "/stats" {
++        return line(out, &e.stats());
++    }
++    if method != "POST" {
++        return Err("expected POST /query, /ms, /batch or GET /stats".into());
++    }
++    let read = |v: &Value| -> Result<(String, String), String> {
++        let name = v.get("name").and_then(Value::as_str).unwrap_or("query");
++        let seq = v
++            .get("pattern")
++            .or_else(|| v.get("read"))
++            .and_then(Value::as_str)
++            .ok_or("need pattern or read string")?;
++        e.validate(seq.as_bytes())?;
++        Ok((name.into(), seq.into()))
++    };
++    match path {
++        "/query" => {
++            let (name, seq) = read(&value)?;
++            e.query(&name, seq.as_bytes(), out, o.sample, o.seed, o.trace)
++        }
++        "/ms" => {
++            let (name, seq) = read(&value)?;
++            e.matching_statistics(&name, seq.as_bytes(), out)
++        }
++        "/batch" => {
++            let reads = value
++                .get("reads")
++                .and_then(Value::as_array)
++                .ok_or("need reads array")?;
++            let min = value
++                .get("min_len")
++                .map(|v| {
++                    v.as_u64()
++                        .filter(|&n| n > 0 && n <= MAX_READ as u64)
++                        .ok_or("invalid min_len")
++                })
++                .transpose()?
++                .unwrap_or(o.min as u64) as usize;
++            if reads.len() > 256 {
++                return Err("batch exceeds 256 reads".into());
++            }
++            let reads = reads.iter().map(read).collect::<Result<Vec<_>, _>>()?;
++            for (name, seq) in reads {
++                e.mems(&name, seq.as_bytes(), min, out)?;
++            }
++            Ok(())
++        }
++        _ => Err("unknown endpoint".into()),
++    }
++}
++fn serve(engine: Engine, o: Options, pool: rayon::ThreadPool) -> Result<(), String> {
++    let server = tiny_http::Server::http(&o.bind).map_err(|e| e.to_string())?;
++    eprintln!("xsa serve: listening {}", server.server_addr());
++    // Fixed workers pull requests directly. There is no unbounded application
++    // work queue and every worker borrows the same mmap-backed index.
++    pool.scope(|scope| {
++        for _ in 0..o.jobs {
++            let server = &server;
++            let engine = &engine;
++            let o = &o;
++            scope.spawn(move |_| {
++                while let Ok(mut req) = server.recv() {
++                    let mut body = Vec::new();
++                    let result: Result<File, String> = (|| {
++                        req.as_reader()
++                            .take((HTTP_BYTES + 1) as u64)
++                            .read_to_end(&mut body)
++                            .map_err(|e| e.to_string())?;
++                        if body.len() > HTTP_BYTES {
++                            return Err("request exceeds 2 MiB".into());
++                        }
++                        let value = if body.is_empty() {
++                            Value::Null
++                        } else {
++                            serde_json::from_slice(&body).map_err(|e| e.to_string())?
++                        };
++                        let mut file = tempfile::tempfile().map_err(|e| e.to_string())?;
++                        {
++                            let mut out = BufWriter::new(&mut file);
++                            request(engine, o, req.method().as_str(), req.url(), value, &mut out)?;
++                            out.flush().map_err(|e| e.to_string())?;
++                        }
++                        use std::io::{Seek, SeekFrom};
++                        file.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
++                        Ok(file)
++                    })();
++                    let header =
++                        tiny_http::Header::from_bytes("Content-Type", "application/x-ndjson")
++                            .unwrap();
++                    match result {
++                        Ok(file) => {
++                            let _ = req
++                                .respond(tiny_http::Response::from_file(file).with_header(header));
++                        }
++                        Err(error) => {
++                            let _ = req.respond(
++                                tiny_http::Response::from_string(format!(
++                                    "{}\n",
++                                    json!({"error":error})
++                                ))
++                                .with_status_code(400)
++                                .with_header(header),
++                            );
++                        }
++                    }
++                }
++            });
++        }
++    });
++    Ok(())
++}
++pub fn command(kind: &str, args: &[String]) {
++    if args.iter().any(|x| x == "--help" || x == "-h") {
++        println!("xsa {kind} --sxi FILE [--reads FA|FQ|GZ | --pattern STRING] [-j N] [--mode auto|dna|text]\n  [--min-len 20] [--ms] [--sample N --seed N] [--plain|--revlines] [--bind 127.0.0.1:7331]\nOutput: deterministic JSONL; coordinates zero-based; MEM qstart in original read.");
++        return;
++    }
++    if let Err(e) = run(kind, args) {
++        die(&e);
++    }
++}
+--- a/bit6/sxi_write.cpp
++++ b/bit6/sxi_write.cpp
+@@ -16,8 +16,8 @@
+     void write(const void* p,size_t n){auto& m=members.back();f.write((const char*)p,n);check(bool(f),"write output");m.bytes+=n;m.checksum=crc(m.checksum,(const unsigned char*)p,n);}
+     void number(U v,unsigned n=8){unsigned char b[8];put(b,v,n);write(b,n);}
+     void copy(const std::string& path,U offset,U bytes){std::ifstream in(path,std::ios::binary);check(bool(in),"open member");in.seekg(offset);std::vector<unsigned char>b(1<<20);while(bytes){size_t z=std::min<U>(bytes,b.size());read(in,b.data(),z);write(b.data(),z);bytes-=z;}}
+-    void finish(U n,U k,U r,bool complete){
+-        U total=f.tellp();std::vector<unsigned char>h(64+40*members.size());memcpy(h.data(),"SXI1",4);put(h.data()+4,1,4);put(h.data()+8,n);put(h.data()+16,k);put(h.data()+24,r);put(h.data()+32,members.size(),4);put(h.data()+36,h.size(),4);put(h.data()+40,total);put(h.data()+48,complete);
++    void finish(U n,U k,U r,bool complete,U metadata){
++        U total=f.tellp();std::vector<unsigned char>h(64+40*members.size());memcpy(h.data(),"SXI1",4);put(h.data()+4,1,4);put(h.data()+8,n);put(h.data()+16,k);put(h.data()+24,r);put(h.data()+32,members.size(),4);put(h.data()+36,h.size(),4);put(h.data()+40,total);put(h.data()+48,U(complete)|metadata);
+         for(size_t i=0;i<members.size();i++){auto&m=members[i];m.checksum=~m.checksum;auto*d=h.data()+64+40*i;put(d,m.id,4);put(d+4,m.codec,4);put(d+8,m.offset);put(d+16,m.bytes);put(d+24,m.count);put(d+32,m.checksum,4);fprintf(stderr,"SXI_MEMBER id=%u count=%llu bytes=%llu crc32=%08x\n",m.id,(unsigned long long)m.count,(unsigned long long)m.bytes,m.checksum);}
+         put(h.data()+56,~crc(~0U,h.data(),h.size()),4);f.seekp(0);f.write((char*)h.data(),h.size());f.flush();check(bool(f),"flush output");f.close();
+         // Atomic no-clobber publication, including a competing writer.
+@@ -26,7 +26,7 @@
+     }
+ };
+ int main(int argc,char**argv){try{
+-    std::map<std::string,std::string>a;for(int i=1;i<argc;i+=2){check(i+1<argc,"usage: sxi_write --ri4 IN --heads RAW --output OUT [--chi RAW] [--anchors XANC] [--names TSV]");std::string key=argv[i];check(key=="--ri4"||key=="--heads"||key=="--output"||key=="--chi"||key=="--anchors"||key=="--names","unknown option");check(a.emplace(key,argv[i+1]).second,"duplicate option");}
++    std::map<std::string,std::string>a;for(int i=1;i<argc;i+=2){check(i+1<argc,"usage: sxi_write --ri4 IN --heads RAW --output OUT [--chi RAW] [--anchors XANC] [--names TSV]");std::string key=argv[i];check(key=="--ri4"||key=="--heads"||key=="--output"||key=="--chi"||key=="--anchors"||key=="--names"||key=="--mode"||key=="--orientation","unknown option");check(a.emplace(key,argv[i+1]).second,"duplicate option");}
+     check(a.count("--ri4")&&a.count("--heads")&&a.count("--output"),"need --ri4 --heads --output");
+     std::ifstream f(a["--ri4"],std::ios::binary);check(bool(f),"open ri4");U filebytes=size(f);check(integer(f)==0x0000000452585349ULL,"need ri4 v4");U n=integer(f),k=integer(f),r=integer(f);check(n&&n<UINT64_MAX&&r&&r<=n&&k<=n&&r<=UINT32_MAX,"invalid n/k/r");
+     U tailoff=2080+5*r;check(tailoff+9<=filebytes,"truncated runs");f.seekg(tailoff);U bits=integer(f);unsigned w=integer(f,1);check(w&&w<=64&&bits==r*w,"bad samples");U tailbytes=9+((bits+63)/64)*8;check(filebytes==tailoff+tailbytes,"truncated/trailing ri4");
+@@ -42,8 +42,12 @@
+ 
+     U anchors=0,anchorbytes=12;if(a.count("--anchors")){std::ifstream q(a["--anchors"],std::ios::binary);check(bool(q),"open anchors");anchorbytes=size(q);check(integer(q,4)==0x434e4158,"bad anchor magic");anchors=integer(q);check(anchors<=k&&anchorbytes==12+16*anchors,"bad anchor size");U last=0;for(U i=0;i<anchors;i++){U row=integer(q),v=integer(q);check(row<n&&v<n&&(!i||row>last),"bad anchor");last=row;}}
+     std::vector<U> chi;if(a.count("--chi")){std::ifstream q(a["--chi"],std::ios::binary);check(bool(q),"open chi");U bytes=size(q);check(bytes%8==0&&bytes/8<=n+1&&bytes<140000000000ULL,"chi size/budget");chi.resize(bytes/8);for(auto&v:chi){v=integer(q);check(v<=n,"chi out of range");}std::sort(chi.begin(),chi.end());check(std::adjacent_find(chi.begin(),chi.end())==chi.end(),"chi contains duplicates");}
++    U metadata=8;
++    if(a.count("--mode")){check(a["--mode"]=="dna"||a["--mode"]=="text","invalid mode");if(a["--mode"]=="dna")metadata|=2;}
++    if(a.count("--orientation")){check(a["--orientation"]=="forward"||a["--orientation"]=="reversed","invalid orientation");if(a["--orientation"]=="reversed")metadata|=4;}
++    if(a.count("--names")){std::ifstream q(a["--names"],std::ios::binary);check(bool(q),"open names");U bytes=size(q);k=named_records(q,bytes,n);}
+     Output out(a["--output"],a.count("--names")?6:5);out.begin(1,r);out.copy(a["--ri4"],32,2048+5*r);out.begin(2,r);out.copy(a["--ri4"],tailoff,tailbytes);out.begin(3,r);out.copy(a["--heads"],0,8*r);out.begin(4,anchors);if(a.count("--anchors"))out.copy(a["--anchors"],0,anchorbytes);else{out.number(0x434e4158,4);out.number(0);}
+     out.begin(5,chi.size());U prev=0;for(U v:chi){U d=v-prev;do{unsigned char b=d&127;d>>=7;if(d)b|=128;out.write(&b,1);}while(d);prev=v;}
+     if(a.count("--names")){std::ifstream q(a["--names"],std::ios::binary);check(bool(q),"open names");U bytes=size(q);out.begin(6,bytes);out.copy(a["--names"],0,bytes);}
+-    out.finish(n,k,r,a.count("--chi"));return 0;
++    out.finish(n,k,r,a.count("--chi"),metadata);return 0;
+ }catch(const std::exception&e){fprintf(stderr,"FATAL: %s\n",e.what());return 1;}}
+--- a/bit6/sxi_format.hpp
++++ b/bit6/sxi_format.hpp
+@@ -8,6 +8,7 @@
+ #include <stdexcept>
+ #include <string>
+ #include <vector>
++#include <sstream>
+ namespace sxi {
+ using U=uint64_t;
+ inline void check(bool ok,const char* msg){if(!ok)throw std::runtime_error(msg);}
+@@ -21,6 +22,20 @@
+ inline void read(std::istream& f,void* p,size_t n){check(bool(f.read((char*)p,n)),"SXI: truncated input");}
+ inline U integer(std::istream& f,unsigned bytes=8){unsigned char b[8];read(f,b,bytes);return get(b,bytes);}
+ inline U size(std::ifstream& f){f.seekg(0,std::ios::end);auto n=f.tellg();check(n>=0,"SXI: stat input");f.seekg(0);return U(n);}
++// Names fstart is mirrored: stream_start = n - 1 - fstart - len.
++inline U named_records(std::istream& in,U bytes,U n){
++    U next=0,count=0;std::string line;
++    while(bytes){
++        line.clear();while(bytes){char c;read(in,&c,1);--bytes;if(c=='\n')break;line+=c;check(line.size()<=1048576,"SXI: names line too long");}
++        auto a=line.find('\t'),b=line.find('\t',a==std::string::npos?0:a+1);
++        check(a!=std::string::npos&&a>0&&b!=std::string::npos&&line.find('\t',b+1)==std::string::npos,"SXI: names fields");
++        auto number=[](const std::string& v){check(!v.empty()&&v.find_first_not_of("0123456789")==std::string::npos,"SXI: names integer");return U(std::stoull(v));};
++        U fs=number(line.substr(a+1,b-a-1)),len=number(line.substr(b+1));
++        check(fs<n&&len<=n-1-fs&&n-1-fs-len==next,"SXI: names coordinates");
++        next+=len+1;++count;
++    }
++    check(count&&next==n,"SXI: names partition");return count;
++}
+ struct Member {uint32_t id=0,codec=0;U offset=0,bytes=0,count=0;uint32_t checksum=0;};
+ struct Container {
+     U n=0,k=0,r=0,flags=0;std::vector<Member> members;
+@@ -30,7 +45,7 @@
+         unsigned char b[64];read(f,b,64);check(!memcmp(b,"SXI1",4)&&get(b+4,4)==1,"SXI: bad magic/version");
+         n=get(b+8);k=get(b+16);r=get(b+24);U count=get(b+32,4),hs=get(b+36,4);flags=get(b+48);
+         check(n&&n<UINT64_MAX&&r&&r<=n&&k<=n&&r<=UINT32_MAX,"SXI: invalid n/k/r");
+-        check(count>=5&&count<=6&&hs==64+40*count&&get(b+40)==length&&flags<=1&&!get(b+60,4),"SXI: invalid header");
++        check(count>=5&&count<=6&&hs==64+40*count&&get(b+40)==length&&(flags<=1||(flags>=8&&flags<=15))&&!get(b+60,4),"SXI: invalid header");
+         uint32_t wanted=get(b+56,4);put(b+56,0,4);uint32_t crcval=crc(~0U,b,64);U end=hs;
+         for(U i=0;i<count;i++){
+             unsigned char d[40];read(f,d,40);crcval=crc(crcval,d,40);
+@@ -43,9 +58,10 @@
+         check(member(1).count==r&&member(1).bytes==2048+5*r&&member(2).count==r&&member(3).count==r&&member(3).bytes==8*r,"SXI: run/sample sizes");
+         check(member(4).count<=k&&member(4).count<=(UINT64_MAX-12)/16&&member(4).bytes==12+16*member(4).count,"SXI: anchor size");
+         check(member(5).count<=n+1&&member(5).count<=UINT64_MAX/10&&member(5).bytes>=member(5).count&&member(5).bytes<=10*member(5).count,"SXI: chi size");
+-        check(flags==1||(member(5).count==0&&member(5).bytes==0),"SXI: unfinished chi");
++        check((flags&1)||(member(5).count==0&&member(5).bytes==0),"SXI: unfinished chi");
+         if(members.size()==6)check(member(6).count==member(6).bytes,"SXI: names size");
+         if(verify){std::vector<unsigned char> buf(1<<20);for(auto& m:members){f.seekg(m.offset);U left=m.bytes;uint32_t c=~0U;while(left){size_t z=std::min<U>(left,buf.size());read(f,buf.data(),z);c=crc(c,buf.data(),z);left-=z;}check(~c==m.checksum,"SXI: member CRC mismatch");}}
++        if(members.size()==6){f.seekg(member(6).offset);U records=named_records(f,member(6).bytes,n);check(!(flags&8)||k==records,"SXI: record count mismatch");k=records;}
+         f.seekg(member(2).offset);U bits=integer(f);unsigned w=integer(f,1);
+         check(w&&w<=64&&bits==r*w&&member(2).bytes==9+((bits+63)/64)*8,"SXI: packed tail size");
+         f.seekg(member(4).offset);check(integer(f,4)==0x434e4158&&integer(f)==member(4).count,"SXI: anchor header");
+--- a/bit6/chi_rspace_dump.cpp
++++ b/bit6/chi_rspace_dump.cpp
+@@ -85,6 +85,7 @@
+ struct Ri4 {
+     std::string sxiPath; uint64_t headOffset=0;
+     uint64_t n = 0, k = 0, R = 0;
++    uint64_t records = 0; // SXI named records; k below is the core byte-string count.
+     std::vector<uint64_t> C;      // 256
+     std::vector<uint8_t> a;       // run chars
+     std::vector<uint32_t> l;      // run lens
+@@ -109,6 +110,14 @@
+         if(sx)f.seekg(sx->member(1).offset);
+         C.resize(256); f.read((char*)C.data(), 8 * 256);
+         a.resize(R); f.read((char*)a.data(), R);
++        records = sx ? sx->k : k;
++        if (sx) {
++            bool hasRS = std::find(a.begin(), a.end(), uint8_t(0x1e)) != a.end();
++            bool hasNL = std::find(a.begin(), a.end(), uint8_t(0x0a)) != a.end();
++            // Named records do not introduce erased sentinels. The existing
++            // slim core still consumes one cyclic byte string for 0x1e text.
++            k = (hasRS || !hasNL) ? 1 : records;
++        }
+         l.resize(R); f.read((char*)l.data(), 4 * R);
+         starts.resize(R);
+         uint64_t acc = 0;
+--- a/bit6/sxi_pipeline.py
++++ b/bit6/sxi_pipeline.py
+@@ -32,11 +32,15 @@
+     p.add_argument('--scratch')
+     p.add_argument('--log-dir', default=str(ROOT / 'bit6/sxi_logs'))
+     p.add_argument('--expect-chi', type=int)
++    p.add_argument('--mode', choices=['auto', 'dna', 'text'], default='auto')
++    p.add_argument('--verify-text-sample', type=int, default=0)
+     p.add_argument('--expect-heads', help='acceptance oracle only; checked after fresh construction')
+     p.add_argument('--expect-ri4', help='acceptance oracle only; exact runs and packed-tail byte gate')
+     p.add_argument('--verbose', action='store_true')
+     p.add_argument('--xsa', default=str(ROOT / 'xsa/target/release/xsa'))
+     a = p.parse_args()
++    if not 0 <= a.verify_text_sample <= 100000:
++        p.error('--verify-text-sample must be 0..100000')
+     if not 1 <= a.threads <= 64:
+         p.error('--threads must be 1..64')
+     source_path = pathlib.Path(a.text or a.agc or a.fasta or a.fastq).absolute()
+@@ -50,6 +54,8 @@
+     rpf = os.environ.get('XSA_RPFBWT', '/tmp/rpfbwt-sxgc/build-sxgc/rpfbwt')
+     agc = os.environ.get('XSA_AGC2FLAT', str(tools / 'agc2flat'))
+     required = [pfp, rpf, a.xsa, '/usr/bin/time'] + [str(tools / s) for s in ('rpfbwt_endpoints', 'slim_dump', 'sxi_write')]
++    if a.verify_text_sample:
++        required.append(str(tools / "sxi_text_audit"))
+     if a.agc:
+         required.append(agc)
+     for tool in required:
+@@ -152,12 +158,15 @@
+         raise RuntimeError('internal chi count/file gate mismatch')
+     if a.expect_chi is not None and count != a.expect_chi:
+         raise RuntimeError(f'chi gate mismatch: {count} != {a.expect_chi}')
++    if a.verify_text_sample:
++        run('verify-text-sample', [tools/'sxi_text_audit', text, ri4, agg, chi, a.verify_text_sample])
+     # Writer validates range, uniqueness, endpoint consistency and checksums.
+     # Write on the destination filesystem, validate, then publish no-clobber.
+     out.parent.mkdir(parents=True, exist_ok=True)
+     with tempfile.TemporaryDirectory(prefix='.xsa-publish-', dir=out.parent) as publish:
+         candidate = pathlib.Path(publish)/'candidate.sxi'
+         cmd = [tools/'sxi_write', '--ri4', ri4, '--heads', heads, '--chi', chi, '--output', candidate]
++        cmd += ['--mode', (a.mode if a.mode != 'auto' else ('text' if a.text else 'dna')), '--orientation', 'reversed' if a.agc else 'forward']
+         if names:
+             cmd += ['--names', names]
+         run('write', cmd)
+--- a/bit6/sxi_text_audit.cpp
++++ b/bit6/sxi_text_audit.cpp
+@@ -0,0 +1,78 @@
++// Independent direct-text checks of sampled sweep witnesses. No text SA/BWT.
++#include "sxi_format.hpp"
++#include <sys/stat.h>
++#include <fcntl.h>
++#include <unistd.h>
++#include <map>
++#include <iostream>
++using namespace sxi;
++struct Text {
++    int fd; U bytes;
++    explicit Text(const char* path){fd=open(path,O_RDONLY);check(fd>=0,"audit text open");struct stat st{};check(!fstat(fd,&st)&&st.st_size>0,"audit text stat");bytes=st.st_size;}
++    ~Text(){close(fd);}
++    void at(U offset,unsigned char* dst,size_t length)const{
++        while(length){ssize_t got=pread(fd,dst,length,offset);check(got>0,"audit text read");offset+=got;dst+=got;length-=got;}
++    }
++    unsigned char byte(U offset)const{unsigned char c;at(offset,&c,1);return c;}
++};
++// Separate bounded streams: no mmap/address-space growth with corpus size.
++struct Stream {
++    std::vector<char> buffer;std::ifstream in;
++    Stream(const char* path,U offset):buffer(1<<20){in.rdbuf()->pubsetbuf(buffer.data(),buffer.size());in.open(path,std::ios::binary);check(bool(in),"audit stream open");in.seekg(offset);}
++    U next(unsigned bytes=8){return integer(in,bytes);}
++};
++int main(int argc,char**argv){try{
++    check(argc==6,"usage: sxi_text_audit TEXT RI4 AGG CHI N");
++    U requested=std::stoull(argv[5]);check(requested>0&&requested<=100000,"sample N must be 1..100000");
++    Text text(argv[1]);std::ifstream ri(argv[2],std::ios::binary),agg(argv[3],std::ios::binary);
++    check(bool(ri)&&bool(agg),"audit index open");U ribytes=size(ri),aggbytes=size(agg);
++    check(ribytes>=2080&&integer(ri)==0x0000000452585349ULL,"audit ri4 header");
++    U n=integer(ri);integer(ri);U r=integer(ri);check(n==text.bytes&&r<=(UINT64_MAX-2080)/32&&ribytes>=2080+5*r,"audit dimensions");
++    check(aggbytes==12+32*r&&integer(agg,4)==0x31415243&&integer(agg)==r,"audit agg dimensions");
++    Stream chars(argv[2],2080);bool rs=false,nl=false;
++    for(U i=0;i<r;i++){U c=chars.next(1);rs|=c==30;nl|=c==10;}
++    chars.in.clear();chars.in.seekg(2080);
++    Stream lcps(argv[3],12),heads(argv[3],12+8*r),tails(argv[3],12+16*r),interiors(argv[3],12+24*r);
++    check(rs||!nl,"text audit currently requires cyclic corpus convention");
++    std::ifstream cf(argv[4],std::ios::binary);check(bool(cf),"audit chi open");U sizechi=size(cf);check(sizechi%8==0,"audit chi size");U count=sizechi/8,take=std::min(count,requested);
++    std::map<U,bool> samples;
++    // Stratified deterministic witnesses across the complete emission stream.
++    for(U i=0;i<take;i++){cf.seekg((i*(count/take)+(i*(count%take))/take)*8);U v=integer(cf);check(v<n,"audit witness range");check(samples.emplace(v,false).second,"audit duplicate sample");}
++    struct Candidate {int64_t len=-1;U pos=0,other=0,lcp=0;bool active=false;int symbol=0,other_symbol=0;};
++    std::array<Candidate,128> candidates{};U comparisons=0,verified=0,emitted=0;
++    auto witness=[&](U pos){check(pos<n,"audit endpoint range");return pos? n-pos:0;};
++    std::array<unsigned char,65536> left{},right{};
++    auto emit=[&](const Candidate& c){
++        ++emitted;U w=witness(c.pos);auto found=samples.find(w);if(found==samples.end())return;
++        check(!found->second,"audit repeated sampled witness");
++        check(c.other<n&&c.lcp<=n,"audit context range");
++        U a=c.pos,b=c.other;
++        check(text.byte((a+n-1)%n)==c.symbol&&text.byte((b+n-1)%n)==c.other_symbol,"audit witness symbol FAIL");
++        check(text.byte((a+n-1)%n)!=text.byte((b+n-1)%n),"audit right-context distinctness FAIL");
++        for(U j=0;j<c.lcp;){
++            U x=(a+j)%n,y=(b+j)%n;
++            size_t length=std::min({U(left.size()),c.lcp-j,n-x,n-y});
++            text.at(x,left.data(),length);text.at(y,right.data(),length);comparisons+=length;
++            check(!memcmp(left.data(),right.data(),length),"audit shared context FAIL");j+=length;
++        }
++        if(c.lcp<n){++comparisons;check(text.byte((a+c.lcp)%n)!=text.byte((b+c.lcp)%n),"audit LCP maximality FAIL");}
++        found->second=true;++verified;
++    };
++    int prev=-1;U prevtail=0,interior=UINT64_MAX;int64_t m=INT64_MAX;
++    for(U i=0;i<r;i++){
++        U lcp=lcps.next(),head=heads.next(),tail=tails.next(),within=interiors.next();
++        int c=chars.next(1);check(c<128,"audit alphabet");
++        if(i){int64_t mm=std::min(m,interior==UINT64_MAX?INT64_MAX:int64_t(interior));
++            if(c!=prev){int64_t m3=std::min(mm,int64_t(lcp));
++                for(int ch=1;ch<128;ch++)if(m3<candidates[ch].len){if(candidates[ch].active)emit(candidates[ch]);candidates[ch].len=m3;candidates[ch].active=false;}
++                if(int64_t(lcp)>candidates[prev].len)candidates[prev]={int64_t(lcp),prevtail,head,lcp,true,prev,c};
++                if(int64_t(lcp)>candidates[c].len)candidates[c]={int64_t(lcp),head,prevtail,lcp,true,c,prev};
++                m=INT64_MAX;
++            }else m=std::min(mm,int64_t(lcp));
++        }
++        prev=c;prevtail=tail;interior=within;
++    }
++    for(int c=1;c<128;c++)if(candidates[c].active)emit(candidates[c]);
++    check(emitted==count&&verified==take,"audit sampled witness missing/count mismatch");
++    std::cout<<"TEXT_SAMPLE_PASS requested="<<requested<<" verified="<<verified<<" chi="<<count<<" compared_bytes="<<comparisons<<"\n";
++}catch(const std::exception& e){std::cerr<<"TEXT_SAMPLE_FAIL "<<e.what()<<"\n";return 1;}}
+--- a/bit6/query_brute.cpp
++++ b/bit6/query_brute.cpp
+@@ -0,0 +1,38 @@
++// Test-only independent direct-text MEM oracle. Rolling hashes only nominate
++// candidates; every seed and both maximality conditions are byte verified.
++#include "sxi_format.hpp"
++#include <sys/mman.h>
++#include <sys/stat.h>
++#include <fcntl.h>
++#include <unistd.h>
++#include <unordered_map>
++#include <iostream>
++using namespace sxi;
++struct Seed {size_t read,start;};
++int main(int argc,char**argv){try{
++    check(argc==5,"usage: query_brute TEXT READS_TSV NAMES MIN");U min=std::stoull(argv[4]);check(min>0,"min");
++    int fd=open(argv[1],O_RDONLY);check(fd>=0,"text open");struct stat st{};check(!fstat(fd,&st),"stat");U n=st.st_size;auto t=(const unsigned char*)mmap(nullptr,n,PROT_READ,MAP_PRIVATE,fd,0);check(t!=MAP_FAILED,"mmap");
++    std::vector<std::string> names,queries,strands;std::vector<U> ends,starts;std::ifstream nf(argv[3]);std::string s;
++    while(std::getline(nf,s)){auto a=s.find('\t'),b=s.find('\t',a+1);U fs=std::stoull(s.substr(a+1,b-a-1)),len=std::stoull(s.substr(b+1));starts.push_back(n-1-fs-len);ends.push_back(n-1-fs);}
++    check(!ends.empty(),"names");std::ifstream qf(argv[2]);
++    while(std::getline(qf,s)){auto a=s.find('\t'),b=s.find('\t',a+1);names.push_back(s.substr(0,a));strands.push_back(s.substr(a+1,b-a-1));queries.push_back(s.substr(b+1));}
++    std::unordered_map<U,std::vector<Seed>> seeds;
++    for(size_t i=0;i<queries.size();i++)for(size_t j=0;j+min<=queries[i].size();j++){U h=0;for(U z=0;z<min;z++)h=h*131+(unsigned char)queries[i][j+z];seeds[h].push_back({i,j});}
++    U pow=1;for(U z=1;z<min;z++)pow*=131;U h=0,hits=0,doc=0;
++    for(U p=0;p<n;p++){
++        if(p>=min)h-=U(t[p-min])*pow;
++        h=h*131+t[p];if(p+1<min)continue;
++        U pos=p+1-min;while(doc<ends.size()&&pos>ends[doc])++doc;if(doc==ends.size()||p>=ends[doc])continue;
++        auto found=seeds.find(h);if(found==seeds.end())continue;
++        for(auto seed:found->second){const auto& q=queries[seed.read];U j=seed.start;
++            if(memcmp(t+pos,q.data()+j,min))continue;
++            if(j&&pos>starts[doc]&&t[pos-1]==(unsigned char)q[j-1])continue;
++            U len=min;while(j+len<q.size()&&pos+len<ends[doc]&&t[pos+len]==(unsigned char)q[j+len])++len;
++            // Query file contains reversed-storage oriented sequences. Restore
++            // original-record offset and original-read qstart for the oracle.
++            U off=ends[doc]-pos-len,qstart=strands[seed.read]=="+"?q.size()-j-len:j;
++            std::cout<<names[seed.read]<<'\t'<<doc<<'\t'<<off<<'\t'<<len<<'\t'<<qstart<<'\t'<<strands[seed.read]<<'\n';++hits;
++        }
++    }
++    std::cerr<<"BRUTE_PASS bytes="<<n<<" oriented_reads="<<queries.size()<<" mems="<<hits<<"\n";munmap((void*)t,n);close(fd);
++}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}
+--- a/bit6/test_query_product.py
++++ b/bit6/test_query_product.py
+@@ -0,0 +1,122 @@
++#!/usr/bin/env python3
++"""Independent all-occurrence MEM oracle, source battery, and HTTP parity."""
++import argparse, gzip, json, pathlib, random, socket, struct, subprocess, tempfile, time, urllib.request, urllib.error
++from test_sxi_separator import cyclic_frame
++P=argparse.ArgumentParser();P.add_argument('--work',required=True);P.add_argument('--xsa',default='xsa/target/release/xsa');P.add_argument('--writer',default='/tmp/sxi-query-writer');A=P.parse_args()
++work=pathlib.Path(A.work);work.mkdir(parents=True,exist_ok=True)
++xsa=str(pathlib.Path(A.xsa).absolute())
++def run(args,ok=True):
++    p=subprocess.run(list(map(str,args)),capture_output=True)
++    assert (p.returncode==0)==ok,(args,p.returncode,p.stderr.decode())
++    return p.stdout
++
++def fixture(label,records,dna=True,reversed=False):
++    text=b'\x1e'.join(seq[::-1] if reversed else seq for _,seq in records)+b'\x1e'
++    sa,bwt,runs=cyclic_frame(text);n=len(text);r=len(runs)
++    ri=work/(label+'.ri4');head=work/(label+'.heads');names=work/(label+'.names');out=work/(label+'.sxi')
++    counts=[bwt.count(c) for c in range(256)];C=[];acc=0
++    for c in counts:C.append(acc);acc+=c
++    width=(n-1).bit_length() or 1;values=[n-1-v[3] for v in runs];packed=sum(v<<(i*width) for i,v in enumerate(values))
++    ri.write_bytes(struct.pack('<IIQQQ256Q',0x52585349,4,n,1,r,*C)+bytes(v[0] for v in runs)+struct.pack(f'<{r}I',*(v[1] for v in runs))+struct.pack('<QB',r*width,width)+packed.to_bytes(((r*width+63)//64)*8,'little'))
++    head.write_bytes(struct.pack(f'<{r}Q',*(v[2] for v in runs)))
++    rows=[];off=0
++    for name,seq in records:rows.append(f'{name}\t{n-1-off-len(seq)}\t{len(seq)}\n');off+=len(seq)+1
++    names.write_text(''.join(rows))
++    run([A.writer,'--ri4',ri,'--heads',head,'--names',names,'--mode','dna' if dna else 'text','--orientation','reversed' if reversed else 'forward','--output',out])
++    return out
++RC=bytes.maketrans(b'ACGTRYSWKMBDHVNacgtryswkmbdhvn',b'TGCAYRSWMKVHDBNtgcayrswmkvhdbn')
++def brute(records,reads,min_len,dna):
++    result=[]
++    for name,q in reads:
++        for strand,seq in ([('+',q),('-',q.translate(RC)[::-1])] if dna else [('+',q)]):
++            for doc,(record,t) in enumerate(records):
++                for i in range(len(seq)):
++                    pos=t.find(seq[i:i+min_len]) if i+min_len<=len(seq) else -1
++                    while pos>=0:
++                        if not (i and pos and seq[i-1]==t[pos-1]):
++                            length=min_len
++                            while i+length<len(seq) and pos+length<len(t) and seq[i+length]==t[pos+length]:length+=1
++                            v=dict(read=name,name=record,doc_id=doc,offset=pos,len=length,qstart=i if strand=='+' else len(seq)-i-length)
++                            if dna:v['strand']=strand
++                            result.append(v)
++                        pos=t.find(seq[i:i+min_len],pos+1)
++    return result
++
++def canonical(v):return sorted(json.dumps(x,sort_keys=True) for x in v)
++def lines(b):return [json.loads(x) for x in b.splitlines()]
++def check(label,records,reads,min_len,dna=True,reversed=False,index=None):
++    index=index or fixture(label,records,dna,reversed)
++    fa=work/(label+'.fa');fa.write_bytes(b''.join(b'>'+name.encode()+b'\n'+seq+b'\n' for name,seq in reads))
++    args=[xsa,'mems','--sxi',index,'--reads',fa,'--min-len',min_len,'--mode','dna' if dna else 'text']
++    actual=run(args+['-j',3]);assert actual==run(args+['-j',1]),'thread order'
++    expected=brute(records,reads,min_len,dna)
++    assert canonical(lines(actual))==canonical(expected),(label,canonical(lines(actual))[:15],canonical(expected)[:15])
++    (work/(label+'.mems.jsonl')).write_bytes(actual)
++    print(json.dumps(dict(test=label,reads=len(reads),mems=len(expected),status='PASS')),flush=True)
++    return index,fa,actual
++rng=random.Random(466)
++records=[('a',b'ACGACGTACG'),('b',b'ACGTTTACG'),('c',b'TTACGAC'),('pal',b'ATATAT')]
++reads=[('r'+str(i),bytes(rng.choice(b'ACGTN') for _ in range(rng.randrange(1,18)))) for i in range(50)]+[('exact',records[0][1]),('repeat',b'ACGACG'),('left-shorter',b'TTACGACGT')]
++index,fa,expected=check('dna',records,reads,2)
++check('reversed',records,reads,2,reversed=True)
++check('text',[('doc x',b'abracadabra'),('doc y',b'abra abrac')],[('r',b'abracadabracadabra')],2,dna=False)
++check('periodic',[(str(i),b'ACG'*25) for i in range(7)],[('q',b'ACG'*5)],3)
++for i in range(12):
++    rs=[(str(j),bytes(rng.choice(b'ACGT') for _ in range(rng.randrange(3,32)))) for j in range(3)]
++    qs=[(str(j),bytes(rng.choice(b'ACGT') for _ in range(15))) for j in range(5)]
++    check('random'+str(i),rs,qs,1)
++# Exact locate and MS independently checked at every position, both strands.
++for idx, reverse in [(index, False), (work/'reversed.sxi', True)]:
++    for seq in [b'ACGACGT', b'NNN', b'TTACGAC', b'ATATAT']:
++        got=lines(run([xsa,'query','--sxi',idx,'--pattern',seq.decode()]))
++        want=[]
++        vectors=[]
++        for strand,q in [('+',seq),('-',seq.translate(RC)[::-1])]:
++            values=[]
++            for i in range(len(q)):
++                values.append(max([0]+[length for length in range(1,len(q)-i+1) if any(q[i:i+length] in t for _,t in records)]))
++            vectors.append(dict(read='query',strand=strand,ms=values))
++            for doc,(name,t) in enumerate(records):
++                p=t.find(q)
++                while p>=0:
++                    want.append(dict(read='query',name=name,doc_id=doc,offset=p,len=len(q),strand=strand));p=t.find(q,p+1)
++        assert canonical(got)==canonical(want)
++        assert lines(run([xsa,'query','--sxi',idx,'--pattern',seq.decode(),'--ms']))==vectors
++        sampled=lines(run([xsa,'query','--sxi',idx,'--pattern',seq.decode(),'--sample','2','--seed','7']))
++        assert all(hit in want for hit in sampled) and len(sampled)<=4
++assert b'k=4' in run([xsa,'sxi-info',index])
++# All original construction battery fixtures; legacy single-record text mode.
++for label in ['duplicates-600k','random-4-2k','random-4-20k','random-bin-20k','random-4-200k','satellite-18k','HOR-nested']:
++    text=pathlib.Path('/tmp/laneY/bat',label+'.txt').read_bytes()
++    qs=[('sample'+str(i),text[pos:pos+40].rstrip(b'\r')) for i,pos in enumerate([5,len(text)//2,len(text)-60])]
++    check('battery-'+label,[('text',text)],qs,12,dna=False,index=pathlib.Path('/tmp/laneV/g0-final',label+'.sxi'))
++# gzip FASTQ equivalence, malformed input and IUPAC checks.
++fq=work/'reads.fq.gz'
++with gzip.open(fq,'wb') as f:f.write(b''.join(b'@'+n.encode()+b'\n'+q+b'\n+\n'+b'I'*len(q)+b'\n' for n,q in reads))
++assert run([xsa,'mems','--sxi',index,'--reads',fq,'--min-len',2,'-j',2])==expected
++run([xsa,'query','--sxi',index,'--pattern','ACGT!'],False)
++run([xsa,'query','--sxi',index,'--pattern','ACGT!','--mode','text'])
++run([xsa,'query','--sxi',index,'--pattern','ARYSWKMBDHVNaryswkmbdhvn'])
++bad=work/'bad.fq';bad.write_bytes(b'@r\nACGT\n+\nIII\n');run([xsa,'mems','--sxi',index,'--reads',bad],False)
++# HTTP responses are the exact CLI JSONL wire representation.
++with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
++log=(work/'server.log').open('wb');server=subprocess.Popen([xsa,'serve','--sxi',str(index),'-j','3','--bind',f'127.0.0.1:{port}'],stderr=log)
++try:
++    base=f'http://127.0.0.1:{port}'
++    for _ in range(300):
++        try:stats=urllib.request.urlopen(base+'/stats').read();break
++        except OSError:time.sleep(.1)
++    else:raise AssertionError('server startup')
++    assert json.loads(stats)['k']==len(records)
++    seq='ACGACG'
++    for endpoint,extra in [('/query',[]),('/ms',['--ms']),('/batch',['--min-len','2'])]:
++        kind='mems' if endpoint=='/batch' else 'query'
++        v={'reads':[{'name':'query','read':seq}],'min_len':2} if endpoint=='/batch' else {'pattern':seq}
++        data=json.dumps(v).encode()
++        got=run(['curl','--fail','--silent','-H','Content-Type: application/json','--data-binary',data.decode(),base+endpoint])
++        assert got==run([xsa,kind,'--sxi',index,'--pattern',seq,*extra]),endpoint
++    try:urllib.request.urlopen(urllib.request.Request(base+'/query',data=b'{"pattern":"!"}'));raise AssertionError('bad query accepted')
++    except urllib.error.HTTPError as e:assert e.code==400
++    assert json.loads(urllib.request.urlopen(base+'/stats').read())['k']==len(records)
++finally:server.terminate();server.wait();log.close()
++print('PASS all MEMs brute verified, deterministic threads, gzip/FASTQ, modes, IUPAC, HTTP byte parity and error survival')
+--- a/bit6/test_query_metadata.py
++++ b/bit6/test_query_metadata.py
+@@ -0,0 +1,21 @@
++#!/usr/bin/env python3
++"""Container mode, orientation, k, and names are validated, not guessed."""
++import pathlib,struct,subprocess,tempfile,zlib
++ROOT=pathlib.Path(__file__).resolve().parents[1];X=ROOT/'xsa/target/release/xsa'
++def crc(b):
++    hs=struct.unpack_from('<I',b,36)[0];struct.pack_into('<I',b,56,0);struct.pack_into('<I',b,56,zlib.crc32(b[:hs]))
++def run(args,ok=True):
++    p=subprocess.run(list(map(str,args)),capture_output=True);assert (p.returncode==0)==ok,(args,p.stderr);return p.stdout
++source=pathlib.Path('/tmp/sxi-query-tests5/dna.sxi').read_bytes()
++with tempfile.TemporaryDirectory(prefix='query-metadata-') as tmp:
++    tmp=pathlib.Path(tmp)
++    for label,offset,fmt,value in [('k',16,'<Q',1),('flags',48,'<Q',32)]:
++        b=bytearray(source);struct.pack_into(fmt,b,offset,value);crc(b);p=tmp/(label+'.sxi');p.write_bytes(b);run([X,'sxi-info',p],False)
++    b=bytearray(source);off,size=struct.unpack_from('<QQ',b,64+5*40+8);b[off+2]=ord('9');struct.pack_into('<I',b,64+5*40+32,zlib.crc32(b[off:off+size]));crc(b);p=tmp/'names.sxi';p.write_bytes(b);run([X,'sxi-info',p],False)
++    b=bytearray(source);struct.pack_into('<Q',b,16,1);struct.pack_into('<Q',b,48,0);crc(b);p=tmp/'legacy.sxi';p.write_bytes(b)
++    assert b'k=4' in run([X,'sxi-info',p])
++    # Legacy auto has no provenance: generic; explicit DNA rejects invalid bytes.
++    run([X,'query','--sxi',p,'--pattern','!'])
++    run([X,'query','--sxi',p,'--pattern','!','--mode','dna'],False)
++    assert b'"row":' in run([X,'query','--sxi','/tmp/sxi-query-tests5/dna.sxi','--pattern','ACG','--trace-samples','--sample','2'])
++print('PASS invalid k/flags/names rejected; legacy k normalized read-only; mode overrides; annotated sampled traces')
+--- a/bit6/test_query_yeast.py
++++ b/bit6/test_query_yeast.py
+@@ -0,0 +1,75 @@
++#!/usr/bin/env python3
++"""Retained yeast235 gate: direct-text MEM oracle, server/CLI byte parity,
++record-count repack regression and immutable five-member comparison."""
++import hashlib,json,pathlib,socket,struct,subprocess,time,urllib.request
++ROOT=pathlib.Path(__file__).resolve().parents[1];LOG=ROOT/'bit6/sxi_logs/query-product';X=str(ROOT/'xsa/target/release/xsa')
++WORK=pathlib.Path('/tmp/sxi-query-yeast');WORK.mkdir(exist_ok=True)
++SCRATCH=pathlib.Path('/tmp/sxi-repair2/yeast235/xsa-build-26al38ee');INDEX='/tmp/sxi-query-yeast235.sxi'
++def run(args,label):
++    p=subprocess.run(['/usr/bin/time','-v','-o',str(LOG/(label+'.time')),*map(str,args)],capture_output=True)
++    (LOG/(label+'.stderr')).write_bytes(p.stderr)
++    assert p.returncode==0,(args,p.stderr.decode());return p.stdout
++names=[line.split('\t') for line in (SCRATCH/'collection.txt.names.tsv').read_text().splitlines()]
++n=(SCRATCH/'collection.txt').stat().st_size
++reads=[]
++with (SCRATCH/'collection.txt').open('rb') as f:
++    for i,doc in enumerate([12,555]):
++        name,fs,length=names[doc];start=n-1-int(fs)-int(length);f.seek(start+123);seq=f.read(45)[::-1]
++        if i==1:seq=seq[:23]+(b'A' if seq[23:24]!=b'A' else b'C')+seq[24:]
++        reads.append(('sample'+str(i),seq))
++fa=WORK/'reads.fa';fa.write_bytes(b''.join(b'>'+name.encode()+b'\n'+seq+b'\n' for name,seq in reads))
++rc=bytes.maketrans(b'ACGTN',b'TGCAN');br=WORK/'oriented.tsv';br.write_bytes(b''.join(name.encode()+b'\t'+strand+b'\t'+q+b'\n' for name,seq in reads for strand,q in [(b'+',seq[::-1]),(b'-',seq.translate(rc))]))
++expected=run(['/tmp/sxi-query-brute',SCRATCH/'collection.txt',br,SCRATCH/'collection.txt.names.tsv',20],'yeast-brute')
++want=[]
++for row in expected.decode().splitlines():
++    name,doc,off,length,start,strand=row.split('\t');doc=int(doc)
++    want.append(dict(read=name,doc_id=doc,name=names[doc][0],offset=int(off),len=int(length),qstart=int(start),strand=strand))
++actual=run([X,'mems','--sxi',INDEX,'--reads',fa,'--min-len',20,'-j',3],'yeast-mems')
++canon=lambda rows:sorted(json.dumps(x,sort_keys=True) for x in rows)
++assert canon(want)==canon([json.loads(x) for x in actual.splitlines()]),'MEM oracle mismatch'
++(LOG/'yeast-mems.jsonl').write_bytes(actual)
++print(json.dumps(dict(gate='yeast235-brute-mems',reads=len(reads),mems=len(want),status='PASS')),flush=True)
++# stats reports the new named-record k from a fresh writer publication.
++stats=run([X,'stats','--sxi',INDEX],'yeast-stats');(LOG/'yeast-stats.log').write_bytes(stats);assert b'9901' in stats
++
++def members(path):
++    result={}
++    with open(path,'rb') as f:
++        h=f.read(64);n,k,r=struct.unpack_from('<3Q',h,8);count=struct.unpack_from('<I',h,32)[0];directory=f.read(40*count)
++        for i in range(count):
++            id,codec,off,size,num,crc,res=struct.unpack_from('<IIQQQII',directory,40*i);f.seek(off);hash=hashlib.sha256();left=size
++            while left:b=f.read(min(left,1<<20));assert b;left-=len(b);hash.update(b)
++            result[id]=dict(codec=codec,bytes=size,count=num,crc=crc,sha256=hash.hexdigest())
++    return dict(n=n,k=k,r=r,members=result)
++before=members('/tmp/sxi-repair2/yeast235.sxi');after=members(INDEX)
++assert before['k']==1 and after['k']==9901
++assert before['members']==after['members'] and after['members'][5]['count']==85404336
++(LOG/'yeast-members.json').write_text(json.dumps(dict(before=before,after=after),indent=2)+'\n')
++# Reference-only yeast regression publication remains unchanged too.
++reg=members('/mnt/nvme3n1/erikg/sxi-repair2/yeast.sxi')
++prior=json.loads((ROOT/'bit6/sxi_logs/sep-convention/repair2/yeast-members.json').read_text())
++(LOG/'yeast-regression-current.json').write_text(json.dumps(reg,indent=2)+'\n')
++assert reg['members'][5]['count']==85404240
++for id in range(1,6):
++    assert reg['members'][id]['sha256']==prior['previous']['members'][str(id)]['sha256']
++print('PASS yeast235 k=9901, chi=85404336, all six member hashes unchanged; yeast chi=85404240',flush=True)
++with socket.socket() as s:s.bind(('127.0.0.1',0));port=s.getsockname()[1]
++log=(LOG/'yeast-server.log').open('wb');server=subprocess.Popen(['/usr/bin/time','-v','-o',str(LOG/'yeast-server.time'),X,'serve','--sxi',INDEX,'-j','3','--bind',f'127.0.0.1:{port}'],stderr=log,start_new_session=True)
++try:
++    base=f'http://127.0.0.1:{port}'
++    for _ in range(1800):
++        try:stats=urllib.request.urlopen(base+'/stats',timeout=1).read();break
++        except OSError:time.sleep(.1)
++    else:raise AssertionError('server startup timeout')
++    assert json.loads(stats)['k']==9901
++    for endpoint,kind,extra in [('/query','query',[]),('/ms','query',['--ms']),('/batch','mems',['--min-len','20'])]:
++        if endpoint=='/batch':value={'reads':[{'name':name,'read':seq.decode()} for name,seq in reads],'min_len':20};cli=actual
++        else:value={'name':reads[0][0],'read':reads[0][1].decode()};single=WORK/'single.fa';single.write_bytes(b'>'+reads[0][0].encode()+b'\n'+reads[0][1]+b'\n');cli=run([X,kind,'--sxi',INDEX,'--reads',single,*extra],'yeast-cli-'+endpoint[1:])
++        got=run(['curl','--fail','--silent','-H','Content-Type: application/json','--data-binary',json.dumps(value),base+endpoint],'yeast-http-'+endpoint[1:])
++        assert got==cli,endpoint
++        (LOG/('yeast-http-'+endpoint[1:]+'.jsonl')).write_bytes(got)
++        print('PASS HTTP/CLI byte parity '+endpoint,flush=True)
++finally:
++    # Kill only this test's newly created process group.
++    import os,signal
++    os.killpg(server.pid,signal.SIGTERM);server.wait();log.close()
+--- a/bit6/test_query_http.py
++++ b/bit6/test_query_http.py
+@@ -0,0 +1,25 @@
++#!/usr/bin/env python3
++"""Replay the retained yeast HTTP oracle under a 20 GB address-space ceiling."""
++import json,pathlib,resource,socket,subprocess,time,urllib.request
++ROOT=pathlib.Path(__file__).resolve().parents[1];LOG=ROOT/'bit6/sxi_logs/query-product';X=ROOT/'xsa/target/release/xsa'
++reads=pathlib.Path('/tmp/sxi-query-yeast/reads.fa').read_text().splitlines();rows=[{'name':reads[i][1:],'read':reads[i+1]} for i in range(0,len(reads),2)]
++with socket.socket() as s:s.bind(('127.0.0.1',0));port=s.getsockname()[1]
++def cap():resource.setrlimit(resource.RLIMIT_AS,(20_000_000_000,20_000_000_000))
++with (LOG/'http-final-server.log').open('wb') as log:
++    server=subprocess.Popen([X,'serve','--sxi','/tmp/sxi-query-yeast235.sxi','-j','3','--bind',f'127.0.0.1:{port}'],stderr=log,preexec_fn=cap)
++    try:
++        base=f'http://127.0.0.1:{port}'
++        for _ in range(1200):
++            try:stats=json.load(urllib.request.urlopen(base+'/stats',timeout=1));break
++            except OSError:time.sleep(.1)
++        else:raise AssertionError('server failed to start')
++        assert stats['k']==9901 and stats['mode']=='dna'
++        for endpoint in ['query','ms','batch']:
++            value={'reads':rows,'min_len':20} if endpoint=='batch' else rows[0]
++            p=subprocess.run(['curl','--fail','--silent','-H','Content-Type: application/json','--data-binary',json.dumps(value),base+'/'+endpoint],capture_output=True)
++            assert p.returncode==0 and p.stdout==(LOG/('yeast-http-'+endpoint+'.jsonl')).read_bytes(),endpoint
++            print('PASS final HTTP '+endpoint,flush=True)
++    finally:server.terminate();server.wait()
++peak=resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
++assert peak*1024<20_000_000_000
++print(json.dumps(dict(status='PASS',server_peak_rss_kib=peak,address_space_limit_bytes=20_000_000_000)))
+--- a/bit6/test_text_audit.py
++++ b/bit6/test_text_audit.py
+@@ -0,0 +1,17 @@
++#!/usr/bin/env python3
++"""Audit must reject bad materialized text and failed gates must not publish."""
++import json,pathlib,subprocess,tempfile,os
++ROOT=pathlib.Path(__file__).resolve().parents[1];LOG=ROOT/'bit6/sxi_logs/query-product'
++record=json.loads((LOG/'fresh-build.log').read_text().splitlines()[-1]);work=pathlib.Path(record['work'])
++base=['/tmp/sxi-query-audit',str(work/'collection.txt'),str(work/'fresh.ri4'),str(work/'fresh.agg'),str(work/'fresh.sA'),'32']
++p=subprocess.run(base,capture_output=True,text=True);assert p.returncode==0 and 'verified=32' in p.stdout,p.stderr
++with tempfile.TemporaryDirectory(prefix='sxi-audit-negative-') as tmp:
++    tmp=pathlib.Path(tmp);bad=tmp/'bad.txt';bad.write_bytes(b'A'*(work/'collection.txt').stat().st_size)
++    args=base.copy();args[1]=str(bad);p=subprocess.run(args,capture_output=True,text=True);assert p.returncode!=0 and 'TEXT_SAMPLE_FAIL' in p.stderr
++    tools=tmp/'tools';tools.mkdir()
++    for name in ['rpfbwt_endpoints','slim_dump','sxi_write']:(tools/name).symlink_to('/tmp/sxi-query-tools/'+name)
++    (tools/'sxi_text_audit').symlink_to('/bin/false')
++    output=tmp/'must-not-exist.sxi'
++    p=subprocess.run([ROOT/'xsa/target/release/xsa','build','--fasta','/tmp/sxi-query-fresh/refs.fa','-o',output,'--scratch',tmp,'--verify-text-sample','32','--log-dir',LOG],env=dict(os.environ,XSA_TOOLS=str(tools)),capture_output=True,text=True)
++    assert p.returncode!=0 and 'verify-text-sample failed' in p.stderr and not output.exists(),p.stderr
++print('PASS direct-text witnesses, corrupted text rejected, failed sample gate prevents publication')
+--- a/tools/build_sxi_tools.sh
++++ b/tools/build_sxi_tools.sh
+@@ -7,6 +7,7 @@
+ mkdir -p "$OUT"
+ OUT="$(cd "$OUT" && pwd)"
+ bash tools/build_slim_dump.sh "$OUT/rpfbwt_endpoints" bit6/rpfbwt_endpoints.cpp
++g++ -O3 -std=c++17 -Wall -Wextra bit6/sxi_text_audit.cpp -o "$OUT/sxi_text_audit"
+ g++ -O3 -std=c++17 -Wall -Wextra bit6/sxi_write.cpp -o "$OUT/sxi_write"
+ g++ -O3 -std=c++17 -Wall -Wextra -fopenmp bit6/phi_inverse_heads.cpp -o "$OUT/phi_inverse_heads"
+ bash tools/build_slim_dump.sh "$OUT/slim_dump"
+--- a/bit6/SXI_FORMAT.md
++++ b/bit6/SXI_FORMAT.md
+@@ -1,9 +1,9 @@
+ # SXI1, internal version 1
+ 
+ All integers are little endian. Readers detect magic, independent of suffix;
+-`.ri4` v4 remains supported. This implementation is a container/consumer
+-bridge; fresh endpoint construction is blocked as recorded in
+-[SXI_CONSTRUCTION_BLOCKER.md](SXI_CONSTRUCTION_BLOCKER.md).
++`.ri4` v4 remains supported. Fresh source construction is described in
++[SXI_BUILD.md](SXI_BUILD.md); checked seam-repair evidence is in
++[sxi_logs/sep-convention/repair2/ACCEPTANCE.md](sxi_logs/sep-convention/repair2/ACCEPTANCE.md).
+ 
+ The 64-byte header is:
+ 
+@@ -11,10 +11,10 @@
+ |---|---|
+ | 0 | four bytes `SXI1` |
+ | 4 | u32 version = 1 |
+-| 8, 16, 24 | u64 n, string count k, run count R |
++| 8, 16, 24 | u64 n, named record count k, run count R |
+ | 32, 36 | u32 member count, total header+directory bytes |
+ | 40 | u64 exact file length |
+-| 48 | u64 flags: bit 0 = chi completed; other bits must be zero |
++| 48 | u64 flags: bit 0 = chi completed; bit 1 = DNA mode; bit 2 = reversed records; bit 3 = record metadata present; other bits zero |
+ | 56 | u32 IEEE CRC32 of header+directory, this field zeroed |
+ | 60 | u32 reserved = 0 |
+ 
+@@ -50,7 +50,29 @@
+ use. Rust validates all member semantics, including canonical varints.
+ Native C++ slim maps the embedded head member directly, reads embedded
+ anchors and tails, and does not need an extracted `.ri4` or head sidecar.
+-Optional names feed Rust plain-query coordinate decoding automatically.
++Names feed all SXI query/MEM coordinates automatically. TSV rows contain
++`name<TAB>fstart<TAB>length`; fstart is mirrored, so
++`stream_start = n - 1 - fstart - length`. Rows must partition the stream in
++order, including one reserved separator byte after each named record.
++The sorted array `stream_start + length` is the 0x1E boundary array.
++A predecessor/rank search gives the record ID; offsets exclude separators.
++For reversed storage, offsets are converted back to the original record.
++
++**Records versus byte strings:** `k` is the number of named records, e.g.
++9,901 for yeast235. The RLBWT still indexes ONE cyclic byte string
++`T = s1 0x1E ... sk 0x1E`; `.ri4` transport k remains the core string count.
++The native SXI-to-core loader separates these counts. A names-free text
++container retains its transport k and queries use the synthetic name `text`.
++No text scan or sequence-content rewrite is introduced by this metadata fix.
++
++Writers set bit 3 and validate k against the names rows. The source pipeline
++sets bit 1 for FASTA/FASTQ/AGC, clears it for text, and sets bit 2 for AGC's
++reversed storage. Build `--mode dna|text` overrides the automatic mode.
++Legacy flags 0/1 remain readable: the loader derives record k from names,
++without modifying the file; legacy auto mode is text/forward because the old
++header does not encode provenance. Use `--mode dna --revlines` for a legacy
++AGC container. New flags require upgraded readers; old readers fail closed.
++The five core members and verbatim names bytes are unchanged.
+ 
+ Cost: writer O(R + chi log chi + names bytes), O(chi) working memory plus
+ bounded I/O buffers. Sorting is over witness positions, never text positions.
+@@ -70,42 +92,18 @@
+ all member sizes, delta/raw chi ratio and exact file size. `--ri4` remains
+ accepted, with magic detection determining the actual format.
+ 
+-The final source-build interface is recognized:
++Source build and query interfaces:
+ 
+ ```sh
+-xsa build --agc archive.agc -o out.sxi
++xsa build --agc archive.agc -o out.sxi --verify-text-sample 32
+ xsa build --fasta refs.fa -o out.sxi
+-xsa build --text file.txt -o out.sxi --verbose
++xsa build --text collection.txt -o out.sxi
++xsa mems --sxi out.sxi --reads reads.fq.gz -j 4 --min-len 20
++xsa serve --sxi out.sxi -j 4 --bind 127.0.0.1:7331
+ ```
+ 
+-These commands currently **fail preflight without writing output**. The
+-Rust module is a CLI boundary only; it does not implement the missing
+-endpoint construction or the requested internal stage orchestration/chi
+-gate. This must not be presented as a working source-build UX.
+-
+-Endpoint-ready development pipeline (distinct from a fresh source build):
+-
+-```sh
+-python3 bit6/sxi_pipeline.py --ri4 input.ri4 --heads input.head_sa \
+-  --parse input_pfp --names input.names.tsv --output output.sxi \
+-  --writer /tmp/laneU/sxi-tools/sxi_write --dump /tmp/laneU/sxi-tools/slim_dump
+-```
+-
+-This writes a stage container, builds slim aggregates using its embedded
+-heads, sweeps chi to `output.sxi.sA`, and writes the completed container.
+-It retains logs and intermediates and refuses overwrites. Child address
+-space is capped at 149 GB; mmap-heavy stages can hit that conservative cap
+-before physical RAM does. No process outside this tree is controlled.
+-`--source PATH --output output.sxi` explicitly fails preflight until the
+-endpoint dependency is resolved; it is **not** an implemented G2.
+-
+-AGC input boundary: `agc2flat ARCHIVE.agc --samples samples.txt --revlines
+--o SOURCE` is the existing streaming collection-text producer. The inspected
+-`--revlines` branch writes `-o` directly and ignores `--stdout`; use a named
+-FIFO at SOURCE with a reader already running to avoid storing the flat text.
+-The names file is written as `SOURCE.names.tsv` at EOF. It emits reversed
+-contigs in archive order, newline-terminated, plus names metadata. Preserve
+-those exact bytes for the PFP parse and endpoint producer; substituting the
+-single-string `h10ss` conversion changes the index. The missing normalized
+-endpoint producer must be supplied before this stream can be wired to the
+-source entry point. The running pfp466 process is never a pipeline target.
++See [SXI_QUERY.md](SXI_QUERY.md) for the query/server contract and limitations.
++`xsa stats --sxi FILE` labels k as records, validates names and reports exact
++embedded chi and member sizes. Repacking yeast235 with the new writer reports
++k=9901 while all six members retain their original hashes. Published legacy
++artifacts are not edited.
+--- a/bit6/SXI_BUILD.md
++++ b/bit6/SXI_BUILD.md
+@@ -1,15 +1,9 @@
+ # Fresh-source SXI build
+ 
+-**Separator-lane status (2026-09-27): not accepted.** Input preparation now
+-uses reserved 0x1E, but the new contract exposes two downstream blockers.
+-The current slim consumer still derives newline collection boundaries and
+-fails `parse/ri4 string-end count mismatch` on 0x1E text. Independently,
+-normalizing away the producer's ten dollar-padding rows does **not** recover
+-the cyclic rotation order of T: the 2,003-byte regression has different BWT
+-bytes and head positions. Input-mode endpoint equality passes, but cannot
+-certify this semantic requirement. No new-convention SXI has been published.
+-See `sxi_logs/sep-convention/ACCEPTANCE.md` and `separator-gates.json`.
+-
++**Current construction evidence:** the repaired separator path is checked in
++[sxi_logs/sep-convention/repair2/ACCEPTANCE.md](sxi_logs/sep-convention/repair2/ACCEPTANCE.md).
++Query-product gates and residual limits are recorded separately in
++[sxi_logs/query-product/ACCEPTANCE.md](sxi_logs/query-product/ACCEPTANCE.md).
+ 
+ Build tools (no commits and no upstream edits):
+ 
+@@ -84,8 +78,10 @@
+ `xsa build` indexes **one byte string** `T = s1 0x1E s2 0x1E ... sk 0x1E`.
+ The reserved separator is **0x1E (ASCII record separator, decimal 30)**, both
+ between records and terminally. It must never appear in sequence content.
+-The intended suffix structure is cyclic over T, with one string in the SXI
+-transport (`k=1`); the names member can still describe many source records.
++The intended suffix structure is cyclic over T, with one byte string in the `.ri4` core transport (`k=1`). SXI header `k`
++counts named records instead (9,901 for yeast235). The writer derives k from
++validated names; the native loader keeps record count separate from the
++core byte-string count. This changes metadata, not BWT/endpoints/chi.
+ 
+ The rationale for this convention is theory-faithful single-string chi semantics: it uses a byte
+ native to rpfbwt, makes every record boundary uniform, and is pile-compatible:
+@@ -175,3 +171,26 @@
+ the DNA-transcoded, three-record `HOR-nested` fixture fails the existing
+ `--text` PFP second parse (`A sequence doesn't have w DOLLAR at the end!`).
+ No algorithm or existing publication gate was changed to accommodate it.
++
++## Query mode and sampled ground-truth gate
++
++`--mode auto|dna|text` defaults to auto: FASTA/FASTQ/AGC builds mark the
++container DNA; `--text` marks it generic text. AGC also records reversed
++storage. These flags change only the final container header; source bytes,
++producer, adapter and sweep are unchanged. See [SXI_QUERY.md](SXI_QUERY.md).
++
++`--verify-text-sample N` (0 by default, maximum 100000) runs
++`sxi_text_audit TEXT fresh.ri4 fresh.agg fresh.sA N` immediately after the
++sweep and before publication. It selects up to N evenly spaced emitted chi
++witnesses, replays compressed sweep candidates, and compares their shared
++context, exact LCP endpoint, and distinct following characters directly
++against the materialized scratch text. The reversed/cyclic coordinate map
++is `(n - SA) % n`. No dense SA, inverse SA or BWT is constructed.
++
++The audit logs `TEXT_SAMPLE_PASS requested=... verified=... chi=...` or
++`TEXT_SAMPLE_FAIL ...`; any failure prevents publication. It uses five bounded sequential streams, 64 KiB direct-text comparison
++buffers, and O(N + alphabet) state. Runtime is the compressed sweep plus
++the total sampled context lengths. Neither text nor aggregates are mapped
++or expanded; memory is independent of corpus size. This is a sampled witness-grounding gate, not a proof of
++complete chi-set equality. Legacy newline multi-string convention fails
++loudly if this optional cyclic audit is requested.
+--- a/bit6/SXI_QUERY.md
++++ b/bit6/SXI_QUERY.md
+@@ -0,0 +1,84 @@
++# SXI query product
++
++```sh
++xsa query --sxi refs.sxi --pattern ACGT --mode auto
++xsa query --sxi refs.sxi --reads reads.fa.gz --ms -j 4
++xsa mems --sxi refs.sxi --reads reads.fq.gz --min-len 20 -j 4
++xsa serve --sxi refs.sxi -j 4 --bind 127.0.0.1:7331
++```
++
++SXI queries emit deterministic JSONL. Exact hits contain `read`, `doc_id`,
++`name`, `offset`, `len`; MEMs also contain `qstart`. DNA records include
++`strand` (`+` or `-`) on every hit/vector; generic text omits strand. All
++coordinates are zero-based. Offset is the leftmost coordinate in the
++original named reference. MEM qstart is the leftmost coordinate in the
++original read, including reverse-strand MEMs. Palindromes report both
++strands. No-hit exact queries emit no records.
++
++`query --ms` emits `{read, ms, strand?}` for each oriented read, with MS[i]
++the longest substring starting at i in that orientation. The minus vector
++is indexed in the reverse-complement read. Exact matches and MEMs treat
++IUPAC letters literally (not as wildcard sets), preserve case, and accept
++DNA alphabet `ACGTRYSWKMBDHVN` in either case. DNA mode rejects other bytes.
++The reserved separator 0x1E is always rejected in queries.
++
++Auto mode uses the source mode recorded by new builds: FASTA/FASTQ/AGC are
++DNA, text is generic. `--mode dna|text` overrides this. Storage orientation
++is independently recorded (AGC is reversed); `--plain` and `--revlines`
++override orientation for imported legacy files. Old headers lack source
++provenance, so default to text/forward; use `--mode dna --revlines` for old
++AGC files. Without embedded names the synthetic name is `text` with absolute
++stream offsets. Embedded names are validated and converted from mirrored
++starts into sorted separator boundaries; lookup uses O(log k) predecessor.
++`--ri4 FILE.sxi` also detects SXI and uses this annotated path. Raw RI4 query
++commands retain their historical output/orientation conventions.
++
++`--sample N --seed S` selects up to N rows per strand in O(N) extra memory.
++`--trace-samples` adds the BWT row to each annotated exact hit, including
++sampled hits. `--output` / `--ms-out` write JSONL; legacy raw RI4 MS retains
++its earlier binary format.
++
++FASTA supports wrapped sequences. FASTQ uses four-line records and checks
++quality lengths, printable quality, and repeated + identifiers. Gzip is
++detected by magic (including concatenated gzip members). CRLF is normalized.
++Each read/physical line is capped at 65,536 bytes. Batches contain at most
++256 reads and about 1 MiB of input (plus one final read). Rayon workers share
++one index: run symbols and packed samples are immutable mmap views; rank
++structures are built once. Each read's output is spooled to an anonymous
++temporary file and drained in input order, bounding RAM even with many hits.
++Disk usage remains proportional to the output of one batch. Set TMPDIR for
++spool placement. Published containers must remain immutable while loaded.
++
++MEMs are maximal per query/reference occurrence, not only globally longest
++matches. Matching statistics bound candidate lengths; nested suffix intervals
++exclude right-extendible rows, and the BWT preceding symbol excludes
++left-extendible rows. Shorter maximal matches at other occurrences are kept.
++Both strand and record boundaries are respected. This v1 favors exactness:
++repeated searches can take cubic time in read length, plus emitted/visited
++occurrences and LF locate walks. Long reads/highly repetitive references can
++be slow. Periodic texts can have unsampled LF cycles; equivalent rotation
++classes are resolved from an endpoint lane and their coordinates enumerated.
++
++## HTTP contract
++
++The HTTP layer is `tiny_http` 0.12: blocking HTTP/1.1 keeps the dependency and
++execution model small, without an async runtime. Rayon provides a fixed
++worker pool; `memmap2`, `flate2`, `serde_json`, and `tempfile` cover shared
++mapping, reads, JSON, and bounded output spooling. Versions are locked in
++`xsa/Cargo.lock`. The default bind is loopback; there is no authentication or
++TLS, and this minimal service is intended for a trusted local deployment.
++
++* `POST /query`: `{"pattern":"ACGT","name":"query"}` (or `read` instead
++  of `pattern`) returns the same JSONL as `query --pattern ACGT`.
++* `POST /ms`: the same request returns MS JSONL, identical to CLI `--ms`.
++* `POST /batch`: `{"reads":[{"name":"r1","read":"ACGT"}],"min_len":3}`
++  returns MEM JSONL in request order. The worker owns this batch; simultaneous
++  requests use the other workers.
++* `GET /stats`: one JSON object with `n`, record `k`, `runs`, `chi`, `mode`,
++  and `reversed`.
++
++Bodies are limited to 2 MiB, batches to 256 reads. Invalid queries return
++HTTP 400 with a JSON error and leave the server alive. Successful responses
++have `application/x-ndjson`; large result sets spool to disk before response.
++The server loads and validates the container once and shares it across all
++workers. The CLI and HTTP paths use the same serialization and algorithms.

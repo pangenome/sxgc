@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Fresh PFP endpoint build, with timed stages and atomic gated publication.
 
-Collection input is newline-terminated, already in the pilot orientation.
-AGC preparation uses agc2flat --revlines --upper (one reversed contig/line).
-FASTA/FASTQ extract already oriented sequences verbatim, one per line.
+Collection contract: T = s1 0x1E ... sk 0x1E, one cyclic byte string.
+0x1E is reserved and must never occur in sequence content; --text is passed as-is.
+AGC preparation uses agc2flat --revlines --upper (one reversed contig/record).
+FASTA/FASTQ extract already oriented sequences verbatim, separated and terminated by 0x1E.
 Scratch defaults beside the input, on the same filesystem; retained for audit.
 """
 import argparse
@@ -31,11 +32,15 @@ def main():
     p.add_argument('--scratch')
     p.add_argument('--log-dir', default=str(ROOT / 'bit6/sxi_logs'))
     p.add_argument('--expect-chi', type=int)
+    p.add_argument('--mode', choices=['auto', 'dna', 'text'], default='auto')
+    p.add_argument('--verify-text-sample', type=int, default=0)
     p.add_argument('--expect-heads', help='acceptance oracle only; checked after fresh construction')
     p.add_argument('--expect-ri4', help='acceptance oracle only; exact runs and packed-tail byte gate')
     p.add_argument('--verbose', action='store_true')
     p.add_argument('--xsa', default=str(ROOT / 'xsa/target/release/xsa'))
     a = p.parse_args()
+    if not 0 <= a.verify_text_sample <= 100000:
+        p.error('--verify-text-sample must be 0..100000')
     if not 1 <= a.threads <= 64:
         p.error('--threads must be 1..64')
     source_path = pathlib.Path(a.text or a.agc or a.fasta or a.fastq).absolute()
@@ -49,6 +54,8 @@ def main():
     rpf = os.environ.get('XSA_RPFBWT', '/tmp/rpfbwt-sxgc/build-sxgc/rpfbwt')
     agc = os.environ.get('XSA_AGC2FLAT', str(tools / 'agc2flat'))
     required = [pfp, rpf, a.xsa, '/usr/bin/time'] + [str(tools / s) for s in ('rpfbwt_endpoints', 'slim_dump', 'sxi_write')]
+    if a.verify_text_sample:
+        required.append(str(tools / "sxi_text_audit"))
     if a.agc:
         required.append(agc)
     for tool in required:
@@ -116,14 +123,15 @@ def main():
     if a.agc:
         text = work / 'collection.txt'
         # The committed streamer emits the names sidecar beside this -o path.
-        run('prepare-agc', [agc, source_path, '--revlines', '--upper', '-o', text])
+        run('prepare-agc', [agc, source_path, '--revlines', '--upper', '--sep', '1e', '-o', text])
         names = work / 'collection.txt.names.tsv'
     with text.open('rb') as f:
+        # O(1) terminal-byte lookup for padding normalization; never scan or
+        # rewrite raw text. The caller owns the reserved-separator contract.
+        if not text.stat().st_size:
+            raise RuntimeError('empty input text')
         f.seek(-1, 2)
-        term = f.read(1)
-        if term not in (b'\n', b'\x1e'):
-            raise RuntimeError('collection text must end in a record separator '
-                               '(0x1E contract) or legacy newline')
+        terminal = f.read(1)[0]
     prefix = work / 'parse'
     run('parse', [pfp, '-t', text, '-o', prefix, '-w', 10, '-p', 100, '-j', a.threads, '--tmp-dir', work])
     run('parse-l2', [pfp, '-i', str(prefix)+'.parse', '-w', 5, '-p', 11, '-j', a.threads, '--tmp-dir', work])
@@ -132,7 +140,7 @@ def main():
     chunks = 1 if text.stat().st_size < 1_000_000 else 50
     run('rpfbwt', [rpf, '--l1-prefix', prefix, '--w1', 10, '--w2', 5, '--threads', a.threads, '--chunks', chunks, '--tmp-dir', work])
     ri4, heads, agg, chi = [work / ('fresh.' + ext) for ext in ('ri4', 'head_sa', 'agg', 'sA')]
-    run('endpoints', [tools/'rpfbwt_endpoints', prefix, ri4, heads])
+    run('endpoints', [tools/'rpfbwt_endpoints', prefix, ri4, heads, f'{terminal:02x}'])
     if a.expect_heads:
         run('gate-heads', ['/usr/bin/cmp', heads, pathlib.Path(a.expect_heads).absolute()])
     if a.expect_ri4:
@@ -150,12 +158,15 @@ def main():
         raise RuntimeError('internal chi count/file gate mismatch')
     if a.expect_chi is not None and count != a.expect_chi:
         raise RuntimeError(f'chi gate mismatch: {count} != {a.expect_chi}')
+    if a.verify_text_sample:
+        run('verify-text-sample', [tools/'sxi_text_audit', text, ri4, agg, chi, a.verify_text_sample])
     # Writer validates range, uniqueness, endpoint consistency and checksums.
     # Write on the destination filesystem, validate, then publish no-clobber.
     out.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.xsa-publish-', dir=out.parent) as publish:
         candidate = pathlib.Path(publish)/'candidate.sxi'
         cmd = [tools/'sxi_write', '--ri4', ri4, '--heads', heads, '--chi', chi, '--output', candidate]
+        cmd += ['--mode', (a.mode if a.mode != 'auto' else ('text' if a.text else 'dna')), '--orientation', 'reversed' if a.agc else 'forward']
         if names:
             cmd += ['--names', names]
         run('write', cmd)

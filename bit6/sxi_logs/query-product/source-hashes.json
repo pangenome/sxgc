@@ -1,0 +1,23 @@
+{
+  "xsa/Cargo.toml": "9ae6d0509b36f802c49cfc7b0bdf99b1afe0a9ceadff67290ae561a16a2c391c",
+  "xsa/Cargo.lock": "caf52f4953e4d7815e00a65d05f255a92022fc2f6dedf759e70c342d0e0cfdfd",
+  "xsa/src/main.rs": "fa0ff01d23703a64cabe97d3af7b37c0f61ca3052b3eb16f45a656ea5c2d54a0",
+  "xsa/src/sxi.rs": "d410d884b880b4fd5c0ba5d879933e955bbb074f008a3eee85d157e1fa4db1aa",
+  "xsa/src/build.rs": "36fdfda58af5689bc8584003d1db62966be436201d0df65d8072287e89c2a722",
+  "xsa/src/product.rs": "c1a91843f8e10ba0e25d8c6e1290581e72e9a2b34b84d220a4179ceea7220d39",
+  "bit6/sxi_write.cpp": "7cb28c58138066d3def33572df24d2cc864dd9edbdc739c5b264813716b28f05",
+  "bit6/sxi_format.hpp": "b3bcfe07923efe9f40073c78b8cbedd88d8e29a69d4459e29257672f4768fb91",
+  "bit6/chi_rspace_dump.cpp": "9268c245dd5043f558a8f84af85e5de261866cad05389552c4ec5f2e6c47fb6d",
+  "bit6/sxi_pipeline.py": "fef4d51f8f94909efdffb324d07940806c6716ec18f74f0b2962097fa6bb7113",
+  "bit6/sxi_text_audit.cpp": "740cbb652f46cc324b66e3487d05577eb184ece5fa02242eefbcf7e086df332a",
+  "bit6/query_brute.cpp": "70f22ecdbe2db9b40d8d2df952b6183c2476d06450bd6f85bd3888ee5ffff346",
+  "bit6/test_query_product.py": "043feec42f5a74262b7b82e4e0b2da144343a738a7ce6158e0222c9e9961c2a1",
+  "bit6/test_query_metadata.py": "f93d10eff75c5a09fafb29a4d13cc412c293941ccc054000f0915d3a6fbe358f",
+  "bit6/test_query_yeast.py": "f6834853042aa8a8a9ed831983b3791b9e0b6ac59f3ebc6cd944aa93da853cad",
+  "bit6/test_query_http.py": "0f76dda51e710bd48c8f6903d104f6a2516f3d5b534b16fa1e07cc64c8eb5d19",
+  "bit6/test_text_audit.py": "99ec4d558dec69261533069c3cc7cc5eaa017244f8b56918dbded2a3670eb99e",
+  "tools/build_sxi_tools.sh": "b0f7af5e498a0e30c7f6d1b6837b9c427caf986d68cbc2b7045cd4cd454f3517",
+  "bit6/SXI_FORMAT.md": "e109850ec98f8a8c3d6f82d69d63e3c8cac76676ff05cce749e59a5650266640",
+  "bit6/SXI_BUILD.md": "cf162812bfb4107cca7c4933b6ab44cebf623a9a2f375fd946bb602e2d450610",
+  "bit6/SXI_QUERY.md": "b560956a05f482db2f57a449a4d866cc69dd21bdf724e412d0807448d993db9d"
+}

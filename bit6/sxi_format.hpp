@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <sstream>
 namespace sxi {
 using U=uint64_t;
 inline void check(bool ok,const char* msg){if(!ok)throw std::runtime_error(msg);}
@@ -21,6 +22,20 @@ inline uint32_t crc(uint32_t v,const unsigned char* p,size_t n){
 inline void read(std::istream& f,void* p,size_t n){check(bool(f.read((char*)p,n)),"SXI: truncated input");}
 inline U integer(std::istream& f,unsigned bytes=8){unsigned char b[8];read(f,b,bytes);return get(b,bytes);}
 inline U size(std::ifstream& f){f.seekg(0,std::ios::end);auto n=f.tellg();check(n>=0,"SXI: stat input");f.seekg(0);return U(n);}
+// Names fstart is mirrored: stream_start = n - 1 - fstart - len.
+inline U named_records(std::istream& in,U bytes,U n){
+    U next=0,count=0;std::string line;
+    while(bytes){
+        line.clear();while(bytes){char c;read(in,&c,1);--bytes;if(c=='\n')break;line+=c;check(line.size()<=1048576,"SXI: names line too long");}
+        auto a=line.find('\t'),b=line.find('\t',a==std::string::npos?0:a+1);
+        check(a!=std::string::npos&&a>0&&b!=std::string::npos&&line.find('\t',b+1)==std::string::npos,"SXI: names fields");
+        auto number=[](const std::string& v){check(!v.empty()&&v.find_first_not_of("0123456789")==std::string::npos,"SXI: names integer");return U(std::stoull(v));};
+        U fs=number(line.substr(a+1,b-a-1)),len=number(line.substr(b+1));
+        check(fs<n&&len<=n-1-fs&&n-1-fs-len==next,"SXI: names coordinates");
+        next+=len+1;++count;
+    }
+    check(count&&next==n,"SXI: names partition");return count;
+}
 struct Member {uint32_t id=0,codec=0;U offset=0,bytes=0,count=0;uint32_t checksum=0;};
 struct Container {
     U n=0,k=0,r=0,flags=0;std::vector<Member> members;
@@ -30,7 +45,7 @@ struct Container {
         unsigned char b[64];read(f,b,64);check(!memcmp(b,"SXI1",4)&&get(b+4,4)==1,"SXI: bad magic/version");
         n=get(b+8);k=get(b+16);r=get(b+24);U count=get(b+32,4),hs=get(b+36,4);flags=get(b+48);
         check(n&&n<UINT64_MAX&&r&&r<=n&&k<=n&&r<=UINT32_MAX,"SXI: invalid n/k/r");
-        check(count>=5&&count<=6&&hs==64+40*count&&get(b+40)==length&&flags<=1&&!get(b+60,4),"SXI: invalid header");
+        check(count>=5&&count<=6&&hs==64+40*count&&get(b+40)==length&&(flags<=1||(flags>=8&&flags<=15))&&!get(b+60,4),"SXI: invalid header");
         uint32_t wanted=get(b+56,4);put(b+56,0,4);uint32_t crcval=crc(~0U,b,64);U end=hs;
         for(U i=0;i<count;i++){
             unsigned char d[40];read(f,d,40);crcval=crc(crcval,d,40);
@@ -43,9 +58,10 @@ struct Container {
         check(member(1).count==r&&member(1).bytes==2048+5*r&&member(2).count==r&&member(3).count==r&&member(3).bytes==8*r,"SXI: run/sample sizes");
         check(member(4).count<=k&&member(4).count<=(UINT64_MAX-12)/16&&member(4).bytes==12+16*member(4).count,"SXI: anchor size");
         check(member(5).count<=n+1&&member(5).count<=UINT64_MAX/10&&member(5).bytes>=member(5).count&&member(5).bytes<=10*member(5).count,"SXI: chi size");
-        check(flags==1||(member(5).count==0&&member(5).bytes==0),"SXI: unfinished chi");
+        check((flags&1)||(member(5).count==0&&member(5).bytes==0),"SXI: unfinished chi");
         if(members.size()==6)check(member(6).count==member(6).bytes,"SXI: names size");
         if(verify){std::vector<unsigned char> buf(1<<20);for(auto& m:members){f.seekg(m.offset);U left=m.bytes;uint32_t c=~0U;while(left){size_t z=std::min<U>(left,buf.size());read(f,buf.data(),z);c=crc(c,buf.data(),z);left-=z;}check(~c==m.checksum,"SXI: member CRC mismatch");}}
+        if(members.size()==6){f.seekg(member(6).offset);U records=named_records(f,member(6).bytes,n);check(!(flags&8)||k==records,"SXI: record count mismatch");k=records;}
         f.seekg(member(2).offset);U bits=integer(f);unsigned w=integer(f,1);
         check(w&&w<=64&&bits==r*w&&member(2).bytes==9+((bits+63)/64)*8,"SXI: packed tail size");
         f.seekg(member(4).offset);check(integer(f,4)==0x434e4158&&integer(f)==member(4).count,"SXI: anchor header");

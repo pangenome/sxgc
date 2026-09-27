@@ -1,0 +1,5 @@
+{"gate": "yeast235-brute-mems", "reads": 2, "mems": 1720, "status": "PASS"}
+PASS yeast235 k=9901, chi=85404336, all six member hashes unchanged; yeast chi=85404240
+PASS HTTP/CLI byte parity /query
+PASS HTTP/CLI byte parity /ms
+PASS HTTP/CLI byte parity /batch

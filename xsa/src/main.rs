@@ -10,6 +10,7 @@
 
 mod sxi;
 mod build;
+mod product;
 
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
@@ -105,11 +106,28 @@ fn fmt_ratio(num: f64, den: f64) -> String {
 
 // ---------- full .ri4 index (rank/LF/search/locate) ----------
 
+/// Immutable file-backed members shared by all query workers.
+enum Bytes { Owned(Vec<u8>), Mapped(memmap2::Mmap, usize, usize) }
+impl Bytes {
+    fn mapped(path: &str, offset: u64, len: usize) -> Self {
+        let file = File::open(path).unwrap_or_else(|e| die(&e.to_string()));
+        // Published containers are immutable for the lifetime of the index.
+        let map = unsafe { memmap2::Mmap::map(&file) }.unwrap_or_else(|e| die(&e.to_string()));
+        Self::Mapped(map, offset as usize, len)
+    }
+}
+impl std::ops::Deref for Bytes {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] { match self {
+        Self::Owned(v) => v, Self::Mapped(m, o, n) => &m[*o..*o + *n],
+    }}
+}
+
 /// sdsl int_vector bitstream: entries of `width` bits, LSB-first per u64 word.
 struct PackedSa {
     bits: u64,          // total size IN BITS
     width: u8,
-    data: Vec<u8>,      // little-endian u64 words
+    data: Bytes,      // little-endian u64 words
 }
 impl PackedSa {
     fn get(&self, i: u64) -> u64 {
@@ -170,7 +188,8 @@ struct Ri4 {
     k: u64,
     r: u64,
     c: Vec<u64>,
-    run_char: Vec<u8>,
+    run_char: Bytes,
+    cyclic: bool,
     run_len: Vec<u32>,
     sa: PackedSa,
     run_start_blk: Vec<u64>,
@@ -182,7 +201,9 @@ const BLK: u64 = 64;
 
 impl Ri4 {
     fn load(path: &str) -> Ri4 {
-        let container = sxi::Container::open(path);
+        Self::load_validated(path, sxi::Container::open(path))
+    }
+    fn load_validated(path: &str, container: Option<sxi::Container>) -> Ri4 {
         let mut f = File::open(path).unwrap_or_else(|e| die(&format!("open {}: {}", path, e)));
         let mut b = [0u8; 32];
         f.read_exact(&mut b).unwrap_or_else(|e| die(&format!("read {}: {}", path, e)));
@@ -219,6 +240,9 @@ impl Ri4 {
         let nbytes = ((bits + 63) / 64 * 8) as usize;
         let mut data = vec![0u8; nbytes];
         f.read_exact(&mut data).unwrap_or_else(|e| die(&format!("read sa data: {}", e)));
+        let data = if let Some(ref sx) = container {
+            Bytes::mapped(path, sx.member(2).offset + 9, nbytes)
+        } else { Bytes::Owned(data) };
         let sa = PackedSa { bits, width, data };
 
         let mut run_start_blk = Vec::with_capacity((r / BLK + 2) as usize);
@@ -238,12 +262,16 @@ impl Ri4 {
             acc256[c] += run_len[x] as u64;
         }
         let total = acc256.clone();
+        let cyclic = total[0x1e] > 0 || total[0x0a] == 0;
+        let run_char = if let Some(ref sx) = container {
+            Bytes::mapped(path, sx.member(1).offset + 2048, r as usize)
+        } else { Bytes::Owned(run_char) };
         for c in 0..256 { csum[c].push(total[c]); }
         let _ = k;   // stored
         let embedded_anchors = container.as_ref().map(|sx| sx.anchors(path));
         let names = container.as_ref().and_then(|sx| sx.members.iter().find(|m| m.id == 6))
             .map(|m| (path.to_string(), m.offset, m.bytes));
-        Ri4 { embedded_anchors, names, n, k, r, c, run_char, run_len, sa, run_start_blk, cruns, csum, total }
+        Ri4 { cyclic, embedded_anchors, names, n, k, r, c, run_char, run_len, sa, run_start_blk, cruns, csum, total }
     }
 
     fn run_start(&self, r: u64) -> u64 {
@@ -320,9 +348,10 @@ impl Ri4 {
             let r = self.run_of(pos);
             let e = self.run_start(r) + self.run_len[r as usize] as u64;
             if pos == e - 1 {
-                return self.sa.get(r).wrapping_sub(steps);
+                return if self.cyclic { (self.sa.get(r) + self.n - steps % self.n) % self.n }
+                    else { self.sa.get(r).wrapping_sub(steps) };
             }
-            if self.run_char[r as usize] == 0x0A {
+            if !self.cyclic && self.run_char[r as usize] == 0x0A {
                 match anc.and_then(|a| a.lookup(pos)) {
                     Some(s0) => return s0.wrapping_sub(steps),
                     None => die("s_at: walk reached a 0x0A row with no anchor table (--anchors)"),
@@ -330,6 +359,19 @@ impl Ri4 {
             }
             pos = self.lf(pos);
             steps += 1;
+            if self.cyclic && pos == j && steps < self.n && self.n % steps == 0 {
+                // Periodic text has equal-rotation classes of n/period rows.
+                // An interior lane can be an LF cycle without an endpoint.
+                // The final lane reaches a run tail. Resolve its rotation,
+                // then enumerate equivalent coordinates in increasing order.
+                let copies = self.n / steps;
+                let representative = (j / copies + 1) * copies - 1;
+                if representative == j { die("locate: unsampled periodic representative"); }
+                let last = self.n - 1 - self.s_at_opt(representative, anc);
+                let coordinate = last % steps + (j % copies) * steps;
+                return self.n - 1 - coordinate;
+            }
+            if steps >= self.n { die("locate: LF cycle has no sample"); }
         }
     }
 }
@@ -665,7 +707,7 @@ fn cmd_stats(args: &[String]) {
         n = h.n;
         k = h.k;
         r = h.r;
-        println!("{}      {}  (v{}: n={}, k={} strings, R={} runs)", if h.version == 1 { ".sxi" } else { ".ri4" }, p, h.version, h.n, h.k, h.r);
+        println!("{}      {}  (v{}: n={}, k={} {}, R={} runs)", if h.version == 1 { ".sxi" } else { ".ri4" }, p, h.version, h.n, h.k, if h.version == 1 { "records" } else { "strings" }, h.r);
         if let Some(c) = container { c.print_members(); }
     }
     if let Some(p) = &rlbwt {
@@ -688,7 +730,7 @@ fn cmd_stats(args: &[String]) {
 
     println!();
     println!("n            = {}", n);
-    if k > 0 { println!("k (strings)  = {}", k); }
+    if k > 0 { println!("k ({})  = {}", if index_bytes.is_some() { "records" } else { "strings" }, k); }
     println!("r (runs)     = {}", r);
     if let Some(xc) = x {
         println!("chi          = {}", xc);
@@ -1216,7 +1258,8 @@ fn usage() -> ! {
     eprintln!("  xsa build --agc <archive.agc> -o <out.sxi> [--verbose]");
     eprintln!("  xsa build --fasta <refs.fa> -o <out.sxi> [--verbose]");
     eprintln!("  xsa build --text <file.txt> -o <out.sxi> [--verbose]");
-    eprintln!("    source build currently blocked; see xsa build --help");
+    eprintln!("  xsa mems --sxi FILE --reads FA|FQ|GZ [-j N] [--min-len 20] [--mode auto|dna|text]");
+    eprintln!("  xsa serve --sxi FILE [-j N] [--bind 127.0.0.1:7331]");
     eprintln!("  xsa sxi-info <f.sxi> [--chi-out sorted.sA]");
     eprintln!("  --sxi is an alias for --ri4; format is detected by magic");
     eprintln!("  xsa stats --ri4 <f.ri4> [--chi <f.sA>]   header + law check");
@@ -1239,7 +1282,12 @@ fn main() {
         Some("sxi-info") => sxi::command(&args[1..]),
         Some("stats") => cmd_stats(&args[1..]),
         Some("tags") => cmd_tags(&args[1..]),
+        Some("query") if args.windows(2).any(|a| matches!(a[0].as_str(), "--sxi" | "--ri4") && {
+            let mut magic = [0;4]; File::open(&a[1]).and_then(|mut f| f.read_exact(&mut magic)).is_ok() && &magic == b"SXI1"
+        }) => product::command("query", &args[1..]),
         Some("query") => cmd_query(&args[1..]),
+        Some("mems") => product::command("mems", &args[1..]),
+        Some("serve") => product::command("serve", &args[1..]),
         Some("build-anchors") => cmd_build_anchors(&args[1..]),
         Some("chi-rspace") => cmd_chi_rspace(&args[1..]),
         Some("-h") | Some("--help") | None => usage(),

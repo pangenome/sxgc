@@ -1,0 +1,38 @@
+{
+  "agc2flat/src/main.rs": {
+    "sha256": "37477d46426d7ea5d0909c8d56db1cf6beac9107462942edeeec51336091046f",
+    "prior_sha256": "37477d46426d7ea5d0909c8d56db1cf6beac9107462942edeeec51336091046f"
+  },
+  "bit6/patches/rpfbwt_emit_tails.patch": {
+    "sha256": "3b718217ec9280187da2c6db307500facac53543f5bd65f0b8e3701d25a0a4e9",
+    "prior_sha256": "3b718217ec9280187da2c6db307500facac53543f5bd65f0b8e3701d25a0a4e9"
+  },
+  "tools/build_rpfbwt_tap.sh": {
+    "sha256": "a935920c80f7cc0d387a66b34a432592cca0553f1f1e34b8d1f73ea5f0ba6def",
+    "prior_sha256": "a935920c80f7cc0d387a66b34a432592cca0553f1f1e34b8d1f73ea5f0ba6def"
+  },
+  "bit6/rpfbwt_endpoints.cpp": {
+    "sha256": "f243c3e3bd94a2181ebb76884f361a560c05693c7f65daa71508b49f05f6a9ea",
+    "prior_sha256": "f243c3e3bd94a2181ebb76884f361a560c05693c7f65daa71508b49f05f6a9ea"
+  },
+  "bit6/seam_repair.hpp": {
+    "sha256": "d9bb8957d676058fddddd8ed09623f64af9e47fb292e64592a500ecbcc7fa368",
+    "prior_sha256": "d9bb8957d676058fddddd8ed09623f64af9e47fb292e64592a500ecbcc7fa368"
+  },
+  "bit6/slim_lce.hpp": {
+    "sha256": "c46fb1113532b82698ee9920d719cb9c255a079e7c9dc44035feab8ffbb3ba19",
+    "prior_sha256": "c46fb1113532b82698ee9920d719cb9c255a079e7c9dc44035feab8ffbb3ba19"
+  },
+  "bit6/test_sxi_separator.py": {
+    "sha256": "c2723b884a679663e23a5697039ef81dfd75f99cc036f481826b5e12ee12ef64",
+    "prior_sha256": "c2723b884a679663e23a5697039ef81dfd75f99cc036f481826b5e12ee12ef64"
+  },
+  "bit6/test_seam_repair.py": {
+    "sha256": "9ddb6695e167477e1af899f5d9e25e77039880d713d481ab801765edf15bb1ca",
+    "prior_sha256": "9ddb6695e167477e1af899f5d9e25e77039880d713d481ab801765edf15bb1ca"
+  },
+  "bit6/test_sxi_build.py": {
+    "sha256": "9a1540c99de76e4181d8e7cf114608f9edd74a36665ba7ffa2fb1259a327d7ee",
+    "prior_sha256": "9a1540c99de76e4181d8e7cf114608f9edd74a36665ba7ffa2fb1259a327d7ee"
+  }
+}

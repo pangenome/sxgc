@@ -52,6 +52,7 @@ pub struct Container {
     pub k: u64,
     pub r: u64,
     pub complete: bool,
+    pub flags: u64,
     pub members: Vec<Member>,
 }
 impl Container {
@@ -96,7 +97,7 @@ impl Container {
             (5..=6).contains(&count)
                 && hs == 64 + 40 * count
                 && u64at(&b, 40) == length
-                && flags <= 1
+                && (flags <= 1 || (8..=15).contains(&flags))
                 && u32at(&b, 60) == 0,
             "invalid header",
         );
@@ -136,11 +137,12 @@ impl Container {
             !hc == expected && end == length,
             "header CRC or trailing bytes",
         );
-        let c = Self {
+        let mut c = Self {
             n,
             k,
             r,
-            complete: flags == 1,
+            complete: flags & 1 != 0,
+            flags,
             members,
         };
         need(
@@ -239,6 +241,14 @@ impl Container {
             need(value < (n as u128), "tail range");
             reservoir >>= w;
             available -= w as u32;
+        }
+        if c.members.len() == 6 {
+            let m = c.member(6);
+            at(&mut f, m.offset);
+            let mut bytes = vec![0; m.bytes as usize]; rd(&mut f, &mut bytes);
+            let records = super::product::names(&bytes, n).unwrap_or_else(|e| die(&e));
+            need(flags & 8 == 0 || records.len() as u64 == k, "record count mismatch");
+            c.k = records.len() as u64;
         }
         c.anchors(path);
         c.write_chi(path, &mut std::io::sink());

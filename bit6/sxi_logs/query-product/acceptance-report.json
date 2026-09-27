@@ -1,0 +1,130 @@
+{
+  "criteriaSatisfied": [
+    {
+      "id": "criterion-1",
+      "status": "satisfied",
+      "evidence": "All six deliverables implemented; unchanged component hashes and isolated lane.diff verify scope."
+    },
+    {
+      "id": "criterion-2",
+      "status": "satisfied",
+      "evidence": "Reproduction commands, oracle results, HTTP parity, member hashes, memory measurements and hygiene evidence retained under bit6/sxi_logs/query-product/."
+    }
+  ],
+  "changedFiles": [
+    "xsa/Cargo.toml",
+    "xsa/Cargo.lock",
+    "xsa/src/main.rs",
+    "xsa/src/sxi.rs",
+    "xsa/src/build.rs",
+    "xsa/src/product.rs",
+    "bit6/sxi_write.cpp",
+    "bit6/sxi_format.hpp",
+    "bit6/chi_rspace_dump.cpp",
+    "bit6/sxi_pipeline.py",
+    "bit6/sxi_text_audit.cpp",
+    "bit6/query_brute.cpp",
+    "bit6/test_query_product.py",
+    "bit6/test_query_metadata.py",
+    "bit6/test_query_yeast.py",
+    "bit6/test_query_http.py",
+    "bit6/test_text_audit.py",
+    "tools/build_sxi_tools.sh",
+    "bit6/SXI_FORMAT.md",
+    "bit6/SXI_BUILD.md",
+    "bit6/SXI_QUERY.md",
+    "bit6/sxi_logs/query-product/ACCEPTANCE.md",
+    "bit6/sxi_logs/query-product/COMMANDS.md",
+    "bit6/sxi_logs/query-product/REVIEW.md"
+  ],
+  "testsAddedOrUpdated": [
+    "bit6/test_query_product.py",
+    "bit6/test_query_metadata.py",
+    "bit6/test_query_yeast.py",
+    "bit6/test_query_http.py",
+    "bit6/test_text_audit.py",
+    "bit6/query_brute.cpp"
+  ],
+  "commandsRun": [
+    {
+      "command": "cargo build --release --manifest-path xsa/Cargo.toml",
+      "result": "passed",
+      "summary": "Release build passes."
+    },
+    {
+      "command": "g++ -O3 -std=c++17 -Wall -Wextra bit6/sxi_write.cpp -o /tmp/sxi-query-writer",
+      "result": "passed",
+      "summary": "Writer builds."
+    },
+    {
+      "command": "g++ -O3 -std=c++17 -Wall -Wextra bit6/sxi_text_audit.cpp -o /tmp/sxi-query-audit",
+      "result": "passed",
+      "summary": "Bounded-memory audit builds."
+    },
+    {
+      "command": "bash tools/build_slim_dump.sh /tmp/sxi-query-slim",
+      "result": "passed",
+      "summary": "Native consumer builds; fresh SXI aggregates match RI4 bytes."
+    },
+    {
+      "command": "python3 bit6/test_query_product.py --work /tmp/sxi-query-tests-final",
+      "result": "passed",
+      "summary": "23 fixtures, 44,481 MEMs brute verified."
+    },
+    {
+      "command": "python3 bit6/test_query_metadata.py",
+      "result": "passed",
+      "summary": "Metadata corruption, legacy counts, mode overrides and sampled traces pass."
+    },
+    {
+      "command": "python3 bit6/test_query_yeast.py",
+      "result": "passed",
+      "summary": "1,720 yeast MEMs brute verified; member hashes and HTTP parity pass."
+    },
+    {
+      "command": "python3 bit6/test_query_http.py",
+      "result": "passed",
+      "summary": "Final server responses match retained CLI outputs under 20 GB address-space limit."
+    },
+    {
+      "command": "python3 bit6/test_text_audit.py",
+      "result": "passed",
+      "summary": "Direct-text checks pass; corrupted text and failing audit reject publication."
+    },
+    {
+      "command": "python3 bit6/test_sxi_format.py --writer /tmp/sxi-query-writer --xsa xsa/target/release/xsa",
+      "result": "passed",
+      "summary": "Committed format regression passes."
+    },
+    {
+      "command": "XSA_TOOLS=/tmp/sxi-query-tools python3 bit6/test_sxi_build.py --log-dir bit6/sxi_logs/query-product",
+      "result": "passed",
+      "summary": "Committed CLI regression passes."
+    },
+    {
+      "command": "git diff --check && git diff --cached --name-only",
+      "result": "passed",
+      "summary": "Clean diff check; no staged files."
+    }
+  ],
+  "validationOutput": [
+    "44,481 small/battery MEMs and 1,720 yeast235 MEMs match independent direct-text oracles.",
+    "HTTP /query, /ms, /batch match CLI byte-for-byte; /stats k=9901.",
+    "Yeast235 chi=85404336 and all six member hashes unchanged; yeast regression chi=85404240 and five core hashes unchanged.",
+    "Fresh build and yeast235 sampled audits pass 32/32 witnesses; negative audit blocks publication.",
+    "Largest measured gate process: 3260416 KiB; final server: 2081572 KiB."
+  ],
+  "residualRisks": [
+    "Required independent reviewer gate remains pending.",
+    "Long/repetitive reads can be slow; temporary disk use scales with batch output.",
+    "Legacy source mode/orientation needs explicit overrides; new flags require upgraded readers.",
+    "HTTP is a minimal trusted-local service; sampled audit does not certify complete chi equality."
+  ],
+  "noStagedFiles": true,
+  "diffSummary": "Annotated SXI search, bounded Rayon MEM streaming, DNA/text semantics, shared-index HTTP service, named-record k metadata and sampled direct-text build audit.",
+  "reviewFindings": [
+    "No unresolved implementation blockers found in self-review.",
+    "Independent reviewer approval has not been obtained."
+  ],
+  "manualNotes": "No supervisor contact tool was exposed. Published artifacts and protected k10 paths were not modified. Yeast235 k regression uses a writer-only rebuild from retained certified intermediates, not a fresh AGC/PFP build. Inherited dirty changes are isolated via baseline/ and lane.diff; no commits were created."
+}

@@ -1,0 +1,250 @@
+{
+  "process_measurements": [
+    {
+      "log": "must-not-exist-xsa-build-jf_e83p5.parse.time",
+      "peak_rss_kib": 4096
+    },
+    {
+      "log": "generic-xsa-build-me414kho.sweep.time",
+      "peak_rss_kib": 2048
+    },
+    {
+      "log": "must-not-exist-xsa-build-jf_e83p5.parse-l2.time",
+      "peak_rss_kib": 4096
+    },
+    {
+      "log": "must-not-exist-xsa-build-jf_e83p5.rpfbwt.time",
+      "peak_rss_kib": 4096
+    },
+    {
+      "log": "yeast-http-ms.time",
+      "peak_rss_kib": 8192
+    },
+    {
+      "log": "rejected-xsa-build-l2lzl8z8.endpoints.time",
+      "peak_rss_kib": 2048
+    },
+    {
+      "log": "yeast-cli-ms.time",
+      "peak_rss_kib": 2082892
+    },
+    {
+      "log": "yeast235-legacy-stats.time",
+      "peak_rss_kib": 2048
+    },
+    {
+      "log": "must-not-exist-xsa-build-jf_e83p5.sweep.time",
+      "peak_rss_kib": 2048
+    },
+    {
+      "log": "generic-xsa-build-me414kho.write.time",
+      "peak_rss_kib": 2048
+    },
+    {
+      "log": "generic-xsa-build-me414kho.validate.time",
+      "peak_rss_kib": 2048
+    },
+    {
+      "log": "refs-xsa-build-6f5_1s27.parse.time",
+      "peak_rss_kib": 4096
+    },
+    {
+      "log": "must-not-exist-xsa-build-jf_e83p5.endpoints.time",
+      "peak_rss_kib": 2048
+    },
+    {
+      "log": "rejected-xsa-build-fp1hif0t.endpoints.time",
+      "peak_rss_kib": 4096
+    },
+    {
+      "log": "rejected-xsa-build-fp1hif0t.parse.time",
+      "peak_rss_kib": 4096
+    },
+    {
+      "log": "refs-xsa-build-6f5_1s27.slim.time",
+      "peak_rss_kib": 6144
+    },
+    {
+      "log": "must-not-exist-xsa-build-52ivz7jc.parse-l2.time",
+      "peak_rss_kib": 4096
+    },
+    {
+      "log": "generic-xsa-build-me414kho.rpfbwt.time",
+      "peak_rss_kib": 4096
+    },
+    {
+      "log": "rejected-xsa-build-31zxtjhh.endpoints.time",
+      "peak_rss_kib": 2048
+    },
+    {
+      "log": "must-not-exist-xsa-build-jf_e83p5.verify-text-sample.time",
+      "peak_rss_kib": 0
+    },
+    {
+      "log": "refs-xsa-build-6f5_1s27.validate.time",
+      "peak_rss_kib": 2048
+    },
+    {
+      "log": "rejected-xsa-build-31zxtjhh.slim.time",
+      "peak_rss_kib": 6144
+    },
+    {
+      "log": "rejected-xsa-build-l2lzl8z8.parse.time",
+      "peak_rss_kib": 4096
+    },
+    {
+      "log": "must-not-exist-xsa-build-52ivz7jc.endpoints.time",
+      "peak_rss_kib": 2048
+    },
+    {
+      "log": "fresh-build.time",
+      "peak_rss_kib": 12288
+    },
+    {
+      "log": "rejected-xsa-build-fp1hif0t.parse-l2.time",
+      "peak_rss_kib": 4096
+    },
+    {
+      "log": "refs-xsa-build-6f5_1s27.rpfbwt.time",
+      "peak_rss_kib": 4096
+    },
+    {
+      "log": "yeast-brute.time",
+      "peak_rss_kib": 3260416
+    },
+    {
+      "log": "rejected-xsa-build-l2lzl8z8.rpfbwt.time",
+      "peak_rss_kib": 4096
+    },
+    {
+      "log": "must-not-exist-xsa-build-52ivz7jc.rpfbwt.time",
+      "peak_rss_kib": 4096
+    },
+    {
+      "log": "rejected-xsa-build-31zxtjhh.parse.time",
+      "peak_rss_kib": 4096
+    },
+    {
+      "log": "must-not-exist-xsa-build-52ivz7jc.verify-text-sample.time",
+      "peak_rss_kib": 0
+    },
+    {
+      "log": "rejected-xsa-build-fp1hif0t.rpfbwt.time",
+      "peak_rss_kib": 4096
+    },
+    {
+      "log": "refs-xsa-build-6f5_1s27.verify-text-sample.time",
+      "peak_rss_kib": 2048
+    },
+    {
+      "log": "yeast-stats-final.time",
+      "peak_rss_kib": 4096
+    },
+    {
+      "log": "rejected-xsa-build-l2lzl8z8.parse-l2.time",
+      "peak_rss_kib": 4096
+    },
+    {
+      "log": "refs-xsa-build-6f5_1s27.sweep.time",
+      "peak_rss_kib": 2048
+    },
+    {
+      "log": "refs-xsa-build-6f5_1s27.endpoints.time",
+      "peak_rss_kib": 2048
+    },
+    {
+      "log": "generic-xsa-build-me414kho.slim.time",
+      "peak_rss_kib": 6144
+    },
+    {
+      "log": "rejected-xsa-build-31zxtjhh.rpfbwt.time",
+      "peak_rss_kib": 4096
+    },
+    {
+      "log": "yeast235-repack.time",
+      "peak_rss_kib": 669696
+    },
+    {
+      "log": "rejected-xsa-build-31zxtjhh.parse-l2.time",
+      "peak_rss_kib": 4096
+    },
+    {
+      "log": "rejected-xsa-build-31zxtjhh.sweep.time",
+      "peak_rss_kib": 2048
+    },
+    {
+      "log": "yeast-cli-query.time",
+      "peak_rss_kib": 2081664
+    },
+    {
+      "log": "generic-xsa-build-me414kho.parse-l2.time",
+      "peak_rss_kib": 4096
+    },
+    {
+      "log": "generic-xsa-build-me414kho.endpoints.time",
+      "peak_rss_kib": 2048
+    },
+    {
+      "log": "rejected-xsa-build-m7n3362v.parse.time",
+      "peak_rss_kib": 0
+    },
+    {
+      "log": "yeast-stats.time",
+      "peak_rss_kib": 4096
+    },
+    {
+      "log": "yeast235-audit-final.time",
+      "peak_rss_kib": 6144
+    },
+    {
+      "log": "must-not-exist-xsa-build-52ivz7jc.slim.time",
+      "peak_rss_kib": 6144
+    },
+    {
+      "log": "must-not-exist-xsa-build-52ivz7jc.sweep.time",
+      "peak_rss_kib": 2048
+    },
+    {
+      "log": "yeast-mems.time",
+      "peak_rss_kib": 2084432
+    },
+    {
+      "log": "rejected-xsa-build-l2lzl8z8.gate-heads.time",
+      "peak_rss_kib": 0
+    },
+    {
+      "log": "must-not-exist-xsa-build-jf_e83p5.slim.time",
+      "peak_rss_kib": 6144
+    },
+    {
+      "log": "yeast-http-batch.time",
+      "peak_rss_kib": 8192
+    },
+    {
+      "log": "must-not-exist-xsa-build-52ivz7jc.parse.time",
+      "peak_rss_kib": 4096
+    },
+    {
+      "log": "generic-xsa-build-me414kho.parse.time",
+      "peak_rss_kib": 4096
+    },
+    {
+      "log": "refs-xsa-build-6f5_1s27.parse-l2.time",
+      "peak_rss_kib": 4096
+    },
+    {
+      "log": "refs-xsa-build-6f5_1s27.write.time",
+      "peak_rss_kib": 2048
+    },
+    {
+      "log": "yeast-http-query.time",
+      "peak_rss_kib": 8192
+    },
+    {
+      "log": "http-final.log",
+      "peak_rss_kib": 2081572
+    }
+  ],
+  "server_address_space_cap": 20000000000,
+  "notes": "Each gate process peaks below 20 GB. Largest overlapping query phase is one shared-index server plus one CLI; individual peaks are retained, not an observed tree-wide RSS claim."
+}

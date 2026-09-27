@@ -2,20 +2,23 @@
 use std::path::PathBuf;
 
 const USAGE: &str = "usage:
-  xsa build --text <collection.txt> -o <out.sxi> [--threads N] [--scratch DIR] [--expect-chi N] [--verbose]
+  xsa build --text <collection.txt> -o <out.sxi> [--threads N] [--scratch DIR] [--expect-chi N] [--verify-text-sample N] [--mode auto|dna|text] [--verbose]
   xsa build --agc <archive.agc> -o <out.sxi> [same options]
   xsa build --fasta <records.fa> -o <out.sxi> [same options]
   xsa build --fastq <reads.fq> -o <out.sxi> [same options]
 
-Text uses newline-terminated pilot collection conventions, already oriented.
+Corpus contract: T = s1 0x1E s2 0x1E ... sk 0x1E, ONE cyclic byte string.
+0x1E (ASCII record separator) is reserved; never include it in sequence content.
+--text passes raw bytes AS-IS, without a content scan; the caller owns this contract.
 FASTA (wrapped lines allowed) and FASTQ (four-line records) extract sequences
-verbatim in input order, one per line; supply already oriented sequences.
+verbatim in input order, with 0x1E between records and terminally.
+Supply already oriented sequences; embedded 0x1E fails during input preparation.
 Record identifiers populate the SXI names member. Malformed records fail closed.
-AGC uses agc2flat --revlines --upper, materialized beside its source.
+AGC uses agc2flat --revlines --upper --sep 1e, materialized beside its source.
 Stages: PFP (w1=10,p1=100; w2=5,p2=11), endpoint-tap rpfbwt,
 slim streaming aggregates, streamed chi sweep/gate, checked SXI publication.
 Scratch must share the source filesystem. Timings and peak RSS are logged.
-Multi-string inputs require --expect-heads RAW --expect-ri4 FILE byte gates
+Legacy newline-terminated multi-string inputs require --expect-heads RAW --expect-ri4 FILE byte gates
 because linear PFP ordering is not established as BCR collection ordering.";
 
 #[derive(Debug)]
@@ -48,7 +51,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
                     return Err("choose exactly one of --agc, --fasta, --fastq, --text".into());
                 }
             }
-            "--threads" | "--scratch" | "--log-dir" | "--expect-chi" | "--expect-heads" | "--expect-ri4" => {
+            "--mode" | "--verify-text-sample" | "--threads" | "--scratch" | "--log-dir" | "--expect-chi" | "--expect-heads" | "--expect-ri4" => {
                 i += 1;
                 let value = args.get(i).filter(|s| !s.is_empty() && !s.starts_with('-'))
                     .ok_or_else(|| format!("{flag} requires a value"))?;

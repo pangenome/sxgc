@@ -1,0 +1,5 @@
+xsa build: work=/tmp/sxi-query-fresh/xsa-build-010lozhw log=/tmp/sxgc-laneV/bit6/sxi_logs/query-product/audited-final-xsa-build-010lozhw.jsonl
+prepare-fasta: record=1 name=record0 sequence_bytes=800 collection_bytes=801
+prepare-fasta: record=2 name=record1 sequence_bytes=800 collection_bytes=1602
+prepare-fasta: record=3 name=record2 sequence_bytes=800 collection_bytes=2403
+{"sxi": "/tmp/sxi-query-fresh/audited-final.sxi", "chi": 1657, "work": "/tmp/sxi-query-fresh/xsa-build-010lozhw", "log": "/tmp/sxgc-laneV/bit6/sxi_logs/query-product/audited-final-xsa-build-010lozhw.jsonl"}
