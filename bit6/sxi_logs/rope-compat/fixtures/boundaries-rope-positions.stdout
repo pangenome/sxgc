@@ -1,0 +1,6 @@
+boundary	0	2	2	2	first:+:4	duplicate:+:4
+boundary	2	4	2	2	second:-:0	second:+:0
+minus	0	6	1	1	second:-:0
+long	2	8	2	2	first:+:0	duplicate:+:0
+nested	0	6	1	1	second:+:0
+nested	1	7	2	2	first:+:0	duplicate:+:0

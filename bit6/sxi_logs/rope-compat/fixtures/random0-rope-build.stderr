@@ -1,0 +1,6 @@
+[M::main_build::0.000*10.42] read 96 symbols from file '/tmp/sxgc-laneV/bit6/sxi_logs/rope-compat/fixtures/random0.refs.fa'
+[M::main_build::0.000*6.61] constructed partial BWT for 96 symbols
+[M::main_build::0.000*4.93] encoded the partial BWT for 96 symbols
+[M::main] Version: 3.10-r285-dirty
+[M::main] CMD: /tmp/pi-github-repos/runtime-iM4bba/c73bf005e0630ea7936d5e6556e9d9dd3902b92cd1a35a5b3ffece651d8f6c29/ropebwt3 build -t1 -do /tmp/sxgc-laneV/bit6/sxi_logs/rope-compat/fixtures/random0.fmd /tmp/sxgc-laneV/bit6/sxi_logs/rope-compat/fixtures/random0.refs.fa
+[M::main] Real time: 0.000 sec; CPU: 0.001 sec; Peak RSS: 0.002 GB

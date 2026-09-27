@@ -1,4 +1,4 @@
-//! Annotated, deterministic JSONL queries over a shared immutable SXI index.
+//! Annotated JSONL and ropebwt3-style queries over a shared immutable SXI index.
 use super::{die, ms_vector, sxi, Ri4};
 use flate2::read::MultiGzDecoder;
 use rayon::prelude::*;
@@ -260,6 +260,137 @@ impl Engine {
         min_len: usize,
         out: &mut impl Write,
     ) -> Result<(), String> {
+        self.visit_mems(seq, min_len, |row, len, start, strand| {
+            if let Some(v) = self.hit(read, row, len, Some(start), strand) {
+                line(out, &v)?;
+            }
+            Ok(())
+        })
+    }
+    fn rope_mems(
+        &self,
+        read: &str,
+        seq: &[u8],
+        o: &Options,
+        out: &mut impl Write,
+    ) -> Result<(), String> {
+        self.validate(seq)?;
+        // kseq (used by ropebwt3) separates the identifier from its comment.
+        let read = read.split_ascii_whitespace().next().unwrap_or(read);
+        let cap = if o.gap.is_some() || o.cov {
+            0
+        } else {
+            o.positions
+        };
+        let mut matches = std::collections::BTreeMap::<(usize, usize), MemSummary>::new();
+        if o.all_mems {
+            // Native MEM maximality is per occurrence. Aggregate only those
+            // maximal occurrences, retaining a bounded deterministic prefix.
+            self.visit_mems(seq, o.min, |row, len, start, strand| {
+                if self.annotate(self.position(row), len).is_none() {
+                    return Ok(());
+                }
+                let entry = matches.entry((start, start + len)).or_default();
+                entry.count += 1;
+                if entry.positions.len() < cap {
+                    entry.positions.push(self.rope_position(row, len, strand)?);
+                }
+                Ok(())
+            })?;
+        } else {
+            // Every SMEM is a longest match at its start in either oriented
+            // query. Collect these O(read length) intervals, then remove strict
+            // query containment across BOTH strands (equal intervals coalesce).
+            let mut candidates = Vec::new();
+            for (work, strand) in self.orientations(seq) {
+                for (start, len) in self.ms(&work).into_iter().enumerate() {
+                    let len = len as usize;
+                    if len < o.min {
+                        continue;
+                    }
+                    let start = if self.reversed ^ (strand == "-") {
+                        seq.len() - start - len
+                    } else {
+                        start
+                    };
+                    candidates.push((start, start + len));
+                }
+            }
+            candidates.sort_unstable_by_key(|&(start, end)| (start, std::cmp::Reverse(end)));
+            let mut rightmost = 0;
+            for (start, end) in candidates {
+                if end <= rightmost {
+                    continue;
+                }
+                rightmost = end;
+                let mut entry = MemSummary::default();
+                for (work, strand) in self.orientations(&seq[start..end]) {
+                    let (l, r) = self.interval(&work);
+                    // Queries cannot contain the record separator, so this
+                    // interval contains only within-record matches. Counts do
+                    // not depend on locate or the position sampling cap.
+                    entry.count += r - l;
+                    for row in l..l + (cap - entry.positions.len()).min((r - l) as usize) as u64 {
+                        entry
+                            .positions
+                            .push(self.rope_position(row, end - start, strand)?);
+                    }
+                }
+                matches.insert((start, end), entry);
+            }
+        }
+        if o.gap.is_some() || o.cov {
+            let mut last = 0;
+            let mut covered = 0;
+            for &(start, end) in matches.keys() {
+                if let Some(min_gap) = o.gap {
+                    if start.saturating_sub(last) >= min_gap {
+                        write_gap(out, read, seq, last, start, o.gap_seq)?;
+                    }
+                }
+                covered += end.saturating_sub(last.max(start));
+                last = last.max(end);
+            }
+            if let Some(min_gap) = o.gap {
+                if seq.len() - last >= min_gap {
+                    write_gap(out, read, seq, last, seq.len(), o.gap_seq)?;
+                }
+            } else if covered > 0 {
+                // Match write_per_seq: reads with zero coverage have no row.
+                writeln!(out, "{read}\t{}\t{covered}", seq.len()).map_err(|e| e.to_string())?;
+            }
+        } else {
+            for ((start, end), entry) in matches {
+                write!(out, "{read}\t{start}\t{end}\t{}", entry.count)
+                    .map_err(|e| e.to_string())?;
+                for pos in entry.positions {
+                    write!(out, "\t{pos}").map_err(|e| e.to_string())?;
+                }
+                writeln!(out).map_err(|e| e.to_string())?;
+            }
+        }
+        Ok(())
+    }
+    fn rope_position(&self, row: u64, len: usize, strand: &str) -> Result<String, String> {
+        let (_, record, offset) = self
+            .annotate(self.position(row), len)
+            .ok_or("MEM position crosses reference boundary")?;
+        // We search the reverse-complement QUERY in the forward reference.
+        // annotate already normalizes reversed storage; applying rlen-(p+len)
+        // again for '-' would incorrectly mirror the forward coordinate.
+        let name = record
+            .name
+            .split_ascii_whitespace()
+            .next()
+            .unwrap_or(&record.name);
+        Ok(format!("{name}:{strand}:{offset}"))
+    }
+    fn visit_mems(
+        &self,
+        seq: &[u8],
+        min_len: usize,
+        mut emit: impl FnMut(u64, usize, usize, &str) -> Result<(), String>,
+    ) -> Result<(), String> {
         self.validate(seq)?;
         for (work, strand) in self.orientations(seq) {
             let ms = self.ms(&work);
@@ -288,9 +419,7 @@ impl Engine {
                         } else {
                             start
                         };
-                        if let Some(v) = self.hit(read, row, len, Some(qstart), strand) {
-                            line(out, &v)?;
-                        }
+                        emit(row, len, qstart, strand)?;
                     }
                 }
             }
@@ -301,6 +430,26 @@ impl Engine {
         json!({"n": self.idx.n, "k": self.records.len(), "runs": self.idx.r, "chi": self.chi,
                "mode": if self.dna { "dna" } else { "text" }, "reversed": self.reversed})
     }
+}
+#[derive(Default)]
+struct MemSummary {
+    count: u64,
+    positions: Vec<String>,
+}
+fn write_gap(
+    out: &mut impl Write,
+    read: &str,
+    seq: &[u8],
+    start: usize,
+    end: usize,
+    include_seq: bool,
+) -> Result<(), String> {
+    write!(out, "{read}\t{start}\t{end}\t{}", seq.len()).map_err(|e| e.to_string())?;
+    if include_seq {
+        out.write_all(b"\t").map_err(|e| e.to_string())?;
+        out.write_all(&seq[start..end]).map_err(|e| e.to_string())?;
+    }
+    writeln!(out).map_err(|e| e.to_string())
 }
 fn complement(c: u8) -> Option<u8> {
     let b = match c.to_ascii_uppercase() {
@@ -435,6 +584,12 @@ struct Options {
     sample: Option<usize>,
     seed: u64,
     trace: bool,
+    out: String,
+    all_mems: bool,
+    positions: usize,
+    gap: Option<usize>,
+    gap_seq: bool,
+    cov: bool,
 }
 fn parse(args: &[String]) -> Result<Options, String> {
     let mut o = Options {
@@ -451,12 +606,30 @@ fn parse(args: &[String]) -> Result<Options, String> {
         sample: None,
         seed: 0,
         trace: false,
+        out: "native".into(),
+        all_mems: false,
+        positions: 0,
+        gap: None,
+        gap_seq: false,
+        cov: false,
     };
     let mut i = 0;
     while i < args.len() {
         let flag = &args[i];
         i += 1;
         match flag.as_str() {
+            "--mem" => {
+                o.all_mems = true;
+                continue;
+            }
+            "--cov" => {
+                o.cov = true;
+                continue;
+            }
+            "--gap-seq" => {
+                o.gap_seq = true;
+                continue;
+            }
             "--trace-samples" => {
                 o.trace = true;
                 continue;
@@ -485,6 +658,9 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--bind" => o.bind = v.clone(),
             "--output" | "--ms-out" => o.output = Some(v.clone()),
             "-j" | "--threads" => o.jobs = v.parse().map_err(|_| "invalid threads")?,
+            "--out" => o.out = v.clone(),
+            "-p" | "--positions" => o.positions = v.parse().map_err(|_| "invalid positions")?,
+            "--gap" => o.gap = Some(v.parse().map_err(|_| "invalid gap")?),
             "--min-len" => o.min = v.parse().map_err(|_| "invalid min-len")?,
             "--sample" => o.sample = Some(v.parse().map_err(|_| "invalid sample")?),
             "--seed" => o.seed = v.parse().map_err(|_| "invalid seed")?,
@@ -493,6 +669,15 @@ fn parse(args: &[String]) -> Result<Options, String> {
     }
     if o.path.is_empty() || !(1..=64).contains(&o.jobs) || o.min == 0 {
         return Err("need --sxi; threads 1..64; min-len > 0".into());
+    }
+    if !matches!(o.out.as_str(), "native" | "ropebwt3") {
+        return Err("--out must be native or ropebwt3".into());
+    }
+    if o.gap == Some(0) || (o.gap_seq && o.gap.is_none()) {
+        return Err("--gap must be positive; --gap-seq requires --gap".into());
+    }
+    if o.out != "ropebwt3" && (o.positions > 0 || o.gap.is_some() || o.cov || o.gap_seq) {
+        return Err("positions, gap and cov require --out ropebwt3".into());
     }
     Ok(o)
 }
@@ -505,7 +690,11 @@ fn process(
     out: &mut impl Write,
 ) -> Result<(), String> {
     if kind == "mems" {
-        e.mems(name, seq, o.min, out)
+        if o.out == "ropebwt3" {
+            e.rope_mems(name, seq, o, out)
+        } else {
+            e.mems(name, seq, o.min, out)
+        }
     } else if o.ms {
         e.matching_statistics(name, seq, out)
     } else {
@@ -514,6 +703,17 @@ fn process(
 }
 fn run(kind: &str, args: &[String]) -> Result<(), String> {
     let o = parse(args)?;
+    if kind != "mems"
+        && (o.out != "native" || o.all_mems || o.positions > 0 || o.gap.is_some() || o.cov)
+    {
+        return Err("--out ropebwt3/--mem/positions/gap/cov are mems options".into());
+    }
+    if kind == "mems" && o.out == "ropebwt3" && (o.sample.is_some() || o.trace || o.ms) {
+        return Err(
+            "ropebwt3 MEMs use -p N for positions; --sample/--trace-samples/--ms are query options"
+                .into(),
+        );
+    }
     let engine = Engine::open(&o.path, &o.mode, o.orientation)?;
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(o.jobs)
@@ -695,7 +895,7 @@ fn serve(engine: Engine, o: Options, pool: rayon::ThreadPool) -> Result<(), Stri
 }
 pub fn command(kind: &str, args: &[String]) {
     if args.iter().any(|x| x == "--help" || x == "-h") {
-        println!("xsa {kind} --sxi FILE [--reads FA|FQ|GZ | --pattern STRING] [-j N] [--mode auto|dna|text]\n  [--min-len 20] [--ms] [--sample N --seed N] [--plain|--revlines] [--bind 127.0.0.1:7331]\nOutput: deterministic JSONL; coordinates zero-based; MEM qstart in original read.");
+        println!("xsa {kind} --sxi FILE [--reads FA|FQ|GZ | --pattern STRING] [-j N] [--mode auto|dna|text]\n  [--min-len 20] [--ms] [--sample N --seed N] [--plain|--revlines] [--bind 127.0.0.1:7331]\nOutput: native deterministic JSONL (default, all occurrence MEMs).\n  mems: [--out native|ropebwt3] [--mem] [-p N|--positions N] [--gap N [--gap-seq]] [--cov]\n  ropebwt3: default SMEMs; qname/start/end/count TSV, no positions unless -p N.\n  --mem retains all occurrence MEMs; -p caps positions per interval, never counts.\n  --gap takes precedence over --cov; cov omits zero-coverage reads.\nCoordinates zero-based half-open; reference positions always forward-strand.");
         return;
     }
     if let Err(e) = run(kind, args) {

@@ -1,0 +1,81 @@
+{
+  "criteriaSatisfied": [
+    {
+      "id": "criterion-1",
+      "status": "satisfied",
+      "evidence": "Implemented native/ropebwt3 output, SMEM containment, --mem, capped positions, gap/coverage and forward coordinates; isolated product.diff and hygiene.json verify scope."
+    },
+    {
+      "id": "criterion-2",
+      "status": "satisfied",
+      "evidence": "Reproducible commands, real-tool comparisons, independent brute oracles, native regressions, yeast checks, memory measurements and source hashes are retained in bit6/sxi_logs/rope-compat/."
+    }
+  ],
+  "changedFiles": [
+    "xsa/src/product.rs",
+    "bit6/SXI_QUERY.md",
+    "bit6/test_rope_compat.py",
+    "bit6/test_rope_yeast.py",
+    "bit6/sxi_logs/rope-compat/"
+  ],
+  "testsAddedOrUpdated": [
+    "bit6/test_rope_compat.py",
+    "bit6/test_rope_yeast.py"
+  ],
+  "commandsRun": [
+    {
+      "command": "cargo build --release --manifest-path xsa/Cargo.toml",
+      "result": "passed",
+      "summary": "Release build succeeded."
+    },
+    {
+      "command": "make -j2 (ropebwt3 cloned-source directory)",
+      "result": "passed",
+      "summary": "Built real MIT-licensed reference tool; provenance and build log retained."
+    },
+    {
+      "command": "python3 bit6/test_rope_compat.py --battery --work bit6/sxi_logs/rope-compat/fixtures --rope /tmp/pi-github-repos/runtime-iM4bba/c73bf005e0630ea7936d5e6556e9d9dd3902b92cd1a35a5b3ffece651d8f6c29/ropebwt3",
+      "result": "passed",
+      "summary": "25 brute-verified fixtures, including 23 real-tool parity fixtures and all seven relabeled construction batteries."
+    },
+    {
+      "command": "python3 bit6/test_rope_yeast.py",
+      "result": "passed",
+      "summary": "1,720 native MEM occurrences; 5 SMEM intervals and 74 hits verified; native byte parity and all-MEM aggregation pass."
+    },
+    {
+      "command": "python3 bit6/sxi_logs/rope-compat/run_regressions.py",
+      "result": "passed",
+      "summary": "Native query/HTTP battery, committed format/build/Phi tests, and cargo test pass."
+    },
+    {
+      "command": "bash tools/build_slim_dump.sh /tmp/sxi-rope-lce-test tools/slim_lce_test.cpp; /tmp/sxi-rope-lce-test",
+      "result": "passed",
+      "summary": "Committed LCE test passes 216,000 comparisons."
+    },
+    {
+      "command": "rustfmt --check xsa/src/product.rs; git diff --check; git diff --cached --name-only",
+      "result": "passed",
+      "summary": "Formatting/diff checks clean; no staged files."
+    }
+  ],
+  "validationOutput": [
+    "756 SMEM intervals and 44,583 maximal occurrences brute verified across 25 fixtures.",
+    "23 real-tool fixtures match SMEM sets, counts, normalized position multisets, gaps and coverage.",
+    "Existing native regression verifies 44,481 occurrences across 23 fixtures.",
+    "All six yeast index members remain unchanged.",
+    "Peak gate RSS 3,260,416 KiB (3.11 GiB); runners impose a 9 GiB address-space limit."
+  ],
+  "residualRisks": [
+    "Independent reviewer approval remains pending.",
+    "Intentional differences: omit upstream sampled-count column; retain literal case/IUPAC/text matching; capped subsets may differ; native stays default.",
+    "Large all-MEM queries retain expensive enumeration and potentially quadratic interval storage."
+  ],
+  "noStagedFiles": true,
+  "diffSummary": "Added ropebwt3-style SMEM/MEM tables and companion modes while preserving native output; no index-format, tap, front-end or seam changes.",
+  "reviewFindings": [
+    "No unresolved implementation blockers in self-review.",
+    "Required independent reviewer gate has not been completed."
+  ],
+  "manualNotes": "No contact_supervisor tool was exposed. No commits were created and the protected k10 path/processes were not accessed. Construction batteries use the same order-preserving DNA relabeling in both tools; original native fixtures also pass unchanged. Exact reproduction and evidence map: bit6/sxi_logs/rope-compat/ACCEPTANCE.md and COMMANDS.md."
+}

@@ -1,0 +1,5 @@
+q	0	4	1	mixed:-:0
+q	0	10	1	mixed:+:0
+q	4	5	2	mixed:+:9	mixed:-:4
+q	4	10	1	mixed:-:4
+q	9	10	2	mixed:+:4	mixed:-:9

@@ -1,0 +1,7 @@
+{"doc_id":0,"len":10,"name":"mixed","offset":0,"qstart":0,"read":"q","strand":"+"}
+{"doc_id":0,"len":1,"name":"mixed","offset":9,"qstart":4,"read":"q","strand":"+"}
+{"doc_id":0,"len":1,"name":"mixed","offset":4,"qstart":9,"read":"q","strand":"+"}
+{"doc_id":0,"len":1,"name":"mixed","offset":9,"qstart":9,"read":"q","strand":"-"}
+{"doc_id":0,"len":6,"name":"mixed","offset":4,"qstart":4,"read":"q","strand":"-"}
+{"doc_id":0,"len":1,"name":"mixed","offset":4,"qstart":4,"read":"q","strand":"-"}
+{"doc_id":0,"len":4,"name":"mixed","offset":0,"qstart":0,"read":"q","strand":"-"}

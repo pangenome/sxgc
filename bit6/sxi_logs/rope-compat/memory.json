@@ -1,0 +1,2101 @@
+{
+  "limit_bytes": 9663676416,
+  "maximum": {
+    "path": "bit6/sxi_logs/rope-compat/yeast/brute.time",
+    "max_rss_kib": 3260416
+  },
+  "processes": [
+    {
+      "path": "bit6/sxi_logs/rope-compat/yeast/brute.time",
+      "max_rss_kib": 3260416
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/yeast/baseline.time",
+      "max_rss_kib": 2083760
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/yeast/rope-all-mems.time",
+      "max_rss_kib": 2082564
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/yeast/native.time",
+      "max_rss_kib": 2082096
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/yeast/rope-positions.time",
+      "max_rss_kib": 2081724
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/yeast/rope-counts.time",
+      "max_rss_kib": 2081060
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/lce-build.time",
+      "max_rss_kib": 554448
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/rust-tests.time",
+      "max_rss_kib": 172032
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/native-regression.time",
+      "max_rss_kib": 34696
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/format-regression.time",
+      "max_rss_kib": 12288
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/phi-regression.time",
+      "max_rss_kib": 12288
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/build-regression.time",
+      "max_rss_kib": 12288
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-duplicates-600k-rope-build.time",
+      "max_rss_kib": 8192
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/build-regression/rejected-xsa-build-ojmmcexh.slim.time",
+      "max_rss_kib": 6144
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-200k-all-mems.time",
+      "max_rss_kib": 6144
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-200k-native.time",
+      "max_rss_kib": 6144
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-200k-cov.time",
+      "max_rss_kib": 6144
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-200k-explicit-native.time",
+      "max_rss_kib": 6144
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-200k-threads.time",
+      "max_rss_kib": 6144
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-200k-counts.time",
+      "max_rss_kib": 6144
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-200k-cap.time",
+      "max_rss_kib": 6144
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-200k-all-cov.time",
+      "max_rss_kib": 6144
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-200k-zero-cap.time",
+      "max_rss_kib": 6144
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-200k-gap-no-seq.time",
+      "max_rss_kib": 6144
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-200k-baseline.time",
+      "max_rss_kib": 6144
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-200k-positions.time",
+      "max_rss_kib": 6144
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-200k-gap.time",
+      "max_rss_kib": 6144
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/lce-regression.time",
+      "max_rss_kib": 4096
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/build-regression/rejected-xsa-build-cf5d4sf_.parse-l2.time",
+      "max_rss_kib": 4096
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/build-regression/rejected-xsa-build-cf5d4sf_.rpfbwt.time",
+      "max_rss_kib": 4096
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/build-regression/rejected-xsa-build-cf5d4sf_.endpoints.time",
+      "max_rss_kib": 4096
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/build-regression/rejected-xsa-build-p66x1gn9.parse-l2.time",
+      "max_rss_kib": 4096
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/build-regression/rejected-xsa-build-p66x1gn9.parse.time",
+      "max_rss_kib": 4096
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/build-regression/rejected-xsa-build-ojmmcexh.parse.time",
+      "max_rss_kib": 4096
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/build-regression/rejected-xsa-build-ojmmcexh.parse-l2.time",
+      "max_rss_kib": 4096
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/build-regression/rejected-xsa-build-p66x1gn9.rpfbwt.time",
+      "max_rss_kib": 4096
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/build-regression/rejected-xsa-build-ojmmcexh.rpfbwt.time",
+      "max_rss_kib": 4096
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/build-regression/rejected-xsa-build-cf5d4sf_.parse.time",
+      "max_rss_kib": 4096
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-duplicates-600k-rope-ssa.time",
+      "max_rss_kib": 4096
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-200k-rope-build.time",
+      "max_rss_kib": 4096
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/build-regression/rejected-xsa-build-p66x1gn9.endpoints.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/build-regression/rejected-xsa-build-ojmmcexh.sweep.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/build-regression/rejected-xsa-build-ojmmcexh.endpoints.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random6-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random8-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-2k-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-bin-20k-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-bin-20k-zero-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/reversed-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/invalid-gap-seq.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random0-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random1-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random10-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random7-writer.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-satellite-18k-writer.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random9-rope-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-20k-rope-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random5-rope-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random0-all-mems.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/literal-all-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random6-rope-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random0-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random8-all-mems.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-duplicates-600k-rope-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-satellite-18k-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/reversed-rope-ssa.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random9-writer.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/reversed-rope-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random7-all-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random7-rope-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-duplicates-600k-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random2-rope-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random1-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random2-gap-no-seq.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random0-gap-no-seq.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-bin-20k-rope-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-satellite-18k-rope-ssa.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/dna-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random0-threads.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/dna-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random10-zero-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random1-rope-ssa.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random11-writer.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/boundaries-writer.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random7-rope-ssa.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-HOR-nested-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random4-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-bin-20k-gap-no-seq.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/text-gap-no-seq.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random11-zero-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-satellite-18k-baseline.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random6-zero-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random4-gap-no-seq.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/literal-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random1-rope-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random5-gap-no-seq.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/literal-writer.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random7-explicit-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-2k-zero-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random6-explicit-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/dna-gap-no-seq.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random5-rope-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random3-rope-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random10-gap-no-seq.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-duplicates-600k-all-mems.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random8-baseline.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/periodic-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/text-threads.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-20k-writer.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/boundaries-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-satellite-18k-gap-no-seq.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random11-explicit-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random4-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random10-baseline.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-satellite-18k-rope-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random6-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random5-all-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random3-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random5-baseline.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random7-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-2k-gap-no-seq.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/reversed-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-20k-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-200k-rope-ssa.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random6-writer.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random2-baseline.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random9-rope-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random4-threads.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/text-all-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/literal-all-mems.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random0-writer.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/dna-rope-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random5-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/dna-rope-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/reversed-explicit-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-HOR-nested-zero-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random1-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random5-all-mems.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random3-zero-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/reversed-rope-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/periodic-zero-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random9-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-HOR-nested-all-mems.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random6-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/dna-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-duplicates-600k-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-2k-baseline.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-HOR-nested-rope-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/boundaries-rope-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random10-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-duplicates-600k-explicit-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-20k-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-20k-rope-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random10-rope-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/boundaries-rope-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/reversed-all-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/boundaries-threads.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/dna-baseline.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random10-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random6-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-bin-20k-explicit-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-satellite-18k-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random6-gap-no-seq.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random7-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random3-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random10-writer.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random4-rope-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/dna-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-HOR-nested-gap-no-seq.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-2k-all-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-HOR-nested-writer.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-duplicates-600k-gap-no-seq.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random1-rope-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random8-explicit-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-bin-20k-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/reversed-rope-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random2-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/boundaries-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random7-rope-build.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-2k-explicit-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random10-threads.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random5-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-bin-20k-threads.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/periodic-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/text-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/periodic-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/periodic-rope-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/dna-rope-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/dna-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-duplicates-600k-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/dna-all-mems.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/periodic-rope-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random0-baseline.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random11-threads.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random8-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random10-rope-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random3-all-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/periodic-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random11-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random11-rope-ssa.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random9-explicit-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-bin-20k-all-mems.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random9-all-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random8-rope-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-duplicates-600k-zero-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/text-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random5-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-bin-20k-rope-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-HOR-nested-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-duplicates-600k-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/dna-rope-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-2k-rope-build.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random7-rope-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-bin-20k-all-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random1-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random4-baseline.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random0-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-HOR-nested-rope-ssa.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random10-explicit-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random0-all-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random9-baseline.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random8-writer.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random10-rope-ssa.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random5-writer.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-20k-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random0-rope-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random8-all-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/invalid-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-2k-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-bin-20k-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/periodic-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/reversed-writer.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random2-rope-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random4-all-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-200k-rope-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random2-all-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/literal-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random4-writer.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-bin-20k-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-satellite-18k-rope-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random9-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random7-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/reversed-baseline.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random1-writer.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-20k-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random10-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-2k-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-duplicates-600k-writer.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random7-baseline.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-satellite-18k-all-mems.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random8-threads.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-satellite-18k-all-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-2k-threads.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/boundaries-explicit-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random0-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random2-rope-build.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-satellite-18k-rope-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random7-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random8-rope-ssa.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/boundaries-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random5-rope-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/boundaries-rope-build.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/literal-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-2k-rope-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-duplicates-600k-baseline.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random7-gap-no-seq.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random0-rope-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random1-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/periodic-baseline.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/boundaries-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/reversed-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-satellite-18k-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random2-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random9-rope-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random11-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/boundaries-all-mems.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-200k-writer.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random1-explicit-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random4-zero-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random7-threads.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random5-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-HOR-nested-baseline.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-20k-rope-build.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random3-all-mems.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random4-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random5-rope-build.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random7-zero-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random3-rope-ssa.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random10-rope-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/boundaries-rope-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random8-rope-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/boundaries-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/dna-all-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/literal-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/reversed-gap-no-seq.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/text-explicit-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random0-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random10-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/invalid-ms.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/boundaries-rope-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/boundaries-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/text-zero-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random5-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random1-rope-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-2k-rope-ssa.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/literal-gap-no-seq.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-duplicates-600k-rope-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random3-rope-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random4-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-2k-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random10-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-bin-20k-rope-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random0-rope-build.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random4-explicit-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-satellite-18k-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-bin-20k-writer.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-HOR-nested-rope-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-bin-20k-rope-ssa.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-HOR-nested-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-duplicates-600k-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/reversed-threads.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random4-all-mems.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/text-writer.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random9-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-HOR-nested-rope-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-duplicates-600k-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random6-all-mems.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random2-threads.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random2-rope-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/periodic-rope-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random11-rope-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-2k-rope-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random5-threads.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/reversed-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-HOR-nested-all-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random10-all-mems.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/boundaries-zero-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/reversed-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random7-all-mems.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random1-gap-no-seq.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random6-rope-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random2-all-mems.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random4-rope-build.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random11-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-HOR-nested-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random11-baseline.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-2k-rope-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random2-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random1-rope-build.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/text-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-20k-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-2k-rope-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random5-rope-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-2k-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/dna-rope-ssa.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-bin-20k-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random2-rope-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-bin-20k-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random2-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/dna-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/invalid-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random5-explicit-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-bin-20k-rope-build.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random7-rope-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/reversed-zero-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/dna-explicit-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-20k-rope-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random6-rope-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random6-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random8-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-20k-gap-no-seq.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random5-zero-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-duplicates-600k-rope-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random2-explicit-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random3-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-200k-rope-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/periodic-all-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random8-gap-no-seq.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random4-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-20k-all-mems.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-satellite-18k-rope-build.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random3-rope-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-satellite-18k-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random4-rope-ssa.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/boundaries-rope-ssa.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random7-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random5-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random4-rope-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/dna-writer.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/text-baseline.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random6-all-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random3-threads.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random0-rope-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random8-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random3-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random11-rope-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random8-rope-build.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random9-all-mems.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random2-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random10-rope-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/literal-baseline.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random8-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random0-rope-ssa.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/periodic-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random0-rope-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random1-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random9-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-satellite-18k-zero-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-20k-rope-ssa.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random6-baseline.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random1-all-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random8-rope-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random1-all-mems.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random11-all-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random9-gap-no-seq.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-duplicates-600k-threads.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-HOR-nested-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random11-rope-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/periodic-explicit-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/boundaries-gap-no-seq.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random6-rope-ssa.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random2-rope-ssa.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/literal-explicit-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random3-explicit-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random0-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/literal-threads.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random9-rope-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-HOR-nested-threads.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/invalid-out.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-satellite-18k-threads.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/literal-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random4-rope-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random9-threads.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-bin-20k-baseline.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-2k-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random6-threads.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-2k-all-mems.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random3-gap-no-seq.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random11-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/reversed-rope-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/periodic-threads.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-satellite-18k-explicit-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/periodic-rope-build.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random9-rope-build.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-20k-threads.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random11-rope-build.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random1-zero-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-20k-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/invalid-sample.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random1-rope-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/text-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random4-rope-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random10-all-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-20k-zero-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/text-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random3-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random9-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/periodic-writer.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-2k-writer.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/periodic-rope-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random7-rope-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-satellite-18k-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random11-gap-no-seq.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/dna-threads.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-satellite-18k-rope-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random2-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/periodic-rope-ssa.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/boundaries-baseline.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random3-rope-build.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/reversed-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/literal-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random0-zero-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random11-rope-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random8-zero-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-200k-rope-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/reversed-rope-build.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random1-baseline.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random6-rope-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-20k-all-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random7-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-200k-rope-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/dna-zero-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/text-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/periodic-all-mems.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random1-threads.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/text-all-mems.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random11-all-mems.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random11-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random9-zero-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/boundaries-all-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-duplicates-600k-all-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random11-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random2-zero-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random9-rope-ssa.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random6-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-HOR-nested-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random3-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/literal-zero-cap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random3-baseline.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random3-writer.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/reversed-all-mems.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random3-rope-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random8-rope-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random8-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-duplicates-600k-rope-positions.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random6-rope-build.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random5-rope-ssa.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random0-explicit-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random2-writer.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random10-rope-build.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-20k-rope-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-20k-baseline.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-HOR-nested-rope-gap.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random4-counts.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-HOR-nested-explicit-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-bin-20k-rope-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/dna-rope-build.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-random-4-20k-explicit-native.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/battery-HOR-nested-rope-build.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/random9-cov.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/fixtures/periodic-gap-no-seq.time",
+      "max_rss_kib": 2048
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/build-regression/rejected-xsa-build-_h5vqnpc.parse.time",
+      "max_rss_kib": 0
+    },
+    {
+      "path": "bit6/sxi_logs/rope-compat/build-regression/rejected-xsa-build-p66x1gn9.gate-heads.time",
+      "max_rss_kib": 0
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+{"command": ["/tmp/sxi-query-brute", "/tmp/sxi-repair2/yeast235/xsa-build-26al38ee/collection.txt", "bit6/sxi_logs/rope-compat/yeast/oriented.tsv", "/tmp/sxi-repair2/yeast235/xsa-build-26al38ee/collection.txt.names.tsv", "20"], "exit": 0}
+{"command": ["xsa/target/release/xsa", "mems", "--sxi", "/tmp/sxi-query-yeast235.sxi", "--reads", "bit6/sxi_logs/rope-compat/yeast/reads.fa", "--min-len", "20", "-j", "2", "--out", "native"], "exit": 0}
+{"command": ["/tmp/sxi-rope-native-baseline", "mems", "--sxi", "/tmp/sxi-query-yeast235.sxi", "--reads", "bit6/sxi_logs/rope-compat/yeast/reads.fa", "--min-len", "20", "-j", "2"], "exit": 0}
+{"command": ["xsa/target/release/xsa", "mems", "--sxi", "/tmp/sxi-query-yeast235.sxi", "--reads", "bit6/sxi_logs/rope-compat/yeast/reads.fa", "--min-len", "20", "-j", "2", "--out", "ropebwt3"], "exit": 0}
+{"command": ["xsa/target/release/xsa", "mems", "--sxi", "/tmp/sxi-query-yeast235.sxi", "--reads", "bit6/sxi_logs/rope-compat/yeast/reads.fa", "--min-len", "20", "-j", "2", "--out", "ropebwt3", "-p", "5000"], "exit": 0}
+{"command": ["xsa/target/release/xsa", "mems", "--sxi", "/tmp/sxi-query-yeast235.sxi", "--reads", "bit6/sxi_logs/rope-compat/yeast/reads.fa", "--min-len", "20", "-j", "2", "--out", "ropebwt3", "--mem", "-p", "5000"], "exit": 0}

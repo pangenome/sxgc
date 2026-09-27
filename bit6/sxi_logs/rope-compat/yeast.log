@@ -1,0 +1,1 @@
+{"status": "PASS", "reads": 2, "native_mems": 1720, "smems": 5, "smem_occurrences": 74, "checks": ["direct-text oracle", "native baseline byte parity", "SMEM containment", "authoritative counts", "all forward positions", "all-MEM aggregation"]}

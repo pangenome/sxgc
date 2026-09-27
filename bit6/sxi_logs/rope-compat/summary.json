@@ -1,0 +1,25 @@
+{
+  "fixtures": 25,
+  "real_rope_fixtures": 23,
+  "reads": 195,
+  "smems": 756,
+  "maximal_occurrences": 44583,
+  "native_fixtures": 23,
+  "native_occurrences": 44481,
+  "yeast": {
+    "status": "PASS",
+    "reads": 2,
+    "native_mems": 1720,
+    "smems": 5,
+    "smem_occurrences": 74,
+    "checks": [
+      "direct-text oracle",
+      "native baseline byte parity",
+      "SMEM containment",
+      "authoritative counts",
+      "all forward positions",
+      "all-MEM aggregation"
+    ]
+  },
+  "max_rss_kib": 3260416
+}

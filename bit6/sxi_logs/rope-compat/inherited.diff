@@ -1,0 +1,1931 @@
+diff --git a/agc2flat/src/main.rs b/agc2flat/src/main.rs
+index 9b79924..c265102 100644
+--- a/agc2flat/src/main.rs
++++ b/agc2flat/src/main.rs
+@@ -12,9 +12,9 @@
+ //       out.txt + out.names.tsv; --band S:E slices [S,E) of every copy
+ //       (AGC-native sharded construction: extract -> build -> delete)
+ //   agc2flat <archive.agc> [--samples <file>] [--revlines] [-o out.txt]
+-//       one reversed contig per line, '\n'-terminated (no '$'): the BCR-BWT
+-//       collection format (grlBWT and friends). Sidecar keeps FORWARD flat
+-//       offsets (same-pass ground truth). '\n' is the per-string sentinel.
++//       one reversed contig per record, --sep terminated (default 0x1E).
++//       Sidecar keeps FORWARD flat offsets (same-pass ground truth).
++//       Use --sep 0a explicitly for legacy newline consumers.
+ //   agc2flat <archive.agc> [--samples <file>] [--reverse] [--stdout] ...
+ //       --samples restricts ALL modes to the listed AGC sample names
+ //       (one per line, '#' starts a comment); unknown names abort loudly;
+@@ -30,14 +30,17 @@ use std::fs::File;
+ use std::io::{BufWriter, Write};
+ use std::path::Path;
+ 
+-fn ascii_of(numeric: &[u8], upper: bool) -> Result<Vec<u8>> {
++fn ascii_of(numeric: &[u8], upper: bool, sep: u8) -> Result<Vec<u8>> {
+     let mut v = Vec::with_capacity(numeric.len());
+     for &b in numeric {
++        anyhow::ensure!(b != 0x1e, "corpus contract: reserved separator 0x1E must never appear in sequence content");
+         let c = if b < 16 { CNV_NUM[b as usize] } else { b'N' };
+         if c == 0 || c == 1 || c == 2 {
+             anyhow::bail!("forbidden byte {c} after conversion");
+         }
+-        v.push(if upper && c.is_ascii_lowercase() { c - 32 } else { c });
++        let c = if upper && c.is_ascii_lowercase() { c - 32 } else { c };
++        anyhow::ensure!(c != 0x1e && c != sep, "corpus contract: reserved separator 0x{sep:02X} must never appear in sequence content");
++        v.push(c);
+     }
+     Ok(v)
+ }
+@@ -63,14 +66,23 @@ struct Args {
+     samples: Option<String>,
+     revlines: bool,
+     list_samples: bool,
++    sep: u8,
++}
++
++fn parse_sep(value: &str) -> Result<u8> {
++    let digits = value.strip_prefix("0x").or_else(|| value.strip_prefix("0X")).unwrap_or(value);
++    anyhow::ensure!(!digits.is_empty() && digits.len() <= 2 && digits.bytes().all(|c| c.is_ascii_hexdigit()),
++                    "--sep requires a hex byte, e.g. 1e or 0x1E");
++    Ok(u8::from_str_radix(digits, 16)?)
+ }
+ 
+ fn parse_args() -> Result<Args> {
+-    let mut a = Args { archive: String::new(), out: String::new(), upper: false, groups: false, group: None, band: None, reverse: false, stdout: false, samples: None, revlines: false, list_samples: false };
++    let mut a = Args { archive: String::new(), out: String::new(), upper: false, groups: false, group: None, band: None, reverse: false, stdout: false, samples: None, revlines: false, list_samples: false, sep: 0x1e };
+     let mut it = std::env::args().skip(1);
+     while let Some(arg) = it.next() {
+         match arg.as_str() {
+             "-o" => a.out = it.next().context("-o needs a value")?,
++            "--sep" => a.sep = parse_sep(&it.next().context("--sep needs a hex byte (default 0x1E)")?)?,
+             "--upper" => a.upper = true,
+             "--reverse" => a.reverse = true,
+             "--revlines" => a.revlines = true,
+@@ -89,7 +101,7 @@ fn parse_args() -> Result<Args> {
+         }
+     }
+     if a.archive.is_empty() {
+-        anyhow::bail!("usage: agc2flat <archive.agc> [-o out.txt] [--upper] [--groups] [--group <contig>] [--band S:E] [--samples <file>] [--reverse] [--stdout]");
++        anyhow::bail!("usage: agc2flat <archive.agc> [-o out.txt] [--upper] [--groups] [--group <contig>] [--band S:E] [--samples <file>] [--reverse] [--revlines] [--stdout] [--sep <hexbyte> (default 0x1E)]\nCorpus contract: 0x1E is reserved; it must never appear in sequence content.");
+     }
+     Ok(a)
+ }
+@@ -174,10 +186,10 @@ fn main() -> Result<()> {
+                     let clen = dec.get_contig_length(s, cname)?;
+                     dec.get_contig_range(s, cname, s0, (be as usize).min(clen))?
+                 };
+-                let seq = ascii_of(&numeric, args.upper)?;
++                let seq = ascii_of(&numeric, args.upper, args.sep)?;
+                 if seq.is_empty() { continue; }
+                 text.write_all(&seq)?;
+-                text.write_all(b"$")?;
++                text.write_all(&[args.sep])?;
+                 writeln!(tsv, "{}\t{}\t{}", cname, offset, seq.len())?;
+                 offset += seq.len() as u64 + 1;
+                 copies += 1;
+@@ -189,8 +201,8 @@ fn main() -> Result<()> {
+         return Ok(());
+     }
+ 
+-    // --revlines: one reversed contig per line ('\n' sentinel) — BCR-BWT
+-    // collection format for grlBWT. Contigs in FORWARD archive order (each
++    // --revlines: one reversed contig per separator-terminated record.
++    // Use --sep 0a for legacy BCR consumers. Contigs in FORWARD archive order (each
+     // string is independent in BCR; the sidecar is the coordinate truth).
+     if args.revlines {
+         let mut out_path = args.out.clone();
+@@ -208,12 +220,12 @@ fn main() -> Result<()> {
+             let names = dec.list_contigs(s)?;
+             for cname in &names {
+                 let numeric = dec.get_contig(s, cname)?;
+-                let mut seq = ascii_of(&numeric, args.upper)?;
++                let mut seq = ascii_of(&numeric, args.upper, args.sep)?;
+                 let len = seq.len() as u64;
+                 seq.reverse();
+                 rows.push((cname.clone(), streamed, len));
+                 text.write_all(&seq)?;
+-                text.write_all(b"\n")?;
++                text.write_all(&[args.sep])?;
+                 streamed += len + 1;
+                 n_contigs += 1;
+             }
+@@ -224,8 +236,8 @@ fn main() -> Result<()> {
+         let total = streamed; // == forward flat length (incl separators)
+         eprintln!("TOTAL {total}");
+         for (cname, soff, len) in &rows {
+-            // stream block: rev(contig) at [soff, soff+len), '\n' at soff+len.
+-            // The stream is the '$'-mirror rotated per block; the rotation
++            // stream block: rev(contig) at [soff, soff+len), separator at soff+len.
++            // The stream is the separator-mirror rotated per block; the rotation
+             // cancels, giving the same forward-start formula as --reverse:
+             let fstart = total - 1 - soff - len;
+             writeln!(tsv, "{cname}\t{fstart}\t{len}")?;
+@@ -237,10 +249,10 @@ fn main() -> Result<()> {
+ 
+     // whole-collection mode (validated on yeast235)
+     // --reverse --stdout: stream the byte-exact mirror of the forward flat text
+-    // ('$' + reversed contig, last contig first) so pscan -S can parse the
++    // (separator + reversed contig, last contig first) so pscan -S can parse the
+     // reversed text without any materialization. Sidecar keeps FORWARD offsets.
+     if args.reverse {
+-        // stream the byte-exact mirror of the forward flat text ('$' + reversed
++        // stream the byte-exact mirror of the forward flat text (separator + reversed
+         // contig, last contig first). Sidecar written at EOF from ACTUAL stream
+         // positions (metadata lengths can disagree with decompressed bytes).
+         let mut out_path = args.out.clone();
+@@ -270,12 +282,12 @@ fn main() -> Result<()> {
+                 let mut c = 0u64;
+                 for cname in &names {
+                     let numeric = dec.get_contig(s, cname)?;
+-                    let mut seq = ascii_of(&numeric, args.upper)?;
++                    let mut seq = ascii_of(&numeric, args.upper, args.sep)?;
+                     let len = seq.len() as u64;
+                     seq.reverse();
+                     { use std::io::Write as _;
+-                      if let Some(w) = stdout_out.as_mut() { w.write_all(b"$")?; w.write_all(&seq)?; }
+-                      else if let Some(w) = file_out.as_mut() { w.write_all(b"$")?; w.write_all(&seq)?; }
++                      if let Some(w) = stdout_out.as_mut() { w.write_all(&[args.sep])?; w.write_all(&seq)?; }
++                      else if let Some(w) = file_out.as_mut() { w.write_all(&[args.sep])?; w.write_all(&seq)?; }
+                     }
+                     rows.push((cname.clone(), streamed, len));
+                     streamed += len + 1;
+@@ -295,8 +307,8 @@ fn main() -> Result<()> {
+         }
+         let mut tsv = BufWriter::with_capacity(1 << 16, File::create(&tsv_path)?);
+         for (cname, soff, len) in &rows {
+-            // stream: [soff]='$', [soff+1 .. soff+len)=rev(contig)
+-            // forward: [fstart .. fstart+len)=contig, [fstart+len]='$'
++            // stream: [soff]=separator, [soff+1 .. soff+len)=rev(contig)
++            // forward: [fstart .. fstart+len)=contig, [fstart+len]=separator
+             // byte i of stream == byte total-1-i of forward
+             let fstart = total - 1 - soff - len;
+             writeln!(tsv, "{cname}\t{fstart}\t{len}")?;
+@@ -318,10 +330,10 @@ fn main() -> Result<()> {
+         let names = dec.list_contigs(s)?;
+         for cname in &names {
+             let numeric = dec.get_contig(s, cname)?;
+-            let seq = ascii_of(&numeric, args.upper)?;
++            let seq = ascii_of(&numeric, args.upper, args.sep)?;
+             let start = offset;
+             text.write_all(&seq)?;
+-            text.write_all(b"$")?;
++            text.write_all(&[args.sep])?;
+             offset += seq.len() as u64 + 1;
+             writeln!(tsv, "{cname}\t{start}\t{}", seq.len())?;
+             n_contigs += 1;
+@@ -334,3 +346,17 @@ fn main() -> Result<()> {
+     eprintln!("flat text length (incl. {n_contigs} separators): {offset}\ntext: {out_path}\nnames: {tsv_path}");
+     Ok(())
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    #[test]
++    fn separator_bytes_and_collisions() {
++        for value in ["1e", "1E", "0x1E", "0X1e"] { assert_eq!(parse_sep(value).unwrap(), 30); }
++        for value in ["", "100", "-1", "gg", "0x", "+1"] { assert!(parse_sep(value).is_err()); }
++        assert_eq!(ascii_of(&[0, 1, 2, 3], true, 30).unwrap(), b"ACGT");
++        let error = ascii_of(&[0, 30, 1], true, 30).unwrap_err().to_string();
++        assert!(error.contains("corpus contract: reserved separator 0x1E"));
++        assert!(ascii_of(&[0, 1], true, b'A').is_err());
++    }
++}
+diff --git a/bit6/SXI_ACCEPTANCE.md b/bit6/SXI_ACCEPTANCE.md
+index 325208a..b0e1692 100644
+--- a/bit6/SXI_ACCEPTANCE.md
++++ b/bit6/SXI_ACCEPTANCE.md
+@@ -1,125 +1,142 @@
+-# SXI final UX revision — INCOMPLETE / source construction BLOCKED
++# Endpoint-tap source-build acceptance — G0/G1/G2 PASS; G3 incomplete
+ 
+-Workspace `/tmp/sxgc-laneU`, base `6330f6d`; no commits. The requested
+-one-command source build is **not delivered**. This revision keeps the
+-working container/consumer changes from the stopped lane, adds a fail-closed
+-Rust source CLI boundary, and corrects gate labels. The earlier fixture
+-conversion result is not G0 under the final task definition.
++Workspace `/tmp/sxgc-laneV`, base `9af69c4`. No commits or staged files.
++The minimal vendored tap and source pipeline are implemented; general
++multi-string collection equivalence is **not** established. See
++[SXI_BUILD.md](SXI_BUILD.md) for exact flags, build commands and limitations.
+ 
+-## Required gates
+-
+-| Gate | Result | Evidence |
+-|---|---|---|
+-| G0: seven `xsa build --text` runs | BLOCKED, 0/7 built | `sxi_logs/ux-source-gates.jsonl`; all seven attempts exit without output |
+-| G1: yeast born from source, chi 85,404,240 and witnesses | BLOCKED | Same log; input `/mnt/nvme3n1/erikg/sxgc-yeast/grl/yeast_pfp2.txt` |
+-| G2: k10 source build and RAM profile | BLOCKED | Same log; input `/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10_rl.txt` |
+-| G3: fresh k10 heads vs `h10.head_sa` | NOT RUN | No fresh heads; oracle not substituted as construction input |
+-
+-The blocker is a producer/algorithm dependency, **not a wall-clock timeout**.
+-No front-end process was launched and no new k10 RAM profile exists.
+-
+-The unchanged installed r-pfbwt writes heads only; the proposed post-step
+-assumes tails. The local Phi predecessor construction requires heads to
+-define its interval starts. Lean `headFromTail` proves inversion given a
+-sound Phi table; it does not construct that table from tails. The producer's
+-single-string padding convention also differs from the requested k10
+-collection oracle. Exact source locations and the required contract repair
+-are in [SXI_CONSTRUCTION_BLOCKER.md](SXI_CONSTRUCTION_BLOCKER.md). This is
+-not an impossibility claim about every possible r-space algorithm.
+-
+-The requested `contact_supervisor` tool is absent from the tool catalog.
+-The frontend-untouched instruction was preserved rather than overriding it
+-with the older ledger's endpoint-emission proposal.
+-
+-## Implemented and checked
+-
+-- `xsa/src/build.rs` accepts exactly one `--agc`, `--fasta`, or `--text`
+-  source, `-o`/`--output`, and `--verbose`. It checks paths and fails before
+-  any stage launch or output creation. **This is not a functioning build
+-  orchestrator.** There is no successful internal chi gate to claim.
+-- Usage lists SXI1 and continued pilot-era `.ri4` support. `stats --sxi`
+-  now reports embedded chi without requiring an external `.sA`, member
+-  sizes, compression ratio and actual container size.
+-- Preserved C++ writer (`sxi_write.cpp`), SXI1 v1 checked member format,
+-  Rust loader, native slim loader, embedded endpoints/anchors/names and
+-  delta chi. The writer remains an endpoint-input container writer.
+-- Preserved pilot Phi inverse extractor and its explicit rejection of
+-  `--from-front-end`; the requested new constructor is still absent.
+-- Added `tools/build_sxi_tools.sh` to compile writer, pilot extractor, slim
+-  consumer and Rust executable using the existing slim build script.
+-  No native-library integration was introduced.
+-
+-| Check | Result | Log |
+-|---|---|---|
+-| Release C++/Rust tool builds | PASS | `ux-build-tools.log` |
+-| Fail-closed CLI, all modes, invalid args, existing output and dangling symlink | PASS | `ux-cli-contract.log` |
+-| Packed widths 2–64, checksums, malformed members, atomic/no-clobber failure | PASS | `ux-format-adversarial.log` |
+-| Tiny pilot Phi inversions | PASS, four fixtures | `ux-phi-contract.log` |
+-| Format differential | PASS, 7/7; **not G0** | `ux-format-differential.log` |
+-| Revised stats on existing yeast conversion | PASS; **not G1** | `ux-yeast-conversion-stats.log` |
+-
+-All logs above are in `bit6/sxi_logs`. Format differential fixtures are
+-duplicates-600k, random-4-2k, random-4-20k, random-bin-20k, random-4-200k,
+-satellite-18k and HOR-nested. Aggregate bytes, streamed/resident sweep bytes,
+-exact queries and matching statistics match the `.ri4` route; sorted chi
+-round-trips preserve witnesses. Those fixtures consume inherited endpoints.
+-
+-## Per-stage timing/RSS and k10 profile
+-
+-| Required fresh-build stage | Yeast | k10 |
++| Gate | Current result | Evidence |
+ |---|---|---|
+-| Input preparation / parse | Not launched | Not launched |
+-| Front-end / RLBWT | Not launched | Not launched |
+-| Phi interval construction / inverse heads | Unimplemented | Unimplemented |
+-| Slim aggregates | Not launched | Not launched |
+-| Sweep / internal chi gate | Not launched | Not launched |
+-| Completed SXI write | Not launched | Not launched |
+-
+-There are **no measured fresh-build stage wall/RSS values or k10 peak RAM**.
+-`ux-source-gates.jsonl` records only preflight attempt durations. Reporting
+-those as front-end measurements would be misleading. Inherited pilot or
+-conversion measurements are not a substitute for the requested 466 planning
+-slice. No 466 memory extrapolation is justified by this revision.
+-
+-## Existing yeast conversion (explicitly NOT G1)
+-
+-Artifact: `/tmp/laneU/yeast.legacy-converted.sxi`, inherited from the prior
+-lane, built from existing `.ri4`/head/chi files. Header: n=3,336,986,760,
+-k=1, R=100,904,881. Revised `xsa stats --sxi` validates it and reports
+-**chi=85,404,240**; that is not evidence of a fresh source build.
+-
+-| Member | Stored bytes |
++| G0 source battery | PASS 7/7 | `sxi_logs/G0-final.log` |
++| G1 additive tap | PASS | `sxi_logs/G1-equivalence.json` |
++| G2 fresh yeast | PASS: chi 85,404,240; endpoints and witnesses equal | `sxi_logs/G2-endpoints.json`, `sxi_logs/G2-yeast.log` |
++| G3 fresh k10 / RAM slice | Launched, incomplete | `sxi_logs/G3-launch.json`, `sxi_logs/G3-k10.log` |
++
++G0 builds each text from scratch through `xsa build --text`. All aggregate
++bytes match the committed baselines. Entire normalized `.ri4` files and
++raw normalized heads also match. Mandatory duplicates-600k is included.
++The other six are random-4-2k, random-4-20k, random-bin-20k,
++random-4-200k, satellite-18k and HOR-nested.
++
++G1 uses the duplicates-600k parse with both unpatched and patched rpfbwt.
++`.ssa` and RLE bytes are identical. Raw R=14,703 and `.ssa_t` is exactly
++117,632 bytes: count plus R u64 values. The tiny independent cyclic-SA
++oracle tests both singleton and repetitive runs at 1, 7 and 50 chunks;
++all six combinations preserve upstream head bytes and emit correct tails.
++
++The two repetitive G0 fixtures exposed the upstream empty-chunk `.ssa`
++merge failure. The pipeline uses one chunk for inputs below 1 MB; large
++inputs use 50. No `.ssa` code was changed. Failed first attempts remain in
++the logs; the final source battery passes all seven with explicit endpoint
++gates. This is a configuration workaround, not a fix to upstream's head
++merge. Large low-complexity inputs could still fail closed on that bug.
++
++Yeast fresh endpoints have raw n=3,336,986,770 and R=100,904,883. Removing
++ten padding rows gives n=3,336,986,760 and R=100,904,881. Fresh heads are
++byte-equal to `/tmp/laneS/yp2.phi.head_sa` (807,239,048 bytes). The entire
++fresh `.ri4` is byte-equal to `/tmp/laneQ/pass3/yp2real.ri4` (908,146,022
++bytes), proving run-table and packed-tail equality, including the
++`n-1-SA` mirrored convention. Neither oracle supplied construction data.
++
++## Collection ordering limitation
++
++The requested k10 input has 865 strings. Its oracle's first run head is
++SA=242,892,443. Linear PFP over the newline-joined input should put the
++final newline suffix first, at SA=30,151,407,544. This is a preflight
++inference recorded in `sxi_logs/k10-convention-preflight.json`, not a fresh
++G3 result. Matching newline separators alone does not prove equivalence
++to BCR's independent-string ordering. The tap and padding adapter do not
++reorder suffixes. The actual fresh k10 byte gates are mandatory.
++
++Multi-string builds therefore require both explicit endpoint byte gates;
++without them, publication fails closed. General oracle-free multi-contig
++AGC construction remains unavailable. A tiny single-contig AGC source
++build passes through the committed `agc2flat --revlines --upper` path,
++including embedded names (`sxi_logs/agc-source-build.log`). No broader AGC
++collection acceptance is claimed.
++
++## Failure, format and scope checks
++
++- `sxi_logs/source-cli-test.log`: missing executable, stage failure, wrong
++  chi, wrong head oracle and unvalidated multi-string ordering cannot
++  publish final SXI; existing files and dangling symlinks are preserved.
++- `sxi_logs/tap-oracle-test.log`: independent tiny suffix-array oracle;
++  test-only text/SA enumeration, never used in production construction.
++- `sxi_logs/format-regression.log`: packed widths 2–64, malformed members,
++  singleton/duplicate checks and atomic publication regression pass.
++- `sxi_logs/unchanged-components.json`: legacy Phi extractor, SXI writer,
++  format and slim consumer are byte-unchanged from the base.
++- The tap lives only in `/tmp/rpfbwt-sxgc`; built binary is
++  `/tmp/rpfbwt-sxgc/build-sxgc/rpfbwt`. Upstream tracked files are unchanged.
++- No M/b_bwt/w_wt artifacts are emitted by the new downstream path; its
++  endpoints are direct. rpfbwt retains its pre-existing internal L2 structures.
++- No pfp466 process was signaled and no k466 files were read or written.
++  No process has been killed by this lane. `contact_supervisor` is absent
++  from the available tool catalog. No alternate messaging channel was used.
++
++## Per-stage wall/RSS
++
++Every stage is wrapped separately by `/usr/bin/time -v`; the JSONL journals
++contain exact commands and stage return codes. RSS is KiB. K10 is capped
++at 139,000,000,000 bytes of address space while the remaining yeast stream
++runs. `sxi_logs/lane-observed-rss.jsonl` samples only this lane's process trees.
++These samples are observational, not substitutes for final stage peaks.
++
++The tables below are measured from the fresh-source runs. K10 remains
++incomplete; pending stages have no final peak RSS measurement. No 466
++extrapolation or completed k10 slice is claimed.
++
++Independent reviewer approval remains required. This report records
++checks and limitations; it does not self-approve acceptance.
++
++## Fresh yeast completed
++
++Artifact: `/mnt/nvme3n1/erikg/sxgc-laneV/yeast.sxi`. Embedded chi is **85,404,240**. Fresh aggregate
++bytes and sweep witness bytes also match the committed Phi-chain outputs;
++see `sxi_logs/G2-downstream-byte-gates.log`. Slim reports zero LF walks/steps.
++
++| Stage | Wall seconds | Peak RSS KiB | Result |
++|---|---:|---:|---|
++| parse | 79.299 | 952,448 | 0 |
++| parse-l2 | 4.093 | 263,304 | 0 |
++| rpfbwt | 624.236 | 8,821,236 | 0 |
++| endpoints | 24.622 | 2,048 | 0 |
++| slim | 832.835 | 3,743,332 | 0 |
++| sweep | 14.862 | 6,144 | 0 |
++| write | 23.234 | 669,696 | 0 |
++| validate | 7.777 | 2,048 | 0 |
++
++| SXI member | Stored bytes |
+ |---|---:|
+-| RLBWT run table and C | 504,526,453 |
++| RLBWT + C | 504,526,453 |
+ | Packed tails | 403,619,537 |
+ | Raw heads | 807,239,048 |
+-| Anchors (empty) | 12 |
++| Anchors | 12 |
+ | Delta chi | 88,746,976 |
+-| Names | absent |
+-| Container, including header/padding | 1,804,132,304 |
+-
+-Chi raw size is 683,233,920 bytes; delta/raw ratio is **0.129892521**
+-(12.9893%, reduction 87.0107%). The new stats measurement is **7.73 s,
+-2,048 KiB peak RSS** (`/usr/bin/time`). No fresh witness-equality claim is
+-made. Earlier conversion writer/reader and slim logs remain historical
+-diagnostics, not acceptance evidence for G1.
+-
+-## Reproduction
+-
+-```sh
+-bash tools/build_sxi_tools.sh /tmp/laneU/sxi-tools
+-python3 bit6/test_sxi_build.py
+-python3 bit6/test_sxi_format.py --writer /tmp/laneU/sxi-tools/sxi_write
+-python3 bit6/test_phi_inverse_contract.py /tmp/laneU/sxi-tools/phi_inverse_heads
+-# Use a fresh work directory:
+-python3 bit6/sxi_gate.py --work /tmp/laneU/new-format-check \
+-  --writer /tmp/laneU/sxi-tools/sxi_write --dump /tmp/laneU/sxi-tools/slim_dump
+-xsa/target/release/xsa stats --sxi /tmp/laneU/yeast.legacy-converted.sxi
+-# Expected to fail preflight in this revision:
+-xsa/target/release/xsa build --text /tmp/laneY/bat/duplicates-600k.txt \
+-  -o /tmp/laneU/new-source.sxi --verbose
+-```
+-
+-No frontend changes, no O(n) post-step, no new M/b_bwt/w_wt consumed artifact,
+-no pfp466 interaction, no signals to unrelated PIDs, and no git commits.
+-The running h466rl_pfp output remains reserved for the later 466 build.
++| Whole container | 1,804,132,304 |
++
++## K10 RAM profile — incomplete
++
++Launch PID: `4170892`; journal: `sxi_logs/k10-xsa-build-vnapn3jx.jsonl`.
++Address-space ceiling is 139 GB; this is not an RSS measurement.
++The raw input is `/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10_rl.txt`.
++No k10 SXI or successful endpoint/chi gate is claimed.
++
++| Stage | Wall seconds | Peak RSS KiB | Status |
++|---|---:|---:|---|
++| parse | 850.963 | 10,199,376 | exit 0 |
++| parse-l2 | 57.656 | 2,714,380 | exit 0 |
++| rpfbwt | pending | pending | running |
++| endpoints | pending | pending | not started |
++| gate-heads | pending | pending | not started |
++| gate-runs-tails | pending | pending | not started |
++| slim | pending | pending | not started |
++| sweep | pending | pending | not started |
++| write | pending | pending | not started |
++| validate | pending | pending | not started |
++
++Observed combined lane RSS peak at report time: 29,556,180 KiB. This is a sampled observation; final per-stage `/usr/bin/time -v` values
++above remain authoritative for completed stages. The running k10 logs
++continue to update after this report snapshot.
++
++Snapshot UTC: 2026-09-27T11:40:14.377076+00:00.
+diff --git a/bit6/SXI_CONSTRUCTION_BLOCKER.md b/bit6/SXI_CONSTRUCTION_BLOCKER.md
+index 9af5bdb..99260a8 100644
+--- a/bit6/SXI_CONSTRUCTION_BLOCKER.md
++++ b/bit6/SXI_CONSTRUCTION_BLOCKER.md
+@@ -1,3 +1,22 @@
++# Endpoint-tap revision (2026-09-27)
++
++The user-approved endpoint tap supersedes the earlier front-end-untouched
++restriction below. Fresh builds now obtain both endpoints directly from the
++vendored merge; no Phi construction or legacy extractor is involved.
++See [SXI_ACCEPTANCE.md](SXI_ACCEPTANCE.md) for current measured gates.
++The historical dependency analysis is retained below; it describes the
++previous tail-only proposal, not the implemented endpoint route.
++
++The current adapter removes the ten PFP padding rows and maps producer byte
++2 to newline in O(r) streaming passes. It never reorders collection suffixes.
++Consequently newline-joined text is necessary for the pilot convention but
++is not by itself proof of BCR collection row/sample equivalence. The k10
++endpoint byte gates remain authoritative; any mismatch must fail, rather
++than substituting pilot samples. The installed `contact_supervisor` tool
++was again absent from the available tool catalog in this revision.
++
++---
++
+ # Fresh construction: unresolved dependency (2026-09-27)
+ 
+ The revised tail-only Phi construction has **not** been implemented. No
+diff --git a/bit6/SXI_FORMAT.md b/bit6/SXI_FORMAT.md
+index c4c5671..9b52ccf 100644
+--- a/bit6/SXI_FORMAT.md
++++ b/bit6/SXI_FORMAT.md
+@@ -1,9 +1,9 @@
+ # SXI1, internal version 1
+ 
+ All integers are little endian. Readers detect magic, independent of suffix;
+-`.ri4` v4 remains supported. This implementation is a container/consumer
+-bridge; fresh endpoint construction is blocked as recorded in
+-[SXI_CONSTRUCTION_BLOCKER.md](SXI_CONSTRUCTION_BLOCKER.md).
++`.ri4` v4 remains supported. Fresh source construction is described in
++[SXI_BUILD.md](SXI_BUILD.md); checked seam-repair evidence is in
++[sxi_logs/sep-convention/repair2/ACCEPTANCE.md](sxi_logs/sep-convention/repair2/ACCEPTANCE.md).
+ 
+ The 64-byte header is:
+ 
+@@ -11,10 +11,10 @@ The 64-byte header is:
+ |---|---|
+ | 0 | four bytes `SXI1` |
+ | 4 | u32 version = 1 |
+-| 8, 16, 24 | u64 n, string count k, run count R |
++| 8, 16, 24 | u64 n, named record count k, run count R |
+ | 32, 36 | u32 member count, total header+directory bytes |
+ | 40 | u64 exact file length |
+-| 48 | u64 flags: bit 0 = chi completed; other bits must be zero |
++| 48 | u64 flags: bit 0 = chi completed; bit 1 = DNA mode; bit 2 = reversed records; bit 3 = record metadata present; other bits zero |
+ | 56 | u32 IEEE CRC32 of header+directory, this field zeroed |
+ | 60 | u32 reserved = 0 |
+ 
+@@ -50,7 +50,29 @@ uniqueness and sizes. CRC validation and section bounds precede consumer
+ use. Rust validates all member semantics, including canonical varints.
+ Native C++ slim maps the embedded head member directly, reads embedded
+ anchors and tails, and does not need an extracted `.ri4` or head sidecar.
+-Optional names feed Rust plain-query coordinate decoding automatically.
++Names feed all SXI query/MEM coordinates automatically. TSV rows contain
++`name<TAB>fstart<TAB>length`; fstart is mirrored, so
++`stream_start = n - 1 - fstart - length`. Rows must partition the stream in
++order, including one reserved separator byte after each named record.
++The sorted array `stream_start + length` is the 0x1E boundary array.
++A predecessor/rank search gives the record ID; offsets exclude separators.
++For reversed storage, offsets are converted back to the original record.
++
++**Records versus byte strings:** `k` is the number of named records, e.g.
++9,901 for yeast235. The RLBWT still indexes ONE cyclic byte string
++`T = s1 0x1E ... sk 0x1E`; `.ri4` transport k remains the core string count.
++The native SXI-to-core loader separates these counts. A names-free text
++container retains its transport k and queries use the synthetic name `text`.
++No text scan or sequence-content rewrite is introduced by this metadata fix.
++
++Writers set bit 3 and validate k against the names rows. The source pipeline
++sets bit 1 for FASTA/FASTQ/AGC, clears it for text, and sets bit 2 for AGC's
++reversed storage. Build `--mode dna|text` overrides the automatic mode.
++Legacy flags 0/1 remain readable: the loader derives record k from names,
++without modifying the file; legacy auto mode is text/forward because the old
++header does not encode provenance. Use `--mode dna --revlines` for a legacy
++AGC container. New flags require upgraded readers; old readers fail closed.
++The five core members and verbatim names bytes are unchanged.
+ 
+ Cost: writer O(R + chi log chi + names bytes), O(chi) working memory plus
+ bounded I/O buffers. Sorting is over witness positions, never text positions.
+@@ -70,42 +92,18 @@ The writer is C++ (`bit6/sxi_write.cpp`); Rust consumes SXI directly.
+ all member sizes, delta/raw chi ratio and exact file size. `--ri4` remains
+ accepted, with magic detection determining the actual format.
+ 
+-The final source-build interface is recognized:
++Source build and query interfaces:
+ 
+ ```sh
+-xsa build --agc archive.agc -o out.sxi
++xsa build --agc archive.agc -o out.sxi --verify-text-sample 32
+ xsa build --fasta refs.fa -o out.sxi
+-xsa build --text file.txt -o out.sxi --verbose
++xsa build --text collection.txt -o out.sxi
++xsa mems --sxi out.sxi --reads reads.fq.gz -j 4 --min-len 20
++xsa serve --sxi out.sxi -j 4 --bind 127.0.0.1:7331
+ ```
+ 
+-These commands currently **fail preflight without writing output**. The
+-Rust module is a CLI boundary only; it does not implement the missing
+-endpoint construction or the requested internal stage orchestration/chi
+-gate. This must not be presented as a working source-build UX.
+-
+-Endpoint-ready development pipeline (distinct from a fresh source build):
+-
+-```sh
+-python3 bit6/sxi_pipeline.py --ri4 input.ri4 --heads input.head_sa \
+-  --parse input_pfp --names input.names.tsv --output output.sxi \
+-  --writer /tmp/laneU/sxi-tools/sxi_write --dump /tmp/laneU/sxi-tools/slim_dump
+-```
+-
+-This writes a stage container, builds slim aggregates using its embedded
+-heads, sweeps chi to `output.sxi.sA`, and writes the completed container.
+-It retains logs and intermediates and refuses overwrites. Child address
+-space is capped at 149 GB; mmap-heavy stages can hit that conservative cap
+-before physical RAM does. No process outside this tree is controlled.
+-`--source PATH --output output.sxi` explicitly fails preflight until the
+-endpoint dependency is resolved; it is **not** an implemented G2.
+-
+-AGC input boundary: `agc2flat ARCHIVE.agc --samples samples.txt --revlines
+--o SOURCE` is the existing streaming collection-text producer. The inspected
+-`--revlines` branch writes `-o` directly and ignores `--stdout`; use a named
+-FIFO at SOURCE with a reader already running to avoid storing the flat text.
+-The names file is written as `SOURCE.names.tsv` at EOF. It emits reversed
+-contigs in archive order, newline-terminated, plus names metadata. Preserve
+-those exact bytes for the PFP parse and endpoint producer; substituting the
+-single-string `h10ss` conversion changes the index. The missing normalized
+-endpoint producer must be supplied before this stream can be wired to the
+-source entry point. The running pfp466 process is never a pipeline target.
++See [SXI_QUERY.md](SXI_QUERY.md) for the query/server contract and limitations.
++`xsa stats --sxi FILE` labels k as records, validates names and reports exact
++embedded chi and member sizes. Repacking yeast235 with the new writer reports
++k=9901 while all six members retain their original hashes. Published legacy
++artifacts are not edited.
+diff --git a/bit6/chi_rspace_dump.cpp b/bit6/chi_rspace_dump.cpp
+index e00448a..d46449c 100644
+--- a/bit6/chi_rspace_dump.cpp
++++ b/bit6/chi_rspace_dump.cpp
+@@ -85,6 +85,7 @@ static void phase(const char* what) {
+ struct Ri4 {
+     std::string sxiPath; uint64_t headOffset=0;
+     uint64_t n = 0, k = 0, R = 0;
++    uint64_t records = 0; // SXI named records; k below is the core byte-string count.
+     std::vector<uint64_t> C;      // 256
+     std::vector<uint8_t> a;       // run chars
+     std::vector<uint32_t> l;      // run lens
+@@ -109,6 +110,14 @@ struct Ri4 {
+         if(sx)f.seekg(sx->member(1).offset);
+         C.resize(256); f.read((char*)C.data(), 8 * 256);
+         a.resize(R); f.read((char*)a.data(), R);
++        records = sx ? sx->k : k;
++        if (sx) {
++            bool hasRS = std::find(a.begin(), a.end(), uint8_t(0x1e)) != a.end();
++            bool hasNL = std::find(a.begin(), a.end(), uint8_t(0x0a)) != a.end();
++            // Named records do not introduce erased sentinels. The existing
++            // slim core still consumes one cyclic byte string for 0x1e text.
++            k = (hasRS || !hasNL) ? 1 : records;
++        }
+         l.resize(R); f.read((char*)l.data(), 4 * R);
+         starts.resize(R);
+         uint64_t acc = 0;
+diff --git a/bit6/slim_lce.hpp b/bit6/slim_lce.hpp
+index c1105bd..c303293 100644
+--- a/bit6/slim_lce.hpp
++++ b/bit6/slim_lce.hpp
+@@ -75,6 +75,7 @@ template<class Seq> struct SlimFingerprint {
+     const Seq& s; uint64_t tau; std::vector<uint64_t> hashes;
+     static constexpr uint64_t BASE=0x9e3779b185ebca87ULL;
+     bool inject;
++    uint64_t verificationLimit=INF; // Adapter policy; default preserves slim behavior.
+     mutable std::atomic<uint64_t> calls{0}, checked{0}, jumps{0}, maxChecked{0};
+     void record_checked(uint64_t count) const {
+         checked.fetch_add(count,std::memory_order_relaxed);
+@@ -90,6 +91,7 @@ template<class Seq> struct SlimFingerprint {
+     uint64_t suffix(uint64_t i) const {
+         if(i==s.size())return 0;
+         uint64_t end=std::min<uint64_t>(s.size(),((i+tau-1)/tau)*tau);
++        if(end-i>verificationLimit)slim_fail("CYCLIC_SEAM_REFUSED: fingerprint probe exceeds polylog-work policy; no O(n) fallback");
+         uint64_t h=end==s.size()?0:hashes[end/tau];
+         while(end>i){--end;h=(uint64_t)s[end]+1+BASE*h;}return h;
+     }
+@@ -122,6 +124,7 @@ template<class Seq> struct SlimFingerprint {
+         uint64_t guess=lo;
+         if(inject && guess<cap)++guess;
+         else if(inject && guess) --guess;
++        if(guess>verificationLimit)slim_fail("CYCLIC_SEAM_REFUSED: LCE verification exceeds polylog-work policy; no O(n) fallback");
+         for(uint64_t k=0;k<guess;++k) if(s[i+k]!=s[j+k])
+             slim_fail("fingerprint verification mismatch inside proposed prefix");
+         if(guess<cap && s[i+guess]==s[j+guess])
+@@ -143,12 +146,13 @@ struct SlimLCE {
+     sdsl::sd_vector<>::select_1_type ds,ps;
+     sdsl::sd_vector<>::rank_1_type pr;
+     uint64_t n=0,w=10;
+-    std::vector<uint64_t> stringEnds; // newline positions in virtual PFP text, O(k)
++    bool cyclic;
++    std::vector<uint64_t> stringEnds; // legacy newline ends, or one cyclic end
+     std::unique_ptr<SlimFingerprint<SlimDict>> dh;
+     std::unique_ptr<SlimFingerprint<std::vector<uint32_t>>> ph;
+     uint64_t dstart(uint64_t id)const {return ds(id);}
+     uint64_t length(uint64_t id)const {return ds(id+1)-ds(id)-1;}
+-    SlimLCE(const std::string& prefix,uint64_t r,uint64_t t1,uint64_t t2,bool stream,bool fault=false):d(prefix+".dict",10,stream) {
++    SlimLCE(const std::string& prefix,uint64_t r,uint64_t t1,uint64_t t2,bool stream,bool fault=false,bool cyclicText=false):d(prefix+".dict",10,stream),cyclic(cyclicText) {
+         double last=started; slim_phase("dict-read",last);
+         // Recover collection terminators during the existing dictionary scan.
+         // Only phrases containing newline need metadata; phrase overlaps are
+@@ -157,7 +161,7 @@ struct SlimLCE {
+         uint64_t count=1,phraseStart=0;uint32_t phrase=1;
+         for(uint64_t i=1;i<d.size();++i) {
+             uint8_t c=d[i-1];
+-            if(c==0x0a)phraseEnds[phrase].push_back(i-1-phraseStart);
++            if(!cyclic && c==0x0a)phraseEnds[phrase].push_back(i-1-phraseStart);
+             if(c==1 || i==d.size()-1)++count;
+             if(c==1){++phrase;phraseStart=i;}
+         }
+@@ -179,7 +183,10 @@ struct SlimLCE {
+                 if(off<take)stringEnds.push_back(n+off);
+             n+=take;
+         }
+-        fprintf(stderr,"SLIM_STRING_ENDS count=%zu bytes=%zu from_parse_dict=1\n",stringEnds.size(),stringEnds.capacity()*8);
++        // 0x1e records form ONE cyclic byte string. Record separators are
++        // ordinary compared bytes; they neither end nor truncate an LCE.
++        if(cyclic)stringEnds.push_back(n);
++        fprintf(stderr,"SLIM_STRING_ENDS count=%zu bytes=%zu from_parse_dict=1 cyclic=%d\n",stringEnds.size(),stringEnds.capacity()*8,int(cyclic));
+         sdsl::sd_vector_builder pb(n,p.size()-1);pb.set(0);uint64_t pos=0;
+         for(uint64_t j=0;j+2<p.size();++j){pos+=length(p[j])-w;pb.set(pos);}
+         // compute_b_p marks every phrase start: 0 plus P-1 increments.
+@@ -200,6 +207,21 @@ struct SlimLCE {
+     // Collection LCP excludes the newline sentinel itself, unlike raw LCE
+     // on the concatenated PFP text. Sparse ends are derived without a text scan.
+     uint64_t collection_lce(uint64_t i,uint64_t j)const {
++        if(cyclic) {
++            uint64_t size=n-w,answer=0;
++            if(i>=size||j>=size)slim_fail("cyclic LCE bounds");
++            if(i==j){seedQueries.fetch_add(1,std::memory_order_relaxed);return size;}
++            // At most two seam crossings in size symbols. Each raw PFP LCE
++            // is capped before its dollar padding; no raw text is read.
++            while(answer<size) {
++                uint64_t cap=std::min({size-answer,size-i,size-j});
++                uint64_t got=std::min((*this)(i,j),cap);
++                answer+=got;
++                if(got<cap)break;
++                i=(i+got)%size;j=(j+got)%size;
++            }
++            return answer;
++        }
+         auto remaining=[&](uint64_t pos) {
+             pos+=w;
+             auto end=std::lower_bound(stringEnds.begin(),stringEnds.end(),pos);
+@@ -226,6 +248,7 @@ struct SlimLCE {
+     }
+ };
+ 
++#ifndef SLIM_LCE_CORE_ONLY
+ // Headerless little-endian u64 column, exactly one SA value per ri4 run.
+ // Mapping charges up to 8R resident bytes; it never copies the whole column.
+ struct SlimHeads {
+@@ -259,7 +282,12 @@ static int slim_dump(Ri4& ri,const std::string& prefix,const std::string& out,
+     if(!profileOnly && (!ri.haveSa||ri.sampleAllInf()))slim_fail("usable ri4 samples required");
+     double last=tnow();
+     SlimHeads heads(headSaPath.empty()?ri.sxiPath:headSaPath,ri.R,headSaPath.empty()?ri.headOffset:0);
+-    SlimLCE lce(prefix,ri.R,t1,t2,stream,fault);
++    // Auto-detect using the existing RLE alphabet, with no input text scan.
++    // New collections use reserved 0x1e; texts without newline are cyclic
++    // too. Preserve legacy newline collection behavior otherwise.
++    bool hasRS=false,hasNL=false;
++    for(uint64_t run=0;run<ri.R;++run){hasRS|=ri.a[run]==0x1e;hasNL|=ri.a[run]==0x0a;}
++    SlimLCE lce(prefix,ri.R,t1,t2,stream,fault,hasRS||!hasNL);
+     if(lce.n!=ri.n+lce.w)slim_fail("parse/ri4 length mismatch");
+     if(lce.stringEnds.size()!=ri.k)slim_fail("parse/ri4 string-end count mismatch");
+     slim_phase("lce-build-total",last);
+@@ -345,3 +373,5 @@ static int slim_dump(Ri4& ri,const std::string& prefix,const std::string& out,
+         (unsigned long long)(resolver.sumSteps.load()-queryStepsBefore));
+     return 0;
+ }
++
++#endif // SLIM_LCE_CORE_ONLY
+diff --git a/bit6/sxi_format.hpp b/bit6/sxi_format.hpp
+index 48cdb4f..1e19b24 100644
+--- a/bit6/sxi_format.hpp
++++ b/bit6/sxi_format.hpp
+@@ -8,6 +8,7 @@
+ #include <stdexcept>
+ #include <string>
+ #include <vector>
++#include <sstream>
+ namespace sxi {
+ using U=uint64_t;
+ inline void check(bool ok,const char* msg){if(!ok)throw std::runtime_error(msg);}
+@@ -21,6 +22,20 @@ inline uint32_t crc(uint32_t v,const unsigned char* p,size_t n){
+ inline void read(std::istream& f,void* p,size_t n){check(bool(f.read((char*)p,n)),"SXI: truncated input");}
+ inline U integer(std::istream& f,unsigned bytes=8){unsigned char b[8];read(f,b,bytes);return get(b,bytes);}
+ inline U size(std::ifstream& f){f.seekg(0,std::ios::end);auto n=f.tellg();check(n>=0,"SXI: stat input");f.seekg(0);return U(n);}
++// Names fstart is mirrored: stream_start = n - 1 - fstart - len.
++inline U named_records(std::istream& in,U bytes,U n){
++    U next=0,count=0;std::string line;
++    while(bytes){
++        line.clear();while(bytes){char c;read(in,&c,1);--bytes;if(c=='\n')break;line+=c;check(line.size()<=1048576,"SXI: names line too long");}
++        auto a=line.find('\t'),b=line.find('\t',a==std::string::npos?0:a+1);
++        check(a!=std::string::npos&&a>0&&b!=std::string::npos&&line.find('\t',b+1)==std::string::npos,"SXI: names fields");
++        auto number=[](const std::string& v){check(!v.empty()&&v.find_first_not_of("0123456789")==std::string::npos,"SXI: names integer");return U(std::stoull(v));};
++        U fs=number(line.substr(a+1,b-a-1)),len=number(line.substr(b+1));
++        check(fs<n&&len<=n-1-fs&&n-1-fs-len==next,"SXI: names coordinates");
++        next+=len+1;++count;
++    }
++    check(count&&next==n,"SXI: names partition");return count;
++}
+ struct Member {uint32_t id=0,codec=0;U offset=0,bytes=0,count=0;uint32_t checksum=0;};
+ struct Container {
+     U n=0,k=0,r=0,flags=0;std::vector<Member> members;
+@@ -30,7 +45,7 @@ struct Container {
+         unsigned char b[64];read(f,b,64);check(!memcmp(b,"SXI1",4)&&get(b+4,4)==1,"SXI: bad magic/version");
+         n=get(b+8);k=get(b+16);r=get(b+24);U count=get(b+32,4),hs=get(b+36,4);flags=get(b+48);
+         check(n&&n<UINT64_MAX&&r&&r<=n&&k<=n&&r<=UINT32_MAX,"SXI: invalid n/k/r");
+-        check(count>=5&&count<=6&&hs==64+40*count&&get(b+40)==length&&flags<=1&&!get(b+60,4),"SXI: invalid header");
++        check(count>=5&&count<=6&&hs==64+40*count&&get(b+40)==length&&(flags<=1||(flags>=8&&flags<=15))&&!get(b+60,4),"SXI: invalid header");
+         uint32_t wanted=get(b+56,4);put(b+56,0,4);uint32_t crcval=crc(~0U,b,64);U end=hs;
+         for(U i=0;i<count;i++){
+             unsigned char d[40];read(f,d,40);crcval=crc(crcval,d,40);
+@@ -43,9 +58,10 @@ struct Container {
+         check(member(1).count==r&&member(1).bytes==2048+5*r&&member(2).count==r&&member(3).count==r&&member(3).bytes==8*r,"SXI: run/sample sizes");
+         check(member(4).count<=k&&member(4).count<=(UINT64_MAX-12)/16&&member(4).bytes==12+16*member(4).count,"SXI: anchor size");
+         check(member(5).count<=n+1&&member(5).count<=UINT64_MAX/10&&member(5).bytes>=member(5).count&&member(5).bytes<=10*member(5).count,"SXI: chi size");
+-        check(flags==1||(member(5).count==0&&member(5).bytes==0),"SXI: unfinished chi");
++        check((flags&1)||(member(5).count==0&&member(5).bytes==0),"SXI: unfinished chi");
+         if(members.size()==6)check(member(6).count==member(6).bytes,"SXI: names size");
+         if(verify){std::vector<unsigned char> buf(1<<20);for(auto& m:members){f.seekg(m.offset);U left=m.bytes;uint32_t c=~0U;while(left){size_t z=std::min<U>(left,buf.size());read(f,buf.data(),z);c=crc(c,buf.data(),z);left-=z;}check(~c==m.checksum,"SXI: member CRC mismatch");}}
++        if(members.size()==6){f.seekg(member(6).offset);U records=named_records(f,member(6).bytes,n);check(!(flags&8)||k==records,"SXI: record count mismatch");k=records;}
+         f.seekg(member(2).offset);U bits=integer(f);unsigned w=integer(f,1);
+         check(w&&w<=64&&bits==r*w&&member(2).bytes==9+((bits+63)/64)*8,"SXI: packed tail size");
+         f.seekg(member(4).offset);check(integer(f,4)==0x434e4158&&integer(f)==member(4).count,"SXI: anchor header");
+diff --git a/bit6/sxi_pipeline.py b/bit6/sxi_pipeline.py
+index e8bbac9..fdb2464 100755
+--- a/bit6/sxi_pipeline.py
++++ b/bit6/sxi_pipeline.py
+@@ -1,44 +1,182 @@
+ #!/usr/bin/env python3
+-"""Build SXI + chi from endpoint-ready inputs; source mode fails preflight.
++"""Fresh PFP endpoint build, with timed stages and atomic gated publication.
+ 
+-No legacy Phi index, aggregate oracle, or LF walk is used by the build mode.
+-Endpoint provenance is supplied by the caller; this is not a fresh front end.
++Collection contract: T = s1 0x1E ... sk 0x1E, one cyclic byte string.
++0x1E is reserved and must never occur in sequence content; --text is passed as-is.
++AGC preparation uses agc2flat --revlines --upper (one reversed contig/record).
++FASTA/FASTQ extract already oriented sequences verbatim, separated and terminated by 0x1E.
++Scratch defaults beside the input, on the same filesystem; retained for audit.
+ """
+-import argparse,json,pathlib,subprocess,sys,time,resource
+-ROOT=pathlib.Path(__file__).resolve().parents[1]
+-p=argparse.ArgumentParser(description=__doc__)
+-p.add_argument('--source',help='raw source or AGC path (currently blocked before launching any producer)')
+-p.add_argument('--ri4',help='normalized run table and mirrored tail samples')
+-p.add_argument('--heads',help='raw little-endian run-head SA samples')
+-p.add_argument('--parse',help='PFP parse/dictionary prefix')
+-p.add_argument('--anchors');p.add_argument('--names');p.add_argument('--output',required=True)
+-p.add_argument('--writer',default='/tmp/laneU/sxi_write');p.add_argument('--dump',default='/tmp/laneU/slim_dump')
+-p.add_argument('--xsa',default=str(ROOT/'xsa/target/release/xsa'));p.add_argument('--threads',type=int,default=8)
+-a=p.parse_args()
+-if a.source:
+-    sys.exit('BLOCKED: source -> endpoints has no validated tail-only Phi constructor, and the installed r-pfbwt emits heads rather than tails. See bit6/SXI_CONSTRUCTION_BLOCKER.md. No producer was launched.')
+-if not all((a.ri4,a.heads,a.parse)):p.error('need --ri4 --heads --parse (or --source to check fresh-build availability)')
+-if not 1<=a.threads<=64:p.error('--threads must be 1..64')
+-out=pathlib.Path(a.output).resolve();stage=pathlib.Path(str(out)+'.stage');agg=pathlib.Path(str(out)+'.agg');chi=pathlib.Path(str(out)+'.sA');log=pathlib.Path(str(out)+'.pipeline.jsonl')
+-for q in [out,stage,agg,chi,log]:
+-    if q.exists():sys.exit(f'refusing to overwrite {q}')
+-out.parent.mkdir(parents=True,exist_ok=True)
+-# Cap this process tree's address space; never signal unrelated processes.
+-# This conservative cap can reject a mmap-heavy stage before its RSS reaches 150 GB.
+-resource.setrlimit(resource.RLIMIT_AS,(149_000_000_000,149_000_000_000))
+-def run(cmd):
+-    begin=time.monotonic()
+-    with log.open('a')as f:
+-        f.write(json.dumps({'command':list(map(str,cmd)),'start':time.time()})+'\n');f.flush()
+-        result=subprocess.run(list(map(str,cmd)))
+-        f.write(json.dumps({'returncode':result.returncode,'wall_seconds':time.monotonic()-begin,'child_peak_kib':resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss})+'\n')
+-    if result.returncode:sys.exit(result.returncode)
+-writer=[a.writer,'--ri4',a.ri4,'--heads',a.heads]
+-for flag,value in [('--anchors',a.anchors),('--names',a.names)]:
+-    if value:writer += [flag,value]
+-run(writer+['--output',stage])
+-run([a.dump,'--slim','--resolve-ri4','--dict-stream','--sxi',stage,'--parse',a.parse,'-t',a.threads,'-o',agg])
+-run([a.xsa,'chi-rspace','--stream-agg','--sxi',stage,'--agg',agg,'-o',chi])
+-run(writer+['--chi',chi,'--output',out])
+-run([a.xsa,'sxi-info',out])
+-print(json.dumps({'sxi':str(out),'chi':str(chi),'provenance':'caller-supplied endpoint inputs; NOT a from-source gate'}))
++import argparse
++import json
++import os
++import pathlib
++import re
++import resource
++import shlex
++import subprocess
++import struct
++import sys
++import tempfile
++import time
++
++ROOT = pathlib.Path(__file__).resolve().parents[1]
++
++def main():
++    p = argparse.ArgumentParser(description=__doc__)
++    source = p.add_mutually_exclusive_group(required=True)
++    for kind in ('text', 'agc', 'fasta', 'fastq'):
++        source.add_argument('--' + kind)
++    p.add_argument('--output', required=True)
++    p.add_argument('--threads', type=int, default=8)
++    p.add_argument('--scratch')
++    p.add_argument('--log-dir', default=str(ROOT / 'bit6/sxi_logs'))
++    p.add_argument('--expect-chi', type=int)
++    p.add_argument('--mode', choices=['auto', 'dna', 'text'], default='auto')
++    p.add_argument('--verify-text-sample', type=int, default=0)
++    p.add_argument('--expect-heads', help='acceptance oracle only; checked after fresh construction')
++    p.add_argument('--expect-ri4', help='acceptance oracle only; exact runs and packed-tail byte gate')
++    p.add_argument('--verbose', action='store_true')
++    p.add_argument('--xsa', default=str(ROOT / 'xsa/target/release/xsa'))
++    a = p.parse_args()
++    if not 0 <= a.verify_text_sample <= 100000:
++        p.error('--verify-text-sample must be 0..100000')
++    if not 1 <= a.threads <= 64:
++        p.error('--threads must be 1..64')
++    source_path = pathlib.Path(a.text or a.agc or a.fasta or a.fastq).absolute()
++    out = pathlib.Path(a.output).absolute()
++    if os.path.lexists(out):
++        p.error('output exists: ' + str(out))
++    if not source_path.is_file():
++        p.error('input must be a regular file')
++    tools = pathlib.Path(os.environ.get('XSA_TOOLS', '/tmp/laneV/tools'))
++    pfp = os.environ.get('XSA_PFP', '/home/erikg/pfp/build/pfp++')
++    rpf = os.environ.get('XSA_RPFBWT', '/tmp/rpfbwt-sxgc/build-sxgc/rpfbwt')
++    agc = os.environ.get('XSA_AGC2FLAT', str(tools / 'agc2flat'))
++    required = [pfp, rpf, a.xsa, '/usr/bin/time'] + [str(tools / s) for s in ('rpfbwt_endpoints', 'slim_dump', 'sxi_write')]
++    if a.verify_text_sample:
++        required.append(str(tools / "sxi_text_audit"))
++    if a.agc:
++        required.append(agc)
++    for tool in required:
++        if not os.access(tool, os.X_OK):
++            p.error('missing executable: ' + tool)
++    scratch = pathlib.Path(a.scratch).absolute() if a.scratch else source_path.parent
++    scratch.mkdir(parents=True, exist_ok=True)
++    if scratch.stat().st_dev != source_path.stat().st_dev:
++        p.error('scratch must be on the same filesystem as the source')
++    work = pathlib.Path(tempfile.mkdtemp(prefix='xsa-build-', dir=scratch))
++    logs = pathlib.Path(a.log_dir).absolute()
++    logs.mkdir(parents=True, exist_ok=True)
++    label = out.stem + '-' + work.name
++    journal = logs / (label + '.jsonl')
++    env = dict(os.environ, OMP_NUM_THREADS=str(a.threads), TMPDIR=str(work))
++    # Sequential children; conservative address-space ceiling also bounds RSS.
++    _, hard_limit = resource.getrlimit(resource.RLIMIT_AS)
++    limit = 149_000_000_000 if hard_limit == resource.RLIM_INFINITY else min(hard_limit, 149_000_000_000)
++    resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
++    def record(value):
++        with journal.open('a') as f:
++            f.write(json.dumps(value) + '\n')
++    def run(name, command, stdout=None):
++        command = list(map(str, command))
++        logfile = logs / (label + '.' + name + '.log')
++        timing = logs / (label + '.' + name + '.time')
++        record(dict(stage=name, command=command, work=str(work), start=time.time()))
++        if a.verbose:
++            print(name + ': ' + shlex.join(command), file=sys.stderr, flush=True)
++        begin = time.monotonic()
++        with logfile.open('wb') as log:
++            proc = subprocess.run(['/usr/bin/time', '-v', '-o', str(timing), *command],
++                                  stdout=stdout or log, stderr=log, env=env)
++        measurement = timing.read_text()
++        rss = re.search(r'Maximum resident set size \(kbytes\): (\d+)', measurement)
++        record(dict(stage=name, returncode=proc.returncode, wall_seconds=time.monotonic()-begin,
++                    peak_rss_kib=int(rss[1]) if rss else None, log=str(logfile), timing=str(timing)))
++        if proc.returncode:
++            raise RuntimeError(f'{name} failed ({proc.returncode}); see {logfile}')
++        return logfile
++    print(f'xsa build: work={work} log={journal}', file=sys.stderr, flush=True)
++    text = source_path
++    names = None
++    if a.fasta or a.fastq:
++        from sxi_sequence_input import prepare
++        kind = 'fasta' if a.fasta else 'fastq'
++        stage = 'prepare-' + kind
++        text = work / 'collection.txt'
++        names = work / 'collection.txt.names.tsv'
++        begin = time.monotonic()
++        record(dict(stage=stage, source=str(source_path), work=str(work), start=time.time()))
++        def progress(value):
++            record(dict(stage=stage, **value))
++            print(f'{stage}: record={value["record"]} name={value["name"]} '
++                  f'sequence_bytes={value["sequence_bytes"]} '
++                  f'collection_bytes={value["collection_bytes"]}', file=sys.stderr, flush=True)
++        try:
++            records, size = prepare(kind, source_path, text, names, progress)
++        except (OSError, RuntimeError) as error:
++            record(dict(stage=stage, returncode=1, error=str(error)))
++            raise
++        record(dict(stage=stage, returncode=0, records=records, collection_bytes=size,
++                    wall_seconds=time.monotonic()-begin,
++                    peak_rss_kib=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss))
++    if a.agc:
++        text = work / 'collection.txt'
++        # The committed streamer emits the names sidecar beside this -o path.
++        run('prepare-agc', [agc, source_path, '--revlines', '--upper', '--sep', '1e', '-o', text])
++        names = work / 'collection.txt.names.tsv'
++    with text.open('rb') as f:
++        # O(1) terminal-byte lookup for padding normalization; never scan or
++        # rewrite raw text. The caller owns the reserved-separator contract.
++        if not text.stat().st_size:
++            raise RuntimeError('empty input text')
++        f.seek(-1, 2)
++        terminal = f.read(1)[0]
++    prefix = work / 'parse'
++    run('parse', [pfp, '-t', text, '-o', prefix, '-w', 10, '-p', 100, '-j', a.threads, '--tmp-dir', work])
++    run('parse-l2', [pfp, '-i', str(prefix)+'.parse', '-w', 5, '-p', 11, '-j', a.threads, '--tmp-dir', work])
++    # Upstream's rdbuf merge sets failbit on an empty chunk. Tiny parses can
++    # create such chunks; one chunk avoids this without changing .ssa code.
++    chunks = 1 if text.stat().st_size < 1_000_000 else 50
++    run('rpfbwt', [rpf, '--l1-prefix', prefix, '--w1', 10, '--w2', 5, '--threads', a.threads, '--chunks', chunks, '--tmp-dir', work])
++    ri4, heads, agg, chi = [work / ('fresh.' + ext) for ext in ('ri4', 'head_sa', 'agg', 'sA')]
++    run('endpoints', [tools/'rpfbwt_endpoints', prefix, ri4, heads, f'{terminal:02x}'])
++    if a.expect_heads:
++        run('gate-heads', ['/usr/bin/cmp', heads, pathlib.Path(a.expect_heads).absolute()])
++    if a.expect_ri4:
++        run('gate-runs-tails', ['/usr/bin/cmp', ri4, pathlib.Path(a.expect_ri4).absolute()])
++    with ri4.open('rb') as header:
++        _, _, strings, _ = struct.unpack('<4Q', header.read(32))
++    if strings > 1 and not (a.expect_heads and a.expect_ri4):
++        raise RuntimeError('multi-string PFP/BCR collection ordering is unvalidated; explicit endpoint byte gates are required')
++    run('slim', [tools/'slim_dump', '--slim', '--resolve-ri4', '--dict-stream', '--ri4', ri4,
++                 '--head-sa', heads, '--parse', prefix, '-t', a.threads, '-o', agg])
++    sweep = run('sweep', [a.xsa, 'chi-rspace', '--stream-agg', '--ri4', ri4, '--agg', agg, '-o', chi])
++    count = chi.stat().st_size // 8
++    reported = re.search(r'chi = (\d+)', sweep.read_text())
++    if chi.stat().st_size % 8 or not reported or int(reported[1]) != count:
++        raise RuntimeError('internal chi count/file gate mismatch')
++    if a.expect_chi is not None and count != a.expect_chi:
++        raise RuntimeError(f'chi gate mismatch: {count} != {a.expect_chi}')
++    if a.verify_text_sample:
++        run('verify-text-sample', [tools/'sxi_text_audit', text, ri4, agg, chi, a.verify_text_sample])
++    # Writer validates range, uniqueness, endpoint consistency and checksums.
++    # Write on the destination filesystem, validate, then publish no-clobber.
++    out.parent.mkdir(parents=True, exist_ok=True)
++    with tempfile.TemporaryDirectory(prefix='.xsa-publish-', dir=out.parent) as publish:
++        candidate = pathlib.Path(publish)/'candidate.sxi'
++        cmd = [tools/'sxi_write', '--ri4', ri4, '--heads', heads, '--chi', chi, '--output', candidate]
++        cmd += ['--mode', (a.mode if a.mode != 'auto' else ('text' if a.text else 'dna')), '--orientation', 'reversed' if a.agc else 'forward']
++        if names:
++            cmd += ['--names', names]
++        run('write', cmd)
++        run('validate', [a.xsa, 'sxi-info', candidate])
++        os.link(candidate, out)
++    record(dict(status='PASS', output=str(out), chi=count, work=str(work)))
++    print(json.dumps(dict(sxi=str(out), chi=count, work=str(work), log=str(journal))))
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (OSError, RuntimeError) as error:
++        sys.exit('xsa build: ' + str(error) + '; no final SXI published')
+diff --git a/bit6/sxi_write.cpp b/bit6/sxi_write.cpp
+index 9e5a8f2..abfb634 100644
+--- a/bit6/sxi_write.cpp
++++ b/bit6/sxi_write.cpp
+@@ -16,8 +16,8 @@ struct Output {
+     void write(const void* p,size_t n){auto& m=members.back();f.write((const char*)p,n);check(bool(f),"write output");m.bytes+=n;m.checksum=crc(m.checksum,(const unsigned char*)p,n);}
+     void number(U v,unsigned n=8){unsigned char b[8];put(b,v,n);write(b,n);}
+     void copy(const std::string& path,U offset,U bytes){std::ifstream in(path,std::ios::binary);check(bool(in),"open member");in.seekg(offset);std::vector<unsigned char>b(1<<20);while(bytes){size_t z=std::min<U>(bytes,b.size());read(in,b.data(),z);write(b.data(),z);bytes-=z;}}
+-    void finish(U n,U k,U r,bool complete){
+-        U total=f.tellp();std::vector<unsigned char>h(64+40*members.size());memcpy(h.data(),"SXI1",4);put(h.data()+4,1,4);put(h.data()+8,n);put(h.data()+16,k);put(h.data()+24,r);put(h.data()+32,members.size(),4);put(h.data()+36,h.size(),4);put(h.data()+40,total);put(h.data()+48,complete);
++    void finish(U n,U k,U r,bool complete,U metadata){
++        U total=f.tellp();std::vector<unsigned char>h(64+40*members.size());memcpy(h.data(),"SXI1",4);put(h.data()+4,1,4);put(h.data()+8,n);put(h.data()+16,k);put(h.data()+24,r);put(h.data()+32,members.size(),4);put(h.data()+36,h.size(),4);put(h.data()+40,total);put(h.data()+48,U(complete)|metadata);
+         for(size_t i=0;i<members.size();i++){auto&m=members[i];m.checksum=~m.checksum;auto*d=h.data()+64+40*i;put(d,m.id,4);put(d+4,m.codec,4);put(d+8,m.offset);put(d+16,m.bytes);put(d+24,m.count);put(d+32,m.checksum,4);fprintf(stderr,"SXI_MEMBER id=%u count=%llu bytes=%llu crc32=%08x\n",m.id,(unsigned long long)m.count,(unsigned long long)m.bytes,m.checksum);}
+         put(h.data()+56,~crc(~0U,h.data(),h.size()),4);f.seekp(0);f.write((char*)h.data(),h.size());f.flush();check(bool(f),"flush output");f.close();
+         // Atomic no-clobber publication, including a competing writer.
+@@ -26,7 +26,7 @@ struct Output {
+     }
+ };
+ int main(int argc,char**argv){try{
+-    std::map<std::string,std::string>a;for(int i=1;i<argc;i+=2){check(i+1<argc,"usage: sxi_write --ri4 IN --heads RAW --output OUT [--chi RAW] [--anchors XANC] [--names TSV]");std::string key=argv[i];check(key=="--ri4"||key=="--heads"||key=="--output"||key=="--chi"||key=="--anchors"||key=="--names","unknown option");check(a.emplace(key,argv[i+1]).second,"duplicate option");}
++    std::map<std::string,std::string>a;for(int i=1;i<argc;i+=2){check(i+1<argc,"usage: sxi_write --ri4 IN --heads RAW --output OUT [--chi RAW] [--anchors XANC] [--names TSV]");std::string key=argv[i];check(key=="--ri4"||key=="--heads"||key=="--output"||key=="--chi"||key=="--anchors"||key=="--names"||key=="--mode"||key=="--orientation","unknown option");check(a.emplace(key,argv[i+1]).second,"duplicate option");}
+     check(a.count("--ri4")&&a.count("--heads")&&a.count("--output"),"need --ri4 --heads --output");
+     std::ifstream f(a["--ri4"],std::ios::binary);check(bool(f),"open ri4");U filebytes=size(f);check(integer(f)==0x0000000452585349ULL,"need ri4 v4");U n=integer(f),k=integer(f),r=integer(f);check(n&&n<UINT64_MAX&&r&&r<=n&&k<=n&&r<=UINT32_MAX,"invalid n/k/r");
+     U tailoff=2080+5*r;check(tailoff+9<=filebytes,"truncated runs");f.seekg(tailoff);U bits=integer(f);unsigned w=integer(f,1);check(w&&w<=64&&bits==r*w,"bad samples");U tailbytes=9+((bits+63)/64)*8;check(filebytes==tailoff+tailbytes,"truncated/trailing ri4");
+@@ -42,8 +42,12 @@ int main(int argc,char**argv){try{
+ 
+     U anchors=0,anchorbytes=12;if(a.count("--anchors")){std::ifstream q(a["--anchors"],std::ios::binary);check(bool(q),"open anchors");anchorbytes=size(q);check(integer(q,4)==0x434e4158,"bad anchor magic");anchors=integer(q);check(anchors<=k&&anchorbytes==12+16*anchors,"bad anchor size");U last=0;for(U i=0;i<anchors;i++){U row=integer(q),v=integer(q);check(row<n&&v<n&&(!i||row>last),"bad anchor");last=row;}}
+     std::vector<U> chi;if(a.count("--chi")){std::ifstream q(a["--chi"],std::ios::binary);check(bool(q),"open chi");U bytes=size(q);check(bytes%8==0&&bytes/8<=n+1&&bytes<140000000000ULL,"chi size/budget");chi.resize(bytes/8);for(auto&v:chi){v=integer(q);check(v<=n,"chi out of range");}std::sort(chi.begin(),chi.end());check(std::adjacent_find(chi.begin(),chi.end())==chi.end(),"chi contains duplicates");}
++    U metadata=8;
++    if(a.count("--mode")){check(a["--mode"]=="dna"||a["--mode"]=="text","invalid mode");if(a["--mode"]=="dna")metadata|=2;}
++    if(a.count("--orientation")){check(a["--orientation"]=="forward"||a["--orientation"]=="reversed","invalid orientation");if(a["--orientation"]=="reversed")metadata|=4;}
++    if(a.count("--names")){std::ifstream q(a["--names"],std::ios::binary);check(bool(q),"open names");U bytes=size(q);k=named_records(q,bytes,n);}
+     Output out(a["--output"],a.count("--names")?6:5);out.begin(1,r);out.copy(a["--ri4"],32,2048+5*r);out.begin(2,r);out.copy(a["--ri4"],tailoff,tailbytes);out.begin(3,r);out.copy(a["--heads"],0,8*r);out.begin(4,anchors);if(a.count("--anchors"))out.copy(a["--anchors"],0,anchorbytes);else{out.number(0x434e4158,4);out.number(0);}
+     out.begin(5,chi.size());U prev=0;for(U v:chi){U d=v-prev;do{unsigned char b=d&127;d>>=7;if(d)b|=128;out.write(&b,1);}while(d);prev=v;}
+     if(a.count("--names")){std::ifstream q(a["--names"],std::ios::binary);check(bool(q),"open names");U bytes=size(q);out.begin(6,bytes);out.copy(a["--names"],0,bytes);}
+-    out.finish(n,k,r,a.count("--chi"));return 0;
++    out.finish(n,k,r,a.count("--chi"),metadata);return 0;
+ }catch(const std::exception&e){fprintf(stderr,"FATAL: %s\n",e.what());return 1;}}
+diff --git a/bit6/test_sxi_build.py b/bit6/test_sxi_build.py
+index 30ce7cb..7aeeba7 100644
+--- a/bit6/test_sxi_build.py
++++ b/bit6/test_sxi_build.py
+@@ -1,16 +1,20 @@
+ #!/usr/bin/env python3
+-"""Fail-closed source CLI regression. This is NOT a successful source-build gate."""
++"""Source CLI validation and real pipeline failure/publication regression."""
+ import argparse
+ import pathlib
+ import subprocess
+ import tempfile
++import os
++import re
+ 
+ p = argparse.ArgumentParser(description=__doc__)
+ p.add_argument('--xsa', default='xsa/target/release/xsa')
++p.add_argument('--log-dir', default='bit6/sxi_logs')
+ a = p.parse_args()
++build = [a.xsa, 'build', '--log-dir', a.log_dir]
+ 
+ def run(args, expected):
+-    proc = subprocess.run([a.xsa, 'build', *map(str, args)], capture_output=True, text=True)
++    proc = subprocess.run([*build, *map(str, args)], capture_output=True, text=True, env=dict(os.environ, XSA_RPFBWT='/missing/tap'))
+     assert proc.returncode != 0, proc.stdout
+     assert expected in proc.stderr, proc.stderr
+ 
+@@ -19,10 +23,12 @@ with tempfile.TemporaryDirectory(prefix='sxi-build-contract-') as directory:
+     source = root / 'input with spaces.txt'
+     source.write_text('ACGT\n')
+     out = root / 'out.sxi'
+-    for mode in ['--agc', '--fasta', '--text']:
+-        run([mode, source, '-o', out, '--verbose'], 'source construction blocked')
++    for mode in ['--agc', '--fasta', '--fastq', '--text']:
++        run([mode, source, '-o', out, '--verbose'], 'missing executable')
+         assert sorted(x.name for x in root.iterdir()) == [source.name]
+     run(['--text', source, '--fasta', source, '-o', out], 'exactly one')
++    run(['--fasta', source, '--fastq', source, '-o', out], 'exactly one')
++    run(['--fastq'], 'requires a path')
+     run(['--text', source, '-o', out, '-o', out], 'only once')
+     run(['--text', source], 'need -o')
+     run(['--text'], 'requires a path')
+@@ -36,6 +42,40 @@ with tempfile.TemporaryDirectory(prefix='sxi-build-contract-') as directory:
+     run(['--text', source, '-o', out], 'output exists')
+     assert out.is_symlink()
+ help_result = subprocess.run([a.xsa, 'build', '--help'], capture_output=True, text=True)
+-assert help_result.returncode == 0 and 'currently unavailable' in help_result.stdout
+-print('PASS fail-closed CLI: three source modes, invalid arguments, no artifacts, existing output/symlink preservation')
+-print('NOT source-build acceptance: endpoint construction remains unavailable')
++assert help_result.returncode == 0 and 'endpoint-tap' in help_result.stdout
++assert '--fasta' in help_result.stdout and '--fastq' in help_result.stdout
++# Full real stages with a deliberately incorrect chi expectation must not publish.
++with tempfile.TemporaryDirectory(prefix='sxi-failure-test-') as directory:
++    root = pathlib.Path(directory)
++    source = pathlib.Path('/tmp/laneY/bat/random-4-2k.txt')
++    out = root / 'rejected.sxi'
++    proc = subprocess.run([*build, '--text', str(source), '-o', str(out),
++        '--scratch', str(root), '--expect-chi', '0'], capture_output=True, text=True)
++    assert proc.returncode != 0 and 'chi gate mismatch' in proc.stderr, proc.stderr
++    assert not out.exists()
++    wrong = root / 'wrong.heads'
++    wrong.write_bytes(b'bad oracle')
++    proc = subprocess.run([*build, '--text', str(source), '-o', str(out),
++        '--scratch', str(root), '--expect-heads', str(wrong)], capture_output=True, text=True)
++    assert proc.returncode != 0 and 'gate-heads failed' in proc.stderr, proc.stderr
++    assert not out.exists()
++    collection = root / 'collection.txt'
++    collection.write_bytes(source.read_bytes() * 2)
++    proc = subprocess.run([*build, '--text', str(collection), '-o', str(out),
++        '--scratch', str(root)], capture_output=True, text=True)
++    rejected_collection = 'collection ordering is unvalidated' in proc.stderr
++    if 'endpoints failed' in proc.stderr:
++        # A periodic input can exceed the bounded seam-discovery policy
++        # before the legacy collection guard. Require the precise refusal.
++        match = re.search(r'see (.+\.endpoints\.log);', proc.stderr)
++        evidence = pathlib.Path(match[1]).read_text() if match else ''
++        rejected_collection = ('CYCLIC_SEAM_REFUSED' in evidence and
++                               'policy=max(1000,raw_r/1000); no O(n) fallback' in evidence)
++    assert proc.returncode != 0 and rejected_collection, proc.stderr
++    assert not out.exists()
++    # A stage failure also cannot publish; /bin/false passes executable preflight.
++    proc = subprocess.run([*build, '--text', str(source), '-o', str(out),
++        '--scratch', str(root)], env=dict(os.environ, XSA_PFP='/bin/false'), capture_output=True, text=True)
++    assert proc.returncode != 0 and 'parse failed' in proc.stderr, proc.stderr
++    assert not out.exists()
++print('PASS CLI validation; missing tool, stage failure, chi/head mismatch and unvalidated multi-string input publish no SXI; existing files/symlinks preserved')
+diff --git a/tools/build_sxi_tools.sh b/tools/build_sxi_tools.sh
+index cc5292a..5a6c7a9 100644
+--- a/tools/build_sxi_tools.sh
++++ b/tools/build_sxi_tools.sh
+@@ -1,12 +1,16 @@
+ #!/usr/bin/env bash
+ # Build the container writer, pilot Phi extractor and SXI-aware slim consumer.
+-# These tools alone do not implement fresh source endpoint construction.
++# The vendored endpoint producer is built separately; see build_rpfbwt_tap.sh.
+ set -euo pipefail
+ cd "$(dirname "$0")/.."
+ OUT="${1:?usage: bash tools/build_sxi_tools.sh OUT_DIR}"
+ mkdir -p "$OUT"
+ OUT="$(cd "$OUT" && pwd)"
++bash tools/build_slim_dump.sh "$OUT/rpfbwt_endpoints" bit6/rpfbwt_endpoints.cpp
++g++ -O3 -std=c++17 -Wall -Wextra bit6/sxi_text_audit.cpp -o "$OUT/sxi_text_audit"
+ g++ -O3 -std=c++17 -Wall -Wextra bit6/sxi_write.cpp -o "$OUT/sxi_write"
+ g++ -O3 -std=c++17 -Wall -Wextra -fopenmp bit6/phi_inverse_heads.cpp -o "$OUT/phi_inverse_heads"
+ bash tools/build_slim_dump.sh "$OUT/slim_dump"
+ cargo build --release --manifest-path xsa/Cargo.toml
++cargo build --release --manifest-path agc2flat/Cargo.toml --target-dir "$OUT/agc-target"
++cp "$OUT/agc-target/release/agc2flat" "$OUT/agc2flat"
+diff --git a/xsa/Cargo.lock b/xsa/Cargo.lock
+index be136cb..b426738 100644
+--- a/xsa/Cargo.lock
++++ b/xsa/Cargo.lock
+@@ -2,6 +2,357 @@
+ # It is not intended for manual editing.
+ version = 4
+ 
++[[package]]
++name = "adler2"
++version = "2.0.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
++
++[[package]]
++name = "ascii"
++version = "1.1.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "d92bec98840b8f03a5ff5413de5293bfcd8bf96467cf5452609f939ec6f5de16"
++
++[[package]]
++name = "bitflags"
++version = "2.13.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06"
++
++[[package]]
++name = "cfg-if"
++version = "1.0.5"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
++
++[[package]]
++name = "chunked_transfer"
++version = "1.5.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "6e4de3bc4ea267985becf712dc6d9eed8b04c953b3fcfb339ebc87acd9804901"
++
++[[package]]
++name = "crc32fast"
++version = "1.5.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "01a7799fd6b852db0e61728dde9a204c423b44d689dbd432522543614b490e78"
++dependencies = [
++ "cfg-if",
++]
++
++[[package]]
++name = "crossbeam-deque"
++version = "0.8.8"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "622f3fc73690be383c7214310406f28a90e6edeadc3cea882f9d71e495b9711a"
++dependencies = [
++ "crossbeam-epoch",
++ "crossbeam-utils",
++]
++
++[[package]]
++name = "crossbeam-epoch"
++version = "0.9.21"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "dc74980687109a3b14c72fd458107bf0baa1da1a1a805e178d15501ba9b86d9d"
++dependencies = [
++ "crossbeam-utils",
++]
++
++[[package]]
++name = "crossbeam-utils"
++version = "0.8.23"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "a31eee39dddec8330830986fcd7625edb5a24ec90ea038215273bbc3adb08ac6"
++
++[[package]]
++name = "either"
++version = "1.18.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "252afb9ae5eaa683babdc6a068b3f5726eb19e05070c731f9b2a23a7c3e8ed34"
++
++[[package]]
++name = "errno"
++version = "0.3.14"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
++dependencies = [
++ "libc",
++ "windows-sys",
++]
++
++[[package]]
++name = "fastrand"
++version = "2.5.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
++
++[[package]]
++name = "flate2"
++version = "1.1.10"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "6e634e2e0ebac1ee034020da1ca582e17ffe4e0f5e985823721e168928136dcb"
++dependencies = [
++ "crc32fast",
++ "miniz_oxide",
++ "zlib-rs",
++]
++
++[[package]]
++name = "getrandom"
++version = "0.4.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "300e883d756b2e4ec94e02791f39b04b522276138852cfc41d9fb7e904106099"
++dependencies = [
++ "cfg-if",
++ "libc",
++ "r-efi",
++]
++
++[[package]]
++name = "httpdate"
++version = "1.0.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
++
++[[package]]
++name = "itoa"
++version = "1.0.18"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
++
++[[package]]
++name = "libc"
++version = "0.2.189"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
++
++[[package]]
++name = "linux-raw-sys"
++version = "0.12.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
++
++[[package]]
++name = "log"
++version = "0.4.34"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
++
++[[package]]
++name = "memchr"
++version = "2.8.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
++
++[[package]]
++name = "memmap2"
++version = "0.9.11"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "d1219ed1b7f229ee7104d281dd01d6802fe28bb6e95d292942c4daacdeb798c0"
++dependencies = [
++ "libc",
++]
++
++[[package]]
++name = "miniz_oxide"
++version = "0.9.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "b63fbc4a50860e98e7b2aa7804ded1db5cbc3aff9193adaff57a6931bf7c4b4c"
++dependencies = [
++ "adler2",
++ "simd-adler32",
++]
++
++[[package]]
++name = "once_cell"
++version = "1.21.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
++
++[[package]]
++name = "proc-macro2"
++version = "1.0.107"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9"
++dependencies = [
++ "unicode-ident",
++]
++
++[[package]]
++name = "quote"
++version = "1.0.47"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "1fbf4db142a473a8d80c26bbf18454ed458bf8d26c8219c331daecfdbd079001"
++dependencies = [
++ "proc-macro2",
++]
++
++[[package]]
++name = "r-efi"
++version = "6.0.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
++
++[[package]]
++name = "rayon"
++version = "1.12.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "fb39b166781f92d482534ef4b4b1b2568f42613b53e5b6c160e24cfbfa30926d"
++dependencies = [
++ "either",
++ "rayon-core",
++]
++
++[[package]]
++name = "rayon-core"
++version = "1.13.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "22e18b0f0062d30d4230b2e85ff77fdfe4326feb054b9783a3460d8435c8ab91"
++dependencies = [
++ "crossbeam-deque",
++ "crossbeam-utils",
++]
++
++[[package]]
++name = "rustix"
++version = "1.1.5"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "891efababe418670775f199f0d233d84843c227a0949a883ce15b37c78d6629d"
++dependencies = [
++ "bitflags",
++ "errno",
++ "libc",
++ "linux-raw-sys",
++ "windows-sys",
++]
++
++[[package]]
++name = "serde"
++version = "1.0.229"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba"
++dependencies = [
++ "serde_core",
++]
++
++[[package]]
++name = "serde_core"
++version = "1.0.229"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "67dca2c9c51e58a4791a4b1ed58308b39c64224d349a935ab5039aa360942a48"
++dependencies = [
++ "serde_derive",
++]
++
++[[package]]
++name = "serde_derive"
++version = "1.0.229"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "e7a5d71263a5a7d47b41f6b3f06ba276f10cc18b0931f1799f710578e2309348"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn",
++]
++
++[[package]]
++name = "serde_json"
++version = "1.0.151"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14"
++dependencies = [
++ "itoa",
++ "memchr",
++ "serde",
++ "serde_core",
++ "zmij",
++]
++
++[[package]]
++name = "simd-adler32"
++version = "0.3.10"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "3a219298ac11a56ea9a6d2120044824d6f01aeb034955e7af7bc16858527deea"
++
++[[package]]
++name = "syn"
++version = "3.0.6"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "8593e8e72159ed2257d083c7a454a85cbf854f37a0966d8d483aff8c8a3ebcee"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "unicode-ident",
++]
++
++[[package]]
++name = "tempfile"
++version = "3.27.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
++dependencies = [
++ "fastrand",
++ "getrandom",
++ "once_cell",
++ "rustix",
++ "windows-sys",
++]
++
++[[package]]
++name = "tiny_http"
++version = "0.12.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "389915df6413a2e74fb181895f933386023c71110878cd0825588928e64cdc82"
++dependencies = [
++ "ascii",
++ "chunked_transfer",
++ "httpdate",
++ "log",
++]
++
++[[package]]
++name = "unicode-ident"
++version = "1.0.26"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "d245f478577f809a851594d02313b640fb437e0bb33866753cff937863096954"
++
++[[package]]
++name = "windows-link"
++version = "0.2.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5"
++
++[[package]]
++name = "windows-sys"
++version = "0.61.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc"
++dependencies = [
++ "windows-link",
++]
++
+ [[package]]
+ name = "xsa"
+ version = "0.1.0"
++dependencies = [
++ "flate2",
++ "memmap2",
++ "rayon",
++ "serde_json",
++ "tempfile",
++ "tiny_http",
++]
++
++[[package]]
++name = "zlib-rs"
++version = "0.6.8"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "b268e58e7c693d7c271f93ffc4ba3b380412554231c85bf61ca7af91042a4112"
++
++[[package]]
++name = "zmij"
++version = "1.0.23"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
+diff --git a/xsa/Cargo.toml b/xsa/Cargo.toml
+index c37bc01..51a16de 100644
+--- a/xsa/Cargo.toml
++++ b/xsa/Cargo.toml
+@@ -11,3 +11,11 @@ path = "src/main.rs"
+ 
+ [profile.release]
+ opt-level = 3
++
++[dependencies]
++rayon = "1.11"
++flate2 = "1.1"
++memmap2 = "0.9"
++serde_json = "1.0"
++tiny_http = "0.12"
++tempfile = "3.23"
+diff --git a/xsa/src/build.rs b/xsa/src/build.rs
+index d0f392d..2670635 100644
+--- a/xsa/src/build.rs
++++ b/xsa/src/build.rs
+@@ -1,18 +1,25 @@
+-//! Source-build CLI boundary. Construction is fail-closed until the missing
+-//! front-end endpoint/Phi contract is implemented; see SXI_CONSTRUCTION_BLOCKER.md.
+-//! This module deliberately does not disguise pilot-artifact conversion as a
+-//! fresh build, or launch a large parse whose next required stage cannot run.
++//! Timed, fail-closed source pipeline with endpoint samples from the vendored tap.
+ use std::path::PathBuf;
+ 
+ const USAGE: &str = "usage:
+-  xsa build --agc   <archive.agc> -o <out.sxi> [--verbose]
+-  xsa build --fasta <refs.fa>     -o <out.sxi> [--verbose]
+-  xsa build --text  <file.txt>    -o <out.sxi> [--verbose]
++  xsa build --text <collection.txt> -o <out.sxi> [--threads N] [--scratch DIR] [--expect-chi N] [--verify-text-sample N] [--mode auto|dna|text] [--verbose]
++  xsa build --agc <archive.agc> -o <out.sxi> [same options]
++  xsa build --fasta <records.fa> -o <out.sxi> [same options]
++  xsa build --fastq <reads.fq> -o <out.sxi> [same options]
+ 
+-Source construction is currently unavailable: the unchanged r-pfbwt emits
+-head samples, not the tail samples required by the proposed Phi post-step.
+-No source build is published until that dependency and the chi gate pass.
+-See bit6/SXI_CONSTRUCTION_BLOCKER.md.";
++Corpus contract: T = s1 0x1E s2 0x1E ... sk 0x1E, ONE cyclic byte string.
++0x1E (ASCII record separator) is reserved; never include it in sequence content.
++--text passes raw bytes AS-IS, without a content scan; the caller owns this contract.
++FASTA (wrapped lines allowed) and FASTQ (four-line records) extract sequences
++verbatim in input order, with 0x1E between records and terminally.
++Supply already oriented sequences; embedded 0x1E fails during input preparation.
++Record identifiers populate the SXI names member. Malformed records fail closed.
++AGC uses agc2flat --revlines --upper --sep 1e, materialized beside its source.
++Stages: PFP (w1=10,p1=100; w2=5,p2=11), endpoint-tap rpfbwt,
++slim streaming aggregates, streamed chi sweep/gate, checked SXI publication.
++Scratch must share the source filesystem. Timings and peak RSS are logged.
++Legacy newline-terminated multi-string inputs require --expect-heads RAW --expect-ri4 FILE byte gates
++because linear PFP ordering is not established as BCR collection ordering.";
+ 
+ #[derive(Debug)]
+ struct Options {
+@@ -20,17 +27,19 @@ struct Options {
+     input: PathBuf,
+     output: PathBuf,
+     verbose: bool,
++    extra: Vec<String>,
+ }
+ 
+ fn parse(args: &[String]) -> Result<Options, String> {
+     let mut source = None;
+     let mut output = None;
+     let mut verbose = false;
++    let mut extra = Vec::new();
+     let mut i = 0;
+     while i < args.len() {
+         let flag = &args[i];
+         match flag.as_str() {
+-            "--agc" | "--fasta" | "--text" | "-o" | "--output" => {
++            "--agc" | "--fasta" | "--fastq" | "--text" | "-o" | "--output" => {
+                 i += 1;
+                 let value = args.get(i).filter(|s| !s.is_empty() && !s.starts_with('-'))
+                     .ok_or_else(|| format!("{flag} requires a path"))?;
+@@ -39,17 +48,23 @@ fn parse(args: &[String]) -> Result<Options, String> {
+                         return Err("specify the output only once".into());
+                     }
+                 } else if source.replace((flag[2..].to_string(), PathBuf::from(value))).is_some() {
+-                    return Err("choose exactly one of --agc, --fasta, --text".into());
++                    return Err("choose exactly one of --agc, --fasta, --fastq, --text".into());
+                 }
+             }
++            "--mode" | "--verify-text-sample" | "--threads" | "--scratch" | "--log-dir" | "--expect-chi" | "--expect-heads" | "--expect-ri4" => {
++                i += 1;
++                let value = args.get(i).filter(|s| !s.is_empty() && !s.starts_with('-'))
++                    .ok_or_else(|| format!("{flag} requires a value"))?;
++                extra.extend([flag.clone(), value.clone()]);
++            }
+             "--verbose" => verbose = true,
+             _ => return Err(format!("unknown option {flag}")),
+         }
+         i += 1;
+     }
+-    let (kind, input) = source.ok_or("need one of --agc, --fasta, --text")?;
++    let (kind, input) = source.ok_or("need one of --agc, --fasta, --fastq, --text")?;
+     let output = output.ok_or("need -o <out.sxi>")?;
+-    Ok(Options { kind, input, output, verbose })
++    Ok(Options { kind, input, output, verbose, extra })
+ }
+ 
+ fn run(args: &[String]) -> Result<(), String> {
+@@ -66,14 +81,15 @@ fn run(args: &[String]) -> Result<(), String> {
+     if !input.metadata().map_err(|e| format!("inspect input: {e}"))?.is_file() {
+         return Err("input must be a regular file".into());
+     }
+-    eprintln!("xsa build: preflight ({})", options.kind);
+-    if options.verbose {
+-        eprintln!("  input: {}", options.input.display());
+-        eprintln!("  output: {}", options.output.display());
+-        eprintln!("  required stages: parse -> front-end/RLBWT -> Phi^-1 heads -> slim aggregates -> sweep -> chi gate -> SXI write");
+-        eprintln!("  no stage subprocess launched: required endpoint construction is unavailable");
+-    }
+-    Err("source construction blocked: the unchanged r-pfbwt produces run-head .ssa samples, not tails; no validated r-space tail-only Phi constructor is implemented. headFromTail assumes a sound Phi index. No .sxi was written. See bit6/SXI_CONSTRUCTION_BLOCKER.md".into())
++    let script = std::env::var_os("XSA_PIPELINE").map(PathBuf::from).unwrap_or_else(||
++        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../bit6/sxi_pipeline.py"));
++    let mut command = std::process::Command::new("python3");
++    command.arg(script).arg(format!("--{}", options.kind)).arg(options.input)
++        .arg("--output").arg(options.output).args(options.extra)
++        .arg("--xsa").arg(std::env::current_exe().map_err(|e| e.to_string())?);
++    if options.verbose { command.arg("--verbose"); }
++    let status = command.status().map_err(|e| format!("launch pipeline: {e}"))?;
++    if status.success() { Ok(()) } else { Err(format!("pipeline failed: {status}")) }
+ }
+ 
+ pub fn command(args: &[String]) {
+diff --git a/xsa/src/main.rs b/xsa/src/main.rs
+index 66260ba..aad0329 100644
+--- a/xsa/src/main.rs
++++ b/xsa/src/main.rs
+@@ -10,6 +10,7 @@
+ 
+ mod sxi;
+ mod build;
++mod product;
+ 
+ use std::fs::File;
+ use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
+@@ -105,11 +106,28 @@ fn fmt_ratio(num: f64, den: f64) -> String {
+ 
+ // ---------- full .ri4 index (rank/LF/search/locate) ----------
+ 
++/// Immutable file-backed members shared by all query workers.
++enum Bytes { Owned(Vec<u8>), Mapped(memmap2::Mmap, usize, usize) }
++impl Bytes {
++    fn mapped(path: &str, offset: u64, len: usize) -> Self {
++        let file = File::open(path).unwrap_or_else(|e| die(&e.to_string()));
++        // Published containers are immutable for the lifetime of the index.
++        let map = unsafe { memmap2::Mmap::map(&file) }.unwrap_or_else(|e| die(&e.to_string()));
++        Self::Mapped(map, offset as usize, len)
++    }
++}
++impl std::ops::Deref for Bytes {
++    type Target = [u8];
++    fn deref(&self) -> &[u8] { match self {
++        Self::Owned(v) => v, Self::Mapped(m, o, n) => &m[*o..*o + *n],
++    }}
++}
++
+ /// sdsl int_vector bitstream: entries of `width` bits, LSB-first per u64 word.
+ struct PackedSa {
+     bits: u64,          // total size IN BITS
+     width: u8,
+-    data: Vec<u8>,      // little-endian u64 words
++    data: Bytes,      // little-endian u64 words
+ }
+ impl PackedSa {
+     fn get(&self, i: u64) -> u64 {
+@@ -170,7 +188,8 @@ struct Ri4 {
+     k: u64,
+     r: u64,
+     c: Vec<u64>,
+-    run_char: Vec<u8>,
++    run_char: Bytes,
++    cyclic: bool,
+     run_len: Vec<u32>,
+     sa: PackedSa,
+     run_start_blk: Vec<u64>,
+@@ -182,7 +201,9 @@ const BLK: u64 = 64;
+ 
+ impl Ri4 {
+     fn load(path: &str) -> Ri4 {
+-        let container = sxi::Container::open(path);
++        Self::load_validated(path, sxi::Container::open(path))
++    }
++    fn load_validated(path: &str, container: Option<sxi::Container>) -> Ri4 {
+         let mut f = File::open(path).unwrap_or_else(|e| die(&format!("open {}: {}", path, e)));
+         let mut b = [0u8; 32];
+         f.read_exact(&mut b).unwrap_or_else(|e| die(&format!("read {}: {}", path, e)));
+@@ -219,6 +240,9 @@ impl Ri4 {
+         let nbytes = ((bits + 63) / 64 * 8) as usize;
+         let mut data = vec![0u8; nbytes];
+         f.read_exact(&mut data).unwrap_or_else(|e| die(&format!("read sa data: {}", e)));
++        let data = if let Some(ref sx) = container {
++            Bytes::mapped(path, sx.member(2).offset + 9, nbytes)
++        } else { Bytes::Owned(data) };
+         let sa = PackedSa { bits, width, data };
+ 
+         let mut run_start_blk = Vec::with_capacity((r / BLK + 2) as usize);
+@@ -238,12 +262,16 @@ impl Ri4 {
+             acc256[c] += run_len[x] as u64;
+         }
+         let total = acc256.clone();
++        let cyclic = total[0x1e] > 0 || total[0x0a] == 0;
++        let run_char = if let Some(ref sx) = container {
++            Bytes::mapped(path, sx.member(1).offset + 2048, r as usize)
++        } else { Bytes::Owned(run_char) };
+         for c in 0..256 { csum[c].push(total[c]); }
+         let _ = k;   // stored
+         let embedded_anchors = container.as_ref().map(|sx| sx.anchors(path));
+         let names = container.as_ref().and_then(|sx| sx.members.iter().find(|m| m.id == 6))
+             .map(|m| (path.to_string(), m.offset, m.bytes));
+-        Ri4 { embedded_anchors, names, n, k, r, c, run_char, run_len, sa, run_start_blk, cruns, csum, total }
++        Ri4 { cyclic, embedded_anchors, names, n, k, r, c, run_char, run_len, sa, run_start_blk, cruns, csum, total }
+     }
+ 
+     fn run_start(&self, r: u64) -> u64 {
+@@ -320,9 +348,10 @@ impl Ri4 {
+             let r = self.run_of(pos);
+             let e = self.run_start(r) + self.run_len[r as usize] as u64;
+             if pos == e - 1 {
+-                return self.sa.get(r).wrapping_sub(steps);
++                return if self.cyclic { (self.sa.get(r) + self.n - steps % self.n) % self.n }
++                    else { self.sa.get(r).wrapping_sub(steps) };
+             }
+-            if self.run_char[r as usize] == 0x0A {
++            if !self.cyclic && self.run_char[r as usize] == 0x0A {
+                 match anc.and_then(|a| a.lookup(pos)) {
+                     Some(s0) => return s0.wrapping_sub(steps),
+                     None => die("s_at: walk reached a 0x0A row with no anchor table (--anchors)"),
+@@ -330,6 +359,19 @@ impl Ri4 {
+             }
+             pos = self.lf(pos);
+             steps += 1;
++            if self.cyclic && pos == j && steps < self.n && self.n % steps == 0 {
++                // Periodic text has equal-rotation classes of n/period rows.
++                // An interior lane can be an LF cycle without an endpoint.
++                // The final lane reaches a run tail. Resolve its rotation,
++                // then enumerate equivalent coordinates in increasing order.
++                let copies = self.n / steps;
++                let representative = (j / copies + 1) * copies - 1;
++                if representative == j { die("locate: unsampled periodic representative"); }
++                let last = self.n - 1 - self.s_at_opt(representative, anc);
++                let coordinate = last % steps + (j % copies) * steps;
++                return self.n - 1 - coordinate;
++            }
++            if steps >= self.n { die("locate: LF cycle has no sample"); }
+         }
+     }
+ }
+@@ -665,7 +707,7 @@ fn cmd_stats(args: &[String]) {
+         n = h.n;
+         k = h.k;
+         r = h.r;
+-        println!("{}      {}  (v{}: n={}, k={} strings, R={} runs)", if h.version == 1 { ".sxi" } else { ".ri4" }, p, h.version, h.n, h.k, h.r);
++        println!("{}      {}  (v{}: n={}, k={} {}, R={} runs)", if h.version == 1 { ".sxi" } else { ".ri4" }, p, h.version, h.n, h.k, if h.version == 1 { "records" } else { "strings" }, h.r);
+         if let Some(c) = container { c.print_members(); }
+     }
+     if let Some(p) = &rlbwt {
+@@ -688,7 +730,7 @@ fn cmd_stats(args: &[String]) {
+ 
+     println!();
+     println!("n            = {}", n);
+-    if k > 0 { println!("k (strings)  = {}", k); }
++    if k > 0 { println!("k ({})  = {}", if index_bytes.is_some() { "records" } else { "strings" }, k); }
+     println!("r (runs)     = {}", r);
+     if let Some(xc) = x {
+         println!("chi          = {}", xc);
+@@ -919,7 +961,7 @@ fn cmd_build_anchors(args: &[String]) {
+ // topLCP, saFirst, saLast, interiorMin per run -- all computed r-space via
+ // PFP resolve + LCE + the phi-piece law) and runs the production scan-rs
+ // state machine VERBATIM (bit6/teralcp_chi.cpp): no walks, no SA, no text
+-// access. Witness values = N - pos (N = n + 1 convention).
++// access. Legacy witnesses use n+1-pos; cyclic witnesses use (n-pos)%n.
+ fn cmd_chi_rspace(args: &[String]) {
+     let mut ri4p: Option<String> = None;
+     let mut aggp: Option<String> = None;
+@@ -973,7 +1015,25 @@ fn cmd_chi_rspace(args: &[String]) {
+     } else { Vec::new() };
+     const INF: u64 = u64::MAX;
+     const IINF: i64 = i64::MAX;
+-    let big_n = header.n + 1;
++    // Match slim's alphabet-based cyclic convention without reading text.
++    let mut has_rs = false;
++    let mut has_nl = false;
++    for _ in 0..header.r {
++        let mut ch = [0u8; 1];
++        char_file.read_exact(&mut ch).unwrap();
++        has_rs |= ch[0] == 0x1e;
++        has_nl |= ch[0] == 0x0a;
++    }
++    char_file.seek(SeekFrom::Start(header.runs_offset)).unwrap();
++    let cyclic = has_rs || !has_nl;
++    let big_n = if cyclic { header.n } else { header.n + 1 };
++    // The candidate is the BWT character preceding SA=pos. Reversing its
++    // cyclic coordinate gives n-pos, with pos=0 wrapping to coordinate 0.
++    let witness = |pos: u64| -> u64 {
++        if pos >= header.n { die("chi-rspace: endpoint outside text"); }
++        if cyclic { if pos == 0 { 0 } else { header.n - pos } }
++        else { big_n - pos }
++    };
+     const SIGMA: usize = 128;
+     let mut rr_len = vec![-1i64; SIGMA];
+     let mut rr_pos = vec![0u64; SIGMA];
+@@ -1010,7 +1070,7 @@ fn cmd_chi_rspace(args: &[String]) {
+         let mut ch = [0u8; 1];
+         let raw = if let Some(ref index) = idx { index.run_char[i] }
+             else { char_file.read_exact(&mut ch).unwrap(); ch[0] };
+-        let c: i32 = if raw == 0x0A { 0 } else { raw as i32 };
++        let c: i32 = if !cyclic && raw == 0x0A { 0 } else { raw as i32 };
+         if c as usize >= SIGMA { die("chi-rspace: character outside supported alphabet"); }
+         let lcp_b = values[0] as i64;
+         if i == 0 {
+@@ -1031,8 +1091,8 @@ fn cmd_chi_rspace(args: &[String]) {
+                     rr_len[cc] = m3; rr_pos[cc] = 0; rr_act[cc] = false;
+                 }
+             }
+-            if lcp_b > rr_len[p as usize] { rr_len[p as usize] = lcp_b; rr_pos[p as usize] = big_n - p_sa_last; rr_act[p as usize] = true; }
+-            if lcp_b > rr_len[c as usize] { rr_len[c as usize] = lcp_b; rr_pos[c as usize] = big_n - values[1]; rr_act[c as usize] = true; }
++            if lcp_b > rr_len[p as usize] { rr_len[p as usize] = lcp_b; rr_pos[p as usize] = witness(p_sa_last); rr_act[p as usize] = true; }
++            if lcp_b > rr_len[c as usize] { rr_len[c as usize] = lcp_b; rr_pos[c as usize] = witness(values[1]); rr_act[c as usize] = true; }
+             m = IINF;
+         } else {
+             m = mm.min(lcp_b);
+@@ -1198,7 +1258,8 @@ fn usage() -> ! {
+     eprintln!("  xsa build --agc <archive.agc> -o <out.sxi> [--verbose]");
+     eprintln!("  xsa build --fasta <refs.fa> -o <out.sxi> [--verbose]");
+     eprintln!("  xsa build --text <file.txt> -o <out.sxi> [--verbose]");
+-    eprintln!("    source build currently blocked; see xsa build --help");
++    eprintln!("  xsa mems --sxi FILE --reads FA|FQ|GZ [-j N] [--min-len 20] [--mode auto|dna|text]");
++    eprintln!("  xsa serve --sxi FILE [-j N] [--bind 127.0.0.1:7331]");
+     eprintln!("  xsa sxi-info <f.sxi> [--chi-out sorted.sA]");
+     eprintln!("  --sxi is an alias for --ri4; format is detected by magic");
+     eprintln!("  xsa stats --ri4 <f.ri4> [--chi <f.sA>]   header + law check");
+@@ -1221,7 +1282,12 @@ fn main() {
+         Some("sxi-info") => sxi::command(&args[1..]),
+         Some("stats") => cmd_stats(&args[1..]),
+         Some("tags") => cmd_tags(&args[1..]),
++        Some("query") if args.windows(2).any(|a| matches!(a[0].as_str(), "--sxi" | "--ri4") && {
++            let mut magic = [0;4]; File::open(&a[1]).and_then(|mut f| f.read_exact(&mut magic)).is_ok() && &magic == b"SXI1"
++        }) => product::command("query", &args[1..]),
+         Some("query") => cmd_query(&args[1..]),
++        Some("mems") => product::command("mems", &args[1..]),
++        Some("serve") => product::command("serve", &args[1..]),
+         Some("build-anchors") => cmd_build_anchors(&args[1..]),
+         Some("chi-rspace") => cmd_chi_rspace(&args[1..]),
+         Some("-h") | Some("--help") | None => usage(),
+diff --git a/xsa/src/sxi.rs b/xsa/src/sxi.rs
+index 6094ed9..9f5dc41 100644
+--- a/xsa/src/sxi.rs
++++ b/xsa/src/sxi.rs
+@@ -52,6 +52,7 @@ pub struct Container {
+     pub k: u64,
+     pub r: u64,
+     pub complete: bool,
++    pub flags: u64,
+     pub members: Vec<Member>,
+ }
+ impl Container {
+@@ -96,7 +97,7 @@ impl Container {
+             (5..=6).contains(&count)
+                 && hs == 64 + 40 * count
+                 && u64at(&b, 40) == length
+-                && flags <= 1
++                && (flags <= 1 || (8..=15).contains(&flags))
+                 && u32at(&b, 60) == 0,
+             "invalid header",
+         );
+@@ -136,11 +137,12 @@ impl Container {
+             !hc == expected && end == length,
+             "header CRC or trailing bytes",
+         );
+-        let c = Self {
++        let mut c = Self {
+             n,
+             k,
+             r,
+-            complete: flags == 1,
++            complete: flags & 1 != 0,
++            flags,
+             members,
+         };
+         need(
+@@ -240,6 +242,14 @@ impl Container {
+             reservoir >>= w;
+             available -= w as u32;
+         }
++        if c.members.len() == 6 {
++            let m = c.member(6);
++            at(&mut f, m.offset);
++            let mut bytes = vec![0; m.bytes as usize]; rd(&mut f, &mut bytes);
++            let records = super::product::names(&bytes, n).unwrap_or_else(|e| die(&e));
++            need(flags & 8 == 0 || records.len() as u64 == k, "record count mismatch");
++            c.k = records.len() as u64;
++        }
+         c.anchors(path);
+         c.write_chi(path, &mut std::io::sink());
+         Some(c)

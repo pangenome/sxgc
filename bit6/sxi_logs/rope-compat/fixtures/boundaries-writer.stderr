@@ -1,0 +1,7 @@
+SXI_MEMBER id=1 count=10 bytes=2098 crc32=c7af402b
+SXI_MEMBER id=2 count=10 bytes=17 crc32=333cd063
+SXI_MEMBER id=3 count=10 bytes=80 crc32=d6fb37f4
+SXI_MEMBER id=4 count=0 bytes=12 crc32=31082463
+SXI_MEMBER id=5 count=0 bytes=0 crc32=00000000
+SXI_MEMBER id=6 count=44 bytes=44 crc32=315c013f
+SXI_PASS n=21 runs=10 bytes=2572 chi_complete=0 chi_delta_ratio=0.000000000

@@ -1,0 +1,3 @@
+[M::main] Version: 3.10-r285-dirty
+[M::main] CMD: /tmp/pi-github-repos/runtime-iM4bba/c73bf005e0630ea7936d5e6556e9d9dd3902b92cd1a35a5b3ffece651d8f6c29/ropebwt3 ssa -t1 -s3 -o /tmp/sxgc-laneV/bit6/sxi_logs/rope-compat/fixtures/random3.fmd.ssa /tmp/sxgc-laneV/bit6/sxi_logs/rope-compat/fixtures/random3.fmd
+[M::main] Real time: 0.000 sec; CPU: 0.001 sec; Peak RSS: 0.002 GB

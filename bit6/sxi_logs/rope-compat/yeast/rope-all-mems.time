@@ -1,0 +1,23 @@
+	Command being timed: "xsa/target/release/xsa mems --sxi /tmp/sxi-query-yeast235.sxi --reads bit6/sxi_logs/rope-compat/yeast/reads.fa --min-len 20 -j 2 --out ropebwt3 --mem -p 5000"
+	User time (seconds): 117.17
+	System time (seconds): 3.12
+	Percent of CPU this job got: 164%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 1:13.24
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 2080992
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 1021087
+	Voluntary context switches: 87
+	Involuntary context switches: 336
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 88
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

@@ -1,1 +1,6 @@
 [2026-09-27 17:16:58.172] [info] Using 8 bytes for computing SA of the dictionary
+[2026-09-27 17:36:23.187] [info] Using 5 bytes for storing SA of the dictionary
+[2026-09-27 17:36:54.960] [info] Elapsed time (s): 1196.788226237
+[2026-09-27 17:36:58.747] [info] Using 4 bytes for DA of the dictionary
+[2026-09-27 17:42:47.922] [info] Elapsed time (s): 349.175022788
+[2026-09-27 17:42:47.922] [info] Using 5 bytes for ISA of the dictionary

@@ -1,0 +1,5 @@
+[M::rb3_fmi_load_all::0.000*26.05] loaded the BWT
+[M::worker_pipeline::0.000*4.21] processed 5 sequences
+[M::main] Version: 3.10-r285-dirty
+[M::main] CMD: /tmp/pi-github-repos/runtime-iM4bba/c73bf005e0630ea7936d5e6556e9d9dd3902b92cd1a35a5b3ffece651d8f6c29/ropebwt3 mem --gap 2 --gap-seq -t1 -l 1 /tmp/sxgc-laneV/bit6/sxi_logs/rope-compat/fixtures/random1.fmd /tmp/sxgc-laneV/bit6/sxi_logs/rope-compat/fixtures/random1.reads.fa
+[M::main] Real time: 0.001 sec; CPU: 0.002 sec; Peak RSS: 0.002 GB

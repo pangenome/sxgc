@@ -1,0 +1,18 @@
+{
+  "changed_files": [
+    "xsa/src/product.rs",
+    "bit6/SXI_QUERY.md",
+    "bit6/test_rope_compat.py",
+    "bit6/test_rope_yeast.py"
+  ],
+  "inherited_tracked_diff_unchanged": true,
+  "no_staged_files": true,
+  "no_commits_created": true,
+  "protected_k10_path_not_accessed": true,
+  "sources": {
+    "xsa/src/product.rs": "259a864c1ce6de50e91aa699263cb43eecc5f43150fb6ffade49556e56113a7a",
+    "bit6/SXI_QUERY.md": "6c1a23aabef6cdc5b5b78e6728f6db70c0092b70dfeec1ed486822fce7395518",
+    "bit6/test_rope_compat.py": "a14e06c42542bd87d10fe457fc5a375d679e109167af82dbac0c162678806e02",
+    "bit6/test_rope_yeast.py": "80bd3b65ff16f1de7f32b43e3545f9f88f9ff735d787166b7d1852f9da82ae97"
+  }
+}

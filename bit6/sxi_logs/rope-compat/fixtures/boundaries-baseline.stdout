@@ -1,0 +1,33 @@
+{"doc_id":0,"len":2,"name":"first comment","offset":4,"qstart":0,"read":"boundary comment","strand":"+"}
+{"doc_id":2,"len":2,"name":"duplicate","offset":4,"qstart":0,"read":"boundary comment","strand":"+"}
+{"doc_id":1,"len":2,"name":"second","offset":0,"qstart":2,"read":"boundary comment","strand":"+"}
+{"doc_id":1,"len":2,"name":"second","offset":0,"qstart":2,"read":"boundary comment","strand":"-"}
+{"doc_id":1,"len":2,"name":"second","offset":4,"qstart":0,"read":"minus","strand":"+"}
+{"doc_id":0,"len":2,"name":"first comment","offset":3,"qstart":0,"read":"minus","strand":"+"}
+{"doc_id":2,"len":2,"name":"duplicate","offset":3,"qstart":0,"read":"minus","strand":"+"}
+{"doc_id":1,"len":2,"name":"second","offset":2,"qstart":2,"read":"minus","strand":"+"}
+{"doc_id":0,"len":2,"name":"first comment","offset":1,"qstart":2,"read":"minus","strand":"+"}
+{"doc_id":2,"len":2,"name":"duplicate","offset":1,"qstart":2,"read":"minus","strand":"+"}
+{"doc_id":1,"len":2,"name":"second","offset":0,"qstart":4,"read":"minus","strand":"+"}
+{"doc_id":1,"len":6,"name":"second","offset":0,"qstart":0,"read":"minus","strand":"-"}
+{"doc_id":0,"len":5,"name":"first comment","offset":0,"qstart":0,"read":"minus","strand":"-"}
+{"doc_id":2,"len":5,"name":"duplicate","offset":0,"qstart":0,"read":"minus","strand":"-"}
+{"doc_id":1,"len":5,"name":"second","offset":1,"qstart":2,"read":"long","strand":"+"}
+{"doc_id":0,"len":6,"name":"first comment","offset":0,"qstart":2,"read":"long","strand":"+"}
+{"doc_id":2,"len":6,"name":"duplicate","offset":0,"qstart":2,"read":"long","strand":"+"}
+{"doc_id":1,"len":2,"name":"second","offset":4,"qstart":5,"read":"long","strand":"-"}
+{"doc_id":0,"len":2,"name":"first comment","offset":3,"qstart":5,"read":"long","strand":"-"}
+{"doc_id":2,"len":2,"name":"duplicate","offset":3,"qstart":5,"read":"long","strand":"-"}
+{"doc_id":1,"len":2,"name":"second","offset":2,"qstart":3,"read":"long","strand":"-"}
+{"doc_id":0,"len":2,"name":"first comment","offset":1,"qstart":3,"read":"long","strand":"-"}
+{"doc_id":2,"len":2,"name":"duplicate","offset":1,"qstart":3,"read":"long","strand":"-"}
+{"doc_id":1,"len":6,"name":"second","offset":0,"qstart":0,"read":"nested","strand":"+"}
+{"doc_id":0,"len":6,"name":"first comment","offset":0,"qstart":1,"read":"nested","strand":"+"}
+{"doc_id":2,"len":6,"name":"duplicate","offset":0,"qstart":1,"read":"nested","strand":"+"}
+{"doc_id":1,"len":2,"name":"second","offset":4,"qstart":4,"read":"nested","strand":"-"}
+{"doc_id":0,"len":2,"name":"first comment","offset":3,"qstart":4,"read":"nested","strand":"-"}
+{"doc_id":2,"len":2,"name":"duplicate","offset":3,"qstart":4,"read":"nested","strand":"-"}
+{"doc_id":1,"len":2,"name":"second","offset":2,"qstart":2,"read":"nested","strand":"-"}
+{"doc_id":0,"len":2,"name":"first comment","offset":1,"qstart":2,"read":"nested","strand":"-"}
+{"doc_id":2,"len":2,"name":"duplicate","offset":1,"qstart":2,"read":"nested","strand":"-"}
+{"doc_id":1,"len":2,"name":"second","offset":0,"qstart":0,"read":"nested","strand":"-"}

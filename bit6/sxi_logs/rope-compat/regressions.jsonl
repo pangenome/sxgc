@@ -1,0 +1,5 @@
+{"command": ["python3", "bit6/test_query_product.py", "--work", "/tmp/sxi-rope-native-regression"], "exit": 0, "label": "native-regression"}
+{"command": ["python3", "bit6/test_sxi_format.py", "--writer", "/tmp/sxi-query-writer", "--xsa", "xsa/target/release/xsa"], "exit": 0, "label": "format-regression"}
+{"command": ["python3", "bit6/test_sxi_build.py", "--log-dir", "bit6/sxi_logs/rope-compat/build-regression"], "exit": 0, "label": "build-regression"}
+{"command": ["python3", "bit6/test_phi_inverse_contract.py", "/tmp/laneU/phi_inverse_heads"], "exit": 0, "label": "phi-regression"}
+{"command": ["cargo", "test", "--release", "--manifest-path", "xsa/Cargo.toml"], "exit": 0, "label": "rust-tests"}

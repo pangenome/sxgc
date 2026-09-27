@@ -1,0 +1,26 @@
+{"test": "dna", "reads": 53, "smems": 117, "maximal_occurrences": 900, "rope_parity": true, "status": "PASS"}
+{"test": "reversed", "reads": 53, "smems": 117, "maximal_occurrences": 900, "rope_parity": true, "status": "PASS"}
+{"test": "periodic", "reads": 1, "smems": 1, "maximal_occurrences": 203, "rope_parity": true, "status": "PASS"}
+{"test": "random0", "reads": 5, "smems": 37, "maximal_occurrences": 1294, "rope_parity": true, "status": "PASS"}
+{"test": "random1", "reads": 5, "smems": 35, "maximal_occurrences": 1646, "rope_parity": true, "status": "PASS"}
+{"test": "random2", "reads": 5, "smems": 42, "maximal_occurrences": 1099, "rope_parity": true, "status": "PASS"}
+{"test": "random3", "reads": 5, "smems": 40, "maximal_occurrences": 1516, "rope_parity": true, "status": "PASS"}
+{"test": "random4", "reads": 5, "smems": 38, "maximal_occurrences": 1223, "rope_parity": true, "status": "PASS"}
+{"test": "random5", "reads": 5, "smems": 44, "maximal_occurrences": 802, "rope_parity": true, "status": "PASS"}
+{"test": "random6", "reads": 5, "smems": 44, "maximal_occurrences": 1501, "rope_parity": true, "status": "PASS"}
+{"test": "random7", "reads": 5, "smems": 39, "maximal_occurrences": 1850, "rope_parity": true, "status": "PASS"}
+{"test": "random8", "reads": 5, "smems": 41, "maximal_occurrences": 1453, "rope_parity": true, "status": "PASS"}
+{"test": "random9", "reads": 5, "smems": 43, "maximal_occurrences": 1575, "rope_parity": true, "status": "PASS"}
+{"test": "random10", "reads": 5, "smems": 41, "maximal_occurrences": 1754, "rope_parity": true, "status": "PASS"}
+{"test": "random11", "reads": 5, "smems": 47, "maximal_occurrences": 1701, "rope_parity": true, "status": "PASS"}
+{"test": "boundaries", "reads": 5, "smems": 6, "maximal_occurrences": 33, "rope_parity": true, "status": "PASS"}
+{"test": "text", "reads": 1, "smems": 2, "maximal_occurrences": 10, "rope_parity": false, "status": "PASS"}
+{"test": "literal", "reads": 1, "smems": 1, "maximal_occurrences": 7, "rope_parity": false, "status": "PASS"}
+{"test": "battery-duplicates-600k", "reads": 3, "smems": 3, "maximal_occurrences": 150, "rope_parity": true, "status": "PASS"}
+{"test": "battery-random-4-2k", "reads": 3, "smems": 3, "maximal_occurrences": 3, "rope_parity": true, "status": "PASS"}
+{"test": "battery-random-4-20k", "reads": 3, "smems": 3, "maximal_occurrences": 3, "rope_parity": true, "status": "PASS"}
+{"test": "battery-random-bin-20k", "reads": 3, "smems": 3, "maximal_occurrences": 223, "rope_parity": true, "status": "PASS"}
+{"test": "battery-random-4-200k", "reads": 3, "smems": 3, "maximal_occurrences": 4, "rope_parity": true, "status": "PASS"}
+{"test": "battery-satellite-18k", "reads": 3, "smems": 3, "maximal_occurrences": 12012, "rope_parity": true, "status": "PASS"}
+{"test": "battery-HOR-nested", "reads": 3, "smems": 3, "maximal_occurrences": 12721, "rope_parity": true, "status": "PASS"}
+PASS real ropebwt3 count/SMEM/forward-position/coverage/gap parity, brute all-MEM/SMEM sets, native byte parity, capped positions, CLI errors

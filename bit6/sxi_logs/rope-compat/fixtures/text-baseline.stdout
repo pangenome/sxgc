@@ -1,0 +1,10 @@
+{"doc_id":0,"len":4,"name":"doc x","offset":7,"qstart":0,"read":"r"}
+{"doc_id":1,"len":4,"name":"doc y","offset":0,"qstart":0,"read":"r"}
+{"doc_id":1,"len":5,"name":"doc y","offset":5,"qstart":0,"read":"r"}
+{"doc_id":0,"len":11,"name":"doc x","offset":0,"qstart":0,"read":"r"}
+{"doc_id":1,"len":4,"name":"doc y","offset":0,"qstart":7,"read":"r"}
+{"doc_id":1,"len":5,"name":"doc y","offset":5,"qstart":7,"read":"r"}
+{"doc_id":0,"len":11,"name":"doc x","offset":0,"qstart":7,"read":"r"}
+{"doc_id":1,"len":4,"name":"doc y","offset":0,"qstart":14,"read":"r"}
+{"doc_id":1,"len":4,"name":"doc y","offset":5,"qstart":14,"read":"r"}
+{"doc_id":0,"len":4,"name":"doc x","offset":0,"qstart":14,"read":"r"}

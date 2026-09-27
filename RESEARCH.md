@@ -1557,3 +1557,11 @@ ordering to be adjudicated by k10's real byte gates.
 - --verify-text-sample N: in-flight ground-truth witness audit vs the materialized
   text (32/32 at gates; corrupted text blocks publication) - the 466 gate.
 - Terminal-byte check generalized (any separator flows to the endpoints adapter).
+
+## ROPEBWT3-COMPAT OUTPUT LANDED (supervisor-verified): xsa mems --out ropebwt3 -
+## one line per SMEM (qname, qstart, qend, hit_count [+ name:strand:pos tokens,
+## forward-normalized]), --mem all-MEMs, capped sampling, --gap/--cov companion
+## modes. ORACLE: real ropebwt3 built from source; 23 parity fixtures agree on
+## SMEM sets, counts, forward-position multisets, gaps, coverage; 756 SMEM
+## intervals + 44,583 occurrences brute-verified; native mode + six members
+## unchanged. Documented divergences recorded in the acceptance note.

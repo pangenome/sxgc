@@ -1,0 +1,147 @@
+sample0	0	12	2	text:+:7652	text:+:18996
+sample0	0	15	2	text:+:9327	text:+:15925
+sample0	0	40	1	text:+:5
+sample0	1	13	2	text:+:3810	text:+:13968
+sample0	2	15	2	text:+:13312	text:+:17090
+sample0	2	16	1	text:+:10187
+sample0	3	15	2	text:+:4726	text:+:13552
+sample0	3	21	1	text:+:19882
+sample0	4	16	1	text:+:2284
+sample0	4	17	1	text:+:16450
+sample0	4	18	1	text:+:19102
+sample0	5	17	2	text:+:5224	text:+:19492
+sample0	6	19	3	text:+:16647	text:+:13331	text:+:8744
+sample0	7	19	3	text:+:6299	text:+:19393	text:+:16707
+sample0	8	20	1	text:+:11998
+sample0	8	22	3	text:+:7512	text:+:18555	text:+:16312
+sample0	9	21	6	text:+:62	text:+:7327	text:+:6955	text:+:7152	text:+:5769	text:+:10879
+sample0	11	24	1	text:+:3833
+sample0	12	24	1	text:+:207
+sample0	12	25	2	text:+:18887	text:+:17057
+sample0	12	26	2	text:+:17137	text:+:2135
+sample0	12	29	1	text:+:15571
+sample0	13	25	1	text:+:14548
+sample0	13	26	1	text:+:18132
+sample0	14	26	3	text:+:3535	text:+:12028	text:+:10707
+sample0	14	27	3	text:+:10301	text:+:15314	text:+:6778
+sample0	15	27	1	text:+:9189
+sample0	15	28	1	text:+:7443
+sample0	15	30	1	text:+:7423
+sample0	17	29	4	text:+:2863	text:+:6452	text:+:17498	text:+:16989
+sample0	18	30	2	text:+:2130	text:+:7821
+sample0	18	31	1	text:+:15701
+sample0	18	32	1	text:+:19686
+sample0	19	32	2	text:+:13812	text:+:5096
+sample0	20	32	1	text:+:10553
+sample0	20	34	1	text:+:16301
+sample0	21	33	4	text:+:4604	text:+:19028	text:+:17661	text:+:1524
+sample0	21	34	1	text:+:4147
+sample0	21	36	1	text:+:10366
+sample0	22	34	1	text:+:3467
+sample0	22	36	1	text:+:19540
+sample0	22	37	1	text:+:12358
+sample0	23	35	1	text:+:10984
+sample0	23	36	2	text:+:18298	text:+:9984
+sample0	23	37	1	text:+:16099
+sample0	24	36	1	text:+:14561
+sample0	25	37	2	text:+:1561	text:+:11938
+sample0	25	38	1	text:+:11294
+sample0	26	40	1	text:+:8774
+sample0	27	39	2	text:+:8400	text:+:12401
+sample0	28	40	1	text:+:1779
+sample1	0	12	2	text:+:15872	text:+:4903
+sample1	0	13	1	text:+:10075
+sample1	0	40	1	text:+:10000
+sample1	1	13	2	text:+:17082	text:+:14214
+sample1	2	14	2	text:+:11500	text:+:10095
+sample1	3	15	1	text:+:16911
+sample1	3	16	1	text:+:10161
+sample1	3	17	1	text:+:7140
+sample1	4	16	2	text:+:5010	text:+:452
+sample1	4	19	1	text:+:10125
+sample1	5	17	1	text:+:8188
+sample1	5	22	1	text:+:8634
+sample1	6	18	1	text:+:196
+sample1	6	21	2	text:+:10767	text:+:3002
+sample1	7	21	1	text:+:18373
+sample1	8	20	2	text:+:3578	text:+:3588
+sample1	8	21	1	text:+:7374
+sample1	10	22	1	text:+:1455
+sample1	11	23	1	text:+:2881
+sample1	12	24	2	text:+:8819	text:+:3292
+sample1	12	26	1	text:+:7078
+sample1	14	26	1	text:+:15840
+sample1	14	27	3	text:+:12463	text:+:9358	text:+:18044
+sample1	14	28	2	text:+:16609	text:+:16227
+sample1	16	28	2	text:+:748	text:+:17944
+sample1	17	29	3	text:+:3823	text:+:17254	text:+:5534
+sample1	17	30	1	text:+:1341
+sample1	17	31	1	text:+:8507
+sample1	19	31	2	text:+:5585	text:+:16577
+sample1	19	33	1	text:+:600
+sample1	20	32	1	text:+:6101
+sample1	21	33	1	text:+:8893
+sample1	21	35	1	text:+:6032
+sample1	21	36	1	text:+:19151
+sample1	21	37	1	text:+:9079
+sample1	21	38	1	text:+:7214
+sample1	22	34	1	text:+:5606
+sample1	23	35	2	text:+:14902	text:+:7727
+sample1	23	38	1	text:+:11760
+sample1	24	36	2	text:+:5244	text:+:15855
+sample1	24	37	2	text:+:11205	text:+:692
+sample1	25	37	3	text:+:177	text:+:4875	text:+:15221
+sample1	25	38	1	text:+:8358
+sample1	27	39	3	text:+:11135	text:+:18520	text:+:7490
+sample1	28	40	1	text:+:11649
+sample2	0	14	1	text:+:17117
+sample2	0	15	1	text:+:8927
+sample2	0	40	1	text:+:19941
+sample2	1	13	1	text:+:13844
+sample2	1	14	2	text:+:10756	text:+:3421
+sample2	2	14	2	text:+:9886	text:+:4278
+sample2	2	15	1	text:+:19528
+sample2	3	16	1	text:+:12730
+sample2	4	16	1	text:+:12408
+sample2	4	17	2	text:+:19306	text:+:7452
+sample2	5	17	1	text:+:16016
+sample2	6	18	2	text:+:5240	text:+:15851
+sample2	7	19	1	text:+:9341
+sample2	7	20	1	text:+:13912
+sample2	7	22	1	text:+:18255
+sample2	8	27	1	text:+:9556
+sample2	9	22	1	text:+:7111
+sample2	10	22	1	text:+:11335
+sample2	10	24	2	text:+:4016	text:+:8561
+sample2	10	26	1	text:+:2734
+sample2	11	24	2	text:+:14345	text:+:19268
+sample2	12	24	1	text:+:10737
+sample2	12	30	1	text:+:15988
+sample2	13	26	1	text:+:18032
+sample2	14	26	2	text:+:390	text:+:14581
+sample2	15	28	2	text:+:9531	text:+:17476
+sample2	15	29	1	text:+:8974
+sample2	15	33	1	text:+:13116
+sample2	15	34	1	text:+:13188
+sample2	16	28	1	text:+:4325
+sample2	16	30	1	text:+:7559
+sample2	16	31	1	text:+:18443
+sample2	17	29	4	text:+:10814	text:+:2204	text:+:2850	text:+:4105
+sample2	17	30	2	text:+:8310	text:+:10427
+sample2	17	31	1	text:+:4744
+sample2	18	30	1	text:+:908
+sample2	18	31	2	text:+:11103	text:+:11935
+sample2	20	32	1	text:+:5969
+sample2	21	33	1	text:+:10986
+sample2	21	35	1	text:+:4716
+sample2	22	34	2	text:+:1957	text:+:8740
+sample2	22	35	1	text:+:8867
+sample2	23	35	2	text:+:16174	text:+:7881
+sample2	23	37	1	text:+:1023
+sample2	24	36	1	text:+:11814
+sample2	25	37	2	text:+:8128	text:+:7304
+sample2	25	38	1	text:+:6320
+sample2	25	39	1	text:+:15330
+sample2	26	39	2	text:+:6945	text:+:13204
+sample2	27	39	3	text:+:0	text:+:37	text:+:1475
+sample2	27	40	3	text:+:3226	text:+:817	text:+:14571

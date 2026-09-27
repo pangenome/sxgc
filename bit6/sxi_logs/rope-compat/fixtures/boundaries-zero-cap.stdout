@@ -1,0 +1,6 @@
+boundary	0	2	2
+boundary	2	4	2
+minus	0	6	1
+long	2	8	2
+nested	0	6	1
+nested	1	7	2

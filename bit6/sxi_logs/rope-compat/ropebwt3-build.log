@@ -1,0 +1,104 @@
+gcc -c -g -Wall -Wc++-compat -O3 -fopenmp -DLIBSAIS_OPENMP  libsais.c -o libsais.o
+gcc -c -g -Wall -Wc++-compat -O3 -fopenmp -DLIBSAIS_OPENMP  libsais64.c -o libsais64.o
+gcc -c -g -Wall -Wc++-compat -O3 -fopenmp -DLIBSAIS_OPENMP  kalloc.c -o kalloc.o
+gcc -c -g -Wall -Wc++-compat -O3 -fopenmp -DLIBSAIS_OPENMP  kthread.c -o kthread.o
+gcc -c -g -Wall -Wc++-compat -O3 -fopenmp -DLIBSAIS_OPENMP  misc.c -o misc.o
+gcc -c -g -Wall -Wc++-compat -O3 -fopenmp -DLIBSAIS_OPENMP  io.c -o io.o
+gcc -c -g -Wall -Wc++-compat -O3 -fopenmp -DLIBSAIS_OPENMP -DRLD_HAVE_BRE  rld0.c -o rld0.o
+rld0.c: In function ‘rld_restore’:
+rld0.c:312:17: warning: ignoring return value of ‘fread’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  312 |                 fread(e->z[i], 8, RLD_LSIZE, fp);
+      |                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+rld0.c:313:9: warning: ignoring return value of ‘fread’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  313 |         fread(e->z[i], 8, k, fp);
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~
+rld0.c:315:9: warning: ignoring return value of ‘fread’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  315 |         fread(e->frame, 8 * e->asize1, e->n_frames, fp);
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+rld0.c: In function ‘rld_restore_header’:
+rld0.c:278:9: warning: ignoring return value of ‘fread’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  278 |         fread(magic, 1, 4, fp);
+      |         ^~~~~~~~~~~~~~~~~~~~~~
+rld0.c:284:9: warning: ignoring return value of ‘fread’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  284 |         fread(&x, 4, 1, fp);
+      |         ^~~~~~~~~~~~~~~~~~~
+rld0.c:286:9: warning: ignoring return value of ‘fread’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  286 |         fread(a, 8, 3, fp);
+      |         ^~~~~~~~~~~~~~~~~~
+rld0.c:288:9: warning: ignoring return value of ‘fread’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  288 |         fread(e->mcnt + 1, 8, e->asize, fp);
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+gcc -c -g -Wall -Wc++-compat -O3 -fopenmp -DLIBSAIS_OPENMP  bre.c -o bre.o
+gcc -c -g -Wall -Wc++-compat -O3 -fopenmp -DLIBSAIS_OPENMP  rle.c -o rle.o
+gcc -c -g -Wall -Wc++-compat -O3 -fopenmp -DLIBSAIS_OPENMP  rope.c -o rope.o
+rope.c: In function ‘rope_restore_node’:
+rope.c:294:9: warning: ignoring return value of ‘fread’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  294 |         fread(&is_bottom, 1, 1, fp);
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~
+rope.c:295:9: warning: ignoring return value of ‘fread’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  295 |         fread(&n, 2, 1, fp);
+      |         ^~~~~~~~~~~~~~~~~~~
+rope.c:303:25: warning: ignoring return value of ‘fread’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  303 |                         fread(p[i].c, 8, 6, fp);
+      |                         ^~~~~~~~~~~~~~~~~~~~~~~
+rope.c:304:25: warning: ignoring return value of ‘fread’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  304 |                         fread(q, 2, 1, fp);
+      |                         ^~~~~~~~~~~~~~~~~~
+rope.c:305:25: warning: ignoring return value of ‘fread’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  305 |                         fread(q + 1, 1, *q, fp);
+      |                         ^~~~~~~~~~~~~~~~~~~~~~~
+rope.c: In function ‘rope_restore’:
+rope.c:324:9: warning: ignoring return value of ‘fread’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  324 |         fread(&r->max_nodes, 4, 1, fp);
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+rope.c:325:9: warning: ignoring return value of ‘fread’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  325 |         fread(&r->block_len, 4, 1, fp);
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+gcc -c -g -Wall -Wc++-compat -O3 -fopenmp -DLIBSAIS_OPENMP  mrope.c -o mrope.o
+mrope.c: In function ‘mr_restore’:
+mrope.c:167:9: warning: ignoring return value of ‘fread’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  167 |         fread(magic, 1, 4, fp);
+      |         ^~~~~~~~~~~~~~~~~~~~~~
+gcc -c -g -Wall -Wc++-compat -O3 -fopenmp -DLIBSAIS_OPENMP  dawg.c -o dawg.o
+gcc -c -g -Wall -Wc++-compat -O3 -fopenmp -DLIBSAIS_OPENMP  fm-index.c -o fm-index.o
+gcc -c -g -Wall -Wc++-compat -O3 -fopenmp -DLIBSAIS_OPENMP  ssa.c -o ssa.o
+ssa.c: In function ‘rb3_ssa_restore’:
+ssa.c:224:9: warning: ignoring return value of ‘fread’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  224 |         fread(magic, 1, 4, fp);
+      |         ^~~~~~~~~~~~~~~~~~~~~~
+ssa.c:227:9: warning: ignoring return value of ‘fread’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  227 |         fread(&y, 4, 1, fp); sa->ss = y;
+      |         ^~~~~~~~~~~~~~~~~~~
+ssa.c:228:9: warning: ignoring return value of ‘fread’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  228 |         fread(&y, 4, 1, fp); sa->ms = y;
+      |         ^~~~~~~~~~~~~~~~~~~
+ssa.c:229:9: warning: ignoring return value of ‘fread’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  229 |         fread(&sa->m, 8, 1, fp);
+      |         ^~~~~~~~~~~~~~~~~~~~~~~
+ssa.c:230:9: warning: ignoring return value of ‘fread’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  230 |         fread(&sa->n_ssa, 8, 1, fp);
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~
+ssa.c:237:9: warning: ignoring return value of ‘fread’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  237 |         fread(sa->r2i, 8, sa->m, fp);
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ssa.c:238:9: warning: ignoring return value of ‘fread’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  238 |         fread(sa->ssa, 8, sa->n_ssa, fp);
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+gcc -c -g -Wall -Wc++-compat -O3 -fopenmp -DLIBSAIS_OPENMP  sais-ss.c -o sais-ss.o
+gcc -c -g -Wall -Wc++-compat -O3 -fopenmp -DLIBSAIS_OPENMP  build.c -o build.o
+build.c: In function ‘main_build’:
+build.c:162:36: warning: ignoring return value of ‘freopen’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  162 |                 else if (c == 'o') freopen(o.arg, "wb", stdout);
+      |                                    ^~~~~~~~~~~~~~~~~~~~~~~~~~~~
+gcc -c -g -Wall -Wc++-compat -O3 -fopenmp -DLIBSAIS_OPENMP  search.c -o search.o
+gcc -c -g -Wall -Wc++-compat -O3 -fopenmp -DLIBSAIS_OPENMP  bwa-sw.c -o bwa-sw.o
+gcc -c -g -Wall -Wc++-compat -O3 -fopenmp -DLIBSAIS_OPENMP  main.c -o main.o
+main.c: In function ‘main_merge’:
+main.c:94:36: warning: ignoring return value of ‘freopen’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+   94 |                 else if (c == 'o') freopen(o.arg, "wb", stdout);
+      |                                    ^~~~~~~~~~~~~~~~~~~~~~~~~~~~
+main.c: In function ‘main_plain2fmd’:
+main.c:307:31: warning: ignoring return value of ‘freopen’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  307 |                 if (c == 'o') freopen(o.arg, "wb", stdout);
+      |                               ^~~~~~~~~~~~~~~~~~~~~~~~~~~~
+gcc -g -Wall -Wc++-compat -O3 -fopenmp libsais.o libsais64.o kalloc.o kthread.o misc.o io.o rld0.o bre.o rle.o rope.o mrope.o dawg.o fm-index.o ssa.o sais-ss.o build.o search.o bwa-sw.o main.o -o ropebwt3 -lpthread -lz -lm -fopenmp
