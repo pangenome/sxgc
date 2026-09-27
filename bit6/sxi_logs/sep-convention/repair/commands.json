@@ -1,0 +1,77 @@
+[
+  {
+    "command": "g++ -O3 -std=c++17 -Wall -Wextra bit6/rpfbwt_endpoints.cpp -o /tmp/sxi-repair-o4aGmN/rpfbwt_endpoints",
+    "result": "passed",
+    "summary": "Adapter compiled"
+  },
+  {
+    "command": "bash tools/build_slim_dump.sh /tmp/sxi-repair-o4aGmN/slim_dump",
+    "result": "passed",
+    "summary": "Slim compiled; build-slim.log"
+  },
+  {
+    "command": "python3 bit6/sxi_logs/sep-convention/repair/check_certificate.py /tmp/sxi-repair-o4aGmN/rpfbwt_endpoints",
+    "result": "passed",
+    "summary": "1022 binary frames; 252 certified exact, 770 rejected safely"
+  },
+  {
+    "command": "source /tmp/sxi-repair-o4aGmN/env.sh; python3 bit6/test_sxi_separator.py --work /tmp/sxi-repair-o4aGmN/final-gates --xsa /tmp/sxi-sep-8xat6poa/xsa-target/release/xsa --agc2flat /tmp/sxi-sep-8xat6poa/agc-target/release/agc2flat --reserved-agc /tmp/sxi-sep-8xat6poa/reserved.agc --log-dir bit6/sxi_logs/sep-convention/repair/final-gates",
+    "result": "failed",
+    "summary": "45 checks: 30 passed; 15 fail; four unsafe oracle fixture classes remain rejected"
+  },
+  {
+    "command": "python3 bit6/test_sxi_format.py --writer /tmp/sxi-repair-o4aGmN/sxi_write --xsa /tmp/sxi-sep-8xat6poa/xsa-target/release/xsa",
+    "result": "passed",
+    "summary": "format-regression.log"
+  },
+  {
+    "command": "source /tmp/sxi-repair-o4aGmN/env.sh; python3 bit6/test_sxi_build.py --xsa /tmp/sxi-sep-8xat6poa/xsa-target/release/xsa --log-dir bit6/sxi_logs/sep-convention/repair/cli-final",
+    "result": "passed",
+    "summary": "cli-regression-final.log; accepts precise earlier seam rejection"
+  },
+  {
+    "command": "bash tools/build_slim_dump.sh /tmp/sxi-repair-o4aGmN/test_lce /tmp/sxi-repair-o4aGmN/test_lce.cpp",
+    "result": "passed",
+    "summary": "Harness now retained as bit6/test_slim_cyclic.cpp"
+  },
+  {
+    "command": "/tmp/sxi-repair-o4aGmN/test_lce /tmp/sxi-sep-8xat6poa/gates-reviewed/xsa-build-mknrg3yg/parse /tmp/sxi-sep-8xat6poa/gates-reviewed/control.txt",
+    "result": "passed",
+    "summary": "382988 direct cyclic LCE comparisons"
+  },
+  {
+    "command": "/tmp/sxi-repair-o4aGmN/test_lce /tmp/sxi-repair-o4aGmN/lce-fixtures/periodic /tmp/sxi-repair-o4aGmN/lce-fixtures/periodic.txt",
+    "result": "passed",
+    "summary": "lce-periodic.log"
+  },
+  {
+    "command": "/tmp/sxi-repair-o4aGmN/test_lce /tmp/sxi-repair-o4aGmN/lce-fixtures/near-periodic /tmp/sxi-repair-o4aGmN/lce-fixtures/near-periodic.txt",
+    "result": "passed",
+    "summary": "lce-near-periodic.log"
+  },
+  {
+    "command": "/tmp/sxi-repair-o4aGmN/test_lce /tmp/sxi-repair-o4aGmN/lce-fixtures/no-separator /tmp/sxi-repair-o4aGmN/lce-fixtures/no-separator.txt",
+    "result": "passed",
+    "summary": "lce-no-separator.log"
+  },
+  {
+    "command": "source /tmp/sxi-repair-o4aGmN/env.sh; ulimit -v 9700000; /tmp/sxi-sep-8xat6poa/xsa-target/release/xsa build --agc /home/erikg/yeast/yeast235.agc -o /tmp/sxi-repair-o4aGmN/yeast235.sxi --threads 2 --scratch /tmp/sxi-repair-o4aGmN/yeast235 --log-dir /tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair --verbose",
+    "result": "failed",
+    "summary": "Full AGC producer completed; seam certificate rejected rank 6893 before normalized output."
+  },
+  {
+    "command": "source /tmp/sxi-repair-o4aGmN/env.sh; /tmp/sxi-sep-8xat6poa/xsa-target/release/xsa build --text /mnt/nvme3n1/erikg/sxgc-yeast/grl/yeast_pfp2.txt -o /mnt/nvme3n1/erikg/sxi-normalization-repair/yeast-certified.sxi --threads 4 --scratch /mnt/nvme3n1/erikg/sxi-normalization-repair --log-dir /tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair --verbose",
+    "result": "passed",
+    "summary": "Fresh certified yeast build; all five embedded members unchanged; chi 85404240."
+  },
+  {
+    "command": "python3 bit6/sxi_logs/sep-convention/repair/compare_members.py /mnt/nvme3n1/erikg/sxgc-laneV/yeast.sxi /mnt/nvme3n1/erikg/sxi-normalization-repair/yeast-certified.sxi bit6/sxi_logs/sep-convention/repair/yeast-members.json",
+    "result": "passed",
+    "summary": "All member hashes, sizes, counts and CRCs equal."
+  },
+  {
+    "command": "git diff --check; git diff --cached --name-only",
+    "result": "passed",
+    "summary": "No whitespace errors or staged files."
+  }
+]

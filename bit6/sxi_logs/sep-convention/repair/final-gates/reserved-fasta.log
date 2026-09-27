@@ -1,0 +1,3 @@
+xsa build: work=/tmp/sxi-repair-o4aGmN/final-gates/xsa-build-r1siukcg log=/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair/final-gates/reserved-fasta-xsa-build-r1siukcg.jsonl
+xsa build: fasta record 1 sequence: corpus contract: reserved separator 0x1E must never appear in sequence content; no final SXI published
+xsa: error: build: pipeline failed: exit status: 1

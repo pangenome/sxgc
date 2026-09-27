@@ -1,0 +1,8 @@
+SLIM_PHASE dict-read wall=0.000 cumulative=589679.610 peak_rss_kib=2048
+SLIM_PHASE dict-boundaries wall=0.000 cumulative=589679.610 peak_rss_kib=2048
+SLIM_STRING_ENDS count=1 bytes=8 from_parse_dict=1 cyclic=1
+SLIM_PHASE parse+boundaries wall=0.000 cumulative=589679.610 peak_rss_kib=2048
+SLIM_PHASE parse-fingerprints wall=0.000 cumulative=589679.610 peak_rss_kib=2048
+SLIM_PHASE dict-fingerprints wall=0.000 cumulative=589679.610 peak_rss_kib=2048
+SLIM_STRUCT n=2010 P=11 D=444 phrases=3 parse_bytes=48 bd_bytes=190 bp_bytes=214 dict_resident=0 dict_cache_per_thread=262144 no_SA_ISA_LCP_RMQ=1 no_M_b_bwt_w_wt=1
+PASS cyclic_lce checked=382400 n=2000

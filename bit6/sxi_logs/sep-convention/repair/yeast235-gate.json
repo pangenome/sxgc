@@ -1,0 +1,15 @@
+{
+  "gate": "c",
+  "status": "failed",
+  "materialized_bytes": 3336986759,
+  "records": 9901,
+  "raw_n": 3336986769,
+  "raw_r": 100905044,
+  "terminal": "0x1e",
+  "terminal_predecessors_before_zero": 6893,
+  "failed_stage": "endpoints",
+  "normalized_ri4_exists": false,
+  "normalized_heads_exist": false,
+  "published": false,
+  "control_gate": "not run: no normalized frame to gate"
+}

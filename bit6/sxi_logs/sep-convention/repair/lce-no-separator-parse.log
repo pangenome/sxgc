@@ -1,0 +1,55 @@
+[2026-09-27 15:41:29.658] [info] Current Configuration:
+; PFP++
+
+; Text file to parse.
+text="/tmp/sxi-repair-o4aGmN/lce-fixtures/no-separator.txt"
+
+; Output prefix.
+out-prefix="/tmp/sxi-repair-o4aGmN/lce-fixtures/no-separator"
+
+; Sliding window size.
+window-size=10
+
+; Modulo used during parsing.
+modulo=100
+
+; Number of threads.
+threads=2
+
+; Temporary files directory.
+tmp-dir="/tmp/sxi-repair-o4aGmN/lce-fixtures"
+
+; Also output compressed the dictionary.
+compress-dictionary=false
+
+; Use reference parse to avoid re-parsing.
+use-vcf-acceleration=false
+
+; Print out csv containing stats.
+print-statistics=false
+
+; Output count for each dictionary phrase.
+output-occurrences=false
+
+; Output sai array.
+output-sai=false
+
+; Output last array.
+output-last=false
+
+; Convert all non ACGT characters from a VCF or FASTA file to N.
+acgt-only=false
+
+; Verbose output.
+verbose=false
+
+; Version number.
+version=false
+
+[2026-09-27 15:41:29.658] [info] Parsing /tmp/sxi-repair-o4aGmN/lce-fixtures/no-separator.txt
+[2026-09-27 15:41:29.658] [info] Main parser: Replacing hash values with ranks.
+[2026-09-27 15:41:29.658] [info] Main parser: writing dictionary on disk NOT COMPRESSED
+[2026-09-27 15:41:29.658] [info] No properties requested.
+[2026-09-27 15:41:29.658] [info] Main parser: closed
+[2026-09-27 15:41:29.658] [info] Parser Text -	Parse size: 9	Dic Size: 3 Dic Total Length: 431
+[Disk Write (bytes): 543]

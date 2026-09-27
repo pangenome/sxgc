@@ -1,0 +1,7 @@
+Loaded archive with 1 samples
+Sample names: ["tiny"]
+[1/1] sample tiny: streamed 20001 bytes, 1 contigs
+TOTAL 20001
+revlines collection: 20001 bytes, 1 strings
+text: /tmp/sxi-repair-o4aGmN/full-gates/xsa-build-kakbh8iz/collection.txt
+names: /tmp/sxi-repair-o4aGmN/full-gates/xsa-build-kakbh8iz/collection.txt.names.tsv

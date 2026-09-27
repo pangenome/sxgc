@@ -1521,3 +1521,15 @@ ordering to be adjudicated by k10's real byte gates.
 ## validate -> publish. First run (chi-only) fail-closed on the multi-string interlock
 ## as designed; control-build endpoints then gated the rerun. Multi-string interlock
 ## semantics: endpoint byte gates required; oracle-free equivalence = --text control.
+
+## YEAST RE-ADJUDICATED CLEAN (repair lane): chi 85,404,240 and ALL five embedded
+## members unchanged through the certified pad-removal path - the published
+## yeast.sxi is contract-valid as-is. Slim cyclic-LCE fix landed (1.3M comparisons).
+## Multi-string seam repair remains: the local scheme has a proven Theta(n) wall on
+## adversarial (constant-run) classes; DESIGN DECISION: class-based seam repair
+## (reorder seam-equivalence classes via cyclic-LCE sorting, r-space when classes
+## are small - yeast235 seam measured 6,893 rows = 0.007% of R) + LAWFUL fail-loud
+## refusal for pathological corpora (the law is preserved by refusing, not by
+## walking). Derivation: bit6/sxi_logs/sep-convention/repair/DERIVATION.md.
+## Also open: sweep emits n+1 witness for cyclic 0x1E input (legacy sentinel
+## convention, xsa/src/main.rs ~1012).

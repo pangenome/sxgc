@@ -143,12 +143,13 @@ struct SlimLCE {
     sdsl::sd_vector<>::select_1_type ds,ps;
     sdsl::sd_vector<>::rank_1_type pr;
     uint64_t n=0,w=10;
-    std::vector<uint64_t> stringEnds; // newline positions in virtual PFP text, O(k)
+    bool cyclic;
+    std::vector<uint64_t> stringEnds; // legacy newline ends, or one cyclic end
     std::unique_ptr<SlimFingerprint<SlimDict>> dh;
     std::unique_ptr<SlimFingerprint<std::vector<uint32_t>>> ph;
     uint64_t dstart(uint64_t id)const {return ds(id);}
     uint64_t length(uint64_t id)const {return ds(id+1)-ds(id)-1;}
-    SlimLCE(const std::string& prefix,uint64_t r,uint64_t t1,uint64_t t2,bool stream,bool fault=false):d(prefix+".dict",10,stream) {
+    SlimLCE(const std::string& prefix,uint64_t r,uint64_t t1,uint64_t t2,bool stream,bool fault=false,bool cyclicText=false):d(prefix+".dict",10,stream),cyclic(cyclicText) {
         double last=started; slim_phase("dict-read",last);
         // Recover collection terminators during the existing dictionary scan.
         // Only phrases containing newline need metadata; phrase overlaps are
@@ -157,7 +158,7 @@ struct SlimLCE {
         uint64_t count=1,phraseStart=0;uint32_t phrase=1;
         for(uint64_t i=1;i<d.size();++i) {
             uint8_t c=d[i-1];
-            if(c==0x0a)phraseEnds[phrase].push_back(i-1-phraseStart);
+            if(!cyclic && c==0x0a)phraseEnds[phrase].push_back(i-1-phraseStart);
             if(c==1 || i==d.size()-1)++count;
             if(c==1){++phrase;phraseStart=i;}
         }
@@ -179,7 +180,10 @@ struct SlimLCE {
                 if(off<take)stringEnds.push_back(n+off);
             n+=take;
         }
-        fprintf(stderr,"SLIM_STRING_ENDS count=%zu bytes=%zu from_parse_dict=1\n",stringEnds.size(),stringEnds.capacity()*8);
+        // 0x1e records form ONE cyclic byte string. Record separators are
+        // ordinary compared bytes; they neither end nor truncate an LCE.
+        if(cyclic)stringEnds.push_back(n);
+        fprintf(stderr,"SLIM_STRING_ENDS count=%zu bytes=%zu from_parse_dict=1 cyclic=%d\n",stringEnds.size(),stringEnds.capacity()*8,int(cyclic));
         sdsl::sd_vector_builder pb(n,p.size()-1);pb.set(0);uint64_t pos=0;
         for(uint64_t j=0;j+2<p.size();++j){pos+=length(p[j])-w;pb.set(pos);}
         // compute_b_p marks every phrase start: 0 plus P-1 increments.
@@ -200,6 +204,21 @@ struct SlimLCE {
     // Collection LCP excludes the newline sentinel itself, unlike raw LCE
     // on the concatenated PFP text. Sparse ends are derived without a text scan.
     uint64_t collection_lce(uint64_t i,uint64_t j)const {
+        if(cyclic) {
+            uint64_t size=n-w,answer=0;
+            if(i>=size||j>=size)slim_fail("cyclic LCE bounds");
+            if(i==j){seedQueries.fetch_add(1,std::memory_order_relaxed);return size;}
+            // At most two seam crossings in size symbols. Each raw PFP LCE
+            // is capped before its dollar padding; no raw text is read.
+            while(answer<size) {
+                uint64_t cap=std::min({size-answer,size-i,size-j});
+                uint64_t got=std::min((*this)(i,j),cap);
+                answer+=got;
+                if(got<cap)break;
+                i=(i+got)%size;j=(j+got)%size;
+            }
+            return answer;
+        }
         auto remaining=[&](uint64_t pos) {
             pos+=w;
             auto end=std::lower_bound(stringEnds.begin(),stringEnds.end(),pos);
@@ -259,7 +278,12 @@ static int slim_dump(Ri4& ri,const std::string& prefix,const std::string& out,
     if(!profileOnly && (!ri.haveSa||ri.sampleAllInf()))slim_fail("usable ri4 samples required");
     double last=tnow();
     SlimHeads heads(headSaPath.empty()?ri.sxiPath:headSaPath,ri.R,headSaPath.empty()?ri.headOffset:0);
-    SlimLCE lce(prefix,ri.R,t1,t2,stream,fault);
+    // Auto-detect using the existing RLE alphabet, with no input text scan.
+    // New collections use reserved 0x1e; texts without newline are cyclic
+    // too. Preserve legacy newline collection behavior otherwise.
+    bool hasRS=false,hasNL=false;
+    for(uint64_t run=0;run<ri.R;++run){hasRS|=ri.a[run]==0x1e;hasNL|=ri.a[run]==0x0a;}
+    SlimLCE lce(prefix,ri.R,t1,t2,stream,fault,hasRS||!hasNL);
     if(lce.n!=ri.n+lce.w)slim_fail("parse/ri4 length mismatch");
     if(lce.stringEnds.size()!=ri.k)slim_fail("parse/ri4 string-end count mismatch");
     slim_phase("lce-build-total",last);

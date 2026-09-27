@@ -1,0 +1,8 @@
+xsa build: work=/tmp/sxi-repair-o4aGmN/yeast235/xsa-build-kfclgrq6 log=/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair/yeast235-xsa-build-kfclgrq6.jsonl
+prepare-agc: /tmp/sxi-sep-8xat6poa/agc-target/release/agc2flat /home/erikg/yeast/yeast235.agc --revlines --upper --sep 1e -o /tmp/sxi-repair-o4aGmN/yeast235/xsa-build-kfclgrq6/collection.txt
+parse: /home/erikg/pfp/build/pfp++ -t /tmp/sxi-repair-o4aGmN/yeast235/xsa-build-kfclgrq6/collection.txt -o /tmp/sxi-repair-o4aGmN/yeast235/xsa-build-kfclgrq6/parse -w 10 -p 100 -j 2 --tmp-dir /tmp/sxi-repair-o4aGmN/yeast235/xsa-build-kfclgrq6
+parse-l2: /home/erikg/pfp/build/pfp++ -i /tmp/sxi-repair-o4aGmN/yeast235/xsa-build-kfclgrq6/parse.parse -w 5 -p 11 -j 2 --tmp-dir /tmp/sxi-repair-o4aGmN/yeast235/xsa-build-kfclgrq6
+rpfbwt: /tmp/rpfbwt-sxgc/build-sxgc/rpfbwt --l1-prefix /tmp/sxi-repair-o4aGmN/yeast235/xsa-build-kfclgrq6/parse --w1 10 --w2 5 --threads 2 --chunks 50 --tmp-dir /tmp/sxi-repair-o4aGmN/yeast235/xsa-build-kfclgrq6
+endpoints: /tmp/sxi-repair-o4aGmN/rpfbwt_endpoints /tmp/sxi-repair-o4aGmN/yeast235/xsa-build-kfclgrq6/parse /tmp/sxi-repair-o4aGmN/yeast235/xsa-build-kfclgrq6/fresh.ri4 /tmp/sxi-repair-o4aGmN/yeast235/xsa-build-kfclgrq6/fresh.head_sa 1e
+xsa build: endpoints failed (1); see /tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair/yeast235-xsa-build-kfclgrq6.endpoints.log; no final SXI published
+xsa: error: build: pipeline failed: exit status: 1

@@ -1,0 +1,3 @@
+xsa build: work=/tmp/sxi-repair-o4aGmN/final-gates/xsa-build-7_fjm3dz log=/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair/final-gates/reserved-agc-xsa-build-7_fjm3dz.jsonl
+xsa build: prepare-agc failed (1); see /tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair/final-gates/reserved-agc-xsa-build-7_fjm3dz.prepare-agc.log; no final SXI published
+xsa: error: build: pipeline failed: exit status: 1

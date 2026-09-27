@@ -1,0 +1,1 @@
+FATAL: cyclic seam repair required: terminal predecessors precede SA=0; padding removal is not cyclic-T order

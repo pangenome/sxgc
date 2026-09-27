@@ -1,0 +1,36 @@
+In file included from /tmp/sxgc-laneV/bit6/chi_rspace_dump.cpp:52,
+                 from /tmp/sxi-repair-o4aGmN/test_lce.cpp:2:
+/home/erikg/TeraTools/src/thirdparty/include/sdsl/int_vector.hpp:855:45: warning: ‘template<class _Category, class _Tp, class _Distance, class _Pointer, class _Reference> struct std::iterator’ is deprecated [-Wdeprecated-declarations]
+  855 | class int_vector_iterator_base: public std::iterator<std::random_access_iterator_tag, typename t_int_vector::value_type, typename t_int_vector::difference_type>
+      |                                             ^~~~~~~~
+In file included from /usr/include/c++/13/bits/stl_algobase.h:65,
+                 from /usr/include/c++/13/algorithm:60,
+                 from /tmp/sxgc-laneV/bit6/sxi_format.hpp:3,
+                 from /tmp/sxgc-laneV/bit6/chi_rspace_dump.cpp:33:
+/usr/include/c++/13/bits/stl_iterator_base_types.h:127:34: note: declared here
+  127 |     struct _GLIBCXX17_DEPRECATED iterator
+      |                                  ^~~~~~~~
+In file included from /home/erikg/TeraTools/src/thirdparty/include/sdsl/int_vector_buffer.hpp:25,
+                 from /home/erikg/TeraTools/src/thirdparty/include/sdsl/int_vector.hpp:1599:
+/home/erikg/TeraTools/src/thirdparty/include/sdsl/iterators.hpp:33:49: warning: ‘template<class _Category, class _Tp, class _Distance, class _Pointer, class _Reference> struct std::iterator’ is deprecated [-Wdeprecated-declarations]
+   33 | class random_access_const_iterator: public std::iterator<std::random_access_iterator_tag, typename t_rac::value_type, typename t_rac::difference_type>
+      |                                                 ^~~~~~~~
+/usr/include/c++/13/bits/stl_iterator_base_types.h:127:34: note: declared here
+  127 |     struct _GLIBCXX17_DEPRECATED iterator
+      |                                  ^~~~~~~~
+/home/erikg/TeraTools/src/thirdparty/include/sdsl/int_vector_buffer.hpp:489:37: warning: ‘template<class _Category, class _Tp, class _Distance, class _Pointer, class _Reference> struct std::iterator’ is deprecated [-Wdeprecated-declarations]
+  489 |         class iterator: public std::iterator<std::random_access_iterator_tag, value_type, difference_type, value_type*, reference>
+      |                                     ^~~~~~~~
+/usr/include/c++/13/bits/stl_iterator_base_types.h:127:34: note: declared here
+  127 |     struct _GLIBCXX17_DEPRECATED iterator
+      |                                  ^~~~~~~~
+In file included from /home/erikg/TeraTools/src/thirdparty/include/sdsl/rmq_succinct_sct.hpp:27,
+                 from /home/erikg/TeraTools/src/thirdparty/include/sdsl/rmq_support.hpp:47,
+                 from bit6/pfp_ds_vendor/pfp/pfp.hpp:28,
+                 from /tmp/sxgc-laneV/bit6/chi_rspace_dump.cpp:63:
+/home/erikg/TeraTools/src/thirdparty/include/sdsl/suffix_tree_helper.hpp:17:51: warning: ‘template<class _Category, class _Tp, class _Distance, class _Pointer, class _Reference> struct std::iterator’ is deprecated [-Wdeprecated-declarations]
+   17 | class cst_node_child_proxy_iterator : public std::iterator<std::forward_iterator_tag, typename t_cst::node_type>
+      |                                                   ^~~~~~~~
+/usr/include/c++/13/bits/stl_iterator_base_types.h:127:34: note: declared here
+  127 |     struct _GLIBCXX17_DEPRECATED iterator
+      |                                  ^~~~~~~~

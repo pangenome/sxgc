@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "/tmp/sxgc-laneV/bit6/test_sxi_build.py", line 65, in <module>
+    assert proc.returncode != 0 and 'collection ordering is unvalidated' in proc.stderr, proc.stderr
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: xsa build: work=/tmp/sxi-failure-test-9cxkavse/xsa-build-0dpmhjef log=/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair/cli/rejected-xsa-build-0dpmhjef.jsonl
+xsa build: endpoints failed (1); see /tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair/cli/rejected-xsa-build-0dpmhjef.endpoints.log; no final SXI published
+xsa: error: build: pipeline failed: exit status: 1
+

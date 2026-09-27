@@ -1,0 +1,10 @@
+{
+  "no_staged_files": true,
+  "staged_files": [],
+  "max_recorded_process_rss_kib": 8820756,
+  "max_recorded_process_rss_log": "yeast235-xsa-build-kfclgrq6.rpfbwt.time",
+  "peak_observed_process_tree_rss_kib": 17585352,
+  "peak_observed_process_tree_bytes": 18007400448,
+  "protected_work_directories_accessed": false,
+  "commits_created": 0
+}

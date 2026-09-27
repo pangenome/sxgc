@@ -1,0 +1,191 @@
+[2026-09-27 15:49:04.567] [info] Using 8 bytes for computing SA of the dictionary
+[2026-09-27 15:50:25.064] [info] Using 4 bytes for storing SA of the dictionary
+[2026-09-27 15:50:27.348] [info] Elapsed time (s): 82.781170669
+[2026-09-27 15:50:27.699] [info] Using 3 bytes for DA of the dictionary
+[2026-09-27 15:50:46.408] [info] Elapsed time (s): 18.709294144
+[2026-09-27 15:50:46.409] [info] Using 4 bytes for ISA of the dictionary
+[2026-09-27 15:51:03.010] [info] Elapsed time (s): 16.601277088
+[2026-09-27 15:51:03.010] [info] Using 2 bytes for LCP of the dictionary
+[2026-09-27 15:51:24.507] [info] Elapsed time (s): 21.497545623
+[2026-09-27 15:51:24.507] [info] Using 3 bytes for colex id and inverse colex id array of the dictionary
+[2026-09-27 15:51:28.905] [info] Elapsed time (s): 4.39732265
+[2026-09-27 15:51:29.156] [info] Using 8 bytes for computing SA of the dictionary
+[2026-09-27 15:51:34.127] [info] Using 4 bytes for storing SA of the dictionary
+[2026-09-27 15:51:34.242] [info] Elapsed time (s): 5.085940235
+[2026-09-27 15:51:34.257] [info] Using 3 bytes for DA of the dictionary
+[2026-09-27 15:51:34.560] [info] Elapsed time (s): 0.302949223
+[2026-09-27 15:51:34.560] [info] Using 4 bytes for ISA of the dictionary
+[2026-09-27 15:51:35.242] [info] Elapsed time (s): 0.682466067
+[2026-09-27 15:51:35.243] [info] Using 2 bytes for LCP of the dictionary
+[2026-09-27 15:51:36.511] [info] Elapsed time (s): 1.268422514
+[2026-09-27 15:51:36.511] [info] Computing RMQ over LCP of dictionary
+[2026-09-27 15:51:36.978] [info] Elapsed time (s): 0.467483389
+[2026-09-27 15:51:36.979] [info] Using 3 bytes for colex DA of the dictionary
+[2026-09-27 15:51:37.015] [info] Using 3 bytes for colex id and inverse colex id array of the dictionary
+[2026-09-27 15:51:39.840] [info] Elapsed time (s): 2.861371073
+[2026-09-27 15:51:39.843] [info] Using 8 bytes for computing SA of the parsing
+[2026-09-27 15:51:40.155] [info] Using 3 bytes for storing SA of the parsing
+[2026-09-27 15:51:40.163] [info] Elapsed time (s): 0.319837787
+[2026-09-27 15:51:40.488] [info] Computing b_p
+[2026-09-27 15:51:40.887] [info] Computing b_bwt and M of the parsing
+[2026-09-27 15:51:44.639] [info] Computing inverted list of BWT(P)
+[2026-09-27 15:51:44.661] [info] Using 3 bytes for storing the inverted list of the BWT of the parse
+[2026-09-27 15:51:44.872] [info] Precomputing d lengths
+[2026-09-27 15:51:45.185] [info] Precomputing d lengths
+[2026-09-27 15:51:45.918] [info] Creating v table
+[2026-09-27 15:51:49.877] [info] Creating E arrays
+[2026-09-27 15:51:50.811] [info] Computing chunks for parallel execution. Total input size: 3336986769. Requested chunks: 50
+[2026-09-27 15:55:14.581] [info] BWT ranges divided in 50 chunks.
+[2026-09-27 15:55:21.673] [info] Chunk 2/50 completed
+[2026-09-27 15:55:23.483] [info] Chunk 1/50 completed
+[2026-09-27 15:55:28.857] [info] Chunk 3/50 completed
+[2026-09-27 15:55:30.942] [info] Chunk 4/50 completed
+[2026-09-27 15:55:36.301] [info] Chunk 5/50 completed
+[2026-09-27 15:55:38.809] [info] Chunk 6/50 completed
+[2026-09-27 15:55:43.577] [info] Chunk 7/50 completed
+[2026-09-27 15:55:46.499] [info] Chunk 8/50 completed
+[2026-09-27 15:55:51.054] [info] Chunk 9/50 completed
+[2026-09-27 15:55:54.374] [info] Chunk 10/50 completed
+[2026-09-27 15:55:58.817] [info] Chunk 11/50 completed
+[2026-09-27 15:56:02.284] [info] Chunk 12/50 completed
+[2026-09-27 15:56:07.000] [info] Chunk 13/50 completed
+[2026-09-27 15:56:10.422] [info] Chunk 14/50 completed
+[2026-09-27 15:56:14.702] [info] Chunk 15/50 completed
+[2026-09-27 15:56:18.395] [info] Chunk 16/50 completed
+[2026-09-27 15:56:22.336] [info] Chunk 17/50 completed
+[2026-09-27 15:56:26.373] [info] Chunk 18/50 completed
+[2026-09-27 15:56:30.004] [info] Chunk 19/50 completed
+[2026-09-27 15:56:34.323] [info] Chunk 20/50 completed
+[2026-09-27 15:56:37.712] [info] Chunk 21/50 completed
+[2026-09-27 15:56:42.374] [info] Chunk 22/50 completed
+[2026-09-27 15:56:44.827] [info] Chunk 23/50 completed
+[2026-09-27 15:56:49.542] [info] Chunk 24/50 completed
+[2026-09-27 15:56:51.495] [info] Chunk 25/50 completed
+[2026-09-27 15:56:56.056] [info] Chunk 26/50 completed
+[2026-09-27 15:56:57.814] [info] Chunk 27/50 completed
+[2026-09-27 15:57:02.425] [info] Chunk 28/50 completed
+[2026-09-27 15:57:04.132] [info] Chunk 29/50 completed
+[2026-09-27 15:57:08.772] [info] Chunk 30/50 completed
+[2026-09-27 15:57:10.572] [info] Chunk 31/50 completed
+[2026-09-27 15:57:15.005] [info] Chunk 32/50 completed
+[2026-09-27 15:57:16.856] [info] Chunk 33/50 completed
+[2026-09-27 15:57:21.223] [info] Chunk 34/50 completed
+[2026-09-27 15:57:24.006] [info] Chunk 35/50 completed
+[2026-09-27 15:57:27.369] [info] Chunk 36/50 completed
+[2026-09-27 15:57:30.152] [info] Chunk 37/50 completed
+[2026-09-27 15:57:33.526] [info] Chunk 38/50 completed
+[2026-09-27 15:57:36.566] [info] Chunk 39/50 completed
+[2026-09-27 15:57:39.862] [info] Chunk 40/50 completed
+[2026-09-27 15:57:42.661] [info] Chunk 41/50 completed
+[2026-09-27 15:57:46.061] [info] Chunk 42/50 completed
+[2026-09-27 15:57:48.878] [info] Chunk 43/50 completed
+[2026-09-27 15:57:52.203] [info] Chunk 44/50 completed
+[2026-09-27 15:57:55.143] [info] Chunk 45/50 completed
+[2026-09-27 15:57:58.450] [info] Chunk 46/50 completed
+[2026-09-27 15:58:01.320] [info] Chunk 47/50 completed
+[2026-09-27 15:58:04.767] [info] Chunk 48/50 completed
+[2026-09-27 15:58:07.665] [info] Chunk 49/50 completed
+[2026-09-27 15:58:11.424] [info] Chunk 50/50 completed
+[2026-09-27 15:58:15.062] [info] Completed rle string merge
+[2026-09-27 15:58:39.946] [info] Processed: 23343828 Skipped: 37101048
+[2026-09-27 15:58:39.946] [info] Chunk 2/50 completed
+[2026-09-27 15:58:41.812] [info] Processed: 25504537 Skipped: 34776296
+[2026-09-27 15:58:41.813] [info] Chunk 1/50 completed
+[2026-09-27 15:59:02.106] [info] Processed: 23586512 Skipped: 37005244
+[2026-09-27 15:59:02.106] [info] Chunk 3/50 completed
+[2026-09-27 15:59:03.626] [info] Processed: 23237540 Skipped: 37274693
+[2026-09-27 15:59:03.626] [info] Chunk 4/50 completed
+[2026-09-27 15:59:25.448] [info] Processed: 23229135 Skipped: 37144506
+[2026-09-27 15:59:25.448] [info] Chunk 5/50 completed
+[2026-09-27 15:59:27.196] [info] Processed: 23377368 Skipped: 36854306
+[2026-09-27 15:59:27.196] [info] Chunk 6/50 completed
+[2026-09-27 15:59:48.757] [info] Processed: 23059027 Skipped: 37300185
+[2026-09-27 15:59:48.757] [info] Chunk 7/50 completed
+[2026-09-27 15:59:51.664] [info] Processed: 22884155 Skipped: 37601340
+[2026-09-27 15:59:51.664] [info] Chunk 8/50 completed
+[2026-09-27 16:00:13.456] [info] Processed: 22906430 Skipped: 37646765
+[2026-09-27 16:00:13.456] [info] Chunk 9/50 completed
+[2026-09-27 16:00:15.750] [info] Processed: 23211357 Skipped: 37226594
+[2026-09-27 16:00:15.750] [info] Chunk 10/50 completed
+[2026-09-27 16:00:37.617] [info] Processed: 23210086 Skipped: 37300699
+[2026-09-27 16:00:37.617] [info] Chunk 11/50 completed
+[2026-09-27 16:00:39.053] [info] Processed: 23008400 Skipped: 37494469
+[2026-09-27 16:00:39.053] [info] Chunk 12/50 completed
+[2026-09-27 16:01:02.995] [info] Processed: 23023465 Skipped: 37096864
+[2026-09-27 16:01:02.995] [info] Chunk 13/50 completed
+[2026-09-27 16:01:03.923] [info] Processed: 23342533 Skipped: 36965372
+[2026-09-27 16:01:03.923] [info] Chunk 14/50 completed
+[2026-09-27 16:01:27.646] [info] Processed: 23292634 Skipped: 37080798
+[2026-09-27 16:01:27.646] [info] Chunk 15/50 completed
+[2026-09-27 16:01:29.402] [info] Processed: 23634404 Skipped: 36791517
+[2026-09-27 16:01:29.402] [info] Chunk 16/50 completed
+[2026-09-27 16:01:52.797] [info] Processed: 23583030 Skipped: 36469181
+[2026-09-27 16:01:52.798] [info] Chunk 17/50 completed
+[2026-09-27 16:01:55.183] [info] Processed: 23572751 Skipped: 36790847
+[2026-09-27 16:01:55.183] [info] Chunk 18/50 completed
+[2026-09-27 16:02:18.657] [info] Processed: 23653703 Skipped: 36449372
+[2026-09-27 16:02:18.657] [info] Chunk 19/50 completed
+[2026-09-27 16:02:20.068] [info] Processed: 23455423 Skipped: 36987750
+[2026-09-27 16:02:20.068] [info] Chunk 20/50 completed
+[2026-09-27 16:02:45.043] [info] Processed: 23485799 Skipped: 36889472
+[2026-09-27 16:02:45.043] [info] Chunk 21/50 completed
+[2026-09-27 16:02:45.703] [info] Processed: 23886195 Skipped: 36608373
+[2026-09-27 16:02:45.703] [info] Chunk 22/50 completed
+[2026-09-27 16:03:11.556] [info] Processed: 23740864 Skipped: 36719508
+[2026-09-27 16:03:11.556] [info] Chunk 23/50 completed
+[2026-09-27 16:03:12.345] [info] Processed: 23646591 Skipped: 36803292
+[2026-09-27 16:03:12.345] [info] Chunk 24/50 completed
+[2026-09-27 16:03:39.627] [info] Processed: 23960788 Skipped: 36574822
+[2026-09-27 16:03:39.627] [info] Chunk 25/50 completed
+[2026-09-27 16:03:39.873] [info] Processed: 22931337 Skipped: 37556435
+[2026-09-27 16:03:39.873] [info] Chunk 26/50 completed
+[2026-09-27 16:04:05.001] [info] Processed: 23483122 Skipped: 36959830
+[2026-09-27 16:04:05.001] [info] Chunk 27/50 completed
+[2026-09-27 16:04:05.573] [info] Processed: 23415908 Skipped: 36963755
+[2026-09-27 16:04:05.573] [info] Chunk 28/50 completed
+[2026-09-27 16:04:30.585] [info] Processed: 22747583 Skipped: 37527798
+[2026-09-27 16:04:30.585] [info] Chunk 29/50 completed
+[2026-09-27 16:04:31.577] [info] Processed: 23412788 Skipped: 36981962
+[2026-09-27 16:04:31.577] [info] Chunk 30/50 completed
+[2026-09-27 16:04:54.580] [info] Processed: 24047424 Skipped: 36325408
+[2026-09-27 16:04:54.581] [info] Chunk 31/50 completed
+[2026-09-27 16:04:54.648] [info] Processed: 23451763 Skipped: 37129347
+[2026-09-27 16:04:54.649] [info] Chunk 32/50 completed
+[2026-09-27 16:05:17.595] [info] Processed: 23865183 Skipped: 36680057
+[2026-09-27 16:05:17.595] [info] Chunk 34/50 completed
+[2026-09-27 16:05:19.244] [info] Processed: 23416611 Skipped: 37033013
+[2026-09-27 16:05:19.244] [info] Chunk 33/50 completed
+[2026-09-27 16:05:40.302] [info] Processed: 23110828 Skipped: 35790953
+[2026-09-27 16:05:40.302] [info] Chunk 35/50 completed
+[2026-09-27 16:05:41.395] [info] Processed: 23036391 Skipped: 37396073
+[2026-09-27 16:05:41.395] [info] Chunk 36/50 completed
+[2026-09-27 16:06:03.374] [info] Processed: 22937690 Skipped: 37549071
+[2026-09-27 16:06:03.374] [info] Chunk 37/50 completed
+[2026-09-27 16:06:03.722] [info] Processed: 23170197 Skipped: 37334776
+[2026-09-27 16:06:03.722] [info] Chunk 38/50 completed
+[2026-09-27 16:06:26.671] [info] Processed: 22886383 Skipped: 37279224
+[2026-09-27 16:06:26.671] [info] Chunk 39/50 completed
+[2026-09-27 16:06:26.962] [info] Processed: 23170174 Skipped: 37197208
+[2026-09-27 16:06:26.962] [info] Chunk 40/50 completed
+[2026-09-27 16:06:49.798] [info] Processed: 22950209 Skipped: 37542183
+[2026-09-27 16:06:49.798] [info] Chunk 42/50 completed
+[2026-09-27 16:06:49.819] [info] Processed: 22965928 Skipped: 37475370
+[2026-09-27 16:06:49.819] [info] Chunk 41/50 completed
+[2026-09-27 16:07:17.357] [info] Processed: 23313659 Skipped: 37150450
+[2026-09-27 16:07:17.358] [info] Chunk 44/50 completed
+[2026-09-27 16:07:18.034] [info] Processed: 23069412 Skipped: 37276718
+[2026-09-27 16:07:18.034] [info] Chunk 43/50 completed
+[2026-09-27 16:07:46.152] [info] Processed: 23740728 Skipped: 36794573
+[2026-09-27 16:07:46.152] [info] Chunk 45/50 completed
+[2026-09-27 16:07:47.186] [info] Processed: 23551499 Skipped: 36921888
+[2026-09-27 16:07:47.186] [info] Chunk 46/50 completed
+[2026-09-27 16:08:16.335] [info] Processed: 23580203 Skipped: 36924698
+[2026-09-27 16:08:16.335] [info] Chunk 48/50 completed
+[2026-09-27 16:08:16.990] [info] Processed: 23677541 Skipped: 36871455
+[2026-09-27 16:08:16.990] [info] Chunk 47/50 completed
+[2026-09-27 16:08:42.977] [info] Processed: 24142977 Skipped: 36445453
+[2026-09-27 16:08:42.977] [info] Chunk 49/50 completed
+[2026-09-27 16:08:45.754] [info] Processed: 26319016 Skipped: 34217276
+[2026-09-27 16:08:45.754] [info] Chunk 50/50 completed
+[2026-09-27 16:08:45.754] [info] Writing out sa values at run heads
+[2026-09-27 16:08:48.390] [info] Done

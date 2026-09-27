@@ -1,0 +1,2 @@
+CYCLIC_SEAM_BLOCKED terminal=0x1e predecessors_before_zero=6893
+FATAL: cyclic seam repair required: terminal predecessors precede SA=0; padding removal is not cyclic-T order

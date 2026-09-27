@@ -1,0 +1,9 @@
+{
+  "n": 20001,
+  "chi_count": 13560,
+  "out_of_range": [
+    20002
+  ],
+  "minimum": 10,
+  "maximum": 20002
+}

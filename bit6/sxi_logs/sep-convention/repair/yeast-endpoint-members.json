@@ -1,0 +1,23 @@
+[
+  {
+    "member": 1,
+    "bytes": 504526453,
+    "equal": true,
+    "previous_sha256": "2eef1580272ccb6eb8129249b138dec4dd796a339bd5f6329f52945ba42b58e4",
+    "current_sha256": "2eef1580272ccb6eb8129249b138dec4dd796a339bd5f6329f52945ba42b58e4"
+  },
+  {
+    "member": 2,
+    "bytes": 403619537,
+    "equal": true,
+    "previous_sha256": "9a9291eec019d993a46a34c2ee9440168b5a246bea7a5c3b4e6992dcf3610ba6",
+    "current_sha256": "9a9291eec019d993a46a34c2ee9440168b5a246bea7a5c3b4e6992dcf3610ba6"
+  },
+  {
+    "member": 3,
+    "bytes": 807239048,
+    "equal": true,
+    "previous_sha256": "caf2027a9589371b95a71cf0f66dc82fcd1c749ce7ff353560afa09411ef812d",
+    "current_sha256": "caf2027a9589371b95a71cf0f66dc82fcd1c749ce7ff353560afa09411ef812d"
+  }
+]

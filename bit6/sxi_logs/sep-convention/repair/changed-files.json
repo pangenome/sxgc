@@ -1,0 +1,8 @@
+[
+  "bit6/rpfbwt_endpoints.cpp",
+  "bit6/slim_lce.hpp",
+  "bit6/test_sxi_separator.py",
+  "bit6/test_sxi_build.py",
+  "bit6/test_slim_cyclic.cpp",
+  "bit6/sxi_logs/sep-convention/repair/"
+]

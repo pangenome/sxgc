@@ -5,6 +5,7 @@ import pathlib
 import subprocess
 import tempfile
 import os
+import re
 
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--xsa', default='xsa/target/release/xsa')
@@ -62,7 +63,13 @@ with tempfile.TemporaryDirectory(prefix='sxi-failure-test-') as directory:
     collection.write_bytes(source.read_bytes() * 2)
     proc = subprocess.run([*build, '--text', str(collection), '-o', str(out),
         '--scratch', str(root)], capture_output=True, text=True)
-    assert proc.returncode != 0 and 'collection ordering is unvalidated' in proc.stderr, proc.stderr
+    rejected_collection = 'collection ordering is unvalidated' in proc.stderr
+    if 'endpoints failed' in proc.stderr:
+        # The cyclic seam certificate may reject earlier than the legacy
+        # collection guard. Require that precise failure, not any stage error.
+        match = re.search(r'see (.+\.endpoints\.log);', proc.stderr)
+        rejected_collection = bool(match) and 'cyclic seam repair required' in pathlib.Path(match[1]).read_text()
+    assert proc.returncode != 0 and rejected_collection, proc.stderr
     assert not out.exists()
     # A stage failure also cannot publish; /bin/false passes executable preflight.
     proc = subprocess.run([*build, '--text', str(source), '-o', str(out),

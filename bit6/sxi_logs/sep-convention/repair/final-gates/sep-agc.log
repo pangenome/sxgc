@@ -1,0 +1,3 @@
+xsa build: work=/tmp/sxi-repair-o4aGmN/final-gates/xsa-build-bich7df9 log=/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair/final-gates/sep-agc-xsa-build-bich7df9.jsonl
+xsa build: write failed (1); see /tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair/final-gates/sep-agc-xsa-build-bich7df9.write.log; no final SXI published
+xsa: error: build: pipeline failed: exit status: 1

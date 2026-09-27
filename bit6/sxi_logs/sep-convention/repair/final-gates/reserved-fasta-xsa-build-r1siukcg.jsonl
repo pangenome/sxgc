@@ -1,0 +1,2 @@
+{"stage": "prepare-fasta", "source": "/tmp/sxi-repair-o4aGmN/final-gates/reserved.fasta", "work": "/tmp/sxi-repair-o4aGmN/final-gates/xsa-build-r1siukcg", "start": 1790523879.981815}
+{"stage": "prepare-fasta", "returncode": 1, "error": "fasta record 1 sequence: corpus contract: reserved separator 0x1E must never appear in sequence content"}

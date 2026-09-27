@@ -1,0 +1,393 @@
+--- lane-entry/bit6/rpfbwt_endpoints.cpp
++++ lane-current/bit6/rpfbwt_endpoints.cpp
+@@ -1,4 +1,6 @@
+-// O(r), bounded-buffer adapter: PFP padding -> existing endpoint-input ri4.
++// O(r), bounded-buffer adapter: certified PFP padding removal -> ri4.
++// General padded-to-cyclic normalization is NOT implemented. Reject frames
++// whose suffix order needs seam repair before opening either output.
+ // No SA/LF/text walk. .ssa/.ssa_t remain unmodified producer evidence.
+ #include "sxi_format.hpp"
+ #include <functional>
+@@ -11,13 +13,49 @@
+   check(n>10&&r,"empty RLE");
+   for(auto ext:{".ssa",".ssa_t"}){std::ifstream f(p+ext,std::ios::binary);check(bool(f)&&size(f)==8+8*r&&integer(f)==r,"endpoint count/size mismatch");}
+  }
++ void certify_seam() {
++  // After deleting the first w rows, the order is ordinary suffix order of T.
++  // Let z be the row for SA=0. Replacing its dollar by T[n-1] preserves the
++  // cyclic LF permutation exactly iff rank_{T[n-1]}(z)==0. Otherwise the
++  // suffix n-1 must move, potentially followed by Theta(n) other suffixes.
++  std::ifstream b(prefix+".rlebwt",std::ios::binary),h(prefix+".ssa",std::ios::binary),t(prefix+".ssa_t",std::ios::binary);
++  integer(h);integer(t);U rows=0,before=0,zeroes=0;
++  for(U i=0;i<r;++i) {
++   U len=0,c=0,word;
++   do {word=integer(b,4);if(len)check(c==(word&255),"RLE continuation character");c=word&255;len+=(word>>8)&0x7fffff;}while(word>>31);
++   U head=integer(h),tail=integer(t),rawLen=len;
++   check(len&&len<=n-rows,"RLE length");
++   if(rows<10&&rows+len>10) {
++    // SA=0 can share the final padding dollar run. Its single remaining
++    // row is known exactly, without resolving an interior SA sample.
++    check(c==2&&rows+len==11&&tail==0,"unsupported PFP padding boundary");
++    len=1;head=0;
++   }
++   if(rows+rawLen>10) {
++    if(c==2) {
++     check(len==1&&head==0&&tail==0,"invalid SA-zero dollar row");
++     if(before)fprintf(stderr,"CYCLIC_SEAM_BLOCKED terminal=0x%02llx predecessors_before_zero=%llu\n",(unsigned long long)terminal,(unsigned long long)before);
++     check(before==0,"cyclic seam repair required: terminal predecessors precede SA=0; padding removal is not cyclic-T order");
++     ++zeroes;
++    }
++    if(c==terminal)before+=len;
++   }
++   rows+=rawLen;
++  }
++  check(rows==n&&zeroes==1&&b.peek()==EOF,"invalid padded cyclic frame");
++ }
+  void scan(const std::function<void(Run)>& emit) {
+   std::ifstream b(prefix+".rlebwt",std::ios::binary),h(prefix+".ssa",std::ios::binary),t(prefix+".ssa_t",std::ios::binary);
+   integer(h);integer(t);U rows=0,skip=10;Run pending{};bool have=false;
+   for(U i=0;i<r;i++) {
+    Run v{};U word;do{word=integer(b,4);if(v.len)check(v.c==(word&255),"RLE continuation character");v.c=word&255;v.len+=(word>>8)&0x7fffff;}while(word>>31);
+    v.h=integer(h);v.t=integer(t);check(v.len&&v.len<=n-rows,"RLE length");rows+=v.len;
+-   if(skip){check(v.len<=skip&&(v.c==2||v.c==terminal),"unsupported PFP padding boundary");skip-=v.len;continue;}
++   if(skip){
++    check(v.c==2||v.c==terminal,"unsupported PFP padding boundary");
++    U take=std::min(skip,v.len);skip-=take;v.len-=take;
++    if(!v.len)continue;
++    check(v.c==2&&v.len==1&&v.t==0,"unsupported PFP padding boundary");v.h=0;
++   }
+    check(v.h<n-10&&v.t<n-10,"endpoint outside normalized text");
+    if(v.c==2)v.c=terminal;
+    check(v.c>=6&&v.c<128,"unsupported text alphabet");
+@@ -32,7 +70,7 @@
+  check(argc==4||argc==5,"usage: rpfbwt_endpoints PREFIX OUT.ri4 OUT.head_sa [TERMINAL_HEX]");
+  U terminal=10;
+  if(argc==5){std::string arg(argv[4]);size_t used=0;terminal=std::stoul(arg,&used,16);check(used==arg.size()&&terminal>=6&&terminal<128,"unsupported terminal byte");}
+- Source s(argv[1],terminal);U r=0,k=0,n=0;std::array<U,256> totals{};
++ Source s(argv[1],terminal);s.certify_seam();U r=0,k=0,n=0;std::array<U,256> totals{};
+  s.scan([&](Run v){check(v.len<=UINT32_MAX,"run too long");r++;n+=v.len;totals[v.c]+=v.len;if(v.c==10)k+=v.len;});
+  // Preserve legacy newline transport semantics for existing raw pilots.
+  // Reserved-0x1E collections are ONE string, regardless of record count.
+@@ -47,5 +85,5 @@
+  s.scan([&](Run v){reservoir|=__uint128_t(n-1-v.t)<<available;available+=w;if(available>=64){number(out,U(reservoir));reservoir>>=64;available-=64;}});
+  if(available)number(out,U(reservoir));
+  out.flush();heads.flush();check(bool(out)&&bool(heads),"flush outputs");
+- fprintf(stderr,"ENDPOINT_PASS raw_n=%llu raw_r=%llu n=%llu k=%llu r=%llu padding_rows=10\n",(unsigned long long)s.n,(unsigned long long)s.r,(unsigned long long)n,(unsigned long long)k,(unsigned long long)r);return 0;
++ fprintf(stderr,"ENDPOINT_PASS raw_n=%llu raw_r=%llu n=%llu k=%llu r=%llu padding_rows=10 cyclic_seam_certified=1\n",(unsigned long long)s.n,(unsigned long long)s.r,(unsigned long long)n,(unsigned long long)k,(unsigned long long)r);return 0;
+ }catch(const std::exception&e){fprintf(stderr,"FATAL: %s\n",e.what());return 1;}}
+--- lane-entry/bit6/slim_lce.hpp
++++ lane-current/bit6/slim_lce.hpp
+@@ -143,12 +143,13 @@
+     sdsl::sd_vector<>::select_1_type ds,ps;
+     sdsl::sd_vector<>::rank_1_type pr;
+     uint64_t n=0,w=10;
+-    std::vector<uint64_t> stringEnds; // newline positions in virtual PFP text, O(k)
++    bool cyclic;
++    std::vector<uint64_t> stringEnds; // legacy newline ends, or one cyclic end
+     std::unique_ptr<SlimFingerprint<SlimDict>> dh;
+     std::unique_ptr<SlimFingerprint<std::vector<uint32_t>>> ph;
+     uint64_t dstart(uint64_t id)const {return ds(id);}
+     uint64_t length(uint64_t id)const {return ds(id+1)-ds(id)-1;}
+-    SlimLCE(const std::string& prefix,uint64_t r,uint64_t t1,uint64_t t2,bool stream,bool fault=false):d(prefix+".dict",10,stream) {
++    SlimLCE(const std::string& prefix,uint64_t r,uint64_t t1,uint64_t t2,bool stream,bool fault=false,bool cyclicText=false):d(prefix+".dict",10,stream),cyclic(cyclicText) {
+         double last=started; slim_phase("dict-read",last);
+         // Recover collection terminators during the existing dictionary scan.
+         // Only phrases containing newline need metadata; phrase overlaps are
+@@ -157,7 +158,7 @@
+         uint64_t count=1,phraseStart=0;uint32_t phrase=1;
+         for(uint64_t i=1;i<d.size();++i) {
+             uint8_t c=d[i-1];
+-            if(c==0x0a)phraseEnds[phrase].push_back(i-1-phraseStart);
++            if(!cyclic && c==0x0a)phraseEnds[phrase].push_back(i-1-phraseStart);
+             if(c==1 || i==d.size()-1)++count;
+             if(c==1){++phrase;phraseStart=i;}
+         }
+@@ -179,7 +180,10 @@
+                 if(off<take)stringEnds.push_back(n+off);
+             n+=take;
+         }
+-        fprintf(stderr,"SLIM_STRING_ENDS count=%zu bytes=%zu from_parse_dict=1\n",stringEnds.size(),stringEnds.capacity()*8);
++        // 0x1e records form ONE cyclic byte string. Record separators are
++        // ordinary compared bytes; they neither end nor truncate an LCE.
++        if(cyclic)stringEnds.push_back(n);
++        fprintf(stderr,"SLIM_STRING_ENDS count=%zu bytes=%zu from_parse_dict=1 cyclic=%d\n",stringEnds.size(),stringEnds.capacity()*8,int(cyclic));
+         sdsl::sd_vector_builder pb(n,p.size()-1);pb.set(0);uint64_t pos=0;
+         for(uint64_t j=0;j+2<p.size();++j){pos+=length(p[j])-w;pb.set(pos);}
+         // compute_b_p marks every phrase start: 0 plus P-1 increments.
+@@ -200,6 +204,21 @@
+     // Collection LCP excludes the newline sentinel itself, unlike raw LCE
+     // on the concatenated PFP text. Sparse ends are derived without a text scan.
+     uint64_t collection_lce(uint64_t i,uint64_t j)const {
++        if(cyclic) {
++            uint64_t size=n-w,answer=0;
++            if(i>=size||j>=size)slim_fail("cyclic LCE bounds");
++            if(i==j){seedQueries.fetch_add(1,std::memory_order_relaxed);return size;}
++            // At most two seam crossings in size symbols. Each raw PFP LCE
++            // is capped before its dollar padding; no raw text is read.
++            while(answer<size) {
++                uint64_t cap=std::min({size-answer,size-i,size-j});
++                uint64_t got=std::min((*this)(i,j),cap);
++                answer+=got;
++                if(got<cap)break;
++                i=(i+got)%size;j=(j+got)%size;
++            }
++            return answer;
++        }
+         auto remaining=[&](uint64_t pos) {
+             pos+=w;
+             auto end=std::lower_bound(stringEnds.begin(),stringEnds.end(),pos);
+@@ -259,7 +278,12 @@
+     if(!profileOnly && (!ri.haveSa||ri.sampleAllInf()))slim_fail("usable ri4 samples required");
+     double last=tnow();
+     SlimHeads heads(headSaPath.empty()?ri.sxiPath:headSaPath,ri.R,headSaPath.empty()?ri.headOffset:0);
+-    SlimLCE lce(prefix,ri.R,t1,t2,stream,fault);
++    // Auto-detect using the existing RLE alphabet, with no input text scan.
++    // New collections use reserved 0x1e; texts without newline are cyclic
++    // too. Preserve legacy newline collection behavior otherwise.
++    bool hasRS=false,hasNL=false;
++    for(uint64_t run=0;run<ri.R;++run){hasRS|=ri.a[run]==0x1e;hasNL|=ri.a[run]==0x0a;}
++    SlimLCE lce(prefix,ri.R,t1,t2,stream,fault,hasRS||!hasNL);
+     if(lce.n!=ri.n+lce.w)slim_fail("parse/ri4 length mismatch");
+     if(lce.stringEnds.size()!=ri.k)slim_fail("parse/ri4 string-end count mismatch");
+     slim_phase("lce-build-total",last);
+--- lane-entry/bit6/test_sxi_separator.py
++++ lane-current/bit6/test_sxi_separator.py
+@@ -1,12 +1,13 @@
+ #!/usr/bin/env python3
+ """Reserved-separator acceptance gates, including an independent tiny cyclic oracle.
+ 
+-The quadratic oracle is test-only, bounded to 2003 bytes. A successful text
++The quadratic oracle is test-only, bounded to 4096 bytes. A successful text
+ control alone cannot certify cyclic suffix order. Failures are retained.
+ """
+ import argparse
+ import hashlib
+ import json
++import os
+ import pathlib
+ import random
+ import struct
+@@ -16,14 +17,108 @@
+ from sxi_sequence_input import CONTRACT
+ 
+ 
++def cyclic_frame(text):
++    """Independent bounded quadratic oracle; equal rotations tie by position."""
++    assert 0 < len(text) <= 4096
++    sa = sorted(range(len(text)), key=lambda i: text[i:] + text[:i])
++    bwt = bytes(text[(i - 1) % len(text)] for i in sa)
++    runs = []
++    for row, c in enumerate(bwt):
++        if not row or c != bwt[row - 1]:
++            runs.append([c, 1, sa[row], sa[row]])
++        else:
++            runs[-1][1] += 1
++            runs[-1][3] = sa[row]
++    return sa, bwt, runs
++
++
++def oracle_fixtures(work, adapter, record):
++    rng = random.Random(30)
++    records = [bytes(rng.choice(b'ACGT') for _ in range(n)) for n in (666, 667, 667)]
++    unit = b'ACGATCGATACG'
++    nested = (unit * 3 + b'T' + unit * 2 + b'G') * 7
++    fixtures = {
++        'plain': b'GATTACACGTCAGT\x1e',
++        'plain-unseparated': b'ACGT',
++        'legacy-newline': b'GATTACACGTCAGT\n',
++        'repetitive': b'ACGT' * 80 + b'\x1e',
++        'HOR-nested': nested + b'\x1e',
++        'multi-string': b'\x1e'.join(records) + b'\x1e',
++        'seam-aperiodic': b'A' * 128 + b'B' + b'A' * 128,
++        'seam-periodic': b'ACG\x1e' * 64,
++        'seam-periodic-no-separator': b'ABA' * 64,
++    }
++    for label, text in fixtures.items():
++        root = work / ('oracle-' + label)
++        root.mkdir(exist_ok=True)
++        prefix = root / 'parse'
++        _, _, padded = cyclic_frame(text + b'\x02' * 10)
++        pathlib.Path(str(prefix) + '.rlebwt.meta').write_bytes(struct.pack('<2Q', len(text) + 10, len(padded)))
++        pathlib.Path(str(prefix) + '.rlebwt').write_bytes(b''.join(struct.pack('<I', c | (n << 8)) for c, n, _, _ in padded))
++        for ext, col in [('.ssa', 2), ('.ssa_t', 3)]:
++            values = [len(padded)] + [v[col] for v in padded]
++            pathlib.Path(str(prefix) + ext).write_bytes(struct.pack(f'<{len(values)}Q', *values))
++        ri, heads = root / 'out.ri4', root / 'out.heads'
++        result = subprocess.run([adapter, str(prefix), str(ri), str(heads), f'{text[-1]:02x}'], capture_output=True, text=True)
++        _, expected_bwt, expected = cyclic_frame(text)
++        equal = False
++        if result.returncode == 0:
++            raw = ri.read_bytes()
++            n, k, r = struct.unpack_from('<3Q', raw, 8)
++            chars = raw[2080:2080+r]
++            lengths = struct.unpack_from(f'<{r}I', raw, 2080+r)
++            bwt = b''.join(bytes([c]) * z for c, z in zip(chars, lengths))
++            actual_heads = list(struct.unpack(f'<{r}Q', heads.read_bytes()))
++            offset = 2080 + 5*r
++            bits, width = struct.unpack_from('<QB', raw, offset)
++            packed = int.from_bytes(raw[offset+9:], 'little')
++            tails = [n-1-((packed >> (i*width)) & ((1 << width)-1)) for i in range(r)]
++            equal = (n == len(text) and bits == r*width and bwt == expected_bwt
++                     and actual_heads == [v[2] for v in expected] and tails == [v[3] for v in expected])
++        record('oracle-' + label, equal, returncode=result.returncode, stderr=result.stderr,
++               n=len(text), raw_runs=len(padded), cyclic_runs=len(expected))
++        record('oracle-' + label + '-no-invalid-output', equal or
++               (result.returncode != 0 and not ri.exists() and not heads.exists()))
++    # A^m B A^m has constant raw run count but an unbounded seam cascade.
++    for m in (8, 32, 128, 512):
++        text = b'A' * m + b'B' + b'A' * m
++        suffix_sa = sorted(range(len(text)), key=lambda i: text[i:])
++        cyclic_sa, _, _ = cyclic_frame(text)
++        _, _, padded = cyclic_frame(text + b'\x02' * 10)
++        moved = sum(a != b for a, b in zip(suffix_sa, cyclic_sa))
++        # Test-only dense simulation of the tempting backwards row repair.
++        order = suffix_sa.copy()
++        relocations = 0
++        for pos in reversed(range(len(text))):
++            row, tail = order.index(pos), order.index((pos+1) % len(text))
++            bwt = bytes(text[(i-1) % len(text)] for i in order)
++            target = sum(c < text[pos] for c in bwt) + bwt[:tail].count(text[pos])
++            if row == target:
++                break
++            order.insert(target, order.pop(row))
++            relocations += 1
++        record('seam-lower-bound-' + str(m), len(padded) == 6 and moved == m
++               and relocations == m-1 and order == cyclic_sa,
++               n=len(text), raw_runs=len(padded), changed_rows=moved,
++               backwards_row_relocations=relocations)
++
++
++def equal_files(first, second):
++    return first.is_file() and second.is_file() and first.read_bytes() == second.read_bytes()
++
++
+ def main():
+     p = argparse.ArgumentParser(description=__doc__)
+     p.add_argument('--work', required=True)
+-    p.add_argument('--xsa', required=True)
+-    p.add_argument('--agc2flat', required=True)
+-    p.add_argument('--reserved-agc', required=True)
++    p.add_argument('--xsa')
++    p.add_argument('--agc2flat')
++    p.add_argument('--reserved-agc')
++    p.add_argument('--oracle-only', action='store_true')
++    p.add_argument('--adapter', default=os.path.join(os.environ.get('XSA_TOOLS', '/tmp/laneV/tools'), 'rpfbwt_endpoints'))
+     p.add_argument('--log-dir', required=True)
+     a = p.parse_args()
++    if not a.oracle_only and not all((a.xsa, a.agc2flat, a.reserved_agc)):
++        p.error('--xsa, --agc2flat and --reserved-agc are required for pipeline gates')
+     work, logs = pathlib.Path(a.work), pathlib.Path(a.log_dir)
+     work.mkdir(parents=True, exist_ok=True)
+     logs.mkdir(parents=True, exist_ok=True)
+@@ -36,6 +131,11 @@
+         print(json.dumps(row), flush=True)
+         if not passed:
+             summary['blockers'].append(name)
++
++    oracle_fixtures(work, a.adapter, record)
++    (logs / 'cyclic-repair-oracle.json').write_text(json.dumps(summary, indent=2) + '\n')
++    if a.oracle_only:
++        return bool(summary['blockers'])
+ 
+     def build(label, kind, source, extra=(), rejection=False):
+         out = work / (label + '.sxi')
+@@ -75,8 +175,7 @@
+         path.write_bytes(raw)
+         output, scratch = build('sep-' + kind, kind, path, gates)
+         record(kind + '-materialized-bytes', (scratch / 'collection.txt').read_bytes() == text)
+-        record(kind + '-endpoint-byte-gates', all((scratch / name).read_bytes() ==
+-               (baseline_work / name).read_bytes() for name in ('fresh.ri4', 'fresh.head_sa')))
++        record(kind + '-endpoint-byte-gates', all(equal_files(scratch / name, baseline_work / name) for name in ('fresh.ri4', 'fresh.head_sa')))
+         record(kind + '-core-members', output.exists() and baseline.exists() and
+                all(members(output)[i] == members(baseline)[i] for i in range(1, 6)))
+ 
+@@ -95,17 +194,20 @@
+     sa = sorted(range(len(text)), key=lambda i: text[i:] + text[:i])
+     bwt = bytes(text[(i-1) % len(text)] for i in sa)
+     heads = [sa[i] for i in range(len(text)) if not i or bwt[i] != bwt[i-1]]
+-    ri4 = (baseline_work / 'fresh.ri4').read_bytes()
+-    n, k, runs = struct.unpack_from('<3Q', ri4, 8)
+-    chars = ri4[2080:2080+runs]
+-    lengths = struct.unpack_from(f'<{runs}I', ri4, 2080+runs)
+-    actual_bwt = b''.join(bytes([c]) * length for c, length in zip(chars, lengths))
+-    actual_heads = list(struct.unpack(f'<{runs}Q', (baseline_work / 'fresh.head_sa').read_bytes()))
+-    record('independent-cyclic-order', actual_bwt == bwt and actual_heads == heads,
+-           n=n, k=k, actual_runs=runs, cyclic_runs=len(heads),
+-           first_actual_heads=actual_heads[:10], first_cyclic_heads=heads[:10],
+-           bwt_equal=actual_bwt == bwt, heads_equal=actual_heads == heads,
+-           text_sha256=hashlib.sha256(text).hexdigest())
++    if not (baseline_work / 'fresh.ri4').exists():
++        record('independent-cyclic-order', False, reason='adapter rejected unsafe frame')
++    else:
++        ri4 = (baseline_work / 'fresh.ri4').read_bytes()
++        n, k, runs = struct.unpack_from('<3Q', ri4, 8)
++        chars = ri4[2080:2080+runs]
++        lengths = struct.unpack_from(f'<{runs}I', ri4, 2080+runs)
++        actual_bwt = b''.join(bytes([c]) * length for c, length in zip(chars, lengths))
++        actual_heads = list(struct.unpack(f'<{runs}Q', (baseline_work / 'fresh.head_sa').read_bytes()))
++        record('independent-cyclic-order', actual_bwt == bwt and actual_heads == heads,
++               n=n, k=k, actual_runs=runs, cyclic_runs=len(heads),
++               first_actual_heads=actual_heads[:10], first_cyclic_heads=heads[:10],
++               bwt_equal=actual_bwt == bwt, heads_equal=actual_heads == heads,
++               text_sha256=hashlib.sha256(text).hexdigest())
+ 
+     for kind, raw in [('fasta', b'>a\nAC\x1eGT\n'),
+                       ('fastq', b'@a\nAC\x1eGT\n+\nIIIII\n')]:
+@@ -119,8 +221,7 @@
+     agc_output, agc_work = build('sep-agc', 'agc', fixture)
+     control_output, control_work = build('sep-agc-text', 'text', agc_work / 'collection.txt',
+         ['--expect-heads', agc_work / 'fresh.head_sa', '--expect-ri4', agc_work / 'fresh.ri4'])
+-    record('agc-endpoint-byte-gates', all((agc_work / name).read_bytes() ==
+-           (control_work / name).read_bytes() for name in ('fresh.ri4', 'fresh.head_sa')))
++    record('agc-endpoint-byte-gates', all(equal_files(agc_work / name, control_work / name) for name in ('fresh.ri4', 'fresh.head_sa')))
+     record('agc-core-members', agc_output.exists() and control_output.exists() and
+            all(members(agc_output)[i] == members(control_output)[i] for i in range(1, 6)))
+     for label, flags in [('flat', []), ('revlines', ['--revlines']), ('reverse', ['--reverse'])]:
+--- lane-entry/bit6/test_sxi_build.py
++++ lane-current/bit6/test_sxi_build.py
+@@ -5,6 +5,7 @@
+ import subprocess
+ import tempfile
+ import os
++import re
+ 
+ p = argparse.ArgumentParser(description=__doc__)
+ p.add_argument('--xsa', default='xsa/target/release/xsa')
+@@ -62,7 +63,13 @@
+     collection.write_bytes(source.read_bytes() * 2)
+     proc = subprocess.run([*build, '--text', str(collection), '-o', str(out),
+         '--scratch', str(root)], capture_output=True, text=True)
+-    assert proc.returncode != 0 and 'collection ordering is unvalidated' in proc.stderr, proc.stderr
++    rejected_collection = 'collection ordering is unvalidated' in proc.stderr
++    if 'endpoints failed' in proc.stderr:
++        # The cyclic seam certificate may reject earlier than the legacy
++        # collection guard. Require that precise failure, not any stage error.
++        match = re.search(r'see (.+\.endpoints\.log);', proc.stderr)
++        rejected_collection = bool(match) and 'cyclic seam repair required' in pathlib.Path(match[1]).read_text()
++    assert proc.returncode != 0 and rejected_collection, proc.stderr
+     assert not out.exists()
+     # A stage failure also cannot publish; /bin/false passes executable preflight.
+     proc = subprocess.run([*build, '--text', str(source), '-o', str(out),
+--- lane-entry/bit6/test_slim_cyclic.cpp
++++ lane-current/bit6/test_slim_cyclic.cpp
+@@ -0,0 +1,20 @@
++// Test-only direct text oracle for cyclic LCE, including both seam crossings.
++// Build with tools/build_slim_dump.sh OUT bit6/test_slim_cyclic.cpp.
++#define main slim_program_main
++#include "chi_rspace_dump.cpp"
++#undef main
++int main(int argc,char** argv) {
++ if(argc!=3)return 2;
++ std::ifstream f(argv[2],std::ios::binary);std::string text((std::istreambuf_iterator<char>(f)),{});
++ SlimLCE lce(argv[1],100,0,0,true,false,true);
++ if(lce.n!=text.size()+10||lce.stringEnds.size()!=1)return 3;
++ uint64_t checked=0,n=text.size();
++ for(uint64_t i=0;i<n;++i)for(uint64_t j=0;j<n;++j) {
++  if(i%31&&j%29&&i+32<n&&j+32<n)continue;
++  uint64_t want=0;while(want<n&&text[(i+want)%n]==text[(j+want)%n])++want;
++  uint64_t got=lce.collection_lce(i,j);
++  if(got!=want){fprintf(stderr,"FAIL i=%llu j=%llu got=%llu want=%llu\n",(unsigned long long)i,(unsigned long long)j,(unsigned long long)got,(unsigned long long)want);return 1;}
++  ++checked;
++ }
++ fprintf(stderr,"PASS cyclic_lce checked=%llu n=%llu\n",(unsigned long long)checked,(unsigned long long)n);
++}

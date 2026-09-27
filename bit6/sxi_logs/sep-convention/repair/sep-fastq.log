@@ -1,0 +1,6 @@
+xsa build: work=/tmp/sxi-repair-o4aGmN/full-gates/xsa-build-hazux4m0 log=/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair/sep-fastq-xsa-build-hazux4m0.jsonl
+prepare-fastq: record=1 name=0 sequence_bytes=666 collection_bytes=667
+prepare-fastq: record=2 name=1 sequence_bytes=667 collection_bytes=1335
+prepare-fastq: record=3 name=2 sequence_bytes=667 collection_bytes=2003
+xsa build: endpoints failed (1); see /tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair/sep-fastq-xsa-build-hazux4m0.endpoints.log; no final SXI published
+xsa: error: build: pipeline failed: exit status: 1
