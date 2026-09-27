@@ -1511,3 +1511,13 @@ ordering to be adjudicated by k10's real byte gates.
 ## doubled after the walk-orphan kill freed the disk (finished ~3h early). File
 ## set matches k10's exactly; feeds the 466 xsa build, which is QUEUED behind
 ## k10 green (k10's per-stage RAM profile parameterizes the 466 run).
+
+## AGC PATH PROVEN AT YEAST SCALE (xsa build --agc yeast235.agc -> yeast235_agc.sxi,
+## 1086s, published). chi = 85,350,673 EXACTLY the ledger's yeast235.rl chain number -
+## the .rl chain was revlines-convention all along; the Sep-17 '$'-separated yeast235.txt
+## was older archaeology. Full journal in bit6/sxi_logs/yeast235_agc-*.jsonl: agc2flat
+## --revlines --upper -> parse -> l2 -> patched rpfbwt -> endpoints -> [gate-heads,
+## gate-runs-tails byte-equal vs --text control build] -> slim -> sweep -> write ->
+## validate -> publish. First run (chi-only) fail-closed on the multi-string interlock
+## as designed; control-build endpoints then gated the rerun. Multi-string interlock
+## semantics: endpoint byte gates required; oracle-free equivalence = --text control.
