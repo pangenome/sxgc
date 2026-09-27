@@ -120,8 +120,10 @@ def main():
         names = work / 'collection.txt.names.tsv'
     with text.open('rb') as f:
         f.seek(-1, 2)
-        if f.read(1) != b'\n':
-            raise RuntimeError('collection text must end in newline (pilot convention)')
+        term = f.read(1)
+        if term not in (b'\n', b'\x1e'):
+            raise RuntimeError('collection text must end in a record separator '
+                               '(0x1E contract) or legacy newline')
     prefix = work / 'parse'
     run('parse', [pfp, '-t', text, '-o', prefix, '-w', 10, '-p', 100, '-j', a.threads, '--tmp-dir', work])
     run('parse-l2', [pfp, '-i', str(prefix)+'.parse', '-w', 5, '-p', 11, '-j', a.threads, '--tmp-dir', work])
