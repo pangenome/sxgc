@@ -1,0 +1,39 @@
+COMMAND ["/tmp/laneQ/pass4/slim_dump", "--slim", "--resolve-ri4", "--ri4", "/tmp/laneY/bat/duplicates-600k.ri4", "--parse", "/tmp/laneY/bat/duplicates-600k_pfp", "--head-sa", "/tmp/laneQ/pass4/invalid.head_sa", "-o", "/tmp/laneQ/pass4/invalid.agg", "-t", "8"]
+ri4: n=600001 k=1 R=14701
+SLIM_PHASE ri4-load wall=0.000 cumulative=0.000 peak_rss_kib=2048
+SLIM_HEAD_SA bytes=117608 rows=14701 mmap=1
+SLIM_PHASE dict-read wall=0.000 cumulative=0.001 peak_rss_kib=2048
+SLIM_PHASE dict-boundaries wall=0.002 cumulative=0.002 peak_rss_kib=2048
+SLIM_STRING_ENDS count=1 bytes=8 from_parse_dict=1
+SLIM_PHASE parse+boundaries wall=0.001 cumulative=0.003 peak_rss_kib=2048
+SLIM_PHASE parse-fingerprints wall=0.000 cumulative=0.003 peak_rss_kib=2048
+SLIM_PHASE dict-fingerprints wall=0.001 cumulative=0.004 peak_rss_kib=2048
+SLIM_STRUCT n=600011 P=5246 D=287733 phrases=1226 parse_bytes=20988 bd_bytes=1950 bp_bytes=6816 dict_resident=287724 dict_cache_per_thread=262144 no_SA_ISA_LCP_RMQ=1 no_M_b_bwt_w_wt=1
+SLIM_PHASE lce-build-total wall=0.004 cumulative=0.004 peak_rss_kib=2048
+SLIM_PHASE lf-build wall=0.000 cumulative=0.004 peak_rss_kib=2048
+SLIM_RI runs=73505 starts=117608 samples=36760 lf_capacity=183188
+FATAL: head-SA value/range or singleton mismatch at run 0
+Command exited with non-zero status 2
+	Command being timed: "/tmp/laneQ/pass4/slim_dump --slim --resolve-ri4 --ri4 /tmp/laneY/bat/duplicates-600k.ri4 --parse /tmp/laneY/bat/duplicates-600k_pfp --head-sa /tmp/laneQ/pass4/invalid.head_sa -o /tmp/laneQ/pass4/invalid.agg -t 8"
+	User time (seconds): 0.00
+	System time (seconds): 0.00
+	Percent of CPU this job got: 112%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:00.00
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 6144
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 1142
+	Voluntary context switches: 2
+	Involuntary context switches: 1
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 8
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 2

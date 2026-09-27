@@ -1,0 +1,30 @@
+COMMAND ["python3", "/tmp/sxgc-laneQ/tools/extract_head_sa.py", "/tmp/laneY/bat/HOR-nested.agg", "/tmp/laneQ/pass4/HOR-nested.head_sa", "--ri4", "/tmp/laneY/bat/HOR-nested.ri4"]
+column=1/4 rows=232
+column=2/4 rows=232
+column=3/4 rows=232
+column=4/4 rows=232
+ri4 spread_tail_checks=232 singleton_head_checks=161
+{"source": "/tmp/laneY/bat/HOR-nested.agg", "target": "/tmp/laneQ/pass4/HOR-nested.head_sa", "R": 232, "bytes": 1856, "wall_seconds": 0.0015801619738340378, "spots": [{"run": 0, "length": 1, "head": 18360, "tail": 18360, "mirrored_sample": 0}, {"run": 116, "length": 1, "head": 18260, "tail": 18260, "mirrored_sample": 100}, {"run": 231, "length": 1, "head": 18098, "tail": 18098, "mirrored_sample": 262}]}
+	Command being timed: "python3 /tmp/sxgc-laneQ/tools/extract_head_sa.py /tmp/laneY/bat/HOR-nested.agg /tmp/laneQ/pass4/HOR-nested.head_sa --ri4 /tmp/laneY/bat/HOR-nested.ri4"
+	User time (seconds): 0.03
+	System time (seconds): 0.00
+	Percent of CPU this job got: 95%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:00.04
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 12288
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 1782
+	Voluntary context switches: 3
+	Involuntary context switches: 0
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 8
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

@@ -1,0 +1,12 @@
+COMMAND yeast.extract.reuse-cmp ["cmp", "--ignore-initial=807239060:0", "--bytes=807239048", "/tmp/laneY/yeast_pfp2.agg", "/tmp/laneQ/pass4/yeast.head_sa"]
+RESULT yeast.extract.reuse-cmp {"wall_seconds": 1.0911068909335881, "peak_group_bytes": 0, "peak_rss_kib": 0, "returncode": 0}
+COMMAND yeast.dump ["/tmp/laneQ/pass4/slim_dump", "--slim", "--resolve-ri4", "--dict-stream", "--ri4", "/tmp/laneQ/pass3/yp2real.ri4", "--parse", "/mnt/nvme3n1/erikg/sxgc-yeast/grl/yeast2_pfp", "--head-sa", "/tmp/laneQ/pass4/yeast.head_sa", "-o", "/tmp/laneQ/pass4/yeast.agg", "-t", "32"]
+RESULT yeast.dump {"wall_seconds": 503.3347165749874, "peak_group_bytes": 3576434688, "peak_rss_kib": 3492948, "returncode": 0, "resolve_wall": 34.839281, "lce_wall": 446.435483, "write_wall": 3.498516}
+COMMAND yeast.cmp ["cmp", "/tmp/laneQ/pass4/yeast.agg", "/tmp/laneY/yeast_pfp2.agg"]
+RESULT yeast.cmp {"wall_seconds": 3.2841395679861307, "peak_group_bytes": 0, "peak_rss_kib": 0, "returncode": 0}
+BYTE-IDENTICAL /tmp/laneQ/pass4/yeast.agg /tmp/laneY/yeast_pfp2.agg
+COMMAND yeast.sweep ["/tmp/sxgc-laneQ/xsa/target/release/xsa", "chi-rspace", "--stream-agg", "--ri4", "/tmp/laneQ/pass3/yp2real.ri4", "--agg", "/tmp/laneQ/pass4/yeast.agg", "-o", "/tmp/laneQ/pass4/yeast.sA"]
+RESULT yeast.sweep {"wall_seconds": 12.006272675003856, "peak_group_bytes": 4194304, "peak_rss_kib": 4096, "returncode": 0}
+COMMAND yeast.set ["python3", "-c", "import numpy as np,sys,time\nstart=time.monotonic()\na=np.fromfile(sys.argv[1],dtype='<u8'); b=np.fromfile(sys.argv[2],dtype='<u8')\nassert len(a)==len(b)==int(sys.argv[3]), (len(a),len(b))\na.sort();b.sort();assert np.array_equal(a,b)\n# Sorted equality plus no duplicates establishes equality of the witness sets.\nfor off in range(1,len(a),1<<20):\n end=min(len(a),off+(1<<20));assert np.all(a[off:end]>a[off-1:end-1])\nprint('NUMPY sorted-set equality=True count='+str(len(a))+' wall='+str(time.monotonic()-start))\n", "/tmp/laneQ/pass4/yeast.sA", "/mnt/nvme3n1/erikg/sxgc-yeast/grl/chi_yeast_pfp2.sA", "85404240"]
+RESULT yeast.set {"wall_seconds": 16.202973339008167, "peak_group_bytes": 1399873536, "peak_rss_kib": 1449620, "returncode": 0}
+yeast PASS: aggregate byte-identical; chi=85404240; NumPy sorted-set equality; zero LF steps. {"wall_seconds": 534.8318109019892, "peak_rss_kib": 3498920}

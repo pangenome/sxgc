@@ -5,10 +5,12 @@
 #include <sdsl/sd_vector.hpp>
 #include <sys/resource.h>
 #include <sys/stat.h>
+#include <sys/mman.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <array>
 #include <stdexcept>
+#include <unordered_map>
 
 static void slim_phase(const char* label, double& last) {
     struct rusage u{}; getrusage(RUSAGE_SELF, &u);
@@ -141,14 +143,24 @@ struct SlimLCE {
     sdsl::sd_vector<>::select_1_type ds,ps;
     sdsl::sd_vector<>::rank_1_type pr;
     uint64_t n=0,w=10;
+    std::vector<uint64_t> stringEnds; // newline positions in virtual PFP text, O(k)
     std::unique_ptr<SlimFingerprint<SlimDict>> dh;
     std::unique_ptr<SlimFingerprint<std::vector<uint32_t>>> ph;
     uint64_t dstart(uint64_t id)const {return ds(id);}
     uint64_t length(uint64_t id)const {return ds(id+1)-ds(id)-1;}
     SlimLCE(const std::string& prefix,uint64_t r,uint64_t t1,uint64_t t2,bool stream,bool fault=false):d(prefix+".dict",10,stream) {
         double last=started; slim_phase("dict-read",last);
-        uint64_t count=1;
-        for(uint64_t i=1;i<d.size();++i) if(d[i-1]==1 || i==d.size()-1)++count;
+        // Recover collection terminators during the existing dictionary scan.
+        // Only phrases containing newline need metadata; phrase overlaps are
+        // excluded when expanding their positions through the parse below.
+        std::unordered_map<uint32_t,std::vector<uint64_t>> phraseEnds;
+        uint64_t count=1,phraseStart=0;uint32_t phrase=1;
+        for(uint64_t i=1;i<d.size();++i) {
+            uint8_t c=d[i-1];
+            if(c==0x0a)phraseEnds[phrase].push_back(i-1-phraseStart);
+            if(c==1 || i==d.size()-1)++count;
+            if(c==1){++phrase;phraseStart=i;}
+        }
         sdsl::sd_vector_builder db(d.size(),count);db.set(0);
         for(uint64_t i=1;i<d.size();++i)if(d[i-1]==1 || i==d.size()-1)db.set(i);
         bd=sdsl::sd_vector<>(db);ds=sdsl::sd_vector<>::select_1_type(&bd);
@@ -159,7 +171,15 @@ struct SlimLCE {
         uint64_t bytes=f.tellg();p.resize(bytes/4+1); f.seekg(0);
         if(!f.read((char*)p.data(),bytes))slim_fail("read parse");p.back()=0;
         if(p.size()<3)slim_fail("parse too short");
-        for(uint64_t j=0;j+1<p.size();++j){if(!p[j] || p[j]>=count || length(p[j])<w)slim_fail("invalid phrase id/length");n+=length(p[j])-w;}
+        for(uint64_t j=0;j+1<p.size();++j) {
+            if(!p[j] || p[j]>=count || length(p[j])<w)slim_fail("invalid phrase id/length");
+            uint64_t take=length(p[j])-w;
+            auto ends=phraseEnds.find(p[j]);
+            if(ends!=phraseEnds.end())for(uint64_t off:ends->second)
+                if(off<take)stringEnds.push_back(n+off);
+            n+=take;
+        }
+        fprintf(stderr,"SLIM_STRING_ENDS count=%zu bytes=%zu from_parse_dict=1\n",stringEnds.size(),stringEnds.capacity()*8);
         sdsl::sd_vector_builder pb(n,p.size()-1);pb.set(0);uint64_t pos=0;
         for(uint64_t j=0;j+2<p.size();++j){pos+=length(p[j])-w;pb.set(pos);}
         // compute_b_p marks every phrase start: 0 plus P-1 increments.
@@ -177,6 +197,19 @@ struct SlimLCE {
         fprintf(stderr,"SLIM_STRUCT n=%llu P=%zu D=%llu phrases=%llu parse_bytes=%zu bd_bytes=%zu bp_bytes=%zu dict_resident=%zu dict_cache_per_thread=262144 no_SA_ISA_LCP_RMQ=1 no_M_b_bwt_w_wt=1\n",
             (unsigned long long)n,p.size()-1,(unsigned long long)d.size(),(unsigned long long)(count-1),p.size()*4,sdsl::size_in_bytes(bd),sdsl::size_in_bytes(bp),d.resident.size());
     }
+    // Collection LCP excludes the newline sentinel itself, unlike raw LCE
+    // on the concatenated PFP text. Sparse ends are derived without a text scan.
+    uint64_t collection_lce(uint64_t i,uint64_t j)const {
+        auto remaining=[&](uint64_t pos) {
+            pos+=w;
+            auto end=std::lower_bound(stringEnds.begin(),stringEnds.end(),pos);
+            if(end==stringEnds.end())slim_fail("missing collection terminator");
+            return *end-pos;
+        };
+        uint64_t cap=std::min(remaining(i),remaining(j));
+        if(!cap){seedQueries.fetch_add(1,std::memory_order_relaxed);return 0;}
+        return std::min((*this)(i,j),cap);
+    }
     uint64_t operator()(uint64_t i,uint64_t j)const {
         seedQueries.fetch_add(1,std::memory_order_relaxed);
         i=(i+w)%n;j=(j+w)%n;if(i==j)return n-i;
@@ -193,19 +226,45 @@ struct SlimLCE {
     }
 };
 
+// Headerless little-endian u64 column, exactly one SA value per ri4 run.
+// Mapping charges up to 8R resident bytes; it never copies the whole column.
+struct SlimHeads {
+    const uint64_t* data=nullptr; size_t bytes=0;
+    SlimHeads(const std::string& path,uint64_t runs) {
+        if(path.empty())return;
+        const uint16_t endian=1;
+        if(*(const uint8_t*)&endian!=1)slim_fail("head-SA needs little-endian host");
+        if(runs>SIZE_MAX/8)slim_fail("head-SA size overflow");
+        bytes=runs*8;int fd=open(path.c_str(),O_RDONLY);struct stat st{};
+        if(fd<0 || fstat(fd,&st) || (uint64_t)st.st_size!=bytes || !bytes)
+            slim_fail("head-SA must contain exactly R raw u64 values");
+        void* p=mmap(nullptr,bytes,PROT_READ,MAP_PRIVATE,fd,0);close(fd);
+        if(p==MAP_FAILED)slim_fail("mmap head-SA");
+        data=static_cast<const uint64_t*>(p);
+        fprintf(stderr,"SLIM_HEAD_SA bytes=%zu rows=%llu mmap=1\n",bytes,(unsigned long long)runs);
+    }
+    ~SlimHeads(){if(data)munmap((void*)data,bytes);}
+    SlimHeads(const SlimHeads&)=delete;
+    SlimHeads& operator=(const SlimHeads&)=delete;
+};
+
 // CRA1 retains its exact array-major format. Only one row-ordered chunk is
 // retained; four positioned writes place it into the corresponding arrays.
 static int slim_dump(Ri4& ri,const std::string& prefix,const std::string& out,
                      const std::string& anchorsPath,int threads,uint64_t t1,uint64_t t2,
                      bool stream,bool fault,bool profileOnly=false,
-                     const std::string& flatPath="",uint64_t calibRows=256,bool useResolveCache=false) {
+                     const std::string& flatPath="",uint64_t calibRows=256,bool useResolveCache=false,
+                     const std::string& headSaPath="") {
     if(!profileOnly && (!ri.haveSa||ri.sampleAllInf()))slim_fail("usable ri4 samples required");
     double last=tnow();
+    SlimHeads heads(headSaPath,ri.R);
     SlimLCE lce(prefix,ri.R,t1,t2,stream,fault);
     if(lce.n!=ri.n+lce.w)slim_fail("parse/ri4 length mismatch");
+    if(lce.stringEnds.size()!=ri.k)slim_fail("parse/ri4 string-end count mismatch");
     slim_phase("lce-build-total",last);
     LfIndex lf;lf.build(ri);Anchors anc;if(!anchorsPath.empty())anc.load(anchorsPath);
     SampleResolver resolver;resolver.ri=&ri;resolver.lf=&lf;resolver.anc=anchorsPath.empty()?nullptr:&anc;
+    resolver.headSa=heads.data;
     slim_phase("lf-build",last);
     std::unique_ptr<ResolveCache> resolveCache;
     if(useResolveCache) {
@@ -244,6 +303,7 @@ static int slim_dump(Ri4& ri,const std::string& prefix,const std::string& out,
     put(&magic,4,0);put(&ri.R,8,4);
     constexpr uint64_t CHUNK=65536;
     std::array<std::vector<uint64_t>,4> buf;for(auto& b:buf)b.resize(CHUNK);
+    const uint64_t queryStepsBefore=resolver.sumSteps.load();
     double resolveWall=0,lceWall=0,writeWall=0;
     long resolvePeak=0,lcePeak=0,writePeak=0;
     auto measure=[&](double began,double& wall,long& peak){
@@ -254,16 +314,16 @@ static int slim_dump(Ri4& ri,const std::string& prefix,const std::string& out,
         // Separate chunk phases permit real wall-time accounting without a
         // timer at every seed. Reuse the topLCP buffer for the previous SA.
         auto resolveWorker=[&](){for(;;){uint64_t k=next.fetch_add(1);if(k>=count)return;uint64_t run=start+k,a=ri.starts[run],b=a+ri.l[run]-1;
-            uint64_t first=resolver.sa_at(a),tail=a==b?first:resolver.sa_at(b);
+            uint64_t first=resolver.sa_head(run),tail=a==b?first:resolver.sa_tail(run);
             if(first>=ri.n||tail>=ri.n)slim_fail("position resolution failed");
-            uint64_t prev=a?resolver.sa_at(a-1):0;
+            uint64_t prev=a?resolver.sa_tail(run-1):0;
             if(prev>=ri.n)slim_fail("previous position resolution failed");
             buf[0][k]=prev;buf[1][k]=first;buf[2][k]=tail;
         }};
         auto lceWorker=[&](){for(;;){uint64_t k=next.fetch_add(1);if(k>=count)return;uint64_t run=start+k,a=ri.starts[run],b=a+ri.l[run]-1;
             uint64_t prev=buf[0][k],first=buf[1][k],tail=buf[2][k];
-            buf[0][k]=a?std::min(lce(prev,first),ri.n-std::max(prev,first)):0;
-            buf[3][k]=a==b?INF:std::min(lce(first,tail),ri.n-std::max(first,tail));
+            buf[0][k]=a?lce.collection_lce(prev,first):0;
+            buf[3][k]=a==b?INF:lce.collection_lce(first,tail);
         }};
         auto parallel=[&](auto& worker){next=0;std::vector<std::thread> ts;for(int t=0;t<std::max(1,std::min(threads,64));++t)ts.emplace_back(worker);for(auto& t:ts)t.join();};
         double began=tnow();parallel(resolveWorker);measure(began,resolveWall,resolvePeak);
@@ -279,5 +339,8 @@ static int slim_dump(Ri4& ri,const std::string& prefix,const std::string& out,
     fprintf(stderr,"SLIM_QUERY_PHASE resolve_wall=%.6f resolve_peak_kib=%ld lce_wall=%.6f lce_peak_kib=%ld write_wall=%.6f write_peak_kib=%ld\n",resolveWall,resolvePeak,lceWall,lcePeak,writeWall,writePeak);
     fprintf(stderr,"SLIM_SEEDS queries=%llu mean_verified_phrases=%.9f max_verified_phrases=%llu (includes_zero_parse_work_seeds; boundary_included)\n",(unsigned long long)lce.seedQueries.load(),lce.seedQueries.load()?double(lce.ph->checked.load())/lce.seedQueries.load():0.0,(unsigned long long)lce.ph->maxChecked.load());
     fprintf(stderr,"SLIM_RESOLVE walks=%llu steps=%llu max=%llu anchor=%llu failed=%llu cache_hits=%llu\n",(unsigned long long)resolver.nWalks.load(),(unsigned long long)resolver.sumSteps.load(),(unsigned long long)resolver.maxSteps.load(),(unsigned long long)resolver.viaAnchor.load(),(unsigned long long)resolver.hit0a.load(),(unsigned long long)resolver.viaCache.load());
+    fprintf(stderr,"SLIM_BOUNDARY_RESOLVE head_direct=%llu tail_direct=%llu head_lf_steps=%llu\n",
+        (unsigned long long)resolver.directHeads.load(),(unsigned long long)resolver.directTails.load(),
+        (unsigned long long)(resolver.sumSteps.load()-queryStepsBefore));
     return 0;
 }

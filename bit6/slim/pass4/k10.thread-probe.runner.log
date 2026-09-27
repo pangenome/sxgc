@@ -1,0 +1,2 @@
+COMMAND k10.thread-probe ["/tmp/laneQ/pass4/slim_head_probe_bench", "/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10new2.ri4", "/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10rl_pfp", "/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.head_sa", "/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.walk.agg", "100000", "benchmark"]
+RESULT k10.thread-probe {"wall_seconds": 300.7358718259493, "peak_group_bytes": 52153778176, "peak_rss_kib": 50943224, "returncode": 0}

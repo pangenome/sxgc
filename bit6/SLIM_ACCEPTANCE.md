@@ -1,36 +1,80 @@
-# SLIM pass-3 acceptance report
+# SLIM pass-4 acceptance report — PASS
 
-**Yeast acceptance gates passed. 466 feasibility remains conditional.**
+**G0, yeast, and full k10 passed.** Both full aggregates are byte-identical
+to their baselines, both chi counts match, and NumPy verifies both witness
+sets exactly. Every full-dump run head resolved directly with zero LF steps.
+The complete k10 dump/comparison/sweep/set pipeline took **5809.321 s
+(1h 36m 49s)** at **73.982 GB** peak RSS.
 
-- Real samples: independent production walk completed in 3237.03 s,
-  10.599 GB peak; n=3,336,986,760, R=100,904,881;
-  every sample below n. The chain has one newline-delimited string.
-- G1: new slim aggregate byte-identical to the reference; streamed and
-  resident sweeps both chi=85,404,240; witnesses byte-identical and NumPy
-  sorted-set equal to the supplied oracle. Full dump 1209.93 s,
-  4.925 GB peak.
-- G0: all three requested battery texts passed both LCE paths with
-  `--resolve-ri4`; streamed dictionary also passed. No forbidden resolver.
-- G2: full per-phase resolve/LCE/write wall and cumulative peak RSS,
-  verification mean 15.329365891 phrases/seed and maximum
-  22262, tau sensitivity, and corrected 466 model
-  recorded in SLIM_COST.md. O(tau) and legacy parse-resolver mandates retired.
-- Runtime change: a bounded 1.611 GB exact LF-position cache avoids repeated
-  sample walks; verified against explicit suffix arrays and uncached resolution.
-  The original uncached partial attempt is retained, not counted as a full gate.
-- G3: 8/8 tau1=2 clean runs matched; 8/8 induced wrong candidates failed
-  loudly. Lowering tau alone does not induce errors.
+## Implementation and extraction
 
-V5 head samples are the adopted O(1)/run-head fix for the measured k10
-2,156-step tail-walk mean. Adding them to the current LF memory model gives
-205.990 GB; an unimplemented no-LF variant is conditionally 162.150 GB.
-No 466 or v5 implementation acceptance is claimed. This walk is pilot-only
-legacy remediation. The binding end-state requires head/tail samples and
-anchors from the mandatory front-end build, with no TeraLCP, lcp_index, or
-separate O(n) sample walk; that integration remains ungated here.
-All observed peaks were below 150 GB.
+- `tools/extract_head_sa.py` reads CRA1 sequentially with bounded buffers,
+  validates exact source size/count, and publishes raw LE u64 `saFirst`.
+- `h10.head_sa`: **1,859,825,801 values**, **14,878,606,408 bytes**, extracted
+  in **44.965 s**. The entire sidecar is byte-identical to its source column.
+  1,025 spread mirrored-tail checks and 32 singleton-head checks passed;
+  another 1,025 independent LF-decoded head/tail checks had zero mismatches.
+- Slim `--head-sa FILE` maps exactly 8R bytes and resolves known run heads,
+  tails, and previous tails directly. Absent the sidecar, the original LF
+  resolver and optional exact cache remain available. LF tables are retained.
+- The first k10 prefix gate exposed a pre-existing collection-LCP error:
+  raw PFP LCE continued across shared newline terminators. The correction
+  derives sparse string ends during existing dictionary/parse scans and
+  clamps collection LCP before newline. It recovered exactly 865 k10 ends;
+  all four fields matched on 10,000 leading plus 100,000 spread runs.
+  No text scan, M, b_bwt, or w_wt is introduced.
 
-Evidence: `bit6/gate_logs/slim/pass3/gates.log`, individual phase/gate logs,
-and `SLIM_COST.md`. Large outputs are in `/tmp/laneQ/pass3/`. No commits,
-no M/b_bwt/w_wt, and no interference with the separate Lean worktree.
-This report records gate results; it does not substitute for reviewer approval.
+## Gates and measured costs
+
+| Gate | Result |
+|---|---|
+| G0, after collection correction | 8/8 texts, including duplicates-600k; sidecar and fallback aggregates both byte-identical to every baseline |
+| Input failures | Wrong sidecar size and out-of-range SA rejected; extractor rejects wrong R, truncation and trailing data |
+| Yeast aggregate | Byte-identical to `/tmp/laneY/yeast_pfp2.agg` |
+| Yeast streamed sweep | chi = **85,404,240**; NumPy sorted arrays equal the oracle, with no duplicate entries |
+| Yeast resolution | **34.839281 s**, versus supplied **272 s** reference; **0 LF steps** |
+| Yeast dump | **502.60 s**, **3,492,948 KiB** peak (**3.577 GB**) |
+| Yeast dump + comparison + sweep + set verification | **534.832 s** |
+| K10 aggregate | Entire file byte-identical to `h10.walk.agg` |
+| K10 resolution | **437.509169 s (7.292 min)**; **0 LF steps** across all 1,859,825,801 head queries |
+| K10 dump | **5255 s (1h 27m 35s)**; **72,248,348 KiB** peak (**73.982 GB**) |
+| K10 streamed sweep | chi = **1,627,063,183**; **213.928 s** monitored wall; **6,144 KiB** peak |
+| K10 NumPy sorted-set equality | **PASS**, all **1,627,063,183** entries equal the oracle and are unique; **300.725 s** monitored wall |
+| K10 complete pilot | **5809.321 s (1h 36m 49s)**, including dump, full cmp, sweep and NumPy verification; **73.982 GB** peak |
+
+The earlier pass-3 cost document records a different yeast run at 329.067 s
+resolve; 272 s is the task-supplied comparison. Timings share the machine
+with other work and are not controlled single-tenant throughput experiments.
+A three-repeat exact 110,000-run probe favored 64 LCE workers (median 0.184 s)
+over 32 (0.223 s). All 18 thread configurations returned identical answers.
+
+## 466 scope and provenance
+
+The raw sidecar costs **21.920 GB** at R=2.74e9. The corrected conservative
+projection is **213.867 GB with LF retained**, or **170.027 GB without LF**.
+The no-LF variant remains unimplemented. The earlier 205.990/162.150 GB
+pair assumed packed 41-bit heads and is not this implementation's cost.
+Sparse collection-end metadata falls within the existing reserve.
+
+These pilot sidecars deliberately come from the supplied aggregate artifacts.
+The binding v5 end-state requires the mandatory front-end to emit head/tail
+samples and anchors directly, with no separate TeraLCP/lcp_index/O(n) sample
+walk. That provenance adds no separate generation pass, but sample storage
+still counts. Front-end integration, the native v5 container, and a 466 build
+are not validated here. Exact LCE verification remains proportional to the
+matched prefix; no deterministic O(tau) claim is made.
+
+The failed unclamped k10 attempt was stopped only in this lane's process
+group after 759.857 s and retained for diagnosis. Successful pilot timing
+excludes that failed attempt and the separately reported 44.965 s extraction
+and diagnostic probes. Adding extraction to the successful pipeline costs
+5854.286 s of sequential work; intervening re-gates are not folded into it.
+No commits, staging, or interference with the Lean lane. All measured peaks
+were below 150 GB. No full-pilot stages remain running.
+
+Evidence: `bit6/gate_logs/slim/pass4/`; commands and raw timings are in the
+phase logs. Large artifacts: `/tmp/laneQ/pass4/` and the supplied k10 directory.
+Rebuild with `bash tools/build_slim_dump.sh /tmp/laneQ/pass4/slim_dump`
+and `cargo build --release --manifest-path xsa/Cargo.toml`; run
+`python3 tools/slim_pass4.py --stage G0`, `--stage G1`, then
+`--stage K10 --threads 64`. Existing head sidecars are byte-checked before reuse.

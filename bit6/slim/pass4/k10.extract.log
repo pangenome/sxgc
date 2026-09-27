@@ -1,0 +1,6 @@
+column=1/4 rows=1859825801
+column=2/4 rows=1859825801
+column=3/4 rows=1859825801
+column=4/4 rows=1859825801
+ri4 spread_tail_checks=1025 singleton_head_checks=32
+{"source": "/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.walk.agg", "target": "/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.head_sa", "R": 1859825801, "bytes": 14878606408, "wall_seconds": 44.96493362309411, "spots": [{"run": 0, "length": 1, "head": 242892443, "tail": 242892443, "mirrored_sample": 29908515101}, {"run": 929912900, "length": 10, "head": 2259604680, "tail": 17747906975, "mirrored_sample": 12403500569}, {"run": 1859825800, "length": 1, "head": 10054597119, "tail": 10054597119, "mirrored_sample": 20096810425}]}

@@ -1,0 +1,8 @@
+HEAD_COUNT_EXACT /mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.head_sa 1859825801 14878606408
+HEAD_COUNT_EXACT /tmp/laneQ/pass4/yeast.head_sa 100904881 807239048
+CRA1_EXACT /mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.slim.head.agg 1859825801 59514425644
+CRA1_EXACT /tmp/laneQ/pass4/yeast.agg 100904881 3228956204
+WITNESS_COUNT_EXACT /mnt/nvme3n1/erikg/sxgc-pilot/k10/chi_h10.sA 1627063183
+WITNESS_COUNT_EXACT /tmp/laneQ/pass4/k10.sA 1627063183
+Python assertions enabled; final NumPy value comparison remains a separate gate.
+FINAL PASS: NumPy sorted-set equality=True, count=1627063183; all requested gates complete.

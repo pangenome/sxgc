@@ -1,0 +1,30 @@
+COMMAND ["python3", "/tmp/sxgc-laneQ/tools/extract_head_sa.py", "/tmp/laneY/bat/random-bin-20k.agg", "/tmp/laneQ/pass4/random-bin-20k.head_sa", "--ri4", "/tmp/laneY/bat/random-bin-20k.ri4"]
+column=1/4 rows=9883
+column=2/4 rows=9883
+column=3/4 rows=9883
+column=4/4 rows=9883
+ri4 spread_tail_checks=1025 singleton_head_checks=522
+{"source": "/tmp/laneY/bat/random-bin-20k.agg", "target": "/tmp/laneQ/pass4/random-bin-20k.head_sa", "R": 9883, "bytes": 79064, "wall_seconds": 0.01021460397168994, "spots": [{"run": 0, "length": 5, "head": 20000, "tail": 19996, "mirrored_sample": 4}, {"run": 4941, "length": 2, "head": 7214, "tail": 6032, "mirrored_sample": 13968}, {"run": 9882, "length": 2, "head": 16717, "tail": 6969, "mirrored_sample": 13031}]}
+	Command being timed: "python3 /tmp/sxgc-laneQ/tools/extract_head_sa.py /tmp/laneY/bat/random-bin-20k.agg /tmp/laneQ/pass4/random-bin-20k.head_sa --ri4 /tmp/laneY/bat/random-bin-20k.ri4"
+	User time (seconds): 0.06
+	System time (seconds): 0.02
+	Percent of CPU this job got: 97%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:00.09
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 12288
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 1875
+	Voluntary context switches: 4
+	Involuntary context switches: 0
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 160
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

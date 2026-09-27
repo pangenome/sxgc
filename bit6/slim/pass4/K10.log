@@ -1,0 +1,11 @@
+COMMAND k10.dump ["/tmp/laneQ/pass4/slim_dump", "--slim", "--resolve-ri4", "--dict-stream", "--ri4", "/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10new2.ri4", "--parse", "/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10rl_pfp", "--head-sa", "/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.head_sa", "-o", "/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.slim.head.agg", "-t", "64"]
+K10 EARLY PREFIX PASS all four columns rows=65536
+RESULT k10.dump {"wall_seconds": 5255.926391261979, "peak_group_bytes": 73980858368, "peak_rss_kib": 72248348, "returncode": 0, "resolve_wall": 437.509169, "lce_wall": 4590.960594, "write_wall": 14.639814}
+COMMAND k10.cmp ["cmp", "/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.slim.head.agg", "/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.walk.agg"]
+RESULT k10.cmp {"wall_seconds": 38.73745537409559, "peak_group_bytes": 0, "peak_rss_kib": 0, "returncode": 0}
+BYTE-IDENTICAL /mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.slim.head.agg /mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.walk.agg
+COMMAND k10.sweep ["/tmp/sxgc-laneQ/xsa/target/release/xsa", "chi-rspace", "--stream-agg", "--ri4", "/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10new2.ri4", "--agg", "/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.slim.head.agg", "-o", "/tmp/laneQ/pass4/k10.sA"]
+RESULT k10.sweep {"wall_seconds": 213.9278475960018, "peak_group_bytes": 6291456, "peak_rss_kib": 6144, "returncode": 0}
+COMMAND k10.set ["python3", "-c", "import numpy as np,sys,time\nstart=time.monotonic()\na=np.fromfile(sys.argv[1],dtype='<u8'); b=np.fromfile(sys.argv[2],dtype='<u8')\nassert len(a)==len(b)==int(sys.argv[3]), (len(a),len(b))\na.sort();b.sort();assert np.array_equal(a,b)\n# Sorted equality plus no duplicates establishes equality of the witness sets.\nfor off in range(1,len(a),1<<20):\n end=min(len(a),off+(1<<20));assert np.all(a[off:end]>a[off-1:end-1])\nprint('NUMPY sorted-set equality=True count='+str(len(a))+' wall='+str(time.monotonic()-start))\n", "/tmp/laneQ/pass4/k10.sA", "/mnt/nvme3n1/erikg/sxgc-pilot/k10/chi_h10.sA", "1627063183"]
+RESULT k10.set {"wall_seconds": 300.7246965490049, "peak_group_bytes": 27673387008, "peak_rss_kib": 27043224, "returncode": 0}
+k10 PASS: aggregate byte-identical; chi=1627063183; NumPy sorted-set equality; zero LF steps. {"wall_seconds": 5809.32109882799, "peak_rss_kib": 72248348}

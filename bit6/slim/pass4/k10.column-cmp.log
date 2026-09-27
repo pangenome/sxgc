@@ -1,0 +1,23 @@
+	Command being timed: "cmp --ignore-initial=14878606420:0 --bytes=14878606408 /mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.walk.agg /mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.head_sa"
+	User time (seconds): 1.13
+	System time (seconds): 4.37
+	Percent of CPU this job got: 99%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:05.50
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 0
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 163
+	Voluntary context switches: 1
+	Involuntary context switches: 11
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

@@ -18,6 +18,10 @@
 //                       as pfp_lce_support clamp(n - max(p_a,p_b))
 //                       (INF for single-row runs)
 //
+// Slim --head-sa FILE consumes exactly R raw little-endian u64 head SA
+// values. Boundary queries use known run IDs in O(1); absent the sidecar,
+// head queries retain the sample/anchor LF resolver (and optional cache).
+//
 // Output (aggregates sidecar): "CRA1" u32, R u64, then R*4 u64 LE:
 //   topLCP[], saFirst[], saLast[], interiorMin[]  (u64max = INF)
 //
@@ -231,8 +235,31 @@ struct SampleResolver {
     const LfIndex* lf = nullptr;
     const Anchors* anc = nullptr;
     ResolveCache* cache = nullptr;
+    // Optional raw u64 SA values, indexed by run; tails remain mirrored in ri4.
+    const uint64_t* headSa = nullptr;
+    mutable std::atomic<uint64_t> directHeads{0}, directTails{0};
+    inline uint64_t sa_tail(uint64_t run) const {
+        directTails.fetch_add(1,std::memory_order_relaxed);
+        uint64_t sample=ri->sample(run);
+        return sample<ri->n ? ri->n-1-sample : INF;
+    }
+    inline uint64_t sa_head(uint64_t run) const {
+        if(!headSa) return sa_at(ri->starts[run]);
+        directHeads.fetch_add(1,std::memory_order_relaxed);
+        uint64_t value=headSa[run];
+        if(value>=ri->n || (ri->l[run]==1 && value!=ri->n-1-ri->sample(run))) {
+            fprintf(stderr,"FATAL: head-SA value/range or singleton mismatch at run %llu\n",(unsigned long long)run);
+            exit(2);
+        }
+        return value;
+    }
     mutable std::atomic<uint64_t> nWalks{0}, sumSteps{0}, maxSteps{0}, hit0a{0}, viaAnchor{0}, viaCache{0};
     inline uint64_t sa_at(uint64_t row) const {
+        if(headSa) {
+            uint64_t run=lf->run_of(row);
+            if(row==ri->starts[run]) return sa_head(run);
+            if(row==ri->starts[run]+ri->l[run]-1) return sa_tail(run);
+        }
         uint64_t pos = row, steps = 0;
         struct Point {uint64_t row, distance;};
         Point path[4096]; // uninitialized; bounded 64 KiB of stack per worker
@@ -461,7 +488,7 @@ static void pfp_digest(const pfpds::dictionary<uint8_t>& D,
 
 int main(int argc, char** argv) {
     G_T0 = tnow();
-    std::string ri4Path, parsePrefix, lcpIndexPath, pfpIndexPath, outPath, flatPath, anchorsPath;
+    std::string ri4Path, parsePrefix, lcpIndexPath, pfpIndexPath, outPath, flatPath, anchorsPath, headSaPath;
     int nthreads = std::thread::hardware_concurrency();
     uint64_t calibRows = 256;
     bool resolveRi4 = false, slim = false, dictStream = false, injectFault = false, profileOnly = false, resolveCache = false;
@@ -476,6 +503,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "-t") && i + 1 < argc) nthreads = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--calib-rows") && i + 1 < argc) calibRows = strtoull(argv[++i], nullptr, 10);
         else if (!strcmp(argv[i], "--resolve-ri4")) resolveRi4 = true;
+        else if (!strcmp(argv[i], "--head-sa") && i+1<argc) headSaPath=argv[++i];
         else if (!strcmp(argv[i], "--resolve-cache")) resolveCache = true;
         else if (!strcmp(argv[i], "--slim")) slim = true;
         else if (!strcmp(argv[i], "--slim-profile-build")) profileOnly = true;
@@ -486,10 +514,10 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--anchors") && i + 1 < argc) anchorsPath = argv[++i];
         else { fprintf(stderr, "unknown arg %s\n", argv[i]); return 1; }
     }
-    if ((profileOnly || dictStream || injectFault || tau1 || tau2 || resolveCache) && !slim)
+    if ((profileOnly || dictStream || injectFault || tau1 || tau2 || resolveCache || !headSaPath.empty()) && !slim)
         slim_fail("slim options require --slim");
     if (ri4Path.empty() || parsePrefix.empty() || outPath.empty()) {
-        fprintf(stderr, "usage: chi_rspace_dump [--slim --resolve-ri4 [--dict-stream] [--resolve-cache] [--tau1 N] [--tau2 N] [--slim-profile-build] [--inject-fingerprint-error (TEST ONLY)]] --ri4 F.ri4 --parse PFP_PREFIX -o OUT.agg [-t N] [--flat F] [--calib-rows N] [--pfp-index INDEX (load instead of building; bit6/pfp_index_build.cpp)] [--lcp-index F.lcp_index.lcp_index (LEGACY cross-check only)] [--resolve-ri4 (positions from pfp_ds_vendor/pfp/pfp.hpp defer_build_t; NO M/b_bwt/w_wt; SA via the .ri4 sample array + LF walk)] [--anchors F (string-start anchors for walks that reach an interior 0x0A row)]\n");
+        fprintf(stderr, "usage: chi_rspace_dump [--slim --resolve-ri4 [--dict-stream] [--head-sa FILE] [--resolve-cache] [--tau1 N] [--tau2 N] [--slim-profile-build] [--inject-fingerprint-error (TEST ONLY)]] --ri4 F.ri4 --parse PFP_PREFIX -o OUT.agg [-t N] [--flat F] [--calib-rows N] [--pfp-index INDEX (load instead of building; bit6/pfp_index_build.cpp)] [--lcp-index F.lcp_index.lcp_index (LEGACY cross-check only)] [--resolve-ri4 (positions from pfp_ds_vendor/pfp/pfp.hpp defer_build_t; NO M/b_bwt/w_wt; SA via the .ri4 sample array + LF walk)] [--anchors F (string-start anchors for walks that reach an interior 0x0A row)]\n");
         return 1;
     }
 
@@ -501,7 +529,7 @@ int main(int argc, char** argv) {
         if (!resolveRi4 || !pfpIndexPath.empty() || !lcpIndexPath.empty())
             slim_fail("--slim requires --resolve-ri4 and excludes legacy indexes");
         double begin=G_T0;slim_phase("ri4-load",begin);
-        return slim_dump(ri4,parsePrefix,outPath,anchorsPath,nthreads,tau1,tau2,dictStream,injectFault,profileOnly,flatPath,calibRows,resolveCache);
+        return slim_dump(ri4,parsePrefix,outPath,anchorsPath,nthreads,tau1,tau2,dictStream,injectFault,profileOnly,flatPath,calibRows,resolveCache,headSaPath);
     }
 
     // ---- LEGACY lcp_index: OPTIONAL.  When absent, topLCP is computed

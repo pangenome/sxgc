@@ -1,4 +1,89 @@
-# SLIM final pass-3 cost and acceptance evidence
+# SLIM costs — pass 4 head-SA update
+
+Pass-4 yeast passed: resolve 34.839 s (supplied reference 272 s), full
+dump 502.60 s / 3.577 GB peak; chi=85,404,240, aggregate byte identity
+and NumPy witness-set equality. K10 construction and full aggregate byte
+identity passed: resolve 437.509 s, dump 5255 s / 73.982 GB peak. Its sweep
+passed with chi=1,627,063,183 and full NumPy sorted-set equality. The
+complete k10 pilot took **5809.321 s (1h 36m 49s)** at **73.982 GB** peak.
+Historical yeast measurements below are from pass 3. The current sidecar
+is raw u64 (8 B/run), not packed 41-bit heads. The corrected 466 model is **213.867 GB with LF tables**
+and **170.027 GB if LF tables are omitted**; omission remains unimplemented.
+The former 205.990/162.150 GB pair assumed packed heads and does not describe
+this sidecar implementation. See the corrected table below.
+
+## Pass-4 measured construction costs
+
+Both builds use `--slim --resolve-ri4 --dict-stream --head-sa`, with no
+resolve cache. The LF tables remain resident, though query LF steps are zero.
+Yeast uses 32 workers; k10 uses 64, selected by three exact sampled trials.
+All GB are decimal. Full command walls below are GNU time; phase walls are
+sums over separate query chunks. Pilot totals in `results.json` include
+monitoring overhead and all exact verification stages.
+
+| Measurement | Yeast | K10 |
+|---|---:|---:|
+| Runs | 100,904,881 | 1,859,825,801 |
+| Raw head sidecar bytes | 807,239,048 | 14,878,606,408 |
+| Resolve wall, s | 34.839281 | 437.509169 |
+| LCE wall, s | 446.435483 | 4590.960594 |
+| Aggregate writes, s | 3.498516 | 14.639814 |
+| Complete dump wall, s | 502.60 | 5255 (1h 27m 35s) |
+| Peak RSS, KiB | 3,492,948 | 72,248,348 |
+| Peak RSS, GB | 3.577 | 73.982 |
+| LF steps, including heads | 0 | 0 |
+| Direct head queries | 100,904,881 | 1,859,825,801 |
+| Seed LCE queries | 177,082,171 | 3,663,877,939 |
+| Mean verified phrases per seed | 15.329365891 | 2.274210601 |
+| Maximum verified phrases | 22,262 | 11,901 |
+
+| Exact verification stage (monitored wall) | Yeast s | K10 s |
+|---|---:|---:|
+| Full aggregate byte comparison | 3.284 | 38.737 |
+| Streamed sweep | 12.006 | 213.928 |
+| NumPy sorted-set equality, including uniqueness | 16.203 | 300.725 |
+| Dump + comparison + sweep + set verification | 534.832 | 5809.321 |
+
+The k10 streamed sweep returned **chi=1,627,063,183** at **6,144 KiB**
+peak; its 1,627,063,183 raw u64 witnesses exactly equal `chi_h10.sA` after
+sorting and contain no duplicates. NumPy verification peaked at
+27,043,224 KiB (27.692 GB), below the dump's 73.982 GB. Both full aggregates
+are byte-identical to their supplied baselines. All observed peaks are
+below 150 GB. Extraction adds 44.965 s separately; extraction plus successful
+k10 pipeline is 5854.286 s of sequential work. Stopped attempts and diagnostic
+probes are documented separately, not hidden in the accepted construction rate.
+
+The requested yeast comparison is **272 s -> 34.839 s** (7.81x faster).
+The 272 s value is supplied by the task; the older pass-3 run retained below
+measured 329.067 s. The k10 tail-LF pilot's roughly three-day estimate was a
+projection, not a completed baseline. The new measured resolution is
+**437.509 s (7.292 minutes)**. Timings share the machine with other work;
+worker-count and cache differences preclude a controlled speedup claim.
+
+K10's head column was extracted in 44.965 s with bounded buffers, then
+compared byte-for-byte with the entire source column. Sample checks included
+1,025 mirrored tails, 32 singleton heads, and 1,025 independent LF-decoded
+head/tail pairs. This is a pilot-side extraction cost, not an O(n) sample walk.
+
+The first k10 attempt found an existing collection-LCP bug: raw LCE could
+continue through newline terminators. The corrected consumer derives sparse
+ends from the existing dictionary/parse scans (865 ends, 8,192 bytes of
+vector capacity at k10), checks their count against ri4.k, and clamps before
+the terminator. No text scan or forbidden structure is needed. Temporary
+newline metadata and the end vector fit within the model's existing reserve.
+The correction passed 110,000 leading/spread k10 run checks and repeated G0
+and yeast gates. The initial incorrect attempt was stopped after 759.857 s;
+its logs/output remain as `unclamped` evidence and are excluded from the
+successful pipeline timing.
+
+K10 fingerprints used tau1=2 and tau2=24. They directly verified
+8,332,430,051 phrase positions and 170,688,001,020 dictionary byte positions;
+maximum dictionary verification was 2,566,352 bytes. Verification checks the
+raw PFP proposal before collection clamping, so these counters charge the
+work actually performed. Exactness is deterministic; no O(tau) bound or
+466 wall-time prediction follows from these measurements.
+
+## Historical pass-3 cost and acceptance evidence
 
 G1, G0 revalidation, G2 measurement, and G3 passed in the requested order.
 This establishes yeast end-to-end correctness with independently generated
@@ -145,7 +230,7 @@ all eight explicitly perturbed proposals were rejected with
 `FATAL SLIM: fingerprint verification mismatch`. Tau1=2 alone does not
 induce a collision; explicit fault injection is required for that gate.
 
-## Conditional 466 projection, including adopted v5 head samples
+## Conditional 466 projection, including implemented raw head-SA sidecar
 
 Assume n466=1.403e12 and r466=2.74e9. Measured k10 inputs are
 n10=30,151,407,545, P10=333,531,723, virtual D10=5,483,754,406,
@@ -182,12 +267,12 @@ prediction. Exactness is unaffected by eviction; throughput need not be.
 | Current v4 conditional peak | 191.947 |
 | Optional bounded exact LF cache | 1.611 |
 | v4 with that cache enabled | 193.558 |
-| Additional packed v5 head samples (41 bits/run) | 14.043 |
-| v5 with current LF tables retained | 205.990 |
-| Future v5 direct-head/tail mode omitting LF tables | 162.150 |
+| Raw head-SA sidecar (64 bits/run; resident or fully touched mmap) | 21.920 |
+| Direct head/tail sidecar with current LF tables retained | 213.867 |
+| Future direct-head/tail mode omitting LF tables | 170.027 |
 
-V5 direct-boundary lookups do not need this optional cache, so the v5 rows
-add head samples to the uncached model. Enabling it anyway adds 1.611 GB;
+Direct-boundary sidecar lookups do not need the optional resolve cache, so
+the sidecar rows add 8R bytes to the uncached model. Enabling it anyway adds 1.611 GB;
 worker checkpoint stacks and other stack overhead fall within the explicit
 10 GB reserve. Its yeast speedup is not extrapolated to 466.
 
@@ -196,8 +281,8 @@ vector capacities plus 8r for prefix sums). The conservative v5 model retains
 both LF and row-start arrays; the optional no-LF model subtracts only LF.
 The latter is an unimplemented optimization, not a measured win. Native v5
 anchors and header details are not frozen; the 10 GB reserve must cover them
-and other omitted overhead, or the projection increases. No v5 reader/writer
-or 466 build was implemented or tested in this lane.
+and other omitted overhead, or the projection increases. The raw sidecar reader is implemented in pass 4; the single-file v5
+container reader/writer and a 466 build remain outside these gates.
 
 The measured **k10 v4 baseline is 2,156 LF steps/run-head on average,
 maximum 933,995**. Holding that distribution fixed at 466 implies
@@ -206,15 +291,16 @@ The adopted v5 fix stores head samples alongside tails: all required seed
 positions (head, tail, previous tail) become **O(1) direct lookups**. LF
 remains available for arbitrary rows if retained, but it is not needed for
 those sampled boundaries. The mandatory front-end must emit those samples
-and anchors from its internal build structures; its integration cost is
-not measured here. A separate TeraLCP/O(n) walk is excluded from the
+and anchors from its internal build structures; under the binding v5
+provenance clause they require no additional standalone sample-generation
+pass. Their 8R storage still counts. Front-end integration is not gated here. A separate TeraLCP/O(n) walk is excluded from the
 end-state architecture, as clarified after correction #6.
 
-The conservative v5 model exceeds 200 GB by 5.990 GB. Current v4 at
+The conservative raw-sidecar model exceeds 200 GB by 13.867 GB. Current v4 at
 191.947 GB does not include the head-sample fix and must not be advertised
 as its memory cost. Literal sampling gives 228.921
-GB before adding v5 heads; retaining dictionary text gives
-447.116 GB before v5 heads. Both alternatives
+GB before adding heads (250.841 GB with the raw sidecar); retaining
+dictionary text gives 447.116 GB before heads (469.036 GB with the sidecar). Both alternatives
 also exclude the optional LF memo cache. All are conditional
 models, not measured guarantees. The 150 GB operational cap was respected
 by these yeast/battery runs; none of these 466 estimates promises that cap.

@@ -1,0 +1,48 @@
+COMMAND ["/tmp/laneQ/pass4/slim_dump", "--slim", "--resolve-ri4", "--dict-stream", "--ri4", "/tmp/laneY/bat/dup+unique-120k.ri4", "--parse", "/tmp/laneY/bat/dup+unique-120k_pfp", "--flat", "/tmp/laneY/bat/dup+unique-120k.txt", "-t", "8", "-o", "/tmp/laneQ/pass4/dup+unique-120k.head.agg", "--head-sa", "/tmp/laneQ/pass4/dup+unique-120k.head_sa"]
+ri4: n=120001 k=1 R=53844
+SLIM_PHASE ri4-load wall=0.001 cumulative=0.001 peak_rss_kib=2048
+SLIM_HEAD_SA bytes=430752 rows=53844 mmap=1
+SLIM_PHASE dict-read wall=0.000 cumulative=0.001 peak_rss_kib=2048
+SLIM_PHASE dict-boundaries wall=0.001 cumulative=0.002 peak_rss_kib=2048
+SLIM_STRING_ENDS count=1 bytes=8 from_parse_dict=1
+SLIM_PHASE parse+boundaries wall=0.000 cumulative=0.002 peak_rss_kib=2048
+SLIM_PHASE parse-fingerprints wall=0.000 cumulative=0.002 peak_rss_kib=2048
+SLIM_PHASE dict-fingerprints wall=0.001 cumulative=0.003 peak_rss_kib=2048
+SLIM_STRUCT n=120011 P=1131 D=112533 phrases=818 parse_bytes=4528 bd_bytes=1238 bp_bytes=1558 dict_resident=0 dict_cache_per_thread=262144 no_SA_ISA_LCP_RMQ=1 no_M_b_bwt_w_wt=1
+SLIM_PHASE lce-build-total wall=0.002 cumulative=0.003 peak_rss_kib=2048
+SLIM_PHASE lf-build wall=0.001 cumulative=0.004 peak_rss_kib=4096
+SLIM_RI runs=269220 starts=430752 samples=114424 lf_capacity=692940
+SLIM_CALIBRATION ri4_ROW_OFF=0 PFP_text_shift=10 checked=512 bad=0
+SLIM_PHASE flat-calibration wall=0.004 cumulative=0.008 peak_rss_kib=6144
+SLIM_PROGRESS runs=53844/53844 resolve_wall=0.021 lce_wall=0.098 write_wall=0.002 lf_steps=11019 cache_hits=0
+SLIM_PHASE query-chunks wall=0.121 cumulative=0.129 peak_rss_kib=10240
+SLIM_PHASE queries+stream-write-final wall=0.001 cumulative=0.131 peak_rss_kib=10240
+SLIM_FP parse tau=1 bytes=9064 queries=3927 verified_symbols=8531 hash_probes=5599 mean_verified=2.172396231 max_verified=11
+SLIM_FP dict tau=17 bytes=52960 queries=75326 verified_symbols=1305946 hash_probes=54496 mean_verified=17.337254069 max_verified=369
+SLIM_QUERY_PHASE resolve_wall=0.020709 resolve_peak_kib=10240 lce_wall=0.097632 lce_peak_kib=10240 write_wall=0.001743 write_peak_kib=10240
+SLIM_SEEDS queries=73509 mean_verified_phrases=0.116053817 max_verified_phrases=11 (includes_zero_parse_work_seeds; boundary_included)
+SLIM_RESOLVE walks=94 steps=11019 max=327 anchor=0 failed=0 cache_hits=0
+SLIM_BOUNDARY_RESOLVE head_direct=54223 tail_direct=73548 head_lf_steps=0
+	Command being timed: "/tmp/laneQ/pass4/slim_dump --slim --resolve-ri4 --dict-stream --ri4 /tmp/laneY/bat/dup+unique-120k.ri4 --parse /tmp/laneY/bat/dup+unique-120k_pfp --flat /tmp/laneY/bat/dup+unique-120k.txt -t 8 -o /tmp/laneQ/pass4/dup+unique-120k.head.agg --head-sa /tmp/laneQ/pass4/dup+unique-120k.head_sa"
+	User time (seconds): 0.92
+	System time (seconds): 0.02
+	Percent of CPU this job got: 696%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:00.13
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 10240
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 1975
+	Voluntary context switches: 38
+	Involuntary context switches: 12
+	Swaps: 0
+	File system inputs: 8
+	File system outputs: 3368
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

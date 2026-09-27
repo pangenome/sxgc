@@ -1,0 +1,101 @@
+COMMAND duplicates-600k.extract ["python3", "/tmp/sxgc-laneQ/tools/extract_head_sa.py", "/tmp/laneY/bat/duplicates-600k.agg", "/tmp/laneQ/pass4/duplicates-600k.head_sa", "--ri4", "/tmp/laneY/bat/duplicates-600k.ri4"]
+RESULT duplicates-600k.extract {"wall_seconds": 1.1272950229467824, "peak_group_bytes": 0, "peak_rss_kib": 12288, "returncode": 0}
+COMMAND duplicates-600k.head ["/tmp/laneQ/pass4/slim_dump", "--slim", "--resolve-ri4", "--dict-stream", "--ri4", "/tmp/laneY/bat/duplicates-600k.ri4", "--parse", "/tmp/laneY/bat/duplicates-600k_pfp", "--flat", "/tmp/laneY/bat/duplicates-600k.txt", "-t", "8", "-o", "/tmp/laneQ/pass4/duplicates-600k.head.agg", "--head-sa", "/tmp/laneQ/pass4/duplicates-600k.head_sa"]
+RESULT duplicates-600k.head {"wall_seconds": 1.1230098759988323, "peak_group_bytes": 0, "peak_rss_kib": 8192, "returncode": 0, "resolve_wall": 0.005253, "lce_wall": 0.052699, "write_wall": 0.001029}
+COMMAND duplicates-600k.head.cmp ["cmp", "/tmp/laneQ/pass4/duplicates-600k.head.agg", "/tmp/laneY/bat/duplicates-600k.agg"]
+RESULT duplicates-600k.head.cmp {"wall_seconds": 1.1229055860312656, "peak_group_bytes": 0, "peak_rss_kib": 0, "returncode": 0}
+BYTE-IDENTICAL /tmp/laneQ/pass4/duplicates-600k.head.agg /tmp/laneY/bat/duplicates-600k.agg
+COMMAND duplicates-600k.fallback ["/tmp/laneQ/pass4/slim_dump", "--slim", "--resolve-ri4", "--dict-stream", "--ri4", "/tmp/laneY/bat/duplicates-600k.ri4", "--parse", "/tmp/laneY/bat/duplicates-600k_pfp", "--flat", "/tmp/laneY/bat/duplicates-600k.txt", "-t", "8", "-o", "/tmp/laneQ/pass4/duplicates-600k.fallback.agg"]
+RESULT duplicates-600k.fallback {"wall_seconds": 1.1341869329335168, "peak_group_bytes": 6291456, "peak_rss_kib": 6144, "returncode": 0, "resolve_wall": 0.065169, "lce_wall": 0.052408, "write_wall": 0.001347}
+COMMAND duplicates-600k.fallback.cmp ["cmp", "/tmp/laneQ/pass4/duplicates-600k.fallback.agg", "/tmp/laneY/bat/duplicates-600k.agg"]
+RESULT duplicates-600k.fallback.cmp {"wall_seconds": 1.1251161000691354, "peak_group_bytes": 0, "peak_rss_kib": 0, "returncode": 0}
+BYTE-IDENTICAL /tmp/laneQ/pass4/duplicates-600k.fallback.agg /tmp/laneY/bat/duplicates-600k.agg
+COMMAND random-4-2k.extract ["python3", "/tmp/sxgc-laneQ/tools/extract_head_sa.py", "/tmp/laneY/bat/random-4-2k.agg", "/tmp/laneQ/pass4/random-4-2k.head_sa", "--ri4", "/tmp/laneY/bat/random-4-2k.ri4"]
+RESULT random-4-2k.extract {"wall_seconds": 1.1239509379956871, "peak_group_bytes": 0, "peak_rss_kib": 12288, "returncode": 0}
+COMMAND random-4-2k.head ["/tmp/laneQ/pass4/slim_dump", "--slim", "--resolve-ri4", "--dict-stream", "--ri4", "/tmp/laneY/bat/random-4-2k.ri4", "--parse", "/tmp/laneY/bat/random-4-2k_pfp", "--flat", "/tmp/laneY/bat/random-4-2k.txt", "-t", "8", "-o", "/tmp/laneQ/pass4/random-4-2k.head.agg", "--head-sa", "/tmp/laneQ/pass4/random-4-2k.head_sa"]
+RESULT random-4-2k.head {"wall_seconds": 1.1213622440118343, "peak_group_bytes": 0, "peak_rss_kib": 6144, "returncode": 0, "resolve_wall": 0.003511, "lce_wall": 0.002568, "write_wall": 0.000112}
+COMMAND random-4-2k.head.cmp ["cmp", "/tmp/laneQ/pass4/random-4-2k.head.agg", "/tmp/laneY/bat/random-4-2k.agg"]
+RESULT random-4-2k.head.cmp {"wall_seconds": 1.1243614580016583, "peak_group_bytes": 0, "peak_rss_kib": 0, "returncode": 0}
+BYTE-IDENTICAL /tmp/laneQ/pass4/random-4-2k.head.agg /tmp/laneY/bat/random-4-2k.agg
+COMMAND random-4-2k.fallback ["/tmp/laneQ/pass4/slim_dump", "--slim", "--resolve-ri4", "--dict-stream", "--ri4", "/tmp/laneY/bat/random-4-2k.ri4", "--parse", "/tmp/laneY/bat/random-4-2k_pfp", "--flat", "/tmp/laneY/bat/random-4-2k.txt", "-t", "8", "-o", "/tmp/laneQ/pass4/random-4-2k.fallback.agg"]
+RESULT random-4-2k.fallback {"wall_seconds": 1.1252620199229568, "peak_group_bytes": 0, "peak_rss_kib": 6144, "returncode": 0, "resolve_wall": 0.004596, "lce_wall": 0.003165, "write_wall": 8.8e-05}
+COMMAND random-4-2k.fallback.cmp ["cmp", "/tmp/laneQ/pass4/random-4-2k.fallback.agg", "/tmp/laneY/bat/random-4-2k.agg"]
+RESULT random-4-2k.fallback.cmp {"wall_seconds": 1.1226686959853396, "peak_group_bytes": 0, "peak_rss_kib": 0, "returncode": 0}
+BYTE-IDENTICAL /tmp/laneQ/pass4/random-4-2k.fallback.agg /tmp/laneY/bat/random-4-2k.agg
+COMMAND random-4-20k.extract ["python3", "/tmp/sxgc-laneQ/tools/extract_head_sa.py", "/tmp/laneY/bat/random-4-20k.agg", "/tmp/laneQ/pass4/random-4-20k.head_sa", "--ri4", "/tmp/laneY/bat/random-4-20k.ri4"]
+RESULT random-4-20k.extract {"wall_seconds": 1.128078753943555, "peak_group_bytes": 0, "peak_rss_kib": 12288, "returncode": 0}
+COMMAND random-4-20k.head ["/tmp/laneQ/pass4/slim_dump", "--slim", "--resolve-ri4", "--dict-stream", "--ri4", "/tmp/laneY/bat/random-4-20k.ri4", "--parse", "/tmp/laneY/bat/random-4-20k_pfp", "--flat", "/tmp/laneY/bat/random-4-20k.txt", "-t", "8", "-o", "/tmp/laneQ/pass4/random-4-20k.head.agg", "--head-sa", "/tmp/laneQ/pass4/random-4-20k.head_sa"]
+RESULT random-4-20k.head {"wall_seconds": 1.1248818690655753, "peak_group_bytes": 0, "peak_rss_kib": 8192, "returncode": 0, "resolve_wall": 0.002097, "lce_wall": 0.005492, "write_wall": 0.00051}
+COMMAND random-4-20k.head.cmp ["cmp", "/tmp/laneQ/pass4/random-4-20k.head.agg", "/tmp/laneY/bat/random-4-20k.agg"]
+RESULT random-4-20k.head.cmp {"wall_seconds": 1.1211090330034494, "peak_group_bytes": 0, "peak_rss_kib": 0, "returncode": 0}
+BYTE-IDENTICAL /tmp/laneQ/pass4/random-4-20k.head.agg /tmp/laneY/bat/random-4-20k.agg
+COMMAND random-4-20k.fallback ["/tmp/laneQ/pass4/slim_dump", "--slim", "--resolve-ri4", "--dict-stream", "--ri4", "/tmp/laneY/bat/random-4-20k.ri4", "--parse", "/tmp/laneY/bat/random-4-20k_pfp", "--flat", "/tmp/laneY/bat/random-4-20k.txt", "-t", "8", "-o", "/tmp/laneQ/pass4/random-4-20k.fallback.agg"]
+RESULT random-4-20k.fallback {"wall_seconds": 1.1235756279202178, "peak_group_bytes": 0, "peak_rss_kib": 6144, "returncode": 0, "resolve_wall": 0.006796, "lce_wall": 0.005914, "write_wall": 0.000443}
+COMMAND random-4-20k.fallback.cmp ["cmp", "/tmp/laneQ/pass4/random-4-20k.fallback.agg", "/tmp/laneY/bat/random-4-20k.agg"]
+RESULT random-4-20k.fallback.cmp {"wall_seconds": 1.1386793788988143, "peak_group_bytes": 0, "peak_rss_kib": 0, "returncode": 0}
+BYTE-IDENTICAL /tmp/laneQ/pass4/random-4-20k.fallback.agg /tmp/laneY/bat/random-4-20k.agg
+COMMAND random-bin-20k.extract ["python3", "/tmp/sxgc-laneQ/tools/extract_head_sa.py", "/tmp/laneY/bat/random-bin-20k.agg", "/tmp/laneQ/pass4/random-bin-20k.head_sa", "--ri4", "/tmp/laneY/bat/random-bin-20k.ri4"]
+RESULT random-bin-20k.extract {"wall_seconds": 1.1205594229977578, "peak_group_bytes": 0, "peak_rss_kib": 12288, "returncode": 0}
+COMMAND random-bin-20k.head ["/tmp/laneQ/pass4/slim_dump", "--slim", "--resolve-ri4", "--dict-stream", "--ri4", "/tmp/laneY/bat/random-bin-20k.ri4", "--parse", "/tmp/laneY/bat/random-bin-20k_pfp", "--flat", "/tmp/laneY/bat/random-bin-20k.txt", "-t", "8", "-o", "/tmp/laneQ/pass4/random-bin-20k.head.agg", "--head-sa", "/tmp/laneQ/pass4/random-bin-20k.head_sa"]
+RESULT random-bin-20k.head {"wall_seconds": 1.12440819805488, "peak_group_bytes": 0, "peak_rss_kib": 8192, "returncode": 0, "resolve_wall": 0.003348, "lce_wall": 0.008838, "write_wall": 0.00041}
+COMMAND random-bin-20k.head.cmp ["cmp", "/tmp/laneQ/pass4/random-bin-20k.head.agg", "/tmp/laneY/bat/random-bin-20k.agg"]
+RESULT random-bin-20k.head.cmp {"wall_seconds": 1.1222908860072494, "peak_group_bytes": 0, "peak_rss_kib": 0, "returncode": 0}
+BYTE-IDENTICAL /tmp/laneQ/pass4/random-bin-20k.head.agg /tmp/laneY/bat/random-bin-20k.agg
+COMMAND random-bin-20k.fallback ["/tmp/laneQ/pass4/slim_dump", "--slim", "--resolve-ri4", "--dict-stream", "--ri4", "/tmp/laneY/bat/random-bin-20k.ri4", "--parse", "/tmp/laneY/bat/random-bin-20k_pfp", "--flat", "/tmp/laneY/bat/random-bin-20k.txt", "-t", "8", "-o", "/tmp/laneQ/pass4/random-bin-20k.fallback.agg"]
+RESULT random-bin-20k.fallback {"wall_seconds": 1.1257338500581682, "peak_group_bytes": 0, "peak_rss_kib": 6144, "returncode": 0, "resolve_wall": 0.009282, "lce_wall": 0.017498, "write_wall": 0.00065}
+COMMAND random-bin-20k.fallback.cmp ["cmp", "/tmp/laneQ/pass4/random-bin-20k.fallback.agg", "/tmp/laneY/bat/random-bin-20k.agg"]
+RESULT random-bin-20k.fallback.cmp {"wall_seconds": 1.1232884669443592, "peak_group_bytes": 0, "peak_rss_kib": 0, "returncode": 0}
+BYTE-IDENTICAL /tmp/laneQ/pass4/random-bin-20k.fallback.agg /tmp/laneY/bat/random-bin-20k.agg
+COMMAND random-4-200k.extract ["python3", "/tmp/sxgc-laneQ/tools/extract_head_sa.py", "/tmp/laneY/bat/random-4-200k.agg", "/tmp/laneQ/pass4/random-4-200k.head_sa", "--ri4", "/tmp/laneY/bat/random-4-200k.ri4"]
+RESULT random-4-200k.extract {"wall_seconds": 1.1282467640703544, "peak_group_bytes": 0, "peak_rss_kib": 14336, "returncode": 0}
+COMMAND random-4-200k.head ["/tmp/laneQ/pass4/slim_dump", "--slim", "--resolve-ri4", "--dict-stream", "--ri4", "/tmp/laneY/bat/random-4-200k.ri4", "--parse", "/tmp/laneY/bat/random-4-200k_pfp", "--flat", "/tmp/laneY/bat/random-4-200k.txt", "-t", "8", "-o", "/tmp/laneQ/pass4/random-4-200k.head.agg", "--head-sa", "/tmp/laneQ/pass4/random-4-200k.head_sa"]
+RESULT random-4-200k.head {"wall_seconds": 1.1251189690083265, "peak_group_bytes": 12582912, "peak_rss_kib": 12288, "returncode": 0, "resolve_wall": 0.034255, "lce_wall": 0.060288, "write_wall": 0.009683}
+COMMAND random-4-200k.head.cmp ["cmp", "/tmp/laneQ/pass4/random-4-200k.head.agg", "/tmp/laneY/bat/random-4-200k.agg"]
+RESULT random-4-200k.head.cmp {"wall_seconds": 1.119024851010181, "peak_group_bytes": 0, "peak_rss_kib": 0, "returncode": 0}
+BYTE-IDENTICAL /tmp/laneQ/pass4/random-4-200k.head.agg /tmp/laneY/bat/random-4-200k.agg
+COMMAND random-4-200k.fallback ["/tmp/laneQ/pass4/slim_dump", "--slim", "--resolve-ri4", "--dict-stream", "--ri4", "/tmp/laneY/bat/random-4-200k.ri4", "--parse", "/tmp/laneY/bat/random-4-200k_pfp", "--flat", "/tmp/laneY/bat/random-4-200k.txt", "-t", "8", "-o", "/tmp/laneQ/pass4/random-4-200k.fallback.agg"]
+RESULT random-4-200k.fallback {"wall_seconds": 1.109236106975004, "peak_group_bytes": 10485760, "peak_rss_kib": 10240, "returncode": 0, "resolve_wall": 0.053587, "lce_wall": 0.052915, "write_wall": 0.004601}
+COMMAND random-4-200k.fallback.cmp ["cmp", "/tmp/laneQ/pass4/random-4-200k.fallback.agg", "/tmp/laneY/bat/random-4-200k.agg"]
+RESULT random-4-200k.fallback.cmp {"wall_seconds": 1.1048923709895462, "peak_group_bytes": 0, "peak_rss_kib": 0, "returncode": 0}
+BYTE-IDENTICAL /tmp/laneQ/pass4/random-4-200k.fallback.agg /tmp/laneY/bat/random-4-200k.agg
+COMMAND satellite-18k.extract ["python3", "/tmp/sxgc-laneQ/tools/extract_head_sa.py", "/tmp/laneY/bat/satellite-18k.agg", "/tmp/laneQ/pass4/satellite-18k.head_sa", "--ri4", "/tmp/laneY/bat/satellite-18k.ri4"]
+RESULT satellite-18k.extract {"wall_seconds": 1.110180407995358, "peak_group_bytes": 0, "peak_rss_kib": 12288, "returncode": 0}
+COMMAND satellite-18k.head ["/tmp/laneQ/pass4/slim_dump", "--slim", "--resolve-ri4", "--dict-stream", "--ri4", "/tmp/laneY/bat/satellite-18k.ri4", "--parse", "/tmp/laneY/bat/satellite-18k_pfp", "--flat", "/tmp/laneY/bat/satellite-18k.txt", "-t", "8", "-o", "/tmp/laneQ/pass4/satellite-18k.head.agg", "--head-sa", "/tmp/laneQ/pass4/satellite-18k.head_sa"]
+RESULT satellite-18k.head {"wall_seconds": 1.1181940500391647, "peak_group_bytes": 0, "peak_rss_kib": 6144, "returncode": 0, "resolve_wall": 0.003136, "lce_wall": 0.002085, "write_wall": 3.8e-05}
+COMMAND satellite-18k.head.cmp ["cmp", "/tmp/laneQ/pass4/satellite-18k.head.agg", "/tmp/laneY/bat/satellite-18k.agg"]
+RESULT satellite-18k.head.cmp {"wall_seconds": 1.114276813925244, "peak_group_bytes": 0, "peak_rss_kib": 0, "returncode": 0}
+BYTE-IDENTICAL /tmp/laneQ/pass4/satellite-18k.head.agg /tmp/laneY/bat/satellite-18k.agg
+COMMAND satellite-18k.fallback ["/tmp/laneQ/pass4/slim_dump", "--slim", "--resolve-ri4", "--dict-stream", "--ri4", "/tmp/laneY/bat/satellite-18k.ri4", "--parse", "/tmp/laneY/bat/satellite-18k_pfp", "--flat", "/tmp/laneY/bat/satellite-18k.txt", "-t", "8", "-o", "/tmp/laneQ/pass4/satellite-18k.fallback.agg"]
+RESULT satellite-18k.fallback {"wall_seconds": 1.1120012609753758, "peak_group_bytes": 0, "peak_rss_kib": 6144, "returncode": 0, "resolve_wall": 0.004832, "lce_wall": 0.002254, "write_wall": 4.5e-05}
+COMMAND satellite-18k.fallback.cmp ["cmp", "/tmp/laneQ/pass4/satellite-18k.fallback.agg", "/tmp/laneY/bat/satellite-18k.agg"]
+RESULT satellite-18k.fallback.cmp {"wall_seconds": 1.1081996349385008, "peak_group_bytes": 0, "peak_rss_kib": 0, "returncode": 0}
+BYTE-IDENTICAL /tmp/laneQ/pass4/satellite-18k.fallback.agg /tmp/laneY/bat/satellite-18k.agg
+COMMAND HOR-nested.extract ["python3", "/tmp/sxgc-laneQ/tools/extract_head_sa.py", "/tmp/laneY/bat/HOR-nested.agg", "/tmp/laneQ/pass4/HOR-nested.head_sa", "--ri4", "/tmp/laneY/bat/HOR-nested.ri4"]
+RESULT HOR-nested.extract {"wall_seconds": 1.1101347580552101, "peak_group_bytes": 0, "peak_rss_kib": 12288, "returncode": 0}
+COMMAND HOR-nested.head ["/tmp/laneQ/pass4/slim_dump", "--slim", "--resolve-ri4", "--dict-stream", "--ri4", "/tmp/laneY/bat/HOR-nested.ri4", "--parse", "/tmp/laneY/bat/HOR-nested_pfp", "--flat", "/tmp/laneY/bat/HOR-nested.txt", "-t", "8", "-o", "/tmp/laneQ/pass4/HOR-nested.head.agg", "--head-sa", "/tmp/laneQ/pass4/HOR-nested.head_sa"]
+RESULT HOR-nested.head {"wall_seconds": 1.1082467149244621, "peak_group_bytes": 0, "peak_rss_kib": 6144, "returncode": 0, "resolve_wall": 0.001977, "lce_wall": 0.001057, "write_wall": 2.5e-05}
+COMMAND HOR-nested.head.cmp ["cmp", "/tmp/laneQ/pass4/HOR-nested.head.agg", "/tmp/laneY/bat/HOR-nested.agg"]
+RESULT HOR-nested.head.cmp {"wall_seconds": 1.1060783920111135, "peak_group_bytes": 0, "peak_rss_kib": 0, "returncode": 0}
+BYTE-IDENTICAL /tmp/laneQ/pass4/HOR-nested.head.agg /tmp/laneY/bat/HOR-nested.agg
+COMMAND HOR-nested.fallback ["/tmp/laneQ/pass4/slim_dump", "--slim", "--resolve-ri4", "--dict-stream", "--ri4", "/tmp/laneY/bat/HOR-nested.ri4", "--parse", "/tmp/laneY/bat/HOR-nested_pfp", "--flat", "/tmp/laneY/bat/HOR-nested.txt", "-t", "8", "-o", "/tmp/laneQ/pass4/HOR-nested.fallback.agg"]
+RESULT HOR-nested.fallback {"wall_seconds": 1.107480404083617, "peak_group_bytes": 0, "peak_rss_kib": 6144, "returncode": 0, "resolve_wall": 0.002085, "lce_wall": 0.00131, "write_wall": 5e-05}
+COMMAND HOR-nested.fallback.cmp ["cmp", "/tmp/laneQ/pass4/HOR-nested.fallback.agg", "/tmp/laneY/bat/HOR-nested.agg"]
+RESULT HOR-nested.fallback.cmp {"wall_seconds": 1.107963674934581, "peak_group_bytes": 0, "peak_rss_kib": 0, "returncode": 0}
+BYTE-IDENTICAL /tmp/laneQ/pass4/HOR-nested.fallback.agg /tmp/laneY/bat/HOR-nested.agg
+COMMAND dup+unique-120k.extract ["python3", "/tmp/sxgc-laneQ/tools/extract_head_sa.py", "/tmp/laneY/bat/dup+unique-120k.agg", "/tmp/laneQ/pass4/dup+unique-120k.head_sa", "--ri4", "/tmp/laneY/bat/dup+unique-120k.ri4"]
+RESULT dup+unique-120k.extract {"wall_seconds": 1.1072292840108275, "peak_group_bytes": 0, "peak_rss_kib": 12288, "returncode": 0}
+COMMAND dup+unique-120k.head ["/tmp/laneQ/pass4/slim_dump", "--slim", "--resolve-ri4", "--dict-stream", "--ri4", "/tmp/laneY/bat/dup+unique-120k.ri4", "--parse", "/tmp/laneY/bat/dup+unique-120k_pfp", "--flat", "/tmp/laneY/bat/dup+unique-120k.txt", "-t", "8", "-o", "/tmp/laneQ/pass4/dup+unique-120k.head.agg", "--head-sa", "/tmp/laneQ/pass4/dup+unique-120k.head_sa"]
+RESULT dup+unique-120k.head {"wall_seconds": 1.1064871919807047, "peak_group_bytes": 0, "peak_rss_kib": 10240, "returncode": 0, "resolve_wall": 0.011464, "lce_wall": 0.031621, "write_wall": 0.001654}
+COMMAND dup+unique-120k.head.cmp ["cmp", "/tmp/laneQ/pass4/dup+unique-120k.head.agg", "/tmp/laneY/bat/dup+unique-120k.agg"]
+RESULT dup+unique-120k.head.cmp {"wall_seconds": 1.104642549995333, "peak_group_bytes": 0, "peak_rss_kib": 0, "returncode": 0}
+BYTE-IDENTICAL /tmp/laneQ/pass4/dup+unique-120k.head.agg /tmp/laneY/bat/dup+unique-120k.agg
+COMMAND dup+unique-120k.fallback ["/tmp/laneQ/pass4/slim_dump", "--slim", "--resolve-ri4", "--dict-stream", "--ri4", "/tmp/laneY/bat/dup+unique-120k.ri4", "--parse", "/tmp/laneY/bat/dup+unique-120k_pfp", "--flat", "/tmp/laneY/bat/dup+unique-120k.txt", "-t", "8", "-o", "/tmp/laneQ/pass4/dup+unique-120k.fallback.agg"]
+RESULT dup+unique-120k.fallback {"wall_seconds": 1.100856435019523, "peak_group_bytes": 8388608, "peak_rss_kib": 8192, "returncode": 0, "resolve_wall": 0.055355, "lce_wall": 0.030927, "write_wall": 0.001544}
+COMMAND dup+unique-120k.fallback.cmp ["cmp", "/tmp/laneQ/pass4/dup+unique-120k.fallback.agg", "/tmp/laneY/bat/dup+unique-120k.agg"]
+RESULT dup+unique-120k.fallback.cmp {"wall_seconds": 1.1029869670746848, "peak_group_bytes": 0, "peak_rss_kib": 0, "returncode": 0}
+BYTE-IDENTICAL /tmp/laneQ/pass4/dup+unique-120k.fallback.agg /tmp/laneY/bat/dup+unique-120k.agg
+COMMAND invalid.size ["/tmp/laneQ/pass4/slim_dump", "--slim", "--resolve-ri4", "--ri4", "/tmp/laneY/bat/duplicates-600k.ri4", "--parse", "/tmp/laneY/bat/duplicates-600k_pfp", "--head-sa", "/tmp/laneQ/pass4/invalid.head_sa", "-o", "/tmp/laneQ/pass4/invalid.agg", "-t", "8"]
+RESULT invalid.size {"wall_seconds": 1.1036261590197682, "peak_group_bytes": 0, "peak_rss_kib": 4096, "returncode": 2}
+COMMAND invalid.value ["/tmp/laneQ/pass4/slim_dump", "--slim", "--resolve-ri4", "--ri4", "/tmp/laneY/bat/duplicates-600k.ri4", "--parse", "/tmp/laneY/bat/duplicates-600k_pfp", "--head-sa", "/tmp/laneQ/pass4/invalid.head_sa", "-o", "/tmp/laneQ/pass4/invalid.agg", "-t", "8"]
+RESULT invalid.value {"wall_seconds": 1.1031972980126739, "peak_group_bytes": 0, "peak_rss_kib": 4096, "returncode": 2}
+G0 PASS 8/8: sidecar and fallback outputs byte-identical to every baseline, including duplicates-600k. Invalid sidecar size/value rejected.

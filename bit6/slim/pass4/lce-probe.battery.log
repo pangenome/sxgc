@@ -1,0 +1,10 @@
+SLIM_PHASE dict-read wall=0.000 cumulative=0.225 peak_rss_kib=148556
+SLIM_PHASE dict-boundaries wall=0.003 cumulative=0.229 peak_rss_kib=148556
+SLIM_STRING_ENDS count=1 bytes=8 from_parse_dict=1
+SLIM_PHASE parse+boundaries wall=0.001 cumulative=0.230 peak_rss_kib=148556
+SLIM_PHASE parse-fingerprints wall=0.000 cumulative=0.230 peak_rss_kib=148556
+SLIM_PHASE dict-fingerprints wall=0.002 cumulative=0.231 peak_rss_kib=148556
+SLIM_STRUCT n=600011 P=5246 D=287733 phrases=1226 parse_bytes=20988 bd_bytes=1950 bp_bytes=6816 dict_resident=0 dict_cache_per_thread=262144 no_SA_ISA_LCP_RMQ=1 no_M_b_bwt_w_wt=1
+SLIM_PRIMITIVE_PROBE PASS runs=1051 query_wall=0.026 (baseline positions; NOT end-to-end)
+SLIM_FP parse tau=3 bytes=14000 queries=611 verified_symbols=1759 hash_probes=480 mean_verified=2.878887070 max_verified=11
+SLIM_FP dict tau=157 bytes=14664 queries=2260 verified_symbols=138341 hash_probes=7887 mean_verified=61.212831858 max_verified=557

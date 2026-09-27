@@ -1,0 +1,2 @@
+COMMAND k10.collection-probe ["/tmp/laneQ/pass4/slim_head_probe", "/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10new2.ri4", "/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10rl_pfp", "/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.head_sa", "/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.walk.agg", "100000"]
+RESULT k10.collection-probe {"wall_seconds": 300.9872560449876, "peak_group_bytes": 50750943232, "peak_rss_kib": 50921340, "returncode": 0}

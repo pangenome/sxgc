@@ -1,10 +1,31 @@
-# Current state: pass 3 gates complete
+# Current state: pass 4 complete — G0, yeast, k10 PASS
 
-G1, G0, G2 measurements, and G3 passed. See SLIM_ACCEPTANCE.md
-and SLIM_COST.md for current results and 466 conditionality.
-Evidence: bit6/gate_logs/slim/pass3/. Artifacts: /tmp/laneQ/pass3/.
-The earlier blocked entries below are preserved as history.
+- Extracted h10.head_sa: exactly 1,859,825,801 raw LE u64 values,
+  14,878,606,408 bytes; full column byte check and independent LF spots passed.
+- Implemented slim --head-sa with O(1) known-run head/tail/previous-tail
+  lookups. Original LF/cache fallback remains; LF tables are still retained.
+- G0 8/8 passed both modes, including duplicates-600k; invalid size/value
+  sidecars fail loudly. Repeated after the collection correction below.
+- Yeast byte identity, chi=85,404,240 and NumPy set equality passed.
+  Resolve 34.839 s versus supplied 272 s; dump 502.60 s, 3.577 GB peak.
+- Full k10 byte identity, chi=1,627,063,183 and NumPy set equality passed.
+  Resolve 437.509 s (7.292 min), LF steps=0; dump 5255 s. Complete
+  dump/cmp/sweep/set pipeline 5809.321 s (1h 36m 49s), peak 73.982 GB.
+- Necessary correctness fix: collection LCP stops before newline. Sparse
+  ends come from existing parse/dictionary scans (865 k10 ends); no text scan.
+  The failed unclamped attempt is preserved; all final gates use the fix.
+- Raw 8 B/run heads cost 21.920 GB at 466: corrected conditional model
+  213.867 GB with LF, 170.027 GB without LF (no-LF remains unimplemented).
+- No commits/staging, no M/b_bwt/w_wt, no other lane's PIDs touched.
+  All measured peaks <150 GB. No requested gates remain running.
 
+Evidence: bit6/gate_logs/slim/pass4/; SLIM_ACCEPTANCE.md and SLIM_COST.md.
+Outputs: /tmp/laneQ/pass4/ and the supplied k10 directory's h10.head_sa and
+h10.slim.head.agg. Front-end sample emission and native v5 container remain
+outside this consumer gate; the binding no-extra-walk provenance is unchanged.
+No contact_supervisor tool was exposed in this runtime.
+
+# Historical pass-1..4 working notes (retained)
 
 # SLIM lane — in progress
 
@@ -231,3 +252,110 @@ Evidence: `bit6/gate_logs/slim/pass3/gates.log`, individual phase/gate logs,
 and `SLIM_COST.md`. Large outputs are in `/tmp/laneQ/pass3/`. No commits,
 no M/b_bwt/w_wt, and no interference with the separate Lean worktree.
 This report records gate results; it does not substitute for reviewer approval.
+
+## Pass 4 — active
+
+Started at 8330966. No contact_supervisor tool is exposed in this runtime.
+The referenced gate_logs/slim directory and pass-3 automation sources are
+absent from the checkout; existing /tmp/laneQ/pass3 artifacts and final runner
+log were read instead. Pass-4 evidence goes in bit6/gate_logs/slim/pass4.
+Extracting k10 saFirst in one bounded-memory sequential CRA1 pass, with exact
+file/count validation and deterministic spread checks of mirrored ri4 tails
+and singleton heads. No existing input or another lane's PID is modified.
+
+Pass-4 extraction PASS: h10.head_sa has exactly 1,859,825,801 raw LE u64s
+(14,878,606,408 bytes); full CRA1 pass 44.965 s. 1,025 spread tails obey
+SA = n-1-mirrored_sample; 32 sampled singleton heads equal those tails.
+The sidecar-aware dumper compiles. Direct head/tail queries take known run
+IDs, avoiding both LF walks and row-to-run binary searches in query chunks.
+LF tables remain for arbitrary calibration rows and absent-sidecar fallback.
+
+Pass-4 progress: G0 PASS 8/8: sidecar and fallback outputs byte-identical to every baseline, including duplicates-600k. Invalid sidecar size/value rejected.
+
+Pass-4 additional k10 sample validation PASS: 1,025 spread runs resolved
+independently through the existing LF machinery; zero saFirst/saLast
+mismatches, zero sentinel failures (4,260,344 LF steps). Full byte comparison
+also confirms h10.head_sa equals the entire CRA1 saFirst column.
+The final binary differs from the initial G0/active yeast build only in
+accounting: head_lf_steps subtracts startup calibration steps. Final binary
+passed duplicates-600k byte identity again; k10 will use this final binary.
+
+Pass-4 progress: yeast PASS: aggregate byte-identical; chi=85404240; NumPy sorted-set equality; zero LF steps. {"wall_seconds": 561.8613212879281, "peak_rss_kib": 3498920}
+
+Pass-4 k10 full pilot active: owned time-wrapper PGID 2961626 (see
+pass4/active.json), output h10.slim.head.agg. First 3,211,264 runs: resolve
+1.214 s, LCE 17.317 s, LF steps 0. Peak ~60 GB. The gate runner will compare
+the entire output, stream the sweep, and check NumPy sorted-set equality
+before recording PASS. No completion is claimed while that runner is active.
+
+Pass-4 unexpected finding: full-prefix comparison failed at topLCP run 1.
+All inspected SA endpoints agree. The legacy multi-string baseline excludes
+newline terminators from LCP; SlimLCE currently compares the concatenation
+across them. Independent flat reads confirm the failing SA positions point
+to newline bytes. Only our PGID 2961626 was stopped; the failed attempt's
+logs/output are preserved as *.unclamped-attempt.log and
+h10.slim.head.unclamped.agg.partial. No k10 acceptance claimed.
+No contact_supervisor tool is exposed. The required byte-identity semantics
+are unambiguous: derive sparse string ends from existing parse/dictionary
+and clamp LCE at those ends, without scanning text or building forbidden
+structures. This necessary collection-boundary correction will be gated
+before restarting the full pilot. Head-SA extraction/resolution checks pass.
+
+Pass-4 progress: G0 PASS 8/8: sidecar and fallback outputs byte-identical to every baseline, including duplicates-600k. Invalid sidecar size/value rejected.
+
+Pass-4 collection correction sampled gate PASS: all four fields agree with
+h10.walk.agg on the first 10,000 runs plus 100,000 spread runs (110,000
+checks total), with all 865 string ends recovered from parse/dictionary.
+G0 was repeated after this correction and passes 8/8 in both resolver modes.
+Yeast full re-gate is running. A bounded thread-count probe will select a
+measured k10 LCE worker count; exact verification remains enabled throughout.
+
+Pass-4 progress: yeast PASS: aggregate byte-identical; chi=85404240; NumPy sorted-set equality; zero LF steps. {"wall_seconds": 534.8318109019892, "peak_rss_kib": 3498920}
+
+Pass-4 final restart: G0 8/8 and full yeast re-gate passed after the
+collection-boundary fix. Yeast resolve 34.839 s, dump 502.60 s, peak
+3.577 GB; byte identity, chi=85,404,240 and NumPy set equality passed.
+A three-repeat 110,000-run exact LCE probe measured 64 workers fastest
+(~0.184 s versus ~0.223 s at 32); all 18 configurations matched.
+Full k10 restarted with -t 64, with an automatic first-chunk byte guard
+before the full cmp/sweep/set ladder. Active PID/PGID: pass4/active.json.
+
+Pass-4 corrected full pilot: first 65,536 runs passed automatic byte identity
+in all four CRA1 columns. At 24,182,784 runs, resolve=5.585 s,
+LCE=67.867 s, LF steps=0. Full-output gates remain pending.
+
+Pass-4 corrected prefix gate PASS: all four CRA1 columns are byte-identical
+for the first 116,457,472 completed k10 runs, beyond the stopped attempt's
+prefix. Evidence: pass4/k10.corrected-prefix-cmp.log. Full pilot continues.
+
+Pass-4 full-pilot quarter milestone: 480,313,344 / 1,859,825,801 runs;
+resolve 110.296 s, LCE 1307.432 s, LF steps 0, peak ~63.2 GB.
+Full comparison/sweep/set verification remain queued after construction.
+
+Pass-4 full-pilot halfway milestone: 945,881,088 / 1,859,825,801 runs;
+resolve 218.026 s, LCE 2535.937 s, LF steps 0, peak ~66.6 GB.
+Construction elapsed 2968.819 s. Final gates remain pending.
+
+Pass-4 full-pilot three-quarter milestone: 1,403,060,224 / 1,859,825,801
+runs; resolve 327.156 s, LCE 3565.536 s, LF steps 0, peak ~70.3 GB.
+Construction elapsed 4111.134 s. Full byte/sweep/set ladder remains queued.
+
+Pass-4 full k10 construction and byte gate PASS: all 1,859,825,801 runs,
+head_direct=R, LF steps=0. Resolve 437.509169 s; complete dump 5255 s
+(1h 27m 35s); peak 72,248,348 KiB = 73.982 GB. Full cmp returned 0.
+The streamed sweep and NumPy witness check are now running in order.
+
+Pass-4 k10 streamed sweep PASS: chi=1,627,063,183; wall 213.928 s
+(monitored command), peak 6,144 KiB. NumPy full sorted-set equality against
+chi_h10.sA is the final running gate. Full aggregate byte identity passed.
+
+Pass-4 progress: k10 PASS: aggregate byte-identical; chi=1627063183; NumPy sorted-set equality; zero LF steps. {"wall_seconds": 5809.32109882799, "peak_rss_kib": 72248348}
+
+## Pass 4 complete
+
+All requested gates passed. The complete k10 witness arrays are NumPy
+sorted-set equal, with all 1,627,063,183 values unique. Pipeline wall
+5809.321 s, peak 73.982 GB; sidecar extraction 44.965 s separately.
+The current report at the top and SLIM_ACCEPTANCE.md supersede the earlier
+pending/failed-attempt entries preserved above. No commits; this lane has
+no active jobs.

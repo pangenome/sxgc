@@ -1,0 +1,30 @@
+COMMAND ["python3", "/tmp/sxgc-laneQ/tools/extract_head_sa.py", "/tmp/laneY/bat/duplicates-600k.agg", "/tmp/laneQ/pass4/duplicates-600k.head_sa", "--ri4", "/tmp/laneY/bat/duplicates-600k.ri4"]
+column=1/4 rows=14701
+column=2/4 rows=14701
+column=3/4 rows=14701
+column=4/4 rows=14701
+ri4 spread_tail_checks=1025 singleton_head_checks=212
+{"source": "/tmp/laneY/bat/duplicates-600k.agg", "target": "/tmp/laneQ/pass4/duplicates-600k.head_sa", "R": 14701, "bytes": 117608, "wall_seconds": 0.011434756917878985, "spots": [{"run": 0, "length": 1, "head": 600000, "tail": 600000, "mirrored_sample": 0}, {"run": 7350, "length": 50, "head": 133701, "tail": 597801, "mirrored_sample": 2199}, {"run": 14700, "length": 2, "head": 212695, "tail": 563095, "mirrored_sample": 36905}]}
+	Command being timed: "python3 /tmp/sxgc-laneQ/tools/extract_head_sa.py /tmp/laneY/bat/duplicates-600k.agg /tmp/laneQ/pass4/duplicates-600k.head_sa --ri4 /tmp/laneY/bat/duplicates-600k.ri4"
+	User time (seconds): 0.08
+	System time (seconds): 0.02
+	Percent of CPU this job got: 98%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:00.11
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 12288
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 1883
+	Voluntary context switches: 4
+	Involuntary context switches: 1
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 232
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

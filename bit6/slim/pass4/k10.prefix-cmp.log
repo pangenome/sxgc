@@ -1,0 +1,2 @@
+COMMAND ['cmp', '--ignore-initial=12:12', '--bytes=822607872', '/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.walk.agg', '/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.slim.head.agg.partial']
+/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.walk.agg /mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.slim.head.agg.partial differ: byte 9, line 1

@@ -1,0 +1,8 @@
+{
+  "k10.thread-probe": {
+    "wall_seconds": 300.7358718259493,
+    "peak_group_bytes": 52153778176,
+    "peak_rss_kib": 50943224,
+    "returncode": 0
+  }
+}

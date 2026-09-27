@@ -1,0 +1,9 @@
+COMMAND ['cmp', '--ignore-initial=12:12', '--bytes=931659776', '/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.walk.agg', '/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.slim.head.agg.partial']
+PASS column 1 completed_rows 116457472
+COMMAND ['cmp', '--ignore-initial=14878606420:14878606420', '--bytes=931659776', '/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.walk.agg', '/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.slim.head.agg.partial']
+PASS column 2 completed_rows 116457472
+COMMAND ['cmp', '--ignore-initial=29757212828:29757212828', '--bytes=931659776', '/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.walk.agg', '/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.slim.head.agg.partial']
+PASS column 3 completed_rows 116457472
+COMMAND ['cmp', '--ignore-initial=44635819236:44635819236', '--bytes=931659776', '/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.walk.agg', '/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.slim.head.agg.partial']
+PASS column 4 completed_rows 116457472
+ALL FOUR COLUMNS BYTE-IDENTICAL completed prefix 116457472 wall 4.432078481069766

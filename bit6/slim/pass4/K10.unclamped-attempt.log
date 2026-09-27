@@ -1,0 +1,12 @@
+COMMAND k10.dump ["/tmp/laneQ/pass4/slim_dump", "--slim", "--resolve-ri4", "--dict-stream", "--ri4", "/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10new2.ri4", "--parse", "/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10rl_pfp", "--head-sa", "/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.head_sa", "-o", "/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.slim.head.agg", "-t", "32"]
+Traceback (most recent call last):
+  File "/tmp/sxgc-laneQ/tools/slim_pass4.py", line 173, in <module>
+    main()
+  File "/tmp/sxgc-laneQ/tools/slim_pass4.py", line 168, in main
+    full('k10',K10/'h10new2.ri4',K10/'h10rl_pfp',K10/'h10.head_sa',K10/'h10.walk.agg',
+  File "/tmp/sxgc-laneQ/tools/slim_pass4.py", line 130, in full
+    run(name+'.dump',[DUMP,'--slim','--resolve-ri4','--dict-stream','--ri4',ri,
+  File "/tmp/sxgc-laneQ/tools/slim_pass4.py", line 75, in run
+    assert (proc.returncode != 0 if fail else proc.returncode == 0), (name,result)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: ('k10.dump', {'wall_seconds': 759.8568567419425, 'peak_group_bytes': 60203728896, 'peak_rss_kib': None, 'returncode': -15})

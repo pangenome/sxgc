@@ -1,0 +1,51 @@
+COMMAND ["/tmp/laneQ/pass4/slim_head_probe_bench", "/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10new2.ri4", "/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10rl_pfp", "/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.head_sa", "/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.walk.agg", "100000", "benchmark"]
+SLIM_HEAD_SA bytes=14878606408 rows=1859825801 mmap=1
+SLIM_PHASE dict-read wall=0.000 cumulative=32.212 peak_rss_kib=31557632
+SLIM_PHASE dict-boundaries wall=56.608 cumulative=88.820 peak_rss_kib=31606784
+SLIM_STRING_ENDS count=865 bytes=8192 from_parse_dict=1
+SLIM_PHASE parse+boundaries wall=161.075 cumulative=249.895 peak_rss_kib=33308672
+SLIM_PHASE parse-fingerprints wall=2.071 cumulative=251.967 peak_rss_kib=34611200
+SLIM_PHASE dict-fingerprints wall=26.695 cumulative=278.662 peak_rss_kib=36395008
+SLIM_STRUCT n=30151407555 P=333531723 D=5483754406 phrases=37705212 parse_bytes=1334126896 bd_bytes=49162466 bp_bytes=384442745 dict_resident=0 dict_cache_per_thread=262144 no_SA_ISA_LCP_RMQ=1 no_M_b_bwt_w_wt=1
+HEAD_LCE_THREADS repeat=0 threads=1 runs=110000 wall=2.502618 bad=0
+HEAD_LCE_THREADS repeat=0 threads=4 runs=110000 wall=0.762295 bad=0
+HEAD_LCE_THREADS repeat=0 threads=8 runs=110000 wall=0.486801 bad=0
+HEAD_LCE_THREADS repeat=0 threads=16 runs=110000 wall=0.332997 bad=0
+HEAD_LCE_THREADS repeat=0 threads=32 runs=110000 wall=0.222556 bad=0
+HEAD_LCE_THREADS repeat=0 threads=64 runs=110000 wall=0.186559 bad=0
+HEAD_LCE_THREADS repeat=1 threads=1 runs=110000 wall=2.525619 bad=0
+HEAD_LCE_THREADS repeat=1 threads=4 runs=110000 wall=0.788013 bad=0
+HEAD_LCE_THREADS repeat=1 threads=8 runs=110000 wall=0.466871 bad=0
+HEAD_LCE_THREADS repeat=1 threads=16 runs=110000 wall=0.325634 bad=0
+HEAD_LCE_THREADS repeat=1 threads=32 runs=110000 wall=0.223633 bad=0
+HEAD_LCE_THREADS repeat=1 threads=64 runs=110000 wall=0.184493 bad=0
+HEAD_LCE_THREADS repeat=2 threads=1 runs=110000 wall=2.586476 bad=0
+HEAD_LCE_THREADS repeat=2 threads=4 runs=110000 wall=0.746900 bad=0
+HEAD_LCE_THREADS repeat=2 threads=8 runs=110000 wall=0.492967 bad=0
+HEAD_LCE_THREADS repeat=2 threads=16 runs=110000 wall=0.310981 bad=0
+HEAD_LCE_THREADS repeat=2 threads=32 runs=110000 wall=0.223265 bad=0
+HEAD_LCE_THREADS repeat=2 threads=64 runs=110000 wall=0.183568 bad=0
+HEAD_COLLECTION_PROBE checked=110000 bad=0 string_ends=865 wall=296.209
+	Command being timed: "/tmp/laneQ/pass4/slim_head_probe_bench /mnt/nvme3n1/erikg/sxgc-pilot/k10/h10new2.ri4 /mnt/nvme3n1/erikg/sxgc-pilot/k10/h10rl_pfp /mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.head_sa /mnt/nvme3n1/erikg/sxgc-pilot/k10/h10.walk.agg 100000 benchmark"
+	User time (seconds): 289.97
+	System time (seconds): 94.93
+	Percent of CPU this job got: 128%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 5:00.01
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 50943224
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 9270154
+	Voluntary context switches: 361
+	Involuntary context switches: 778
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 64
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

@@ -1348,3 +1348,31 @@ HONEST SCOPE (lane-recorded): bounds are indexed-primitive accounting
 binary search); reference counts not proved identical to yeast
 telemetry; compiled C++/Rust refinement bridges remain the weld's
 differential half.
+
+## 2026-09-26 — THE HUMAN RUNG IS GREEN: k10 slim pilot lands
+## (the parse-space construction validated on real human DNA)
+
+SUPERVISOR-VERIFIED (main-tree rebuild): the k10 slim construction on the
+30 GB human chain (865 contigs, R = 1,859,825,801, r/n = 16) —
+- .agg BYTE-IDENTICAL to the production walk baseline h10.walk.agg
+  (supervisor cmp'd the artifacts directly)
+- chi = 1,627,063,183 EXACT + numpy sorted-set equality vs chi_h10.sA
+- FULL PILOT: 1h36m49s, 73.98 GB peak — vs take-1's ~3-DAY projection.
+  The head-SA sidecar (v5 field, transitional) collapsed resolve:
+  437.5 s with ZERO LF steps (O(1)/run-head, exactly as designed).
+- Yeast re-gate with sidecar: chi = 85,404,240, resolve 272 s -> 34.8 s.
+- G0: 8/8 battery, sidecar AND fallback paths byte-identical.
+- REAL BUG FOUND AT HUMAN SCALE, fixed in-lane: collection-LCP
+  newline-boundary bug (the k10 multi-string corpus exposed it; the
+  fix is in the committed diff, gated by the same byte-identity).
+
+466 PROJECTION UPDATED (honest): 213.9 GB with raw heads + LF;
+170.0 GB on the no-LF path (UNIMPLEMENTED — the named lever if the
+200 GB ceiling is hard; the 214 number is the as-built commit).
+
+THE PROGRAM STATE: the slim construction is now validated at yeast
+(3.34 Gbp) AND k10 human (30 Gbp) — parse-space, no M/b_bwt/w_wt, no
+suffix arrays, no lcp_index, O(1) resolve, both chains byte-identical
+to production oracles. Remaining to 466: the 466 parse (pfp++ over
+1.4 TB, ~day-scale by k10 extrapolation) + the ~214 GB construction
+run. Sequencing per user: k10 (DONE) -> 466 -> the pile.
