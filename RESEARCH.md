@@ -1565,3 +1565,31 @@ ordering to be adjudicated by k10's real byte gates.
 ## SMEM sets, counts, forward-position multisets, gaps, coverage; 756 SMEM
 ## intervals + 44,583 occurrences brute-verified; native mode + six members
 ## unchanged. Documented divergences recorded in the acceptance note.
+
+## CHI-NECESSITY RECON COMPLETE (laneY, GLM background researcher) - the theory
+## frontier is now MAPPED. Findings (all web-verified, sources in
+## lean/LOWER_BOUND_PLAN.md):
+## 1. VIRGIN TERRITORY CONFIRMED: NO space lower bound proportional to chi (nor
+##    even r) is proven ANYWHERE for ANY pattern-matching operation class - every
+##    published r/chi-index is an upper bound; "optimal" claims are time-only.
+## 2. THE LINKAGE (flagged inference): the chi-floor is NOT free-standing - it is
+##    equivalent up to logs to the OPEN chi-vs-delta*log(n) placement (Navarro
+##    CPM 2023 already does MEMs in O(delta log n) words). If chi = O(delta log n)
+##    always, the natural-tier chi-floor is provable family-specific; if not, the
+##    Omega(chi)-floor for MEMs is REFUTED (a negative theorem, also publishable).
+## 3. PROVABLE NOW (S1 bridge): any correct locate-one oracle's emitted positions
+##    form a suffixient set => chi <= |emitted| - mechanical from proven theorems;
+##    the first rung. family_counting (pigeonhole) elementary. Attack 1 ranked:
+##    witness-perturbation family + answer-function counting => Omega(chi log(n/chi))
+##    bits, family-specific first, #eval-batterable against brute-chi.
+## 4. HONEST CALIBRATION: a proven natural-tier floor = ~0.56 B/run at yeast -
+##    underwrites only ~4% of the 12.7 B/run engineering floor (the rest is SA
+##    samples/RLBWT representation, not chi). Delta-coded witnesses measured
+##    8-22 bits each: already within ~1.6-4x of the honest theory floor.
+## 5. CORRECTION #9 (supervisor, lane-caught): the r-index is Gagie-Navarro-
+##    Prezza (J.ACM 2020), NOT "Belazzougui-Canovas-Navarro" as my lane brief
+##    said. The researcher refused the silent fix and recorded it.
+## NEXT: bridge+family_counting in Lean (mechanical), #eval go/no-go battery for
+## the perturbation family, full-paper read of the collapse theorem boundary
+## (does count/locate have a delta-space index? - decides final statement form),
+## measure delta/gamma on yeast+k10 slices.
