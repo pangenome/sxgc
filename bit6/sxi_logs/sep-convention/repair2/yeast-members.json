@@ -1,0 +1,90 @@
+{
+  "previous": {
+    "path": "/mnt/nvme3n1/erikg/sxgc-laneV/yeast.sxi",
+    "n": 3336986760,
+    "k": 1,
+    "r": 100904881,
+    "members": {
+      "1": {
+        "codec": 1,
+        "bytes": 504526453,
+        "count": 100904881,
+        "crc32": 515975207,
+        "sha256": "2eef1580272ccb6eb8129249b138dec4dd796a339bd5f6329f52945ba42b58e4"
+      },
+      "2": {
+        "codec": 2,
+        "bytes": 403619537,
+        "count": 100904881,
+        "crc32": 1066406448,
+        "sha256": "9a9291eec019d993a46a34c2ee9440168b5a246bea7a5c3b4e6992dcf3610ba6"
+      },
+      "3": {
+        "codec": 3,
+        "bytes": 807239048,
+        "count": 100904881,
+        "crc32": 3071207896,
+        "sha256": "caf2027a9589371b95a71cf0f66dc82fcd1c749ce7ff353560afa09411ef812d"
+      },
+      "4": {
+        "codec": 4,
+        "bytes": 12,
+        "count": 0,
+        "crc32": 822617187,
+        "sha256": "0da64314dec135e73e86cba36a52479f4664f4b2b93ae87c9ff1834e9456298e"
+      },
+      "5": {
+        "codec": 5,
+        "bytes": 88746976,
+        "count": 85404240,
+        "crc32": 2540787377,
+        "sha256": "18f441b2d42b6847ab2bd2647e03002d946861bf8e51e93a910f097e1f413c30"
+      }
+    }
+  },
+  "current": {
+    "path": "/mnt/nvme3n1/erikg/sxi-repair2/yeast.sxi",
+    "n": 3336986760,
+    "k": 1,
+    "r": 100904881,
+    "members": {
+      "1": {
+        "codec": 1,
+        "bytes": 504526453,
+        "count": 100904881,
+        "crc32": 515975207,
+        "sha256": "2eef1580272ccb6eb8129249b138dec4dd796a339bd5f6329f52945ba42b58e4"
+      },
+      "2": {
+        "codec": 2,
+        "bytes": 403619537,
+        "count": 100904881,
+        "crc32": 1066406448,
+        "sha256": "9a9291eec019d993a46a34c2ee9440168b5a246bea7a5c3b4e6992dcf3610ba6"
+      },
+      "3": {
+        "codec": 3,
+        "bytes": 807239048,
+        "count": 100904881,
+        "crc32": 3071207896,
+        "sha256": "caf2027a9589371b95a71cf0f66dc82fcd1c749ce7ff353560afa09411ef812d"
+      },
+      "4": {
+        "codec": 4,
+        "bytes": 12,
+        "count": 0,
+        "crc32": 822617187,
+        "sha256": "0da64314dec135e73e86cba36a52479f4664f4b2b93ae87c9ff1834e9456298e"
+      },
+      "5": {
+        "codec": 5,
+        "bytes": 88746976,
+        "count": 85404240,
+        "crc32": 2540787377,
+        "sha256": "18f441b2d42b6847ab2bd2647e03002d946861bf8e51e93a910f097e1f413c30"
+      }
+    }
+  },
+  "changed_members": [],
+  "chi_changed": false
+}

@@ -75,6 +75,7 @@ template<class Seq> struct SlimFingerprint {
     const Seq& s; uint64_t tau; std::vector<uint64_t> hashes;
     static constexpr uint64_t BASE=0x9e3779b185ebca87ULL;
     bool inject;
+    uint64_t verificationLimit=INF; // Adapter policy; default preserves slim behavior.
     mutable std::atomic<uint64_t> calls{0}, checked{0}, jumps{0}, maxChecked{0};
     void record_checked(uint64_t count) const {
         checked.fetch_add(count,std::memory_order_relaxed);
@@ -90,6 +91,7 @@ template<class Seq> struct SlimFingerprint {
     uint64_t suffix(uint64_t i) const {
         if(i==s.size())return 0;
         uint64_t end=std::min<uint64_t>(s.size(),((i+tau-1)/tau)*tau);
+        if(end-i>verificationLimit)slim_fail("CYCLIC_SEAM_REFUSED: fingerprint probe exceeds polylog-work policy; no O(n) fallback");
         uint64_t h=end==s.size()?0:hashes[end/tau];
         while(end>i){--end;h=(uint64_t)s[end]+1+BASE*h;}return h;
     }
@@ -122,6 +124,7 @@ template<class Seq> struct SlimFingerprint {
         uint64_t guess=lo;
         if(inject && guess<cap)++guess;
         else if(inject && guess) --guess;
+        if(guess>verificationLimit)slim_fail("CYCLIC_SEAM_REFUSED: LCE verification exceeds polylog-work policy; no O(n) fallback");
         for(uint64_t k=0;k<guess;++k) if(s[i+k]!=s[j+k])
             slim_fail("fingerprint verification mismatch inside proposed prefix");
         if(guess<cap && s[i+guess]==s[j+guess])
@@ -245,6 +248,7 @@ struct SlimLCE {
     }
 };
 
+#ifndef SLIM_LCE_CORE_ONLY
 // Headerless little-endian u64 column, exactly one SA value per ri4 run.
 // Mapping charges up to 8R resident bytes; it never copies the whole column.
 struct SlimHeads {
@@ -369,3 +373,5 @@ static int slim_dump(Ri4& ri,const std::string& prefix,const std::string& out,
         (unsigned long long)(resolver.sumSteps.load()-queryStepsBefore));
     return 0;
 }
+
+#endif // SLIM_LCE_CORE_ONLY

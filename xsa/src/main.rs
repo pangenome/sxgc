@@ -919,7 +919,7 @@ fn cmd_build_anchors(args: &[String]) {
 // topLCP, saFirst, saLast, interiorMin per run -- all computed r-space via
 // PFP resolve + LCE + the phi-piece law) and runs the production scan-rs
 // state machine VERBATIM (bit6/teralcp_chi.cpp): no walks, no SA, no text
-// access. Witness values = N - pos (N = n + 1 convention).
+// access. Legacy witnesses use n+1-pos; cyclic witnesses use (n-pos)%n.
 fn cmd_chi_rspace(args: &[String]) {
     let mut ri4p: Option<String> = None;
     let mut aggp: Option<String> = None;
@@ -973,7 +973,25 @@ fn cmd_chi_rspace(args: &[String]) {
     } else { Vec::new() };
     const INF: u64 = u64::MAX;
     const IINF: i64 = i64::MAX;
-    let big_n = header.n + 1;
+    // Match slim's alphabet-based cyclic convention without reading text.
+    let mut has_rs = false;
+    let mut has_nl = false;
+    for _ in 0..header.r {
+        let mut ch = [0u8; 1];
+        char_file.read_exact(&mut ch).unwrap();
+        has_rs |= ch[0] == 0x1e;
+        has_nl |= ch[0] == 0x0a;
+    }
+    char_file.seek(SeekFrom::Start(header.runs_offset)).unwrap();
+    let cyclic = has_rs || !has_nl;
+    let big_n = if cyclic { header.n } else { header.n + 1 };
+    // The candidate is the BWT character preceding SA=pos. Reversing its
+    // cyclic coordinate gives n-pos, with pos=0 wrapping to coordinate 0.
+    let witness = |pos: u64| -> u64 {
+        if pos >= header.n { die("chi-rspace: endpoint outside text"); }
+        if cyclic { if pos == 0 { 0 } else { header.n - pos } }
+        else { big_n - pos }
+    };
     const SIGMA: usize = 128;
     let mut rr_len = vec![-1i64; SIGMA];
     let mut rr_pos = vec![0u64; SIGMA];
@@ -1010,7 +1028,7 @@ fn cmd_chi_rspace(args: &[String]) {
         let mut ch = [0u8; 1];
         let raw = if let Some(ref index) = idx { index.run_char[i] }
             else { char_file.read_exact(&mut ch).unwrap(); ch[0] };
-        let c: i32 = if raw == 0x0A { 0 } else { raw as i32 };
+        let c: i32 = if !cyclic && raw == 0x0A { 0 } else { raw as i32 };
         if c as usize >= SIGMA { die("chi-rspace: character outside supported alphabet"); }
         let lcp_b = values[0] as i64;
         if i == 0 {
@@ -1031,8 +1049,8 @@ fn cmd_chi_rspace(args: &[String]) {
                     rr_len[cc] = m3; rr_pos[cc] = 0; rr_act[cc] = false;
                 }
             }
-            if lcp_b > rr_len[p as usize] { rr_len[p as usize] = lcp_b; rr_pos[p as usize] = big_n - p_sa_last; rr_act[p as usize] = true; }
-            if lcp_b > rr_len[c as usize] { rr_len[c as usize] = lcp_b; rr_pos[c as usize] = big_n - values[1]; rr_act[c as usize] = true; }
+            if lcp_b > rr_len[p as usize] { rr_len[p as usize] = lcp_b; rr_pos[p as usize] = witness(p_sa_last); rr_act[p as usize] = true; }
+            if lcp_b > rr_len[c as usize] { rr_len[c as usize] = lcp_b; rr_pos[c as usize] = witness(values[1]); rr_act[c as usize] = true; }
             m = IINF;
         } else {
             m = mm.min(lcp_b);

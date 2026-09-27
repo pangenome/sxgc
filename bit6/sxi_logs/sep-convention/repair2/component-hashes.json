@@ -1,0 +1,8 @@
+{
+  "bit6/sxi_pipeline.py": "119821ef968149327d3fec6579ddfec90ddcf03c0fa9de6a75278708f8314554",
+  "xsa/src/build.rs": "98d1fcd12168d9ce785d1f3bc6be35b145e50aec38d4ac0d99ab944ecdcd23a7",
+  "bit6/sxi_write.cpp": "09dd6c3b9efdc9d0da84dde1f26bef0d475100919a5842e2ddd1ab825a2e1693",
+  "bit6/patches/rpfbwt_emit_tails.patch": "3b718217ec9280187da2c6db307500facac53543f5bd65f0b8e3701d25a0a4e9",
+  "tools/build_rpfbwt_tap.sh": "a935920c80f7cc0d387a66b34a432592cca0553f1f1e34b8d1f73ea5f0ba6def",
+  "agc2flat/src/main.rs": "37477d46426d7ea5d0909c8d56db1cf6beac9107462942edeeec51336091046f"
+}

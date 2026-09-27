@@ -1,0 +1,2 @@
+xsa build: work=/tmp/sxi-repair2/gates/xsa-build-p07oq81l log=/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/gates/sep-agc-xsa-build-p07oq81l.jsonl
+{"sxi": "/tmp/sxi-repair2/gates/sep-agc.sxi", "chi": 13560, "work": "/tmp/sxi-repair2/gates/xsa-build-p07oq81l", "log": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/gates/sep-agc-xsa-build-p07oq81l.jsonl"}

@@ -1,0 +1,11 @@
+{
+  "max_recorded_process_rss_kib": 8828908,
+  "max_recorded_process_rss_log": "bit6/sxi_logs/sep-convention/repair2/yeast235-xsa-build-26al38ee.rpfbwt.time",
+  "peak_observed_process_tree_rss_kib": 26444472,
+  "peak_observed_process_tree_bytes": 27079139328,
+  "no_staged_files": true,
+  "staged_files": [],
+  "commits_created": 0,
+  "protected_k10_work_directories_accessed": false,
+  "existing_parse_artifacts_deleted": false
+}

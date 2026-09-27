@@ -1,0 +1,10 @@
+{
+  "status": "not-run",
+  "optional": true,
+  "source": "/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10_rl.txt",
+  "source_bytes": 30151407545,
+  "last_byte": "0a",
+  "fresh_chi": null,
+  "boundary_delta": null,
+  "note": "Optional approximately 4.6-hour full gate not launched in this lane. Existing source is legacy newline; no canonical-0x1e publication or fresh chi is claimed. Protected k10 work directories were not accessed."
+}

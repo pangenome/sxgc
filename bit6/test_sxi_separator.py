@@ -44,6 +44,7 @@ def oracle_fixtures(work, adapter, record):
         'repetitive': b'ACGT' * 80 + b'\x1e',
         'HOR-nested': nested + b'\x1e',
         'multi-string': b'\x1e'.join(records) + b'\x1e',
+        'seam-refuse': b'A' * 1024 + b'B' + b'A' * 1024,
         'seam-aperiodic': b'A' * 128 + b'B' + b'A' * 128,
         'seam-periodic': b'ACG\x1e' * 64,
         'seam-periodic-no-separator': b'ABA' * 64,
@@ -58,6 +59,12 @@ def oracle_fixtures(work, adapter, record):
         for ext, col in [('.ssa', 2), ('.ssa_t', 3)]:
             values = [len(padded)] + [v[col] for v in padded]
             pathlib.Path(str(prefix) + ext).write_bytes(struct.pack(f'<{len(values)}Q', *values))
+        # Test-only two-phrase PFP representation, independent of the parser.
+        # Expanding the virtual ten-dollar prefix gives $^10 T $^10.
+        pad = b'\x02' * 10
+        pathlib.Path(str(prefix) + '.dict').write_bytes(
+            b'\x02' + (text + pad)[:10] + b'\x01' + text + pad + b'\x01\x00')
+        pathlib.Path(str(prefix) + '.parse').write_bytes(struct.pack('<2I', 1, 2))
         ri, heads = root / 'out.ri4', root / 'out.heads'
         result = subprocess.run([adapter, str(prefix), str(ri), str(heads), f'{text[-1]:02x}'], capture_output=True, text=True)
         _, expected_bwt, expected = cyclic_frame(text)
@@ -75,6 +82,9 @@ def oracle_fixtures(work, adapter, record):
             tails = [n-1-((packed >> (i*width)) & ((1 << width)-1)) for i in range(r)]
             equal = (n == len(text) and bits == r*width and bwt == expected_bwt
                      and actual_heads == [v[2] for v in expected] and tails == [v[3] for v in expected])
+        if label == 'seam-refuse':
+            equal = (result.returncode != 0 and 'CYCLIC_SEAM_REFUSED class_size=2048 limit=1000' in result.stderr
+                     and 'no O(n) fallback' in result.stderr and not ri.exists() and not heads.exists())
         record('oracle-' + label, equal, returncode=result.returncode, stderr=result.stderr,
                n=len(text), raw_runs=len(padded), cyclic_runs=len(expected))
         record('oracle-' + label + '-no-invalid-output', equal or

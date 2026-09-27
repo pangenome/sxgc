@@ -1533,3 +1533,15 @@ ordering to be adjudicated by k10's real byte gates.
 ## walking). Derivation: bit6/sxi_logs/sep-convention/repair/DERIVATION.md.
 ## Also open: sweep emits n+1 witness for cyclic 0x1E input (legacy sentinel
 ## convention, xsa/src/main.rs ~1012).
+
+## SEAM REPAIR LANDED: first multi-string canonical publication. yeast235.sxi
+## (0x1E cyclic contract) PUBLISHED, chi = 85,404,336 - exactly +96 above the
+## single-string yeast corpus (85,404,240) with k=9,901 records: the FIRST
+## MEASURED boundary-delta identity instance (~1 witness per ~103 separators).
+## Old 85,350,673 resolved as legacy-convention (the cross-chain mystery pair
+## was two conventions of near-identical corpora). Yeast regression: chi +
+## all five members unchanged (certified path intact). Separator suite 47/47,
+## 2,214 endpoint cases, constant-run refusal gate (adversarial classes REFUSE
+## loudly per policy). Witness n+1 fixed (zero-based cyclic). Residual flag:
+## container k semantics inconsistent (k=1 byte-strings vs records 9,901) -
+## query lane to pin. Open: k10 canonical + 466 under the repaired frame.

@@ -1,0 +1,23 @@
+	Command being timed: "/tmp/rpfbwt-sxgc/build-sxgc/rpfbwt --l1-prefix /mnt/nvme3n1/erikg/sxi-repair2/xsa-build-t2tghkm7/parse --w1 10 --w2 5 --threads 16 --chunks 50 --tmp-dir /mnt/nvme3n1/erikg/sxi-repair2/xsa-build-t2tghkm7"
+	User time (seconds): 2344.97
+	System time (seconds): 30.62
+	Percent of CPU this job got: 428%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 9:14.01
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 8824188
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 7119406
+	Voluntary context switches: 3444
+	Involuntary context switches: 4247
+	Swaps: 0
+	File system inputs: 448
+	File system outputs: 7884720
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

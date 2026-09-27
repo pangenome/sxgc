@@ -1,0 +1,195 @@
+In file included from /home/erikg/TeraTools/src/thirdparty/include/sdsl/sd_vector.hpp:26,
+                 from bit6/slim_lce.hpp:5,
+                 from bit6/rpfbwt_endpoints.cpp:11:
+/home/erikg/TeraTools/src/thirdparty/include/sdsl/int_vector.hpp:855:45: warning: ‘template<class _Category, class _Tp, class _Distance, class _Pointer, class _Reference> struct std::iterator’ is deprecated [-Wdeprecated-declarations]
+  855 | class int_vector_iterator_base: public std::iterator<std::random_access_iterator_tag, typename t_int_vector::value_type, typename t_int_vector::difference_type>
+      |                                             ^~~~~~~~
+In file included from /usr/include/c++/13/bits/stl_algobase.h:65,
+                 from /usr/include/c++/13/algorithm:60,
+                 from bit6/sxi_format.hpp:3,
+                 from bit6/rpfbwt_endpoints.cpp:1:
+/usr/include/c++/13/bits/stl_iterator_base_types.h:127:34: note: declared here
+  127 |     struct _GLIBCXX17_DEPRECATED iterator
+      |                                  ^~~~~~~~
+In file included from /home/erikg/TeraTools/src/thirdparty/include/sdsl/int_vector_buffer.hpp:25,
+                 from /home/erikg/TeraTools/src/thirdparty/include/sdsl/int_vector.hpp:1599:
+/home/erikg/TeraTools/src/thirdparty/include/sdsl/iterators.hpp:33:49: warning: ‘template<class _Category, class _Tp, class _Distance, class _Pointer, class _Reference> struct std::iterator’ is deprecated [-Wdeprecated-declarations]
+   33 | class random_access_const_iterator: public std::iterator<std::random_access_iterator_tag, typename t_rac::value_type, typename t_rac::difference_type>
+      |                                                 ^~~~~~~~
+/usr/include/c++/13/bits/stl_iterator_base_types.h:127:34: note: declared here
+  127 |     struct _GLIBCXX17_DEPRECATED iterator
+      |                                  ^~~~~~~~
+/home/erikg/TeraTools/src/thirdparty/include/sdsl/int_vector_buffer.hpp:489:37: warning: ‘template<class _Category, class _Tp, class _Distance, class _Pointer, class _Reference> struct std::iterator’ is deprecated [-Wdeprecated-declarations]
+  489 |         class iterator: public std::iterator<std::random_access_iterator_tag, value_type, difference_type, value_type*, reference>
+      |                                     ^~~~~~~~
+/usr/include/c++/13/bits/stl_iterator_base_types.h:127:34: note: declared here
+  127 |     struct _GLIBCXX17_DEPRECATED iterator
+      |                                  ^~~~~~~~
+In file included from bit6/chi_rspace_dump.cpp:52:
+/home/erikg/TeraTools/src/thirdparty/include/sdsl/int_vector.hpp:855:45: warning: ‘template<class _Category, class _Tp, class _Distance, class _Pointer, class _Reference> struct std::iterator’ is deprecated [-Wdeprecated-declarations]
+  855 | class int_vector_iterator_base: public std::iterator<std::random_access_iterator_tag, typename t_int_vector::value_type, typename t_int_vector::difference_type>
+      |                                             ^~~~~~~~
+In file included from /usr/include/c++/13/bits/stl_algobase.h:65,
+                 from /usr/include/c++/13/algorithm:60,
+                 from bit6/sxi_format.hpp:3,
+                 from bit6/chi_rspace_dump.cpp:33:
+/usr/include/c++/13/bits/stl_iterator_base_types.h:127:34: note: declared here
+  127 |     struct _GLIBCXX17_DEPRECATED iterator
+      |                                  ^~~~~~~~
+In file included from /home/erikg/TeraTools/src/thirdparty/include/sdsl/int_vector_buffer.hpp:25,
+                 from /home/erikg/TeraTools/src/thirdparty/include/sdsl/int_vector.hpp:1599:
+/home/erikg/TeraTools/src/thirdparty/include/sdsl/iterators.hpp:33:49: warning: ‘template<class _Category, class _Tp, class _Distance, class _Pointer, class _Reference> struct std::iterator’ is deprecated [-Wdeprecated-declarations]
+   33 | class random_access_const_iterator: public std::iterator<std::random_access_iterator_tag, typename t_rac::value_type, typename t_rac::difference_type>
+      |                                                 ^~~~~~~~
+/usr/include/c++/13/bits/stl_iterator_base_types.h:127:34: note: declared here
+  127 |     struct _GLIBCXX17_DEPRECATED iterator
+      |                                  ^~~~~~~~
+/home/erikg/TeraTools/src/thirdparty/include/sdsl/int_vector_buffer.hpp:489:37: warning: ‘template<class _Category, class _Tp, class _Distance, class _Pointer, class _Reference> struct std::iterator’ is deprecated [-Wdeprecated-declarations]
+  489 |         class iterator: public std::iterator<std::random_access_iterator_tag, value_type, difference_type, value_type*, reference>
+      |                                     ^~~~~~~~
+/usr/include/c++/13/bits/stl_iterator_base_types.h:127:34: note: declared here
+  127 |     struct _GLIBCXX17_DEPRECATED iterator
+      |                                  ^~~~~~~~
+In file included from /home/erikg/TeraTools/src/thirdparty/include/sdsl/rmq_succinct_sct.hpp:27,
+                 from /home/erikg/TeraTools/src/thirdparty/include/sdsl/rmq_support.hpp:47,
+                 from bit6/pfp_ds_vendor/pfp/pfp.hpp:28,
+                 from bit6/chi_rspace_dump.cpp:63:
+/home/erikg/TeraTools/src/thirdparty/include/sdsl/suffix_tree_helper.hpp:17:51: warning: ‘template<class _Category, class _Tp, class _Distance, class _Pointer, class _Reference> struct std::iterator’ is deprecated [-Wdeprecated-declarations]
+   17 | class cst_node_child_proxy_iterator : public std::iterator<std::forward_iterator_tag, typename t_cst::node_type>
+      |                                                   ^~~~~~~~
+/usr/include/c++/13/bits/stl_iterator_base_types.h:127:34: note: declared here
+  127 |     struct _GLIBCXX17_DEPRECATED iterator
+      |                                  ^~~~~~~~
+   Compiling xsa v0.1.0 (/tmp/sxgc-laneV/xsa)
+warning: variable does not need to be mutable
+   --> src/main.rs:542:9
+    |
+542 |     let mut next_rng = |mut x: u64| -> u64 {
+    |         ----^^^^^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `tanchor` is never read
+   --> src/main.rs:594:31
+    |
+594 |             let mut tanchor = 0u64;
+    |                               ^^^^ this value is reassigned later and never used
+...
+602 |                         tanchor = r;
+    |                         ----------- `tanchor` is overwritten here before the previous value is read
+    |
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `tsample` is never read
+   --> src/main.rs:595:31
+    |
+595 |             let mut tsample = 0u64;
+    |                               ^^^^ this value is reassigned later and never used
+...
+603 |                         tsample = idx.sa.get(r);
+    |                         ----------------------- `tsample` is overwritten here before the previous value is read
+
+warning: variable does not need to be mutable
+   --> src/main.rs:748:9
+    |
+748 |     let mut read_flat = |flatf: &mut File, pos: u64, want: usize| -> Vec<u8> {
+    |         ----^^^^^^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: field `bits` is never read
+   --> src/main.rs:110:5
+    |
+109 | struct PackedSa {
+    |        -------- field in this struct
+110 |     bits: u64,          // total size IN BITS
+    |     ^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `s_at` is never used
+   --> src/main.rs:310:8
+    |
+183 | impl Ri4 {
+    | -------- method in this implementation
+...
+310 |     fn s_at(&self, j: u64) -> u64 {
+    |        ^^^^
+
+warning: `xsa` (bin "xsa") generated 6 warnings (run `cargo fix --bin "xsa" -p xsa` to apply 2 suggestions)
+    Finished `release` profile [optimized] target(s) in 1.82s
+   Compiling libc v0.2.189
+   Compiling version_check v0.9.5
+   Compiling proc-macro2 v1.0.107
+   Compiling crossbeam-utils v0.8.23
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.26
+   Compiling find-msvc-tools v0.1.12
+   Compiling shlex v2.0.1
+   Compiling cfg-if v1.0.5
+   Compiling pkg-config v0.3.34
+   Compiling crossbeam-epoch v0.9.21
+   Compiling crossbeam-deque v0.8.8
+   Compiling getrandom v0.3.4
+   Compiling zerocopy v0.8.57
+   Compiling serde_core v1.0.229
+   Compiling typenum v1.20.1
+   Compiling zstd-safe v7.3.0
+   Compiling once_cell v1.21.4
+   Compiling rayon-core v1.13.0
+   Compiling serde v1.0.229
+   Compiling allocator-api2 v0.2.21
+   Compiling anyhow v1.0.104
+   Compiling thiserror v1.0.69
+   Compiling parking_lot_core v0.9.12
+   Compiling crc32fast v1.5.2
+   Compiling scopeguard v1.2.0
+   Compiling adler2 v2.0.1
+   Compiling smallvec v1.16.1
+   Compiling simd-adler32 v0.3.10
+   Compiling either v1.18.0
+   Compiling cpufeatures v0.2.17
+   Compiling arbitrary-chunks v0.4.1
+   Compiling byteorder v1.5.0
+   Compiling partition v0.1.2
+   Compiling lock_api v0.4.14
+   Compiling miniz_oxide v0.9.1
+   Compiling generic-array v0.14.7
+   Compiling ahash v0.8.12
+   Compiling flate2 v1.1.10
+   Compiling crossbeam-queue v0.3.14
+   Compiling crossbeam-channel v0.5.17
+   Compiling syn v3.0.6
+   Compiling syn v2.0.119
+   Compiling crossbeam v0.8.5
+   Compiling jobserver v0.1.35
+   Compiling num_cpus v1.17.0
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling digest v0.10.7
+   Compiling cc v1.4.6
+   Compiling sha2 v0.10.9
+   Compiling rayon v1.12.0
+   Compiling zstd-sys v2.1.0+zstd.1.5.7
+   Compiling ragc-core v0.1.1 (https://github.com/ekg/ragc?rev=40e5cad11cab7d4df07a72d6b16d68c2d60b0742#40e5cad1)
+   Compiling serde_derive v1.0.229
+   Compiling thiserror-impl v1.0.69
+   Compiling rdst v0.20.14
+   Compiling hashbrown v0.14.5
+   Compiling dashmap v6.2.1
+   Compiling bincode v1.3.3
+   Compiling zstd v0.13.3
+   Compiling ragc-common v0.1.1 (https://github.com/ekg/ragc?rev=40e5cad11cab7d4df07a72d6b16d68c2d60b0742#40e5cad1)
+   Compiling agc2flat v0.1.0 (/tmp/sxgc-laneV/agc2flat)
+warning: unused import: `std::io::Write as _`
+   --> src/main.rs:266:17
+    |
+266 |             use std::io::Write as _;
+    |                 ^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `agc2flat` (bin "agc2flat") generated 1 warning (run `cargo fix --bin "agc2flat" -p agc2flat` to apply 1 suggestion)
+    Finished `release` profile [optimized] target(s) in 16.57s

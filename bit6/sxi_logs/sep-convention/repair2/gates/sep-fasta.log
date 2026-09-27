@@ -1,0 +1,5 @@
+xsa build: work=/tmp/sxi-repair2/gates/xsa-build-z9vo3j7q log=/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/gates/sep-fasta-xsa-build-z9vo3j7q.jsonl
+prepare-fasta: record=1 name=0 sequence_bytes=666 collection_bytes=667
+prepare-fasta: record=2 name=1 sequence_bytes=667 collection_bytes=1335
+prepare-fasta: record=3 name=2 sequence_bytes=667 collection_bytes=2003
+{"sxi": "/tmp/sxi-repair2/gates/sep-fasta.sxi", "chi": 1343, "work": "/tmp/sxi-repair2/gates/xsa-build-z9vo3j7q", "log": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/gates/sep-fasta-xsa-build-z9vo3j7q.jsonl"}

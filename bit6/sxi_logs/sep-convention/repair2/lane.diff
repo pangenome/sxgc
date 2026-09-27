@@ -1,0 +1,547 @@
+--- baseline/bit6/rpfbwt_endpoints.cpp
++++ bit6/rpfbwt_endpoints.cpp
+@@ -1,9 +1,17 @@
+-// O(r), bounded-buffer adapter: certified PFP padding removal -> ri4.
+-// General padded-to-cyclic normalization is NOT implemented. Reject frames
+-// whose suffix order needs seam repair before opening either output.
+-// No SA/LF/text walk. .ssa/.ssa_t remain unmodified producer evidence.
++// Padded PFP RLE -> cyclic ri4 and run heads. Certified frames stream;
++// other frames use bounded seam classes. Refusals precede output creation.
++// Producer .ssa/.ssa_t samples are read-only. See seam_repair.hpp.
+ #include "sxi_format.hpp"
+ #include <functional>
++#include <chrono>
++#include <atomic>
++#include <memory>
++#include <limits>
++static constexpr uint64_t INF=UINT64_MAX;
++static double tnow(){return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();}
++static double G_T0=tnow();
++#define SLIM_LCE_CORE_ONLY
++#include "slim_lce.hpp"
+ using namespace sxi;
+ struct Run { U c,len,h,t; };
+ struct Source {
+@@ -13,13 +21,13 @@
+   check(n>10&&r,"empty RLE");
+   for(auto ext:{".ssa",".ssa_t"}){std::ifstream f(p+ext,std::ios::binary);check(bool(f)&&size(f)==8+8*r&&integer(f)==r,"endpoint count/size mismatch");}
+  }
+- void certify_seam() {
++ bool certify_seam() {
+   // After deleting the first w rows, the order is ordinary suffix order of T.
+   // Let z be the row for SA=0. Replacing its dollar by T[n-1] preserves the
+   // cyclic LF permutation exactly iff rank_{T[n-1]}(z)==0. Otherwise the
+   // suffix n-1 must move, potentially followed by Theta(n) other suffixes.
+   std::ifstream b(prefix+".rlebwt",std::ios::binary),h(prefix+".ssa",std::ios::binary),t(prefix+".ssa_t",std::ios::binary);
+-  integer(h);integer(t);U rows=0,before=0,zeroes=0;
++  integer(h);integer(t);U rows=0,before=0,zeroes=0;bool certified=true;
+   for(U i=0;i<r;++i) {
+    U len=0,c=0,word;
+    do {word=integer(b,4);if(len)check(c==(word&255),"RLE continuation character");c=word&255;len+=(word>>8)&0x7fffff;}while(word>>31);
+@@ -34,8 +42,8 @@
+    if(rows+rawLen>10) {
+     if(c==2) {
+      check(len==1&&head==0&&tail==0,"invalid SA-zero dollar row");
+-     if(before)fprintf(stderr,"CYCLIC_SEAM_BLOCKED terminal=0x%02llx predecessors_before_zero=%llu\n",(unsigned long long)terminal,(unsigned long long)before);
+-     check(before==0,"cyclic seam repair required: terminal predecessors precede SA=0; padding removal is not cyclic-T order");
++     if(before)fprintf(stderr,"CYCLIC_SEAM_REPAIR terminal=0x%02llx predecessors_before_zero=%llu\n",(unsigned long long)terminal,(unsigned long long)before);
++     certified=before==0;
+      ++zeroes;
+     }
+     if(c==terminal)before+=len;
+@@ -43,6 +51,7 @@
+    rows+=rawLen;
+   }
+   check(rows==n&&zeroes==1&&b.peek()==EOF,"invalid padded cyclic frame");
++  return certified;
+  }
+  void scan(const std::function<void(Run)>& emit) {
+   std::ifstream b(prefix+".rlebwt",std::ios::binary),h(prefix+".ssa",std::ios::binary),t(prefix+".ssa_t",std::ios::binary);
+@@ -65,25 +74,29 @@
+   check(rows==n&&!skip&&b.peek()==EOF,"RLE metadata/trailing bytes mismatch");if(have)emit(pending);
+  }
+ };
++#include "seam_repair.hpp"
+ void number(std::ostream& f,U x,unsigned bytes=8){unsigned char b[8];put(b,x,bytes);f.write((char*)b,bytes);check(bool(f),"write endpoint adapter");}
+ int main(int argc,char**argv){try{
+  check(argc==4||argc==5,"usage: rpfbwt_endpoints PREFIX OUT.ri4 OUT.head_sa [TERMINAL_HEX]");
+  U terminal=10;
+  if(argc==5){std::string arg(argv[4]);size_t used=0;terminal=std::stoul(arg,&used,16);check(used==arg.size()&&terminal>=6&&terminal<128,"unsupported terminal byte");}
+- Source s(argv[1],terminal);s.certify_seam();U r=0,k=0,n=0;std::array<U,256> totals{};
+- s.scan([&](Run v){check(v.len<=UINT32_MAX,"run too long");r++;n+=v.len;totals[v.c]+=v.len;if(v.c==10)k+=v.len;});
++ Source s(argv[1],terminal);bool certified=s.certify_seam();
++ SeamRepair repair(s,certified);
++ auto scan=[&](const std::function<void(Run)>& emit){repair.scan(emit);};
++ U r=0,k=0,n=0;std::array<U,256> totals{};
++ scan([&](Run v){check(v.len<=UINT32_MAX,"run too long");r++;n+=v.len;totals[v.c]+=v.len;if(v.c==10)k+=v.len;});
+  // Preserve legacy newline transport semantics for existing raw pilots.
+  // Reserved-0x1E collections are ONE string, regardless of record count.
+  if(terminal!=10)k=1;
+  check(n==s.n-10&&k>0,"normalized length/terminators");
+  std::ofstream out(argv[2],std::ios::binary),heads(argv[3],std::ios::binary);check(bool(out)&&bool(heads),"open outputs");
+  number(out,0x0000000452585349ULL);number(out,n);number(out,k);number(out,r);U sum=0;for(U v:totals){number(out,sum);sum+=v;}
+- s.scan([&](Run v){number(out,v.c,1);number(heads,v.h);});
+- s.scan([&](Run v){number(out,v.len,4);});
++ scan([&](Run v){number(out,v.c,1);number(heads,v.h);});
++ scan([&](Run v){number(out,v.len,4);});
+  unsigned w=1;while(w<64&&(U(1)<<w)<=n-1)w++;number(out,r*w);number(out,w,1);
+  __uint128_t reservoir=0;unsigned available=0;
+- s.scan([&](Run v){reservoir|=__uint128_t(n-1-v.t)<<available;available+=w;if(available>=64){number(out,U(reservoir));reservoir>>=64;available-=64;}});
++ scan([&](Run v){reservoir|=__uint128_t(n-1-v.t)<<available;available+=w;if(available>=64){number(out,U(reservoir));reservoir>>=64;available-=64;}});
+  if(available)number(out,U(reservoir));
+  out.flush();heads.flush();check(bool(out)&&bool(heads),"flush outputs");
+- fprintf(stderr,"ENDPOINT_PASS raw_n=%llu raw_r=%llu n=%llu k=%llu r=%llu padding_rows=10 cyclic_seam_certified=1\n",(unsigned long long)s.n,(unsigned long long)s.r,(unsigned long long)n,(unsigned long long)k,(unsigned long long)r);return 0;
++ fprintf(stderr,"ENDPOINT_PASS raw_n=%llu raw_r=%llu n=%llu k=%llu r=%llu padding_rows=10 cyclic_seam_certified=%d\n",(unsigned long long)s.n,(unsigned long long)s.r,(unsigned long long)n,(unsigned long long)k,(unsigned long long)r,int(certified));return 0;
+ }catch(const std::exception&e){fprintf(stderr,"FATAL: %s\n",e.what());return 1;}}
+--- baseline/bit6/seam_repair.hpp
++++ bit6/seam_repair.hpp
+@@ -0,0 +1,135 @@
++// Bounded seam classes over the padded RLBWT. No expanded-text scan or LF
++// fallback: every row enumerated belongs to an admitted seam interval.
++struct SeamRepair {
++ struct Class { U lo,hi,first,before=0,after=0;std::vector<Run> runs; };
++ Source& source;
++ std::vector<Class> classes;
++ U limit,total=0,depth=0;
++ static void refuse(const char* kind,U size,U limit) {
++  fprintf(stderr,"CYCLIC_SEAM_REFUSED %s=%llu limit=%llu policy=max(1000,raw_r/1000); no O(n) fallback\n",kind,(unsigned long long)size,(unsigned long long)limit);
++  throw std::runtime_error("cyclic seam repair exceeds compressed-work policy; no O(n) fallback");
++ }
++ explicit SeamRepair(Source& source,bool certified):source(source),limit(std::max<U>(1000,source.r/1000)) {
++  if(certified)return;
++  const U N=source.n,n=N-10,r=source.r;
++  std::vector<Run> raw;raw.reserve(r);
++  std::vector<U> starts;starts.reserve(r);
++  std::array<std::vector<std::pair<U,U>>,256> bychar;
++  std::array<U,256> counts{},C{};
++  std::ifstream b(source.prefix+".rlebwt",std::ios::binary),h(source.prefix+".ssa",std::ios::binary),t(source.prefix+".ssa_t",std::ios::binary);
++  integer(h);integer(t);U rows=0;
++  for(U i=0;i<r;++i) {
++   Run v{};U word;
++   do {word=integer(b,4);if(v.len)check(v.c==(word&255),"RLE continuation character");v.c=word&255;v.len+=(word>>8)&0x7fffff;}while(word>>31);
++   v.h=integer(h);v.t=integer(t);
++   check(v.len&&v.len<=N-rows&&v.h<N&&v.t<N,"padded RLE bounds");
++   bychar[v.c].emplace_back(i,counts[v.c]);counts[v.c]+=v.len;
++   starts.push_back(rows);rows+=v.len;raw.push_back(v);
++  }
++  check(rows==N&&b.peek()==EOF,"padded RLE size");
++  for(U c=1;c<256;++c)C[c]=C[c-1]+counts[c-1];
++  auto rank=[&](U c,U row) {
++   auto& v=bychar[c];
++   auto it=std::lower_bound(v.begin(),v.end(),row,[&](auto pair,U x){return starts[pair.first]<x;});
++   if(it==v.begin())return U(0);
++   --it;U id=it->first;return it->second+std::min(row-starts[id],raw[id].len);
++  };
++  auto runof=[&](U row){return U(std::upper_bound(starts.begin(),starts.end(),row)-starts.begin()-1);};
++  // In padded order, the suffix beginning at n (the ten dollars) is row 0.
++  // Backward search gives the interval of every non-unique terminal suffix.
++  // Its leftmost row is the shortest suffix, SA=n-depth. Prefix intervals
++  // are disjoint or nested; their maximal union is exactly the set of rows
++  // in which a finite-suffix comparison can reach an end before a mismatch.
++  U lo=0,hi=N,row=0;
++  check(raw[0].h==n,"padding suffix must begin at row zero");
++  while(depth<n) {
++   if(depth==limit)refuse("discovery_steps",depth+1,limit);
++   U c=raw[runof(row)].c;
++   check(c!=2,"unexpected dollar during seam discovery");
++   lo=C[c]+rank(c,lo);hi=C[c]+rank(c,hi);row=C[c]+rank(c,row);++depth;
++   check(lo==row&&hi>lo&&lo>=10,"terminal suffix interval");
++   if(hi-lo==1)break;
++   if(hi-lo>limit)refuse("class_size",hi-lo,limit);
++   classes.push_back({lo-10,hi-10,n-depth,0,0,{}});
++  }
++  std::sort(classes.begin(),classes.end(),[](const Class& a,const Class& b){return a.lo<b.lo||(a.lo==b.lo&&a.hi>b.hi);});
++  size_t used=0;
++  for(size_t i=0;i<classes.size();++i) {
++   if(used&&classes[i].lo<classes[used-1].hi){check(classes[i].hi<=classes[used-1].hi,"crossing prefix intervals");continue;}
++   if(i!=used)classes[used]=std::move(classes[i]);++used;
++  }
++  classes.resize(used);
++  for(auto& cl:classes)total+=cl.hi-cl.lo;
++  if(total>limit)refuse("total_class_rows",total,limit);
++  // Phi(x)=previous SA row is a circular piecewise translation, anchored
++  // by (head SA, previous run tail SA). Its inverse uses (tail,next head).
++  // Both searches cost O(log r); no LF walk resolves interior samples.
++  std::vector<std::pair<U,U>> phi;phi.reserve(r);
++  for(U i=0;i<r;++i)phi.emplace_back(raw[i].h,raw[(i+r-1)%r].t);
++  auto order=[&](){std::sort(phi.begin(),phi.end());};order();
++  auto lookup=[&](U pos) {
++   auto it=std::upper_bound(phi.begin(),phi.end(),std::make_pair(pos,INF));
++   if(it==phi.begin())it=phi.end();--it;
++   U delta=(pos+N-it->first)%N;return (it->second+delta)%N;
++  };
++  for(auto& cl:classes)cl.before=lookup(cl.first);
++  for(auto& pair:phi)std::swap(pair.first,pair.second);
++  order();
++  // Rank structures are no longer needed; release before loading PFP LCE.
++  std::vector<Run>().swap(raw);std::vector<U>().swap(starts);
++  for(auto& v:bychar)std::vector<std::pair<U,U>>().swap(v);
++  SlimLCE lce(source.prefix,r,0,0,true,false,true);
++  check(lce.n==N,"seam PFP length mismatch");
++  // Existing slim hashes verify guesses exactly. Bound that verifier too;
++  // a long verified prefix must refuse, never become a corpus-sized walk.
++  U bits=0;for(U value=N;value;value>>=1)++bits;
++  U queryLimit=std::max<U>(1000,bits*bits*bits);
++  lce.ph->verificationLimit=queryLimit;lce.dh->verificationLimit=queryLimit;
++  fprintf(stderr,"CYCLIC_SEAM_LCE_POLICY max_probe_and_verification=%llu max(1000,bit_width(raw_n)^3)\n",(unsigned long long)queryLimit);
++  auto symbol=[&](U pos) {
++   U shifted=pos+10,id=lce.pr(shifted+1);
++   return lce.d[lce.dstart(lce.p[id-1])+shifted-lce.ps(id)];
++  };
++  for(auto& cl:classes) {
++   std::vector<U> sa;sa.reserve(cl.hi-cl.lo);U pos=cl.first;
++   for(U row=cl.lo;row<cl.hi;++row){check(pos<n,"seam sample outside T");sa.push_back(pos);pos=lookup(pos);}
++   cl.after=pos;
++   std::sort(sa.begin(),sa.end(),[&](U a,U b){
++    U len=lce.collection_lce(a,b);
++    return len==n ? a<b : symbol((a+len)%n)<symbol((b+len)%n);
++   });
++   for(U pos:sa) {
++    U c=symbol((pos+n-1)%n);
++    if(!cl.runs.empty()&&cl.runs.back().c==c){++cl.runs.back().len;cl.runs.back().t=pos;}
++    else cl.runs.push_back({c,1,pos,pos});
++   }
++  }
++  fprintf(stderr,"CYCLIC_SEAM_REPAIRED classes=%zu rows=%llu discovery_steps=%llu limit=%llu phi_samples=%llu\n",classes.size(),(unsigned long long)total,(unsigned long long)depth,(unsigned long long)limit,(unsigned long long)r);
++  lce.ph->report("seam-parse");lce.dh->report("seam-dict");
++ }
++ void scan(const std::function<void(Run)>& emit) {
++  U row=0;size_t next=0;Run pending{};bool have=false;
++  auto append=[&](Run v) {
++   if(!v.len)return;
++   if(have&&pending.c==v.c){pending.len+=v.len;pending.t=v.t;}
++   else {if(have)emit(pending);pending=v;have=true;}
++  };
++  source.scan([&](Run v){
++   U end=row+v.len;
++   while(row<end) {
++    if(next<classes.size()&&row>=classes[next].lo) {
++     auto& cl=classes[next];
++     if(row==cl.lo)for(auto piece:cl.runs)append(piece);
++     row=std::min(end,cl.hi);
++     if(row==cl.hi){v.h=cl.after;++next;}
++    } else {
++     U stop=next<classes.size()?std::min(end,classes[next].lo):end;
++     Run piece=v;piece.len=stop-row;
++     if(stop<end)piece.t=classes[next].before;
++     append(piece);row=stop;
++    }
++   }
++  });
++  if(have)emit(pending);
++ }
++};
+--- baseline/bit6/slim_lce.hpp
++++ bit6/slim_lce.hpp
+@@ -75,6 +75,7 @@
+     const Seq& s; uint64_t tau; std::vector<uint64_t> hashes;
+     static constexpr uint64_t BASE=0x9e3779b185ebca87ULL;
+     bool inject;
++    uint64_t verificationLimit=INF; // Adapter policy; default preserves slim behavior.
+     mutable std::atomic<uint64_t> calls{0}, checked{0}, jumps{0}, maxChecked{0};
+     void record_checked(uint64_t count) const {
+         checked.fetch_add(count,std::memory_order_relaxed);
+@@ -90,6 +91,7 @@
+     uint64_t suffix(uint64_t i) const {
+         if(i==s.size())return 0;
+         uint64_t end=std::min<uint64_t>(s.size(),((i+tau-1)/tau)*tau);
++        if(end-i>verificationLimit)slim_fail("CYCLIC_SEAM_REFUSED: fingerprint probe exceeds polylog-work policy; no O(n) fallback");
+         uint64_t h=end==s.size()?0:hashes[end/tau];
+         while(end>i){--end;h=(uint64_t)s[end]+1+BASE*h;}return h;
+     }
+@@ -122,6 +124,7 @@
+         uint64_t guess=lo;
+         if(inject && guess<cap)++guess;
+         else if(inject && guess) --guess;
++        if(guess>verificationLimit)slim_fail("CYCLIC_SEAM_REFUSED: LCE verification exceeds polylog-work policy; no O(n) fallback");
+         for(uint64_t k=0;k<guess;++k) if(s[i+k]!=s[j+k])
+             slim_fail("fingerprint verification mismatch inside proposed prefix");
+         if(guess<cap && s[i+guess]==s[j+guess])
+@@ -245,6 +248,7 @@
+     }
+ };
+ 
++#ifndef SLIM_LCE_CORE_ONLY
+ // Headerless little-endian u64 column, exactly one SA value per ri4 run.
+ // Mapping charges up to 8R resident bytes; it never copies the whole column.
+ struct SlimHeads {
+@@ -369,3 +373,5 @@
+         (unsigned long long)(resolver.sumSteps.load()-queryStepsBefore));
+     return 0;
+ }
++
++#endif // SLIM_LCE_CORE_ONLY
+--- baseline/bit6/test_sxi_separator.py
++++ bit6/test_sxi_separator.py
+@@ -44,6 +44,7 @@
+         'repetitive': b'ACGT' * 80 + b'\x1e',
+         'HOR-nested': nested + b'\x1e',
+         'multi-string': b'\x1e'.join(records) + b'\x1e',
++        'seam-refuse': b'A' * 1024 + b'B' + b'A' * 1024,
+         'seam-aperiodic': b'A' * 128 + b'B' + b'A' * 128,
+         'seam-periodic': b'ACG\x1e' * 64,
+         'seam-periodic-no-separator': b'ABA' * 64,
+@@ -58,6 +59,12 @@
+         for ext, col in [('.ssa', 2), ('.ssa_t', 3)]:
+             values = [len(padded)] + [v[col] for v in padded]
+             pathlib.Path(str(prefix) + ext).write_bytes(struct.pack(f'<{len(values)}Q', *values))
++        # Test-only two-phrase PFP representation, independent of the parser.
++        # Expanding the virtual ten-dollar prefix gives $^10 T $^10.
++        pad = b'\x02' * 10
++        pathlib.Path(str(prefix) + '.dict').write_bytes(
++            b'\x02' + (text + pad)[:10] + b'\x01' + text + pad + b'\x01\x00')
++        pathlib.Path(str(prefix) + '.parse').write_bytes(struct.pack('<2I', 1, 2))
+         ri, heads = root / 'out.ri4', root / 'out.heads'
+         result = subprocess.run([adapter, str(prefix), str(ri), str(heads), f'{text[-1]:02x}'], capture_output=True, text=True)
+         _, expected_bwt, expected = cyclic_frame(text)
+@@ -75,6 +82,9 @@
+             tails = [n-1-((packed >> (i*width)) & ((1 << width)-1)) for i in range(r)]
+             equal = (n == len(text) and bits == r*width and bwt == expected_bwt
+                      and actual_heads == [v[2] for v in expected] and tails == [v[3] for v in expected])
++        if label == 'seam-refuse':
++            equal = (result.returncode != 0 and 'CYCLIC_SEAM_REFUSED class_size=2048 limit=1000' in result.stderr
++                     and 'no O(n) fallback' in result.stderr and not ri.exists() and not heads.exists())
+         record('oracle-' + label, equal, returncode=result.returncode, stderr=result.stderr,
+                n=len(text), raw_runs=len(padded), cyclic_runs=len(expected))
+         record('oracle-' + label + '-no-invalid-output', equal or
+--- baseline/bit6/test_seam_repair.py
++++ bit6/test_seam_repair.py
+@@ -0,0 +1,151 @@
++#!/usr/bin/env python3
++"""Bounded, independent dense cyclic tests; expanded arrays exist only here."""
++import argparse
++import itertools
++import json
++import pathlib
++import random
++import struct
++import subprocess
++import time
++from test_sxi_separator import cyclic_frame
++
++
++def put_frame(prefix, text):
++    _, _, runs = cyclic_frame(text + b'\x02' * 10)
++    pathlib.Path(str(prefix) + '.rlebwt.meta').write_bytes(struct.pack('<2Q', len(text)+10, len(runs)))
++    pathlib.Path(str(prefix) + '.rlebwt').write_bytes(b''.join(struct.pack('<I', c | length << 8) for c, length, _, _ in runs))
++    for ext, col in [('.ssa', 2), ('.ssa_t', 3)]:
++        values = [len(runs)] + [r[col] for r in runs]
++        pathlib.Path(str(prefix) + ext).write_bytes(struct.pack('<' + 'Q'*len(values), *values))
++    pad = b'\x02'*10
++    pathlib.Path(str(prefix) + '.dict').write_bytes(b'\x02'+(text+pad)[:10]+b'\x01'+text+pad+b'\x01\x00')
++    pathlib.Path(str(prefix) + '.parse').write_bytes(struct.pack('<2I', 1, 2))
++
++
++def read_frame(ri, heads):
++    raw = ri.read_bytes()
++    n, k, r = struct.unpack_from('<3Q', raw, 8)
++    chars = raw[2080:2080+r]
++    lengths = struct.unpack_from('<'+'I'*r, raw, 2080+r)
++    hs = struct.unpack('<'+'Q'*r, heads.read_bytes())
++    bits, width = struct.unpack_from('<QB', raw, 2080+5*r)
++    assert bits == r*width
++    packed = int.from_bytes(raw[2089+5*r:], 'little')
++    tails = [n-1-((packed >> (i*width)) & ((1 << width)-1)) for i in range(r)]
++    return [list(v) for v in zip(chars, lengths, hs, tails)]
++
++
++def dense_witnesses(text, sa, bwt):
++    """Full-row scan: no PFP, Phi samples, or per-run aggregate shortcuts."""
++    n = len(text)
++    lcp = [0]
++    for a, b in zip(sa, sa[1:]):
++        z = 0
++        while z < n and text[(a+z) % n] == text[(b+z) % n]:
++            z += 1
++        lcp.append(z)
++    length, position, active = {}, {}, set()
++    result, minimum = [], n+1
++    for i in range(1, n):
++        minimum = min(minimum, lcp[i])
++        if bwt[i] == bwt[i-1]:
++            continue
++        for c in list(length):
++            if minimum < length[c]:
++                if c in active:
++                    result.append(position[c])
++                    active.remove(c)
++                length[c] = minimum
++        for row in (i-1, i):
++            c = bwt[row]
++            if lcp[i] > length.get(c, -1):
++                length[c] = lcp[i]
++                # Zero-based coordinate of the preceding character in reverse T.
++                position[c] = n-1-((sa[row]-1) % n)
++                active.add(c)
++        minimum = n+1
++    result.extend(position[c] for c in active)
++    return sorted(result), lcp
++
++
++def main():
++    p = argparse.ArgumentParser(description=__doc__)
++    p.add_argument('--tools', required=True)
++    p.add_argument('--xsa', required=True)
++    p.add_argument('--work', required=True)
++    a = p.parse_args()
++    work, tools = pathlib.Path(a.work), pathlib.Path(a.tools)
++    work.mkdir(parents=True, exist_ok=True)
++    prefix, ri, heads = work/'parse', work/'out.ri4', work/'out.heads'
++    count = 0
++    repaired = 0
++    fixtures = [bytes(t) for n in range(1, 10) for t in itertools.product(b'AB', repeat=n)]
++    fixtures += [bytes(t) for n in range(1, 7) for t in itertools.product(b'ABC', repeat=n)]
++    rng = random.Random(30927)
++    fixtures += [bytes(rng.choice(b'ACGT\x1e') for _ in range(rng.randint(12, 240))) for _ in range(100)]
++    for text in fixtures:
++        put_frame(prefix, text)
++        result = subprocess.run([str(tools/'rpfbwt_endpoints'), str(prefix), str(ri), str(heads), f'{text[-1]:02x}'], capture_output=True)
++        assert result.returncode == 0, (text, result.stderr)
++        assert read_frame(ri, heads) == cyclic_frame(text)[2], text
++        repaired += b'CYCLIC_SEAM_REPAIRED' in result.stderr
++        count += 1
++    print(json.dumps(dict(endpoint_cases=count, repaired=repaired, bad=0)), flush=True)
++    # Two billion conceptual text bytes, represented by six raw runs. There
++    # is deliberately no text, dictionary or parse for this refusal gate.
++    m = 10**9
++    huge = work/'huge'
++    runs = [(65, 1, 2*m+1, 2*m+1), (2, 9, 2*m+2, 2*m+10),
++            (65, m-1, 2*m, m+2), (66, 1, m+1, m+1),
++            (2, 1, 0, 0), (65, m, 1, m)]
++    pathlib.Path(str(huge)+'.rlebwt.meta').write_bytes(struct.pack('<2Q', 2*m+11, 6))
++    words = []
++    for c, size, _, _ in runs:
++        while size:
++            part = min(size, 0x7fffff)
++            size -= part
++            words.append(c | part << 8 | (0x80000000 if size else 0))
++    pathlib.Path(str(huge)+'.rlebwt').write_bytes(struct.pack('<'+'I'*len(words), *words))
++    for ext, col in [('.ssa', 2), ('.ssa_t', 3)]:
++        pathlib.Path(str(huge)+ext).write_bytes(struct.pack('<7Q', 6, *(r[col] for r in runs)))
++    huge_ri, huge_heads = work/'huge.ri4', work/'huge.heads'
++    began = time.monotonic()
++    result = subprocess.run([str(tools/'rpfbwt_endpoints'), str(huge), str(huge_ri), str(huge_heads), '41'], capture_output=True)
++    assert result.returncode != 0 and b'CYCLIC_SEAM_REFUSED class_size=2000000000 limit=1000' in result.stderr, result.stderr
++    assert not huge_ri.exists() and not huge_heads.exists()
++    print(json.dumps(dict(refusal_n=2*m+1, raw_runs=6, rlebwt_bytes=4*len(words),
++                          wall_seconds=time.monotonic()-began, stderr=result.stderr.decode())), flush=True)
++    witnesses = 0
++    for text in [b'A', b'AAAA', b'ABA'*17, b'ACG\x1e'*21, b'A'*128+b'B'+b'A'*128,
++                 b'AC\nGT\x1eAC\x1e', b'GATTACA\x1e', *fixtures[-30:]]:
++        put_frame(prefix, text)
++        subprocess.run([str(tools/'rpfbwt_endpoints'), str(prefix), str(ri), str(heads), f'{text[-1]:02x}'], check=True, capture_output=True)
++        agg, chi = work/'out.agg', work/'out.chi'
++        result = subprocess.run([str(tools/'slim_dump'), '--slim', '--resolve-ri4', '--dict-stream', '--ri4', str(ri), '--head-sa', str(heads), '--parse', str(prefix), '-t', '2', '-o', str(agg)], capture_output=True)
++        assert result.returncode == 0, (text, result.stderr)
++        sa, bwt, runs = cyclic_frame(text)
++        want, lcp = dense_witnesses(text, sa, bwt)
++        raw = agg.read_bytes()
++        assert struct.unpack_from('<IQ', raw) == (0x31415243, len(runs))
++        fields = struct.unpack_from('<'+'Q'*(4*len(runs)), raw, 12)
++        row = 0
++        for i, (_, length, first, last) in enumerate(runs):
++            # The minimum of adjacent full-row LCP values equals endpoint LCE.
++            expected = [lcp[row], first, last, min(lcp[row+1:row+length]) if length > 1 else 2**64-1]
++            assert [fields[j*len(runs)+i] for j in range(4)] == expected, (text, i, expected)
++            row += length
++        for stream in (False, True):
++            command = [a.xsa, 'chi-rspace', '--ri4', str(ri), '--agg', str(agg), '-o', str(chi)]
++            if stream:
++                command += ['--stream-agg']
++            result = subprocess.run(command, capture_output=True)
++            assert result.returncode == 0, result.stderr
++            got = sorted(v[0] for v in struct.iter_unpack('<Q', chi.read_bytes()))
++            assert got == want and all(0 <= x < len(text) for x in got), (text, got, want)
++            witnesses += 1
++    print(json.dumps(dict(dense_witness_and_aggregate_checks=witnesses, bad=0)), flush=True)
++
++
++if __name__ == '__main__':
++    main()
+--- baseline/bit6/test_sxi_build.py
++++ bit6/test_sxi_build.py
+@@ -65,10 +65,12 @@
+         '--scratch', str(root)], capture_output=True, text=True)
+     rejected_collection = 'collection ordering is unvalidated' in proc.stderr
+     if 'endpoints failed' in proc.stderr:
+-        # The cyclic seam certificate may reject earlier than the legacy
+-        # collection guard. Require that precise failure, not any stage error.
++        # A periodic input can exceed the bounded seam-discovery policy
++        # before the legacy collection guard. Require the precise refusal.
+         match = re.search(r'see (.+\.endpoints\.log);', proc.stderr)
+-        rejected_collection = bool(match) and 'cyclic seam repair required' in pathlib.Path(match[1]).read_text()
++        evidence = pathlib.Path(match[1]).read_text() if match else ''
++        rejected_collection = ('CYCLIC_SEAM_REFUSED' in evidence and
++                               'policy=max(1000,raw_r/1000); no O(n) fallback' in evidence)
+     assert proc.returncode != 0 and rejected_collection, proc.stderr
+     assert not out.exists()
+     # A stage failure also cannot publish; /bin/false passes executable preflight.
+--- baseline/tools/build_sxi_tools.sh
++++ tools/build_sxi_tools.sh
+@@ -6,7 +6,7 @@
+ OUT="${1:?usage: bash tools/build_sxi_tools.sh OUT_DIR}"
+ mkdir -p "$OUT"
+ OUT="$(cd "$OUT" && pwd)"
+-g++ -O3 -std=c++17 -Wall -Wextra bit6/rpfbwt_endpoints.cpp -o "$OUT/rpfbwt_endpoints"
++bash tools/build_slim_dump.sh "$OUT/rpfbwt_endpoints" bit6/rpfbwt_endpoints.cpp
+ g++ -O3 -std=c++17 -Wall -Wextra bit6/sxi_write.cpp -o "$OUT/sxi_write"
+ g++ -O3 -std=c++17 -Wall -Wextra -fopenmp bit6/phi_inverse_heads.cpp -o "$OUT/phi_inverse_heads"
+ bash tools/build_slim_dump.sh "$OUT/slim_dump"
+--- baseline/xsa/src/main.rs
++++ xsa/src/main.rs
+@@ -919,7 +919,7 @@
+ // topLCP, saFirst, saLast, interiorMin per run -- all computed r-space via
+ // PFP resolve + LCE + the phi-piece law) and runs the production scan-rs
+ // state machine VERBATIM (bit6/teralcp_chi.cpp): no walks, no SA, no text
+-// access. Witness values = N - pos (N = n + 1 convention).
++// access. Legacy witnesses use n+1-pos; cyclic witnesses use (n-pos)%n.
+ fn cmd_chi_rspace(args: &[String]) {
+     let mut ri4p: Option<String> = None;
+     let mut aggp: Option<String> = None;
+@@ -973,7 +973,25 @@
+     } else { Vec::new() };
+     const INF: u64 = u64::MAX;
+     const IINF: i64 = i64::MAX;
+-    let big_n = header.n + 1;
++    // Match slim's alphabet-based cyclic convention without reading text.
++    let mut has_rs = false;
++    let mut has_nl = false;
++    for _ in 0..header.r {
++        let mut ch = [0u8; 1];
++        char_file.read_exact(&mut ch).unwrap();
++        has_rs |= ch[0] == 0x1e;
++        has_nl |= ch[0] == 0x0a;
++    }
++    char_file.seek(SeekFrom::Start(header.runs_offset)).unwrap();
++    let cyclic = has_rs || !has_nl;
++    let big_n = if cyclic { header.n } else { header.n + 1 };
++    // The candidate is the BWT character preceding SA=pos. Reversing its
++    // cyclic coordinate gives n-pos, with pos=0 wrapping to coordinate 0.
++    let witness = |pos: u64| -> u64 {
++        if pos >= header.n { die("chi-rspace: endpoint outside text"); }
++        if cyclic { if pos == 0 { 0 } else { header.n - pos } }
++        else { big_n - pos }
++    };
+     const SIGMA: usize = 128;
+     let mut rr_len = vec![-1i64; SIGMA];
+     let mut rr_pos = vec![0u64; SIGMA];
+@@ -1010,7 +1028,7 @@
+         let mut ch = [0u8; 1];
+         let raw = if let Some(ref index) = idx { index.run_char[i] }
+             else { char_file.read_exact(&mut ch).unwrap(); ch[0] };
+-        let c: i32 = if raw == 0x0A { 0 } else { raw as i32 };
++        let c: i32 = if !cyclic && raw == 0x0A { 0 } else { raw as i32 };
+         if c as usize >= SIGMA { die("chi-rspace: character outside supported alphabet"); }
+         let lcp_b = values[0] as i64;
+         if i == 0 {
+@@ -1031,8 +1049,8 @@
+                     rr_len[cc] = m3; rr_pos[cc] = 0; rr_act[cc] = false;
+                 }
+             }
+-            if lcp_b > rr_len[p as usize] { rr_len[p as usize] = lcp_b; rr_pos[p as usize] = big_n - p_sa_last; rr_act[p as usize] = true; }
+-            if lcp_b > rr_len[c as usize] { rr_len[c as usize] = lcp_b; rr_pos[c as usize] = big_n - values[1]; rr_act[c as usize] = true; }
++            if lcp_b > rr_len[p as usize] { rr_len[p as usize] = lcp_b; rr_pos[p as usize] = witness(p_sa_last); rr_act[p as usize] = true; }
++            if lcp_b > rr_len[c as usize] { rr_len[c as usize] = lcp_b; rr_pos[c as usize] = witness(values[1]); rr_act[c as usize] = true; }
+             m = IINF;
+         } else {
+             m = mm.min(lcp_b);

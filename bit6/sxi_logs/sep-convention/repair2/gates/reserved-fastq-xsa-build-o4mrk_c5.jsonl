@@ -1,0 +1,2 @@
+{"stage": "prepare-fastq", "source": "/tmp/sxi-repair2/gates/reserved.fastq", "work": "/tmp/sxi-repair2/gates/xsa-build-o4mrk_c5", "start": 1790526240.9158528}
+{"stage": "prepare-fastq", "returncode": 1, "error": "fastq record 1 sequence: corpus contract: reserved separator 0x1E must never appear in sequence content"}

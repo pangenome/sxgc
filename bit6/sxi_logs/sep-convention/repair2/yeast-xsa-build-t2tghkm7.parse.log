@@ -1,0 +1,55 @@
+[2026-09-27 16:24:15.535] [info] Current Configuration:
+; PFP++
+
+; Text file to parse.
+text="/mnt/nvme3n1/erikg/sxgc-yeast/grl/yeast_pfp2.txt"
+
+; Output prefix.
+out-prefix="/mnt/nvme3n1/erikg/sxi-repair2/xsa-build-t2tghkm7/parse"
+
+; Sliding window size.
+window-size=10
+
+; Modulo used during parsing.
+modulo=100
+
+; Number of threads.
+threads=16
+
+; Temporary files directory.
+tmp-dir="/mnt/nvme3n1/erikg/sxi-repair2/xsa-build-t2tghkm7"
+
+; Also output compressed the dictionary.
+compress-dictionary=false
+
+; Use reference parse to avoid re-parsing.
+use-vcf-acceleration=false
+
+; Print out csv containing stats.
+print-statistics=false
+
+; Output count for each dictionary phrase.
+output-occurrences=false
+
+; Output sai array.
+output-sai=false
+
+; Output last array.
+output-last=false
+
+; Convert all non ACGT characters from a VCF or FASTA file to N.
+acgt-only=false
+
+; Verbose output.
+verbose=false
+
+; Version number.
+version=false
+
+[2026-09-27 16:24:15.535] [info] Parsing /mnt/nvme3n1/erikg/sxgc-yeast/grl/yeast_pfp2.txt
+[2026-09-27 16:25:19.920] [info] Main parser: Replacing hash values with ranks.
+[2026-09-27 16:25:31.755] [info] Main parser: writing dictionary on disk NOT COMPRESSED
+[2026-09-27 16:25:32.624] [info] No properties requested.
+[2026-09-27 16:25:32.624] [info] Main parser: closed
+[2026-09-27 16:25:32.969] [info] Parser Text -	Parse size: 34134006	Dic Size: 3159456 Dic Total Length: 510236279
+[Disk Write (bytes): 923003808]

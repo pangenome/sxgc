@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "/tmp/sxgc-laneV/bit6/test_sxi_build.py", line 72, in <module>
+    assert proc.returncode != 0 and rejected_collection, proc.stderr
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: xsa build: work=/tmp/sxi-failure-test-p62r6648/xsa-build-yi6ze6j0 log=/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/cli/rejected-xsa-build-yi6ze6j0.jsonl
+xsa build: endpoints failed (1); see /tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/cli/rejected-xsa-build-yi6ze6j0.endpoints.log; no final SXI published
+xsa: error: build: pipeline failed: exit status: 1
+

@@ -1,0 +1,16 @@
+{
+  "bit6/rpfbwt_endpoints.cpp": "f243c3e3bd94a2181ebb76884f361a560c05693c7f65daa71508b49f05f6a9ea",
+  "bit6/seam_repair.hpp": "d9bb8957d676058fddddd8ed09623f64af9e47fb292e64592a500ecbcc7fa368",
+  "bit6/slim_lce.hpp": "c46fb1113532b82698ee9920d719cb9c255a079e7c9dc44035feab8ffbb3ba19",
+  "bit6/test_sxi_separator.py": "c2723b884a679663e23a5697039ef81dfd75f99cc036f481826b5e12ee12ef64",
+  "bit6/test_seam_repair.py": "9ddb6695e167477e1af899f5d9e25e77039880d713d481ab801765edf15bb1ca",
+  "bit6/test_sxi_build.py": "9a1540c99de76e4181d8e7cf114608f9edd74a36665ba7ffa2fb1259a327d7ee",
+  "tools/build_sxi_tools.sh": "236a941e23836ee532d711bf6fb2cc48e8fc2ecd4273add3ebdbd42ca648a9ff",
+  "xsa/src/main.rs": "4640e9bfc3971784919e21729715fcc885620f760397d094040d7d9e6a1df4bb",
+  "/tmp/sxi-repair2/tools/rpfbwt_endpoints": "a091056caf027099214a0ede4eadd6031e727fb4889271d11d4f97e63724d310",
+  "/tmp/sxi-repair2/tools/slim_dump": "a5e7831e440c4b0ff4d11ed6febcf68a1475be8b5b9b912315b4ea2bc7de3830",
+  "/tmp/sxi-repair2/tools/sxi_write": "91e9d361c73d726b1628e97a261b7c8a54273d2cfd38b9b8470101513779615e",
+  "xsa/target/release/xsa": "1bbf7e0f871fe143ad5133e46bdf92cc4acf8e26309ff303fdb4576926e2b97d",
+  "/tmp/rpfbwt-sxgc/build-sxgc/rpfbwt": "588ea73817f6513dc1467161f93fc550e2968a899aeeba853657f7934a649242",
+  "/home/erikg/pfp/build/pfp++": "0ae4f241de094d269dee894d04d243f56c8ae48991bbb7d84be290312785ee62"
+}

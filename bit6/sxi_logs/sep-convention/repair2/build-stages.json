@@ -1,0 +1,251 @@
+{
+  "yeast": {
+    "journal": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast-xsa-build-t2tghkm7.jsonl",
+    "publication": {
+      "status": "PASS",
+      "output": "/mnt/nvme3n1/erikg/sxi-repair2/yeast.sxi",
+      "chi": 85404240,
+      "work": "/mnt/nvme3n1/erikg/sxi-repair2/xsa-build-t2tghkm7"
+    },
+    "stages": [
+      {
+        "stage": "parse",
+        "returncode": 0,
+        "wall_seconds": 78.29368964897003,
+        "peak_rss_kib": 951452,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast-xsa-build-t2tghkm7.parse.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast-xsa-build-t2tghkm7.parse.time"
+      },
+      {
+        "stage": "parse-l2",
+        "returncode": 0,
+        "wall_seconds": 3.9489592589670792,
+        "peak_rss_kib": 261952,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast-xsa-build-t2tghkm7.parse-l2.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast-xsa-build-t2tghkm7.parse-l2.time"
+      },
+      {
+        "stage": "rpfbwt",
+        "returncode": 0,
+        "wall_seconds": 554.0172915669391,
+        "peak_rss_kib": 8824188,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast-xsa-build-t2tghkm7.rpfbwt.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast-xsa-build-t2tghkm7.rpfbwt.time"
+      },
+      {
+        "stage": "endpoints",
+        "returncode": 0,
+        "wall_seconds": 41.46773423999548,
+        "peak_rss_kib": 2048,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast-xsa-build-t2tghkm7.endpoints.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast-xsa-build-t2tghkm7.endpoints.time"
+      },
+      {
+        "stage": "slim",
+        "returncode": 0,
+        "wall_seconds": 878.3326122129802,
+        "peak_rss_kib": 3625448,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast-xsa-build-t2tghkm7.slim.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast-xsa-build-t2tghkm7.slim.time"
+      },
+      {
+        "stage": "sweep",
+        "returncode": 0,
+        "wall_seconds": 13.498406779952347,
+        "peak_rss_kib": 6144,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast-xsa-build-t2tghkm7.sweep.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast-xsa-build-t2tghkm7.sweep.time"
+      },
+      {
+        "stage": "write",
+        "returncode": 0,
+        "wall_seconds": 26.370967313996516,
+        "peak_rss_kib": 669696,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast-xsa-build-t2tghkm7.write.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast-xsa-build-t2tghkm7.write.time"
+      },
+      {
+        "stage": "validate",
+        "returncode": 0,
+        "wall_seconds": 8.541323918034323,
+        "peak_rss_kib": 2048,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast-xsa-build-t2tghkm7.validate.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast-xsa-build-t2tghkm7.validate.time"
+      }
+    ]
+  },
+  "yeast235": {
+    "journal": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-xsa-build-26al38ee.jsonl",
+    "publication": {
+      "status": "PASS",
+      "output": "/tmp/sxi-repair2/yeast235.sxi",
+      "chi": 85404336,
+      "work": "/tmp/sxi-repair2/yeast235/xsa-build-26al38ee"
+    },
+    "stages": [
+      {
+        "stage": "prepare-agc",
+        "returncode": 0,
+        "wall_seconds": 41.41925103007816,
+        "peak_rss_kib": 293664,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-xsa-build-26al38ee.prepare-agc.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-xsa-build-26al38ee.prepare-agc.time"
+      },
+      {
+        "stage": "parse",
+        "returncode": 0,
+        "wall_seconds": 86.09354437701404,
+        "peak_rss_kib": 948572,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-xsa-build-26al38ee.parse.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-xsa-build-26al38ee.parse.time"
+      },
+      {
+        "stage": "parse-l2",
+        "returncode": 0,
+        "wall_seconds": 3.8524263409199193,
+        "peak_rss_kib": 261868,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-xsa-build-26al38ee.parse-l2.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-xsa-build-26al38ee.parse-l2.time"
+      },
+      {
+        "stage": "rpfbwt",
+        "returncode": 0,
+        "wall_seconds": 548.2609096619999,
+        "peak_rss_kib": 8828908,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-xsa-build-26al38ee.rpfbwt.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-xsa-build-26al38ee.rpfbwt.time"
+      },
+      {
+        "stage": "endpoints",
+        "returncode": 0,
+        "wall_seconds": 99.59777853498235,
+        "peak_rss_kib": 7108000,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-xsa-build-26al38ee.endpoints.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-xsa-build-26al38ee.endpoints.time"
+      },
+      {
+        "stage": "slim",
+        "returncode": 0,
+        "wall_seconds": 729.5811715029413,
+        "peak_rss_kib": 3608768,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-xsa-build-26al38ee.slim.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-xsa-build-26al38ee.slim.time"
+      },
+      {
+        "stage": "sweep",
+        "returncode": 0,
+        "wall_seconds": 14.964238437009044,
+        "peak_rss_kib": 4096,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-xsa-build-26al38ee.sweep.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-xsa-build-26al38ee.sweep.time"
+      },
+      {
+        "stage": "write",
+        "returncode": 0,
+        "wall_seconds": 31.768369234981947,
+        "peak_rss_kib": 669696,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-xsa-build-26al38ee.write.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-xsa-build-26al38ee.write.time"
+      },
+      {
+        "stage": "validate",
+        "returncode": 0,
+        "wall_seconds": 9.772283699945547,
+        "peak_rss_kib": 2048,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-xsa-build-26al38ee.validate.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-xsa-build-26al38ee.validate.time"
+      }
+    ]
+  },
+  "yeast235-control": {
+    "journal": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-control-xsa-build-5heqahx4.jsonl",
+    "publication": {
+      "status": "PASS",
+      "output": "/tmp/sxi-repair2/yeast235-control.sxi",
+      "chi": 85404336,
+      "work": "/tmp/sxi-repair2/yeast235-control/xsa-build-5heqahx4"
+    },
+    "stages": [
+      {
+        "stage": "parse",
+        "returncode": 0,
+        "wall_seconds": 77.04776832694188,
+        "peak_rss_kib": 953300,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-control-xsa-build-5heqahx4.parse.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-control-xsa-build-5heqahx4.parse.time"
+      },
+      {
+        "stage": "parse-l2",
+        "returncode": 0,
+        "wall_seconds": 3.937254961929284,
+        "peak_rss_kib": 263220,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-control-xsa-build-5heqahx4.parse-l2.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-control-xsa-build-5heqahx4.parse-l2.time"
+      },
+      {
+        "stage": "rpfbwt",
+        "returncode": 0,
+        "wall_seconds": 566.0485239370028,
+        "peak_rss_kib": 8825064,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-control-xsa-build-5heqahx4.rpfbwt.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-control-xsa-build-5heqahx4.rpfbwt.time"
+      },
+      {
+        "stage": "endpoints",
+        "returncode": 0,
+        "wall_seconds": 106.29487870598678,
+        "peak_rss_kib": 7107512,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-control-xsa-build-5heqahx4.endpoints.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-control-xsa-build-5heqahx4.endpoints.time"
+      },
+      {
+        "stage": "gate-heads",
+        "returncode": 0,
+        "wall_seconds": 0.7902629500022158,
+        "peak_rss_kib": 0,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-control-xsa-build-5heqahx4.gate-heads.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-control-xsa-build-5heqahx4.gate-heads.time"
+      },
+      {
+        "stage": "gate-runs-tails",
+        "returncode": 0,
+        "wall_seconds": 0.8798123790184036,
+        "peak_rss_kib": 0,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-control-xsa-build-5heqahx4.gate-runs-tails.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-control-xsa-build-5heqahx4.gate-runs-tails.time"
+      },
+      {
+        "stage": "slim",
+        "returncode": 0,
+        "wall_seconds": 713.1891336939298,
+        "peak_rss_kib": 3595260,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-control-xsa-build-5heqahx4.slim.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-control-xsa-build-5heqahx4.slim.time"
+      },
+      {
+        "stage": "sweep",
+        "returncode": 0,
+        "wall_seconds": 11.090320975054055,
+        "peak_rss_kib": 6144,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-control-xsa-build-5heqahx4.sweep.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-control-xsa-build-5heqahx4.sweep.time"
+      },
+      {
+        "stage": "write",
+        "returncode": 0,
+        "wall_seconds": 24.856952027999796,
+        "peak_rss_kib": 669696,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-control-xsa-build-5heqahx4.write.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-control-xsa-build-5heqahx4.write.time"
+      },
+      {
+        "stage": "validate",
+        "returncode": 0,
+        "wall_seconds": 8.36270878301002,
+        "peak_rss_kib": 2048,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-control-xsa-build-5heqahx4.validate.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/sep-convention/repair2/yeast235-control-xsa-build-5heqahx4.validate.time"
+      }
+    ]
+  }
+}

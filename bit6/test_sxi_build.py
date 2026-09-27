@@ -65,10 +65,12 @@ with tempfile.TemporaryDirectory(prefix='sxi-failure-test-') as directory:
         '--scratch', str(root)], capture_output=True, text=True)
     rejected_collection = 'collection ordering is unvalidated' in proc.stderr
     if 'endpoints failed' in proc.stderr:
-        # The cyclic seam certificate may reject earlier than the legacy
-        # collection guard. Require that precise failure, not any stage error.
+        # A periodic input can exceed the bounded seam-discovery policy
+        # before the legacy collection guard. Require the precise refusal.
         match = re.search(r'see (.+\.endpoints\.log);', proc.stderr)
-        rejected_collection = bool(match) and 'cyclic seam repair required' in pathlib.Path(match[1]).read_text()
+        evidence = pathlib.Path(match[1]).read_text() if match else ''
+        rejected_collection = ('CYCLIC_SEAM_REFUSED' in evidence and
+                               'policy=max(1000,raw_r/1000); no O(n) fallback' in evidence)
     assert proc.returncode != 0 and rejected_collection, proc.stderr
     assert not out.exists()
     # A stage failure also cannot publish; /bin/false passes executable preflight.
