@@ -1428,3 +1428,8 @@ LCE composition, capstone (conditional on named O1-O4), determinism,
 bounds with constants, hash-scheme weld, phi-inverse extractor, AND
 the implementation-vs-model differential — all green. OPEN: O1,
 minimality (O2-O4 outright), O2_bounded, chi-necessity lower bound.
+
+## MODEL DOCTRINE (user, 2026-09-27): astra = implementing/testing/correcting
+## errors and bugs; job-running and gate management = glm-5.3 / flash
+## models. (Matches the evidence: astra excelled at design-judgment work;
+## process-running is cheap-model territory.)
