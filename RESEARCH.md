@@ -1376,3 +1376,28 @@ suffix arrays, no lcp_index, O(1) resolve, both chains byte-identical
 to production oracles. Remaining to 466: the 466 parse (pfp++ over
 1.4 TB, ~day-scale by k10 extrapolation) + the ~214 GB construction
 run. Sequencing per user: k10 (DONE) -> 466 -> the pile.
+
+## 2026-09-26 — CORRECTION #7 + THE LAW (user): NO O(n) WALKS, EVER, EVEN
+## ONCE — everything in parse/r-space; the phi-inverse route
+
+The supervisor's "no way around the walk" was WRONG. The user's principle
+is now law: if a build step costs O(n), we've lost.
+
+THE PHI-INVERSE TRICK (supervisor-derived under user pressure): head
+position of run j = SA-successor of the PREVIOUS run's tail position =
+phi^-1(tail_pos[j-1]). The phi permutation is stored in the lcp_index as
+O(r) intervals (the move structure) — a sorted index over the interval
+images gives phi^-1 in O(log r)/query. ALL head samples computable in
+O(r log r), ~30 GB RAM, MINUTES-TO-HOURS AT 466 — no O(n) scan, no walk.
+The 466 walk launched earlier is KILLED; this replaces it. The lcp_index
+is a PILOT-ERA SUNK ARTIFACT being mined for its O(r) phi table; nothing
+O(n) is re-run. The 466 gate goes end-to-end: chi = 2,249,968,075 +
+witness set vs chi_h466.sA.
+
+FOR FUTURE CHAINS: the PFP-BWT front-end ALREADY emits SA samples
+natively (.ssa output; the k10 pilot produced h10ss_pfp.ssa) in its one
+mandatory pass — the v5 provenance clause is satisfiable with existing
+tooling. No chain ever needs a walk.
+
+EXTRACTOR GATE: k10's walk-derived head-sa sidecar (on disk) is the
+BYTE-IDENTITY gate for the phi^-1 extractor before it touches 466.
