@@ -1,0 +1,37 @@
+PHI_META n=7 intervals=7 offset=58 bits_per_interval=7 image_bytes=168 threads=2
+PHI_PHASE decode-images elapsed=0.000171 peak_kib=12288
+PHI_PHASE sort-images elapsed=0.000192 peak_kib=12288
+PHI_PHASE validate-permutation elapsed=0.000195 peak_kib=12288
+RI4_META n=7 runs=5 sample_width=3
+PHI_PROGRESS heads=5/5
+PHI_PHASE query elapsed=0.005433 peak_kib=12288
+PHI_PHASE complete elapsed=0.005457 peak_kib=12288
+PHI_PASS all_values_in_range=1 permutation_validated=1 lf_steps=0 heads=5
+PHI_META n=6 intervals=6 offset=58 bits_per_interval=7 image_bytes=144 threads=2
+PHI_PHASE decode-images elapsed=0.000131 peak_kib=12288
+PHI_PHASE sort-images elapsed=0.000150 peak_kib=12288
+PHI_PHASE validate-permutation elapsed=0.000153 peak_kib=12288
+RI4_META n=6 runs=2 sample_width=3
+PHI_PROGRESS heads=2/2
+PHI_PHASE query elapsed=0.004787 peak_kib=12288
+PHI_PHASE complete elapsed=0.004809 peak_kib=12288
+PHI_PASS all_values_in_range=1 permutation_validated=1 lf_steps=0 heads=2
+PHI_META n=1 intervals=1 offset=58 bits_per_interval=3 image_bytes=24 threads=2
+PHI_PHASE decode-images elapsed=0.000127 peak_kib=12288
+PHI_PHASE sort-images elapsed=0.000145 peak_kib=12288
+PHI_PHASE validate-permutation elapsed=0.000148 peak_kib=12288
+RI4_META n=1 runs=1 sample_width=1
+PHI_PROGRESS heads=1/1
+PHI_PHASE query elapsed=0.004406 peak_kib=12288
+PHI_PHASE complete elapsed=0.004427 peak_kib=12288
+PHI_PASS all_values_in_range=1 permutation_validated=1 lf_steps=0 heads=1
+PHI_META n=9 intervals=9 offset=58 bits_per_interval=9 image_bytes=216 threads=2
+PHI_PHASE decode-images elapsed=0.000136 peak_kib=12288
+PHI_PHASE sort-images elapsed=0.000155 peak_kib=12288
+PHI_PHASE validate-permutation elapsed=0.000158 peak_kib=12288
+RI4_META n=9 runs=5 sample_width=4
+PHI_PROGRESS heads=5/5
+PHI_PHASE query elapsed=0.004172 peak_kib=12288
+PHI_PHASE complete elapsed=0.004195 peak_kib=12288
+PHI_PASS all_values_in_range=1 permutation_validated=1 lf_steps=0 heads=5
+PASS: four tiny pilot Phi inversions; front-end mode fails before file access

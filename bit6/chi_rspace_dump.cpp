@@ -30,6 +30,8 @@
 //   row 0 = the trailing-terminator suffix (position n-1); calibrated at
 //   startup: the machinery dollar row resolving to n-1 is found by scan
 //   (W probes) and asserted.
+#include "sxi_format.hpp"
+#include <memory>
 #include <cstdio>
 #include <cstdint>
 #include <cstring>
@@ -81,6 +83,7 @@ static void phase(const char* what) {
 
 // ---------------- .ri4 loader (runs only) ----------------
 struct Ri4 {
+    std::string sxiPath; uint64_t headOffset=0;
     uint64_t n = 0, k = 0, R = 0;
     std::vector<uint64_t> C;      // 256
     std::vector<uint8_t> a;       // run chars
@@ -96,8 +99,14 @@ struct Ri4 {
         if (!f) { fprintf(stderr, "cannot open %s\n", path.c_str()); exit(1); }
         uint32_t magic, ver;
         f.read((char*)&magic, 4); f.read((char*)&ver, 4);
-        if (magic != 0x52585349 || ver != 4) { fprintf(stderr, "bad .ri4 magic/version\n"); exit(1); }
+        std::unique_ptr<sxi::Container> sx;
+        if (magic==0x31495853) {
+            try { sx=std::make_unique<sxi::Container>(path); }
+            catch(const std::exception& e){fprintf(stderr,"FATAL: %s\n",e.what());exit(1);}
+            sxiPath=path;headOffset=sx->member(3).offset;
+        } else if (magic != 0x52585349 || ver != 4) { fprintf(stderr, "bad .ri4/SXI magic/version\n"); exit(1); }
         f.read((char*)&n, 8); f.read((char*)&k, 8); f.read((char*)&R, 8);
+        if(sx)f.seekg(sx->member(1).offset);
         C.resize(256); f.read((char*)C.data(), 8 * 256);
         a.resize(R); f.read((char*)a.data(), R);
         l.resize(R); f.read((char*)l.data(), 4 * R);
@@ -107,6 +116,7 @@ struct Ri4 {
         if (acc != n) { fprintf(stderr, "FATAL: run sum %llu != n %llu\n",
                                  (unsigned long long)acc, (unsigned long long)n); exit(1); }
         // Optional trailing sdsl int_vector<saW>: per-run SA samples.
+        if(sx)f.seekg(sx->member(2).offset);
         f.read((char*)&saBits, 8); f.read((char*)&saW, 1);
         if (f && saW > 0 && saW <= 64 && saBits == R * (uint64_t)saW) {
             size_t nw = (size_t)((saBits + 63) / 64);
@@ -119,11 +129,16 @@ struct Ri4 {
     // LSB-first packed read (mirrors sdsl::int_vector<w>).
     inline uint64_t sample(uint64_t i) const {
         uint64_t bit0 = i * saW, w = bit0 >> 6, b0 = bit0 & 63;
-        if (b0 + saW <= 64) return (saWords[w] >> b0) & ((1ULL << saW) - 1);
-        return ((saWords[w] >> b0) | (saWords[w + 1] << (64 - b0))) & ((1ULL << saW) - 1);
+        const uint64_t mask = saW==64 ? UINT64_MAX : (1ULL << saW)-1;
+        if (b0 + saW <= 64) return (saWords[w] >> b0) & mask;
+        return ((saWords[w] >> b0) | (saWords[w + 1] << (64 - b0))) & mask;
     }
     bool sampleAllInf() const {
-        return haveSa && sample(0) == ((1ULL << saW) - 1);
+        if(!haveSa || !R)return false;
+        const uint64_t mask=saW==64 ? UINT64_MAX : (1ULL<<saW)-1;
+        if(mask<n || sample(0)!=mask)return false;
+        for(uint64_t i=1;i<R;i++)if(sample(i)!=mask)return false;
+        return true;
     }
 };
 
@@ -179,6 +194,10 @@ struct Anchors {
     void load(const std::string& path) {
         std::ifstream f(path, std::ios::binary);
         if (!f) { fprintf(stderr, "cannot open anchors %s\n", path.c_str()); exit(1); }
+        if(sxi::is_sxi(path)) {
+            try {sxi::Container sx(path,false);f.seekg(sx.member(4).offset);}
+            catch(const std::exception& e){fprintf(stderr,"FATAL: %s\n",e.what());exit(1);}
+        }
         uint32_t magic; uint64_t k;
         f.read((char*)&magic, 4);
         if (magic != 0x434E4158) { fprintf(stderr, "anchors: bad magic\n"); exit(1); }
@@ -494,7 +513,7 @@ int main(int argc, char** argv) {
     bool resolveRi4 = false, slim = false, dictStream = false, injectFault = false, profileOnly = false, resolveCache = false;
     uint64_t tau1=0, tau2=0;
     for (int i = 1; i < argc; ++i) {
-        if (!strcmp(argv[i], "--ri4") && i + 1 < argc) ri4Path = argv[++i];
+        if ((!strcmp(argv[i], "--ri4") || !strcmp(argv[i], "--sxi")) && i + 1 < argc) ri4Path = argv[++i];
         else if (!strcmp(argv[i], "--parse") && i + 1 < argc) parsePrefix = argv[++i];
         else if (!strcmp(argv[i], "--lcp-index") && i + 1 < argc) lcpIndexPath = argv[++i];
         else if (!strcmp(argv[i], "--pfp-index") && i + 1 < argc) pfpIndexPath = argv[++i];
@@ -522,6 +541,7 @@ int main(int argc, char** argv) {
     }
 
     Ri4 ri4; ri4.load(ri4Path);
+    if(!ri4.sxiPath.empty() && anchorsPath.empty())anchorsPath=ri4Path;
     fprintf(stderr, "ri4: n=%llu k=%llu R=%llu\n",
             (unsigned long long)ri4.n, (unsigned long long)ri4.k, (unsigned long long)ri4.R);
 

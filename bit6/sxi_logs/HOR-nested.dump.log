@@ -1,0 +1,24 @@
+COMMAND ["/tmp/laneU/sxi-tools/slim_dump", "--slim", "--resolve-ri4", "--dict-stream", "--sxi", "/tmp/laneU/new-format-check/HOR-nested.sxi", "--parse", "/tmp/laneY/bat/HOR-nested_pfp", "-t", "8", "-o", "/tmp/laneU/new-format-check/HOR-nested.sxi.agg"]
+ri4: n=18361 k=1 R=232
+SLIM_PHASE ri4-load wall=0.001 cumulative=0.001 peak_rss_kib=30392
+SLIM_HEAD_SA bytes=5824 rows=232 mmap=1
+SLIM_PHASE dict-read wall=0.000 cumulative=0.001 peak_rss_kib=30392
+SLIM_PHASE dict-boundaries wall=0.000 cumulative=0.001 peak_rss_kib=30392
+SLIM_STRING_ENDS count=1 bytes=8 from_parse_dict=1
+SLIM_PHASE parse+boundaries wall=0.000 cumulative=0.001 peak_rss_kib=30392
+SLIM_PHASE parse-fingerprints wall=0.000 cumulative=0.001 peak_rss_kib=30392
+SLIM_PHASE dict-fingerprints wall=0.000 cumulative=0.001 peak_rss_kib=30392
+SLIM_STRUCT n=18371 P=63 D=1281 phrases=6 parse_bytes=256 bd_bytes=190 bp_bytes=310 dict_resident=0 dict_cache_per_thread=262144 no_SA_ISA_LCP_RMQ=1 no_M_b_bwt_w_wt=1
+SLIM_PHASE lce-build-total wall=0.000 cumulative=0.001 peak_rss_kib=30392
+anchors: 0 string-start rows
+SLIM_PHASE lf-build wall=0.000 cumulative=0.001 peak_rss_kib=30392
+SLIM_RI runs=1160 starts=1856 samples=440 lf_capacity=2924
+SLIM_PROGRESS runs=232/232 resolve_wall=0.002 lce_wall=0.001 write_wall=0.000 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=0.004 cumulative=0.005 peak_rss_kib=30392
+SLIM_PHASE queries+stream-write-final wall=0.000 cumulative=0.005 peak_rss_kib=30392
+SLIM_FP parse tau=3 bytes=176 queries=1 verified_symbols=58 hash_probes=9 mean_verified=58.000000000 max_verified=58
+SLIM_FP dict tau=45 bytes=232 queries=302 verified_symbols=2793 hash_probes=48 mean_verified=9.248344371 max_verified=310
+SLIM_QUERY_PHASE resolve_wall=0.001855 resolve_peak_kib=30392 lce_wall=0.001227 lce_peak_kib=30392 write_wall=0.000022 write_peak_kib=30392
+SLIM_SEEDS queries=302 mean_verified_phrases=0.192052980 max_verified_phrases=58 (includes_zero_parse_work_seeds; boundary_included)
+SLIM_RESOLVE walks=0 steps=0 max=0 anchor=0 failed=0 cache_hits=0
+SLIM_BOUNDARY_RESOLVE head_direct=232 tail_direct=302 head_lf_steps=0

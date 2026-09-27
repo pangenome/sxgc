@@ -1,0 +1,8 @@
+COMMAND ["/tmp/laneU/sxi-tools/sxi_write", "--ri4", "/tmp/laneY/bat/duplicates-600k.ri4", "--heads", "/tmp/laneQ/pass4/duplicates-600k.head_sa", "--chi", "/tmp/laneU/new-format-check/duplicates-600k.ri.sA", "--names", "/tmp/laneY/bat/duplicates-600k.sc", "--output", "/tmp/laneU/new-format-check/duplicates-600k.sxi"]
+SXI_MEMBER id=1 count=14701 bytes=75553 crc32=22355d33
+SXI_MEMBER id=2 count=14701 bytes=36769 crc32=9ccdbcbc
+SXI_MEMBER id=3 count=14701 bytes=117608 crc32=314ea55b
+SXI_MEMBER id=4 count=0 bytes=12 crc32=31082463
+SXI_MEMBER id=5 count=13004 bytes=14885 crc32=3a94fb6a
+SXI_MEMBER id=6 count=12 bytes=12 crc32=483bc3db
+SXI_PASS n=600001 runs=14701 bytes=245164 chi_complete=1 chi_delta_ratio=0.143080975

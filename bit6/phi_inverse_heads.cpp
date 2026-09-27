@@ -1,4 +1,5 @@
-// Mine the immutable TeraLCP Phi table; no suffix/LF walk, PLCP, or text scan.
+// Pilot mode mines an existing TeraLCP Phi table; it is NOT a tail-only builder.
+// See SXI_CONSTRUCTION_BLOCKER.md for the rejected fresh-build dependency.
 // Build: g++ -O3 -std=c++17 -fopenmp bit6/phi_inverse_heads.cpp -o phi_inverse_heads
 // Usage: phi_inverse_heads INDEX RI4 OUTPUT [threads=32]
 // Raw little-endian u64 output: head[j] = inverse_phi(tail[(j+R-1)%R]).
@@ -55,6 +56,9 @@ static void sort_images(Image* b,Image* e,int depth){
 static auto epoch=std::chrono::steady_clock::now();
 static void phase(const char* name){struct rusage ru{};getrusage(RUSAGE_SELF,&ru);fprintf(stderr,"PHI_PHASE %s elapsed=%.6f peak_kib=%ld\n",name,std::chrono::duration<double>(std::chrono::steady_clock::now()-epoch).count(),ru.ru_maxrss);}
 int main(int argc,char** argv){try{
+    if(argc>1 && std::string(argv[1])=="--from-front-end") {
+        throw std::runtime_error("tail-only Phi construction is not implemented: the r-index Phi predecessor structure needs run-head samples; headFromTail assumes a sound Phi table and does not construct it. This r-pfbwt emits heads, not tails. See bit6/SXI_CONSTRUCTION_BLOCKER.md. No input/output was opened.");
+    }
     require(argc==4||argc==5,"usage: phi_inverse_heads INDEX RI4 OUTPUT [threads]");
     uint16_t endian=1;require(*(uint8_t*)&endian==1,"little-endian host required");
     int threads=argc==5?std::stoi(argv[4]):32;require(threads>0&&threads<=64,"threads must be 1..64");omp_set_num_threads(threads);

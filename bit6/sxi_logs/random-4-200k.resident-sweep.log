@@ -1,0 +1,3 @@
+COMMAND ["/tmp/sxgc-laneU/xsa/target/release/xsa", "chi-rspace", "--sxi", "/tmp/laneU/new-format-check/random-4-200k.sxi", "--agg", "/tmp/laneU/new-format-check/random-4-200k.sxi.agg", "-o", "/tmp/laneU/new-format-check/random-4-200k.resident.sA"]
+xsa chi-rspace: chi = 135968 (N=200002, R=149887)
+xsa chi-rspace: wrote 135968 witness values to /tmp/laneU/new-format-check/random-4-200k.resident.sA

@@ -1,0 +1,8 @@
+COMMAND ["/tmp/laneU/sxi-tools/sxi_write", "--ri4", "/tmp/laneY/bat/random-bin-20k.ri4", "--heads", "/tmp/laneQ/pass4/random-bin-20k.head_sa", "--chi", "/tmp/laneU/new-format-check/random-bin-20k.ri.sA", "--names", "/tmp/laneY/bat/random-bin-20k.sc", "--output", "/tmp/laneU/new-format-check/random-bin-20k.sxi"]
+SXI_MEMBER id=1 count=9883 bytes=51463 crc32=d04a1dcb
+SXI_MEMBER id=2 count=9883 bytes=18545 crc32=f854d05b
+SXI_MEMBER id=3 count=9883 bytes=79064 crc32=d8273fe2
+SXI_MEMBER id=4 count=0 bytes=12 crc32=31082463
+SXI_MEMBER id=5 count=9653 bytes=9653 crc32=0063c89f
+SXI_MEMBER id=6 count=11 bytes=11 crc32=db027b2f
+SXI_PASS n=20001 runs=9883 bytes=159067 chi_complete=1 chi_delta_ratio=0.125000000

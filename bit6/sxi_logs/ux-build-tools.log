@@ -1,0 +1,95 @@
+In file included from bit6/chi_rspace_dump.cpp:52:
+/home/erikg/TeraTools/src/thirdparty/include/sdsl/int_vector.hpp:855:45: warning: ‘template<class _Category, class _Tp, class _Distance, class _Pointer, class _Reference> struct std::iterator’ is deprecated [-Wdeprecated-declarations]
+  855 | class int_vector_iterator_base: public std::iterator<std::random_access_iterator_tag, typename t_int_vector::value_type, typename t_int_vector::difference_type>
+      |                                             ^~~~~~~~
+In file included from /usr/include/c++/13/bits/stl_algobase.h:65,
+                 from /usr/include/c++/13/algorithm:60,
+                 from bit6/sxi_format.hpp:3,
+                 from bit6/chi_rspace_dump.cpp:33:
+/usr/include/c++/13/bits/stl_iterator_base_types.h:127:34: note: declared here
+  127 |     struct _GLIBCXX17_DEPRECATED iterator
+      |                                  ^~~~~~~~
+In file included from /home/erikg/TeraTools/src/thirdparty/include/sdsl/int_vector_buffer.hpp:25,
+                 from /home/erikg/TeraTools/src/thirdparty/include/sdsl/int_vector.hpp:1599:
+/home/erikg/TeraTools/src/thirdparty/include/sdsl/iterators.hpp:33:49: warning: ‘template<class _Category, class _Tp, class _Distance, class _Pointer, class _Reference> struct std::iterator’ is deprecated [-Wdeprecated-declarations]
+   33 | class random_access_const_iterator: public std::iterator<std::random_access_iterator_tag, typename t_rac::value_type, typename t_rac::difference_type>
+      |                                                 ^~~~~~~~
+/usr/include/c++/13/bits/stl_iterator_base_types.h:127:34: note: declared here
+  127 |     struct _GLIBCXX17_DEPRECATED iterator
+      |                                  ^~~~~~~~
+/home/erikg/TeraTools/src/thirdparty/include/sdsl/int_vector_buffer.hpp:489:37: warning: ‘template<class _Category, class _Tp, class _Distance, class _Pointer, class _Reference> struct std::iterator’ is deprecated [-Wdeprecated-declarations]
+  489 |         class iterator: public std::iterator<std::random_access_iterator_tag, value_type, difference_type, value_type*, reference>
+      |                                     ^~~~~~~~
+/usr/include/c++/13/bits/stl_iterator_base_types.h:127:34: note: declared here
+  127 |     struct _GLIBCXX17_DEPRECATED iterator
+      |                                  ^~~~~~~~
+In file included from /home/erikg/TeraTools/src/thirdparty/include/sdsl/rmq_succinct_sct.hpp:27,
+                 from /home/erikg/TeraTools/src/thirdparty/include/sdsl/rmq_support.hpp:47,
+                 from bit6/pfp_ds_vendor/pfp/pfp.hpp:28,
+                 from bit6/chi_rspace_dump.cpp:63:
+/home/erikg/TeraTools/src/thirdparty/include/sdsl/suffix_tree_helper.hpp:17:51: warning: ‘template<class _Category, class _Tp, class _Distance, class _Pointer, class _Reference> struct std::iterator’ is deprecated [-Wdeprecated-declarations]
+   17 | class cst_node_child_proxy_iterator : public std::iterator<std::forward_iterator_tag, typename t_cst::node_type>
+      |                                                   ^~~~~~~~
+/usr/include/c++/13/bits/stl_iterator_base_types.h:127:34: note: declared here
+  127 |     struct _GLIBCXX17_DEPRECATED iterator
+      |                                  ^~~~~~~~
+   Compiling xsa v0.1.0 (/tmp/sxgc-laneU/xsa)
+warning: variable does not need to be mutable
+   --> src/main.rs:542:9
+    |
+542 |     let mut next_rng = |mut x: u64| -> u64 {
+    |         ----^^^^^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `tanchor` is never read
+   --> src/main.rs:594:31
+    |
+594 |             let mut tanchor = 0u64;
+    |                               ^^^^ this value is reassigned later and never used
+...
+602 |                         tanchor = r;
+    |                         ----------- `tanchor` is overwritten here before the previous value is read
+    |
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `tsample` is never read
+   --> src/main.rs:595:31
+    |
+595 |             let mut tsample = 0u64;
+    |                               ^^^^ this value is reassigned later and never used
+...
+603 |                         tsample = idx.sa.get(r);
+    |                         ----------------------- `tsample` is overwritten here before the previous value is read
+
+warning: variable does not need to be mutable
+   --> src/main.rs:748:9
+    |
+748 |     let mut read_flat = |flatf: &mut File, pos: u64, want: usize| -> Vec<u8> {
+    |         ----^^^^^^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: field `bits` is never read
+   --> src/main.rs:110:5
+    |
+109 | struct PackedSa {
+    |        -------- field in this struct
+110 |     bits: u64,          // total size IN BITS
+    |     ^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `s_at` is never used
+   --> src/main.rs:310:8
+    |
+183 | impl Ri4 {
+    | -------- method in this implementation
+...
+310 |     fn s_at(&self, j: u64) -> u64 {
+    |        ^^^^
+
+warning: `xsa` (bin "xsa") generated 6 warnings (run `cargo fix --bin "xsa" -p xsa` to apply 2 suggestions)
+    Finished `release` profile [optimized] target(s) in 1.56s

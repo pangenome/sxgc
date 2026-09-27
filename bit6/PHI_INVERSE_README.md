@@ -1,5 +1,11 @@
 # Phi-inverse head sample extractor
 
+The revised tail-only front-end construction is unresolved; see
+[SXI_CONSTRUCTION_BLOCKER.md](SXI_CONSTRUCTION_BLOCKER.md). The
+`--from-front-end` mode fails explicitly before file access. The documented
+pilot route below remains operational and must not be reported as a fresh
+build. SXI container and loader details are in [SXI_FORMAT.md](SXI_FORMAT.md).
+
 `phi_inverse_heads.cpp` reads the immutable pilot index's O(r) Phi table.
 It seeks past F, Psi, and intAtTop, and never reads PLCP samples. It does
 not build or traverse LF, visit text positions, or consume an aggregate.

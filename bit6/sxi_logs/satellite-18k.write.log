@@ -1,0 +1,8 @@
+COMMAND ["/tmp/laneU/sxi-tools/sxi_write", "--ri4", "/tmp/laneY/bat/satellite-18k.ri4", "--heads", "/tmp/laneQ/pass4/satellite-18k.head_sa", "--chi", "/tmp/laneU/new-format-check/satellite-18k.ri.sA", "--names", "/tmp/laneY/bat/satellite-18k.sc", "--output", "/tmp/laneU/new-format-check/satellite-18k.sxi"]
+SXI_MEMBER id=1 count=364 bytes=3868 crc32=3f37c28a
+SXI_MEMBER id=2 count=364 bytes=697 crc32=f0764d21
+SXI_MEMBER id=3 count=364 bytes=2912 crc32=133b394b
+SXI_MEMBER id=4 count=0 bytes=12 crc32=31082463
+SXI_MEMBER id=5 count=322 bytes=324 crc32=2d9da7dd
+SXI_MEMBER id=6 count=11 bytes=11 crc32=5a38b272
+SXI_PASS n=18501 runs=364 bytes=8147 chi_complete=1 chi_delta_ratio=0.125776398

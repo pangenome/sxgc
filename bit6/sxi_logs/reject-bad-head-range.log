@@ -1,0 +1,2 @@
+COMMAND ["/tmp/sxgc-laneU/xsa/target/release/xsa", "sxi-info", "/tmp/laneU/new-format-check/bad-head-range.sxi"]
+xsa: error: SXI: head range

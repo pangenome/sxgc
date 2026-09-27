@@ -1,0 +1,5 @@
+COMMAND ["/tmp/sxgc-laneU/xsa/target/release/xsa", "query", "--ri4", "/tmp/laneY/bat/satellite-18k.ri4", "--patterns", "/tmp/laneU/new-format-check/satellite-18k.fa", "--plain", "--sample", "2", "--output", "/tmp/laneU/new-format-check/satellite-18k.ri.exact", "--sidecar", "/tmp/laneY/bat/satellite-18k.sc"]
+xsa query: loading /tmp/laneY/bat/satellite-18k.ri4 ...
+  n=18501 R=364
+  3 patterns
+xsa query: 4 occurrences over 3 patterns (1 absent) [sampled]

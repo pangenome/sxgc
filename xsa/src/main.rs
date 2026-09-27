@@ -1,11 +1,15 @@
 //! xsa — chi sa.
 //!
 //! Suffixient-array tools over the r-space artifact family:
+//!   .sxi        SXI1 checksummed runs, endpoints, anchors, chi and optional names
 //!   .ri4        v4 self-contained index core (rlbwt + C + run-end SA samples)
 //!   <name>.sA   chi position set (u64 LE stream)
 //!   .bwt.heads/.bwt.len  run-length BWT (u8 heads, u40 LE lengths)
 //!
 //! The index is sovereign: every subcommand runs from these artifacts alone.
+
+mod sxi;
+mod build;
 
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
@@ -20,6 +24,7 @@ fn die(msg: &str) -> ! {
 ///   u32 magic 0x52585349 ("ISXR"), u32 version, u64 n, u64 k, u64 R, ...
 #[derive(Debug, Clone, Copy)]
 struct Ri4Header {
+    runs_offset: u64,
     version: u32,
     n: u64,
     k: u64,
@@ -27,6 +32,7 @@ struct Ri4Header {
 }
 
 fn read_ri4_header(path: &str) -> Ri4Header {
+    if let Some(c) = sxi::Container::open(path) { return Ri4Header { runs_offset: c.member(1).offset + 2048, version: 1, n: c.n, k: c.k, r: c.r }; }
     let mut f = File::open(path).unwrap_or_else(|e| die(&format!("open {}: {}", path, e)));
     let mut b = [0u8; 32];
     f.read_exact(&mut b)
@@ -41,7 +47,7 @@ fn read_ri4_header(path: &str) -> Ri4Header {
         4 => {
             let k = u64::from_le_bytes(b[16..24].try_into().unwrap());
             let r = u64::from_le_bytes(b[24..32].try_into().unwrap());
-            Ri4Header { version, n, k, r }
+            Ri4Header { runs_offset: 2080, version, n, k, r }
         }
         _ => die(&format!("{}: version {} not supported yet (this build reads v4)", path, version)),
     }
@@ -158,6 +164,8 @@ impl Anchors {
 }
 
 struct Ri4 {
+    embedded_anchors: Option<Anchors>,
+    names: Option<(String, u64, u64)>,
     n: u64,
     k: u64,
     r: u64,
@@ -174,17 +182,19 @@ const BLK: u64 = 64;
 
 impl Ri4 {
     fn load(path: &str) -> Ri4 {
+        let container = sxi::Container::open(path);
         let mut f = File::open(path).unwrap_or_else(|e| die(&format!("open {}: {}", path, e)));
         let mut b = [0u8; 32];
         f.read_exact(&mut b).unwrap_or_else(|e| die(&format!("read {}: {}", path, e)));
         let magic = u32::from_le_bytes(b[0..4].try_into().unwrap());
-        if magic != 0x52585349 { die(&format!("{}: bad magic", path)); }
+        if container.is_none() && magic != 0x52585349 { die(&format!("{}: bad magic", path)); }
         let version = u32::from_le_bytes(b[4..8].try_into().unwrap());
-        if version != 4 { die(&format!("{}: need v4, got v{}", path, version)); }
+        if container.is_none() && version != 4 { die(&format!("{}: need v4, got v{}", path, version)); }
         let n = u64::from_le_bytes(b[8..16].try_into().unwrap());
         let k = u64::from_le_bytes(b[16..24].try_into().unwrap());
         let r = u64::from_le_bytes(b[24..32].try_into().unwrap());
         let _ = k;
+        if let Some(ref sx) = container { f.seek(SeekFrom::Start(sx.member(1).offset)).unwrap(); }
         let mut c = vec![0u64; 256];
         f.read_exact(unsafe { std::slice::from_raw_parts_mut(c.as_mut_ptr() as *mut u8, 2048) })
             .unwrap_or_else(|e| die(&format!("read C: {}", e)));
@@ -198,6 +208,7 @@ impl Ri4 {
         }
         drop(rl);
         // sdsl int_vector header: u64 size-in-bits, u8 width, then words
+        if let Some(ref sx) = container { f.seek(SeekFrom::Start(sx.member(2).offset)).unwrap(); }
         let mut hb = [0u8; 9];
         f.read_exact(&mut hb).unwrap_or_else(|e| die(&format!("read sa header: {}", e)));
         let bits = u64::from_le_bytes(hb[0..8].try_into().unwrap());
@@ -229,7 +240,10 @@ impl Ri4 {
         let total = acc256.clone();
         for c in 0..256 { csum[c].push(total[c]); }
         let _ = k;   // stored
-        Ri4 { n, k, r, c, run_char, run_len, sa, run_start_blk, cruns, csum, total }
+        let embedded_anchors = container.as_ref().map(|sx| sx.anchors(path));
+        let names = container.as_ref().and_then(|sx| sx.members.iter().find(|m| m.id == 6))
+            .map(|m| (path.to_string(), m.offset, m.bytes));
+        Ri4 { embedded_anchors, names, n, k, r, c, run_char, run_len, sa, run_start_blk, cruns, csum, total }
     }
 
     fn run_start(&self, r: u64) -> u64 {
@@ -412,7 +426,7 @@ fn cmd_query(args: &[String]) {
     while i < args.len() {
         let step;
         match args[i].as_str() {
-            "--ri4" if i + 1 < args.len() => { ri4 = Some(args[i + 1].clone()); step = 2; }
+            "--ri4" | "--sxi" if i + 1 < args.len() => { ri4 = Some(args[i + 1].clone()); step = 2; }
             "--patterns" if i + 1 < args.len() => { pats = Some(args[i + 1].clone()); step = 2; }
             "--output" if i + 1 < args.len() => { out = Some(args[i + 1].clone()); step = 2; }
             "--sidecar" if i + 1 < args.len() => { sidecar = Some(args[i + 1].clone()); step = 2; }
@@ -431,20 +445,26 @@ fn cmd_query(args: &[String]) {
         ri4.unwrap_or_else(|| die("query: need --ri4")),
         pats.unwrap_or_else(|| die("query: need --patterns (FASTA)")),
     );
-    if plain && sidecar.is_none() && !ms {
-        die("query: --plain needs --sidecar (v4 samples mirror positions on plain chains)");
-    }
     eprintln!("xsa query: loading {} ...", ri4);
     let idx = Ri4::load(&ri4);
     eprintln!("  n={} R={}", idx.n, idx.r);
+    if plain && sidecar.is_none() && idx.names.is_none() && !ms {
+        die("query: --plain needs --sidecar or embedded names");
+    }
 
     // plain-chain decode: v4 samples are mirrored (S = fstart+fend-pos);
     // undo per owning string: pos = fstart_i + fend_i - S
     let (mut p_fstart, mut p_fend): (Vec<u64>, Vec<u64>) = (Vec::new(), Vec::new());
-    if let Some(sc) = &sidecar {
+    let name_reader: Option<(String, Box<dyn BufRead>)> = if let Some(sc) = &sidecar {
         let sf = File::open(sc).unwrap_or_else(|e| die(&format!("open {}: {}", sc, e)));
+        Some((sc.clone(), Box::new(BufReader::new(sf))))
+    } else { idx.names.as_ref().map(|(path, offset, bytes)| {
+        let mut sf = File::open(path).unwrap(); sf.seek(SeekFrom::Start(*offset)).unwrap();
+        (path.clone(), Box::new(BufReader::new(sf.take(*bytes))) as Box<dyn BufRead>)
+    }) };
+    if let Some((sc, reader)) = name_reader {
         let mut acc = 0u64;
-        for line in BufReader::new(sf).lines() {
+        for line in reader.lines() {
             let line = line.unwrap_or_else(|e| die(&format!("read {}: {}", sc, e)));
             if line.is_empty() { continue; }
             let c: Vec<&str> = line.split('\t').collect();
@@ -510,7 +530,8 @@ fn cmd_query(args: &[String]) {
     }
 
     let stdout = std::io::stdout();
-    let anchors = anchor_path.map(|p| Anchors::load(&p));
+    let external_anchors = anchor_path.map(|p| Anchors::load(&p));
+    let anchors = external_anchors.as_ref().or(idx.embedded_anchors.as_ref());
     let mut w: Box<dyn Write> = match &out {
         Some(p) => Box::new(File::create(p).unwrap_or_else(|e| die(&format!("create {}: {}", p, e)))),
         None => Box::new(stdout.lock()),
@@ -553,7 +574,7 @@ fn cmd_query(args: &[String]) {
             }
             rows.truncate(kk as usize);
             for j in rows {
-                let s = idx.s_at_opt(j, anchors.as_ref());
+                let s = idx.s_at_opt(j, anchors);
                 let pos: i64 = if plain {
                     let ii = p_fstart.partition_point(|&x| x <= s);
                     let si = if ii == 0 { usize::MAX } else { ii - 1 };
@@ -590,7 +611,7 @@ fn cmd_query(args: &[String]) {
                 }
                 tsample.wrapping_sub(tsteps)
             } else {
-                idx.s_at_opt(j, anchors.as_ref())
+                idx.s_at_opt(j, anchors)
             };
             let pos: i64 = if plain {
                 // S lies in [fstart_i, fend_i] of the owning string (mirror)
@@ -618,7 +639,7 @@ fn cmd_stats(args: &[String]) {
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
-            "--ri4" if i + 1 < args.len() => ri4 = Some(args[i + 1].clone()),
+            "--ri4" | "--sxi" if i + 1 < args.len() => ri4 = Some(args[i + 1].clone()),
             "--rlbwt" if i + 1 < args.len() => rlbwt = Some(args[i + 1].clone()),
             "--chi" if i + 1 < args.len() => chi = Some(args[i + 1].clone()),
             other => die(&format!("stats: unknown arg {}", other)),
@@ -632,12 +653,20 @@ fn cmd_stats(args: &[String]) {
     let mut n = 0u64;
     let mut k = 0u64;
     let mut r = 0u64;
+    let mut embedded_chi = None;
+    let mut index_bytes = None;
     if let Some(p) = &ri4 {
-        let h = read_ri4_header(p);
+        let container = sxi::Container::open(p);
+        let h = if let Some(ref c) = container {
+            embedded_chi = c.complete.then_some(c.member(5).count);
+            index_bytes = Some(std::fs::metadata(p).unwrap().len());
+            Ri4Header { runs_offset: c.member(1).offset + 2048, version: 1, n: c.n, k: c.k, r: c.r }
+        } else { read_ri4_header(p) };
         n = h.n;
         k = h.k;
         r = h.r;
-        println!(".ri4      {}  (v{}: n={}, k={} strings, R={} runs)", p, h.version, h.n, h.k, h.r);
+        println!("{}      {}  (v{}: n={}, k={} strings, R={} runs)", if h.version == 1 { ".sxi" } else { ".ri4" }, p, h.version, h.n, h.k, h.r);
+        if let Some(c) = container { c.print_members(); }
     }
     if let Some(p) = &rlbwt {
         let (rr, nn) = read_rlbwt(p);
@@ -655,7 +684,7 @@ fn cmd_stats(args: &[String]) {
         let c = chi_count(&p);
         println!("chi       {}  (chi={} positions)", p, c);
         c
-    });
+    }).or(embedded_chi);
 
     println!();
     println!("n            = {}", n);
@@ -666,7 +695,11 @@ fn cmd_stats(args: &[String]) {
         println!("n/r          = {}", fmt_ratio(n as f64, r as f64));
         println!("chi/r        = {}   (law: ~0.86)", fmt_ratio(xc as f64, r as f64));
     }
-    println!("index bytes  ~ {} (rlbwt 6R + samples 8R)", r * 14);
+    if let Some(bytes) = index_bytes {
+        println!("index bytes  = {}", bytes);
+    } else {
+        println!("index bytes  ~ {} (rlbwt 6R + samples 8R)", r * 14);
+    }
 }
 
 fn cmd_build_anchors(args: &[String]) {
@@ -678,7 +711,7 @@ fn cmd_build_anchors(args: &[String]) {
     while i < args.len() {
         let step;
         match args[i].as_str() {
-            "--ri4" if i + 1 < args.len() => { ri4 = Some(args[i + 1].clone()); step = 2; }
+            "--ri4" | "--sxi" if i + 1 < args.len() => { ri4 = Some(args[i + 1].clone()); step = 2; }
             "--flat" if i + 1 < args.len() => { flat = Some(args[i + 1].clone()); step = 2; }
             "--sidecar" if i + 1 < args.len() => { sidecar = Some(args[i + 1].clone()); step = 2; }
             "--output" if i + 1 < args.len() => { out = Some(args[i + 1].clone()); step = 2; }
@@ -896,7 +929,7 @@ fn cmd_chi_rspace(args: &[String]) {
     while i < args.len() {
         let step;
         match args[i].as_str() {
-            "--ri4" if i + 1 < args.len() => { ri4p = Some(args[i + 1].clone()); step = 2; }
+            "--ri4" | "--sxi" if i + 1 < args.len() => { ri4p = Some(args[i + 1].clone()); step = 2; }
             "--stream-agg" => { stream_agg = true; step = 1; }
             "--agg" if i + 1 < args.len() => { aggp = Some(args[i + 1].clone()); step = 2; }
             "-o" | "--output" if i + 1 < args.len() => { outp = Some(args[i + 1].clone()); step = 2; }
@@ -912,7 +945,7 @@ fn cmd_chi_rspace(args: &[String]) {
     // Streaming sweep needs only the run characters, not LF tables/samples.
     let idx = if stream_agg { None } else { Some(Ri4::load(&rp)) };
     let mut char_file = BufReader::with_capacity(1 << 20, File::open(&rp).unwrap());
-    char_file.seek(SeekFrom::Start(32 + 256 * 8)).unwrap();
+    char_file.seek(SeekFrom::Start(header.runs_offset)).unwrap();
     let mut f = File::open(&ap).unwrap_or_else(|e| die(&format!("open {}: {}", ap, e)));
     let mut hdr = [0u8; 12];
     f.read_exact(&mut hdr).unwrap_or_else(|e| die(&format!("read {}: {}", ap, e)));
@@ -1162,6 +1195,12 @@ fn usage() -> ! {
     eprintln!("xsa — chi sa. suffixient-array tools over r-space artifacts");
     eprintln!();
     eprintln!("usage:");
+    eprintln!("  xsa build --agc <archive.agc> -o <out.sxi> [--verbose]");
+    eprintln!("  xsa build --fasta <refs.fa> -o <out.sxi> [--verbose]");
+    eprintln!("  xsa build --text <file.txt> -o <out.sxi> [--verbose]");
+    eprintln!("    source build currently blocked; see xsa build --help");
+    eprintln!("  xsa sxi-info <f.sxi> [--chi-out sorted.sA]");
+    eprintln!("  --sxi is an alias for --ri4; format is detected by magic");
     eprintln!("  xsa stats --ri4 <f.ri4> [--chi <f.sA>]   header + law check");
     eprintln!("  xsa stats --rlbwt <prefix> [--chi ...]   from rlbwt pair");
     eprintln!("  xsa tags --chi <f.sA> --sidecar <names.tsv> [--revlines]");
@@ -1170,13 +1209,16 @@ fn usage() -> ! {
     eprintln!("  xsa query --ri4 <f.ri4> --patterns <p.fa> --ms [--ms-out lens.bin] [--plain]");
     eprintln!("           --ms: matching-statistics length vector per read (binary)");
     eprintln!();
-    eprintln!("artifacts: .ri4 (v4: rlbwt + C + run-end SA samples), .sA (chi, u64 LE)");
+    eprintln!("artifacts: .sxi (SXI1: rlbwt + runs + head/tail samples + anchors + delta-chi)");
+    eprintln!("           .ri4 (v4; pilot-era files stay loadable), .sA (chi, u64 LE)");
     exit(2);
 }
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(|s| s.as_str()) {
+        Some("build") => build::command(&args[1..]),
+        Some("sxi-info") => sxi::command(&args[1..]),
         Some("stats") => cmd_stats(&args[1..]),
         Some("tags") => cmd_tags(&args[1..]),
         Some("query") => cmd_query(&args[1..]),

@@ -1,0 +1,5 @@
+COMMAND ["/tmp/sxgc-laneU/xsa/target/release/xsa", "query", "--ri4", "/tmp/laneU/new-format-check/random-4-200k.sxi", "--patterns", "/tmp/laneU/new-format-check/random-4-200k.fa", "--plain", "--sample", "2", "--output", "/tmp/laneU/new-format-check/random-4-200k.sxi.exact"]
+xsa query: loading /tmp/laneU/new-format-check/random-4-200k.sxi ...
+  n=200001 R=149887
+  3 patterns
+xsa query: 4 occurrences over 3 patterns (1 absent) [sampled]

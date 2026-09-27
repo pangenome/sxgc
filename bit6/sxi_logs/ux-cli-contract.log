@@ -1,0 +1,2 @@
+PASS fail-closed CLI: three source modes, invalid arguments, no artifacts, existing output/symlink preservation
+NOT source-build acceptance: endpoint construction remains unavailable

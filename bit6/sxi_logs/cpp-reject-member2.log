@@ -1,0 +1,2 @@
+COMMAND ["/tmp/laneU/sxi-tools/slim_dump", "--slim", "--resolve-ri4", "--sxi", "/tmp/laneU/new-format-check/bad-member2.sxi", "--parse", "/tmp/laneY/bat/duplicates-600k_pfp", "-o", "/tmp/laneU/new-format-check/bad-member2.sxi.agg"]
+FATAL: SXI: member CRC mismatch

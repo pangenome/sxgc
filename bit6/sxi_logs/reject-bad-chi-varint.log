@@ -1,0 +1,2 @@
+COMMAND ["/tmp/sxgc-laneU/xsa/target/release/xsa", "sxi-info", "/tmp/laneU/new-format-check/bad-chi-varint.sxi"]
+xsa: error: SXI: truncated chi varint

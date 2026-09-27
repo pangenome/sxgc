@@ -1,0 +1,2 @@
+COMMAND ["/tmp/sxgc-laneU/xsa/target/release/xsa", "sxi-info", "/tmp/laneU/new-format-check/bad-member4.sxi"]
+xsa: error: SXI: member CRC mismatch

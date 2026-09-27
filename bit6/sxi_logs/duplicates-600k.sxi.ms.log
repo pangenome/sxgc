@@ -1,0 +1,5 @@
+COMMAND ["/tmp/sxgc-laneU/xsa/target/release/xsa", "query", "--ri4", "/tmp/laneU/new-format-check/duplicates-600k.sxi", "--patterns", "/tmp/laneU/new-format-check/duplicates-600k.fa", "--plain", "--ms", "--ms-out", "/tmp/laneU/new-format-check/duplicates-600k.sxi.ms"]
+xsa query: loading /tmp/laneU/new-format-check/duplicates-600k.sxi ...
+  n=600001 R=14701
+  3 patterns
+xsa query: MS 3 reads, 14 positions [plain]

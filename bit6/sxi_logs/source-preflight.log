@@ -1,0 +1,1 @@
+BLOCKED: source -> endpoints has no validated tail-only Phi constructor, and the installed r-pfbwt emits heads rather than tails. See bit6/SXI_CONSTRUCTION_BLOCKER.md. No producer was launched.

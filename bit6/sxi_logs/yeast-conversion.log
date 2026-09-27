@@ -1,0 +1,29 @@
+SXI_MEMBER id=1 count=100904881 bytes=504526453 crc32=1ec12827
+SXI_MEMBER id=2 count=100904881 bytes=403619537 crc32=3f901230
+SXI_MEMBER id=3 count=100904881 bytes=807239048 crc32=b70ee9d8
+SXI_MEMBER id=4 count=0 bytes=12 crc32=31082463
+SXI_MEMBER id=5 count=85404240 bytes=88746976 crc32=977156b1
+SXI_PASS n=3336986760 runs=100904881 bytes=1804132304 chi_complete=1 chi_delta_ratio=0.129892521
+	Command being timed: "/tmp/laneU/sxi_write --ri4 /tmp/laneQ/pass3/yp2real.ri4 --heads /tmp/laneQ/pass4/yeast.head_sa --chi /tmp/laneQ/pass4/yeast.sA --output /tmp/laneU/yeast.legacy-converted.sxi"
+	User time (seconds): 31.04
+	System time (seconds): 9.66
+	Percent of CPU this job got: 99%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:40.71
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 667648
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 180111
+	Voluntary context switches: 1
+	Involuntary context switches: 70
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 3523712
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

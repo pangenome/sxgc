@@ -1,0 +1,47 @@
+SXI_MEMBER id=1 count=14701 bytes=75553 crc32=22355d33
+SXI_MEMBER id=2 count=14701 bytes=36769 crc32=9ccdbcbc
+SXI_MEMBER id=3 count=14701 bytes=117608 crc32=314ea55b
+SXI_MEMBER id=4 count=0 bytes=12 crc32=31082463
+SXI_MEMBER id=5 count=0 bytes=0 crc32=00000000
+SXI_MEMBER id=6 count=12 bytes=12 crc32=483bc3db
+SXI_PASS n=600001 runs=14701 bytes=230276 chi_complete=0 chi_delta_ratio=0.000000000
+ri4: n=600001 k=1 R=14701
+SLIM_PHASE ri4-load wall=0.004 cumulative=0.004 peak_rss_kib=12288
+SLIM_HEAD_SA bytes=119656 rows=14701 mmap=1
+SLIM_PHASE dict-read wall=0.000 cumulative=0.004 peak_rss_kib=12288
+SLIM_PHASE dict-boundaries wall=0.007 cumulative=0.011 peak_rss_kib=12288
+SLIM_STRING_ENDS count=1 bytes=8 from_parse_dict=1
+SLIM_PHASE parse+boundaries wall=0.002 cumulative=0.013 peak_rss_kib=12288
+SLIM_PHASE parse-fingerprints wall=0.000 cumulative=0.013 peak_rss_kib=12288
+SLIM_PHASE dict-fingerprints wall=0.003 cumulative=0.016 peak_rss_kib=12288
+SLIM_STRUCT n=600011 P=5246 D=287733 phrases=1226 parse_bytes=20988 bd_bytes=1950 bp_bytes=6816 dict_resident=0 dict_cache_per_thread=262144 no_SA_ISA_LCP_RMQ=1 no_M_b_bwt_w_wt=1
+SLIM_PHASE lce-build-total wall=0.012 cumulative=0.017 peak_rss_kib=12288
+anchors: 0 string-start rows
+SLIM_PHASE lf-build wall=0.001 cumulative=0.017 peak_rss_kib=12288
+SLIM_RI runs=73505 starts=117608 samples=36760 lf_capacity=183188
+SLIM_PROGRESS runs=14701/14701 resolve_wall=0.009 lce_wall=0.107 write_wall=0.002 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=0.123 cumulative=0.140 peak_rss_kib=12288
+SLIM_PHASE queries+stream-write-final wall=0.000 cumulative=0.140 peak_rss_kib=12288
+SLIM_FP parse tau=3 bytes=14000 queries=8762 verified_symbols=24698 hash_probes=6498 mean_verified=2.818762840 max_verified=14
+SLIM_FP dict tau=157 bytes=14664 queries=31943 verified_symbols=2012139 hash_probes=113658 mean_verified=62.991547444 max_verified=602
+SLIM_QUERY_PHASE resolve_wall=0.009468 resolve_peak_kib=12288 lce_wall=0.106854 lce_peak_kib=12288 write_wall=0.002309 write_peak_kib=12288
+SLIM_SEEDS queries=26105 mean_verified_phrases=0.946102279 max_verified_phrases=14 (includes_zero_parse_work_seeds; boundary_included)
+SLIM_RESOLVE walks=0 steps=0 max=0 anchor=0 failed=0 cache_hits=0
+SLIM_BOUNDARY_RESOLVE head_direct=14701 tail_direct=26105 head_lf_steps=0
+xsa chi-rspace: chi = 13004 (N=600002, R=14701) stream-agg=true buffers=4194304
+SXI_MEMBER id=1 count=14701 bytes=75553 crc32=22355d33
+SXI_MEMBER id=2 count=14701 bytes=36769 crc32=9ccdbcbc
+SXI_MEMBER id=3 count=14701 bytes=117608 crc32=314ea55b
+SXI_MEMBER id=4 count=0 bytes=12 crc32=31082463
+SXI_MEMBER id=5 count=13004 bytes=14885 crc32=3a94fb6a
+SXI_MEMBER id=6 count=12 bytes=12 crc32=483bc3db
+SXI_PASS n=600001 runs=14701 bytes=245164 chi_complete=1 chi_delta_ratio=0.143080975
+SXI1 version=1 n=600001 k=1 runs=14701 chi_complete=true
+member=1 count=14701 bytes=75553 crc32=22355d33
+member=2 count=14701 bytes=36769 crc32=9ccdbcbc
+member=3 count=14701 bytes=117608 crc32=314ea55b
+member=4 count=0 bytes=12 crc32=31082463
+member=5 count=13004 bytes=14885 crc32=3a94fb6a
+member=6 count=12 bytes=12 crc32=483bc3db
+chi_delta_ratio=0.143080975
+{"sxi": "/tmp/laneU/pipeline-duplicates.sxi", "chi": "/tmp/laneU/pipeline-duplicates.sxi.sA", "provenance": "caller-supplied endpoint inputs; NOT a from-source gate"}

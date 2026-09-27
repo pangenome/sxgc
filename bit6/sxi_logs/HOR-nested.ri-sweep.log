@@ -1,0 +1,2 @@
+COMMAND ["/tmp/sxgc-laneU/xsa/target/release/xsa", "chi-rspace", "--stream-agg", "--ri4", "/tmp/laneY/bat/HOR-nested.ri4", "--agg", "/tmp/laneY/bat/HOR-nested.agg", "-o", "/tmp/laneU/new-format-check/HOR-nested.ri.sA"]
+xsa chi-rspace: chi = 214 (N=18362, R=232) stream-agg=true buffers=4194304

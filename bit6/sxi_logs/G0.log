@@ -1,0 +1,8 @@
+PASS duplicates-600k aggregate + streamed/resident sweep + exact/MS query + chi roundtrip
+PASS random-4-2k aggregate + streamed/resident sweep + exact/MS query + chi roundtrip
+PASS random-4-20k aggregate + streamed/resident sweep + exact/MS query + chi roundtrip
+PASS random-bin-20k aggregate + streamed/resident sweep + exact/MS query + chi roundtrip
+PASS random-4-200k aggregate + streamed/resident sweep + exact/MS query + chi roundtrip
+PASS satellite-18k aggregate + streamed/resident sweep + exact/MS query + chi roundtrip
+PASS HOR-nested aggregate + streamed/resident sweep + exact/MS query + chi roundtrip
+G0 PASS 7/7; corruption rejection PASS; provenance=fixture-conversion-only

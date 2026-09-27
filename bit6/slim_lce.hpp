@@ -229,21 +229,22 @@ struct SlimLCE {
 // Headerless little-endian u64 column, exactly one SA value per ri4 run.
 // Mapping charges up to 8R resident bytes; it never copies the whole column.
 struct SlimHeads {
-    const uint64_t* data=nullptr; size_t bytes=0;
-    SlimHeads(const std::string& path,uint64_t runs) {
+    const uint64_t* data=nullptr; size_t bytes=0; void* mapping=nullptr;
+    SlimHeads(const std::string& path,uint64_t runs,uint64_t offset=0) {
         if(path.empty())return;
         const uint16_t endian=1;
         if(*(const uint8_t*)&endian!=1)slim_fail("head-SA needs little-endian host");
         if(runs>SIZE_MAX/8)slim_fail("head-SA size overflow");
         bytes=runs*8;int fd=open(path.c_str(),O_RDONLY);struct stat st{};
-        if(fd<0 || fstat(fd,&st) || (uint64_t)st.st_size!=bytes || !bytes)
+        if(fd<0 || fstat(fd,&st) || offset>(uint64_t)st.st_size || bytes>(uint64_t)st.st_size-offset || (!offset && (uint64_t)st.st_size!=bytes) || offset%8 || !bytes)
             slim_fail("head-SA must contain exactly R raw u64 values");
-        void* p=mmap(nullptr,bytes,PROT_READ,MAP_PRIVATE,fd,0);close(fd);
+        uint64_t page=uint64_t(sysconf(_SC_PAGESIZE)),base=offset/page*page,delta=offset-base;
+        bytes+=delta;void* p=mmap(nullptr,bytes,PROT_READ,MAP_PRIVATE,fd,base);close(fd);
         if(p==MAP_FAILED)slim_fail("mmap head-SA");
-        data=static_cast<const uint64_t*>(p);
+        mapping=p;data=reinterpret_cast<const uint64_t*>(static_cast<const char*>(p)+delta);
         fprintf(stderr,"SLIM_HEAD_SA bytes=%zu rows=%llu mmap=1\n",bytes,(unsigned long long)runs);
     }
-    ~SlimHeads(){if(data)munmap((void*)data,bytes);}
+    ~SlimHeads(){if(mapping)munmap(mapping,bytes);}
     SlimHeads(const SlimHeads&)=delete;
     SlimHeads& operator=(const SlimHeads&)=delete;
 };
@@ -257,7 +258,7 @@ static int slim_dump(Ri4& ri,const std::string& prefix,const std::string& out,
                      const std::string& headSaPath="") {
     if(!profileOnly && (!ri.haveSa||ri.sampleAllInf()))slim_fail("usable ri4 samples required");
     double last=tnow();
-    SlimHeads heads(headSaPath,ri.R);
+    SlimHeads heads(headSaPath.empty()?ri.sxiPath:headSaPath,ri.R,headSaPath.empty()?ri.headOffset:0);
     SlimLCE lce(prefix,ri.R,t1,t2,stream,fault);
     if(lce.n!=ri.n+lce.w)slim_fail("parse/ri4 length mismatch");
     if(lce.stringEnds.size()!=ri.k)slim_fail("parse/ri4 string-end count mismatch");

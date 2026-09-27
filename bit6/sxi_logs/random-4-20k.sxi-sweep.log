@@ -1,0 +1,2 @@
+COMMAND ["/tmp/sxgc-laneU/xsa/target/release/xsa", "chi-rspace", "--stream-agg", "--sxi", "/tmp/laneU/new-format-check/random-4-20k.sxi", "--agg", "/tmp/laneU/new-format-check/random-4-20k.sxi.agg", "-o", "/tmp/laneU/new-format-check/random-4-20k.sxi.sA"]
+xsa chi-rspace: chi = 13423 (N=20002, R=14959) stream-agg=true buffers=4194304

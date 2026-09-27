@@ -1,0 +1,8 @@
+COMMAND ["/tmp/laneU/sxi-tools/sxi_write", "--ri4", "/tmp/laneY/bat/HOR-nested.ri4", "--heads", "/tmp/laneQ/pass4/HOR-nested.head_sa", "--chi", "/tmp/laneU/new-format-check/HOR-nested.ri.sA", "--names", "/tmp/laneY/bat/HOR-nested.sc", "--output", "/tmp/laneU/new-format-check/HOR-nested.sxi"]
+SXI_MEMBER id=1 count=232 bytes=3208 crc32=e5982b6e
+SXI_MEMBER id=2 count=232 bytes=449 crc32=56ecbcc9
+SXI_MEMBER id=3 count=232 bytes=1856 crc32=cf2a53a1
+SXI_MEMBER id=4 count=0 bytes=12 crc32=31082463
+SXI_MEMBER id=5 count=214 bytes=218 crc32=f8d6d9f3
+SXI_MEMBER id=6 count=11 bytes=11 crc32=7bde911c
+SXI_PASS n=18361 runs=232 bytes=6075 chi_complete=1 chi_delta_ratio=0.127336449
