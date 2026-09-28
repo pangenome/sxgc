@@ -1,0 +1,23 @@
+	Command being timed: "/tmp/sxgc-dist-final/pfp++ -t /home/erikg/yeast/yeast235.agc --agc --agc-names /tmp/sxgc-distribution-yeast/xsa-build-wj3k_ccs/collection.txt.names.tsv -o /tmp/sxgc-distribution-yeast/xsa-build-wj3k_ccs/parse -w 10 -p 100 -j 16 --tmp-dir /tmp/sxgc-distribution-yeast/xsa-build-wj3k_ccs"
+	User time (seconds): 129.27
+	System time (seconds): 12.24
+	Percent of CPU this job got: 234%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 1:00.27
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 1237696
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 724846
+	Voluntary context switches: 3853
+	Involuntary context switches: 466
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 1803456
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

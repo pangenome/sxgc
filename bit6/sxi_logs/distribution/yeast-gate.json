@@ -1,0 +1,14 @@
+{
+  "status": "PASS",
+  "output": "/tmp/sxgc-distribution-yeast/yeast235.sxi",
+  "output_sha256": "764f3dc7cb589223e0935d5bf0177c64f67835ab8857cb2408bdefbf776e5e11",
+  "manifest_sha256": "d766417982f137fe4d177611061c9c50a9f5d46e17cd3003b6f79c214275c84d",
+  "chi": 85404336,
+  "journal": "bit6/sxi_logs/distribution/yeast/yeast235-xsa-build-wj3k_ccs.jsonl",
+  "native_agc": true,
+  "materialized_text": false,
+  "stages": 9,
+  "wall_seconds": 1179.007599979057,
+  "peak_rss_kib": 8821084,
+  "sample_audit": 32
+}

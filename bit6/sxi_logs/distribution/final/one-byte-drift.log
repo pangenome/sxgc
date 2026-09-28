@@ -1,0 +1,12 @@
+usage: sxi_pipeline.py [-h]
+                       (--text TEXT | --agc AGC | --fasta FASTA | --fastq FASTQ)
+                       --output OUTPUT [--threads THREADS] [--scratch SCRATCH]
+                       [--log-dir LOG_DIR] [--expect-chi EXPECT_CHI]
+                       [--mode {auto,dna,text}]
+                       [--verify-text-sample VERIFY_TEXT_SAMPLE]
+                       [--expect-heads EXPECT_HEADS] [--expect-ri4 EXPECT_RI4]
+                       [--fifo] [--materialize] [--verbose] [--xsa XSA]
+                       [--manifest MANIFEST] [--allow-drift]
+sxi_pipeline.py: error: tool manifest verification failed:
+/tmp/sxi-distribution-gate-iood0nzy/drift/MANIFEST.sha256:8: SHA256 mismatch: c3b211e3b045d9206de4ed0330f0edc08735ac81add6e8dd8c1a6d6ad49039e8  bin/sxi_text_audit # source audit; actual=e73310ddfdd545f5a9a60b4cc5ead249eaadc8774618f31e20eeb84554fb4522; path=/tmp/sxi-distribution-gate-iood0nzy/drift/sxi_text_audit
+xsa: error: build: pipeline failed: exit status: 2

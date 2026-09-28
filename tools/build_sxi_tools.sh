@@ -11,6 +11,7 @@ g++ -O3 -std=c++17 -Wall -Wextra bit6/sxi_text_audit.cpp -o "$OUT/sxi_text_audit
 g++ -O3 -std=c++17 -Wall -Wextra bit6/sxi_write.cpp -o "$OUT/sxi_write"
 g++ -O3 -std=c++17 -Wall -Wextra -fopenmp bit6/phi_inverse_heads.cpp -o "$OUT/phi_inverse_heads"
 bash tools/build_slim_dump.sh "$OUT/slim_dump"
-cargo build --release --manifest-path xsa/Cargo.toml
-cargo build --release --manifest-path agc2flat/Cargo.toml --target-dir "$OUT/agc-target"
+cargo build --locked --release --manifest-path xsa/Cargo.toml --target-dir "$OUT/xsa-target"
+cp "$OUT/xsa-target/release/xsa" "$OUT/xsa"
+cargo build --locked --release --manifest-path agc2flat/Cargo.toml --target-dir "$OUT/agc-target"
 cp "$OUT/agc-target/release/agc2flat" "$OUT/agc2flat"

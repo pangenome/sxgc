@@ -25,6 +25,8 @@ import tempfile
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'tools'))
+from tool_manifest import BINARIES, sha256, verify
 
 def stream_parse(fifo, producer, consumer, env, logs, label, record, verbose=False):
     """One producer owns the only FIFO writer; reap both children on every exit."""
@@ -118,7 +120,9 @@ def main():
     p.add_argument('--fifo', action='store_true', help='fallback AGC FIFO preparation')
     p.add_argument('--materialize', action='store_true', help='forensic-only AGC text-file preparation')
     p.add_argument('--verbose', action='store_true')
-    p.add_argument('--xsa', default=str(ROOT / 'xsa/target/release/xsa'))
+    p.add_argument('--xsa')
+    p.add_argument('--manifest', help='toolset manifest (default: XSA_TOOLS/MANIFEST.sha256)')
+    p.add_argument('--allow-drift', action='store_true', help='DEBUG ONLY: permit hash drift; journal all mismatches')
     a = p.parse_args()
     if not 0 <= a.verify_text_sample <= 100000:
         p.error('--verify-text-sample must be 0..100000')
@@ -134,18 +138,30 @@ def main():
         p.error('output exists: ' + str(out))
     if not source_path.is_file():
         p.error('input must be a regular file')
-    tools = pathlib.Path(os.environ.get('XSA_TOOLS', '/tmp/laneV/tools'))
-    pfp = os.environ.get('XSA_PFP', '/home/erikg/pfp/build/pfp++')
-    rpf = os.environ.get('XSA_RPFBWT', '/tmp/rpfbwt-sxgc/build-sxgc/rpfbwt')
+    tools = pathlib.Path(os.environ.get('XSA_TOOLS', str(pathlib.Path(a.xsa).resolve().parent) if a.xsa else str(ROOT / 'tools-built'))).absolute()
+    a.xsa = a.xsa or str(tools / 'xsa')
+    pfp = os.environ.get('XSA_PFP', str(tools / 'pfp++'))
+    rpf = os.environ.get('XSA_RPFBWT', str(tools / 'rpfbwt'))
     agc = os.environ.get('XSA_AGC2FLAT', str(tools / 'agc2flat'))
     required = [pfp, rpf, a.xsa, '/usr/bin/time'] + [str(tools / s) for s in ('rpfbwt_endpoints', 'slim_dump', 'sxi_write')]
     if a.verify_text_sample:
         required.append(str(tools / "sxi_text_audit"))
     if a.agc:
         required.append(agc)
+    manifest = pathlib.Path(a.manifest) if a.manifest else tools / 'MANIFEST.sha256'
+    resolved = {name: str(tools / name) for name in BINARIES}
+    resolved.update({'xsa': a.xsa, 'pfp++': pfp, 'rpfbwt': rpf, 'agc2flat': agc})
+    try:
+        provenance = verify(manifest, tools, resolved, a.allow_drift)
+    except (OSError, ValueError) as error:
+        p.error(str(error))
     for tool in required:
         if not os.access(tool, os.X_OK):
             p.error('missing executable: ' + tool)
+    if a.allow_drift:
+        print('WARNING: --allow-drift is DEBUG ONLY; tool integrity enforcement disabled', file=sys.stderr)
+        for error in provenance['drift']:
+            print(error, file=sys.stderr)
     scratch = pathlib.Path(a.scratch).absolute() if a.scratch else source_path.parent
     scratch.mkdir(parents=True, exist_ok=True)
     if scratch.stat().st_dev != source_path.stat().st_dev:
@@ -163,6 +179,7 @@ def main():
     def record(value):
         with journal.open('a') as f:
             f.write(json.dumps(value) + '\n')
+    record(dict(provenance, output=str(out), work=str(work), start=time.time()))
     def run(name, command, stdout=None):
         command = list(map(str, command))
         logfile = logs / (label + '.' + name + '.log')
@@ -286,7 +303,8 @@ def main():
         run('write', cmd)
         run('validate', [a.xsa, 'sxi-info', candidate])
         os.link(candidate, out)
-    record(dict(status='PASS', output=str(out), chi=count, work=str(work)))
+    record(dict(status='PASS', output=str(out), output_sha256=sha256(out),
+                manifest_sha256=provenance['manifest_sha256'], chi=count, work=str(work)))
     print(json.dumps(dict(sxi=str(out), chi=count, work=str(work), log=str(journal))))
 
 if __name__ == '__main__':

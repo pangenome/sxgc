@@ -1,0 +1,83 @@
+[
+  {
+    "name": "manifest-tests",
+    "command": [
+      "python3",
+      "bit6/test_tool_manifest.py"
+    ],
+    "returncode": 0
+  },
+  {
+    "name": "distribution-tests",
+    "command": [
+      "python3",
+      "bit6/test_distribution.py",
+      "--prefix",
+      "/tmp/sxgc-dist-final",
+      "--text",
+      "/tmp/laneY/bat/random-4-2k.txt",
+      "--heads",
+      "/tmp/laneQ/pass4/random-4-2k.head_sa",
+      "--ri4",
+      "/tmp/laneY/bat/random-4-2k.ri4",
+      "--log-dir",
+      "/tmp/sxgc-laneV/bit6/sxi_logs/distribution/final"
+    ],
+    "returncode": 0
+  },
+  {
+    "name": "build-regression",
+    "command": [
+      "python3",
+      "bit6/test_sxi_build.py",
+      "--xsa",
+      "/tmp/sxgc-dist-final/xsa",
+      "--log-dir",
+      "/tmp/sxgc-laneV/bit6/sxi_logs/distribution/regressions"
+    ],
+    "returncode": 0
+  },
+  {
+    "name": "format-regression",
+    "command": [
+      "python3",
+      "bit6/test_sxi_format.py",
+      "--xsa",
+      "/tmp/sxgc-dist-final/xsa",
+      "--writer",
+      "/tmp/sxgc-dist-final/sxi_write"
+    ],
+    "returncode": 0
+  },
+  {
+    "name": "phi-regression",
+    "command": [
+      "python3",
+      "bit6/test_phi_inverse_contract.py",
+      "/tmp/sxgc-dist-final/phi_inverse_heads"
+    ],
+    "returncode": 0
+  },
+  {
+    "name": "idempotence",
+    "command": [
+      "bash",
+      "tools/build_all.sh",
+      "/tmp/sxgc-dist-final"
+    ],
+    "returncode": 0
+  },
+  {
+    "name": "reference-manifest",
+    "command": [
+      "python3",
+      "tools/tool_manifest.py",
+      "verify",
+      "--prefix",
+      "/tmp/sxgc-dist-final",
+      "--manifest",
+      "tools/MANIFEST.sha256"
+    ],
+    "returncode": 0
+  }
+]

@@ -1,0 +1,55 @@
+[2026-09-28 15:27:03.960] [info] Current Configuration:
+; PFP++
+
+; Text file to parse.
+text="/home/erikg/hprcv2/HPRC_r2_assemblies_0.6.1.agc"
+
+; Read -t as AGC: archive order, uppercase reversed contigs, 0x1e separators.
+agc=true
+
+; Write canonical AGC names/coordinates TSV.
+agc-names="/home/erikg/sxgc-466/A/xsa-build-1e8r8qqr/collection.txt.names.tsv"
+
+; Output prefix.
+out-prefix="/home/erikg/sxgc-466/A/xsa-build-1e8r8qqr/parse"
+
+; Sliding window size.
+window-size=10
+
+; Modulo used during parsing.
+modulo=100
+
+; Number of threads.
+threads=48
+
+; Temporary files directory.
+tmp-dir="/home/erikg/sxgc-466/A/xsa-build-1e8r8qqr"
+
+; Also output compressed the dictionary.
+compress-dictionary=false
+
+; Use reference parse to avoid re-parsing.
+use-vcf-acceleration=false
+
+; Print out csv containing stats.
+print-statistics=false
+
+; Output count for each dictionary phrase.
+output-occurrences=false
+
+; Output sai array.
+output-sai=false
+
+; Output last array.
+output-last=false
+
+; Convert all non ACGT characters from a VCF or FASTA file to N.
+acgt-only=false
+
+; Verbose output.
+verbose=false
+
+; Version number.
+version=false
+
+[2026-09-28 15:28:19.212] [info] Parsing /home/erikg/hprcv2/HPRC_r2_assemblies_0.6.1.agc

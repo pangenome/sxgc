@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-SD=/home/erikg/TeraTools/src/thirdparty
-SDSL=$SD/sdsl-lite
+DEPS=${SXI_DEPS:?set SXI_DEPS to build_all.sh dependency directory}
+RPFBWT_BUILD=${SXI_RPFBWT_BUILD:?set SXI_RPFBWT_BUILD to isolated rpfbwt build}
+gcc -O2 -DM64 -c "$DEPS/gsacak/gsacak.c" -o "$RPFBWT_BUILD/gsacak64.o"
 g++ -DM64=1 -O2 -std=c++17 \
  -I bit6/pfp_ds_vendor \
- -I /home/erikg/r-pfbwt/build/_deps/pfp_ds-src/include \
- -I /home/erikg/r-pfbwt/build/_deps/spdlog-src/include \
- -I /home/erikg/r-pfbwt/build/_deps/gsacak-src \
- -I "$SD/include" -I /home/erikg/TeraTools/src/include \
- -I "$SDSL/include" -I "$SDSL/build/include" \
- -I "$SDSL/build/external/libdivsufsort/include" \
- "${2:-bit6/chi_rspace_dump.cpp}" /tmp/laneY/gsacak64.o -o "${1:-/tmp/laneQ/slim_dump}" \
- -L "$SDSL/build/lib" -L "$SD/lib" -lsdsl -pthread
+ -I "$DEPS/pfp_ds/include" -I "$DEPS/spdlog/include" \
+ -I "$DEPS/gsacak" -I "$DEPS/teratools/src/include" \
+ -I "$DEPS/sdsl/include" -I "$RPFBWT_BUILD/_deps/divsufsort-build/include" \
+ "${2:-bit6/chi_rspace_dump.cpp}" "$RPFBWT_BUILD/gsacak64.o" \
+ -o "${1:?output path required}" \
+ "$RPFBWT_BUILD/_deps/sdsl-build/lib/libsdsl.a" \
+ "$RPFBWT_BUILD/_deps/divsufsort-build/lib/libdivsufsort.a" \
+ "$RPFBWT_BUILD/_deps/divsufsort-build/lib/libdivsufsort64.a" -pthread

@@ -1,0 +1,74 @@
+{
+  "pfp": {
+    "url": "https://github.com/marco-oliva/pfp.git",
+    "commit": "1a5f114ae026c18e7c0049ceace1a5eabc8be44a"
+  },
+  "rpfbwt": {
+    "url": "https://github.com/marco-oliva/r-pfbwt.git",
+    "commit": "1fea5c30ac32cef9574392388005184b23d98d22"
+  },
+  "agc": {
+    "url": "https://github.com/refresh-bio/agc.git",
+    "commit": "e67e3fc865a459779118d3d4e9fbdf42c70ba75e"
+  },
+  "teratools": {
+    "url": "https://github.com/ucfcbb/TeraTools",
+    "commit": "08e7fccc17eb2c1921d4ad38aa16ebda9fe6910a"
+  },
+  "cli11": {
+    "url": "https://github.com/CLIUtils/CLI11.git",
+    "commit": "dd0d8e4fe729e5b1110232c7a5c9566dad884686"
+  },
+  "divsufsort": {
+    "url": "https://github.com/simongog/libdivsufsort.git",
+    "commit": "82b01f764e342f1858d4473c17b56844aac9c12d"
+  },
+  "gsacak": {
+    "url": "https://github.com/felipelouza/gsa-is.git",
+    "commit": "1e533019c29617a496b6d47e929d2639632a5ded"
+  },
+  "kseq": {
+    "url": "https://github.com/lh3/seqtk.git",
+    "commit": "fe1cc9e8d926d40a88f6ff368c07466d33c3665d"
+  },
+  "malloc_count": {
+    "url": "https://github.com/bingmann/malloc_count.git",
+    "commit": "fafc43cc21372296b64f74efef71ad782d6a3a1a"
+  },
+  "mio": {
+    "url": "https://github.com/mandreyel/mio.git",
+    "commit": "8b6b7d878c89e81614d05edca7936de41ccdd2da"
+  },
+  "pfp_ds": {
+    "url": "https://github.com/marco-oliva/PFP-DS.git",
+    "commit": "60ba1fa548740f0062a211dec12f96dfe406ea87"
+  },
+  "rlestring": {
+    "url": "https://github.com/marco-oliva/rle_string.git",
+    "commit": "56d4520e94069a924e303e0c6f09d68fac64936d"
+  },
+  "sdsl": {
+    "url": "https://github.com/simongog/sdsl-lite",
+    "commit": "c32874cb2d8524119f25f3b501526fe692df29f4"
+  },
+  "spdlog": {
+    "url": "https://github.com/gabime/spdlog.git",
+    "commit": "76fb40d95455f249bd70824ecfcae7a8f0930fa3"
+  },
+  "hayai": {
+    "url": "https://github.com/nickbruun/hayai.git",
+    "commit": "dbc97e901df71bcaf9a1d05f406eebe2de16dcdf"
+  },
+  "smhasher": {
+    "url": "https://github.com/aappleby/smhasher.git",
+    "commit": "07bb4de10a63e8cc2e1724865454eba635742383"
+  },
+  "zstr": {
+    "url": "https://github.com/mateidavid/zstr.git",
+    "commit": "7a94c2a4cdf131147da7f08280af5025866ef2bd"
+  },
+  "htslib": {
+    "url": "https://github.com/samtools/htslib.git",
+    "commit": "9431a6a0a49238b3ece0b1aa716b894e1479fff6"
+  }
+}

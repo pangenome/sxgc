@@ -5,23 +5,34 @@
 Query-product gates and residual limits are recorded separately in
 [sxi_logs/query-product/ACCEPTANCE.md](sxi_logs/query-product/ACCEPTANCE.md).
 
-Build tools (no commits and no upstream edits):
+Build all tools from a fresh checkout (Linux, GCC/G++ with OpenMP, CMake,
+Make, Git, Python 3, Rust/Cargo, zlib/liblzma/libbz2/libcurl development
+headers, and GNU time):
 
 ```sh
-bash tools/build_rpfbwt_tap.sh /home/erikg/r-pfbwt /tmp/rpfbwt-sxgc
-bash tools/build_sxi_tools.sh /tmp/laneV/tools
-xsa/target/release/xsa build --text collection.txt -o collection.sxi \
+BUILD_JOBS=4 bash tools/build_all.sh /absolute/new/sxi-tools
+/absolute/new/sxi-tools/xsa build --text collection.txt -o collection.sxi \
   --threads 8 --scratch /path/on/source/filesystem --verbose
-xsa/target/release/xsa build --agc collection.agc -o collection.sxi --verbose
-xsa/target/release/xsa build --fasta oriented.fa -o collection.sxi --verbose \
+/absolute/new/sxi-tools/xsa build --agc collection.agc -o collection.sxi --verbose
+/absolute/new/sxi-tools/xsa build --fasta oriented.fa -o collection.sxi --verbose \
   --expect-heads accepted.head_sa --expect-ri4 accepted.ri4
-xsa/target/release/xsa build --fastq oriented.fq -o collection.sxi --verbose \
+/absolute/new/sxi-tools/xsa build --fastq oriented.fq -o collection.sxi --verbose \
   --expect-heads accepted.head_sa --expect-ri4 accepted.ri4
 ```
 
-The copy destination must not exist. `build_rpfbwt_tap.sh` copies upstream
-including the cached dependency sources, applies `patches/rpfbwt_emit_tails.patch`,
-and uses its own CMake build at `/tmp/rpfbwt-sxgc/build-sxgc/rpfbwt`.
+The prefix must be new, with an existing parent directory. Every download,
+CMake build, C++ executable, and Cargo target goes inside that prefix. No
+machine-local upstream checkout or object file is required. A second invocation
+verifies the completed prefix and exits; it refuses drift or incomplete prefixes.
+After a failed build, retry with a new prefix. No process is stopped by this script.
+
+The two stage upstream pins are PFP++
+`1a5f114ae026c18e7c0049ceace1a5eabc8be44a` and r-pfbwt
+`1fea5c30ac32cef9574392388005184b23d98d22`. The native AGC library is pinned
+to `e67e3fc865a459779118d3d4e9fbdf42c70ba75e`; transitive CMake dependencies
+and TeraTools headers plus HTSlib are fixed in `tools/upstream.lock.json`. Cargo uses
+`--locked`. PFP++ uses `tools/build_pfp_agc.sh` with
+`patches/pfp_agc.patch`; r-pfbwt uses `patches/rpfbwt_emit_tails.patch`.
 The patch changes only the merge's endpoint-selection/range filter and adds
 `.ssa_t` output (`u64 count`, then `count` native-endian u64 values, little-endian
 on this host). It leaves `.ssa` writes unchanged. The tail merge skips empty
@@ -30,9 +41,34 @@ head merge has that empty-stream bug; builds smaller than 1 MB use one chunk,
 while large builds use 50. Both choices are printed with `--verbose`.
 
 `XSA_PFP`, `XSA_RPFBWT`, `XSA_TOOLS`, `XSA_AGC2FLAT`, and `XSA_PIPELINE`
-override tool paths. The Rust launcher otherwise locates the Python script
+override tool paths. Tools default to the directory containing the invoked xsa.
+The Rust launcher otherwise locates the Python script
 relative to the compile-time repository path; shipping a standalone binary
 requires installing the script/tools and setting these paths.
+
+Before creating scratch or launching a stage, the pipeline verifies **all eight
+stage executables**, resolved overrides included, against the prefix's
+`MANIFEST.sha256`. Missing tools/entries, malformed manifests, duplicate entries,
+changed pins/patches/sources, or changed binary bytes fail closed. A mismatch
+reports the manifest path, line number, exact expected line, actual digest, and
+resolved path. `--manifest PATH` explicitly selects another manifest.
+
+`tools/MANIFEST.sha256` records the verified reference build. Binary hashes
+depend on the compiler/platform and embedded build paths; `build_all.sh` seals
+the complete locally built set in its own prefix manifest and verifies it at the
+end. It never regenerates the manifest of an existing prefix. Review source and
+pin changes before creating a new distribution. The manifest protects against
+accidental desynchronization, not an attacker replacing both tools and manifest.
+Inline role comments and logical `bin/`, `repo/`, and `pin/` paths are interpreted
+by `python3 tools/tool_manifest.py verify --prefix PREFIX --manifest MANIFEST`.
+
+`--allow-drift` is **debug-only**: it prints a warning and each mismatch, and
+records the bypass and actual hashes in the journal. Do not use it for accepted
+or production builds. A manifest must still be readable. Each journal begins
+with `tool-provenance`: the full manifest, its SHA256, resolved per-tool SHA256,
+source/patch/pin hashes, and verification status. The final PASS row binds that
+manifest digest to the published SXI path and SHA256. Keep the journal with its
+SXI for provenance. Keep the checkout and installed prefix immutable during use.
 
 Exact stages:
 

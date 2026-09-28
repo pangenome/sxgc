@@ -1,0 +1,74 @@
+{
+  "pfp": {
+    "expected": "1a5f114ae026c18e7c0049ceace1a5eabc8be44a",
+    "actual": "1a5f114ae026c18e7c0049ceace1a5eabc8be44a"
+  },
+  "rpfbwt": {
+    "expected": "1fea5c30ac32cef9574392388005184b23d98d22",
+    "actual": "1fea5c30ac32cef9574392388005184b23d98d22"
+  },
+  "agc": {
+    "expected": "e67e3fc865a459779118d3d4e9fbdf42c70ba75e",
+    "actual": "e67e3fc865a459779118d3d4e9fbdf42c70ba75e"
+  },
+  "teratools": {
+    "expected": "08e7fccc17eb2c1921d4ad38aa16ebda9fe6910a",
+    "actual": "08e7fccc17eb2c1921d4ad38aa16ebda9fe6910a"
+  },
+  "cli11": {
+    "expected": "dd0d8e4fe729e5b1110232c7a5c9566dad884686",
+    "actual": "dd0d8e4fe729e5b1110232c7a5c9566dad884686"
+  },
+  "divsufsort": {
+    "expected": "82b01f764e342f1858d4473c17b56844aac9c12d",
+    "actual": "82b01f764e342f1858d4473c17b56844aac9c12d"
+  },
+  "gsacak": {
+    "expected": "1e533019c29617a496b6d47e929d2639632a5ded",
+    "actual": "1e533019c29617a496b6d47e929d2639632a5ded"
+  },
+  "kseq": {
+    "expected": "fe1cc9e8d926d40a88f6ff368c07466d33c3665d",
+    "actual": "fe1cc9e8d926d40a88f6ff368c07466d33c3665d"
+  },
+  "malloc_count": {
+    "expected": "fafc43cc21372296b64f74efef71ad782d6a3a1a",
+    "actual": "fafc43cc21372296b64f74efef71ad782d6a3a1a"
+  },
+  "mio": {
+    "expected": "8b6b7d878c89e81614d05edca7936de41ccdd2da",
+    "actual": "8b6b7d878c89e81614d05edca7936de41ccdd2da"
+  },
+  "pfp_ds": {
+    "expected": "60ba1fa548740f0062a211dec12f96dfe406ea87",
+    "actual": "60ba1fa548740f0062a211dec12f96dfe406ea87"
+  },
+  "rlestring": {
+    "expected": "56d4520e94069a924e303e0c6f09d68fac64936d",
+    "actual": "56d4520e94069a924e303e0c6f09d68fac64936d"
+  },
+  "sdsl": {
+    "expected": "c32874cb2d8524119f25f3b501526fe692df29f4",
+    "actual": "c32874cb2d8524119f25f3b501526fe692df29f4"
+  },
+  "spdlog": {
+    "expected": "76fb40d95455f249bd70824ecfcae7a8f0930fa3",
+    "actual": "76fb40d95455f249bd70824ecfcae7a8f0930fa3"
+  },
+  "hayai": {
+    "expected": "dbc97e901df71bcaf9a1d05f406eebe2de16dcdf",
+    "actual": "dbc97e901df71bcaf9a1d05f406eebe2de16dcdf"
+  },
+  "smhasher": {
+    "expected": "07bb4de10a63e8cc2e1724865454eba635742383",
+    "actual": "07bb4de10a63e8cc2e1724865454eba635742383"
+  },
+  "zstr": {
+    "expected": "7a94c2a4cdf131147da7f08280af5025866ef2bd",
+    "actual": "7a94c2a4cdf131147da7f08280af5025866ef2bd"
+  },
+  "htslib": {
+    "expected": "9431a6a0a49238b3ece0b1aa716b894e1479fff6",
+    "actual": "9431a6a0a49238b3ece0b1aa716b894e1479fff6"
+  }
+}

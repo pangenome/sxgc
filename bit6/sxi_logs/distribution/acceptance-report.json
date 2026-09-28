@@ -1,0 +1,89 @@
+{
+  "criteriaSatisfied": [
+    {
+      "id": "criterion-1",
+      "status": "satisfied",
+      "evidence": "Unified isolated build, 75-artifact manifest, fail-closed preflight, debug-only escape, and journal provenance implemented; all requested gates passed."
+    },
+    {
+      "id": "criterion-2",
+      "status": "satisfied",
+      "evidence": "Reproduction commands and checked results are retained in bit6/sxi_logs/distribution/ACCEPTANCE.md, regressions.json, full-battery/results.json, yeast-gate.json, and protected-comparison.json."
+    }
+  ],
+  "changedFiles": [
+    "tools/MANIFEST.sha256",
+    "tools/tool_manifest.py",
+    "tools/upstream.lock.json",
+    "tools/build_all.sh",
+    "tools/build_slim_dump.sh",
+    "tools/build_sxi_tools.sh",
+    "tools/build_pfp_agc.sh",
+    "bit6/patches/pfp_agc.patch",
+    "bit6/sxi_pipeline.py",
+    "xsa/src/build.rs",
+    "bit6/SXI_BUILD.md",
+    "bit6/test_sxi_build.py",
+    "bit6/test_tool_manifest.py",
+    "bit6/test_distribution.py",
+    "bit6/sxi_logs/distribution/"
+  ],
+  "testsAddedOrUpdated": [
+    "bit6/test_tool_manifest.py",
+    "bit6/test_distribution.py",
+    "bit6/test_sxi_build.py"
+  ],
+  "commandsRun": [
+    {
+      "command": "BUILD_JOBS=4 bash tools/build_all.sh /tmp/sxgc-dist-build-02",
+      "result": "failed",
+      "summary": "Exploratory build exposed missing HTSlib; resolved by pinning/building it inside the prefix."
+    },
+    {
+      "command": "BUILD_JOBS=4 bash /tmp/sxgc-distribution-checkout/tools/build_all.sh /tmp/sxgc-dist-final",
+      "result": "passed",
+      "summary": "Fresh checkout plus uncommitted source overlay; all stages compiled; 75 artifacts verified."
+    },
+    {
+      "command": "python3 bit6/sxi_logs/distribution/run_regressions.py",
+      "result": "passed",
+      "summary": "Eight manifest tests, real publication/drift gate, all three committed Python regressions, idempotence, reference manifest verification."
+    },
+    {
+      "command": "python3 bit6/sxi_logs/distribution/run_battery.py",
+      "result": "passed",
+      "summary": "7/7 published; endpoint and aggregate byte gates match."
+    },
+    {
+      "command": "/tmp/sxgc-dist-final/xsa build --agc /home/erikg/yeast/yeast235.agc -o /tmp/sxgc-distribution-yeast/yeast235.sxi --scratch /tmp/sxgc-distribution-yeast --threads 16 --expect-chi 85404336 --verify-text-sample 32 --verbose --log-dir /tmp/sxgc-laneV/bit6/sxi_logs/distribution/yeast",
+      "result": "passed",
+      "summary": "Published chi=85404336; 32/32 audit samples; nine stages passed; manifest/output journal binding verified."
+    },
+    {
+      "command": "cargo test --locked --manifest-path xsa/Cargo.toml --target-dir /tmp/sxgc-distribution-test-target",
+      "result": "passed",
+      "summary": "Compilation passed; no Rust unit tests defined."
+    },
+    {
+      "command": "git diff --check && git diff --cached --quiet",
+      "result": "passed",
+      "summary": "No whitespace errors; no staged files."
+    }
+  ],
+  "validationOutput": [
+    "Reference manifest SHA256: d766417982f137fe4d177611061c9c50a9f5d46e17cd3003b6f79c214275c84d.",
+    "Single-byte audit-tool corruption rejected at manifest line 8 before scratch/log/output creation.",
+    "All 336 protected executable hashes identical before/after; no added or removed executables.",
+    "Yeast235 published with chi=85404336 in 1179.01 timed stage seconds; peak RSS 8821084 KiB."
+  ],
+  "residualRisks": [
+    "External reviewer sign-off remains required.",
+    "Binary hashes depend on toolchain/platform/build paths; new prefixes seal their complete local build. Keep the matching source checkout and prefix immutable; this is not a standalone relocatable package."
+  ],
+  "noStagedFiles": true,
+  "diffSummary": "Added a unified pinned build, reference/prefix manifests, strict verification of all resolved stage binaries and sources, debug drift handling, and complete journal provenance with publication hashes.",
+  "reviewFindings": [
+    "No blockers found in self-review; external review pending."
+  ],
+  "manualNotes": "No commits or process signals. Existing unrelated workspace changes preserved. All builds used fresh directories. The requested contact_supervisor tool was unavailable. Logs include exploratory failures and successful final clean-checkout evidence."
+}

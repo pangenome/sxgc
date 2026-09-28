@@ -1,0 +1,22 @@
+{
+  "status": "PASS",
+  "published": "/tmp/sxi-distribution-gate-iood0nzy/battery.sxi",
+  "work": "/tmp/sxi-distribution-gate-iood0nzy",
+  "manifest_sha256": "d766417982f137fe4d177611061c9c50a9f5d46e17cd3003b6f79c214275c84d",
+  "output_sha256": "0b47b90796170cc45aa9f898894f3b11a1f8eef2dc3ed34446ccaaeb5b691720",
+  "chi": 1307,
+  "checked_binaries": [
+    "xsa",
+    "rpfbwt_endpoints",
+    "slim_dump",
+    "sxi_write",
+    "sxi_text_audit",
+    "agc2flat",
+    "pfp++",
+    "rpfbwt"
+  ],
+  "drift_tool": "/tmp/sxi-distribution-gate-iood0nzy/drift/sxi_text_audit",
+  "differing_manifest_line": "c3b211e3b045d9206de4ed0330f0edc08735ac81add6e8dd8c1a6d6ad49039e8  bin/sxi_text_audit # source audit",
+  "drift_refused_before_scratch": true,
+  "endpoint_byte_gates": true
+}

@@ -1,0 +1,17 @@
+[
+  "tools/MANIFEST.sha256",
+  "tools/tool_manifest.py",
+  "tools/upstream.lock.json",
+  "tools/build_all.sh",
+  "tools/build_slim_dump.sh",
+  "tools/build_sxi_tools.sh",
+  "tools/build_pfp_agc.sh",
+  "bit6/patches/pfp_agc.patch",
+  "bit6/sxi_pipeline.py",
+  "xsa/src/build.rs",
+  "bit6/SXI_BUILD.md",
+  "bit6/test_sxi_build.py",
+  "bit6/test_tool_manifest.py",
+  "bit6/test_distribution.py",
+  "bit6/sxi_logs/distribution/"
+]

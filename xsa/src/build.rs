@@ -14,8 +14,10 @@ FASTA (wrapped lines allowed) and FASTQ (four-line records) extract sequences
 verbatim in input order, with 0x1E between records and terminally.
 Supply already oriented sequences; embedded 0x1E fails during input preparation.
 Record identifiers populate the SXI names member. Malformed records fail closed.
-AGC streams agc2flat --stdout --revlines --upper --sep 1e through one FIFO.
+AGC uses a seekable archive-backed FUSE ghost file (revlines, upper, sep 1e).
+--fifo selects the sequential streaming fallback.
 --materialize retains the legacy AGC text-file path.
+--manifest PATH selects a tool manifest; --allow-drift is DEBUG ONLY and journals hash mismatches.
 Stages: PFP (w1=10,p1=100; w2=5,p2=11), endpoint-tap rpfbwt,
 slim streaming aggregates, streamed chi sweep/gate, checked SXI publication.
 Scratch must share the source filesystem. Timings and peak RSS are logged.
@@ -52,13 +54,13 @@ fn parse(args: &[String]) -> Result<Options, String> {
                     return Err("choose exactly one of --agc, --fasta, --fastq, --text".into());
                 }
             }
-            "--mode" | "--verify-text-sample" | "--threads" | "--scratch" | "--log-dir" | "--expect-chi" | "--expect-heads" | "--expect-ri4" => {
+            "--manifest" | "--mode" | "--verify-text-sample" | "--threads" | "--scratch" | "--log-dir" | "--expect-chi" | "--expect-heads" | "--expect-ri4" => {
                 i += 1;
                 let value = args.get(i).filter(|s| !s.is_empty() && !s.starts_with('-'))
                     .ok_or_else(|| format!("{flag} requires a value"))?;
                 extra.extend([flag.clone(), value.clone()]);
             }
-            "--materialize" => extra.push(flag.clone()),
+            "--allow-drift" | "--materialize" | "--fifo" => extra.push(flag.clone()),
             "--verbose" => verbose = true,
             _ => return Err(format!("unknown option {flag}")),
         }

@@ -1833,3 +1833,15 @@ mask + features); pointer-attention only if ablation demands it.
 ## the committed patch; agc lib refresh-bio/agc@e67e3fc, static). Upstreamable: clean
 ## optional CMake (PFP_ENABLE_AGC), README, PR draft in bit6/sxi_logs/pfp-agc/.
 ## Interlock amendment re-applied at bank (lane copies keep predating it).
+
+## DISTRIBUTION HARDENING LANDED (supervisor-verified): tools/MANIFEST.sha256 (75
+## artifacts), strict preflight hash verification (single-byte tool corruption rejected
+## before any scratch/output; --allow-drift is debug-only), tools/build_all.sh (one
+## fresh-checkout build: in-repo C++ + patched pfp++ + patched rpfbwt + pinned HTSlib +
+## agc; upstream.lock.json pins), journal provenance (every build binds manifest + tool
+## hashes + output SHA256). GATES: 7/7 battery through the sealed toolset; yeast235
+## PUBLISHED a third time from a fresh checkout (chi=85,404,336, 32/32 archive audit,
+## no materialization) - three independent toolsets, one answer; 336 protected binaries
+## (the RUNNING 466's tools) hash-identical before/after. DESYNC IS NOW IMPOSSIBLE TO
+## MISS. Interlock amendment re-applied at bank for the THIRD time - lane copies keep
+## predating it; root fix queued (lanes must start from main's current pipeline).

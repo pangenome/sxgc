@@ -73,9 +73,9 @@ with tempfile.TemporaryDirectory(prefix='sxi-failure-test-') as directory:
                                'policy=max(1000,raw_r/1000); no O(n) fallback' in evidence)
     assert proc.returncode != 0 and rejected_collection, proc.stderr
     assert not out.exists()
-    # A stage failure also cannot publish; /bin/false passes executable preflight.
+    # Explicit debug drift permits /bin/false to exercise stage-failure cleanup.
     proc = subprocess.run([*build, '--text', str(source), '-o', str(out),
-        '--scratch', str(root)], env=dict(os.environ, XSA_PFP='/bin/false'), capture_output=True, text=True)
+        '--scratch', str(root), '--allow-drift'], env=dict(os.environ, XSA_PFP='/bin/false'), capture_output=True, text=True)
     assert proc.returncode != 0 and 'parse failed' in proc.stderr, proc.stderr
     assert not out.exists()
 print('PASS CLI validation; missing tool, stage failure, chi/head mismatch and unvalidated multi-string input publish no SXI; existing files/symlinks preserved')
