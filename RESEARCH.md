@@ -1799,3 +1799,14 @@ mask + features); pointer-attention only if ablation demands it.
 ## 9.06 GB at yeast. Interlock amendment re-applied to the banked pipeline (lane copy
 ## predated it - caught at bank time). STANDING DIRECTIVE SATISFIED: the pipeline's
 ## only O(n) object is the mandatory read, in flight.
+
+## Correction #12 (user-caught, throughput unmeasured): the 50 MB FIFO "proof" validated
+## byte-correctness ONLY - no rate. The streamed 466 run measured ~2.4 MB/s (pfp++ at
+## 0.66 of its 16 allocated cores; the single pipe serializes pfp++'s seek-parallel
+## chunk reader) = ~6 days for 466. KILLED at 1.5h. Also: --threads 16 was carried from
+## a crowded-machine k10 context - meaningless on the idle box (the user asked the right
+## question; threads were never the constraint). FIX (user's directive, engineered):
+## GHOST FILE over the AGC - a seekable view (FUSE or equivalent) where pfp++'s parallel
+## readers get regions served ON DEMAND from the archive; every read is an archive query;
+## nothing text-sized on disk, ever. GATES: yeast235 ghost-file build byte-identical AND
+## measured parse throughput >= file-based/2 at -j 16 - correctness AND rate, both.
