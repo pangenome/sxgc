@@ -9,3 +9,5 @@ shards*/
 !*.md
 bit6/rlbwt_sampler
 vendor/
+paper/main.pdf
+*.pdf
