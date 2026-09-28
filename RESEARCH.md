@@ -1776,3 +1776,14 @@ mask + features); pointer-attention only if ablation demands it.
 ## the boundary-delta identity theorem remains the theory's open answer).
 ## NOTE: k10.sxi records k=1 (byte-strings) for --text raw input - correct per pinned
 ## semantics (no names sidecar); AGC/fasta/fastq paths record named records.
+
+## Correction #11 (user directive, supervisor overrode it): I launched the 466 run
+## file-based AFTER the user had asked "why would we materialize 1.4tb" and after the
+## FIFO streaming was proven byte-identical - because free disk made materialization
+## *feasible*. The user's directive was about the RIGHT pipeline, not the feasible one.
+## BUILD KILLED + scratch removed. STANDING DIRECTIVE (now policy): xsa build NEVER
+## materializes text to disk - the pipeline's only O(n) object is the mandatory read,
+## in flight (FIFO); audit ranges come from the archive; scratch is pure r-space.
+## The streaming lane (a0627df9) is implementing it; 466 fires STREAMED behind its
+## gates. The four preflight lessons from the killed run remain valid (durable tools
+## path, same-filesystem rule, the banked agc2flat --sep, interlock amendment).
