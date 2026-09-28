@@ -1845,3 +1845,27 @@ mask + features); pointer-attention only if ablation demands it.
 ## (the RUNNING 466's tools) hash-identical before/after. DESYNC IS NOW IMPOSSIBLE TO
 ## MISS. Interlock amendment re-applied at bank for the THIRD time - lane copies keep
 ## predating it; root fix queued (lanes must start from main's current pipeline).
+
+## CHI-AS-ML-BACKEND SPEC BANKED (researcher lane, GLM-5.3-high; code-cited, hardware-
+## probed, honest): docs/LM_CHI_BACKEND_SPEC.md. HEADLINE FINDINGS:
+## (1) THE 0x1E ALIGNMENT: Emender's DocumentStreamDataset ALREADY uses 0x1E as its
+##     document delimiter - the same byte the .sxi reserves as record separator. Model
+##     byte stream and index multi-string convention are ONE contract, natively.
+## (2) THE HOOKS EXIST: LadderLM.forward already supports loss_mask/reset_before/
+##     doc_boundaries - masked fork-conditioned pretraining needs ZERO loss-machinery
+##     changes; fork features enter via one new projection GEMM onto the embedding.
+## (3) COMPUTE REALITY (live probe): this box has >=7x RTX 6000 Ada 48GB (336 GB VRAM);
+##     Emender's own 1.273B anchor = 0.973 bpb on The Pile in 23 days on ONE such GPU.
+##     The full staged plan is feasible HERE at slice scale; full 1.31 TB byte-level
+##     pretraining is honestly a cluster job - and the stratified falsification test
+##     does NOT need terabyte scale to be decisive.
+## (4) ARCHITECTURE VERDICT: pins ride BESIDE the NDM delta memory (the 32x32 store is
+##     content-addressed, not a pointer store); the delta-correction write is literally
+##     a prediction-error write = the natural fork-policy carrier (interpretation,
+##     labeled, must be measured not asserted).
+## (5) 12 open questions recorded (off-corpus eval has no ground truth by definition;
+##     op-credit assignment; 0x1E dual-use policy; doc-id embeddings could poison the
+##     stage-2 transfer test).
+## Stage 0 = pile slice sweep (also measures the missing pile constants). QUEUED behind
+## paper + human index. Lean follow-up identified: CorrectContinuation statement-lock
+## (mechanical analog of CorrectLocateOne) - hardens the bridge's LM form.
