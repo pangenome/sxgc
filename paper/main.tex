@@ -25,9 +25,11 @@
 \newtheorem{remark}[theorem]{Remark}
 \newtheorem{conjecture}[theorem]{Conjecture}
 
-\title{Indexing Novelty, Not Bulk:\\
-The Suffixient Array at Pangenome Scale,\\
-with a First Space Lower Bound for Pattern Matching}
+% Alternate title (kept per lane record): "Indexing Novelty, Not Bulk:
+% The Suffixient Array at Pangenome Scale, with a First Space Lower Bound
+% for Pattern Matching"
+\title{$\chi$ Marks the Fork:\\
+Suffixient Arrays and a Space Lower Bound for Locating Patterns}
 
 \author{%
   E.~Gaffney\thanks{Correspondence: the sxgc ledger, \texttt{github.com/pangenome/sxgc}.}%
@@ -38,19 +40,23 @@ with a First Space Lower Bound for Pattern Matching}
 \maketitle
 
 \begin{abstract}
-\textbf{Motivation.} A versioned collection---a pangenome, a wiki, a crawl---is
-almost entirely redundancy. Its indexable content is the \emph{novelty}: the
-positions where its future genuinely forks. The suffixient array
-\cite{measure-paper} is, at present, the sharpest formal answer to ``what is the
-novelty'' that supports exact pattern matching: a minimum-size set
-$S\subseteq[1..n]$ of positions such that every right-extension context of the
-text is witnessed. Its size $\X(T)$ is a repetitiveness measure that upper
-bounds the string attractor measure $\gamma$ and is at most twice the run count
-of the BWT of the reversed text. But three questions were open when this work
-began: \emph{can $\X$ be constructed} without reading the text more than once
-and without any operation superlinear in $n$; \emph{is $\X$ necessary}, i.e., is
-there a space lower bound proportional to $\X$ for any pattern-matching
-operation class; and \emph{does the theory build an index} at terabase scale.
+\textbf{Motivation.} Almost every byte of a corpus is \emph{forced}:
+given its left context, only one continuation occurs. The freedom lives in a
+sparse skeleton of \emph{forks}---positions where the future is genuinely
+open---and at pangenome scale that skeleton is tiny: measured across this
+paper's corpora, the minimum suffixient set $S$ (a set of positions witnessing
+every right-extension context of the text) has $\X/n$ at $2.6\%$ (yeast),
+$5.4\%$ (30\,Gbp human), and $0.16\%$ (466-haplotype HPRC, $1.44$\,Tbp).
+The suffixient array \cite{measure-paper} measures this skeleton: $\X(T)$
+upper bounds the string attractor measure $\gamma$ and is at most twice the
+run count of the BWT of the reversed text. But $\X$ was a \emph{one-sided}
+story: it said how small an index \emph{can} be, never how small any index
+\emph{must} be---no space lower bound proportional to any repetitiveness
+measure existed for any pattern-matching operation class (verified survey,
+\S\ref{sec:related}). Three questions were open when this work began: \emph{can
+$\X$ be constructed} without reading the text more than once and without any
+operation superlinear in $n$; \emph{is $\X$ necessary}; and \emph{does the
+theory build an index} at terabase scale.
 \textbf{Results.} We give a machine-checked (Lean 4) development in which
 $\X(T)$ equals the number of inclusion-maximal coverage classes of the text's
 requirements, a one-pass scan over the text's suffix-array stream emits a
@@ -58,24 +64,41 @@ minimum suffixient set (the construction capstone, proven subject to named,
 explicitly-tracked stream hypotheses: the no-duplicates hypothesis is discharged outright, and the remaining hypotheses reduce to a single named statement about run-edge domination, one of whose two factors is proven), the
 parse-space LCE machinery the scan consumes is proven deterministic and
 explicitly bounded, and the head-sample extraction used at scale is proven as
-an inverse permutation on BWT rows. We prove the \emph{first space lower
-bound for any pattern-matching operation class} parametrized by a
-repetitiveness measure: every fixed-decoder index that answers locate-one
-queries on a constructed witness-perturbation family satisfies
-$s+1 \ge \X\log_2(n/\X)/3$. We describe a system that constructs the index as
-one command from a compressed pangenome archive, never materializes the text
-on any disk, and publishes only after an in-flight audit of sampled witnesses
-against the archive. At yeast scale the index is born from scratch in 26
-minutes; at 30\,Gbp human scale, $\X = 1{,}627{,}067{,}257$ with peak
-134\,GB; at the full 466-haplotype HPRC collection (1.44\,Tbp) the headline
-number is \hprcchi. Every claim in this paper is traceable to a machine-checked
-proof or a logged measurement; we state the open hypotheses and unproven
-attributions exactly where they remain.
+an inverse permutation on BWT rows. We then make $\X$ two-sided. \emph{Bridge}:
+any system---index, language model, anything---that correctly answers
+\emph{continuation} queries (``what can follow $w$'', answered with corpus
+positions) must consult at least $\X(T)$ \emph{distinct} positions
+(kernel-checked; this form strictly subsumes the locate-one bridge, since
+locate-one answers are correct continuation answers). \emph{Floor}: on a
+constructed witness-perturbation family, every fixed-decoder index answering
+locate-one satisfies $s+1 \ge \X\log_2(n/\X)/3$---to our knowledge the first
+space lower bound for any pattern-matching operation class parametrized by a
+repetitiveness measure, stated with its honest scope (family-specific,
+fixed-decoder). We describe a system that constructs the index as one command
+from a compressed pangenome archive, never materializes the text on any disk,
+and publishes only after an in-flight audit of sampled witnesses against the
+archive. At yeast scale the index is born from scratch in 26 minutes; at
+30\,Gbp human scale, $\X = 1{,}627{,}067{,}257$ with peak 134\,GB; at the full
+466-haplotype HPRC collection (1.44\,Tbp) the headline number is \hprcchi.
+Every claim in this paper is traceable to a machine-checked proof or a logged
+measurement; we state the open hypotheses and unproven attributions exactly
+where they remain.
 \textbf{Availability.} Proofs, logs, and the tool at
 \texttt{github.com/pangenome/sxgc}.
 \end{abstract}
 
 \section{Introduction}\label{sec:intro}
+
+\paragraph{Most bytes are forced.} Measure any real corpus: for the vast
+majority of positions, the byte that follows is the only one that ever does.
+Across this paper's corpora the \emph{minimum suffixient set}---the smallest
+position set witnessing every place where the future is genuinely open---has
+$\X/n$ at $2.6\%$ for yeast, $5.4\%$ for a 30\,Gbp human pangenome, and
+$0.16\%$ for the 466-haplotype HPRC collection
+($1.44$\,Tbp; \S\ref{sec:results}). The farther a collection duplicates
+itself, the smaller the skeleton: a pangenome is $99.84\%$ inevitability.
+Whatever an exact-search index---or any reader of the corpus---must retain is
+therefore a function of this sparse forking structure, not of the bulk.
 
 \paragraph{The thesis.} Suppose a corpus is mostly redundant---as every
 versioned corpus is. Then whatever an exact-search index must store is a
@@ -84,9 +107,10 @@ making that sentence a theorem-backed engineering statement: a measure
 $\X(T)$ that quantifies novelty, a construction that builds an index of size
 $O(\X\log n)$ at a cost that follows $\X$ rather than $n$, a lower-bound
 program that has produced its first theorem saying that position-answering
-indexes \emph{cannot} be asymptotically smaller, and a system that does all of
-it from a 3\,GB compressed archive of 1.44 terabases without ever writing the
-text to disk.
+indexes \emph{cannot} be asymptotically smaller, a bridge theorem extending
+that necessity from indexes to \emph{any} continuation-answering system
+(\S\ref{sec:contbridge}), and a system that does all of it from a 3\,GB
+compressed archive of 1.44 terabases without ever writing the text to disk.
 
 \paragraph{The object.} A \emph{suffixient set} for a text $T$ of length $n$
 is a set $S\subseteq[1..n]$ of positions such that for every
@@ -155,6 +179,15 @@ s + 1 \;\ge\; \X(T)\cdot \log_2\!\big(n/\X(T)\big)\,/\,3 ,
 machine-checked (Theorem~\ref{thm:floor}). To our knowledge this is the first
 space lower bound proportional to a repetitiveness measure for any
 pattern-matching operation class (survey in \S\ref{sec:related}).
+\item \textbf{The continuation bridge} (\S\ref{sec:contbridge}): the same
+necessity, extended from indexes to \emph{any} system that answers
+continuation queries. Any oracle that, for every requirement $(w,c)$ of $T$,
+answers with a genuine corpus position where $wc$ is covered must \emph{consult}
+at least $\X(T)$ \emph{distinct} positions over the course of answering
+(kernel-checked, Theorem~\ref{thm:contdistinct}); the demand is strictly
+weaker than locate-one, so the new bridge subsumes the old
+(Theorem~\ref{thm:locimpcont}). This is the form the language-model
+framing of \S\ref{sec:lm} consumes.
 \item \textbf{System and measurements} (\S\ref{sec:system},
 \S\ref{sec:results}): a one-command pipeline that parses directly from the
 compressed archive (no text file is ever written), repairs the frame, extracts
@@ -376,6 +409,74 @@ values. The missing ingredient is a family whose members' correct answers are
 pairwise incompatible, so no single decoder can serve two members; then a
 counting argument forces one distinct index per member.
 
+\subsection{The Continuation Bridge}\label{sec:contbridge}
+
+The locate-one demand---answer \emph{every} occurring word with an
+occurrence---is stronger than the position-answering world of language models
+needs. A \emph{continuation oracle} need only answer the requirements
+themselves: for each fork $(w,c)$, a genuine corpus position where the
+continued word $w{+}{+}[c]$ is covered. The Lean development
+(\texttt{LM.lean}; axiom base $\{\texttt{propext},\ \texttt{Quot.sound}\}$,
+cleaner than the fixed base of the earlier sections) proves the bridge holds
+verbatim for this strictly weaker demand, in three forms:
+
+\begin{definition}[Continuation oracle; \texttt{CorrectContinuation}]
+\label{def:contcont}
+$\mathrm{CorrectContinuation}(f, T)$ iff for every requirement $(w,c)$ of
+$T$ there exists a position $x$ with $f(w{+}{+}[c]) = \mathrm{some}(x)$,
+$1 \le x \le |T|$, and $w{+}{+}[c]$ covered at $x$. The function $f$ is
+required to do nothing on any other word.
+\end{definition}
+
+\begin{theorem}[Locate-one subsumption; \texttt{correctLocateOne\_imp\_cont}]
+\label{thm:locimpcont}
+If $f$ answers locate-one correctly on $T$ then $\mathrm{CorrectContinuation}(f,T)$.
+\end{theorem}
+
+Since requirement words occur, a correct locate-one oracle answers each fork
+query with an occurrence of the continued word---which is exactly a covering
+position. The continuation oracle is therefore the strictly weaker demand,
+and every result below covers the locate-one case while standing on its own.
+
+\begin{theorem}[Continuation bridge; \texttt{emitted\_suffixient\_of\_cont},
+\texttt{chi\_le\_of\_cont\_oracle}]\label{thm:contbridge}
+If $\mathrm{CorrectContinuation}(f,T)$ then the positions $f$ emits on
+$T$'s requirement words form a suffixient set, and consequently
+$\X(T) \le |\mathrm{emitted}(f,T)|$.
+\end{theorem}
+
+\begin{theorem}[Distinct-consultation; \texttt{chi\_le\_of\_cont\_oracle\_distinct}]
+\label{thm:contdistinct}
+If $\mathrm{CorrectContinuation}(f,T)$ then
+$\X(T) \le \big|\mathrm{dedup}(\mathrm{emitted}(f,T))\big|$: across all
+fork queries, $f$ must \emph{consult} at least $\X(T)$ \emph{distinct}
+positions.
+\end{theorem}
+
+The distinct form is the honest statement of ``must retain'': an oracle that
+re-emits one position $\X$ times has not consulted $\X$ positions. It
+holds because duplicate removal preserves both suffixience and positional
+membership (\texttt{suffixient\_dedup}, \texttt{dedup\_length\_le}), so the
+deduplicated emitted set is itself a suffixient set of genuine text positions.
+
+\begin{theorem}[Fixed-decoder index form; \texttt{chi\_le\_of\_realized\_cont}]
+\label{thm:realizedcont}
+For any decoder $\mathrm{dec}$ and index $D$: if the decoded answer function
+$\mathrm{dec}(D)$ is a correct continuation oracle on $T$, then
+$\X(T) \le \big|\mathrm{dedup}\big(\mathrm{emitted}(\mathrm{dec}(D),T)\big)\big|$.
+\end{theorem}
+
+This is ``any continuation-answering system must consult $\ge \X$
+distinct positions'' in its precise, kernel-checked form. The
+bridge-to-counting structure is now identical to the locate-one case
+(Theorem~\ref{thm:bridge} $\to$ Theorem~\ref{thm:pigeon} $\to$
+Theorem~\ref{thm:floor}); the continuation-counting analog of
+Theorem~\ref{thm:floor}---replacing the locate-one demand with
+$\mathrm{CorrectContinuation}$ in the family floor---is a mechanical
+follow-on, since the incompatibility machinery of the witness-perturbation
+family needs only that correct answers cover the requirements, which
+continuation answers do by definition. We do not claim it as proven here.
+
 \begin{theorem}[Pigeonhole; \texttt{family\_counting}]\label{thm:pigeon}
 For a fixed decoder $\mathrm{dec}$, a duplicate-free family $F$ of texts
 whose members pairwise admit no common correct answer function satisfies
@@ -410,7 +511,12 @@ machinery is proven for the constructed family, and the general rung---every
 text, or a measure-theoretic statement---remains open, as does the placement
 of $\X$ against $\delta\log n$ that governs the general statement's final
 form (\S\ref{sec:open}). The index model is fixed-decoder with bit-space
-measurement; removing the fixed-decoder restriction is open. One skeleton
+measurement; removing the fixed-decoder restriction is open. Since the
+continuation bridge (\S\ref{sec:contbridge}) has the same shape as the
+locate-one bridge, the continuation-counting analog of
+Theorem~\ref{thm:floor}---the same bound for indexes answering
+continuation queries only---is a mechanical follow-on; we record it as such,
+not as proven. One skeleton
 statement of the original proof plan (\texttt{fam\_oracle\_witness}) was
 found \emph{refutable as locked} (counterexample $k{=}1,L{=}2,s{=}1$); the
 intended content is instead proven as \texttt{fam\_floor\_half\_grid}, and
@@ -543,6 +649,43 @@ table are representation cost (known, packable); the witnesses are
 decision-structure cost (provably irreducible below
 $\X\log(n/\X)$ bits, up to the constant we have proven).
 
+\section{The Fork Skeleton and the Reader}\label{sec:lm}
+
+The continuation bridge has a reader-facing reading that deserves its own
+statement, because it is the reason we believe $\X$ measures something about
+\emph{corpora} rather than only about indexes.
+
+\paragraph{The decision structure of a corpus.} Combine the two bridge forms
+with the forced/fork split. Every position of $T$ is either \emph{forced}---a
+unique continuation, bookkeeping, compressible without loss of
+answerability---or part of a \emph{fork}: a right-maximal context with $\ge 2$
+continuations, witnessed by some requirement. Theorem~\ref{thm:contdistinct}
+says any system that answers continuation queries \emph{with positions} must
+consult $\ge\X$ distinct fork-adjacent positions; it may discard
+\emph{everything else}. The corpus's decision structure is thus precisely
+$\X$-shaped: $n - \X$ bytes of inevitability plus a sparse skeleton of
+genuine choices, and the theorem prices the skeleton at
+$\Omega(\X\log(n/\X))$ bits (Theorem~\ref{thm:floor}, family-specific form).
+At 466-haplotype scale the skeleton is $0.16\%$ of the corpus: a system that
+has retained the forks has retained what cannot be compressed away, and a
+system that has not, cannot answer.
+
+\paragraph{The memorization-externalization thesis, now warranted.} A
+language model trained on a corpus is, among other things, a system that
+answers continuation queries. The design thesis this project's companion
+specification pursues---\emph{memorize nothing, externalize the rulebook into
+the index, spend network capacity on the policy of choosing among forks}---now
+has its formal warrant: by Theorem~\ref{thm:contdistinct}, the
+index-retained positions are not an optimization but a \emph{necessity} for
+any position-consulting continuation system; and by the forced/fork split, a
+model may offload the $n - \X$ inevitable bytes entirely. The bridge is
+direct evidence for the position-consulting regime; whether an implicit
+(weight-space) continuation system must obey the same bound is a
+statement-lock candidate we do \emph{not} claim. The fork-conditioned
+architecture (hard-masked next-byte prediction at the forks, free passage at
+forced positions, witness pointers as episodic memory) is specified and
+compute-audited in the companion document; its evaluation is future work.
+
 \section{Related Work}\label{sec:related}
 
 Our survey (verified against fetched sources; the full annotated map with
@@ -593,7 +736,13 @@ counterexamples; blocked on the emission rule's exact semantics.
 \item \textbf{The general floor.} Theorem~\ref{thm:floor} is
 family-specific; the general rung requires either a measure-theoretic
 incompatibility construction or the negative resolution via
-$\X$-vs-$\delta\log n$.
+$\X$-vs-$\delta\log n$. The continuation-counting analog (same bound for
+continuation-only indexes; the bridge shapes are identical, \S\ref{sec:contbridge})
+is the nearest mechanical step.
+\item \textbf{The implicit form.} Whether a weight-space (non-position-consulting)
+continuation system---e.g.\ a trained language model without retrieval---must
+obey the $\Omega(\X)$ bound is not claimed; a statement-lock candidate is
+recorded in the companion specification, unproven.
 \item \textbf{Minimality of $\X$ itself} among repetitiveness measures for
 this operation class, and the exact constant of
 Theorem~\ref{thm:floor} (currently $1/3$).

@@ -3,7 +3,10 @@
 Every formal and numeric claim in main.tex, with the machine artifact that
 warrants it. Formal claims: Lean files, kernel-checked, axioms
 {propext, Classical.choice, Quot.sound} (audited via fresh-import
-#print axioms on fam_floor_chi, runEdgeHit_true, chi_fam_bounds).
+#print axioms on fam_floor_chi, runEdgeHit_true, chi_fam_bounds); the
+LM.lean continuation-bridge theorems audit cleaner at
+{propext, Quot.sound} (fresh-import #print axioms on
+chi_le_of_cont_oracle_distinct, chi_le_of_realized_cont).
 
 ## Formal claims
 
@@ -23,6 +26,14 @@ warrants it. Formal claims: Lean files, kernel-checked, axioms
 | Theorem headFromTail | lean/SxgcPhi.lean:68 | phiInv_phi at :91 |
 | Seam: rot_agree, identity_outside_classes, agreement_with_nonseam | lean/SxgcSeam.lean:117,144,157 | seamPos def :134 |
 | Bridge emitted_suffixient, chi_le_of_oracle | lean/LowerBound.lean:145,158 | |
+| CorrectContinuation definition | lean/LM.lean:70 | requirement-driven answer form; 1-based position demand (1 <= x <= |T|) exactly as CorrectLocateOne |
+| correctLocateOne_imp_cont (locate-one subsumption) | lean/LM.lean:77 | CorrectLocateOne => CorrectContinuation; continuation is strictly weaker |
+| cont_emitted_mem_positionsT | lean/LM.lean:88 | membership step shared by both counting forms |
+| emitted_suffixient_of_cont (continuation bridge part 1) | lean/LM.lean:100 | mechanical from suffixient_of_witnesses |
+| chi_le_of_cont_oracle (continuation bridge part 2) | lean/LM.lean:111 | chi <= |emitted|, duplicates allowed |
+| suffixient_dedup + dedup_length_le | lean/LM.lean:118,141 | dedup preserves suffixience; never grows |
+| chi_le_of_cont_oracle_distinct (the precise LM form) | lean/LM.lean:151 | chi <= |dedup(emitted)| - "must consult >= chi DISTINCT positions"; axioms {propext, Quot.sound} |
+| chi_le_of_realized_cont (fixed-decoder index form) | lean/LM.lean:158 | Realizes dec D f by definition; axioms {propext, Quot.sound} |
 | family_counting (pigeonhole) | lean/LowerBound.lean:313 | F.length <= 2^(s+1)-1 |
 | chi_fam_bounds 2k <= chi <= 3k-1 | lean/LowerBound.lean:1921 | Sxgc.LowerBound.Fam.chi_fam_bounds; axioms clean incl. fam_run_occ_le, fam_cover |
 | fam_floor_half_grid (L/2+1)^k <= 2^(s+1)-1 | lean/LowerBound.lean:2457 | |
@@ -67,6 +78,11 @@ warrants it. Formal claims: Lean files, kernel-checked, axioms
 | corrections ledger 12 entries | RESEARCH.md Corrections #1-#12 | |
 
 ## Things deliberately NOT claimed in the paper
+- The continuation-counting analog of fam_floor_chi is a MECHANICAL FOLLOW-ON,
+  recorded as such in sec:floor and sec:open; NOT claimed as proven.
+- The implicit (weight-space, non-position-consulting) form of the continuation
+  bound is NOT claimed; recorded as a statement-lock candidate in sec:lm and
+  sec:open, unproven.
 - No O(tau) claim for verification lengths (explicit in SxgcBounds).
 - RunEdgeDominate open (only reduced + battery-warranted).
 - Seam in-class reordering lemma statement-locked, not proven.
