@@ -1,0 +1,2 @@
+{"stage": "prepare-fasta", "source": "/tmp/k10-endpoints-debug/separator/reserved.fasta", "work": "/tmp/k10-endpoints-debug/separator/xsa-build-vootu6y0", "start": 1790539747.8193333}
+{"stage": "prepare-fasta", "returncode": 1, "error": "fasta record 1 sequence: corpus contract: reserved separator 0x1E must never appear in sequence content"}

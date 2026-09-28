@@ -1,0 +1,2 @@
+xsa build: work=/tmp/k10-endpoints-debug/separator/xsa-build-auk_3x0d log=/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/separator/sep-text-xsa-build-auk_3x0d.jsonl
+{"sxi": "/tmp/k10-endpoints-debug/separator/sep-text.sxi", "chi": 1343, "work": "/tmp/k10-endpoints-debug/separator/xsa-build-auk_3x0d", "log": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/separator/sep-text-xsa-build-auk_3x0d.jsonl"}

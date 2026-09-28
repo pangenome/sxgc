@@ -1,0 +1,258 @@
+[
+  {
+    "label": "A",
+    "journal": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-control-xsa-build-hs5uw9vb.jsonl",
+    "stages": [
+      {
+        "stage": "parse",
+        "returncode": 0,
+        "wall_seconds": 825.6664557129843,
+        "peak_rss_kib": 10191256,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-control-xsa-build-hs5uw9vb.parse.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-control-xsa-build-hs5uw9vb.parse.time"
+      },
+      {
+        "stage": "parse-l2",
+        "returncode": 0,
+        "wall_seconds": 53.28404284303542,
+        "peak_rss_kib": 2716056,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-control-xsa-build-hs5uw9vb.parse-l2.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-control-xsa-build-hs5uw9vb.parse-l2.time"
+      },
+      {
+        "stage": "rpfbwt",
+        "returncode": 0,
+        "wall_seconds": 7909.979829750024,
+        "peak_rss_kib": 116413788,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-control-xsa-build-hs5uw9vb.rpfbwt.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-control-xsa-build-hs5uw9vb.rpfbwt.time"
+      },
+      {
+        "stage": "endpoints",
+        "returncode": 0,
+        "wall_seconds": 1731.4987835049396,
+        "peak_rss_kib": 130757180,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-control-xsa-build-hs5uw9vb.endpoints.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-control-xsa-build-hs5uw9vb.endpoints.time"
+      },
+      {
+        "stage": "slim",
+        "returncode": 0,
+        "wall_seconds": 10154.945913586067,
+        "peak_rss_kib": 69620812,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-control-xsa-build-hs5uw9vb.slim.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-control-xsa-build-hs5uw9vb.slim.time"
+      },
+      {
+        "stage": "sweep",
+        "returncode": 0,
+        "wall_seconds": 200.57554616499692,
+        "peak_rss_kib": 6144,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-control-xsa-build-hs5uw9vb.sweep.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-control-xsa-build-hs5uw9vb.sweep.time"
+      },
+      {
+        "stage": "write",
+        "returncode": 0,
+        "wall_seconds": 415.55592007690575,
+        "peak_rss_kib": 12713984,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-control-xsa-build-hs5uw9vb.write.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-control-xsa-build-hs5uw9vb.write.time"
+      },
+      {
+        "stage": "validate",
+        "returncode": 0,
+        "wall_seconds": 128.59586347802542,
+        "peak_rss_kib": 2048,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-control-xsa-build-hs5uw9vb.validate.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-control-xsa-build-hs5uw9vb.validate.time"
+      }
+    ],
+    "frame": {
+      "path": "/mnt/nvme3n1/erikg/sxgc-k10sep/from-zero-p_fwd37s/k10-control.sxi",
+      "bytes": 33961712446,
+      "n": 30151407545,
+      "k": 1,
+      "r": 1859825862,
+      "members": [
+        {
+          "id": 1,
+          "codec": 1,
+          "offset": 264,
+          "bytes": 9299131358,
+          "count": 1859825862,
+          "crc32": 3524134411
+        },
+        {
+          "id": 2,
+          "codec": 2,
+          "offset": 9299131624,
+          "bytes": 8136738161,
+          "count": 1859825862,
+          "crc32": 657515360
+        },
+        {
+          "id": 3,
+          "codec": 3,
+          "offset": 17435869792,
+          "bytes": 14878606896,
+          "count": 1859825862,
+          "crc32": 4293054051
+        },
+        {
+          "id": 4,
+          "codec": 4,
+          "offset": 32314476688,
+          "bytes": 12,
+          "count": 0,
+          "crc32": 822617187
+        },
+        {
+          "id": 5,
+          "codec": 5,
+          "offset": 32314476704,
+          "bytes": 1647235742,
+          "count": 1627067257,
+          "crc32": 1012952230
+        }
+      ]
+    },
+    "chi": 1627067257
+  },
+  {
+    "label": "B",
+    "journal": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-xsa-build-eutfiy_w.jsonl",
+    "stages": [
+      {
+        "stage": "parse",
+        "returncode": 0,
+        "wall_seconds": 828.6455453459639,
+        "peak_rss_kib": 10184256,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-xsa-build-eutfiy_w.parse.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-xsa-build-eutfiy_w.parse.time"
+      },
+      {
+        "stage": "parse-l2",
+        "returncode": 0,
+        "wall_seconds": 55.215578886913136,
+        "peak_rss_kib": 2716960,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-xsa-build-eutfiy_w.parse-l2.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-xsa-build-eutfiy_w.parse-l2.time"
+      },
+      {
+        "stage": "rpfbwt",
+        "returncode": 0,
+        "wall_seconds": 8211.000390324043,
+        "peak_rss_kib": 116407184,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-xsa-build-eutfiy_w.rpfbwt.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-xsa-build-eutfiy_w.rpfbwt.time"
+      },
+      {
+        "stage": "endpoints",
+        "returncode": 0,
+        "wall_seconds": 1555.6570957120275,
+        "peak_rss_kib": 130763484,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-xsa-build-eutfiy_w.endpoints.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-xsa-build-eutfiy_w.endpoints.time"
+      },
+      {
+        "stage": "gate-heads",
+        "returncode": 0,
+        "wall_seconds": 6.7260010309983045,
+        "peak_rss_kib": 0,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-xsa-build-eutfiy_w.gate-heads.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-xsa-build-eutfiy_w.gate-heads.time"
+      },
+      {
+        "stage": "gate-runs-tails",
+        "returncode": 0,
+        "wall_seconds": 14.535812653019093,
+        "peak_rss_kib": 0,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-xsa-build-eutfiy_w.gate-runs-tails.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-xsa-build-eutfiy_w.gate-runs-tails.time"
+      },
+      {
+        "stage": "slim",
+        "returncode": 0,
+        "wall_seconds": 8829.206130563049,
+        "peak_rss_kib": 69905360,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-xsa-build-eutfiy_w.slim.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-xsa-build-eutfiy_w.slim.time"
+      },
+      {
+        "stage": "sweep",
+        "returncode": 0,
+        "wall_seconds": 212.88180695893243,
+        "peak_rss_kib": 4096,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-xsa-build-eutfiy_w.sweep.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-xsa-build-eutfiy_w.sweep.time"
+      },
+      {
+        "stage": "write",
+        "returncode": 0,
+        "wall_seconds": 489.77285200497136,
+        "peak_rss_kib": 12711936,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-xsa-build-eutfiy_w.write.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-xsa-build-eutfiy_w.write.time"
+      },
+      {
+        "stage": "validate",
+        "returncode": 0,
+        "wall_seconds": 138.22916871798225,
+        "peak_rss_kib": 2048,
+        "log": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-xsa-build-eutfiy_w.validate.log",
+        "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/k10-xsa-build-eutfiy_w.validate.time"
+      }
+    ],
+    "frame": {
+      "path": "/mnt/nvme3n1/erikg/sxgc-k10sep/from-zero-p_fwd37s/k10.sxi",
+      "bytes": 33961712446,
+      "n": 30151407545,
+      "k": 1,
+      "r": 1859825862,
+      "members": [
+        {
+          "id": 1,
+          "codec": 1,
+          "offset": 264,
+          "bytes": 9299131358,
+          "count": 1859825862,
+          "crc32": 3524134411
+        },
+        {
+          "id": 2,
+          "codec": 2,
+          "offset": 9299131624,
+          "bytes": 8136738161,
+          "count": 1859825862,
+          "crc32": 657515360
+        },
+        {
+          "id": 3,
+          "codec": 3,
+          "offset": 17435869792,
+          "bytes": 14878606896,
+          "count": 1859825862,
+          "crc32": 4293054051
+        },
+        {
+          "id": 4,
+          "codec": 4,
+          "offset": 32314476688,
+          "bytes": 12,
+          "count": 0,
+          "crc32": 822617187
+        },
+        {
+          "id": 5,
+          "codec": 5,
+          "offset": 32314476704,
+          "bytes": 1647235742,
+          "count": 1627067257,
+          "crc32": 1012952230
+        }
+      ]
+    },
+    "chi": 1627067257
+  }
+]

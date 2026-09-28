@@ -1,0 +1,5 @@
+xsa build: work=/tmp/k10-endpoints-debug/separator/xsa-build-wc_zlnlh log=/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/separator/sep-fasta-xsa-build-wc_zlnlh.jsonl
+prepare-fasta: record=1 name=0 sequence_bytes=666 collection_bytes=667
+prepare-fasta: record=2 name=1 sequence_bytes=667 collection_bytes=1335
+prepare-fasta: record=3 name=2 sequence_bytes=667 collection_bytes=2003
+{"sxi": "/tmp/k10-endpoints-debug/separator/sep-fasta.sxi", "chi": 1343, "work": "/tmp/k10-endpoints-debug/separator/xsa-build-wc_zlnlh", "log": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/separator/sep-fasta-xsa-build-wc_zlnlh.jsonl"}

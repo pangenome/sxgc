@@ -1,0 +1,4 @@
+{"padding_boundary_checks": 7, "bad": 0}
+{"endpoint_cases": 2214, "repaired": 1436, "bad": 0}
+{"refusal_n": 2000000001, "raw_runs": 6, "rlebwt_bytes": 976, "wall_seconds": 0.0024783830158412457, "stderr": "PFP_TERMINAL byte=0x41 source=argument raw_n=2000000011 raw_r=6\nCYCLIC_SEAM_REPAIR terminal=0x41 predecessors_before_zero=999999999\nCYCLIC_SEAM_REFUSED class_size=2000000000 limit=1000 policy=max(1000,raw_r/1000); no O(n) fallback\nFATAL: cyclic seam repair exceeds compressed-work policy; no O(n) fallback\n"}
+{"dense_witness_and_aggregate_checks": 74, "bad": 0}

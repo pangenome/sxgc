@@ -1,0 +1,3 @@
+xsa build: work=/tmp/k10-endpoints-debug/separator-fixed-tools/xsa-build-t8eyqkus log=/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/separator-fixed-tools/reserved-fastq-xsa-build-t8eyqkus.jsonl
+xsa build: fastq record 1 sequence: corpus contract: reserved separator 0x1E must never appear in sequence content; no final SXI published
+xsa: error: build: pipeline failed: exit status: 1

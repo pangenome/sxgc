@@ -16,36 +16,10 @@ using namespace sxi;
 struct Run { U c,len,h,t; };
 struct Source {
  std::string prefix; U n,r,terminal;
- void padding_check(bool ok,const char* site,U row,U c,U len,U head,U tail) const {
-  if(ok)return;
-  fprintf(stderr,"PFP_PADDING_REFUSED site=%s row=%llu char=0x%02llx len=%llu head=%llu tail=%llu terminal=0x%02llx\n",site,(unsigned long long)row,(unsigned long long)c,(unsigned long long)len,(unsigned long long)head,(unsigned long long)tail,(unsigned long long)terminal);
-  throw std::runtime_error("unsupported PFP padding boundary");
- }
  Source(const std::string& p,U last):prefix(p),terminal(last) {
   std::ifstream meta(p+".rlebwt.meta",std::ios::binary);check(bool(meta),"open RLE metadata");n=integer(meta);r=integer(meta);
   check(n>10&&r,"empty RLE");
   for(auto ext:{".ssa",".ssa_t"}){std::ifstream f(p+ext,std::ios::binary);check(bool(f)&&size(f)==8+8*r&&integer(f)==r,"endpoint count/size mismatch");}
-  // Row zero is SA=n-10 (the padding suffix), so its BWT byte is
-  // T.back(). Infer it for legacy callers instead of assuming newline.
-  std::ifstream b(p+".rlebwt",std::ios::binary),h(p+".ssa",std::ios::binary),t(p+".ssa_t",std::ios::binary);
-  U word=integer(b,4);integer(h);integer(t);U head=integer(h),tail=integer(t);
-  if(terminal==INF)terminal=word&255;
-  padding_check(word==(terminal|U(1)<<8)&&head==n-10&&tail==n-10&&terminal>=6&&terminal<128,
-                "terminal-row",0,word&255,(word>>8)&0x7fffff,head,tail);
-  fprintf(stderr,"PFP_TERMINAL byte=0x%02llx source=%s raw_n=%llu raw_r=%llu\n",(unsigned long long)terminal,last==INF?"padding-row":"argument",(unsigned long long)n,(unsigned long long)r);
- }
- Run trim_padding(Run v,U row) const {
-  if(row>=10)return v;
-  padding_check(row==0 ? (v.c==terminal&&v.len==1&&v.h==n-10&&v.t==n-10) : v.c==2,
-                "prefix",row,v.c,v.len,v.h,v.t);
-  U take=std::min(U(10)-row,v.len);v.len-=take;
-  if(v.len) {
-   // SA=0 may share the dollar run ending at row 11. A dollar run
-   // ending exactly at row 10 is equally valid and leaves no row.
-   padding_check(v.c==2&&v.len==1&&v.t==0,"straddle",row,v.c,v.len+take,v.h,v.t);
-   v.h=0;
-  }
-  return v;
  }
  bool certify_seam() {
   // After deleting the first w rows, the order is ordinary suffix order of T.
@@ -59,8 +33,13 @@ struct Source {
    do {word=integer(b,4);if(len)check(c==(word&255),"RLE continuation character");c=word&255;len+=(word>>8)&0x7fffff;}while(word>>31);
    U head=integer(h),tail=integer(t),rawLen=len;
    check(len&&len<=n-rows,"RLE length");
-   Run v=trim_padding({c,len,head,tail},rows);len=v.len;head=v.h;
-   if(len) {
+   if(rows<10&&rows+len>10) {
+    // SA=0 can share the final padding dollar run. Its single remaining
+    // row is known exactly, without resolving an interior SA sample.
+    check(c==2&&rows+len==11&&tail==0,"unsupported PFP padding boundary");
+    len=1;head=0;
+   }
+   if(rows+rawLen>10) {
     if(c==2) {
      check(len==1&&head==0&&tail==0,"invalid SA-zero dollar row");
      if(before)fprintf(stderr,"CYCLIC_SEAM_REPAIR terminal=0x%02llx predecessors_before_zero=%llu\n",(unsigned long long)terminal,(unsigned long long)before);
@@ -76,27 +55,32 @@ struct Source {
  }
  void scan(const std::function<void(Run)>& emit) {
   std::ifstream b(prefix+".rlebwt",std::ios::binary),h(prefix+".ssa",std::ios::binary),t(prefix+".ssa_t",std::ios::binary);
-  integer(h);integer(t);U rows=0;Run pending{};bool have=false;
+  integer(h);integer(t);U rows=0,skip=10;Run pending{};bool have=false;
   for(U i=0;i<r;i++) {
    Run v{};U word;do{word=integer(b,4);if(v.len)check(v.c==(word&255),"RLE continuation character");v.c=word&255;v.len+=(word>>8)&0x7fffff;}while(word>>31);
-   v.h=integer(h);v.t=integer(t);check(v.len&&v.len<=n-rows,"RLE length");
-   U rawLen=v.len;v=trim_padding(v,rows);rows+=rawLen;if(!v.len)continue;
+   v.h=integer(h);v.t=integer(t);check(v.len&&v.len<=n-rows,"RLE length");rows+=v.len;
+   if(skip){
+    check(v.c==2||v.c==terminal,"unsupported PFP padding boundary");
+    U take=std::min(skip,v.len);skip-=take;v.len-=take;
+    if(!v.len)continue;
+    check(v.c==2&&v.len==1&&v.t==0,"unsupported PFP padding boundary");v.h=0;
+   }
    check(v.h<n-10&&v.t<n-10,"endpoint outside normalized text");
    if(v.c==2)v.c=terminal;
    check(v.c>=6&&v.c<128,"unsupported text alphabet");
    if(have&&pending.c==v.c){pending.len+=v.len;pending.t=v.t;}
    else {if(have)emit(pending);pending=v;have=true;}
   }
-  check(rows==n&&b.peek()==EOF,"RLE metadata/trailing bytes mismatch");if(have)emit(pending);
+  check(rows==n&&!skip&&b.peek()==EOF,"RLE metadata/trailing bytes mismatch");if(have)emit(pending);
  }
 };
 #include "seam_repair.hpp"
 void number(std::ostream& f,U x,unsigned bytes=8){unsigned char b[8];put(b,x,bytes);f.write((char*)b,bytes);check(bool(f),"write endpoint adapter");}
 int main(int argc,char**argv){try{
  check(argc==4||argc==5,"usage: rpfbwt_endpoints PREFIX OUT.ri4 OUT.head_sa [TERMINAL_HEX]");
- U terminal=INF;
+ U terminal=10;
  if(argc==5){std::string arg(argv[4]);size_t used=0;terminal=std::stoul(arg,&used,16);check(used==arg.size()&&terminal>=6&&terminal<128,"unsupported terminal byte");}
- Source s(argv[1],terminal);terminal=s.terminal;bool certified=s.certify_seam();
+ Source s(argv[1],terminal);bool certified=s.certify_seam();
  SeamRepair repair(s,certified);
  auto scan=[&](const std::function<void(Run)>& emit){repair.scan(emit);};
  U r=0,k=0,n=0;std::array<U,256> totals{};

@@ -1,0 +1,7 @@
+Loaded archive with 1 samples
+Sample names: ["tiny"]
+[1/1] sample tiny: streamed 20001 bytes, 1 contigs
+TOTAL 20001
+revlines collection: 20001 bytes, 1 strings
+text: /tmp/k10-endpoints-debug/separator-fixed-tools/xsa-build-u31x4kt8/collection.txt
+names: /tmp/k10-endpoints-debug/separator-fixed-tools/xsa-build-u31x4kt8/collection.txt.names.tsv

@@ -78,6 +78,28 @@ def main():
     work, tools = pathlib.Path(a.work), pathlib.Path(a.tools)
     work.mkdir(parents=True, exist_ok=True)
     prefix, ri, heads = work/'parse', work/'out.ri4', work/'out.heads'
+    # Exercise both padding shapes with the legacy omitted-terminal call.
+    # In particular, reserved-0x1E input must never silently default to LF.
+    for text, straddle in [(b'AB', True), (b'GATTACA\x1e', False), (b'GATTACA\n', False)]:
+        put_frame(prefix, text)
+        raw = pathlib.Path(str(prefix)+'.rlebwt').read_bytes()
+        assert ((struct.unpack_from('<I', raw, 4)[0] >> 8) == 10) == straddle
+        result = subprocess.run([str(tools/'rpfbwt_endpoints'), str(prefix), str(ri), str(heads)], capture_output=True)
+        assert result.returncode == 0, result.stderr
+        assert read_frame(ri, heads) == cyclic_frame(text)[2]
+        ri.unlink(); heads.unlink()
+        result = subprocess.run([str(tools/'rpfbwt_endpoints'), str(prefix), str(ri), str(heads), '43'], capture_output=True)
+        assert result.returncode != 0 and b'PFP_PADDING_REFUSED site=terminal-row' in result.stderr
+        assert not ri.exists() and not heads.exists()
+    # A malformed padding run must refuse before output creation.
+    put_frame(prefix, b'AB')
+    raw = bytearray(pathlib.Path(str(prefix)+'.rlebwt').read_bytes())
+    struct.pack_into('<I', raw, 4, 2 | 11 << 8)
+    pathlib.Path(str(prefix)+'.rlebwt').write_bytes(raw)
+    result = subprocess.run([str(tools/'rpfbwt_endpoints'), str(prefix), str(ri), str(heads)], capture_output=True)
+    assert result.returncode != 0 and b'PFP_PADDING_REFUSED site=straddle' in result.stderr
+    assert not ri.exists() and not heads.exists()
+    print(json.dumps(dict(padding_boundary_checks=7, bad=0)), flush=True)
     count = 0
     repaired = 0
     fixtures = [bytes(t) for n in range(1, 10) for t in itertools.product(b'AB', repeat=n)]

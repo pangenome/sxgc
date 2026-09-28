@@ -1,0 +1,5 @@
+{
+  "XSA_TOOLS": "/tmp/k10-endpoints-debug/tools",
+  "XSA_PIPELINE": "/tmp/sxgc-laneV/bit6/sxi_pipeline.py",
+  "note": "Both fresh runs pin these tools and pipeline. The legacy /tmp/laneV/tools installation was not overwritten."
+}

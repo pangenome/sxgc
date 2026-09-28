@@ -1758,3 +1758,21 @@ mask + features); pointer-attention only if ablation demands it.
 ## The floor is FAMILY-SPECIFIC; the general rung and the chi-vs-delta*log(n) linkage
 ## remain the open frontier (recon: equivalence up to logs). Proof-engineering notes
 ## retained (omega nonlinear-atom limits, typed Nat.succ_mul bridges, getElem transport).
+
+## K10 BORN FROM ZERO - PUBLISHED (astra lane, supervisor-verified). k10.sxi at
+## /mnt/nvme3n1/erikg/sxgc-k10sep/from-zero-p_fwd37s/ (33.96 GB): n=30,151,407,545,
+## R=1,859,825,862, CANONICAL chi = 1,627,067,257 (embedded, delta-coded to 1.65 GB).
+## TWO complete independent fresh builds (A control, B gated); complete publications
+## byte-identical. Root cause of the endpoints failure: the pipeline INVOCATION left the
+## adapter's terminal arg at its stale 0x0A default while the canonical text's row-0 char
+## is 0x1E (supervisor static analysis had the right check, wrong level - live
+## instrumentation found it at row 0). Adapter now validates/infers the terminal +
+## handles clean and straddled padding boundaries with refusal diagnostics; 7 new
+## regression checks; all prior gates green (2,214 cyclic cases, 47 separator, yeast +
+## yeast235 byte-equal to accepted controls). k10 seam: 7 classes / 1,161 rows repaired
+## (r-space at 1.86e9 runs). Fresh-build peak RSS 133.9 GB (THE 466 PARAMETER).
+## MEASURED DELTA: canonical 1,627,067,257 - historical BCR 1,627,063,183 = +4,074
+## (O(k)-scale for k=865; same-frame witness attribution UNPROVED - recorded honestly;
+## the boundary-delta identity theorem remains the theory's open answer).
+## NOTE: k10.sxi records k=1 (byte-strings) for --text raw input - correct per pinned
+## semantics (no names sidecar); AGC/fasta/fastq paths record named records.

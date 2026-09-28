@@ -1,0 +1,28 @@
+{
+  "padding_checks": 7,
+  "cyclic_endpoint_cases": 2214,
+  "repaired_cases": 1436,
+  "dense_witness_checks": 74,
+  "separator_checks": 47,
+  "yeast_endpoint_bytes": "identical",
+  "yeast235_endpoint_bytes": "identical",
+  "retained_inputs_unchanged": true,
+  "k10_debug": "PASS (debug only; no retained downstream stages)",
+  "from_zero": "PASS",
+  "external_review": "pending",
+  "k10_seam_classes": 7,
+  "k10_seam_rows": 1161,
+  "k10_discovery_steps": 8,
+  "k10_debug_n": 30151407545,
+  "k10_debug_r": 1859825862,
+  "k10_debug_sizes": {
+    "fresh.ri4": 17435869551,
+    "fresh.head_sa": 14878606896
+  },
+  "run_A_chi": 1627067257,
+  "run_B_endpoint_byte_gates": "PASS",
+  "published": "/mnt/nvme3n1/erikg/sxgc-k10sep/from-zero-p_fwd37s/k10.sxi",
+  "canonical_chi": 1627067257,
+  "historical_bcr_delta": 4074,
+  "publications_byte_identical": true
+}

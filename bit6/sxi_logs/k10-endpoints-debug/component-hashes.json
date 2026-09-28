@@ -1,0 +1,13 @@
+{
+  "bit6/rpfbwt_endpoints.cpp": "763d9dd920095ba8a6ac5b20ce8091873a82641368bb92aabdf52fa092d94cc0",
+  "bit6/seam_repair.hpp": "d9bb8957d676058fddddd8ed09623f64af9e47fb292e64592a500ecbcc7fa368",
+  "bit6/sxi_pipeline.py": "fef4d51f8f94909efdffb324d07940806c6716ec18f74f0b2962097fa6bb7113",
+  "tools/build_rpfbwt_tap.sh": "a935920c80f7cc0d387a66b34a432592cca0553f1f1e34b8d1f73ea5f0ba6def",
+  "/tmp/k10-endpoints-debug/tools/rpfbwt_endpoints": "750712550feb78d165b6007c569f054f50c9e90fa789e6e4bf0fad5209649312",
+  "/tmp/k10-endpoints-debug/tools/slim_dump": "a5e7831e440c4b0ff4d11ed6febcf68a1475be8b5b9b912315b4ea2bc7de3830",
+  "/tmp/k10-endpoints-debug/tools/agc2flat": "eb303819c9d8298bf267b4b8f9a9402471e6fc58e25fa58e9f237b242136bd1a",
+  "/tmp/k10-endpoints-debug/tools/sxi_write": "d464087f1f94afa53658a14bded05a9c205db870439c1221c9478b61570ff012",
+  "/tmp/rpfbwt-sxgc/build-sxgc/rpfbwt": "588ea73817f6513dc1467161f93fc550e2968a899aeeba853657f7934a649242",
+  "xsa/target/release/xsa": "3f40d5ed464aa581cafd8e66917ef49883087554eb5e6fa58d9fc9e046e48697",
+  "/tmp/k10-endpoints-debug/tools/xsa": "3f40d5ed464aa581cafd8e66917ef49883087554eb5e6fa58d9fc9e046e48697"
+}

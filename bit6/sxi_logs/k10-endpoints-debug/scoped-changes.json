@@ -1,0 +1,10 @@
+{
+  "production": [
+    "bit6/rpfbwt_endpoints.cpp"
+  ],
+  "tests": [
+    "bit6/test_seam_repair.py"
+  ],
+  "artifacts": "bit6/sxi_logs/k10-endpoints-debug/",
+  "baseline_note": "Production baseline copied before editing; test baseline reconstructed by reversing exactly this task's inserted padding-test block. Existing lane changes are not included in fix.diff."
+}

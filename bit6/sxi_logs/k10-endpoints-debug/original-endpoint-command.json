@@ -1,0 +1,21 @@
+[
+  {
+    "stage": "endpoints",
+    "command": [
+      "/tmp/laneV/tools/rpfbwt_endpoints",
+      "/mnt/nvme3n1/erikg/sxgc-k10sep/run1/xsa-build-u_l0q_bd/parse",
+      "/mnt/nvme3n1/erikg/sxgc-k10sep/run1/xsa-build-u_l0q_bd/fresh.ri4",
+      "/mnt/nvme3n1/erikg/sxgc-k10sep/run1/xsa-build-u_l0q_bd/fresh.head_sa"
+    ],
+    "work": "/mnt/nvme3n1/erikg/sxgc-k10sep/run1/xsa-build-u_l0q_bd",
+    "start": 1790537841.0246434
+  },
+  {
+    "stage": "endpoints",
+    "returncode": 1,
+    "wall_seconds": 0.006483249017037451,
+    "peak_rss_kib": 2048,
+    "log": "/home/erikg/sxgc/bit6/sxi_logs/k10_control-xsa-build-u_l0q_bd.endpoints.log",
+    "timing": "/home/erikg/sxgc/bit6/sxi_logs/k10_control-xsa-build-u_l0q_bd.endpoints.time"
+  }
+]

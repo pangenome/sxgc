@@ -1,0 +1,3 @@
+Loaded archive with 1 samples
+Sample names: ["fixture"]
+Error: corpus contract: reserved separator 0x1E must never appear in sequence content

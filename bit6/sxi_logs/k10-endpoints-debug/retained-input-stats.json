@@ -1,0 +1,34 @@
+{
+  "/mnt/nvme3n1/erikg/sxgc-k10sep/run1/xsa-build-u_l0q_bd/parse.parse": {
+    "size": 1334127012,
+    "mtime_ns": 1790529256209636946
+  },
+  "/mnt/nvme3n1/erikg/sxgc-k10sep/run1/xsa-build-u_l0q_bd/parse.dict": {
+    "size": 5483754727,
+    "mtime_ns": 1790529277351635476
+  },
+  "/mnt/nvme3n1/erikg/sxgc-k10sep/run1/xsa-build-u_l0q_bd/parse.parse.parse": {
+    "size": 116739008,
+    "mtime_ns": 1790529379462628381
+  },
+  "/mnt/nvme3n1/erikg/sxgc-k10sep/run1/xsa-build-u_l0q_bd/parse.parse.dict": {
+    "size": 994598968,
+    "mtime_ns": 1790529383544628097
+  },
+  "/mnt/nvme3n1/erikg/sxgc-k10sep/run1/xsa-build-u_l0q_bd/parse.rlebwt": {
+    "size": 7439303448,
+    "mtime_ns": 1790535620185194709
+  },
+  "/mnt/nvme3n1/erikg/sxgc-k10sep/run1/xsa-build-u_l0q_bd/parse.rlebwt.meta": {
+    "size": 4112,
+    "mtime_ns": 1790535620186194709
+  },
+  "/mnt/nvme3n1/erikg/sxgc-k10sep/run1/xsa-build-u_l0q_bd/parse.ssa": {
+    "size": 14878606904,
+    "mtime_ns": 1790537790729043876
+  },
+  "/mnt/nvme3n1/erikg/sxgc-k10sep/run1/xsa-build-u_l0q_bd/parse.ssa_t": {
+    "size": 14878606904,
+    "mtime_ns": 1790537811309042446
+  }
+}

@@ -1,0 +1,2 @@
+{"stage": "prepare-fastq", "source": "/tmp/k10-endpoints-debug/separator-fixed-tools/reserved.fastq", "work": "/tmp/k10-endpoints-debug/separator-fixed-tools/xsa-build-t8eyqkus", "start": 1790539768.1293707}
+{"stage": "prepare-fastq", "returncode": 1, "error": "fastq record 1 sequence: corpus contract: reserved separator 0x1E must never appear in sequence content"}

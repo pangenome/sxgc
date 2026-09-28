@@ -1,0 +1,7 @@
+{
+  "canonical_chi": 1627067257,
+  "historical_bcr_chi": 1627063183,
+  "delta": 4074,
+  "identity": "1627067257 = 1627063183 + (4074)",
+  "interpretation": "Measured cardinality difference across conventions. This arithmetic identity is not a same-frame BCR witness-set equality or a proof that only separator-boundary witnesses changed."
+}

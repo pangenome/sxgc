@@ -1,0 +1,2 @@
+xsa build: work=/tmp/k10-endpoints-debug/separator-fixed-tools/xsa-build-i2ym4mga log=/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/separator-fixed-tools/sep-text-xsa-build-i2ym4mga.jsonl
+{"sxi": "/tmp/k10-endpoints-debug/separator-fixed-tools/sep-text.sxi", "chi": 1343, "work": "/tmp/k10-endpoints-debug/separator-fixed-tools/xsa-build-i2ym4mga", "log": "/tmp/sxgc-laneV/bit6/sxi_logs/k10-endpoints-debug/separator-fixed-tools/sep-text-xsa-build-i2ym4mga.jsonl"}
