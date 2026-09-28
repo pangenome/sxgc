@@ -1,0 +1,22 @@
+{
+  "status": "PASS",
+  "work": "/tmp/xsa-cargo-gate-xeniag45",
+  "xsa": "/tmp/xsa-cargo-gate-xeniag45/bin/xsa",
+  "publication": {
+    "sxi": "/tmp/xsa-cargo-gate-xeniag45/battery.sxi",
+    "chi": 13553,
+    "work": "/tmp/xsa-cargo-gate-xeniag45/xsa-build-n993fsts",
+    "log": "/tmp/sxgc-laneV/bit6/sxi_logs/cargo-vendor/install-gate/battery-xsa-build-n993fsts.jsonl"
+  },
+  "zero_xsa_environment": true,
+  "relocated_binary": true,
+  "source_sample_audit": 100,
+  "drift_rejected_before_scratch": true,
+  "manifest_reblessing_rejected": true,
+  "development_override_checked": true,
+  "package": {
+    "name": "xsa",
+    "version": "0.1.0"
+  },
+  "manifest_sha256": "38cb508badc33a6ce5b982be999c5bcbaed3bcf0b732bc5b7cba868e73ec940d"
+}

@@ -1,0 +1,37 @@
+PASS: four tiny pilot Phi inversions; front-end mode fails before file access
+PHI_META n=7 intervals=7 offset=58 bits_per_interval=7 image_bytes=168 threads=2
+PHI_PHASE decode-images elapsed=0.000232 peak_kib=12288
+PHI_PHASE sort-images elapsed=0.000254 peak_kib=12288
+PHI_PHASE validate-permutation elapsed=0.000257 peak_kib=12288
+RI4_META n=7 runs=5 sample_width=3
+PHI_PROGRESS heads=5/5
+PHI_PHASE query elapsed=0.005150 peak_kib=12288
+PHI_PHASE complete elapsed=0.005174 peak_kib=12288
+PHI_PASS all_values_in_range=1 permutation_validated=1 lf_steps=0 heads=5
+PHI_META n=6 intervals=6 offset=58 bits_per_interval=7 image_bytes=144 threads=2
+PHI_PHASE decode-images elapsed=0.000181 peak_kib=12288
+PHI_PHASE sort-images elapsed=0.000203 peak_kib=12288
+PHI_PHASE validate-permutation elapsed=0.000207 peak_kib=12288
+RI4_META n=6 runs=2 sample_width=3
+PHI_PROGRESS heads=2/2
+PHI_PHASE query elapsed=0.005043 peak_kib=12288
+PHI_PHASE complete elapsed=0.005068 peak_kib=12288
+PHI_PASS all_values_in_range=1 permutation_validated=1 lf_steps=0 heads=2
+PHI_META n=1 intervals=1 offset=58 bits_per_interval=3 image_bytes=24 threads=2
+PHI_PHASE decode-images elapsed=0.000123 peak_kib=12288
+PHI_PHASE sort-images elapsed=0.000145 peak_kib=12288
+PHI_PHASE validate-permutation elapsed=0.000147 peak_kib=12288
+RI4_META n=1 runs=1 sample_width=1
+PHI_PROGRESS heads=1/1
+PHI_PHASE query elapsed=0.004376 peak_kib=12288
+PHI_PHASE complete elapsed=0.004400 peak_kib=12288
+PHI_PASS all_values_in_range=1 permutation_validated=1 lf_steps=0 heads=1
+PHI_META n=9 intervals=9 offset=58 bits_per_interval=9 image_bytes=216 threads=2
+PHI_PHASE decode-images elapsed=0.000191 peak_kib=12288
+PHI_PHASE sort-images elapsed=0.000214 peak_kib=12288
+PHI_PHASE validate-permutation elapsed=0.000218 peak_kib=12288
+RI4_META n=9 runs=5 sample_width=4
+PHI_PROGRESS heads=5/5
+PHI_PHASE query elapsed=0.005572 peak_kib=12288
+PHI_PHASE complete elapsed=0.005596 peak_kib=12288
+PHI_PASS all_values_in_range=1 permutation_validated=1 lf_steps=0 heads=5

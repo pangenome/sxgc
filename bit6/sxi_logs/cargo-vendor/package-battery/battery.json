@@ -1,0 +1,65 @@
+[
+  {
+    "name": "duplicates-600k",
+    "status": "PASS",
+    "aggregate_bytes_equal": true,
+    "sxi": "/tmp/xsa-cargo-battery-rk2udmyr/duplicates-600k.sxi",
+    "chi": 13004,
+    "work": "/tmp/xsa-cargo-battery-rk2udmyr/xsa-build-rgky4ndb",
+    "log": "/tmp/sxgc-laneV/bit6/sxi_logs/cargo-vendor/package-battery/duplicates-600k-xsa-build-rgky4ndb.jsonl"
+  },
+  {
+    "name": "random-4-2k",
+    "status": "PASS",
+    "aggregate_bytes_equal": true,
+    "sxi": "/tmp/xsa-cargo-battery-rk2udmyr/random-4-2k.sxi",
+    "chi": 1307,
+    "work": "/tmp/xsa-cargo-battery-rk2udmyr/xsa-build-qzy0pz8k",
+    "log": "/tmp/sxgc-laneV/bit6/sxi_logs/cargo-vendor/package-battery/random-4-2k-xsa-build-qzy0pz8k.jsonl"
+  },
+  {
+    "name": "random-4-20k",
+    "status": "PASS",
+    "aggregate_bytes_equal": true,
+    "sxi": "/tmp/xsa-cargo-battery-rk2udmyr/random-4-20k.sxi",
+    "chi": 13423,
+    "work": "/tmp/xsa-cargo-battery-rk2udmyr/xsa-build-wsq77xom",
+    "log": "/tmp/sxgc-laneV/bit6/sxi_logs/cargo-vendor/package-battery/random-4-20k-xsa-build-wsq77xom.jsonl"
+  },
+  {
+    "name": "random-bin-20k",
+    "status": "PASS",
+    "aggregate_bytes_equal": true,
+    "sxi": "/tmp/xsa-cargo-battery-rk2udmyr/random-bin-20k.sxi",
+    "chi": 9653,
+    "work": "/tmp/xsa-cargo-battery-rk2udmyr/xsa-build-0bmazt0a",
+    "log": "/tmp/sxgc-laneV/bit6/sxi_logs/cargo-vendor/package-battery/random-bin-20k-xsa-build-0bmazt0a.jsonl"
+  },
+  {
+    "name": "random-4-200k",
+    "status": "PASS",
+    "aggregate_bytes_equal": true,
+    "sxi": "/tmp/xsa-cargo-battery-rk2udmyr/random-4-200k.sxi",
+    "chi": 135968,
+    "work": "/tmp/xsa-cargo-battery-rk2udmyr/xsa-build-gadhniqb",
+    "log": "/tmp/sxgc-laneV/bit6/sxi_logs/cargo-vendor/package-battery/random-4-200k-xsa-build-gadhniqb.jsonl"
+  },
+  {
+    "name": "satellite-18k",
+    "status": "PASS",
+    "aggregate_bytes_equal": true,
+    "sxi": "/tmp/xsa-cargo-battery-rk2udmyr/satellite-18k.sxi",
+    "chi": 322,
+    "work": "/tmp/xsa-cargo-battery-rk2udmyr/xsa-build-md1fw_qt",
+    "log": "/tmp/sxgc-laneV/bit6/sxi_logs/cargo-vendor/package-battery/satellite-18k-xsa-build-md1fw_qt.jsonl"
+  },
+  {
+    "name": "HOR-nested",
+    "status": "PASS",
+    "aggregate_bytes_equal": true,
+    "sxi": "/tmp/xsa-cargo-battery-rk2udmyr/HOR-nested.sxi",
+    "chi": 214,
+    "work": "/tmp/xsa-cargo-battery-rk2udmyr/xsa-build-ha7q_ibs",
+    "log": "/tmp/sxgc-laneV/bit6/sxi_logs/cargo-vendor/package-battery/HOR-nested-xsa-build-ha7q_ibs.jsonl"
+  }
+]

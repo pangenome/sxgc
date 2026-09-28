@@ -85,9 +85,32 @@ fn run(args: &[String]) -> Result<(), String> {
     if !input.metadata().map_err(|e| format!("inspect input: {e}"))?.is_file() {
         return Err("input must be a regular file".into());
     }
-    let script = std::env::var_os("XSA_PIPELINE").map(PathBuf::from).unwrap_or_else(||
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../bit6/sxi_pipeline.py"));
+    let bundled = super::bundle::resolve()?;
+    let script = if let Some(script) = std::env::var_os("XSA_PIPELINE") {
+        PathBuf::from(script)
+    } else if std::env::var_os("XSA_TOOLS").is_some_and(|prefix| {
+        std::fs::read(PathBuf::from(prefix).join("MANIFEST.sha256"))
+            .is_ok_and(|bytes| bytes.starts_with(b"# SXI toolset v1"))
+    }) {
+        // Legacy development manifests also bind checkout sources. Locate that
+        // checkout when only XSA_TOOLS was supplied; installed JSON manifests
+        // continue using the embedded pipeline in any working directory.
+        let mut roots = vec![PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")];
+        if let Ok(cwd) = std::env::current_dir() {
+            roots.extend(cwd.ancestors().map(PathBuf::from));
+        }
+        roots.into_iter().map(|root| root.join("bit6/sxi_pipeline.py"))
+            .find(|path| path.is_file()).ok_or(
+                "legacy XSA_TOOLS manifest needs its source checkout; run from that checkout or set XSA_PIPELINE")?
+    } else {
+        bundled.join("bit6/sxi_pipeline.py")
+    };
     let mut command = std::process::Command::new("python3");
+    command.env("XSA_INSTALL_MANIFEST_SHA256", super::bundle::ID)
+        .env("XSA_PACKAGE_VERSION", env!("CARGO_PKG_VERSION"));
+    if std::env::var_os("XSA_TOOLS").is_none() && std::env::var_os("XSA_PIPELINE").is_none() {
+        command.env("XSA_TOOLS", &bundled);
+    }
     command.arg(script).arg(format!("--{}", options.kind)).arg(options.input)
         .arg("--output").arg(options.output).args(options.extra)
         .arg("--xsa").arg(std::env::current_exe().map_err(|e| e.to_string())?);

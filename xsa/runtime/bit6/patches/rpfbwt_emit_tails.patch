@@ -1,0 +1,64 @@
+--- a/include/rpfbwt_algorithm.hpp
++++ b/include/rpfbwt_algorithm.hpp
+@@ -507,6 +507,7 @@
+         pfpds::long_type i = std::get<0>(chunk);
+         
+         std::ofstream out_sa_tmp_fstream(tmp_file_name, std::ios::out | std::ios::binary);
++        std::ofstream out_tail_tmp_fstream(tmp_file_name + ".tails", std::ios::out | std::ios::binary);
+     
+         pfpds::long_type sa_pos_iterator = 0;
+         
+@@ -568,7 +569,10 @@
+                 if (run_heads_bitvector[l_left]) { run_heads_in_range = 1; } // at least
+                 else { run_heads_in_range = run_heads_bitvector.rank(l_right + 1) - run_heads_bitvector.rank(l_left); } ; // include the extremes
+                 
+-                if (run_heads_in_range != 0) // do the whole thing
++                // A tail is immediately before a global head, or is the final row.
++                // Include tail-only ranges; the global vector covers chunk boundaries.
++                bool tail_at_right = (l_right + 1 == l1_n) || run_heads_bitvector[l_right + 1];
++                if (run_heads_in_range != 0 || tail_at_right) // do the whole thing
+                 {
+                     pfpds::long_type sa_values_c = 0; // number of sa values computed in this range
+                     
+@@ -671,6 +675,13 @@
+                                 sa_pos_iterator += 1;
+                             }
+             
++                            // Tap the already computed SA value at every run tail.
++                            pfpds::long_type next_row = l_left + sa_values_c + 1;
++                            if (next_row == l1_n || run_heads_bitvector[next_row])
++                            {
++                                out_tail_tmp_fstream.write((char*)&out_sa_value, sizeof(pfpds::long_type));
++                            }
++
+                             // keep iterating
+                             pfpds::long_type arr_i_c_il = curr.second.first;  // ith array
+                             pfpds::long_type arr_x_c_il = curr.second.second; // index in i-th array
+@@ -698,6 +709,7 @@
+     
+         // close tmp file stream
+         out_sa_tmp_fstream.close();
++        out_tail_tmp_fstream.close();
+     }
+     
+     //------------------------------------------------------------
+@@ -781,6 +793,19 @@
+             out_sa_values << if_sa_chunk.rdbuf();
+         }
+         out_sa_values.close();
++
++        // Parallel tail stream, in the same chunk/run order and count format.
++        std::ofstream out_tail_values(l1_prefix + ".ssa_t", std::ios::out | std::ios::binary);
++        out_tail_values.write((char*) &tot_sa_values, sizeof(tot_sa_values));
++        for (pfpds::long_type i = 0; i < chunks.size(); i++)
++        {
++            std::ifstream if_tail_chunk(sa_chunks_tmp_files[i] + ".tails", std::ios_base::binary);
++            if (if_tail_chunk.peek() != std::ifstream::traits_type::eof())
++            { out_tail_values << if_tail_chunk.rdbuf(); }
++            if_tail_chunk.close();
++            std::remove((sa_chunks_tmp_files[i] + ".tails").c_str());
++        }
++        out_tail_values.close();
+     
+         spdlog::info("Done");
+     }

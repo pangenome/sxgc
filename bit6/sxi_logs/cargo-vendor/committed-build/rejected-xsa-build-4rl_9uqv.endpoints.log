@@ -1,0 +1,4 @@
+PFP_TERMINAL byte=0x0a source=argument raw_n=4012 raw_r=1477
+CYCLIC_SEAM_REPAIR terminal=0x0a predecessors_before_zero=1
+CYCLIC_SEAM_REFUSED discovery_steps=1001 limit=1000 policy=max(1000,raw_r/1000); no O(n) fallback
+FATAL: cyclic seam repair exceeds compressed-work policy; no O(n) fallback

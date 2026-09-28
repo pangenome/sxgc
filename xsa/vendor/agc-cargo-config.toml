@@ -1,0 +1,10 @@
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/ekg/ragc?rev=40e5cad11cab7d4df07a72d6b16d68c2d60b0742"]
+git = "https://github.com/ekg/ragc"
+rev = "40e5cad11cab7d4df07a72d6b16d68c2d60b0742"
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "@VENDOR@"

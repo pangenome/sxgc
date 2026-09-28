@@ -8,7 +8,7 @@ shards*/
 *.txt
 !*.md
 bit6/rlbwt_sampler
-vendor/
+/vendor/
 paper/main.pdf
 *.pdf
 paper/*.log

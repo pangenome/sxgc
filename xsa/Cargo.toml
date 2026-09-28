@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 description = "xsa - chi sa. Suffixient-array tools over r-space artifacts (.ri4, .sA, rlbwt)."
 license = "MIT"
+build = "build.rs"
+include = ["src/**", "runtime/**", "vendor/**", "build.rs", "build_tools.py", "SOURCES.sha256.json", "Cargo.toml", "Cargo.lock", "INSTALL.md"]
 
 [[bin]]
 name = "xsa"
@@ -19,3 +21,5 @@ memmap2 = "0.9"
 serde_json = "1.0"
 tiny_http = "0.12"
 tempfile = "3.23"
+
+sha2 = "0.10"

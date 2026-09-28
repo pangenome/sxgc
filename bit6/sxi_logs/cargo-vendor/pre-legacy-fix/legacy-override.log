@@ -1,0 +1,55 @@
+usage: sxi_pipeline.py [-h]
+                       (--text TEXT | --agc AGC | --fasta FASTA | --fastq FASTQ)
+                       --output OUTPUT [--threads THREADS] [--scratch SCRATCH]
+                       [--log-dir LOG_DIR] [--expect-chi EXPECT_CHI]
+                       [--mode {auto,dna,text}]
+                       [--verify-text-sample VERIFY_TEXT_SAMPLE]
+                       [--expect-heads EXPECT_HEADS] [--expect-ri4 EXPECT_RI4]
+                       [--fifo] [--materialize] [--verbose] [--xsa XSA]
+                       [--manifest MANIFEST] [--allow-drift]
+sxi_pipeline.py: error: tool manifest verification failed:
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:30: duplicate/unknown artifact: 7d3f615e108ccaa68767daaf0b49b9737971dbc5a294fd1c84d0f359dee9e60e  repo/agc2flat/Cargo.lock # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:31: duplicate/unknown artifact: b75196eafc055d6ea31ce233de03f533d7523601afaaa17b380a61a62dbcb222  repo/agc2flat/Cargo.toml # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:32: duplicate/unknown artifact: f5caa15a169f3fd5e80762ad74b214c56012fc6215cd8701226698c6e7bf752e  repo/agc2flat/src/ghost.rs # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:33: duplicate/unknown artifact: 7898adae25f5978012e46f41cd53a8b7ed930b633ee9fb93531b83986bc950f3  repo/agc2flat/src/main.rs # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:34: duplicate/unknown artifact: 9268c245dd5043f558a8f84af85e5de261866cad05389552c4ec5f2e6c47fb6d  repo/bit6/chi_rspace_dump.cpp # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:35: duplicate/unknown artifact: bf4297dee288dbf0eaa6e794c1c1d14820da13e7eaa9e0caf76e70b40b21434b  repo/bit6/patches/pfp_agc.patch # in-repo patch
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:36: duplicate/unknown artifact: 869caf57a886e566b90f922f583f923b02151dd6dce352a06bb3200acec4036e  repo/bit6/patches/ropebwt3-vendored.patch # in-repo patch
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:37: duplicate/unknown artifact: 3b718217ec9280187da2c6db307500facac53543f5bd65f0b8e3701d25a0a4e9  repo/bit6/patches/rpfbwt_emit_tails.patch # in-repo patch
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:38: duplicate/unknown artifact: 22e14ec6a5b7f7dfa557e3bb69492f1e38a665194c933923115144537a0c4064  repo/bit6/patches/teratools-vendored.patch # in-repo patch
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:39: duplicate/unknown artifact: 1ef1f2805ebcc01bef87e51a8de10518b4005d0ac9be7f408491646870f95c85  repo/bit6/pfp_ds_vendor/pfp/dictionary.hpp # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:40: duplicate/unknown artifact: 433fd6c13dbb6706fb047d40d0dedf26f73104ead1f57064196ae97de5d5f4ea  repo/bit6/pfp_ds_vendor/pfp/lce_support.hpp # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:41: duplicate/unknown artifact: 6ab3c235a35190de9e119f056e1e80e85bc7f0f26e1e1f210dbcae9e0bb00bbc  repo/bit6/pfp_ds_vendor/pfp/parse.hpp # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:42: duplicate/unknown artifact: 75b65b69548ec3c4f61ea111fad653c33ae1177be90c7a2a2a65c8e9bef762ea  repo/bit6/pfp_ds_vendor/pfp/pfp.hpp # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:43: duplicate/unknown artifact: 2887a5d6e0ae89c2dab913d69fbe777c0f3d0a224228608a9611fddfda53db64  repo/bit6/pfp_ds_vendor/pfp/sa_support.hpp # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:44: duplicate/unknown artifact: 582835a8da40e1ad2fe16c2ab1da4050ce5f75275486f106dc52a3fbe7c9c92c  repo/bit6/pfp_ds_vendor/pfp/utils.hpp # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:45: duplicate/unknown artifact: a1a257e67a133a1d643c99d463a1412255fd7f5bfa939ba5766d45be5db7d129  repo/bit6/pfp_ds_vendor/pfp/wt.hpp # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:46: duplicate/unknown artifact: b0b48165a8e11869ceeeb97287203456ebfbe0023a5e47554b1ada5b73723c62  repo/bit6/pfp_index_build.cpp # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:47: duplicate/unknown artifact: 8ac4a15ddc6cb0b3371976b4fd10d30227e8ba084595dd4abe74768f85bbcb3a  repo/bit6/phi_inverse_heads.cpp # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:48: duplicate/unknown artifact: 70f22ecdbe2db9b40d8d2df952b6183c2476d06450bd6f85bd3888ee5ffff346  repo/bit6/query_brute.cpp # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:49: duplicate/unknown artifact: 69a3bea23a202b8c76c1737c084ca0e0e539322312679b6fbf032ccb6b4032ac  repo/bit6/reader_bench.cpp # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:50: duplicate/unknown artifact: 376045b4ea384d4cae691fb0b440a3dbc68ae39bdbd3cb7d46e733ee066452ac  repo/bit6/ri4_from_rle.cpp # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:51: duplicate/unknown artifact: e456b275978a3ffc63ae4042a6f24075f397b8f4f9056ca53ad83244853671dc  repo/bit6/rl_text_extract.cpp # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:52: duplicate/unknown artifact: 5b64361ac4c82ccd73f5d897eaa04d3e240c4080e2e1a46f483ae336237fed67  repo/bit6/rlbwt_sampler.cpp # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:53: duplicate/unknown artifact: 763d9dd920095ba8a6ac5b20ce8091873a82641368bb92aabdf52fa092d94cc0  repo/bit6/rpfbwt_endpoints.cpp # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:54: duplicate/unknown artifact: b992354bd82e074a844b1e309c3a16a438e3ece7ce9e52f9c597a4d27987edcc  repo/bit6/sa_decode.cpp # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:55: duplicate/unknown artifact: d9bb8957d676058fddddd8ed09623f64af9e47fb292e64592a500ecbcc7fa368  repo/bit6/seam_repair.hpp # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:56: duplicate/unknown artifact: c46fb1113532b82698ee9920d719cb9c255a079e7c9dc44035feab8ffbb3ba19  repo/bit6/slim_lce.hpp # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:57: duplicate/unknown artifact: b3bcfe07923efe9f40073c78b8cbedd88d8e29a69d4459e29257672f4768fb91  repo/bit6/sxi_format.hpp # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:62: duplicate/unknown artifact: 0745f40b7f74e8b76f8c60a653fcc505170c80257ef4e217e1d182022f7272e7  repo/bit6/sxi_text_audit.cpp # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:63: duplicate/unknown artifact: 7cb28c58138066d3def33572df24d2cc864dd9edbdc739c5b264813716b28f05  repo/bit6/sxi_write.cpp # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:64: duplicate/unknown artifact: 06342aca0874c6ac9c114492cac592ac67a611233c1b56f7b2d016398b0b24b5  repo/bit6/teralcp_chi.cpp # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:65: duplicate/unknown artifact: 7bc091d579808224dd3ff61d16a0b986e6f382b4ede9f6312f3c2725dc6a269f  repo/bit6/test_slim_cyclic.cpp # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:66: duplicate/unknown artifact: f76bd73c2e9e9ee15e1f719f6056dbc6953bd2ae19f7118613d3bfb1e324c3a2  repo/tools/build_all.sh # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:67: duplicate/unknown artifact: 5d527ea6bf7c8411a2f79eaab8a7ace413a5a69000be5db0be98f1b93b576b25  repo/tools/build_pfp_agc.sh # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:68: duplicate/unknown artifact: a935920c80f7cc0d387a66b34a432592cca0553f1f1e34b8d1f73ea5f0ba6def  repo/tools/build_rpfbwt_tap.sh # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:69: duplicate/unknown artifact: aeaba3f3e7996a95fb570069076f1c4d179ca015eec6d5267a8f090b469b8860  repo/tools/build_slim_dump.sh # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:70: duplicate/unknown artifact: fb44cca439d9236dff787580add72d1c25f5f1e308aae62d976d085a53eae70f  repo/tools/build_sxi_tools.sh # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:73: duplicate/unknown artifact: 7ed182d17801c0ef939445200a059a266e24f8a7375d00749fa28ef65e3b92a7  repo/xsa/Cargo.lock # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:74: duplicate/unknown artifact: 5c163bd85ed72173c6b0434b6cf0da4e11bbdeb555e1ed41e46e829ebbe46c29  repo/xsa/Cargo.toml # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:75: duplicate/unknown artifact: 46aa4e7576fb27c6b766b39d6ab5ffc8274cc11f24c3a0a0def45f9157b7c419  repo/xsa/src/build.rs # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:76: duplicate/unknown artifact: b1c1c12282330b46f42b5cdb4f1c8811d22d1476d7091bf02e0a9d8c78da86f4  repo/xsa/src/bundle.rs # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:77: duplicate/unknown artifact: a790f365bb5ad09718c1c9ba6f7a9a813e78b979fc5d2c516b89eb007c13f1a2  repo/xsa/src/main.rs # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:78: duplicate/unknown artifact: 259a864c1ce6de50e91aa699263cb43eecc5f43150fb6ffade49556e56113a7a  repo/xsa/src/product.rs # build/runtime source
+/tmp/xsa-cargo-gate-8aq81vxs/legacy/MANIFEST.sha256:79: duplicate/unknown artifact: d410d884b880b4fd5c0ba5d879933e955bbb074f008a3eee85d157e1fa4db1aa  repo/xsa/src/sxi.rs # build/runtime source
+xsa: error: build: pipeline failed: exit status: 2

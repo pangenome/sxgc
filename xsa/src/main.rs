@@ -10,6 +10,7 @@
 
 mod sxi;
 mod build;
+mod bundle;
 mod product;
 
 use std::fs::File;

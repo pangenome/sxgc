@@ -1,0 +1,5 @@
+warning: manifest has no documentation, homepage or repository
+  |
+  = note: see https://doc.rust-lang.org/cargo/reference/manifest.html#package-metadata for more info
+   Packaging xsa v0.1.0 (/tmp/sxgc-laneV/xsa)
+    Packaged 48 files, 10.3MiB (9.5MiB compressed)

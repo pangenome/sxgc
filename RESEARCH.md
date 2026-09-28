@@ -1892,3 +1892,14 @@ mask + features); pointer-attention only if ablation demands it.
 ## strictly weaker demand, so the new bridge subsumes the old). Identified follow-on:
 ## the fam_floor_chi counting analog for continuation oracles (bridge shapes now
 ## identical - mechanical).
+
+## CARGO-VENDOR LANDED (supervisor-verified): `cargo install xsa` = the complete product.
+## 9.92 MB crate (under the crates.io 10MB limit - the lane built a vendor-compaction
+## tool to fit); all 8 stage tools compiled in-crate (xsa/build.rs + build_tools.py);
+## install 5m17s; works with ZERO env vars, source trees, or prebuilt tools; battery
+## 7/7 THROUGH THE INSTALLED BINARY; drift-rejection intact (corruption fails before
+## scratch); installation provenance (SOURCES.sha256.json + embedded stage hashes);
+## relocation-proof. SNAPSHOT CATCH at bank: the lane had snapshotted laneV's polluted
+## agc2flat (FUSE-era ghost/fuser leftovers, never banked) instead of main's native-
+## reader version - caught by test_cargo_sources, fixed by regenerating snapshots from
+## main (package_xsa_sources.py). Interlock amendment re-applied (4th time).

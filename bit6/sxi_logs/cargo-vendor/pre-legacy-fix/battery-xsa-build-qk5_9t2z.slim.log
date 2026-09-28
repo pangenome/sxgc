@@ -1,0 +1,22 @@
+ri4: n=20001 k=1 R=14926
+SLIM_PHASE ri4-load wall=0.000 cumulative=0.000 peak_rss_kib=2048
+SLIM_HEAD_SA bytes=119408 rows=14926 mmap=1
+SLIM_PHASE dict-read wall=0.000 cumulative=0.000 peak_rss_kib=2048
+SLIM_PHASE dict-boundaries wall=0.000 cumulative=0.001 peak_rss_kib=2048
+SLIM_STRING_ENDS count=1 bytes=8 from_parse_dict=1 cyclic=1
+SLIM_PHASE parse+boundaries wall=0.000 cumulative=0.001 peak_rss_kib=2048
+SLIM_PHASE parse-fingerprints wall=0.000 cumulative=0.001 peak_rss_kib=2048
+SLIM_PHASE dict-fingerprints wall=0.000 cumulative=0.001 peak_rss_kib=2048
+SLIM_STRUCT n=20011 P=196 D=22168 phrases=196 parse_bytes=788 bd_bytes=494 bp_bytes=494 dict_resident=0 dict_cache_per_thread=262144 no_SA_ISA_LCP_RMQ=1 no_M_b_bwt_w_wt=1
+SLIM_PHASE lce-build-total wall=0.000 cumulative=0.001 peak_rss_kib=2048
+SLIM_PHASE lf-build wall=0.000 cumulative=0.001 peak_rss_kib=2048
+SLIM_RI runs=74630 starts=119408 samples=27992 lf_capacity=184988
+SLIM_PROGRESS runs=14926/14926 resolve_wall=0.001 lce_wall=0.007 write_wall=0.001 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=0.010 cumulative=0.011 peak_rss_kib=4096
+SLIM_PHASE queries+stream-write-final wall=0.000 cumulative=0.011 peak_rss_kib=4096
+SLIM_FP parse tau=1 bytes=1584 queries=0 verified_symbols=0 hash_probes=0 mean_verified=0.000000000 max_verified=0
+SLIM_FP dict tau=12 bytes=14784 queries=18684 verified_symbols=136340 hash_probes=38 mean_verified=7.297152644 max_verified=16
+SLIM_QUERY_PHASE resolve_wall=0.000729 resolve_peak_kib=4096 lce_wall=0.007398 lce_peak_kib=4096 write_wall=0.000508 write_peak_kib=4096
+SLIM_SEEDS queries=18684 mean_verified_phrases=0.000000000 max_verified_phrases=0 (includes_zero_parse_work_seeds; boundary_included)
+SLIM_RESOLVE walks=0 steps=0 max=0 anchor=0 failed=0 cache_hits=0
+SLIM_BOUNDARY_RESOLVE head_direct=14926 tail_direct=18684 head_lf_steps=0

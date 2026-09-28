@@ -1,0 +1,12 @@
+usage: sxi_pipeline.py [-h]
+                       (--text TEXT | --agc AGC | --fasta FASTA | --fastq FASTQ)
+                       --output OUTPUT [--threads THREADS] [--scratch SCRATCH]
+                       [--log-dir LOG_DIR] [--expect-chi EXPECT_CHI]
+                       [--mode {auto,dna,text}]
+                       [--verify-text-sample VERIFY_TEXT_SAMPLE]
+                       [--expect-heads EXPECT_HEADS] [--expect-ri4 EXPECT_RI4]
+                       [--fifo] [--materialize] [--verbose] [--xsa XSA]
+                       [--manifest MANIFEST] [--allow-drift]
+sxi_pipeline.py: error: tool manifest verification failed:
+/tmp/xsa-cargo-gate-7hq6kj9q/override/MANIFEST.sha256: SHA256 mismatch: sxi_write; expected=91f51c84f0333ae723b0726c91e7fa04420f9765611d7ad4a4b4b516fffd5626; actual=c9435bdc9572056527e0b6877f032a9626fd690a38efe83d193d9da67f905c64; path=/tmp/xsa-cargo-gate-7hq6kj9q/override/sxi_write
+xsa: error: build: pipeline failed: exit status: 2

@@ -1,0 +1,135 @@
+{
+  "criteriaSatisfied": [
+    {
+      "id": "criterion-1",
+      "status": "satisfied",
+      "evidence": "All eight stages built from in-crate pinned sources; offline installation of final packaged crate passes clean-environment and legacy XSA_TOOLS gates."
+    },
+    {
+      "id": "criterion-2",
+      "status": "satisfied",
+      "evidence": "Exact package/source hashes, final gate journals, seven battery comparisons, committed regressions, protected hashes and unstaged-state evidence recorded in bit6/sxi_logs/cargo-vendor."
+    }
+  ],
+  "changedFiles": [
+    "bit6/sxi_pipeline.py",
+    "tools/tool_manifest.py",
+    "tools/package_xsa_sources.py",
+    "tools/vendor_xsa_upstreams.py",
+    "tools/compact_xsa_vendor.py",
+    "bit6/test_cargo_install.py",
+    "bit6/test_cargo_sources.py",
+    "bit6/test_install_manifest.py",
+    "bit6/test_cargo_battery.py",
+    "xsa/Cargo.toml",
+    "xsa/Cargo.lock",
+    "xsa/build.rs",
+    "xsa/build_tools.py",
+    "xsa/src/build.rs",
+    "xsa/src/bundle.rs",
+    "xsa/src/main.rs",
+    "xsa/INSTALL.md",
+    "xsa/SOURCES.sha256.json",
+    "xsa/runtime/LICENSE",
+    "xsa/runtime/agc2flat/Cargo.lock",
+    "xsa/runtime/agc2flat/Cargo.toml.in",
+    "xsa/runtime/agc2flat/src/ghost.rs",
+    "xsa/runtime/agc2flat/src/main.rs",
+    "xsa/runtime/bit6/chi_rspace_dump.cpp",
+    "xsa/runtime/bit6/patches/pfp_agc.patch",
+    "xsa/runtime/bit6/patches/rpfbwt_emit_tails.patch",
+    "xsa/runtime/bit6/pfp_ds_vendor/pfp/dictionary.hpp",
+    "xsa/runtime/bit6/pfp_ds_vendor/pfp/lce_support.hpp",
+    "xsa/runtime/bit6/pfp_ds_vendor/pfp/parse.hpp",
+    "xsa/runtime/bit6/pfp_ds_vendor/pfp/pfp.hpp",
+    "xsa/runtime/bit6/pfp_ds_vendor/pfp/sa_support.hpp",
+    "xsa/runtime/bit6/pfp_ds_vendor/pfp/utils.hpp",
+    "xsa/runtime/bit6/pfp_ds_vendor/pfp/wt.hpp",
+    "xsa/runtime/bit6/phi_inverse_heads.cpp",
+    "xsa/runtime/bit6/rpfbwt_endpoints.cpp",
+    "xsa/runtime/bit6/seam_repair.hpp",
+    "xsa/runtime/bit6/slim_lce.hpp",
+    "xsa/runtime/bit6/sxi_format.hpp",
+    "xsa/runtime/bit6/sxi_gate.py",
+    "xsa/runtime/bit6/sxi_ghost.py",
+    "xsa/runtime/bit6/sxi_pipeline.py",
+    "xsa/runtime/bit6/sxi_sequence_input.py",
+    "xsa/runtime/bit6/sxi_text_audit.cpp",
+    "xsa/runtime/bit6/sxi_write.cpp",
+    "xsa/runtime/tools/build_slim_dump.sh",
+    "xsa/runtime/tools/tool_manifest.py",
+    "xsa/runtime/tools/upstream.lock.json",
+    "xsa/vendor/agc-cargo-config.toml",
+    "xsa/vendor/agc-cargo.tar.xz",
+    "xsa/vendor/native-provenance.json",
+    "xsa/vendor/native.tar.xz",
+    "xsa/vendor/pruned-paths.json",
+    "xsa/vendor/rust-linux-packages.json"
+  ],
+  "testsAddedOrUpdated": [
+    "bit6/test_cargo_install.py",
+    "bit6/test_cargo_sources.py",
+    "bit6/test_install_manifest.py",
+    "bit6/test_cargo_battery.py"
+  ],
+  "commandsRun": [
+    {
+      "command": "BUILD_JOBS=2 cargo build --offline --locked --release --manifest-path xsa/Cargo.toml --target-dir /tmp/sxgc-laneV-cargo-build-02",
+      "result": "passed",
+      "summary": "Fresh source release build; every stage compiled."
+    },
+    {
+      "command": "cargo package --manifest-path xsa/Cargo.toml --allow-dirty --no-verify --offline --locked --target-dir /tmp/sxgc-laneV-package-06",
+      "result": "passed",
+      "summary": "Final crate: 9,922,453 bytes, 48 package files, 42 authenticated source members."
+    },
+    {
+      "command": "BUILD_JOBS=2 cargo install --path /tmp/sxgc-laneV-unpacked-06/xsa-0.1.0 --offline --locked --root /tmp/sxgc-laneV-installed-package-06 --target-dir /tmp/sxgc-laneV-install-package-build-06",
+      "result": "passed",
+      "summary": "Final packaged-source offline install completed in 5m17s; no prebuilt stage tools."
+    },
+    {
+      "command": "python3 bit6/test_cargo_install.py --xsa /tmp/sxgc-laneV-installed-package-06/bin/xsa --log-dir /tmp/sxgc-laneV/bit6/sxi_logs/cargo-vendor/final-no-build-tree-gate",
+      "result": "passed",
+      "summary": "Fresh HOME, no XSA environment, relocated executable, unavailable source/build paths, publication/audit, corrupted tool rejection, manifest tamper rejection and both override formats."
+    },
+    {
+      "command": "python3 bit6/test_cargo_battery.py --xsa /tmp/sxgc-laneV-installed-package-06/bin/xsa --fixtures /tmp/laneY/bat --oracles /tmp/laneQ/pass4 --log-dir /tmp/sxgc-laneV/bit6/sxi_logs/cargo-vendor/final-battery",
+      "result": "passed",
+      "summary": "7/7 publications; exact endpoint and aggregate byte comparisons."
+    },
+    {
+      "command": "python3 bit6/test_sxi_build.py; python3 bit6/test_sxi_format.py; python3 bit6/test_phi_inverse_contract.py (explicit final installed binary/tool paths; see final-*.log)",
+      "result": "passed",
+      "summary": "All three committed regression programs passed."
+    },
+    {
+      "command": "python3 bit6/test_cargo_sources.py; python3 bit6/test_install_manifest.py; python3 bit6/test_tool_manifest.py",
+      "result": "passed",
+      "summary": "16 unit tests passed, including compressed package budget."
+    },
+    {
+      "command": "SHA256 before/after comparison of protected tools-built files; git diff --cached --name-only; git diff --check",
+      "result": "passed",
+      "summary": "Six protected tool hashes unchanged; no staged files or whitespace errors in edited tracked files."
+    }
+  ],
+  "validationOutput": [
+    "Final installation manifest SHA256: b18bb3cd2d15ba1f06626c59f7939bfe7f93a7fd18ae8b2af224a915bb367d88",
+    "Battery chi=13553 for independent 20,001-byte fixture; 100 source samples audited.",
+    "Final package below conservative 10,000,000-byte registry budget.",
+    "All eight bundled executable runtime-library dependencies resolve."
+  ],
+  "residualRisks": [
+    "Supported/tested host is native Linux x86_64 with the documented compiler/runtime prerequisites; outer Cargo registry dependencies need normal cache or connectivity.",
+    "No registry release was published; independent reviewer approval is still required.",
+    "The executing xsa self-hash is observed, not recursively embedded; all bundled stages are bound at build time.",
+    "Before/after hashes cover the six regular files in protected tools-built; protected vendor and sxgc-466 trees/processes were not accessed or modified."
+  ],
+  "noStagedFiles": true,
+  "diffSummary": "In-crate native and Linux Rust dependency snapshots; Cargo stage compilation/embedding; atomic verified extraction; package/version/source/tool provenance; default and development resolution; regressions and installation documentation.",
+  "reviewFindings": [
+    "No implementation blockers found in self-review. Independent review gate remains outstanding."
+  ],
+  "manualNotes": "No commits or staging. Inherited unrelated workspace changes were preserved. contact_supervisor was not exposed by available tools. Earlier failed packaging/header/test-configuration attempts and the pre-fix legacy regression remain in logs; final-package-06 and final-* files are authoritative. Final source/build trees were renamed with -retired suffix to prove runtime independence."
+}

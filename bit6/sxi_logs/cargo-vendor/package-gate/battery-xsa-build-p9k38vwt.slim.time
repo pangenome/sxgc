@@ -1,0 +1,23 @@
+	Command being timed: "/tmp/xsa-cargo-gate-5ttr7x79/home/.cache/xsa/789b2e6c452674ba247b8698d3a15a64199dd14768ba6158827f8bb5d38188ae/slim_dump --slim --resolve-ri4 --dict-stream --ri4 /tmp/xsa-cargo-gate-5ttr7x79/xsa-build-p9k38vwt/fresh.ri4 --head-sa /tmp/xsa-cargo-gate-5ttr7x79/xsa-build-p9k38vwt/fresh.head_sa --parse /tmp/xsa-cargo-gate-5ttr7x79/xsa-build-p9k38vwt/parse -t 2 -o /tmp/xsa-cargo-gate-5ttr7x79/xsa-build-p9k38vwt/fresh.agg"
+	User time (seconds): 0.01
+	System time (seconds): 0.00
+	Percent of CPU this job got: 161%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:00.01
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 4096
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 1006
+	Voluntary context switches: 4
+	Involuntary context switches: 1
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 944
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

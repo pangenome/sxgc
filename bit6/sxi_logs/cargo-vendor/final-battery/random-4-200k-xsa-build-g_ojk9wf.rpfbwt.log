@@ -1,0 +1,44 @@
+[2026-09-28 17:56:37.702] [info] Using 8 bytes for computing SA of the dictionary
+[2026-09-28 17:56:37.716] [info] Using 3 bytes for storing SA of the dictionary
+[2026-09-28 17:56:37.717] [info] Elapsed time (s): 0.015919972
+[2026-09-28 17:56:37.718] [info] Using 2 bytes for DA of the dictionary
+[2026-09-28 17:56:37.720] [info] Elapsed time (s): 0.002290113
+[2026-09-28 17:56:37.720] [info] Using 3 bytes for ISA of the dictionary
+[2026-09-28 17:56:37.723] [info] Elapsed time (s): 0.002602124
+[2026-09-28 17:56:37.723] [info] Using 2 bytes for LCP of the dictionary
+[2026-09-28 17:56:37.730] [info] Elapsed time (s): 0.00700577
+[2026-09-28 17:56:37.730] [info] Using 2 bytes for colex id and inverse colex id array of the dictionary
+[2026-09-28 17:56:37.731] [info] Elapsed time (s): 0.001665852
+[2026-09-28 17:56:37.731] [info] Using 8 bytes for computing SA of the dictionary
+[2026-09-28 17:56:37.731] [info] Using 2 bytes for storing SA of the dictionary
+[2026-09-28 17:56:37.731] [info] Elapsed time (s): 0.00023495
+[2026-09-28 17:56:37.731] [info] Using 1 bytes for DA of the dictionary
+[2026-09-28 17:56:37.732] [info] Elapsed time (s): 2.973e-05
+[2026-09-28 17:56:37.732] [info] Using 2 bytes for ISA of the dictionary
+[2026-09-28 17:56:37.732] [info] Elapsed time (s): 2.5571e-05
+[2026-09-28 17:56:37.732] [info] Using 1 bytes for LCP of the dictionary
+[2026-09-28 17:56:37.732] [info] Elapsed time (s): 3.359e-05
+[2026-09-28 17:56:37.732] [info] Computing RMQ over LCP of dictionary
+[2026-09-28 17:56:37.732] [info] Elapsed time (s): 8.454e-05
+[2026-09-28 17:56:37.732] [info] Using 1 bytes for colex DA of the dictionary
+[2026-09-28 17:56:37.732] [info] Using 1 bytes for colex id and inverse colex id array of the dictionary
+[2026-09-28 17:56:37.732] [info] Elapsed time (s): 0.00034759
+[2026-09-28 17:56:37.732] [info] Using 8 bytes for computing SA of the parsing
+[2026-09-28 17:56:37.732] [info] Using 1 bytes for storing SA of the parsing
+[2026-09-28 17:56:37.732] [info] Elapsed time (s): 1.589e-05
+[2026-09-28 17:56:37.732] [info] Computing b_p
+[2026-09-28 17:56:37.732] [info] Computing b_bwt and M of the parsing
+[2026-09-28 17:56:37.732] [info] Computing inverted list of BWT(P)
+[2026-09-28 17:56:37.732] [info] Using 1 bytes for storing the inverted list of the BWT of the parse
+[2026-09-28 17:56:37.733] [info] Precomputing d lengths
+[2026-09-28 17:56:37.733] [info] Precomputing d lengths
+[2026-09-28 17:56:37.733] [info] Creating v table
+[2026-09-28 17:56:37.733] [info] Creating E arrays
+[2026-09-28 17:56:37.733] [info] Computing chunks for parallel execution. Total input size: 200011. Requested chunks: 1
+[2026-09-28 17:56:37.740] [info] BWT ranges divided in 1 chunks.
+[2026-09-28 17:56:37.761] [info] Chunk 1/1 completed
+[2026-09-28 17:56:37.767] [info] Completed rle string merge
+[2026-09-28 17:56:37.892] [info] Processed: 233 Skipped: 5
+[2026-09-28 17:56:37.892] [info] Chunk 1/1 completed
+[2026-09-28 17:56:37.892] [info] Writing out sa values at run heads
+[2026-09-28 17:56:37.895] [info] Done

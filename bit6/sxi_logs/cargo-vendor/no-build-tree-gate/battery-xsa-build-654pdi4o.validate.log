@@ -1,0 +1,8 @@
+SXI1 version=1 n=20001 k=1 runs=14926 chi_complete=true
+member=1 count=14926 bytes=76678 crc32=ad335720
+member=2 count=14926 bytes=28001 crc32=fd71104b
+member=3 count=14926 bytes=119408 crc32=5ec21e84
+member=4 count=0 bytes=12 crc32=31082463
+member=5 count=13553 bytes=13553 crc32=944b32f3
+chi_complete=true
+chi_delta_ratio=0.125000000

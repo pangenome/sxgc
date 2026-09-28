@@ -1,0 +1,22 @@
+{
+  "status": "PASS",
+  "work": "/tmp/xsa-cargo-gate-7hq6kj9q",
+  "xsa": "/tmp/xsa-cargo-gate-7hq6kj9q/bin/xsa",
+  "publication": {
+    "sxi": "/tmp/xsa-cargo-gate-7hq6kj9q/battery.sxi",
+    "chi": 13553,
+    "work": "/tmp/xsa-cargo-gate-7hq6kj9q/xsa-build-654pdi4o",
+    "log": "/tmp/sxgc-laneV/bit6/sxi_logs/cargo-vendor/no-build-tree-gate/battery-xsa-build-654pdi4o.jsonl"
+  },
+  "zero_xsa_environment": true,
+  "relocated_binary": true,
+  "source_sample_audit": 100,
+  "drift_rejected_before_scratch": true,
+  "manifest_reblessing_rejected": true,
+  "development_override_checked": true,
+  "package": {
+    "name": "xsa",
+    "version": "0.1.0"
+  },
+  "manifest_sha256": "789b2e6c452674ba247b8698d3a15a64199dd14768ba6158827f8bb5d38188ae"
+}
