@@ -1593,3 +1593,36 @@ ordering to be adjudicated by k10's real byte gates.
 ## the perturbation family, full-paper read of the collapse theorem boundary
 ## (does count/locate have a delta-space index? - decides final statement form),
 ## measure delta/gamma on yeast+k10 slices.
+
+## TWO MATH LANES BANKED - the theory ledger advances materially:
+
+### 1. O2_bounded PROVEN OUTRIGHT (laneW, GLM-5.3-high) - A CAPSTONE PILLAR CLOSES.
+Via a strictly stronger stream theorem, scanAux_nodup (lean/SxgcNodup.lean): ANY
+distinct-sa, position-bounded, lcp-bounded triple stream scans Nodup. Ten invariants;
+boundedness used EXACTLY ONCE (blocks re-arm at run-length-1 boundaries - the precise
+spot unbounded streams duplicate). O2 assembles byte-for-byte from it; its own positive-T
+hypothesis is unused (stronger theorem). Axioms clean; Sxgc.lean byte-untouched.
+Capstone parseChi_eq pillar ledger: O1 (grinding, laneX) / O2 (PROVEN) / O3 (clean,
+empirical) / minimality (open). The stale no-proof note in SxgcBounds is superseded by
+O2_bounded_true (measurement owner to annotate).
+
+### 2. Seam-repair IDENTITY HALF PROVEN (lean/SxgcSeam.lean): rot_agree, 
+identity_outside_classes, agreement_with_nonseam, rotation_cmp_total - the frame-level
+core of DERIVATION.md is now theorems. Reordering half statement-locked with measured
+warrant (yeast235: 7 classes, 13,503 rows, byte-identical to the dense oracle).
+
+### 3. Boundary-delta statement-locked (boundaryDelta_bounded) with honest obstruction
+(position-shift + coverage-coupling between the class characterization and insertion).
+
+### 4. THE FLOOR PROGRAM STARTS COMPOSING (laneY, GLM-5.3-high; lean/LowerBound.lean):
+- S1 BRIDGE PROVEN, kernel-checked: emitted_suffixient + chi_le_of_oracle - ANY correct
+  locate-one oracle's emitted positions form a suffixient set, chi <= |emitted|. The
+  first theorem connecting ARBITRARY INDEXES to chi.
+- family_counting PROVEN (pigeonhole, fixed decoder, no classical axioms): pairwise-
+  incompatible correct answers force one index per family member, |F| <= 2^(s+1)-1.
+- ATTACK-1 BATTERY: GO (reformulated honestly) - strict chi-invariance REFUTED and fully
+  characterized (chi = 2k + #{i>=2: p_i >= 1}; junction/marker classes coincide at p=0),
+  but the uniform bound 2k <= chi <= 3k-1 holds on all grids - which is what the floor
+  needs: family_counting + chi_fam_bounds (next Lean target, battery-pre-validated) +
+  marker injectivity => Omega(chi log(n/chi)) modulo bookkeeping.
+All eval runners unchanged-green incl. Main BIT 1B GATE 511/511.

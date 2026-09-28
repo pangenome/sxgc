@@ -14,3 +14,6 @@ lean_exe sxgctest where
 
 lean_exe dbg where
   root := `Debug
+lean_lib LowerBound
+lean_lib SxgcNodup
+lean_lib SxgcSeam
