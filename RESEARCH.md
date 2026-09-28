@@ -1691,3 +1691,13 @@ mask + features); pointer-attention only if ablation demands it.
 ## runEdgeHit_of_maxHit + maxHit_of_runEdge. Statement-locked with differentials:
 ## 0 counterexamples across 729-binary/243-ternary/structured batteries; sorry ledger
 ## unchanged; Bit 1B gate GREEN. Full analysis: lean/O1_OBSTRUCTION.md.
+
+## CHI_FAM_LOWER PROVEN (laneY, GLM-5.3-high): 2k <= chi(famText) - the floor program's
+## family bound, lower half kernel-checked (92 declarations, 0 errors). The engine:
+## notreq_of_unique_window (unique window => no requirement) with two instantiation
+## engines (marker + block-boundary pinning); req_word_shape (every requirement word is
+## eps or a pure run); chi_ge_letters general lemma. Upper bound: full structure proven,
+## two marked cover-case stubs remain (fam_run_occ_le, fam_cover) - plan in the battery.
+## Composition skeleton statement-locked: fam_forced_incompat, fam_oracle_witness,
+## floor_theorem_shape. Toolchain discoveries recorded (no-Mathlib workarounds, the
+## getElem_idx_congr index-congruence lemma). Bit 1B gate GREEN throughout.

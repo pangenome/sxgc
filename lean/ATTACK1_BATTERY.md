@@ -132,3 +132,65 @@ impossible) — noted as the family-design lesson, not pursued here.
 were additionally run on the FULL grids (not just half) where noted.
 No claim is made beyond the tested grid sizes; the empirical law is
 exact on every tested member.
+
+## Lean status of `chi_fam_bounds` (this lane, `lean/LowerBound.lean`)
+
+Formalization target: `2k ≤ chi (famText k L ps) ≤ 3k − 1` on the half
+grid (`1 ≤ L`, `2·p_i ≤ L`), with `famText`/`block`/`runL`/`markL` the
+battery's gadget family, ported verbatim into `namespace Sxgc.LowerBound.Fam`.
+
+### Kernel-checked (zero sorry, `lake env lean LowerBound.lean` green)
+
+- **Family infrastructure**: `famText_split`, `famText_length`
+  (`n = k(L+1)`), `fam_get`, `fam_letter` (full position/letter
+  classification), `fam_run_iff`, `fam_mark_iff`, `fam_letter_block`,
+  `runL`/`markL` injectivity and disjointness, membership of the `2k`
+  block letters.
+- **`chi_ge_letters`** (general): `χ T ≥ #distinct letters of T`, for
+  ANY text — the `2k` letter requirements `(ε, c)` are pairwise
+  uncoverable (a position covers at most one letter; formalized via
+  `coversAt_letter_inj`: two distinct letters cannot both be covered at
+  the same position, since the covering prefix determines its last letter).
+- **`chi_fam_lower`**: `2k ≤ χ (famText k L ps)` — THE LOWER BOUND HALF,
+  assembled from `chi_ge_letters` and the nodup `2k`-letter list
+  (`runL 0..k−1` ∪ `markL 0..k−1`).
+- **Unique-window engine** (`notreq_of_unique_window`, general): a
+  nonempty word occurring at a unique window contributes no
+  requirements — any right extension is forced to the single letter after
+  the window (suffix case: no window for `w++[c]`; ≥2 case: all
+  extensions equal, `dedup` collapses to ≤ 1 < 2).
+- **Engine A** (`unique_window_of_mark`): a word containing a marker has
+  a unique window (markers occur at exactly one position).
+- **Engine B** (`unique_window_of_two_run_letters`): a word with two
+  distinct run letters has a unique window (windows agree pointwise on
+  blocks; the block boundary between the two letters pins the start).
+- **`req_word_shape`**: any word contributing requirements is empty or a
+  pure run `x_i^m` (`m ≥ 1`) — the full structural characterization,
+  both engines applied. This is the hard half of the upper bound's
+  correctness argument.
+- **Cover infrastructure**: `coversAt_of_window`, `coversAt_single`,
+  `window_of_letters`, `fam_letter_at` (letter at block/offset).
+
+### Marked stubs (the remaining upper-bound work)
+
+- `fam_run_occ_le`: an occurring pure run `x_i^{m+1}` fits in the right
+  run (`m+1 ≤ L − p_i`; half grid). Block arithmetic: the window's
+  consecutive offsets avoid `p_i`, so they lie wholly left or wholly
+  right of the marker; `2p_i ≤ L` makes the right run the max.
+- `fam_cover`: the four cover cases —
+  `(ε,c)` → marker/`E` positions; `x_i^m b_i` → `M_i` (left run);
+  `x_i^{m+1}` → `E_i` (right run); `x_i^m b_{i+1}` with `p_{i+1} = 0` →
+  `M_{i+1}`; `x_i^m x_{i+1}` → `P_{i+1}` (boundary). Each is a
+  `coversAt_of_window` application with the window built pointwise from
+  `fam_letter_at`; the occurrence side-conditions (`m ≤ p_i` etc.) come
+  from the requirement's own window (marker positions pin it exactly).
+  Then `famV` (M ∪ E ∪ P, `3k−1` positions, nodup via block intervals),
+  the filter trick `(positionsT T).filter (· ∈ famV)`, and
+  `chi_le_of_suffixient` close `χ ≤ 3k−1`.
+
+The statement-locked composition skeleton is in place:
+`fam_half_grid_size`, `fam_half_grid`, and the stubs
+`fam_forced_incompat`, `fam_oracle_witness`, `floor_theorem_shape`
+(combine `family_counting` + the bounds + `n = k(L+1)` into
+`s ≥ Ω(χ·log(n/χ))`). Project gates: `lake build` green,
+`Main.lean` BIT gate green.
