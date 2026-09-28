@@ -1701,3 +1701,10 @@ mask + features); pointer-attention only if ablation demands it.
 ## Composition skeleton statement-locked: fam_forced_incompat, fam_oracle_witness,
 ## floor_theorem_shape. Toolchain discoveries recorded (no-Mathlib workarounds, the
 ## getElem_idx_congr index-congruence lemma). Bit 1B gate GREEN throughout.
+
+## Correction #10 (supervisor, self-caught, pre-commit): the RunEdgeHit lane crashed
+## mid-assembly; a STALE-CACHE `lake build` reported green while the file had 5 real
+## errors (type mismatch, failed rewrite, unknown tactic, unsolved goals). Explicit
+## `lake build SxgcRunEdge` exposed them. NOTHING was banked. House rule added:
+## kernel-check claims require an explicit-target rebuild (or #print axioms on a fresh
+## import), never a cached full-package green. Lane revived with the error list.
