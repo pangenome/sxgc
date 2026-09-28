@@ -1869,3 +1869,14 @@ mask + features); pointer-attention only if ablation demands it.
 ## Stage 0 = pile slice sweep (also measures the missing pile constants). QUEUED behind
 ## paper + human index. Lean follow-up identified: CorrectContinuation statement-lock
 ## (mechanical analog of CorrectLocateOne) - hardens the bridge's LM form.
+
+## PAPER DRAFT BANKED (GLM-5.3-high lane + supervisor compile check): paper/main.tex
+## (623 lines) + refs.bib (11 verified entries, r-index correctly attributed per
+## correction #9) + FACTS.md (claim->artifact map; a "deliberately NOT claimed" list).
+## Statement-lock discipline carried into prose: formal statements quoted in exact Lean
+## forms (O2/scanAux_nodup discharged; O1 reduced to RunEdgeDominate with RunEdgeHit
+## proven; fam_floor_chi verbatim with hypotheses; the refuted skeleton recorded
+## visibly); every number sourced to a log path; the honest bounds (no O(tau) claim
+## preserved); the 0.19-0.56 B/run proven-floor calibration included. \hprcchi
+## placeholder (4 occurrences) ready for the 466 drop. COMPILED by supervisor (tectonic;
+## 3 fixes: \Bits math-mode wrapper, bib note underscores, note math) - 0 errors.
