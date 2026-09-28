@@ -11,3 +11,7 @@ bit6/rlbwt_sampler
 vendor/
 paper/main.pdf
 *.pdf
+paper/*.log
+paper/*.blg
+paper/*.aux
+paper/*.bbl
