@@ -1719,3 +1719,10 @@ mask + features); pointer-attention only if ablation demands it.
 ## namespace Sxgc). Correction #10's strict-verification rule enforced throughout
 ## (explicit-target rebuild + fresh-import #print axioms; the crashed lane's cached
 ## green claim was false, the real proof needed 2 more fixes).
+
+## Cover-case lane: INCOMPLETE on the proofs, DELIVERED on the warrant. The battery's
+## emitted values match the recorded chi-law exactly (chi-linearity (2,2,2)->(16,8,8);
+## 2k <= chi <= 3k-1 on every emitted member) - the family bound's empirical warrant is
+## now confirmed on live data. But fam_run_occ_le and fam_cover still carry their marked
+## stubs: chi_fam_bounds upper half remains OPEN. Lane's "complete and banked" claim was
+## overstated; recorded here per discipline. Refire: narrow two-lemma lane.
