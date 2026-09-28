@@ -1810,3 +1810,12 @@ mask + features); pointer-attention only if ablation demands it.
 ## readers get regions served ON DEMAND from the archive; every read is an archive query;
 ## nothing text-sized on disk, ever. GATES: yeast235 ghost-file build byte-identical AND
 ## measured parse throughput >= file-based/2 at -j 16 - correctness AND rate, both.
+
+## DIRECTIVE (user): patch pfp++ to read AGC DIRECTLY - no FUSE (an environment privilege,
+## not a foundation: unavailable in sandboxes/HPC; not a reliable product base). The AGC
+## reader is written INTO pfp++ as a first-class input mode. Institutional form: FORK the
+## tool under the pangenome org, edit there, submit a PR back upstream so the author
+## benefits. POLICY: no more carried .patch files in this repo - vendored changes live in
+## pangenome-org forks with upstream PRs (the rpfbwt tap patch gets the same treatment).
+## The mandatory read becomes "read the archive" natively; canonical extraction rule
+## (revlines, --upper, 0x1E) inside the reader; thread-parallel range serving.
