@@ -147,8 +147,9 @@ def main():
         run('gate-runs-tails', ['/usr/bin/cmp', ri4, pathlib.Path(a.expect_ri4).absolute()])
     with ri4.open('rb') as header:
         _, _, strings, _ = struct.unpack('<4Q', header.read(32))
-    if strings > 1 and not (a.expect_heads and a.expect_ri4):
-        raise RuntimeError('multi-string PFP/BCR collection ordering is unvalidated; explicit endpoint byte gates are required')
+    if strings > 1 and not (a.expect_heads and a.expect_ri4) and not a.verify_text_sample:
+        raise RuntimeError('multi-string ordering unvalidated: endpoint byte gates '
+                           'or --verify-text-sample (in-flight ground-truth audit) required')
     run('slim', [tools/'slim_dump', '--slim', '--resolve-ri4', '--dict-stream', '--ri4', ri4,
                  '--head-sa', heads, '--parse', prefix, '-t', a.threads, '-o', agg])
     sweep = run('sweep', [a.xsa, 'chi-rspace', '--stream-agg', '--ri4', ri4, '--agg', agg, '-o', chi])
