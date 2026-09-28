@@ -1880,3 +1880,15 @@ mask + features); pointer-attention only if ablation demands it.
 ## preserved); the 0.19-0.56 B/run proven-floor calibration included. \hprcchi
 ## placeholder (4 occurrences) ready for the 466 drop. COMPILED by supervisor (tectonic;
 ## 3 fixes: \Bits math-mode wrapper, bib note underscores, note math) - 0 errors.
+
+## THE CONTINUATION BRIDGE PROVEN (lane, supervisor-verified strict chain): lean/LM.lean
+## (9 theorems, 0 sorries, axioms {propext, Quot.sound}): CorrectContinuation defined
+## (requirement-driven form); emitted_suffixient_of_cont + chi_le_of_cont_oracle (bridge
+## analog, mechanical as predicted); AND THE LM-FACING FORM OUTRIGHT:
+## chi_le_of_cont_oracle_distinct - any correct continuation oracle must CONSULT >= chi
+## DISTINCT positions - plus chi_le_of_realized_cont (the fixed-decoder index form).
+## The memorization-externalization thesis now has a kernel-checked warrant. The
+## CorrectContinuation => CorrectLocateOne implication also proven (continuation is the
+## strictly weaker demand, so the new bridge subsumes the old). Identified follow-on:
+## the fam_floor_chi counting analog for continuation oracles (bridge shapes now
+## identical - mechanical).
