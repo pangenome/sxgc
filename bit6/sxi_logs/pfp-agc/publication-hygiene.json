@@ -1,0 +1,102 @@
+{
+  "work": "/tmp/pfp-agc-gates/xsa-build-5najb_ty",
+  "files": [
+    {
+      "path": "/tmp/pfp-agc-gates/xsa-build-5najb_ty/collection.txt.names.tsv",
+      "bytes": 351876,
+      "regular": true,
+      "fifo": false,
+      "symlink": false
+    },
+    {
+      "path": "/tmp/pfp-agc-gates/xsa-build-5najb_ty/fresh.agg",
+      "bytes": 3228961452,
+      "regular": true,
+      "fifo": false,
+      "symlink": false
+    },
+    {
+      "path": "/tmp/pfp-agc-gates/xsa-build-5najb_ty/fresh.head_sa",
+      "bytes": 807240360,
+      "regular": true,
+      "fifo": false,
+      "symlink": false
+    },
+    {
+      "path": "/tmp/pfp-agc-gates/xsa-build-5najb_ty/fresh.ri4",
+      "bytes": 908147498,
+      "regular": true,
+      "fifo": false,
+      "symlink": false
+    },
+    {
+      "path": "/tmp/pfp-agc-gates/xsa-build-5najb_ty/fresh.sA",
+      "bytes": 683234688,
+      "regular": true,
+      "fifo": false,
+      "symlink": false
+    },
+    {
+      "path": "/tmp/pfp-agc-gates/xsa-build-5najb_ty/parse.dict",
+      "bytes": 513394300,
+      "regular": true,
+      "fifo": false,
+      "symlink": false
+    },
+    {
+      "path": "/tmp/pfp-agc-gates/xsa-build-5najb_ty/parse.parse",
+      "bytes": 136535136,
+      "regular": true,
+      "fifo": false,
+      "symlink": false
+    },
+    {
+      "path": "/tmp/pfp-agc-gates/xsa-build-5najb_ty/parse.parse.dict",
+      "bytes": 102802192,
+      "regular": true,
+      "fifo": false,
+      "symlink": false
+    },
+    {
+      "path": "/tmp/pfp-agc-gates/xsa-build-5najb_ty/parse.parse.parse",
+      "bytes": 12332344,
+      "regular": true,
+      "fifo": false,
+      "symlink": false
+    },
+    {
+      "path": "/tmp/pfp-agc-gates/xsa-build-5najb_ty/parse.rlebwt",
+      "bytes": 403620176,
+      "regular": true,
+      "fifo": false,
+      "symlink": false
+    },
+    {
+      "path": "/tmp/pfp-agc-gates/xsa-build-5najb_ty/parse.rlebwt.meta",
+      "bytes": 4112,
+      "regular": true,
+      "fifo": false,
+      "symlink": false
+    },
+    {
+      "path": "/tmp/pfp-agc-gates/xsa-build-5najb_ty/parse.ssa",
+      "bytes": 807240360,
+      "regular": true,
+      "fifo": false,
+      "symlink": false
+    },
+    {
+      "path": "/tmp/pfp-agc-gates/xsa-build-5najb_ty/parse.ssa_t",
+      "bytes": 807240360,
+      "regular": true,
+      "fifo": false,
+      "symlink": false
+    }
+  ],
+  "no_collection_text": true,
+  "no_fifo": true,
+  "observed_tree_peak_rss_kib": 8852624,
+  "rss_samples": 527,
+  "memory_note": "Monitor started during BWT; first parse RSS is separately recorded in its stage timing file",
+  "write_policy": "Only expanded collection text prohibited; r-space outputs unrestricted"
+}

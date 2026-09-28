@@ -1,0 +1,2 @@
+xsa build: work=/tmp/pfp-agc-gates/battery/xsa-build-ktsh8vqp log=/tmp/sxgc-laneV/bit6/sxi_logs/pfp-agc/random-20k-file-xsa-build-ktsh8vqp.jsonl
+{"sxi": "/tmp/pfp-agc-gates/battery/random-20k-file.sxi", "chi": 13538, "work": "/tmp/pfp-agc-gates/battery/xsa-build-ktsh8vqp", "log": "/tmp/sxgc-laneV/bit6/sxi_logs/pfp-agc/random-20k-file-xsa-build-ktsh8vqp.jsonl"}

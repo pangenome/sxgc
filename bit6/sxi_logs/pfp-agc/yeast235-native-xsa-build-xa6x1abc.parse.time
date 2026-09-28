@@ -1,0 +1,23 @@
+	Command being timed: "/tmp/pfp-agc-fork/build/pfp++ -t /home/erikg/yeast/yeast235.agc --agc --agc-names /tmp/pfp-agc-gates/xsa-build-xa6x1abc/collection.txt.names.tsv -o /tmp/pfp-agc-gates/xsa-build-xa6x1abc/parse -w 10 -p 100 -j 16 --tmp-dir /tmp/pfp-agc-gates/xsa-build-xa6x1abc"
+	User time (seconds): 131.40
+	System time (seconds): 12.20
+	Percent of CPU this job got: 252%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:56.80
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 1249160
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 798086
+	Voluntary context switches: 3794
+	Involuntary context switches: 675
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 1803464
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

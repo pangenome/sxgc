@@ -1,0 +1,7 @@
+Loaded archive with 1 samples
+Sample names: ["random-200k"]
+[1/1] sample random-200k: streamed 200003 bytes, 3 contigs
+TOTAL 200003
+revlines collection: 200003 bytes, 3 strings
+text: /tmp/pfp-agc-gates/battery/xsa-build-4bapss6k/collection.txt
+names: /tmp/pfp-agc-gates/battery/xsa-build-4bapss6k/collection.txt.names.tsv

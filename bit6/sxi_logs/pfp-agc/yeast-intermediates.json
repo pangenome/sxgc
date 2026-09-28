@@ -1,0 +1,38 @@
+[
+  {
+    "file": "parse.parse",
+    "bytes": 136535136,
+    "byte_equal": true,
+    "sha256": "d1ea3bc9edc5837278ffade8698498c1a2ec237e538c87cc154c099ea6b66825"
+  },
+  {
+    "file": "parse.dict",
+    "bytes": 513394300,
+    "byte_equal": true,
+    "sha256": "f427f8f3f41d44588749a2478b03af5c0c9c7240ef78e35a621911d92e0bcbdc"
+  },
+  {
+    "file": "collection.txt.names.tsv",
+    "bytes": 351876,
+    "byte_equal": true,
+    "sha256": "1243e4f51957ac4ac2a4aa80642b9ac9367e5864d979f2040f26e2519278079b"
+  },
+  {
+    "file": "parse.rlebwt",
+    "bytes": 403620176,
+    "byte_equal": true,
+    "sha256": "9a11cb7991bd473f271dd30320379b1da98435e74dda2df7538565edd096e3c0"
+  },
+  {
+    "file": "parse.ssa",
+    "bytes": 807240360,
+    "byte_equal": true,
+    "sha256": "42da0224e0cf6143116217893b0070ba3d1d428d2d88f346e7941058da12d7be"
+  },
+  {
+    "file": "parse.ssa_t",
+    "bytes": 807240360,
+    "byte_equal": true,
+    "sha256": "745184ec4d0f457ae3384c5483f6ed3cbe25d5870158f8e053a33858a14c5e8a"
+  }
+]

@@ -1,0 +1,15 @@
+{
+  "cmdline": "python3 /tmp/sxgc-laneV/bit6/sxi_pipeline.py --agc /home/erikg/yeast/yeast235.agc --output /tmp/pfp-agc-gates/yeast235-native.sxi --scratch /tmp/pfp-agc-gates --log-dir /tmp/sxgc-laneV/bit6/sxi_logs/pfp-agc --threads 16 --verify-text-sample 32 --xsa /tmp/sxi-stream/xsa-target/release/xsa --verbose ",
+  "status": "PASS: published, archive-audited, all five core members byte-identical",
+  "decision_pending": null,
+  "published": true,
+  "control_agg_bytes": 3228961452,
+  "control_sxi_bytes": 1804487132,
+  "previous_pipeline_pid": 3651283,
+  "previous_pid_present_at_restart": false,
+  "pipeline_pid": null,
+  "write_policy": "Expanded collection text forbidden; r-space artifacts including .agg/.ri4/.sxi unrestricted per supervisor clarification",
+  "work": "/tmp/pfp-agc-gates/xsa-build-5najb_ty",
+  "journal": "/tmp/sxgc-laneV/bit6/sxi_logs/pfp-agc/yeast235-native-xsa-build-5najb_ty.jsonl",
+  "output": "/tmp/pfp-agc-gates/yeast235-native.sxi"
+}

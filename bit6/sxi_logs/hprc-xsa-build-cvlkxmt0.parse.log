@@ -1,0 +1,49 @@
+[2026-09-28 12:32:45.595] [info] Current Configuration:
+; PFP++
+
+; Text file to parse.
+text="/home/erikg/sxgc-466/A/xsa-build-cvlkxmt0/collection.fifo"
+
+; Output prefix.
+out-prefix="/home/erikg/sxgc-466/A/xsa-build-cvlkxmt0/parse"
+
+; Sliding window size.
+window-size=10
+
+; Modulo used during parsing.
+modulo=100
+
+; Number of threads.
+threads=16
+
+; Temporary files directory.
+tmp-dir="/home/erikg/sxgc-466/A/xsa-build-cvlkxmt0"
+
+; Also output compressed the dictionary.
+compress-dictionary=false
+
+; Use reference parse to avoid re-parsing.
+use-vcf-acceleration=false
+
+; Print out csv containing stats.
+print-statistics=false
+
+; Output count for each dictionary phrase.
+output-occurrences=false
+
+; Output sai array.
+output-sai=false
+
+; Output last array.
+output-last=false
+
+; Convert all non ACGT characters from a VCF or FASTA file to N.
+acgt-only=false
+
+; Verbose output.
+verbose=false
+
+; Version number.
+version=false
+
+[2026-09-28 12:32:45.641] [info] Parsing /home/erikg/sxgc-466/A/xsa-build-cvlkxmt0/collection.fifo

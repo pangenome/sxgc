@@ -1,0 +1,19 @@
+{
+  "base": "1a5f114ae026c18e7c0049ceace1a5eabc8be44a",
+  "patch_applies": true,
+  "all_patched_files_match_tested_fork": true,
+  "files": [
+    "CMakeLists.txt",
+    "README.md",
+    "include/pfp_algo.hpp",
+    "pfp++.cpp",
+    "src/pfp_algo.cpp",
+    "include/text_source.hpp",
+    "src/text_source.cpp",
+    "src/agc_source.hpp",
+    "src/agc_source.cpp",
+    "tests/source_probe.cpp",
+    "tests/test_agc.py"
+  ],
+  "sha256": "bf4297dee288dbf0eaa6e794c1c1d14820da13e7eaa9e0caf76e70b40b21434b"
+}

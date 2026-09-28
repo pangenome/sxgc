@@ -1,0 +1,9 @@
+{
+  "patch": "pipeline.patch",
+  "base": "sxi_pipeline.before.py",
+  "applies": true,
+  "exact_current_files": [
+    "bit6/sxi_pipeline.py",
+    "tools/build_pfp_agc.sh"
+  ]
+}

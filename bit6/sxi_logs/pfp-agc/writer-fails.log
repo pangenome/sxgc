@@ -1,0 +1,3 @@
+xsa build: work=/tmp/pfp-agc-gates/battery/xsa-build-6tcw5e1e log=/tmp/sxgc-laneV/bit6/sxi_logs/pfp-agc/writer-fails-xsa-build-6tcw5e1e.jsonl
+xsa build: verify-text-sample failed (1); see /tmp/sxgc-laneV/bit6/sxi_logs/pfp-agc/writer-fails-xsa-build-6tcw5e1e.verify-text-sample.log; no final SXI published
+xsa: error: build: pipeline failed: exit status: 1

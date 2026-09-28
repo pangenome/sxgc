@@ -8,3 +8,4 @@ shards*/
 *.txt
 !*.md
 bit6/rlbwt_sampler
+vendor/

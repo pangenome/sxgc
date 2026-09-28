@@ -1,0 +1,13 @@
+{
+  "/tmp/pfp-agc-fork/CMakeLists.txt": "a5e0628262b32299308396b13c7befc9a0b35ea4d95e10741c6873a60191d2e3",
+  "/tmp/pfp-agc-fork/README.md": "c501b4e6781be892ec171392ecf402be8c7005819c0a7567b595fcda5e6c8f31",
+  "/tmp/pfp-agc-fork/include/pfp_algo.hpp": "7d90c8cd460c1915ea7aeb28cebe620e45220b8307aa37c9ebaefa8e2d79861d",
+  "/tmp/pfp-agc-fork/pfp++.cpp": "21c9a0ef2347866b2bad97e222d4e6d31b64e40b5b88c7d117f2d1d1111569b3",
+  "/tmp/pfp-agc-fork/src/pfp_algo.cpp": "2092aa53ac223b100ae21c56c596f83318a5ccebc2c88d53aa682e75dac2db0d",
+  "/tmp/pfp-agc-fork/include/text_source.hpp": "2f64743a52d7acd461c8c02f0629cd877c9507f1383f0e9cc3d436fdc56e5726",
+  "/tmp/pfp-agc-fork/src/text_source.cpp": "f6f458cb25eeee749a0f664383b4eb8b21db699f85b35260bc2d4682dccf2e21",
+  "/tmp/pfp-agc-fork/src/agc_source.hpp": "a02e9d3486dc780685a3f5ae66d380572b0f004a4b3062e1cdb3fd47ee3536cb",
+  "/tmp/pfp-agc-fork/src/agc_source.cpp": "4691fd505bc91e1789dbdc5aff0b2f33708fed97afcd92405bb45554d0b82c96",
+  "/tmp/pfp-agc-fork/tests/source_probe.cpp": "5b098096937aa9306b7280c8016ee96b093d7356c12e385d1a369ce1726ab70d",
+  "/tmp/pfp-agc-fork/tests/test_agc.py": "6ef140ee664ebeed97b86a06dedb58e0fb51d987ad9595d1428dead221b7f3d7"
+}

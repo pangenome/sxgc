@@ -1819,3 +1819,17 @@ mask + features); pointer-attention only if ablation demands it.
 ## pangenome-org forks with upstream PRs (the rpfbwt tap patch gets the same treatment).
 ## The mandatory read becomes "read the archive" natively; canonical extraction rule
 ## (revlines, --upper, 0x1E) inside the reader; thread-parallel range serving.
+
+## PFP++ READS AGC NATIVELY - LANDED (two lanes, supervisor-verified): the parse stage
+## now consumes the archive directly (pfp++ -t <archive> --agc --agc-names; canonical
+## extraction - uppercase reversed contigs, archive order, 0x1E - inside the reader;
+## FIFO fallback; --materialize forensic-only). GATES: full yeast235 native publication,
+## five core members byte-identical + 32/32 archive witnesses; all 3.34 GB canonical
+## bytes identical vs agc2flat; 20x100MB HPRC windows byte-identical at 466 scale;
+## measured reader throughput 440-535 MB/s (73-87% of file-based; optimum j16 at HPRC);
+## MEASURED 466 PARSE ETA: 6.63 h (upstream parse loop is serial; the reader feeds it
+## at 509 MB/s at j16 - supervisor's 48-min extrapolation was wrong, lane's is right).
+## Vendored durably at vendor/pfp-agc-fork (reproducible via tools/build_pfp_agc.sh +
+## the committed patch; agc lib refresh-bio/agc@e67e3fc, static). Upstreamable: clean
+## optional CMake (PFP_ENABLE_AGC), README, PR draft in bit6/sxi_logs/pfp-agc/.
+## Interlock amendment re-applied at bank (lane copies keep predating it).

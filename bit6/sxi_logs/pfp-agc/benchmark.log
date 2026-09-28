@@ -1,0 +1,12 @@
+{"bytes": 3336986759, "init_seconds": 3.6301e-05, "read_seconds": 5.15733, "MB_per_s": 647.037, "hash": 18330819722500875293, "dataset": "yeast235", "mode": "file", "j": 16}
+{"bytes": 3336986759, "init_seconds": 0.905286, "read_seconds": 7.08985, "MB_per_s": 470.671, "hash": 18330819722500875293, "dataset": "yeast235", "mode": "agc", "j": 16}
+{"bytes": 3336986759, "init_seconds": 4.616e-05, "read_seconds": 5.33366, "MB_per_s": 625.647, "hash": 18330819722500875293, "dataset": "yeast235", "mode": "file", "j": 48}
+{"bytes": 3336986759, "init_seconds": 0.976412, "read_seconds": 6.55574, "MB_per_s": 509.017, "hash": 18330819722500875293, "dataset": "yeast235", "mode": "agc", "j": 48}
+{"bytes": 3336986759, "init_seconds": 4.427e-05, "read_seconds": 5.41977, "MB_per_s": 615.706, "hash": 18330819722500875293, "dataset": "yeast235", "mode": "file", "j": 96}
+{"bytes": 3336986759, "init_seconds": 1.05936, "read_seconds": 6.24003, "MB_per_s": 534.771, "hash": 18330819722500875293, "dataset": "yeast235", "mode": "agc", "j": 96}
+{"dataset": "HPRC-466-20-windows", "mode": "file", "j": 16, "bytes": 2000000000, "read_seconds": 2.8870590000000003, "init_seconds": 0.000788982, "MB_per_s": 692.7464939234009}
+{"dataset": "HPRC-466-20-windows", "mode": "agc", "j": 16, "bytes": 2000000000, "read_seconds": 3.9284280000000003, "init_seconds": 68.4388, "MB_per_s": 509.1094962157891}
+{"dataset": "HPRC-466-20-windows", "mode": "file", "j": 48, "bytes": 2000000000, "read_seconds": 2.99942, "init_seconds": 0.000800693, "MB_per_s": 666.7955804788926}
+{"dataset": "HPRC-466-20-windows", "mode": "agc", "j": 48, "bytes": 2000000000, "read_seconds": 4.307285, "init_seconds": 76.6158, "MB_per_s": 464.3296183094455}
+{"dataset": "HPRC-466-20-windows", "mode": "file", "j": 96, "bytes": 2000000000, "read_seconds": 2.739466, "init_seconds": 0.00064638, "MB_per_s": 730.0692908763971}
+{"dataset": "HPRC-466-20-windows", "mode": "agc", "j": 96, "bytes": 2000000000, "read_seconds": 4.5699689999999995, "init_seconds": 82.2128, "MB_per_s": 437.6397301600952}

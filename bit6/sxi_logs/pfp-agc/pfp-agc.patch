@@ -1,0 +1,659 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index cca7d0b..e482a7d 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -301,9 +301,31 @@ add_library(pfp ${SOURCES} ${SOURCES_GENERATED} ${MURMUR_SOURCES})
+ add_library(pfp64 ${SOURCES} ${SOURCES_GENERATED} ${MURMUR_SOURCES})
+ target_compile_options(pfp64 PRIVATE "-DPFP_LONG_TYPE=ON")
+ 
++option(PFP_ENABLE_AGC "Enable native canonical AGC v3 input" OFF)
++set(AGC_ROOT "" CACHE PATH "AGC source/build directory (refresh-bio/agc 3.2)")
++if(PFP_ENABLE_AGC)
++    if(NOT OpenMP_CXX_FOUND)
++        message(FATAL_ERROR "PFP_ENABLE_AGC requires OpenMP")
++    endif()
++    find_path(AGC_INCLUDE_DIR agc_decompressor_lib.h HINTS "${AGC_ROOT}/src/common" REQUIRED)
++    find_library(AGC_LIBRARY NAMES agc HINTS "${AGC_ROOT}/bin" REQUIRED)
++    find_library(AGC_ZSTD_LIBRARY NAMES zstd HINTS "${AGC_ROOT}/3rd_party/zstd/lib" REQUIRED)
++    foreach(target pfp pfp64)
++        target_compile_definitions(${target} PRIVATE PFP_ENABLE_AGC)
++        target_compile_features(${target} PRIVATE cxx_std_20)
++        target_include_directories(${target} PRIVATE "${AGC_INCLUDE_DIR}" "${AGC_ROOT}/3rd_party")
++        target_link_libraries(${target} PUBLIC ${AGC_LIBRARY} ${AGC_ZSTD_LIBRARY})
++    endforeach()
++    install(FILES "${AGC_ROOT}/LICENSE" DESTINATION share/licenses/pfp++ RENAME AGC-LICENSE)
++    add_executable(pfp_source_probe tests/source_probe.cpp)
++    target_link_libraries(pfp_source_probe pfp z ${OMP_LIBRARIES})
++endif()
++
++
+ set(PFP_PUBLIC_HEADERS
+         ${PROJECT_SOURCE_DIR}/include/internals.hpp
+         ${PROJECT_SOURCE_DIR}/include/pfp_algo.hpp
++        ${PROJECT_SOURCE_DIR}/include/text_source.hpp
+         ${PROJECT_SOURCE_DIR}/include/utils.hpp
+         ${PROJECT_SOURCE_DIR}/include/vcf.hpp
+         ${PROJECT_SOURCE_DIR}/include/version.hpp)
+diff --git a/README.md b/README.md
+index 8fe0a65..6c25ff3 100644
+--- a/README.md
++++ b/README.md
+@@ -117,3 +117,54 @@ Options:
+   --version                   Version number.
+   --configure                 Read an ini file.
+ ```
++
++### Native AGC input (optional)
++
++Build the MIT-licensed [AGC library](https://github.com/refresh-bio/agc)
++(`make libagc`), then configure PFP++ with
++`-DPFP_ENABLE_AGC=ON -DAGC_ROOT=/path/to/agc`. This adapter uses AGC's
++collection/segment C++ interface; the tested revision is
++`e67e3fc865a459779118d3d4e9fbdf42c70ba75e` (3.2), with archive format 3.
++AGC is optional and is neither downloaded nor linked in a default build.
++An enabled build requires C++20 and OpenMP.
++
++```
++pfp++ -t collection.agc --agc -o collection -j 16 -w 10 -p 100
++```
++
++`--agc` explicitly selects the archive. The logical text consists of each
++contig reversed (not reverse complemented), uppercased, and followed by
++byte `0x1e`, including the final contig. Samples and contigs retain their
++archive-internal order. `--agc-names PATH` optionally writes
++`contig<TAB>total-1-stream_offset-length<TAB>length` metadata, matching
++`agc2flat --revlines --upper --sep 1e`.
++
++The upstream `-t` parser in this revision is serial; it has no file chunk
++partitioning or parallel overlap algorithm. File/gzip/FIFO behavior stays
++unchanged. In AGC mode `-j` (1..96) controls independent decoder sessions
++that seek and fetch 1 MiB regions in parallel. The parser consumes their
++results in order. Its rolling hash and last `w` phrase bytes persist across
++chunk boundaries, so chunks need no extra overlap and introduce no new
++phrase boundaries. This is parallel archive input, not parallel phrase
++construction.
++
++No FUSE mount, child extractor, pipe, or extracted text file is used by the
++AGC reader. Metadata is indexed once. Segment lengths are counted from
++compressed delta instructions, without expanding matches or N runs; this
++also handles metadata/decoded-length discrepancies in existing archives.
++The index is proportional to archive descriptors and compressed packs,
++not expanded collection length. Each decoder owns its archive handle and
++ZSTD context. There is no persistent decoded sequence cache; the delivery
++buffer is at most `j` MiB, plus metadata and each active segment/pack.
++Reference and uncompressed pack sizes above 256 MiB are rejected. Archive
++input must remain unchanged during a run. Invalid ranges and decoder
++length disagreements fail the operation.
++
++`pfp_source_probe` is an enabled-build test/benchmark utility. For example,
++`pfp_source_probe agc collection.agc 16 0 100000000` hashes a 100 MB range
++and reports initialization time and steady read throughput separately.
++The `file` mode is the same control with a regular extracted file. The
++optional `emit` argument writes the requested bytes for differential tests.
++Run `tests/test_agc.py --pfp build/pfp++ --probe build/pfp_source_probe
++--agc /path/to/agc --agc2flat /path/to/agc2flat` for parse/dictionary,
++names, seek, separator, and error regressions.
+diff --git a/include/pfp_algo.hpp b/include/pfp_algo.hpp
+index aed2b51..b3286fd 100644
+--- a/include/pfp_algo.hpp
++++ b/include/pfp_algo.hpp
+@@ -391,13 +391,18 @@ private:
+     std::size_t parse_size = 0;
+     
+     bool closed = false;
++    bool agc_input = false;
++    std::size_t input_threads = 1;
++    std::string agc_names;
+ 
+ public:
+     
+     void init(const Params& params, const std::string& prefix);
+     
+-    ParserText(const Params& params, const std::string& file_path, const std::string& out_prefix)
++    ParserText(const Params& params, const std::string& file_path, const std::string& out_prefix, bool agc = false, std::size_t threads = 1,
++               const std::string& names = "")
+     {
++        agc_input = agc; input_threads = threads; agc_names = names;
+         this->w = params.w; this->p = params.p;
+         this->in_file_path = file_path;
+         if (out_prefix.empty()) { this->init(params, "out"); }
+diff --git a/pfp++.cpp b/pfp++.cpp
+index bba843a..addf097 100644
+--- a/pfp++.cpp
++++ b/pfp++.cpp
+@@ -25,6 +25,8 @@ int main(int argc, char **argv)
+     std::string samples_file_name;
+     std::size_t threads = 1;
+     bool check = false;
++    bool agc_input = false;
++    std::string agc_names;
+     bool only_trigger_strings = false;
+     bool verbose = false;
+     std::string haplotype_string = "1";
+@@ -38,6 +40,8 @@ int main(int argc, char **argv)
+     app.add_option("--int-shift", params.integers_shift, "Each integer i in int32t input is interpreted as (i + int-shift).")->check(CLI::Range(0, 200))->configurable();
+     app.add_option("-H,--haplotype", haplotype_string, "Haplotype: [1,2,12].")->configurable();
+     app.add_option("-t,--text", text_file_path, "Text file to parse.")->configurable()->check(CLI::ExistingFile);
++    app.add_flag("--agc", agc_input, "Read -t as AGC: archive order, uppercase reversed contigs, 0x1e separators.");
++    app.add_option("--agc-names", agc_names, "Write canonical AGC names/coordinates TSV.");
+     app.add_option("-o,--out-prefix", out_prefix, "Output prefix.")->configurable();
+     app.add_option("-m, --max", max_samples, "Max number of samples to analyze.")->configurable();
+     app.add_option("-S, --samples", samples_file_name, "File containing the list of samples to parse.")->configurable();
+@@ -59,6 +63,11 @@ int main(int argc, char **argv)
+     
+     CLI11_PARSE(app, argc, argv);
+ 
++    if ((agc_input && (text_file_path.empty() || !fasta_file_path.empty() || !integers_file_path.empty() || !vcfs_file_names.empty())) || (!agc_input && !agc_names.empty()) || (agc_input && threads == 0)) {
++        spdlog::error("--agc requires only -t; --agc-names requires --agc; threads must be positive");
++        return EXIT_FAILURE;
++    }
++
+     if (verbose) { spdlog::set_level(spdlog::level::debug); }
+     
+     // Clean file name vectors
+@@ -87,13 +96,18 @@ int main(int argc, char **argv)
+     else if (not text_file_path.empty())
+     {
+         if (out_prefix.empty()) { out_prefix = text_file_path; }
+-        vcfbwt::pfp::ParserText main_parser(params, text_file_path, out_prefix);
+-    
+-        // Run
+-        main_parser();
+-    
+-        // Close the main parser
+-        main_parser.close();
++        try {
++            vcfbwt::pfp::ParserText main_parser(params, text_file_path, out_prefix, agc_input, threads, agc_names);
++
++            // Run
++            main_parser();
++
++            // Close the main parser
++            main_parser.close();
++        } catch (const std::exception& error) {
++            spdlog::error("Text input failed: {}", error.what());
++            return EXIT_FAILURE;
++        }
+     }
+     else if (not integers_file_path.empty())
+     {
+diff --git a/src/pfp_algo.cpp b/src/pfp_algo.cpp
+index 93a5974..ecfdf53 100644
+--- a/src/pfp_algo.cpp
++++ b/src/pfp_algo.cpp
+@@ -5,6 +5,7 @@
+ // Licensed under the GNU license. See LICENSE file in the repository root for full license information.
+ 
+ #include <pfp_algo.hpp>
++#include <text_source.hpp>
+ 
+ //------------------------------------------------------------------------------
+ 
+@@ -515,15 +516,7 @@ vcfbwt::pfp::ParserText::init(const Params& params, const std::string& prefix)
+ void
+ vcfbwt::pfp::ParserText::operator()()
+ {
+-    // Open input file with kseq
+-    gzFile fp;
+-    fp = gzopen(this->in_file_path.c_str(), "r");
+-    if (fp == nullptr)
+-    {
+-        spdlog::error("Failed to open input file {}", in_file_path);
+-        exit(EXIT_FAILURE);
+-    }
+-    
++    auto source = open_text_source(in_file_path, agc_input, input_threads, agc_names);
+     std::vector<vcfbwt::char_type> phrase;
+     spdlog::info("Parsing {}", in_file_path);
+     
+@@ -533,31 +526,38 @@ vcfbwt::pfp::ParserText::operator()()
+     // First sequence start with one dollar
+     phrase.emplace_back(DOLLAR);
+     
+-    char c;
+-    while(gzread(fp, &c, 1) > 0)
++    // Keep file mode's one-byte gzread behavior. AGC reads bounded chunks;
++    // phrase/hash state persists, so no overlap is duplicated at chunk seams.
++    std::vector<char> input(agc_input ? (1 << 20) : 1);
++    std::size_t count;
++    while ((count = source->read(input.data(), input.size())) != 0)
+     {
+-        if (c <= DOLLAR_PRIME)
++        for (std::size_t i = 0; i < count; ++i)
+         {
+-            spdlog::error("Input may not contain bytes with integer value less than or equal to 5!");
+-            std::exit(EXIT_FAILURE);
+-        }
+-        
+-        phrase.push_back(c);
+-        if (phrase.size() == params.w) { kr_hash.initialize(phrase.data(), params.w); }
+-        else if (phrase.size() > params.w) { kr_hash.update(phrase[phrase.size() - params.w - 1], phrase[phrase.size() - 1]); }
+-        
+-        if ((phrase.size() > this->params.w) and ((kr_hash.get_hash() % this->params.p) == 0))
+-        {
+-            hash_type hash = this->dictionary.check_and_add(phrase);
+-            
+-            out_file.write((char*) (&hash), sizeof(hash_type)); this->parse_size += 1;
+-            
+-            phrase.erase(phrase.begin(), phrase.end() - this->params.w); // Keep the last w chars
+-            
+-            kr_hash.reset(); kr_hash.initialize(phrase.data(), params.w);
++            char c = input[i];
++            if (c <= DOLLAR_PRIME)
++            {
++                spdlog::error("Input may not contain bytes with integer value less than or equal to 5!");
++                std::exit(EXIT_FAILURE);
++            }
++
++            phrase.push_back(c);
++            if (phrase.size() == params.w) { kr_hash.initialize(phrase.data(), params.w); }
++            else if (phrase.size() > params.w) { kr_hash.update(phrase[phrase.size() - params.w - 1], phrase[phrase.size() - 1]); }
++
++            if ((phrase.size() > this->params.w) and ((kr_hash.get_hash() % this->params.p) == 0))
++            {
++                hash_type hash = this->dictionary.check_and_add(phrase);
++
++                out_file.write((char*) (&hash), sizeof(hash_type)); this->parse_size += 1;
++
++                phrase.erase(phrase.begin(), phrase.end() - this->params.w); // Keep the last w chars
++
++                kr_hash.reset(); kr_hash.initialize(phrase.data(), params.w);
++            }
+         }
+     }
+-    
++
+     // Last phrase
+     if (phrase.size() >= this->params.w)
+     {
+@@ -569,8 +569,7 @@ vcfbwt::pfp::ParserText::operator()()
+         out_file.write((char*) (&hash), sizeof(hash_type)); this->parse_size += 1;
+     }
+     else { spdlog::error("A sequence doesn't have w DOLLAR at the end!"); std::exit(EXIT_FAILURE); }
+-    
+-    gzclose(fp);
++
+ }
+ 
+ 
+diff --git a/include/text_source.hpp b/include/text_source.hpp
+new file mode 100644
+index 0000000..14c2fa6
+--- /dev/null
++++ b/include/text_source.hpp
+@@ -0,0 +1,20 @@
++#ifndef PFP_TEXT_SOURCE_HPP
++#define PFP_TEXT_SOURCE_HPP
++#include <cstddef>
++#include <cstdint>
++#include <memory>
++#include <string>
++namespace vcfbwt { namespace pfp {
++// Sequential consumption of bounded chunks; an AGC source fetches each chunk
++// at its logical collection offset using independent decoder sessions.
++class TextSource {
++public:
++    virtual ~TextSource() = default;
++    virtual std::size_t read(char* output, std::size_t capacity) = 0;
++    virtual uint64_t size() const = 0;
++    virtual void seek(uint64_t offset, uint64_t length = UINT64_MAX) = 0;
++};
++std::unique_ptr<TextSource> open_text_source(const std::string& path, bool agc,
++    std::size_t threads = 1, const std::string& names_path = "");
++} }
++#endif
+diff --git a/src/text_source.cpp b/src/text_source.cpp
+new file mode 100644
+index 0000000..68ea35e
+--- /dev/null
++++ b/src/text_source.cpp
+@@ -0,0 +1,39 @@
++#include <text_source.hpp>
++#include <zlib.h>
++#include <algorithm>
++#include <stdexcept>
++#ifdef PFP_ENABLE_AGC
++#include "agc_source.hpp"
++#endif
++namespace vcfbwt { namespace pfp {
++namespace {
++class FileSource : public TextSource {
++    gzFile file;
++public:
++    explicit FileSource(const std::string& path) : file(gzopen(path.c_str(), "rb")) {
++        if (!file) throw std::runtime_error("Cannot open text: " + path);
++    }
++    ~FileSource() { gzclose(file); }
++    std::size_t read(char* out, std::size_t capacity) override {
++        int n = gzread(file, out, std::min<std::size_t>(capacity, 1 << 30));
++        if (n < 0) throw std::runtime_error("Text read failed");
++        return n;
++    }
++    uint64_t size() const override { throw std::runtime_error("File size not available for compressed input"); }
++    void seek(uint64_t offset, uint64_t) override {
++        if (gzseek(file, offset, SEEK_SET) < 0) throw std::runtime_error("Text seek failed");
++    }
++};
++}
++std::unique_ptr<TextSource> open_text_source(const std::string& path, bool agc,
++        std::size_t threads, const std::string& names_path) {
++    if (agc) {
++#ifdef PFP_ENABLE_AGC
++        return open_agc_source(path, threads, names_path);
++#else
++        throw std::runtime_error("AGC input requires a build with PFP_ENABLE_AGC=ON");
++#endif
++    }
++    return std::unique_ptr<TextSource>(new FileSource(path));
++}
++} }
+diff --git a/src/agc_source.hpp b/src/agc_source.hpp
+new file mode 100644
+index 0000000..e7d5208
+--- /dev/null
++++ b/src/agc_source.hpp
+@@ -0,0 +1,7 @@
++#ifndef PFP_AGC_SOURCE_HPP
++#define PFP_AGC_SOURCE_HPP
++#include <text_source.hpp>
++namespace vcfbwt { namespace pfp {
++std::unique_ptr<TextSource> open_agc_source(const std::string&, std::size_t, const std::string&);
++} }
++#endif
+diff --git a/src/agc_source.cpp b/src/agc_source.cpp
+new file mode 100644
+index 0000000..052180f
+--- /dev/null
++++ b/src/agc_source.cpp
+@@ -0,0 +1,217 @@
++#ifdef PFP_ENABLE_AGC
++#include "agc_source.hpp"
++#include <agc_decompressor_lib.h>
++#include <algorithm>
++#include <exception>
++#include <fstream>
++#include <limits>
++#include <unordered_map>
++#include <stdexcept>
++#include <omp.h>
++namespace vcfbwt { namespace pfp { namespace {
++constexpr std::size_t BLOCK = 1 << 20;
++constexpr uint64_t MAX_PACK = 256ULL << 20;
++struct Part { uint64_t base; uint32_t length, skip; segment_desc_t desc; };
++struct Row { uint64_t base, length; std::string name; std::vector<Part> parts; };
++struct Layout { std::vector<Row> rows; uint64_t total = 0; };
++void require(bool ok, const char* message) { if (!ok) throw std::runtime_error(message); }
++// The public C API sorts samples and its advertised lengths can disagree with
++// decoded output. Use the pinned library's collection/segment interface instead.
++class Session : public CAGCDecompressorLibrary {
++    std::unordered_map<uint64_t, std::vector<uint32_t>> pack_lengths;
++    std::unordered_map<uint32_t, uint64_t> reference_lengths;
++    ZSTD_DCtx* zstd = nullptr;
++    static int64_t number(const std::vector<uint8_t>& v, std::size_t& p, std::size_t end) {
++        bool neg = p < end && v[p] == '-'; if (neg) ++p;
++        int64_t n = 0; bool seen = false;
++        while (p < end && v[p] >= '0' && v[p] <= '9') {
++            seen = true; require(n <= INT32_MAX / 10, "AGC integer overflow");
++            n = n * 10 + v[p++] - '0';
++        }
++        require(seen, "Invalid AGC delta integer"); return neg ? -n : n;
++    }
++    uint64_t delta_length(const std::vector<uint8_t>& v, std::size_t b, std::size_t e, uint64_t ref) {
++        // An empty encoding denotes an identical copy of the reference.
++        if (b == e) return ref;
++        uint64_t length = 0, predicted = 0; std::size_t p = b;
++        while (p < e) {
++            auto c = v[p];
++            if ((c >= 'A' && c <= 'U') || c == '!') { ++length; ++predicted; ++p; }
++            else if (c == 30) {
++                ++p; auto n = number(v, p, e); require(n >= 0, "Invalid AGC N run");
++                length += n + 4; require(p < e && v[p++] == 4, "Invalid AGC N run suffix");
++            } else {
++                int64_t pos = static_cast<int64_t>(predicted) + number(v, p, e);
++                require(pos >= 0 && static_cast<uint64_t>(pos) <= ref, "Invalid AGC match position");
++                uint64_t n;
++                if (p < e && v[p] == ',') {
++                    ++p; auto raw = number(v, p, e); require(raw >= 0, "Invalid AGC match length");
++                    n = raw + min_match_len;
++                } else n = ref - pos;
++                require(p < e && v[p++] == '.' && n <= ref - pos, "Invalid AGC match");
++                predicted = pos + n; length += n;
++            }
++            require(length <= UINT32_MAX, "AGC segment too long");
++        }
++        return length;
++    }
++    uint32_t segment_length(const segment_desc_t& d) {
++        uint32_t group = d.group_id, id = d.in_group_id;
++        auto base = ss_base(archive_version, group); uint64_t ref = 0;
++        if (group >= no_raw_groups) {
++            auto it = reference_lengths.find(group);
++            if (it == reference_lengths.end()) {
++                std::vector<uint8_t> packed; uint64_t n = 0;
++                auto result = in_archive->GetPart(base + ss_ref_ext(archive_version), 0, packed, n);
++                require(result.second, "Missing AGC reference");
++                ref = n ? n : packed.size(); require(ref <= MAX_PACK, "AGC reference exceeds 256 MiB bound");
++                reference_lengths.emplace(group, ref);
++            } else ref = it->second;
++            if (id == 0) return ref;
++            --id;
++        }
++        auto part = id / pack_cardinality;
++        uint64_t key = (uint64_t(group) << 32) | part;
++        auto it = pack_lengths.find(key);
++        if (it == pack_lengths.end()) {
++            std::vector<uint8_t> packed, raw; uint64_t n = 0;
++            auto result = in_archive->GetPart(base + ss_delta_ext(archive_version), part, packed, n);
++            require(result.second, "Missing AGC delta pack");
++            require(n <= MAX_PACK && packed.size() <= MAX_PACK, "AGC pack exceeds 256 MiB bound");
++            if (n) {
++                require(!packed.empty() && packed.back() == 0, "Invalid AGC pack marker");
++                raw.resize(n);
++                auto got = ZSTD_decompressDCtx(zstd, raw.data(), raw.size(), packed.data(), packed.size() - 1);
++                require(!ZSTD_isError(got) && got == n, "Invalid compressed AGC pack");
++            } else raw = std::move(packed);
++            std::vector<uint32_t> lengths; std::size_t b = 0;
++            for (std::size_t e = 0; e < raw.size(); ++e) if (raw[e] == 255) {
++                lengths.push_back(group < no_raw_groups ? e - b : delta_length(raw, b, e, ref)); b = e + 1;
++            }
++            require(b == raw.size(), "Unterminated AGC pack");
++            it = pack_lengths.emplace(key, std::move(lengths)).first;
++        }
++        auto length = it->second.at(id % pack_cardinality);
++        require(length <= MAX_PACK, "AGC decoded segment exceeds 256 MiB bound");
++        return length;
++    }
++public:
++    explicit Session(const std::string& path) : CAGCDecompressorLibrary(false) {
++        require(Open(path, false), "Cannot open AGC archive");
++        require(archive_version >= 3000 && archive_version < 4000, "AGC input currently supports archive version 3");
++        zstd = ZSTD_createDCtx(); require(zstd != nullptr, "Cannot allocate AGC decoder");
++    }
++    ~Session() { ZSTD_freeDCtx(zstd); }
++    Layout index() {
++        Layout layout; std::vector<std::string> samples;
++        require(collection_desc->get_samples_list(samples, false), "Cannot list AGC samples");
++        for (const auto& sample : samples) {
++            std::vector<std::string> contigs;
++            require(ListContigs(sample, contigs), "Cannot list AGC contigs");
++            for (const auto& contig : contigs) {
++                require(contig.find_first_of("\t\r\n") == std::string::npos, "AGC contig name is not TSV-safe");
++                Row row; row.base = layout.total; row.length = 0; row.name = contig;
++                std::string full_name = contig; std::vector<segment_desc_t> descriptors;
++                require(collection_desc->get_contig_desc(sample, full_name, descriptors), "Cannot read AGC descriptors");
++                for (std::size_t i = 0; i < descriptors.size(); ++i) {
++                    auto n = segment_length(descriptors[i]); auto skip = i ? kmer_length : 0;
++                    require(n >= skip, "AGC segment shorter than its overlap");
++                    row.parts.push_back(Part{row.length, n, skip, descriptors[i]}); row.length += n - skip;
++                }
++                require(row.length < UINT64_MAX - layout.total, "AGC collection size overflow");
++                layout.total += row.length + 1; layout.rows.push_back(std::move(row));
++            }
++        }
++        require(layout.total != 0, "Empty AGC collection");
++        pack_lengths.clear(); pack_lengths.rehash(0); reference_lengths.clear();
++        return layout;
++    }
++    void read(const Layout& layout, uint64_t offset, char* out, std::size_t count) {
++        static const char alphabet[] = "ACGTNRYSWKMBDHVU";
++        require(offset <= layout.total && count <= layout.total - offset, "AGC range outside collection");
++        auto it = std::upper_bound(layout.rows.begin(), layout.rows.end(), offset,
++            [](uint64_t p, const Row& row) { return p < row.base; });
++        if (count == 0) return;
++        --it; uint64_t end = offset + count;
++        while (offset < end) {
++            const auto& row = *it; auto local = offset - row.base;
++            if (local == row.length) { *out++ = 30; ++offset; ++it; continue; }
++            auto take = std::min(end - offset, row.length - local);
++            auto first = row.length - local - take, last = first + take;
++            auto part = std::upper_bound(row.parts.begin(), row.parts.end(), first,
++                [](uint64_t p, const Part& x) { return p < x.base; });
++            if (part != row.parts.begin()) --part;
++            for (; part != row.parts.end() && part->base < last; ++part) {
++                const auto& x = *part; auto finish = x.base + x.length - x.skip;
++                if (finish <= first) continue;
++                contig_t raw;
++                require(decompress_segment(x.desc.group_id, x.desc.in_group_id, raw, zstd), "AGC segment decode failed");
++                if (raw.empty() && x.length && x.desc.group_id >= no_raw_groups)
++                    require(decompress_segment(x.desc.group_id, 0, raw, zstd), "AGC identical segment decode failed");
++                require(raw.size() == x.length, "AGC decoded length differs from compressed index");
++                auto lo = std::max(first, x.base), hi = std::min(last, finish);
++                for (auto p = lo; p < hi; ++p) {
++                    auto k = p - x.base + x.skip;
++                    auto b = raw[x.desc.is_rev_comp ? raw.size() - 1 - k : k];
++                    if (x.desc.is_rev_comp && b < 4) b = 3 - b;
++                    require(b != 30, "Reserved AGC separator in sequence content");
++                    out[last - 1 - p] = b < 16 ? alphabet[b] : 'N';
++                }
++            }
++            offset += take; out += take;
++        }
++    }
++};
++class AgcSource : public TextSource {
++    Layout layout;
++    std::vector<std::unique_ptr<Session>> sessions;
++    std::vector<char> buffer;
++    uint64_t position = 0, range_end = 0;
++    std::size_t consumed = 0, available = 0;
++public:
++    AgcSource(const std::string& path, std::size_t threads, const std::string& names) {
++        require(threads > 0 && threads <= 96, "AGC decoder threads must be 1..96");
++        { Session indexer(path); layout = indexer.index(); }
++        range_end = layout.total;
++        threads = std::min<uint64_t>(threads, (layout.total + BLOCK - 1) / BLOCK);
++        sessions.resize(threads); buffer.resize(threads * BLOCK);
++        std::vector<std::exception_ptr> errors(threads);
++        #pragma omp parallel for num_threads(threads)
++        for (std::size_t i = 0; i < threads; ++i) {
++            try { sessions[i].reset(new Session(path)); } catch (...) { errors[i] = std::current_exception(); }
++        }
++        for (auto& e : errors) if (e) std::rethrow_exception(e);
++        if (!names.empty()) {
++            std::ofstream f(names); require(bool(f), "Cannot create AGC names sidecar");
++            for (const auto& r : layout.rows) f << r.name << '\t' << layout.total - 1 - r.base - r.length << '\t' << r.length << '\n';
++            f.close(); require(bool(f), "Cannot write AGC names sidecar");
++        }
++    }
++    uint64_t size() const override { return layout.total; }
++    void seek(uint64_t offset, uint64_t length) override {
++        require(offset <= layout.total, "AGC seek outside collection"); position = offset; range_end = offset + std::min(length, layout.total - offset); consumed = available = 0;
++    }
++    std::size_t read(char* out, std::size_t capacity) override {
++        if (!capacity || position == range_end) return 0;
++        if (consumed == available) {
++            available = std::min<uint64_t>(buffer.size(), range_end - position); consumed = 0;
++            std::vector<std::exception_ptr> errors(sessions.size());
++            #pragma omp parallel for num_threads(sessions.size())
++            for (std::size_t i = 0; i < sessions.size(); ++i) {
++                auto begin = i * BLOCK;
++                if (begin >= available) continue;
++                try { sessions[i]->read(layout, position + begin, buffer.data() + begin, std::min(BLOCK, available - begin)); }
++                catch (...) { errors[i] = std::current_exception(); }
++            }
++            for (auto& e : errors) if (e) std::rethrow_exception(e);
++        }
++        auto n = std::min(capacity, available - consumed);
++        std::copy_n(buffer.data() + consumed, n, out); consumed += n; position += n; return n;
++    }
++};
++} // namespace
++std::unique_ptr<TextSource> open_agc_source(const std::string& path, std::size_t threads, const std::string& names) {
++    return std::unique_ptr<TextSource>(new AgcSource(path, threads, names));
++}
++} }
++#endif
+diff --git a/tests/source_probe.cpp b/tests/source_probe.cpp
+new file mode 100644
+index 0000000..b929b77
+--- /dev/null
++++ b/tests/source_probe.cpp
+@@ -0,0 +1,34 @@
++#include <text_source.hpp>
++#include <chrono>
++#include <iostream>
++#include <vector>
++#include <algorithm>
++int main(int argc, char** argv) {
++    try {
++        if (argc < 6) { std::cerr << "source_probe agc|file PATH THREADS OFFSET LENGTH [emit]\n"; return 2; }
++        auto begin = std::chrono::steady_clock::now();
++        auto source = vcfbwt::pfp::open_text_source(argv[2], std::string(argv[1]) == "agc", std::stoul(argv[3]));
++        auto start = std::chrono::steady_clock::now();
++        bool requests = std::string(argv[4]) == "requests";
++        uint64_t offset, length;
++        do {
++        if (requests) { if (!(std::cin >> offset >> length)) break; }
++        else { offset = std::stoull(argv[4]); length = std::stoull(argv[5]); }
++        auto read_start = std::chrono::steady_clock::now();
++        source->seek(offset, length); uint64_t left = length, bytes = 0, hash = 14695981039346656037ULL;
++        std::vector<char> block(1 << 20);
++        while (left) {
++            auto n = source->read(block.data(), std::min<uint64_t>(left, block.size()));
++            if (!n) throw std::runtime_error("Short source read");
++            if (argc > 6) std::cout.write(block.data(), n);
++            else for (std::size_t i = 0; i < n; ++i) { hash ^= static_cast<unsigned char>(block[i]); hash *= 1099511628211ULL; }
++            left -= n; bytes += n;
++        }
++        auto end = std::chrono::steady_clock::now();
++        double init = std::chrono::duration<double>(start - begin).count(), seconds = std::chrono::duration<double>(end - read_start).count();
++        std::cerr << "{\"bytes\":" << bytes << ",\"init_seconds\":" << init << ",\"read_seconds\":" << seconds
++                  << ",\"MB_per_s\":" << bytes / 1e6 / seconds << ",\"hash\":" << hash << "}\n";
++        std::cout.flush(); std::cerr.flush();
++        } while (requests);
++    } catch (const std::exception& e) { std::cerr << e.what() << '\n'; return 1; }
++}
+diff --git a/tests/test_agc.py b/tests/test_agc.py
+new file mode 100644
+index 0000000..c0cc4b4
+--- /dev/null
++++ b/tests/test_agc.py
+@@ -0,0 +1,28 @@
++#!/usr/bin/env python3
++"""Native AGC/file parse equivalence and seek/separator regressions."""
++import argparse, os, pathlib, random, subprocess, tempfile
++p=argparse.ArgumentParser();p.add_argument('--pfp',required=True);p.add_argument('--probe',required=True);p.add_argument('--agc',required=True);p.add_argument('--agc2flat',required=True);a=p.parse_args()
++def run(cmd,**kw): return subprocess.run(list(map(str,cmd)),check=True,**kw)
++with tempfile.TemporaryDirectory(prefix='pfp-agc-test-') as tmp:
++ d=pathlib.Path(tmp); rng=random.Random(512); inputs=[]
++ for sample in range(2):
++  fa=d/f'sample{sample}.fa';fa.write_bytes(b'>shared\n'+bytes(rng.choice(b'ACGTN') for _ in range(1050001+sample))+b'\n>tiny\nacgtnryswkmbdhvu\n>periodic\n'+b'ACGT'*5000+b'\n');inputs.append(fa)
++ archive=d/'input.agc';run([a.agc,'create','-t','2','-o',archive,*inputs],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
++ flat=d/'control.txt';run([a.agc2flat,archive,'--revlines','--upper','--sep','1e','-o',flat],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
++ expected=flat.read_bytes()
++ for j in [1,16,48,96]:
++  prefix=d/f'native{j}';names=d/f'names{j}.tsv'
++  run([a.pfp,'-t',archive,'--agc','--agc-names',names,'-j',j,'-w','10','-p','100','-o',prefix,'--tmp-dir',d],stdout=subprocess.DEVNULL)
++  assert names.read_bytes()==pathlib.Path(str(flat)+'.names.tsv').read_bytes()
++  if j==1:run([a.pfp,'-t',flat,'-j',j,'-w','10','-p','100','-o',d/'file','--tmp-dir',d],stdout=subprocess.DEVNULL)
++  for ext in ['parse','dict']:assert (d/f'native{j}.{ext}').read_bytes()==(d/f'file.{ext}').read_bytes()
++ ranges=[(0,len(expected)),(len(expected),0)]
++ ranges += [(max(0,i-5),min(15,len(expected)-max(0,i-5))) for i,b in enumerate(expected) if b==30]
++ ranges += [(rng.randrange(len(expected)),rng.randrange(300)) for _ in range(30)]
++ proc=subprocess.Popen([a.probe,'agc',str(archive),'16','requests','0','emit'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
++ for offset,n in ranges:
++  n=min(n,len(expected)-offset);proc.stdin.write(f'{offset} {n}\n'.encode());proc.stdin.flush();assert proc.stdout.read(n)==expected[offset:offset+n]
++ proc.stdin.close();assert proc.wait()==0
++ bad=subprocess.run([a.probe,'agc',str(archive),'1',str(len(expected)+1),'1'],capture_output=True)
++ assert bad.returncode!=0
++ print('PASS: four thread counts; parse/dict/names byte-identical; whole stream, random seeks, separators, EOF, invalid range')

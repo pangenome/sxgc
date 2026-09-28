@@ -1,0 +1,1088 @@
+[
+  {
+    "bytes": 3336986759,
+    "init_seconds": 3.6301e-05,
+    "read_seconds": 5.15733,
+    "MB_per_s": 647.037,
+    "hash": 18330819722500875293,
+    "dataset": "yeast235",
+    "mode": "file",
+    "j": 16
+  },
+  {
+    "bytes": 3336986759,
+    "init_seconds": 0.905286,
+    "read_seconds": 7.08985,
+    "MB_per_s": 470.671,
+    "hash": 18330819722500875293,
+    "dataset": "yeast235",
+    "mode": "agc",
+    "j": 16
+  },
+  {
+    "bytes": 3336986759,
+    "init_seconds": 4.616e-05,
+    "read_seconds": 5.33366,
+    "MB_per_s": 625.647,
+    "hash": 18330819722500875293,
+    "dataset": "yeast235",
+    "mode": "file",
+    "j": 48
+  },
+  {
+    "bytes": 3336986759,
+    "init_seconds": 0.976412,
+    "read_seconds": 6.55574,
+    "MB_per_s": 509.017,
+    "hash": 18330819722500875293,
+    "dataset": "yeast235",
+    "mode": "agc",
+    "j": 48
+  },
+  {
+    "bytes": 3336986759,
+    "init_seconds": 4.427e-05,
+    "read_seconds": 5.41977,
+    "MB_per_s": 615.706,
+    "hash": 18330819722500875293,
+    "dataset": "yeast235",
+    "mode": "file",
+    "j": 96
+  },
+  {
+    "bytes": 3336986759,
+    "init_seconds": 1.05936,
+    "read_seconds": 6.24003,
+    "MB_per_s": 534.771,
+    "hash": 18330819722500875293,
+    "dataset": "yeast235",
+    "mode": "agc",
+    "j": 96
+  },
+  {
+    "dataset": "HPRC-466-20-windows",
+    "mode": "file",
+    "j": 16,
+    "bytes": 2000000000,
+    "read_seconds": 2.8870590000000003,
+    "init_seconds": 0.000788982,
+    "MB_per_s": 692.7464939234009,
+    "windows": [
+      {
+        "bytes": 100000000,
+        "init_seconds": 3.0491e-05,
+        "read_seconds": 0.139247,
+        "MB_per_s": 718.151,
+        "hash": 2222846675503757889,
+        "window": 0
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 4.332e-05,
+        "read_seconds": 0.138888,
+        "MB_per_s": 720.003,
+        "hash": 13370036989977547538,
+        "window": 1
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 3.463e-05,
+        "read_seconds": 0.168416,
+        "MB_per_s": 593.769,
+        "hash": 15127803203828834842,
+        "window": 2
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 4.802e-05,
+        "read_seconds": 0.151252,
+        "MB_per_s": 661.149,
+        "hash": 4430999641782337680,
+        "window": 3
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 3.507e-05,
+        "read_seconds": 0.146096,
+        "MB_per_s": 684.484,
+        "hash": 11782468181517974978,
+        "window": 4
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 4.4551e-05,
+        "read_seconds": 0.144966,
+        "MB_per_s": 689.818,
+        "hash": 16905452983853211755,
+        "window": 5
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 3.58e-05,
+        "read_seconds": 0.144943,
+        "MB_per_s": 689.925,
+        "hash": 14848623864713325723,
+        "window": 6
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 3.972e-05,
+        "read_seconds": 0.144434,
+        "MB_per_s": 692.358,
+        "hash": 3659150758218544552,
+        "window": 7
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 3.458e-05,
+        "read_seconds": 0.148207,
+        "MB_per_s": 674.733,
+        "hash": 7577860399291529916,
+        "window": 8
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 4.181e-05,
+        "read_seconds": 0.144818,
+        "MB_per_s": 690.524,
+        "hash": 10220330524962237490,
+        "window": 9
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 4.184e-05,
+        "read_seconds": 0.142816,
+        "MB_per_s": 700.2,
+        "hash": 2495081402855942338,
+        "window": 10
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 4.249e-05,
+        "read_seconds": 0.142813,
+        "MB_per_s": 700.218,
+        "hash": 10490154983238527266,
+        "window": 11
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 3.863e-05,
+        "read_seconds": 0.142884,
+        "MB_per_s": 699.87,
+        "hash": 3101705262495859957,
+        "window": 12
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 3.504e-05,
+        "read_seconds": 0.134194,
+        "MB_per_s": 745.192,
+        "hash": 15965759528578952831,
+        "window": 13
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 3.061e-05,
+        "read_seconds": 0.144021,
+        "MB_per_s": 694.345,
+        "hash": 1650872962717421616,
+        "window": 14
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 4.019e-05,
+        "read_seconds": 0.138789,
+        "MB_per_s": 720.518,
+        "hash": 11503618084040966898,
+        "window": 15
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 5.186e-05,
+        "read_seconds": 0.143769,
+        "MB_per_s": 695.563,
+        "hash": 15404981541121295481,
+        "window": 16
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 3.977e-05,
+        "read_seconds": 0.143739,
+        "MB_per_s": 695.704,
+        "hash": 708618579550362012,
+        "window": 17
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 5.028e-05,
+        "read_seconds": 0.138912,
+        "MB_per_s": 719.879,
+        "hash": 8246628905185169032,
+        "window": 18
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 3.028e-05,
+        "read_seconds": 0.143855,
+        "MB_per_s": 695.146,
+        "hash": 10264244559995973234,
+        "window": 19
+      }
+    ]
+  },
+  {
+    "dataset": "HPRC-466-20-windows",
+    "mode": "agc",
+    "j": 16,
+    "bytes": 2000000000,
+    "read_seconds": 3.9284280000000003,
+    "init_seconds": 68.4388,
+    "MB_per_s": 509.1094962157891,
+    "windows": [
+      {
+        "bytes": 100000000,
+        "init_seconds": 68.4388,
+        "read_seconds": 0.360649,
+        "MB_per_s": 277.278,
+        "hash": 2222846675503757889,
+        "window": 0
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 68.4388,
+        "read_seconds": 0.17994,
+        "MB_per_s": 555.74,
+        "hash": 13370036989977547538,
+        "window": 1
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 68.4388,
+        "read_seconds": 0.176246,
+        "MB_per_s": 567.388,
+        "hash": 15127803203828834842,
+        "window": 2
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 68.4388,
+        "read_seconds": 0.178107,
+        "MB_per_s": 561.459,
+        "hash": 4430999641782337680,
+        "window": 3
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 68.4388,
+        "read_seconds": 0.18497,
+        "MB_per_s": 540.629,
+        "hash": 11782468181517974978,
+        "window": 4
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 68.4388,
+        "read_seconds": 0.186094,
+        "MB_per_s": 537.364,
+        "hash": 16905452983853211755,
+        "window": 5
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 68.4388,
+        "read_seconds": 0.183689,
+        "MB_per_s": 544.399,
+        "hash": 14848623864713325723,
+        "window": 6
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 68.4388,
+        "read_seconds": 0.185647,
+        "MB_per_s": 538.658,
+        "hash": 3659150758218544552,
+        "window": 7
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 68.4388,
+        "read_seconds": 0.173872,
+        "MB_per_s": 575.136,
+        "hash": 7577860399291529916,
+        "window": 8
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 68.4388,
+        "read_seconds": 0.177047,
+        "MB_per_s": 564.821,
+        "hash": 10220330524962237490,
+        "window": 9
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 68.4388,
+        "read_seconds": 0.188045,
+        "MB_per_s": 531.787,
+        "hash": 2495081402855942338,
+        "window": 10
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 68.4388,
+        "read_seconds": 0.215543,
+        "MB_per_s": 463.944,
+        "hash": 10490154983238527266,
+        "window": 11
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 68.4388,
+        "read_seconds": 0.183359,
+        "MB_per_s": 545.377,
+        "hash": 3101705262495859957,
+        "window": 12
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 68.4388,
+        "read_seconds": 0.176345,
+        "MB_per_s": 567.071,
+        "hash": 15965759528578952831,
+        "window": 13
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 68.4388,
+        "read_seconds": 0.188981,
+        "MB_per_s": 529.154,
+        "hash": 1650872962717421616,
+        "window": 14
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 68.4388,
+        "read_seconds": 0.204849,
+        "MB_per_s": 488.163,
+        "hash": 11503618084040966898,
+        "window": 15
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 68.4388,
+        "read_seconds": 0.205795,
+        "MB_per_s": 485.92,
+        "hash": 15404981541121295481,
+        "window": 16
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 68.4388,
+        "read_seconds": 0.194807,
+        "MB_per_s": 513.329,
+        "hash": 708618579550362012,
+        "window": 17
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 68.4388,
+        "read_seconds": 0.179478,
+        "MB_per_s": 557.172,
+        "hash": 8246628905185169032,
+        "window": 18
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 68.4388,
+        "read_seconds": 0.204965,
+        "MB_per_s": 487.889,
+        "hash": 10264244559995973234,
+        "window": 19
+      }
+    ]
+  },
+  {
+    "dataset": "HPRC-466-20-windows",
+    "mode": "file",
+    "j": 48,
+    "bytes": 2000000000,
+    "read_seconds": 2.99942,
+    "init_seconds": 0.000800693,
+    "MB_per_s": 666.7955804788926,
+    "windows": [
+      {
+        "bytes": 100000000,
+        "init_seconds": 4.3661e-05,
+        "read_seconds": 0.149228,
+        "MB_per_s": 670.115,
+        "hash": 2222846675503757889,
+        "window": 0
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 3.574e-05,
+        "read_seconds": 0.198757,
+        "MB_per_s": 503.128,
+        "hash": 13370036989977547538,
+        "window": 1
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 4.166e-05,
+        "read_seconds": 0.191698,
+        "MB_per_s": 521.655,
+        "hash": 15127803203828834842,
+        "window": 2
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 4.313e-05,
+        "read_seconds": 0.142069,
+        "MB_per_s": 703.885,
+        "hash": 4430999641782337680,
+        "window": 3
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 2.669e-05,
+        "read_seconds": 0.143591,
+        "MB_per_s": 696.423,
+        "hash": 11782468181517974978,
+        "window": 4
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 3.26e-05,
+        "read_seconds": 0.146356,
+        "MB_per_s": 683.264,
+        "hash": 16905452983853211755,
+        "window": 5
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 4.4411e-05,
+        "read_seconds": 0.144865,
+        "MB_per_s": 690.297,
+        "hash": 14848623864713325723,
+        "window": 6
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 4.868e-05,
+        "read_seconds": 0.146871,
+        "MB_per_s": 680.872,
+        "hash": 3659150758218544552,
+        "window": 7
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 3.229e-05,
+        "read_seconds": 0.162539,
+        "MB_per_s": 615.236,
+        "hash": 7577860399291529916,
+        "window": 8
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 4.15e-05,
+        "read_seconds": 0.182395,
+        "MB_per_s": 548.262,
+        "hash": 10220330524962237490,
+        "window": 9
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 3.707e-05,
+        "read_seconds": 0.139945,
+        "MB_per_s": 714.565,
+        "hash": 2495081402855942338,
+        "window": 10
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 4.885e-05,
+        "read_seconds": 0.140535,
+        "MB_per_s": 711.567,
+        "hash": 10490154983238527266,
+        "window": 11
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 3.721e-05,
+        "read_seconds": 0.137348,
+        "MB_per_s": 728.076,
+        "hash": 3101705262495859957,
+        "window": 12
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 4.378e-05,
+        "read_seconds": 0.133166,
+        "MB_per_s": 750.94,
+        "hash": 15965759528578952831,
+        "window": 13
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 3.4191e-05,
+        "read_seconds": 0.140735,
+        "MB_per_s": 710.555,
+        "hash": 1650872962717421616,
+        "window": 14
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 4.138e-05,
+        "read_seconds": 0.142835,
+        "MB_per_s": 700.108,
+        "hash": 11503618084040966898,
+        "window": 15
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 3.529e-05,
+        "read_seconds": 0.137021,
+        "MB_per_s": 729.816,
+        "hash": 15404981541121295481,
+        "window": 16
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 4.46e-05,
+        "read_seconds": 0.137029,
+        "MB_per_s": 729.773,
+        "hash": 708618579550362012,
+        "window": 17
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 4.103e-05,
+        "read_seconds": 0.14049,
+        "MB_per_s": 711.793,
+        "hash": 8246628905185169032,
+        "window": 18
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 4.693e-05,
+        "read_seconds": 0.141947,
+        "MB_per_s": 704.486,
+        "hash": 10264244559995973234,
+        "window": 19
+      }
+    ]
+  },
+  {
+    "dataset": "HPRC-466-20-windows",
+    "mode": "agc",
+    "j": 48,
+    "bytes": 2000000000,
+    "read_seconds": 4.307285,
+    "init_seconds": 76.6158,
+    "MB_per_s": 464.3296183094455,
+    "windows": [
+      {
+        "bytes": 100000000,
+        "init_seconds": 76.6158,
+        "read_seconds": 0.739125,
+        "MB_per_s": 135.295,
+        "hash": 2222846675503757889,
+        "window": 0
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 76.6158,
+        "read_seconds": 0.149055,
+        "MB_per_s": 670.895,
+        "hash": 13370036989977547538,
+        "window": 1
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 76.6158,
+        "read_seconds": 0.166512,
+        "MB_per_s": 600.556,
+        "hash": 15127803203828834842,
+        "window": 2
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 76.6158,
+        "read_seconds": 0.182401,
+        "MB_per_s": 548.243,
+        "hash": 4430999641782337680,
+        "window": 3
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 76.6158,
+        "read_seconds": 0.181948,
+        "MB_per_s": 549.606,
+        "hash": 11782468181517974978,
+        "window": 4
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 76.6158,
+        "read_seconds": 0.18663,
+        "MB_per_s": 535.819,
+        "hash": 16905452983853211755,
+        "window": 5
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 76.6158,
+        "read_seconds": 0.197983,
+        "MB_per_s": 505.093,
+        "hash": 14848623864713325723,
+        "window": 6
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 76.6158,
+        "read_seconds": 0.208677,
+        "MB_per_s": 479.208,
+        "hash": 3659150758218544552,
+        "window": 7
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 76.6158,
+        "read_seconds": 0.16313,
+        "MB_per_s": 613.007,
+        "hash": 7577860399291529916,
+        "window": 8
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 76.6158,
+        "read_seconds": 0.191823,
+        "MB_per_s": 521.314,
+        "hash": 10220330524962237490,
+        "window": 9
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 76.6158,
+        "read_seconds": 0.188088,
+        "MB_per_s": 531.667,
+        "hash": 2495081402855942338,
+        "window": 10
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 76.6158,
+        "read_seconds": 0.20245,
+        "MB_per_s": 493.95,
+        "hash": 10490154983238527266,
+        "window": 11
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 76.6158,
+        "read_seconds": 0.184013,
+        "MB_per_s": 543.44,
+        "hash": 3101705262495859957,
+        "window": 12
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 76.6158,
+        "read_seconds": 0.20785,
+        "MB_per_s": 481.116,
+        "hash": 15965759528578952831,
+        "window": 13
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 76.6158,
+        "read_seconds": 0.187356,
+        "MB_per_s": 533.744,
+        "hash": 1650872962717421616,
+        "window": 14
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 76.6158,
+        "read_seconds": 0.206966,
+        "MB_per_s": 483.171,
+        "hash": 11503618084040966898,
+        "window": 15
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 76.6158,
+        "read_seconds": 0.197459,
+        "MB_per_s": 506.434,
+        "hash": 15404981541121295481,
+        "window": 16
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 76.6158,
+        "read_seconds": 0.190847,
+        "MB_per_s": 523.981,
+        "hash": 708618579550362012,
+        "window": 17
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 76.6158,
+        "read_seconds": 0.181956,
+        "MB_per_s": 549.582,
+        "hash": 8246628905185169032,
+        "window": 18
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 76.6158,
+        "read_seconds": 0.193016,
+        "MB_per_s": 518.092,
+        "hash": 10264244559995973234,
+        "window": 19
+      }
+    ]
+  },
+  {
+    "dataset": "HPRC-466-20-windows",
+    "mode": "file",
+    "j": 96,
+    "bytes": 2000000000,
+    "read_seconds": 2.739466,
+    "init_seconds": 0.00064638,
+    "MB_per_s": 730.0692908763971,
+    "windows": [
+      {
+        "bytes": 100000000,
+        "init_seconds": 4.642e-05,
+        "read_seconds": 0.150288,
+        "MB_per_s": 665.388,
+        "hash": 2222846675503757889,
+        "window": 0
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 3.453e-05,
+        "read_seconds": 0.136943,
+        "MB_per_s": 730.229,
+        "hash": 13370036989977547538,
+        "window": 1
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 3.913e-05,
+        "read_seconds": 0.144355,
+        "MB_per_s": 692.739,
+        "hash": 15127803203828834842,
+        "window": 2
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 3.683e-05,
+        "read_seconds": 0.142789,
+        "MB_per_s": 700.332,
+        "hash": 4430999641782337680,
+        "window": 3
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 4.218e-05,
+        "read_seconds": 0.139548,
+        "MB_per_s": 716.6,
+        "hash": 11782468181517974978,
+        "window": 4
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 3.397e-05,
+        "read_seconds": 0.144684,
+        "MB_per_s": 691.16,
+        "hash": 16905452983853211755,
+        "window": 5
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 3.712e-05,
+        "read_seconds": 0.144045,
+        "MB_per_s": 694.228,
+        "hash": 14848623864713325723,
+        "window": 6
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 4.068e-05,
+        "read_seconds": 0.142176,
+        "MB_per_s": 703.355,
+        "hash": 3659150758218544552,
+        "window": 7
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 3.066e-05,
+        "read_seconds": 0.149798,
+        "MB_per_s": 667.565,
+        "hash": 7577860399291529916,
+        "window": 8
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 3.274e-05,
+        "read_seconds": 0.137262,
+        "MB_per_s": 728.534,
+        "hash": 10220330524962237490,
+        "window": 9
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 3.386e-05,
+        "read_seconds": 0.133301,
+        "MB_per_s": 750.184,
+        "hash": 2495081402855942338,
+        "window": 10
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 2.406e-05,
+        "read_seconds": 0.127084,
+        "MB_per_s": 786.884,
+        "hash": 10490154983238527266,
+        "window": 11
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 2.534e-05,
+        "read_seconds": 0.127306,
+        "MB_per_s": 785.51,
+        "hash": 3101705262495859957,
+        "window": 12
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 3.34e-05,
+        "read_seconds": 0.136608,
+        "MB_per_s": 732.019,
+        "hash": 15965759528578952831,
+        "window": 13
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 2.72e-05,
+        "read_seconds": 0.130371,
+        "MB_per_s": 767.04,
+        "hash": 1650872962717421616,
+        "window": 14
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 2.723e-05,
+        "read_seconds": 0.129836,
+        "MB_per_s": 770.204,
+        "hash": 11503618084040966898,
+        "window": 15
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 2.325e-05,
+        "read_seconds": 0.129905,
+        "MB_per_s": 769.794,
+        "hash": 15404981541121295481,
+        "window": 16
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 2.461e-05,
+        "read_seconds": 0.129656,
+        "MB_per_s": 771.27,
+        "hash": 708618579550362012,
+        "window": 17
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 2.655e-05,
+        "read_seconds": 0.131047,
+        "MB_per_s": 763.083,
+        "hash": 8246628905185169032,
+        "window": 18
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 2.662e-05,
+        "read_seconds": 0.132464,
+        "MB_per_s": 754.923,
+        "hash": 10264244559995973234,
+        "window": 19
+      }
+    ]
+  },
+  {
+    "dataset": "HPRC-466-20-windows",
+    "mode": "agc",
+    "j": 96,
+    "bytes": 2000000000,
+    "read_seconds": 4.5699689999999995,
+    "init_seconds": 82.2128,
+    "MB_per_s": 437.6397301600952,
+    "windows": [
+      {
+        "bytes": 100000000,
+        "init_seconds": 82.2128,
+        "read_seconds": 1.28914,
+        "MB_per_s": 77.5711,
+        "hash": 2222846675503757889,
+        "window": 0
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 82.2128,
+        "read_seconds": 0.155435,
+        "MB_per_s": 643.356,
+        "hash": 13370036989977547538,
+        "window": 1
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 82.2128,
+        "read_seconds": 0.153318,
+        "MB_per_s": 652.237,
+        "hash": 15127803203828834842,
+        "window": 2
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 82.2128,
+        "read_seconds": 0.158182,
+        "MB_per_s": 632.182,
+        "hash": 4430999641782337680,
+        "window": 3
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 82.2128,
+        "read_seconds": 0.157677,
+        "MB_per_s": 634.209,
+        "hash": 11782468181517974978,
+        "window": 4
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 82.2128,
+        "read_seconds": 0.153136,
+        "MB_per_s": 653.016,
+        "hash": 16905452983853211755,
+        "window": 5
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 82.2128,
+        "read_seconds": 0.158503,
+        "MB_per_s": 630.903,
+        "hash": 14848623864713325723,
+        "window": 6
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 82.2128,
+        "read_seconds": 0.173165,
+        "MB_per_s": 577.485,
+        "hash": 3659150758218544552,
+        "window": 7
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 82.2128,
+        "read_seconds": 0.192979,
+        "MB_per_s": 518.191,
+        "hash": 7577860399291529916,
+        "window": 8
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 82.2128,
+        "read_seconds": 0.174861,
+        "MB_per_s": 571.883,
+        "hash": 10220330524962237490,
+        "window": 9
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 82.2128,
+        "read_seconds": 0.18267,
+        "MB_per_s": 547.434,
+        "hash": 2495081402855942338,
+        "window": 10
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 82.2128,
+        "read_seconds": 0.183799,
+        "MB_per_s": 544.074,
+        "hash": 10490154983238527266,
+        "window": 11
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 82.2128,
+        "read_seconds": 0.184743,
+        "MB_per_s": 541.293,
+        "hash": 3101705262495859957,
+        "window": 12
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 82.2128,
+        "read_seconds": 0.182511,
+        "MB_per_s": 547.911,
+        "hash": 15965759528578952831,
+        "window": 13
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 82.2128,
+        "read_seconds": 0.187136,
+        "MB_per_s": 534.37,
+        "hash": 1650872962717421616,
+        "window": 14
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 82.2128,
+        "read_seconds": 0.194841,
+        "MB_per_s": 513.24,
+        "hash": 11503618084040966898,
+        "window": 15
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 82.2128,
+        "read_seconds": 0.169033,
+        "MB_per_s": 591.601,
+        "hash": 15404981541121295481,
+        "window": 16
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 82.2128,
+        "read_seconds": 0.163019,
+        "MB_per_s": 613.427,
+        "hash": 708618579550362012,
+        "window": 17
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 82.2128,
+        "read_seconds": 0.17048,
+        "MB_per_s": 586.577,
+        "hash": 8246628905185169032,
+        "window": 18
+      },
+      {
+        "bytes": 100000000,
+        "init_seconds": 82.2128,
+        "read_seconds": 0.185341,
+        "MB_per_s": 539.547,
+        "hash": 10264244559995973234,
+        "window": 19
+      }
+    ]
+  }
+]

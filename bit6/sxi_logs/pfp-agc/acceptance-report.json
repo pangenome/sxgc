@@ -1,0 +1,94 @@
+{
+  "criteriaSatisfied": [
+    {
+      "id": "criterion-1",
+      "status": "satisfied",
+      "evidence": "Full native yeast publication completed without code/scope expansion or extracted collection text; all five core members byte-identical"
+    },
+    {
+      "id": "criterion-2",
+      "status": "satisfied",
+      "evidence": "Acceptance bundle contains stage logs, direct byte comparisons and hashes, regressions, throughput/466 ETA, verified patch, PR draft and hygiene checks"
+    }
+  ],
+  "changedFiles": [
+    "/tmp/pfp-agc-fork/CMakeLists.txt",
+    "/tmp/pfp-agc-fork/README.md",
+    "/tmp/pfp-agc-fork/include/pfp_algo.hpp",
+    "/tmp/pfp-agc-fork/pfp++.cpp",
+    "/tmp/pfp-agc-fork/src/pfp_algo.cpp",
+    "/tmp/pfp-agc-fork/include/text_source.hpp",
+    "/tmp/pfp-agc-fork/src/text_source.cpp",
+    "/tmp/pfp-agc-fork/src/agc_source.hpp",
+    "/tmp/pfp-agc-fork/src/agc_source.cpp",
+    "/tmp/pfp-agc-fork/tests/source_probe.cpp",
+    "/tmp/pfp-agc-fork/tests/test_agc.py",
+    "bit6/sxi_pipeline.py",
+    "tools/build_pfp_agc.sh",
+    "bit6/sxi_logs/pfp-agc/ACCEPTANCE.md",
+    "bit6/sxi_logs/pfp-agc/THROUGHPUT.md",
+    "bit6/sxi_logs/pfp-agc/PR-DESCRIPTION.md",
+    "bit6/sxi_logs/pfp-agc/PATCHES.md",
+    "bit6/sxi_logs/pfp-agc/COMMANDS.md",
+    "bit6/sxi_logs/pfp-agc/compare_published.py",
+    "bit6/sxi_logs/pfp-agc/monitor_completion.py",
+    "bit6/sxi_logs/pfp-agc/finalize_completion.py",
+    "bit6/sxi_logs/pfp-agc/series"
+  ],
+  "testsAddedOrUpdated": [
+    "/tmp/pfp-agc-fork/tests/test_agc.py",
+    "/tmp/pfp-agc-fork/tests/source_probe.cpp",
+    "bit6/sxi_logs/pfp-agc/compare_published.py"
+  ],
+  "commandsRun": [
+    {
+      "command": "XSA_PFP=/tmp/pfp-agc-fork/build/pfp++ XSA_TOOLS=/tmp/sxi-stream/tools XSA_PIPELINE=/tmp/sxgc-laneV/bit6/sxi_pipeline.py /tmp/sxi-stream/xsa-target/release/xsa build --agc /home/erikg/yeast/yeast235.agc -o /tmp/pfp-agc-gates/yeast235-native.sxi --scratch /tmp/pfp-agc-gates --log-dir /tmp/sxgc-laneV/bit6/sxi_logs/pfp-agc --threads 16 --verify-text-sample 32 --verbose",
+      "result": "passed",
+      "summary": "All stages pass, archive audit green, validated SXI published"
+    },
+    {
+      "command": "python3 bit6/sxi_logs/pfp-agc/compare_published.py",
+      "result": "passed",
+      "summary": "Five core members byte-identical to accepted control"
+    },
+    {
+      "command": "python3 bit6/sxi_logs/pfp-agc/run_regressions.py",
+      "result": "passed",
+      "summary": "Three committed Python tests and both Cargo suites pass"
+    },
+    {
+      "command": "/tmp/sxi-stream/tools/slim_lce_test",
+      "result": "passed",
+      "summary": "216000 exact LCE checks"
+    },
+    {
+      "command": "python3 /tmp/pfp-agc-fork/tests/test_agc.py --pfp /tmp/pfp-agc-fork/build/pfp++ --probe /tmp/pfp-agc-fork/build/pfp_source_probe --agc /home/erikg/agc/bin/agc --agc2flat /tmp/sxi-stream/tools/agc2flat (also pfp++64)",
+      "result": "passed",
+      "summary": "Both widths pass at j=1/16/48/96"
+    },
+    {
+      "command": "git apply --check pfp-agc.patch; git apply pfp-agc.patch (fresh base export)",
+      "result": "passed",
+      "summary": "All eleven patched files exactly match tested fork; no staging"
+    }
+  ],
+  "validationOutput": [
+    "Published /tmp/pfp-agc-gates/yeast235-native.sxi: 1804487132 bytes",
+    "All five core members byte-identical; yeast-published-members.json contains hashes/counts/lengths",
+    "All 3336986759 yeast reader bytes and 20 x 100000000 HPRC window bytes matched (prior proofs retained)",
+    "Archive-backed 32-witness audit passes; no collection.txt/FIFO in native scratch",
+    "All regressions pass; protected checkout and binary unchanged",
+    "HPRC optimum j=16: 509.109 MB/s steady; startup-amortized reader projection 47.08 min; parse ETA 6.63 h"
+  ],
+  "residualRisks": [
+    "External reviewer approval remains required",
+    "Pinned internal AGC APIs; format 3 only",
+    "Archive audit is sampled; HPRC full parse/index not run; parse ETA is extrapolated"
+  ],
+  "noStagedFiles": true,
+  "diffSummary": "Optional native AGC TextSource and tests in isolated PFP fork; separate SXI integration; completed publication and evidence materials, no commits",
+  "reviewFindings": [
+    "No local acceptance blockers; independent reviewer gate pending"
+  ],
+  "manualNotes": "Supervisor clarified text-only write prohibition and steady-throughput gate. Original stopped PID was gone; full native build was restarted. Upstream PR is a local draft only."
+}

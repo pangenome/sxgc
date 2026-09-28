@@ -1,0 +1,604 @@
+make: Entering directory '/tmp/pfp-agc-library'
+*** Initialization of submodules ***
+*** Initialization of global values ***
+*** Unspecified platform - using native compilation for x86_64 ***
+*** Adding mimalloc ***
+*** Proposing isal ***
+*** Proposing zlib-ng ***
+zlib-ng will be used for gzip decompression
+*** Adding libdeflate ***
+*** Adding libzstd ***
+*** Adding raduls-inplace ***
+*** Adding REFRESH libs ***
+Prebuild jobs: mimalloc_obj zlib-ng libdeflate libzstd raduls-inplace
+*** Checking compiler version ***
+Compiler: GCC
+Version: 13
+g++ -DMI_MALLOC_OVERRIDE -O3 -DNDEBUG -fPIC -Wall -Wextra -Wno-unknown-pragmas -fvisibility=hidden -ftls-model=initial-exec -fno-builtin-malloc -c -I ./3rd_party/mimalloc/include ./3rd_party/mimalloc/src/static.c -o ./3rd_party/mimalloc/mimalloc.o
+cd ./3rd_party/zlib-ng && cmake  -DCMAKE_CXX_COMPILER=g++ -DCMAKE_C_COMPILER=cc -B build-g++/zlib-ng -S . -DZLIB_COMPAT=ON; cmake --build build-g++/zlib-ng --config Release
+cd ./3rd_party/libdeflate && cmake  -DCMAKE_CXX_COMPILER=g++ -DCMAKE_C_COMPILER=cc -DLIBDEFLATE_BUILD_SHARED_LIB=OFF -DLIBDEFLATE_BUILD_GZIP=OFF -B build && cmake --build build
+cd ./3rd_party/zstd && make
+cd ./3rd_party/raduls-inplace/Raduls && make
+make[1]: Entering directory '/tmp/pfp-agc-library/3rd_party/zstd'
+make[1]: warning: jobserver unavailable: using -j1.  Add '+' to parent make rule.
+make[1]: Entering directory '/tmp/pfp-agc-library/3rd_party/raduls-inplace/Raduls'
+make[1]: warning: jobserver unavailable: using -j1.  Add '+' to parent make rule.
+*** default extensions ***
+g++ -DNDEBUG -Wall -O3  -static -fno-ipa-ra -fno-tree-vrp -fno-tree-pre  -std=c++14 -Wl,--whole-archive -lpthread -Wl,--no-whole-archive -DCOMPILE_FOR_SSE2 -DCOMPILE_FOR_AVX -DCOMPILE_FOR_AVX2 -DARCH_X64 -c raduls_impl.cpp -o raduls_impl.o
+make[2]: Entering directory '/tmp/pfp-agc-library/3rd_party/zstd/lib'
+-- No build type selected; defaulting to Release
+-- Using CMake version 3.28.3
+-- ZLIB_HEADER_VERSION: 1.3.1
+-- ZLIBNG_HEADER_VERSION: 2.1.6
+-- The C compiler identification is GNU 13.3.0
+-- The C compiler identification is GNU 13.3.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info
+CC obj/conf_88911b1022c568e1510edaaf5256a23d/static/debug.o
+CC obj/conf_88911b1022c568e1510edaaf5256a23d/static/entropy_common.o
+-- Detecting C compiler ABI info - done
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/cc - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Check for working C compiler: /usr/bin/cc - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Performing Test HAVE_WDECLARATION_AFTER_STATEMENT
+-- Arch detected: 'x86_64'
+-- Basearch of 'x86_64' has been detected as: 'x86'
+-- Performing Test FNO_LTO_AVAILABLE
+-- Performing Test HAVE_WDECLARATION_AFTER_STATEMENT - Success
+-- Performing Test HAVE_WIMPLICIT_FALLTHROUGH
+In file included from ./3rd_party/mimalloc/src/static.c:24:
+./3rd_party/mimalloc/src/alloc-aligned.c:162:14: warning: ‘_mi_heap_malloc_aligned’ defined but not used [-Wunused-variable]
+  162 | static void* _mi_heap_malloc_aligned = (void*)&mi_heap_malloc_aligned;
+      |              ^~~~~~~~~~~~~~~~~~~~~~~
+CC obj/conf_88911b1022c568e1510edaaf5256a23d/static/error_private.o
+g++    -c -o exceptions.o exceptions.cpp
+-- Performing Test FNO_LTO_AVAILABLE - Success
+-- Looking for arm_acle.h
+CC obj/conf_88911b1022c568e1510edaaf5256a23d/static/fse_decompress.o
+-- Looking for arm_acle.h - not found
+-- Looking for sys/auxv.h
+-- Performing Test HAVE_WIMPLICIT_FALLTHROUGH - Success
+-- Performing Test HAVE_WMISSING_FIELD_INITIALIZERS
+-- Performing Test HAVE_WMISSING_FIELD_INITIALIZERS - Success
+-- Performing Test HAVE_WMISSING_PROTOTYPES
+-- Looking for sys/auxv.h - found
+-- Looking for sys/sdt.h
+g++ -DNDEBUG -Wall -O3  -static -fno-ipa-ra -fno-tree-vrp -fno-tree-pre  -std=c++14 -Wl,--whole-archive -lpthread -Wl,--no-whole-archive  -DCOMPILE_FOR_SSE2 -DCOMPILE_FOR_AVX -DCOMPILE_FOR_AVX2 -DARCH_X64 -c raduls_SSE2.cpp -o raduls_SSE2.o
+-- Looking for sys/sdt.h - not found
+-- Looking for unistd.h
+-- Performing Test HAVE_WMISSING_PROTOTYPES - Success
+-- Performing Test HAVE_WPEDANTIC
+-- Looking for unistd.h - found
+-- Looking for linux/auxvec.h
+CC obj/conf_88911b1022c568e1510edaaf5256a23d/static/pool.o
+-- Performing Test HAVE_WPEDANTIC - Success
+-- Performing Test HAVE_WSHADOW
+CC obj/conf_88911b1022c568e1510edaaf5256a23d/static/threading.o
+CC obj/conf_88911b1022c568e1510edaaf5256a23d/static/xxhash.o
+-- Looking for linux/auxvec.h - found
+-- Looking for sys/types.h
+-- Performing Test HAVE_WSHADOW - Success
+-- Performing Test HAVE_WSTRICT_PROTOTYPES
+-- Looking for sys/types.h - found
+-- Looking for stdint.h
+CC obj/conf_88911b1022c568e1510edaaf5256a23d/static/zstd_common.o
+-- Performing Test HAVE_WSTRICT_PROTOTYPES - Success
+-- Performing Test HAVE_WUNDEF
+CC obj/conf_88911b1022c568e1510edaaf5256a23d/static/zstd_v05.o
+-- Looking for stdint.h - found
+-- Looking for stddef.h
+-- Performing Test HAVE_WUNDEF - Success
+-- Performing Test HAVE_WVLA
+-- Looking for stddef.h - found
+-- Check size of off64_t
+-- Performing Test HAVE_WVLA - Success
+-- Configuring done (1.1s)
+-- Generating done (0.0s)
+CMake Warning:
+  Manually-specified variables were not used by the project:
+
+    CMAKE_CXX_COMPILER
+
+
+-- Build files have been written to: /tmp/pfp-agc-library/3rd_party/libdeflate/build
+gmake[1]: Entering directory '/tmp/pfp-agc-library/3rd_party/libdeflate/build'
+gmake[1]: warning: jobserver unavailable: using -j1.  Add '+' to parent make rule.
+gmake[2]: Entering directory '/tmp/pfp-agc-library/3rd_party/libdeflate/build'
+gmake[3]: Entering directory '/tmp/pfp-agc-library/3rd_party/libdeflate/build'
+gmake[3]: Leaving directory '/tmp/pfp-agc-library/3rd_party/libdeflate/build'
+gmake[3]: Entering directory '/tmp/pfp-agc-library/3rd_party/libdeflate/build'
+-- Check size of off64_t - done
+-- Looking for fseeko
+[  8%] Building C object CMakeFiles/libdeflate_static.dir/lib/arm/cpu_features.c.o
+[ 16%] Building C object CMakeFiles/libdeflate_static.dir/lib/utils.c.o
+[ 25%] Building C object CMakeFiles/libdeflate_static.dir/lib/x86/cpu_features.c.o
+-- Looking for fseeko - found
+-- Looking for strerror
+[ 33%] Building C object CMakeFiles/libdeflate_static.dir/lib/deflate_compress.c.o
+-- Looking for strerror - found
+-- Looking for posix_memalign
+-- Looking for posix_memalign - found
+-- Looking for aligned_alloc
+-- Looking for aligned_alloc - found
+-- Performing Test HAVE_NO_INTERPOSITION
+-- Performing Test HAVE_NO_INTERPOSITION - Success
+-- Performing Test HAVE_ATTRIBUTE_VISIBILITY_HIDDEN
+-- Performing Test HAVE_ATTRIBUTE_VISIBILITY_HIDDEN - Success
+-- Performing Test HAVE_ATTRIBUTE_VISIBILITY_INTERNAL
+-- Performing Test HAVE_ATTRIBUTE_VISIBILITY_INTERNAL - Success
+-- Performing Test HAVE_ATTRIBUTE_ALIGNED
+-- Performing Test HAVE_ATTRIBUTE_ALIGNED - Success
+-- Performing Test HAVE_BUILTIN_CTZ
+CC obj/conf_88911b1022c568e1510edaaf5256a23d/static/zstd_v06.o
+-- Performing Test HAVE_BUILTIN_CTZ - Success
+-- Performing Test HAVE_BUILTIN_CTZLL
+-- Performing Test HAVE_BUILTIN_CTZLL - Success
+-- Performing Test HAVE_PTRDIFF_T
+-- Performing Test HAVE_PTRDIFF_T - Success
+-- Performing Test HAVE_XSAVE_INTRIN
+[ 41%] Building C object CMakeFiles/libdeflate_static.dir/lib/deflate_decompress.c.o
+-- Performing Test HAVE_XSAVE_INTRIN - Success
+-- Performing Test HAVE_SSE2_INTRIN
+-- Performing Test HAVE_SSE2_INTRIN - Success
+-- Performing Test HAVE_SSSE3_INTRIN
+CC obj/conf_88911b1022c568e1510edaaf5256a23d/static/zstd_v07.o
+[ 50%] Building C object CMakeFiles/libdeflate_static.dir/lib/adler32.c.o
+g++ -static -O1  -DCOMPILE_FOR_SSE2 -DCOMPILE_FOR_AVX -DCOMPILE_FOR_AVX2 -DARCH_X64 -std=c++14 -Wl,--whole-archive -lpthread -Wl,--no-whole-archive -c sorting_network_SSE2.cpp -o sorting_network_SSE2.o
+-- Performing Test HAVE_SSSE3_INTRIN - Success
+-- Performing Test HAVE_SSE42_INTRIN
+-- Performing Test HAVE_SSE42_INTRIN - Success
+-- Performing Test HAVE_PCLMULQDQ_INTRIN
+[ 58%] Building C object CMakeFiles/libdeflate_static.dir/lib/zlib_compress.c.o
+[ 66%] Building C object CMakeFiles/libdeflate_static.dir/lib/zlib_decompress.c.o
+[ 75%] Building C object CMakeFiles/libdeflate_static.dir/lib/crc32.c.o
+-- Performing Test HAVE_PCLMULQDQ_INTRIN - Success
+-- Performing Test HAVE_AVX2_INTRIN
+-- Performing Test HAVE_AVX2_INTRIN - Success
+-- Performing Test HAVE_CASCADE_LAKE
+[ 83%] Building C object CMakeFiles/libdeflate_static.dir/lib/gzip_compress.c.o
+-- Performing Test HAVE_CASCADE_LAKE - Success
+-- Performing Test HAVE_AVX512_INTRIN
+CC obj/conf_88911b1022c568e1510edaaf5256a23d/static/fse_compress.o
+[ 91%] Building C object CMakeFiles/libdeflate_static.dir/lib/gzip_decompress.c.o
+[100%] Linking C static library libdeflate.a
+gmake[3]: Leaving directory '/tmp/pfp-agc-library/3rd_party/libdeflate/build'
+[100%] Built target libdeflate_static
+gmake[2]: Leaving directory '/tmp/pfp-agc-library/3rd_party/libdeflate/build'
+gmake[1]: Leaving directory '/tmp/pfp-agc-library/3rd_party/libdeflate/build'
+CC obj/conf_88911b1022c568e1510edaaf5256a23d/static/hist.o
+-- Performing Test HAVE_AVX512_INTRIN - Success
+-- Performing Test HAVE_AVX512VNNI_INTRIN
+CC obj/conf_88911b1022c568e1510edaaf5256a23d/static/huf_compress.o
+-- Performing Test HAVE_AVX512VNNI_INTRIN - Success
+-- Performing Test HAVE_VPCLMULQDQ_INTRIN
+-- Performing Test HAVE_VPCLMULQDQ_INTRIN - Success
+-- Architecture-specific source files: arch/x86/x86_features.c;arch/x86/chunkset_sse2.c;arch/x86/compare256_sse2.c;arch/x86/slide_hash_sse2.c;arch/x86/adler32_ssse3.c;arch/x86/chunkset_ssse3.c;arch/x86/adler32_sse42.c;arch/x86/crc32_pclmulqdq.c;arch/x86/slide_hash_avx2.c;arch/x86/chunkset_avx2.c;arch/x86/compare256_avx2.c;arch/x86/adler32_avx2.c;arch/x86/adler32_avx512.c;arch/x86/adler32_avx512_vnni.c;arch/x86/crc32_vpclmulqdq.c
+-- The CXX compiler identification is GNU 13.3.0
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/g++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Could NOT find GTest (missing: GTEST_LIBRARY GTEST_INCLUDE_DIR GTEST_MAIN_LIBRARY) 
+-- Git checking out GoogleTest release-1.12.1
+CC obj/conf_88911b1022c568e1510edaaf5256a23d/static/zstd_compress.o
+CC obj/conf_88911b1022c568e1510edaaf5256a23d/static/zstd_compress_literals.o
+CC obj/conf_88911b1022c568e1510edaaf5256a23d/static/zstd_compress_sequences.o
+CC obj/conf_88911b1022c568e1510edaaf5256a23d/static/zstd_compress_superblock.o
+CC obj/conf_88911b1022c568e1510edaaf5256a23d/static/zstd_double_fast.o
+-- Found Python: /usr/bin/python3 (found version "3.12.3") found components: Interpreter 
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+-- Found Threads: TRUE  
+-- The following features have been enabled:
+
+ * CMAKE_BUILD_TYPE, Build type: Release (default)
+ * XSAVE, Support XSAVE intrinsics using "-mxsave"
+ * SSSE3_ADLER32, Support SSSE3-accelerated adler32, using "-mssse3"
+ * SSE42_CRC, Support SSE4.2 optimized adler32 hash generation, using "-msse4.2"
+ * PCLMUL_CRC, Support CRC hash generation using PCLMULQDQ, using "-msse4.2 -mpclmul"
+ * AVX2_SLIDEHASH, Support AVX2 optimized slide_hash, using "-mavx2"
+ * AVX2_CHUNKSET, Support AVX2 optimized chunkset, using "-mavx2"
+ * AVX2_COMPARE256, Support AVX2 optimized compare256, using "-mavx2"
+ * AVX2_ADLER32, Support AVX2-accelerated adler32, using "-mavx2"
+ * AVX512_ADLER32, Support AVX512-accelerated adler32, using "-mavx512f -mavx512dq -mavx512bw -mavx512vl -mtune=cascadelake"
+ * AVX512VNNI_ADLER32, Support AVX512VNNI adler32, using "-mavx512f -mavx512dq -mavx512bw -mavx512vl -mavx512vnni -mtune=cascadelake"
+ * VPCLMUL_CRC, Support CRC hash generation using VPCLMULQDQ, using "-mpclmul -mvpclmulqdq -mavx512f -mavx512f -mavx512dq -mavx512bw -mavx512vl -mtune=cascadelake"
+ * WITH_GZFILEOP, Compile with support for gzFile related functions
+ * ZLIB_COMPAT, Compile with zlib compatible API
+ * ZLIB_ENABLE_TESTS, Build test binaries
+ * ZLIBNG_ENABLE_TESTS, Test zlib-ng specific API
+ * WITH_SANITIZER, Enable sanitizer support
+ * WITH_GTEST, Build gtest_zlib
+ * WITH_OPTIM, Build with optimisation
+ * WITH_NEW_STRATEGIES, Use new strategies
+ * WITH_AVX2, Build with AVX2
+ * WITH_AVX512, Build with AVX512
+ * WITH_AVX512VNNI, Build with AVX512 VNNI
+ * WITH_SSE2, Build with SSE2
+ * WITH_SSSE3, Build with SSSE3
+ * WITH_SSE42, Build with SSE42
+ * WITH_PCLMULQDQ, Build with PCLMULQDQ
+ * WITH_VPCLMULQDQ, Build with VPCLMULQDQ
+
+-- The following OPTIONAL packages have been found:
+
+ * Git
+ * Python
+ * Threads
+
+-- The following features have been disabled:
+
+ * ZLIB_SYMBOL_PREFIX, Publicly exported symbols DO NOT have a custom prefix
+ * WITH_FUZZERS, Build test/fuzz
+ * WITH_BENCHMARKS, Build test/benchmarks
+ * WITH_BENCHMARK_APPS, Build application benchmarks
+ * WITH_NATIVE_INSTRUCTIONS, Instruct the compiler to use the full instruction set on this host (gcc/clang -march=native)
+ * WITH_MAINTAINER_WARNINGS, Build with project maintainer warnings
+ * WITH_CODE_COVERAGE, Enable code coverage reporting
+ * WITH_INFLATE_STRICT, Build with strict inflate distance checking
+ * WITH_INFLATE_ALLOW_INVALID_DIST, Build with zero fill for inflate invalid distances
+ * INSTALL_UTILS, Copy minigzip and minideflate during install
+
+-- The following OPTIONAL packages have not been found:
+
+ * GTest
+
+-- Configuring done (7.9s)
+-- Generating done (0.0s)
+-- Build files have been written to: /tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng
+gmake[1]: Entering directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+gmake[1]: warning: jobserver unavailable: using -j1.  Add '+' to parent make rule.
+gmake[2]: Entering directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+gmake[3]: Entering directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+gmake[3]: Leaving directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+gmake[3]: Entering directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+[  1%] Building C object CMakeFiles/zlib.dir/arch/generic/adler32_c.c.o
+[  1%] Building C object CMakeFiles/zlib.dir/arch/generic/adler32_fold_c.c.o
+[  2%] Building C object CMakeFiles/zlib.dir/arch/generic/chunkset_c.c.o
+[  3%] Building C object CMakeFiles/zlib.dir/arch/generic/compare256_c.c.o
+[  3%] Building C object CMakeFiles/zlib.dir/arch/generic/crc32_braid_c.c.o
+[  4%] Building C object CMakeFiles/zlib.dir/arch/generic/crc32_fold_c.c.o
+[  5%] Building C object CMakeFiles/zlib.dir/arch/generic/slide_hash_c.c.o
+[  5%] Building C object CMakeFiles/zlib.dir/adler32.c.o
+[  6%] Building C object CMakeFiles/zlib.dir/compress.c.o
+[  7%] Building C object CMakeFiles/zlib.dir/cpu_features.c.o
+[  7%] Building C object CMakeFiles/zlib.dir/crc32.c.o
+[  8%] Building C object CMakeFiles/zlib.dir/crc32_braid_comb.c.o
+[  9%] Building C object CMakeFiles/zlib.dir/deflate.c.o
+CC obj/conf_88911b1022c568e1510edaaf5256a23d/static/zstd_fast.o
+[  9%] Building C object CMakeFiles/zlib.dir/deflate_fast.c.o
+[ 10%] Building C object CMakeFiles/zlib.dir/deflate_huff.c.o
+[ 11%] Building C object CMakeFiles/zlib.dir/deflate_medium.c.o
+[ 11%] Building C object CMakeFiles/zlib.dir/deflate_quick.c.o
+[ 12%] Building C object CMakeFiles/zlib.dir/deflate_rle.c.o
+[ 13%] Building C object CMakeFiles/zlib.dir/deflate_slow.c.o
+[ 13%] Building C object CMakeFiles/zlib.dir/deflate_stored.c.o
+[ 14%] Building C object CMakeFiles/zlib.dir/functable.c.o
+[ 14%] Building C object CMakeFiles/zlib.dir/infback.c.o
+[ 15%] Building C object CMakeFiles/zlib.dir/inflate.c.o
+[ 16%] Building C object CMakeFiles/zlib.dir/inftrees.c.o
+[ 16%] Building C object CMakeFiles/zlib.dir/insert_string.c.o
+[ 17%] Building C object CMakeFiles/zlib.dir/insert_string_roll.c.o
+[ 18%] Building C object CMakeFiles/zlib.dir/trees.c.o
+CC obj/conf_88911b1022c568e1510edaaf5256a23d/static/zstd_lazy.o
+[ 18%] Building C object CMakeFiles/zlib.dir/uncompr.c.o
+[ 19%] Building C object CMakeFiles/zlib.dir/zutil.c.o
+[ 20%] Building C object CMakeFiles/zlib.dir/arch/x86/x86_features.c.o
+[ 20%] Building C object CMakeFiles/zlib.dir/arch/x86/chunkset_sse2.c.o
+[ 21%] Building C object CMakeFiles/zlib.dir/arch/x86/compare256_sse2.c.o
+[ 22%] Building C object CMakeFiles/zlib.dir/arch/x86/slide_hash_sse2.c.o
+[ 22%] Building C object CMakeFiles/zlib.dir/arch/x86/adler32_ssse3.c.o
+[ 23%] Building C object CMakeFiles/zlib.dir/arch/x86/chunkset_ssse3.c.o
+[ 24%] Building C object CMakeFiles/zlib.dir/arch/x86/adler32_sse42.c.o
+[ 24%] Building C object CMakeFiles/zlib.dir/arch/x86/crc32_pclmulqdq.c.o
+[ 25%] Building C object CMakeFiles/zlib.dir/arch/x86/slide_hash_avx2.c.o
+[ 25%] Building C object CMakeFiles/zlib.dir/arch/x86/chunkset_avx2.c.o
+[ 26%] Building C object CMakeFiles/zlib.dir/arch/x86/compare256_avx2.c.o
+[ 27%] Building C object CMakeFiles/zlib.dir/arch/x86/adler32_avx2.c.o
+[ 27%] Building C object CMakeFiles/zlib.dir/arch/x86/adler32_avx512.c.o
+[ 28%] Building C object CMakeFiles/zlib.dir/arch/x86/adler32_avx512_vnni.c.o
+[ 29%] Building C object CMakeFiles/zlib.dir/arch/x86/crc32_vpclmulqdq.c.o
+[ 29%] Building C object CMakeFiles/zlib.dir/gzlib.c.o
+[ 30%] Building C object CMakeFiles/zlib.dir/gzread.c.o
+[ 31%] Building C object CMakeFiles/zlib.dir/gzwrite.c.o
+[ 31%] Linking C shared library libz.so
+gmake[3]: Leaving directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+[ 31%] Built target zlib
+gmake[3]: Entering directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+gmake[3]: Leaving directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+gmake[3]: Entering directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+[ 32%] Building C object CMakeFiles/zlibstatic.dir/arch/generic/adler32_c.c.o
+[ 34%] Building C object CMakeFiles/zlibstatic.dir/arch/generic/adler32_fold_c.c.o
+[ 34%] Building C object CMakeFiles/zlibstatic.dir/arch/generic/chunkset_c.c.o
+[ 35%] Building C object CMakeFiles/zlibstatic.dir/arch/generic/compare256_c.c.o
+[ 36%] Building C object CMakeFiles/zlibstatic.dir/arch/generic/crc32_braid_c.c.o
+[ 36%] Building C object CMakeFiles/zlibstatic.dir/arch/generic/crc32_fold_c.c.o
+[ 37%] Building C object CMakeFiles/zlibstatic.dir/arch/generic/slide_hash_c.c.o
+[ 38%] Building C object CMakeFiles/zlibstatic.dir/adler32.c.o
+[ 38%] Building C object CMakeFiles/zlibstatic.dir/compress.c.o
+[ 39%] Building C object CMakeFiles/zlibstatic.dir/cpu_features.c.o
+[ 39%] Building C object CMakeFiles/zlibstatic.dir/crc32.c.o
+[ 40%] Building C object CMakeFiles/zlibstatic.dir/crc32_braid_comb.c.o
+[ 41%] Building C object CMakeFiles/zlibstatic.dir/deflate.c.o
+CC obj/conf_88911b1022c568e1510edaaf5256a23d/static/zstd_ldm.o
+[ 41%] Building C object CMakeFiles/zlibstatic.dir/deflate_fast.c.o
+[ 42%] Building C object CMakeFiles/zlibstatic.dir/deflate_huff.c.o
+CC obj/conf_88911b1022c568e1510edaaf5256a23d/static/zstd_opt.o
+[ 43%] Building C object CMakeFiles/zlibstatic.dir/deflate_medium.c.o
+[ 43%] Building C object CMakeFiles/zlibstatic.dir/deflate_quick.c.o
+[ 44%] Building C object CMakeFiles/zlibstatic.dir/deflate_rle.c.o
+[ 45%] Building C object CMakeFiles/zlibstatic.dir/deflate_slow.c.o
+[ 45%] Building C object CMakeFiles/zlibstatic.dir/deflate_stored.c.o
+[ 46%] Building C object CMakeFiles/zlibstatic.dir/functable.c.o
+[ 47%] Building C object CMakeFiles/zlibstatic.dir/infback.c.o
+[ 47%] Building C object CMakeFiles/zlibstatic.dir/inflate.c.o
+[ 48%] Building C object CMakeFiles/zlibstatic.dir/inftrees.c.o
+[ 49%] Building C object CMakeFiles/zlibstatic.dir/insert_string.c.o
+[ 49%] Building C object CMakeFiles/zlibstatic.dir/insert_string_roll.c.o
+[ 50%] Building C object CMakeFiles/zlibstatic.dir/trees.c.o
+[ 51%] Building C object CMakeFiles/zlibstatic.dir/uncompr.c.o
+[ 51%] Building C object CMakeFiles/zlibstatic.dir/zutil.c.o
+[ 52%] Building C object CMakeFiles/zlibstatic.dir/arch/x86/x86_features.c.o
+CC obj/conf_88911b1022c568e1510edaaf5256a23d/static/zstdmt_compress.o
+[ 52%] Building C object CMakeFiles/zlibstatic.dir/arch/x86/chunkset_sse2.c.o
+CC obj/conf_88911b1022c568e1510edaaf5256a23d/static/huf_decompress.o
+[ 53%] Building C object CMakeFiles/zlibstatic.dir/arch/x86/compare256_sse2.c.o
+[ 54%] Building C object CMakeFiles/zlibstatic.dir/arch/x86/slide_hash_sse2.c.o
+[ 54%] Building C object CMakeFiles/zlibstatic.dir/arch/x86/adler32_ssse3.c.o
+[ 55%] Building C object CMakeFiles/zlibstatic.dir/arch/x86/chunkset_ssse3.c.o
+[ 56%] Building C object CMakeFiles/zlibstatic.dir/arch/x86/adler32_sse42.c.o
+CC obj/conf_88911b1022c568e1510edaaf5256a23d/static/zstd_ddict.o
+CC obj/conf_88911b1022c568e1510edaaf5256a23d/static/zstd_decompress.o
+[ 56%] Building C object CMakeFiles/zlibstatic.dir/arch/x86/crc32_pclmulqdq.c.o
+[ 57%] Building C object CMakeFiles/zlibstatic.dir/arch/x86/slide_hash_avx2.c.o
+CC obj/conf_88911b1022c568e1510edaaf5256a23d/static/zstd_decompress_block.o
+[ 58%] Building C object CMakeFiles/zlibstatic.dir/arch/x86/chunkset_avx2.c.o
+[ 58%] Building C object CMakeFiles/zlibstatic.dir/arch/x86/compare256_avx2.c.o
+[ 59%] Building C object CMakeFiles/zlibstatic.dir/arch/x86/adler32_avx2.c.o
+AS obj/conf_88911b1022c568e1510edaaf5256a23d/static/huf_decompress_amd64.o
+CC obj/conf_88911b1022c568e1510edaaf5256a23d/static/cover.o
+[ 60%] Building C object CMakeFiles/zlibstatic.dir/arch/x86/adler32_avx512.c.o
+CC obj/conf_88911b1022c568e1510edaaf5256a23d/static/divsufsort.o
+[ 60%] Building C object CMakeFiles/zlibstatic.dir/arch/x86/adler32_avx512_vnni.c.o
+[ 61%] Building C object CMakeFiles/zlibstatic.dir/arch/x86/crc32_vpclmulqdq.c.o
+[ 62%] Building C object CMakeFiles/zlibstatic.dir/gzlib.c.o
+[ 62%] Building C object CMakeFiles/zlibstatic.dir/gzread.c.o
+[ 63%] Building C object CMakeFiles/zlibstatic.dir/gzwrite.c.o
+[ 64%] Linking C static library libz.a
+CC obj/conf_88911b1022c568e1510edaaf5256a23d/static/fastcover.o
+gmake[3]: Leaving directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+[ 64%] Built target zlibstatic
+gmake[3]: Entering directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+gmake[3]: Leaving directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+gmake[3]: Entering directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+[ 64%] Building C object test/CMakeFiles/example.dir/example.c.o
+CC obj/conf_88911b1022c568e1510edaaf5256a23d/static/zdict.o
+[ 65%] Linking C executable ../example
+gmake[3]: Leaving directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+[ 65%] Built target example
+gmake[3]: Entering directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+gmake[3]: Leaving directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+gmake[3]: Entering directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+[ 65%] Building C object test/CMakeFiles/minigzip.dir/minigzip.c.o
+[ 67%] Linking C executable ../minigzip
+gmake[3]: Leaving directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+[ 67%] Built target minigzip
+gmake[3]: Entering directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+gmake[3]: Leaving directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+gmake[3]: Entering directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+[ 68%] Building C object test/CMakeFiles/minideflate.dir/minideflate.c.o
+compiling single-threaded static library 1.5.5
+[ 69%] Linking C executable ../minideflate
+gmake[3]: Leaving directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+[ 69%] Built target minideflate
+gmake[3]: Entering directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+gmake[3]: Leaving directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+gmake[3]: Entering directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+[ 70%] Building C object test/CMakeFiles/switchlevels.dir/switchlevels.c.o
+CC obj/conf_df00e3d15c735455eba3250100a47740/dynamic/debug.o
+CC obj/conf_df00e3d15c735455eba3250100a47740/dynamic/entropy_common.o
+[ 70%] Linking C executable ../switchlevels
+gmake[3]: Leaving directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+[ 70%] Built target switchlevels
+gmake[3]: Entering directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+gmake[3]: Leaving directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+gmake[3]: Entering directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+[ 71%] Building C object test/CMakeFiles/infcover.dir/infcover.c.o
+CC obj/conf_df00e3d15c735455eba3250100a47740/dynamic/error_private.o
+CC obj/conf_df00e3d15c735455eba3250100a47740/dynamic/fse_decompress.o
+[ 72%] Building C object test/CMakeFiles/infcover.dir/__/inftrees.c.o
+g++ -DNDEBUG -Wall -O3  -static -fno-ipa-ra -fno-tree-vrp -fno-tree-pre  -std=c++14 -Wl,--whole-archive -lpthread -Wl,--no-whole-archive  -DCOMPILE_FOR_SSE2 -DCOMPILE_FOR_AVX -DCOMPILE_FOR_AVX2 -DARCH_X64 -c raduls_AVX.cpp -o raduls_AVX.o
+[ 72%] Linking C executable ../infcover
+gmake[3]: Leaving directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+[ 72%] Built target infcover
+gmake[3]: Entering directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+gmake[3]: Leaving directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+gmake[3]: Entering directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+[ 72%] Building C object test/CMakeFiles/makefixed.dir/__/tools/makefixed.c.o
+CC obj/conf_df00e3d15c735455eba3250100a47740/dynamic/pool.o
+[ 73%] Building C object test/CMakeFiles/makefixed.dir/__/inftrees.c.o
+[ 74%] Linking C executable ../makefixed
+CC obj/conf_df00e3d15c735455eba3250100a47740/dynamic/threading.o
+CC obj/conf_df00e3d15c735455eba3250100a47740/dynamic/xxhash.o
+gmake[3]: Leaving directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+[ 74%] Built target makefixed
+gmake[3]: Entering directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+gmake[3]: Leaving directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+gmake[3]: Entering directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+[ 74%] Building C object test/CMakeFiles/maketrees.dir/__/tools/maketrees.c.o
+[ 75%] Building C object test/CMakeFiles/maketrees.dir/__/trees.c.o
+CC obj/conf_df00e3d15c735455eba3250100a47740/dynamic/zstd_common.o
+CC obj/conf_df00e3d15c735455eba3250100a47740/dynamic/zstd_v05.o
+[ 76%] Building C object test/CMakeFiles/maketrees.dir/__/zutil.c.o
+[ 76%] Linking C executable ../maketrees
+gmake[3]: Leaving directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+[ 76%] Built target maketrees
+gmake[3]: Entering directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+gmake[3]: Leaving directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+gmake[3]: Entering directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+[ 77%] Building C object test/CMakeFiles/makecrct.dir/__/tools/makecrct.c.o
+[ 78%] Linking C executable ../makecrct
+gmake[3]: Leaving directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+[ 78%] Built target makecrct
+gmake[3]: Entering directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+gmake[3]: Leaving directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+gmake[3]: Entering directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+[ 79%] Building CXX object _deps/googletest-build/googletest/CMakeFiles/gtest.dir/src/gtest-all.cc.o
+CC obj/conf_df00e3d15c735455eba3250100a47740/dynamic/zstd_v06.o
+CC obj/conf_df00e3d15c735455eba3250100a47740/dynamic/zstd_v07.o
+g++ -static -O1  -DCOMPILE_FOR_SSE2 -DCOMPILE_FOR_AVX -DCOMPILE_FOR_AVX2 -DARCH_X64 -std=c++14 -Wl,--whole-archive -lpthread -Wl,--no-whole-archive -c sorting_network_AVX.cpp -o sorting_network_AVX.o
+CC obj/conf_df00e3d15c735455eba3250100a47740/dynamic/fse_compress.o
+CC obj/conf_df00e3d15c735455eba3250100a47740/dynamic/hist.o
+CC obj/conf_df00e3d15c735455eba3250100a47740/dynamic/huf_compress.o
+CC obj/conf_df00e3d15c735455eba3250100a47740/dynamic/zstd_compress.o
+CC obj/conf_df00e3d15c735455eba3250100a47740/dynamic/zstd_compress_literals.o
+CC obj/conf_df00e3d15c735455eba3250100a47740/dynamic/zstd_compress_sequences.o
+CC obj/conf_df00e3d15c735455eba3250100a47740/dynamic/zstd_compress_superblock.o
+CC obj/conf_df00e3d15c735455eba3250100a47740/dynamic/zstd_double_fast.o
+[ 80%] Linking CXX static library ../../../lib/libgtest.a
+gmake[3]: Leaving directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+[ 80%] Built target gtest
+gmake[3]: Entering directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+gmake[3]: Leaving directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+gmake[3]: Entering directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+[ 81%] Building CXX object test/CMakeFiles/gtest_zlib.dir/test_compress.cc.o
+[ 81%] Building CXX object test/CMakeFiles/gtest_zlib.dir/test_compress_bound.cc.o
+CC obj/conf_df00e3d15c735455eba3250100a47740/dynamic/zstd_fast.o
+[ 82%] Building CXX object test/CMakeFiles/gtest_zlib.dir/test_cve-2003-0107.cc.o
+CC obj/conf_df00e3d15c735455eba3250100a47740/dynamic/zstd_lazy.o
+[ 83%] Building CXX object test/CMakeFiles/gtest_zlib.dir/test_deflate_bound.cc.o
+[ 83%] Building CXX object test/CMakeFiles/gtest_zlib.dir/test_deflate_copy.cc.o
+[ 84%] Building CXX object test/CMakeFiles/gtest_zlib.dir/test_deflate_dict.cc.o
+[ 85%] Building CXX object test/CMakeFiles/gtest_zlib.dir/test_deflate_hash_head_0.cc.o
+[ 85%] Building CXX object test/CMakeFiles/gtest_zlib.dir/test_deflate_header.cc.o
+[ 86%] Building CXX object test/CMakeFiles/gtest_zlib.dir/test_deflate_params.cc.o
+[ 86%] Building CXX object test/CMakeFiles/gtest_zlib.dir/test_deflate_pending.cc.o
+[ 87%] Building CXX object test/CMakeFiles/gtest_zlib.dir/test_deflate_prime.cc.o
+CC obj/conf_df00e3d15c735455eba3250100a47740/dynamic/zstd_ldm.o
+[ 88%] Building CXX object test/CMakeFiles/gtest_zlib.dir/test_deflate_quick_bi_valid.cc.o
+CC obj/conf_df00e3d15c735455eba3250100a47740/dynamic/zstd_opt.o
+[ 88%] Building CXX object test/CMakeFiles/gtest_zlib.dir/test_deflate_quick_block_open.cc.o
+[ 89%] Building CXX object test/CMakeFiles/gtest_zlib.dir/test_deflate_tune.cc.o
+CC obj/conf_df00e3d15c735455eba3250100a47740/dynamic/zstdmt_compress.o
+[ 90%] Building CXX object test/CMakeFiles/gtest_zlib.dir/test_dict.cc.o
+CC obj/conf_df00e3d15c735455eba3250100a47740/dynamic/huf_decompress.o
+[ 90%] Building CXX object test/CMakeFiles/gtest_zlib.dir/test_inflate_adler32.cc.o
+[ 91%] Building CXX object test/CMakeFiles/gtest_zlib.dir/test_large_buffers.cc.o
+CC obj/conf_df00e3d15c735455eba3250100a47740/dynamic/zstd_ddict.o
+CC obj/conf_df00e3d15c735455eba3250100a47740/dynamic/zstd_decompress.o
+CC obj/conf_df00e3d15c735455eba3250100a47740/dynamic/zstd_decompress_block.o
+[ 92%] Building CXX object test/CMakeFiles/gtest_zlib.dir/test_raw.cc.o
+[ 92%] Building CXX object test/CMakeFiles/gtest_zlib.dir/test_small_buffers.cc.o
+AS obj/conf_df00e3d15c735455eba3250100a47740/dynamic/huf_decompress_amd64.o
+CC obj/conf_df00e3d15c735455eba3250100a47740/dynamic/cover.o
+[ 93%] Building CXX object test/CMakeFiles/gtest_zlib.dir/test_small_window.cc.o
+CC obj/conf_df00e3d15c735455eba3250100a47740/dynamic/divsufsort.o
+[ 94%] Building CXX object test/CMakeFiles/gtest_zlib.dir/test_gzio.cc.o
+CC obj/conf_df00e3d15c735455eba3250100a47740/dynamic/fastcover.o
+CC obj/conf_df00e3d15c735455eba3250100a47740/dynamic/zdict.o
+g++ -DNDEBUG -Wall -O3  -static -fno-ipa-ra -fno-tree-vrp -fno-tree-pre  -std=c++14 -Wl,--whole-archive -lpthread -Wl,--no-whole-archive  -DCOMPILE_FOR_SSE2 -DCOMPILE_FOR_AVX -DCOMPILE_FOR_AVX2 -DARCH_X64 -c raduls_AVX2.cpp -o raduls_AVX2.o
+compiling multi-threaded dynamic library 1.5.5
+creating versioned links
+creating pkgconfig
+release build completed
+make[2]: Leaving directory '/tmp/pfp-agc-library/3rd_party/zstd/lib'
+make[2]: Entering directory '/tmp/pfp-agc-library/3rd_party/zstd/programs'
+[ 94%] Building CXX object test/CMakeFiles/gtest_zlib.dir/test_adler32.cc.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/debug.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/entropy_common.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/error_private.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/fse_decompress.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/pool.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/threading.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/xxhash.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/zstd_common.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/fse_compress.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/hist.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/huf_compress.o
+[ 95%] Building CXX object test/CMakeFiles/gtest_zlib.dir/test_aligned_alloc.cc.o
+g++ -static -O1  -DCOMPILE_FOR_SSE2 -DCOMPILE_FOR_AVX -DCOMPILE_FOR_AVX2 -DARCH_X64 -std=c++14 -Wl,--whole-archive -lpthread -Wl,--no-whole-archive -c sorting_network_AVX2.cpp -o sorting_network_AVX2.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/zstd_compress.o
+[ 96%] Building CXX object test/CMakeFiles/gtest_zlib.dir/test_compare256.cc.o
+[ 96%] Building CXX object test/CMakeFiles/gtest_zlib.dir/test_crc32.cc.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/zstd_compress_literals.o
+[ 97%] Building CXX object test/CMakeFiles/gtest_zlib.dir/test_inflate_sync.cc.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/zstd_compress_sequences.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/zstd_compress_superblock.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/zstd_double_fast.o
+[ 98%] Building CXX object test/CMakeFiles/gtest_zlib.dir/test_main.cc.o
+[ 98%] Building CXX object test/CMakeFiles/gtest_zlib.dir/test_version.cc.o
+[100%] Building CXX object test/CMakeFiles/gtest_zlib.dir/test_deflate_concurrency.cc.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/zstd_fast.o
+[100%] Linking CXX executable ../gtest_zlib
+gmake[3]: Leaving directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+[100%] Built target gtest_zlib
+gmake[2]: Leaving directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+gmake[1]: Leaving directory '/tmp/pfp-agc-library/3rd_party/zlib-ng/build-g++/zlib-ng'
+CC obj/conf_20daa47e8058f816896e54abab38685b/zstd_lazy.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/zstd_ldm.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/zstd_opt.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/zstdmt_compress.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/huf_decompress.o
+AS obj/conf_20daa47e8058f816896e54abab38685b/huf_decompress_amd64.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/zstd_ddict.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/zstd_decompress.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/zstd_decompress_block.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/cover.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/divsufsort.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/fastcover.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/zdict.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/zstd_v05.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/zstd_v06.o
+ar rcs libraduls.a raduls_impl.o exceptions.o raduls_SSE2.o sorting_network_SSE2.o raduls_AVX.o sorting_network_AVX.o raduls_AVX2.o sorting_network_AVX2.o
+make[1]: Leaving directory '/tmp/pfp-agc-library/3rd_party/raduls-inplace/Raduls'
+CC obj/conf_20daa47e8058f816896e54abab38685b/zstd_v07.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/benchfn.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/benchzstd.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/datagen.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/dibio.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/fileio.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/fileio_asyncio.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/lorem.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/timefn.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/util.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/zstdcli.o
+CC obj/conf_20daa47e8058f816896e54abab38685b/zstdcli_trace.o
+==> building with threading support
+==> building zstd with .gz compression support
+==> building zstd with .xz/.lzma compression support
+==> no liblz4, building zstd without .lz4 support
+LINK obj/conf_20daa47e8058f816896e54abab38685b/zstd
+zstd build completed
+make[2]: Leaving directory '/tmp/pfp-agc-library/3rd_party/zstd/programs'
+make[1]: Leaving directory '/tmp/pfp-agc-library/3rd_party/zstd'
+mkdir -p obj/lib-cxx
+mkdir -p obj/common
+mkdir -p obj/common
+mkdir -p obj/common
+g++  -DREFRESH_USE_ZLIB -std=c++20 -Wall -fPIC -pthread -fpermissive  -O3 -march=native -DARCH_X64 -DGIT_COMMIT=e67e3fc -I. -I ./3rd_party/mimalloc/include -I./3rd_party/zlib-ng/build-g++ -I./3rd_party/zlib-ng/build-g++/zlib-ng -I ./3rd_party/libdeflate -I ./3rd_party/zstd -I./3rd_party/raduls-inplace/Raduls -I./3rd_party/pybind11/include -I /usr/include/python3.12 -I ./3rd_party -MMD -MF obj/lib-cxx/lib-cxx.cpp.o.d -c src/lib-cxx/lib-cxx.cpp -o obj/lib-cxx/lib-cxx.cpp.o
+g++  -DREFRESH_USE_ZLIB -std=c++20 -Wall -fPIC -pthread -fpermissive  -O3 -march=native -DARCH_X64 -DGIT_COMMIT=e67e3fc -I. -I ./3rd_party/mimalloc/include -I./3rd_party/zlib-ng/build-g++ -I./3rd_party/zlib-ng/build-g++/zlib-ng -I ./3rd_party/libdeflate -I ./3rd_party/zstd -I./3rd_party/raduls-inplace/Raduls -I./3rd_party/pybind11/include -I /usr/include/python3.12 -I ./3rd_party -MMD -MF obj/common/agc_basic.cpp.o.d -c src/common/agc_basic.cpp -o obj/common/agc_basic.cpp.o
+g++  -DREFRESH_USE_ZLIB -std=c++20 -Wall -fPIC -pthread -fpermissive  -O3 -march=native -DARCH_X64 -DGIT_COMMIT=e67e3fc -I. -I ./3rd_party/mimalloc/include -I./3rd_party/zlib-ng/build-g++ -I./3rd_party/zlib-ng/build-g++/zlib-ng -I ./3rd_party/libdeflate -I ./3rd_party/zstd -I./3rd_party/raduls-inplace/Raduls -I./3rd_party/pybind11/include -I /usr/include/python3.12 -I ./3rd_party -MMD -MF obj/common/agc_decompressor_lib.cpp.o.d -c src/common/agc_decompressor_lib.cpp -o obj/common/agc_decompressor_lib.cpp.o
+mkdir -p obj/common
+mkdir -p obj/common
+g++  -DREFRESH_USE_ZLIB -std=c++20 -Wall -fPIC -pthread -fpermissive  -O3 -march=native -DARCH_X64 -DGIT_COMMIT=e67e3fc -I. -I ./3rd_party/mimalloc/include -I./3rd_party/zlib-ng/build-g++ -I./3rd_party/zlib-ng/build-g++/zlib-ng -I ./3rd_party/libdeflate -I ./3rd_party/zstd -I./3rd_party/raduls-inplace/Raduls -I./3rd_party/pybind11/include -I /usr/include/python3.12 -I ./3rd_party -MMD -MF obj/common/archive.cpp.o.d -c src/common/archive.cpp -o obj/common/archive.cpp.o
+g++  -DREFRESH_USE_ZLIB -std=c++20 -Wall -fPIC -pthread -fpermissive  -O3 -march=native -DARCH_X64 -DGIT_COMMIT=e67e3fc -I. -I ./3rd_party/mimalloc/include -I./3rd_party/zlib-ng/build-g++ -I./3rd_party/zlib-ng/build-g++/zlib-ng -I ./3rd_party/libdeflate -I ./3rd_party/zstd -I./3rd_party/raduls-inplace/Raduls -I./3rd_party/pybind11/include -I /usr/include/python3.12 -I ./3rd_party -MMD -MF obj/common/collection.cpp.o.d -c src/common/collection.cpp -o obj/common/collection.cpp.o
+mkdir -p obj/common
+g++  -DREFRESH_USE_ZLIB -std=c++20 -Wall -fPIC -pthread -fpermissive  -O3 -march=native -DARCH_X64 -DGIT_COMMIT=e67e3fc -I. -I ./3rd_party/mimalloc/include -I./3rd_party/zlib-ng/build-g++ -I./3rd_party/zlib-ng/build-g++/zlib-ng -I ./3rd_party/libdeflate -I ./3rd_party/zstd -I./3rd_party/raduls-inplace/Raduls -I./3rd_party/pybind11/include -I /usr/include/python3.12 -I ./3rd_party -MMD -MF obj/common/collection_v1.cpp.o.d -c src/common/collection_v1.cpp -o obj/common/collection_v1.cpp.o
+mkdir -p obj/common
+g++  -DREFRESH_USE_ZLIB -std=c++20 -Wall -fPIC -pthread -fpermissive  -O3 -march=native -DARCH_X64 -DGIT_COMMIT=e67e3fc -I. -I ./3rd_party/mimalloc/include -I./3rd_party/zlib-ng/build-g++ -I./3rd_party/zlib-ng/build-g++/zlib-ng -I ./3rd_party/libdeflate -I ./3rd_party/zstd -I./3rd_party/raduls-inplace/Raduls -I./3rd_party/pybind11/include -I /usr/include/python3.12 -I ./3rd_party -MMD -MF obj/common/collection_v2.cpp.o.d -c src/common/collection_v2.cpp -o obj/common/collection_v2.cpp.o
+mkdir -p obj/common
+mkdir -p obj/common
+mkdir -p obj/common
+g++  -DREFRESH_USE_ZLIB -std=c++20 -Wall -fPIC -pthread -fpermissive  -O3 -march=native -DARCH_X64 -DGIT_COMMIT=e67e3fc -I. -I ./3rd_party/mimalloc/include -I./3rd_party/zlib-ng/build-g++ -I./3rd_party/zlib-ng/build-g++/zlib-ng -I ./3rd_party/libdeflate -I ./3rd_party/zstd -I./3rd_party/raduls-inplace/Raduls -I./3rd_party/pybind11/include -I /usr/include/python3.12 -I ./3rd_party -MMD -MF obj/common/collection_v3.cpp.o.d -c src/common/collection_v3.cpp -o obj/common/collection_v3.cpp.o
+g++  -DREFRESH_USE_ZLIB -std=c++20 -Wall -fPIC -pthread -fpermissive  -O3 -march=native -DARCH_X64 -DGIT_COMMIT=e67e3fc -I. -I ./3rd_party/mimalloc/include -I./3rd_party/zlib-ng/build-g++ -I./3rd_party/zlib-ng/build-g++/zlib-ng -I ./3rd_party/libdeflate -I ./3rd_party/zstd -I./3rd_party/raduls-inplace/Raduls -I./3rd_party/pybind11/include -I /usr/include/python3.12 -I ./3rd_party -MMD -MF obj/common/lz_diff.cpp.o.d -c src/common/lz_diff.cpp -o obj/common/lz_diff.cpp.o
+g++  -DREFRESH_USE_ZLIB -std=c++20 -Wall -fPIC -pthread -fpermissive  -O3 -march=native -DARCH_X64 -DGIT_COMMIT=e67e3fc -I. -I ./3rd_party/mimalloc/include -I./3rd_party/zlib-ng/build-g++ -I./3rd_party/zlib-ng/build-g++/zlib-ng -I ./3rd_party/libdeflate -I ./3rd_party/zstd -I./3rd_party/raduls-inplace/Raduls -I./3rd_party/pybind11/include -I /usr/include/python3.12 -I ./3rd_party -MMD -MF obj/common/segment.cpp.o.d -c src/common/segment.cpp -o obj/common/segment.cpp.o
+g++  -DREFRESH_USE_ZLIB -std=c++20 -Wall -fPIC -pthread -fpermissive  -O3 -march=native -DARCH_X64 -DGIT_COMMIT=e67e3fc -I. -I ./3rd_party/mimalloc/include -I./3rd_party/zlib-ng/build-g++ -I./3rd_party/zlib-ng/build-g++/zlib-ng -I ./3rd_party/libdeflate -I ./3rd_party/zstd -I./3rd_party/raduls-inplace/Raduls -I./3rd_party/pybind11/include -I /usr/include/python3.12 -I ./3rd_party -MMD -MF obj/common/utils.cpp.o.d -c src/common/utils.cpp -o obj/common/utils.cpp.o
+mkdir -p bin
+ar rcs -o bin/libagc.a  \
+obj/lib-cxx/lib-cxx.cpp.o obj/common/agc_basic.cpp.o  obj/common/agc_decompressor_lib.cpp.o  obj/common/archive.cpp.o  obj/common/collection.cpp.o  obj/common/collection_v1.cpp.o  obj/common/collection_v2.cpp.o  obj/common/collection_v3.cpp.o  obj/common/lz_diff.cpp.o  obj/common/segment.cpp.o  obj/common/utils.cpp.o
+make: Leaving directory '/tmp/pfp-agc-library'

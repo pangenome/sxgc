@@ -1,0 +1,49 @@
+[2026-09-28 14:47:36.907] [info] Current Configuration:
+; PFP++
+
+; Text file to parse.
+text="/home/erikg/yeast/yeast235.agc"
+
+; Read -t as AGC: archive order, uppercase reversed contigs, 0x1e separators.
+agc=true
+
+; Output prefix.
+out-prefix="/tmp/pfp-agc-gates/file-test/rejected"
+
+; Temporary files directory.
+tmp-dir="/tmp/pfp-agc-gates/file-test"
+
+; Also output compressed the dictionary.
+compress-dictionary=false
+
+; Use reference parse to avoid re-parsing.
+use-vcf-acceleration=false
+
+; Print out csv containing stats.
+print-statistics=false
+
+; Output count for each dictionary phrase.
+output-occurrences=false
+
+; Output sai array.
+output-sai=false
+
+; Output last array.
+output-last=false
+
+; Convert all non ACGT characters from a VCF or FASTA file to N.
+acgt-only=false
+
+; Verbose output.
+verbose=false
+
+; Version number.
+version=false
+
+[2026-09-28 14:47:36.907] [info] Main parser: Replacing hash values with ranks.
+[2026-09-28 14:47:36.907] [info] Main parser: writing dictionary on disk NOT COMPRESSED
+[2026-09-28 14:47:36.907] [info] No properties requested.
+[2026-09-28 14:47:36.907] [info] Main parser: closed
+[2026-09-28 14:47:36.907] [info] Parser Text -	Parse size: 0	Dic Size: 0 Dic Total Length: 0
+[2026-09-28 14:47:36.907] [error] Text input failed: AGC input requires a build with PFP_ENABLE_AGC=ON
+[Disk Write (bytes): 1]

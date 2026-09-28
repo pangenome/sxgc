@@ -1,0 +1,65 @@
+[
+  {
+    "dataset": "yeast235",
+    "j": 16,
+    "ratio": 0.7274251704307481,
+    "pass_steady_state": true,
+    "pass_including_init": true,
+    "acceptance_gate": "steady reader throughput >= 50% of same-j file control",
+    "acceptance_pass": true,
+    "startup_inclusive_metric_is_gate": false
+  },
+  {
+    "dataset": "yeast235",
+    "j": 48,
+    "ratio": 0.8135849768319835,
+    "pass_steady_state": true,
+    "pass_including_init": true,
+    "acceptance_gate": "steady reader throughput >= 50% of same-j file control",
+    "acceptance_pass": true,
+    "startup_inclusive_metric_is_gate": false
+  },
+  {
+    "dataset": "yeast235",
+    "j": 96,
+    "ratio": 0.8685492751410575,
+    "pass_steady_state": true,
+    "pass_including_init": true,
+    "acceptance_gate": "steady reader throughput >= 50% of same-j file control",
+    "acceptance_pass": true,
+    "startup_inclusive_metric_is_gate": false
+  },
+  {
+    "dataset": "HPRC-466-20-windows",
+    "j": 16,
+    "ratio": 0.73491457651763,
+    "pass_steady_state": true,
+    "pass_including_init": false,
+    "acceptance_gate": "steady reader throughput >= 50% of same-j file control",
+    "acceptance_pass": true,
+    "startup_inclusive_metric_is_gate": false,
+    "startup_note": "2 GB benchmark-window artifact; full-corpus amortization documented in THROUGHPUT.md per supervisor clarification"
+  },
+  {
+    "dataset": "HPRC-466-20-windows",
+    "j": 48,
+    "ratio": 0.6963597718748585,
+    "pass_steady_state": true,
+    "pass_including_init": false,
+    "acceptance_gate": "steady reader throughput >= 50% of same-j file control",
+    "acceptance_pass": true,
+    "startup_inclusive_metric_is_gate": false,
+    "startup_note": "2 GB benchmark-window artifact; full-corpus amortization documented in THROUGHPUT.md per supervisor clarification"
+  },
+  {
+    "dataset": "HPRC-466-20-windows",
+    "j": 96,
+    "ratio": 0.5994495805113776,
+    "pass_steady_state": true,
+    "pass_including_init": false,
+    "acceptance_gate": "steady reader throughput >= 50% of same-j file control",
+    "acceptance_pass": true,
+    "startup_inclusive_metric_is_gate": false,
+    "startup_note": "2 GB benchmark-window artifact; full-corpus amortization documented in THROUGHPUT.md per supervisor clarification"
+  }
+]

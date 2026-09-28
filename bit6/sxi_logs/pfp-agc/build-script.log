@@ -1,0 +1,39 @@
+make: Entering directory '/tmp/pfp-agc-library'
+*** Initialization of submodules ***
+*** Initialization of global values ***
+*** Unspecified platform - using native compilation for x86_64 ***
+*** Adding mimalloc ***
+*** Proposing isal ***
+*** Proposing zlib-ng ***
+zlib-ng will be used for gzip decompression
+*** Adding libdeflate ***
+*** Adding libzstd ***
+*** Adding raduls-inplace ***
+*** Adding REFRESH libs ***
+Prebuild jobs: mimalloc_obj zlib-ng libdeflate libzstd raduls-inplace
+*** Checking compiler version ***
+Compiler: GCC
+Version: 13
+mkdir -p bin
+ar rcs -o bin/libagc.a  \
+obj/lib-cxx/lib-cxx.cpp.o obj/common/agc_basic.cpp.o  obj/common/agc_decompressor_lib.cpp.o  obj/common/archive.cpp.o  obj/common/collection.cpp.o  obj/common/collection_v1.cpp.o  obj/common/collection_v2.cpp.o  obj/common/collection_v3.cpp.o  obj/common/lz_diff.cpp.o  obj/common/segment.cpp.o  obj/common/utils.cpp.o
+make: Leaving directory '/tmp/pfp-agc-library'
+-- Build type: Release
+-- Git current branch: master
+-- Git commit hash: 1a5f114
+-- Generating version.cpp
+-- HAVE_OPENMP: OpenMP
+-- Found HTSlib 
+-- HTSlib: /home/erikg/htsinst/lib/libhts.a;/usr/lib/x86_64-linux-gnu/liblzma.so;/usr/lib/x86_64-linux-gnu/libbz2.so;/usr/lib/x86_64-linux-gnu/libz.so;/usr/lib/x86_64-linux-gnu/libcurl.so
+-- Configuring done (3.3s)
+-- Generating done (0.0s)
+-- Build files have been written to: /tmp/pfp-agc-fork/build
+[ 81%] Built target pfp
+[ 90%] Linking CXX executable pfp++
+[100%] Built target pfp++
+[ 81%] Built target pfp64
+[ 90%] Linking CXX executable pfp++64
+[100%] Built target pfp++64
+[ 81%] Built target pfp
+[ 90%] Linking CXX executable pfp_source_probe
+[100%] Built target pfp_source_probe

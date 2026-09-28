@@ -1,0 +1,4 @@
+xsa build: work=/tmp/pfp-agc-gates/xsa-build-xa6x1abc log=/tmp/sxgc-laneV/bit6/sxi_logs/pfp-agc/yeast235-native-xsa-build-xa6x1abc.jsonl
+parse: /tmp/pfp-agc-fork/build/pfp++ -t /home/erikg/yeast/yeast235.agc --agc --agc-names /tmp/pfp-agc-gates/xsa-build-xa6x1abc/collection.txt.names.tsv -o /tmp/pfp-agc-gates/xsa-build-xa6x1abc/parse -w 10 -p 100 -j 16 --tmp-dir /tmp/pfp-agc-gates/xsa-build-xa6x1abc
+parse-l2: /tmp/pfp-agc-fork/build/pfp++ -i /tmp/pfp-agc-gates/xsa-build-xa6x1abc/parse.parse -w 5 -p 11 -j 16 --tmp-dir /tmp/pfp-agc-gates/xsa-build-xa6x1abc
+rpfbwt: /tmp/rpfbwt-sxgc/build-sxgc/rpfbwt --l1-prefix /tmp/pfp-agc-gates/xsa-build-xa6x1abc/parse --w1 10 --w2 5 --threads 16 --chunks 50 --tmp-dir /tmp/pfp-agc-gates/xsa-build-xa6x1abc

@@ -1,0 +1,15 @@
+{
+  "dataset": "HPRC-466",
+  "canonical_bytes": 1403221068481,
+  "optimum_measured_reader_j": 16,
+  "reader_MB_per_s": 509.1094962157891,
+  "init_seconds": 68.4388,
+  "projected_reader_seconds": 2756.2264678053393,
+  "projected_reader_seconds_with_init": 2824.665267805339,
+  "projected_amortized_reader_MB_per_s": 496.7742848947376,
+  "parse_basis": "Measured full yeast first parse: 56.80 s at j=16 for 3336986759 bytes; linear extrapolation, not measured HPRC parsing",
+  "projected_parse_seconds": 23884.7087045696,
+  "projected_parse_hours": 6.634641306824888,
+  "projected_parse_hours_plus_hprc_init": 6.653652084602666,
+  "full_hprc_build_run": false
+}

@@ -1,0 +1,17 @@
+-- Build type: Release
+-- Git current branch: master
+-- Git commit hash: 1a5f114
+-- Generating version.cpp
+-- HAVE_OPENMP: OpenMP
+-- Found HTSlib 
+-- HTSlib: /home/erikg/htsinst/lib/libhts.a;/usr/lib/x86_64-linux-gnu/liblzma.so;/usr/lib/x86_64-linux-gnu/libbz2.so;/usr/lib/x86_64-linux-gnu/libz.so;/usr/lib/x86_64-linux-gnu/libcurl.so
+-- Configuring done (3.5s)
+-- Generating done (0.0s)
+-- Build files have been written to: /tmp/pfp-agc-fork/build-file
+[  9%] Building CXX object CMakeFiles/pfp.dir/src/agc_source.cpp.o
+[ 18%] Building CXX object CMakeFiles/pfp.dir/src/pfp_algo.cpp.o
+[ 27%] Linking CXX static library libpfp.a
+[ 81%] Built target pfp
+[ 90%] Building CXX object CMakeFiles/pfp++.dir/pfp++.cpp.o
+[100%] Linking CXX executable pfp++
+[100%] Built target pfp++

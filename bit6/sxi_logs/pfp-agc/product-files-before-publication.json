@@ -1,0 +1,42 @@
+{
+  "files": [
+    {
+      "path": "/tmp/pfp-agc-gates/xsa-build-xa6x1abc/parse.parse.parse",
+      "bytes": 12332344
+    },
+    {
+      "path": "/tmp/pfp-agc-gates/xsa-build-xa6x1abc/parse.ssa",
+      "bytes": 807240360
+    },
+    {
+      "path": "/tmp/pfp-agc-gates/xsa-build-xa6x1abc/collection.txt.names.tsv",
+      "bytes": 351876
+    },
+    {
+      "path": "/tmp/pfp-agc-gates/xsa-build-xa6x1abc/parse.ssa_t",
+      "bytes": 807240360
+    },
+    {
+      "path": "/tmp/pfp-agc-gates/xsa-build-xa6x1abc/parse.parse.dict",
+      "bytes": 102802192
+    },
+    {
+      "path": "/tmp/pfp-agc-gates/xsa-build-xa6x1abc/parse.rlebwt",
+      "bytes": 403620176
+    },
+    {
+      "path": "/tmp/pfp-agc-gates/xsa-build-xa6x1abc/parse.dict",
+      "bytes": 513394300
+    },
+    {
+      "path": "/tmp/pfp-agc-gates/xsa-build-xa6x1abc/parse.parse",
+      "bytes": 136535136
+    },
+    {
+      "path": "/tmp/pfp-agc-gates/xsa-build-xa6x1abc/parse.rlebwt.meta",
+      "bytes": 4112
+    }
+  ],
+  "over_1GB": [],
+  "collection_text_exists": false
+}

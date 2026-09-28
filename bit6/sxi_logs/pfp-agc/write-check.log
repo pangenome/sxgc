@@ -1,0 +1,15 @@
+{
+  "writes_by_path": {
+    "/tmp/sxgc-laneV/bit6/sxi_logs/pfp-agc/traced-parse.log": 1540,
+    "/tmp/pfp-agc-gates/traced/names.tsv": 351876,
+    "/tmp/pfp-agc-gates/traced/parse_lambda01_3663275_0": 273070272,
+    "/tmp/pfp-agc-gates/traced/parse.parse": 136535136,
+    "/tmp/pfp-agc-gates/traced/parse.dict": 513394300
+  },
+  "product_bytes_written": 923351584,
+  "largest_product_file_bytes_written": 513394300,
+  "over_1GB": [],
+  "shared_file_mappings": [],
+  "truncates": [],
+  "unknown_write_records": []
+}

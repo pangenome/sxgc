@@ -1,0 +1,71 @@
+--- a/bit6/sxi_pipeline.py
++++ b/bit6/sxi_pipeline.py
+@@ -3,7 +3,9 @@
+ 
+ Collection contract: T = s1 0x1E ... sk 0x1E, one cyclic byte string.
+ 0x1E is reserved and must never occur in sequence content; --text is passed as-is.
+-AGC preparation uses agc2flat --revlines --upper (one reversed contig/record).
++AGC input is read natively by PFP++ (uppercase reversed contigs, archive order).
++--fifo preserves the agc2flat fallback; --materialize is forensic-only.
++Set XSA_PFP to the AGC-enabled PFP++ executable.
+ FASTA/FASTQ extract already oriented sequences verbatim, separated and terminated by 0x1E.
+ Scratch defaults beside the input, on the same filesystem; retained for audit.
+ """
+@@ -114,7 +116,7 @@
+     p.add_argument('--expect-heads', help='acceptance oracle only; checked after fresh construction')
+     p.add_argument('--expect-ri4', help='acceptance oracle only; exact runs and packed-tail byte gate')
+     p.add_argument('--fifo', action='store_true', help='fallback AGC FIFO preparation')
+-    p.add_argument('--materialize', action='store_true', help='legacy AGC text-file preparation')
++    p.add_argument('--materialize', action='store_true', help='forensic-only AGC text-file preparation')
+     p.add_argument('--verbose', action='store_true')
+     p.add_argument('--xsa', default=str(ROOT / 'xsa/target/release/xsa'))
+     a = p.parse_args()
+@@ -210,12 +212,15 @@
+         names = work / 'collection.txt.names.tsv'
+         prepare = [agc, source_path, '--revlines', '--upper', '--sep', '1e', '-o', text]
+         if streaming and not a.fifo:
+-            from sxi_ghost import ghost_parse
+-            mount = work / 'ghost'
+-            ghost_text = mount / 'collection'
+-            parse = [pfp, '-t', ghost_text, '-o', prefix, '-w', 10, '-p', 100, '-j', a.threads, '--tmp-dir', work]
+-            size = ghost_parse(mount, prepare + ['--ghost', mount, '--workers', a.threads],
+-                               parse, env, logs, label, record, a.verbose)
++            run('parse', [pfp, '-t', source_path, '--agc', '--agc-names', names,
++                          '-o', prefix, '-w', 10, '-p', 100, '-j', a.threads, '--tmp-dir', work])
++            size = 0
++            with names.open() as f:
++                for line in f:
++                    _, start, length = line.rstrip('\n').rsplit('\t', 2)
++                    size += int(length) + 1
++            if not size:
++                raise RuntimeError('empty AGC stream')
+             terminal = 30
+         elif streaming:
+             fifo = work / 'collection.fifo'
+diff --git a/tools/build_pfp_agc.sh b/tools/build_pfp_agc.sh
+new file mode 100755
+index 0000000..a2e5414
+--- /dev/null
++++ b/tools/build_pfp_agc.sh
+@@ -0,0 +1,21 @@
++#!/usr/bin/env bash
++# Isolated native-AGC PFP++ build. Never writes /home/erikg/pfp.
++set -euo pipefail
++root=$(cd "$(dirname "$0")/.." && pwd)
++pfp_dir=${PFP_AGC_FORK:-/tmp/pfp-agc-fork}
++agc_dir=${PFP_AGC_LIBRARY:-/tmp/pfp-agc-library}
++[[ $(realpath -m "$pfp_dir") != /home/erikg/pfp ]] || { echo 'Refusing protected PFP checkout' >&2; exit 1; }
++if [[ ! -d "$pfp_dir/.git" ]]; then
++  git clone https://github.com/marco-oliva/pfp.git "$pfp_dir"
++  git -C "$pfp_dir" checkout 1a5f114
++  git -C "$pfp_dir" apply "$root/bit6/sxi_logs/pfp-agc/pfp-agc.patch"
++fi
++if [[ ! -d "$agc_dir/.git" ]]; then
++  git clone --recursive https://github.com/refresh-bio/agc.git "$agc_dir"
++  git -C "$agc_dir" checkout e67e3fc865a459779118d3d4e9fbdf42c70ba75e
++  git -C "$agc_dir" submodule update --init --recursive
++fi
++[[ $(git -C "$agc_dir" rev-parse HEAD) == e67e3fc865a459779118d3d4e9fbdf42c70ba75e ]] || { echo 'AGC revision differs from the tested adapter revision' >&2; exit 1; }
++make -C "$agc_dir" -j"${BUILD_JOBS:-16}" libagc
++cmake -S "$pfp_dir" -B "$pfp_dir/build" -DPFP_ENABLE_AGC=ON -DAGC_ROOT="$agc_dir" "$@"
++cmake --build "$pfp_dir/build" -j"${BUILD_JOBS:-16}" --target pfp++ pfp++64 pfp_source_probe

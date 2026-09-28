@@ -1,0 +1,43 @@
+{"bytes":100000000,"init_seconds":75.2002,"read_seconds":0.315252,"MB_per_s":317.207,"hash":14695981039346656037}
+{"bytes":100000000,"init_seconds":75.2002,"read_seconds":0.149991,"MB_per_s":666.709,"hash":14695981039346656037}
+{"bytes":100000000,"init_seconds":75.2002,"read_seconds":0.149146,"MB_per_s":670.482,"hash":14695981039346656037}
+{"bytes":100000000,"init_seconds":75.2002,"read_seconds":0.15605,"MB_per_s":640.821,"hash":14695981039346656037}
+{"bytes":100000000,"init_seconds":75.2002,"read_seconds":0.153155,"MB_per_s":652.932,"hash":14695981039346656037}
+{"bytes":100000000,"init_seconds":75.2002,"read_seconds":0.155411,"MB_per_s":643.453,"hash":14695981039346656037}
+{"bytes":100000000,"init_seconds":75.2002,"read_seconds":0.147022,"MB_per_s":680.172,"hash":14695981039346656037}
+{"bytes":100000000,"init_seconds":75.2002,"read_seconds":0.16423,"MB_per_s":608.901,"hash":14695981039346656037}
+{"bytes":100000000,"init_seconds":75.2002,"read_seconds":0.150722,"MB_per_s":663.475,"hash":14695981039346656037}
+{"bytes":100000000,"init_seconds":75.2002,"read_seconds":0.167783,"MB_per_s":596.009,"hash":14695981039346656037}
+{"bytes":100000000,"init_seconds":75.2002,"read_seconds":0.154112,"MB_per_s":648.878,"hash":14695981039346656037}
+{"bytes":100000000,"init_seconds":75.2002,"read_seconds":0.15886,"MB_per_s":629.484,"hash":14695981039346656037}
+{"bytes":100000000,"init_seconds":75.2002,"read_seconds":0.169758,"MB_per_s":589.072,"hash":14695981039346656037}
+{"bytes":100000000,"init_seconds":75.2002,"read_seconds":0.161927,"MB_per_s":617.562,"hash":14695981039346656037}
+{"bytes":100000000,"init_seconds":75.2002,"read_seconds":0.159835,"MB_per_s":625.646,"hash":14695981039346656037}
+{"bytes":100000000,"init_seconds":75.2002,"read_seconds":0.16699,"MB_per_s":598.84,"hash":14695981039346656037}
+{"bytes":100000000,"init_seconds":75.2002,"read_seconds":0.163943,"MB_per_s":609.967,"hash":14695981039346656037}
+{"bytes":100000000,"init_seconds":75.2002,"read_seconds":0.145514,"MB_per_s":687.218,"hash":14695981039346656037}
+{"bytes":100000000,"init_seconds":75.2002,"read_seconds":0.152808,"MB_per_s":654.414,"hash":14695981039346656037}
+{"bytes":100000000,"init_seconds":75.2002,"read_seconds":0.157679,"MB_per_s":634.2,"hash":14695981039346656037}
+	Command being timed: "/tmp/pfp-agc-fork/build/pfp_source_probe agc /home/erikg/hprcv2/HPRC_r2_assemblies_0.6.1.agc 16 requests 0 emit"
+	User time (seconds): 92.61
+	System time (seconds): 11.52
+	Percent of CPU this job got: 69%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 2:29.91
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 1973740
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 550537
+	Voluntary context switches: 31073
+	Involuntary context switches: 336
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 112
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

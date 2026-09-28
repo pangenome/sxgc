@@ -1,0 +1,13 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index cca7d0b..feb3305 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -330,7 +330,7 @@ else()
+     set(MALLOC_COUNT_LIBRARIES "")
+ endif()
+ 
+-set(PFP_LIBS ${VCF_LIB_DEPS} ${OMP_LIBRARIES} ${MALLOC_COUNT_LIBRARIES} ${MIMALLOC_D_LIB})
++set(PFP_LIBS ${VCF_LIB_DEPS} ${OMP_LIBRARIES} ${MALLOC_COUNT_LIBRARIES} ${MIMALLOC_D_LIB} z lzma bz2 curl m deflate $ENV{HOME}/htsinst/lib/libhts.a pthread)
+ 
+ ################################################################################
+ # Tests

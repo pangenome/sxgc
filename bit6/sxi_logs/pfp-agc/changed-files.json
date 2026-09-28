@@ -1,0 +1,20 @@
+{
+  "fork": [
+    "CMakeLists.txt",
+    "README.md",
+    "include/pfp_algo.hpp",
+    "pfp++.cpp",
+    "src/pfp_algo.cpp",
+    "include/text_source.hpp",
+    "src/text_source.cpp",
+    "src/agc_source.hpp",
+    "src/agc_source.cpp",
+    "tests/source_probe.cpp",
+    "tests/test_agc.py"
+  ],
+  "pipeline": [
+    "bit6/sxi_pipeline.py",
+    "tools/build_pfp_agc.sh"
+  ],
+  "evidence_directory": "/tmp/sxgc-laneV/bit6/sxi_logs/pfp-agc"
+}

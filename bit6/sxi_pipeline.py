@@ -3,7 +3,9 @@
 
 Collection contract: T = s1 0x1E ... sk 0x1E, one cyclic byte string.
 0x1E is reserved and must never occur in sequence content; --text is passed as-is.
-AGC preparation uses agc2flat --revlines --upper (one reversed contig/record).
+AGC input is read natively by PFP++ (uppercase reversed contigs, archive order).
+--fifo preserves the agc2flat fallback; --materialize is forensic-only.
+Set XSA_PFP to the AGC-enabled PFP++ executable.
 FASTA/FASTQ extract already oriented sequences verbatim, separated and terminated by 0x1E.
 Scratch defaults beside the input, on the same filesystem; retained for audit.
 """
@@ -113,16 +115,19 @@ def main():
     p.add_argument('--verify-text-sample', type=int, default=0)
     p.add_argument('--expect-heads', help='acceptance oracle only; checked after fresh construction')
     p.add_argument('--expect-ri4', help='acceptance oracle only; exact runs and packed-tail byte gate')
-    p.add_argument('--materialize', action='store_true', help='legacy AGC text-file preparation')
+    p.add_argument('--fifo', action='store_true', help='fallback AGC FIFO preparation')
+    p.add_argument('--materialize', action='store_true', help='forensic-only AGC text-file preparation')
     p.add_argument('--verbose', action='store_true')
     p.add_argument('--xsa', default=str(ROOT / 'xsa/target/release/xsa'))
     a = p.parse_args()
     if not 0 <= a.verify_text_sample <= 100000:
         p.error('--verify-text-sample must be 0..100000')
-    if not 1 <= a.threads <= 64:
-        p.error('--threads must be 1..64')
+    if not 1 <= a.threads <= 96:
+        p.error('--threads must be 1..96')
     if a.materialize and not a.agc:
         p.error('--materialize requires --agc')
+    if a.fifo and (not a.agc or a.materialize):
+        p.error('--fifo requires --agc and excludes --materialize')
     source_path = pathlib.Path(a.text or a.agc or a.fasta or a.fastq).absolute()
     out = pathlib.Path(a.output).absolute()
     if os.path.lexists(out):
@@ -206,7 +211,18 @@ def main():
         text = work / 'collection.txt'
         names = work / 'collection.txt.names.tsv'
         prepare = [agc, source_path, '--revlines', '--upper', '--sep', '1e', '-o', text]
-        if streaming:
+        if streaming and not a.fifo:
+            run('parse', [pfp, '-t', source_path, '--agc', '--agc-names', names,
+                          '-o', prefix, '-w', 10, '-p', 100, '-j', a.threads, '--tmp-dir', work])
+            size = 0
+            with names.open() as f:
+                for line in f:
+                    _, start, length = line.rstrip('\n').rsplit('\t', 2)
+                    size += int(length) + 1
+            if not size:
+                raise RuntimeError('empty AGC stream')
+            terminal = 30
+        elif streaming:
             fifo = work / 'collection.fifo'
             parse = [pfp, '-t', fifo, '-o', prefix, '-w', 10, '-p', 100, '-j', a.threads, '--tmp-dir', work]
             stream_parse(fifo, prepare + ['--stdout'], parse, env, logs, label, record, a.verbose)
@@ -243,8 +259,7 @@ def main():
     with ri4.open('rb') as header:
         _, _, strings, _ = struct.unpack('<4Q', header.read(32))
     if strings > 1 and not (a.expect_heads and a.expect_ri4) and not a.verify_text_sample:
-        raise RuntimeError('multi-string ordering unvalidated: endpoint byte gates '
-                           'or --verify-text-sample (in-flight ground-truth audit) required')
+        raise RuntimeError('multi-string ordering unvalidated: endpoint byte gates or --verify-text-sample (in-flight ground-truth audit) required')
     run('slim', [tools/'slim_dump', '--slim', '--resolve-ri4', '--dict-stream', '--ri4', ri4,
                  '--head-sa', heads, '--parse', prefix, '-t', a.threads, '-o', agg])
     sweep = run('sweep', [a.xsa, 'chi-rspace', '--stream-agg', '--ri4', ri4, '--agg', agg, '-o', chi])

@@ -1,0 +1,1 @@
+SLIM_UNIT PASS 216000 exact capped LCE checks (random/periodic/uniform; tau 1..2048)
