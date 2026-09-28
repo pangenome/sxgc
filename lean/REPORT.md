@@ -122,3 +122,72 @@ lexLt_total_same_length, rotation_cmp_total, firstDiff, lexLt_shape.
 
 No commits made (agents never commit). `Sxgc.lean` and `SxgcBounds.lean`
 statements untouched.
+
+## Cover-cases completion lane (this session): chi_fam_bounds COMPLETE, floor program fully composed
+
+Task: close the two marked cover stubs (`fam_run_occ_le`, `fam_cover`) and
+assemble the floor composition. Result: everything kernel-checked; the lane
+went beyond the two stubs and closed the entire family-specific floor program.
+
+### Mandatory targets — DONE, zero unmarked sorries
+- **`fam_run_occ_le` PROVEN**: an occurring pure run `x_i^{m+1}` fits in the
+  right run (`m+1 ≤ L − p_i`). Route: every window letter is `x_i`, so every
+  window position is in block `i` off the marker (`fam_run_iff`); block-relative
+  offsets are consecutive (`div_add_mod`); a consecutive offset window avoiding
+  `p_i` lies wholly left (then `m+1 ≤ p ≤ L−p` by the half grid) or wholly right
+  (then it fits before the block end). Boundedness used nowhere — the lemma is
+  pure block arithmetic.
+- **`fam_cover` PROVEN** (statement-locked, unmodified): every requirement is
+  covered by one of the `3k−1` positions. Case analysis: `w = ε` → cover the
+  letter at its own occurrence (marker → marker-successor; run letter →
+  block-end, using `L ≠ p_j` from the half grid); `w = x_i^m` with the window
+  `w++[c]` at `s` → `c` marker (either block: cover at `s+m+1`, family 1 via
+  `fam_mark_iff` at the last window position) or `c` run letter: same block
+  (run extension: `fam_run_occ_le` + reconstructed window at the block end,
+  family 2) or different block (the position before the change is in block `i`,
+  so `s+m = (i+1)(L+1)` exactly, cover at `s+m+1`, family 3). All covers via
+  `coversAt_of_window`/`coversAt_single` — never a walk, never an enumeration.
+- **`chi_fam_upper`** (`χ ≤ 3k−1` via the explicit `famV` and
+  `chi_le_of_suffixient_mem`) and **`chi_fam_bounds`**: `2k ≤ χ(famText k L ps)
+  ≤ 3k−1` on the half grid — the battery's empirical law, now a theorem.
+
+### Composition — DONE (beyond the two stubs)
+- **`fam_forced_incompat` PROVEN** (was a skeleton stub): distinct half-grid
+  assignments admit no common correct locate-one oracle. New machinery:
+  `coversAt_letter_iff` (single-letter cover ⟺ prefix ends with it, via
+  `List.getElem_of_eq`), `fam_marker_cover_unique` (the marker query's cover is
+  uniquely the marker-successor position).
+- **`floor_theorem_shape` PROVEN** (statement-locked, unmodified): from the
+  counting bound `(L/2+1)^k ≤ 2^(s+1)−1`, `2k ≤ χk ≤ 3k−1`, `n = k(L+1)`:
+  `χk · log2(n/χk) / 3 ≤ s+1`. The Ω(χ·log(n/χ)) arithmetic core of the floor.
+  Route: `2^(k·log2 m) ≤ m^k < 2^(s+1)` gives `k·log2 m ≤ s`; `χ ≥ 2k` cancels
+  the `k` in `n/χk ≤ L/2+1`; monotone log2; assemble and divide by 3.
+  Toolchain notes: core has NO `Nat.log2_spec`/`log2_le_log2`/`log2_mono` —
+  built from `Nat.le_log2` as `pow_log2_le`/`log2_mono`; NO Mathlib `ring`/
+  `set`/`by_contra` — replaced with core equivalents throughout.
+
+### The witness: skeleton FALSE as stated — true form PROVEN
+- `fam_oracle_witness` as originally locked is **false** (for
+  `2^(s+1)−1 ≥ (L/2+1)^k` a decoder can index one correct answer per member;
+  pairwise-distinct answers fit). Documented in place; statement left with
+  its single sorry per statement-lock discipline (not silently edited).
+- **`fam_oracle_witness_size` PROVEN** (the honest replacement, with the size
+  flip `2^(s+1)−1 < (L/2+1)^k`): NO `s`-bit index scheme under one fixed
+  decoder answers locate-one correctly on every half-grid member. Route:
+  `family_counting` applied to the family — but the product-list bookkeeping
+  (size + Nodup) is discharged by a **digit encoding**: `decodeP m k z` (the
+  base-`m` digits of `z`) turns the family into `(range (m^k)).map ...`, so
+  Nodup is `List.nodup_range` + injectivity (`famText_inj_markers`: equal
+  texts pin equal marker offsets block-by-block; `digits_inj`: equal digits
+  force equal numbers below `m^k`). No product-list machinery anywhere.
+
+### Program state after this lane
+The family-specific floor theorem is now FULLY kernel-checked end to end:
+`family_counting` (pigeonhole) + `fam_oracle_witness_size` (counting on the
+family) + `chi_fam_bounds` (2k ≤ χ ≤ 3k−1) + `fam_half_grid_size` (n) +
+`floor_theorem_shape` (arithmetic) ⇒ `s ≥ Ω(χ·log(n/χ))` on the half-grid
+family — the first space lower bound of this shape for the locate-one class.
+Lean status: `lake build` green; `Main.lean` BIT 1B gate GREEN; axioms of every
+flagship ⊆ {propext, Classical.choice, Quot.sound}; no native_decide; sorry
+ledger: LowerBound 1 (the documented-false skeleton, unchanged), flagship
+files byte-untouched.

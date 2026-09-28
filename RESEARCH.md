@@ -1708,3 +1708,14 @@ mask + features); pointer-attention only if ablation demands it.
 ## `lake build SxgcRunEdge` exposed them. NOTHING was banked. House rule added:
 ## kernel-check claims require an explicit-target rebuild (or #print axioms on a fresh
 ## import), never a cached full-package green. Lane revived with the error list.
+
+## RUNEDGEHIT PROVEN OUTRIGHT (laneX, revived after crash; final assembly closed by
+## supervisor - two list-associativity fixes): Sxgc.runEdgeHit_true, kernel-checked,
+## axioms exactly {propext, Classical.choice, Quot.sound} (fresh-import audit), explicit-
+## target build green, Main BIT 1B GATE GREEN, zero sorries in SxgcRunEdge.lean.
+## LEDGER EFFECT via the proven factorization (O1 iff RunEdgeHit AND RunEdgeDominate):
+## O1 now reduces to RunEdgeDominate ALONE - the endpoint-rule/exact-range-min obstruction
+## is the pillar's entire remaining content. Lean file: SxgcRunEdge.lean (783 lines,
+## namespace Sxgc). Correction #10's strict-verification rule enforced throughout
+## (explicit-target rebuild + fresh-import #print axioms; the crashed lane's cached
+## green claim was false, the real proof needed 2 more fixes).

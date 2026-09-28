@@ -502,6 +502,16 @@ theorem replicate_add' {α : Type} (m n : Nat) (a : α) :
   | succ m ih =>
     rw [Nat.add_right_comm, List.replicate_succ, List.replicate_succ, List.cons_append, ← ih]
 
+/-- A replicate extended by one more copy of the same letter. -/
+theorem replicate_snoc {α : Type} (a : α) : ∀ (m : Nat),
+    List.replicate m a ++ [a] = List.replicate (m + 1) a := by
+  intro m
+  induction m with
+  | zero => rfl
+  | succ n ih =>
+    show List.replicate (n + 1) a ++ [a] = List.replicate (n + 1 + 1) a
+    rw [List.replicate_succ, List.replicate_succ, List.cons_append, ih]
+
 theorem nodup_filter' {α : Type} {p : α → Bool} : ∀ {l : List α}, l.Nodup → (l.filter p).Nodup := by
   intro l
   induction l with
@@ -1427,7 +1437,8 @@ theorem fam_run_occ_le {k L : Nat} {ps : List Nat} (hp : ∀ i, i < k → ps.get
     (hsle : s + (m + 1) ≤ (famText k L ps).length)
     (hwin : ((famText k L ps).drop s).take (m + 1) = List.replicate (m + 1) (runL i)) :
     m + 1 ≤ L - ps.getD i 0 := by
-  -- every letter of the window is x_i, so all positions lie in block i, off p_i
+  have hb : 0 < L + 1 := by omega
+  -- every window letter is x_i, so every window position is in block i, off the marker
   have hblk : ∀ t, (ht : t < m + 1) → (s + t) / (L + 1) = i ∧
       (s + t) % (L + 1) ≠ ps.getD i 0 := by
     intro t ht
@@ -1438,8 +1449,38 @@ theorem fam_run_occ_le {k L : Nat} {ps : List Nat} (hp : ∀ i, i < k → ps.get
       rw [hlen]; exact hwin
     have h := window_get hwin' (by rw [hlen]; exact ht) hst
     rw [List.getElem_replicate] at h
-    sorry
-  sorry
+    obtain ⟨_, hie, hop⟩ := (fam_run_iff hp hst).mp h
+    exact ⟨hie.symm, hop⟩
+  -- block-relative offsets are consecutive across the window
+  have hoff : ∀ t, (ht : t < m + 1) → (s + t) % (L + 1) = s % (L + 1) + t := by
+    intro t ht
+    have hdm : (L + 1) * ((s + t) / (L + 1)) + (s + t) % (L + 1) = s + t :=
+      Nat.div_add_mod (s + t) (L + 1)
+    have hdm0 : (L + 1) * (s / (L + 1)) + s % (L + 1) = s := Nat.div_add_mod s (L + 1)
+    have h1 := (hblk t ht).1
+    rw [h1] at hdm
+    have h0 : s / (L + 1) = i := by simpa using (hblk 0 (by omega)).1
+    rw [h0] at hdm0
+    omega
+  -- the window's last offset stays inside the block
+  have hmlast : s % (L + 1) + m ≤ L := by
+    have hlt : (s + m) % (L + 1) < L + 1 := Nat.mod_lt _ hb
+    have := hoff m (by omega)
+    omega
+  -- split on the window's first offset relative to the marker offset
+  rcases Nat.lt_or_ge (s % (L + 1)) (ps.getD i 0) with hlt | hge
+  · rcases Nat.lt_or_ge (s % (L + 1) + m) (ps.getD i 0) with hlt2 | hge2
+    · -- window entirely left of the marker: m + 1 ≤ p ≤ L − p (half grid)
+      omega
+    · -- window reaches the marker offset: some position lands exactly on it
+      exfalso
+      have htlt : ps.getD i 0 - s % (L + 1) < m + 1 := by omega
+      have hcross := (hblk _ htlt).2
+      rw [hoff _ htlt] at hcross
+      omega
+  · -- window starts right of the marker: fits before the block end
+    have hne : s % (L + 1) ≠ ps.getD i 0 := (hblk 0 (by omega)).2
+    omega
 
 /-- **The cover**: every requirement of the family text is covered by one of
 the `3k-1` marker / block-end / boundary positions. -/
@@ -1450,7 +1491,277 @@ theorem fam_cover {k L : Nat} {ps : List Nat} (hp : ∀ i, i < k → ps.getD i 0
       ( (∃ i, i < k ∧ x = i * (L + 1) + ps.getD i 0 + 1) ∨
         (∃ i, i < k ∧ x = (i + 1) * (L + 1)) ∨
         (∃ i, i + 1 < k ∧ x = (i + 1) * (L + 1) + 1) ) := by
-  sorry
+  have hlen : (famText k L ps).length = k * (L + 1) := famText_length hp
+  rintro ⟨w, c⟩ hreq
+  obtain ⟨_, _, hcext⟩ := (mem_requirements w c (famText k L ps)).mp hreq
+  have hocc : occurs (w ++ [c]) (famText k L ps) = true := (mem_rightExts w c _).mp hcext
+  rcases (Classical.em (w = [])) with hw | hw
+  · subst hw
+    -- the empty word: `c` is a letter; cover at its own occurrence
+    obtain ⟨s, hsle, hwin⟩ := (occurs_eq_true [c] (famText k L ps) (by simp)).mp hocc
+    have hsle1 : s + 1 ≤ (famText k L ps).length := by simpa using hsle
+    have hq : s < (famText k L ps).length := by omega
+    have hget : (famText k L ps)[s]'hq = c := by
+      have hwin0 := window_get hwin (t := 0) (by simp) hq
+      exact hwin0
+    obtain ⟨⟨hj, _⟩, hcls⟩ := fam_letter hp hq
+    rcases hcls with ⟨hm, hop⟩ | ⟨hr, _⟩
+    · -- `c` is the marker of block `s/(L+1)`: cover right after it (family 1)
+      obtain ⟨hjk, hqeq⟩ := (fam_mark_iff hp hq).mp hm
+      refine ⟨s + 1, by omega, ?_, Or.inl ⟨_, hjk, by omega⟩⟩
+      exact coversAt_single (by omega) (by omega) hget
+    · -- `c` is a run letter of block `s/(L+1)`: cover at the block end (family 2)
+      have hjk : s / (L + 1) < k := (fam_letter hp hq).1.1
+      have hsm2 : (s / (L + 1) + 1) * (L + 1) = s / (L + 1) * (L + 1) + (L + 1) := by
+        rw [Nat.succ_mul]
+      have hxle : (s / (L + 1) + 1) * (L + 1) ≤ (famText k L ps).length := by
+        rw [hlen]; exact Nat.mul_le_mul_right _ (by omega)
+      have hq' : s / (L + 1) * (L + 1) + L < (famText k L ps).length := by omega
+      obtain ⟨hdiv, hmod⟩ := div_mod_unique (by omega : 0 < L + 1)
+        (by omega : L < L + 1)
+        (by omega : s / (L + 1) * (L + 1) + L = s / (L + 1) * (L + 1) + L)
+      obtain ⟨_, hcls'⟩ := fam_letter hp hq'
+      rcases hcls' with ⟨_, hop'⟩ | ⟨hrl', _⟩
+      · -- offset L = p_j contradicts the half grid
+        exfalso
+        rw [hmod, hdiv] at hop'
+        have := hhalf _ hjk
+        omega
+      · refine ⟨(s / (L + 1) + 1) * (L + 1), by omega, ?_, Or.inr (Or.inl ⟨_, hjk, rfl⟩)⟩
+        refine coversAt_single (by omega) (by omega) ?_
+        have hc : c = runL (s / (L + 1)) := hget.symm.trans hr
+        rw [hdiv] at hrl'
+        have hidx := getElem_idx_congr (l := famText k L ps)
+          (i := s / (L + 1) * (L + 1) + L) (j := (s / (L + 1) + 1) * (L + 1) - 1)
+          (by omega) hq'
+        exact hidx.symm.trans (hrl'.trans hc.symm)
+  · -- the nonempty word is a pure run: `w = x_i^m`
+    have hw : w ≠ [] := hw
+    obtain ⟨i, m, hik, hm1, hwrep⟩ := req_word_shape hp hreq hw
+    subst hwrep
+    have hwlen : (List.replicate m (runL i)).length = m := by simp
+    have hlw2 : ((List.replicate m (runL i)) ++ [c]).length = m + 1 := by
+      rw [List.length_append, hwlen]; simp
+    obtain ⟨s, hsle, hwin⟩ := (occurs_eq_true ((List.replicate m (runL i)) ++ [c])
+      (famText k L ps) (by simp)).mp hocc
+    have hqm : s + m < (famText k L ps).length := by omega
+    have hgetm : (famText k L ps)[s + m]'hqm = c := by
+      have hW : ((famText k L ps).drop s).take ((List.replicate m (runL i)).length + 1) =
+          (List.replicate m (runL i)) ++ [c] := by
+        have hwin2 := hwin
+        rw [hlw2] at hwin2
+        rw [hwlen]
+        exact hwin2
+      have hres := letter_of_append_window (by omega) hW
+      have hidx := getElem_idx_congr (l := famText k L ps)
+        (i := s + (List.replicate m (runL i)).length) (j := s + m) (by omega) (by omega)
+      exact hidx.symm.trans hres
+    have hgetall : ∀ t, (ht : t < m) → (famText k L ps)[s + t]'(by omega) = runL i := by
+      intro t ht
+      have hst : s + t < (famText k L ps).length := by omega
+      have hwinT := window_get hwin (by omega) hst
+      rw [List.getElem_append_left (by omega)] at hwinT
+      rw [List.getElem_replicate] at hwinT
+      exact hwinT
+    obtain ⟨⟨hjm, _⟩, hclsm⟩ := fam_letter hp hqm
+    rcases hclsm with ⟨hmm, hopm⟩ | ⟨hrm, hopm⟩
+    · -- `c` is the marker of block `(s+m)/(L+1)`: cover right after it (family 1)
+      obtain ⟨hjk, hqeq⟩ := (fam_mark_iff hp hqm).mp hmm
+      refine ⟨s + m + 1, by omega, ?_, Or.inl ⟨_, hjk, by omega⟩⟩
+      refine coversAt_of_window (T := famText k L ps)
+        (W := (List.replicate m (runL i)) ++ [c]) (x := s + m + 1) ?_ ?_ ?_
+      · omega
+      · omega
+      · have hsub : s + m + 1 - ((List.replicate m (runL i)) ++ [c]).length = s := by
+          rw [hlw2]; omega
+        rw [hsub]
+        exact hwin
+    · -- `c` is a run letter of block `(s+m)/(L+1)`
+      have hcrun : c = runL ((s + m) / (L + 1)) := hgetm.symm.trans hrm
+      rcases (Classical.em ((s + m) / (L + 1) = i)) with hji | hji
+      · -- same block: the window is the pure run `x_i^{m+1}`; block-end cover (family 2)
+        have hwcc : (List.replicate m (runL i)) ++ [c] =
+            List.replicate (m + 1) (runL i) := by
+          rw [hcrun, hji, replicate_snoc]
+        have hsle' : s + (m + 1) ≤ (famText k L ps).length := by
+          rw [← hlw2]; exact hsle
+        have hwin2 : ((famText k L ps).drop s).take (m + 1) =
+            List.replicate (m + 1) (runL i) := by
+          have htmp := hwin
+          rw [hlw2] at htmp
+          rw [htmp, hwcc]
+        have hbound : m + 1 ≤ L - ps.getD i 0 :=
+          fam_run_occ_le hp hik (hhalf i hik) hsle' hwin2
+        have hsm2 : (i + 1) * (L + 1) = i * (L + 1) + (L + 1) := by rw [Nat.succ_mul]
+        have hxle : (i + 1) * (L + 1) ≤ (famText k L ps).length := by
+          rw [hlen]; exact Nat.mul_le_mul_right _ (by omega)
+        have hWlen : (List.replicate (m + 1) (runL i)).length = m + 1 := by simp
+        refine ⟨(i + 1) * (L + 1), by omega, ?_, Or.inr (Or.inl ⟨i, hik, rfl⟩)⟩
+        rw [hwcc]
+        refine coversAt_of_window (T := famText k L ps)
+          (W := List.replicate (m + 1) (runL i)) (x := (i + 1) * (L + 1)) ?_ ?_ ?_
+        · rw [hWlen]; omega
+        · exact hxle
+        · refine window_of_letters (T := famText k L ps)
+            (W := List.replicate (m + 1) (runL i))
+            (a := (i + 1) * (L + 1) - (List.replicate (m + 1) (runL i)).length) ?_ ?_
+          · rw [hWlen]; omega
+          · intro t ht
+            have hqt : (i + 1) * (L + 1) - (List.replicate (m + 1) (runL i)).length + t <
+                (famText k L ps).length := by rw [hWlen]; omega
+            obtain ⟨hdiv, hmod⟩ := div_mod_unique (i := i)
+              (q := (i + 1) * (L + 1) - (List.replicate (m + 1) (runL i)).length + t)
+              (by omega : 0 < L + 1) (by omega : L - m + t < L + 1) (by omega)
+            obtain ⟨_, hcls'⟩ := fam_letter hp hqt
+            rcases hcls' with ⟨_, hop'⟩ | ⟨hrl', _⟩
+            · exfalso
+              rw [hmod, hdiv] at hop'
+              have := hhalf i hik
+              omega
+            · rw [List.getElem_replicate, hrl', hdiv]
+      · -- different block: the window crosses a block boundary (family 3)
+        have hq1 : s + (m - 1) < (famText k L ps).length := by omega
+        have hget1 : (famText k L ps)[s + (m - 1)]'hq1 = runL i := hgetall (m - 1) (by omega)
+        have hblk1 : (s + (m - 1)) / (L + 1) = i := ((fam_run_iff hp hq1).mp hget1).2.1.symm
+        have hcomm : (L + 1) * i = i * (L + 1) := Nat.mul_comm _ _
+        have hdm1 : (L + 1) * i + (s + (m - 1)) % (L + 1) = s + (m - 1) := by
+          rw [← hblk1]; exact Nat.div_add_mod _ _
+        have hmod1 : (s + (m - 1)) % (L + 1) < L + 1 := Nat.mod_lt _ (by omega)
+        have hsm2 : (i + 1) * (L + 1) = i * (L + 1) + (L + 1) := by rw [Nat.succ_mul]
+        have hle : s + m ≤ (i + 1) * (L + 1) := by omega
+        have hsm : s + m = (i + 1) * (L + 1) := by
+          rcases (Classical.em (s + m = (i + 1) * (L + 1))) with heq | hne
+          · exact heq
+          · exfalso
+            have hlt : s + m < (i + 1) * (L + 1) := by omega
+            have hge : i * (L + 1) ≤ s + m := by omega
+            obtain ⟨hdiv, _⟩ := div_mod_unique (i := i) (q := s + m)
+              (by omega : 0 < L + 1)
+              (by omega : s + m - i * (L + 1) < L + 1) (by omega)
+            exact hji hdiv
+        have hik1 : i + 1 < k := by
+          rcases Nat.lt_or_ge (i + 1) k with hlt | hge
+          · exact hlt
+          · exfalso
+            have hnn : k * (L + 1) ≤ (i + 1) * (L + 1) := Nat.mul_le_mul_right _ hge
+            omega
+        refine ⟨s + m + 1, by omega, ?_, Or.inr (Or.inr ⟨i, hik1, by omega⟩)⟩
+        refine coversAt_of_window (T := famText k L ps)
+          (W := (List.replicate m (runL i)) ++ [c]) (x := s + m + 1) ?_ ?_ ?_
+        · omega
+        · omega
+        · have hsub : s + m + 1 - ((List.replicate m (runL i)) ++ [c]).length = s := by
+            rw [hlw2]; omega
+          rw [hsub]
+          exact hwin
+
+
+/-! ### The cover set and the upper bound -/
+
+/-- The `3k−1` candidate positions: marker-successors, block-ends, boundaries. -/
+def famV (k L : Nat) (ps : List Nat) : List Nat :=
+  ((List.range k).map (fun i => i * (L + 1) + ps.getD i 0 + 1)) ++
+  ((List.range k).map (fun i => (i + 1) * (L + 1))) ++
+  ((List.range (k - 1)).map (fun i => (i + 1) * (L + 1) + 1))
+
+theorem famV_length (k L : Nat) (ps : List Nat) : (famV k L ps).length = 3 * k - 1 := by
+  simp only [famV, List.length_append, List.length_map, List.length_range]
+  omega
+
+theorem mem_famV_marker {k L : Nat} {ps : List Nat} {i x : Nat} (hik : i < k)
+    (hx : x = i * (L + 1) + ps.getD i 0 + 1) : x ∈ famV k L ps := by
+  rw [famV, List.mem_append, List.mem_append]
+  refine Or.inl (Or.inl ?_)
+  rw [List.mem_map]
+  exact ⟨i, by rw [List.mem_range]; omega, hx.symm⟩
+
+theorem mem_famV_end {k L : Nat} {ps : List Nat} {i x : Nat} (hik : i < k)
+    (hx : x = (i + 1) * (L + 1)) : x ∈ famV k L ps := by
+  rw [famV, List.mem_append, List.mem_append]
+  refine Or.inl (Or.inr ?_)
+  rw [List.mem_map]
+  exact ⟨i, by rw [List.mem_range]; omega, hx.symm⟩
+
+theorem mem_famV_boundary {k L : Nat} {ps : List Nat} {i x : Nat} (hik : i + 1 < k)
+    (hx : x = (i + 1) * (L + 1) + 1) : x ∈ famV k L ps := by
+  rw [famV, List.mem_append]
+  refine Or.inr ?_
+  rw [List.mem_map]
+  exact ⟨i, by rw [List.mem_range]; omega, hx.symm⟩
+
+/-- Every cover position is a genuine 1-based position of the family text. -/
+theorem famV_positions {k L : Nat} {ps : List Nat} (hp : ∀ i, i < k → ps.getD i 0 ≤ L)
+    (hL : 1 ≤ L) : ∀ x ∈ famV k L ps, 1 ≤ x ∧ x ≤ (famText k L ps).length := by
+  have hlen : (famText k L ps).length = k * (L + 1) := famText_length hp
+  intro x hx
+  rw [famV, List.mem_append] at hx
+  rcases hx with hx | hx
+  · rw [List.mem_append] at hx
+    rcases hx with hx | hx
+    · rw [List.mem_map] at hx
+      obtain ⟨i, hi, hxi⟩ := hx
+      rw [List.mem_range] at hi
+      have hpi : ps.getD i 0 ≤ L := hp i hi
+      have hsm2 : (i + 1) * (L + 1) = i * (L + 1) + (L + 1) := by rw [Nat.succ_mul]
+      have hle : (i + 1) * (L + 1) ≤ k * (L + 1) := Nat.mul_le_mul_right _ (by omega)
+      rw [← hxi]
+      refine ⟨by omega, ?_⟩
+      rw [hlen]
+      have hstep : i * (L + 1) + ps.getD i 0 + 1 ≤ (i + 1) * (L + 1) := by omega
+      omega
+    · rw [List.mem_map] at hx
+      obtain ⟨i, hi, hxi⟩ := hx
+      rw [List.mem_range] at hi
+      have hsm2 : (i + 1) * (L + 1) = i * (L + 1) + (L + 1) := by rw [Nat.succ_mul]
+      have hle : (i + 1) * (L + 1) ≤ k * (L + 1) := Nat.mul_le_mul_right _ (by omega)
+      rw [← hxi]
+      refine ⟨by omega, ?_⟩
+      rw [hlen]
+      omega
+  · rw [List.mem_map] at hx
+    obtain ⟨i, hi, hxi⟩ := hx
+    rw [List.mem_range] at hi
+    have hsm2 : (i + 2) * (L + 1) = (i + 1) * (L + 1) + (L + 1) := by rw [Nat.succ_mul]
+    have hle : (i + 2) * (L + 1) ≤ k * (L + 1) := Nat.mul_le_mul_right _ (by omega)
+    rw [← hxi]
+    refine ⟨by omega, ?_⟩
+    rw [hlen]
+    have hstep : (i + 1) * (L + 1) + 1 ≤ k * (L + 1) := by omega
+    omega
+
+/-- The `3k−1` positions are suffixient for the family text. -/
+theorem fam_suffixient {k L : Nat} {ps : List Nat} (hp : ∀ i, i < k → ps.getD i 0 ≤ L)
+    (hL : 1 ≤ L) (hhalf : ∀ i, i < k → 2 * ps.getD i 0 ≤ L) :
+    suffixient (famV k L ps) (famText k L ps) = true := by
+  rw [suffixient_iff_cover]
+  intro p hpmem
+  obtain ⟨x, hxle, hcover, hfam⟩ := fam_cover hp hL hhalf p hpmem
+  refine ⟨x, ?_, hcover⟩
+  rcases hfam with ⟨i, hik, hx⟩ | ⟨i, hik, hx⟩ | ⟨i, hik, hx⟩
+  · exact mem_famV_marker hik hx
+  · exact mem_famV_end hik hx
+  · exact mem_famV_boundary hik hx
+
+/-- **Family upper bound**: `χ ≤ 3k − 1` — the explicit cover set suffices. -/
+theorem chi_fam_upper {k L : Nat} {ps : List Nat} (hp : ∀ i, i < k → ps.getD i 0 ≤ L)
+    (hL : 1 ≤ L) (hhalf : ∀ i, i < k → 2 * ps.getD i 0 ≤ L) :
+    chi (famText k L ps) ≤ 3 * k - 1 := by
+  have hmem : ∀ x ∈ famV k L ps, x ∈ positionsT (famText k L ps) := by
+    intro x hx
+    obtain ⟨h1, h2⟩ := famV_positions hp hL x hx
+    exact mem_positionsT h1 h2
+  have hle := chi_le_of_suffixient_mem (famText k L ps) (famV k L ps) hmem
+    (fam_suffixient hp hL hhalf)
+  rw [famV_length] at hle
+  exact hle
+
+/-- **The family bound** (the battery's empirical law, kernel-checked):
+`2k ≤ χ(famText k L ps) ≤ 3k − 1` on the half grid. -/
+theorem chi_fam_bounds {k L : Nat} {ps : List Nat} (hL : 1 ≤ L)
+    (hhalf : ∀ i, i < k → 2 * ps.getD i 0 ≤ L)
+    (hp : ∀ i, i < k → ps.getD i 0 ≤ L) :
+    2 * k ≤ chi (famText k L ps) ∧ chi (famText k L ps) ≤ 3 * k - 1 :=
+  ⟨chi_fam_lower hL hhalf hp, chi_fam_upper hp hL hhalf⟩
 
 /-! ### Composition skeleton (statement-locked toward the χ-floor) -/
 
@@ -1466,11 +1777,53 @@ theorem fam_half_grid {k L : Nat} {ps : List Nat} (hL : 1 ≤ L)
   have := hhalf i hik
   omega
 
-/-- **Skeleton stub** — the family's member texts (marker-perturbation class):
-one text per assignment of half-grid marker positions. Size `(L/2 + 1)^k`,
-pairwise distinguishable at markers. The construction and the incompatibility
-argument (single-marker flip forces distinct locate-one answers) are the
-remaining work; the statement is locked to the shape the floor needs. -/
+/-! ### Marker uniqueness and pairwise incompatibility -/
+
+/-- Covering a single letter means the prefix ends with it. -/
+theorem coversAt_letter_iff {T : Text} {c x : Nat} (h1 : 1 ≤ x) (hxle : x ≤ T.length) :
+    coversAt [c] x T = true ↔ T[x - 1]'(by omega) = c := by
+  obtain ⟨y, hy⟩ : ∃ y, x = y + 1 := ⟨x - 1, by omega⟩
+  subst hy
+  constructor
+  · intro hc
+    obtain ⟨u, hu⟩ := (coversAt_iff_suffix [c] (y + 1) T).mp hc
+    have hq : y < T.length := by omega
+    have htk : T.take (y + 1) = T.take y ++ [T[y]'hq] := by
+      simpa using List.take_add_one hq
+    have hu' : T.take (y + 1) = u ++ [c] := hu
+    have hul : u.length = y := by
+      have hla : (T.take (y + 1)).length = y + 1 := by
+        rw [List.length_take]; omega
+      have hlb : (u ++ [c]).length = (T.take (y + 1)).length := by rw [hu']
+      rw [List.length_append, List.length_singleton] at hlb
+      omega
+    have hyA : y < (T.take (y + 1)).length := by rw [List.length_take]; omega
+    have hL : (T.take (y + 1))[y]'hyA = (u ++ [c])[y]'(by rw [← hu']; exact hyA) :=
+      List.getElem_of_eq hu' hyA
+    have hLL : (T.take (y + 1))[y]'hyA = T[y]'hq := by rw [List.getElem_take]
+    have hLR : (u ++ [c])[y]'(by rw [← hu']; exact hyA) = c := by
+      rw [List.getElem_append_right (by omega)]
+      simp
+    exact (hLL.symm.trans hL).trans hLR
+  · intro hlast
+    exact coversAt_single (by omega) (by omega) hlast
+
+/-- A single-letter marker query is covered ONLY right after the marker. -/
+theorem fam_marker_cover_unique {k L : Nat} {ps : List Nat}
+    (hp : ∀ i, i < k → ps.getD i 0 ≤ L) {i x : Nat} (hik : i < k)
+    (h1 : 1 ≤ x) (hxle : x ≤ (famText k L ps).length)
+    (hc : coversAt [markL i] x (famText k L ps) = true) :
+    x = i * (L + 1) + ps.getD i 0 + 1 := by
+  have hlast := (coversAt_letter_iff h1 hxle).mp hc
+  obtain ⟨_, hqeq⟩ := (fam_mark_iff hp (q := x - 1) (by omega)).mp hlast
+  omega
+
+/-- **Pairwise incompatibility** — the battery's (c), kernel-checked: distinct
+half-grid assignments give texts that admit NO common correct locate-one
+oracle.  The single-letter marker query `[b_i]` at any differing block `i`
+occurs in both texts, its cover is uniquely forced to the position after the
+marker (fam_marker_cover_unique), and `p_i ≠ p'_i` makes the forced answers
+distinct — `incompat_of_forced` finishes. -/
 theorem fam_forced_incompat {k L : Nat} {ps ps' : List Nat}
     (hL : 1 ≤ L)
     (hhalf : ∀ i, i < k → 2 * ps.getD i 0 ≤ L)
@@ -1478,12 +1831,41 @@ theorem fam_forced_incompat {k L : Nat} {ps ps' : List Nat}
     (hps : ∃ i, i < k ∧ ps.getD i 0 ≠ ps'.getD i 0)
     (f : Answer) : ¬ (CorrectLocateOne f (famText k L ps) ∧
                        CorrectLocateOne f (famText k L ps')) := by
-  sorry
+  have hp : ∀ i, i < k → ps.getD i 0 ≤ L := by
+    intro i hi; have := hhalf i hi; omega
+  have hp' : ∀ i, i < k → ps'.getD i 0 ≤ L := by
+    intro i hi; have := hhalf' i hi; omega
+  rintro ⟨hf, hf'⟩
+  obtain ⟨i, hik, hne⟩ := hps
+  have hoccT : occurs [markL i] (famText k L ps) = true :=
+    mem_letter_occurs (markL_mem hik hp)
+  have hoccT' : occurs [markL i] (famText k L ps') = true :=
+    mem_letter_occurs (markL_mem hik hp')
+  exact incompat_of_forced f (famText k L ps) (famText k L ps') [markL i]
+    (i * (L + 1) + ps.getD i 0 + 1) (i * (L + 1) + ps'.getD i 0 + 1)
+    hoccT hoccT'
+    (fun x hx1 hxle hxc => fam_marker_cover_unique hp hik hx1 hxle hxc)
+    (fun x hx1 hxle hxc => fam_marker_cover_unique hp' hik hx1 hxle hxc)
+    (by omega) hf hf'
 
-/-- **Skeleton stub** — the family's witness size: with `χ = Θ(k)` members'
-requirements all distinct at markers, any correct locate-one oracle on all
-`(L/2 + 1)^k` members must emit distinct answers, so the counting lemma
-applies with `F.length = (L/2 + 1)^k`. -/
+-- **Honest obstruction (recorded, not hidden)**: `fam_oracle_witness` as
+-- originally skeleton-locked is FALSE as stated: for `2^(s+1) - 1 ≥ (L/2+1)^k`
+-- a decoder can index a distinct correct answer per member (correct oracles
+-- for distinct members are pairwise distinct by `fam_forced_incompat`, and
+-- there is room for them all), so `hex` is satisfiable and `False` is not
+-- derivable.  The TRUE witness statement needs the size flip
+-- `2^(s+1) - 1 < (L/2 + 1)^k` as a hypothesis; its proof is
+-- `family_counting` applied to the product family of all half-grid
+-- assignments, which additionally requires the product list's construction,
+-- its `(L/2+1)^k` length, and its Nodup (via the assignment-injectivity
+-- argument: equal texts force equal marker offsets `p_i` for all `i < k`).
+-- The TRUE form is now PROVEN below as `fam_oracle_witness_size`: the
+-- product-family bookkeeping is discharged by the digit encoding
+-- (`decodeP`/`famDigits`) — Nodup comes from `List.nodup_range` plus
+-- `famText_inj_markers`/`digits_inj`, never from product-list machinery.
+-- The skeleton statement below is left untouched (with its sorry) rather
+-- than silently edited, per statement-lock discipline: it is FALSE as
+-- stated (see above), and its honest replacement carries the size flip.
 theorem fam_oracle_witness {k L : Nat} (hL : 1 ≤ L)
     (dec : Index → Answer) (s : Nat)
     (hex : ∀ ps, (∀ i, i < k → 2 * ps.getD i 0 ≤ L) → ∃ D : Index,
@@ -1491,19 +1873,251 @@ theorem fam_oracle_witness {k L : Nat} (hL : 1 ≤ L)
     False := by
   sorry
 
-/-- **Floor theorem shape (statement-locked)**: `family_counting` applied to
-the witness-perturbation family yields `s ≥ Ω(χ · log(n/χ))`. The hypotheses
-are exactly: the family bound (`chi_fam_bounds`, the remaining piece), the
-member count `(#assignments)^k`, and pairwise incompatibility. With
-`2^s ≥ (L/2 + 1)^k` and `χ ≤ 3k−1`, `n = k(L+1)`, this reads
-`s ≥ k log(L/2) = Ω(χ log(n/χ))` bits. -/
+/-- `2 ^ log2 m ≤ m` for positive `m` (from `Nat.le_log2`). -/
+theorem pow_log2_le {m : Nat} (hm : 0 < m) : 2 ^ Nat.log2 m ≤ m :=
+  (Nat.le_log2 (by omega)).mp (Nat.le_refl _)
+
+/-- `log2` is monotone (from `Nat.le_log2`; core has no `log2_le_log2`). -/
+theorem log2_mono {a b : Nat} (ha : 0 < a) (h : a ≤ b) : Nat.log2 a ≤ Nat.log2 b := by
+  rcases Nat.eq_zero_or_pos b with hb | hb
+  · exfalso
+    rw [hb] at h
+    have : a = 0 := Nat.le_zero.mp h
+    omega
+  · exact (Nat.le_log2 (by omega)).mpr (Nat.le_trans (pow_log2_le ha) h)
+
+/-- **Floor theorem shape (statement-locked), PROVEN**: the arithmetic core
+of the family-specific χ-floor.  With the counting bound `(L/2+1)^k ≤
+2^(s+1)−1` (what any `s`-bit index scheme satisfying `family_counting` must
+obey), `2k ≤ χ ≤ 3k−1` (`chi_fam_bounds`), and `n = k(L+1)`
+(`fam_half_grid_size`), the space is `s ≥ Ω(χ · log(n/χ))`:
+`χ·log2(n/χ)/3 ≤ k·log2(L/2+1) ≤ s+1`. -/
 theorem floor_theorem_shape {k L : Nat} (hL : 1 ≤ L) (hk : 1 ≤ k)
     (s : Nat)
     (hcount : (L / 2 + 1) ^ k ≤ 2 ^ (s + 1) - 1)
     (hchi : 2 * k ≤ χk ∧ χk ≤ 3 * k - 1)
     (hn : n = k * (L + 1)) :
     χk * (Nat.log2 (n / χk)) / 3 ≤ s + 1 := by
-  sorry
+  -- (1) k · log2(L/2+1) ≤ s  (the counting bound forces it)
+  have h2L : 2 ^ Nat.log2 (L / 2 + 1) ≤ L / 2 + 1 := pow_log2_le (by omega)
+  have hpow : 2 ^ (k * Nat.log2 (L / 2 + 1)) ≤ (L / 2 + 1) ^ k := by
+    rw [Nat.mul_comm, Nat.pow_mul]
+    exact Nat.pow_le_pow_left h2L k
+  have hone : 1 ≤ 2 ^ (s + 1) := Nat.one_le_two_pow
+  have hkl : k * Nat.log2 (L / 2 + 1) ≤ s := by
+    rcases Nat.lt_or_ge (k * Nat.log2 (L / 2 + 1)) (s + 1) with h | h
+    · omega
+    · exfalso
+      have hle : 2 ^ (s + 1) ≤ 2 ^ (k * Nat.log2 (L / 2 + 1)) :=
+        Nat.pow_le_pow_right (by omega) h
+      omega
+  -- (2) n / χk ≤ L/2 + 1  (χ ≥ 2k cancels the k)
+  have hχpos : 0 < χk := by omega
+  have hbase : L + 1 < 2 * (L / 2 + 2) := by omega
+  have h1 : k * (L + 1) < k * (2 * (L / 2 + 2)) :=
+    (Nat.mul_lt_mul_left (by omega : 0 < k)).mpr hbase
+  have h2 : k * (2 * (L / 2 + 2)) = 2 * k * (L / 2 + 2) := by
+    rw [← Nat.mul_assoc, Nat.mul_comm k 2]
+  have h3 : 2 * k * (L / 2 + 2) ≤ χk * (L / 2 + 2) := Nat.mul_le_mul_right _ hchi.1
+  have hnlt : n < χk * (L / 2 + 2) := by omega
+  have hnlt' : n < (L / 2 + 2) * χk := by rw [Nat.mul_comm]; exact hnlt
+  have hdiv : n / χk ≤ L / 2 + 1 := by
+    have := (Nat.div_lt_iff_lt_mul hχpos).mpr hnlt'
+    omega
+  -- (3) log2 monotone
+  have hlog : Nat.log2 (n / χk) ≤ Nat.log2 (L / 2 + 1) := by
+    rcases Nat.eq_zero_or_pos (n / χk) with h0 | hpos
+    · rw [h0]; exact Nat.zero_le _
+    · exact log2_mono hpos hdiv
+  -- (4) assemble: χ·log2(n/χ) ≤ 3k·log2(L/2+1) ≤ 3(s+1), then cancel 3
+  have hχ3 : χk ≤ 3 * k := by omega
+  have hmain : χk * Nat.log2 (n / χk) ≤ 3 * k * Nat.log2 (L / 2 + 1) := by
+    have h4 : χk * Nat.log2 (n / χk) ≤ 3 * k * Nat.log2 (n / χk) :=
+      Nat.mul_le_mul_right _ hχ3
+    have h5 : 3 * k * Nat.log2 (n / χk) ≤ 3 * k * Nat.log2 (L / 2 + 1) :=
+      Nat.mul_le_mul_left _ hlog
+    omega
+  have hfinal : 3 * k * Nat.log2 (L / 2 + 1) ≤ 3 * (s + 1) := by
+    have h6 := Nat.mul_le_mul_left 3 hkl
+    have hcomm : 3 * k * Nat.log2 (L / 2 + 1) = 3 * (k * Nat.log2 (L / 2 + 1)) :=
+      Nat.mul_assoc 3 k (Nat.log2 (L / 2 + 1))
+    omega
+  have hboth : χk * Nat.log2 (n / χk) ≤ 3 * (s + 1) := Nat.le_trans hmain hfinal
+  have hdiv3 : χk * Nat.log2 (n / χk) / 3 ≤ 3 * (s + 1) / 3 :=
+    Nat.div_le_div_right hboth
+  have hcancel : (s + 1) * 3 / 3 = s + 1 := Nat.mul_div_cancel _ (by omega)
+  have hcomm2 : 3 * (s + 1) = (s + 1) * 3 := Nat.mul_comm _ _
+  omega
+
+/-! ### The true-form witness: `family_counting` closes the floor program -/
+
+/-- The digit assignment of a base-`m` number: `p_i = (z / m^i) % m`.  This
+encodes the half-grid product without building a list product: the family is
+indexed by `z ∈ range (m^k)`, so Nodup comes from `List.nodup_range` plus
+digit-injectivity, not from product-list bookkeeping. -/
+def decodeP (m : Nat) (k z : Nat) : List Nat :=
+  (List.range k).map (fun i => (z / m ^ i) % m)
+
+theorem decodeP_length (m k z : Nat) : (decodeP m k z).length = k := by
+  rw [decodeP, List.length_map, List.length_range]
+
+theorem decodeP_getD (m : Nat) {k z i : Nat} (hik : i < k) :
+    (decodeP m k z).getD i 0 = (z / m ^ i) % m := by
+  show (List.map (fun j => (z / m ^ j) % m) (List.range k)).getD i 0 = (z / m ^ i) % m
+  have hlen : (List.map (fun j => (z / m ^ j) % m) (List.range k)).length = k := by
+    rw [List.length_map, List.length_range]
+  have hlt : i < (List.map (fun j => (z / m ^ j) % m) (List.range k)).length := by
+    rw [hlen]; exact hik
+  have h1 : (List.map (fun j => (z / m ^ j) % m) (List.range k)).getD i 0 =
+      (List.map (fun j => (z / m ^ j) % m) (List.range k))[i]'hlt := by
+    simp only [List.getD]
+    rw [(List.getElem?_eq_some_iff).mpr ⟨hlt, rfl⟩]
+    rfl
+  rw [h1, List.getElem_map, List.getElem_range (by rw [List.length_range]; exact hik)]
+
+theorem decodeP_digit_lt (m : Nat) {k z i : Nat} (hik : i < k) (hm : 0 < m) :
+    (decodeP m k z).getD i 0 < m := by
+  rw [decodeP_getD m hik]
+  exact Nat.mod_lt _ hm
+
+/-- The digit-encoded half-grid family of texts. -/
+def famDigits (k L : Nat) : List Text :=
+  (List.range ((L / 2 + 1) ^ k)).map
+    (fun z => famText k L (decodeP (L / 2 + 1) k z))
+
+theorem famDigits_length (k L : Nat) : (famDigits k L).length = (L / 2 + 1) ^ k := by
+  rw [famDigits, List.length_map, List.length_range]
+
+/-- Equal texts force equal marker offsets: the marker's unique position in
+the shared text pins `p_i`, block by block. -/
+theorem famText_inj_markers {k L : Nat} {ps ps' : List Nat}
+    (hp : ∀ i, i < k → ps.getD i 0 ≤ L) (hp' : ∀ i, i < k → ps'.getD i 0 ≤ L)
+    (hTxt : famText k L ps = famText k L ps') {i : Nat} (hik : i < k) :
+    ps.getD i 0 = ps'.getD i 0 := by
+  have hmem : markL i ∈ famText k L ps := markL_mem hik hp
+  obtain ⟨q, hq, hget⟩ := List.getElem_of_mem hmem
+  obtain ⟨_, hqeq⟩ := (fam_mark_iff hp hq).mp hget
+  have hq' : q < (famText k L ps').length := by rw [← hTxt]; exact hq
+  have hget' : (famText k L ps')[q]'hq' = markL i :=
+    (List.getElem_of_eq hTxt hq).symm.trans hget
+  obtain ⟨_, hqeq'⟩ := (fam_mark_iff hp' hq').mp hget'
+  omega
+
+/-- Equal base-`m` digits below `k` force equal numbers below `m^k`. -/
+theorem digits_inj (m : Nat) (hm : 0 < m) : ∀ (k z z' : Nat), z < m ^ k → z' < m ^ k →
+    (∀ i, i < k → (z / m ^ i) % m = (z' / m ^ i) % m) → z = z' := by
+  intro k
+  induction k with
+  | zero =>
+    intro z z' hz hz' _
+    rw [Nat.pow_zero] at hz hz'
+    omega
+  | succ k ih =>
+    intro z z' hz hz' hdigits
+    have hz'k : z < m ^ k * m := by rw [← Nat.pow_succ]; exact hz
+    have hz''k : z' < m ^ k * m := by rw [← Nat.pow_succ]; exact hz'
+    have h0 : z % m = z' % m := by
+      have h00 := hdigits 0 (by omega)
+      rw [Nat.pow_zero, Nat.div_one, Nat.div_one] at h00
+      exact h00
+    have hquots : z / m = z' / m := by
+      refine ih (z / m) (z' / m) ?_ ?_ ?_
+      · exact (Nat.div_lt_iff_lt_mul hm).mpr hz'k
+      · exact (Nat.div_lt_iff_lt_mul hm).mpr hz''k
+      · intro i hik
+        have hdiv : z / m / m ^ i = z / m ^ (i + 1) := by
+          rw [Nat.div_div_eq_div_mul, Nat.pow_succ, Nat.mul_comm]
+        have hdiv' : z' / m / m ^ i = z' / m ^ (i + 1) := by
+          rw [Nat.div_div_eq_div_mul, Nat.pow_succ, Nat.mul_comm]
+        rw [hdiv, hdiv']
+        exact hdigits (i + 1) (by omega)
+    have hdm : m * (z / m) + z % m = z := Nat.div_add_mod z m
+    have hdm' : m * (z' / m) + z' % m = z' := Nat.div_add_mod z' m
+    rw [hquots] at hdm
+    omega
+
+theorem famDigits_nodup (k L : Nat) : (famDigits k L).Nodup := by
+  have hm : 0 < L / 2 + 1 := by omega
+  refine nodup_map_of_injOn _ (List.range ((L / 2 + 1) ^ k)) List.nodup_range ?_
+  intro z hz z' hz' hTxtEq
+  rw [List.mem_range] at hz hz'
+  have hple : ∀ i, i < k → (decodeP (L / 2 + 1) k z).getD i 0 ≤ L := by
+    intro i hi
+    have := decodeP_digit_lt (L / 2 + 1) (z := z) hi hm
+    omega
+  have hple' : ∀ i, i < k → (decodeP (L / 2 + 1) k z').getD i 0 ≤ L := by
+    intro i hi
+    have := decodeP_digit_lt (L / 2 + 1) (z := z') hi hm
+    omega
+  refine digits_inj (L / 2 + 1) hm k z z' hz hz' ?_
+  intro i hi
+  have h := famText_inj_markers hple hple' hTxtEq hi
+  rw [decodeP_getD (L / 2 + 1) (z := z) hi, decodeP_getD (L / 2 + 1) (z := z') hi] at h
+  exact h
+
+/-- **The true-form witness** — the floor program's family-specific counting
+theorem, kernel-checked: under the size flip `2^(s+1) − 1 < (L/2+1)^k`, NO
+`s`-bit index scheme (under one fixed decoder) answers locate-one correctly
+on every half-grid member.  This is `family_counting` applied to the
+digit-encoded family; with `chi_fam_bounds` (`2k ≤ χ ≤ 3k−1`) and
+`fam_half_grid_size` (`n = k(L+1)`) it composes, via `floor_theorem_shape`,
+into `s ≥ Ω(χ · log(n/χ))` on the family. -/
+theorem fam_oracle_witness_size {k L : Nat} (hL : 1 ≤ L) (hk : 1 ≤ k)
+    (dec : Index → Answer) (s : Nat)
+    (hsize : 2 ^ (s + 1) - 1 < (L / 2 + 1) ^ k)
+    (hex : ∀ ps, (∀ i, i < k → 2 * ps.getD i 0 ≤ L) → ∃ D : Index,
+      space D ≤ s ∧ CorrectLocateOne (dec D) (famText k L ps)) :
+    False := by
+  have hm : 0 < L / 2 + 1 := by omega
+  have hcount : (famDigits k L).length ≤ 2 ^ (s + 1) - 1 := by
+    refine family_counting dec (famDigits k L) s (famDigits_nodup k L) ?_ ?_
+    · intro T hT
+      rw [famDigits, List.mem_map] at hT
+      obtain ⟨z, hz, hTeq⟩ := hT
+      rw [List.mem_range] at hz
+      obtain ⟨D, hspace, hcorr⟩ := hex (decodeP (L / 2 + 1) k z) (fun i hi => by
+        have := decodeP_digit_lt (L / 2 + 1) (z := z) hi hm
+        omega)
+      exact ⟨D, hspace, dec D, rfl, by rw [← hTeq]; exact hcorr⟩
+    · intro T hT T' hT' hTne
+      rw [famDigits, List.mem_map] at hT hT'
+      obtain ⟨z, hz, hTeq⟩ := hT
+      obtain ⟨z', hz', hT'eq⟩ := hT'
+      rw [List.mem_range] at hz hz'
+      have hzne : z ≠ z' := by
+        intro heq
+        rw [← heq] at hT'eq
+        exact hTne (hTeq.symm.trans hT'eq)
+      have hgz : ∀ i, i < k → 2 * (decodeP (L / 2 + 1) k z).getD i 0 ≤ L := by
+        intro i hi
+        have := decodeP_digit_lt (L / 2 + 1) (z := z) hi hm
+        omega
+      have hgz' : ∀ i, i < k → 2 * (decodeP (L / 2 + 1) k z').getD i 0 ≤ L := by
+        intro i hi
+        have := decodeP_digit_lt (L / 2 + 1) (z := z') hi hm
+        omega
+      rcases (Classical.em (∃ i, i < k ∧
+          (decodeP (L / 2 + 1) k z).getD i 0 ≠ (decodeP (L / 2 + 1) k z').getD i 0))
+        with hdiff | hsame
+      · obtain ⟨i, hi, hne⟩ := hdiff
+        intro f hf hf'
+        rw [← hTeq] at hf
+        rw [← hT'eq] at hf'
+        exact fam_forced_incompat hL hgz hgz' ⟨i, hi, hne⟩ f ⟨hf, hf'⟩
+      · exfalso
+        have hdeq : ∀ i, i < k →
+            (decodeP (L / 2 + 1) k z).getD i 0 = (decodeP (L / 2 + 1) k z').getD i 0 := by
+          intro i hi
+          rcases (Classical.em ((decodeP (L / 2 + 1) k z).getD i 0 =
+              (decodeP (L / 2 + 1) k z').getD i 0)) with heq | hne
+          · exact heq
+          · exact absurd ⟨i, hi, hne⟩ hsame
+        exact hzne (digits_inj (L / 2 + 1) hm k z z' hz hz' (fun i hi => by
+          have h := hdeq i hi
+          rw [decodeP_getD (L / 2 + 1) (z := z) hi, decodeP_getD (L / 2 + 1) (z := z') hi] at h
+          exact h))
+  rw [famDigits_length] at hcount
+  omega
 
 end Fam
 
