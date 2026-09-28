@@ -1903,3 +1903,13 @@ mask + features); pointer-attention only if ablation demands it.
 ## agc2flat (FUSE-era ghost/fuser leftovers, never banked) instead of main's native-
 ## reader version - caught by test_cargo_sources, fixed by regenerating snapshots from
 ## main (package_xsa_sources.py). Interlock amendment re-applied (4th time).
+
+## 466 FRONT-END SCALE BOUNDARY FOUND: rpfbwt died std::bad_alloc after 1h31m at ONLY
+## 36.3 GB RSS (750+ GB free, heuristic overcommit, commit limit nowhere near) - at the
+## 'computing SA of the dictionary' phase. 466's dictionary = 89.9M phrases / 18.52 Gbp
+## total length > 2^32 - the first corpus past a 32-bit length/offset path (k10's dict
+## fit under; n and dict-length both crossed). Projected RAM correction: front-end RAM
+## is DICTIONARY-driven, not R-driven (my R-similar extrapolation was wrong).
+## The 6.6h parse is RETAINED (15.5G phrases + 17.75 GB dict in the work dir) - debug
+## iterations cost minutes. Fix = another upstreamable fork patch (32-bit overflow in
+## the dict-SA path); then the milestone reruns FROM ZERO per doctrine.
