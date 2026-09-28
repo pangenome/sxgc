@@ -6,7 +6,6 @@
 \usepackage{enumitem}
 \usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
 \usepackage{xcolor}
-\usepackage{listings}
 
 % ---- Notation ----
 \newcommand{\X}{\chi}
@@ -16,6 +15,20 @@
 \newcommand{\Bits}{$\mathrm{bits}$}
 \newcommand{\TODO}[1]{\textbf{\textcolor{red}{[TODO: #1]}}}
 \newcommand{\hprcchi}{\TODO{466 headline $\X$ lands with the running build; expected $\approx 2.25\times 10^9$}}
+
+% ---- Formalization pointers ----
+% Every formal statement carries a clickable pointer into the Lean sources at
+% the commit-pinned repository version. The hash pins the exact version whose
+% line numbers the links resolve to; it is updated at release time.
+\newcommand{\sxgchash}{101403519196e5129ce113eae57123227219f59e}
+\newcommand{\leanpoint}[3]{%
+  \par\nopagebreak\vspace{0.2em}%
+  \hfill{\footnotesize$\langle$\,%
+    \href{https://github.com/pangenome/sxgc/blob/\sxgchash/lean/#1\#L#2}%
+    {\textsf{formal:} \texttt{#3} \textsf{\,·\,} \texttt{#1:#2}}%
+  \,$\rangle$}\nopagebreak\vspace{0.2em}}
+\newcommand{\repofile}[2]{%
+  \href{https://github.com/pangenome/sxgc/blob/\sxgchash/#1}{\texttt{#2}}}
 
 % Theorem environments
 \newtheorem{theorem}{Theorem}[section]
@@ -202,31 +215,64 @@ is \hprcchi.
 
 \section{The Formal Model}\label{sec:formal}
 
-All statements in this section are stated as they appear in the Lean sources
-(cited in Appendix~\ref{app:facts}); the axiom base is exactly
-\{\texttt{propext}, \texttt{Classical.choice}, \texttt{Quot.sound}\}. The
-text is a list of naturals $T$; positions are $1$-based.
+\paragraph{Formalization.} Every definition and theorem in this paper is
+formalized in Lean~4. The complete development---including a transparent
+ledger of the statements that remain open---is available at
+\texttt{github.com/pangenome/sxgc}, directory \texttt{lean/}, with
+kernel-checked proofs on the axiom base
+$\{$\texttt{propext}, \texttt{Classical.choice}, \texttt{Quot.sound}$\}$
+(the continuation-bridge file depends on fewer still). Each formal
+statement below carries a clickable pointer of the form
+$\langle$\textsf{formal:} \emph{name} \textsf{·} \emph{file:line}$\rangle$
+linking into the repository at a pinned commit
+({\small\texttt{\sxgchash}}): the hash fixes the exact version whose line
+numbers the links resolve to, so a reader can jump from any theorem in
+this PDF directly to the machine-checked statement and its proof.
+Appendix~\ref{app:facts} pairs every claim in this paper, formal or
+numeric, with its exact formal statement and the artifact that warrants
+it.
 
-\begin{definition}[Requirements; \texttt{Sxgc.lean}]
-A pair $(w,c)$ is a \emph{requirement} of $T$ if $w$ is right-maximal in $T$
-and $wc$ occurs in $T$, where right-maximal means $w$ occurs and either $w$
-is a suffix of $T$ or $w$ has $\ge 2$ distinct right extensions. Position $x$
-\emph{covers} $(w,c)$ if $wc$ is a suffix of the prefix of $T$ of length $x$.
-$S$ is \emph{suffixient} if every requirement is covered by some $x\in S$.
-$\X(T)$ is the minimum cardinality of a suffixient set.
+\paragraph{Setup.} Fix a finite alphabet $\Sigma=\{1,\dots,\sigma\}$; a
+\emph{text} is $T=T[1..n]$ over $\Sigma$, with the symbol $0$ reserved as
+a terminal sentinel and never occurring in $T$. Positions are $1$-based;
+$T[1..x]$ is the prefix of length $x$.
+
+\begin{definition}[Requirements and suffixient sets]\label{def:req}
+Word $w$ \emph{occurs at} position $x$ of $T$ if
+$T[x-|w|+1\,..\,x]=w$. A word $w$ occurring in $T$ is \emph{right-maximal}
+in $T$ if it is a suffix of $T$ or has at least two distinct one-symbol
+right extensions occurring in $T$; the empty word is right-maximal by
+convention. A \emph{requirement} is a pair $(w,c)$ with $w$ right-maximal
+and $wc$ occurring in $T$. Position $x$ \emph{covers} $(w,c)$ if $wc$ is a
+suffix of $T[1..x]$. A set $S\subseteq[1..n]$ is \emph{suffixient} for
+$T$ if every requirement of $T$ is covered by some $x\in S$, and $\X(T)$
+is the minimum cardinality of a suffixient set.
 \end{definition}
+\leanpoint{Sxgc.lean}{67}{requirements, suffixient}
 
-\begin{definition}[Coverage classes; \texttt{Sxgc.lean}]
-For a position $x$, its \emph{coverage set} is the set of requirements it
-covers. \emph{Scope comparison} $x \preceq y$ says $y$'s coverage set
-contains $x$'s restricted to a common domain (the Lean \texttt{ScopeLe}).
-Classes are inclusion-maximal coverage sets; \texttt{maxClassCount} counts
-the distinct maxima.
+\begin{definition}[Coverage classes]\label{def:classes}
+The \emph{coverage set} of position $x$ is
+\[
+C_T(x)\;=\;\{\,(w,c) : (w,c)\text{ is a requirement of }T\text{ and }wc
+\text{ is a suffix of } T[1..x]\,\},
+\]
+the set of requirements $x$ covers. Write $x\preceq y$ when
+$C_T(x)\subseteq C_T(y)$, and say $x$ is \emph{dominated by} $y$.
+Position $x$ is \emph{maximal} when $C_T(x)\neq\emptyset$ and no position
+strictly dominates it: $x\preceq y$ implies $y\preceq x$ for every
+position $y$. Two maximal positions are \emph{coverage-equivalent} when
+$C_T(x)=C_T(y)$. The \emph{maximal coverage classes} of $T$ are the
+equivalence classes of maximal positions under coverage equivalence---
+equivalently, the distinct inclusion-maximal coverage sets realized by
+positions of $T$.
 \end{definition}
+\leanpoint{Sxgc.lean}{777}{covSet, ScopeLe, IsMax, maxClassCount}
 
-\begin{theorem}[Characterization; \texttt{chi\_eq\_maxClasses}]\label{thm:maxclasses}
-For positive $T$, $\X(T) = \mathrm{maxClassCount}(T)$.
+\begin{theorem}[Characterization of $\X$]\label{thm:maxclasses}
+For every text $T$ over $\Sigma$, $\X(T)$ equals the number of maximal
+coverage classes of $T$.
 \end{theorem}
+\leanpoint{Sxgc.lean}{1863}{chi\_eq\_maxClasses}
 
 The proof's two halves are informative: ($\le$) the earliest representative of
 each maximal class is suffixient; ($\ge$) each maximal class has a
@@ -235,37 +281,40 @@ forces one position per class into any suffixient set. The private-requirement
 property is exactly the algebraic seed the lower bound of
 \S\ref{sec:floor} harvests.
 
-\begin{theorem}[Minimality transfer; \texttt{chi\_le\_of\_suffixient}]
-\label{thm:chiLe}
+\begin{theorem}[Minimality transfer]\label{thm:chiLe}
 If $S\subseteq[1..n]$ is suffixient for $T$ then $\X(T)\le|S|$.
 \end{theorem}
+\leanpoint{Sxgc.lean}{889}{chi\_le\_of\_suffixient}
 
 \paragraph{The one-pass scan.} The reference construction is a single left-to-right
 pass over the \emph{triple stream} of $T$: for each suffix-array row $k$ of
-$T^{R}0$ (the reverse of $T$ with a terminal 0), the triple
+$T^{R}0$ (the reverse of $T$, terminated by the sentinel), the triple
 $(\mathrm{BWT}[k],\ \mathrm{LCP}[k],\ \mathrm{SA}[k])$. The scan maintains an
 \emph{armed candidate} (a tentative witness) and emits it at run boundaries;
-the emitted positions form the suffixient set. The Lean \texttt{scan} is a
-functional mirror of the deployed C++ scanner, byte-verified against it on
-all battery corpora.
+the emitted positions form the suffixient set. The reference scan is a
+functional mirror of the deployed scanner, verified against it by exhaustive
+differential testing on the full battery of test corpora.
 
-\begin{theorem}[Scan emits run edges; \texttt{scan\_emits\_run\_edges}]
-Every emitted position is the position of a run-edge row of the triple
-stream.
+\begin{theorem}[The scan emits run edges]
+Every position emitted by the scan is the position of a run-edge row of
+the triple stream.
 \end{theorem}
+\leanpoint{Sxgc.lean}{5848}{scan\_emits\_run\_edges}
 
-\begin{theorem}[No duplicates, all bounded streams; \texttt{scanAux\_nodup}]
-\label{thm:nodup}
-For \emph{any} triple stream $ts$ (not only those arising from a text) with
-distinct SA values, all SA values $<N$, and all LCP values $\le\mathrm{MAXINT}$:
-the scan's emitted list is duplicate-free.
+\begin{theorem}[No duplicates, for all bounded streams]\label{thm:nodup}
+Let $ts$ be any finite triple stream---not necessarily one arising from a
+text---whose SA values are pairwise distinct and less than $N$, and whose
+LCP values are all at most the fixed bound $M$ of the scan. Then the scan
+of $ts$ emits no position twice.
 \end{theorem}
+\leanpoint{SxgcNodup.lean}{623}{scan\_nodup}
 
-This is the statement-locked pillar \textbf{O2}, now discharged: the proof
-threads ten invariants and uses boundedness exactly once, to block re-arming
-a just-emitted position at run-length-1 boundaries---the precise point where
-unbounded streams duplicate. $1.47$ million bounded test streams showed zero
-violations before the proof; the proof replaces the warrant.
+This theorem was the construction's no-inflation pillar: for months it was
+carried as a named empirical hypothesis---$1.47$ million bounded test
+streams, zero violations---before being proven. The proof threads ten
+invariants through the scan and invokes the bound exactly once, to block
+re-arming a just-emitted position at run-length-one boundaries: the precise
+point where unbounded streams duplicate. The proof replaces the warrant.
 
 \section{The Construction Capstone and Its Ledger}\label{sec:construction}
 
@@ -274,60 +323,75 @@ $(\mathrm{parse},\mathrm{dict})$ and reconstructs the triple stream's LCP
 column by two-level fingerprint LCE over the parse. The capstone ties it
 together:
 
-\begin{theorem}[Capstone, conditional; \texttt{parseChi\_eq}]\label{thm:capstone}
-Let $P$ be a well-formed parse of $T^{R}0$ and let
-$S=\mathrm{scan}(\text{parse-triples of }T,P)$. If
-(i) $S$ is duplicate-free,
-(ii) every $x\in S$ lands in a maximal coverage class (\texttt{IsMax}),
-(iii) $S$ is pairwise scope-unique on those classes,
-(iv) $S$ is suffixient,
-then $|S| = \X(T)$.
+\begin{theorem}[Construction capstone, conditional]\label{thm:capstone}
+Let $T$ be a text over $\Sigma$ and let $P$ be a well-formed parse of
+$T^{R}0$. Let $S$ be the list of positions emitted by the scan of the
+parse-based triple stream of $T$ and $P$. Suppose:
+\begin{enumerate}[label=(\roman*),leftmargin=*]
+\item $S$ is duplicate-free;
+\item every $x\in S$ is maximal;
+\item no two distinct $x,y\in S$ are coverage-equivalent;
+\item $S$ is suffixient for $T$.
+\end{enumerate}
+Then $|S| = \X(T)$.
 \end{theorem}
+\leanpoint{SxgcBuild.lean}{1242}{parseChi\_eq}
 
 The four stream hypotheses are named and tracked; their status as of this
 writing:
 
 \begin{itemize}[leftmargin=*]
-\item[(i)] \emph{Discharged}: Theorem~\ref{thm:nodup} applies to the parse
-stream via \texttt{triplesOf\_sa\_nodup}.
-\item[(ii),(iii)] \emph{Reduced}: hypothesis (ii) is equivalent to
-\texttt{O1\_maxHit}---every maximal class contains an emitted position---and
-we prove the factorization
-$\mathtt{O1\_maxHit} \iff \mathrm{RunEdgeHit} \wedge \mathrm{RunEdgeDominate}$,
-where \texttt{RunEdgeHit} (every maximal class contains a run-edge position)
-is \emph{proven outright} (\texttt{SxgcRunEdge.lean}), and
-\texttt{RunEdgeDominate} (every run-edge position is dominated by an emitted
-one) remains open. Covering (iv) follows from \texttt{maxHit} by
-\texttt{covering\_given\_stream\_of\_maxHit} (proven).
+\item[(i)] \emph{Discharged}: the parse-based stream provably equals the
+text's own triple stream, whose SA values are pairwise distinct, so
+Theorem~\ref{thm:nodup} applies.
+\leanpoint{SxgcBuild.lean}{1224}{parseTriplesOf\_eq, parseScan\_eq}
+\item[(ii),(iii)] \emph{Reduced}: conditions (ii) and (iii) together hold
+exactly when every maximal coverage class contains an emitted position
+(the \emph{class-hit} statement). We prove the class-hit statement
+equivalent to the conjunction of two properties: every maximal class
+contains a run-edge position (the \emph{run-edge hit} property---proven
+outright, since every emitted position is a run-edge position by the
+theorem above), and every run-edge position
+is dominated by an emitted one (the \emph{run-edge domination} property,
+open). Given class-hit, condition (iv) follows unconditionally.
 \end{itemize}
+\leanpoint{Sxgc.lean}{6062}{maxHit\_of\_runEdge, runEdgeHit\_of\_maxHit}
+\leanpoint{SxgcRunEdge.lean}{604}{runEdgeHit\_true}
+\leanpoint{Sxgc.lean}{5984}{covering\_given\_stream\_of\_maxHit}
 
-\textbf{The honest ledger.} \texttt{RunEdgeDominate} is blocked on the exact
-emission rule of the scan's LCP-window machinery; its statement-lock
-differentials report zero counterexamples over exhaustive
-$\{1,2\}^{\le 8}$ and $\{1,2,3\}^{\le 7}$ texts and 3{,}000 random 4-letter
-texts, and it is the single remaining open hypothesis of the capstone.
+\textbf{The honest ledger.} Run-edge domination is blocked on the exact
+emission rule of the scan's LCP-window machinery; its statement-level
+differentials report zero counterexamples over exhaustive $\{1,2\}^{\le 8}$
+and $\{1,2,3\}^{\le 7}$ texts and 3{,}000 random 4-letter texts, and it is
+the single remaining open hypothesis of the capstone.
 
-\begin{theorem}[LCE determinism; \texttt{VerifiedLCE\_determinism}]
-The parse-space LCE oracle equals ground truth: for a well-formed parse,
-$\mathrm{textLCEvia}(P,T,i,j) = \mathrm{lcp}(T[i..], T[j..])$.
+\begin{theorem}[Determinism of the parse-space LCE]
+For a well-formed parse of $T$ and positions $i,j$: given any step budget
+of at least $n-i$, the two-level fingerprint LCE with direct verification
+returns the true longest-common-prefix length of $T[i..]$ and $T[j..]$.
+No probability appears anywhere: the equality is the oracle's
+certificate, not a hash-collision argument.
 \end{theorem}
+\leanpoint{SxgcBuild.lean}{1257}{VerifiedLCE\_determinism}
 
-\begin{theorem}[Explicit bounds; \texttt{SxgcBounds}]\label{thm:bounds}
+\begin{theorem}[Explicit per-query bounds]\label{thm:bounds}
 Each text LCE costs at most
 $8\,(1+\tau+\ell)$ elementary steps, where $\tau$ is the fingerprint
 sampling period and $\ell$ the number of verified symbols.
 \end{theorem}
+\leanpoint{SxgcBounds.lean}{195}{textLCESteps\_bound}
 
-\begin{theorem}[Total work; \texttt{totalWork\_bound}]\label{thm:totalwork}
-For any query batch,
+\begin{theorem}[Total work]\label{thm:totalwork}
+For any query batch, the scan's total step count is at most
 \[
-\mathrm{totalWork} \;\le\; 16\Big(\,\mathrm{count} + \mathrm{dictSize}
-+ |qs|\cdot\tau + \textstyle\sum_q \ell_q\Big).
+16\Big(\,\mathrm{count} + \mathrm{dictSize}
++ |qs|\cdot\tau + \textstyle\sum_q \ell_q\Big),
 \]
-For the construction's own queries this yields
-$16\,(\mathrm{count}+\mathrm{dict}+n\,\tau+\sum\ell_q)$
-(\texttt{parseTriplesLCEWork\_bound}).
+and for the construction's own queries at most
+$16\,(\mathrm{count}+\mathrm{dict}+n\,\tau+\sum_q \ell_q)$.
 \end{theorem}
+\leanpoint{SxgcBounds.lean}{229}{totalWork\_bound}
+\leanpoint{SxgcBounds.lean}{254}{parseTriplesLCEWork\_bound}
 
 We deliberately make no claim that the verification lengths $\ell_q$ are
 $O(\tau)$; they are measured (15.33 phrases per seed on average, 22{,}262
@@ -339,14 +403,23 @@ explicit in the theorem.
 At scale the scan needs, for each run head, a text position; the classical
 route is an LF walk from the nearest sampled tail---measured at 2{,}156 steps
 per head on our corpora, an $\Omega(n)$ aggregate cost the construction cannot
-pay. The alternative is algebraic. Let $\varphi$ map each row to its
-predecessor in suffix order (the r-index's $\varphi$). Then:
+pay. The alternative is algebraic. Let $U$ be the indexed text (here
+$U=T^{R}0$) and write $\mathrm{pos}(a)$ for the text position of
+suffix-array row $a$. Let $\varphi$ be the suffix-order predecessor map
+on positions: $\varphi(p)$ is the position whose suffix immediately
+precedes the suffix at $p$ in suffix order, and $\varphi^{-1}$ its
+inverse. Then:
 
-\begin{theorem}[\texttt{headFromTail}, \texttt{SxgcPhi.lean}]\label{thm:headfromtail}
-For a row $a>0$ of the reverse text's index, the head position of row $a$
-equals $\varphi^{-1}$ applied to the tail position of row $a-1$:
-$\mathrm{rowPos}(a) = \varphi^{-1}(\mathrm{rowPos}(a-1))$.
+\begin{theorem}[Heads by inverse permutation]\label{thm:headfromtail}
+For every row $a$ with $0<a<|U|$: 
+$\;\mathrm{pos}(a) = \varphi^{-1}\big(\mathrm{pos}(a-1)\big)$. In deployment
+the samples sit at run boundaries; the sample contract is the instance in
+which row $a-1$ ends a run and row $a$ begins the next: the head sample of
+run $a$ equals $\varphi^{-1}$ applied to the tail sample of run $a-1$.
 \end{theorem}
+\leanpoint{SxgcPhi.lean}{68}{headFromTail}
+\leanpoint{SxgcPhi.lean}{85}{runHeadFromTail}
+\leanpoint{SxgcPhi.lean}{91}{phiInv\_phi}
 
 With $\varphi^{-1}$ realized as a lookup over the sorted images of the sample
 intervals, every head costs one binary search: on 30\,Gbp human data, all
@@ -359,21 +432,26 @@ heads byte-identical to the walk baseline on the full corpus.
 A compressed archive does not define a single text; it defines a family
 (the contigs) plus a convention. We adopt the \emph{canonical cyclic frame}:
 the corpus is the byte string $T = s_1 \sep s_2 \sep \dots \sep s_k \sep$
-($\sep$ a reserved separator byte, $0\le\sep$ below all content bytes), and
+($\sep$ a reserved separator byte, absent from the content; for DNA
+corpora it also orders below all content bytes), and
 the index is its suffix structure. The upstream front end, however, produces
 the BWT of the \emph{padded} string $T' = T\$^{w}$ under a cyclic
 convention. The two frames agree almost everywhere:
 
-\begin{definition}[Seam position; \texttt{SxgcSeam.lean}]
+\begin{definition}[Seam position]
 Row $i$ is a \emph{seam} position if its finite suffix is prefix-comparable
 with some other row's suffix.
 \end{definition}
+\leanpoint{SxgcSeam.lean}{137}{seamPos}
 
 \begin{theorem}[Identity outside classes]\label{thm:seam}
 For two non-seam rows, finite suffix order and cyclic rotation order agree.
 Moreover a non-seam row's order against \emph{every} row is stable, so
 in-class reordering can never displace a row across a non-seam row.
 \end{theorem}
+\leanpoint{SxgcSeam.lean}{117}{rot\_agree}
+\leanpoint{SxgcSeam.lean}{144}{identity\_outside\_classes}
+\leanpoint{SxgcSeam.lean}{157}{agreement\_with\_nonseam}
 
 The repair therefore: strip the padding block (whose structure the front
 end certifies), re-sort each seam class by cyclic comparison, splice, and
@@ -390,17 +468,24 @@ corpora).
 
 No space lower bound proportional to any repetitiveness measure---not $r$,
 not $z$, not $\delta$, not $\X$---was previously known for any
-pattern-matching operation class (\S\ref{sec:related}). The bridge that makes
-one possible for $\X$:
+pattern-matching operation class (\S\ref{sec:related}). We work in the
+following index model. An \emph{oracle} is a function $f$ from words to
+positions or ``no answer.'' An oracle \emph{answers locate-one} correctly
+on $T$ if for every word $w$ occurring in $T$ it returns a genuine
+position $x\in[1..n]$ at which $w$ ends. An \emph{index} is a bit
+string $D$; its \emph{size} $\mathrm{space}(D)$ is its length in bits; a
+\emph{decoder} is a function $\mathrm{dec}$ from indexes to oracles, and
+an index \emph{realizes} the oracle $\mathrm{dec}(D)$ it decodes to.
 
-\begin{theorem}[Bridge; \texttt{emitted\_suffixient},
-\texttt{chi\_le\_of\_oracle}]\label{thm:bridge}
-Let $f$ be any oracle that answers locate-one correctly (it returns, for each
-occurring word $wc$ with $(w,c)$ a requirement, a position $x$ with $wc$ a
-suffix of $T$'s prefix $x$). Then the set of positions $f$ emits on
-$T$'s requirement words is suffixient, and consequently
-$\X(T) \le |\mathrm{emitted}(f,T)|$.
+\begin{theorem}[Bridge]\label{thm:bridge}
+Let $f$ be any oracle that answers locate-one correctly on $T$. The set
+of positions that $f$ returns on $T$'s requirement words is suffixient
+for $T$, and consequently $\X(T) \le |E(f,T)|$, where $E(f,T)$ is the
+list of positions $f$ returns on the requirement words (duplicates
+allowed).
 \end{theorem}
+\leanpoint{LowerBound.lean}{145}{emitted\_suffixient}
+\leanpoint{LowerBound.lean}{158}{chi\_le\_of\_oracle}
 
 That is: \emph{any} index, however encoded, that answers ``where can this
 continue'' emits at least $\X$ positions. What the bridge does not give is
@@ -412,96 +497,120 @@ counting argument forces one distinct index per member.
 \subsection{The Continuation Bridge}\label{sec:contbridge}
 
 The locate-one demand---answer \emph{every} occurring word with an
-occurrence---is stronger than the position-answering world of language models
-needs. A \emph{continuation oracle} need only answer the requirements
-themselves: for each fork $(w,c)$, a genuine corpus position where the
-continued word $w{+}{+}[c]$ is covered. The Lean development
-(\texttt{LM.lean}; axiom base $\{\texttt{propext},\ \texttt{Quot.sound}\}$,
-cleaner than the fixed base of the earlier sections) proves the bridge holds
-verbatim for this strictly weaker demand, in three forms:
+occurrence---is stronger than the position-answering world of language
+models needs. A \emph{continuation oracle} need only answer the forks
+themselves:
 
-\begin{definition}[Continuation oracle; \texttt{CorrectContinuation}]
-\label{def:contcont}
-$\mathrm{CorrectContinuation}(f, T)$ iff for every requirement $(w,c)$ of
-$T$ there exists a position $x$ with $f(w{+}{+}[c]) = \mathrm{some}(x)$,
-$1 \le x \le |T|$, and $w{+}{+}[c]$ covered at $x$. The function $f$ is
-required to do nothing on any other word.
+\begin{definition}[Continuation oracle]\label{def:contcont}
+$f$ is a \emph{correct continuation oracle} for $T$ if for every
+requirement $(w,c)$ of $T$, $f$ returns on the continued word $wc$ a
+genuine position $x\in[1..n]$ at which $wc$ ends. Nothing is demanded of
+$f$ on any other word.
 \end{definition}
+\leanpoint{LM.lean}{59}{CorrectContinuation}
 
-\begin{theorem}[Locate-one subsumption; \texttt{correctLocateOne\_imp\_cont}]
-\label{thm:locimpcont}
-If $f$ answers locate-one correctly on $T$ then $\mathrm{CorrectContinuation}(f,T)$.
+\begin{theorem}[Locate-one subsumption]\label{thm:locimpcont}
+Every oracle that answers locate-one correctly on $T$ is a correct
+continuation oracle on $T$.
 \end{theorem}
+\leanpoint{LM.lean}{66}{correctLocateOne\_imp\_cont}
 
 Since requirement words occur, a correct locate-one oracle answers each fork
 query with an occurrence of the continued word---which is exactly a covering
 position. The continuation oracle is therefore the strictly weaker demand,
 and every result below covers the locate-one case while standing on its own.
+The continuation-bridge file is also the cleanest in the development: its
+axiom base is smaller than the standard three.
 
-\begin{theorem}[Continuation bridge; \texttt{emitted\_suffixient\_of\_cont},
-\texttt{chi\_le\_of\_cont\_oracle}]\label{thm:contbridge}
-If $\mathrm{CorrectContinuation}(f,T)$ then the positions $f$ emits on
-$T$'s requirement words form a suffixient set, and consequently
-$\X(T) \le |\mathrm{emitted}(f,T)|$.
+\begin{theorem}[Continuation bridge]\label{thm:contbridge}
+If $f$ is a correct continuation oracle on $T$ then the positions $f$
+returns on $T$'s requirement words form a suffixient set, and
+consequently $\X(T) \le |E(f,T)|$ (duplicates allowed).
 \end{theorem}
+\leanpoint{LM.lean}{92}{emitted\_suffixient\_of\_cont}
+\leanpoint{LM.lean}{104}{chi\_le\_of\_cont\_oracle}
 
-\begin{theorem}[Distinct-consultation; \texttt{chi\_le\_of\_cont\_oracle\_distinct}]
-\label{thm:contdistinct}
-If $\mathrm{CorrectContinuation}(f,T)$ then
-$\X(T) \le \big|\mathrm{dedup}(\mathrm{emitted}(f,T))\big|$: across all
-fork queries, $f$ must \emph{consult} at least $\X(T)$ \emph{distinct}
-positions.
+\begin{theorem}[Distinct consultation]\label{thm:contdistinct}
+If $f$ is a correct continuation oracle on $T$ then across all fork
+queries, $f$ must \emph{consult} at least $\X(T)$ \emph{distinct}
+positions: $\X(T) \le |\mathrm{dedup}(E(f,T))|$, the number of distinct
+positions in $E(f,T)$.
 \end{theorem}
+\leanpoint{LM.lean}{154}{chi\_le\_of\_cont\_oracle\_distinct}
 
 The distinct form is the honest statement of ``must retain'': an oracle that
 re-emits one position $\X$ times has not consulted $\X$ positions. It
-holds because duplicate removal preserves both suffixience and positional
-membership (\texttt{suffixient\_dedup}, \texttt{dedup\_length\_le}), so the
-deduplicated emitted set is itself a suffixient set of genuine text positions.
+holds because removing duplicates preserves suffixience while never
+growing the list, so the deduplicated emitted set is itself a suffixient
+set of genuine text positions.
+\leanpoint{LM.lean}{118}{suffixient\_dedup, dedup\_length\_le}
 
-\begin{theorem}[Fixed-decoder index form; \texttt{chi\_le\_of\_realized\_cont}]
-\label{thm:realizedcont}
-For any decoder $\mathrm{dec}$ and index $D$: if the decoded answer function
-$\mathrm{dec}(D)$ is a correct continuation oracle on $T$, then
-$\X(T) \le \big|\mathrm{dedup}\big(\mathrm{emitted}(\mathrm{dec}(D),T)\big)\big|$.
+\begin{theorem}[Fixed-decoder index form]\label{thm:realizedcont}
+For any decoder $\mathrm{dec}$ and index $D$: if the decoded oracle
+$\mathrm{dec}(D)$ is a correct continuation oracle on $T$, then it
+consults at least $\X(T)$ distinct positions on $T$'s forks.
 \end{theorem}
+\leanpoint{LM.lean}{166}{chi\_le\_of\_realized\_cont}
 
-This is ``any continuation-answering system must consult $\ge \X$
+This is ``any continuation-answering system must consult $\ge\X$
 distinct positions'' in its precise, kernel-checked form. The
 bridge-to-counting structure is now identical to the locate-one case
 (Theorem~\ref{thm:bridge} $\to$ Theorem~\ref{thm:pigeon} $\to$
 Theorem~\ref{thm:floor}); the continuation-counting analog of
-Theorem~\ref{thm:floor}---replacing the locate-one demand with
-$\mathrm{CorrectContinuation}$ in the family floor---is a mechanical
+Theorem~\ref{thm:floor}---replacing the locate-one demand with the
+continuation demand in the family floor---is a mechanical
 follow-on, since the incompatibility machinery of the witness-perturbation
 family needs only that correct answers cover the requirements, which
 continuation answers do by definition. We do not claim it as proven here.
 
-\begin{theorem}[Pigeonhole; \texttt{family\_counting}]\label{thm:pigeon}
-For a fixed decoder $\mathrm{dec}$, a duplicate-free family $F$ of texts
-whose members pairwise admit no common correct answer function satisfies
-$|F| \le 2^{s+1}-1$ for any $s$-bit index space serving all of them.
+\begin{theorem}[Pigeonhole]\label{thm:pigeon}
+Fix a decoder $\mathrm{dec}$ and $s\ge0$. Let $F$ be a duplicate-free
+family of texts, each served by some index of at most $s$ bits through
+$\mathrm{dec}$ by a correct locate-one oracle, and no two members of $F$
+admitting a common correct answer function. Then
+$|F| \le 2^{s+1}-1$.
 \end{theorem}
+\leanpoint{LowerBound.lean}{313}{family\_counting}
 
-\paragraph{The witness-perturbation family.} For $k$ blocks of period $L$
-and perturbation offsets $p_i \in [0,L/2]$, let
-$T(p) = \mathrm{famText}(k,L,p)$ (block $i$ carries its marker at offset
-$p_i$; the full definition is \texttt{LowerBound.lean}, which also proves
-$2k \le \X(T) \le 3k-1$ (\texttt{chi\_fam\_bounds}) and
-$n = k(L+1)$). Members with distinct offsets have pairwise incompatible
-correct answers (\texttt{fam\_forced\_incompat}), and the half grid
-$\{p : 2p_i \le L\}^k$ injects into texts (\texttt{famText\_inj\_grid}).
-
-\begin{theorem}[Family floor; \texttt{fam\_floor\_chi}]\label{thm:floor}
-For all $k\ge1$, $L\ge1$, base offsets $p_0$ in the half grid, and every
-decoder $\mathrm{dec}$: if for every half-grid $p$ there exists an index
-$D$ with $\mathrm{space}(D) \le s$ answering locate-one correctly on
-$\mathrm{famText}(k,L,p)$, then
+\paragraph{The witness-perturbation family.} Fix $k\ge1$ and $L\ge1$.
+Block $i$ ($1\le i\le k$) lives on its own private two-letter alphabet
+$\{\rho_i,\mu_i\}$ with $\rho_i=2i+2$, $\mu_i=2i+3$ (all $2k$ letters
+distinct, and disjoint from the sentinel-free alphabet convention by
+construction): given an offset $0\le p_i\le L$, block $i$ is the
+length-$(L{+}1)$ word
 \[
-\frac{\X\big(\mathrm{famText}(k,L,p_0)\big)\cdot
-\log_2\!\big(k(L{+}1)\,/\,\X(\mathrm{famText}(k,L,p_0))\big)}{3} \;\le\; s+1 .
+B_i(p_i) \;=\; \rho_i^{\,p_i}\;\mu_i\;\rho_i^{\,L-p_i},
 \]
+and the family member at offset vector $p=(p_1,\dots,p_k)$ is the
+concatenation $T(p)=B_1(p_1)B_2(p_2)\cdots B_k(p_k)$, of length
+$n=k(L+1)$. The \emph{half grid} is the set of offset vectors with
+$2p_i\le L$ for all $i$, of size $\lfloor L/2\rfloor+1$ per block. Three
+facts, all machine-checked, drive the counting: on the half grid
+$2k \le \X(T(p)) \le 3k-1$; members with distinct offset vectors admit
+no common correct answer function; and the half grid injects into texts.
+\leanpoint{LowerBound.lean}{688}{famText}
+\leanpoint{LowerBound.lean}{1921}{chi\_fam\_bounds}
+\leanpoint{LowerBound.lean}{2016}{fam\_forced\_incompat}
+\leanpoint{LowerBound.lean}{2347}{famText\_inj\_grid}
+
+\begin{theorem}[Family floor]\label{thm:floor}
+Fix $k\ge1$, $L\ge1$, a decoder $\mathrm{dec}$, and $s\ge0$. Suppose
+that for every half-grid offset vector $p$ there is an index $D$ with
+$\mathrm{space}(D)\le s$ such that $\mathrm{dec}(D)$ answers locate-one
+correctly on $T(p)$. Then for every half-grid $p^{0}$, writing
+$\X_0=\X(T(p^{0}))$ and $n=k(L+1)$,
+\[
+s + 1 \;\ge\; \left\lfloor \frac{\X_0\cdot\big\lfloor \log_2(n/\X_0)\big\rfloor}{3} \right\rfloor .
+\]
+(Both divisions are integer division; $\log_2$ is the integer logarithm,
+as in the formal statement.)
 \end{theorem}
+\leanpoint{LowerBound.lean}{2525}{fam\_floor\_chi}
+\leanpoint{LowerBound.lean}{2511}{fam\_floor}
+\leanpoint{LowerBound.lean}{2457}{fam\_floor\_half\_grid}
+
+Combining the family bound $\X_0\in[2k,\,3k-1]$ with $n=k(L+1)$, the
+right-hand side is $\Omega\big(\X\log(n/\X)\big)$ at the natural tier.
 
 \paragraph{What this does and does not establish.} It is the first space
 lower bound parametrized by a repetitiveness measure for a pattern-matching
@@ -516,13 +625,12 @@ continuation bridge (\S\ref{sec:contbridge}) has the same shape as the
 locate-one bridge, the continuation-counting analog of
 Theorem~\ref{thm:floor}---the same bound for indexes answering
 continuation queries only---is a mechanical follow-on; we record it as such,
-not as proven. One skeleton
-statement of the original proof plan (\texttt{fam\_oracle\_witness}) was
-found \emph{refutable as locked} (counterexample $k{=}1,L{=}2,s{=}1$); the
-intended content is instead proven as \texttt{fam\_floor\_half\_grid}, and
-Theorem~\ref{thm:floor} does not depend on the refuted skeleton. We record
-this because statement-lock discipline requires the counterexample to be
-visible, not buried.
+not as proven. One skeleton statement of the original proof plan was
+found \emph{refutable as locked} (a one-bit decoder serves the member
+$k{=}1$, $L{=}2$, $s{=}1$); the intended content is instead proven in its
+place, and Theorem~\ref{thm:floor} does not depend on the refuted
+statement. We record this because statement-lock discipline requires the
+counterexample to be visible, not buried.
 
 \section{The System}\label{sec:system}
 
@@ -616,7 +724,7 @@ seam repair touched 7 classes / 1{,}161 rows at $1.86\times10^9$ runs.
 \centering\small
 \caption{Measured archive-reader throughput (steady state, identical
 checksums against the file-based control in every row). Source:
-\texttt{THROUGHPUT.md}.}
+\repofile{bit6/sxi_logs/pfp-agc/THROUGHPUT.md}{sxi\_logs/pfp-agc/THROUGHPUT.md}.}
 \begin{tabular}{lrrrr}
 \toprule
 Corpus & $j$ & AGC MB/s & file MB/s & ratio \\
@@ -689,7 +797,8 @@ compute-audited in the companion document; its evaluation is future work.
 \section{Related Work}\label{sec:related}
 
 Our survey (verified against fetched sources; the full annotated map with
-arXiv links is \texttt{LOWER\_BOUND\_PLAN.md}) found:
+arXiv links is \repofile{lean/LOWER_BOUND_PLAN.md}{LOWER\_BOUND\_PLAN.md})
+found:
 
 \textbf{No space lower bounds for pattern matching.} The r-index
 \cite{r-index} achieves $O(r)$ words with optimal-time count/locate---where
@@ -764,9 +873,14 @@ acknowledgments section; the method is the coauthor.
 
 \appendix
 \section{Claim-to-Artifact Map}\label{app:facts}
-Every numeric and formal claim above, with its machine source, is listed in
-\texttt{paper/FACTS.md} in the repository. The Lean statements quoted are in
-\texttt{lean/}; the measurement records in \texttt{bit6/sxi\_logs/} and the
-ledger \texttt{RESEARCH.md}.
+Every numeric and formal claim above, with its machine source, is listed
+in \repofile{paper/FACTS.md}{paper/FACTS.md} in the repository: for each
+formal statement it pairs the exact mathematical form printed here with
+the exact Lean statement (verbatim) and its file and line; for each
+measurement it names the log artifact and the recorded value. The Lean
+sources are in \repofile{lean/}{lean/}; the measurement records in
+\repofile{bit6/sxi_logs/}{bit6/sxi\_logs/} and the running ledger in
+\repofile{RESEARCH.md}{RESEARCH.md}. All links are commit-pinned
+(\small\texttt{\sxgchash}).
 
 \end{document}
