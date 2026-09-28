@@ -1,0 +1,90 @@
+{
+  "criteriaSatisfied": [
+    {
+      "id": "criterion-1",
+      "status": "satisfied",
+      "evidence": "Default single-writer AGC FIFO streaming, explicit --materialize, same-pass names, archive-backed audit, all requested gates passed; seven scoped source/test/documentation files."
+    },
+    {
+      "id": "criterion-2",
+      "status": "satisfied",
+      "evidence": "bit6/sxi_logs/stream-mode/ contains lane.diff, baselines, commands, stage journals/timings, yeast member byte comparisons, memory measurements, regression and failure-gate logs."
+    }
+  ],
+  "changedFiles": [
+    "agc2flat/src/main.rs",
+    "xsa/src/build.rs",
+    "bit6/sxi_pipeline.py",
+    "bit6/sxi_text_audit.cpp",
+    "bit6/SXI_BUILD.md",
+    "bit6/test_sxi_fifo.py",
+    "bit6/test_sxi_stream.py"
+  ],
+  "testsAddedOrUpdated": [
+    "bit6/test_sxi_stream.py",
+    "bit6/test_sxi_fifo.py"
+  ],
+  "commandsRun": [
+    {
+      "command": "cargo build --release --manifest-path agc2flat/Cargo.toml --target-dir /tmp/sxi-stream/agc-target",
+      "result": "passed",
+      "summary": "Isolated archive streamer/range-service build."
+    },
+    {
+      "command": "cargo build --release --manifest-path xsa/Cargo.toml --target-dir /tmp/sxi-stream/xsa-target",
+      "result": "passed",
+      "summary": "Isolated CLI build with --materialize."
+    },
+    {
+      "command": "g++ -O3 -std=c++17 -Wall -Wextra bit6/sxi_text_audit.cpp -o /tmp/sxi-stream/tools/sxi_text_audit",
+      "result": "passed",
+      "summary": "Archive-backed audit compiled."
+    },
+    {
+      "command": "python3 bit6/test_sxi_stream.py --work /tmp/sxi-stream/battery-final-source --xsa /tmp/sxi-stream/xsa-target/release/xsa --tools /tmp/sxi-stream/tools --log-dir bit6/sxi_logs/stream-mode",
+      "result": "passed",
+      "summary": "Six fixture sets: member equivalence, archive ranges, corrupt-range publication rejection, malformed ranges/names, producer/consumer failures."
+    },
+    {
+      "command": "python3 bit6/test_sxi_fifo.py",
+      "result": "passed",
+      "summary": "Single writer, exact bytes, broken pipe, journal failure and SIGTERM cleanup."
+    },
+    {
+      "command": "python3 bit6/sxi_logs/stream-mode/run_yeast.py",
+      "result": "passed",
+      "summary": "Full fresh stream/control publications; all five core members byte-identical; both archive audits pass."
+    },
+    {
+      "command": "python3 bit6/sxi_logs/stream-mode/run_regressions.py",
+      "result": "passed",
+      "summary": "Three committed Python regressions and both Cargo test commands passed."
+    },
+    {
+      "command": "bash tools/build_slim_dump.sh /tmp/sxi-stream/tools/slim_lce_test tools/slim_lce_test.cpp && /tmp/sxi-stream/tools/slim_lce_test",
+      "result": "passed",
+      "summary": "216000 exact capped LCE checks passed."
+    },
+    {
+      "command": "git diff --check && git diff --cached --name-only",
+      "result": "passed",
+      "summary": "No whitespace errors or staged files."
+    }
+  ],
+  "validationOutput": [
+    "Full yeast235: chi=85404336; 32/32 archive witnesses verified in each fresh build.",
+    "Five yeast core members compared byte for byte; full parse and dictionary are also byte-identical.",
+    "Maximum observed full-build process-tree RSS: 8852004 KiB (9.064 GB), below 20 GB.",
+    "Default AGC builds contain no collection.txt; FIFOs are removed after success and tested failures."
+  ],
+  "residualRisks": [
+    "Independent reviewer approval remains required.",
+    "Witness auditing is sampled; SIGKILL or host failure can leave an unused FIFO in abandoned scratch."
+  ],
+  "noStagedFiles": true,
+  "diffSummary": "Adds AGC stdout/FIFO streaming and bounded archive range access for witness auditing; preserves legacy materialization, sidecar format, PFP/producer, and SXI core construction.",
+  "reviewFindings": [
+    "No blockers found in focused self-review; external review pending."
+  ],
+  "manualNotes": "No commits. Prior dirty work preserved; the running 466 tree, scratch and processes were not modified. contact_supervisor was unavailable. An initial exact-duplicate fixture hit the existing file-mode endpoint refusal; final admitted fixtures pass. Failure-path cleanup was hardened after the full stream started; final-source battery and lifecycle gates were rerun afterward."
+}

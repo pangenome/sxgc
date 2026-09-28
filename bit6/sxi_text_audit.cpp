@@ -4,14 +4,57 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <map>
+#include <sys/wait.h>
+#include <signal.h>
+#include <cerrno>
 #include <iostream>
 using namespace sxi;
 struct Text {
-    int fd; U bytes;
-    explicit Text(const char* path){fd=open(path,O_RDONLY);check(fd>=0,"audit text open");struct stat st{};check(!fstat(fd,&st)&&st.st_size>0,"audit text stat");bytes=st.st_size;}
-    ~Text(){close(fd);}
+    int fd=-1, request=-1; pid_t child=-1; U bytes=0;
+    struct Cache { U start=UINT64_MAX; std::vector<unsigned char> data; };
+    mutable std::array<Cache,2> cache;
+    mutable unsigned slot=0;
+    static void transfer(int fd, void* buffer, size_t length, bool writing) {
+        auto* p=static_cast<unsigned char*>(buffer);
+        while(length){ssize_t got=writing?write(fd,p,length):read(fd,p,length);
+            if(got<0&&errno==EINTR)continue;
+            check(got>0,"archive range service broke/short response");p+=got;length-=got;}
+    }
+    explicit Text(const char* path, const char* archive=nullptr, const char* names=nullptr, const char* tool=nullptr){
+        if(!archive){fd=open(path,O_RDONLY);check(fd>=0,"audit text open");struct stat st{};check(!fstat(fd,&st)&&st.st_size>0,"audit text stat");bytes=st.st_size;return;}
+        int in[2],out[2];check(!pipe(in)&&!pipe(out),"archive pipes");
+        child=fork();check(child>=0,"archive fork");
+        if(!child){
+            dup2(in[0],STDIN_FILENO);dup2(out[1],STDOUT_FILENO);
+            close(in[0]);close(in[1]);close(out[0]);close(out[1]);
+            execl(tool,tool,archive,"--serve-ranges",names,"--revlines","--upper","--sep","1e",(char*)nullptr);
+            _exit(127);
+        }
+        close(in[0]);close(out[1]);request=in[1];fd=out[0];
+        signal(SIGPIPE,SIG_IGN);
+        unsigned char header[8];transfer(fd,header,8,false);
+        for(unsigned i=0;i<8;i++)bytes|=U(header[i])<<(8*i);
+        check(bytes>0,"empty archive range service");
+    }
+    void finish(){
+        if(request>=0){close(request);request=-1;int status=0;pid_t result;
+            do{result=waitpid(child,&status,0);}while(result<0&&errno==EINTR);
+            child=-1;check(result>0&&WIFEXITED(status)&&WEXITSTATUS(status)==0,"archive range service failed");}
+    }
+    ~Text(){if(request>=0)close(request);if(fd>=0)close(fd);if(child>0){kill(child,SIGTERM);waitpid(child,nullptr,0);}}
     void at(U offset,unsigned char* dst,size_t length)const{
-        while(length){ssize_t got=pread(fd,dst,length,offset);check(got>0,"audit text read");offset+=got;dst+=got;length-=got;}
+        check(offset<=bytes&&length<=bytes-offset,"audit text range");
+        while(length){
+            if(request<0){ssize_t got=pread(fd,dst,length,offset);if(got<0&&errno==EINTR)continue;check(got>0,"audit text read");offset+=got;dst+=got;length-=got;continue;}
+            U base=offset/65536*65536;Cache* found=nullptr;
+            for(auto& c:cache)if(c.start==base)found=&c;
+            if(!found){found=&cache[slot++%cache.size()];found->start=base;found->data.resize(std::min<U>(65536,bytes-base));
+                unsigned char query[16];U len=found->data.size();
+                for(unsigned i=0;i<8;i++){query[i]=base>>(8*i);query[i+8]=len>>(8*i);}
+                transfer(request,query,16,true);transfer(fd,found->data.data(),len,false);}
+            size_t take=std::min<size_t>(length,found->data.size()-(offset-base));
+            memcpy(dst,found->data.data()+(offset-base),take);offset+=take;dst+=take;length-=take;
+        }
     }
     unsigned char byte(U offset)const{unsigned char c;at(offset,&c,1);return c;}
 };
@@ -22,9 +65,9 @@ struct Stream {
     U next(unsigned bytes=8){return integer(in,bytes);}
 };
 int main(int argc,char**argv){try{
-    check(argc==6,"usage: sxi_text_audit TEXT RI4 AGG CHI N");
+    check(argc==6||(argc==12&&std::string(argv[6])=="--agc"&&std::string(argv[8])=="--names"&&std::string(argv[10])=="--agc2flat"),"usage: sxi_text_audit TEXT RI4 AGG CHI N [--agc ARCHIVE --names TSV --agc2flat TOOL]");
     U requested=std::stoull(argv[5]);check(requested>0&&requested<=100000,"sample N must be 1..100000");
-    Text text(argv[1]);std::ifstream ri(argv[2],std::ios::binary),agg(argv[3],std::ios::binary);
+    Text text(argv[1],argc==12?argv[7]:nullptr,argc==12?argv[9]:nullptr,argc==12?argv[11]:nullptr);std::ifstream ri(argv[2],std::ios::binary),agg(argv[3],std::ios::binary);
     check(bool(ri)&&bool(agg),"audit index open");U ribytes=size(ri),aggbytes=size(agg);
     check(ribytes>=2080&&integer(ri)==0x0000000452585349ULL,"audit ri4 header");
     U n=integer(ri);integer(ri);U r=integer(ri);check(n==text.bytes&&r<=(UINT64_MAX-2080)/32&&ribytes>=2080+5*r,"audit dimensions");
@@ -74,5 +117,6 @@ int main(int argc,char**argv){try{
     }
     for(int c=1;c<128;c++)if(candidates[c].active)emit(candidates[c]);
     check(emitted==count&&verified==take,"audit sampled witness missing/count mismatch");
+    text.finish();
     std::cout<<"TEXT_SAMPLE_PASS requested="<<requested<<" verified="<<verified<<" chi="<<count<<" compared_bytes="<<comparisons<<"\n";
 }catch(const std::exception& e){std::cerr<<"TEXT_SAMPLE_FAIL "<<e.what()<<"\n";return 1;}}

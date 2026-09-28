@@ -1,0 +1,5 @@
+{"name": "format-regression", "command": ["python3", "bit6/test_sxi_format.py", "--writer", "/tmp/sxi-stream/tools/sxi_write", "--xsa", "/tmp/sxi-stream/xsa-target/release/xsa"], "returncode": 0}
+{"name": "cli-regression", "command": ["python3", "bit6/test_sxi_build.py", "--xsa", "/tmp/sxi-stream/xsa-target/release/xsa", "--log-dir", "bit6/sxi_logs/stream-mode"], "returncode": 0}
+{"name": "phi-regression", "command": ["python3", "bit6/test_phi_inverse_contract.py", "/tmp/laneU/phi_inverse_heads"], "returncode": 0}
+{"name": "xsa-tests", "command": ["cargo", "test", "--release", "--manifest-path", "xsa/Cargo.toml", "--target-dir", "/tmp/sxi-stream/xsa-target"], "returncode": 0}
+{"name": "agc-tests", "command": ["cargo", "test", "--release", "--manifest-path", "agc2flat/Cargo.toml", "--target-dir", "/tmp/sxi-stream/agc-target"], "returncode": 0}

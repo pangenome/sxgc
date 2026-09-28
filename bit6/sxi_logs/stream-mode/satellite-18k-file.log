@@ -1,0 +1,2 @@
+xsa build: work=/tmp/sxi-stream/battery-final-source/xsa-build-gdvwc41u log=/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/satellite-18k-file-xsa-build-gdvwc41u.jsonl
+{"sxi": "/tmp/sxi-stream/battery-final-source/satellite-18k-file.sxi", "chi": 76, "work": "/tmp/sxi-stream/battery-final-source/xsa-build-gdvwc41u", "log": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/satellite-18k-file-xsa-build-gdvwc41u.jsonl"}

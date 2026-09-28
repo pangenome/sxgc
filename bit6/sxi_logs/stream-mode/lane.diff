@@ -1,0 +1,681 @@
+--- a/agc2flat/src/main.rs
++++ b/agc2flat/src/main.rs
+@@ -21,13 +21,16 @@
+ //       archive order is preserved so a subset stream is a subsequence of
+ //       the whole-collection stream.
+ //
++//   agc2flat <archive.agc> --serve-ranges <out>.names.tsv --revlines --upper
++//       audit range service: initial LE u64 length, then stdin LE u64 pairs
++//       (offset, length <= 65536), stdout exact range bytes; EOF closes.
+ // Uses targeted per-contig extraction (get_contig / get_contig_range) —
+ // never get_sample (which decompresses every contig of a sample at once).
+ use anyhow::{Context, Result};
+ use ragc_core::{Decompressor, DecompressorConfig, CNV_NUM};
+ use std::collections::BTreeMap;
+ use std::fs::File;
+-use std::io::{BufWriter, Write};
++use std::io::{BufRead, BufReader, BufWriter, Read, Write};
+ use std::path::Path;
+ 
+ fn ascii_of(numeric: &[u8], upper: bool, sep: u8) -> Result<Vec<u8>> {
+@@ -67,6 +70,7 @@
+     revlines: bool,
+     list_samples: bool,
+     sep: u8,
++    serve_ranges: Option<String>,
+ }
+ 
+ fn parse_sep(value: &str) -> Result<u8> {
+@@ -77,7 +81,7 @@
+ }
+ 
+ fn parse_args() -> Result<Args> {
+-    let mut a = Args { archive: String::new(), out: String::new(), upper: false, groups: false, group: None, band: None, reverse: false, stdout: false, samples: None, revlines: false, list_samples: false, sep: 0x1e };
++    let mut a = Args { archive: String::new(), out: String::new(), upper: false, groups: false, group: None, band: None, reverse: false, stdout: false, samples: None, revlines: false, list_samples: false, sep: 0x1e, serve_ranges: None };
+     let mut it = std::env::args().skip(1);
+     while let Some(arg) = it.next() {
+         match arg.as_str() {
+@@ -87,6 +91,7 @@
+             "--reverse" => a.reverse = true,
+             "--revlines" => a.revlines = true,
+             "--stdout" => a.stdout = true,
++            "--serve-ranges" => a.serve_ranges = Some(it.next().context("--serve-ranges needs names.tsv")?),
+             "--samples" => a.samples = Some(it.next().context("--samples needs a file of sample names")?),
+             "--list-samples" => a.list_samples = true,
+             "--groups" => a.groups = true,
+@@ -104,6 +109,65 @@
+         anyhow::bail!("usage: agc2flat <archive.agc> [-o out.txt] [--upper] [--groups] [--group <contig>] [--band S:E] [--samples <file>] [--reverse] [--revlines] [--stdout] [--sep <hexbyte> (default 0x1E)]\nCorpus contract: 0x1E is reserved; it must never appear in sequence content.");
+     }
+     Ok(a)
++}
++
++// Binary range service for the audit. Requests are two LE u64s (stream
++// offset, length <= 64 KiB); replies are exactly length bytes. EOF closes it.
++// The names rows disambiguate repeated names by archive sample/contig order.
++fn serve_ranges(dec: &mut Decompressor, samples: &[String], args: &Args, path: &str) -> Result<()> {
++    anyhow::ensure!(args.revlines && args.upper && args.sep == 30,
++                    "range service requires --revlines --upper --sep 1e");
++    let mut names = BufReader::new(File::open(path)?).lines();
++    let mut rows = Vec::new();
++    let mut total = 0u64;
++    for sample in samples {
++        for contig in dec.list_contigs(sample)? {
++            let line = names.next().context("missing names row")??;
++            let fields: Vec<_> = line.split('\t').collect();
++            anyhow::ensure!(fields.len() == 3 && fields[0] == contig, "archive/names order mismatch");
++            let start: u64 = fields[1].parse()?;
++            let len: u64 = fields[2].parse()?;
++            rows.push((total, len, start, sample.clone(), contig));
++            total = total.checked_add(len).and_then(|n| n.checked_add(1)).context("names length overflow")?;
++        }
++    }
++    anyhow::ensure!(names.next().is_none() && total > 0, "extra names rows or empty archive");
++    for (offset, len, start, _, _) in &rows {
++        anyhow::ensure!(*start == total - 1 - offset - len, "invalid names coordinate");
++    }
++    let mut input = std::io::stdin().lock();
++    let mut output = std::io::stdout().lock();
++    output.write_all(&total.to_le_bytes())?;
++    output.flush()?;
++    loop {
++        let mut request = [0u8; 16];
++        if input.read(&mut request[..1])? == 0 { break; }
++        input.read_exact(&mut request[1..])?;
++        let mut offset = u64::from_le_bytes(request[..8].try_into()?);
++        let length = u64::from_le_bytes(request[8..].try_into()?);
++        anyhow::ensure!(length <= 65536 && offset <= total && length <= total - offset, "invalid audit range");
++        let end = offset + length;
++        while offset < end {
++            let idx = rows.partition_point(|r| r.0 <= offset) - 1;
++            let (base, len, _, sample, contig) = &rows[idx];
++            let local = offset - base;
++            if local == *len {
++                output.write_all(&[args.sep])?;
++                offset += 1;
++            } else {
++                let take = (end - offset).min(len - local);
++                let numeric = dec.get_contig_range(sample, contig,
++                    usize::try_from(len - local - take)?, usize::try_from(len - local)?)?;
++                anyhow::ensure!(numeric.len() as u64 == take, "short archive range");
++                let mut seq = ascii_of(&numeric, true, args.sep)?;
++                seq.reverse();
++                output.write_all(&seq)?;
++                offset += take;
++            }
++        }
++        output.flush()?;
++    }
++    Ok(())
+ }
+ 
+ fn main() -> Result<()> {
+@@ -141,6 +205,10 @@
+         }
+         None => all_samples,
+     };
++
++    if let Some(path) = &args.serve_ranges {
++        return serve_ranges(&mut dec, &samples, &args, path);
++    }
+ 
+     // --groups: metadata only (list_contigs + get_contig_length — no decompression)
+     if args.groups {
+@@ -210,7 +278,9 @@
+             out_path = Path::new(&args.archive).file_stem().unwrap().to_string_lossy().to_string() + ".revlines.txt";
+         }
+         let tsv_path = format!("{out_path}.names.tsv");
+-        let mut text = BufWriter::with_capacity(1 << 22, File::create(&out_path)?);
++        let sink: Box<dyn Write> = if args.stdout { Box::new(std::io::stdout()) }
++            else { Box::new(File::create(&out_path)?) };
++        let mut text = BufWriter::with_capacity(1 << 22, sink);
+         let mut tsv = BufWriter::with_capacity(1 << 16, File::create(&tsv_path)?);
+         let mut rows: Vec<(String, u64, u64)> = Vec::new(); // (cname, stream_off, len)
+         let mut streamed: u64 = 0;
+--- a/xsa/src/build.rs
++++ b/xsa/src/build.rs
+@@ -14,7 +14,8 @@
+ verbatim in input order, with 0x1E between records and terminally.
+ Supply already oriented sequences; embedded 0x1E fails during input preparation.
+ Record identifiers populate the SXI names member. Malformed records fail closed.
+-AGC uses agc2flat --revlines --upper --sep 1e, materialized beside its source.
++AGC streams agc2flat --stdout --revlines --upper --sep 1e through one FIFO.
++--materialize retains the legacy AGC text-file path.
+ Stages: PFP (w1=10,p1=100; w2=5,p2=11), endpoint-tap rpfbwt,
+ slim streaming aggregates, streamed chi sweep/gate, checked SXI publication.
+ Scratch must share the source filesystem. Timings and peak RSS are logged.
+@@ -57,6 +58,7 @@
+                     .ok_or_else(|| format!("{flag} requires a value"))?;
+                 extra.extend([flag.clone(), value.clone()]);
+             }
++            "--materialize" => extra.push(flag.clone()),
+             "--verbose" => verbose = true,
+             _ => return Err(format!("unknown option {flag}")),
+         }
+--- a/bit6/sxi_pipeline.py
++++ b/bit6/sxi_pipeline.py
+@@ -8,6 +8,8 @@
+ Scratch defaults beside the input, on the same filesystem; retained for audit.
+ """
+ import argparse
++import errno
++import signal
+ import json
+ import os
+ import pathlib
+@@ -21,6 +23,81 @@
+ import time
+ 
+ ROOT = pathlib.Path(__file__).resolve().parents[1]
++
++def stream_parse(fifo, producer, consumer, env, logs, label, record, verbose=False):
++    """One producer owns the only FIFO writer; reap both children on every exit."""
++    children, handles = [], []
++    writer = None
++    os.mkfifo(fifo, 0o600)
++    def interrupted(*_):
++        raise KeyboardInterrupt
++    old_term = signal.signal(signal.SIGTERM, interrupted)
++    def start(stage, command, output=None):
++        logfile = logs / (label + '.' + stage + '.log')
++        timing = logs / (label + '.' + stage + '.time')
++        log = logfile.open('wb'); handles.append(log)
++        command = list(map(str, command))
++        record(dict(stage=stage, command=command, work=str(fifo.parent), start=time.time()))
++        if verbose:
++            print(stage + ': ' + shlex.join(command), file=sys.stderr, flush=True)
++        proc = subprocess.Popen(['/usr/bin/time', '-v', '-o', str(timing), *command],
++                                stdout=log if output is None else output, stderr=log,
++                                env=env, start_new_session=True)
++        children.append((stage, proc, logfile, timing, time.monotonic()))
++        return proc
++    try:
++        reader = start('parse', consumer)
++        deadline = time.monotonic() + 30
++        while writer is None:
++            if reader.poll() is not None:
++                raise RuntimeError(f'parse failed ({reader.returncode}) before opening AGC FIFO')
++            try:
++                writer = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
++            except OSError as error:
++                if error.errno != errno.ENXIO:
++                    raise
++                if time.monotonic() >= deadline:
++                    raise RuntimeError('parse did not open AGC FIFO within 30 seconds')
++                time.sleep(.05)
++        os.set_blocking(writer, True)
++        source = start('prepare-agc', producer, writer)
++        os.close(writer); writer = None
++        while True:
++            src, dst = source.poll(), reader.poll()
++            if src is not None and src != 0:
++                raise RuntimeError(f'prepare-agc stream failed ({src}); see {children[1][2]}')
++            if dst is not None and dst != 0:
++                raise RuntimeError(f'parse stream failed ({dst}); see {children[0][2]}')
++            if src is not None and dst is not None:
++                break
++            time.sleep(.05)
++    finally:
++        try:
++            if writer is not None:
++                os.close(writer)
++            for _, proc, _, _, _ in children:
++                # Signal only groups created here, including time's children.
++                try:
++                    os.killpg(proc.pid, signal.SIGTERM)
++                except ProcessLookupError:
++                    pass
++            for _, proc, _, _, _ in children:
++                try:
++                    proc.wait(timeout=5)
++                except subprocess.TimeoutExpired:
++                    os.killpg(proc.pid, signal.SIGKILL)
++                    proc.wait()
++        finally:
++            for log in handles:
++                log.close()
++            fifo.unlink(missing_ok=True)
++            signal.signal(signal.SIGTERM, old_term)
++        # Logging failures must not leave a FIFO or live stream behind.
++        for stage, proc, logfile, timing, begin in children:
++            measurement = timing.read_text() if timing.exists() else ''
++            rss = re.search(r'Maximum resident set size \(kbytes\): (\d+)', measurement)
++            record(dict(stage=stage, returncode=proc.returncode, wall_seconds=time.monotonic()-begin,
++                        peak_rss_kib=int(rss[1]) if rss else None, log=str(logfile), timing=str(timing)))
+ 
+ def main():
+     p = argparse.ArgumentParser(description=__doc__)
+@@ -36,6 +113,7 @@
+     p.add_argument('--verify-text-sample', type=int, default=0)
+     p.add_argument('--expect-heads', help='acceptance oracle only; checked after fresh construction')
+     p.add_argument('--expect-ri4', help='acceptance oracle only; exact runs and packed-tail byte gate')
++    p.add_argument('--materialize', action='store_true', help='legacy AGC text-file preparation')
+     p.add_argument('--verbose', action='store_true')
+     p.add_argument('--xsa', default=str(ROOT / 'xsa/target/release/xsa'))
+     a = p.parse_args()
+@@ -43,6 +121,8 @@
+         p.error('--verify-text-sample must be 0..100000')
+     if not 1 <= a.threads <= 64:
+         p.error('--threads must be 1..64')
++    if a.materialize and not a.agc:
++        p.error('--materialize requires --agc')
+     source_path = pathlib.Path(a.text or a.agc or a.fasta or a.fastq).absolute()
+     out = pathlib.Path(a.output).absolute()
+     if os.path.lexists(out):
+@@ -71,7 +151,7 @@
+     label = out.stem + '-' + work.name
+     journal = logs / (label + '.jsonl')
+     env = dict(os.environ, OMP_NUM_THREADS=str(a.threads), TMPDIR=str(work))
+-    # Sequential children; conservative address-space ceiling also bounds RSS.
++    # Children inherit the ceiling; only the AGC producer/first parse overlap.
+     _, hard_limit = resource.getrlimit(resource.RLIMIT_AS)
+     limit = 149_000_000_000 if hard_limit == resource.RLIM_INFINITY else min(hard_limit, 149_000_000_000)
+     resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+@@ -120,24 +200,39 @@
+         record(dict(stage=stage, returncode=0, records=records, collection_bytes=size,
+                     wall_seconds=time.monotonic()-begin,
+                     peak_rss_kib=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss))
++    prefix = work / 'parse'
++    streaming = bool(a.agc and not a.materialize)
+     if a.agc:
+         text = work / 'collection.txt'
+-        # The committed streamer emits the names sidecar beside this -o path.
+-        run('prepare-agc', [agc, source_path, '--revlines', '--upper', '--sep', '1e', '-o', text])
+         names = work / 'collection.txt.names.tsv'
+-    with text.open('rb') as f:
+-        # O(1) terminal-byte lookup for padding normalization; never scan or
+-        # rewrite raw text. The caller owns the reserved-separator contract.
+-        if not text.stat().st_size:
+-            raise RuntimeError('empty input text')
+-        f.seek(-1, 2)
+-        terminal = f.read(1)[0]
+-    prefix = work / 'parse'
+-    run('parse', [pfp, '-t', text, '-o', prefix, '-w', 10, '-p', 100, '-j', a.threads, '--tmp-dir', work])
++        prepare = [agc, source_path, '--revlines', '--upper', '--sep', '1e', '-o', text]
++        if streaming:
++            fifo = work / 'collection.fifo'
++            parse = [pfp, '-t', fifo, '-o', prefix, '-w', 10, '-p', 100, '-j', a.threads, '--tmp-dir', work]
++            stream_parse(fifo, prepare + ['--stdout'], parse, env, logs, label, record, a.verbose)
++            # Same-pass names lengths include exactly one separator per record.
++            size = 0
++            with names.open() as f:
++                for line in f:
++                    _, start, length = line.rstrip('\n').rsplit('\t', 2)
++                    size += int(length) + 1
++            if not size:
++                raise RuntimeError('empty AGC stream')
++            terminal = 30
++        else:
++            run('prepare-agc', prepare)
++    if not streaming:
++        with text.open('rb') as f:
++            size = text.stat().st_size
++            if not size:
++                raise RuntimeError('empty input text')
++            f.seek(-1, 2)
++            terminal = f.read(1)[0]
++        run('parse', [pfp, '-t', text, '-o', prefix, '-w', 10, '-p', 100, '-j', a.threads, '--tmp-dir', work])
+     run('parse-l2', [pfp, '-i', str(prefix)+'.parse', '-w', 5, '-p', 11, '-j', a.threads, '--tmp-dir', work])
+     # Upstream's rdbuf merge sets failbit on an empty chunk. Tiny parses can
+     # create such chunks; one chunk avoids this without changing .ssa code.
+-    chunks = 1 if text.stat().st_size < 1_000_000 else 50
++    chunks = 1 if size < 1_000_000 else 50
+     run('rpfbwt', [rpf, '--l1-prefix', prefix, '--w1', 10, '--w2', 5, '--threads', a.threads, '--chunks', chunks, '--tmp-dir', work])
+     ri4, heads, agg, chi = [work / ('fresh.' + ext) for ext in ('ri4', 'head_sa', 'agg', 'sA')]
+     run('endpoints', [tools/'rpfbwt_endpoints', prefix, ri4, heads, f'{terminal:02x}'])
+@@ -159,7 +254,10 @@
+     if a.expect_chi is not None and count != a.expect_chi:
+         raise RuntimeError(f'chi gate mismatch: {count} != {a.expect_chi}')
+     if a.verify_text_sample:
+-        run('verify-text-sample', [tools/'sxi_text_audit', text, ri4, agg, chi, a.verify_text_sample])
++        audit = [tools/'sxi_text_audit', text, ri4, agg, chi, a.verify_text_sample]
++        if a.agc:
++            audit += ['--agc', source_path, '--names', names, '--agc2flat', agc]
++        run('verify-text-sample', audit)
+     # Writer validates range, uniqueness, endpoint consistency and checksums.
+     # Write on the destination filesystem, validate, then publish no-clobber.
+     out.parent.mkdir(parents=True, exist_ok=True)
+--- a/bit6/sxi_text_audit.cpp
++++ b/bit6/sxi_text_audit.cpp
+@@ -4,14 +4,57 @@
+ #include <fcntl.h>
+ #include <unistd.h>
+ #include <map>
++#include <sys/wait.h>
++#include <signal.h>
++#include <cerrno>
+ #include <iostream>
+ using namespace sxi;
+ struct Text {
+-    int fd; U bytes;
+-    explicit Text(const char* path){fd=open(path,O_RDONLY);check(fd>=0,"audit text open");struct stat st{};check(!fstat(fd,&st)&&st.st_size>0,"audit text stat");bytes=st.st_size;}
+-    ~Text(){close(fd);}
++    int fd=-1, request=-1; pid_t child=-1; U bytes=0;
++    struct Cache { U start=UINT64_MAX; std::vector<unsigned char> data; };
++    mutable std::array<Cache,2> cache;
++    mutable unsigned slot=0;
++    static void transfer(int fd, void* buffer, size_t length, bool writing) {
++        auto* p=static_cast<unsigned char*>(buffer);
++        while(length){ssize_t got=writing?write(fd,p,length):read(fd,p,length);
++            if(got<0&&errno==EINTR)continue;
++            check(got>0,"archive range service broke/short response");p+=got;length-=got;}
++    }
++    explicit Text(const char* path, const char* archive=nullptr, const char* names=nullptr, const char* tool=nullptr){
++        if(!archive){fd=open(path,O_RDONLY);check(fd>=0,"audit text open");struct stat st{};check(!fstat(fd,&st)&&st.st_size>0,"audit text stat");bytes=st.st_size;return;}
++        int in[2],out[2];check(!pipe(in)&&!pipe(out),"archive pipes");
++        child=fork();check(child>=0,"archive fork");
++        if(!child){
++            dup2(in[0],STDIN_FILENO);dup2(out[1],STDOUT_FILENO);
++            close(in[0]);close(in[1]);close(out[0]);close(out[1]);
++            execl(tool,tool,archive,"--serve-ranges",names,"--revlines","--upper","--sep","1e",(char*)nullptr);
++            _exit(127);
++        }
++        close(in[0]);close(out[1]);request=in[1];fd=out[0];
++        signal(SIGPIPE,SIG_IGN);
++        unsigned char header[8];transfer(fd,header,8,false);
++        for(unsigned i=0;i<8;i++)bytes|=U(header[i])<<(8*i);
++        check(bytes>0,"empty archive range service");
++    }
++    void finish(){
++        if(request>=0){close(request);request=-1;int status=0;pid_t result;
++            do{result=waitpid(child,&status,0);}while(result<0&&errno==EINTR);
++            child=-1;check(result>0&&WIFEXITED(status)&&WEXITSTATUS(status)==0,"archive range service failed");}
++    }
++    ~Text(){if(request>=0)close(request);if(fd>=0)close(fd);if(child>0){kill(child,SIGTERM);waitpid(child,nullptr,0);}}
+     void at(U offset,unsigned char* dst,size_t length)const{
+-        while(length){ssize_t got=pread(fd,dst,length,offset);check(got>0,"audit text read");offset+=got;dst+=got;length-=got;}
++        check(offset<=bytes&&length<=bytes-offset,"audit text range");
++        while(length){
++            if(request<0){ssize_t got=pread(fd,dst,length,offset);if(got<0&&errno==EINTR)continue;check(got>0,"audit text read");offset+=got;dst+=got;length-=got;continue;}
++            U base=offset/65536*65536;Cache* found=nullptr;
++            for(auto& c:cache)if(c.start==base)found=&c;
++            if(!found){found=&cache[slot++%cache.size()];found->start=base;found->data.resize(std::min<U>(65536,bytes-base));
++                unsigned char query[16];U len=found->data.size();
++                for(unsigned i=0;i<8;i++){query[i]=base>>(8*i);query[i+8]=len>>(8*i);}
++                transfer(request,query,16,true);transfer(fd,found->data.data(),len,false);}
++            size_t take=std::min<size_t>(length,found->data.size()-(offset-base));
++            memcpy(dst,found->data.data()+(offset-base),take);offset+=take;dst+=take;length-=take;
++        }
+     }
+     unsigned char byte(U offset)const{unsigned char c;at(offset,&c,1);return c;}
+ };
+@@ -22,9 +65,9 @@
+     U next(unsigned bytes=8){return integer(in,bytes);}
+ };
+ int main(int argc,char**argv){try{
+-    check(argc==6,"usage: sxi_text_audit TEXT RI4 AGG CHI N");
++    check(argc==6||(argc==12&&std::string(argv[6])=="--agc"&&std::string(argv[8])=="--names"&&std::string(argv[10])=="--agc2flat"),"usage: sxi_text_audit TEXT RI4 AGG CHI N [--agc ARCHIVE --names TSV --agc2flat TOOL]");
+     U requested=std::stoull(argv[5]);check(requested>0&&requested<=100000,"sample N must be 1..100000");
+-    Text text(argv[1]);std::ifstream ri(argv[2],std::ios::binary),agg(argv[3],std::ios::binary);
++    Text text(argv[1],argc==12?argv[7]:nullptr,argc==12?argv[9]:nullptr,argc==12?argv[11]:nullptr);std::ifstream ri(argv[2],std::ios::binary),agg(argv[3],std::ios::binary);
+     check(bool(ri)&&bool(agg),"audit index open");U ribytes=size(ri),aggbytes=size(agg);
+     check(ribytes>=2080&&integer(ri)==0x0000000452585349ULL,"audit ri4 header");
+     U n=integer(ri);integer(ri);U r=integer(ri);check(n==text.bytes&&r<=(UINT64_MAX-2080)/32&&ribytes>=2080+5*r,"audit dimensions");
+@@ -74,5 +117,6 @@
+     }
+     for(int c=1;c<128;c++)if(candidates[c].active)emit(candidates[c]);
+     check(emitted==count&&verified==take,"audit sampled witness missing/count mismatch");
++    text.finish();
+     std::cout<<"TEXT_SAMPLE_PASS requested="<<requested<<" verified="<<verified<<" chi="<<count<<" compared_bytes="<<comparisons<<"\n";
+ }catch(const std::exception& e){std::cerr<<"TEXT_SAMPLE_FAIL "<<e.what()<<"\n";return 1;}}
+--- a/bit6/SXI_BUILD.md
++++ b/bit6/SXI_BUILD.md
+@@ -36,9 +36,11 @@
+ 
+ Exact stages:
+ 
+-1. Prepare the input. AGC: committed `agc2flat --revlines --upper --sep 1e -o SCRATCH/collection.txt`.
+-   It streams one reversed contig per 0x1E-terminated record and writes `collection.txt.names.tsv`.
+-   The text is materialized on the same filesystem as the archive.
++1. Prepare the input. AGC defaults to `agc2flat --stdout --revlines --upper --sep 1e
++   -o SCRATCH/collection.txt`. Its stdout feeds `collection.fifo`, which PFP reads
++   directly. Only `collection.txt.names.tsv` is created: **no collection text file**.
++   The sidecar is computed from actual decompressed lengths during that same pass.
++   `xsa build --agc ARCHIVE --materialize` retains the legacy text-file path.
+    FASTA/FASTQ: stream extracted sequences into the same `collection.txt` path,
+    joining wrapped FASTA lines and separating and terminating every record with 0x1E.
+    Both then enter exactly the same stages as `--text`.
+@@ -62,8 +64,8 @@
+ 
+ Each subprocess has its own `/usr/bin/time -v` file and stage log under
+ `bit6/sxi_logs` (override `--log-dir`). The JSONL journal records argv, return
+-code, wall seconds, and stage peak RSS. Stages run sequentially with a 149 GB
+-address-space ceiling. Scratch is intentionally retained for independent
++code, wall seconds, and stage peak RSS. Stages run sequentially except for the AGC streamer and first PFP parse, which run together.
++The pipeline respects a lower inherited hard address-space ceiling; otherwise it uses 149 GB. Scratch is intentionally retained for independent
+ review. Failed stages or gates never publish the requested output path.
+ FASTA/FASTQ preparation runs in the Python process, recording elapsed time and
+ process peak RSS in the journal; each completed record logs its identifier,
+@@ -184,7 +186,8 @@
+ sweep and before publication. It selects up to N evenly spaced emitted chi
+ witnesses, replays compressed sweep candidates, and compares their shared
+ context, exact LCP endpoint, and distinct following characters directly
+-against the materialized scratch text. The reversed/cyclic coordinate map
++against source bytes. AGC builds fetch these bytes directly from the archive; other
++input modes use their existing text input. The reversed/cyclic coordinate map
+ is `(n - SA) % n`. No dense SA, inverse SA or BWT is constructed.
+ 
+ The audit logs `TEXT_SAMPLE_PASS requested=... verified=... chi=...` or
+@@ -194,3 +197,55 @@
+ or expanded; memory is independent of corpus size. This is a sampled witness-grounding gate, not a proof of
+ complete chi-set equality. Legacy newline multi-string convention fails
+ loudly if this optional cyclic audit is requested.
++
++## AGC streaming and archive audit
++
++The first parse uses one private FIFO (mode 0600) in the new build directory.
++The pipeline starts the PFP reader, then opens **one** writer descriptor and
++passes it as stdout to **one** agc2flat process. The parent closes its copy
++immediately after spawning the producer. There is no second writer, tee,
++retry producer, keeper descriptor, or text spool. This discipline matters:
++two producers writing one FIFO corrupt the byte stream. The reader-open
++handshake times out after 30 seconds; data transfer has no fixed time limit.
++Both exit statuses must succeed before the next stage can start. A broken
++pipe or failed child aborts the build and prevents publication. On success,
++failure, SIGINT, or SIGTERM, the pipeline reaps its own process groups and
++unlinks the FIFO; it retains parse artifacts, names, and logs for review.
++SIGKILL or host failure cannot run cleanup; any leftover FIFO is confined to
++that unique failed scratch directory and is never reused by a later build.
++
++For AGC, `--verify-text-sample N` starts a persistent `agc2flat --serve-ranges
++NAMES --revlines --upper --sep 1e` reader of the original archive. It does not
++open the `collection.txt` argument. The service checks the names rows against
++archive sample/contig order (including repeated contig names across samples),
++validates their mirrored offsets, and maps stream offsets to reversed contig
++ranges using `get_contig_range`. Separator positions return 0x1E. A request
++may cross any number of record boundaries. The service sends an initial
++little-endian u64 collection length, accepts pairs of little-endian u64
++(offset, length), and returns exactly length bytes (at most 64 KiB per request).
++Clean request EOF ends the service; malformed requests, short reads, archive
++errors, or nonzero service exit fail the audit before publication.
++
++The audit retains two 64 KiB range buffers, plus the existing compressed
++streams and O(N + alphabet) witness state. The range service retains O(record
++count) name/coordinate metadata and the AGC decoder's segment working set;
++it does not decompress or scan the whole archive for audit. It does not
++construct an SA, BWT, or LF walk. Even `--materialize` AGC builds audit the
++archive, so both input paths exercise the same independent witness check.
++
++Reproduction and evidence (isolated tools, no edits to running build trees):
++
++```sh
++python3 bit6/test_sxi_fifo.py
++python3 bit6/test_sxi_stream.py --work /tmp/new-stream-battery \
++  --xsa /tmp/sxi-stream/xsa-target/release/xsa --tools /tmp/sxi-stream/tools \
++  --log-dir bit6/sxi_logs/stream-mode
++python3 bit6/sxi_logs/stream-mode/run_regressions.py
++python3 bit6/sxi_logs/stream-mode/run_yeast.py
++```
++
++The full yeast script runs stream and fresh file control sequentially, samples
++32 archive witnesses in each, checks absence/cleanup of materialized text/FIFO
++as applicable, and compares all five core members byte for byte. It records
++process-tree peak RSS and enforces a gate below 20 GB. Evidence lives in
++`sxi_logs/stream-mode/`; scripts use fresh output directories on a rerun.
+--- a/bit6/test_sxi_fifo.py
++++ b/bit6/test_sxi_fifo.py
+@@ -0,0 +1,60 @@
++#!/usr/bin/env python3
++"""FIFO single-writer and cancellation tests (only this test's child groups)."""
++import json, os, pathlib, signal, subprocess, sys, tempfile, time
++from sxi_pipeline import stream_parse
++with tempfile.TemporaryDirectory(prefix='sxi-fifo-') as tmp:
++    root=pathlib.Path(tmp);fifo=root/'input.fifo';rows=[]
++    producer=root/'producer.py';consumer=root/'consumer.py';out=root/'received'
++    producer.write_text('import os,sys\nfrom pathlib import Path\nwith Path(sys.argv[1]).open("a") as f:f.write(str(os.getpid())+"\\n")\nsys.stdout.buffer.write(b"AGCT"*250000)\n')
++    consumer.write_text('from pathlib import Path\nimport sys\nwith open(sys.argv[1],"rb") as f:Path(sys.argv[2]).write_bytes(f.read())\n')
++    count=root/'writers'
++    stream_parse(fifo,[sys.executable,producer,count],[sys.executable,consumer,fifo,out],os.environ,root,'good',rows.append)
++    assert out.read_bytes()==b'AGCT'*250000 and len(count.read_text().splitlines())==1
++    assert not fifo.exists() and all(row.get('returncode',0)==0 for row in rows)
++    # An early successful reader exit still breaks a large producer loudly.
++    try:
++        stream_parse(fifo,[sys.executable,producer,count],
++                     [sys.executable,'-c',"import sys;open(sys.argv[1],'rb').read(1)",fifo],
++                     os.environ,root,'broken',rows.append)
++        raise AssertionError('broken stream succeeded')
++    except RuntimeError as error:
++        assert 'stream failed' in str(error)
++    assert not fifo.exists()
++    # Journal I/O failure during startup cannot strand either FIFO endpoint.
++    calls=[]
++    def broken_journal(row):
++        calls.append(row)
++        if len(calls)>1:raise OSError('injected journal failure')
++    try:
++        stream_parse(fifo,[sys.executable,producer,count],
++                     [sys.executable,consumer,fifo,out],os.environ,root,'journal',broken_journal)
++        raise AssertionError('journal failure ignored')
++    except OSError as error:
++        assert 'injected journal failure' in str(error)
++    assert not fifo.exists()
++    # Start a slow stream in a separate driver, then cancel that driver. Both
++    # its producer and consumer must be gone, and its FIFO must be unlinked.
++    driver=root/'driver.py';pidfile=root/'pids'
++    driver.write_text('''import os,sys
++sys.path.insert(0,'''+repr(str(pathlib.Path(__file__).resolve().parent))+''')
++from sxi_pipeline import stream_parse
++from pathlib import Path
++p=Path(sys.argv[1]);stream_parse(p/'cancel.fifo',[sys.executable,'-c',"import os,sys,time;open(sys.argv[1],'a').write(str(os.getpid())+'\\\\n');sys.stdout.buffer.write(b'A'*1000000);sys.stdout.flush();time.sleep(300)",str(p/'pids')],[sys.executable,'-c',"import os,sys;open(sys.argv[2],'a').write(str(os.getpid())+'\\\\n');open(sys.argv[1],'rb').read()",str(p/'cancel.fifo'),str(p/'pids')],os.environ,p,'cancel',lambda x:None)
++''')
++    with (root/'cancel.log').open('wb') as log:
++        child=subprocess.Popen([sys.executable,driver,root],stdout=log,stderr=log)
++        deadline=time.monotonic()+10
++        while not pidfile.exists() or len(pidfile.read_text().splitlines())!=2:
++            assert child.poll() is None,(root/'cancel.log').read_text()
++            assert time.monotonic()<deadline
++            time.sleep(.05)
++        children=list(map(int,pidfile.read_text().splitlines()))
++        child.send_signal(signal.SIGTERM);assert child.wait(timeout=15)!=0
++    assert not (root/'cancel.fifo').exists()
++    for pid in children:
++        try:os.kill(pid,0)
++        except ProcessLookupError:continue
++        # A reaped wrapper can briefly leave an orphan zombie until init reaps it.
++        status=pathlib.Path(f'/proc/{pid}/status').read_text()
++        assert 'State:\tZ' in status,status
++print('PASS exactly one writer, byte-exact FIFO, broken pipe, journal failure, SIGTERM cleanup of FIFO and children')
+--- a/bit6/test_sxi_stream.py
++++ b/bit6/test_sxi_stream.py
+@@ -0,0 +1,102 @@
++#!/usr/bin/env python3
++"""Fresh streamed/file AGC equivalence, archive ranges, and fail-closed FIFO gates."""
++import argparse, hashlib, json, os, pathlib, random, resource, signal, struct, subprocess, time
++p=argparse.ArgumentParser();p.add_argument('--work',required=True);p.add_argument('--xsa',required=True);p.add_argument('--tools',required=True);p.add_argument('--log-dir',required=True);p.add_argument('--agc',default='/home/erikg/agc/bin/agc');a=p.parse_args()
++resource.setrlimit(resource.RLIMIT_AS,(18_000_000_000,18_000_000_000))
++work=pathlib.Path(a.work).absolute();work.mkdir(parents=True,exist_ok=True)
++logs=pathlib.Path(a.log_dir).absolute();logs.mkdir(parents=True,exist_ok=True)
++tools=pathlib.Path(a.tools).absolute();env=dict(os.environ,XSA_TOOLS=str(tools))
++def run(cmd,**kw):return subprocess.run(list(map(str,cmd)),check=True,env=env,**kw)
++def members(path):
++    result={}
++    with open(path,'rb') as f:
++        h=f.read(64);count=struct.unpack_from('<I',h,32)[0]
++        desc=f.read(40*count)
++        for i in range(count):
++            ident,codec,offset,length,n,crc,res=struct.unpack_from('<IIQQQII',desc,40*i)
++            f.seek(offset);digest=hashlib.sha256();left=length
++            while left:
++                b=f.read(min(left,1<<20));assert b;left-=len(b);digest.update(b)
++            result[ident]=dict(codec=codec,length=length,count=n,sha256=digest.hexdigest())
++    return result
++def build(archive,label,extra=(),override=None,ok=True):
++    out=work/(label+'.sxi');cmd=[a.xsa,'build','--agc',archive,'-o',out,'--scratch',work,'--threads','2','--verify-text-sample','32','--log-dir',logs,*extra]
++    q=subprocess.run(list(map(str,cmd)),env=override or env,capture_output=True,text=True,timeout=180)
++    (logs/(label+'.log')).write_text(q.stderr+q.stdout)
++    assert (q.returncode==0)==ok,(cmd,q.stderr)
++    if not ok:assert not out.exists();return q
++    info=json.loads(q.stdout.splitlines()[-1]);scratch=pathlib.Path(info['work'])
++    assert not (scratch/'collection.fifo').exists()
++    assert (scratch/'collection.txt').exists()==('--materialize' in extra)
++    return out,scratch
++for fixture,length in [('random-2k',2000),('random-20k',20000),('random-200k',200000),('repeated-600k',600000),('satellite-18k',18000)]:
++    rng=random.Random(171);seq=bytes(rng.choice(b'ACGT') for _ in range(length))
++    if fixture.startswith('repeated'):seq=seq[:200000]+b'AC'+seq[2:200000]+b'GT'+seq[2:200000]
++    if fixture.startswith('satellite'):seq=(seq[:101]*180)[:length]
++    fa=work/(fixture+'.fa');fa.write_bytes(b''.join(b'>contig'+str(i).encode()+b'\n'+seq[i*len(seq)//3:(i+1)*len(seq)//3]+b'\n' for i in range(3)))
++    archive=work/(fixture+'.agc')
++    run([a.agc,'create','-t','2','-o',archive,fa],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
++    file,fw=build(archive,fixture+'-file',['--materialize'])
++    stream,sw=build(archive,fixture+'-stream')
++    assert members(file)==members(stream)
++    for suffix in ['parse','dict']:
++        assert (fw/('parse.'+suffix)).read_bytes()==(sw/('parse.'+suffix)).read_bytes()
++    # Random range and seam coverage against the actual legacy stream.
++    expected=(fw/'collection.txt').read_bytes()
++    proc=subprocess.Popen([str(tools/'agc2flat'),str(archive),'--serve-ranges',str(sw/'collection.txt.names.tsv'),'--revlines','--upper','--sep','1e'],stdin=subprocess.PIPE,stdout=subprocess.PIPE)
++    assert struct.unpack('<Q',proc.stdout.read(8))[0]==len(expected)
++    ranges=[(0,len(expected))] if len(expected)<=65536 else [(0,65536),(len(expected)-65536,65536)]
++    ranges += [(rng.randrange(len(expected)),rng.randrange(100)) for _ in range(30)]
++    for start,length in ranges:
++        length=min(length,len(expected)-start);proc.stdin.write(struct.pack('<QQ',start,length));proc.stdin.flush()
++        assert proc.stdout.read(length)==expected[start:start+length]
++    proc.stdin.close();assert proc.wait(timeout=10)==0
++    print(json.dumps(dict(fixture=fixture,status='PASS',all_members_equal=True,parse_dict_equal=True,archive_ranges_equal=True)),flush=True)
++# A real range response is deliberately corrupted; the actual audit must block publication.
++wrapper=work/'corrupt-agc2flat';wrapper.write_text('''#!/usr/bin/env python3
++import subprocess,sys,struct
++real='''+repr(str(tools/'agc2flat'))+'''
++if '--serve-ranges' not in sys.argv:
++ import os
++ os.execv(real,[real,*sys.argv[1:]])
++p=subprocess.Popen([real,*sys.argv[1:]],stdin=subprocess.PIPE,stdout=subprocess.PIPE)
++sys.stdout.buffer.write(p.stdout.read(8));sys.stdout.buffer.flush()
++while True:
++ q=sys.stdin.buffer.read(16)
++ if not q:break
++ p.stdin.write(q);p.stdin.flush();n=struct.unpack('<QQ',q)[1]
++ data=p.stdout.read(n)
++ sys.stdout.buffer.write(bytes([0])*len(data));sys.stdout.buffer.flush()
++p.stdin.close();sys.exit(p.wait())
++''');wrapper.chmod(0o755)
++q=build(archive,'corrupt-range',override=dict(env,XSA_AGC2FLAT=str(wrapper)),ok=False)
++assert 'verify-text-sample failed' in q.stderr
++assert any('TEXT_SAMPLE_FAIL' in f.read_text() for f in logs.glob('corrupt-range-*.verify-text-sample.log'))
++# Both endpoints failing, including failure before FIFO open, leave no FIFO.
++for label,overrides in [('reader-fails',dict(XSA_PFP='/bin/false')),('writer-fails',dict(XSA_AGC2FLAT='/bin/false'))]:
++    build(archive,label,override=dict(env,**overrides),ok=False)
++assert not list(work.glob('xsa-build-*/collection.fifo'))
++print('PASS corruption blocks publication; reader/writer failures unlink FIFO',flush=True)
++# Same contig names in different samples must resolve to the right archive record.
++rng=random.Random(22);fas=[]
++for sample in range(2):
++    fa=work/f'sample{sample}.fa'
++    fa.write_bytes(b''.join(b'>shared'+str(i).encode()+b'\n'+bytes(rng.choice(b'ACGT') for _ in range(5000+i))+b'\n' for i in range(2)))
++    fas.append(fa)
++archive=work/'duplicate-names.agc';run([a.agc,'create','-t','2','-o',archive,*fas],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
++file,fw=build(archive,'duplicate-names-file',['--materialize']);stream,sw=build(archive,'duplicate-names-stream')
++assert members(file)==members(stream)
++expected=(fw/'collection.txt').read_bytes()
++cmd=[str(tools/'agc2flat'),str(archive),'--serve-ranges',str(sw/'collection.txt.names.tsv'),'--revlines','--upper','--sep','1e']
++reply=subprocess.run(cmd,input=struct.pack('<QQ',0,len(expected)),capture_output=True,check=True)
++assert reply.stdout==struct.pack('<Q',len(expected))+expected
++# Invalid requests and names fail loudly (including an incomplete request).
++for request in [struct.pack('<QQ',len(expected),1),struct.pack('<QQ',0,65537),b'x']:
++    reply=subprocess.run(cmd,input=request,capture_output=True)
++    assert reply.returncode!=0
++bad=work/'bad.names.tsv';rows=(sw/'collection.txt.names.tsv').read_text().splitlines();parts=rows[0].split('\t');parts[1]=str(int(parts[1])+1);rows[0]='\t'.join(parts);bad.write_text('\n'.join(rows)+'\n')
++badcmd=cmd.copy();badcmd[3]=str(bad);reply=subprocess.run(badcmd,input=b'',capture_output=True)
++assert reply.returncode!=0 and b'invalid names coordinate' in reply.stderr
++q=subprocess.run([a.xsa,'build','--text',str(fw/'collection.txt'),'-o',str(work/'invalid.sxi'),'--materialize'],capture_output=True,text=True,env=env)
++assert q.returncode and '--materialize requires --agc' in q.stderr
++print('PASS duplicate names across samples, invalid/short ranges, invalid sidecar and materialize CLI guard',flush=True)

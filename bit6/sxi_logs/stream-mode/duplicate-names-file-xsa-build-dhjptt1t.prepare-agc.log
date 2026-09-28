@@ -1,0 +1,8 @@
+Loaded archive with 2 samples
+Sample names: ["sample0", "sample1"]
+[1/2] sample sample0: streamed 10003 bytes, 2 contigs
+[2/2] sample sample1: streamed 20006 bytes, 4 contigs
+TOTAL 20006
+revlines collection: 20006 bytes, 4 strings
+text: /tmp/sxi-stream/battery-reviewed/xsa-build-dhjptt1t/collection.txt
+names: /tmp/sxi-stream/battery-reviewed/xsa-build-dhjptt1t/collection.txt.names.tsv

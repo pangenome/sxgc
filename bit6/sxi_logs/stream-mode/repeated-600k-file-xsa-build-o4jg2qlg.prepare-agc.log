@@ -1,0 +1,7 @@
+Loaded archive with 1 samples
+Sample names: ["repeated-600k"]
+[1/1] sample repeated-600k: streamed 600003 bytes, 3 contigs
+TOTAL 600003
+revlines collection: 600003 bytes, 3 strings
+text: /tmp/sxi-stream/battery-reviewed/xsa-build-o4jg2qlg/collection.txt
+names: /tmp/sxi-stream/battery-reviewed/xsa-build-o4jg2qlg/collection.txt.names.tsv

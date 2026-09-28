@@ -1,0 +1,7 @@
+Loaded archive with 1 samples
+Sample names: ["random-2k"]
+[1/1] sample random-2k: streamed 2003 bytes, 3 contigs
+TOTAL 2003
+revlines collection: 2003 bytes, 3 strings
+text: /tmp/sxi-stream/battery-final/xsa-build-24ftgc1z/collection.txt
+names: /tmp/sxi-stream/battery-final/xsa-build-24ftgc1z/collection.txt.names.tsv

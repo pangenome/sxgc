@@ -1,0 +1,17 @@
+Loaded archive with 1 samples
+Sample names: ["random-2k"]
+{"fixture": "random-2k", "status": "PASS", "all_members_equal": true, "parse_dict_equal": true, "archive_ranges_equal": true}
+Loaded archive with 1 samples
+Sample names: ["random-20k"]
+{"fixture": "random-20k", "status": "PASS", "all_members_equal": true, "parse_dict_equal": true, "archive_ranges_equal": true}
+Loaded archive with 1 samples
+Sample names: ["random-200k"]
+{"fixture": "random-200k", "status": "PASS", "all_members_equal": true, "parse_dict_equal": true, "archive_ranges_equal": true}
+Traceback (most recent call last):
+  File "/tmp/sxgc-laneV/bit6/test_sxi_stream.py", line 39, in <module>
+    file,fw=build(archive,fixture+'-file',['--materialize'])
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/sxgc-laneV/bit6/test_sxi_stream.py", line 26, in build
+    assert (q.returncode==0)==ok,(cmd,q.stderr)
+           ^^^^^^^^^^^^^^^^^^^^^
+AssertionError: (['/tmp/sxi-stream/xsa-target/release/xsa', 'build', '--agc', PosixPath('/tmp/sxi-stream/battery/repeated-600k.agc'), '-o', PosixPath('/tmp/sxi-stream/battery/repeated-600k-file.sxi'), '--scratch', PosixPath('/tmp/sxi-stream/battery'), '--threads', '2', '--verify-text-sample', '32', '--log-dir', PosixPath('/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode'), '--materialize'], 'xsa build: work=/tmp/sxi-stream/battery/xsa-build-n31p82jj log=/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/repeated-600k-file-xsa-build-n31p82jj.jsonl\nxsa build: endpoints failed (1); see /tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/repeated-600k-file-xsa-build-n31p82jj.endpoints.log; no final SXI published\nxsa: error: build: pipeline failed: exit status: 1\n')

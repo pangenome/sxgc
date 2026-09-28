@@ -1,0 +1,3 @@
+xsa build: work=/tmp/sxi-stream/battery-final-source/xsa-build-70bq4yyh log=/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/reader-fails-xsa-build-70bq4yyh.jsonl
+xsa build: parse failed (1) before opening AGC FIFO; no final SXI published
+xsa: error: build: pipeline failed: exit status: 1

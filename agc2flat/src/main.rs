@@ -21,13 +21,16 @@
 //       archive order is preserved so a subset stream is a subsequence of
 //       the whole-collection stream.
 //
+//   agc2flat <archive.agc> --serve-ranges <out>.names.tsv --revlines --upper
+//       audit range service: initial LE u64 length, then stdin LE u64 pairs
+//       (offset, length <= 65536), stdout exact range bytes; EOF closes.
 // Uses targeted per-contig extraction (get_contig / get_contig_range) —
 // never get_sample (which decompresses every contig of a sample at once).
 use anyhow::{Context, Result};
 use ragc_core::{Decompressor, DecompressorConfig, CNV_NUM};
 use std::collections::BTreeMap;
 use std::fs::File;
-use std::io::{BufWriter, Write};
+use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::path::Path;
 
 fn ascii_of(numeric: &[u8], upper: bool, sep: u8) -> Result<Vec<u8>> {
@@ -67,6 +70,7 @@ struct Args {
     revlines: bool,
     list_samples: bool,
     sep: u8,
+    serve_ranges: Option<String>,
 }
 
 fn parse_sep(value: &str) -> Result<u8> {
@@ -77,7 +81,7 @@ fn parse_sep(value: &str) -> Result<u8> {
 }
 
 fn parse_args() -> Result<Args> {
-    let mut a = Args { archive: String::new(), out: String::new(), upper: false, groups: false, group: None, band: None, reverse: false, stdout: false, samples: None, revlines: false, list_samples: false, sep: 0x1e };
+    let mut a = Args { archive: String::new(), out: String::new(), upper: false, groups: false, group: None, band: None, reverse: false, stdout: false, samples: None, revlines: false, list_samples: false, sep: 0x1e, serve_ranges: None };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -87,6 +91,7 @@ fn parse_args() -> Result<Args> {
             "--reverse" => a.reverse = true,
             "--revlines" => a.revlines = true,
             "--stdout" => a.stdout = true,
+            "--serve-ranges" => a.serve_ranges = Some(it.next().context("--serve-ranges needs names.tsv")?),
             "--samples" => a.samples = Some(it.next().context("--samples needs a file of sample names")?),
             "--list-samples" => a.list_samples = true,
             "--groups" => a.groups = true,
@@ -104,6 +109,65 @@ fn parse_args() -> Result<Args> {
         anyhow::bail!("usage: agc2flat <archive.agc> [-o out.txt] [--upper] [--groups] [--group <contig>] [--band S:E] [--samples <file>] [--reverse] [--revlines] [--stdout] [--sep <hexbyte> (default 0x1E)]\nCorpus contract: 0x1E is reserved; it must never appear in sequence content.");
     }
     Ok(a)
+}
+
+// Binary range service for the audit. Requests are two LE u64s (stream
+// offset, length <= 64 KiB); replies are exactly length bytes. EOF closes it.
+// The names rows disambiguate repeated names by archive sample/contig order.
+fn serve_ranges(dec: &mut Decompressor, samples: &[String], args: &Args, path: &str) -> Result<()> {
+    anyhow::ensure!(args.revlines && args.upper && args.sep == 30,
+                    "range service requires --revlines --upper --sep 1e");
+    let mut names = BufReader::new(File::open(path)?).lines();
+    let mut rows = Vec::new();
+    let mut total = 0u64;
+    for sample in samples {
+        for contig in dec.list_contigs(sample)? {
+            let line = names.next().context("missing names row")??;
+            let fields: Vec<_> = line.split('\t').collect();
+            anyhow::ensure!(fields.len() == 3 && fields[0] == contig, "archive/names order mismatch");
+            let start: u64 = fields[1].parse()?;
+            let len: u64 = fields[2].parse()?;
+            rows.push((total, len, start, sample.clone(), contig));
+            total = total.checked_add(len).and_then(|n| n.checked_add(1)).context("names length overflow")?;
+        }
+    }
+    anyhow::ensure!(names.next().is_none() && total > 0, "extra names rows or empty archive");
+    for (offset, len, start, _, _) in &rows {
+        anyhow::ensure!(*start == total - 1 - offset - len, "invalid names coordinate");
+    }
+    let mut input = std::io::stdin().lock();
+    let mut output = std::io::stdout().lock();
+    output.write_all(&total.to_le_bytes())?;
+    output.flush()?;
+    loop {
+        let mut request = [0u8; 16];
+        if input.read(&mut request[..1])? == 0 { break; }
+        input.read_exact(&mut request[1..])?;
+        let mut offset = u64::from_le_bytes(request[..8].try_into()?);
+        let length = u64::from_le_bytes(request[8..].try_into()?);
+        anyhow::ensure!(length <= 65536 && offset <= total && length <= total - offset, "invalid audit range");
+        let end = offset + length;
+        while offset < end {
+            let idx = rows.partition_point(|r| r.0 <= offset) - 1;
+            let (base, len, _, sample, contig) = &rows[idx];
+            let local = offset - base;
+            if local == *len {
+                output.write_all(&[args.sep])?;
+                offset += 1;
+            } else {
+                let take = (end - offset).min(len - local);
+                let numeric = dec.get_contig_range(sample, contig,
+                    usize::try_from(len - local - take)?, usize::try_from(len - local)?)?;
+                anyhow::ensure!(numeric.len() as u64 == take, "short archive range");
+                let mut seq = ascii_of(&numeric, true, args.sep)?;
+                seq.reverse();
+                output.write_all(&seq)?;
+                offset += take;
+            }
+        }
+        output.flush()?;
+    }
+    Ok(())
 }
 
 fn main() -> Result<()> {
@@ -141,6 +205,10 @@ fn main() -> Result<()> {
         }
         None => all_samples,
     };
+
+    if let Some(path) = &args.serve_ranges {
+        return serve_ranges(&mut dec, &samples, &args, path);
+    }
 
     // --groups: metadata only (list_contigs + get_contig_length — no decompression)
     if args.groups {
@@ -210,7 +278,9 @@ fn main() -> Result<()> {
             out_path = Path::new(&args.archive).file_stem().unwrap().to_string_lossy().to_string() + ".revlines.txt";
         }
         let tsv_path = format!("{out_path}.names.tsv");
-        let mut text = BufWriter::with_capacity(1 << 22, File::create(&out_path)?);
+        let sink: Box<dyn Write> = if args.stdout { Box::new(std::io::stdout()) }
+            else { Box::new(File::create(&out_path)?) };
+        let mut text = BufWriter::with_capacity(1 << 22, sink);
         let mut tsv = BufWriter::with_capacity(1 << 16, File::create(&tsv_path)?);
         let mut rows: Vec<(String, u64, u64)> = Vec::new(); // (cname, stream_off, len)
         let mut streamed: u64 = 0;

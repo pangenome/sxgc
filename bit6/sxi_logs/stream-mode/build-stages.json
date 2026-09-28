@@ -1,0 +1,182 @@
+[
+  {
+    "journal": "yeast235-control-xsa-build-gpvh5hug.jsonl",
+    "stage": "prepare-agc",
+    "returncode": 0,
+    "wall_seconds": 36.12879040208645,
+    "peak_rss_kib": 295232,
+    "log": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-control-xsa-build-gpvh5hug.prepare-agc.log",
+    "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-control-xsa-build-gpvh5hug.prepare-agc.time"
+  },
+  {
+    "journal": "yeast235-control-xsa-build-gpvh5hug.jsonl",
+    "stage": "parse",
+    "returncode": 0,
+    "wall_seconds": 69.05478837306146,
+    "peak_rss_kib": 954116,
+    "log": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-control-xsa-build-gpvh5hug.parse.log",
+    "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-control-xsa-build-gpvh5hug.parse.time"
+  },
+  {
+    "journal": "yeast235-control-xsa-build-gpvh5hug.jsonl",
+    "stage": "parse-l2",
+    "returncode": 0,
+    "wall_seconds": 3.6533931959420443,
+    "peak_rss_kib": 261880,
+    "log": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-control-xsa-build-gpvh5hug.parse-l2.log",
+    "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-control-xsa-build-gpvh5hug.parse-l2.time"
+  },
+  {
+    "journal": "yeast235-control-xsa-build-gpvh5hug.jsonl",
+    "stage": "rpfbwt",
+    "returncode": 0,
+    "wall_seconds": 609.2904419749975,
+    "peak_rss_kib": 8826524,
+    "log": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-control-xsa-build-gpvh5hug.rpfbwt.log",
+    "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-control-xsa-build-gpvh5hug.rpfbwt.time"
+  },
+  {
+    "journal": "yeast235-control-xsa-build-gpvh5hug.jsonl",
+    "stage": "endpoints",
+    "returncode": 0,
+    "wall_seconds": 80.07012912095524,
+    "peak_rss_kib": 7108000,
+    "log": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-control-xsa-build-gpvh5hug.endpoints.log",
+    "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-control-xsa-build-gpvh5hug.endpoints.time"
+  },
+  {
+    "journal": "yeast235-control-xsa-build-gpvh5hug.jsonl",
+    "stage": "slim",
+    "returncode": 0,
+    "wall_seconds": 756.968220670009,
+    "peak_rss_kib": 3776952,
+    "log": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-control-xsa-build-gpvh5hug.slim.log",
+    "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-control-xsa-build-gpvh5hug.slim.time"
+  },
+  {
+    "journal": "yeast235-control-xsa-build-gpvh5hug.jsonl",
+    "stage": "sweep",
+    "returncode": 0,
+    "wall_seconds": 13.114416361087933,
+    "peak_rss_kib": 6144,
+    "log": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-control-xsa-build-gpvh5hug.sweep.log",
+    "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-control-xsa-build-gpvh5hug.sweep.time"
+  },
+  {
+    "journal": "yeast235-control-xsa-build-gpvh5hug.jsonl",
+    "stage": "verify-text-sample",
+    "returncode": 0,
+    "wall_seconds": 23.720895642996766,
+    "peak_rss_kib": 59392,
+    "log": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-control-xsa-build-gpvh5hug.verify-text-sample.log",
+    "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-control-xsa-build-gpvh5hug.verify-text-sample.time"
+  },
+  {
+    "journal": "yeast235-control-xsa-build-gpvh5hug.jsonl",
+    "stage": "write",
+    "returncode": 0,
+    "wall_seconds": 23.630103953066282,
+    "peak_rss_kib": 669696,
+    "log": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-control-xsa-build-gpvh5hug.write.log",
+    "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-control-xsa-build-gpvh5hug.write.time"
+  },
+  {
+    "journal": "yeast235-control-xsa-build-gpvh5hug.jsonl",
+    "stage": "validate",
+    "returncode": 0,
+    "wall_seconds": 7.172911250963807,
+    "peak_rss_kib": 2048,
+    "log": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-control-xsa-build-gpvh5hug.validate.log",
+    "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-control-xsa-build-gpvh5hug.validate.time"
+  },
+  {
+    "journal": "yeast235-stream-xsa-build-2a91j_w3.jsonl",
+    "stage": "parse",
+    "returncode": 0,
+    "wall_seconds": 132.48733538400847,
+    "peak_rss_kib": 938976,
+    "log": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-stream-xsa-build-2a91j_w3.parse.log",
+    "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-stream-xsa-build-2a91j_w3.parse.time"
+  },
+  {
+    "journal": "yeast235-stream-xsa-build-2a91j_w3.jsonl",
+    "stage": "prepare-agc",
+    "returncode": 0,
+    "wall_seconds": 132.43642654200085,
+    "peak_rss_kib": 277256,
+    "log": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-stream-xsa-build-2a91j_w3.prepare-agc.log",
+    "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-stream-xsa-build-2a91j_w3.prepare-agc.time"
+  },
+  {
+    "journal": "yeast235-stream-xsa-build-2a91j_w3.jsonl",
+    "stage": "parse-l2",
+    "returncode": 0,
+    "wall_seconds": 3.769231971935369,
+    "peak_rss_kib": 261880,
+    "log": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-stream-xsa-build-2a91j_w3.parse-l2.log",
+    "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-stream-xsa-build-2a91j_w3.parse-l2.time"
+  },
+  {
+    "journal": "yeast235-stream-xsa-build-2a91j_w3.jsonl",
+    "stage": "rpfbwt",
+    "returncode": 0,
+    "wall_seconds": 587.3814807349117,
+    "peak_rss_kib": 8824816,
+    "log": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-stream-xsa-build-2a91j_w3.rpfbwt.log",
+    "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-stream-xsa-build-2a91j_w3.rpfbwt.time"
+  },
+  {
+    "journal": "yeast235-stream-xsa-build-2a91j_w3.jsonl",
+    "stage": "endpoints",
+    "returncode": 0,
+    "wall_seconds": 90.77259209100157,
+    "peak_rss_kib": 7104932,
+    "log": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-stream-xsa-build-2a91j_w3.endpoints.log",
+    "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-stream-xsa-build-2a91j_w3.endpoints.time"
+  },
+  {
+    "journal": "yeast235-stream-xsa-build-2a91j_w3.jsonl",
+    "stage": "slim",
+    "returncode": 0,
+    "wall_seconds": 762.8990235439269,
+    "peak_rss_kib": 3778512,
+    "log": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-stream-xsa-build-2a91j_w3.slim.log",
+    "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-stream-xsa-build-2a91j_w3.slim.time"
+  },
+  {
+    "journal": "yeast235-stream-xsa-build-2a91j_w3.jsonl",
+    "stage": "sweep",
+    "returncode": 0,
+    "wall_seconds": 13.095634212950245,
+    "peak_rss_kib": 6144,
+    "log": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-stream-xsa-build-2a91j_w3.sweep.log",
+    "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-stream-xsa-build-2a91j_w3.sweep.time"
+  },
+  {
+    "journal": "yeast235-stream-xsa-build-2a91j_w3.jsonl",
+    "stage": "verify-text-sample",
+    "returncode": 0,
+    "wall_seconds": 22.75046969403047,
+    "peak_rss_kib": 57344,
+    "log": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-stream-xsa-build-2a91j_w3.verify-text-sample.log",
+    "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-stream-xsa-build-2a91j_w3.verify-text-sample.time"
+  },
+  {
+    "journal": "yeast235-stream-xsa-build-2a91j_w3.jsonl",
+    "stage": "write",
+    "returncode": 0,
+    "wall_seconds": 20.84794838295784,
+    "peak_rss_kib": 669696,
+    "log": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-stream-xsa-build-2a91j_w3.write.log",
+    "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-stream-xsa-build-2a91j_w3.write.time"
+  },
+  {
+    "journal": "yeast235-stream-xsa-build-2a91j_w3.jsonl",
+    "stage": "validate",
+    "returncode": 0,
+    "wall_seconds": 6.528720229980536,
+    "peak_rss_kib": 2048,
+    "log": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-stream-xsa-build-2a91j_w3.validate.log",
+    "timing": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/yeast235-stream-xsa-build-2a91j_w3.validate.time"
+  }
+]

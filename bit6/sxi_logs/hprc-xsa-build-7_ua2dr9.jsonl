@@ -1,0 +1,1 @@
+{"stage": "prepare-agc", "command": ["/home/erikg/sxgc/tools-built/agc2flat", "/home/erikg/hprcv2/HPRC_r2_assemblies_0.6.1.agc", "--revlines", "--upper", "--sep", "1e", "-o", "/home/erikg/sxgc-466/A/xsa-build-7_ua2dr9/collection.txt"], "work": "/home/erikg/sxgc-466/A/xsa-build-7_ua2dr9", "start": 1790594118.2163146}

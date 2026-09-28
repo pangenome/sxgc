@@ -1,0 +1,9 @@
+[
+  "agc2flat/src/main.rs",
+  "xsa/src/build.rs",
+  "bit6/sxi_pipeline.py",
+  "bit6/sxi_text_audit.cpp",
+  "bit6/SXI_BUILD.md",
+  "bit6/test_sxi_fifo.py",
+  "bit6/test_sxi_stream.py"
+]

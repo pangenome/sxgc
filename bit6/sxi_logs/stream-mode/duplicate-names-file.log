@@ -1,0 +1,2 @@
+xsa build: work=/tmp/sxi-stream/battery-final-source/xsa-build-jbkyi3sb log=/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/duplicate-names-file-xsa-build-jbkyi3sb.jsonl
+{"sxi": "/tmp/sxi-stream/battery-final-source/duplicate-names-file.sxi", "chi": 13553, "work": "/tmp/sxi-stream/battery-final-source/xsa-build-jbkyi3sb", "log": "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/duplicate-names-file-xsa-build-jbkyi3sb.jsonl"}

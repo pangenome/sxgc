@@ -14,7 +14,8 @@ FASTA (wrapped lines allowed) and FASTQ (four-line records) extract sequences
 verbatim in input order, with 0x1E between records and terminally.
 Supply already oriented sequences; embedded 0x1E fails during input preparation.
 Record identifiers populate the SXI names member. Malformed records fail closed.
-AGC uses agc2flat --revlines --upper --sep 1e, materialized beside its source.
+AGC streams agc2flat --stdout --revlines --upper --sep 1e through one FIFO.
+--materialize retains the legacy AGC text-file path.
 Stages: PFP (w1=10,p1=100; w2=5,p2=11), endpoint-tap rpfbwt,
 slim streaming aggregates, streamed chi sweep/gate, checked SXI publication.
 Scratch must share the source filesystem. Timings and peak RSS are logged.
@@ -57,6 +58,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
                     .ok_or_else(|| format!("{flag} requires a value"))?;
                 extra.extend([flag.clone(), value.clone()]);
             }
+            "--materialize" => extra.push(flag.clone()),
             "--verbose" => verbose = true,
             _ => return Err(format!("unknown option {flag}")),
         }

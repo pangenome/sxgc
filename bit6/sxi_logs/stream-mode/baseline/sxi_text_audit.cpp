@@ -1,0 +1,78 @@
+// Independent direct-text checks of sampled sweep witnesses. No text SA/BWT.
+#include "sxi_format.hpp"
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <map>
+#include <iostream>
+using namespace sxi;
+struct Text {
+    int fd; U bytes;
+    explicit Text(const char* path){fd=open(path,O_RDONLY);check(fd>=0,"audit text open");struct stat st{};check(!fstat(fd,&st)&&st.st_size>0,"audit text stat");bytes=st.st_size;}
+    ~Text(){close(fd);}
+    void at(U offset,unsigned char* dst,size_t length)const{
+        while(length){ssize_t got=pread(fd,dst,length,offset);check(got>0,"audit text read");offset+=got;dst+=got;length-=got;}
+    }
+    unsigned char byte(U offset)const{unsigned char c;at(offset,&c,1);return c;}
+};
+// Separate bounded streams: no mmap/address-space growth with corpus size.
+struct Stream {
+    std::vector<char> buffer;std::ifstream in;
+    Stream(const char* path,U offset):buffer(1<<20){in.rdbuf()->pubsetbuf(buffer.data(),buffer.size());in.open(path,std::ios::binary);check(bool(in),"audit stream open");in.seekg(offset);}
+    U next(unsigned bytes=8){return integer(in,bytes);}
+};
+int main(int argc,char**argv){try{
+    check(argc==6,"usage: sxi_text_audit TEXT RI4 AGG CHI N");
+    U requested=std::stoull(argv[5]);check(requested>0&&requested<=100000,"sample N must be 1..100000");
+    Text text(argv[1]);std::ifstream ri(argv[2],std::ios::binary),agg(argv[3],std::ios::binary);
+    check(bool(ri)&&bool(agg),"audit index open");U ribytes=size(ri),aggbytes=size(agg);
+    check(ribytes>=2080&&integer(ri)==0x0000000452585349ULL,"audit ri4 header");
+    U n=integer(ri);integer(ri);U r=integer(ri);check(n==text.bytes&&r<=(UINT64_MAX-2080)/32&&ribytes>=2080+5*r,"audit dimensions");
+    check(aggbytes==12+32*r&&integer(agg,4)==0x31415243&&integer(agg)==r,"audit agg dimensions");
+    Stream chars(argv[2],2080);bool rs=false,nl=false;
+    for(U i=0;i<r;i++){U c=chars.next(1);rs|=c==30;nl|=c==10;}
+    chars.in.clear();chars.in.seekg(2080);
+    Stream lcps(argv[3],12),heads(argv[3],12+8*r),tails(argv[3],12+16*r),interiors(argv[3],12+24*r);
+    check(rs||!nl,"text audit currently requires cyclic corpus convention");
+    std::ifstream cf(argv[4],std::ios::binary);check(bool(cf),"audit chi open");U sizechi=size(cf);check(sizechi%8==0,"audit chi size");U count=sizechi/8,take=std::min(count,requested);
+    std::map<U,bool> samples;
+    // Stratified deterministic witnesses across the complete emission stream.
+    for(U i=0;i<take;i++){cf.seekg((i*(count/take)+(i*(count%take))/take)*8);U v=integer(cf);check(v<n,"audit witness range");check(samples.emplace(v,false).second,"audit duplicate sample");}
+    struct Candidate {int64_t len=-1;U pos=0,other=0,lcp=0;bool active=false;int symbol=0,other_symbol=0;};
+    std::array<Candidate,128> candidates{};U comparisons=0,verified=0,emitted=0;
+    auto witness=[&](U pos){check(pos<n,"audit endpoint range");return pos? n-pos:0;};
+    std::array<unsigned char,65536> left{},right{};
+    auto emit=[&](const Candidate& c){
+        ++emitted;U w=witness(c.pos);auto found=samples.find(w);if(found==samples.end())return;
+        check(!found->second,"audit repeated sampled witness");
+        check(c.other<n&&c.lcp<=n,"audit context range");
+        U a=c.pos,b=c.other;
+        check(text.byte((a+n-1)%n)==c.symbol&&text.byte((b+n-1)%n)==c.other_symbol,"audit witness symbol FAIL");
+        check(text.byte((a+n-1)%n)!=text.byte((b+n-1)%n),"audit right-context distinctness FAIL");
+        for(U j=0;j<c.lcp;){
+            U x=(a+j)%n,y=(b+j)%n;
+            size_t length=std::min({U(left.size()),c.lcp-j,n-x,n-y});
+            text.at(x,left.data(),length);text.at(y,right.data(),length);comparisons+=length;
+            check(!memcmp(left.data(),right.data(),length),"audit shared context FAIL");j+=length;
+        }
+        if(c.lcp<n){++comparisons;check(text.byte((a+c.lcp)%n)!=text.byte((b+c.lcp)%n),"audit LCP maximality FAIL");}
+        found->second=true;++verified;
+    };
+    int prev=-1;U prevtail=0,interior=UINT64_MAX;int64_t m=INT64_MAX;
+    for(U i=0;i<r;i++){
+        U lcp=lcps.next(),head=heads.next(),tail=tails.next(),within=interiors.next();
+        int c=chars.next(1);check(c<128,"audit alphabet");
+        if(i){int64_t mm=std::min(m,interior==UINT64_MAX?INT64_MAX:int64_t(interior));
+            if(c!=prev){int64_t m3=std::min(mm,int64_t(lcp));
+                for(int ch=1;ch<128;ch++)if(m3<candidates[ch].len){if(candidates[ch].active)emit(candidates[ch]);candidates[ch].len=m3;candidates[ch].active=false;}
+                if(int64_t(lcp)>candidates[prev].len)candidates[prev]={int64_t(lcp),prevtail,head,lcp,true,prev,c};
+                if(int64_t(lcp)>candidates[c].len)candidates[c]={int64_t(lcp),head,prevtail,lcp,true,c,prev};
+                m=INT64_MAX;
+            }else m=std::min(mm,int64_t(lcp));
+        }
+        prev=c;prevtail=tail;interior=within;
+    }
+    for(int c=1;c<128;c++)if(candidates[c].active)emit(candidates[c]);
+    check(emitted==count&&verified==take,"audit sampled witness missing/count mismatch");
+    std::cout<<"TEXT_SAMPLE_PASS requested="<<requested<<" verified="<<verified<<" chi="<<count<<" compared_bytes="<<comparisons<<"\n";
+}catch(const std::exception& e){std::cerr<<"TEXT_SAMPLE_FAIL "<<e.what()<<"\n";return 1;}}

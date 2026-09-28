@@ -8,6 +8,8 @@ FASTA/FASTQ extract already oriented sequences verbatim, separated and terminate
 Scratch defaults beside the input, on the same filesystem; retained for audit.
 """
 import argparse
+import errno
+import signal
 import json
 import os
 import pathlib
@@ -21,6 +23,81 @@ import tempfile
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+def stream_parse(fifo, producer, consumer, env, logs, label, record, verbose=False):
+    """One producer owns the only FIFO writer; reap both children on every exit."""
+    children, handles = [], []
+    writer = None
+    os.mkfifo(fifo, 0o600)
+    def interrupted(*_):
+        raise KeyboardInterrupt
+    old_term = signal.signal(signal.SIGTERM, interrupted)
+    def start(stage, command, output=None):
+        logfile = logs / (label + '.' + stage + '.log')
+        timing = logs / (label + '.' + stage + '.time')
+        log = logfile.open('wb'); handles.append(log)
+        command = list(map(str, command))
+        record(dict(stage=stage, command=command, work=str(fifo.parent), start=time.time()))
+        if verbose:
+            print(stage + ': ' + shlex.join(command), file=sys.stderr, flush=True)
+        proc = subprocess.Popen(['/usr/bin/time', '-v', '-o', str(timing), *command],
+                                stdout=log if output is None else output, stderr=log,
+                                env=env, start_new_session=True)
+        children.append((stage, proc, logfile, timing, time.monotonic()))
+        return proc
+    try:
+        reader = start('parse', consumer)
+        deadline = time.monotonic() + 30
+        while writer is None:
+            if reader.poll() is not None:
+                raise RuntimeError(f'parse failed ({reader.returncode}) before opening AGC FIFO')
+            try:
+                writer = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
+            except OSError as error:
+                if error.errno != errno.ENXIO:
+                    raise
+                if time.monotonic() >= deadline:
+                    raise RuntimeError('parse did not open AGC FIFO within 30 seconds')
+                time.sleep(.05)
+        os.set_blocking(writer, True)
+        source = start('prepare-agc', producer, writer)
+        os.close(writer); writer = None
+        while True:
+            src, dst = source.poll(), reader.poll()
+            if src is not None and src != 0:
+                raise RuntimeError(f'prepare-agc stream failed ({src}); see {children[1][2]}')
+            if dst is not None and dst != 0:
+                raise RuntimeError(f'parse stream failed ({dst}); see {children[0][2]}')
+            if src is not None and dst is not None:
+                break
+            time.sleep(.05)
+    finally:
+        try:
+            if writer is not None:
+                os.close(writer)
+            for _, proc, _, _, _ in children:
+                # Signal only groups created here, including time's children.
+                try:
+                    os.killpg(proc.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+            for _, proc, _, _, _ in children:
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                    proc.wait()
+        finally:
+            for log in handles:
+                log.close()
+            fifo.unlink(missing_ok=True)
+            signal.signal(signal.SIGTERM, old_term)
+        # Logging failures must not leave a FIFO or live stream behind.
+        for stage, proc, logfile, timing, begin in children:
+            measurement = timing.read_text() if timing.exists() else ''
+            rss = re.search(r'Maximum resident set size \(kbytes\): (\d+)', measurement)
+            record(dict(stage=stage, returncode=proc.returncode, wall_seconds=time.monotonic()-begin,
+                        peak_rss_kib=int(rss[1]) if rss else None, log=str(logfile), timing=str(timing)))
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
@@ -36,6 +113,7 @@ def main():
     p.add_argument('--verify-text-sample', type=int, default=0)
     p.add_argument('--expect-heads', help='acceptance oracle only; checked after fresh construction')
     p.add_argument('--expect-ri4', help='acceptance oracle only; exact runs and packed-tail byte gate')
+    p.add_argument('--materialize', action='store_true', help='legacy AGC text-file preparation')
     p.add_argument('--verbose', action='store_true')
     p.add_argument('--xsa', default=str(ROOT / 'xsa/target/release/xsa'))
     a = p.parse_args()
@@ -43,6 +121,8 @@ def main():
         p.error('--verify-text-sample must be 0..100000')
     if not 1 <= a.threads <= 64:
         p.error('--threads must be 1..64')
+    if a.materialize and not a.agc:
+        p.error('--materialize requires --agc')
     source_path = pathlib.Path(a.text or a.agc or a.fasta or a.fastq).absolute()
     out = pathlib.Path(a.output).absolute()
     if os.path.lexists(out):
@@ -71,7 +151,7 @@ def main():
     label = out.stem + '-' + work.name
     journal = logs / (label + '.jsonl')
     env = dict(os.environ, OMP_NUM_THREADS=str(a.threads), TMPDIR=str(work))
-    # Sequential children; conservative address-space ceiling also bounds RSS.
+    # Children inherit the ceiling; only the AGC producer/first parse overlap.
     _, hard_limit = resource.getrlimit(resource.RLIMIT_AS)
     limit = 149_000_000_000 if hard_limit == resource.RLIM_INFINITY else min(hard_limit, 149_000_000_000)
     resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
@@ -120,24 +200,39 @@ def main():
         record(dict(stage=stage, returncode=0, records=records, collection_bytes=size,
                     wall_seconds=time.monotonic()-begin,
                     peak_rss_kib=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss))
+    prefix = work / 'parse'
+    streaming = bool(a.agc and not a.materialize)
     if a.agc:
         text = work / 'collection.txt'
-        # The committed streamer emits the names sidecar beside this -o path.
-        run('prepare-agc', [agc, source_path, '--revlines', '--upper', '--sep', '1e', '-o', text])
         names = work / 'collection.txt.names.tsv'
-    with text.open('rb') as f:
-        # O(1) terminal-byte lookup for padding normalization; never scan or
-        # rewrite raw text. The caller owns the reserved-separator contract.
-        if not text.stat().st_size:
-            raise RuntimeError('empty input text')
-        f.seek(-1, 2)
-        terminal = f.read(1)[0]
-    prefix = work / 'parse'
-    run('parse', [pfp, '-t', text, '-o', prefix, '-w', 10, '-p', 100, '-j', a.threads, '--tmp-dir', work])
+        prepare = [agc, source_path, '--revlines', '--upper', '--sep', '1e', '-o', text]
+        if streaming:
+            fifo = work / 'collection.fifo'
+            parse = [pfp, '-t', fifo, '-o', prefix, '-w', 10, '-p', 100, '-j', a.threads, '--tmp-dir', work]
+            stream_parse(fifo, prepare + ['--stdout'], parse, env, logs, label, record, a.verbose)
+            # Same-pass names lengths include exactly one separator per record.
+            size = 0
+            with names.open() as f:
+                for line in f:
+                    _, start, length = line.rstrip('\n').rsplit('\t', 2)
+                    size += int(length) + 1
+            if not size:
+                raise RuntimeError('empty AGC stream')
+            terminal = 30
+        else:
+            run('prepare-agc', prepare)
+    if not streaming:
+        with text.open('rb') as f:
+            size = text.stat().st_size
+            if not size:
+                raise RuntimeError('empty input text')
+            f.seek(-1, 2)
+            terminal = f.read(1)[0]
+        run('parse', [pfp, '-t', text, '-o', prefix, '-w', 10, '-p', 100, '-j', a.threads, '--tmp-dir', work])
     run('parse-l2', [pfp, '-i', str(prefix)+'.parse', '-w', 5, '-p', 11, '-j', a.threads, '--tmp-dir', work])
     # Upstream's rdbuf merge sets failbit on an empty chunk. Tiny parses can
     # create such chunks; one chunk avoids this without changing .ssa code.
-    chunks = 1 if text.stat().st_size < 1_000_000 else 50
+    chunks = 1 if size < 1_000_000 else 50
     run('rpfbwt', [rpf, '--l1-prefix', prefix, '--w1', 10, '--w2', 5, '--threads', a.threads, '--chunks', chunks, '--tmp-dir', work])
     ri4, heads, agg, chi = [work / ('fresh.' + ext) for ext in ('ri4', 'head_sa', 'agg', 'sA')]
     run('endpoints', [tools/'rpfbwt_endpoints', prefix, ri4, heads, f'{terminal:02x}'])
@@ -160,7 +255,10 @@ def main():
     if a.expect_chi is not None and count != a.expect_chi:
         raise RuntimeError(f'chi gate mismatch: {count} != {a.expect_chi}')
     if a.verify_text_sample:
-        run('verify-text-sample', [tools/'sxi_text_audit', text, ri4, agg, chi, a.verify_text_sample])
+        audit = [tools/'sxi_text_audit', text, ri4, agg, chi, a.verify_text_sample]
+        if a.agc:
+            audit += ['--agc', source_path, '--names', names, '--agc2flat', agc]
+        run('verify-text-sample', audit)
     # Writer validates range, uniqueness, endpoint consistency and checksums.
     # Write on the destination filesystem, validate, then publish no-clobber.
     out.parent.mkdir(parents=True, exist_ok=True)

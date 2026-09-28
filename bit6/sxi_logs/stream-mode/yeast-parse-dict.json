@@ -1,0 +1,12 @@
+[
+  {
+    "member": "parse",
+    "bytes": 136535136,
+    "byte_equal": true
+  },
+  {
+    "member": "dict",
+    "bytes": 513394300,
+    "byte_equal": true
+  }
+]

@@ -1,0 +1,1 @@
+["/tmp/sxi-stream/xsa-target/release/xsa", "build", "--agc", "/home/erikg/yeast/yeast235.agc", "-o", "/tmp/sxi-stream/yeast/yeast235-stream.sxi", "--scratch", "/tmp/sxi-stream/yeast", "--log-dir", "/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode", "--threads", "8", "--verify-text-sample", "32", "--verbose"]

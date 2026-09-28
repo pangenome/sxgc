@@ -1,0 +1,20 @@
+{
+  "no_staged_files": true,
+  "no_commits": true,
+  "protected_component_hashes_unchanged": true,
+  "yeast_builds": [
+    {
+      "build": "yeast235-stream",
+      "returncode": 0,
+      "wall_seconds": 1641.586906671524,
+      "tree_peak_rss_kib": 8852004
+    },
+    {
+      "build": "yeast235-control",
+      "returncode": 0,
+      "wall_seconds": 1623.6170222759247,
+      "tree_peak_rss_kib": 8851200
+    }
+  ],
+  "peak_stage_rss_kib": 8826524
+}

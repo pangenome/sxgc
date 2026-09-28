@@ -1,0 +1,55 @@
+[2026-09-28 11:40:17.777] [info] Current Configuration:
+; PFP++
+
+; Text file to parse.
+text="/tmp/sxi-stream/battery-final-source/xsa-build-3jgb7ipf/collection.fifo"
+
+; Output prefix.
+out-prefix="/tmp/sxi-stream/battery-final-source/xsa-build-3jgb7ipf/parse"
+
+; Sliding window size.
+window-size=10
+
+; Modulo used during parsing.
+modulo=100
+
+; Number of threads.
+threads=2
+
+; Temporary files directory.
+tmp-dir="/tmp/sxi-stream/battery-final-source/xsa-build-3jgb7ipf"
+
+; Also output compressed the dictionary.
+compress-dictionary=false
+
+; Use reference parse to avoid re-parsing.
+use-vcf-acceleration=false
+
+; Print out csv containing stats.
+print-statistics=false
+
+; Output count for each dictionary phrase.
+output-occurrences=false
+
+; Output sai array.
+output-sai=false
+
+; Output last array.
+output-last=false
+
+; Convert all non ACGT characters from a VCF or FASTA file to N.
+acgt-only=false
+
+; Verbose output.
+verbose=false
+
+; Version number.
+version=false
+
+[2026-09-28 11:40:17.823] [info] Parsing /tmp/sxi-stream/battery-final-source/xsa-build-3jgb7ipf/collection.fifo
+[2026-09-28 11:40:17.832] [info] Main parser: Replacing hash values with ranks.
+[2026-09-28 11:40:17.833] [info] Main parser: writing dictionary on disk NOT COMPRESSED
+[2026-09-28 11:40:17.833] [info] No properties requested.
+[2026-09-28 11:40:17.833] [info] Main parser: closed
+[2026-09-28 11:40:17.833] [info] Parser Text -	Parse size: 1961	Dic Size: 1961 Dic Total Length: 219614
+[Disk Write (bytes): 245108]

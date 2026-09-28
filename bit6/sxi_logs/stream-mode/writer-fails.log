@@ -1,0 +1,3 @@
+xsa build: work=/tmp/sxi-stream/battery-final-source/xsa-build-eabp0cnn log=/tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/writer-fails-xsa-build-eabp0cnn.jsonl
+xsa build: prepare-agc stream failed (1); see /tmp/sxgc-laneV/bit6/sxi_logs/stream-mode/writer-fails-xsa-build-eabp0cnn.prepare-agc.log; no final SXI published
+xsa: error: build: pipeline failed: exit status: 1

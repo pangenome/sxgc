@@ -36,9 +36,11 @@ requires installing the script/tools and setting these paths.
 
 Exact stages:
 
-1. Prepare the input. AGC: committed `agc2flat --revlines --upper --sep 1e -o SCRATCH/collection.txt`.
-   It streams one reversed contig per 0x1E-terminated record and writes `collection.txt.names.tsv`.
-   The text is materialized on the same filesystem as the archive.
+1. Prepare the input. AGC defaults to `agc2flat --stdout --revlines --upper --sep 1e
+   -o SCRATCH/collection.txt`. Its stdout feeds `collection.fifo`, which PFP reads
+   directly. Only `collection.txt.names.tsv` is created: **no collection text file**.
+   The sidecar is computed from actual decompressed lengths during that same pass.
+   `xsa build --agc ARCHIVE --materialize` retains the legacy text-file path.
    FASTA/FASTQ: stream extracted sequences into the same `collection.txt` path,
    joining wrapped FASTA lines and separating and terminating every record with 0x1E.
    Both then enter exactly the same stages as `--text`.
@@ -62,8 +64,8 @@ Exact stages:
 
 Each subprocess has its own `/usr/bin/time -v` file and stage log under
 `bit6/sxi_logs` (override `--log-dir`). The JSONL journal records argv, return
-code, wall seconds, and stage peak RSS. Stages run sequentially with a 149 GB
-address-space ceiling. Scratch is intentionally retained for independent
+code, wall seconds, and stage peak RSS. Stages run sequentially except for the AGC streamer and first PFP parse, which run together.
+The pipeline respects a lower inherited hard address-space ceiling; otherwise it uses 149 GB. Scratch is intentionally retained for independent
 review. Failed stages or gates never publish the requested output path.
 FASTA/FASTQ preparation runs in the Python process, recording elapsed time and
 process peak RSS in the journal; each completed record logs its identifier,
@@ -184,7 +186,8 @@ producer, adapter and sweep are unchanged. See [SXI_QUERY.md](SXI_QUERY.md).
 sweep and before publication. It selects up to N evenly spaced emitted chi
 witnesses, replays compressed sweep candidates, and compares their shared
 context, exact LCP endpoint, and distinct following characters directly
-against the materialized scratch text. The reversed/cyclic coordinate map
+against source bytes. AGC builds fetch these bytes directly from the archive; other
+input modes use their existing text input. The reversed/cyclic coordinate map
 is `(n - SA) % n`. No dense SA, inverse SA or BWT is constructed.
 
 The audit logs `TEXT_SAMPLE_PASS requested=... verified=... chi=...` or
@@ -194,3 +197,55 @@ the total sampled context lengths. Neither text nor aggregates are mapped
 or expanded; memory is independent of corpus size. This is a sampled witness-grounding gate, not a proof of
 complete chi-set equality. Legacy newline multi-string convention fails
 loudly if this optional cyclic audit is requested.
+
+## AGC streaming and archive audit
+
+The first parse uses one private FIFO (mode 0600) in the new build directory.
+The pipeline starts the PFP reader, then opens **one** writer descriptor and
+passes it as stdout to **one** agc2flat process. The parent closes its copy
+immediately after spawning the producer. There is no second writer, tee,
+retry producer, keeper descriptor, or text spool. This discipline matters:
+two producers writing one FIFO corrupt the byte stream. The reader-open
+handshake times out after 30 seconds; data transfer has no fixed time limit.
+Both exit statuses must succeed before the next stage can start. A broken
+pipe or failed child aborts the build and prevents publication. On success,
+failure, SIGINT, or SIGTERM, the pipeline reaps its own process groups and
+unlinks the FIFO; it retains parse artifacts, names, and logs for review.
+SIGKILL or host failure cannot run cleanup; any leftover FIFO is confined to
+that unique failed scratch directory and is never reused by a later build.
+
+For AGC, `--verify-text-sample N` starts a persistent `agc2flat --serve-ranges
+NAMES --revlines --upper --sep 1e` reader of the original archive. It does not
+open the `collection.txt` argument. The service checks the names rows against
+archive sample/contig order (including repeated contig names across samples),
+validates their mirrored offsets, and maps stream offsets to reversed contig
+ranges using `get_contig_range`. Separator positions return 0x1E. A request
+may cross any number of record boundaries. The service sends an initial
+little-endian u64 collection length, accepts pairs of little-endian u64
+(offset, length), and returns exactly length bytes (at most 64 KiB per request).
+Clean request EOF ends the service; malformed requests, short reads, archive
+errors, or nonzero service exit fail the audit before publication.
+
+The audit retains two 64 KiB range buffers, plus the existing compressed
+streams and O(N + alphabet) witness state. The range service retains O(record
+count) name/coordinate metadata and the AGC decoder's segment working set;
+it does not decompress or scan the whole archive for audit. It does not
+construct an SA, BWT, or LF walk. Even `--materialize` AGC builds audit the
+archive, so both input paths exercise the same independent witness check.
+
+Reproduction and evidence (isolated tools, no edits to running build trees):
+
+```sh
+python3 bit6/test_sxi_fifo.py
+python3 bit6/test_sxi_stream.py --work /tmp/new-stream-battery \
+  --xsa /tmp/sxi-stream/xsa-target/release/xsa --tools /tmp/sxi-stream/tools \
+  --log-dir bit6/sxi_logs/stream-mode
+python3 bit6/sxi_logs/stream-mode/run_regressions.py
+python3 bit6/sxi_logs/stream-mode/run_yeast.py
+```
+
+The full yeast script runs stream and fresh file control sequentially, samples
+32 archive witnesses in each, checks absence/cleanup of materialized text/FIFO
+as applicable, and compares all five core members byte for byte. It records
+process-tree peak RSS and enforces a gate below 20 GB. Evidence lives in
+`sxi_logs/stream-mode/`; scripts use fresh output directories on a rerun.

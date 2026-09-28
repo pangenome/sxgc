@@ -1787,3 +1787,15 @@ mask + features); pointer-attention only if ablation demands it.
 ## The streaming lane (a0627df9) is implementing it; 466 fires STREAMED behind its
 ## gates. The four preflight lessons from the killed run remain valid (durable tools
 ## path, same-filesystem rule, the banked agc2flat --sep, interlock amendment).
+
+## STREAMED PIPELINE LANDED (supervisor-verified from main tree): xsa build --agc no
+## longer materializes - archive -> FIFO -> pfp++ (single writer, broken-pipe/SIGTERM
+## lifecycle), names emitted same-pass, --verify-text-sample audit fetches ranges FROM
+## THE ARCHIVE (bounded range access; corruption blocks publication); legacy --materialize
+## kept as a forensic flag. GATES: full yeast235 streamed build vs control - ALL FIVE
+## core members + parse + dict byte-identical, chi=85,404,336 both, 32/32 archive
+## witnesses, no collection.txt created; battery member-equality/archive-range/corruption
+## gates pass from main tree; FIFO lifecycle gate; committed regressions green. Peak RSS
+## 9.06 GB at yeast. Interlock amendment re-applied to the banked pipeline (lane copy
+## predated it - caught at bank time). STANDING DIRECTIVE SATISFIED: the pipeline's
+## only O(n) object is the mandatory read, in flight.

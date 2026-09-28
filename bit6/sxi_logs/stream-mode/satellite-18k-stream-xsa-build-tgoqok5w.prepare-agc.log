@@ -1,0 +1,7 @@
+Loaded archive with 1 samples
+Sample names: ["satellite-18k"]
+[1/1] sample satellite-18k: streamed 18003 bytes, 3 contigs
+TOTAL 18003
+revlines collection: 18003 bytes, 3 strings
+text: /tmp/sxi-stream/battery-final-source/xsa-build-tgoqok5w/collection.txt
+names: /tmp/sxi-stream/battery-final-source/xsa-build-tgoqok5w/collection.txt.names.tsv

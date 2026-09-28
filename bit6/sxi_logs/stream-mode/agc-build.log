@@ -1,0 +1,73 @@
+   Compiling libc v0.2.189
+   Compiling version_check v0.9.5
+   Compiling proc-macro2 v1.0.107
+   Compiling crossbeam-utils v0.8.23
+   Compiling quote v1.0.47
+   Compiling find-msvc-tools v0.1.12
+   Compiling unicode-ident v1.0.26
+   Compiling shlex v2.0.1
+   Compiling cfg-if v1.0.5
+   Compiling crossbeam-epoch v0.9.21
+   Compiling pkg-config v0.3.34
+   Compiling zerocopy v0.8.57
+   Compiling crossbeam-deque v0.8.8
+   Compiling getrandom v0.3.4
+   Compiling typenum v1.20.1
+   Compiling serde_core v1.0.229
+   Compiling serde v1.0.229
+   Compiling once_cell v1.21.4
+   Compiling zstd-safe v7.3.0
+   Compiling rayon-core v1.13.0
+   Compiling allocator-api2 v0.2.21
+   Compiling anyhow v1.0.104
+   Compiling parking_lot_core v0.9.12
+   Compiling crc32fast v1.5.2
+   Compiling thiserror v1.0.69
+   Compiling simd-adler32 v0.3.10
+   Compiling scopeguard v1.2.0
+   Compiling either v1.18.0
+   Compiling smallvec v1.16.1
+   Compiling adler2 v2.0.1
+   Compiling byteorder v1.5.0
+   Compiling partition v0.1.2
+   Compiling cpufeatures v0.2.17
+   Compiling arbitrary-chunks v0.4.1
+   Compiling lock_api v0.4.14
+   Compiling generic-array v0.14.7
+   Compiling ahash v0.8.12
+   Compiling miniz_oxide v0.9.1
+   Compiling crossbeam-queue v0.3.14
+   Compiling crossbeam-channel v0.5.17
+   Compiling flate2 v1.1.10
+   Compiling syn v3.0.6
+   Compiling syn v2.0.119
+   Compiling crossbeam v0.8.5
+   Compiling jobserver v0.1.35
+   Compiling num_cpus v1.17.0
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling cc v1.4.6
+   Compiling digest v0.10.7
+   Compiling sha2 v0.10.9
+   Compiling rayon v1.12.0
+   Compiling zstd-sys v2.1.0+zstd.1.5.7
+   Compiling ragc-core v0.1.1 (https://github.com/ekg/ragc?rev=40e5cad11cab7d4df07a72d6b16d68c2d60b0742#40e5cad1)
+   Compiling thiserror-impl v1.0.69
+   Compiling serde_derive v1.0.229
+   Compiling rdst v0.20.14
+   Compiling hashbrown v0.14.5
+   Compiling dashmap v6.2.1
+   Compiling bincode v1.3.3
+   Compiling zstd v0.13.3
+   Compiling ragc-common v0.1.1 (https://github.com/ekg/ragc?rev=40e5cad11cab7d4df07a72d6b16d68c2d60b0742#40e5cad1)
+   Compiling agc2flat v0.1.0 (/tmp/sxgc-laneV/agc2flat)
+warning: unused import: `std::io::Write as _`
+   --> src/main.rs:333:17
+    |
+333 |             use std::io::Write as _;
+    |                 ^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `agc2flat` (bin "agc2flat") generated 1 warning (run `cargo fix --bin "agc2flat" -p agc2flat` to apply 1 suggestion)
+    Finished `release` profile [optimized] target(s) in 16.06s

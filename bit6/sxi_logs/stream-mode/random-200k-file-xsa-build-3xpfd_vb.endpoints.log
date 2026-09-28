@@ -1,0 +1,13 @@
+CYCLIC_SEAM_REPAIR terminal=0x1e predecessors_before_zero=2
+SLIM_PHASE dict-read wall=0.000 cumulative=0.048 peak_rss_kib=12288
+SLIM_PHASE dict-boundaries wall=0.002 cumulative=0.051 peak_rss_kib=12288
+SLIM_STRING_ENDS count=1 bytes=8 from_parse_dict=1 cyclic=1
+SLIM_PHASE parse+boundaries wall=0.000 cumulative=0.051 peak_rss_kib=12288
+SLIM_PHASE parse-fingerprints wall=0.000 cumulative=0.051 peak_rss_kib=12288
+SLIM_PHASE dict-fingerprints wall=0.001 cumulative=0.052 peak_rss_kib=12288
+SLIM_STRUCT n=200013 P=1961 D=221585 phrases=1961 parse_bytes=7848 bd_bytes=2526 bp_bytes=2526 dict_resident=0 dict_cache_per_thread=262144 no_SA_ISA_LCP_RMQ=1 no_M_b_bwt_w_wt=1
+CYCLIC_SEAM_LCE_POLICY max_probe_and_verification=5832 max(1000,bit_width(raw_n)^3)
+CYCLIC_SEAM_REPAIRED classes=1 rows=3 discovery_steps=2 limit=1000 phi_samples=150033
+SLIM_FP seam-parse tau=1 bytes=15704 queries=0 verified_symbols=0 hash_probes=0 mean_verified=0.000000000 max_verified=0
+SLIM_FP seam-dict tau=12 bytes=147728 queries=6 verified_symbols=10 hash_probes=0 mean_verified=1.666666667 max_verified=2
+ENDPOINT_PASS raw_n=200013 raw_r=150033 n=200003 k=1 r=150031 padding_rows=10 cyclic_seam_certified=0

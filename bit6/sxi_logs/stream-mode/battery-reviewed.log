@@ -1,0 +1,17 @@
+Loaded archive with 1 samples
+Sample names: ["random-2k"]
+{"fixture": "random-2k", "status": "PASS", "all_members_equal": true, "parse_dict_equal": true, "archive_ranges_equal": true}
+Loaded archive with 1 samples
+Sample names: ["random-20k"]
+{"fixture": "random-20k", "status": "PASS", "all_members_equal": true, "parse_dict_equal": true, "archive_ranges_equal": true}
+Loaded archive with 1 samples
+Sample names: ["random-200k"]
+{"fixture": "random-200k", "status": "PASS", "all_members_equal": true, "parse_dict_equal": true, "archive_ranges_equal": true}
+Loaded archive with 1 samples
+Sample names: ["repeated-600k"]
+{"fixture": "repeated-600k", "status": "PASS", "all_members_equal": true, "parse_dict_equal": true, "archive_ranges_equal": true}
+Loaded archive with 1 samples
+Sample names: ["satellite-18k"]
+{"fixture": "satellite-18k", "status": "PASS", "all_members_equal": true, "parse_dict_equal": true, "archive_ranges_equal": true}
+PASS corruption blocks publication; reader/writer failures unlink FIFO
+PASS duplicate names across samples, invalid/short ranges, invalid sidecar and materialize CLI guard

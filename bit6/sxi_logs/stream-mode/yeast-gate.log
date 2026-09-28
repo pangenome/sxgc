@@ -1,0 +1,3 @@
+{"build": "yeast235-stream", "returncode": 0, "wall_seconds": 1641.586906671524, "tree_peak_rss_kib": 8852004}
+{"build": "yeast235-control", "returncode": 0, "wall_seconds": 1623.6170222759247, "tree_peak_rss_kib": 8851200}
+PASS full yeast235 stream/control: all five core members byte-identical

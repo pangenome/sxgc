@@ -1,0 +1,23 @@
+	Command being timed: "/tmp/sxi-stream/tools/sxi_write --ri4 /tmp/sxi-stream/yeast/xsa-build-2a91j_w3/fresh.ri4 --heads /tmp/sxi-stream/yeast/xsa-build-2a91j_w3/fresh.head_sa --chi /tmp/sxi-stream/yeast/xsa-build-2a91j_w3/fresh.sA --output /tmp/sxi-stream/yeast/.xsa-publish-w6q288us/candidate.sxi --mode dna --orientation reversed --names /tmp/sxi-stream/yeast/xsa-build-2a91j_w3/collection.txt.names.tsv"
+	User time (seconds): 18.66
+	System time (seconds): 2.18
+	Percent of CPU this job got: 99%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:20.84
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 669696
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 167481
+	Voluntary context switches: 1
+	Involuntary context switches: 27
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 3524408
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

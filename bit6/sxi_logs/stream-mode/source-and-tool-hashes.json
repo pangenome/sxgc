@@ -1,0 +1,16 @@
+{
+  "agc2flat/src/main.rs": "f82b7292863dce8a8dcbef3bece33d5aa7aedd7e398b564e4cca2fe3a886941d",
+  "xsa/src/build.rs": "54e0afa9ce0a868402edf1383aa062e3d2a89c053ce6e289a0c46a8cb3f70ad5",
+  "bit6/sxi_pipeline.py": "d25875e30fa8396e36a172419eb2eb701ea8cfc242e1f8314ed947b00e6e2dee",
+  "bit6/sxi_text_audit.cpp": "0745f40b7f74e8b76f8c60a653fcc505170c80257ef4e217e1d182022f7272e7",
+  "bit6/SXI_BUILD.md": "0f82ee72832b5324c44b628b249a03bf706e3989be9ca2c25e25bb398b4054f6",
+  "bit6/test_sxi_fifo.py": "fbe7c0a02752c8743def93fd21b189fbbdf479b7778b8464b2d7fb26b49a4d8e",
+  "bit6/test_sxi_stream.py": "4f50837724b09dced84db920a9f8ccc2f15b09617673ebfb2d20c42ee77391d6",
+  "/tmp/sxi-stream/xsa-target/release/xsa": "95d1a9df3d32c8ea328ff4863b3b704870c3719b71a4d46225feb7ce6833aa3d",
+  "/tmp/sxi-stream/tools/slim_lce_test": "5b62eaf783e1b160fb70fd2525503d979e3662b9ce47b8fc602d1bf9736551a3",
+  "/tmp/sxi-stream/tools/rpfbwt_endpoints": "a091056caf027099214a0ede4eadd6031e727fb4889271d11d4f97e63724d310",
+  "/tmp/sxi-stream/tools/sxi_write": "d464087f1f94afa53658a14bded05a9c205db870439c1221c9478b61570ff012",
+  "/tmp/sxi-stream/tools/agc2flat": "9e11671331bed635f60f9ab53ad08cc8cabfd9ca50e0ec99640b047dbac57db0",
+  "/tmp/sxi-stream/tools/slim_dump": "a5e7831e440c4b0ff4d11ed6febcf68a1475be8b5b9b912315b4ea2bc7de3830",
+  "/tmp/sxi-stream/tools/sxi_text_audit": "c3b211e3b045d9206de4ed0330f0edc08735ac81add6e8dd8c1a6d6ad49039e8"
+}
