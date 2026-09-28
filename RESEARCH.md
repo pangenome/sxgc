@@ -1740,3 +1740,21 @@ mask + features); pointer-attention only if ablation demands it.
 ## ((2,2,2)->(16,8,8) battery) and PROVEN. The 3 skeleton statements
 ## (fam_forced_incompat, fam_oracle_witness, floor_theorem_shape) remain locked,
 ## awaiting exactly this theorem for assembly.
+
+## THE FIRST SPACE LOWER BOUND FOR A PATTERN-MATCHING CLASS - PROVEN (family-specific):
+## Sxgc.LowerBound.Fam.fam_floor_chi, kernel-checked, axioms {propext, Classical.choice,
+## Quot.sound}, explicit build rc=0, Main BIT 1B GATE GREEN. EVERY fixed-decoder index
+## answering locate-one on all (L/2+1)^k half-grid members with s-bit indexes satisfies
+## s + 1 >= chi * log2(n/chi) / 3   (chi in [2k, 3k-1] by chi_fam_bounds; n = k(L+1)).
+## Bridge (chi <= |emitted|) -> counting pigeonhole (fam_floor_half_grid, grid Nodup via
+## nodup_flatMap_of_disjoint, famText_inj_grid) -> chi-translation (floor_theorem_shape
+## as locked). The recon's ranked Attack 1 executed end-to-end in ~36h from plan to
+## kernel: witness-perturbation family + answer-function counting = the natural tier.
+## STATEMENT-LOCK EVENT (adjudication pending user): the third skeleton fam_oracle_witness
+## as originally locked is REFUTABLE (counterexample k=1,L=2,s=1 documented in its
+## docstring: the smallness must be concluded, not assumed) - the intended content is
+## proven as fam_floor_half_grid; fam_floor_chi does NOT depend on it; revision proposal
+## recorded (add the smallness hypothesis or replace conclusion with the inequality).
+## The floor is FAMILY-SPECIFIC; the general rung and the chi-vs-delta*log(n) linkage
+## remain the open frontier (recon: equivalence up to logs). Proof-engineering notes
+## retained (omega nonlinear-atom limits, typed Nat.succ_mul bridges, getElem transport).

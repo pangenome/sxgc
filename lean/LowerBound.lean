@@ -1938,11 +1938,81 @@ theorem fam_half_grid {k L : Nat} {ps : List Nat} (hL : 1 ≤ L)
   have := hhalf i hik
   omega
 
-/-- **Skeleton stub** — the family's member texts (marker-perturbation class):
-one text per assignment of half-grid marker positions. Size `(L/2 + 1)^k`,
-pairwise distinguishable at markers. The construction and the incompatibility
-argument (single-marker flip forces distinct locate-one answers) are the
-remaining work; the statement is locked to the shape the floor needs. -/
+/-- The distinguishing word for marker offset `p`: `a` run letters then the
+marker letter (`a ≤ p` in both texts, so the word always straddles a marker). -/
+def markerWord (i a : Nat) : List Nat :=
+  List.replicate a (runL i) ++ [markL i]
+
+theorem markerWord_ne_nil (i a : Nat) : markerWord i a ≠ [] := by
+  simp [markerWord]
+
+theorem markerWord_length (i a : Nat) : (markerWord i a).length = a + 1 := by
+  simp [markerWord]
+
+theorem markerWord_eq (i a : Nat) :
+    markerWord i a = List.replicate a (runL i) ++ [markL i] := rfl
+
+theorem markerWord_get_run {i a t : Nat} (ht : t < a) :
+    (markerWord i a)[t]'(by simp [markerWord_length]; omega) = runL i :=
+  (List.getElem_of_eq
+    (show markerWord i a = List.replicate a (runL i) ++ [markL i] from rfl)
+    (by simp [markerWord_length]; omega)).trans (app_rep_get_left _ ht)
+
+theorem markerWord_get_mark {i a : Nat} :
+    (markerWord i a)[a]'(by simp [markerWord_length]) = markL i :=
+  (List.getElem_of_eq
+    (show markerWord i a = List.replicate a (runL i) ++ [markL i] from rfl)
+    (by simp [markerWord_length])).trans (app_rep_get_last _)
+
+/-- A cover of `W' ++ [c]` ending at `x` pins the prefix's last letter:
+`T[x-1] = c`. -/
+theorem coversAt_last {T : Text} {W' : List Nat} {c x : Nat}
+    (h1 : 1 ≤ x) (hxle : x ≤ T.length)
+    (hc : coversAt (W' ++ [c]) x T = true) : T[x-1]'(by omega) = c := by
+  obtain ⟨u, hu⟩ := (coversAt_iff_suffix (W' ++ [c]) x T).mp hc
+  simp only [pref] at hu
+  rw [← List.append_assoc] at hu
+  have hlen : u.length + W'.length + 1 = x := by
+    have h := congrArg List.length hu
+    simp only [List.length_append, List.length_singleton, List.length_take,
+      Nat.min_eq_left hxle] at h
+    omega
+  have hsplit : T = (u ++ W' ++ [c]) ++ T.drop x :=
+    calc T = T.take x ++ T.drop x := (List.take_append_drop x T).symm
+      _ = (u ++ W' ++ [c]) ++ T.drop x := by rw [hu]
+  have hltT : x - 1 < T.length := by omega
+  have hlen2 : ((u ++ W' ++ [c]) ++ T.drop x).length = T.length := by
+    have h3 : ((u ++ W' ++ [c]) ++ T.drop x).length
+        = (u ++ W' ++ [c]).length + (T.drop x).length := List.length_append
+    have h4 : (T.drop x).length = T.length - x := List.length_drop
+    have h5 : (u ++ W' ++ [c]).length = x := by
+      simp only [List.length_append, List.length_singleton]; omega
+    rw [h3, h4, h5]; omega
+  have hstep1 : T[x-1]'hltT
+      = ((u ++ W' ++ [c]) ++ T.drop x)[x-1]'(by rw [hlen2]; omega) :=
+    List.getElem_of_eq hsplit hltT
+  have hltA : x - 1 < (u ++ W' ++ [c]).length := by
+    simp only [List.length_append, List.length_singleton]; omega
+  have hstep2 : ((u ++ W' ++ [c]) ++ T.drop x)[x-1]'(by rw [hlen2]; omega)
+      = (u ++ W' ++ [c])[x-1]'hltA := List.getElem_append_left hltA
+  have hfin : (u ++ W' ++ [c])[x-1]'hltA = c := by
+    have hle1 : (u ++ W').length ≤ x - 1 := by
+      simp only [List.length_append]; omega
+    have h2 : x - 1 - (u ++ W').length < [c].length := by
+      simp only [List.length_append, List.length_singleton]; omega
+    have h0 : x - 1 < ((u ++ W') ++ ([c] ++ ([] : List Nat))).length := by
+      simp only [List.length_append, List.length_singleton]; omega
+    exact (getElem_append_mid hle1 h2 h0).trans (getElem_singleton_idx h2)
+  calc T[x-1]'hltT
+      = ((u ++ W' ++ [c]) ++ T.drop x)[x-1]'(by rw [hlen2]; omega) := hstep1
+    _ = (u ++ W' ++ [c])[x-1]'hltA := hstep2
+    _ = c := hfin
+
+/-- **PROVEN (was skeleton)** — the family's member texts are pairwise
+answer-incompatible: a single marker offset difference forces every
+locate-one oracle to answer the shared marker word at two different
+positions (the marker letter occurs exactly once per text, at
+`i(L+1)+p+1`), so no single answer function is correct on both. -/
 theorem fam_forced_incompat {k L : Nat} {ps ps' : List Nat}
     (hL : 1 ≤ L)
     (hhalf : ∀ i, i < k → 2 * ps.getD i 0 ≤ L)
@@ -1950,31 +2020,535 @@ theorem fam_forced_incompat {k L : Nat} {ps ps' : List Nat}
     (hps : ∃ i, i < k ∧ ps.getD i 0 ≠ ps'.getD i 0)
     (f : Answer) : ¬ (CorrectLocateOne f (famText k L ps) ∧
                        CorrectLocateOne f (famText k L ps')) := by
-  sorry
+  obtain ⟨i, hik, hne⟩ := hps
+  have hpall : ∀ j, j < k → ps.getD j 0 ≤ L := fun j hj => by
+    have := hhalf j hj; omega
+  have hpall' : ∀ j, j < k → ps'.getD j 0 ≤ L := fun j hj => by
+    have := hhalf' j hj; omega
+  have hpL : ps.getD i 0 ≤ L := hpall i hik
+  have hpL' : ps'.getD i 0 ≤ L := hpall' i hik
+  obtain ⟨a, hap, hap'⟩ : ∃ a, a ≤ ps.getD i 0 ∧ a ≤ ps'.getD i 0 :=
+    ⟨min (ps.getD i 0) (ps'.getD i 0), Nat.min_le_left _ _, Nat.min_le_right _ _⟩
+  have hlen : (famText k L ps).length = k * (L + 1) := famText_length hpall
+  have hlen' : (famText k L ps').length = k * (L + 1) := famText_length hpall'
+  have hblk : (i + 1) * (L + 1) ≤ k * (L + 1) := Nat.mul_le_mul_right _ (by omega)
+  have hblkEq : (i + 1) * (L + 1) = i * (L + 1) + (L + 1) := Nat.succ_mul i (L + 1)
+  -- the marker word occurs in both texts, ending at their respective markers:
+  have hocc : occurs (markerWord i a) (famText k L ps) = true := by
+    rw [occurs_eq_true (markerWord i a) _ (markerWord_ne_nil i a)]
+    refine ⟨i * (L + 1) + ps.getD i 0 - a, ?_, ?_⟩
+    · rw [markerWord_length, hlen]
+      omega
+    · have hale : i * (L + 1) + ps.getD i 0 - a + (markerWord i a).length
+          ≤ (famText k L ps).length := by
+        rw [markerWord_length, hlen]
+        omega
+      have hletters : ∀ t, (ht : t < (markerWord i a).length) →
+          (famText k L ps)[i * (L + 1) + ps.getD i 0 - a + t]'(by omega)
+            = (markerWord i a)[t]'ht := by
+        intro t ht
+        by_cases hta : t < a
+        · have hpos : i * (L + 1) + ps.getD i 0 - a + t
+              < (famText k L ps).length := by
+            rw [hlen]; omega
+          have hdm := div_mod_unique (by omega : 0 < L + 1)
+            (by omega : ps.getD i 0 - a + t < L + 1)
+            (by omega : i * (L + 1) + (ps.getD i 0 - a + t)
+              = i * (L + 1) + ps.getD i 0 - a + t)
+          have hrun : (famText k L ps)[i * (L + 1) + ps.getD i 0 - a + t]'hpos
+              = runL i :=
+            (fam_run_iff hpall hpos).mpr ⟨hik, hdm.1.symm, by
+              rw [hdm.2]; omega⟩
+          rw [hrun, markerWord_get_run hta]
+        · have hta' : t = a := by
+            have ht2 : t < (markerWord i a).length := ht
+            rw [markerWord_length] at ht2
+            omega
+          have hpos : i * (L + 1) + ps.getD i 0 - a + t
+              < (famText k L ps).length := by
+            rw [hlen]; omega
+          have hmark : (famText k L ps)[i * (L + 1) + ps.getD i 0 - a + t]'hpos
+              = markL i :=
+            (fam_mark_iff hpall hpos).mpr ⟨hik, by omega⟩
+          rw [hmark]
+          exact ((getElem_idx_congr hta' ht).trans markerWord_get_mark).symm
+      exact window_of_letters hale hletters
+  have hocc' : occurs (markerWord i a) (famText k L ps') = true := by
+    rw [occurs_eq_true (markerWord i a) _ (markerWord_ne_nil i a)]
+    refine ⟨i * (L + 1) + ps'.getD i 0 - a, ?_, ?_⟩
+    · rw [markerWord_length, hlen']
+      omega
+    · have hale : i * (L + 1) + ps'.getD i 0 - a + (markerWord i a).length
+          ≤ (famText k L ps').length := by
+        rw [markerWord_length, hlen']
+        omega
+      have hletters : ∀ t, (ht : t < (markerWord i a).length) →
+          (famText k L ps')[i * (L + 1) + ps'.getD i 0 - a + t]'(by omega)
+            = (markerWord i a)[t]'ht := by
+        intro t ht
+        by_cases hta : t < a
+        · have hpos : i * (L + 1) + ps'.getD i 0 - a + t
+              < (famText k L ps').length := by
+            rw [hlen']; omega
+          have hdm := div_mod_unique (by omega : 0 < L + 1)
+            (by omega : ps'.getD i 0 - a + t < L + 1)
+            (by omega : i * (L + 1) + (ps'.getD i 0 - a + t)
+              = i * (L + 1) + ps'.getD i 0 - a + t)
+          have hrun : (famText k L ps')[i * (L + 1) + ps'.getD i 0 - a + t]'hpos
+              = runL i :=
+            (fam_run_iff hpall' hpos).mpr ⟨hik, hdm.1.symm, by
+              rw [hdm.2]; omega⟩
+          rw [hrun, markerWord_get_run hta]
+        · have hta' : t = a := by
+            have ht2 : t < (markerWord i a).length := ht
+            rw [markerWord_length] at ht2
+            omega
+          have hpos : i * (L + 1) + ps'.getD i 0 - a + t
+              < (famText k L ps').length := by
+            rw [hlen']; omega
+          have hmark : (famText k L ps')[i * (L + 1) + ps'.getD i 0 - a + t]'hpos
+              = markL i :=
+            (fam_mark_iff hpall' hpos).mpr ⟨hik, by omega⟩
+          rw [hmark]
+          exact ((getElem_idx_congr hta' ht).trans markerWord_get_mark).symm
+      exact window_of_letters hale hletters
+  -- the covers are unique per text (the marker letter occurs exactly once):
+  have huq : ∀ x, 1 ≤ x → x ≤ (famText k L ps).length →
+      coversAt (markerWord i a) x (famText k L ps) = true →
+      x = i * (L + 1) + ps.getD i 0 + 1 := by
+    intro x h1 hxle hcov
+    have hlast := coversAt_last h1 hxle hcov
+    have hlt : x - 1 < (famText k L ps).length := by omega
+    obtain ⟨-, hq⟩ := (fam_mark_iff hpall hlt).mp hlast
+    omega
+  have huq' : ∀ x, 1 ≤ x → x ≤ (famText k L ps').length →
+      coversAt (markerWord i a) x (famText k L ps') = true →
+      x = i * (L + 1) + ps'.getD i 0 + 1 := by
+    intro x h1 hxle hcov
+    have hlast := coversAt_last h1 hxle hcov
+    have hlt : x - 1 < (famText k L ps').length := by omega
+    obtain ⟨-, hq⟩ := (fam_mark_iff hpall' hlt).mp hlast
+    omega
+  have hne' : i * (L + 1) + ps.getD i 0 + 1 ≠ i * (L + 1) + ps'.getD i 0 + 1 := by
+    omega
+  rintro ⟨hf, hf'⟩
+  exact absurd hf' (incompat_of_forced f _ _ (markerWord i a) _ _ hocc hocc'
+    huq huq' hne' hf)
 
-/-- **Skeleton stub** — the family's witness size: with `χ = Θ(k)` members'
-requirements all distinct at markers, any correct locate-one oracle on all
-`(L/2 + 1)^k` members must emit distinct answers, so the counting lemma
-applies with `F.length = (L/2 + 1)^k`. -/
-theorem fam_oracle_witness {k L : Nat} (hL : 1 ≤ L)
-    (dec : Index → Answer) (s : Nat)
-    (hex : ∀ ps, (∀ i, i < k → 2 * ps.getD i 0 ≤ L) → ∃ D : Index,
-      space D ≤ s ∧ CorrectLocateOne (dec D) (famText k L ps)) :
-    False := by
-  sorry
+/-! ### The assignment grid: enumeration, soundness, completeness, Nodup -/
 
-/-- **Floor theorem shape (statement-locked)**: `family_counting` applied to
-the witness-perturbation family yields `s ≥ Ω(χ · log(n/χ))`. The hypotheses
-are exactly: the family bound (`chi_fam_bounds`, the remaining piece), the
-member count `(#assignments)^k`, and pairwise incompatibility. With
-`2^s ≥ (L/2 + 1)^k` and `χ ≤ 3k−1`, `n = k(L+1)`, this reads
-`s ≥ k log(L/2) = Ω(χ log(n/χ))` bits. -/
+theorem getD_tail (ps : List Nat) (i : Nat) :
+    ps.tail.getD i 0 = ps.getD (i + 1) 0 := by
+  cases ps with
+  | nil => simp [List.getD]
+  | cons p t =>
+    cases i with
+    | zero => simp [List.getD]
+    | succ i => simp [List.getD]
+
+theorem list_ext_getD : ∀ (l1 l2 : List Nat), l1.length = l2.length →
+    (∀ i, i < l1.length → l1.getD i 0 = l2.getD i 0) → l1 = l2 := by
+  intro l1
+  induction l1 with
+  | nil =>
+    intro l2 hlen _
+    cases l2 with
+    | nil => rfl
+    | cons p t => simp at hlen
+  | cons a t ih =>
+    intro l2 hlen hget
+    cases l2 with
+    | nil => simp at hlen
+    | cons b t' =>
+      have hhead : a = b := by
+        have := hget 0 (by simp)
+        simp only [List.getD] at this
+        exact this
+      have htail : t = t' := by
+        refine ih t' ?_ ?_
+        · simp only [List.length_cons] at hlen; omega
+        · intro i hi
+          have := hget (i + 1) (by simp only [List.length_cons]; omega)
+          simp only [List.getD] at this
+          exact this
+      rw [hhead, htail]
+
+/-- All length-`k` assignments of marker offsets `≤ R` (coordinate 0 = head). -/
+def grid : Nat → Nat → List (List Nat)
+  | 0, _ => [[]]
+  | k + 1, R => (grid k R).flatMap
+      (fun base => (List.range (R + 1)).map (fun v => v :: base))
+
+theorem length_flatMap_const : ∀ (l : List (List Nat))
+      (g : List Nat → List (List Nat)) (c : Nat),
+    (∀ b ∈ l, (g b).length = c) → (l.flatMap g).length = l.length * c := by
+  intro l
+  induction l with
+  | nil => intro g c _; simp
+  | cons a t ih =>
+    intro g c hg
+    rw [List.flatMap_cons, List.length_append,
+      ih g c (fun b hb => hg b (List.mem_cons_of_mem _ hb)),
+      hg a List.mem_cons_self, List.length_cons, Nat.add_mul]
+    omega
+
+theorem grid_length (k R : Nat) : (grid k R).length = (R + 1) ^ k := by
+  induction k with
+  | zero => simp [grid]
+  | succ k ih =>
+    rw [grid]
+    have hlen := length_flatMap_const (grid k R)
+      (fun base => (List.range (R + 1)).map (fun v => v :: base)) (R + 1)
+      (fun base _ => by rw [List.length_map, List.length_range])
+    rw [hlen, ih, Nat.pow_succ]
+
+theorem grid_len (k R : Nat) : ∀ base, base ∈ grid k R → base.length = k := by
+  induction k with
+  | zero =>
+    intro base hb
+    simp only [grid, List.mem_singleton] at hb
+    rw [hb]
+    rfl
+  | succ k ih =>
+    intro base hb
+    rw [grid, List.mem_flatMap] at hb
+    obtain ⟨b, hb', hbb⟩ := hb
+    rw [List.mem_map] at hbb
+    obtain ⟨v, -, hbb⟩ := hbb
+    rw [← hbb]
+    simp only [List.length_cons]
+    have hbih := ih b hb'
+    omega
+
+theorem grid_sound (k R : Nat) : ∀ base, base ∈ grid k R →
+    ∀ i, i < k → base.getD i 0 ≤ R := by
+  induction k with
+  | zero => intro base hb i hi; omega
+  | succ k ih =>
+    intro base hb i hi
+    rw [grid, List.mem_flatMap] at hb
+    obtain ⟨b, hb', hbb⟩ := hb
+    rw [List.mem_map] at hbb
+    obtain ⟨v, hv, hbb⟩ := hbb
+    rw [List.mem_range] at hv
+    rw [← hbb]
+    cases i with
+    | zero => show v ≤ R; omega
+    | succ i' =>
+      show b.getD i' 0 ≤ R
+      exact ih b hb' i' (by omega)
+
+theorem grid_complete (k R : Nat) : ∀ ps : List Nat,
+    (∀ i, i < k → ps.getD i 0 ≤ R) →
+    ∃ base, base ∈ grid k R ∧ ∀ i, i < k → base.getD i 0 = ps.getD i 0 := by
+  induction k with
+  | zero =>
+    intro ps _
+    exact ⟨[], by simp [grid], fun i hi => by omega⟩
+  | succ k ih =>
+    intro ps hcond
+    have htail : ∀ i, i < k → ps.tail.getD i 0 ≤ R := by
+      intro i hi
+      rw [getD_tail]
+      exact hcond (i + 1) (by omega)
+    obtain ⟨base, hbase, hmatch⟩ := ih ps.tail htail
+    have hv : ps.getD 0 0 ≤ R := hcond 0 (by omega)
+    refine ⟨ps.getD 0 0 :: base, ?_, ?_⟩
+    · rw [grid, List.mem_flatMap]
+      exact ⟨base, hbase, by
+        rw [List.mem_map]
+        exact ⟨ps.getD 0 0, List.mem_range.mpr (by omega), rfl⟩⟩
+    · intro i hi
+      cases i with
+      | zero => simp [List.getD]
+      | succ i' =>
+        rw [List.getD_cons_succ]
+        have hmi := hmatch i' (by omega)
+        rwa [getD_tail] at hmi
+
+theorem nodup_append_any {α : Type} : ∀ {l1 l2 : List α}, l1.Nodup → l2.Nodup →
+    (∀ a ∈ l1, a ∉ l2) → (l1 ++ l2).Nodup := by
+  intro l1
+  induction l1 with
+  | nil => intro l2 _ h2 _; exact h2
+  | cons a t ih =>
+    intro l2 h1 h2 hd
+    rw [List.nodup_cons] at h1
+    refine List.nodup_cons.mpr ⟨?_, ih h1.2 h2 (fun b hb => hd b (List.mem_cons_of_mem _ hb))⟩
+    intro hmem
+    rcases List.mem_append.mp hmem with hmem | hmem
+    · exact h1.1 hmem
+    · exact hd a (List.mem_cons_self) hmem
+
+theorem nodup_flatMap_of_disjoint : ∀ (l : List (List Nat))
+      (f : List Nat → List (List Nat)),
+    l.Nodup → (∀ x ∈ l, (f x).Nodup) →
+    (∀ x ∈ l, ∀ x' ∈ l, x ≠ x' → (∀ y, y ∈ f x → y ∉ f x')) →
+    (l.flatMap f).Nodup := by
+  intro l
+  induction l with
+  | nil => intro f _ _ _; simp
+  | cons a t ih =>
+    intro f hl hf hdj
+    rw [List.flatMap_cons]
+    have hl' := (List.nodup_cons).mp hl
+    have h1 : (f a).Nodup := hf a List.mem_cons_self
+    have h2 : (t.flatMap f).Nodup :=
+      ih f hl'.2 (fun x hx => hf x (List.mem_cons_of_mem _ hx))
+        (fun x hx x' hx' hne =>
+          hdj x (List.mem_cons_of_mem _ hx) x' (List.mem_cons_of_mem _ hx') hne)
+    have h3 : ∀ y ∈ f a, y ∉ t.flatMap f := by
+      rintro y hy hmem
+      rw [List.mem_flatMap] at hmem
+      obtain ⟨x, hx, hxy⟩ := hmem
+      exact hdj a List.mem_cons_self x (List.mem_cons_of_mem _ hx)
+        (fun heq => hl'.1 (by rw [heq]; exact hx)) y hy hxy
+    exact nodup_append_any h1 h2 h3
+
+theorem grid_nodup (k R : Nat) : (grid k R).Nodup := by
+  induction k with
+  | zero => simp [grid]
+  | succ k ih =>
+    rw [grid]
+    refine nodup_flatMap_of_disjoint _ _ ih ?_ ?_
+    · intro base _
+      refine nodup_map_of_injOn _ _ List.nodup_range ?_
+      intro a _ b _ hab
+      simp only [List.cons.injEq] at hab
+      exact hab.1
+    · intro base hb base' hb' hne y hy hy'
+      rw [List.mem_map] at hy
+      rw [List.mem_map] at hy'
+      obtain ⟨v, -, hvy⟩ := hy
+      obtain ⟨v', -, hvy'⟩ := hy'
+      have hbb : v :: base = v' :: base' := hvy.trans hvy'.symm
+      simp only [List.cons.injEq] at hbb
+      exact hne hbb.2
+
+/-! ### famText congruence and injectivity on the grid -/
+
+theorem famText_congr {k L : Nat} {ps ps' : List Nat}
+    (h : ∀ i, i < k → ps.getD i 0 = ps'.getD i 0) :
+    famText k L ps = famText k L ps' := by
+  unfold famText
+  refine congrArg List.flatten (List.map_congr_left (fun i hi => ?_))
+  have hik : i < k := List.mem_range.mp hi
+  rw [h i hik]
+
+theorem fam_marker_pos {k L : Nat} {ps : List Nat}
+    (hp : ∀ j, j < k → ps.getD j 0 ≤ L) (i : Nat) (hik : i < k) :
+    ∃ q h, (famText k L ps)[q]'h = markL i ∧
+      q = i * (L + 1) + ps.getD i 0 := by
+  have hmem : markL i ∈ famText k L ps := markL_mem hik hp
+  obtain ⟨q, hq, hget⟩ := (List.mem_iff_getElem).mp hmem
+  have hmark := (fam_mark_iff hp hq).mp hget
+  exact ⟨q, hq, hget, hmark.2⟩
+
+theorem famText_inj_grid {k L R : Nat} {base base' : List Nat}
+    (hb : base ∈ grid k R) (hb' : base' ∈ grid k R) (hR : R ≤ L)
+    (heq : famText k L base = famText k L base') : base = base' := by
+  have hbl : base.length = k := grid_len k R base hb
+  have hbl' : base'.length = k := grid_len k R base' hb'
+  have hpb : ∀ j, j < k → base.getD j 0 ≤ L :=
+    fun j hj => Nat.le_trans (grid_sound k R base hb j hj) hR
+  have hpb' : ∀ j, j < k → base'.getD j 0 ≤ L :=
+    fun j hj => Nat.le_trans (grid_sound k R base' hb' j hj) hR
+  have hlen : (famText k L base).length = k * (L + 1) := famText_length hpb
+  have hlen' : (famText k L base').length = k * (L + 1) := famText_length hpb'
+  have hget : ∀ i, i < k → base.getD i 0 = base'.getD i 0 := by
+    intro i hik
+    obtain ⟨q, hq, hget, hqb⟩ := fam_marker_pos hpb i hik
+    have hq' : q < (famText k L base').length := by
+      rw [hlen']
+      rw [hlen] at hq
+      omega
+    have hget' : (famText k L base')[q]'hq' = markL i :=
+      (List.getElem_of_eq heq.symm hq').trans hget
+    have hmark' := (fam_mark_iff hpb' hq').mp hget'
+    omega
+  exact list_ext_getD base base' (by rw [hbl, hbl'])
+    (fun i hi => hget i (by rw [← hbl]; exact hi))
+
+/-- **Floor theorem shape (statement-locked) — PROVEN**: the counting
+inequality `2^s ≥ (L/2+1)^k` plus the χ-family bound and `n = k(L+1)`
+compose to `s ≥ χ·log₂(n/χ)/3` (up to the additive `+1`).  Arithmetic core:
+`k·log₂(L/2+1) ≤ s` from the pigeonhole power; `n/χk ≤ (L+1)/2 ≤ L/2+1`
+from `χk ≥ 2k`; monotonicity of `log₂`; and `χk·t/3 ≤ k·t` from `χk ≤ 3k`. -/
 theorem floor_theorem_shape {k L : Nat} (hL : 1 ≤ L) (hk : 1 ≤ k)
     (s : Nat)
     (hcount : (L / 2 + 1) ^ k ≤ 2 ^ (s + 1) - 1)
     (hchi : 2 * k ≤ χk ∧ χk ≤ 3 * k - 1)
     (hn : n = k * (L + 1)) :
     χk * (Nat.log2 (n / χk)) / 3 ≤ s + 1 := by
+  have hane : (L / 2 + 1) ≠ 0 := by omega
+  have hspec : 2 ^ Nat.log2 (L / 2 + 1) ≤ L / 2 + 1 :=
+    (Nat.le_log2 hane).mp (Nat.le_refl _)
+  have hpowmul : 2 ^ (k * Nat.log2 (L / 2 + 1))
+      = (2 ^ Nat.log2 (L / 2 + 1)) ^ k := by
+    rw [Nat.mul_comm]
+    exact Nat.pow_mul 2 (Nat.log2 (L / 2 + 1)) k
+  have hpow : 2 ^ (k * Nat.log2 (L / 2 + 1)) ≤ (L / 2 + 1) ^ k := by
+    rw [hpowmul]
+    exact Nat.pow_le_pow_left hspec k
+  have hleS : 2 ^ (k * Nat.log2 (L / 2 + 1)) < 2 ^ (s + 1) :=
+    Nat.lt_of_le_of_lt (Nat.le_trans hpow hcount)
+      (Nat.sub_lt (Nat.two_pow_pos (s + 1)) (by omega))
+  have hkl : k * Nat.log2 (L / 2 + 1) ≤ s := by
+    have := (Nat.pow_lt_pow_iff_right (by omega : 1 < 2)).mp hleS
+    omega
+  have hk0 : 0 < k := by omega
+  have hχpos : 0 < χk := by omega
+  have hkey : k * (L + 1) < 2 * (L / 2 + 2) * k := by
+    have hcomp : L + 1 < 2 * (L / 2 + 2) := by omega
+    have h1 : k * (L + 1) < k * (2 * (L / 2 + 2)) :=
+      Nat.mul_lt_mul_left hk0 |>.mpr hcomp
+    calc k * (L + 1) < k * (2 * (L / 2 + 2)) := h1
+      _ = 2 * (L / 2 + 2) * k := Nat.mul_comm k (2 * (L / 2 + 2))
+  have hnlt : k * (L + 1) < χk * (L / 2 + 2) := by
+    have h2k : 2 * k ≤ χk := hchi.1
+    have hmono : 2 * k * (L / 2 + 2) ≤ χk * (L / 2 + 2) :=
+      Nat.mul_le_mul_right _ h2k
+    calc k * (L + 1) < 2 * (L / 2 + 2) * k := hkey
+      _ = 2 * ((L / 2 + 2) * k) := Nat.mul_assoc 2 (L / 2 + 2) k
+      _ = 2 * (k * (L / 2 + 2)) := by rw [Nat.mul_comm (L / 2 + 2) k]
+      _ = 2 * k * (L / 2 + 2) := (Nat.mul_assoc 2 k (L / 2 + 2)).symm
+      _ ≤ χk * (L / 2 + 2) := hmono
+  have hnχ : n / χk ≤ L / 2 + 1 := by
+    rw [hn]
+    have hlt := (Nat.div_lt_iff_lt_mul hχpos).mpr
+      (by rw [Nat.mul_comm (L / 2 + 2) χk]; exact hnlt)
+    have hconv : L / 2 + 2 = Nat.succ (L / 2 + 1) := rfl
+    rw [hconv] at hlt
+    exact Nat.lt_succ_iff.mp hlt
+  have hlog : Nat.log2 (n / χk) ≤ Nat.log2 (L / 2 + 1) := by
+    rcases Nat.eq_zero_or_pos (n / χk) with h0 | hpos
+    · rw [h0, Nat.log2_zero]
+      exact Nat.zero_le _
+    · have hspec2 : 2 ^ Nat.log2 (n / χk) ≤ n / χk :=
+        (Nat.le_log2 (by omega : n / χk ≠ 0)).mp (Nat.le_refl _)
+      have hle := Nat.le_trans hspec2 hnχ
+      exact (Nat.le_log2 hane).mpr hle
+  have hmul : k * Nat.log2 (n / χk) ≤ k * Nat.log2 (L / 2 + 1) :=
+    Nat.mul_le_mul_left _ hlog
+  have hkt : k * Nat.log2 (n / χk) ≤ s := Nat.le_trans hmul hkl
+  have hthree : χk * Nat.log2 (n / χk) / 3 ≤ k * Nat.log2 (n / χk) := by
+    have hχ3 : χk ≤ 3 * k := by omega
+    have hle : χk * Nat.log2 (n / χk) ≤ 3 * (k * Nat.log2 (n / χk)) := by
+      calc χk * Nat.log2 (n / χk) ≤ 3 * k * Nat.log2 (n / χk) :=
+            Nat.mul_le_mul_right _ hχ3
+        _ = 3 * (k * Nat.log2 (n / χk)) :=
+            Nat.mul_assoc 3 k (Nat.log2 (n / χk))
+    calc χk * Nat.log2 (n / χk) / 3
+        ≤ (3 * (k * Nat.log2 (n / χk))) / 3 := Nat.div_le_div_right hle
+      _ = k * Nat.log2 (n / χk) := Nat.mul_div_cancel_left _ (by omega)
+  omega
+
+/-! ### The counting bridge (fam_oracle_witness's corrected shape) and the
+assembled floor -/
+
+/-- **The counting bridge**: if every half-grid member text is served by
+SOME index of `space ≤ s` under one FIXED decoder, then the grid's size is
+pigeonholed: `(L/2+1)^k ≤ 2^(s+1) − 1`.  This is the honest form of the
+`fam_oracle_witness` skeleton: the locked statement concludes `False` from
+existence alone, which is refutable for large `s` (a decoder can hardcode
+one index per member — e.g. `k = 1, L = 2, s = 1` with the two
+`fFirst`-decoded members); the smallness of `s` must be concluded, not
+assumed.  This bridge + `floor_theorem_shape` = the floor theorem. -/
+theorem fam_floor_half_grid {k L : Nat} (hL : 1 ≤ L) (hk : 1 ≤ k)
+    (dec : Index → Answer) (s : Nat)
+    (hex : ∀ ps, (∀ i, i < k → 2 * ps.getD i 0 ≤ L) → ∃ D : Index,
+      space D ≤ s ∧ CorrectLocateOne (dec D) (famText k L ps)) :
+    (L / 2 + 1) ^ k ≤ 2 ^ (s + 1) - 1 := by
+  have hbnd : ∀ base ∈ grid k (L / 2), ∀ i, i < k → 2 * base.getD i 0 ≤ L := by
+    intro base hmem i hi
+    have := grid_sound k (L / 2) base hmem i hi
+    omega
+  have hexF : ∀ T ∈ (grid k (L / 2)).map (fun base => famText k L base),
+      ∃ D, space D ≤ s ∧ ∃ f, Realizes dec D f ∧ CorrectLocateOne f T := by
+    intro T hT
+    obtain ⟨base, hmem, hTe⟩ := (List.mem_map).mp hT
+    obtain ⟨D, hs, hc⟩ := hex base (hbnd base hmem)
+    exact ⟨D, hs, dec D, rfl, by rw [← hTe]; exact hc⟩
+  have hincompat : ∀ T ∈ (grid k (L / 2)).map (fun base => famText k L base),
+      ∀ T' ∈ (grid k (L / 2)).map (fun base => famText k L base),
+      T ≠ T' → ∀ f, CorrectLocateOne f T → ¬ CorrectLocateOne f T' := by
+    intro T hT T' hT' hne f hf hf'
+    obtain ⟨base, hmem, hsame⟩ := (List.mem_map).mp hT
+    obtain ⟨base', hmem', hsame'⟩ := (List.mem_map).mp hT'
+    have hbb : base ≠ base' := by
+      intro heqlist
+      rw [heqlist] at hsame
+      exact hne (hsame.symm.trans hsame')
+    have hbk : base.length = k := grid_len k (L / 2) base hmem
+    have hlength : base.length = base'.length :=
+      by rw [hbk, grid_len k (L / 2) base' hmem']
+    have hdiff : ∃ i, i < k ∧ base.getD i 0 ≠ base'.getD i 0 :=
+      Classical.byContradiction (fun hcon => hbb
+        (list_ext_getD base base' hlength
+          (fun i hi => Classical.byContradiction
+            (fun hne2 => hcon ⟨i, by rw [← hbk]; exact hi, hne2⟩))))
+    rw [← hsame] at hf
+    rw [← hsame'] at hf'
+    exact fam_forced_incompat hL (hbnd base hmem) (hbnd base' hmem') hdiff f
+      ⟨hf, hf'⟩
+  have hnd : ((grid k (L / 2)).map (fun base => famText k L base)).Nodup := by
+    refine nodup_map_of_injOn _ _ (grid_nodup k (L / 2)) ?_
+    intro base hmem base' hmem' htext
+    exact famText_inj_grid hmem hmem' (by omega : L / 2 ≤ L) htext
+  have hcount := family_counting dec
+    ((grid k (L / 2)).map (fun base => famText k L base)) s hnd hexF hincompat
+  have hlenF : ((grid k (L / 2)).map (fun base => famText k L base)).length
+      = (L / 2 + 1) ^ k := by
+    rw [List.length_map, grid_length]
+  calc (L / 2 + 1) ^ k
+      = ((grid k (L / 2)).map (fun base => famText k L base)).length := hlenF.symm
+    _ ≤ 2 ^ (s + 1) - 1 := hcount
+
+/-- **The family-specific floor, composed**: any fixed-decoder index family
+serving every half-grid member with `space ≤ s` bits satisfies
+`s + 1 ≥ χ·log₂(n/χ)/3` for every `χk` in the band `[2k, 3k−1]` and
+`n = k(L+1)`. -/
+theorem fam_floor {k L : Nat} (hL : 1 ≤ L) (hk : 1 ≤ k)
+    (dec : Index → Answer) (s : Nat)
+    (hex : ∀ ps, (∀ i, i < k → 2 * ps.getD i 0 ≤ L) → ∃ D : Index,
+      space D ≤ s ∧ CorrectLocateOne (dec D) (famText k L ps))
+    (hchi : 2 * k ≤ χk ∧ χk ≤ 3 * k - 1)
+    (hn : n = k * (L + 1)) :
+    χk * (Nat.log2 (n / χk)) / 3 ≤ s + 1 :=
+  floor_theorem_shape hL hk s (fam_floor_half_grid hL hk dec s hex) hchi hn
+
+/-- **THE FAMILY-SPECIFIC FLOOR THEOREM (fully assembled)**: with the χ of
+any half-grid member (in `[2k, 3k−1]` by `chi_fam_bounds`) and
+`n = k(L+1)`, every fixed-decoder index family that answers locate-one on
+all `(L/2+1)^k` members using indexes of `s` bits satisfies
+`s + 1 ≥ χ·log₂(n/χ)/3`. -/
+theorem fam_floor_chi {k L : Nat} (hL : 1 ≤ L) (hk : 1 ≤ k)
+    (ps₀ : List Nat) (hhalf : ∀ i, i < k → 2 * ps₀.getD i 0 ≤ L)
+    (hp : ∀ i, i < k → ps₀.getD i 0 ≤ L)
+    (dec : Index → Answer) (s : Nat)
+    (hex : ∀ ps, (∀ i, i < k → 2 * ps.getD i 0 ≤ L) → ∃ D : Index,
+      space D ≤ s ∧ CorrectLocateOne (dec D) (famText k L ps)) :
+    chi (famText k L ps₀) *
+      (Nat.log2 (k * (L + 1) / chi (famText k L ps₀))) / 3 ≤ s + 1 :=
+  fam_floor hL hk dec s hex (chi_fam_bounds hL hhalf hp) rfl
+
+/-- **Skeleton stub (GAP NAMED, statement unchanged)** — `fam_oracle_witness`
+as locked concludes `False` from the existence hypothesis alone, which is
+REFUTABLE: for `k = 1, L = 2, s = 1` a decoder sending `[false] ↦ fFirst` of
+the `p = 0` member and `[true] ↦ fFirst` of the `p = 1` member satisfies
+`hex` (every half-grid assignment has an index of one bit), yet nothing is
+contradicted.  The intended content — that existence forces the counting
+inequality — is PROVEN in the corrected shape `fam_floor_half_grid`, which
+together with `floor_theorem_shape` yields the assembled floor
+`fam_floor` / `fam_floor_chi`.  The locked statement needs the measurement
+owner's revision (add `hsmall : 2 ^ (s+1) - 1 < (L/2+1)^k`, or replace the
+conclusion with the counting inequality); it is left verbatim here with the
+gap named, per statement-lock discipline. -/
+theorem fam_oracle_witness {k L : Nat} (hL : 1 ≤ L)
+    (dec : Index → Answer) (s : Nat)
+    (hex : ∀ ps, (∀ i, i < k → 2 * ps.getD i 0 ≤ L) → ∃ D : Index,
+      space D ≤ s ∧ CorrectLocateOne (dec D) (famText k L ps)) :
+    False := by
   sorry
 
 end Fam
