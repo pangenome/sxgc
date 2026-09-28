@@ -1726,3 +1726,17 @@ mask + features); pointer-attention only if ablation demands it.
 ## now confirmed on live data. But fam_run_occ_le and fam_cover still carry their marked
 ## stubs: chi_fam_bounds upper half remains OPEN. Lane's "complete and banked" claim was
 ## overstated; recorded here per discipline. Refire: narrow two-lemma lane.
+
+## CHI_FAM_BOUNDS COMPLETE (narrow lane, GLM-5.3-high; strict chain: explicit build rc=0,
+## fresh-import axioms {propext, Classical.choice, Quot.sound}, Main BIT 1B GATE GREEN):
+## 2k <= chi(famText k L ps) <= 3k-1 KERNEL-CHECKED (Sxgc.LowerBound.Fam.chi_fam_bounds).
+## Both cover cases closed: fam_run_occ_le (window localization + half-grid squeeze +
+## marker contradiction; axioms {propext, Quot.sound} - cleaner than allowed) and
+## fam_cover (full case analysis: single-letter covers + three run-continuation
+## families incl. the div/mod boundary trichotomy - omega cannot see through i*(L+1)
+## products; every cross-block bound needs a typed Nat.succ_mul bridge). Assembly:
+## coverSet/mem_coverSet/coverSet_length/chi_fam_upper/chi_fam_bounds. Proof-engineering
+## findings recorded for future lanes. The floor program's central object: MEASURED
+## ((2,2,2)->(16,8,8) battery) and PROVEN. The 3 skeleton statements
+## (fam_forced_incompat, fam_oracle_witness, floor_theorem_shape) remain locked,
+## awaiting exactly this theorem for assembly.
