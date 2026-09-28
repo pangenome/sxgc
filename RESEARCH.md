@@ -1626,3 +1626,55 @@ warrant (yeast235: 7 classes, 13,503 rows, byte-identical to the dense oracle).
   needs: family_counting + chi_fam_bounds (next Lean target, battery-pre-validated) +
   marker injectivity => Omega(chi log(n/chi)) modulo bookkeeping.
 All eval runners unchanged-green incl. Main BIT 1B GATE 511/511.
+
+## LM-OVER-CHI-INDEX RUNG - DESIGN SPEC (user-directed record; conversation 2026-09-28)
+The experiment rung, now measurement-designed. Core thesis: memorization externalized
+into the index (which the bridge theorem says any continuation-answering system must
+consult); network capacity spent on policy (choice among forks), not on rulebook storage.
+
+### The three-mode generation loop (the resolution of "how does the net react"):
+The index delimits reaction points EXACTLY. Per generated position, backward search gives:
+- FORCED (the overwhelmingly common case; chi ~ 0.85*r << n means most contexts admit
+  ONE next byte): mask dictates; the net passes the byte through - no compute needed.
+- FORK (at witness-neighborhood decision points): the fork set C = distinct next-chars of
+  the MS/SA interval, each with counts + witness (doc, offset) annotations; the net
+  set-encodes the candidates and CHOOSES. Its expressive freedom is chi-shaped.
+- OFF-CORPUS (MS length collapses to 0: the walk left every known continuation): free
+  emission until re-entry; the index marks novelty exactly.
+Training = learning the FORK policy (+ when to leave and re-enter).
+
+### Architecture (v1 dumb-first, per ablation discipline):
+byte-level small RNN (100M-4B range), input = [chosen byte ; fork-set features]
+(candidates, log counts, doc-label features; set-encoder or padded); hard mask to C.
+Hybrid extension (ablation-gated): sparse attention over PINNED corpus pointers -
+the walk's committed witnesses (doc, offset) - a rotating/circular bounded pin buffer.
+ATTENTION = QUERY EMISSION: a head emits offsets into the corpus; the index returns the
+bytes there ("what happened next at this witness"); those bytes enter the state. Keys/
+values are not stored in the context window - they live in the corpus, retrieved by
+position. This unifies attention and index lookup.
+
+### Reading fragments (MEM-reasoning mode):
+The matched MEM content needs no re-reading (it equals the probe). What is fed back =
+the witness CONTINUATIONS: the next m bytes after each MEM's target, per-MEM encoded,
+then chosen among. Ops space: byte-fork, mem-copy, mem-with-edits, jump-to-doc,
+emit-new. Novelty detection is exact (MS boundary). 
+
+### Training signal for the op policy (free supervision):
+Haplotype pairs (and pile near-duplicate families) ARE supervised MEM-op traces: the op
+sequence reconstructing haplotype B from A is an alignment; mine with the MEM machinery.
+DNA mode: op-traces = variant recombination, annotated by nature.
+
+### Stages:
+0: sweep the pile .sxi -> per-position fork sets/MS/witness flags (server = dataloader:
+   POST /batch). 1: pile pretraining, hard-masked next-byte, candidate featurization.
+2 (the headline): swap indexes under the same weights (web -> other web -> DNA pangenome);
+   fast re-adaptation = the net learned domain-agnostic fork navigation.
+Scaling law: net size x index presence; flattening curve = memorization-tax thesis.
+
+### Baselines: pure n-gram (fork histogram), pure net (no index), k-NN retrieval
+(Infini-gram replication), net+index. Prediction (falsifiable): index-augmented
+agreement concentrates at witness-dense regions; stratify metrics by witness density.
+Pile labels (pile_set_name) = per-component analysis for free.
+
+### Open: GPU inventory for the byte-level 1.31TB run; v1 = dumbest version (RNN +
+mask + features); pointer-attention only if ablation demands it.
