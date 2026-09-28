@@ -1678,3 +1678,16 @@ Pile labels (pile_set_name) = per-component analysis for free.
 
 ### Open: GPU inventory for the byte-level 1.31TB run; v1 = dumbest version (RNN +
 mask + features); pointer-attention only if ablation demands it.
+
+## O1 REDUCED (laneX, GLM-5.3-high): O1 iff O1_maxHit (every inclusion-maximal coverage
+## class contains an emitted position) - a single named statement now carries the pillar.
+## FACTORIZATION PROVEN: O1 iff RunEdgeHit AND RunEdgeDominate. RunEdgeHit = cheapest
+## next target (purely semantic: every maximal class contains a run-edge position; needs
+## only row/position alignment lemmas over proven saOrder/lcpOf facts). RunEdgeDominate
+## = blocked on the emission-set's semantic identity - the SAME pending endpoint-rule/
+## exact range-min model the v3 events refutation hit at scale (no crisp invariant yet).
+## New proven en route: covSet_ne_of_mem_positionsT (the exists_max_above side condition
+## now unconditional), covering_given_stream_of_maxHit, maxHit_iff_reps, maxHit_in_class,
+## runEdgeHit_of_maxHit + maxHit_of_runEdge. Statement-locked with differentials:
+## 0 counterexamples across 729-binary/243-ternary/structured batteries; sorry ledger
+## unchanged; Bit 1B gate GREEN. Full analysis: lean/O1_OBSTRUCTION.md.

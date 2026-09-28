@@ -5893,4 +5893,245 @@ theorem scan_emits_run_edges (N : Nat) (ts : List Triple) :
    `covering_given_stream`).
 -/
 
+/-! ### O1 outright attempt (2026-09-27 lane): reduction to class-hitting
+
+`covering_given_stream` needs (O1): every text position is `ScopeLe`-dominated
+by some emitted position.  This section reduces (O1) by pure coverage-set
+algebra to a single scan-side statement — `O1_maxHit`: every
+inclusion-maximal coverage class contains an emitted position — and then
+factors that residual through run edges, the provenance class of every
+emitted witness (`scan_emits_run_edges`).  The reductions are exact on
+positive texts (`O1_iff_maxHit`, `maxHit_of_runEdge` +
+`runEdgeHit_of_maxHit`); no direction weakens the obligation, and the
+residual statements are given at statement-lock strength. -/
+
+/-- Every text position covers at least the empty-context requirement
+`([], c)` with `c` its own last character: the empty word is right-maximal
+by definition, and `[c]` occurs at the position itself.  (Discharges the
+`covSet ≠ []` side condition of `exists_max_above` for text positions.) -/
+theorem covSet_ne_of_mem_positionsT (T : Text) {x : Nat} (hx : x ∈ positionsT T) :
+    covSet T x ≠ [] := by
+  classical
+  intro hemp
+  have hxb : 1 ≤ x ∧ x ≤ T.length := by
+    rcases List.mem_map.mp hx with ⟨i, hi, rfl⟩
+    simp only [List.mem_range] at hi
+    omega
+  obtain ⟨hx1, hxle⟩ := hxb
+  have hlt : x - 1 < T.length := by omega
+  have hgc : T.getD (x - 1) 0 = T[x - 1] := by
+    rw [List.getD_eq_getElem?_getD]
+    have hs : T[x - 1]? = some (T[x - 1]) := (List.getElem?_eq_some_iff).mpr ⟨hlt, rfl⟩
+    rw [hs]
+    rfl
+  have hdrop : T.drop (x - 1) = T.getD (x - 1) 0 :: T.drop x := by
+    rw [List.drop_eq_getElem_cons hlt, hgc]
+    have hxs : x - 1 + 1 = x := by omega
+    rw [hxs]
+  have hdt : (T.drop (x - 1)).take 1 = [T.getD (x - 1) 0] := by
+    rw [hdrop]; rfl
+  have hsplit : T.take x = T.take (x - 1) ++ (T.drop (x - 1)).take 1 := by
+    have h := List.take_add (i := x - 1) (j := 1) (l := T)
+    rw [show x - 1 + 1 = x from by omega] at h
+    exact h
+  have hlast : T.take x = T.take (x - 1) ++ [T.getD (x - 1) 0] := by
+    rw [hsplit, hdt]
+  have hcocc : occurs ([] ++ [T.getD (x - 1) 0]) T = true := by
+    refine (occurs_eq_true ([] ++ [T.getD (x - 1) 0]) T
+      (by rw [List.nil_append]; exact fun h => nomatch h)).mpr
+      ⟨x - 1, by simp only [List.nil_append, List.length_cons, List.length_nil]; omega, hdt⟩
+  have hsub : [] ∈ subStrings T := by
+    cases T with
+    | nil => exact List.Mem.head _
+    | cons t ts => exact List.Mem.head _
+  have hreq : ([], T.getD (x - 1) 0) ∈ requirements T := by
+    refine (mem_requirements [] (T.getD (x - 1) 0) T).mpr
+      ⟨hsub, rfl, (mem_rightExts [] (T.getD (x - 1) 0) T).mpr hcocc⟩
+  have hccov : coversAt ([] ++ [T.getD (x - 1) 0]) x T = true := by
+    rw [coversAt_iff_suffix]
+    exact ⟨T.take (x - 1), hlast⟩
+  have hmem : ([], T.getD (x - 1) 0) ∈ covSet T x :=
+    (mem_covSet T x ([], T.getD (x - 1) 0)).mpr ⟨hreq, hccov⟩
+  exact (List.ne_nil_of_mem hmem) hemp
+
+/-- **(O1-core) MaxHit** — every inclusion-maximal coverage class contains a
+position emitted by the scan.  By maximality the emitted witness is in the
+same class as `m` (`maxHit_in_class`); via `domination_of_maxHit` and
+`covering_of_domination` this single statement completes the covering half
+of `minimality` (`covering_given_stream_of_maxHit`). -/
+def O1_maxHit (T : Text) : Prop :=
+  ∀ m, m ∈ positionsT T → IsMax T m →
+    ∃ e, e ∈ scan (T.length + 1) (triplesOf T) ∧ ScopeLe T m e
+
+/-- A maximal position dominated by a position is in the same class. -/
+theorem maxHit_in_class (T : Text) {m e : Nat} (hmax : IsMax T m)
+    (he : e ∈ positionsT T) (hme : ScopeLe T m e) : ScopeLe T e m :=
+  hmax.2 e he hme
+
+/-- **O1 reduction (main).**  MaxHit implies full domination: every text
+position is `ScopeLe`-dominated by an emitted position. -/
+theorem domination_of_maxHit (T : Text) (hhit : O1_maxHit T) :
+    ∀ x, x ∈ positionsT T →
+      ∃ y, y ∈ scan (T.length + 1) (triplesOf T) ∧ ScopeLe T x y := by
+  intro x hx
+  obtain ⟨m, hmP, hxm, hmax⟩ :=
+    exists_max_above T x hx (covSet_ne_of_mem_positionsT T hx)
+  obtain ⟨e, he, hme⟩ := hhit m hmP hmax
+  exact ⟨e, he, ScopeLe_trans T hxm hme⟩
+
+/-- MaxHit implies the scan's emitted set is suffixient — the covering half
+of `minimality`, now isolated to `O1_maxHit`. -/
+theorem covering_given_stream_of_maxHit (T : Text) (hT : positive T = true)
+    (hhit : O1_maxHit T) :
+    suffixient (scan (T.length + 1) (triplesOf T)) T = true :=
+  covering_of_domination T hT (domination_of_maxHit T hhit)
+
+/-- The reduction is exact on positive texts: domination (O1) and MaxHit are
+equivalent, since MaxHit is domination restricted to maximal positions. -/
+theorem O1_iff_maxHit (T : Text) :
+    (∀ x, x ∈ positionsT T →
+      ∃ y, y ∈ scan (T.length + 1) (triplesOf T) ∧ ScopeLe T x y) ↔
+      O1_maxHit T := by
+  constructor
+  · intro h m hmP _
+    exact h m hmP
+  · intro h
+    exact domination_of_maxHit T h
+
+/-- MaxHit equivalently requires only the class *representatives* to be hit
+(the first position of each maximal class); every other class member is
+dominated by its rep.  This connects the scan obligation to the semantic
+`reps` machinery (`reps_suffixient`, `count_le_of_disjoint_witnesses`). -/
+theorem maxHit_iff_reps (T : Text) :
+    O1_maxHit T ↔
+      ∀ r, r ∈ reps T →
+        ∃ e, e ∈ scan (T.length + 1) (triplesOf T) ∧ ScopeLe T r e := by
+  classical
+  constructor
+  · intro h r hr
+    exact h r (List.mem_filter.mp hr).1
+      ((of_decide_eq_true (List.mem_filter.mp hr).2).2.1)
+  · intro h m hmP hmax
+    obtain ⟨r, hrP, hrep, _hrm, hmr⟩ := exists_rep_of_max T m hmP hmax
+    obtain ⟨e, he, hre⟩ :=
+      h r (List.mem_filter.mpr ⟨hrP, decide_eq_true hrep⟩)
+    exact ⟨e, he, ScopeLe_trans T hmr hre⟩
+
+/-! #### Run-edge factorization of MaxHit
+
+Every emitted witness is the position of a run-edge row
+(`scan_emits_run_edges`).  Consequently MaxHit *requires* that every maximal
+class contain a run-edge position (`RunEdgeHit`, `runEdgeHit_of_maxHit`),
+and MaxHit *follows* from that fact together with every run-edge position
+being dominated by an emitted position (`RunEdgeDominate`,
+`maxHit_of_runEdge`). -/
+
+/-- Text positions of the run-edge rows (heads and tails of BWT runs of the
+reverse text), restricted to genuine text positions. -/
+def runEdgePositions (T : Text) : List Nat :=
+  (((List.range (triplesOf T).length).filter (fun k => isRunEdge (triplesOf T) k)).map
+    (fun k => T.length + 1 - ((triplesOf T).getD k ⟨0,0,0⟩).sa)).filter
+    (fun w => decide (1 ≤ w ∧ w ≤ T.length))
+
+theorem isRunEdge_lt (ts : List Triple) {k : Nat} (h : isRunEdge ts k = true) :
+    k < ts.length := by
+  unfold isRunEdge at h
+  rw [Bool.or_eq_true] at h
+  rcases h with hb | hand
+  · unfold isBoundary at hb
+    split at hb
+    · exact absurd hb (by simp)
+    · omega
+  · rw [Bool.and_eq_true] at hand
+    exact of_decide_eq_true hand.1
+
+/-- Necessary semantic factor: every maximal class contains a run-edge
+position.  Necessary because emitted witnesses are run-edge positions
+(`scan_emits_run_edges`). -/
+def RunEdgeHit (T : Text) : Prop :=
+  ∀ m, m ∈ positionsT T → IsMax T m →
+    ∃ w, w ∈ runEdgePositions T ∧ ScopeLe T m w
+
+/-- Every run-edge position is dominated by an emitted position. -/
+def RunEdgeDominate (T : Text) : Prop :=
+  ∀ w ∈ runEdgePositions T,
+    ∃ e, e ∈ scan (T.length + 1) (triplesOf T) ∧ ScopeLe T w e
+
+/-- Sufficiency of the factorization: run-edge class-hitting plus per-run-edge
+domination give MaxHit. -/
+theorem maxHit_of_runEdge (T : Text) (hhit : RunEdgeHit T) (hdom : RunEdgeDominate T) :
+    O1_maxHit T := by
+  intro m hmP hmax
+  obtain ⟨w, hw, hmw⟩ := hhit m hmP hmax
+  obtain ⟨e, he, hwe⟩ := hdom w hw
+  exact ⟨e, he, ScopeLe_trans T hmw hwe⟩
+
+/-- Necessity of the run-edge factor (positive texts): MaxHit implies every
+maximal class contains a run-edge position. -/
+theorem runEdgeHit_of_maxHit (T : Text) (hT : positive T = true) (hhit : O1_maxHit T) :
+    RunEdgeHit T := by
+  intro m hmP hmax
+  obtain ⟨e, he, hme⟩ := hhit m hmP hmax
+  refine ⟨e, ?_, hme⟩
+  obtain ⟨k, hk, hek⟩ := scan_emits_run_edges (T.length + 1) (triplesOf T) e he
+  have hklt := isRunEdge_lt (triplesOf T) hk
+  have herange := scan_range T hT e he
+  unfold runEdgePositions
+  refine List.mem_filter.mpr ⟨?_, decide_eq_true herange⟩
+  refine List.mem_map.mpr ⟨k, ?_, hek.symm⟩
+  exact List.mem_filter.mpr ⟨by rw [List.mem_range]; exact hklt, hk⟩
+
+/-! #### Executable differentials (statement-lock evals for the residual) -/
+
+private def maxHitOk (T : Text) : Bool :=
+  let S := scan (T.length + 1) (triplesOf T)
+  ((positionsT T).filter (maxSL T)).all (fun m => S.any (fun e => subSL T m e))
+
+private def runEdgeHitOk (T : Text) : Bool :=
+  let W := runEdgePositions T
+  ((positionsT T).filter (maxSL T)).all (fun m => W.any (fun w => subSL T m w))
+
+private def runEdgeDominateOk (T : Text) : Bool :=
+  let S := scan (T.length + 1) (triplesOf T)
+  (runEdgePositions T).all (fun w => S.any (fun e => subSL T w e))
+
+#eval ("O1 maxHit counterexamples / 729: "
+  ++ toString ((fmTexts 6).filter (fun T => !maxHitOk T)).length)
+#eval ("runEdgeHit counterexamples / 729: "
+  ++ toString ((fmTexts 6).filter (fun T => !runEdgeHitOk T)).length)
+#eval ("runEdgeDominate counterexamples / 729: "
+  ++ toString ((fmTexts 6).filter (fun T => !runEdgeDominateOk T)).length)
+
+/-- 3-letter battery: class/run-edge structure differs from the {1,2} battery. -/
+private def triTexts : Nat → List Text
+  | 0 => [[]]
+  | k + 1 =>
+    let r := triTexts k
+    r ++ r.map (fun t => 1 :: t) ++ r.map (fun t => 2 :: t) ++ r.map (fun t => 3 :: t)
+
+#eval ("O1 maxHit counterexamples / 243 ternary: "
+  ++ toString ((triTexts 5).filter (fun T => !maxHitOk T)).length)
+#eval ("runEdgeHit counterexamples / 243 ternary: "
+  ++ toString ((triTexts 5).filter (fun T => !runEdgeHitOk T)).length)
+#eval ("runEdgeDominate counterexamples / 243 ternary: "
+  ++ toString ((triTexts 5).filter (fun T => !runEdgeDominateOk T)).length)
+
+/-- structured repetitive probes (periodic, constant, run-heavy).  Kept
+short: the covSet/requirements machinery is recomputed per pairwise check,
+so eval cost is superlinear in text length (the battery texts are ≤ 6). -/
+private def structTexts : List Text :=
+  [List.replicate 10 1,
+   List.replicate 10 2,
+   (List.range 10).map (fun i => i % 3 + 1),
+   (List.range 10).map (fun i => i % 2 + 1),
+   List.replicate 5 1 ++ List.replicate 5 2,
+   List.replicate 3 1 ++ List.replicate 3 2 ++ List.replicate 3 1 ++ List.replicate 1 3]
+
+#eval ("O1 maxHit counterexamples / structured: "
+  ++ toString (structTexts.filter (fun T => !maxHitOk T)).length)
+#eval ("runEdgeHit counterexamples / structured: "
+  ++ toString (structTexts.filter (fun T => !runEdgeHitOk T)).length)
+#eval ("runEdgeDominate counterexamples / structured: "
+  ++ toString (structTexts.filter (fun T => !runEdgeDominateOk T)).length)
+
 end Sxgc
