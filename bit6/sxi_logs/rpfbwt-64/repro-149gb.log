@@ -1,0 +1,6 @@
+TRACE_NEW bytes=18611972661 result=0x70040603d010 errno=0 rlimit_as=149000000000
+TRACE_NEW bytes=37223945322 result=0x6ffb5b4b7010 errno=0 rlimit_as=149000000000
+[2026-09-28 23:20:30.301] [info] Using 8 bytes for computing SA of the dictionary
+TRACE_NEW bytes=148895781360 result=(nil) errno=12 rlimit_as=149000000000
+terminate called after throwing an instance of 'std::bad_alloc'
+  what():  std::bad_alloc

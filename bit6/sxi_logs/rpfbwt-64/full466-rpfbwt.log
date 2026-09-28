@@ -1,0 +1,4 @@
+TRACE_NEW bytes=18611972661 result=0x737bcfe3d010 errno=0 rlimit_as=850000000000
+TRACE_NEW bytes=37223945322 result=0x7373252b7010 errno=0 rlimit_as=850000000000
+[2026-09-28 23:22:42.752] [info] Using 8 bytes for computing SA of the dictionary
+TRACE_NEW bytes=148895781360 result=0x73507a4a1010 errno=0 rlimit_as=850000000000

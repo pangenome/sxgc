@@ -1913,3 +1913,18 @@ mask + features); pointer-attention only if ablation demands it.
 ## The 6.6h parse is RETAINED (15.5G phrases + 17.75 GB dict in the work dir) - debug
 ## iterations cost minutes. Fix = another upstreamable fork patch (32-bit overflow in
 ## the dict-SA path); then the milestone reruns FROM ZERO per doctrine.
+
+### Correction #13 — supervisor misdiagnosis of the 466 front-end failure
+Claimed: a 32-bit length/offset wrap in rpfbwt's dictionary-SA path (dict > 2^32, k10 under).
+Also misread /usr/bin/time "1:31.36" as 1h31m - it was 91 seconds.
+Truth (lane's instrumented reproduction, LD_PRELOAD allocation tracer): the failing request was a
+LEGITIMATE 148,895,781,360-byte allocation (18,611,972,670-entry dictionary SA x 8 bytes) denied by
+RLIMIT_AS = 149,000,000,000 - THE PIPELINE'S OWN ADDRESS-SPACE CEILING, set on every child by
+sxi_pipeline.py since the distribution lane. The dictionary SA alone exceeds it. No overflow exists;
+the lane correctly REFUSED to fabricate the upstream 64-bit patch I commissioned.
+Repair: `xsa build --address-space-gb N` (default stays 149; journaled; inherited hard limit respected).
+Gated: 3 tiny builds at default/850GB/inherited-1GB -> byte-identical indexes (chi=1401); invalid rejected.
+Lesson: before proposing a code bug at scale, instrument the actual failing request - and read time -v
+format before converting units. Infrastructure lesson: a failed codex run's sandbox teardown killed the
+detached validation tree ~20 min later (0-byte .time files = SIGKILL signature); relaunch validation as a
+supervisor-owned process.

@@ -1,0 +1,4 @@
+{"case": "default", "limit": 149000000000, "chi": 1401, "status": "PASS"}
+{"case": "large", "limit": 850000000000, "chi": 1401, "status": "PASS"}
+{"case": "inherited", "limit": 1000000000, "chi": 1401, "status": "PASS"}
+PASS: identical indexes; default/override/inherited hard ceiling; invalid limits rejected

@@ -2,7 +2,7 @@
 use std::path::PathBuf;
 
 const USAGE: &str = "usage:
-  xsa build --text <collection.txt> -o <out.sxi> [--threads N] [--scratch DIR] [--expect-chi N] [--verify-text-sample N] [--mode auto|dna|text] [--verbose]
+  xsa build --text <collection.txt> -o <out.sxi> [--threads N] [--address-space-gb N] [--scratch DIR] [--expect-chi N] [--verify-text-sample N] [--mode auto|dna|text] [--verbose]
   xsa build --agc <archive.agc> -o <out.sxi> [same options]
   xsa build --fasta <records.fa> -o <out.sxi> [same options]
   xsa build --fastq <reads.fq> -o <out.sxi> [same options]
@@ -21,6 +21,7 @@ AGC uses a seekable archive-backed FUSE ghost file (revlines, upper, sep 1e).
 Stages: PFP (w1=10,p1=100; w2=5,p2=11), endpoint-tap rpfbwt,
 slim streaming aggregates, streamed chi sweep/gate, checked SXI publication.
 Scratch must share the source filesystem. Timings and peak RSS are logged.
+--address-space-gb sets the child virtual-memory ceiling in decimal GB (default 149), bounded by an inherited hard limit.
 Legacy newline-terminated multi-string inputs require --expect-heads RAW --expect-ri4 FILE byte gates
 because linear PFP ordering is not established as BCR collection ordering.";
 
@@ -54,7 +55,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
                     return Err("choose exactly one of --agc, --fasta, --fastq, --text".into());
                 }
             }
-            "--manifest" | "--mode" | "--verify-text-sample" | "--threads" | "--scratch" | "--log-dir" | "--expect-chi" | "--expect-heads" | "--expect-ri4" => {
+            "--manifest" | "--mode" | "--verify-text-sample" | "--threads" | "--address-space-gb" | "--scratch" | "--log-dir" | "--expect-chi" | "--expect-heads" | "--expect-ri4" => {
                 i += 1;
                 let value = args.get(i).filter(|s| !s.is_empty() && !s.starts_with('-'))
                     .ok_or_else(|| format!("{flag} requires a value"))?;
