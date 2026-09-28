@@ -12,9 +12,9 @@
 //       out.txt + out.names.tsv; --band S:E slices [S,E) of every copy
 //       (AGC-native sharded construction: extract -> build -> delete)
 //   agc2flat <archive.agc> [--samples <file>] [--revlines] [-o out.txt]
-//       one reversed contig per line, '\n'-terminated (no '$'): the BCR-BWT
-//       collection format (grlBWT and friends). Sidecar keeps FORWARD flat
-//       offsets (same-pass ground truth). '\n' is the per-string sentinel.
+//       one reversed contig per record, --sep terminated (default 0x1E).
+//       Sidecar keeps FORWARD flat offsets (same-pass ground truth).
+//       Use --sep 0a explicitly for legacy newline consumers.
 //   agc2flat <archive.agc> [--samples <file>] [--reverse] [--stdout] ...
 //       --samples restricts ALL modes to the listed AGC sample names
 //       (one per line, '#' starts a comment); unknown names abort loudly;
@@ -30,14 +30,17 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
-fn ascii_of(numeric: &[u8], upper: bool) -> Result<Vec<u8>> {
+fn ascii_of(numeric: &[u8], upper: bool, sep: u8) -> Result<Vec<u8>> {
     let mut v = Vec::with_capacity(numeric.len());
     for &b in numeric {
+        anyhow::ensure!(b != 0x1e, "corpus contract: reserved separator 0x1E must never appear in sequence content");
         let c = if b < 16 { CNV_NUM[b as usize] } else { b'N' };
         if c == 0 || c == 1 || c == 2 {
             anyhow::bail!("forbidden byte {c} after conversion");
         }
-        v.push(if upper && c.is_ascii_lowercase() { c - 32 } else { c });
+        let c = if upper && c.is_ascii_lowercase() { c - 32 } else { c };
+        anyhow::ensure!(c != 0x1e && c != sep, "corpus contract: reserved separator 0x{sep:02X} must never appear in sequence content");
+        v.push(c);
     }
     Ok(v)
 }
@@ -63,14 +66,23 @@ struct Args {
     samples: Option<String>,
     revlines: bool,
     list_samples: bool,
+    sep: u8,
+}
+
+fn parse_sep(value: &str) -> Result<u8> {
+    let digits = value.strip_prefix("0x").or_else(|| value.strip_prefix("0X")).unwrap_or(value);
+    anyhow::ensure!(!digits.is_empty() && digits.len() <= 2 && digits.bytes().all(|c| c.is_ascii_hexdigit()),
+                    "--sep requires a hex byte, e.g. 1e or 0x1E");
+    Ok(u8::from_str_radix(digits, 16)?)
 }
 
 fn parse_args() -> Result<Args> {
-    let mut a = Args { archive: String::new(), out: String::new(), upper: false, groups: false, group: None, band: None, reverse: false, stdout: false, samples: None, revlines: false, list_samples: false };
+    let mut a = Args { archive: String::new(), out: String::new(), upper: false, groups: false, group: None, band: None, reverse: false, stdout: false, samples: None, revlines: false, list_samples: false, sep: 0x1e };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "-o" => a.out = it.next().context("-o needs a value")?,
+            "--sep" => a.sep = parse_sep(&it.next().context("--sep needs a hex byte (default 0x1E)")?)?,
             "--upper" => a.upper = true,
             "--reverse" => a.reverse = true,
             "--revlines" => a.revlines = true,
@@ -89,7 +101,7 @@ fn parse_args() -> Result<Args> {
         }
     }
     if a.archive.is_empty() {
-        anyhow::bail!("usage: agc2flat <archive.agc> [-o out.txt] [--upper] [--groups] [--group <contig>] [--band S:E] [--samples <file>] [--reverse] [--stdout]");
+        anyhow::bail!("usage: agc2flat <archive.agc> [-o out.txt] [--upper] [--groups] [--group <contig>] [--band S:E] [--samples <file>] [--reverse] [--revlines] [--stdout] [--sep <hexbyte> (default 0x1E)]\nCorpus contract: 0x1E is reserved; it must never appear in sequence content.");
     }
     Ok(a)
 }
@@ -174,10 +186,10 @@ fn main() -> Result<()> {
                     let clen = dec.get_contig_length(s, cname)?;
                     dec.get_contig_range(s, cname, s0, (be as usize).min(clen))?
                 };
-                let seq = ascii_of(&numeric, args.upper)?;
+                let seq = ascii_of(&numeric, args.upper, args.sep)?;
                 if seq.is_empty() { continue; }
                 text.write_all(&seq)?;
-                text.write_all(b"$")?;
+                text.write_all(&[args.sep])?;
                 writeln!(tsv, "{}\t{}\t{}", cname, offset, seq.len())?;
                 offset += seq.len() as u64 + 1;
                 copies += 1;
@@ -189,8 +201,8 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    // --revlines: one reversed contig per line ('\n' sentinel) — BCR-BWT
-    // collection format for grlBWT. Contigs in FORWARD archive order (each
+    // --revlines: one reversed contig per separator-terminated record.
+    // Use --sep 0a for legacy BCR consumers. Contigs in FORWARD archive order (each
     // string is independent in BCR; the sidecar is the coordinate truth).
     if args.revlines {
         let mut out_path = args.out.clone();
@@ -208,12 +220,12 @@ fn main() -> Result<()> {
             let names = dec.list_contigs(s)?;
             for cname in &names {
                 let numeric = dec.get_contig(s, cname)?;
-                let mut seq = ascii_of(&numeric, args.upper)?;
+                let mut seq = ascii_of(&numeric, args.upper, args.sep)?;
                 let len = seq.len() as u64;
                 seq.reverse();
                 rows.push((cname.clone(), streamed, len));
                 text.write_all(&seq)?;
-                text.write_all(b"\n")?;
+                text.write_all(&[args.sep])?;
                 streamed += len + 1;
                 n_contigs += 1;
             }
@@ -224,8 +236,8 @@ fn main() -> Result<()> {
         let total = streamed; // == forward flat length (incl separators)
         eprintln!("TOTAL {total}");
         for (cname, soff, len) in &rows {
-            // stream block: rev(contig) at [soff, soff+len), '\n' at soff+len.
-            // The stream is the '$'-mirror rotated per block; the rotation
+            // stream block: rev(contig) at [soff, soff+len), separator at soff+len.
+            // The stream is the separator-mirror rotated per block; the rotation
             // cancels, giving the same forward-start formula as --reverse:
             let fstart = total - 1 - soff - len;
             writeln!(tsv, "{cname}\t{fstart}\t{len}")?;
@@ -237,10 +249,10 @@ fn main() -> Result<()> {
 
     // whole-collection mode (validated on yeast235)
     // --reverse --stdout: stream the byte-exact mirror of the forward flat text
-    // ('$' + reversed contig, last contig first) so pscan -S can parse the
+    // (separator + reversed contig, last contig first) so pscan -S can parse the
     // reversed text without any materialization. Sidecar keeps FORWARD offsets.
     if args.reverse {
-        // stream the byte-exact mirror of the forward flat text ('$' + reversed
+        // stream the byte-exact mirror of the forward flat text (separator + reversed
         // contig, last contig first). Sidecar written at EOF from ACTUAL stream
         // positions (metadata lengths can disagree with decompressed bytes).
         let mut out_path = args.out.clone();
@@ -270,12 +282,12 @@ fn main() -> Result<()> {
                 let mut c = 0u64;
                 for cname in &names {
                     let numeric = dec.get_contig(s, cname)?;
-                    let mut seq = ascii_of(&numeric, args.upper)?;
+                    let mut seq = ascii_of(&numeric, args.upper, args.sep)?;
                     let len = seq.len() as u64;
                     seq.reverse();
                     { use std::io::Write as _;
-                      if let Some(w) = stdout_out.as_mut() { w.write_all(b"$")?; w.write_all(&seq)?; }
-                      else if let Some(w) = file_out.as_mut() { w.write_all(b"$")?; w.write_all(&seq)?; }
+                      if let Some(w) = stdout_out.as_mut() { w.write_all(&[args.sep])?; w.write_all(&seq)?; }
+                      else if let Some(w) = file_out.as_mut() { w.write_all(&[args.sep])?; w.write_all(&seq)?; }
                     }
                     rows.push((cname.clone(), streamed, len));
                     streamed += len + 1;
@@ -295,8 +307,8 @@ fn main() -> Result<()> {
         }
         let mut tsv = BufWriter::with_capacity(1 << 16, File::create(&tsv_path)?);
         for (cname, soff, len) in &rows {
-            // stream: [soff]='$', [soff+1 .. soff+len)=rev(contig)
-            // forward: [fstart .. fstart+len)=contig, [fstart+len]='$'
+            // stream: [soff]=separator, [soff+1 .. soff+len)=rev(contig)
+            // forward: [fstart .. fstart+len)=contig, [fstart+len]=separator
             // byte i of stream == byte total-1-i of forward
             let fstart = total - 1 - soff - len;
             writeln!(tsv, "{cname}\t{fstart}\t{len}")?;
@@ -318,10 +330,10 @@ fn main() -> Result<()> {
         let names = dec.list_contigs(s)?;
         for cname in &names {
             let numeric = dec.get_contig(s, cname)?;
-            let seq = ascii_of(&numeric, args.upper)?;
+            let seq = ascii_of(&numeric, args.upper, args.sep)?;
             let start = offset;
             text.write_all(&seq)?;
-            text.write_all(b"$")?;
+            text.write_all(&[args.sep])?;
             offset += seq.len() as u64 + 1;
             writeln!(tsv, "{cname}\t{start}\t{}", seq.len())?;
             n_contigs += 1;
@@ -333,4 +345,18 @@ fn main() -> Result<()> {
     text.flush()?; tsv.flush()?;
     eprintln!("flat text length (incl. {n_contigs} separators): {offset}\ntext: {out_path}\nnames: {tsv_path}");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn separator_bytes_and_collisions() {
+        for value in ["1e", "1E", "0x1E", "0X1e"] { assert_eq!(parse_sep(value).unwrap(), 30); }
+        for value in ["", "100", "-1", "gg", "0x", "+1"] { assert!(parse_sep(value).is_err()); }
+        assert_eq!(ascii_of(&[0, 1, 2, 3], true, 30).unwrap(), b"ACGT");
+        let error = ascii_of(&[0, 30, 1], true, 30).unwrap_err().to_string();
+        assert!(error.contains("corpus contract: reserved separator 0x1E"));
+        assert!(ascii_of(&[0, 1], true, b'A').is_err());
+    }
 }
