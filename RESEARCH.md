@@ -1944,3 +1944,18 @@ space up front is wrong product behavior. New contract: NO self-imposed ceiling 
 --address-space-gb N is an optional explicit cap; lower inherited hard limits always apply.
 The milestone rerun is therefore knob-free: xsa build --agc ... -o hprc.sxi --threads N --verify-text-sample K.
 Gate: default(null-cap)/850GB/inherited-1GB tiny builds -> byte-identical indexes (chi=1401).
+
+## 466 FRONT-END DONE; SEAM-LCE POLICY BOUNDARY FOUND (validation chain paused at endpoints)
+Front-end PASS at 466 (largest dictionary SA ever built): wall 10h13m, peak RSS 505.9 GB,
+n = 1,403,221,068,491 (1.40 Tbp), R = 2,739,737,289 (vs k10 R=1.86e9: 47x text, 1.47x runs).
+parse.rlebwt 10.96 GB + .ssa/.ssa_t published; tap-count and tap-structure gates PASS.
+Endpoints stage then FAILED LOUD after 2h40m (peak 192 GB): CYCLIC_SEAM_REFUSED - an LCE
+verification at the cyclic seam needed MORE than the polylog-work policy
+(max(1000, bit_width(n)^3) = 68,921 probes ~ 6 MB at parse granularity; 466-haplotype
+near-identity makes multi-MB collinear identity routine). Fail-loud worked as designed: no
+silent O(n). The SlimFingerprint verifier is already exactness-optimal (galloping search,
+then direct verify; phrase-ID equality amortizes ~90 symbols per comparison); the POLICY
+BOUND is what is miscalibrated for pangenome scale, not the algorithm.
+Fix direction: justified sublinear budget (per-seam + total-work accounting, journaled
+actuals, fail-loud preserved), exact LCE value in the refusal message; k10/yeast regressions
+must republish identical seam deltas (+4,074 / +96).
