@@ -15,3 +15,7 @@ paper/*.log
 paper/*.blg
 paper/*.aux
 paper/*.bbl
+
+# binary toolset outputs (sealed distribution + isolated builds)
+sealed-tools/
+tools-built/
