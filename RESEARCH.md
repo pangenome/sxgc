@@ -2050,3 +2050,16 @@ w10/p100 1.07-1.08, w20/p100 1.18 (longer window makes mod-p WORSE, not better).
 The genuinely open question (mod-p w40-200/p3-12 on real regions) was NOT in the fresh sweep;
 supervisor is measuring it directly. Lesson reinforced: side-effect CSVs are not findings;
 cross-check against the producing lane's own acceptance numbers before announcing.
+
+### WEB-TEXT PARAMETER QUESTION CLOSED (supervisor mod-p sweep, fresh region @110GB offset, 1.08 GB clean slice)
+mod-p D/n: w3/p5 0.51 (parse 0.76n) | w10/p100 1.08 | w20/p8 3.24 | w40/p5 8.73 |
+w80/p5 16.70 | w160/p8 20.76. LONG WINDOWS EXPLODE the dictionary on heterogeneous web text
+(longer phrases = longer DISTINCT phrases); the long-window idea is dead in both trigger families
+(syncmer 3.3, mod-p up to 20.8). The user's original instinct was correct: TIGHTER grammar wins.
+PILE PLAN (settled): mod-p w3/p5 (D ~ 0.5n), sharded-parallel parse (friend's architecture:
+block-split with w-1 overlap, per-worker local dictionaries, sort-based external dedup, remap -
+fixes the 83h sequential external parse; matches the Diaz-Dominguez SPIRE 2025 partition+merge
+philosophy), parsed-space external front-end (banked), uint32 widening (R~5e11 regardless).
+w-parameterization of endpoints/slim (running lane) is load-bearing for w3.
+Token-space PFP (BPE) remains the bigger-shrink option: 4-5.7x sequence reduction, aligns with
+the LM-over-chi backend; chi becomes tokenizer-conditioned (provenance decision).
