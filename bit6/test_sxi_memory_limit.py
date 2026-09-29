@@ -20,7 +20,7 @@ with tempfile.TemporaryDirectory(prefix='sxi-memory-limit-') as directory:
     source.write_bytes(bytes(rng.choice(b'ACGT') for _ in range(2000)) + b'\x1e')
     outputs = []
     for label, options, inherited, expected in [
-        ('default', [], None, 149_000_000_000),
+        ('default', [], None, None),
         ('large', ['--address-space-gb', '850'], None, 850_000_000_000),
         ('inherited', ['--address-space-gb', '850'], 1_000_000_000, 1_000_000_000),
     ]:
@@ -39,7 +39,7 @@ with tempfile.TemporaryDirectory(prefix='sxi-memory-limit-') as directory:
         outputs.append(output.read_bytes())
         print(json.dumps(dict(case=label, limit=expected, chi=events[-1]['chi'], status='PASS')), flush=True)
     assert outputs[0] == outputs[1] == outputs[2], 'ceiling changed index bytes'
-    for value in ['0', '-1', '9223372037', 'not-an-integer']:
+    for value in ['-1', '9223372037', 'not-an-integer']:
         output = root/'invalid.sxi'
         result = subprocess.run([xsa, 'build', '--text', str(source), '-o', str(output),
                                  '--address-space-gb', value], capture_output=True, text=True)

@@ -1937,3 +1937,10 @@ it; deleted immediately. The streaming audit never opens the text path when give
 (sxi_text_audit.cpp line 24: `if(!archive){open...}`), and names.tsv is metadata-only from the parse.
 Lesson restated: the streaming path has NO prepare stage; audit boundaries come from AGC + names.tsv.
 A metadata-only listing (ragc-ffi or agc2flat --ghost) is available if ever needed.
+
+### Address-space default removed (user decision)
+A fixed 149 GB default ceiling was itself the 466 killer; requiring the user to budget address
+space up front is wrong product behavior. New contract: NO self-imposed ceiling by default;
+--address-space-gb N is an optional explicit cap; lower inherited hard limits always apply.
+The milestone rerun is therefore knob-free: xsa build --agc ... -o hprc.sxi --threads N --verify-text-sample K.
+Gate: default(null-cap)/850GB/inherited-1GB tiny builds -> byte-identical indexes (chi=1401).

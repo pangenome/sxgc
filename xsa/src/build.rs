@@ -21,7 +21,7 @@ AGC uses a seekable archive-backed FUSE ghost file (revlines, upper, sep 1e).
 Stages: PFP (w1=10,p1=100; w2=5,p2=11), endpoint-tap rpfbwt,
 slim streaming aggregates, streamed chi sweep/gate, checked SXI publication.
 Scratch must share the source filesystem. Timings and peak RSS are logged.
---address-space-gb sets the child virtual-memory ceiling in decimal GB (default 149), bounded by an inherited hard limit.
+--address-space-gb optionally caps child virtual memory in decimal GB (no self-imposed ceiling by default; a lower inherited hard limit always applies).
 Legacy newline-terminated multi-string inputs require --expect-heads RAW --expect-ri4 FILE byte gates
 because linear PFP ordering is not established as BCR collection ordering.";
 

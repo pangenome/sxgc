@@ -101,13 +101,13 @@ Exact stages:
 Each subprocess has its own `/usr/bin/time -v` file and stage log under
 `bit6/sxi_logs` (override `--log-dir`). The JSONL journal records argv, return
 code, wall seconds, and stage peak RSS. Stages run sequentially except for the AGC streamer and first PFP parse, which run together.
-The pipeline uses a 149 GB address-space ceiling by default. `--address-space-gb N`
-sets a different ceiling in decimal GB; a lower inherited hard limit still applies.
-This limits virtual memory, not RSS, and includes concurrent allocations. At 466
-scale the dictionary SA alone needs about 149 GB, so the default cannot accommodate
-it alongside the dictionary. Use an explicitly budgeted larger ceiling for that
-build, such as `--address-space-gb 850` on the 1 TB validation host. The journal
-records the effective byte limit. Scratch is intentionally retained for independent
+The pipeline imposes no address-space ceiling of its own; `--address-space-gb N`
+optionally caps child virtual memory in decimal GB, and a lower inherited hard
+limit always applies either way. This limits virtual memory, not RSS. At 466
+scale the dictionary SA alone is about 149 GB, which is why a fixed default
+ceiling was removed: it killed the first 466 front-end with `std::bad_alloc`
+against a perfectly legitimate allocation. The journal records the effective
+limit (null when uncapped). Scratch is intentionally retained for independent
 review. Failed stages or gates never publish the requested output path.
 FASTA/FASTQ preparation runs in the Python process, recording elapsed time and
 process peak RSS in the journal; each completed record logs its identifier,

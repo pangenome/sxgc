@@ -110,8 +110,8 @@ def main():
         source.add_argument('--' + kind)
     p.add_argument('--output', required=True)
     p.add_argument('--threads', type=int, default=8)
-    p.add_argument('--address-space-gb', type=int, default=149,
-                   help='child address-space ceiling in decimal GB (default: 149; inherited hard limit still applies)')
+    p.add_argument('--address-space-gb', type=int, default=0,
+                   help='optional child address-space ceiling in decimal GB (default: none; a lower inherited hard limit always applies)')
     p.add_argument('--scratch')
     p.add_argument('--log-dir', default=str(ROOT / 'bit6/sxi_logs'))
     p.add_argument('--expect-chi', type=int)
@@ -126,8 +126,8 @@ def main():
     p.add_argument('--manifest', help='toolset manifest (default: XSA_TOOLS/MANIFEST.sha256)')
     p.add_argument('--allow-drift', action='store_true', help='DEBUG ONLY: permit hash drift; journal all mismatches')
     a = p.parse_args()
-    if a.address_space_gb <= 0 or a.address_space_gb > (2**63 - 1) // 1_000_000_000:
-        p.error('--address-space-gb must be positive and fit a signed 64-bit byte limit')
+    if a.address_space_gb < 0 or a.address_space_gb > (2**63 - 1) // 1_000_000_000:
+        p.error('--address-space-gb must be non-negative and fit a signed 64-bit byte limit')
     if not 0 <= a.verify_text_sample <= 100000:
         p.error('--verify-text-sample must be 0..100000')
     if not 1 <= a.threads <= 96:
@@ -177,10 +177,16 @@ def main():
     journal = logs / (label + '.jsonl')
     env = dict(os.environ, OMP_NUM_THREADS=str(a.threads), TMPDIR=str(work))
     # Children inherit the ceiling; only the AGC producer/first parse overlap.
-    _, hard_limit = resource.getrlimit(resource.RLIMIT_AS)
-    requested_limit = a.address_space_gb * 1_000_000_000
-    limit = requested_limit if hard_limit == resource.RLIM_INFINITY else min(hard_limit, requested_limit)
-    resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+    # No self-imposed ceiling by default: the 466 failure was a fixed default
+    # smaller than a legitimate allocation. An explicit cap is optional; a lower
+    # inherited hard limit always applies either way.
+    requested_limit = a.address_space_gb * 1_000_000_000 if a.address_space_gb else None
+    soft, hard_limit = resource.getrlimit(resource.RLIMIT_AS)
+    if requested_limit:
+        limit = requested_limit if hard_limit == resource.RLIM_INFINITY else min(hard_limit, requested_limit)
+        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+    else:
+        limit = None
     def record(value):
         with journal.open('a') as f:
             f.write(json.dumps(value) + '\n')
