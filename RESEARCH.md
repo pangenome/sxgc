@@ -1928,3 +1928,12 @@ Lesson: before proposing a code bug at scale, instrument the actual failing requ
 format before converting units. Infrastructure lesson: a failed codex run's sandbox teardown killed the
 detached validation tree ~20 min later (0-byte .time files = SIGKILL signature); relaunch validation as a
 supervisor-owned process.
+
+### Near-miss (supervisor, logged for honesty): accidental 69 GB materialization
+While preparing the 466 validation relaunch I invoked the pipeline's AGC *prepare* verb
+(agc2flat --revlines --upper --sep 1e -o collection.txt) believing the audit stage needed the flat
+listing. It is the MATERIALIZED-path verb: 69 GB of flat text written before the 900s timeout killed
+it; deleted immediately. The streaming audit never opens the text path when given --agc/--names
+(sxi_text_audit.cpp line 24: `if(!archive){open...}`), and names.tsv is metadata-only from the parse.
+Lesson restated: the streaming path has NO prepare stage; audit boundaries come from AGC + names.tsv.
+A metadata-only listing (ragc-ffi or agc2flat --ghost) is available if ever needed.
