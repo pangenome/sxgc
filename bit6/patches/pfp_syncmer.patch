@@ -1,0 +1,333 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index e482a7d..4460a26 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -369,6 +369,9 @@ if (BUILD_TESTS OR ${CMAKE_BUILD_TYPE} MATCHES "Debug")
+     enable_testing()
+     add_test(NAME pfp_unit_tests COMMAND pfp_unit_tests)
+     add_test(NAME pfp_unit_tests64 COMMAND pfp_unit_tests64)
++    add_executable(test_closed_syncmer tests/test_closed_syncmer.cpp)
++    target_include_directories(test_closed_syncmer PRIVATE ${PROJECT_SOURCE_DIR}/include)
++    add_test(NAME test_closed_syncmer COMMAND test_closed_syncmer)
+ 
+     message(STATUS "Building benchmarks")
+     add_executable(pfp_benchmarks benchmarks/kr_hash.cpp)
+@@ -449,4 +452,3 @@ include(CPack)
+ 
+ 
+ 
+-
+diff --git a/README.md b/README.md
+index 6c25ff3..8595cb8 100644
+--- a/README.md
++++ b/README.md
+@@ -100,10 +100,12 @@ Options:
+   -o,--out-prefix TEXT        Output prefix.
+   -m,--max UINT               Max number of samples to analyze.
+   -S,--samples TEXT           File containing the list of samples to parse.
+-  -w,--window-size UINT:INT in [3 - 200]
+-                              Sliding window size.
++  -w,--window-size UINT:INT in [3 - 512]
++                              Sliding window size (syncmer k).
+   -p,--modulo UINT:INT in [5 - 20000]
+                               Modulo used during parsing.
++  --syncmer-s UINT            Closed syncmer s-mer length (text/AGC only).
++  --syncmer-canonical         Canonicalize DNA s-mers by reverse complement.
+   -j,--threads UINT           Number of threads.
+   --tmp-dir TEXT:DIR          Temporary files directory.
+   -c,--compress-dictionary    Also output compressed the dictionary.
+@@ -168,3 +170,23 @@ optional `emit` argument writes the requested bytes for differential tests.
+ Run `tests/test_agc.py --pfp build/pfp++ --probe build/pfp_source_probe
+ --agc /path/to/agc --agc2flat /path/to/agc2flat` for parse/dictionary,
+ names, seek, separator, and error regressions.
++
++### Closed syncmer triggers (text/AGC only)
++
++`--syncmer-s S` selects a closed syncmer trigger: among the `S`-mers in the
++last `K` bytes (`-w K`), the minimum hash must occur at the first or last position.
++Equal minima qualify. With no `--syncmer-s`, the original mod-`p` trigger is
++unchanged. `-p` is ignored for first-level syncmer trigger selection.
++
++`--syncmer-canonical` uses the smaller hash of each DNA
++`S`-mer and its reverse complement. A/C/G/T are complemented; other bytes,
++including N and the 0x1e separator, are self-complementary. Web text should
++leave this flag off. The selector consumes each byte once with O(K) memory;
++its state is not reset at phrase or source block boundaries. The PFP overlap
++remains K, so a trigger's content is fully present in adjacent phrases.
++
++The bound of `K-S` is on the gap between consecutive triggers. A normal
++phrase is at most `K+(K-S)` bytes; the final phrase additionally appends K
++end markers. Existing endpoint and slim tools in SXI currently assume
++`K=10`, so larger K values are for parser measurements until they are
++parameterized downstream.
+diff --git a/include/closed_syncmer.hpp b/include/closed_syncmer.hpp
+new file mode 100644
+index 0000000..ba139e4
+--- /dev/null
++++ b/include/closed_syncmer.hpp
+@@ -0,0 +1,79 @@
++#ifndef PFP_CLOSED_SYNCMER_HPP
++#define PFP_CLOSED_SYNCMER_HPP
++
++#include <cstdint>
++#include <deque>
++#include <stdexcept>
++#include <utility>
++#include <vector>
++
++namespace vcfbwt { namespace pfp {
++
++// Streaming closed syncmer selector: the minimum s-mer hash in a k-mer
++// must occur at either end. Equal minima qualify at either endpoint.
++class ClosedSyncmer {
++    const uint32_t s_, q_;
++    const bool canonical_;
++    std::vector<uint8_t> bases_;
++    std::vector<uint64_t> endpoints_;
++    std::deque<std::pair<uint64_t, uint64_t>> minima_;
++    uint64_t base_power_ = 1, rolling_ = 0, characters_ = 0, smers_ = 0;
++
++    static uint64_t mix(uint64_t x) {
++        x += 0x9e3779b97f4a7c15ULL;
++        x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
++        x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
++        return x ^ (x >> 31);
++    }
++    static uint8_t complement(uint8_t c) {
++        switch (c) {
++            case 'A': return 'T'; case 'a': return 't';
++            case 'C': return 'G'; case 'c': return 'g';
++            case 'G': return 'C'; case 'g': return 'c';
++            case 'T': return 'A'; case 't': return 'a';
++            default: return c; // N and 0x1e are self-complementary
++        }
++    }
++public:
++    ClosedSyncmer(uint32_t k, uint32_t s, bool canonical)
++        : s_(s), q_(s < k ? k - s + 1 : 1), canonical_(canonical), bases_(s), endpoints_(q_) {
++        if (!s || s >= k)
++            throw std::invalid_argument("closed syncmer needs 1 <= s < k");
++        for (uint32_t i = 1; i < s; ++i) base_power_ *= 257;
++    }
++    bool push(uint8_t c) {
++        if (characters_ < s_) {
++            bases_[characters_ % s_] = c;
++            rolling_ = rolling_ * 257 + c;
++            ++characters_;
++            if (characters_ < s_) return false;
++        } else {
++            const uint64_t slot = characters_ % s_;
++            const uint8_t old = bases_[slot];
++            bases_[slot] = c;
++            rolling_ = (rolling_ - old * base_power_) * 257 + c;
++            ++characters_;
++        }
++        uint64_t hash = mix(rolling_);
++        if (canonical_) {
++            uint64_t reverse = 0;
++            for (uint32_t i = 0; i < s_; ++i)
++                reverse = reverse * 257 +
++                    complement(bases_[(characters_ + s_ - 1 - i) % s_]);
++            const uint64_t r = mix(reverse);
++            if (r < hash) hash = r;
++        }
++        const uint64_t index = smers_++;
++        endpoints_[index % q_] = hash;
++        while (!minima_.empty() && minima_.back().second > hash) minima_.pop_back();
++        minima_.emplace_back(index, hash);
++        if (smers_ < q_) return false;
++        const uint64_t first = index - q_ + 1;
++        while (minima_.front().first < first) minima_.pop_front();
++        const uint64_t minimum = minima_.front().second;
++        return endpoints_[first % q_] == minimum || hash == minimum;
++    }
++};
++
++}} // namespace vcfbwt::pfp
++#endif
+diff --git a/include/pfp_algo.hpp b/include/pfp_algo.hpp
+index b3286fd..b009344 100644
+--- a/include/pfp_algo.hpp
++++ b/include/pfp_algo.hpp
+@@ -176,6 +176,9 @@ struct Params
+ {
+     hash_type p = 100;
+     hash_type w =  10;
++    // Text/AGC trigger only. Zero keeps the original mod-p predicate.
++    uint32_t syncmer_s = 0;
++    bool syncmer_canonical = false;
+     bool compress_dictionary = false;
+     bool use_acceleration = false;
+     bool acgt_only = false;
+diff --git a/pfp++.cpp b/pfp++.cpp
+index addf097..4f78b5a 100644
+--- a/pfp++.cpp
++++ b/pfp++.cpp
+@@ -45,8 +45,10 @@ int main(int argc, char **argv)
+     app.add_option("-o,--out-prefix", out_prefix, "Output prefix.")->configurable();
+     app.add_option("-m, --max", max_samples, "Max number of samples to analyze.")->configurable();
+     app.add_option("-S, --samples", samples_file_name, "File containing the list of samples to parse.")->configurable();
+-    app.add_option("-w, --window-size", params.w, "Sliding window size.")->check(CLI::Range(3, 200))->configurable();
++    app.add_option("-w, --window-size", params.w, "Sliding window size (syncmer k).")->check(CLI::Range(3, 512))->configurable();
+     app.add_option("-p, --modulo", params.p, "Modulo used during parsing.")->check(CLI::Range(5, 20000))->configurable();
++    app.add_option("--syncmer-s", params.syncmer_s, "Use closed (w,s) syncmer triggers; -w is k. Text/AGC input only.")->check(CLI::Range(1, 511));
++    app.add_flag("--syncmer-canonical", params.syncmer_canonical, "Use reverse-complement canonical s-mer hashes; other bytes are self-complementary.");
+     app.add_option("-j, --threads", threads, "Number of threads.")->configurable();
+     app.add_option("--tmp-dir", tmp_dir, "Temporary files directory.")->check(CLI::ExistingDirectory)->configurable();
+     app.add_flag("-c, --compress-dictionary", params.compress_dictionary, "Also output compressed the dictionary.")->configurable();
+@@ -63,6 +65,17 @@ int main(int argc, char **argv)
+     
+     CLI11_PARSE(app, argc, argv);
+ 
++    if (params.syncmer_canonical && !params.syncmer_s) {
++        spdlog::error("--syncmer-canonical requires --syncmer-s"); return EXIT_FAILURE;
++    }
++    if (!params.syncmer_s && params.w > 200) {
++        spdlog::error("mod-p window size must be at most 200"); return EXIT_FAILURE;
++    }
++    if (params.syncmer_s && (params.syncmer_s >= params.w ||
++        (!fasta_file_path.empty() || !integers_file_path.empty() || !vcfs_file_names.empty()))) {
++        spdlog::error("Syncmer triggers require text/AGC input and 1 <= s < w (k)"); return EXIT_FAILURE;
++    }
++
+     if ((agc_input && (text_file_path.empty() || !fasta_file_path.empty() || !integers_file_path.empty() || !vcfs_file_names.empty())) || (!agc_input && !agc_names.empty()) || (agc_input && threads == 0)) {
+         spdlog::error("--agc requires only -t; --agc-names requires --agc; threads must be positive");
+         return EXIT_FAILURE;
+diff --git a/src/pfp_algo.cpp b/src/pfp_algo.cpp
+index 917f75c..1d72c64 100644
+--- a/src/pfp_algo.cpp
++++ b/src/pfp_algo.cpp
+@@ -7,6 +7,8 @@
+ #include <pfp_algo.hpp>
+ #include <text_source.hpp>
+ #include <byte_remap.hpp>
++#include <closed_syncmer.hpp>
++#include <memory>
+ 
+ //------------------------------------------------------------------------------
+ 
+@@ -521,8 +523,11 @@ vcfbwt::pfp::ParserText::operator()()
+     std::vector<vcfbwt::char_type> phrase;
+     spdlog::info("Parsing {}", in_file_path);
+     
+-    // Karp Robin Hash Function for sliding window
++    // Keep scanner state across phrase erasure so triggers depend on content.
+     Mersenne_KarpRabinHash kr_hash(this->params.w);
++    std::unique_ptr<ClosedSyncmer> syncmer;
++    if (params.syncmer_s)
++        syncmer.reset(new ClosedSyncmer(params.w, params.syncmer_s, params.syncmer_canonical));
+     
+     // First sequence start with one dollar
+     phrase.emplace_back(DOLLAR);
+@@ -541,10 +546,16 @@ vcfbwt::pfp::ParserText::operator()()
+             const unsigned char c = remap.map(static_cast<unsigned char>(input[i]));
+ 
+             phrase.push_back(c);
+-            if (phrase.size() == params.w) { kr_hash.initialize(phrase.data(), params.w); }
+-            else if (phrase.size() > params.w) { kr_hash.update(phrase[phrase.size() - params.w - 1], phrase[phrase.size() - 1]); }
++            bool trigger = false;
++            if (syncmer) trigger = syncmer->push(c);
++            else {
++                if (phrase.size() == params.w) kr_hash.initialize(phrase.data(), params.w);
++                else if (phrase.size() > params.w)
++                    kr_hash.update(phrase[phrase.size() - params.w - 1], phrase.back());
++                if (phrase.size() > params.w) trigger = kr_hash.get_hash() % params.p == 0;
++            }
+ 
+-            if ((phrase.size() > this->params.w) and ((kr_hash.get_hash() % this->params.p) == 0))
++            if (phrase.size() > this->params.w && trigger)
+             {
+                 hash_type hash = this->dictionary.check_and_add(phrase);
+ 
+@@ -552,7 +563,7 @@ vcfbwt::pfp::ParserText::operator()()
+ 
+                 phrase.erase(phrase.begin(), phrase.end() - this->params.w); // Keep the last w chars
+ 
+-                kr_hash.reset(); kr_hash.initialize(phrase.data(), params.w);
++                if (!syncmer) { kr_hash.reset(); kr_hash.initialize(phrase.data(), params.w); }
+             }
+         }
+     }
+@@ -756,4 +767,4 @@ vcfbwt::pfp::ParserIntegers::close()
+     spdlog::info("Main parser: closed");
+ }
+ 
+-//------------------------------------------------------------------------------
+\ No newline at end of file
++//------------------------------------------------------------------------------
+diff --git a/tests/test_closed_syncmer.cpp b/tests/test_closed_syncmer.cpp
+new file mode 100644
+index 0000000..9397ba1
+--- /dev/null
++++ b/tests/test_closed_syncmer.cpp
+@@ -0,0 +1,70 @@
++#include <closed_syncmer.hpp>
++#include <algorithm>
++#include <cassert>
++#include <cstdint>
++#include <stdexcept>
++#include <string>
++#include <vector>
++
++using vcfbwt::pfp::ClosedSyncmer;
++
++static uint64_t hash_smer(const std::string& text, int start, int s) {
++    uint64_t x = 0;
++    for (int i = 0; i < s; ++i)
++        x = x * 257 + static_cast<uint8_t>(text[start+i]);
++    x += 0x9e3779b97f4a7c15ULL;
++    x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
++    x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
++    return x ^ (x >> 31);
++}
++
++static std::vector<int> selected(const std::string& text, int k, int s, bool canonical) {
++    ClosedSyncmer scanner(k, s, canonical);
++    std::vector<int> positions;
++    for (int i = 0; i < static_cast<int>(text.size()); ++i)
++        if (scanner.push(static_cast<uint8_t>(text[i]))) positions.push_back(i);
++    return positions;
++}
++
++int main() {
++    bool rejected = false;
++    try { ClosedSyncmer invalid(10, 10, false); }
++    catch (const std::invalid_argument&) { rejected = true; }
++    assert(rejected);
++    std::string dna;
++    uint32_t state = 7;
++    for (int i = 0; i < 100000; ++i) {
++        state = state * 1664525 + 1013904223;
++        dna.push_back("ACGT"[state >> 30]);
++    }
++    for (int k : {10, 30, 100}) {
++        const int s = 5;
++        const auto hits = selected(dna, k, s, false);
++        assert(!hits.empty());
++        for (size_t i = 1; i < hits.size(); ++i) assert(hits[i] - hits[i-1] <= k-s+1);
++        auto canonical_hits = selected(dna, k, s, true);
++        std::string reverse(dna.rbegin(), dna.rend());
++        for (char& c : reverse) c = c == 'A' ? 'T' : c == 'T' ? 'A' : c == 'C' ? 'G' : 'C';
++        auto reverse_hits = selected(reverse, k, s, true);
++        std::reverse(reverse_hits.begin(), reverse_hits.end());
++        for (int& position : reverse_hits) position = static_cast<int>(dna.size()) - 1 - position + k - 1;
++        assert(canonical_hits == reverse_hits);
++    }
++    std::string text = dna.substr(0, 1000) + "  punctuation, N; words!";
++    const auto observed = selected(text, 13, 4, false);
++    std::vector<int> expected;
++    for (int end = 12; end < static_cast<int>(text.size()); ++end) {
++        uint64_t first = hash_smer(text, end-12, 4);
++        uint64_t last = hash_smer(text, end-3, 4);
++        uint64_t minimum = first;
++        for (int start = end-11; start <= end-3; ++start)
++            minimum = std::min(minimum, hash_smer(text, start, 4));
++        if (first == minimum || last == minimum) expected.push_back(end);
++    }
++    assert(observed == expected);
++    const auto tied = selected(std::string(1000, 'A'), 20, 4, false);
++    assert(tied.size() == 981); // equal endpoint hashes select every k-mer
++    auto with_separator = selected(std::string(50, 'A') + '\x1e' + std::string(50, 'A'), 20, 4, true);
++    for (size_t i = 1; i < with_separator.size(); ++i)
++        assert(with_separator[i] - with_separator[i-1] <= 17);
++}

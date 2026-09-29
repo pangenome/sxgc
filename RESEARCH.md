@@ -1995,3 +1995,19 @@ Full-pile blockers, measured honestly:
 NOTE the interaction: the syncmer-trigger lane (GPT-6-SOL, running) attacks D directly - any D/n
 reduction shrinks both the 6xD disk footprint and the dictionary sort; the two lanes compose.
 Gates b-d (k10 byte-identity, pile-frag end-to-end, slice datum) not run; recipes recorded.
+
+## SYNCMER-TRIGGER HYPOTHESIS FALSIFIED (GPT-6-SOL lane; user hypothesis tested honestly)
+Closed-syncmer triggers (Durbin syng selection rule) implemented as drop-in PFP trigger
+(pipeline + fork patch; mod-p stays default). MEASURED at matched density: web D/n 1.070->3.283
+(1%), 0.472->2.411 (19%); yeast chrI 0.258->1.108 (1%), 0.056->0.339 (19%). Dictionary GREW ~3x.
+MECHANISM (the finding): mod-p DECOUPLES trigger density from phrase length (w=10 window, 1% rate,
+mean phrase 112); syncmers COUPLE them - 1% density needs K~260, and every trigger drags its whole
+k-mer, flooring phrases at ~k-s+1 (measured mean 360, max 512: the bounded-gap tail cut works
+exactly as Edgar's guarantee says, but it floors every phrase). No (k,s) is simultaneously
+sparse-trigger and short-phrase. LONG-PHRASE-TAIL ELIMINATION ALONE IS NOT SUFFICIENT.
+VALIDATED FREE: chi invariance proven at byte level - chrI end-to-end through the full pipeline
+(50-chunk front end, endpoints, slim, sweep, writer) produced BYTE-IDENTICAL chi files across
+trigger schemes (2,093,235 entries, SHA 027155db...). Chi is construction-agnostic, empirically.
+Also: w>10 integration blocker caught by fail-loud (endpoints/slim hardcode w1=10; pipeline now
+refuses long-window parses early). Pile path remains: parsed-space external construction with
+mod-p w10/p100 (D/n=1.08 stands as the web-text constant).

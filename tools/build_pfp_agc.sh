@@ -12,6 +12,12 @@ if [[ ! -d "$pfp_dir/.git" ]]; then
 fi
 [[ $(git -C "$pfp_dir" rev-parse HEAD) == 1a5f114ae026c18e7c0049ceace1a5eabc8be44a ]] || { echo 'PFP revision differs from pinned revision' >&2; exit 1; }
 git -C "$pfp_dir" apply --reverse --check "$root/bit6/patches/pfp_agc.patch"
+if [[ ${PFP_SYNCMER:-0} == 1 ]]; then
+  if ! git -C "$pfp_dir" apply --reverse --check "$root/bit6/patches/pfp_syncmer.patch" 2>/dev/null; then
+    git -C "$pfp_dir" apply "$root/bit6/patches/pfp_syncmer.patch"
+  fi
+  git -C "$pfp_dir" apply --reverse --check "$root/bit6/patches/pfp_syncmer.patch"
+fi
 if [[ ! -d "$agc_dir/.git" ]]; then
   git clone --recursive https://github.com/refresh-bio/agc.git "$agc_dir"
   git -C "$agc_dir" checkout e67e3fc865a459779118d3d4e9fbdf42c70ba75e
