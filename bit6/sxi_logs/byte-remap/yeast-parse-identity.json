@@ -1,0 +1,52 @@
+[
+  {
+    "command": [
+      "cmp",
+      "vendor/byte-remap-gates/xsa-build-18f03s3v/parse.dict",
+      "/tmp/pfp-agc-gates/xsa-build-5najb_ty/parse.dict"
+    ],
+    "returncode": 0,
+    "bytes": 513394300,
+    "stderr": ""
+  },
+  {
+    "command": [
+      "cmp",
+      "vendor/byte-remap-gates/xsa-build-18f03s3v/parse.parse",
+      "/tmp/pfp-agc-gates/xsa-build-5najb_ty/parse.parse"
+    ],
+    "returncode": 0,
+    "bytes": 136535136,
+    "stderr": ""
+  },
+  {
+    "command": [
+      "cmp",
+      "vendor/byte-remap-gates/xsa-build-18f03s3v/parse.parse.dict",
+      "/tmp/pfp-agc-gates/xsa-build-5najb_ty/parse.parse.dict"
+    ],
+    "returncode": 0,
+    "bytes": 102802192,
+    "stderr": ""
+  },
+  {
+    "command": [
+      "cmp",
+      "vendor/byte-remap-gates/xsa-build-18f03s3v/parse.parse.parse",
+      "/tmp/pfp-agc-gates/xsa-build-5najb_ty/parse.parse.parse"
+    ],
+    "returncode": 0,
+    "bytes": 12332344,
+    "stderr": ""
+  },
+  {
+    "command": [
+      "cmp",
+      "vendor/byte-remap-gates/xsa-build-18f03s3v/collection.txt.names.tsv",
+      "/tmp/pfp-agc-gates/xsa-build-5najb_ty/collection.txt.names.tsv"
+    ],
+    "returncode": 0,
+    "bytes": 351876,
+    "stderr": ""
+  }
+]

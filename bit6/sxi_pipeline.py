@@ -274,6 +274,13 @@ def main():
             f.seek(-1, 2)
             terminal = f.read(1)[0]
         run('parse', [pfp, '-t', text, '-o', prefix, '-w', 10, '-p', 100, '-j', a.threads, '--tmp-dir', work])
+    remap = pathlib.Path(str(prefix)+'.remap')
+    sigma = remap.read_bytes()
+    if len(sigma) != 256 or len(set(sigma)) != 256 or sigma[30] != 30:
+        raise RuntimeError('invalid/missing parser byte permutation')
+    terminal = sigma[terminal]
+    record(dict(stage='byte-remap', path=str(remap), sha256=sha256(remap),
+                identity=sigma == bytes(range(256)), sigma=list(sigma)))
     run('parse-l2', [pfp, '-i', str(prefix)+'.parse', '-w', 5, '-p', 11, '-j', a.threads, '--tmp-dir', work])
     # Upstream's rdbuf merge sets failbit on an empty chunk. Tiny parses can
     # create such chunks; one chunk avoids this without changing .ssa code.
@@ -299,7 +306,7 @@ def main():
     if a.expect_chi is not None and count != a.expect_chi:
         raise RuntimeError(f'chi gate mismatch: {count} != {a.expect_chi}')
     if a.verify_text_sample:
-        audit = [tools/'sxi_text_audit', text, ri4, agg, chi, a.verify_text_sample]
+        audit = [tools/'sxi_text_audit', text, ri4, agg, chi, a.verify_text_sample, '--remap', remap]
         if a.agc:
             audit += ['--agc', source_path, '--names', names, '--agc2flat', agc]
         run('verify-text-sample', audit)
@@ -308,7 +315,7 @@ def main():
     out.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.xsa-publish-', dir=out.parent) as publish:
         candidate = pathlib.Path(publish)/'candidate.sxi'
-        cmd = [tools/'sxi_write', '--ri4', ri4, '--heads', heads, '--chi', chi, '--output', candidate]
+        cmd = [tools/'sxi_write', '--ri4', ri4, '--heads', heads, '--chi', chi, '--output', candidate, '--remap', remap]
         cmd += ['--mode', (a.mode if a.mode != 'auto' else ('text' if a.text else 'dna')), '--orientation', 'reversed' if a.agc else 'forward']
         if names:
             cmd += ['--names', names]

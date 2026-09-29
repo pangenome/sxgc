@@ -1,0 +1,59 @@
+[2026-09-29 14:49:41.595] [info] Current Configuration:
+; PFP++
+
+; Text file to parse.
+text="/tmp/byte-remap-2lgonwm7/overflow256.txt"
+
+; Read -t as AGC: archive order, uppercase reversed contigs, 0x1e separators.
+agc=false
+
+; Output prefix.
+out-prefix="/tmp/byte-remap-2lgonwm7/xsa-build-ls6y9l14/parse"
+
+; Sliding window size.
+window-size=10
+
+; Modulo used during parsing.
+modulo=100
+
+; Number of threads.
+threads=2
+
+; Temporary files directory.
+tmp-dir="/tmp/byte-remap-2lgonwm7/xsa-build-ls6y9l14"
+
+; Also output compressed the dictionary.
+compress-dictionary=false
+
+; Use reference parse to avoid re-parsing.
+use-vcf-acceleration=false
+
+; Print out csv containing stats.
+print-statistics=false
+
+; Output count for each dictionary phrase.
+output-occurrences=false
+
+; Output sai array.
+output-sai=false
+
+; Output last array.
+output-last=false
+
+; Convert all non ACGT characters from a VCF or FASTA file to N.
+acgt-only=false
+
+; Verbose output.
+verbose=false
+
+; Version number.
+version=false
+
+[2026-09-29 14:49:41.595] [info] Parsing /tmp/byte-remap-2lgonwm7/overflow256.txt
+[2026-09-29 14:49:41.595] [info] Main parser: Replacing hash values with ranks.
+[2026-09-29 14:49:41.595] [info] Main parser: writing dictionary on disk NOT COMPRESSED
+[2026-09-29 14:49:41.595] [info] No properties requested.
+[2026-09-29 14:49:41.595] [info] Main parser: closed
+[2026-09-29 14:49:41.595] [info] Parser Text -	Parse size: 0	Dic Size: 0 Dic Total Length: 0
+[2026-09-29 14:49:41.595] [error] Text input failed: Byte alphabet exceeds 250 codes (249 plus reserved 0x1e); escape encoding is not supported
+[Disk Write (bytes): 1]

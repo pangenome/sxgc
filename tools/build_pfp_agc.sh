@@ -2,8 +2,8 @@
 # Isolated native-AGC PFP++ build. Never writes /home/erikg/pfp.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
-pfp_dir=${PFP_AGC_FORK:-/tmp/pfp-agc-fork}
-agc_dir=${PFP_AGC_LIBRARY:-/tmp/pfp-agc-library}
+pfp_dir=${PFP_AGC_FORK:-$root/vendor/pfp-agc-fork}
+agc_dir=${PFP_AGC_LIBRARY:-$root/vendor/pfp-agc-library}
 [[ $(realpath -m "$pfp_dir") != /home/erikg/pfp ]] || { echo 'Refusing protected PFP checkout' >&2; exit 1; }
 if [[ ! -d "$pfp_dir/.git" ]]; then
   git clone https://github.com/marco-oliva/pfp.git "$pfp_dir"

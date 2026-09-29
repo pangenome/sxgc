@@ -1,0 +1,35 @@
+[
+  {
+    "command": [
+      "/home/erikg/worktrees/sxgc/pi-worktree-e7286239-b261-424c-8585-f2604e5d83e0-s0-0/xsa/target/release/xsa",
+      "mems",
+      "--sxi",
+      "/home/erikg/worktrees/sxgc/pi-worktree-e7286239-b261-424c-8585-f2604e5d83e0-s0-0/vendor/byte-remap-gates/pile-frag.sxi",
+      "--reads",
+      "/home/erikg/worktrees/sxgc/pi-worktree-e7286239-b261-424c-8585-f2604e5d83e0-s0-0/bit6/sxi_logs/byte-remap/pile-patterns.fa",
+      "--min-len",
+      "20",
+      "-j",
+      "4"
+    ],
+    "returncode": 0,
+    "seconds": 48.81701504299417
+  },
+  {
+    "command": [
+      "python3",
+      "/home/erikg/worktrees/sxgc/pi-worktree-e7286239-b261-424c-8585-f2604e5d83e0-s0-0/tools/pilot_verify.py",
+      "--text",
+      "/home/erikg/sxgc-piletest/pile-frag.txt",
+      "--patterns",
+      "/home/erikg/worktrees/sxgc/pi-worktree-e7286239-b261-424c-8585-f2604e5d83e0-s0-0/bit6/sxi_logs/byte-remap/pile-patterns.json",
+      "--occs",
+      "/home/erikg/worktrees/sxgc/pi-worktree-e7286239-b261-424c-8585-f2604e5d83e0-s0-0/bit6/sxi_logs/byte-remap/pile-mems.jsonl",
+      "--slices",
+      "/home/erikg/worktrees/sxgc/pi-worktree-e7286239-b261-424c-8585-f2604e5d83e0-s0-0/bit6/sxi_logs/byte-remap/pile-slices.json",
+      "--min-len",
+      "20"
+    ],
+    "returncode": 0
+  }
+]

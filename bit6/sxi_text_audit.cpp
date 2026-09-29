@@ -10,6 +10,7 @@
 #include <iostream>
 using namespace sxi;
 struct Text {
+    Remap sigma=identity_remap();
     int fd=-1, request=-1; pid_t child=-1; U bytes=0;
     struct Cache { U start=UINT64_MAX; std::vector<unsigned char> data; };
     mutable std::array<Cache,2> cache;
@@ -44,6 +45,7 @@ struct Text {
     ~Text(){if(request>=0)close(request);if(fd>=0)close(fd);if(child>0){kill(child,SIGTERM);waitpid(child,nullptr,0);}}
     void at(U offset,unsigned char* dst,size_t length)const{
         check(offset<=bytes&&length<=bytes-offset,"audit text range");
+        auto* begin=dst;size_t total=length;
         while(length){
             if(request<0){ssize_t got=pread(fd,dst,length,offset);if(got<0&&errno==EINTR)continue;check(got>0,"audit text read");offset+=got;dst+=got;length-=got;continue;}
             U base=offset/65536*65536;Cache* found=nullptr;
@@ -55,6 +57,7 @@ struct Text {
             size_t take=std::min<size_t>(length,found->data.size()-(offset-base));
             memcpy(dst,found->data.data()+(offset-base),take);offset+=take;dst+=take;length-=take;
         }
+        for(size_t i=0;i<total;++i)begin[i]=sigma[begin[i]];
     }
     unsigned char byte(U offset)const{unsigned char c;at(offset,&c,1);return c;}
 };
@@ -65,9 +68,16 @@ struct Stream {
     U next(unsigned bytes=8){return integer(in,bytes);}
 };
 int main(int argc,char**argv){try{
-    check(argc==6||(argc==12&&std::string(argv[6])=="--agc"&&std::string(argv[8])=="--names"&&std::string(argv[10])=="--agc2flat"),"usage: sxi_text_audit TEXT RI4 AGG CHI N [--agc ARCHIVE --names TSV --agc2flat TOOL]");
+    check(argc>=6,"usage: sxi_text_audit TEXT RI4 AGG CHI N [--remap TABLE] [--agc ARCHIVE --names TSV --agc2flat TOOL]");
+    std::map<std::string,std::string> opts;
+    for(int i=6;i<argc;i+=2){check(i+1<argc,"missing audit option value");std::string key=argv[i];
+        check(key=="--remap"||key=="--agc"||key=="--names"||key=="--agc2flat","unknown audit option");
+        check(opts.emplace(key,argv[i+1]).second,"duplicate audit option");}
+    bool archive=opts.count("--agc");check(archive==(opts.count("--names")!=0)&&archive==(opts.count("--agc2flat")!=0),"incomplete audit archive options");
     U requested=std::stoull(argv[5]);check(requested>0&&requested<=100000,"sample N must be 1..100000");
-    Text text(argv[1],argc==12?argv[7]:nullptr,argc==12?argv[9]:nullptr,argc==12?argv[11]:nullptr);std::ifstream ri(argv[2],std::ios::binary),agg(argv[3],std::ios::binary);
+    Text text(argv[1],archive?opts["--agc"].c_str():nullptr,archive?opts["--names"].c_str():nullptr,archive?opts["--agc2flat"].c_str():nullptr);
+    if(opts.count("--remap"))text.sigma=load_remap(opts["--remap"]);
+    std::ifstream ri(argv[2],std::ios::binary),agg(argv[3],std::ios::binary);
     check(bool(ri)&&bool(agg),"audit index open");U ribytes=size(ri),aggbytes=size(agg);
     check(ribytes>=2080&&integer(ri)==0x0000000452585349ULL,"audit ri4 header");
     U n=integer(ri);integer(ri);U r=integer(ri);check(n==text.bytes&&r<=(UINT64_MAX-2080)/32&&ribytes>=2080+5*r,"audit dimensions");
@@ -82,7 +92,7 @@ int main(int argc,char**argv){try{
     // Stratified deterministic witnesses across the complete emission stream.
     for(U i=0;i<take;i++){cf.seekg((i*(count/take)+(i*(count%take))/take)*8);U v=integer(cf);check(v<n,"audit witness range");check(samples.emplace(v,false).second,"audit duplicate sample");}
     struct Candidate {int64_t len=-1;U pos=0,other=0,lcp=0;bool active=false;int symbol=0,other_symbol=0;};
-    std::array<Candidate,128> candidates{};U comparisons=0,verified=0,emitted=0;
+    std::array<Candidate,256> candidates{};U comparisons=0,verified=0,emitted=0;
     auto witness=[&](U pos){check(pos<n,"audit endpoint range");return pos? n-pos:0;};
     std::array<unsigned char,65536> left{},right{};
     auto emit=[&](const Candidate& c){
@@ -104,10 +114,10 @@ int main(int argc,char**argv){try{
     int prev=-1;U prevtail=0,interior=UINT64_MAX;int64_t m=INT64_MAX;
     for(U i=0;i<r;i++){
         U lcp=lcps.next(),head=heads.next(),tail=tails.next(),within=interiors.next();
-        int c=chars.next(1);check(c<128,"audit alphabet");
+        int c=chars.next(1);check(c<256,"audit alphabet");
         if(i){int64_t mm=std::min(m,interior==UINT64_MAX?INT64_MAX:int64_t(interior));
             if(c!=prev){int64_t m3=std::min(mm,int64_t(lcp));
-                for(int ch=1;ch<128;ch++)if(m3<candidates[ch].len){if(candidates[ch].active)emit(candidates[ch]);candidates[ch].len=m3;candidates[ch].active=false;}
+                for(int ch=1;ch<256;ch++)if(m3<candidates[ch].len){if(candidates[ch].active)emit(candidates[ch]);candidates[ch].len=m3;candidates[ch].active=false;}
                 if(int64_t(lcp)>candidates[prev].len)candidates[prev]={int64_t(lcp),prevtail,head,lcp,true,prev,c};
                 if(int64_t(lcp)>candidates[c].len)candidates[c]={int64_t(lcp),head,prevtail,lcp,true,c,prev};
                 m=INT64_MAX;
@@ -115,7 +125,7 @@ int main(int argc,char**argv){try{
         }
         prev=c;prevtail=tail;interior=within;
     }
-    for(int c=1;c<128;c++)if(candidates[c].active)emit(candidates[c]);
+    for(int c=1;c<256;c++)if(candidates[c].active)emit(candidates[c]);
     check(emitted==count&&verified==take,"audit sampled witness missing/count mismatch");
     text.finish();
     std::cout<<"TEXT_SAMPLE_PASS requested="<<requested<<" verified="<<verified<<" chi="<<count<<" compared_bytes="<<comparisons<<"\n";

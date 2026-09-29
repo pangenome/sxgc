@@ -1,0 +1,51 @@
+[2026-09-29 13:23:51.364] [info] Current Configuration:
+; PFP++
+
+; Integers file to parse.
+int32t="/tmp/byte-remap-v9z7ou9k/xsa-build-gor9c47r/parse.parse"
+
+; Read -t as AGC: archive order, uppercase reversed contigs, 0x1e separators.
+agc=false
+
+; Sliding window size.
+window-size=5
+
+; Modulo used during parsing.
+modulo=11
+
+; Number of threads.
+threads=2
+
+; Temporary files directory.
+tmp-dir="/tmp/byte-remap-v9z7ou9k/xsa-build-gor9c47r"
+
+; Also output compressed the dictionary.
+compress-dictionary=false
+
+; Use reference parse to avoid re-parsing.
+use-vcf-acceleration=false
+
+; Print out csv containing stats.
+print-statistics=false
+
+; Output count for each dictionary phrase.
+output-occurrences=false
+
+; Output sai array.
+output-sai=false
+
+; Output last array.
+output-last=false
+
+; Convert all non ACGT characters from a VCF or FASTA file to N.
+acgt-only=false
+
+; Verbose output.
+verbose=false
+
+; Version number.
+version=false
+
+[2026-09-29 13:23:51.364] [info] Parsing /tmp/byte-remap-v9z7ou9k/xsa-build-gor9c47r/parse.parse
+[2026-09-29 13:23:51.364] [error] A sequence doesn't have w DOLLAR at the end!
+[Disk Write (bytes): 0]

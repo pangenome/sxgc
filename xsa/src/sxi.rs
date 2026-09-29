@@ -53,6 +53,7 @@ pub struct Container {
     pub r: u64,
     pub complete: bool,
     pub flags: u64,
+    pub sigma: [u8; 256],
     pub members: Vec<Member>,
 }
 impl Container {
@@ -94,10 +95,10 @@ impl Container {
             "invalid n/k/r",
         );
         need(
-            (5..=6).contains(&count)
+            (5..=7).contains(&count)
                 && hs == 64 + 40 * count
                 && u64at(&b, 40) == length
-                && (flags <= 1 || (8..=15).contains(&flags))
+                && (flags <= 1 || (8..=15).contains(&flags) || (24..=31).contains(&flags))
                 && u32at(&b, 60) == 0,
             "invalid header",
         );
@@ -118,7 +119,7 @@ impl Container {
                 checksum: u32at(&d, 32),
             };
             need(
-                m.id == i + 1 && u32at(&d, 4) == m.id && u32at(&d, 36) == 0,
+                (m.id == i + 1 || (i == 5 && count == 6 && m.id == 7)) && u32at(&d, 4) == m.id && u32at(&d, 36) == 0,
                 "unsupported/duplicate member",
             );
             let aligned = end
@@ -143,6 +144,7 @@ impl Container {
             r,
             complete: flags & 1 != 0,
             flags,
+            sigma: std::array::from_fn(|i| i as u8),
             members,
         };
         need(
@@ -170,7 +172,7 @@ impl Container {
             c.complete || (chi.count == 0 && chi.bytes == 0),
             "unfinished chi",
         );
-        if c.members.len() == 6 {
+        if c.members.iter().any(|m| m.id == 6) {
             need(c.member(6).count == c.member(6).bytes, "names size");
         }
         let mut buf = vec![0; 1 << 20];
@@ -185,6 +187,20 @@ impl Container {
                 left -= z as u64;
             }
             need(!v == m.checksum, "member CRC mismatch");
+        }
+        let remapped = c.members.last().unwrap().id == 7;
+        need(remapped == (flags & 16 != 0), "remap flag/member mismatch");
+        if remapped {
+            let m = c.member(7);
+            need(m.count == 256 && m.bytes == 256, "remap size");
+            at(&mut f, m.offset);
+            rd(&mut f, &mut c.sigma);
+            let mut seen = [false; 256];
+            for &v in &c.sigma {
+                need(!seen[v as usize], "remap is not a permutation");
+                seen[v as usize] = true;
+            }
+            need(c.sigma[30] == 30, "remap moves separator");
         }
         let tail = c.member(2);
         at(&mut f, tail.offset);
@@ -242,7 +258,7 @@ impl Container {
             reservoir >>= w;
             available -= w as u32;
         }
-        if c.members.len() == 6 {
+        if c.members.iter().any(|m| m.id == 6) {
             let m = c.member(6);
             at(&mut f, m.offset);
             let mut bytes = vec![0; m.bytes as usize]; rd(&mut f, &mut bytes);

@@ -1,0 +1,106 @@
+{
+  "chi": 85404336,
+  "identity_table": true,
+  "comparisons": [
+    {
+      "command": [
+        "cmp",
+        "/home/erikg/worktrees/sxgc/pi-worktree-e7286239-b261-424c-8585-f2604e5d83e0-s0-0/vendor/byte-remap-gates/xsa-build-18f03s3v/parse.dict",
+        "/tmp/pfp-agc-gates/xsa-build-5najb_ty/parse.dict"
+      ],
+      "returncode": 0,
+      "bytes": 513394300,
+      "stderr": ""
+    },
+    {
+      "command": [
+        "cmp",
+        "/home/erikg/worktrees/sxgc/pi-worktree-e7286239-b261-424c-8585-f2604e5d83e0-s0-0/vendor/byte-remap-gates/xsa-build-18f03s3v/parse.parse",
+        "/tmp/pfp-agc-gates/xsa-build-5najb_ty/parse.parse"
+      ],
+      "returncode": 0,
+      "bytes": 136535136,
+      "stderr": ""
+    },
+    {
+      "command": [
+        "cmp",
+        "/home/erikg/worktrees/sxgc/pi-worktree-e7286239-b261-424c-8585-f2604e5d83e0-s0-0/vendor/byte-remap-gates/xsa-build-18f03s3v/parse.parse.dict",
+        "/tmp/pfp-agc-gates/xsa-build-5najb_ty/parse.parse.dict"
+      ],
+      "returncode": 0,
+      "bytes": 102802192,
+      "stderr": ""
+    },
+    {
+      "command": [
+        "cmp",
+        "/home/erikg/worktrees/sxgc/pi-worktree-e7286239-b261-424c-8585-f2604e5d83e0-s0-0/vendor/byte-remap-gates/xsa-build-18f03s3v/parse.parse.parse",
+        "/tmp/pfp-agc-gates/xsa-build-5najb_ty/parse.parse.parse"
+      ],
+      "returncode": 0,
+      "bytes": 12332344,
+      "stderr": ""
+    },
+    {
+      "command": [
+        "cmp",
+        "/home/erikg/worktrees/sxgc/pi-worktree-e7286239-b261-424c-8585-f2604e5d83e0-s0-0/vendor/byte-remap-gates/xsa-build-18f03s3v/collection.txt.names.tsv",
+        "/tmp/pfp-agc-gates/xsa-build-5najb_ty/collection.txt.names.tsv"
+      ],
+      "returncode": 0,
+      "bytes": 351876,
+      "stderr": ""
+    },
+    {
+      "command": [
+        "cmp",
+        "/home/erikg/worktrees/sxgc/pi-worktree-e7286239-b261-424c-8585-f2604e5d83e0-s0-0/vendor/byte-remap-gates/xsa-build-18f03s3v/fresh.head_sa",
+        "/tmp/pfp-agc-gates/xsa-build-5najb_ty/fresh.head_sa"
+      ],
+      "returncode": 0,
+      "bytes": 807240360,
+      "stderr": ""
+    },
+    {
+      "command": [
+        "cmp",
+        "/home/erikg/worktrees/sxgc/pi-worktree-e7286239-b261-424c-8585-f2604e5d83e0-s0-0/vendor/byte-remap-gates/xsa-build-18f03s3v/fresh.ri4",
+        "/tmp/pfp-agc-gates/xsa-build-5najb_ty/fresh.ri4"
+      ],
+      "returncode": 0,
+      "bytes": 908147498,
+      "stderr": ""
+    },
+    {
+      "command": [
+        "cmp",
+        "/home/erikg/worktrees/sxgc/pi-worktree-e7286239-b261-424c-8585-f2604e5d83e0-s0-0/vendor/byte-remap-gates/xsa-build-18f03s3v/fresh.agg",
+        "/tmp/pfp-agc-gates/xsa-build-5najb_ty/fresh.agg"
+      ],
+      "returncode": 0,
+      "bytes": 3228961452,
+      "stderr": ""
+    },
+    {
+      "command": [
+        "cmp",
+        "/home/erikg/worktrees/sxgc/pi-worktree-e7286239-b261-424c-8585-f2604e5d83e0-s0-0/vendor/byte-remap-gates/xsa-build-18f03s3v/fresh.sA",
+        "/tmp/pfp-agc-gates/xsa-build-5najb_ty/fresh.sA"
+      ],
+      "returncode": 0,
+      "bytes": 683234688,
+      "stderr": ""
+    },
+    {
+      "command": [
+        "cmp",
+        "/home/erikg/worktrees/sxgc/pi-worktree-e7286239-b261-424c-8585-f2604e5d83e0-s0-0/vendor/byte-remap-gates/yeast235.sxi",
+        "/tmp/pfp-agc-gates/yeast235-native.sxi"
+      ],
+      "returncode": 0,
+      "bytes": 1804487132,
+      "stderr": ""
+    }
+  ]
+}

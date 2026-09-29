@@ -1,0 +1,10 @@
+COMMAND ["/home/erikg/worktrees/sxgc/pi-worktree-e7286239-b261-424c-8585-f2604e5d83e0-s0-0/xsa/target/release/xsa", "sxi-info", "/home/erikg/worktrees/sxgc/pi-worktree-e7286239-b261-424c-8585-f2604e5d83e0-s0-0/vendor/byte-remap-gates/legacy-format/duplicates-600k.sxi", "--chi-out", "/home/erikg/worktrees/sxgc/pi-worktree-e7286239-b261-424c-8585-f2604e5d83e0-s0-0/vendor/byte-remap-gates/legacy-format/duplicates-600k.sorted.sA"]
+SXI1 version=1 n=600001 k=1 runs=14701 chi_complete=true
+member=1 count=14701 bytes=75553 crc32=22355d33
+member=2 count=14701 bytes=36769 crc32=9ccdbcbc
+member=3 count=14701 bytes=117608 crc32=314ea55b
+member=4 count=0 bytes=12 crc32=31082463
+member=5 count=13004 bytes=14885 crc32=3a94fb6a
+member=6 count=12 bytes=12 crc32=483bc3db
+chi_complete=true
+chi_delta_ratio=0.143080975

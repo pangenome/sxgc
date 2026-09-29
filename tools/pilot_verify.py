@@ -28,7 +28,78 @@ def load_lib(path):
     return lib
 
 
+def verify_text():
+    """Native MEM precision over original bytes, with bounded-slice brute recall.
+
+    Pattern JSON entries: name, hex, and optional planted (absolute byte offset).
+    Slice JSON entries: offset, length. No transformed corpus or full-text scan.
+    """
+    import json
+    import os
+    ap = argparse.ArgumentParser(description=verify_text.__doc__)
+    ap.add_argument('--text', required=True)
+    ap.add_argument('--patterns', required=True)
+    ap.add_argument('--occs', required=True)
+    ap.add_argument('--slices', required=True)
+    ap.add_argument('--min-len', required=True, type=int)
+    args = ap.parse_args()
+    if args.min_len < 1:
+        ap.error('--min-len must be positive')
+    patterns = json.load(open(args.patterns))
+    pats = {p['name']: bytes.fromhex(p['hex']) for p in patterns}
+    spans = json.load(open(args.slices))
+    got = {name: set() for name in pats}
+    fd = os.open(args.text, os.O_RDONLY)
+    try:
+        size = os.fstat(fd).st_size
+        total = 0
+        with open(args.occs) as f:
+            for line in f:
+                row = json.loads(line)
+                pat = pats[row['read']]
+                q, pos, length = row['qstart'], row['offset'], row['len']
+                assert 0 <= q < len(pat) and args.min_len <= length <= len(pat)-q
+                assert 0 <= pos <= size-length
+                assert os.pread(fd, length, pos) == pat[q:q+length], row
+                assert q == 0 or pos == 0 or os.pread(fd, 1, pos-1) != pat[q-1:q], ('left extendible', row)
+                assert q+length == len(pat) or pos+length == size or os.pread(fd, 1, pos+length) != pat[q+length:q+length+1], ('right extendible', row)
+                hit = (q, pos, length)
+                assert hit not in got[row['read']], ('duplicate', row)
+                got[row['read']].add(hit); total += 1
+        expected = 0
+        maxpat = max(map(len, pats.values()))
+        for span in spans:
+            start, length = span['offset'], span['length']
+            assert 0 <= start < size and 0 < length <= 64*1024*1024
+            base = max(0, start-1)
+            data = os.pread(fd, min(size-base, length+maxpat+1), base)
+            for name, pat in pats.items():
+                for q in range(len(pat)-args.min_len+1):
+                    pos = start-base
+                    while True:
+                        pos = data.find(pat[q:q+args.min_len], pos)
+                        if pos < 0 or base+pos >= min(size, start+length): break
+                        n = args.min_len
+                        while q+n < len(pat) and pos+n < len(data) and pat[q+n] == data[pos+n]: n += 1
+                        if q == 0 or base+pos == 0 or data[pos-1] != pat[q-1]:
+                            assert (q, base+pos, n) in got[name], ('slice recall', name, q, base+pos, n)
+                            expected += 1
+                        pos += 1
+        planted = 0
+        for p in patterns:
+            if 'planted' in p:
+                assert (0, p['planted'], len(pats[p['name']])) in got[p['name']], ('planted recall', p)
+                planted += 1
+        assert total > 0 and expected > 0
+        print(f'PILOT VERDICT GREEN text MEMs: precision={total}/{total}, slice_recall={expected}/{expected}, planted={planted}/{planted}, slices={len(spans)}')
+        return 0
+    finally:
+        os.close(fd)
+
+
 def main():
+    if '--text' in sys.argv[1:]:
+        return verify_text()
     ap = argparse.ArgumentParser()
     ap.add_argument("--agc", required=True)
     ap.add_argument("--sidecar", required=True)

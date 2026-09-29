@@ -14,11 +14,11 @@ The 64-byte header is:
 | 8, 16, 24 | u64 n, named record count k, run count R |
 | 32, 36 | u32 member count, total header+directory bytes |
 | 40 | u64 exact file length |
-| 48 | u64 flags: bit 0 = chi completed; bit 1 = DNA mode; bit 2 = reversed records; bit 3 = record metadata present; other bits zero |
+| 48 | u64 flags: bit 0 = chi completed; bit 1 = DNA mode; bit 2 = reversed records; bit 3 = record metadata present; bit 4 = byte permutation present; other bits zero |
 | 56 | u32 IEEE CRC32 of header+directory, this field zeroed |
 | 60 | u32 reserved = 0 |
 
-Directory: five mandatory entries followed by optional names. Each entry
+Directory: five mandatory entries followed by optional names (ID 6) and optional byte permutation (ID 7). Each entry
 is 40 bytes: u32 ID, u32 codec, u64 offset, u64 byte length, u64 item count,
 u32 IEEE CRC32 of stored member bytes, u32 reserved=0. ID and codec are
 identical in v1. Entries occur in ID order. Each member starts at the next
@@ -34,6 +34,7 @@ cryptographic authentication.
 | 4 | Anchors | XANC: u32 `0x434e4158`, u64 count, `(u64 row,u64 mirrored sample)` pairs, increasing row order |
 | 5 | Chi set | sorted unique witness positions, unsigned LEB128 gaps, starting from zero |
 | 6 | Names (optional) | existing UTF-8 names TSV, verbatim; count = byte length |
+| 7 | Byte permutation (optional) | 256 u8 values, `sigma[original] = indexed`; count = byte length = 256 |
 
 SA samples lie in `[0,n)`. Chi witnesses use the existing `.sA` coordinate
 convention, including the virtual end at **n**; allowed range is `[0,n]`.
@@ -107,3 +108,18 @@ See [SXI_QUERY.md](SXI_QUERY.md) for the query/server contract and limitations.
 embedded chi and member sizes. Repacking yeast235 with the new writer reports
 k=9901 while all six members retain their original hashes. Published legacy
 artifacts are not edited.
+
+The byte-permutation member is present exactly when flag bit 4 is set. It
+requires bit 3 (explicit metadata). ID 7 may follow ID 5 directly when there
+are no names. The table must be a permutation of all 256 values and fix
+`0x1E`; this also ensures no other byte maps to the separator. Omission means
+identity, and writers omit an explicitly supplied identity table so previous
+identity containers remain byte identical. Nonidentity metadata costs 40
+directory bytes plus 256 payload bytes and up to 7 alignment bytes. Old
+readers reject the new flag.
+PFP emits `<prefix>.remap` during its single input read; the build journal
+records its 256 entries and SHA256 before the writer consumes it. Observed
+source bytes map into 6..255; unobserved bytes may map into reserved codes,
+which are absent from the normalized index. DNA complementation uses original bytes; reversing a sequence commutes
+with byte mapping. Positions and lengths remain in
+original byte units. The table changes lexicographic order, not equality.

@@ -1,0 +1,5 @@
+COMMAND ["/home/erikg/worktrees/sxgc/pi-worktree-e7286239-b261-424c-8585-f2604e5d83e0-s0-0/xsa/target/release/xsa", "query", "--ri4", "/tmp/laneY/bat/duplicates-600k.ri4", "--patterns", "/home/erikg/worktrees/sxgc/pi-worktree-e7286239-b261-424c-8585-f2604e5d83e0-s0-0/vendor/byte-remap-gates/legacy-format/duplicates-600k.fa", "--plain", "--ms", "--ms-out", "/home/erikg/worktrees/sxgc/pi-worktree-e7286239-b261-424c-8585-f2604e5d83e0-s0-0/vendor/byte-remap-gates/legacy-format/duplicates-600k.ri.ms"]
+xsa query: loading /tmp/laneY/bat/duplicates-600k.ri4 ...
+  n=600001 R=14701
+  3 patterns
+xsa query: MS 3 reads, 14 positions [plain]

@@ -1,0 +1,137 @@
+{
+  "criteriaSatisfied": [
+    {
+      "id": "criterion-1",
+      "status": "satisfied",
+      "evidence": "Single-pass in-parser permutation implemented and consumed by SXI, MEM/HTTP queries and text audit. Pile-frag end-to-end and yeast235 byte-identity gates passed."
+    },
+    {
+      "id": "criterion-2",
+      "status": "satisfied",
+      "evidence": "Measurement histograms, design, applicable diff, binary provenance, commands, stage timings, independent byte oracles and residual limits are retained under bit6/sxi_logs/byte-remap/."
+    }
+  ],
+  "changedFiles": [
+    "bit6/SXI_BUILD.md",
+    "bit6/SXI_FORMAT.md",
+    "bit6/patches/pfp_agc.patch",
+    "bit6/rpfbwt_endpoints.cpp",
+    "bit6/sxi_format.hpp",
+    "bit6/sxi_pipeline.py",
+    "bit6/sxi_text_audit.cpp",
+    "bit6/sxi_write.cpp",
+    "bit6/test_sxi_format.py",
+    "tools/build_pfp_agc.sh",
+    "tools/pilot_verify.py",
+    "xsa/SOURCES.sha256.json",
+    "xsa/runtime/bit6/patches/pfp_agc.patch",
+    "xsa/runtime/bit6/rpfbwt_endpoints.cpp",
+    "xsa/runtime/bit6/sxi_format.hpp",
+    "xsa/runtime/bit6/sxi_pipeline.py",
+    "xsa/runtime/bit6/sxi_text_audit.cpp",
+    "xsa/runtime/bit6/sxi_write.cpp",
+    "xsa/src/main.rs",
+    "xsa/src/product.rs",
+    "xsa/src/sxi.rs",
+    "bit6/test_byte_remap.cpp",
+    "bit6/test_byte_remap.py",
+    "bit6/sxi_logs/byte-remap/ALPHABET.md",
+    "bit6/sxi_logs/byte-remap/DESIGN.md",
+    "bit6/sxi_logs/byte-remap/REPORT.md",
+    "bit6/sxi_logs/byte-remap/changes.patch",
+    "bit6/sxi_logs/byte-remap/journal-files.json"
+  ],
+  "testsAddedOrUpdated": [
+    "bit6/test_byte_remap.cpp",
+    "bit6/test_byte_remap.py",
+    "bit6/test_sxi_format.py",
+    "tools/pilot_verify.py",
+    "bit6/sxi_logs/byte-remap/chunk-gate.py"
+  ],
+  "commandsRun": [
+    {
+      "command": "/tmp/byte-remap-measure /home/erikg/sxgc-piletest/pile-frag.txt 0 1082130213",
+      "result": "passed",
+      "summary": "231 distinct bytes; low-byte counts [0,130,29,3,67,0]. Three additional 256 MiB pile regions counted; all histograms retained."
+    },
+    {
+      "command": "BUILD_JOBS=4 cargo build --offline --locked --release --manifest-path xsa/Cargo.toml",
+      "result": "passed",
+      "summary": "Complete packaged native/Rust build; build.log."
+    },
+    {
+      "command": "bash tools/build_pfp_agc.sh",
+      "result": "passed",
+      "summary": "Invoked with isolated offline dependency paths; pfp++, pfp++64 and pfp_source_probe built. See fork-build.log."
+    },
+    {
+      "command": "c++ -std=c++17 -O2 -I vendor/pfp-agc-fork/include bit6/test_byte_remap.cpp -o /tmp/byte-remap-unit; /tmp/byte-remap-unit",
+      "result": "passed",
+      "summary": "1,000 shuffled maximal alphabets; stable observed mappings, identity, separator pinning and exhaustion."
+    },
+    {
+      "command": "python3 bit6/test_sxi_format.py --writer xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-5l8veref/bundle/sxi_write --cpp-reader /tmp/byte-remap-format-probe",
+      "result": "passed",
+      "summary": "C++/Rust remap validation, identity byte equality and existing format cases; cpp-format.log."
+    },
+    {
+      "command": "python3 bit6/test_byte_remap.py",
+      "result": "passed",
+      "summary": "Fresh binary pipeline, brute MEM oracle, SXI/RI4 aggregate and chi differential, HTTP parity, 250-code capacity, 256-code refusal, verifier negative check."
+    },
+    {
+      "command": "python3 bit6/sxi_logs/byte-remap/chunk-gate.py",
+      "result": "passed",
+      "summary": ">2 MiB identity parse/dictionary match old parser; mapping collision across read seam handled."
+    },
+    {
+      "command": "xsa/target/release/xsa build --text /home/erikg/sxgc-piletest/pile-frag.txt -o vendor/byte-remap-gates/pile-frag.sxi --scratch vendor/byte-remap-gates --threads 16 --verify-text-sample 128 --log-dir bit6/sxi_logs/byte-remap --verbose",
+      "result": "passed",
+      "summary": "Published and validated 7,017,802,200-byte SXI; chi=306,164,765; audit 128/128; verified tool manifest."
+    },
+    {
+      "command": "python3 bit6/sxi_logs/byte-remap/verify-pile.py",
+      "result": "passed",
+      "summary": "All 256 indexed frequencies conserved; 179/179 MEM precision, 123/123 slice recall, 7/7 planted queries."
+    },
+    {
+      "command": "xsa/target/release/xsa build --agc /home/erikg/yeast/yeast235.agc -o vendor/byte-remap-gates/yeast235.sxi --scratch vendor/byte-remap-gates --threads 16 --verify-text-sample 32 --expect-heads /tmp/pfp-agc-gates/xsa-build-5najb_ty/fresh.head_sa --expect-ri4 /tmp/pfp-agc-gates/xsa-build-5najb_ty/fresh.ri4 --log-dir bit6/sxi_logs/byte-remap --verbose",
+      "result": "passed",
+      "summary": "Identity mapping, endpoint gates and text audit passed; chi=85,404,336."
+    },
+    {
+      "command": "python3 bit6/sxi_logs/byte-remap/verify-yeast.py",
+      "result": "passed",
+      "summary": "All 10 retained artifact comparisons passed, including final SXI and chi bytes."
+    },
+    {
+      "command": "python3 bit6/sxi_logs/byte-remap/legacy-format-run.py",
+      "result": "failed",
+      "summary": "Pre-existing empty-query fixture failure; identical failure reproduced with the pre-change binary. New remap differential passes."
+    },
+    {
+      "command": "git diff --check; git apply --reverse --check bit6/sxi_logs/byte-remap/changes.patch",
+      "result": "passed",
+      "summary": "Clean whitespace and review patch matches current worktree."
+    }
+  ],
+  "validationOutput": [
+    "Pile fragment: 1,082,130,213 bytes, 231 distinct values, 177,753 unchanged 0x1E separators; three pile slices: 219/219/230 values.",
+    "TEXT_SAMPLE_PASS requested=128 verified=128 chi=306164765 compared_bytes=1965",
+    "PILOT VERDICT GREEN text MEMs: precision=179/179, slice_recall=123/123, planted=7/7, slices=7",
+    "Yeast235 final SXI, chi, aggregates, endpoints, parse, dictionaries and names are byte-identical to accepted artifacts; chi=85404336.",
+    "All 42 packaged source hashes and the 23-file review inventory match; root and fork have no staged files."
+  ],
+  "residualRisks": [
+    "More than 249 nonseparator byte values fails explicitly. All-256-byte support needs escapes or a wider alphabet plus coordinate/boundary semantics; it is not implemented.",
+    "The complete 1.31 TB pile was sampled, not indexed. Its complete alphabet and resource feasibility remain ungated; the existing 32-bit run-count limit is unchanged.",
+    "Legacy seven-fixture format harness has a baseline empty-query failure; new C++/Rust remap and fresh-format differential gates pass.",
+    "Existing query transport framing remains: JSON strings use UTF-8; binary FASTA has newline/header framing. Raw RI4 carries no remap metadata."
+  ],
+  "noStagedFiles": true,
+  "diffSummary": "Online PFP byte permutation; optional SXI1 member 7/flag 0x10; original-byte query and audit mapping; 8-bit endpoint/sweep/audit support; packaged snapshots, documentation and gates.",
+  "reviewFindings": [
+    "No new blockers found in local review. Required independent reviewer approval remains pending."
+  ],
+  "manualNotes": "No commits, staged files, transformed corpus files or shared-input writes. Exact commands, hashes, timings and outputs are indexed by REPORT.md and journal-files.json. contact_supervisor was not available in the tool registry."
+}

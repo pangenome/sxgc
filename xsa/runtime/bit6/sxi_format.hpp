@@ -36,21 +36,32 @@ inline U named_records(std::istream& in,U bytes,U n){
     }
     check(count&&next==n,"SXI: names partition");return count;
 }
+using Remap=std::array<unsigned char,256>;
+inline Remap identity_remap(){Remap v{};for(unsigned i=0;i<256;++i)v[i]=i;return v;}
+inline void validate_remap(const Remap& v){
+    std::array<bool,256> seen{};
+    for(auto c:v){check(!seen[c],"SXI: remap is not a permutation");seen[c]=true;}
+    check(v[30]==30,"SXI: remap moves separator");
+}
+inline Remap load_remap(const std::string& path){
+    std::ifstream f(path,std::ios::binary);check(bool(f)&&size(f)==256,"SXI: remap size");
+    Remap v{};read(f,v.data(),v.size());validate_remap(v);return v;
+}
 struct Member {uint32_t id=0,codec=0;U offset=0,bytes=0,count=0;uint32_t checksum=0;};
 struct Container {
-    U n=0,k=0,r=0,flags=0;std::vector<Member> members;
+    U n=0,k=0,r=0,flags=0;std::vector<Member> members;Remap sigma=identity_remap();
     const Member& member(unsigned id)const{for(auto& m:members)if(m.id==id)return m;throw std::runtime_error("SXI: missing member");}
     explicit Container(const std::string& path,bool verify=true){
         std::ifstream f(path,std::ios::binary);check(bool(f),"SXI: open");U length=size(f);
         unsigned char b[64];read(f,b,64);check(!memcmp(b,"SXI1",4)&&get(b+4,4)==1,"SXI: bad magic/version");
         n=get(b+8);k=get(b+16);r=get(b+24);U count=get(b+32,4),hs=get(b+36,4);flags=get(b+48);
         check(n&&n<UINT64_MAX&&r&&r<=n&&k<=n&&r<=UINT32_MAX,"SXI: invalid n/k/r");
-        check(count>=5&&count<=6&&hs==64+40*count&&get(b+40)==length&&(flags<=1||(flags>=8&&flags<=15))&&!get(b+60,4),"SXI: invalid header");
+        check(count>=5&&count<=7&&hs==64+40*count&&get(b+40)==length&&(flags<=1||(flags>=8&&flags<=15)||(flags>=24&&flags<=31))&&!get(b+60,4),"SXI: invalid header");
         uint32_t wanted=get(b+56,4);put(b+56,0,4);uint32_t crcval=crc(~0U,b,64);U end=hs;
         for(U i=0;i<count;i++){
             unsigned char d[40];read(f,d,40);crcval=crc(crcval,d,40);
             Member m{uint32_t(get(d,4)),uint32_t(get(d+4,4)),get(d+8),get(d+16),get(d+24),uint32_t(get(d+32,4))};
-            check(m.id==i+1&&m.codec==m.id&&!get(d+36,4),"SXI: unsupported/duplicate member");
+            check((m.id==i+1||(i==5&&count==6&&m.id==7))&&m.codec==m.id&&!get(d+36,4),"SXI: unsupported/duplicate member");
             check(end<=UINT64_MAX-7&&m.offset==(end+7)/8*8&&m.offset<=length&&m.bytes<=length-m.offset,"SXI: overlapping/out-of-bounds member");
             end=m.offset+m.bytes;members.push_back(m);
         }
@@ -59,9 +70,15 @@ struct Container {
         check(member(4).count<=k&&member(4).count<=(UINT64_MAX-12)/16&&member(4).bytes==12+16*member(4).count,"SXI: anchor size");
         check(member(5).count<=n+1&&member(5).count<=UINT64_MAX/10&&member(5).bytes>=member(5).count&&member(5).bytes<=10*member(5).count,"SXI: chi size");
         check((flags&1)||(member(5).count==0&&member(5).bytes==0),"SXI: unfinished chi");
-        if(members.size()==6)check(member(6).count==member(6).bytes,"SXI: names size");
+        if(std::any_of(members.begin(),members.end(),[](const Member& m){return m.id==6;}))check(member(6).count==member(6).bytes,"SXI: names size");
         if(verify){std::vector<unsigned char> buf(1<<20);for(auto& m:members){f.seekg(m.offset);U left=m.bytes;uint32_t c=~0U;while(left){size_t z=std::min<U>(left,buf.size());read(f,buf.data(),z);c=crc(c,buf.data(),z);left-=z;}check(~c==m.checksum,"SXI: member CRC mismatch");}}
-        if(members.size()==6){f.seekg(member(6).offset);U records=named_records(f,member(6).bytes,n);check(!(flags&8)||k==records,"SXI: record count mismatch");k=records;}
+        if(std::any_of(members.begin(),members.end(),[](const Member& m){return m.id==6;})){f.seekg(member(6).offset);U records=named_records(f,member(6).bytes,n);check(!(flags&8)||k==records,"SXI: record count mismatch");k=records;}
+        bool remapped=members.back().id==7;
+        check(remapped==bool(flags&16),"SXI: remap flag/member mismatch");
+        if(remapped){
+            check(member(7).count==256&&member(7).bytes==256,"SXI: remap size");
+            f.seekg(member(7).offset);read(f,sigma.data(),sigma.size());validate_remap(sigma);
+        }
         f.seekg(member(2).offset);U bits=integer(f);unsigned w=integer(f,1);
         check(w&&w<=64&&bits==r*w&&member(2).bytes==9+((bits+63)/64)*8,"SXI: packed tail size");
         f.seekg(member(4).offset);check(integer(f,4)==0x434e4158&&integer(f)==member(4).count,"SXI: anchor header");

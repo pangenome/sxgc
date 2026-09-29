@@ -178,18 +178,19 @@ index bba843a..addf097 100644
      else if (not integers_file_path.empty())
      {
 diff --git a/src/pfp_algo.cpp b/src/pfp_algo.cpp
-index 93a5974..ecfdf53 100644
+index 93a5974..917f75c 100644
 --- a/src/pfp_algo.cpp
 +++ b/src/pfp_algo.cpp
-@@ -5,6 +5,7 @@
+@@ -5,6 +5,8 @@
  // Licensed under the GNU license. See LICENSE file in the repository root for full license information.
  
  #include <pfp_algo.hpp>
 +#include <text_source.hpp>
++#include <byte_remap.hpp>
  
  //------------------------------------------------------------------------------
  
-@@ -515,15 +516,7 @@ vcfbwt::pfp::ParserText::init(const Params& params, const std::string& prefix)
+@@ -515,15 +517,7 @@ vcfbwt::pfp::ParserText::init(const Params& params, const std::string& prefix)
  void
  vcfbwt::pfp::ParserText::operator()()
  {
@@ -206,15 +207,18 @@ index 93a5974..ecfdf53 100644
      std::vector<vcfbwt::char_type> phrase;
      spdlog::info("Parsing {}", in_file_path);
      
-@@ -533,31 +526,38 @@ vcfbwt::pfp::ParserText::operator()()
+@@ -533,31 +527,38 @@ vcfbwt::pfp::ParserText::operator()()
      // First sequence start with one dollar
      phrase.emplace_back(DOLLAR);
      
 -    char c;
 -    while(gzread(fp, &c, 1) > 0)
-+    // Keep file mode's one-byte gzread behavior. AGC reads bounded chunks;
-+    // phrase/hash state persists, so no overlap is duplicated at chunk seams.
-+    std::vector<char> input(agc_input ? (1 << 20) : 1);
++    ByteRemap remap;
++    // Remove stale metadata before reading; publish the final permutation only
++    // after the complete source was successfully consumed.
++    const auto remap_path = out_file_prefix + ".remap";
++    std::remove(remap_path.c_str());
++    std::vector<char> input(1 << 20);
 +    std::size_t count;
 +    while ((count = source->read(input.data(), input.size())) != 0)
      {
@@ -238,12 +242,7 @@ index 93a5974..ecfdf53 100644
 -            phrase.erase(phrase.begin(), phrase.end() - this->params.w); // Keep the last w chars
 -            
 -            kr_hash.reset(); kr_hash.initialize(phrase.data(), params.w);
-+            char c = input[i];
-+            if (c <= DOLLAR_PRIME)
-+            {
-+                spdlog::error("Input may not contain bytes with integer value less than or equal to 5!");
-+                std::exit(EXIT_FAILURE);
-+            }
++            const unsigned char c = remap.map(static_cast<unsigned char>(input[i]));
 +
 +            phrase.push_back(c);
 +            if (phrase.size() == params.w) { kr_hash.initialize(phrase.data(), params.w); }
@@ -263,10 +262,12 @@ index 93a5974..ecfdf53 100644
      }
 -    
 +
++    remap.save(remap_path);
++
      // Last phrase
      if (phrase.size() >= this->params.w)
      {
-@@ -569,8 +569,7 @@ vcfbwt::pfp::ParserText::operator()()
+@@ -569,8 +570,7 @@ vcfbwt::pfp::ParserText::operator()()
          out_file.write((char*) (&hash), sizeof(hash_type)); this->parse_size += 1;
      }
      else { spdlog::error("A sequence doesn't have w DOLLAR at the end!"); std::exit(EXIT_FAILURE); }
@@ -276,6 +277,54 @@ index 93a5974..ecfdf53 100644
  }
  
  
+diff --git a/include/byte_remap.hpp b/include/byte_remap.hpp
+new file mode 100644
+index 0000000..1af6a2a
+--- /dev/null
++++ b/include/byte_remap.hpp
+@@ -0,0 +1,42 @@
++#pragma once
++#include <array>
++#include <algorithm>
++#include <fstream>
++#include <stdexcept>
++#include <string>
++
++namespace vcfbwt { namespace pfp {
++// A permutation of all 256 bytes, injective into [6,255] on the observed
++// alphabet. Only unseen source entries may change. No prepass or text spool.
++// Separator 0x1e is pinned, including before its first occurrence.
++class ByteRemap {
++    std::array<unsigned char,256> sigma{}, inverse{};
++    std::array<bool,256> seen{};
++public:
++    ByteRemap() {
++        for (unsigned i=0;i<256;++i) sigma[i]=inverse[i]=i;
++        seen[0x1e]=true;
++    }
++    unsigned char map(unsigned char c) {
++        if (!seen[c]) {
++            if (sigma[c]<=5) {
++                int target=255;
++                while(target>=6 && seen[inverse[target]]) --target;
++                if(target<6) throw std::runtime_error(
++                    "Byte alphabet exceeds 250 codes (249 plus reserved 0x1e); escape encoding is not supported");
++                unsigned char displaced=inverse[target], old=sigma[c];
++                sigma[c]=target; sigma[displaced]=old;
++                inverse[target]=c; inverse[old]=displaced;
++            }
++            seen[c]=true;
++        }
++        return sigma[c];
++    }
++    void save(const std::string& path) const {
++        std::ofstream out(path,std::ios::binary|std::ios::trunc);
++        out.write(reinterpret_cast<const char*>(sigma.data()),sigma.size());
++        out.close();
++        if(!out) throw std::runtime_error("Cannot write byte-remap table: "+path);
++    }
++};
++} }
 diff --git a/include/text_source.hpp b/include/text_source.hpp
 new file mode 100644
 index 0000000..14c2fa6
@@ -300,64 +349,6 @@ index 0000000..14c2fa6
 +};
 +std::unique_ptr<TextSource> open_text_source(const std::string& path, bool agc,
 +    std::size_t threads = 1, const std::string& names_path = "");
-+} }
-+#endif
-diff --git a/src/text_source.cpp b/src/text_source.cpp
-new file mode 100644
-index 0000000..68ea35e
---- /dev/null
-+++ b/src/text_source.cpp
-@@ -0,0 +1,39 @@
-+#include <text_source.hpp>
-+#include <zlib.h>
-+#include <algorithm>
-+#include <stdexcept>
-+#ifdef PFP_ENABLE_AGC
-+#include "agc_source.hpp"
-+#endif
-+namespace vcfbwt { namespace pfp {
-+namespace {
-+class FileSource : public TextSource {
-+    gzFile file;
-+public:
-+    explicit FileSource(const std::string& path) : file(gzopen(path.c_str(), "rb")) {
-+        if (!file) throw std::runtime_error("Cannot open text: " + path);
-+    }
-+    ~FileSource() { gzclose(file); }
-+    std::size_t read(char* out, std::size_t capacity) override {
-+        int n = gzread(file, out, std::min<std::size_t>(capacity, 1 << 30));
-+        if (n < 0) throw std::runtime_error("Text read failed");
-+        return n;
-+    }
-+    uint64_t size() const override { throw std::runtime_error("File size not available for compressed input"); }
-+    void seek(uint64_t offset, uint64_t) override {
-+        if (gzseek(file, offset, SEEK_SET) < 0) throw std::runtime_error("Text seek failed");
-+    }
-+};
-+}
-+std::unique_ptr<TextSource> open_text_source(const std::string& path, bool agc,
-+        std::size_t threads, const std::string& names_path) {
-+    if (agc) {
-+#ifdef PFP_ENABLE_AGC
-+        return open_agc_source(path, threads, names_path);
-+#else
-+        throw std::runtime_error("AGC input requires a build with PFP_ENABLE_AGC=ON");
-+#endif
-+    }
-+    return std::unique_ptr<TextSource>(new FileSource(path));
-+}
-+} }
-diff --git a/src/agc_source.hpp b/src/agc_source.hpp
-new file mode 100644
-index 0000000..e7d5208
---- /dev/null
-+++ b/src/agc_source.hpp
-@@ -0,0 +1,7 @@
-+#ifndef PFP_AGC_SOURCE_HPP
-+#define PFP_AGC_SOURCE_HPP
-+#include <text_source.hpp>
-+namespace vcfbwt { namespace pfp {
-+std::unique_ptr<TextSource> open_agc_source(const std::string&, std::size_t, const std::string&);
 +} }
 +#endif
 diff --git a/src/agc_source.cpp b/src/agc_source.cpp
@@ -583,6 +574,64 @@ index 0000000..052180f
 +}
 +} }
 +#endif
+diff --git a/src/agc_source.hpp b/src/agc_source.hpp
+new file mode 100644
+index 0000000..e7d5208
+--- /dev/null
++++ b/src/agc_source.hpp
+@@ -0,0 +1,7 @@
++#ifndef PFP_AGC_SOURCE_HPP
++#define PFP_AGC_SOURCE_HPP
++#include <text_source.hpp>
++namespace vcfbwt { namespace pfp {
++std::unique_ptr<TextSource> open_agc_source(const std::string&, std::size_t, const std::string&);
++} }
++#endif
+diff --git a/src/text_source.cpp b/src/text_source.cpp
+new file mode 100644
+index 0000000..68ea35e
+--- /dev/null
++++ b/src/text_source.cpp
+@@ -0,0 +1,39 @@
++#include <text_source.hpp>
++#include <zlib.h>
++#include <algorithm>
++#include <stdexcept>
++#ifdef PFP_ENABLE_AGC
++#include "agc_source.hpp"
++#endif
++namespace vcfbwt { namespace pfp {
++namespace {
++class FileSource : public TextSource {
++    gzFile file;
++public:
++    explicit FileSource(const std::string& path) : file(gzopen(path.c_str(), "rb")) {
++        if (!file) throw std::runtime_error("Cannot open text: " + path);
++    }
++    ~FileSource() { gzclose(file); }
++    std::size_t read(char* out, std::size_t capacity) override {
++        int n = gzread(file, out, std::min<std::size_t>(capacity, 1 << 30));
++        if (n < 0) throw std::runtime_error("Text read failed");
++        return n;
++    }
++    uint64_t size() const override { throw std::runtime_error("File size not available for compressed input"); }
++    void seek(uint64_t offset, uint64_t) override {
++        if (gzseek(file, offset, SEEK_SET) < 0) throw std::runtime_error("Text seek failed");
++    }
++};
++}
++std::unique_ptr<TextSource> open_text_source(const std::string& path, bool agc,
++        std::size_t threads, const std::string& names_path) {
++    if (agc) {
++#ifdef PFP_ENABLE_AGC
++        return open_agc_source(path, threads, names_path);
++#else
++        throw std::runtime_error("AGC input requires a build with PFP_ENABLE_AGC=ON");
++#endif
++    }
++    return std::unique_ptr<TextSource>(new FileSource(path));
++}
++} }
 diff --git a/tests/source_probe.cpp b/tests/source_probe.cpp
 new file mode 100644
 index 0000000..b929b77

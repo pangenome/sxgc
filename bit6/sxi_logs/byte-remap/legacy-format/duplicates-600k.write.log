@@ -1,0 +1,8 @@
+COMMAND ["/home/erikg/worktrees/sxgc/pi-worktree-e7286239-b261-424c-8585-f2604e5d83e0-s0-0/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-5l8veref/bundle/sxi_write", "--ri4", "/tmp/laneY/bat/duplicates-600k.ri4", "--heads", "/tmp/laneQ/pass4/duplicates-600k.head_sa", "--chi", "/home/erikg/worktrees/sxgc/pi-worktree-e7286239-b261-424c-8585-f2604e5d83e0-s0-0/vendor/byte-remap-gates/legacy-format/duplicates-600k.ri.sA", "--names", "/tmp/laneY/bat/duplicates-600k.sc", "--output", "/home/erikg/worktrees/sxgc/pi-worktree-e7286239-b261-424c-8585-f2604e5d83e0-s0-0/vendor/byte-remap-gates/legacy-format/duplicates-600k.sxi"]
+SXI_MEMBER id=1 count=14701 bytes=75553 crc32=22355d33
+SXI_MEMBER id=2 count=14701 bytes=36769 crc32=9ccdbcbc
+SXI_MEMBER id=3 count=14701 bytes=117608 crc32=314ea55b
+SXI_MEMBER id=4 count=0 bytes=12 crc32=31082463
+SXI_MEMBER id=5 count=13004 bytes=14885 crc32=3a94fb6a
+SXI_MEMBER id=6 count=12 bytes=12 crc32=483bc3db
+SXI_PASS n=600001 runs=14701 bytes=245164 chi_complete=1 chi_delta_ratio=0.143080975

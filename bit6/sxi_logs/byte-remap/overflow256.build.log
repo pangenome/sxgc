@@ -1,0 +1,4 @@
+xsa build: work=/tmp/byte-remap-2lgonwm7/xsa-build-ls6y9l14 log=/home/erikg/sxgc/bit6/sxi_logs/byte-remap/overflow256-xsa-build-ls6y9l14.jsonl
+parse: /home/erikg/.cache/xsa/aa32cdfd0ef12d8b4180a24c8a383e40673e63953cb606ca3aede688c3cbd63b/pfp++ -t /tmp/byte-remap-2lgonwm7/overflow256.txt -o /tmp/byte-remap-2lgonwm7/xsa-build-ls6y9l14/parse -w 10 -p 100 -j 2 --tmp-dir /tmp/byte-remap-2lgonwm7/xsa-build-ls6y9l14
+xsa build: parse failed (1); see /home/erikg/sxgc/bit6/sxi_logs/byte-remap/overflow256-xsa-build-ls6y9l14.parse.log; no final SXI published
+xsa: error: build: pipeline failed: exit status: 1

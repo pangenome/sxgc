@@ -1,0 +1,1580 @@
+diff --git a/bit6/SXI_BUILD.md b/bit6/SXI_BUILD.md
+index 9716de2..bd6d141 100644
+--- a/bit6/SXI_BUILD.md
++++ b/bit6/SXI_BUILD.md
+@@ -140,8 +140,14 @@ preparation cannot recover information absent from the archive.
+ `--text` passes the supplied raw bytes **as-is**, with no O(n) contract scan,
+ separator insertion, newline conversion, reversal or uppercasing. The caller
+ owns the contract: using 0x1E as content is user error. A constant-time final-byte
+-read only configures endpoint padding normalization. Existing parser/alphabet
+-limitations still apply (the current backend supports bytes 6..127). Historical
++read only configures endpoint padding normalization. PFP maps bytes in its input
++read path, without a prepass or a transformed text file. It fixes 0x1E and uses
++a single-byte permutation into codes 6..255, supporting up to 249 distinct
++nonseparator bytes. Inputs with no bytes 0..5 retain the identity mapping.
++Alphabet exhaustion fails explicitly; variable-length escape encoding is not
++supported. The parse-time `.remap` table flows through the journal, text audit,
++SXI member 7 and the query engine. Positions remain original byte positions;
++see [SXI_FORMAT.md](SXI_FORMAT.md) for the metadata contract. Historical
+ newline-terminated raw pilots retain their legacy transport/gates; they are
+ outside the new corpus contract. In particular, old BCR newline collection
+ oracles do not establish correctness for the new T.
+diff --git a/bit6/SXI_FORMAT.md b/bit6/SXI_FORMAT.md
+index 9b52ccf..5fa9593 100644
+--- a/bit6/SXI_FORMAT.md
++++ b/bit6/SXI_FORMAT.md
+@@ -14,11 +14,11 @@ The 64-byte header is:
+ | 8, 16, 24 | u64 n, named record count k, run count R |
+ | 32, 36 | u32 member count, total header+directory bytes |
+ | 40 | u64 exact file length |
+-| 48 | u64 flags: bit 0 = chi completed; bit 1 = DNA mode; bit 2 = reversed records; bit 3 = record metadata present; other bits zero |
++| 48 | u64 flags: bit 0 = chi completed; bit 1 = DNA mode; bit 2 = reversed records; bit 3 = record metadata present; bit 4 = byte permutation present; other bits zero |
+ | 56 | u32 IEEE CRC32 of header+directory, this field zeroed |
+ | 60 | u32 reserved = 0 |
+ 
+-Directory: five mandatory entries followed by optional names. Each entry
++Directory: five mandatory entries followed by optional names (ID 6) and optional byte permutation (ID 7). Each entry
+ is 40 bytes: u32 ID, u32 codec, u64 offset, u64 byte length, u64 item count,
+ u32 IEEE CRC32 of stored member bytes, u32 reserved=0. ID and codec are
+ identical in v1. Entries occur in ID order. Each member starts at the next
+@@ -34,6 +34,7 @@ cryptographic authentication.
+ | 4 | Anchors | XANC: u32 `0x434e4158`, u64 count, `(u64 row,u64 mirrored sample)` pairs, increasing row order |
+ | 5 | Chi set | sorted unique witness positions, unsigned LEB128 gaps, starting from zero |
+ | 6 | Names (optional) | existing UTF-8 names TSV, verbatim; count = byte length |
++| 7 | Byte permutation (optional) | 256 u8 values, `sigma[original] = indexed`; count = byte length = 256 |
+ 
+ SA samples lie in `[0,n)`. Chi witnesses use the existing `.sA` coordinate
+ convention, including the virtual end at **n**; allowed range is `[0,n]`.
+@@ -107,3 +108,18 @@ See [SXI_QUERY.md](SXI_QUERY.md) for the query/server contract and limitations.
+ embedded chi and member sizes. Repacking yeast235 with the new writer reports
+ k=9901 while all six members retain their original hashes. Published legacy
+ artifacts are not edited.
++
++The byte-permutation member is present exactly when flag bit 4 is set. It
++requires bit 3 (explicit metadata). ID 7 may follow ID 5 directly when there
++are no names. The table must be a permutation of all 256 values and fix
++`0x1E`; this also ensures no other byte maps to the separator. Omission means
++identity, and writers omit an explicitly supplied identity table so previous
++identity containers remain byte identical. Nonidentity metadata costs 40
++directory bytes plus 256 payload bytes and up to 7 alignment bytes. Old
++readers reject the new flag.
++PFP emits `<prefix>.remap` during its single input read; the build journal
++records its 256 entries and SHA256 before the writer consumes it. Observed
++source bytes map into 6..255; unobserved bytes may map into reserved codes,
++which are absent from the normalized index. DNA complementation uses original bytes; reversing a sequence commutes
++with byte mapping. Positions and lengths remain in
++original byte units. The table changes lexicographic order, not equality.
+diff --git a/bit6/patches/pfp_agc.patch b/bit6/patches/pfp_agc.patch
+index b1ca988..e2f456e 100644
+--- a/bit6/patches/pfp_agc.patch
++++ b/bit6/patches/pfp_agc.patch
+@@ -178,18 +178,19 @@ index bba843a..addf097 100644
+      else if (not integers_file_path.empty())
+      {
+ diff --git a/src/pfp_algo.cpp b/src/pfp_algo.cpp
+-index 93a5974..ecfdf53 100644
++index 93a5974..917f75c 100644
+ --- a/src/pfp_algo.cpp
+ +++ b/src/pfp_algo.cpp
+-@@ -5,6 +5,7 @@
++@@ -5,6 +5,8 @@
+  // Licensed under the GNU license. See LICENSE file in the repository root for full license information.
+  
+  #include <pfp_algo.hpp>
+ +#include <text_source.hpp>
+++#include <byte_remap.hpp>
+  
+  //------------------------------------------------------------------------------
+  
+-@@ -515,15 +516,7 @@ vcfbwt::pfp::ParserText::init(const Params& params, const std::string& prefix)
++@@ -515,15 +517,7 @@ vcfbwt::pfp::ParserText::init(const Params& params, const std::string& prefix)
+  void
+  vcfbwt::pfp::ParserText::operator()()
+  {
+@@ -206,15 +207,18 @@ index 93a5974..ecfdf53 100644
+      std::vector<vcfbwt::char_type> phrase;
+      spdlog::info("Parsing {}", in_file_path);
+      
+-@@ -533,31 +526,38 @@ vcfbwt::pfp::ParserText::operator()()
++@@ -533,31 +527,38 @@ vcfbwt::pfp::ParserText::operator()()
+      // First sequence start with one dollar
+      phrase.emplace_back(DOLLAR);
+      
+ -    char c;
+ -    while(gzread(fp, &c, 1) > 0)
+-+    // Keep file mode's one-byte gzread behavior. AGC reads bounded chunks;
+-+    // phrase/hash state persists, so no overlap is duplicated at chunk seams.
+-+    std::vector<char> input(agc_input ? (1 << 20) : 1);
+++    ByteRemap remap;
+++    // Remove stale metadata before reading; publish the final permutation only
+++    // after the complete source was successfully consumed.
+++    const auto remap_path = out_file_prefix + ".remap";
+++    std::remove(remap_path.c_str());
+++    std::vector<char> input(1 << 20);
+ +    std::size_t count;
+ +    while ((count = source->read(input.data(), input.size())) != 0)
+      {
+@@ -238,12 +242,7 @@ index 93a5974..ecfdf53 100644
+ -            phrase.erase(phrase.begin(), phrase.end() - this->params.w); // Keep the last w chars
+ -            
+ -            kr_hash.reset(); kr_hash.initialize(phrase.data(), params.w);
+-+            char c = input[i];
+-+            if (c <= DOLLAR_PRIME)
+-+            {
+-+                spdlog::error("Input may not contain bytes with integer value less than or equal to 5!");
+-+                std::exit(EXIT_FAILURE);
+-+            }
+++            const unsigned char c = remap.map(static_cast<unsigned char>(input[i]));
+ +
+ +            phrase.push_back(c);
+ +            if (phrase.size() == params.w) { kr_hash.initialize(phrase.data(), params.w); }
+@@ -262,11 +261,13 @@ index 93a5974..ecfdf53 100644
+          }
+      }
+ -    
+++
+++    remap.save(remap_path);
+ +
+      // Last phrase
+      if (phrase.size() >= this->params.w)
+      {
+-@@ -569,8 +569,7 @@ vcfbwt::pfp::ParserText::operator()()
++@@ -569,8 +570,7 @@ vcfbwt::pfp::ParserText::operator()()
+          out_file.write((char*) (&hash), sizeof(hash_type)); this->parse_size += 1;
+      }
+      else { spdlog::error("A sequence doesn't have w DOLLAR at the end!"); std::exit(EXIT_FAILURE); }
+@@ -276,6 +277,54 @@ index 93a5974..ecfdf53 100644
+  }
+  
+  
++diff --git a/include/byte_remap.hpp b/include/byte_remap.hpp
++new file mode 100644
++index 0000000..1af6a2a
++--- /dev/null
+++++ b/include/byte_remap.hpp
++@@ -0,0 +1,42 @@
+++#pragma once
+++#include <array>
+++#include <algorithm>
+++#include <fstream>
+++#include <stdexcept>
+++#include <string>
+++
+++namespace vcfbwt { namespace pfp {
+++// A permutation of all 256 bytes, injective into [6,255] on the observed
+++// alphabet. Only unseen source entries may change. No prepass or text spool.
+++// Separator 0x1e is pinned, including before its first occurrence.
+++class ByteRemap {
+++    std::array<unsigned char,256> sigma{}, inverse{};
+++    std::array<bool,256> seen{};
+++public:
+++    ByteRemap() {
+++        for (unsigned i=0;i<256;++i) sigma[i]=inverse[i]=i;
+++        seen[0x1e]=true;
+++    }
+++    unsigned char map(unsigned char c) {
+++        if (!seen[c]) {
+++            if (sigma[c]<=5) {
+++                int target=255;
+++                while(target>=6 && seen[inverse[target]]) --target;
+++                if(target<6) throw std::runtime_error(
+++                    "Byte alphabet exceeds 250 codes (249 plus reserved 0x1e); escape encoding is not supported");
+++                unsigned char displaced=inverse[target], old=sigma[c];
+++                sigma[c]=target; sigma[displaced]=old;
+++                inverse[target]=c; inverse[old]=displaced;
+++            }
+++            seen[c]=true;
+++        }
+++        return sigma[c];
+++    }
+++    void save(const std::string& path) const {
+++        std::ofstream out(path,std::ios::binary|std::ios::trunc);
+++        out.write(reinterpret_cast<const char*>(sigma.data()),sigma.size());
+++        out.close();
+++        if(!out) throw std::runtime_error("Cannot write byte-remap table: "+path);
+++    }
+++};
+++} }
+ diff --git a/include/text_source.hpp b/include/text_source.hpp
+ new file mode 100644
+ index 0000000..14c2fa6
+@@ -302,64 +351,6 @@ index 0000000..14c2fa6
+ +    std::size_t threads = 1, const std::string& names_path = "");
+ +} }
+ +#endif
+-diff --git a/src/text_source.cpp b/src/text_source.cpp
+-new file mode 100644
+-index 0000000..68ea35e
+---- /dev/null
+-+++ b/src/text_source.cpp
+-@@ -0,0 +1,39 @@
+-+#include <text_source.hpp>
+-+#include <zlib.h>
+-+#include <algorithm>
+-+#include <stdexcept>
+-+#ifdef PFP_ENABLE_AGC
+-+#include "agc_source.hpp"
+-+#endif
+-+namespace vcfbwt { namespace pfp {
+-+namespace {
+-+class FileSource : public TextSource {
+-+    gzFile file;
+-+public:
+-+    explicit FileSource(const std::string& path) : file(gzopen(path.c_str(), "rb")) {
+-+        if (!file) throw std::runtime_error("Cannot open text: " + path);
+-+    }
+-+    ~FileSource() { gzclose(file); }
+-+    std::size_t read(char* out, std::size_t capacity) override {
+-+        int n = gzread(file, out, std::min<std::size_t>(capacity, 1 << 30));
+-+        if (n < 0) throw std::runtime_error("Text read failed");
+-+        return n;
+-+    }
+-+    uint64_t size() const override { throw std::runtime_error("File size not available for compressed input"); }
+-+    void seek(uint64_t offset, uint64_t) override {
+-+        if (gzseek(file, offset, SEEK_SET) < 0) throw std::runtime_error("Text seek failed");
+-+    }
+-+};
+-+}
+-+std::unique_ptr<TextSource> open_text_source(const std::string& path, bool agc,
+-+        std::size_t threads, const std::string& names_path) {
+-+    if (agc) {
+-+#ifdef PFP_ENABLE_AGC
+-+        return open_agc_source(path, threads, names_path);
+-+#else
+-+        throw std::runtime_error("AGC input requires a build with PFP_ENABLE_AGC=ON");
+-+#endif
+-+    }
+-+    return std::unique_ptr<TextSource>(new FileSource(path));
+-+}
+-+} }
+-diff --git a/src/agc_source.hpp b/src/agc_source.hpp
+-new file mode 100644
+-index 0000000..e7d5208
+---- /dev/null
+-+++ b/src/agc_source.hpp
+-@@ -0,0 +1,7 @@
+-+#ifndef PFP_AGC_SOURCE_HPP
+-+#define PFP_AGC_SOURCE_HPP
+-+#include <text_source.hpp>
+-+namespace vcfbwt { namespace pfp {
+-+std::unique_ptr<TextSource> open_agc_source(const std::string&, std::size_t, const std::string&);
+-+} }
+-+#endif
+ diff --git a/src/agc_source.cpp b/src/agc_source.cpp
+ new file mode 100644
+ index 0000000..052180f
+@@ -583,6 +574,64 @@ index 0000000..052180f
+ +}
+ +} }
+ +#endif
++diff --git a/src/agc_source.hpp b/src/agc_source.hpp
++new file mode 100644
++index 0000000..e7d5208
++--- /dev/null
+++++ b/src/agc_source.hpp
++@@ -0,0 +1,7 @@
+++#ifndef PFP_AGC_SOURCE_HPP
+++#define PFP_AGC_SOURCE_HPP
+++#include <text_source.hpp>
+++namespace vcfbwt { namespace pfp {
+++std::unique_ptr<TextSource> open_agc_source(const std::string&, std::size_t, const std::string&);
+++} }
+++#endif
++diff --git a/src/text_source.cpp b/src/text_source.cpp
++new file mode 100644
++index 0000000..68ea35e
++--- /dev/null
+++++ b/src/text_source.cpp
++@@ -0,0 +1,39 @@
+++#include <text_source.hpp>
+++#include <zlib.h>
+++#include <algorithm>
+++#include <stdexcept>
+++#ifdef PFP_ENABLE_AGC
+++#include "agc_source.hpp"
+++#endif
+++namespace vcfbwt { namespace pfp {
+++namespace {
+++class FileSource : public TextSource {
+++    gzFile file;
+++public:
+++    explicit FileSource(const std::string& path) : file(gzopen(path.c_str(), "rb")) {
+++        if (!file) throw std::runtime_error("Cannot open text: " + path);
+++    }
+++    ~FileSource() { gzclose(file); }
+++    std::size_t read(char* out, std::size_t capacity) override {
+++        int n = gzread(file, out, std::min<std::size_t>(capacity, 1 << 30));
+++        if (n < 0) throw std::runtime_error("Text read failed");
+++        return n;
+++    }
+++    uint64_t size() const override { throw std::runtime_error("File size not available for compressed input"); }
+++    void seek(uint64_t offset, uint64_t) override {
+++        if (gzseek(file, offset, SEEK_SET) < 0) throw std::runtime_error("Text seek failed");
+++    }
+++};
+++}
+++std::unique_ptr<TextSource> open_text_source(const std::string& path, bool agc,
+++        std::size_t threads, const std::string& names_path) {
+++    if (agc) {
+++#ifdef PFP_ENABLE_AGC
+++        return open_agc_source(path, threads, names_path);
+++#else
+++        throw std::runtime_error("AGC input requires a build with PFP_ENABLE_AGC=ON");
+++#endif
+++    }
+++    return std::unique_ptr<TextSource>(new FileSource(path));
+++}
+++} }
+ diff --git a/tests/source_probe.cpp b/tests/source_probe.cpp
+ new file mode 100644
+ index 0000000..b929b77
+diff --git a/bit6/rpfbwt_endpoints.cpp b/bit6/rpfbwt_endpoints.cpp
+index 4636ea1..1d9ef6a 100644
+--- a/bit6/rpfbwt_endpoints.cpp
++++ b/bit6/rpfbwt_endpoints.cpp
+@@ -30,7 +30,7 @@ struct Source {
+   std::ifstream b(p+".rlebwt",std::ios::binary),h(p+".ssa",std::ios::binary),t(p+".ssa_t",std::ios::binary);
+   U word=integer(b,4);integer(h);integer(t);U head=integer(h),tail=integer(t);
+   if(terminal==INF)terminal=word&255;
+-  padding_check(word==(terminal|U(1)<<8)&&head==n-10&&tail==n-10&&terminal>=6&&terminal<128,
++  padding_check(word==(terminal|U(1)<<8)&&head==n-10&&tail==n-10&&terminal>=6&&terminal<256,
+                 "terminal-row",0,word&255,(word>>8)&0x7fffff,head,tail);
+   fprintf(stderr,"PFP_TERMINAL byte=0x%02llx source=%s raw_n=%llu raw_r=%llu\n",(unsigned long long)terminal,last==INF?"padding-row":"argument",(unsigned long long)n,(unsigned long long)r);
+  }
+@@ -83,7 +83,7 @@ struct Source {
+    U rawLen=v.len;v=trim_padding(v,rows);rows+=rawLen;if(!v.len)continue;
+    check(v.h<n-10&&v.t<n-10,"endpoint outside normalized text");
+    if(v.c==2)v.c=terminal;
+-   check(v.c>=6&&v.c<128,"unsupported text alphabet");
++   check(v.c>=6&&v.c<256,"unsupported text alphabet");
+    if(have&&pending.c==v.c){pending.len+=v.len;pending.t=v.t;}
+    else {if(have)emit(pending);pending=v;have=true;}
+   }
+@@ -95,7 +95,7 @@ void number(std::ostream& f,U x,unsigned bytes=8){unsigned char b[8];put(b,x,byt
+ int main(int argc,char**argv){try{
+  check(argc==4||argc==5,"usage: rpfbwt_endpoints PREFIX OUT.ri4 OUT.head_sa [TERMINAL_HEX]");
+  U terminal=INF;
+- if(argc==5){std::string arg(argv[4]);size_t used=0;terminal=std::stoul(arg,&used,16);check(used==arg.size()&&terminal>=6&&terminal<128,"unsupported terminal byte");}
++ if(argc==5){std::string arg(argv[4]);size_t used=0;terminal=std::stoul(arg,&used,16);check(used==arg.size()&&terminal>=6&&terminal<256,"unsupported terminal byte");}
+  Source s(argv[1],terminal);terminal=s.terminal;bool certified=s.certify_seam();
+  SeamRepair repair(s,certified);
+  auto scan=[&](const std::function<void(Run)>& emit){repair.scan(emit);};
+diff --git a/bit6/sxi_format.hpp b/bit6/sxi_format.hpp
+index 1e19b24..ad92352 100644
+--- a/bit6/sxi_format.hpp
++++ b/bit6/sxi_format.hpp
+@@ -36,21 +36,32 @@ inline U named_records(std::istream& in,U bytes,U n){
+     }
+     check(count&&next==n,"SXI: names partition");return count;
+ }
++using Remap=std::array<unsigned char,256>;
++inline Remap identity_remap(){Remap v{};for(unsigned i=0;i<256;++i)v[i]=i;return v;}
++inline void validate_remap(const Remap& v){
++    std::array<bool,256> seen{};
++    for(auto c:v){check(!seen[c],"SXI: remap is not a permutation");seen[c]=true;}
++    check(v[30]==30,"SXI: remap moves separator");
++}
++inline Remap load_remap(const std::string& path){
++    std::ifstream f(path,std::ios::binary);check(bool(f)&&size(f)==256,"SXI: remap size");
++    Remap v{};read(f,v.data(),v.size());validate_remap(v);return v;
++}
+ struct Member {uint32_t id=0,codec=0;U offset=0,bytes=0,count=0;uint32_t checksum=0;};
+ struct Container {
+-    U n=0,k=0,r=0,flags=0;std::vector<Member> members;
++    U n=0,k=0,r=0,flags=0;std::vector<Member> members;Remap sigma=identity_remap();
+     const Member& member(unsigned id)const{for(auto& m:members)if(m.id==id)return m;throw std::runtime_error("SXI: missing member");}
+     explicit Container(const std::string& path,bool verify=true){
+         std::ifstream f(path,std::ios::binary);check(bool(f),"SXI: open");U length=size(f);
+         unsigned char b[64];read(f,b,64);check(!memcmp(b,"SXI1",4)&&get(b+4,4)==1,"SXI: bad magic/version");
+         n=get(b+8);k=get(b+16);r=get(b+24);U count=get(b+32,4),hs=get(b+36,4);flags=get(b+48);
+         check(n&&n<UINT64_MAX&&r&&r<=n&&k<=n&&r<=UINT32_MAX,"SXI: invalid n/k/r");
+-        check(count>=5&&count<=6&&hs==64+40*count&&get(b+40)==length&&(flags<=1||(flags>=8&&flags<=15))&&!get(b+60,4),"SXI: invalid header");
++        check(count>=5&&count<=7&&hs==64+40*count&&get(b+40)==length&&(flags<=1||(flags>=8&&flags<=15)||(flags>=24&&flags<=31))&&!get(b+60,4),"SXI: invalid header");
+         uint32_t wanted=get(b+56,4);put(b+56,0,4);uint32_t crcval=crc(~0U,b,64);U end=hs;
+         for(U i=0;i<count;i++){
+             unsigned char d[40];read(f,d,40);crcval=crc(crcval,d,40);
+             Member m{uint32_t(get(d,4)),uint32_t(get(d+4,4)),get(d+8),get(d+16),get(d+24),uint32_t(get(d+32,4))};
+-            check(m.id==i+1&&m.codec==m.id&&!get(d+36,4),"SXI: unsupported/duplicate member");
++            check((m.id==i+1||(i==5&&count==6&&m.id==7))&&m.codec==m.id&&!get(d+36,4),"SXI: unsupported/duplicate member");
+             check(end<=UINT64_MAX-7&&m.offset==(end+7)/8*8&&m.offset<=length&&m.bytes<=length-m.offset,"SXI: overlapping/out-of-bounds member");
+             end=m.offset+m.bytes;members.push_back(m);
+         }
+@@ -59,9 +70,15 @@ struct Container {
+         check(member(4).count<=k&&member(4).count<=(UINT64_MAX-12)/16&&member(4).bytes==12+16*member(4).count,"SXI: anchor size");
+         check(member(5).count<=n+1&&member(5).count<=UINT64_MAX/10&&member(5).bytes>=member(5).count&&member(5).bytes<=10*member(5).count,"SXI: chi size");
+         check((flags&1)||(member(5).count==0&&member(5).bytes==0),"SXI: unfinished chi");
+-        if(members.size()==6)check(member(6).count==member(6).bytes,"SXI: names size");
++        if(std::any_of(members.begin(),members.end(),[](const Member& m){return m.id==6;}))check(member(6).count==member(6).bytes,"SXI: names size");
+         if(verify){std::vector<unsigned char> buf(1<<20);for(auto& m:members){f.seekg(m.offset);U left=m.bytes;uint32_t c=~0U;while(left){size_t z=std::min<U>(left,buf.size());read(f,buf.data(),z);c=crc(c,buf.data(),z);left-=z;}check(~c==m.checksum,"SXI: member CRC mismatch");}}
+-        if(members.size()==6){f.seekg(member(6).offset);U records=named_records(f,member(6).bytes,n);check(!(flags&8)||k==records,"SXI: record count mismatch");k=records;}
++        if(std::any_of(members.begin(),members.end(),[](const Member& m){return m.id==6;})){f.seekg(member(6).offset);U records=named_records(f,member(6).bytes,n);check(!(flags&8)||k==records,"SXI: record count mismatch");k=records;}
++        bool remapped=members.back().id==7;
++        check(remapped==bool(flags&16),"SXI: remap flag/member mismatch");
++        if(remapped){
++            check(member(7).count==256&&member(7).bytes==256,"SXI: remap size");
++            f.seekg(member(7).offset);read(f,sigma.data(),sigma.size());validate_remap(sigma);
++        }
+         f.seekg(member(2).offset);U bits=integer(f);unsigned w=integer(f,1);
+         check(w&&w<=64&&bits==r*w&&member(2).bytes==9+((bits+63)/64)*8,"SXI: packed tail size");
+         f.seekg(member(4).offset);check(integer(f,4)==0x434e4158&&integer(f)==member(4).count,"SXI: anchor header");
+diff --git a/bit6/sxi_pipeline.py b/bit6/sxi_pipeline.py
+index 8f296b9..e17837f 100755
+--- a/bit6/sxi_pipeline.py
++++ b/bit6/sxi_pipeline.py
+@@ -274,6 +274,13 @@ def main():
+             f.seek(-1, 2)
+             terminal = f.read(1)[0]
+         run('parse', [pfp, '-t', text, '-o', prefix, '-w', 10, '-p', 100, '-j', a.threads, '--tmp-dir', work])
++    remap = pathlib.Path(str(prefix)+'.remap')
++    sigma = remap.read_bytes()
++    if len(sigma) != 256 or len(set(sigma)) != 256 or sigma[30] != 30:
++        raise RuntimeError('invalid/missing parser byte permutation')
++    terminal = sigma[terminal]
++    record(dict(stage='byte-remap', path=str(remap), sha256=sha256(remap),
++                identity=sigma == bytes(range(256)), sigma=list(sigma)))
+     run('parse-l2', [pfp, '-i', str(prefix)+'.parse', '-w', 5, '-p', 11, '-j', a.threads, '--tmp-dir', work])
+     # Upstream's rdbuf merge sets failbit on an empty chunk. Tiny parses can
+     # create such chunks; one chunk avoids this without changing .ssa code.
+@@ -299,7 +306,7 @@ def main():
+     if a.expect_chi is not None and count != a.expect_chi:
+         raise RuntimeError(f'chi gate mismatch: {count} != {a.expect_chi}')
+     if a.verify_text_sample:
+-        audit = [tools/'sxi_text_audit', text, ri4, agg, chi, a.verify_text_sample]
++        audit = [tools/'sxi_text_audit', text, ri4, agg, chi, a.verify_text_sample, '--remap', remap]
+         if a.agc:
+             audit += ['--agc', source_path, '--names', names, '--agc2flat', agc]
+         run('verify-text-sample', audit)
+@@ -308,7 +315,7 @@ def main():
+     out.parent.mkdir(parents=True, exist_ok=True)
+     with tempfile.TemporaryDirectory(prefix='.xsa-publish-', dir=out.parent) as publish:
+         candidate = pathlib.Path(publish)/'candidate.sxi'
+-        cmd = [tools/'sxi_write', '--ri4', ri4, '--heads', heads, '--chi', chi, '--output', candidate]
++        cmd = [tools/'sxi_write', '--ri4', ri4, '--heads', heads, '--chi', chi, '--output', candidate, '--remap', remap]
+         cmd += ['--mode', (a.mode if a.mode != 'auto' else ('text' if a.text else 'dna')), '--orientation', 'reversed' if a.agc else 'forward']
+         if names:
+             cmd += ['--names', names]
+diff --git a/bit6/sxi_text_audit.cpp b/bit6/sxi_text_audit.cpp
+index 8ddb69c..9464a42 100644
+--- a/bit6/sxi_text_audit.cpp
++++ b/bit6/sxi_text_audit.cpp
+@@ -10,6 +10,7 @@
+ #include <iostream>
+ using namespace sxi;
+ struct Text {
++    Remap sigma=identity_remap();
+     int fd=-1, request=-1; pid_t child=-1; U bytes=0;
+     struct Cache { U start=UINT64_MAX; std::vector<unsigned char> data; };
+     mutable std::array<Cache,2> cache;
+@@ -44,6 +45,7 @@ struct Text {
+     ~Text(){if(request>=0)close(request);if(fd>=0)close(fd);if(child>0){kill(child,SIGTERM);waitpid(child,nullptr,0);}}
+     void at(U offset,unsigned char* dst,size_t length)const{
+         check(offset<=bytes&&length<=bytes-offset,"audit text range");
++        auto* begin=dst;size_t total=length;
+         while(length){
+             if(request<0){ssize_t got=pread(fd,dst,length,offset);if(got<0&&errno==EINTR)continue;check(got>0,"audit text read");offset+=got;dst+=got;length-=got;continue;}
+             U base=offset/65536*65536;Cache* found=nullptr;
+@@ -55,6 +57,7 @@ struct Text {
+             size_t take=std::min<size_t>(length,found->data.size()-(offset-base));
+             memcpy(dst,found->data.data()+(offset-base),take);offset+=take;dst+=take;length-=take;
+         }
++        for(size_t i=0;i<total;++i)begin[i]=sigma[begin[i]];
+     }
+     unsigned char byte(U offset)const{unsigned char c;at(offset,&c,1);return c;}
+ };
+@@ -65,9 +68,16 @@ struct Stream {
+     U next(unsigned bytes=8){return integer(in,bytes);}
+ };
+ int main(int argc,char**argv){try{
+-    check(argc==6||(argc==12&&std::string(argv[6])=="--agc"&&std::string(argv[8])=="--names"&&std::string(argv[10])=="--agc2flat"),"usage: sxi_text_audit TEXT RI4 AGG CHI N [--agc ARCHIVE --names TSV --agc2flat TOOL]");
++    check(argc>=6,"usage: sxi_text_audit TEXT RI4 AGG CHI N [--remap TABLE] [--agc ARCHIVE --names TSV --agc2flat TOOL]");
++    std::map<std::string,std::string> opts;
++    for(int i=6;i<argc;i+=2){check(i+1<argc,"missing audit option value");std::string key=argv[i];
++        check(key=="--remap"||key=="--agc"||key=="--names"||key=="--agc2flat","unknown audit option");
++        check(opts.emplace(key,argv[i+1]).second,"duplicate audit option");}
++    bool archive=opts.count("--agc");check(archive==(opts.count("--names")!=0)&&archive==(opts.count("--agc2flat")!=0),"incomplete audit archive options");
+     U requested=std::stoull(argv[5]);check(requested>0&&requested<=100000,"sample N must be 1..100000");
+-    Text text(argv[1],argc==12?argv[7]:nullptr,argc==12?argv[9]:nullptr,argc==12?argv[11]:nullptr);std::ifstream ri(argv[2],std::ios::binary),agg(argv[3],std::ios::binary);
++    Text text(argv[1],archive?opts["--agc"].c_str():nullptr,archive?opts["--names"].c_str():nullptr,archive?opts["--agc2flat"].c_str():nullptr);
++    if(opts.count("--remap"))text.sigma=load_remap(opts["--remap"]);
++    std::ifstream ri(argv[2],std::ios::binary),agg(argv[3],std::ios::binary);
+     check(bool(ri)&&bool(agg),"audit index open");U ribytes=size(ri),aggbytes=size(agg);
+     check(ribytes>=2080&&integer(ri)==0x0000000452585349ULL,"audit ri4 header");
+     U n=integer(ri);integer(ri);U r=integer(ri);check(n==text.bytes&&r<=(UINT64_MAX-2080)/32&&ribytes>=2080+5*r,"audit dimensions");
+@@ -82,7 +92,7 @@ int main(int argc,char**argv){try{
+     // Stratified deterministic witnesses across the complete emission stream.
+     for(U i=0;i<take;i++){cf.seekg((i*(count/take)+(i*(count%take))/take)*8);U v=integer(cf);check(v<n,"audit witness range");check(samples.emplace(v,false).second,"audit duplicate sample");}
+     struct Candidate {int64_t len=-1;U pos=0,other=0,lcp=0;bool active=false;int symbol=0,other_symbol=0;};
+-    std::array<Candidate,128> candidates{};U comparisons=0,verified=0,emitted=0;
++    std::array<Candidate,256> candidates{};U comparisons=0,verified=0,emitted=0;
+     auto witness=[&](U pos){check(pos<n,"audit endpoint range");return pos? n-pos:0;};
+     std::array<unsigned char,65536> left{},right{};
+     auto emit=[&](const Candidate& c){
+@@ -104,10 +114,10 @@ int main(int argc,char**argv){try{
+     int prev=-1;U prevtail=0,interior=UINT64_MAX;int64_t m=INT64_MAX;
+     for(U i=0;i<r;i++){
+         U lcp=lcps.next(),head=heads.next(),tail=tails.next(),within=interiors.next();
+-        int c=chars.next(1);check(c<128,"audit alphabet");
++        int c=chars.next(1);check(c<256,"audit alphabet");
+         if(i){int64_t mm=std::min(m,interior==UINT64_MAX?INT64_MAX:int64_t(interior));
+             if(c!=prev){int64_t m3=std::min(mm,int64_t(lcp));
+-                for(int ch=1;ch<128;ch++)if(m3<candidates[ch].len){if(candidates[ch].active)emit(candidates[ch]);candidates[ch].len=m3;candidates[ch].active=false;}
++                for(int ch=1;ch<256;ch++)if(m3<candidates[ch].len){if(candidates[ch].active)emit(candidates[ch]);candidates[ch].len=m3;candidates[ch].active=false;}
+                 if(int64_t(lcp)>candidates[prev].len)candidates[prev]={int64_t(lcp),prevtail,head,lcp,true,prev,c};
+                 if(int64_t(lcp)>candidates[c].len)candidates[c]={int64_t(lcp),head,prevtail,lcp,true,c,prev};
+                 m=INT64_MAX;
+@@ -115,7 +125,7 @@ int main(int argc,char**argv){try{
+         }
+         prev=c;prevtail=tail;interior=within;
+     }
+-    for(int c=1;c<128;c++)if(candidates[c].active)emit(candidates[c]);
++    for(int c=1;c<256;c++)if(candidates[c].active)emit(candidates[c]);
+     check(emitted==count&&verified==take,"audit sampled witness missing/count mismatch");
+     text.finish();
+     std::cout<<"TEXT_SAMPLE_PASS requested="<<requested<<" verified="<<verified<<" chi="<<count<<" compared_bytes="<<comparisons<<"\n";
+diff --git a/bit6/sxi_write.cpp b/bit6/sxi_write.cpp
+index abfb634..e24f105 100644
+--- a/bit6/sxi_write.cpp
++++ b/bit6/sxi_write.cpp
+@@ -26,7 +26,7 @@ struct Output {
+     }
+ };
+ int main(int argc,char**argv){try{
+-    std::map<std::string,std::string>a;for(int i=1;i<argc;i+=2){check(i+1<argc,"usage: sxi_write --ri4 IN --heads RAW --output OUT [--chi RAW] [--anchors XANC] [--names TSV]");std::string key=argv[i];check(key=="--ri4"||key=="--heads"||key=="--output"||key=="--chi"||key=="--anchors"||key=="--names"||key=="--mode"||key=="--orientation","unknown option");check(a.emplace(key,argv[i+1]).second,"duplicate option");}
++    std::map<std::string,std::string>a;for(int i=1;i<argc;i+=2){check(i+1<argc,"usage: sxi_write --ri4 IN --heads RAW --output OUT [--chi RAW] [--anchors XANC] [--names TSV]");std::string key=argv[i];check(key=="--ri4"||key=="--heads"||key=="--output"||key=="--chi"||key=="--anchors"||key=="--names"||key=="--mode"||key=="--orientation"||key=="--remap","unknown option");check(a.emplace(key,argv[i+1]).second,"duplicate option");}
+     check(a.count("--ri4")&&a.count("--heads")&&a.count("--output"),"need --ri4 --heads --output");
+     std::ifstream f(a["--ri4"],std::ios::binary);check(bool(f),"open ri4");U filebytes=size(f);check(integer(f)==0x0000000452585349ULL,"need ri4 v4");U n=integer(f),k=integer(f),r=integer(f);check(n&&n<UINT64_MAX&&r&&r<=n&&k<=n&&r<=UINT32_MAX,"invalid n/k/r");
+     U tailoff=2080+5*r;check(tailoff+9<=filebytes,"truncated runs");f.seekg(tailoff);U bits=integer(f);unsigned w=integer(f,1);check(w&&w<=64&&bits==r*w,"bad samples");U tailbytes=9+((bits+63)/64)*8;check(filebytes==tailoff+tailbytes,"truncated/trailing ri4");
+@@ -46,8 +46,11 @@ int main(int argc,char**argv){try{
+     if(a.count("--mode")){check(a["--mode"]=="dna"||a["--mode"]=="text","invalid mode");if(a["--mode"]=="dna")metadata|=2;}
+     if(a.count("--orientation")){check(a["--orientation"]=="forward"||a["--orientation"]=="reversed","invalid orientation");if(a["--orientation"]=="reversed")metadata|=4;}
+     if(a.count("--names")){std::ifstream q(a["--names"],std::ios::binary);check(bool(q),"open names");U bytes=size(q);k=named_records(q,bytes,n);}
+-    Output out(a["--output"],a.count("--names")?6:5);out.begin(1,r);out.copy(a["--ri4"],32,2048+5*r);out.begin(2,r);out.copy(a["--ri4"],tailoff,tailbytes);out.begin(3,r);out.copy(a["--heads"],0,8*r);out.begin(4,anchors);if(a.count("--anchors"))out.copy(a["--anchors"],0,anchorbytes);else{out.number(0x434e4158,4);out.number(0);}
++    Remap sigma=a.count("--remap")?load_remap(a["--remap"]):identity_remap();
++    bool remapped=sigma!=identity_remap();if(remapped)metadata|=16;
++    Output out(a["--output"],5+a.count("--names")+remapped);out.begin(1,r);out.copy(a["--ri4"],32,2048+5*r);out.begin(2,r);out.copy(a["--ri4"],tailoff,tailbytes);out.begin(3,r);out.copy(a["--heads"],0,8*r);out.begin(4,anchors);if(a.count("--anchors"))out.copy(a["--anchors"],0,anchorbytes);else{out.number(0x434e4158,4);out.number(0);}
+     out.begin(5,chi.size());U prev=0;for(U v:chi){U d=v-prev;do{unsigned char b=d&127;d>>=7;if(d)b|=128;out.write(&b,1);}while(d);prev=v;}
+     if(a.count("--names")){std::ifstream q(a["--names"],std::ios::binary);check(bool(q),"open names");U bytes=size(q);out.begin(6,bytes);out.copy(a["--names"],0,bytes);}
++    if(remapped){out.begin(7,256);out.write(sigma.data(),sigma.size());}
+     out.finish(n,k,r,a.count("--chi"),metadata);return 0;
+ }catch(const std::exception&e){fprintf(stderr,"FATAL: %s\n",e.what());return 1;}}
+diff --git a/bit6/test_sxi_format.py b/bit6/test_sxi_format.py
+index 6c794dd..4451638 100644
+--- a/bit6/test_sxi_format.py
++++ b/bit6/test_sxi_format.py
+@@ -1,7 +1,7 @@
+ #!/usr/bin/env python3
+ """Adversarial format tests, independent of the real-corpus differential."""
+ import argparse,pathlib,struct,subprocess,tempfile,zlib
+-p=argparse.ArgumentParser();p.add_argument('--writer',default='/tmp/laneU/sxi_write');p.add_argument('--xsa',default='xsa/target/release/xsa');a=p.parse_args()
++p=argparse.ArgumentParser();p.add_argument('--writer',default='/tmp/laneU/sxi_write');p.add_argument('--xsa',default='xsa/target/release/xsa');p.add_argument('--cpp-reader');a=p.parse_args()
+ def run(cmd,ok=True):
+     x=subprocess.run(list(map(str,cmd)),stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+     assert (x.returncode==0)==ok,(cmd,x.returncode,x.stderr.decode())
+@@ -9,6 +9,9 @@ def header_crc(b):
+     hs=struct.unpack_from('<I',b,36)[0];struct.pack_into('<I',b,56,0);struct.pack_into('<I',b,56,zlib.crc32(b[:hs]))
+ def member_crc(b,i):
+     d=64+40*(i-1);off,size=struct.unpack_from('<QQ',b,d+8);struct.pack_into('<I',b,d+32,zlib.crc32(b[off:off+size]));header_crc(b)
++def check_remap_container(path,ok=True):
++    run([a.xsa,'sxi-info',path],ok)
++    if a.cpp_reader:run([a.cpp_reader,path],ok)
+ with tempfile.TemporaryDirectory(prefix='sxi-format-unit-')as d:
+     d=pathlib.Path(d);ri=d/'input.ri4';heads=d/'heads';chi=d/'chi';anc=d/'anc';names=d/'names'
+     # Valid table with 3 singleton runs and both nonempty anchors and names.
+@@ -22,6 +25,29 @@ with tempfile.TemporaryDirectory(prefix='sxi-format-unit-')as d:
+         out=d/f'w{width}.sxi';cmd=[a.writer,'--ri4',ri,'--heads',heads,'--chi',chi,'--anchors',anc,'--names',names,'--output',out]
+         run(cmd);run([a.xsa,'sxi-info',out,'--chi-out',str(out)+'.chi']);assert pathlib.Path(str(out)+'.chi').read_bytes()==struct.pack('<3Q',0,1,3)
+     source=out.read_bytes();run(cmd,False);assert out.read_bytes()==source
++    # Identity metadata must not change one byte of an accepted container.
++    table=d/'remap';table.write_bytes(bytes(range(256)))
++    identity=d/'identity.sxi';run(cmd[:-1]+[identity,'--remap',table]);assert identity.read_bytes()==source
++    sigma=bytearray(range(256));sigma[1],sigma[65]=sigma[65],sigma[1];table.write_bytes(sigma)
++    for with_names in (False,True):
++        remapped=d/f'remap-{with_names}.sxi'
++        remap_cmd=[a.writer,'--ri4',ri,'--heads',heads,'--chi',chi,'--anchors',anc,'--output',remapped,'--remap',table]
++        if with_names:remap_cmd+=['--names',names]
++        run(remap_cmd);check_remap_container(remapped)
++        b=remapped.read_bytes();count=struct.unpack_from('<I',b,32)[0]
++        assert count==6+with_names and struct.unpack_from('<Q',b,48)[0]&16
++        last=64+40*(count-1);assert struct.unpack_from('<I',b,last)[0]==7
++        off,size=struct.unpack_from('<QQ',b,last+8);assert b[off:off+size]==sigma
++        for label,change in [('duplicate',lambda v:v.__setitem__(0,v[1])),
++                             ('separator',lambda v:(v.__setitem__(30,31),v.__setitem__(31,30)))]:
++            bad=bytearray(b);v=bytearray(sigma);change(v);bad[off:off+256]=v
++            struct.pack_into('<I',bad,last+32,zlib.crc32(v));header_crc(bad)
++            path=d/f'{label}-{with_names}.sxi';path.write_bytes(bad);check_remap_container(path,False)
++        bad=bytearray(b);struct.pack_into('<Q',bad,48,struct.unpack_from('<Q',bad,48)[0]&~16);header_crc(bad)
++        path=d/f'flag-{with_names}.sxi';path.write_bytes(bad);check_remap_container(path,False)
++    for bad_table in (bytes(256),bytes(range(255)),bytes(range(256))+b'x'):
++        table.write_bytes(bad_table);badout=d/'invalid-table.sxi'
++        run([a.writer,'--ri4',ri,'--heads',heads,'--output',badout,'--remap',table],False);assert not badout.exists()
+     # Semantic/structural corruption, recomputing checksums to avoid testing CRC alone.
+     mutations=[('version',4,'<I',2),('flags',48,'<Q',2),('reserved',60,'<I',1),('count',32,'<I',7),('run-count',24,'<Q',4),('member-id',64,'<I',2),('overlap',64+40+8,'<Q',struct.unpack_from('<Q',source,72)[0]),('anchor-count',64+3*40+24,'<Q',2)]
+     for label,off,fmt,value in mutations:
+@@ -36,4 +62,4 @@ with tempfile.TemporaryDirectory(prefix='sxi-format-unit-')as d:
+     # Writer input failures must not publish an artifact.
+     chi.write_bytes(struct.pack('<2Q',1,1));out=d/'duplicate.sxi';run([a.writer,'--ri4',ri,'--heads',heads,'--chi',chi,'--output',out],False);assert not out.exists()
+     heads.write_bytes(struct.pack('<3Q',0,0,1));out=d/'singleton.sxi';run([a.writer,'--ri4',ri,'--heads',heads,'--output',out],False);assert not out.exists()
+-print('PASS packed widths 2..64, nonempty anchors/names, virtual-end chi, empty/stage chi, overwrite, duplicate chi, singleton mismatch, malformed metadata/members')
++print('PASS packed widths 2..64, nonempty anchors/names, virtual-end chi, empty/stage chi, overwrite, duplicate chi, singleton mismatch, malformed metadata/members, remap optional names/identity/permutation/flag/size')
+diff --git a/tools/build_pfp_agc.sh b/tools/build_pfp_agc.sh
+index 904c55f..0796928 100755
+--- a/tools/build_pfp_agc.sh
++++ b/tools/build_pfp_agc.sh
+@@ -2,8 +2,8 @@
+ # Isolated native-AGC PFP++ build. Never writes /home/erikg/pfp.
+ set -euo pipefail
+ root=$(cd "$(dirname "$0")/.." && pwd)
+-pfp_dir=${PFP_AGC_FORK:-/tmp/pfp-agc-fork}
+-agc_dir=${PFP_AGC_LIBRARY:-/tmp/pfp-agc-library}
++pfp_dir=${PFP_AGC_FORK:-$root/vendor/pfp-agc-fork}
++agc_dir=${PFP_AGC_LIBRARY:-$root/vendor/pfp-agc-library}
+ [[ $(realpath -m "$pfp_dir") != /home/erikg/pfp ]] || { echo 'Refusing protected PFP checkout' >&2; exit 1; }
+ if [[ ! -d "$pfp_dir/.git" ]]; then
+   git clone https://github.com/marco-oliva/pfp.git "$pfp_dir"
+diff --git a/tools/pilot_verify.py b/tools/pilot_verify.py
+index 47d7be6..2fe3128 100644
+--- a/tools/pilot_verify.py
++++ b/tools/pilot_verify.py
+@@ -28,7 +28,78 @@ def load_lib(path):
+     return lib
+ 
+ 
++def verify_text():
++    """Native MEM precision over original bytes, with bounded-slice brute recall.
++
++    Pattern JSON entries: name, hex, and optional planted (absolute byte offset).
++    Slice JSON entries: offset, length. No transformed corpus or full-text scan.
++    """
++    import json
++    import os
++    ap = argparse.ArgumentParser(description=verify_text.__doc__)
++    ap.add_argument('--text', required=True)
++    ap.add_argument('--patterns', required=True)
++    ap.add_argument('--occs', required=True)
++    ap.add_argument('--slices', required=True)
++    ap.add_argument('--min-len', required=True, type=int)
++    args = ap.parse_args()
++    if args.min_len < 1:
++        ap.error('--min-len must be positive')
++    patterns = json.load(open(args.patterns))
++    pats = {p['name']: bytes.fromhex(p['hex']) for p in patterns}
++    spans = json.load(open(args.slices))
++    got = {name: set() for name in pats}
++    fd = os.open(args.text, os.O_RDONLY)
++    try:
++        size = os.fstat(fd).st_size
++        total = 0
++        with open(args.occs) as f:
++            for line in f:
++                row = json.loads(line)
++                pat = pats[row['read']]
++                q, pos, length = row['qstart'], row['offset'], row['len']
++                assert 0 <= q < len(pat) and args.min_len <= length <= len(pat)-q
++                assert 0 <= pos <= size-length
++                assert os.pread(fd, length, pos) == pat[q:q+length], row
++                assert q == 0 or pos == 0 or os.pread(fd, 1, pos-1) != pat[q-1:q], ('left extendible', row)
++                assert q+length == len(pat) or pos+length == size or os.pread(fd, 1, pos+length) != pat[q+length:q+length+1], ('right extendible', row)
++                hit = (q, pos, length)
++                assert hit not in got[row['read']], ('duplicate', row)
++                got[row['read']].add(hit); total += 1
++        expected = 0
++        maxpat = max(map(len, pats.values()))
++        for span in spans:
++            start, length = span['offset'], span['length']
++            assert 0 <= start < size and 0 < length <= 64*1024*1024
++            base = max(0, start-1)
++            data = os.pread(fd, min(size-base, length+maxpat+1), base)
++            for name, pat in pats.items():
++                for q in range(len(pat)-args.min_len+1):
++                    pos = start-base
++                    while True:
++                        pos = data.find(pat[q:q+args.min_len], pos)
++                        if pos < 0 or base+pos >= min(size, start+length): break
++                        n = args.min_len
++                        while q+n < len(pat) and pos+n < len(data) and pat[q+n] == data[pos+n]: n += 1
++                        if q == 0 or base+pos == 0 or data[pos-1] != pat[q-1]:
++                            assert (q, base+pos, n) in got[name], ('slice recall', name, q, base+pos, n)
++                            expected += 1
++                        pos += 1
++        planted = 0
++        for p in patterns:
++            if 'planted' in p:
++                assert (0, p['planted'], len(pats[p['name']])) in got[p['name']], ('planted recall', p)
++                planted += 1
++        assert total > 0 and expected > 0
++        print(f'PILOT VERDICT GREEN text MEMs: precision={total}/{total}, slice_recall={expected}/{expected}, planted={planted}/{planted}, slices={len(spans)}')
++        return 0
++    finally:
++        os.close(fd)
++
++
+ def main():
++    if '--text' in sys.argv[1:]:
++        return verify_text()
+     ap = argparse.ArgumentParser()
+     ap.add_argument("--agc", required=True)
+     ap.add_argument("--sidecar", required=True)
+diff --git a/xsa/SOURCES.sha256.json b/xsa/SOURCES.sha256.json
+index 18f8ddb..f7eb788 100644
+--- a/xsa/SOURCES.sha256.json
++++ b/xsa/SOURCES.sha256.json
+@@ -1,44 +1,44 @@
+ {
+- "build.rs": "8c781182490a30c279d98e1c4c3179aa8f80c8f8dae6da35ef1dd8c203c60d4b",
+- "build_tools.py": "0b11ebaa408d8b37f4b4bed8f4c103aa49ffdd2ff351d1332c017700188450d1",
+- "runtime/LICENSE": "7ec8945fc40a1edec18b078439c0a899163c0fd093aab30e97773a1e46f6c2f1",
+- "runtime/agc2flat/Cargo.lock": "e32729616741e1861fc6a9546ad11823c33baa8d0017a96cb728b9861205c517",
+- "runtime/agc2flat/Cargo.toml.in": "e4be99bd86554aac1f62412f229d8931becb4765a67ae79de16eea3cda964f57",
+- "runtime/agc2flat/src/ghost.rs": "f5caa15a169f3fd5e80762ad74b214c56012fc6215cd8701226698c6e7bf752e",
+- "runtime/agc2flat/src/main.rs": "f82b7292863dce8a8dcbef3bece33d5aa7aedd7e398b564e4cca2fe3a886941d",
+- "runtime/bit6/chi_rspace_dump.cpp": "9268c245dd5043f558a8f84af85e5de261866cad05389552c4ec5f2e6c47fb6d",
+- "runtime/bit6/patches/pfp_agc.patch": "bf4297dee288dbf0eaa6e794c1c1d14820da13e7eaa9e0caf76e70b40b21434b",
+- "runtime/bit6/patches/rpfbwt_emit_tails.patch": "3b718217ec9280187da2c6db307500facac53543f5bd65f0b8e3701d25a0a4e9",
+- "runtime/bit6/pfp_ds_vendor/pfp/dictionary.hpp": "1ef1f2805ebcc01bef87e51a8de10518b4005d0ac9be7f408491646870f95c85",
+- "runtime/bit6/pfp_ds_vendor/pfp/lce_support.hpp": "433fd6c13dbb6706fb047d40d0dedf26f73104ead1f57064196ae97de5d5f4ea",
+- "runtime/bit6/pfp_ds_vendor/pfp/parse.hpp": "6ab3c235a35190de9e119f056e1e80e85bc7f0f26e1e1f210dbcae9e0bb00bbc",
+- "runtime/bit6/pfp_ds_vendor/pfp/pfp.hpp": "75b65b69548ec3c4f61ea111fad653c33ae1177be90c7a2a2a65c8e9bef762ea",
+- "runtime/bit6/pfp_ds_vendor/pfp/sa_support.hpp": "2887a5d6e0ae89c2dab913d69fbe777c0f3d0a224228608a9611fddfda53db64",
+- "runtime/bit6/pfp_ds_vendor/pfp/utils.hpp": "582835a8da40e1ad2fe16c2ab1da4050ce5f75275486f106dc52a3fbe7c9c92c",
+- "runtime/bit6/pfp_ds_vendor/pfp/wt.hpp": "a1a257e67a133a1d643c99d463a1412255fd7f5bfa939ba5766d45be5db7d129",
+- "runtime/bit6/phi_inverse_heads.cpp": "8ac4a15ddc6cb0b3371976b4fd10d30227e8ba084595dd4abe74768f85bbcb3a",
+- "runtime/bit6/rpfbwt_endpoints.cpp": "763d9dd920095ba8a6ac5b20ce8091873a82641368bb92aabdf52fa092d94cc0",
+- "runtime/bit6/seam_repair.hpp": "d9bb8957d676058fddddd8ed09623f64af9e47fb292e64592a500ecbcc7fa368",
+- "runtime/bit6/slim_lce.hpp": "c46fb1113532b82698ee9920d719cb9c255a079e7c9dc44035feab8ffbb3ba19",
+- "runtime/bit6/sxi_format.hpp": "b3bcfe07923efe9f40073c78b8cbedd88d8e29a69d4459e29257672f4768fb91",
+- "runtime/bit6/sxi_gate.py": "78f5af5d32c6315d01ee9269799e4e250b425a067b7f0b073dd5bd3f46efd56e",
+- "runtime/bit6/sxi_ghost.py": "5351d909f2e1ac20c5975b30a87a658d4feec4f7f28226822d34ad4dbd4b8414",
+- "runtime/bit6/sxi_pipeline.py": "7ea42b1ac3f4cfa7ab8ee207265b178545deee9aeafd49a9fa5524c94a1b918a",
+- "runtime/bit6/sxi_sequence_input.py": "453d9d36f25a005d87b06420d742ac2d7dcff09782e3b977e112cc24b6694b80",
+- "runtime/bit6/sxi_text_audit.cpp": "0745f40b7f74e8b76f8c60a653fcc505170c80257ef4e217e1d182022f7272e7",
+- "runtime/bit6/sxi_write.cpp": "7cb28c58138066d3def33572df24d2cc864dd9edbdc739c5b264813716b28f05",
+- "runtime/tools/build_slim_dump.sh": "aeaba3f3e7996a95fb570069076f1c4d179ca015eec6d5267a8f090b469b8860",
+- "runtime/tools/tool_manifest.py": "0712748587f804849613597124dd96a50d987a1c2274f475c54f0e40cb21f31f",
+- "runtime/tools/upstream.lock.json": "bd5d345045de9c1eeff013bdb412e19a285ecf6c713323858f1eb8ea7aa02928",
+- "src/build.rs": "4b4a0bcc3340011199ddcd6c30987b15a1614f709854bca8700bfbca51b41b58",
+- "src/bundle.rs": "b1c1c12282330b46f42b5cdb4f1c8811d22d1476d7091bf02e0a9d8c78da86f4",
+- "src/main.rs": "a790f365bb5ad09718c1c9ba6f7a9a813e78b979fc5d2c516b89eb007c13f1a2",
+- "src/product.rs": "259a864c1ce6de50e91aa699263cb43eecc5f43150fb6ffade49556e56113a7a",
+- "src/sxi.rs": "d410d884b880b4fd5c0ba5d879933e955bbb074f008a3eee85d157e1fa4db1aa",
+- "vendor/agc-cargo-config.toml": "cfed2185a898f161c8c5dba2fc6b30f84e0d9f2d3d5657cc506ed1aec1f5b080",
+- "vendor/agc-cargo.tar.xz": "a684168eb701ac700513811d45e70d251eb2ff8584ae956e52a8077c3cac75b4",
+- "vendor/native-provenance.json": "bb4402a3df2d1aa6406b2cc9395dfade542dd1dbb42ee449a9d3148125246030",
+- "vendor/native.tar.xz": "36e60304970212a7f32b5ef4cbeaafd7b88a79d0d48941424beeefe1fd9eb6e9",
+- "vendor/pruned-paths.json": "742feccf44be4ec11c67d23d3c98d2fee77aea92a8834d994eb18d10b96dfc48",
+- "vendor/rust-linux-packages.json": "4b24b5bfedd0764f8b1bee064a35d2f68676f4926048cce5fcc30e78db0640db"
++  "runtime/LICENSE": "7ec8945fc40a1edec18b078439c0a899163c0fd093aab30e97773a1e46f6c2f1",
++  "runtime/agc2flat/Cargo.lock": "e32729616741e1861fc6a9546ad11823c33baa8d0017a96cb728b9861205c517",
++  "runtime/agc2flat/Cargo.toml.in": "e4be99bd86554aac1f62412f229d8931becb4765a67ae79de16eea3cda964f57",
++  "runtime/agc2flat/src/ghost.rs": "f5caa15a169f3fd5e80762ad74b214c56012fc6215cd8701226698c6e7bf752e",
++  "runtime/agc2flat/src/main.rs": "f82b7292863dce8a8dcbef3bece33d5aa7aedd7e398b564e4cca2fe3a886941d",
++  "runtime/bit6/chi_rspace_dump.cpp": "9268c245dd5043f558a8f84af85e5de261866cad05389552c4ec5f2e6c47fb6d",
++  "runtime/bit6/patches/pfp_agc.patch": "0860fa14a5be0f4db6994aa5ccd1a1155bfde48749ee19b6a7e1a2247c9fa4b1",
++  "runtime/bit6/patches/rpfbwt_emit_tails.patch": "3b718217ec9280187da2c6db307500facac53543f5bd65f0b8e3701d25a0a4e9",
++  "runtime/bit6/pfp_ds_vendor/pfp/dictionary.hpp": "1ef1f2805ebcc01bef87e51a8de10518b4005d0ac9be7f408491646870f95c85",
++  "runtime/bit6/pfp_ds_vendor/pfp/lce_support.hpp": "433fd6c13dbb6706fb047d40d0dedf26f73104ead1f57064196ae97de5d5f4ea",
++  "runtime/bit6/pfp_ds_vendor/pfp/parse.hpp": "6ab3c235a35190de9e119f056e1e80e85bc7f0f26e1e1f210dbcae9e0bb00bbc",
++  "runtime/bit6/pfp_ds_vendor/pfp/pfp.hpp": "75b65b69548ec3c4f61ea111fad653c33ae1177be90c7a2a2a65c8e9bef762ea",
++  "runtime/bit6/pfp_ds_vendor/pfp/sa_support.hpp": "2887a5d6e0ae89c2dab913d69fbe777c0f3d0a224228608a9611fddfda53db64",
++  "runtime/bit6/pfp_ds_vendor/pfp/utils.hpp": "582835a8da40e1ad2fe16c2ab1da4050ce5f75275486f106dc52a3fbe7c9c92c",
++  "runtime/bit6/pfp_ds_vendor/pfp/wt.hpp": "a1a257e67a133a1d643c99d463a1412255fd7f5bfa939ba5766d45be5db7d129",
++  "runtime/bit6/phi_inverse_heads.cpp": "8ac4a15ddc6cb0b3371976b4fd10d30227e8ba084595dd4abe74768f85bbcb3a",
++  "runtime/bit6/rpfbwt_endpoints.cpp": "461c1f9b5f5db7d017dbd0b55cf6c89c70f7411ed289066d23c85ecc999ee359",
++  "runtime/bit6/seam_repair.hpp": "d9bb8957d676058fddddd8ed09623f64af9e47fb292e64592a500ecbcc7fa368",
++  "runtime/bit6/slim_lce.hpp": "c46fb1113532b82698ee9920d719cb9c255a079e7c9dc44035feab8ffbb3ba19",
++  "runtime/bit6/sxi_format.hpp": "9388470fa848412e6710ad17de229fc765bcb8e005f21f90ef0279505cae1e9d",
++  "runtime/bit6/sxi_gate.py": "78f5af5d32c6315d01ee9269799e4e250b425a067b7f0b073dd5bd3f46efd56e",
++  "runtime/bit6/sxi_ghost.py": "5351d909f2e1ac20c5975b30a87a658d4feec4f7f28226822d34ad4dbd4b8414",
++  "runtime/bit6/sxi_pipeline.py": "a564995bcf804e36307cb0d32dafeb9aab925bc295ca42e3fdaab5bf4d835614",
++  "runtime/bit6/sxi_sequence_input.py": "453d9d36f25a005d87b06420d742ac2d7dcff09782e3b977e112cc24b6694b80",
++  "runtime/bit6/sxi_text_audit.cpp": "8de4a80dd91b0cfab6f9bb8c8f21f142ac36e2b8859fbaca4352169172623a5c",
++  "runtime/bit6/sxi_write.cpp": "f957ea9395513769c5b6f386d8f0469a53a7748cf85a3aa8d3e321669851ccea",
++  "runtime/tools/build_slim_dump.sh": "aeaba3f3e7996a95fb570069076f1c4d179ca015eec6d5267a8f090b469b8860",
++  "runtime/tools/tool_manifest.py": "0712748587f804849613597124dd96a50d987a1c2274f475c54f0e40cb21f31f",
++  "runtime/tools/upstream.lock.json": "bd5d345045de9c1eeff013bdb412e19a285ecf6c713323858f1eb8ea7aa02928",
++  "src/build.rs": "4b4a0bcc3340011199ddcd6c30987b15a1614f709854bca8700bfbca51b41b58",
++  "src/bundle.rs": "b1c1c12282330b46f42b5cdb4f1c8811d22d1476d7091bf02e0a9d8c78da86f4",
++  "src/main.rs": "9d8cdd159a2ea2d9f5dd791fa424c26a23f262925ae7aaabd7067f59b62dd606",
++  "src/product.rs": "0b5023fdf591d8cb84ac5d4785645eb3a8cdd73454467217011e6f6722b62ed0",
++  "src/sxi.rs": "fac56dbe130bbf616d7a6bcd50b759dba3cc918c18777ce644df7736902ff549",
++  "vendor/agc-cargo-config.toml": "cfed2185a898f161c8c5dba2fc6b30f84e0d9f2d3d5657cc506ed1aec1f5b080",
++  "vendor/agc-cargo.tar.xz": "a684168eb701ac700513811d45e70d251eb2ff8584ae956e52a8077c3cac75b4",
++  "vendor/native-provenance.json": "bb4402a3df2d1aa6406b2cc9395dfade542dd1dbb42ee449a9d3148125246030",
++  "vendor/native.tar.xz": "36e60304970212a7f32b5ef4cbeaafd7b88a79d0d48941424beeefe1fd9eb6e9",
++  "vendor/pruned-paths.json": "742feccf44be4ec11c67d23d3c98d2fee77aea92a8834d994eb18d10b96dfc48",
++  "vendor/rust-linux-packages.json": "4b24b5bfedd0764f8b1bee064a35d2f68676f4926048cce5fcc30e78db0640db",
++  "build.rs": "8c781182490a30c279d98e1c4c3179aa8f80c8f8dae6da35ef1dd8c203c60d4b",
++  "build_tools.py": "0b11ebaa408d8b37f4b4bed8f4c103aa49ffdd2ff351d1332c017700188450d1"
+ }
+diff --git a/xsa/runtime/bit6/patches/pfp_agc.patch b/xsa/runtime/bit6/patches/pfp_agc.patch
+index b1ca988..e2f456e 100644
+--- a/xsa/runtime/bit6/patches/pfp_agc.patch
++++ b/xsa/runtime/bit6/patches/pfp_agc.patch
+@@ -178,18 +178,19 @@ index bba843a..addf097 100644
+      else if (not integers_file_path.empty())
+      {
+ diff --git a/src/pfp_algo.cpp b/src/pfp_algo.cpp
+-index 93a5974..ecfdf53 100644
++index 93a5974..917f75c 100644
+ --- a/src/pfp_algo.cpp
+ +++ b/src/pfp_algo.cpp
+-@@ -5,6 +5,7 @@
++@@ -5,6 +5,8 @@
+  // Licensed under the GNU license. See LICENSE file in the repository root for full license information.
+  
+  #include <pfp_algo.hpp>
+ +#include <text_source.hpp>
+++#include <byte_remap.hpp>
+  
+  //------------------------------------------------------------------------------
+  
+-@@ -515,15 +516,7 @@ vcfbwt::pfp::ParserText::init(const Params& params, const std::string& prefix)
++@@ -515,15 +517,7 @@ vcfbwt::pfp::ParserText::init(const Params& params, const std::string& prefix)
+  void
+  vcfbwt::pfp::ParserText::operator()()
+  {
+@@ -206,15 +207,18 @@ index 93a5974..ecfdf53 100644
+      std::vector<vcfbwt::char_type> phrase;
+      spdlog::info("Parsing {}", in_file_path);
+      
+-@@ -533,31 +526,38 @@ vcfbwt::pfp::ParserText::operator()()
++@@ -533,31 +527,38 @@ vcfbwt::pfp::ParserText::operator()()
+      // First sequence start with one dollar
+      phrase.emplace_back(DOLLAR);
+      
+ -    char c;
+ -    while(gzread(fp, &c, 1) > 0)
+-+    // Keep file mode's one-byte gzread behavior. AGC reads bounded chunks;
+-+    // phrase/hash state persists, so no overlap is duplicated at chunk seams.
+-+    std::vector<char> input(agc_input ? (1 << 20) : 1);
+++    ByteRemap remap;
+++    // Remove stale metadata before reading; publish the final permutation only
+++    // after the complete source was successfully consumed.
+++    const auto remap_path = out_file_prefix + ".remap";
+++    std::remove(remap_path.c_str());
+++    std::vector<char> input(1 << 20);
+ +    std::size_t count;
+ +    while ((count = source->read(input.data(), input.size())) != 0)
+      {
+@@ -238,12 +242,7 @@ index 93a5974..ecfdf53 100644
+ -            phrase.erase(phrase.begin(), phrase.end() - this->params.w); // Keep the last w chars
+ -            
+ -            kr_hash.reset(); kr_hash.initialize(phrase.data(), params.w);
+-+            char c = input[i];
+-+            if (c <= DOLLAR_PRIME)
+-+            {
+-+                spdlog::error("Input may not contain bytes with integer value less than or equal to 5!");
+-+                std::exit(EXIT_FAILURE);
+-+            }
+++            const unsigned char c = remap.map(static_cast<unsigned char>(input[i]));
+ +
+ +            phrase.push_back(c);
+ +            if (phrase.size() == params.w) { kr_hash.initialize(phrase.data(), params.w); }
+@@ -262,11 +261,13 @@ index 93a5974..ecfdf53 100644
+          }
+      }
+ -    
+++
+++    remap.save(remap_path);
+ +
+      // Last phrase
+      if (phrase.size() >= this->params.w)
+      {
+-@@ -569,8 +569,7 @@ vcfbwt::pfp::ParserText::operator()()
++@@ -569,8 +570,7 @@ vcfbwt::pfp::ParserText::operator()()
+          out_file.write((char*) (&hash), sizeof(hash_type)); this->parse_size += 1;
+      }
+      else { spdlog::error("A sequence doesn't have w DOLLAR at the end!"); std::exit(EXIT_FAILURE); }
+@@ -276,6 +277,54 @@ index 93a5974..ecfdf53 100644
+  }
+  
+  
++diff --git a/include/byte_remap.hpp b/include/byte_remap.hpp
++new file mode 100644
++index 0000000..1af6a2a
++--- /dev/null
+++++ b/include/byte_remap.hpp
++@@ -0,0 +1,42 @@
+++#pragma once
+++#include <array>
+++#include <algorithm>
+++#include <fstream>
+++#include <stdexcept>
+++#include <string>
+++
+++namespace vcfbwt { namespace pfp {
+++// A permutation of all 256 bytes, injective into [6,255] on the observed
+++// alphabet. Only unseen source entries may change. No prepass or text spool.
+++// Separator 0x1e is pinned, including before its first occurrence.
+++class ByteRemap {
+++    std::array<unsigned char,256> sigma{}, inverse{};
+++    std::array<bool,256> seen{};
+++public:
+++    ByteRemap() {
+++        for (unsigned i=0;i<256;++i) sigma[i]=inverse[i]=i;
+++        seen[0x1e]=true;
+++    }
+++    unsigned char map(unsigned char c) {
+++        if (!seen[c]) {
+++            if (sigma[c]<=5) {
+++                int target=255;
+++                while(target>=6 && seen[inverse[target]]) --target;
+++                if(target<6) throw std::runtime_error(
+++                    "Byte alphabet exceeds 250 codes (249 plus reserved 0x1e); escape encoding is not supported");
+++                unsigned char displaced=inverse[target], old=sigma[c];
+++                sigma[c]=target; sigma[displaced]=old;
+++                inverse[target]=c; inverse[old]=displaced;
+++            }
+++            seen[c]=true;
+++        }
+++        return sigma[c];
+++    }
+++    void save(const std::string& path) const {
+++        std::ofstream out(path,std::ios::binary|std::ios::trunc);
+++        out.write(reinterpret_cast<const char*>(sigma.data()),sigma.size());
+++        out.close();
+++        if(!out) throw std::runtime_error("Cannot write byte-remap table: "+path);
+++    }
+++};
+++} }
+ diff --git a/include/text_source.hpp b/include/text_source.hpp
+ new file mode 100644
+ index 0000000..14c2fa6
+@@ -302,64 +351,6 @@ index 0000000..14c2fa6
+ +    std::size_t threads = 1, const std::string& names_path = "");
+ +} }
+ +#endif
+-diff --git a/src/text_source.cpp b/src/text_source.cpp
+-new file mode 100644
+-index 0000000..68ea35e
+---- /dev/null
+-+++ b/src/text_source.cpp
+-@@ -0,0 +1,39 @@
+-+#include <text_source.hpp>
+-+#include <zlib.h>
+-+#include <algorithm>
+-+#include <stdexcept>
+-+#ifdef PFP_ENABLE_AGC
+-+#include "agc_source.hpp"
+-+#endif
+-+namespace vcfbwt { namespace pfp {
+-+namespace {
+-+class FileSource : public TextSource {
+-+    gzFile file;
+-+public:
+-+    explicit FileSource(const std::string& path) : file(gzopen(path.c_str(), "rb")) {
+-+        if (!file) throw std::runtime_error("Cannot open text: " + path);
+-+    }
+-+    ~FileSource() { gzclose(file); }
+-+    std::size_t read(char* out, std::size_t capacity) override {
+-+        int n = gzread(file, out, std::min<std::size_t>(capacity, 1 << 30));
+-+        if (n < 0) throw std::runtime_error("Text read failed");
+-+        return n;
+-+    }
+-+    uint64_t size() const override { throw std::runtime_error("File size not available for compressed input"); }
+-+    void seek(uint64_t offset, uint64_t) override {
+-+        if (gzseek(file, offset, SEEK_SET) < 0) throw std::runtime_error("Text seek failed");
+-+    }
+-+};
+-+}
+-+std::unique_ptr<TextSource> open_text_source(const std::string& path, bool agc,
+-+        std::size_t threads, const std::string& names_path) {
+-+    if (agc) {
+-+#ifdef PFP_ENABLE_AGC
+-+        return open_agc_source(path, threads, names_path);
+-+#else
+-+        throw std::runtime_error("AGC input requires a build with PFP_ENABLE_AGC=ON");
+-+#endif
+-+    }
+-+    return std::unique_ptr<TextSource>(new FileSource(path));
+-+}
+-+} }
+-diff --git a/src/agc_source.hpp b/src/agc_source.hpp
+-new file mode 100644
+-index 0000000..e7d5208
+---- /dev/null
+-+++ b/src/agc_source.hpp
+-@@ -0,0 +1,7 @@
+-+#ifndef PFP_AGC_SOURCE_HPP
+-+#define PFP_AGC_SOURCE_HPP
+-+#include <text_source.hpp>
+-+namespace vcfbwt { namespace pfp {
+-+std::unique_ptr<TextSource> open_agc_source(const std::string&, std::size_t, const std::string&);
+-+} }
+-+#endif
+ diff --git a/src/agc_source.cpp b/src/agc_source.cpp
+ new file mode 100644
+ index 0000000..052180f
+@@ -583,6 +574,64 @@ index 0000000..052180f
+ +}
+ +} }
+ +#endif
++diff --git a/src/agc_source.hpp b/src/agc_source.hpp
++new file mode 100644
++index 0000000..e7d5208
++--- /dev/null
+++++ b/src/agc_source.hpp
++@@ -0,0 +1,7 @@
+++#ifndef PFP_AGC_SOURCE_HPP
+++#define PFP_AGC_SOURCE_HPP
+++#include <text_source.hpp>
+++namespace vcfbwt { namespace pfp {
+++std::unique_ptr<TextSource> open_agc_source(const std::string&, std::size_t, const std::string&);
+++} }
+++#endif
++diff --git a/src/text_source.cpp b/src/text_source.cpp
++new file mode 100644
++index 0000000..68ea35e
++--- /dev/null
+++++ b/src/text_source.cpp
++@@ -0,0 +1,39 @@
+++#include <text_source.hpp>
+++#include <zlib.h>
+++#include <algorithm>
+++#include <stdexcept>
+++#ifdef PFP_ENABLE_AGC
+++#include "agc_source.hpp"
+++#endif
+++namespace vcfbwt { namespace pfp {
+++namespace {
+++class FileSource : public TextSource {
+++    gzFile file;
+++public:
+++    explicit FileSource(const std::string& path) : file(gzopen(path.c_str(), "rb")) {
+++        if (!file) throw std::runtime_error("Cannot open text: " + path);
+++    }
+++    ~FileSource() { gzclose(file); }
+++    std::size_t read(char* out, std::size_t capacity) override {
+++        int n = gzread(file, out, std::min<std::size_t>(capacity, 1 << 30));
+++        if (n < 0) throw std::runtime_error("Text read failed");
+++        return n;
+++    }
+++    uint64_t size() const override { throw std::runtime_error("File size not available for compressed input"); }
+++    void seek(uint64_t offset, uint64_t) override {
+++        if (gzseek(file, offset, SEEK_SET) < 0) throw std::runtime_error("Text seek failed");
+++    }
+++};
+++}
+++std::unique_ptr<TextSource> open_text_source(const std::string& path, bool agc,
+++        std::size_t threads, const std::string& names_path) {
+++    if (agc) {
+++#ifdef PFP_ENABLE_AGC
+++        return open_agc_source(path, threads, names_path);
+++#else
+++        throw std::runtime_error("AGC input requires a build with PFP_ENABLE_AGC=ON");
+++#endif
+++    }
+++    return std::unique_ptr<TextSource>(new FileSource(path));
+++}
+++} }
+ diff --git a/tests/source_probe.cpp b/tests/source_probe.cpp
+ new file mode 100644
+ index 0000000..b929b77
+diff --git a/xsa/runtime/bit6/rpfbwt_endpoints.cpp b/xsa/runtime/bit6/rpfbwt_endpoints.cpp
+index 4636ea1..1d9ef6a 100644
+--- a/xsa/runtime/bit6/rpfbwt_endpoints.cpp
++++ b/xsa/runtime/bit6/rpfbwt_endpoints.cpp
+@@ -30,7 +30,7 @@ struct Source {
+   std::ifstream b(p+".rlebwt",std::ios::binary),h(p+".ssa",std::ios::binary),t(p+".ssa_t",std::ios::binary);
+   U word=integer(b,4);integer(h);integer(t);U head=integer(h),tail=integer(t);
+   if(terminal==INF)terminal=word&255;
+-  padding_check(word==(terminal|U(1)<<8)&&head==n-10&&tail==n-10&&terminal>=6&&terminal<128,
++  padding_check(word==(terminal|U(1)<<8)&&head==n-10&&tail==n-10&&terminal>=6&&terminal<256,
+                 "terminal-row",0,word&255,(word>>8)&0x7fffff,head,tail);
+   fprintf(stderr,"PFP_TERMINAL byte=0x%02llx source=%s raw_n=%llu raw_r=%llu\n",(unsigned long long)terminal,last==INF?"padding-row":"argument",(unsigned long long)n,(unsigned long long)r);
+  }
+@@ -83,7 +83,7 @@ struct Source {
+    U rawLen=v.len;v=trim_padding(v,rows);rows+=rawLen;if(!v.len)continue;
+    check(v.h<n-10&&v.t<n-10,"endpoint outside normalized text");
+    if(v.c==2)v.c=terminal;
+-   check(v.c>=6&&v.c<128,"unsupported text alphabet");
++   check(v.c>=6&&v.c<256,"unsupported text alphabet");
+    if(have&&pending.c==v.c){pending.len+=v.len;pending.t=v.t;}
+    else {if(have)emit(pending);pending=v;have=true;}
+   }
+@@ -95,7 +95,7 @@ void number(std::ostream& f,U x,unsigned bytes=8){unsigned char b[8];put(b,x,byt
+ int main(int argc,char**argv){try{
+  check(argc==4||argc==5,"usage: rpfbwt_endpoints PREFIX OUT.ri4 OUT.head_sa [TERMINAL_HEX]");
+  U terminal=INF;
+- if(argc==5){std::string arg(argv[4]);size_t used=0;terminal=std::stoul(arg,&used,16);check(used==arg.size()&&terminal>=6&&terminal<128,"unsupported terminal byte");}
++ if(argc==5){std::string arg(argv[4]);size_t used=0;terminal=std::stoul(arg,&used,16);check(used==arg.size()&&terminal>=6&&terminal<256,"unsupported terminal byte");}
+  Source s(argv[1],terminal);terminal=s.terminal;bool certified=s.certify_seam();
+  SeamRepair repair(s,certified);
+  auto scan=[&](const std::function<void(Run)>& emit){repair.scan(emit);};
+diff --git a/xsa/runtime/bit6/sxi_format.hpp b/xsa/runtime/bit6/sxi_format.hpp
+index 1e19b24..ad92352 100644
+--- a/xsa/runtime/bit6/sxi_format.hpp
++++ b/xsa/runtime/bit6/sxi_format.hpp
+@@ -36,21 +36,32 @@ inline U named_records(std::istream& in,U bytes,U n){
+     }
+     check(count&&next==n,"SXI: names partition");return count;
+ }
++using Remap=std::array<unsigned char,256>;
++inline Remap identity_remap(){Remap v{};for(unsigned i=0;i<256;++i)v[i]=i;return v;}
++inline void validate_remap(const Remap& v){
++    std::array<bool,256> seen{};
++    for(auto c:v){check(!seen[c],"SXI: remap is not a permutation");seen[c]=true;}
++    check(v[30]==30,"SXI: remap moves separator");
++}
++inline Remap load_remap(const std::string& path){
++    std::ifstream f(path,std::ios::binary);check(bool(f)&&size(f)==256,"SXI: remap size");
++    Remap v{};read(f,v.data(),v.size());validate_remap(v);return v;
++}
+ struct Member {uint32_t id=0,codec=0;U offset=0,bytes=0,count=0;uint32_t checksum=0;};
+ struct Container {
+-    U n=0,k=0,r=0,flags=0;std::vector<Member> members;
++    U n=0,k=0,r=0,flags=0;std::vector<Member> members;Remap sigma=identity_remap();
+     const Member& member(unsigned id)const{for(auto& m:members)if(m.id==id)return m;throw std::runtime_error("SXI: missing member");}
+     explicit Container(const std::string& path,bool verify=true){
+         std::ifstream f(path,std::ios::binary);check(bool(f),"SXI: open");U length=size(f);
+         unsigned char b[64];read(f,b,64);check(!memcmp(b,"SXI1",4)&&get(b+4,4)==1,"SXI: bad magic/version");
+         n=get(b+8);k=get(b+16);r=get(b+24);U count=get(b+32,4),hs=get(b+36,4);flags=get(b+48);
+         check(n&&n<UINT64_MAX&&r&&r<=n&&k<=n&&r<=UINT32_MAX,"SXI: invalid n/k/r");
+-        check(count>=5&&count<=6&&hs==64+40*count&&get(b+40)==length&&(flags<=1||(flags>=8&&flags<=15))&&!get(b+60,4),"SXI: invalid header");
++        check(count>=5&&count<=7&&hs==64+40*count&&get(b+40)==length&&(flags<=1||(flags>=8&&flags<=15)||(flags>=24&&flags<=31))&&!get(b+60,4),"SXI: invalid header");
+         uint32_t wanted=get(b+56,4);put(b+56,0,4);uint32_t crcval=crc(~0U,b,64);U end=hs;
+         for(U i=0;i<count;i++){
+             unsigned char d[40];read(f,d,40);crcval=crc(crcval,d,40);
+             Member m{uint32_t(get(d,4)),uint32_t(get(d+4,4)),get(d+8),get(d+16),get(d+24),uint32_t(get(d+32,4))};
+-            check(m.id==i+1&&m.codec==m.id&&!get(d+36,4),"SXI: unsupported/duplicate member");
++            check((m.id==i+1||(i==5&&count==6&&m.id==7))&&m.codec==m.id&&!get(d+36,4),"SXI: unsupported/duplicate member");
+             check(end<=UINT64_MAX-7&&m.offset==(end+7)/8*8&&m.offset<=length&&m.bytes<=length-m.offset,"SXI: overlapping/out-of-bounds member");
+             end=m.offset+m.bytes;members.push_back(m);
+         }
+@@ -59,9 +70,15 @@ struct Container {
+         check(member(4).count<=k&&member(4).count<=(UINT64_MAX-12)/16&&member(4).bytes==12+16*member(4).count,"SXI: anchor size");
+         check(member(5).count<=n+1&&member(5).count<=UINT64_MAX/10&&member(5).bytes>=member(5).count&&member(5).bytes<=10*member(5).count,"SXI: chi size");
+         check((flags&1)||(member(5).count==0&&member(5).bytes==0),"SXI: unfinished chi");
+-        if(members.size()==6)check(member(6).count==member(6).bytes,"SXI: names size");
++        if(std::any_of(members.begin(),members.end(),[](const Member& m){return m.id==6;}))check(member(6).count==member(6).bytes,"SXI: names size");
+         if(verify){std::vector<unsigned char> buf(1<<20);for(auto& m:members){f.seekg(m.offset);U left=m.bytes;uint32_t c=~0U;while(left){size_t z=std::min<U>(left,buf.size());read(f,buf.data(),z);c=crc(c,buf.data(),z);left-=z;}check(~c==m.checksum,"SXI: member CRC mismatch");}}
+-        if(members.size()==6){f.seekg(member(6).offset);U records=named_records(f,member(6).bytes,n);check(!(flags&8)||k==records,"SXI: record count mismatch");k=records;}
++        if(std::any_of(members.begin(),members.end(),[](const Member& m){return m.id==6;})){f.seekg(member(6).offset);U records=named_records(f,member(6).bytes,n);check(!(flags&8)||k==records,"SXI: record count mismatch");k=records;}
++        bool remapped=members.back().id==7;
++        check(remapped==bool(flags&16),"SXI: remap flag/member mismatch");
++        if(remapped){
++            check(member(7).count==256&&member(7).bytes==256,"SXI: remap size");
++            f.seekg(member(7).offset);read(f,sigma.data(),sigma.size());validate_remap(sigma);
++        }
+         f.seekg(member(2).offset);U bits=integer(f);unsigned w=integer(f,1);
+         check(w&&w<=64&&bits==r*w&&member(2).bytes==9+((bits+63)/64)*8,"SXI: packed tail size");
+         f.seekg(member(4).offset);check(integer(f,4)==0x434e4158&&integer(f)==member(4).count,"SXI: anchor header");
+diff --git a/xsa/runtime/bit6/sxi_pipeline.py b/xsa/runtime/bit6/sxi_pipeline.py
+index 8f296b9..e17837f 100644
+--- a/xsa/runtime/bit6/sxi_pipeline.py
++++ b/xsa/runtime/bit6/sxi_pipeline.py
+@@ -274,6 +274,13 @@ def main():
+             f.seek(-1, 2)
+             terminal = f.read(1)[0]
+         run('parse', [pfp, '-t', text, '-o', prefix, '-w', 10, '-p', 100, '-j', a.threads, '--tmp-dir', work])
++    remap = pathlib.Path(str(prefix)+'.remap')
++    sigma = remap.read_bytes()
++    if len(sigma) != 256 or len(set(sigma)) != 256 or sigma[30] != 30:
++        raise RuntimeError('invalid/missing parser byte permutation')
++    terminal = sigma[terminal]
++    record(dict(stage='byte-remap', path=str(remap), sha256=sha256(remap),
++                identity=sigma == bytes(range(256)), sigma=list(sigma)))
+     run('parse-l2', [pfp, '-i', str(prefix)+'.parse', '-w', 5, '-p', 11, '-j', a.threads, '--tmp-dir', work])
+     # Upstream's rdbuf merge sets failbit on an empty chunk. Tiny parses can
+     # create such chunks; one chunk avoids this without changing .ssa code.
+@@ -299,7 +306,7 @@ def main():
+     if a.expect_chi is not None and count != a.expect_chi:
+         raise RuntimeError(f'chi gate mismatch: {count} != {a.expect_chi}')
+     if a.verify_text_sample:
+-        audit = [tools/'sxi_text_audit', text, ri4, agg, chi, a.verify_text_sample]
++        audit = [tools/'sxi_text_audit', text, ri4, agg, chi, a.verify_text_sample, '--remap', remap]
+         if a.agc:
+             audit += ['--agc', source_path, '--names', names, '--agc2flat', agc]
+         run('verify-text-sample', audit)
+@@ -308,7 +315,7 @@ def main():
+     out.parent.mkdir(parents=True, exist_ok=True)
+     with tempfile.TemporaryDirectory(prefix='.xsa-publish-', dir=out.parent) as publish:
+         candidate = pathlib.Path(publish)/'candidate.sxi'
+-        cmd = [tools/'sxi_write', '--ri4', ri4, '--heads', heads, '--chi', chi, '--output', candidate]
++        cmd = [tools/'sxi_write', '--ri4', ri4, '--heads', heads, '--chi', chi, '--output', candidate, '--remap', remap]
+         cmd += ['--mode', (a.mode if a.mode != 'auto' else ('text' if a.text else 'dna')), '--orientation', 'reversed' if a.agc else 'forward']
+         if names:
+             cmd += ['--names', names]
+diff --git a/xsa/runtime/bit6/sxi_text_audit.cpp b/xsa/runtime/bit6/sxi_text_audit.cpp
+index 8ddb69c..9464a42 100644
+--- a/xsa/runtime/bit6/sxi_text_audit.cpp
++++ b/xsa/runtime/bit6/sxi_text_audit.cpp
+@@ -10,6 +10,7 @@
+ #include <iostream>
+ using namespace sxi;
+ struct Text {
++    Remap sigma=identity_remap();
+     int fd=-1, request=-1; pid_t child=-1; U bytes=0;
+     struct Cache { U start=UINT64_MAX; std::vector<unsigned char> data; };
+     mutable std::array<Cache,2> cache;
+@@ -44,6 +45,7 @@ struct Text {
+     ~Text(){if(request>=0)close(request);if(fd>=0)close(fd);if(child>0){kill(child,SIGTERM);waitpid(child,nullptr,0);}}
+     void at(U offset,unsigned char* dst,size_t length)const{
+         check(offset<=bytes&&length<=bytes-offset,"audit text range");
++        auto* begin=dst;size_t total=length;
+         while(length){
+             if(request<0){ssize_t got=pread(fd,dst,length,offset);if(got<0&&errno==EINTR)continue;check(got>0,"audit text read");offset+=got;dst+=got;length-=got;continue;}
+             U base=offset/65536*65536;Cache* found=nullptr;
+@@ -55,6 +57,7 @@ struct Text {
+             size_t take=std::min<size_t>(length,found->data.size()-(offset-base));
+             memcpy(dst,found->data.data()+(offset-base),take);offset+=take;dst+=take;length-=take;
+         }
++        for(size_t i=0;i<total;++i)begin[i]=sigma[begin[i]];
+     }
+     unsigned char byte(U offset)const{unsigned char c;at(offset,&c,1);return c;}
+ };
+@@ -65,9 +68,16 @@ struct Stream {
+     U next(unsigned bytes=8){return integer(in,bytes);}
+ };
+ int main(int argc,char**argv){try{
+-    check(argc==6||(argc==12&&std::string(argv[6])=="--agc"&&std::string(argv[8])=="--names"&&std::string(argv[10])=="--agc2flat"),"usage: sxi_text_audit TEXT RI4 AGG CHI N [--agc ARCHIVE --names TSV --agc2flat TOOL]");
++    check(argc>=6,"usage: sxi_text_audit TEXT RI4 AGG CHI N [--remap TABLE] [--agc ARCHIVE --names TSV --agc2flat TOOL]");
++    std::map<std::string,std::string> opts;
++    for(int i=6;i<argc;i+=2){check(i+1<argc,"missing audit option value");std::string key=argv[i];
++        check(key=="--remap"||key=="--agc"||key=="--names"||key=="--agc2flat","unknown audit option");
++        check(opts.emplace(key,argv[i+1]).second,"duplicate audit option");}
++    bool archive=opts.count("--agc");check(archive==(opts.count("--names")!=0)&&archive==(opts.count("--agc2flat")!=0),"incomplete audit archive options");
+     U requested=std::stoull(argv[5]);check(requested>0&&requested<=100000,"sample N must be 1..100000");
+-    Text text(argv[1],argc==12?argv[7]:nullptr,argc==12?argv[9]:nullptr,argc==12?argv[11]:nullptr);std::ifstream ri(argv[2],std::ios::binary),agg(argv[3],std::ios::binary);
++    Text text(argv[1],archive?opts["--agc"].c_str():nullptr,archive?opts["--names"].c_str():nullptr,archive?opts["--agc2flat"].c_str():nullptr);
++    if(opts.count("--remap"))text.sigma=load_remap(opts["--remap"]);
++    std::ifstream ri(argv[2],std::ios::binary),agg(argv[3],std::ios::binary);
+     check(bool(ri)&&bool(agg),"audit index open");U ribytes=size(ri),aggbytes=size(agg);
+     check(ribytes>=2080&&integer(ri)==0x0000000452585349ULL,"audit ri4 header");
+     U n=integer(ri);integer(ri);U r=integer(ri);check(n==text.bytes&&r<=(UINT64_MAX-2080)/32&&ribytes>=2080+5*r,"audit dimensions");
+@@ -82,7 +92,7 @@ int main(int argc,char**argv){try{
+     // Stratified deterministic witnesses across the complete emission stream.
+     for(U i=0;i<take;i++){cf.seekg((i*(count/take)+(i*(count%take))/take)*8);U v=integer(cf);check(v<n,"audit witness range");check(samples.emplace(v,false).second,"audit duplicate sample");}
+     struct Candidate {int64_t len=-1;U pos=0,other=0,lcp=0;bool active=false;int symbol=0,other_symbol=0;};
+-    std::array<Candidate,128> candidates{};U comparisons=0,verified=0,emitted=0;
++    std::array<Candidate,256> candidates{};U comparisons=0,verified=0,emitted=0;
+     auto witness=[&](U pos){check(pos<n,"audit endpoint range");return pos? n-pos:0;};
+     std::array<unsigned char,65536> left{},right{};
+     auto emit=[&](const Candidate& c){
+@@ -104,10 +114,10 @@ int main(int argc,char**argv){try{
+     int prev=-1;U prevtail=0,interior=UINT64_MAX;int64_t m=INT64_MAX;
+     for(U i=0;i<r;i++){
+         U lcp=lcps.next(),head=heads.next(),tail=tails.next(),within=interiors.next();
+-        int c=chars.next(1);check(c<128,"audit alphabet");
++        int c=chars.next(1);check(c<256,"audit alphabet");
+         if(i){int64_t mm=std::min(m,interior==UINT64_MAX?INT64_MAX:int64_t(interior));
+             if(c!=prev){int64_t m3=std::min(mm,int64_t(lcp));
+-                for(int ch=1;ch<128;ch++)if(m3<candidates[ch].len){if(candidates[ch].active)emit(candidates[ch]);candidates[ch].len=m3;candidates[ch].active=false;}
++                for(int ch=1;ch<256;ch++)if(m3<candidates[ch].len){if(candidates[ch].active)emit(candidates[ch]);candidates[ch].len=m3;candidates[ch].active=false;}
+                 if(int64_t(lcp)>candidates[prev].len)candidates[prev]={int64_t(lcp),prevtail,head,lcp,true,prev,c};
+                 if(int64_t(lcp)>candidates[c].len)candidates[c]={int64_t(lcp),head,prevtail,lcp,true,c,prev};
+                 m=INT64_MAX;
+@@ -115,7 +125,7 @@ int main(int argc,char**argv){try{
+         }
+         prev=c;prevtail=tail;interior=within;
+     }
+-    for(int c=1;c<128;c++)if(candidates[c].active)emit(candidates[c]);
++    for(int c=1;c<256;c++)if(candidates[c].active)emit(candidates[c]);
+     check(emitted==count&&verified==take,"audit sampled witness missing/count mismatch");
+     text.finish();
+     std::cout<<"TEXT_SAMPLE_PASS requested="<<requested<<" verified="<<verified<<" chi="<<count<<" compared_bytes="<<comparisons<<"\n";
+diff --git a/xsa/runtime/bit6/sxi_write.cpp b/xsa/runtime/bit6/sxi_write.cpp
+index abfb634..e24f105 100644
+--- a/xsa/runtime/bit6/sxi_write.cpp
++++ b/xsa/runtime/bit6/sxi_write.cpp
+@@ -26,7 +26,7 @@ struct Output {
+     }
+ };
+ int main(int argc,char**argv){try{
+-    std::map<std::string,std::string>a;for(int i=1;i<argc;i+=2){check(i+1<argc,"usage: sxi_write --ri4 IN --heads RAW --output OUT [--chi RAW] [--anchors XANC] [--names TSV]");std::string key=argv[i];check(key=="--ri4"||key=="--heads"||key=="--output"||key=="--chi"||key=="--anchors"||key=="--names"||key=="--mode"||key=="--orientation","unknown option");check(a.emplace(key,argv[i+1]).second,"duplicate option");}
++    std::map<std::string,std::string>a;for(int i=1;i<argc;i+=2){check(i+1<argc,"usage: sxi_write --ri4 IN --heads RAW --output OUT [--chi RAW] [--anchors XANC] [--names TSV]");std::string key=argv[i];check(key=="--ri4"||key=="--heads"||key=="--output"||key=="--chi"||key=="--anchors"||key=="--names"||key=="--mode"||key=="--orientation"||key=="--remap","unknown option");check(a.emplace(key,argv[i+1]).second,"duplicate option");}
+     check(a.count("--ri4")&&a.count("--heads")&&a.count("--output"),"need --ri4 --heads --output");
+     std::ifstream f(a["--ri4"],std::ios::binary);check(bool(f),"open ri4");U filebytes=size(f);check(integer(f)==0x0000000452585349ULL,"need ri4 v4");U n=integer(f),k=integer(f),r=integer(f);check(n&&n<UINT64_MAX&&r&&r<=n&&k<=n&&r<=UINT32_MAX,"invalid n/k/r");
+     U tailoff=2080+5*r;check(tailoff+9<=filebytes,"truncated runs");f.seekg(tailoff);U bits=integer(f);unsigned w=integer(f,1);check(w&&w<=64&&bits==r*w,"bad samples");U tailbytes=9+((bits+63)/64)*8;check(filebytes==tailoff+tailbytes,"truncated/trailing ri4");
+@@ -46,8 +46,11 @@ int main(int argc,char**argv){try{
+     if(a.count("--mode")){check(a["--mode"]=="dna"||a["--mode"]=="text","invalid mode");if(a["--mode"]=="dna")metadata|=2;}
+     if(a.count("--orientation")){check(a["--orientation"]=="forward"||a["--orientation"]=="reversed","invalid orientation");if(a["--orientation"]=="reversed")metadata|=4;}
+     if(a.count("--names")){std::ifstream q(a["--names"],std::ios::binary);check(bool(q),"open names");U bytes=size(q);k=named_records(q,bytes,n);}
+-    Output out(a["--output"],a.count("--names")?6:5);out.begin(1,r);out.copy(a["--ri4"],32,2048+5*r);out.begin(2,r);out.copy(a["--ri4"],tailoff,tailbytes);out.begin(3,r);out.copy(a["--heads"],0,8*r);out.begin(4,anchors);if(a.count("--anchors"))out.copy(a["--anchors"],0,anchorbytes);else{out.number(0x434e4158,4);out.number(0);}
++    Remap sigma=a.count("--remap")?load_remap(a["--remap"]):identity_remap();
++    bool remapped=sigma!=identity_remap();if(remapped)metadata|=16;
++    Output out(a["--output"],5+a.count("--names")+remapped);out.begin(1,r);out.copy(a["--ri4"],32,2048+5*r);out.begin(2,r);out.copy(a["--ri4"],tailoff,tailbytes);out.begin(3,r);out.copy(a["--heads"],0,8*r);out.begin(4,anchors);if(a.count("--anchors"))out.copy(a["--anchors"],0,anchorbytes);else{out.number(0x434e4158,4);out.number(0);}
+     out.begin(5,chi.size());U prev=0;for(U v:chi){U d=v-prev;do{unsigned char b=d&127;d>>=7;if(d)b|=128;out.write(&b,1);}while(d);prev=v;}
+     if(a.count("--names")){std::ifstream q(a["--names"],std::ios::binary);check(bool(q),"open names");U bytes=size(q);out.begin(6,bytes);out.copy(a["--names"],0,bytes);}
++    if(remapped){out.begin(7,256);out.write(sigma.data(),sigma.size());}
+     out.finish(n,k,r,a.count("--chi"),metadata);return 0;
+ }catch(const std::exception&e){fprintf(stderr,"FATAL: %s\n",e.what());return 1;}}
+diff --git a/xsa/src/main.rs b/xsa/src/main.rs
+index fa72694..57e1189 100644
+--- a/xsa/src/main.rs
++++ b/xsa/src/main.rs
+@@ -1035,7 +1035,7 @@ fn cmd_chi_rspace(args: &[String]) {
+         if cyclic { if pos == 0 { 0 } else { header.n - pos } }
+         else { big_n - pos }
+     };
+-    const SIGMA: usize = 128;
++    const SIGMA: usize = 256;
+     let mut rr_len = vec![-1i64; SIGMA];
+     let mut rr_pos = vec![0u64; SIGMA];
+     let mut rr_act = vec![false; SIGMA];
+diff --git a/xsa/src/product.rs b/xsa/src/product.rs
+index 4f15242..4e48c8a 100644
+--- a/xsa/src/product.rs
++++ b/xsa/src/product.rs
+@@ -60,12 +60,14 @@ pub struct Engine {
+     dna: bool,
+     reversed: bool,
+     chi: u64,
++    sigma: [u8; 256],
+ }
+ impl Engine {
+     fn open(path: &str, mode: &str, orientation: Option<bool>) -> Result<Self, String> {
+         let meta = sxi::Container::open(path).ok_or("need an SXI container")?;
+         let flags = meta.flags;
+         let chi = meta.member(5).count;
++        let sigma = meta.sigma;
+         let idx = Ri4::load_validated(path, Some(meta));
+         let records = if let Some((path, offset, len)) = &idx.names {
+             use std::io::{Seek, SeekFrom};
+@@ -99,6 +101,7 @@ impl Engine {
+             dna,
+             reversed,
+             chi,
++            sigma,
+         })
+     }
+     fn annotate(&self, pos: u64, len: usize) -> Option<(usize, &Record, u64)> {
+@@ -136,6 +139,7 @@ impl Engine {
+             ));
+         }
+         for (seq, _) in &mut out {
++            for c in seq.iter_mut() { *c = self.sigma[*c as usize]; }
+             if self.reversed {
+                 seq.reverse();
+             }
+diff --git a/xsa/src/sxi.rs b/xsa/src/sxi.rs
+index 9f5dc41..57928bb 100644
+--- a/xsa/src/sxi.rs
++++ b/xsa/src/sxi.rs
+@@ -53,6 +53,7 @@ pub struct Container {
+     pub r: u64,
+     pub complete: bool,
+     pub flags: u64,
++    pub sigma: [u8; 256],
+     pub members: Vec<Member>,
+ }
+ impl Container {
+@@ -94,10 +95,10 @@ impl Container {
+             "invalid n/k/r",
+         );
+         need(
+-            (5..=6).contains(&count)
++            (5..=7).contains(&count)
+                 && hs == 64 + 40 * count
+                 && u64at(&b, 40) == length
+-                && (flags <= 1 || (8..=15).contains(&flags))
++                && (flags <= 1 || (8..=15).contains(&flags) || (24..=31).contains(&flags))
+                 && u32at(&b, 60) == 0,
+             "invalid header",
+         );
+@@ -118,7 +119,7 @@ impl Container {
+                 checksum: u32at(&d, 32),
+             };
+             need(
+-                m.id == i + 1 && u32at(&d, 4) == m.id && u32at(&d, 36) == 0,
++                (m.id == i + 1 || (i == 5 && count == 6 && m.id == 7)) && u32at(&d, 4) == m.id && u32at(&d, 36) == 0,
+                 "unsupported/duplicate member",
+             );
+             let aligned = end
+@@ -143,6 +144,7 @@ impl Container {
+             r,
+             complete: flags & 1 != 0,
+             flags,
++            sigma: std::array::from_fn(|i| i as u8),
+             members,
+         };
+         need(
+@@ -170,7 +172,7 @@ impl Container {
+             c.complete || (chi.count == 0 && chi.bytes == 0),
+             "unfinished chi",
+         );
+-        if c.members.len() == 6 {
++        if c.members.iter().any(|m| m.id == 6) {
+             need(c.member(6).count == c.member(6).bytes, "names size");
+         }
+         let mut buf = vec![0; 1 << 20];
+@@ -186,6 +188,20 @@ impl Container {
+             }
+             need(!v == m.checksum, "member CRC mismatch");
+         }
++        let remapped = c.members.last().unwrap().id == 7;
++        need(remapped == (flags & 16 != 0), "remap flag/member mismatch");
++        if remapped {
++            let m = c.member(7);
++            need(m.count == 256 && m.bytes == 256, "remap size");
++            at(&mut f, m.offset);
++            rd(&mut f, &mut c.sigma);
++            let mut seen = [false; 256];
++            for &v in &c.sigma {
++                need(!seen[v as usize], "remap is not a permutation");
++                seen[v as usize] = true;
++            }
++            need(c.sigma[30] == 30, "remap moves separator");
++        }
+         let tail = c.member(2);
+         at(&mut f, tail.offset);
+         let mut hb = [0; 9];
+@@ -242,7 +258,7 @@ impl Container {
+             reservoir >>= w;
+             available -= w as u32;
+         }
+-        if c.members.len() == 6 {
++        if c.members.iter().any(|m| m.id == 6) {
+             let m = c.member(6);
+             at(&mut f, m.offset);
+             let mut bytes = vec![0; m.bytes as usize]; rd(&mut f, &mut bytes);
+diff --git a/bit6/test_byte_remap.cpp b/bit6/test_byte_remap.cpp
+new file mode 100644
+index 0000000..4985b0f
+--- /dev/null
++++ b/bit6/test_byte_remap.cpp
+@@ -0,0 +1,19 @@
++#include "byte_remap.hpp"
++#include <cassert>
++#include <random>
++#include <vector>
++#include <algorithm>
++using vcfbwt::pfp::ByteRemap;
++int main(){
++ std::mt19937 rng(42);
++ for(int trial=0;trial<1000;++trial){
++  std::vector<unsigned char> symbols;for(int c=0;c<256;++c)if(c!=30)symbols.push_back(c);
++  std::shuffle(symbols.begin(),symbols.end(),rng);symbols.resize(249);symbols.push_back(30);
++  ByteRemap m;std::array<int,256> assigned;assigned.fill(-1);std::array<bool,256> used{};
++  for(auto c:symbols){auto v=m.map(c);assert(v>=6&&!used[v]);used[v]=true;assigned[c]=v;
++   for(auto prev:symbols)if(assigned[prev]>=0)assert(m.map(prev)==assigned[prev]);}
++  bool failed=false;for(int c=0;c<256;++c)if(assigned[c]<0){try{m.map(c);}catch(const std::runtime_error&){failed=true;}break;}
++  assert(failed&&m.map(30)==30);
++ }
++ ByteRemap identity;for(int c=6;c<256;++c)assert(identity.map(c)==c);
++}
+diff --git a/bit6/test_byte_remap.py b/bit6/test_byte_remap.py
+new file mode 100644
+index 0000000..15c241c
+--- /dev/null
++++ b/bit6/test_byte_remap.py
+@@ -0,0 +1,120 @@
++#!/usr/bin/env python3
++"""Streaming remap contract, fresh pipeline, binary MEM oracle and HTTP parity."""
++import argparse
++import json
++import pathlib
++import random
++import socket
++import struct
++import subprocess
++import tempfile
++import time
++import urllib.request
++
++p = argparse.ArgumentParser(description=__doc__)
++p.add_argument('--xsa', default='xsa/target/release/xsa')
++p.add_argument('--log-dir', default='bit6/sxi_logs/byte-remap')
++a = p.parse_args()
++xsa = str(pathlib.Path(a.xsa).resolve())
++logs = pathlib.Path(a.log_dir).resolve(); logs.mkdir(parents=True, exist_ok=True)
++
++def run(cmd, ok=True):
++    r = subprocess.run(list(map(str, cmd)), capture_output=True)
++    assert (r.returncode == 0) == ok, (cmd, r.stderr.decode(errors='replace'))
++    return r
++
++def members(path):
++    b = path.read_bytes(); n = struct.unpack_from('<I', b, 32)[0]
++    return {struct.unpack_from('<I', b, 64+40*i)[0]:
++            b[off:off+size] for i in range(n)
++            for off, size in [struct.unpack_from('<QQ', b, 72+40*i)]}
++
++def brute(text, pat, minimum):
++    hits = set()
++    for q in range(len(pat)):
++        for pos in range(len(text)):
++            n = 0
++            while q+n < len(pat) and pos+n < len(text) and pat[q+n] == text[pos+n]: n += 1
++            if n >= minimum and (q == 0 or pos == 0 or pat[q-1] != text[pos-1]):
++                hits.add((q, pos, n))
++    return hits
++
++with tempfile.TemporaryDirectory(prefix='byte-remap-') as tmp:
++    d = pathlib.Path(tmp)
++    def build(label, data, ok=True):
++        text = d/(label+'.txt'); text.write_bytes(data)
++        out = d/(label+'.sxi')
++        r = run([xsa, 'build', '--text', text, '-o', out, '--threads', 2,
++                 '--verify-text-sample', 32, '--log-dir', logs, '--verbose'], ok)
++        (logs/(label+'.build.log')).write_bytes(r.stdout+r.stderr)
++        if not ok:
++            assert not out.exists()
++            return
++        record = json.loads(r.stdout)
++        work = pathlib.Path(record['work'])
++        sigma = (work/'parse.remap').read_bytes()
++        assert len(sigma) == len(set(sigma)) == 256 and sigma[30] == 30
++        assert all(sigma[c] >= 6 for c in data)
++        return out, work, sigma
++
++    # Encounter displaced high codes AFTER low codes.
++    rng = random.Random(927)
++    data = bytes([0, 255, 1, 254, 2, 253, 3, 252, 4, 251, 5, 250])
++    data += bytes(rng.choice([1, 2, 3, 4, 5, 65, 66, 67, 240, 255]) for _ in range(1800)) + b'\x1e'
++    out, work, sigma = build('binary', data)
++    assert members(out)[7] == sigma
++    pats = [data[i:i+12] for i in (0, 7, 15, 77, 801)] + [b'AB\x01\x02CD', b'\xf9absent']
++    fa = d/'queries.fa'
++    fa.write_bytes(b''.join(b'>'+str(i).encode()+b'\n'+q+b'\n' for i,q in enumerate(pats)))
++    result = run([xsa, 'mems', '--sxi', out, '--reads', fa, '--min-len', 3])
++    (logs/'binary.mems.jsonl').write_bytes(result.stdout)
++    got = {str(i): set() for i in range(len(pats))}
++    for line in result.stdout.splitlines():
++        row = json.loads(line); got[row['read']].add((row['qstart'], row['offset'], row['len']))
++    for i, pat in enumerate(pats): assert got[str(i)] == brute(data, pat, 3), (i, got[str(i)], brute(data, pat, 3))
++    # Exercise the same bounded text verifier used by the large-fragment gate.
++    pattern_json=d/'patterns.json';pattern_json.write_text(json.dumps([
++        {'name':str(i),'hex':pat.hex()} for i,pat in enumerate(pats)]))
++    slices=d/'slices.json';slices.write_text(json.dumps([{'offset':0,'length':len(data)}]))
++    verifier=pathlib.Path(__file__).resolve().parents[1]/'tools/pilot_verify.py'
++    verify_cmd=['python3',verifier,'--text',d/'binary.txt','--patterns',pattern_json,
++                '--occs',logs/'binary.mems.jsonl','--slices',slices,'--min-len',3]
++    run(verify_cmd)
++    missing=d/'missing.jsonl';missing.write_bytes(b'\n'.join(result.stdout.splitlines()[1:])+b'\n')
++    verify_cmd[verify_cmd.index('--occs')+1]=missing
++    run(verify_cmd,False)
++    # Exercise the independent C++ SXI decoder and streamed dictionary path.
++    provenance = json.loads(next(logs.glob('binary-'+work.name+'.jsonl')).read_text().splitlines()[0])
++    slim = next(v['path'] for v in provenance['artifacts'] if v['artifact'] == 'bin/slim_dump')
++    aggregate = d/'differential.agg'
++    run([slim, '--slim', '--resolve-ri4', '--dict-stream', '--sxi', out,
++         '--head-sa', work/'fresh.head_sa', '--parse', work/'parse', '-o', aggregate])
++    assert aggregate.read_bytes() == (work/'fresh.agg').read_bytes()
++    # Same encoded RI4/AGG consumed through SXI must produce identical chi bytes.
++    chi = d/'differential.sA'
++    run([xsa, 'chi-rspace', '--stream-agg', '--sxi', out, '--agg', work/'fresh.agg', '-o', chi])
++    assert chi.read_bytes() == (work/'fresh.sA').read_bytes()
++    # Identity table is journaled but omitted from the container.
++    identity, _, table = build('identity', bytes(rng.choice(b'ACGT') for _ in range(5000))+b'\x1e')
++    assert table == bytes(range(256)) and 7 not in members(identity)
++    # Every allowed slot is usable, including the pinned separator.
++    full = bytes(list(range(244))+[250,251,252,253,254,255])
++    capacity, _, _ = build('capacity250', full+bytes(rng.choice(full) for _ in range(10000))+b'\x1e')
++    build('overflow256', bytes(range(256))*4+b'\x1e', False)
++    # JSON HTTP can represent forbidden control bytes; compare to the CLI oracle.
++    with socket.socket() as s: s.bind(('127.0.0.1', 0)); port = s.getsockname()[1]
++    with (logs/'serve.log').open('wb') as log:
++        server = subprocess.Popen([xsa, 'serve', '--sxi', str(out), '--bind', f'127.0.0.1:{port}', '-j', '2'], stdout=log, stderr=log)
++        try:
++            for _ in range(100):
++                try:
++                    with urllib.request.urlopen(f'http://127.0.0.1:{port}/stats', timeout=1): pass
++                    break
++                except (OSError, urllib.error.URLError): time.sleep(.1)
++            query = b'AB\x01\x02CD'
++            req = urllib.request.Request(f'http://127.0.0.1:{port}/batch', json.dumps({'reads': [{'pattern': query.decode()}], 'min_len': 3}).encode(), {'Content-Type':'application/json'})
++            with urllib.request.urlopen(req, timeout=30) as response:
++                rows = [json.loads(line) for line in response.read().splitlines()]
++            assert {(r['qstart'], r['offset'], r['len']) for r in rows} == brute(data, query, 3)
++        finally: server.terminate(); server.wait(timeout=10)
++print('PASS remap permutation; collision displacement; binary MEM precision/recall; SXI/RI4 chi differential; identity omission; 250-code capacity; 256-code refusal; HTTP parity')

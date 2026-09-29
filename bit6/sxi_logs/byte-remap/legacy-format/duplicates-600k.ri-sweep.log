@@ -1,0 +1,2 @@
+COMMAND ["/home/erikg/worktrees/sxgc/pi-worktree-e7286239-b261-424c-8585-f2604e5d83e0-s0-0/xsa/target/release/xsa", "chi-rspace", "--stream-agg", "--ri4", "/tmp/laneY/bat/duplicates-600k.ri4", "--agg", "/tmp/laneY/bat/duplicates-600k.agg", "-o", "/home/erikg/worktrees/sxgc/pi-worktree-e7286239-b261-424c-8585-f2604e5d83e0-s0-0/vendor/byte-remap-gates/legacy-format/duplicates-600k.ri.sA"]
+xsa chi-rspace: chi = 13004 (N=600002, R=14701) stream-agg=true buffers=4194304

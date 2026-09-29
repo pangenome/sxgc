@@ -140,8 +140,14 @@ preparation cannot recover information absent from the archive.
 `--text` passes the supplied raw bytes **as-is**, with no O(n) contract scan,
 separator insertion, newline conversion, reversal or uppercasing. The caller
 owns the contract: using 0x1E as content is user error. A constant-time final-byte
-read only configures endpoint padding normalization. Existing parser/alphabet
-limitations still apply (the current backend supports bytes 6..127). Historical
+read only configures endpoint padding normalization. PFP maps bytes in its input
+read path, without a prepass or a transformed text file. It fixes 0x1E and uses
+a single-byte permutation into codes 6..255, supporting up to 249 distinct
+nonseparator bytes. Inputs with no bytes 0..5 retain the identity mapping.
+Alphabet exhaustion fails explicitly; variable-length escape encoding is not
+supported. The parse-time `.remap` table flows through the journal, text audit,
+SXI member 7 and the query engine. Positions remain original byte positions;
+see [SXI_FORMAT.md](SXI_FORMAT.md) for the metadata contract. Historical
 newline-terminated raw pilots retain their legacy transport/gates; they are
 outside the new corpus contract. In particular, old BCR newline collection
 oracles do not establish correctness for the new T.

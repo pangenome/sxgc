@@ -60,12 +60,14 @@ pub struct Engine {
     dna: bool,
     reversed: bool,
     chi: u64,
+    sigma: [u8; 256],
 }
 impl Engine {
     fn open(path: &str, mode: &str, orientation: Option<bool>) -> Result<Self, String> {
         let meta = sxi::Container::open(path).ok_or("need an SXI container")?;
         let flags = meta.flags;
         let chi = meta.member(5).count;
+        let sigma = meta.sigma;
         let idx = Ri4::load_validated(path, Some(meta));
         let records = if let Some((path, offset, len)) = &idx.names {
             use std::io::{Seek, SeekFrom};
@@ -99,6 +101,7 @@ impl Engine {
             dna,
             reversed,
             chi,
+            sigma,
         })
     }
     fn annotate(&self, pos: u64, len: usize) -> Option<(usize, &Record, u64)> {
@@ -136,6 +139,7 @@ impl Engine {
             ));
         }
         for (seq, _) in &mut out {
+            for c in seq.iter_mut() { *c = self.sigma[*c as usize]; }
             if self.reversed {
                 seq.reverse();
             }

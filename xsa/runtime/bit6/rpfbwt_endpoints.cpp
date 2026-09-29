@@ -30,7 +30,7 @@ struct Source {
   std::ifstream b(p+".rlebwt",std::ios::binary),h(p+".ssa",std::ios::binary),t(p+".ssa_t",std::ios::binary);
   U word=integer(b,4);integer(h);integer(t);U head=integer(h),tail=integer(t);
   if(terminal==INF)terminal=word&255;
-  padding_check(word==(terminal|U(1)<<8)&&head==n-10&&tail==n-10&&terminal>=6&&terminal<128,
+  padding_check(word==(terminal|U(1)<<8)&&head==n-10&&tail==n-10&&terminal>=6&&terminal<256,
                 "terminal-row",0,word&255,(word>>8)&0x7fffff,head,tail);
   fprintf(stderr,"PFP_TERMINAL byte=0x%02llx source=%s raw_n=%llu raw_r=%llu\n",(unsigned long long)terminal,last==INF?"padding-row":"argument",(unsigned long long)n,(unsigned long long)r);
  }
@@ -83,7 +83,7 @@ struct Source {
    U rawLen=v.len;v=trim_padding(v,rows);rows+=rawLen;if(!v.len)continue;
    check(v.h<n-10&&v.t<n-10,"endpoint outside normalized text");
    if(v.c==2)v.c=terminal;
-   check(v.c>=6&&v.c<128,"unsupported text alphabet");
+   check(v.c>=6&&v.c<256,"unsupported text alphabet");
    if(have&&pending.c==v.c){pending.len+=v.len;pending.t=v.t;}
    else {if(have)emit(pending);pending=v;have=true;}
   }
@@ -95,7 +95,7 @@ void number(std::ostream& f,U x,unsigned bytes=8){unsigned char b[8];put(b,x,byt
 int main(int argc,char**argv){try{
  check(argc==4||argc==5,"usage: rpfbwt_endpoints PREFIX OUT.ri4 OUT.head_sa [TERMINAL_HEX]");
  U terminal=INF;
- if(argc==5){std::string arg(argv[4]);size_t used=0;terminal=std::stoul(arg,&used,16);check(used==arg.size()&&terminal>=6&&terminal<128,"unsupported terminal byte");}
+ if(argc==5){std::string arg(argv[4]);size_t used=0;terminal=std::stoul(arg,&used,16);check(used==arg.size()&&terminal>=6&&terminal<256,"unsupported terminal byte");}
  Source s(argv[1],terminal);terminal=s.terminal;bool certified=s.certify_seam();
  SeamRepair repair(s,certified);
  auto scan=[&](const std::function<void(Run)>& emit){repair.scan(emit);};

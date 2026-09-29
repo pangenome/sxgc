@@ -1,0 +1,9 @@
+Traceback (most recent call last):
+  File "/home/erikg/worktrees/sxgc/pi-worktree-e7286239-b261-424c-8585-f2604e5d83e0-s0-0/bit6/sxi_logs/byte-remap/legacy-format-run.py", line 9, in <module>
+    exec(compile(source,str(p),'exec'),{'__file__':str(p),'__name__':'__main__'})
+  File "/home/erikg/worktrees/sxgc/pi-worktree-e7286239-b261-424c-8585-f2604e5d83e0-s0-0/bit6/sxi_gate.py", line 38, in <module>
+    run(cmd,name+'.'+route+'.'+mode)
+  File "/home/erikg/worktrees/sxgc/pi-worktree-e7286239-b261-424c-8585-f2604e5d83e0-s0-0/bit6/sxi_gate.py", line 12, in run
+    assert (p.returncode==0)==success,(label,p.returncode)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: ('duplicates-600k.sxi.ms', 1)

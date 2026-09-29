@@ -1035,7 +1035,7 @@ fn cmd_chi_rspace(args: &[String]) {
         if cyclic { if pos == 0 { 0 } else { header.n - pos } }
         else { big_n - pos }
     };
-    const SIGMA: usize = 128;
+    const SIGMA: usize = 256;
     let mut rr_len = vec![-1i64; SIGMA];
     let mut rr_pos = vec![0u64; SIGMA];
     let mut rr_act = vec![false; SIGMA];

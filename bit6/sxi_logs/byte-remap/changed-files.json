@@ -1,0 +1,94 @@
+[
+  {
+    "path": "bit6/SXI_BUILD.md",
+    "sha256": "2d8212d09ef725baf32912f4a6d34aa6c7172d3cca0c591d0226b8897065dd8d"
+  },
+  {
+    "path": "bit6/SXI_FORMAT.md",
+    "sha256": "24a62061ab3948c2c31870b841f9d2e17deaeac25bcbb7005e18ce3bd1cfdd87"
+  },
+  {
+    "path": "bit6/patches/pfp_agc.patch",
+    "sha256": "0860fa14a5be0f4db6994aa5ccd1a1155bfde48749ee19b6a7e1a2247c9fa4b1"
+  },
+  {
+    "path": "bit6/rpfbwt_endpoints.cpp",
+    "sha256": "461c1f9b5f5db7d017dbd0b55cf6c89c70f7411ed289066d23c85ecc999ee359"
+  },
+  {
+    "path": "bit6/sxi_format.hpp",
+    "sha256": "9388470fa848412e6710ad17de229fc765bcb8e005f21f90ef0279505cae1e9d"
+  },
+  {
+    "path": "bit6/sxi_pipeline.py",
+    "sha256": "a564995bcf804e36307cb0d32dafeb9aab925bc295ca42e3fdaab5bf4d835614"
+  },
+  {
+    "path": "bit6/sxi_text_audit.cpp",
+    "sha256": "8de4a80dd91b0cfab6f9bb8c8f21f142ac36e2b8859fbaca4352169172623a5c"
+  },
+  {
+    "path": "bit6/sxi_write.cpp",
+    "sha256": "f957ea9395513769c5b6f386d8f0469a53a7748cf85a3aa8d3e321669851ccea"
+  },
+  {
+    "path": "bit6/test_sxi_format.py",
+    "sha256": "977063cf98f8cf4db07a0cf153c4a1616ea9c361df89cbadb651ea36c5b4e4c8"
+  },
+  {
+    "path": "tools/build_pfp_agc.sh",
+    "sha256": "a776631df186032a5f7edc9a412e098fa25089f4e0e544fbf731dcdd261e1daf"
+  },
+  {
+    "path": "tools/pilot_verify.py",
+    "sha256": "3664110727d49f86f7bcabca78978c3185e71fb7ca55e88f893315029c590cce"
+  },
+  {
+    "path": "xsa/SOURCES.sha256.json",
+    "sha256": "06f996a1760c62877b266d21c8356edfe3b4a9c717a9a0cca6f623f1d859966e"
+  },
+  {
+    "path": "xsa/runtime/bit6/patches/pfp_agc.patch",
+    "sha256": "0860fa14a5be0f4db6994aa5ccd1a1155bfde48749ee19b6a7e1a2247c9fa4b1"
+  },
+  {
+    "path": "xsa/runtime/bit6/rpfbwt_endpoints.cpp",
+    "sha256": "461c1f9b5f5db7d017dbd0b55cf6c89c70f7411ed289066d23c85ecc999ee359"
+  },
+  {
+    "path": "xsa/runtime/bit6/sxi_format.hpp",
+    "sha256": "9388470fa848412e6710ad17de229fc765bcb8e005f21f90ef0279505cae1e9d"
+  },
+  {
+    "path": "xsa/runtime/bit6/sxi_pipeline.py",
+    "sha256": "a564995bcf804e36307cb0d32dafeb9aab925bc295ca42e3fdaab5bf4d835614"
+  },
+  {
+    "path": "xsa/runtime/bit6/sxi_text_audit.cpp",
+    "sha256": "8de4a80dd91b0cfab6f9bb8c8f21f142ac36e2b8859fbaca4352169172623a5c"
+  },
+  {
+    "path": "xsa/runtime/bit6/sxi_write.cpp",
+    "sha256": "f957ea9395513769c5b6f386d8f0469a53a7748cf85a3aa8d3e321669851ccea"
+  },
+  {
+    "path": "xsa/src/main.rs",
+    "sha256": "9d8cdd159a2ea2d9f5dd791fa424c26a23f262925ae7aaabd7067f59b62dd606"
+  },
+  {
+    "path": "xsa/src/product.rs",
+    "sha256": "0b5023fdf591d8cb84ac5d4785645eb3a8cdd73454467217011e6f6722b62ed0"
+  },
+  {
+    "path": "xsa/src/sxi.rs",
+    "sha256": "fac56dbe130bbf616d7a6bcd50b759dba3cc918c18777ce644df7736902ff549"
+  },
+  {
+    "path": "bit6/test_byte_remap.cpp",
+    "sha256": "1998e4931f126436263e1828755c2e22931a09cf3a761355f286f3faacb5f0e9"
+  },
+  {
+    "path": "bit6/test_byte_remap.py",
+    "sha256": "6599f75d670a4a0287e30026839fdc5c88df0938599ecb212a32af3d8ec62a7f"
+  }
+]

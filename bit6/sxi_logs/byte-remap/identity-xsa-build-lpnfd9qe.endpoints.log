@@ -1,0 +1,2 @@
+PFP_TERMINAL byte=0x1e source=argument raw_n=5011 raw_r=3816
+ENDPOINT_PASS raw_n=5011 raw_r=3816 n=5001 k=1 r=3814 padding_rows=10 cyclic_seam_certified=1
