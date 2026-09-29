@@ -2038,3 +2038,15 @@ evidence; (3) boundary-spanning phrases must draw from a small shared pool (doc 
 boilerplate): fragment D at w200 = 11 MB total across 177,753 boundaries proves the pool is small
 under random adjacency - the adversarial test passed by construction. Chi and R of the pile are
 defined for the shuffled corpus AS SHIPPED (document order is part of T; provenance only).
+
+### Correction #14 - supervisor misread: "window-is-the-knob 100x collapse" RETRACTED
+The web-density.csv collapse table (D/n 0.0106 at w200) was a MISCOMPUTED/mislabeled side-effect
+CSV from the syncmer lane (it contradicts that same lane's own acceptance measurements, and its
+columns were syncmer (K,S), not mod-p (w,p)). The long-window verification lane's fresh 3-region
+sweep of the REAL pile (proper parses, 1 GB slices, begin/middle/end): syncmer D/n = 3.10-4.43
+UNIFORMLY - long-window syncmers are BAD on the pile, consistent across regions (representativeness
+confirmed for the shuffled pile). TRUE mod-p facts on web text: w3/p5 D/n=0.47 (best known),
+w10/p100 1.07-1.08, w20/p100 1.18 (longer window makes mod-p WORSE, not better).
+The genuinely open question (mod-p w40-200/p3-12 on real regions) was NOT in the fresh sweep;
+supervisor is measuring it directly. Lesson reinforced: side-effect CSVs are not findings;
+cross-check against the producing lane's own acceptance numbers before announcing.
