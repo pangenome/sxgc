@@ -1959,3 +1959,21 @@ BOUND is what is miscalibrated for pangenome scale, not the algorithm.
 Fix direction: justified sublinear budget (per-seam + total-work accounting, journaled
 actuals, fail-loud preserved), exact LCE value in the refusal message; k10/yeast regressions
 must republish identical seam deltas (+4,074 / +96).
+
+## PARSE-MEMORY LANE RESULTS (banked; k10 gate re-owned by supervisor after worktree reaping)
+Opt-in memory front-end (M32/M64 width selection - pinned gsacak has no M5 ABI; L1 DA derived
+from phrase-boundary ranks; L1 ISA released after construction; colex sort without copied
+dictionary symbols). YEAST GATE: all four frontend files byte-identical, peak RSS 9.032->5.762 GB
+(-36.2%), small runtime cost. 24 randomized dictionary A/B tests identical. Disk-SA probe works
+(hash-matching) but ~51x slower under a 32 MiB cgroup cap; NOT a production fallback yet.
+466-redo projection: ~355 GB peak (was 506; 466 actually used 4-byte LCP entries).
+WEB-TEXT REGIME (pile-frag slices, THE pile-rung datum): w10/p100 D/n = 1.08 CONSTANT (dictionary
+larger than text); w20 worse (1.18); w3/p5 halves D/n (0.51) but parse explodes and live set still
+9.3 TB. Naive 24D workspace at pile scale = 33.9 TB -> IN-RAM dictionary-SA construction is
+fundamentally infeasible for web text at any sane parameter. Also R/n ~ 0.39 at 100 MB slice:
+the pile will sit in the unique-dominant regime (chi/n a large fraction) - the paper's contrast
+case, and a construction-regime change (external-memory SA or a non-PFP front-end) is REQUIRED
+for the pile rung. Infrastructure lesson #3: completing a run reaps its worktree INCLUDING
+long-running gates inside it - never leave gates in a worktree past lane exit; hand them to the
+supervisor. k10 memory gate (lost with the worktree) is being re-run from main as a
+supervisor-owned process.

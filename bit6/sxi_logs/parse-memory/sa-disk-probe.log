@@ -1,0 +1,8 @@
+Running as unit: sxi-sa-disk-83fce81c.service; invocation ID: 4a563d2bf7254e4ea8990ccfdd77135a
+mode=disk D=9999977 sa_bytes=39999908 hash=fa607383921036d5 wall_s=122.941571 peak_kib=34824 major_faults=2170 input_blocks=960360 output_blocks=3997472
+Finished with result: success
+Main processes terminated with: code=exited/status=0
+Service runtime: 2min 2.972s
+CPU time consumed: 5.115s
+Memory peak: 32.0M
+Memory swap peak: 0B

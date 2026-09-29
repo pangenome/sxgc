@@ -1,0 +1,25 @@
+ALLOC_TRACE t=754402.751557426 op=malloc old=(nil) new=0x74ab1e86a010 old_bytes=0 bytes=108616070 peak_kib=2048
+ALLOC_TRACE t=754402.847006702 op=malloc old=(nil) new=0x74ab180d4010 old_bytes=0 bytes=108616079 peak_kib=106496
+ALLOC_TRACE t=754402.934964358 op=free old=0x74ab1e86a010 new=(nil) old_bytes=108617712 bytes=0 peak_kib=212992
+ALLOC_TRACE t=754402.966143763 op=realloc old=0x55ab09b54770 new=0x74ab2430d010 old_bytes=24 bytes=13577016 peak_kib=212992
+[2026-09-29 13:26:53.171] [info] MEMORY_SA workspace_bytes=4 entries=108616079
+ALLOC_TRACE t=754403.337606214 op=malloc old=(nil) new=0x74aafe27d010 old_bytes=0 bytes=434464316 peak_kib=212992
+ALLOC_TRACE t=754437.519720042 op=malloc old=(nil) new=0x74aae4426010 old_bytes=0 bytes=434464320 peak_kib=550752
+ALLOC_TRACE t=754438.120353251 op=free old=0x74aafe27d010 new=(nil) old_bytes=434466800 bytes=0 peak_kib=974688
+[2026-09-29 13:27:27.985] [info] Using 4 bytes for storing SA of the dictionary
+[2026-09-29 13:27:27.985] [info] Elapsed time (s): 34.814190902
+[2026-09-29 13:27:27.985] [info] Using 4 bytes for ISA of the dictionary
+ALLOC_TRACE t=754438.151668406 op=malloc old=(nil) new=0x74aafe27d010 old_bytes=0 bytes=434464320 peak_kib=974688
+[2026-09-29 13:27:33.913] [info] Elapsed time (s): 5.927298809
+[2026-09-29 13:27:33.913] [info] Using 2 bytes for LCP of the dictionary
+ALLOC_TRACE t=754444.079044275 op=malloc old=(nil) new=0x74aad74fa010 old_bytes=0 bytes=217232160 peak_kib=974688
+[2026-09-29 13:27:45.895] [info] Elapsed time (s): 11.98189683
+[2026-09-29 13:27:45.895] [info] Using 3 bytes for colex id and inverse colex id array of the dictionary
+[2026-09-29 13:27:58.911] [info] Elapsed time (s): 13.01594445
+LIVE stage=built D=108616079 d_capacity=108616079 SA=434464329 ISA=434464329 DA=9 LCP=217232169 boundaries=13577024 rank=3394264 select=83364 colex=2783473 inv_colex=2783473
+ALLOC_TRACE t=754469.077117985 op=free old=0x74aafe27d010 new=(nil) old_bytes=434466800 bytes=0 peak_kib=1192624
+LIVE stage=released-ISA D=108616079 d_capacity=108616079 SA=434464329 ISA=9 DA=9 LCP=217232169 boundaries=13577024 rank=3394264 select=83364 colex=2783473 inv_colex=2783473
+ALLOC_TRACE t=754469.112646066 op=free old=0x74aad74fa010 new=(nil) old_bytes=217235440 bytes=0 peak_kib=1192624
+ALLOC_TRACE t=754469.129911431 op=free old=0x74aae4426010 new=(nil) old_bytes=434466800 bytes=0 peak_kib=1192624
+ALLOC_TRACE t=754469.163506029 op=free old=0x74ab2430d010 new=(nil) old_bytes=13578224 bytes=0 peak_kib=1192624
+ALLOC_TRACE t=754469.164644130 op=free old=0x74ab180d4010 new=(nil) old_bytes=108617712 bytes=0 peak_kib=1192624

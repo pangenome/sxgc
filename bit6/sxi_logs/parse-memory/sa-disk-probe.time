@@ -1,0 +1,23 @@
+	Command being timed: "/home/erikg/worktrees/sxgc/pi-worktree-83fce81c-553e-426d-980f-952003f67bf7-s0-0/bit6/sxi_logs/parse-memory/work/sa-disk-probe /home/erikg/worktrees/sxgc/pi-worktree-83fce81c-553e-426d-980f-952003f67bf7-s0-0/bit6/sxi_logs/parse-memory/work/probe.dict /mnt/nvme2n1/erikg/sxgc-parse-memory-83fce81c/sa-workspace"
+	User time (seconds): 2.97
+	System time (seconds): 2.13
+	Percent of CPU this job got: 4%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 2:02.96
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 34824
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 2170
+	Minor (reclaiming a frame) page faults: 330098
+	Voluntary context switches: 51384
+	Involuntary context switches: 342
+	Swaps: 0
+	File system inputs: 960360
+	File system outputs: 3997480
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

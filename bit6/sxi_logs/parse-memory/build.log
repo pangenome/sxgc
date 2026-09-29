@@ -1,0 +1,45 @@
+gcc -O3 -DM64=0 -c /home/erikg/sxgc/sealed-tools/.build/deps/gsacak/gsacak.c -o /home/erikg/worktrees/sxgc/pi-worktree-83fce81c-553e-426d-980f-952003f67bf7-s0-0/bit6/sxi_logs/parse-memory/work/build/gsacak32.o
+objcopy --redefine-syms=/home/erikg/worktrees/sxgc/pi-worktree-83fce81c-553e-426d-980f-952003f67bf7-s0-0/bit6/sxi_logs/parse-memory/work/build/symbols.map /home/erikg/worktrees/sxgc/pi-worktree-83fce81c-553e-426d-980f-952003f67bf7-s0-0/bit6/sxi_logs/parse-memory/work/build/gsacak32.o
+gcc -O3 -DM64=1 -c /home/erikg/sxgc/sealed-tools/.build/deps/gsacak/gsacak.c -o /home/erikg/worktrees/sxgc/pi-worktree-83fce81c-553e-426d-980f-952003f67bf7-s0-0/bit6/sxi_logs/parse-memory/work/build/gsacak64.o
+patch -d /home/erikg/worktrees/sxgc/pi-worktree-83fce81c-553e-426d-980f-952003f67bf7-s0-0/bit6/sxi_logs/parse-memory/work/build/rpfbwt -p1 -i /home/erikg/worktrees/sxgc/pi-worktree-83fce81c-553e-426d-980f-952003f67bf7-s0-0/bit6/patches/rpfbwt_memory.patch
+patching file rpfbwt.cpp
+patching file include/rpfbwt_algorithm.hpp
+g++ -O3 -DNDEBUG -std=c++17 -fopenmp -DM64=1 -DSXI_MEMORY_DICTIONARY -I/home/erikg/worktrees/sxgc/pi-worktree-83fce81c-553e-426d-980f-952003f67bf7-s0-0/bit6/pfp_ds_vendor -I/home/erikg/worktrees/sxgc/pi-worktree-83fce81c-553e-426d-980f-952003f67bf7-s0-0/bit6/sxi_logs/parse-memory/work/build/rpfbwt/include -I/home/erikg/sxgc/sealed-tools/.build/deps/rpfbwt/include -I/home/erikg/sxgc/sealed-tools/.build/rpfbwt-build/generated -I/home/erikg/sxgc/sealed-tools/.build/deps/pfp_ds/include -I/home/erikg/sxgc/sealed-tools/.build/deps/spdlog/include -I/home/erikg/sxgc/sealed-tools/.build/deps/cli11/include -I/home/erikg/sxgc/sealed-tools/.build/deps/mio/single_include -I/home/erikg/sxgc/sealed-tools/.build/deps/rlestring/include -I/home/erikg/sxgc/sealed-tools/.build/deps/kseq -I/home/erikg/sxgc/sealed-tools/.build/deps/gsacak -I/home/erikg/sxgc/sealed-tools/.build/deps/sdsl/include -I/home/erikg/sxgc/sealed-tools/.build/rpfbwt-build/_deps/divsufsort-build/include /home/erikg/worktrees/sxgc/pi-worktree-83fce81c-553e-426d-980f-952003f67bf7-s0-0/bit6/sxi_logs/parse-memory/work/build/rpfbwt/rpfbwt.cpp /home/erikg/sxgc/sealed-tools/.build/rpfbwt-build/generated/version.cpp /home/erikg/worktrees/sxgc/pi-worktree-83fce81c-553e-426d-980f-952003f67bf7-s0-0/bit6/sxi_logs/parse-memory/work/build/gsacak32.o /home/erikg/worktrees/sxgc/pi-worktree-83fce81c-553e-426d-980f-952003f67bf7-s0-0/bit6/sxi_logs/parse-memory/work/build/gsacak64.o /home/erikg/sxgc/sealed-tools/.build/rpfbwt-build/_deps/sdsl-build/lib/libsdsl.a /home/erikg/sxgc/sealed-tools/.build/rpfbwt-build/_deps/divsufsort-build/lib/libdivsufsort.a /home/erikg/sxgc/sealed-tools/.build/rpfbwt-build/_deps/divsufsort-build/lib/libdivsufsort64.a /home/erikg/sxgc/sealed-tools/.build/rpfbwt-build/_deps/rlestring-build/librlestring.a /home/erikg/sxgc/sealed-tools/.build/rpfbwt-build/_deps/sdsl-build/lib/libsdsl.a /home/erikg/sxgc/sealed-tools/.build/rpfbwt-build/_deps/divsufsort-build/lib/libdivsufsort.a /home/erikg/sxgc/sealed-tools/.build/rpfbwt-build/_deps/divsufsort-build/lib/libdivsufsort64.a -pthread -ldl -o /home/erikg/worktrees/sxgc/pi-worktree-83fce81c-553e-426d-980f-952003f67bf7-s0-0/bit6/sxi_logs/parse-memory/work/build/rpfbwt-memory
+In file included from /home/erikg/sxgc/sealed-tools/.build/deps/sdsl/include/sdsl/rmq_support_sparse_table.hpp:25,
+                 from /home/erikg/sxgc/sealed-tools/.build/deps/sdsl/include/sdsl/rmq_support.hpp:46,
+                 from /home/erikg/worktrees/sxgc/pi-worktree-83fce81c-553e-426d-980f-952003f67bf7-s0-0/bit6/pfp_ds_vendor/pfp/pfp.hpp:28,
+                 from /home/erikg/worktrees/sxgc/pi-worktree-83fce81c-553e-426d-980f-952003f67bf7-s0-0/bit6/sxi_logs/parse-memory/work/build/rpfbwt/include/rpfbwt_algorithm.hpp:14,
+                 from /home/erikg/worktrees/sxgc/pi-worktree-83fce81c-553e-426d-980f-952003f67bf7-s0-0/bit6/sxi_logs/parse-memory/work/build/rpfbwt/rpfbwt.cpp:8:
+/home/erikg/sxgc/sealed-tools/.build/deps/sdsl/include/sdsl/int_vector.hpp:855:45: warning: ‘template<class _Category, class _Tp, class _Distance, class _Pointer, class _Reference> struct std::iterator’ is deprecated [-Wdeprecated-declarations]
+  855 | class int_vector_iterator_base: public std::iterator<std::random_access_iterator_tag, typename t_int_vector::value_type, typename t_int_vector::difference_type>
+      |                                             ^~~~~~~~
+In file included from /usr/include/c++/13/bits/stl_algobase.h:65,
+                 from /usr/include/c++/13/algorithm:60,
+                 from /home/erikg/sxgc/sealed-tools/.build/deps/cli11/include/CLI/StringTools.hpp:6,
+                 from /home/erikg/sxgc/sealed-tools/.build/deps/cli11/include/CLI/CLI.hpp:13,
+                 from /home/erikg/worktrees/sxgc/pi-worktree-83fce81c-553e-426d-980f-952003f67bf7-s0-0/bit6/sxi_logs/parse-memory/work/build/rpfbwt/rpfbwt.cpp:5:
+/usr/include/c++/13/bits/stl_iterator_base_types.h:127:34: note: declared here
+  127 |     struct _GLIBCXX17_DEPRECATED iterator
+      |                                  ^~~~~~~~
+In file included from /home/erikg/sxgc/sealed-tools/.build/deps/sdsl/include/sdsl/int_vector_buffer.hpp:25,
+                 from /home/erikg/sxgc/sealed-tools/.build/deps/sdsl/include/sdsl/int_vector.hpp:1599:
+/home/erikg/sxgc/sealed-tools/.build/deps/sdsl/include/sdsl/iterators.hpp:33:49: warning: ‘template<class _Category, class _Tp, class _Distance, class _Pointer, class _Reference> struct std::iterator’ is deprecated [-Wdeprecated-declarations]
+   33 | class random_access_const_iterator: public std::iterator<std::random_access_iterator_tag, typename t_rac::value_type, typename t_rac::difference_type>
+      |                                                 ^~~~~~~~
+/usr/include/c++/13/bits/stl_iterator_base_types.h:127:34: note: declared here
+  127 |     struct _GLIBCXX17_DEPRECATED iterator
+      |                                  ^~~~~~~~
+/home/erikg/sxgc/sealed-tools/.build/deps/sdsl/include/sdsl/int_vector_buffer.hpp:489:37: warning: ‘template<class _Category, class _Tp, class _Distance, class _Pointer, class _Reference> struct std::iterator’ is deprecated [-Wdeprecated-declarations]
+  489 |         class iterator: public std::iterator<std::random_access_iterator_tag, value_type, difference_type, value_type*, reference>
+      |                                     ^~~~~~~~
+/usr/include/c++/13/bits/stl_iterator_base_types.h:127:34: note: declared here
+  127 |     struct _GLIBCXX17_DEPRECATED iterator
+      |                                  ^~~~~~~~
+In file included from /home/erikg/sxgc/sealed-tools/.build/deps/sdsl/include/sdsl/rmq_succinct_sct.hpp:27,
+                 from /home/erikg/sxgc/sealed-tools/.build/deps/sdsl/include/sdsl/rmq_support.hpp:47:
+/home/erikg/sxgc/sealed-tools/.build/deps/sdsl/include/sdsl/suffix_tree_helper.hpp:17:51: warning: ‘template<class _Category, class _Tp, class _Distance, class _Pointer, class _Reference> struct std::iterator’ is deprecated [-Wdeprecated-declarations]
+   17 | class cst_node_child_proxy_iterator : public std::iterator<std::forward_iterator_tag, typename t_cst::node_type>
+      |                                                   ^~~~~~~~
+/usr/include/c++/13/bits/stl_iterator_base_types.h:127:34: note: declared here
+  127 |     struct _GLIBCXX17_DEPRECATED iterator
+      |                                  ^~~~~~~~

@@ -26,6 +26,10 @@
 #define _PFP_DICTIONARY_HH
 
 #include <queue>
+#ifdef SXI_MEMORY_DICTIONARY
+#include "sa_workspace.hpp"
+#include <numeric>
+#endif
 
 #include "utils.hpp"
 #undef max
@@ -133,6 +137,10 @@ public:
         int n_dollars = 0;
         while(i < d.size() && d[i++] == Dollar) { ++n_dollars; }
         std::vector<data_type> dollars(w-n_dollars, Dollar);
+#ifdef SXI_MEMORY_DICTIONARY
+        // Avoid vector's doubling policy when prepending the window padding.
+        d.reserve(d.size() + dollars.size());
+#endif
         d.insert(d.begin(), dollars.begin(), dollars.end());
         assert(d.back() == 0);
         
@@ -145,6 +153,13 @@ public:
         return select_b_d(id+1)-select_b_d(id) - 1; // to remove the EndOfWord
     }
     
+    // DA can be derived in O(1) from the existing phrase-boundary rank index.
+    long_type phrase_at_sa(long_type i) const {
+        if (daD_flag) return daD[i];
+        const long_type pos = saD[i];
+        return rank_b_d(pos) + (b_d[pos] ? 1 : 0) - 1;
+    }
+
     long_type n_phrases() const { return rank_b_d(d.size()-1); }
     
     void build(bool saD_flag_, bool isaD_flag_, bool daD_flag_, bool lcpD_flag_, bool rmq_lcp_D_flag_, bool colex_id_flag_, bool colex_daD_flag_){
@@ -177,6 +192,25 @@ public:
         if(saD_flag_)
         {
             _elapsed_time(
+#ifdef SXI_MEMORY_DICTIONARY
+            long_type bytes_saD = 1;
+            for (long_type v = (d.size() + 1) >> 8; v; v >>= 8) ++bytes_saD;
+            if (d.size() <= INT32_MAX && alphabet_size <= INT32_MAX) {
+                spdlog::info("MEMORY_SA workspace_bytes=4 entries={}", d.size());
+                std::vector<uint32_t> tmp(d.size(), 0);
+                if (sxi_sa32(d.data(), tmp.data(), d.size(), alphabet_size) < 0)
+                    throw std::runtime_error("32-bit gSACA-K failed");
+                saD = sdsl::int_vector<>(d.size(), 0ULL, bytes_saD * 8);
+                for (long_type i = 0; i < d.size(); ++i) saD[i] = tmp[i];
+            } else {
+                spdlog::info("MEMORY_SA workspace_bytes=8 entries={}", d.size());
+                std::vector<long_type> tmp(d.size(), 0);
+                gsacak_templated<data_type>(d.data(), tmp.data(), d.size(), alphabet_size);
+                saD = sdsl::int_vector<>(d.size(), 0ULL, bytes_saD * 8);
+                for (long_type i = 0; i < d.size(); ++i) saD[i] = tmp[i];
+            }
+            spdlog::info("Using {} bytes for storing SA of the dictionary", bytes_saD);
+#else
             spdlog::info("Using 8 bytes for computing SA of the dictionary");
             std::vector<long_type> tmp_saD(d.size(), 0);
             gsacak_templated<data_type>(&d[0], &tmp_saD[0], d.size(), alphabet_size);
@@ -188,6 +222,7 @@ public:
             saD = sdsl::int_vector<>(tmp_saD.size(), 0ULL, bytes_saD * 8);
 
             for (long_type i = 0; i < tmp_saD.size(); i++) { saD[i] = tmp_saD[i]; }
+#endif
             );
             saD_flag = true;
         }
@@ -274,7 +309,7 @@ public:
         if(colex_daD_flag_ or colex_id_flag_)
         {
             _elapsed_time(
-            assert(daD_flag);
+            assert(daD_flag || !colex_daD_flag_);
             // allocating space for colex DA
             if (colex_daD_flag_)
             {
@@ -313,6 +348,29 @@ public:
     void compute_colex_da(bool colex_id_flag_, bool colex_daD_flag_)
     {
 
+#ifdef SXI_MEMORY_DICTIONARY
+        if (n_phrases() > UINT32_MAX)
+            throw std::runtime_error("colex phrase IDs exceed uint32_t");
+        // Sort IDs against the original dictionary, without a second copy of D
+        // or one vector allocation per phrase. The ordering matches reverse words.
+        std::vector<uint32_t> ids(n_phrases());
+        std::iota(ids.begin(), ids.end(), uint32_t(0));
+        std::sort(ids.begin(), ids.end(), [this](uint32_t a, uint32_t b) {
+            long_type ab = select_b_d(long_type(a)+1), ae = select_b_d(long_type(a)+2)-1;
+            long_type bb = select_b_d(long_type(b)+1), be = select_b_d(long_type(b)+2)-1;
+            while (ae > ab && be > bb) {
+                const data_type ac = d[--ae], bc = d[--be];
+                if (ac != bc) return colex_comparator(ac, bc);
+            }
+            return ae == ab && be != bb;
+        });
+        for (long_type i = 0; i < ids.size(); ++i) {
+            colex_id[i] = ids[i];
+            inv_colex_id[ids[i]] = i;
+        }
+        for (long_type i = 0; i < colex_daD.size(); ++i)
+            colex_daD[i] = inv_colex_id[daD[i] % inv_colex_id.size()];
+#else
         // ---------- just sort the reversed phrases
         std::vector<std::pair<std::vector<data_type>,uint32_t>> rev_dict(n_phrases());
         long_type i = 0;
@@ -357,6 +415,7 @@ public:
         {
             colex_daD[i] = inv_colex_id[daD[i] % inv_colex_id.size()];
         }
+#endif
     }
 };
 

@@ -1,0 +1,30 @@
+[2026-09-29 13:44:04.947] [info] Using 8 bytes for computing SA of the dictionary
+[2026-09-29 13:44:17.498] [info] Using 4 bytes for storing SA of the dictionary
+[2026-09-29 13:44:17.910] [info] Elapsed time (s): 12.963102304
+[2026-09-29 13:44:17.961] [info] Using 3 bytes for DA of the dictionary
+[2026-09-29 13:44:19.614] [info] Elapsed time (s): 1.652487354
+[2026-09-29 13:44:19.614] [info] Using 4 bytes for ISA of the dictionary
+[2026-09-29 13:44:22.857] [info] Elapsed time (s): 3.24358519
+[2026-09-29 13:44:22.857] [info] Using 2 bytes for LCP of the dictionary
+[2026-09-29 13:44:28.835] [info] Elapsed time (s): 5.977762201
+[2026-09-29 13:44:28.835] [info] Using 3 bytes for colex id and inverse colex id array of the dictionary
+[2026-09-29 13:44:34.212] [info] Elapsed time (s): 5.377012572
+[2026-09-29 13:44:34.608] [info] Using 8 bytes for computing SA of the dictionary
+[2026-09-29 13:44:49.445] [info] Using 4 bytes for storing SA of the dictionary
+[2026-09-29 13:44:49.623] [info] Elapsed time (s): 15.01509549
+[2026-09-29 13:44:49.643] [info] Using 3 bytes for DA of the dictionary
+[2026-09-29 13:44:50.325] [info] Elapsed time (s): 0.681952216
+[2026-09-29 13:44:50.325] [info] Using 4 bytes for ISA of the dictionary
+[2026-09-29 13:44:51.866] [info] Elapsed time (s): 1.541116085
+[2026-09-29 13:44:51.866] [info] Using 2 bytes for LCP of the dictionary
+[2026-09-29 13:44:55.519] [info] Elapsed time (s): 3.652304114
+[2026-09-29 13:44:55.519] [info] Computing RMQ over LCP of dictionary
+[2026-09-29 13:44:56.088] [info] Elapsed time (s): 0.569653845
+[2026-09-29 13:44:56.089] [info] Using 3 bytes for colex DA of the dictionary
+[2026-09-29 13:44:56.146] [info] Using 3 bytes for colex id and inverse colex id array of the dictionary
+[2026-09-29 13:45:01.624] [info] Elapsed time (s): 5.535123068
+[2026-09-29 13:45:01.627] [info] Using 8 bytes for computing SA of the parsing
+[2026-09-29 13:45:02.015] [info] Using 3 bytes for storing SA of the parsing
+[2026-09-29 13:45:02.020] [info] Elapsed time (s): 0.393759483
+[2026-09-29 13:45:02.242] [info] Computing b_p
+[2026-09-29 13:45:02.501] [info] Computing b_bwt and M of the parsing

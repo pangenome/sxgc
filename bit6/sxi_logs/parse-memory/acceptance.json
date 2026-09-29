@@ -1,0 +1,198 @@
+{
+  "criteriaSatisfied": [
+    {
+      "id": "criterion-1",
+      "status": "not-satisfied",
+      "evidence": "Implemented and gated an opt-in memory reduction, but pile capacity remains unclosed: default projected SA packing alone is 21.21 TB; best measured low-p setting is 9.34 TB. K10 full gate remains running."
+    },
+    {
+      "id": "criterion-2",
+      "status": "satisfied",
+      "evidence": "12 parse measurements, exact-array differential, yeast and three web byte gates, allocation-lifetime logs, bounded disk-I/O experiment, source diff, reproducible commands, projection assumptions and pending gates are journaled here."
+    }
+  ],
+  "changedFiles": [
+    "bit6/patches/rpfbwt_memory.patch",
+    "bit6/pfp_ds_vendor/pfp/dictionary.hpp",
+    "bit6/pfp_ds_vendor/pfp/sa_workspace.hpp",
+    "bit6/sxi_logs/parse-memory/.gitignore",
+    "bit6/sxi_logs/parse-memory/AUDIT.md",
+    "bit6/sxi_logs/parse-memory/GATES.md",
+    "bit6/sxi_logs/parse-memory/RESULTS.md",
+    "bit6/sxi_logs/parse-memory/acceptance.json",
+    "bit6/sxi_logs/parse-memory/allocation-build.log",
+    "bit6/sxi_logs/parse-memory/allocation-summary.json",
+    "bit6/sxi_logs/parse-memory/allocations-baseline.log",
+    "bit6/sxi_logs/parse-memory/allocations-baseline.time",
+    "bit6/sxi_logs/parse-memory/allocations-memory.log",
+    "bit6/sxi_logs/parse-memory/allocations-memory.time",
+    "bit6/sxi_logs/parse-memory/analyze_allocations.py",
+    "bit6/sxi_logs/parse-memory/build-parser.log",
+    "bit6/sxi_logs/parse-memory/build.log",
+    "bit6/sxi_logs/parse-memory/build_parser_probe.py",
+    "bit6/sxi_logs/parse-memory/dictionary-test.log",
+    "bit6/sxi_logs/parse-memory/dictionary_memory_test.cpp",
+    "bit6/sxi_logs/parse-memory/dictionary_probe.cpp",
+    "bit6/sxi_logs/parse-memory/finish_k10_tail_gate.py",
+    "bit6/sxi_logs/parse-memory/gates.jsonl",
+    "bit6/sxi_logs/parse-memory/k10.log",
+    "bit6/sxi_logs/parse-memory/k10.time",
+    "bit6/sxi_logs/parse-memory/measure-driver.log",
+    "bit6/sxi_logs/parse-memory/measure.py",
+    "bit6/sxi_logs/parse-memory/measurements.jsonl",
+    "bit6/sxi_logs/parse-memory/monitor.py",
+    "bit6/sxi_logs/parse-memory/parse-100000000-w10-p100-baseline.log",
+    "bit6/sxi_logs/parse-memory/parse-100000000-w10-p100-baseline.time",
+    "bit6/sxi_logs/parse-memory/parse-100000000-w10-p100-l2.log",
+    "bit6/sxi_logs/parse-memory/parse-100000000-w10-p100-l2.time",
+    "bit6/sxi_logs/parse-memory/parse-100000000-w10-p100-memory.log",
+    "bit6/sxi_logs/parse-memory/parse-100000000-w10-p100-memory.time",
+    "bit6/sxi_logs/parse-memory/parse-100000000-w10-p100.log",
+    "bit6/sxi_logs/parse-memory/parse-100000000-w10-p100.time",
+    "bit6/sxi_logs/parse-memory/parse-100000000-w20-p100-baseline.log",
+    "bit6/sxi_logs/parse-memory/parse-100000000-w20-p100-baseline.time",
+    "bit6/sxi_logs/parse-memory/parse-100000000-w20-p100-l2.log",
+    "bit6/sxi_logs/parse-memory/parse-100000000-w20-p100-l2.time",
+    "bit6/sxi_logs/parse-memory/parse-100000000-w20-p100-memory.log",
+    "bit6/sxi_logs/parse-memory/parse-100000000-w20-p100-memory.time",
+    "bit6/sxi_logs/parse-memory/parse-100000000-w20-p100.log",
+    "bit6/sxi_logs/parse-memory/parse-100000000-w20-p100.time",
+    "bit6/sxi_logs/parse-memory/parse-100000000-w3-p5-l2.log",
+    "bit6/sxi_logs/parse-memory/parse-100000000-w3-p5-l2.time",
+    "bit6/sxi_logs/parse-memory/parse-100000000-w3-p5-memory.log",
+    "bit6/sxi_logs/parse-memory/parse-100000000-w3-p5-memory.time",
+    "bit6/sxi_logs/parse-memory/parse-100000000-w3-p5.log",
+    "bit6/sxi_logs/parse-memory/parse-100000000-w3-p5.time",
+    "bit6/sxi_logs/parse-memory/parse-100000000-w5-p100-baseline.log",
+    "bit6/sxi_logs/parse-memory/parse-100000000-w5-p100-baseline.time",
+    "bit6/sxi_logs/parse-memory/parse-100000000-w5-p100-l2.log",
+    "bit6/sxi_logs/parse-memory/parse-100000000-w5-p100-l2.time",
+    "bit6/sxi_logs/parse-memory/parse-100000000-w5-p100-memory.log",
+    "bit6/sxi_logs/parse-memory/parse-100000000-w5-p100-memory.time",
+    "bit6/sxi_logs/parse-memory/parse-100000000-w5-p100.log",
+    "bit6/sxi_logs/parse-memory/parse-100000000-w5-p100.time",
+    "bit6/sxi_logs/parse-memory/parse-1000000000-w10-p100.log",
+    "bit6/sxi_logs/parse-memory/parse-1000000000-w10-p100.time",
+    "bit6/sxi_logs/parse-memory/parse-1000000000-w20-p100.log",
+    "bit6/sxi_logs/parse-memory/parse-1000000000-w20-p100.time",
+    "bit6/sxi_logs/parse-memory/parse-1000000000-w3-p5.log",
+    "bit6/sxi_logs/parse-memory/parse-1000000000-w3-p5.time",
+    "bit6/sxi_logs/parse-memory/parse-1000000000-w5-p100.log",
+    "bit6/sxi_logs/parse-memory/parse-1000000000-w5-p100.time",
+    "bit6/sxi_logs/parse-memory/parse-500000000-w10-p100.log",
+    "bit6/sxi_logs/parse-memory/parse-500000000-w10-p100.time",
+    "bit6/sxi_logs/parse-memory/parse-500000000-w20-p100.log",
+    "bit6/sxi_logs/parse-memory/parse-500000000-w20-p100.time",
+    "bit6/sxi_logs/parse-memory/parse-500000000-w3-p5.log",
+    "bit6/sxi_logs/parse-memory/parse-500000000-w3-p5.time",
+    "bit6/sxi_logs/parse-memory/parse-500000000-w5-p100.log",
+    "bit6/sxi_logs/parse-memory/parse-500000000-w5-p100.time",
+    "bit6/sxi_logs/parse-memory/parser-probe.log",
+    "bit6/sxi_logs/parse-memory/phrase-statistics.json",
+    "bit6/sxi_logs/parse-memory/phrase_statistics.py",
+    "bit6/sxi_logs/parse-memory/provenance.json",
+    "bit6/sxi_logs/parse-memory/resource-summary.json",
+    "bit6/sxi_logs/parse-memory/resources.jsonl",
+    "bit6/sxi_logs/parse-memory/retained466-widths.log",
+    "bit6/sxi_logs/parse-memory/retained466.time",
+    "bit6/sxi_logs/parse-memory/run_allocation_probe.py",
+    "bit6/sxi_logs/parse-memory/run_gate.py",
+    "bit6/sxi_logs/parse-memory/run_pile_frontend.py",
+    "bit6/sxi_logs/parse-memory/sa-disk-probe.log",
+    "bit6/sxi_logs/parse-memory/sa-disk-probe.time",
+    "bit6/sxi_logs/parse-memory/sa-memory-probe.log",
+    "bit6/sxi_logs/parse-memory/sa-memory-probe.time",
+    "bit6/sxi_logs/parse-memory/sa_disk_probe.cpp",
+    "bit6/sxi_logs/parse-memory/summarize.py",
+    "bit6/sxi_logs/parse-memory/test_dictionary.py",
+    "bit6/sxi_logs/parse-memory/trace_alloc.c",
+    "bit6/sxi_logs/parse-memory/yeast.log",
+    "bit6/sxi_logs/parse-memory/yeast.time",
+    "tools/build_memory_rpfbwt.py"
+  ],
+  "testsAddedOrUpdated": [
+    "bit6/sxi_logs/parse-memory/dictionary_memory_test.cpp",
+    "bit6/sxi_logs/parse-memory/test_dictionary.py",
+    "bit6/sxi_logs/parse-memory/run_gate.py",
+    "bit6/sxi_logs/parse-memory/run_pile_frontend.py",
+    "bit6/sxi_logs/parse-memory/finish_k10_tail_gate.py",
+    "bit6/sxi_logs/parse-memory/dictionary_probe.cpp",
+    "bit6/sxi_logs/parse-memory/run_allocation_probe.py",
+    "bit6/sxi_logs/parse-memory/sa_disk_probe.cpp"
+  ],
+  "commandsRun": [
+    {
+      "command": "python3 bit6/sxi_logs/parse-memory/build_parser_probe.py",
+      "result": "passed",
+      "summary": "Isolated unsigned-byte ParserText probe; no upstream mutation or remapping."
+    },
+    {
+      "command": "python3 bit6/sxi_logs/parse-memory/measure.py",
+      "result": "passed",
+      "summary": "100/500/1000 MB, w/p = 10/100, 5/100, 20/100, 3/5; 12 measurements."
+    },
+    {
+      "command": "python3 tools/build_memory_rpfbwt.py /home/erikg/sxgc/sealed-tools/.build/deps /home/erikg/sxgc/sealed-tools/.build/rpfbwt-build bit6/sxi_logs/parse-memory/work/build",
+      "result": "passed",
+      "summary": "Built distinct M32/M64 ABIs and opt-in memory frontend."
+    },
+    {
+      "command": "python3 bit6/sxi_logs/parse-memory/test_dictionary.py",
+      "result": "passed",
+      "summary": "24 randomized byte/integer dictionaries: SA/ISA/DA/LCP/colex values exactly equal."
+    },
+    {
+      "command": "python3 bit6/sxi_logs/parse-memory/run_gate.py yeast",
+      "result": "passed",
+      "summary": "All four retained files byte-identical. Peak 5.762 GB versus 9.032 GB retained baseline."
+    },
+    {
+      "command": "/home/erikg/worktrees/sxgc/pi-worktree-83fce81c-553e-426d-980f-952003f67bf7-s0-0/bit6/sxi_logs/parse-memory/work/build/rpfbwt-memory --l1-prefix /home/erikg/worktrees/sxgc/pi-worktree-83fce81c-553e-426d-980f-952003f67bf7-s0-0/bit6/sxi_logs/parse-memory/work/parse-100000000-w10-p100 --w1 10 --w2 5 --threads 16 --tmp-dir /home/erikg/worktrees/sxgc/pi-worktree-83fce81c-553e-426d-980f-952003f67bf7-s0-0/bit6/sxi_logs/parse-memory/work",
+      "result": "passed",
+      "summary": "Completed default 100 MB frontend, exit 0; all four output files subsequently cmp-identical. Separate w5 and w20 comparisons passed; bonus w3/p5 remains running."
+    },
+    {
+      "command": "python3 bit6/sxi_logs/parse-memory/run_gate.py k10 (background launch)",
+      "result": "passed",
+      "summary": "Started producer PID 760626 at 48 threads; comparison pending. Sequential four-file baseline continuation queued."
+    },
+    {
+      "command": "python3 bit6/sxi_logs/parse-memory/run_allocation_probe.py",
+      "result": "passed",
+      "summary": "Traced large allocation/free lifetimes and persistent arrays for both paths."
+    },
+    {
+      "command": "systemd-run --user --wait --pipe --unit=sxi-sa-disk-83fce81c -p MemoryMax=32M -p MemorySwapMax=0 -p WorkingDirectory=\"$PWD\" /usr/bin/time -v -o \"$PWD/bit6/sxi_logs/parse-memory/sa-disk-probe.time\" \"$PWD/bit6/sxi_logs/parse-memory/work/sa-disk-probe\" \"$PWD/bit6/sxi_logs/parse-memory/work/probe.dict\" /mnt/nvme2n1/erikg/sxgc-parse-memory-83fce81c/sa-workspace",
+      "result": "passed",
+      "summary": "Matching SA hash; 32 MiB cgroup peak; 122.94 s vs 2.40 s memory, 0.492 GB read / 2.047 GB written."
+    },
+    {
+      "command": "python3 -m py_compile tools/build_memory_rpfbwt.py bit6/sxi_logs/parse-memory/*.py; git diff --check; git diff --cached --name-only",
+      "result": "passed",
+      "summary": "Python compiles, no whitespace errors, no staged files."
+    }
+  ],
+  "validationOutput": [
+    "Yeast235: four byte-identical outputs; maxRSS 5626544 KiB, wall 12:08.14.",
+    "100 MB default: four byte-identical outputs; maxRSS 1194700 KiB vs 1705732 KiB; R=38647349.",
+    "1 GB default: D=1079181467; distinct phrases=9094817; parse bytes=39358732; D/n=1.0791817087.",
+    "Pinned gsacak has no M5 ABI; it receives null LCP/DA pointers.",
+    "466 projection: 338.4 GB using supplied 505.9 GB baseline, or 354.7 GB using retained GNU-time 522.238 GB; proposed redo budget 380 GB, not measured."
+  ],
+  "residualRisks": [
+    "Full pile projection exceeds 900 GB; no production fallback solves this.",
+    "K10 all-four gate and extra low-p slice comparison pending.",
+    "Standalone mmap SA probe is not integrated; default projected temporary SA exceeds nvme2n1 capacity.",
+    "Constant-ratio extrapolations are not full-corpus measurements; production remap may alter parsing.",
+    "Conditional 466 estimate needs actual redo; observed runtime increases are from a shared machine.",
+    "Independent reviewer signoff remains required."
+  ],
+  "noStagedFiles": true,
+  "diffSummary": "Opt-in 32/64-bit SA dispatch, derived L1 DA, early L1 ISA release, exact padding reservation and colex ID sorting without copied phrase symbols; reproducible experiments and reports.",
+  "reviewFindings": [
+    "blocker: RESULTS.md - pile construction capacity gate is not met.",
+    "blocker: GATES.md - K10 full four-file comparison and independent reviewer gate remain pending.",
+    "No new correctness blocker found by code inspection and completed differential/byte gates."
+  ],
+  "manualNotes": "Snapshot 2026-09-29T13:43:35.438851+00:00. All large artifacts are ignored under work/. No commits. contact_supervisor is unavailable in the tool catalog. Background journals continue after this snapshot; consult gates.jsonl. This report explicitly does not claim task completion or pile readiness."
+}

@@ -1,0 +1,31 @@
+{
+  "baseline": {
+    "tracked_large_allocation_peak_bytes": 1672508436,
+    "allocations_at_peak": [
+      434464320,
+      434464320,
+      325848240,
+      217232160,
+      217232140,
+      29690240,
+      13577016
+    ],
+    "persistent_snapshots": [
+      "LIVE stage=built D=108616079 d_capacity=217232140 SA=434464329 ISA=434464329 DA=325848249 LCP=217232169 boundaries=13577024 rank=3394264 select=83364 colex=2783473 inv_colex=2783473"
+    ]
+  },
+  "memory": {
+    "tracked_large_allocation_peak_bytes": 1208353895,
+    "allocations_at_peak": [
+      434464320,
+      434464320,
+      217232160,
+      108616079,
+      13577016
+    ],
+    "persistent_snapshots": [
+      "LIVE stage=built D=108616079 d_capacity=108616079 SA=434464329 ISA=434464329 DA=9 LCP=217232169 boundaries=13577024 rank=3394264 select=83364 colex=2783473 inv_colex=2783473",
+      "LIVE stage=released-ISA D=108616079 d_capacity=108616079 SA=434464329 ISA=9 DA=9 LCP=217232169 boundaries=13577024 rank=3394264 select=83364 colex=2783473 inv_colex=2783473"
+    ]
+  }
+}

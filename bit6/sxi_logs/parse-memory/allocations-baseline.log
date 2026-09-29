@@ -1,0 +1,30 @@
+ALLOC_TRACE t=754390.403040001 op=malloc old=(nil) new=0x73deaa26a010 old_bytes=0 bytes=108616070 peak_kib=2048
+ALLOC_TRACE t=754390.497288236 op=malloc old=(nil) new=0x73de9d33e010 old_bytes=0 bytes=217232140 peak_kib=106496
+ALLOC_TRACE t=754390.637744757 op=free old=0x73deaa26a010 new=(nil) old_bytes=108617712 bytes=0 peak_kib=212992
+ALLOC_TRACE t=754390.659578928 op=realloc old=0x5b5b8c2cc770 new=0x73deafd0d010 old_bytes=24 bytes=13577016 peak_kib=212992
+[2026-09-29 13:26:40.863] [info] Using 8 bytes for computing SA of the dictionary
+ALLOC_TRACE t=754391.029749767 op=malloc old=(nil) new=0x73de69691010 old_bytes=0 bytes=868928632 peak_kib=212992
+[2026-09-29 13:27:12.572] [info] Using 4 bytes for storing SA of the dictionary
+ALLOC_TRACE t=754422.738388677 op=malloc old=(nil) new=0x73de4f83a010 old_bytes=0 bytes=434464320 peak_kib=972636
+[2026-09-29 13:27:13.604] [info] Elapsed time (s): 32.740552716
+ALLOC_TRACE t=754423.770247463 op=free old=0x73de69691010 new=(nil) old_bytes=868929520 bytes=0 peak_kib=1396572
+[2026-09-29 13:27:13.703] [info] Using 3 bytes for DA of the dictionary
+ALLOC_TRACE t=754423.868999024 op=malloc old=(nil) new=0x73de89c7d010 old_bytes=0 bytes=325848240 peak_kib=1396572
+[2026-09-29 13:27:24.997] [info] Elapsed time (s): 11.293966496
+[2026-09-29 13:27:24.997] [info] Using 4 bytes for ISA of the dictionary
+ALLOC_TRACE t=754435.163338501 op=malloc old=(nil) new=0x73de6fe26010 old_bytes=0 bytes=434464320 peak_kib=1396572
+[2026-09-29 13:27:30.338] [info] Elapsed time (s): 5.341596352
+[2026-09-29 13:27:30.338] [info] Using 2 bytes for LCP of the dictionary
+ALLOC_TRACE t=754440.504589202 op=malloc old=(nil) new=0x73de4290e010 old_bytes=0 bytes=217232160 peak_kib=1396572
+[2026-09-29 13:27:41.305] [info] Elapsed time (s): 10.967268478
+[2026-09-29 13:27:41.305] [info] Using 3 bytes for colex id and inverse colex id array of the dictionary
+ALLOC_TRACE t=754451.475087355 op=malloc old=(nil) new=0x73dead82f010 old_bytes=0 bytes=29690240 peak_kib=1505696
+ALLOC_TRACE t=754452.774465924 op=free old=0x73dead82f010 new=(nil) old_bytes=29691888 bytes=0 peak_kib=1700256
+[2026-09-29 13:27:42.610] [info] Elapsed time (s): 1.304727767
+LIVE stage=built D=108616079 d_capacity=217232140 SA=434464329 ISA=434464329 DA=325848249 LCP=217232169 boundaries=13577024 rank=3394264 select=83364 colex=2783473 inv_colex=2783473
+ALLOC_TRACE t=754452.777263258 op=free old=0x73de4290e010 new=(nil) old_bytes=217235440 bytes=0 peak_kib=1700256
+ALLOC_TRACE t=754452.792330829 op=free old=0x73de89c7d010 new=(nil) old_bytes=325849072 bytes=0 peak_kib=1700256
+ALLOC_TRACE t=754452.824226315 op=free old=0x73de6fe26010 new=(nil) old_bytes=434466800 bytes=0 peak_kib=1700256
+ALLOC_TRACE t=754452.860270497 op=free old=0x73de4f83a010 new=(nil) old_bytes=434466800 bytes=0 peak_kib=1700256
+ALLOC_TRACE t=754452.957709796 op=free old=0x73deafd0d010 new=(nil) old_bytes=13578224 bytes=0 peak_kib=1700256
+ALLOC_TRACE t=754452.959582419 op=free old=0x73de9d33e010 new=(nil) old_bytes=217235440 bytes=0 peak_kib=1700256

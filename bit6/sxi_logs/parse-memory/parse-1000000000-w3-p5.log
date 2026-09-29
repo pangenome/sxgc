@@ -1,0 +1,51 @@
+[2026-09-29 13:31:23.932] [info] Current Configuration:
+; PFP++
+
+; Text file to parse.
+text="/home/erikg/worktrees/sxgc/pi-worktree-83fce81c-553e-426d-980f-952003f67bf7-s0-0/bit6/sxi_logs/parse-memory/work/pile-1000000000.txt"
+
+; Output prefix.
+out-prefix="/home/erikg/worktrees/sxgc/pi-worktree-83fce81c-553e-426d-980f-952003f67bf7-s0-0/bit6/sxi_logs/parse-memory/work/parse-1000000000-w3-p5"
+
+; Sliding window size.
+window-size=3
+
+; Modulo used during parsing.
+modulo=5
+
+; Also output compressed the dictionary.
+compress-dictionary=false
+
+; Use reference parse to avoid re-parsing.
+use-vcf-acceleration=false
+
+; Print out csv containing stats.
+print-statistics=false
+
+; Output count for each dictionary phrase.
+output-occurrences=true
+
+; Output sai array.
+output-sai=false
+
+; Output last array.
+output-last=false
+
+; Convert all non ACGT characters from a VCF or FASTA file to N.
+acgt-only=false
+
+; Verbose output.
+verbose=false
+
+; Version number.
+version=false
+
+[2026-09-29 13:31:23.932] [info] Parsing /home/erikg/worktrees/sxgc/pi-worktree-83fce81c-553e-426d-980f-952003f67bf7-s0-0/bit6/sxi_logs/parse-memory/work/pile-1000000000.txt
+[2026-09-29 13:33:38.896] [info] Main parser: Replacing hash values with ranks.
+[2026-09-29 13:35:33.371] [info] Main parser: writing dictionary on disk NOT COMPRESSED
+[2026-09-29 13:35:42.217] [info] Loading dictionary from disk.
+[2026-09-29 13:35:56.904] [info] Read in parse and output properties
+[2026-09-29 13:36:03.200] [info] Writing occurrences to file
+[2026-09-29 13:36:04.387] [info] Main parser: closed
+[2026-09-29 13:36:13.097] [info] Parser Text -	Parse size: 190150322	Dic Size: 33212825 Dic Total Length: 476142463
+[Disk Write (bytes): 2924010453]

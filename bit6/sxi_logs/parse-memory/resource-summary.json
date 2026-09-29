@@ -1,0 +1,99 @@
+{
+  "peak_sampled_combined_rss_bytes": 56941613056,
+  "peak_sample": {
+    "time": 1790688290.9039116,
+    "processes": [
+      {
+        "pid": 759269,
+        "rss_kib": 1568,
+        "hwm_kib": 1568,
+        "vmsize_kib": 2704,
+        "io": {
+          "rchar": 4092,
+          "wchar": 0,
+          "syscr": 8,
+          "syscw": 0,
+          "read_bytes": 0,
+          "write_bytes": 0,
+          "cancelled_write_bytes": 0
+        }
+      },
+      {
+        "pid": 759270,
+        "rss_kib": 5630964,
+        "hwm_kib": 5630964,
+        "vmsize_kib": 5633688,
+        "io": {
+          "rchar": 513409876,
+          "wchar": 603,
+          "syscr": 28,
+          "syscw": 8,
+          "read_bytes": 0,
+          "write_bytes": 12288,
+          "cancelled_write_bytes": 0
+        }
+      },
+      {
+        "pid": 760386,
+        "rss_kib": 1568,
+        "hwm_kib": 1568,
+        "vmsize_kib": 2704,
+        "io": {
+          "rchar": 4092,
+          "wchar": 0,
+          "syscr": 8,
+          "syscw": 0,
+          "read_bytes": 0,
+          "write_bytes": 0,
+          "cancelled_write_bytes": 0
+        }
+      },
+      {
+        "pid": 760387,
+        "rss_kib": 929324,
+        "hwm_kib": 1194700,
+        "vmsize_kib": 2035392,
+        "io": {
+          "rchar": 424440670,
+          "wchar": 735726819,
+          "syscr": 37862,
+          "syscw": 90008,
+          "read_bytes": 0,
+          "write_bytes": 736129024,
+          "cancelled_write_bytes": 0
+        }
+      },
+      {
+        "pid": 760625,
+        "rss_kib": 1568,
+        "hwm_kib": 1568,
+        "vmsize_kib": 2704,
+        "io": {
+          "rchar": 4092,
+          "wchar": 0,
+          "syscr": 8,
+          "syscw": 0,
+          "read_bytes": 0,
+          "write_bytes": 0,
+          "cancelled_write_bytes": 0
+        }
+      },
+      {
+        "pid": 760626,
+        "rss_kib": 49042052,
+        "hwm_kib": 49042052,
+        "vmsize_kib": 49044824,
+        "io": {
+          "rchar": 5483769992,
+          "wchar": 80,
+          "syscr": 30,
+          "syscw": 1,
+          "read_bytes": 0,
+          "write_bytes": 4096,
+          "cancelled_write_bytes": 0
+        }
+      }
+    ]
+  },
+  "note": "15-second samples of this worktree memory-frontends and their time wrappers; excludes parser/baseline/probe processes. Individual GNU time files record each completed stage peak. All gate child processes have RLIMIT_AS=350GB; parser=150GB; disk probe MemoryMax=32MiB."
+}

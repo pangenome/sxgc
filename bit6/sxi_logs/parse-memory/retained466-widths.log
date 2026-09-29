@@ -1,0 +1,16 @@
+[2026-09-29 00:15:05.658] [info] Using 8 bytes for computing SA of the dictionary
+[2026-09-29 01:02:54.578] [info] Using 5 bytes for storing SA of the dictionary
+[2026-09-29 01:04:33.581] [info] Using 4 bytes for DA of the dictionary
+[2026-09-29 01:18:14.441] [info] Using 5 bytes for ISA of the dictionary
+[2026-09-29 01:32:40.517] [info] Using 4 bytes for LCP of the dictionary
+[2026-09-29 02:03:41.966] [info] Using 4 bytes for colex id and inverse colex id array of the dictionary
+[2026-09-29 02:08:54.791] [info] Using 8 bytes for computing SA of the dictionary
+[2026-09-29 02:21:29.990] [info] Using 4 bytes for storing SA of the dictionary
+[2026-09-29 02:21:51.476] [info] Using 4 bytes for DA of the dictionary
+[2026-09-29 02:23:21.563] [info] Using 4 bytes for ISA of the dictionary
+[2026-09-29 02:24:43.117] [info] Using 2 bytes for LCP of the dictionary
+[2026-09-29 02:28:22.820] [info] Using 4 bytes for colex DA of the dictionary
+[2026-09-29 02:28:27.739] [info] Using 4 bytes for colex id and inverse colex id array of the dictionary
+[2026-09-29 02:36:53.571] [info] Using 8 bytes for computing SA of the parsing
+[2026-09-29 02:45:17.133] [info] Using 4 bytes for storing SA of the parsing
+[2026-09-29 03:08:45.359] [info] Using 4 bytes for storing the inverted list of the BWT of the parse
