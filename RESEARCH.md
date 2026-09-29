@@ -2011,3 +2011,20 @@ trigger schemes (2,093,235 entries, SHA 027155db...). Chi is construction-agnost
 Also: w>10 integration blocker caught by fail-loud (endpoints/slim hardcode w1=10; pipeline now
 refuses long-window parses early). Pile path remains: parsed-space external construction with
 mod-p w10/p100 (D/n=1.08 stands as the web-text constant).
+
+## THE WINDOW IS THE KNOB: w=10 was never tuned - D/n collapses 10-100x at longer windows
+The syncmer lane's (w,p) density sweeps (side-effect data, on disk in bit6/sxi_logs/syncmer/):
+WEB 1.08 GB slice: w10/p100 D/n=1.070 -> w20/p8 0.155 -> w40/p12 0.069 -> w80/p3 0.028 ->
+w160/p8 0.013 -> w200/p3 0.0106. DNA chrI: w10/p1 0.835 -> w40/p3 0.102 -> w80/p5 0.031.
+Mechanism: web repetition is BOILERPLATE-SCALE (templates, markup, near-duplicate pages) - a 10-byte
+window triggers inside novel text (phrases short and mostly distinct); a 200-byte window rides over
+duplicated spans (phrases long, shared, wildly repeated: 44,432 distinct phrases for 1.08 GB).
+Consequence: at pile scale D ~ 0.011 x 1.31 TB ~ 14-17 GB -> the dictionary SA fits IN RAM
+(3x8Bx17e9 ~ 400 GB) - no external machinery needed for the front-end; parse ~25 GB; phrase IDs
+uint32-safe; the 83h external-parse path unnecessary (stock in-RAM parse at ~500 MB/s ~ 45min-1h).
+The earlier 'web text has no compression' conclusion was an ARTIFACT OF w=10 (correction of framing).
+Construction-side only: R, chi, and query semantics are text-intrinsic (byte-proven via the syncmer
+chrI smoke). UNVERIFIED before pile adoption: (1) slice representativeness (is the fragment
+near-duplicate-heavy? re-sweep 2-3 fresh pile.txt regions); (2) downstream w-parameterization -
+endpoints/slim hardcode w1=10 (known blocker, now the gate to a 100x payoff); (3) L2 retune;
+(4) R ~ 5e11 run-count widening still required regardless.
