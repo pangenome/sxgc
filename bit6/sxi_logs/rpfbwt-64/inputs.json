@@ -1,0 +1,47 @@
+[
+  {
+    "source": "/home/erikg/sxgc-466/A/xsa-build-1e8r8qqr/parse.dict",
+    "copy": "/tmp/rpfbwt-64-466/parse.dict",
+    "bytes": 18611972661,
+    "source_inode": 204888028,
+    "copy_inode": 349441676,
+    "source_mtime_ns": 1790635222915273248,
+    "copy_cmp_pass": true
+  },
+  {
+    "source": "/home/erikg/sxgc-466/A/xsa-build-1e8r8qqr/parse.parse",
+    "copy": "/tmp/rpfbwt-64-466/parse.parse",
+    "bytes": 62068980920,
+    "source_inode": 204888027,
+    "copy_inode": 349443973,
+    "source_mtime_ns": 1790635163266277393,
+    "copy_cmp_pass": true
+  },
+  {
+    "source": "/home/erikg/sxgc-466/A/xsa-build-1e8r8qqr/parse.parse.dict",
+    "copy": "/tmp/rpfbwt-64-466/parse.parse.dict",
+    "bytes": 9178789184,
+    "source_inode": 204888030,
+    "copy_inode": 349443974,
+    "source_mtime_ns": 1790637001268149669,
+    "copy_cmp_pass": true
+  },
+  {
+    "source": "/home/erikg/sxgc-466/A/xsa-build-1e8r8qqr/parse.parse.parse",
+    "copy": "/tmp/rpfbwt-64-466/parse.parse.parse",
+    "bytes": 5428311508,
+    "source_inode": 204888029,
+    "copy_inode": 349443975,
+    "source_mtime_ns": 1790636971244151755,
+    "copy_cmp_pass": true
+  },
+  {
+    "source": "/home/erikg/sxgc-466/A/xsa-build-1e8r8qqr/collection.txt.names.tsv",
+    "copy": "/tmp/rpfbwt-64-466/collection.txt.names.tsv",
+    "bytes": 1872320,
+    "source_inode": 204888026,
+    "copy_inode": 349444292,
+    "source_mtime_ns": 1790609299212074703,
+    "copy_cmp_pass": true
+  }
+]

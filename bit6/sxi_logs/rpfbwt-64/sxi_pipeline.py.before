@@ -110,14 +110,6 @@ def main():
         source.add_argument('--' + kind)
     p.add_argument('--output', required=True)
     p.add_argument('--threads', type=int, default=8)
-    p.add_argument('--w1', type=int, default=10,
-                   help='first-level PFP overlap/window length')
-    p.add_argument('--syncmer-s', type=int, default=0,
-                   help='use closed (w1,s) syncmer triggers in the first-level parse')
-    p.add_argument('--syncmer-canonical', action='store_true',
-                   help='reverse-complement canonical s-mer hashes; other bytes self-complement')
-    p.add_argument('--address-space-gb', type=int, default=0,
-                   help='optional child address-space ceiling in decimal GB (default: none; a lower inherited hard limit always applies)')
     p.add_argument('--scratch')
     p.add_argument('--log-dir', default=str(ROOT / 'bit6/sxi_logs'))
     p.add_argument('--expect-chi', type=int)
@@ -132,16 +124,10 @@ def main():
     p.add_argument('--manifest', help='toolset manifest (default: XSA_TOOLS/MANIFEST.sha256)')
     p.add_argument('--allow-drift', action='store_true', help='DEBUG ONLY: permit hash drift; journal all mismatches')
     a = p.parse_args()
-    if a.address_space_gb < 0 or a.address_space_gb > (2**63 - 1) // 1_000_000_000:
-        p.error('--address-space-gb must be non-negative and fit a signed 64-bit byte limit')
     if not 0 <= a.verify_text_sample <= 100000:
         p.error('--verify-text-sample must be 0..100000')
     if not 1 <= a.threads <= 96:
         p.error('--threads must be 1..96')
-    if not 3 <= a.w1 <= 512 or (a.syncmer_s and not 1 <= a.syncmer_s < a.w1):
-        p.error('--w1 must be 3..512 and --syncmer-s must be less than w1')
-    if a.syncmer_canonical and not a.syncmer_s:
-        p.error('--syncmer-canonical requires --syncmer-s')
     if a.materialize and not a.agc:
         p.error('--materialize requires --agc')
     if a.fifo and (not a.agc or a.materialize):
@@ -187,21 +173,13 @@ def main():
     journal = logs / (label + '.jsonl')
     env = dict(os.environ, OMP_NUM_THREADS=str(a.threads), TMPDIR=str(work))
     # Children inherit the ceiling; only the AGC producer/first parse overlap.
-    # No self-imposed ceiling by default: the 466 failure was a fixed default
-    # smaller than a legitimate allocation. An explicit cap is optional; a lower
-    # inherited hard limit always applies either way.
-    requested_limit = a.address_space_gb * 1_000_000_000 if a.address_space_gb else None
-    soft, hard_limit = resource.getrlimit(resource.RLIMIT_AS)
-    if requested_limit:
-        limit = requested_limit if hard_limit == resource.RLIM_INFINITY else min(hard_limit, requested_limit)
-        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
-    else:
-        limit = None
+    _, hard_limit = resource.getrlimit(resource.RLIMIT_AS)
+    limit = 149_000_000_000 if hard_limit == resource.RLIM_INFINITY else min(hard_limit, 149_000_000_000)
+    resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
     def record(value):
         with journal.open('a') as f:
             f.write(json.dumps(value) + '\n')
-    record(dict(provenance, output=str(out), work=str(work), start=time.time(),
-                address_space_limit_bytes=limit))
+    record(dict(provenance, output=str(out), work=str(work), start=time.time()))
     def run(name, command, stdout=None):
         command = list(map(str, command))
         logfile = logs / (label + '.' + name + '.log')
@@ -245,11 +223,6 @@ def main():
                     wall_seconds=time.monotonic()-begin,
                     peak_rss_kib=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss))
     prefix = work / 'parse'
-    trigger_args = ['-w', a.w1, '-p', 100]
-    if a.syncmer_s:
-        trigger_args += ['--syncmer-s', a.syncmer_s]
-    if a.syncmer_canonical:
-        trigger_args += ['--syncmer-canonical']
     streaming = bool(a.agc and not a.materialize)
     if a.agc:
         text = work / 'collection.txt'
@@ -257,7 +230,7 @@ def main():
         prepare = [agc, source_path, '--revlines', '--upper', '--sep', '1e', '-o', text]
         if streaming and not a.fifo:
             run('parse', [pfp, '-t', source_path, '--agc', '--agc-names', names,
-                          '-o', prefix, *trigger_args, '-j', a.threads, '--tmp-dir', work])
+                          '-o', prefix, '-w', 10, '-p', 100, '-j', a.threads, '--tmp-dir', work])
             size = 0
             with names.open() as f:
                 for line in f:
@@ -268,7 +241,7 @@ def main():
             terminal = 30
         elif streaming:
             fifo = work / 'collection.fifo'
-            parse = [pfp, '-t', fifo, '-o', prefix, *trigger_args, '-j', a.threads, '--tmp-dir', work]
+            parse = [pfp, '-t', fifo, '-o', prefix, '-w', 10, '-p', 100, '-j', a.threads, '--tmp-dir', work]
             stream_parse(fifo, prepare + ['--stdout'], parse, env, logs, label, record, a.verbose)
             # Same-pass names lengths include exactly one separator per record.
             size = 0
@@ -288,31 +261,24 @@ def main():
                 raise RuntimeError('empty input text')
             f.seek(-1, 2)
             terminal = f.read(1)[0]
-        run('parse', [pfp, '-t', text, '-o', prefix, *trigger_args, '-j', a.threads, '--tmp-dir', work])
-    remap = pathlib.Path(str(prefix)+'.remap')
-    sigma = remap.read_bytes()
-    if len(sigma) != 256 or len(set(sigma)) != 256 or sigma[30] != 30:
-        raise RuntimeError('invalid/missing parser byte permutation')
-    terminal = sigma[terminal]
-    record(dict(stage='byte-remap', path=str(remap), sha256=sha256(remap),
-                identity=sigma == bytes(range(256)), sigma=list(sigma)))
+        run('parse', [pfp, '-t', text, '-o', prefix, '-w', 10, '-p', 100, '-j', a.threads, '--tmp-dir', work])
     run('parse-l2', [pfp, '-i', str(prefix)+'.parse', '-w', 5, '-p', 11, '-j', a.threads, '--tmp-dir', work])
     # Upstream's rdbuf merge sets failbit on an empty chunk. Tiny parses can
     # create such chunks; one chunk avoids this without changing .ssa code.
     chunks = 1 if size < 1_000_000 else 50
-    run('rpfbwt', [rpf, '--l1-prefix', prefix, '--w1', a.w1, '--w2', 5, '--threads', a.threads, '--chunks', chunks, '--tmp-dir', work])
+    run('rpfbwt', [rpf, '--l1-prefix', prefix, '--w1', 10, '--w2', 5, '--threads', a.threads, '--chunks', chunks, '--tmp-dir', work])
     ri4, heads, agg, chi = [work / ('fresh.' + ext) for ext in ('ri4', 'head_sa', 'agg', 'sA')]
-    run('endpoints', [tools/'rpfbwt_endpoints', prefix, ri4, heads, f'{terminal:02x}', '--w1', a.w1])
+    run('endpoints', [tools/'rpfbwt_endpoints', prefix, ri4, heads, f'{terminal:02x}'])
     if a.expect_heads:
         run('gate-heads', ['/usr/bin/cmp', heads, pathlib.Path(a.expect_heads).absolute()])
     if a.expect_ri4:
         run('gate-runs-tails', ['/usr/bin/cmp', ri4, pathlib.Path(a.expect_ri4).absolute()])
     with ri4.open('rb') as header:
         _, _, strings, _ = struct.unpack('<4Q', header.read(32))
-    if strings > 1 and not (a.expect_heads and a.expect_ri4) and not a.verify_text_sample:
-        raise RuntimeError('multi-string ordering unvalidated: endpoint byte gates or --verify-text-sample (in-flight ground-truth audit) required')
+    if strings > 1 and not (a.expect_heads and a.expect_ri4):
+        raise RuntimeError('multi-string PFP/BCR collection ordering is unvalidated; explicit endpoint byte gates are required')
     run('slim', [tools/'slim_dump', '--slim', '--resolve-ri4', '--dict-stream', '--ri4', ri4,
-                 '--head-sa', heads, '--parse', prefix, '--w1', a.w1, '-t', a.threads, '-o', agg])
+                 '--head-sa', heads, '--parse', prefix, '-t', a.threads, '-o', agg])
     sweep = run('sweep', [a.xsa, 'chi-rspace', '--stream-agg', '--ri4', ri4, '--agg', agg, '-o', chi])
     count = chi.stat().st_size // 8
     reported = re.search(r'chi = (\d+)', sweep.read_text())
@@ -321,7 +287,7 @@ def main():
     if a.expect_chi is not None and count != a.expect_chi:
         raise RuntimeError(f'chi gate mismatch: {count} != {a.expect_chi}')
     if a.verify_text_sample:
-        audit = [tools/'sxi_text_audit', text, ri4, agg, chi, a.verify_text_sample, '--remap', remap]
+        audit = [tools/'sxi_text_audit', text, ri4, agg, chi, a.verify_text_sample]
         if a.agc:
             audit += ['--agc', source_path, '--names', names, '--agc2flat', agc]
         run('verify-text-sample', audit)
@@ -330,7 +296,7 @@ def main():
     out.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.xsa-publish-', dir=out.parent) as publish:
         candidate = pathlib.Path(publish)/'candidate.sxi'
-        cmd = [tools/'sxi_write', '--ri4', ri4, '--heads', heads, '--chi', chi, '--output', candidate, '--remap', remap]
+        cmd = [tools/'sxi_write', '--ri4', ri4, '--heads', heads, '--chi', chi, '--output', candidate]
         cmd += ['--mode', (a.mode if a.mode != 'auto' else ('text' if a.text else 'dna')), '--orientation', 'reversed' if a.agc else 'forward']
         if names:
             cmd += ['--names', names]

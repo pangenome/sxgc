@@ -520,7 +520,7 @@ int main(int argc, char** argv) {
     int nthreads = std::thread::hardware_concurrency();
     uint64_t calibRows = 256;
     bool resolveRi4 = false, slim = false, dictStream = false, injectFault = false, profileOnly = false, resolveCache = false;
-    uint64_t tau1=0, tau2=0;
+    uint64_t tau1=0, tau2=0, w1=10;
     for (int i = 1; i < argc; ++i) {
         if ((!strcmp(argv[i], "--ri4") || !strcmp(argv[i], "--sxi")) && i + 1 < argc) ri4Path = argv[++i];
         else if (!strcmp(argv[i], "--parse") && i + 1 < argc) parsePrefix = argv[++i];
@@ -539,13 +539,15 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--inject-fingerprint-error")) injectFault = true;
         else if (!strcmp(argv[i], "--tau1") && i+1<argc) tau1=strtoull(argv[++i],nullptr,10);
         else if (!strcmp(argv[i], "--tau2") && i+1<argc) tau2=strtoull(argv[++i],nullptr,10);
+        else if (!strcmp(argv[i], "--w1") && i+1<argc) w1=strtoull(argv[++i],nullptr,10);
         else if (!strcmp(argv[i], "--anchors") && i + 1 < argc) anchorsPath = argv[++i];
         else { fprintf(stderr, "unknown arg %s\n", argv[i]); return 1; }
     }
     if ((profileOnly || dictStream || injectFault || tau1 || tau2 || resolveCache || !headSaPath.empty()) && !slim)
         slim_fail("slim options require --slim");
+    if (w1<3 || w1>512 || (!slim && w1!=10)) slim_fail("--w1 must be 3..512 and non-default windows require --slim");
     if (ri4Path.empty() || parsePrefix.empty() || outPath.empty()) {
-        fprintf(stderr, "usage: chi_rspace_dump [--slim --resolve-ri4 [--dict-stream] [--head-sa FILE] [--resolve-cache] [--tau1 N] [--tau2 N] [--slim-profile-build] [--inject-fingerprint-error (TEST ONLY)]] --ri4 F.ri4 --parse PFP_PREFIX -o OUT.agg [-t N] [--flat F] [--calib-rows N] [--pfp-index INDEX (load instead of building; bit6/pfp_index_build.cpp)] [--lcp-index F.lcp_index.lcp_index (LEGACY cross-check only)] [--resolve-ri4 (positions from pfp_ds_vendor/pfp/pfp.hpp defer_build_t; NO M/b_bwt/w_wt; SA via the .ri4 sample array + LF walk)] [--anchors F (string-start anchors for walks that reach an interior 0x0A row)]\n");
+        fprintf(stderr, "usage: chi_rspace_dump [--slim --resolve-ri4 [--w1 N] [--dict-stream] [--head-sa FILE] [--resolve-cache] [--tau1 N] [--tau2 N] [--slim-profile-build] [--inject-fingerprint-error (TEST ONLY)]] --ri4 F.ri4 --parse PFP_PREFIX -o OUT.agg [-t N] [--flat F] [--calib-rows N] [--pfp-index INDEX (load instead of building; bit6/pfp_index_build.cpp)] [--lcp-index F.lcp_index.lcp_index (LEGACY cross-check only)] [--resolve-ri4 (positions from pfp_ds_vendor/pfp/pfp.hpp defer_build_t; NO M/b_bwt/w_wt; SA via the .ri4 sample array + LF walk)] [--anchors F (string-start anchors for walks that reach an interior 0x0A row)]\n");
         return 1;
     }
 
@@ -558,7 +560,7 @@ int main(int argc, char** argv) {
         if (!resolveRi4 || !pfpIndexPath.empty() || !lcpIndexPath.empty())
             slim_fail("--slim requires --resolve-ri4 and excludes legacy indexes");
         double begin=G_T0;slim_phase("ri4-load",begin);
-        return slim_dump(ri4,parsePrefix,outPath,anchorsPath,nthreads,tau1,tau2,dictStream,injectFault,profileOnly,flatPath,calibRows,resolveCache,headSaPath);
+        return slim_dump(ri4,parsePrefix,outPath,anchorsPath,nthreads,tau1,tau2,dictStream,injectFault,profileOnly,flatPath,calibRows,resolveCache,headSaPath,w1);
     }
 
     // ---- LEGACY lcp_index: OPTIONAL.  When absent, topLCP is computed

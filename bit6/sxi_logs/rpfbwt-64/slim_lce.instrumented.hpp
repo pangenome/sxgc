@@ -69,51 +69,14 @@ struct SlimDict {
     }
 };
 
-// Seam-only work policy. One work unit is one phrase-ID/byte comparison,
-// one hash probe, or one directly verified symbol. A hash probe reads at
-// most probeLimit symbols to reconstruct one sampled value; those reads are
-// a bounded structure constant (tau <= 8*max(P,D)/r), so each probe charges
-// one unit instead of one per symbol - per-symbol charging multiplies probe
-// cost by tau and exhausts honest budgets on small structures. Preprocessing
-// remains O(P+D+r), never an expanded-text walk. Each direct verification is
-// capped at 2^26 units; all seam queries share at most
-// min(2^32, max(10^6, (P+D)/8)) units. The floor admits bounded tiny fixtures;
-// the absolute ceilings make additional verification sublinear as n grows.
-// Hashes only propose answers: the complete prefix and boundary stay exact.
-struct SlimSeamWork {
-    uint64_t limit;
-    mutable std::atomic<uint64_t> used{0};
-    explicit SlimSeamWork(uint64_t size):limit(std::min<uint64_t>(1ULL<<32,std::max<uint64_t>(1000000,size/8))) {}
-    bool reserve(uint64_t count) const {
-        uint64_t old=used.load(std::memory_order_relaxed);
-        do {if(count>limit-old)return false;}
-        while(!used.compare_exchange_weak(old,old+count,std::memory_order_relaxed));
-        return true;
-    }
-};
-
 // Polynomial suffix hash in Z/(2^64), base odd. Collisions cannot escape the
 // direct verifier. A suffix at any position needs at most tau-1 symbol reads.
 template<class Seq> struct SlimFingerprint {
     const Seq& s; uint64_t tau; std::vector<uint64_t> hashes;
     static constexpr uint64_t BASE=0x9e3779b185ebca87ULL;
     bool inject;
-    uint64_t verificationLimit=INF, probeLimit=INF; // Seam adapter only.
-    const char* reportName="unrestricted";
-    SlimSeamWork* seamWork=nullptr;
-    mutable std::atomic<uint64_t> verificationWork{0}, maxRequested{0};
-    void seam_policy(SlimSeamWork& work,uint64_t probe,const char* name) {
-        seamWork=&work;probeLimit=probe;reportName=name;
-        verificationLimit=std::min<uint64_t>(1ULL<<26,std::max<uint64_t>(1000,s.size()));
-    }
-    void charge(uint64_t count,const char* site,uint64_t requested=0) const {
-        if(seamWork && !seamWork->reserve(count)) {
-            fprintf(stderr,"CYCLIC_SEAM_REFUSED site=%s requested_lce=%llu requested_work=%llu total_work=%llu total_limit=%llu no_O_n_fallback=1\n",site,
-                (unsigned long long)requested,(unsigned long long)count,(unsigned long long)seamWork->used.load(),(unsigned long long)seamWork->limit);
-            report(reportName);slim_fail("CYCLIC_SEAM_REFUSED: total compressed-work budget exhausted; no O(n) fallback");
-        }
-    }
-    mutable std::atomic<uint64_t> calls{0}, checked{0}, jumps{0}, maxChecked{0}, suffixReads{0}, hashProbes{0};
+    uint64_t verificationLimit=INF; // Adapter policy; default preserves slim behavior.
+    mutable std::atomic<uint64_t> calls{0}, checked{0}, jumps{0}, maxChecked{0}, suffixReads{0};
     void record_checked(uint64_t count) const {
         checked.fetch_add(count,std::memory_order_relaxed);
         uint64_t mx=maxChecked.load(std::memory_order_relaxed);
@@ -128,12 +91,7 @@ template<class Seq> struct SlimFingerprint {
     uint64_t suffix(uint64_t i) const {
         if(i==s.size())return 0;
         uint64_t end=std::min<uint64_t>(s.size(),((i+tau-1)/tau)*tau);
-        if(end-i>probeLimit) {
-            fprintf(stderr,"CYCLIC_SEAM_REFUSED probe_symbols=%llu probe_limit=%llu\n",(unsigned long long)(end-i),(unsigned long long)probeLimit);
-            report(reportName);slim_fail("CYCLIC_SEAM_REFUSED: fingerprint probe exceeds polylog-work policy; no O(n) fallback");
-        }
-        charge(1,"hash-probe");
-        hashProbes.fetch_add(1,std::memory_order_relaxed);
+        if(end-i>verificationLimit)slim_fail("CYCLIC_SEAM_REFUSED: fingerprint probe exceeds polylog-work policy; no O(n) fallback");
         suffixReads.fetch_add(end-i,std::memory_order_relaxed);
         uint64_t h=end==s.size()?0:hashes[end/tau];
         while(end>i){--end;h=(uint64_t)s[end]+1+BASE*h;}return h;
@@ -149,13 +107,7 @@ template<class Seq> struct SlimFingerprint {
         ++calls;
         // Cheap short mismatch path; no probabilistic answer is returned.
         uint64_t lo=0, quick=std::min<uint64_t>(cap,std::min<uint64_t>(tau,16));
-        uint64_t quickWork=0;
-        while(lo<quick) {
-            charge(1,"quick-compare");++quickWork;
-            if(s[i+lo]!=s[j+lo])break;
-            ++lo;
-        }
-        verificationWork.fetch_add(quickWork,std::memory_order_relaxed);
+        while(lo<quick && s[i+lo]==s[j+lo])++lo;
         if(lo<quick && !inject){record_checked(lo+1);return lo;}
         uint64_t queryProbes=0;
         uint64_t hi=cap;
@@ -174,18 +126,13 @@ template<class Seq> struct SlimFingerprint {
         uint64_t guess=lo;
         if(inject && guess<cap)++guess;
         else if(inject && guess) --guess;
-        uint64_t mx=maxRequested.load(std::memory_order_relaxed);
-        while(guess>mx && !maxRequested.compare_exchange_weak(mx,guess,std::memory_order_relaxed)) {}
-        uint64_t directWork=guess+(guess<cap);
-        if(quickWork>verificationLimit || directWork>verificationLimit-quickWork) {
+        if(guess>verificationLimit) {
             fprintf(stderr,"CYCLIC_SEAM_REFUSED requested_lce=%llu sequence_size=%llu i=%llu j=%llu cap=%llu verification_limit=%llu query_hash_probes=%llu total_hash_probes=%llu suffix_symbol_reads=%llu completed_verified_symbols=%llu quick_comparisons=%llu exact_requested_lce=0\n",
                 (unsigned long long)guess,(unsigned long long)s.size(),(unsigned long long)i,(unsigned long long)j,(unsigned long long)cap,(unsigned long long)verificationLimit,
-                (unsigned long long)queryProbes,(unsigned long long)jumps.load(),(unsigned long long)suffixReads.load(),(unsigned long long)checked.load(),(unsigned long long)quickWork);
-            report(reportName);
-            slim_fail("CYCLIC_SEAM_REFUSED: LCE verification exceeds compressed-work policy; no O(n) fallback");
+                (unsigned long long)queryProbes,(unsigned long long)jumps.load(),(unsigned long long)suffixReads.load(),(unsigned long long)checked.load(),(unsigned long long)quick);
+            report("seam-refusal");
+            slim_fail("CYCLIC_SEAM_REFUSED: LCE verification exceeds polylog-work policy; no O(n) fallback");
         }
-        charge(directWork,"direct-verify",guess);
-        verificationWork.fetch_add(directWork,std::memory_order_relaxed);
         for(uint64_t k=0;k<guess;++k) if(s[i+k]!=s[j+k])
             slim_fail("fingerprint verification mismatch inside proposed prefix");
         if(guess<cap && s[i+guess]==s[j+guess])
@@ -193,13 +140,10 @@ template<class Seq> struct SlimFingerprint {
         record_checked(guess+(guess<cap));
         return guess;
     }
-    void report(const char* name)const {fprintf(stderr,"SLIM_FP %s tau=%llu bytes=%llu queries=%llu verified_symbols=%llu hash_probes=%llu mean_verified=%.9f max_verified=%llu max_requested_lce=%llu verification_work=%llu hash_probe_charges=%llu suffix_symbol_reads=%llu total_work=%llu total_limit=%llu verification_limit=%llu probe_limit=%llu\n",name,
+    void report(const char* name)const {fprintf(stderr,"SLIM_FP %s tau=%llu bytes=%llu queries=%llu verified_symbols=%llu hash_probes=%llu mean_verified=%.9f max_verified=%llu\n",name,
         (unsigned long long)tau,(unsigned long long)(hashes.size()*8),(unsigned long long)calls.load(),
         (unsigned long long)checked.load(),(unsigned long long)jumps.load(),
-        calls.load()?double(checked.load())/calls.load():0.0,(unsigned long long)maxChecked.load(),
-        (unsigned long long)maxRequested.load(),(unsigned long long)verificationWork.load(),(unsigned long long)hashProbes.load(),(unsigned long long)suffixReads.load(),
-        (unsigned long long)(seamWork?seamWork->used.load():0),(unsigned long long)(seamWork?seamWork->limit:INF),
-        (unsigned long long)verificationLimit,(unsigned long long)probeLimit);}
+        calls.load()?double(checked.load())/calls.load():0.0,(unsigned long long)maxChecked.load());}
 };
 
 struct SlimLCE {
@@ -216,7 +160,7 @@ struct SlimLCE {
     std::unique_ptr<SlimFingerprint<std::vector<uint32_t>>> ph;
     uint64_t dstart(uint64_t id)const {return ds(id);}
     uint64_t length(uint64_t id)const {return ds(id+1)-ds(id)-1;}
-    SlimLCE(const std::string& prefix,uint64_t r,uint64_t t1,uint64_t t2,bool stream,bool fault=false,bool cyclicText=false,uint64_t w1=10):d(prefix+".dict",w1,stream),w(w1),cyclic(cyclicText) {
+    SlimLCE(const std::string& prefix,uint64_t r,uint64_t t1,uint64_t t2,bool stream,bool fault=false,bool cyclicText=false):d(prefix+".dict",10,stream),cyclic(cyclicText) {
         double last=started; slim_phase("dict-read",last);
         // Recover collection terminators during the existing dictionary scan.
         // Only phrases containing newline need metadata; phrase overlaps are
@@ -342,7 +286,7 @@ static int slim_dump(Ri4& ri,const std::string& prefix,const std::string& out,
                      const std::string& anchorsPath,int threads,uint64_t t1,uint64_t t2,
                      bool stream,bool fault,bool profileOnly=false,
                      const std::string& flatPath="",uint64_t calibRows=256,bool useResolveCache=false,
-                     const std::string& headSaPath="",uint64_t w1=10) {
+                     const std::string& headSaPath="") {
     if(!profileOnly && (!ri.haveSa||ri.sampleAllInf()))slim_fail("usable ri4 samples required");
     double last=tnow();
     SlimHeads heads(headSaPath.empty()?ri.sxiPath:headSaPath,ri.R,headSaPath.empty()?ri.headOffset:0);
@@ -351,7 +295,7 @@ static int slim_dump(Ri4& ri,const std::string& prefix,const std::string& out,
     // too. Preserve legacy newline collection behavior otherwise.
     bool hasRS=false,hasNL=false;
     for(uint64_t run=0;run<ri.R;++run){hasRS|=ri.a[run]==0x1e;hasNL|=ri.a[run]==0x0a;}
-    SlimLCE lce(prefix,ri.R,t1,t2,stream,fault,hasRS||!hasNL,w1);
+    SlimLCE lce(prefix,ri.R,t1,t2,stream,fault,hasRS||!hasNL);
     if(lce.n!=ri.n+lce.w)slim_fail("parse/ri4 length mismatch");
     if(lce.stringEnds.size()!=ri.k)slim_fail("parse/ri4 string-end count mismatch");
     slim_phase("lce-build-total",last);
@@ -386,7 +330,7 @@ static int slim_dump(Ri4& ri,const std::string& prefix,const std::string& out,
                 ++checked;
             }
         }
-        fprintf(stderr,"SLIM_CALIBRATION ri4_ROW_OFF=0 PFP_text_shift=%llu checked=%llu bad=0\n",(unsigned long long)w1,(unsigned long long)checked);
+        fprintf(stderr,"SLIM_CALIBRATION ri4_ROW_OFF=0 PFP_text_shift=10 checked=%llu bad=0\n",(unsigned long long)checked);
         slim_phase("flat-calibration",last);
     }
     std::string tmp=out+".partial";

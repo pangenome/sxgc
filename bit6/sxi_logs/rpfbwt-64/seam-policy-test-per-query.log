@@ -1,0 +1,3 @@
+CYCLIC_SEAM_REFUSED requested_lce=100000 sequence_size=200002 i=0 j=100001 cap=100001 verification_limit=1000 query_hash_probes=29 total_hash_probes=29 suffix_symbol_reads=798 completed_verified_symbols=0 quick_comparisons=16 exact_requested_lce=0
+SLIM_FP test-parse tau=16 bytes=100008 queries=1 verified_symbols=0 hash_probes=29 mean_verified=0.000000000 max_verified=0 max_requested_lce=100000 verification_work=16 suffix_symbol_reads=798 total_work=814 total_limit=1000000 verification_limit=1000 probe_limit=1000
+FATAL SLIM: CYCLIC_SEAM_REFUSED: LCE verification exceeds compressed-work policy; no O(n) fallback

@@ -1,0 +1,188 @@
+--- a/bit6/sxi_pipeline.py
++++ b/bit6/sxi_pipeline.py
+@@ -110,6 +110,8 @@
+         source.add_argument('--' + kind)
+     p.add_argument('--output', required=True)
+     p.add_argument('--threads', type=int, default=8)
++    p.add_argument('--address-space-gb', type=int, default=149,
++                   help='child address-space ceiling in decimal GB (default: 149; inherited hard limit still applies)')
+     p.add_argument('--scratch')
+     p.add_argument('--log-dir', default=str(ROOT / 'bit6/sxi_logs'))
+     p.add_argument('--expect-chi', type=int)
+@@ -124,6 +126,8 @@
+     p.add_argument('--manifest', help='toolset manifest (default: XSA_TOOLS/MANIFEST.sha256)')
+     p.add_argument('--allow-drift', action='store_true', help='DEBUG ONLY: permit hash drift; journal all mismatches')
+     a = p.parse_args()
++    if a.address_space_gb <= 0 or a.address_space_gb > (2**63 - 1) // 1_000_000_000:
++        p.error('--address-space-gb must be positive and fit a signed 64-bit byte limit')
+     if not 0 <= a.verify_text_sample <= 100000:
+         p.error('--verify-text-sample must be 0..100000')
+     if not 1 <= a.threads <= 96:
+@@ -174,12 +178,14 @@
+     env = dict(os.environ, OMP_NUM_THREADS=str(a.threads), TMPDIR=str(work))
+     # Children inherit the ceiling; only the AGC producer/first parse overlap.
+     _, hard_limit = resource.getrlimit(resource.RLIMIT_AS)
+-    limit = 149_000_000_000 if hard_limit == resource.RLIM_INFINITY else min(hard_limit, 149_000_000_000)
++    requested_limit = a.address_space_gb * 1_000_000_000
++    limit = requested_limit if hard_limit == resource.RLIM_INFINITY else min(hard_limit, requested_limit)
+     resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+     def record(value):
+         with journal.open('a') as f:
+             f.write(json.dumps(value) + '\n')
+-    record(dict(provenance, output=str(out), work=str(work), start=time.time()))
++    record(dict(provenance, output=str(out), work=str(work), start=time.time(),
++                address_space_limit_bytes=limit))
+     def run(name, command, stdout=None):
+         command = list(map(str, command))
+         logfile = logs / (label + '.' + name + '.log')
+--- a/xsa/src/build.rs
++++ b/xsa/src/build.rs
+@@ -2,7 +2,7 @@
+ use std::path::PathBuf;
+ 
+ const USAGE: &str = "usage:
+-  xsa build --text <collection.txt> -o <out.sxi> [--threads N] [--scratch DIR] [--expect-chi N] [--verify-text-sample N] [--mode auto|dna|text] [--verbose]
++  xsa build --text <collection.txt> -o <out.sxi> [--threads N] [--address-space-gb N] [--scratch DIR] [--expect-chi N] [--verify-text-sample N] [--mode auto|dna|text] [--verbose]
+   xsa build --agc <archive.agc> -o <out.sxi> [same options]
+   xsa build --fasta <records.fa> -o <out.sxi> [same options]
+   xsa build --fastq <reads.fq> -o <out.sxi> [same options]
+@@ -21,6 +21,7 @@
+ Stages: PFP (w1=10,p1=100; w2=5,p2=11), endpoint-tap rpfbwt,
+ slim streaming aggregates, streamed chi sweep/gate, checked SXI publication.
+ Scratch must share the source filesystem. Timings and peak RSS are logged.
++--address-space-gb sets the child virtual-memory ceiling in decimal GB (default 149), bounded by an inherited hard limit.
+ Legacy newline-terminated multi-string inputs require --expect-heads RAW --expect-ri4 FILE byte gates
+ because linear PFP ordering is not established as BCR collection ordering.";
+ 
+@@ -54,7 +55,7 @@
+                     return Err("choose exactly one of --agc, --fasta, --fastq, --text".into());
+                 }
+             }
+-            "--manifest" | "--mode" | "--verify-text-sample" | "--threads" | "--scratch" | "--log-dir" | "--expect-chi" | "--expect-heads" | "--expect-ri4" => {
++            "--manifest" | "--mode" | "--verify-text-sample" | "--threads" | "--address-space-gb" | "--scratch" | "--log-dir" | "--expect-chi" | "--expect-heads" | "--expect-ri4" => {
+                 i += 1;
+                 let value = args.get(i).filter(|s| !s.is_empty() && !s.starts_with('-'))
+                     .ok_or_else(|| format!("{flag} requires a value"))?;
+--- a/bit6/SXI_BUILD.md
++++ b/bit6/SXI_BUILD.md
+@@ -101,7 +101,13 @@
+ Each subprocess has its own `/usr/bin/time -v` file and stage log under
+ `bit6/sxi_logs` (override `--log-dir`). The JSONL journal records argv, return
+ code, wall seconds, and stage peak RSS. Stages run sequentially except for the AGC streamer and first PFP parse, which run together.
+-The pipeline respects a lower inherited hard address-space ceiling; otherwise it uses 149 GB. Scratch is intentionally retained for independent
++The pipeline uses a 149 GB address-space ceiling by default. `--address-space-gb N`
++sets a different ceiling in decimal GB; a lower inherited hard limit still applies.
++This limits virtual memory, not RSS, and includes concurrent allocations. At 466
++scale the dictionary SA alone needs about 149 GB, so the default cannot accommodate
++it alongside the dictionary. Use an explicitly budgeted larger ceiling for that
++build, such as `--address-space-gb 850` on the 1 TB validation host. The journal
++records the effective byte limit. Scratch is intentionally retained for independent
+ review. Failed stages or gates never publish the requested output path.
+ FASTA/FASTQ preparation runs in the Python process, recording elapsed time and
+ process peak RSS in the journal; each completed record logs its identifier,
+--- a/xsa/runtime/bit6/sxi_pipeline.py
++++ b/xsa/runtime/bit6/sxi_pipeline.py
+@@ -110,6 +110,8 @@
+         source.add_argument('--' + kind)
+     p.add_argument('--output', required=True)
+     p.add_argument('--threads', type=int, default=8)
++    p.add_argument('--address-space-gb', type=int, default=149,
++                   help='child address-space ceiling in decimal GB (default: 149; inherited hard limit still applies)')
+     p.add_argument('--scratch')
+     p.add_argument('--log-dir', default=str(ROOT / 'bit6/sxi_logs'))
+     p.add_argument('--expect-chi', type=int)
+@@ -124,6 +126,8 @@
+     p.add_argument('--manifest', help='toolset manifest (default: XSA_TOOLS/MANIFEST.sha256)')
+     p.add_argument('--allow-drift', action='store_true', help='DEBUG ONLY: permit hash drift; journal all mismatches')
+     a = p.parse_args()
++    if a.address_space_gb <= 0 or a.address_space_gb > (2**63 - 1) // 1_000_000_000:
++        p.error('--address-space-gb must be positive and fit a signed 64-bit byte limit')
+     if not 0 <= a.verify_text_sample <= 100000:
+         p.error('--verify-text-sample must be 0..100000')
+     if not 1 <= a.threads <= 96:
+@@ -174,12 +178,14 @@
+     env = dict(os.environ, OMP_NUM_THREADS=str(a.threads), TMPDIR=str(work))
+     # Children inherit the ceiling; only the AGC producer/first parse overlap.
+     _, hard_limit = resource.getrlimit(resource.RLIMIT_AS)
+-    limit = 149_000_000_000 if hard_limit == resource.RLIM_INFINITY else min(hard_limit, 149_000_000_000)
++    requested_limit = a.address_space_gb * 1_000_000_000
++    limit = requested_limit if hard_limit == resource.RLIM_INFINITY else min(hard_limit, requested_limit)
+     resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+     def record(value):
+         with journal.open('a') as f:
+             f.write(json.dumps(value) + '\n')
+-    record(dict(provenance, output=str(out), work=str(work), start=time.time()))
++    record(dict(provenance, output=str(out), work=str(work), start=time.time(),
++                address_space_limit_bytes=limit))
+     def run(name, command, stdout=None):
+         command = list(map(str, command))
+         logfile = logs / (label + '.' + name + '.log')
+--- a/xsa/SOURCES.sha256.json
++++ b/xsa/SOURCES.sha256.json
+@@ -21,14 +21,14 @@
+   "runtime/bit6/sxi_format.hpp": "b3bcfe07923efe9f40073c78b8cbedd88d8e29a69d4459e29257672f4768fb91",
+   "runtime/bit6/sxi_gate.py": "78f5af5d32c6315d01ee9269799e4e250b425a067b7f0b073dd5bd3f46efd56e",
+   "runtime/bit6/sxi_ghost.py": "5351d909f2e1ac20c5975b30a87a658d4feec4f7f28226822d34ad4dbd4b8414",
+-  "runtime/bit6/sxi_pipeline.py": "1a6f29b56844e269bfb09ba2eacb1e9dfdee8b9cf627b5a6d852c8219976d974",
++  "runtime/bit6/sxi_pipeline.py": "6fe012d6e71ca3b57e1eb6e22d1f2127870d145e98177b324e214c9636ed3987",
+   "runtime/bit6/sxi_sequence_input.py": "453d9d36f25a005d87b06420d742ac2d7dcff09782e3b977e112cc24b6694b80",
+   "runtime/bit6/sxi_text_audit.cpp": "0745f40b7f74e8b76f8c60a653fcc505170c80257ef4e217e1d182022f7272e7",
+   "runtime/bit6/sxi_write.cpp": "7cb28c58138066d3def33572df24d2cc864dd9edbdc739c5b264813716b28f05",
+   "runtime/tools/build_slim_dump.sh": "aeaba3f3e7996a95fb570069076f1c4d179ca015eec6d5267a8f090b469b8860",
+   "runtime/tools/tool_manifest.py": "0712748587f804849613597124dd96a50d987a1c2274f475c54f0e40cb21f31f",
+   "runtime/tools/upstream.lock.json": "bd5d345045de9c1eeff013bdb412e19a285ecf6c713323858f1eb8ea7aa02928",
+-  "src/build.rs": "46aa4e7576fb27c6b766b39d6ab5ffc8274cc11f24c3a0a0def45f9157b7c419",
++  "src/build.rs": "c522df1af2bb3dba960e5a25947b499e5a79f2cbdead58aef545debad427699f",
+   "src/bundle.rs": "b1c1c12282330b46f42b5cdb4f1c8811d22d1476d7091bf02e0a9d8c78da86f4",
+   "src/main.rs": "a790f365bb5ad09718c1c9ba6f7a9a813e78b979fc5d2c516b89eb007c13f1a2",
+   "src/product.rs": "259a864c1ce6de50e91aa699263cb43eecc5f43150fb6ffade49556e56113a7a",
+--- /dev/null
++++ b/bit6/test_sxi_memory_limit.py
+@@ -0,0 +1,47 @@
++#!/usr/bin/env python3
++"""Build real tiny indexes with default, explicit, and inherited AS ceilings."""
++import argparse
++import json
++import os
++from pathlib import Path
++import random
++import subprocess
++import tempfile
++
++parser = argparse.ArgumentParser(description=__doc__)
++parser.add_argument('--xsa', default='xsa/target/release/xsa')
++args = parser.parse_args()
++xsa = str(Path(args.xsa).resolve())
++
++with tempfile.TemporaryDirectory(prefix='sxi-memory-limit-') as directory:
++    root = Path(directory)
++    source = root/'text'
++    rng = random.Random(466)
++    source.write_bytes(bytes(rng.choice(b'ACGT') for _ in range(2000)) + b'\x1e')
++    outputs = []
++    for label, options, inherited, expected in [
++        ('default', [], None, 149_000_000_000),
++        ('large', ['--address-space-gb', '850'], None, 850_000_000_000),
++        ('inherited', ['--address-space-gb', '850'], 1_000_000_000, 1_000_000_000),
++    ]:
++        output = root/(label+'.sxi')
++        logs = root/label
++        command = [xsa, 'build', '--text', str(source), '-o', str(output),
++                   '--scratch', str(root), '--log-dir', str(logs), '--threads', '1', *options]
++        if inherited:
++            command = ['/usr/bin/prlimit', '--as='+str(inherited), *command]
++        result = subprocess.run(command, capture_output=True, text=True)
++        assert result.returncode == 0, result.stderr
++        journal, = logs.glob('*.jsonl')
++        events = [json.loads(line) for line in journal.read_text().splitlines()]
++        assert events[0]['address_space_limit_bytes'] == expected, events[0]
++        assert events[-1]['status'] == 'PASS', events[-1]
++        outputs.append(output.read_bytes())
++        print(json.dumps(dict(case=label, limit=expected, chi=events[-1]['chi'], status='PASS')), flush=True)
++    assert outputs[0] == outputs[1] == outputs[2], 'ceiling changed index bytes'
++    for value in ['0', '-1', '9223372037', 'not-an-integer']:
++        output = root/'invalid.sxi'
++        result = subprocess.run([xsa, 'build', '--text', str(source), '-o', str(output),
++                                 '--address-space-gb', value], capture_output=True, text=True)
++        assert result.returncode != 0 and not output.exists(), (value, result)
++    print('PASS: identical indexes; default/override/inherited hard ceiling; invalid limits rejected')

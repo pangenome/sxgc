@@ -1,0 +1,13 @@
+PFP_TERMINAL byte=0x1e source=argument raw_n=1403221068491 raw_r=2739737289
+CYCLIC_SEAM_REPAIR terminal=0x1e predecessors_before_zero=36467
+SLIM_PHASE dict-read wall=0.000 cumulative=1401.425 peak_rss_kib=192638992
+SLIM_PHASE dict-boundaries wall=240.547 cumulative=1641.972 peak_rss_kib=192638992
+SLIM_STRING_ENDS count=1 bytes=8 from_parse_dict=1 cyclic=1
+SLIM_PHASE parse+boundaries wall=7483.114 cumulative=9125.086 peak_rss_kib=192638992
+SLIM_PHASE parse-fingerprints wall=42.626 cumulative=9167.712 peak_rss_kib=192638992
+SLIM_PHASE dict-fingerprints wall=99.076 cumulative=9266.788 peak_rss_kib=192638992
+SLIM_STRUCT n=1403221068491 P=15517245230 D=18611972670 phrases=89908955 parse_bytes=62068980924 bd_bytes=124454859 bp_bytes=18624260290 dict_resident=0 dict_cache_per_thread=262144 no_SA_ISA_LCP_RMQ=1 no_M_b_bwt_w_wt=1
+CYCLIC_SEAM_LCE_POLICY max_probe_and_verification=68921 max(1000,bit_width(raw_n)^3)
+CYCLIC_SEAM_REFUSED requested_lce=110001 sequence_size=18611972670 i=12564035071 j=12564365846 cap=110078 verification_limit=68921 query_hash_probes=28 total_hash_probes=125302 suffix_symbol_reads=13562675 completed_verified_symbols=6479934 quick_comparisons=16 exact_requested_lce=0
+SLIM_FP seam-refusal tau=55 bytes=2707196032 queries=208756 verified_symbols=6479934 hash_probes=125302 mean_verified=31.040707812 max_verified=60002
+FATAL SLIM: CYCLIC_SEAM_REFUSED: LCE verification exceeds polylog-work policy; no O(n) fallback

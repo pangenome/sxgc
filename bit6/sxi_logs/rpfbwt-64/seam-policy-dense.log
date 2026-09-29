@@ -1,0 +1,11 @@
+{"padding_boundary_checks": 7, "bad": 0}
+{"endpoint_cases": 2214, "repaired": 1436, "bad": 0}
+{"refusal_n": 2000000001, "raw_runs": 6, "rlebwt_bytes": 976, "wall_seconds": 0.002822733949869871, "stderr": "PFP_TERMINAL byte=0x41 source=argument raw_n=2000000011 raw_r=6\nCYCLIC_SEAM_REPAIR terminal=0x41 predecessors_before_zero=999999999\nCYCLIC_SEAM_REFUSED class_size=2000000000 limit=1000 policy=max(1000,raw_r/1000); no O(n) fallback\nFATAL: cyclic seam repair exceeds compressed-work policy; no O(n) fallback\n"}
+Traceback (most recent call last):
+  File "/tmp/sxgc-laneV/bit6/test_seam_repair.py", line 173, in <module>
+    main()
+  File "/tmp/sxgc-laneV/bit6/test_seam_repair.py", line 145, in main
+    subprocess.run([str(tools/'rpfbwt_endpoints'), str(prefix), str(ri), str(heads), f'{text[-1]:02x}'], check=True, capture_output=True)
+  File "/usr/lib/python3.12/subprocess.py", line 571, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['/tmp/sxgc-laneV/bit6/sxi_logs/rpfbwt-64/seam-policy-tools/rpfbwt_endpoints', '/tmp/sxgc-laneV/bit6/sxi_logs/rpfbwt-64/seam-policy-work/dense/parse', '/tmp/sxgc-laneV/bit6/sxi_logs/rpfbwt-64/seam-policy-work/dense/out.ri4', '/tmp/sxgc-laneV/bit6/sxi_logs/rpfbwt-64/seam-policy-work/dense/out.heads', '41']' returned non-zero exit status 2.

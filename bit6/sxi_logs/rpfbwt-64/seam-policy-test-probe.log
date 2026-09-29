@@ -1,0 +1,3 @@
+CYCLIC_SEAM_REFUSED probe_symbols=15 probe_limit=1
+SLIM_FP test-parse tau=16 bytes=100008 queries=1 verified_symbols=0 hash_probes=1 mean_verified=0.000000000 max_verified=0 max_requested_lce=0 verification_work=16 suffix_symbol_reads=0 total_work=16 total_limit=1000000 verification_limit=200002 probe_limit=1
+FATAL SLIM: CYCLIC_SEAM_REFUSED: fingerprint probe exceeds polylog-work policy; no O(n) fallback

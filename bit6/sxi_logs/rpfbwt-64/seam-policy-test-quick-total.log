@@ -1,0 +1,3 @@
+CYCLIC_SEAM_REFUSED site=quick-compare requested_lce=0 requested_work=1 total_work=0 total_limit=0 no_O_n_fallback=1
+SLIM_FP test-parse tau=16 bytes=100008 queries=1 verified_symbols=0 hash_probes=0 mean_verified=0.000000000 max_verified=0 max_requested_lce=0 verification_work=0 suffix_symbol_reads=0 total_work=0 total_limit=0 verification_limit=200002 probe_limit=1000
+FATAL SLIM: CYCLIC_SEAM_REFUSED: total compressed-work budget exhausted; no O(n) fallback

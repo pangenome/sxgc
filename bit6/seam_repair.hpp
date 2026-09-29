@@ -11,7 +11,7 @@ struct SeamRepair {
  }
  explicit SeamRepair(Source& source,bool certified):source(source),limit(std::max<U>(1000,source.r/1000)) {
   if(certified)return;
-  const U N=source.n,n=N-10,r=source.r;
+  const U N=source.n,n=N-source.w1,r=source.r;
   std::vector<Run> raw;raw.reserve(r);
   std::vector<U> starts;starts.reserve(r);
   std::array<std::vector<std::pair<U,U>>,256> bychar;
@@ -35,7 +35,7 @@ struct SeamRepair {
    --it;U id=it->first;return it->second+std::min(row-starts[id],raw[id].len);
   };
   auto runof=[&](U row){return U(std::upper_bound(starts.begin(),starts.end(),row)-starts.begin()-1);};
-  // In padded order, the suffix beginning at n (the ten dollars) is row 0.
+  // In padded order, the suffix beginning at n (the w1 dollars) is row 0.
   // Backward search gives the interval of every non-unique terminal suffix.
   // Its leftmost row is the shortest suffix, SA=n-depth. Prefix intervals
   // are disjoint or nested; their maximal union is exactly the set of rows
@@ -47,10 +47,10 @@ struct SeamRepair {
    U c=raw[runof(row)].c;
    check(c!=2,"unexpected dollar during seam discovery");
    lo=C[c]+rank(c,lo);hi=C[c]+rank(c,hi);row=C[c]+rank(c,row);++depth;
-   check(lo==row&&hi>lo&&lo>=10,"terminal suffix interval");
+   check(lo==row&&hi>lo&&lo>=source.w1,"terminal suffix interval");
    if(hi-lo==1)break;
    if(hi-lo>limit)refuse("class_size",hi-lo,limit);
-   classes.push_back({lo-10,hi-10,n-depth,0,0,{}});
+   classes.push_back({lo-source.w1,hi-source.w1,n-depth,0,0,{}});
   }
   std::sort(classes.begin(),classes.end(),[](const Class& a,const Class& b){return a.lo<b.lo||(a.lo==b.lo&&a.hi>b.hi);});
   size_t used=0;
@@ -78,16 +78,18 @@ struct SeamRepair {
   // Rank structures are no longer needed; release before loading PFP LCE.
   std::vector<Run>().swap(raw);std::vector<U>().swap(starts);
   for(auto& v:bychar)std::vector<std::pair<U,U>>().swap(v);
-  SlimLCE lce(source.prefix,r,0,0,true,false,true);
+  SlimLCE lce(source.prefix,r,0,0,true,false,true,source.w1);
   check(lce.n==N,"seam PFP length mismatch");
   // Existing slim hashes verify guesses exactly. Bound that verifier too;
   // a long verified prefix must refuse, never become a corpus-sized walk.
   U bits=0;for(U value=N;value;value>>=1)++bits;
   U queryLimit=std::max<U>(1000,bits*bits*bits);
-  lce.ph->verificationLimit=queryLimit;lce.dh->verificationLimit=queryLimit;
-  fprintf(stderr,"CYCLIC_SEAM_LCE_POLICY max_probe_and_verification=%llu max(1000,bit_width(raw_n)^3)\n",(unsigned long long)queryLimit);
+  SlimSeamWork work(lce.p.size()+lce.d.size());
+  lce.ph->seam_policy(work,queryLimit,"seam-parse");lce.dh->seam_policy(work,queryLimit,"seam-dict");
+  U maxSeamLCE=0;
+  fprintf(stderr,"CYCLIC_SEAM_LCE_POLICY max_probe=%llu max_verification=67108864 total_limit=%llu cost=phrase_or_byte_comparisons_plus_hash_symbol_reads fraction=(P+D)/8 floor=1000000 ceiling=4294967296\n",(unsigned long long)queryLimit,(unsigned long long)work.limit);
   auto symbol=[&](U pos) {
-   U shifted=pos+10,id=lce.pr(shifted+1);
+   U shifted=pos+source.w1,id=lce.pr(shifted+1);
    return lce.d[lce.dstart(lce.p[id-1])+shifted-lce.ps(id)];
   };
   for(auto& cl:classes) {
@@ -95,7 +97,7 @@ struct SeamRepair {
    for(U row=cl.lo;row<cl.hi;++row){check(pos<n,"seam sample outside T");sa.push_back(pos);pos=lookup(pos);}
    cl.after=pos;
    std::sort(sa.begin(),sa.end(),[&](U a,U b){
-    U len=lce.collection_lce(a,b);
+    U len=lce.collection_lce(a,b);maxSeamLCE=std::max(maxSeamLCE,len);
     return len==n ? a<b : symbol((a+len)%n)<symbol((b+len)%n);
    });
    for(U pos:sa) {
@@ -105,6 +107,7 @@ struct SeamRepair {
    }
   }
   fprintf(stderr,"CYCLIC_SEAM_REPAIRED classes=%zu rows=%llu discovery_steps=%llu limit=%llu phi_samples=%llu\n",classes.size(),(unsigned long long)total,(unsigned long long)depth,(unsigned long long)limit,(unsigned long long)r);
+  fprintf(stderr,"CYCLIC_SEAM_WORK max_seam_lce=%llu total_work=%llu total_limit=%llu exact=1\n",(unsigned long long)maxSeamLCE,(unsigned long long)work.used.load(),(unsigned long long)work.limit);
   lce.ph->report("seam-parse");lce.dh->report("seam-dict");
  }
  void scan(const std::function<void(Run)>& emit) {

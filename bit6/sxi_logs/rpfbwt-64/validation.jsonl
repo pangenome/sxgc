@@ -1,0 +1,18 @@
+{"time": 1790637651.5935817, "status": "VALIDATION_ONLY", "note": "Retained parse; not the from-zero milestone", "binary": "/tmp/sxgc-laneV/bit6/sxi_logs/rpfbwt-64/rpfbwt.baseline", "binary_patch": "none: testing address-space diagnosis"}
+{"time": 1790637651.5937507, "stage": "full466-rpfbwt", "command": ["/tmp/sxgc-laneV/bit6/sxi_logs/rpfbwt-64/rpfbwt.baseline", "--l1-prefix", "/tmp/rpfbwt-64-466/parse", "--w1", "10", "--w2", "5", "--threads", "48", "--chunks", "50", "--tmp-dir", "/tmp/rpfbwt-64-466"], "status": "START", "address_space_bytes": 850000000000}
+{"time": 1790637651.5946558, "stage": "full466-rpfbwt", "pid": 7884}
+{"time": 1790640795.94718, "status": "VALIDATION_ONLY", "note": "Retained parse; not the from-zero milestone", "binary": "/tmp/sxgc-laneV/bit6/sxi_logs/rpfbwt-64/rpfbwt.baseline", "binary_patch": "none: testing address-space diagnosis"}
+{"time": 1790640795.9473403, "stage": "full466-rpfbwt", "command": ["/tmp/sxgc-laneV/bit6/sxi_logs/rpfbwt-64/rpfbwt.baseline", "--l1-prefix", "/tmp/rpfbwt-64-466/parse", "--w1", "10", "--w2", "5", "--threads", "48", "--chunks", "50", "--tmp-dir", "/tmp/rpfbwt-64-466"], "status": "START", "address_space_bytes": 850000000000}
+{"time": 1790640795.9474204, "status": "FAIL", "error": "[Errno 17] File exists: '/tmp/sxgc-laneV/bit6/sxi_logs/rpfbwt-64/full466-rpfbwt.log'"}
+{"time": 1790640818.211714, "status": "VALIDATION_ONLY", "note": "Retained parse; not the from-zero milestone", "binary": "/tmp/sxgc-laneV/bit6/sxi_logs/rpfbwt-64/rpfbwt.baseline", "binary_patch": "none: testing address-space diagnosis"}
+{"time": 1790640818.2118354, "stage": "full466-rpfbwt", "command": ["/tmp/sxgc-laneV/bit6/sxi_logs/rpfbwt-64/rpfbwt.baseline", "--l1-prefix", "/tmp/rpfbwt-64-466/parse", "--w1", "10", "--w2", "5", "--threads", "48", "--chunks", "50", "--tmp-dir", "/tmp/rpfbwt-64-466"], "status": "START", "address_space_bytes": 850000000000}
+{"time": 1790640818.2123418, "stage": "full466-rpfbwt", "pid": 109818}
+{"time": 1790677642.783558, "stage": "full466-rpfbwt", "status": "PASS", "returncode": 0, "wall_seconds": 36824.571513667004}
+{"time": 1790677642.7839923, "stage": "tap-count", "status": "PASS", "raw_n": 1403221068491, "raw_r": 2739737289}
+{"time": 1790677642.7842076, "stage": "full466-tap-structure", "command": ["/tmp/sxgc-laneV/bit6/sxi_logs/rpfbwt-64/check_tap", "/tmp/rpfbwt-64-466/parse"], "status": "START", "address_space_bytes": 850000000000}
+{"time": 1790677642.785373, "stage": "full466-tap-structure", "pid": 351133}
+{"time": 1790677728.3619533, "stage": "full466-tap-structure", "status": "PASS", "returncode": 0, "wall_seconds": 85.57752922992222}
+{"time": 1790677728.3624055, "stage": "full466-endpoints", "command": ["/tmp/sxgc-dist-final/rpfbwt_endpoints", "/tmp/rpfbwt-64-466/parse", "/tmp/rpfbwt-64-466/validation.ri4", "/tmp/rpfbwt-64-466/validation.head_sa", "1e"], "status": "START", "address_space_bytes": 850000000000}
+{"time": 1790677728.36317, "stage": "full466-endpoints", "pid": 351197}
+{"time": 1790687330.5757449, "stage": "full466-endpoints", "status": "FAIL", "returncode": 2, "wall_seconds": 9602.213154876023}
+{"time": 1790687330.5760436, "status": "FAIL", "error": "full466-endpoints: exit 2"}

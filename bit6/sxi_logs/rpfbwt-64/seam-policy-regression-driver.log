@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "/tmp/sxgc-laneV/bit6/sxi_logs/rpfbwt-64/run_seam_regressions.py", line 57, in <module>
+    try:main()
+        ^^^^^^
+  File "/tmp/sxgc-laneV/bit6/sxi_logs/rpfbwt-64/run_seam_regressions.py", line 22, in main
+    run('seam-policy-dense',['python3',LOG.parents[1]/'test_seam_repair.py','--tools',BIN,'--xsa',TOOLS/'xsa','--work',OUT/'dense'])
+  File "/tmp/sxgc-laneV/bit6/sxi_logs/rpfbwt-64/seam_job.py", line 24, in run
+    if code!=expected: raise RuntimeError(f'{stage}: exit {code}, expected {expected}')
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: seam-policy-dense: exit 1, expected 0

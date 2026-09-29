@@ -1,0 +1,11 @@
+PFP_TERMINAL byte=0x1e source=argument raw_n=1403221068491 raw_r=2739737289
+CYCLIC_SEAM_REPAIR terminal=0x1e predecessors_before_zero=36467
+SLIM_PHASE dict-read wall=0.000 cumulative=1171.879 peak_rss_kib=192639524
+SLIM_PHASE dict-boundaries wall=211.418 cumulative=1383.297 peak_rss_kib=192639524
+SLIM_STRING_ENDS count=1 bytes=8 from_parse_dict=1 cyclic=1
+SLIM_PHASE parse+boundaries wall=8010.763 cumulative=9394.060 peak_rss_kib=192639524
+SLIM_PHASE parse-fingerprints wall=41.259 cumulative=9435.319 peak_rss_kib=192639524
+SLIM_PHASE dict-fingerprints wall=138.805 cumulative=9574.124 peak_rss_kib=192639524
+SLIM_STRUCT n=1403221068491 P=15517245230 D=18611972670 phrases=89908955 parse_bytes=62068980924 bd_bytes=124454859 bp_bytes=18624260290 dict_resident=0 dict_cache_per_thread=262144 no_SA_ISA_LCP_RMQ=1 no_M_b_bwt_w_wt=1
+CYCLIC_SEAM_LCE_POLICY max_probe_and_verification=68921 max(1000,bit_width(raw_n)^3)
+FATAL SLIM: CYCLIC_SEAM_REFUSED: LCE verification exceeds polylog-work policy; no O(n) fallback

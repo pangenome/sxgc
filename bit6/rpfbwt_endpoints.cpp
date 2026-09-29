@@ -15,33 +15,33 @@ static double G_T0=tnow();
 using namespace sxi;
 struct Run { U c,len,h,t; };
 struct Source {
- std::string prefix; U n,r,terminal;
+ std::string prefix; U n,r,terminal,w1;
  void padding_check(bool ok,const char* site,U row,U c,U len,U head,U tail) const {
   if(ok)return;
   fprintf(stderr,"PFP_PADDING_REFUSED site=%s row=%llu char=0x%02llx len=%llu head=%llu tail=%llu terminal=0x%02llx\n",site,(unsigned long long)row,(unsigned long long)c,(unsigned long long)len,(unsigned long long)head,(unsigned long long)tail,(unsigned long long)terminal);
   throw std::runtime_error("unsupported PFP padding boundary");
  }
- Source(const std::string& p,U last):prefix(p),terminal(last) {
+ Source(const std::string& p,U last,U window):prefix(p),terminal(last),w1(window) {
   std::ifstream meta(p+".rlebwt.meta",std::ios::binary);check(bool(meta),"open RLE metadata");n=integer(meta);r=integer(meta);
-  check(n>10&&r,"empty RLE");
+  check(n>w1&&r,"empty RLE");
   for(auto ext:{".ssa",".ssa_t"}){std::ifstream f(p+ext,std::ios::binary);check(bool(f)&&size(f)==8+8*r&&integer(f)==r,"endpoint count/size mismatch");}
-  // Row zero is SA=n-10 (the padding suffix), so its BWT byte is
+  // Row zero is SA=n-w1 (the padding suffix), so its BWT byte is
   // T.back(). Infer it for legacy callers instead of assuming newline.
   std::ifstream b(p+".rlebwt",std::ios::binary),h(p+".ssa",std::ios::binary),t(p+".ssa_t",std::ios::binary);
   U word=integer(b,4);integer(h);integer(t);U head=integer(h),tail=integer(t);
   if(terminal==INF)terminal=word&255;
-  padding_check(word==(terminal|U(1)<<8)&&head==n-10&&tail==n-10&&terminal>=6&&terminal<256,
+  padding_check(word==(terminal|U(1)<<8)&&head==n-w1&&tail==n-w1&&terminal>=6&&terminal<256,
                 "terminal-row",0,word&255,(word>>8)&0x7fffff,head,tail);
   fprintf(stderr,"PFP_TERMINAL byte=0x%02llx source=%s raw_n=%llu raw_r=%llu\n",(unsigned long long)terminal,last==INF?"padding-row":"argument",(unsigned long long)n,(unsigned long long)r);
  }
  Run trim_padding(Run v,U row) const {
-  if(row>=10)return v;
-  padding_check(row==0 ? (v.c==terminal&&v.len==1&&v.h==n-10&&v.t==n-10) : v.c==2,
+  if(row>=w1)return v;
+  padding_check(row==0 ? (v.c==terminal&&v.len==1&&v.h==n-w1&&v.t==n-w1) : v.c==2,
                 "prefix",row,v.c,v.len,v.h,v.t);
-  U take=std::min(U(10)-row,v.len);v.len-=take;
+  U take=std::min(w1-row,v.len);v.len-=take;
   if(v.len) {
-   // SA=0 may share the dollar run ending at row 11. A dollar run
-   // ending exactly at row 10 is equally valid and leaves no row.
+   // SA=0 may share the dollar run ending at row w1+1. A dollar run
+   // ending exactly at row w1 is equally valid and leaves no row.
    padding_check(v.c==2&&v.len==1&&v.t==0,"straddle",row,v.c,v.len+take,v.h,v.t);
    v.h=0;
   }
@@ -81,7 +81,7 @@ struct Source {
    Run v{};U word;do{word=integer(b,4);if(v.len)check(v.c==(word&255),"RLE continuation character");v.c=word&255;v.len+=(word>>8)&0x7fffff;}while(word>>31);
    v.h=integer(h);v.t=integer(t);check(v.len&&v.len<=n-rows,"RLE length");
    U rawLen=v.len;v=trim_padding(v,rows);rows+=rawLen;if(!v.len)continue;
-   check(v.h<n-10&&v.t<n-10,"endpoint outside normalized text");
+   check(v.h<n-w1&&v.t<n-w1,"endpoint outside normalized text");
    if(v.c==2)v.c=terminal;
    check(v.c>=6&&v.c<256,"unsupported text alphabet");
    if(have&&pending.c==v.c){pending.len+=v.len;pending.t=v.t;}
@@ -93,10 +93,13 @@ struct Source {
 #include "seam_repair.hpp"
 void number(std::ostream& f,U x,unsigned bytes=8){unsigned char b[8];put(b,x,bytes);f.write((char*)b,bytes);check(bool(f),"write endpoint adapter");}
 int main(int argc,char**argv){try{
- check(argc==4||argc==5,"usage: rpfbwt_endpoints PREFIX OUT.ri4 OUT.head_sa [TERMINAL_HEX]");
+ check(argc>=4&&argc<=7,"usage: rpfbwt_endpoints PREFIX OUT.ri4 OUT.head_sa [TERMINAL_HEX] [--w1 N]");
  U terminal=INF;
- if(argc==5){std::string arg(argv[4]);size_t used=0;terminal=std::stoul(arg,&used,16);check(used==arg.size()&&terminal>=6&&terminal<256,"unsupported terminal byte");}
- Source s(argv[1],terminal);terminal=s.terminal;bool certified=s.certify_seam();
+ U w1=10;int i=4;
+ if(i<argc&&std::string(argv[i])!="--w1"){std::string arg(argv[i++]);size_t used=0;terminal=std::stoul(arg,&used,16);check(used==arg.size()&&terminal>=6&&terminal<256,"unsupported terminal byte");}
+ if(i<argc){check(i+2==argc&&std::string(argv[i])=="--w1","invalid endpoint arguments");w1=std::stoull(argv[i+1]);}
+ check(w1>=3&&w1<=512,"--w1 must be 3..512");
+ Source s(argv[1],terminal,w1);terminal=s.terminal;bool certified=s.certify_seam();
  SeamRepair repair(s,certified);
  auto scan=[&](const std::function<void(Run)>& emit){repair.scan(emit);};
  U r=0,k=0,n=0;std::array<U,256> totals{};
@@ -104,7 +107,7 @@ int main(int argc,char**argv){try{
  // Preserve legacy newline transport semantics for existing raw pilots.
  // Reserved-0x1E collections are ONE string, regardless of record count.
  if(terminal!=10)k=1;
- check(n==s.n-10&&k>0,"normalized length/terminators");
+ check(n==s.n-w1&&k>0,"normalized length/terminators");
  std::ofstream out(argv[2],std::ios::binary),heads(argv[3],std::ios::binary);check(bool(out)&&bool(heads),"open outputs");
  number(out,0x0000000452585349ULL);number(out,n);number(out,k);number(out,r);U sum=0;for(U v:totals){number(out,sum);sum+=v;}
  scan([&](Run v){number(out,v.c,1);number(heads,v.h);});
@@ -114,5 +117,5 @@ int main(int argc,char**argv){try{
  scan([&](Run v){reservoir|=__uint128_t(n-1-v.t)<<available;available+=w;if(available>=64){number(out,U(reservoir));reservoir>>=64;available-=64;}});
  if(available)number(out,U(reservoir));
  out.flush();heads.flush();check(bool(out)&&bool(heads),"flush outputs");
- fprintf(stderr,"ENDPOINT_PASS raw_n=%llu raw_r=%llu n=%llu k=%llu r=%llu padding_rows=10 cyclic_seam_certified=%d\n",(unsigned long long)s.n,(unsigned long long)s.r,(unsigned long long)n,(unsigned long long)k,(unsigned long long)r,int(certified));return 0;
+ fprintf(stderr,"ENDPOINT_PASS raw_n=%llu raw_r=%llu n=%llu k=%llu r=%llu padding_rows=%llu cyclic_seam_certified=%d\n",(unsigned long long)s.n,(unsigned long long)s.r,(unsigned long long)n,(unsigned long long)k,(unsigned long long)r,(unsigned long long)w1,int(certified));return 0;
 }catch(const std::exception&e){fprintf(stderr,"FATAL: %s\n",e.what());return 1;}}

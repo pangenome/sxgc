@@ -1,0 +1,5 @@
+{"time": 1790638212.3682015, "case": "yeast", "file": ".rlebwt", "status": "BYTE_IDENTICAL"}
+{"time": 1790638212.3707826, "case": "yeast", "file": ".rlebwt.meta", "status": "BYTE_IDENTICAL"}
+{"time": 1790638212.8094044, "case": "yeast", "file": ".ssa", "status": "BYTE_IDENTICAL"}
+{"time": 1790638213.2557428, "case": "yeast", "file": ".ssa_t", "status": "BYTE_IDENTICAL"}
+{"time": 1790638217.2138524, "case": "yeast", "status": "PASS", "check": "tap structure and applicable retained byte gates"}

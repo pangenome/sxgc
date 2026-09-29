@@ -1,0 +1,32 @@
+[
+  {
+    "mode": "pass",
+    "returncode": 0,
+    "status": "PASS"
+  },
+  {
+    "mode": "per-query",
+    "returncode": 2,
+    "status": "PASS"
+  },
+  {
+    "mode": "total",
+    "returncode": 2,
+    "status": "PASS"
+  },
+  {
+    "mode": "probe",
+    "returncode": 2,
+    "status": "PASS"
+  },
+  {
+    "mode": "quick-total",
+    "returncode": 2,
+    "status": "PASS"
+  },
+  {
+    "mode": "collision",
+    "returncode": 2,
+    "status": "PASS"
+  }
+]

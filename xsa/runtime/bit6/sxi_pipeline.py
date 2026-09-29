@@ -110,6 +110,12 @@ def main():
         source.add_argument('--' + kind)
     p.add_argument('--output', required=True)
     p.add_argument('--threads', type=int, default=8)
+    p.add_argument('--w1', type=int, default=10,
+                   help='first-level PFP overlap/window length')
+    p.add_argument('--syncmer-s', type=int, default=0,
+                   help='use closed (w1,s) syncmer triggers in the first-level parse')
+    p.add_argument('--syncmer-canonical', action='store_true',
+                   help='reverse-complement canonical s-mer hashes; other bytes self-complement')
     p.add_argument('--address-space-gb', type=int, default=0,
                    help='optional child address-space ceiling in decimal GB (default: none; a lower inherited hard limit always applies)')
     p.add_argument('--scratch')
@@ -132,6 +138,10 @@ def main():
         p.error('--verify-text-sample must be 0..100000')
     if not 1 <= a.threads <= 96:
         p.error('--threads must be 1..96')
+    if not 3 <= a.w1 <= 512 or (a.syncmer_s and not 1 <= a.syncmer_s < a.w1):
+        p.error('--w1 must be 3..512 and --syncmer-s must be less than w1')
+    if a.syncmer_canonical and not a.syncmer_s:
+        p.error('--syncmer-canonical requires --syncmer-s')
     if a.materialize and not a.agc:
         p.error('--materialize requires --agc')
     if a.fifo and (not a.agc or a.materialize):
@@ -287,7 +297,7 @@ def main():
     chunks = 1 if size < 1_000_000 else 50
     run('rpfbwt', [rpf, '--l1-prefix', prefix, '--w1', 10, '--w2', 5, '--threads', a.threads, '--chunks', chunks, '--tmp-dir', work])
     ri4, heads, agg, chi = [work / ('fresh.' + ext) for ext in ('ri4', 'head_sa', 'agg', 'sA')]
-    run('endpoints', [tools/'rpfbwt_endpoints', prefix, ri4, heads, f'{terminal:02x}'])
+    run('endpoints', [tools/'rpfbwt_endpoints', prefix, ri4, heads, f'{terminal:02x}', '--w1', a.w1])
     if a.expect_heads:
         run('gate-heads', ['/usr/bin/cmp', heads, pathlib.Path(a.expect_heads).absolute()])
     if a.expect_ri4:
@@ -297,7 +307,7 @@ def main():
     if strings > 1 and not (a.expect_heads and a.expect_ri4) and not a.verify_text_sample:
         raise RuntimeError('multi-string ordering unvalidated: endpoint byte gates or --verify-text-sample (in-flight ground-truth audit) required')
     run('slim', [tools/'slim_dump', '--slim', '--resolve-ri4', '--dict-stream', '--ri4', ri4,
-                 '--head-sa', heads, '--parse', prefix, '-t', a.threads, '-o', agg])
+                 '--head-sa', heads, '--parse', prefix, '--w1', a.w1, '-t', a.threads, '-o', agg])
     sweep = run('sweep', [a.xsa, 'chi-rspace', '--stream-agg', '--ri4', ri4, '--agg', agg, '-o', chi])
     count = chi.stat().st_size // 8
     reported = re.search(r'chi = (\d+)', sweep.read_text())

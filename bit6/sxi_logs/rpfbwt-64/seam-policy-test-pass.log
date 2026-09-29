@@ -1,0 +1,2 @@
+SLIM_FP test-parse tau=16 bytes=100008 queries=1 verified_symbols=100001 hash_probes=29 mean_verified=100001.000000000 max_verified=100001 max_requested_lce=100000 verification_work=100017 suffix_symbol_reads=798 total_work=100815 total_limit=1000000 verification_limit=200002 probe_limit=1000
+SLIM_SEAM_POLICY_TEST PASS exact_lce=100000 shared_limit=10003

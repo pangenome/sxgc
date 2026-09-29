@@ -2063,3 +2063,27 @@ philosophy), parsed-space external front-end (banked), uint32 widening (R~5e11 r
 w-parameterization of endpoints/slim (running lane) is load-bearing for w3.
 Token-space PFP (BPE) remains the bigger-shrink option: 4-5.7x sequence reduction, aligns with
 the LM-over-chi backend; chi becomes tokenizer-conditioned (provenance decision).
+
+## ==================== CHI(HPRC-466) = 2,250,211,129 ====================
+### Validation-only (from the retained parse; from-zero milestone rerun pending). hprc.validation.sxi
+### = 52,175,300,288 bytes at /tmp/rpfbwt-64-466/. chi/n = 0.1604%, chi/R = 0.8214 (inside the
+### proven [0.82,0.88] band). n = 1,403,221,068,491; R = 2,739,737,289; strings = 38,790 contigs.
+### Paper macro \hprcchi filled; results row complete.
+
+SEAM-LCE RESOLUTION (the full arc, measured): old cap 68,921 refused the FIRST dict-level seam LCE
+at 110,001 symbols; the TRUE max seam LCE = 18,180,977 text symbols (18.2 MB of collinear haplotype
+identity - pangenome near-identity is real and large). Corrected policy: one work unit = one
+comparison / one hash probe (probeLimit-capped; tau-bounded reads uncharged) / one directly-verified
+symbol; per-verify cap min(2^16, structure size); shared total budget min(2^32, max(10^6,(P+D)/8)),
+atomic + journaled. Total seam work 426,807,960 / 4,266,152,237 budget = 10.0%. Classes 5,836,
+rows repaired 274,952, exact=1. THE LAW intact: all 2.74e9 boundary rows resolved directly,
+zero LF walks; audit 1000/1000 samples verified against the AGC.
+En-route correction: the prior draft charged hash-probe reconstruction PER SYMBOL (tau-x inflation,
+984,245 units on a 267-byte fixture) - caught by the dense integration gate, fixed before any 466 claim.
+Regression gates green: yeast endpoints+slim byte-identical to accepted publication (the anchor);
+k10 A/B byte-identical (finding: the k10 pilot parse is pre-0x1E-era text, 0x0A terminal - head
+samples diverge from k10.sxi member 3; canonical-k10 anchoring impossible from it, yeast carries it).
+Ledger incident: the accidental agc2flat prepare verb ALSO truncated work-dir names.tsv to zero
+(prepare-verb sidecar clobber) - silently broke the audit; restored from the original work dir.
+Banked with the w1-parameterization merge (long-window lane, 3-way): w1 now flows through
+pipeline/endpoints/seam/slim in BOTH trees, defaults w10, w10 byte-identity gated.

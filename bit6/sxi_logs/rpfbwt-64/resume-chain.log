@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "/tmp/sxgc-laneV/bit6/sxi_logs/rpfbwt-64/resume_validation.py", line 90, in <module>
+    main()
+  File "/tmp/sxgc-laneV/bit6/sxi_logs/rpfbwt-64/resume_validation.py", line 78, in main
+    run('resume-audit', [TOOLS / 'sxi_text_audit', WORK / 'collection.txt', ri, agg, chi, 1000,
+  File "/tmp/sxgc-laneV/bit6/sxi_logs/rpfbwt-64/resume_validation.py", line 49, in run
+    raise RuntimeError(f'{stage}: exit {code}')
+RuntimeError: resume-audit: exit 1

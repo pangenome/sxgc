@@ -1,0 +1,15 @@
+PFP_TERMINAL byte=0x1e source=argument raw_n=1403221068491 raw_r=2739737289
+CYCLIC_SEAM_REPAIR terminal=0x1e predecessors_before_zero=36467
+SLIM_PHASE dict-read wall=0.000 cumulative=1430.151 peak_rss_kib=192618040
+SLIM_PHASE dict-boundaries wall=248.655 cumulative=1678.806 peak_rss_kib=192618040
+SLIM_STRING_ENDS count=1 bytes=8 from_parse_dict=1 cyclic=1
+SLIM_PHASE parse+boundaries wall=7079.254 cumulative=8758.060 peak_rss_kib=192618040
+SLIM_PHASE parse-fingerprints wall=49.092 cumulative=8807.152 peak_rss_kib=192618040
+SLIM_PHASE dict-fingerprints wall=97.320 cumulative=8904.472 peak_rss_kib=192618040
+SLIM_STRUCT n=1403221068491 P=15517245230 D=18611972670 phrases=89908955 parse_bytes=62068980924 bd_bytes=124454859 bp_bytes=18624260290 dict_resident=0 dict_cache_per_thread=262144 no_SA_ISA_LCP_RMQ=1 no_M_b_bwt_w_wt=1
+CYCLIC_SEAM_LCE_POLICY max_probe=68921 max_verification=67108864 total_limit=4266152237 cost=phrase_or_byte_comparisons_plus_hash_symbol_reads fraction=(P+D)/8 floor=1000000 ceiling=4294967296
+CYCLIC_SEAM_REPAIRED classes=5836 rows=274952 discovery_steps=5837 limit=2739737 phi_samples=2739737289
+CYCLIC_SEAM_WORK max_seam_lce=18180977 total_work=426807960 total_limit=4266152237 exact=1
+SLIM_FP seam-parse tau=46 bytes=2698651352 queries=928679 verified_symbols=9787118 hash_probes=261186 mean_verified=10.538752357 max_verified=193423 max_requested_lce=193422 verification_work=10520718 hash_probe_charges=1026734 suffix_symbol_reads=22306938 total_work=426807960 total_limit=4266152237 verification_limit=67108864 probe_limit=68921
+SLIM_FP seam-dict tau=55 bytes=2707196032 queries=1947558 verified_symbols=340642188 hash_probes=13344417 mean_verified=174.907339345 max_verified=337222 max_requested_lce=337221 verification_work=361882840 hash_probe_charges=53377668 suffix_symbol_reads=1461534458 total_work=426807960 total_limit=4266152237 verification_limit=67108864 probe_limit=68921
+ENDPOINT_PASS raw_n=1403221068491 raw_r=2739737289 n=1403221068481 k=1 r=2739737285 padding_rows=10 cyclic_seam_certified=0
