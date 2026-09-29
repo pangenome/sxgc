@@ -1,0 +1,12 @@
+{
+  "source": "/home/erikg/worktrees/sxgc/pi-worktree-de16a986-97f3-45c4-a7ca-fe2df3a51aa3-s0-0/bit6/sxi_logs/parsed-space/fixtures/pile-frag.txt",
+  "bytes": 1082130213,
+  "sha256": "69a6b5fde1e79d593217ce815c9f47237e276169e5204831a218124e14e6b6b2",
+  "cleaned_sha256": "dc0477ad5f78524aa416d501a54b17961b4c93550f8586e4e22a8b7847656321",
+  "low_bytes_changed": 229,
+  "high_bytes_changed": 13301465,
+  "reserved_terminal_bytes_changed": 177753,
+  "replacement": 6,
+  "appended_terminal": 30,
+  "warning": "Measurement corpus only; not a lossless byte-remap implementation."
+}

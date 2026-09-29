@@ -1,0 +1,32 @@
+--- a/rpfbwt.cpp
++++ b/rpfbwt.cpp
+@@ -55,12 +55,14 @@
+     // Set tmp dir for rle string
+     if (not tmp_dir.empty()) { rle::TempFile::setDirectory(tmp_dir); }
+     
++    if (threads != 1 || chunks != 1) { throw std::runtime_error("external dictionary requires --threads 1 --chunks 1"); }
++
+     // Build dictionaries and parse
+     std::less<uint8_t> uint8_t_comp;
+     pfpds::dictionary<uint8_t> l1_d(l1_prefix, w1, uint8_t_comp, true, true, false, true, false, true, false);
+     
+     // L1 ISA is only needed to construct LCP; merge uses SA and boundary ranks.
+-    l1_d.isaD = sdsl::int_vector<>();
++
+     l1_d.isaD_flag = false;
+     spdlog::info("MEMORY_L1 released ISA; DA derived from phrase-boundary rank");
+     rpfbwt::rpfbwt_algo<uint8_t, uint32_t>::l2_colex_comp l2_comp(l1_d, int_shift);
+--- a/include/rpfbwt_algorithm.hpp
++++ b/include/rpfbwt_algorithm.hpp
+@@ -71,9 +71,9 @@
+     
+     rle::RLEString::RLEncoderMerger rle_chunks;
+     
+-    template <typename dict_char_type>
++    template <typename dict_char_type, typename DictArray>
+     void
+-    init_d_lengths(const std::vector<dict_char_type>& dict_array, std::vector<pfpds::long_type>& out)
++    init_d_lengths(const DictArray& dict_array, std::vector<pfpds::long_type>& out)
+     {
+         spdlog::info("Precomputing d lengths");
+         

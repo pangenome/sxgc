@@ -498,4 +498,7 @@ public:
 
 }
 
+#ifdef SXI_EXTERNAL_DICTIONARY
+#include "../../external/dictionary.hpp"
+#endif
 #endif /* end of include guard: _PFP_DICTIONARY_HH */

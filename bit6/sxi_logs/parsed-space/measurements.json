@@ -1,0 +1,119 @@
+[
+  {
+    "case": "yeast-parser-checked",
+    "stage": "parse",
+    "wall_seconds": 489.22,
+    "rss_bytes": 129708032,
+    "sampled_allocated_disk_bytes": 1583763456,
+    "address_limit_bytes": 3500000000,
+    "journal": "yeast-parser-checked/journal.jsonl"
+  },
+  {
+    "case": "yeast-parser-checked",
+    "stage": "parse-l2",
+    "wall_seconds": 5.89,
+    "rss_bytes": 268185600,
+    "sampled_allocated_disk_bytes": null,
+    "address_limit_bytes": 3500000000,
+    "journal": "yeast-parser-checked/parse-l2.time"
+  },
+  {
+    "case": "yeast-final",
+    "stage": "frontend",
+    "wall_seconds": 1925.81,
+    "rss_bytes": 2302205952,
+    "sampled_allocated_disk_bytes": 7757250560,
+    "address_limit_bytes": 3500000000,
+    "journal": "yeast-final/journal.jsonl"
+  },
+  {
+    "case": "web-parser-bounded",
+    "stage": "parse",
+    "wall_seconds": 22.91,
+    "rss_bytes": 27262976,
+    "sampled_allocated_disk_bytes": 304918528,
+    "address_limit_bytes": 500000000,
+    "journal": "web-parser-bounded/journal.jsonl"
+  },
+  {
+    "case": "cyclic-checked",
+    "stage": "parse",
+    "wall_seconds": 0.03,
+    "rss_bytes": 6291456,
+    "sampled_allocated_disk_bytes": 245760,
+    "address_limit_bytes": 500000000,
+    "journal": "cyclic-checked/journal.jsonl"
+  },
+  {
+    "case": "cyclic-checked",
+    "stage": "parse-l2",
+    "wall_seconds": 0.0,
+    "rss_bytes": 4194304,
+    "sampled_allocated_disk_bytes": 270336,
+    "address_limit_bytes": 500000000,
+    "journal": "cyclic-checked/journal.jsonl"
+  },
+  {
+    "case": "cyclic-checked",
+    "stage": "frontend",
+    "wall_seconds": 8.98,
+    "rss_bytes": 10485760,
+    "sampled_allocated_disk_bytes": 4820992,
+    "address_limit_bytes": 500000000,
+    "journal": "cyclic-checked/journal.jsonl"
+  },
+  {
+    "case": "cyclic-checked",
+    "stage": "endpoints",
+    "wall_seconds": 0.07,
+    "rss_bytes": 2097152,
+    "sampled_allocated_disk_bytes": 5607424,
+    "address_limit_bytes": 500000000,
+    "journal": "cyclic-checked/journal.jsonl"
+  },
+  {
+    "case": "cyclic-checked",
+    "stage": "slim",
+    "wall_seconds": 0.12,
+    "rss_bytes": 8388608,
+    "sampled_allocated_disk_bytes": 10420224,
+    "address_limit_bytes": 500000000,
+    "journal": "cyclic-checked/journal.jsonl"
+  },
+  {
+    "case": "cyclic-checked",
+    "stage": "sweep",
+    "wall_seconds": 0.02,
+    "rss_bytes": 6291456,
+    "sampled_allocated_disk_bytes": 11517952,
+    "address_limit_bytes": 500000000,
+    "journal": "cyclic-checked/journal.jsonl"
+  },
+  {
+    "case": "cyclic-checked",
+    "stage": "audit",
+    "wall_seconds": 0.06,
+    "rss_bytes": 6291456,
+    "sampled_allocated_disk_bytes": 11526144,
+    "address_limit_bytes": 500000000,
+    "journal": "cyclic-checked/journal.jsonl"
+  },
+  {
+    "case": "cyclic-checked",
+    "stage": "write",
+    "wall_seconds": 0.03,
+    "rss_bytes": 4194304,
+    "sampled_allocated_disk_bytes": 13967360,
+    "address_limit_bytes": 500000000,
+    "journal": "cyclic-checked/journal.jsonl"
+  },
+  {
+    "case": "cyclic-checked",
+    "stage": "validate",
+    "wall_seconds": 0.01,
+    "rss_bytes": 2097152,
+    "sampled_allocated_disk_bytes": 13975552,
+    "address_limit_bytes": 500000000,
+    "journal": "cyclic-checked/journal.jsonl"
+  }
+]

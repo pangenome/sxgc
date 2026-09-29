@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "/home/erikg/worktrees/sxgc/pi-worktree-de16a986-97f3-45c4-a7ca-fe2df3a51aa3-s0-0/tools/gate_external_frontend.py", line 82, in <module>
+    for ext in ('.dict','.parse','.parse.dict','.parse.parse'):
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/erikg/worktrees/sxgc/pi-worktree-de16a986-97f3-45c4-a7ca-fe2df3a51aa3-s0-0/tools/gate_external_frontend.py", line 68, in run
+    wall_seconds=time.monotonic()-started,peak_rss_bytes=rss,peak_allocated_disk_bytes=peak,
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: frontend: exit 143

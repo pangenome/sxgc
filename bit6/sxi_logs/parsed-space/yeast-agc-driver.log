@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "/home/erikg/worktrees/sxgc/pi-worktree-de16a986-97f3-45c4-a7ca-fe2df3a51aa3-s0-0/tools/gate_external_frontend.py", line 76, in <module>
+    record(stage='parse-benchmark',status='PASS',end_to_end_gate=False)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/erikg/worktrees/sxgc/pi-worktree-de16a986-97f3-45c4-a7ca-fe2df3a51aa3-s0-0/tools/gate_external_frontend.py", line 65, in run
+    record(stage=stage,status='PASS' if child.returncode==0 else 'FAIL',returncode=child.returncode,
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: frontend: exit 143

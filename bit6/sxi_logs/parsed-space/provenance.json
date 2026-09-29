@@ -1,0 +1,39 @@
+{
+  "binaries": {
+    "/home/erikg/worktrees/sxgc/pi-worktree-de16a986-97f3-45c4-a7ca-fe2df3a51aa3-s0-0/bit6/sxi_logs/parsed-space/pfp-bounded-build/pfp-external": "074566651621f7448a4f98bdbc4d73a18b0a2899e8cfceb2fbd3af4fcc7af369",
+    "/home/erikg/worktrees/sxgc/pi-worktree-de16a986-97f3-45c4-a7ca-fe2df3a51aa3-s0-0/bit6/sxi_logs/parsed-space/rpf-final-build/rpfbwt-external": "0d5528d3ae7fb770128a95570b77244f301e621846eb8154632066e338bc1c52",
+    "/home/erikg/sxgc/sealed-tools/rpfbwt": "3f3e5e82f5d549c85a61c26433d7eafe2bf711a807d12509b7c681e765c4cd50",
+    "/tmp/pfp-agc-fork/build/pfp++": "0334c38c3c45ff43e201d5d0b31b580f253fef12a14dc9e12004401b8b240416"
+  },
+  "baseline_references": [
+    "/tmp/rpfbwt-64-yeast/parse",
+    "/mnt/nvme3n1/erikg/sxgc-pilot/k10/h10ss_pfp"
+  ],
+  "source_head": "004460f1fbf98ecaaa6f6020aa61e7afd0216bd5",
+  "contact_supervisor_tool_available": false,
+  "open_file_limit_measured": 1048576,
+  "source_sha256": {
+    "bit6/external/io.hpp": "77981f7ff82a1e725e64a9620190f5c8ec4ac053c2a6c49fdaa1eb4a10ebd836",
+    "bit6/external/phrase_store.hpp": "73fa805aa77a2b5a854d21f33a8bea1230194f77e15eb539658b22137591a54f",
+    "bit6/external/dictionary.hpp": "f4c8cc12466ae86b8895a9725ad6037fe2bbeb255196cf285988ad4392363bb2",
+    "bit6/pfp_ds_vendor/pfp/dictionary.hpp": "18f5c4747fe7766f59f07faec7938f9a286d9ce5c7c67febe7089999a4819fe1",
+    "bit6/patches/pfp_external.patch": "2d0089c1bf38f5d82dcdb6c775b8077d9c714aa64019a0c53ebf8ababb6718a3",
+    "bit6/patches/rpfbwt_external.patch": "3927a3b07b180e014746e29c1cee186e298ddda27cc398d8b8d781d16c14b647",
+    "tools/build_external_frontend.py": "de85e5fb609e618816284de4f588714dc0071e3168a10efb329926ece7fbb17a",
+    "tools/gate_external_frontend.py": "457f2f25566b4a9609bdde57938edd0d6626658a36b8ea81d3bed1aa4cce1d18",
+    "tools/prepare_external_measurement.py": "1fcaec239cbd6b940b88b5b2923a4d48fb97ca6840b722c6182b8e156cb48771",
+    "bit6/test_external_dictionary.cpp": "68ddaef3701020f2f5a7a55e13999e84d205e25828e8531915b954966e01b7f1",
+    "bit6/test_external_phrase_store.cpp": "dcca55869023c594b838a93e9888efd5cf5bfb0f1802554dd078be08f5b2bb52",
+    "bit6/test_external_frontend.py": "c6b0dc80a1b9b8bbeeb39e0f2648648944f65d848ca3f75e26285db804895d23",
+    "bit6/test_external_measurement.py": "21dd08be89c0aa7f1642cdbf2ac58aa0b74c6a4faa2f7a60aaa401373be78505"
+  },
+  "upstream_checkouts": {
+    "/tmp/pfp-agc-fork": "1a5f114ae026c18e7c0049ceace1a5eabc8be44a",
+    "/tmp/sxgc-dist-build-02/.build/deps/rpfbwt": "1fea5c30ac32cef9574392388005184b23d98d22",
+    "/tmp/sxgc-dist-build-02/.build/deps/gsacak": "1e533019c29617a496b6d47e929d2639632a5ded"
+  },
+  "measurement_cleaning_versions": {
+    "parser_benchmark": "fixtures/pile-cleaning.json; existing 0x1e retained; parse-only timing",
+    "future_fragment_gate": "fixtures/pile-terminal-cleaning.json; existing 0x1e replaced with 6, unique terminal appended"
+  }
+}

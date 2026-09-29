@@ -1,0 +1,7 @@
+Traceback (most recent call last):
+  File "/home/erikg/worktrees/sxgc/pi-worktree-de16a986-97f3-45c4-a7ca-fe2df3a51aa3-s0-0/tools/gate_external_frontend.py", line 73, in <module>
+    run('cmp-input'+ext,['cmp',str(prefix)+ext,str(a.reference)+ext])
+  File "/home/erikg/worktrees/sxgc/pi-worktree-de16a986-97f3-45c4-a7ca-fe2df3a51aa3-s0-0/tools/gate_external_frontend.py", line 63, in run
+    if child.returncode:raise RuntimeError(f'{stage}: exit {child.returncode}')
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: cmp-input.dict: exit 1

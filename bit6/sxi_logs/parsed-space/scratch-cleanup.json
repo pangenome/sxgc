@@ -1,0 +1,18 @@
+{
+  "time": 1790693282.6467233,
+  "removed": [
+    {
+      "path": "/mnt/nvme2n1/erikg/sxgc-parsed-space-de16a986-yeast-agc",
+      "allocated_bytes": 0
+    },
+    {
+      "path": "/mnt/nvme2n1/erikg/sxgc-parsed-space-de16a986-yeast-buffered",
+      "allocated_bytes": 2053586944
+    },
+    {
+      "path": "/mnt/nvme2n1/erikg/sxgc-parsed-space-de16a986-yeast-tournament",
+      "allocated_bytes": 3080376320
+    }
+  ],
+  "reason": "Only this lane's stopped prototype scratch; validated parse files and all logs retained."
+}

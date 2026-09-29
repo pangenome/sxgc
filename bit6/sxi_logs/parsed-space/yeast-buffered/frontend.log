@@ -1,0 +1,37 @@
+EXTERNAL_SA_BLOCK begin=0 end=67108731 runs=1 disk_bytes=268434924
+EXTERNAL_SA_BLOCK begin=67108731 end=134217593 runs=2 disk_bytes=536870372
+EXTERNAL_SA_BLOCK begin=134217593 end=201326428 runs=3 disk_bytes=805305712
+EXTERNAL_SA_BLOCK begin=201326428 end=268432874 runs=4 disk_bytes=1073731496
+EXTERNAL_SA_BLOCK begin=268432874 end=335541306 runs=5 disk_bytes=1342165224
+EXTERNAL_SA_BLOCK begin=335541306 end=402650146 runs=6 disk_bytes=1610600584
+EXTERNAL_SA_BLOCK begin=402650146 end=469758999 runs=7 disk_bytes=1879035996
+EXTERNAL_SA_BLOCK begin=469758999 end=513394308 runs=8 disk_bytes=2053577232
+EXTERNAL_SA_READY D=513394309 runs=9 sa_disk_bytes=2053577236 run_buffer_bytes=8388612
+EXTERNAL_DICTIONARY phrases=3159359 boundaries_bytes=33554432 no_dense_D_arrays=1
+[2026-09-29 14:20:08.885] [info] MEMORY_L1 released ISA; DA derived from phrase-boundary rank
+[2026-09-29 14:20:09.254] [info] MEMORY_SA workspace_bytes=4 entries=25700552
+[2026-09-29 14:20:19.238] [info] Using 4 bytes for storing SA of the dictionary
+[2026-09-29 14:20:19.238] [info] Elapsed time (s): 9.984588923
+[2026-09-29 14:20:19.238] [info] Using 3 bytes for DA of the dictionary
+[2026-09-29 14:20:19.642] [info] Elapsed time (s): 0.403895618
+[2026-09-29 14:20:19.642] [info] Using 4 bytes for ISA of the dictionary
+[2026-09-29 14:20:21.048] [info] Elapsed time (s): 1.405729821
+[2026-09-29 14:20:21.048] [info] Using 2 bytes for LCP of the dictionary
+[2026-09-29 14:20:23.383] [info] Elapsed time (s): 2.335204581
+[2026-09-29 14:20:23.383] [info] Computing RMQ over LCP of dictionary
+[2026-09-29 14:20:23.936] [info] Elapsed time (s): 0.553010291
+[2026-09-29 14:20:23.936] [info] Using 3 bytes for colex DA of the dictionary
+[2026-09-29 14:20:23.989] [info] Using 3 bytes for colex id and inverse colex id array of the dictionary
+[2026-09-29 14:20:35.429] [info] Elapsed time (s): 11.492112279
+[2026-09-29 14:20:35.450] [info] Using 8 bytes for computing SA of the parsing
+[2026-09-29 14:20:36.113] [info] Using 3 bytes for storing SA of the parsing
+[2026-09-29 14:20:36.122] [info] Elapsed time (s): 0.672136692
+[2026-09-29 14:20:36.538] [info] Computing b_p
+[2026-09-29 14:20:37.065] [info] Computing b_bwt and M of the parsing
+[2026-09-29 14:20:43.124] [info] Computing inverted list of BWT(P)
+[2026-09-29 14:20:43.194] [info] Using 3 bytes for storing the inverted list of the BWT of the parse
+[2026-09-29 14:20:43.636] [info] Precomputing d lengths
+[2026-09-29 14:20:46.567] [info] Precomputing d lengths
+[2026-09-29 14:20:48.002] [info] Creating v table
+[2026-09-29 14:20:55.356] [info] Creating E arrays
+[2026-09-29 14:20:57.240] [info] Computing chunks for parallel execution. Total input size: 3336986769. Requested chunks: 1

@@ -1,0 +1,7 @@
+Traceback (most recent call last):
+  File "/home/erikg/worktrees/sxgc/pi-worktree-de16a986-97f3-45c4-a7ca-fe2df3a51aa3-s0-0/tools/gate_external_frontend.py", line 84, in <module>
+    run('frontend',[a.rpfbwt,'--l1-prefix',prefix,'--w1','10','--w2','5','--threads','1','--chunks','1','--tmp-dir',a.scratch])
+  File "/home/erikg/worktrees/sxgc/pi-worktree-de16a986-97f3-45c4-a7ca-fe2df3a51aa3-s0-0/tools/gate_external_frontend.py", line 70, in run
+    if child.returncode:raise RuntimeError(f'{stage}: exit {child.returncode}')
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: frontend: exit 143

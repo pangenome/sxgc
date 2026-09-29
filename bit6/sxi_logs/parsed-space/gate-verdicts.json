@@ -1,0 +1,9 @@
+{
+  "a_yeast": "PASS",
+  "b_k10": "NOT_RUN",
+  "c_pile_fragment_end_to_end": "NOT_RUN",
+  "d_10_to_50_GB": "NOT_RUN",
+  "small_cyclic_end_to_end": "PASS",
+  "full_pile_fit": "NOT_ESTABLISHED; measured-ratio projection exceeds RAM/disk/ID limits",
+  "independent_review": "PENDING"
+}

@@ -1,0 +1,128 @@
+--- a/include/pfp_algo.hpp
++++ b/include/pfp_algo.hpp
+@@ -8,6 +8,8 @@
+ #define pfp_algo_hpp
+ 
+ #include <vector>
++#include <array>
++#include "io.hpp"
+ #include <unordered_map>
+ #include <set>
+ #include <iostream>
+@@ -160,6 +162,7 @@
+     }
+     
+     size_type size() const { return hash_string_map.size(); }
++    uint64_t total_length() const { uint64_t n=0; for(const auto& e:hash_string_map)n+=e.second.phrase.size()*sizeof(data_type); return n; }
+     
+     const std::vector<data_type>& sorted_entry_at(std::size_t i)
+     {
+@@ -169,6 +172,8 @@
+ 
+     friend class ParserVCF;
+ };
++
++#include "phrase_store.hpp"
+ 
+ //------------------------------------------------------------------------------
+ 
+@@ -263,11 +268,11 @@
+     {
+         close();
+         std::size_t total_length = 0;
+-        for (auto& entry : dictionary->hash_string_map) { total_length += entry.second.phrase.size(); }
++        total_length = dictionary->total_length();
+     
+         // Fill out statistics
+         this->statistics.parse_length = this->parse_size;
+-        this->statistics.num_of_phrases_dictionary = this->dictionary->sorted_phrases.size();
++        this->statistics.num_of_phrases_dictionary = this->dictionary->size();
+         this->statistics.total_dictionary_length = total_length;
+         std::string name;
+         if (tags & WORKER) { name = "Worker"; } else { name = "Main"; }
+@@ -338,11 +343,11 @@
+     {
+         close();
+         std::size_t total_length = 0;
+-        for (auto& entry : dictionary.hash_string_map) { total_length += entry.second.phrase.size(); }
++        total_length = dictionary.total_length();
+         
+         // Fill out statistics
+         this->statistics.parse_length = this->parse_size;
+-        this->statistics.num_of_phrases_dictionary = this->dictionary.sorted_phrases.size();
++        this->statistics.num_of_phrases_dictionary = this->dictionary.size();
+         this->statistics.total_dictionary_length = total_length;
+         std::string name = "Parser Fasta";
+         spdlog::info("{} -\tParse size: {}\tDic Size: {} Dic Total Length: {}", name ,parse_size, dictionary.size(), total_length);
+@@ -415,11 +420,11 @@
+     {
+         close();
+         std::size_t total_length = 0;
+-        for (auto& entry : dictionary.hash_string_map) { total_length += entry.second.phrase.size(); }
++        total_length = dictionary.total_length();
+         
+         // Fill out statistics
+         this->statistics.parse_length = this->parse_size;
+-        this->statistics.num_of_phrases_dictionary = this->dictionary.sorted_phrases.size();
++        this->statistics.num_of_phrases_dictionary = this->dictionary.size();
+         this->statistics.total_dictionary_length = total_length;
+         std::string name = "Parser Text";
+         spdlog::info("{} -\tParse size: {}\tDic Size: {} Dic Total Length: {}", name ,parse_size, dictionary.size(), total_length);
+@@ -488,11 +493,11 @@
+     {
+         close();
+         std::size_t total_length = 0;
+-        for (auto& entry : dictionary.hash_string_map) { total_length += entry.second.phrase.size() * sizeof(int32_t); }
++        total_length = dictionary.total_length();
+ 
+         // Fill out statistics
+         this->statistics.parse_length = this->parse_size;
+-        this->statistics.num_of_phrases_dictionary = this->dictionary.sorted_phrases.size();
++        this->statistics.num_of_phrases_dictionary = this->dictionary.size();
+         this->statistics.total_dictionary_length = total_length;
+         std::string name = "Parser Integers";
+         spdlog::info("{} -\tParse size: {}\tDic Size: {} Dic Total Length: {}", name ,parse_size, dictionary.size(), total_length);
+--- a/pfp++.cpp
++++ b/pfp++.cpp
+@@ -62,6 +62,15 @@
+     app.allow_windows_style_options();
+     
+     CLI11_PARSE(app, argc, argv);
++
++    // This opt-in executable promises parsed-space text/integer construction.
++    // Other input/property modes load raw text or a complete byte dictionary.
++    if ((!text_file_path.empty() == !integers_file_path.empty()) || !fasta_file_path.empty() ||
++        !vcfs_file_names.empty() || !refs_file_names.empty() || params.compress_dictionary ||
++        params.output_occurrences || params.output_sai || params.output_last) {
++        spdlog::error("external parser requires exactly one of -t/-i and no dictionary properties, FASTA or VCF mode");
++        return EXIT_FAILURE;
++    }
+ 
+     if ((agc_input && (text_file_path.empty() || !fasta_file_path.empty() || !integers_file_path.empty() || !vcfs_file_names.empty())) || (!agc_input && !agc_names.empty()) || (agc_input && threads == 0)) {
+         spdlog::error("--agc requires only -t; --agc-names requires --agc; threads must be positive");
+--- a/src/pfp_algo.cpp
++++ b/src/pfp_algo.cpp
+@@ -518,6 +518,7 @@
+ {
+     auto source = open_text_source(in_file_path, agc_input, input_threads, agc_names);
+     std::vector<vcfbwt::char_type> phrase;
++    const uint64_t phrase_limit=sxi_external::setting("SXI_MAX_PHRASE_BYTES",64ULL<<20);
+     spdlog::info("Parsing {}", in_file_path);
+     
+     // Karp Robin Hash Function for sliding window
+@@ -541,6 +542,7 @@
+                 std::exit(EXIT_FAILURE);
+             }
+ 
++            sxi_external::require(phrase.size()<phrase_limit,"phrase memory budget exceeded; increase SXI_MAX_PHRASE_BYTES");
+             phrase.push_back(c);
+             if (phrase.size() == params.w) { kr_hash.initialize(phrase.data(), params.w); }
+             else if (phrase.size() > params.w) { kr_hash.update(phrase[phrase.size() - params.w - 1], phrase[phrase.size() - 1]); }
+@@ -562,6 +564,7 @@
+     if (phrase.size() >= this->params.w)
+     {
+         // Append w dollar at the end
++        sxi_external::require(phrase.size()<=phrase_limit && this->params.w<=phrase_limit-phrase.size(),"final phrase memory budget exceeded");
+         phrase.insert(phrase.end(), this->params.w, DOLLAR);
+         
+         hash_type hash = this->dictionary.check_and_add(phrase);

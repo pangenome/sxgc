@@ -1,0 +1,1 @@
+EXTERNAL_FRONTEND_PASS cases=2 byte_comparisons=16 small_blocks=32768 unsupported_properties_refused=1 scratch_clean=1

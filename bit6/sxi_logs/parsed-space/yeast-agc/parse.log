@@ -1,0 +1,59 @@
+[2026-09-29 14:07:26.112] [info] Current Configuration:
+; PFP++
+
+; Text file to parse.
+text="/home/erikg/yeast/yeast235.agc"
+
+; Read -t as AGC: archive order, uppercase reversed contigs, 0x1e separators.
+agc=true
+
+; Output prefix.
+out-prefix="/home/erikg/worktrees/sxgc/pi-worktree-de16a986-97f3-45c4-a7ca-fe2df3a51aa3-s0-0/bit6/sxi_logs/parsed-space/yeast-agc/parse"
+
+; Sliding window size.
+window-size=10
+
+; Modulo used during parsing.
+modulo=100
+
+; Number of threads.
+threads=1
+
+; Temporary files directory.
+tmp-dir="/mnt/nvme2n1/erikg/sxgc-parsed-space-de16a986-yeast-agc"
+
+; Also output compressed the dictionary.
+compress-dictionary=false
+
+; Use reference parse to avoid re-parsing.
+use-vcf-acceleration=false
+
+; Print out csv containing stats.
+print-statistics=false
+
+; Output count for each dictionary phrase.
+output-occurrences=false
+
+; Output sai array.
+output-sai=false
+
+; Output last array.
+output-last=false
+
+; Convert all non ACGT characters from a VCF or FASTA file to N.
+acgt-only=false
+
+; Verbose output.
+verbose=false
+
+; Version number.
+version=false
+
+[2026-09-29 14:07:27.167] [info] Parsing /home/erikg/yeast/yeast235.agc
+[2026-09-29 14:11:43.009] [info] Main parser: Replacing hash values with ranks.
+[2026-09-29 14:12:20.840] [info] EXTERNAL_PHRASES phrases=3159359 phrase_disk_bytes=510234940 metadata_disk_bytes=176924104 bucket_bytes=8388608 order_bytes=75824616 shards=16
+[2026-09-29 14:15:39.233] [info] Main parser: writing dictionary on disk NOT COMPRESSED
+[2026-09-29 14:15:48.685] [info] No properties requested.
+[2026-09-29 14:15:48.685] [info] Main parser: closed
+[2026-09-29 14:15:48.685] [info] Parser Text -	Parse size: 34133784	Dic Size: 3159359 Dic Total Length: 510234940
+[Disk Write (bytes): 922999708]

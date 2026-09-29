@@ -1,0 +1,65 @@
+{
+  "time": 1790693670.443385,
+  "parse_l2_command": [
+    "/usr/bin/time",
+    "-v",
+    "-o",
+    "/home/erikg/worktrees/sxgc/pi-worktree-de16a986-97f3-45c4-a7ca-fe2df3a51aa3-s0-0/bit6/sxi_logs/parsed-space/yeast-parser-checked/parse-l2.time",
+    "prlimit",
+    "--as=3500000000",
+    "/home/erikg/worktrees/sxgc/pi-worktree-de16a986-97f3-45c4-a7ca-fe2df3a51aa3-s0-0/bit6/sxi_logs/parsed-space/pfp-bounded-build/pfp-external",
+    "-i",
+    "/home/erikg/worktrees/sxgc/pi-worktree-de16a986-97f3-45c4-a7ca-fe2df3a51aa3-s0-0/bit6/sxi_logs/parsed-space/yeast-parser-checked/parse.parse",
+    "-w",
+    "5",
+    "-p",
+    "11",
+    "-j",
+    "1",
+    "--tmp-dir",
+    "/mnt/nvme2n1/erikg/sxgc-parsed-space-de16a986-yeast-parser-checked"
+  ],
+  "comparisons": [
+    {
+      "extension": ".dict",
+      "reference": "/tmp/rpfbwt-64-yeast/parse",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "extension": ".dict",
+      "reference": "/home/erikg/worktrees/sxgc/pi-worktree-de16a986-97f3-45c4-a7ca-fe2df3a51aa3-s0-0/bit6/sxi_logs/parsed-space/yeast-final/parse",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "extension": ".parse",
+      "reference": "/tmp/rpfbwt-64-yeast/parse",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "extension": ".parse",
+      "reference": "/home/erikg/worktrees/sxgc/pi-worktree-de16a986-97f3-45c4-a7ca-fe2df3a51aa3-s0-0/bit6/sxi_logs/parsed-space/yeast-final/parse",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "extension": ".parse.dict",
+      "reference": "/tmp/rpfbwt-64-yeast/parse",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "extension": ".parse.dict",
+      "reference": "/home/erikg/worktrees/sxgc/pi-worktree-de16a986-97f3-45c4-a7ca-fe2df3a51aa3-s0-0/bit6/sxi_logs/parsed-space/yeast-final/parse",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "extension": ".parse.parse",
+      "reference": "/tmp/rpfbwt-64-yeast/parse",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "extension": ".parse.parse",
+      "reference": "/home/erikg/worktrees/sxgc/pi-worktree-de16a986-97f3-45c4-a7ca-fe2df3a51aa3-s0-0/bit6/sxi_logs/parsed-space/yeast-final/parse",
+      "status": "BYTE_IDENTICAL"
+    }
+  ],
+  "status": "PASS"
+}

@@ -1,0 +1,37 @@
+EXTERNAL_SA_BLOCK begin=0 end=222043 runs=1 disk_bytes=888172
+EXTERNAL_SA_READY D=222044 runs=2 sa_disk_bytes=888176 run_buffer_bytes=1048580
+EXTERNAL_DICTIONARY phrases=2003 boundaries_bytes=16384 no_dense_D_arrays=1
+[2026-09-29 14:07:28.586] [info] MEMORY_L1 released ISA; DA derived from phrase-boundary rank
+[2026-09-29 14:07:28.586] [info] MEMORY_SA workspace_bytes=4 entries=2976
+[2026-09-29 14:07:28.586] [info] Using 2 bytes for storing SA of the dictionary
+[2026-09-29 14:07:28.586] [info] Elapsed time (s): 0.00021891
+[2026-09-29 14:07:28.586] [info] Using 1 bytes for DA of the dictionary
+[2026-09-29 14:07:28.586] [info] Elapsed time (s): 2.786e-05
+[2026-09-29 14:07:28.586] [info] Using 2 bytes for ISA of the dictionary
+[2026-09-29 14:07:28.586] [info] Elapsed time (s): 2.331e-05
+[2026-09-29 14:07:28.586] [info] Using 1 bytes for LCP of the dictionary
+[2026-09-29 14:07:28.586] [info] Elapsed time (s): 3.045e-05
+[2026-09-29 14:07:28.586] [info] Computing RMQ over LCP of dictionary
+[2026-09-29 14:07:28.586] [info] Elapsed time (s): 6.381e-05
+[2026-09-29 14:07:28.586] [info] Using 1 bytes for colex DA of the dictionary
+[2026-09-29 14:07:28.586] [info] Using 1 bytes for colex id and inverse colex id array of the dictionary
+[2026-09-29 14:07:28.587] [info] Elapsed time (s): 0.000508391
+[2026-09-29 14:07:28.587] [info] Using 8 bytes for computing SA of the parsing
+[2026-09-29 14:07:28.587] [info] Using 1 bytes for storing SA of the parsing
+[2026-09-29 14:07:28.587] [info] Elapsed time (s): 1.541e-05
+[2026-09-29 14:07:28.587] [info] Computing b_p
+[2026-09-29 14:07:28.587] [info] Computing b_bwt and M of the parsing
+[2026-09-29 14:07:28.587] [info] Computing inverted list of BWT(P)
+[2026-09-29 14:07:28.587] [info] Using 1 bytes for storing the inverted list of the BWT of the parse
+[2026-09-29 14:07:28.587] [info] Precomputing d lengths
+[2026-09-29 14:07:28.589] [info] Precomputing d lengths
+[2026-09-29 14:07:28.589] [info] Creating v table
+[2026-09-29 14:07:28.589] [info] Creating E arrays
+[2026-09-29 14:07:28.589] [info] Computing chunks for parallel execution. Total input size: 200011. Requested chunks: 1
+[2026-09-29 14:07:28.667] [info] BWT ranges divided in 1 chunks.
+[2026-09-29 14:07:28.765] [info] Chunk 1/1 completed
+[2026-09-29 14:07:28.771] [info] Completed rle string merge
+[2026-09-29 14:07:28.983] [info] Processed: 231 Skipped: 1
+[2026-09-29 14:07:28.983] [info] Chunk 1/1 completed
+[2026-09-29 14:07:28.983] [info] Writing out sa values at run heads
+[2026-09-29 14:07:28.987] [info] Done

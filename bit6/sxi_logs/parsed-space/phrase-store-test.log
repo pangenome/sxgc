@@ -1,0 +1,2 @@
+[2026-09-29 14:06:53.948] [info] EXTERNAL_PHRASES phrases=100000 phrase_disk_bytes=6456225 metadata_disk_bytes=5600000 bucket_bytes=262144 order_bytes=2400000 shards=2
+EXTERNAL_PHRASE_STORE_PASS unique=100000 duplicates=100000 rank_checks=100000 collision_refused=1 rehash=1

@@ -1,0 +1,41 @@
+{
+  "time": 1790694690.44885,
+  "checks": [
+    {
+      "command": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "returncode": 0,
+      "output": ""
+    },
+    {
+      "command": [
+        "python3",
+        "-m",
+        "py_compile",
+        "tools/build_external_frontend.py",
+        "tools/gate_external_frontend.py",
+        "tools/prepare_external_measurement.py",
+        "bit6/test_external_frontend.py",
+        "bit6/test_external_measurement.py",
+        "bit6/sxi_logs/parsed-space/summarize.py"
+      ],
+      "returncode": 0,
+      "output": ""
+    },
+    {
+      "command": [
+        "bash",
+        "-n",
+        "bit6/sxi_logs/parsed-space/RECIPES.sh"
+      ],
+      "returncode": 0,
+      "output": ""
+    }
+  ],
+  "no_staged_files": true,
+  "live_owned_gate_processes": [],
+  "yeast_scratch_files": []
+}

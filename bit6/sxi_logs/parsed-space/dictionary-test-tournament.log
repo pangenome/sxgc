@@ -1,0 +1,45 @@
+EXTERNAL_SA_BLOCK begin=0 end=4061 runs=1 disk_bytes=24366
+EXTERNAL_SA_BLOCK begin=4061 end=8125 runs=2 disk_bytes=48750
+EXTERNAL_SA_BLOCK begin=8125 end=12204 runs=3 disk_bytes=73224
+EXTERNAL_SA_BLOCK begin=12204 end=16300 runs=4 disk_bytes=97800
+EXTERNAL_SA_BLOCK begin=16300 end=20384 runs=5 disk_bytes=122304
+EXTERNAL_SA_BLOCK begin=20384 end=24451 runs=6 disk_bytes=146706
+EXTERNAL_SA_BLOCK begin=24451 end=28528 runs=7 disk_bytes=171168
+EXTERNAL_SA_BLOCK begin=28528 end=32564 runs=8 disk_bytes=195384
+EXTERNAL_SA_BLOCK begin=32564 end=33836 runs=9 disk_bytes=203016
+EXTERNAL_SA_READY D=33837 runs=10 sa_lcp_disk_bytes=203022 run_buffer_bytes=546
+EXTERNAL_DICTIONARY phrases=500 boundaries_bytes=4096 no_dense_D_arrays=1
+EXTERNAL_SA_BLOCK begin=0 end=4090 runs=1 disk_bytes=24540
+EXTERNAL_SA_BLOCK begin=4090 end=8182 runs=2 disk_bytes=49092
+EXTERNAL_SA_BLOCK begin=8182 end=12205 runs=3 disk_bytes=73230
+EXTERNAL_SA_BLOCK begin=12205 end=16250 runs=4 disk_bytes=97500
+EXTERNAL_SA_BLOCK begin=16250 end=20286 runs=5 disk_bytes=121716
+EXTERNAL_SA_BLOCK begin=20286 end=24372 runs=6 disk_bytes=146232
+EXTERNAL_SA_BLOCK begin=24372 end=28384 runs=7 disk_bytes=170304
+EXTERNAL_SA_BLOCK begin=28384 end=32435 runs=8 disk_bytes=194610
+EXTERNAL_SA_BLOCK begin=32435 end=33294 runs=9 disk_bytes=199764
+EXTERNAL_SA_READY D=33295 runs=10 sa_lcp_disk_bytes=199770 run_buffer_bytes=546
+EXTERNAL_DICTIONARY phrases=500 boundaries_bytes=4096 no_dense_D_arrays=1
+EXTERNAL_SA_BLOCK begin=0 end=4090 runs=1 disk_bytes=24540
+EXTERNAL_SA_BLOCK begin=4090 end=8136 runs=2 disk_bytes=48816
+EXTERNAL_SA_BLOCK begin=8136 end=12217 runs=3 disk_bytes=73302
+EXTERNAL_SA_BLOCK begin=12217 end=16253 runs=4 disk_bytes=97518
+EXTERNAL_SA_BLOCK begin=16253 end=20290 runs=5 disk_bytes=121740
+EXTERNAL_SA_BLOCK begin=20290 end=24321 runs=6 disk_bytes=145926
+EXTERNAL_SA_BLOCK begin=24321 end=28386 runs=7 disk_bytes=170316
+EXTERNAL_SA_BLOCK begin=28386 end=32406 runs=8 disk_bytes=194436
+EXTERNAL_SA_BLOCK begin=32406 end=33518 runs=9 disk_bytes=201108
+EXTERNAL_SA_READY D=33519 runs=10 sa_lcp_disk_bytes=201114 run_buffer_bytes=546
+EXTERNAL_DICTIONARY phrases=500 boundaries_bytes=4096 no_dense_D_arrays=1
+EXTERNAL_SA_BLOCK begin=0 end=4055 runs=1 disk_bytes=24330
+EXTERNAL_SA_BLOCK begin=4055 end=8053 runs=2 disk_bytes=48318
+EXTERNAL_SA_BLOCK begin=8053 end=12111 runs=3 disk_bytes=72666
+EXTERNAL_SA_BLOCK begin=12111 end=16180 runs=4 disk_bytes=97080
+EXTERNAL_SA_BLOCK begin=16180 end=20271 runs=5 disk_bytes=121626
+EXTERNAL_SA_BLOCK begin=20271 end=24322 runs=6 disk_bytes=145932
+EXTERNAL_SA_BLOCK begin=24322 end=28388 runs=7 disk_bytes=170328
+EXTERNAL_SA_BLOCK begin=28388 end=32425 runs=8 disk_bytes=194550
+EXTERNAL_SA_BLOCK begin=32425 end=33065 runs=9 disk_bytes=198390
+EXTERNAL_SA_READY D=33066 runs=10 sa_lcp_disk_bytes=198396 run_buffer_bytes=546
+EXTERNAL_DICTIONARY phrases=500 boundaries_bytes=4096 no_dense_D_arrays=1
+EXTERNAL_DICTIONARY_PASS cases=4 passes=3 full_sa_and_lcp=1

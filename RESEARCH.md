@@ -1977,3 +1977,21 @@ for the pile rung. Infrastructure lesson #3: completing a run reaps its worktree
 long-running gates inside it - never leave gates in a worktree past lane exit; hand them to the
 supervisor. k10 memory gate (lost with the worktree) is being re-run from main as a
 supervisor-owned process.
+
+## PARSED-SPACE FRONT-END BANKED: O(parse) RAM PROVEN (yeast gate byte-exact at 2.30 GB peak)
+User architecture ("all operations in parsed space") implemented and PROVEN at yeast scale:
+disk-backed phrase store (parser: 123.7 MiB RSS!), phrase-aligned external suffix runs with
+sequential tournament merge, bounded paged dictionary access. Yeast front-end: all four outputs
+byte-identical, peak RSS 2.30 GB (was 9.03 stock / 5.76 in-RAM-optimized), wall 32m06s, under
+prlimit 3.5 GB. Small cyclic fixture through full audit/write/validation: PASS.
+ANSWER TO THE USER'S CORE QUESTION: construction memory floor is O(parse); the limiter moves out.
+Full-pile blockers, measured honestly:
+(1) DISK: SA/LCP runs cost 6x D (not 2-3x D hoped) -> ~30.1 TB overlapping frontend files +
+    ~15.2 TB slim arrays vs 10.98 TB free. Infeasible on this box without D-shrink or external slim.
+(2) WIDTH: projected distinct-phrase and LF-run counts exceed uint32 downstream interfaces
+    (consistent with the R~5e11 > 2^32 flag from the remap lane) - widening is a pile prerequisite.
+(3) PARSE SPEED: external phrase store parses at ~4.4-6.8 MB/s (83.2 h projected for 1.31 TB) -
+    ~100x slower than the in-RAM DNA parse (440-535 MB/s); needs batching/prefilter engineering.
+NOTE the interaction: the syncmer-trigger lane (GPT-6-SOL, running) attacks D directly - any D/n
+reduction shrinks both the 6xD disk footprint and the dictionary sort; the two lanes compose.
+Gates b-d (k10 byte-identity, pile-frag end-to-end, slice datum) not run; recipes recorded.

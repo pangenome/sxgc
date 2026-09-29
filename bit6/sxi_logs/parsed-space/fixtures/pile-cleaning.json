@@ -1,0 +1,10 @@
+{
+  "source": "/home/erikg/sxgc-piletest/pile-frag.txt",
+  "bytes": 1082130213,
+  "sha256": "69a6b5fde1e79d593217ce815c9f47237e276169e5204831a218124e14e6b6b2",
+  "low_bytes_changed": 229,
+  "high_bytes_changed": 13301465,
+  "replacement": 6,
+  "appended_terminal": 30,
+  "warning": "Measurement corpus only; not the byte-remap implementation. Raw copy retained."
+}
