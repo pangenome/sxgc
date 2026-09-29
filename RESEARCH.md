@@ -2028,3 +2028,13 @@ chrI smoke). UNVERIFIED before pile adoption: (1) slice representativeness (is t
 near-duplicate-heavy? re-sweep 2-3 fresh pile.txt regions); (2) downstream w-parameterization -
 endpoints/slim hardcode w1=10 (known blocker, now the gate to a 100x payoff); (3) L2 retune;
 (4) R ~ 5e11 run-count widening still required regardless.
+
+### Pile provenance note (user): pile.txt documents are SHUFFLED
+Doc-level shuffle (fragment collapse already rules out byte-level). Implications: (1) the D/n
+collapse at long windows cannot be adjacency/duplicate-proximity - the repetition is INTRA-document
+boilerplate (templates, markup, page structure) - the most layout-independent kind; (2) slices are
+IID at document level -> consistent fresh-region sweep results = the strongest representativeness
+evidence; (3) boundary-spanning phrases must draw from a small shared pool (doc starts/tails are
+boilerplate): fragment D at w200 = 11 MB total across 177,753 boundaries proves the pool is small
+under random adjacency - the adversarial test passed by construction. Chi and R of the pile are
+defined for the shuffled corpus AS SHIPPED (document order is part of T; provenance only).
