@@ -1,0 +1,3 @@
+[2026-09-28 23:12:05.781] [info] Using 8 bytes for computing SA of the dictionary
+terminate called after throwing an instance of 'std::bad_alloc'
+  what():  std::bad_alloc

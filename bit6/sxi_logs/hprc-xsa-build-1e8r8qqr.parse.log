@@ -53,3 +53,9 @@ verbose=false
 version=false
 
 [2026-09-28 15:28:19.212] [info] Parsing /home/erikg/hprcv2/HPRC_r2_assemblies_0.6.1.agc
+[2026-09-28 20:56:31.208] [info] Main parser: Replacing hash values with ranks.
+[2026-09-28 22:39:23.268] [info] Main parser: writing dictionary on disk NOT COMPRESSED
+[2026-09-28 22:40:22.916] [info] No properties requested.
+[2026-09-28 22:40:22.916] [info] Main parser: closed
+[2026-09-28 22:40:35.880] [info] Parser Text -	Parse size: 15517245230	Dic Size: 89908955 Dic Total Length: 18522063705
+[Disk Write (bytes): 204818915421]
