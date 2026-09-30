@@ -2292,3 +2292,22 @@ dominates old witnesses away, never re-requires them; new witnesses only in the 
 fork conditions recomputed only at merged boundaries). Never sorts the whole thing; merges are
 O(r) pairwise in a balanced tree (O(R log k) total). Matches the Diaz-Dominguez SPIRE 2025
 "merging big BWTs" motivation with our chi twist.
+
+## CHUNK-MERGE PREMISE AUDIT: two shortcuts are FALSE (counterexamples, brute-verified)
+(1) CHI IS NOT MONOTONE-COMPACT under concatenation: appending text can REVIVE old dominated
+nonwitnesses. Counterexample (brute-verified minimum cover): A=(1,2,2,0x1e), B=(1,0x1e) ->
+chi(A)=3, chi(A+B)=5, old position 2 goes dominated -> REQUIRED. 26/180 aligned chunk-pair
+tests showed revivals - REVIVAL IS COMMON, not a corner case. Verified against lean/Sxgc.lean
+coverage definitions. My monotone-pruning claim was WRONG; incremental chi maintenance by
+pruning alone is impossible.
+(2) CYCLIC-FRAME ROW INSTABILITY: appending B reorders suffixes WITHIN chunk A (rows [0,3,1,4,2]
+-> [0,1,3,2,4] on the counterexample) - cyclic suffix comparison runs through the wrap into the
+appended material, so independently sorted chunk rotations cannot be merged by stable
+interleaving, and chunk-local chi candidates are not reusable as-is.
+THE ARCHITECTURE SURVIVES, CORRECTED: (a) the BWT merge itself is unaffected (BCR/ropebwt merges
+interleave by LF steps, not by stable-order assumption); (b) per-chunk products are BWT +
+samples-for-insertion, NOT chunk chi; (c) chi is derived ONCE from the FINAL merged move map via
+the decoupled phi-LCE slim (or re-derived per round at O(R) - still no full-corpus sort).
+New theory datum for the paper: witness REVIVAL under concatenation - the suffixient set is
+genuinely dynamic, with both shrinkage and local growth. Also relevant to the LM-over-chi story
+(incremental corpus growth has non-monotone state).
