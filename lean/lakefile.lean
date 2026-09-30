@@ -19,3 +19,5 @@ lean_lib LowerBound
 lean_lib SxgcNodup
 lean_lib SxgcRunEdge
 lean_lib SxgcSeam
+
+lean_lib SxgcRevival
