@@ -2232,3 +2232,17 @@ Chain: parse -> front-end -> endpoints -> slim -> sweep (chi = 2,261,916,360) ->
 streamed audit (PASS) -> write -> validate -> PASS. All from one command, no knobs. Per-stage
 journal at logs2/. Summary: TWO published web-text scales now exist (1 GB frag: chi=306,164,765;
 8 GB slice: chi=2,261,916,360; chi/n 0.283 -> 0.2696; chi/R constant 0.770).
+
+## TOKEN-SPACE MEASUREMENT: the naive 10x is NOT real alone (1.83x measured); composes with v6
+Document-aware BPE (4.10 bytes/token) on the fragment: token R'/n' = 0.728 (vs byte 0.368 - runs
+are 2x DENSER per token), token chi'/n' = 0.520 (vs 0.283). The merge-hypothesis FAILED: BPE
+tokenization VAPORIZES run structure - a 100K-symbol near-uniform alphabet makes the BWT almost
+run-free (first-symbol entropy governs runs; bytes' small skewed alphabet is what gave 0.368).
+Net absolute: R' = 0.178n vs byte 0.368n (2.07x fewer runs) - hence total index 7.02 -> 3.83 GB
+(1.83x, incl. a 132.8 MB EF byte-offset table). Pile projection: ~4.5 TB at 290 Gtokens - NOT a
+rescue alone. HOWEVER the levers COMPOSE: samples dominate BOTH routes (always the samples);
+tokens cut sample COUNT 2.07x, the v6 few-bits form cuts sample COST 16B -> ~5-12 bits/run.
+Composed estimate for the fragment: rleBWT ~240 MB + move-members ~120-290 MB + EF chi ~220 MB +
+offset table 133 MB = ~0.7-0.9 GB - the user's half-of-text goal (0.54 GB) is in reach at the
+composition. MEM semantics honestly limited: token MEMs != byte MEMs; in-token matches
+unrecoverable; offset table gives boundaries only. Token-space is the LM-substrate query space.
