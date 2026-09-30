@@ -2178,3 +2178,11 @@ ALL MERGED PIECES NOW GATED IN MAIN: seam policy (yeast+k10+466 chain), w1 param
 byte-identical), memory path (yeast+k10), remap (fragment end-to-end), address-space (3 tiny
 ceilings identical), no-default-ceiling. Sealed-toolset refresh is the only remaining mechanical
 step before the 466 from-zero milestone.
+
+### SEALED TOOLSET v2 REFRESHED + MILESTONE LAUNCH
+tools/build_all.sh sealed-tools-v2: 83 artifacts (was 75; now incl. sxi2_write), manifest
+verified 74e077b6... All gated pieces in one toolset: seam policy, w1 parameterization,
+remap pfp++, address-space defaults, SXI2 converter. THE FROM-ZERO 466 MILESTONE launches:
+xsa build --agc HPRC_r2_assemblies_0.6.1.agc -o hprc.sxi --threads 48 --verify-text-sample 10000
+(sealed-tools-v2; stock rpfbwt - the memory path stays opt-in; peak ~506 GB projected, box
+accommodates; the number must reproduce the validation chi = 2,250,211,129 EXACTLY).
