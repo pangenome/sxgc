@@ -2213,3 +2213,15 @@ Sol-lane retention patches are empty when the lane STAGES files, valid when it l
 UNSTAGED. v2's 27 KB patch applied cleanly; bcr_frontend_v2.cpp (13 KB) compiles warning-free.
 The detached scale gates (yeast + fragment) write verdicts to /tmp/bcr-v2-gates-2ec315bd/
 (outside the reaped worktree); supervisor watcher armed. Infrastructure lesson #4 recorded.
+
+## 8 GB ALIGNED TREND BUILD: chi lands; the web-text scaling law is measured
+chi(8 GB aligned slice) = 2,261,916,360; n = 8,388,474,069; chi/n = 0.2696 (was 0.28293 at 1 GB -
+4.7% relative gain at 8x corpus). R/n 0.3501 (was 0.3676). CRITICAL INVARIANT: chi/R = 0.7703 vs
+0.7697 at 1 GB - CONSTANT across scales; the ratio improvement is pure BWT-run economy, the fork
+fraction never moves. Web-text scaling law (measured at two scales): ~1.2% per doubling, chi/R ~ 0.77.
+Extrapolation to the 1.31 TB pile: R/n ~ 0.32, chi/n ~ 0.25. The 1 GB fragment was the worst case
+(user's prediction, confirmed twice). Also: parse-speedup lane banked - partitioned dict CORRECT
+(byte-identity at -j 1/16/48 on yeast + full 8 GB slice) + rehash fix (264->41ms) gives web 1.4x;
+PROFILING FINDING: the plain-text parse loop is SERIAL in this fork (zero lock contention measured)
+- the text scan, not the dictionary, is the text-path bottleneck; moot for the pile (BCR route),
+and the AGC/pangenome path was already parallel.

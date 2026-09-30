@@ -1,0 +1,825 @@
+diff -ruN a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt	2026-09-29 14:50:53.803226744 +0000
++++ b/CMakeLists.txt	2026-09-30 12:49:44.548496997 +0000
+@@ -7,7 +7,7 @@
+ SET(VERSION "${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_PATCH}")
+ set(PROJECT_VERSION ${VERSION})
+ 
+-set(CMAKE_CXX_STANDARD 11)
++set(CMAKE_CXX_STANDARD 20)
+ set(CMAKE_CXX_STANDARD_REQUIRED ON)
+ set(CMAKE_CXX_EXTENSIONS OFF)
+ 
+@@ -325,6 +325,8 @@
+ set(PFP_PUBLIC_HEADERS
+         ${PROJECT_SOURCE_DIR}/include/internals.hpp
+         ${PROJECT_SOURCE_DIR}/include/pfp_algo.hpp
++        ${PROJECT_SOURCE_DIR}/include/parse_profile.hpp
++        ${PROJECT_SOURCE_DIR}/include/closed_syncmer.hpp
+         ${PROJECT_SOURCE_DIR}/include/text_source.hpp
+         ${PROJECT_SOURCE_DIR}/include/utils.hpp
+         ${PROJECT_SOURCE_DIR}/include/vcf.hpp
+@@ -354,6 +356,14 @@
+ 
+ set(PFP_LIBS ${VCF_LIB_DEPS} ${OMP_LIBRARIES} ${MALLOC_COUNT_LIBRARIES} ${MIMALLOC_D_LIB})
+ 
++option(PFP_BUILD_PARTITION_TEST "Build the standalone partitioned dictionary test" OFF)
++if(PFP_BUILD_PARTITION_TEST)
++    add_executable(pfp_partition_test tests/partitioned_dictionary.cpp)
++    target_link_libraries(pfp_partition_test pfp ${PFP_LIBS})
++    enable_testing()
++    add_test(NAME pfp_partition_test COMMAND pfp_partition_test)
++endif()
++
+ ################################################################################
+ # Tests
+ 
+@@ -446,7 +456,3 @@
+ set(CPACK_DEB_COMPONENT_INSTALL YES)
+ include(CPack)
+ 
+-
+-
+-
+-
+diff -ruN a/README.md b/README.md
+--- a/README.md	2026-09-29 14:50:53.803226744 +0000
++++ b/README.md	2026-09-30 13:00:49.088450818 +0000
+@@ -168,3 +168,22 @@
+ Run `tests/test_agc.py --pfp build/pfp++ --probe build/pfp_source_probe
+ --agc /path/to/agc --agc2flat /path/to/agc2flat` for parse/dictionary,
+ names, seek, separator, and error regressions.
++
++### Dictionary partitions and trigger modes
++
++`-j N` gives the dictionary N hash-owned partitions, each with its own lock
++and allocation pool. A phrase is stored in exactly one partition. The global
++lexicographic sort still determines parse ranks, so changing `-j` does not
++change `.parse`, `.dict`, or `.remap` bytes. For plain text, parsing itself is
++currently serial; `-j` does not create parse workers.
++
++`--syncmer-s S` selects closed syncmer triggers on text or AGC input, with
++`-w` as the k-mer length. `--syncmer-canonical` canonicalizes DNA s-mers by
++reverse complement. Omitting `--syncmer-s` retains the mod-`p` trigger.
++
++Set `PFP_PROFILE=1` to print opt-in wall-time counters for dictionary hash,
++lock wait, lookup, insert, rehash, sorting, rank lookup, and output writes.
++The profile explicitly times growth calls when a partition reaches its load
++threshold, so profiling changes the growth schedule and is for diagnosis.
++`sort_ms` includes rank-map growth; `rank_rehash_ms` is that subset of the
++sort time. The measured counters are wall time and can vary with host load.
+diff -ruN a/include/closed_syncmer.hpp b/include/closed_syncmer.hpp
+--- a/include/closed_syncmer.hpp	1970-01-01 00:00:00.000000000 +0000
++++ b/include/closed_syncmer.hpp	2026-09-30 12:26:07.233595487 +0000
+@@ -0,0 +1,79 @@
++#ifndef PFP_CLOSED_SYNCMER_HPP
++#define PFP_CLOSED_SYNCMER_HPP
++
++#include <cstdint>
++#include <deque>
++#include <stdexcept>
++#include <utility>
++#include <vector>
++
++namespace vcfbwt { namespace pfp {
++
++// Streaming closed syncmer selector: the minimum s-mer hash in a k-mer
++// must occur at either end. Equal minima qualify at either endpoint.
++class ClosedSyncmer {
++    const uint32_t s_, q_;
++    const bool canonical_;
++    std::vector<uint8_t> bases_;
++    std::vector<uint64_t> endpoints_;
++    std::deque<std::pair<uint64_t, uint64_t>> minima_;
++    uint64_t base_power_ = 1, rolling_ = 0, characters_ = 0, smers_ = 0;
++
++    static uint64_t mix(uint64_t x) {
++        x += 0x9e3779b97f4a7c15ULL;
++        x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
++        x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
++        return x ^ (x >> 31);
++    }
++    static uint8_t complement(uint8_t c) {
++        switch (c) {
++            case 'A': return 'T'; case 'a': return 't';
++            case 'C': return 'G'; case 'c': return 'g';
++            case 'G': return 'C'; case 'g': return 'c';
++            case 'T': return 'A'; case 't': return 'a';
++            default: return c; // N and 0x1e are self-complementary
++        }
++    }
++public:
++    ClosedSyncmer(uint32_t k, uint32_t s, bool canonical)
++        : s_(s), q_(s < k ? k - s + 1 : 1), canonical_(canonical), bases_(s), endpoints_(q_) {
++        if (!s || s >= k)
++            throw std::invalid_argument("closed syncmer needs 1 <= s < k");
++        for (uint32_t i = 1; i < s; ++i) base_power_ *= 257;
++    }
++    bool push(uint8_t c) {
++        if (characters_ < s_) {
++            bases_[characters_ % s_] = c;
++            rolling_ = rolling_ * 257 + c;
++            ++characters_;
++            if (characters_ < s_) return false;
++        } else {
++            const uint64_t slot = characters_ % s_;
++            const uint8_t old = bases_[slot];
++            bases_[slot] = c;
++            rolling_ = (rolling_ - old * base_power_) * 257 + c;
++            ++characters_;
++        }
++        uint64_t hash = mix(rolling_);
++        if (canonical_) {
++            uint64_t reverse = 0;
++            for (uint32_t i = 0; i < s_; ++i)
++                reverse = reverse * 257 +
++                    complement(bases_[(characters_ + s_ - 1 - i) % s_]);
++            const uint64_t r = mix(reverse);
++            if (r < hash) hash = r;
++        }
++        const uint64_t index = smers_++;
++        endpoints_[index % q_] = hash;
++        while (!minima_.empty() && minima_.back().second > hash) minima_.pop_back();
++        minima_.emplace_back(index, hash);
++        if (smers_ < q_) return false;
++        const uint64_t first = index - q_ + 1;
++        while (minima_.front().first < first) minima_.pop_front();
++        const uint64_t minimum = minima_.front().second;
++        return endpoints_[first % q_] == minimum || hash == minimum;
++    }
++};
++
++}} // namespace vcfbwt::pfp
++#endif
+diff -ruN a/include/parse_profile.hpp b/include/parse_profile.hpp
+--- a/include/parse_profile.hpp	1970-01-01 00:00:00.000000000 +0000
++++ b/include/parse_profile.hpp	2026-09-30 13:24:04.299353864 +0000
+@@ -0,0 +1,43 @@
++#pragma once
++
++#include <atomic>
++#include <chrono>
++#include <cstdlib>
++#include <cstdint>
++#include <spdlog/spdlog.h>
++
++namespace vcfbwt::pfp {
++
++// Opt-in wall time counters. They are deliberately off for production runs.
++struct ParseProfile {
++    using clock = std::chrono::steady_clock;
++    std::atomic<uint64_t> hashes{0}, lock_wait{0}, lookup{0}, insert{0};
++    std::atomic<uint64_t> dictionary_rehash{0}, rank_rehash{0}, output_writes{0}, sort{0}, rank_lookup{0};
++    std::atomic<uint64_t> probes{0}, misses{0}, rehashes{0}, lock_contentions{0};
++
++    static ParseProfile& instance() { static ParseProfile value; return value; }
++    static bool enabled() {
++        static const bool value = [] {
++            const char* setting = std::getenv("PFP_PROFILE");
++            return setting && *setting && *setting != '0';
++        }();
++        return value;
++    }
++    static uint64_t ns(clock::time_point start) {
++        return std::chrono::duration_cast<std::chrono::nanoseconds>(clock::now() - start).count();
++    }
++    static void add(std::atomic<uint64_t>& counter, clock::time_point start) {
++        counter.fetch_add(ns(start), std::memory_order_relaxed);
++    }
++    void report(const char* name) const {
++        if (!enabled()) return;
++        spdlog::info("PROFILE {} probes={} misses={} rehashes={} lock_contentions={} hash_ms={} lock_wait_ms={} lookup_ms={} insert_ms={} dictionary_rehash_ms={} rank_rehash_ms={} output_write_ms={} sort_ms={} rank_lookup_ms={}",
++            name, probes.load(), misses.load(), rehashes.load(), lock_contentions.load(), hashes.load()/1e6,
++            lock_wait.load()/1e6, lookup.load()/1e6, insert.load()/1e6,
++            dictionary_rehash.load()/1e6, rank_rehash.load()/1e6,
++            output_writes.load()/1e6, sort.load()/1e6,
++            rank_lookup.load()/1e6);
++    }
++};
++
++} // namespace vcfbwt::pfp
+diff -ruN a/include/pfp_algo.hpp b/include/pfp_algo.hpp
+--- a/include/pfp_algo.hpp	2026-09-29 14:50:53.803226744 +0000
++++ b/include/pfp_algo.hpp	2026-09-30 13:02:30.159443794 +0000
+@@ -9,12 +9,16 @@
+ 
+ #include <vector>
+ #include <unordered_map>
++#include <memory>
++#include <memory_resource>
++#include <atomic>
+ #include <set>
+ #include <iostream>
+ #include <fstream>
+ #include <vcf.hpp>
+ #include <utils.hpp>
+ #include <internals.hpp>
++#include <parse_profile.hpp>
+ 
+ 
+ namespace vcfbwt
+@@ -42,67 +46,109 @@
+ 
+     std::size_t insertions_safe_guard = 1000;
+ 
+-    std::mutex dictionary_mutex;
+-
+-    std::atomic_bool sorted;
++    std::mutex sort_mutex;
++    std::atomic_bool sorted{false};
+     
+     struct DictionaryEntry
+     {
+-        std::vector<data_type> phrase;
++        std::pmr::vector<data_type> phrase;
+     
+         DictionaryEntry() = default;
+-        explicit DictionaryEntry(const std::vector<data_type>& s) : phrase(s) {}
++        DictionaryEntry(const std::vector<data_type>& s, std::pmr::memory_resource* arena)
++            : phrase(s.begin(), s.end(), arena) {}
+     };
+     
+-    std::unordered_map<hash_type, DictionaryEntry> hash_string_map;
+-    std::vector<std::pair<std::reference_wrapper<std::vector<data_type>>, hash_type>> sorted_phrases;
++    // A hash owns exactly one shard.  The pool belongs to that shard, so
++    // neither nodes nor bucket arrays are copied between workers.
++    struct Partition
++    {
++        std::mutex mutex;
++        std::pmr::unsynchronized_pool_resource arena;
++        std::pmr::unordered_map<hash_type, DictionaryEntry> entries{&arena};
++    };
++    std::vector<std::unique_ptr<Partition>> partitions;
++    std::atomic<std::size_t> entry_count{0};
++    std::vector<std::pair<std::reference_wrapper<std::pmr::vector<data_type>>, hash_type>> sorted_phrases;
+     std::unordered_map<hash_type, size_type> hash_to_ranks;
++
++    Dictionary() { set_partition_count(1); }
++
++    void set_partition_count(std::size_t count)
++    {
++        if (count == 0 || entry_count.load() != 0)
++        { spdlog::error("Dictionary partitions must be set before insertion and be positive"); std::exit(EXIT_FAILURE); }
++        partitions.clear();
++        partitions.reserve(count);
++        for (std::size_t i = 0; i < count; ++i) partitions.emplace_back(std::make_unique<Partition>());
++    }
++
++    std::size_t partition_count() const { return partitions.size(); }
++
++    // Call only after all insertion workers have joined (statistics path).
++    template <typename F> void for_each_entry(F&& visit) const
++    {
++        for (const auto& partition : partitions)
++            for (const auto& entry : partition->entries) visit(entry.first, entry.second.phrase);
++    }
+     
+     void sort()
+     {
+-        // lock the dictionary
+-        std::lock_guard<std::mutex> guard(dictionary_mutex);
++        // Freeze every partition while collecting references and publishing
++        // ranks; insertions can otherwise race with unordered_map iteration.
++        std::lock_guard<std::mutex> guard(sort_mutex);
++        std::vector<std::unique_lock<std::mutex>> partition_guards;
++        partition_guards.reserve(partitions.size());
++        for (auto& partition : partitions) partition_guards.emplace_back(partition->mutex);
+ 
+         // if sorted, do nothing
+         if (this->sorted.load()) { return; }
+ 
++        auto sort_start = ParseProfile::clock::now();
+         // sort the dictionary
+-        for (auto& entry : this->hash_string_map)
+-        {
+-            this->sorted_phrases.emplace_back(std::ref(entry.second.phrase), entry.first);
+-        }
+-        std::sort(sorted_phrases.begin(), sorted_phrases.end(), ref_smaller<data_type>);
++        this->sorted_phrases.clear();
++        for (auto& partition : partitions)
++            for (auto& entry : partition->entries)
++                this->sorted_phrases.emplace_back(std::ref(entry.second.phrase), entry.first);
++        std::sort(sorted_phrases.begin(), sorted_phrases.end(), [](const auto& a, const auto& b) {
++            return std::lexicographical_compare(a.first.get().begin(), a.first.get().end(),
++                                                b.first.get().begin(), b.first.get().end());
++        });
+ 
+         // insert in hashmap
+         this->hash_to_ranks.clear();
++        const bool profiling = ParseProfile::enabled();
+         for (size_type i = 0; i < sorted_phrases.size(); i++)
+         {
++            if (profiling &&
++                hash_to_ranks.size() + 1 > hash_to_ranks.max_load_factor() * hash_to_ranks.bucket_count()) {
++                const auto rehash_start = ParseProfile::clock::now();
++                hash_to_ranks.rehash(hash_to_ranks.bucket_count() * 2 + 1);
++                ParseProfile::add(ParseProfile::instance().rank_rehash, rehash_start);
++                ParseProfile::instance().rehashes.fetch_add(1, std::memory_order_relaxed);
++            }
+             hash_to_ranks.insert(std::make_pair(sorted_phrases[i].second, i + 1)); // 1 based
+         }
+ 
+         this->sorted.store(true);
++        if (profiling) ParseProfile::add(ParseProfile::instance().sort, sort_start);
+     }
+     
+-    Dictionary() = default;
+-    
+     hash_type add(const std::vector<data_type>& phrase)
+     {
+-        // lock the dictionary
+-        std::lock_guard<std::mutex> guard(dictionary_mutex);
+-
+-        this->sorted.store(false);
+-
+-        hash_type phrase_hash = string_hash(&(phrase[0]), phrase.size());
+-        if (hash_string_map.contains(phrase_hash))
++        hash_type phrase_hash = string_hash((const char*) phrase.data(), phrase.size());
++        auto& partition = *partitions[phrase_hash % partitions.size()];
++        std::lock_guard<std::mutex> guard(partition.mutex);
++        if (partition.entries.contains(phrase_hash))
+         {
+             spdlog::error("Dictionary::addHash collision! Hash already in the dictionary");
+             std::exit(EXIT_FAILURE);
+         }
+ 
+-        DictionaryEntry entry(phrase);
+-        hash_string_map.insert(std::make_pair(phrase_hash, entry));
++        partition.entries.emplace(phrase_hash, DictionaryEntry(phrase, &partition.arena));
++        this->sorted.store(false);
++        auto count = entry_count.fetch_add(1) + 1;
+ 
+-        if (this->size() >= (std::numeric_limits<size_type>::max() - insertions_safe_guard))
++        if (count >= (std::numeric_limits<size_type>::max() - insertions_safe_guard))
+         { spdlog::error("Dictionary::add Dictionary too big for type {}", typeid(size_type).name()); std::exit(EXIT_FAILURE); }
+ 
+         return phrase_hash;
+@@ -110,26 +156,51 @@
+ 
+     hash_type check_and_add(const std::vector<data_type>& phrase)
+     {
+-        // lock the dictionary
+-        std::lock_guard<std::mutex> guard(dictionary_mutex);
+-
+-        // Check if present
+-        hash_type phrase_hash = string_hash((const char*) &(phrase[0]), phrase.size() * sizeof(data_type));
+-        const auto& ptr = hash_string_map.find(phrase_hash);
+-
+-        if ((ptr != hash_string_map.end()) and (ptr->second.phrase != phrase))
++        const bool profiling = ParseProfile::enabled();
++        const auto hash_start = profiling ? ParseProfile::clock::now() : ParseProfile::clock::time_point{};
++        hash_type phrase_hash = string_hash((const char*) phrase.data(), phrase.size() * sizeof(data_type));
++        if (profiling) ParseProfile::add(ParseProfile::instance().hashes, hash_start);
++        auto& partition = *partitions[phrase_hash % partitions.size()];
++        std::unique_lock<std::mutex> guard(partition.mutex, std::defer_lock);
++        if (profiling) {
++            if (!guard.try_lock()) {
++                ParseProfile::instance().lock_contentions.fetch_add(1, std::memory_order_relaxed);
++                const auto wait_start = ParseProfile::clock::now();
++                guard.lock();
++                ParseProfile::add(ParseProfile::instance().lock_wait, wait_start);
++            }
++        } else guard.lock();
++        const auto lookup_start = profiling ? ParseProfile::clock::now() : ParseProfile::clock::time_point{};
++        const auto& ptr = partition.entries.find(phrase_hash);
++        if (profiling) { ParseProfile::add(ParseProfile::instance().lookup, lookup_start); ParseProfile::instance().probes.fetch_add(1, std::memory_order_relaxed); }
++
++        if ((ptr != partition.entries.end()) and
++            (ptr->second.phrase.size() != phrase.size() ||
++             !std::equal(ptr->second.phrase.begin(), ptr->second.phrase.end(), phrase.begin())))
+         {
+             spdlog::error("Dictionary::check_and_add Hash collision! Hash already in the dictionary for a different phrase");
+             std::exit(EXIT_FAILURE);
+         }
+-        else if (ptr != hash_string_map.end()) { return phrase_hash; }
++        else if (ptr != partition.entries.end()) { return phrase_hash; }
+ 
++        if (profiling) {
++            ParseProfile::instance().misses.fetch_add(1, std::memory_order_relaxed);
++            // Explicitly perform a growth that unordered_map would otherwise
++            // perform inside emplace, allowing the two costs to be timed apart.
++            if (partition.entries.size() + 1 > partition.entries.max_load_factor() * partition.entries.bucket_count()) {
++                const auto rehash_start = ParseProfile::clock::now();
++                partition.entries.rehash(partition.entries.bucket_count() * 2 + 1);
++                ParseProfile::add(ParseProfile::instance().dictionary_rehash, rehash_start);
++                ParseProfile::instance().rehashes.fetch_add(1, std::memory_order_relaxed);
++            }
++        }
++        const auto insert_start = profiling ? ParseProfile::clock::now() : ParseProfile::clock::time_point{};
++        partition.entries.emplace(phrase_hash, DictionaryEntry(phrase, &partition.arena));
++        if (profiling) ParseProfile::add(ParseProfile::instance().insert, insert_start);
+         this->sorted.store(false);
++        auto count = entry_count.fetch_add(1) + 1;
+ 
+-        DictionaryEntry entry(phrase);
+-        hash_string_map.insert(std::make_pair(phrase_hash, entry));
+-
+-        if (this->size() >= (std::numeric_limits<size_type>::max() - insertions_safe_guard))
++        if (count >= (std::numeric_limits<size_type>::max() - insertions_safe_guard))
+         { spdlog::error("Dictionary::check_and_add Dictionary too big for type {}", typeid(size_type).name()); std::exit(EXIT_FAILURE); }
+ 
+         return phrase_hash;
+@@ -142,13 +213,13 @@
+ 
+     bool contains(const std::vector<data_type>& phrase)
+     {
+-        // lock the dictionary
+-        std::lock_guard<std::mutex> guard(dictionary_mutex);
+-
+-        hash_type phrase_hash = string_hash((const char*) &(phrase[0]), phrase.size() * sizeof(data_type));
+-        const auto& ptr = hash_string_map.find(phrase_hash);
++        hash_type phrase_hash = string_hash((const char*) phrase.data(), phrase.size() * sizeof(data_type));
++        auto& partition = *partitions[phrase_hash % partitions.size()];
++        std::lock_guard<std::mutex> guard(partition.mutex);
++        const auto& ptr = partition.entries.find(phrase_hash);
+ 
+-        return ((ptr != hash_string_map.end()) and (ptr->second.phrase == phrase));
++        return ptr != partition.entries.end() && ptr->second.phrase.size() == phrase.size() &&
++               std::equal(ptr->second.phrase.begin(), ptr->second.phrase.end(), phrase.begin());
+     }
+ 
+     size_type hash_to_rank(hash_type hash)
+@@ -159,9 +230,9 @@
+         else { spdlog::error("Dictionary::hash_to_rank hash requested not in the dictionary. hash: {}", hash); std::exit(EXIT_FAILURE); }
+     }
+     
+-    size_type size() const { return hash_string_map.size(); }
++    size_type size() const { return entry_count.load(); }
+     
+-    const std::vector<data_type>& sorted_entry_at(std::size_t i)
++    const std::pmr::vector<data_type>& sorted_entry_at(std::size_t i)
+     {
+         if (not this->sorted.load()) { sort(); }
+         return sorted_phrases[i].first.get();
+@@ -176,6 +247,9 @@
+ {
+     hash_type p = 100;
+     hash_type w =  10;
++    std::size_t dictionary_partitions = 1;
++    uint32_t syncmer_s = 0;
++    bool syncmer_canonical = false;
+     bool compress_dictionary = false;
+     bool use_acceleration = false;
+     bool acgt_only = false;
+@@ -205,7 +279,8 @@
+     
+     void init(const std::string& reference);
+     
+-    ReferenceParse(const std::string& reference, const Params& pms) : params(pms) { this->init(reference); }
++    ReferenceParse(const std::string& reference, const Params& pms) : params(pms)
++    { dictionary.set_partition_count(pms.dictionary_partitions); this->init(reference); }
+     const hash_type& operator[](std::size_t i) const { return this->parse[i]; }
+ };
+ 
+@@ -263,7 +338,7 @@
+     {
+         close();
+         std::size_t total_length = 0;
+-        for (auto& entry : dictionary->hash_string_map) { total_length += entry.second.phrase.size(); }
++        dictionary->for_each_entry([&](hash_type, const auto& phrase) { total_length += phrase.size(); });
+     
+         // Fill out statistics
+         this->statistics.parse_length = this->parse_size;
+@@ -338,7 +413,7 @@
+     {
+         close();
+         std::size_t total_length = 0;
+-        for (auto& entry : dictionary.hash_string_map) { total_length += entry.second.phrase.size(); }
++        dictionary.for_each_entry([&](hash_type, const auto& phrase) { total_length += phrase.size(); });
+         
+         // Fill out statistics
+         this->statistics.parse_length = this->parse_size;
+@@ -415,7 +490,7 @@
+     {
+         close();
+         std::size_t total_length = 0;
+-        for (auto& entry : dictionary.hash_string_map) { total_length += entry.second.phrase.size(); }
++        dictionary.for_each_entry([&](hash_type, const auto& phrase) { total_length += phrase.size(); });
+         
+         // Fill out statistics
+         this->statistics.parse_length = this->parse_size;
+@@ -488,7 +563,7 @@
+     {
+         close();
+         std::size_t total_length = 0;
+-        for (auto& entry : dictionary.hash_string_map) { total_length += entry.second.phrase.size() * sizeof(int32_t); }
++        dictionary.for_each_entry([&](hash_type, const auto& phrase) { total_length += phrase.size() * sizeof(int32_t); });
+ 
+         // Fill out statistics
+         this->statistics.parse_length = this->parse_size;
+diff -ruN a/pfp++.cpp b/pfp++.cpp
+--- a/pfp++.cpp	2026-09-29 14:50:53.803226744 +0000
++++ b/pfp++.cpp	2026-09-30 12:26:46.616592751 +0000
+@@ -45,8 +45,10 @@
+     app.add_option("-o,--out-prefix", out_prefix, "Output prefix.")->configurable();
+     app.add_option("-m, --max", max_samples, "Max number of samples to analyze.")->configurable();
+     app.add_option("-S, --samples", samples_file_name, "File containing the list of samples to parse.")->configurable();
+-    app.add_option("-w, --window-size", params.w, "Sliding window size.")->check(CLI::Range(3, 200))->configurable();
++    app.add_option("-w, --window-size", params.w, "Sliding window size (syncmer k).")->check(CLI::Range(3, 512))->configurable();
+     app.add_option("-p, --modulo", params.p, "Modulo used during parsing.")->check(CLI::Range(5, 20000))->configurable();
++    app.add_option("--syncmer-s", params.syncmer_s, "Use closed (w,s) syncmer triggers; text/AGC only.")->check(CLI::Range(1, 511));
++    app.add_flag("--syncmer-canonical", params.syncmer_canonical, "Use reverse-complement canonical s-mer hashes.");
+     app.add_option("-j, --threads", threads, "Number of threads.")->configurable();
+     app.add_option("--tmp-dir", tmp_dir, "Temporary files directory.")->check(CLI::ExistingDirectory)->configurable();
+     app.add_flag("-c, --compress-dictionary", params.compress_dictionary, "Also output compressed the dictionary.")->configurable();
+@@ -63,10 +65,22 @@
+     
+     CLI11_PARSE(app, argc, argv);
+ 
+-    if ((agc_input && (text_file_path.empty() || !fasta_file_path.empty() || !integers_file_path.empty() || !vcfs_file_names.empty())) || (!agc_input && !agc_names.empty()) || (agc_input && threads == 0)) {
++    if (params.syncmer_canonical && !params.syncmer_s) {
++        spdlog::error("--syncmer-canonical requires --syncmer-s"); return EXIT_FAILURE;
++    }
++    if (!params.syncmer_s && params.w > 200) {
++        spdlog::error("mod-p window size must be at most 200"); return EXIT_FAILURE;
++    }
++    if (params.syncmer_s && (params.syncmer_s >= params.w || text_file_path.empty() ||
++        !fasta_file_path.empty() || !integers_file_path.empty() || !vcfs_file_names.empty())) {
++        spdlog::error("Syncmer triggers require text/AGC input and 1 <= s < w"); return EXIT_FAILURE;
++    }
++
++    if ((agc_input && (text_file_path.empty() || !fasta_file_path.empty() || !integers_file_path.empty() || !vcfs_file_names.empty())) || (!agc_input && !agc_names.empty()) || threads == 0) {
+         spdlog::error("--agc requires only -t; --agc-names requires --agc; threads must be positive");
+         return EXIT_FAILURE;
+     }
++    params.dictionary_partitions = threads;
+ 
+     if (verbose) { spdlog::set_level(spdlog::level::debug); }
+     
+diff -ruN a/src/pfp_algo.cpp b/src/pfp_algo.cpp
+--- a/src/pfp_algo.cpp	2026-09-29 14:50:53.803226744 +0000
++++ b/src/pfp_algo.cpp	2026-09-30 12:52:15.852486483 +0000
+@@ -7,6 +7,7 @@
+ #include <pfp_algo.hpp>
+ #include <text_source.hpp>
+ #include <byte_remap.hpp>
++#include <closed_syncmer.hpp>
+ 
+ //------------------------------------------------------------------------------
+ 
+@@ -335,6 +336,7 @@
+ void
+ vcfbwt::pfp::ParserFasta::init(const Params& params, const std::string& prefix)
+ {
++    dictionary.set_partition_count(params.dictionary_partitions);
+     this->params = params;
+     this->w = this->params.w;
+     this->p = this->params.p;
+@@ -470,8 +472,12 @@
+         {
+             hash_type hash;
+             in_hash.read((char*) &hash, sizeof(hash_type));
++            const auto rank_start = ParseProfile::enabled() ? ParseProfile::clock::now() : ParseProfile::clock::time_point{};
+             size_type rank = this->dictionary.hash_to_rank(hash);
++            if (ParseProfile::enabled()) ParseProfile::add(ParseProfile::instance().rank_lookup, rank_start);
++            const auto write_start = ParseProfile::enabled() ? ParseProfile::clock::now() : ParseProfile::clock::time_point{};
+             out_ranks.write((char*) &rank, sizeof(size_type));
++            if (ParseProfile::enabled()) ParseProfile::add(ParseProfile::instance().output_writes, write_start);
+         }
+         in_hash.close();
+         vcfbwt::DiskWrites::update(out_ranks.tellp());
+@@ -485,8 +491,10 @@
+     
+     for (std::size_t i = 0; i < this->dictionary.size(); i++)
+     {
++        const auto write_start = ParseProfile::enabled() ? ParseProfile::clock::now() : ParseProfile::clock::time_point{};
+         dict.write((char*) this->dictionary.sorted_entry_at(i).data(), this->dictionary.sorted_entry_at(i).size());
+         dict.put(ENDOFWORD);
++        if (ParseProfile::enabled()) ParseProfile::add(ParseProfile::instance().output_writes, write_start);
+     }
+     dict.put(ENDOFDICT);
+     
+@@ -496,6 +504,7 @@
+     vcfbwt::pfp::PropertiesWriter<vcfbwt::char_type> properties_out(this->out_file_prefix, this->params);
+     properties_out.write();
+ 
++    ParseProfile::instance().report("fasta");
+     spdlog::info("Main parser: closed");
+ }
+ 
+@@ -504,6 +513,7 @@
+ void
+ vcfbwt::pfp::ParserText::init(const Params& params, const std::string& prefix)
+ {
++    dictionary.set_partition_count(params.dictionary_partitions);
+     this->params = params;
+     this->w = this->params.w;
+     this->p = this->params.p;
+@@ -523,6 +533,9 @@
+     
+     // Karp Robin Hash Function for sliding window
+     Mersenne_KarpRabinHash kr_hash(this->params.w);
++    std::unique_ptr<ClosedSyncmer> syncmer;
++    if (params.syncmer_s)
++        syncmer.reset(new ClosedSyncmer(params.w, params.syncmer_s, params.syncmer_canonical));
+     
+     // First sequence start with one dollar
+     phrase.emplace_back(DOLLAR);
+@@ -541,18 +554,25 @@
+             const unsigned char c = remap.map(static_cast<unsigned char>(input[i]));
+ 
+             phrase.push_back(c);
+-            if (phrase.size() == params.w) { kr_hash.initialize(phrase.data(), params.w); }
+-            else if (phrase.size() > params.w) { kr_hash.update(phrase[phrase.size() - params.w - 1], phrase[phrase.size() - 1]); }
++            bool trigger = false;
++            if (syncmer) trigger = syncmer->push(c);
++            else {
++                if (phrase.size() == params.w) { kr_hash.initialize(phrase.data(), params.w); }
++                else if (phrase.size() > params.w) { kr_hash.update(phrase[phrase.size() - params.w - 1], phrase.back()); }
++                if (phrase.size() > params.w) trigger = kr_hash.get_hash() % params.p == 0;
++            }
+ 
+-            if ((phrase.size() > this->params.w) and ((kr_hash.get_hash() % this->params.p) == 0))
++            if (phrase.size() > this->params.w && trigger)
+             {
+                 hash_type hash = this->dictionary.check_and_add(phrase);
+ 
++                const auto write_start = ParseProfile::enabled() ? ParseProfile::clock::now() : ParseProfile::clock::time_point{};
+                 out_file.write((char*) (&hash), sizeof(hash_type)); this->parse_size += 1;
++                if (ParseProfile::enabled()) ParseProfile::add(ParseProfile::instance().output_writes, write_start);
+ 
+                 phrase.erase(phrase.begin(), phrase.end() - this->params.w); // Keep the last w chars
+ 
+-                kr_hash.reset(); kr_hash.initialize(phrase.data(), params.w);
++                if (!syncmer) { kr_hash.reset(); kr_hash.initialize(phrase.data(), params.w); }
+             }
+         }
+     }
+@@ -567,7 +587,9 @@
+         
+         hash_type hash = this->dictionary.check_and_add(phrase);
+         
++        const auto write_start = ParseProfile::enabled() ? ParseProfile::clock::now() : ParseProfile::clock::time_point{};
+         out_file.write((char*) (&hash), sizeof(hash_type)); this->parse_size += 1;
++        if (ParseProfile::enabled()) ParseProfile::add(ParseProfile::instance().output_writes, write_start);
+     }
+     else { spdlog::error("A sequence doesn't have w DOLLAR at the end!"); std::exit(EXIT_FAILURE); }
+ 
+@@ -594,12 +616,18 @@
+         std::ifstream in_hash(tmp_out_file_name);
+         if (not in_hash.is_open()) { spdlog::error("Can't open {}", tmp_out_file_name); std::exit(EXIT_FAILURE); }
+     
++        // Keep the timed rank probes separate from the initial sort/build.
++        if (ParseProfile::enabled()) this->dictionary.sort();
+         for (std::size_t i = 0; i < this->parse_size; i++)
+         {
+             hash_type hash;
+             in_hash.read((char*) &hash, sizeof(hash_type));
++            const auto rank_start = ParseProfile::enabled() ? ParseProfile::clock::now() : ParseProfile::clock::time_point{};
+             size_type rank = this->dictionary.hash_to_rank(hash);
++            if (ParseProfile::enabled()) ParseProfile::add(ParseProfile::instance().rank_lookup, rank_start);
++            const auto write_start = ParseProfile::enabled() ? ParseProfile::clock::now() : ParseProfile::clock::time_point{};
+             out_ranks.write((char*) &rank, sizeof(size_type));
++            if (ParseProfile::enabled()) ParseProfile::add(ParseProfile::instance().output_writes, write_start);
+         }
+         in_hash.close();
+         vcfbwt::DiskWrites::update(out_ranks.tellp());
+@@ -613,8 +641,10 @@
+     
+     for (std::size_t i = 0; i < this->dictionary.size(); i++)
+     {
++        const auto write_start = ParseProfile::enabled() ? ParseProfile::clock::now() : ParseProfile::clock::time_point{};
+         dict.write((char*) this->dictionary.sorted_entry_at(i).data(), this->dictionary.sorted_entry_at(i).size());
+         dict.put(ENDOFWORD);
++        if (ParseProfile::enabled()) ParseProfile::add(ParseProfile::instance().output_writes, write_start);
+     }
+     
+     dict.put(ENDOFDICT);
+@@ -625,6 +655,7 @@
+     vcfbwt::pfp::PropertiesWriter<vcfbwt::char_type> properties_out(this->out_file_prefix, this->params);
+     properties_out.write();
+ 
++    ParseProfile::instance().report("text");
+     spdlog::info("Main parser: closed");
+ }
+ 
+@@ -633,6 +664,7 @@
+ void
+ vcfbwt::pfp::ParserIntegers::init(const Params& params, const std::string& prefix)
+ {
++    dictionary.set_partition_count(params.dictionary_partitions);
+     this->params = params;
+     this->w = this->params.w;
+     this->p = this->params.p;
+@@ -756,4 +788,4 @@
+     spdlog::info("Main parser: closed");
+ }
+ 
+-//------------------------------------------------------------------------------
+\ No newline at end of file
++//------------------------------------------------------------------------------
+diff -ruN a/tests/partitioned_dictionary.cpp b/tests/partitioned_dictionary.cpp
+--- a/tests/partitioned_dictionary.cpp	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/partitioned_dictionary.cpp	2026-09-30 13:02:52.419442247 +0000
+@@ -0,0 +1,37 @@
++#include <pfp_algo.hpp>
++#include <thread>
++
++int main()
++{
++    using byte = vcfbwt::char_type;
++    vcfbwt::pfp::Dictionary<byte> partitioned;
++    vcfbwt::pfp::Dictionary<byte> single;
++    partitioned.set_partition_count(16);
++    constexpr std::size_t unique_phrases = 2000;
++    std::vector<std::thread> workers;
++    for (std::size_t worker = 0; worker < 8; ++worker) {
++        workers.emplace_back([&] {
++            for (std::size_t i = 0; i < unique_phrases; ++i) {
++                const std::string text = "phrase-" + std::to_string(i);
++                partitioned.check_and_add(std::vector<byte>(text.begin(), text.end()));
++            }
++        });
++    }
++    for (auto& worker : workers) worker.join();
++    if (partitioned.size() != unique_phrases) return 1;
++    for (std::size_t i = 0; i < unique_phrases; ++i) {
++        const std::string text = "phrase-" + std::to_string(i);
++        single.check_and_add(std::vector<byte>(text.begin(), text.end()));
++    }
++    partitioned.sort();
++    single.sort();
++    for (std::size_t i = 0; i < unique_phrases; ++i) {
++        if (partitioned.sorted_entry_at(i) != single.sorted_entry_at(i)) return 2;
++    }
++    const std::string extra = "zzzz";
++    partitioned.check_and_add(std::vector<byte>(extra.begin(), extra.end()));
++    partitioned.sort();
++    if (partitioned.size() != unique_phrases + 1 ||
++        partitioned.sorted_entry_at(unique_phrases) != std::pmr::vector<byte>(extra.begin(), extra.end())) return 3;
++    return 0;
++}
+diff -ruN a/tests/test_closed_syncmer.cpp b/tests/test_closed_syncmer.cpp
+--- a/tests/test_closed_syncmer.cpp	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_closed_syncmer.cpp	2026-09-30 12:26:07.233595487 +0000
+@@ -0,0 +1,70 @@
++#include <closed_syncmer.hpp>
++#include <algorithm>
++#include <cassert>
++#include <cstdint>
++#include <stdexcept>
++#include <string>
++#include <vector>
++
++using vcfbwt::pfp::ClosedSyncmer;
++
++static uint64_t hash_smer(const std::string& text, int start, int s) {
++    uint64_t x = 0;
++    for (int i = 0; i < s; ++i)
++        x = x * 257 + static_cast<uint8_t>(text[start+i]);
++    x += 0x9e3779b97f4a7c15ULL;
++    x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
++    x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
++    return x ^ (x >> 31);
++}
++
++static std::vector<int> selected(const std::string& text, int k, int s, bool canonical) {
++    ClosedSyncmer scanner(k, s, canonical);
++    std::vector<int> positions;
++    for (int i = 0; i < static_cast<int>(text.size()); ++i)
++        if (scanner.push(static_cast<uint8_t>(text[i]))) positions.push_back(i);
++    return positions;
++}
++
++int main() {
++    bool rejected = false;
++    try { ClosedSyncmer invalid(10, 10, false); }
++    catch (const std::invalid_argument&) { rejected = true; }
++    assert(rejected);
++    std::string dna;
++    uint32_t state = 7;
++    for (int i = 0; i < 100000; ++i) {
++        state = state * 1664525 + 1013904223;
++        dna.push_back("ACGT"[state >> 30]);
++    }
++    for (int k : {10, 30, 100}) {
++        const int s = 5;
++        const auto hits = selected(dna, k, s, false);
++        assert(!hits.empty());
++        for (size_t i = 1; i < hits.size(); ++i) assert(hits[i] - hits[i-1] <= k-s+1);
++        auto canonical_hits = selected(dna, k, s, true);
++        std::string reverse(dna.rbegin(), dna.rend());
++        for (char& c : reverse) c = c == 'A' ? 'T' : c == 'T' ? 'A' : c == 'C' ? 'G' : 'C';
++        auto reverse_hits = selected(reverse, k, s, true);
++        std::reverse(reverse_hits.begin(), reverse_hits.end());
++        for (int& position : reverse_hits) position = static_cast<int>(dna.size()) - 1 - position + k - 1;
++        assert(canonical_hits == reverse_hits);
++    }
++    std::string text = dna.substr(0, 1000) + "  punctuation, N; words!";
++    const auto observed = selected(text, 13, 4, false);
++    std::vector<int> expected;
++    for (int end = 12; end < static_cast<int>(text.size()); ++end) {
++        uint64_t first = hash_smer(text, end-12, 4);
++        uint64_t last = hash_smer(text, end-3, 4);
++        uint64_t minimum = first;
++        for (int start = end-11; start <= end-3; ++start)
++            minimum = std::min(minimum, hash_smer(text, start, 4));
++        if (first == minimum || last == minimum) expected.push_back(end);
++    }
++    assert(observed == expected);
++    const auto tied = selected(std::string(1000, 'A'), 20, 4, false);
++    assert(tied.size() == 981); // equal endpoint hashes select every k-mer
++    auto with_separator = selected(std::string(50, 'A') + '\x1e' + std::string(50, 'A'), 20, 4, true);
++    for (size_t i = 1; i < with_separator.size(); ++i)
++        assert(with_separator[i] - with_separator[i-1] <= 17);
++}
