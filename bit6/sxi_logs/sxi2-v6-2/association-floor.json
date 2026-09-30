@@ -1,0 +1,20 @@
+[
+  {
+    "artifact": "yeast235",
+    "one_permutation_bits_per_run": 25.145728170491235,
+    "one_boundary_set_bits_per_run": 6.468135028966498,
+    "two_permutations_two_sets_bits_per_run": 63.227726398915465
+  },
+  {
+    "artifact": "pile-frag",
+    "one_permutation_bits_per_run": 27.124493788175624,
+    "one_boundary_set_bits_per_run": 2.58140523439521,
+    "two_permutations_two_sets_bits_per_run": 59.411798045141666
+  },
+  {
+    "artifact": "k10",
+    "one_permutation_bits_per_run": 29.34982536826582,
+    "one_boundary_set_bits_per_run": 5.416241974998555,
+    "two_permutations_two_sets_bits_per_run": 69.53213468652875
+  }
+]

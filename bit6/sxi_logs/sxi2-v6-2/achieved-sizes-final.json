@@ -1,0 +1,147 @@
+[
+  {
+    "artifact": "yeast235",
+    "bytes": 1010069024,
+    "v5_bytes": 1413689216,
+    "v5_ratio": 0.7144915675723738,
+    "phi_lf_bits_per_run": 66.03345844600733,
+    "members": {
+      "1": {
+        "codec": 101,
+        "bytes": 98951370,
+        "count": 100905045
+      },
+      "4": {
+        "codec": 4,
+        "bytes": 12,
+        "count": 0
+      },
+      "5": {
+        "codec": 105,
+        "bytes": 77088381,
+        "count": 85404336
+      },
+      "6": {
+        "codec": 6,
+        "bytes": 351876,
+        "count": 351876
+      },
+      "8": {
+        "codec": 118,
+        "bytes": 832888637,
+        "count": 100905045
+      },
+      "9": {
+        "codec": 109,
+        "bytes": 0,
+        "count": 0
+      },
+      "10": {
+        "codec": 110,
+        "bytes": 0,
+        "count": 100905045
+      },
+      "11": {
+        "codec": 111,
+        "bytes": 788344,
+        "count": 98541
+      }
+    },
+    "gate": "PASSED"
+  },
+  {
+    "artifact": "pile-frag",
+    "bytes": 3655580696,
+    "v5_bytes": 5196757368,
+    "v5_ratio": 0.7034349378152457,
+    "phi_lf_bits_per_run": 63.36040769680386,
+    "members": {
+      "1": {
+        "codec": 101,
+        "bytes": 358311934,
+        "count": 397723010
+      },
+      "4": {
+        "codec": 4,
+        "bytes": 12,
+        "count": 0
+      },
+      "5": {
+        "codec": 105,
+        "bytes": 144174354,
+        "count": 306164765
+      },
+      "7": {
+        "codec": 7,
+        "bytes": 256,
+        "count": 256
+      },
+      "8": {
+        "codec": 118,
+        "bytes": 3149986508,
+        "count": 397723010
+      },
+      "9": {
+        "codec": 109,
+        "bytes": 0,
+        "count": 0
+      },
+      "10": {
+        "codec": 110,
+        "bytes": 0,
+        "count": 397723010
+      },
+      "11": {
+        "codec": 111,
+        "bytes": 3107232,
+        "count": 388402
+      }
+    },
+    "gate": "PASSED"
+  },
+  {
+    "artifact": "k10",
+    "bytes": 20235882024,
+    "v5_bytes": 28372620184,
+    "v5_ratio": 0.7132186556182604,
+    "phi_lf_bits_per_run": 72.01324718002013,
+    "members": {
+      "1": {
+        "codec": 101,
+        "bytes": 2227364376,
+        "count": 1859825862
+      },
+      "4": {
+        "codec": 4,
+        "bytes": 12,
+        "count": 0
+      },
+      "5": {
+        "codec": 105,
+        "bytes": 1252474932,
+        "count": 1627067257
+      },
+      "8": {
+        "codec": 118,
+        "bytes": 16741512439,
+        "count": 1859825862
+      },
+      "9": {
+        "codec": 109,
+        "bytes": 0,
+        "count": 0
+      },
+      "10": {
+        "codec": 110,
+        "bytes": 0,
+        "count": 1859825862
+      },
+      "11": {
+        "codec": 111,
+        "bytes": 14529912,
+        "count": 1816237
+      }
+    },
+    "gate": "PASSED"
+  }
+]

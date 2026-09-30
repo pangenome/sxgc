@@ -1,0 +1,52 @@
+[
+  {
+    "corpus": "yeast235",
+    "preflight_below_v5": true,
+    "version_4": true,
+    "exact_projected_bytes": true,
+    "below_v5": true,
+    "chi_exact": true,
+    "derived_lf_empty": true,
+    "raw_sample_members_absent": true,
+    "native_byte_parity": true,
+    "native_sha256": "5eb69b87b794b709d08d39df379fe1511241bda879f80e2139dd9f2404725519",
+    "native_records": 423,
+    "http_byte_parity": true,
+    "http_median_ms": 382.2746160440147,
+    "v5_http_median_ms": 377.9311910038814,
+    "bounded_byte_parity": true
+  },
+  {
+    "corpus": "pile-frag",
+    "preflight_below_v5": true,
+    "version_4": true,
+    "exact_projected_bytes": true,
+    "below_v5": true,
+    "chi_exact": true,
+    "derived_lf_empty": true,
+    "raw_sample_members_absent": true,
+    "native_byte_parity": true,
+    "native_sha256": "fb6e3952d7d140e62363cc681d5c37c0d80774de8358dc56fc41442a57701907",
+    "native_records": 4,
+    "http_byte_parity": true,
+    "http_median_ms": 0.3615400055423379,
+    "v5_http_median_ms": 0.35954004852101207,
+    "bounded_byte_parity": true
+  },
+  {
+    "corpus": "k10",
+    "preflight_below_v5": true,
+    "version_4": true,
+    "exact_projected_bytes": true,
+    "below_v5": true,
+    "chi_exact": true,
+    "derived_lf_empty": true,
+    "raw_sample_members_absent": true,
+    "native_byte_parity": true,
+    "native_sha256": "383daa41ad0b470945034f273ab571831d6c59d3300ece1d7aa1666effc9bcee",
+    "native_records": 205,
+    "http_byte_parity": true,
+    "http_median_ms": 3.473654971458018,
+    "v5_http_median_ms": 2.9258939903229475
+  }
+]

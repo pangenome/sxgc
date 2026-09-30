@@ -1,0 +1,8 @@
+{
+  "corpus": "yeast235",
+  "version": 4,
+  "bytes": 1010069024,
+  "native_sha256": "5eb69b87b794b709d08d39df379fe1511241bda879f80e2139dd9f2404725519",
+  "http_median_ms": 382.2746160440147,
+  "http_v5_median_ms": 377.9311910038814
+}

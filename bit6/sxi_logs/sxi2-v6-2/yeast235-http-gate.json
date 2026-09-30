@@ -1,0 +1,24 @@
+{
+  "label": "yeast235",
+  "pattern": "ATCAAGAGGGAATTAAGATCAAGATCAAAATATCAACCAATTCAAGTTTC",
+  "sample": 16,
+  "byte_parity": true,
+  "old": {
+    "requests": 5,
+    "hits": 32,
+    "bytes": 3116,
+    "sha256": "2ebe33c33ce4e238ecac5ae09a99ad758e047e9bd949e13a86bb43e7db277c4a",
+    "median_ms": 2473.4794279793277,
+    "mean_ms": 2481.894752383232,
+    "requests_per_second": 0.4029179718599078
+  },
+  "new": {
+    "requests": 5,
+    "hits": 32,
+    "bytes": 3116,
+    "sha256": "2ebe33c33ce4e238ecac5ae09a99ad758e047e9bd949e13a86bb43e7db277c4a",
+    "median_ms": 382.2746160440147,
+    "mean_ms": 384.0122093912214,
+    "requests_per_second": 2.6040838690658052
+  }
+}

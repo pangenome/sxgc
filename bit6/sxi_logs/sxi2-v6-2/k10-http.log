@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "/home/erikg/worktrees/sxgc/pi-worktree-b25eaecb-0f98-4a12-80f2-085c95964cec-s0-0/bit6/sxi_logs/sxi2-v6-2/http_gate.py", line 62, in <module>
+    new,new_stat=query(a.new,'new')
+                 ^^^^^^^^^^^^^^^^^^
+  File "/home/erikg/worktrees/sxgc/pi-worktree-b25eaecb-0f98-4a12-80f2-085c95964cec-s0-0/bit6/sxi_logs/sxi2-v6-2/http_gate.py", line 40, in query
+    else:raise RuntimeError('server did not become ready')
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: server did not become ready

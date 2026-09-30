@@ -1,0 +1,24 @@
+{
+  "label": "pile-frag",
+  "pattern": "and the",
+  "sample": 16,
+  "byte_parity": true,
+  "old": {
+    "requests": 200,
+    "hits": 16,
+    "bytes": 1104,
+    "sha256": "b07746010a52cc1900e37708bae060b09255af97184945c9b750c8fca922a61b",
+    "median_ms": 0.3736549988389015,
+    "mean_ms": 0.3775478567695245,
+    "requests_per_second": 2648.6708428342467
+  },
+  "new": {
+    "requests": 200,
+    "hits": 16,
+    "bytes": 1104,
+    "sha256": "b07746010a52cc1900e37708bae060b09255af97184945c9b750c8fca922a61b",
+    "median_ms": 0.3615400055423379,
+    "mean_ms": 0.3659353917464614,
+    "requests_per_second": 2732.722831829425
+  }
+}

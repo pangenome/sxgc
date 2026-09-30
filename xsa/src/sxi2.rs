@@ -177,7 +177,7 @@ impl Phi {
         need(m.count==c.r,"phi member count");
         let file=File::open(path).unwrap();
         let map=Arc::new(unsafe{memmap2::Mmap::map(&file).unwrap()});
-        let mut phi=Self{map,off:m.offset as usize,compact:c.version==3,
+        let mut phi=Self{map,off:m.offset as usize,compact:c.version>=3,
             u_low_off:0,u_high_off:0,v_off:0,run_off:0,u_low_width:0,u_high_bits:0,v_width:0,run_width:0,
             select:Vec::new(),inverse:Vec::new(),r:c.r,n:c.n,escape:Vec::new(),payload:0,width:0};
         if phi.compact {
@@ -309,17 +309,30 @@ impl Phi {
 fn gcd_u64(mut a:u64,mut b:u64)->u64{while b!=0{let t=a%b;a=b;b=t;}a}
 
 #[derive(Clone)]
-pub struct LfMap { map: Arc<memmap2::Mmap>, off: usize, width: u32, r: u64 }
+pub struct LfMap { map: Option<Arc<memmap2::Mmap>>, starts: Option<Arc<Vec<u64>>>, off: usize, width: u32, r: u64 }
 impl LfMap {
     pub fn load(path:&str,c:&sxi::Container,heads:&[u8],lengths:&[u32],freq:&[u64])->Self {
         let m=c.member(10);
         let width=(64-c.n.saturating_sub(1).leading_zeros()).max(1);
+        if c.version==4 {
+            need(m.count==c.r&&m.bytes==0,"derived LF member size");
+            let mut seen=[0u64;256];
+            let mut starts=Vec::with_capacity(c.r as usize);
+            for i in 0..c.r as usize {
+                let ch=heads[i] as usize;
+                let value=freq[ch].checked_add(seen[ch]).unwrap_or_else(||die("SXI2: LF overflow"));
+                need(value<c.n&&(lengths[i] as u64)<=c.n-value,"derived LF interval");
+                starts.push(value);
+                seen[ch]+=lengths[i] as u64;
+            }
+            return Self{map:None,starts:Some(Arc::new(starts)),off:0,width,r:c.r};
+        }
         need(m.count==c.r&&m.bytes==8+(c.r*width as u64+7)/8,"LF map size");
         let file=File::open(path).unwrap();let map=Arc::new(unsafe{memmap2::Mmap::map(&file).unwrap()});
         let off=m.offset as usize+8;
         need(u64le(&map[m.offset as usize..off])==width as u64,"LF map width");
         padding(&map[off..(m.offset+m.bytes) as usize],c.r*width as u64);
-        let lf=Self{map,off,width,r:c.r};
+        let lf=Self{map:Some(map),starts:None,off,width,r:c.r};
         let mut seen=[0u64;256];
         for i in 0..c.r as usize {
             let ch=heads[i] as usize;let value=freq[ch]+seen[ch];
@@ -330,9 +343,11 @@ impl LfMap {
     }
     pub fn start(&self,run:u64)->u64 {
         need(run<self.r,"LF run range");
+        if let Some(ref starts)=self.starts {return starts[run as usize];}
+        let map=self.map.as_ref().unwrap();
         let pos=run*self.width as u64;let p=self.off+(pos/8) as usize;
         let shift=pos%8;let bytes=((shift+self.width as u64+7)/8) as usize;
-        let mut raw=0u128;for k in 0..bytes {raw|=(self.map[p+k] as u128)<<(8*k);}
+        let mut raw=0u128;for k in 0..bytes {raw|=(map[p+k] as u128)<<(8*k);}
         ((raw>>shift)&((1u128<<self.width)-1)) as u64
     }
 }

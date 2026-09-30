@@ -1,0 +1,22 @@
+{
+  "command": [
+    "xsa/target/release/xsa",
+    "mems",
+    "--sxi",
+    "/mnt/nvme3n1/erikg/sxi2-v6-2-b25eaecb/yeast235.sxi2",
+    "--reads",
+    "/home/erikg/worktrees/sxgc/pi-worktree-b25eaecb-0f98-4a12-80f2-085c95964cec-s0-0/bit6/sxi_logs/sxi2-v5/yeast235.reads2.fa",
+    "--min-len",
+    "20",
+    "-j",
+    "1",
+    "--mode",
+    "dna",
+    "--out",
+    "ropebwt3",
+    "-p",
+    "10"
+  ],
+  "wall_seconds": 37.42380224505905,
+  "exit": 0
+}

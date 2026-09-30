@@ -1,0 +1,18 @@
+{
+  "command": [
+    "xsa/target/release/xsa",
+    "mems",
+    "--sxi",
+    "/mnt/nvme3n1/erikg/sxi2-v6-2-b25eaecb/pile-frag.sxi2",
+    "--reads",
+    "/home/erikg/worktrees/sxgc/pi-worktree-b25eaecb-0f98-4a12-80f2-085c95964cec-s0-0/bit6/sxi_logs/sxi2-v5/pile-frag.reads2.fa",
+    "--min-len",
+    "50",
+    "-j",
+    "1",
+    "--mode",
+    "text"
+  ],
+  "wall_seconds": 171.3223550079856,
+  "exit": 0
+}

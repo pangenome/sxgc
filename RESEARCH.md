@@ -2263,3 +2263,15 @@ Explicit-association cost: 25.146 / 27.124 / 29.350 bits/run (yeast / fragment /
 optimistic totals 575.9 MB / 1.982 GB / 11.58 GB - the corrected v6-2 targets (2.4-2.6x over v5).
 The 12-bit two-list form is information-theoretically impossible (association lost); a BWT-derived
 association is the open research question, deferred.
+
+## SXI2 v6-2 SHIPPED AND BANKED (format version 4; verified by binary this time)
+All gates green at all three scales: chi exact (85,404,336 / 306,164,765 / 1,627,067,257),
+native MEM byte-parity (423/4/205 records), HTTP byte-parity, format differential, escape + bounded
+MEM checks. Achieved: yeast 1.010 GB (v5 1.414), fragment 3.656 GB (v5 5.197), k10 20.24 GB
+(v5 28.37) - 29% off v5, ~52% off SXI1. Version 4 derives LF starts from the run stream (removed
+from storage); phi association remains the whale at 63-72 bits/run vs the preflight floor 25-30
+(optimistic totals 576 MB / 1.98 GB / 11.6 GB still available). Warm throughput within noise
+(yeast 382 ms, frag 0.36 ms; k10 3.47 vs 2.93 ms - slightly slower, noted). Bank path: unstaged
+retention patch (165 KB, applied clean), version-4 writer verified by built binary, cargo green,
+small gates re-run from main. NEXT (optional v6-3): the association representation gap 63-72 ->
+25-30 bits/run; composed with token-space = the half-of-text goal still in reach.

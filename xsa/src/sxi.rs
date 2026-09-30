@@ -86,7 +86,7 @@ impl Container {
         }
         rd(&mut f, &mut b[4..]);
         let version = u32at(&b,4);
-        need((&b[..4]==b"SXI1" && version==1) || (&b[..4]==b"SXI2" && (version==2||version==3)), "unsupported version");
+        need((&b[..4]==b"SXI1" && version==1) || (&b[..4]==b"SXI2" && (2..=4).contains(&version)), "unsupported version");
         let n = u64at(&b, 8);
         let k = u64at(&b, 16);
         let r = u64at(&b, 24);
@@ -135,7 +135,7 @@ impl Container {
                     if optional==1 && flags&16!=0 {7} else {6+i-3}
                 } else {8+i-(3+optional)}
             };
-            let expected_codec=if version==3 {match m.id {1=>101,5=>105,8=>118,9=>109,10=>110,11=>111,_=>m.id}}
+            let expected_codec=if version>=3 {match m.id {1=>101,5=>105,8=>118,9=>109,10=>110,11=>111,_=>m.id}}
                 else if version==2 {match m.id {1=>101,5=>105,8=>108,9=>109,_=>m.id}} else {m.id};
             need(m.id==expected_id && m.codec==expected_codec && u32at(&d,36)==0,
                 "unsupported/duplicate member");
@@ -168,7 +168,7 @@ impl Container {
         need(
             c.member(1).count == r
                 && (version!=1 || c.member(1).bytes == 2048 + 5 * r)
-                && (version==3 || (c.member(2).count == r
+                && (version>=3 || (c.member(2).count == r
                     && c.member(3).count == r && c.member(3).bytes == 8 * r)),
             "run/sample sizes",
         );
@@ -219,7 +219,7 @@ impl Container {
             need(c.sigma[30] == 30, "remap moves separator");
         }
         let mut w=0;
-        if version!=3 {
+        if version<3 {
             let tail = c.member(2);
             at(&mut f, tail.offset);
             let mut hb = [0; 9];rd(&mut f, &mut hb);
@@ -231,7 +231,7 @@ impl Container {
         if version>=2 {
             let (frequencies,heads,lengths)=super::sxi2::runs(path,c.member(1),n,r);
             super::sxi2::Phi::load(path,&c,&frequencies);
-            if version==3 {super::sxi2::LfMap::load(path,&c,&heads,&lengths,&frequencies);}
+            if version>=3 {super::sxi2::LfMap::load(path,&c,&heads,&lengths,&frequencies);}
         } else {
             at(&mut f, c.member(1).offset);
             let mut cb = [0; 2048];rd(&mut f,&mut cb);
@@ -242,7 +242,7 @@ impl Container {
                 let len=u32at(&len,0) as u64;need(len>0&&len<=n-sum,"run length");sum+=len;totals[ch[0] as usize]+=len;}
             need(sum==n,"run sum");sum=0;for(i,t)in totals.iter().enumerate(){need(u64at(&cb,8*i)==sum,"C table");sum+=t;}
         }
-        if version!=3 {
+        if version<3 {
             at(&mut f, c.member(3).offset);
             let mut x = [0; 8];
             for _ in 0..r {rd(&mut f, &mut x);need(u64at(&x, 0) < n, "head range");}

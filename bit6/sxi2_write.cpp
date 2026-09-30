@@ -35,7 +35,7 @@ struct Out {
     void copy(const std::string& p,U off,U n){std::ifstream in(p,std::ios::binary);check(bool(in),"open copy");in.seekg(off);std::vector<unsigned char>b(1<<20);while(n){size_t z=std::min<U>(n,b.size());read(in,b.data(),z);write(b.data(),z);n-=z;}}
     void finish(U n,U k,U r,U flags,const std::string& validator,const std::string& source,const Member& source_chi){
         U length=f.tellp();std::vector<unsigned char>h(64+40*ms.size());
-        memcpy(h.data(),"SXI2",4);put(h.data()+4,3,4);put(h.data()+8,n);put(h.data()+16,k);put(h.data()+24,r);
+        memcpy(h.data(),"SXI2",4);put(h.data()+4,4,4);put(h.data()+8,n);put(h.data()+16,k);put(h.data()+24,r);
         put(h.data()+32,ms.size(),4);put(h.data()+36,h.size(),4);put(h.data()+40,length);put(h.data()+48,flags);
         for(size_t i=0;i<ms.size();i++){auto&m=ms[i];auto*d=h.data()+64+40*i;
             put(d,m.id,4);put(d+4,m.codec,4);put(d+8,m.offset);put(d+16,m.bytes);put(d+24,m.count);
@@ -97,7 +97,7 @@ int main(int argc,char**argv){try{
     std::sort(order.begin(),order.end());U code=0;unsigned prev=0;
     for(auto [len,sym]:order){code<<=len-prev;codes[sym]=code++;prev=len;}
     Temp tmp;auto hp=tmp.add(dst,".headbits"),lp=tmp.add(dst,".lenbits"),lowp=tmp.add(dst,".lowbits"),highp=tmp.add(dst,".highbits");
-    auto pup=tmp.add(dst,".phi-u-low"),puh=tmp.add(dst,".phi-u-high"),pvp=tmp.add(dst,".phi-v"),prp=tmp.add(dst,".phi-run"),lfp=tmp.add(dst,".lf-start");
+    auto pup=tmp.add(dst,".phi-u-low"),puh=tmp.add(dst,".phi-u-high"),pvp=tmp.add(dst,".phi-v"),prp=tmp.add(dst,".phi-run");
     Bits heads(hp),lengths(lp);
     std::ifstream cs(src,std::ios::binary),ls(src,std::ios::binary);cs.seekg(m1.offset+2048);ls.seekg(m1.offset+2048+r);
     for(U i=0;i<r;i++){unsigned ch=integer(cs,1);U len=integer(ls,4);heads.msb(codes[ch],lens[ch]);lengths.gamma(len);}
@@ -115,7 +115,7 @@ int main(int argc,char**argv){try{
         add(24+(chi0*cl0+7)/8+(((n>>cl0)+chi0+1+7)/8));
         for(unsigned id=6;id<=7;id++)for(const auto&m:c.members)if(m.id==id)add(m.bytes);
         add(40+(r*ul0+7)/8+(((n>>ul0)+r+1+7)/8)+(r*nw0+7)/8+(r*rw0+7)/8);
-        add(0);add(8+(r*nw0+7)/8);add(16+8*((r+1023)/1024));
+        add(0);add(0);add(16+8*((r+1023)/1024));
         check(projected<=max_bytes,"SXI2 lower-bound container exceeds --max-bytes");
     }
     auto& mt=c.member(2);std::ifstream tails(src,std::ios::binary);tails.seekg(mt.offset);
@@ -163,7 +163,7 @@ int main(int argc,char**argv){try{
     unsigned rw=std::max(1,64-__builtin_clzll(r-1?r-1:1));
     unsigned ul=0;while(ul<63&&(__uint128_t(1)<<(ul+1))<=n/r)++ul;
     U u_lowbits=r*ul,u_highbits=(n>>ul)+r+1;
-    Bits ulo(pup),uhi(puh),pv(pvp),pr(prp),lfbits(lfp);
+    Bits ulo(pup),uhi(puh),pv(pvp),pr(prp);
     U uhp=0;
     for(U i=0;i<r;i++){
         const auto&e=edges[i];ulo.lsb(e.u,ul);
@@ -173,15 +173,6 @@ int main(int argc,char**argv){try{
     while(uhp<u_highbits){uhi.bit(0);++uhp;}
     ulo.finish();uhi.finish();pv.finish();pr.finish();
     check(ulo.count==u_lowbits&&uhi.count==u_highbits,"phi EF dimensions");
-    std::array<U,256> seen_lf{};
-    std::ifstream lc(src,std::ios::binary),ll(src,std::ios::binary);
-    lc.seekg(m1.offset+2048);ll.seekg(m1.offset+2048+r);
-    for(U i=0;i<r;i++){
-        unsigned ch=integer(lc,1);U len=integer(ll,4);
-        U start=C[ch]+seen_lf[ch];check(start<n&&len<=n-start,"LF interval range");
-        lfbits.lsb(start,nw);seen_lf[ch]+=len;
-    }
-    lfbits.finish();
     if(max_bytes){
         U projected=64+40*(c.members.size()+2);
         auto add=[&](U z){projected=(projected+7)/8*8+z;};
@@ -192,7 +183,7 @@ int main(int argc,char**argv){try{
         add(24+(chi_count*chi_l+7)/8+(((n>>chi_l)+chi_count+1+7)/8));
         for(unsigned id=6;id<=7;id++)for(const auto&m:c.members)if(m.id==id)add(m.bytes);
         add(40+(u_lowbits+7)/8+(u_highbits+7)/8+(r*nw+7)/8+(r*rw+7)/8);
-        add(esc.size());add(8+(r*nw+7)/8);add(16+8*((r+1023)/1024));
+        add(esc.size());add(0);add(16+8*((r+1023)/1024));
         check(projected<=max_bytes,"SXI2 projected container exceeds --max-bytes");
     }
     Out out(dst,c.members.size()+2);
@@ -216,7 +207,8 @@ int main(int argc,char**argv){try{
     out.copy(pup,0,(u_lowbits+7)/8);out.copy(puh,0,(u_highbits+7)/8);
     out.copy(pvp,0,(r*nw+7)/8);out.copy(prp,0,(r*rw+7)/8);
     out.begin(9,109,failed);if(!esc.empty())out.write(esc.data(),esc.size());
-    out.begin(10,110,r);out.num(nw);out.copy(lfp,0,(r*nw+7)/8);
+    // LF starts are reconstructed exactly from run heads, lengths, and C.
+    out.begin(10,110,r);
     out.begin(11,111,sparse.size());out.num(10);out.num(sparse.size());
     for(U v:sparse)out.num(v);
     out.finish(n,c.k,r,c.flags,validator,src,c.member(5));

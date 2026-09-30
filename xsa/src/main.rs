@@ -239,7 +239,7 @@ impl Ri4 {
             }
         } else { read_raw_runs(&mut f,r) };
         // sdsl int_vector header: u64 size-in-bits, u8 width, then words
-        let sa=if !container.as_ref().is_some_and(|sx|sx.version==3) {
+        let sa=if !container.as_ref().is_some_and(|sx|sx.version>=3) {
             if let Some(ref sx) = container { f.seek(SeekFrom::Start(sx.member(2).offset)).unwrap(); }
             let mut hb = [0u8; 9];
             f.read_exact(&mut hb).unwrap_or_else(|e| die(&format!("read sa header: {}", e)));
@@ -263,7 +263,7 @@ impl Ri4 {
         }
         run_start_blk.push(acc);
         let mut cruns: Vec<Vec<u32>> = vec![Vec::new(); 256];
-        let compact=container.as_ref().is_some_and(|sx|sx.version==3);
+        let compact=container.as_ref().is_some_and(|sx|sx.version>=3);
         let mut csum: Vec<Vec<u64>> = vec![Vec::new(); 256];
         let mut acc256 = vec![0u64; 256];
         for x in 0..r as usize {
@@ -291,7 +291,7 @@ impl Ri4 {
             .map(|sx|sxi2::Phi::load(path,sx,&c));
         let head_sa=container.as_ref().filter(|sx|sx.version==2)
             .map(|sx|Bytes::mapped(path,sx.member(3).offset,(8*r) as usize));
-        let lf_map=container.as_ref().filter(|sx|sx.version==3)
+        let lf_map=container.as_ref().filter(|sx|sx.version>=3)
             .map(|sx|sxi2::LfMap::load(path,sx,&run_char,&run_len,&c));
         Ri4 { phi, lf_map, head_sa, gcd_one, cyclic, embedded_anchors, names, n, k, r, c,
             run_char, run_len, sa, run_start_blk, cruns, csum:if compact {None}else{Some(csum)}, total }

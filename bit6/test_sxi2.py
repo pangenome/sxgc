@@ -15,6 +15,7 @@ p = argparse.ArgumentParser()
 p.add_argument("--writer", default="/tmp/sxi_write_v4")
 p.add_argument("--compact-writer", default="/tmp/sxi2_write_v5")
 p.add_argument("--xsa", default="xsa/target/release/xsa")
+p.add_argument("--expected-version", type=int, default=3)
 a = p.parse_args()
 spec = importlib.util.spec_from_file_location(
     "escape_codec", pathlib.Path(__file__).parent / "sxi_logs/sxi2-v3/escape_codec.py")
@@ -126,17 +127,19 @@ def fixture(root, label, text):
     assert result.returncode == 0, result.stderr
     assert old.read_bytes()[:4] == b"SXI1" and new.read_bytes()[:4] == b"SXI2"
     raw = new.read_bytes()
-    assert struct.unpack_from("<I", raw, 4)[0] == 3
+    assert struct.unpack_from("<I", raw, 4)[0] == a.expected_version
     count = struct.unpack_from("<I", raw, 32)[0]
     member_ids = [struct.unpack_from("<I", raw, 64+40*i)[0] for i in range(count)]
     assert 2 not in member_ids and 3 not in member_ids
     assert {1,4,5,8,9,10,11} <= set(member_ids)
+    lf_bytes = struct.unpack_from("<Q", raw, 64+40*member_ids.index(10)+16)[0]
+    assert (lf_bytes == 0) == (a.expected_version == 4)
     for path in (old, new):
         out = pathlib.Path(str(path) + ".chi-out")
         result = call(a.xsa, "sxi-info", path, "--chi-out", out)
         assert result.returncode == 0, result.stderr
         if path == new:
-            assert result.stdout.startswith(b"SXI2 version=3"), result.stdout
+            assert result.stdout.startswith(f"SXI2 version={a.expected_version}".encode()), result.stdout
         assert out.read_bytes() == struct.pack("<2Q", 0, n)
     return old, new, len(escape)
 

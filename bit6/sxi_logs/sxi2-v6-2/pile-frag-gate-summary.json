@@ -1,0 +1,8 @@
+{
+  "corpus": "pile-frag",
+  "version": 4,
+  "bytes": 3655580696,
+  "native_sha256": "fb6e3952d7d140e62363cc681d5c37c0d80774de8358dc56fc41442a57701907",
+  "http_median_ms": 0.3615400055423379,
+  "http_v5_median_ms": 0.35954004852101207
+}
