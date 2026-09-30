@@ -1,0 +1,144 @@
+[
+  {
+    "artifact": "yeast235",
+    "sxi1_bytes": 1804487132,
+    "sxi2_bytes": 1413689216,
+    "ratio": 0.7834299236221984,
+    "new_members": {
+      "1": {
+        "codec": 101,
+        "bytes": 98951370,
+        "count": 100905045
+      },
+      "4": {
+        "codec": 4,
+        "bytes": 12,
+        "count": 0
+      },
+      "5": {
+        "codec": 105,
+        "bytes": 77088381,
+        "count": 85404336
+      },
+      "6": {
+        "codec": 6,
+        "bytes": 351876,
+        "count": 351876
+      },
+      "8": {
+        "codec": 118,
+        "bytes": 832888637,
+        "count": 100905045
+      },
+      "9": {
+        "codec": 109,
+        "bytes": 0,
+        "count": 0
+      },
+      "10": {
+        "codec": 110,
+        "bytes": 403620188,
+        "count": 100905045
+      },
+      "11": {
+        "codec": 111,
+        "bytes": 788344,
+        "count": 98541
+      }
+    },
+    "space_gate": "PASSED"
+  },
+  {
+    "artifact": "pile-frag",
+    "sxi1_bytes": 7017802200,
+    "sxi2_bytes": 5196757368,
+    "ratio": 0.7405106641506652,
+    "new_members": {
+      "1": {
+        "codec": 101,
+        "bytes": 358311934,
+        "count": 397723010
+      },
+      "4": {
+        "codec": 4,
+        "bytes": 12,
+        "count": 0
+      },
+      "5": {
+        "codec": 105,
+        "bytes": 144174354,
+        "count": 306164765
+      },
+      "7": {
+        "codec": 7,
+        "bytes": 256,
+        "count": 256
+      },
+      "8": {
+        "codec": 118,
+        "bytes": 3149986508,
+        "count": 397723010
+      },
+      "9": {
+        "codec": 109,
+        "bytes": 0,
+        "count": 0
+      },
+      "10": {
+        "codec": 110,
+        "bytes": 1541176672,
+        "count": 397723010
+      },
+      "11": {
+        "codec": 111,
+        "bytes": 3107232,
+        "count": 388402
+      }
+    },
+    "space_gate": "PASSED"
+  },
+  {
+    "artifact": "k10",
+    "sxi1_bytes": 33961712446,
+    "sxi2_bytes": 28372620184,
+    "ratio": 0.8354296100090123,
+    "new_members": {
+      "1": {
+        "codec": 101,
+        "bytes": 2227364376,
+        "count": 1859825862
+      },
+      "4": {
+        "codec": 4,
+        "bytes": 12,
+        "count": 0
+      },
+      "5": {
+        "codec": 105,
+        "bytes": 1252474932,
+        "count": 1627067257
+      },
+      "8": {
+        "codec": 118,
+        "bytes": 16741512439,
+        "count": 1859825862
+      },
+      "9": {
+        "codec": 109,
+        "bytes": 0,
+        "count": 0
+      },
+      "10": {
+        "codec": 110,
+        "bytes": 8136738155,
+        "count": 1859825862
+      },
+      "11": {
+        "codec": 111,
+        "bytes": 14529912,
+        "count": 1816237
+      }
+    },
+    "space_gate": "PASSED"
+  }
+]

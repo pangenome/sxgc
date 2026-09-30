@@ -1,0 +1,24 @@
+{
+  "label": "k10",
+  "pattern": "CGTTACCTTACCTTACCTTTGATGGGCTTACCTTACCTTACATTACCTCA",
+  "sample": 16,
+  "byte_parity": true,
+  "old": {
+    "requests": 5,
+    "hits": 32,
+    "bytes": 2706,
+    "sha256": "bc429f50693789eae9acbbf877dc9da5a61d2c8d8933fdf181fd6d0076bcdb6d",
+    "median_ms": 10.229654028080404,
+    "mean_ms": 12.460540025494993,
+    "requests_per_second": 80.25334359136454
+  },
+  "new": {
+    "requests": 5,
+    "hits": 32,
+    "bytes": 2706,
+    "sha256": "bc429f50693789eae9acbbf877dc9da5a61d2c8d8933fdf181fd6d0076bcdb6d",
+    "median_ms": 2.9258939903229475,
+    "mean_ms": 3.3647225936874747,
+    "requests_per_second": 297.20132110626025
+  }
+}

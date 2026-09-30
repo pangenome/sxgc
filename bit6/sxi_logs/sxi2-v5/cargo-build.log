@@ -1,0 +1,122 @@
+   Compiling version_check v0.9.5
+   Compiling crossbeam-utils v0.8.23
+   Compiling libc v0.2.189
+   Compiling crossbeam-epoch v0.9.21
+   Compiling cfg-if v1.0.5
+   Compiling typenum v1.20.1
+   Compiling crossbeam-deque v0.8.8
+   Compiling rustix v1.1.5
+   Compiling crc32fast v1.5.2
+   Compiling serde_core v1.0.229
+   Compiling getrandom v0.4.3
+   Compiling rayon-core v1.13.0
+   Compiling zmij v1.0.23
+   Compiling simd-adler32 v0.3.10
+   Compiling linux-raw-sys v0.12.1
+   Compiling adler2 v2.0.1
+   Compiling bitflags v2.13.2
+   Compiling serde_json v1.0.151
+   Compiling cpufeatures v0.2.17
+   Compiling ascii v1.1.0
+   Compiling httpdate v1.0.3
+   Compiling once_cell v1.21.4
+   Compiling xsa v0.1.0 (/home/erikg/worktrees/sxgc/pi-worktree-4ba085e3-059a-4f64-ad96-120e33f2d786-s0-0/xsa)
+   Compiling either v1.18.0
+   Compiling memchr v2.8.3
+   Compiling itoa v1.0.18
+   Compiling chunked_transfer v1.5.0
+   Compiling fastrand v2.5.0
+   Compiling log v0.4.34
+   Compiling miniz_oxide v0.9.1
+   Compiling generic-array v0.14.7
+   Compiling tiny_http v0.12.0
+   Compiling flate2 v1.1.10
+   Compiling memmap2 v0.9.11
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling digest v0.10.7
+   Compiling sha2 v0.10.9
+   Compiling rayon v1.12.0
+   Compiling tempfile v3.27.0
+error[E0599]: no method named `get` found for enum `Option<T>` in the current scope
+   --> src/main.rs:887:28
+    |
+887 |         let s_val = idx.sa.get(ri);
+    |                            ^^^ method not found in `Option<PackedSa>`
+    |
+note: the method `get` exists on the type `PackedSa`
+   --> src/main.rs:135:5
+    |
+135 |     fn get(&self, i: u64) -> u64 {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: consider using `Option::expect` to unwrap the `PackedSa` value, panicking if the value is an `Option::None`
+    |
+887 |         let s_val = idx.sa.expect("REASON").get(ri);
+    |                           +++++++++++++++++
+
+error[E0599]: no method named `get` found for enum `Option<T>` in the current scope
+   --> src/main.rs:998:19
+    |
+998 | ...   if idx.sa.get(ri) != fs[si] + lens[si] { die(&format!("build-anchors: run {} end law violated (sample {} != S of string {})",...
+    |                 ^^^ method not found in `Option<PackedSa>`
+    |
+note: the method `get` exists on the type `PackedSa`
+   --> src/main.rs:135:5
+    |
+135 |     fn get(&self, i: u64) -> u64 {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: consider using `Option::expect` to unwrap the `PackedSa` value, panicking if the value is an `Option::None`
+    |
+998 |         if idx.sa.expect("REASON").get(ri) != fs[si] + lens[si] { die(&format!("build-anchors: run {} end law violated (sample {} != S of string {})", ri, idx.sa.get(ri), si)); }
+    |                  +++++++++++++++++
+
+error[E0599]: no method named `get` found for enum `Option<T>` in the current scope
+   --> src/main.rs:998:146
+    |
+998 | ...(sample {} != S of string {})", ri, idx.sa.get(ri), si)); }
+    |                                               ^^^ method not found in `Option<PackedSa>`
+    |
+note: the method `get` exists on the type `PackedSa`
+   --> src/main.rs:135:5
+    |
+135 |     fn get(&self, i: u64) -> u64 {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: consider using `Option::expect` to unwrap the `PackedSa` value, panicking if the value is an `Option::None`
+    |
+998 |         if idx.sa.get(ri) != fs[si] + lens[si] { die(&format!("build-anchors: run {} end law violated (sample {} != S of string {})", ri, idx.sa.expect("REASON").get(ri), si)); }
+    |                                                                                                                                                 +++++++++++++++++
+
+warning: variable does not need to be mutable
+   --> src/main.rs:644:9
+    |
+644 |     let mut next_rng = |mut x: u64| -> u64 {
+    |         ----^^^^^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `tanchor` is never read
+   --> src/main.rs:697:31
+    |
+697 |             let mut tanchor = 0u64;
+    |                               ^^^^ this value is reassigned later and never used
+...
+705 |                         tanchor = r;
+    |                         ----------- `tanchor` is overwritten here before the previous value is read
+    |
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `tsample` is never read
+   --> src/main.rs:698:31
+    |
+698 |               let mut tsample = 0u64;
+    |                                 ^^^^ this value is reassigned later and never used
+...
+706 | /                         tsample = if idx.lf_map.is_some() {idx.n-1-idx.phi.as_ref().unwrap().tail(r)}
+707 | |                             else {idx.sa.as_ref().unwrap().get(r)};
+    | |__________________________________________________________________- `tsample` is overwritten here before the previous value is read
+
+For more information about this error, try `rustc --explain E0599`.
+warning: `xsa` (bin "xsa") generated 3 warnings
+error: could not compile `xsa` (bin "xsa") due to 3 previous errors; 3 warnings emitted

@@ -1,0 +1,13 @@
+{
+  "source": "PHI_INVERSE_ACCEPTANCE.md exact n and v4 466 run projection R",
+  "n": 1403221068481,
+  "r": 2739737289,
+  "sa_width": 41,
+  "run_width": 32,
+  "ef_low_width": 9,
+  "phi_bytes": 28767357684,
+  "lf_bytes": 14041153615,
+  "sparse_bytes": 21404216,
+  "members_8_10_11_lower_bound_bytes": 42829915515,
+  "note": "Excludes runs, chi, names, directory and padding; no 466 SXI2 artifact exists."
+}

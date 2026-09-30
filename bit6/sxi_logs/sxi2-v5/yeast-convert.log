@@ -1,0 +1,20 @@
+SXI2_MEMBER id=1 codec=101 count=100905045 bytes=98951370
+SXI2_MEMBER id=4 codec=4 count=0 bytes=12
+SXI2_MEMBER id=5 codec=105 count=85404336 bytes=77088381
+SXI2_MEMBER id=6 codec=6 count=351876 bytes=351876
+SXI2_MEMBER id=8 codec=118 count=100905045 bytes=832888637
+SXI2_MEMBER id=9 codec=109 count=0 bytes=0
+SXI2_MEMBER id=10 codec=110 count=100905045 bytes=403620188
+SXI2_MEMBER id=11 codec=111 count=98541 bytes=788344
+SXI3 version=3 n=3336986759 k=9901 runs=100905045 chi_complete=true
+member=1 count=100905045 bytes=98951370 crc32=4d91ed96
+member=4 count=0 bytes=12 crc32=31082463
+member=5 count=85404336 bytes=77088381 crc32=640bf588
+member=6 count=351876 bytes=351876 crc32=f72c1bca
+member=8 count=100905045 bytes=832888637 crc32=4fd9901e
+member=9 count=0 bytes=0 crc32=00000000
+member=10 count=100905045 bytes=403620188 crc32=7f389a5d
+member=11 count=98541 bytes=788344 crc32=65e1f061
+chi_complete=true
+chi_ef_ratio=0.112828553
+SXI2_PASS bytes=1413689216

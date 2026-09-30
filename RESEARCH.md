@@ -2142,3 +2142,17 @@ v5 mandate: phi REPLACES samples - sparse anchors (8B per 2^k runs) + few-bits/r
 members; compact LF move map as a STORED member (not rebuilt from decoded runs); O(log log n)
 predecessor, not O(log R) binary search. Also fixed: SOURCES.sha256.json regenerated for the 8
 runtime/src entries changed by the seam+w1 merges and v4 (vendoring discipline caught the drift).
+
+## SXI2 v5 SHIPPED: full-scale compact artifacts, all correctness gates green (bits/run target unmet)
+Published: yeast235.sxi2 1.414 GB (0.783x SXI1), pile-frag.sxi2 5.197 GB (0.741x), k10.sxi2
+28.373 GB (0.835x) - durable copies at /mnt/nvme3n1/erikg/sxi2-v5/. Raw head/tail members GONE
+(phi replaces samples - the v4 architecture bug fixed). GATES ALL GREEN at full scale: space
+preflight = achieved exactly; chi EXACT (every decoded value compared to SXI1); native MEM
+byte-parity (423/4/205 records) + HTTP byte-parity at all three scales. WARM QUERY WIN:
+HTTP median latency SXI2 vs SXI1 - yeast 377.9 vs 5076.7 ms, k10 2.93 vs 10.23 ms, frag ~par.
+UNMET: phi+LF members at 94.4-107.0 bits/run vs the 5-12 NT target (packed fields, not the
+permutation structure - the remaining 10x is succinct-structure engineering); O(log R)
+predecessor; cold load worse than SXI1 (k10 48.4 GB RSS / 14 min vs 31.1 GB / 3.4 min - reader
+still builds symbol-run lists). 466 projection >= 42.83 GB (better than SXI1's 52, stretch 6-8
+needs the few-bits form). v6 candidate: NT few-bits permutation representation + O(log log)
+predecessor + cold-load path.
