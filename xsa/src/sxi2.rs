@@ -121,6 +121,17 @@ pub fn chi(path: &str, m: &sxi::Member, n: u64, out: &mut impl Write) {
 pub struct Phi {
     map: Arc<memmap2::Mmap>,
     off: usize,
+    compact: bool,
+    u_low_off: usize,
+    u_high_off: usize,
+    v_off: usize,
+    run_off: usize,
+    u_low_width: u32,
+    u_high_bits: u64,
+    v_width: u32,
+    run_width: u32,
+    select: Vec<u64>,
+    inverse: Vec<u32>,
     r: u64,
     n: u64,
     escape: Vec<(u64,u64,u64,u64)>, // run, domain start, length, bit offset
@@ -128,35 +139,123 @@ pub struct Phi {
     width: u32,
 }
 impl Phi {
+    fn packed(&self, off: usize, pos: u64, width: u32) -> u64 {
+        if width==0 {return 0;}
+        let p=off+(pos/8) as usize;let shift=pos%8;
+        let bytes=((shift+width as u64+7)/8) as usize;
+        let mut raw=0u128;
+        for k in 0..bytes {raw|=(self.map[p+k] as u128)<<(8*k);}
+        ((raw>>shift)&((1u128<<width)-1)) as u64
+    }
     fn edge(&self, i: u64) -> (u64,u64,u64) {
+        if self.compact {
+            let sample=(i/64) as usize;
+            let mut pos=self.select[sample];
+            for _ in 0..i%64 {
+                pos+=1;while bit(&self.map[self.u_high_off..],pos)==0 {pos+=1;}
+            }
+            let u=((pos-i)<<self.u_low_width)
+                |self.packed(self.u_low_off,i*self.u_low_width as u64,self.u_low_width);
+            let v=self.packed(self.v_off,i*self.v_width as u64,self.v_width);
+            let run=self.packed(self.run_off,i*self.run_width as u64,self.run_width);
+            return (u,v,run);
+        }
         let p=self.off+i as usize*24;let b=&self.map[p..p+24];
         (u64le(&b[..8]),u64le(&b[8..16]),u32::from_le_bytes(b[16..20].try_into().unwrap()) as u64)
     }
+    pub fn tail(&self, run: u64) -> u64 {
+        need(self.compact&&run<self.r,"phi tail lookup");
+        self.edge(self.inverse[run as usize] as u64).0
+    }
+    pub fn head(&self, run: u64) -> u64 {
+        need(self.compact&&run<self.r,"phi head lookup");
+        let previous=if run==0 {self.r-1}else{run-1};
+        self.edge(self.inverse[previous as usize] as u64).1
+    }
     pub fn load(path: &str, c: &sxi::Container, frequencies: &[u64]) -> Self {
         let m=c.member(8);let e=c.member(9);
-        need(m.count==c.r && m.bytes==24*c.r,"phi member size");
+        need(m.count==c.r,"phi member count");
         let file=File::open(path).unwrap();
         let map=Arc::new(unsafe{memmap2::Mmap::map(&file).unwrap()});
-        let mut phi=Self{map,off:m.offset as usize,r:c.r,n:c.n,escape:Vec::new(),payload:0,width:0};
+        let mut phi=Self{map,off:m.offset as usize,compact:c.version==3,
+            u_low_off:0,u_high_off:0,v_off:0,run_off:0,u_low_width:0,u_high_bits:0,v_width:0,run_width:0,
+            select:Vec::new(),inverse:Vec::new(),r:c.r,n:c.n,escape:Vec::new(),payload:0,width:0};
+        if phi.compact {
+            need(m.bytes>=40,"compact phi header");
+            let b=&phi.map[phi.off..phi.off+40];
+            let vw=u64le(&b[0..8]);let rw=u64le(&b[8..16]);let ul=u64le(&b[16..24]);
+            let lb=u64le(&b[24..32]);let hb=u64le(&b[32..40]);
+            let expected_v=(64-c.n.saturating_sub(1).leading_zeros()).max(1) as u64;
+            let expected_r=(64-c.r.saturating_sub(1).leading_zeros()).max(1) as u64;
+            need(vw==expected_v&&rw==expected_r&&ul<=63&&lb==c.r*ul
+                &&hb==(c.n>>ul)+c.r+1,"compact phi widths");
+            let low_bytes=(lb+7)/8;let high_bytes=(hb+7)/8;
+            let v_bytes=(c.r*vw+7)/8;let run_bytes=(c.r*rw+7)/8;
+            need(m.bytes==40+low_bytes+high_bytes+v_bytes+run_bytes,"compact phi size");
+            phi.u_low_width=ul as u32;phi.u_high_bits=hb;phi.v_width=vw as u32;phi.run_width=rw as u32;
+            phi.u_low_off=phi.off+40;
+            phi.u_high_off=phi.u_low_off+low_bytes as usize;
+            phi.v_off=phi.u_high_off+high_bytes as usize;
+            phi.run_off=phi.v_off+v_bytes as usize;
+            padding(&phi.map[phi.u_low_off..phi.u_high_off],lb);
+            padding(&phi.map[phi.u_high_off..phi.v_off],hb);
+            padding(&phi.map[phi.v_off..phi.run_off],c.r*vw);
+            padding(&phi.map[phi.run_off..phi.run_off+run_bytes as usize],c.r*rw);
+            let mut ones=0u64;
+            for pos in 0..hb {
+                if bit(&phi.map[phi.u_high_off..],pos)!=0 {
+                    if ones%64==0 {phi.select.push(pos);}
+                    ones+=1;
+                }
+            }
+            need(ones==c.r,"compact phi EF count");
+            phi.inverse=vec![u32::MAX;c.r as usize];
+        } else {need(m.bytes==24*c.r,"phi member size");}
         let mut gcd=0u64;
         for i in 0..256 {let next=if i==255{c.n}else{frequencies[i+1]};
             let v=next.checked_sub(frequencies[i]).unwrap_or_else(||die("SXI2: C table order"));
             if v!=0 {gcd=gcd_u64(gcd,v);}
         }
-        let mut seen=vec![0u8;((c.r+7)/8) as usize];
+        let mut seen=if phi.compact {Vec::new()} else {vec![0u8;((c.r+7)/8) as usize]};
         let mut failed=Vec::new();
+        let mut highpos=0u64;
+        let mut previous_u=None;
         for i in 0..c.r {
-            let (u,v,run)=phi.edge(i);
+            let (u,v,run)=if phi.compact {
+                while highpos<phi.u_high_bits&&bit(&phi.map[phi.u_high_off..],highpos)==0 {highpos+=1;}
+                need(highpos<phi.u_high_bits,"compact phi EF truncated");
+                let u=((highpos-i)<<phi.u_low_width)
+                    |phi.packed(phi.u_low_off,i*phi.u_low_width as u64,phi.u_low_width);
+                highpos+=1;
+                let v=phi.packed(phi.v_off,i*phi.v_width as u64,phi.v_width);
+                let run=phi.packed(phi.run_off,i*phi.run_width as u64,phi.run_width);
+                (u,v,run)
+            } else {phi.edge(i)};
             need(u<c.n&&v<c.n&&run<c.r,"phi edge range");
-            need(i==0||phi.edge(i-1).0<u,"phi edge order");
-            let s=&mut seen[(run/8) as usize];need(*s&(1<<(run%8))==0,"duplicate phi run");*s|=1<<(run%8);
+            need(previous_u.is_none_or(|old|old<u),"phi edge order");previous_u=Some(u);
+            if phi.compact {
+                need(phi.inverse[run as usize]==u32::MAX,"duplicate phi run");
+                phi.inverse[run as usize]=i as u32;
+            } else {
+                let s=&mut seen[(run/8) as usize];need(*s&(1<<(run%8))==0,"duplicate phi run");*s|=1<<(run%8);
+            }
         }
-        for i in 0..c.r {
+        if phi.compact {
+            let sparse=c.member(11);
+            need(sparse.count==(c.r+1023)/1024&&sparse.bytes==16+8*sparse.count,"sparse anchor size");
+            let b=&phi.map[sparse.offset as usize..(sparse.offset+sparse.bytes) as usize];
+            need(u64le(&b[0..8])==10&&u64le(&b[8..16])==sparse.count,"sparse anchor header");
+            for j in 0..sparse.count {
+                let v=u64le(&b[(16+8*j) as usize..(24+8*j) as usize]);
+                need(v==phi.tail(j*1024),"sparse anchor value");
+            }
+        }
+        if gcd!=1 {for i in 0..c.r {
             let (u,_,run)=phi.edge(i);let next=phi.edge((i+1)%c.r).0;
             let size=if next>u {next-u} else {c.n-u+next};
             need(size>0,"empty phi domain");
-            if gcd!=1&&size!=1 {failed.push((run,u,size));}
-        }
+            if size!=1 {failed.push((run,u,size));}
+        }}
         need(e.count==failed.len() as u64,"escape count/criterion");
         if failed.is_empty() {need(e.bytes==0,"unexpected escape payload");return phi;}
         need(e.bytes>=40+32*e.count,"escape size");
@@ -208,3 +307,32 @@ impl Phi {
     }
 }
 fn gcd_u64(mut a:u64,mut b:u64)->u64{while b!=0{let t=a%b;a=b;b=t;}a}
+
+#[derive(Clone)]
+pub struct LfMap { map: Arc<memmap2::Mmap>, off: usize, width: u32, r: u64 }
+impl LfMap {
+    pub fn load(path:&str,c:&sxi::Container,heads:&[u8],lengths:&[u32],freq:&[u64])->Self {
+        let m=c.member(10);
+        let width=(64-c.n.saturating_sub(1).leading_zeros()).max(1);
+        need(m.count==c.r&&m.bytes==8+(c.r*width as u64+7)/8,"LF map size");
+        let file=File::open(path).unwrap();let map=Arc::new(unsafe{memmap2::Mmap::map(&file).unwrap()});
+        let off=m.offset as usize+8;
+        need(u64le(&map[m.offset as usize..off])==width as u64,"LF map width");
+        padding(&map[off..(m.offset+m.bytes) as usize],c.r*width as u64);
+        let lf=Self{map,off,width,r:c.r};
+        let mut seen=[0u64;256];
+        for i in 0..c.r as usize {
+            let ch=heads[i] as usize;let value=freq[ch]+seen[ch];
+            need(lf.start(i as u64)==value&&value<c.n,"LF map interval");
+            seen[ch]+=lengths[i] as u64;
+        }
+        lf
+    }
+    pub fn start(&self,run:u64)->u64 {
+        need(run<self.r,"LF run range");
+        let pos=run*self.width as u64;let p=self.off+(pos/8) as usize;
+        let shift=pos%8;let bytes=((shift+self.width as u64+7)/8) as usize;
+        let mut raw=0u128;for k in 0..bytes {raw|=(self.map[p+k] as u128)<<(8*k);}
+        ((raw>>shift)&((1u128<<self.width)-1)) as u64
+    }
+}

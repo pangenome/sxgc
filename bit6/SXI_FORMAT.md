@@ -168,3 +168,25 @@ intended few-bits-per-run space budget. Phi predecessor is binary search over
 the sorted records, so its bound is O(log R), not the intended O(log log n).
 The large-artifact gates and size targets must pass before treating SXI2 as
 the production replacement.
+
+## SXI2 v3 packed interval experiment
+
+Version 3 retains the SXI2 magic and the CRC protected directory but deletes
+members 2 and 3. Its required IDs are 1, 4, 5, 8, 9, 10, and 11; optional
+names and remap retain IDs 6 and 7. SXI1 and SXI2 version 2 remain readable.
+
+| ID | Codec | Representation |
+|---|---:|---|
+| 8 | 118 | Five LE u64 fields: SA width, run ID width, Elias–Fano low width, low bit count, high bit count. Then sorted phi domain starts as EF low/high vectors, packed successor starts at SA width, and packed run IDs at run width. Bit fields are LSB first and high padding is zero. |
+| 9 | 109 | The version 2 exact escape sidecar, when needed. |
+| 10 | 110 | LE u64 SA width followed by packed LF output start for each BWT run. For a row in run `i`, `LF(row) = start[i] + row - run_start[i]`. |
+| 11 | 111 | LE u64 stride exponent 10, LE u64 count, then one u64 tail SA value for every 1024th run. |
+
+The phi intervals are sorted by SA domain start. The reader builds a compact
+select directory and an in-memory inverse run lookup to recover a run-tail
+sample from member 8. It validates every sparse anchor against that member.
+The LF starts in member 10 replace the decoded cumulative sum arrays; the
+reader still builds symbol-run lists for rank predecessor queries. Phi domain
+predecessor remains binary search. This is a working space reduction, but the
+packed interval and LF members exceed the desired 5–12 bits per run and are
+not the final Nishimoto–Tabei encoding.

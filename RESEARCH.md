@@ -2246,3 +2246,14 @@ Composed estimate for the fragment: rleBWT ~240 MB + move-members ~120-290 MB + 
 offset table 133 MB = ~0.7-0.9 GB - the user's half-of-text goal (0.54 GB) is in reach at the
 composition. MEM semantics honestly limited: token MEMs != byte MEMs; in-token matches
 unrecoverable; offset table gives boundaries only. Token-space is the LM-substrate query space.
+
+### Correction #16 - the v5 code was never actually banked (staged-files retention trap, AGAIN)
+The v5 retention patch was 0 BYTES (the lane staged its changes; staged files produce empty
+retention diffs - the SAME trap that lost the syncmer and BCR v1 worktrees), and my bank's
+"V5-APPLIED" echo was fooled: git apply on an empty patch exited through without error under
+2>/dev/null, and my verification test used STALE v4 binaries (/tmp/sxi2_write_v4_o3) so it
+green-lit the wrong code. Main has been carrying the v4-era writer (format version 2) while the
+v5 artifacts on nvme3n1 are version 3 - caught by the v6 lane's honest format audit. FIXED NOW:
+v5 code recovered from the still-live worktree (writer verified version 3, cargo release build
+green, writer compiles clean). The verification lesson, restated with teeth: a bank is not
+verified until the BINARY IT PRODUCES is checked against the artifact it claims to be.

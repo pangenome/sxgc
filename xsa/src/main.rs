@@ -185,6 +185,7 @@ impl Anchors {
 
 struct Ri4 {
     phi: Option<sxi2::Phi>,
+    lf_map: Option<sxi2::LfMap>,
     head_sa: Option<Bytes>,
     gcd_one: bool,
     embedded_anchors: Option<Anchors>,
@@ -196,10 +197,10 @@ struct Ri4 {
     run_char: Bytes,
     cyclic: bool,
     run_len: Vec<u32>,
-    sa: PackedSa,
+    sa: Option<PackedSa>,
     run_start_blk: Vec<u64>,
     cruns: Vec<Vec<u32>>,
-    csum: Vec<Vec<u64>>,
+    csum: Option<Vec<Vec<u64>>>,
     total: Vec<u64>,
 }
 const BLK: u64 = 64;
@@ -230,7 +231,7 @@ impl Ri4 {
         let r = u64::from_le_bytes(b[24..32].try_into().unwrap());
         let _ = k;
         let (c, run_char, run_len) = if let Some(ref sx)=container {
-            if sx.version==2 {
+            if sx.version>=2 {
                 sxi2::runs(path,sx.member(1),n,r)
             } else {
                 f.seek(SeekFrom::Start(sx.member(1).offset)).unwrap();
@@ -238,21 +239,21 @@ impl Ri4 {
             }
         } else { read_raw_runs(&mut f,r) };
         // sdsl int_vector header: u64 size-in-bits, u8 width, then words
-        if let Some(ref sx) = container { f.seek(SeekFrom::Start(sx.member(2).offset)).unwrap(); }
-        let mut hb = [0u8; 9];
-        f.read_exact(&mut hb).unwrap_or_else(|e| die(&format!("read sa header: {}", e)));
-        let bits = u64::from_le_bytes(hb[0..8].try_into().unwrap());
-        let width = hb[8];
-        if width == 0 || width > 64 || bits != r * width as u64 {
-            die(&format!("{}: bad sa array (bits={} width={}?)", path, bits, width));
-        }
-        let nbytes = ((bits + 63) / 64 * 8) as usize;
-        let mut data = vec![0u8; nbytes];
-        f.read_exact(&mut data).unwrap_or_else(|e| die(&format!("read sa data: {}", e)));
-        let data = if let Some(ref sx) = container {
-            Bytes::mapped(path, sx.member(2).offset + 9, nbytes)
-        } else { Bytes::Owned(data) };
-        let sa = PackedSa { bits, width, data };
+        let sa=if !container.as_ref().is_some_and(|sx|sx.version==3) {
+            if let Some(ref sx) = container { f.seek(SeekFrom::Start(sx.member(2).offset)).unwrap(); }
+            let mut hb = [0u8; 9];
+            f.read_exact(&mut hb).unwrap_or_else(|e| die(&format!("read sa header: {}", e)));
+            let bits = u64::from_le_bytes(hb[0..8].try_into().unwrap());let width = hb[8];
+            if width == 0 || width > 64 || bits != r * width as u64 {
+                die(&format!("{}: bad sa array (bits={} width={}?)", path, bits, width));
+            }
+            let nbytes = ((bits + 63) / 64 * 8) as usize;
+            let mut data = vec![0u8; nbytes];
+            f.read_exact(&mut data).unwrap_or_else(|e| die(&format!("read sa data: {}", e)));
+            let data = if let Some(ref sx) = container {Bytes::mapped(path,sx.member(2).offset+9,nbytes)}
+                else {Bytes::Owned(data)};
+            Some(PackedSa { bits, width, data })
+        } else {None};
 
         let mut run_start_blk = Vec::with_capacity((r / BLK + 2) as usize);
         let mut acc = 0u64;
@@ -262,12 +263,13 @@ impl Ri4 {
         }
         run_start_blk.push(acc);
         let mut cruns: Vec<Vec<u32>> = vec![Vec::new(); 256];
+        let compact=container.as_ref().is_some_and(|sx|sx.version==3);
         let mut csum: Vec<Vec<u64>> = vec![Vec::new(); 256];
         let mut acc256 = vec![0u64; 256];
         for x in 0..r as usize {
             let c = run_char[x] as usize;
             cruns[c].push(x as u32);
-            csum[c].push(acc256[c]);
+            if !compact {csum[c].push(acc256[c]);}
             acc256[c] += run_len[x] as u64;
         }
         let total = acc256.clone();
@@ -280,16 +282,19 @@ impl Ri4 {
         let run_char = if let Some(sx) = container.as_ref().filter(|sx|sx.version==1) {
             Bytes::mapped(path, sx.member(1).offset + 2048, r as usize)
         } else { Bytes::Owned(run_char) };
-        for c in 0..256 { csum[c].push(total[c]); }
+        if !compact {for c in 0..256 { csum[c].push(total[c]); }}
         let _ = k;   // stored
         let embedded_anchors = container.as_ref().map(|sx| sx.anchors(path));
         let names = container.as_ref().and_then(|sx| sx.members.iter().find(|m| m.id == 6))
             .map(|m| (path.to_string(), m.offset, m.bytes));
-        let phi=container.as_ref().filter(|sx|sx.version==2)
+        let phi=container.as_ref().filter(|sx|sx.version>=2)
             .map(|sx|sxi2::Phi::load(path,sx,&c));
         let head_sa=container.as_ref().filter(|sx|sx.version==2)
             .map(|sx|Bytes::mapped(path,sx.member(3).offset,(8*r) as usize));
-        Ri4 { phi, head_sa, gcd_one, cyclic, embedded_anchors, names, n, k, r, c, run_char, run_len, sa, run_start_blk, cruns, csum, total }
+        let lf_map=container.as_ref().filter(|sx|sx.version==3)
+            .map(|sx|sxi2::LfMap::load(path,sx,&run_char,&run_len,&c));
+        Ri4 { phi, lf_map, head_sa, gcd_one, cyclic, embedded_anchors, names, n, k, r, c,
+            run_char, run_len, sa, run_start_blk, cruns, csum:if compact {None}else{Some(csum)}, total }
     }
 
     fn run_start(&self, r: u64) -> u64 {
@@ -297,6 +302,10 @@ impl Ri4 {
         let mut q = (r / BLK) * BLK;
         while q < r { s += self.run_len[q as usize] as u64; q += 1; }
         s
+    }
+    fn tail_sample(&self, run:u64)->u64 {
+        if self.lf_map.is_some() {self.n-1-self.phi.as_ref().unwrap().tail(run)}
+        else {self.sa.as_ref().unwrap().get(run)}
     }
     fn run_of(&self, i: u64) -> u64 {
         let mut lo = 0usize;
@@ -319,12 +328,20 @@ impl Ri4 {
         let s = self.run_start(r);
         let v = &self.cruns[c as usize];
         let j = v.partition_point(|&x| (x as u64) < r);
-        if self.run_char[r as usize] == c { self.csum[c as usize][j] + (i - s) }
-        else { self.csum[c as usize][j] }
+        if let Some(ref lf)=self.lf_map {
+            if self.run_char[r as usize]==c {lf.start(r)-self.c[c as usize]+(i-s)}
+            else if j==0 {0}
+            else {let p=v[j-1] as u64;lf.start(p)-self.c[c as usize]+self.run_len[p as usize] as u64}
+        } else {
+            let csum=self.csum.as_ref().unwrap();
+            if self.run_char[r as usize] == c { csum[c as usize][j] + (i - s) }
+            else { csum[c as usize][j] }
+        }
     }
     fn lf(&self, i: u64) -> u64 {
-        let c = self.run_char[self.run_of(i) as usize];
-        self.c[c as usize] + self.rank(c, i)
+        let r=self.run_of(i);
+        if let Some(ref map)=self.lf_map {map.start(r)+i-self.run_start(r)}
+        else {let c=self.run_char[r as usize];self.c[c as usize]+self.rank(c,i)}
     }
     /// backward search; returns half-open [l, r) of suffixes prefixed by p.
     /// Chars are consumed LEFT-TO-RIGHT AS GIVEN, extending the match leftward
@@ -344,8 +361,13 @@ impl Ri4 {
     }
     fn search_toehold(&self,tchars:&[u8])->(u64,u64,Option<u64>){
         if self.phi.is_none()||!self.gcd_one{let(l,r)=self.search(tchars);return(l,r,None);}
-        let heads=self.head_sa.as_ref().unwrap();
-        let head=|run:u64|u64::from_le_bytes(heads[(8*run) as usize..(8*run+8) as usize].try_into().unwrap());
+        let head=|run:u64| -> u64 {
+            if let Some(ref phi)=self.phi {
+                if self.lf_map.is_some() {return phi.head(run);}
+            }
+            let heads=self.head_sa.as_ref().unwrap();
+            u64::from_le_bytes(heads[(8*run) as usize..(8*run+8) as usize].try_into().unwrap())
+        };
         let mut l=0u64;let mut r=self.n;let mut sa=head(0);
         for &ch in tchars{
             let(nl,nr)=self.step(l,r,ch);
@@ -388,8 +410,9 @@ impl Ri4 {
             let r = self.run_of(pos);
             let e = self.run_start(r) + self.run_len[r as usize] as u64;
             if pos == e - 1 {
-                return if self.cyclic { (self.sa.get(r) + self.n - steps % self.n) % self.n }
-                    else { self.sa.get(r).wrapping_sub(steps) };
+                let sample=self.tail_sample(r);
+                return if self.cyclic { (sample + self.n - steps % self.n) % self.n }
+                    else { sample.wrapping_sub(steps) };
             }
             if !self.cyclic && self.run_char[r as usize] == 0x0A {
                 match anc.and_then(|a| a.lookup(pos)) {
@@ -670,6 +693,7 @@ fn cmd_query(args: &[String]) {
             }
             continue;
         }
+        let mut previous_phi_sa=None;
         for j in l..r {
             let mut trow = j;
             let mut tsteps = 0u64;
@@ -682,7 +706,7 @@ fn cmd_query(args: &[String]) {
                     let e = idx.run_start(r) + idx.run_len[r as usize] as u64;
                     if trow == e - 1 {
                         tanchor = r;
-                        tsample = idx.sa.get(r);
+                        tsample = idx.tail_sample(r);
                         break;
                     }
                     trow = idx.lf(trow);
@@ -692,6 +716,12 @@ fn cmd_query(args: &[String]) {
                     writeln!(w, "TRACE\t{}\t{}\t{}\t{}\t{}", name, j, tanchor, tsample, tsteps).unwrap();
                 }
                 tsample.wrapping_sub(tsteps)
+            } else if idx.lf_map.is_some() {
+                let actual=if let Some(previous)=previous_phi_sa {
+                    idx.phi.as_ref().unwrap().successor(previous)
+                } else {idx.n-1-idx.s_at_opt(j,anchors)};
+                previous_phi_sa=Some(actual);
+                idx.n-1-actual
             } else {
                 idx.s_at_opt(j, anchors)
             };
@@ -856,7 +886,7 @@ fn cmd_build_anchors(args: &[String]) {
     let mut multi: Vec<(u64, u64, u64)> = Vec::new();              // multi-row 0x0A runs
     for &(ri, rs, re) in &runs {
         let last = re - 1;
-        let s_val = idx.sa.get(ri);
+        let s_val = idx.tail_sample(ri);
         let si = *s_to_string.get(&s_val).unwrap_or_else(|| die(&format!("build-anchors: run-end sample S={} matches no string — corrupt samples?", s_val)));
         if assigned[si].is_some() { die(&format!("build-anchors: string {} assigned twice by samples", si)); }
         assigned[si] = Some(last);
@@ -967,7 +997,7 @@ fn cmd_build_anchors(args: &[String]) {
         }
         let last = re - 1;
         let si = owner[&last];
-        if idx.sa.get(ri) != fs[si] + lens[si] { die(&format!("build-anchors: run {} end law violated (sample {} != S of string {})", ri, idx.sa.get(ri), si)); }
+        if idx.tail_sample(ri) != fs[si] + lens[si] { die(&format!("build-anchors: run {} end law violated (sample {} != S of string {})", ri, idx.tail_sample(ri), si)); }
         checked += re - rs;
     }
     let mut anchors: Vec<(u64, u64)> = Vec::with_capacity(k as usize);
@@ -1024,7 +1054,7 @@ fn cmd_chi_rspace(args: &[String]) {
         aggp.unwrap_or_else(|| die("chi-rspace: need --agg")),
     );
     let header = read_ri4_header(&rp);
-    if header.version==2 {die("chi-rspace requires SXI1 or ri4 source runs");}
+    if header.version>=2 {die("chi-rspace requires SXI1 or ri4 source runs");}
     // Streaming sweep needs only the run characters, not LF tables/samples.
     let idx = if stream_agg { None } else { Some(Ri4::load(&rp)) };
     let mut char_file = BufReader::with_capacity(1 << 20, File::open(&rp).unwrap());

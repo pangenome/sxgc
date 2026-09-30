@@ -35,7 +35,7 @@ struct Out {
     void copy(const std::string& p,U off,U n){std::ifstream in(p,std::ios::binary);check(bool(in),"open copy");in.seekg(off);std::vector<unsigned char>b(1<<20);while(n){size_t z=std::min<U>(n,b.size());read(in,b.data(),z);write(b.data(),z);n-=z;}}
     void finish(U n,U k,U r,U flags,const std::string& validator,const std::string& source,const Member& source_chi){
         U length=f.tellp();std::vector<unsigned char>h(64+40*ms.size());
-        memcpy(h.data(),"SXI2",4);put(h.data()+4,2,4);put(h.data()+8,n);put(h.data()+16,k);put(h.data()+24,r);
+        memcpy(h.data(),"SXI2",4);put(h.data()+4,3,4);put(h.data()+8,n);put(h.data()+16,k);put(h.data()+24,r);
         put(h.data()+32,ms.size(),4);put(h.data()+36,h.size(),4);put(h.data()+40,length);put(h.data()+48,flags);
         for(size_t i=0;i<ms.size();i++){auto&m=ms[i];auto*d=h.data()+64+40*i;
             put(d,m.id,4);put(d+4,m.codec,4);put(d+8,m.offset);put(d+16,m.bytes);put(d+24,m.count);
@@ -78,7 +78,8 @@ int main(int argc,char**argv){try{
         check(value.empty(),"duplicate option");value=argv[i+1];}
     check(!src.empty()&&!dst.empty()&&!validator.empty()&&src!=dst,"need distinct --sxi --output and --validator");
     Container c(src);check(c.flags&1,"SXI2 needs completed chi");U n=c.n,r=c.r;
-    check(!max_bytes||24*r<=max_bytes,"SXI2 phi member alone exceeds --max-bytes");
+    // The budget is checked against the completed container below.  A flat
+    // 24-byte edge table is intentionally not part of this format.
     std::ifstream in(src,std::ios::binary);
     auto&m1=c.member(1);in.seekg(m1.offset);std::array<U,256>C{};for(auto&v:C)v=integer(in);
     std::array<U,256> freq{};for(U i=0;i<r;i++){unsigned ch=integer(in,1);++freq[ch];}
@@ -96,18 +97,38 @@ int main(int argc,char**argv){try{
     std::sort(order.begin(),order.end());U code=0;unsigned prev=0;
     for(auto [len,sym]:order){code<<=len-prev;codes[sym]=code++;prev=len;}
     Temp tmp;auto hp=tmp.add(dst,".headbits"),lp=tmp.add(dst,".lenbits"),lowp=tmp.add(dst,".lowbits"),highp=tmp.add(dst,".highbits");
+    auto pup=tmp.add(dst,".phi-u-low"),puh=tmp.add(dst,".phi-u-high"),pvp=tmp.add(dst,".phi-v"),prp=tmp.add(dst,".phi-run"),lfp=tmp.add(dst,".lf-start");
     Bits heads(hp),lengths(lp);
     std::ifstream cs(src,std::ios::binary),ls(src,std::ios::binary);cs.seekg(m1.offset+2048);ls.seekg(m1.offset+2048+r);
     for(U i=0;i<r;i++){unsigned ch=integer(cs,1);U len=integer(ls,4);heads.msb(codes[ch],lens[ch]);lengths.gamma(len);}
     heads.finish();lengths.finish();
+    if(max_bytes){
+        unsigned nw0=std::max(1,64-__builtin_clzll(n-1?n-1:1));
+        unsigned rw0=std::max(1,64-__builtin_clzll(r-1?r-1:1));
+        unsigned ul0=0;while(ul0<63&&(__uint128_t(1)<<(ul0+1))<=n/r)++ul0;
+        U chi0=c.member(5).count;
+        unsigned cl0=chi0?std::max(0,int(std::log2(double(n+1)/double(chi0)))):0;
+        U projected=64+40*(c.members.size()+2);
+        auto add=[&](U z){projected=(projected+7)/8*8+z;};
+        add(2320+(heads.count+7)/8+(lengths.count+7)/8);
+        add(c.member(4).bytes);
+        add(24+(chi0*cl0+7)/8+(((n>>cl0)+chi0+1+7)/8));
+        for(unsigned id=6;id<=7;id++)for(const auto&m:c.members)if(m.id==id)add(m.bytes);
+        add(40+(r*ul0+7)/8+(((n>>ul0)+r+1+7)/8)+(r*nw0+7)/8+(r*rw0+7)/8);
+        add(0);add(8+(r*nw0+7)/8);add(16+8*((r+1023)/1024));
+        check(projected<=max_bytes,"SXI2 lower-bound container exceeds --max-bytes");
+    }
     auto& mt=c.member(2);std::ifstream tails(src,std::ios::binary);tails.seekg(mt.offset);
     U bits=integer(tails);unsigned width=integer(tails,1);(void)bits;
-    std::vector<Edge> edges;edges.reserve(r);std::ifstream hs(src,std::ios::binary);hs.seekg(c.member(3).offset);
+    std::vector<Edge> edges;edges.reserve(r);std::vector<U> sparse;sparse.reserve((r+1023)/1024);
+    std::ifstream hs(src,std::ios::binary);hs.seekg(c.member(3).offset);
     U first_head=integer(hs);__uint128_t reservoir=0;unsigned available=0;
     for(U i=0;i<r;i++){
         if(available<width){reservoir|=__uint128_t(integer(tails))<<available;available+=64;}
         U mirror=U(reservoir&((__uint128_t(1)<<width)-1));reservoir>>=width;available-=width;
-        U v=i+1<r?integer(hs):first_head;edges.push_back({n-1-mirror,v,uint32_t(i)});
+        U v=i+1<r?integer(hs):first_head;
+        if(i%1024==0)sparse.push_back(n-1-mirror);
+        edges.push_back({n-1-mirror,v,uint32_t(i)});
     }
     std::sort(edges.begin(),edges.end());for(U i=1;i<r;i++)check(edges[i-1].u<edges[i].u,"duplicate phi domain");
     U gcd=0;std::array<U,256> counts{};
@@ -138,10 +159,46 @@ int main(int argc,char**argv){try{
         for(U bit=0;bit<endbit;bit+=ew){U value=0;for(unsigned j=0;j<ew;j++)value|=U((payload[(bit+j)/8]>>((bit+j)%8))&1)<<j;
             check(value<n,"escape successor range");}
     }
+    unsigned nw=std::max(1,64-__builtin_clzll(n-1?n-1:1));
+    unsigned rw=std::max(1,64-__builtin_clzll(r-1?r-1:1));
+    unsigned ul=0;while(ul<63&&(__uint128_t(1)<<(ul+1))<=n/r)++ul;
+    U u_lowbits=r*ul,u_highbits=(n>>ul)+r+1;
+    Bits ulo(pup),uhi(puh),pv(pvp),pr(prp),lfbits(lfp);
+    U uhp=0;
+    for(U i=0;i<r;i++){
+        const auto&e=edges[i];ulo.lsb(e.u,ul);
+        U mark=(e.u>>ul)+i;while(uhp<mark){uhi.bit(0);++uhp;}uhi.bit(1);++uhp;
+        pv.lsb(e.v,nw);pr.lsb(e.run,rw);
+    }
+    while(uhp<u_highbits){uhi.bit(0);++uhp;}
+    ulo.finish();uhi.finish();pv.finish();pr.finish();
+    check(ulo.count==u_lowbits&&uhi.count==u_highbits,"phi EF dimensions");
+    std::array<U,256> seen_lf{};
+    std::ifstream lc(src,std::ios::binary),ll(src,std::ios::binary);
+    lc.seekg(m1.offset+2048);ll.seekg(m1.offset+2048+r);
+    for(U i=0;i<r;i++){
+        unsigned ch=integer(lc,1);U len=integer(ll,4);
+        U start=C[ch]+seen_lf[ch];check(start<n&&len<=n-start,"LF interval range");
+        lfbits.lsb(start,nw);seen_lf[ch]+=len;
+    }
+    lfbits.finish();
+    if(max_bytes){
+        U projected=64+40*(c.members.size()+2);
+        auto add=[&](U z){projected=(projected+7)/8*8+z;};
+        add(2320+(heads.count+7)/8+(lengths.count+7)/8);
+        add(c.member(4).bytes);
+        U chi_count=c.member(5).count;
+        unsigned chi_l=chi_count?std::max(0,int(std::log2(double(n+1)/double(chi_count)))):0;
+        add(24+(chi_count*chi_l+7)/8+(((n>>chi_l)+chi_count+1+7)/8));
+        for(unsigned id=6;id<=7;id++)for(const auto&m:c.members)if(m.id==id)add(m.bytes);
+        add(40+(u_lowbits+7)/8+(u_highbits+7)/8+(r*nw+7)/8+(r*rw+7)/8);
+        add(esc.size());add(8+(r*nw+7)/8);add(16+8*((r+1023)/1024));
+        check(projected<=max_bytes,"SXI2 projected container exceeds --max-bytes");
+    }
     Out out(dst,c.members.size()+2);
     out.begin(1,101,r);for(U v:C)out.num(v);out.write(lens.data(),lens.size());out.num(heads.count);out.num(lengths.count);
     out.copy(hp,0,(heads.count+7)/8);out.copy(lp,0,(lengths.count+7)/8);
-    for(unsigned id=2;id<=4;id++){auto&m=c.member(id);out.begin(id,id,m.count);out.copy(src,m.offset,m.bytes);}
+    {auto&m=c.member(4);out.begin(4,4,m.count);out.copy(src,m.offset,m.bytes);}
     auto& mc=c.member(5);U chi=mc.count;unsigned l=chi?std::max(0,int(std::log2(double(n+1)/double(chi)))):0;
     if(l>63)l=63;
     U lowbits=chi*l,highbits=chi?((n>>l)+chi+1):0;
@@ -154,8 +211,14 @@ int main(int argc,char**argv){try{
     low.finish();high.finish();check(low.count==lowbits&&high.count==highbits,"EF bits");
     out.begin(5,105,chi);out.num(l);out.num(lowbits);out.num(highbits);out.copy(lowp,0,(lowbits+7)/8);out.copy(highp,0,(highbits+7)/8);
     for(unsigned id=6;id<=7;id++)for(const auto&m:c.members)if(m.id==id){out.begin(id,id,m.count);out.copy(src,m.offset,m.bytes);}
-    out.begin(8,108,r);for(const auto&e:edges){out.num(e.u);out.num(e.v);out.num(e.run,4);out.num(0,4);}
+    out.begin(8,118,r);
+    out.num(nw);out.num(rw);out.num(ul);out.num(u_lowbits);out.num(u_highbits);
+    out.copy(pup,0,(u_lowbits+7)/8);out.copy(puh,0,(u_highbits+7)/8);
+    out.copy(pvp,0,(r*nw+7)/8);out.copy(prp,0,(r*rw+7)/8);
     out.begin(9,109,failed);if(!esc.empty())out.write(esc.data(),esc.size());
+    out.begin(10,110,r);out.num(nw);out.copy(lfp,0,(r*nw+7)/8);
+    out.begin(11,111,sparse.size());out.num(10);out.num(sparse.size());
+    for(U v:sparse)out.num(v);
     out.finish(n,c.k,r,c.flags,validator,src,c.member(5));
     return 0;
 }catch(const std::exception&e){fprintf(stderr,"SXI2 FATAL: %s\n",e.what());return 1;}}

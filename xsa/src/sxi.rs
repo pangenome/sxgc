@@ -66,7 +66,7 @@ impl Container {
         }
         let m = self.member(5);
         println!("chi_complete={}", self.complete);
-        println!("chi_{}_ratio={:.9}",if self.version==2{"ef"}else{"delta"}, if m.count == 0 { 0.0 }
+        println!("chi_{}_ratio={:.9}",if self.version>=2{"ef"}else{"delta"}, if m.count == 0 { 0.0 }
             else { m.bytes as f64 / (8.0 * m.count as f64) });
     }
     pub fn member(&self, id: u32) -> &Member {
@@ -86,7 +86,7 @@ impl Container {
         }
         rd(&mut f, &mut b[4..]);
         let version = u32at(&b,4);
-        need((&b[..4]==b"SXI1" && version==1) || (&b[..4]==b"SXI2" && version==2), "unsupported version");
+        need((&b[..4]==b"SXI1" && version==1) || (&b[..4]==b"SXI2" && (version==2||version==3)), "unsupported version");
         let n = u64at(&b, 8);
         let k = u64at(&b, 16);
         let r = u64at(&b, 24);
@@ -124,13 +124,19 @@ impl Container {
             };
             let expected_id=if version==1 {
                 if i==5 && count==6 && m.id==7 {7} else {i+1}
-            } else {
+            } else if version==2 {
                 let optional=count-7;
                 if i<5 {i+1} else if i<5+optional {
                     if optional==1 && m.id==7 {7} else {i+1}
                 } else {8+i-(5+optional)}
+            } else {
+                let optional=count-7;
+                if i<3 {[1,4,5][i as usize]} else if i<3+optional {
+                    if optional==1 && flags&16!=0 {7} else {6+i-3}
+                } else {8+i-(3+optional)}
             };
-            let expected_codec=if version==2 {match m.id {1=>101,5=>105,8=>108,9=>109,_=>m.id}} else {m.id};
+            let expected_codec=if version==3 {match m.id {1=>101,5=>105,8=>118,9=>109,10=>110,11=>111,_=>m.id}}
+                else if version==2 {match m.id {1=>101,5=>105,8=>108,9=>109,_=>m.id}} else {m.id};
             need(m.id==expected_id && m.codec==expected_codec && u32at(&d,36)==0,
                 "unsupported/duplicate member");
             let aligned = end
@@ -161,10 +167,9 @@ impl Container {
         };
         need(
             c.member(1).count == r
-                && (version==2 || c.member(1).bytes == 2048 + 5 * r)
-                && c.member(2).count == r
-                && c.member(3).count == r
-                && c.member(3).bytes == 8 * r,
+                && (version!=1 || c.member(1).bytes == 2048 + 5 * r)
+                && (version==3 || (c.member(2).count == r
+                    && c.member(3).count == r && c.member(3).bytes == 8 * r)),
             "run/sample sizes",
         );
         let a = c.member(4);
@@ -176,7 +181,7 @@ impl Container {
         need(
             chi.count <= n + 1
                 && chi.count <= u64::MAX / 10
-                && (version==2 || (chi.bytes >= chi.count && chi.bytes <= 10 * chi.count)),
+                && (version!=1 || (chi.bytes >= chi.count && chi.bytes <= 10 * chi.count)),
             "chi size",
         );
         need(
@@ -213,20 +218,20 @@ impl Container {
             }
             need(c.sigma[30] == 30, "remap moves separator");
         }
-        let tail = c.member(2);
-        at(&mut f, tail.offset);
-        let mut hb = [0; 9];
-        rd(&mut f, &mut hb);
-        let bits = u64at(&hb, 0);
-        let w = hb[8] as u64;
-        need(
-            (1..=64).contains(&w) && bits == r * w && tail.bytes == 9 + ((bits + 63) / 64) * 8,
-            "packed tail size",
-        );
+        let mut w=0;
+        if version!=3 {
+            let tail = c.member(2);
+            at(&mut f, tail.offset);
+            let mut hb = [0; 9];rd(&mut f, &mut hb);
+            let bits = u64at(&hb, 0);w = hb[8] as u64;
+            need((1..=64).contains(&w) && bits == r * w
+                && tail.bytes == 9 + ((bits + 63) / 64) * 8,"packed tail size");
+        }
         // Validate every independent member even on the header-only sweep path.
-        if version==2 {
-            let (frequencies,_,_)=super::sxi2::runs(path,c.member(1),n,r);
+        if version>=2 {
+            let (frequencies,heads,lengths)=super::sxi2::runs(path,c.member(1),n,r);
             super::sxi2::Phi::load(path,&c,&frequencies);
+            if version==3 {super::sxi2::LfMap::load(path,&c,&heads,&lengths,&frequencies);}
         } else {
             at(&mut f, c.member(1).offset);
             let mut cb = [0; 2048];rd(&mut f,&mut cb);
@@ -237,26 +242,18 @@ impl Container {
                 let len=u32at(&len,0) as u64;need(len>0&&len<=n-sum,"run length");sum+=len;totals[ch[0] as usize]+=len;}
             need(sum==n,"run sum");sum=0;for(i,t)in totals.iter().enumerate(){need(u64at(&cb,8*i)==sum,"C table");sum+=t;}
         }
-        at(&mut f, c.member(3).offset);
-        let mut x = [0; 8];
-        for _ in 0..r {
-            rd(&mut f, &mut x);
-            need(u64at(&x, 0) < n, "head range");
-        }
-        // Packed words are streamed with a 128-bit reservoir, not expanded.
-        at(&mut f, tail.offset + 9);
-        let mut reservoir = 0u128;
-        let mut available = 0u32;
-        for _ in 0..r {
-            if available < w as u32 {
-                rd(&mut f, &mut x);
-                reservoir |= (u64at(&x, 0) as u128) << available;
-                available += 64;
+        if version!=3 {
+            at(&mut f, c.member(3).offset);
+            let mut x = [0; 8];
+            for _ in 0..r {rd(&mut f, &mut x);need(u64at(&x, 0) < n, "head range");}
+            // Packed words are streamed with a 128-bit reservoir, not expanded.
+            at(&mut f, c.member(2).offset + 9);
+            let mut reservoir = 0u128;let mut available = 0u32;
+            for _ in 0..r {
+                if available < w as u32 {rd(&mut f, &mut x);reservoir |= (u64at(&x, 0) as u128) << available;available += 64;}
+                let value = reservoir & ((1u128 << w) - 1);
+                need(value < (n as u128), "tail range");reservoir >>= w;available -= w as u32;
             }
-            let value = reservoir & ((1u128 << w) - 1);
-            need(value < (n as u128), "tail range");
-            reservoir >>= w;
-            available -= w as u32;
         }
         if c.members.iter().any(|m| m.id == 6) {
             let m = c.member(6);
@@ -297,7 +294,7 @@ impl Container {
     }
     pub fn write_chi(&self, path: &str, out: &mut impl Write) {
         let m = self.member(5);
-        if self.version==2 {super::sxi2::chi(path,m,self.n,out);return;}
+        if self.version>=2 {super::sxi2::chi(path,m,self.n,out);return;}
         let mut f = BufReader::new(File::open(path).unwrap());
         at(&mut f, m.offset);
         let mut used = 0;
@@ -341,7 +338,7 @@ pub fn command(args: &[String]) {
     let c = Container::open(&args[0]).unwrap_or_else(|| die("expected SXI1"));
         println!(
         "SXI{} version={} n={} k={} runs={} chi_complete={}",
-        c.version,c.version,c.n, c.k, c.r, c.complete
+        if c.version==1 {1}else{2},c.version,c.n, c.k, c.r, c.complete
     );
     c.print_members();
     if args.len() == 3 {
