@@ -150,6 +150,9 @@ impl Engine {
         self.idx
             .search(&seq.iter().rev().copied().collect::<Vec<_>>())
     }
+    fn interval_toehold(&self,seq:&[u8])->(u64,u64,Option<u64>){
+        self.idx.search_toehold(&seq.iter().rev().copied().collect::<Vec<_>>())
+    }
     fn ms(&self, seq: &[u8]) -> Vec<u32> {
         let mut values = ms_vector(&self.idx, &seq.iter().rev().copied().collect::<Vec<_>>());
         values.reverse();
@@ -157,6 +160,16 @@ impl Engine {
     }
     fn position(&self, row: u64) -> u64 {
         self.idx.n - 1 - self.idx.s_at_opt(row, self.idx.embedded_anchors.as_ref())
+    }
+    fn position_cached(&self, row: u64, cache: &mut Option<(u64,u64)>) -> u64 {
+        if let Some(phi)=&self.idx.phi {
+            let sa=if let Some((last,value))=*cache {
+                if last==row {value}
+                else if last.checked_add(1)==Some(row) {phi.successor(value)}
+                else {self.idx.n-1-self.idx.s_at_opt(row,self.idx.embedded_anchors.as_ref())}
+            } else {self.idx.n-1-self.idx.s_at_opt(row,self.idx.embedded_anchors.as_ref())};
+            *cache=Some((row,sa));sa
+        } else {self.position(row)}
     }
     fn hit(
         &self,
@@ -177,6 +190,18 @@ impl Engine {
         }
         Some(v)
     }
+    fn hit_cached(&self,read:&str,row:u64,len:usize,qstart:Option<usize>,strand:&str,
+        cache:&mut Option<(u64,u64)>) -> Option<Value> {
+        let pos=self.position_cached(row,cache);
+        self.hit_position(read,pos,len,qstart,strand)
+    }
+    fn hit_position(&self,read:&str,pos:u64,len:usize,qstart:Option<usize>,strand:&str)->Option<Value>{
+        let (doc,record,offset)=self.annotate(pos,len)?;
+        let mut v=json!({"read":read,"name":record.name,"offset":offset,"len":len,"doc_id":doc});
+        if let Some(qstart)=qstart {v["qstart"]=json!(qstart);}
+        if self.dna {v["strand"]=json!(strand);}
+        Some(v)
+    }
     fn query(
         &self,
         read: &str,
@@ -188,7 +213,8 @@ impl Engine {
     ) -> Result<(), String> {
         self.validate(seq)?;
         for (seq, strand) in self.orientations(seq) {
-            let (l, r) = self.interval(&seq);
+            let (l, r, toehold) = self.interval_toehold(&seq);
+            let mut locate_cache=toehold.map(|sa|(l,sa));
             if let Some(limit) = sample {
                 // Floyd's O(sample) selection: never allocate the full interval.
                 let k = (limit as u64).min(r.saturating_sub(l));
@@ -204,7 +230,7 @@ impl Engine {
                     }
                 }
                 for row in chosen {
-                    if let Some(mut v) = self.hit(read, l + row, seq.len(), None, strand) {
+                    if let Some(mut v) = self.hit_cached(read, l + row, seq.len(), None, strand,&mut locate_cache) {
                         if trace {
                             v["row"] = json!(l + row);
                         }
@@ -213,7 +239,7 @@ impl Engine {
                 }
             } else {
                 for row in l..r {
-                    if let Some(mut v) = self.hit(read, row, seq.len(), None, strand) {
+                    if let Some(mut v) = self.hit_cached(read, row, seq.len(), None, strand,&mut locate_cache) {
                         if trace {
                             v["row"] = json!(row);
                         }
@@ -264,8 +290,8 @@ impl Engine {
         min_len: usize,
         out: &mut impl Write,
     ) -> Result<(), String> {
-        self.visit_mems(seq, min_len, |row, len, start, strand| {
-            if let Some(v) = self.hit(read, row, len, Some(start), strand) {
+        self.visit_mems(seq, min_len, |_row, pos, len, start, strand| {
+            if let Some(v) = self.hit_position(read, pos, len, Some(start), strand) {
                 line(out, &v)?;
             }
             Ok(())
@@ -290,14 +316,14 @@ impl Engine {
         if o.all_mems {
             // Native MEM maximality is per occurrence. Aggregate only those
             // maximal occurrences, retaining a bounded deterministic prefix.
-            self.visit_mems(seq, o.min, |row, len, start, strand| {
-                if self.annotate(self.position(row), len).is_none() {
+            self.visit_mems(seq, o.min, |_row, pos, len, start, strand| {
+                if self.annotate(pos, len).is_none() {
                     return Ok(());
                 }
                 let entry = matches.entry((start, start + len)).or_default();
                 entry.count += 1;
                 if entry.positions.len() < cap {
-                    entry.positions.push(self.rope_position(row, len, strand)?);
+                    entry.positions.push(self.rope_position_at(pos, len, strand)?);
                 }
                 Ok(())
             })?;
@@ -376,8 +402,11 @@ impl Engine {
         Ok(())
     }
     fn rope_position(&self, row: u64, len: usize, strand: &str) -> Result<String, String> {
+        self.rope_position_at(self.position(row),len,strand)
+    }
+    fn rope_position_at(&self, pos: u64, len: usize, strand: &str) -> Result<String, String> {
         let (_, record, offset) = self
-            .annotate(self.position(row), len)
+            .annotate(pos, len)
             .ok_or("MEM position crosses reference boundary")?;
         // We search the reverse-complement QUERY in the forward reference.
         // annotate already normalizes reversed storage; applying rlen-(p+len)
@@ -393,7 +422,7 @@ impl Engine {
         &self,
         seq: &[u8],
         min_len: usize,
-        mut emit: impl FnMut(u64, usize, usize, &str) -> Result<(), String>,
+        mut emit: impl FnMut(u64, u64, usize, usize, &str) -> Result<(), String>,
     ) -> Result<(), String> {
         self.validate(seq)?;
         for (work, strand) in self.orientations(seq) {
@@ -402,13 +431,19 @@ impl Engine {
                 // MS bounds the search. Shorter maximal matches at OTHER text
                 // occurrences must also be emitted; longest-only loses MEMs.
                 for len in min_len..=max as usize {
-                    let (l, r) = self.interval(&work[start..start + len]);
+                    let (l, r, seed) = self.interval_toehold(&work[start..start + len]);
+                    let phi_scan=seed.is_some();
                     let (el, er) = if start + len < work.len() {
                         self.interval(&work[start..start + len + 1])
                     } else {
                         (0, 0)
                     };
+                    let mut sa=seed;
                     for row in l..r {
+                        let pos=if let Some(value)=sa {
+                            sa=if row+1<r {Some(self.idx.phi.as_ref().unwrap().successor(value))} else {None};
+                            value
+                        } else {0};
                         if row >= el && row < er {
                             continue;
                         } // right extendible at this occurrence
@@ -423,7 +458,7 @@ impl Engine {
                         } else {
                             start
                         };
-                        emit(row, len, qstart, strand)?;
+                        emit(row, if phi_scan{pos}else{self.position(row)}, len, qstart, strand)?;
                     }
                 }
             }

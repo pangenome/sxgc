@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Adversarial format tests, independent of the real-corpus differential."""
 import argparse,pathlib,struct,subprocess,tempfile,zlib
-p=argparse.ArgumentParser();p.add_argument('--writer',default='/tmp/laneU/sxi_write');p.add_argument('--xsa',default='xsa/target/release/xsa');p.add_argument('--cpp-reader');a=p.parse_args()
+p=argparse.ArgumentParser();p.add_argument('--writer',default='/tmp/laneU/sxi_write');p.add_argument('--sxi2-writer',default='/tmp/sxi2_write_v4');p.add_argument('--xsa',default='xsa/target/release/xsa');p.add_argument('--cpp-reader');a=p.parse_args()
 def run(cmd,ok=True):
     x=subprocess.run(list(map(str,cmd)),stdout=subprocess.PIPE,stderr=subprocess.PIPE)
     assert (x.returncode==0)==ok,(cmd,x.returncode,x.stderr.decode())
@@ -25,6 +25,29 @@ with tempfile.TemporaryDirectory(prefix='sxi-format-unit-')as d:
         out=d/f'w{width}.sxi';cmd=[a.writer,'--ri4',ri,'--heads',heads,'--chi',chi,'--anchors',anc,'--names',names,'--output',out]
         run(cmd);run([a.xsa,'sxi-info',out,'--chi-out',str(out)+'.chi']);assert pathlib.Path(str(out)+'.chi').read_bytes()==struct.pack('<3Q',0,1,3)
     source=out.read_bytes();run(cmd,False);assert out.read_bytes()==source
+    # SXI2 is a separate publication; the canonical SXI1 source stays byte-identical.
+    compact=d/'compact.sxi';run([a.sxi2_writer,'--sxi',out,'--output',compact,'--validator',a.xsa])
+    compact_chi=d/'compact.chi';run([a.xsa,'sxi-info',compact,'--chi-out',compact_chi])
+    assert compact_chi.read_bytes()==struct.pack('<3Q',0,1,3)
+    assert out.read_bytes()==source and compact.read_bytes()[:4]==b'SXI2'
+    # Recompute both checksums so malformed codec content reaches semantic validation.
+    b=bytearray(compact.read_bytes());d1=64
+    off=struct.unpack_from('<Q',b,d1+8)[0];b[off+2048]=255
+    member_crc(b,1);bad=d/'compact-codebook.sxi';bad.write_bytes(b)
+    run([a.xsa,'sxi-info',bad],False)
+    b=bytearray(compact.read_bytes());d5=64+4*40
+    off=struct.unpack_from('<Q',b,d5+8)[0];struct.pack_into('<Q',b,off,64)
+    member_crc(b,5);bad=d/'compact-ef.sxi';bad.write_bytes(b)
+    run([a.xsa,'sxi-info',bad],False)
+    b=bytearray(compact.read_bytes());dphi=64+6*40
+    off=struct.unpack_from('<Q',b,dphi+8)[0]
+    struct.pack_into('<Q',b,off+24,struct.unpack_from('<Q',b,off)[0])
+    member_crc(b,7);bad=d/'compact-phi.sxi';bad.write_bytes(b)
+    run([a.xsa,'sxi-info',bad],False)
+    b=bytearray(compact.read_bytes());desc=64+7*40
+    struct.pack_into('<Q',b,desc+24,1);header_crc(b)
+    bad=d/'compact-escape-count.sxi';bad.write_bytes(b)
+    run([a.xsa,'sxi-info',bad],False)
     # Identity metadata must not change one byte of an accepted container.
     table=d/'remap';table.write_bytes(bytes(range(256)))
     identity=d/'identity.sxi';run(cmd[:-1]+[identity,'--remap',table]);assert identity.read_bytes()==source
@@ -62,4 +85,4 @@ with tempfile.TemporaryDirectory(prefix='sxi-format-unit-')as d:
     # Writer input failures must not publish an artifact.
     chi.write_bytes(struct.pack('<2Q',1,1));out=d/'duplicate.sxi';run([a.writer,'--ri4',ri,'--heads',heads,'--chi',chi,'--output',out],False);assert not out.exists()
     heads.write_bytes(struct.pack('<3Q',0,0,1));out=d/'singleton.sxi';run([a.writer,'--ri4',ri,'--heads',heads,'--output',out],False);assert not out.exists()
-print('PASS packed widths 2..64, nonempty anchors/names, virtual-end chi, empty/stage chi, overwrite, duplicate chi, singleton mismatch, malformed metadata/members, remap optional names/identity/permutation/flag/size')
+print('PASS SXI1 widths 2..64, metadata/remap/corruption, SXI2 entropy/EF/phi/escape format differential')

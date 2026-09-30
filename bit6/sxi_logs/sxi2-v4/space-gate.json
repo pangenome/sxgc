@@ -1,0 +1,67 @@
+[
+  {
+    "artifact": "yeast235",
+    "n": 3336986759,
+    "r": 100905045,
+    "chi": 85404336,
+    "sxi1_bytes_from_directory": 1804487132,
+    "sxi2_exact_preflight_bytes": 3808973680,
+    "sxi2_over_text": 1.141441052988008,
+    "sxi2_over_sxi1": 2.1108344927781952,
+    "members": {
+      "huffman_gamma_runs": 98951370,
+      "raw_tail_samples": 403620193,
+      "raw_head_samples": 807240360,
+      "anchors": 12,
+      "elias_fano_chi": 77088381,
+      "names": 351876,
+      "phi_u_v_run": 2421721080,
+      "escape": 0
+    },
+    "gate": "FAILED",
+    "achieved": false
+  },
+  {
+    "artifact": "pile-frag",
+    "n": 1082130213,
+    "r": 397723010,
+    "chi": 306164765,
+    "sxi1_bytes_from_directory": 7017802200,
+    "sxi2_exact_preflight_bytes": 14770799952,
+    "sxi2_over_text": 13.649743602528913,
+    "sxi2_over_sxi1": 2.1047615095221692,
+    "members": {
+      "huffman_gamma_runs": 358311934,
+      "raw_tail_samples": 1541176673,
+      "raw_head_samples": 3181784080,
+      "anchors": 12,
+      "elias_fano_chi": 144174354,
+      "remap": 256,
+      "phi_u_v_run": 9545352240,
+      "escape": 0
+    },
+    "gate": "FAILED",
+    "achieved": false
+  },
+  {
+    "artifact": "k10",
+    "n": 30151407545,
+    "r": 1859825862,
+    "chi": 1627067257,
+    "sxi1_bytes_from_directory": 33961712446,
+    "sxi2_exact_preflight_bytes": 71131005424,
+    "sxi2_over_text": 2.359127192249293,
+    "sxi2_over_sxi1": 2.0944469610329612,
+    "members": {
+      "huffman_gamma_runs": 2227364376,
+      "raw_tail_samples": 8136738161,
+      "raw_head_samples": 14878606896,
+      "anchors": 12,
+      "elias_fano_chi": 1252474932,
+      "phi_u_v_run": 44635820688,
+      "escape": 0
+    },
+    "gate": "FAILED",
+    "achieved": false
+  }
+]

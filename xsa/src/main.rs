@@ -9,6 +9,7 @@
 //! The index is sovereign: every subcommand runs from these artifacts alone.
 
 mod sxi;
+mod sxi2;
 mod build;
 mod bundle;
 mod product;
@@ -34,7 +35,7 @@ struct Ri4Header {
 }
 
 fn read_ri4_header(path: &str) -> Ri4Header {
-    if let Some(c) = sxi::Container::open(path) { return Ri4Header { runs_offset: c.member(1).offset + 2048, version: 1, n: c.n, k: c.k, r: c.r }; }
+    if let Some(c) = sxi::Container::open(path) { return Ri4Header { runs_offset: c.member(1).offset + 2048, version: c.version, n: c.n, k: c.k, r: c.r }; }
     let mut f = File::open(path).unwrap_or_else(|e| die(&format!("open {}: {}", path, e)));
     let mut b = [0u8; 32];
     f.read_exact(&mut b)
@@ -183,6 +184,9 @@ impl Anchors {
 }
 
 struct Ri4 {
+    phi: Option<sxi2::Phi>,
+    head_sa: Option<Bytes>,
+    gcd_one: bool,
     embedded_anchors: Option<Anchors>,
     names: Option<(String, u64, u64)>,
     n: u64,
@@ -200,6 +204,15 @@ struct Ri4 {
 }
 const BLK: u64 = 64;
 
+fn read_raw_runs(f: &mut File, r: u64) -> (Vec<u64>,Vec<u8>,Vec<u32>) {
+    let mut cb=[0u8;2048];f.read_exact(&mut cb).unwrap_or_else(|e|die(&format!("read C: {e}")));
+    let c=cb.chunks_exact(8).map(|x|u64::from_le_bytes(x.try_into().unwrap())).collect();
+    let mut heads=vec![0;r as usize];f.read_exact(&mut heads).unwrap_or_else(|e|die(&format!("read runs: {e}")));
+    let mut raw=vec![0;(r*4) as usize];f.read_exact(&mut raw).unwrap_or_else(|e|die(&format!("read lens: {e}")));
+    let lengths=raw.chunks_exact(4).map(|x|u32::from_le_bytes(x.try_into().unwrap())).collect();
+    (c,heads,lengths)
+}
+
 impl Ri4 {
     fn load(path: &str) -> Ri4 {
         Self::load_validated(path, sxi::Container::open(path))
@@ -216,19 +229,14 @@ impl Ri4 {
         let k = u64::from_le_bytes(b[16..24].try_into().unwrap());
         let r = u64::from_le_bytes(b[24..32].try_into().unwrap());
         let _ = k;
-        if let Some(ref sx) = container { f.seek(SeekFrom::Start(sx.member(1).offset)).unwrap(); }
-        let mut c = vec![0u64; 256];
-        f.read_exact(unsafe { std::slice::from_raw_parts_mut(c.as_mut_ptr() as *mut u8, 2048) })
-            .unwrap_or_else(|e| die(&format!("read C: {}", e)));
-        let mut run_char = vec![0u8; r as usize];
-        f.read_exact(&mut run_char).unwrap_or_else(|e| die(&format!("read runs: {}", e)));
-        let mut rl = vec![0u8; (r * 4) as usize];
-        f.read_exact(&mut rl).unwrap_or_else(|e| die(&format!("read lens: {}", e)));
-        let mut run_len = Vec::with_capacity(r as usize);
-        for i in 0..r as usize {
-            run_len.push(u32::from_le_bytes(rl[4 * i..4 * i + 4].try_into().unwrap()));
-        }
-        drop(rl);
+        let (c, run_char, run_len) = if let Some(ref sx)=container {
+            if sx.version==2 {
+                sxi2::runs(path,sx.member(1),n,r)
+            } else {
+                f.seek(SeekFrom::Start(sx.member(1).offset)).unwrap();
+                read_raw_runs(&mut f,r)
+            }
+        } else { read_raw_runs(&mut f,r) };
         // sdsl int_vector header: u64 size-in-bits, u8 width, then words
         if let Some(ref sx) = container { f.seek(SeekFrom::Start(sx.member(2).offset)).unwrap(); }
         let mut hb = [0u8; 9];
@@ -264,7 +272,12 @@ impl Ri4 {
         }
         let total = acc256.clone();
         let cyclic = total[0x1e] > 0 || total[0x0a] == 0;
-        let run_char = if let Some(ref sx) = container {
+        let gcd_one={
+            let mut gcd=0u64;
+            for &x in &total {if x!=0 {let mut a=gcd;let mut b=x;while b!=0{let t=a%b;a=b;b=t;}gcd=a;}}
+            gcd==1
+        };
+        let run_char = if let Some(sx) = container.as_ref().filter(|sx|sx.version==1) {
             Bytes::mapped(path, sx.member(1).offset + 2048, r as usize)
         } else { Bytes::Owned(run_char) };
         for c in 0..256 { csum[c].push(total[c]); }
@@ -272,7 +285,11 @@ impl Ri4 {
         let embedded_anchors = container.as_ref().map(|sx| sx.anchors(path));
         let names = container.as_ref().and_then(|sx| sx.members.iter().find(|m| m.id == 6))
             .map(|m| (path.to_string(), m.offset, m.bytes));
-        Ri4 { cyclic, embedded_anchors, names, n, k, r, c, run_char, run_len, sa, run_start_blk, cruns, csum, total }
+        let phi=container.as_ref().filter(|sx|sx.version==2)
+            .map(|sx|sxi2::Phi::load(path,sx,&c));
+        let head_sa=container.as_ref().filter(|sx|sx.version==2)
+            .map(|sx|Bytes::mapped(path,sx.member(3).offset,(8*r) as usize));
+        Ri4 { phi, head_sa, gcd_one, cyclic, embedded_anchors, names, n, k, r, c, run_char, run_len, sa, run_start_blk, cruns, csum, total }
     }
 
     fn run_start(&self, r: u64) -> u64 {
@@ -324,6 +341,28 @@ impl Ri4 {
             if l >= r { return (l, r); }
         }
         (l, r)
+    }
+    fn search_toehold(&self,tchars:&[u8])->(u64,u64,Option<u64>){
+        if self.phi.is_none()||!self.gcd_one{let(l,r)=self.search(tchars);return(l,r,None);}
+        let heads=self.head_sa.as_ref().unwrap();
+        let head=|run:u64|u64::from_le_bytes(heads[(8*run) as usize..(8*run+8) as usize].try_into().unwrap());
+        let mut l=0u64;let mut r=self.n;let mut sa=head(0);
+        for &ch in tchars{
+            let(nl,nr)=self.step(l,r,ch);
+            if nl>=nr{return(nl,nr,None);}
+            let run=self.run_of(l);
+            let selected=if self.run_char[run as usize]==ch {sa}
+            else {
+                let ids=&self.cruns[ch as usize];
+                let j=ids.partition_point(|&x|x as u64<=run);
+                let next=*ids.get(j).unwrap_or_else(||die("SXI2: missing toehold run")) as u64;
+                if self.run_start(next)>=r {die("SXI2: toehold run outside interval");}
+                head(next)
+            };
+            sa=if selected==0{self.n-1}else{selected-1};
+            l=nl;r=nr;
+        }
+        (l,r,Some(sa))
     }
     /// one backward-search step: rank-extend the half-open interval [l, r) by
     /// char `ch`. The result is the interval of `ch` immediately preceding the
@@ -703,12 +742,12 @@ fn cmd_stats(args: &[String]) {
         let h = if let Some(ref c) = container {
             embedded_chi = c.complete.then_some(c.member(5).count);
             index_bytes = Some(std::fs::metadata(p).unwrap().len());
-            Ri4Header { runs_offset: c.member(1).offset + 2048, version: 1, n: c.n, k: c.k, r: c.r }
+            Ri4Header { runs_offset: c.member(1).offset + 2048, version: c.version, n: c.n, k: c.k, r: c.r }
         } else { read_ri4_header(p) };
         n = h.n;
         k = h.k;
         r = h.r;
-        println!("{}      {}  (v{}: n={}, k={} {}, R={} runs)", if h.version == 1 { ".sxi" } else { ".ri4" }, p, h.version, h.n, h.k, if h.version == 1 { "records" } else { "strings" }, h.r);
+        println!("{}      {}  (v{}: n={}, k={} {}, R={} runs)", if h.version <= 2 { ".sxi" } else { ".ri4" }, p, h.version, h.n, h.k, if h.version <= 2 { "records" } else { "strings" }, h.r);
         if let Some(c) = container { c.print_members(); }
     }
     if let Some(p) = &rlbwt {
@@ -985,6 +1024,7 @@ fn cmd_chi_rspace(args: &[String]) {
         aggp.unwrap_or_else(|| die("chi-rspace: need --agg")),
     );
     let header = read_ri4_header(&rp);
+    if header.version==2 {die("chi-rspace requires SXI1 or ri4 source runs");}
     // Streaming sweep needs only the run characters, not LF tables/samples.
     let idx = if stream_agg { None } else { Some(Ri4::load(&rp)) };
     let mut char_file = BufReader::with_capacity(1 << 20, File::open(&rp).unwrap());

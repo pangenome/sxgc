@@ -123,3 +123,48 @@ source bytes map into 6..255; unobserved bytes may map into reserved codes,
 which are absent from the normalized index. DNA complementation uses original bytes; reversing a sequence commutes
 with byte mapping. Positions and lengths remain in
 original byte units. The table changes lexicographic order, not equality.
+
+## SXI2 v2 experimental publish codec
+
+`bit6/sxi2_write.cpp` transcodes a validated SXI1 publication without
+reading text or walking BWT rows. It writes a distinct `SXI2` magic and
+version 2, retaining the 64-byte header, 40-byte directory, flags, alignment,
+and CRC rules above. It fsyncs a partial file and uses a no-clobber hard link.
+The SXI1 input is never changed. Build with `tools/build_sxi_tools.sh` or
+`g++ -O3 -std=c++17 bit6/sxi2_write.cpp -o sxi2_write`; invoke
+`sxi2_write --sxi input.sxi --output new.sxi2 --validator xsa
+[--escape sidecar] [--max-bytes budget]`. The writer validates the partial
+container with the supplied dual-format `xsa`, compares every decoded EF chi
+value bytewise with the SXI1 source, and only then links the output. A byte
+budget can reject an impossible size target before encoding starts.
+
+| ID | Codec | Representation |
+|---|---:|---|
+| 1 | 101 | 256 LE u64 C values; 256 u8 canonical Huffman code lengths; u64 head bit count; u64 gamma length bit count; head bits then length bits. Both bitstreams pack the first emitted bit into byte bit 0 and require zero padding. Canonical Huffman codes are emitted most significant bit first; each positive run length uses Elias gamma. |
+| 2 | 2 | SXI1 packed mirrored run-tail samples, retained for arbitrary-row fallback. |
+| 3 | 3 | SXI1 raw run-head SA samples, used to seed backward-search toeholds. |
+| 4 | 4 | SXI1 XANC anchors. |
+| 5 | 105 | u64 low width `l`, u64 low bit count, u64 upper bit count, then Elias–Fano low values and unary upper bits. Low values are emitted least significant bit first. Upper 1 positions are `(value >> l) + rank`; the upper vector has `(n >> l) + chi + 1` bits. Empty chi uses two zero bit counts. |
+| 6, 7 | 6, 7 | Optional SXI1 names and remap, verbatim. |
+| 8 | 108 | `R` sorted 24-byte records: u64 tail SA value `u`, u64 next-head SA value `v`, u32 run ID, u32 zero. The successor for an SA value in this cyclic domain is `(v + value - u) mod n`. |
+| 9 | 109 | Zero bytes when criterion C certifies every domain. Otherwise the `SXESC3` reference layout from `sxi_logs/sxi2-v3/escape_codec.py`, with one exact successor array per failed run, sorted by run ID. |
+
+The writer requires a supplied exact escape sidecar if frequency gcd is
+greater than one and any domain has more than one value. It checks its domain
+coverage, bit lengths, padding, and value ranges before publication. The
+loader checks directory and member CRCs, decodes and validates the RLBWT and
+EF streams, checks phi ordering and unique run IDs, and validates escape
+coverage. `xsa sxi-info --chi-out` decodes EF in increasing order with bounded
+streaming state. `xsa mems` and `xsa serve` use the same dual-format query
+engine. On frequency-gcd-one inputs, backward search carries a head-SA
+toehold and subsequent SA rows use the phi successor. Periodic inputs use the
+existing LF fallback for the first row and the exact escape-aware phi map
+for adjacent rows.
+
+This v4 codec is a working **intermediate implementation** of the requested
+compact form. It retains raw head and tail members and stores a 24-byte phi
+record per run. It does not yet serialize a compact LF move map or meet the
+intended few-bits-per-run space budget. Phi predecessor is binary search over
+the sorted records, so its bound is O(log R), not the intended O(log log n).
+The large-artifact gates and size targets must pass before treating SXI2 as
+the production replacement.

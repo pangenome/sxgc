@@ -42,12 +42,14 @@ fn crc(mut v: u32, b: &[u8]) -> u32 {
 #[derive(Clone)]
 pub struct Member {
     pub id: u32,
+    pub codec: u32,
     pub offset: u64,
     pub bytes: u64,
     pub count: u64,
     pub checksum: u32,
 }
 pub struct Container {
+    pub version: u32,
     pub n: u64,
     pub k: u64,
     pub r: u64,
@@ -64,7 +66,7 @@ impl Container {
         }
         let m = self.member(5);
         println!("chi_complete={}", self.complete);
-        println!("chi_delta_ratio={:.9}", if m.count == 0 { 0.0 }
+        println!("chi_{}_ratio={:.9}",if self.version==2{"ef"}else{"delta"}, if m.count == 0 { 0.0 }
             else { m.bytes as f64 / (8.0 * m.count as f64) });
     }
     pub fn member(&self, id: u32) -> &Member {
@@ -79,11 +81,12 @@ impl Container {
         let length = f.get_ref().metadata().unwrap().len();
         let mut b = [0u8; 64];
         rd(&mut f, &mut b[..4]);
-        if &b[..4] != b"SXI1" {
+        if &b[..4] != b"SXI1" && &b[..4] != b"SXI2" {
             return None;
         }
         rd(&mut f, &mut b[4..]);
-        need(u32at(&b, 4) == 1, "unsupported version");
+        let version = u32at(&b,4);
+        need((&b[..4]==b"SXI1" && version==1) || (&b[..4]==b"SXI2" && version==2), "unsupported version");
         let n = u64at(&b, 8);
         let k = u64at(&b, 16);
         let r = u64at(&b, 24);
@@ -95,7 +98,7 @@ impl Container {
             "invalid n/k/r",
         );
         need(
-            (5..=7).contains(&count)
+            (if version==1 {(5..=7).contains(&count)} else {(7..=9).contains(&count)})
                 && hs == 64 + 40 * count
                 && u64at(&b, 40) == length
                 && (flags <= 1 || (8..=15).contains(&flags) || (24..=31).contains(&flags))
@@ -113,15 +116,23 @@ impl Container {
             hc = crc(hc, &d);
             let m = Member {
                 id: u32at(&d, 0),
+                codec: u32at(&d, 4),
                 offset: u64at(&d, 8),
                 bytes: u64at(&d, 16),
                 count: u64at(&d, 24),
                 checksum: u32at(&d, 32),
             };
-            need(
-                (m.id == i + 1 || (i == 5 && count == 6 && m.id == 7)) && u32at(&d, 4) == m.id && u32at(&d, 36) == 0,
-                "unsupported/duplicate member",
-            );
+            let expected_id=if version==1 {
+                if i==5 && count==6 && m.id==7 {7} else {i+1}
+            } else {
+                let optional=count-7;
+                if i<5 {i+1} else if i<5+optional {
+                    if optional==1 && m.id==7 {7} else {i+1}
+                } else {8+i-(5+optional)}
+            };
+            let expected_codec=if version==2 {match m.id {1=>101,5=>105,8=>108,9=>109,_=>m.id}} else {m.id};
+            need(m.id==expected_id && m.codec==expected_codec && u32at(&d,36)==0,
+                "unsupported/duplicate member");
             let aligned = end
                 .checked_add(7)
                 .unwrap_or_else(|| die("SXI: offset overflow"))
@@ -139,6 +150,7 @@ impl Container {
             "header CRC or trailing bytes",
         );
         let mut c = Self {
+            version,
             n,
             k,
             r,
@@ -149,7 +161,7 @@ impl Container {
         };
         need(
             c.member(1).count == r
-                && c.member(1).bytes == 2048 + 5 * r
+                && (version==2 || c.member(1).bytes == 2048 + 5 * r)
                 && c.member(2).count == r
                 && c.member(3).count == r
                 && c.member(3).bytes == 8 * r,
@@ -164,8 +176,7 @@ impl Container {
         need(
             chi.count <= n + 1
                 && chi.count <= u64::MAX / 10
-                && chi.bytes >= chi.count
-                && chi.bytes <= 10 * chi.count,
+                && (version==2 || (chi.bytes >= chi.count && chi.bytes <= 10 * chi.count)),
             "chi size",
         );
         need(
@@ -188,7 +199,7 @@ impl Container {
             }
             need(!v == m.checksum, "member CRC mismatch");
         }
-        let remapped = c.members.last().unwrap().id == 7;
+        let remapped = c.members.iter().any(|m|m.id==7);
         need(remapped == (flags & 16 != 0), "remap flag/member mismatch");
         if remapped {
             let m = c.member(7);
@@ -213,29 +224,18 @@ impl Container {
             "packed tail size",
         );
         // Validate every independent member even on the header-only sweep path.
-        at(&mut f, c.member(1).offset);
-        let mut cb = [0; 2048];
-        rd(&mut f, &mut cb);
-        let mut chars = BufReader::new(File::open(path).unwrap());
-        at(&mut chars, c.member(1).offset + 2048);
-        at(&mut f, c.member(1).offset + 2048 + r);
-        let mut totals = [0u64; 256];
-        let mut sum = 0u64;
-        for _ in 0..r {
-            let mut ch = [0];
-            let mut len = [0; 4];
-            rd(&mut chars, &mut ch);
-            rd(&mut f, &mut len);
-            let len = u32at(&len, 0) as u64;
-            need(len > 0 && len <= n - sum, "run length");
-            sum += len;
-            totals[ch[0] as usize] += len;
-        }
-        need(sum == n, "run sum");
-        sum = 0;
-        for (i, t) in totals.iter().enumerate() {
-            need(u64at(&cb, 8 * i) == sum, "C table");
-            sum += t;
+        if version==2 {
+            let (frequencies,_,_)=super::sxi2::runs(path,c.member(1),n,r);
+            super::sxi2::Phi::load(path,&c,&frequencies);
+        } else {
+            at(&mut f, c.member(1).offset);
+            let mut cb = [0; 2048];rd(&mut f,&mut cb);
+            let mut chars=BufReader::new(File::open(path).unwrap());at(&mut chars,c.member(1).offset+2048);
+            at(&mut f,c.member(1).offset+2048+r);
+            let mut totals=[0u64;256];let mut sum=0u64;
+            for _ in 0..r {let mut ch=[0];let mut len=[0;4];rd(&mut chars,&mut ch);rd(&mut f,&mut len);
+                let len=u32at(&len,0) as u64;need(len>0&&len<=n-sum,"run length");sum+=len;totals[ch[0] as usize]+=len;}
+            need(sum==n,"run sum");sum=0;for(i,t)in totals.iter().enumerate(){need(u64at(&cb,8*i)==sum,"C table");sum+=t;}
         }
         at(&mut f, c.member(3).offset);
         let mut x = [0; 8];
@@ -297,6 +297,7 @@ impl Container {
     }
     pub fn write_chi(&self, path: &str, out: &mut impl Write) {
         let m = self.member(5);
+        if self.version==2 {super::sxi2::chi(path,m,self.n,out);return;}
         let mut f = BufReader::new(File::open(path).unwrap());
         at(&mut f, m.offset);
         let mut used = 0;
@@ -338,9 +339,9 @@ pub fn command(args: &[String]) {
         die("usage: xsa sxi-info FILE [--chi-out FILE]");
     }
     let c = Container::open(&args[0]).unwrap_or_else(|| die("expected SXI1"));
-    println!(
-        "SXI1 version=1 n={} k={} runs={} chi_complete={}",
-        c.n, c.k, c.r, c.complete
+        println!(
+        "SXI{} version={} n={} k={} runs={} chi_complete={}",
+        c.version,c.version,c.n, c.k, c.r, c.complete
     );
     c.print_members();
     if args.len() == 3 {
