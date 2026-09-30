@@ -2108,3 +2108,15 @@ side-list for periodic-ambiguous runs, with a stated criterion. THEORY CONNECTIO
 (RunEdgeDominate; RunEdgeHit PROVEN in SxgcRunEdge.lean) is precisely about run-edge rules - the
 phi-correctness criterion may be O1-adjacent and Lean-provable. EF chi member: 0.144 GB ideal at fragment.
 Evidence: bit6/sxi_logs/sxi2-v2/ (DESIGN.md, RESULTS.md, phi oracle + counterexamples, size probe).
+
+## UPSTREAM pfp++ BUG FOUND (explains the original pile refusal): signed-char gate
+Upstream pfp_algo.cpp text path: `char c = record->seq.s[seq_it]; if (c <= DOLLAR_PRIME)` with
+SIGNED char - any byte >= 128 (negative) trips the gate. The error message says "bytes <= 5" but
+the actual behavior ALSO rejects all UTF-8 high bytes - the pile's original refusal was mostly
+HIGH BYTES, not the rare 0-5 bytes (229 low bytes vs abundant UTF-8). Our remap fork already
+replaced the path with unsigned-char handling; main's dev-tree xsa bundles the fixed toolchain.
+Upstream-PR material: fix the comparison (uint8_t) or the message. Also third k10-gate SIGKILL
+logged (same phase, crowded-window OOM both prior times; relaunched on the now-empty box, watch
+armed). 8 GB pile trend build launched (slice8.txt, clean, offset 900 GB region): decisive test
+of the user's scaling hypothesis - does chi/n improve with 8x corpus, or hold at the 1 GB floor
+(baseline: filtered-fragment chi/n = 0.28293; within-fragment D/n was flat 500MB->1GB).
