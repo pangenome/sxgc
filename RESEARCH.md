@@ -2311,3 +2311,15 @@ the decoupled phi-LCE slim (or re-derived per round at O(R) - still no full-corp
 New theory datum for the paper: witness REVIVAL under concatenation - the suffixient set is
 genuinely dynamic, with both shrinkage and local growth. Also relevant to the LM-over-chi story
 (incremental corpus growth has non-monotone state).
+
+## LEAN FLEET ROUND 1 - SEAM LANE RESULT (dsv4 native, first deepseek bank)
+Seam order core BANKED (sorry-free, lake green, additions only): lexLt strict order lemmas,
+cycCmp irrefl/asymm/trans + trichotomy via rotation_cmp_total => the cyclic comparison is a
+STRICT TOTAL ORDER on rows, class sort well-defined and unique; compRel/seam-class structure
+(comparable rows are exactly seam rows; non-seam rows are singleton classes). STATEMENT
+CORRECTION #17 (fleet catch): seamRepair_reorders_in_classes was VACUOUS as written (its
+comparability hypothesis is unused; its conclusion IS rotation_cmp_total) - proven as
+seamRepair_reorders_in_classes_from_total and demoted; the SUBSTANTIVE half needs a
+prefix-interval/trie class-partition model + the r-space spliced-output equivalence (both
+statement-locked in lean/FLEET_SEAM_REPORT.md). Fleet lesson: fresh-worktree lanes pay a
+~5min Sxgc.lean baseline compile; seed the olean cache next round.

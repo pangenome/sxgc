@@ -253,4 +253,208 @@ def boundaryDelta_bounded : Prop :=
     chi (ps.foldl insertSep T) ≤ chi T + C * ps.length ∧
       chi T ≤ chi (ps.foldl insertSep T) + C * ps.length
 
+/-! ### Reordering-inside-classes: the strict-total-order core and class structure
+
+The "reordering-inside-classes" half asks that the repair sort each seam class by
+exact cyclic LCE (ties by increasing position) and that this order equals the
+independent cyclic oracle restricted to the class.  Two of its components are
+provable in the vocabulary already present in this file.
+
+**Order core.**  For a sort to be well-defined the comparison must decide every
+distinct pair, and for the sorted order to be canonical it must be transitive.
+We prove `lexLt` (the first-difference order) is irreflexive, asymmetric, and
+transitive; hence the cyclic comparison `cycCmp` is irreflexive, asymmetric and
+transitive, and together with the existing `rotation_cmp_total` it *decides*
+every distinct pair (`cycCmp_decides`): exactly one of `cycCmp T i j`,
+`cycCmp T j i` holds.  This is exactly the statement "the cyclic comparison is a
+strict total order on the (class) rows", so sorting a class by it is well-defined
+and yields a unique result — the order-theoretic content of the half.
+
+**Class structure.**  `compRel` (distinct prefix-comparable rows) is the
+seam-class relation.  Comparable rows are exactly seam rows
+(`comparable_seamPos`), and a non-seam row is prefix-incomparable with *every*
+other row (`nonseam_incomparable`).  Consequently non-seam rows are pairwise
+incomparable and form singleton classes, so the hypotheses of
+`identity_outside_classes` are automatic for them and no class reordering can
+displace one.
+
+**Statement correction (recorded so it is not mistaken for the substantive
+half).**  The open proposition `seamRepair_reorders_in_classes` is, as literally
+stated, *implied by totality alone*: its prefix-comparability hypothesis is
+unused and its conclusion is exactly `rotation_cmp_total`.  The theorem
+`seamRepair_reorders_in_classes_from_total` records that fact.  The proposition
+does NOT capture, and the half still needs: (a) nothing further on the order
+theory (closed by `cycCmp_decides`/`cycCmp_trans` above), and (b) the
+class-partition structure (terminal-suffix prefix intervals are nested or
+disjoint and their maximal union partitions the ambiguous rows) and the
+equivalence of the r-space spliced output (Phi anchors, run splicing,
+coalescing) with this order — the latter needs the r-space sampling model and
+is out of vocabulary here.  Measured warrant for (b): yeast235, seven maximal
+classes, 13,503 candidate rows, repaired output byte-identical to the dense
+independent cyclic oracle.
+-/
+
+/-- The first-difference lexicographic order is irreflexive. -/
+theorem lexLt_irrefl (l : List Nat) : ¬ lexLt l l := by
+  rintro ⟨pre, a, b, l', m', hl, hm, hab⟩
+  have h : a :: l' = b :: m' := by
+    have hh : (pre ++ a :: l') = (pre ++ b :: m') := hl.symm.trans hm
+    have := congrArg (List.drop pre.length) hh
+    simpa using this
+  injection h with hab'
+  omega
+
+/-- The first-difference lexicographic order is asymmetric. -/
+theorem lexLt_asymm : ∀ (l m : List Nat), lexLt l m → ¬ lexLt m l := by
+  intro l
+  induction l with
+  | nil =>
+      intro m h
+      rcases h with ⟨p, a, b, l', m', hl, _, _⟩
+      simp at hl
+  | cons x xs ih =>
+      intro m h
+      rcases h with ⟨p, a, b, l', m', hl, hm, hlt⟩
+      cases p with
+      | nil =>
+          simp only [List.nil_append] at hl hm
+          injection hl with hx hxs
+          subst hx; subst hxs
+          rw [hm]
+          intro h2
+          rcases h2 with ⟨p2, c, d, m2, l2, hm2, hl2, hcd⟩
+          cases p2 with
+          | nil =>
+              simp only [List.nil_append] at hm2 hl2
+              injection hm2 with hb _
+              injection hl2 with hd _
+              omega
+          | cons y ys =>
+              simp only [List.cons_append] at hm2 hl2
+              injection hm2 with hby _
+              injection hl2 with hxy _
+              omega
+      | cons y ys =>
+          simp only [List.cons_append] at hl hm
+          injection hl with hxy hxs
+          subst hxy
+          rw [hm]
+          intro h2
+          rcases h2 with ⟨p2, c, d, m2, l2, hm2, hl2, hcd⟩
+          cases p2 with
+          | nil =>
+              simp only [List.nil_append] at hm2 hl2
+              injection hm2 with hc _
+              injection hl2 with hd _
+              omega
+          | cons z Z =>
+              simp only [List.cons_append] at hm2 hl2
+              injection hm2 with hxz htail1
+              injection hl2 with hzd htail2
+              have h1' : lexLt xs (ys ++ b :: m') := by
+                rw [hxs]
+                exact ⟨ys, a, b, l', m', rfl, rfl, hlt⟩
+              have h2' : lexLt (ys ++ b :: m') xs := by
+                rw [htail1, htail2]
+                exact ⟨Z, c, d, m2, l2, rfl, rfl, hcd⟩
+              exact ih (ys ++ b :: m') h1' h2'
+
+/-- The first-difference lexicographic order is transitive. -/
+theorem lexLt_trans : ∀ (l m k : List Nat), lexLt l m → lexLt m k → lexLt l k := by
+  intro l m k h1 h2
+  rcases h1 with ⟨p1, a, b, l1, m1, hl, hm, hab⟩
+  rcases h2 with ⟨p2, c, d, m2, k2, hm2, hk, hcd⟩
+  have hp1 : p1 = m.take p1.length := by rw [hm, List.take_left]
+  have hp2 : p2 = m.take p2.length := by rw [hm2, List.take_left]
+  rcases Nat.lt_trichotomy p1.length p2.length with hlt | heq | hgt
+  · have hle : p1.length ≤ p2.length := Nat.le_of_lt hlt
+    have htake : m.take p2.length = p1 ++ b :: (m1.take (p2.length - p1.length - 1)) := by
+      rw [hm, List.take_append, List.take_of_length_le hle]
+      have harith : p2.length - p1.length = (p2.length - p1.length - 1) + 1 := by omega
+      rw [harith, List.take_succ_cons, Nat.add_sub_cancel]
+    have hp2' : p2 = p1 ++ b :: (m1.take (p2.length - p1.length - 1)) := hp2.trans htake
+    refine ⟨p1, a, b, l1, m1.take (p2.length - p1.length - 1) ++ d :: k2, hl, ?_, hab⟩
+    rw [hk, hp2']; simp [List.append_assoc]
+  · have hp : p1 = p2 := by rw [hp1, hp2, heq]
+    have hbc : b = c := by
+      have hthis : p1 ++ b :: m1 = p2 ++ c :: m2 := hm.symm.trans hm2
+      rw [hp] at hthis
+      have hcons : b :: m1 = c :: m2 := List.append_cancel_left hthis
+      injection hcons with hb _
+    refine ⟨p1, a, d, l1, k2, hl, ?_, by omega⟩
+    rw [hk, ← hp]
+  · have hle : p2.length ≤ p1.length := Nat.le_of_lt hgt
+    have htake : m.take p1.length = p2 ++ c :: (m2.take (p1.length - p2.length - 1)) := by
+      rw [hm2, List.take_append, List.take_of_length_le hle]
+      have harith : p1.length - p2.length = (p1.length - p2.length - 1) + 1 := by omega
+      rw [harith, List.take_succ_cons, Nat.add_sub_cancel]
+    have hp1' : p1 = p2 ++ c :: (m2.take (p1.length - p2.length - 1)) := hp1.trans htake
+    refine ⟨p2, c, d, m2.take (p1.length - p2.length - 1) ++ a :: l1, k2, ?_, hk, hcd⟩
+    rw [hl, hp1']; simp [List.append_assoc]
+
+/-- The cyclic comparison is irreflexive. -/
+theorem cycCmp_irrefl (T : Text) (i : Nat) : ¬ cycCmp T i i := by
+  rw [cycCmp]
+  rintro (h | ⟨_, hlt⟩)
+  · exact lexLt_irrefl _ h
+  · omega
+
+/-- The cyclic comparison is asymmetric. -/
+theorem cycCmp_asymm (T : Text) (i j : Nat) : ¬ (cycCmp T i j ∧ cycCmp T j i) := by
+  rintro ⟨hij, hji⟩
+  rw [cycCmp] at hij hji
+  rcases hij with h1 | ⟨he1, hl1⟩
+  · rcases hji with h2 | ⟨he2, hl2⟩
+    · exact lexLt_asymm _ _ h1 h2
+    · rw [← he2] at h1; exact lexLt_irrefl _ h1
+  · rcases hji with h2 | ⟨he2, hl2⟩
+    · rw [he1] at h2; exact lexLt_irrefl _ h2
+    · omega
+
+/-- The cyclic comparison is transitive. -/
+theorem cycCmp_trans (T : Text) (i j k : Nat) :
+    cycCmp T i j → cycCmp T j k → cycCmp T i k := by
+  rw [cycCmp]
+  rintro (h1 | ⟨he1, hl1⟩) (h2 | ⟨he2, hl2⟩)
+  · exact Or.inl (lexLt_trans _ _ _ h1 h2)
+  · exact Or.inl (by rw [he2] at h1; exact h1)
+  · exact Or.inl (by rw [← he1] at h2; exact h2)
+  · exact Or.inr ⟨by rw [he1, he2], by omega⟩
+
+/-- **The cyclic comparison decides.**  For distinct rows exactly one of the two
+directions holds: the comparison is a strict total order, so sorting a seam
+class by it is well-defined and has a unique result. -/
+theorem cycCmp_decides (T : Text) (i j : Nat) (hij : i ≠ j) :
+    (cycCmp T i j ∧ ¬ cycCmp T j i) ∨ (cycCmp T j i ∧ ¬ cycCmp T i j) := by
+  rcases rotation_cmp_total T i j hij with h | h
+  · exact Or.inl ⟨h, fun hji => cycCmp_asymm T i j ⟨h, hji⟩⟩
+  · exact Or.inr ⟨h, fun hij' => cycCmp_asymm T i j ⟨hij', h⟩⟩
+
+/-- Prefix-comparability of two *distinct* rows: the seam-class relation. -/
+def compRel (T : Text) (i j : Nat) : Prop :=
+  i ≠ j ∧ (suffixAt T i <+: suffixAt T j ∨ suffixAt T j <+: suffixAt T i)
+
+/-- Comparable rows are exactly seam rows: the seam relation is closed on both
+endpoints. -/
+theorem comparable_seamPos (T : Text) (i j : Nat) (h : compRel T i j) :
+    seamPos T i ∧ seamPos T j :=
+  ⟨⟨j, h.1, h.2⟩, ⟨i, h.1.symm, h.2.symm⟩⟩
+
+/-- A non-seam row is prefix-incomparable with every other row, so it is a
+singleton class and no reordering can touch it. -/
+theorem nonseam_incomparable (T : Text) (l c : Nat) (hcl : c ≠ l)
+    (hl : ¬ seamPos T l) :
+    ¬ (suffixAt T l <+: suffixAt T c ∨ suffixAt T c <+: suffixAt T l) := by
+  rintro (h | h)
+  · exact hl ⟨c, hcl.symm, Or.inl h⟩
+  · exact hl ⟨c, hcl.symm, Or.inr h⟩
+
+/-- **Statement correction.**  The open proposition `seamRepair_reorders_in_classes`
+is, as literally stated, implied by totality alone (its prefix-comparability
+hypothesis is unused).  Recorded so the fact is not mistaken for the substantive
+reordering half. -/
+theorem seamRepair_reorders_in_classes_from_total : seamRepair_reorders_in_classes := by
+  intro T i j hij _
+  exact rotation_cmp_total T i j hij
+
 end SxgcSeam
