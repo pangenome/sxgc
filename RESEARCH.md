@@ -2323,3 +2323,30 @@ seamRepair_reorders_in_classes_from_total and demoted; the SUBSTANTIVE half need
 prefix-interval/trie class-partition model + the r-space spliced-output equivalence (both
 statement-locked in lean/FLEET_SEAM_REPORT.md). Fleet lesson: fresh-worktree lanes pay a
 ~5min Sxgc.lean baseline compile; seed the olean cache next round.
+
+## LEAN FLEET ROUND 1 COMPLETE - the theory ledger moves (2026-10-02)
+Fleet: astra (O1 campaign, exploratory) + 3x deepseek-4.1-flash native grind (criterion C,
+revival, seam). ALL LANES DELIVERED. SORRY LEDGER: 2 live -> 1 (minimality lower half, the
+Lemma 34 tie-breaking, now with saturation-evidence + a newly identified duplicate-family
+datum under small scan caps).
+(1) O1 COVERING CLOSED (astra): runEdgeDominate_true (RunEdgeDominate proven unconditionally,
+SxgcRunEdge.lean sorry-free) + the RunEdgeHit -> maxHit -> domination -> covering assembly;
+covering_given_stream now a THEOREM (was the 1913 sorry). The scan provably emits a
+suffixient set - the O1 half of the main theorem is done. Axiom audit: standard three only.
+BIT 1B gate 511/0 GREEN.
+(2) CRITERION C: 2 of 3 obligations proven (gcdOne_not_isPower + singleton branch); the
+order-preservation bridge (primitive => distinct rotations => affine interval map) is
+statement-locked, Lyndon-Schutzenberger-shaped, next round's target.
+(3) WITNESS REVIVAL FORMALIZED: 17 sorry-free theorems; revival (position 2: dominated ->
+required) AND destruction (position 1: required -> dominated) both machine-checked; chi A=3,
+chi J=5. FLEET SHARPENING (correction #18 territory, lane catch): my brief's claim 'no lemma
+chi T1 <= chi (T1++T2)' was WRONG as a refutation target - the example does not refute the
+COUNT inequality (3 <= 5) and a 40k-pair search found NO chi-decreasing concatenation. NEW
+OPEN QUESTION: is chi-count monotone under concatenation? (If yes: chunk-merge gets a free
+lower-bound invariant and the paper gets a cleaner statement.) What IS proven: witness-SET
+non-monotonicity (both directions) - the merge architecture conclusion (derive chi once at
+the end) stands on the set-level fact.
+(4) SEAM order core banked earlier (daad4e1). Infrastructure lessons: retention patches
+miss UNTRACKED files (revival file survived only because the lane wrote into main cwd);
+fresh-worktree lake baseline ~5min (seed olean cache next round); deepseek-4.1-flash cannot
+route through codex (use native runner + model override).
