@@ -20,3 +20,11 @@ import SxgcPhi
 #print axioms SxgcPhi.imageLookup_eq_phiInv
 #print axioms SxgcPhi.extractHead_correct
 #print axioms SxgcPhi.unmirror_tail
+
+-- Criterion C section (gcd-one primitivity and the singleton-domain branch)
+#print axioms SxgcPhi.foldl_gcd_dvd_acc
+#print axioms SxgcPhi.dvd_foldl_gcd
+#print axioms SxgcPhi.count_flatten_replicate
+#print axioms SxgcPhi.isPower_dvd_byteFreqGcd
+#print axioms SxgcPhi.gcdOne_not_isPower
+#print axioms SxgcPhi.criterion_singleton_branch

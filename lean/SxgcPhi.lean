@@ -219,4 +219,100 @@ established by a decoder/refinement layer. Sorting cost is outside scope.
 See PhiEval.lean, PhiAxioms.lean and PHI_ACCEPTANCE.md for gates.
 -/
 
+/-! ## Criterion C: gcd-one primitivity and the singleton-domain branch
+
+Criterion C (SXI2 v3 [DESIGN.md](../bit6/sxi_logs/sxi2-v3/DESIGN.md)) is the hybrid
+safety test `C(i) := (byte-frequency gcd g = 1) OR (cyclic SA domain of run i is a
+singleton)`. This section formalizes the two halves that do not require a cyclic
+rotation model of the text:
+
+* `gcdOne_not_isPower`: `g = 1` rules out `T = U^m` with `m > 1`. That periodicity
+  is exactly the hypothesis under which the order-preserving LF/Phi interval map
+  gains equal-rotation ties, so `g = 1` is the certificate the publisher records on
+  real corpora (all three retained artifacts have `g = 1`).
+* `criterion_singleton_branch`: on a singleton domain the affine Phi formula is
+  exact — the single point is the run tail `u`, and the formula returns the
+  directly sampled successor `v = phiInv u` (`headFromTail`), with no periodicity
+  hypothesis. This is the branch a periodic text falls back to.
+
+Not formalized here (the precise remaining `g = 1` obligation): given `byteFreqGcd R = 1`,
+all `n` cyclic rotations of `R` are pairwise distinct, and therefore the
+Nishimoto--Tabei interval map is exact — for run `i` with tail value `u`, head value
+`v = phiInv R u` and cyclic SA domain `D_i`, every `x ∈ D_i` satisfies
+`phiFormula R u v x = phiInv R x`. That needs (a) a cyclic-rotation model and the
+primitive-implies-distinct-rotations direction (Lyndon--Schützenberger), and (b) order
+preservation of the LF map for a tie-free suffix order. Neither bridge is asserted
+here, and no proof hole is introduced by this section. -/
+
+/-- Gcd of the byte frequencies over the distinct symbols of `T`. `0` when `T` is empty. -/
+def byteFreqGcd (T : Text) : Nat :=
+  T.eraseDups.foldl (fun acc c => Nat.gcd acc (T.count c)) 0
+
+theorem foldl_gcd_dvd_acc (a : Nat) (l : List Nat) : l.foldl Nat.gcd a ∣ a := by
+  induction l generalizing a with
+  | nil => simp
+  | cons b t ih =>
+      simp only [List.foldl_cons]
+      exact Nat.dvd_trans (ih (Nat.gcd a b)) (Nat.gcd_dvd_left a b)
+
+/-- If `m` divides the accumulator and every mapped entry, it divides the mapped gcd fold. -/
+theorem dvd_foldl_gcd (m a : Nat) (l : List Nat) (f : Nat → Nat)
+    (ha : m ∣ a) (hl : ∀ x ∈ l, m ∣ f x) :
+    m ∣ l.foldl (fun acc c => Nat.gcd acc (f c)) a := by
+  induction l generalizing a with
+  | nil => simpa using ha
+  | cons b t ih =>
+      simp only [List.foldl_cons]
+      exact ih (Nat.gcd a (f b)) (Nat.dvd_gcd ha (hl b (by simp)))
+        (fun x hx => hl x (by simp [hx]))
+
+/-- A byte appearing `m` times in a `U`-repeat appears `m * count` times in `U^m`. -/
+theorem count_flatten_replicate (U : Text) (m c : Nat) :
+    ((List.replicate m U).flatten).count c = m * U.count c := by
+  induction m with
+  | zero => simp
+  | succ k ih =>
+      rw [List.replicate_succ, List.flatten_cons, List.count_append, ih,
+          Nat.add_mul, Nat.one_mul]
+      exact Nat.add_comm _ _
+
+/-- `T` is a proper power `U^m`, `m > 1` (i.e. `T` is not primitive). -/
+def IsPower (T : Text) : Prop := ∃ U m, 1 < m ∧ T = (List.replicate m U).flatten
+
+/-- Every byte frequency of a proper power is divisible by the exponent. -/
+theorem isPower_dvd_byteFreqGcd {T : Text} (h : IsPower T) :
+    ∃ m, 1 < m ∧ m ∣ byteFreqGcd T := by
+  obtain ⟨U, m, hm, hT⟩ := h
+  refine ⟨m, hm, ?_⟩
+  unfold byteFreqGcd
+  apply dvd_foldl_gcd m 0 T.eraseDups (fun c => T.count c)
+  · exact ⟨0, by simp⟩
+  · intro c _
+    rw [hT, count_flatten_replicate]
+    exact ⟨U.count c, rfl⟩
+
+/-- Criterion C, `g = 1` half at the frequency level: gcd one rules out proper powers,
+hence the equal-rotation periodicity the LF-map argument needs to exclude. -/
+theorem gcdOne_not_isPower (T : Text) (h : byteFreqGcd T = 1) : ¬ IsPower T := by
+  intro hp
+  obtain ⟨m, hm, hdvd⟩ := isPower_dvd_byteFreqGcd hp
+  rw [h] at hdvd
+  have hmle : m ≤ 1 := Nat.le_of_dvd Nat.one_pos hdvd
+  omega
+
+/-- The affine Phi interval formula (DESIGN.md): `phi^-1(x) = (v + x - u) mod n`. -/
+def phiFormula (R : Text) (u v x : Nat) : Nat := (v + (x - u)) % R.length
+
+/-- Criterion C, singleton half: when a run's cyclic SA domain is the singleton `{u}`,
+the affine formula at `u` returns exactly the sampled successor `phiInv u`, with no
+periodicity hypothesis. Here `u = rowPos R (a-1)` is the run tail and `v = rowPos R a`
+the next run's head. -/
+theorem criterion_singleton_branch (R : Text) (a : Nat) (hpos : 0 < a) (ha : a < R.length) :
+    phiFormula R (rowPos R (a-1)) (rowPos R a) (rowPos R (a-1))
+      = phiInv R (rowPos R (a-1)) := by
+  have hv : rowPos R a < R.length := rowPos_lt R a ha
+  unfold phiFormula
+  rw [Nat.sub_self, Nat.add_zero, Nat.mod_eq_of_lt hv]
+  exact headFromTail R a hpos ha
+
 end SxgcPhi
