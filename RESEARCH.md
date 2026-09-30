@@ -2098,3 +2098,13 @@ the published compact form requires the FULL Nishimoto-Tabei machinery: LF move 
 SA-value interval mapping (phi at run granularity) - Movi 2 compresses only the LF part.
 Sizing carried over: fragment members ~0.552 GB before the locate map (consistent with the
 ~0.6-0.7x-text target). Relaunching with per-artifact gates and the corrected design requirement.
+
+## SXI2 v2 REVIEW: periodic-cyclic phi blocker found (fail-loud held; hybrid escape mandated)
+The v2 oracle (phi_oracle.py): 28,362 aperiodic locate cases PASS; 126 PERIODIC CYCLIC cases FAIL -
+run-tail SA-value mapping returns wrong successors under local periodicity (satellite arrays, repeated
+padding) - the cyclic-frame manifestation of classic LF periodicity. Shipped SXI1 samples never hit it
+(locate reads explicit values). Design direction (v3): HYBRID ESCAPE - phi for aperiodic runs + explicit
+side-list for periodic-ambiguous runs, with a stated criterion. THEORY CONNECTION: the open O1 problem
+(RunEdgeDominate; RunEdgeHit PROVEN in SxgcRunEdge.lean) is precisely about run-edge rules - the
+phi-correctness criterion may be O1-adjacent and Lean-provable. EF chi member: 0.144 GB ideal at fragment.
+Evidence: bit6/sxi_logs/sxi2-v2/ (DESIGN.md, RESULTS.md, phi oracle + counterexamples, size probe).

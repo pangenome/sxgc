@@ -1,0 +1,115 @@
+[
+  {
+    "path": "/home/erikg/worktrees/sxgc/pi-worktree-e7286239-b261-424c-8585-f2604e5d83e0-s0-0/vendor/byte-remap-gates/yeast235.sxi",
+    "n": 3336986759,
+    "k": 9901,
+    "r": 100905045,
+    "chi": 85404336,
+    "sxi1_members": {
+      "1": {
+        "bytes": 504527273,
+        "count": 100905045
+      },
+      "2": {
+        "bytes": 403620193,
+        "count": 100905045
+      },
+      "3": {
+        "bytes": 807240360,
+        "count": 100905045
+      },
+      "4": {
+        "bytes": 12,
+        "count": 0
+      },
+      "5": {
+        "bytes": 88747090,
+        "count": 85404336
+      },
+      "6": {
+        "bytes": 351876,
+        "count": 351876
+      }
+    },
+    "huffman_head_bits": 223412101,
+    "gamma_length_bits": 568180293,
+    "idealized_rlbwt_bytes": 98949050,
+    "elias_fano_low_bits": 5,
+    "idealized_ef_bytes": 77088357,
+    "caveat": "Excludes codebook/checkpoints, LF map, phi map, anchors, directory and padding"
+  },
+  {
+    "path": "/home/erikg/worktrees/sxgc/pi-worktree-e7286239-b261-424c-8585-f2604e5d83e0-s0-0/vendor/byte-remap-gates/pile-frag.sxi",
+    "n": 1082130213,
+    "k": 1,
+    "r": 397723010,
+    "chi": 306164765,
+    "sxi1_members": {
+      "1": {
+        "bytes": 1988617098,
+        "count": 397723010
+      },
+      "2": {
+        "bytes": 1541176673,
+        "count": 397723010
+      },
+      "3": {
+        "bytes": 3181784080,
+        "count": 397723010
+      },
+      "4": {
+        "bytes": 12,
+        "count": 0
+      },
+      "5": {
+        "bytes": 306223758,
+        "count": 306164765
+      },
+      "7": {
+        "bytes": 256,
+        "count": 256
+      }
+    },
+    "huffman_head_bits": 2105962875,
+    "gamma_length_bits": 760514030,
+    "idealized_rlbwt_bytes": 358309614,
+    "elias_fano_low_bits": 1,
+    "idealized_ef_bytes": 144174330,
+    "caveat": "Excludes codebook/checkpoints, LF map, phi map, anchors, directory and padding"
+  },
+  {
+    "path": "/mnt/nvme3n1/erikg/sxgc-k10sep/from-zero-p_fwd37s/k10.sxi",
+    "n": 30151407545,
+    "k": 1,
+    "r": 1859825862,
+    "chi": 1627067257,
+    "sxi1_members": {
+      "1": {
+        "bytes": 9299131358,
+        "count": 1859825862
+      },
+      "2": {
+        "bytes": 8136738161,
+        "count": 1859825862
+      },
+      "3": {
+        "bytes": 14878606896,
+        "count": 1859825862
+      },
+      "4": {
+        "bytes": 12,
+        "count": 0
+      },
+      "5": {
+        "bytes": 1647235742,
+        "count": 1627067257
+      }
+    },
+    "huffman_head_bits": 4114811613,
+    "gamma_length_bits": 13704084828,
+    "idealized_rlbwt_bytes": 2227362056,
+    "elias_fano_low_bits": 4,
+    "idealized_ef_bytes": 1252474908,
+    "caveat": "Excludes codebook/checkpoints, LF map, phi map, anchors, directory and padding"
+  }
+]

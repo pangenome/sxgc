@@ -1,0 +1,4 @@
+b'banana\x1e' first_mismatch []
+b'ACG\x1eACG\x1eACG\x1eACG\x1e' first_mismatch [(0, 1, 4)]
+b'\x01\x02\x02\x01\x02\x02' first_mismatch [(0, 2, 3)]
+PASS aperiodic 28362 periodic counterexamples 126
