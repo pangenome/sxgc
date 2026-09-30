@@ -2167,3 +2167,14 @@ predecessors_before_zero=678,349,792 candidate spaces, class_size 1.39e9 vs limi
 CYCLIC_SEAM_REFUSED - the cyclic contract ENFORCES document-aligned corpora. Supervisor
 error (bad slice cut), caught by policy; slice truncated at last 0x1E (dropped 34,675 bytes),
 aligned rebuild running for the true 8 GB chi.
+
+## K10 MEMORY GATE PASS (third attempt; completes the parse-memory lane's gates)
+k10 front-end, memory path vs stock oracle: ALL FOUR OUTPUTS BYTE-IDENTICAL (.rlebwt/.meta/.ssa/
+.ssa_t). Peak RSS 116.4 GB -> 76.3 GB (-34.5%; yeast was -36.2% - consistent). Wall 2:03:30 vs
+2:04:07 (+0.3% - free). Parse-memory lane now FULLY GATED at both scales; the 466-redo projection
+(~355 GB peak vs 506 as-built) is supported by two independent scale gates. Note: two prior gate
+attempts were OOM-killed in crowded windows - third attempt on the quiet box ran clean.
+ALL MERGED PIECES NOW GATED IN MAIN: seam policy (yeast+k10+466 chain), w1 parameterization (w10
+byte-identical), memory path (yeast+k10), remap (fragment end-to-end), address-space (3 tiny
+ceilings identical), no-default-ceiling. Sealed-toolset refresh is the only remaining mechanical
+step before the 466 from-zero milestone.
