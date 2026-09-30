@@ -2225,3 +2225,10 @@ Extrapolation to the 1.31 TB pile: R/n ~ 0.32, chi/n ~ 0.25. The 1 GB fragment w
 PROFILING FINDING: the plain-text parse loop is SERIAL in this fork (zero lock contention measured)
 - the text scan, not the dictionary, is the text-path bottleneck; moot for the pile (BCR route),
 and the AGC/pangenome path was already parallel.
+
+### 8 GB TREND BUILD PUBLISHED (full pipeline from zero, exit 0, wall 5.9h)
+slice8.sxi = 52.55 GB at /mnt/nvme2n1/erikg/sxgc-trend/ - the second published web-text index.
+Chain: parse -> front-end -> endpoints -> slim -> sweep (chi = 2,261,916,360) -> 100-sample
+streamed audit (PASS) -> write -> validate -> PASS. All from one command, no knobs. Per-stage
+journal at logs2/. Summary: TWO published web-text scales now exist (1 GB frag: chi=306,164,765;
+8 GB slice: chi=2,261,916,360; chi/n 0.283 -> 0.2696; chi/R constant 0.770).
