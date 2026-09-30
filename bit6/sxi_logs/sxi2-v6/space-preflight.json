@@ -1,0 +1,77 @@
+{
+  "model": "explicit independently stored phi interval pairing",
+  "caveat": "Not a lower bound on an index deriving pairing from the BWT; no v6 codec is projected or published.",
+  "target_max_move_bits_per_run": 12,
+  "fragment_target_max_bytes": 1300000000,
+  "rows": [
+    {
+      "artifact": "yeast235",
+      "n": 3336986759,
+      "r": 100905045,
+      "chi": 85404336,
+      "sxi1_bytes": 1804487132,
+      "v5_bytes": 1413689216,
+      "retained_members_bytes": {
+        "1_runs": 98951370,
+        "4_old_anchors": 12,
+        "5_chi_ef": 77088381,
+        "6_names": 351876,
+        "11_sparse_sa": 788344
+      },
+      "pairing_bits_per_run": 25.145728170491235,
+      "source_boundary_bits_per_run": 6.468135028966498,
+      "move_form_optimistic_bits_per_run": 31.613863199457736,
+      "optimistic_total_bytes": 575929770,
+      "optimistic_below_v5": true,
+      "v5_below_sxi1": true,
+      "few_bits_gate": false,
+      "fragment_target_gate": null
+    },
+    {
+      "artifact": "pile-frag",
+      "n": 1082130213,
+      "r": 397723010,
+      "chi": 306164765,
+      "sxi1_bytes": 7017802200,
+      "v5_bytes": 5196757368,
+      "retained_members_bytes": {
+        "1_runs": 358311934,
+        "4_old_anchors": 12,
+        "5_chi_ef": 144174354,
+        "7_remap": 256,
+        "11_sparse_sa": 3107232
+      },
+      "pairing_bits_per_run": 27.124493788175624,
+      "source_boundary_bits_per_run": 2.58140523439521,
+      "move_form_optimistic_bits_per_run": 29.705899022570833,
+      "optimistic_total_bytes": 1982433735,
+      "optimistic_below_v5": true,
+      "v5_below_sxi1": true,
+      "few_bits_gate": false,
+      "fragment_target_gate": false
+    },
+    {
+      "artifact": "k10",
+      "n": 30151407545,
+      "r": 1859825862,
+      "chi": 1627067257,
+      "sxi1_bytes": 33961712446,
+      "v5_bytes": 28372620184,
+      "retained_members_bytes": {
+        "1_runs": 2227364376,
+        "4_old_anchors": 12,
+        "5_chi_ef": 1252474932,
+        "11_sparse_sa": 14529912
+      },
+      "pairing_bits_per_run": 29.34982536826582,
+      "source_boundary_bits_per_run": 5.416241974998555,
+      "move_form_optimistic_bits_per_run": 34.766067343264375,
+      "optimistic_total_bytes": 11576723128,
+      "optimistic_below_v5": true,
+      "v5_below_sxi1": true,
+      "few_bits_gate": false,
+      "fragment_target_gate": null
+    }
+  ],
+  "gate": "FAILED"
+}

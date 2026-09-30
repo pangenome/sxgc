@@ -2257,3 +2257,9 @@ v5 artifacts on nvme3n1 are version 3 - caught by the v6 lane's honest format au
 v5 code recovered from the still-live worktree (writer verified version 3, cargo release build
 green, writer compiles clean). The verification lesson, restated with teeth: a bank is not
 verified until the BINARY IT PRODUCES is checked against the artifact it claims to be.
+
+### v6 PREFLIGHT BANKED (recovered from retention patch - the unstaged-lane pattern works)
+Explicit-association cost: 25.146 / 27.124 / 29.350 bits/run (yeast / fragment / k10);
+optimistic totals 575.9 MB / 1.982 GB / 11.58 GB - the corrected v6-2 targets (2.4-2.6x over v5).
+The 12-bit two-list form is information-theoretically impossible (association lost); a BWT-derived
+association is the open research question, deferred.
