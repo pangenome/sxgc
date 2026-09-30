@@ -2350,3 +2350,26 @@ the end) stands on the set-level fact.
 miss UNTRACKED files (revival file survived only because the lane wrote into main cwd);
 fresh-worktree lake baseline ~5min (seed olean cache next round); deepseek-4.1-flash cannot
 route through codex (use native runner + model override).
+
+## CORRECTION #18 + THEORY CLOSURE: chi-COUNT MONOTONICITY REFUTED (fleet round 2, both barrels converged)
+The open question from fleet round 1 is CLOSED - REFUTED, machine-checked in Lean, found
+independently by both lanes within ~90 minutes of being posed:
+(1) COUNTEREXAMPLES (Lean, sorry-free, SxgcChiMono.lean): chi_append_decreases (T1=[1,30,3,4,30,
+3,30,4,30,5,1,30], T2=[3,30]: chi 7 -> 6); chi_single_symbol_document_decreases (even the
+single-document append-unit of the BCR/merge world violates it); chi_prefix_extension_decreases.
+Oracle hammer's minimal contract-valid witness: A=1<SEP>2<SEP>2<SEP>1<SEP> (4 docs, chi=4),
+B=2<SEP> (chi(A+B)=3) - DELTA = -1; every violation found across ~20M pairs is exactly -1.
+(2) WHY THE 40K SEARCH MISSED IT: it tested only SINGLE-document texts (body++[SEP]) - that
+family is genuinely safe (8M further pairs, 0 violations). Violations require MULTI-document A
+(docs(A)<=2 safe over 2.7M pairs; minimal violators have 4 documents). The document contract
+SEP recurs at every doc end, so it is NOT a unique trailing delimiter - the safe condition fails.
+(3) MECHANISM: append can ERASE a 'terminal-context' requirement - a context right-maximal
+only as a SUFFIX of A - demoting an old maximal class with NO compensating creation.
+Demotion-driven, never revival-driven (independent of round 1's revival result).
+(4) POSITIVE SURVIVORS (Lean-proven + oracle-hardened): monotone when the trailing symbol is
+unique (a genuine delimiter); fresh symbols; disjoint content alphabets; suffix-preserving
+appends; doubling cannot decrease.
+(5) ARCHITECTURE CONSEQUENCE: no cheap incremental chi-count invariant exists; ANY prune-based
+incremental chi maintenance is UNSOUND (now by Lean-checked counterexample, not just set-level
+revival). The 'derive chi once from the final merged structure' decision STANDS, STRENGTHENED.
+Fleet pattern validated again: pose sharp question -> parallel hammer+proof -> closed same night.
