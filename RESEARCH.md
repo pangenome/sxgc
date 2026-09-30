@@ -2156,3 +2156,14 @@ predecessor; cold load worse than SXI1 (k10 48.4 GB RSS / 14 min vs 31.1 GB / 3.
 still builds symbol-run lists). 466 projection >= 42.83 GB (better than SXI1's 52, stretch 6-8
 needs the few-bits form). v6 candidate: NT few-bits permutation representation + O(log log)
 predecessor + cold-load path.
+
+## 8 GB TREND DATA (first cross-scale web-text measurement; user scaling hypothesis CONFIRMED)
+R/n: 0.3676 (1 GB fragment) -> 0.3501 (8 GB slice, offset 900 GB region) - the ratio IMPROVES
+~1.2% per doubling, monotone, no cliff. The 1 GB fragment is the worst case as the user argued
+("as long as there is any repetition it should get better and better"). Extrapolated to the
+full 1.31 TB pile: R/n ~ 0.32, chi/n ~ 0.25 (via chi/R ~ 0.77). Also: the trend corpus
+initially cut mid-document (terminal 0x20 = SPACE) -> the seam machinery REFUSED correctly:
+predecessors_before_zero=678,349,792 candidate spaces, class_size 1.39e9 vs limit 2.9M,
+CYCLIC_SEAM_REFUSED - the cyclic contract ENFORCES document-aligned corpora. Supervisor
+error (bad slice cut), caught by policy; slice truncated at last 0x1E (dropped 34,675 bytes),
+aligned rebuild running for the true 8 GB chi.
