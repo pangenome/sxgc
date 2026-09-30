@@ -2275,3 +2275,20 @@ from storage); phi association remains the whale at 63-72 bits/run vs the prefli
 retention patch (165 KB, applied clean), version-4 writer verified by built binary, cargo green,
 small gates re-run from main. NEXT (optional v6-3): the association representation gap 63-72 ->
 25-30 bits/run; composed with token-space = the half-of-text goal still in reach.
+
+## WEBTEXT ARCHITECTURE DECISIONS (user, end of day 2)
+(1) CORPUS CONTRACT: BYTE SPACE for the pile (token route banked as measurement + LM-substrate
+option; not the default). (2) ADOPT A/B/C/D ALL: A = current shipped chain (milestone running);
+B = MOVE-NATIVE (BCR maintaining move map + sparse anchors, NO sample materialization; decoupled
+phi-LCE slim; chi computed FROM the move form; one representation end-to-end); C = Movi 2 as
+external benchmark/verification oracle only (cross-check vs their HPRC-466 numbers); D = direct
+SA+LCP chi derivation as the slice-scale third construction route AND standing cross-verification
+oracle (the token-space lane's cyclic-SA oracle already proves the pattern).
+(3) THE NEXT-LEVEL DESIGN (user's ropebwt3-style proposal, confirmed natural): CHUNK-MERGE
+progressive construction - per-chunk in-RAM indexes built by the SIMPLEST method (direct SA + linear
+chi derivation, no PFP/BCR needed per chunk) then progressive ropebwt-style BWT merges WITH move-map
+maintenance, chi maintained INCREMENTALLY: chi is MONOTONE-COMPACT under merges (adding text only
+dominates old witnesses away, never re-requires them; new witnesses only in the added chunk;
+fork conditions recomputed only at merged boundaries). Never sorts the whole thing; merges are
+O(r) pairwise in a balanced tree (O(R log k) total). Matches the Diaz-Dominguez SPIRE 2025
+"merging big BWTs" motivation with our chi twist.
