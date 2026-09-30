@@ -45,6 +45,7 @@ def compare(a, b):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--binary', required=True)
+    p.add_argument('--reference-binary', help='optional banked v1 differential at block scale')
     p.add_argument('--pfp')
     p.add_argument('--rpfbwt')
     a = p.parse_args()
@@ -63,7 +64,23 @@ def main():
             want = oracle(text)
             for ext in EXT:
                 assert pathlib.Path(str(out) + ext).read_bytes() == want[ext], (j, ext)
+            if j == 0:
+                before = {ext: pathlib.Path(str(out) + ext).read_bytes() for ext in EXT}
+                retry = subprocess.run([a.binary, source, out], capture_output=True)
+                assert retry.returncode != 0
+                assert all(pathlib.Path(str(out) + ext).read_bytes() == before[ext] for ext in EXT)
         print(f'PASS independent cyclic-SA oracle: {len(cases)} collections, all four files')
+        print('PASS no-clobber retry: all four files preserved')
+        if a.reference_binary:
+            # Forces many leaf splits and AVL rebalances, beyond the tiny
+            # cyclic-SA cases. Both producers serialize the same four files.
+            stress = bytes(rng.choice(b'ACGT') for _ in range(49_999)) + b'\x1e'
+            source, reference, out = d / 'stress.txt', d / 'stress.v1', d / 'stress.v2'
+            source.write_bytes(stress)
+            subprocess.run([a.reference_binary, source, reference], check=True, capture_output=True)
+            subprocess.run([a.binary, source, out], check=True, capture_output=True)
+            compare(out, reference)
+            print('PASS blocked-tree differential: 50,000 bytes vs banked v1, all four files')
         if a.pfp and a.rpfbwt:
             # Larger, near-duplicate and distinct records give the two-level
             # PFP route enough phrases for rpfbwt's tiny-input preconditions.

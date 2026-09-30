@@ -2198,3 +2198,18 @@ DOMINATE BCR (2 samples/run x R=0.35n) - the same whale as SXI1. v2 mandate: rop
 run structure (O(log) insert/rank) + SPARSE-ANCHOR sample maintenance with phi recovery (dynamic
 move structure line) - the SXI2 lesson applied to construction. Full pile remains external/output-
 bound either way (theorem: chi ~ 0.25n); slices 10-50 GB work with full samples, 100 GB+ needs sparse.
+
+## BCR FRONT-END v2 BANKED (blocked AVL run tree; scale gates running detached, adopted)
+Independently implemented blocked AVL RLBWT builder (bit6/bcr_frontend_v2.cpp): O(log) rank/insert,
+ASAN/UBSAN-clean, 33 oracle cases + both PFP byte-identity gates + 50KB v1 differential PASS.
+OPEN ITEMS (honest): (1) endpoint recovery is currently O(n log r) full-LF-cycle - sparse-anchor
+O(R) recovery is v3; (2) yeast235 + remapped-fragment scale gates LAUNCHED DETACHED by the lane and
+ADOPTED by the supervisor (watcher armed; fragment auto-queued after yeast). Projections (tree
+memory at fragment density): 100 GB slice 612-897 GB (under the 900 cap, barely); 1 TB 6.1-9 TB
+(external required - as expected, output-bound). No checkpoint/restart for long gates yet.
+
+### BCR v2 source recovered (retention patch VALID for unstaged lane changes; note the pattern)
+Sol-lane retention patches are empty when the lane STAGES files, valid when it leaves changes
+UNSTAGED. v2's 27 KB patch applied cleanly; bcr_frontend_v2.cpp (13 KB) compiles warning-free.
+The detached scale gates (yeast + fragment) write verdicts to /tmp/bcr-v2-gates-2ec315bd/
+(outside the reaped worktree); supervisor watcher armed. Infrastructure lesson #4 recorded.
