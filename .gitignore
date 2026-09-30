@@ -25,3 +25,7 @@ bit6/sxi_logs/parse-memory/work-main/*-tmp/
 bit6/sxi_logs/parse-memory/work-main/
 bit6/sxi_logs/sxi2-v5/*.sxi2
 sealed-tools-v2/
+# live milestone journals are force-added at bank time
+bit6/sxi_logs/hprc-xsa-build-*.jsonl
+bit6/sxi_logs/hprc-xsa-build-*.log
+bit6/sxi_logs/hprc-xsa-build-*.time
