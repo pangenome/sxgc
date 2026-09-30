@@ -21,3 +21,4 @@ lean_lib SxgcRunEdge
 lean_lib SxgcSeam
 
 lean_lib SxgcRevival
+lean_lib SxgcChiMono
