@@ -1,0 +1,6 @@
+fixture b'banana\x1e' runs 5 safe 5 escaped_runs 0 escaped_values 0 first_mismatch []
+fixture b'ACG\x1eACG\x1eACG\x1eACG\x1e' runs 4 safe 3 escaped_runs 1 escaped_values 13 first_mismatch [(0, 1, 4, 0)]
+fixture b'\x01\x02\x02\x01\x02\x02' runs 2 safe 1 escaped_runs 1 escaped_values 5 first_mismatch [(0, 2, 3, 0)]
+random PASS aperiodic 28362 periodic 638 periodic_counterexamples 126 gcd_one 23977 periodic_escaped_runs 653 periodic_escaped_values 1826
+exhaustive ternary PASS 88569
+periodic stress PASS 2000

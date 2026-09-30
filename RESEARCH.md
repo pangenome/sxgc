@@ -2120,3 +2120,13 @@ logged (same phase, crowded-window OOM both prior times; relaunched on the now-e
 armed). 8 GB pile trend build launched (slice8.txt, clean, offset 900 GB region): decisive test
 of the user's scaling hypothesis - does chi/n improve with 8x corpus, or hold at the 1 GB floor
 (baseline: filtered-fragment chi/n = 0.28293; within-fragment D/n was flat 500MB->1GB).
+
+## SXI2 v3: CRITERION C FOUND, ORACLE-VERIFIED, REAL CORPORA NEED ZERO ESCAPES
+Criterion C (sufficient for phi on a run): BWT symbol-frequency gcd == 1, OR the run's SA-value
+domain is a singleton. Oracle: all 126 v2 counterexamples + 88,569 exhaustive ternary texts +
+2,000 periodic stress cases PASS under C+escape. Reference escape codec implemented + tested.
+EMPIRICAL: yeast (R=100.9M), k10 (R=1.86e9), remapped pile-frag (R=397.7M) ALL have gcd 1 ->
+escape-list size ZERO in every real corpus. The periodic pathology is synthetic-only (so far).
+Remaining: production implementation (writer/loader/query port/gates/sizes) - v4 mandated to
+implement, not re-review. Banked: bit6/sxi_logs/sxi2-v3/ (DESIGN.md criterion + proof sketch,
+oracle, criterion probe, escape codec).

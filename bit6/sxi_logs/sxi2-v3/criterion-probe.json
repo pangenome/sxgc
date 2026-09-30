@@ -1,0 +1,38 @@
+[
+  {
+    "path": "/home/erikg/worktrees/sxgc/pi-worktree-e7286239-b261-424c-8585-f2604e5d83e0-s0-0/vendor/byte-remap-gates/yeast235.sxi",
+    "n": 3336986759,
+    "k": 9901,
+    "runs": 100905045,
+    "chi": 85404336,
+    "frequency_gcd": 1,
+    "positive_symbols": 10,
+    "certified_safe_runs": 100905045,
+    "certified_escape_runs": 0,
+    "certified_escape_bytes": 0
+  },
+  {
+    "path": "/home/erikg/worktrees/sxgc/pi-worktree-e7286239-b261-424c-8585-f2604e5d83e0-s0-0/vendor/byte-remap-gates/pile-frag.sxi",
+    "n": 1082130213,
+    "k": 1,
+    "runs": 397723010,
+    "chi": 306164765,
+    "frequency_gcd": 1,
+    "positive_symbols": 231,
+    "certified_safe_runs": 397723010,
+    "certified_escape_runs": 0,
+    "certified_escape_bytes": 0
+  },
+  {
+    "path": "/mnt/nvme3n1/erikg/sxgc-k10sep/from-zero-p_fwd37s/k10.sxi",
+    "n": 30151407545,
+    "k": 1,
+    "runs": 1859825862,
+    "chi": 1627067257,
+    "frequency_gcd": 1,
+    "positive_symbols": 6,
+    "certified_safe_runs": 1859825862,
+    "certified_escape_runs": 0,
+    "certified_escape_bytes": 0
+  }
+]
