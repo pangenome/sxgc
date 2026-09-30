@@ -2087,3 +2087,14 @@ Ledger incident: the accidental agc2flat prepare verb ALSO truncated work-dir na
 (prepare-verb sidecar clobber) - silently broke the audit; restored from the original work dir.
 Banked with the w1-parameterization merge (long-window lane, 3-way): w1 now flows through
 pipeline/endpoints/seam/slim in BOTH trees, defaults w10, w10 byte-identity gated.
+
+### Correction #15 - supervisor brief error, caught by lane fail-loud
+The SXI2 brief gated the retained pile-frag .sxi (REMAPPED corpus: n=1,082,130,213,
+chi=306,164,765, audit 128/128) against the FILTERED corpus's chi (306,164,941, n minus
+229 forbidden bytes, from the long-window lane). Two different corpora, both correct, both
+already attributed in this ledger. The lane refused to publish on the mismatch - correct.
+Also caught: tail SA is NOT head+length (within-run SA values are arbitrary in suffix order);
+the published compact form requires the FULL Nishimoto-Tabei machinery: LF move map PLUS the
+SA-value interval mapping (phi at run granularity) - Movi 2 compresses only the LF part.
+Sizing carried over: fragment members ~0.552 GB before the locate map (consistent with the
+~0.6-0.7x-text target). Relaunching with per-artifact gates and the corrected design requirement.
