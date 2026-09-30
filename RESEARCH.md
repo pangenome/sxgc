@@ -2130,3 +2130,15 @@ escape-list size ZERO in every real corpus. The periodic pathology is synthetic-
 Remaining: production implementation (writer/loader/query port/gates/sizes) - v4 mandated to
 implement, not re-review. Banked: bit6/sxi_logs/sxi2-v3/ (DESIGN.md criterion + proof sketch,
 oracle, criterion probe, escape codec).
+
+## SXI2 v4 BANKED (production substrate + honest space-gate failure)
+Implemented and small-scale-gated: SXI2 publish-only converter (bit6/sxi2_write.cpp), dual-format
+xsa loader, EF chi decoder, phi locate, escape fallback. Synthetic MEM + HTTP byte parity PASS
+(aperiodic phi + periodic nonempty-escape + exact EF chi); SXI1 regression + SXI2 differential PASS;
+all three chi header gates verified. SPACE GATE FAILED LOUD (correct refusal): the v4 codec retains
+raw head+tail samples AND adds 24 B/run phi records - the compact form AUGMENTED instead of REPLACING
+(projected yeast 3.81 vs 1.80 GB SXI1; fragment 14.77 vs 7.02; 466 phi member alone 65.75 GB).
+v5 mandate: phi REPLACES samples - sparse anchors (8B per 2^k runs) + few-bits/run NT interval
+members; compact LF move map as a STORED member (not rebuilt from decoded runs); O(log log n)
+predecessor, not O(log R) binary search. Also fixed: SOURCES.sha256.json regenerated for the 8
+runtime/src entries changed by the seam+w1 merges and v4 (vendoring discipline caught the drift).
