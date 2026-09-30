@@ -2186,3 +2186,15 @@ remap pfp++, address-space defaults, SXI2 converter. THE FROM-ZERO 466 MILESTONE
 xsa build --agc HPRC_r2_assemblies_0.6.1.agc -o hprc.sxi --threads 48 --verify-text-sample 10000
 (sealed-tools-v2; stock rpfbwt - the memory path stays opt-in; peak ~506 GB projected, box
 accommodates; the number must reproduce the validation chi = 2,250,211,129 EXACTLY).
+
+## BCR FRONT-END v1 BANKED (route validated at correctness level; scale structure is v2's work)
+Single-read, reverse-stream BCR prototype with run-head+run-tail SA sample maintenance during
+insertion; writes all four PFP-compatible files (drop-in for the chain). GATES PASS: 33 collections
+vs independent cyclic-SA oracle (all four files); cross-producer PFP byte-identity incl. a REMAPPED
+corpus (entries changed=12) - TWO DIFFERENT CONSTRUCTIONS, IDENTICAL ARTIFACTS. Parse-free slim
+design doc included. HONEST LIMIT: flat-run arrays => quadratic construction; yeast/fragment scale
+gates not run. Projections (fragment-density): 1 TB slice - PFP 25 TB vs BCR >=5.15 TB, and SAMPLES
+DOMINATE BCR (2 samples/run x R=0.35n) - the same whale as SXI1. v2 mandate: ropebwt2-style blocked
+run structure (O(log) insert/rank) + SPARSE-ANCHOR sample maintenance with phi recovery (dynamic
+move structure line) - the SXI2 lesson applied to construction. Full pile remains external/output-
+bound either way (theorem: chi ~ 0.25n); slices 10-50 GB work with full samples, 100 GB+ needs sparse.
