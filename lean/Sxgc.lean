@@ -1883,61 +1883,6 @@ theorem chi_eq_maxClasses (T : Text) (hT : positive T = true) :
       simpa [positionsT] using hthis
 
 
-/-- every requirement (w,c) is covered by some emitted position.
-Requires `positive T` (see the domain-convention note above). -/
-theorem covering_given_stream (T : Text) (hT : positive T = true) :
-    suffixient (scan (T.length + 1) (triplesOf T)) T := by
-  apply suffixient_of_witnesses
-  intro p hp
-  -- REMAINING (Bit 1b, covering direction of the LCP-maxima characterisation):
-  -- for every requirement p = (w,c), the one-pass scan emits some position x
-  -- with `wc` a suffix of `T[0:x)`.  This is the core of Lemma 34.
-  --
-  -- FOUNDATION NOW IN PLACE (Lane L, Task 2b):
-  --   * `take_eq_iff_le_lcpOf` — `lcpOf` is the longest common prefix, so the
-  --     `lcp` field of `triplesOf T` is the true LCP of SA-adjacent suffixes;
-  --   * `saOrder_pairwise` / `saOrder_sorted_getElem` — `saOrder` really is the
-  --     lexicographic suffix order.
-  -- REDUCED (2026-10-02 lane): `covering_of_domination` proves this from the
-  -- domination property (O1) of the scan — see the "Reductions isolating the
-  -- remaining obligations" block below.  The open obligation is (O1):
-  --   ∀ x ∈ positionsT T, ∃ y ∈ scan …, ScopeLe T x y
-  -- (0 counterexamples on 729 exhaustive + 320 random/binary/repetitive texts).
-  --
-  -- PRECISE REMAINING OBLIGATION: a "scan-covers-requirements" invariant over
-  -- `scanAux`: for every requirement (w,c) occurring in `T`, some emitted
-  -- position x has `w ++ [c]` as a suffix of `T.take x`.  The invariant must be
-  -- maintained across `evalStep`/`upd` (the candidate table's LCP-maxima are
-  -- exactly the right-maximal contexts of `T.reverse`), using the two facts
-  -- above to line the stream up with the suffix order.
-  sorry
-
-/-- the scan emits a *smallest* suffixient set (Lemma 34 tie-breaking).
-Requires `positive T` (see the domain-convention note above). -/
-theorem minimality (T : Text) (hT : positive T = true) :
-    (scan (T.length + 1) (triplesOf T)).length = chi T := by
-  -- HALF PROVEN (this lane): the emitted set is a suffixient list of positions,
-  -- so `chi` -- the minimum over suffixient subsets of `1..T.length` -- is at
-  -- most its size.  The remaining obligation is the LOWER half below.
-  have hle : chi T ≤ (scan (T.length + 1) (triplesOf T)).length :=
-    chi_le_of_suffixient_mem T _
-      (fun x hx => scan_mem_positionsT T hT x hx)
-      (covering_given_stream T hT)
-  apply Nat.le_antisymm
-  · -- REDUCED (2026-10-02 lane): `minimality_lower_of_scan_classes` proves
-    -- |scan| ≤ chi T from (O2) no duplicates, (O3) maximality, (O4) distinct
-    -- classes; combined with the upper half (covering) this completes minimality
-    -- via `minimality_of_scan_classes`.  Those are the open obligations (0
-    -- counterexamples on 729 exhaustive + 320 random/binary/repetitive texts).
-    --
-    -- REMAINING (Lemma 34 tie-breaking / minima lower bound): |scan| ≤ chi T,
-    -- i.e. no suffixient set of positions 1..T.length is smaller than the
-    -- emitted one.  Requires the LCP-maxima characterisation; see the lane
-    -- report for the precise missing statement and the FM event bridge.
-    sorry
-  · exact hle
-
-
 /-! ### Reductions isolating the remaining obligations (statement-locked)
 
 Each of the three open theorems above reduces to a single stream-level
@@ -6133,5 +6078,1507 @@ private def structTexts : List Text :=
   ++ toString (structTexts.filter (fun T => !runEdgeHitOk T)).length)
 #eval ("runEdgeDominate counterexamples / structured: "
   ++ toString (structTexts.filter (fun T => !runEdgeDominateOk T)).length)
+
+
+/-! ## Shared reverse-row geometry (from SxgcRunEdge)
+
+Kept before the covering theorem to avoid a circular module dependency. -/
+
+/-! ## Layer 0: small list lemmas -/
+
+/-- take beyond the end of the list -/
+theorem take_full (l : List Nat) (n : Nat) (h : l.length ≤ n) : l.take n = l := by
+  have hd : l.drop n = [] := (List.drop_eq_nil_iff).mpr h
+  have hsplit : l = l.take n ++ l.drop n := (List.take_append_drop n l).symm
+  rw [hd, List.append_nil] at hsplit
+  exact hsplit.symm
+
+/-- `append` with a single-element suffix is injective in both arguments. -/
+theorem append_last_inj (a b : List Nat) (x y : Nat) (h : a ++ [x] = b ++ [y]) :
+    x = y ∧ a = b := by
+  have hrev : [x] ++ a.reverse = [y] ++ b.reverse := by
+    have h2 : (a ++ [x]).reverse = (b ++ [y]).reverse := by rw [h]
+    simpa [List.reverse_append, List.reverse_singleton] using h2
+  simp only [List.singleton_append, List.cons.injEq] at hrev
+  obtain ⟨rfl, htail⟩ := hrev
+  exact ⟨rfl, List.reverse_inj.mp htail⟩
+
+/-- a boolean walk that changes value somewhere has an adjacent change -/
+theorem exists_bool_change (f : Nat → Bool) : ∀ d a, f a ≠ f (a + d) →
+    ∃ k, a ≤ k ∧ k < a + d ∧ f k ≠ f (k + 1) := by
+  intro d
+  induction d with
+  | zero => intro a h; rw [Nat.add_zero] at h; exact absurd rfl h
+  | succ d' ih =>
+    intro a h
+    by_cases hmid : f a = f (a + d')
+    · refine ⟨a + d', by omega, by omega, ?_⟩
+      rw [← hmid]; exact h
+    · obtain ⟨k, hk1, hk2, hk3⟩ := ih a hmid
+      exact ⟨k, hk1, by omega, hk3⟩
+
+/-- all-skip case of `dedupAux`: everything is in `seen` -/
+theorem dedupAux_all_skip (seen : List Nat) : ∀ l : List Nat,
+    (∀ x ∈ l, seen.contains x = true) → dedup.dedupAux seen l = [] := by
+  intro l
+  induction l with
+  | nil => intro _; rfl
+  | cons a rest ih =>
+    intro hall
+    simp only [dedup.dedupAux]
+    rw [if_pos (hall a (by simp))]
+    exact ih (fun x hx => hall x (List.mem_cons_of_mem _ hx))
+
+/-- dedup of an all-equal list has length at most 1 -/
+theorem dedup_all_eq_le_one (c : Nat) : ∀ l : List Nat, (∀ x ∈ l, x = c) → (dedup l).length ≤ 1 := by
+  intro l hall
+  cases l with
+  | nil => exact Nat.zero_le 1
+  | cons a rest =>
+    have ha : a = c := hall a List.mem_cons_self
+    rw [ha]
+    unfold dedup
+    simp only [dedup.dedupAux]
+    by_cases h0 : List.contains [] c = true
+    · rw [if_pos h0]; exact absurd h0 (by simp)
+    · rw [if_neg h0]
+      have hskip : dedup.dedupAux [c] rest = [] :=
+        dedupAux_all_skip [c] rest (fun x hx => by
+          rw [hall x (List.mem_cons_of_mem _ hx)]; simp)
+      rw [hskip]; simp
+
+/-! ## Layer 1: the reverse-text alignment -/
+
+/-- The R-suffix at 0-based R-position `j` reverses the prefix of length
+`T.length - j` and appends the sentinel. -/
+theorem R_drop (T : Text) (j : Nat) (hj : j ≤ T.length) :
+    (T.reverse ++ [0]).drop j = (T.take (T.length - j)).reverse ++ [0] := by
+  have h3 : T = T.take (T.length - j) ++ T.drop (T.length - j) :=
+    (List.take_append_drop _ _).symm
+  have h4r : T.reverse = (T.take (T.length - j) ++ T.drop (T.length - j)).reverse :=
+    congrArg List.reverse h3
+  rw [List.reverse_append] at h4r
+  rw [List.drop_append, show j - T.reverse.length = 0 from by rw [List.length_reverse]; omega,
+      List.drop_zero, h4r, List.drop_append,
+      show j - (T.drop (T.length - j)).reverse.length = 0 from by
+        rw [List.length_reverse, List.length_drop]; omega,
+      List.drop_zero,
+      show (T.drop (T.length - j)).reverse.drop j = [] from
+        List.drop_eq_nil_iff.mpr (by rw [List.length_reverse, List.length_drop]; omega)]
+  simp
+
+/-! ## Layer 2: rows, positions, and characters -/
+
+instance : Inhabited Triple := ⟨⟨0,0,0⟩⟩
+
+/-- sa field of a stream row -/
+def saRow (T : Text) (k : Nat) : Nat := (triplesOf T)[k]!.sa
+
+/-- char field of a stream row -/
+def charRow (T : Text) (k : Nat) : Nat := (triplesOf T)[k]!.c
+
+/-- getElem! and getD agree in range -/
+theorem bang_getD : ∀ (l : List Triple) (i : Nat), i < l.length →
+    l[i]! = l.getD i ⟨0,0,0⟩ := by
+  intro l i h
+  rw [getElem!_pos l i h]
+  simp only [List.getD]
+  rw [show l[i]? = some l[i] from (List.getElem?_eq_some_iff).mpr ⟨h, rfl⟩]
+  simp
+
+theorem getD_bang (T : Text) (k : Nat) (hk : k < (triplesOf T).length) :
+    (triplesOf T).getD k ⟨0,0,0⟩ = (triplesOf T)[k]! :=
+  (bang_getD (triplesOf T) k hk).symm
+
+/-- row of a map over range: the index function -/
+theorem map_range_bang (f : Nat → Triple) (n i : Nat) (h : i < n) :
+    ((List.range n).map f)[i]! = f i := by
+  rw [bang_getD _ _ (by rw [List.length_map, List.length_range]; exact h),
+    getD_map_range f n i ⟨0,0,0⟩ h]
+
+/-- stream length -/
+theorem triplesOf_length (T : Text) : (triplesOf T).length = T.length + 1 := by
+  simp only [triplesOf]
+  rw [List.length_map, List.length_range]
+  simp
+
+/-- the sa field of row k is the k-th saOrder entry of R -/
+theorem saRow_eq (T : Text) (k : Nat) (hk : k < (triplesOf T).length) :
+    saRow T k = (saOrder (T.reverse ++ [0]))[k]! := by
+  have hk' : k < T.length + 1 := by rwa [triplesOf_length] at hk
+  simp only [saRow, triplesOf, List.length_append, List.length_reverse,
+    List.length_singleton] at ⊢
+  rw [map_range_bang _ (T.length + 1) k hk']
+
+/-- sa = 0 rows carry the sentinel char -/
+theorem charRow_zero (T : Text) (k : Nat) (hk : k < (triplesOf T).length)
+    (h0 : (saOrder (T.reverse ++ [0]))[k]! = 0) :
+    charRow T k = 0 := by
+  have hk' : k < T.length + 1 := by rwa [triplesOf_length] at hk
+  simp only [charRow, triplesOf, List.length_append, List.length_reverse,
+    List.length_singleton] at ⊢
+  rw [map_range_bang _ (T.length + 1) k hk']
+  show (if ((saOrder (T.reverse ++ [0]))[k]! == 0) = true then 0
+      else (T.reverse ++ [0])[(saOrder (T.reverse ++ [0]))[k]! - 1]!) = 0
+  rw [h0]
+  simp
+
+/-- sa ≥ 1 rows carry the R-char before their suffix -/
+theorem charRow_pos (T : Text) (k : Nat) (hk : k < (triplesOf T).length)
+    (h1 : 1 ≤ (saOrder (T.reverse ++ [0]))[k]!) :
+    charRow T k = (T.reverse ++ [0])[(saOrder (T.reverse ++ [0]))[k]! - 1]! := by
+  have hk' : k < T.length + 1 := by rwa [triplesOf_length] at hk
+  simp only [charRow, triplesOf, List.length_append, List.length_reverse,
+    List.length_singleton] at ⊢
+  rw [map_range_bang _ (T.length + 1) k hk']
+  show (if ((saOrder (T.reverse ++ [0]))[k]! == 0) = true then 0
+      else (T.reverse ++ [0])[(saOrder (T.reverse ++ [0]))[k]! - 1]!) =
+    (T.reverse ++ [0])[(saOrder (T.reverse ++ [0]))[k]! - 1]!
+  have hb : ((saOrder (T.reverse ++ [0]))[k]! == 0) = false := by
+    cases hbb : ((saOrder (T.reverse ++ [0]))[k]! == 0) with
+    | false => rfl
+    | true => rw [beq_iff_eq] at hbb; omega
+  rw [hb]
+  simp
+
+/-- every row's sa is an R-position -/
+theorem saRow_lt (T : Text) (k : Nat) (hk : k < (triplesOf T).length) :
+    saRow T k < T.length + 1 := by
+  rw [saRow_eq T k hk]
+  have hlen : (saOrder (T.reverse ++ [0])).length = T.length + 1 := by
+    rw [saOrder_length]; simp
+  have hklt : k < (saOrder (T.reverse ++ [0])).length := by
+    rw [hlen]; rwa [triplesOf_length] at hk
+  have hmem : (saOrder (T.reverse ++ [0]))[k]! ∈ saOrder (T.reverse ++ [0]) := by
+    rw [getElem!_pos _ k hklt]; exact List.getElem_mem hklt
+  have := saOrder_lt (T.reverse ++ [0]) _ hmem
+  simpa using this
+
+/-- sa determines the row -/
+theorem saRow_inj (T : Text) {k k' : Nat} (hk : k < (triplesOf T).length)
+    (hk' : k' < (triplesOf T).length) (h : saRow T k = saRow T k') : k = k' := by
+  classical
+  by_cases hne : k = k'
+  · exact hne
+  have hlen : (saOrder (T.reverse ++ [0])).length = T.length + 1 := by
+    rw [saOrder_length]; simp
+  have hpair : ∀ i j, i < (saOrder (T.reverse ++ [0])).length →
+      j < (saOrder (T.reverse ++ [0])).length → i < j →
+      (saOrder (T.reverse ++ [0]))[i]! ≠ (saOrder (T.reverse ++ [0]))[j]! := by
+    intro i j hi hj hij
+    have h := (List.pairwise_iff_getElem.mp (saOrder_nodup _)) i j hi hj hij
+    rw [getElem!_pos _ i hi, getElem!_pos _ j hj]
+    exact h
+  have hklt : k < (saOrder (T.reverse ++ [0])).length := by
+    rw [hlen]; rwa [triplesOf_length] at hk
+  have hklt' : k' < (saOrder (T.reverse ++ [0])).length := by
+    rw [hlen]; rwa [triplesOf_length] at hk'
+  rw [saRow_eq T k hk, saRow_eq T k' hk'] at h
+  rcases Nat.lt_or_ge k k' with hlt | hge
+  · exact absurd h (hpair k k' hklt hklt' hlt)
+  · have hlt' : k' < k := by omega
+    exact absurd h.symm (hpair k' k hklt' hklt hlt')
+
+/-- every R-position is some row's sa -/
+theorem saRow_surj (T : Text) (p : Nat) (hp : p < T.length + 1) :
+    ∃ k, k < (triplesOf T).length ∧ saRow T k = p := by
+  have hmem : p ∈ saOrder (T.reverse ++ [0]) := by
+    refine saOrder_mem _ p ?_
+    simp
+    omega
+  obtain ⟨k, hk, hget⟩ := List.mem_iff_getElem.mp hmem
+  have hlen : (saOrder (T.reverse ++ [0])).length = T.length + 1 := by
+    rw [saOrder_length, List.length_append, List.length_reverse, List.length_singleton]
+  have hkt : k < (triplesOf T).length := by
+    rw [triplesOf_length]
+    rw [hlen] at hk
+    exact hk
+  refine ⟨k, hkt, ?_⟩
+  rw [saRow_eq T k hkt]
+  rw [getElem!_pos _ k hk]
+  exact hget
+
+/-- the R-char at position i is the text char at `T.length - 1 - i` -/
+theorem R_get (T : Text) (i : Nat) (hi : i < T.length) :
+    (T.reverse ++ [0])[i]! = T[T.length - 1 - i]! := by
+  have h1 : i < (T.reverse ++ [0]).length := by simp; omega
+  have h2 : i < T.reverse.length := by rw [List.length_reverse]; exact hi
+  have h3 : T.length - 1 - i < T.length := by omega
+  rw [getElem!_pos (T.reverse ++ [0]) i h1, getElem!_pos T (T.length - 1 - i) h3,
+    List.getElem_append_left h2, List.getElem_reverse h2]
+
+/-- text position of row k -/
+def rowPos (T : Text) (k : Nat) : Nat := T.length + 1 - saRow T k
+
+/-- the BWT char of a row is the text char AT its position -/
+theorem charRow_at_pos (T : Text) (k : Nat) (hk : k < (triplesOf T).length)
+    (hsa : 1 ≤ saRow T k) : charRow T k = T[rowPos T k - 1]! := by
+  have hlt := saRow_lt T k hk
+  have heq := saRow_eq T k hk
+  have ho : 1 ≤ (saOrder (T.reverse ++ [0]))[k]! := by rw [← heq]; exact hsa
+  have h1 : (saOrder (T.reverse ++ [0]))[k]! - 1 < T.length := by omega
+  rw [charRow_pos T k hk ho, R_get T _ h1]
+  have hfix : T.length - 1 - ((saOrder (T.reverse ++ [0]))[k]! - 1) = rowPos T k - 1 := by
+    rw [← heq]
+    unfold rowPos
+    omega
+  rw [hfix]
+
+/-! ## Layer 3: the w-interval (rows whose R-suffix starts with reverse w) -/
+
+/-- a suffix relation on plain lists -/
+def SuffixOf (w A : List Nat) : Prop := ∃ q, A = q ++ w
+
+/-- suffix gives reverse-prefix (with the trailing sentinel) -/
+theorem suffix_rev_prefix (A w : List Nat) (h : SuffixOf w A) :
+    ∃ rest, A.reverse ++ [0] = w.reverse ++ rest := by
+  obtain ⟨q, rfl⟩ := h
+  exact ⟨q.reverse ++ [0], by rw [List.reverse_append, List.append_assoc]⟩
+
+/-- reverse-prefix (with the trailing sentinel) gives suffix, for positive w -/
+theorem rev_prefix_suffix (A w : List Nat) (h : ∃ rest, A.reverse ++ [0] = w.reverse ++ rest)
+    (hw : ∀ x ∈ w, 1 ≤ x) : SuffixOf w A := by
+  obtain ⟨rest, hrest⟩ := h
+  by_cases hlen : w.length ≤ A.length
+  · have hlen' : w.length ≤ A.reverse.length := by rw [List.length_reverse]; exact hlen
+    have hsub1 : w.length - A.reverse.length = 0 := by omega
+    have hlenw : w.reverse.length = w.length := List.length_reverse
+    have htake : (A.reverse ++ [0]).take w.length = (w.reverse ++ rest).take w.length := by
+      rw [hrest]
+    rw [List.take_append, List.take_append, hsub1, hlenw, Nat.sub_self, List.take_zero,
+      List.take_zero, List.append_nil, List.append_nil] at htake
+    have hwr : w.reverse.take w.length = w.reverse :=
+      take_full w.reverse w.length (by rw [List.length_reverse]; omega)
+    rw [hwr] at htake
+    have hsplit : A.reverse = w.reverse ++ A.reverse.drop w.length := by
+      have h1 : A.reverse.take w.length ++ A.reverse.drop w.length = A.reverse :=
+        List.take_append_drop _ _
+      rw [htake] at h1
+      exact h1.symm
+    refine ⟨A.reverse.drop w.length |>.reverse, ?_⟩
+    calc A = A.reverse.reverse := (List.reverse_reverse A).symm
+      _ = (w.reverse ++ A.reverse.drop w.length).reverse := congrArg List.reverse hsplit
+      _ = (A.reverse.drop w.length).reverse ++ w.reverse.reverse := List.reverse_append
+      _ = (A.reverse.drop w.length).reverse ++ w := by rw [List.reverse_reverse]
+  · -- w.length ≥ A.length + 1
+    have hlenA : A.reverse.length = A.length := List.length_reverse
+    have hlenr : w.reverse.length = w.length := List.length_reverse
+    have hlenEq : A.reverse.length + 1 = w.length + rest.length := by
+      have := congrArg List.length hrest
+      simp only [List.length_append, List.length_singleton] at this
+      omega
+    have hrest0 : rest.length = 0 := by omega
+    have hw0 : rest = [] := List.length_eq_zero_iff.mp hrest0
+    have hwfull : w.reverse = A.reverse ++ [0] := by
+      rw [hw0, List.append_nil] at hrest; exact hrest.symm
+    have hwA : w = 0 :: A := by
+      have hw1 : w = (A.reverse ++ [0]).reverse := by
+        rw [← hwfull, List.reverse_reverse]
+      rw [hw1, List.reverse_append, List.reverse_singleton, List.reverse_reverse,
+        List.singleton_append]
+    have hhead : 0 ∈ w := by rw [hwA]; exact List.mem_cons_self
+    have := hw 0 hhead
+    omega
+
+/-- row k is a w-row: its R-suffix starts with reverse w -/
+def wRow (T : Text) (w : List Nat) (k : Nat) : Prop :=
+  ∃ rest, (T.reverse ++ [0]).drop (saRow T k) = w.reverse ++ rest
+
+/-- w-rows are exactly the rows whose position ends an occurrence of w -/
+theorem wRow_iff_suffix (T : Text) (w : List Nat) (k : Nat)
+    (hkw : k < (triplesOf T).length) (hw : ∀ x ∈ w, 1 ≤ x) :
+    wRow T w k ↔ SuffixOf w (T.take (rowPos T k - 1)) := by
+  have hlt := saRow_lt T k hkw
+  constructor
+  · intro h
+    rcases Nat.eq_zero_or_pos (saRow T k) with h0 | h1
+    · -- sa = 0: the full R is the suffix; rowPos - 1 = T.length
+      have hrp : rowPos T k - 1 = T.length := by
+        unfold rowPos; rw [h0]; omega
+      have hR : (T.reverse ++ [0]).drop 0 = (T.reverse ++ [0]) := by
+        rw [List.drop_zero]
+      obtain ⟨rest, hrest⟩ := h
+      rw [h0, hR] at hrest
+      have : SuffixOf w T := rev_prefix_suffix T w ⟨rest, hrest⟩ hw
+      obtain ⟨q, hq⟩ := this
+      refine ⟨q, ?_⟩
+      rw [hrp, take_full T T.length (by omega)]
+      exact hq
+    · -- sa ≥ 1
+      have hsa : saRow T k ≤ T.length := by omega
+      have hrp : rowPos T k - 1 = T.length - saRow T k := by
+        unfold rowPos; omega
+      obtain ⟨rest, hrest⟩ := h
+      have hdrop : (T.reverse ++ [0]).drop (saRow T k)
+          = (T.take (T.length - saRow T k)).reverse ++ [0] := R_drop T _ hsa
+      rw [hdrop] at hrest
+      have hA : SuffixOf w (T.take (T.length - saRow T k)) :=
+        rev_prefix_suffix _ w ⟨rest, hrest⟩ hw
+      obtain ⟨q, hq⟩ := hA
+      refine ⟨q, ?_⟩
+      rw [hrp]
+      exact hq
+  · intro hsuffix
+    rcases Nat.eq_zero_or_pos (saRow T k) with h0 | h1
+    · have hrp : rowPos T k - 1 = T.length := by
+        unfold rowPos; rw [h0]; omega
+      have hR : (T.reverse ++ [0]).drop 0 = (T.reverse ++ [0]) := by
+        rw [List.drop_zero]
+      have hT : T.take (rowPos T k - 1) = T := by
+        rw [hrp]; exact take_full T T.length (by omega)
+      obtain ⟨q, hq⟩ := hsuffix
+      have hfull : SuffixOf w T := ⟨q, by rw [← hT]; exact hq⟩
+      obtain ⟨rest, hrest⟩ := suffix_rev_prefix T w hfull
+      refine ⟨rest, ?_⟩
+      rw [h0, hR]
+      exact hrest
+    · have hsa : saRow T k ≤ T.length := by omega
+      have hrp : rowPos T k - 1 = T.length - saRow T k := by
+        unfold rowPos; omega
+      have hdrop : (T.reverse ++ [0]).drop (saRow T k)
+          = (T.take (T.length - saRow T k)).reverse ++ [0] := R_drop T _ hsa
+      obtain ⟨rest, hrest⟩ := suffix_rev_prefix (T.take (rowPos T k - 1)) w hsuffix
+      rw [hrp] at hrest
+      refine ⟨rest, ?_⟩
+      rw [hdrop]
+      exact hrest
+
+/-! ## Layer 3b: lex-convexity of the w-interval -/
+
+/-- two lex-comparable prefix-sharing lists force the middle to share the prefix -/
+theorem lexLE_between_prefix : ∀ (u a x b : List Nat),
+    (∃ ra, a = u ++ ra) → (∃ rb, b = u ++ rb) →
+    lexLE a x = true → lexLE x b = true → ∃ rx, x = u ++ rx := by
+  intro u
+  induction u with
+  | nil => intro a x b _ _ _ _; exact ⟨x, rfl⟩
+  | cons un ur ih =>
+    intro a x b ha hb h1 h2
+    obtain ⟨ra, rfl⟩ := ha
+    obtain ⟨rb, rfl⟩ := hb
+    cases x with
+    | nil => simp [lexLE] at h1
+    | cons xn xr =>
+      simp only [List.cons_append, lexLE, Bool.or_eq_true, Bool.and_eq_true] at h1 h2
+      rcases h1 with hlt | ⟨heq, hrest⟩
+      · -- un < xn: h2 impossible
+        have hun : un < xn := of_decide_eq_true hlt
+        have h2' : (decide (xn < un) = true) ∨ ((xn == un) = true ∧ lexLE xr (ur ++ rb) = true) := h2
+        rcases h2' with hlt2 | ⟨heq2, _⟩
+        · have : xn < un := of_decide_eq_true hlt2
+          omega
+        · have : xn = un := beq_iff_eq.mp heq2
+          omega
+      · -- un = xn
+        have hun : un = xn := beq_iff_eq.mp heq
+        have hrest2 : lexLE xr (ur ++ rb) = true := by
+          rcases h2 with hlt2 | ⟨heq2, hrest2'⟩
+          · have : xn < un := of_decide_eq_true hlt2
+            omega
+          · exact hrest2'
+        obtain ⟨rx, hrx⟩ := ih (ur ++ ra) xr (ur ++ rb) ⟨_, rfl⟩ ⟨_, rfl⟩ hrest hrest2
+        refine ⟨rx, ?_⟩
+        rw [hrx, hun, List.cons_append]
+
+/-! ## Layer 4: convexity of the w-interval and the block argument -/
+
+/-- the w-rows are convex in SA order -/
+theorem wRow_convex (T : Text) (w : List Nat) {k k' k'' : Nat}
+    (hk : k < (triplesOf T).length) (hk'' : k'' < (triplesOf T).length)
+    (hlt : k < k') (hlt' : k' < k'') (hWk : wRow T w k) (hWk'' : wRow T w k'') :
+    wRow T w k' := by
+  have hlen : (saOrder (T.reverse ++ [0])).length = T.length + 1 := by
+    rw [saOrder_length, List.length_append, List.length_reverse, List.length_singleton]
+  have hklt : k < (saOrder (T.reverse ++ [0])).length := by
+    rw [hlen]; rwa [triplesOf_length] at hk
+  have hklt'' : k'' < (saOrder (T.reverse ++ [0])).length := by
+    rw [hlen]; rwa [triplesOf_length] at hk''
+  have hmid : k' < (saOrder (T.reverse ++ [0])).length := by omega
+  have hk'len : k' < (triplesOf T).length := by
+    have := triplesOf_length T; omega
+  have hs1 : lexLE ((T.reverse ++ [0]).drop (saOrder (T.reverse ++ [0]))[k])
+      ((T.reverse ++ [0]).drop (saOrder (T.reverse ++ [0]))[k']) :=
+    saOrder_sorted_getElem (T.reverse ++ [0]) k k' hklt hmid hlt
+  have hs2 : lexLE ((T.reverse ++ [0]).drop (saOrder (T.reverse ++ [0]))[k'])
+      ((T.reverse ++ [0]).drop (saOrder (T.reverse ++ [0]))[k'']) :=
+    saOrder_sorted_getElem (T.reverse ++ [0]) k' k'' hmid hklt'' hlt'
+  obtain ⟨rest, hrest⟩ := hWk
+  obtain ⟨rest'', hrest''⟩ := hWk''
+  rw [saRow_eq T k hk, getElem!_pos _ k hklt] at hrest
+  rw [saRow_eq T k'' hk'', getElem!_pos _ k'' hklt''] at hrest''
+  obtain ⟨rx, hrx⟩ := lexLE_between_prefix w.reverse _ _ _ ⟨rest, hrest⟩ ⟨rest'', hrest''⟩ hs1 hs2
+  refine ⟨rx, ?_⟩
+  rw [saRow_eq T k' hk'len, getElem!_pos _ k' hmid]
+  exact hrx
+
+
+/-- charRow is the getD-char -/
+theorem charRow_getD (T : Text) (k : Nat) (hk : k < (triplesOf T).length) :
+    ((triplesOf T).getD k ⟨0,0,0⟩).c = charRow T k := by
+  rw [getD_bang T k hk]; rfl
+
+theorem saRow_getD (T : Text) (k : Nat) (hk : k < (triplesOf T).length) :
+    ((triplesOf T).getD k ⟨0,0,0⟩).sa = saRow T k := by
+  rw [getD_bang T k hk]; rfl
+
+/-- char differs from the next row's: run edge -/
+theorem isRunEdge_of_diff_next (ts : List Triple) (k : Nat) (hk : k < ts.length)
+    (hdiff : (ts.getD k ⟨0,0,0⟩).c ≠ (ts.getD (k+1) ⟨0,0,0⟩).c) : isRunEdge ts k = true := by
+  unfold isRunEdge
+  rw [Bool.or_eq_true]
+  refine Or.inr ?_
+  rw [Bool.and_eq_true]
+  refine ⟨decide_eq_true hk, ?_⟩
+  rw [Bool.or_eq_true]
+  refine Or.inr ?_
+  exact bne_iff_ne.mpr hdiff
+
+/-- char differs from the previous row's: run edge -/
+theorem isRunEdge_of_diff_prev (ts : List Triple) (k : Nat) (hk : k < ts.length) (hk1 : 1 ≤ k)
+    (hdiff : (ts.getD k ⟨0,0,0⟩).c ≠ (ts.getD (k-1) ⟨0,0,0⟩).c) : isRunEdge ts k = true := by
+  unfold isRunEdge isBoundary
+  rw [if_neg (by omega), if_neg (by omega), Bool.or_eq_true]
+  exact Or.inl (bne_iff_ne.mpr hdiff)
+
+/-- take m splits at position m -/
+theorem take_succ_last (T : Text) {m : Nat} (hm : 1 ≤ m) (hm2 : m ≤ T.length) :
+    T.take m = T.take (m - 1) ++ [T[m - 1]!] := by
+  have hm1 : m - 1 < T.length := by omega
+  have hopt : T[m - 1]? = some T[m - 1]! :=
+    (List.getElem?_eq_some_iff).mpr ⟨hm1, (getElem!_pos T (m - 1) hm1).symm⟩
+  rw [show m = (m - 1) + 1 from by omega, List.take_add_one, hopt]
+  rfl
+
+/-- if a w-row of char ≠ c exists, a char-c w-row is a run edge -/
+theorem exists_edge_wRow (T : Text) (w : List Nat) (c : Nat) {a b : Nat}
+    (hla : a < (triplesOf T).length) (hlb : b < (triplesOf T).length)
+    (hWa : wRow T w a) (hca : charRow T a = c)
+    (hWb : wRow T w b) (hcb : charRow T b ≠ c) :
+    ∃ k, k < (triplesOf T).length ∧ wRow T w k ∧ charRow T k = c ∧
+      isRunEdge (triplesOf T) k = true := by
+  classical
+  have key : ∀ x y : Nat, x < y → x < (triplesOf T).length → y < (triplesOf T).length →
+      wRow T w x → wRow T w y →
+      decide (charRow T x = c) ≠ decide (charRow T y = c) →
+      ∃ k, k < (triplesOf T).length ∧ wRow T w k ∧ charRow T k = c ∧
+        isRunEdge (triplesOf T) k = true := by
+    intro x y hxy hlx hly hWx hWy hne
+    obtain ⟨k, hk1, hk2, hk3⟩ :=
+      exists_bool_change (fun k => decide (charRow T k = c)) (y - x) x (by
+        have hxy' : x + (y - x) = y := by omega
+        intro hcon
+        apply hne
+        rw [hxy'] at hcon
+        exact hcon)
+    have hkl1 : x ≤ k := hk1
+    have hkl2 : k + 1 ≤ y := by omega
+    have hkl : k < (triplesOf T).length := by
+      have := triplesOf_length T; omega
+    have hkl1' : k + 1 < (triplesOf T).length := by
+      have := triplesOf_length T; omega
+    -- both are w-rows (convexity)
+    have hWk : wRow T w k := by
+      rcases Nat.eq_or_lt_of_le hkl1 with heq | hlt
+      · rw [← heq]; exact hWx
+      · exact wRow_convex T w hlx hly hlt (by omega) hWx hWy
+    have hWk1 : wRow T w (k + 1) := by
+      rcases Nat.eq_or_lt_of_le hkl2 with heq | hlt
+      · rw [heq]; exact hWy
+      · exact wRow_convex T w hlx hly (by omega) hlt hWx hWy
+    -- the status change gives a char difference
+    have hcdiff : charRow T k ≠ charRow T (k + 1) := by
+      intro heqchar
+      have hbeta : decide (charRow T k = c) ≠ decide (charRow T (k + 1) = c) := hk3
+      rw [heqchar] at hbeta
+      exact absurd hbeta (by simp)
+    by_cases hck : charRow T k = c
+    · refine ⟨k, hkl, hWk, hck, ?_⟩
+      exact isRunEdge_of_diff_next (triplesOf T) k hkl
+        (by rw [charRow_getD T k hkl, charRow_getD T (k+1) hkl1']; omega)
+    · have hck1 : charRow T (k + 1) = c := by
+        have hbeta : decide (charRow T k = c) ≠ decide (charRow T (k + 1) = c) := hk3
+        have hf : decide (charRow T k = c) = false := by simp [hck]
+        rw [hf] at hbeta
+        cases hbb : decide (charRow T (k + 1) = c) with
+        | true => exact of_decide_eq_true hbb
+        | false => rw [hbb] at hbeta; exact absurd rfl hbeta
+      refine ⟨k + 1, hkl1', hWk1, hck1, ?_⟩
+      exact isRunEdge_of_diff_prev (triplesOf T) (k + 1) hkl1' (by omega)
+        (by rw [show k + 1 - 1 = k from by omega, charRow_getD T (k+1) hkl1',
+            charRow_getD T k hkl]; omega)
+
+  rcases Nat.lt_trichotomy a b with hlt | heq | hgt
+  · exact key a b hlt hla hlb hWa hWb (by simp [hca, hcb])
+  · rw [← heq] at hcb
+    exact absurd hca hcb
+  · exact key b a hgt hlb hla hWb hWa (by simp [hca, hcb])
+
+
+/-! ## Layer 5: the assembly -/
+
+/-- `rightMaximal.isSuffix = true` gives a plain suffix -/
+theorem suffix_of_isSuffix (w T : List Nat)
+    (h : rightMaximal.isSuffix w T = true) : SuffixOf w T := by
+  unfold rightMaximal.isSuffix at h
+  rw [Bool.and_eq_true] at h
+  obtain ⟨_, hbeq⟩ := h
+  refine ⟨T.take (T.length - w.length), ?_⟩
+  have hdrop : List.drop (T.length - w.length) T = w := by
+    simp at hbeq
+    exact hbeq.symm
+  calc T = T.take (T.length - w.length) ++ List.drop (T.length - w.length) T :=
+        (List.take_append_drop _ _).symm
+    _ = T.take (T.length - w.length) ++ w := by rw [hdrop]
+
+
+/-! ### O1 campaign: O1Interval.lean (assembled) -/
+
+/-- A nonempty convex set of valid row indices has inclusive endpoints. -/
+theorem finite_convex_interval (n : Nat) (P : Nat → Prop)
+    (hconv : ∀ a j b, a < n → b < n → a < j → j < b → P a → P b → P j)
+    (k : Nat) (hk : k < n) (hPk : P k) :
+    ∃ a b, a ≤ k ∧ k ≤ b ∧ b < n ∧
+      (∀ j, a ≤ j → j ≤ b → P j) ∧
+      (∀ j, j < n → P j → a ≤ j ∧ j ≤ b) ∧
+      (a = 0 ∨ ¬ P (a-1)) ∧ (b+1 = n ∨ ¬ P (b+1)) := by
+  classical
+  let rows := (List.range n).filter (fun j => decide (P j))
+  have mem_rows : ∀ j, j ∈ rows ↔ j < n ∧ P j := by
+    intro j
+    simp [rows]
+  have hkm : k ∈ rows := (mem_rows k).mpr ⟨hk, hPk⟩
+  have hne : rows ≠ [] := by
+    intro h
+    rw [h] at hkm
+    exact List.not_mem_nil hkm
+  obtain ⟨a, ha, hmin⟩ := exists_min_le rows hne
+  obtain ⟨b, hb, hmax⟩ := exists_argmax_f rows hne id
+  have ha' := (mem_rows a).mp ha
+  have hb' := (mem_rows b).mp hb
+  have hak := hmin k hkm
+  have hkb : k ≤ b := hmax k hkm
+  refine ⟨a, b, hak, hkb, hb'.1, ?_, ?_, ?_, ?_⟩
+  · intro j haj hjb
+    by_cases hja : j = a
+    · simpa [hja] using ha'.2
+    by_cases hjb' : j = b
+    · simpa [hjb'] using hb'.2
+    exact hconv a j b ha'.1 hb'.1 (by omega) (by omega) ha'.2 hb'.2
+  · intro j hj hPj
+    have hm := (mem_rows j).mpr ⟨hj, hPj⟩
+    exact ⟨hmin j hm, hmax j hm⟩
+  · by_cases ha0 : a = 0
+    · exact Or.inl ha0
+    · refine Or.inr ?_
+      intro hP
+      have hm := hmin (a-1) ((mem_rows (a-1)).mpr ⟨by omega, hP⟩)
+      omega
+  · by_cases hbn : b+1 = n
+    · exact Or.inl hbn
+    · refine Or.inr ?_
+      intro hP
+      have hm : b+1 ≤ b := hmax (b+1) ((mem_rows (b+1)).mpr ⟨by omega, hP⟩)
+      omega
+
+/-- A nonzero character row with context w covers the corresponding word. -/
+theorem coversAt_of_wRow (T : Text) (hT : positive T = true)
+    (w : List Nat) (c k : Nat) (hk : k < (triplesOf T).length)
+    (hwpos : ∀ x ∈ w, 1 ≤ x) (hc : 1 ≤ c)
+    (hW : wRow T w k) (hchar : charRow T k = c) :
+    coversAt (w ++ [c]) (rowPos T k) T = true := by
+  have hsa : 1 ≤ saRow T k := by
+    by_cases h : 1 ≤ saRow T k
+    · exact h
+    have hz : saRow T k = 0 := by omega
+    have hc0 := charRow_zero T k hk (by rw [← saRow_eq T k hk, hz])
+    omega
+  have hlt := saRow_lt T k hk
+  have hr1 : 1 ≤ rowPos T k := by unfold rowPos; omega
+  have hrn : rowPos T k ≤ T.length := by unfold rowPos; omega
+  obtain ⟨q, hq⟩ := (wRow_iff_suffix T w k hk hwpos).mp hW
+  apply (coversAt_iff_suffix _ _ _).mpr
+  refine ⟨q, ?_⟩
+  rw [pref, take_succ_last T hr1 hrn, ← charRow_at_pos T k hk hsa,
+    hchar, hq, List.append_assoc]
+
+
+/-! ### O1 campaign: O1LcpBridge.lean (assembled) -/
+
+/-- The stored LCP of a noninitial row compares its suffix with the preceding row. -/
+theorem lcpRow_eq (T : Text) (k : Nat) (hk : 1 ≤ k)
+    (hkn : k < (triplesOf T).length) :
+    ((triplesOf T).getD k ⟨0,0,0⟩).lcp =
+      lcpOf ((T.reverse ++ [0]).drop (saRow T k))
+        ((T.reverse ++ [0]).drop (saRow T (k - 1))) := by
+  have hprev : k - 1 < (triplesOf T).length := by omega
+  rw [saRow_eq T k hkn, saRow_eq T (k - 1) hprev]
+  have hlen : k < (T.reverse ++ [0]).length := by
+    simpa [triplesOf_length] using hkn
+  unfold triplesOf
+  rw [getD_map_range _ _ _ _ hlen]
+  dsimp only
+  rw [getElem!_pos _ k (by simpa using hlen)]
+  simp only [List.getElem_map, List.getElem_range]
+  simp [show k ≠ 0 by omega]
+
+/-- A row begins with the reversed word exactly when its word-length take is that word. -/
+theorem wRow_iff_take (T : Text) (w : List Nat) (k : Nat) :
+    wRow T w k ↔
+      ((T.reverse ++ [0]).drop (saRow T k)).take w.length = w.reverse := by
+  constructor
+  · rintro ⟨rest, hrest⟩
+    have hwlen : w.reverse.length = w.length := List.length_reverse
+    rw [hrest, ← hwlen, List.take_append_length]
+  · intro htake
+    refine ⟨((T.reverse ++ [0]).drop (saRow T k)).drop w.length, ?_⟩
+    rw [← htake, List.take_append_drop]
+
+theorem wRow_length_le (T : Text) (w : List Nat) (k : Nat)
+    (hw : wRow T w k) :
+    w.length ≤ ((T.reverse ++ [0]).drop (saRow T k)).length := by
+  obtain ⟨rest, hrest⟩ := hw
+  rw [hrest, List.length_append, List.length_reverse]
+  omega
+
+/-- From a word row, crossing the next LCP preserves the word exactly at its length threshold. -/
+theorem wRow_lcp_step (T : Text) (w : List Nat) (k : Nat)
+    (hk : 1 ≤ k) (hkn : k < (triplesOf T).length)
+    (hw : wRow T w (k - 1)) :
+    (wRow T w k ↔ w.length ≤ ((triplesOf T).getD k ⟨0,0,0⟩).lcp) := by
+  rw [lcpRow_eq T k hk hkn]
+  have hprev := (wRow_iff_take T w (k - 1)).mp hw
+  constructor
+  · intro hcur
+    apply (take_eq_iff_le_lcpOf _ _ w.length
+      ⟨wRow_length_le T w k hcur, wRow_length_le T w (k - 1) hw⟩).mp
+    exact ((wRow_iff_take T w k).mp hcur).trans hprev.symm
+  · intro hlcp
+    have hleft := Nat.le_trans hlcp (lcpOf_le_left _ _)
+    have hright := Nat.le_trans hlcp (lcpOf_le_right _ _)
+    apply (wRow_iff_take T w k).mpr
+    exact ((take_eq_iff_le_lcpOf _ _ w.length ⟨hleft, hright⟩).mpr hlcp).trans hprev
+
+/-- LCP transport in the reverse direction, from the current row to its predecessor. -/
+theorem wRow_lcp_prev (T : Text) (w : List Nat) (k : Nat)
+    (hk : 1 ≤ k) (hkn : k < (triplesOf T).length)
+    (hw : wRow T w k)
+    (hlcp : w.length ≤ ((triplesOf T).getD k ⟨0,0,0⟩).lcp) :
+    wRow T w (k - 1) := by
+  rw [lcpRow_eq T k hk hkn] at hlcp
+  have hleft := Nat.le_trans hlcp (lcpOf_le_left _ _)
+  have hright := Nat.le_trans hlcp (lcpOf_le_right _ _)
+  apply (wRow_iff_take T w (k - 1)).mpr
+  exact ((take_eq_iff_le_lcpOf _ _ w.length ⟨hleft, hright⟩).mpr hlcp).symm.trans
+    ((wRow_iff_take T w k).mp hw)
+
+
+/-! ### O1 campaign: O1SemanticInterval.lean (assembled) -/
+
+/-- The maximal interval of rows beginning with a word has LCP barriers at
+both external boundaries and reaches the word-length threshold internally. -/
+theorem wRow_lcp_interval (T : Text) (w : List Nat) (k : Nat)
+    (hk : k < (triplesOf T).length) (hw : wRow T w k) :
+    ∃ a b, a ≤ k ∧ k ≤ b ∧ b < (triplesOf T).length ∧
+      (∀ j, a ≤ j → j ≤ b → wRow T w j) ∧
+      (∀ j, j < (triplesOf T).length → wRow T w j → a ≤ j ∧ j ≤ b) ∧
+      (∀ j, a < j → j ≤ b →
+        w.length ≤ ((triplesOf T).getD j ⟨0,0,0⟩).lcp) ∧
+      (a = 0 ∨ ((triplesOf T).getD a ⟨0,0,0⟩).lcp < w.length) ∧
+      (b + 1 = (triplesOf T).length ∨
+        ((triplesOf T).getD (b + 1) ⟨0,0,0⟩).lcp < w.length) := by
+  obtain ⟨a, b, hak, hkb, hbn, hinside, hall, hleft, hright⟩ :=
+    finite_convex_interval (triplesOf T).length (wRow T w)
+      (fun _ _ _ ha hb haj hjb hWa hWb =>
+        wRow_convex T w ha hb haj hjb hWa hWb) k hk hw
+  have hab : a ≤ b := Nat.le_trans hak hkb
+  have han : a < (triplesOf T).length := by omega
+  have hWa : wRow T w a := hinside a (Nat.le_refl _) hab
+  have hWb : wRow T w b := hinside b hab (Nat.le_refl _)
+  refine ⟨a, b, hak, hkb, hbn, hinside, hall, ?_, ?_, ?_⟩
+  · intro j haj hjb
+    exact (wRow_lcp_step T w j (by omega) (by omega)
+      (hinside (j - 1) (by omega) (by omega))).mp
+      (hinside j (by omega) hjb)
+  · rcases hleft with ha0 | hnot
+    · exact Or.inl ha0
+    · by_cases ha0 : a = 0
+      · exact Or.inl ha0
+      · refine Or.inr (Nat.lt_of_not_ge ?_)
+        intro hlcp
+        exact hnot (wRow_lcp_prev T w a (by omega) han hWa hlcp)
+  · rcases hright with hlast | hnot
+    · exact Or.inl hlast
+    · by_cases hlast : b + 1 = (triplesOf T).length
+      · exact Or.inl hlast
+      · refine Or.inr (Nat.lt_of_not_ge ?_)
+        intro hlcp
+        have hprev : wRow T w (b + 1 - 1) := by simpa using hWb
+        exact hnot ((wRow_lcp_step T w (b + 1) (by omega) (by omega) hprev).mpr hlcp)
+
+
+/-! ### O1 campaign: O1RequirementBoundary.lean (assembled) -/
+
+/-- Two differently colored rows in a word interval force an internal
+boundary with a row of the specified color on one side. -/
+theorem boundary_of_mixed_wRows (T : Text) (w : List Nat) (c : Nat) {a b : Nat}
+    (hla : a < (triplesOf T).length) (hlb : b < (triplesOf T).length)
+    (hWa : wRow T w a) (hca : charRow T a = c)
+    (hWb : wRow T w b) (hcb : charRow T b ≠ c) :
+    ∃ k, 1 ≤ k ∧ k < (triplesOf T).length ∧
+      charRow T (k-1) ≠ charRow T k ∧ wRow T w (k-1) ∧ wRow T w k ∧
+      (charRow T (k-1) = c ∨ charRow T k = c) := by
+  classical
+  have key : ∀ x y : Nat, x < y → x < (triplesOf T).length → y < (triplesOf T).length →
+      wRow T w x → wRow T w y →
+      decide (charRow T x = c) ≠ decide (charRow T y = c) →
+      ∃ k, 1 ≤ k ∧ k < (triplesOf T).length ∧
+        charRow T (k-1) ≠ charRow T k ∧ wRow T w (k-1) ∧ wRow T w k ∧
+        (charRow T (k-1) = c ∨ charRow T k = c) := by
+    intro x y hxy hlx hly hWx hWy hne
+    obtain ⟨k, hk1, hk2, hk3⟩ :=
+      exists_bool_change (fun k => decide (charRow T k = c)) (y - x) x (by
+        have hxy' : x + (y - x) = y := by omega
+        intro hcon
+        apply hne
+        rw [hxy'] at hcon
+        exact hcon)
+    have hkl1 : x ≤ k := hk1
+    have hkl2 : k + 1 ≤ y := by omega
+    have hkl : k < (triplesOf T).length := by
+      have := triplesOf_length T; omega
+    have hkl1' : k + 1 < (triplesOf T).length := by
+      have := triplesOf_length T; omega
+    -- both are w-rows (convexity)
+    have hWk : wRow T w k := by
+      rcases Nat.eq_or_lt_of_le hkl1 with heq | hlt
+      · rw [← heq]; exact hWx
+      · exact wRow_convex T w hlx hly hlt (by omega) hWx hWy
+    have hWk1 : wRow T w (k + 1) := by
+      rcases Nat.eq_or_lt_of_le hkl2 with heq | hlt
+      · rw [heq]; exact hWy
+      · exact wRow_convex T w hlx hly (by omega) hlt hWx hWy
+    -- the status change gives a char difference
+    have hcdiff : charRow T k ≠ charRow T (k + 1) := by
+      intro heqchar
+      have hbeta : decide (charRow T k = c) ≠ decide (charRow T (k + 1) = c) := hk3
+      rw [heqchar] at hbeta
+      exact absurd hbeta (by simp)
+    have hcolor : charRow T k = c ∨ charRow T (k+1) = c := by
+      by_cases hck : charRow T k = c
+      · exact Or.inl hck
+      · by_cases hn : charRow T (k+1) = c
+        · exact Or.inr hn
+        · simp [hck, hn] at hk3
+    refine ⟨k+1, by omega, hkl1', ?_⟩
+    rw [show k + 1 - 1 = k from by omega]
+    exact ⟨hcdiff, hWk, hWk1, hcolor⟩
+  rcases Nat.lt_trichotomy a b with hlt | heq | hgt
+  · exact key a b hlt hla hlb hWa hWb (by simp [hca, hcb])
+  · rw [← heq] at hcb
+    exact absurd hca hcb
+  · exact key b a hgt hlb hla hWb hWa (by simp [hca, hcb])
+
+/-- Every requirement has an internal mixed-color boundary in its word interval. -/
+theorem requirement_boundary (T : Text) (hT : positive T = true)
+    (w : List Nat) (c : Nat) (hp : (w,c) ∈ requirements T) :
+    ∃ k, 1 ≤ k ∧ k < (triplesOf T).length ∧
+      charRow T (k-1) ≠ charRow T k ∧ wRow T w (k-1) ∧ wRow T w k ∧
+      (charRow T (k-1) = c ∨ charRow T k = c) := by
+  classical
+  obtain ⟨hwSub, hwMax, hcExt⟩ := (mem_requirements w c T).mp hp
+  obtain ⟨m, hmP, hpCover⟩ := exists_covers_of_occurs (w ++ [c]) T
+    ((mem_rightExts w c T).mp hcExt) (by simp)
+  have hm1 : 1 ≤ m ∧ m ≤ T.length := by
+    rcases List.mem_map.mp hmP with ⟨i, hi, rfl⟩
+    rw [List.mem_range] at hi
+    omega
+  obtain ⟨hm1, hmT⟩ := hm1
+  -- the cover decomposition
+  obtain ⟨u, hu⟩ := (coversAt_iff_suffix (w ++ [c]) m T).mp hpCover
+  rw [pref] at hu
+  have hsplit : T.take m = T.take (m - 1) ++ [T[m - 1]!] := take_succ_last T hm1 hmT
+  have hlast : c = T[m - 1]! ∧ u ++ w = T.take (m - 1) := by
+    have hassoc : (u ++ w) ++ [c] = T.take (m - 1) ++ [T[m - 1]!] := by
+      rw [show (u ++ w) ++ [c] = u ++ (w ++ [c]) from List.append_assoc u w [c],
+        ← hu, hsplit]
+    exact append_last_inj _ _ _ _ hassoc
+  -- positivity
+  have hwpos : ∀ x ∈ w, 1 ≤ x := by
+    intro x hx
+    have hxw : x ∈ T.take (m - 1) := by
+      rw [← hlast.2]
+      exact List.mem_append_right _ hx
+    have hxT : x ∈ T := List.mem_of_mem_take hxw
+    exact (positive_of_mem T hT hxT).1
+  have hcpos : 1 ≤ c := by
+    have hcT : c ∈ T := occurs_append_last w c T ((mem_rightExts w c T).mp hcExt)
+    exact (positive_of_mem T hT hcT).1
+  -- the row of m
+  obtain ⟨k₀, hk₀, hsa₀⟩ := saRow_surj T (T.length + 1 - m) (by omega)
+  have hrp₀ : rowPos T k₀ = m := by
+    unfold rowPos; rw [hsa₀]; omega
+  have hchar₀ : charRow T k₀ = c := by
+    rw [charRow_at_pos T k₀ hk₀ (by rw [hsa₀]; omega), hrp₀]
+    exact hlast.1.symm
+  have hW₀ : wRow T w k₀ := by
+    refine (wRow_iff_suffix T w k₀ hk₀ hwpos).mpr ⟨u, ?_⟩
+    rw [hrp₀]
+    exact hlast.2.symm
+  by_cases hB : ∃ k₁, k₁ < (triplesOf T).length ∧ wRow T w k₁ ∧ charRow T k₁ ≠ c
+  · obtain ⟨k₁, hk₁, hW₁, hc₁⟩ := hB
+    exact boundary_of_mixed_wRows T w c hk₀ hk₁ hW₀ hchar₀ hW₁ hc₁
+  · exfalso
+    have hall : ∀ k, k < (triplesOf T).length → wRow T w k → charRow T k = c := by
+      intro k hk hW
+      by_cases hne : charRow T k = c
+      · exact hne
+      · exact absurd ⟨k, hk, hW, hne⟩ hB
+    by_cases hSuf : SuffixOf w T
+    · -- the sentinel row is a w-row of char 0 ≠ c
+      obtain ⟨k₀', hk₀', hsa₀'⟩ := saRow_surj T 0 (by omega)
+      obtain ⟨q₀, hq₀⟩ := hSuf
+      have hW₀' : wRow T w k₀' := by
+        refine (wRow_iff_suffix T w k₀' hk₀' hwpos).mpr ⟨q₀, ?_⟩
+        have hrp : rowPos T k₀' - 1 = T.length := by
+          unfold rowPos; rw [hsa₀']; omega
+        rw [hrp, take_full T T.length (by omega)]
+        exact hq₀
+      have hc₀' : charRow T k₀' = 0 := by
+        refine charRow_zero T k₀' hk₀' ?_
+        rw [← saRow_eq T k₀' hk₀', hsa₀']
+      have hcc := hall k₀' hk₀' hW₀'
+      omega
+    · -- every occurrence of w is followed by c
+      have hfoll : ∀ e, e ≤ T.length - 1 → SuffixOf w (T.take e) → T[e]! = c := by
+        intro e he hsuf
+        obtain ⟨q, hq⟩ := hsuf
+        obtain ⟨k, hk, hsak⟩ :=
+          saRow_surj T (T.length + 1 - (e + 1)) (by omega)
+        have hsa1 : 1 ≤ saRow T k := by rw [hsak]; omega
+        have hrp : rowPos T k = e + 1 := by
+          unfold rowPos; rw [hsak]; omega
+        have hWk : wRow T w k := by
+          refine (wRow_iff_suffix T w k hk hwpos).mpr ⟨q, ?_⟩
+          rw [hrp, show e + 1 - 1 = e from by omega]
+          exact hq
+        have hck := hall k hk hWk
+        rw [charRow_at_pos T k hk hsa1, hrp,
+          show e + 1 - 1 = e from by omega] at hck
+        exact hck
+      -- every right extension equals c
+      have hocc : ∀ x, occurs (w ++ [x]) T = true → x = c := by
+        intro x hoccx
+        obtain ⟨i, hi, htake⟩ := (occurs_eq_true (w ++ [x]) T (by simp)).mp hoccx
+        have hlen : (w ++ [x]).length = w.length + 1 := by simp
+        have hf : i + w.length + 1 ≤ T.length := by omega
+        have hfull : T.take (i + w.length + 1) = T.take i ++ w ++ [x] := by
+          rw [show i + w.length + 1 = i + (w ++ [x]).length from by
+                rw [hlen]; omega,
+            List.take_add, htake, List.append_assoc]
+        have hsucc : T.take (i + w.length + 1)
+            = T.take (i + w.length) ++ [T[i + w.length]!] :=
+          take_succ_last T (by omega) (by omega)
+        rw [hsucc] at hfull
+        obtain ⟨hx, hqw⟩ := append_last_inj _ _ _ _ hfull
+        have he : i + w.length ≤ T.length - 1 := by omega
+        have hfolli := hfoll (i + w.length) he ⟨T.take i, hqw⟩
+        omega
+      have hext : ∀ x ∈ rightExts w T, x = c :=
+        fun x hx => hocc x ((mem_rightExts w x T).mp hx)
+      have hlen1 : (rightExts w T).length = 1 := by
+        have hle : (rightExts w T).length ≤ 1 := by
+          rw [rightExts]
+          refine dedup_all_eq_le_one c _ ?_
+          intro x hx
+          obtain ⟨_, hxocc⟩ := List.mem_filter.mp hx
+          exact hocc x hxocc
+        have hge : 1 ≤ (rightExts w T).length := List.length_pos_of_mem hcExt
+        omega
+      -- w nonempty would contradict ¬SuffixOf
+      cases w with
+      | nil => exact absurd (show SuffixOf [] T from ⟨T, by simp⟩) hSuf
+      | cons a as =>
+        simp only [rightMaximal] at hwMax
+        rw [Bool.and_eq_true, Bool.or_eq_true] at hwMax
+        obtain ⟨_, hisf | hlen2⟩ := hwMax
+        · exact absurd (suffix_of_isSuffix _ _ hisf) hSuf
+        · exact absurd (of_decide_eq_true hlen2) (by omega)
+
+
+/-! ### O1 campaign: O1ScanThreshold.lean (assembled) -/
+
+set_option maxRecDepth 4096
+
+/-- A color has a pending witness at or above the component threshold. -/
+def ThresholdPending (P : Nat → Prop) (d c : Nat) (R : List Cand) : Prop :=
+  (d : Int) ≤ (getR R c).len ∧ (getR R c).active = true ∧ P (getR R c).pos
+
+/-- A suitable position has already been emitted. -/
+def ThresholdHit (P : Nat → Prop) (out : List Nat) : Prop :=
+  ∃ x, x ∈ out ∧ P x
+
+/-- Before and during a component, a color's slot is below its threshold or
+contains a witness from that component. -/
+def ThresholdClean (P : Nat → Prop) (d c : Nat) (R : List Cand) : Prop :=
+  (getR R c).len < (d : Int) ∨ ThresholdPending P d c R
+
+theorem thresholdHit_eval (P : Nat → Prop) (w : Int) (R : List Cand)
+    (out : List Nat) (h : ThresholdHit P out) :
+    ThresholdHit P (evalStep w R out).1 := by
+  obtain ⟨x, hx, hP⟩ := h
+  exact ⟨x, (evalStep_mem w R out x).mpr (Or.inl hx), hP⟩
+
+/-- Evaluation either emits the pending witness or preserves it exactly. -/
+theorem thresholdPending_eval (P : Nat → Prop) (d c : Nat) (w : Int)
+    (R : List Cand) (out : List Nat) (hc1 : 1 ≤ c) (hc2 : c < SIGMA)
+    (hR : SIGMA ≤ R.length) (h : ThresholdPending P d c R) :
+    ThresholdHit P (evalStep w R out).1 ∨
+      ThresholdPending P d c (evalStep w R out).2 := by
+  by_cases hw : w < (getR R c).len
+  · exact Or.inl ⟨(getR R c).pos,
+      (evalStep_mem w R out _).mpr (Or.inr ⟨c, hc1, hc2, hw, h.2.1, rfl⟩), h.2.2⟩
+  · right
+    unfold ThresholdPending
+    rw [evalStep_getR w R out c hc1 hc2 hR, if_neg hw]
+    exact h
+
+/-- A below-threshold evaluation necessarily emits a pending witness. -/
+theorem thresholdPending_emit (P : Nat → Prop) (d c : Nat) (w : Int)
+    (R : List Cand) (out : List Nat) (hc1 : 1 ≤ c) (hc2 : c < SIGMA)
+    (hw : w < (d : Int)) (h : ThresholdPending P d c R) :
+    ThresholdHit P (evalStep w R out).1 := by
+  exact ⟨(getR R c).pos,
+    (evalStep_mem w R out _).mpr
+      (Or.inr ⟨c, hc1, hc2, by have := h.1; omega, h.2.1, rfl⟩), h.2.2⟩
+
+/-- An update cannot lose a pending witness: an overwrite uses a strictly
+higher LCP and therefore another qualifying position. -/
+theorem thresholdPending_upd (P : Nat → Prop) (d c q l pos : Nat)
+    (R : List Cand) (hc : c < R.length)
+    (hpos : q = c → d ≤ l → P pos) (h : ThresholdPending P d c R) :
+    ThresholdPending P d c (upd R q l pos) := by
+  by_cases hqc : q = c
+  · subst q
+    unfold ThresholdPending
+    rw [upd_getR_self R c l pos hc]
+    by_cases hl : (l : Int) > (getR R c).len
+    · rw [if_pos hl]
+      have hdl : d ≤ l := by have := h.1; omega
+      exact ⟨by simpa using hdl, rfl, hpos rfl hdl⟩
+    · rw [if_neg hl]
+      exact h
+  · unfold ThresholdPending
+    rw [upd_getR_ne R q l pos c (Ne.symm hqc)]
+    exact h
+
+/-- Evaluations clamp every represented real-color slot to their level. -/
+theorem threshold_eval_clamp (d c : Nat) (w : Int) (R : List Cand)
+    (out : List Nat) (hc1 : 1 ≤ c) (hc2 : c < SIGMA)
+    (hR : SIGMA ≤ R.length) (hw : w < (d : Int)) :
+    (getR (evalStep w R out).2 c).len < (d : Int) := by
+  rw [evalStep_getR w R out c hc1 hc2 hR]
+  split <;> simp_all <;> omega
+
+theorem thresholdClean_eval (P : Nat → Prop) (d c : Nat) (w : Int)
+    (R : List Cand) (out : List Nat) (hc1 : 1 ≤ c) (hc2 : c < SIGMA)
+    (hR : SIGMA ≤ R.length) (h : ThresholdClean P d c R) :
+    ThresholdHit P (evalStep w R out).1 ∨
+      ThresholdClean P d c (evalStep w R out).2 := by
+  rcases h with h | h
+  · right; left
+    rw [evalStep_getR w R out c hc1 hc2 hR]
+    split <;> simp_all <;> omega
+  · rcases thresholdPending_eval P d c w R out hc1 hc2 hR h with h | h
+    · exact Or.inl h
+    · exact Or.inr (Or.inr h)
+
+theorem thresholdClean_upd (P : Nat → Prop) (d c q l pos : Nat)
+    (R : List Cand) (hc : c < R.length)
+    (hpos : q = c → d ≤ l → P pos) (h : ThresholdClean P d c R) :
+    ThresholdClean P d c (upd R q l pos) := by
+  rcases h with h | h
+  · by_cases hqc : q = c
+    · subst q
+      unfold ThresholdClean ThresholdPending
+      rw [upd_getR_self R c l pos hc]
+      by_cases hl : (l : Int) > (getR R c).len
+      · rw [if_pos hl]
+        by_cases hdl : d ≤ l
+        · exact Or.inr ⟨by simpa using hdl, rfl, hpos rfl hdl⟩
+        · exact Or.inl (by simpa using (Nat.lt_of_not_ge hdl))
+      · rw [if_neg hl]
+        exact Or.inl h
+    · unfold ThresholdClean ThresholdPending
+      rw [upd_getR_ne R q l pos c (Ne.symm hqc)]
+      exact Or.inl h
+  · exact Or.inr (thresholdPending_upd P d c q l pos R hc hpos h)
+
+/-- A high-LCP participating edge arms the color once its slot is clean. -/
+theorem thresholdClean_arm (P : Nat → Prop) (d c l pos : Nat)
+    (R : List Cand) (hc : c < R.length) (hdl : d ≤ l) (hpos : P pos)
+    (h : ThresholdClean P d c R) :
+    ThresholdPending P d c (upd R c l pos) := by
+  rcases h with h | h
+  · unfold ThresholdPending
+    rw [upd_getR_self R c l pos hc, if_pos (by omega)]
+    exact ⟨by simpa using hdl, rfl, hpos⟩
+  · exact thresholdPending_upd P d c c l pos R hc (fun _ _ => hpos) h
+
+/-- Output membership is monotone throughout the scan. -/
+theorem thresholdHit_scanAux (N : Nat) (P : Nat → Prop) (ts : List Triple)
+    (p pSa : Nat) (m : Int) (R : List Cand) (out : List Nat)
+    (h : ThresholdHit P out) : ThresholdHit P (scanAux N ts p pSa m R out) := by
+  induction ts generalizing p pSa m R out with
+  | nil => exact thresholdHit_eval P (-1) R out h
+  | cons t rest ih =>
+    by_cases hne : (t.c != p) = true
+    · rw [scanAux_cons_bnd N t rest p pSa m R out hne]
+      exact ih _ _ _ _ _ (thresholdHit_eval P _ R out h)
+    · rw [scanAux_cons_nonbnd N t rest p pSa m R out (Bool.eq_false_iff.mpr hne)]
+      exact ih _ _ _ _ _ h
+
+/-- Once the running minimum falls below the threshold, a pending witness
+must be emitted at the next run boundary, or by the final flush. -/
+theorem thresholdPending_scanAux_low (N : Nat) (P : Nat → Prop) (d c : Nat)
+    (ts : List Triple) (p pSa : Nat) (m : Int) (R : List Cand) (out : List Nat)
+    (hc1 : 1 ≤ c) (hc2 : c < SIGMA) (hm : m < (d : Int))
+    (h : ThresholdPending P d c R) :
+    ThresholdHit P (scanAux N ts p pSa m R out) := by
+  induction ts generalizing p pSa m R out with
+  | nil => exact thresholdPending_emit P d c (-1) R out hc1 hc2 (by omega) h
+  | cons t rest ih =>
+    by_cases hne : (t.c != p) = true
+    · rw [scanAux_cons_bnd N t rest p pSa m R out hne]
+      apply thresholdHit_scanAux
+      exact thresholdPending_emit P d c _ R out hc1 hc2
+        (Int.lt_of_le_of_lt (Int.min_le_left _ _) hm) h
+    · rw [scanAux_cons_nonbnd N t rest p pSa m R out (Bool.eq_false_iff.mpr hne)]
+      exact ih _ _ _ R out (Int.lt_of_le_of_lt (Int.min_le_left _ _) hm) h
+
+/-- The first row outside a component starts below the component threshold. -/
+def ThresholdExit (d : Nat) : List Triple → Prop
+  | [] => True
+  | t :: _ => t.lcp < d
+
+/-- Pending component witnesses survive every internal update and are
+emitted on exit. No upper bound on the LCP values or MAXINT is needed. -/
+theorem thresholdPending_scanAux_block (N : Nat) (P : Nat → Prop) (d c : Nat)
+    (inside after : List Triple) (p pSa : Nat) (m : Int)
+    (R : List Cand) (out : List Nat) (hc1 : 1 ≤ c) (hc2 : c < SIGMA)
+    (hR : SIGMA ≤ R.length) (hp : p = c → P (N - pSa))
+    (hinside : ∀ t ∈ inside, t.c = c → P (N - t.sa))
+    (hexit : ThresholdExit d after) (h : ThresholdPending P d c R) :
+    ThresholdHit P (scanAux N (inside ++ after) p pSa m R out) := by
+  induction inside generalizing p pSa m R out with
+  | nil =>
+    cases after with
+    | nil => exact thresholdPending_emit P d c (-1) R out hc1 hc2 (by omega) h
+    | cons t rest =>
+      have ht : (t.lcp : Int) < (d : Int) := by have : t.lcp < d := hexit; omega
+      simp only [List.nil_append, scanAux]
+      split
+      · apply thresholdHit_scanAux
+        exact thresholdPending_emit P d c _ R out hc1 hc2
+          (Int.lt_of_le_of_lt (Int.min_le_right _ _) ht) h
+      · exact thresholdPending_scanAux_low N P d c rest t.c t.sa _ R out hc1 hc2
+          (Int.lt_of_le_of_lt (Int.min_le_right _ _) ht) h
+  | cons t rest ih =>
+    have ht := hinside t (by simp)
+    have hrs : ∀ u ∈ rest, u.c = c → P (N - u.sa) := by
+      intro u hu; exact hinside u (by simp [hu])
+    simp only [List.cons_append, scanAux]
+    split
+    · rcases thresholdPending_eval P d c (min m t.lcp) R out hc1 hc2 hR h with he | he
+      · exact thresholdHit_scanAux N P (rest ++ after) t.c t.sa MAXINT _ _ he
+      · apply ih _ _ _ _ _ (by simpa [upd_len, evalStep_len] using hR) ht hrs
+        apply thresholdPending_upd P d c t.c t.lcp (N - t.sa) _
+          (by simpa [upd_len, evalStep_len] using Nat.lt_of_lt_of_le hc2 hR)
+          (fun htc _ => ht htc)
+        exact thresholdPending_upd P d c p t.lcp (N - pSa) _
+          (by simpa [evalStep_len] using Nat.lt_of_lt_of_le hc2 hR)
+          (fun hpc _ => hp hpc) he
+    · exact ih _ _ _ R out hR ht hrs h
+
+/-- An internal run edge involving the selected color. -/
+def HasColorEdge (c : Nat) : Nat → List Triple → Prop
+  | _, [] => False
+  | p, t :: rest => (p ≠ t.c ∧ (p = c ∨ t.c = c)) ∨ HasColorEdge c t.c rest
+
+/-- Every mixed component is hit when entered with a clean slot or with a
+below-threshold running minimum. -/
+theorem thresholdClean_scanAux_block (N : Nat) (P : Nat → Prop) (d c : Nat)
+    (inside after : List Triple) (p pSa : Nat) (m : Int)
+    (R : List Cand) (out : List Nat) (hc1 : 1 ≤ c) (hc2 : c < SIGMA)
+    (hR : SIGMA ≤ R.length) (hp : p = c → P (N - pSa))
+    (hinside : ∀ t ∈ inside, d ≤ t.lcp ∧ (t.c = c → P (N - t.sa)))
+    (hexit : ThresholdExit d after)
+    (hclean : ThresholdClean P d c R ∨ m < (d : Int))
+    (hmix : HasColorEdge c p inside) :
+    ThresholdHit P (scanAux N (inside ++ after) p pSa m R out) := by
+  induction inside generalizing p pSa m R out with
+  | nil => exact False.elim hmix
+  | cons t rest ih =>
+    have ht := hinside t (by simp)
+    have hrs : ∀ u ∈ rest, d ≤ u.lcp ∧ (u.c = c → P (N - u.sa)) := by
+      intro u hu; exact hinside u (by simp [hu])
+    simp only [List.cons_append]
+    by_cases hne : (t.c != p) = true
+    · rw [scanAux_cons_bnd N t (rest ++ after) p pSa m R out hne]
+      let E := evalStep (min m t.lcp) R out
+      let R₂ := upd E.2 p t.lcp (N - pSa)
+      let R₃ := upd R₂ t.c t.lcp (N - t.sa)
+      have hElen : SIGMA ≤ E.2.length := by simpa [E, evalStep_len] using hR
+      have h₂len : SIGMA ≤ R₂.length := by simpa [R₂, upd_len] using hElen
+      have h₃len : SIGMA ≤ R₃.length := by simpa [R₃, upd_len] using h₂len
+      have hEc : ThresholdHit P E.1 ∨ ThresholdClean P d c E.2 := by
+        rcases hclean with hclean | hm
+        · exact thresholdClean_eval P d c _ R out hc1 hc2 hR hclean
+        · exact Or.inr (Or.inl (threshold_eval_clamp d c _ R out hc1 hc2 hR
+            (Int.lt_of_le_of_lt (Int.min_le_left _ _) hm)))
+      rcases hEc with hhit | hEc
+      · exact thresholdHit_scanAux N P (rest ++ after) t.c t.sa MAXINT R₃ E.1 hhit
+      · have h₂c : ThresholdClean P d c R₂ :=
+          thresholdClean_upd P d c p t.lcp (N - pSa) E.2
+            (Nat.lt_of_lt_of_le hc2 hElen) (fun hpc _ => hp hpc) hEc
+        have h₃c : ThresholdClean P d c R₃ :=
+          thresholdClean_upd P d c t.c t.lcp (N - t.sa) R₂
+            (Nat.lt_of_lt_of_le hc2 h₂len) (fun htc _ => ht.2 htc) h₂c
+        rcases hmix with hhere | hlater
+        · have hpend : ThresholdPending P d c R₃ := by
+            rcases hhere.2 with hpc | htc
+            · have h₂p : ThresholdPending P d c R₂ := by
+                unfold R₂
+                rw [hpc]
+                exact thresholdClean_arm P d c t.lcp (N - pSa) E.2
+                  (Nat.lt_of_lt_of_le hc2 hElen) ht.1 (hp hpc) hEc
+              exact thresholdPending_upd P d c t.c t.lcp (N - t.sa) R₂
+                (Nat.lt_of_lt_of_le hc2 h₂len) (fun htc _ => ht.2 htc) h₂p
+            · unfold R₃
+              rw [htc]
+              exact thresholdClean_arm P d c t.lcp (N - t.sa) R₂
+                (Nat.lt_of_lt_of_le hc2 h₂len) ht.1 (ht.2 htc) h₂c
+          exact thresholdPending_scanAux_block N P d c rest after t.c t.sa MAXINT R₃ E.1
+            hc1 hc2 h₃len ht.2 (fun u hu => (hrs u hu).2) hexit hpend
+        · exact ih _ _ _ R₃ E.1 h₃len ht.2 hrs (Or.inl h₃c) hlater
+    · have heq : p = t.c := by
+        have : t.c = p := by simpa using hne
+        exact this.symm
+      rw [scanAux_cons_nonbnd N t (rest ++ after) p pSa m R out
+        (by simpa using heq.symm)]
+      apply ih _ _ _ R out hR ht.2 hrs
+      · rcases hclean with hclean | hm
+        · exact Or.inl hclean
+        · exact Or.inr (Int.lt_of_le_of_lt (Int.min_le_left _ _) hm)
+      · rcases hmix with hhere | hlater
+        · exact False.elim (hhere.1 heq)
+        · exact hlater
+
+/-- An indexed adjacent edge supplies the structural mixed-edge witness used
+by the block theorem. -/
+theorem hasColorEdge_of_index (c : Nat) (prev : Triple) (inside : List Triple)
+    (k : Nat) (hk1 : 1 ≤ k) (hkl : k ≤ inside.length)
+    (hne : ((prev :: inside).getD (k - 1) dT).c ≠
+      ((prev :: inside).getD k dT).c)
+    (hc : ((prev :: inside).getD (k - 1) dT).c = c ∨
+      ((prev :: inside).getD k dT).c = c) :
+    HasColorEdge c prev.c inside := by
+  induction inside generalizing prev k with
+  | nil => simp at hkl; omega
+  | cons t rest ih =>
+    cases k with
+    | zero => omega
+    | succ j =>
+      cases j with
+      | zero => exact Or.inl ⟨hne, hc⟩
+      | succ j =>
+        right
+        apply ih t (j + 1) (by omega) (by simp only [List.length_cons] at hkl; omega)
+        · simpa using hne
+        · simpa using hc
+
+
+/-! ### O1 campaign: O1ScanEntry.lean (assembled) -/
+
+set_option maxRecDepth 2048
+
+/-- Consume an arbitrary prefix without flushing the candidate table. -/
+theorem scanAux_prefix_state (N : Nat) (before after : List Triple)
+    (p pSa : Nat) (m : Int) (R : List Cand) (out : List Nat) :
+    ∃ p' pSa' m' R' out', R'.length = R.length ∧
+      scanAux N (before ++ after) p pSa m R out =
+        scanAux N after p' pSa' m' R' out' := by
+  induction before generalizing p pSa m R out with
+  | nil => exact ⟨p, pSa, m, R, out, rfl, rfl⟩
+  | cons t rest ih =>
+    simp only [List.cons_append, scanAux]
+    split
+    · obtain ⟨p', pSa', m', R', out', hlen, heq⟩ :=
+        ih t.c t.sa MAXINT
+          (upd (upd (evalStep (min m t.lcp) R out).2 p t.lcp (N-pSa))
+            t.c t.lcp (N-t.sa)) (evalStep (min m t.lcp) R out).1
+      exact ⟨p', pSa', m', R', out', by simpa only [upd_len, evalStep_len] using hlen, heq⟩
+    · exact ih t.c t.sa (min m t.lcp) R out
+
+/-- A low-LCP entry clears the threshold invariant, even inside a BWT run. -/
+theorem thresholdClean_scanAux_entry (N : Nat) (P : Nat → Prop) (d c : Nat)
+    (first : Triple) (inside after : List Triple) (p pSa : Nat) (m : Int)
+    (R : List Cand) (out : List Nat) (hc1 : 1 ≤ c) (hc2 : c < SIGMA)
+    (hR : SIGMA ≤ R.length) (hfirst : first.lcp < d)
+    (hp : first.c = c → P (N-first.sa))
+    (hinside : ∀ t ∈ inside, d ≤ t.lcp ∧ (t.c = c → P (N-t.sa)))
+    (hexit : ThresholdExit d after) (hmix : HasColorEdge c first.c inside) :
+    ThresholdHit P (scanAux N (first :: (inside ++ after)) p pSa m R out) := by
+  have hmin : min m (first.lcp : Int) < (d : Int) := by
+    have hh := Int.min_le_right m (first.lcp : Int)
+    omega
+  by_cases hne : (first.c != p) = true
+  · rw [scanAux_cons_bnd N first (inside ++ after) p pSa m R out hne]
+    apply thresholdClean_scanAux_block N P d c inside after first.c first.sa MAXINT
+      _ _ hc1 hc2 (by simpa only [upd_len, evalStep_len] using hR) hp hinside hexit
+      (Or.inl ?_) hmix
+    apply thresholdClean_upd P d c first.c first.lcp (N-first.sa) _
+      (by simpa only [upd_len, evalStep_len] using Nat.lt_of_lt_of_le hc2 hR)
+      (fun _ h => by omega)
+    apply thresholdClean_upd P d c p first.lcp (N-pSa) _
+      (by simpa only [evalStep_len] using Nat.lt_of_lt_of_le hc2 hR)
+      (fun _ h => by omega)
+    exact Or.inl (threshold_eval_clamp d c _ R out hc1 hc2 hR hmin)
+  · rw [scanAux_cons_nonbnd N first (inside ++ after) p pSa m R out (Bool.eq_false_iff.mpr hne)]
+    exact thresholdClean_scanAux_block N P d c inside after first.c first.sa
+      _ R out hc1 hc2 hR hp hinside hexit (Or.inr hmin) hmix
+
+/-- Every internally mixed LCP block emits a position of its participating color. -/
+theorem scan_hits_block (N : Nat) (P : Nat → Prop) (d c : Nat)
+    (before : List Triple) (first : Triple) (inside after : List Triple)
+    (hc1 : 1 ≤ c) (hc2 : c < SIGMA)
+    (hentry : before = [] ∨ first.lcp < d)
+    (hp : first.c = c → P (N-first.sa))
+    (hinside : ∀ t ∈ inside, d ≤ t.lcp ∧ (t.c = c → P (N-t.sa)))
+    (hexit : ThresholdExit d after) (hmix : HasColorEdge c first.c inside) :
+    ThresholdHit P (scan N (before ++ first :: (inside ++ after))) := by
+  cases before with
+  | nil =>
+    simp only [List.nil_append, scan]
+    apply thresholdClean_scanAux_block N P d c inside after first.c first.sa
+      MAXINT defaultR [] hc1 hc2 (by rw [defaultR_len]; exact Nat.le_refl _) hp hinside hexit
+      (Or.inl (Or.inl ?_)) hmix
+    rw [defaultR_getR]
+    simp only
+    omega
+  | cons t rest =>
+    have hlow : first.lcp < d := by
+      rcases hentry with h | h
+      · simp at h
+      · exact h
+    simp only [List.cons_append, scan]
+    obtain ⟨p', pSa', m', R', out', hlen, heq⟩ :=
+      scanAux_prefix_state N rest (first :: (inside ++ after)) t.c t.sa MAXINT defaultR []
+    rw [heq]
+    exact thresholdClean_scanAux_entry N P d c first inside after p' pSa' m' R' out'
+      hc1 hc2 (by rw [hlen, defaultR_len]; exact Nat.le_refl _) hlow hp hinside hexit hmix
+
+
+/-! ### O1 campaign: O1ScanComponent.lean (assembled) -/
+
+private theorem component_getD_drop (ts : List Triple) (a i : Nat) :
+    (ts.drop a).getD i dT = ts.getD (a + i) dT := by
+  simp only [List.getD_eq_getElem?_getD, List.getElem?_drop]
+
+private theorem component_getD_take (ts : List Triple) (a i : Nat) (hi : i < a) :
+    (ts.take a).getD i dT = ts.getD i dT := by
+  simp only [List.getD_eq_getElem?_getD, List.getElem?_take, if_pos hi]
+
+/-- Every color participating in a mixed LCP component has an emitted row
+inside that component. LCP values need not be bounded by MAXINT. -/
+theorem scan_hits_component (N : Nat) (ts : List Triple) (a b d c : Nat)
+    (hab : a ≤ b) (hbn : b < ts.length) (hc1 : 1 ≤ c) (hc2 : c < SIGMA)
+    (hin : ∀ j, a < j → j ≤ b → d ≤ (ts.getD j dT).lcp)
+    (hleft : a = 0 ∨ (ts.getD a dT).lcp < d)
+    (hright : b + 1 = ts.length ∨ (ts.getD (b + 1) dT).lcp < d)
+    (hmix : ∃ k, a < k ∧ k ≤ b ∧
+      (ts.getD (k - 1) dT).c ≠ (ts.getD k dT).c ∧
+      ((ts.getD (k - 1) dT).c = c ∨ (ts.getD k dT).c = c)) :
+    ∃ j, a ≤ j ∧ j ≤ b ∧ (ts.getD j dT).c = c ∧
+      N - (ts.getD j dT).sa ∈ scan N ts := by
+  let first := ts.getD a dT
+  let before := ts.take a
+  let inside := (ts.drop (a + 1)).take (b - a)
+  let after := ts.drop (b + 1)
+  let P := fun x => ∃ j, a ≤ j ∧ j ≤ b ∧ (ts.getD j dT).c = c ∧
+    x = N - (ts.getD j dT).sa
+  have hdropa : ts.drop a = first :: ts.drop (a + 1) := by
+    rw [List.drop_eq_getElem_cons (by omega : a < ts.length)]
+    congr 1
+    simp only [first, List.getD_eq_getElem?_getD,
+      List.getElem?_eq_getElem (by omega : a < ts.length), Option.getD_some]
+  have hinner : inside ++ after = ts.drop (a + 1) := by
+    have hh := List.take_append_drop (b - a) (ts.drop (a + 1))
+    rw [List.drop_drop] at hh
+    have hi : a + 1 + (b - a) = b + 1 := by omega
+    simpa only [inside, after, hi] using hh
+  have hsplit : before ++ first :: (inside ++ after) = ts := by
+    rw [hinner, ← hdropa]
+    exact List.take_append_drop a ts
+  have hblock : first :: inside = (ts.drop a).take (b - a + 1) := by
+    rw [hdropa]
+    rfl
+  have hrow (q : Nat) (hq : q ≤ b - a) :
+      ((first :: inside).getD q dT) = ts.getD (a + q) dT := by
+    rw [hblock, component_getD_take _ _ _ (by omega), component_getD_drop]
+  have hlen : inside.length = b - a := by
+    simp only [inside, List.length_take, List.length_drop]
+    omega
+  have hp : first.c = c → P (N - first.sa) := by
+    intro h
+    exact ⟨a, Nat.le_refl _, hab, h, rfl⟩
+  have hinside : ∀ t ∈ inside, d ≤ t.lcp ∧ (t.c = c → P (N - t.sa)) := by
+    intro t ht
+    obtain ⟨i, hi, hit⟩ := List.mem_iff_getElem.mp ht
+    have hib : i < b - a := by omega
+    have heq : inside.getD i dT = t := by
+      simp only [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hi,
+        Option.getD_some, hit]
+    have htrow : ts.getD (a + 1 + i) dT = t := by
+      rw [← component_getD_drop ts (a + 1) i,
+        ← component_getD_take (ts.drop (a + 1)) (b - a) i hib]
+      exact heq
+    constructor
+    · rw [← htrow]
+      exact hin _ (by omega) (by omega)
+    · intro htc
+      refine ⟨a + 1 + i, by omega, by omega, ?_, ?_⟩ <;> rw [htrow]
+      exact htc
+  have hexit : ThresholdExit d after := by
+    rcases hright with hright | hright
+    · have he : after = [] := by simp [after, hright]
+      rw [he]; trivial
+    · cases he : after with
+      | nil => trivial
+      | cons t rest =>
+        change t.lcp < d
+        have ht : ts.getD (b + 1) dT = t := by
+          have hh := component_getD_drop ts (b + 1) 0
+          change after.getD 0 dT = _ at hh
+          simpa [he] using hh.symm
+        simpa only [ht] using hright
+  have hedge : HasColorEdge c first.c inside := by
+    clear hp hinside hexit
+    obtain ⟨k, hak, hkb, hne, hkc⟩ := hmix
+    apply hasColorEdge_of_index c first inside (k - a) (by omega) (by omega)
+    · rw [hrow (k - a - 1) (by omega), hrow (k - a) (by omega)]
+      have he₁ : a + (k - a - 1) = k - 1 := by omega
+      have he₂ : a + (k - a) = k := by omega
+      simpa only [he₁, he₂] using hne
+    · rw [hrow (k - a - 1) (by omega), hrow (k - a) (by omega)]
+      have he₁ : a + (k - a - 1) = k - 1 := by omega
+      have he₂ : a + (k - a) = k := by omega
+      simpa only [he₁, he₂] using hkc
+  have hentry : before = [] ∨ first.lcp < d := by
+    rcases hleft with hleft | hleft
+    · left; simp [before, hleft]
+    · exact Or.inr hleft
+  obtain ⟨x, hx, j, haj, hjb, hjc, hxj⟩ :=
+    scan_hits_block N P d c before first inside after hc1 hc2 hentry hp hinside hexit hedge
+  rw [hsplit, hxj] at hx
+  exact ⟨j, haj, hjb, hjc, hx⟩
+
+
+/-! ### O1 campaign: O1Covering.lean (assembled) -/
+
+/-- The scan covers each requirement by hitting its mixed context interval. -/
+theorem scan_covers_requirement (T : Text) (hT : positive T = true)
+    (w : List Nat) (c : Nat) (hp : (w,c) ∈ requirements T) :
+    ∃ x, x ∈ scan (T.length+1) (triplesOf T) ∧ coversAt (w ++ [c]) x T = true := by
+  obtain ⟨k, hk1, hkn, hdiff, hprev, hcur, hcolor⟩ :=
+    requirement_boundary T hT w c hp
+  obtain ⟨a, b, hak, hkb, hbn, hinside, hall, hlcp, hleft, hright⟩ :=
+    wRow_lcp_interval T w k hkn hcur
+  have hprevbounds := hall (k-1) (by omega) hprev
+  have hcExt := (mem_requirements w c T).mp hp |>.2.2
+  have hocc := (mem_rightExts w c T).mp hcExt
+  have hcT : c ∈ T := occurs_append_last w c T hocc
+  have hc := positive_of_mem T hT hcT
+  have hmix : ∃ j, a < j ∧ j ≤ b ∧
+      ((triplesOf T).getD (j-1) dT).c ≠ ((triplesOf T).getD j dT).c ∧
+      (((triplesOf T).getD (j-1) dT).c = c ∨ ((triplesOf T).getD j dT).c = c) := by
+    refine ⟨k, by omega, hkb, ?_, ?_⟩
+    · simpa only [dT, charRow_getD T (k-1) (by omega), charRow_getD T k hkn] using hdiff
+    · simpa only [dT, charRow_getD T (k-1) (by omega), charRow_getD T k hkn] using hcolor
+  obtain ⟨j, haj, hjb, hjc, hmem⟩ :=
+    scan_hits_component (T.length+1) (triplesOf T) a b w.length c
+      (by omega) hbn hc.1 hc.2 hlcp hleft hright hmix
+  have hjn : j < (triplesOf T).length := by omega
+  have hwpos : ∀ v ∈ w, 1 ≤ v := by
+    obtain ⟨x, _, hx⟩ := exists_covers_of_occurs (w ++ [c]) T hocc (by simp)
+    obtain ⟨q, hq⟩ := (coversAt_iff_suffix _ _ _).mp hx
+    intro v hv
+    have hvtake : v ∈ T.take x := by
+      change v ∈ pref T x
+      rw [hq]
+      exact List.mem_append_right _ (List.mem_append_left _ hv)
+    exact (positive_of_mem T hT (List.mem_of_mem_take hvtake)).1
+  have hjc' : charRow T j = c := by
+    simpa only [dT, charRow_getD T j hjn] using hjc
+  have hpos : T.length+1 - ((triplesOf T).getD j dT).sa = rowPos T j := by
+    rw [dT, saRow_getD T j hjn]
+    rfl
+  refine ⟨rowPos T j, by rwa [hpos] at hmem, ?_⟩
+  exact coversAt_of_wRow T hT w c j hjn hwpos hc.1 (hinside j haj hjb) hjc'
+
+/-- Unbounded covering: the machine threshold argument needs no LCP cap. -/
+theorem covering_from_components (T : Text) (hT : positive T = true) :
+    suffixient (scan (T.length+1) (triplesOf T)) T = true := by
+  apply suffixient_of_witnesses
+  intro p hp
+  exact scan_covers_requirement T hT p.1 p.2 hp
+
+/-- Every text position is dominated by an emitted position. -/
+theorem scan_domination (T : Text) (hT : positive T = true)
+    (x : Nat) (hx : x ∈ positionsT T) :
+    ∃ y, y ∈ scan (T.length+1) (triplesOf T) ∧ ScopeLe T x y := by
+  obtain ⟨p, hpcov, hmax⟩ := exists_maxW (covSet_ne_of_mem_positionsT T hx)
+  obtain ⟨hpreq, hpc⟩ := (mem_covSet T x p).mp hpcov
+  obtain ⟨y, hy, hpy⟩ := scan_covers_requirement T hT p.1 p.2 hpreq
+  refine ⟨y, hy, ?_⟩
+  intro q hq
+  obtain ⟨hqreq, hqc⟩ := (mem_covSet T x q).mp hq
+  have hlen : (q.1 ++ [q.2]).length ≤ (p.1 ++ [p.2]).length := by
+    have hh := Nat.le_trans (wlen_le_maxW T x q hq) hmax
+    simpa only [List.length_append, List.length_singleton, wlen] using hh
+  exact (mem_covSet T y q).mpr
+    ⟨hqreq, coversAt_of_suffix hpy (coversAt_suffix_of_coversAt hqc hpc hlen)⟩
+
+
+/-- every requirement (w,c) is covered by some emitted position.
+Requires `positive T` (see the domain-convention note above). -/
+theorem covering_given_stream (T : Text) (hT : positive T = true) :
+    suffixient (scan (T.length + 1) (triplesOf T)) T := by
+  exact covering_from_components T hT
+
+/-- the scan emits a *smallest* suffixient set (Lemma 34 tie-breaking).
+Requires `positive T` (see the domain-convention note above). -/
+theorem minimality (T : Text) (hT : positive T = true) :
+    (scan (T.length + 1) (triplesOf T)).length = chi T := by
+  -- HALF PROVEN (this lane): the emitted set is a suffixient list of positions,
+  -- so `chi` -- the minimum over suffixient subsets of `1..T.length` -- is at
+  -- most its size.  The remaining obligation is the LOWER half below.
+  have hle : chi T ≤ (scan (T.length + 1) (triplesOf T)).length :=
+    chi_le_of_suffixient_mem T _
+      (fun x hx => scan_mem_positionsT T hT x hx)
+      (covering_given_stream T hT)
+  apply Nat.le_antisymm
+  · -- REDUCED (2026-10-02 lane): `minimality_lower_of_scan_classes` proves
+    -- |scan| ≤ chi T from (O2) no duplicates, (O3) maximality, (O4) distinct
+    -- classes; combined with the upper half (covering) this completes minimality
+    -- via `minimality_of_scan_classes`.  Those are the open obligations (0
+    -- counterexamples on 729 exhaustive + 320 random/binary/repetitive texts).
+    --
+    -- REMAINING (Lemma 34 tie-breaking / minima lower bound): |scan| ≤ chi T,
+    -- i.e. no suffixient set of positions 1..T.length is smaller than the
+    -- emitted one.  Requires the LCP-maxima characterisation; see the lane
+    -- report for the precise missing statement and the FM event bridge.
+    sorry
+  · exact hle
+
 
 end Sxgc
