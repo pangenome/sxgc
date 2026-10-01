@@ -1,0 +1,15 @@
+PFP_TERMINAL byte=0x1e source=argument raw_n=1082130223 raw_r=397723016
+CYCLIC_SEAM_REPAIR terminal=0x1e predecessors_before_zero=78653
+SLIM_PHASE dict-read wall=0.000 cumulative=169.793 peak_rss_kib=28251588
+SLIM_PHASE dict-boundaries wall=13.049 cumulative=182.842 peak_rss_kib=28251588
+SLIM_STRING_ENDS count=1 bytes=8 from_parse_dict=1 cyclic=1
+SLIM_PHASE parse+boundaries wall=3.766 cumulative=186.609 peak_rss_kib=28251588
+SLIM_PHASE parse-fingerprints wall=0.130 cumulative=186.739 peak_rss_kib=28251588
+SLIM_PHASE dict-fingerprints wall=7.279 cumulative=194.018 peak_rss_kib=28251588
+SLIM_STRUCT n=1082130223 P=10648985 D=1167589617 phrases=9835281 parse_bytes=42595944 bd_bytes=12718374 bp_bytes=13553852 dict_resident=0 dict_cache_per_thread=262144 no_SA_ISA_LCP_RMQ=1 no_M_b_bwt_w_wt=1
+CYCLIC_SEAM_LCE_POLICY max_probe=29791 max_verification=67108864 total_limit=147279825 cost=phrase_or_byte_comparisons_plus_hash_symbol_reads fraction=(P+D)/8 floor=1000000 ceiling=4294967296
+CYCLIC_SEAM_REPAIRED classes=15 rows=273235 discovery_steps=16 limit=397723 phi_samples=397723016
+CYCLIC_SEAM_WORK max_seam_lce=97059 total_work=46976968 total_limit=147279825 exact=1
+SLIM_FP seam-parse tau=1 bytes=85191896 queries=44597 verified_symbols=83974 hash_probes=30100 mean_verified=1.882951768 max_verified=1051 max_requested_lce=1050 verification_work=94864 hash_probe_charges=120400 suffix_symbol_reads=0 total_work=46976968 total_limit=147279825 verification_limit=10648986 probe_limit=29791
+SLIM_FP seam-dict tau=24 bytes=389196544 queries=5186755 verified_symbols=35426462 hash_probes=1571134 mean_verified=6.830178406 max_verified=761 max_requested_lce=761 verification_work=40477168 hash_probe_charges=6284536 suffix_symbol_reads=71825666 total_work=46976968 total_limit=147279825 verification_limit=67108864 probe_limit=29791
+ENDPOINT_PASS raw_n=1082130223 raw_r=397723016 n=1082130213 k=1 r=397723010 padding_rows=10 cyclic_seam_certified=0

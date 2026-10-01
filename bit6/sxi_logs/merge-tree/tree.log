@@ -16,3 +16,5 @@ TREE_START level=2 pair=0 first=0 last=8 pid=2915988 log=/home/erikg/sxgc/vendor
 TREE_START level=2 pair=1 first=8 last=16 pid=2915989 log=/home/erikg/sxgc/vendor/chunk-merge-tree/states/level-2-1.log
 TREE_LEVEL level=2 pairs=2 wall_seconds=1869.258000
 TREE_START level=3 pair=0 first=0 last=16 pid=2989581 log=/home/erikg/sxgc/vendor/chunk-merge-tree/states/level-3-0.log
+TREE_LEVEL level=3 pairs=1 wall_seconds=16063.110284
+TREE_PASS chunks=16 levels=4 n=1082130213 wall_seconds=19596.804882

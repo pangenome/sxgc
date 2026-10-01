@@ -2498,3 +2498,20 @@ dominate (webtext), regresses modestly where they do not (DNA). Lane history: th
 lane died at provider capacity mid-gates (work rescued via retention patch + 3-way merge
 with the run-width widening - Edge.run u64, phi inverse u64, implicit_v kept). The 25-30
 floor remains open (exceptions coding is the next lever).
+
+## MERGE-TREE GATE COMPLETE: ALL GATES PASS - the tree is proven, and honestly priced
+TREE MERGE: 16 chunks through 4 pairwise levels -> FOUR FILES BYTE-IDENTICAL to the monolithic
+PFP reference (CMP_PASS x4); CHI = 306,164,765 DERIVED FROM THE TREE-MERGED STRUCTURE, exact
+(CHI_PASS, sA bytes 2,449,318,120). FIVE constructions have now produced the identical fragment
+number and artifact family.
+HONEST PERFORMANCE (TABLE.md): tree 19,597s vs serial 20,599s = 1.05x - the parallel tree at
+16 chunks is nearly serial, because the TOP LEVEL dominates: level 4 (final pair merge) alone ran
+16,063s of the 19,597s. Level walls: L1 818s (8 pairs), L2 846s (4), L3 1,869s (2), L4 16,063s (1).
+The tree is a SCALING answer, not a 16-chunk speedup: at k chunks the lower levels parallelize
+wide and the wall converges to top-merge + spread; at k=16 there is almost nothing to hide.
+PILE PROJECTION (linear, conditional): 26x50GB chunks -> ~1.30e6s fully-parallel level sum,
+top level ~7.4e5s; AND the blocker: final-level BCR state projects ~330 GB (over the 64 GB
+line) - a memory-bounded BCR state is REQUIRED before any 50 GB attempt. The batch-BCR route
+at pile scale is thus bounded by BOTH the top-merge wall AND memory - reinforcing that the
+O(runs) cross-LCP merge (cost model banked: 23.7 symbols/run conditional) is the real pile path;
+the tree proves the semantics that merge will inherit.
