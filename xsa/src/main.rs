@@ -1054,7 +1054,10 @@ fn cmd_chi_rspace(args: &[String]) {
         aggp.unwrap_or_else(|| die("chi-rspace: need --agg")),
     );
     let header = read_ri4_header(&rp);
-    if header.version>=2 {die("chi-rspace requires SXI1 or ri4 source runs");}
+    // Raw ri4 is version 4; only container versions 2+ lack source runs here.
+    if sxi::Container::open(&rp).is_some_and(|container| container.version >= 2) {
+        die("chi-rspace requires SXI1 or ri4 source runs");
+    }
     // Streaming sweep needs only the run characters, not LF tables/samples.
     let idx = if stream_agg { None } else { Some(Ri4::load(&rp)) };
     let mut char_file = BufReader::with_capacity(1 << 20, File::open(&rp).unwrap());

@@ -105,3 +105,73 @@ Chunk merge may eventually compose with BCR for boundary repair or as a
 single-chunk base case. The evidence here does not support superseding BCR.
 The claimed `O(R log k)` merge and monotone chi update must be revised before
 the long corpus gates are worth launching.
+
+## Round 2 follow-up (2026-10-01 UTC)
+
+The banked `bit6/third_party/libsais/token-libsais.c/.h` is now available.
+It supplies 32-bit suffix-array/BWT functions, which suffice for a roughly
+68 MB chunk. This resolves the dependency noted above. The corrected task
+also requests a fresh monolithic fragment reference; that is a separate
+reproducibility gate and cannot certify a chunk merge by itself.
+The round 2 plan derives chi once from the final merged structure; the
+earlier recommendation to rederive it at each merge was a conservative
+correctness route, not a required invariant for this revised plan.
+
+The specified run-granularity primitive still has a fatal correctness
+obstruction. Its operation is a stable interleave of the two input BWT run
+orders. The aligned, nonperiodic example above is stronger than an SA-order
+objection: **its final BWT byte sequence is not any stable interleave of the
+two input BWT byte sequences**. The independent exhaustive dynamic-programming
+gate in `../chunk-merge-v2/test_interleave_obstruction.py` checks all possible
+character-level stable interleavings (a superset of run-level ones):
+The fixed fixture fails, as do 7 of 20 deterministic, separator-aligned
+synthetic two-chunk collections.
+
+| Text | Cyclic BWT bytes (hex) | Runs |
+| --- | --- | ---: |
+| A = `06 06 1e 06 1e` | `1e 1e 06 06 06` | 2 |
+| B = `07 06 06 1e` | `07 06 1e 06` | 4 |
+| A+B | `07 1e 06 06 1e 1e 06 06 06` | 5 |
+
+The target prefix forces `07` from B, `1e` from A, and `06` from B.
+At the next target `06`, both inputs' next bytes are `1e`; the merge is
+already impossible. This direct prefix proof does not depend on samples,
+tie handling, rank implementation, or computational limits.
+
+Since no character-level interleave exists, per-symbol run-boundary
+rank/select arithmetic cannot produce the required concatenated cyclic BWT
+by interleaving these runs. The issue is the ordinary `0x1e` separator and
+single cyclic text convention: suffix comparisons cross the chunk seam, so
+both order and predecessor bytes can change. BCR or ropebwt2 collection
+insertion uses different endmarker/ordering semantics and does not prove this
+merge. An exact concatenation algorithm must be specified and gated before
+claiming the requested builder, fragment equality, or 100x contrast.
+
+The requested scale arithmetic is: 1.31 TB / 50 GB = 26.2 chunks, hence
+27 if a final partial chunk is counted, five tree levels; at 1 GB, 1,310
+chunks and eleven levels. These are counts only, not throughput projections.
+
+### Round 2 work in this lane
+
+`bit6/chunk_frontend.cpp` now streams the original file once, maps each byte
+as it arrives, ends chunks at `0x1e`, and uses the banked libsais to sort
+each chunk's cyclic rotations. It writes a versioned RLE plus run-head and
+run-tail local SA samples; it cannot merge those chunks under the specified
+primitive. Its tiny independent oracle passes 20 generated aligned
+collections, two periodic collections, a nonidentity in-stream remap, and a
+no-clobber check. `bit6/third_party/libsais/libsais.h` is the compatibility
+include needed because the banked C source includes `libsais.h` but the
+banked header is named `token-libsais.h`.
+
+The long fragment regeneration and 16-chunk sort completed under
+`vendor/chunk-merge-v2/`, with detailed timings in
+`../chunk-merge-v2/REPORT.md`. Fresh reference Gate 0 passed exactly:
+normalized runs = **397,723,010**, chi = **306,164,765**. The buffered
+chunk frontend produced 16 document-aligned artifacts for all 1,082,130,213
+bytes in 3:57.26 wall, 2,309,920 KiB peak RSS; its local run counts sum to
+420,913,952. The monolithic six-stage wall sum was 4,789.07 s, with a
+28,251,580 KiB largest stage RSS. These are valid front-end/reference
+measurements, not a completed merge or 100x throughput contrast. The exact
+merge, 20 merged-versus-monolithic gates, merged chi, and independent review
+remain open because the specified stable run interleave fails the byte-level
+gate above.

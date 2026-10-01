@@ -1,0 +1,4 @@
+Command: xsa/target/release/xsa chi-rspace --stream-agg --ri4 vendor/chunk-merge-v2/monolithic/fresh.ri4 --agg vendor/chunk-merge-v2/monolithic/fresh.agg -o vendor/chunk-merge-v2/monolithic/fresh.sA
+Exit: 1
+Diagnostic: xsa: error: chi-rspace requires SXI1 or ri4 source runs
+Cause: xsa/src/main.rs tested header.version>=2; raw ri4 has version 4. Fixed by applying the version restriction only to SXI containers.

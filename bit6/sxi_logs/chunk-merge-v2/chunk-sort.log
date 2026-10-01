@@ -1,0 +1,17 @@
+CHUNK index=0 offset=0 n=67654936 runs=26313439 sort_wall_seconds=15.283440 path=vendor/chunk-merge-v2/chunks/chunk-0.crle
+CHUNK index=1 offset=67654936 n=67633960 runs=26248319 sort_wall_seconds=14.482322 path=vendor/chunk-merge-v2/chunks/chunk-1.crle
+CHUNK index=2 offset=135288896 n=67701485 runs=26366125 sort_wall_seconds=13.156621 path=vendor/chunk-merge-v2/chunks/chunk-2.crle
+CHUNK index=3 offset=202990381 n=67636079 runs=26110624 sort_wall_seconds=12.797713 path=vendor/chunk-merge-v2/chunks/chunk-3.crle
+CHUNK index=4 offset=270626460 n=67690163 runs=26874665 sort_wall_seconds=13.877069 path=vendor/chunk-merge-v2/chunks/chunk-4.crle
+CHUNK index=5 offset=338316623 n=67633624 runs=26241662 sort_wall_seconds=13.585618 path=vendor/chunk-merge-v2/chunks/chunk-5.crle
+CHUNK index=6 offset=405950247 n=67636876 runs=26164389 sort_wall_seconds=12.827893 path=vendor/chunk-merge-v2/chunks/chunk-6.crle
+CHUNK index=7 offset=473587123 n=67644494 runs=26374618 sort_wall_seconds=12.758959 path=vendor/chunk-merge-v2/chunks/chunk-7.crle
+CHUNK index=8 offset=541231617 n=67702549 runs=26386970 sort_wall_seconds=14.943538 path=vendor/chunk-merge-v2/chunks/chunk-8.crle
+CHUNK index=9 offset=608934166 n=67690373 runs=26726603 sort_wall_seconds=13.738870 path=vendor/chunk-merge-v2/chunks/chunk-9.crle
+CHUNK index=10 offset=676624539 n=67672739 runs=26656575 sort_wall_seconds=13.410696 path=vendor/chunk-merge-v2/chunks/chunk-10.crle
+CHUNK index=11 offset=744297278 n=67636223 runs=25912324 sort_wall_seconds=14.910350 path=vendor/chunk-merge-v2/chunks/chunk-11.crle
+CHUNK index=12 offset=811933501 n=67676429 runs=26309880 sort_wall_seconds=12.352650 path=vendor/chunk-merge-v2/chunks/chunk-12.crle
+CHUNK index=13 offset=879609930 n=67636041 runs=25917904 sort_wall_seconds=11.569832 path=vendor/chunk-merge-v2/chunks/chunk-13.crle
+CHUNK index=14 offset=947245971 n=67647969 runs=25909041 sort_wall_seconds=13.837903 path=vendor/chunk-merge-v2/chunks/chunk-14.crle
+CHUNK index=15 offset=1014893940 n=67236273 runs=26400814 sort_wall_seconds=15.237518 path=vendor/chunk-merge-v2/chunks/chunk-15.crle
+CHUNKS_PASS count=16 source_bytes=1082130213
