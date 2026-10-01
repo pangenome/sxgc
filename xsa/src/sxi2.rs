@@ -17,6 +17,14 @@ fn padding(data: &[u8], bits: u64) {
         need(data[data.len() - 1] >> (bits % 8) == 0, "nonzero bit padding");
     }
 }
+fn packed_bits(data: &[u8], pos: u64, width: u32) -> u64 {
+    if width==0 {return 0;}
+    let p=(pos/8) as usize;let shift=pos%8;
+    let bytes=((shift+width as u64+7)/8) as usize;
+    let mut raw=0u128;
+    for k in 0..bytes {raw|=(data[p+k] as u128)<<(8*k);}
+    ((raw>>shift)&((1u128<<width)-1)) as u64
+}
 pub fn runs(path: &str, m: &sxi::Member, n: u64, r: u64) -> (Vec<u64>, Vec<u8>, Vec<u32>) {
     let mut f = BufReader::new(File::open(path).unwrap());
     f.seek(SeekFrom::Start(m.offset)).unwrap();
@@ -136,7 +144,7 @@ pub struct Phi {
     v_width: u32,
     run_width: u32,
     select: Vec<u64>,
-    inverse: Vec<u32>,
+    inverse: Vec<u64>,
     r: u64,
     n: u64,
     escape: Vec<(u64,u64,u64,u64)>, // run, domain start, length, bit offset
@@ -162,12 +170,7 @@ impl Phi {
         }
     }
     fn packed(&self, off: usize, pos: u64, width: u32) -> u64 {
-        if width==0 {return 0;}
-        let p=off+(pos/8) as usize;let shift=pos%8;
-        let bytes=((shift+width as u64+7)/8) as usize;
-        let mut raw=0u128;
-        for k in 0..bytes {raw|=(self.map[p+k] as u128)<<(8*k);}
-        ((raw>>shift)&((1u128<<width)-1)) as u64
+        packed_bits(&self.map[off..],pos,width)
     }
     fn v_at(&self,i:u64,run:u64)->u64 {
         if !self.implicit_v {return self.packed(self.v_off,i*self.v_width as u64,self.v_width);}
@@ -272,7 +275,7 @@ impl Phi {
                 }
             }
             need(ones==c.r,"compact phi EF count");
-            phi.inverse=vec![u32::MAX;c.r as usize];
+            phi.inverse=vec![u64::MAX;c.r as usize];
             if phi.implicit_v {phi.tail_by_run=vec![0;c.r as usize];}
         } else {need(m.bytes==24*c.r,"phi member size");}
         let mut gcd=0u64;
@@ -298,8 +301,8 @@ impl Phi {
             need(u<c.n&&(phi.implicit_v||v<c.n)&&run<c.r,"phi edge range");
             need(previous_u.is_none_or(|old|old<u),"phi edge order");previous_u=Some(u);
             if phi.compact {
-                need(phi.inverse[run as usize]==u32::MAX,"duplicate phi run");
-                phi.inverse[run as usize]=i as u32;
+                need(phi.inverse[run as usize]==u64::MAX,"duplicate phi run");
+                phi.inverse[run as usize]=i;
                 if phi.implicit_v {phi.tail_by_run[run as usize]=u;}
             } else {
                 let s=&mut seen[(run/8) as usize];need(*s&(1<<(run%8))==0,"duplicate phi run");*s|=1<<(run%8);
@@ -374,6 +377,19 @@ impl Phi {
             need(result<self.n,"escape value range");return result;
         }
         if v>=self.n-delta {v-(self.n-delta)} else {v+delta}
+    }
+}
+
+#[cfg(test)]
+mod run_width_tests {
+    use super::packed_bits;
+
+    #[test]
+    fn compact_phi_run_id_above_u32() {
+        let run=(1u64<<33)+16;
+        let bits=(run as u128)<<5;
+        let bytes=bits.to_le_bytes();
+        assert_eq!(packed_bits(&bytes,5,34),run);
     }
 }
 fn gcd_u64(mut a:u64,mut b:u64)->u64{while b!=0{let t=a%b;a=b;b=t;}a}

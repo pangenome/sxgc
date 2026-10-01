@@ -1,0 +1,13 @@
+random-4-2k returncode 0
+xsa build: work=/tmp/sxi-run-widen/battery-final/xsa-build-mi7w29kg log=/home/erikg/worktrees/sxgc/pi-worktree-156159d0-6b35-49e0-abf8-2fe6993430b2-s0-0/bit6/sxi_logs/run-widen/random-4-2k-xsa-build-mi7w29kg.jsonl
+
+random-4-2k aggregate_byte_equal True output /tmp/sxi-run-widen/battery-final/random-4-2k.sxi
+random-4-20k returncode 0
+xsa build: work=/tmp/sxi-run-widen/battery-final/xsa-build-ghdz9v41 log=/home/erikg/worktrees/sxgc/pi-worktree-156159d0-6b35-49e0-abf8-2fe6993430b2-s0-0/bit6/sxi_logs/run-widen/random-4-20k-xsa-build-ghdz9v41.jsonl
+
+random-4-20k aggregate_byte_equal True output /tmp/sxi-run-widen/battery-final/random-4-20k.sxi
+random-4-200k returncode 0
+xsa build: work=/tmp/sxi-run-widen/battery-final/xsa-build-ns4stri6 log=/home/erikg/worktrees/sxgc/pi-worktree-156159d0-6b35-49e0-abf8-2fe6993430b2-s0-0/bit6/sxi_logs/run-widen/random-4-200k-xsa-build-ns4stri6.jsonl
+
+random-4-200k aggregate_byte_equal True output /tmp/sxi-run-widen/battery-final/random-4-200k.sxi
+PASS 3/3 FINAL source battery scales

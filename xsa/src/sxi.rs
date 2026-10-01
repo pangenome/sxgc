@@ -21,6 +21,7 @@ fn u32at(b: &[u8], o: usize) -> u32 {
 fn u64at(b: &[u8], o: usize) -> u64 {
     u64::from_le_bytes(b[o..o + 8].try_into().unwrap())
 }
+pub(crate) fn header_run_count(b: &[u8]) -> u64 { u64at(b, 24) }
 fn crc(mut v: u32, b: &[u8]) -> u32 {
     static TABLE: std::sync::OnceLock<[u32; 256]> = std::sync::OnceLock::new();
     let table = TABLE.get_or_init(|| {
@@ -89,14 +90,15 @@ impl Container {
         need((&b[..4]==b"SXI1" && version==1) || (&b[..4]==b"SXI2" && (2..=5).contains(&version)), "unsupported version");
         let n = u64at(&b, 8);
         let k = u64at(&b, 16);
-        let r = u64at(&b, 24);
+        let r = header_run_count(&b);
         let count = u32at(&b, 32);
         let hs = u32at(&b, 36);
         let flags = u64at(&b, 48);
         need(
-            n > 0 && n < u64::MAX && r > 0 && r <= n && k <= n && r <= u32::MAX as u64,
+            n > 0 && n < u64::MAX && r > 0 && r <= n && k <= n && r <= (u64::MAX - 2048) / 8,
             "invalid n/k/r",
         );
+        need(version != 2 || r <= u32::MAX as u64, "SXI2 v2 run ID width");
         need(
             (if version==1 {(5..=7).contains(&count)} else {(7..=9).contains(&count)})
                 && hs == 64 + 40 * count
@@ -224,7 +226,7 @@ impl Container {
             at(&mut f, tail.offset);
             let mut hb = [0; 9];rd(&mut f, &mut hb);
             let bits = u64at(&hb, 0);w = hb[8] as u64;
-            need((1..=64).contains(&w) && bits == r * w
+            need((1..=64).contains(&w) && r <= u64::MAX / w && bits == r * w && bits <= u64::MAX - 63
                 && tail.bytes == 9 + ((bits + 63) / 64) * 8,"packed tail size");
         }
         // Validate every independent member even on the header-only sweep path.

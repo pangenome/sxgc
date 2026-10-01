@@ -25,11 +25,12 @@ struct Output {
         auto&m=members[4];fprintf(stderr,"SXI_PASS n=%llu runs=%llu bytes=%llu chi_complete=%d chi_delta_ratio=%.9f\n",(unsigned long long)n,(unsigned long long)r,(unsigned long long)total,complete,m.count?double(m.bytes)/(8.0*m.count):0);
     }
 };
+#ifndef SXI_WRITE_TEST
 int main(int argc,char**argv){try{
     std::map<std::string,std::string>a;for(int i=1;i<argc;i+=2){check(i+1<argc,"usage: sxi_write --ri4 IN --heads RAW --output OUT [--chi RAW] [--anchors XANC] [--names TSV]");std::string key=argv[i];check(key=="--ri4"||key=="--heads"||key=="--output"||key=="--chi"||key=="--anchors"||key=="--names"||key=="--mode"||key=="--orientation"||key=="--remap","unknown option");check(a.emplace(key,argv[i+1]).second,"duplicate option");}
     check(a.count("--ri4")&&a.count("--heads")&&a.count("--output"),"need --ri4 --heads --output");
-    std::ifstream f(a["--ri4"],std::ios::binary);check(bool(f),"open ri4");U filebytes=size(f);check(integer(f)==0x0000000452585349ULL,"need ri4 v4");U n=integer(f),k=integer(f),r=integer(f);check(n&&n<UINT64_MAX&&r&&r<=n&&k<=n&&r<=UINT32_MAX,"invalid n/k/r");
-    U tailoff=2080+5*r;check(tailoff+9<=filebytes,"truncated runs");f.seekg(tailoff);U bits=integer(f);unsigned w=integer(f,1);check(w&&w<=64&&bits==r*w,"bad samples");U tailbytes=9+((bits+63)/64)*8;check(filebytes==tailoff+tailbytes,"truncated/trailing ri4");
+    std::ifstream f(a["--ri4"],std::ios::binary);check(bool(f),"open ri4");U filebytes=size(f);check(integer(f)==0x0000000452585349ULL,"need ri4 v4");U n=integer(f),k=integer(f),r=integer(f);check(n&&n<UINT64_MAX&&r&&r<=n&&k<=n&&r<=(UINT64_MAX-2089)/8,"invalid n/k/r");
+    U tailoff=2080+5*r;check(tailoff+9<=filebytes,"truncated runs");f.seekg(tailoff);U bits=integer(f);unsigned w=integer(f,1);check(w&&w<=64&&r<=UINT64_MAX/w&&bits==r*w,"bad samples");check(bits<=UINT64_MAX-63,"sample bits overflow");U tailbytes=9+((bits+63)/64)*8;check(filebytes==tailoff+tailbytes,"truncated/trailing ri4");
     std::array<U,256> supplied{},totals{};f.seekg(32);for(auto&v:supplied)v=integer(f);
     // Two sequential streams avoid O(r) run-table duplication.
     std::ifstream chars(a["--ri4"],std::ios::binary);chars.seekg(2080);f.seekg(2080+r);
@@ -54,3 +55,4 @@ int main(int argc,char**argv){try{
     if(remapped){out.begin(7,256);out.write(sigma.data(),sigma.size());}
     out.finish(n,k,r,a.count("--chi"),metadata);return 0;
 }catch(const std::exception&e){fprintf(stderr,"FATAL: %s\n",e.what());return 1;}}
+#endif

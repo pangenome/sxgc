@@ -9,6 +9,9 @@ def header_crc(b):
     hs=struct.unpack_from('<I',b,36)[0];struct.pack_into('<I',b,56,0);struct.pack_into('<I',b,56,zlib.crc32(b[:hs]))
 def member_crc(b,i):
     d=64+40*(i-1);off,size=struct.unpack_from('<QQ',b,d+8);struct.pack_into('<I',b,d+32,zlib.crc32(b[off:off+size]));header_crc(b)
+def member_index(b,id):
+    count=struct.unpack_from('<I',b,32)[0]
+    return next(i+1 for i in range(count) if struct.unpack_from('<I',b,64+40*i)[0]==id)
 def check_remap_container(path,ok=True):
     run([a.xsa,'sxi-info',path],ok)
     if a.cpp_reader:run([a.cpp_reader,path],ok)
@@ -35,16 +38,16 @@ with tempfile.TemporaryDirectory(prefix='sxi-format-unit-')as d:
     off=struct.unpack_from('<Q',b,d1+8)[0];b[off+2048]=255
     member_crc(b,1);bad=d/'compact-codebook.sxi';bad.write_bytes(b)
     run([a.xsa,'sxi-info',bad],False)
-    b=bytearray(compact.read_bytes());d5=64+4*40
+    b=bytearray(compact.read_bytes());i5=member_index(b,5);d5=64+(i5-1)*40
     off=struct.unpack_from('<Q',b,d5+8)[0];struct.pack_into('<Q',b,off,64)
-    member_crc(b,5);bad=d/'compact-ef.sxi';bad.write_bytes(b)
+    member_crc(b,i5);bad=d/'compact-ef.sxi';bad.write_bytes(b)
     run([a.xsa,'sxi-info',bad],False)
-    b=bytearray(compact.read_bytes());dphi=64+6*40
+    b=bytearray(compact.read_bytes());iphi=member_index(b,8);dphi=64+(iphi-1)*40
     off=struct.unpack_from('<Q',b,dphi+8)[0]
     struct.pack_into('<Q',b,off+24,struct.unpack_from('<Q',b,off)[0])
-    member_crc(b,7);bad=d/'compact-phi.sxi';bad.write_bytes(b)
+    member_crc(b,iphi);bad=d/'compact-phi.sxi';bad.write_bytes(b)
     run([a.xsa,'sxi-info',bad],False)
-    b=bytearray(compact.read_bytes());desc=64+7*40
+    b=bytearray(compact.read_bytes());desc=64+(member_index(b,9)-1)*40
     struct.pack_into('<Q',b,desc+24,1);header_crc(b)
     bad=d/'compact-escape-count.sxi';bad.write_bytes(b)
     run([a.xsa,'sxi-info',bad],False)

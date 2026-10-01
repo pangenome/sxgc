@@ -16,7 +16,7 @@ pub struct Witness {
     bits: Vec<u8>,
     // Number of one bits before each 512-bit block.
     rank: Vec<u64>,
-    next_block: Vec<u32>,
+    next_block: Vec<u64>,
     count: u64,
     slots: u64,
 }
@@ -52,10 +52,10 @@ impl Witness {
             return Err("witness count differs from chi".into());
         }
         let blocks = rank.len() - 1;
-        let mut next_block = vec![u32::MAX; blocks + 1];
+        let mut next_block = vec![u64::MAX; blocks + 1];
         for block in (0..blocks).rev() {
             next_block[block] = if rank[block + 1] > rank[block] {
-                block as u32
+                block as u64
             } else { next_block[block + 1] };
         }
         Ok(Self {bits, rank, next_block, count, slots})
@@ -81,7 +81,7 @@ impl Witness {
             if word != 0 { return Some(byte as u64 * 8 + word.trailing_zeros() as u64); }
         }
         let next = *self.next_block.get(block + 1)?;
-        if next == u32::MAX { return None; }
+        if next == u64::MAX { return None; }
         for byte in next as usize * 64..((next as usize + 1) * 64).min(self.bits.len()) {
             word = self.bits[byte];
             if word != 0 { return Some(byte as u64 * 8 + word.trailing_zeros() as u64); }

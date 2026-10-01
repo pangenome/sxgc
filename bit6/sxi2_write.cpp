@@ -82,7 +82,7 @@ struct Temp {
     ~Temp(){for(const auto& p:paths)unlink(p.c_str());}
     std::string add(const std::string& base,const char* suffix){auto p=base+suffix;check(access(p.c_str(),F_OK)!=0,"bit temp exists");paths.push_back(p);return p;}
 };
-struct Edge {U u,v;uint32_t run,pad=0;bool operator<(const Edge& x)const{return u<x.u;}};
+struct Edge {U u,v,run;bool operator<(const Edge& x)const{return u<x.u;}};
 // In a singleton BWT run the head and tail SA samples coincide.  The edge
 // for the preceding run therefore already points to the next run's tail.
 // Keep the source-order run permutation, and store v only at other edges.
@@ -150,7 +150,7 @@ static void repack_sxi2(const std::string& src,const std::string& dst,const std:
         U v=packed(values,i,nw),run=packed(runs,i,rw);
         check(u<n&&v<n&&run<r&&(i==0||u>previous),"repack phi edge range/order");
         check(!(seen[run>>3]&(1u<<(run&7))),"repack duplicate run");seen[run>>3]|=1u<<(run&7);
-        edges.push_back({u,v,uint32_t(run)});previous=u;
+        edges.push_back({u,v,run});previous=u;
     }
     std::vector<U> tails;U exceptions=phi_exceptions(edges,tails);
     U projected=64+40*count;auto add=[&](U z){projected=(projected+7)/8*8+z;};
@@ -229,7 +229,7 @@ int main(int argc,char**argv){try{
         U mirror=U(reservoir&((__uint128_t(1)<<width)-1));reservoir>>=width;available-=width;
         U v=i+1<r?integer(hs):first_head;
         if(i%1024==0)sparse.push_back(n-1-mirror);
-        edges.push_back({n-1-mirror,v,uint32_t(i)});
+        edges.push_back({n-1-mirror,v,i});
     }
     std::sort(edges.begin(),edges.end());for(U i=1;i<r;i++)check(edges[i-1].u<edges[i].u,"duplicate phi domain");
     U gcd=0;std::array<U,256> counts{};

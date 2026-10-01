@@ -366,7 +366,7 @@ static int slim_dump(Ri4& ri,const std::string& prefix,const std::string& out,
         fprintf(stderr,"SLIM_RESOLVE_CACHE slots=%zu bytes=%zu checkpoint_bytes_per_worker=65536 exact_keys=1\n",slots,resolveCache->bytes());
         slim_phase("resolve-cache-build",last);
     }
-    uint64_t lfbytes=0;for(auto& v:lf.charRuns)lfbytes+=v.capacity()*4;for(auto& v:lf.charSum)lfbytes+=v.capacity()*8;
+    uint64_t lfbytes=0;for(auto& v:lf.charRuns)lfbytes+=v.capacity()*sizeof(uint64_t);for(auto& v:lf.charSum)lfbytes+=v.capacity()*8;
     fprintf(stderr,"SLIM_RI runs=%llu starts=%llu samples=%llu lf_capacity=%llu\n",(unsigned long long)(ri.R*5),(unsigned long long)(ri.R*8),(unsigned long long)(ri.saWords.size()*8),(unsigned long long)lfbytes);
     if(profileOnly){ lce.ph->report("parse");lce.dh->report("dict");fprintf(stderr,"SLIM_PROFILE_ONLY no queries or aggregate produced\n");return 0; }
     if(!flatPath.empty()) {

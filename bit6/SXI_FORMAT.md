@@ -78,9 +78,15 @@ The five core members and verbatim names bytes are unchanged.
 Cost: writer O(R + chi log chi + names bytes), O(chi) working memory plus
 bounded I/O buffers. Sorting is over witness positions, never text positions.
 Rust validation uses bounded streaming buffers plus O(k) anchors; query
-index construction retains the original O(R) data structures. All readers
-currently restrict R to u32 because the existing query index uses u32 run
-IDs. Head positions remain raw u64 in v1; tails retain their packed width.
+index construction retains the original O(R) data structures. SXI1 and
+compact SXI2 v3/v4 store R as u64; native and Rust query indexes now retain
+run IDs as u64. Per-run lengths remain u32 in `.ri4` and SXI1; this limits an
+individual run, not the number of runs. SXI2 v2's legacy phi record stores a
+u32 run ID and remains limited to `R <= 2^32`; current SXI2 publication uses
+v4 with packed run IDs sized from R. Head positions remain raw u64 in v1;
+tails retain their packed width. No wire layout or version changed, so
+existing small-scale SXI1/SXI2 artifacts do not require regeneration. New
+high-R artifacts require the widened readers; older readers reject them.
 
 Build:
 

@@ -200,11 +200,15 @@ struct Ri4 {
     run_len: Vec<u32>,
     sa: Option<PackedSa>,
     run_start_blk: Vec<u64>,
-    cruns: Vec<Vec<u32>>,
+    cruns: Vec<Vec<u64>>,
     csum: Option<Vec<Vec<u64>>>,
     total: Vec<u64>,
 }
 const BLK: u64 = 64;
+
+fn run_lower_bound(ids: &[u64], run: u64) -> usize {
+    ids.partition_point(|&id| id < run)
+}
 
 fn read_raw_runs(f: &mut File, r: u64) -> (Vec<u64>,Vec<u8>,Vec<u32>) {
     let mut cb=[0u8;2048];f.read_exact(&mut cb).unwrap_or_else(|e|die(&format!("read C: {e}")));
@@ -263,13 +267,13 @@ impl Ri4 {
             acc += run_len[x as usize] as u64;
         }
         run_start_blk.push(acc);
-        let mut cruns: Vec<Vec<u32>> = vec![Vec::new(); 256];
+        let mut cruns: Vec<Vec<u64>> = vec![Vec::new(); 256];
         let compact=container.as_ref().is_some_and(|sx|sx.version>=3);
         let mut csum: Vec<Vec<u64>> = vec![Vec::new(); 256];
         let mut acc256 = vec![0u64; 256];
         for x in 0..r as usize {
             let c = run_char[x] as usize;
-            cruns[c].push(x as u32);
+            cruns[c].push(x as u64);
             if !compact {csum[c].push(acc256[c]);}
             acc256[c] += run_len[x] as u64;
         }
@@ -328,7 +332,7 @@ impl Ri4 {
         let r = self.run_of(i);
         let s = self.run_start(r);
         let v = &self.cruns[c as usize];
-        let j = v.partition_point(|&x| (x as u64) < r);
+        let j = run_lower_bound(v, r);
         if let Some(ref lf)=self.lf_map {
             if self.run_char[r as usize]==c {lf.start(r)-self.c[c as usize]+(i-s)}
             else if j==0 {0}
@@ -377,7 +381,7 @@ impl Ri4 {
             let selected=if self.run_char[run as usize]==ch {sa}
             else {
                 let ids=&self.cruns[ch as usize];
-                let j=ids.partition_point(|&x|x as u64<=run);
+                let j=run_lower_bound(ids,run+1);
                 let next=*ids.get(j).unwrap_or_else(||die("SXI2: missing toehold run")) as u64;
                 if self.run_start(next)>=r {die("SXI2: toehold run outside interval");}
                 head(next)
@@ -1371,5 +1375,34 @@ fn main() {
         Some("chi-rspace") => cmd_chi_rspace(&args[1..]),
         Some("-h") | Some("--help") | None => usage(),
         Some(other) => die(&format!("unknown subcommand '{}' (try --help)", other)),
+    }
+}
+
+#[cfg(test)]
+mod run_width_tests {
+    use super::run_lower_bound;
+
+    #[test]
+    fn high_run_id_query_predecessor() {
+        let r = (1u64 << 33) + 17;
+        let ids = [(1u64 << 32) - 1, (1u64 << 32) + 1, r - 1, r];
+        assert_eq!(run_lower_bound(&ids, r), 3);
+        assert_eq!(run_lower_bound(&ids, r + 1), 4);
+    }
+
+    #[test]
+    fn cxx_writer_header_round_trip() {
+        let bytes = if let Ok(path) = std::env::var("SXI_RUN_WIDTH_HEADER") {
+            std::fs::read(path).unwrap()
+        } else {
+            let mut header = vec![0u8;64];
+            header[..4].copy_from_slice(b"SXI1");
+            header[24..32].copy_from_slice(&((1u64<<33)+17).to_le_bytes());
+            header
+        };
+        assert_eq!(&bytes[..4], b"SXI1");
+        let r = super::sxi::header_run_count(&bytes);
+        assert_eq!(r, (1u64 << 33) + 17);
+        assert!(r > u32::MAX as u64);
     }
 }

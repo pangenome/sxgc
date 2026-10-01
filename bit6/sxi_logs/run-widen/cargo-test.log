@@ -1,0 +1,78 @@
+   Compiling xsa v0.1.0 (/home/erikg/worktrees/sxgc/pi-worktree-156159d0-6b35-49e0-abf8-2fe6993430b2-s0-0/xsa)
+warning: variable does not need to be mutable
+   --> src/main.rs:652:9
+    |
+652 |     let mut next_rng = |mut x: u64| -> u64 {
+    |         ----^^^^^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `tanchor` is never read
+   --> src/main.rs:705:31
+    |
+705 |             let mut tanchor = 0u64;
+    |                               ^^^^ this value is reassigned later and never used
+...
+713 |                         tanchor = r;
+    |                         ----------- `tanchor` is overwritten here before the previous value is read
+    |
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `tsample` is never read
+   --> src/main.rs:706:31
+    |
+706 |             let mut tsample = 0u64;
+    |                               ^^^^ this value is reassigned later and never used
+...
+714 |                         tsample = idx.tail_sample(r);
+    |                         ---------------------------- `tsample` is overwritten here before the previous value is read
+
+warning: variable does not need to be mutable
+   --> src/main.rs:865:9
+    |
+865 |     let mut read_flat = |flatf: &mut File, pos: u64, want: usize| -> Vec<u8> {
+    |         ----^^^^^^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: field `bits` is never read
+   --> src/main.rs:131:5
+    |
+130 | struct PackedSa {
+    |        -------- field in this struct
+131 |     bits: u64,          // total size IN BITS
+    |     ^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `s_at` is never used
+   --> src/main.rs:405:8
+    |
+222 | impl Ri4 {
+    | -------- method in this implementation
+...
+405 |     fn s_at(&self, j: u64) -> u64 {
+    |        ^^^^
+
+warning: method `hit` is never used
+   --> src/product.rs:178:8
+    |
+ 67 | impl Engine {
+    | ----------- method in this implementation
+...
+178 |     fn hit(
+    |        ^^^
+
+warning: `xsa` (bin "xsa" test) generated 7 warnings (run `cargo fix --bin "xsa" -p xsa --tests` to apply 2 suggestions)
+    Finished `release` profile [optimized] target(s) in 5m 31s
+     Running unittests src/main.rs (/tmp/sxi-run-widen/cargo-target/release/deps/xsa-9a7f173d66c1ba47)
+
+running 3 tests
+test run_width_tests::cxx_writer_header_round_trip ... ok
+test run_width_tests::high_run_id_query_predecessor ... ok
+test sxi2::run_width_tests::compact_phi_run_id_above_u32 ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

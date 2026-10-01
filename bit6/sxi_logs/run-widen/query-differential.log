@@ -1,0 +1,8 @@
+original pattern byte 11 mapped 11
+sxi return 0 rows 3 stderr 
+sxi2 return 0 rows 3 stderr 
+equal True
+{"doc_id":0,"len":1,"name":"text","offset":667,"read":"query"}
+{"doc_id":0,"len":1,"name":"text","offset":1969,"read":"query"}
+{"doc_id":0,"len":1,"name":"text","offset":1201,"read":"query"}
+

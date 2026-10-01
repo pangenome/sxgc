@@ -164,7 +164,7 @@ struct Ri4 {
 struct LfIndex {
     const Ri4* ri = nullptr;
     std::vector<uint64_t> Cless;                        // 256: rows with char < c
-    std::vector<std::vector<uint32_t>> charRuns;        // per char: run ids
+    std::vector<std::vector<uint64_t>> charRuns;        // per char: run ids
     std::vector<std::vector<uint64_t>> charSum;         // per char: prefix lens
     void build(const Ri4& r) {
         ri = &r;
@@ -175,7 +175,7 @@ struct LfIndex {
         for (int c = 0; c < 256; ++c) { Cless[c] = acc; acc += Ctot[c]; }
         charRuns.assign(256, {});
         charSum.assign(256, {});
-        for (uint64_t i = 0; i < r.R; ++i) charRuns[r.a[i]].push_back((uint32_t)i);
+        for (uint64_t i = 0; i < r.R; ++i) charRuns[r.a[i]].push_back(i);
         for (int c = 0; c < 256; ++c) {
             if (charRuns[c].empty()) continue;
             charSum[c].resize(charRuns[c].size() + 1, 0);
@@ -192,7 +192,7 @@ struct LfIndex {
         uint8_t ch = ri->a[r];
         uint64_t o = row - ri->starts[r];
         auto& vr = charRuns[ch];
-        uint64_t k = (uint64_t)(std::lower_bound(vr.begin(), vr.end(), (uint32_t)r) - vr.begin());
+        uint64_t k = (uint64_t)(std::lower_bound(vr.begin(), vr.end(), r) - vr.begin());
         return Cless[ch] + charSum[ch][k] + o;
     }
 };
@@ -826,9 +826,9 @@ int main(int argc, char** argv) {
             uint64_t acc = 0;
             for (int c = 0; c < 256; ++c) { Cless[c] = acc; acc += Ctot[c]; }
         }
-        std::vector<std::vector<uint32_t>> charRuns(256);
+        std::vector<std::vector<uint64_t>> charRuns(256);
         std::vector<std::vector<uint64_t>> charSum(256);
-        for (uint64_t i = 0; i < ri4.R; ++i) charRuns[ri4.a[i]].push_back((uint32_t)i);
+        for (uint64_t i = 0; i < ri4.R; ++i) charRuns[ri4.a[i]].push_back(i);
         for (int c = 0; c < 256; ++c) {
             if (charRuns[c].empty()) continue;
             charSum[c].resize(charRuns[c].size() + 1, 0);
@@ -844,7 +844,7 @@ int main(int argc, char** argv) {
             uint8_t ch = ri4.a[r];
             uint64_t o = row - ri4.starts[r];
             auto& vr = charRuns[ch];
-            uint64_t k = (uint64_t)(std::lower_bound(vr.begin(), vr.end(), (uint32_t)r) - vr.begin());
+            uint64_t k = (uint64_t)(std::lower_bound(vr.begin(), vr.end(), r) - vr.begin());
             return Cless[ch] + charSum[ch][k] + o;
         };
         auto flat_at = [&](uint64_t p) -> int {

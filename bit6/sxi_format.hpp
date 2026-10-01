@@ -55,7 +55,7 @@ struct Container {
         std::ifstream f(path,std::ios::binary);check(bool(f),"SXI: open");U length=size(f);
         unsigned char b[64];read(f,b,64);check(!memcmp(b,"SXI1",4)&&get(b+4,4)==1,"SXI: bad magic/version");
         n=get(b+8);k=get(b+16);r=get(b+24);U count=get(b+32,4),hs=get(b+36,4);flags=get(b+48);
-        check(n&&n<UINT64_MAX&&r&&r<=n&&k<=n&&r<=UINT32_MAX,"SXI: invalid n/k/r");
+        check(n&&n<UINT64_MAX&&r&&r<=n&&k<=n&&r<=(UINT64_MAX-2048)/8,"SXI: invalid n/k/r");
         check(count>=5&&count<=7&&hs==64+40*count&&get(b+40)==length&&(flags<=1||(flags>=8&&flags<=15)||(flags>=24&&flags<=31))&&!get(b+60,4),"SXI: invalid header");
         uint32_t wanted=get(b+56,4);put(b+56,0,4);uint32_t crcval=crc(~0U,b,64);U end=hs;
         for(U i=0;i<count;i++){
@@ -80,7 +80,7 @@ struct Container {
             f.seekg(member(7).offset);read(f,sigma.data(),sigma.size());validate_remap(sigma);
         }
         f.seekg(member(2).offset);U bits=integer(f);unsigned w=integer(f,1);
-        check(w&&w<=64&&bits==r*w&&member(2).bytes==9+((bits+63)/64)*8,"SXI: packed tail size");
+        check(w&&w<=64&&r<=UINT64_MAX/w&&bits==r*w&&bits<=UINT64_MAX-63&&member(2).bytes==9+((bits+63)/64)*8,"SXI: packed tail size");
         f.seekg(member(4).offset);check(integer(f,4)==0x434e4158&&integer(f)==member(4).count,"SXI: anchor header");
     }
 };
