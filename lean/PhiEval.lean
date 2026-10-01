@@ -24,7 +24,7 @@ def phiMismatch (R : Text) : Nat :=
 def boundaryMismatch (R : Text) : Nat :=
   ((List.range R.length).filter (fun a =>
     a > 0 && bwtRow R (a-1) != bwtRow R a &&
-    rowPos R a != phiInv R (rowPos R (a-1)))).length
+    SxgcPhi.rowPos R a != phiInv R (SxgcPhi.rowPos R (a-1)))).length
 
 -- Direct empty/singleton cases plus the sentinel-bearing text family.
 #eval do

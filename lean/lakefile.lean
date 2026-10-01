@@ -22,3 +22,5 @@ lean_lib SxgcSeam
 
 lean_lib SxgcRevival
 lean_lib SxgcChiMono
+
+lean_lib SxgcUniDelim

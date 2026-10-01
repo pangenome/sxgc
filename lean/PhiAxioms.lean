@@ -28,3 +28,11 @@ import SxgcPhi
 #print axioms SxgcPhi.isPower_dvd_byteFreqGcd
 #print axioms SxgcPhi.gcdOne_not_isPower
 #print axioms SxgcPhi.criterion_singleton_branch
+
+-- Criterion C bridge (a): primitive ⟹ distinct cyclic rotations
+#print axioms SxgcPhi.cyclicSym_mod_eq
+#print axioms SxgcPhi.cyclicSym_sub
+#print axioms SxgcPhi.cyclicSym_isPower
+#print axioms SxgcPhi.rot_eq_cyclicSym
+#print axioms SxgcPhi.rot_eq_imp_not_gcdOne
+#print axioms SxgcPhi.byteFreqGcd_one_rot_injective
