@@ -1,0 +1,149 @@
+{
+  "yeast235": {
+    "sxi2-v5": {
+      "path": "/mnt/nvme3n1/erikg/sxi2-v5/yeast235.sxi2",
+      "version": 3,
+      "n": 3336986759,
+      "r": 100905045,
+      "members": {
+        "1": {
+          "bytes": 98951370,
+          "count": 100905045,
+          "crc32": "4d91ed96"
+        },
+        "5": {
+          "bytes": 77088381,
+          "count": 85404336,
+          "crc32": "640bf588"
+        },
+        "8": {
+          "bytes": 832888637,
+          "count": 100905045,
+          "crc32": "4fd9901e"
+        }
+      }
+    },
+    "sxi2-v6-2-b25eaecb": {
+      "path": "/mnt/nvme3n1/erikg/sxi2-v6-2-b25eaecb/yeast235.sxi2",
+      "version": 4,
+      "n": 3336986759,
+      "r": 100905045,
+      "members": {
+        "1": {
+          "bytes": 98951370,
+          "count": 100905045,
+          "crc32": "4d91ed96"
+        },
+        "5": {
+          "bytes": 77088381,
+          "count": 85404336,
+          "crc32": "640bf588"
+        },
+        "8": {
+          "bytes": 832888637,
+          "count": 100905045,
+          "crc32": "4fd9901e"
+        }
+      }
+    },
+    "common_members_identical": true
+  },
+  "pile-frag": {
+    "sxi2-v5": {
+      "path": "/mnt/nvme3n1/erikg/sxi2-v5/pile-frag.sxi2",
+      "version": 3,
+      "n": 1082130213,
+      "r": 397723010,
+      "members": {
+        "1": {
+          "bytes": 358311934,
+          "count": 397723010,
+          "crc32": "12990b42"
+        },
+        "5": {
+          "bytes": 144174354,
+          "count": 306164765,
+          "crc32": "3786e7a0"
+        },
+        "8": {
+          "bytes": 3149986508,
+          "count": 397723010,
+          "crc32": "a8376eb7"
+        }
+      }
+    },
+    "sxi2-v6-2-b25eaecb": {
+      "path": "/mnt/nvme3n1/erikg/sxi2-v6-2-b25eaecb/pile-frag.sxi2",
+      "version": 4,
+      "n": 1082130213,
+      "r": 397723010,
+      "members": {
+        "1": {
+          "bytes": 358311934,
+          "count": 397723010,
+          "crc32": "12990b42"
+        },
+        "5": {
+          "bytes": 144174354,
+          "count": 306164765,
+          "crc32": "3786e7a0"
+        },
+        "8": {
+          "bytes": 3149986508,
+          "count": 397723010,
+          "crc32": "a8376eb7"
+        }
+      }
+    },
+    "common_members_identical": true
+  },
+  "k10": {
+    "sxi2-v5": {
+      "path": "/mnt/nvme3n1/erikg/sxi2-v5/k10.sxi2",
+      "version": 3,
+      "n": 30151407545,
+      "r": 1859825862,
+      "members": {
+        "1": {
+          "bytes": 2227364376,
+          "count": 1859825862,
+          "crc32": "c5c2f199"
+        },
+        "5": {
+          "bytes": 1252474932,
+          "count": 1627067257,
+          "crc32": "c9b5d4f6"
+        },
+        "8": {
+          "bytes": 16741512439,
+          "count": 1859825862,
+          "crc32": "c72fecaa"
+        }
+      }
+    },
+    "sxi2-v6-2-b25eaecb": {
+      "path": "/mnt/nvme3n1/erikg/sxi2-v6-2-b25eaecb/k10.sxi2",
+      "version": 4,
+      "n": 30151407545,
+      "r": 1859825862,
+      "members": {
+        "1": {
+          "bytes": 2227364376,
+          "count": 1859825862,
+          "crc32": "c5c2f199"
+        },
+        "5": {
+          "bytes": 1252474932,
+          "count": 1627067257,
+          "crc32": "c9b5d4f6"
+        },
+        "8": {
+          "bytes": 16741512439,
+          "count": 1859825862,
+          "crc32": "c72fecaa"
+        }
+      }
+    },
+    "common_members_identical": true
+  }
+}

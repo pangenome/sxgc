@@ -1,0 +1,116 @@
+{
+  "measured_artifact_projections": [
+    {
+      "corpus": "yeast235",
+      "r": 100905045,
+      "bearing_runs": 80121608,
+      "bearing_fraction": 0.7940297534181765,
+      "chi_over_r": 0.8463832110673951,
+      "v6_2_bytes": 1010069024,
+      "ef_chi_bytes": 77088381,
+      "skeleton": {
+        "bitvector": 12613131,
+        "rank_directory": 1576648,
+        "c_table": 2048
+      },
+      "projected_v7_bytes": 832094598,
+      "optimistic_size_reduction": 0.17620026133976363,
+      "optimistic_compression_factor": 1.213887250833949,
+      "full_run_table_floor_bytes": 852475636,
+      "explicit_lf_anchor_bytes": 320486432,
+      "with_explicit_lf_anchors_bytes": 1152581030,
+      "full_v6_fallback_bytes": 1024260851
+    },
+    {
+      "corpus": "pile-frag",
+      "r": 397723010,
+      "bearing_runs": 295804478,
+      "bearing_fraction": 0.7437449445029595,
+      "chi_over_r": 0.7697939452887074,
+      "v6_2_bytes": 3655580696,
+      "ef_chi_bytes": 144174354,
+      "skeleton": {
+        "bitvector": 49715377,
+        "rank_directory": 6214424,
+        "c_table": 2048
+      },
+      "projected_v7_bytes": 2811696918,
+      "optimistic_size_reduction": 0.23084807809697439,
+      "optimistic_compression_factor": 1.3001332656438185,
+      "full_run_table_floor_bytes": 2903516162,
+      "explicit_lf_anchor_bytes": 1146242353,
+      "with_explicit_lf_anchors_bytes": 3957939271,
+      "full_v6_fallback_bytes": 3711512545
+    },
+    {
+      "corpus": "k10",
+      "r": 1859825862,
+      "bearing_runs": 1516975271,
+      "bearing_fraction": 0.8156544663642278,
+      "chi_over_r": 0.8748492481174025,
+      "v6_2_bytes": 20235882024,
+      "ef_chi_bytes": 1252474932,
+      "skeleton": {
+        "bitvector": 232478233,
+        "rank_directory": 29059784,
+        "c_table": 2048
+      },
+      "projected_v7_bytes": 16997915778,
+      "optimistic_size_reduction": 0.16001112489980585,
+      "optimistic_compression_factor": 1.1904919572663621,
+      "full_run_table_floor_bytes": 17408520453,
+      "explicit_lf_anchor_bytes": 6636766811,
+      "with_explicit_lf_anchors_bytes": 23634682589,
+      "full_v6_fallback_bytes": 20497422089
+    }
+  ],
+  "pile_linear_extrapolation": {
+    "corpus": "pile-1.31TB-linear",
+    "r": 460000000000,
+    "bearing_runs": 342122674471,
+    "bearing_fraction": 0.7437449445021739,
+    "chi_over_r": 0.7697939452891305,
+    "v6_2_bytes": 4227985502171,
+    "ef_chi_bytes": 166749725745,
+    "skeleton": {
+      "bitvector": 57500000000,
+      "rank_directory": 7187500000,
+      "c_table": 2048
+    },
+    "projected_v7_bytes": 3251960804941,
+    "optimistic_size_reduction": 0.23084863860787308,
+    "optimistic_compression_factor": 1.3001342131021496,
+    "full_run_table_floor_bytes": 3358157457946,
+    "explicit_lf_anchor_bytes": 1753378706664,
+    "with_explicit_lf_anchors_bytes": 5005339511605,
+    "full_v6_fallback_bytes": 4292673004219
+  },
+  "pile_width_adjusted_extrapolation": {
+    "corpus": "pile-1.31TB-width-adjusted",
+    "r": 460000000000,
+    "bearing_runs": 342122674471,
+    "bearing_fraction": 0.7437449445021739,
+    "chi_over_r": 0.7697939452891305,
+    "v6_2_bytes": 5377985502171,
+    "ef_chi_bytes": 166749725745,
+    "skeleton": {
+      "bitvector": 57500000000,
+      "rank_directory": 7187500000,
+      "c_table": 2048
+    },
+    "projected_v7_bytes": 4107267491119,
+    "optimistic_size_reduction": 0.23628141253616863,
+    "optimistic_compression_factor": 1.3093828229594564,
+    "full_run_table_floor_bytes": 4213464144124,
+    "explicit_lf_anchor_bytes": 1753378706664,
+    "with_explicit_lf_anchors_bytes": 5860646197783,
+    "full_v6_fallback_bytes": 5442673004219
+  },
+  "pile_phi_width_uplift_bytes": 1150000000000,
+  "r_466_skeleton": {
+    "bitvector": 342467162,
+    "rank_directory": 42808400,
+    "c_table": 2048
+  },
+  "note": "Lower bound only: assumes all non-chi bytes scale with bearing-run fraction; does not encode omitted run boundaries, symbol rank, select, or phi repair."
+}

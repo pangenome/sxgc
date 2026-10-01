@@ -2408,3 +2408,17 @@ untenable at scale (14h/3.3Gbp single-core) - the chunk-merge builder (round 2, 
 is the O(runs) answer. NOTE: the queued pile-frag gate in run_gates.sh points at the dead
 worktree path (my cleanup) - mooted by the recipe rule; the fragment reference regenerates
 in chunk-merge round 2's Gate 0.
+
+## V7 MODEL VERDICT (witness-restricted run structure): NOT a standalone search index - negative, measured
+The user's idea (search directly on chi + move, dropping witness-free runs) was modeled by census +
+simulation + projection, not built. FINDINGS: (a) CENSUS: witness-free runs are 18.4-25.6% of R
+(yeast 20.6%, frag 25.6%, k10 18.4%); witnesses map to run heads OR tails (head-witness runs 54%/
+66%/47% of R); (b) OPTIMISTIC SPACE: with charged skeleton (bitvector+rank+C-array), v7 would be
+832 MB / 2.81 GB / 17.0 GB - a real ~20-23% under v6-2 at stored size; (c) THE KILL: search
+routing fails - 99-100% of real MEM queries (1001 per corpus) hit intermediate backward-search
+steps inside witness-free intervals; the skeleton cannot supply rank there. Making routing work
+via packed LF starts pushes the pile projection to 5.861 TB vs v6-2's 5.378 TB baseline - the
+fix costs more than the win. CONCLUSION: the rleBWT's witness-free runs are LOAD-BEARING for
+backward search; chi rides the artifact, it does not drive it. v6-2 remains the container shape.
+The statement-locked Lean target (witness-anchored search) is recorded in the journal for any
+future hybrid scheme. One month of speculative building avoided by one hour of modeling.
