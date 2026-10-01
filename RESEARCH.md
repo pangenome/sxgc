@@ -2456,3 +2456,14 @@ falsify covering_given_stream (the theorem is about requirement coverage at ends
 step was assuming coverage implies interval-row witnessing for arbitrary-length patterns.
 The honest corollary to state in the paper: find-one-position is witness-anchored for the
 end-positioned requirement; the start mapping needs |P|, hence toehold rescue for ~45% of probes.
+
+## THE 466 FROM-ZERO MILESTONE IS DONE - THE PAPER NUMBER IS UNQUALIFIED
+chi(HPRC-466) = 2,250,211,129 (N=1,403,221,068,491, R=2,739,737,289, 38,790 strings) - FROM ZERO,
+one knob-free command (sealed-tools-v2 xsa build --agc HPRC_r2_assemblies_0.6.1.agc --threads 48
+--verify-text-sample 10000), 27.15 hours wall. THE MILESTONE ARTIFACT IS BYTE-IDENTICAL TO THE
+INDEPENDENT VALIDATION BUILD: hprc.sxi == hprc.validation.sxi, sha256
+2aca539e3747414e447372b9554f14613335162fd07c00c03599a1948198a8fb, 52,175,300,288 bytes each.
+TWO full 1.4 Tbp constructions, identical 52 GB artifacts, identical chi. Every number in the
+paper about 466 is now from-zero reproducible: chi/n = 0.1604%, chi/R = 0.8214 (inside the proven
+band). The audit gate (10000-sample text verification) passed in-build. This is the largest
+suffixient-set construction ever, and it is byte-reproducible.
