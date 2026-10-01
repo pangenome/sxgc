@@ -2422,3 +2422,22 @@ fix costs more than the win. CONCLUSION: the rleBWT's witness-free runs are LOAD
 backward search; chi rides the artifact, it does not drive it. v6-2 remains the container shape.
 The statement-locked Lean target (witness-anchored search) is recorded in the journal for any
 future hybrid scheme. One month of speculative building avoided by one hour of modeling.
+
+## CHUNK-MERGE ROUND 2 + THE MERGE OBSTRUCTION (theory datum, merge family #3)
+GATE 0: regenerated fragment reference prints chi=306,164,765, R=397,723,010, n=1,082,130,213
+EXACT - the lost-artifact incident is fully recovered and the fragment number is now
+reproduced from zero twice. The per-chunk libsais front end: 16 document-aligned chunks in
+237s at 2.3 GB peak, 254 exhaustive + 20 synthetic collections pass, 16/16 byte-identity
+between serializers. Sum of local runs 420.9M > merged R 397.7M (expected: merges absorb).
+OBSTRUCTION (the lane proved it with a legal separator-aligned fixture): the cyclic BWT of
+A++B is NOT a stable interleave of BWT(A) and BWT(B), even at byte/run granularity - 7/20
+synthetic aligned pairs obstruct. Merge family falsifications now: (1) stable chunk-internal
+ROW order (round 1); (2) incremental chi maintenance (revival/demotion, Lean); (3) stable
+run INTERLEAVE as the merge itself (this). The correct merge must recompute CROSS-BOUNDARY
+order: rotations of A continue into B (cyclic frame), so interleaving points depend on
+cross-LCPs, not on either input's internal order. OPEN RESEARCH TARGET: a run-granularity
+cyclic-BWT merge with cross-LCP semantics (the O(r) prize; publishable if it exists).
+PRAGMATIC GATE PATH meanwhile: batch-BCR insertion at CHUNK granularity (rotation-by-
+rotation within each 68 MB chunk, ~17 min/chunk measured class) finishes the fragment gate
+in ~4.5h - proves the pipeline end-to-end while the O(r) merge stays open. Pile waits on
+the real merge, not on the gate.
