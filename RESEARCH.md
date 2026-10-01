@@ -2373,3 +2373,13 @@ appends; doubling cannot decrease.
 incremental chi maintenance is UNSOUND (now by Lean-checked counterexample, not just set-level
 revival). The 'derive chi once from the final merged structure' decision STANDS, STRENGTHENED.
 Fleet pattern validated again: pose sharp question -> parallel hammer+proof -> closed same night.
+
+## INFRASTRUCTURE LESSON #5 (supervisor self-inflicted): the cleanup sweep removed the byte-remap
+lane worktree holding the ONLY copy of the pile-frag PFP four-file front-end (untracked vendor
+outputs; its retention patch was 0 bytes - staged-lane pattern). Banked reports referenced those
+files (byte-remap/REPORT.md points at the dead path). RULE: before removing any completed lane's
+worktree, grep banked reports for references to its untracked outputs and rescue them first.
+RECOVERY: the fragment reference is regenerable from the retained corpus
+(/home/erikg/sxgc-piletest/pile-frag.txt, n=1,082,130,213) in ~1h via the banked pipeline;
+chi must print 306,164,765. libsais now BANKED in-repo (bit6/third_party/libsais) - it had been
+living untracked in /tmp all along (three lanes reported it absent before one finally said why).
