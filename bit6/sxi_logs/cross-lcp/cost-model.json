@@ -1,0 +1,23 @@
+{
+  "pile_R": 480000000000.0,
+  "sampled_B_heads": 15000000,
+  "adjacent_B_runs": 394600513,
+  "weighted_mean_best_LCE": 15.021292115504238,
+  "weighted_mean_sum_two_candidate_LCE": 23.701484054346967,
+  "weighted_mean_pair_standard_error_iid": 0.12402725323742066,
+  "conditional_pile_two_candidate_symbols": 11376712346086.545,
+  "conditional_pile_best_candidate_symbols": 7210220215442.034,
+  "weighted_mean_search_LCE_sum": 106.16358425685067,
+  "weighted_mean_actual_LCE_calls_per_head": 27.023346742807036,
+  "weighted_mean_actual_hash_probes_per_head": 2.884840894178812,
+  "conditional_pile_search_hash_probes": 1384723629205.8298,
+  "conditional_fragment_rate_pile_seconds": 2620998.206089324,
+  "conditional_two_candidate_days_at_1e8_symbols_per_second": 1.316749114130387,
+  "conditional_two_candidate_days_at_1e9_symbols_per_second": 0.1316749114130387,
+  "per_boundary_zero_tail_95_upper": 2.9957277863923437e-06,
+  "not_fully_verified_queries": 0,
+  "seam_candidate_pairs": 4,
+  "aligned_phrase_pair_fraction": 0.0006025667470088996,
+  "aligned_phrase_bytes_fraction_of_pair_LCE": 0.0030179569458383395,
+  "next_phrase_bytes_fraction_of_pair_LCE": 0.0034811075579322982
+}

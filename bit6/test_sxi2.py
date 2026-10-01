@@ -133,7 +133,7 @@ def fixture(root, label, text):
     assert 2 not in member_ids and 3 not in member_ids
     assert {1,4,5,8,9,10,11} <= set(member_ids)
     lf_bytes = struct.unpack_from("<Q", raw, 64+40*member_ids.index(10)+16)[0]
-    assert (lf_bytes == 0) == (a.expected_version == 4)
+    assert (lf_bytes == 0) == (a.expected_version >= 4)
     for path in (old, new):
         out = pathlib.Path(str(path) + ".chi-out")
         result = call(a.xsa, "sxi-info", path, "--chi-out", out)

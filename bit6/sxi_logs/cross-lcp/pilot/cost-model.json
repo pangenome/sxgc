@@ -1,0 +1,20 @@
+{
+  "pile_R": 480000000000.0,
+  "sampled_B_heads": 3000000,
+  "adjacent_B_runs": 394600513,
+  "weighted_mean_best_LCE": 15.191463227732841,
+  "weighted_mean_sum_two_candidate_LCE": 23.877643033398222,
+  "weighted_mean_pair_standard_error_iid": 0.2822373972065335,
+  "conditional_pile_two_candidate_symbols": 11461268656031.146,
+  "conditional_pile_best_candidate_symbols": 7291902349311.764,
+  "weighted_mean_search_LCE_sum": 106.34015860575768,
+  "weighted_mean_actual_LCE_calls_per_head": 27.023134044455208,
+  "weighted_mean_actual_hash_probes_per_head": 2.8923383421688684,
+  "conditional_pile_search_hash_probes": 1388322404241.057,
+  "conditional_fragment_rate_pile_seconds": 2531315.0343982284,
+  "conditional_two_candidate_days_at_1e8_symbols_per_second": 1.3265357240776792,
+  "conditional_two_candidate_days_at_1e9_symbols_per_second": 0.1326535724077679,
+  "per_boundary_zero_tail_95_upper": 1.4978549188193746e-05,
+  "not_fully_verified_queries": 804,
+  "seam_candidate_pairs": 3
+}

@@ -1,0 +1,15 @@
+{
+  "command": [
+    "/tmp/sxi2-v6-3-write",
+    "--sxi",
+    "/mnt/nvme3n1/erikg/sxi2-v5/yeast235.sxi2",
+    "--output",
+    "/mnt/nvme3n1/erikg/sxi2-v6-3-3eae0415/yeast235.sxi2",
+    "--validator",
+    "xsa/target/release/xsa",
+    "--max-bytes",
+    "1413689215"
+  ],
+  "wall_seconds": 83.41410251404159,
+  "exit": 0
+}

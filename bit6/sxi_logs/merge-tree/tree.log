@@ -1,0 +1,8 @@
+TREE_START level=0 pair=0 first=0 last=2 pid=2629093 log=/home/erikg/sxgc/vendor/chunk-merge-tree/states/level-0-0.log
+TREE_START level=0 pair=1 first=2 last=4 pid=2629094 log=/home/erikg/sxgc/vendor/chunk-merge-tree/states/level-0-1.log
+TREE_START level=0 pair=2 first=4 last=6 pid=2629095 log=/home/erikg/sxgc/vendor/chunk-merge-tree/states/level-0-2.log
+TREE_START level=0 pair=3 first=6 last=8 pid=2629096 log=/home/erikg/sxgc/vendor/chunk-merge-tree/states/level-0-3.log
+TREE_START level=0 pair=4 first=8 last=10 pid=2629097 log=/home/erikg/sxgc/vendor/chunk-merge-tree/states/level-0-4.log
+TREE_START level=0 pair=5 first=10 last=12 pid=2629098 log=/home/erikg/sxgc/vendor/chunk-merge-tree/states/level-0-5.log
+TREE_START level=0 pair=6 first=12 last=14 pid=2629099 log=/home/erikg/sxgc/vendor/chunk-merge-tree/states/level-0-6.log
+TREE_START level=0 pair=7 first=14 last=16 pid=2629100 log=/home/erikg/sxgc/vendor/chunk-merge-tree/states/level-0-7.log

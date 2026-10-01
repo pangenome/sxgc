@@ -1,0 +1,2 @@
+git diff --cached --name-only
+NO_STAGED_FILES_PASS

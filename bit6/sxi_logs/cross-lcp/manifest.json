@@ -1,0 +1,131 @@
+{
+  "created_utc": "2026-10-01T13:11:47.524628+00:00",
+  "base_commit": "5cf0f1d79a4a5494387e53d9f3ba6fa5f3a749ec",
+  "input_metadata_only_no_extra_content_reads": [
+    {
+      "path": "/home/erikg/sxgc-piletest/pile-frag.txt",
+      "size": 1082130213,
+      "mtime_ns": 1790623439751092068
+    },
+    {
+      "path": "/home/erikg/sxgc/vendor/chunk-merge-v3/chunks/chunk-0.crle",
+      "size": 552582251,
+      "mtime_ns": 1790832735633317058
+    },
+    {
+      "path": "/home/erikg/sxgc/vendor/chunk-merge-v3/chunks/chunk-1.crle",
+      "size": 551214731,
+      "mtime_ns": 1790832751546315952
+    },
+    {
+      "path": "/home/erikg/sxgc/vendor/chunk-merge-v3/chunks/chunk-10.crle",
+      "size": 559788107,
+      "mtime_ns": 1790832901978305498
+    },
+    {
+      "path": "/home/erikg/sxgc/vendor/chunk-merge-v3/chunks/chunk-11.crle",
+      "size": 544158836,
+      "mtime_ns": 1790832921943304111
+    },
+    {
+      "path": "/home/erikg/sxgc/vendor/chunk-merge-v3/chunks/chunk-12.crle",
+      "size": 552507512,
+      "mtime_ns": 1790832938563302956
+    },
+    {
+      "path": "/home/erikg/sxgc/vendor/chunk-merge-v3/chunks/chunk-13.crle",
+      "size": 544276016,
+      "mtime_ns": 1790832955338301790
+    },
+    {
+      "path": "/home/erikg/sxgc/vendor/chunk-merge-v3/chunks/chunk-14.crle",
+      "size": 544089893,
+      "mtime_ns": 1790832972534300595
+    },
+    {
+      "path": "/home/erikg/sxgc/vendor/chunk-merge-v3/chunks/chunk-15.crle",
+      "size": 554417126,
+      "mtime_ns": 1790832989587299410
+    },
+    {
+      "path": "/home/erikg/sxgc/vendor/chunk-merge-v3/chunks/chunk-2.crle",
+      "size": 553688657,
+      "mtime_ns": 1790832766989314879
+    },
+    {
+      "path": "/home/erikg/sxgc/vendor/chunk-merge-v3/chunks/chunk-3.crle",
+      "size": 548323136,
+      "mtime_ns": 1790832784185313684
+    },
+    {
+      "path": "/home/erikg/sxgc/vendor/chunk-merge-v3/chunks/chunk-4.crle",
+      "size": 564367997,
+      "mtime_ns": 1790832801788312460
+    },
+    {
+      "path": "/home/erikg/sxgc/vendor/chunk-merge-v3/chunks/chunk-5.crle",
+      "size": 551074934,
+      "mtime_ns": 1790832819309311243
+    },
+    {
+      "path": "/home/erikg/sxgc/vendor/chunk-merge-v3/chunks/chunk-6.crle",
+      "size": 549452201,
+      "mtime_ns": 1790832835525310116
+    },
+    {
+      "path": "/home/erikg/sxgc/vendor/chunk-merge-v3/chunks/chunk-7.crle",
+      "size": 553867010,
+      "mtime_ns": 1790832851010309040
+    },
+    {
+      "path": "/home/erikg/sxgc/vendor/chunk-merge-v3/chunks/chunk-8.crle",
+      "size": 554126402,
+      "mtime_ns": 1790832866492307964
+    },
+    {
+      "path": "/home/erikg/sxgc/vendor/chunk-merge-v3/chunks/chunk-9.crle",
+      "size": 561258695,
+      "mtime_ns": 1790832882778306832
+    },
+    {
+      "path": "/home/erikg/sxgc/vendor/chunk-merge-v3/reference/parse.remap",
+      "size": 256,
+      "mtime_ns": 1790831007744437130
+    },
+    {
+      "path": "/home/erikg/sxgc/vendor/chunk-merge-v3/reference/parse.dict",
+      "size": 1167589608,
+      "mtime_ns": 1790831027403435764
+    },
+    {
+      "path": "/home/erikg/sxgc/vendor/chunk-merge-v3/reference/parse.parse",
+      "size": 42595940,
+      "mtime_ns": 1790831024919435936
+    }
+  ],
+  "artifacts_sha256": {
+    "DESIGN.md": "7c5b0c84355945e7bff644918776b2dab2ecb2f61433ea98b3d23652167fa46e",
+    "PLAN.md": "f06d86e549d698a07484be67b54feee60e7fe4edb9feb1de1aee688b8171a446",
+    "RESULTS.md": "b4a4fd4586a01dccc2e479ac3db279cfc7239c2ba4815ff21169bdabb2d9351b",
+    "REVIEW.md": "bbef90282000401e8d21567e2acee2a00a9d9d6e6068f133aab8d72970db3938",
+    "cost-model.json": "473f9a6b3b66412c55d99afb50282b397222182a7fd02edb7cc98e8295ff446b",
+    "driver.pid": "6a1721cfc5fc10e071bad4a2e374e577c0df38b5e42e69ef05cc5b2d95e0ceac",
+    "histograms.csv": "6bf9fcbff3b493de3fe5316d688dc709ef7abf2b5e9728185ca8d906008e621f",
+    "integration-test.log": "d45ecad58a952380473fdaaff1ff85ecd82cd707e792ee6a8dbbe5c0fc5c3216",
+    "measure.cpp": "aab80af5293aa58814f83f24ac8951885fff342ebd7db52353cb66a2e9037fd2",
+    "measurement.time": "d22fde9dcd63b2b1eaf7c873ff773881b1e161753f342c358f9b3a08cbcbcbf6",
+    "measurements.jsonl": "8aa31696933730b2330a8573566e651f8181ab956b4c414c8631609e28ca816c",
+    "no-staged-files.log": "b69bf9a4bf4a7a739d3aa75f1c9bb6b506e070ffa99d26c2ca5ef575693f9550",
+    "pilot/RESULTS.md": "452e254eee196df756367701035c6a163fe4970e943f08cd5454093385e8566c",
+    "pilot/cost-model.json": "d4c4cddeaab77393ee05cde38f878c20d09f8ed93e799d0595287eb8df6e10f5",
+    "pilot/measurement.time": "6a9eaad639fc7a0b33b6b110358a3df70132035ea9afe5a0dc608a2f09514591",
+    "pilot/measurements.jsonl": "f9b1010e3039963c1cf21349110619da59b7e81ea735f999b14c007c0e3646a9",
+    "pilot/progress.log": "939dfaa86d435a1920b5c693905a21999c94e0d49bb87b7ddc34903c344f4977",
+    "progress.log": "e31f1ededab8902433afda721f76ef03b71e600c29bea913cd775d302887ceef",
+    "run.sh": "8b7d0e465e4e584e0282d153c381ff594adcb4583ab51a2db396901bb79808e4",
+    "self-test.log": "1d2834424b579d239f7504368c1a0ee52c5a78b461e2ac1757a5c698831465ce",
+    "summarize.py": "f9dc8df65cebc097c1aabf362d4fd96dbf9342aa0d1c152e9a9bf16f725be2c9",
+    "summary.log": "3dcf2f71b14932ef0cc86db7d615b55a8695f35435a840df820a41fde403e6d3",
+    "test_measure.py": "8fbd24080182566d5af393c920b967ccfffa3af55b2cc56c8be200c0c7f03ae4"
+  }
+}

@@ -126,6 +126,11 @@ pub struct Phi {
     u_high_off: usize,
     v_off: usize,
     run_off: usize,
+    mask_off: usize,
+    exception_prefix: Vec<u32>,
+    exception_count: u64,
+    implicit_v: bool,
+    tail_by_run: Vec<u64>,
     u_low_width: u32,
     u_high_bits: u64,
     v_width: u32,
@@ -150,8 +155,8 @@ impl Phi {
             need(high < self.u_high_bits, "truncated phi edge");
             let u = ((high - i) << self.u_low_width)
                 | self.packed(self.u_low_off, i * self.u_low_width as u64, self.u_low_width);
-            let v = self.packed(self.v_off, i * self.v_width as u64, self.v_width);
             let run = self.packed(self.run_off, i * self.run_width as u64, self.run_width);
+            let v = self.v_at(i,run);
             visit(u, v, run);
             high += 1;
         }
@@ -164,6 +169,20 @@ impl Phi {
         for k in 0..bytes {raw|=(self.map[p+k] as u128)<<(8*k);}
         ((raw>>shift)&((1u128<<width)-1)) as u64
     }
+    fn v_at(&self,i:u64,run:u64)->u64 {
+        if !self.implicit_v {return self.packed(self.v_off,i*self.v_width as u64,self.v_width);}
+        let word=i/64;let word_off=self.mask_off+(word*8) as usize;
+        let mut flags=0u64;let available=(((self.r+7)/8) as usize-(word*8) as usize).min(8);
+        for j in 0..available {flags|=(self.map[word_off+j] as u64)<<(8*j);}
+        let prior=self.exception_prefix[word as usize] as u64;
+        let below=if i%64==0 {0} else {flags&((1u64<<(i%64))-1)};
+        if flags&(1u64<<(i%64))!=0 {
+            let rank=prior+below.count_ones() as u64;
+            return self.packed(self.v_off,rank*self.v_width as u64,self.v_width);
+        }
+        let next=(run+1)%self.r;
+        self.tail_by_run[next as usize]
+    }
     fn edge(&self, i: u64) -> (u64,u64,u64) {
         if self.compact {
             let sample=(i/64) as usize;
@@ -173,8 +192,8 @@ impl Phi {
             }
             let u=((pos-i)<<self.u_low_width)
                 |self.packed(self.u_low_off,i*self.u_low_width as u64,self.u_low_width);
-            let v=self.packed(self.v_off,i*self.v_width as u64,self.v_width);
             let run=self.packed(self.run_off,i*self.run_width as u64,self.run_width);
+            let v=self.v_at(i,run);
             return (u,v,run);
         }
         let p=self.off+i as usize*24;let b=&self.map[p..p+24];
@@ -182,6 +201,7 @@ impl Phi {
     }
     pub fn tail(&self, run: u64) -> u64 {
         need(self.compact&&run<self.r,"phi tail lookup");
+        if self.implicit_v {return self.tail_by_run[run as usize];}
         self.edge(self.inverse[run as usize] as u64).0
     }
     pub fn head(&self, run: u64) -> u64 {
@@ -195,11 +215,12 @@ impl Phi {
         let file=File::open(path).unwrap();
         let map=Arc::new(unsafe{memmap2::Mmap::map(&file).unwrap()});
         let mut phi=Self{map,off:m.offset as usize,compact:c.version>=3,
-            u_low_off:0,u_high_off:0,v_off:0,run_off:0,u_low_width:0,u_high_bits:0,v_width:0,run_width:0,
+            u_low_off:0,u_high_off:0,v_off:0,run_off:0,mask_off:0,exception_prefix:Vec::new(),exception_count:0,implicit_v:c.version==5,tail_by_run:Vec::new(),u_low_width:0,u_high_bits:0,v_width:0,run_width:0,
             select:Vec::new(),inverse:Vec::new(),r:c.r,n:c.n,escape:Vec::new(),payload:0,width:0};
         if phi.compact {
-            need(m.bytes>=40,"compact phi header");
-            let b=&phi.map[phi.off..phi.off+40];
+            let header=if phi.implicit_v {48} else {40};
+            need(m.bytes>=header,"compact phi header");
+            let b=&phi.map[phi.off..phi.off+header as usize];
             let vw=u64le(&b[0..8]);let rw=u64le(&b[8..16]);let ul=u64le(&b[16..24]);
             let lb=u64le(&b[24..32]);let hb=u64le(&b[32..40]);
             let expected_v=(64-c.n.saturating_sub(1).leading_zeros()).max(1) as u64;
@@ -207,17 +228,42 @@ impl Phi {
             need(vw==expected_v&&rw==expected_r&&ul<=63&&lb==c.r*ul
                 &&hb==(c.n>>ul)+c.r+1,"compact phi widths");
             let low_bytes=(lb+7)/8;let high_bytes=(hb+7)/8;
-            let v_bytes=(c.r*vw+7)/8;let run_bytes=(c.r*rw+7)/8;
-            need(m.bytes==40+low_bytes+high_bytes+v_bytes+run_bytes,"compact phi size");
+            let run_bytes=(c.r*rw+7)/8;
+            let exceptions=if phi.implicit_v {u64le(&b[40..48])} else {0};
+            need(exceptions<=c.r,"phi exception count");
+            let v_bytes=(if phi.implicit_v {exceptions} else {c.r})*vw;
+            let v_bytes=(v_bytes+7)/8;
+            let mask_bytes=if phi.implicit_v {(c.r+7)/8} else {0};
+            need(m.bytes==header+low_bytes+high_bytes+run_bytes+mask_bytes+v_bytes,"compact phi size");
             phi.u_low_width=ul as u32;phi.u_high_bits=hb;phi.v_width=vw as u32;phi.run_width=rw as u32;
-            phi.u_low_off=phi.off+40;
+            phi.exception_count=exceptions;
+            phi.u_low_off=phi.off+header as usize;
             phi.u_high_off=phi.u_low_off+low_bytes as usize;
-            phi.v_off=phi.u_high_off+high_bytes as usize;
-            phi.run_off=phi.v_off+v_bytes as usize;
+            if phi.implicit_v {
+                phi.run_off=phi.u_high_off+high_bytes as usize;
+                phi.mask_off=phi.run_off+run_bytes as usize;
+                phi.v_off=phi.mask_off+mask_bytes as usize;
+                phi.exception_prefix.push(0);
+                let mut seen=0u64;
+                for word in 0..(c.r+63)/64 {
+                    let start=phi.mask_off+(word*8) as usize;
+                    let mut flags=0u64;
+                    for j in 0..((mask_bytes as usize).saturating_sub((word*8) as usize)).min(8) {
+                        flags|=(phi.map[start+j] as u64)<<(8*j);
+                    }
+                    if word==(c.r/64) && c.r%64!=0 {need(flags>>(c.r%64)==0,"phi mask padding");}
+                    seen+=flags.count_ones() as u64;
+                    phi.exception_prefix.push(seen as u32);
+                }
+                need(seen==exceptions,"phi exception bitmap count");
+            } else {
+                phi.v_off=phi.u_high_off+high_bytes as usize;
+                phi.run_off=phi.v_off+v_bytes as usize;
+            }
             padding(&phi.map[phi.u_low_off..phi.u_high_off],lb);
-            padding(&phi.map[phi.u_high_off..phi.v_off],hb);
-            padding(&phi.map[phi.v_off..phi.run_off],c.r*vw);
+            padding(&phi.map[phi.u_high_off..phi.u_high_off+high_bytes as usize],hb);
             padding(&phi.map[phi.run_off..phi.run_off+run_bytes as usize],c.r*rw);
+            padding(&phi.map[phi.v_off..phi.v_off+v_bytes as usize],(if phi.implicit_v {exceptions} else {c.r})*vw);
             let mut ones=0u64;
             for pos in 0..hb {
                 if bit(&phi.map[phi.u_high_off..],pos)!=0 {
@@ -227,6 +273,7 @@ impl Phi {
             }
             need(ones==c.r,"compact phi EF count");
             phi.inverse=vec![u32::MAX;c.r as usize];
+            if phi.implicit_v {phi.tail_by_run=vec![0;c.r as usize];}
         } else {need(m.bytes==24*c.r,"phi member size");}
         let mut gcd=0u64;
         for i in 0..256 {let next=if i==255{c.n}else{frequencies[i+1]};
@@ -244,17 +291,23 @@ impl Phi {
                 let u=((highpos-i)<<phi.u_low_width)
                     |phi.packed(phi.u_low_off,i*phi.u_low_width as u64,phi.u_low_width);
                 highpos+=1;
-                let v=phi.packed(phi.v_off,i*phi.v_width as u64,phi.v_width);
                 let run=phi.packed(phi.run_off,i*phi.run_width as u64,phi.run_width);
+                let v=if phi.implicit_v {0} else {phi.packed(phi.v_off,i*phi.v_width as u64,phi.v_width)};
                 (u,v,run)
             } else {phi.edge(i)};
-            need(u<c.n&&v<c.n&&run<c.r,"phi edge range");
+            need(u<c.n&&(phi.implicit_v||v<c.n)&&run<c.r,"phi edge range");
             need(previous_u.is_none_or(|old|old<u),"phi edge order");previous_u=Some(u);
             if phi.compact {
                 need(phi.inverse[run as usize]==u32::MAX,"duplicate phi run");
                 phi.inverse[run as usize]=i as u32;
+                if phi.implicit_v {phi.tail_by_run[run as usize]=u;}
             } else {
                 let s=&mut seen[(run/8) as usize];need(*s&(1<<(run%8))==0,"duplicate phi run");*s|=1<<(run%8);
+            }
+        }
+        if phi.implicit_v {
+            for j in 0..phi.exception_count {
+                need(phi.packed(phi.v_off,j*phi.v_width as u64,phi.v_width)<c.n,"phi exception range");
             }
         }
         if phi.compact {
@@ -331,7 +384,7 @@ impl LfMap {
     pub fn load(path:&str,c:&sxi::Container,heads:&[u8],lengths:&[u32],freq:&[u64])->Self {
         let m=c.member(10);
         let width=(64-c.n.saturating_sub(1).leading_zeros()).max(1);
-        if c.version==4 {
+        if c.version>=4 {
             need(m.count==c.r&&m.bytes==0,"derived LF member size");
             let mut seen=[0u64;256];
             let mut starts=Vec::with_capacity(c.r as usize);

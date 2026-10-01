@@ -1,0 +1,58 @@
+{
+  "toy": {
+    "records": [
+      "AACGAAAT",
+      "AGGAGCCT",
+      "AATCACCT"
+    ],
+    "context": "A",
+    "bwt_interval": "GAACTTACAG",
+    "run_count": 8,
+    "distinct_branch_count": 4,
+    "record_following_A": [
+      "ACT",
+      "G",
+      "ACT"
+    ]
+  },
+  "yeast_artifact": {
+    "magic": "SXI2",
+    "version": 3,
+    "text_bytes": 3336986759,
+    "record_count": 9901,
+    "run_count": 100905045,
+    "chi_count": 85404336,
+    "member_ids": [
+      1,
+      4,
+      5,
+      6,
+      8,
+      9,
+      10,
+      11
+    ],
+    "has_move_map": true
+  },
+  "hprc_artifact": {
+    "magic": "SXI1",
+    "version": 1,
+    "text_bytes": 1403221068481,
+    "record_count": 38790,
+    "run_count": 2739737285,
+    "chi_count": 2250211129,
+    "member_ids": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6
+    ],
+    "has_move_map": false
+  },
+  "corpus_prefix": {
+    "records_checked": 100,
+    "records_with_multiple_A_branches": 100
+  }
+}

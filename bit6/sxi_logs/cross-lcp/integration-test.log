@@ -1,0 +1,10 @@
+test_nearest_oracle_one_b_run (__main__.MeasurementTest.test_nearest_oracle_one_b_run) ... ok
+test_projected_dictionary_excludes_seam_phrase (__main__.MeasurementTest.test_projected_dictionary_excludes_seam_phrase) ... ok
+test_projected_dictionary_shared_phrases (__main__.MeasurementTest.test_projected_dictionary_shared_phrases) ... ok
+test_rejects_truncated_chunk (__main__.MeasurementTest.test_rejects_truncated_chunk) ... ok
+test_rejects_wrong_source_size (__main__.MeasurementTest.test_rejects_wrong_source_size) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.037s
+
+OK
