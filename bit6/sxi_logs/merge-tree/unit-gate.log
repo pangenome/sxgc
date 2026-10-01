@@ -1,7 +1,7 @@
 test_cross_producer_four_files (__main__.ChunkBcrMergeTests.test_cross_producer_four_files) ... ok
-test_tree_twenty_five_collections (__main__.ChunkBcrMergeTests.test_tree_twenty_five_collections) ... ok
+test_tree_twenty_six_collections (__main__.ChunkBcrMergeTests.test_tree_twenty_six_collections) ... ok
 
 ----------------------------------------------------------------------
-Ran 2 tests in 0.647s
+Ran 2 tests in 0.710s
 
 OK
