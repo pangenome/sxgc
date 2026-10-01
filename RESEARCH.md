@@ -2383,3 +2383,15 @@ RECOVERY: the fragment reference is regenerable from the retained corpus
 (/home/erikg/sxgc-piletest/pile-frag.txt, n=1,082,130,213) in ~1h via the banked pipeline;
 chi must print 306,164,765. libsais now BANKED in-repo (bit6/third_party/libsais) - it had been
 living untracked in /tmp all along (three lanes reported it absent before one finally said why).
+
+### LESSON #5 AMENDED (user correction): do NOT hoard big intermediate artifacts at all
+The original lesson said "rescue untracked artifacts before sweeping worktrees" - WRONG DIRECTION.
+The real problem was retention: a 27 GB front-end + 7 GB SXI1 for a 1 GB input is not an asset,
+it is a liability that almost cost us a false sense of loss. THE RULE: retain (1) code, (2)
+journals, (3) input corpora, (4) the small canonical product set (the published artifacts the
+paper claims: hprc.sxi, slice8.sxi, the v6-2 containers, the sealed tools) - on managed nvme
+paths. EVERYTHING intermediate is derived and regenerable on demand: banked reports must
+reference ARTIFACT RECIPES (input path + command + expected chi), never artifact paths.
+Sweep intermediates freely. The old pipeline's artifact bloat is itself a symptom of the
+samples whale (the front-end carries 16B x 2/run sample arrays) - the chunk-merge/move-native
+architecture does not produce these intermediates at all, so the pattern dies with the whale.
