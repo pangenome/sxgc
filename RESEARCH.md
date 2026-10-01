@@ -2395,3 +2395,16 @@ reference ARTIFACT RECIPES (input path + command + expected chi), never artifact
 Sweep intermediates freely. The old pipeline's artifact bloat is itself a symptom of the
 samples whale (the front-end carries 16B x 2/run sample arrays) - the chunk-merge/move-native
 architecture does not produce these intermediates at all, so the pattern dies with the whale.
+
+## BCR V2 YEAST GATE: ALL FOUR FILES BYTE-IDENTICAL (verdict completed by supervisor)
+The 14h single-core yeast235 build (n=3,336,986,769) finished all outputs at 03:47Z; the gate
+script was SIGKILLed at the finish line by the round-1 chunk-merge lane's sandbox teardown
+(infrastructure lesson #1 pattern, ~20min lag; 0-byte .time) before its own cmp step ran.
+Supervisor ran the verdict directly: rlebwt + rlebwt.meta + ssa + ssa_t ALL byte-identical to
+the retained PFP reference. THE BCR V2 RUN-MERGE SEMANTICS ARE PROVEN at yeast scale:
+two constructions (PFP front-end; blocked-AVL BCR insertion), one artifact, four files,
+zero byte differences. Speed verdict stands as measured: one-at-a-time insertion is
+untenable at scale (14h/3.3Gbp single-core) - the chunk-merge builder (round 2, running)
+is the O(runs) answer. NOTE: the queued pile-frag gate in run_gates.sh points at the dead
+worktree path (my cleanup) - mooted by the recipe rule; the fragment reference regenerates
+in chunk-merge round 2's Gate 0.
