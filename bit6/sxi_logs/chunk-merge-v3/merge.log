@@ -1,1 +1,18 @@
-BATCH index=15 offset=1014893940 n=67236273 runs=26400814 insert_wall_seconds=337.353531 merged_n=67236283 merged_segments=26400817
+BATCH index=15 offset=1014893940 n=67236273 runs=26400814 insert_wall_seconds=371.812736 merged_n=67236283 merged_segments=26400817
+BATCH index=14 offset=947245971 n=67647969 runs=25909041 insert_wall_seconds=400.345982 merged_n=134884252 merged_segments=51647690
+BATCH index=13 offset=879609930 n=67636041 runs=25917904 insert_wall_seconds=445.518922 merged_n=202520293 merged_segments=76616899
+BATCH index=12 offset=811933501 n=67676429 runs=26309880 insert_wall_seconds=457.505633 merged_n=270196722 merged_segments=101808993
+BATCH index=11 offset=744297278 n=67636223 runs=25912324 insert_wall_seconds=451.604536 merged_n=337832945 merged_segments=126424022
+BATCH index=10 offset=676624539 n=67672739 runs=26656575 insert_wall_seconds=448.862609 merged_n=405505684 merged_segments=151737932
+BATCH index=9 offset=608934166 n=67690373 runs=26726603 insert_wall_seconds=435.769698 merged_n=473196057 merged_segments=177019489
+BATCH index=8 offset=541231617 n=67702549 runs=26386970 insert_wall_seconds=488.205090 merged_n=540898606 merged_segments=201844140
+BATCH index=7 offset=473587123 n=67644494 runs=26374618 insert_wall_seconds=494.086083 merged_n=608543100 merged_segments=226578718
+BATCH index=6 offset=405950247 n=67636876 runs=26164389 insert_wall_seconds=589.650004 merged_n=676179976 merged_segments=250978934
+BATCH index=5 offset=338316623 n=67633624 runs=26241662 insert_wall_seconds=601.236851 merged_n=743813600 merged_segments=275426454
+BATCH index=4 offset=270626460 n=67690163 runs=26874665 insert_wall_seconds=620.684133 merged_n=811503763 merged_segments=300497193
+BATCH index=3 offset=202990381 n=67636079 runs=26110624 insert_wall_seconds=598.676571 merged_n=879139842 merged_segments=324752833
+BATCH index=2 offset=135288896 n=67701485 runs=26366125 insert_wall_seconds=488.203108 merged_n=946841327 merged_segments=349133444
+BATCH index=1 offset=67654936 n=67633960 runs=26248319 insert_wall_seconds=495.657165 merged_n=1014475287 merged_segments=373369486
+BATCH index=0 offset=0 n=67654936 runs=26313439 insert_wall_seconds=553.302754 merged_n=1082130223 merged_segments=397723016
+INSERT_PASS chunks=16 n=1082130213 padded_n=1082130223 insert_wall_seconds=7941.701038
+MERGE_PASS chunks=16 merged_n=1082130213 padded_n=1082130223 runs=397723016 merge_wall_seconds=20598.367982

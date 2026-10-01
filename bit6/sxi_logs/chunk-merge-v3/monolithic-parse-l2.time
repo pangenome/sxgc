@@ -1,18 +1,18 @@
 	Command being timed: "/home/erikg/.cache/xsa/81c4a8c0271c4096ec4c983e33b22ba23ccdfaac12bdc5db9a5bf1b5ef867f28/pfp++ -i vendor/chunk-merge-v3/reference/parse.parse -w 5 -p 11 -j 8 --tmp-dir vendor/chunk-merge-v3/reference"
-	User time (seconds): 1.62
-	System time (seconds): 0.17
-	Percent of CPU this job got: 99%
-	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:01.80
+	User time (seconds): 1.61
+	System time (seconds): 0.19
+	Percent of CPU this job got: 100%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:01.81
 	Average shared text size (kbytes): 0
 	Average unshared data size (kbytes): 0
 	Average stack size (kbytes): 0
 	Average total size (kbytes): 0
-	Maximum resident set size (kbytes): 195732
+	Maximum resident set size (kbytes): 195280
 	Average resident set size (kbytes): 0
 	Major (requiring I/O) page faults: 0
-	Minor (reclaiming a frame) page faults: 51996
+	Minor (reclaiming a frame) page faults: 51995
 	Voluntary context switches: 1
-	Involuntary context switches: 3
+	Involuntary context switches: 4
 	Swaps: 0
 	File system inputs: 0
 	File system outputs: 150832

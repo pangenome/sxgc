@@ -51,3 +51,8 @@ version=false
 
 [2026-10-01 05:03:14.027] [info] Parsing /home/erikg/sxgc-piletest/pile-frag.txt
 [2026-10-01 05:03:27.745] [info] Main parser: Replacing hash values with ranks.
+[2026-10-01 05:03:44.920] [info] Main parser: writing dictionary on disk NOT COMPRESSED
+[2026-10-01 05:03:47.404] [info] No properties requested.
+[2026-10-01 05:03:47.404] [info] Main parser: closed
+[2026-10-01 05:03:48.457] [info] Parser Text -	Parse size: 10648985	Dic Size: 9835281 Dic Total Length: 1157754326
+[Disk Write (bytes): 1295377428]

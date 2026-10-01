@@ -1,21 +1,21 @@
-	Command being timed: "vendor/chunk-merge-v3/chunk_frontend /home/erikg/sxgc-piletest/pile-frag.txt 16 vendor/chunk-merge-v3/chunks vendor/chunk-merge-v3/parse.remap"
-	User time (seconds): 195.93
-	System time (seconds): 36.39
+	Command being timed: "vendor/chunk-merge-v3/chunk_frontend_buffered /home/erikg/sxgc-piletest/pile-frag.txt 16 vendor/chunk-merge-v3/chunks vendor/chunk-merge-v3/reference/parse.remap"
+	User time (seconds): 229.86
+	System time (seconds): 38.84
 	Percent of CPU this job got: 99%
-	Elapsed (wall clock) time (h:mm:ss or m:ss): 3:52.50
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 4:28.78
 	Average shared text size (kbytes): 0
 	Average unshared data size (kbytes): 0
 	Average stack size (kbytes): 0
 	Average total size (kbytes): 0
-	Maximum resident set size (kbytes): 2309432
+	Maximum resident set size (kbytes): 2312864
 	Average resident set size (kbytes): 0
-	Major (requiring I/O) page faults: 0
-	Minor (reclaiming a frame) page faults: 12175428
-	Voluntary context switches: 1279
-	Involuntary context switches: 372
+	Major (requiring I/O) page faults: 1
+	Minor (reclaiming a frame) page faults: 11465156
+	Voluntary context switches: 527
+	Involuntary context switches: 438
 	Swaps: 0
-	File system inputs: 397832
-	File system outputs: 17264192
+	File system inputs: 1713720
+	File system outputs: 17264208
 	Socket messages sent: 0
 	Socket messages received: 0
 	Signals delivered: 0

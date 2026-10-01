@@ -1,4 +1,4 @@
-[2026-10-01 04:47:14.400] [info] Current Configuration:
+[2026-10-01 05:03:50.597] [info] Current Configuration:
 ; PFP++
 
 ; Integers file to parse.
@@ -46,10 +46,10 @@ verbose=false
 ; Version number.
 version=false
 
-[2026-10-01 04:47:14.400] [info] Parsing vendor/chunk-merge-v3/reference/parse.parse
-[2026-10-01 04:47:14.986] [info] Main parser: Replacing hash values with ranks.
-[2026-10-01 04:47:15.755] [info] Main parser: writing dictionary on disk NOT COMPRESSED
-[2026-10-01 04:47:15.972] [info] No properties requested.
-[2026-10-01 04:47:15.972] [info] Main parser: closed
-[2026-10-01 04:47:16.057] [info] Parser Integers -	Parse size: 967527	Dic Size: 963588 Dic Total Length: 61753720
+[2026-10-01 05:03:50.597] [info] Parsing vendor/chunk-merge-v3/reference/parse.parse
+[2026-10-01 05:03:51.180] [info] Main parser: Replacing hash values with ranks.
+[2026-10-01 05:03:51.955] [info] Main parser: writing dictionary on disk NOT COMPRESSED
+[2026-10-01 05:03:52.173] [info] No properties requested.
+[2026-10-01 05:03:52.173] [info] Main parser: closed
+[2026-10-01 05:03:52.256] [info] Parser Integers -	Parse size: 967527	Dic Size: 963588 Dic Total Length: 61753720
 [Disk Write (bytes): 77218400]

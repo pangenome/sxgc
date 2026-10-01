@@ -2467,3 +2467,19 @@ TWO full 1.4 Tbp constructions, identical 52 GB artifacts, identical chi. Every 
 paper about 466 is now from-zero reproducible: chi/n = 0.1604%, chi/R = 0.8214 (inside the proven
 band). The audit gate (10000-sample text verification) passed in-build. This is the largest
 suffixient-set construction ever, and it is byte-reproducible.
+
+## CHUNK-MERGE V3 GATE: COMPLETE - ALL GATES PASS
+The webtext construction route is proven END-TO-END: 16 libsais chunks (268.78s) -> batch-BCR
+merge (20,599s) -> FOUR FILES BYTE-IDENTICAL to the monolithic PFP reference (cmp PASS x4) ->
+endpoints -> slim (397,723,010 heads resolved DIRECTLY, head_lf_steps=0 - THE LAW held through
+the merged structure) -> CHI = 306,164,765 (N=1,082,130,213, R=397,723,010) DERIVED FROM THE
+MERGED STRUCTURE, exact. sA byte-size gate PASS (2,449,318,120). HONEST TABLE (banked,
+TABLE.md): at fragment scale monolithic PFP (4,789s) beats chunk+batch-BCR (20,868s) - as
+predicted; the route's value is bounded-memory construction + the runway to the open O(runs)
+cross-LCP merge; the parallel merge tree (~4x wall at 16 chunks, next lane) closes part of the
+gap. FOUR constructions have now produced identical fragment numbers: PFP monolithic,
+PFP regenerated, BCR small-scale differential, and merged chunks.
+Incident note: the finish needed two one-line recoveries - the endpoints' dictionary path
+(symlinked reference parse) and the raw-ri4 guard regression (the witness-locate rescue
+clobbered the v2 lane's guard fix; re-applied, lesson: file-level rescue copies must diff
+against current main first, not blanket cp).
