@@ -1,5 +1,5 @@
 //! Annotated JSONL and ropebwt3-style queries over a shared immutable SXI index.
-use super::{die, ms_vector, sxi, Ri4};
+use super::{die, ms_vector, sxi, witness, Ri4};
 use flate2::read::MultiGzDecoder;
 use rayon::prelude::*;
 use serde_json::{json, Value};
@@ -55,6 +55,8 @@ pub fn names(bytes: &[u8], n: u64) -> Result<Vec<Record>, String> {
 
 pub struct Engine {
     idx: Ri4,
+    witness: Option<witness::Witness>,
+    verify_first: bool,
     records: Vec<Record>,
     boundaries: Vec<u64>,
     dna: bool,
@@ -96,6 +98,8 @@ impl Engine {
         let boundaries = records.iter().map(|r| r.start + r.len).collect();
         Ok(Self {
             idx,
+            witness: None,
+            verify_first: false,
             records,
             boundaries,
             dna,
@@ -247,6 +251,56 @@ impl Engine {
                     }
                 }
             }
+        }
+        Ok(())
+    }
+    fn first(&self, read: &str, seq: &[u8], out: &mut impl Write) -> Result<(), String> {
+        self.validate(seq)?;
+        let witnesses = self.witness.as_ref().ok_or("--first requires --witness-index")?;
+        for (work, strand) in self.orientations(seq) {
+            let (l, r, toehold) = self.interval_toehold(&work);
+            if l == r { continue; }
+            let mut slot = if r - l == 1 { 0 } else { 2 * self.idx.run_of(l) };
+            // A singleton interval already has its unique coordinate in the
+            // search toehold. Checking the bitmap adds no information here.
+            let mut selected = if r - l == 1 {
+                Some((l, toehold.ok_or("missing singleton toehold")?, "toehold"))
+            } else { None };
+            while selected.is_none() {
+                let Some(found) = witnesses.first_at_or_after(slot) else { break; };
+                let run = found / 2;
+                let row = self.idx.run_start(run) + if found % 2 == 0 {
+                    0
+                } else { self.idx.run_len[run as usize] as u64 - 1 };
+                if row >= r { break; }
+                if row >= l {
+                    let phi = self.idx.phi.as_ref().ok_or("--first needs phi")?;
+                    let sa = if row == l { toehold.ok_or("missing search toehold")? }
+                        else if found % 2 == 0 { phi.head(run) } else { phi.tail(run) };
+                    selected = Some((row, sa, "chi"));
+                    break;
+                }
+                slot = found + 1;
+            }
+            let (row, sa, source) = if let Some(hit) = selected { hit } else {
+                // Suffixient covering concerns right-maximal contexts, not
+                // every arbitrary pattern. The search toehold supplies one
+                // certified row using run-head phi, without an LF walk.
+                (l, toehold.ok_or("nonempty interval has no toehold")?, "toehold")
+            };
+            // Phi and the search toehold carry the indexed text position.
+            // s_at_opt stores its mirrored S value; position(row) mirrors it
+            // back, so the direct phi value is already the product position.
+            let pos = sa;
+            if self.verify_first && self.position(row) != pos {
+                return Err(format!("first/full-locate position mismatch at row {row}"));
+            }
+            let mut hit = self.hit_position(read, pos, work.len(), None, strand)
+                .ok_or("first occurrence crosses reference boundary")?;
+            hit["row"] = json!(row);
+            hit["source"] = json!(source);
+            line(out, &hit)?;
+            return Ok(());
         }
         Ok(())
     }
@@ -629,6 +683,9 @@ struct Options {
     gap: Option<usize>,
     gap_seq: bool,
     cov: bool,
+    first: bool,
+    witness_index: Option<String>,
+    verify_first: bool,
 }
 fn parse(args: &[String]) -> Result<Options, String> {
     let mut o = Options {
@@ -651,6 +708,9 @@ fn parse(args: &[String]) -> Result<Options, String> {
         gap: None,
         gap_seq: false,
         cov: false,
+        first: false,
+        witness_index: None,
+        verify_first: false,
     };
     let mut i = 0;
     while i < args.len() {
@@ -677,6 +737,8 @@ fn parse(args: &[String]) -> Result<Options, String> {
                 o.ms = true;
                 continue;
             }
+            "--first" => { o.first = true; continue; }
+            "--verify-first" => { o.verify_first = true; continue; }
             "--plain" => {
                 o.orientation = Some(false);
                 continue;
@@ -696,6 +758,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--mode" => o.mode = v.clone(),
             "--bind" => o.bind = v.clone(),
             "--output" | "--ms-out" => o.output = Some(v.clone()),
+            "--witness-index" => o.witness_index = Some(v.clone()),
             "-j" | "--threads" => o.jobs = v.parse().map_err(|_| "invalid threads")?,
             "--out" => o.out = v.clone(),
             "-p" | "--positions" => o.positions = v.parse().map_err(|_| "invalid positions")?,
@@ -728,6 +791,7 @@ fn process(
     seq: &[u8],
     out: &mut impl Write,
 ) -> Result<(), String> {
+    if o.first { return e.first(name, seq, out); }
     if kind == "mems" {
         if o.out == "ropebwt3" {
             e.rope_mems(name, seq, o, out)
@@ -742,6 +806,11 @@ fn process(
 }
 fn run(kind: &str, args: &[String]) -> Result<(), String> {
     let o = parse(args)?;
+    if o.first && (o.witness_index.is_none() || o.ms || o.sample.is_some() ||
+        o.out != "native" || o.all_mems || o.positions > 0 || o.gap.is_some() || o.cov) {
+        return Err("--first requires --witness-index and native exact-query output".into());
+    }
+    if o.verify_first && !o.first { return Err("--verify-first requires --first".into()); }
     if kind != "mems"
         && (o.out != "native" || o.all_mems || o.positions > 0 || o.gap.is_some() || o.cov)
     {
@@ -753,7 +822,12 @@ fn run(kind: &str, args: &[String]) -> Result<(), String> {
                 .into(),
         );
     }
-    let engine = Engine::open(&o.path, &o.mode, o.orientation)?;
+    let mut engine = Engine::open(&o.path, &o.mode, o.orientation)?;
+    engine.verify_first = o.verify_first;
+    if let Some(path) = &o.witness_index {
+        let meta = sxi::Container::open(&o.path).ok_or("witness index requires SXI2")?;
+        engine.witness = Some(witness::Witness::load(path, &meta)?);
+    }
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(o.jobs)
         .build()
@@ -839,7 +913,8 @@ fn request(
     match path {
         "/query" => {
             let (name, seq) = read(&value)?;
-            e.query(&name, seq.as_bytes(), out, o.sample, o.seed, o.trace)
+            if o.first { e.first(&name, seq.as_bytes(), out) }
+            else { e.query(&name, seq.as_bytes(), out, o.sample, o.seed, o.trace) }
         }
         "/ms" => {
             let (name, seq) = read(&value)?;
@@ -934,10 +1009,30 @@ fn serve(engine: Engine, o: Options, pool: rayon::ThreadPool) -> Result<(), Stri
 }
 pub fn command(kind: &str, args: &[String]) {
     if args.iter().any(|x| x == "--help" || x == "-h") {
-        println!("xsa {kind} --sxi FILE [--reads FA|FQ|GZ | --pattern STRING] [-j N] [--mode auto|dna|text]\n  [--min-len 20] [--ms] [--sample N --seed N] [--plain|--revlines] [--bind 127.0.0.1:7331]\nOutput: native deterministic JSONL (default, all occurrence MEMs).\n  mems: [--out native|ropebwt3] [--mem] [-p N|--positions N] [--gap N [--gap-seq]] [--cov]\n  ropebwt3: default SMEMs; qname/start/end/count TSV, no positions unless -p N.\n  --mem retains all occurrence MEMs; -p caps positions per interval, never counts.\n  --gap takes precedence over --cov; cov omits zero-coverage reads.\nCoordinates zero-based half-open; reference positions always forward-strand.");
+        println!("xsa {kind} --sxi FILE [--reads FA|FQ|GZ | --pattern STRING] [-j N] [--mode auto|dna|text]\n  [--min-len 20] [--ms] [--sample N --seed N] [--plain|--revlines] [--bind 127.0.0.1:7331]\n  --first --witness-index FILE.wit: one exact occurrence, with chi/toehold source.\n  --verify-first: gate selected position against the LF-based full locate path.\nOutput: native deterministic JSONL (default, all occurrence MEMs).\n  mems: [--out native|ropebwt3] [--mem] [-p N|--positions N] [--gap N [--gap-seq]] [--cov]\n  ropebwt3: default SMEMs; qname/start/end/count TSV, no positions unless -p N.\n  --mem retains all occurrence MEMs; -p caps positions per interval, never counts.\n  --gap takes precedence over --cov; cov omits zero-coverage reads.\nCoordinates zero-based half-open; reference positions always forward-strand.");
         return;
     }
     if let Err(e) = run(kind, args) {
         die(&e);
     }
+}
+
+pub fn witness_build(args: &[String]) {
+    let mut path = None;
+    let mut output = None;
+    let mut it = args.iter();
+    while let Some(flag) = it.next() {
+        let value = it.next().unwrap_or_else(|| die("witness-build option needs value"));
+        match flag.as_str() {
+            "--sxi" => path = Some(value.as_str()),
+            "--output" => output = Some(value.as_str()),
+            _ => die("witness-build accepts --sxi FILE --output FILE"),
+        }
+    }
+    let path = path.unwrap_or_else(|| die("witness-build needs --sxi"));
+    let output = output.unwrap_or_else(|| die("witness-build needs --output"));
+    let meta = sxi::Container::open(path).unwrap_or_else(|| die("need SXI2"));
+    let engine = Engine::open(path, "text", None).unwrap_or_else(|e| die(&e));
+    let phi = engine.idx.phi.as_ref().unwrap_or_else(|| die("need phi"));
+    witness::build(path, output, &meta, phi).unwrap_or_else(|e| die(&e));
 }

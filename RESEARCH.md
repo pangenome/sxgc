@@ -2441,3 +2441,18 @@ PRAGMATIC GATE PATH meanwhile: batch-BCR insertion at CHUNK granularity (rotatio
 rotation within each 68 MB chunk, ~17 min/chunk measured class) finishes the fragment gate
 in ~4.5h - proves the pipeline end-to-end while the O(r) merge stays open. Pile waits on
 the real merge, not on the gate.
+
+## WITNESS-ANCHORED LOCATE SHIPPED + THE INTERVAL-WITNESS LIMITATION (measured, honest)
+xsa mems --first: chi edge bitmap (2 bits/run sidecar: 25.2 MB yeast / 99.4 MB frag - ~2% of
+artifact) + stored phi recovery. NEITHER production route enumerates occurrences or walks LF.
+GATES: 1000/1000 correct decisions both corpora; 872/872 (yeast) and 778/778 (frag) returned
+positions text-verified as true occurrences. SPEED: yeast first-position 0.513 ms vs full
+locate 5.671 ms (11x); frag 0.369 vs 0.410 ms (frag full-locate is already near-warm-floor).
+LIMITATION (the lane caught the supervisor's imprecise corollary BEFORE banking): 'P's BWT
+interval contains a witness row' is FALSE in general - chi members are END-positioned (requirement
+ends), occurrence STARTS depend on |P|; the static bitmap misses 390/870 yeast / 425/778 frag
+occurring probes. The toehold fallback covers every miss with no enumeration. This does NOT
+falsify covering_given_stream (the theorem is about requirement coverage at ends); the wrong
+step was assuming coverage implies interval-row witnessing for arbitrary-length patterns.
+The honest corollary to state in the paper: find-one-position is witness-anchored for the
+end-positioned requirement; the start mapping needs |P|, hence toehold rescue for ~45% of probes.

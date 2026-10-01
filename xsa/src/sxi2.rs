@@ -139,6 +139,23 @@ pub struct Phi {
     width: u32,
 }
 impl Phi {
+    /// Visit compact phi edges in SA order without repeated EF selects.
+    pub fn for_each_edge(&self, mut visit: impl FnMut(u64, u64, u64)) {
+        need(self.compact, "witness edges require compact phi");
+        let mut high = 0;
+        for i in 0..self.r {
+            while high < self.u_high_bits && bit(&self.map[self.u_high_off..], high) == 0 {
+                high += 1;
+            }
+            need(high < self.u_high_bits, "truncated phi edge");
+            let u = ((high - i) << self.u_low_width)
+                | self.packed(self.u_low_off, i * self.u_low_width as u64, self.u_low_width);
+            let v = self.packed(self.v_off, i * self.v_width as u64, self.v_width);
+            let run = self.packed(self.run_off, i * self.run_width as u64, self.run_width);
+            visit(u, v, run);
+            high += 1;
+        }
+    }
     fn packed(&self, off: usize, pos: u64, width: u32) -> u64 {
         if width==0 {return 0;}
         let p=off+(pos/8) as usize;let shift=pos%8;

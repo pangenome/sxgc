@@ -1,0 +1,10 @@
+{
+  "corpus": "yeast235",
+  "mode": "first",
+  "patterns": 1000,
+  "median_ms": 0.513436,
+  "mean_ms": 0.571763897,
+  "p95_ms": 0.808151,
+  "total_ms": 571.763897,
+  "output_bytes": 113026
+}

@@ -10,6 +10,7 @@
 
 mod sxi;
 mod sxi2;
+mod witness;
 mod build;
 mod bundle;
 mod product;
@@ -1054,10 +1055,7 @@ fn cmd_chi_rspace(args: &[String]) {
         aggp.unwrap_or_else(|| die("chi-rspace: need --agg")),
     );
     let header = read_ri4_header(&rp);
-    // Raw ri4 is version 4; only container versions 2+ lack source runs here.
-    if sxi::Container::open(&rp).is_some_and(|container| container.version >= 2) {
-        die("chi-rspace requires SXI1 or ri4 source runs");
-    }
+    if header.version>=2 {die("chi-rspace requires SXI1 or ri4 source runs");}
     // Streaming sweep needs only the run characters, not LF tables/samples.
     let idx = if stream_agg { None } else { Some(Ri4::load(&rp)) };
     let mut char_file = BufReader::with_capacity(1 << 20, File::open(&rp).unwrap());
@@ -1333,6 +1331,8 @@ fn usage() -> ! {
     eprintln!("  xsa build --fasta <refs.fa> -o <out.sxi> [--verbose]");
     eprintln!("  xsa build --text <file.txt> -o <out.sxi> [--verbose]");
     eprintln!("  xsa mems --sxi FILE --reads FA|FQ|GZ [-j N] [--min-len 20] [--mode auto|dna|text]");
+    eprintln!("  xsa witness-build --sxi FILE --output FILE.wit");
+    eprintln!("  xsa mems --first --sxi FILE --witness-index FILE.wit --reads FA|FQ|GZ");
     eprintln!("  xsa serve --sxi FILE [-j N] [--bind 127.0.0.1:7331]");
     eprintln!("  xsa sxi-info <f.sxi> [--chi-out sorted.sA]");
     eprintln!("  --sxi is an alias for --ri4; format is detected by magic");
@@ -1357,10 +1357,12 @@ fn main() {
         Some("stats") => cmd_stats(&args[1..]),
         Some("tags") => cmd_tags(&args[1..]),
         Some("query") if args.windows(2).any(|a| matches!(a[0].as_str(), "--sxi" | "--ri4") && {
-            let mut magic = [0;4]; File::open(&a[1]).and_then(|mut f| f.read_exact(&mut magic)).is_ok() && &magic == b"SXI1"
+            let mut magic = [0;4]; File::open(&a[1]).and_then(|mut f| f.read_exact(&mut magic)).is_ok()
+                && (&magic == b"SXI1" || &magic == b"SXI2")
         }) => product::command("query", &args[1..]),
         Some("query") => cmd_query(&args[1..]),
         Some("mems") => product::command("mems", &args[1..]),
+        Some("witness-build") => product::witness_build(&args[1..]),
         Some("serve") => product::command("serve", &args[1..]),
         Some("build-anchors") => cmd_build_anchors(&args[1..]),
         Some("chi-rspace") => cmd_chi_rspace(&args[1..]),

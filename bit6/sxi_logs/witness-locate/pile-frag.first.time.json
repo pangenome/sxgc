@@ -1,0 +1,10 @@
+{
+  "corpus": "pile-frag",
+  "mode": "first",
+  "patterns": 1000,
+  "median_ms": 0.36888,
+  "mean_ms": 0.390492197,
+  "p95_ms": 0.528741,
+  "total_ms": 390.492197,
+  "output_bytes": 83771
+}
