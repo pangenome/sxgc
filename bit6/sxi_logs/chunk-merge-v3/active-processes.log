@@ -1,0 +1,3 @@
+    PID     ELAPSED   RSS %CPU COMMAND
+1178922       10:40 18461856 99.8 /home/erikg/.cache/xsa/81c4a8c0271c4096ec4c983e33b22ba23ccdfaac12bdc5db9a5bf1b5ef867f28/rpfbwt --l1-prefix vendor/chunk-merge-v3/reference/parse --w1 10 --w2 5 --threads 8 --chunks 50 --tmp-dir vendor/chunk-merge-v3/reference
+1182105       09:10 1008916 100 vendor/chunk-merge-v3/chunk_bcr_merge vendor/chunk-merge-v3/chunks 16 1082130213 vendor/chunk-merge-v3/merged/frag

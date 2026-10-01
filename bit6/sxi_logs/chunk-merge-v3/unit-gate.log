@@ -1,0 +1,6 @@
+test_cross_producer_four_files (__main__.ChunkBcrMergeTests.test_cross_producer_four_files) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.136s
+
+OK
