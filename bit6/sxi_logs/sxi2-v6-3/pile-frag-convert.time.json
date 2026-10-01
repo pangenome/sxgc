@@ -1,0 +1,15 @@
+{
+  "command": [
+    "/tmp/sxi2_write_v63",
+    "--sxi",
+    "/mnt/nvme3n1/erikg/sxi2-v5/pile-frag.sxi2",
+    "--output",
+    "/mnt/nvme3n1/erikg/sxi2-v6-3-main/pile-frag.sxi2",
+    "--validator",
+    "xsa/target/release/xsa",
+    "--max-bytes",
+    "5196757367"
+  ],
+  "wall_seconds": 377.28009070199914,
+  "exit": 0
+}

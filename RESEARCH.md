@@ -2483,3 +2483,18 @@ Incident note: the finish needed two one-line recoveries - the endpoints' dictio
 (symlinked reference parse) and the raw-ri4 guard regression (the witness-locate rescue
 clobbered the v2 lane's guard fix; re-applied, lesson: file-level rescue copies must diff
 against current main first, not blanket cp).
+
+## SXI2 V6-3 COMPLETE: FORMAT VERSION 5 SHIPPED AT ALL THREE SCALES (all gates green)
+The implicit-exception phi encoding (singleton-run tails are implicit; v stored only at
+non-singleton edges, ranked by a bitmap): pile-frag 5,196,757,368 -> 2,606,290,008 bytes
+(0.502x of v6-2!), phi 42.25 bits/run (from 63.36) - AND WARM HTTP FASTER: 0.325 ms vs
+0.362 (the exception path short-circuits the common case). yeast: 1.414 -> 0.924 GB
+(0.653x, phi 59.19), warm 440 vs 382 ms (+15%). k10: 28.37 -> 20.22 GB (0.713x, phi 71.96),
+warm 4.61 vs 3.47 ms (+33%). ALL GATES GREEN at all three scales: native MEM byte-parity,
+bounded MEM parity, HTTP byte-parity, chi exact. The SINGLETON RATE is the knob: pile-frag
+71% singletons -> 42.25 bits/run (approaching the 25-30 floor); yeast/k10 pay more per
+exception. HONEST TRADE: v5 = 29-50% smaller; warm latency improves where singletons
+dominate (webtext), regresses modestly where they do not (DNA). Lane history: the original
+lane died at provider capacity mid-gates (work rescued via retention patch + 3-way merge
+with the run-width widening - Edge.run u64, phi inverse u64, implicit_v kept). The 25-30
+floor remains open (exceptions coding is the next lever).

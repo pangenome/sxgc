@@ -1,0 +1,15 @@
+{
+  "command": [
+    "/tmp/sxi2_write_v63",
+    "--sxi",
+    "/mnt/nvme3n1/erikg/sxi2-v5/k10.sxi2",
+    "--output",
+    "/mnt/nvme3n1/erikg/sxi2-v6-3-main/k10.sxi2",
+    "--validator",
+    "xsa/target/release/xsa",
+    "--max-bytes",
+    "28372620183"
+  ],
+  "wall_seconds": 2495.3329752370482,
+  "exit": 0
+}

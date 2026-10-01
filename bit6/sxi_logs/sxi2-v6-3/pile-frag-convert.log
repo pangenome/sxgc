@@ -7,3 +7,4 @@ SXI2_MEMBER id=8 codec=119 count=397723010 bytes=2100695822
 SXI2_MEMBER id=9 codec=109 count=0 bytes=0
 SXI2_MEMBER id=10 codec=110 count=397723010 bytes=0
 SXI2_MEMBER id=11 codec=111 count=388402 bytes=3107232
+SXI2_PASS bytes=2606290008

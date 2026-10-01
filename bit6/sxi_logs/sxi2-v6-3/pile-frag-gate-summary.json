@@ -1,0 +1,15 @@
+{
+  "corpus": "pile-frag",
+  "source": "/mnt/nvme3n1/erikg/sxi2-v5/pile-frag.sxi2",
+  "target": "/mnt/nvme3n1/erikg/sxi2-v6-3-main/pile-frag.sxi2",
+  "version": 5,
+  "r": 397723010,
+  "source_bytes": 5196757368,
+  "bytes": 2606290008,
+  "phi_bytes": 2100695822,
+  "phi_bits_per_run": 42.25444883362419,
+  "native_sha256": "fb6e3952d7d140e62363cc681d5c37c0d80774de8358dc56fc41442a57701907",
+  "http_sha256": "b07746010a52cc1900e37708bae060b09255af97184945c9b750c8fca922a61b",
+  "http_median_ms": 0.324645487125963,
+  "v6_2_median_ms": 0.362
+}
