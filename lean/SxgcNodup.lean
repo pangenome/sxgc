@@ -691,4 +691,230 @@ theorem O2_bounded_true : SxgcBounds.O2_bounded := by
     rwa [h3] at h2
   exact scan_nodup (T.length + 1) (triplesOf T) (triplesOf_sa_nodup T) htpos hbnd'
 
+/-! ## Saturation regime: the text stream's LCPs are bounded by the text length
+
+(Fleet minimality round 4; see `FLEET_MINIMALITY4_REPORT.md`.)
+`scanAux` resets its running LCP minimum to the FIXED cap `MAXINT = 2^63 - 1`
+after every BWT-run boundary.  `scan_nodup` above needs the stream's LCP
+values to stay below that cap; the duplicate families of
+`counterexamples/o1_saturation_family.*` live exactly where an artificially
+lowered cap cuts below the stream's LCP values (fleet round 3).
+
+For the ACTUAL text stream `triplesOf T` this boundedness premise is
+automatic for every text of length at most `MAXINT.toNat`: the LCP of two
+suffixes of `R = T.reverse ++ [0]` is bounded by the length of the shorter
+suffix, and two consecutive SA rows start at distinct positions, so the
+shorter suffix is a PROPER suffix of `R`, of length at most
+`|R| - 1 = T.length`.  Hence the fixed cap can bind only for texts longer
+than `9,223,372,036,854,775,807` characters — the exact boundary of the
+saturated regime (`scan_nodup_of_length_le` below). -/
+
+/-- `lcpOf` never exceeds the length of its first argument. -/
+theorem lcpOf_le_length_left : ∀ (a b : List Nat), lcpOf a b ≤ a.length := by
+  intro a
+  induction a with
+  | nil => intro b; simp [lcpOf]
+  | cons x xs ih =>
+    intro b
+    cases b with
+    | nil => simp [lcpOf]
+    | cons y ys =>
+      simp only [lcpOf]
+      split
+      · next _h =>
+        have h2 := ih ys
+        simp only [List.length_cons]
+        omega
+      · omega
+
+/-- `lcpOf` never exceeds the length of its second argument. -/
+theorem lcpOf_le_length_right (a b : List Nat) : lcpOf a b ≤ b.length := by
+  induction b generalizing a with
+  | nil => simp [lcpOf]
+  | cons y ys ih =>
+    cases a with
+    | nil => simp [lcpOf]
+    | cons x xs =>
+      simp only [lcpOf]
+      split
+      · next _h =>
+        have h2 := ih xs
+        simp only [List.length_cons]
+        omega
+      · omega
+
+/-- Indexing a `map` over `List.range n` in range applies the function. -/
+theorem getElem!_map_range (f : Nat → Nat) (n i : Nat) (hi : i < n) :
+    ((List.range n).map f)[i]! = f i := by
+  have h1 : i < ((List.range n).map f).length := by
+    rw [List.length_map, List.length_range]; exact hi
+  have h2 : i < (List.range n).length := by rw [List.length_range]; exact hi
+  rw [getElem!_pos ((List.range n).map f) i h1,
+    List.getElem_map (f := f) (l := List.range n) (i := i) (h := h1),
+    List.getElem_range (j := i) (n := n) (h := h2)]
+
+/-- Every member of `triplesOf T` is row `i` of the suffix stream: its `sa`
+is the `i`-th suffix-array entry and its `lcp` is the LCP between rows `i`
+and `i-1` (zero at the first row). -/
+theorem triplesOf_fields (T : Text) : ∀ t ∈ triplesOf T, ∃ i,
+    i < (T.reverse ++ [0]).length ∧
+    t.sa = (saOrder (T.reverse ++ [0]))[i]! ∧
+    t.lcp = (if i == 0 then 0
+      else lcpOf ((T.reverse ++ [0]).drop (saOrder (T.reverse ++ [0]))[i]!)
+          ((T.reverse ++ [0]).drop (saOrder (T.reverse ++ [0]))[i - 1]!)) := by
+  intro t ht
+  simp only [triplesOf] at ht
+  rw [List.mem_map] at ht
+  obtain ⟨i, hi, hteq⟩ := ht
+  rw [List.mem_range] at hi
+  refine ⟨i, hi, ?_, ?_⟩
+  · subst hteq; rfl
+  · subst hteq
+    have h1 := getElem!_map_range (fun k => if k == 0 then 0
+        else lcpOf ((T.reverse ++ [0]).drop (saOrder (T.reverse ++ [0]))[k]!)
+            ((T.reverse ++ [0]).drop (saOrder (T.reverse ++ [0]))[k - 1]!))
+        (T.reverse ++ [0]).length i hi
+    simp only [h1]
+
+/-- Every `sa` entry of the actual text stream is a genuine position of
+`R = T.reverse ++ [0]`, i.e. below `T.length + 1`. -/
+theorem triplesOf_sa_lt (T : Text) : ∀ t ∈ triplesOf T, t.sa < T.length + 1 := by
+  intro t ht
+  obtain ⟨i, hi, hsa, _⟩ := triplesOf_fields T t ht
+  have hRlen : (T.reverse ++ [0]).length = T.length + 1 := by simp
+  have hordlen : (saOrder (T.reverse ++ [0])).length = T.length + 1 := by
+    rw [saOrder_length, hRlen]
+  have hilt : i < (saOrder (T.reverse ++ [0])).length := by rw [hordlen]; omega
+  have e1 : (saOrder (T.reverse ++ [0]))[i]! = (saOrder (T.reverse ++ [0]))[i] :=
+    getElem!_pos (saOrder (T.reverse ++ [0])) i hilt
+  have hmem : (saOrder (T.reverse ++ [0]))[i] ∈ saOrder (T.reverse ++ [0]) :=
+    List.getElem_mem hilt
+  have hlt := saOrder_lt (T.reverse ++ [0]) _ hmem
+  rw [hsa, e1]
+  omega
+
+/-- **Saturation bound**: every LCP value in the actual text stream is at
+most the text length.  Two consecutive SA rows start at distinct positions
+(`saOrder_nodup`), so their common prefix is bounded by the shorter suffix,
+which is a proper suffix of `R = T.reverse ++ [0]` of length at most
+`|R| - 1 = T.length`. -/
+theorem triplesOf_lcp_le (T : Text) : ∀ t ∈ triplesOf T, t.lcp ≤ T.length := by
+  intro t ht
+  obtain ⟨i, hi, _hsa, hlcp⟩ := triplesOf_fields T t ht
+  have hRlen : (T.reverse ++ [0]).length = T.length + 1 := by simp
+  have hordlen : (saOrder (T.reverse ++ [0])).length = T.length + 1 := by
+    rw [saOrder_length, hRlen]
+  have hilt : i < (saOrder (T.reverse ++ [0])).length := by rw [hordlen]; omega
+  rw [hlcp]
+  split
+  · omega
+  · next h =>
+    have hi0 : i ≠ 0 := fun he => h (by simp [he])
+    have hne : (saOrder (T.reverse ++ [0]))[i]!
+        ≠ (saOrder (T.reverse ++ [0]))[i - 1]! := by
+      intro heq
+      have e1 : (saOrder (T.reverse ++ [0]))[i]!
+          = (saOrder (T.reverse ++ [0]))[i] :=
+        getElem!_pos (saOrder (T.reverse ++ [0])) i hilt
+      have e2 : (saOrder (T.reverse ++ [0]))[i - 1]!
+          = (saOrder (T.reverse ++ [0]))[i - 1] :=
+        getElem!_pos (saOrder (T.reverse ++ [0])) (i - 1) (by omega)
+      rw [e1, e2] at heq
+      have hidx : i = i - 1 :=
+        (saOrder_nodup (T.reverse ++ [0])).getElem_inj.mp heq
+      omega
+    have h1 := lcpOf_le_length_left
+      ((T.reverse ++ [0]).drop (saOrder (T.reverse ++ [0]))[i]!)
+      ((T.reverse ++ [0]).drop (saOrder (T.reverse ++ [0]))[i - 1]!)
+    have h2 := lcpOf_le_length_right
+      ((T.reverse ++ [0]).drop (saOrder (T.reverse ++ [0]))[i]!)
+      ((T.reverse ++ [0]).drop (saOrder (T.reverse ++ [0]))[i - 1]!)
+    rw [List.length_drop] at h1
+    rw [List.length_drop] at h2
+    rw [hRlen] at h1 h2
+    omega
+
+/-- **O2 in the saturated regime.**  For every text of length at most
+`MAXINT.toNat` — every text that can physically exist — the one-pass scan
+emits no duplicate positions.  No `positive T` hypothesis and no per-stream
+LCP hypothesis is needed: the saturation bound `triplesOf_lcp_le` supplies
+the boundedness premise of the stream theorem `scan_nodup` from the text
+length alone. -/
+theorem scan_nodup_of_length_le (T : Text) (hlen : T.length ≤ MAXINT.toNat) :
+    (scan (T.length + 1) (triplesOf T)).Nodup := by
+  have hbnd : ∀ t ∈ triplesOf T, (t.lcp : Int) ≤ MAXINT := by
+    intro t ht
+    have h1 := triplesOf_lcp_le T t ht
+    have h2 : (t.lcp : Int) ≤ (MAXINT.toNat : Int) := by
+      exact_mod_cast Nat.le_trans h1 hlen
+    have h3 : (MAXINT.toNat : Int) = MAXINT := by decide
+    rwa [h3] at h2
+  exact scan_nodup (T.length + 1) (triplesOf T) (triplesOf_sa_nodup T)
+    (triplesOf_sa_lt T) hbnd
+
+/-- The boundedness premise of the locked `O2_bounded` is derivable for every
+text of length at most `MAXINT.toNat`; inside the saturated regime the
+locked statement is unconditional. -/
+theorem O2_bounded_premise_of_length_le (T : Text) (hlen : T.length ≤ MAXINT.toNat) :
+    ∀ t ∈ triplesOf T, t.lcp ≤ MAXINT.toNat :=
+  fun t ht => Nat.le_trans (triplesOf_lcp_le T t ht) hlen
+
+/-! ### Statement-locked residual of the minimality lower half (round 4)
+
+The lower half of `Sxgc.minimality` reduces (`Sxgc.minimality_lower_of_scan_classes`)
+to three scan-side facts.  Round 4 settles the saturation boundary:
+
+* **O2** is a theorem inside the saturated regime
+  (`scan_nodup_of_length_le` above); only texts longer than `MAXINT.toNat`
+  characters — where the fixed reset cap can bind — remain, locked as
+  `O2_astronomic` below.
+* **O3** and **O4** are open in every regime (0 counterexamples on the
+  729-text battery: `Sxgc.lean` in-file `#eval`s at the `obls` differential;
+  the round-3 small-cap families do not touch these fixed-cap statements).
+
+These three locks plus the PROVED reduction give the lower half
+(`minimality_lower_of_O3_O4` below). -/
+
+/-- **(O3, statement-lock)** every emitted position is coverage-maximal. -/
+def O3_maximal (T : Text) : Prop :=
+  ∀ x ∈ scan (T.length + 1) (triplesOf T), IsMax T x
+
+/-- **(O4, statement-lock)** two emitted positions never share a coverage
+class. -/
+def O4_distinct (T : Text) : Prop :=
+  ∀ x ∈ scan (T.length + 1) (triplesOf T),
+    ∀ y ∈ scan (T.length + 1) (triplesOf T),
+    ScopeLe T x y → ScopeLe T y x → x = y
+
+/-- **(O2 residual, statement-lock)** no duplicates beyond the saturated
+regime — the only texts for which O2 is not already proved. -/
+def O2_astronomic (T : Text) : Prop :=
+  MAXINT.toNat < T.length → (scan (T.length + 1) (triplesOf T)).Nodup
+
+/-- Route (c) assembly: O3 and O4, plus the astronomic-regime O2 lock, give
+the minimality lower half.  For texts of length at most `MAXINT.toNat` the
+O2 premise is discharged automatically by `scan_nodup_of_length_le`. -/
+theorem minimality_lower_of_O3_O4 (T : Text) (hT : positive T = true)
+    (hO3 : O3_maximal T) (hO4 : O4_distinct T) (hO2 : O2_astronomic T) :
+    (scan (T.length + 1) (triplesOf T)).length ≤ chi T := by
+  refine minimality_lower_of_scan_classes T hT ?_ hO3 hO4
+  rcases Nat.lt_or_ge MAXINT.toNat T.length with h | h
+  · exact hO2 h
+  · exact scan_nodup_of_length_le T h
+
+/-! ### Executable warrant for the saturation successor (statement-lock eval) -/
+
+private def satTexts : Nat → List Text
+  | 0 => [[]]
+  | k + 1 => let r := satTexts k
+             r ++ r.map (fun t => 1 :: t) ++ r.map (fun t => 2 :: t)
+
+private def satOk (T : Text) : Bool :=
+  (scan (T.length + 1) (triplesOf T)).Nodup &&
+  (triplesOf T).all (fun t => t.lcp ≤ T.length)
+
+-- 729 texts over {1,2}, |T| ≤ 6: 0 violations of the saturation successor.
+#eval ("saturation successor violations / 729: "
+  ++ toString ((satTexts 6).filter (fun T => !satOk T)).length)
+
 end SxgcNodup

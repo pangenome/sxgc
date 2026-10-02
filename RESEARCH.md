@@ -2529,3 +2529,18 @@ zero-cost capability insurance for any future corpus with compressible permutati
 differentials PASS, three-scale gates PASS (ratios 1.000, byte-parity identical, phi unchanged
 59.19/42.25/71.96). v6-3 REMAINS THE SHIPPED CONTAINER. Container effort now redirects to the
 cross-LCP merge (the pile's actual blocker) per the lane's own recommendation - agreed.
+
+## ROUND 5 (the relaunch after the infra repair): paper refresh + minimality round 4
+(1) PAPER REFRESHED: main.tex now carries the from-zero unqualified 466 result (byte-identical
+second construction, sha256 2aca539e...), five constructions of the fragment number, tonight's
+theory additions with Lean file citations, the v6-3 container results at the honest ~42 bits/run
+floor, the witness-anchored locate, and the negative-results paragraph. 194 insertions; braces
+and environments balanced (pdflatex unavailable on this box - compile check pending upstream CI
+or a local texlive install).
+(2) MINIMALITY ROUND 4 (partial, real): O2 (NO DUPLICATES) IS NOW AN UNCONDITIONAL THEOREM for
+every physically realizable text (length <= 2^63-1) - scan_nodup_of_length_le in SxgcNodup.lean,
+no premises, kernel-checked. The exact saturation boundary is characterized: the scan's fixed
+reset cap binds only beyond 2^63-1. The remaining obligations for the minimality lower half are
+now the MINIMAL precise set: O3_maximal + O4_distinct (plus an astronomic-texts-only O2 lock),
+with the assembly lemma minimality_lower_of_O3_O4 PROVEN - the last sorry now reduces cleanly
+to two statement-locked lemmas. Full lake build green (6 jobs).

@@ -59,7 +59,7 @@ sparse skeleton of \emph{forks}---positions where the future is genuinely
 open---and at pangenome scale that skeleton is tiny: measured across this
 paper's corpora, the minimum suffixient set $S$ (a set of positions witnessing
 every right-extension context of the text) has $\X/n$ at $2.6\%$ (yeast),
-$5.4\%$ (30\,Gbp human), and $0.16\%$ (466-haplotype HPRC, $1.44$\,Tbp).
+$5.4\%$ (30\,Gbp human), and $0.16\%$ (466-haplotype HPRC, $1.40$\,Tbp).
 The suffixient array \cite{measure-paper} measures this skeleton: $\X(T)$
 upper bounds the string attractor measure $\gamma$ and is at most twice the
 run count of the BWT of the reversed text. But $\X$ was a \emph{one-sided}
@@ -73,8 +73,10 @@ theory build an index} at terabase scale.
 \textbf{Results.} We give a machine-checked (Lean 4) development in which
 $\X(T)$ equals the number of inclusion-maximal coverage classes of the text's
 requirements, a one-pass scan over the text's suffix-array stream emits a
-minimum suffixient set (the construction capstone, proven subject to named,
-explicitly-tracked stream hypotheses: the no-duplicates hypothesis is discharged outright, and the remaining hypotheses reduce to a single named statement about run-edge domination, one of whose two factors is proven), the
+minimum suffixient set (the construction capstone, whose coverage side---the
+scan provably emits a suffixient set---is discharged outright, and whose
+remaining obligation, that no smaller suffixient set exists, is named and
+tracked), the
 parse-space LCE machinery the scan consumes is proven deterministic and
 explicitly bounded, and the head-sample extraction used at scale is proven as
 an inverse permutation on BWT rows. We then make $\X$ two-sided. \emph{Bridge}:
@@ -92,7 +94,9 @@ from a compressed pangenome archive, never materializes the text on any disk,
 and publishes only after an in-flight audit of sampled witnesses against the
 archive. At yeast scale the index is born from scratch in 26 minutes; at
 30\,Gbp human scale, $\X = 1{,}627{,}067{,}257$ with peak 134\,GB; at the full
-466-haplotype HPRC collection (1.44\,Tbp) the headline number is \hprcchi.
+466-haplotype HPRC collection (1.40\,Tbp) the headline number is \hprcchi,
+reproduced by a second independent from-zero construction whose container
+is byte-identical.
 Every claim in this paper is traceable to a machine-checked proof or a logged
 measurement; we state the open hypotheses and unproven attributions exactly
 where they remain.
@@ -108,7 +112,7 @@ Across this paper's corpora the \emph{minimum suffixient set}---the smallest
 position set witnessing every place where the future is genuinely open---has
 $\X/n$ at $2.6\%$ for yeast, $5.4\%$ for a 30\,Gbp human pangenome, and
 $0.16\%$ for the 466-haplotype HPRC collection
-($1.44$\,Tbp; \S\ref{sec:results}). The farther a collection duplicates
+($1.40$\,Tbp; \S\ref{sec:results}). The farther a collection duplicates
 itself, the smaller the skeleton: a pangenome is $99.84\%$ inevitability.
 Whatever an exact-search index---or any reader of the corpus---must retain is
 therefore a function of this sparse forking structure, not of the bulk.
@@ -123,7 +127,7 @@ program that has produced its first theorem saying that position-answering
 indexes \emph{cannot} be asymptotically smaller, a bridge theorem extending
 that necessity from indexes to \emph{any} continuation-answering system
 (\S\ref{sec:contbridge}), and a system that does all of it from a 3\,GB
-compressed archive of 1.44 terabases without ever writing the text to disk.
+compressed archive of 1.40 terabases without ever writing the text to disk.
 
 \paragraph{The object.} A \emph{suffixient set} for a text $T$ of length $n$
 is a set $S\subseteq[1..n]$ of positions such that for every
@@ -169,9 +173,11 @@ scale is proven deterministic (two-sided equality with ground truth) and
 explicitly bounded (Theorems~\ref{thm:bounds}--\ref{thm:totalwork}). The
 end-to-end statement---the parse-built witness list has exactly $\X(T)$
 elements---is proven \emph{conditional on named stream hypotheses}
-(Theorem~\ref{thm:capstone}), of which all but one are discharged; the
-remaining one is reduced to a single statement about run-edge domination
-(``RunEdgeDominate'', \S\ref{sec:status}) with its semantic half proven.
+(Theorem~\ref{thm:capstone}). The coverage side is closed outright: run-edge
+domination---every run-edge position is dominated by an emitted one---is
+proven unconditionally (\texttt{runEdgeDominate\_true}), so the scan provably
+emits a suffixient set; the remaining obligation is count-side, the
+tie-breaking bound $|S|\le\X(T)$ (\S\ref{sec:construction}).
 \item \textbf{Position extraction} (\S\ref{sec:phi}): the head samples used
 to resolve scan positions at scale are the values of an inverse permutation
 $\varphi^{-1}$ on BWT rows (Theorem~\ref{thm:headfromtail}), which replaces
@@ -316,6 +322,29 @@ invariants through the scan and invokes the bound exactly once, to block
 re-arming a just-emitted position at run-length-one boundaries: the precise
 point where unbounded streams duplicate. The proof replaces the warrant.
 
+\paragraph{Dynamics under append.} Two machine-checked facts delimit any
+incremental or chunk-merged construction. First, \emph{witness revival}:
+appending text can resurrect a dominated position into a required
+witness---on the banked counterexample ($A=[1,2,2,\sep]$, $B=[1,\sep]$) a
+position dominated in $A$ is maximal in $A{+}{+}B$, and $\X$ strictly grows
+($\chi(A)=3$, $\chi(A{+}{+}B)=5$), with the new witnesses not confined to
+the appended chunk. Second, \emph{$\X$-count demotion}: $\X$ is not monotone
+under append. Appending can erase a terminal-context requirement---a context
+right-maximal only as a suffix of the old text---and demote an old maximal
+class with no compensating creation, so the count can \emph{decrease}
+(\texttt{chi\_append\_decreases}); even the single-document append unit of
+the merge world violates it
+(\texttt{chi\_single\_symbol\_document\_decreases}), so no prune-based
+incremental $\X$ maintenance is sound. The demotion mechanism is independent
+of revival, and both are machine-checked. The positive survivor is the
+delimiter case: when the old text ends in a symbol unique to it, $\X$ is
+monotone under append (\texttt{chi\_append\_unique\_last}).
+\leanpoint{SxgcRevival.lean}{104}{isMax\_J\_two}
+\leanpoint{SxgcRevival.lean}{171}{chi\_strictly\_grows}
+\leanpoint{SxgcChiMono.lean}{33}{chi\_append\_decreases}
+\leanpoint{SxgcChiMono.lean}{236}{chi\_single\_symbol\_document\_decreases}
+\leanpoint{SxgcUniDelim.lean}{151}{chi\_append\_unique\_last}
+
 \section{The Construction Capstone and Its Ledger}\label{sec:construction}
 
 The construction at scale replaces the text with a prefix-free parse
@@ -345,25 +374,38 @@ writing:
 text's own triple stream, whose SA values are pairwise distinct, so
 Theorem~\ref{thm:nodup} applies.
 \leanpoint{SxgcBuild.lean}{1224}{parseTriplesOf\_eq, parseScan\_eq}
-\item[(ii),(iii)] \emph{Reduced}: conditions (ii) and (iii) together hold
-exactly when every maximal coverage class contains an emitted position
-(the \emph{class-hit} statement). We prove the class-hit statement
-equivalent to the conjunction of two properties: every maximal class
-contains a run-edge position (the \emph{run-edge hit} property---proven
-outright, since every emitted position is a run-edge position by the
-theorem above), and every run-edge position
-is dominated by an emitted one (the \emph{run-edge domination} property,
-open). Given class-hit, condition (iv) follows unconditionally.
+\item[(ii),(iii)] \emph{Reduced to the count side}: these are the two
+conditions that make the emitted list minimal---every emitted position is
+maximal, and no two emitted positions are coverage-equivalent. They are the
+capstone's remaining open obligations: the proven reduction
+\texttt{minimality\_lower\_of\_scan\_classes} turns them, together with
+no-duplicates, into the count bound $|S|\le\X(T)$ (the Lemma~34
+tie-breaking), which requires the LCP-maxima characterization of the
+emission rule. Its statement-level differentials report zero counterexamples
+over 729 exhaustive and 320 random, binary, and repetitive battery texts.
+\item[(iv)] \emph{Discharged outright}: every requirement is covered by some
+emitted position. The class-hit statement---every maximal coverage class
+contains an emitted position---is the conjunction of the run-edge hit
+property (proven outright, since every emitted position is a run-edge
+position by the theorem above) and the run-edge domination property, every
+run-edge position dominated by an emitted one, which is now also proven
+outright (\texttt{runEdgeDominate\_true}). The assembly run-edge hit $\to$
+class-hit $\to$ covering closes the coverage side unconditionally: the scan
+provably emits a suffixient set (\texttt{covering\_given\_stream}, until
+recently the development's largest open sorry).
 \end{itemize}
-\leanpoint{Sxgc.lean}{6062}{maxHit\_of\_runEdge, runEdgeHit\_of\_maxHit}
-\leanpoint{SxgcRunEdge.lean}{604}{runEdgeHit\_true}
-\leanpoint{Sxgc.lean}{5984}{covering\_given\_stream\_of\_maxHit}
+\leanpoint{Sxgc.lean}{6007}{maxHit\_of\_runEdge, runEdgeHit\_of\_maxHit}
+\leanpoint{SxgcRunEdge.lean}{60}{runEdgeHit\_true}
+\leanpoint{SxgcRunEdge.lean}{240}{runEdgeDominate\_true}
+\leanpoint{Sxgc.lean}{5929}{covering\_given\_stream\_of\_maxHit}
+\leanpoint{Sxgc.lean}{7554}{covering\_given\_stream}
+\leanpoint{Sxgc.lean}{1955}{minimality\_lower\_of\_scan\_classes}
 
-\textbf{The honest ledger.} Run-edge domination is blocked on the exact
-emission rule of the scan's LCP-window machinery; its statement-level
-differentials report zero counterexamples over exhaustive $\{1,2\}^{\le 8}$
-and $\{1,2,3\}^{\le 7}$ texts and 3{,}000 random 4-letter texts, and it is
-the single remaining open hypothesis of the capstone.
+\textbf{The honest ledger.} With run-edge domination proven, the capstone's
+single remaining obligation is the count side: $|S|\le\X(T)$, the statement
+that no suffixient set of positions is smaller than the emitted one. It is
+blocked on the LCP-maxima characterization of the scan's emission rule; it
+is not proven, and we do not claim it.
 
 \begin{theorem}[Determinism of the parse-space LCE]
 For a well-formed parse of $T$ and positions $i,j$: given any step budget
@@ -426,6 +468,24 @@ intervals, every head costs one binary search: on 30\,Gbp human data, all
 $1.86\times10^9$ head positions were extracted in 751\,s at 64.8\,GB, versus
 a projected 38-hour walk---a $165\times$ replacement, with the extracted
 heads byte-identical to the walk baseline on the full corpus.
+
+\paragraph{Criterion C.} The correctness of the deployed $\varphi$ formula
+rests on a hybrid safety test, \emph{Criterion C}: for each run, either the
+corpus's byte-frequency gcd is one, or the run's cyclic SA domain is a
+singleton. Both halves that do not need a cyclic rotation model are
+machine-checked: gcd one rules out proper powers
+(\texttt{gcdOne\_not\_isPower})---periodicity being exactly the condition
+under which the order-preserving LF/$\varphi$ interval map gains
+equal-rotation ties---and on a singleton domain the affine formula is exact
+(\texttt{criterion\_singleton\_branch}). The $g{=}1$ half additionally rests
+on two bridges. Bridge (a) is proven: a text with byte-frequency gcd one is
+primitive, and all of its cyclic rotations are pairwise distinct
+(\texttt{byteFreqGcd\_one\_rot\_injective})---the classical
+Lyndon--Sch\"utzenberger route, formalized from scratch. Bridge (b)---order
+preservation of the LF/$\varphi$ interval map for a tie-free suffix order---
+remains statement-locked.
+\leanpoint{SxgcPhi.lean}{570}{byteFreqGcd\_one\_rot\_injective}
+\leanpoint{SxgcPhi.lean}{296}{gcdOne\_not\_isPower, criterion\_singleton\_branch}
 
 \section{Cyclic Frames and Seam Classes}\label{sec:seam}
 
@@ -669,9 +729,10 @@ samples, streamed aggregate sweep) $\to$ container write and validation.
 
 \begin{table}[t]
 \centering\small
-\caption{Corpora and headline measurements. The 466-haplotype number is a
-placeholder pending the running build; the historical BCR-frame value for
-that corpus is $2{,}249{,}968{,}075$. Sources: Appendix~\ref{app:facts}.}
+\caption{Corpora and headline measurements. Every row is a from-zero
+build; the 466-haplotype value was reproduced by a second independent
+from-zero construction with a byte-identical container
+(\S\ref{sec:results}). Sources: Appendix~\ref{app:facts}.}
 \begin{tabular}{lrrrr}
 \toprule
 Corpus & $n$ (bp) & strings & $\rparam$ (runs) & $\X$ \\
@@ -720,6 +781,37 @@ front end 7{,}910--8{,}211\,s (111\,GB), endpoints 1{,}556--1{,}731\,s
 write 416--490\,s, validate 129--138\,s; peak 134\,GB at 16 threads. The
 seam repair touched 7 classes / 1{,}161 rows at $1.86\times10^9$ runs.
 
+\paragraph{HPRC 466, from zero, twice.} The full 466-haplotype HPRC
+collection---$n=1{,}403{,}221{,}068{,}491$ ($1.40$\,Tbp) over $38{,}790$
+strings, $\rparam=2{,}739{,}737{,}289$ runs---is constructed from zero by
+one knob-free command,
+\verb|xsa build --agc HPRC_r2_assemblies_0.6.1.agc --threads 48 --verify-text-sample 10000|,
+in $27.15$\,h wall, with the
+$10{,}000$-witness in-flight audit passing in-build. The result:
+$\X=\hprcchi$, so $\X/n=0.1604\%$ and $\X/\rparam=0.8214$; the container
+is $52{,}175{,}300{,}288$ bytes, sha256
+\texttt{2aca539e3747414e447372b9554f14613335162fd07c00c03599a1948198a8fb}.
+The number is unqualified: an independent full construction---a second
+$1.4$\,Tbp build from zero---reproduced it with a byte-identical container,
+same hash, same size. To our knowledge this is the largest suffixient-set
+construction to date, and it is byte-reproducible.
+
+\paragraph{Five constructions, one answer.} On the web-text fragment
+(pile-frag; $n=1{,}082{,}130{,}213$ bytes, $\rparam=397{,}723{,}010$), five
+independent constructions produce the identical number $\X=306{,}164{,}765$
+and byte-identical core artifacts (the four output files of every merged
+route match the monolithic reference byte for byte): the monolithic PFP
+front end, a regenerated PFP reference, a small-scale BCR differential, a
+serial batch-merge of 16 document-aligned chunks, and a parallel merge tree
+over the same chunks. The honest price, at fragment scale: monolithic PFP
+builds in $4{,}789$\,s while chunking plus batch-BCR merge takes
+$20{,}868$\,s---the monolith wins, as predicted; the merged routes buy
+bounded-memory construction, not speed. The parallel tree at 16 chunks is
+nearly serial ($19{,}597$\,s vs $20{,}599$\,s serial, $1.05\times$)
+because the top level dominates: the final pairwise merge alone runs
+$16{,}063$\,s of the $19{,}597$\,s. The tree is a scaling answer, not a
+16-chunk speedup.
+
 \begin{table}[t]
 \centering\small
 \caption{Measured archive-reader throughput (steady state, identical
@@ -756,6 +848,71 @@ $1.6\times$ of the natural tier. The honest reading: the samples and run
 table are representation cost (known, packable); the witnesses are
 decision-structure cost (provably irreducible below
 $\X\log(n/\X)$ bits, up to the constant we have proven).
+
+\paragraph{Container format v5.} The implicit-exception $\varphi$ encoding
+(singleton-run tails are implicit; $\varphi$ is stored only at
+non-singleton edges, ranked by a bitmap) ships as container format
+version 5 at all three scales, with every gate green at each (native,
+bounded, and HTTP byte-parity; $\X$ exact), measured against the
+immediately prior container generation in every case. Pile-frag:
+$2{,}606{,}290{,}008$ bytes ($2.61$\,GB), $0.502\times$ the prior form, at
+$\varphi=42.25$\,bits/run (from $63.36$)---and warm HTTP locate is
+\emph{faster} than the prior form ($0.325$ vs $0.362$\,ms: the exception
+path short-circuits the common case). Yeast: $0.924$\,GB ($0.653\times$,
+$\varphi=59.19$\,bits/run), warm $440$ vs $382$\,ms ($+15\%$). k10:
+$20.22$\,GB ($0.713\times$, $\varphi=71.96$\,bits/run), warm $4.61$ vs
+$3.47$\,ms ($+33\%$). The honest trade: $29$--$50\%$ smaller; warm latency
+improves where singleton runs dominate (web text) and regresses modestly
+where they do not (DNA).
+
+\paragraph{The association floor, honestly.} The $\varphi$ association
+stands at $42.25$\,bits/run on the web-text fragment, and we record that
+the preflight's $25$--$30$\,bits/run projection was wrong: it assumed a
+compressible run permutation, which is refuted below. The honest floor
+under the current coding scheme is therefore approximately $42$\,bits/run
+on this corpus; the remaining levers (exception-value coding, adaptive
+models) are unmeasured and speculative.
+
+\paragraph{Witness-anchored locate.} \verb|mems --first| answers
+find-one-position queries from a $\chi$-edge bitmap (a $2$-bit/run sidecar:
+$25.2$\,MB at yeast, $99.4$\,MB at pile-frag, $\approx 2\%$ of the
+artifact) plus stored-$\varphi$ recovery; neither route enumerates
+occurrences or walks LF. Gates: $1000/1000$ correct decisions on both
+corpora, and every returned position is text-verified as a true occurrence
+($872/872$ yeast, $778/778$ pile-frag). Speed: yeast first-position
+$0.513$\,ms against $5.671$\,ms full locate ($11\times$); pile-frag
+$0.369$ vs $0.410$\,ms (its full locate is already near the warm floor).
+The honest limitation, caught before banking: $\chi$ members are
+end-positioned (requirement ends) while occurrence starts depend on $|P|$,
+so ``the pattern's BWT interval contains a witness row'' is false in
+general---the static bitmap misses $390/870$ (yeast) and $425/778$
+(pile-frag) occurring probes---and the toehold fallback covers every miss
+with no enumeration. Find-one-position is witness-anchored for the
+end-positioned requirement; the start mapping needs $|P|$.
+
+\paragraph{Negative results, banked.} Three refutations are recorded
+because each killed a design lane. (1) \emph{Stable interleave merges are
+impossible}: the cyclic BWT of $A{+}{+}B$ is not a stable interleave of the
+BWTs of $A$ and $B$, even at byte/run granularity ($7$ of $20$ synthetic
+separator-aligned pairs obstruct), because rotations of $A$ continue into
+$B$ under the cyclic frame---interleaving points depend on cross-LCPs,
+not on either input's internal order, so a correct merge must recompute
+cross-boundary structure. (2) \emph{Witness-restricted run structures
+break backward search}: witness-free runs are $18.4$--$25.6\%$ of
+$\rparam$ (yeast $20.6\%$, pile-frag $25.6\%$, k10 $18.4\%$), and a
+modeled index that retains only the $\chi$-anchored skeleton fails
+routing on $99$--$100\%$ of real MEM queries ($1001$ per corpus), which hit
+backward-search steps inside witness-free intervals where the skeleton
+cannot supply rank; repairing the routing with packed LF starts pushes the
+pile projection to $5.861$\,TB against the $5.378$\,TB baseline---the fix
+costs more than the win. The run-length BWT's witness-free runs are
+load-bearing: $\X$ rides the artifact, it does not drive it. (3) \emph{The
+run permutation is incompressible}: exact gamma-Golomb accounting puts
+it at flat-code cost on real corpora (yeast $28.16$, pile-frag $30.35$
+bits), and the earlier $12.29$-bit delta-entropy
+estimate was a sampling artifact (unique-sample entropy
+$\approx\log_2 5000$); the claim that the permutation compresses more than
+$2\times$ is retracted.
 
 \section{The Fork Skeleton and the Reader}\label{sec:lm}
 
@@ -839,9 +996,13 @@ fixtures).
 
 \section{Open Problems}\label{sec:open}
 \begin{enumerate}[leftmargin=*]
-\item \textbf{RunEdgeDominate.} The capstone's single remaining hypothesis:
-every run-edge position is dominated by an emitted one. Zero measured
-counterexamples; blocked on the emission rule's exact semantics.
+\item \textbf{The minimality lower bound.} Run-edge domination---the
+capstone's last coverage-side hypothesis---is now proven
+(\texttt{runEdgeDominate\_true}), so the scan provably emits a suffixient
+set. What remains is the count side: $|S|\le\X$, the Lemma~34 tie-breaking
+(emitted positions maximal, pairwise coverage-distinct), which requires
+the LCP-maxima characterization of the emission rule. Zero measured
+counterexamples.
 \item \textbf{The general floor.} Theorem~\ref{thm:floor} is
 family-specific; the general rung requires either a measure-theoretic
 incompatibility construction or the negative resolution via
