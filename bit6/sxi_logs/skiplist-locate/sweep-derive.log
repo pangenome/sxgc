@@ -1,0 +1,6 @@
+stride=1024 anchors=98541 sum(delta)=3336986759 n=3336986759 CYCLE-OK wall=78.8s threads=48
+derive stride=32: values=3153283 holes=0 member11-crosscheck=98541 mismatches=0
+  wrote vals32.bin
+flat walk stride=1024 (tail-row termination, all rows): mean=221572.8 p50=83950 p90=560641 p99=1991444 p999=3884030 p9999=6183147 max=6516845
+  segment-length histogram (anchor-side, unweighted):
+  wrote dist1024b.bin

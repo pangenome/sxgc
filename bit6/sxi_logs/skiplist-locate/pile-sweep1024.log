@@ -1,0 +1,4 @@
+stride=1024 anchors=388402 sum(delta)=1082130213 n=1082130213 CYCLE-OK wall=53.5s threads=15
+flat walk stride=1024 (tail-row termination, all rows): mean=3050.6 p50=1971 p90=6904 p99=16041 p999=41057 p9999=91307 max=134859
+  segment-length histogram (anchor-side, unweighted):
+  wrote pile-dist1024.bin

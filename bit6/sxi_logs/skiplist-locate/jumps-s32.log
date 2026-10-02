@@ -1,0 +1,20 @@
+building jumps with band safety for stride=32 termination
+jump build: band-filter candidates=55011540 pointers=47457309 cap=65536 censored=2783 wall=189.1s
+  level>=2      : 47457309 runs (47.03% of R)  space@8B+bitmap=392271603 B (48.59% of R*8)
+  level>=4      : 41707445 runs (41.33% of R)  space@8B+bitmap=346272691 B (42.90% of R*8)
+  level>=8      : 35005384 runs (34.69% of R)  space@8B+bitmap=292656203 B (36.25% of R*8)
+  level>=16     : 27076090 runs (26.83% of R)  space@8B+bitmap=229221851 B (28.40% of R*8)
+  level>=32     : 18908940 runs (18.74% of R)  space@8B+bitmap=163884651 B (20.30% of R*8)
+  level>=64     : 11666269 runs (11.56% of R)  space@8B+bitmap=105943283 B (13.12% of R*8)
+  level>=128    :  6655043 runs ( 6.60% of R)  space@8B+bitmap=65853475 B (8.16% of R*8)
+  level>=256    :  3926180 runs ( 3.89% of R)  space@8B+bitmap=44022571 B (5.45% of R*8)
+  level>=512    :  2375188 runs ( 2.35% of R)  space@8B+bitmap=31614635 B (3.92% of R*8)
+  level>=1024   :  1355442 runs ( 1.34% of R)  space@8B+bitmap=23456667 B (2.91% of R*8)
+  level>=2048   :   693166 runs ( 0.69% of R)  space@8B+bitmap=18158459 B (2.25% of R*8)
+  level>=4096   :   311959 runs ( 0.31% of R)  space@8B+bitmap=15108803 B (1.87% of R*8)
+  level>=8192   :   123973 runs ( 0.12% of R)  space@8B+bitmap=13604915 B (1.69% of R*8)
+  level>=16384  :    47884 runs ( 0.05% of R)  space@8B+bitmap=12996203 B (1.61% of R*8)
+  level>=32768  :    14824 runs ( 0.01% of R)  space@8B+bitmap=12731723 B (1.58% of R*8)
+  level>=65536  :     2783 runs ( 0.00% of R)  space@8B+bitmap=12635395 B (1.57% of R*8)
+  pointer distance: mean=174.5 max=65536
+saved 47457309 pointers to jumps-s32.bin

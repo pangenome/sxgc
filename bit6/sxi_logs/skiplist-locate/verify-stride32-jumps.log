@@ -1,0 +1,11 @@
+reconstructing text via anchor-segment inverse BWT (3336986759 rows)...
+  loaded text cache text-cache.bin
+  reconstructed in 2.2s
+  candidate fasta forward     : mismatch
+  SOURCE MATCH: fasta revrec (byte-exact, all 3336986759 bytes)
+using derived anchor values: stride=32 count=3153283 (+25226264 bytes vs member 11)
+loaded 47457309 pointers from jumps-s32.bin (cap=65536 censored=2783)
+active pointers (d>=2): 47457309  space: 392.3 MB raw(8B+bitmap) = 221.40% of the 177179983 B lite artifact
+verify: 4096 sampled rows, window=128, text mismatches=0, anchor mismatches=0, wall=11.08s (source=fasta revrec)
+  flat : mean=75485.8 p50=5839 p99=1310646 max=4166823 | locate latency mean=81537616 ns (=1080.2 ns/step)
+  skiplist: mean=75485.8 p50=5839 p99=1310646 max=4166823 (mean hops=256.97) | locate latency mean=1374436 ns = 59.32x flat

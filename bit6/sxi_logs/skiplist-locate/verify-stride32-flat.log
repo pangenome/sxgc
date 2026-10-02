@@ -1,0 +1,8 @@
+reconstructing text via anchor-segment inverse BWT (3336986759 rows)...
+  loaded text cache text-cache.bin
+  reconstructed in 2.4s
+  candidate fasta forward     : mismatch
+  SOURCE MATCH: fasta revrec (byte-exact, all 3336986759 bytes)
+using derived anchor values: stride=32 count=3153283 (+25226264 bytes vs member 11)
+verify: 4096 sampled rows, window=128, text mismatches=0, anchor mismatches=0, wall=9.51s (source=fasta revrec)
+  flat : mean=75485.8 p50=5839 p99=1310646 max=4166823 | locate latency mean=76847308 ns (=1018.0 ns/step)

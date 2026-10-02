@@ -1,0 +1,5 @@
+entry distance to anchored RUN (sampled 20000 rows; the '~1024 steps' banked model):
+  mean=1195.7 p50=766 p90=2707 p99=6227 max=71090
+  NOTE: entry into an anchored run does NOT resolve SA (within-run SA values
+  are not consecutive; e.g. BWT "annb$aa" run {a,a} has SA {4,2}); correct
+  termination requires the anchored TAIL row.

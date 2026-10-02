@@ -2584,3 +2584,22 @@ enrichment ~20x at top-20; null calibrated (3.2% at p<0.05). THE CHI FORK MATRIX
 GENOTYPING PLATFORM - the completeness+minimality theory now has empirical teeth.
 Rescue note: staged-lane retention empty again; code+journals rescued from the live worktree
 (gate data outputs excluded per the recipe rule - regenerable); manifest regenerated from truth.
+
+## SKIPLIST-LOCATE VERDICT (honest negative + regime split; the lite container's true shape)
+(1) THE CORRECTED WALK COST: the banked '~1024 worst case' was the anchored-run ENTRY distance;
+correct member-11-only locate must land on the anchored TAIL row: yeast235 mean 221,573 /
+p99 1.99M / max 6.52M LF steps (~217x worse than assumed) - the LF orbit is permutation-random
+(the same incompressibility from correction #19, now as WALK cost). On text-like pile-frag:
+mean ~3.1k steps - the lite container is VIABLE THERE.
+(2) DURBIN TRANSPLANT VERDICT: his skiplist discipline does NOT transplant as a chain over
+anchors (the LF-orbit has no monotone order to skip along); the transplantable piece is
+run-granular SAFE-JUMP pointers (parallel-band jumps valid for all rows of a run).
+(3) THE TRADE CURVE (measured): ~10% of the lite artifact buys only 1.4-2.3x; ~47% buys 5.8x;
+the FULL pointer set (~33 bits/run, 2.3x the lite artifact) buys 58.9x (790 hops - still not
+O(log)). CONCLUSION: O(log) locate at few-percent space does not exist in this family - it
+requires the phi/move class (member 8, the samples). 87.5% of yeast's mean sits in 2,705
+satellite mega-segments which jumps crush exactly - but the yeast bulk needs mid-level pointers
+half the runs possess.
+PRODUCT SHAPE SETTLED BY MEASUREMENT: LITE (no member 8) for the PILE - 0.44x text with
+usable ~3.1k-step walks and witness-anchored find-one unaffected; WARM (member 8) for
+satellite-heavy pangenome serving. The two-regime product line is now data-backed.

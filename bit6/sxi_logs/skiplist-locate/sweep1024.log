@@ -1,0 +1,27 @@
+stride=1024 anchors=98541 sum(delta)=3336986759 n=3336986759 CYCLE-OK wall=66.5s threads=48
+flat walk stride=1024 (tail-row termination, all rows): mean=221572.8 p50=83950 p90=560641 p99=1991444 p999=3884030 p9999=6183147 max=6516845
+  segment-length histogram (anchor-side, unweighted):
+    [     1,     2): 56 segments
+    [     2,     4): 127 segments
+    [     4,     8): 214 segments
+    [     8,    16): 353 segments
+    [    16,    32): 696 segments
+    [    32,    64): 1163 segments
+    [    64,   128): 2058 segments
+    [   128,   256): 3556 segments
+    [   256,   512): 5833 segments
+    [   512,  1024): 9107 segments
+    [  1024,  2048): 12469 segments
+    [  2048,  4096): 14269 segments
+    [  4096,  8192): 12740 segments
+    [  8192, 16384): 10252 segments
+    [ 16384, 32768): 8102 segments
+    [ 32768, 65536): 6376 segments
+    [ 65536,131072): 5050 segments
+    [131072,262144): 3415 segments
+    [262144,524288): 1793 segments
+    [524288,1048576): 694 segments
+    [1048576,2097152): 183 segments
+    [2097152,4194304): 33 segments
+    [4194304,8388608): 2 segments
+  wrote dist1024.bin

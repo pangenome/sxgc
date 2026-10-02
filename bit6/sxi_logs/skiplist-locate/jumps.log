@@ -1,0 +1,16 @@
+jump build: band-filter candidates=55011540 pointers=49307001 cap=16384 censored=669920 wall=634.2s
+  level>=2      : 49307001 runs (48.86% of R)  space@8B+bitmap=407069139 B (50.43% of R*8)
+  level>=4      : 44933978 runs (44.53% of R)  space@8B+bitmap=372084955 B (46.09% of R*8)
+  level>=8      : 40308503 runs (39.95% of R)  space@8B+bitmap=335081155 B (41.51% of R*8)
+  level>=16     : 34850616 runs (34.54% of R)  space@8B+bitmap=291418059 B (36.10% of R*8)
+  level>=32     : 29057836 runs (28.80% of R)  space@8B+bitmap=245075819 B (30.36% of R*8)
+  level>=64     : 23255262 runs (23.05% of R)  space@8B+bitmap=198655227 B (24.61% of R*8)
+  level>=128    : 17645405 runs (17.49% of R)  space@8B+bitmap=153776371 B (19.05% of R*8)
+  level>=256    : 12703982 runs (12.59% of R)  space@8B+bitmap=114244987 B (14.15% of R*8)
+  level>=512    :  8850690 runs ( 8.77% of R)  space@8B+bitmap=83418651 B (10.33% of R*8)
+  level>=1024   :  5913460 runs ( 5.86% of R)  space@8B+bitmap=59920811 B (7.42% of R*8)
+  level>=2048   :  3665807 runs ( 3.63% of R)  space@8B+bitmap=41939587 B (5.20% of R*8)
+  level>=4096   :  2152846 runs ( 2.13% of R)  space@8B+bitmap=29835899 B (3.70% of R*8)
+  level>=8192   :  1247325 runs ( 1.24% of R)  space@8B+bitmap=22591731 B (2.80% of R*8)
+  level>=16384  :   669920 runs ( 0.66% of R)  space@8B+bitmap=17972491 B (2.23% of R*8)
+  pointer distance: mean=727.8 max=16384

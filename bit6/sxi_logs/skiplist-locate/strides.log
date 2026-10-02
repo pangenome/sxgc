@@ -1,0 +1,16 @@
+stride=4096 anchors=24636 sum(delta)=3336986759 n=3336986759 CYCLE-OK wall=72.2s threads=48
+flat walk stride=4096 (tail-row termination, all rows): mean=562181.2 p50=272994 p90=1382884 p99=4167538 p999=8915774 p9999=11196296 max=11529994
+  segment-length histogram (anchor-side, unweighted):
+    [     1,     2): 3 segments
+stride=256 anchors=394161 sum(delta)=3336986759 n=3336986759 CYCLE-OK wall=74.6s threads=48
+flat walk stride=256 (tail-row termination, all rows): mean=113767.0 p50=27238 p90=278042 p99=1419147 p999=2849422 p9999=3899978 max=4233676
+  segment-length histogram (anchor-side, unweighted):
+    [     1,     2): 1001 segments
+stride=128 anchors=788321 sum(delta)=3336986759 n=3336986759 CYCLE-OK wall=79.6s threads=48
+flat walk stride=128 (tail-row termination, all rows): mean=93292.1 p50=15946 p90=219488 p99=1343538 p999=2785799 p9999=3899978 max=4233676
+  segment-length histogram (anchor-side, unweighted):
+    [     1,     2): 4018 segments
+stride=32 anchors=3153283 sum(delta)=3336986759 n=3336986759 CYCLE-OK wall=111.6s threads=48
+flat walk stride=32 (tail-row termination, all rows): mean=69352.7 p50=6120 p90=156499 p99=1132165 p999=2506625 p9999=3895811 max=4229509
+  segment-length histogram (anchor-side, unweighted):
+    [     1,     2): 64024 segments
