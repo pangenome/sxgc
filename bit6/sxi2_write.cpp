@@ -37,7 +37,7 @@ struct Out {
     void copy(const std::string& p,U off,U n){std::ifstream in(p,std::ios::binary);check(bool(in),"open copy");in.seekg(off);std::vector<unsigned char>b(1<<20);while(n){size_t z=std::min<U>(n,b.size());read(in,b.data(),z);write(b.data(),z);n-=z;}}
     void finish(U n,U k,U r,U flags,const std::string& validator,const std::string& source,const Member& source_chi,bool source_sxi2=false){
         U length=f.tellp();std::vector<unsigned char>h(64+40*ms.size());
-        memcpy(h.data(),"SXI2",4);put(h.data()+4,5,4);put(h.data()+8,n);put(h.data()+16,k);put(h.data()+24,r);
+        memcpy(h.data(),"SXI2",4);put(h.data()+4,6,4);put(h.data()+8,n);put(h.data()+16,k);put(h.data()+24,r);
         put(h.data()+32,ms.size(),4);put(h.data()+36,h.size(),4);put(h.data()+40,length);put(h.data()+48,flags);
         for(size_t i=0;i<ms.size();i++){auto&m=ms[i];auto*d=h.data()+64+40*i;
             put(d,m.id,4);put(d+4,m.codec,4);put(d+8,m.offset);put(d+16,m.bytes);put(d+24,m.count);
@@ -100,23 +100,89 @@ static void write_phi(Out& out,const std::vector<Edge>& edges,U n,U exceptions,
     unsigned ul=0;while(ul<63&&(__uint128_t(1)<<(ul+1))<=n/r)++ul;
     U lowbits=r*ul,highbits=(n>>ul)+r+1;
     auto lp=tmp.add(base,".phi-u-low"),hp=tmp.add(base,".phi-u-high");
-    auto rp=tmp.add(base,".phi-run"),mp=tmp.add(base,".phi-mask"),vp=tmp.add(base,".phi-exception");
-    Bits low(lp),high(hp),runs(rp),mask(mp),values(vp);U pos=0;
+    auto mp=tmp.add(base,".phi-mask"),vp=tmp.add(base,".phi-exception");
+    Bits low(lp),high(hp),mask(mp),values(vp);U pos=0;
+    // Block-anchored gamma-Golomb coding of the run permutation (codec 120).
+    const U BLOCK=64;
+    U blocks=(r+BLOCK-1)/BLOCK;
+    U k_best=0;U rice_bits=0;
+    {
+        // Exact cost of the DELTA STREAM for each candidate k: quotient
+        // gamma(q+1) then k low bits. Anchors/offsets accounted separately.
+        U best=~U(0);
+        for(U k=0;k<=32;k++){
+            U total=0;bool over=false;
+            for(U i=0;i<r;i++){
+                if(i%BLOCK==0)continue;
+                U prev=edges[i-1].run,cur=edges[i].run;
+                U d=cur>prev?cur-prev:prev-cur;U z=(d<<1)|((cur<prev)?1:0);
+                U q=(z>>k)+1;U w=64-__builtin_clzll(q);
+                total+=2*w-1+k;
+                if(total>best){over=true;break;}
+            }
+            if(!over&&total<best){best=total;k_best=k;rice_bits=total;}
+        }
+    }
+    // u EF + mask + exception values are shared by both layouts.
     for(U i=0;i<r;i++){
         const auto&e=edges[i];low.lsb(e.u,ul);
         U mark=(e.u>>ul)+i;while(pos<mark){high.bit(0);++pos;}high.bit(1);++pos;
-        runs.lsb(e.run,rw);bool non_singleton=e.v!=tails[(U(e.run)+1)%r];
+        bool non_singleton=e.v!=tails[(U(e.run)+1)%r];
         mask.bit(non_singleton);if(non_singleton)values.lsb(e.v,nw);
     }
     while(pos<highbits){high.bit(0);++pos;}
-    low.finish();high.finish();runs.finish();mask.finish();values.finish();
+    low.finish();high.finish();mask.finish();values.finish();
     check(low.count==lowbits&&high.count==highbits&&values.count==exceptions*nw,"phi dimensions");
-    out.begin(8,119,r);out.num(nw);out.num(rw);out.num(ul);out.num(lowbits);out.num(highbits);out.num(exceptions);
+    // Coded totals including headers and side tables.
+    U delta_bits=rice_bits;
+    U anchor_bits=blocks*rw,offset_bits=blocks*32;
+    U coded_total=72+(lowbits+7)/8+(highbits+7)/8+(anchor_bits+7)/8+(offset_bits+7)/8+(delta_bits+7)/8+(r+7)/8+(exceptions*nw+7)/8;
+    U flat_total=48+(lowbits+7)/8+(highbits+7)/8+(r*rw+7)/8+(r+7)/8+(exceptions*nw+7)/8;
+    if(coded_total>=flat_total&&!getenv("SXI2_FORCE_RICE")){
+        // Never-regress: permutation incompressible on this corpus; emit flat 119.
+        auto rp2=tmp.add(base,".phi-run");Bits runs2(rp2);
+        for(U i=0;i<r;i++)runs2.lsb(edges[i].run,rw);
+        runs2.finish();
+        out.begin(8,119,r);out.num(nw);out.num(rw);out.num(ul);out.num(lowbits);out.num(highbits);out.num(exceptions);
+        out.copy(lp,0,(lowbits+7)/8);out.copy(hp,0,(highbits+7)/8);
+        out.copy(rp2,0,(r*rw+7)/8);
+        out.copy(mp,0,(r+7)/8);out.copy(vp,0,(exceptions*nw+7)/8);
+        fprintf(stderr,"SXI2_ASSOC singleton=%llu exceptions=%llu coding=flat119 bits_per_run=%.6f (coded140=%llu flat=%llu)\n",
+            (unsigned long long)(r-exceptions),(unsigned long long)exceptions,
+            double(8*flat_total)/r,(unsigned long long)coded_total,(unsigned long long)flat_total);
+        return;
+    }
+    auto ap=tmp.add(base,".phi-run-anchor"),op=tmp.add(base,".phi-run-offset"),dp=tmp.add(base,".phi-run-delta");
+    Bits anchors(ap),offsets(op),deltas(dp);
+    U delta_pos=0;
+    for(U b=0;b<blocks;b++){
+        U first=b*BLOCK;
+        anchors.lsb(edges[first].run,rw);
+        offsets.lsb(delta_pos,32);
+        for(U i=first+1;i<first+BLOCK&&i<r;i++){
+            U prev=edges[i-1].run,cur=edges[i].run;
+            U d=cur>prev?cur-prev:prev-cur;U z=(d<<1)|((cur<prev)?1:0);
+            U q=(z>>k_best)+1;U w=64-__builtin_clzll(q);
+            for(U j=1;j<w;j++)deltas.bit(0);
+            for(U j=w;j--;)deltas.bit((q>>j)&1);
+            deltas.lsb(z&((k_best?((U(1)<<k_best)-1):U(0))),unsigned(k_best));
+        }
+        delta_pos=deltas.count;
+    }
+    anchors.finish();offsets.finish();deltas.finish();
+    check(deltas.count==rice_bits,"rice dimension mismatch");
+    U header=72;
+    U phi_bytes=coded_total;
+    out.begin(8,120,r);out.num(nw);out.num(rw);out.num(ul);out.num(lowbits);out.num(highbits);out.num(exceptions);
+    out.num(k_best);out.num(blocks);out.num(delta_bits);
     out.copy(lp,0,(lowbits+7)/8);out.copy(hp,0,(highbits+7)/8);
-    out.copy(rp,0,(r*rw+7)/8);out.copy(mp,0,(r+7)/8);out.copy(vp,0,(exceptions*nw+7)/8);
-    fprintf(stderr,"SXI2_ASSOC singleton=%llu exceptions=%llu bits_per_run=%.6f\n",
+    out.copy(ap,0,(anchor_bits+7)/8);out.copy(op,0,(offset_bits+7)/8);out.copy(dp,0,(delta_bits+7)/8);
+    out.copy(mp,0,(r+7)/8);out.copy(vp,0,(exceptions*nw+7)/8);
+    fprintf(stderr,"SXI2_ASSOC singleton=%llu exceptions=%llu coding=rice120 k=%llu bits_per_run=%.6f (perm: rw=%u flat %.2f -> coded %.2f)\n",
         (unsigned long long)(r-exceptions),(unsigned long long)exceptions,
-        double(8*(48+(lowbits+7)/8+(highbits+7)/8+(r*rw+7)/8+(r+7)/8+(exceptions*nw+7)/8))/r);
+        (unsigned long long)k_best,
+        double(8*phi_bytes)/r,
+        rw,double(8*((r*rw)+7)/8)/r,double(anchor_bits+offset_bits+delta_bits)/r);
 }
 static U packed(const unsigned char* p,U i,unsigned width){
     if(!width)return 0;U at=i*width;unsigned shift=at&7;unsigned z=(shift+width+7)/8;
@@ -129,7 +195,7 @@ static void repack_sxi2(const std::string& src,const std::string& dst,const std:
     auto base=(const unsigned char*)mmap(nullptr,st.st_size,PROT_READ,MAP_PRIVATE,fd,0);
     check(base!=MAP_FAILED,"mmap SXI2 source");
     check(!memcmp(base,"SXI2",4),"repack source magic");U version=get(base+4,4);
-    check(version==3||version==4,"repack needs banked SXI2 v3/v4");
+    check(version==3||version==4||version==5,"repack needs banked SXI2 v3/v4/v5");
     U n=get(base+8),k=get(base+16),r=get(base+24),count=get(base+32,4),flags=get(base+48);
     check(r&&r<=UINT32_MAX&&count>=7&&count<=9&&get(base+36,4)==64+40*count&&get(base+40)==U(st.st_size),"repack source header");
     std::map<unsigned,Member> ms;for(U i=0;i<count;i++){
@@ -137,26 +203,83 @@ static void repack_sxi2(const std::string& src,const std::string& dst,const std:
         check(m.offset<=U(st.st_size)&&m.bytes<=U(st.st_size)-m.offset,"repack member bounds");ms.emplace(m.id,m);
     }
     for(unsigned id:{1,4,5,8,9,10,11})check(ms.count(id),"repack missing member");
-    const auto&m=ms.at(8);check(m.codec==118&&m.count==r&&m.bytes>=40,"repack phi format");
+    const auto&m=ms.at(8);check((m.codec==118||m.codec==119)&&m.count==r,"repack phi format");
     const auto*p=base+m.offset;unsigned nw=get(p),rw=get(p+8),ul=get(p+16);U lb=get(p+24),hb=get(p+32);
     check(nw==std::max(1,64-__builtin_clzll(n-1?n-1:1))&&rw==std::max(1,64-__builtin_clzll(r-1?r-1:1))&&ul<=63&&lb==r*ul&&hb==(n>>ul)+r+1,"repack phi widths");
-    U low_bytes=(lb+7)/8,high_bytes=(hb+7)/8,v_bytes=(r*nw+7)/8,run_bytes=(r*rw+7)/8;
-    check(m.bytes==40+low_bytes+high_bytes+v_bytes+run_bytes,"repack phi bytes");
-    auto low=p+40,high=low+low_bytes,values=high+high_bytes,runs=values+v_bytes;
+    U low_bytes=(lb+7)/8,high_bytes=(hb+7)/8;
     std::vector<Edge> edges;edges.reserve(r);std::vector<unsigned char> seen((r+7)/8);U pos=0,previous=0;
-    for(U i=0;i<r;i++){
-        while(pos<hb&&!(high[pos>>3]&(1u<<(pos&7))))pos++;
-        check(pos<hb,"repack phi EF truncated");U u=((pos-i)<<ul)|packed(low,i,ul);pos++;
-        U v=packed(values,i,nw),run=packed(runs,i,rw);
-        check(u<n&&v<n&&run<r&&(i==0||u>previous),"repack phi edge range/order");
-        check(!(seen[run>>3]&(1u<<(run&7))),"repack duplicate run");seen[run>>3]|=1u<<(run&7);
-        edges.push_back({u,v,run});previous=u;
+    if(m.codec==119&&version==5){
+        // v5 input: implicit-v. 48-byte header (exceptions at 40), then u EF,
+        // runs, mask, exception values.
+        U exceptions=get(p+40);check(exceptions<=r,"repack v5 exceptions");
+        U run_bytes=(r*rw+7)/8,mask_bytes=(r+7)/8,v_bytes=(exceptions*nw+7)/8;
+        check(m.bytes==48+low_bytes+high_bytes+run_bytes+mask_bytes+v_bytes,"repack v5 phi bytes");
+        auto low=p+48,high=low+low_bytes,runs=high+high_bytes,mask=runs+run_bytes,values=mask+mask_bytes;
+        std::vector<U> tail_by_run(r,U(-1));U pos2=0;
+        for(U i=0;i<r;i++){
+            while(pos2<hb&&!(high[pos2>>3]&(1u<<(pos2&7))))pos2++;
+            check(pos2<hb,"repack v5 phi EF truncated");U u=((pos2-i)<<ul)|packed(low,i,ul);pos2++;
+            U run=packed(runs,i,rw);
+            check(u<n&&run<r&&(i==0||u>previous),"repack v5 phi edge range/order");
+            check(!(seen[run>>3]&(1u<<(run&7))),"repack v5 duplicate run");seen[run>>3]|=1u<<(run&7);
+            bool non_singleton=(mask[i>>3]>>(i&7))&1;
+            U v;
+            if(non_singleton){
+                // rank among exceptions up to i (recomputed incrementally below).
+                v=U(-1); // placeholder; filled in second pass
+            } else {
+                v=u; // corrected below once tail_by_run is complete
+            }
+            edges.push_back({u,v,run});previous=u;
+        }
+        // Second pass: decode exception values by mask rank; fill implicit v.
+        U rank=0;std::vector<U> exc_values(exceptions);
+        for(U i=0;i<exceptions;i++)exc_values[i]=packed(values,i,nw);
+        for(U i=0;i<r;i++){
+            if((mask[i>>3]>>(i&7))&1){edges[i].v=exc_values[rank++];}
+        }
+        // Non-exception v (implicit): v_i = tail of run (run_i + 1) = u of edge(run_i + 1).
+        std::vector<U> u_by_run(r);
+        for(const auto&e:edges)u_by_run[e.run]=e.u;
+        for(U i=0;i<r;i++){
+            if(!((mask[i>>3]>>(i&7))&1)){
+                edges[i].v=u_by_run[(edges[i].run+1)%r];
+            }
+        }
+        check(rank==exceptions,"repack v5 exception count");
+    } else {
+        U v_bytes=(r*nw+7)/8,run_bytes=(r*rw+7)/8;
+        check(m.bytes==40+low_bytes+high_bytes+v_bytes+run_bytes,"repack phi bytes");
+        auto low=p+40,high=low+low_bytes,values=high+high_bytes,runs=values+v_bytes;
+        for(U i=0;i<r;i++){
+            while(pos<hb&&!(high[pos>>3]&(1u<<(pos&7))))pos++;
+            check(pos<hb,"repack phi EF truncated");U u=((pos-i)<<ul)|packed(low,i,ul);pos++;
+            U v=packed(values,i,nw),run=packed(runs,i,rw);
+            check(u<n&&v<n&&run<r&&(i==0||u>previous),"repack phi edge range/order");
+            check(!(seen[run>>3]&(1u<<(run&7))),"repack duplicate run");seen[run>>3]|=1u<<(run&7);
+            edges.push_back({u,v,run});previous=u;
+        }
     }
     std::vector<U> tails;U exceptions=phi_exceptions(edges,tails);
     U projected=64+40*count;auto add=[&](U z){projected=(projected+7)/8*8+z;};
     for(unsigned id:{1,4,5})add(ms.at(id).bytes);
     for(unsigned id:{6,7})if(ms.count(id))add(ms.at(id).bytes);
-    add(48+low_bytes+high_bytes+run_bytes+(r+7)/8+(exceptions*nw+7)/8);
+    // Codec 120 member: 64-byte header + EF u + block anchors/offsets + Rice deltas + mask + exceptions.
+    {
+        const U BLOCK=64;U blocks=(r+BLOCK-1)/BLOCK;U best=~U(0),k_best=0;
+        for(U k=0;k<=32;k++){U total=0;bool over=false;
+            for(U i=0;i<r;i++){if(i%BLOCK==0)continue;
+                U prev=edges[i-1].run,cur=edges[i].run;U d=cur>prev?cur-prev:prev-cur;U z=(d<<1)|((cur<prev)?1:0);
+                U q=(z>>k)+1;U w=64-__builtin_clzll(q);
+                total+=2*w-1+k;if(total>best){over=true;break;}}
+            if(!over&&total<best){best=total;k_best=k;}
+        }
+        U delta_bytes=(best+7)/8,anchor_bytes=(blocks*rw+7)/8,offset_bytes=(blocks*32+7)/8;
+        // The writer never regresses: it emits whichever of coded/flat is smaller.
+        U coded_member=64+low_bytes+high_bytes+anchor_bytes+offset_bytes+delta_bytes+(r+7)/8+(exceptions*nw+7)/8;
+        U flat_member=48+low_bytes+high_bytes+(r*rw+7)/8+(r+7)/8+(exceptions*nw+7)/8;
+        add(std::min(coded_member,flat_member));
+    }
     add(ms.at(9).bytes);add(0);add(ms.at(11).bytes);
     check(!max_bytes||projected<=max_bytes,"SXI2 projected container exceeds --max-bytes");
     Temp tmp;Out out(dst,count);
@@ -274,7 +397,22 @@ int main(int argc,char**argv){try{
         unsigned chi_l=chi_count?std::max(0,int(std::log2(double(n+1)/double(chi_count)))):0;
         add(24+(chi_count*chi_l+7)/8+(((n>>chi_l)+chi_count+1+7)/8));
         for(unsigned id=6;id<=7;id++)for(const auto&m:c.members)if(m.id==id)add(m.bytes);
-        add(48+(u_lowbits+7)/8+(u_highbits+7)/8+(r*rw+7)/8+(r+7)/8+(exceptions*nw+7)/8);
+        {
+            // Codec 120 projection: exact Rice cost pass over in-RAM edges.
+            const U BLOCK=64;U blocks=(r+BLOCK-1)/BLOCK;U best=~U(0);
+            for(U k=0;k<=32;k++){U total=0;bool over=false;
+                for(U i=0;i<r;i++){if(i%BLOCK==0)continue;
+                    U prev=edges[i-1].run,cur=edges[i].run;U d=cur>prev?cur-prev:prev-cur;U z=(d<<1)|((cur<prev)?1:0);
+                    U q=(z>>k)+1;U w=64-__builtin_clzll(q);
+                    total+=2*w-1+k;if(total>best){over=true;break;}}
+                if(!over&&total<best)best=total;
+            }
+            {
+                U coded_member=64+(u_lowbits+7)/8+(u_highbits+7)/8+((blocks*rw)+7)/8+((blocks*32)+7)/8+(best+7)/8+(r+7)/8+(exceptions*nw+7)/8;
+                U flat_member=48+(u_lowbits+7)/8+(u_highbits+7)/8+((r*rw)+7)/8+(r+7)/8+(exceptions*nw+7)/8;
+                add(std::min(coded_member,flat_member));
+            }
+        }
         add(esc.size());add(0);add(16+8*((r+1023)/1024));
         check(projected<=max_bytes,"SXI2 projected container exceeds --max-bytes");
     }

@@ -1,0 +1,18 @@
+{
+  "command": [
+    "/home/erikg/worktrees/sxgc/pi-worktree-8e982cda-f619-40c9-8696-440ef20d9cb5-s0-0/xsa/target/release/xsa",
+    "mems",
+    "--sxi",
+    "/mnt/nvme3n1/erikg/sxi2-v6-4/pile-frag.sxi2",
+    "--reads",
+    "/home/erikg/worktrees/sxgc/pi-worktree-8e982cda-f619-40c9-8696-440ef20d9cb5-s0-0/bit6/sxi_logs/sxi2-v5/pile-frag.reads2.fa",
+    "--min-len",
+    "50",
+    "-j",
+    "1",
+    "--mode",
+    "text"
+  ],
+  "wall_seconds": 202.07638391200453,
+  "exit": 0
+}

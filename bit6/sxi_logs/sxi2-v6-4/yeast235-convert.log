@@ -1,0 +1,10 @@
+SXI2_ASSOC singleton=24727946 exceptions=76177099 coding=flat119 bits_per_run=59.191490 (coded140=761228084 flat=746589992)
+SXI2_MEMBER id=1 codec=101 count=100905045 bytes=98951370
+SXI2_MEMBER id=4 codec=4 count=0 bytes=12
+SXI2_MEMBER id=5 codec=105 count=85404336 bytes=77088381
+SXI2_MEMBER id=6 codec=6 count=351876 bytes=351876
+SXI2_MEMBER id=8 codec=119 count=100905045 bytes=746589992
+SXI2_MEMBER id=9 codec=109 count=0 bytes=0
+SXI2_MEMBER id=10 codec=110 count=100905045 bytes=0
+SXI2_MEMBER id=11 codec=111 count=98541 bytes=788344
+SXI2_PASS bytes=923770376

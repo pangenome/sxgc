@@ -2515,3 +2515,17 @@ line) - a memory-bounded BCR state is REQUIRED before any 50 GB attempt. The bat
 at pile scale is thus bounded by BOTH the top-merge wall AND memory - reinforcing that the
 O(runs) cross-LCP merge (cost model banked: 23.7 symbols/run conditional) is the real pile path;
 the tree proves the semantics that merge will inherit.
+
+## CORRECTION #19 + V6-4 NEGATIVE (the fleet catches the supervisor again): the permutation is incompressible
+My 12.29-bit delta-entropy measurement was a SAMPLING ARTIFACT (unique-sample entropy ~ log2(5000));
+the lane's exact gamma-Golomb accounting proves the run permutation is at flat-code cost on real
+corpora (yeast 28.16, pile-frag 30.35 = flat log2(r); consistent with the 0.507 coin-flip
+increasing-fraction) - the BWT scrambles the permutation to genuine randomness. 'Permutation
+compresses >2x' is RETRACTED; the 42.25 bits/run v6-3 association is closer to the true floor
+than the preflight's 25-30 (which partly assumed the same compressibility). Remaining unmeasured
+levers: exception-value coding and adaptive models - both speculative, neither scheduled.
+SHIPPED ANYWAY: format version 6, codec 120 (gamma-Golomb with never-regress fallback to 119) -
+zero-cost capability insurance for any future corpus with compressible permutation; three codec-path
+differentials PASS, three-scale gates PASS (ratios 1.000, byte-parity identical, phi unchanged
+59.19/42.25/71.96). v6-3 REMAINS THE SHIPPED CONTAINER. Container effort now redirects to the
+cross-LCP merge (the pile's actual blocker) per the lane's own recommendation - agreed.

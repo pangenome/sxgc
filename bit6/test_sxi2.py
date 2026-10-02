@@ -16,14 +16,15 @@ p.add_argument("--writer", default="/tmp/sxi_write_v4")
 p.add_argument("--compact-writer", default="/tmp/sxi2_write_v5")
 p.add_argument("--xsa", default="xsa/target/release/xsa")
 p.add_argument("--expected-version", type=int, default=3)
+p.add_argument("--rice-forced", action="store_true", help="set SXI2_FORCE_RICE so the writer emits codec 120 even when flat is smaller")
 a = p.parse_args()
 spec = importlib.util.spec_from_file_location(
     "escape_codec", pathlib.Path(__file__).parent / "sxi_logs/sxi2-v3/escape_codec.py")
 codec = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(codec)
 
-def call(*cmd):
-    return subprocess.run(list(map(str, cmd)), capture_output=True)
+def call(*cmd, env=None):
+    return subprocess.run(list(map(str, cmd)), capture_output=True, env=env)
 
 def http(path, pattern):
     with socket.socket() as s:
@@ -113,6 +114,11 @@ def fixture(root, label, text):
             escape[run] = [((u + j) % n, sa[(inverse[(u + j) % n] + 1) % n])
                            for j in range(size)]
     compact_cmd = [a.compact_writer, "--sxi", old, "--output", new, "--validator", a.xsa]
+    if a.rice_forced:
+        import os
+        env = {**os.environ, "SXI2_FORCE_RICE": "1"}
+    else:
+        env = None
     if escape:
         sidecar = prefix.with_suffix(".escape")
         sidecar.write_bytes(codec.encode(n, r, escape))
@@ -123,7 +129,12 @@ def fixture(root, label, text):
                       "--validator", a.xsa, "--escape", bad_sidecar)
         assert result.returncode != 0 and not rejected.exists()
         compact_cmd += ["--escape", sidecar]
-    result = call(*compact_cmd)
+    result = call(*compact_cmd, env=env)
+    if a.rice_forced:
+        raw8 = new.read_bytes()
+        n_members = struct.unpack_from("<I", raw8, 32)[0]
+        member8 = [struct.unpack_from("<II", raw8, 64+40*i) for i in range(n_members)]
+        assert any(mid == 8 and codec == 120 for mid, codec in member8), "forced rice did not emit codec 120"
     assert result.returncode == 0, result.stderr
     assert old.read_bytes()[:4] == b"SXI1" and new.read_bytes()[:4] == b"SXI2"
     raw = new.read_bytes()

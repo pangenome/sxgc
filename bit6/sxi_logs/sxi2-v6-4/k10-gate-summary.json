@@ -1,0 +1,17 @@
+{
+  "corpus": "k10",
+  "source": "/mnt/nvme3n1/erikg/sxi2-v6-3-main/k10.sxi2",
+  "target": "/mnt/nvme3n1/erikg/sxi2-v6-4/k10.sxi2",
+  "version": 6,
+  "r": 1859825862,
+  "v63_bytes": 20224350184,
+  "bytes": 20224350184,
+  "ratio_vs_v63": 1.0,
+  "phi_bytes": 16729980598,
+  "phi_bits_per_run": 71.96364321984034,
+  "v63_phi_bits_per_run": 71.96,
+  "native_sha256": "383daa41ad0b470945034f273ab571831d6c59d3300ece1d7aa1666effc9bcee",
+  "http_sha256": "bc429f50693789eae9acbbf877dc9da5a61d2c8d8933fdf181fd6d0076bcdb6d",
+  "http_median_ms": 3.526645014062524,
+  "v63_http_median_ms": 4.610146046616137
+}

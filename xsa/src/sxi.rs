@@ -87,7 +87,7 @@ impl Container {
         }
         rd(&mut f, &mut b[4..]);
         let version = u32at(&b,4);
-        need((&b[..4]==b"SXI1" && version==1) || (&b[..4]==b"SXI2" && (2..=5).contains(&version)), "unsupported version");
+        need((&b[..4]==b"SXI1" && version==1) || (&b[..4]==b"SXI2" && (2..=6).contains(&version)), "unsupported version");
         let n = u64at(&b, 8);
         let k = u64at(&b, 16);
         let r = header_run_count(&b);
@@ -137,7 +137,7 @@ impl Container {
                     if optional==1 && flags&16!=0 {7} else {6+i-3}
                 } else {8+i-(3+optional)}
             };
-            let expected_codec=if version>=3 {match m.id {1=>101,5=>105,8=>if version==5 {119} else {118},9=>109,10=>110,11=>111,_=>m.id}}
+            let expected_codec=if version>=3 {match m.id {1=>101,5=>105,8=>if version==5 {119} else if version==6 {if m.codec==119 {119} else {120}} else {118},9=>109,10=>110,11=>111,_=>m.id}}
                 else if version==2 {match m.id {1=>101,5=>105,8=>108,9=>109,_=>m.id}} else {m.id};
             need(m.id==expected_id && m.codec==expected_codec && u32at(&d,36)==0,
                 "unsupported/duplicate member");

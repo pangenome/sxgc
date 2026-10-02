@@ -125,7 +125,6 @@ pub fn chi(path: &str, m: &sxi::Member, n: u64, out: &mut impl Write) {
     need(ones==m.count,"EF count");low.end();high.end();
 }
 
-#[derive(Clone)]
 pub struct Phi {
     map: Arc<memmap2::Mmap>,
     off: usize,
@@ -143,6 +142,17 @@ pub struct Phi {
     u_high_bits: u64,
     v_width: u32,
     run_width: u32,
+    // Codec 120: block-anchored Rice-coded run permutation.
+    rice: bool,
+    rice_k: u32,
+    rice_blocks: u64,
+    rice_delta_bits: u64,
+    rice_anchor_off: usize,
+    rice_offset_off: usize,
+    rice_delta_off: usize,
+    // Sequential-access block cache (thread-safe; one 64-run block at a time).
+    cached_block: std::sync::Mutex<u64>,
+    cached_runs: std::sync::Mutex<Vec<u64>>,
     select: Vec<u64>,
     inverse: Vec<u64>,
     r: u64,
@@ -163,7 +173,7 @@ impl Phi {
             need(high < self.u_high_bits, "truncated phi edge");
             let u = ((high - i) << self.u_low_width)
                 | self.packed(self.u_low_off, i * self.u_low_width as u64, self.u_low_width);
-            let run = self.packed(self.run_off, i * self.run_width as u64, self.run_width);
+            let run = self.run_at(i);
             let v = self.v_at(i,run);
             visit(u, v, run);
             high += 1;
@@ -171,6 +181,46 @@ impl Phi {
     }
     fn packed(&self, off: usize, pos: u64, width: u32) -> u64 {
         packed_bits(&self.map[off..],pos,width)
+    }
+    /// Run id of edge i. Codec <=119: flat rw-bit stream. Codec 120:
+    /// block-anchored Rice deltas; sequential access hits a one-block cache.
+    fn run_at(&self, i: u64) -> u64 {
+        if !self.rice {return self.packed(self.run_off,i*self.run_width as u64,self.run_width);}
+        const BLOCK:u64=64;
+        let block=i/BLOCK;need(block<self.rice_blocks,"phi run block range");
+        if *self.cached_block.lock().unwrap()!=block {
+            let first=(block*BLOCK).min(self.r-1);
+            let anchor=self.packed(self.rice_anchor_off,block*self.run_width as u64,self.run_width);
+            let mut runs=self.cached_runs.lock().unwrap();
+            runs.clear();runs.push(anchor);
+            let bit_offset=self.packed(self.rice_offset_off,block*32,32);
+            let mut pos=bit_offset;let mut run=anchor;
+            let k=self.rice_k as u64;
+            let mut j=first+1;
+            while j<first+BLOCK&&j<self.r {
+                // gamma-coded quotient q (q>0): w-1 zero bits, then w-bit value.
+                let mut w=0u64;
+                while bit(&self.map[self.rice_delta_off..],pos)==0 {w+=1;pos+=1;}
+                pos+=1;
+                let mut q=1u64;
+                for _ in 0..w {
+                    q=(q<<1)|bit(&self.map[self.rice_delta_off..],pos) as u64;pos+=1;
+                }
+                let low=if k>0 {self.packed(self.rice_delta_off,pos,k as u32)} else {0};
+                pos+=k;
+                let z=((q-1)<<k)|low;
+                let d=z>>1;let back=(z&1)==1;
+                run=if back {
+                    run.checked_sub(d).unwrap_or_else(||die("phi run underflow"))
+                } else {
+                    run.checked_add(d).unwrap_or_else(||die("phi run overflow"))
+                };
+                runs.push(run);
+                j+=1;
+            }
+            *self.cached_block.lock().unwrap()=block;
+        }
+        self.cached_runs.lock().unwrap()[(i%BLOCK) as usize]
     }
     fn v_at(&self,i:u64,run:u64)->u64 {
         if !self.implicit_v {return self.packed(self.v_off,i*self.v_width as u64,self.v_width);}
@@ -195,7 +245,7 @@ impl Phi {
             }
             let u=((pos-i)<<self.u_low_width)
                 |self.packed(self.u_low_off,i*self.u_low_width as u64,self.u_low_width);
-            let run=self.packed(self.run_off,i*self.run_width as u64,self.run_width);
+            let run=self.run_at(i);
             let v=self.v_at(i,run);
             return (u,v,run);
         }
@@ -218,10 +268,13 @@ impl Phi {
         let file=File::open(path).unwrap();
         let map=Arc::new(unsafe{memmap2::Mmap::map(&file).unwrap()});
         let mut phi=Self{map,off:m.offset as usize,compact:c.version>=3,
-            u_low_off:0,u_high_off:0,v_off:0,run_off:0,mask_off:0,exception_prefix:Vec::new(),exception_count:0,implicit_v:c.version==5,tail_by_run:Vec::new(),u_low_width:0,u_high_bits:0,v_width:0,run_width:0,
+            u_low_off:0,u_high_off:0,v_off:0,run_off:0,mask_off:0,exception_prefix:Vec::new(),exception_count:0,implicit_v:c.version>=5,tail_by_run:Vec::new(),u_low_width:0,u_high_bits:0,v_width:0,run_width:0,
+            rice:false,rice_k:0,rice_blocks:0,rice_delta_bits:0,rice_anchor_off:0,rice_offset_off:0,rice_delta_off:0,
+            cached_block:std::sync::Mutex::new(u64::MAX),cached_runs:std::sync::Mutex::new(Vec::new()),
             select:Vec::new(),inverse:Vec::new(),r:c.r,n:c.n,escape:Vec::new(),payload:0,width:0};
         if phi.compact {
-            let header=if phi.implicit_v {48} else {40};
+            let rice_path=c.version==6 && m.codec==120;
+            let header=if rice_path {72} else if phi.implicit_v {48} else {40};
             need(m.bytes>=header,"compact phi header");
             let b=&phi.map[phi.off..phi.off+header as usize];
             let vw=u64le(&b[0..8]);let rw=u64le(&b[8..16]);let ul=u64le(&b[16..24]);
@@ -231,25 +284,64 @@ impl Phi {
             need(vw==expected_v&&rw==expected_r&&ul<=63&&lb==c.r*ul
                 &&hb==(c.n>>ul)+c.r+1,"compact phi widths");
             let low_bytes=(lb+7)/8;let high_bytes=(hb+7)/8;
-            let run_bytes=(c.r*rw+7)/8;
-            let exceptions=if phi.implicit_v {u64le(&b[40..48])} else {0};
-            need(exceptions<=c.r,"phi exception count");
-            let v_bytes=(if phi.implicit_v {exceptions} else {c.r})*vw;
-            let v_bytes=(v_bytes+7)/8;
-            let mask_bytes=if phi.implicit_v {(c.r+7)/8} else {0};
-            need(m.bytes==header+low_bytes+high_bytes+run_bytes+mask_bytes+v_bytes,"compact phi size");
-            phi.u_low_width=ul as u32;phi.u_high_bits=hb;phi.v_width=vw as u32;phi.run_width=rw as u32;
-            phi.exception_count=exceptions;
-            phi.u_low_off=phi.off+header as usize;
-            phi.u_high_off=phi.u_low_off+low_bytes as usize;
-            if phi.implicit_v {
+            if rice_path {
+                // Codec 120: exceptions(40), k(48), blocks(56), delta_bits(64).
+                let exceptions=u64le(&b[40..48]);
+                let k=u64le(&b[48..56]);let blocks=u64le(&b[56..64]);let delta_bits=u64le(&b[64..72]);
+                let expected_blocks=(c.r+63)/64;
+                need(k<=32&&blocks==expected_blocks&&delta_bits>0,"phi rice header");
+                phi.rice=true;phi.rice_k=k as u32;phi.rice_blocks=blocks;phi.rice_delta_bits=delta_bits;
+                let anchor_bytes=((blocks*rw)+7)/8;let offset_bytes=((blocks*32)+7)/8;
+                let delta_bytes=(delta_bits+7)/8;
+                need(exceptions<=c.r,"phi exception count");
+                let v_bytes=((exceptions*vw)+7)/8;
+                let mask_bytes=(c.r+7)/8;
+                need(m.bytes==header+low_bytes+high_bytes+anchor_bytes+offset_bytes+delta_bytes+mask_bytes+v_bytes,"compact phi size");
+                phi.u_low_off=phi.off+header as usize;
+                phi.u_high_off=phi.u_low_off+low_bytes as usize;
+                phi.rice_anchor_off=phi.u_high_off+high_bytes as usize;
+                phi.rice_offset_off=phi.rice_anchor_off+anchor_bytes as usize;
+                phi.rice_delta_off=phi.rice_offset_off+offset_bytes as usize;
+                phi.mask_off=phi.rice_delta_off+delta_bytes as usize;
+                phi.v_off=phi.mask_off+mask_bytes as usize;
+                phi.exception_count=exceptions;
+                padding(&phi.map[phi.u_low_off..phi.u_high_off],lb);
+                padding(&phi.map[phi.u_high_off..phi.u_high_off+high_bytes as usize],hb);
+                padding(&phi.map[phi.rice_delta_off..phi.rice_delta_off+delta_bytes as usize],delta_bits);
+                padding(&phi.map[phi.v_off..phi.v_off+v_bytes as usize],exceptions*vw);
+            } else if phi.implicit_v {
+                let exceptions=u64le(&b[40..48]);
+                let run_bytes=(c.r*rw+7)/8;
+                need(exceptions<=c.r,"phi exception count");
+                let v_bytes=(exceptions*vw+7)/8;
+                let mask_bytes=(c.r+7)/8;
+                need(m.bytes==header+low_bytes+high_bytes+run_bytes+mask_bytes+v_bytes,"compact phi size");
+                phi.u_low_width=ul as u32;phi.u_high_bits=hb;phi.v_width=vw as u32;phi.run_width=rw as u32;
+                phi.exception_count=exceptions;
+                phi.u_low_off=phi.off+header as usize;
+                phi.u_high_off=phi.u_low_off+low_bytes as usize;
                 phi.run_off=phi.u_high_off+high_bytes as usize;
                 phi.mask_off=phi.run_off+run_bytes as usize;
                 phi.v_off=phi.mask_off+mask_bytes as usize;
-                phi.exception_prefix.push(0);
-                let mut seen=0u64;
+            } else {
+                let run_bytes=(c.r*rw+7)/8;
+                let v_bytes=(c.r*vw+7)/8;
+                need(m.bytes==header+low_bytes+high_bytes+v_bytes+run_bytes,"compact phi size");
+                phi.u_low_width=ul as u32;phi.u_high_bits=hb;phi.v_width=vw as u32;phi.run_width=rw as u32;
+                phi.u_low_off=phi.off+header as usize;
+                phi.u_high_off=phi.u_low_off+low_bytes as usize;
+                phi.v_off=phi.u_high_off+high_bytes as usize;
+                phi.run_off=phi.v_off+v_bytes as usize;
+            }
+            phi.u_low_width=ul as u32;phi.u_high_bits=hb;phi.v_width=vw as u32;phi.run_width=rw as u32;
+            phi.exception_prefix.push(0);
+            let mut seen=0u64;
+            let mask_bytes=if phi.rice {(c.r+7)/8} else if phi.implicit_v {(c.r+7)/8} else {0};
+            let mask_off=if phi.rice {phi.mask_off} else {0};
+            if phi.implicit_v||phi.rice {
+                let mask_base=if phi.rice {mask_off} else {phi.mask_off};
                 for word in 0..(c.r+63)/64 {
-                    let start=phi.mask_off+(word*8) as usize;
+                    let start=mask_base+(word*8) as usize;
                     let mut flags=0u64;
                     for j in 0..((mask_bytes as usize).saturating_sub((word*8) as usize)).min(8) {
                         flags|=(phi.map[start+j] as u64)<<(8*j);
@@ -258,15 +350,8 @@ impl Phi {
                     seen+=flags.count_ones() as u64;
                     phi.exception_prefix.push(seen as u32);
                 }
-                need(seen==exceptions,"phi exception bitmap count");
-            } else {
-                phi.v_off=phi.u_high_off+high_bytes as usize;
-                phi.run_off=phi.v_off+v_bytes as usize;
+                need(seen==phi.exception_count,"phi exception bitmap count");
             }
-            padding(&phi.map[phi.u_low_off..phi.u_high_off],lb);
-            padding(&phi.map[phi.u_high_off..phi.u_high_off+high_bytes as usize],hb);
-            padding(&phi.map[phi.run_off..phi.run_off+run_bytes as usize],c.r*rw);
-            padding(&phi.map[phi.v_off..phi.v_off+v_bytes as usize],(if phi.implicit_v {exceptions} else {c.r})*vw);
             let mut ones=0u64;
             for pos in 0..hb {
                 if bit(&phi.map[phi.u_high_off..],pos)!=0 {
@@ -294,7 +379,7 @@ impl Phi {
                 let u=((highpos-i)<<phi.u_low_width)
                     |phi.packed(phi.u_low_off,i*phi.u_low_width as u64,phi.u_low_width);
                 highpos+=1;
-                let run=phi.packed(phi.run_off,i*phi.run_width as u64,phi.run_width);
+                let run=phi.run_at(i);
                 let v=if phi.implicit_v {0} else {phi.packed(phi.v_off,i*phi.v_width as u64,phi.v_width)};
                 (u,v,run)
             } else {phi.edge(i)};

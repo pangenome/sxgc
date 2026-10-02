@@ -1,0 +1,17 @@
+{
+  "corpus": "yeast235",
+  "source": "/mnt/nvme3n1/erikg/sxi2-v6-3-3eae0415/yeast235.sxi2",
+  "target": "/mnt/nvme3n1/erikg/sxi2-v6-4/yeast235.sxi2",
+  "version": 6,
+  "r": 100905045,
+  "v63_bytes": 923770376,
+  "bytes": 923770376,
+  "ratio_vs_v63": 1.0,
+  "phi_bytes": 746589992,
+  "phi_bits_per_run": 59.191489741667525,
+  "v63_phi_bits_per_run": 59.19,
+  "native_sha256": "5eb69b87b794b709d08d39df379fe1511241bda879f80e2139dd9f2404725519",
+  "http_sha256": "2ebe33c33ce4e238ecac5ae09a99ad758e047e9bd949e13a86bb43e7db277c4a",
+  "http_median_ms": 392.9926020791754,
+  "v63_http_median_ms": 440.1911789314047
+}
