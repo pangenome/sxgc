@@ -1,0 +1,25 @@
+2026-10-02 16:00 UTC
+?? bit6/cross_lcp_merge.cpp
+?? bit6/sxi_logs/cross-lcp-impl/
+--- staged (must be empty):
+--- untracked:
+bit6/cross_lcp_merge.cpp
+bit6/sxi_logs/cross-lcp-impl/COST_TABLE.md
+bit6/sxi_logs/cross-lcp-impl/README.md
+bit6/sxi_logs/cross-lcp-impl/chi-gate.log
+bit6/sxi_logs/cross-lcp-impl/four-file-gate.log
+bit6/sxi_logs/cross-lcp-impl/make_cost_table.py
+bit6/sxi_logs/cross-lcp-impl/merge-serial.err
+bit6/sxi_logs/cross-lcp-impl/merge-serial.log
+bit6/sxi_logs/cross-lcp-impl/merge-serial.time
+bit6/sxi_logs/cross-lcp-impl/merge-tree.err
+bit6/sxi_logs/cross-lcp-impl/merge-tree.log
+bit6/sxi_logs/cross-lcp-impl/merge-tree.time
+bit6/sxi_logs/cross-lcp-impl/merged-chi.combined
+bit6/sxi_logs/cross-lcp-impl/merged-chi.err
+bit6/sxi_logs/cross-lcp-impl/merged-chi.log
+bit6/sxi_logs/cross-lcp-impl/merged-chi.time
+bit6/sxi_logs/cross-lcp-impl/merged-endpoints.err
+bit6/sxi_logs/cross-lcp-impl/merged-endpoints.log
+bit6/sxi_logs/cross-lcp-impl/merged-endpoints.time
+bit6/sxi_logs/cross-lcp-impl/merged-slim.err

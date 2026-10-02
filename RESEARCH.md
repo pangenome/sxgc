@@ -2544,3 +2544,25 @@ reset cap binds only beyond 2^63-1. The remaining obligations for the minimality
 now the MINIMAL precise set: O3_maximal + O4_distinct (plus an astronomic-texts-only O2 lock),
 with the assembly lemma minimality_lower_of_O3_O4 PROVEN - the last sorry now reduces cleanly
 to two statement-locked lemmas. Full lake build green (6 jobs).
+
+## THE CROSS-LCP MERGE IS DONE - THE PILE'S BLOCKER HAS FALLEN (round 5, glm-5.3 lane)
+bit6/cross_lcp_merge.cpp (999 lines, verify-by-binary: builds from main). THE ALGORITHM
+(refined beyond the design lock): merged vs local order differs only on PREFIX pairs; every
+short side is an ANCHOR whose occurrence block is found by backward search on the chunk's own
+BWT (walk stops when the block drops below 2 members); merged order = local order with anchor
+blocks sorted in place by merged key - exact, with block splits handled naturally. Dense prefix
+fingerprints over M.M, 16-symbol checked fast path, galloping probes + bisect, FULL direct
+verification of every proposal (a hash disagreement aborts - caught two real bugs in dev).
+Periodic chunks (tied classes wrapping position 0) handled BCR-safe. ~150k brute selftest cases.
+GATES ALL GREEN: (a) 26+ synthetic collections byte-identical vs direct BCR incl. periodic/
+all-equal; (b) FULL 16-chunk fragment: four files byte-identical (SHA-256) under BOTH tree and
+serial schedules, chi = 306,164,765 exact, sA 2,449,318,120 bytes; (c) COST: TREE 1,331.4s vs
+banked 19,596.8s batch-BCR = 14.7x FASTER; serial 2,991.9s vs 20,599s = 6.9x; exactly 1.00
+comparisons/position, 17.9 verified symbols/symbol, 2.1 probes/comparison, peak RSS 27.5 GB.
+HONEST CAVEATS: per-position amortized O(1) (runs genuinely split) - the merge is linear with
+tiny constants, not O(r); fully-periodic large inputs slower (still exact); the finish sequence
+currently uses the reference parse for slim LCE (the pile needs the parse-free decoupled slim -
+the remaining piece); artifacts at /home/erikg/cross-lcp-run deletable per the recipe rule.
+PILE PROJECTION: 1.31e12 positions x ~18 symbols ~ 2.3e13 verified symbols ~ hours-to-a-day on
+48 cores at 27-100 GB-class RSS per pair. THE PILE'S REMAINING LIST: parse-free slim at scale +
+the full widened-run battery. Construction itself: SOLVED.

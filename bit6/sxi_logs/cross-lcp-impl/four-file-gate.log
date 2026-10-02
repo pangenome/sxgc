@@ -1,0 +1,5 @@
+CMP_PASS .rlebwt
+CMP_PASS .rlebwt.meta
+CMP_PASS .ssa
+CMP_PASS .ssa_t
+FOUR_FILE_GATE_PASS

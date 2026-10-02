@@ -1,0 +1,5 @@
+CMP_PASS serial .rlebwt
+CMP_PASS serial .rlebwt.meta
+CMP_PASS serial .ssa
+CMP_PASS serial .ssa_t
+SERIAL_FOUR_FILE_GATE_PASS

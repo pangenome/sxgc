@@ -1,0 +1,127 @@
+CROSS_PHASE m2-build wall=0.157 cumulative=33.469 peak_rss_kib=2083668
+CROSS_PHASE hash-build wall=1.197 cumulative=34.666 peak_rss_kib=3040588
+CROSS_PHASE anchor+repair wall=1.564 cumulative=36.230 peak_rss_kib=3131560
+CROSS_PHASE cross-merge wall=12.433 cumulative=48.663 peak_rss_kib=3461908
+CROSS_PHASE sxcr-count wall=1.002 cumulative=49.844 peak_rss_kib=3461908
+CROSS_PHASE sxcr-write wall=6.524 cumulative=56.368 peak_rss_kib=3461908
+CROSS_PHASE sidecar-write wall=0.543 cumulative=56.911 peak_rss_kib=3461908
+CROSS_PHASE m2-build wall=0.231 cumulative=81.615 peak_rss_kib=3461908
+CROSS_PHASE hash-build wall=1.798 cumulative=83.413 peak_rss_kib=4585596
+CROSS_PHASE anchor+repair wall=2.252 cumulative=85.665 peak_rss_kib=4749436
+CROSS_PHASE cross-merge wall=19.441 cumulative=105.106 peak_rss_kib=5179296
+CROSS_PHASE sxcr-count wall=1.599 cumulative=106.972 peak_rss_kib=5179296
+CROSS_PHASE sxcr-write wall=10.219 cumulative=117.191 peak_rss_kib=5179296
+CROSS_PHASE sidecar-write wall=0.804 cumulative=117.995 peak_rss_kib=5179296
+CROSS_PHASE m2-build wall=0.321 cumulative=148.389 peak_rss_kib=5179296
+CROSS_PHASE hash-build wall=2.412 cumulative=150.801 peak_rss_kib=6103128
+CROSS_PHASE anchor+repair wall=3.111 cumulative=153.913 peak_rss_kib=6350936
+CROSS_PHASE cross-merge wall=26.595 cumulative=180.508 peak_rss_kib=6904444
+CROSS_PHASE sxcr-count wall=2.138 cumulative=183.017 peak_rss_kib=6904444
+CROSS_PHASE sxcr-write wall=14.032 cumulative=197.049 peak_rss_kib=6904444
+CROSS_PHASE sidecar-write wall=1.086 cumulative=198.135 peak_rss_kib=6904444
+CROSS_PHASE m2-build wall=0.367 cumulative=233.790 peak_rss_kib=6904444
+CROSS_PHASE hash-build wall=2.951 cumulative=236.742 peak_rss_kib=7630700
+CROSS_PHASE anchor+repair wall=3.964 cumulative=240.705 peak_rss_kib=7962476
+CROSS_PHASE cross-merge wall=33.165 cumulative=273.870 peak_rss_kib=8622380
+CROSS_PHASE sxcr-count wall=2.669 cumulative=276.947 peak_rss_kib=8622380
+CROSS_PHASE sxcr-write wall=18.332 cumulative=295.279 peak_rss_kib=8622380
+CROSS_PHASE sidecar-write wall=1.336 cumulative=296.615 peak_rss_kib=8622380
+CROSS_PHASE m2-build wall=0.467 cumulative=336.033 peak_rss_kib=8622380
+CROSS_PHASE hash-build wall=3.713 cumulative=339.747 peak_rss_kib=9150016
+CROSS_PHASE anchor+repair wall=4.712 cumulative=344.459 peak_rss_kib=9561664
+CROSS_PHASE cross-merge wall=43.032 cumulative=387.491 peak_rss_kib=10339016
+CROSS_PHASE sxcr-count wall=3.723 cumulative=391.755 peak_rss_kib=10339016
+CROSS_PHASE sxcr-write wall=21.444 cumulative=413.199 peak_rss_kib=10339016
+CROSS_PHASE sidecar-write wall=1.705 cumulative=414.904 peak_rss_kib=10339016
+CROSS_PHASE m2-build wall=0.567 cumulative=460.643 peak_rss_kib=10339016
+CROSS_PHASE hash-build wall=4.155 cumulative=464.798 peak_rss_kib=10670288
+CROSS_PHASE anchor+repair wall=5.441 cumulative=470.238 peak_rss_kib=11165904
+CROSS_PHASE cross-merge wall=48.042 cumulative=518.280 peak_rss_kib=12056972
+CROSS_PHASE sxcr-count wall=3.733 cumulative=522.652 peak_rss_kib=12056972
+CROSS_PHASE sxcr-write wall=24.895 cumulative=547.547 peak_rss_kib=12056972
+CROSS_PHASE sidecar-write wall=1.913 cumulative=549.459 peak_rss_kib=12056972
+CROSS_PHASE m2-build wall=0.581 cumulative=600.586 peak_rss_kib=12056972
+CROSS_PHASE hash-build wall=5.370 cumulative=605.956 peak_rss_kib=12187864
+CROSS_PHASE anchor+repair wall=6.594 cumulative=612.551 peak_rss_kib=12765400
+CROSS_PHASE cross-merge wall=60.189 cumulative=672.739 peak_rss_kib=13774352
+CROSS_PHASE sxcr-count wall=4.251 cumulative=677.736 peak_rss_kib=13774352
+CROSS_PHASE sxcr-write wall=28.301 cumulative=706.037 peak_rss_kib=13774352
+CROSS_PHASE sidecar-write wall=2.120 cumulative=708.156 peak_rss_kib=13774352
+CROSS_PHASE m2-build wall=0.647 cumulative=763.489 peak_rss_kib=13774352
+CROSS_PHASE hash-build wall=5.112 cumulative=768.601 peak_rss_kib=13774352
+CROSS_PHASE anchor+repair wall=6.834 cumulative=775.435 peak_rss_kib=14370068
+CROSS_PHASE cross-merge wall=58.697 cumulative=834.132 peak_rss_kib=15492676
+CROSS_PHASE sxcr-count wall=4.768 cumulative=839.626 peak_rss_kib=15492676
+CROSS_PHASE sxcr-write wall=31.508 cumulative=871.134 peak_rss_kib=15492676
+CROSS_PHASE sidecar-write wall=2.605 cumulative=873.740 peak_rss_kib=15492676
+CROSS_PHASE m2-build wall=0.855 cumulative=935.853 peak_rss_kib=15492676
+CROSS_PHASE hash-build wall=7.106 cumulative=942.959 peak_rss_kib=15492676
+CROSS_PHASE anchor+repair wall=11.958 cumulative=954.917 peak_rss_kib=15965648
+CROSS_PHASE cross-merge wall=85.766 cumulative=1040.683 peak_rss_kib=17203904
+CROSS_PHASE sxcr-count wall=7.494 cumulative=1049.092 peak_rss_kib=17203904
+CROSS_PHASE sxcr-write wall=48.452 cumulative=1097.545 peak_rss_kib=17203904
+CROSS_PHASE sidecar-write wall=3.130 cumulative=1100.675 peak_rss_kib=17203904
+CROSS_PHASE m2-build wall=0.830 cumulative=1171.593 peak_rss_kib=17203904
+CROSS_PHASE hash-build wall=6.512 cumulative=1178.105 peak_rss_kib=17203904
+CROSS_PHASE anchor+repair wall=10.982 cumulative=1189.087 peak_rss_kib=17568256
+CROSS_PHASE cross-merge wall=100.389 cumulative=1289.476 peak_rss_kib=18922852
+CROSS_PHASE sxcr-count wall=14.116 cumulative=1304.726 peak_rss_kib=18922852
+CROSS_PHASE sxcr-write wall=84.395 cumulative=1389.121 peak_rss_kib=18922852
+CROSS_PHASE sidecar-write wall=4.555 cumulative=1393.675 peak_rss_kib=18922852
+CROSS_PHASE m2-build wall=0.971 cumulative=1526.333 peak_rss_kib=18922852
+CROSS_PHASE hash-build wall=7.372 cumulative=1533.705 peak_rss_kib=18922852
+CROSS_PHASE anchor+repair wall=11.869 cumulative=1545.574 peak_rss_kib=19166456
+CROSS_PHASE cross-merge wall=91.031 cumulative=1636.605 peak_rss_kib=20634468
+CROSS_PHASE sxcr-count wall=8.388 cumulative=1646.145 peak_rss_kib=20634468
+CROSS_PHASE sxcr-write wall=49.124 cumulative=1695.269 peak_rss_kib=20634468
+CROSS_PHASE sidecar-write wall=3.636 cumulative=1698.904 peak_rss_kib=20634468
+CROSS_PHASE m2-build wall=1.068 cumulative=1780.754 peak_rss_kib=20634468
+CROSS_PHASE hash-build wall=9.513 cumulative=1790.267 peak_rss_kib=20634468
+CROSS_PHASE anchor+repair wall=18.327 cumulative=1808.594 peak_rss_kib=20761316
+CROSS_PHASE cross-merge wall=113.453 cumulative=1922.047 peak_rss_kib=22346948
+CROSS_PHASE sxcr-count wall=7.429 cumulative=1931.412 peak_rss_kib=22346948
+CROSS_PHASE sxcr-write wall=47.822 cumulative=1979.234 peak_rss_kib=22346948
+CROSS_PHASE sidecar-write wall=3.730 cumulative=1982.964 peak_rss_kib=22346948
+CROSS_PHASE m2-build wall=1.125 cumulative=2063.131 peak_rss_kib=22346948
+CROSS_PHASE hash-build wall=8.397 cumulative=2071.528 peak_rss_kib=22346948
+CROSS_PHASE anchor+repair wall=10.811 cumulative=2082.338 peak_rss_kib=22360796
+CROSS_PHASE cross-merge wall=97.081 cumulative=2179.419 peak_rss_kib=24063856
+CROSS_PHASE sxcr-count wall=9.408 cumulative=2190.136 peak_rss_kib=24063856
+CROSS_PHASE sxcr-write wall=58.066 cumulative=2248.203 peak_rss_kib=24063856
+CROSS_PHASE sidecar-write wall=3.714 cumulative=2251.916 peak_rss_kib=24063856
+CROSS_PHASE m2-build wall=1.735 cumulative=2349.242 peak_rss_kib=24063856
+CROSS_PHASE hash-build wall=14.971 cumulative=2364.213 peak_rss_kib=24063856
+CROSS_PHASE anchor+repair wall=16.134 cumulative=2380.347 peak_rss_kib=24063856
+CROSS_PHASE cross-merge wall=172.900 cumulative=2553.247 peak_rss_kib=25778660
+CROSS_PHASE sxcr-count wall=17.480 cumulative=2572.788 peak_rss_kib=25778660
+CROSS_PHASE sxcr-write wall=77.377 cumulative=2650.165 peak_rss_kib=25778660
+CROSS_PHASE sidecar-write wall=7.739 cumulative=2657.903 peak_rss_kib=25778660
+CROSS_PHASE m2-build wall=3.128 cumulative=2807.798 peak_rss_kib=25778660
+CROSS_PHASE hash-build wall=11.194 cumulative=2818.992 peak_rss_kib=25778660
+CROSS_PHASE anchor+repair wall=24.674 cumulative=2843.666 peak_rss_kib=25778660
+CROSS_PHASE cross-merge wall=99.150 cumulative=2942.816 peak_rss_kib=27480048
+CROSS_PHASE emit-count wall=10.045 cumulative=2954.014 peak_rss_kib=27480048
+CROSS_PHASE emit-write wall=45.905 cumulative=2999.919 peak_rss_kib=27480048
+	Command being timed: "/tmp/cross_lcp_merge /home/erikg/sxgc/vendor/chunk-merge-v3/chunks 16 1082130213 /home/erikg/cross-lcp-run/serial/frag --work /home/erikg/cross-lcp-run/serial-work --serial --threads 8"
+	User time (seconds): 2980.28
+	System time (seconds): 369.06
+	Percent of CPU this job got: 111%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 50:00.69
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 27480048
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 85840135
+	Voluntary context switches: 11829
+	Involuntary context switches: 24479
+	Swaps: 0
+	File system inputs: 4200984
+	File system outputs: 217000480
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
