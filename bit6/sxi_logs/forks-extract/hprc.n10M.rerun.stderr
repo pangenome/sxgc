@@ -1,0 +1,35 @@
+forks: opening and validating /home/erikg/sxgc-466/milestone/hprc.sxi ...
+forks: SXI1 v1 n=1403221068481 k=38790 runs=2739737285 chi=2250211129 (validated in 244.4s)
+forks: run tables loaded in 361.5s
+forks: 38790 named records indexed in 0.0s
+forks: chi loaded: 10000000 witnesses kept of 2250211129 stored (--n 10000000), max filter 5855300749 in 0.1s
+forks: 10832713 run-edge slots matched chi in 3.3s; folding singleton rows
+forks: 10000000 witnesses; 20757970 distinct runs witness them (11682900583 rows to resolve)
+forks: criterion C holds (char-count gcd 1); φ-domain fast path
+forks: cross-checked φ chain vs LF walk on 16 runs
+forks: resolved 11682900583 rows over 20757970 runs in 252.7s
+forks: emitted 20251533 records (20251533 classes) over 10000000 witnesses in 199.5s; 10387126788 string slots; 60443628959 output bytes
+forks: total wall 1065.8s; 9382.78853194817 witnesses/s end-to-end
+	Command being timed: "../../../xsa/target/release/xsa forks --jsonl /home/erikg/sxgc-466/milestone/hprc.sxi --n 10000000 -o hprc.n10M.forks.jsonl"
+	User time (seconds): 56823.03
+	System time (seconds): 1034.51
+	Percent of CPU this job got: 5324%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 18:06.62
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 195073232
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 2
+	Minor (reclaiming a frame) page faults: 109700155
+	Voluntary context switches: 338344
+	Involuntary context switches: 3279533
+	Swaps: 0
+	File system inputs: 9385976
+	File system outputs: 118054048
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

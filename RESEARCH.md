@@ -2566,3 +2566,21 @@ the remaining piece); artifacts at /home/erikg/cross-lcp-run deletable per the r
 PILE PROJECTION: 1.31e12 positions x ~18 symbols ~ 2.3e13 verified symbols ~ hours-to-a-day on
 48 cores at 27-100 GB-class RSS per pair. THE PILE'S REMAINING LIST: parse-free slim at scale +
 the full widened-run battery. Construction itself: SOLVED.
+
+## PAPER TWO'S SUBSTRATE IS REAL: xsa forks SHIPPED AND GWAS-DEMONSTRATED (round 5, forks lane)
+THE FORK-MATRIX EXTRACTOR: xsa forks --jsonl (dual-format SXI1 raw + SXI2 v3), ratified
+STRING x (WITNESS,CLASS) binary-presence semantics. The semantics were RESOLVED EMPIRICALLY:
+forward-cyclic stream confirmed; each witness resolves to its run-boundary row; occurrences =
+rows of the meeting runs; classes = distinct BWT chars (audit blockers dissolved); multi-label
+presence kept; phi-domain fast path from ssa/ssa_t alone with criterion-C runtime check.
+GATES ALL PASS: (a) YEAST FULL: exactly 85,404,336 witnesses (hard invariant), 182,032,143
+records, 41.7 GB in 457s; 100-witness direct-text verification 6,547/6,547 rows, 0 failures.
+(b) 466 PREFIX: 10,000,000 witnesses exact, 20.25M records, 60.4 GB, 18:07 wall, 186 GB RSS,
+byte-identical across runs; PROJECTED FULL-466: ~21 h wall, ~13.6 TB output - honest limit:
+the in-RAM string-set arena (~5.6 TB at full scale) needs a batched-emission redesign first.
+(c) THE GWAS SMOKE - THE DEMONSTRATION THAT MAKES PAPER TWO: injected single-locus association
+recovered 61/100 Bonferroni-significant, MEDIAN CAUSAL RANK 1/5594 (random: 2797); joint-locus
+enrichment ~20x at top-20; null calibrated (3.2% at p<0.05). THE CHI FORK MATRIX IS A FUNCTIONAL
+GENOTYPING PLATFORM - the completeness+minimality theory now has empirical teeth.
+Rescue note: staged-lane retention empty again; code+journals rescued from the live worktree
+(gate data outputs excluded per the recipe rule - regenerable); manifest regenerated from truth.

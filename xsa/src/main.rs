@@ -14,6 +14,7 @@ mod witness;
 mod build;
 mod bundle;
 mod product;
+mod forks;
 
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
@@ -1338,6 +1339,7 @@ fn usage() -> ! {
     eprintln!("  xsa build --fasta <refs.fa> -o <out.sxi> [--verbose]");
     eprintln!("  xsa build --text <file.txt> -o <out.sxi> [--verbose]");
     eprintln!("  xsa mems --sxi FILE --reads FA|FQ|GZ [-j N] [--min-len 20] [--mode auto|dna|text]");
+    eprintln!("  xsa forks --jsonl FILE [--n N] [-o OUT.jsonl] [-j J]  chi fork matrix (STRING x (WITNESS,CLASS) presence)");
     eprintln!("  xsa witness-build --sxi FILE --output FILE.wit");
     eprintln!("  xsa mems --first --sxi FILE --witness-index FILE.wit --reads FA|FQ|GZ");
     eprintln!("  xsa serve --sxi FILE [-j N] [--bind 127.0.0.1:7331]");
@@ -1369,6 +1371,7 @@ fn main() {
         }) => product::command("query", &args[1..]),
         Some("query") => cmd_query(&args[1..]),
         Some("mems") => product::command("mems", &args[1..]),
+        Some("forks") => forks::command(&args[1..]),
         Some("witness-build") => product::witness_build(&args[1..]),
         Some("serve") => product::command("serve", &args[1..]),
         Some("build-anchors") => cmd_build_anchors(&args[1..]),

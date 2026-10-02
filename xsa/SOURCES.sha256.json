@@ -1,6 +1,4 @@
 {
-  "build.rs": "8c781182490a30c279d98e1c4c3179aa8f80c8f8dae6da35ef1dd8c203c60d4b",
-  "build_tools.py": "0b11ebaa408d8b37f4b4bed8f4c103aa49ffdd2ff351d1332c017700188450d1",
   "runtime/LICENSE": "7ec8945fc40a1edec18b078439c0a899163c0fd093aab30e97773a1e46f6c2f1",
   "runtime/agc2flat/Cargo.lock": "e32729616741e1861fc6a9546ad11823c33baa8d0017a96cb728b9861205c517",
   "runtime/agc2flat/Cargo.toml.in": "e4be99bd86554aac1f62412f229d8931becb4765a67ae79de16eea3cda964f57",
@@ -32,7 +30,8 @@
   "runtime/tools/upstream.lock.json": "bd5d345045de9c1eeff013bdb412e19a285ecf6c713323858f1eb8ea7aa02928",
   "src/build.rs": "4b4a0bcc3340011199ddcd6c30987b15a1614f709854bca8700bfbca51b41b58",
   "src/bundle.rs": "b1c1c12282330b46f42b5cdb4f1c8811d22d1476d7091bf02e0a9d8c78da86f4",
-  "src/main.rs": "194a22d8dde810f9404831ff6f4bf115ccee825398d9fb523e045c38de5a7894",
+  "src/forks.rs": "65a268d6c58749463ba62dc61bc19d474efcf2ce48994d643002456cc6879495",
+  "src/main.rs": "af44f29759825bd4c5f89f4e8cddb4d2da93b0ec040bff2907a535b7a0440763",
   "src/product.rs": "fe3ff93d3fd25336995f8cb5c2afb77698eb8102078a835dca6e23a4f80fb20b",
   "src/sxi.rs": "37523875a9c82ac24592fa7ba05703aa235532270908496790e3a2433a569e3c",
   "src/sxi2.rs": "0e934320d25739c632f00f961e7b018feaaf14fbd92b41fe67db9194d26fa5af",
@@ -42,5 +41,7 @@
   "vendor/native-provenance.json": "bb4402a3df2d1aa6406b2cc9395dfade542dd1dbb42ee449a9d3148125246030",
   "vendor/native.tar.xz": "36e60304970212a7f32b5ef4cbeaafd7b88a79d0d48941424beeefe1fd9eb6e9",
   "vendor/pruned-paths.json": "742feccf44be4ec11c67d23d3c98d2fee77aea92a8834d994eb18d10b96dfc48",
-  "vendor/rust-linux-packages.json": "4b24b5bfedd0764f8b1bee064a35d2f68676f4926048cce5fcc30e78db0640db"
+  "vendor/rust-linux-packages.json": "4b24b5bfedd0764f8b1bee064a35d2f68676f4926048cce5fcc30e78db0640db",
+  "build.rs": "8c781182490a30c279d98e1c4c3179aa8f80c8f8dae6da35ef1dd8c203c60d4b",
+  "build_tools.py": "0b11ebaa408d8b37f4b4bed8f4c103aa49ffdd2ff351d1332c017700188450d1"
 }

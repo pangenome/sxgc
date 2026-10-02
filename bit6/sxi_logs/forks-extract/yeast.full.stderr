@@ -1,0 +1,12 @@
+forks: opening and validating /mnt/nvme3n1/erikg/sxi2-v5/yeast235.sxi2 ...
+forks: SXI2 v3 n=3336986759 k=9901 runs=100905045 chi=85404336 (validated in 22.9s)
+forks: run tables loaded in 25.4s
+forks: 9901 named records indexed in 0.0s
+forks: chi loaded: 85404336 witnesses kept of 85404336 stored, max filter 3336986759 in 2.1s
+forks: 105339558 run-edge slots matched chi in 7.2s; folding singleton rows
+forks: 85404336 witnesses; 89159823 distinct runs witness them (2950587688 rows to resolve)
+forks: criterion C holds (char-count gcd 1); φ-domain fast path
+forks: cross-checked φ chain vs LF walk on 16 runs
+forks: resolved 2950587688 rows over 89159823 runs in 35.2s
+forks: emitted 182032143 records (182032143 classes) over 85404336 witnesses in 360.3s; 6465022491 string slots; 41664977207 output bytes
+forks: total wall 457.3s; 186769.04135741616 witnesses/s end-to-end

@@ -1,0 +1,7 @@
+forks: opening and validating /mnt/nvme3n1/erikg/sxi2-v5/yeast235.sxi2 ...
+forks: SXI2 v3 n=3336986759 k=9901 runs=100905045 chi=85404336 (validated in 24.5s)
+forks: run tables loaded in 26.3s
+forks: 9901 named records indexed in 0.0s
+forks: chi loaded: 100000 witnesses kept of 85404336 stored (--n 100000), max filter 3336986759 in 2.1s
+forks: 105686 run-edge slots matched chi in 0.0s; folding singleton rows
+forks: 100000 witnesses; 205486 distinct runs witness them (5024704 rows to resolve)

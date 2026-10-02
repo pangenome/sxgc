@@ -1,0 +1,12 @@
+forks: opening and validating /home/erikg/sxgc-466/milestone/hprc.sxi ...
+forks: SXI1 v1 n=1403221068481 k=38790 runs=2739737285 chi=2250211129 (validated in 261.9s)
+forks: run tables loaded in 260.8s
+forks: 38790 named records indexed in 0.0s
+forks: chi loaded: 10000000 witnesses kept of 2250211129 stored (--n 10000000), max filter 5855300749 in 0.1s
+forks: 10832713 run-edge slots matched chi in 1.8s; folding singleton rows
+forks: 10000000 witnesses; 20757970 distinct runs witness them (11682900583 rows to resolve)
+forks: criterion C holds (char-count gcd 1); φ-domain fast path
+forks: cross-checked φ chain vs LF walk on 16 runs
+forks: resolved 11682900583 rows over 20757970 runs in 249.8s
+forks: emitted 20251533 records (20251533 classes) over 10000000 witnesses in 275.7s; 10387126788 string slots; 60443628959 output bytes
+forks: total wall 1053.9s; 9488.214188273918 witnesses/s end-to-end
