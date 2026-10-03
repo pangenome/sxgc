@@ -1,0 +1,39 @@
+PFP_TERMINAL byte=0x1e source=padding-row raw_n=1082130223 raw_r=397723016
+CYCLIC_SEAM_REPAIR terminal=0x1e predecessors_before_zero=78653
+SLIM_PHASE parse-free-lf-base wall=2.523 cumulative=168.856 peak_rss_kib=33296944
+SLIM_PHASE parse-free-seeds-sort wall=44.570 cumulative=213.426 peak_rss_kib=33296944
+SLIM_STRING_ENDS count=1 bytes=8 from_parse_dict=0 cyclic=1
+SLIM_PHASE parse-free-walk wall=129.698 cumulative=343.124 peak_rss_kib=33296944
+SLIM_PHASE parse-free-fingerprints wall=2.970 cumulative=346.093 peak_rss_kib=33296944
+SLIM_PF_SELF_CHECK checks=256 passed=1
+SLIM_PHASE parse-free-self-check wall=0.006 cumulative=346.099 peak_rss_kib=33296944
+SLIM_PARSE_FREE_STRUCT n=1082130223 text_len=1082130213 rows=1082130223 R=397723016 tau=22 checkpoints=49187737 checkpoint_bytes=393501896 sidecar_bytes=1082130213 seeds=397723016 emissions=1082130213 cyclic=1 work_limit=17314083408 no_SA_ISA_LCP_RMQ=1 no_M_b_bwt_w_wt=1 no_parse_dict=1 no_phrase_ids=1 corpus_reads=0
+CYCLIC_SEAM_LCE_POLICY parse_free=1 probe_limit=22 max_verification=67108864 total_limit=17314083408 cost=byte_comparisons_plus_hash_probes_plus_verified_bytes fraction=16n floor=100000000 exact=1 no_parse_dict=1
+CYCLIC_SEAM_REPAIRED classes=15 rows=273235 discovery_steps=16 limit=397723 phi_samples=397723016
+CYCLIC_SEAM_WORK max_seam_lce=97059 total_work=49535096 total_limit=17314083408 exact=1
+SLIM_FP parse-free-text tau=22 bytes=393501896 queries=5142316 verified_symbols=37901672 hash_probes=1745217 mean_verified=7.370545101 max_verified=97060 max_requested_lce=97059 verification_work=42553716 hash_probe_charges=6981380 suffix_symbol_reads=73629890 total_work=49535096 total_limit=17314083408 verification_limit=67108864 probe_limit=22
+SLIM_PARSE_FREE text_len=1082130213 rows=1082130223 sidecar_bytes=1082130213 tau=22 checkpoint_bytes=393501896 seeds=397723016 emissions=1082130213 cyclic=1 string_ends=1 work_used=49535096 work_limit=17314083408 sidecar_unlinked=1 corpus_reads=0
+ENDPOINT_PASS raw_n=1082130223 raw_r=397723016 n=1082130213 k=1 r=397723010 padding_rows=10 cyclic_seam_certified=0
+	Command being timed: "env SLIM_PF_THREADS=16 /tmp/slimpf/rpfbwt_endpoints out/frag finish.ri4 finish.head_sa"
+	User time (seconds): 2340.15
+	System time (seconds): 167.89
+	Percent of CPU this job got: 445%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 9:23.27
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 33296944
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 23339537
+	Voluntary context switches: 3991
+	Involuntary context switches: 7216
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 15222392
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

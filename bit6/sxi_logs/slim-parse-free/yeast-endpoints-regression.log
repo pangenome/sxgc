@@ -1,0 +1,39 @@
+PFP_TERMINAL byte=0x1e source=padding-row raw_n=3336986769 raw_r=100905044
+CYCLIC_SEAM_REPAIR terminal=0x1e predecessors_before_zero=6893
+SLIM_PHASE parse-free-lf-base wall=0.603 cumulative=41.853 peak_rss_kib=8390044
+SLIM_PHASE parse-free-seeds-sort wall=10.064 cumulative=51.917 peak_rss_kib=8390044
+SLIM_STRING_ENDS count=1 bytes=8 from_parse_dict=0 cyclic=1
+SLIM_PHASE parse-free-walk wall=348.737 cumulative=400.654 peak_rss_kib=8390044
+SLIM_PHASE parse-free-fingerprints wall=8.530 cumulative=409.184 peak_rss_kib=8390044
+SLIM_PF_SELF_CHECK checks=256 passed=1
+SLIM_PHASE parse-free-self-check wall=0.005 cumulative=409.189 peak_rss_kib=8390044
+SLIM_PARSE_FREE_STRUCT n=3336986769 text_len=3336986759 rows=3336986769 R=100905044 tau=265 checkpoints=12592403 checkpoint_bytes=100739224 sidecar_bytes=3336986759 seeds=100905044 emissions=3336986759 cyclic=1 work_limit=53391788144 no_SA_ISA_LCP_RMQ=1 no_M_b_bwt_w_wt=1 no_parse_dict=1 no_phrase_ids=1 corpus_reads=0
+CYCLIC_SEAM_LCE_POLICY parse_free=1 probe_limit=265 max_verification=67108864 total_limit=53391788144 cost=byte_comparisons_plus_hash_probes_plus_verified_bytes fraction=16n floor=100000000 exact=1 no_parse_dict=1
+CYCLIC_SEAM_REPAIRED classes=7 rows=13503 discovery_steps=8 limit=100905 phi_samples=100905044
+CYCLIC_SEAM_WORK max_seam_lce=2164880 total_work=823798051 total_limit=53391788144 exact=1
+SLIM_FP parse-free-text tau=265 bytes=100739224 queries=167932 verified_symbols=822580619 hash_probes=216558 mean_verified=4898.295851892 max_verified=2164881 max_requested_lce=2164880 verification_work=822931307 hash_probe_charges=866744 suffix_symbol_reads=114879228 total_work=823798051 total_limit=53391788144 verification_limit=67108864 probe_limit=265
+SLIM_PARSE_FREE text_len=3336986759 rows=3336986769 sidecar_bytes=3336986759 tau=265 checkpoint_bytes=100739224 seeds=100905044 emissions=3336986759 cyclic=1 string_ends=1 work_used=823798051 work_limit=53391788144 sidecar_unlinked=1 corpus_reads=0
+ENDPOINT_PASS raw_n=3336986769 raw_r=100905044 n=3336986759 k=1 r=100905045 padding_rows=10 cyclic_seam_certified=0
+	Command being timed: "env SLIM_PF_THREADS=16 /tmp/slimpf/rpfbwt_endpoints /tmp/sxgc-distribution-yeast/xsa-build-wj3k_ccs/parse /tmp/slimpf/yeastep/fresh.ri4 /tmp/slimpf/yeastep/fresh.head_sa"
+	User time (seconds): 5641.98
+	System time (seconds): 45.19
+	Percent of CPU this job got: 1243%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 7:37.28
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 8390044
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 8004677
+	Voluntary context switches: 6466
+	Involuntary context switches: 12335
+	Swaps: 0
+	File system inputs: 3941928
+	File system outputs: 9869592
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

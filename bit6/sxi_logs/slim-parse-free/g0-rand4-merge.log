@@ -1,0 +1,23 @@
+CROSS_PHASE m2-build wall=0.000 cumulative=0.002 peak_rss_kib=14336
+CROSS_PHASE hash-build wall=0.000 cumulative=0.002 peak_rss_kib=14336
+CROSS_PHASE anchor+repair wall=0.000 cumulative=0.002 peak_rss_kib=14336
+CROSS_PHASE cross-merge wall=0.000 cumulative=0.002 peak_rss_kib=14336
+CROSS_PHASE sxcr-count wall=0.000 cumulative=0.002 peak_rss_kib=14336
+CROSS_PHASE sxcr-write wall=0.000 cumulative=0.002 peak_rss_kib=14336
+CROSS_PHASE sidecar-write wall=0.000 cumulative=0.002 peak_rss_kib=14336
+CROSS_PAIR mode=cyclic left=/tmp/slimpf/g0/rand4/chunks/chunk-0.crle right=/tmp/slimpf/g0/rand4/chunks/chunk-1.crle nA=2401 nB=2401 out=/tmp/slimpf/g0/rand4/work/L0-0.crle out_runs=3644 wall_total=0.002 comparisons=4801 symbols_compared=27906 probes=0 max_lce=11 fast_decided=4801 probe_decided=0 cap_decided=0 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_A=0 anchors_B=0 walk_steps_A=0 walk_steps_B=0 block_rows_A=0 block_rows_B=0 peak_rss_kib=14336
+CROSS_PHASE m2-build wall=0.000 cumulative=0.004 peak_rss_kib=14336
+CROSS_PHASE hash-build wall=0.000 cumulative=0.004 peak_rss_kib=14336
+CROSS_PHASE anchor+repair wall=0.000 cumulative=0.004 peak_rss_kib=14336
+CROSS_PHASE cross-merge wall=0.000 cumulative=0.004 peak_rss_kib=14336
+CROSS_PHASE sxcr-count wall=0.000 cumulative=0.004 peak_rss_kib=14336
+CROSS_PHASE sxcr-write wall=0.000 cumulative=0.004 peak_rss_kib=14336
+CROSS_PHASE sidecar-write wall=0.000 cumulative=0.004 peak_rss_kib=14336
+CROSS_PAIR mode=cyclic left=/tmp/slimpf/g0/rand4/chunks/chunk-2.crle right=/tmp/slimpf/g0/rand4/chunks/chunk-3.crle nA=2401 nB=2401 out=/tmp/slimpf/g0/rand4/work/L0-1.crle out_runs=3654 wall_total=0.002 comparisons=4801 symbols_compared=27853 probes=0 max_lce=11 fast_decided=4801 probe_decided=0 cap_decided=0 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_A=0 anchors_B=0 walk_steps_A=0 walk_steps_B=0 block_rows_A=0 block_rows_B=0 peak_rss_kib=14336
+CROSS_PHASE m2-build wall=0.000 cumulative=0.005 peak_rss_kib=14336
+CROSS_PHASE hash-build wall=0.000 cumulative=0.005 peak_rss_kib=14336
+CROSS_PHASE anchor+repair wall=0.000 cumulative=0.005 peak_rss_kib=14336
+CROSS_PHASE cross-merge wall=0.000 cumulative=0.005 peak_rss_kib=14336
+CROSS_PHASE emit-count wall=0.000 cumulative=0.005 peak_rss_kib=14336
+CROSS_PHASE emit-write wall=0.000 cumulative=0.006 peak_rss_kib=14336
+CROSS_PAIR mode=dollar left=/tmp/slimpf/g0/rand4/work/L0-0.crle right=/tmp/slimpf/g0/rand4/work/L0-1.crle nA=4802 nB=4802 out=/tmp/slimpf/g0/rand4/frag out_runs=7287 wall_total=0.002 comparisons=9606 symbols_compared=60230 probes=0 max_lce=11 fast_decided=9602 probe_decided=0 cap_decided=4 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_A=1 anchors_B=2 walk_steps_A=1 walk_steps_B=2 block_rows_A=2 block_rows_B=4 peak_rss_kib=14336

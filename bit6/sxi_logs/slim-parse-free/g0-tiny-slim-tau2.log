@@ -1,0 +1,24 @@
+ri4: n=33 k=1 R=14
+SLIM_PHASE ri4-load wall=0.000 cumulative=0.000 peak_rss_kib=14336
+SLIM_HEAD_SA bytes=112 rows=14 mmap=1
+SLIM_PHASE parse-free-lf-base wall=0.000 cumulative=0.000 peak_rss_kib=14336
+SLIM_PHASE parse-free-seeds-sort wall=0.000 cumulative=0.000 peak_rss_kib=14336
+SLIM_STRING_ENDS count=1 bytes=8 from_parse_dict=0 cyclic=1
+SLIM_PHASE parse-free-walk wall=0.003 cumulative=0.003 peak_rss_kib=14336
+SLIM_PHASE parse-free-fingerprints wall=0.000 cumulative=0.003 peak_rss_kib=14336
+SLIM_PF_SELF_CHECK checks=33 passed=1
+SLIM_PHASE parse-free-self-check wall=0.000 cumulative=0.003 peak_rss_kib=14336
+SLIM_PARSE_FREE_STRUCT n=43 text_len=33 rows=33 R=14 tau=2 checkpoints=17 checkpoint_bytes=136 sidecar_bytes=33 seeds=14 emissions=33 cyclic=1 work_limit=1000000000 no_SA_ISA_LCP_RMQ=1 no_M_b_bwt_w_wt=1 no_parse_dict=1 no_phrase_ids=1 corpus_reads=0
+SLIM_PHASE lce-build-total wall=0.003 cumulative=0.003 peak_rss_kib=14336
+SLIM_PHASE lf-build wall=0.000 cumulative=0.003 peak_rss_kib=14336
+SLIM_RI runs=70 starts=112 samples=16 lf_capacity=312
+SLIM_PROGRESS runs=14/14 resolve_wall=0.002 lce_wall=0.002 write_wall=0.000 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=0.005 cumulative=0.008 peak_rss_kib=14336
+SLIM_PHASE queries+stream-write-final wall=0.000 cumulative=0.008 peak_rss_kib=14336
+SLIM_FP parse-free-text tau=2 bytes=136 queries=29 verified_symbols=90 hash_probes=18 mean_verified=3.103448276 max_verified=12 max_requested_lce=12 verification_work=108 hash_probe_charges=130 suffix_symbol_reads=67 total_work=238 total_limit=1000000000 verification_limit=1000 probe_limit=2
+SLIM_PARSE_FREE text_len=33 rows=33 sidecar_bytes=33 tau=2 checkpoint_bytes=136 seeds=14 emissions=33 cyclic=1 string_ends=1 work_used=238 work_limit=1000000000 sidecar_unlinked=1 corpus_reads=0
+SLIM_QUERY_PHASE resolve_wall=0.001755 resolve_peak_kib=14336 lce_wall=0.001835 lce_peak_kib=14336 write_wall=0.000023 write_peak_kib=14336
+SLIM_SEEDS queries=0 mean_verified_symbols=0.000000000 max_verified_symbols=12 (includes_zero_parse_work_seeds; boundary_included)
+SLIM_RESOLVE walks=0 steps=0 max=0 anchor=0 failed=0 cache_hits=0
+SLIM_BOUNDARY_RESOLVE head_direct=14 tail_direct=21 head_lf_steps=0
+SLIM_PF_KEEP_TEXT sidecar=/tmp/slimpf/g0/tiny/free.tau2.agg.pftext retained

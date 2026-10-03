@@ -1,0 +1,5 @@
+CHUNK index=0 offset=0 n=2401 runs=1795 sort_wall_seconds=0.000291 path=/tmp/slimpf/g0/rand4/chunks/chunk-0.crle
+CHUNK index=1 offset=2401 n=2401 runs=1835 sort_wall_seconds=0.000210 path=/tmp/slimpf/g0/rand4/chunks/chunk-1.crle
+CHUNK index=2 offset=4802 n=2401 runs=1830 sort_wall_seconds=0.000196 path=/tmp/slimpf/g0/rand4/chunks/chunk-2.crle
+CHUNK index=3 offset=7203 n=2401 runs=1791 sort_wall_seconds=0.000193 path=/tmp/slimpf/g0/rand4/chunks/chunk-3.crle
+CHUNKS_PASS count=4 source_bytes=9604

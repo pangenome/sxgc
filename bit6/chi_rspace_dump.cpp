@@ -163,6 +163,7 @@ struct Ri4 {
 // LOUDLY.
 struct LfIndex {
     const Ri4* ri = nullptr;
+    bool full = false;                          // full build vs starts-only (parse-free slim)
     std::vector<uint64_t> Cless;                        // 256: rows with char < c
     std::vector<std::vector<uint64_t>> charRuns;        // per char: run ids
     std::vector<std::vector<uint64_t>> charSum;         // per char: prefix lens
@@ -182,12 +183,14 @@ struct LfIndex {
             for (size_t t = 0; t < charRuns[c].size(); ++t)
                 charSum[c][t + 1] = charSum[c][t] + r.l[charRuns[c][t]];
         }
+        full = true;
     }
     inline uint64_t run_of(uint64_t row) const {
         return (uint64_t)(std::upper_bound(ri->starts.begin(), ri->starts.end(), row)
                           - ri->starts.begin() - 1);
     }
     inline uint64_t lf(uint64_t row) const {
+        if (!full) { fprintf(stderr, "FATAL: lf() needs the full LfIndex build (starts-only mode)\n"); exit(2); }
         uint64_t r = run_of(row);
         uint8_t ch = ri->a[r];
         uint64_t o = row - ri->starts[r];
@@ -546,9 +549,16 @@ int main(int argc, char** argv) {
     if ((profileOnly || dictStream || injectFault || tau1 || tau2 || resolveCache || !headSaPath.empty()) && !slim)
         slim_fail("slim options require --slim");
     if (w1<3 || w1>512 || (!slim && w1!=10)) slim_fail("--w1 must be 3..512 and non-default windows require --slim");
-    if (ri4Path.empty() || parsePrefix.empty() || outPath.empty()) {
-        fprintf(stderr, "usage: chi_rspace_dump [--slim --resolve-ri4 [--w1 N] [--dict-stream] [--head-sa FILE] [--resolve-cache] [--tau1 N] [--tau2 N] [--slim-profile-build] [--inject-fingerprint-error (TEST ONLY)]] --ri4 F.ri4 --parse PFP_PREFIX -o OUT.agg [-t N] [--flat F] [--calib-rows N] [--pfp-index INDEX (load instead of building; bit6/pfp_index_build.cpp)] [--lcp-index F.lcp_index.lcp_index (LEGACY cross-check only)] [--resolve-ri4 (positions from pfp_ds_vendor/pfp/pfp.hpp defer_build_t; NO M/b_bwt/w_wt; SA via the .ri4 sample array + LF walk)] [--anchors F (string-start anchors for walks that reach an interior 0x0A row)]\n");
+    if (ri4Path.empty() || outPath.empty() || (!slim && parsePrefix.empty())) {
+        fprintf(stderr, "usage: chi_rspace_dump [--slim --resolve-ri4 [--w1 N] [--dict-stream] [--head-sa FILE] [--resolve-cache] [--tau1 N] [--tau2 N] [--slim-profile-build] [--inject-fingerprint-error (TEST ONLY)]] --ri4 F.ri4 [--parse PFP_PREFIX (omit in --slim mode for the parse-free backend; requires --head-sa)] -o OUT.agg [-t N] [--flat F] [--calib-rows N] [--pfp-index INDEX (load instead of building; bit6/pfp_index_build.cpp)] [--lcp-index F.lcp_index.lcp_index (LEGACY cross-check only)] [--resolve-ri4 (positions from pfp_ds_vendor/pfp/pfp.hpp defer_build_t; NO M/b_bwt/w_wt; SA via the .ri4 sample array + LF walk)] [--anchors F (string-start anchors for walks that reach an interior 0x0A row)]\n");
         return 1;
+    }
+    // --slim without --parse selects the parse-free backend: no dictionary,
+    // no parse, no phrase IDs. The chunk route's finish needs no PFP input.
+    bool parseFree = slim && parsePrefix.empty();
+    if (parseFree) {
+        if (dictStream) fprintf(stderr, "SLIM_NOTE --dict-stream has no effect in parse-free mode (no dictionary exists)\n");
+        if (tau2) fprintf(stderr, "SLIM_NOTE --tau2 has no effect in parse-free mode (single fingerprint level; --tau1 overrides spacing)\n");
     }
 
     Ri4 ri4; ri4.load(ri4Path);
@@ -560,7 +570,7 @@ int main(int argc, char** argv) {
         if (!resolveRi4 || !pfpIndexPath.empty() || !lcpIndexPath.empty())
             slim_fail("--slim requires --resolve-ri4 and excludes legacy indexes");
         double begin=G_T0;slim_phase("ri4-load",begin);
-        return slim_dump(ri4,parsePrefix,outPath,anchorsPath,nthreads,tau1,tau2,dictStream,injectFault,profileOnly,flatPath,calibRows,resolveCache,headSaPath,w1);
+        return slim_dump(ri4,parsePrefix,outPath,anchorsPath,nthreads,tau1,tau2,dictStream,injectFault,profileOnly,flatPath,calibRows,resolveCache,headSaPath,w1,parseFree);
     }
 
     // ---- LEGACY lcp_index: OPTIONAL.  When absent, topLCP is computed

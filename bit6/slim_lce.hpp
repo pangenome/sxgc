@@ -8,9 +8,19 @@
 #include <sys/mman.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <algorithm>
 #include <array>
+#include <atomic>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <memory>
 #include <stdexcept>
+#include <string>
+#include <thread>
 #include <unordered_map>
+#include <vector>
 
 static void slim_phase(const char* label, double& last) {
     struct rusage u{}; getrusage(RUSAGE_SELF, &u);
@@ -84,6 +94,10 @@ struct SlimSeamWork {
     uint64_t limit;
     mutable std::atomic<uint64_t> used{0};
     explicit SlimSeamWork(uint64_t size):limit(std::min<uint64_t>(1ULL<<32,std::max<uint64_t>(1000000,size/8))) {}
+    // Explicit-limit journal (parse-free backend): the parse it replaces charged
+    // ~11 work units per text byte at fragment scale, so the parse-free budget is
+    // 64 units/text byte with no 2^32 ceiling. Exhaustion still fails loudly.
+    explicit SlimSeamWork(uint64_t size,uint64_t ceiling):limit(std::min<uint64_t>(ceiling,std::max<uint64_t>(1000000,size))) {}
     bool reserve(uint64_t count) const {
         uint64_t old=used.load(std::memory_order_relaxed);
         do {if(count>limit-old)return false;}
@@ -123,6 +137,13 @@ template<class Seq> struct SlimFingerprint {
         hashes.resize(s.size()/tau+1);
         uint64_t h=0;
         for(uint64_t i=s.size();i-->0;) {h=(uint64_t)s[i]+1+BASE*h; if(i%tau==0) hashes[i/tau]=h;}
+    }
+    // Adopt tau-spaced suffix-hash checkpoints computed by a single backward
+    // stream (parse-free backend). The recurrence is identical to the scan
+    // constructor; the owner self-checks adopted checkpoints at startup.
+    SlimFingerprint(const Seq& seq,uint64_t t,bool fault,std::vector<uint64_t>&& pre)
+        :s(seq),tau(std::max<uint64_t>(1,t)),hashes(std::move(pre)),inject(fault) {
+        if(hashes.size()!=s.size()/tau+1) slim_fail("adopted checkpoint count mismatch");
     }
     static uint64_t power(uint64_t n) {uint64_t x=BASE,r=1; while(n){if(n&1)r*=x;x*=x;n>>=1;}return r;}
     uint64_t suffix(uint64_t i) const {
@@ -200,6 +221,282 @@ template<class Seq> struct SlimFingerprint {
         (unsigned long long)maxRequested.load(),(unsigned long long)verificationWork.load(),(unsigned long long)hashProbes.load(),(unsigned long long)suffixReads.load(),
         (unsigned long long)(seamWork?seamWork->used.load():0),(unsigned long long)(seamWork?seamWork->limit:INF),
         (unsigned long long)verificationLimit,(unsigned long long)probeLimit);}
+};
+
+// Random access to the walk-emitted text sidecar: optional bounded
+// four-page pread cache per thread (the SlimDict streamed pattern).
+struct SlimTextFile {
+    int fd=-1; uint64_t size_=0;
+    SlimTextFile(const std::string& path,uint64_t expected) {
+        fd=open(path.c_str(),O_RDONLY); struct stat st{};
+        if(fd<0 || fstat(fd,&st) || (uint64_t)st.st_size!=expected) slim_fail("text sidecar open/size");
+        size_=expected;
+    }
+    ~SlimTextFile(){ if(fd>=0) close(fd); }
+    SlimTextFile(const SlimTextFile&)=delete;
+    SlimTextFile& operator=(const SlimTextFile&)=delete;
+    uint64_t size() const {return size_;}
+    uint8_t operator[](uint64_t i) const {
+        if(i>=size_) slim_fail("text sidecar bounds");
+        constexpr uint64_t B=65536;
+        struct Cache { uint64_t next=0; const SlimTextFile* owner=nullptr; std::array<uint64_t,4> tags{{INF,INF,INF,INF}}; std::array<std::array<uint8_t,B>,4> data; };
+        thread_local Cache c;
+        if(c.owner!=this) { c.owner=this; c.tags.fill(INF); }
+        uint64_t page=i/B, slot=0;
+        while(slot<4 && c.tags[slot]!=page)++slot;
+        if(slot==4) {
+            slot=c.next++%4;
+            uint64_t start=page*B, need=std::min(B,size_-start), done=0;
+            while(done<need) { ssize_t n=pread(fd,c.data[slot].data()+done,need-done,start+done);
+                if(n<=0) slim_fail("pread text sidecar page"); done+=n; }
+            c.tags[slot]=page;
+        }
+        return c.data[slot][i%B];
+    }
+};
+
+// Parse-free LCE backend. The chunk route has no dictionary, parse, phrase
+// IDs or phrase boundaries; the slim's verification queries are answered from
+// the merged structure itself (.ri4 runs + per-run head-SA samples).
+//
+// Route (a), post-merge rebuild: ONE structural LF walk over the built runs
+// (rows, head samples and the emitted sidecar bytes only; the corpus is never
+// read - THE LAW holds) emits the cyclic text order to a private sidecar file
+// while feeding tau-spaced rolling suffix-hash checkpoints. Sorted run-head
+// seeds partition the cyclic position axis into disjoint descending intervals,
+// so the walk parallelizes with no visited bitmap and every walk must close
+// exactly on the next lower seed's row (O(1) exact check per walk). Emitted
+// byte multiset, total coverage and sidecar size are all checked. Queries use
+// the SlimFingerprint discipline over the sidecar through the bounded pread
+// cache: checked 16-symbol fast path, galloping probes, bisection, FULL direct
+// verification of every proposed prefix and its mismatch boundary. Probes and
+// verified symbols are journaled against a fail-loud budget; a hash/verification
+// disagreement aborts. The sidecar (n bytes) is unlinked on clean completion
+// and kept for inspection after any failure.
+struct SlimLCEParseFree {
+    double started=tnow();
+    mutable std::atomic<uint64_t> seedQueries{0};
+    uint64_t n=0, w=10, textLen=0, rowsTotal=0, tau=0, seedCount=0, walkEmissions=0, selfChecks=0;
+    bool cyclic;
+    std::vector<uint64_t> stringEnds; // newline byte positions (text coords); cyclic: {textLen}
+    std::unique_ptr<SlimTextFile> sidecar;
+    std::unique_ptr<SlimFingerprint<SlimTextFile>> fh;
+    std::unique_ptr<SlimSeamWork> work;
+    std::string sidecarPath;
+
+    // Runs provides .R, .a[r] (uint8_t), .l[r], .starts[r] (row starts).
+    // rows = total LF rows of the structure walked; textLen = emitted text
+    // length. They are equal for a normalized .ri4; the endpoint adapter's
+    // seam repair walks the PADDED structure (rows = n + w1, all rotations
+    // distinct, LF closed by construction) and emits only the n text bytes.
+    // skippedByte is the byte occupying the non-emitted tail (the 0x02
+    // padding for the padded walk); it is only used by the multiset check.
+    template<class Runs>
+    SlimLCEParseFree(const Runs& runs, const uint64_t* headSa, uint64_t textLen_, uint64_t rows_,
+                     int threads, uint64_t tauOverride, const std::string& outPrefix,
+                     bool fault, bool cyclicText, uint64_t w1,
+                     uint64_t workLimit=0, uint64_t skippedByte=256)
+        : w(w1), textLen(textLen_), rowsTotal(rows_), cyclic(cyclicText) {
+        if(!headSa) slim_fail("parse-free slim requires --head-sa (per-run head SA samples)");
+        if(w1<3 || w1>512) slim_fail("parse-free window out of range");
+        if(textLen>rows_) slim_fail("parse-free text length exceeds walked rows");
+        n=textLen+w;
+        double last=started;
+        // Per-run LF constant: lf(row)=lfBase[run]+(row-starts[run]); exactly
+        // LfIndex::lf (Cless + same-char run-length prefix + offset within run).
+        std::vector<uint64_t> totals(256,0);
+        for(uint64_t r=0;r<runs.R;++r) totals[runs.a[r]]+=runs.l[r];
+        std::vector<uint64_t> Cless(256,0), runAcc(256,0);
+        { uint64_t acc=0; for(unsigned c=0;c<256;++c){Cless[c]=acc;acc+=totals[c];} }
+        std::vector<uint64_t> lfBase(runs.R);
+        for(uint64_t r=0;r<runs.R;++r){lfBase[r]=Cless[runs.a[r]]+runAcc[runs.a[r]];runAcc[runs.a[r]]+=runs.l[r];}
+        slim_phase("parse-free-lf-base",last);
+        // Seeds: every run head (row, SA position). Distinct rows carry distinct
+        // positions; sorted ascending they partition [0,textLen) into per-walk
+        // intervals with no overlap and no hole (over the walked rows).
+        struct Seed { uint64_t pos,row; };
+        std::vector<Seed> sd(runs.R);
+        for(uint64_t r=0;r<runs.R;++r) {
+            if(headSa[r]>=rowsTotal) slim_fail("parse-free seed: head-SA value outside walked rows");
+            sd[r]={headSa[r],runs.starts[r]};
+        }
+        std::sort(sd.begin(),sd.end(),[](const Seed& a,const Seed& b){return a.pos<b.pos;});
+        for(uint64_t r=1;r<runs.R;++r) if(sd[r].pos==sd[r-1].pos) slim_fail("parse-free seed: duplicate head-SA position");
+        seedCount=runs.R;
+        sidecarPath=outPrefix+".pftext";
+        int out=open(sidecarPath.c_str(),O_CREAT|O_EXCL|O_RDWR,0666);
+        if(out<0) slim_fail("create parse-free text sidecar (refusing to clobber an existing file)");
+        slim_phase("parse-free-seeds-sort",last);
+        // Structural walk: at row(p), BWT[row]=T[p-1 mod n]; one LF step moves
+        // p -> p-1. Task idx>=1 emits offsets [P[idx-1],P[idx]); task 0 emits
+        // [0,P[0]) then wraps to [P[R-1],textLen). Every task ends ON the next
+        // lower seed's row; that exact row identity is asserted per task.
+        {
+        int tc=std::max(1,std::min(threads,64));
+        constexpr uint64_t B=65536, BATCH=4096;
+        std::atomic<uint64_t> emitted{0}, nextBatch{0};
+        std::vector<std::array<uint64_t,256>> freqs(tc);
+        std::vector<std::vector<uint64_t>> newlineLists(tc);
+        std::vector<std::thread> ts;
+        for(int t=0;t<tc;++t) ts.emplace_back([&,t](){
+            std::array<uint64_t,256>& freq=freqs[t]; freq.fill(0);
+            std::vector<uint64_t>& nl=newlineLists[t];
+            std::vector<uint8_t> buf(B);
+            uint64_t curb=UINT64_MAX, curLo=0, curHi=0;
+            auto flush=[&]() {
+                if(curb==UINT64_MAX) return;
+                uint64_t start=curb*B+curLo, len=curHi-curLo;
+                const char* p=(const char*)buf.data()+curLo;
+                while(len) { ssize_t z=pwrite(out,p,len,start); if(z<=0) slim_fail("write text sidecar"); p+=z; start+=z; len-=z; }
+                curb=UINT64_MAX;
+            };
+            auto put=[&](uint64_t off,uint8_t b) {
+                uint64_t blk=off/B, o=off%B;
+                if(curb!=UINT64_MAX && (blk!=curb || o+1!=curLo)) flush();
+                if(curb==UINT64_MAX) { curb=blk; curHi=o+1; }
+                buf[o]=b; curLo=o;
+                ++freq[b];
+                emitted.fetch_add(1,std::memory_order_relaxed);
+                if(!cyclic && b==0x0a) nl.push_back(off);
+            };
+            auto runTask=[&](uint64_t idx) {
+                uint64_t row=sd[idx].row, p=sd[idx].pos, steps, stopPos, stopRow;
+                bool wrap=idx==0;
+                if(wrap) { steps=sd[0].pos+rowsTotal-sd[runs.R-1].pos; stopPos=sd[runs.R-1].pos; stopRow=sd[runs.R-1].row; }
+                else { steps=sd[idx].pos-sd[idx-1].pos; stopPos=sd[idx-1].pos; stopRow=sd[idx-1].row; }
+                for(uint64_t k=0;k<steps;++k) {
+                    uint64_t run=(uint64_t)(std::upper_bound(runs.starts.begin(),runs.starts.end(),row)-runs.starts.begin()-1);
+                    uint64_t off=p? p-1 : rowsTotal-1;
+                    if(off<textLen) put(off,runs.a[run]);
+                    row=lfBase[run]+(row-runs.starts[run]);
+                    p=off;
+                }
+                if(row!=stopRow || p!=stopPos)
+                    slim_fail("parse-free walk: LF chain did not close on the next seed row");
+            };
+            for(;;) {
+                uint64_t lo=nextBatch.fetch_add(BATCH);
+                if(lo>=runs.R) break;
+                uint64_t hi=std::min(lo+BATCH,runs.R);
+                for(uint64_t idx=hi; idx-->lo; ) runTask(idx); // contiguous descent
+                flush();
+            }
+            flush();
+        });
+        for(auto& t:ts) t.join();
+        walkEmissions=emitted.load();
+        if(walkEmissions!=textLen) slim_fail("parse-free walk: emitted count != text length");
+        for(unsigned c=0;c<256;++c) {
+            uint64_t expect=totals[c];
+            if(rowsTotal>textLen && c==skippedByte) expect-=rowsTotal-textLen;
+            uint64_t got=0; for(int t=0;t<tc;++t) got+=freqs[t][c];
+            if(got!=expect) slim_fail("parse-free walk: emitted byte multiset disagrees with the runs");
+        }
+        if(cyclic) stringEnds.push_back(textLen);
+        else {
+            for(int t=0;t<tc;++t) stringEnds.insert(stringEnds.end(),newlineLists[t].begin(),newlineLists[t].end());
+            std::sort(stringEnds.begin(),stringEnds.end());
+        }
+        fprintf(stderr,"SLIM_STRING_ENDS count=%zu bytes=%zu from_parse_dict=0 cyclic=%d\n",stringEnds.size(),stringEnds.capacity()*8,(int)cyclic);
+        }
+        slim_phase("parse-free-walk",last);
+        // tau-spaced suffix-hash checkpoints from one backward read of the
+        // sidecar (our own emitted bytes; the corpus stays untouched).
+        tau=tauOverride? tauOverride : std::max<uint64_t>(1,(8*textLen+runs.R-1)/runs.R);
+        std::vector<uint64_t> H(textLen/tau+1);
+        {
+            constexpr uint64_t RB=1<<23;
+            std::vector<uint8_t> rb(std::min<uint64_t>(RB,std::max<uint64_t>(1,textLen)));
+            uint64_t h=0;
+            for(uint64_t base=textLen; base>0; ) {
+                uint64_t lo=base>rb.size()? base-rb.size():0, len=base-lo, done=0;
+                while(done<len) { ssize_t z=pread(out,rb.data()+done,len-done,lo+done); if(z<=0) slim_fail("read sidecar for fingerprints"); done+=z; }
+                for(uint64_t i=len;i-->0;) { uint64_t p=lo+i; h=(uint64_t)rb[i]+1+SlimFingerprint<SlimTextFile>::BASE*h; if(p%tau==0) H[p/tau]=h; }
+                base=lo;
+            }
+        }
+        slim_phase("parse-free-fingerprints",last);
+        if(close(out)) slim_fail("close text sidecar");
+        sidecar=std::make_unique<SlimTextFile>(sidecarPath,textLen);
+        fh=std::make_unique<SlimFingerprint<SlimTextFile>>(*sidecar,tau,fault,std::move(H));
+        // Journaled fail-loud budget. The legacy parse slim charged mixed
+        // phrase/byte units and ran UNCAPPED in production (total_limit=INF);
+        // its yeast run verified ~1500 bytes/query = 63n bytes overall, the
+        // same reads this backend performs. The byte-honest cap is 128n
+        // (2x the worst measured corpus); any corpus exceeding it fails loudly.
+        uint64_t limit=workLimit? workLimit : std::max<uint64_t>(1000000000ULL,128*textLen);
+        work=std::make_unique<SlimSeamWork>(limit,UINT64_MAX);
+        fh->seam_policy(*work,tau,"parse-free-text");
+        // Startup self-check: adopted checkpoints against direct window reads.
+        {
+            selfChecks=std::min<uint64_t>(256,textLen);
+            for(uint64_t k=0;k<selfChecks;++k) {
+                uint64_t p=textLen? (k*2654435761ULL+0x9e3779b9ULL)%textLen : 0;
+                uint64_t len=std::min<uint64_t>(tau,textLen-p);
+                if(!len) continue;
+                // h(p) - BASE^len * h(p+len) == polynomial hash of T[p..p+len)
+                // with the FIRST byte at coefficient BASE^0 (SlimFingerprint order).
+                uint64_t direct=0, pk=1;
+                for(uint64_t i=0;i<len;++i) { direct+=((uint64_t)(*sidecar)[p+i]+1)*pk; pk*=FBase(); }
+                uint64_t fromFp=fh->suffix(p)-Fpw(len)*fh->suffix(p+len);
+                if(direct!=fromFp) slim_fail("parse-free fingerprint self-check mismatch");
+            }
+            fprintf(stderr,"SLIM_PF_SELF_CHECK checks=%llu passed=1\n",(unsigned long long)selfChecks);
+        }
+        slim_phase("parse-free-self-check",last);
+        fprintf(stderr,"SLIM_PARSE_FREE_STRUCT n=%llu text_len=%llu rows=%llu R=%llu tau=%llu checkpoints=%llu checkpoint_bytes=%llu sidecar_bytes=%llu seeds=%llu emissions=%llu cyclic=%d work_limit=%llu no_SA_ISA_LCP_RMQ=1 no_M_b_bwt_w_wt=1 no_parse_dict=1 no_phrase_ids=1 corpus_reads=0\n",
+            (unsigned long long)n,(unsigned long long)textLen,(unsigned long long)rowsTotal,(unsigned long long)runs.R,(unsigned long long)tau,
+            (unsigned long long)fh->hashes.size(),(unsigned long long)(fh->hashes.size()*8),
+            (unsigned long long)textLen,(unsigned long long)seedCount,(unsigned long long)walkEmissions,(int)cyclic,
+            (unsigned long long)work->limit);
+    }
+    uint8_t text_byte(uint64_t pos) const { if(pos>=textLen) slim_fail("parse-free text byte bounds"); return (*sidecar)[pos]; }
+    static uint64_t FBase() { return SlimFingerprint<SlimTextFile>::BASE; }
+    static uint64_t Fpw(uint64_t e) { return SlimFingerprint<SlimTextFile>::power(e); }
+    ~SlimLCEParseFree() {
+        if(sidecar) {
+            const char* keep=getenv("SLIM_PF_KEEP_TEXT");
+            sidecar.reset();
+            if(!keep) unlink(sidecarPath.c_str());
+            else fprintf(stderr,"SLIM_PF_KEEP_TEXT sidecar=%s retained\n",sidecarPath.c_str());
+        }
+    }
+    SlimLCEParseFree(const SlimLCEParseFree&)=delete;
+    SlimLCEParseFree& operator=(const SlimLCEParseFree&)=delete;
+    // Collection LCE semantics are identical to SlimLCE: cyclic corpora compare
+    // the one cyclic byte string with at most two seam crossings, clamped so a
+    // raw query never leaves [0,textLen); newline corpora stop before the
+    // terminator on either side. Positions are text coordinates throughout.
+    uint64_t collection_lce(uint64_t i,uint64_t j) const {
+        if(cyclic) {
+            uint64_t size=textLen, answer=0;
+            if(i>=size||j>=size) slim_fail("parse-free cyclic LCE bounds");
+            if(i==j){seedQueries.fetch_add(1,std::memory_order_relaxed);return size;}
+            while(answer<size) {
+                uint64_t cap=std::min({size-answer,size-i,size-j});
+                uint64_t got=std::min(fh->lce(i,j,cap),cap);
+                answer+=got;
+                if(got<cap) break;
+                i=(i+got)%size; j=(j+got)%size;
+            }
+            return answer;
+        }
+        auto remaining=[&](uint64_t pos) {
+            auto end=std::lower_bound(stringEnds.begin(),stringEnds.end(),pos);
+            if(end==stringEnds.end()) slim_fail("parse-free: missing collection terminator");
+            return *end-pos;
+        };
+        uint64_t cap=std::min(remaining(i),remaining(j));
+        if(!cap){seedQueries.fetch_add(1,std::memory_order_relaxed);return 0;}
+        return std::min(fh->lce(i,j,cap),cap);
+    }
+    void report() const {
+        fh->report("parse-free-text");
+        fprintf(stderr,"SLIM_PARSE_FREE text_len=%llu rows=%llu sidecar_bytes=%llu tau=%llu checkpoint_bytes=%llu seeds=%llu emissions=%llu cyclic=%d string_ends=%zu work_used=%llu work_limit=%llu sidecar_unlinked=1 corpus_reads=0\n",
+            (unsigned long long)textLen,(unsigned long long)rowsTotal,(unsigned long long)textLen,(unsigned long long)tau,
+            (unsigned long long)(fh->hashes.size()*8),(unsigned long long)seedCount,(unsigned long long)walkEmissions,
+            (int)cyclic,stringEnds.size(),(unsigned long long)work->used.load(),(unsigned long long)work->limit);
+    }
 };
 
 struct SlimLCE {
@@ -336,13 +633,14 @@ struct SlimHeads {
     SlimHeads& operator=(const SlimHeads&)=delete;
 };
 
+
 // CRA1 retains its exact array-major format. Only one row-ordered chunk is
 // retained; four positioned writes place it into the corresponding arrays.
 static int slim_dump(Ri4& ri,const std::string& prefix,const std::string& out,
                      const std::string& anchorsPath,int threads,uint64_t t1,uint64_t t2,
                      bool stream,bool fault,bool profileOnly=false,
                      const std::string& flatPath="",uint64_t calibRows=256,bool useResolveCache=false,
-                     const std::string& headSaPath="",uint64_t w1=10) {
+                     const std::string& headSaPath="",uint64_t w1=10,bool parseFree=false) {
     if(!profileOnly && (!ri.haveSa||ri.sampleAllInf()))slim_fail("usable ri4 samples required");
     double last=tnow();
     SlimHeads heads(headSaPath.empty()?ri.sxiPath:headSaPath,ri.R,headSaPath.empty()?ri.headOffset:0);
@@ -351,11 +649,20 @@ static int slim_dump(Ri4& ri,const std::string& prefix,const std::string& out,
     // too. Preserve legacy newline collection behavior otherwise.
     bool hasRS=false,hasNL=false;
     for(uint64_t run=0;run<ri.R;++run){hasRS|=ri.a[run]==0x1e;hasNL|=ri.a[run]==0x0a;}
-    SlimLCE lce(prefix,ri.R,t1,t2,stream,fault,hasRS||!hasNL,w1);
-    if(lce.n!=ri.n+lce.w)slim_fail("parse/ri4 length mismatch");
-    if(lce.stringEnds.size()!=ri.k)slim_fail("parse/ri4 string-end count mismatch");
+    // Parse-free backend (no --parse): LCE from the merged structure itself.
+    // Legacy backend unchanged when a PFP prefix is supplied.
+    std::unique_ptr<SlimLCE> lgce;
+    std::unique_ptr<SlimLCEParseFree> pfce;
+    if(parseFree) pfce=std::make_unique<SlimLCEParseFree>(ri,heads.data,ri.n,ri.n,threads,t1,out,fault,hasRS||!hasNL,w1);
+    else lgce=std::make_unique<SlimLCE>(prefix,ri.R,t1,t2,stream,fault,hasRS||!hasNL,w1);
+    uint64_t lceN=parseFree?pfce->n:lgce->n;
+    size_t lceEnds=parseFree?pfce->stringEnds.size():lgce->stringEnds.size();
+    if(lceN!=ri.n+w1)slim_fail("parse/ri4 length mismatch");
+    if(lceEnds!=ri.k)slim_fail("parse/ri4 string-end count mismatch");
+    auto collection_lce=[&](uint64_t i,uint64_t j){return parseFree?pfce->collection_lce(i,j):lgce->collection_lce(i,j);};
     slim_phase("lce-build-total",last);
-    LfIndex lf;lf.build(ri);Anchors anc;if(!anchorsPath.empty())anc.load(anchorsPath);
+    LfIndex lf;lf.build(ri); // full tables: --flat calibration and resolver fallback walk interior rows via lf()
+    Anchors anc;if(!anchorsPath.empty())anc.load(anchorsPath);
     SampleResolver resolver;resolver.ri=&ri;resolver.lf=&lf;resolver.anc=anchorsPath.empty()?nullptr:&anc;
     resolver.headSa=heads.data;
     slim_phase("lf-build",last);
@@ -368,7 +675,7 @@ static int slim_dump(Ri4& ri,const std::string& prefix,const std::string& out,
     }
     uint64_t lfbytes=0;for(auto& v:lf.charRuns)lfbytes+=v.capacity()*sizeof(uint64_t);for(auto& v:lf.charSum)lfbytes+=v.capacity()*8;
     fprintf(stderr,"SLIM_RI runs=%llu starts=%llu samples=%llu lf_capacity=%llu\n",(unsigned long long)(ri.R*5),(unsigned long long)(ri.R*8),(unsigned long long)(ri.saWords.size()*8),(unsigned long long)lfbytes);
-    if(profileOnly){ lce.ph->report("parse");lce.dh->report("dict");fprintf(stderr,"SLIM_PROFILE_ONLY no queries or aggregate produced\n");return 0; }
+    if(profileOnly){ if(parseFree)pfce->report(); else {lgce->ph->report("parse");lgce->dh->report("dict");} fprintf(stderr,"SLIM_PROFILE_ONLY no queries or aggregate produced\n");return 0; }
     if(!flatPath.empty()) {
         std::ifstream flat(flatPath,std::ios::binary);
         if(!flat)slim_fail("open calibration text");
@@ -415,8 +722,8 @@ static int slim_dump(Ri4& ri,const std::string& prefix,const std::string& out,
         }};
         auto lceWorker=[&](){for(;;){uint64_t k=next.fetch_add(1);if(k>=count)return;uint64_t run=start+k,a=ri.starts[run],b=a+ri.l[run]-1;
             uint64_t prev=buf[0][k],first=buf[1][k],tail=buf[2][k];
-            buf[0][k]=a?lce.collection_lce(prev,first):0;
-            buf[3][k]=a==b?INF:lce.collection_lce(first,tail);
+            buf[0][k]=a?collection_lce(prev,first):0;
+            buf[3][k]=a==b?INF:collection_lce(first,tail);
         }};
         auto parallel=[&](auto& worker){next=0;std::vector<std::thread> ts;for(int t=0;t<std::max(1,std::min(threads,64));++t)ts.emplace_back(worker);for(auto& t:ts)t.join();};
         double began=tnow();parallel(resolveWorker);measure(began,resolveWall,resolvePeak);
@@ -428,9 +735,14 @@ static int slim_dump(Ri4& ri,const std::string& prefix,const std::string& out,
     }
     if(close(fd)||rename(tmp.c_str(),out.c_str()))slim_fail("publish aggregate");
     slim_phase("queries+stream-write-final",last);
-    lce.ph->report("parse");lce.dh->report("dict");
+    if(parseFree)pfce->report(); else {lgce->ph->report("parse");lgce->dh->report("dict");}
     fprintf(stderr,"SLIM_QUERY_PHASE resolve_wall=%.6f resolve_peak_kib=%ld lce_wall=%.6f lce_peak_kib=%ld write_wall=%.6f write_peak_kib=%ld\n",resolveWall,resolvePeak,lceWall,lcePeak,writeWall,writePeak);
-    fprintf(stderr,"SLIM_SEEDS queries=%llu mean_verified_phrases=%.9f max_verified_phrases=%llu (includes_zero_parse_work_seeds; boundary_included)\n",(unsigned long long)lce.seedQueries.load(),lce.seedQueries.load()?double(lce.ph->checked.load())/lce.seedQueries.load():0.0,(unsigned long long)lce.ph->maxChecked.load());
+    {const auto& seeds=parseFree?pfce->seedQueries:lgce->seedQueries;
+     const auto& checked=parseFree?pfce->fh->checked:lgce->ph->checked;
+     const auto& maxChecked=parseFree?pfce->fh->maxChecked:lgce->ph->maxChecked;
+     const char* unit=parseFree?"symbols":"phrases";
+    fprintf(stderr,"SLIM_SEEDS queries=%llu mean_verified_%s=%.9f max_verified_%s=%llu (includes_zero_parse_work_seeds; boundary_included)\n",(unsigned long long)seeds.load(),unit,seeds.load()?double(checked.load())/seeds.load():0.0,unit,(unsigned long long)maxChecked.load());
+    }
     fprintf(stderr,"SLIM_RESOLVE walks=%llu steps=%llu max=%llu anchor=%llu failed=%llu cache_hits=%llu\n",(unsigned long long)resolver.nWalks.load(),(unsigned long long)resolver.sumSteps.load(),(unsigned long long)resolver.maxSteps.load(),(unsigned long long)resolver.viaAnchor.load(),(unsigned long long)resolver.hit0a.load(),(unsigned long long)resolver.viaCache.load());
     fprintf(stderr,"SLIM_BOUNDARY_RESOLVE head_direct=%llu tail_direct=%llu head_lf_steps=%llu\n",
         (unsigned long long)resolver.directHeads.load(),(unsigned long long)resolver.directTails.load(),

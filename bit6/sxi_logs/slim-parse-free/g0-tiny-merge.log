@@ -1,0 +1,6 @@
+CROSS_PHASE load wall=0.001 cumulative=0.001 peak_rss_kib=14336
+CROSS_PHASE hash-build wall=0.000 cumulative=0.001 peak_rss_kib=14336
+CROSS_PHASE anchor+repair wall=0.000 cumulative=0.001 peak_rss_kib=14336
+CROSS_PHASE emit-count wall=0.000 cumulative=0.001 peak_rss_kib=14336
+CROSS_PHASE emit-write wall=0.000 cumulative=0.001 peak_rss_kib=14336
+CROSS_PAIR mode=dollar-single left=/tmp/slimpf/g0/tiny/chunks/chunk-0.crle right=- nA=33 nB=0 out=/tmp/slimpf/g0/tiny/frag out_runs=18 wall_total=0.001 comparisons=16 symbols_compared=84 probes=0 max_lce=2 fast_decided=1 probe_decided=0 cap_decided=15 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_A=13 anchors_B=0 walk_steps_A=13 walk_steps_B=0 block_rows_A=27 block_rows_B=0 peak_rss_kib=14336

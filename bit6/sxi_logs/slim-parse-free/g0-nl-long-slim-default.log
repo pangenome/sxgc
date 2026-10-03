@@ -1,0 +1,24 @@
+ri4: n=9009 k=4 R=5870
+SLIM_PHASE ri4-load wall=0.000 cumulative=0.000 peak_rss_kib=14336
+SLIM_HEAD_SA bytes=46960 rows=5870 mmap=1
+SLIM_PHASE parse-free-lf-base wall=0.000 cumulative=0.000 peak_rss_kib=14336
+SLIM_PHASE parse-free-seeds-sort wall=0.000 cumulative=0.001 peak_rss_kib=14336
+SLIM_STRING_ENDS count=4 bytes=48 from_parse_dict=0 cyclic=0
+SLIM_PHASE parse-free-walk wall=0.003 cumulative=0.003 peak_rss_kib=14336
+SLIM_PHASE parse-free-fingerprints wall=0.000 cumulative=0.003 peak_rss_kib=14336
+SLIM_PF_SELF_CHECK checks=256 passed=1
+SLIM_PHASE parse-free-self-check wall=0.000 cumulative=0.003 peak_rss_kib=14336
+SLIM_PARSE_FREE_STRUCT n=9019 text_len=9009 rows=9009 R=5870 tau=13 checkpoints=694 checkpoint_bytes=5552 sidecar_bytes=9009 seeds=5870 emissions=9009 cyclic=0 work_limit=1000000000 no_SA_ISA_LCP_RMQ=1 no_M_b_bwt_w_wt=1 no_parse_dict=1 no_phrase_ids=1 corpus_reads=0
+SLIM_PHASE lce-build-total wall=0.003 cumulative=0.003 peak_rss_kib=14336
+SLIM_PHASE lf-build wall=0.000 cumulative=0.004 peak_rss_kib=14336
+SLIM_RI runs=29350 starts=46960 samples=10280 lf_capacity=107912
+SLIM_PROGRESS runs=5870/5870 resolve_wall=0.002 lce_wall=0.025 write_wall=0.000 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=0.028 cumulative=0.031 peak_rss_kib=14336
+SLIM_PHASE queries+stream-write-final wall=0.000 cumulative=0.031 peak_rss_kib=14336
+SLIM_FP parse-free-text tau=13 bytes=5552 queries=8865 verified_symbols=4306142 hash_probes=19717 mean_verified=485.746418500 max_verified=3000 max_requested_lce=3000 verification_work=4343278 hash_probe_charges=79379 suffix_symbol_reads=463677 total_work=4422657 total_limit=1000000000 verification_limit=9009 probe_limit=13
+SLIM_PARSE_FREE text_len=9009 rows=9009 sidecar_bytes=9009 tau=13 checkpoint_bytes=5552 seeds=5870 emissions=9009 cyclic=0 string_ends=4 work_used=4422657 work_limit=1000000000 sidecar_unlinked=1 corpus_reads=0
+SLIM_QUERY_PHASE resolve_wall=0.001772 resolve_peak_kib=14336 lce_wall=0.024804 lce_peak_kib=14336 write_wall=0.000233 write_peak_kib=14336
+SLIM_SEEDS queries=5 mean_verified_symbols=861228.400000000 max_verified_symbols=3000 (includes_zero_parse_work_seeds; boundary_included)
+SLIM_RESOLVE walks=0 steps=0 max=0 anchor=0 failed=0 cache_hits=0
+SLIM_BOUNDARY_RESOLVE head_direct=5870 tail_direct=8870 head_lf_steps=0
+SLIM_PF_KEEP_TEXT sidecar=/tmp/slimpf/g0/nl-long/free.default.agg.pftext retained

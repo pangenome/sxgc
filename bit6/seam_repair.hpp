@@ -75,29 +75,44 @@ struct SeamRepair {
   for(auto& cl:classes)cl.before=lookup(cl.first);
   for(auto& pair:phi)std::swap(pair.first,pair.second);
   order();
-  // Rank structures are no longer needed; release before loading PFP LCE.
-  std::vector<Run>().swap(raw);std::vector<U>().swap(starts);
+  // Parse-free LCE (the finish sequence no longer reads any PFP artifact):
+  // one structural LF walk over the PADDED runs - all n+w1 rotations of
+  // P=M.0x02^w1 are distinct, so LF is closed by construction - emits the
+  // normalized text M to a private sidecar and builds tau-spaced rolling
+  // suffix-hash checkpoints. Every probe and verified symbol is journaled
+  // and budgeted; hash/verification disagreement aborts. Corpus is not read.
+  struct PaddedRuns { U R; std::vector<uint8_t> a; std::vector<uint32_t> l; std::vector<uint64_t> starts; };
+  PaddedRuns pr; pr.R=r; pr.a.resize(r); pr.l.resize(r); pr.starts=std::move(starts);
+  std::vector<U> headSa(r);
+  for(U i=0;i<r;++i) {
+   check(raw[i].len<=UINT32_MAX,"padded run too long for the parse-free walk");
+   pr.a[i]=raw[i].c; pr.l[i]=uint32_t(raw[i].len); headSa[i]=raw[i].h;
+  }
+  // Rank structures are no longer needed; release before building the LCE.
+  std::vector<Run>().swap(raw);
   for(auto& v:bychar)std::vector<std::pair<U,U>>().swap(v);
-  SlimLCE lce(source.prefix,r,0,0,true,false,true,source.w1);
-  check(lce.n==N,"seam PFP length mismatch");
-  // Existing slim hashes verify guesses exactly. Bound that verifier too;
-  // a long verified prefix must refuse, never become a corpus-sized walk.
-  U bits=0;for(U value=N;value;value>>=1)++bits;
-  U queryLimit=std::max<U>(1000,bits*bits*bits);
-  SlimSeamWork work(lce.p.size()+lce.d.size());
-  lce.ph->seam_policy(work,queryLimit,"seam-parse");lce.dh->seam_policy(work,queryLimit,"seam-dict");
+  const char* env=getenv("SLIM_PF_THREADS");
+  int pfThreads=env? std::max(1,std::min(64,atoi(env))) : 16;
+  // Byte-denominated journaled budget. The parse-based policy charged mixed
+  // phrase/byte units with limit max(1e6,(P+D)/8); at fragment scale one
+  // phrase unit covered ~102 bytes, so that limit was ~14n byte-equivalents.
+  // The honest byte-level replacement is max(1e8, 16n): comparable
+  // stringency, with the floor admitting bounded tiny fixtures. Every probe
+  // and verified byte is charged; exhaustion fails loudly, never degrades.
+  U pfWorkLimit=std::max<U>(100000000,16*n);
+  SlimLCEParseFree pf(pr,headSa.data(),n,N,pfThreads,0,source.prefix,false,true,source.w1,pfWorkLimit,2);
+  check(pf.n==N,"seam parse-free length mismatch");
   U maxSeamLCE=0;
-  fprintf(stderr,"CYCLIC_SEAM_LCE_POLICY max_probe=%llu max_verification=67108864 total_limit=%llu cost=phrase_or_byte_comparisons_plus_hash_symbol_reads fraction=(P+D)/8 floor=1000000 ceiling=4294967296\n",(unsigned long long)queryLimit,(unsigned long long)work.limit);
+  fprintf(stderr,"CYCLIC_SEAM_LCE_POLICY parse_free=1 probe_limit=%llu max_verification=67108864 total_limit=%llu cost=byte_comparisons_plus_hash_probes_plus_verified_bytes fraction=16n floor=100000000 exact=1 no_parse_dict=1\n",(unsigned long long)pf.tau,(unsigned long long)pf.work->limit);
   auto symbol=[&](U pos) {
-   U shifted=pos+source.w1,id=lce.pr(shifted+1);
-   return lce.d[lce.dstart(lce.p[id-1])+shifted-lce.ps(id)];
+   return pf.text_byte(pos);
   };
   for(auto& cl:classes) {
    std::vector<U> sa;sa.reserve(cl.hi-cl.lo);U pos=cl.first;
    for(U row=cl.lo;row<cl.hi;++row){check(pos<n,"seam sample outside T");sa.push_back(pos);pos=lookup(pos);}
    cl.after=pos;
    std::sort(sa.begin(),sa.end(),[&](U a,U b){
-    U len=lce.collection_lce(a,b);maxSeamLCE=std::max(maxSeamLCE,len);
+    U len=pf.collection_lce(a,b);maxSeamLCE=std::max(maxSeamLCE,len);
     return len==n ? a<b : symbol((a+len)%n)<symbol((b+len)%n);
    });
    for(U pos:sa) {
@@ -107,8 +122,8 @@ struct SeamRepair {
    }
   }
   fprintf(stderr,"CYCLIC_SEAM_REPAIRED classes=%zu rows=%llu discovery_steps=%llu limit=%llu phi_samples=%llu\n",classes.size(),(unsigned long long)total,(unsigned long long)depth,(unsigned long long)limit,(unsigned long long)r);
-  fprintf(stderr,"CYCLIC_SEAM_WORK max_seam_lce=%llu total_work=%llu total_limit=%llu exact=1\n",(unsigned long long)maxSeamLCE,(unsigned long long)work.used.load(),(unsigned long long)work.limit);
-  lce.ph->report("seam-parse");lce.dh->report("seam-dict");
+  fprintf(stderr,"CYCLIC_SEAM_WORK max_seam_lce=%llu total_work=%llu total_limit=%llu exact=1\n",(unsigned long long)maxSeamLCE,(unsigned long long)pf.work->used.load(),(unsigned long long)pf.work->limit);
+  pf.report();
  }
  void scan(const std::function<void(Run)>& emit) {
   U row=0;size_t next=0;Run pending{};bool have=false;

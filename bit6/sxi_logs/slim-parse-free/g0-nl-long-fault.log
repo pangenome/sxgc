@@ -1,0 +1,16 @@
+ri4: n=9009 k=4 R=5870
+SLIM_PHASE ri4-load wall=0.000 cumulative=0.000 peak_rss_kib=14336
+SLIM_HEAD_SA bytes=46960 rows=5870 mmap=1
+SLIM_PHASE parse-free-lf-base wall=0.000 cumulative=0.000 peak_rss_kib=14336
+SLIM_PHASE parse-free-seeds-sort wall=0.000 cumulative=0.001 peak_rss_kib=14336
+SLIM_STRING_ENDS count=4 bytes=48 from_parse_dict=0 cyclic=0
+SLIM_PHASE parse-free-walk wall=0.002 cumulative=0.003 peak_rss_kib=14336
+SLIM_PHASE parse-free-fingerprints wall=0.000 cumulative=0.003 peak_rss_kib=14336
+SLIM_PF_SELF_CHECK checks=256 passed=1
+SLIM_PHASE parse-free-self-check wall=0.000 cumulative=0.003 peak_rss_kib=14336
+SLIM_PARSE_FREE_STRUCT n=9019 text_len=9009 rows=9009 R=5870 tau=13 checkpoints=694 checkpoint_bytes=5552 sidecar_bytes=9009 seeds=5870 emissions=9009 cyclic=0 work_limit=1000000000 no_SA_ISA_LCP_RMQ=1 no_M_b_bwt_w_wt=1 no_parse_dict=1 no_phrase_ids=1 corpus_reads=0
+SLIM_PHASE lce-build-total wall=0.003 cumulative=0.003 peak_rss_kib=14336
+SLIM_PHASE lf-build wall=0.000 cumulative=0.003 peak_rss_kib=14336
+SLIM_RI runs=29350 starts=46960 samples=10280 lf_capacity=107912
+FATAL SLIM: fingerprint verification mismatch at boundary
+FATAL SLIM: fingerprint verification mismatch inside proposed prefix

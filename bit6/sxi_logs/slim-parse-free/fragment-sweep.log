@@ -1,0 +1,24 @@
+xsa chi-rspace: chi = 306164765 (N=1082130213, R=397723010) stream-agg=true buffers=4194304
+	Command being timed: "/home/erikg/sxgc/xsa/target/release/xsa chi-rspace --stream-agg --ri4 fresh.ri4 --agg fresh.agg -o fresh.sA"
+	User time (seconds): 62.65
+	System time (seconds): 5.12
+	Percent of CPU this job got: 99%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 1:07.78
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 6144
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 1
+	Minor (reclaiming a frame) page faults: 3247
+	Voluntary context switches: 54
+	Involuntary context switches: 150
+	Swaps: 0
+	File system inputs: 778848
+	File system outputs: 4783840
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

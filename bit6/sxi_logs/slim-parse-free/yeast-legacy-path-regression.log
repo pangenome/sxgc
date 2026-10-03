@@ -1,0 +1,237 @@
+ri4: n=3336986759 k=1 R=100905045
+SLIM_PHASE ri4-load wall=1.181 cumulative=1.181 peak_rss_kib=1677312
+SLIM_HEAD_SA bytes=807240360 rows=100905045 mmap=1
+SLIM_PHASE dict-read wall=0.001 cumulative=1.240 peak_rss_kib=1677312
+SLIM_PHASE dict-boundaries wall=4.771 cumulative=6.012 peak_rss_kib=1681408
+SLIM_STRING_ENDS count=1 bytes=8 from_parse_dict=1 cyclic=1
+SLIM_PHASE parse+boundaries wall=8.240 cumulative=14.252 peak_rss_kib=1857536
+SLIM_PHASE parse-fingerprints wall=0.180 cumulative=14.432 peak_rss_kib=1945600
+SLIM_PHASE dict-fingerprints wall=2.825 cumulative=17.257 peak_rss_kib=2043904
+SLIM_STRUCT n=3336986769 P=34133784 D=513394309 phrases=3159359 parse_bytes=136535140 bd_bytes=3909776 bp_bytes=41215786 dict_resident=0 dict_cache_per_thread=262144 no_SA_ISA_LCP_RMQ=1 no_M_b_bwt_w_wt=1
+SLIM_PHASE lce-build-total wall=16.089 cumulative=17.270 peak_rss_kib=2043904
+SLIM_PHASE lf-build wall=2.648 cumulative=19.918 peak_rss_kib=3626504
+SLIM_RI runs=504525225 starts=807240360 samples=403620184 lf_capacity=1881080616
+SLIM_PROGRESS runs=65536/100905045 resolve_wall=0.021 lce_wall=0.428 write_wall=0.002 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=0.451 cumulative=20.368 peak_rss_kib=3642888
+SLIM_PROGRESS runs=1114112/100905045 resolve_wall=0.318 lce_wall=4.894 write_wall=0.032 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.793 cumulative=25.161 peak_rss_kib=3643432
+SLIM_PROGRESS runs=2162688/100905045 resolve_wall=0.609 lce_wall=9.163 write_wall=0.060 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.590 cumulative=29.751 peak_rss_kib=3643432
+SLIM_PROGRESS runs=3211264/100905045 resolve_wall=0.891 lce_wall=13.390 write_wall=0.089 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.537 cumulative=34.288 peak_rss_kib=3643432
+SLIM_PROGRESS runs=4259840/100905045 resolve_wall=1.179 lce_wall=17.609 write_wall=0.118 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.538 cumulative=38.826 peak_rss_kib=3643432
+SLIM_PROGRESS runs=5308416/100905045 resolve_wall=1.463 lce_wall=21.819 write_wall=0.147 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.523 cumulative=43.348 peak_rss_kib=3643432
+SLIM_PROGRESS runs=6356992/100905045 resolve_wall=1.751 lce_wall=26.078 write_wall=0.176 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.576 cumulative=47.924 peak_rss_kib=3643432
+SLIM_PROGRESS runs=7405568/100905045 resolve_wall=2.029 lce_wall=30.373 write_wall=0.206 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.603 cumulative=52.527 peak_rss_kib=3643432
+SLIM_PROGRESS runs=8454144/100905045 resolve_wall=2.313 lce_wall=34.466 write_wall=0.236 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.408 cumulative=56.935 peak_rss_kib=3643432
+SLIM_PROGRESS runs=9502720/100905045 resolve_wall=2.597 lce_wall=38.533 write_wall=0.266 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.381 cumulative=61.315 peak_rss_kib=3643432
+SLIM_PROGRESS runs=10551296/100905045 resolve_wall=2.870 lce_wall=42.592 write_wall=0.297 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.363 cumulative=65.679 peak_rss_kib=3643432
+SLIM_PROGRESS runs=11599872/100905045 resolve_wall=3.133 lce_wall=46.683 write_wall=0.325 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.381 cumulative=70.060 peak_rss_kib=3643432
+SLIM_PROGRESS runs=12648448/100905045 resolve_wall=3.405 lce_wall=50.743 write_wall=0.355 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.363 cumulative=74.423 peak_rss_kib=3643432
+SLIM_PROGRESS runs=13697024/100905045 resolve_wall=3.670 lce_wall=54.879 write_wall=0.384 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.430 cumulative=78.853 peak_rss_kib=3643432
+SLIM_PROGRESS runs=14745600/100905045 resolve_wall=3.944 lce_wall=58.953 write_wall=0.417 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.381 cumulative=83.234 peak_rss_kib=3643432
+SLIM_PROGRESS runs=15794176/100905045 resolve_wall=4.218 lce_wall=63.056 write_wall=0.448 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.408 cumulative=87.642 peak_rss_kib=3643432
+SLIM_PROGRESS runs=16842752/100905045 resolve_wall=4.480 lce_wall=67.169 write_wall=0.478 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.405 cumulative=92.047 peak_rss_kib=3643432
+SLIM_PROGRESS runs=17891328/100905045 resolve_wall=4.764 lce_wall=71.474 write_wall=0.510 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.621 cumulative=96.668 peak_rss_kib=3643432
+SLIM_PROGRESS runs=18939904/100905045 resolve_wall=5.057 lce_wall=75.691 write_wall=0.541 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.542 cumulative=101.210 peak_rss_kib=3643432
+SLIM_PROGRESS runs=19988480/100905045 resolve_wall=5.339 lce_wall=79.850 write_wall=0.571 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.471 cumulative=105.681 peak_rss_kib=3643432
+SLIM_PROGRESS runs=21037056/100905045 resolve_wall=5.620 lce_wall=84.157 write_wall=0.601 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.618 cumulative=110.299 peak_rss_kib=3643432
+SLIM_PROGRESS runs=22085632/100905045 resolve_wall=5.892 lce_wall=88.327 write_wall=0.633 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.474 cumulative=114.773 peak_rss_kib=3643432
+SLIM_PROGRESS runs=23134208/100905045 resolve_wall=6.160 lce_wall=92.477 write_wall=0.664 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.450 cumulative=119.223 peak_rss_kib=3643432
+SLIM_PROGRESS runs=24182784/100905045 resolve_wall=6.436 lce_wall=96.634 write_wall=0.696 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.464 cumulative=123.687 peak_rss_kib=3643432
+SLIM_PROGRESS runs=25231360/100905045 resolve_wall=6.705 lce_wall=100.770 write_wall=0.727 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.436 cumulative=128.124 peak_rss_kib=3643432
+SLIM_PROGRESS runs=26279936/100905045 resolve_wall=6.970 lce_wall=105.397 write_wall=0.758 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.923 cumulative=133.047 peak_rss_kib=3643432
+SLIM_PROGRESS runs=27328512/100905045 resolve_wall=7.246 lce_wall=109.983 write_wall=0.788 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.892 cumulative=137.939 peak_rss_kib=3643432
+SLIM_PROGRESS runs=28377088/100905045 resolve_wall=7.517 lce_wall=114.475 write_wall=0.818 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.793 cumulative=142.732 peak_rss_kib=3643432
+SLIM_PROGRESS runs=29425664/100905045 resolve_wall=7.791 lce_wall=119.082 write_wall=0.848 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.912 cumulative=147.643 peak_rss_kib=3643432
+SLIM_PROGRESS runs=30474240/100905045 resolve_wall=8.056 lce_wall=123.708 write_wall=0.878 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.920 cumulative=152.564 peak_rss_kib=3643432
+SLIM_PROGRESS runs=31522816/100905045 resolve_wall=8.323 lce_wall=128.473 write_wall=0.910 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=5.066 cumulative=157.629 peak_rss_kib=3652544
+SLIM_PROGRESS runs=32571392/100905045 resolve_wall=8.588 lce_wall=133.178 write_wall=0.940 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=5.000 cumulative=162.629 peak_rss_kib=3657956
+SLIM_PROGRESS runs=33619968/100905045 resolve_wall=8.847 lce_wall=137.821 write_wall=0.970 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.932 cumulative=167.562 peak_rss_kib=3665956
+SLIM_PROGRESS runs=34668544/100905045 resolve_wall=9.105 lce_wall=142.557 write_wall=0.999 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=5.024 cumulative=172.585 peak_rss_kib=3665956
+SLIM_PROGRESS runs=35717120/100905045 resolve_wall=9.354 lce_wall=147.289 write_wall=1.027 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=5.008 cumulative=177.594 peak_rss_kib=3669068
+SLIM_PROGRESS runs=36765696/100905045 resolve_wall=9.608 lce_wall=151.904 write_wall=1.057 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.899 cumulative=182.492 peak_rss_kib=3676172
+SLIM_PROGRESS runs=37814272/100905045 resolve_wall=9.864 lce_wall=156.427 write_wall=1.088 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.810 cumulative=187.303 peak_rss_kib=3680492
+SLIM_PROGRESS runs=38862848/100905045 resolve_wall=10.123 lce_wall=161.118 write_wall=1.118 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.981 cumulative=192.283 peak_rss_kib=3688124
+SLIM_PROGRESS runs=39911424/100905045 resolve_wall=10.387 lce_wall=165.794 write_wall=1.147 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.969 cumulative=197.252 peak_rss_kib=3688124
+SLIM_PROGRESS runs=40960000/100905045 resolve_wall=10.661 lce_wall=170.487 write_wall=1.177 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.997 cumulative=202.249 peak_rss_kib=3689436
+SLIM_PROGRESS runs=42008576/100905045 resolve_wall=10.932 lce_wall=175.104 write_wall=1.208 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.919 cumulative=207.168 peak_rss_kib=3698548
+SLIM_PROGRESS runs=43057152/100905045 resolve_wall=11.197 lce_wall=179.785 write_wall=1.238 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.977 cumulative=212.145 peak_rss_kib=3709300
+SLIM_PROGRESS runs=44105728/100905045 resolve_wall=11.461 lce_wall=184.606 write_wall=1.269 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=5.115 cumulative=217.260 peak_rss_kib=3720404
+SLIM_PROGRESS runs=45154304/100905045 resolve_wall=11.719 lce_wall=189.710 write_wall=1.298 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=5.392 cumulative=222.652 peak_rss_kib=3727508
+SLIM_PROGRESS runs=46202880/100905045 resolve_wall=11.987 lce_wall=194.587 write_wall=1.329 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=5.176 cumulative=227.828 peak_rss_kib=3734648
+SLIM_PROGRESS runs=47251456/100905045 resolve_wall=12.244 lce_wall=198.937 write_wall=1.360 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.638 cumulative=232.466 peak_rss_kib=3748344
+SLIM_PROGRESS runs=48300032/100905045 resolve_wall=12.509 lce_wall=203.194 write_wall=1.389 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.552 cumulative=237.017 peak_rss_kib=3752504
+SLIM_PROGRESS runs=49348608/100905045 resolve_wall=12.769 lce_wall=207.401 write_wall=1.420 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.498 cumulative=241.515 peak_rss_kib=3766304
+SLIM_PROGRESS runs=50397184/100905045 resolve_wall=13.037 lce_wall=211.679 write_wall=1.452 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.579 cumulative=246.094 peak_rss_kib=3773408
+SLIM_PROGRESS runs=51445760/100905045 resolve_wall=13.297 lce_wall=215.891 write_wall=1.483 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.503 cumulative=250.597 peak_rss_kib=3787160
+SLIM_PROGRESS runs=52494336/100905045 resolve_wall=13.565 lce_wall=220.081 write_wall=1.513 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.488 cumulative=255.085 peak_rss_kib=3798908
+SLIM_PROGRESS runs=53542912/100905045 resolve_wall=13.827 lce_wall=224.174 write_wall=1.543 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.384 cumulative=259.469 peak_rss_kib=3809660
+SLIM_PROGRESS runs=54591488/100905045 resolve_wall=14.093 lce_wall=228.172 write_wall=1.575 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.297 cumulative=263.766 peak_rss_kib=3816316
+SLIM_PROGRESS runs=55640064/100905045 resolve_wall=14.355 lce_wall=232.213 write_wall=1.606 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.335 cumulative=268.101 peak_rss_kib=3828484
+SLIM_PROGRESS runs=56688640/100905045 resolve_wall=14.616 lce_wall=236.269 write_wall=1.636 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.347 cumulative=272.447 peak_rss_kib=3836152
+SLIM_PROGRESS runs=57737216/100905045 resolve_wall=14.876 lce_wall=240.432 write_wall=1.668 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.455 cumulative=276.903 peak_rss_kib=3841912
+SLIM_PROGRESS runs=58785792/100905045 resolve_wall=15.149 lce_wall=244.620 write_wall=1.698 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.491 cumulative=281.393 peak_rss_kib=3845368
+SLIM_PROGRESS runs=59834368/100905045 resolve_wall=15.418 lce_wall=248.877 write_wall=1.729 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.557 cumulative=285.951 peak_rss_kib=3848088
+SLIM_PROGRESS runs=60882944/100905045 resolve_wall=15.688 lce_wall=253.027 write_wall=1.759 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.450 cumulative=290.401 peak_rss_kib=3857392
+SLIM_PROGRESS runs=61931520/100905045 resolve_wall=15.970 lce_wall=257.010 write_wall=1.789 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.295 cumulative=294.696 peak_rss_kib=3870456
+SLIM_PROGRESS runs=62980096/100905045 resolve_wall=16.244 lce_wall=261.012 write_wall=1.819 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.306 cumulative=299.002 peak_rss_kib=3871784
+SLIM_PROGRESS runs=64028672/100905045 resolve_wall=16.513 lce_wall=265.097 write_wall=1.848 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.384 cumulative=303.386 peak_rss_kib=3879936
+SLIM_PROGRESS runs=65077248/100905045 resolve_wall=16.775 lce_wall=269.156 write_wall=1.878 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.350 cumulative=307.736 peak_rss_kib=3889316
+SLIM_PROGRESS runs=66125824/100905045 resolve_wall=17.044 lce_wall=273.215 write_wall=1.908 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.358 cumulative=312.094 peak_rss_kib=3895972
+SLIM_PROGRESS runs=67174400/100905045 resolve_wall=17.313 lce_wall=277.318 write_wall=1.938 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.402 cumulative=316.497 peak_rss_kib=3903704
+SLIM_PROGRESS runs=68222976/100905045 resolve_wall=17.573 lce_wall=281.416 write_wall=1.968 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.388 cumulative=320.885 peak_rss_kib=3907060
+SLIM_PROGRESS runs=69271552/100905045 resolve_wall=17.836 lce_wall=285.811 write_wall=1.997 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.688 cumulative=325.572 peak_rss_kib=3910324
+SLIM_PROGRESS runs=70320128/100905045 resolve_wall=18.099 lce_wall=290.271 write_wall=2.027 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.753 cumulative=330.325 peak_rss_kib=3920180
+SLIM_PROGRESS runs=71368704/100905045 resolve_wall=18.368 lce_wall=294.317 write_wall=2.058 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.346 cumulative=334.672 peak_rss_kib=3938676
+SLIM_PROGRESS runs=72417280/100905045 resolve_wall=18.647 lce_wall=298.372 write_wall=2.090 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.366 cumulative=339.037 peak_rss_kib=3947380
+SLIM_PROGRESS runs=73465856/100905045 resolve_wall=18.916 lce_wall=302.628 write_wall=2.121 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.557 cumulative=343.594 peak_rss_kib=3951988
+SLIM_PROGRESS runs=74514432/100905045 resolve_wall=19.177 lce_wall=306.690 write_wall=2.151 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.353 cumulative=347.947 peak_rss_kib=3964800
+SLIM_PROGRESS runs=75563008/100905045 resolve_wall=19.445 lce_wall=310.859 write_wall=2.180 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.466 cumulative=352.413 peak_rss_kib=3968176
+SLIM_PROGRESS runs=76611584/100905045 resolve_wall=19.708 lce_wall=315.013 write_wall=2.211 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.448 cumulative=356.861 peak_rss_kib=3978928
+SLIM_PROGRESS runs=77660160/100905045 resolve_wall=19.973 lce_wall=319.252 write_wall=2.241 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.534 cumulative=361.395 peak_rss_kib=3992360
+SLIM_PROGRESS runs=78708736/100905045 resolve_wall=20.236 lce_wall=323.649 write_wall=2.270 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.690 cumulative=366.085 peak_rss_kib=4004976
+SLIM_PROGRESS runs=79757312/100905045 resolve_wall=20.492 lce_wall=328.061 write_wall=2.300 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.698 cumulative=370.783 peak_rss_kib=4021208
+SLIM_PROGRESS runs=80805888/100905045 resolve_wall=20.760 lce_wall=332.326 write_wall=2.330 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.563 cumulative=375.346 peak_rss_kib=4021208
+SLIM_PROGRESS runs=81854464/100905045 resolve_wall=21.028 lce_wall=336.456 write_wall=2.360 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.427 cumulative=379.774 peak_rss_kib=4029484
+SLIM_PROGRESS runs=82903040/100905045 resolve_wall=21.289 lce_wall=340.515 write_wall=2.390 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.350 cumulative=384.124 peak_rss_kib=4038636
+SLIM_PROGRESS runs=83951616/100905045 resolve_wall=21.544 lce_wall=344.622 write_wall=2.418 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.390 cumulative=388.514 peak_rss_kib=4044264
+SLIM_PROGRESS runs=85000192/100905045 resolve_wall=21.809 lce_wall=348.933 write_wall=2.448 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.606 cumulative=393.120 peak_rss_kib=4052200
+SLIM_PROGRESS runs=86048768/100905045 resolve_wall=22.069 lce_wall=353.074 write_wall=2.477 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.431 cumulative=397.551 peak_rss_kib=4060456
+SLIM_PROGRESS runs=87097344/100905045 resolve_wall=22.332 lce_wall=357.202 write_wall=2.507 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.421 cumulative=401.972 peak_rss_kib=4069160
+SLIM_PROGRESS runs=88145920/100905045 resolve_wall=22.597 lce_wall=361.439 write_wall=2.536 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.530 cumulative=406.502 peak_rss_kib=4075912
+SLIM_PROGRESS runs=89194496/100905045 resolve_wall=22.863 lce_wall=365.739 write_wall=2.567 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.598 cumulative=411.101 peak_rss_kib=4084952
+SLIM_PROGRESS runs=90243072/100905045 resolve_wall=23.120 lce_wall=369.907 write_wall=2.596 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.454 cumulative=415.554 peak_rss_kib=4095704
+SLIM_PROGRESS runs=91291648/100905045 resolve_wall=23.381 lce_wall=374.205 write_wall=2.626 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.589 cumulative=420.144 peak_rss_kib=4102360
+SLIM_PROGRESS runs=92340224/100905045 resolve_wall=23.642 lce_wall=378.388 write_wall=2.655 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.472 cumulative=424.616 peak_rss_kib=4104920
+SLIM_PROGRESS runs=93388800/100905045 resolve_wall=23.903 lce_wall=382.649 write_wall=2.684 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.552 cumulative=429.168 peak_rss_kib=4112920
+SLIM_PROGRESS runs=94437376/100905045 resolve_wall=24.160 lce_wall=386.981 write_wall=2.712 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.618 cumulative=433.786 peak_rss_kib=4128472
+SLIM_PROGRESS runs=95485952/100905045 resolve_wall=24.422 lce_wall=391.165 write_wall=2.742 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.475 cumulative=438.261 peak_rss_kib=4138644
+SLIM_PROGRESS runs=96534528/100905045 resolve_wall=24.686 lce_wall=395.363 write_wall=2.772 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.492 cumulative=442.753 peak_rss_kib=4144852
+SLIM_PROGRESS runs=97583104/100905045 resolve_wall=24.950 lce_wall=399.571 write_wall=2.803 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.503 cumulative=447.256 peak_rss_kib=4164812
+SLIM_PROGRESS runs=98631680/100905045 resolve_wall=25.212 lce_wall=403.809 write_wall=2.834 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.532 cumulative=451.788 peak_rss_kib=4164964
+SLIM_PROGRESS runs=99680256/100905045 resolve_wall=25.474 lce_wall=408.043 write_wall=2.866 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.527 cumulative=456.315 peak_rss_kib=4178652
+SLIM_PROGRESS runs=100728832/100905045 resolve_wall=25.744 lce_wall=412.307 write_wall=2.897 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=4.566 cumulative=460.881 peak_rss_kib=4185628
+SLIM_PHASE queries+stream-write-final wall=1.301 cumulative=462.182 peak_rss_kib=4190368
+SLIM_FP parse tau=3 bytes=91023432 queries=36312215 verified_symbols=2854710339 hash_probes=115658536 mean_verified=78.615703807 max_verified=22263 max_requested_lce=22262 verification_work=2903486928 hash_probe_charges=462634144 suffix_symbol_reads=462639883 total_work=0 total_limit=18446744073709551615 verification_limit=18446744073709551615 probe_limit=18446744073709551615
+SLIM_FP dict tau=41 bytes=100174504 queries=192894612 verified_symbols=6460417656 hash_probes=439818224 mean_verified=33.491954954 max_verified=17549 max_requested_lce=17548 verification_work=7684458788 hash_probe_charges=1759272896 suffix_symbol_reads=35181488853 total_work=0 total_limit=18446744073709551615 verification_limit=18446744073709551615 probe_limit=18446744073709551615
+SLIM_QUERY_PHASE resolve_wall=25.790005 resolve_peak_kib=4190368 lce_wall=413.556075 lce_peak_kib=4190368 write_wall=2.902778 write_peak_kib=4190368
+SLIM_SEEDS queries=177082156 mean_verified_phrases=16.120824387 max_verified_phrases=22263 (includes_zero_parse_work_seeds; boundary_included)
+SLIM_RESOLVE walks=0 steps=0 max=0 anchor=0 failed=0 cache_hits=0
+SLIM_BOUNDARY_RESOLVE head_direct=100905045 tail_direct=177082143 head_lf_steps=0
+	Command being timed: "/tmp/slimpf/slim_dump --slim --resolve-ri4 --dict-stream --ri4 /tmp/sxgc-distribution-yeast/xsa-build-wj3k_ccs/fresh.ri4 --head-sa /tmp/sxgc-distribution-yeast/xsa-build-wj3k_ccs/fresh.head_sa --parse /tmp/sxgc-distribution-yeast/xsa-build-wj3k_ccs/parse --w1 10 -t 32 -o /tmp/slimpf/yeast/legacy-check.agg"
+	User time (seconds): 2940.47
+	System time (seconds): 10503.52
+	Percent of CPU this job got: 2906%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 7:42.55
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 4190368
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 1
+	Minor (reclaiming a frame) page faults: 14976478
+	Voluntary context switches: 1256261
+	Involuntary context switches: 77264
+	Swaps: 0
+	File system inputs: 4322144
+	File system outputs: 6307568
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

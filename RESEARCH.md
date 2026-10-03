@@ -2647,3 +2647,24 @@ PRODUCT TABLE FINALIZED: LITE 500-580 GB with orbit-aware anchors = all position
 walks (4% premium) - the locate weakness is SOLVED; WARM samples 1.4-2.4 TB -> 0.35-1.6 TB via
 banked threshold subsampling (the one remaining warm lever, pending its own lane); member 1
 stands (ours beats VLB at our scale).
+
+## THE PARSE-FREE SLIM - LANDED, ALL GATES GREEN, BYTE-EXACT (the pile's last construction piece)
+Route (a) post-merge rebuild: one structural LF walk over the built runs (corpus NEVER read) emits
+the cyclic text to a transient sidecar + tau-spaced suffix-hash checkpoints (tau=8n/r, r bytes);
+queries via the proven SlimFingerprint discipline (full direct verification, fail-loud budgets).
+DISCOVERY: the finish had a SECOND parse dependency (the endpoints adapter's cyclic seam repair) -
+also made parse-free, byte-identical at both scales (frag classes=15/rows=273,235; yeast
+classes=7, max_seam_lce=2,164,880).
+GATES ALL PASS: yeast chi=85,404,336 sA/agg byte-identical to banked; fragment chi=306,164,765
+with ri4/head_sa/agg/sA ALL byte-identical, ZERO parse in the finish; end-to-end from the 16
+banked chunks re-merges byte-identically and reproduces chi exactly; 7-corpus synthetic
+differential incl. fail-loud fault injection; legacy --parse path regression byte-identical.
+HONEST PILE-SCALE FINDINGS: (a) fingerprint structures r bytes = 480 GB - CHEAPER than the
+1.46 TB parse they replace (+ transient 1.31 TB sidecar, also < parse input); (b) the old slim
+ran UNCAPPED with mixed phrase/byte units - honest byte-denominated work is 85.4n (yeast);
+fail-loud cap set at 128n (a 64n attempt refused at 99.7%, evidence retained); (c) per-run LCE
+~3x the parse variant -> both variants multi-day at pile - levers identified: merge-time
+fingerprint streaming + journal sharding; (d) THE REAL BLOCKER: resident run columns 26R =
+12.5 TB at R=4.8e11 - the slim needs an external/streamed column design for the pile.
+PILE'S REMAINING LIST (all named, all bounded): external run-columns + merge-time fingerprint
+streaming + journal sharding -> then the run.
