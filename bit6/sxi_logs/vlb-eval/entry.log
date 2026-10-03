@@ -1,0 +1,171 @@
+# VLB evaluation lane — running journal
+
+2026-10-03. Worker lane task: evaluate arXiv:2602.17201 (Diaz-Dominguez &
+Makinen, "Adaptive encodings for small and fast compressed suffix arrays",
+VLB-tree + state-valid sampling) for the sxgc container line.
+
+## Phase 1 — paper (DONE, see paper-notes.md)
+
+- Fetched https://arxiv.org/pdf/2602.17201 (11-page PDF, 28pp ACM format)
+  -> paper-fulltext.txt. Extracted (a)-(f) into paper-notes.md.
+- Key finds: public code at github.com/ddiazdom/VLBT (live, public);
+  no asymptotic space bound (open problem, their Sec 9); their "state-valid
+  sampling" (Sec 5) subsamples the VLB-tree's root ROUTING arrays (Z) using
+  suffix-tree overlap structure (lmo/rmo) — it does NOT subsample SA samples
+  (Sec 7 reuses sr-index subsampling for those). Self-index: yes.
+- Honest framing correction journaled in paper-notes.md: the set of
+  backward-search interval states over ALL occurring patterns is ALL rows
+  (each row is the singleton interval of its own context). The non-trivial
+  restriction is the workload one (MEM minimal length L), which we
+  implement exactly as V_L = rows whose L-mer occurs >= 2 times.
+
+## Phase 2 — prototype (IN PROGRESS)
+
+Tool: vlb_stateval.cpp (C++17, no deps) in this directory. Decoder copied
+from the proven skiplist-lane tool (bit6/sxi_logs/skiplist-locate/
+skiplist_locate.cpp): SXI2 codec-101 runs, member-11 anchor semantics
+(one raw u64 tail-SA per 1024th run; locate walk terminates on the
+anchored TAIL row; SA[origin] = (anchor + steps) mod n).
+
+Corpora (retained artifacts, READ-ONLY):
+- yeast235 v5: /mnt/nvme3n1/erikg/sxi2-v5/yeast235.sxi2
+  n=3,336,986,759 R=100,905,045 member11=98,541 anchors
+- pile-frag v5: /mnt/nvme3n1/erikg/sxi2-v5/pile-frag.sxi2
+  n=1,082,130,213 R=397,723,010 member11=388,402 anchors
+
+Method (all offline measurement passes, NOT proposed build steps; the
+skiplist lane's sweep precedent walks the full LF cycle at this scale):
+1. text = inverse BWT via anchor-segment walks (parallel), byte-compare
+   vs source in ONE forward pass (THE-LAW style).
+2. SA[row] via the same segment walks, seeded by member-11 anchor values.
+   Gates: all 98,541 anchor values == SA[tailrow] (tautological per
+   segment but catches segment-boundary/walk bugs), sum(SA)==n(n-1)/2,
+   and selftest mode: exact rank vs brute, LF bijection, and
+   L[i]==T[(SA[i]-1) mod n] for ALL rows (smoke corpus: all exact).
+3. V_L bitmaps for L in {20,39,100}: row r in V_L iff
+   LCP(SA[r-1],SA[r])>=L or LCP(SA[r],SA[r+1])>=L (cyclic).
+4. ONE parallel orbit walk (orbit index of row = (A0 - SA) mod n, A0 =
+   anchor_val[0]; LF decrements SA by 1): gaps between consecutive
+   run-tails in orbit order + per-L valid aggregates + member-11
+   uniform walk stats (must reproduce the banked lane numbers:
+   yeast mean 221,573 / max 6,516,845; pile 3,050.6 / 134,859).
+5. Greedy state-valid placement per L, per D (min anchor count s.t.
+   every V_L point has an anchor within D ahead on the orbit), plus the
+   all-rows variant (pure orbit-aware placement) and D* bisection at the
+   member-11 anchor count.
+6. Benchmark: 1000 patterns of length L from the text, backward search
+   (exact rank, selftested), locate every sampled interval row both
+   ways; gates: recovered position == SA[startrow] (exact answer parity
+   vs the reconstructed SA) AND pattern-context byte match. Latency
+   measured in the same run for both.
+
+Smoke test (random-4-2k, n=2001): all gates 0 mismatches (ASAN clean).
+Bug found+fixed during smoke: the interval-interior row sampler could
+overshoot ep (j beyond rowCap-1) — produced false context mismatches;
+rank/LF/BWT-property selftests were exact throughout.
+
+Resource use: <= 31 threads, ~27 GB RSS peak expected for yeast.
+
+## Logs
+
+- yeast235.run.log — full yeast run (launched 03:24)
+
+## Phase 2 — yeast235 results (COMPLETE, see yeast235.run.log)
+
+All gates green:
+- source compare vs syng/yeast.fa (records reversed): BYTE-EXACT, all
+  3,336,986,759 bytes (one forward pass).
+- SA reconstruction: all 98,541 member-11 anchor values == SA[tailrow];
+  sum(SA) == n(n-1)/2.
+- Orbit machinery reproduces the banked lane EXACTLY: member-11 walk over
+  all rows mean=221,572.8 / max=6,516,844 (banked 221,573.0 / 6,516,845).
+- Benchmark: 2,000-7,647 located rows per L, 0 SA-parity mismatches,
+  0 context mismatches.
+
+THE CENTRAL MEASUREMENT (state-valid sampling premise test):
+- |V_20| = 98.50% of n; |V_39| = 97.70%; |V_100| = 95.84%. On a pangenome
+  essentially EVERY row is a backward-search-reachable locate start for
+  MEMs of length >= 20-100 (LCPs are huge). The state-valid restriction is
+  nearly EMPTY here — it cannot shrink the anchor set much.
+- Confirmed by placement: at the member-11 anchor count (98,541), the
+  state-valid greedy (L=20) gives D*=31,400 / mean walk 43,160 / max
+  2,164,858; the workload-independent ALL-ROWS orbit-aware greedy gives
+  D*=31,665 / mean 42,844 / max 2,164,858 — IDENTICAL within noise.
+  State-validity contributes ~0% on yeast.
+
+WHAT ACTUALLY WINS (and it is big, at zero extra space): ORBIT-AWARE
+anchor placement. member-11 anchors every 1024th run BY RUN INDEX, which is
+blind to the LF orbit; the orbit gaps between consecutive member-11
+anchored tails are permutation-random (mean 33.8k, max 6.5M steps).
+Placing the SAME 98,540 anchors to bound the orbit walk instead:
+- locate walk mean 210k-221k -> 40.5k-45.0k steps (5.0-5.2x)
+- max 6.1M -> 1.5M-1.9M (3.2-3.4x)
+- measured latency (31 threads, same run): 112-124 ms -> 21.4-24.8 ms
+  per locate (5.0-5.23x)
+Tradeoff curve (state-valid ~= all-rows on yeast, L=20):
+  D=1,024    -> 2,089,653 anchors (21x member-11 space), mean 33,219
+  D=4,096    ->   655,453 anchors (6.6x), mean 33,900
+  D=16,384   ->   181,900 anchors (1.8x), mean 37,770
+  D=65,536   ->    48,855 anchors (0.50x, HALF member-11 space), mean 56,475
+  D=262,144  ->    12,911 anchors (0.13x), mean 141,084 (still 1.6x faster
+                                                      than member-11 today)
+  D=1,048,576->     3,271 anchors (0.033x), mean 514,912 (2.3x slower)
+So: half the anchor space buys 4x; 7.6x less space still beats today's
+latency. Anchors are u64 tail-SA values (member 11 = 788,344 B on yeast),
+so these are sub-MB-to-8MB decisions, but the same curve shape will apply
+at pile scale where member 11 is 3.1 MB and, more importantly, where the
+WALK cost (not the anchor bytes) is the product's locate latency.
+
+Caveat (honest): singleton-occurrence MEM starts are NOT in V_L (16-43 of
+~7,200-7,600 benchmark rows, 0.2-0.6%); their walks under the state-valid
+set are unbounded by construction (measured mean 12-17k steps — luck, not
+a bound). The all-rows variant has no such hazard and costs the same on
+yeast.
+
+Bug history (this run): (1) anchor segments processed in run-index order
+are NOT orbit order — fixed by sorting segments by orbit start;
+(2) per-gap valid accumulators were not reset at gap close (cumulated
+across segments) — fixed + new partition gate (sum tcnt == |V_L|).
+Both were caught by internal-consistency gates before any conclusion was
+drawn; the banked-lane cross-check (221,572.8) was the anchor truth.
+
+## Phase 2 — pile-frag run (launched, pile-frag.run.log)
+
+Text-like regime (n/R=2.7), where the banked lite walk is ~3.1k mean.
+Ls = 20, 31, 100. No source text found on the retained volumes for a
+byte-compare gate; correctness gates here are: member-11 anchor-value
+crosscheck, sum(SA), SA-parity + context checks in the benchmark, and the
+orbit-order/partition FATAL gates.
+
+## Phase 2 — pile-frag results (COMPLETE, pile-frag.run.log / run2.log)
+
+All gates green (member-11 crosscheck 388,402/388,402; sum(SA) OK;
+benchmark 0 SA-parity / 0 context mismatches; orbit stats reproduce the
+banked lane exactly: 3,050.6 / 134,858).
+
+- |V_20|=28.31%, |V_31|=11.64%, |V_100|=4.03% of n — the restriction is
+  real on text, unlike yeast.
+- BUT anchor-count savings from state-validity are ~nil at L=20 (0.7%
+  fewer than all-rows at D=4,096), 9.7% at L=31, 73% at L=100 — and the
+  L=100 placement strands the singleton starts (88% of real benchmark
+  starts; measured 10x WORSE locate from them: mean 33,893 steps).
+- Orbit-aware all-rows placement: same count -> mean 1,415 (2.16x),
+  max 97,037 (1.4x); D=1,024 -> 1.06M anchors (2.8% of the 2.05 GB lite)
+  -> mean 537 (5.7x); D=256 -> 4.25M anchors (~4.1% of lite incl. bitmap)
+  -> mean 158 (19.3x). Dominates the skiplist lane's jump pointers
+  (47% of lite for 5.8x) on the space-time plane; composable with them.
+
+## Phase 3 — verdict row (full arithmetic in REPORT.md)
+
+1. Warm-form samples 1.4-2.4 TB -> 0.35-1.6 TB STANDS (sr-index
+   subsampling); VLB state-valid sampling does not touch SA samples
+   (it subsamples the VLB-tree Z routing arrays). VLB's warm-form value
+   is layout (T_phi interleave) - a future member-8 re-encoding lane.
+2. Lite locate 3.1k mean -> 1.4k at identical anchor count (2.2x); ~160
+   steps at ~4% of the lite artifact (~19x) - via ORBIT-AWARE anchors,
+   NOT state-validity.
+3. Member 1 -> VLB tree: NO (>=13-16 bits/run vs 7.2; satellite overhead
+   maximal at n/r=2.85; their own HUM already loses to fbb by 13-18%;
+   expected pile VLB BWT ~1-1.6 TB vs 414 GB).
+
+Lane complete. No process left running at close; nothing staged.

@@ -1,0 +1,64 @@
+phase A done in 244.8s (max segment 6516845)
+container: n=3336986759 k=9901 R=100905045 flags=15
+idx built (4.5s): 10 symbols, member11 anchors=98541
+text cache loaded
+source compare (fasta revrec) /mnt/nvme3n1/erikg/sxgc-yeast/syng/yeast.fa: BYTE-EXACT (15.9s)
+SA reconstructed (117.6s)
+gates: member11 SA mismatches=0 / 98541 ; sum(SA)=OK (1.2s)
+LCPGE L=20: adjacent pairs with LCP>=20: 3190245415 (95.6026% of n); |V_L|=3287097380 (98.50% of n) (32.6s)
+LCPGE L=39: adjacent pairs with LCP>=39: 3134652341 (93.9366% of n); |V_L|=3260157128 (97.70% of n) (40.1s)
+LCPGE L=100: adjacent pairs with LCP>=100: 3009886993 (90.1978% of n); |V_L|=3198007279 (95.84% of n) (70.0s)
+orbit gaps: R=100905045 records; member-11 uniform walk over ALL rows: mean=221572.8 max=6516844 (banked lane: yeast 221573.0/6516845, pile 3050.6/134859)
+member-11 uniform walk over V_L (L=20): cnt=3287097380 mean=224672.4 max=6516844
+member-11 uniform walk over V_L (L=39): cnt=3260157128 mean=226254.1 max=6516844
+member-11 uniform walk over V_L (L=100): cnt=3198007279 mean=229718.2 max=6516844
+orbit inter-tail gaps: mean=33.1 max=2164859 gaps>=1024=470264
+floor L=20: max distance from a V_L point to the next run tail on the orbit = 2164858
+floor L=39: max distance from a V_L point to the next run tail on the orbit = 2164841
+floor L=100: max distance from a V_L point to the next run tail on the orbit = 2164780
+
+=== state-valid greedy placement (D = walk bound from V_L) ===
+L          D            |       count     meanwalk     maxwalk   forced
+20         1024         |     2089653      33219.1     2164858   469155
+20         4096         |      655453      33899.9     2164858    76846
+20         16384        |      181900      37769.6     2164858    15525
+20         65536        |       48855      56475.2     2164858     2847
+20         262144       |       12911     141084.3     2164858      548
+20         1048576      |        3271     514911.7     2164858       17
+ALL        4096         |      656664      33423.1     2164858    76846   (all-rows)
+L=20: D*=31400 (min D with count<=98541) -> count=98540 meanwalk=43160.4 maxwalk=2164858 forced=7062 forcedExcess=2133458
+  all-rows D*=31665 -> count=98538 meanwalk=42844.1 maxwalk=2164858 (orbit-aware, workload-independent)
+39         1024         |     2074402      33487.5     2164841   468681
+39         4096         |      653850      34162.5     2164841    76830
+39         16384        |      181686      38015.5     2164841    15524
+39         65536        |       48758      56677.5     2164841     2847
+39         262144       |       12884     141179.3     2164841      548
+39         1048576      |        3271     514862.8     2164841       17
+ALL        4096         |      656664      33423.1     2164858    76846   (all-rows)
+L=39: D*=31355 (min D with count<=98541) -> count=98540 meanwalk=43374.2 maxwalk=2164841 forced=7070 forcedExcess=2133486
+  all-rows D*=31665 -> count=98538 meanwalk=42844.1 maxwalk=2164858 (orbit-aware, workload-independent)
+100        1024         |     2031707      34120.6     2164780   466273
+100        4096         |      646718      34783.2     2164780    76754
+100        16384        |      180612      38598.4     2164780    15523
+100        65536        |       48613      57157.9     2164780     2847
+100        262144       |       12857     141411.1     2164780      547
+100        1048576      |        3271     514659.5     2164780       17
+ALL        4096         |      656664      33423.1     2164858    76846   (all-rows)
+L=100: D*=31217 (min D with count<=98541) -> count=98537 meanwalk=43870.0 maxwalk=2164780 forced=7107 forcedExcess=2133563
+  all-rows D*=31665 -> count=98538 meanwalk=42844.1 maxwalk=2164858 (orbit-aware, workload-independent)
+anchor sets written to yeast235.anchors.bin
+
+=== locate benchmark (patterns of length L from the indexed text) ===
+BENCH L=20 qlen=20: patterns=1000 occurrencesTotal=245120 locatedRows=7647
+  gates: SA-parity mismatches=0 context mismatches=0 uncoveredStarts=16 (mean stateval steps on uncovered=15019.3)
+  member11: meanSteps=210147.6 maxSteps=5752956 meanLatency=111936963 ns/locate
+  stateval: meanSteps=40535.8 maxSteps=1908119 meanLatency=21393208 ns/locate (5.23x member11 latency, 5.18x steps)
+BENCH L=39 qlen=39: patterns=1000 occurrencesTotal=170352 locatedRows=7391
+  gates: SA-parity mismatches=0 context mismatches=0 uncoveredStarts=32 (mean stateval steps on uncovered=17264.1)
+  member11: meanSteps=208500.4 maxSteps=6113306 meanLatency=111231847 ns/locate
+  stateval: meanSteps=40711.7 maxSteps=1819240 meanLatency=21251188 ns/locate (5.23x member11 latency, 5.12x steps)
+BENCH L=100 qlen=100: patterns=1000 occurrencesTotal=112777 locatedRows=7189
+  gates: SA-parity mismatches=0 context mismatches=0 uncoveredStarts=43 (mean stateval steps on uncovered=12311.7)
+  member11: meanSteps=220824.9 maxSteps=5276650 meanLatency=123772016 ns/locate
+  stateval: meanSteps=44982.4 maxSteps=1525909 meanLatency=24775944 ns/locate (5.00x member11 latency, 4.91x steps)
+TOTAL wall 726.8s

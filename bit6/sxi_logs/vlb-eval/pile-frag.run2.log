@@ -1,0 +1,78 @@
+phase A done in 56.2s (max segment 134859)
+container: n=1082130213 k=1 R=397723010 flags=25
+idx built (23.5s): 231 symbols, member11 anchors=388402
+text cache loaded
+SA reconstructed (34.4s)
+gates: member11 SA mismatches=0 / 388402 ; sum(SA)=OK (1.1s)
+LCPGE L=20: adjacent pairs with LCP>=20: 229052273 (21.1668% of n); |V_L|=306313256 (28.31% of n) (10.9s)
+LCPGE L=31: adjacent pairs with LCP>=31: 89321654 (8.2542% of n); |V_L|=125928473 (11.64% of n) (9.0s)
+LCPGE L=100: adjacent pairs with LCP>=100: 29469596 (2.7233% of n); |V_L|=43604481 (4.03% of n) (12.6s)
+orbit gaps: R=397723010 records; member-11 uniform walk over ALL rows: mean=3050.6 max=134858 (banked lane: yeast 221573.0/6516845, pile 3050.6/134859)
+member-11 uniform walk over V_L (L=20): cnt=306313256 mean=3762.6 max=134858
+member-11 uniform walk over V_L (L=31): cnt=125928473 mean=4882.3 max=134858
+member-11 uniform walk over V_L (L=100): cnt=43604481 mean=6856.0 max=134858
+orbit inter-tail gaps: mean=2.7 max=97038 gaps>=1024=2786
+floor L=20: max distance from a V_L point to the next run tail on the orbit = 97037
+floor L=31: max distance from a V_L point to the next run tail on the orbit = 97028
+floor L=100: max distance from a V_L point to the next run tail on the orbit = 96959
+
+=== state-valid greedy placement (D = walk bound from V_L) ===
+L          D            |       count     meanwalk     maxwalk   forced
+20         256          |     3854137        245.6       97037    35042
+ALL        256          |     4253158        158.0       97037    35975   (all-rows)
+20         1024         |     1032205        616.3       97037     2742
+ALL        1024         |     1061005        536.6       97037     2768   (all-rows)
+20         4096         |      262659       2133.0       97037      285
+ALL        4096         |      264620       2064.9       97037      285   (all-rows)
+20         16384        |       65959       8248.3       97037       39
+ALL        16384        |       66096       8196.6       97037       39   (all-rows)
+20         65536        |       16512      32830.2       97037        3
+ALL        65536        |       16520      32756.0       97037        3   (all-rows)
+20         262144       |        4128     130745.5      262144        0
+ALL        262144       |        4129     131044.3      262144        0   (all-rows)
+L=20: D*=2762 (min D with count<=388402) -> count=388367 meanwalk=1472.7 maxwalk=97037 forced=513 forcedExcess=94275
+  all-rows D*=2792 -> count=388380 meanwalk=1415.4 maxwalk=97037 (orbit-aware, workload-independent)
+31         256          |     2116256        414.5       97028    33786
+ALL        256          |     4253158        158.0       97037    35975   (all-rows)
+31         1024         |      786494        783.5       97028     2701
+ALL        1024         |     1061005        536.6       97037     2768   (all-rows)
+31         4096         |      238838       2301.7       97028      285
+ALL        4096         |      264620       2064.9       97037      285   (all-rows)
+31         16384        |       64203       8415.3       97028       39
+ALL        16384        |       66096       8196.6       97037       39   (all-rows)
+31         65536        |       16399      32976.7       97028        3
+ALL        65536        |       16520      32756.0       97037        3   (all-rows)
+31         262144       |        4122     131507.7      262144        0
+ALL        262144       |        4129     131044.3      262144        0   (all-rows)
+L=31: D*=2382 (min D with count<=388402) -> count=388285 meanwalk=1453.9 maxwalk=97028 forced=630 forcedExcess=94646
+  all-rows D*=2792 -> count=388380 meanwalk=1415.4 maxwalk=97037 (orbit-aware, workload-independent)
+100        256          |      299171        910.4       96959    27133
+ALL        256          |     4253158        158.0       97037    35975   (all-rows)
+100        1024         |      145790       1269.5       96959     2458
+ALL        1024         |     1061005        536.6       97037     2768   (all-rows)
+100        4096         |       71941       2966.9       96959      281
+ALL        4096         |      264620       2064.9       97037      285   (all-rows)
+100        16384        |       33747       9991.2       96959       39
+ALL        16384        |       66096       8196.6       97037       39   (all-rows)
+100        65536        |       12447      36776.3       96959        3
+ALL        65536        |       16520      32756.0       97037        3   (all-rows)
+100        262144       |        3695     136812.6      262144        0
+ALL        262144       |        4129     131044.3      262144        0   (all-rows)
+L=100: D*=142 (min D with count<=388402) -> count=388268 meanwalk=871.3 maxwalk=96959 forced=50988 forcedExcess=96817
+  all-rows D*=2792 -> count=388380 meanwalk=1415.4 maxwalk=97037 (orbit-aware, workload-independent)
+anchor sets written to pile-frag.anchors.bin
+
+=== locate benchmark (patterns of length L from the indexed text) ===
+BENCH L=20 qlen=20: patterns=1000 occurrencesTotal=71572104 locatedRows=2196
+  gates: SA-parity mismatches=0 context mismatches=0 uncoveredStarts=691 (mean stateval steps on uncovered=1414.5)
+  member11: meanSteps=3755.9 maxSteps=87123 meanLatency=1731398 ns/locate
+  stateval: meanSteps=1399.3 maxSteps=34075 meanLatency=652487 ns/locate (2.65x member11 latency, 2.68x steps)
+BENCH L=31 qlen=31: patterns=1000 occurrencesTotal=34542858 locatedRows=1379
+  gates: SA-parity mismatches=0 context mismatches=0 uncoveredStarts=892 (mean stateval steps on uncovered=1578.0)
+  member11: meanSteps=3796.3 maxSteps=70819 meanLatency=1699589 ns/locate
+  stateval: meanSteps=1443.0 maxSteps=12237 meanLatency=680163 ns/locate (2.50x member11 latency, 2.63x steps)
+BENCH L=100 qlen=100: patterns=1000 occurrencesTotal=6115 locatedRows=1090
+  gates: SA-parity mismatches=0 context mismatches=0 uncoveredStarts=962 (mean stateval steps on uncovered=38337.6)
+  member11: meanSteps=3317.8 maxSteps=37153 meanLatency=1647234 ns/locate
+  stateval: meanSteps=33892.7 maxSteps=1077535 meanLatency=19954355 ns/locate (0.08x member11 latency, 0.10x steps)
+TOTAL wall 399.9s

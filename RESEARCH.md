@@ -2625,3 +2625,25 @@ substrate: 5.8 GB lossless GBWT for 92 human genomes (DNA-shaped; 170-675 GB at 
 needs text access); (e) sketch tier 20-60 GB as the lossy front end (SPUMONI-2 pattern).
 PRODUCT CONCLUSION: exact-lite 500-580 GB (mmap, all positions) + sketch front end; warm tier
 upgradeable via threshold subsampling; arXiv/PubMed-class corpora are the 25-70 GB products.
+
+## THE VLB EVALUATION - verdict + a bonus discovery (orbit-aware anchors)
+(1) THE PAPER (arXiv:2602.17201, code public: github.com/ddiazdom/VLBT): no asymptotic bounds;
+their corpora are 22x MORE COMPRESSIBLE than our pile (n/r 61.8-940.5 vs our 2.85); their
+state-valid sampling does NOT subsample SA samples (it subsamples the VLB-tree routing arrays);
+fully self-contained; move-locate remains 2.4-3.6x FASTER than VLB at 2.2-5.6x space - the move
+line (ours/Movi) still owns the time-space frontier.
+(2) MEMBER 1 -> VLB TREE: NO. Byte-aligned vbyte runs (13-16 bits/run vs our 7.2) + satellite
+overhead at our incompressibility: ~1-1.6 TB vs our 414 GB core; their own HUM corpus loses to
+plain fbb by 13-18%. Our run-stream encoding stands.
+(3) THE BONUS DISCOVERY - ORBIT-AWARE ANCHOR PLACEMENT (the lane's, better than the paper's
+idea AND our skiplist lane): state-validity itself is EMPTY on pangenomes (V covers 95.8-98.5%
+of rows) and hazardous on text - but placing the SAME anchor count in LF-orbit order crushes
+the walks: yeast mean 221,573 -> 42,844 steps (5.2x, 112 -> 21.4 ms/locate); pile-frag
+3,051 -> 1,415 (2.2x) at ZERO extra space; ~160 steps at ~4% of the lite artifact (19x) -
+dominating the skiplist lane's jump pointers (47% space for 5.8x). Prototype gates green:
+text byte-exact, 98,541/388,402 anchor crosschecks, 0 parity mismatches on ~16k located rows,
+orbit machinery reproduces the banked walk numbers exactly.
+PRODUCT TABLE FINALIZED: LITE 500-580 GB with orbit-aware anchors = all positions at ~160-step
+walks (4% premium) - the locate weakness is SOLVED; WARM samples 1.4-2.4 TB -> 0.35-1.6 TB via
+banked threshold subsampling (the one remaining warm lever, pending its own lane); member 1
+stands (ours beats VLB at our scale).
