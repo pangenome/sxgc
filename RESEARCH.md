@@ -2603,3 +2603,25 @@ half the runs possess.
 PRODUCT SHAPE SETTLED BY MEASUREMENT: LITE (no member 8) for the PILE - 0.44x text with
 usable ~3.1k-step walks and witness-anchored find-one unaffected; WARM (member 8) for
 satellite-heavy pangenome serving. The two-regime product line is now data-backed.
+
+## THE 100GB QUESTION - CLOSED (size-survey verdict; z measured, survey complete)
+z(pile-frag) = 85,822,791 (greedy LZ77, tight upper bound; z/n = 0.0793, z = R/4.63; phrases
+avg 12.9 bytes, max match 97,059 - the Pile carries ~100KB verbatim duplicates). Cross-check:
+zstd -15 gives 2.315 bpc vs z*log2(n) = 2.380 bpc - 3% agreement. The supervisor's prior
+(z in [40M,100M]) confirmed at 85.8M.
+VERDICT - the grammar/LZ family is DEAD for the pile, and the arithmetic is subtle: the crude
+z>=R/3 rule does NOT fire, but at pile scale z*log2(n) = 499 GB merely TIES the exact-lite
+floor with NO locate structures, and LOSES to the rleBWT core alone (log2(n) grows with corpus
+size; 7.2 bits/run does not - effective kill threshold z >= R/5.58, actual z_pile ~ R/4.6).
+A real LZ77-index (Kreft-Navarro iCSA, 2.6x LZ size) = ~2.5 TB. Flipping needs z/n < 0.035 at
+pile scale - 2.3x below the measured trend. THE 500-580 GB LITE FLOOR IS THE HONEST EXACT
+ANSWER; 100 GB remains unreachable for the pile.
+THE SURVEY'S LIVE FINDS: (a) threshold/sr-index subsampling (Cobas-Gagie-Navarro) - the one
+literature-measured multi-hundred-GB lever: samples 1.4-2.4 TB -> 0.35-1.6 TB at same query
+time (NEXT EVALUATION for the WARM form: 3 TB -> possibly ~1-1.5 TB); (b) VLB adaptive
+encodings (Feb 2026, arXiv 2602.17201) - the one 2024-26 result beating the r-index AND move
+line in time; (c) r*-index (Gagie 2025), RR-index (Nishimoto-Tabei 2026); (d) Durbin syng
+substrate: 5.8 GB lossless GBWT for 92 human genomes (DNA-shaped; 170-675 GB at pile scale,
+needs text access); (e) sketch tier 20-60 GB as the lossy front end (SPUMONI-2 pattern).
+PRODUCT CONCLUSION: exact-lite 500-580 GB (mmap, all positions) + sketch front end; warm tier
+upgradeable via threshold subsampling; arXiv/PubMed-class corpora are the 25-70 GB products.

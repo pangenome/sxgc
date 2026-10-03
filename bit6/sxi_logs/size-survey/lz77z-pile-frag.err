@@ -1,0 +1,17 @@
+at 64 MB: z=6373287, 45.2 s since last report
+at 128 MB: z=12120298, 60.7 s since last report
+at 192 MB: z=17658515, 66.2 s since last report
+at 256 MB: z=23043893, 70.5 s since last report
+at 320 MB: z=28502426, 122.3 s since last report
+at 384 MB: z=33801008, 91.3 s since last report
+at 448 MB: z=39010377, 84.7 s since last report
+at 512 MB: z=44205962, 78.3 s since last report
+at 576 MB: z=49409805, 81.2 s since last report
+at 640 MB: z=54638354, 95.9 s since last report
+at 704 MB: z=59870604, 86.3 s since last report
+at 768 MB: z=64958540, 108.5 s since last report
+at 832 MB: z=70039765, 98.7 s since last report
+at 896 MB: z=75057818, 100.1 s since last report
+at 960 MB: z=80124992, 82.3 s since last report
+at 1024 MB: z=85187499, 99.3 s since last report
+parse pass done in 1385.4 s (extensions=889905230)
