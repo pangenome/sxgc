@@ -1,0 +1,24 @@
+Command exited with non-zero status 2
+	Command being timed: "/tmp/extcols/bin/cross_lcp_merge --tree /tmp/extcols/real10b/chunks 32 10000017258 /tmp/extcols/real10b/merged/frag --threads 48 --work /tmp/extcols/real10b/mwork --emit-pf"
+	User time (seconds): 17845.41
+	System time (seconds): 1446.00
+	Percent of CPU this job got: 179%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 2:59:00
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 63461764
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 1
+	Minor (reclaiming a frame) page faults: 344740121
+	Voluntary context switches: 6142631
+	Involuntary context switches: 40796
+	Swaps: 0
+	File system inputs: 510911568
+	File system outputs: 744038112
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 2

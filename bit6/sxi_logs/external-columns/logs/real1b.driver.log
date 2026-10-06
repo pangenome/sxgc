@@ -1,0 +1,7 @@
+########## 0. AS-IS raw cut: expect fail-loud at chunk_frontend
+RAW_CUT_CHUNK_RC=1 (expected nonzero: mid-document cut)
+CHUNK index=14 offset=877523881 n=62505867 runs=24052047 sort_wall_seconds=11.118927 path=/tmp/extcols/real1b/chunks-raw/chunk-14.crle
+CHUNK_FRONTEND_FATAL input must end at document boundary
+########## 1. snap to the first 0x1e at-or-after 1000000000 (loud, recorded)
+SNAP n=1000000665 (+665 bytes past 1e9) sha256=c382daa53d0e66fdc921c32d356961b7e8189ceee0a435bb3b66e06b203ebb61
+########## 2. chunk_frontend + merge --tree --emit-pf (real sidecars)

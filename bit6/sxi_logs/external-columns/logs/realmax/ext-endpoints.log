@@ -1,0 +1,18 @@
+PFP_TERMINAL byte=0x1e source=padding-row raw_n=4290469843 raw_r=1525384284
+CYCLIC_SEAM_REPAIR terminal=0x1e predecessors_before_zero=307074
+SLIM_PHASE ext-totals wall=2.627 cumulative=NA peak_rss_kib=32780
+SLIM_PHASE ext-record+seed-chunks wall=339.856 cumulative=NA peak_rss_kib=562616
+SLIM_PHASE ext-seeds-tail-merge wall=226.402 cumulative=NA peak_rss_kib=663752
+SLIM_EXT_BUILT R=1525384284 textLen=4290469833 rows=4290469843 records=36609222816 seeds=24406148544 seeds_t=24406148544 coarse=23834130 coarse_stride=64 work_prefix=/tmp/extcols/realmax/ext.ri4
+SLIM_PHASE ext-build-total wall=568.884 cumulative=NA peak_rss_kib=NA
+SLIM_PHASE adopt-text+checkpoints wall=0.000 cumulative=732.354 peak_rss_kib=663752
+SLIM_STRING_ENDS count=1 bytes=8 from_parse_dict=0 cyclic=1
+SLIM_PF_SELF_CHECK checks=256 passed=1
+SLIM_PHASE parse-free-self-check wall=0.063 cumulative=732.417 peak_rss_kib=663752
+SLIM_PARSE_FREE_STRUCT mode=adopt n=4290469843 text_len=4290469833 rows=4290469833 tau=23 checkpoints=186542167 checkpoint_bytes=1492337336 sidecar_bytes=0 seeds=0 emissions=0 cyclic=1 work_limit=68647517328 no_SA_ISA_LCP_RMQ=1 no_M_b_bwt_w_wt=1 no_parse_dict=1 no_phrase_ids=1 corpus_reads=0
+CYCLIC_SEAM_LCE_POLICY parse_free=1 probe_limit=23 max_verification=67108864 total_limit=68647517328 cost=byte_comparisons_plus_hash_probes_plus_verified_bytes fraction=16n floor=100000000 exact=1 no_parse_dict=1
+CYCLIC_SEAM_REPAIRED classes=8 rows=697556 discovery_steps=9 limit=1525384 phi_samples=1525384284
+CYCLIC_SEAM_WORK max_seam_lce=593278 total_work=188790631 total_limit=68647517328 exact=1
+SLIM_FP parse-free-text tau=23 bytes=1492337336 queries=15377756 verified_symbols=140788765 hash_probes=7239907 mean_verified=9.155351730 max_verified=593279 max_requested_lce=593278 verification_work=159830491 hash_probe_charges=28960140 suffix_symbol_reads=317978235 total_work=188790631 total_limit=68647517328 verification_limit=67108864 probe_limit=23
+SLIM_PARSE_FREE mode=adopt text_len=4290469833 rows=4290469833 sidecar_bytes=0 tau=23 checkpoint_bytes=1492337336 seeds=0 emissions=0 cyclic=1 string_ends=1 work_used=188790631 work_limit=68647517328 sidecar_owned=0 corpus_reads=0
+FATAL: unsupported text alphabet

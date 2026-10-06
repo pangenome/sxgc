@@ -1,0 +1,18 @@
+SLIM_EXT_RI n=9604 k_raw=1 R=7285 a=7285B l=29140B samples=101990bits saW=14 head_col=/tmp/extcols/g0b3/rand4/fresh.head_sa@0 container=0
+ri4: n=9604 k=1 R=7285 (external columns, cyclic=1)
+SLIM_PHASE ri4-ext-load wall=0.003 cumulative=0.003 peak_rss_kib=14336
+SLIM_PHASE adopt-text+checkpoints wall=0.000 cumulative=0.003 peak_rss_kib=14336
+SLIM_STRING_ENDS count=1 bytes=8 from_parse_dict=0 cyclic=1
+SLIM_PF_SELF_CHECK checks=256 passed=1
+SLIM_PHASE parse-free-self-check wall=0.000 cumulative=0.003 peak_rss_kib=14336
+SLIM_PARSE_FREE_STRUCT mode=adopt n=9614 text_len=9604 rows=9604 tau=11 checkpoints=874 checkpoint_bytes=6992 sidecar_bytes=0 seeds=0 emissions=0 cyclic=1 work_limit=1000000000 no_SA_ISA_LCP_RMQ=1 no_M_b_bwt_w_wt=1 no_parse_dict=1 no_phrase_ids=1 corpus_reads=0
+SLIM_PHASE lce-build-total wall=0.000 cumulative=0.003 peak_rss_kib=14336
+SLIM_PROGRESS runs=7285/7285 resolve_wall=0.003 lce_wall=0.003 write_wall=0.000 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=0.008 cumulative=0.011 peak_rss_kib=14336
+SLIM_PHASE queries+stream-write-final wall=0.000 cumulative=0.011 peak_rss_kib=14336
+SLIM_FP parse-free-text tau=11 bytes=6992 queries=9024 verified_symbols=60775 hash_probes=28 mean_verified=6.734818262 max_verified=12 max_requested_lce=11 verification_work=60855 hash_probe_charges=623 suffix_symbol_reads=3047 total_work=61478 total_limit=1000000000 verification_limit=9604 probe_limit=11
+SLIM_PARSE_FREE mode=adopt text_len=9604 rows=9604 sidecar_bytes=0 tau=11 checkpoint_bytes=6992 seeds=0 emissions=0 cyclic=1 string_ends=1 work_used=61478 work_limit=1000000000 sidecar_owned=0 corpus_reads=0
+SLIM_QUERY_PHASE resolve_wall=0.002773 resolve_peak_kib=14336 lce_wall=0.002969 lce_peak_kib=14336 write_wall=0.000343 write_peak_kib=14336
+SLIM_SEEDS queries=0 mean_verified_symbols=0.000000000 max_verified_symbols=12 (includes_zero_parse_work_seeds; boundary_included)
+SLIM_RESOLVE walks=0 steps=0 max=0 anchor=0 failed=0 cache_hits=0
+SLIM_BOUNDARY_RESOLVE head_direct=7285 tail_direct=9022 head_lf_steps=0

@@ -1,0 +1,27 @@
+SLIM_EXT_RI n=31080 k_raw=1 R=7020 a=7020B l=28080B samples=105300bits saW=15 head_col=/tmp/extcols/g0b3/rs-dup/fresh.head_sa@0 container=0
+ri4: n=31080 k=1 R=7020 (external columns, cyclic=1)
+SLIM_PHASE ri4-ext-load wall=0.003 cumulative=0.003 peak_rss_kib=12288
+SLIM_EXT_WORK prefix=/tmp/extcols/g0b3/rs-dup/free.default.agg records=168480B seeds=112320B coarse=880B
+SLIM_PHASE ext-totals wall=0.013 cumulative=NA peak_rss_kib=27388
+SLIM_PHASE ext-record+seed-chunks wall=0.001 cumulative=NA peak_rss_kib=27388
+SLIM_EXT_BUILT R=7020 textLen=31080 rows=31080 records=168480 seeds=112320 seeds_t=0 coarse=110 coarse_stride=64 work_prefix=/tmp/extcols/g0b3/rs-dup/free.default.agg
+SLIM_PHASE ext-build-total wall=0.015 cumulative=NA peak_rss_kib=NA
+SLIM_PHASE parse-free-ext-ready wall=0.000 cumulative=0.020 peak_rss_kib=29436
+SLIM_STRING_ENDS count=1 bytes=8 from_parse_dict=0 cyclic=1
+SLIM_PHASE parse-free-walk wall=0.041 cumulative=0.060 peak_rss_kib=29436
+SLIM_PHASE parse-free-fingerprints wall=0.000 cumulative=0.061 peak_rss_kib=29436
+SLIM_PF_SELF_CHECK checks=256 passed=1
+SLIM_PHASE parse-free-self-check wall=0.000 cumulative=0.061 peak_rss_kib=29436
+SLIM_PARSE_FREE_STRUCT mode=walk n=31090 text_len=31080 rows=31080 tau=36 checkpoints=864 checkpoint_bytes=6912 sidecar_bytes=31080 seeds=7020 emissions=31080 cyclic=1 work_limit=1000000000 no_SA_ISA_LCP_RMQ=1 no_M_b_bwt_w_wt=1 no_parse_dict=1 no_phrase_ids=1 corpus_reads=0
+SLIM_PHASE lce-build-total wall=0.058 cumulative=0.061 peak_rss_kib=29436
+SLIM_PROGRESS runs=7020/7020 resolve_wall=0.002 lce_wall=0.003 write_wall=0.000 lf_steps=0 cache_hits=0
+SLIM_PHASE query-chunks wall=0.006 cumulative=0.067 peak_rss_kib=29436
+SLIM_PHASE queries+stream-write-final wall=0.000 cumulative=0.067 peak_rss_kib=29436
+SLIM_FP parse-free-text tau=36 bytes=6912 queries=7350 verified_symbols=62300 hash_probes=1613 mean_verified=8.476190476 max_verified=23920 max_requested_lce=23919 verification_work=65104 hash_probe_charges=6963 suffix_symbol_reads=119088 total_work=72067 total_limit=1000000000 verification_limit=31080 probe_limit=36
+SLIM_PARSE_FREE mode=walk text_len=31080 rows=31080 sidecar_bytes=31080 tau=36 checkpoint_bytes=6912 seeds=7020 emissions=31080 cyclic=1 string_ends=1 work_used=72067 work_limit=1000000000 sidecar_owned=1 corpus_reads=0
+SLIM_QUERY_PHASE resolve_wall=0.001687 resolve_peak_kib=29436 lce_wall=0.002964 lce_peak_kib=29436 write_wall=0.000185 write_peak_kib=29436
+SLIM_SEEDS queries=0 mean_verified_symbols=0.000000000 max_verified_symbols=23920 (includes_zero_parse_work_seeds; boundary_included)
+SLIM_RESOLVE walks=0 steps=0 max=0 anchor=0 failed=0 cache_hits=0
+SLIM_BOUNDARY_RESOLVE head_direct=7020 tail_direct=7347 head_lf_steps=0
+SLIM_PF_KEEP_TEXT sidecar=/tmp/extcols/g0b3/rs-dup/free.default.agg.pftext retained
+SLIM_PF_KEEP_TEXT ckpt=/tmp/extcols/g0b3/rs-dup/free.default.agg.pfck retained

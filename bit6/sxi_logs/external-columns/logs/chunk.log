@@ -1,0 +1,17 @@
+CHUNK index=0 offset=0 n=62500523 runs=24328893 sort_wall_seconds=11.498293 path=/tmp/extcols/real1b/chunks/chunk-0.crle
+CHUNK index=1 offset=62500523 n=62511392 runs=24298009 sort_wall_seconds=11.172941 path=/tmp/extcols/real1b/chunks/chunk-1.crle
+CHUNK index=2 offset=125011915 n=62500800 runs=24429829 sort_wall_seconds=11.200955 path=/tmp/extcols/real1b/chunks/chunk-2.crle
+CHUNK index=3 offset=187512715 n=62554674 runs=24163414 sort_wall_seconds=11.068394 path=/tmp/extcols/real1b/chunks/chunk-3.crle
+CHUNK index=4 offset=250067389 n=62506075 runs=24639515 sort_wall_seconds=11.178412 path=/tmp/extcols/real1b/chunks/chunk-4.crle
+CHUNK index=5 offset=312573464 n=62503353 runs=24469785 sort_wall_seconds=11.607511 path=/tmp/extcols/real1b/chunks/chunk-5.crle
+CHUNK index=6 offset=375076817 n=62502635 runs=24138263 sort_wall_seconds=11.173463 path=/tmp/extcols/real1b/chunks/chunk-6.crle
+CHUNK index=7 offset=437579452 n=62503241 runs=24140153 sort_wall_seconds=11.358144 path=/tmp/extcols/real1b/chunks/chunk-7.crle
+CHUNK index=8 offset=500082693 n=62594655 runs=24715674 sort_wall_seconds=11.499927 path=/tmp/extcols/real1b/chunks/chunk-8.crle
+CHUNK index=9 offset=562677348 n=62515590 runs=24377795 sort_wall_seconds=12.701812 path=/tmp/extcols/real1b/chunks/chunk-9.crle
+CHUNK index=10 offset=625192938 n=64807440 runs=25788798 sort_wall_seconds=10.765554 path=/tmp/extcols/real1b/chunks/chunk-10.crle
+CHUNK index=11 offset=690000378 n=62500568 runs=24496486 sort_wall_seconds=10.627880 path=/tmp/extcols/real1b/chunks/chunk-11.crle
+CHUNK index=12 offset=752500946 n=62520615 runs=23990889 sort_wall_seconds=10.402373 path=/tmp/extcols/real1b/chunks/chunk-12.crle
+CHUNK index=13 offset=815021561 n=62502320 runs=24270998 sort_wall_seconds=10.286688 path=/tmp/extcols/real1b/chunks/chunk-13.crle
+CHUNK index=14 offset=877523881 n=62505867 runs=24052049 sort_wall_seconds=10.709445 path=/tmp/extcols/real1b/chunks/chunk-14.crle
+CHUNK index=15 offset=940029748 n=59970917 runs=23112642 sort_wall_seconds=10.050607 path=/tmp/extcols/real1b/chunks/chunk-15.crle
+CHUNKS_PASS count=16 source_bytes=1000000665

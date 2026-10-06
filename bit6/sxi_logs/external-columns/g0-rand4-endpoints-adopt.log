@@ -1,0 +1,2 @@
+PFP_TERMINAL byte=0x1e source=padding-row raw_n=9614 raw_r=7287
+ENDPOINT_PASS raw_n=9614 raw_r=7287 n=9604 k=1 r=7285 padding_rows=10 cyclic_seam_certified=1

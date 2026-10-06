@@ -1,0 +1,16 @@
+CHUNK index=0 offset=0 n=62500523 runs=24328895 sort_wall_seconds=11.137579 path=/tmp/extcols/real1b/chunks-raw/chunk-0.crle
+CHUNK index=1 offset=62500523 n=62511392 runs=24298009 sort_wall_seconds=11.846350 path=/tmp/extcols/real1b/chunks-raw/chunk-1.crle
+CHUNK index=2 offset=125011915 n=62500800 runs=24429845 sort_wall_seconds=11.225758 path=/tmp/extcols/real1b/chunks-raw/chunk-2.crle
+CHUNK index=3 offset=187512715 n=62554674 runs=24163410 sort_wall_seconds=10.615633 path=/tmp/extcols/real1b/chunks-raw/chunk-3.crle
+CHUNK index=4 offset=250067389 n=62506075 runs=24639515 sort_wall_seconds=11.318808 path=/tmp/extcols/real1b/chunks-raw/chunk-4.crle
+CHUNK index=5 offset=312573464 n=62503353 runs=24469786 sort_wall_seconds=11.625394 path=/tmp/extcols/real1b/chunks-raw/chunk-5.crle
+CHUNK index=6 offset=375076817 n=62502635 runs=24138256 sort_wall_seconds=11.428279 path=/tmp/extcols/real1b/chunks-raw/chunk-6.crle
+CHUNK index=7 offset=437579452 n=62503241 runs=24140151 sort_wall_seconds=10.656426 path=/tmp/extcols/real1b/chunks-raw/chunk-7.crle
+CHUNK index=8 offset=500082693 n=62594655 runs=24715678 sort_wall_seconds=11.776801 path=/tmp/extcols/real1b/chunks-raw/chunk-8.crle
+CHUNK index=9 offset=562677348 n=62515590 runs=24377800 sort_wall_seconds=11.828227 path=/tmp/extcols/real1b/chunks-raw/chunk-9.crle
+CHUNK index=10 offset=625192938 n=64807440 runs=25788796 sort_wall_seconds=12.432872 path=/tmp/extcols/real1b/chunks-raw/chunk-10.crle
+CHUNK index=11 offset=690000378 n=62500568 runs=24496472 sort_wall_seconds=11.717629 path=/tmp/extcols/real1b/chunks-raw/chunk-11.crle
+CHUNK index=12 offset=752500946 n=62520615 runs=23990888 sort_wall_seconds=11.632945 path=/tmp/extcols/real1b/chunks-raw/chunk-12.crle
+CHUNK index=13 offset=815021561 n=62502320 runs=24271001 sort_wall_seconds=11.323360 path=/tmp/extcols/real1b/chunks-raw/chunk-13.crle
+CHUNK index=14 offset=877523881 n=62505867 runs=24052047 sort_wall_seconds=11.050092 path=/tmp/extcols/real1b/chunks-raw/chunk-14.crle
+CHUNK_FRONTEND_FATAL input must end at document boundary

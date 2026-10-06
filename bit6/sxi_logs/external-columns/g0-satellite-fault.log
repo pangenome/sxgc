@@ -1,0 +1,18 @@
+SLIM_EXT_RI n=8884 k_raw=1 R=140 a=140B l=560B samples=1960bits saW=14 head_col=/tmp/extcols/g0b3/satellite/fresh.head_sa@0 container=0
+ri4: n=8884 k=1 R=140 (external columns, cyclic=1)
+SLIM_PHASE ri4-ext-load wall=0.003 cumulative=0.003 peak_rss_kib=14336
+SLIM_EXT_WORK prefix=/tmp/extcols/g0b3/satellite/fault.agg records=3360B seeds=2240B coarse=24B
+SLIM_PHASE ext-totals wall=0.014 cumulative=NA peak_rss_kib=27372
+SLIM_PHASE ext-record+seed-chunks wall=0.000 cumulative=NA peak_rss_kib=27372
+SLIM_EXT_BUILT R=140 textLen=8884 rows=8884 records=3360 seeds=2240 seeds_t=0 coarse=3 coarse_stride=64 work_prefix=/tmp/extcols/g0b3/satellite/fault.agg
+SLIM_PHASE ext-build-total wall=0.015 cumulative=NA peak_rss_kib=NA
+SLIM_PHASE parse-free-ext-ready wall=0.000 cumulative=0.020 peak_rss_kib=29420
+SLIM_STRING_ENDS count=1 bytes=8 from_parse_dict=0 cyclic=1
+SLIM_PHASE parse-free-walk wall=0.007 cumulative=0.027 peak_rss_kib=29420
+SLIM_PHASE parse-free-fingerprints wall=0.000 cumulative=0.027 peak_rss_kib=29420
+SLIM_PF_SELF_CHECK checks=256 passed=1
+SLIM_PHASE parse-free-self-check wall=0.001 cumulative=0.029 peak_rss_kib=29420
+SLIM_PARSE_FREE_STRUCT mode=walk n=8894 text_len=8884 rows=8884 tau=508 checkpoints=18 checkpoint_bytes=144 sidecar_bytes=8884 seeds=140 emissions=8884 cyclic=1 work_limit=1000000000 no_SA_ISA_LCP_RMQ=1 no_M_b_bwt_w_wt=1 no_parse_dict=1 no_phrase_ids=1 corpus_reads=0
+SLIM_PHASE lce-build-total wall=0.026 cumulative=0.029 peak_rss_kib=29420
+FATAL SLIM: fingerprint verification mismatch inside proposed prefix
+FATAL SLIM: fingerprint verification mismatch inside proposed prefix

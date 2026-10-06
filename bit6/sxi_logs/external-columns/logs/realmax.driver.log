@@ -1,0 +1,8 @@
+########## 0. AS-IS raw cut: the mid-document refusal (demonstrated in full at 1 GB; here verified by the cut's last byte)
+RAW_CUT_LAST_BYTE=0x6e (0x1e would be document-aligned; chunk_frontend would refuse: input must end at document boundary — the full refusal was demonstrated and logged at 1 GB scale; a 4.29 GB (the maximum the upstream SXCR intermediate format permits: n/2 < 2^31) doomed chunk sort is skipped)
+########## 1. snap to the first 0x1e at-or-after 4290000000 (loud, recorded)
+SNAP n=4290469833 (+469833 bytes past 1e10) sha256=9c181e24453fcf536a5c2a3a67b22183000b2697f0b4092e454e993e1f76e4a0
+########## 2. chunk_frontend + merge --tree --emit-pf
+CROSS_PF_EMIT text=/tmp/extcols/realmax/merged/frag.pftext pfck=/tmp/extcols/realmax/merged/frag.pfck n=4290469833 final_runs=1525384284 tau=23 count=186542167 bytes=1492337376
+########## 3. EXTERNAL finish (ADOPT, pile-shaped) under RLIMIT_AS 8388608 KiB
+EXT_CHAIN_FAIL

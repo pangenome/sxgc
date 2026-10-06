@@ -1,0 +1,5 @@
+CHUNK index=0 offset=0 n=7839 runs=200 sort_wall_seconds=0.000528 path=/tmp/extcols/g0b3/rs-dup/chunks/chunk-0.crle
+CHUNK index=1 offset=7839 n=7839 runs=200 sort_wall_seconds=0.000397 path=/tmp/extcols/g0b3/rs-dup/chunks/chunk-1.crle
+CHUNK index=2 offset=15678 n=7839 runs=200 sort_wall_seconds=0.000399 path=/tmp/extcols/g0b3/rs-dup/chunks/chunk-2.crle
+CHUNK index=3 offset=23517 n=7563 runs=7020 sort_wall_seconds=0.000924 path=/tmp/extcols/g0b3/rs-dup/chunks/chunk-3.crle
+CHUNKS_PASS count=4 source_bytes=31080

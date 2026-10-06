@@ -1,0 +1,122 @@
+CROSS_PHASE m2-build wall=0.147 cumulative=28.856 peak_rss_kib=1927364
+CROSS_PHASE hash-build wall=1.084 cumulative=29.940 peak_rss_kib=2810312
+CROSS_PHASE anchor+repair wall=1.362 cumulative=31.302 peak_rss_kib=2938696
+CROSS_PHASE cross-merge wall=10.973 cumulative=42.275 peak_rss_kib=3190772
+CROSS_PHASE sxcr-count wall=0.853 cumulative=43.326 peak_rss_kib=3190772
+CROSS_PHASE sxcr-write wall=5.624 cumulative=48.950 peak_rss_kib=3190772
+CROSS_PHASE sidecar-write wall=0.438 cumulative=49.389 peak_rss_kib=3190772
+CROSS_PAIR mode=cyclic left=/tmp/extcols/real1b/chunks/chunk-0.crle right=/tmp/extcols/real1b/chunks/chunk-1.crle nA=62500523 nB=62511392 out=/tmp/extcols/real1b/mwork/L0-0.crle out_runs=47987597 wall_total=49.388 comparisons=125020002 symbols_compared=2341675866 probes=181743360 max_lce=33999 fast_decided=108615264 probe_decided=16404738 cap_decided=0 tie_decided=0 lce_over_10k=25717 lce_over_100k=0 lce_over_1m=0 anchors_A=4 anchors_B=7 walk_steps_A=4 walk_steps_B=7 block_rows_A=15124 block_rows_B=11023 peak_rss_kib=3190772
+CROSS_PHASE m2-build wall=0.144 cumulative=74.904 peak_rss_kib=3190772
+CROSS_PHASE hash-build wall=0.971 cumulative=75.876 peak_rss_kib=3190772
+CROSS_PHASE anchor+repair wall=1.311 cumulative=77.186 peak_rss_kib=3190772
+CROSS_PHASE cross-merge wall=10.552 cumulative=87.738 peak_rss_kib=3192148
+CROSS_PHASE sxcr-count wall=0.921 cumulative=88.808 peak_rss_kib=3192148
+CROSS_PHASE sxcr-write wall=5.735 cumulative=94.542 peak_rss_kib=3192148
+CROSS_PHASE sidecar-write wall=0.479 cumulative=95.022 peak_rss_kib=3192148
+CROSS_PAIR mode=cyclic left=/tmp/extcols/real1b/chunks/chunk-2.crle right=/tmp/extcols/real1b/chunks/chunk-3.crle nA=62500800 nB=62554674 out=/tmp/extcols/real1b/mwork/L0-1.crle out_runs=47968732 wall_total=45.530 comparisons=125073584 symbols_compared=1602918418 probes=178571468 max_lce=3191 fast_decided=108730066 probe_decided=16343518 cap_decided=0 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_A=6 anchors_B=3 walk_steps_A=6 walk_steps_B=3 block_rows_A=16637 block_rows_B=13485 peak_rss_kib=3192148
+CROSS_PHASE m2-build wall=0.140 cumulative=121.175 peak_rss_kib=3192148
+CROSS_PHASE hash-build wall=1.097 cumulative=122.272 peak_rss_kib=3192148
+CROSS_PHASE anchor+repair wall=1.284 cumulative=123.555 peak_rss_kib=3192148
+CROSS_PHASE cross-merge wall=10.900 cumulative=134.455 peak_rss_kib=3192148
+CROSS_PHASE sxcr-count wall=0.917 cumulative=135.560 peak_rss_kib=3192148
+CROSS_PHASE sxcr-write wall=5.883 cumulative=141.443 peak_rss_kib=3192148
+CROSS_PHASE sidecar-write wall=0.493 cumulative=141.936 peak_rss_kib=3192148
+CROSS_PAIR mode=cyclic left=/tmp/extcols/real1b/chunks/chunk-4.crle right=/tmp/extcols/real1b/chunks/chunk-5.crle nA=62506075 nB=62503353 out=/tmp/extcols/real1b/mwork/L0-2.crle out_runs=48475007 wall_total=46.828 comparisons=125022005 symbols_compared=1576662717 probes=176219550 max_lce=2727 fast_decided=108879306 probe_decided=16142699 cap_decided=0 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_A=4 anchors_B=9 walk_steps_A=4 walk_steps_B=9 block_rows_A=9915 block_rows_B=17041 peak_rss_kib=3192148
+CROSS_PHASE m2-build wall=0.153 cumulative=168.053 peak_rss_kib=3192148
+CROSS_PHASE hash-build wall=1.016 cumulative=169.070 peak_rss_kib=3192148
+CROSS_PHASE anchor+repair wall=1.330 cumulative=170.399 peak_rss_kib=3192148
+CROSS_PHASE cross-merge wall=10.998 cumulative=181.398 peak_rss_kib=3192168
+CROSS_PHASE sxcr-count wall=0.900 cumulative=182.437 peak_rss_kib=3192168
+CROSS_PHASE sxcr-write wall=5.688 cumulative=188.125 peak_rss_kib=3192168
+CROSS_PHASE sidecar-write wall=0.471 cumulative=188.596 peak_rss_kib=3192168
+CROSS_PAIR mode=cyclic left=/tmp/extcols/real1b/chunks/chunk-6.crle right=/tmp/extcols/real1b/chunks/chunk-7.crle nA=62502635 nB=62503241 out=/tmp/extcols/real1b/mwork/L0-3.crle out_runs=47651475 wall_total=46.549 comparisons=125014400 symbols_compared=1655298339 probes=178255104 max_lce=11147 fast_decided=108620412 probe_decided=16393988 cap_decided=0 tie_decided=0 lce_over_10k=1148 lce_over_100k=0 lce_over_1m=0 anchors_A=4 anchors_B=6 walk_steps_A=4 walk_steps_B=6 block_rows_A=10505 block_rows_B=11092 peak_rss_kib=3192168
+CROSS_PHASE m2-build wall=0.140 cumulative=215.280 peak_rss_kib=3192168
+CROSS_PHASE hash-build wall=1.094 cumulative=216.374 peak_rss_kib=3192168
+CROSS_PHASE anchor+repair wall=1.282 cumulative=217.655 peak_rss_kib=3192168
+CROSS_PHASE cross-merge wall=11.037 cumulative=228.693 peak_rss_kib=3192168
+CROSS_PHASE sxcr-count wall=0.905 cumulative=229.777 peak_rss_kib=3192168
+CROSS_PHASE sxcr-write wall=5.941 cumulative=235.717 peak_rss_kib=3192168
+CROSS_PHASE sidecar-write wall=0.488 cumulative=236.205 peak_rss_kib=3192168
+CROSS_PAIR mode=cyclic left=/tmp/extcols/real1b/chunks/chunk-8.crle right=/tmp/extcols/real1b/chunks/chunk-9.crle nA=62594655 nB=62515590 out=/tmp/extcols/real1b/mwork/L0-4.crle out_runs=48434318 wall_total=47.521 comparisons=125120466 symbols_compared=1539747115 probes=172559602 max_lce=2006 fast_decided=109092139 probe_decided=16028327 cap_decided=0 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_A=5 anchors_B=4 walk_steps_A=5 walk_steps_B=4 block_rows_A=13351 block_rows_B=13936 peak_rss_kib=3192168
+CROSS_PHASE m2-build wall=0.157 cumulative=263.073 peak_rss_kib=3192168
+CROSS_PHASE hash-build wall=0.927 cumulative=264.000 peak_rss_kib=3192168
+CROSS_PHASE anchor+repair wall=1.268 cumulative=265.268 peak_rss_kib=3192168
+CROSS_PHASE cross-merge wall=10.779 cumulative=276.047 peak_rss_kib=3250036
+CROSS_PHASE sxcr-count wall=0.913 cumulative=277.105 peak_rss_kib=3250036
+CROSS_PHASE sxcr-write wall=5.974 cumulative=283.079 peak_rss_kib=3250036
+CROSS_PHASE sidecar-write wall=0.493 cumulative=283.571 peak_rss_kib=3250036
+CROSS_PAIR mode=cyclic left=/tmp/extcols/real1b/chunks/chunk-10.crle right=/tmp/extcols/real1b/chunks/chunk-11.crle nA=64807440 nB=62500568 out=/tmp/extcols/real1b/mwork/L0-5.crle out_runs=49677914 wall_total=47.257 comparisons=127322904 symbols_compared=1623929000 probes=175382840 max_lce=2789 fast_decided=111350704 probe_decided=15972200 cap_decided=0 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_A=4 anchors_B=6 walk_steps_A=4 walk_steps_B=6 block_rows_A=12801 block_rows_B=15204 peak_rss_kib=3250036
+CROSS_PHASE m2-build wall=0.135 cumulative=309.583 peak_rss_kib=3250036
+CROSS_PHASE hash-build wall=1.045 cumulative=310.627 peak_rss_kib=3250036
+CROSS_PHASE anchor+repair wall=1.264 cumulative=311.891 peak_rss_kib=3250036
+CROSS_PHASE cross-merge wall=10.477 cumulative=322.369 peak_rss_kib=3250036
+CROSS_PHASE sxcr-count wall=0.834 cumulative=323.378 peak_rss_kib=3250036
+CROSS_PHASE sxcr-write wall=5.514 cumulative=328.892 peak_rss_kib=3250036
+CROSS_PHASE sidecar-write wall=0.440 cumulative=329.332 peak_rss_kib=3250036
+CROSS_PAIR mode=cyclic left=/tmp/extcols/real1b/chunks/chunk-12.crle right=/tmp/extcols/real1b/chunks/chunk-13.crle nA=62520615 nB=62502320 out=/tmp/extcols/real1b/mwork/L0-6.crle out_runs=47639079 wall_total=45.659 comparisons=125026970 symbols_compared=1701595216 probes=184636638 max_lce=6316 fast_decided=108396187 probe_decided=16630783 cap_decided=0 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_A=6 anchors_B=2 walk_steps_A=6 walk_steps_B=2 block_rows_A=17062 block_rows_B=9481 peak_rss_kib=3250036
+CROSS_PHASE m2-build wall=0.130 cumulative=354.131 peak_rss_kib=3250036
+CROSS_PHASE hash-build wall=1.002 cumulative=355.133 peak_rss_kib=3250036
+CROSS_PHASE anchor+repair wall=1.227 cumulative=356.360 peak_rss_kib=3250036
+CROSS_PHASE cross-merge wall=11.123 cumulative=367.483 peak_rss_kib=3250036
+CROSS_PHASE sxcr-count wall=1.001 cumulative=368.624 peak_rss_kib=3250036
+CROSS_PHASE sxcr-write wall=5.753 cumulative=374.378 peak_rss_kib=3250036
+CROSS_PHASE sidecar-write wall=0.479 cumulative=374.856 peak_rss_kib=3250036
+CROSS_PAIR mode=cyclic left=/tmp/extcols/real1b/chunks/chunk-14.crle right=/tmp/extcols/real1b/chunks/chunk-15.crle nA=62505867 nB=59970917 out=/tmp/extcols/real1b/mwork/L0-7.crle out_runs=46548030 wall_total=45.428 comparisons=122500057 symbols_compared=1748258461 probes=189149946 max_lce=5978 fast_decided=105807808 probe_decided=16692249 cap_decided=0 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_A=9 anchors_B=4 walk_steps_A=9 walk_steps_B=4 block_rows_A=13508 block_rows_B=13740 peak_rss_kib=3250036
+CROSS_PHASE m2-build wall=0.283 cumulative=391.175 peak_rss_kib=3250036
+CROSS_PHASE hash-build wall=2.112 cumulative=393.287 peak_rss_kib=5631948
+CROSS_PHASE anchor+repair wall=2.721 cumulative=396.008 peak_rss_kib=5876060
+CROSS_PHASE cross-merge wall=27.725 cumulative=423.733 peak_rss_kib=6378920
+CROSS_PHASE sxcr-count wall=1.836 cumulative=425.886 peak_rss_kib=6378920
+CROSS_PHASE sxcr-write wall=12.732 cumulative=438.618 peak_rss_kib=6378920
+CROSS_PHASE sidecar-write wall=0.946 cumulative=439.564 peak_rss_kib=6378920
+CROSS_PAIR mode=cyclic left=/tmp/extcols/real1b/mwork/L0-0.crle right=/tmp/extcols/real1b/mwork/L0-1.crle nA=125011915 nB=125055474 out=/tmp/extcols/real1b/mwork/L1-0.crle out_runs=94637412 wall_total=64.617 comparisons=250088115 symbols_compared=3501133613 probes=452540980 max_lce=5813 fast_decided=208525979 probe_decided=41562136 cap_decided=0 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_A=7 anchors_B=3 walk_steps_A=7 walk_steps_B=3 block_rows_A=21876 block_rows_B=27146 peak_rss_kib=6378920
+CROSS_PHASE m2-build wall=0.293 cumulative=455.732 peak_rss_kib=6378920
+CROSS_PHASE hash-build wall=2.417 cumulative=458.150 peak_rss_kib=6378920
+CROSS_PHASE anchor+repair wall=2.778 cumulative=460.927 peak_rss_kib=6378920
+CROSS_PHASE cross-merge wall=26.849 cumulative=487.777 peak_rss_kib=6378920
+CROSS_PHASE sxcr-count wall=1.882 cumulative=489.933 peak_rss_kib=6378920
+CROSS_PHASE sxcr-write wall=13.363 cumulative=503.296 peak_rss_kib=6378920
+CROSS_PHASE sidecar-write wall=0.896 cumulative=504.193 peak_rss_kib=6378920
+CROSS_PAIR mode=cyclic left=/tmp/extcols/real1b/mwork/L0-2.crle right=/tmp/extcols/real1b/mwork/L0-3.crle nA=125009428 nB=125005876 out=/tmp/extcols/real1b/mwork/L1-1.crle out_runs=94820720 wall_total=64.427 comparisons=250032621 symbols_compared=3634157397 probes=447908744 max_lce=21712 fast_decided=208674367 probe_decided=41358254 cap_decided=0 tie_decided=0 lce_over_10k=11713 lce_over_100k=0 lce_over_1m=0 anchors_A=9 anchors_B=6 walk_steps_A=9 walk_steps_B=6 block_rows_A=31969 block_rows_B=21935 peak_rss_kib=6378920
+CROSS_PHASE m2-build wall=0.242 cumulative=520.312 peak_rss_kib=6378920
+CROSS_PHASE hash-build wall=1.936 cumulative=522.248 peak_rss_kib=6378920
+CROSS_PHASE anchor+repair wall=4.362 cumulative=526.610 peak_rss_kib=6378920
+CROSS_PHASE cross-merge wall=34.058 cumulative=560.668 peak_rss_kib=6438824
+CROSS_PHASE sxcr-count wall=2.552 cumulative=563.630 peak_rss_kib=6438824
+CROSS_PHASE sxcr-write wall=12.941 cumulative=576.572 peak_rss_kib=6438824
+CROSS_PHASE sidecar-write wall=0.960 cumulative=577.532 peak_rss_kib=6438824
+CROSS_PAIR mode=cyclic left=/tmp/extcols/real1b/mwork/L0-4.crle right=/tmp/extcols/real1b/mwork/L0-5.crle nA=125110245 nB=127308008 out=/tmp/extcols/real1b/mwork/L1-2.crle out_runs=96783458 wall_total=73.131 comparisons=252458085 symbols_compared=3570948412 probes=445371210 max_lce=9409 fast_decided=211523054 probe_decided=40935031 cap_decided=0 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_A=4 anchors_B=7 walk_steps_A=4 walk_steps_B=7 block_rows_A=27252 block_rows_B=30100 peak_rss_kib=6438824
+CROSS_PHASE m2-build wall=0.246 cumulative=593.221 peak_rss_kib=6438824
+CROSS_PHASE hash-build wall=2.017 cumulative=595.238 peak_rss_kib=6438824
+CROSS_PHASE anchor+repair wall=2.649 cumulative=597.888 peak_rss_kib=6438824
+CROSS_PHASE cross-merge wall=24.914 cumulative=622.801 peak_rss_kib=6438824
+CROSS_PHASE sxcr-count wall=2.394 cumulative=625.516 peak_rss_kib=6438824
+CROSS_PHASE sxcr-write wall=14.438 cumulative=639.953 peak_rss_kib=6438824
+CROSS_PHASE sidecar-write wall=1.316 cumulative=641.270 peak_rss_kib=6438824
+CROSS_PAIR mode=cyclic left=/tmp/extcols/real1b/mwork/L0-6.crle right=/tmp/extcols/real1b/mwork/L0-7.crle nA=125022935 nB=122476784 out=/tmp/extcols/real1b/mwork/L1-3.crle out_runs=92881320 wall_total=63.516 comparisons=247522405 symbols_compared=3751626361 probes=467189604 max_lce=12365 fast_decided=205361419 probe_decided=42160986 cap_decided=0 tie_decided=0 lce_over_10k=2366 lce_over_100k=0 lce_over_1m=0 anchors_A=2 anchors_B=4 walk_steps_A=2 walk_steps_B=4 block_rows_A=20665 block_rows_B=27198 peak_rss_kib=6438824
+CROSS_PHASE m2-build wall=0.495 cumulative=674.374 peak_rss_kib=6438824
+CROSS_PHASE hash-build wall=3.745 cumulative=678.118 peak_rss_kib=11263492
+CROSS_PHASE anchor+repair wall=8.300 cumulative=686.419 peak_rss_kib=11568216
+CROSS_PHASE cross-merge wall=96.342 cumulative=782.761 peak_rss_kib=12726208
+CROSS_PHASE sxcr-count wall=4.608 cumulative=788.248 peak_rss_kib=12726208
+CROSS_PHASE sxcr-write wall=27.874 cumulative=816.122 peak_rss_kib=12726208
+CROSS_PHASE sidecar-write wall=2.162 cumulative=818.284 peak_rss_kib=12726208
+CROSS_PAIR mode=cyclic left=/tmp/extcols/real1b/mwork/L1-0.crle right=/tmp/extcols/real1b/mwork/L1-1.crle nA=250067389 nB=250015304 out=/tmp/extcols/real1b/mwork/L2-0.crle out_runs=186722937 wall_total=176.765 comparisons=500131028 symbols_compared=7715611423 probes=1115722982 max_lce=11147 fast_decided=397027405 probe_decided=103103623 cap_decided=0 tie_decided=0 lce_over_10k=1148 lce_over_100k=0 lce_over_1m=0 anchors_A=3 anchors_B=6 walk_steps_A=3 walk_steps_B=6 block_rows_A=53787 block_rows_B=43053 peak_rss_kib=12726208
+CROSS_PHASE m2-build wall=0.536 cumulative=858.733 peak_rss_kib=12726208
+CROSS_PHASE hash-build wall=3.827 cumulative=862.561 peak_rss_kib=12726208
+CROSS_PHASE anchor+repair wall=5.638 cumulative=868.198 peak_rss_kib=12726208
+CROSS_PHASE cross-merge wall=53.674 cumulative=921.873 peak_rss_kib=12726208
+CROSS_PHASE sxcr-count wall=3.640 cumulative=926.093 peak_rss_kib=12726208
+CROSS_PHASE sxcr-write wall=24.500 cumulative=950.593 peak_rss_kib=12726208
+CROSS_PHASE sidecar-write wall=1.646 cumulative=952.239 peak_rss_kib=12726208
+CROSS_PAIR mode=cyclic left=/tmp/extcols/real1b/mwork/L1-2.crle right=/tmp/extcols/real1b/mwork/L1-3.crle nA=252418253 nB=247499719 out=/tmp/extcols/real1b/mwork/L2-1.crle out_runs=186985112 wall_total=133.431 comparisons=499966473 symbols_compared=7845519740 probes=1122256410 max_lce=7346 fast_decided=397260314 probe_decided=102706159 cap_decided=0 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_A=11 anchors_B=4 walk_steps_A=11 walk_steps_B=4 block_rows_A=60945 block_rows_B=53741 peak_rss_kib=12726208
+CROSS_PHASE m2-build wall=0.922 cumulative=1017.852 peak_rss_kib=12726208
+CROSS_PHASE hash-build wall=7.266 cumulative=1025.118 peak_rss_kib=22486680
+CROSS_PHASE anchor+repair wall=10.740 cumulative=1035.858 peak_rss_kib=23095668
+CROSS_PHASE cross-merge wall=170.649 cumulative=1206.508 peak_rss_kib=25414560
+CROSS_PHASE emit-count wall=10.327 cumulative=1218.489 peak_rss_kib=25414560
+CROSS_PHASE emit-write wall=46.527 cumulative=1265.016 peak_rss_kib=25414560
+CROSS_PHASE emit-pf-text wall=0.785 cumulative=1265.801 peak_rss_kib=25414560
+CROSS_PF_EMIT text=/tmp/extcols/real1b/merged/frag.pftext pfck=/tmp/extcols/real1b/merged/frag.pfck n=1000000665 final_runs=368036610 tau=22 count=45454576 bytes=363636648
+CROSS_PHASE emit-pf-checkpoints wall=2.394 cumulative=1268.195 peak_rss_kib=25414560
+CROSS_PAIR mode=dollar left=/tmp/extcols/real1b/mwork/L2-0.crle right=/tmp/extcols/real1b/mwork/L2-1.crle nA=500082693 nB=499917972 out=/tmp/extcols/real1b/merged/frag out_runs=368036610 wall_total=315.586 comparisons=1000058907 symbols_compared=21321661543 probes=2727335124 max_lce=51460 fast_decided=749571660 probe_decided=250487215 cap_decided=32 tie_decided=0 lce_over_10k=172723 lce_over_100k=0 lce_over_1m=0 anchors_A=6 anchors_B=30 walk_steps_A=6 walk_steps_B=30 block_rows_A=86558 block_rows_B=106246 peak_rss_kib=25414560
