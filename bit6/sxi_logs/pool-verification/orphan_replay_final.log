@@ -1,0 +1,7 @@
+REPLAY_OK S1_orphan_write
+REPLAY_OK S2_stale_publish
+REPLAY_OK S3_flash_window
+REPLAY_OK S4_same_page_duel
+REPLAY_OK S5_reader_midcopy_claim
+REPLAY_OK S6_wrap_arithmetic_note
+WITNESS_REPLAY ALL_OK

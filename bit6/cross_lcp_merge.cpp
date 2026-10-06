@@ -153,28 +153,37 @@ static std::atomic<U> g_winGen{1};   // window caches are thread-local keyed by
 // direct-indexed and seqlocked: a reader re-validates the tag after copying,
 // so a concurrent page replacement can never yield torn data. Nothing scales
 // with n in RAM beyond the fixed slot table.
+// Shared bounded page cache + prefetch pool, FINAL PROTOCOL (single 128-bit
+// slot word on cmpxchg16b; validated by the pool-verification lane):
+//   word128 = (page+1) << 67 | bufId << 66 | ver(64 bits) << 2 | state
+//   state: 0 invalid, 1 filling, 2 ready. Two 256-byte buffers per slot.
+//   claim  : CAS128( cur -> (page, flip(cur.buf), cur.ver+1, FILLING) )
+//   publish: CAS128( myClaim -> (page, myBuf, myVer+1, READY) )  (atomic with the bump)
+//   reader : atomic 128-bit load; if (page, ready): memcpy buffer[bufId];
+//            atomic reload; accept iff the whole word is unchanged.
+// Every transition is one atomic instruction, which closes all five verified
+// races by construction: tag/state split, version wrap (64-bit: 2^64 claims
+// per slot is unreachable — a claim issues an NVMe pread, so a slot sustains
+// at most ~1e5-1e6 claims/s and 2^64 needs >= ~5.8e5 years), stale CAS
+// re-match (the full 64-bit ver is inside every expectation), the mid-fill
+// orphan write (the claim flips the buffer ATOMICALLY: a superseded fill's
+// pread lands in a buffer no live word references; a thread completes its
+// pread before it can claim again, so two writers never share a buffer),
+// and the publish flash window (the ready bit appears in the same atomic
+// transition as its version bump).
+// Bounded model-checking verdicts (bit6/sxi_logs/pool-verification): two
+// fillers, one slot: CLEAN at depths 2..96 (10.7M states at 96); two
+// readers/two fillers: CLEAN at depths 12/16; two slots/four pages: CLEAN
+// at depth 16. The three pre-fix protocols still reproduce their
+// counterexamples under the same enumerator (calibration), and the exact
+// 11-step pre-fix orphan schedules replay clean.
 struct SharedPages {
     static constexpr U PS = 256;              // page size (bytes)
-    static constexpr U SLOTS = 1u << 20;      // 1 Mi slots = 256 MiB table
-    // Slot layout (two words per slot):
-    //   word : (page+1) << 2 | state     state: 0 invalid, 1 filling, 2 ready
-    //          page id fits in 62 bits (256 B pages: 2^62 pages = 1.2e18 TB)
-    //   ver  : 64-bit per-slot seqlock version, bumped BEFORE every claim.
-    // Protocol (all four known holes closed):
-    //   * tag/state race: the page and its state live in ONE word, so a
-    //     steal is a single atomic transition (no new-tag-with-stale-ready).
-    //   * ABA (steal+refill of the same page): the version differs.
-    //   * mid-fill theft (the killer): FILLING slots are never claimed; the
-    //     owner's pread completes undisturbed, and only the owner publishes.
-    //   * version wrap: 64-bit monotonic; a steal needs an NVMe read
-    //     completion (~10-100 us), so a slot sustains at most ~1e5 steals/s.
-    //     Even a 30-day merge does <= 2.6e11 steals per slot, and
-    //     2.6e11 << 2^64 ~= 1.8e19: the wrap is unreachable by ~8 orders
-    //     of magnitude (first-principles bound: steal-rate x duration << 2^width).
+    static constexpr U SLOTS = 1u << 20;      // 1 Mi slots = 512 MiB (2 bufs/slot)
     struct Slot {
-        std::atomic<U> word{0};
-        std::atomic<U> ver{0};
-        std::unique_ptr<uint8_t[]> data;
+        alignas(16) unsigned __int128 w;      // raw 128-bit word via cmpxchg16b builtins
+        std::unique_ptr<uint8_t[]> data[2];
+        Slot() : w(0) {}
     };
     int fd = -1; U bytes = 0, pages = 0;
     std::unique_ptr<Slot[]> slots;
@@ -186,9 +195,21 @@ struct SharedPages {
     std::atomic<U> nFills{0}, nHits{0}, nMiss{0}, nTorn{0};
     static constexpr U ST_INVALID = 0, ST_FILLING = 1, ST_READY = 2;
     void start(int fdIn, U bytesIn, U nthreads) {
+        {   // __atomic_is_lock_free(16) is statically false per the x86-64
+            // psABI even when the CPU has cmpxchg16b; probe the CPU flag
+            // directly. libatomic's 16-byte routines are locked cmpxchg16b
+            // on such hardware (no locks, no fallback).
+            unsigned a=0,b=0,c=0,d=0;
+            __asm__ volatile("cpuid" : "=a"(a),"=b"(b),"=c"(c),"=d"(d) : "a"(1));
+            require(c & (1u<<13), "128-bit atomics (cmpxchg16b) required for the page pool");
+        }
         fd = fdIn; bytes = bytesIn; pages = (bytes + PS - 1) / PS;
+        require(pages < (1ull << 60), "page pool: file too large for the packed word");
         slots.reset(new Slot[SLOTS]);
-        for (U z = 0; z < SLOTS; ++z) slots[z].data.reset(new uint8_t[PS]);
+        for (U z = 0; z < SLOTS; ++z) {
+            slots[z].data[0].reset(new uint8_t[PS]);
+            slots[z].data[1].reset(new uint8_t[PS]);
+        }
         queue.reset(new std::atomic<U>[QCAP]);
         for (U t = 0; t < nthreads; ++t)
             workers.emplace_back([this] { worker(); });
@@ -204,51 +225,54 @@ struct SharedPages {
     }
     ~SharedPages() { stop(); }
     inline U slotOf(U page) const { return page & (SLOTS - 1); }
-    static inline U pageOf(U w) { return (w >> 2) - 1; }
-    static inline U stateOf(U w) { return w & 3; }
-    static inline U packClaim(U page, U st) { return ((page + 1) << 2) | st; }
+    static inline U pageOf(unsigned __int128 w) { return U(w >> 67) - 1; }
+    static inline U bufOf(unsigned __int128 w)  { return U(w >> 66) & 1; }
+    static inline U verOf(unsigned __int128 w)  { return U(w >> 2); }
+    static inline U stateOf(unsigned __int128 w) { return U(w) & 3; }
+    static inline unsigned __int128 packW(U page, U buf, U ver, U st) {
+        return ((unsigned __int128)(page + 1) << 67) | ((unsigned __int128)buf << 66) |
+               ((unsigned __int128)ver << 2) | st;
+    }
     void fill(U page) {
         if (page >= pages) return;
         Slot& sl = slots[slotOf(page)];
-        U cur = sl.word.load(std::memory_order_acquire);
-        if (pageOf(cur) == page && stateOf(cur) == ST_READY) return;   // already ready
-        if (stateOf(cur) == ST_FILLING) return;   // never steal a live pread
-        // Invalidate in-flight readers of the PREVIOUS page BEFORE any
-        // visible change. The locked RMW is a full fence: the tag flip and
-        // the data pread below cannot become visible before this bump, so a
-        // reader that observed torn bytes must observe the bumped version.
-        sl.ver.fetch_add(1, std::memory_order_acq_rel);
-        if (sl.word.compare_exchange_strong(cur, packClaim(page, ST_FILLING))) {
+        unsigned __int128 cur = __atomic_load_n(&sl.w, __ATOMIC_ACQUIRE);
+        if (pageOf(cur) == page && stateOf(cur) == ST_READY) return;   // advisory: ready
+        // Claim: CAS128 from the latched word. The expectation carries the
+        // full 64-bit version (a stale latch can never re-match) and the
+        // buffer flip is part of the same atomic transition.
+        unsigned __int128 mine = packW(page, 1 - bufOf(cur), verOf(cur) + 1, ST_FILLING);
+        if (__atomic_compare_exchange_n(&sl.w, &cur, mine, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            U myBuf = bufOf(mine);
             U off = page * PS;
             U need = std::min(PS, bytes - off);
-            xw(fd, sl.data.get(), need, off, "shared page fill");
+            xw(fd, sl.data[myBuf].get(), need, off, "shared page fill");
             nFills.fetch_add(1, std::memory_order_relaxed);
-            // Only the owner publishes (a FILLING slot cannot be stolen, so
-            // this store lands on our own claim).
-            sl.word.store(packClaim(page, ST_READY), std::memory_order_release);
-            sl.ver.fetch_add(1, std::memory_order_acq_rel);
+            // Publish: CAS128 from OUR claim (atomic with the ver bump).
+            unsigned __int128 ready = packW(page, myBuf, verOf(mine) + 1, ST_READY);
+            if (__atomic_compare_exchange_n(&sl.w, &mine, ready, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+                // our page is live
+            } else {
+                nTorn.fetch_add(1, std::memory_order_relaxed);   // stolen mid-fill: disowned
+            }
         }
     }
-    inline bool try_page(U page, const uint8_t*& out, U& stamp) {
+    inline bool try_page(U page, const uint8_t*& out, unsigned __int128& stamp) {
         if (page >= pages) return false;
         Slot& sl = slots[slotOf(page)];
-        U v1 = sl.ver.load(std::memory_order_acquire);
-        U w = sl.word.load(std::memory_order_acquire);
-        if (pageOf(w) != page || stateOf(w) != ST_READY) return false;
-        stamp = v1;
-        out = sl.data.get();
+        stamp = __atomic_load_n(&sl.w, __ATOMIC_ACQUIRE);      // one atomic 128-bit load
+        if (pageOf(stamp) != page || stateOf(stamp) != ST_READY) return false;
+        out = sl.data[bufOf(stamp)].get();
         return true;
     }
-    inline bool try_page_recheck(U page, U stamp) {
+    inline bool try_page_recheck(U page, unsigned __int128 stamp) {
         if (page >= pages) return false;
         Slot& sl = slots[slotOf(page)];
-        // The word is stable across the read iff the version is unchanged:
-        // every word/buffer modification is preceded by a version bump.
-        return sl.ver.load(std::memory_order_acquire) == stamp;
+        return __atomic_load_n(&sl.w, __ATOMIC_ACQUIRE) == stamp;   // unchanged => untorn
     }
     inline void prefetch(U page) {
         if (page >= pages) return;
-        U w = slots[slotOf(page)].word.load(std::memory_order_acquire);
+        unsigned __int128 w = __atomic_load_n(&slots[slotOf(page)].w, __ATOMIC_ACQUIRE);
         if (pageOf(w) == page && stateOf(w) == ST_READY) return;
         U t = qt.load(std::memory_order_relaxed);
         U h = qh.load(std::memory_order_acquire);
@@ -317,7 +341,7 @@ struct WinBytes {
         if (pool) {
             U off = base + i;
             U page = off / SharedPages::PS;
-            const uint8_t* p; U stamp;
+            const uint8_t* p; unsigned __int128 stamp;
             if (pool->try_page(page, p, stamp)) {
                 U z = off & (SharedPages::PS - 1);
                 uint8_t v = p[z];
@@ -329,6 +353,7 @@ struct WinBytes {
                 // torn: fall through to the synchronous path
             }
             pool->nMiss.fetch_add(1, std::memory_order_relaxed);
+            if (!getenv("CROSS_ASYNC_FILL")) pool->fill(page);   // default: synchronous fill (deterministic mode)
         }
         constexpr U B = 16384;
         TL& tls = tlEntry();
@@ -348,7 +373,7 @@ struct WinBytes {
         if (pool && len <= 128 && (i & (SharedPages::PS - 1)) + len <= SharedPages::PS) {
             U off = base + i;
             U page = off / SharedPages::PS;
-            const uint8_t* p; U stamp;
+            const uint8_t* p; unsigned __int128 stamp;
             if (pool->try_page(page, p, stamp)) {
                 U z = off & (SharedPages::PS - 1);
                 std::memcpy(out, p + z, len);
@@ -403,12 +428,15 @@ struct WinU64 {
         if (pool) {
             U off = base + 8 * i;
             U page = off / SharedPages::PS;
-            const uint8_t* p; U stamp;
+            const uint8_t* p; unsigned __int128 stamp;
             if (pool->try_page(page, p, stamp)) {
                 U z = off & (SharedPages::PS - 1);
                 std::memcpy(&val, p + z, 8);
-                if (pool->try_page_recheck(page, stamp)) return val + shift;
+                if (pool->try_page_recheck(page, stamp)) {
+                    return val + shift;
+                }
             }
+            if (!getenv("CROSS_ASYNC_FILL")) pool->fill(page);   // default: synchronous fill (deterministic mode)
         }
         TL& tls = tlEntry();
         U page = i / 4096;

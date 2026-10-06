@@ -379,3 +379,57 @@ Design (per the directive's menu, after profiling):
   the gate.
 Scratch for this phase relocates to /mnt/nvme2n1/erikg/extcols-scratch
 (root is done carrying builds).
+
+## THE POOL VERDICT (post-OOM revival, timeboxed by supervisor order)
+
+**Slot protocol: model-CLEAN and BANKED.** The final protocol is a single
+128-bit slot word on cmpxchg16b — `(page+1) << 67 | bufId << 66 | ver(64) <<
+2 | state{invalid,filling,ready}`, two 256-byte buffers per slot; claim =
+CAS128(cur -> (page, flip(cur.buf), ver+1, FILLING)); publish = CAS128(my
+claim -> (page, myBuf, ver+2, READY)) — atomic with the bump; reader =
+atomic 128-bit load, copy the named buffer, reload, accept iff unchanged.
+This closes all five discovered races by construction: tag/state split
+(one word), version wrap (64-bit ver: a claim issues an NVMe pread, so a
+slot sustains <= ~1e5-1e6 claims/s; 2^64 claims needs >= ~5.8e5 years —
+unreachable by arithmetic), stale CAS re-match (the full 64-bit ver lives
+inside every CAS expectation), mid-fill orphan write (the claim flips the
+buffer atomically; a superseded fill's pread lands in a buffer no live word
+references; a thread completes its pread before claiming again, so two
+writers never share a buffer), and the publish flash window (the ready bit
+appears in the same atomic transition as its ver bump).
+
+Checker program (bit6/sxi_logs/pool-verification/, every run bounded:
+ulimit -v 30-50 GB + wall alarm + state cap; growth measured at depth 4/8/12
+before launching — the unbounded pre-fix runs are what OOMed the box):
+- two fillers/one slot: CLEAN at depths 2,3,8,16,24,32,48,64,96
+  (10.7M states at 96, exhaustive; log: final_protocol_d48.log etc.)
+- two readers/two fillers: CLEAN d12/d16; two slots/four pages: CLEAN d16
+- the three PRE-FIX protocols still reproduce their counterexamples under
+  the same enumerator (calibration intact); the 11-step orphan schedule
+  replays clean (orphan_replay_final.log, 6 schedules OK)
+- the epoch-parity pre-final model is the one that exploded (13.4M states
+  at depth 3); the CAS128 model collapses the space (304K states at d16)
+
+**Residual nondeterminism: OUTSIDE the verified protocol — PARKED.**
+Concurrent (worker-thread) fills still produced nondeterministic outputs on
+the real pair (out_runs 102796809/802/9458, zero fatals) while the protocol
+itself is model-clean and selftests pass on every seed. The timebox order
+ends the hunt on the critical path; the concurrent pool is a PARKED post-pile
+item with the sync-fill knob + checker as the starting point.
+
+**SHIPPED MODE: synchronous fill (default; CROSS_ASYNC_FILL=1 re-enables the
+parked concurrent path).** Benches on the f4tree pair (L0-2+L0-3, n=270.6M,
+48 threads), repeated:
+- no-pool (CROSS_NO_POOL=1): out_runs=102796802 x2, wall 2372/2516 s
+- sync-fill (default): out_runs=102796802 x3, wall 1185/1046 s, outputs
+  byte-identical to the no-pool reference
+- async (PARKED): 1102/1101/1156 s but nondeterministic
+Decision rule applied: sync-fill is byte-identical AND 2.1-2.4x FASTER than
+no-pool on this pair — adopted. Build flags for the merge are now
+`g++ -O2 -mcx16 -std=c++17 -pthread cross_lcp_merge.cpp -latomic`
+(cpuid-probed cx16 gate; __atomic_is_lock_free(16) is statically false per
+the x86-64 psABI and is NOT the right probe).
+
+Scratch discipline (standing): all scratch/references on nvme2n1; root for
+the repo and final artifacts only; df checked before every phase (refuse
+under 15% free).
