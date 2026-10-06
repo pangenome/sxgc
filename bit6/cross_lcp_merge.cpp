@@ -1635,8 +1635,11 @@ static void preflight_run(Preflight* pf) {
     }
     pf->done = true;
 }
-// Announce the upcoming pair and start its preflight now (lookahead of one).
+// Announce the upcoming pair and start its preflight (lookahead of one).
+// OPT-IN via CROSS_PIPELINE=1: the serial tree is the shipped deterministic
+// mode; the preflight thread-lifetime path is a post-pile performance item.
 static void cross_announce_next(const std::string& L, const std::string& R, const std::string& out) {
+    if (!getenv("CROSS_PIPELINE")) return;
     if (g_pfq.size() >= 2) fail("preflight lookahead exceeded one");
     auto pf = std::make_unique<Preflight>();
     pf->left = L; pf->right = R; pf->out = out;
