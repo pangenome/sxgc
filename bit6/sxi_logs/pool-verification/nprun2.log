@@ -1,0 +1,9 @@
+CROSS_PHASE m2-build wall=0.160 cumulative=546.132 peak_rss_kib=8192
+CROSS_PHASE hash-build wall=0.429 cumulative=546.561 peak_rss_kib=415896
+CROSS_PHASE anchor+repair wall=39.583 cumulative=586.143 peak_rss_kib=415896
+XMERG_TIMING t_pf=12.510 t_pop=20.981 cell_hits=37198281 cell_miss=54135871
+CROSS_PHASE cross-merge wall=1153.456 cumulative=1739.599 peak_rss_kib=415896
+CROSS_PHASE sxcr-count wall=422.433 cumulative=2162.032 peak_rss_kib=415896
+CROSS_PHASE sxcr-write wall=353.547 cumulative=2515.579 peak_rss_kib=415896
+CROSS_PHASE sidecar-write wall=0.464 cumulative=2516.043 peak_rss_kib=415896
+CROSS_PAIR mode=cyclic left=/mnt/nvme2n1/erikg/extcols-scratch/f4tree/mwork/L0-2.crle right=/mnt/nvme2n1/erikg/extcols-scratch/f4tree/mwork/L0-3.crle nA=135323787 nB=135281370 out=/mnt/nvme2n1/erikg/extcols-scratch/f4tree/L1-1-np-2.crle out_runs=102796802 wall_total=2516.044 comparisons=270649370 symbols_compared=8589649343 probes=163097420 max_lce=97059 fast_decided=224982294 probe_decided=45667076 cap_decided=0 tie_decided=0 lce_over_10k=98773 lce_over_100k=0 lce_over_1m=0 anchors_A=5 anchors_B=8 walk_steps_A=5 walk_steps_B=8 block_rows_A=28889 block_rows_B=33773 peak_rss_kib=415896 hash_k=0 t_fast=686.624 t_prep=2.253 t_probe=252.058 t_scan=126.382

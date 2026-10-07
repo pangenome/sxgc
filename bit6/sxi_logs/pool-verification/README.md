@@ -300,3 +300,26 @@ bash run_checker.sh                              # build + gate + both witnesses
 ./pool_checker_fast 0 8  2 1 4 1 2 16 0          # multi-filler COUNTEREXAMPLE
 ./pool_checker_fast 0 32 2 1 4 1 2 16 0          # ... identical at 32 bits
 ```
+
+## PARKED-POOL DIAGNOSTIC FILE (final state; pool work closed by timebox)
+
+- **Merge core EXONERATED**: no-pool serial tree, 10 chunks / 9 pairs,
+  10.3 h wall, cumulative 37,138 s, ALL pairs clean, zero failures
+  (fd10np.log). The same tree WITH pools (sync-fill mode, 16 threads) died
+  at pair 4 with grid-equality (fd10.log) — the pool family is convicted.
+- **Grid-dump finding** (gd.log, scratch /tmp/gd-out.xsc-*): the corrupt
+  value was `pj2` = P[8,056,665] — an entry from hash page 251,770, the
+  SLOT-COLLISION PARTNER of the requested hash page 1,300,346 (slot
+  251,770; SLOTS=2^20, page table larger than the slot table). The reader
+  accepted a word naming page 1,300,346 while the named buffer held the
+  partner page's bytes. The hs FILE ITSELF is correct (file-based
+  recomputation of every involved entry matches direct folds; the grid
+  math on file data reproduces the direct fold exactly).
+- **Isolated stress harness** (pool_stress.cpp + extracted header
+  cross_lcp_merge_pool_extract.h): 2-8 MB ground-truth files, 2-4 reader
+  threads, at_span+at verified per accepted read, bounded runs — NO
+  reproduction in bounded runs. The contamination needs the real pair's
+  working set/access mix. PARKED: the knob (CROSS_ASYNC_FILL), the checker
+  (clean to depth 96 + replays), and this harness are the starting point.
+- **Shipped mode**: CROSS_NO_POOL=1 (deterministic, core-exonerated).
+  The CAS128 protocol implementation stays in the tree, OFF by default.
