@@ -311,6 +311,7 @@ static std::atomic<U> g_cellHits{0}, g_cellMiss{0};   // grid-cell cache telemet
 struct WinBytes {
     int fd = -1; U size = 0, base = 0, gen = 0;
     std::shared_ptr<SharedPages> pool;
+    ~WinBytes() { pool.reset(); if (fd >= 0) ::close(fd); }
     void open_ro(const std::string& path, U bytes, U byteBase = 0, bool pooled = false) {
         fd = ::open(path.c_str(), O_RDONLY);
         if (fd < 0) fail("open windowed byte file");
@@ -401,6 +402,7 @@ struct WinBytes {
 struct WinU64 {
     int fd = -1; U base = 0, count = 0, shift = 0, gen = 0;
     std::shared_ptr<SharedPages> pool;
+    ~WinU64() { pool.reset(); if (fd >= 0) ::close(fd); }
     void open_ro(const std::string& path, U elems, U byteBase, U shiftIn = 0, bool pooled = false) {
         fd = ::open(path.c_str(), O_RDONLY);
         if (fd < 0) fail("open windowed u64 file");
@@ -469,6 +471,7 @@ struct PosOverlay {
     struct Region { U lo, hi, off; };
     WinU64 src;
     int ovFd = -1; U ovCount = 0;
+    ~PosOverlay() { if (ovFd >= 0) ::close(ovFd); }
     std::vector<Region> regions;
     U minLo = UINT64_MAX, maxHi = 0;
     void init(const std::string& path, U elems, U byteBase, U shift,
