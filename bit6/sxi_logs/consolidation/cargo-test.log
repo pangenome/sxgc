@@ -1,0 +1,25 @@
+warning: method `hit` is never used
+   --> src/product.rs:178:8
+    |
+ 67 | impl Engine {
+    | ----------- method in this implementation
+...
+178 |     fn hit(
+    |        ^^^
+
+warning: `xsa` (bin "xsa" test) generated 10 warnings (run `cargo fix --bin "xsa" -p xsa --tests` to apply 4 suggestions)
+    Finished `release` profile [optimized] target(s) in 0.96s
+     Running unittests src/main.rs (target/release/deps/xsa-9a7f173d66c1ba47)
+
+running 8 tests
+test chain::tests::disc_preflight_refuses_under_15_percent_free ... ok
+test chain::tests::production_remap_matches_banked_framemap ... ok
+test chain::tests::time_report_parse ... ok
+test chain::tests::snap_aligned_input_passes ... ok
+test run_width_tests::cxx_writer_header_round_trip ... ok
+test run_width_tests::high_run_id_query_predecessor ... ok
+test sxi2::run_width_tests::compact_phi_run_id_above_u32 ... ok
+test chain::tests::snap_refusal_mid_document_input_fails_loud ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

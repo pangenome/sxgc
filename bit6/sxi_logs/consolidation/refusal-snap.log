@@ -1,0 +1,4 @@
+=== snap refusal (mid-document cut):
+XSA_BUILD START input=/dev/shm/xsa-smoke/cut-mid.txt scratch=/dev/shm/xsa-smoke/r.snap memory_gb=4 threads=48 chunks=32 remap=production
+xsa: error: build: SNAP_REFUSED mid-document input /dev/shm/xsa-smoke/cut-mid.txt: last byte is 0x0a, want 0x1e (document boundary); snap the prefix forward to the next 0x1e in the source corpus and retry - the chain never trims or extends silently
+RC=1

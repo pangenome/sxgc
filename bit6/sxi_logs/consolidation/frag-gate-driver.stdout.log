@@ -1,0 +1,39 @@
+=== gate start 2026-10-08T09:20:56+00:00 pid=2615743 caps: ulimit -v 6 GiB (per phase), timeout 43200s
+=== xsa provenance: 64f75904a841eeb4...
+/dev/nvme2n1     14T   12T  2.3T  84% /mnt/nvme2n1
+=== xsa build rc=0 2026-10-08T16:46:50+00:00
+=== byte-identity vs the banked fragment reference
+CONSOLIDATED_MERGE_rlebwt BYTE_IDENTICAL_TO_BANKED
+CONSOLIDATED_MERGE_rlebwt.meta BYTE_IDENTICAL_TO_BANKED
+CONSOLIDATED_MERGE_ssa BYTE_IDENTICAL_TO_BANKED
+CONSOLIDATED_MERGE_ssa_t BYTE_IDENTICAL_TO_BANKED
+CONSOLIDATED_FINISH_ri4 BYTE_IDENTICAL_TO_BANKED
+CONSOLIDATED_FINISH_head_sa BYTE_IDENTICAL_TO_BANKED
+CONSOLIDATED_FINISH_agg BYTE_IDENTICAL_TO_BANKED
+CONSOLIDATED_FINISH_sA BYTE_IDENTICAL_TO_BANKED
+=== pf sidecar journal (bank predates --emit-pf; certified via agg)
+PFTEXT bytes=1082130213 (want n=1082130213)
+PFCK bytes=393501936
+CROSS_PF_EMIT text=/mnt/nvme2n1/erikg/extcols-scratch/consolidation-frag/merged/frag.pftext pfck=/mnt/nvme2n1/erikg/extcols-scratch/consolidation-frag/merged/frag.pfck n=1082130213 final_runs=397723016 tau=22 count=49187737 bytes=393501936
+xsa chi-rspace: chi = 306164765 (N=1082130213, R=397723010) stream-agg=true buffers=4194304
+CONSOLIDATED_CHI_306164765_OK
+=== per-phase telemetry (from the uniform xsa-build.log)
+XSA_BUILD START input=/home/erikg/sxgc-piletest/pile-frag.txt scratch=/mnt/nvme2n1/erikg/extcols-scratch/consolidation-frag memory_gb=6 threads=48 chunks=32 remap=production
+SNAP_OK n=1082130213 sha256=69a6b5fde1e79d593217ce815c9f47237e276169e5204831a218124e14e6b6b2
+REMAP /mnt/nvme2n1/erikg/extcols-scratch/consolidation-frag/remap-256.bin sha256=b4f387767707f3095a0981148a1753f8da5885c30c19753b3b93887153e611be
+PHASE chunk START /home/erikg/.cache/xsa/cfaa5f749815864a296ab21652035ae51b3e2972e190bfa26dc7c92d648e58bf/chunk_frontend /home/erikg/sxgc-piletest/pile-frag.txt 32 /mnt/nvme2n1/erikg/extcols-scratch/consolidation-frag/chunks /mnt/nvme2n1/erikg/extcols-scratch/consolidation-frag/remap-256.bin
+PHASE chunk END rc=0 wall=3:33.47 peak_rss_kb=1299020 disc_used_bytes=12894422728704
+PHASE merge START /home/erikg/.cache/xsa/cfaa5f749815864a296ab21652035ae51b3e2972e190bfa26dc7c92d648e58bf/cross_lcp_merge --tree /mnt/nvme2n1/erikg/extcols-scratch/consolidation-frag/chunks 32 1082130213 /mnt/nvme2n1/erikg/extcols-scratch/consolidation-frag/merged/frag --threads 48 --work /mnt/nvme2n1/erikg/extcols-scratch/consolidation-frag/mwork --emit-pf
+PHASE merge END rc=0 wall=6:57:38 peak_rss_kb=2536464 disc_used_bytes=12984480436224
+MERGE cross_pairs=31
+CROSS_PF_EMIT text=/mnt/nvme2n1/erikg/extcols-scratch/consolidation-frag/merged/frag.pftext pfck=/mnt/nvme2n1/erikg/extcols-scratch/consolidation-frag/merged/frag.pfck n=1082130213 final_runs=397723016 tau=22 count=49187737 bytes=393501936
+PHASE endpoints START /home/erikg/.cache/xsa/cfaa5f749815864a296ab21652035ae51b3e2972e190bfa26dc7c92d648e58bf/rpfbwt_endpoints /mnt/nvme2n1/erikg/extcols-scratch/consolidation-frag/merged/frag /mnt/nvme2n1/erikg/extcols-scratch/consolidation-frag/finish/frag.ri4 /mnt/nvme2n1/erikg/extcols-scratch/consolidation-frag/finish/frag.head_sa --pf-text /mnt/nvme2n1/erikg/extcols-scratch/consolidation-frag/merged/frag.pftext --pf-checkpoints /mnt/nvme2n1/erikg/extcols-scratch/consolidation-frag/merged/frag.pfck
+PHASE endpoints END rc=0 wall=5:22.55 peak_rss_kb=393584 disc_used_bytes=12993366740992
+PHASE slim START /home/erikg/.cache/xsa/cfaa5f749815864a296ab21652035ae51b3e2972e190bfa26dc7c92d648e58bf/slim_dump --slim --resolve-ri4 --ri4 /mnt/nvme2n1/erikg/extcols-scratch/consolidation-frag/finish/frag.ri4 --head-sa /mnt/nvme2n1/erikg/extcols-scratch/consolidation-frag/finish/frag.head_sa -t 48 --pf-text /mnt/nvme2n1/erikg/extcols-scratch/consolidation-frag/merged/frag.pftext --pf-checkpoints /mnt/nvme2n1/erikg/extcols-scratch/consolidation-frag/merged/frag.pfck -o /mnt/nvme2n1/erikg/extcols-scratch/consolidation-frag/finish/frag.agg
+PHASE slim END rc=0 wall=18:19.74 peak_rss_kb=30216 disc_used_bytes=12979690651648
+PHASE sweep START /home/erikg/worktrees/sxgc/pi-worktree-d71c804e-9751-4699-a734-7e445af3b5de-s0-0/xsa/target/release/xsa chi-rspace --stream-agg --ri4 /mnt/nvme2n1/erikg/extcols-scratch/consolidation-frag/finish/frag.ri4 --agg /mnt/nvme2n1/erikg/extcols-scratch/consolidation-frag/finish/frag.agg -o /mnt/nvme2n1/erikg/extcols-scratch/consolidation-frag/finish/frag.sA
+PHASE sweep END rc=0 wall=0:58.69 peak_rss_kb=6144 disc_used_bytes=12982149955584
+PEAK_DISC_USED_BYTES 12982149955584 (scratch filesystem, after finish)
+XSA_BUILD_DONE xsa chi-rspace: chi = 306164765 (N=1082130213, R=397723010) stream-agg=true buffers=4194304
+/dev/nvme2n1     14T   12T  2.2T  85% /mnt/nvme2n1
+CONSOLIDATION_FRAG_GATE_DONE pass=8 fail=0

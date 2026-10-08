@@ -1,0 +1,20 @@
+SELFTEST_SWEEP START cases=50 seeds=6 threads=48
+PHASE selftest-seed-11 START /home/erikg/.cache/xsa/cfaa5f749815864a296ab21652035ae51b3e2972e190bfa26dc7c92d648e58bf/cross_lcp_merge --selftest 50 --seed 11 --threads 48
+PHASE selftest-seed-11 END rc=0 wall=0:27.65 peak_rss_kb=1242644 disc_used_bytes=12714323124224
+SEED 11 SELFTEST_PASS count=50 seed=11
+PHASE selftest-seed-99 START /home/erikg/.cache/xsa/cfaa5f749815864a296ab21652035ae51b3e2972e190bfa26dc7c92d648e58bf/cross_lcp_merge --selftest 50 --seed 99 --threads 48
+PHASE selftest-seed-99 END rc=0 wall=0:26.05 peak_rss_kb=1240476 disc_used_bytes=12714323189760
+SEED 99 SELFTEST_PASS count=50 seed=99
+PHASE selftest-seed-20261002 START /home/erikg/.cache/xsa/cfaa5f749815864a296ab21652035ae51b3e2972e190bfa26dc7c92d648e58bf/cross_lcp_merge --selftest 50 --seed 20261002 --threads 48
+PHASE selftest-seed-20261002 END rc=0 wall=0:24.72 peak_rss_kb=1246936 disc_used_bytes=12714323247104
+SEED 20261002 SELFTEST_PASS count=50 seed=20261002
+PHASE selftest-seed-7 START /home/erikg/.cache/xsa/cfaa5f749815864a296ab21652035ae51b3e2972e190bfa26dc7c92d648e58bf/cross_lcp_merge --selftest 50 --seed 7 --threads 48
+PHASE selftest-seed-7 END rc=0 wall=0:24.98 peak_rss_kb=1251052 disc_used_bytes=12714323316736
+SEED 7 SELFTEST_PASS count=50 seed=7
+PHASE selftest-seed-5 START /home/erikg/.cache/xsa/cfaa5f749815864a296ab21652035ae51b3e2972e190bfa26dc7c92d648e58bf/cross_lcp_merge --selftest 50 --seed 5 --threads 48
+PHASE selftest-seed-5 END rc=0 wall=0:24.87 peak_rss_kb=1250356 disc_used_bytes=12714323488768
+SEED 5 SELFTEST_PASS count=50 seed=5
+PHASE selftest-seed-13 START /home/erikg/.cache/xsa/cfaa5f749815864a296ab21652035ae51b3e2972e190bfa26dc7c92d648e58bf/cross_lcp_merge --selftest 50 --seed 13 --threads 48
+PHASE selftest-seed-13 END rc=0 wall=0:25.75 peak_rss_kb=1237396 disc_used_bytes=12714323546112
+SEED 13 SELFTEST_PASS count=50 seed=13
+SELFTEST_SWEEP_PASS

@@ -44,26 +44,52 @@ from pushed main (003e314):
 No algorithm changes: the bundled stages are the same sources built with the
 same gate flags, so outputs must be byte-for-byte those of the reference chain.
 
-## Gates
+## Gates — ALL PASSED (2026-10-08)
 
-1. cargo build + `xsa build --help` — logs: `cargo-build.log`, `help.log`
-2. fragment-scale byte identity through `xsa build --input`
-   (`gate_consolidation_frag.sh`): the four merged files + the four finish
-   artifacts byte-identical to the banked fragment reference
-   (BANK=/home/erikg/cross-lcp-run/merged), chi = 306164765 exactly.
-3. six-seed selftest via `xsa build --selftest` — logs: `selftest-*.log`
-4. fresh `cargo test` (snap refusal + disc preflight) — logs: `cargo-test.log`
+1. **cargo build + `xsa build --help`** — PASS (release build green; both build routes in help).
+2. **fragment-scale byte identity through `xsa build --input`** — PASS:
+   `CONSOLIDATION_FRAG_GATE_DONE pass=8 fail=0`. One command (32 chunks, 48
+   threads, pool ON, ulimit -v 6 GiB per phase) reproduced the banked
+   fragment reference byte-for-byte: frag.{rlebwt,rlebwt.meta,ssa,ssa_t}
+   and fresh.{ri4,head_sa,agg,sA} all BYTE_IDENTICAL_TO_BANKED; chi =
+   306164765 (N=1082130213, R=397723010) exactly. Emitted sidecars match the
+   banked lever-gate numbers: pftext = n bytes exactly, pfck tau=22
+   count=49,187,737 (bytes=393,501,936). Walls: chunk 3:33 (1.3 GB), merge
+   tree 6:57:38 (31 pairs, peak RSS 2.53 GB under the cap; gate-5 no-pool
+   reference was 8:52:38), endpoints 5:23 (394 MB), slim 18:20 (30 MB),
+   sweep 0:59 (6 MB). Driver log: `frag-gate-driver.stdout.log`, verdicts:
+   `frag-xsa-build.cmp.log`.
+3. **six-seed selftest** — PASS: `xsa build --selftest 2000` (48 threads,
+   capped, scratch nvme2n1) — SELFTEST_PASS for seeds 11, 99, 20261002, 7, 5,
+   13 at 2000 cases each, SELFTEST_SWEEP_PASS (`selftest-sweep.log`).
+4. **fresh `cargo test`** — PASS: 8/8 (snap refusal mid-document, snap aligned,
+   disc gate boundary 85/86, production remap == banked frag.remap,
+   time -v telemetry parse) plus the pre-existing run-width tests; live CLI
+   refusals demonstrated too (`refusal-snap.log`, `refusal-disc.log`).
 
-## Findings / blockers
+Additional smoke evidence (pre-gate): on a 1.09 MB corpus all 10 chain
+artifacts byte-identical to the pre-consolidation /tmp/extcols reference
+chain; 4-chunk vs 7-chunk trees byte-identical; chi = 744578 agrees across
+the chunk route and the PFP pipeline route; the runtime remap drift check
+caught (and I fixed) the map being an involution (0xFC..0xFF map back to
+0x04..0x01) which the prose description had omitted.
 
-* DISC: /mnt/nvme2n1 sits at ~88.2% used; the mandated disc preflight
-  (>= 15% free) refuses. Both this lane's fragment gate and the supervisor's
-  10 GB launch require cleanup first (escalated to the supervisor with
-  numbers; project-owned scratch candidates total only ~223 GB of the
-  ~480 GB needed to reach 85%).
+## Disc ledger
 
-## Logs
+* My authorized deletions: extcols-scratch/{f4tree 103G, fragext 93G,
+  poolfix-int 13G, poolfix-nopool 13G, poolfix-rig 0.9G, poolstress.bin}
+  — freed 238.4 GB. real10b-ref untouched.
+* Supervisor cleared the remainder (sxgc-trend scratch 288G,
+  long-window-cfac1c84 100G) → 84% used at gate-2 launch; 85% after.
 
-* `frag-xsa-build.driver.log` / `frag-xsa-build.cmp.log` — gate 2 driver + verdicts
-* `selftest-sweep.log` — gate 3
-* `cargo-test.log` — gate 4
+## Notes for the 10 GB launch (supervisor)
+
+`xsa build --input /mnt/nvme2n1/erikg/extcols-scratch/real10b-ref/pile-10b-snap.txt
+  --scratch <fresh nvme2n1 dir> --snap-1e --memory-gb 24 --threads 48
+  [--chunks 32]` — the snap sha256 gate check (d440d9e1... 10 GB snap) is
+  journaled via SNAP_OK; scratch must hold >= 15% free at start (currently
+  85% used — free space before launching; the run needs roughly 0.4-0.6 TB);
+  byte-identity targets per gate_10b_external_rebuild.sh: merged 4 files
+  + pftext/pfck + ext.{ri4,head_sa,agg,sA} vs real10b-ref. Fragment scratch
+  (consolidation-frag, ~40 GB) can be deleted after inspection if space is
+  needed.

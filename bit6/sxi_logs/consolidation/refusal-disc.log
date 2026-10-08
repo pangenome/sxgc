@@ -1,0 +1,3 @@
+=== disc preflight (scratch on nvme2n1, 89% used):
+xsa: error: build: DF_GATE_FAIL /mnt/nvme2n1/erikg/extcols-scratch/consolidation-dfprobe 88% used (>= 15% free required on the scratch filesystem)
+RC=1
