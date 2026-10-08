@@ -245,6 +245,11 @@ def main():
                     wall_seconds=time.monotonic()-begin,
                     peak_rss_kib=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss))
     prefix = work / 'parse'
+    trigger_args = ['-w', a.w1, '-p', 100]
+    if a.syncmer_s:
+        trigger_args += ['--syncmer-s', a.syncmer_s]
+    if a.syncmer_canonical:
+        trigger_args += ['--syncmer-canonical']
     streaming = bool(a.agc and not a.materialize)
     if a.agc:
         text = work / 'collection.txt'
@@ -252,7 +257,7 @@ def main():
         prepare = [agc, source_path, '--revlines', '--upper', '--sep', '1e', '-o', text]
         if streaming and not a.fifo:
             run('parse', [pfp, '-t', source_path, '--agc', '--agc-names', names,
-                          '-o', prefix, '-w', 10, '-p', 100, '-j', a.threads, '--tmp-dir', work])
+                          '-o', prefix, *trigger_args, '-j', a.threads, '--tmp-dir', work])
             size = 0
             with names.open() as f:
                 for line in f:
@@ -263,7 +268,7 @@ def main():
             terminal = 30
         elif streaming:
             fifo = work / 'collection.fifo'
-            parse = [pfp, '-t', fifo, '-o', prefix, '-w', 10, '-p', 100, '-j', a.threads, '--tmp-dir', work]
+            parse = [pfp, '-t', fifo, '-o', prefix, *trigger_args, '-j', a.threads, '--tmp-dir', work]
             stream_parse(fifo, prepare + ['--stdout'], parse, env, logs, label, record, a.verbose)
             # Same-pass names lengths include exactly one separator per record.
             size = 0
@@ -283,7 +288,7 @@ def main():
                 raise RuntimeError('empty input text')
             f.seek(-1, 2)
             terminal = f.read(1)[0]
-        run('parse', [pfp, '-t', text, '-o', prefix, '-w', 10, '-p', 100, '-j', a.threads, '--tmp-dir', work])
+        run('parse', [pfp, '-t', text, '-o', prefix, *trigger_args, '-j', a.threads, '--tmp-dir', work])
     remap = pathlib.Path(str(prefix)+'.remap')
     sigma = remap.read_bytes()
     if len(sigma) != 256 or len(set(sigma)) != 256 or sigma[30] != 30:
@@ -295,7 +300,7 @@ def main():
     # Upstream's rdbuf merge sets failbit on an empty chunk. Tiny parses can
     # create such chunks; one chunk avoids this without changing .ssa code.
     chunks = 1 if size < 1_000_000 else 50
-    run('rpfbwt', [rpf, '--l1-prefix', prefix, '--w1', 10, '--w2', 5, '--threads', a.threads, '--chunks', chunks, '--tmp-dir', work])
+    run('rpfbwt', [rpf, '--l1-prefix', prefix, '--w1', a.w1, '--w2', 5, '--threads', a.threads, '--chunks', chunks, '--tmp-dir', work])
     ri4, heads, agg, chi = [work / ('fresh.' + ext) for ext in ('ri4', 'head_sa', 'agg', 'sA')]
     run('endpoints', [tools/'rpfbwt_endpoints', prefix, ri4, heads, f'{terminal:02x}', '--w1', a.w1])
     if a.expect_heads:

@@ -2,6 +2,7 @@
 // other frames use bounded seam classes. Refusals precede output creation.
 // Producer .ssa/.ssa_t samples are read-only. See seam_repair.hpp.
 #include "sxi_format.hpp"
+#include <cstring>
 #include <functional>
 #include <chrono>
 #include <atomic>
@@ -93,14 +94,18 @@ struct Source {
 #include "seam_repair.hpp"
 void number(std::ostream& f,U x,unsigned bytes=8){unsigned char b[8];put(b,x,bytes);f.write((char*)b,bytes);check(bool(f),"write endpoint adapter");}
 int main(int argc,char**argv){try{
- check(argc>=4&&argc<=7,"usage: rpfbwt_endpoints PREFIX OUT.ri4 OUT.head_sa [TERMINAL_HEX] [--w1 N]");
+ std::string pfText,pfCkpt;
+ {int j=4;while(j<argc){if(!strcmp(argv[j],"--pf-text")&&j+1<argc){pfText=argv[++j];}else if(!strcmp(argv[j],"--pf-checkpoints")&&j+1<argc){pfCkpt=argv[++j];}else{++j;}}}
+ check(argc>=4&&argc<=11,"usage: rpfbwt_endpoints PREFIX OUT.ri4 OUT.head_sa [TERMINAL_HEX] [--w1 N] [--pf-text T.pftext --pf-checkpoints T.pfck (ADOPT the merge-time sidecars for the repair LCE; skips the padded walk)]");
  U terminal=INF;
  U w1=10;int i=4;
- if(i<argc&&std::string(argv[i])!="--w1"){std::string arg(argv[i++]);size_t used=0;terminal=std::stoul(arg,&used,16);check(used==arg.size()&&terminal>=6&&terminal<256,"unsupported terminal byte");}
+ if(i<argc&&std::string(argv[i])!="--w1"&&std::string(argv[i]).rfind("--pf-",0)!=0){std::string arg(argv[i++]);size_t used=0;terminal=std::stoul(arg,&used,16);check(used==arg.size()&&terminal>=6&&terminal<256,"unsupported terminal byte");}
+ while(i<argc&&std::string(argv[i]).rfind("--pf-",0)==0)i+=2;
  if(i<argc){check(i+2==argc&&std::string(argv[i])=="--w1","invalid endpoint arguments");w1=std::stoull(argv[i+1]);}
  check(w1>=3&&w1<=512,"--w1 must be 3..512");
  Source s(argv[1],terminal,w1);terminal=s.terminal;bool certified=s.certify_seam();
- SeamRepair repair(s,certified);
+ check(pfText.empty()==pfCkpt.empty(),"--pf-text and --pf-checkpoints go together");
+ SeamRepair repair(s,certified,argv[2],pfText,pfCkpt);
  auto scan=[&](const std::function<void(Run)>& emit){repair.scan(emit);};
  U r=0,k=0,n=0;std::array<U,256> totals{};
  scan([&](Run v){check(v.len<=UINT32_MAX,"run too long");r++;n+=v.len;totals[v.c]+=v.len;if(v.c==10)k+=v.len;});

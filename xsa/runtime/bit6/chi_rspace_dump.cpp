@@ -71,6 +71,7 @@ static const uint64_t INF = std::numeric_limits<uint64_t>::max();
 static const uint32_t IDX_MAGIC = 0x31465058; // "XPF1" (bit6/pfp_index_build.cpp)
 static const uint32_t IDX_VERSION = 2;
 
+
 // phase timing (G3 cost table)
 static double G_T0;
 static double tnow() {
@@ -163,6 +164,7 @@ struct Ri4 {
 // LOUDLY.
 struct LfIndex {
     const Ri4* ri = nullptr;
+    bool full = false;                          // full build vs starts-only (parse-free slim)
     std::vector<uint64_t> Cless;                        // 256: rows with char < c
     std::vector<std::vector<uint64_t>> charRuns;        // per char: run ids
     std::vector<std::vector<uint64_t>> charSum;         // per char: prefix lens
@@ -182,12 +184,14 @@ struct LfIndex {
             for (size_t t = 0; t < charRuns[c].size(); ++t)
                 charSum[c][t + 1] = charSum[c][t] + r.l[charRuns[c][t]];
         }
+        full = true;
     }
     inline uint64_t run_of(uint64_t row) const {
         return (uint64_t)(std::upper_bound(ri->starts.begin(), ri->starts.end(), row)
                           - ri->starts.begin() - 1);
     }
     inline uint64_t lf(uint64_t row) const {
+        if (!full) { fprintf(stderr, "FATAL: lf() needs the full LfIndex build (starts-only mode)\n"); exit(2); }
         uint64_t r = run_of(row);
         uint8_t ch = ri->a[r];
         uint64_t o = row - ri->starts[r];
@@ -514,9 +518,344 @@ static void pfp_digest(const pfpds::dictionary<uint8_t>& D,
 
 #include "slim_lce.hpp"
 
+// ---------------- external .ri4 (header + column readers) ----------------
+// Parse-free mode never loads a run-scale vector: the .ri4 (raw v4 or SXI
+// container) is opened once and its columns are served through bounded
+// pread windows (bit6/ext_columns.hpp).
+struct ExtRi4 {
+    uint64_t n = 0, kRaw = 0, R = 0, records = 0;
+    uint64_t saBits = 0; uint8_t saW = 0; bool haveSa = false;
+    bool container = false;
+    std::string sxiPath; uint64_t headOffset = 0;
+    std::vector<uint64_t> C;   // 256, informational
+    ExtCol aCol, lCol, headCol; ExtBits samp;
+    static void rd(int fd, void* p, uint64_t len, uint64_t off) { ext_pread(fd, p, len, off, "ri4 header"); }
+    void load(const std::string& path, const std::string& headSaPath) {
+        int fd = open(path.c_str(), O_RDONLY);
+        if (fd < 0) { fprintf(stderr, "cannot open %s\n", path.c_str()); exit(1); }
+        uint32_t magic = 0, ver = 0;
+        rd(fd, &magic, 4, 0); rd(fd, &ver, 4, 4);
+        uint64_t offC = 0, offSamp = 0;
+        if (magic == 0x31495853) {
+            container = true; sxiPath = path;
+            try {
+                std::ifstream f(path, std::ios::binary);
+                f.read((char*)&n, 8); f.read((char*)&kRaw, 8); f.read((char*)&R, 8);
+                std::unique_ptr<sxi::Container> sx = std::make_unique<sxi::Container>(path);
+                records = sx->k;
+                offC = sx->member(1).offset;
+                headOffset = sx->member(3).offset;
+                offSamp = sx->member(2).offset;
+            } catch (const std::exception& e) { fprintf(stderr, "FATAL: %s\n", e.what()); exit(1); }
+        } else {
+            if (magic != 0x52585349 || ver != 4) { fprintf(stderr, "bad .ri4/SXI magic/version\n"); exit(1); }
+            rd(fd, &n, 8, 8); rd(fd, &kRaw, 8, 16); rd(fd, &R, 8, 24);
+            records = kRaw;
+            offC = 32;
+        }
+        if (!R) { fprintf(stderr, "FATAL: empty run set\n"); exit(1); }
+        C.resize(256);
+        rd(fd, C.data(), 2048, offC);
+        uint64_t offA = offC + 2048, offL = offA + R;
+        aCol.open_ro(path, 1, R, offA, "ri4 a column");
+        lCol.open_ro(path, 4, R, offL, "ri4 l column");
+        uint64_t sampHdr = container ? offSamp : offL + 4 * R;
+        // samples are optional in the raw format: a short read just means absent
+        uint8_t shdr[9];
+        ssize_t got = pread(fd, shdr, 9, sampHdr);
+        if (got == 9) { memcpy(&saBits, shdr, 8); saW = shdr[8]; }
+        haveSa = (saW > 0 && saW <= 64 && saBits == R * (uint64_t)saW && got == 9);
+        if (haveSa) samp.open_ro(path, (sampHdr + 9) * 8, saW, R, "ri4 samples");
+        else samp.fd = -1;
+        close(fd);
+        // head-SA column: --head-sa file, or the container's embedded member.
+        std::string hp = headSaPath;
+        uint64_t hoff = 0;
+        if (hp.empty()) {
+            if (!container || !headOffset) {
+                fprintf(stderr, "FATAL: parse-free slim requires --head-sa (or an SXI container with an embedded head column)\n");
+                exit(2);
+            }
+            hp = path; hoff = headOffset;
+        }
+        headCol.open_ro(hp, 8, R, hoff, "head-SA column");
+        fprintf(stderr, "SLIM_EXT_RI n=%llu k_raw=%llu R=%llu a=%lluB l=%lluB samples=%llubits saW=%u head_col=%s@%llu container=%d\n",
+                (unsigned long long)n, (unsigned long long)kRaw, (unsigned long long)R,
+                (unsigned long long)R, (unsigned long long)(4 * R),
+                (unsigned long long)saBits, (unsigned)saw(), hp.c_str(), (unsigned long long)hoff, (int)container);
+    }
+    unsigned saw() const { return saW; }
+    // Fail-loud all-INF sample scan (mirrors Ri4::sampleAllInf), streamed.
+    bool sampleAllInf() const {
+        if (!haveSa || !R) return false;
+        const uint64_t mask = saW == 64 ? ~0ull : ((1ull << saW) - 1);
+        if (mask < n) return false;
+        const uint64_t B = 1u << 20;
+        std::vector<uint64_t> words; uint64_t bit0 = 0;
+        for (uint64_t i = 0; i < R; ) {
+            uint64_t j = std::min(i + B, R);
+            samp.read_words(i, j, words, bit0);
+            for (uint64_t k = i; k < j; ++k) {
+                uint64_t b = bit0 + (k - i) * saW, w = b >> 6, o = b & 63;
+                uint64_t v;
+                if (o + saW <= 64) v = (words[w - (bit0 >> 6)] >> o) & mask;
+                else v = ((words[w - (bit0 >> 6)] >> o) | (words[w + 1 - (bit0 >> 6)] << (64 - o))) & mask;
+                if (v != mask) return false;
+            }
+            i = j;
+        }
+        return true;
+    }
+    // Cyclic/newline detection: one sequential scan of the a column.
+    void scan_alphabet(bool& hasRS, bool& hasNL) const {
+        hasRS = hasNL = false;
+        const uint64_t B = 1 << 22;
+        std::vector<uint8_t> buf(B);
+        for (uint64_t i = 0; i < R; ) {
+            uint64_t cnt = std::min(B, R - i);
+            aCol.read(i, buf.data(), cnt);
+            for (uint64_t k = 0; k < cnt; ++k) {
+                hasRS |= buf[k] == 0x1e; hasNL |= buf[k] == 0x0a;
+            }
+            i += cnt;
+        }
+    }
+};
+
+// ---- parse-free slim over EXTERNAL columns ------------------------------
+// The production finish path. No run-scale vector is resident: the .ri4 and
+// head-SA columns are read through pread windows; the walk machinery (when
+// used) builds the two-pass external form (bit6/ext_columns.hpp); the query
+// phase sweeps run-range bands, bulk-loading each column slice for the
+// active band (the stream-agg sweep pattern). Output is byte-identical to
+// the resident implementation (gated at fragment scale).
+static int slim_parse_free_dump(const std::string& ri4Path, const std::string& outPath,
+                                const std::string& anchorsPath, int nthreads, uint64_t t1,
+                                bool injectFault, bool profileOnly, const std::string& flatPath,
+                                uint64_t calibRows, bool useResolveCache, const std::string& headSaPath,
+                                uint64_t w1, const std::string& pfTextPath, const std::string& pfCkptPath) {
+    double last = tnow();
+    ExtRi4 er; er.load(ri4Path, headSaPath);
+    if (!profileOnly && (!er.haveSa || er.sampleAllInf())) slim_fail("usable ri4 samples required");
+    bool hasRS=false, hasNL=false; er.scan_alphabet(hasRS, hasNL);
+    uint64_t k = (hasRS || !hasNL) ? 1 : er.records;
+    bool cyclic = hasRS || !hasNL;
+    fprintf(stderr, "ri4: n=%llu k=%llu R=%llu (external columns, cyclic=%d)\n",
+            (unsigned long long)er.n, (unsigned long long)k, (unsigned long long)er.R, (int)cyclic);
+    slim_phase("ri4-ext-load", last);
+
+    std::unique_ptr<ExtRuns> ext;
+    std::unique_ptr<SlimLCEParseFree> pf;
+    if (!pfTextPath.empty()) {
+        if (pfCkptPath.empty()) slim_fail("--pf-text requires --pf-checkpoints");
+        if (!flatPath.empty()) slim_fail("--flat requires walk mode (no --pf-text)");
+        pf = std::make_unique<SlimLCEParseFree>(pfTextPath, pfCkptPath, er.n, cyclic, w1,
+                                                injectFault, 0);
+    } else {
+        ext = std::make_unique<ExtRuns>();
+        ext->R = er.R; ext->textLen = er.n; ext->rowsTotal = er.n; ext->skippedByte = 256;
+        ext->runScan = [&](uint64_t r, uint8_t* a, uint64_t* l, uint64_t n) {
+            er.aCol.read(r, a, n);
+            // the l column is u32 on disk; widen into the u64 scan buffer
+            thread_local std::vector<uint32_t> tmp;
+            if (tmp.size() < n) tmp.resize(n);
+            er.lCol.read(r, tmp.data(), n);
+            for (uint64_t k = 0; k < n; ++k) l[k] = tmp[k];
+        };
+        ext->headScan = [&](uint64_t r, uint64_t* h, uint64_t n) { er.headCol.read(r, h, n); };
+        ext->workPrefix = outPath;
+        fprintf(stderr, "SLIM_EXT_WORK prefix=%s records=%lluB seeds=%lluB coarse=%lluB\n",
+                outPath.c_str(), (unsigned long long)(24*er.R), (unsigned long long)(16*er.R),
+                (unsigned long long)(8*((er.R+63)/64)));
+        ext->build(nthreads);
+        pf = std::make_unique<SlimLCEParseFree>(*ext, nthreads, t1, outPath,
+                                                injectFault, cyclic, w1, 0);
+    }
+    if (pf->n != er.n + w1) slim_fail("parse/ri4 length mismatch");
+    if (pf->stringEnds.size() != k) slim_fail("parse/ri4 string-end count mismatch");
+    slim_phase("lce-build-total", last);
+
+    // --flat calibration (walk mode only): LF-walk resolver over the external
+    // structure, with optional bounded memo and string-start anchors.
+    if (!flatPath.empty()) {
+        if (!ext) slim_fail("--flat requires walk mode (no --pf-text)");
+        std::ifstream flat(flatPath, std::ios::binary);
+        if (!flat) slim_fail("open calibration text");
+        Anchors anc; if (!anchorsPath.empty()) anc.load(anchorsPath);
+        std::unique_ptr<ResolveCache> resolveCache;
+        if (useResolveCache) {
+            size_t slots=1; while (slots < std::min<uint64_t>(er.R, 1ull<<26)) slots*=2;
+            resolveCache=std::make_unique<ResolveCache>(slots);
+            fprintf(stderr, "SLIM_RESOLVE_CACHE slots=%zu bytes=%zu checkpoint_bytes_per_worker=65536 exact_keys=1\n", slots, resolveCache->bytes());
+        }
+        uint64_t nWalks=0, sumSteps=0, viaAnchor=0, hit0a=0, viaCache=0;
+        auto sa_at = [&](uint64_t row) -> uint64_t {
+            ExtRec rec; uint64_t run0 = ext->run_of(row, rec);
+            if (row == rec.starts) {
+                uint64_t v = er.headCol.at(run0);
+                if (v >= er.n || (er.lCol.at(run0)==1 && v != er.n-1-er.samp.at(run0)))
+                    slim_fail("head-SA value/range or singleton mismatch");
+                return v;
+            }
+            uint64_t len0 = er.lCol.at(run0);
+            if (row == rec.starts + len0 - 1) {
+                uint64_t sample = er.samp.at(run0);
+                return sample < er.n ? er.n-1-sample : INF;
+            }
+            uint64_t pos=row, steps=0;
+            struct Point { uint64_t row, distance; };
+            thread_local std::vector<Point> path;
+            path.clear(); uint64_t stride=8; bool anyPath=false;
+            auto finish=[&](uint64_t sample)->uint64_t {
+                nWalks++; sumSteps+=steps;
+                uint64_t answer=(er.n-1)-(sample-steps);
+                if (resolveCache && answer<er.n) {
+                    for(auto& p: path) if(answer>=p.distance) resolveCache->put(p.row,answer-p.distance);
+                }
+                return answer;
+            };
+            for (;;) {
+                uint64_t run=ext->run_of(pos, rec);
+                uint64_t e=rec.starts+er.lCol.at(run);
+                if (pos==e-1) return finish(er.samp.at(run));
+                uint64_t cached;
+                if (resolveCache && resolveCache->lookup(pos,cached)) { viaCache++; return finish((er.n-1)-cached); }
+                if (rec.a==0x0A) {
+                    uint64_t s0;
+                    if (!anchorsPath.empty() && anc.lookup(pos,s0)) { viaAnchor++; return finish(s0); }
+                    hit0a++; return INF;
+                }
+                if (resolveCache && steps%stride==0) {
+                    if (path.size()==4096) { for(size_t i=0;i<2048;++i) path[i]=path[2*i]; path.resize(2048); stride*=2; }
+                    if (steps%stride==0) { path.push_back({pos,steps}); anyPath=true; }
+                }
+                pos=ext->lf(pos); steps++;
+            }
+            (void)anyPath;
+        };
+        uint64_t checked=0;
+        for (uint64_t kk=0; kk<calibRows; ++kk) {
+            for (uint64_t row : {ext->starts_at(kk*er.R/calibRows), kk*er.n/calibRows}) {
+                uint64_t pos=sa_at(row);
+                if (pos>=er.n) slim_fail("calibration position resolution");
+                if (!pos) continue;
+                flat.seekg((std::streamoff)(pos-1)); char c;
+                if (!flat.read(&c,1)) slim_fail("calibration read");
+                ExtRec rec; ext->run_of(row, rec);
+                uint8_t bwt=rec.a;
+                if (bwt!=0x0a && (uint8_t)c!=0x0a && bwt!=(uint8_t)c)
+                    slim_fail("flat calibration mismatch");
+                ++checked;
+            }
+        }
+        fprintf(stderr, "SLIM_CALIBRATION ri4_ROW_OFF=0 PFP_text_shift=%llu checked=%llu bad=0\n",
+                (unsigned long long)w1, (unsigned long long)checked);
+        fprintf(stderr, "SLIM_RESOLVE walks=%llu steps=%llu max=0 anchor=%llu failed=%llu cache_hits=%llu\n",
+                (unsigned long long)nWalks, (unsigned long long)sumSteps,
+                (unsigned long long)viaAnchor, (unsigned long long)hit0a, (unsigned long long)viaCache);
+        slim_phase("flat-calibration", last);
+    }
+
+    if (profileOnly) {
+        pf->report();
+        fprintf(stderr, "SLIM_PROFILE_ONLY no queries or aggregate produced\n");
+        if (ext) ext->cleanup();
+        return 0;
+    }
+
+    // ---- banded query phase: run-range bands, bulk pread column windows ----
+    std::string tmp=outPath+".partial";
+    int fd=open(tmp.c_str(),O_CREAT|O_TRUNC|O_WRONLY,0666); if(fd<0) slim_fail("create aggregate");
+    uint32_t magic=0x31415243;
+    auto put=[&](const void* data,uint64_t bytes,uint64_t offset){const char* p=(const char*)data;while(bytes){ssize_t z=pwrite(fd,p,bytes,offset);if(z<=0) slim_fail("write aggregate");p+=z;bytes-=z;offset+=z;}};
+    put(&magic,4,0); put(&er.R,8,4);
+    constexpr uint64_t BAND=65536;
+    std::array<std::vector<uint64_t>,4> buf; for(auto& b:buf) b.resize(BAND);
+    std::vector<uint8_t> aB(BAND); std::vector<uint32_t> lB(BAND); std::vector<uint64_t> hB(BAND);
+    std::vector<uint64_t> sampWords;
+    const uint64_t sampMask = er.saW==64 ? ~0ull : ((1ull<<er.saW)-1);
+    double resolveWall=0,lceWall=0,writeWall=0;
+    long resolvePeak=0,lcePeak=0,writePeak=0;
+    uint64_t headDirect=0, tailDirect=0;
+    auto measure=[&](double began,double& wall,long& peak){
+        wall+=tnow()-began;struct rusage u{};getrusage(RUSAGE_SELF,&u);peak=std::max(peak,u.ru_maxrss);
+    };
+    auto parallel=[&](auto& worker,std::atomic<uint64_t>& next){
+        std::vector<std::thread> ts;
+        for(int t=0;t<std::max(1,std::min(nthreads,64));++t)
+            ts.emplace_back([&,t]{ slim_set_thread_shard((unsigned)t); worker(); });
+        for(auto& t:ts) t.join();
+    };
+    for (uint64_t start=0; start<er.R; start+=BAND) {
+        uint64_t count=std::min(BAND, er.R-start);
+        er.aCol.read(start, aB.data(), count);
+        er.lCol.read(start, lB.data(), count);
+        er.headCol.read(start, hB.data(), count);
+        uint64_t bit0w=0;
+        er.samp.read_words(start, start+count, sampWords, bit0w);
+        uint64_t wordDelta = bit0w>>6;   // == 0 (read_words aligns to words)
+        auto sampleLocal=[&](uint64_t i2)->uint64_t {
+            uint64_t b=bit0w+i2*er.saW, w=(b>>6)-wordDelta, o=b&63;
+            if (o+er.saW<=64) return (sampWords[w]>>o)&sampMask;
+            return ((sampWords[w]>>o)|(sampWords[w+1]<<(64-o)))&sampMask;
+        };
+        std::atomic<uint64_t> next{0};
+        auto resolveWorker=[&](){
+            for(;;){uint64_t k2=next.fetch_add(1); if(k2>=count) break;
+                uint64_t run=start+k2, len=lB[k2];
+                uint64_t first=hB[k2];
+                if(first>=er.n) slim_fail("position resolution failed");
+                uint64_t sm=sampleLocal(k2);
+                if(len==1 && first!=er.n-1-sm) slim_fail("head-SA value/range or singleton mismatch");
+                uint64_t tail = len==1 ? first : (sm<er.n ? er.n-1-sm : INF);
+                if(tail>=er.n) slim_fail("position resolution failed");
+                uint64_t prev;
+                if(run==0) prev=0;
+                else if(k2>0) { uint64_t pm=sampleLocal(k2-1); prev = pm<er.n ? er.n-1-pm : INF; }
+                else { uint64_t pm=er.samp.at(start-1); prev = pm<er.n ? er.n-1-pm : INF; }
+                if(prev>=er.n) slim_fail("previous position resolution failed");
+                buf[0][k2]=prev; buf[1][k2]=first; buf[2][k2]=tail;
+            }
+            pf->flush_thread();
+        };
+        auto lceWorker=[&](){
+            for(;;){uint64_t k2=next.fetch_add(1); if(k2>=count) break;
+                uint64_t run=start+k2, len=lB[k2];
+                uint64_t prev=buf[0][k2], first=buf[1][k2], tail=buf[2][k2];
+                buf[0][k2]=run? pf->collection_lce(prev,first) : 0;
+                buf[3][k2]=len==1 ? INF : pf->collection_lce(first,tail);
+            }
+            pf->flush_thread();
+        };
+        double began=tnow(); parallel(resolveWorker,next); measure(began,resolveWall,resolvePeak);
+        next=0;
+        began=tnow(); parallel(lceWorker,next); measure(began,lceWall,lcePeak);
+        began=tnow();
+        for(uint64_t field=0; field<4; ++field) put(buf[field].data(), count*8, 12+8*(field*er.R+start));
+        measure(began,writeWall,writePeak);
+        headDirect+=count;
+        for(uint64_t k2=0;k2<count;++k2) if(lB[k2]!=1) ++tailDirect;
+        tailDirect += count - (start==0?1:0);
+        if(start%(BAND*16)==0){fprintf(stderr,"SLIM_PROGRESS runs=%llu/%llu resolve_wall=%.3f lce_wall=%.3f write_wall=%.3f lf_steps=0 cache_hits=0\n",(unsigned long long)(start+count),(unsigned long long)er.R,resolveWall,lceWall,writeWall);slim_phase("query-chunks",last);}
+    }
+    if(close(fd)||rename(tmp.c_str(),outPath.c_str())) slim_fail("publish aggregate");
+    slim_phase("queries+stream-write-final",last);
+    pf->report();
+    fprintf(stderr, "SLIM_QUERY_PHASE resolve_wall=%.6f resolve_peak_kib=%ld lce_wall=%.6f lce_peak_kib=%ld write_wall=%.6f write_peak_kib=%ld\n",resolveWall,resolvePeak,lceWall,lcePeak,writeWall,writePeak);
+    fprintf(stderr, "SLIM_SEEDS queries=%llu mean_verified_symbols=%.9f max_verified_symbols=%llu (includes_zero_parse_work_seeds; boundary_included)\n",
+            (unsigned long long)pf->seedQueries.read(),
+            pf->seedQueries.read()? double(pf->fh->checked.read())/pf->seedQueries.read() : 0.0,
+            (unsigned long long)pf->fh->maxChecked.load());
+    fprintf(stderr, "SLIM_RESOLVE walks=0 steps=0 max=0 anchor=0 failed=0 cache_hits=0\n");
+    fprintf(stderr, "SLIM_BOUNDARY_RESOLVE head_direct=%llu tail_direct=%llu head_lf_steps=0\n",
+            (unsigned long long)headDirect,(unsigned long long)tailDirect);
+    if (ext) ext->cleanup();
+    return 0;
+}
+
 int main(int argc, char** argv) {
     G_T0 = tnow();
-    std::string ri4Path, parsePrefix, lcpIndexPath, pfpIndexPath, outPath, flatPath, anchorsPath, headSaPath;
+    std::string ri4Path, parsePrefix, lcpIndexPath, pfpIndexPath, outPath, flatPath, anchorsPath, headSaPath, pfTextPath, pfCkptPath;
     int nthreads = std::thread::hardware_concurrency();
     uint64_t calibRows = 256;
     bool resolveRi4 = false, slim = false, dictStream = false, injectFault = false, profileOnly = false, resolveCache = false;
@@ -540,16 +879,31 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--tau1") && i+1<argc) tau1=strtoull(argv[++i],nullptr,10);
         else if (!strcmp(argv[i], "--tau2") && i+1<argc) tau2=strtoull(argv[++i],nullptr,10);
         else if (!strcmp(argv[i], "--w1") && i+1<argc) w1=strtoull(argv[++i],nullptr,10);
+        else if (!strcmp(argv[i], "--pf-text") && i+1<argc) pfTextPath=argv[++i];
+        else if (!strcmp(argv[i], "--pf-checkpoints") && i+1<argc) pfCkptPath=argv[++i];
         else if (!strcmp(argv[i], "--anchors") && i + 1 < argc) anchorsPath = argv[++i];
         else { fprintf(stderr, "unknown arg %s\n", argv[i]); return 1; }
     }
-    if ((profileOnly || dictStream || injectFault || tau1 || tau2 || resolveCache || !headSaPath.empty()) && !slim)
+    if ((profileOnly || dictStream || injectFault || tau1 || tau2 || resolveCache || !headSaPath.empty() || !pfTextPath.empty() || !pfCkptPath.empty()) && !slim)
         slim_fail("slim options require --slim");
     if (w1<3 || w1>512 || (!slim && w1!=10)) slim_fail("--w1 must be 3..512 and non-default windows require --slim");
-    if (ri4Path.empty() || parsePrefix.empty() || outPath.empty()) {
-        fprintf(stderr, "usage: chi_rspace_dump [--slim --resolve-ri4 [--w1 N] [--dict-stream] [--head-sa FILE] [--resolve-cache] [--tau1 N] [--tau2 N] [--slim-profile-build] [--inject-fingerprint-error (TEST ONLY)]] --ri4 F.ri4 --parse PFP_PREFIX -o OUT.agg [-t N] [--flat F] [--calib-rows N] [--pfp-index INDEX (load instead of building; bit6/pfp_index_build.cpp)] [--lcp-index F.lcp_index.lcp_index (LEGACY cross-check only)] [--resolve-ri4 (positions from pfp_ds_vendor/pfp/pfp.hpp defer_build_t; NO M/b_bwt/w_wt; SA via the .ri4 sample array + LF walk)] [--anchors F (string-start anchors for walks that reach an interior 0x0A row)]\n");
+    if (ri4Path.empty() || outPath.empty() || (!slim && parsePrefix.empty())) {
+        fprintf(stderr, "usage: chi_rspace_dump [--slim --resolve-ri4 [--w1 N] [--dict-stream] [--head-sa FILE] [--resolve-cache] [--tau1 N] [--tau2 N] [--slim-profile-build] [--inject-fingerprint-error (TEST ONLY)] [--pf-text T.pftext --pf-checkpoints T.pfck (ADOPT mode: consume merge-emitted text+checkpoints, cross_lcp_merge --emit-pf; skips the walk)]] --ri4 F.ri4 [--parse PFP_PREFIX (omit in --slim mode for the parse-free backend; requires --head-sa)] -o OUT.agg [-t N] [--flat F] [--calib-rows N] [--pfp-index INDEX (load instead of building; bit6/pfp_index_build.cpp)] [--lcp-index F.lcp_index.lcp_index (LEGACY cross-check only)] [--resolve-ri4 (positions from pfp_ds_vendor/pfp/pfp.hpp defer_build_t; NO M/b_bwt/w_wt; SA via the .ri4 sample array + LF walk)] [--anchors F (string-start anchors for walks that reach an interior 0x0A row)]\n");
         return 1;
     }
+    // --slim without --parse selects the parse-free backend: no dictionary,
+    // no parse, no phrase IDs. The chunk route's finish needs no PFP input.
+    bool parseFree = slim && parsePrefix.empty();
+    if (parseFree) {
+        if (dictStream) fprintf(stderr, "SLIM_NOTE --dict-stream has no effect in parse-free mode (no dictionary exists)\n");
+        if (tau2) fprintf(stderr, "SLIM_NOTE --tau2 has no effect in parse-free mode (single fingerprint level; --tau1 overrides spacing)\n");
+    }
+
+    if (slim && parseFree)
+        // External columns: no run-scale vector is resident at any scale.
+        return slim_parse_free_dump(ri4Path, outPath, anchorsPath, nthreads, tau1,
+                                    injectFault, profileOnly, flatPath, calibRows,
+                                    resolveCache, headSaPath, w1, pfTextPath, pfCkptPath);
 
     Ri4 ri4; ri4.load(ri4Path);
     if(!ri4.sxiPath.empty() && anchorsPath.empty())anchorsPath=ri4Path;

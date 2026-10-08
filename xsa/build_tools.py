@@ -69,6 +69,15 @@ for name, path in [('pfp++', work/'pfp-build/pfp++'), ('rpfbwt', work/'rpfbwt-bu
     shutil.copyfile(path, bundle/name)
 for name, src in [('rpfbwt_endpoints', 'rpfbwt_endpoints.cpp'), ('slim_dump', 'chi_rspace_dump.cpp')]:
     run('bash', repo/'tools/build_slim_dump.sh', bundle/name, 'bit6/'+src, env=env)
+# External construction chain: libsais chunk front end + externalized cross-LCP
+# merge (gate flags: -O3 front end; -O2 -mcx16 -pthread -latomic merge with the
+# cpuid cx16 startup gate; pool knobs CROSS_* stay env-pass-through).
+run('gcc', '-O3', '-I', repo/'bit6', '-c', repo/'bit6/third_party/libsais/token-libsais.c',
+    '-o', work/'token-libsais.o', env=env)
+run('g++', '-O3', '-std=c++17', repo/'bit6/chunk_frontend.cpp', work/'token-libsais.o',
+    '-o', bundle/'chunk_frontend', env=env)
+run('g++', '-O2', '-mcx16', '-std=c++17', '-pthread', repo/'bit6/cross_lcp_merge.cpp',
+    '-o', bundle/'cross_lcp_merge', '-latomic', env=env)
 for name in ('sxi_write', 'sxi_text_audit', 'phi_inverse_heads'):
     run('g++', '-O3', '-std=c++17', '-fopenmp', repo/f'bit6/{name}.cpp', '-o', bundle/name, env=env)
 with tarfile.open(ROOT/'vendor/agc-cargo.tar.xz') as archive:

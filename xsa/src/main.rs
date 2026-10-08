@@ -12,6 +12,7 @@ mod sxi;
 mod sxi2;
 mod witness;
 mod build;
+mod chain;
 mod bundle;
 mod product;
 mod forks;

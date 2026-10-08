@@ -2,6 +2,12 @@
 use std::path::PathBuf;
 
 const USAGE: &str = "usage:
+  xsa build --input <corpus> --scratch <dir> [--snap-1e] [--memory-gb N] [--threads N] [--chunks N] [--remap <256-byte-map>]
+      the consolidated external construction chain: chunk -> merge tree ->
+      adopt finish -> chi sweep, one cargo-built command (see --help below);
+      outputs byte-identical to the reference chain on the same corpus.
+  xsa build --selftest [CASES] [--threads N]
+      the merge selftest for the six banked sweep seeds.
   xsa build --text <collection.txt> -o <out.sxi> [--threads N] [--address-space-gb N] [--scratch DIR] [--expect-chi N] [--verify-text-sample N] [--mode auto|dna|text] [--verbose]
   xsa build --agc <archive.agc> -o <out.sxi> [same options]
   xsa build --fasta <records.fa> -o <out.sxi> [same options]
@@ -121,8 +127,13 @@ fn run(args: &[String]) -> Result<(), String> {
 }
 
 pub fn command(args: &[String]) {
+    if args.iter().any(|a| matches!(a.as_str(), "--input" | "--selftest")) {
+        super::chain::command(args); // the consolidated construction chain route
+        return;
+    }
     if args.len() == 1 && matches!(args[0].as_str(), "--help" | "-h") {
         println!("{USAGE}");
+        println!("{}", super::chain::USAGE);
         return;
     }
     if let Err(e) = run(args) {

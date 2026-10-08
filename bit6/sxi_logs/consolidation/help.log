@@ -1,0 +1,68 @@
+usage:
+  xsa build --input <corpus> --scratch <dir> [--snap-1e] [--memory-gb N] [--threads N] [--chunks N] [--remap <256-byte-map>]
+      the consolidated external construction chain: chunk -> merge tree ->
+      adopt finish -> chi sweep, one cargo-built command (see --help below);
+      outputs byte-identical to the reference chain on the same corpus.
+  xsa build --selftest [CASES] [--threads N]
+      the merge selftest for the six banked sweep seeds.
+  xsa build --text <collection.txt> -o <out.sxi> [--threads N] [--address-space-gb N] [--scratch DIR] [--expect-chi N] [--verify-text-sample N] [--mode auto|dna|text] [--verbose]
+  xsa build --agc <archive.agc> -o <out.sxi> [same options]
+  xsa build --fasta <records.fa> -o <out.sxi> [same options]
+  xsa build --fastq <reads.fq> -o <out.sxi> [same options]
+
+Corpus contract: T = s1 0x1E s2 0x1E ... sk 0x1E, ONE cyclic byte string.
+0x1E (ASCII record separator) is reserved; never include it in sequence content.
+--text passes raw bytes AS-IS, without a content scan; the caller owns this contract.
+FASTA (wrapped lines allowed) and FASTQ (four-line records) extract sequences
+verbatim in input order, with 0x1E between records and terminally.
+Supply already oriented sequences; embedded 0x1E fails during input preparation.
+Record identifiers populate the SXI names member. Malformed records fail closed.
+AGC uses a seekable archive-backed FUSE ghost file (revlines, upper, sep 1e).
+--fifo selects the sequential streaming fallback.
+--materialize retains the legacy AGC text-file path.
+--manifest PATH selects a tool manifest; --allow-drift is DEBUG ONLY and journals hash mismatches.
+Stages: PFP (w1=10,p1=100; w2=5,p2=11), endpoint-tap rpfbwt,
+slim streaming aggregates, streamed chi sweep/gate, checked SXI publication.
+Scratch must share the source filesystem. Timings and peak RSS are logged.
+--address-space-gb optionally caps child virtual memory in decimal GB (no self-imposed ceiling by default; a lower inherited hard limit always applies).
+Legacy newline-terminated multi-string inputs require --expect-heads RAW --expect-ri4 FILE byte gates
+because linear PFP ordering is not established as BCR collection ordering.
+usage:
+  xsa build --input <corpus> --scratch <dir> [--snap-1e] [--memory-gb N] [--threads N] [--chunks N] [--remap <256-byte-map>]
+
+The consolidated external construction chain (chunk -> merge tree -> adopt
+finish -> chi sweep), one cargo-built command with bundled provenance.
+
+  --input PATH       corpus file: ONE cyclic 0x1E-terminated byte string
+                     (s1 0x1E s2 0x1E ... sk 0x1E); mid-document input fails
+                     loud before any phase runs (the demonstrated refusal).
+  --scratch DIR      all intermediate and final artifacts are written here:
+                     chunks/ merged/ mwork/ finish/ and xsa-build.log.
+                     The scratch filesystem must hold >= 15% free (df gate).
+  --snap-1e          additionally verify and journal the input snap
+                     (SNAP_OK n=<size> sha256=<...>); the boundary check
+                     itself always runs. Snapping is never done silently:
+                     a raw prefix must be extended forward to the next 0x1E
+                     in the source corpus before it is passed here.
+  --memory-gb N      hard RLIMIT_AS cap (GiB) applied to every phase
+                     (default 24; a lower inherited hard limit always wins).
+  --threads N        merge/finish thread count (default 48, gate discipline).
+  --chunks N         chunk count (default 32, the 10 GB gate value; outputs
+                     are chunk-count invariant - the exact merge certifies
+                     trees of 5 and 16 chunks byte-identical to the bank).
+  --remap PATH       256-byte bijective byte map applied by the chunk front
+                     end. Default: the embedded production map (the banked
+                     fragment route's frag.remap, sha256 b4f38776...).
+
+Pool knobs pass through to the merge unchanged (default: fixed concurrent
+pool ON): CROSS_NO_POOL=1, CROSS_ASYNC_FILL=1, CROSS_HASH_K=K, CROSS_PIPELINE=1.
+
+Outputs (byte-identical to the reference chain on the same corpus):
+  merged/frag.rlebwt .rlebwt.meta .ssa .ssa_t .pftext .pfck
+  finish/frag.ri4 .head_sa .agg .sA
+The uniform journal (xsa-build.log) reports chi and per-phase wall / peak
+RSS / disc telemetry.
+
+  xsa build --selftest [CASES] [--threads N] [--scratch DIR]
+                     runs the merge selftest for the six banked sweep seeds
+                     (11, 99, 20261002, 7, 5, 13; default 2000 cases each).
