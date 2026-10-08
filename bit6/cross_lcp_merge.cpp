@@ -75,6 +75,7 @@
 #include <deque>
 #include <memory>
 #include <filesystem>
+#include <mutex>
 #include <fstream>
 #include <stdexcept>
 #include <string>
@@ -1454,37 +1455,57 @@ static void put_le32(char* b, uint32_t v) { for (int i = 0; i < 4; ++i) b[i] = c
 static void put_le64(char* b, U v)       { for (int i = 0; i < 8; ++i) b[i] = char(v >> (8 * i)); }
 
 // ------------------------------------------------------------ external core merge
-struct CoreStats { U anchorsA = 0, anchorsB = 0, rowsA = 0, rowsB = 0, stepsA = 0, stepsB = 0; };
+// Per-side anchor/repair stats: k-way generalized (k=2 is the pairwise case).
+struct CoreStats {
+    std::vector<U> anchors, steps, rows;
+    void init(size_t k) { anchors.assign(k, 0); steps.assign(k, 0); rows.assign(k, 0); }
+    U sum(const std::vector<U>& v) const { U t = 0; for (U x : v) t += x; return t; }
+    U anchorsA() const { return anchors.size() > 0 ? anchors[0] : 0; }
+    U anchorsB() const { return anchors.size() > 1 ? anchors[1] : 0; }
+    U stepsA() const { return steps.size() > 0 ? steps[0] : 0; }
+    U stepsB() const { return steps.size() > 1 ? steps[1] : 0; }
+    U rowsA() const { return rows.size() > 0 ? rows[0] : 0; }
+    U rowsB() const { return rows.size() > 1 ? rows[1] : 0; }
+};
 struct PairScratch {
     std::string dir;
-    std::string m2, hs, wm, bwtA, bwtB, ovA, ovB;
-    void init(const std::string& out, U pid) {
+    std::string m2, hs, wm;
+    std::vector<std::string> bwt, ov;   // per side
+    void init(const std::string& out, U pid, size_t sides) {
         dir = out + ".xsc-" + std::to_string(pid);
         fs::create_directories(dir);
         m2 = dir + "/m2.bin"; hs = dir + "/hs.bin"; wm = dir + "/wm.bin";
-        bwtA = dir + "/bwtA.bin"; bwtB = dir + "/bwtB.bin";
-        ovA = dir + "/ovA.bin"; ovB = dir + "/ovB.bin";
+        bwt.clear(); ov.clear();
+        for (size_t j = 0; j < sides; ++j) {
+            bwt.push_back(dir + "/bwt" + std::to_string(j) + ".bin");
+            ov.push_back(dir + "/ov" + std::to_string(j) + ".bin");
+        }
     }
-    void cleanup() { for (const char* f : {"m2.bin","hs.bin","wm.bin","bwtA.bin","bwtB.bin","ovA.bin","ovB.bin"})
-            ::unlink((dir + "/" + f).c_str()); fs::remove_all(dir); }
+    void cleanup() {
+        ::unlink(m2.c_str()); ::unlink(hs.c_str()); ::unlink(wm.c_str());
+        for (auto& f : bwt) ::unlink(f.c_str());
+        for (auto& f : ov) ::unlink(f.c_str());
+        fs::remove_all(dir);
+    }
 };
-// M2 file = T||T with T = textA||textB (streamed from the sidecars).
-static void build_m2_file(const SideExt& A, const SideExt& B, const std::string& path) {
+// M2 file = T||T with T = text_0||...||text_{k-1} in offset order (k sides).
+static void build_m2_file(const std::vector<SideExt>& sides, const std::string& path) {
     int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
     require(fd >= 0, "create m2 scratch");
-    U n = A.n + B.n;
+    U n = 0; for (auto& S : sides) n += S.n;
     constexpr U W = 1u << 22;
     std::vector<uint8_t> buf(W);
     for (int copy = 0; copy < 2; ++copy) {
-        for (int side = 0; side < 2; ++side) {
-            const SideExt& S = side ? B : A;
+        U placed = 0;
+        for (auto& S : sides) {
             SideText t; open_side_text(S, t);
             for (U i = 0; i < S.n;) {
                 U len = std::min<U>(W, S.n - i);
                 t.read(i, buf.data(), len);
-                xput(fd, buf.data(), len, (U)copy * n + (side ? A.n : 0) + i, "m2 write");
+                xput(fd, buf.data(), len, (U)copy * n + placed + i, "m2 write");
                 i += len;
             }
+            placed += S.n;
         }
     }
     ::close(fd);
@@ -1514,12 +1535,25 @@ static void build_bwt_file(const SideExt& S, const PosOverlay& pos, const std::s
 // Externalized core merge: M2/sparse-hash/BWT/WM are scratch FILES; the
 // children's pos are windowed with a repair overlay; per-position RAM is
 // limited to window caches, the rank index, and bounded block buffers.
-static void core_merge_ext(const SideExt& A, const SideExt& B, bool dollar, U threads,
-                           Budget& bud, CoreStats& st, const PairScratch& sc, U hashK, bool pre) {
+// K-WAY EXTERNAL CORE MERGE (k=2 is the certified pairwise case; ONE code
+// path, k selected at launch). Sides tile the text T = text_0..text_{k-1};
+// M2 = T||T. The anchor/repair theory is per-side and INDEPENDENT of k: two
+// rows of one side diverge between their LOCAL cyclic order and the merged
+// (global) order only on prefix pairs, whose short sides are exactly the
+// side's own chunk-suffix anchors (the shorter suffix fits inside the side
+// because both rows are in it), found by the same backward-search walk on the
+// side's own BWT; blocks are sorted by the same merged comparator. The
+// global order restricted to a side IS its repaired order, so the merged
+// sequence is the k-way interleave of the k repaired orders.
+static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U threads,
+                            Budget& bud, CoreStats& st, const PairScratch& sc, U hashK, bool pre) {
     double last = now_sec();
-    U nA = A.n, nB = B.n, n = nA + nB;
+    const size_t k = sides.size();
+    require(k >= 1, "k-way merge needs at least one side");
+    st.init(k);
+    U n = 0; for (auto& S : sides) n += S.n;
     if (!pre) {
-        build_m2_file(A, B, sc.m2);
+        build_m2_file(sides, sc.m2);
         phase("m2-build", last);
         hashK = hash_spacing();
         if (hashK > n / 2) hashK = std::max<U>(1, n / 2);   // degenerate-grid guard
@@ -1529,67 +1563,111 @@ static void core_merge_ext(const SideExt& A, const SideExt& B, bool dollar, U th
     WinBytes m2; m2.open_ro(sc.m2, 2 * n, 0, true);
     HashSparse hp; hp.open_ro(sc.hs, hashK, 2 * n / hashK + 1);
     Keys keys; keys.init(&m2, &hp, n, dollar, &bud);
-    PosOverlay posA, posB;
-    posA.init(A.sxsPath, nA, A.posBase, 0, sc.ovA);
-    posB.init(B.sxsPath, nB, B.posBase, nA, sc.ovB);
-    // Anchor blocks per side, then repair.
-    std::vector<BlockRec> blocks;
-    std::vector<uint64_t> anchors;
-    build_bwt_file(A, posA, sc.bwtA, threads, 0);
-    { WinBytes bwt; bwt.open_ro(sc.bwtA, nA, 0);
-      SideText textA; open_side_text(A, textA);
-      anchor_blocks_ext(textA, bwt, posA, nA, 0, A.period, blocks, anchors, st.stepsA, st.rowsA); }
-    st.anchorsA = anchors.size();
-    repair_ext(posA, blocks, anchors, 0, nA, keys);
-    blocks.clear(); anchors.clear();
-    build_bwt_file(B, posB, sc.bwtB, threads, nA);
-    { WinBytes bwt; bwt.open_ro(sc.bwtB, nB, 0);
-      SideText textB; open_side_text(B, textB);
-      anchor_blocks_ext(textB, bwt, posB, nB, nA, B.period, blocks, anchors, st.stepsB, st.rowsB); }
-    st.anchorsB = anchors.size();
-    repair_ext(posB, blocks, anchors, nA, nB, keys);
+    // MERGE-LOCAL coordinate rebasing (the banked pairwise contract): every
+    // merge's positions run in the merge's own coordinate space - side j is
+    // rebased to localOff[j] = sum of the previous sides' lengths (the
+    // pairwise path's A->0, B->nA). SideExt.offset is the CORPUS offset and
+    // is used ONLY for the tiling contract and the emitted SXCR header.
+    // (For a flat merge from chunk 0 they coincide; for tree intermediates
+    // they do not, and the comparator's p < n bound is merge-local.)
+    std::vector<U> localOff(k, 0);
+    for (size_t j = 1; j < k; ++j) localOff[j] = localOff[j - 1] + sides[j - 1].n;
+    // Per-side position overlays (positions rebased to merge-local space).
+    std::vector<std::unique_ptr<PosOverlay>> pos(k);
+    for (size_t j = 0; j < k; ++j)
+        pos[j].reset(new PosOverlay());
+    for (size_t j = 0; j < k; ++j)
+        pos[j]->init(sides[j].sxsPath, sides[j].n, sides[j].posBase,
+                     localOff[j], sc.ov[j]);
+    // Anchor blocks per side, then repair (k-independent, per side).
+    for (size_t j = 0; j < k; ++j) {
+        std::vector<BlockRec> blocks;
+        std::vector<uint64_t> anchors;
+        build_bwt_file(sides[j], *pos[j], sc.bwt[j], threads, localOff[j]);
+        { WinBytes bwt; bwt.open_ro(sc.bwt[j], sides[j].n, 0);
+          SideText text; open_side_text(sides[j], text);
+          anchor_blocks_ext(text, bwt, *pos[j], sides[j].n, localOff[j],
+                            sides[j].period, blocks, anchors, st.steps[j], st.rows[j]); }
+        st.anchors[j] = anchors.size();
+        repair_ext(*pos[j], blocks, anchors, localOff[j], sides[j].n, keys);
+    }
     phase("anchor+repair", last);
-    // Linear cross merge under the total order, streamed into the WM file.
-    // PARALLEL EMISSION: the walk is sharded at fixed order boundaries. The
-    // merged total order is strict, so the merged rank of A[a] is exactly
-    // a + #{B rows ordered before A[a]} (rank_B). Planning binary-searches,
-    // at merged-rank target s*n/S, the largest a_s with
-    //   a_s + rank_B(A[a_s]) <= s*n/S,  b_s = rank_B(A[a_s])  (a_S = nA).
-    // Every element of A[a_s..a_{s+1}) and of B[b_s..b_{s+1}) then has merged
-    // rank inside [a_s+b_s, a_{s+1}+b_{s+1}) (both inclusions proved by the
-    // strict order: rank(A[i]) = i + rank_B(A[i]), rank(B[j]) = j +
-    // #{A ordered before B[j]}), so shard s runs the same two-pointer merge
-    // over its two ranges and pwrites at element offset a_s + b_s. Disjoint
-    // output ranges, one code path (S=1 is the serial walk), byte-identical
-    // by construction; thread scheduling cannot reach the bytes. Planning
-    // costs (S-1)*log(nA)*log(nB) comparisons, charged to the same budget.
+    // K-way cross merge under the total order, streamed into the WM file.
+    // PARALLEL EMISSION (k-way): the walk is sharded at fixed order
+    // boundaries. The merged total order is strict and the global order
+    // restricted to a side IS its repaired order, so the merged rank of
+    // side i's a-th row is exactly a + sum_{j != i} rank_j(row). Planning
+    // binary-searches, at merged-rank target s*n/S on the WIDEST side i,
+    // the largest a_s with rank(A_i[a_s]) <= s*n/S; every side's boundary
+    // is then rank_j(X_s) for the boundary element X_s = A_i[a_s] (and a_s
+    // itself for side i), so every element of each side's s-range has
+    // merged rank inside [R_s, R_{s+1}) with R_s = a_s + sum_j rank_j(X_s).
+    // Shard s k-way-merges its per-side row ranges with a BINARY MIN-HEAP of
+    // the k current fronts (O(log k) comparisons per emitted element, never
+    // O(k)) and pwrites at element offset R_s: disjoint ranges, one code
+    // path (k=2, S=1 is the serial pairwise walk), byte-identical by
+    // construction. Planning costs (S-1)*log(n_i)*k*log(n_j) comparisons
+    // (boundaries planned in parallel), charged to the same budget.
     int fd = ::open(sc.wm.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
     require(fd >= 0, "create wm scratch");
     double tPF = 0, tPop = 0;
     const U S = emit_shard_count(threads, n);
-    std::vector<U> aB(S + 1, 0), bB(S + 1, 0);
+    size_t wide = 0;   // planning probe side: the widest
+    for (size_t j = 1; j < k; ++j) if (sides[j].n > sides[wide].n) wide = j;
+    std::vector<std::vector<U>> aB(S + 1, std::vector<U>(k, 0));
+    for (size_t j = 0; j < k; ++j) aB[S][j] = sides[j].n;
     {
-        auto rankB = [&](U p) -> U {   // #{j < nB : posB[j] ordered before p}
-            U lo = 0, hi = nB;
-            while (lo < hi) {
-                U mid = lo + (hi - lo) / 2;
-                if (keys.cmp(posB.at(mid), p) < 0) lo = mid + 1; else hi = mid;
-            }
-            return lo;
-        };
-        for (U s = 1; s < S; ++s) {
-            U target = s * n / S;
-            U lo = 0, hi = nA;         // f(a) = a + rank_B(A[a]); f(nA) := n
-            while (lo < hi) {
-                U mid = lo + (hi - lo + 1) / 2;
-                U f = (mid == nA) ? n : mid + rankB(posA.at(mid));
-                if (f <= target) lo = mid; else hi = mid - 1;
-            }
-            aB[s] = lo;
-            bB[s] = (lo == nA) ? nB : rankB(posA.at(lo));
-        }
-        aB[S] = nA; bB[S] = nB;
+        require(sides[wide].n > 0, "k-way planning needs a non-empty probe side");
+        std::vector<std::thread> pt;
+        std::mutex planMu;
+        for (U s = 1; s < S; ++s)
+            pt.emplace_back([&, s] {
+                // Thread-local keys/budget: the shared-key comparator is
+                // never touched from planning threads (its scratch is
+                // thread-local but its Budget is not).
+                Budget pb;
+                Keys pkeys; pkeys.init(&m2, &hp, n, dollar, &pb);
+                // rank in side j of a global position p (side j's repaired
+                // order IS the global order restricted to it):
+                // #{rows of j ordered before p}.
+                auto rankIn = [&](size_t j, U p) -> U {
+                    U lo = 0, hi = sides[j].n;
+                    while (lo < hi) {
+                        U mid = lo + (hi - lo) / 2;
+                        if (pkeys.cmp(pos[j]->at(mid), p) < 0) lo = mid + 1; else hi = mid;
+                    }
+                    return lo;
+                };
+                U target = s * n / S;
+                U nI = sides[wide].n;
+                auto rowRank = [&](U a) -> U {   // merged rank of wide's a-th row
+                    U r = a, p = pos[wide]->at(a);
+                    for (size_t j = 0; j < k; ++j)
+                        if (j != wide) r += rankIn(j, p);
+                    return r;
+                };
+                U lo = 0, hi = nI;         // f(a) = rank(A_wide[a]); f(nI) := n
+                while (lo < hi) {
+                    U mid = lo + (hi - lo + 1) / 2;
+                    U f = (mid == nI) ? n : rowRank(mid);
+                    if (f <= target) lo = mid; else hi = mid - 1;
+                }
+                require(lo < nI, "k-way boundary fell off the probe side");
+                U bElem = pos[wide]->at(lo);   // the boundary element X_s
+                for (size_t j = 0; j < k; ++j)
+                    aB[s][j] = (j == wide) ? lo : rankIn(j, bElem);
+                std::lock_guard<std::mutex> g(planMu);
+                bud.comparisons += pb.comparisons; bud.probes += pb.probes;
+                bud.symbols += pb.symbols; bud.fast_decided += pb.fast_decided;
+                bud.probe_decided += pb.probe_decided; bud.cap_decided += pb.cap_decided;
+                bud.tie_decided += pb.tie_decided; bud.note_lce(pb.max_lce);
+                bud.tFast += pb.tFast; bud.tPrep += pb.tPrep; bud.tProbe += pb.tProbe; bud.tScan += pb.tScan;
+            });
+        for (auto& t : pt) t.join();
     }
+    // merged-rank shard start offsets: R_s = sum_j aB[s][j]
+    std::vector<U> R(S + 1, 0);
+    for (U s = 0; s <= S; ++s) for (size_t j = 0; j < k; ++j) R[s] += aB[s][j];
     std::vector<Budget> shardBud(S);
     std::vector<double> shardPF(S, 0.0), shardPop(S, 0.0);
     {
@@ -1597,46 +1675,76 @@ static void core_merge_ext(const SideExt& A, const SideExt& B, bool dollar, U th
         std::vector<std::thread> ts;
         for (U s = 0; s < S; ++s)
             ts.emplace_back([&, s] {
-                U a0 = aB[s], a1 = aB[s + 1], b0 = bB[s], b1 = bB[s + 1];
                 Keys skeys; skeys.init(&m2, &hp, n, dollar, &shardBud[s]);
                 constexpr U W = 8192;
                 std::vector<U> buf(W);
-                U nb = 0, out = a0 + b0, k = 0;
+                U nb = 0, out = R[s], emitted = 0, step = 0;
                 auto flushW = [&]() { if (nb) { xput(fd, buf.data(), 8 * nb, 8 * out, "wm write"); out += nb; nb = 0; } };
-                U i = a0, j = b0;
-                while (i < a1 && j < b1) {
-                    double q0 = now_sec();
-                    if (m2.pool && (k & 31) == 0 && !noPf) {
-                        // Front speculation: the next 32 fronts of both
-                        // streams (deduplicated inside prefetch against
-                        // owned slots), plus the m2 spans and sparse-hash
-                        // anchor entries those fronts will touch.
-                        U firstJb = 16 / hashK + 1;
-                        for (U d = 1; d <= 32 && i + d < a1; ++d) {
-                            U p = posA.at(i + d);
-                            m2.prefetch(p, 16);
-                            if (hp.col.pool) hp.col.prefetch(p / hashK + firstJb);
-                        }
-                        for (U d = 1; d <= 32 && j + d < b1; ++d) {
-                            U p = posB.at(j + d);
-                            m2.prefetch(p, 16);
-                            if (hp.col.pool) hp.col.prefetch(p / hashK + firstJb);
-                        }
+                // per-side cursors and a binary min-heap of the k fronts
+                std::vector<U> cur(k), end(k);
+                for (size_t j = 0; j < k; ++j) { cur[j] = aB[s][j]; end[j] = aB[s + 1][j]; }
+                std::vector<U> hv(k);   // heap values
+                std::vector<size_t> hs_(k);  // heap sides
+                size_t hm = 0;
+                auto hLess = [&](size_t a, size_t b) { return skeys.cmp(hv[a], hv[b]) < 0; };
+                auto hPush = [&](U v, size_t side) {
+                    size_t i = hm++;
+                    hv[i] = v; hs_[i] = side;
+                    while (i > 0) {
+                        size_t par = (i - 1) / 2;
+                        if (!hLess(i, par)) break;
+                        std::swap(hv[i], hv[par]); std::swap(hs_[i], hs_[par]);
+                        i = par;
                     }
-                    shardPF[s] += now_sec() - q0;
+                };
+                auto hSift = [&]() {
+                    size_t i = 0;
+                    for (;;) {
+                        size_t l = 2 * i + 1, r = l + 1, m = i;
+                        if (l < hm && hLess(l, m)) m = l;
+                        if (r < hm && hLess(r, m)) m = r;
+                        if (m == i) break;
+                        std::swap(hv[i], hv[m]); std::swap(hs_[i], hs_[m]);
+                        i = m;
+                    }
+                };
+                auto hPopReplace = [&](U v, size_t side) {   // root leaves, push (v,side)
+                    hv[0] = v; hs_[0] = side;
+                    hSift();
+                };
+                for (size_t j = 0; j < k; ++j)
+                    if (cur[j] < end[j]) hPush(pos[j]->at(cur[j]), j);
+                U pfAt = 0;
+                while (hm > 0) {
+                    if (!noPf && m2.pool && (step & 31) == 0) {
+                        // Front speculation: each side's next few fronts.
+                        double q0 = now_sec();
+                        U firstJb = 16 / hashK + 1;
+                        for (size_t j = 0; j < k; ++j)
+                            for (U d = 1; d <= 4 && cur[j] + d < end[j]; ++d) {
+                                U p = pos[j]->at(cur[j] + d);
+                                m2.prefetch(p, 16);
+                                if (hp.col.pool) hp.col.prefetch(p / hashK + firstJb);
+                            }
+                        shardPF[s] += now_sec() - q0;
+                        pfAt = step + 32;
+                    }
                     double q1 = now_sec();
-                    U va = posA.at(i), vb = posB.at(j);
+                    U v = hv[0]; size_t j = hs_[0];
+                    ++cur[j];
                     shardPop[s] += now_sec() - q1;
-                    if (skeys.cmp(va, vb) < 0) { buf[nb++] = va; ++i; }
-                    else { buf[nb++] = vb; ++j; }
+                    buf[nb++] = v; ++emitted;
+                    if (cur[j] < end[j]) hPopReplace(pos[j]->at(cur[j]), j);
+                    else {   // side exhausted: move last to root, shrink
+                        hv[0] = hv[hm - 1]; hs_[0] = hs_[hm - 1]; --hm;
+                        if (hm > 0) hSift();
+                    }
                     if (nb == W) flushW();
-                    ++k;
+                    ++step;
                 }
-                while (i < a1) { buf[nb++] = posA.at(i++); ++k; if (nb == W) flushW(); }
-                while (j < b1) { buf[nb++] = posB.at(j++); ++k; if (nb == W) flushW(); }
+                U want = 0; for (size_t j = 0; j < k; ++j) want += end[j] - aB[s][j];
                 flushW();
-                require(k == (a1 - a0) + (b1 - b0) && out == a1 + b1,
-                        "shard merge coverage");
+                require(emitted == want && out == R[s + 1], "shard merge coverage");
             });
         for (auto& t : ts) t.join();
     }
@@ -2106,12 +2214,12 @@ struct Preflight {
 static std::deque<std::unique_ptr<Preflight>> g_pfq;
 static void preflight_run(Preflight* pf) {
     try {
-        pf->sc.init(pf->out, U(getpid()));
+        pf->sc.init(pf->out, U(getpid()), 2);
         load_side_ext(pf->left, 48, pf->sc.dir, pf->A);
         load_side_ext(pf->right, 48, pf->sc.dir, pf->B);
         require(pf->A.offset + pf->A.n == pf->B.offset, "pair chunks do not tile");
         U n = pf->A.n + pf->B.n;
-        build_m2_file(pf->A, pf->B, pf->sc.m2);
+        build_m2_file(std::vector<SideExt>{pf->A, pf->B}, pf->sc.m2);
         pf->hashK = hash_spacing();
         if (pf->hashK > n / 2) pf->hashK = std::max<U>(1, n / 2);
         build_hash_sparse(pf->sc.m2, 2 * n, pf->hashK, pf->sc.hs, 48);
@@ -2159,9 +2267,17 @@ static void cross_drop_stale_preflights(const std::string& L, const std::string&
     }
 }
 
-// ---------------------------------------------------------------- pair merge
-static U merge_pair_files(const std::string& leftPath, const std::string& rightPath,
-                          bool dollar, const std::string& out, U threads, bool emitPf = false) {
+// ------------------------------------------------------------ k-way merge
+// ONE code path: k=2 is the certified pairwise merge (CROSS_PAIR line,
+// byte-identical banked format); k>2 (CROSS_KWAY line) is the flat/inter-
+// mediate arity selected at launch. Sides must tile the text: side j's
+// global offset = sum of previous sides' lengths.
+static U merge_kway_files(const std::vector<std::string>& inputs, bool dollar,
+                          const std::string& out, U threads, bool emitPf = false) {
+    const size_t k = inputs.size();
+    require(k >= 1, "k-way merge needs at least one input");
+    const std::string& leftPath = inputs.front();
+    const std::string& rightPath = inputs.back();
     if (dollar)
         for (const char* ext : {".rlebwt", ".rlebwt.meta", ".ssa", ".ssa_t"})
             require(!fs::exists(out + ext), "output exists; refusing to clobber");
@@ -2171,51 +2287,83 @@ static U merge_pair_files(const std::string& leftPath, const std::string& rightP
     Budget bud; CoreStats st;
     bool pre = false;
     PairScratch sc;
-    SideExt A, B;
+    std::vector<SideExt> sides(k);
     U hashK = 0;
-    cross_drop_stale_preflights(leftPath, rightPath);
-    if (auto pf = cross_take_preflight(leftPath, rightPath)) {
+    std::unique_ptr<Preflight> pf;
+    if (k == 2) {
+        cross_drop_stale_preflights(leftPath, rightPath);
+        pf = cross_take_preflight(leftPath, rightPath);
+    }
+    if (pf) {
         // FIX 4: this pair's loads/m2/hash were prefetched during the
         // previous pair's run.
         if (!pf->ok) fail(("preflight failed: " + pf->err).c_str());
-        A = pf->A; B = pf->B; sc = std::move(pf->sc); hashK = pf->hashK;
+        sides[0] = pf->A; sides[1] = pf->B; sc = std::move(pf->sc); hashK = pf->hashK;
         pre = true;
     } else {
-        sc.init(out, U(getpid()));
-        load_side_ext(leftPath, threads, sc.dir, A);
-        load_side_ext(rightPath, threads, sc.dir, B);
-        require(A.offset + A.n == B.offset, "pair chunks do not tile");
+        sc.init(out, U(getpid()), k);
+        for (size_t j = 0; j < k; ++j)
+            load_side_ext(inputs[j], threads, sc.dir, sides[j]);
+        for (size_t j = 1; j < k; ++j)
+            require(sides[j - 1].offset + sides[j - 1].n == sides[j].offset,
+                    "merge sides do not tile");
     }
-    core_merge_ext(A, B, dollar, threads, bud, st, sc, hashK, pre);
-    U n = A.n + B.n;
+    core_merge_kway(sides, dollar, threads, bud, st, sc, hashK, pre);
+    U n = 0; for (auto& S : sides) n += S.n;
     WinBytes m2; m2.open_ro(sc.m2, 2 * n, 0, true);
     WinU64 wm; wm.open_ro(sc.wm, n, 0);
     U out_runs = dollar ? emit_four_ext(out, m2, wm, n, threads, sc.dir)
-                        : emit_sxcr_ext(out, m2, wm, n, A.offset, threads);
+                        : emit_sxcr_ext(out, m2, wm, n, sides.front().offset, threads);
     if (dollar && emitPf) emit_pf_side_ext(out, m2, n, out_runs);
     sc.cleanup();
     double total = now_sec() - t0;
-    std::printf("CROSS_PAIR mode=%s left=%s right=%s nA=%llu nB=%llu out=%s out_runs=%llu "
-                "wall_total=%.3f comparisons=%llu symbols_compared=%llu probes=%llu max_lce=%llu "
-                "fast_decided=%llu probe_decided=%llu cap_decided=%llu tie_decided=%llu "
-                "lce_over_10k=%llu lce_over_100k=%llu lce_over_1m=%llu "
-                "anchors_A=%llu anchors_B=%llu walk_steps_A=%llu walk_steps_B=%llu "
-                "block_rows_A=%llu block_rows_B=%llu peak_rss_kib=%llu hash_k=%llu "
-                "t_fast=%.3f t_prep=%.3f t_probe=%.3f t_scan=%.3f\n",
-                dollar ? "dollar" : "cyclic", leftPath.c_str(), rightPath.c_str(),
-                (unsigned long long)A.n, (unsigned long long)B.n, out.c_str(),
-                (unsigned long long)out_runs, total,
-                (unsigned long long)bud.comparisons, (unsigned long long)bud.symbols,
-                (unsigned long long)bud.probes, (unsigned long long)bud.max_lce,
-                (unsigned long long)bud.fast_decided, (unsigned long long)bud.probe_decided,
-                (unsigned long long)bud.cap_decided, (unsigned long long)bud.tie_decided,
-                (unsigned long long)bud.lce_over_10k, (unsigned long long)bud.lce_over_100k,
-                (unsigned long long)bud.lce_over_1m,
-                (unsigned long long)st.anchorsA, (unsigned long long)st.anchorsB,
-                (unsigned long long)st.stepsA, (unsigned long long)st.stepsB,
-                (unsigned long long)st.rowsA, (unsigned long long)st.rowsB,
-                (unsigned long long)peak_rss_kib(), (unsigned long long)hashK,
-                bud.tFast, bud.tPrep, bud.tProbe, bud.tScan);
+    if (k == 2) {
+        std::printf("CROSS_PAIR mode=%s left=%s right=%s nA=%llu nB=%llu out=%s out_runs=%llu "
+                    "wall_total=%.3f comparisons=%llu symbols_compared=%llu probes=%llu max_lce=%llu "
+                    "fast_decided=%llu probe_decided=%llu cap_decided=%llu tie_decided=%llu "
+                    "lce_over_10k=%llu lce_over_100k=%llu lce_over_1m=%llu "
+                    "anchors_A=%llu anchors_B=%llu walk_steps_A=%llu walk_steps_B=%llu "
+                    "block_rows_A=%llu block_rows_B=%llu peak_rss_kib=%llu hash_k=%llu "
+                    "t_fast=%.3f t_prep=%.3f t_probe=%.3f t_scan=%.3f\n",
+                    dollar ? "dollar" : "cyclic", leftPath.c_str(), rightPath.c_str(),
+                    (unsigned long long)sides[0].n, (unsigned long long)sides[1].n, out.c_str(),
+                    (unsigned long long)out_runs, total,
+                    (unsigned long long)bud.comparisons, (unsigned long long)bud.symbols,
+                    (unsigned long long)bud.probes, (unsigned long long)bud.max_lce,
+                    (unsigned long long)bud.fast_decided, (unsigned long long)bud.probe_decided,
+                    (unsigned long long)bud.cap_decided, (unsigned long long)bud.tie_decided,
+                    (unsigned long long)bud.lce_over_10k, (unsigned long long)bud.lce_over_100k,
+                    (unsigned long long)bud.lce_over_1m,
+                    (unsigned long long)st.anchorsA(), (unsigned long long)st.anchorsB(),
+                    (unsigned long long)st.stepsA(), (unsigned long long)st.stepsB(),
+                    (unsigned long long)st.rowsA(), (unsigned long long)st.rowsB(),
+                    (unsigned long long)peak_rss_kib(), (unsigned long long)hashK,
+                    bud.tFast, bud.tPrep, bud.tProbe, bud.tScan);
+    } else {
+        std::string sizes;
+        for (size_t j = 0; j < k; ++j)
+            sizes += (j ? "," : "") + std::to_string(sides[j].n);
+        std::printf("CROSS_KWAY k=%llu mode=%s left=%s right=%s n=%llu sizes=%s out=%s out_runs=%llu "
+                    "wall_total=%.3f comparisons=%llu symbols_compared=%llu probes=%llu max_lce=%llu "
+                    "fast_decided=%llu probe_decided=%llu cap_decided=%llu tie_decided=%llu "
+                    "lce_over_10k=%llu lce_over_100k=%llu lce_over_1m=%llu "
+                    "anchors_sum=%llu walk_steps_sum=%llu block_rows_sum=%llu "
+                    "peak_rss_kib=%llu hash_k=%llu "
+                    "t_fast=%.3f t_prep=%.3f t_probe=%.3f t_scan=%.3f\n",
+                    (unsigned long long)k, dollar ? "dollar" : "cyclic", leftPath.c_str(),
+                    rightPath.c_str(), (unsigned long long)n, sizes.c_str(), out.c_str(),
+                    (unsigned long long)out_runs, total,
+                    (unsigned long long)bud.comparisons, (unsigned long long)bud.symbols,
+                    (unsigned long long)bud.probes, (unsigned long long)bud.max_lce,
+                    (unsigned long long)bud.fast_decided, (unsigned long long)bud.probe_decided,
+                    (unsigned long long)bud.cap_decided, (unsigned long long)bud.tie_decided,
+                    (unsigned long long)bud.lce_over_10k, (unsigned long long)bud.lce_over_100k,
+                    (unsigned long long)bud.lce_over_1m,
+                    (unsigned long long)st.sum(st.anchors), (unsigned long long)st.sum(st.steps),
+                    (unsigned long long)st.sum(st.rows),
+                    (unsigned long long)peak_rss_kib(), (unsigned long long)hashK,
+                    bud.tFast, bud.tPrep, bud.tProbe, bud.tScan);
+    }
     std::fflush(stdout);
     return out_runs;
 }
@@ -2242,7 +2390,7 @@ static U finalize_file(const std::string& path, const std::string& prefix, U thr
         require(!fs::exists(prefix + ext), "output exists; refusing to clobber");
     double t0 = now_sec(), last = t0;
     Budget bud; CoreStats st;
-    PairScratch sc; sc.init(prefix, U(getpid()));
+    PairScratch sc; sc.init(prefix, U(getpid()), 1);
     SideExt A;
     load_side_ext(path, threads, sc.dir, A);
     phase("load", last);
@@ -2255,16 +2403,17 @@ static U finalize_file(const std::string& path, const std::string& prefix, U thr
     HashSparse hp; hp.open_ro(sc.hs, hashK, 2 * A.n / hashK + 1);
     Keys keys; keys.init(&m2, &hp, A.n, true, &bud);
     PosOverlay posA;
-    posA.init(A.sxsPath, A.n, A.posBase, 0, sc.ovA);
-    build_bwt_file(A, posA, sc.bwtA, threads, 0);
+    posA.init(A.sxsPath, A.n, A.posBase, 0, sc.ov[0]);
+    build_bwt_file(A, posA, sc.bwt[0], threads, 0);
     std::vector<BlockRec> blocks;
     std::vector<uint64_t> anchors;
     {
-        WinBytes bwt; bwt.open_ro(sc.bwtA, A.n, 0);
+        WinBytes bwt; bwt.open_ro(sc.bwt[0], A.n, 0);
         SideText text; open_side_text(A, text);
-        anchor_blocks_ext(text, bwt, posA, A.n, 0, A.period, blocks, anchors, st.stepsA, st.rowsA);
+        anchor_blocks_ext(text, bwt, posA, A.n, 0, A.period, blocks, anchors, st.steps[0], st.rows[0]);
     }
-    st.anchorsA = anchors.size();
+    st.init(1);
+    st.anchors[0] = anchors.size();
     repair_ext(posA, blocks, anchors, 0, A.n, keys);
     phase("anchor+repair", last);
     // WM = the repaired order, streamed from the overlay.
@@ -2297,8 +2446,8 @@ static U finalize_file(const std::string& path, const std::string& prefix, U thr
                 (unsigned long long)bud.fast_decided, (unsigned long long)bud.probe_decided,
                 (unsigned long long)bud.cap_decided, (unsigned long long)bud.tie_decided,
                 (unsigned long long)bud.lce_over_10k, (unsigned long long)bud.lce_over_100k,
-                (unsigned long long)bud.lce_over_1m, (unsigned long long)st.anchorsA,
-                (unsigned long long)st.stepsA, (unsigned long long)st.rowsA,
+                (unsigned long long)bud.lce_over_1m, (unsigned long long)st.anchorsA(),
+                (unsigned long long)st.stepsA(), (unsigned long long)st.rowsA(),
                 (unsigned long long)peak_rss_kib(), (unsigned long long)hashK);
     std::fflush(stdout);
     return out_runs;
@@ -2327,7 +2476,7 @@ static std::vector<uint64_t> brute_dollar(const std::string& T) {
     return o;
 }
 
-static int selftest(U cases, uint64_t seed, U threads) {
+static int selftest(U cases, uint64_t seed, U threads, U kway) {
     uint64_t s = seed ? seed : 1;
     auto next = [&]() { s ^= s << 13; s ^= s >> 7; s ^= s << 17; return s; };
     const std::vector<std::string> alphabets = {
@@ -2353,10 +2502,11 @@ static int selftest(U cases, uint64_t seed, U threads) {
             }
             return t;
         };
-        std::string A = gen(1 + next() % 60, bool(next() & 1));
-        std::string B = gen(1 + next() % 60, bool(next() & 1));
-        std::string M = A + B;
-        std::vector<uint64_t> posA = brute_cyclic(A), posB = brute_cyclic(B);
+        std::vector<std::string> As;
+        std::string M;
+        for (U z = 0; z < kway; ++z) { As.push_back(gen(1 + next() % 60, bool(next() & 1))); M += As.back(); }
+        std::vector<std::vector<uint64_t>> posS;
+        for (auto& A : As) posS.push_back(brute_cyclic(A));
         // Route through the EXTERNAL path: tiny sidecars in a scratch dir, the
         // windowed core merge, WM read back from its scratch file.
         std::string scratch = "cross-selftest-scratch-" + std::to_string(U(getpid()));
@@ -2364,13 +2514,9 @@ static int selftest(U cases, uint64_t seed, U threads) {
         fs::create_directories(scratch);
         for (int mode = 0; mode < 2; ++mode) {
             bool dollar = mode == 1;
-            std::vector<uint8_t> tA(A.begin(), A.end()), tB(B.begin(), B.end());
             Budget bud; CoreStats st;
-            SideExt SA, SB;
-            SA.n = A.size(); SA.offset = 0; SA.period = min_period(tA, tA.size());
-            SA.sxsPath = scratch + "/A.sxs"; SA.ownsSxs = false;
-            SB.n = B.size(); SB.offset = A.size(); SB.period = min_period(tB, tB.size());
-            SB.sxsPath = scratch + "/B.sxs"; SB.ownsSxs = false;
+            std::vector<SideExt> sides(kway);
+            U off = 0, nTot = 0;
             auto dump = [](const SideExt& S, const std::vector<uint8_t>& t, const std::vector<uint64_t>& pos) {
                 fs::remove(S.sxsPath);   // second mode reuses the names
                 OutFile f(S.sxsPath);
@@ -2379,30 +2525,40 @@ static int selftest(U cases, uint64_t seed, U threads) {
                 f.raw(t.data(), t.size());
                 f.raw(pos.data(), 8 * pos.size());
             };
-            dump(SA, tA, posA);
-            dump(SB, tB, posB);
-            PairScratch sc; sc.init(scratch + "/case", 0);
+            for (U z = 0; z < kway; ++z) {
+                std::vector<uint8_t> tz(As[z].begin(), As[z].end());
+                SideExt& S = sides[z];
+                S.n = As[z].size(); S.offset = off; S.period = min_period(tz, tz.size());
+                S.sxsPath = scratch + "/side-" + std::to_string(z) + ".sxs"; S.ownsSxs = false;
+                S.refText = false; S.posBase = 20 + S.n;
+                dump(S, tz, posS[z]);
+                off += S.n; nTot += S.n;
+            }
+            PairScratch sc; sc.init(scratch + "/case", 0, kway);
             U hashK = hash_spacing();
-            if (hashK > (SA.n + SB.n) / 2) hashK = std::max<U>(1, (SA.n + SB.n) / 2);
-            core_merge_ext(SA, SB, dollar, threads, bud, st, sc, hashK, false);
-            std::vector<uint64_t> WM(SA.n + SB.n, 0);
+            if (hashK > nTot / 2) hashK = std::max<U>(1, nTot / 2);
+            core_merge_kway(sides, dollar, threads, bud, st, sc, hashK, false);
+            std::vector<uint64_t> WM(nTot, 0);
             {
-                WinU64 wm; wm.open_ro(sc.wm, SA.n + SB.n, 0);
-                wm.read(0, WM.data(), SA.n + SB.n);
+                WinU64 wm; wm.open_ro(sc.wm, nTot, 0);
+                wm.read(0, WM.data(), nTot);
             }
             sc.cleanup();
             std::vector<uint64_t> want = dollar ? brute_dollar(M) : brute_cyclic(M);
             if (WM != want) {
-                std::fprintf(stderr, "SELFTEST_FAIL case=%llu mode=%s nA=%zu nB=%zu\n",
+                std::fprintf(stderr, "SELFTEST_FAIL case=%llu mode=%s k=%llu sizes=",
                              (unsigned long long)cs, dollar ? "dollar" : "cyclic",
-                             A.size(), B.size());
+                             (unsigned long long)kway);
+                for (auto& Az : As) std::fprintf(stderr, "%zu,", Az.size());
+                std::fprintf(stderr, "\n");
                 auto hex = [](const std::string& s) {
                     std::string o;
                     char buf[8];
                     for (unsigned char ch : s) { std::snprintf(buf, sizeof buf, "%02x", ch); o += buf; }
                     return o;
                 };
-                std::fprintf(stderr, "A_hex=%s B_hex=%s\n", hex(A).c_str(), hex(B).c_str());
+                for (U z = 0; z < kway; ++z)
+                    std::fprintf(stderr, "SIDE%llu_hex=%s\n", (unsigned long long)z, hex(As[z]).c_str());
                 std::fprintf(stderr, "got :");
                 for (auto p : WM) std::fprintf(stderr, " %u", p);
                 std::fprintf(stderr, "\nwant:");
@@ -2418,8 +2574,9 @@ static int selftest(U cases, uint64_t seed, U threads) {
         }
     }
     fs::remove_all("cross-selftest-scratch-" + std::to_string(U(getpid())));
-    std::printf("SELFTEST_PASS count=%llu seed=%llu\n",
-                (unsigned long long)cases, (unsigned long long)seed);
+    std::printf("SELFTEST_PASS count=%llu seed=%llu kway=%llu\n",
+                (unsigned long long)cases, (unsigned long long)seed,
+                (unsigned long long)kway);
     return 0;
 }
 
@@ -2446,10 +2603,15 @@ int main_impl(int argc, char** argv) {
         return false;
     };
     if (!flag("--threads").empty()) threads = std::stoull(flag("--threads"));
+    U kway = 2;
+    if (!flag("--kway").empty()) {
+        kway = std::stoull(flag("--kway"));
+        require(kway >= 2 && kway < 1000000, "--kway must be >= 2");
+    }
     if (has("--selftest")) {
         U cases = flag("--selftest").empty() ? 2000 : std::stoull(flag("--selftest"));
         uint64_t seed = flag("--seed").empty() ? 20261002 : std::stoull(flag("--seed"));
-        return selftest(cases, seed, threads);
+        return selftest(cases, seed, threads, kway);
     }
     if (has("--pair")) {
         std::string L = flag("--pair"), R = flag("--right");
@@ -2457,10 +2619,10 @@ int main_impl(int argc, char** argv) {
         if (has("--sxcr")) {
             require(!fs::exists(flag("--sxcr")) && !fs::exists(flag("--sxcr") + ".sxs"),
                     "output exists; refusing to clobber");
-            merge_pair_files(L, R, false, flag("--sxcr"), threads);
+            merge_kway_files({L, R}, false, flag("--sxcr"), threads);
         } else {
             require(has("--out-prefix"), "--pair needs --sxcr OUT or --out-prefix PREFIX");
-            merge_pair_files(L, R, true, flag("--out-prefix"), threads, has("--emit-pf"));
+            merge_kway_files({L, R}, true, flag("--out-prefix"), threads, has("--emit-pf"));
         }
         return 0;
     }
@@ -2476,7 +2638,7 @@ int main_impl(int argc, char** argv) {
     auto valued = [&](const std::string& a) {
         return a == "--threads" || a == "--work" || a == "--seed" || a == "--pair" ||
                a == "--right" || a == "--sxcr" || a == "--out-prefix" || a == "--finalize" ||
-               a == "--selftest";
+               a == "--selftest" || a == "--kway";
     };
     for (size_t i = 0; i < args.size(); ++i) {
         if (args[i].rfind("--", 0) == 0) { if (valued(args[i])) ++i; continue; }
@@ -2488,9 +2650,11 @@ int main_impl(int argc, char** argv) {
     }
     require(!dir.empty() && count && total && !prefix.empty(),
             "usage: cross_lcp_merge CHUNK_DIR COUNT TOTAL_BYTES OUT_PREFIX [--work DIR] [--serial] [--threads N]\n"
+            "       cross_lcp_merge ... [--kway K]   (merge arity: 2 = pairwise tree, the default;\n"
+            "                                       count = FLAT one-level, the primary shape)\n"
             "       cross_lcp_merge --pair LEFT --right RIGHT (--sxcr OUT | --out-prefix PREFIX)\n"
             "       cross_lcp_merge --finalize ONE --out-prefix PREFIX\n"
-            "       cross_lcp_merge --selftest CASES [--seed N]");
+            "       cross_lcp_merge --selftest CASES [--seed N] [--kway K]");
     struct Part { std::string file; U offset, n; };
     std::vector<Part> parts;
     for (U i = 0; i < count; ++i) {
@@ -2515,25 +2679,34 @@ int main_impl(int argc, char** argv) {
             std::string out = final ? prefix : work + "/serial-" + std::to_string(i) + ".crle";
             if (!final)
                 cross_announce_next(acc.file, parts[i].file, out);   // FIX 4 lookahead
-            merge_pair_files(acc.file, parts[i].file, final, out, threads, final && has("--emit-pf"));
+            merge_kway_files({acc.file, parts[i].file}, final, out, threads, final && has("--emit-pf"));
             acc = {out, acc.offset, acc.n + parts[i].n};
         }
         return 0;
     }
+    // Merge topology: --kway K (default 2 = the certified pairwise tree).
+    // K = count is FLAT: one k-way merge, dollar mode, straight from the raw
+    // chunks (the primary shape: one read pass + one write pass, full width
+    // from minute one, boundaries double as restart checkpoints). The
+    // pairwise path is the k=2 case of the ONE k-way core.
     U level = 0;
     while (parts.size() > 1) {
         std::vector<Part> next;
-        for (size_t j = 0; j < parts.size(); j += 2) {
-            if (j + 1 == parts.size()) { next.push_back(parts[j]); continue; }
-            bool final = parts.size() == 2 && j == 0;
+        for (size_t j = 0; j < parts.size(); j += kway) {
+            size_t g = std::min<size_t>(kway, parts.size() - j);
+            if (g == 1) { next.push_back(parts[j]); continue; }
+            bool final = parts.size() <= kway && j == 0;
             std::string out = final ? prefix
-                : work + "/L" + std::to_string(level) + "-" + std::to_string(j / 2) + ".crle";
-            if (j + 3 < parts.size())
+                : work + "/L" + std::to_string(level) + "-" + std::to_string(j / kway) + ".crle";
+            if (kway == 2 && j + 3 < parts.size())
                 cross_announce_next(parts[j + 2].file, parts[j + 3].file,
                                     work + "/L" + std::to_string(level) + "-" +
                                         std::to_string(j / 2 + 1) + ".crle");   // FIX 4 lookahead (same level)
-            merge_pair_files(parts[j].file, parts[j + 1].file, final, out, threads, final && has("--emit-pf"));
-            next.push_back({out, parts[j].offset, parts[j].n + parts[j + 1].n});
+            std::vector<std::string> ins;
+            U nn = 0;
+            for (size_t z = 0; z < g; ++z) { ins.push_back(parts[j + z].file); nn += parts[j + z].n; }
+            merge_kway_files(ins, final, out, threads, final && has("--emit-pf"));
+            next.push_back({out, parts[j].offset, nn});
         }
         parts = std::move(next);
         ++level;

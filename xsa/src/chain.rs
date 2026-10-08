@@ -29,7 +29,8 @@ use std::process::{Command, Stdio};
 use sha2::{Digest, Sha256};
 
 pub const USAGE: &str = "usage:
-  xsa build --input <corpus> --scratch <dir> [--snap-1e] [--memory-gb N] [--threads N] [--chunks N] [--remap <256-byte-map>]
+  xsa build --input <corpus> --scratch <dir> [--snap-1e] [--memory-gb N] [--threads N]
+                    [--chunks N] [--kway N] [--remap <256-byte-map>]
 
 The consolidated external construction chain (chunk -> merge tree -> adopt
 finish -> chi sweep), one cargo-built command with bundled provenance.
@@ -51,6 +52,10 @@ finish -> chi sweep), one cargo-built command with bundled provenance.
   --chunks N         chunk count (default 32, the 10 GB gate value; outputs
                      are chunk-count invariant - the exact merge certifies
                      trees of 5 and 16 chunks byte-identical to the bank).
+  --kway N           merge arity (default 2 = the certified pairwise tree).
+                     N = chunk count is the FLAT one-level shape: ONE k-way
+                     merge straight from the chunks (primary shape; every
+                     arity byte-reproduces the same canonical artifact).
   --remap PATH       256-byte bijective byte map applied by the chunk front
                      end. Default: the embedded production map (the banked
                      fragment route's frag.remap, sha256 b4f38776...).
@@ -116,6 +121,7 @@ struct Options {
     memory_gb: u64,
     threads: u32,
     chunks: u32,
+    kway: u32,
     remap: Option<PathBuf>,
 }
 
@@ -172,6 +178,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     let mut memory_gb = 24u64;
     let mut threads = 48u32;
     let mut chunks = 32u32;
+    let mut kway = 2u32;
     let mut remap = None;
     let mut i = 0;
     while i < args.len() {
@@ -211,6 +218,13 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
                     return Err("--chunks must be positive".into());
                 }
             }
+            "--kway" => {
+                i += 1;
+                kway = parse_u32(args.get(i), "--kway")?;
+                if kway < 2 {
+                    return Err("--kway must be >= 2 (the pairwise arity)".into());
+                }
+            }
             "--remap" => {
                 i += 1;
                 let path = PathBuf::from(value(args.get(i), "--remap")?);
@@ -224,7 +238,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     }
     let input = input.ok_or("need --input <corpus>")?;
     let scratch = scratch.ok_or("need --scratch <dir>")?;
-    Ok(Options { input, scratch, snap_1e, memory_gb, threads, chunks, remap })
+    Ok(Options { input, scratch, snap_1e, memory_gb, threads, chunks, kway, remap })
 }
 
 /// Last byte of a file (the snap-boundary probe).
@@ -511,9 +525,9 @@ fn run_chain(options: Options) -> Result<(), String> {
     // Preflight: disc gate before anything is written.
     disc_preflight(&scratch)?;
     journal.line(&format!(
-        "XSA_BUILD START input={} scratch={} memory_gb={} threads={} chunks={} remap={}",
+        "XSA_BUILD START input={} scratch={} memory_gb={} threads={} chunks={} kway={} remap={}",
         input.display(), scratch.display(), options.memory_gb, options.threads,
-        options.chunks, if options.remap.is_some() { "provided" } else { "production" }
+        options.chunks, options.kway, if options.remap.is_some() { "provided" } else { "production" }
     ));
     // Snap preflight: the demonstrated refusal fires before any phase runs.
     let n = check_snap_boundary(&input)?;
@@ -548,11 +562,13 @@ fn run_chain(options: Options) -> Result<(), String> {
         "--tree".into(), s(&scratch.join("chunks").to_string_lossy()), options.chunks.to_string(),
         n.to_string(), frag.clone(),
         "--threads".into(), options.threads.to_string(),
+        "--kway".into(), options.kway.to_string(),
         "--work".into(), s(&scratch.join("mwork").to_string_lossy()),
         "--emit-pf".into(),
     ])?;
     let pairs = count_log_contains(&scratch, "merge", "CROSS_PAIR");
-    journal.line(&format!("MERGE cross_pairs={pairs}"));
+    let kways = count_log_contains(&scratch, "merge", "CROSS_KWAY");
+    journal.line(&format!("MERGE cross_pairs={pairs} cross_kway_nodes={kways} kway={}", options.kway));
     journal.line(&require_log_contains(&scratch, "merge", "CROSS_PF_EMIT")?);
 
     // 3. external adopt finish: endpoints + slim consume the pf side streams.
