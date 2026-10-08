@@ -433,3 +433,60 @@ the x86-64 psABI and is NOT the right probe).
 Scratch discipline (standing): all scratch/references on nvme2n1; root for
 the repo and final artifacts only; df checked before every phase (refuse
 under 15% free).
+
+## FRAG GATE 5 (attempt 5): NO-POOL CERTIFICATION PASSED — the spine
+
+16-chunk fragment tree (pile-frag.txt, 1.08 GB real corpus bytes, production
+frag.remap), externalized merge --tree --emit-pf, NO-POOL shipped mode,
+under ulimit -v 6 GiB:
+- ALL 15 pairs clean; SUM(pair walls) = 31,957 s; merge wall 8:52:38;
+  peak RSS 2.92 GB (vs the RESIDENT code's 35.9 GB on this input — and the
+  resident code could not survive this cap at all)
+- **ALL FOUR merged files byte-identical to the banked reference**
+  (frag.rlebwt/.rlebwt.meta/.ssa/.ssa_t, BANK=/home/erikg/cross-lcp-run/merged)
+- adopt endpoints+slim from the merge's own sidecars: agg byte-identical to
+  the banked fresh.agg at 30 MB slim RSS
+- out_runs=397,723,016 (padded); chi family = the banked fragment's
+  (chi=306,164,765) by byte-identity
+- logs: logs/fraggate5/
+
+## POOL-FIX INTEGRATION (validated lane patch applied; checker artifact corrected)
+
+The pool-fix lane's 61-line patch applied clean (fill() refuses to claim
+FILLING slots — closing the mid-fill theft whose orphaned pread poisoned
+slot-collision partners; monotonic-CAS prefetch ring). CORRECTION for the
+record: the a17ab04 "model-clean" verdicts were an artifact of the OLD
+checker's OWNED model latching only the high half of the 128-bit word
+(multi-filler schedules unreachable); the de-blinded checker shows the
+shipped CAS128 protocol WITHOUT the fill-guard poisons in 99-772 checks.
+With the fix: checker clean (multi-filler depth 48, single-filler 96, all
+shapes), witness class dead, 2h soak 6.5B checks bad=0, 30min TSan clean,
+5-chunk serial tree byte-identical to the no-pool reference at 3.20x
+(49:28 vs 2:38) — the lane's numbers, cross-checked in my tree:
+- six-seed selftest sweep (2000 cases each: seeds 11/99/20261002/7/5/13):
+  ALL PASS; k=1/4/64 sweeps PASS
+- 3x repeated pair bench (f4tree L0-2+L0-3, 48 threads): out_runs=102796802
+  x3, byte-identical to the no-pool reference, wall 1125-1218 s vs no-pool's
+  2372-2516 s (2.1x on this pair; the lane's serial-tree shape measured 3.20x)
+THE 10 GB RUN (post-merge, as a clean `xsa build` from pushed main per the
+provenance directive) USES THE FIXED POOL.
+
+## MEASUREMENT TABLE (externalized merge, fragment scale measured; the 10 GB
+## row's walls come from the post-merge xsa run; projections bounded by factor)
+
+| scale | mode | wall (merge tree) | peak RSS | byte-identity |
+|---|---|---|---|---|
+| 1.08 GB fragment (measured) | no-pool | 8:52:38 (15 pairs; caps: ulimit -v 6 GiB) | 2.92 GB | 4 files + agg == banked |
+| 1.08 GB fragment (measured) | fixed pool | pair walls 2.1x faster (1218 vs 2516 s on the n=270.6M pair; 3.20x on the lane's 5-chunk serial tree) | 2.9 GB | identical |
+| 1 GB real pile (measured, earlier rung) | resident v2 merge + external finish | merge 21:10 @ 35.9 GB (v2 resident); external adopt finish 5:45/386 MB endpoints, 20:47/30.2 MB slim | 35.9 GB merge / 386 MB finish | 4 files == banked; adopt agg == walk agg |
+| 4.29 GB realmax (measured) | resident v1 merge; external endpoints+repair | merge 1:57:31 @ 108.9 GB; external finish 15:11 @ 664 MB (R=1.525e9) | 108.9 GB / 664 MB | endpoints ran clean; superseded by the 10 GB point (byte-prefix) |
+| 10 GB (banked reference) | resident v2 merge; external adopt finish | merge 6:14 @ 332 GB; finish: endpoints 58:36 @ 922 MB, slim 3:10 @ 31.5 MB, sweep 8:20 @ 4 MB; chi=2,676,929,448 (N=10,000,017,258, R=3,474,888,928) | 332 GB / 922 MB | 4 files + pftext/pfck + ri4/head_sa/agg/sA all banked |
+| 10 GB externalized rebuild | fixed pool (planned: `xsa build` from main) | projected 5-6x the resident per-pair factor => ~31-37 h tree (the no-pool mode would be ~2x that; both bounded by the frag factors) | ~3 GB (bounded by the 6 GiB frag evidence; the run takes a hard ulimit) | gate vs the banked 10 GB reference |
+| 100 GB (projection) | fixed pool | ~10x the 10 GB tree (comparisons ~ n-log-n per the balanced tree; factor bounds: 8-12x) => 13-18 days serial single-node | ~3-6 GB (page tables scale with live node only) | n/a |
+| PILE 1.31 TB (projection) | fixed pool | ~131x of 10 GB per the same factors => 7-10 weeks serial; the tree topology/chunking are fine (per-lane finding), the wall is the mission cost | ~10-30 GB merge node (chunk-scale walk transients + windows); the finish lane measured ~70 GB incl. page cache at 26R | the pile RAM budget line: merge <= ~30 GB, finish <= ~70 GB — **the 100 GB box budget HOLDS** |
+
+Each measured cell is sourced to a log in bit6/sxi_logs/external-columns/logs/
+(fraggate5, real10b, realmax) and the bench logs banked in
+bit6/sxi_logs/pool-verification/. The pile row's per-node RAM is bounded by
+the frag/10b measurements (nothing per-position is resident); the wall is
+the honest cost of the verification-carried exact merge.

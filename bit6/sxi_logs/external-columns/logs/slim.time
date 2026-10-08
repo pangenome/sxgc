@@ -1,0 +1,23 @@
+	Command being timed: "/tmp/extcols/bin3/slim_dump --slim --resolve-ri4 --ri4 /mnt/nvme2n1/erikg/extcols-scratch/fragext/frag-ext.ri4 --head-sa /mnt/nvme2n1/erikg/extcols-scratch/fragext/frag-ext.head_sa -t 48 --pf-text /mnt/nvme2n1/erikg/extcols-scratch/fragext/merged/frag.pftext --pf-checkpoints /mnt/nvme2n1/erikg/extcols-scratch/fragext/merged/frag.pfck -o /mnt/nvme2n1/erikg/extcols-scratch/fragext/frag-ext.agg"
+	User time (seconds): 2684.25
+	System time (seconds): 54003.19
+	Percent of CPU this job got: 4202%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 22:29.02
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 30216
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 69434558
+	Voluntary context switches: 231693
+	Involuntary context switches: 271907
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 24861184
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

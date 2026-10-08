@@ -57,6 +57,8 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <execinfo.h>
+#include <csignal>
 #include <cstdlib>
 #include <cstring>
 #include <deque>
@@ -237,6 +239,24 @@ struct SharedPages {
         if (page >= pages) return;
         Slot& sl = slots[slotOf(page)];
         unsigned __int128 cur = __atomic_load_n(&sl.w, __ATOMIC_ACQUIRE);
+        // THE POOL FIX (residual corruption #3, slot-collision contamination).
+        // NEVER claim a slot another filler is mid-fill on. The old rule
+        // claimed any non-ready slot, which disowned the owner's in-flight
+        // pread; a later claim flips the buffer table BACK to the buffer the
+        // disowned pread is still writing into, so two preads race in one
+        // buffer and the final publish can name a page whose buffer holds
+        // the slot-collision PARTNER page's bytes -- the reader's seqlock
+        // recheck passes because the word never changed after the publish.
+        // Live witness: pj2 served from partner hash page 251770 for
+        // requested page 1300346 (grid dump, kill pairs 3+). Bounded checker
+        // (pool-fix lane, faithful half-latch): STALE READ at depth 16 with
+        // 2 fillers. Refusing to claim while FILLING makes every disowned
+        // write impossible: only the owner writes, only the owner publishes,
+        // and the owner's publish CAS can never fail (nobody can move the
+        // word while it owns it), so FILLING is transient (one pread) and a
+        // refused filler simply skips: the owner publishes and the reader
+        // falls back to its synchronous thread-local page on the miss path.
+        if (stateOf(cur) == ST_FILLING) return;   // an in-flight owner owns the slot
         if (pageOf(cur) == page && stateOf(cur) == ST_READY) return;   // advisory: ready
         // Claim: CAS128 from the latched word. The expectation carries the
         // full 64-bit version (a stale latch can never re-match) and the
@@ -278,13 +298,21 @@ struct SharedPages {
         U h = qh.load(std::memory_order_acquire);
         if (t - h >= QCAP - 2) return;             // ring full: drop
         queue[t & (QCAP - 1)].store(page, std::memory_order_relaxed);
-        qt.store(t + 1, std::memory_order_release);
+        // POOL-FIX RING RULE (pool-fix lane; stress-rig teardown-hang
+        // witness): publish by monotonic CAS. A plain store of a stale t+1
+        // could REGRESS qt below qh; the emptiness test h==t then never
+        // holds again, the unsigned fullness check t-h inverts (producers
+        // silently drop everything), and the workers spin past the stopping
+        // check forever (pool teardown join hang). A lost CAS is just a
+        // dropped hint; qt never regresses.
+        U exp = t;
+        qt.compare_exchange_strong(exp, t + 1, std::memory_order_release, std::memory_order_relaxed);
     }
     void worker() {
         unsigned idle = 0;
         for (;;) {
             U h = qh.load(std::memory_order_acquire);
-            U t = qt.load(std::memory_order_relaxed);
+            U t = qt.load(std::memory_order_acquire);   // pairs the producer's release CAS
             if (h == t) {
                 if (stopping.load(std::memory_order_relaxed)) return;
                 // Idle: brief pause-spin (no syscalls), then sleep; an idle
@@ -296,7 +324,8 @@ struct SharedPages {
             }
             idle = 0;
             U page = queue[h & (QCAP - 1)].load(std::memory_order_relaxed);
-            qh.store(h + 1, std::memory_order_release);
+            if (!qh.compare_exchange_strong(h, h + 1, std::memory_order_acquire, std::memory_order_acquire))
+                continue;   // taken by another worker: retry (pool-fix ring rule)
             fill(page);
         }
     }
@@ -1940,7 +1969,15 @@ static int selftest(U cases, uint64_t seed, U threads) {
 }
 
 // ---------------------------------------------------------------- driver
+static void abortHandler(int sig) {
+    void* bt[32];
+    int n = backtrace(bt, 32);
+    std::fprintf(stderr, "SIGABRT/terminate backtrace (%d frames):\n", n);
+    backtrace_symbols_fd(bt, n, 2);
+    _exit(99);
+}
 int main_impl(int argc, char** argv) {
+    std::signal(SIGABRT, abortHandler);
     G_T0 = now_sec();
     U threads = 8;
     std::vector<std::string> args(argv + 1, argv + argc);

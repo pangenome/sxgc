@@ -21,7 +21,7 @@ echo "=== chunk_frontend (v2, unchanged)"
 grep CHUNKS_PASS "$SCR/chunk.log"
 
 echo "=== externalized merge --tree --emit-pf under ulimit -v 6 GiB"
-( ulimit -v 6291456; /usr/bin/time -v -o "$SCR/merge.time" \
+( ulimit -v 6291456; export CROSS_NO_POOL=1; /usr/bin/time -v -o "$SCR/merge.time" \
   "$BIN/cross_lcp_merge" --tree "$SCR/chunks" 16 "$N" "$SCR/merged/frag" \
     --threads 48 --work "$SCR/mwork" --emit-pf > "$SCR/merge.log" 2>&1 ) \
   || { echo MERGE_FAIL; tail -5 "$SCR/merge.log"; exit 1; }
@@ -39,10 +39,17 @@ for f in pftext pfck; do
       || echo "EXTMERGE_$f not present in bank (informational; gate on agg below)"
 done
 
-echo "=== adopt slim from the externalized merge's sidecars (same cap)"
+echo "=== adopt endpoints + slim from the externalized merge's sidecars (same cap)"
 BIN3=/tmp/extcols/bin3
-( ulimit -v 6291456; /usr/bin/time -v -o "$SCR/slim.time" \
-  "$BIN3/slim_dump" --text "$SCR/merged/frag.pftext" --checkpoints "$SCR/merged/frag.pfck" \
+( ulimit -v 6291456; export CROSS_NO_POOL=1
+  /usr/bin/time -v -o "$SCR/ep.time" \
+  "$BIN3/rpfbwt_endpoints" "$SCR/merged/frag" "$SCR/frag-ext.ri4" "$SCR/frag-ext.head_sa" \
+      --pf-text "$SCR/merged/frag.pftext" --pf-checkpoints "$SCR/merged/frag.pfck" > "$SCR/ep.log" 2>&1 ) \
+  || { echo EP_FAIL; tail -3 "$SCR/ep.log"; exit 1; }
+grep ENDPOINT_PASS "$SCR/ep.log" | head -1
+( ulimit -v 6291456; export CROSS_NO_POOL=1; /usr/bin/time -v -o "$SCR/slim.time" \
+  "$BIN3/slim_dump" --slim --resolve-ri4 --ri4 "$SCR/frag-ext.ri4" --head-sa "$SCR/frag-ext.head_sa" -t 48 \
+  --pf-text "$SCR/merged/frag.pftext" --pf-checkpoints "$SCR/merged/frag.pfck" \
     --output "$SCR/frag-ext.agg" > "$SCR/slim.log" 2>&1 ) \
   || { echo SLIM_FAIL; tail -3 "$SCR/slim.log"; exit 1; }
 grep -o "Maximum resident set size.*" "$SCR/slim.time"
