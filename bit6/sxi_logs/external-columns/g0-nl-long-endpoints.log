@@ -1,0 +1,20 @@
+PFP_TERMINAL byte=0x0a source=padding-row raw_n=9019 raw_r=5873
+CYCLIC_SEAM_REPAIR terminal=0x0a predecessors_before_zero=2
+SLIM_PHASE ext-totals wall=0.015 cumulative=NA peak_rss_kib=26624
+SLIM_PHASE ext-record+seed-chunks wall=0.001 cumulative=NA peak_rss_kib=26624
+SLIM_PHASE ext-seeds-tail-merge wall=0.002 cumulative=NA peak_rss_kib=28672
+SLIM_EXT_BUILT R=5873 textLen=9009 rows=9019 records=140952 seeds=93968 seeds_t=93968 coarse=92 coarse_stride=64 work_prefix=/tmp/extcols/g0b3/nl-long/fresh.ri4
+SLIM_PHASE ext-build-total wall=0.017 cumulative=NA peak_rss_kib=NA
+SLIM_PHASE parse-free-ext-ready wall=0.000 cumulative=0.021 peak_rss_kib=28672
+SLIM_STRING_ENDS count=1 bytes=8 from_parse_dict=0 cyclic=1
+SLIM_PHASE parse-free-walk wall=0.022 cumulative=0.042 peak_rss_kib=28672
+SLIM_PHASE parse-free-fingerprints wall=0.000 cumulative=0.043 peak_rss_kib=28672
+SLIM_PF_SELF_CHECK checks=256 passed=1
+SLIM_PHASE parse-free-self-check wall=0.000 cumulative=0.043 peak_rss_kib=28672
+SLIM_PARSE_FREE_STRUCT mode=walk n=9019 text_len=9009 rows=9019 tau=13 checkpoints=694 checkpoint_bytes=5552 sidecar_bytes=9009 seeds=5873 emissions=9009 cyclic=1 work_limit=100000000 no_SA_ISA_LCP_RMQ=1 no_M_b_bwt_w_wt=1 no_parse_dict=1 no_phrase_ids=1 corpus_reads=0
+CYCLIC_SEAM_LCE_POLICY parse_free=1 probe_limit=13 max_verification=67108864 total_limit=100000000 cost=byte_comparisons_plus_hash_probes_plus_verified_bytes fraction=16n floor=100000000 exact=1 no_parse_dict=1
+CYCLIC_SEAM_REPAIRED classes=1 rows=4 discovery_steps=2 limit=1000 phi_samples=5873
+CYCLIC_SEAM_WORK max_seam_lce=3002 total_work=3616 total_limit=100000000 exact=1
+SLIM_FP parse-free-text tau=13 bytes=5552 queries=9 verified_symbols=3013 hash_probes=19 mean_verified=334.777777778 max_verified=3002 max_requested_lce=3001 verification_work=3029 hash_probe_charges=587 suffix_symbol_reads=3172 total_work=3616 total_limit=100000000 verification_limit=9009 probe_limit=13
+SLIM_PARSE_FREE mode=walk text_len=9009 rows=9019 sidecar_bytes=9009 tau=13 checkpoint_bytes=5552 seeds=5873 emissions=9009 cyclic=1 string_ends=1 work_used=3616 work_limit=100000000 sidecar_owned=1 corpus_reads=0
+ENDPOINT_PASS raw_n=9019 raw_r=5873 n=9009 k=4 r=5870 padding_rows=10 cyclic_seam_certified=0

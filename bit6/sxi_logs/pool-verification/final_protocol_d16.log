@@ -1,0 +1,4 @@
+PROG explored=100000 queued=5151 elapsed=0.4s
+PROG explored=200000 queued=5099 elapsed=0.8s
+== ?: vb=64 pages=2 slots=1 ps=4 R=1 F=2 depth=16 cap=0
+   states=304131 transitions=978778 verdict=clean

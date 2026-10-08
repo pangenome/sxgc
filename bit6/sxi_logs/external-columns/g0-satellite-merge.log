@@ -1,0 +1,26 @@
+CROSS_PHASE m2-build wall=0.000 cumulative=0.001 peak_rss_kib=14336
+CROSS_PHASE hash-build wall=0.000 cumulative=0.002 peak_rss_kib=14336
+CROSS_PHASE anchor+repair wall=0.000 cumulative=0.002 peak_rss_kib=14336
+CROSS_PHASE cross-merge wall=0.000 cumulative=0.002 peak_rss_kib=14336
+CROSS_PHASE sxcr-count wall=0.000 cumulative=0.002 peak_rss_kib=14336
+CROSS_PHASE sxcr-write wall=0.000 cumulative=0.002 peak_rss_kib=14336
+CROSS_PHASE sidecar-write wall=0.000 cumulative=0.002 peak_rss_kib=14336
+CROSS_PAIR mode=cyclic left=/tmp/extcols/g0b3/satellite/chunks/chunk-0.crle right=/tmp/extcols/g0b3/satellite/chunks/chunk-1.crle nA=2221 nB=2221 out=/tmp/extcols/g0b3/satellite/work/L0-0.crle out_runs=120 wall_total=0.002 comparisons=4456 symbols_compared=54568 probes=15786 max_lce=48 fast_decided=3117 probe_decided=1339 cap_decided=0 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_A=7 anchors_B=1 walk_steps_A=7 walk_steps_B=1 block_rows_A=230 block_rows_B=38 peak_rss_kib=14336
+CROSS_PHASE m2-build wall=0.000 cumulative=0.003 peak_rss_kib=14336
+CROSS_PHASE hash-build wall=0.000 cumulative=0.003 peak_rss_kib=14336
+CROSS_PHASE anchor+repair wall=0.000 cumulative=0.003 peak_rss_kib=14336
+CROSS_PHASE cross-merge wall=0.000 cumulative=0.003 peak_rss_kib=14336
+CROSS_PHASE sxcr-count wall=0.000 cumulative=0.003 peak_rss_kib=14336
+CROSS_PHASE sxcr-write wall=0.000 cumulative=0.003 peak_rss_kib=14336
+CROSS_PHASE sidecar-write wall=0.000 cumulative=0.003 peak_rss_kib=14336
+CROSS_PAIR mode=cyclic left=/tmp/extcols/g0b3/satellite/chunks/chunk-2.crle right=/tmp/extcols/g0b3/satellite/chunks/chunk-3.crle nA=2221 nB=2221 out=/tmp/extcols/g0b3/satellite/work/L0-1.crle out_runs=122 wall_total=0.001 comparisons=4450 symbols_compared=54206 probes=15688 max_lce=47 fast_decided=3118 probe_decided=1332 cap_decided=0 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_A=1 anchors_B=1 walk_steps_A=1 walk_steps_B=1 block_rows_A=38 block_rows_B=38 peak_rss_kib=14336
+CROSS_PHASE m2-build wall=0.000 cumulative=0.004 peak_rss_kib=14336
+CROSS_PHASE hash-build wall=0.000 cumulative=0.004 peak_rss_kib=14336
+CROSS_PHASE anchor+repair wall=0.000 cumulative=0.004 peak_rss_kib=14336
+CROSS_PHASE cross-merge wall=0.000 cumulative=0.004 peak_rss_kib=14336
+CROSS_PHASE emit-count wall=0.000 cumulative=0.004 peak_rss_kib=14336
+CROSS_PHASE emit-write wall=0.000 cumulative=0.004 peak_rss_kib=14336
+CROSS_PHASE emit-pf-text wall=0.000 cumulative=0.004 peak_rss_kib=14336
+CROSS_PF_EMIT text=/tmp/extcols/g0b3/satellite/frag.pftext pfck=/tmp/extcols/g0b3/satellite/frag.pfck n=8884 final_runs=142 tau=501 count=18 bytes=184
+CROSS_PHASE emit-pf-checkpoints wall=0.000 cumulative=0.004 peak_rss_kib=14336
+CROSS_PAIR mode=dollar left=/tmp/extcols/g0b3/satellite/work/L0-0.crle right=/tmp/extcols/g0b3/satellite/work/L0-1.crle nA=4442 nB=4442 out=/tmp/extcols/g0b3/satellite/frag out_runs=142 wall_total=0.001 comparisons=8881 symbols_compared=129858 probes=40738 max_lce=47 fast_decided=5300 probe_decided=3579 cap_decided=2 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_A=1 anchors_B=1 walk_steps_A=1 walk_steps_B=1 block_rows_A=76 block_rows_B=76 peak_rss_kib=14336

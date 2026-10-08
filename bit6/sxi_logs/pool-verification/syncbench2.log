@@ -1,0 +1,13 @@
+CROSS_PHASE m2-build wall=0.153 cumulative=731.845 peak_rss_kib=10240
+POOL_STATS fd=13 bytes=541210320 fills=5 hits=0 misses=0 torn=0
+CROSS_PHASE hash-build wall=1.291 cumulative=733.136 peak_rss_kib=928876
+CROSS_PHASE anchor+repair wall=90.287 cumulative=823.423 peak_rss_kib=1559948
+XMERG_TIMING t_pf=41.578 t_pop=12.304 cell_hits=37198281 cell_miss=54135871
+CROSS_PHASE cross-merge wall=265.260 cumulative=1088.684 peak_rss_kib=1559948
+POOL_STATS fd=14 bytes=541210320 fills=6111508 hits=0 misses=0 torn=3329405
+POOL_STATS fd=7 bytes=541210314 fills=6107403 hits=3280990215 misses=251636 torn=3244587
+CROSS_PHASE sxcr-count wall=84.951 cumulative=1173.794 peak_rss_kib=1559948
+CROSS_PHASE sxcr-write wall=152.031 cumulative=1325.825 peak_rss_kib=1559948
+CROSS_PHASE sidecar-write wall=9.250 cumulative=1335.074 peak_rss_kib=1559948
+CROSS_PAIR mode=cyclic left=/mnt/nvme2n1/erikg/extcols-scratch/f4tree/mwork/L0-2.crle right=/mnt/nvme2n1/erikg/extcols-scratch/f4tree/mwork/L0-3.crle nA=135323787 nB=135281370 out=/mnt/nvme2n1/erikg/extcols-scratch/f4tree/L1-1-sync-2.crle out_runs=102796802 wall_total=1335.075 comparisons=270649370 symbols_compared=8589649306 probes=163097420 max_lce=97059 fast_decided=224982294 probe_decided=45667076 cap_decided=0 tie_decided=0 lce_over_10k=98773 lce_over_100k=0 lce_over_1m=0 anchors_A=5 anchors_B=8 walk_steps_A=5 walk_steps_B=8 block_rows_A=28889 block_rows_B=33773 peak_rss_kib=1559948 hash_k=0 t_fast=71.067 t_prep=1.775 t_probe=22.407 t_scan=69.334
+POOL_STATS fd=123 bytes=541210314 fills=9270271 hits=811730110 misses=85360 torn=4716310

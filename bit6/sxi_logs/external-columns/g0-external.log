@@ -1,0 +1,34 @@
+PASS rs-dup: adopt-mode endpoints byte-identical (no padded walk)
+PASS rs-dup: endpoints ri4+head_sa byte-identical to legacy adapter
+PASS rs-dup/default: sidecar==text; agg byte-identical to brute oracle (n=31080 R=7020 k=1)
+PASS rs-dup: adopt-mode agg byte-identical (no walk, merge sidecars)
+PASS rs-dup/tau2: sidecar==text; agg byte-identical to brute oracle (n=31080 R=7020 k=1)
+PASS rs-dup: fault injection fails loudly
+PASS periodic: both adapters refuse the out-of-policy seam identically
+PASS rand4: adopt-mode endpoints byte-identical (no padded walk)
+PASS rand4: endpoints ri4+head_sa byte-identical to legacy adapter
+PASS rand4/default: sidecar==text; agg byte-identical to brute oracle (n=9604 R=7285 k=1)
+PASS rand4: adopt-mode agg byte-identical (no walk, merge sidecars)
+PASS rand4/tau2: sidecar==text; agg byte-identical to brute oracle (n=9604 R=7285 k=1)
+PASS rand4: fault injection fails loudly
+PASS nl-multi: endpoints ri4+head_sa byte-identical to legacy adapter
+PASS nl-multi/default: sidecar==text; agg byte-identical to brute oracle (n=3530 R=421 k=60)
+PASS nl-multi/tau2: sidecar==text; agg byte-identical to brute oracle (n=3530 R=421 k=60)
+PASS nl-multi: fault injection fails loudly
+PASS satellite: adopt-mode endpoints byte-identical (no padded walk)
+PASS satellite: endpoints ri4+head_sa byte-identical to legacy adapter
+PASS satellite/default: sidecar==text; agg byte-identical to brute oracle (n=8884 R=140 k=1)
+PASS satellite: adopt-mode agg byte-identical (no walk, merge sidecars)
+PASS satellite/tau2: sidecar==text; agg byte-identical to brute oracle (n=8884 R=140 k=1)
+PASS satellite: fault injection fails loudly
+PASS tiny: adopt-mode endpoints byte-identical (no padded walk)
+PASS tiny: parse-free adapter passes; legacy cannot (no viable PFP parse); parity skipped
+PASS tiny/default: sidecar==text; agg byte-identical to brute oracle (n=33 R=14 k=1)
+PASS tiny: adopt-mode agg byte-identical (no walk, merge sidecars)
+PASS tiny/tau2: sidecar==text; agg byte-identical to brute oracle (n=33 R=14 k=1)
+PASS tiny: fault injection fails loudly
+PASS nl-long: endpoints ri4+head_sa byte-identical to legacy adapter
+PASS nl-long/default: sidecar==text; agg byte-identical to brute oracle (n=9009 R=5870 k=4)
+PASS nl-long/tau2: sidecar==text; agg byte-identical to brute oracle (n=9009 R=5870 k=4)
+PASS nl-long: fault injection fails loudly
+G0_PARSE_FREE PASS all corpora: adapter parity, walk parity, oracle byte identity (default tau + tau1=2), fail-loud

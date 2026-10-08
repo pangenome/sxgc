@@ -1,0 +1,9 @@
+=== merge --tree --emit-pp started 1791054723
+=== merge done 1791055968 rc=0
+MERGE_FOUR_rlebwt BYTE_IDENTICAL
+MERGE_FOUR_rlebwt.meta BYTE_IDENTICAL
+MERGE_FOUR_ssa BYTE_IDENTICAL
+MERGE_FOUR_ssa_t BYTE_IDENTICAL
+CROSS_PF_EMIT text=/tmp/extcols/mergerun/frag/frag.pftext pfck=/tmp/extcols/mergerun/frag/frag.pfck n=1082130213 final_runs=397723016 tau=22 count=49187737 bytes=393501936
+Terminated
+PFCK_CHECK_FAIL

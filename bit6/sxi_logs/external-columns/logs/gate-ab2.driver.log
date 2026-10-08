@@ -1,0 +1,18 @@
+########## (a) external finish, uncapped
+GATE_A ENDPOINTS_BYTE_IDENTICAL
+GATE_A AGG_BYTE_IDENTICAL
+xsa chi-rspace: chi = 306164765 (N=1082130213, R=397723010) stream-agg=true buffers=4194304
+GATE_A CHI_306164765_OK
+GATE_A sA_BYTE_IDENTICAL
+########## (b) memory force-test under RLIMIT_AS 8388608 KiB
+GATE_B ENDPOINTS_BYTE_IDENTICAL
+GATE_B AGG_BYTE_IDENTICAL
+xsa chi-rspace: chi = 306164765 (N=1082130213, R=397723010) stream-agg=true buffers=4194304
+GATE_B CHI_306164765_OK
+GATE_B sA_BYTE_IDENTICAL
+########## resident-version refusal under the same cap (evidence)
+8388608
+resident endpoints under cap rc=1 (expected nonzero)
+CYCLIC_SEAM_REPAIR terminal=0x1e predecessors_before_zero=78653
+FATAL: std::bad_alloc
+GATE_AB_DONE

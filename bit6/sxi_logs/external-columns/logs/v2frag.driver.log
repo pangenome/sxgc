@@ -1,0 +1,12 @@
+=== v2 chunk_frontend
+CHUNKS_PASS count=16 source_bytes=1082130213
+=== v2 merge --tree --emit-pf
+CROSS_PF_EMIT text=/tmp/extcols/v2frag/merged/frag.pftext pfck=/tmp/extcols/v2frag/merged/frag.pfck n=1082130213 final_runs=397723016 tau=22 count=49187737 bytes=393501936
+V2_MERGE_rlebwt BYTE_IDENTICAL_TO_BANKED
+V2_MERGE_rlebwt.meta BYTE_IDENTICAL_TO_BANKED
+V2_MERGE_ssa BYTE_IDENTICAL_TO_BANKED
+V2_MERGE_ssa_t BYTE_IDENTICAL_TO_BANKED
+V2_SIDECARS_AGG_BYTE_IDENTICAL_TO_BANKED
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 21:10.49
+	Maximum resident set size (kbytes): 35931444
+V2FRAG_VALIDATION_DONE

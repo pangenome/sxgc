@@ -40,7 +40,7 @@ struct Writer {
             data[used++] = static_cast<uint8_t>(value >> (8 * i));
     }
 };
-struct Run { uint8_t c; uint32_t len; uint64_t h, t; };
+struct Run { uint8_t c; uint64_t len; uint64_t h, t; };
 static void emit(const fs::path& output, const std::vector<uint8_t>& text,
                  uint64_t offset, unsigned index) {
     require(!text.empty() && text.back() == 0x1e, "unaligned chunk");
@@ -77,7 +77,7 @@ static void emit(const fs::path& output, const std::vector<uint8_t>& text,
     std::vector<Run> runs;
     for (int32_t pos : order) {
         uint8_t c = text[(static_cast<uint64_t>(pos) + n - 1) % n];
-        if (runs.empty() || runs.back().c != c || runs.back().len == UINT32_MAX)
+        if (runs.empty() || runs.back().c != c || runs.back().len == UINT64_MAX)
             runs.push_back({c, 0, static_cast<uint64_t>(pos), static_cast<uint64_t>(pos)});
         Run& r = runs.back();
         ++r.len; r.t = static_cast<uint64_t>(pos);
@@ -89,10 +89,12 @@ static void emit(const fs::path& output, const std::vector<uint8_t>& text,
     try {
         Writer writer(fd);
         for (uint8_t c : {'S','X','C','R'}) writer.word(c, 1);
-        writer.word(1, 4); writer.word(offset, 8); writer.word(n, 8);
+        // SXCR v2: 64-bit run lengths (widened chunk-route format; v1 readers
+        // and v1 chunks fail loud against each other by version).
+        writer.word(2, 4); writer.word(offset, 8); writer.word(n, 8);
         writer.word(runs.size(), 8);
         for (auto r : runs) {
-            writer.word(r.c, 1); writer.word(r.len, 4);
+            writer.word(r.c, 1); writer.word(r.len, 8);
             writer.word(r.h, 8); writer.word(r.t, 8);
         }
         writer.flush();

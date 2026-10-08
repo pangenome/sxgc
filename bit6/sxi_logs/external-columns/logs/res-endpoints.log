@@ -1,0 +1,16 @@
+PFP_TERMINAL byte=0x1e source=padding-row raw_n=1000000675 raw_r=368036610
+CYCLIC_SEAM_REPAIR terminal=0x1e predecessors_before_zero=73250
+SLIM_PHASE parse-free-lf-base wall=2.046 cumulative=142.899 peak_rss_kib=30779148
+SLIM_PHASE parse-free-seeds-sort wall=35.207 cumulative=178.106 peak_rss_kib=30779148
+SLIM_STRING_ENDS count=1 bytes=8 from_parse_dict=0 cyclic=1
+SLIM_PHASE parse-free-walk wall=121.149 cumulative=299.255 peak_rss_kib=30779148
+SLIM_PHASE parse-free-fingerprints wall=2.466 cumulative=301.721 peak_rss_kib=30779148
+SLIM_PF_SELF_CHECK checks=256 passed=1
+SLIM_PHASE parse-free-self-check wall=0.004 cumulative=301.724 peak_rss_kib=30779148
+SLIM_PARSE_FREE_STRUCT n=1000000675 text_len=1000000665 rows=1000000675 R=368036610 tau=22 checkpoints=45454576 checkpoint_bytes=363636608 sidecar_bytes=1000000665 seeds=368036610 emissions=1000000665 cyclic=1 work_limit=16000010640 no_SA_ISA_LCP_RMQ=1 no_M_b_bwt_w_wt=1 no_parse_dict=1 no_phrase_ids=1 corpus_reads=0
+CYCLIC_SEAM_LCE_POLICY parse_free=1 probe_limit=22 max_verification=67108864 total_limit=16000010640 cost=byte_comparisons_plus_hash_probes_plus_verified_bytes fraction=16n floor=100000000 exact=1 no_parse_dict=1
+CYCLIC_SEAM_REPAIRED classes=30 rows=213516 discovery_steps=31 limit=368036 phi_samples=368036610
+CYCLIC_SEAM_WORK max_seam_lce=97059 total_work=38367091 total_limit=16000010640 exact=1
+SLIM_FP parse-free-text tau=22 bytes=363636608 queries=4038381 verified_symbols=29271872 hash_probes=1363613 mean_verified=7.248417621 max_verified=97060 max_requested_lce=97059 verification_work=32912154 hash_probe_charges=5454937 suffix_symbol_reads=57520755 total_work=38367091 total_limit=16000010640 verification_limit=67108864 probe_limit=22
+SLIM_PARSE_FREE text_len=1000000665 rows=1000000675 sidecar_bytes=1000000665 tau=22 checkpoint_bytes=363636608 seeds=368036610 emissions=1000000665 cyclic=1 string_ends=1 work_used=38367091 work_limit=16000010640 sidecar_unlinked=1 corpus_reads=0
+ENDPOINT_PASS raw_n=1000000675 raw_r=368036610 n=1000000665 k=1 r=368036609 padding_rows=10 cyclic_seam_certified=0

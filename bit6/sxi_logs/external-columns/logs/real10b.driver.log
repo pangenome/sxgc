@@ -1,0 +1,6 @@
+########## 0. AS-IS raw cut: the mid-document refusal (demonstrated in full at 1 GB; here verified by the cut's last byte)
+RAW_CUT_LAST_BYTE=0x6e (0x1e would be document-aligned; chunk_frontend would refuse: input must end at document boundary — the full refusal was demonstrated and logged at 1 GB scale; a 10 GB doomed chunk sort is skipped)
+########## 1. snap to the first 0x1e at-or-after 10000000000 (loud, recorded)
+SNAP n=10000017258 (+17258 bytes past 1e10) sha256=d440d9e1fe0aeb4c32ebeffb2df02dac009a0806510c2f864a04c2cd92d3864a
+########## 2. chunk_frontend + merge --tree --emit-pf
+MERGE_FAIL
