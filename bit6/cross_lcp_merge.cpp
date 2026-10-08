@@ -36,6 +36,17 @@
 //    so their relative order is always already correct.
 //  * Cross placement is a plain two-pointer merge of the two repaired orders
 //    under the same total-order comparator.
+//  * PARALLEL EMISSION: the cross-merge walk and every emit walk are sharded
+//    at FIXED ORDER BOUNDARIES. The merged total order is strict, so the
+//    merged rank of A[a] is exactly a + #{B rows ordered before A[a]}: the
+//    walk's shard boundaries are binary-searched at merged-rank targets and
+//    each shard pwrites its disjoint output range. The emitters shard at run
+//    boundaries (shard-local run-start sums fix every run's global index);
+//    every run is finalized by exactly one shard, fixed-size records go out
+//    by pwrite at their global offsets, and the variable-word rlebwt goes
+//    through per-shard segments concatenated in shard order. Concatenation
+//    is order-pure: byte-identical to the serial walk by construction at
+//    S = --threads shards (CROSS_SHARDS overrides; S=1 IS the serial walk).
 //  * Comparisons use dense prefix fingerprints over M.M with a directly
 //    checked 16-symbol fast path, galloping hash probes, bisection, and FULL
 //    direct verification of every proposed equal prefix and its mismatch
@@ -1265,6 +1276,26 @@ static void repair_ext(PosOverlay& W, const std::vector<BlockRec>& blocks,
     }
 }
 
+// ------------------------------------------------------------ shard helpers
+// PARALLEL EMISSION (order/run-boundary sharding). S = --threads by default;
+// CROSS_SHARDS overrides (S=1 is exactly the banked serial walk; one code
+// path). Shard counts never exceed the walked item count.
+static U emit_shard_count(U threads, U items) {
+    U S = threads ? threads : 8;
+    if (const char* e = getenv("CROSS_SHARDS")) {
+        if (*e) {
+            U v = std::stoull(e);
+            require(v >= 1 && v <= 4096, "CROSS_SHARDS out of range");
+            S = v;
+        }
+    }
+    if (items && S > items) S = items;
+    if (S < 1) S = 1;
+    return S;
+}
+static void put_le32(char* b, uint32_t v) { for (int i = 0; i < 4; ++i) b[i] = char(v >> (8 * i)); }
+static void put_le64(char* b, U v)       { for (int i = 0; i < 8; ++i) b[i] = char(v >> (8 * i)); }
+
 // ------------------------------------------------------------ external core merge
 struct CoreStats { U anchorsA = 0, anchorsB = 0, rowsA = 0, rowsB = 0, stepsA = 0, stepsB = 0; };
 struct PairScratch {
@@ -1362,52 +1393,112 @@ static void core_merge_ext(const SideExt& A, const SideExt& B, bool dollar, U th
     repair_ext(posB, blocks, anchors, nA, nB, keys);
     phase("anchor+repair", last);
     // Linear cross merge under the total order, streamed into the WM file.
+    // PARALLEL EMISSION: the walk is sharded at fixed order boundaries. The
+    // merged total order is strict, so the merged rank of A[a] is exactly
+    // a + #{B rows ordered before A[a]} (rank_B). Planning binary-searches,
+    // at merged-rank target s*n/S, the largest a_s with
+    //   a_s + rank_B(A[a_s]) <= s*n/S,  b_s = rank_B(A[a_s])  (a_S = nA).
+    // Every element of A[a_s..a_{s+1}) and of B[b_s..b_{s+1}) then has merged
+    // rank inside [a_s+b_s, a_{s+1}+b_{s+1}) (both inclusions proved by the
+    // strict order: rank(A[i]) = i + rank_B(A[i]), rank(B[j]) = j +
+    // #{A ordered before B[j]}), so shard s runs the same two-pointer merge
+    // over its two ranges and pwrites at element offset a_s + b_s. Disjoint
+    // output ranges, one code path (S=1 is the serial walk), byte-identical
+    // by construction; thread scheduling cannot reach the bytes. Planning
+    // costs (S-1)*log(nA)*log(nB) comparisons, charged to the same budget.
     int fd = ::open(sc.wm.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
     require(fd >= 0, "create wm scratch");
     double tPF = 0, tPop = 0;
+    const U S = emit_shard_count(threads, n);
+    std::vector<U> aB(S + 1, 0), bB(S + 1, 0);
     {
-        constexpr U W = 8192;
-        U buf[W]; U nb = 0; U written = 0;
-        auto flushW = [&]() { if (nb) { xput(fd, buf, 8 * nb, 8 * written, "wm write"); written += nb; nb = 0; } };
-        U i = 0, j = 0, k = 0;
-        while (i < nA && j < nB) {
-            double q0 = now_sec();
-            if (m2.pool && (k & 31) == 0 && !getenv("CROSS_NO_PF")) {
-                // Front speculation: the next 32 fronts of both streams
-                // (deduplicated inside prefetch against owned slots).
-                // FIX 3: also prefetch the m2 text spans AND the sparse-hash
-                // anchor entries those fronts will touch (the head span is
-                // the fast-path page; the first gallop probe reads P at
-                // p/k + fast/k + 1, so that entry goes too).
-                U firstJb = 16 / hashK + 1;
-                for (U d = 1; d <= 32 && i + d < nA; ++d) {
-                    U p = posA.at(i + d);
-                    m2.prefetch(p, 16);
-                    if (hp.col.pool) hp.col.prefetch(p / hashK + firstJb);
-                }
-                for (U d = 1; d <= 32 && j + d < nB; ++d) {
-                    U p = posB.at(j + d);
-                    m2.prefetch(p, 16);
-                    if (hp.col.pool) hp.col.prefetch(p / hashK + firstJb);
-                }
+        auto rankB = [&](U p) -> U {   // #{j < nB : posB[j] ordered before p}
+            U lo = 0, hi = nB;
+            while (lo < hi) {
+                U mid = lo + (hi - lo) / 2;
+                if (keys.cmp(posB.at(mid), p) < 0) lo = mid + 1; else hi = mid;
             }
-            tPF += now_sec() - q0;
-            double q1 = now_sec();
-            U va = posA.at(i), vb = posB.at(j);
-            tPop += now_sec() - q1;
-            if (keys.cmp(va, vb) < 0) { buf[nb++] = va; ++i; }
-            else { buf[nb++] = vb; ++j; }
-            if (nb == W) flushW();
-            ++k;
+            return lo;
+        };
+        for (U s = 1; s < S; ++s) {
+            U target = s * n / S;
+            U lo = 0, hi = nA;         // f(a) = a + rank_B(A[a]); f(nA) := n
+            while (lo < hi) {
+                U mid = lo + (hi - lo + 1) / 2;
+                U f = (mid == nA) ? n : mid + rankB(posA.at(mid));
+                if (f <= target) lo = mid; else hi = mid - 1;
+            }
+            aB[s] = lo;
+            bB[s] = (lo == nA) ? nB : rankB(posA.at(lo));
         }
-        while (i < nA) { buf[nb++] = posA.at(i++); if (nb == W) flushW(); ++k; }
-        while (j < nB) { buf[nb++] = posB.at(j++); if (nb == W) flushW(); ++k; }
-        flushW();
-        require(k == n && written == n, "merge coverage");
+        aB[S] = nA; bB[S] = nB;
+    }
+    std::vector<Budget> shardBud(S);
+    std::vector<double> shardPF(S, 0.0), shardPop(S, 0.0);
+    {
+        const bool noPf = getenv("CROSS_NO_PF") != nullptr;
+        std::vector<std::thread> ts;
+        for (U s = 0; s < S; ++s)
+            ts.emplace_back([&, s] {
+                U a0 = aB[s], a1 = aB[s + 1], b0 = bB[s], b1 = bB[s + 1];
+                Keys skeys; skeys.init(&m2, &hp, n, dollar, &shardBud[s]);
+                constexpr U W = 8192;
+                std::vector<U> buf(W);
+                U nb = 0, out = a0 + b0, k = 0;
+                auto flushW = [&]() { if (nb) { xput(fd, buf.data(), 8 * nb, 8 * out, "wm write"); out += nb; nb = 0; } };
+                U i = a0, j = b0;
+                while (i < a1 && j < b1) {
+                    double q0 = now_sec();
+                    if (m2.pool && (k & 31) == 0 && !noPf) {
+                        // Front speculation: the next 32 fronts of both
+                        // streams (deduplicated inside prefetch against
+                        // owned slots), plus the m2 spans and sparse-hash
+                        // anchor entries those fronts will touch.
+                        U firstJb = 16 / hashK + 1;
+                        for (U d = 1; d <= 32 && i + d < a1; ++d) {
+                            U p = posA.at(i + d);
+                            m2.prefetch(p, 16);
+                            if (hp.col.pool) hp.col.prefetch(p / hashK + firstJb);
+                        }
+                        for (U d = 1; d <= 32 && j + d < b1; ++d) {
+                            U p = posB.at(j + d);
+                            m2.prefetch(p, 16);
+                            if (hp.col.pool) hp.col.prefetch(p / hashK + firstJb);
+                        }
+                    }
+                    shardPF[s] += now_sec() - q0;
+                    double q1 = now_sec();
+                    U va = posA.at(i), vb = posB.at(j);
+                    shardPop[s] += now_sec() - q1;
+                    if (skeys.cmp(va, vb) < 0) { buf[nb++] = va; ++i; }
+                    else { buf[nb++] = vb; ++j; }
+                    if (nb == W) flushW();
+                    ++k;
+                }
+                while (i < a1) { buf[nb++] = posA.at(i++); ++k; if (nb == W) flushW(); }
+                while (j < b1) { buf[nb++] = posB.at(j++); ++k; if (nb == W) flushW(); }
+                flushW();
+                require(k == (a1 - a0) + (b1 - b0) && out == a1 + b1,
+                        "shard merge coverage");
+            });
+        for (auto& t : ts) t.join();
     }
     ::close(fd);
-    std::fprintf(stderr, "XMERG_TIMING t_pf=%.3f t_pop=%.3f cell_hits=%llu cell_miss=%llu\n",
-                 tPF, tPop, (unsigned long long)g_cellHits.load(), (unsigned long long)g_cellMiss.load());
+    for (U s = 0; s < S; ++s) {
+        const Budget& sb = shardBud[s];
+        bud.comparisons += sb.comparisons; bud.fast_decided += sb.fast_decided;
+        bud.probe_decided += sb.probe_decided; bud.cap_decided += sb.cap_decided;
+        bud.probes += sb.probes; bud.symbols += sb.symbols;
+        bud.tie_decided += sb.tie_decided;
+        bud.lce_over_10k += sb.lce_over_10k; bud.lce_over_100k += sb.lce_over_100k;
+        bud.lce_over_1m += sb.lce_over_1m;
+        if (sb.max_lce > bud.max_lce) bud.max_lce = sb.max_lce;
+        bud.tFast += sb.tFast; bud.tPrep += sb.tPrep; bud.tProbe += sb.tProbe; bud.tScan += sb.tScan;
+        tPF += shardPF[s]; tPop += shardPop[s];
+    }
+    std::fprintf(stderr, "XMERG_TIMING t_pf=%.3f t_pop=%.3f cell_hits=%llu cell_miss=%llu shards=%llu\n",
+                 tPF, tPop, (unsigned long long)g_cellHits.load(), (unsigned long long)g_cellMiss.load(),
+                 (unsigned long long)S);
     phase("cross-merge", last);
 }
 
@@ -1502,108 +1593,315 @@ static void emit_pf_side_ext(const std::string& prefix, const WinBytes& m2, U n,
     phase("emit-pf-checkpoints", last);
 }
 
-// Enqueue, one band ahead, the M2 pages a coming band of WM rows will read.
-// four=true: row t reads M[WM[t-10]-1]; else M[WM[t]+n-1].
-static void prefetch_wm_rows(const WinBytes& m2, const WinU64& wm, U t0, U t1, U n, bool four) {
-    if (!m2.pool) return;
-    if (four) {
-        for (U t = std::max<U>(10, t0); t < t1; ++t) {
-            U p = wm.at(t - 10);
-            if (p) m2.prefetch(p - 1, 1);
-        }
-    } else {
-        for (U t = t0; t < t1; ++t) m2.prefetch(wm.at(t) + n - 1, 1);
-    }
-}
-
 // Final four files, read from the M2 and WM scratch files (sequential WM).
+// PARALLEL EMISSION: both walks are sharded at fixed run boundaries (the
+// same combiner arithmetic as the SXCR emitter; rows are the n+10 rows of
+// the padded order, pad rows included). The fixed-size outputs go out by
+// pwrite at global offsets (.meta entirely from the combiner; .ssa/.ssa_t
+// 8 bytes per run at 8*(1+runIndex), buffered per shard), and the
+// variable-word .rlebwt goes through per-shard segment files concatenated
+// in shard order. Every run is finalized by exactly one shard, so all four
+// files are byte-identical to the serial writer by construction.
 static U emit_four_ext(const std::string& prefix, const WinBytes& m2,
-                       const WinU64& wm, U n) {
+                       const WinU64& wm, U n, U threads, const std::string& segDir) {
     double last = now_sec();
     U total = n + 10;
     auto row_char_sample = [&](U t, uint8_t& c, U& sample) {
         if (t < 10) { sample = n + t; c = t == 0 ? m2.at(n - 1) : uint8_t(2); }
         else { U p = wm.at(t - 10); sample = p; c = p == 0 ? uint8_t(2) : m2.at(p - 1); }
     };
+    const U S = emit_shard_count(threads, total);
+    auto pfRows = [&](U t0, U t1) {   // rows [t0,t1): row t reads M[WM[t-10]-1]
+        if (!m2.pool) return;
+        for (U t = std::max<U>(10, t0); t < t1; ++t) {
+            U p = wm.at(t - 10);
+            if (p) m2.prefetch(p - 1, 1);
+        }
+    };
+    struct CountInfo { std::array<U, 256> counts{}, rc{}; U internalStarts = 0; bool firstIsStart = false; };
+    std::vector<CountInfo> info(S);
+    {   // pass 1: sharded count (chars + run starts per row-range shard)
+        std::vector<std::thread> ts;
+        for (U s = 0; s < S; ++s) {
+            U t0 = s * total / S, t1 = (s + 1) * total / S;
+            if (t1 <= t0) continue;
+            ts.emplace_back([&, s, t0, t1] {
+                CountInfo& ci = info[s];
+                pfRows(t0, std::min<U>(t1, t0 + 4096));
+                U pfNext = t0 + 4096;
+                uint8_t prevC; U prevS;
+                row_char_sample(t0, prevC, prevS);
+                ++ci.counts[prevC];
+                ci.firstIsStart = true;
+                if (t0) {
+                    uint8_t pc; U ps;
+                    row_char_sample(t0 - 1, pc, ps);
+                    ci.firstIsStart = (prevC != pc);
+                }
+                if (ci.firstIsStart) ++ci.rc[prevC];
+                for (U t = t0 + 1; t < t1; ++t) {
+                    if (t >= pfNext) { pfRows(t, std::min<U>(t1, t + 4096)); pfNext = t + 4096; }
+                    uint8_t c; U smp;
+                    row_char_sample(t, c, smp);
+                    ++ci.counts[c];
+                    if (c != prevC) { ++ci.internalStarts; ++ci.rc[c]; }
+                    prevC = c;
+                }
+            });
+        }
+        for (auto& t : ts) t.join();
+    }
     std::array<U, 256> counts{}, rc{};
     U final_runs = 0;
-    {
-        uint8_t prev = 0xff; bool any = false;
-        prefetch_wm_rows(m2, wm, 0, std::min(total, U(4096)), n, true);
-        for (U t = 0; t < total; ++t) {
-            if ((t & 4095) == 0)
-                prefetch_wm_rows(m2, wm, t + 4096, std::min(total, t + 8192), n, true);
-            uint8_t c; U s; row_char_sample(t, c, s);
-            ++counts[c];
-            if (!any || c != prev) { ++final_runs; ++rc[c]; prev = c; any = true; }
-        }
+    std::vector<U> base(S, 0);   // global run index of the first start >= t0_s
+    for (U s = 0; s < S; ++s) {
+        base[s] = final_runs;
+        final_runs += info[s].internalStarts + (info[s].firstIsStart ? 1u : 0u);
+        for (unsigned c = 0; c < 256; ++c) { counts[c] += info[s].counts[c]; rc[c] += info[s].rc[c]; }
     }
+    require(final_runs >= 1, "final run count underflow");
     require(counts[2] == 10, "padding count mismatch");
     phase("emit-count", last);
     {
-        OutFile b(prefix + ".rlebwt"), m(prefix + ".rlebwt.meta"),
-               h(prefix + ".ssa"), tl(prefix + ".ssa_t");
+        OutFile b(prefix + ".rlebwt"), m(prefix + ".rlebwt.meta");
         m.w64(total); m.w64(final_runs);
         for (U c : counts) m.w64(c);
         for (U c : rc) m.w64(c);
-        h.w64(final_runs); tl.w64(final_runs);
-        uint8_t cur = 0; U runlen = 0, head = 0, tail = 0; bool any = false;
-        auto flush = [&]() {
-            if (!any) return;
-            U left = runlen;
-            while (left) {
-                U take = std::min<U>(left, 0x7fffff); left -= take;
-                b.w32(uint32_t(cur) | uint32_t(take << 8) | (left ? 0x80000000u : 0u));
-            }
-            h.w64(head); tl.w64(tail);
+        m.flush();
+        auto openX = [&](const std::string& p) {
+            int f = ::open(p.c_str(), O_CREAT | O_EXCL | O_WRONLY, 0666);
+            require(f >= 0, "create output (exists?)");
+            return f;
         };
-        prefetch_wm_rows(m2, wm, 0, std::min(total, U(4096)), n, true);
-        for (U t = 0; t < total; ++t) {
-            if ((t & 4095) == 0)
-                prefetch_wm_rows(m2, wm, t + 4096, std::min(total, t + 8192), n, true);
-            uint8_t c; U s; row_char_sample(t, c, s);
-            if (!any || c != cur) { flush(); cur = c; runlen = 0; head = s; any = true; }
-            ++runlen; tail = s;
+        int hFd = openX(prefix + ".ssa"), tFd = openX(prefix + ".ssa_t");
+        {
+            char hb[8];
+            put_le64(hb, final_runs);
+            xput(hFd, hb, 8, 0, "ssa header write");
+            xput(tFd, hb, 8, 0, "ssa_t header write");
         }
-        flush();
+        std::vector<int> segFd(S, -1);
+        std::vector<std::string> segPath(S);
+        for (U s = 0; s < S; ++s) {
+            segPath[s] = segDir + "/rlebwt-seg-" + std::to_string(s);
+            segFd[s] = ::open(segPath[s].c_str(), O_CREAT | O_EXCL | O_WRONLY, 0666);
+            require(segFd[s] >= 0, "create rlebwt segment");
+        }
+        std::vector<std::thread> ts;
+        for (U s = 0; s < S; ++s) {
+            U t0 = s * total / S, t1 = (s + 1) * total / S;
+            if (t1 <= t0) continue;
+            U b0 = base[s];
+            bool firstIsStart = info[s].firstIsStart;
+            ts.emplace_back([&, s, t0, t1, b0, firstIsStart] {
+                U t = t0;
+                if (!firstIsStart) {  // skip the run continued from the previous shard
+                    uint8_t c; U smp;
+                    row_char_sample(t, c, smp);
+                    for (++t; t < total; ) {
+                        uint8_t c2; U s2;
+                        row_char_sample(t, c2, s2);
+                        if (c2 != c) break;
+                        ++t;
+                    }
+                }
+                std::vector<char> rec; rec.reserve(4 * 65536);
+                U segOff = 0;
+                auto flushRec = [&]() {
+                    if (!rec.empty()) {
+                        xput(segFd[s], rec.data(), rec.size(), segOff, "rlebwt segment write");
+                        segOff += rec.size(); rec.clear();
+                    }
+                };
+                auto emitWords = [&](uint8_t c, U len) {
+                    U left = len;
+                    while (left) {
+                        U take = std::min<U>(left, 0x7fffff); left -= take;
+                        char w[4];
+                        put_le32(w, uint32_t(c) | uint32_t(take << 8) | (left ? 0x80000000u : 0u));
+                        rec.insert(rec.end(), w, w + 4);
+                    }
+                    if (rec.size() >= 4 * 65536) flushRec();
+                };
+                std::vector<U> headBuf, tailBuf;
+                headBuf.reserve(65536); tailBuf.reserve(65536);
+                U bufIdx = b0;
+                auto flushSamples = [&]() {
+                    if (!headBuf.empty()) {
+                        xput(hFd, headBuf.data(), 8 * headBuf.size(), 8 * (1 + bufIdx), "ssa write");
+                        xput(tFd, tailBuf.data(), 8 * tailBuf.size(), 8 * (1 + bufIdx), "ssa_t write");
+                        bufIdx += headBuf.size();
+                        headBuf.clear(); tailBuf.clear();
+                    }
+                };
+                U pfAt = t;
+                auto pfAhead = [&](U cur) {
+                    if (m2.pool && cur >= pfAt) { pfRows(cur, std::min<U>(total, cur + 8192)); pfAt = cur + 8192; }
+                };
+                pfAhead(t);
+                U runIdx = b0;
+                while (t < t1) {
+                    uint8_t c; U head;
+                    row_char_sample(t, c, head);
+                    U e = t + 1;
+                    for (;;) {
+                        if (e >= total) break;
+                        if (e >= pfAt) pfAhead(e);
+                        uint8_t c2; U s2;
+                        row_char_sample(e, c2, s2);
+                        if (c2 != c) break;
+                        ++e;
+                    }
+                    emitWords(c, e - t);
+                    uint8_t tc; U tailSmp;
+                    row_char_sample(e - 1, tc, tailSmp);
+                    headBuf.push_back(head);
+                    tailBuf.push_back(tailSmp);
+                    if (headBuf.size() >= 65536) flushSamples();
+                    ++runIdx;
+                    t = e;
+                }
+                flushRec();
+                flushSamples();
+                require(runIdx == b0 + info[s].internalStarts + (firstIsStart ? 1u : 0u),
+                        "emit shard run coverage");
+            });
+        }
+        for (auto& t : ts) t.join();
+        for (U s = 0; s < S; ++s) require(::close(segFd[s]) == 0, "close rlebwt segment");
+        // ordered concatenation: shard order is run order (order-pure)
+        constexpr U CW = 1u << 20;
+        std::vector<char> cbuf(CW);
+        for (U s = 0; s < S; ++s) {
+            int in = ::open(segPath[s].c_str(), O_RDONLY);
+            require(in >= 0, "reopen rlebwt segment");
+            for (;;) {
+                ssize_t z = ::read(in, cbuf.data(), CW);
+                require(z >= 0, "read rlebwt segment");
+                if (z == 0) break;
+                b.raw(cbuf.data(), size_t(z));
+            }
+            require(::close(in) == 0, "close rlebwt segment read");
+            ::unlink(segPath[s].c_str());
+        }
+        b.flush();
+        require(::close(hFd) == 0 && ::close(tFd) == 0, "close ssa outputs");
     }
+    std::fprintf(stderr, "FOUR_EMIT shards=%llu runs=%llu total=%llu\n",
+                 (unsigned long long)S, (unsigned long long)final_runs, (unsigned long long)total);
     phase("emit-write", last);
     return final_runs;
 }
 
 // Intermediate: merged cyclic order as an SXCR chunk + sidecar, read from
-// the M2 and WM scratch files.
+// the M2 and WM scratch files. PARALLEL EMISSION: both walks are sharded
+// at fixed run boundaries. Pass 1 counts runs per row-range shard (internal
+// starts plus the shard's own first-row start flag); the combiner's prefix
+// sums give the global run count and every shard's global start-index base.
+// Pass 2 emits the fixed 25-byte records by pwrite at 25*globalRunIndex:
+// every run is finalized by exactly one shard (the one containing its start
+// row; a run straddling the shard end is scanned to its true end), so the
+// chunk is byte-identical to the serial writer by construction.
 static U emit_sxcr_ext(const std::string& path, const WinBytes& m2,
-                       const WinU64& wm, U n, U offset) {
+                       const WinU64& wm, U n, U offset, U threads) {
     double last = now_sec();
-    U runs = 0;
-    prefetch_wm_rows(m2, wm, 0, std::min(n, U(4096)), n, false);
-    for (U t = 0; t < n; ++t) {
-        if ((t & 4095) == 0)
-            prefetch_wm_rows(m2, wm, t + 4096, std::min(n, t + 8192), n, false);
-        uint8_t c = m2.at(wm.at(t) + n - 1);
-        if (t == 0 || c != m2.at(wm.at(t - 1) + n - 1)) ++runs;
-    }
-    phase("sxcr-count", last);
-    {
-        OutFile f(path);
-        char magic[4]{'S','X','C','R'}; f.raw(magic, 4);
-        f.w32(2); f.w64(offset); f.w64(n); f.w64(runs);
-        uint8_t cur = 0; U runlen = 0, head = 0, tail = 0; bool any = false;
-        auto flush = [&]() {
-            if (!any) return;
-            f.w8(cur); f.w64(runlen); f.w64(head); f.w64(tail);
-        };
-        prefetch_wm_rows(m2, wm, 0, std::min(n, U(4096)), n, false);
-        for (U t = 0; t < n; ++t) {
-            if ((t & 4095) == 0)
-                prefetch_wm_rows(m2, wm, t + 4096, std::min(n, t + 8192), n, false);
-            U p = wm.at(t); uint8_t c = m2.at(p + n - 1);
-            if (!any || c != cur) { flush(); cur = c; runlen = 0; head = p; any = true; }
-            ++runlen; tail = p;
+    const U S = emit_shard_count(threads, n);
+    auto charAt = [&](U t) { return m2.at(wm.at(t) + n - 1); };
+    struct CountInfo { U internalStarts = 0; bool firstIsStart = false; };
+    std::vector<CountInfo> info(S);
+    auto pfRows = [&](U t0, U t1) {   // enqueue the M2 pages rows [t0,t1) read
+        if (!m2.pool) return;
+        for (U t = t0; t < t1; ++t) m2.prefetch(wm.at(t) + n - 1, 1);
+    };
+    {   // pass 1: sharded run count
+        std::vector<std::thread> ts;
+        for (U s = 0; s < S; ++s) {
+            U t0 = s * n / S, t1 = (s + 1) * n / S;
+            if (t1 <= t0) continue;
+            ts.emplace_back([&, s, t0, t1] {
+                CountInfo& ci = info[s];
+                pfRows(t0, std::min<U>(t1, t0 + 4096));
+                U pfNext = t0 + 4096;
+                uint8_t prev = charAt(t0);
+                ci.firstIsStart = (t0 == 0);
+                if (t0) ci.firstIsStart = (prev != charAt(t0 - 1));
+                for (U t = t0 + 1; t < t1; ++t) {
+                    if (t >= pfNext) { pfRows(t, std::min<U>(t1, t + 4096)); pfNext = t + 4096; }
+                    uint8_t c = charAt(t);
+                    if (c != prev) ++ci.internalStarts;
+                    prev = c;
+                }
+            });
         }
-        flush();
+        for (auto& t : ts) t.join();
     }
+    U runs = 0;
+    std::vector<U> base(S, 0);   // global run index of the first start >= t0_s
+    for (U s = 0; s < S; ++s) {
+        base[s] = runs;
+        runs += info[s].internalStarts + (info[s].firstIsStart ? 1u : 0u);
+    }
+    require(runs >= 1, "sxcr run count underflow");
+    phase("sxcr-count", last);
+    {   // pass 2: sharded record emission (pwrite at 25 * global run index)
+        int fd = ::open(path.c_str(), O_CREAT | O_EXCL | O_WRONLY, 0666);
+        require(fd >= 0, "create SXCR chunk (exists?)");
+        char hdr[32];
+        std::memcpy(hdr, "SXCR", 4);
+        put_le32(hdr + 4, 2); put_le64(hdr + 8, offset); put_le64(hdr + 16, n); put_le64(hdr + 24, runs);
+        xput(fd, hdr, 32, 0, "sxcr header write");
+        std::vector<std::thread> ts;
+        for (U s = 0; s < S; ++s) {
+            U t0 = s * n / S, t1 = (s + 1) * n / S;
+            if (t1 <= t0) continue;
+            U b0 = base[s];
+            bool firstIsStart = info[s].firstIsStart;
+            ts.emplace_back([&, s, t0, t1, b0, firstIsStart] {
+                U t = t0;
+                if (!firstIsStart) {  // skip the run continued from the previous shard
+                    uint8_t c = charAt(t);
+                    for (++t; t < n && charAt(t) == c; ++t) {}
+                }
+                std::vector<char> rec; rec.reserve(25 * 4096);
+                U bufIdx = b0;        // global run index of rec[0]
+                auto flushRec = [&]() {
+                    if (!rec.empty()) {
+                        xput(fd, rec.data(), rec.size(), 32 + 25 * bufIdx, "sxcr record write");
+                        bufIdx += rec.size() / 25; rec.clear();
+                    }
+                };
+                U pfAt = t;
+                auto pfAhead = [&](U cur) {
+                    if (m2.pool && cur >= pfAt) { pfRows(cur, std::min<U>(n, cur + 8192)); pfAt = cur + 8192; }
+                };
+                pfAhead(t);
+                U runIdx = b0;
+                while (t < t1) {
+                    uint8_t c = charAt(t);
+                    U head = wm.at(t);
+                    U e = t + 1;
+                    while (e < n && charAt(e) == c) {
+                        if (e >= pfAt) pfAhead(e);
+                        ++e;
+                    }
+                    char b[25];
+                    b[0] = char(c);
+                    put_le64(b + 1, e - t); put_le64(b + 9, head); put_le64(b + 17, wm.at(e - 1));
+                    rec.insert(rec.end(), b, b + 25);
+                    ++runIdx;
+                    if (rec.size() >= 25 * 4096) flushRec();
+                    t = e;
+                }
+                flushRec();
+                require(runIdx == b0 + info[s].internalStarts + (firstIsStart ? 1u : 0u),
+                        "sxcr emit shard run coverage");
+            });
+        }
+        for (auto& t : ts) t.join();
+        require(::close(fd) == 0, "close SXCR chunk");
+    }
+    std::fprintf(stderr, "SXCR_EMIT shards=%llu runs=%llu n=%llu\n",
+                 (unsigned long long)S, (unsigned long long)runs, (unsigned long long)n);
     phase("sxcr-write", last);
     {
         OutFile f(path + ".sxs");
@@ -1735,8 +2033,8 @@ static U merge_pair_files(const std::string& leftPath, const std::string& rightP
     U n = A.n + B.n;
     WinBytes m2; m2.open_ro(sc.m2, 2 * n, 0, true);
     WinU64 wm; wm.open_ro(sc.wm, n, 0);
-    U out_runs = dollar ? emit_four_ext(out, m2, wm, n)
-                        : emit_sxcr_ext(out, m2, wm, n, A.offset);
+    U out_runs = dollar ? emit_four_ext(out, m2, wm, n, threads, sc.dir)
+                        : emit_sxcr_ext(out, m2, wm, n, A.offset, threads);
     if (dollar && emitPf) emit_pf_side_ext(out, m2, n, out_runs);
     sc.cleanup();
     double total = now_sec() - t0;
@@ -1826,7 +2124,7 @@ static U finalize_file(const std::string& path, const std::string& prefix, U thr
         ::close(fd);
     }
     WinU64 wm; wm.open_ro(sc.wm, A.n, 0);
-    U out_runs = emit_four_ext(prefix, m2, wm, A.n);
+    U out_runs = emit_four_ext(prefix, m2, wm, A.n, threads, sc.dir);
     if (emitPf) emit_pf_side_ext(prefix, m2, A.n, out_runs);
     sc.cleanup();
     double total = now_sec() - t0;

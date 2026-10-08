@@ -5,7 +5,8 @@
 //! per the demonstrated chunk_frontend refusal), libsais chunk front end,
 //! externalized cross-LCP merge tree (`--emit-pf` side streams, fixed
 //! concurrent pool ON by default; CROSS_NO_POOL / CROSS_ASYNC_FILL /
-//! CROSS_HASH_K / CROSS_PIPELINE pass through as environment knobs), and the
+//! CROSS_HASH_K / CROSS_PIPELINE / CROSS_SHARDS pass through as environment
+//! knobs), and the
 //! external adopt finish (rpfbwt_endpoints + slim_dump + the streamed chi
 //! sweep) consuming the merge's `.pftext`/`.pfck` side streams.
 //!
@@ -55,7 +56,9 @@ finish -> chi sweep), one cargo-built command with bundled provenance.
                      fragment route's frag.remap, sha256 b4f38776...).
 
 Pool knobs pass through to the merge unchanged (default: fixed concurrent
-pool ON): CROSS_NO_POOL=1, CROSS_ASYNC_FILL=1, CROSS_HASH_K=K, CROSS_PIPELINE=1.
+pool ON): CROSS_NO_POOL=1, CROSS_ASYNC_FILL=1, CROSS_HASH_K=K, CROSS_PIPELINE=1,
+CROSS_SHARDS=S (parallel emission: the order/run-boundary shard count for the
+merge walks; default --threads, 1 = the serial walk).
 
 Outputs (byte-identical to the reference chain on the same corpus):
   merged/frag.rlebwt .rlebwt.meta .ssa .ssa_t .pftext .pfck
@@ -497,7 +500,7 @@ fn run_chain(options: Options) -> Result<(), String> {
         ));
     }
     let mut journal = Journal::open(&journal_path)?;
-    for knob in ["CROSS_NO_POOL", "CROSS_ASYNC_FILL", "CROSS_HASH_K", "CROSS_PIPELINE"] {
+    for knob in ["CROSS_NO_POOL", "CROSS_ASYNC_FILL", "CROSS_HASH_K", "CROSS_PIPELINE", "CROSS_SHARDS"] {
         if let Some(value) = std::env::var_os(knob) {
             journal.line(&format!("KNOB {knob}={}", value.to_string_lossy()));
         }
