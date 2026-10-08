@@ -58,7 +58,10 @@ finish -> chi sweep), one cargo-built command with bundled provenance.
 Pool knobs pass through to the merge unchanged (default: fixed concurrent
 pool ON): CROSS_NO_POOL=1, CROSS_ASYNC_FILL=1, CROSS_HASH_K=K, CROSS_PIPELINE=1,
 CROSS_SHARDS=S (parallel emission: the order/run-boundary shard count for the
-merge walks; default --threads, 1 = the serial walk).
+merge walks; default --threads, 1 = the serial walk). The chunk front end
+writes per-chunk corpus references (chunk-i.ref) so the merge never
+copies chunk text (referenced mode; CHUNK_NO_REF=1 restores the legacy
+artifact set, CROSS_NO_REF=1 makes the merge ignore refs).
 
 Outputs (byte-identical to the reference chain on the same corpus):
   merged/frag.rlebwt .rlebwt.meta .ssa .ssa_t .pftext .pfck
@@ -500,7 +503,7 @@ fn run_chain(options: Options) -> Result<(), String> {
         ));
     }
     let mut journal = Journal::open(&journal_path)?;
-    for knob in ["CROSS_NO_POOL", "CROSS_ASYNC_FILL", "CROSS_HASH_K", "CROSS_PIPELINE", "CROSS_SHARDS"] {
+    for knob in ["CROSS_NO_POOL", "CROSS_ASYNC_FILL", "CROSS_HASH_K", "CROSS_PIPELINE", "CROSS_SHARDS", "CROSS_NO_REF", "CHUNK_NO_REF"] {
         if let Some(value) = std::env::var_os(knob) {
             journal.line(&format!("KNOB {knob}={}", value.to_string_lossy()));
         }

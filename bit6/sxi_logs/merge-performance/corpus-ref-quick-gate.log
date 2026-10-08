@@ -1,0 +1,7 @@
+BYTE_IDENTICAL :: corpus-synth.txt c=5  chunk_artifacts old=18957035B new=18958610B (refs)
+BYTE_IDENTICAL :: corpus-synth.txt c=16  chunk_artifacts old=18908662B new=18913702B (refs)
+BYTE_IDENTICAL :: corpus-synth.txt c=32  chunk_artifacts old=18859299B new=18869379B (refs)
+BYTE_IDENTICAL :: corpus-tiny-alpha.txt c=5  chunk_artifacts old=10707060B new=10708660B (refs)
+BYTE_IDENTICAL :: corpus-tiny-alpha.txt c=16  chunk_artifacts old=10714737B new=10719857B (refs)
+BYTE_IDENTICAL :: corpus-tiny-alpha.txt c=32  chunk_artifacts old=10688424B new=10698664B (refs)
+CORPUS_REF_QUICK_GATE pass=6 fail=0

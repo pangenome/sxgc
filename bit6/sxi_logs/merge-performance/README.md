@@ -31,6 +31,19 @@ weeks serial — this lane exists to collapse it.
    below the aggregate floor.
 4. Pool size + threads as launch knobs (present); io_uring only if the
    counters still show syscall overhead after (1)-(3).
+5. **BUILD CONFIGURATOR** (plan-first flow; user directive, queued after the
+   flat k-way): `xsa build` becomes plan-first - survey (corpus stat, df per
+   candidate scratch/stripe dir, free RAM/cores/cx16), model with a
+   versioned constants table in-source (chunk RAM ~5x chunk bytes -> chunk
+   bound -> count -> flat k; per-phase working sets; peak-disc timeline;
+   wall projections from measured per-byte rates), the PLAN FILE as the
+   scratch journal's first entry before any bytes move, fail-loud with
+   nearest feasible alternatives (the DF_GATE refusal becomes this richer
+   contract), flags --scratch/--stripe/--plan-only. Gate: plan-only
+   projections vs measured phase telemetry after each gated run
+   (planner-calibration loop). Journal:
+   bit6/sxi_logs/merge-performance/configurator/. Bounded: survey +
+   arithmetic + plan writer, not a new engine.
 
 ## Milestone 1: PARALLEL EMISSION (sharded walks) — quick gates PASSED
 

@@ -41,8 +41,34 @@ struct Writer {
     }
 };
 struct Run { uint8_t c; uint64_t len; uint64_t h, t; };
+// Corpus-reference sidecar (chunk-i.ref): the chunk's text is NOT copied;
+// consumers read remap[corpus[offset..offset+n)] instead. Layout:
+//   "SXRF" | u32 ver=1 | u8 flags=0 | remap[256] | u32 pathLen | path | u64 offset | u64 n
+// offset/n are the chunk's corpus range (already the .crle header values);
+// the remap is embedded so every chunk is self-contained.
+static void emit_ref(const fs::path& refPath, const std::array<uint8_t,256>& remap,
+                     const fs::path& corpus, uint64_t offset, uint64_t n) {
+    int fd = ::open(refPath.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0644);
+    require(fd >= 0, "chunk ref output exists or cannot be created");
+    try {
+        Writer w(fd);
+        for (uint8_t c : {'S','X','R','F'}) w.word(c, 1);
+        w.word(1, 4);
+        w.word(0, 1);
+        for (unsigned i = 0; i < 256; ++i) w.word(remap[i], 1);
+        std::string p = fs::absolute(corpus).string();
+        require(p.size() <= 0xffffffffu, "corpus path too long");
+        w.word(p.size(), 4);
+        for (char c : p) w.word(static_cast<uint8_t>(c), 1);
+        w.word(offset, 8);
+        w.word(n, 8);
+        w.flush();
+        require(::close(fd) == 0, "chunk ref close failed");
+    } catch (...) { ::close(fd); throw; }
+}
 static void emit(const fs::path& output, const std::vector<uint8_t>& text,
-                 uint64_t offset, unsigned index) {
+                 uint64_t offset, unsigned index,
+                 const std::array<uint8_t,256>& remap, const fs::path& corpus) {
     require(!text.empty() && text.back() == 0x1e, "unaligned chunk");
     uint64_t n = text.size();
     require(n <= INT32_MAX / 2, "libsais doubled chunk exceeds int32 length");
@@ -100,6 +126,12 @@ static void emit(const fs::path& output, const std::vector<uint8_t>& text,
         writer.flush();
         require(::close(fd) == 0, "chunk output close failed");
     } catch (...) { ::close(fd); throw; }
+    // Corpus-referenced text: default ON (the chunk's text lives in the
+    // corpus; merge sides read remap[corpus[offset..offset+n)]). CHUNK_NO_REF
+    // restores the legacy no-sidecar artifact set (text re-derived by walk).
+    if (!getenv("CHUNK_NO_REF"))
+        emit_ref(output / ("chunk-" + std::to_string(index) + ".ref"),
+                 remap, corpus, offset, n);
     std::printf("CHUNK index=%u offset=%llu n=%llu runs=%zu sort_wall_seconds=%.6f path=%s\n",
                 index, (unsigned long long)offset, (unsigned long long)n,
                 runs.size(), wall, path.c_str());
@@ -141,14 +173,14 @@ int main(int argc, char** argv) {
                 chunk.push_back(remap[original]);
                 ++consumed;
                 if (original == 0x1e && chunk.size() >= target && index + 1 < wanted) {
-                    emit(output, chunk, offset, index++);
+                    emit(output, chunk, offset, index++, remap, input);
                     offset = consumed; chunk.clear();
                 }
             }
         }
         require(consumed == total, "short source read");
         require(!chunk.empty() && chunk.back() == 0x1e, "input must end at document boundary");
-        emit(output, chunk, offset, index++);
+        emit(output, chunk, offset, index++, remap, input);
         require(index == wanted, "document boundaries did not permit requested chunk count");
         std::printf("CHUNKS_PASS count=%u source_bytes=%llu\n", index,
                     (unsigned long long)consumed);

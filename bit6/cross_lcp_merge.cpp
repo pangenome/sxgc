@@ -500,6 +500,82 @@ struct WinU64 {
         pool->prefetch((base + 8 * i) / SharedPages::PS);
     }
 };
+// Corpus-referenced side text. A side's text is either embedded in its
+// SXS2 sidecar (intermediates; legacy raw-chunk walks) or REFERENCED: chunk
+// artifacts carry (corpus path, offset, n) + the 256-byte remap, and the
+// view is remap[corpus[offset+i]] — the text is never materialized (it
+// already exists in the corpus; the disc discipline kills the per-side text
+// copies). One API in two backing modes; consumers are bulk passes and
+// per-row random reads, so a small thread-local page cache suffices (the
+// hot comparison path reads the materialized M2 scratch file, not this).
+struct SideText {
+    int fd = -1;
+    U n = 0, base = 0, gen = 0;   // base: text byte offset (sidecar 20 / corpus range start)
+    bool remapped = false;
+    std::array<uint8_t, 256> map{};
+    static std::atomic<U> g_gen;
+    void open_sidecar(const std::string& path, U elems, U byteBase) {
+        fd = ::open(path.c_str(), O_RDONLY);
+        if (fd < 0) fail("open sidecar text");
+        n = elems; base = byteBase; remapped = false; gen = g_gen.fetch_add(1);
+    }
+    void open_corpus(const std::string& path, U elems, U corpusOff,
+                     const std::array<uint8_t, 256>& remap) {
+        fd = ::open(path.c_str(), O_RDONLY);
+        if (fd < 0) fail("open corpus (referenced chunk text)");
+        struct stat st{};
+        require(fstat(fd, &st) == 0 && U(st.st_size) >= corpusOff + elems,
+                "corpus range out of bounds (referenced chunk)");
+        n = elems; base = corpusOff; remapped = true; map = remap; gen = g_gen.fetch_add(1);
+    }
+    ~SideText() { if (fd >= 0) ::close(fd); }
+    SideText() = default;
+    SideText(const SideText&) = delete;
+    SideText& operator=(const SideText&) = delete;
+    struct TL { const void* o = nullptr; U gen = 0; U tag[2]{UINT64_MAX, UINT64_MAX};
+                std::unique_ptr<uint8_t[]> d[2]; unsigned nxt = 0; };
+    struct TLS4 { TL e[4]; unsigned nxt = 0; };
+    inline TL& tlEntry() const {
+        thread_local TLS4 tls;
+        for (unsigned z = 0; z < 4; ++z)
+            if (tls.e[z].o == (const void*)this && tls.e[z].gen == gen) return tls.e[z];
+        TL& e = tls.e[tls.nxt++ & 3];
+        e.o = (const void*)this; e.gen = gen;
+        e.tag[0] = e.tag[1] = UINT64_MAX; e.nxt = 0;
+        return e;
+    }
+    inline uint8_t at(U i) const {
+        if (i >= n) fail("side text bounds");
+        constexpr U B = 16384;
+        TL& tls = tlEntry();
+        U page = i / B;
+        for (unsigned k = 0; k < 2; ++k)
+            if (tls.tag[k] == page) {
+                uint8_t raw = tls.d[k][i % B];
+                return remapped ? map[raw] : raw;
+            }
+        unsigned slot = tls.nxt++ & 1;
+        if (!tls.d[slot]) tls.d[slot].reset(new uint8_t[B]);
+        U start = page * B, need = std::min(B, n - start);
+        xw(fd, tls.d[slot].get(), need, base + start, "side text page");
+        tls.tag[slot] = page;
+        uint8_t raw = tls.d[slot][i % B];
+        return remapped ? map[raw] : raw;
+    }
+    void read(U i, void* buf, U len) const {   // bulk banded read (+remap)
+        if (i + len > n) fail("side text bulk bounds");
+        uint8_t* q = (uint8_t*)buf;
+        constexpr U W = 1u << 22;
+        U done = 0;
+        while (done < len) {
+            U take = std::min<U>(W, len - done);
+            xw(fd, q + done, take, base + i + done, "side text bulk");
+            if (remapped) for (U z = 0; z < take; ++z) q[done + z] = map[q[done + z]];
+            done += take;
+        }
+    }
+};
+std::atomic<U> SideText::g_gen{1};
 // Overlay of repaired slices over an immutable position column: the repair
 // writes each sorted block slice sequentially and registers [lo,hi) with its
 // file offset. Anchor blocks NEST (the backward-search walk shrinks the row
@@ -885,14 +961,51 @@ static void build_hash_sparse(const std::string& m2Path, U n2, U k,
 }
 
 // ------------------------------------------------------------- streamed sides
-// A side is either an on-disk SXS2 sidecar (all intermediates) or a raw SXCR
-// chunk, which is walked once (chunk-scale resident transient) and dumped to a
-// scratch sidecar; from there every consumer is windowed.
+// A side is either an on-disk SXS2 sidecar (all intermediates; legacy raw
+// walks) or a raw SXCR chunk, which is walked once (chunk-scale resident
+// transient). The walked order column is dumped to a scratch pos sidecar; in
+// CORPUS-REFERENCED mode (chunk-i.ref present, the chunker default) the text
+// is NOT dumped with it — consumers read remap[corpus[offset..offset+n)] and
+// the per-side text copy never exists.
 struct SideExt {
     U offset = 0, n = 0, runs = 0, period = 0; // period==n means aperiodic
-    std::string sxsPath;       // the sidecar actually used
+    std::string sxsPath;       // the sidecar actually used (text+pos, or pos-only)
     bool ownsSxs = false;      // we wrote it (scratch; unlink at pair end)
+    bool refText = false;      // corpus-referenced text (chunk-i.ref)
+    U posBase = 0;             // byte offset of the pos column in sxsPath
+    std::string corpusPath;    // ref mode
+    U corpusOff = 0;           // ref mode: chunk range start in the corpus
+    std::array<uint8_t, 256> remap{};   // ref mode: the chunker's byte map
 };
+// chunk-i.ref (chunk_frontend emit_ref): "SXRF" | u32 ver=1 | u8 flags=0 |
+// remap[256] | u32 pathLen | corpusPath | u64 offset | u64 n
+static void parse_chunk_ref(const std::string& path, std::string& corpus, U& off, U& n,
+                            std::array<uint8_t, 256>& remap) {
+    std::ifstream f(path, std::ios::binary);
+    require(bool(f), "cannot open chunk ref");
+    char magic[4]{}; f.read(magic, 4);
+    require(bool(f) && !std::memcmp(magic, "SXRF", 4), "chunk ref magic mismatch");
+    require(rd_le(f, 4) == 1, "unsupported chunk ref version");
+    require(rd_le(f, 1) == 0, "unknown chunk ref flags");
+    f.read(reinterpret_cast<char*>(remap.data()), 256);
+    require(bool(f), "truncated chunk ref remap");
+    U plen = rd_le(f, 4);
+    require(plen && plen < 65536, "chunk ref corpus path length");
+    std::vector<char> p(plen);
+    f.read(p.data(), plen);
+    require(bool(f), "truncated chunk ref path");
+    corpus.assign(p.data(), plen);
+    off = rd_le(f, 8); n = rd_le(f, 8);
+    require(bool(f) && f.peek() == EOF, "trailing bytes in chunk ref");
+    auto check = remap; std::sort(check.begin(), check.end());
+    for (unsigned i = 0; i < 256; ++i) require(check[i] == i, "chunk ref remap not bijective");
+    require(remap[0x1e] == 0x1e, "chunk ref remap changes the document separator");
+}
+// Open a side's text view (sidecar-embedded or corpus-referenced).
+static void open_side_text(const SideExt& s, SideText& t) {
+    if (s.refText) t.open_corpus(s.corpusPath, s.n, s.corpusOff, s.remap);
+    else t.open_sidecar(s.sxsPath, s.n, 20);
+}
 
 // Minimal cyclic period d | n with T[i]==T[i+d] (cyclically); n if aperiodic.
 static U min_period(const std::vector<uint8_t>& T, U n) {
@@ -923,7 +1036,7 @@ static void sxcr_header(const std::string& path, U& offset, U& n, U& runs) {
 // Validate runs against the STREAMED (text,pos): preceding char per row and
 // head/tail samples. Same contract as the resident build.
 static void validate_runs_ext(const std::string& path, U n, U runs,
-                              const WinBytes& text, const WinU64& pos) {
+                              const SideText& text, const WinU64& pos) {
     std::ifstream f(path, std::ios::binary);
     f.seekg(32);
     U row = 0; uint8_t prev = 0;
@@ -941,7 +1054,7 @@ static void validate_runs_ext(const std::string& path, U n, U runs,
 }
 // Streaming minimal cyclic period (fast-fail per divisor; one full pass for
 // the true period).
-static U min_period_stream(const WinBytes& text, U n) {
+static U min_period_stream(const SideText& text, U n) {
     std::vector<U> divs;
     for (U d = 1; d * d <= n; ++d) if (n % d == 0) { divs.push_back(d); if (d != n / d) divs.push_back(n / d); }
     std::sort(divs.begin(), divs.end());
@@ -1074,40 +1187,84 @@ static void walk_chunk(const std::string& path, U n, U runs, U threads,
 }
 
 
-// Load a side into its STREAMED form (SXS2 sidecar path). Raw chunks are
-// walked once (chunk-scale resident transient: text, bwt, lf, pos, visited)
-// and dumped to a scratch sidecar; then the sidecar contract is checked the
-// same way as for intermediates: positions, period, and run validation.
+// Load a side into its STREAMED form. Raw chunks are walked once (chunk-scale
+// resident transient: text, bwt, lf, pos, visited) and the order column is
+// dumped to a scratch pos sidecar; with a chunk-i.ref the text stays in the
+// corpus (cross-validated against the walked text byte for byte; the runs
+// were already validated against the walked (text,pos), so runs<->text<->
+// corpus is fully proven and the legacy sidecar re-validation is subsumed).
+// Intermediates and legacy raw chunks keep the full SXS2 text+pos sidecar.
 static void load_side_ext(const std::string& path, U threads,
                           const std::string& scratch, SideExt& s) {
     sxcr_header(path, s.offset, s.n, s.runs);
     std::string side = path + ".sxs";
     if (fs::exists(side)) {
-        s.sxsPath = side; s.ownsSxs = false;
+        s.sxsPath = side; s.ownsSxs = false; s.refText = false; s.posBase = 20 + s.n;
     } else {
         std::vector<uint8_t> text; std::vector<uint64_t> pos;
         walk_chunk(path, s.n, s.runs, threads, text, pos, s.period);
-        s.sxsPath = scratch + "/" + fs::path(path).filename().string() + ".walked.sxs";
-        s.ownsSxs = true;
-        {
-            OutFile f(s.sxsPath);
-            char magic[4]{'S','X','S','2'}; f.raw(magic, 4);
-            f.w64(s.offset); f.w64(s.n);
-            f.raw(text.data(), s.n);
-            f.raw(pos.data(), 8 * s.n);
+        std::string ref = path + ".ref";
+        if (fs::exists(ref) && !getenv("CROSS_NO_REF")) {
+            // CORPUS-REFERENCED: record provenance, prove the walked text is
+            // exactly remap[corpus[offset..offset+n)), dump the pos column only.
+            U refN = 0;
+            parse_chunk_ref(ref, s.corpusPath, s.corpusOff, refN, s.remap);
+            require(s.corpusOff == s.offset && refN == s.n,
+                    "chunk ref range disagrees with the SXCR header");
+            {
+                SideText t; t.open_corpus(s.corpusPath, s.n, s.corpusOff, s.remap);
+                constexpr U W = 1u << 22;
+                std::vector<uint8_t> buf(W);
+                for (U i = 0; i < s.n;) {
+                    U len = std::min<U>(W, s.n - i);
+                    t.read(i, buf.data(), len);
+                    require(std::memcmp(buf.data(), text.data() + i, len) == 0,
+                            "chunk text disagrees with the corpus reference");
+                    i += len;
+                }
+            }
+            s.sxsPath = scratch + "/" + fs::path(path).filename().string() + ".walked.pos";
+            s.ownsSxs = true; s.refText = true; s.posBase = 20;
+            {
+                OutFile f(s.sxsPath);
+                char magic[4]{'S','X','P','2'}; f.raw(magic, 4);
+                f.w64(s.offset); f.w64(s.n);
+                f.raw(pos.data(), 8 * s.n);
+            }
+        } else {
+            s.sxsPath = scratch + "/" + fs::path(path).filename().string() + ".walked.sxs";
+            s.ownsSxs = true; s.refText = false; s.posBase = 20 + s.n;
+            {
+                OutFile f(s.sxsPath);
+                char magic[4]{'S','X','S','2'}; f.raw(magic, 4);
+                f.w64(s.offset); f.w64(s.n);
+                f.raw(text.data(), s.n);
+                f.raw(pos.data(), 8 * s.n);
+            }
         }
     }
-    WinBytes text; text.open_ro(s.sxsPath, s.n, 20);
-    if (s.period == 0) s.period = min_period_stream(text, s.n);
-    {
-        WinU64 pos; pos.open_ro(s.sxsPath, s.n, 20 + s.n);
+    if (!s.refText) {
+        SideText text; open_side_text(s, text);
+        if (s.period == 0) s.period = min_period_stream(text, s.n);
+        {
+            WinU64 pos; pos.open_ro(s.sxsPath, s.n, s.posBase);
+            U buf[4096];
+            for (U i = 0; i < s.n; i += 4096) {
+                U len = std::min<U>(4096, s.n - i);
+                pos.read(i, buf, len);
+                for (U z = 0; z < len; ++z) require(buf[z] < s.n, "sidecar position out of range");
+            }
+            validate_runs_ext(path, s.n, s.runs, text, pos);
+        }
+    } else {
+        // ref mode: period came from the walk; positions checked here.
+        WinU64 pos; pos.open_ro(s.sxsPath, s.n, s.posBase);
         U buf[4096];
         for (U i = 0; i < s.n; i += 4096) {
             U len = std::min<U>(4096, s.n - i);
             pos.read(i, buf, len);
             for (U z = 0; z < len; ++z) require(buf[z] < s.n, "sidecar position out of range");
         }
-        validate_runs_ext(path, s.n, s.runs, text, pos);
     }
 }
 
@@ -1152,7 +1309,7 @@ struct RankIndex {
 // Anchor block discovery, windowed (same algorithm as the resident build).
 // Periodic chunks: every position is an anchor; the external form for huge
 // periodic chunks is not implemented, so it fails loud above 32 Mi positions.
-static void anchor_blocks_ext(const WinBytes& text, const WinBytes& bwt,
+static void anchor_blocks_ext(const SideText& text, const WinBytes& bwt,
                               const PosOverlay& pos, U n, U base, U period,
                               std::vector<BlockRec>& out, std::vector<uint64_t>& anchors,
                               U& steps, U& rows) {
@@ -1321,7 +1478,7 @@ static void build_m2_file(const SideExt& A, const SideExt& B, const std::string&
     for (int copy = 0; copy < 2; ++copy) {
         for (int side = 0; side < 2; ++side) {
             const SideExt& S = side ? B : A;
-            WinBytes t; t.open_ro(S.sxsPath, S.n, 20);
+            SideText t; open_side_text(S, t);
             for (U i = 0; i < S.n;) {
                 U len = std::min<U>(W, S.n - i);
                 t.read(i, buf.data(), len);
@@ -1341,7 +1498,7 @@ static void build_bwt_file(const SideExt& S, const PosOverlay& pos, const std::s
     U band = (S.n + tc - 1) / tc;
     std::vector<std::thread> ts;
     auto work = [&](U t) {
-        WinBytes text; text.open_ro(S.sxsPath, S.n, 20);
+        SideText text; open_side_text(S, text);
         U i0 = t * band, i1 = std::min(S.n, i0 + band);
         std::vector<uint8_t> buf(i1 > i0 ? i1 - i0 : 0);
         for (U i = i0; i < i1; ++i) {
@@ -1373,21 +1530,21 @@ static void core_merge_ext(const SideExt& A, const SideExt& B, bool dollar, U th
     HashSparse hp; hp.open_ro(sc.hs, hashK, 2 * n / hashK + 1);
     Keys keys; keys.init(&m2, &hp, n, dollar, &bud);
     PosOverlay posA, posB;
-    posA.init(A.sxsPath, nA, 20 + nA, 0, sc.ovA);
-    posB.init(B.sxsPath, nB, 20 + nB, nA, sc.ovB);
+    posA.init(A.sxsPath, nA, A.posBase, 0, sc.ovA);
+    posB.init(B.sxsPath, nB, B.posBase, nA, sc.ovB);
     // Anchor blocks per side, then repair.
     std::vector<BlockRec> blocks;
     std::vector<uint64_t> anchors;
     build_bwt_file(A, posA, sc.bwtA, threads, 0);
     { WinBytes bwt; bwt.open_ro(sc.bwtA, nA, 0);
-      WinBytes textA; textA.open_ro(A.sxsPath, nA, 20);
+      SideText textA; open_side_text(A, textA);
       anchor_blocks_ext(textA, bwt, posA, nA, 0, A.period, blocks, anchors, st.stepsA, st.rowsA); }
     st.anchorsA = anchors.size();
     repair_ext(posA, blocks, anchors, 0, nA, keys);
     blocks.clear(); anchors.clear();
     build_bwt_file(B, posB, sc.bwtB, threads, nA);
     { WinBytes bwt; bwt.open_ro(sc.bwtB, nB, 0);
-      WinBytes textB; textB.open_ro(B.sxsPath, nB, 20);
+      SideText textB; open_side_text(B, textB);
       anchor_blocks_ext(textB, bwt, posB, nB, nA, B.period, blocks, anchors, st.stepsB, st.rowsB); }
     st.anchorsB = anchors.size();
     repair_ext(posB, blocks, anchors, nA, nB, keys);
@@ -2068,7 +2225,7 @@ static U merge_pair_files(const std::string& leftPath, const std::string& rightP
 static void build_m2_single(const SideExt& A, const std::string& path) {
     int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
     require(fd >= 0, "create m2 scratch");
-    WinBytes t; t.open_ro(A.sxsPath, A.n, 20);
+    SideText t; open_side_text(A, t);
     constexpr U W = 1u << 22;
     std::vector<uint8_t> buf(W);
     for (int copy = 0; copy < 2; ++copy)
@@ -2098,13 +2255,13 @@ static U finalize_file(const std::string& path, const std::string& prefix, U thr
     HashSparse hp; hp.open_ro(sc.hs, hashK, 2 * A.n / hashK + 1);
     Keys keys; keys.init(&m2, &hp, A.n, true, &bud);
     PosOverlay posA;
-    posA.init(A.sxsPath, A.n, 20 + A.n, 0, sc.ovA);
+    posA.init(A.sxsPath, A.n, A.posBase, 0, sc.ovA);
     build_bwt_file(A, posA, sc.bwtA, threads, 0);
     std::vector<BlockRec> blocks;
     std::vector<uint64_t> anchors;
     {
         WinBytes bwt; bwt.open_ro(sc.bwtA, A.n, 0);
-        WinBytes text; text.open_ro(A.sxsPath, A.n, 20);
+        SideText text; open_side_text(A, text);
         anchor_blocks_ext(text, bwt, posA, A.n, 0, A.period, blocks, anchors, st.stepsA, st.rowsA);
     }
     st.anchorsA = anchors.size();
