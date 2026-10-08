@@ -101,3 +101,30 @@ merged files), then 10 GB flat vs real10b-ref.
 
 Floor analysis: owed after each milestone (pool misses x window size = drive
 traffic vs aggregate NVMe bandwidth).
+
+## Milestone 1 GATE 1 RESULT (fragment scale, PASSED 2026-10-08)
+
+Sharded parallel emission through the consolidated binary (bundle at 7e89d98):
+* BYTE IDENTITY: 8/8 (frag.{rlebwt,rlebwt.meta,ssa,ssa_t} + finish
+  frag.{ri4,head_sa,agg,sA} all BYTE_IDENTICAL_TO_BANKED);
+  chi = 306164765 (N=1082130213, R=397723010) EXACT.
+* WALLS (deliverable table): merge tree 6:57:38 (banked b031c61) ->
+  **3:36:54** = **1.93x**; peak RSS 2.42 GB (banked 2.53 GB, cap 6 GiB).
+  chunk 3:24 (unchanged), endpoints 5:06, slim 17:31, sweep 0:54.
+* Per-phase (CROSS_PHASE, vs banked serial telemetry): L0-pair cross-merge
+  ~5.2s (banked comparable 104s at 10GB scale; sxcr-count/write 2.5-3.6s vs
+  ~30s); final pair (1.08B, dollar): cross-merge 1316s vs ~3300s serial
+  (2.5x - long-tail shard skew: ~13-19 cores average; comparison cost is
+  LCE-skewed and merged-RANK planning balances rows, not comparisons),
+  anchor+repair 358s (UNCHANGED serial per-side code - now the largest
+  remaining serial core), emit phases wide (19+ cores).
+* Incident (recovered): two xsa rebuilds during the in-flight gate replaced
+  target/release/xsa; the sweep phase re-execs current_exe() = the deleted
+  inode -> rc 127. Merge/endpoints/slim ran from the version-keyed cache
+  bundle (old inode, valid). Recovery: manual sweep under the same
+  ulimit -v 6 GiB cap -> chi exact; verdicts completed manually (this file).
+  RULE: never rebuild the xsa target while a gate that re-execs itself runs.
+* Floor counters: final pair POOL_STATS m2 pool hits=1.89e9 misses=1.07e9
+  (256B windows => ~274 GB drive reads on the 2.16 GB m2 file - the pool
+  covers ~24% of it at 512 MB slots); the walk is miss-bound on fat pairs
+  (striping/larger pool are the levers, lane items 3-4).

@@ -5,3 +5,16 @@ PHASE chunk START /home/erikg/.cache/xsa/fab8cda65c9aa11901ebedbd0f44973be843be7
 PHASE chunk END rc=0 wall=3:24.39 peak_rss_kb=1296960 disc_used_bytes=12919557562368
 CHUNKS_PASS count=32 source_bytes=1082130213
 PHASE merge START /home/erikg/.cache/xsa/fab8cda65c9aa11901ebedbd0f44973be843be7a9f9e4771feab0077f6d6e48b/cross_lcp_merge --tree /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag/chunks 32 1082130213 /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag/merged/frag --threads 48 --work /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag/mwork --emit-pf
+PHASE merge END rc=0 wall=3:36:54 peak_rss_kb=2424924 disc_used_bytes=13033979092992
+MERGE cross_pairs=31
+CROSS_PF_EMIT text=/mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag/merged/frag.pftext pfck=/mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag/merged/frag.pfck n=1082130213 final_runs=397723016 tau=22 count=49187737 bytes=393501936
+PHASE endpoints START /home/erikg/.cache/xsa/fab8cda65c9aa11901ebedbd0f44973be843be7a9f9e4771feab0077f6d6e48b/rpfbwt_endpoints /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag/merged/frag /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag/finish/frag.ri4 /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag/finish/frag.head_sa --pf-text /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag/merged/frag.pftext --pf-checkpoints /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag/merged/frag.pfck
+PHASE endpoints END rc=0 wall=5:06.11 peak_rss_kb=395924 disc_used_bytes=13040694439936
+ENDPOINT_PASS raw_n=1082130223 raw_r=397723016 n=1082130213 k=1 r=397723010 padding_rows=10 cyclic_seam_certified=0
+PHASE slim START /home/erikg/.cache/xsa/fab8cda65c9aa11901ebedbd0f44973be843be7a9f9e4771feab0077f6d6e48b/slim_dump --slim --resolve-ri4 --ri4 /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag/finish/frag.ri4 --head-sa /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag/finish/frag.head_sa -t 48 --pf-text /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag/merged/frag.pftext --pf-checkpoints /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag/merged/frag.pfck -o /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag/finish/frag.agg
+PHASE slim END rc=0 wall=17:31.24 peak_rss_kb=30216 disc_used_bytes=13029159837696
+PHASE sweep START /home/erikg/worktrees/sxgc/pi-worktree-721d9f35-fd8d-4651-85a3-3995854b08f7-s0-0/xsa/target/release/xsa (deleted) chi-rspace --stream-agg --ri4 /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag/finish/frag.ri4 --agg /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag/finish/frag.agg -o /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag/finish/frag.sA
+PHASE sweep END rc=127 wall=0:00.00 peak_rss_kb=0 disc_used_bytes=13029159890944
+xsa: error: build: PHASE sweep FAILED (rc 127); log tail:
+PHASE_CAP_KB=6291456
+/usr/bin/time: cannot run /home/erikg/worktrees/sxgc/pi-worktree-721d9f35-fd8d-4651-85a3-3995854b08f7-s0-0/xsa/target/release/xsa (deleted): No such file or directory
