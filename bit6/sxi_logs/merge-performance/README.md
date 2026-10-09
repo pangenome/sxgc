@@ -90,17 +90,38 @@ Gates: k-way selftest (synthetic mechanics at k=16/26/32), then REAL fragment
 byte-identity (flat k=32 must byte-reproduce chi=306164765 and all four
 merged files), then 10 GB flat vs real10b-ref.
 
+## Milestone 3 probe result (fragment scale, FLAT k=32, BEFORE the clean gate)
+
+The 24 GiB probe run (pre-arena-fix binary, no --emit-pf, standalone merge)
+certified the flat artifact at fragment scale for the first time:
+* All four merged files BYTE_IDENTICAL_TO_BANKED; merge wall 4364.7s =
+  1:12:45 -> **5.75x vs the banked tree (6:57:38)**, 2.98x vs gate 1's
+  sharded tree (3:36:54). comparisons=6.92B, max_lce=97059, RSS 2.65 GB.
+* Phase breakdown: sequential 32-chunk load ~2000s (NEXT optimization
+  target: bounded-concurrency walks), parallel anchor+repair 167s for ALL
+  32 sides (vs ~2000s+ cumulative serial in the tree), k-way heap walk
+  1205s (5x one pairwise walk's comparisons at the SAME wall as the tree's
+  final pairwise walk alone; pool 31.5e9 hits / 212e6 misses = 99.3%),
+  emit-count 456s + emit-write 465s.
+* Crash found + fixed en route (the arena blowup, commit 54639fd):
+  VmPeak 7.9 GB vs the 6 GiB gate cap; mallopt(M_ARENA_MAX,16) +
+  memory-aware side parallelism from getrlimit(RLIMIT_AS).
+
 ## Deliverable table (walls; before/after each change)
 
-| run                          | wall (banked) | wall (milestone) | notes |
-|------------------------------|---------------|------------------|-------|
-| fragment merge tree (k=2)    | 6:57:38       | gate1 in flight  | 32 chunks, 48 threads, pool ON, cap 6 GiB |
-| fragment FLAT k=32           | -             | pending          | the number that prices the pile at its I/O floor |
-| 10 GB merge (tree)           | 6:14 (old fat build, 332 GB) | pending | |
-| 10 GB FLAT                   | -             | pending          | |
+| run                          | wall (banked) | wall (milestone)   | notes |
+|------------------------------|---------------|-------------------|-------|
+| fragment merge tree (k=2)    | 6:57:38       | 3:36:54 (gate 1)  | sharded emission, 1.93x; 8/8 bytes, chi exact |
+| fragment FLAT k=32 (probe)   | -             | 1:12:45 merge     | 4/4 files byte-identical; clean gate 3 in flight |
+| fragment FLAT k=32 (gate 3)  | -             | in flight         | full chain + finish + pf sidecars, 6 GiB cap |
+| 10 GB merge (tree, banked)   | 6:14 (old fat build, 332 GB) | - | |
+| 10 GB FLAT (gate 4)          | -             | pending           | prices the pile at its I/O floor |
 
 Floor analysis: owed after each milestone (pool misses x window size = drive
-traffic vs aggregate NVMe bandwidth).
+traffic vs aggregate NVMe bandwidth). Flat fragment walk: 212e6 misses x 256B
+= ~54 GB drive traffic for 6.9e9 comparisons - the walk is NOT yet
+I/O-bound; the load phase (~2000s of single-threaded walks + validation)
+is the next CPU-side target.
 
 ## Milestone 1 GATE 1 RESULT (fragment scale, PASSED 2026-10-08)
 
@@ -149,3 +170,27 @@ gate-2 xsa additionally contained the k-way core, unused at k=2):
   remaining serial core, 358s on the final pair; a flat k-way would
   otherwise serialize all k sides' anchor phases). Re-gated byte-identical
   (selftest k {2,16,32}, arities {2,5,16,32}).
+
+## Milestone 3 GATE 3 RESULT (fragment scale, FLAT k=32, PASSED)
+
+The headline row, through the consolidated `xsa build --kway 32` (bundle at
+54639fd: sharded emission + referenced chunks + flat k-way + parallel
+anchors + arena cap):
+* BYTE IDENTITY: 8/8 BYTE_IDENTICAL_TO_BANKED (all four merged files,
+  all four finish files); chi = 306164765 EXACT. FLAT == the certified tree
+  artifact, byte-for-byte.
+* WALLS: chunk 3:24 (unchanged), **merge 1:03:15** vs banked tree 6:57:38 =
+  **6.63x on the merge** (3.45x vs gate 1's sharded tree 3:36:54),
+  endpoints 5:56, slim 20:02, sweep 1:04. Full chain ~1:33 vs ~7:35 banked.
+* Per-phase (flat, k=32, 48 threads, S=48): sequential 32-chunk load
+  ~1650s (the NEXT target: bounded-concurrency walks), anchor+repair 104s
+  for ALL 32 sides in parallel, k-way heap walk 1109s (6.92B comparisons =
+  5x one pairwise walk's, at the same wall as the tree's final pairwise
+  walk; pool 99.3% hit rate; NOT I/O-bound: ~54 GB drive traffic),
+  emit-count 463s + emit-write 465s + pf emits 3s, RSS 2.48 GB,
+  VmPeak 3.64 GB (under the 6 GiB gate cap after the arena fix).
+* Floor status at fragment scale: the merge is CPU/load-bound, not
+  I/O-bound. Remaining CPU-side costs in rank order: (1) the sequential
+  chunk walks at load (~1650s), (2) the walk's comparator pool misses
+  (~1109s wall with 99.3% hits - bigger pool slots or striping shave it),
+  (3) emit passes (~930s, sharded but IO/CPU mixed).
