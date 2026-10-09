@@ -283,3 +283,83 @@ En-route root causes (journal): companion-name mismatch (chunker wrote
 chunk-N.pos/.ref, merge looked for chunk-N.crle.*: every "persisted"
 gate had silently walked - byte-identical fallbacks kept gates green);
 SXP3 posBase 40; bwt-expansion mid-run flush offset. All fixed + re-gated.
+
+## GATE 5 (1GB BARRIER BREAK) - PASSED 2026-10-09 21:14: 10/10, both chi exact
+
+mergperf-1b-snap.txt (sha c382daa5..., N=1,000,000,665, cut from the pile at
+first 0x1e >= 1e9), 16 chunks, flat k=16, cap 8 GiB, 48 threads.
+A (CROSS_NO_PERSIST=1: derive loads) vs B (persisted-at-chunk-time): ALL SIX
+merged files + ALL FOUR finish files BYTE-IDENTICAL; chi = 283296933
+(N=1000000665, R=368036609) exact on BOTH. MERGPERF_GATE5_1B_DONE pass=10.
+THE BARRIER BREAK (load phase): A LOAD_STATS sides=16 par=1 wall=1844.905s
+(serial derivation at width 1 - the walk pool deriving order columns) vs B
+sides=16 par=16 wall=3.023s (pure reads of the chunker-persisted columns) =
+610x. Merge wall_total: A 3537.0s -> B 1612.6s (2.2x; B is now walk-bound:
+cross-merge t_fast=12033/t_scan=5297 CPU-seconds). Full chain (chunk+merge+
+sweep+slim): 1:30:53 (A) vs 1:27:44 (B) in this run (both under disc
+pressure at 87-88% full, --scratch-free-pct 0 journaled; A's chunk phase and
+the finish phases are shared costs). At 10GB the equivalent derive load was
+6.6 HOURS (gate 4); persistence removes the class (loads -> ~0 at any scale;
+0.25s/6.5M-position side at 100MB).
+
+## SXP4 COMPACT .pos (chunk-disc lever) - tiny gates PASS, 100MB gate in flight
+
+Design (measured, then built): within-group row deltas on real pile-like
+100MB chunk-0 are ~3.13 B/pos (0.6% 1B, 12.2% 2B, 61.1% 3B, 26.1% 4B; none
+>=5B). Format "SXP4" | u32 ver | u64 offset | u64 n | u64 period | u64 rsvd
+| u64 groups | pad(8) | per-group (startRow, byteOff, basePos) 24B entries
+from byte 56 | zigzag-varint delta stream, groups of 4096 rows. Bases and
+absolute positions stay 64-bit (41+ bits required by pile arithmetic);
+only bounded within-group deltas are narrow - NO 32-bit overflow anywhere.
+Reader: PosColumn (sniffs SXP3 dense vs SXP4; binary-searched group table,
+windowed bulk read) replaces WinU64 in PosOverlay; writers: chunker
+emit_pos (direct-fd) + merge write_pos_sxp4 for intermediates (cascade
+composes). Tiny-alpha gates (16 chunks, banked outputs): k=2/16/32 ALL
+BYTE-IDENTICAL; tiny chunks 1.94x corpus (SXP3 was 8.2n at 100MB).
+ROOT CAUSE of the failures that delayed this: zigzag ENCODERS wrote
+2|d|+1 for negative deltas; the standard decoder maps odd v to -(v>>1)-1,
+so every negative delta was off by one and drift accumulated group-by-group
+(detected as "persisted position out of range" only when drift wrapped a
+row below 0 - my python delta checker had mirrored the encoder's error and
+masked it). Fix: standard zigzag in both writers (v = 2d if d>=0 else
+-2d-1). Two merge-side fixes: 1-row groups (n%4096==1) have empty spans
+(span check relaxed to >=); the persisted branch now returns before the
+legacy dense tail re-check (which misread SXP4 as dense).
+In flight at journal time: 100MB production gate (xsa build, flat k=16)
+vs the banked v3-flat outputs + chi 29716349; then the ratio table.
+
+## SXP4 100MB PRODUCTION GATE - PASSED 2026-10-09 (10/10, chi exact)
+
+xsa build (16 chunks, flat k=16, cap 6 GiB, 48 threads, --scratch-free-pct
+0): ALL SIX merged + ALL FOUR finish files BYTE-IDENTICAL to the banked
+certified v3-flat run; chi = 29716349 (N=100000503, R=38647515) EXACT.
+RATIO TABLE (100MB fixture, provenance mergperf-100m-v3-flat vs -sxp4,
+16 chunks, bytes summed over the chunk set):
+| column | v3 (SXCR v3 + SXP3 dense) | SXP4 compact | per corpus byte |
+| crle   | 80,732,634  (0.807n)      | 80,732,634 (0.807n) | unchanged |
+| pos    | 800,004,664  (8.000n)    | 328,663,481 (3.287n) | 2.43x down |
+| ref    | 5,472        (~0n)        | 5,472      (~0n)     | unchanged |
+| TOTAL  | 880,742,770  (8.807n)    | 409,401,587 (4.094n) | 2.15x down |
+TINY fixture (corpus-tiny-alpha, 16 chunks): total 1.94n (2-char text
+compresses deltas further). PILE PROJECTION at 4.09n x 1.31TB = ~5.4TB
+chunk set vs ~6TB free = INSIDE THE BOX (v3/SXP3: 8.8n -> 11.5TB miss;
+the 29n pre-v3 shape was a 38TB = 6x miss). Disc no longer binds the pile
+chunk set; merge-transient peaks are the remaining disc question.
+En-route perf fix (post-gate): PosColumn::at() compact mode re-decoded
+its whole 4096-row group per call (per-run samplers hit at() 2x/run) -
+100MB loads measured 132.4s wall. Fixed with the same 4-slot TLS
+windowed-cache pattern as dense mode (group == page: starts are
+GRP-aligned; one group decode per miss). Re-gate sxp4b in flight to
+re-bank LOAD_STATS (expect ~seconds; SXP3-era persisted loads were
+0.25-0.54s/side).
+Windowed at() re-gate (mergperf-100m-sxp4c): 10/10 BYTE-IDENTICAL, chi
+EXACT; LOAD_STATS sides=16 par=16 wall=0.225s (the unwindowed decode had
+measured 132.4s; SXP3-era persisted loads were 0.25-0.54s - parity
+restored at 100MB). Merge wall 51.7s; chunk 17.5s; slim 1:49; sweep 6s.
+EN-ROUTE BUG (caught by the merge's own 1-in-64 sampled run-head text
+check, minutes into the re-gate): decodeGroup output already includes
+`shift`; the windowed at() return added shift again (double shift) ->
+the sample check fired "persisted order disagrees with the referenced
+text". Fixed (return without the extra shift). The sampled checks keep
+earning their keep: this class of bug (correct bulk path, wrong point
+path) is invisible to load-time validation and caught in seconds.

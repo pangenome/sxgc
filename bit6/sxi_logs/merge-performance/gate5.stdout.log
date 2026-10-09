@@ -1,2 +1,28 @@
 === 1b gate start 2026-10-09T18:53:18+00:00 pid=3857055 caps: ulimit -v 8 GiB chunks=16 kway=16
 === run A rc=0 2026-10-09T20:21:29+00:00
+=== run B rc=0 2026-10-09T21:14:42+00:00
+=== byte-identity A (derive) == B (persist) on every artifact
+ONEB_MERGE_rlebwt BYTE_IDENTICAL
+ONEB_MERGE_rlebwt.meta BYTE_IDENTICAL
+ONEB_MERGE_ssa BYTE_IDENTICAL
+ONEB_MERGE_ssa_t BYTE_IDENTICAL
+ONEB_MERGE_pftext BYTE_IDENTICAL
+ONEB_MERGE_pfck BYTE_IDENTICAL
+ONEB_FINISH_ri4 BYTE_IDENTICAL
+ONEB_FINISH_head_sa BYTE_IDENTICAL
+ONEB_FINISH_agg BYTE_IDENTICAL
+ONEB_FINISH_sA BYTE_IDENTICAL
+xsa chi-rspace: chi = 283296933 (N=1000000665, R=368036609) stream-agg=true buffers=4194304
+ONEB_A_CHI_283296933_OK
+xsa chi-rspace: chi = 283296933 (N=1000000665, R=368036609) stream-agg=true buffers=4194304
+ONEB_B_CHI_283296933_OK
+=== the barrier break: load-phase walls (before = derivation pool, after = pure reads)
+-- run A
+LOAD_STATS sides=16 par=1 wall=1844.905 per_side_avg=115.307 (serial-equivalent width 1)
+0
+wall_total=3537.042
+-- run B
+LOAD_STATS sides=16 par=16 wall=3.023 per_side_avg=3.023 (serial-equivalent width 1)
+16
+wall_total=1612.600
+MERGPERF_GATE5_1B_DONE pass=10 fail=0

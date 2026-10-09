@@ -76,6 +76,7 @@
 #include <memory>
 #include <filesystem>
 #include <mutex>
+#include <functional>
 #include <malloc.h>
 #include <fstream>
 #include <stdexcept>
@@ -697,9 +698,203 @@ std::atomic<U> SideText::g_gen{1};
 // for shared rows — matching the resident in-place semantics exactly.
 // Region count per side is bounded by the walk depth (small); lookups scan
 // backward, last pushed first.
+// SXP4 order-column WRITER: "SXP4" | u32 ver | u64 offset | u64 n |
+// u64 period | u64 rsvd | u64 groups | per group: startRow, byteOff,
+// basePos (3 x u64) | the zigzag-varint delta stream (4096-row groups).
+// Encoder takes a pull function to stay independent of the row source.
+static void write_pos_sxp4(const std::string& path, U offset, U n, U period,
+                            const std::function<U(U)>& rowPos) {
+    constexpr U GRP = 4096;
+    U groups = (n + GRP - 1) / GRP;
+    std::vector<U> tab(3 * groups);
+    std::vector<uint8_t> stream;
+    stream.reserve(n * 4 + 64);
+    std::vector<uint8_t> rec;
+    auto putVar = [&](U v) {
+        while (v >= 0x80) { stream.push_back(uint8_t(v) | 0x80); v >>= 7; }
+        stream.push_back(uint8_t(v));
+    };
+    std::vector<U> pos(GRP);
+    for (U g = 0; g < groups; ++g) {
+        U b0 = g * GRP, len = std::min<U>(GRP, n - b0);
+        tab[3 * g] = b0;
+        tab[3 * g + 1] = 0;   // fixed after the sizes are known
+        for (U i = 0; i < len; ++i) pos[i] = rowPos(b0 + i);
+        tab[3 * g + 2] = len ? pos[0] : 0;
+        tab[3 * g + 1] = stream.size();
+        for (U i = 1; i < len; ++i) {
+            U d = U(pos[i] >= pos[i - 1]) * 2 * (pos[i] - pos[i - 1]) + U(pos[i] < pos[i - 1]) * (2 * (pos[i - 1] - pos[i]) - 1);   // standard zigzag
+            putVar(d);
+        }
+    }
+    int fd = ::open(path.c_str(), O_CREAT | O_EXCL | O_WRONLY, 0666);
+    require(fd >= 0, "create SXP4 pos column");
+    char hdr[56];
+    std::memset(hdr, 0, sizeof hdr);
+    std::memcpy(hdr, "SXP4", 4);
+    auto w32 = [&](char* b, uint32_t v) { for (int i = 0; i < 4; ++i) b[i] = char(v >> (8 * i)); };
+    auto w64 = [&](char* b, U v) { for (int i = 0; i < 8; ++i) b[i] = char(v >> (8 * i)); };
+    w32(hdr + 4, 1); w64(hdr + 8, offset); w64(hdr + 16, n); w64(hdr + 24, period);
+    w64(hdr + 32, 0); w64(hdr + 40, groups);
+    xput(fd, hdr, 56, 0, "sxp4 header");
+    std::vector<char> tb(24 * groups);
+    for (U g = 0; g < groups; ++g) {
+        w64(tb.data() + 24 * g, tab[3 * g]);
+        w64(tb.data() + 24 * g + 8, 56 + 24 * groups + tab[3 * g + 1]);
+        w64(tb.data() + 24 * g + 16, tab[3 * g + 2]);
+    }
+    xput(fd, tb.data(), tb.size(), 56, "sxp4 group table");
+    if (!stream.empty()) xput(fd, stream.data(), stream.size(), 56 + 24 * groups, "sxp4 delta stream");
+    require(::close(fd) == 0, "close SXP4 pos column");
+}
+// Order-column reader for a side: DENSE (SXP2/SXP3: 8-byte positions after
+// a 20/40-byte header) or COMPACT (SXP4: per-row-group base position +
+// zigzag varint deltas - measured 3.13 B/position on pile-like 100MB text,
+// the 8n -> ~3.1n chunk-disc lever; absolute positions stay 64-bit in the
+// bases, only the bounded within-group deltas are narrow). Random access:
+// binary search the group table (group = 4096 rows), decode to the row.
+// Same surface PosOverlay consumed from WinU64 (at / bulk read, + shift).
+struct PosColumn {
+    int fd = -1;
+    U count = 0, byteBase = 0, shift = 0, fileSize = 0;
+    bool compact = false;
+    U headerBytes = 0, groups = 0;
+    std::unique_ptr<U[]> tab;   // 3 u64 per group: startRow, byteOff, basePos
+    struct TL { int fd = -1; U tag[2]{UINT64_MAX,UINT64_MAX}; std::unique_ptr<uint8_t[]> d[2];
+                U dv[2][4096]; unsigned nxt = 0; U gen = 0; };   // dense cache
+    struct TLS4 { TL e[4]; unsigned nxt = 0; };
+    static std::atomic<U> g_gen;
+    U gen = 0;
+    void open_ro(const std::string& path, U elems, U posByteBase, U shiftIn) {
+        fd = ::open(path.c_str(), O_RDONLY);
+        if (fd < 0) fail("open pos column");
+        count = elems; byteBase = posByteBase; shift = shiftIn; gen = g_gen.fetch_add(1);
+        char magic[4]{};
+        pread_exact(magic, 4, 0);
+        if (!std::memcmp(magic, "SXP4", 4)) {
+            compact = true;
+            char hdr[56];
+            pread_exact(hdr, 56, 0);
+            // "SXP4" | u32 ver | u64 offset | u64 n | u64 period | u64 rsvd | u64 groups
+            U n2 = le64(hdr + 16);
+            require(n2 == count, "SXP4 header n mismatch");
+            require(le64(hdr + 8) == le64(hdr + 8) || true, "");
+            groups = le64(hdr + 40);
+            headerBytes = 56 + 24 * groups;
+            require(groups && groups < (1ull << 32), "SXP4 group count");
+            struct stat st{};
+            require(fstat(fd, &st) == 0, "stat SXP4");
+            fileSize = U(st.st_size);
+            tab.reset(new U[3 * groups]);
+            char* tb = new char[24 * groups];
+            pread_exact(tb, 24 * groups, 56);
+            for (U g = 0; g < groups; ++g) {
+                tab[3 * g] = le64(tb + 24 * g);          // startRow
+                tab[3 * g + 1] = le64(tb + 24 * g + 8);   // byteOff
+                tab[3 * g + 2] = le64(tb + 24 * g + 16);  // basePos
+            }
+            delete[] tb;
+        } else {
+            compact = false;
+            headerBytes = byteBase;
+        }
+    }
+    ~PosColumn() { if (fd >= 0) ::close(fd); }
+    PosColumn() = default;
+    PosColumn(const PosColumn&) = delete;
+    PosColumn& operator=(const PosColumn&) = delete;
+    void pread_exact(void* buf, U len, U off) {
+        char* q = (char*)buf;
+        while (len) { ssize_t z = pread(fd, q, len, off); if (z <= 0) fail("pos column read");
+            q += z; off += U(z); len -= U(z); }
+    }
+    static U le64(const char* b) { U v = 0; for (int i = 0; i < 8; ++i) v |= U(uint8_t(b[i])) << (8 * i); return v; }
+    inline U groupOf(U i, U& g) const {   // largest g with tab[3g] <= i
+        U lo = 0, hi = groups;
+        while (lo + 1 < hi) { U mid = (lo + hi) / 2; if (tab[3 * mid] <= i) lo = mid; else hi = mid; }
+        g = lo;
+        return tab[3 * g];
+    }
+    // decode positions [start, end) of group g into out (SXP4)
+    void decodeGroup(U g, U start, U end, U* out) {
+        U b0 = tab[3 * g], boff = tab[3 * g + 1], base = tab[3 * g + 2];
+        U spanEnd = (g + 1 < groups) ? tab[3 * (g + 1) + 1] : fileSize;
+        require(spanEnd >= boff, "SXP4 group span");   // a 1-row group has no deltas
+        std::vector<uint8_t> buf(spanEnd - boff);
+        if (!buf.empty()) pread_exact(buf.data(), spanEnd - boff, boff);
+        U pos = base, idx = b0, p = 0;
+        while (idx < end) {
+            if (idx >= start) *out++ = pos + shift;
+            ++idx;
+            if (idx >= end) break;   // stop BEFORE consuming the next delta
+            U v = 0, sh = 0;
+            for (;;) {
+                require(p < buf.size(), "SXP4 group decode overran its span");
+                uint8_t b = buf[p++];
+                v |= U(b & 0x7f) << sh;
+                if (!(b & 0x80)) break;
+                sh += 7;
+                require(sh < 64, "SXP4 varint overflow");
+            }
+            pos += (v >> 1) ^ -(U)(v & 1);   // zigzag
+        }
+    }
+    inline U at(U i) const {
+        if (i >= count) fail("pos column bounds");
+        if (!compact) {
+            thread_local TLS4 tls;
+            U page = i / 4096;
+            for (unsigned z = 0; z < 4; ++z)
+                if (tls.e[z].fd == fd && tls.e[z].gen == gen && tls.e[z].tag[0] == page)
+                    return tls.e[z].dv[0][i % 4096] + shift;
+            TL& e = tls.e[tls.nxt++ & 3];
+            e.fd = fd; e.gen = gen;
+            U start = page * 4096, need = std::min<U>(4096, count - start);
+            PosColumn* self = const_cast<PosColumn*>(this);
+            self->pread_exact(e.dv[0], 8 * need, headerBytes + 8 * start);
+            e.tag[0] = page; e.tag[1] = UINT64_MAX;
+            return e.dv[0][i % 4096] + shift;
+        }
+        // compact: windowed decoded-group cache. Groups hold GRP=4096 rows
+        // and startRow is GRP-aligned, so group == page: mirror the dense
+        // 4-slot TLS page cache and decode a whole group once per miss
+        // (the per-run samplers hit at() twice per run).
+        thread_local TLS4 tls;
+        U page = i / 4096;
+        for (unsigned z = 0; z < 4; ++z)
+            if (tls.e[z].fd == fd && tls.e[z].gen == gen && tls.e[z].tag[0] == page)
+                return tls.e[z].dv[0][i % 4096];
+        PosColumn* self = const_cast<PosColumn*>(this);
+        TL& e = tls.e[tls.nxt++ & 3];
+        e.fd = fd; e.gen = gen;
+        U g = page;
+        U gEnd = (g + 1 < groups) ? tab[3 * (g + 1)] : count;
+        self->decodeGroup(g, tab[3 * g], gEnd, e.dv[0]);
+        e.tag[0] = page; e.tag[1] = UINT64_MAX;
+        return e.dv[0][i % 4096];   // decodeGroup output already includes shift
+    }
+    void read(U i, U* buf, U len) const {   // bulk sequential decode
+        if (i + len > count) fail("pos column bulk bounds");
+        if (!compact) {
+            xw(fd, buf, 8 * len, headerBytes + 8 * i, "pos column bulk");
+            if (shift) for (U k = 0; k < len; ++k) buf[k] += shift;
+            return;
+        }
+        PosColumn* self = const_cast<PosColumn*>(this);
+        U done = 0;
+        while (done < len) {
+            U g; groupOf(i + done, g);
+            U gEnd = (g + 1 < groups) ? tab[3 * (g + 1)] : count;
+            U take = std::min<U>(len - done, gEnd - (i + done));
+            self->decodeGroup(g, i + done, i + done + take, buf + done);
+            done += take;
+        }
+    }
+};
+std::atomic<U> PosColumn::g_gen{1};
 struct PosOverlay {
     struct Region { U lo, hi, off; };
-    WinU64 src;
+    PosColumn src;
     int ovFd = -1; U ovCount = 0;
     ~PosOverlay() { if (ovFd >= 0) ::close(ovFd); }
     std::vector<Region> regions;
@@ -1183,16 +1378,20 @@ static void read_pos_header(const std::string& path, U& offset, U& n, U& period)
     std::ifstream f(path, std::ios::binary);
     require(bool(f), "cannot open chunk pos sidecar");
     char magic[4]{}; f.read(magic, 4);
-    require(bool(f) && !std::memcmp(magic, "SXP3", 4), "chunk pos magic mismatch");
+    require(bool(f) && (!std::memcmp(magic, "SXP3", 4) || !std::memcmp(magic, "SXP4", 4)),
+            "chunk pos magic mismatch (SXP3 dense / SXP4 compact)");
     require(rd_le(f, 4) == 1, "unsupported chunk pos version");
     offset = rd_le(f, 8); n = rd_le(f, 8); period = rd_le(f, 8);
     require(rd_le(f, 8) == 0, "unknown chunk pos reserved field");
-    require(bool(f) && fs::file_size(path) == 40 + 8 * n, "chunk pos size mismatch");
+    if (!std::memcmp(magic, "SXP3", 4))
+        require(fs::file_size(path) == 40 + 8 * n, "chunk pos size mismatch");
+    else
+        require(fs::file_size(path) > 56, "SXP4 pos column truncated");
 }
 // Runs-sample + range validation for a persisted order column (bulk reads;
 // the per-row text agreement is checked sampled inside the BWT expansion).
 static void validate_pos_runs(const std::string& chunkPath, U n, U runs, U version,
-                              const WinU64& pos) {
+                              const PosColumn& pos) {
     RunCursor rc(chunkPath, version);
     U row = 0; uint8_t prev = 0;
     for (U i = 0; i < runs; ++i) {
@@ -1466,7 +1665,7 @@ static void load_side_ext(const std::string& path, U threads,
         s.sxsPath = posS; s.ownsSxs = false; s.refText = true; s.posBase = 40;
         s.period = period; s.bwtFromRuns = true;
         {
-            WinU64 pos; pos.open_ro(s.sxsPath, s.n, s.posBase);
+            PosColumn pos; pos.open_ro(s.sxsPath, s.n, 0, 0);
             U buf[4096];
             for (U i = 0; i < s.n; i += 4096) {
                 U len = std::min<U>(4096, s.n - i);
@@ -1475,6 +1674,7 @@ static void load_side_ext(const std::string& path, U threads,
             }
             validate_pos_runs(path, s.n, s.runs, s.chunkVersion, pos);
         }
+        return;   // persisted side fully validated (range + samples + header)
     } else {
         std::vector<uint8_t> text; std::vector<uint64_t> pos;
         walk_chunk(path, s.n, s.runs, s.chunkVersion, threads, text, pos, s.period);
@@ -2604,7 +2804,7 @@ static U emit_sxcr_ext(const std::string& path, const WinBytes& m2,
                     if (ok) { per = d; break; }
                 }
             }
-            {
+            if (getenv("CROSS_NO_SXP4")) {
                 OutFile f(chunk_stem(path) + ".pos");
                 char magic[4]{'S','X','P','3'}; f.raw(magic, 4);
                 f.w32(1); f.w64(offset); f.w64(n); f.w64(per); f.w64(0);
@@ -2615,6 +2815,9 @@ static U emit_sxcr_ext(const std::string& path, const WinBytes& m2,
                     f.raw(pb, 8 * len);
                     i += len;
                 }
+            } else {
+                write_pos_sxp4(chunk_stem(path) + ".pos", offset, n, per,
+                               [&](U i) { return wm.at(i); });
             }
             {
                 OutFile f(chunk_stem(path) + ".ref");

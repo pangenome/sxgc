@@ -1,0 +1,14 @@
+xsa chi-rspace: chi = 283296933 (N=1000000665, R=368036609) stream-agg=true buffers=4194304
+xsa chi-rspace: chi = 283296933 (N=1000000665, R=368036609) stream-agg=true buffers=4194304
+-- run A
+LOAD_STATS sides=16 par=1 wall=1844.905 per_side_avg=115.307 (serial-equivalent width 1)
+LOAD_STATS sides=16 par=1 wall=1844.905 per_side_avg=115.307 (serial-equivalent width 1)
+0
+wall_total=3537.042
+wall_total=3537.042
+-- run B
+LOAD_STATS sides=16 par=16 wall=3.023 per_side_avg=3.023 (serial-equivalent width 1)
+LOAD_STATS sides=16 par=16 wall=3.023 per_side_avg=3.023 (serial-equivalent width 1)
+16
+wall_total=1612.600
+wall_total=1612.600
