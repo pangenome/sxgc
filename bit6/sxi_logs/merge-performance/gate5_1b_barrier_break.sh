@@ -22,8 +22,12 @@ for run in A B; do
   SCR=/mnt/nvme2n1/erikg/extcols-scratch/mergperf-1b-$run
   rm -rf "$SCR"; mkdir -p "$SCR"
   if [ "$run" = A ]; then export CROSS_NO_PERSIST=1; else unset CROSS_NO_PERSIST; fi
+  # --scratch-free-pct 0: the 37 GB run fits 2.0 TB free with 55x headroom;
+  # the >=15%-free policy cannot be met while the banked references + the
+  # in-flight 10GB gate occupy the drive (override journaled in the plan).
   timeout "$TIMEOUT_S" "$XSA" build --input "$SNAP" --scratch "$SCR" --snap-1e \
       --memory-gb "$CAP_GB" --threads 48 --chunks "$CHUNKS" --kway "$KWAY" \
+      --scratch-free-pct 0 \
       > "$J/gate1b-$run.driver.log" 2>&1
   rc=$?
   echo "=== run $run rc=$rc $(date -Is)"

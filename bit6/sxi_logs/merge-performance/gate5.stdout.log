@@ -1,6 +1,7 @@
-=== 1b gate start 2026-10-09T17:18:55+00:00 pid=101992 caps: ulimit -v 8 GiB chunks=16 kway=16
-=== run A rc=1 2026-10-09T17:18:55+00:00
+=== 1b gate start 2026-10-09T17:38:43+00:00 pid=997648 caps: ulimit -v 8 GiB chunks=16 kway=16
+=== run A rc=1 2026-10-09T17:38:43+00:00
 RUN_A_FAIL
+XSA_PLAN v=2 corpus_bytes=1000000665 chunks=16 kway=16 threads=48 cap_gb=8 cores=256 cx16=true mem_available_gb=810
 XSA_PLAN_PHASES name wall disc_peak_gb rss_gb
 XSA_PLAN_PHASE name=chunk wall=0:02:59 wall_s=180 disc_peak_gb=16.7 rss_gb=1.57
 XSA_PLAN_PHASE name=merge(load) wall=0:00:52 wall_s=53 disc_peak_gb=35.3 rss_gb=4.00
@@ -11,8 +12,6 @@ XSA_PLAN_PHASE name=endpoints wall=0:05:13 wall_s=314 disc_peak_gb=18.0 rss_gb=0
 XSA_PLAN_PHASE name=slim wall=0:17:39 wall_s=1059 disc_peak_gb=18.0 rss_gb=0.04
 XSA_PLAN_PHASE name=sweep wall=0:00:56 wall_s=56 disc_peak_gb=18.0 rss_gb=0.01
 XSA_PLAN_TOTAL wall=0:59:12 wall_s=3552 chunk_bytes_mb=60
-XSA_PLAN_DISC INFEASIBLE: peak ~37 GB vs 1910 GB free (87% used)
+XSA_PLAN_DISC FEASIBLE: peak ~37 GB fits 1969 GB free (87% used)
 XSA_PLAN_RAM FEASIBLE: chunk front end ~1.6 GB (27x chunk bytes) vs cap 8 GiB; merge ~4.0 GB (bounded, memory-aware side parallelism)
-XSA_PLAN_ALTERNATIVE free or add scratch space (or pass --stripe dirs once reader-level striping lands, lane item 3)
-XSA_PLAN_ALTERNATIVE accumulator mode (merge corpus quarters into one growing object; ~14 corpus passes vs flat's 2; acknowledged disc-frugal fallback)
-xsa: error: build: PLAN_INFEASIBLE: see XSA_PLAN_ALTERNATIVE lines above
+xsa: error: build: DF_GATE_FAIL /mnt/nvme2n1/erikg/extcols-scratch/mergperf-1b-A 87% used (>= 15% free required on the scratch filesystem)

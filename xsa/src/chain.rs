@@ -341,12 +341,15 @@ fn disc_used_percent(path: &Path) -> Result<u32, String> {
     parse_used_percent(&text).ok_or_else(|| format!("unparsable df output: {text:?}"))
 }
 
-fn disc_preflight(path: &Path) -> Result<(), String> {
+fn disc_preflight(path: &Path, min_free_pct: u32) -> Result<(), String> {
+    if min_free_pct == 0 {
+        return Ok(());   // explicit operator override (journaled in the plan)
+    }
     let used = disc_used_percent(path)?;
-    if !disc_allows_used_percent(used) {
+    if !disc_allows_used_percent(100u32.saturating_sub(min_free_pct)) {
         return Err(format!(
             "DF_GATE_FAIL {} {}% used (>= {}% free required on the scratch filesystem)",
-            path.display(), used, 100 - DISC_MAX_USED_PERCENT
+            path.display(), used, min_free_pct
         ));
     }
     Ok(())
@@ -577,8 +580,9 @@ fn run_chain(options: Options) -> Result<(), String> {
             journal.line(&format!("KNOB {knob}={}", value.to_string_lossy()));
         }
     }
-    // Preflight: disc gate before anything is written.
-    disc_preflight(&scratch)?;
+    // Preflight: disc gate before anything is written (the plan-first
+    // verdicts above carry the fit + hygiene contract; this is the belt).
+    disc_preflight(&scratch, options.scratch_free_pct)?;
     journal.line(&format!(
         "XSA_BUILD START input={} scratch={} memory_gb={} threads={} chunks={} kway={} remap={}",
         input.display(), scratch.display(), options.memory_gb, options.threads,
