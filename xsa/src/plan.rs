@@ -125,7 +125,10 @@ pub struct Plan {
     pub alternatives: Vec<String>,
 }
 
-pub fn model(survey: Survey, chunks: u32, kway: u32, threads: u32, cap_gb: u64) -> Plan {
+pub fn model(
+    survey: Survey, chunks: u32, kway: u32, threads: u32, cap_gb: u64,
+    hygiene_free_pct: u32,
+) -> Plan {
     let mb = survey.corpus_bytes as f64 / (1024.0 * 1024.0);
     let r = &RATES_V2;
     let chunk_bytes_mb = mb / chunks as f64;
@@ -152,11 +155,26 @@ pub fn model(survey: Survey, chunks: u32, kway: u32, threads: u32, cap_gb: u64) 
     // Verdicts.
     let disc_peak_mb = chunk_disc_mb + merge_disc_mb + outputs_disc_mb;
     let free_mb = survey.scratch_free_bytes as f64 / (1024.0 * 1024.0);
-    let disc_ok = survey.scratch_used_percent <= DISC_MAX_USED_PERCENT && disc_peak_mb < free_mb;
+    // FIT (absolute: projected peak vs free) and HYGIENE (the banked >=15%-
+    // free policy, overridable by the operator with an explicit, journaled
+    // --scratch-free-pct - a bounded run with many-x headroom on a full
+    // drive is fit even when the blunt policy says no).
+    let fits = disc_peak_mb < free_mb;
+    let free_pct = 100u32.saturating_sub(survey.scratch_used_percent);
+    let hygiene_ok = free_pct >= hygiene_free_pct;
+    let disc_ok = fits && (hygiene_ok || hygiene_free_pct == 0);
     let disc_verdict = if disc_ok {
-        format!("FEASIBLE: peak ~{:.0} GB fits {:.0} GB free ({}% used)", disc_peak_mb / 1024.0, free_mb / 1024.0, survey.scratch_used_percent)
-    } else {
+        if hygiene_ok {
+            format!("FEASIBLE: peak ~{:.0} GB fits {:.0} GB free ({}% used)", disc_peak_mb / 1024.0, free_mb / 1024.0, survey.scratch_used_percent)
+        } else {
+            format!("FEASIBLE with hygiene override: peak ~{:.0} GB fits {:.0} GB free ({}% used; policy >= {}% free overridden by the operator)",
+                     disc_peak_mb / 1024.0, free_mb / 1024.0, survey.scratch_used_percent, hygiene_free_pct)
+        }
+    } else if !fits {
         format!("INFEASIBLE: peak ~{:.0} GB vs {:.0} GB free ({}% used)", disc_peak_mb / 1024.0, free_mb / 1024.0, survey.scratch_used_percent)
+    } else {
+        format!("INFEASIBLE (hygiene): peak ~{:.0} GB fits {:.0} GB free but only {}% free < the {}% policy; pass --scratch-free-pct to override",
+                 disc_peak_mb / 1024.0, free_mb / 1024.0, free_pct, hygiene_free_pct)
     };
     let chunk_ram_ok = chunk_ram_gb < cap_gb as f64 * 0.8;
     let merge_ram_ok = MERGE_RSS_GB < cap_gb as f64;

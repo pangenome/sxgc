@@ -77,6 +77,10 @@ RSS / disc telemetry.
   xsa build --plan-only           print the surveyed+modeled build plan
                      and exit without building anything (same model as the
                      plan file the build journals first).
+  --scratch-free-pct N  disc hygiene policy override (default 15 = the
+                     banked >=15%-free rule; 0 = a bounded run that FITS
+                     with headroom may proceed on a full drive; the
+                     override is journaled in the plan).
   --stripe DIR[,DIR...]  candidate stripe directories for the disc model
                      (reader-level striping is lane item 3; the plan
                      accounts for the space now, the I/O split lands later).
@@ -131,6 +135,7 @@ struct Options {
     kway: u32,
     plan_only: bool,
     stripes: Vec<String>,
+    scratch_free_pct: u32,
     remap: Option<PathBuf>,
 }
 
@@ -190,6 +195,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     let mut kway = 2u32;
     let mut plan_only = false;
     let mut stripes: Vec<String> = Vec::new();
+    let mut scratch_free_pct = 15u32;
     let mut remap = None;
     let mut i = 0;
     while i < args.len() {
@@ -237,6 +243,13 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
                 }
             }
             "--plan-only" => plan_only = true,
+            "--scratch-free-pct" => {
+                i += 1;
+                scratch_free_pct = parse_u32(args.get(i), "--scratch-free-pct")?;
+                if scratch_free_pct > 100 {
+                    return Err("--scratch-free-pct must be <= 100 (0 = override hygiene)".into());
+                }
+            }
             "--stripe" => {
                 i += 1;
                 let v = value(args.get(i), "--stripe")?;
@@ -258,7 +271,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     }
     let input = input.ok_or("need --input <corpus>")?;
     let scratch = scratch.ok_or("need --scratch <dir>")?;
-    Ok(Options { input, scratch, snap_1e, memory_gb, threads, chunks, kway, plan_only, stripes, remap })
+    Ok(Options { input, scratch, snap_1e, memory_gb, threads, chunks, kway, plan_only, stripes, scratch_free_pct, remap })
 }
 
 /// Last byte of a file (the snap-boundary probe).
@@ -543,6 +556,7 @@ fn run_chain(options: Options) -> Result<(), String> {
     let survey = super::plan::survey(&input, &scratch, &options.stripes)?;
     let build_plan = super::plan::model(
         survey, options.chunks, options.kway, options.threads, options.memory_gb,
+        options.scratch_free_pct,
     );
     if options.plan_only {
         print!("{}", build_plan.render());
