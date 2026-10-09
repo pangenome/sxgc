@@ -2518,8 +2518,17 @@ static U merge_kway_files(const std::vector<std::string>& inputs, bool dollar,
                     for (;;) {
                         size_t j = next.fetch_add(1);
                         if (j >= k) return;
+                        double t0 = now_sec();
                         load_side_ext(inputs[j], innerThreads, sc.dir, sides[j]);
-                        loadSides.fetch_add(1, std::memory_order_relaxed);
+                        U done = loadSides.fetch_add(1, std::memory_order_relaxed) + 1;
+                        // Per-side progress (the 10GB run was blind within the
+                        // load phase): index, size, wall, mode, done/total.
+                        std::fprintf(stderr, "LOAD_SIDE idx=%llu n=%llu wall=%.3f mode=%s done=%llu/%llu\n",
+                                     (unsigned long long)j, (unsigned long long)sides[j].n,
+                                     now_sec() - t0,
+                                     sides[j].bwtFromRuns ? "persisted-reads"
+                                       : (sides[j].refText ? "walk+ref" : "walk"),
+                                     (unsigned long long)done, (unsigned long long)k);
                     }
                 });
             for (auto& t : ts) t.join();
