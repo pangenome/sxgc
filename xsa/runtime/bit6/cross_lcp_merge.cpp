@@ -76,6 +76,7 @@
 #include <memory>
 #include <filesystem>
 #include <mutex>
+#include <malloc.h>
 #include <fstream>
 #include <stdexcept>
 #include <string>
@@ -1579,17 +1580,63 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
     for (size_t j = 0; j < k; ++j)
         pos[j]->init(sides[j].sxsPath, sides[j].n, sides[j].posBase,
                      localOff[j], sc.ov[j]);
-    // Anchor blocks per side, then repair (k-independent, per side).
-    for (size_t j = 0; j < k; ++j) {
-        std::vector<BlockRec> blocks;
-        std::vector<uint64_t> anchors;
-        build_bwt_file(sides[j], *pos[j], sc.bwt[j], threads, localOff[j]);
-        { WinBytes bwt; bwt.open_ro(sc.bwt[j], sides[j].n, 0);
-          SideText text; open_side_text(sides[j], text);
-          anchor_blocks_ext(text, bwt, *pos[j], sides[j].n, localOff[j],
-                            sides[j].period, blocks, anchors, st.steps[j], st.rows[j]); }
-        st.anchors[j] = anchors.size();
-        repair_ext(*pos[j], blocks, anchors, localOff[j], sides[j].n, keys);
+    // Anchor blocks per side, then repair (k-independent, per side - and
+    // therefore PARALLEL ACROSS SIDES: every side's BWT/overlay/scratch file
+    // is its own; the shared comparator is thread-safe with per-side
+    // budgets, summed after the join like the walk's shard budgets. This
+    // was the largest remaining serial core after the walks were sharded
+    // (gate 1: 358s on the final fat pair), and a flat k-way merge would
+    // otherwise serialize all k sides' anchor+repair phases).
+    {
+        // Memory-aware side parallelism: each concurrent side's anchor pass
+        // holds ~n_j of BWT band + ~n_j/2 of rank table + buffers; bound the
+        // concurrent sides to half the phase's RLIMIT_AS (the pools, the load
+        // transient, and the walk/emit buffers own the rest).
+        U sidePar = std::min<size_t>(k, threads ? threads : 1);
+        {
+            struct rlimit rl{};
+            U perSide = 0;
+            for (auto& S : sides) perSide = std::max(perSide, S.n + S.n / 2 + (64u << 20));
+            if (perSide && getrlimit(RLIMIT_AS, &rl) == 0 && rl.rlim_cur != RLIM_INFINITY) {
+                U fit = U(rl.rlim_cur) / 2 / perSide;
+                if (fit < 1) fit = 1;
+                sidePar = std::min<U>(sidePar, fit);
+            }
+        }
+        std::vector<Budget> sideBud(k);
+        std::atomic<size_t> nextSide{0};
+        std::vector<std::thread> ts;
+        for (U t = 0; t < sidePar; ++t)
+            ts.emplace_back([&, t] {
+                for (;;) {
+                    size_t j = nextSide.fetch_add(1);
+                    if (j >= k) return;
+                    Keys skeys; skeys.init(&m2, &hp, n, dollar, &sideBud[j]);
+                    std::vector<BlockRec> blocks;
+                    std::vector<uint64_t> anchors;
+                    build_bwt_file(sides[j], *pos[j], sc.bwt[j],
+                                  std::max<U>(1, threads / sidePar), localOff[j]);
+                    { WinBytes bwt; bwt.open_ro(sc.bwt[j], sides[j].n, 0);
+                      SideText text; open_side_text(sides[j], text);
+                      anchor_blocks_ext(text, bwt, *pos[j], sides[j].n, localOff[j],
+                                        sides[j].period, blocks, anchors,
+                                        st.steps[j], st.rows[j]); }
+                    st.anchors[j] = anchors.size();
+                    repair_ext(*pos[j], blocks, anchors, localOff[j], sides[j].n, skeys);
+                }
+            });
+        for (auto& t : ts) t.join();
+        for (size_t j = 0; j < k; ++j) {
+            const Budget& sb = sideBud[j];
+            bud.comparisons += sb.comparisons; bud.fast_decided += sb.fast_decided;
+            bud.probe_decided += sb.probe_decided; bud.cap_decided += sb.cap_decided;
+            bud.probes += sb.probes; bud.symbols += sb.symbols;
+            bud.tie_decided += sb.tie_decided;
+            bud.lce_over_10k += sb.lce_over_10k; bud.lce_over_100k += sb.lce_over_100k;
+            bud.lce_over_1m += sb.lce_over_1m;
+            if (sb.max_lce > bud.max_lce) bud.max_lce = sb.max_lce;
+            bud.tFast += sb.tFast; bud.tPrep += sb.tPrep; bud.tProbe += sb.tProbe; bud.tScan += sb.tScan;
+        }
     }
     phase("anchor+repair", last);
     // K-way cross merge under the total order, streamed into the WM file.
@@ -2591,6 +2638,12 @@ static void abortHandler(int sig) {
 int main_impl(int argc, char** argv) {
     std::signal(SIGABRT, abortHandler);
     G_T0 = now_sec();
+    // Cap glibc malloc arenas: every worker thread's arena reserves 64 MB of
+    // address space, and the wide phases (48 hash threads + k anchor sides +
+    // pool workers) reserved ~5 GB of pure arena VSZ - VmPeak 7.9 GB against
+    // a 6 GiB fragment-gate RLIMIT_AS (std::bad_alloc, gate 3 first attempt).
+    // 16 arenas keep parallel allocation wide without the blowup.
+    mallopt(M_ARENA_MAX, 16);
     U threads = 8;
     std::vector<std::string> args(argv + 1, argv + argc);
     auto flag = [&](const char* name) {

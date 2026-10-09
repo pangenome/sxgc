@@ -1,0 +1,14 @@
+XSA_BUILD START input=/home/erikg/sxgc-piletest/pile-frag.txt scratch=/mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag-flat memory_gb=6 threads=48 chunks=32 kway=32 remap=production
+SNAP_OK n=1082130213 sha256=69a6b5fde1e79d593217ce815c9f47237e276169e5204831a218124e14e6b6b2
+REMAP /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag-flat/remap-256.bin sha256=b4f387767707f3095a0981148a1753f8da5885c30c19753b3b93887153e611be
+PHASE chunk START /home/erikg/.cache/xsa/96aa494949f50df7ce318b3aeb7d2da720734852575e05307ce705acdfd5ab02/chunk_frontend /home/erikg/sxgc-piletest/pile-frag.txt 32 /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag-flat/chunks /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag-flat/remap-256.bin
+PHASE chunk END rc=0 wall=3:58.00 peak_rss_kb=1291036 disc_used_bytes=12993933193216
+CHUNKS_PASS count=32 source_bytes=1082130213
+PHASE merge START /home/erikg/.cache/xsa/96aa494949f50df7ce318b3aeb7d2da720734852575e05307ce705acdfd5ab02/cross_lcp_merge --tree /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag-flat/chunks 32 1082130213 /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag-flat/merged/frag --threads 48 --kway 32 --work /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag-flat/mwork --emit-pf
+PHASE merge END rc=99 wall=27:12.00 peak_rss_kb=2273412 disc_used_bytes=13056629846016
+xsa: error: build: PHASE merge FAILED (rc 99); log tail:
+/lib/x86_64-linux-gnu/libc.so.6(+0x45330)[0x72e951245330]
+/lib/x86_64-linux-gnu/libc.so.6(pthread_kill+0x11c)[0x72e95129ec0c]
+/lib/x86_64-linux-gnu/libc.so.6(gsignal+0x1e)[0x72e95124527e]
+/lib/x86_64-linux-gnu/libc.so.6(abort+0xdf)[0x72e9512288ff]
+/lib/x86_64-linux-gnu/libstdc++.so.6(+0xa5ff5)[0x72e9516a5ff5]

@@ -76,6 +76,7 @@
 #include <memory>
 #include <filesystem>
 #include <mutex>
+#include <malloc.h>
 #include <fstream>
 #include <stdexcept>
 #include <string>
@@ -1587,7 +1588,21 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
     // (gate 1: 358s on the final fat pair), and a flat k-way merge would
     // otherwise serialize all k sides' anchor+repair phases).
     {
+        // Memory-aware side parallelism: each concurrent side's anchor pass
+        // holds ~n_j of BWT band + ~n_j/2 of rank table + buffers; bound the
+        // concurrent sides to half the phase's RLIMIT_AS (the pools, the load
+        // transient, and the walk/emit buffers own the rest).
         U sidePar = std::min<size_t>(k, threads ? threads : 1);
+        {
+            struct rlimit rl{};
+            U perSide = 0;
+            for (auto& S : sides) perSide = std::max(perSide, S.n + S.n / 2 + (64u << 20));
+            if (perSide && getrlimit(RLIMIT_AS, &rl) == 0 && rl.rlim_cur != RLIM_INFINITY) {
+                U fit = U(rl.rlim_cur) / 2 / perSide;
+                if (fit < 1) fit = 1;
+                sidePar = std::min<U>(sidePar, fit);
+            }
+        }
         std::vector<Budget> sideBud(k);
         std::atomic<size_t> nextSide{0};
         std::vector<std::thread> ts;
@@ -2623,6 +2638,12 @@ static void abortHandler(int sig) {
 int main_impl(int argc, char** argv) {
     std::signal(SIGABRT, abortHandler);
     G_T0 = now_sec();
+    // Cap glibc malloc arenas: every worker thread's arena reserves 64 MB of
+    // address space, and the wide phases (48 hash threads + k anchor sides +
+    // pool workers) reserved ~5 GB of pure arena VSZ - VmPeak 7.9 GB against
+    // a 6 GiB fragment-gate RLIMIT_AS (std::bad_alloc, gate 3 first attempt).
+    // 16 arenas keep parallel allocation wide without the blowup.
+    mallopt(M_ARENA_MAX, 16);
     U threads = 8;
     std::vector<std::string> args(argv + 1, argv + argc);
     auto flag = [&](const char* name) {
