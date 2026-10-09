@@ -978,6 +978,8 @@ struct SideExt {
     std::string corpusPath;    // ref mode
     U corpusOff = 0;           // ref mode: chunk range start in the corpus
     std::array<uint8_t, 256> remap{};   // ref mode: the chunker's byte map
+    std::string chunkPath;     // the source .crle (persisted-pos sides)
+    bool bwtFromRuns = false;  // load shortcut: expand the BWT from the runs
 };
 // chunk-i.ref (chunk_frontend emit_ref): "SXRF" | u32 ver=1 | u8 flags=0 |
 // remap[256] | u32 pathLen | corpusPath | u64 offset | u64 n
@@ -1007,6 +1009,69 @@ static void parse_chunk_ref(const std::string& path, std::string& corpus, U& off
 static void open_side_text(const SideExt& s, SideText& t) {
     if (s.refText) t.open_corpus(s.corpusPath, s.n, s.corpusOff, s.remap);
     else t.open_sidecar(s.sxsPath, s.n, 20);
+}
+// chunk-i.pos (SXP3, chunker-persisted): "SXP3" | u32 ver | u64 offset |
+// u64 n | u64 period | u64 rsvd | pos[8n]. The order column the chunker
+// already computed; the merge load for such a chunk is PURE READS (no
+// walk, no LF derivation) plus the cheap bulk validations below.
+static void read_pos_header(const std::string& path, U& offset, U& n, U& period) {
+    std::ifstream f(path, std::ios::binary);
+    require(bool(f), "cannot open chunk pos sidecar");
+    char magic[4]{}; f.read(magic, 4);
+    require(bool(f) && !std::memcmp(magic, "SXP3", 4), "chunk pos magic mismatch");
+    require(rd_le(f, 4) == 1, "unsupported chunk pos version");
+    offset = rd_le(f, 8); n = rd_le(f, 8); period = rd_le(f, 8);
+    require(rd_le(f, 8) == 0, "unknown chunk pos reserved field");
+    require(bool(f) && fs::file_size(path) == 40 + 8 * n, "chunk pos size mismatch");
+}
+// Runs-sample + range validation for a persisted order column (bulk reads;
+// the per-row text agreement is checked sampled inside the BWT expansion).
+static void validate_pos_runs(const std::string& chunkPath, U n, U runs,
+                              const WinU64& pos) {
+    std::ifstream f(chunkPath, std::ios::binary);
+    f.seekg(32);
+    U row = 0; uint8_t prev = 0;
+    for (U i = 0; i < runs; ++i) {
+        uint8_t c = uint8_t(rd_le(f, 1));
+        U len = rd_le(f, 8), h = rd_le(f, 8), t = rd_le(f, 8);
+        require(len && row + len <= n && h < n && t < n, "invalid SXCR run");
+        require(i == 0 || c != prev, "noncanonical SXCR runs");
+        require(pos.at(row) == h && pos.at(row + len - 1) == t,
+                "persisted order disagrees with the run samples");
+        row += len; prev = c;
+    }
+    require(row == n, "SXCR length mismatch");
+}
+// Expand the BWT column directly from the .crle runs (sequential rows) -
+// no text reads. Sampled per-run text agreement is the residual check that
+// the persisted order matches the corpus bytes (every 64th run head).
+static void build_bwt_from_runs(const SideExt& s, const PosOverlay& pos,
+                                const std::string& path) {
+    int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    require(fd >= 0, "create bwt scratch");
+    std::ifstream f(s.chunkPath, std::ios::binary);
+    require(bool(f), "reopen chunk for bwt expansion");
+    f.seekg(32);
+    constexpr U W = 1u << 22;
+    std::vector<uint8_t> buf(W);
+    U row = 0, used = 0, checked = 0;
+    SideText text; open_side_text(s, text);
+    for (U i = 0; i < s.runs; ++i) {
+        uint8_t c = uint8_t(rd_le(f, 1));
+        U len = rd_le(f, 8), h = rd_le(f, 8), t = rd_le(f, 8);
+        if ((checked & 63) == 0)   // 1-in-64 sampled run-head text check
+            require(text.at((h + s.n - 1) % s.n) == c,
+                    "persisted order disagrees with the referenced text");
+        ++checked;
+        for (U z = 0; z < len; ++z) {
+            if (used == W) { xput(fd, buf.data(), used, row - used, "bwt expand write"); used = 0; }
+            buf[used++] = c;
+        }
+        row += len;
+    }
+    if (used) xput(fd, buf.data(), used, row - used, "bwt expand write");
+    require(row == s.n, "bwt expansion coverage");
+    ::close(fd);
 }
 
 // Minimal cyclic period d | n with T[i]==T[i+d] (cyclically); n if aperiodic.
@@ -1199,9 +1264,38 @@ static void walk_chunk(const std::string& path, U n, U runs, U threads,
 static void load_side_ext(const std::string& path, U threads,
                           const std::string& scratch, SideExt& s) {
     sxcr_header(path, s.offset, s.n, s.runs);
+    s.chunkPath = path;
     std::string side = path + ".sxs";
+    std::string posS = path + ".pos";
     if (fs::exists(side)) {
         s.sxsPath = side; s.ownsSxs = false; s.refText = false; s.posBase = 20 + s.n;
+    } else if (fs::exists(posS) && fs::exists(path + ".ref") && !getenv("CROSS_NO_PERSIST")) {
+        // PERSISTED-AT-CHUNK-TIME (SXP3): the order column the chunker
+        // computed; the load is PURE READS (no walk, no LF derivation -
+        // the pile-scale bottleneck). Validations: header agreement, the
+        // position range, the run samples, and the sampled text checks
+        // inside the BWT expansion; the absolute byte-identity gate
+        // carries the rest.
+        U pOff = 0, pN = 0, period = 0;
+        read_pos_header(posS, pOff, pN, period);
+        require(pOff == s.offset && pN == s.n,
+                "chunk pos sidecar disagrees with the SXCR header");
+        U refN = 0;
+        parse_chunk_ref(path + ".ref", s.corpusPath, s.corpusOff, refN, s.remap);
+        require(s.corpusOff == s.offset && refN == s.n,
+                "chunk ref range disagrees with the SXCR header");
+        s.sxsPath = posS; s.ownsSxs = false; s.refText = true; s.posBase = 20;
+        s.period = period; s.bwtFromRuns = true;
+        {
+            WinU64 pos; pos.open_ro(s.sxsPath, s.n, s.posBase);
+            U buf[4096];
+            for (U i = 0; i < s.n; i += 4096) {
+                U len = std::min<U>(4096, s.n - i);
+                pos.read(i, buf, len);
+                for (U z = 0; z < len; ++z) require(buf[z] < s.n, "persisted position out of range");
+            }
+            validate_pos_runs(path, s.n, s.runs, pos);
+        }
     } else {
         std::vector<uint8_t> text; std::vector<uint64_t> pos;
         walk_chunk(path, s.n, s.runs, threads, text, pos, s.period);
@@ -1614,8 +1708,11 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
                     Keys skeys; skeys.init(&m2, &hp, n, dollar, &sideBud[j]);
                     std::vector<BlockRec> blocks;
                     std::vector<uint64_t> anchors;
-                    build_bwt_file(sides[j], *pos[j], sc.bwt[j],
-                                  std::max<U>(1, threads / sidePar), localOff[j]);
+                    if (sides[j].bwtFromRuns)
+                        build_bwt_from_runs(sides[j], *pos[j], sc.bwt[j]);
+                    else
+                        build_bwt_file(sides[j], *pos[j], sc.bwt[j],
+                                       std::max<U>(1, threads / sidePar), localOff[j]);
                     { WinBytes bwt; bwt.open_ro(sc.bwt[j], sides[j].n, 0);
                       SideText text; open_side_text(sides[j], text);
                       anchor_blocks_ext(text, bwt, *pos[j], sides[j].n, localOff[j],
@@ -2492,7 +2589,8 @@ static U finalize_file(const std::string& path, const std::string& prefix, U thr
     Keys keys; keys.init(&m2, &hp, A.n, true, &bud);
     PosOverlay posA;
     posA.init(A.sxsPath, A.n, A.posBase, 0, sc.ov[0]);
-    build_bwt_file(A, posA, sc.bwt[0], threads, 0);
+    if (A.bwtFromRuns) build_bwt_from_runs(A, posA, sc.bwt[0]);
+    else build_bwt_file(A, posA, sc.bwt[0], threads, 0);
     std::vector<BlockRec> blocks;
     std::vector<uint64_t> anchors;
     {

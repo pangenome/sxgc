@@ -66,6 +66,44 @@ static void emit_ref(const fs::path& refPath, const std::array<uint8_t,256>& rem
         require(::close(fd) == 0, "chunk ref close failed");
     } catch (...) { ::close(fd); throw; }
 }
+// Order-column sidecar (chunk-i.pos, SXP3): the merge load phase is
+// DERIVATION (BWT/LF walks from the runs) - the pile-scale bottleneck
+// (~0.7 MB/s serial). The chunker ALREADY computes the cyclic order when
+// it builds the runs, so persisting it is one 8n write with zero extra
+// compute: the merge's raw-chunk load collapses to pure reads. Layout:
+//   "SXP3" | u32 ver=1 | u64 offset | u64 n | u64 period | u64 rsvd | pos[8n]
+// CHUNK_NO_POS=1 restores the legacy artifact set (walk-derived loads).
+static void emit_pos(const fs::path& posPath, const std::vector<int32_t>& order,
+                     const std::vector<uint8_t>& text, uint64_t offset, uint64_t n) {
+    int fd = ::open(posPath.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0644);
+    require(fd >= 0, "chunk pos output exists or cannot be created");
+    try {
+        Writer w(fd);
+        for (uint8_t c : {'S','X','P','3'}) w.word(c, 1);
+        w.word(1, 4);
+        w.word(offset, 8); w.word(n, 8);
+        // Minimal cyclic period (same rule the merge applies): the merge's
+        // periodic anchor form needs it; computed here once, on the
+        // resident text, instead of a merge-time divisor sweep.
+        uint64_t period = n;
+        {
+            std::vector<uint64_t> divs;
+            for (uint64_t d = 1; d * d <= n; ++d)
+                if (n % d == 0) { divs.push_back(d); if (d != n / d) divs.push_back(n / d); }
+            std::sort(divs.begin(), divs.end());
+            for (uint64_t d : divs) {
+                if (d >= n) continue;
+                bool ok = true;
+                for (uint64_t i = 0; i + d < n && ok; ++i) ok = text[i] == text[i + d];
+                if (ok) { period = d; break; }
+            }
+        }
+        w.word(period, 8); w.word(0, 8);
+        for (int32_t p : order) w.word(static_cast<uint64_t>(p), 8);
+        w.flush();
+        require(::close(fd) == 0, "chunk pos close failed");
+    } catch (...) { ::close(fd); throw; }
+}
 static void emit(const fs::path& output, const std::vector<uint8_t>& text,
                  uint64_t offset, unsigned index,
                  const std::array<uint8_t,256>& remap, const fs::path& corpus) {
@@ -132,6 +170,9 @@ static void emit(const fs::path& output, const std::vector<uint8_t>& text,
     if (!getenv("CHUNK_NO_REF"))
         emit_ref(output / ("chunk-" + std::to_string(index) + ".ref"),
                  remap, corpus, offset, n);
+    if (!getenv("CHUNK_NO_POS"))
+        emit_pos(output / ("chunk-" + std::to_string(index) + ".pos"),
+                 order, text, offset, n);
     std::printf("CHUNK index=%u offset=%llu n=%llu runs=%zu sort_wall_seconds=%.6f path=%s\n",
                 index, (unsigned long long)offset, (unsigned long long)n,
                 runs.size(), wall, path.c_str());
