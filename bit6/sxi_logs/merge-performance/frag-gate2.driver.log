@@ -1,0 +1,19 @@
+XSA_BUILD START input=/home/erikg/sxgc-piletest/pile-frag.txt scratch=/mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag-ref memory_gb=6 threads=48 chunks=32 kway=2 remap=production
+SNAP_OK n=1082130213 sha256=69a6b5fde1e79d593217ce815c9f47237e276169e5204831a218124e14e6b6b2
+REMAP /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag-ref/remap-256.bin sha256=b4f387767707f3095a0981148a1753f8da5885c30c19753b3b93887153e611be
+PHASE chunk START /home/erikg/.cache/xsa/6aec6725b7f0d8916a8a5728459ff860c1a01a25f1a4d9cb04965f534691af45/chunk_frontend /home/erikg/sxgc-piletest/pile-frag.txt 32 /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag-ref/chunks /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag-ref/remap-256.bin
+PHASE chunk END rc=0 wall=3:24.57 peak_rss_kb=1301848 disc_used_bytes=12993711517696
+CHUNKS_PASS count=32 source_bytes=1082130213
+PHASE merge START /home/erikg/.cache/xsa/6aec6725b7f0d8916a8a5728459ff860c1a01a25f1a4d9cb04965f534691af45/cross_lcp_merge --tree /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag-ref/chunks 32 1082130213 /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag-ref/merged/frag --threads 48 --kway 2 --work /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag-ref/mwork --emit-pf
+PHASE merge END rc=0 wall=4:17:37 peak_rss_kb=2357840 disc_used_bytes=13083570331648
+MERGE cross_pairs=31 cross_kway_nodes=0 kway=2
+CROSS_PF_EMIT text=/mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag-ref/merged/frag.pftext pfck=/mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag-ref/merged/frag.pfck n=1082130213 final_runs=397723016 tau=22 count=49187737 bytes=393501936
+PHASE endpoints START /home/erikg/.cache/xsa/6aec6725b7f0d8916a8a5728459ff860c1a01a25f1a4d9cb04965f534691af45/rpfbwt_endpoints /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag-ref/merged/frag /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag-ref/finish/frag.ri4 /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag-ref/finish/frag.head_sa --pf-text /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag-ref/merged/frag.pftext --pf-checkpoints /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag-ref/merged/frag.pfck
+PHASE endpoints END rc=0 wall=5:54.51 peak_rss_kb=392620 disc_used_bytes=13090267619328
+ENDPOINT_PASS raw_n=1082130223 raw_r=397723016 n=1082130213 k=1 r=397723010 padding_rows=10 cyclic_seam_certified=0
+PHASE slim START /home/erikg/.cache/xsa/6aec6725b7f0d8916a8a5728459ff860c1a01a25f1a4d9cb04965f534691af45/slim_dump --slim --resolve-ri4 --ri4 /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag-ref/finish/frag.ri4 --head-sa /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag-ref/finish/frag.head_sa -t 48 --pf-text /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag-ref/merged/frag.pftext --pf-checkpoints /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag-ref/merged/frag.pfck -o /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag-ref/finish/frag.agg
+PHASE slim END rc=0 wall=17:23.44 peak_rss_kb=30216 disc_used_bytes=13102998290432
+PHASE sweep START /home/erikg/worktrees/sxgc/pi-worktree-721d9f35-fd8d-4651-85a3-3995854b08f7-s0-0/xsa/target/release/xsa chi-rspace --stream-agg --ri4 /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag-ref/finish/frag.ri4 --agg /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag-ref/finish/frag.agg -o /mnt/nvme2n1/erikg/extcols-scratch/mergperf-frag-ref/finish/frag.sA
+PHASE sweep END rc=0 wall=1:05.62 peak_rss_kb=6144 disc_used_bytes=13105447161856
+PEAK_DISC_USED_BYTES 13105447161856 (scratch filesystem, after finish)
+XSA_BUILD_DONE xsa chi-rspace: chi = 306164765 (N=1082130213, R=397723010) stream-agg=true buffers=4194304

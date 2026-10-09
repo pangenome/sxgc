@@ -128,3 +128,24 @@ Sharded parallel emission through the consolidated binary (bundle at 7e89d98):
   (256B windows => ~274 GB drive reads on the 2.16 GB m2 file - the pool
   covers ~24% of it at 512 MB slots); the walk is miss-bound on fat pairs
   (striping/larger pool are the levers, lane items 3-4).
+
+## Milestone 2 GATE 2 RESULT (corpus-referenced chunks, fragment, PASSED)
+
+Referenced text through the consolidated binary (bundle at 494fe6b; the
+gate-2 xsa additionally contained the k-way core, unused at k=2):
+* BYTE IDENTITY: 8/8 BYTE_IDENTICAL_TO_BANKED; chi = 306164765 exact.
+* Disc accounting: chunk dir 10.65 GB (unchanged .crle runs + 32 x ~300B
+  .ref sidecars); the saving is in the merge scratch: walked chunk
+  sidecars drop from 9n (text+pos) to 8n (pos-only) per raw chunk, and the
+  corpus cross-validation replaces the O(n) sidecar re-validation at load.
+* WALLS: polluted and therefore not banked as a comparison row - my k-way
+  quick-gate merge sweeps ran concurrently with gate 2's L1-L3 pairs
+  (mea culpa, journaled): tree total 4:17:37, but clean-window evidence
+  (L0 pairs before the pollution window): 99-108s/pair vs gate 1's
+  115-128s/pair - the ref loads cut ~15% per L0 pair as expected from
+  removing the text dump + the sidecar re-validation. RULE REINFORCED:
+  no side load of any kind during measurement gates.
+* En route: anchor+repair parallelized ACROSS SIDES (gate 1's largest
+  remaining serial core, 358s on the final pair; a flat k-way would
+  otherwise serialize all k sides' anchor phases). Re-gated byte-identical
+  (selftest k {2,16,32}, arities {2,5,16,32}).
