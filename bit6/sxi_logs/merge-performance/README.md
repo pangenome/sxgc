@@ -194,3 +194,32 @@ anchors + arena cap):
   chunk walks at load (~1650s), (2) the walk's comparator pool misses
   (~1109s wall with 99.3% hits - bigger pool slots or striping shave it),
   (3) emit passes (~930s, sharded but IO/CPU mixed).
+
+
+## Queued evaluation (user design question): persist derived structures at
+CHUNK time
+
+The load phase is merge-time DERIVATION (BWT text walked from chunk runs,
+LF/pos, rank machinery) - compute, not I/O; that is why it was serial and
+why mmap cannot remove it. Option 3 under evaluation: chunk_frontend emits
+the materialized per-side BWT text + pos column alongside the .crle, and
+the merge's load collapses to pure pool-served reads. PRICING (from the
+gated numbers, to be finalized after the 10GB verdict + shipping rerun):
+* Artifact growth: ~9n bytes per chunk (text n + pos 8n) - the exact
+  walked-sidecar cost we removed from the scratch in milestone 2, moved
+  to chunk time: fragment +~9.7 GB total, 10GB +~90 GB, pile (26 chunks,
+  ~58 GB each) +~520 GB of chunks vs the .crle runs alone at ~9.3x corpus
+  (~1.4 TB) - pile chunk artifacts ~1.9-2 TB, still far under the ~6 TB
+  free with the referenced corpus in place.
+* Load-phase wall: pure reads at pool bandwidth (~2-5 GB/s/reader across
+  stripes) vs parallel derivation at ~50 s per 33.8M-position side
+  (fragment measured, ~1.5 s/MB serial). At pile scale: 26 x ~580 MB/s
+  reads ~= ~40 min total vs derivation at ~1450 s/side x 26 / width ~2-3
+  (memory-bound walk transient ~9x chunk bytes ~520 GB/side on a 1 TB box)
+  ~= ~4-5 h. VERDICT (preliminary, to be confirmed with the 10GB shipping
+  rerun): persist-at-chunk-time is materially cheaper at every scale AND
+  removes the pile's width-1-2 memory ceiling on loads; the chunk-time
+  cost is one extra n-byte write per chunk (~+8% of chunk phase wall).
+  Recommendation: ship it as the default after the fragment-scale
+  experiment; the merged outputs are byte-identity-neutral by
+  construction (same loaded structures, same merge).
