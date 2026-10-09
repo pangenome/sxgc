@@ -2349,8 +2349,49 @@ static U merge_kway_files(const std::vector<std::string>& inputs, bool dollar,
         pre = true;
     } else {
         sc.init(out, U(getpid()), k);
-        for (size_t j = 0; j < k; ++j)
-            load_side_ext(inputs[j], threads, sc.dir, sides[j]);
+        // PARALLEL SIDE LOADS: the per-side loads (walk, validation, pos
+        // dump) are independent - the pairwise origin's serial 2-item loop
+        // is the leftover. A thread pool loads them with a MEMORY-AWARE
+        // width: each load's walk transient is ~9x its chunk (text/bwt/lf/
+        // pos/visited, chunk-scale, freed per side), so the concurrent
+        // width is bounded by the phase's RLIMIT_AS. Side j is loaded by
+        // whichever thread takes it; the sides vector is index-stable, so
+        // the load order cannot reach any output (loads are pure functions
+        // of their chunk; the merge is deterministic given the loaded
+        // sides). Barrier: the pool joins before the tiling check and the
+        // core merge, which is already parallel and order-independent.
+        U nMax = 0;
+        for (auto& f : inputs) { U o = 0, n = 0, r = 0; sxcr_header(f, o, n, r); nMax = std::max(nMax, n); }
+        U loadPar = std::min<size_t>(k, threads ? threads : 1);
+        {
+            struct rlimit rl{};
+            U perSide = nMax * 10 + (128u << 20);   // walk transient + dump buffers
+            if (perSide && getrlimit(RLIMIT_AS, &rl) == 0 && rl.rlim_cur != RLIM_INFINITY) {
+                U fit = U(rl.rlim_cur) / 2 / perSide;   // pools + merge own the rest
+                if (fit < 1) fit = 1;
+                loadPar = std::min<size_t>(loadPar, size_t(std::min<U>(fit, 64)));
+            }
+        }
+        U innerThreads = std::max<U>(1, threads ? threads / loadPar : 1);
+        std::atomic<size_t> next{0};
+        std::atomic<U> loadSides{0};
+        double loadT0 = now_sec();
+        {
+            std::vector<std::thread> ts;
+            for (U t = 0; t < loadPar; ++t)
+                ts.emplace_back([&] {
+                    for (;;) {
+                        size_t j = next.fetch_add(1);
+                        if (j >= k) return;
+                        load_side_ext(inputs[j], innerThreads, sc.dir, sides[j]);
+                        loadSides.fetch_add(1, std::memory_order_relaxed);
+                    }
+                });
+            for (auto& t : ts) t.join();
+        }
+        std::fprintf(stderr, "LOAD_STATS sides=%llu par=%llu wall=%.3f per_side_avg=%.3f (serial-equivalent width 1)\n",
+                     (unsigned long long)loadSides.load(), (unsigned long long)loadPar,
+                     now_sec() - loadT0, (now_sec() - loadT0) * loadPar / (double)(k ? k : 1));
         for (size_t j = 1; j < k; ++j)
             require(sides[j - 1].offset + sides[j - 1].n == sides[j].offset,
                     "merge sides do not tile");
