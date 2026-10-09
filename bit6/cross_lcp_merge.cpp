@@ -2495,17 +2495,35 @@ static U merge_kway_files(const std::vector<std::string>& inputs, bool dollar,
         // of their chunk; the merge is deterministic given the loaded
         // sides). Barrier: the pool joins before the tiling check and the
         // core merge, which is already parallel and order-independent.
-        U nMax = 0;
-        for (auto& f : inputs) { U o = 0, n = 0, r = 0; sxcr_header(f, o, n, r); nMax = std::max(nMax, n); }
+        U nMax = 0, runsMax = 0;
+        for (auto& f : inputs) {
+            U o = 0, n = 0, r = 0;
+            sxcr_header(f, o, n, r);
+            nMax = std::max(nMax, n); runsMax = std::max(runsMax, r);
+        }
         U loadPar = std::min<size_t>(k, threads ? threads : 1);
-        {
+        bool anyDerive = false;
+        for (auto& f : inputs)
+            anyDerive = anyDerive || (!fs::exists(f + ".sxs")
+                && !(fs::exists(f + ".pos") && fs::exists(f + ".ref") && !getenv("CROSS_NO_PERSIST")));
+        if (anyDerive) {
+            // DERIVE-FALLBACK width from the REAL per-chunk header metadata,
+            // not a corpus-size constant: walk_chunk's resident transient =
+            // runs records (25B/run) + seeds (16B/run) + bwt+text+visited
+            // (2n) + lf (8n) + pos (8n). The 1b run A crash was exactly this
+            // misestimate (10n assumed vs ~35n at 62.5M/24M-runs chunks:
+            // a 5-wide pool = ~11 GB virtual > the 8 GiB cap; std::bad_alloc
+            // thrown from walk_chunk's vector allocations). The persist path
+            // has NO walk transient and skips this bound entirely.
             struct rlimit rl{};
-            U perSide = nMax * 10 + (128u << 20);   // walk transient + dump buffers
+            U perSide = 42 * runsMax + 18 * nMax + (256u << 20);
             if (perSide && getrlimit(RLIMIT_AS, &rl) == 0 && rl.rlim_cur != RLIM_INFINITY) {
                 U fit = U(rl.rlim_cur) / 2 / perSide;   // pools + merge own the rest
                 if (fit < 1) fit = 1;
                 loadPar = std::min<size_t>(loadPar, size_t(std::min<U>(fit, 64)));
             }
+            std::fprintf(stderr, "LOAD_PLAN derive_per_side_mb=%.0f par=%llu\n",
+                         perSide / 1048576.0, (unsigned long long)loadPar);
         }
         U innerThreads = std::max<U>(1, threads ? threads / loadPar : 1);
         std::atomic<size_t> next{0};
