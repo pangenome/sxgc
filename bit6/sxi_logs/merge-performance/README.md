@@ -247,3 +247,22 @@ gated numbers, to be finalized after the 10GB verdict + shipping rerun):
 3. Sequence: 10GB verdict (gate 4, in flight) -> persist-at-chunk (gated)
    -> walk-width investigation + fix (gated) -> 10GB shipping rerun with
    both -> pile plan recomputed honestly.
+
+## GATE 4 (10GB flat) - STOPPED BY DIRECTIVE 2026-10-09 ~18:40; partial telemetry banked
+
+Killed before the walk (the question it answered was no longer next; cores
+and disc needed for the fast loop). What it proved and cost, as the flat
+shape's last data point at 10GB (32 chunks, 48 threads, cap 24 GiB, plan
+journaled in-run - the configurator's first live plan: projected chunk
+29:58 vs measured 37:05 = +24% calibration error):
+* chunk phase: 37:05 rc=0 (plan 29:58; calibration data point)
+* SERIAL-DERIVATION LOADS: ~25,403s = 6.6 HOURS at 1 core (the bottleneck
+  this lane then removed: persist-at-chunk-time). This is the 10GB BEFORE.
+* m2-build 5.4s; hash-build 8.5s (2 x 10GB files)
+* anchor+repair 1369s (22.8 min) for ALL 32 sides in parallel (fragment
+  104s at 1/9.3 scale - scales sub-linearly with corpus)
+* walk: never ran (stopped).
+Disc finding (supervisor, from live trees): chunk artifacts 9.2-9.7x
+corpus (25B/run x 0.39 runs/char), merge transients ~28x, peak ~29x =
+291.5GB at 10GB -> ~38TB at pile (1.31TB) vs ~6TB free = 6x MISS.
+DISC BINDS THE PILE, not RAM. Action list in the pivot directive below.

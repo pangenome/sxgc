@@ -1,17 +1,18 @@
-=== 1b gate start 2026-10-09T17:38:43+00:00 pid=997648 caps: ulimit -v 8 GiB chunks=16 kway=16
-=== run A rc=1 2026-10-09T17:38:43+00:00
+=== 1b gate start 2026-10-09T17:40:19+00:00 pid=1099772 caps: ulimit -v 8 GiB chunks=16 kway=16
+=== run A rc=1 2026-10-09T17:44:29+00:00
 RUN_A_FAIL
-XSA_PLAN v=2 corpus_bytes=1000000665 chunks=16 kway=16 threads=48 cap_gb=8 cores=256 cx16=true mem_available_gb=810
-XSA_PLAN_PHASES name wall disc_peak_gb rss_gb
-XSA_PLAN_PHASE name=chunk wall=0:02:59 wall_s=180 disc_peak_gb=16.7 rss_gb=1.57
-XSA_PLAN_PHASE name=merge(load) wall=0:00:52 wall_s=53 disc_peak_gb=35.3 rss_gb=4.00
-XSA_PLAN_PHASE name=merge(anchor) wall=0:01:31 wall_s=92 disc_peak_gb=35.3 rss_gb=4.00
-XSA_PLAN_PHASE name=merge(walk) wall=0:16:17 wall_s=977 disc_peak_gb=35.3 rss_gb=4.00
-XSA_PLAN_PHASE name=merge(emit) wall=0:13:40 wall_s=821 disc_peak_gb=36.6 rss_gb=4.00
-XSA_PLAN_PHASE name=endpoints wall=0:05:13 wall_s=314 disc_peak_gb=18.0 rss_gb=0.40
-XSA_PLAN_PHASE name=slim wall=0:17:39 wall_s=1059 disc_peak_gb=18.0 rss_gb=0.04
-XSA_PLAN_PHASE name=sweep wall=0:00:56 wall_s=56 disc_peak_gb=18.0 rss_gb=0.01
-XSA_PLAN_TOTAL wall=0:59:12 wall_s=3552 chunk_bytes_mb=60
-XSA_PLAN_DISC FEASIBLE: peak ~37 GB fits 1969 GB free (87% used)
 XSA_PLAN_RAM FEASIBLE: chunk front end ~1.6 GB (27x chunk bytes) vs cap 8 GiB; merge ~4.0 GB (bounded, memory-aware side parallelism)
-xsa: error: build: DF_GATE_FAIL /mnt/nvme2n1/erikg/extcols-scratch/mergperf-1b-A 87% used (>= 15% free required on the scratch filesystem)
+XSA_BUILD START input=/mnt/nvme2n1/erikg/extcols-scratch/mergperf-1b-snap.txt scratch=/mnt/nvme2n1/erikg/extcols-scratch/mergperf-1b-A memory_gb=8 threads=48 chunks=16 kway=16 remap=production
+SNAP_OK n=1000000665 sha256=c382daa53d0e66fdc921c32d356961b7e8189ceee0a435bb3b66e06b203ebb61
+REMAP /mnt/nvme2n1/erikg/extcols-scratch/mergperf-1b-A/remap-256.bin sha256=b4f387767707f3095a0981148a1753f8da5885c30c19753b3b93887153e611be
+PHASE chunk START /home/erikg/.cache/xsa/6386fe092994a76d9dd82f38784a4cacf8912fa2a7dfe192570b84d10b23f95e/chunk_frontend /mnt/nvme2n1/erikg/extcols-scratch/mergperf-1b-snap.txt 16 /mnt/nvme2n1/erikg/extcols-scratch/mergperf-1b-A/chunks /mnt/nvme2n1/erikg/extcols-scratch/mergperf-1b-A/remap-256.bin
+PHASE chunk END rc=0 wall=4:05.35 peak_rss_kb=2506260 disc_used_bytes=13293860855808
+CHUNKS_PASS count=16 source_bytes=1000000665
+PHASE merge START /home/erikg/.cache/xsa/6386fe092994a76d9dd82f38784a4cacf8912fa2a7dfe192570b84d10b23f95e/cross_lcp_merge --tree /mnt/nvme2n1/erikg/extcols-scratch/mergperf-1b-A/chunks 16 1000000665 /mnt/nvme2n1/erikg/extcols-scratch/mergperf-1b-A/merged/frag --threads 48 --kway 16 --work /mnt/nvme2n1/erikg/extcols-scratch/mergperf-1b-A/mwork --emit-pf
+PHASE merge END rc=99 wall=0:03.53 peak_rss_kb=6643712 disc_used_bytes=13298161745920
+xsa: error: build: PHASE merge FAILED (rc 99); log tail:
+/home/erikg/.cache/xsa/6386fe092994a76d9dd82f38784a4cacf8912fa2a7dfe192570b84d10b23f95e/cross_lcp_merge(+0x18c92)[0x6141ca407c92]
+/home/erikg/.cache/xsa/6386fe092994a76d9dd82f38784a4cacf8912fa2a7dfe192570b84d10b23f95e/cross_lcp_merge(+0x1a778)[0x6141ca409778]
+/lib/x86_64-linux-gnu/libstdc++.so.6(+0xecdb4)[0x789b96cecdb4]
+/lib/x86_64-linux-gnu/libc.so.6(+0x9cb84)[0x789b9689cb84]
+/lib/x86_64-linux-gnu/libc.so.6(+0x129ecc)[0x789b96929ecc]
