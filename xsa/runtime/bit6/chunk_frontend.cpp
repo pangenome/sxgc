@@ -148,18 +148,31 @@ static void emit(const fs::path& output, const std::vector<uint8_t>& text,
     }
     double wall = std::chrono::duration<double>(Clock::now() - start).count();
     fs::path path = output / ("chunk-" + std::to_string(index) + ".crle");
+    // SXCR v3 (default): COMPACT run records - char + varint length; the
+    // head/tail samples are NOT embedded (they are derivable from the
+    // persisted order column chunk-N.pos, which v3 requires). 25 B/run ->
+    // ~2 B/run: the disc lever that fits the pile (~9.7n -> ~0.8n of runs).
+    // CHUNK_NO_POS=1 restores the v2 sample-bearing 25-byte records.
+    bool v3 = !getenv("CHUNK_NO_POS");
     int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0644);
     require(fd >= 0, "chunk output exists or cannot be created");
     try {
         Writer writer(fd);
         for (uint8_t c : {'S','X','C','R'}) writer.word(c, 1);
-        // SXCR v2: 64-bit run lengths (widened chunk-route format; v1 readers
-        // and v1 chunks fail loud against each other by version).
-        writer.word(2, 4); writer.word(offset, 8); writer.word(n, 8);
+        writer.word(v3 ? 3 : 2, 4); writer.word(offset, 8); writer.word(n, 8);
         writer.word(runs.size(), 8);
-        for (auto r : runs) {
-            writer.word(r.c, 1); writer.word(r.len, 8);
-            writer.word(r.h, 8); writer.word(r.t, 8);
+        if (v3) {
+            for (auto r : runs) {
+                writer.word(r.c, 1);
+                uint64_t len = r.len;
+                while (len >= 0x80) { writer.word(uint64_t(uint8_t(len) | 0x80), 1); len >>= 7; }
+                writer.word(len, 1);
+            }
+        } else {
+            for (auto r : runs) {
+                writer.word(r.c, 1); writer.word(r.len, 8);
+                writer.word(r.h, 8); writer.word(r.t, 8);
+            }
         }
         writer.flush();
         require(::close(fd) == 0, "chunk output close failed");

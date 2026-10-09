@@ -520,6 +520,57 @@ struct TextSeg {
     U off = 0, len = 0;
     std::array<uint8_t, 256> remap{};
 };
+// Varint (LEB128) for the compact run stream: every absolute column stays
+// 64-bit (positions live in the persisted order column); the varint is
+// only the run LENGTH, bounded by the chunk size, checked on decode.
+static void put_varint(std::vector<char>& out, U v) {
+    while (v >= 0x80) { out.push_back(char(uint8_t(v) | 0x80)); v >>= 7; }
+    out.push_back(char(uint8_t(v)));
+}
+struct RunCursor {   // streams run records from a v2 (25B) or v3 (varint) file
+    std::ifstream f;
+    U version = 0;
+    char vbuf[16]; size_t vlen = 0, vused = 0;   // varint record buffer
+    explicit RunCursor(const std::string& path, U ver) : f(path, std::ios::binary), version(ver) {
+        require(bool(f), "reopen chunk runs");
+        f.seekg(32);
+        if (ver == 3) { f.read(vbuf, 16); vlen = size_t(f.gcount()); }
+    }
+    void refill() {
+        require(vused == vlen, "varint refill alignment");
+        f.read(vbuf, 16); vlen = size_t(f.gcount()); vused = 0;
+        require(vlen > 0, "truncated varint run stream");
+    }
+    uint8_t byte() {
+        if (version == 2) { char b; f.read(&b, 1); require(bool(f), "truncated run record"); return uint8_t(b); }
+        if (vused == vlen) refill();
+        return uint8_t(vbuf[vused++]);
+    }
+    U fixed(U bytes) {   // v2 little-endian field
+        U v = 0;
+        for (U i = 0; i < bytes; ++i) { char b; f.read(&b, 1); require(bool(f), "truncated run record"); v |= U(uint8_t(b)) << (8 * i); }
+        return v;
+    }
+    U varint() {
+        U v = 0;
+        for (unsigned shift = 0; ; shift += 7) {
+            uint8_t b = byte();
+            require(shift < 63, "varint overflow");
+            v |= U(b & 0x7f) << shift;
+            if (!(b & 0x80)) return v;
+        }
+    }
+    // next record; for v2 fills h/t from the file, for v3 leaves them 0
+    // (samples come from the persisted order column).
+    void next(uint8_t& c, U& len, U& h, U& t) {
+        c = byte();
+        if (version == 2) {
+            len = fixed(8); h = fixed(8); t = fixed(8);
+        } else {
+            len = varint(); h = 0; t = 0;
+        }
+    }
+};
 struct SideText {
     int fd = -1;
     U n = 0, base = 0, gen = 0;   // base: text byte offset (sidecar 20 / corpus range start)
@@ -1058,6 +1109,7 @@ struct SideExt {
     std::vector<TextSeg> segs; // referenced text segments (v1: one; v2: concat)
     std::string chunkPath;     // the source .crle (persisted-pos sides)
     bool bwtFromRuns = false;  // load shortcut: expand the BWT from the runs
+    U chunkVersion = 0;        // SXCR record version (2 = 25B w/ samples, 3 = varint)
 };
 // chunk-i.ref (chunk_frontend emit_ref): "SXRF" | u32 ver=1 | u8 flags=0 |
 // remap[256] | u32 pathLen | corpusPath | u64 offset | u64 n
@@ -1139,14 +1191,14 @@ static void read_pos_header(const std::string& path, U& offset, U& n, U& period)
 }
 // Runs-sample + range validation for a persisted order column (bulk reads;
 // the per-row text agreement is checked sampled inside the BWT expansion).
-static void validate_pos_runs(const std::string& chunkPath, U n, U runs,
+static void validate_pos_runs(const std::string& chunkPath, U n, U runs, U version,
                               const WinU64& pos) {
-    std::ifstream f(chunkPath, std::ios::binary);
-    f.seekg(32);
+    RunCursor rc(chunkPath, version);
     U row = 0; uint8_t prev = 0;
     for (U i = 0; i < runs; ++i) {
-        uint8_t c = uint8_t(rd_le(f, 1));
-        U len = rd_le(f, 8), h = rd_le(f, 8), t = rd_le(f, 8);
+        uint8_t c; U len, h, t;
+        rc.next(c, len, h, t);
+        if (version == 3) { h = pos.at(row); t = pos.at(row + len - 1); }
         require(len && row + len <= n && h < n && t < n, "invalid SXCR run");
         require(i == 0 || c != prev, "noncanonical SXCR runs");
         require(pos.at(row) == h && pos.at(row + len - 1) == t,
@@ -1159,19 +1211,21 @@ static void validate_pos_runs(const std::string& chunkPath, U n, U runs,
 // no text reads. Sampled per-run text agreement is the residual check that
 // the persisted order matches the corpus bytes (every 64th run head).
 static void build_bwt_from_runs(const SideExt& s, const PosOverlay& pos,
-                                const std::string& path) {
+                                const std::string& path, U base) {
     int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
     require(fd >= 0, "create bwt scratch");
-    std::ifstream f(s.chunkPath, std::ios::binary);
-    require(bool(f), "reopen chunk for bwt expansion");
-    f.seekg(32);
+    RunCursor rc(s.chunkPath, s.chunkVersion);
     constexpr U W = 1u << 22;
     std::vector<uint8_t> buf(W);
     U row = 0, used = 0, written = 0, checked = 0;
     SideText text; open_side_text(s, text);
     for (U i = 0; i < s.runs; ++i) {
-        uint8_t c = uint8_t(rd_le(f, 1));
-        U len = rd_le(f, 8), h = rd_le(f, 8), t = rd_le(f, 8);
+        uint8_t c; U len, h, t;
+        rc.next(c, len, h, t);
+        // v3 samples come from the order column; the overlay returns
+        // MERGE-LOCAL positions (shifted by the side's base) while the text
+        // view is SIDE-LOCAL - subtract the base before indexing it.
+        if (s.chunkVersion == 3) { h = pos.at(row) - base; }
         if ((checked & 63) == 0)   // 1-in-64 sampled run-head text check
             require(text.at((h + s.n - 1) % s.n) == c,
                     "persisted order disagrees with the referenced text");
@@ -1201,22 +1255,29 @@ static U min_period(const std::vector<uint8_t>& T, U n) {
     return n;
 }
 
-static void sxcr_header(const std::string& path, U& offset, U& n, U& runs) {
+static void sxcr_header(const std::string& path, U& offset, U& n, U& runs, U& version) {
     std::ifstream f(path, std::ios::binary);
     require(bool(f), "cannot open SXCR chunk");
     char magic[4]{}; f.read(magic, 4);
     require(bool(f) && !std::memcmp(magic, "SXCR", 4), "SXCR magic mismatch");
-    require(rd_le(f, 4) == 2, "unsupported SXCR version (this build reads the widened v2: 64-bit run lens; v1 pre-widening chunks are refused)");
+    U ver = rd_le(f, 4);
+    require(ver == 2 || ver == 3,
+            "unsupported SXCR version (this build reads v2: 25-byte sample-bearing "
+            "records, and v3: compact c+varint-len records that REQUIRE the "
+            "persisted order column for samples)");
+    version = ver;
     offset = rd_le(f, 8); n = rd_le(f, 8); runs = rd_le(f, 8);
     require(n && n < (1ull << 62) && runs, "invalid SXCR header");
-    require(fs::file_size(path) == 32 + 25 * runs, "SXCR file size mismatch");
+    if (ver == 2) require(fs::file_size(path) == 32 + 25 * runs, "SXCR file size mismatch");
+    else require(fs::file_size(path) > 32, "SXCR v3 has no run stream");
 }
 
 
 // Validate runs against the STREAMED (text,pos): preceding char per row and
 // head/tail samples. Same contract as the resident build.
-static void validate_runs_ext(const std::string& path, U n, U runs,
+static void validate_runs_ext(const std::string& path, U n, U runs, U version,
                               const SideText& text, const WinU64& pos) {
+    require(version == 2, "SXCR v3 has no embedded samples (sidecar sides are v2)");
     std::ifstream f(path, std::ios::binary);
     f.seekg(32);
     U row = 0; uint8_t prev = 0;
@@ -1273,8 +1334,11 @@ static void validate_runs_resident(const std::string& path, U n, U runs,
     require(row == n && f.peek() == EOF, "SXCR length mismatch");
 }
 
-static void walk_chunk(const std::string& path, U n, U runs, U threads,
+static void walk_chunk(const std::string& path, U n, U runs, U version, U threads,
                        std::vector<uint8_t>& text, std::vector<uint64_t>& pos, U& period) {
+    require(version == 2,
+            "SXCR v3 chunks carry no run samples - they REQUIRE the persisted "
+            "order column (chunk-N.pos); re-chunk or restore the companion");
     struct RunRec { uint8_t c; uint64_t len; U h, t; };
     std::vector<RunRec> rs(runs);
     {
@@ -1376,7 +1440,7 @@ static void walk_chunk(const std::string& path, U n, U runs, U threads,
 // Intermediates and legacy raw chunks keep the full SXS2 text+pos sidecar.
 static void load_side_ext(const std::string& path, U threads,
                           const std::string& scratch, SideExt& s) {
-    sxcr_header(path, s.offset, s.n, s.runs);
+    sxcr_header(path, s.offset, s.n, s.runs, s.chunkVersion);
     s.chunkPath = path;
     std::string stem = chunk_stem(path);
     std::string side = path + ".sxs";
@@ -1409,11 +1473,11 @@ static void load_side_ext(const std::string& path, U threads,
                 pos.read(i, buf, len);
                 for (U z = 0; z < len; ++z) require(buf[z] < s.n, "persisted position out of range");
             }
-            validate_pos_runs(path, s.n, s.runs, pos);
+            validate_pos_runs(path, s.n, s.runs, s.chunkVersion, pos);
         }
     } else {
         std::vector<uint8_t> text; std::vector<uint64_t> pos;
-        walk_chunk(path, s.n, s.runs, threads, text, pos, s.period);
+        walk_chunk(path, s.n, s.runs, s.chunkVersion, threads, text, pos, s.period);
         std::string ref = stem + ".ref";
         if (fs::exists(ref) && !getenv("CROSS_NO_REF")) {
             // CORPUS-REFERENCED: record provenance, prove the walked text is
@@ -1466,7 +1530,7 @@ static void load_side_ext(const std::string& path, U threads,
                 pos.read(i, buf, len);
                 for (U z = 0; z < len; ++z) require(buf[z] < s.n, "sidecar position out of range");
             }
-            validate_runs_ext(path, s.n, s.runs, text, pos);
+            validate_runs_ext(path, s.n, s.runs, s.chunkVersion, text, pos);
         }
     } else {
         // ref mode: period came from the walk; positions checked here.
@@ -1825,7 +1889,7 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
                     std::vector<BlockRec> blocks;
                     std::vector<uint64_t> anchors;
                     if (sides[j].bwtFromRuns)
-                        build_bwt_from_runs(sides[j], *pos[j], sc.bwt[j]);
+                        build_bwt_from_runs(sides[j], *pos[j], sc.bwt[j], localOff[j]);
                     else
                         build_bwt_file(sides[j], *pos[j], sc.bwt[j],
                                        std::max<U>(1, threads / sidePar), localOff[j]);
@@ -2351,7 +2415,7 @@ static U emit_four_ext(const std::string& prefix, const WinBytes& m2,
 // chunk is byte-identical to the serial writer by construction.
 static U emit_sxcr_ext(const std::string& path, const WinBytes& m2,
                        const WinU64& wm, U n, U offset, U threads,
-                       const std::vector<SideExt>& inSides) {
+                       const std::vector<SideExt>& inSides, const std::string& segDir) {
     double last = now_sec();
     const U S = emit_shard_count(threads, n);
     auto charAt = [&](U t) { return m2.at(wm.at(t) + n - 1); };
@@ -2391,31 +2455,55 @@ static U emit_sxcr_ext(const std::string& path, const WinBytes& m2,
     }
     require(runs >= 1, "sxcr run count underflow");
     phase("sxcr-count", last);
-    {   // pass 2: sharded record emission (pwrite at 25 * global run index)
+    {   // pass 2: sharded record emission. v2 (legacy .sxs set): fixed
+        // 25-byte records, pwrite at 25 * global run index. v3 (persisted
+        // set - the order column carries the samples): compact c+varint-len
+        // records via per-shard segments concatenated in shard order.
+        bool persistEmit = !inSides.empty() && !getenv("CROSS_NO_PERSIST_EMIT");
+        U emitVer = 2;
+        for (auto& S : inSides)
+            persistEmit = persistEmit && S.refText && !S.segs.empty();
+        if (persistEmit) emitVer = 3;
         int fd = ::open(path.c_str(), O_CREAT | O_EXCL | O_WRONLY, 0666);
         require(fd >= 0, "create SXCR chunk (exists?)");
         char hdr[32];
         std::memcpy(hdr, "SXCR", 4);
-        put_le32(hdr + 4, 2); put_le64(hdr + 8, offset); put_le64(hdr + 16, n); put_le64(hdr + 24, runs);
+        put_le32(hdr + 4, uint32_t(emitVer)); put_le64(hdr + 8, offset); put_le64(hdr + 16, n); put_le64(hdr + 24, runs);
         xput(fd, hdr, 32, 0, "sxcr header write");
         std::vector<std::thread> ts;
+        std::vector<int> segFds;
+        std::vector<std::string> segPaths;
+        U v3Off = 32;   // byte offset of the concatenated v3 stream
         for (U s = 0; s < S; ++s) {
             U t0 = s * n / S, t1 = (s + 1) * n / S;
             if (t1 <= t0) continue;
             U b0 = base[s];
             bool firstIsStart = info[s].firstIsStart;
-            ts.emplace_back([&, s, t0, t1, b0, firstIsStart] {
+            std::string segPath;
+            int segFd = -1;
+            if (emitVer == 3) {   // compact records: per-shard segment files
+                segPath = segDir + "/sxcr-seg-" + std::to_string(s);
+                segFd = ::open(segPath.c_str(), O_CREAT | O_EXCL | O_WRONLY, 0666);
+                require(segFd >= 0, "create sxcr v3 segment");
+            }
+            ts.emplace_back([&, s, t0, t1, b0, firstIsStart, segFd] {
                 U t = t0;
                 if (!firstIsStart) {  // skip the run continued from the previous shard
                     uint8_t c = charAt(t);
                     for (++t; t < n && charAt(t) == c; ++t) {}
                 }
-                std::vector<char> rec; rec.reserve(25 * 4096);
-                U bufIdx = b0;        // global run index of rec[0]
+                std::vector<char> rec;
+                U bufIdx = b0;        // global run index of rec[0] (v2)
+                U recOff = 0;         // segment offset (v3)
                 auto flushRec = [&]() {
                     if (!rec.empty()) {
-                        xput(fd, rec.data(), rec.size(), 32 + 25 * bufIdx, "sxcr record write");
-                        bufIdx += rec.size() / 25; rec.clear();
+                        if (segFd >= 0) {
+                            xput(segFd, rec.data(), rec.size(), recOff, "sxcr v3 segment write");
+                            recOff += rec.size(); rec.clear();
+                        } else {
+                            xput(fd, rec.data(), rec.size(), 32 + 25 * bufIdx, "sxcr record write");
+                            bufIdx += rec.size() / 25; rec.clear();
+                        }
                     }
                 };
                 U pfAt = t;
@@ -2432,20 +2520,52 @@ static U emit_sxcr_ext(const std::string& path, const WinBytes& m2,
                         if (e >= pfAt) pfAhead(e);
                         ++e;
                     }
-                    char b[25];
-                    b[0] = char(c);
-                    put_le64(b + 1, e - t); put_le64(b + 9, head); put_le64(b + 17, wm.at(e - 1));
-                    rec.insert(rec.end(), b, b + 25);
+                    if (segFd >= 0) {   // v3: char + varint len (samples in .pos)
+                        char vb[12];
+                        vb[0] = char(c);
+                        std::vector<char> lenbuf;
+                        put_varint(lenbuf, e - t);
+                        rec.push_back(vb[0]);
+                        rec.insert(rec.end(), lenbuf.begin(), lenbuf.end());
+                        if (rec.size() >= (1u << 20)) flushRec();
+                    } else {           // v2: 25-byte sample-bearing record
+                        char b[25];
+                        b[0] = char(c);
+                        put_le64(b + 1, e - t); put_le64(b + 9, head); put_le64(b + 17, wm.at(e - 1));
+                        rec.insert(rec.end(), b, b + 25);
+                        if (rec.size() >= 25 * 4096) flushRec();
+                    }
                     ++runIdx;
-                    if (rec.size() >= 25 * 4096) flushRec();
                     t = e;
                 }
                 flushRec();
                 require(runIdx == b0 + info[s].internalStarts + (firstIsStart ? 1u : 0u),
                         "sxcr emit shard run coverage");
             });
+            if (segFd >= 0) {
+                segFds.push_back(segFd);
+                segPaths.push_back(segPath);
+            }
         }
         for (auto& t : ts) t.join();
+        if (emitVer == 3) {   // ordered concatenation: shard order is run order
+            for (int sf : segFds) require(::close(sf) == 0, "close sxcr v3 segment");
+            constexpr U CW = 1u << 20;
+            std::vector<char> cbuf(CW);
+            for (auto& sp : segPaths) {
+                int in = ::open(sp.c_str(), O_RDONLY);
+                require(in >= 0, "reopen sxcr v3 segment");
+                for (;;) {
+                    ssize_t z = ::read(in, cbuf.data(), CW);
+                    require(z >= 0, "read sxcr v3 segment");
+                    if (z == 0) break;
+                    xput(fd, cbuf.data(), size_t(z), v3Off, "sxcr v3 concat");
+                    v3Off += U(z);
+                }
+                require(::close(in) == 0, "close sxcr v3 segment read");
+                ::unlink(sp.c_str());
+            }
+        }
         require(::close(fd) == 0, "close SXCR chunk");
     }
     std::fprintf(stderr, "SXCR_EMIT shards=%llu runs=%llu n=%llu\n",
@@ -2658,8 +2778,8 @@ static U merge_kway_files(const std::vector<std::string>& inputs, bool dollar,
         // core merge, which is already parallel and order-independent.
         U nMax = 0, runsMax = 0;
         for (auto& f : inputs) {
-            U o = 0, n = 0, r = 0;
-            sxcr_header(f, o, n, r);
+            U o = 0, n = 0, r = 0, ver = 0;
+            sxcr_header(f, o, n, r, ver);
             nMax = std::max(nMax, n); runsMax = std::max(runsMax, r);
         }
         U loadPar = std::min<size_t>(k, threads ? threads : 1);
@@ -2726,7 +2846,7 @@ static U merge_kway_files(const std::vector<std::string>& inputs, bool dollar,
     WinBytes m2; m2.open_ro(sc.m2, 2 * n, 0, true);
     WinU64 wm; wm.open_ro(sc.wm, n, 0);
     U out_runs = dollar ? emit_four_ext(out, m2, wm, n, threads, sc.dir)
-                        : emit_sxcr_ext(out, m2, wm, n, sides.front().offset, threads, sides);
+                        : emit_sxcr_ext(out, m2, wm, n, sides.front().offset, threads, sides, sc.dir);
     if (dollar && emitPf) emit_pf_side_ext(out, m2, n, out_runs);
     sc.cleanup();
     double total = now_sec() - t0;
@@ -2817,7 +2937,7 @@ static U finalize_file(const std::string& path, const std::string& prefix, U thr
     Keys keys; keys.init(&m2, &hp, A.n, true, &bud);
     PosOverlay posA;
     posA.init(A.sxsPath, A.n, A.posBase, 0, sc.ov[0]);
-    if (A.bwtFromRuns) build_bwt_from_runs(A, posA, sc.bwt[0]);
+    if (A.bwtFromRuns) build_bwt_from_runs(A, posA, sc.bwt[0], 0);
     else build_bwt_file(A, posA, sc.bwt[0], threads, 0);
     std::vector<BlockRec> blocks;
     std::vector<uint64_t> anchors;
@@ -3075,11 +3195,11 @@ int main_impl(int argc, char** argv) {
             "       cross_lcp_merge --pair LEFT --right RIGHT (--sxcr OUT | --out-prefix PREFIX)\n"
             "       cross_lcp_merge --finalize ONE --out-prefix PREFIX\n"
             "       cross_lcp_merge --selftest CASES [--seed N] [--kway K]");
-    struct Part { std::string file; U offset, n; };
+    struct Part { std::string file; U offset, n, version = 0; };
     std::vector<Part> parts;
     for (U i = 0; i < count; ++i) {
         Part p{dir + "/chunk-" + std::to_string(i) + ".crle", 0, 0};
-        U runs = 0; sxcr_header(p.file, p.offset, p.n, runs);
+        U runs = 0; sxcr_header(p.file, p.offset, p.n, runs, p.version);
         if (i) require(parts[i - 1].offset + parts[i - 1].n == p.offset, "chunks do not tile");
         parts.push_back(p);
     }
