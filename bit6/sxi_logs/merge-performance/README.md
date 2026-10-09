@@ -223,3 +223,27 @@ gated numbers, to be finalized after the 10GB verdict + shipping rerun):
   Recommendation: ship it as the default after the fragment-scale
   experiment; the merged outputs are byte-identity-neutral by
   construction (same loaded structures, same merge).
+
+## BOTTLENECK COST MODEL UPDATE (user directive, 2026-10-09)
+
+1. DERIVATION is the current bottleneck: the merge re-derives per-side
+   structures at load (BWT walk from runs, LF/pos) at ~0.7 MB/s serial -
+   ~5h at 10GB, ~22 days at pile serial. PROMOTED TO MUST-DO:
+   persist-at-chunk-time. KEY INSIGHT from the chunker source: chunk_frontend
+   ALREADY computes the order (the cyclic suffix array) and holds the chunk
+   text when it emits the .crle - persisting the order column (8n bytes per
+   chunk) + expanding the BWT directly from the .crle runs (sequential, no
+   text reads) makes the merge load PURE READS with near-zero chunk-time
+   cost (one 8n write per chunk). The parallel-derivation pool (0565ab0)
+   becomes the FALLBACK for chunk sets without persisted columns.
+2. THE WALK is the second bottleneck, its own lane after the 10GB verdict:
+   fragment walk ran ~26 effective cores of 48 (skew-limited), ~1.7us/byte
+   probe cost, 99.3% pool hits - CPU-bound, not I/O. Pile extrapolation
+   ~25 days of walk at current width. Investigation list (gated):
+   effective-core instrumentation + block-size/skew distribution; probes
+   per emitted run at 10GB vs fragment (k-way fan / heap cursor
+   overhead); why width stalls at ~26 with block-parallel comparisons;
+   honest floor analysis: probes/decision x amplification x decisions.
+3. Sequence: 10GB verdict (gate 4, in flight) -> persist-at-chunk (gated)
+   -> walk-width investigation + fix (gated) -> 10GB shipping rerun with
+   both -> pile plan recomputed honestly.
