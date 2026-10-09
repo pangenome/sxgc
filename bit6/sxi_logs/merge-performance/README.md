@@ -266,3 +266,20 @@ Disc finding (supervisor, from live trees): chunk artifacts 9.2-9.7x
 corpus (25B/run x 0.39 runs/char), merge transients ~28x, peak ~29x =
 291.5GB at 10GB -> ~38TB at pile (1.31TB) vs ~6TB free = 6x MISS.
 DISC BINDS THE PILE, not RAM. Action list in the pivot directive below.
+
+## 100MB CASCADE GATE (PASSED 2026-10-09): the progressive invariant holds
+
+Fast-loop fixture: snap n=100,000,503 (sha 3c965f58...), banked via the
+certified config (flat k=16): chi = 29716349 (N=100000503, R=38647515).
+Cascade (tree k=2, 4 levels, 14 intermediates): ALL SIX merged files +
+ALL FOUR finish files BYTE-IDENTICAL to the flat run; chi EXACT. Every
+intermediate is chunk-format (SXCR + SXP3 .pos + SXRF-v2 segment-concat
+.ref; ZERO .sxs) - level N's output is a valid level N+1 input, loads
+are pure reads (0.25-0.54s per 6.5M-position side vs 12.3s walk = 50x),
+no text copy at any level. Merge wall: flat 1:17 vs cascade 1:57 (the
+cascade pays 4 levels' m2/hash/emit; the progressive/delete-consumed
+shape bounds its disc - driver TODO).
+En-route root causes (journal): companion-name mismatch (chunker wrote
+chunk-N.pos/.ref, merge looked for chunk-N.crle.*: every "persisted"
+gate had silently walked - byte-identical fallbacks kept gates green);
+SXP3 posBase 40; bwt-expansion mid-run flush offset. All fixed + re-gated.
