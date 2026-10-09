@@ -14,17 +14,22 @@
 use std::fs;
 use std::path::Path;
 
-/// Versioned, gate-measured model constants. v1 = fragment-scale gates
-/// (1.08 GB corpus, 32 chunks, 48 threads, flat k=32, cap 6 GiB):
-/// chunk 3:24, merge 1:03:15, endpoints 5:56, slim 20:02, sweep 1:04.
-/// Chunk artifacts measured 9.9x corpus bytes (25-byte runs dominate the
-/// .crle format at ~9.3 bytes/position on pile-like text).
-pub const CONSTANTS_VERSION: u32 = 1;
+/// Versioned, gate-measured model constants. v2 = fragment-scale gates
+/// (1.08 GB corpus, 32 chunks, 48 threads, flat k=32, cap 6 GiB:
+/// chunk 3:24, merge 1:03:15, endpoints 5:56, slim 20:02, sweep 1:04)
+/// PLUS the post-gate-3 cost model: the merge loads are PURE READS with
+/// the chunker-persisted order columns (persist-at-chunk-time, 05cdafe) -
+/// load_read below; load_derive is the walk-derivation fallback for
+/// legacy chunk sets (CROSS_NO_PERSIST), measured ~1.5 s/MB serial
+/// (~0.7 MB/s - the pile-scale bottleneck that motivated persisting).
+/// Chunk artifacts: 9.9x corpus (.crle runs) + 8x (persisted pos columns).
+pub const CONSTANTS_VERSION: u32 = 2;
 
 /// Per-byte wall rates (seconds per corpus MB), fragment-calibrated.
 pub struct Rates {
     pub chunk_s_per_mb: f64,
-    pub merge_load_s_per_mb: f64,
+    pub merge_load_s_per_mb: f64,       // pure-read loads (persisted pos columns)
+    pub merge_load_derive_s_per_mb: f64, // walk-derivation fallback (legacy chunk sets)
     pub merge_anchor_s_per_mb: f64,
     pub merge_walk_s_per_mb: f64,
     pub merge_emit_s_per_mb: f64,
@@ -35,9 +40,10 @@ pub struct Rates {
 
 /// The v1 table (fragment gates; merge split into load/anchor/walk/emit from
 /// the CROSS_PHASE telemetry of gate 3).
-pub const RATES_V1: Rates = Rates {
+pub const RATES_V2: Rates = Rates {
     chunk_s_per_mb: 204.0 / 1082.0,
-    merge_load_s_per_mb: 1650.0 / 1082.0,
+    merge_load_s_per_mb: 60.0 / 1082.0,        // 8x-corpus pos reads at pool bandwidth
+    merge_load_derive_s_per_mb: 1650.0 / 1082.0,
     merge_anchor_s_per_mb: 104.0 / 1082.0,
     merge_walk_s_per_mb: 1109.0 / 1082.0,
     merge_emit_s_per_mb: 931.0 / 1082.0,
@@ -47,7 +53,7 @@ pub const RATES_V1: Rates = Rates {
 };
 
 /// Disc/RAM shape constants (measured).
-pub const CHUNK_ARTIFACTS_PER_CORPUS_MB: f64 = 9.9; // .crle runs + ~300B refs
+pub const CHUNK_ARTIFACTS_PER_CORPUS_MB: f64 = 17.9; // .crle runs 9.9x + persisted pos 8x
 pub const MERGE_SCRATCH_PER_CORPUS_MB: f64 = 20.0; // m2 2x + hash 2x + wm 1x + pos 8x + bwt 1x + outputs, minus consumed
 pub const CHUNK_BUILD_RAM_PER_CHUNK_MB: f64 = 27.0; // libsais doubled SA + PLCP + text (measured peak/chunk at fragment)
 pub const MERGE_RSS_GB: f64 = 4.0; // bounded design: pools + memory-aware side parallelism
@@ -121,7 +127,7 @@ pub struct Plan {
 
 pub fn model(survey: Survey, chunks: u32, kway: u32, threads: u32, cap_gb: u64) -> Plan {
     let mb = survey.corpus_bytes as f64 / (1024.0 * 1024.0);
-    let r = &RATES_V1;
+    let r = &RATES_V2;
     let chunk_bytes_mb = mb / chunks as f64;
     // RAM: the chunk front end sorts a doubled copy of one chunk (SA + PLCP
     // + text): ~27x chunk bytes, measured. The merge's anchor/BWT side
@@ -135,7 +141,7 @@ pub fn model(survey: Survey, chunks: u32, kway: u32, threads: u32, cap_gb: u64) 
     let outputs_disc_mb = mb * 1.4;
     let phases = vec![
         PhaseRow { name: "chunk", wall_s: r.chunk_s_per_mb * mb, disc_peak_mb: chunk_disc_mb, rss_gb: chunk_ram_gb },
-        PhaseRow { name: "merge(load)", wall_s: r.merge_load_s_per_mb * mb, disc_peak_mb: chunk_disc_mb + merge_disc_mb, rss_gb: MERGE_RSS_GB },
+        PhaseRow { name: "merge(load)", wall_s: r.merge_load_s_per_mb * mb, disc_peak_mb: chunk_disc_mb + merge_disc_mb, rss_gb: MERGE_RSS_GB },   // pure reads; derivation fallback is r.merge_load_derive_s_per_mb (x27 slower)
         PhaseRow { name: "merge(anchor)", wall_s: r.merge_anchor_s_per_mb * mb, disc_peak_mb: chunk_disc_mb + merge_disc_mb, rss_gb: MERGE_RSS_GB },
         PhaseRow { name: "merge(walk)", wall_s: r.merge_walk_s_per_mb * mb, disc_peak_mb: chunk_disc_mb + merge_disc_mb, rss_gb: MERGE_RSS_GB },
         PhaseRow { name: "merge(emit)", wall_s: r.merge_emit_s_per_mb * mb, disc_peak_mb: chunk_disc_mb + merge_disc_mb + outputs_disc_mb, rss_gb: MERGE_RSS_GB },

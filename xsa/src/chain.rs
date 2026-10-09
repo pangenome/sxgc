@@ -632,6 +632,14 @@ fn run_chain(options: Options) -> Result<(), String> {
 
     // 4. streamed chi sweep (this same xsa binary).
     let xsa = std::env::current_exe().map_err(|e| format!("current exe: {e}"))?;
+    // If the binary was replaced mid-run (cargo rebuild), /proc/self/exe
+    // resolves to a deleted inode and the re-exec would fail with 127.
+    // Fall back to the invocation path (argv[0]): the gate then runs the
+    // binary currently at that path end-to-end.
+    let xsa = if xsa.to_string_lossy().ends_with(" (deleted)") {
+        std::env::args().next().map(PathBuf::from).filter(|p| p.is_file())
+            .ok_or_else(|| "sweep launcher: this binary was replaced during the run; re-invoke by path".to_string())?
+    } else { xsa };
     run_phase(&mut journal, &scratch, "sweep", memory_kb, xsa.to_str().unwrap(), &[
         "chi-rspace".into(), "--stream-agg".into(),
         "--ri4".into(), s(&finish.join("frag.ri4").to_string_lossy()),
