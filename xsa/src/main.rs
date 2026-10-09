@@ -14,6 +14,7 @@ mod witness;
 mod build;
 mod chain;
 mod bundle;
+mod plan;
 mod product;
 mod forks;
 

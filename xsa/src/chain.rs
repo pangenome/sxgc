@@ -74,6 +74,13 @@ Outputs (byte-identical to the reference chain on the same corpus):
 The uniform journal (xsa-build.log) reports chi and per-phase wall / peak
 RSS / disc telemetry.
 
+  xsa build --plan-only           print the surveyed+modeled build plan
+                     and exit without building anything (same model as the
+                     plan file the build journals first).
+  --stripe DIR[,DIR...]  candidate stripe directories for the disc model
+                     (reader-level striping is lane item 3; the plan
+                     accounts for the space now, the I/O split lands later).
+
   xsa build --selftest [CASES] [--threads N] [--scratch DIR]
                      runs the merge selftest for the six banked sweep seeds
                      (11, 99, 20261002, 7, 5, 13; default 2000 cases each).";
@@ -122,6 +129,8 @@ struct Options {
     threads: u32,
     chunks: u32,
     kway: u32,
+    plan_only: bool,
+    stripes: Vec<String>,
     remap: Option<PathBuf>,
 }
 
@@ -179,6 +188,8 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     let mut threads = 48u32;
     let mut chunks = 32u32;
     let mut kway = 2u32;
+    let mut plan_only = false;
+    let mut stripes: Vec<String> = Vec::new();
     let mut remap = None;
     let mut i = 0;
     while i < args.len() {
@@ -225,6 +236,15 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
                     return Err("--kway must be >= 2 (the pairwise arity)".into());
                 }
             }
+            "--plan-only" => plan_only = true,
+            "--stripe" => {
+                i += 1;
+                let v = value(args.get(i), "--stripe")?;
+                stripes = v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+                if stripes.is_empty() {
+                    return Err("--stripe needs at least one directory".into());
+                }
+            }
             "--remap" => {
                 i += 1;
                 let path = PathBuf::from(value(args.get(i), "--remap")?);
@@ -238,7 +258,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     }
     let input = input.ok_or("need --input <corpus>")?;
     let scratch = scratch.ok_or("need --scratch <dir>")?;
-    Ok(Options { input, scratch, snap_1e, memory_gb, threads, chunks, kway, remap })
+    Ok(Options { input, scratch, snap_1e, memory_gb, threads, chunks, kway, plan_only, stripes, remap })
 }
 
 /// Last byte of a file (the snap-boundary probe).
@@ -516,7 +536,28 @@ fn run_chain(options: Options) -> Result<(), String> {
             journal_path.display()
         ));
     }
+    // PLAN-FIRST: survey + model before any bytes move. The plan is the
+    // journal's FIRST entry (same plan file = same build = provenance);
+    // --plan-only prints it and exits. The old DF_GATE refusal becomes this
+    // richer contract: infeasible plans are refused WITH the alternatives.
+    let survey = super::plan::survey(&input, &scratch, &options.stripes)?;
+    let build_plan = super::plan::model(
+        survey, options.chunks, options.kway, options.threads, options.memory_gb,
+    );
+    if options.plan_only {
+        print!("{}", build_plan.render());
+        return Ok(());
+    }
+    if build_plan.alternatives.iter().any(|a| !a.starts_with("CPU lacks")) {
+        // Feasibility failed (disc or RAM): print the plan + alternatives,
+        // refuse loud. (The cx16 note is informational, not a refusal.)
+        print!("{}", build_plan.render());
+        return Err("PLAN_INFEASIBLE: see XSA_PLAN_ALTERNATIVE lines above".into());
+    }
     let mut journal = Journal::open(&journal_path)?;
+    for line in build_plan.render().lines() {
+        journal.line(line);
+    }
     for knob in ["CROSS_NO_POOL", "CROSS_ASYNC_FILL", "CROSS_HASH_K", "CROSS_PIPELINE", "CROSS_SHARDS", "CROSS_NO_REF", "CHUNK_NO_REF"] {
         if let Some(value) = std::env::var_os(knob) {
             journal.line(&format!("KNOB {knob}={}", value.to_string_lossy()));

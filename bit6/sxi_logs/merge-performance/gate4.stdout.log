@@ -1,0 +1,3 @@
+=== gate start 2026-10-09T09:13:48+00:00 pid=2307353 caps: ulimit -v 24 GiB, timeout 86400s (10GB FLAT kway=32)
+=== xsa provenance: d53e9edfca253549... (bundle: sharded emission + referenced chunks + flat k-way + parallel anchors)
+SNAP_OK 10000017258 sha256=d440d9e1fe0aeb4c32ebeffb2df02dac009a0806510c2f864a04c2cd92d3864a
