@@ -510,11 +510,23 @@ struct WinU64 {
 // copies). One API in two backing modes; consumers are bulk passes and
 // per-row random reads, so a small thread-local page cache suffices (the
 // hot comparison path reads the materialized M2 scratch file, not this).
+// One referenced text segment: bytes [off, off+len) of `path`, mapped
+// through `remap`. A side's text is a CONCATENATION of segments (its refs):
+// a corpus window is one segment; a merged intermediate's text is its input
+// sides' segments in order - no merged text is ever copied (the progressive
+// shape's invariant: level N's output is a valid level N+1 input).
+struct TextSeg {
+    std::string path;
+    U off = 0, len = 0;
+    std::array<uint8_t, 256> remap{};
+};
 struct SideText {
     int fd = -1;
     U n = 0, base = 0, gen = 0;   // base: text byte offset (sidecar 20 / corpus range start)
     bool remapped = false;
     std::array<uint8_t, 256> map{};
+    std::vector<TextSeg> segs;           // segment mode (referenced text)
+    std::vector<U> segBase;              // cumulative segment starts
     static std::atomic<U> g_gen;
     void open_sidecar(const std::string& path, U elems, U byteBase) {
         fd = ::open(path.c_str(), O_RDONLY);
@@ -530,12 +542,22 @@ struct SideText {
                 "corpus range out of bounds (referenced chunk)");
         n = elems; base = corpusOff; remapped = true; map = remap; gen = g_gen.fetch_add(1);
     }
+    void open_segments(std::vector<TextSeg> list, U elems) {
+        segs = std::move(list);
+        segBase.assign(segs.size() + 1, 0);
+        for (size_t z = 0; z < segs.size(); ++z) segBase[z + 1] = segBase[z] + segs[z].len;
+        require(segBase.back() == elems, "referenced text segments do not cover the side");
+        n = elems; gen = g_gen.fetch_add(1);
+    }
+    inline size_t segOf(U i) const {
+        return size_t(std::upper_bound(segBase.begin(), segBase.end() - 1, i) - segBase.begin()) - 1;
+    }
     ~SideText() { if (fd >= 0) ::close(fd); }
     SideText() = default;
     SideText(const SideText&) = delete;
     SideText& operator=(const SideText&) = delete;
     struct TL { const void* o = nullptr; U gen = 0; U tag[2]{UINT64_MAX, UINT64_MAX};
-                std::unique_ptr<uint8_t[]> d[2]; unsigned nxt = 0; };
+                U segOfTag[2]{}; std::unique_ptr<uint8_t[]> d[2]; unsigned nxt = 0; };
     struct TLS4 { TL e[4]; unsigned nxt = 0; };
     inline TL& tlEntry() const {
         thread_local TLS4 tls;
@@ -548,6 +570,29 @@ struct SideText {
     }
     inline uint8_t at(U i) const {
         if (i >= n) fail("side text bounds");
+        if (!segs.empty()) {   // segment mode: 2-page cache keyed (segment, page)
+            size_t z = segOf(i);
+            const TextSeg& s = segs[z];
+            U within = i - segBase[z];
+            constexpr U B = 16384;
+            U page = within / B;
+            TL& tls = tlEntry();
+            for (unsigned k = 0; k < 2; ++k)
+                if (tls.tag[k] == page && tls.segOfTag[k] == U(z)) {
+                    uint8_t raw = tls.d[k][within % B];
+                    return s.remap[raw];
+                }
+            unsigned slot = tls.nxt++ & 1;
+            if (!tls.d[slot]) tls.d[slot].reset(new uint8_t[B]);
+            U start = page * B, need = std::min<U>(B, s.len - start);
+            int f = ::open(s.path.c_str(), O_RDONLY);
+            if (f < 0) fail("open referenced text segment");
+            xw(f, tls.d[slot].get(), need, s.off + start, "referenced text page");
+            ::close(f);
+            tls.tag[slot] = page; tls.segOfTag[slot] = U(z);
+            uint8_t raw = tls.d[slot][within % B];
+            return s.remap[raw];
+        }
         constexpr U B = 16384;
         TL& tls = tlEntry();
         U page = i / B;
@@ -564,9 +609,25 @@ struct SideText {
         uint8_t raw = tls.d[slot][i % B];
         return remapped ? map[raw] : raw;
     }
-    void read(U i, void* buf, U len) const {   // bulk banded read (+remap)
+    void read(U i, void* buf, U len) const {   // bulk banded read (+per-seg remap)
         if (i + len > n) fail("side text bulk bounds");
         uint8_t* q = (uint8_t*)buf;
+        if (!segs.empty()) {
+            U done = 0;
+            while (done < len) {
+                size_t z = segOf(i + done);
+                const TextSeg& s = segs[z];
+                U within = i + done - segBase[z];
+                U take = std::min<U>(len - done, s.len - within);
+                int f = ::open(s.path.c_str(), O_RDONLY);
+                if (f < 0) fail("open referenced text segment");
+                xw(f, q + done, take, s.off + within, "referenced text bulk");
+                ::close(f);
+                for (U t = 0; t < take; ++t) q[done + t] = s.remap[q[done + t]];
+                done += take;
+            }
+            return;
+        }
         constexpr U W = 1u << 22;
         U done = 0;
         while (done < len) {
@@ -991,39 +1052,75 @@ struct SideExt {
     bool ownsSxs = false;      // we wrote it (scratch; unlink at pair end)
     bool refText = false;      // corpus-referenced text (chunk-i.ref)
     U posBase = 0;             // byte offset of the pos column in sxsPath
-    std::string corpusPath;    // ref mode
+    std::string corpusPath;    // ref mode (single-segment legacy refs)
     U corpusOff = 0;           // ref mode: chunk range start in the corpus
     std::array<uint8_t, 256> remap{};   // ref mode: the chunker's byte map
+    std::vector<TextSeg> segs; // referenced text segments (v1: one; v2: concat)
     std::string chunkPath;     // the source .crle (persisted-pos sides)
     bool bwtFromRuns = false;  // load shortcut: expand the BWT from the runs
 };
 // chunk-i.ref (chunk_frontend emit_ref): "SXRF" | u32 ver=1 | u8 flags=0 |
 // remap[256] | u32 pathLen | corpusPath | u64 offset | u64 n
-static void parse_chunk_ref(const std::string& path, std::string& corpus, U& off, U& n,
-                            std::array<uint8_t, 256>& remap) {
+// SXRF v1: "SXRF" | u32 ver=1 | u8 flags | remap[256] | u32 pathLen |
+//          path | u64 off | u64 n          (chunker: one corpus segment)
+// SXRF v2: "SXRF" | u32 ver=2 | u8 flags | u32 segCount | per segment:
+//          remap[256] | u32 pathLen | path | u64 off | u64 len | then
+//          u64 totalN. A merged intermediate's ref is its input sides'
+// segments concatenated - the text view composes with no copies.
+// Companion naming: for chunk file X.crle, its persisted companions are
+// stem(X).pos / stem(X).ref (the chunker writes chunk-N.pos / chunk-N.ref;
+// merged intermediates write L-x.pos / L-x.ref). ONE convention everywhere;
+// the legacy text-embedded sidecar stays X.sxs (banked format).
+static std::string chunk_stem(const std::string& path) {
+    require(path.size() > 5 && path.compare(path.size() - 5, 5, ".crle") == 0,
+            "chunk path must end in .crle");
+    return path.substr(0, path.size() - 5);
+}
+static void parse_chunk_ref(const std::string& path, SideExt& s) {
     std::ifstream f(path, std::ios::binary);
     require(bool(f), "cannot open chunk ref");
     char magic[4]{}; f.read(magic, 4);
     require(bool(f) && !std::memcmp(magic, "SXRF", 4), "chunk ref magic mismatch");
-    require(rd_le(f, 4) == 1, "unsupported chunk ref version");
+    U ver = rd_le(f, 4);
+    require(ver == 1 || ver == 2, "unsupported chunk ref version");
     require(rd_le(f, 1) == 0, "unknown chunk ref flags");
-    f.read(reinterpret_cast<char*>(remap.data()), 256);
-    require(bool(f), "truncated chunk ref remap");
-    U plen = rd_le(f, 4);
-    require(plen && plen < 65536, "chunk ref corpus path length");
-    std::vector<char> p(plen);
-    f.read(p.data(), plen);
-    require(bool(f), "truncated chunk ref path");
-    corpus.assign(p.data(), plen);
-    off = rd_le(f, 8); n = rd_le(f, 8);
+    s.segs.clear();
+    auto readSeg = [&](U lenHint) {
+        TextSeg t;
+        f.read(reinterpret_cast<char*>(t.remap.data()), 256);
+        require(bool(f), "truncated chunk ref remap");
+        auto check = t.remap; std::sort(check.begin(), check.end());
+        for (unsigned i = 0; i < 256; ++i) require(check[i] == i, "chunk ref remap not bijective");
+        require(t.remap[0x1e] == 0x1e, "chunk ref remap changes the document separator");
+        U plen = rd_le(f, 4);
+        require(plen && plen < 65536, "chunk ref path length");
+        std::vector<char> p(plen);
+        f.read(p.data(), plen);
+        require(bool(f), "truncated chunk ref path");
+        t.path.assign(p.data(), plen);
+        t.off = rd_le(f, 8);
+        t.len = lenHint ? lenHint : rd_le(f, 8);
+        require(t.len && t.len < (1ull << 62), "chunk ref segment length");
+        s.segs.push_back(std::move(t));
+    };
+    if (ver == 1) {
+        readSeg(0);
+        s.corpusPath = s.segs[0].path;
+        s.corpusOff = s.segs[0].off;
+        s.remap = s.segs[0].remap;
+    } else {
+        U count = rd_le(f, 4);
+        require(count && count < 4096, "chunk ref segment count");
+        for (U z = 0; z < count; ++z) readSeg(0);
+        U totalN = rd_le(f, 8);
+        require(totalN == [&]{ U t = 0; for (auto& g : s.segs) t += g.len; return t; }(),
+                "chunk ref totalN disagrees with the segments");
+    }
     require(bool(f) && f.peek() == EOF, "trailing bytes in chunk ref");
-    auto check = remap; std::sort(check.begin(), check.end());
-    for (unsigned i = 0; i < 256; ++i) require(check[i] == i, "chunk ref remap not bijective");
-    require(remap[0x1e] == 0x1e, "chunk ref remap changes the document separator");
 }
-// Open a side's text view (sidecar-embedded or corpus-referenced).
+// Open a side's text view (sidecar-embedded or referenced segments).
 static void open_side_text(const SideExt& s, SideText& t) {
-    if (s.refText) t.open_corpus(s.corpusPath, s.n, s.corpusOff, s.remap);
+    if (s.refText) t.open_segments(s.segs, s.n);
     else t.open_sidecar(s.sxsPath, s.n, 20);
 }
 // chunk-i.pos (SXP3, chunker-persisted): "SXP3" | u32 ver | u64 offset |
@@ -1070,7 +1167,7 @@ static void build_bwt_from_runs(const SideExt& s, const PosOverlay& pos,
     f.seekg(32);
     constexpr U W = 1u << 22;
     std::vector<uint8_t> buf(W);
-    U row = 0, used = 0, checked = 0;
+    U row = 0, used = 0, written = 0, checked = 0;
     SideText text; open_side_text(s, text);
     for (U i = 0; i < s.runs; ++i) {
         uint8_t c = uint8_t(rd_le(f, 1));
@@ -1080,13 +1177,13 @@ static void build_bwt_from_runs(const SideExt& s, const PosOverlay& pos,
                     "persisted order disagrees with the referenced text");
         ++checked;
         for (U z = 0; z < len; ++z) {
-            if (used == W) { xput(fd, buf.data(), used, row - used, "bwt expand write"); used = 0; }
+            if (used == W) { xput(fd, buf.data(), used, written, "bwt expand write"); written += used; used = 0; }
             buf[used++] = c;
         }
         row += len;
     }
-    if (used) xput(fd, buf.data(), used, row - used, "bwt expand write");
-    require(row == s.n, "bwt expansion coverage");
+    if (used) { xput(fd, buf.data(), used, written, "bwt expand write"); written += used; }
+    require(row == s.n && written == s.n, "bwt expansion coverage");
     ::close(fd);
 }
 
@@ -1281,11 +1378,12 @@ static void load_side_ext(const std::string& path, U threads,
                           const std::string& scratch, SideExt& s) {
     sxcr_header(path, s.offset, s.n, s.runs);
     s.chunkPath = path;
+    std::string stem = chunk_stem(path);
     std::string side = path + ".sxs";
-    std::string posS = path + ".pos";
+    std::string posS = stem + ".pos";
     if (fs::exists(side)) {
         s.sxsPath = side; s.ownsSxs = false; s.refText = false; s.posBase = 20 + s.n;
-    } else if (fs::exists(posS) && fs::exists(path + ".ref") && !getenv("CROSS_NO_PERSIST")) {
+    } else if (fs::exists(posS) && fs::exists(stem + ".ref") && !getenv("CROSS_NO_PERSIST")) {
         // PERSISTED-AT-CHUNK-TIME (SXP3): the order column the chunker
         // computed; the load is PURE READS (no walk, no LF derivation -
         // the pile-scale bottleneck). Validations: header agreement, the
@@ -1296,11 +1394,12 @@ static void load_side_ext(const std::string& path, U threads,
         read_pos_header(posS, pOff, pN, period);
         require(pOff == s.offset && pN == s.n,
                 "chunk pos sidecar disagrees with the SXCR header");
-        U refN = 0;
-        parse_chunk_ref(path + ".ref", s.corpusPath, s.corpusOff, refN, s.remap);
-        require(s.corpusOff == s.offset && refN == s.n,
+        U refTotal = 0;
+        parse_chunk_ref(stem + ".ref", s);
+        for (auto& g : s.segs) refTotal += g.len;
+        require(refTotal == s.n,
                 "chunk ref range disagrees with the SXCR header");
-        s.sxsPath = posS; s.ownsSxs = false; s.refText = true; s.posBase = 20;
+        s.sxsPath = posS; s.ownsSxs = false; s.refText = true; s.posBase = 40;
         s.period = period; s.bwtFromRuns = true;
         {
             WinU64 pos; pos.open_ro(s.sxsPath, s.n, s.posBase);
@@ -1315,16 +1414,17 @@ static void load_side_ext(const std::string& path, U threads,
     } else {
         std::vector<uint8_t> text; std::vector<uint64_t> pos;
         walk_chunk(path, s.n, s.runs, threads, text, pos, s.period);
-        std::string ref = path + ".ref";
+        std::string ref = stem + ".ref";
         if (fs::exists(ref) && !getenv("CROSS_NO_REF")) {
             // CORPUS-REFERENCED: record provenance, prove the walked text is
             // exactly remap[corpus[offset..offset+n)), dump the pos column only.
-            U refN = 0;
-            parse_chunk_ref(ref, s.corpusPath, s.corpusOff, refN, s.remap);
-            require(s.corpusOff == s.offset && refN == s.n,
+            U refTotal = 0;
+            parse_chunk_ref(ref, s);
+            for (auto& g : s.segs) refTotal += g.len;
+            require(refTotal == s.n,
                     "chunk ref range disagrees with the SXCR header");
             {
-                SideText t; t.open_corpus(s.corpusPath, s.n, s.corpusOff, s.remap);
+                SideText t; t.open_segments(s.segs, s.n);
                 constexpr U W = 1u << 22;
                 std::vector<uint8_t> buf(W);
                 for (U i = 0; i < s.n;) {
@@ -2250,7 +2350,8 @@ static U emit_four_ext(const std::string& prefix, const WinBytes& m2,
 // row; a run straddling the shard end is scanned to its true end), so the
 // chunk is byte-identical to the serial writer by construction.
 static U emit_sxcr_ext(const std::string& path, const WinBytes& m2,
-                       const WinU64& wm, U n, U offset, U threads) {
+                       const WinU64& wm, U n, U offset, U threads,
+                       const std::vector<SideExt>& inSides) {
     double last = now_sec();
     const U S = emit_shard_count(threads, n);
     auto charAt = [&](U t) { return m2.at(wm.at(t) + n - 1); };
@@ -2351,23 +2452,83 @@ static U emit_sxcr_ext(const std::string& path, const WinBytes& m2,
                  (unsigned long long)S, (unsigned long long)runs, (unsigned long long)n);
     phase("sxcr-write", last);
     {
-        OutFile f(path + ".sxs");
-        char magic[4]{'S','X','S','2'}; f.raw(magic, 4);
-        f.w64(offset); f.w64(n);
-        constexpr U W = 1u << 22;
-        std::vector<uint8_t> buf(W);
-        for (U i = 0; i < n;) {
-            U len = std::min<U>(W, n - i);
-            m2.read(i, buf.data(), len);
-            f.raw(buf.data(), len);
-            i += len;
-        }
-        U pb[4096];
-        for (U i = 0; i < n;) {
-            U len = std::min<U>(4096, n - i);
-            wm.read(i, pb, len);
-            f.raw(pb, 8 * len);
-            i += len;
+        // PROGRESSIVE-SHAPE INVARIANT: level N's output is a valid level
+        // N+1 input in the PERSISTED format. When every input side's text
+        // is referenced (segments), the intermediate emits .pos (SXP3 order
+        // column + period) and a .ref v2 whose segments are the input
+        // sides' segments CONCATENATED (the merged text is exactly the
+        // inputs' texts in order) - zero text copies, zero re-derivation
+        // at any level, and n bytes less disc than the legacy .sxs embed.
+        bool allRef = !inSides.empty();
+        U segTotal = 0;
+        for (auto& S : inSides)
+            allRef = allRef && S.refText && !S.segs.empty() && (segTotal += S.segs.size(), true);
+        if (allRef && !getenv("CROSS_NO_PERSIST_EMIT")) {
+            U per = n;
+            {
+                // minimal cyclic period over the merged text (m2's first copy)
+                std::vector<U> divs;
+                for (U d = 1; d * d <= n; ++d) if (n % d == 0) { divs.push_back(d); if (d != n / d) divs.push_back(n / d); }
+                std::sort(divs.begin(), divs.end());
+                constexpr U W = 1u << 20;
+                std::vector<uint8_t> a(W), b(W);
+                for (U d : divs) {
+                    if (d >= n) continue;
+                    bool ok = true;
+                    for (U i = 0; i + d < n && ok; i += W) {
+                        U len = std::min<U>(W, n - d - i);
+                        m2.read(i, a.data(), len);
+                        m2.read(i + d, b.data(), len);
+                        for (U z = 0; z < len; ++z) if (a[z] != b[z]) { ok = false; break; }
+                    }
+                    if (ok) { per = d; break; }
+                }
+            }
+            {
+                OutFile f(chunk_stem(path) + ".pos");
+                char magic[4]{'S','X','P','3'}; f.raw(magic, 4);
+                f.w32(1); f.w64(offset); f.w64(n); f.w64(per); f.w64(0);
+                U pb[4096];
+                for (U i = 0; i < n;) {
+                    U len = std::min<U>(4096, n - i);
+                    wm.read(i, pb, len);
+                    f.raw(pb, 8 * len);
+                    i += len;
+                }
+            }
+            {
+                OutFile f(chunk_stem(path) + ".ref");
+                char magic[4]{'S','X','R','F'}; f.raw(magic, 4);
+                f.w32(2); f.w8(0);
+                f.w32(U(segTotal));
+                for (auto& S : inSides)
+                    for (auto& g : S.segs) {
+                        f.raw(g.remap.data(), 256);
+                        f.w32(U(g.path.size()));
+                        f.raw(g.path.data(), g.path.size());
+                        f.w64(g.off); f.w64(g.len);
+                    }
+                f.w64(n);
+            }
+        } else {
+            OutFile f(path + ".sxs");
+            char magic[4]{'S','X','S','2'}; f.raw(magic, 4);
+            f.w64(offset); f.w64(n);
+            constexpr U W = 1u << 22;
+            std::vector<uint8_t> buf(W);
+            for (U i = 0; i < n;) {
+                U len = std::min<U>(W, n - i);
+                m2.read(i, buf.data(), len);
+                f.raw(buf.data(), len);
+                i += len;
+            }
+            U pb[4096];
+            for (U i = 0; i < n;) {
+                U len = std::min<U>(4096, n - i);
+                wm.read(i, pb, len);
+                f.raw(pb, 8 * len);
+                i += len;
+            }
         }
     }
     phase("sidecar-write", last);
@@ -2503,9 +2664,11 @@ static U merge_kway_files(const std::vector<std::string>& inputs, bool dollar,
         }
         U loadPar = std::min<size_t>(k, threads ? threads : 1);
         bool anyDerive = false;
-        for (auto& f : inputs)
+        for (auto& f : inputs) {
+            std::string stem = chunk_stem(f);
             anyDerive = anyDerive || (!fs::exists(f + ".sxs")
-                && !(fs::exists(f + ".pos") && fs::exists(f + ".ref") && !getenv("CROSS_NO_PERSIST")));
+                && !(fs::exists(stem + ".pos") && fs::exists(stem + ".ref") && !getenv("CROSS_NO_PERSIST")));
+        }
         if (anyDerive) {
             // DERIVE-FALLBACK width from the REAL per-chunk header metadata,
             // not a corpus-size constant: walk_chunk's resident transient =
@@ -2563,7 +2726,7 @@ static U merge_kway_files(const std::vector<std::string>& inputs, bool dollar,
     WinBytes m2; m2.open_ro(sc.m2, 2 * n, 0, true);
     WinU64 wm; wm.open_ro(sc.wm, n, 0);
     U out_runs = dollar ? emit_four_ext(out, m2, wm, n, threads, sc.dir)
-                        : emit_sxcr_ext(out, m2, wm, n, sides.front().offset, threads);
+                        : emit_sxcr_ext(out, m2, wm, n, sides.front().offset, threads, sides);
     if (dollar && emitPf) emit_pf_side_ext(out, m2, n, out_runs);
     sc.cleanup();
     double total = now_sec() - t0;
