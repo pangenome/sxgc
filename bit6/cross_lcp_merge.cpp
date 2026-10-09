@@ -610,6 +610,22 @@ struct PosOverlay {
         }
         return src.at(i);
     }
+    void read(U i, U* buf, U len) const {   // bulk read, overlay regions applied
+        if (i + len > src.count) fail("overlay bulk bounds");
+        src.read(i, buf, len);
+        if (regions.empty() || i + len <= minLo || i >= maxHi) return;
+        // Forward push order, ALL intersecting regions applied: anchor
+        // blocks nest or are disjoint, so the latest pushed region
+        // containing a row wins - exactly at()'s backward-scan first-match
+        // contract (applying in reverse would let an EARLIER nested region
+        // override a later one).
+        for (size_t k = 0; k < regions.size(); ++k) {
+            const Region& r = regions[k];
+            U lo = std::max(i, r.lo), hi = std::min(i + len, r.hi);
+            if (lo >= hi) continue;
+            xw(ovFd, buf + (lo - i), 8 * (hi - lo), r.off + 8 * (lo - r.lo), "overlay bulk read");
+        }
+    }
     void putSlice(U lo, const std::vector<U>& slice) {
         require(!slice.empty(), "overlay empty slice");
         xput(ovFd, slice.data(), 8 * slice.size(), 8 * ovCount, "overlay write");
@@ -1824,9 +1840,28 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
                 std::vector<U> buf(W);
                 U nb = 0, out = R[s], emitted = 0, step = 0;
                 auto flushW = [&]() { if (nb) { xput(fd, buf.data(), 8 * nb, 8 * out, "wm write"); out += nb; nb = 0; } };
-                // per-side cursors and a binary min-heap of the k fronts
-                std::vector<U> cur(k), end(k);
-                for (size_t j = 0; j < k; ++j) { cur[j] = aB[s][j]; end[j] = aB[s + 1][j]; }
+                // per-side cursors and a binary min-heap of the k fronts.
+                // WINDOWED POS FRONTS: the pairwise-era 4-slot thread-local
+                // reader cache thrashes across k > 4 overlay objects (one
+                // 32 KB pread per front value - gate 3's floor analysis:
+                // t_pf 17.5k CPU-s, the walk at ~22 effective cores of 48,
+                // PREAD-BOUND, not comparison-bound). Each side's fronts
+                // come from a bulk window instead: ONE overlay read per
+                // side per WIN emitted rows of that side.
+                constexpr U WIN = 4096;
+                std::vector<U> cur(k), end(k), wbase(k, 0);
+                std::vector<std::vector<U>> pwin(k);
+                for (size_t j = 0; j < k; ++j) { cur[j] = aB[s][j]; end[j] = aB[s + 1][j]; wbase[j] = cur[j]; }
+                auto frontAt = [&](size_t j, U idx) -> U {   // idx: global row in [cur[j], end[j])
+                    if (idx >= wbase[j] && idx - wbase[j] < pwin[j].size())
+                        return pwin[j][idx - wbase[j]];
+                    require(idx < end[j], "window front bounds");
+                    U len = std::min<U>(WIN, end[j] - idx);
+                    pwin[j].resize(len);
+                    pos[j]->read(idx, pwin[j].data(), len);
+                    wbase[j] = idx;
+                    return pwin[j][0];
+                };
                 std::vector<U> hv(k);   // heap values
                 std::vector<size_t> hs_(k);  // heap sides
                 size_t hm = 0;
@@ -1857,16 +1892,19 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
                     hSift();
                 };
                 for (size_t j = 0; j < k; ++j)
-                    if (cur[j] < end[j]) hPush(pos[j]->at(cur[j]), j);
+                    if (cur[j] < end[j]) hPush(frontAt(j, cur[j]), j);
                 U pfAt = 0;
                 while (hm > 0) {
                     if (!noPf && m2.pool && (step & 31) == 0) {
-                        // Front speculation: each side's next few fronts.
+                        // Front speculation: each side's next few fronts,
+                        // served from the bulk windows (no overlay reads).
                         double q0 = now_sec();
                         U firstJb = 16 / hashK + 1;
                         for (size_t j = 0; j < k; ++j)
                             for (U d = 1; d <= 4 && cur[j] + d < end[j]; ++d) {
-                                U p = pos[j]->at(cur[j] + d);
+                                U w = cur[j] + d - wbase[j];
+                                if (w >= pwin[j].size()) break;   // next window: speculative skip
+                                U p = pwin[j][w];
                                 m2.prefetch(p, 16);
                                 if (hp.col.pool) hp.col.prefetch(p / hashK + firstJb);
                             }
@@ -1878,7 +1916,7 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
                     ++cur[j];
                     shardPop[s] += now_sec() - q1;
                     buf[nb++] = v; ++emitted;
-                    if (cur[j] < end[j]) hPopReplace(pos[j]->at(cur[j]), j);
+                    if (cur[j] < end[j]) hPopReplace(frontAt(j, cur[j]), j);
                     else {   // side exhausted: move last to root, shrink
                         hv[0] = hv[hm - 1]; hs_[0] = hs_[hm - 1]; --hm;
                         if (hm > 0) hSift();
