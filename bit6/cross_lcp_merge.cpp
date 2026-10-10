@@ -1338,6 +1338,20 @@ static std::string chunk_stem(const std::string& path) {
             "chunk path must end in .crle");
     return path.substr(0, path.size() - 5);
 }
+// DELETE-AS-YOU-GO (CROSS_DELETE_CONSUMED=1): once a group has merged, its
+// input files are never read again. Unlink the .crle and both persisted
+// companion sidecars (.pos order column, .ref corpus/segment reference), plus
+// the legacy text-embed .sxs, so the peak disc stays ~ one level's live set
+// instead of the whole input history. Off by default (the gates compare
+// intermediates); the fan-in driver turns it on.
+static void delete_consumed_side(const std::string& path) {
+    const std::string stem = chunk_stem(path);
+    ::unlink(path.c_str());
+    ::unlink((stem + ".pos").c_str());
+    ::unlink((stem + ".ref").c_str());
+    ::unlink((path + ".sxs").c_str());
+    ::unlink((stem + ".sxs").c_str());
+}
 static void parse_chunk_ref(const std::string& path, SideExt& s) {
     std::ifstream f(path, std::ios::binary);
     require(bool(f), "cannot open chunk ref");
@@ -3472,6 +3486,10 @@ int main_impl(int argc, char** argv) {
             U nn = 0;
             for (size_t z = 0; z < g; ++z) { ins.push_back(parts[j + z].file); nn += parts[j + z].n; }
             merge_kway_files(ins, final, out, threads, final && has("--emit-pf"));
+            // Delete-as-you-go: this group's inputs are consumed. Skipped with
+            // the opt-in preflight pipeline, which may still be reading them.
+            if (getenv("CROSS_DELETE_CONSUMED") && !getenv("CROSS_PIPELINE"))
+                for (const auto& f : ins) delete_consumed_side(f);
             next.push_back({out, parts[j].offset, nn});
         }
         parts = std::move(next);

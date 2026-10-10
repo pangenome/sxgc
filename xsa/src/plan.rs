@@ -68,6 +68,7 @@ pub fn chunk_artifacts_per_corpus_mb(pos_mode: &str) -> f64 {
         + if pos_mode == "dense" { POS_DENSE_PER_CORPUS_MB } else { POS_COMPACT_PER_CORPUS_MB }
 }
 pub const MERGE_SCRATCH_PER_CORPUS_MB: f64 = 9.1; // 100MB flat v3+SXP4 measured delta (m2+hash+wm+bwt+outputs, persisted loads keep pos on the chunk set)
+pub const FINISH_ARTIFACTS_PER_CORPUS_MB: f64 = 21.1; // 100MB dense finish footprint (agg 12n + ri4/head_sa/sA); the biggest disc term after cheap chunks
 pub const CHUNK_BUILD_RAM_PER_CHUNK_MB: f64 = 27.0; // libsais doubled SA + PLCP + text (measured peak/chunk at fragment)
 pub const MERGE_RSS_GB: f64 = 4.0; // bounded design: pools + memory-aware side parallelism
 pub const DISC_MAX_USED_PERCENT: u32 = 85;
@@ -119,10 +120,33 @@ pub fn survey(corpus: &Path, scratch: &Path, stripes: &[String]) -> Result<Surve
 
 /// One phase row of the plan.
 pub struct PhaseRow {
-    pub name: &'static str,
+    pub name: String,
     pub wall_s: f64,
     pub disc_peak_mb: f64,
     pub rss_gb: f64,
+}
+
+/// One fan-in level (fixed-chunk + repeated k-way fan-in shape). `in_count`
+/// chunks merge in groups of <= kway into `out_count`; every level runs the
+/// SAME certified k-way merge, and its output is a valid next-level input
+/// (the progressive-shape invariant).
+pub struct FaninLevel {
+    pub level: u32,
+    pub in_count: u32,
+    pub out_count: u32,
+    pub groups: u32,
+    pub level_side_gb: f64,     // total input side bytes held at this level
+    pub group_scratch_gb: f64,  // one group's merge transient (m2/hash/wm/bwt)
+    pub wall_s: f64,
+}
+
+/// The fan-in plan: arithmetic over levels, per-level side sizes, peak disc
+/// with delete-as-you-go, and the projected wall.
+pub struct FaninPlan {
+    pub chunk_bytes_mb: f64,
+    pub levels: Vec<FaninLevel>,
+    pub peak_disc_mb: f64,
+    pub total_merge_wall_s: f64,
 }
 
 pub struct Plan {
@@ -137,6 +161,7 @@ pub struct Plan {
     pub disc_verdict: String,
     pub ram_verdict: String,
     pub alternatives: Vec<String>,
+    pub fanin: Option<FaninPlan>,
 }
 
 pub fn model(
@@ -167,14 +192,14 @@ pub fn model(
     let chunk_disc_mb = mb * chunk_artifacts_per_corpus_mb(pos_mode);
     let walk_s_per_mb = if pos_mode == "dense" { r.merge_walk_s_per_mb.max(MERGE_WALK_DENSE_S_PER_MB) } else { r.merge_walk_s_per_mb.max(MERGE_WALK_COMPACT_S_PER_MB) };
     let phases = vec![
-        PhaseRow { name: "chunk", wall_s: r.chunk_s_per_mb * mb, disc_peak_mb: chunk_disc_mb, rss_gb: chunk_ram_gb },
-        PhaseRow { name: "merge(load)", wall_s: r.merge_load_s_per_mb * mb, disc_peak_mb: chunk_disc_mb + merge_disc_mb, rss_gb: MERGE_RSS_GB },   // pure reads; derivation fallback is r.merge_load_derive_s_per_mb (x27 slower)
-        PhaseRow { name: "merge(anchor)", wall_s: r.merge_anchor_s_per_mb * mb, disc_peak_mb: chunk_disc_mb + merge_disc_mb, rss_gb: MERGE_RSS_GB },
-        PhaseRow { name: "merge(walk)", wall_s: walk_s_per_mb * mb, disc_peak_mb: chunk_disc_mb + merge_disc_mb, rss_gb: MERGE_RSS_GB },   // pos-mode exchange rate applied
-        PhaseRow { name: "merge(emit)", wall_s: r.merge_emit_s_per_mb * mb, disc_peak_mb: chunk_disc_mb + merge_disc_mb + outputs_disc_mb, rss_gb: MERGE_RSS_GB },
-        PhaseRow { name: "endpoints", wall_s: r.endpoints_s_per_mb * mb, disc_peak_mb: chunk_disc_mb + outputs_disc_mb, rss_gb: 0.4 },
-        PhaseRow { name: "slim", wall_s: r.slim_s_per_mb * mb, disc_peak_mb: chunk_disc_mb + outputs_disc_mb, rss_gb: 0.04 },
-        PhaseRow { name: "sweep", wall_s: r.sweep_s_per_mb * mb, disc_peak_mb: chunk_disc_mb + outputs_disc_mb, rss_gb: 0.01 },
+        PhaseRow { name: "chunk".into(), wall_s: r.chunk_s_per_mb * mb, disc_peak_mb: chunk_disc_mb, rss_gb: chunk_ram_gb },
+        PhaseRow { name: "merge(load)".into(), wall_s: r.merge_load_s_per_mb * mb, disc_peak_mb: chunk_disc_mb + merge_disc_mb, rss_gb: MERGE_RSS_GB },   // pure reads; derivation fallback is r.merge_load_derive_s_per_mb (x27 slower)
+        PhaseRow { name: "merge(anchor)".into(), wall_s: r.merge_anchor_s_per_mb * mb, disc_peak_mb: chunk_disc_mb + merge_disc_mb, rss_gb: MERGE_RSS_GB },
+        PhaseRow { name: "merge(walk)".into(), wall_s: walk_s_per_mb * mb, disc_peak_mb: chunk_disc_mb + merge_disc_mb, rss_gb: MERGE_RSS_GB },   // pos-mode exchange rate applied
+        PhaseRow { name: "merge(emit)".into(), wall_s: r.merge_emit_s_per_mb * mb, disc_peak_mb: chunk_disc_mb + merge_disc_mb + outputs_disc_mb, rss_gb: MERGE_RSS_GB },
+        PhaseRow { name: "endpoints".into(), wall_s: r.endpoints_s_per_mb * mb, disc_peak_mb: chunk_disc_mb + outputs_disc_mb, rss_gb: 0.4 },
+        PhaseRow { name: "slim".into(), wall_s: r.slim_s_per_mb * mb, disc_peak_mb: chunk_disc_mb + outputs_disc_mb, rss_gb: 0.04 },
+        PhaseRow { name: "sweep".into(), wall_s: r.sweep_s_per_mb * mb, disc_peak_mb: chunk_disc_mb + outputs_disc_mb, rss_gb: 0.01 },
     ];
     // Verdicts.
     let disc_peak_mb = chunk_disc_mb + merge_disc_mb + outputs_disc_mb;
@@ -221,12 +246,117 @@ pub fn model(
     if !survey.cx16 {
         alternatives.push("CPU lacks cmpxchg16b: the merge's page pool requires it (CROSS_NO_POOL=1 runs without the pool, slower)".to_string());
     }
-    Plan { survey, chunks, kway, threads, cap_gb, phases, chunk_bytes_mb, pos_mode: pos_mode.to_string(), disc_verdict, ram_verdict, alternatives }
+    Plan { survey, chunks, kway, threads, cap_gb, phases, chunk_bytes_mb, pos_mode: pos_mode.to_string(), disc_verdict, ram_verdict, alternatives, fanin: None }
 }
 
 fn hms(s: f64) -> String {
     let s = s.max(0.0) as u64;
     format!("{}:{:02}:{:02}", s / 3600, (s % 3600) / 60, s % 60)
+}
+
+/// The FAN-IN shape: fixed chunk size + repeated k-way fan-in until one
+/// artifact remains. Levels are arithmetic: count -> ceil(count/kway) -> ...
+/// -> 1. Every level runs the SAME certified k-way merge (one code path,
+/// the progressive-shape invariant: level N's output is a valid level N+1
+/// input), and inputs are reclaimed as consumed (CROSS_DELETE_CONSUMED), so
+/// the peak disc is ~ one level's live set + one group's merge transient,
+/// NOT the whole input history. This is the pile's path (flat k=count is
+/// DISC_FAIL at pile scale: ~18 TB peak vs ~1.8 TB free).
+pub fn model_fanin(
+    survey: Survey, chunks: u32, kway: u32, threads: u32, cap_gb: u64,
+    hygiene_free_pct: u32,
+) -> Plan {
+    let mb = survey.corpus_bytes as f64 / (1024.0 * 1024.0);
+    let r = &RATES_V2;
+    let chunk_bytes_mb = mb / chunks as f64;
+    let chunk_ram_gb = chunk_bytes_mb * CHUNK_BUILD_RAM_PER_CHUNK_MB / 1024.0;
+    let free_mb = survey.scratch_free_bytes as f64 / (1024.0 * 1024.0);
+    // Pos-mode exchange rate (same rule as the flat model).
+    let dense_total_mb = mb * chunk_artifacts_per_corpus_mb("dense") + mb * MERGE_SCRATCH_PER_CORPUS_MB + mb * 1.4;
+    let pos_mode = if dense_total_mb < free_mb * 0.9 { "dense" } else { "compact" };
+    let walk_s_per_mb = if pos_mode == "dense" { r.merge_walk_s_per_mb.max(MERGE_WALK_DENSE_S_PER_MB) } else { r.merge_walk_s_per_mb.max(MERGE_WALK_COMPACT_S_PER_MB) };
+    let f_chunk = chunk_artifacts_per_corpus_mb(pos_mode);
+    // A merged level's artifact set is the .crle (fewer runs across boundaries)
+    // + the per-position .pos + the .ref; measured ~ the chunk set magnitude.
+    let f_merged = f_chunk;
+    let merge_rate_s_per_mb = r.merge_load_s_per_mb + r.merge_anchor_s_per_mb + walk_s_per_mb + r.merge_emit_s_per_mb;
+
+    let mut levels: Vec<FaninLevel> = Vec::new();
+    let mut count = chunks;
+    let mut level = 0u32;
+    let mut total_merge_wall_s = 0.0f64;
+    let mut merge_peak_mb = 0.0f64;
+    while count > 1 {
+        let out_count = (count + kway - 1) / kway;
+        let groups = out_count; // ceil(count/kway) groups (last may be short)
+        let f = if level == 0 { f_chunk } else { f_merged };
+        let level_side_mb = mb * f;
+        // Largest group covers kway/count of the corpus (the last, short group
+        // is smaller); bound the merge transient by the largest group.
+        let group_frac = (kway.min(count)) as f64 / count as f64;
+        let group_scratch_mb = mb * MERGE_SCRATCH_PER_CORPUS_MB * group_frac;
+        let wall_s = merge_rate_s_per_mb * mb; // every level merges the whole corpus once
+        if level_side_mb + group_scratch_mb > merge_peak_mb {
+            merge_peak_mb = level_side_mb + group_scratch_mb;
+        }
+        total_merge_wall_s += wall_s;
+        levels.push(FaninLevel { level, in_count: count, out_count, groups, level_side_gb: level_side_mb / 1024.0, group_scratch_gb: group_scratch_mb / 1024.0, wall_s });
+        count = out_count;
+        level += 1;
+    }
+
+    let outputs_disc_mb = mb * 1.4;
+    let chunk_disc_mb = mb * f_chunk;
+    let mut phases = vec![
+        PhaseRow { name: "chunk".into(), wall_s: r.chunk_s_per_mb * mb, disc_peak_mb: chunk_disc_mb, rss_gb: chunk_ram_gb },
+    ];
+    // Merge phases: one row per level. disc_peak rises to the level's live set
+    // plus one group transient, then falls as inputs are reclaimed.
+    for l in &levels {
+        phases.push(PhaseRow {
+            name: format!("merge(L{})", l.level),
+            wall_s: l.wall_s,
+            disc_peak_mb: l.level_side_gb * 1024.0 + l.group_scratch_gb * 1024.0,
+            rss_gb: MERGE_RSS_GB,
+        });
+    }
+    // Finish consumes the merge's .pftext/.pfck; intermediates are already
+    // reclaimed, so only the merged outputs + finish artifacts are live.
+    let finish_peak_mb = outputs_disc_mb + mb * FINISH_ARTIFACTS_PER_CORPUS_MB;
+    phases.push(PhaseRow { name: "endpoints".into(), wall_s: r.endpoints_s_per_mb * mb, disc_peak_mb: finish_peak_mb, rss_gb: 0.4 });
+    phases.push(PhaseRow { name: "slim".into(), wall_s: r.slim_s_per_mb * mb, disc_peak_mb: finish_peak_mb, rss_gb: 0.04 });
+    phases.push(PhaseRow { name: "sweep".into(), wall_s: r.sweep_s_per_mb * mb, disc_peak_mb: finish_peak_mb, rss_gb: 0.01 });
+
+    let peak_mb = merge_peak_mb.max(chunk_disc_mb).max(finish_peak_mb);
+    let fits = peak_mb < free_mb;
+    let free_pct = 100u32.saturating_sub(survey.scratch_used_percent);
+    let hygiene_ok = free_pct >= hygiene_free_pct;
+    let disc_ok = fits && (hygiene_ok || hygiene_free_pct == 0);
+    let disc_verdict = if disc_ok {
+        if hygiene_ok {
+            format!("FEASIBLE (fan-in): peak ~{:.0} GB fits {:.0} GB free ({}% used)", peak_mb / 1024.0, free_mb / 1024.0, survey.scratch_used_percent)
+        } else {
+            format!("FEASIBLE with hygiene override (fan-in): peak ~{:.0} GB fits {:.0} GB free ({}% used)", peak_mb / 1024.0, free_mb / 1024.0, survey.scratch_used_percent)
+        }
+    } else if !fits {
+        format!("INFEASIBLE (fan-in): peak ~{:.0} GB vs {:.0} GB free ({}% used)", peak_mb / 1024.0, free_mb / 1024.0, survey.scratch_used_percent)
+    } else {
+        format!("INFEASIBLE (fan-in hygiene): peak ~{:.0} GB fits {:.0} GB free but only {}% free < the {}% policy", peak_mb / 1024.0, free_mb / 1024.0, free_pct, hygiene_free_pct)
+    };
+    let chunk_ram_ok = chunk_ram_gb < cap_gb as f64 * 0.8;
+    let ram_verdict = format!(
+        "{}: chunk front end ~{:.1} GB ({}x chunk bytes) vs cap {} GiB; merge ~{:.1} GB (bounded)",
+        if chunk_ram_ok { "FEASIBLE" } else { "INFEASIBLE" }, chunk_ram_gb, CHUNK_BUILD_RAM_PER_CHUNK_MB as u32, cap_gb, MERGE_RSS_GB,
+    );
+    let mut alternatives = Vec::new();
+    if !disc_ok {
+        alternatives.push("raise --kway (fewer levels) or free scratch space".to_string());
+    }
+    if !chunk_ram_ok {
+        alternatives.push(format!("lower --chunk-mb (smaller chunks cut the front end's ~{}x-chunk-bytes RAM linearly)", CHUNK_BUILD_RAM_PER_CHUNK_MB as u32));
+    }
+    let fanin = FaninPlan { chunk_bytes_mb, levels, peak_disc_mb: peak_mb, total_merge_wall_s };
+    Plan { survey, chunks, kway, threads, cap_gb, phases, chunk_bytes_mb, pos_mode: pos_mode.to_string(), disc_verdict, ram_verdict, alternatives, fanin: Some(fanin) }
 }
 
 impl Plan {
@@ -250,6 +380,21 @@ impl Plan {
             ));
         }
         s.push_str(&format!("XSA_PLAN_TOTAL wall={} wall_s={:.0} chunk_bytes_mb={:.0}\n", hms(total), total, self.chunk_bytes_mb));
+        // The fan-in shape: levels, per-level side sizes, peak disc
+        // (delete-as-you-go) and the merge wall, all from arithmetic.
+        if let Some(f) = &self.fanin {
+            s.push_str(&format!(
+                "XSA_FANIN levels={} chunk_bytes_mb={:.1} peak_disc_gb={:.1} merge_wall_s={:.0} merge_wall={}\n",
+                f.levels.len(), f.chunk_bytes_mb, f.peak_disc_mb / 1024.0, f.total_merge_wall_s, hms(f.total_merge_wall_s),
+            ));
+            s.push_str("XSA_FANIN_LEVELS level in out groups level_side_gb group_scratch_gb wall_s\n");
+            for l in &f.levels {
+                s.push_str(&format!(
+                    "XSA_FANIN_LEVEL level={} in={} out={} groups={} level_side_gb={:.1} group_scratch_gb={:.1} wall_s={:.0} wall={}\n",
+                    l.level, l.in_count, l.out_count, l.groups, l.level_side_gb, l.group_scratch_gb, l.wall_s, hms(l.wall_s),
+                ));
+            }
+        }
         // The pos-mode pick with its arithmetic: dense = 8n pos disc /
         // fast walk; compact = 3.6n / 2.3x slower walk. Dense whenever
         // its peak fits free with 10% headroom, else compact.

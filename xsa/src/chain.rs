@@ -25,6 +25,9 @@ use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 
@@ -52,10 +55,24 @@ finish -> chi sweep), one cargo-built command with bundled provenance.
   --chunks N         chunk count (default 32, the 10 GB gate value; outputs
                      are chunk-count invariant - the exact merge certifies
                      trees of 5 and 16 chunks byte-identical to the bank).
+  --chunk-mb N       fixed chunk size (MiB): the chunk count is derived by
+                     arithmetic (ceil(corpus_bytes / N MiB); document-aligned
+                     boundaries land near, not at, the target). The pile
+                     driver's sizing knob; mutually exclusive with --chunks.
+  --fanin            the fan-in shape: fixed chunks (--chunk-mb) + repeated
+                     k-way fan-in (--kway K) until one artifact remains.
+                     Levels are arithmetic; every level runs the same
+                     certified k-way merge and its output is a valid next
+                     level input (zero re-derivation); consumed inputs are
+                     reclaimed as the build advances (CROSS_DELETE_CONSUMED)
+                     so the peak disc is ~ one level's live set + one group's
+                     merge transient, not the whole input history. The plan
+                     prints levels, per-level side sizes, peak disc and wall.
   --kway N           merge arity (default 2 = the certified pairwise tree).
                      N = chunk count is the FLAT one-level shape: ONE k-way
                      merge straight from the chunks (primary shape; every
                      arity byte-reproduces the same canonical artifact).
+                     N < chunk count with --fanin is the progressive shape.
   --remap PATH       256-byte bijective byte map applied by the chunk front
                      end. Default: the embedded production map (the banked
                      fragment route's frag.remap, sha256 b4f38776...).
@@ -137,6 +154,8 @@ struct Options {
     stripes: Vec<String>,
     scratch_free_pct: u32,
     remap: Option<PathBuf>,
+    chunk_mb: Option<u32>,
+    fanin: bool,
 }
 
 #[derive(Debug)]
@@ -197,6 +216,9 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     let mut stripes: Vec<String> = Vec::new();
     let mut scratch_free_pct = 15u32;
     let mut remap = None;
+    let mut chunk_mb = None;
+    let mut fanin = false;
+    let mut chunks_given = false;
     let mut i = 0;
     while i < args.len() {
         let flag = &args[i];
@@ -231,10 +253,20 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
             "--chunks" => {
                 i += 1;
                 chunks = parse_u32(args.get(i), "--chunks")?;
+                chunks_given = true;
                 if chunks == 0 {
                     return Err("--chunks must be positive".into());
                 }
             }
+            "--chunk-mb" => {
+                i += 1;
+                let v = parse_u32(args.get(i), "--chunk-mb")?;
+                if v == 0 {
+                    return Err("--chunk-mb must be positive".into());
+                }
+                chunk_mb = Some(v);
+            }
+            "--fanin" => fanin = true,
             "--kway" => {
                 i += 1;
                 kway = parse_u32(args.get(i), "--kway")?;
@@ -271,7 +303,13 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     }
     let input = input.ok_or("need --input <corpus>")?;
     let scratch = scratch.ok_or("need --scratch <dir>")?;
-    Ok(Options { input, scratch, snap_1e, memory_gb, threads, chunks, kway, plan_only, stripes, scratch_free_pct, remap })
+    if chunk_mb.is_some() && chunks_given {
+        return Err("--chunk-mb and --chunks are mutually exclusive (chunk-mb derives the count)".into());
+    }
+    if fanin && chunk_mb.is_none() {
+        return Err("--fanin requires --chunk-mb N (the fixed chunk size)".into());
+    }
+    Ok(Options { input, scratch, snap_1e, memory_gb, threads, chunks, kway, plan_only, stripes, scratch_free_pct, remap, chunk_mb, fanin })
 }
 
 /// Last byte of a file (the snap-boundary probe).
@@ -367,6 +405,62 @@ fn disc_used_bytes(path: &Path) -> Result<u64, String> {
         .ok_or_else(|| format!("unparsable df output: {text:?}"))
 }
 
+/// Recursive byte size of a directory tree (the build's own disc footprint).
+/// `df --output=used` on a shared filesystem picks up every other writer, so
+/// the per-build peak is measured over the scratch tree alone.
+fn tree_bytes(path: &Path) -> u64 {
+    let mut total = 0u64;
+    let mut stack = vec![path.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(rd) = fs::read_dir(&dir) else { continue };
+        for entry in rd.flatten() {
+            let Ok(md) = entry.metadata() else { continue };
+            if md.is_dir() {
+                stack.push(entry.path());
+            } else if md.is_file() {
+                total += md.len();
+            }
+        }
+    }
+    total
+}
+
+/// Background peak-disc sampler: the merge's delete-as-you-go reclaim is
+/// invisible at phase boundaries, so poll the scratch tree size while a long
+/// phase runs and keep the maximum. The peak a delete-as-you-go fan-in build
+/// reaches mid-merge is the deliverable, not the end-of-phase value.
+struct DiscSampler {
+    stop: Arc<AtomicBool>,
+    peak: Arc<AtomicU64>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl DiscSampler {
+    fn start(path: PathBuf, interval: Duration) -> DiscSampler {
+        let stop = Arc::new(AtomicBool::new(false));
+        let peak = Arc::new(AtomicU64::new(0));
+        let stop_t = stop.clone();
+        let peak_t = peak.clone();
+        let handle = std::thread::spawn(move || {
+            while !stop_t.load(Ordering::Relaxed) {
+                let used = tree_bytes(&path);
+                if used > peak_t.load(Ordering::Relaxed) {
+                    peak_t.store(used, Ordering::Relaxed);
+                }
+                std::thread::sleep(interval);
+            }
+        });
+        DiscSampler { stop, peak, handle: Some(handle) }
+    }
+    fn peak_bytes(mut self) -> u64 {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+        self.peak.load(Ordering::Relaxed)
+    }
+}
+
 /// Parse `/usr/bin/time -v` output for wall clock and peak RSS.
 fn parse_time_report(text: &str) -> (Option<String>, Option<u64>) {
     let mut wall = None;
@@ -433,9 +527,9 @@ fn run_phase(
     let (wall, peak_rss_kb) = fs::read_to_string(&time_path)
         .map(|text| parse_time_report(&text))
         .unwrap_or((None, None));
-    let used_after = disc_used_bytes(scratch)?;
+    let used_after = tree_bytes(scratch);
     journal.line(&format!(
-        "PHASE {tag} END rc={} wall={} peak_rss_kb={} disc_used_bytes={}",
+        "PHASE {tag} END rc={} wall={} peak_rss_kb={} disc_scratch_bytes={}",
         status.code().unwrap_or(-1),
         wall.as_deref().unwrap_or("?"),
         peak_rss_kb.map(|v| v.to_string()).unwrap_or_else(|| "?".into()),
@@ -556,11 +650,22 @@ fn run_chain(options: Options) -> Result<(), String> {
     // journal's FIRST entry (same plan file = same build = provenance);
     // --plan-only prints it and exits. The old DF_GATE refusal becomes this
     // richer contract: infeasible plans are refused WITH the alternatives.
+    // Fixed chunk size (--chunk-mb) derives the chunk count by arithmetic
+    // (document-aligned boundaries land near, not at, the target).
+    let corpus_bytes = fs::metadata(&input).map_err(|e| format!("stat {}: {e}", input.display()))?.len();
+    let chunks = match options.chunk_mb {
+        Some(mb) => {
+            let target = mb as u64 * 1048576;
+            (((corpus_bytes + target - 1) / target).max(1)) as u32
+        }
+        None => options.chunks,
+    };
     let survey = super::plan::survey(&input, &scratch, &options.stripes)?;
-    let build_plan = super::plan::model(
-        survey, options.chunks, options.kway, options.threads, options.memory_gb,
-        options.scratch_free_pct,
-    );
+    let build_plan = if options.fanin {
+        super::plan::model_fanin(survey, chunks, options.kway, options.threads, options.memory_gb, options.scratch_free_pct)
+    } else {
+        super::plan::model(survey, chunks, options.kway, options.threads, options.memory_gb, options.scratch_free_pct)
+    };
     if options.plan_only {
         print!("{}", build_plan.render());
         return Ok(());
@@ -591,13 +696,23 @@ fn run_chain(options: Options) -> Result<(), String> {
         std::env::set_var("CROSS_POS_MODE", &build_plan.pos_mode);
         journal.line(&format!("KNOB CROSS_POS_MODE={} (plan-picked)", build_plan.pos_mode));
     }
+    // Fan-in shape: fixed chunks + repeated k-way fan-in. Consume inputs
+    // (raw chunks and per-level intermediates) and reclaim them as the build
+    // advances, so the peak disc stays ~ one level's live set instead of the
+    // whole input history (the flat shape's 48n pile-killer).
+    if options.fanin {
+        if std::env::var_os("CROSS_DELETE_CONSUMED").is_none() {
+            std::env::set_var("CROSS_DELETE_CONSUMED", "1");
+            journal.line("KNOB CROSS_DELETE_CONSUMED=1 (fan-in: delete inputs as consumed)");
+        }
+    }
     // Preflight: disc gate before anything is written (the plan-first
     // verdicts above carry the fit + hygiene contract; this is the belt).
     disc_preflight(&scratch, options.scratch_free_pct)?;
     journal.line(&format!(
         "XSA_BUILD START input={} scratch={} memory_gb={} threads={} chunks={} kway={} remap={}",
         input.display(), scratch.display(), options.memory_gb, options.threads,
-        options.chunks, options.kway, if options.remap.is_some() { "provided" } else { "production" }
+        chunks, options.kway, if options.remap.is_some() { "provided" } else { "production" }
     ));
     // Snap preflight: the demonstrated refusal fires before any phase runs.
     let n = check_snap_boundary(&input)?;
@@ -622,20 +737,25 @@ fn run_chain(options: Options) -> Result<(), String> {
 
     // 1. chunk front end (libsais, document-aligned cyclic BWT chunks).
     run_phase(&mut journal, &scratch, "chunk", memory_kb, tools.join("chunk_frontend").to_str().unwrap(), &[
-        s(&input.to_string_lossy()), options.chunks.to_string(),
+        s(&input.to_string_lossy()), chunks.to_string(),
         s(&scratch.join("chunks").to_string_lossy()), s(&remap_path.to_string_lossy()),
     ])?;
     journal.line(&require_log_contains(&scratch, "chunk", "CHUNKS_PASS")?);
 
     // 2. externalized merge tree (delete-as-consumed scratch, --emit-pf).
+    // Sample peak disc through the merge: with delete-as-you-go the fan-in
+    // peak is mid-merge, not at a phase boundary.
+    let merge_sampler = DiscSampler::start(scratch.clone(), Duration::from_secs(2));
     run_phase(&mut journal, &scratch, "merge", memory_kb, tools.join("cross_lcp_merge").to_str().unwrap(), &[
-        "--tree".into(), s(&scratch.join("chunks").to_string_lossy()), options.chunks.to_string(),
+        "--tree".into(), s(&scratch.join("chunks").to_string_lossy()), chunks.to_string(),
         n.to_string(), frag.clone(),
         "--threads".into(), options.threads.to_string(),
         "--kway".into(), options.kway.to_string(),
         "--work".into(), s(&scratch.join("mwork").to_string_lossy()),
         "--emit-pf".into(),
     ])?;
+    let merge_peak_disc = merge_sampler.peak_bytes();
+    journal.line(&format!("MERGE_PEAK_DISC_USED_BYTES {merge_peak_disc} (sampled every 2s during the merge)"));
     let pairs = count_log_contains(&scratch, "merge", "CROSS_PAIR");
     let kways = count_log_contains(&scratch, "merge", "CROSS_KWAY");
     journal.line(&format!("MERGE cross_pairs={pairs} cross_kway_nodes={kways} kway={}", options.kway));
@@ -676,8 +796,8 @@ fn run_chain(options: Options) -> Result<(), String> {
         "-o".into(), s(&finish.join("frag.sA").to_string_lossy()),
     ])?;
     let chi = require_log_contains(&scratch, "sweep", "chi = ")?;
-    let peak_disc = disc_used_bytes(&scratch)?;
-    journal.line(&format!("PEAK_DISC_USED_BYTES {peak_disc} (scratch filesystem, after finish)"));
+    let peak_disc = tree_bytes(&scratch);
+    journal.line(&format!("PEAK_DISC_USED_BYTES {peak_disc} (scratch tree after finish)"));
     journal.line(&format!("XSA_BUILD_DONE {chi}"));
     Ok(())
 }
