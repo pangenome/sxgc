@@ -1,0 +1,20 @@
+XSA_PLAN v=1 corpus_bytes=10000017258 chunks=32 kway=32 threads=48 cap_gb=24 cores=256 cx16=true mem_available_gb=780
+XSA_PLAN_PHASES name wall disc_peak_gb rss_gb
+XSA_PLAN_PHASE name=chunk wall=0:29:58 wall_s=1798 disc_peak_gb=92.2 rss_gb=7.86
+XSA_PLAN_PHASE name=merge(load) wall=4:02:23 wall_s=14543 disc_peak_gb=278.5 rss_gb=4.00
+XSA_PLAN_PHASE name=merge(anchor) wall=0:15:16 wall_s=917 disc_peak_gb=278.5 rss_gb=4.00
+XSA_PLAN_PHASE name=merge(walk) wall=2:42:54 wall_s=9775 disc_peak_gb=278.5 rss_gb=4.00
+XSA_PLAN_PHASE name=merge(emit) wall=2:16:45 wall_s=8206 disc_peak_gb=291.5 rss_gb=4.00
+XSA_PLAN_PHASE name=endpoints wall=0:52:17 wall_s=3138 disc_peak_gb=105.2 rss_gb=0.40
+XSA_PLAN_PHASE name=slim wall=2:56:34 wall_s=10594 disc_peak_gb=105.2 rss_gb=0.04
+XSA_PLAN_PHASE name=sweep wall=0:09:24 wall_s=564 disc_peak_gb=105.2 rss_gb=0.01
+XSA_PLAN_TOTAL wall=13:45:34 wall_s=49535 chunk_bytes_mb=298
+XSA_PLAN_DISC FEASIBLE: peak ~292 GB fits 2221 GB free (85% used)
+XSA_PLAN_RAM FEASIBLE: chunk front end ~7.9 GB (27x chunk bytes) vs cap 24 GiB; merge ~4.0 GB (bounded, memory-aware side parallelism)
+XSA_BUILD START input=/mnt/nvme2n1/erikg/extcols-scratch/real10b-ref/pile-10b-snap.txt scratch=/mnt/nvme2n1/erikg/extcols-scratch/mergperf-10b-flat memory_gb=24 threads=48 chunks=32 kway=32 remap=production
+SNAP_OK n=10000017258 sha256=d440d9e1fe0aeb4c32ebeffb2df02dac009a0806510c2f864a04c2cd92d3864a
+REMAP /mnt/nvme2n1/erikg/extcols-scratch/mergperf-10b-flat/remap-256.bin sha256=b4f387767707f3095a0981148a1753f8da5885c30c19753b3b93887153e611be
+PHASE chunk START /home/erikg/.cache/xsa/cc9e0b695f5757e6034677727ec963dbbe207809c04267c593b803df6a9f60ab/chunk_frontend /mnt/nvme2n1/erikg/extcols-scratch/real10b-ref/pile-10b-snap.txt 32 /mnt/nvme2n1/erikg/extcols-scratch/mergperf-10b-flat/chunks /mnt/nvme2n1/erikg/extcols-scratch/mergperf-10b-flat/remap-256.bin
+PHASE chunk END rc=0 wall=37:05.73 peak_rss_kb=11216356 disc_used_bytes=13022480740352
+CHUNKS_PASS count=32 source_bytes=10000017258
+PHASE merge START /home/erikg/.cache/xsa/cc9e0b695f5757e6034677727ec963dbbe207809c04267c593b803df6a9f60ab/cross_lcp_merge --tree /mnt/nvme2n1/erikg/extcols-scratch/mergperf-10b-flat/chunks 32 10000017258 /mnt/nvme2n1/erikg/extcols-scratch/mergperf-10b-flat/merged/frag --threads 48 --kway 32 --work /mnt/nvme2n1/erikg/extcols-scratch/mergperf-10b-flat/mwork --emit-pf

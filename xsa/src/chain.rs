@@ -5,7 +5,8 @@
 //! per the demonstrated chunk_frontend refusal), libsais chunk front end,
 //! externalized cross-LCP merge tree (`--emit-pf` side streams, fixed
 //! concurrent pool ON by default; CROSS_NO_POOL / CROSS_ASYNC_FILL /
-//! CROSS_HASH_K / CROSS_PIPELINE pass through as environment knobs), and the
+//! CROSS_HASH_K / CROSS_PIPELINE / CROSS_SHARDS pass through as environment
+//! knobs), and the
 //! external adopt finish (rpfbwt_endpoints + slim_dump + the streamed chi
 //! sweep) consuming the merge's `.pftext`/`.pfck` side streams.
 //!
@@ -28,7 +29,8 @@ use std::process::{Command, Stdio};
 use sha2::{Digest, Sha256};
 
 pub const USAGE: &str = "usage:
-  xsa build --input <corpus> --scratch <dir> [--snap-1e] [--memory-gb N] [--threads N] [--chunks N] [--remap <256-byte-map>]
+  xsa build --input <corpus> --scratch <dir> [--snap-1e] [--memory-gb N] [--threads N]
+                    [--chunks N] [--kway N] [--remap <256-byte-map>]
 
 The consolidated external construction chain (chunk -> merge tree -> adopt
 finish -> chi sweep), one cargo-built command with bundled provenance.
@@ -50,18 +52,38 @@ finish -> chi sweep), one cargo-built command with bundled provenance.
   --chunks N         chunk count (default 32, the 10 GB gate value; outputs
                      are chunk-count invariant - the exact merge certifies
                      trees of 5 and 16 chunks byte-identical to the bank).
+  --kway N           merge arity (default 2 = the certified pairwise tree).
+                     N = chunk count is the FLAT one-level shape: ONE k-way
+                     merge straight from the chunks (primary shape; every
+                     arity byte-reproduces the same canonical artifact).
   --remap PATH       256-byte bijective byte map applied by the chunk front
                      end. Default: the embedded production map (the banked
                      fragment route's frag.remap, sha256 b4f38776...).
 
 Pool knobs pass through to the merge unchanged (default: fixed concurrent
-pool ON): CROSS_NO_POOL=1, CROSS_ASYNC_FILL=1, CROSS_HASH_K=K, CROSS_PIPELINE=1.
+pool ON): CROSS_NO_POOL=1, CROSS_ASYNC_FILL=1, CROSS_HASH_K=K, CROSS_PIPELINE=1,
+CROSS_SHARDS=S (parallel emission: the order/run-boundary shard count for the
+merge walks; default --threads, 1 = the serial walk). The chunk front end
+writes per-chunk corpus references (chunk-i.ref) so the merge never
+copies chunk text (referenced mode; CHUNK_NO_REF=1 restores the legacy
+artifact set, CROSS_NO_REF=1 makes the merge ignore refs).
 
 Outputs (byte-identical to the reference chain on the same corpus):
   merged/frag.rlebwt .rlebwt.meta .ssa .ssa_t .pftext .pfck
   finish/frag.ri4 .head_sa .agg .sA
 The uniform journal (xsa-build.log) reports chi and per-phase wall / peak
 RSS / disc telemetry.
+
+  xsa build --plan-only           print the surveyed+modeled build plan
+                     and exit without building anything (same model as the
+                     plan file the build journals first).
+  --scratch-free-pct N  disc hygiene policy override (default 15 = the
+                     banked >=15%-free rule; 0 = a bounded run that FITS
+                     with headroom may proceed on a full drive; the
+                     override is journaled in the plan).
+  --stripe DIR[,DIR...]  candidate stripe directories for the disc model
+                     (reader-level striping is lane item 3; the plan
+                     accounts for the space now, the I/O split lands later).
 
   xsa build --selftest [CASES] [--threads N] [--scratch DIR]
                      runs the merge selftest for the six banked sweep seeds
@@ -110,6 +132,10 @@ struct Options {
     memory_gb: u64,
     threads: u32,
     chunks: u32,
+    kway: u32,
+    plan_only: bool,
+    stripes: Vec<String>,
+    scratch_free_pct: u32,
     remap: Option<PathBuf>,
 }
 
@@ -166,6 +192,10 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     let mut memory_gb = 24u64;
     let mut threads = 48u32;
     let mut chunks = 32u32;
+    let mut kway = 2u32;
+    let mut plan_only = false;
+    let mut stripes: Vec<String> = Vec::new();
+    let mut scratch_free_pct = 15u32;
     let mut remap = None;
     let mut i = 0;
     while i < args.len() {
@@ -205,6 +235,29 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
                     return Err("--chunks must be positive".into());
                 }
             }
+            "--kway" => {
+                i += 1;
+                kway = parse_u32(args.get(i), "--kway")?;
+                if kway < 2 {
+                    return Err("--kway must be >= 2 (the pairwise arity)".into());
+                }
+            }
+            "--plan-only" => plan_only = true,
+            "--scratch-free-pct" => {
+                i += 1;
+                scratch_free_pct = parse_u32(args.get(i), "--scratch-free-pct")?;
+                if scratch_free_pct > 100 {
+                    return Err("--scratch-free-pct must be <= 100 (0 = override hygiene)".into());
+                }
+            }
+            "--stripe" => {
+                i += 1;
+                let v = value(args.get(i), "--stripe")?;
+                stripes = v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+                if stripes.is_empty() {
+                    return Err("--stripe needs at least one directory".into());
+                }
+            }
             "--remap" => {
                 i += 1;
                 let path = PathBuf::from(value(args.get(i), "--remap")?);
@@ -218,7 +271,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     }
     let input = input.ok_or("need --input <corpus>")?;
     let scratch = scratch.ok_or("need --scratch <dir>")?;
-    Ok(Options { input, scratch, snap_1e, memory_gb, threads, chunks, remap })
+    Ok(Options { input, scratch, snap_1e, memory_gb, threads, chunks, kway, plan_only, stripes, scratch_free_pct, remap })
 }
 
 /// Last byte of a file (the snap-boundary probe).
@@ -288,12 +341,15 @@ fn disc_used_percent(path: &Path) -> Result<u32, String> {
     parse_used_percent(&text).ok_or_else(|| format!("unparsable df output: {text:?}"))
 }
 
-fn disc_preflight(path: &Path) -> Result<(), String> {
+fn disc_preflight(path: &Path, min_free_pct: u32) -> Result<(), String> {
+    if min_free_pct == 0 {
+        return Ok(());   // explicit operator override (journaled in the plan)
+    }
     let used = disc_used_percent(path)?;
-    if !disc_allows_used_percent(used) {
+    if !disc_allows_used_percent(100u32.saturating_sub(min_free_pct)) {
         return Err(format!(
             "DF_GATE_FAIL {} {}% used (>= {}% free required on the scratch filesystem)",
-            path.display(), used, 100 - DISC_MAX_USED_PERCENT
+            path.display(), used, min_free_pct
         ));
     }
     Ok(())
@@ -496,18 +552,52 @@ fn run_chain(options: Options) -> Result<(), String> {
             journal_path.display()
         ));
     }
+    // PLAN-FIRST: survey + model before any bytes move. The plan is the
+    // journal's FIRST entry (same plan file = same build = provenance);
+    // --plan-only prints it and exits. The old DF_GATE refusal becomes this
+    // richer contract: infeasible plans are refused WITH the alternatives.
+    let survey = super::plan::survey(&input, &scratch, &options.stripes)?;
+    let build_plan = super::plan::model(
+        survey, options.chunks, options.kway, options.threads, options.memory_gb,
+        options.scratch_free_pct,
+    );
+    if options.plan_only {
+        print!("{}", build_plan.render());
+        return Ok(());
+    }
+    if build_plan.alternatives.iter().any(|a| !a.starts_with("CPU lacks")) {
+        // Feasibility failed (disc or RAM): print the plan + alternatives,
+        // refuse loud. (The cx16 note is informational, not a refusal.)
+        print!("{}", build_plan.render());
+        return Err("PLAN_INFEASIBLE: see XSA_PLAN_ALTERNATIVE lines above".into());
+    }
     let mut journal = Journal::open(&journal_path)?;
-    for knob in ["CROSS_NO_POOL", "CROSS_ASYNC_FILL", "CROSS_HASH_K", "CROSS_PIPELINE"] {
+    for line in build_plan.render().lines() {
+        journal.line(line);
+    }
+    for knob in ["CROSS_NO_POOL", "CROSS_ASYNC_FILL", "CROSS_HASH_K", "CROSS_PIPELINE", "CROSS_SHARDS", "CROSS_NO_REF", "CHUNK_NO_REF", "CHUNK_POS_MODE", "CROSS_POS_MODE", "CROSS_NO_SXP4"] {
         if let Some(value) = std::env::var_os(knob) {
             journal.line(&format!("KNOB {knob}={}", value.to_string_lossy()));
         }
     }
-    // Preflight: disc gate before anything is written.
-    disc_preflight(&scratch)?;
+    // Pos-column mode: the plan's pick (XSA_POS_MODE) unless the operator
+    // already chose. Dense = fast walk / fat disc; compact = thin disc /
+    // slow walk. Both writers honor it; the reader sniffs the format.
+    if std::env::var_os("CHUNK_POS_MODE").is_none() {
+        std::env::set_var("CHUNK_POS_MODE", &build_plan.pos_mode);
+        journal.line(&format!("KNOB CHUNK_POS_MODE={} (plan-picked)", build_plan.pos_mode));
+    }
+    if std::env::var_os("CROSS_POS_MODE").is_none() && std::env::var_os("CROSS_NO_SXP4").is_none() {
+        std::env::set_var("CROSS_POS_MODE", &build_plan.pos_mode);
+        journal.line(&format!("KNOB CROSS_POS_MODE={} (plan-picked)", build_plan.pos_mode));
+    }
+    // Preflight: disc gate before anything is written (the plan-first
+    // verdicts above carry the fit + hygiene contract; this is the belt).
+    disc_preflight(&scratch, options.scratch_free_pct)?;
     journal.line(&format!(
-        "XSA_BUILD START input={} scratch={} memory_gb={} threads={} chunks={} remap={}",
+        "XSA_BUILD START input={} scratch={} memory_gb={} threads={} chunks={} kway={} remap={}",
         input.display(), scratch.display(), options.memory_gb, options.threads,
-        options.chunks, if options.remap.is_some() { "provided" } else { "production" }
+        options.chunks, options.kway, if options.remap.is_some() { "provided" } else { "production" }
     ));
     // Snap preflight: the demonstrated refusal fires before any phase runs.
     let n = check_snap_boundary(&input)?;
@@ -542,11 +632,13 @@ fn run_chain(options: Options) -> Result<(), String> {
         "--tree".into(), s(&scratch.join("chunks").to_string_lossy()), options.chunks.to_string(),
         n.to_string(), frag.clone(),
         "--threads".into(), options.threads.to_string(),
+        "--kway".into(), options.kway.to_string(),
         "--work".into(), s(&scratch.join("mwork").to_string_lossy()),
         "--emit-pf".into(),
     ])?;
     let pairs = count_log_contains(&scratch, "merge", "CROSS_PAIR");
-    journal.line(&format!("MERGE cross_pairs={pairs}"));
+    let kways = count_log_contains(&scratch, "merge", "CROSS_KWAY");
+    journal.line(&format!("MERGE cross_pairs={pairs} cross_kway_nodes={kways} kway={}", options.kway));
     journal.line(&require_log_contains(&scratch, "merge", "CROSS_PF_EMIT")?);
 
     // 3. external adopt finish: endpoints + slim consume the pf side streams.
@@ -569,6 +661,14 @@ fn run_chain(options: Options) -> Result<(), String> {
 
     // 4. streamed chi sweep (this same xsa binary).
     let xsa = std::env::current_exe().map_err(|e| format!("current exe: {e}"))?;
+    // If the binary was replaced mid-run (cargo rebuild), /proc/self/exe
+    // resolves to a deleted inode and the re-exec would fail with 127.
+    // Fall back to the invocation path (argv[0]): the gate then runs the
+    // binary currently at that path end-to-end.
+    let xsa = if xsa.to_string_lossy().ends_with(" (deleted)") {
+        std::env::args().next().map(PathBuf::from).filter(|p| p.is_file())
+            .ok_or_else(|| "sweep launcher: this binary was replaced during the run; re-invoke by path".to_string())?
+    } else { xsa };
     run_phase(&mut journal, &scratch, "sweep", memory_kb, xsa.to_str().unwrap(), &[
         "chi-rspace".into(), "--stream-agg".into(),
         "--ri4".into(), s(&finish.join("frag.ri4").to_string_lossy()),

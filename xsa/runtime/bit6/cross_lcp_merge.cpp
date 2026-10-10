@@ -36,6 +36,17 @@
 //    so their relative order is always already correct.
 //  * Cross placement is a plain two-pointer merge of the two repaired orders
 //    under the same total-order comparator.
+//  * PARALLEL EMISSION: the cross-merge walk and every emit walk are sharded
+//    at FIXED ORDER BOUNDARIES. The merged total order is strict, so the
+//    merged rank of A[a] is exactly a + #{B rows ordered before A[a]}: the
+//    walk's shard boundaries are binary-searched at merged-rank targets and
+//    each shard pwrites its disjoint output range. The emitters shard at run
+//    boundaries (shard-local run-start sums fix every run's global index);
+//    every run is finalized by exactly one shard, fixed-size records go out
+//    by pwrite at their global offsets, and the variable-word rlebwt goes
+//    through per-shard segments concatenated in shard order. Concatenation
+//    is order-pure: byte-identical to the serial walk by construction at
+//    S = --threads shards (CROSS_SHARDS overrides; S=1 IS the serial walk).
 //  * Comparisons use dense prefix fingerprints over M.M with a directly
 //    checked 16-symbol fast path, galloping hash probes, bisection, and FULL
 //    direct verification of every proposed equal prefix and its mismatch
@@ -64,6 +75,9 @@
 #include <deque>
 #include <memory>
 #include <filesystem>
+#include <mutex>
+#include <functional>
+#include <malloc.h>
 #include <fstream>
 #include <stdexcept>
 #include <string>
@@ -489,6 +503,194 @@ struct WinU64 {
         pool->prefetch((base + 8 * i) / SharedPages::PS);
     }
 };
+// Corpus-referenced side text. A side's text is either embedded in its
+// SXS2 sidecar (intermediates; legacy raw-chunk walks) or REFERENCED: chunk
+// artifacts carry (corpus path, offset, n) + the 256-byte remap, and the
+// view is remap[corpus[offset+i]] — the text is never materialized (it
+// already exists in the corpus; the disc discipline kills the per-side text
+// copies). One API in two backing modes; consumers are bulk passes and
+// per-row random reads, so a small thread-local page cache suffices (the
+// hot comparison path reads the materialized M2 scratch file, not this).
+// One referenced text segment: bytes [off, off+len) of `path`, mapped
+// through `remap`. A side's text is a CONCATENATION of segments (its refs):
+// a corpus window is one segment; a merged intermediate's text is its input
+// sides' segments in order - no merged text is ever copied (the progressive
+// shape's invariant: level N's output is a valid level N+1 input).
+struct TextSeg {
+    std::string path;
+    U off = 0, len = 0;
+    std::array<uint8_t, 256> remap{};
+};
+// Varint (LEB128) for the compact run stream: every absolute column stays
+// 64-bit (positions live in the persisted order column); the varint is
+// only the run LENGTH, bounded by the chunk size, checked on decode.
+static void put_varint(std::vector<char>& out, U v) {
+    while (v >= 0x80) { out.push_back(char(uint8_t(v) | 0x80)); v >>= 7; }
+    out.push_back(char(uint8_t(v)));
+}
+struct RunCursor {   // streams run records from a v2 (25B) or v3 (varint) file
+    std::ifstream f;
+    U version = 0;
+    char vbuf[16]; size_t vlen = 0, vused = 0;   // varint record buffer
+    explicit RunCursor(const std::string& path, U ver) : f(path, std::ios::binary), version(ver) {
+        require(bool(f), "reopen chunk runs");
+        f.seekg(32);
+        if (ver == 3) { f.read(vbuf, 16); vlen = size_t(f.gcount()); }
+    }
+    void refill() {
+        require(vused == vlen, "varint refill alignment");
+        f.read(vbuf, 16); vlen = size_t(f.gcount()); vused = 0;
+        require(vlen > 0, "truncated varint run stream");
+    }
+    uint8_t byte() {
+        if (version == 2) { char b; f.read(&b, 1); require(bool(f), "truncated run record"); return uint8_t(b); }
+        if (vused == vlen) refill();
+        return uint8_t(vbuf[vused++]);
+    }
+    U fixed(U bytes) {   // v2 little-endian field
+        U v = 0;
+        for (U i = 0; i < bytes; ++i) { char b; f.read(&b, 1); require(bool(f), "truncated run record"); v |= U(uint8_t(b)) << (8 * i); }
+        return v;
+    }
+    U varint() {
+        U v = 0;
+        for (unsigned shift = 0; ; shift += 7) {
+            uint8_t b = byte();
+            require(shift < 63, "varint overflow");
+            v |= U(b & 0x7f) << shift;
+            if (!(b & 0x80)) return v;
+        }
+    }
+    // next record; for v2 fills h/t from the file, for v3 leaves them 0
+    // (samples come from the persisted order column).
+    void next(uint8_t& c, U& len, U& h, U& t) {
+        c = byte();
+        if (version == 2) {
+            len = fixed(8); h = fixed(8); t = fixed(8);
+        } else {
+            len = varint(); h = 0; t = 0;
+        }
+    }
+};
+struct SideText {
+    int fd = -1;
+    U n = 0, base = 0, gen = 0;   // base: text byte offset (sidecar 20 / corpus range start)
+    bool remapped = false;
+    std::array<uint8_t, 256> map{};
+    std::vector<TextSeg> segs;           // segment mode (referenced text)
+    std::vector<U> segBase;              // cumulative segment starts
+    static std::atomic<U> g_gen;
+    void open_sidecar(const std::string& path, U elems, U byteBase) {
+        fd = ::open(path.c_str(), O_RDONLY);
+        if (fd < 0) fail("open sidecar text");
+        n = elems; base = byteBase; remapped = false; gen = g_gen.fetch_add(1);
+    }
+    void open_corpus(const std::string& path, U elems, U corpusOff,
+                     const std::array<uint8_t, 256>& remap) {
+        fd = ::open(path.c_str(), O_RDONLY);
+        if (fd < 0) fail("open corpus (referenced chunk text)");
+        struct stat st{};
+        require(fstat(fd, &st) == 0 && U(st.st_size) >= corpusOff + elems,
+                "corpus range out of bounds (referenced chunk)");
+        n = elems; base = corpusOff; remapped = true; map = remap; gen = g_gen.fetch_add(1);
+    }
+    void open_segments(std::vector<TextSeg> list, U elems) {
+        segs = std::move(list);
+        segBase.assign(segs.size() + 1, 0);
+        for (size_t z = 0; z < segs.size(); ++z) segBase[z + 1] = segBase[z] + segs[z].len;
+        require(segBase.back() == elems, "referenced text segments do not cover the side");
+        n = elems; gen = g_gen.fetch_add(1);
+    }
+    inline size_t segOf(U i) const {
+        return size_t(std::upper_bound(segBase.begin(), segBase.end() - 1, i) - segBase.begin()) - 1;
+    }
+    ~SideText() { if (fd >= 0) ::close(fd); }
+    SideText() = default;
+    SideText(const SideText&) = delete;
+    SideText& operator=(const SideText&) = delete;
+    struct TL { const void* o = nullptr; U gen = 0; U tag[2]{UINT64_MAX, UINT64_MAX};
+                U segOfTag[2]{}; std::unique_ptr<uint8_t[]> d[2]; unsigned nxt = 0; };
+    struct TLS4 { TL e[4]; unsigned nxt = 0; };
+    inline TL& tlEntry() const {
+        thread_local TLS4 tls;
+        for (unsigned z = 0; z < 4; ++z)
+            if (tls.e[z].o == (const void*)this && tls.e[z].gen == gen) return tls.e[z];
+        TL& e = tls.e[tls.nxt++ & 3];
+        e.o = (const void*)this; e.gen = gen;
+        e.tag[0] = e.tag[1] = UINT64_MAX; e.nxt = 0;
+        return e;
+    }
+    inline uint8_t at(U i) const {
+        if (i >= n) fail("side text bounds");
+        if (!segs.empty()) {   // segment mode: 2-page cache keyed (segment, page)
+            size_t z = segOf(i);
+            const TextSeg& s = segs[z];
+            U within = i - segBase[z];
+            constexpr U B = 16384;
+            U page = within / B;
+            TL& tls = tlEntry();
+            for (unsigned k = 0; k < 2; ++k)
+                if (tls.tag[k] == page && tls.segOfTag[k] == U(z)) {
+                    uint8_t raw = tls.d[k][within % B];
+                    return s.remap[raw];
+                }
+            unsigned slot = tls.nxt++ & 1;
+            if (!tls.d[slot]) tls.d[slot].reset(new uint8_t[B]);
+            U start = page * B, need = std::min<U>(B, s.len - start);
+            int f = ::open(s.path.c_str(), O_RDONLY);
+            if (f < 0) fail("open referenced text segment");
+            xw(f, tls.d[slot].get(), need, s.off + start, "referenced text page");
+            ::close(f);
+            tls.tag[slot] = page; tls.segOfTag[slot] = U(z);
+            uint8_t raw = tls.d[slot][within % B];
+            return s.remap[raw];
+        }
+        constexpr U B = 16384;
+        TL& tls = tlEntry();
+        U page = i / B;
+        for (unsigned k = 0; k < 2; ++k)
+            if (tls.tag[k] == page) {
+                uint8_t raw = tls.d[k][i % B];
+                return remapped ? map[raw] : raw;
+            }
+        unsigned slot = tls.nxt++ & 1;
+        if (!tls.d[slot]) tls.d[slot].reset(new uint8_t[B]);
+        U start = page * B, need = std::min(B, n - start);
+        xw(fd, tls.d[slot].get(), need, base + start, "side text page");
+        tls.tag[slot] = page;
+        uint8_t raw = tls.d[slot][i % B];
+        return remapped ? map[raw] : raw;
+    }
+    void read(U i, void* buf, U len) const {   // bulk banded read (+per-seg remap)
+        if (i + len > n) fail("side text bulk bounds");
+        uint8_t* q = (uint8_t*)buf;
+        if (!segs.empty()) {
+            U done = 0;
+            while (done < len) {
+                size_t z = segOf(i + done);
+                const TextSeg& s = segs[z];
+                U within = i + done - segBase[z];
+                U take = std::min<U>(len - done, s.len - within);
+                int f = ::open(s.path.c_str(), O_RDONLY);
+                if (f < 0) fail("open referenced text segment");
+                xw(f, q + done, take, s.off + within, "referenced text bulk");
+                ::close(f);
+                for (U t = 0; t < take; ++t) q[done + t] = s.remap[q[done + t]];
+                done += take;
+            }
+            return;
+        }
+        constexpr U W = 1u << 22;
+        U done = 0;
+        while (done < len) {
+            U take = std::min<U>(W, len - done);
+            xw(fd, q + done, take, base + i + done, "side text bulk");
+            if (remapped) for (U z = 0; z < take; ++z) q[done + z] = map[q[done + z]];
+            done += take;
+        }
+    }
+};
+std::atomic<U> SideText::g_gen{1};
 // Overlay of repaired slices over an immutable position column: the repair
 // writes each sorted block slice sequentially and registers [lo,hi) with its
 // file offset. Anchor blocks NEST (the backward-search walk shrinks the row
@@ -496,9 +698,218 @@ struct WinU64 {
 // for shared rows — matching the resident in-place semantics exactly.
 // Region count per side is bounded by the walk depth (small); lookups scan
 // backward, last pushed first.
+// SXP4 order-column WRITER: "SXP4" | u32 ver | u64 offset | u64 n |
+// u64 period | u64 rsvd | u64 groups | per group: startRow, byteOff,
+// basePos (3 x u64) | the zigzag-varint delta stream (4096-row groups).
+// Encoder takes a pull function to stay independent of the row source.
+static void write_pos_sxp4(const std::string& path, U offset, U n, U period,
+                            const std::function<U(U)>& rowPos) {
+    constexpr U GRP = 4096;
+    U groups = (n + GRP - 1) / GRP;
+    std::vector<U> tab(3 * groups);
+    std::vector<uint8_t> stream;
+    stream.reserve(n * 4 + 64);
+    std::vector<uint8_t> rec;
+    auto putVar = [&](U v) {
+        while (v >= 0x80) { stream.push_back(uint8_t(v) | 0x80); v >>= 7; }
+        stream.push_back(uint8_t(v));
+    };
+    std::vector<U> pos(GRP);
+    for (U g = 0; g < groups; ++g) {
+        U b0 = g * GRP, len = std::min<U>(GRP, n - b0);
+        tab[3 * g] = b0;
+        tab[3 * g + 1] = 0;   // fixed after the sizes are known
+        for (U i = 0; i < len; ++i) pos[i] = rowPos(b0 + i);
+        tab[3 * g + 2] = len ? pos[0] : 0;
+        tab[3 * g + 1] = stream.size();
+        for (U i = 1; i < len; ++i) {
+            U d = U(pos[i] >= pos[i - 1]) * 2 * (pos[i] - pos[i - 1]) + U(pos[i] < pos[i - 1]) * (2 * (pos[i - 1] - pos[i]) - 1);   // standard zigzag
+            putVar(d);
+        }
+    }
+    int fd = ::open(path.c_str(), O_CREAT | O_EXCL | O_WRONLY, 0666);
+    require(fd >= 0, "create SXP4 pos column");
+    char hdr[56];
+    std::memset(hdr, 0, sizeof hdr);
+    std::memcpy(hdr, "SXP4", 4);
+    auto w32 = [&](char* b, uint32_t v) { for (int i = 0; i < 4; ++i) b[i] = char(v >> (8 * i)); };
+    auto w64 = [&](char* b, U v) { for (int i = 0; i < 8; ++i) b[i] = char(v >> (8 * i)); };
+    w32(hdr + 4, 1); w64(hdr + 8, offset); w64(hdr + 16, n); w64(hdr + 24, period);
+    w64(hdr + 32, 0); w64(hdr + 40, groups);
+    xput(fd, hdr, 56, 0, "sxp4 header");
+    std::vector<char> tb(24 * groups);
+    for (U g = 0; g < groups; ++g) {
+        w64(tb.data() + 24 * g, tab[3 * g]);
+        w64(tb.data() + 24 * g + 8, 56 + 24 * groups + tab[3 * g + 1]);
+        w64(tb.data() + 24 * g + 16, tab[3 * g + 2]);
+    }
+    xput(fd, tb.data(), tb.size(), 56, "sxp4 group table");
+    if (!stream.empty()) xput(fd, stream.data(), stream.size(), 56 + 24 * groups, "sxp4 delta stream");
+    require(::close(fd) == 0, "close SXP4 pos column");
+}
+// Order-column reader for a side: DENSE (SXP2/SXP3: 8-byte positions after
+// a 20/40-byte header) or COMPACT (SXP4: per-row-group base position +
+// zigzag varint deltas - measured 3.13 B/position on pile-like 100MB text,
+// the 8n -> ~3.1n chunk-disc lever; absolute positions stay 64-bit in the
+// bases, only the bounded within-group deltas are narrow). Random access:
+// binary search the group table (group = 4096 rows), decode to the row.
+// Same surface PosOverlay consumed from WinU64 (at / bulk read, + shift).
+struct PosColumn {
+    int fd = -1;
+    U count = 0, byteBase = 0, shift = 0, fileSize = 0;
+    bool compact = false;
+    U headerBytes = 0, groups = 0;
+    std::unique_ptr<U[]> tab;   // 3 u64 per group: startRow, byteOff, basePos
+    struct TL { int fd = -1; U tag[2]{UINT64_MAX,UINT64_MAX}; std::unique_ptr<uint8_t[]> d[2];
+                U dv[2][4096]; unsigned nxt = 0; U gen = 0; };   // dense cache
+    struct TLS4 { TL e[4]; unsigned nxt = 0; };
+    static std::atomic<U> g_gen;
+    U gen = 0;
+    void open_ro(const std::string& path, U elems, U posByteBase, U shiftIn) {
+        fd = ::open(path.c_str(), O_RDONLY);
+        if (fd < 0) fail("open pos column");
+        count = elems; byteBase = posByteBase; shift = shiftIn; gen = g_gen.fetch_add(1);
+        char magic[4]{};
+        pread_exact(magic, 4, 0);
+        if (!std::memcmp(magic, "SXP4", 4)) {
+            compact = true;
+            char hdr[56];
+            pread_exact(hdr, 56, 0);
+            // "SXP4" | u32 ver | u64 offset | u64 n | u64 period | u64 rsvd | u64 groups
+            U n2 = le64(hdr + 16);
+            require(n2 == count, "SXP4 header n mismatch");
+            require(le64(hdr + 8) == le64(hdr + 8) || true, "");
+            groups = le64(hdr + 40);
+            headerBytes = 56 + 24 * groups;
+            require(groups && groups < (1ull << 32), "SXP4 group count");
+            struct stat st{};
+            require(fstat(fd, &st) == 0, "stat SXP4");
+            fileSize = U(st.st_size);
+            tab.reset(new U[3 * groups]);
+            char* tb = new char[24 * groups];
+            pread_exact(tb, 24 * groups, 56);
+            for (U g = 0; g < groups; ++g) {
+                tab[3 * g] = le64(tb + 24 * g);          // startRow
+                tab[3 * g + 1] = le64(tb + 24 * g + 8);   // byteOff
+                tab[3 * g + 2] = le64(tb + 24 * g + 16);  // basePos
+            }
+            delete[] tb;
+        } else {
+            compact = false;
+            headerBytes = byteBase;
+        }
+    }
+    ~PosColumn() { if (fd >= 0) ::close(fd); }
+    PosColumn() = default;
+    PosColumn(const PosColumn&) = delete;
+    PosColumn& operator=(const PosColumn&) = delete;
+    void pread_exact(void* buf, U len, U off) {
+        char* q = (char*)buf;
+        while (len) { ssize_t z = pread(fd, q, len, off); if (z <= 0) fail("pos column read");
+            q += z; off += U(z); len -= U(z); }
+    }
+    static U le64(const char* b) { U v = 0; for (int i = 0; i < 8; ++i) v |= U(uint8_t(b[i])) << (8 * i); return v; }
+    inline U groupOf(U i, U& g) const {   // largest g with tab[3g] <= i
+        U lo = 0, hi = groups;
+        while (lo + 1 < hi) { U mid = (lo + hi) / 2; if (tab[3 * mid] <= i) lo = mid; else hi = mid; }
+        g = lo;
+        return tab[3 * g];
+    }
+    // decode positions [start, end) of group g into out (SXP4)
+    void decodeGroup(U g, U start, U end, U* out) {
+        U b0 = tab[3 * g], boff = tab[3 * g + 1], base = tab[3 * g + 2];
+        U spanEnd = (g + 1 < groups) ? tab[3 * (g + 1) + 1] : fileSize;
+        require(spanEnd >= boff, "SXP4 group span");   // a 1-row group has no deltas
+        std::vector<uint8_t> buf(spanEnd - boff);
+        if (!buf.empty()) pread_exact(buf.data(), spanEnd - boff, boff);
+        U pos = base, idx = b0, p = 0;
+        while (idx < end) {
+            if (idx >= start) *out++ = pos + shift;
+            ++idx;
+            if (idx >= end) break;   // stop BEFORE consuming the next delta
+            U v = 0, sh = 0;
+            for (;;) {
+                require(p < buf.size(), "SXP4 group decode overran its span");
+                uint8_t b = buf[p++];
+                v |= U(b & 0x7f) << sh;
+                if (!(b & 0x80)) break;
+                sh += 7;
+                require(sh < 64, "SXP4 varint overflow");
+            }
+            pos += (v >> 1) ^ -(U)(v & 1);   // zigzag
+        }
+    }
+    inline U at(U i) const {
+        if (i >= count) fail("pos column bounds");
+        if (!compact) {
+            thread_local TLS4 tls;
+            U page = i / 4096;
+            for (unsigned z = 0; z < 4; ++z)
+                if (tls.e[z].fd == fd && tls.e[z].gen == gen && tls.e[z].tag[0] == page)
+                    return tls.e[z].dv[0][i % 4096] + shift;
+            TL& e = tls.e[tls.nxt++ & 3];
+            e.fd = fd; e.gen = gen;
+            U start = page * 4096, need = std::min<U>(4096, count - start);
+            PosColumn* self = const_cast<PosColumn*>(this);
+            self->pread_exact(e.dv[0], 8 * need, headerBytes + 8 * start);
+            e.tag[0] = page; e.tag[1] = UINT64_MAX;
+            return e.dv[0][i % 4096] + shift;
+        }
+        // compact: 16-slot LRU decoded-group cache. Groups hold GRP=4096
+        // rows and startRow is GRP-aligned, so group == page. The walk
+        // interleaves k sides per worker thread; 4 slots thrash at k>=8
+        // (every access a group decode - the measured 2.3x compact walk
+        // penalty at 1GB/k=16), 16 slots cover the per-side hot groups.
+        struct TL16 { int fd = -1; U gen = 0; U stamp = 0; U g = UINT64_MAX;
+                      std::unique_ptr<U[]> rows; };
+        thread_local std::array<TL16, 16> cache;
+        thread_local U clock = 0;
+        U page = i / 4096;
+        U slot = 16;
+        for (U z = 0; z < 16; ++z)
+            if (cache[z].fd == fd && cache[z].gen == gen && cache[z].g == page)
+                { slot = z; break; }
+        if (slot == 16) {
+            for (U z = 0; z < 16; ++z)
+                if (cache[z].fd != fd || cache[z].gen != gen || !cache[z].rows)
+                    { slot = z; break; }
+            if (slot == 16) {   // LRU victim
+                U best = 0;
+                for (U z = 1; z < 16; ++z) if (cache[z].stamp < cache[best].stamp) best = z;
+                slot = best;
+            }
+            TL16& e = cache[slot];
+            if (e.fd != fd || e.gen != gen || !e.rows) e.rows.reset(new U[4096]);
+            e.fd = fd; e.gen = gen;
+            U gEnd = (page + 1 < groups) ? tab[3 * (page + 1)] : count;
+            const_cast<PosColumn*>(this)->decodeGroup(page, tab[3 * page], gEnd, e.rows.get());
+            e.g = page;
+        }
+        cache[slot].stamp = ++clock;
+        return cache[slot].rows[i % 4096];   // decodeGroup output already includes shift
+    }
+    void read(U i, U* buf, U len) const {   // bulk sequential decode
+        if (i + len > count) fail("pos column bulk bounds");
+        if (!compact) {
+            xw(fd, buf, 8 * len, headerBytes + 8 * i, "pos column bulk");
+            if (shift) for (U k = 0; k < len; ++k) buf[k] += shift;
+            return;
+        }
+        PosColumn* self = const_cast<PosColumn*>(this);
+        U done = 0;
+        while (done < len) {
+            U g; groupOf(i + done, g);
+            U gEnd = (g + 1 < groups) ? tab[3 * (g + 1)] : count;
+            U take = std::min<U>(len - done, gEnd - (i + done));
+            self->decodeGroup(g, i + done, i + done + take, buf + done);
+            done += take;
+        }
+    }
+};
+std::atomic<U> PosColumn::g_gen{1};
 struct PosOverlay {
     struct Region { U lo, hi, off; };
-    WinU64 src;
+    PosColumn src;
     int ovFd = -1; U ovCount = 0;
     ~PosOverlay() { if (ovFd >= 0) ::close(ovFd); }
     std::vector<Region> regions;
@@ -520,6 +931,22 @@ struct PosOverlay {
             }
         }
         return src.at(i);
+    }
+    void read(U i, U* buf, U len) const {   // bulk read, overlay regions applied
+        if (i + len > src.count) fail("overlay bulk bounds");
+        src.read(i, buf, len);
+        if (regions.empty() || i + len <= minLo || i >= maxHi) return;
+        // Forward push order, ALL intersecting regions applied: anchor
+        // blocks nest or are disjoint, so the latest pushed region
+        // containing a row wins - exactly at()'s backward-scan first-match
+        // contract (applying in reverse would let an EARLIER nested region
+        // override a later one).
+        for (size_t k = 0; k < regions.size(); ++k) {
+            const Region& r = regions[k];
+            U lo = std::max(i, r.lo), hi = std::min(i + len, r.hi);
+            if (lo >= hi) continue;
+            xw(ovFd, buf + (lo - i), 8 * (hi - lo), r.off + 8 * (lo - r.lo), "overlay bulk read");
+        }
     }
     void putSlice(U lo, const std::vector<U>& slice) {
         require(!slice.empty(), "overlay empty slice");
@@ -874,14 +1301,159 @@ static void build_hash_sparse(const std::string& m2Path, U n2, U k,
 }
 
 // ------------------------------------------------------------- streamed sides
-// A side is either an on-disk SXS2 sidecar (all intermediates) or a raw SXCR
-// chunk, which is walked once (chunk-scale resident transient) and dumped to a
-// scratch sidecar; from there every consumer is windowed.
+// A side is either an on-disk SXS2 sidecar (all intermediates; legacy raw
+// walks) or a raw SXCR chunk, which is walked once (chunk-scale resident
+// transient). The walked order column is dumped to a scratch pos sidecar; in
+// CORPUS-REFERENCED mode (chunk-i.ref present, the chunker default) the text
+// is NOT dumped with it — consumers read remap[corpus[offset..offset+n)] and
+// the per-side text copy never exists.
 struct SideExt {
     U offset = 0, n = 0, runs = 0, period = 0; // period==n means aperiodic
-    std::string sxsPath;       // the sidecar actually used
+    std::string sxsPath;       // the sidecar actually used (text+pos, or pos-only)
     bool ownsSxs = false;      // we wrote it (scratch; unlink at pair end)
+    bool refText = false;      // corpus-referenced text (chunk-i.ref)
+    U posBase = 0;             // byte offset of the pos column in sxsPath
+    std::string corpusPath;    // ref mode (single-segment legacy refs)
+    U corpusOff = 0;           // ref mode: chunk range start in the corpus
+    std::array<uint8_t, 256> remap{};   // ref mode: the chunker's byte map
+    std::vector<TextSeg> segs; // referenced text segments (v1: one; v2: concat)
+    std::string chunkPath;     // the source .crle (persisted-pos sides)
+    bool bwtFromRuns = false;  // load shortcut: expand the BWT from the runs
+    U chunkVersion = 0;        // SXCR record version (2 = 25B w/ samples, 3 = varint)
 };
+// chunk-i.ref (chunk_frontend emit_ref): "SXRF" | u32 ver=1 | u8 flags=0 |
+// remap[256] | u32 pathLen | corpusPath | u64 offset | u64 n
+// SXRF v1: "SXRF" | u32 ver=1 | u8 flags | remap[256] | u32 pathLen |
+//          path | u64 off | u64 n          (chunker: one corpus segment)
+// SXRF v2: "SXRF" | u32 ver=2 | u8 flags | u32 segCount | per segment:
+//          remap[256] | u32 pathLen | path | u64 off | u64 len | then
+//          u64 totalN. A merged intermediate's ref is its input sides'
+// segments concatenated - the text view composes with no copies.
+// Companion naming: for chunk file X.crle, its persisted companions are
+// stem(X).pos / stem(X).ref (the chunker writes chunk-N.pos / chunk-N.ref;
+// merged intermediates write L-x.pos / L-x.ref). ONE convention everywhere;
+// the legacy text-embedded sidecar stays X.sxs (banked format).
+static std::string chunk_stem(const std::string& path) {
+    require(path.size() > 5 && path.compare(path.size() - 5, 5, ".crle") == 0,
+            "chunk path must end in .crle");
+    return path.substr(0, path.size() - 5);
+}
+static void parse_chunk_ref(const std::string& path, SideExt& s) {
+    std::ifstream f(path, std::ios::binary);
+    require(bool(f), "cannot open chunk ref");
+    char magic[4]{}; f.read(magic, 4);
+    require(bool(f) && !std::memcmp(magic, "SXRF", 4), "chunk ref magic mismatch");
+    U ver = rd_le(f, 4);
+    require(ver == 1 || ver == 2, "unsupported chunk ref version");
+    require(rd_le(f, 1) == 0, "unknown chunk ref flags");
+    s.segs.clear();
+    auto readSeg = [&](U lenHint) {
+        TextSeg t;
+        f.read(reinterpret_cast<char*>(t.remap.data()), 256);
+        require(bool(f), "truncated chunk ref remap");
+        auto check = t.remap; std::sort(check.begin(), check.end());
+        for (unsigned i = 0; i < 256; ++i) require(check[i] == i, "chunk ref remap not bijective");
+        require(t.remap[0x1e] == 0x1e, "chunk ref remap changes the document separator");
+        U plen = rd_le(f, 4);
+        require(plen && plen < 65536, "chunk ref path length");
+        std::vector<char> p(plen);
+        f.read(p.data(), plen);
+        require(bool(f), "truncated chunk ref path");
+        t.path.assign(p.data(), plen);
+        t.off = rd_le(f, 8);
+        t.len = lenHint ? lenHint : rd_le(f, 8);
+        require(t.len && t.len < (1ull << 62), "chunk ref segment length");
+        s.segs.push_back(std::move(t));
+    };
+    if (ver == 1) {
+        readSeg(0);
+        s.corpusPath = s.segs[0].path;
+        s.corpusOff = s.segs[0].off;
+        s.remap = s.segs[0].remap;
+    } else {
+        U count = rd_le(f, 4);
+        require(count && count < 4096, "chunk ref segment count");
+        for (U z = 0; z < count; ++z) readSeg(0);
+        U totalN = rd_le(f, 8);
+        require(totalN == [&]{ U t = 0; for (auto& g : s.segs) t += g.len; return t; }(),
+                "chunk ref totalN disagrees with the segments");
+    }
+    require(bool(f) && f.peek() == EOF, "trailing bytes in chunk ref");
+}
+// Open a side's text view (sidecar-embedded or referenced segments).
+static void open_side_text(const SideExt& s, SideText& t) {
+    if (s.refText) t.open_segments(s.segs, s.n);
+    else t.open_sidecar(s.sxsPath, s.n, 20);
+}
+// chunk-i.pos (SXP3, chunker-persisted): "SXP3" | u32 ver | u64 offset |
+// u64 n | u64 period | u64 rsvd | pos[8n]. The order column the chunker
+// already computed; the merge load for such a chunk is PURE READS (no
+// walk, no LF derivation) plus the cheap bulk validations below.
+static void read_pos_header(const std::string& path, U& offset, U& n, U& period) {
+    std::ifstream f(path, std::ios::binary);
+    require(bool(f), "cannot open chunk pos sidecar");
+    char magic[4]{}; f.read(magic, 4);
+    require(bool(f) && (!std::memcmp(magic, "SXP3", 4) || !std::memcmp(magic, "SXP4", 4)),
+            "chunk pos magic mismatch (SXP3 dense / SXP4 compact)");
+    require(rd_le(f, 4) == 1, "unsupported chunk pos version");
+    offset = rd_le(f, 8); n = rd_le(f, 8); period = rd_le(f, 8);
+    require(rd_le(f, 8) == 0, "unknown chunk pos reserved field");
+    if (!std::memcmp(magic, "SXP3", 4))
+        require(fs::file_size(path) == 40 + 8 * n, "chunk pos size mismatch");
+    else
+        require(fs::file_size(path) > 56, "SXP4 pos column truncated");
+}
+// Runs-sample + range validation for a persisted order column (bulk reads;
+// the per-row text agreement is checked sampled inside the BWT expansion).
+static void validate_pos_runs(const std::string& chunkPath, U n, U runs, U version,
+                              const PosColumn& pos) {
+    RunCursor rc(chunkPath, version);
+    U row = 0; uint8_t prev = 0;
+    for (U i = 0; i < runs; ++i) {
+        uint8_t c; U len, h, t;
+        rc.next(c, len, h, t);
+        if (version == 3) { h = pos.at(row); t = pos.at(row + len - 1); }
+        require(len && row + len <= n && h < n && t < n, "invalid SXCR run");
+        require(i == 0 || c != prev, "noncanonical SXCR runs");
+        require(pos.at(row) == h && pos.at(row + len - 1) == t,
+                "persisted order disagrees with the run samples");
+        row += len; prev = c;
+    }
+    require(row == n, "SXCR length mismatch");
+}
+// Expand the BWT column directly from the .crle runs (sequential rows) -
+// no text reads. Sampled per-run text agreement is the residual check that
+// the persisted order matches the corpus bytes (every 64th run head).
+static void build_bwt_from_runs(const SideExt& s, const PosOverlay& pos,
+                                const std::string& path, U base) {
+    int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    require(fd >= 0, "create bwt scratch");
+    RunCursor rc(s.chunkPath, s.chunkVersion);
+    constexpr U W = 1u << 22;
+    std::vector<uint8_t> buf(W);
+    U row = 0, used = 0, written = 0, checked = 0;
+    SideText text; open_side_text(s, text);
+    for (U i = 0; i < s.runs; ++i) {
+        uint8_t c; U len, h, t;
+        rc.next(c, len, h, t);
+        // v3 samples come from the order column; the overlay returns
+        // MERGE-LOCAL positions (shifted by the side's base) while the text
+        // view is SIDE-LOCAL - subtract the base before indexing it.
+        if (s.chunkVersion == 3) { h = pos.at(row) - base; }
+        if ((checked & 63) == 0)   // 1-in-64 sampled run-head text check
+            require(text.at((h + s.n - 1) % s.n) == c,
+                    "persisted order disagrees with the referenced text");
+        ++checked;
+        for (U z = 0; z < len; ++z) {
+            if (used == W) { xput(fd, buf.data(), used, written, "bwt expand write"); written += used; used = 0; }
+            buf[used++] = c;
+        }
+        row += len;
+    }
+    if (used) { xput(fd, buf.data(), used, written, "bwt expand write"); written += used; }
+    require(row == s.n && written == s.n, "bwt expansion coverage");
+    ::close(fd);
+}
 
 // Minimal cyclic period d | n with T[i]==T[i+d] (cyclically); n if aperiodic.
 static U min_period(const std::vector<uint8_t>& T, U n) {
@@ -897,22 +1469,29 @@ static U min_period(const std::vector<uint8_t>& T, U n) {
     return n;
 }
 
-static void sxcr_header(const std::string& path, U& offset, U& n, U& runs) {
+static void sxcr_header(const std::string& path, U& offset, U& n, U& runs, U& version) {
     std::ifstream f(path, std::ios::binary);
     require(bool(f), "cannot open SXCR chunk");
     char magic[4]{}; f.read(magic, 4);
     require(bool(f) && !std::memcmp(magic, "SXCR", 4), "SXCR magic mismatch");
-    require(rd_le(f, 4) == 2, "unsupported SXCR version (this build reads the widened v2: 64-bit run lens; v1 pre-widening chunks are refused)");
+    U ver = rd_le(f, 4);
+    require(ver == 2 || ver == 3,
+            "unsupported SXCR version (this build reads v2: 25-byte sample-bearing "
+            "records, and v3: compact c+varint-len records that REQUIRE the "
+            "persisted order column for samples)");
+    version = ver;
     offset = rd_le(f, 8); n = rd_le(f, 8); runs = rd_le(f, 8);
     require(n && n < (1ull << 62) && runs, "invalid SXCR header");
-    require(fs::file_size(path) == 32 + 25 * runs, "SXCR file size mismatch");
+    if (ver == 2) require(fs::file_size(path) == 32 + 25 * runs, "SXCR file size mismatch");
+    else require(fs::file_size(path) > 32, "SXCR v3 has no run stream");
 }
 
 
 // Validate runs against the STREAMED (text,pos): preceding char per row and
 // head/tail samples. Same contract as the resident build.
-static void validate_runs_ext(const std::string& path, U n, U runs,
-                              const WinBytes& text, const WinU64& pos) {
+static void validate_runs_ext(const std::string& path, U n, U runs, U version,
+                              const SideText& text, const WinU64& pos) {
+    require(version == 2, "SXCR v3 has no embedded samples (sidecar sides are v2)");
     std::ifstream f(path, std::ios::binary);
     f.seekg(32);
     U row = 0; uint8_t prev = 0;
@@ -930,7 +1509,7 @@ static void validate_runs_ext(const std::string& path, U n, U runs,
 }
 // Streaming minimal cyclic period (fast-fail per divisor; one full pass for
 // the true period).
-static U min_period_stream(const WinBytes& text, U n) {
+static U min_period_stream(const SideText& text, U n) {
     std::vector<U> divs;
     for (U d = 1; d * d <= n; ++d) if (n % d == 0) { divs.push_back(d); if (d != n / d) divs.push_back(n / d); }
     std::sort(divs.begin(), divs.end());
@@ -969,8 +1548,11 @@ static void validate_runs_resident(const std::string& path, U n, U runs,
     require(row == n && f.peek() == EOF, "SXCR length mismatch");
 }
 
-static void walk_chunk(const std::string& path, U n, U runs, U threads,
+static void walk_chunk(const std::string& path, U n, U runs, U version, U threads,
                        std::vector<uint8_t>& text, std::vector<uint64_t>& pos, U& period) {
+    require(version == 2,
+            "SXCR v3 chunks carry no run samples - they REQUIRE the persisted "
+            "order column (chunk-N.pos); re-chunk or restore the companion");
     struct RunRec { uint8_t c; uint64_t len; U h, t; };
     std::vector<RunRec> rs(runs);
     {
@@ -1063,40 +1645,119 @@ static void walk_chunk(const std::string& path, U n, U runs, U threads,
 }
 
 
-// Load a side into its STREAMED form (SXS2 sidecar path). Raw chunks are
-// walked once (chunk-scale resident transient: text, bwt, lf, pos, visited)
-// and dumped to a scratch sidecar; then the sidecar contract is checked the
-// same way as for intermediates: positions, period, and run validation.
+// Load a side into its STREAMED form. Raw chunks are walked once (chunk-scale
+// resident transient: text, bwt, lf, pos, visited) and the order column is
+// dumped to a scratch pos sidecar; with a chunk-i.ref the text stays in the
+// corpus (cross-validated against the walked text byte for byte; the runs
+// were already validated against the walked (text,pos), so runs<->text<->
+// corpus is fully proven and the legacy sidecar re-validation is subsumed).
+// Intermediates and legacy raw chunks keep the full SXS2 text+pos sidecar.
 static void load_side_ext(const std::string& path, U threads,
                           const std::string& scratch, SideExt& s) {
-    sxcr_header(path, s.offset, s.n, s.runs);
+    sxcr_header(path, s.offset, s.n, s.runs, s.chunkVersion);
+    s.chunkPath = path;
+    std::string stem = chunk_stem(path);
     std::string side = path + ".sxs";
+    std::string posS = stem + ".pos";
     if (fs::exists(side)) {
-        s.sxsPath = side; s.ownsSxs = false;
+        s.sxsPath = side; s.ownsSxs = false; s.refText = false; s.posBase = 20 + s.n;
+    } else if (fs::exists(posS) && fs::exists(stem + ".ref") && !getenv("CROSS_NO_PERSIST")) {
+        // PERSISTED-AT-CHUNK-TIME (SXP3): the order column the chunker
+        // computed; the load is PURE READS (no walk, no LF derivation -
+        // the pile-scale bottleneck). Validations: header agreement, the
+        // position range, the run samples, and the sampled text checks
+        // inside the BWT expansion; the absolute byte-identity gate
+        // carries the rest.
+        U pOff = 0, pN = 0, period = 0;
+        read_pos_header(posS, pOff, pN, period);
+        require(pOff == s.offset && pN == s.n,
+                "chunk pos sidecar disagrees with the SXCR header");
+        U refTotal = 0;
+        parse_chunk_ref(stem + ".ref", s);
+        for (auto& g : s.segs) refTotal += g.len;
+        require(refTotal == s.n,
+                "chunk ref range disagrees with the SXCR header");
+        s.sxsPath = posS; s.ownsSxs = false; s.refText = true; s.posBase = 40;
+        s.period = period; s.bwtFromRuns = true;
+        {
+            // 40 = the SXP3 dense header (byteBase); the SXP4 branch
+            // ignores it and derives its own layout from the sniff.
+            PosColumn pos; pos.open_ro(s.sxsPath, s.n, 40, 0);
+            U buf[4096];
+            for (U i = 0; i < s.n; i += 4096) {
+                U len = std::min<U>(4096, s.n - i);
+                pos.read(i, buf, len);
+                for (U z = 0; z < len; ++z) require(buf[z] < s.n, "persisted position out of range");
+            }
+            validate_pos_runs(path, s.n, s.runs, s.chunkVersion, pos);
+        }
+        return;   // persisted side fully validated (range + samples + header)
     } else {
         std::vector<uint8_t> text; std::vector<uint64_t> pos;
-        walk_chunk(path, s.n, s.runs, threads, text, pos, s.period);
-        s.sxsPath = scratch + "/" + fs::path(path).filename().string() + ".walked.sxs";
-        s.ownsSxs = true;
-        {
-            OutFile f(s.sxsPath);
-            char magic[4]{'S','X','S','2'}; f.raw(magic, 4);
-            f.w64(s.offset); f.w64(s.n);
-            f.raw(text.data(), s.n);
-            f.raw(pos.data(), 8 * s.n);
+        walk_chunk(path, s.n, s.runs, s.chunkVersion, threads, text, pos, s.period);
+        std::string ref = stem + ".ref";
+        if (fs::exists(ref) && !getenv("CROSS_NO_REF")) {
+            // CORPUS-REFERENCED: record provenance, prove the walked text is
+            // exactly remap[corpus[offset..offset+n)), dump the pos column only.
+            U refTotal = 0;
+            parse_chunk_ref(ref, s);
+            for (auto& g : s.segs) refTotal += g.len;
+            require(refTotal == s.n,
+                    "chunk ref range disagrees with the SXCR header");
+            {
+                SideText t; t.open_segments(s.segs, s.n);
+                constexpr U W = 1u << 22;
+                std::vector<uint8_t> buf(W);
+                for (U i = 0; i < s.n;) {
+                    U len = std::min<U>(W, s.n - i);
+                    t.read(i, buf.data(), len);
+                    require(std::memcmp(buf.data(), text.data() + i, len) == 0,
+                            "chunk text disagrees with the corpus reference");
+                    i += len;
+                }
+            }
+            s.sxsPath = scratch + "/" + fs::path(path).filename().string() + ".walked.pos";
+            s.ownsSxs = true; s.refText = true; s.posBase = 20;
+            {
+                OutFile f(s.sxsPath);
+                char magic[4]{'S','X','P','2'}; f.raw(magic, 4);
+                f.w64(s.offset); f.w64(s.n);
+                f.raw(pos.data(), 8 * s.n);
+            }
+        } else {
+            s.sxsPath = scratch + "/" + fs::path(path).filename().string() + ".walked.sxs";
+            s.ownsSxs = true; s.refText = false; s.posBase = 20 + s.n;
+            {
+                OutFile f(s.sxsPath);
+                char magic[4]{'S','X','S','2'}; f.raw(magic, 4);
+                f.w64(s.offset); f.w64(s.n);
+                f.raw(text.data(), s.n);
+                f.raw(pos.data(), 8 * s.n);
+            }
         }
     }
-    WinBytes text; text.open_ro(s.sxsPath, s.n, 20);
-    if (s.period == 0) s.period = min_period_stream(text, s.n);
-    {
-        WinU64 pos; pos.open_ro(s.sxsPath, s.n, 20 + s.n);
+    if (!s.refText) {
+        SideText text; open_side_text(s, text);
+        if (s.period == 0) s.period = min_period_stream(text, s.n);
+        {
+            WinU64 pos; pos.open_ro(s.sxsPath, s.n, s.posBase);
+            U buf[4096];
+            for (U i = 0; i < s.n; i += 4096) {
+                U len = std::min<U>(4096, s.n - i);
+                pos.read(i, buf, len);
+                for (U z = 0; z < len; ++z) require(buf[z] < s.n, "sidecar position out of range");
+            }
+            validate_runs_ext(path, s.n, s.runs, s.chunkVersion, text, pos);
+        }
+    } else {
+        // ref mode: period came from the walk; positions checked here.
+        WinU64 pos; pos.open_ro(s.sxsPath, s.n, s.posBase);
         U buf[4096];
         for (U i = 0; i < s.n; i += 4096) {
             U len = std::min<U>(4096, s.n - i);
             pos.read(i, buf, len);
             for (U z = 0; z < len; ++z) require(buf[z] < s.n, "sidecar position out of range");
         }
-        validate_runs_ext(path, s.n, s.runs, text, pos);
     }
 }
 
@@ -1141,7 +1802,7 @@ struct RankIndex {
 // Anchor block discovery, windowed (same algorithm as the resident build).
 // Periodic chunks: every position is an anchor; the external form for huge
 // periodic chunks is not implemented, so it fails loud above 32 Mi positions.
-static void anchor_blocks_ext(const WinBytes& text, const WinBytes& bwt,
+static void anchor_blocks_ext(const SideText& text, const WinBytes& bwt,
                               const PosOverlay& pos, U n, U base, U period,
                               std::vector<BlockRec>& out, std::vector<uint64_t>& anchors,
                               U& steps, U& rows) {
@@ -1265,38 +1926,78 @@ static void repair_ext(PosOverlay& W, const std::vector<BlockRec>& blocks,
     }
 }
 
+// ------------------------------------------------------------ shard helpers
+// PARALLEL EMISSION (order/run-boundary sharding). S = --threads by default;
+// CROSS_SHARDS overrides (S=1 is exactly the banked serial walk; one code
+// path). Shard counts never exceed the walked item count.
+static U emit_shard_count(U threads, U items) {
+    U S = threads ? threads : 8;
+    if (const char* e = getenv("CROSS_SHARDS")) {
+        if (*e) {
+            U v = std::stoull(e);
+            require(v >= 1 && v <= 4096, "CROSS_SHARDS out of range");
+            S = v;
+        }
+    }
+    if (items && S > items) S = items;
+    if (S < 1) S = 1;
+    return S;
+}
+static void put_le32(char* b, uint32_t v) { for (int i = 0; i < 4; ++i) b[i] = char(v >> (8 * i)); }
+static void put_le64(char* b, U v)       { for (int i = 0; i < 8; ++i) b[i] = char(v >> (8 * i)); }
+
 // ------------------------------------------------------------ external core merge
-struct CoreStats { U anchorsA = 0, anchorsB = 0, rowsA = 0, rowsB = 0, stepsA = 0, stepsB = 0; };
+// Per-side anchor/repair stats: k-way generalized (k=2 is the pairwise case).
+struct CoreStats {
+    std::vector<U> anchors, steps, rows;
+    void init(size_t k) { anchors.assign(k, 0); steps.assign(k, 0); rows.assign(k, 0); }
+    U sum(const std::vector<U>& v) const { U t = 0; for (U x : v) t += x; return t; }
+    U anchorsA() const { return anchors.size() > 0 ? anchors[0] : 0; }
+    U anchorsB() const { return anchors.size() > 1 ? anchors[1] : 0; }
+    U stepsA() const { return steps.size() > 0 ? steps[0] : 0; }
+    U stepsB() const { return steps.size() > 1 ? steps[1] : 0; }
+    U rowsA() const { return rows.size() > 0 ? rows[0] : 0; }
+    U rowsB() const { return rows.size() > 1 ? rows[1] : 0; }
+};
 struct PairScratch {
     std::string dir;
-    std::string m2, hs, wm, bwtA, bwtB, ovA, ovB;
-    void init(const std::string& out, U pid) {
+    std::string m2, hs, wm;
+    std::vector<std::string> bwt, ov;   // per side
+    void init(const std::string& out, U pid, size_t sides) {
         dir = out + ".xsc-" + std::to_string(pid);
         fs::create_directories(dir);
         m2 = dir + "/m2.bin"; hs = dir + "/hs.bin"; wm = dir + "/wm.bin";
-        bwtA = dir + "/bwtA.bin"; bwtB = dir + "/bwtB.bin";
-        ovA = dir + "/ovA.bin"; ovB = dir + "/ovB.bin";
+        bwt.clear(); ov.clear();
+        for (size_t j = 0; j < sides; ++j) {
+            bwt.push_back(dir + "/bwt" + std::to_string(j) + ".bin");
+            ov.push_back(dir + "/ov" + std::to_string(j) + ".bin");
+        }
     }
-    void cleanup() { for (const char* f : {"m2.bin","hs.bin","wm.bin","bwtA.bin","bwtB.bin","ovA.bin","ovB.bin"})
-            ::unlink((dir + "/" + f).c_str()); fs::remove_all(dir); }
+    void cleanup() {
+        ::unlink(m2.c_str()); ::unlink(hs.c_str()); ::unlink(wm.c_str());
+        for (auto& f : bwt) ::unlink(f.c_str());
+        for (auto& f : ov) ::unlink(f.c_str());
+        fs::remove_all(dir);
+    }
 };
-// M2 file = T||T with T = textA||textB (streamed from the sidecars).
-static void build_m2_file(const SideExt& A, const SideExt& B, const std::string& path) {
+// M2 file = T||T with T = text_0||...||text_{k-1} in offset order (k sides).
+static void build_m2_file(const std::vector<SideExt>& sides, const std::string& path) {
     int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
     require(fd >= 0, "create m2 scratch");
-    U n = A.n + B.n;
+    U n = 0; for (auto& S : sides) n += S.n;
     constexpr U W = 1u << 22;
     std::vector<uint8_t> buf(W);
     for (int copy = 0; copy < 2; ++copy) {
-        for (int side = 0; side < 2; ++side) {
-            const SideExt& S = side ? B : A;
-            WinBytes t; t.open_ro(S.sxsPath, S.n, 20);
+        U placed = 0;
+        for (auto& S : sides) {
+            SideText t; open_side_text(S, t);
             for (U i = 0; i < S.n;) {
                 U len = std::min<U>(W, S.n - i);
                 t.read(i, buf.data(), len);
-                xput(fd, buf.data(), len, (U)copy * n + (side ? A.n : 0) + i, "m2 write");
+                xput(fd, buf.data(), len, (U)copy * n + placed + i, "m2 write");
                 i += len;
             }
+            placed += S.n;
         }
     }
     ::close(fd);
@@ -1310,7 +2011,7 @@ static void build_bwt_file(const SideExt& S, const PosOverlay& pos, const std::s
     U band = (S.n + tc - 1) / tc;
     std::vector<std::thread> ts;
     auto work = [&](U t) {
-        WinBytes text; text.open_ro(S.sxsPath, S.n, 20);
+        SideText text; open_side_text(S, text);
         U i0 = t * band, i1 = std::min(S.n, i0 + band);
         std::vector<uint8_t> buf(i1 > i0 ? i1 - i0 : 0);
         for (U i = i0; i < i1; ++i) {
@@ -1326,12 +2027,25 @@ static void build_bwt_file(const SideExt& S, const PosOverlay& pos, const std::s
 // Externalized core merge: M2/sparse-hash/BWT/WM are scratch FILES; the
 // children's pos are windowed with a repair overlay; per-position RAM is
 // limited to window caches, the rank index, and bounded block buffers.
-static void core_merge_ext(const SideExt& A, const SideExt& B, bool dollar, U threads,
-                           Budget& bud, CoreStats& st, const PairScratch& sc, U hashK, bool pre) {
+// K-WAY EXTERNAL CORE MERGE (k=2 is the certified pairwise case; ONE code
+// path, k selected at launch). Sides tile the text T = text_0..text_{k-1};
+// M2 = T||T. The anchor/repair theory is per-side and INDEPENDENT of k: two
+// rows of one side diverge between their LOCAL cyclic order and the merged
+// (global) order only on prefix pairs, whose short sides are exactly the
+// side's own chunk-suffix anchors (the shorter suffix fits inside the side
+// because both rows are in it), found by the same backward-search walk on the
+// side's own BWT; blocks are sorted by the same merged comparator. The
+// global order restricted to a side IS its repaired order, so the merged
+// sequence is the k-way interleave of the k repaired orders.
+static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U threads,
+                            Budget& bud, CoreStats& st, const PairScratch& sc, U hashK, bool pre) {
     double last = now_sec();
-    U nA = A.n, nB = B.n, n = nA + nB;
+    const size_t k = sides.size();
+    require(k >= 1, "k-way merge needs at least one side");
+    st.init(k);
+    U n = 0; for (auto& S : sides) n += S.n;
     if (!pre) {
-        build_m2_file(A, B, sc.m2);
+        build_m2_file(sides, sc.m2);
         phase("m2-build", last);
         hashK = hash_spacing();
         if (hashK > n / 2) hashK = std::max<U>(1, n / 2);   // degenerate-grid guard
@@ -1341,73 +2055,278 @@ static void core_merge_ext(const SideExt& A, const SideExt& B, bool dollar, U th
     WinBytes m2; m2.open_ro(sc.m2, 2 * n, 0, true);
     HashSparse hp; hp.open_ro(sc.hs, hashK, 2 * n / hashK + 1);
     Keys keys; keys.init(&m2, &hp, n, dollar, &bud);
-    PosOverlay posA, posB;
-    posA.init(A.sxsPath, nA, 20 + nA, 0, sc.ovA);
-    posB.init(B.sxsPath, nB, 20 + nB, nA, sc.ovB);
-    // Anchor blocks per side, then repair.
-    std::vector<BlockRec> blocks;
-    std::vector<uint64_t> anchors;
-    build_bwt_file(A, posA, sc.bwtA, threads, 0);
-    { WinBytes bwt; bwt.open_ro(sc.bwtA, nA, 0);
-      WinBytes textA; textA.open_ro(A.sxsPath, nA, 20);
-      anchor_blocks_ext(textA, bwt, posA, nA, 0, A.period, blocks, anchors, st.stepsA, st.rowsA); }
-    st.anchorsA = anchors.size();
-    repair_ext(posA, blocks, anchors, 0, nA, keys);
-    blocks.clear(); anchors.clear();
-    build_bwt_file(B, posB, sc.bwtB, threads, nA);
-    { WinBytes bwt; bwt.open_ro(sc.bwtB, nB, 0);
-      WinBytes textB; textB.open_ro(B.sxsPath, nB, 20);
-      anchor_blocks_ext(textB, bwt, posB, nB, nA, B.period, blocks, anchors, st.stepsB, st.rowsB); }
-    st.anchorsB = anchors.size();
-    repair_ext(posB, blocks, anchors, nA, nB, keys);
+    // MERGE-LOCAL coordinate rebasing (the banked pairwise contract): every
+    // merge's positions run in the merge's own coordinate space - side j is
+    // rebased to localOff[j] = sum of the previous sides' lengths (the
+    // pairwise path's A->0, B->nA). SideExt.offset is the CORPUS offset and
+    // is used ONLY for the tiling contract and the emitted SXCR header.
+    // (For a flat merge from chunk 0 they coincide; for tree intermediates
+    // they do not, and the comparator's p < n bound is merge-local.)
+    std::vector<U> localOff(k, 0);
+    for (size_t j = 1; j < k; ++j) localOff[j] = localOff[j - 1] + sides[j - 1].n;
+    // Per-side position overlays (positions rebased to merge-local space).
+    std::vector<std::unique_ptr<PosOverlay>> pos(k);
+    for (size_t j = 0; j < k; ++j)
+        pos[j].reset(new PosOverlay());
+    for (size_t j = 0; j < k; ++j)
+        pos[j]->init(sides[j].sxsPath, sides[j].n, sides[j].posBase,
+                     localOff[j], sc.ov[j]);
+    // Anchor blocks per side, then repair (k-independent, per side - and
+    // therefore PARALLEL ACROSS SIDES: every side's BWT/overlay/scratch file
+    // is its own; the shared comparator is thread-safe with per-side
+    // budgets, summed after the join like the walk's shard budgets. This
+    // was the largest remaining serial core after the walks were sharded
+    // (gate 1: 358s on the final fat pair), and a flat k-way merge would
+    // otherwise serialize all k sides' anchor+repair phases).
+    {
+        // Memory-aware side parallelism: each concurrent side's anchor pass
+        // holds ~n_j of BWT band + ~n_j/2 of rank table + buffers; bound the
+        // concurrent sides to half the phase's RLIMIT_AS (the pools, the load
+        // transient, and the walk/emit buffers own the rest).
+        U sidePar = std::min<size_t>(k, threads ? threads : 1);
+        {
+            struct rlimit rl{};
+            U perSide = 0;
+            for (auto& S : sides) perSide = std::max(perSide, S.n + S.n / 2 + (64u << 20));
+            if (perSide && getrlimit(RLIMIT_AS, &rl) == 0 && rl.rlim_cur != RLIM_INFINITY) {
+                U fit = U(rl.rlim_cur) / 2 / perSide;
+                if (fit < 1) fit = 1;
+                sidePar = std::min<U>(sidePar, fit);
+            }
+        }
+        std::vector<Budget> sideBud(k);
+        std::atomic<size_t> nextSide{0};
+        std::vector<std::thread> ts;
+        for (U t = 0; t < sidePar; ++t)
+            ts.emplace_back([&, t] {
+                for (;;) {
+                    size_t j = nextSide.fetch_add(1);
+                    if (j >= k) return;
+                    Keys skeys; skeys.init(&m2, &hp, n, dollar, &sideBud[j]);
+                    std::vector<BlockRec> blocks;
+                    std::vector<uint64_t> anchors;
+                    if (sides[j].bwtFromRuns)
+                        build_bwt_from_runs(sides[j], *pos[j], sc.bwt[j], localOff[j]);
+                    else
+                        build_bwt_file(sides[j], *pos[j], sc.bwt[j],
+                                       std::max<U>(1, threads / sidePar), localOff[j]);
+                    { WinBytes bwt; bwt.open_ro(sc.bwt[j], sides[j].n, 0);
+                      SideText text; open_side_text(sides[j], text);
+                      anchor_blocks_ext(text, bwt, *pos[j], sides[j].n, localOff[j],
+                                        sides[j].period, blocks, anchors,
+                                        st.steps[j], st.rows[j]); }
+                    st.anchors[j] = anchors.size();
+                    repair_ext(*pos[j], blocks, anchors, localOff[j], sides[j].n, skeys);
+                }
+            });
+        for (auto& t : ts) t.join();
+        for (size_t j = 0; j < k; ++j) {
+            const Budget& sb = sideBud[j];
+            bud.comparisons += sb.comparisons; bud.fast_decided += sb.fast_decided;
+            bud.probe_decided += sb.probe_decided; bud.cap_decided += sb.cap_decided;
+            bud.probes += sb.probes; bud.symbols += sb.symbols;
+            bud.tie_decided += sb.tie_decided;
+            bud.lce_over_10k += sb.lce_over_10k; bud.lce_over_100k += sb.lce_over_100k;
+            bud.lce_over_1m += sb.lce_over_1m;
+            if (sb.max_lce > bud.max_lce) bud.max_lce = sb.max_lce;
+            bud.tFast += sb.tFast; bud.tPrep += sb.tPrep; bud.tProbe += sb.tProbe; bud.tScan += sb.tScan;
+        }
+    }
     phase("anchor+repair", last);
-    // Linear cross merge under the total order, streamed into the WM file.
+    // K-way cross merge under the total order, streamed into the WM file.
+    // PARALLEL EMISSION (k-way): the walk is sharded at fixed order
+    // boundaries. The merged total order is strict and the global order
+    // restricted to a side IS its repaired order, so the merged rank of
+    // side i's a-th row is exactly a + sum_{j != i} rank_j(row). Planning
+    // binary-searches, at merged-rank target s*n/S on the WIDEST side i,
+    // the largest a_s with rank(A_i[a_s]) <= s*n/S; every side's boundary
+    // is then rank_j(X_s) for the boundary element X_s = A_i[a_s] (and a_s
+    // itself for side i), so every element of each side's s-range has
+    // merged rank inside [R_s, R_{s+1}) with R_s = a_s + sum_j rank_j(X_s).
+    // Shard s k-way-merges its per-side row ranges with a BINARY MIN-HEAP of
+    // the k current fronts (O(log k) comparisons per emitted element, never
+    // O(k)) and pwrites at element offset R_s: disjoint ranges, one code
+    // path (k=2, S=1 is the serial pairwise walk), byte-identical by
+    // construction. Planning costs (S-1)*log(n_i)*k*log(n_j) comparisons
+    // (boundaries planned in parallel), charged to the same budget.
     int fd = ::open(sc.wm.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
     require(fd >= 0, "create wm scratch");
     double tPF = 0, tPop = 0;
+    const U S = emit_shard_count(threads, n);
+    size_t wide = 0;   // planning probe side: the widest
+    for (size_t j = 1; j < k; ++j) if (sides[j].n > sides[wide].n) wide = j;
+    std::vector<std::vector<U>> aB(S + 1, std::vector<U>(k, 0));
+    for (size_t j = 0; j < k; ++j) aB[S][j] = sides[j].n;
     {
-        constexpr U W = 8192;
-        U buf[W]; U nb = 0; U written = 0;
-        auto flushW = [&]() { if (nb) { xput(fd, buf, 8 * nb, 8 * written, "wm write"); written += nb; nb = 0; } };
-        U i = 0, j = 0, k = 0;
-        while (i < nA && j < nB) {
-            double q0 = now_sec();
-            if (m2.pool && (k & 31) == 0 && !getenv("CROSS_NO_PF")) {
-                // Front speculation: the next 32 fronts of both streams
-                // (deduplicated inside prefetch against owned slots).
-                // FIX 3: also prefetch the m2 text spans AND the sparse-hash
-                // anchor entries those fronts will touch (the head span is
-                // the fast-path page; the first gallop probe reads P at
-                // p/k + fast/k + 1, so that entry goes too).
-                U firstJb = 16 / hashK + 1;
-                for (U d = 1; d <= 32 && i + d < nA; ++d) {
-                    U p = posA.at(i + d);
-                    m2.prefetch(p, 16);
-                    if (hp.col.pool) hp.col.prefetch(p / hashK + firstJb);
+        require(sides[wide].n > 0, "k-way planning needs a non-empty probe side");
+        std::vector<std::thread> pt;
+        std::mutex planMu;
+        for (U s = 1; s < S; ++s)
+            pt.emplace_back([&, s] {
+                // Thread-local keys/budget: the shared-key comparator is
+                // never touched from planning threads (its scratch is
+                // thread-local but its Budget is not).
+                Budget pb;
+                Keys pkeys; pkeys.init(&m2, &hp, n, dollar, &pb);
+                // rank in side j of a global position p (side j's repaired
+                // order IS the global order restricted to it):
+                // #{rows of j ordered before p}.
+                auto rankIn = [&](size_t j, U p) -> U {
+                    U lo = 0, hi = sides[j].n;
+                    while (lo < hi) {
+                        U mid = lo + (hi - lo) / 2;
+                        if (pkeys.cmp(pos[j]->at(mid), p) < 0) lo = mid + 1; else hi = mid;
+                    }
+                    return lo;
+                };
+                U target = s * n / S;
+                U nI = sides[wide].n;
+                auto rowRank = [&](U a) -> U {   // merged rank of wide's a-th row
+                    U r = a, p = pos[wide]->at(a);
+                    for (size_t j = 0; j < k; ++j)
+                        if (j != wide) r += rankIn(j, p);
+                    return r;
+                };
+                U lo = 0, hi = nI;         // f(a) = rank(A_wide[a]); f(nI) := n
+                while (lo < hi) {
+                    U mid = lo + (hi - lo + 1) / 2;
+                    U f = (mid == nI) ? n : rowRank(mid);
+                    if (f <= target) lo = mid; else hi = mid - 1;
                 }
-                for (U d = 1; d <= 32 && j + d < nB; ++d) {
-                    U p = posB.at(j + d);
-                    m2.prefetch(p, 16);
-                    if (hp.col.pool) hp.col.prefetch(p / hashK + firstJb);
+                require(lo < nI, "k-way boundary fell off the probe side");
+                U bElem = pos[wide]->at(lo);   // the boundary element X_s
+                for (size_t j = 0; j < k; ++j)
+                    aB[s][j] = (j == wide) ? lo : rankIn(j, bElem);
+                std::lock_guard<std::mutex> g(planMu);
+                bud.comparisons += pb.comparisons; bud.probes += pb.probes;
+                bud.symbols += pb.symbols; bud.fast_decided += pb.fast_decided;
+                bud.probe_decided += pb.probe_decided; bud.cap_decided += pb.cap_decided;
+                bud.tie_decided += pb.tie_decided; bud.note_lce(pb.max_lce);
+                bud.tFast += pb.tFast; bud.tPrep += pb.tPrep; bud.tProbe += pb.tProbe; bud.tScan += pb.tScan;
+            });
+        for (auto& t : pt) t.join();
+    }
+    // merged-rank shard start offsets: R_s = sum_j aB[s][j]
+    std::vector<U> R(S + 1, 0);
+    for (U s = 0; s <= S; ++s) for (size_t j = 0; j < k; ++j) R[s] += aB[s][j];
+    std::vector<Budget> shardBud(S);
+    std::vector<double> shardPF(S, 0.0), shardPop(S, 0.0);
+    {
+        const bool noPf = getenv("CROSS_NO_PF") != nullptr;
+        std::vector<std::thread> ts;
+        for (U s = 0; s < S; ++s)
+            ts.emplace_back([&, s] {
+                Keys skeys; skeys.init(&m2, &hp, n, dollar, &shardBud[s]);
+                constexpr U W = 8192;
+                std::vector<U> buf(W);
+                U nb = 0, out = R[s], emitted = 0, step = 0;
+                auto flushW = [&]() { if (nb) { xput(fd, buf.data(), 8 * nb, 8 * out, "wm write"); out += nb; nb = 0; } };
+                // per-side cursors and a binary min-heap of the k fronts.
+                // WINDOWED POS FRONTS: the pairwise-era 4-slot thread-local
+                // reader cache thrashes across k > 4 overlay objects (one
+                // 32 KB pread per front value - gate 3's floor analysis:
+                // t_pf 17.5k CPU-s, the walk at ~22 effective cores of 48,
+                // PREAD-BOUND, not comparison-bound). Each side's fronts
+                // come from a bulk window instead: ONE overlay read per
+                // side per WIN emitted rows of that side.
+                constexpr U WIN = 4096;
+                std::vector<U> cur(k), end(k), wbase(k, 0);
+                std::vector<std::vector<U>> pwin(k);
+                for (size_t j = 0; j < k; ++j) { cur[j] = aB[s][j]; end[j] = aB[s + 1][j]; wbase[j] = cur[j]; }
+                auto frontAt = [&](size_t j, U idx) -> U {   // idx: global row in [cur[j], end[j])
+                    if (idx >= wbase[j] && idx - wbase[j] < pwin[j].size())
+                        return pwin[j][idx - wbase[j]];
+                    require(idx < end[j], "window front bounds");
+                    U len = std::min<U>(WIN, end[j] - idx);
+                    pwin[j].resize(len);
+                    pos[j]->read(idx, pwin[j].data(), len);
+                    wbase[j] = idx;
+                    return pwin[j][0];
+                };
+                std::vector<U> hv(k);   // heap values
+                std::vector<size_t> hs_(k);  // heap sides
+                size_t hm = 0;
+                auto hLess = [&](size_t a, size_t b) { return skeys.cmp(hv[a], hv[b]) < 0; };
+                auto hPush = [&](U v, size_t side) {
+                    size_t i = hm++;
+                    hv[i] = v; hs_[i] = side;
+                    while (i > 0) {
+                        size_t par = (i - 1) / 2;
+                        if (!hLess(i, par)) break;
+                        std::swap(hv[i], hv[par]); std::swap(hs_[i], hs_[par]);
+                        i = par;
+                    }
+                };
+                auto hSift = [&]() {
+                    size_t i = 0;
+                    for (;;) {
+                        size_t l = 2 * i + 1, r = l + 1, m = i;
+                        if (l < hm && hLess(l, m)) m = l;
+                        if (r < hm && hLess(r, m)) m = r;
+                        if (m == i) break;
+                        std::swap(hv[i], hv[m]); std::swap(hs_[i], hs_[m]);
+                        i = m;
+                    }
+                };
+                auto hPopReplace = [&](U v, size_t side) {   // root leaves, push (v,side)
+                    hv[0] = v; hs_[0] = side;
+                    hSift();
+                };
+                for (size_t j = 0; j < k; ++j)
+                    if (cur[j] < end[j]) hPush(frontAt(j, cur[j]), j);
+                U pfAt = 0;
+                while (hm > 0) {
+                    if (!noPf && m2.pool && (step & 31) == 0) {
+                        // Front speculation: each side's next few fronts,
+                        // served from the bulk windows (no overlay reads).
+                        double q0 = now_sec();
+                        U firstJb = 16 / hashK + 1;
+                        for (size_t j = 0; j < k; ++j)
+                            for (U d = 1; d <= 4 && cur[j] + d < end[j]; ++d) {
+                                U w = cur[j] + d - wbase[j];
+                                if (w >= pwin[j].size()) break;   // next window: speculative skip
+                                U p = pwin[j][w];
+                                m2.prefetch(p, 16);
+                                if (hp.col.pool) hp.col.prefetch(p / hashK + firstJb);
+                            }
+                        shardPF[s] += now_sec() - q0;
+                        pfAt = step + 32;
+                    }
+                    double q1 = now_sec();
+                    U v = hv[0]; size_t j = hs_[0];
+                    ++cur[j];
+                    shardPop[s] += now_sec() - q1;
+                    buf[nb++] = v; ++emitted;
+                    if (cur[j] < end[j]) hPopReplace(frontAt(j, cur[j]), j);
+                    else {   // side exhausted: move last to root, shrink
+                        hv[0] = hv[hm - 1]; hs_[0] = hs_[hm - 1]; --hm;
+                        if (hm > 0) hSift();
+                    }
+                    if (nb == W) flushW();
+                    ++step;
                 }
-            }
-            tPF += now_sec() - q0;
-            double q1 = now_sec();
-            U va = posA.at(i), vb = posB.at(j);
-            tPop += now_sec() - q1;
-            if (keys.cmp(va, vb) < 0) { buf[nb++] = va; ++i; }
-            else { buf[nb++] = vb; ++j; }
-            if (nb == W) flushW();
-            ++k;
-        }
-        while (i < nA) { buf[nb++] = posA.at(i++); if (nb == W) flushW(); ++k; }
-        while (j < nB) { buf[nb++] = posB.at(j++); if (nb == W) flushW(); ++k; }
-        flushW();
-        require(k == n && written == n, "merge coverage");
+                U want = 0; for (size_t j = 0; j < k; ++j) want += end[j] - aB[s][j];
+                flushW();
+                require(emitted == want && out == R[s + 1], "shard merge coverage");
+            });
+        for (auto& t : ts) t.join();
     }
     ::close(fd);
-    std::fprintf(stderr, "XMERG_TIMING t_pf=%.3f t_pop=%.3f cell_hits=%llu cell_miss=%llu\n",
-                 tPF, tPop, (unsigned long long)g_cellHits.load(), (unsigned long long)g_cellMiss.load());
+    for (U s = 0; s < S; ++s) {
+        const Budget& sb = shardBud[s];
+        bud.comparisons += sb.comparisons; bud.fast_decided += sb.fast_decided;
+        bud.probe_decided += sb.probe_decided; bud.cap_decided += sb.cap_decided;
+        bud.probes += sb.probes; bud.symbols += sb.symbols;
+        bud.tie_decided += sb.tie_decided;
+        bud.lce_over_10k += sb.lce_over_10k; bud.lce_over_100k += sb.lce_over_100k;
+        bud.lce_over_1m += sb.lce_over_1m;
+        if (sb.max_lce > bud.max_lce) bud.max_lce = sb.max_lce;
+        bud.tFast += sb.tFast; bud.tPrep += sb.tPrep; bud.tProbe += sb.tProbe; bud.tScan += sb.tScan;
+        tPF += shardPF[s]; tPop += shardPop[s];
+    }
+    std::fprintf(stderr, "XMERG_TIMING t_pf=%.3f t_pop=%.3f cell_hits=%llu cell_miss=%llu shards=%llu\n",
+                 tPF, tPop, (unsigned long long)g_cellHits.load(), (unsigned long long)g_cellMiss.load(),
+                 (unsigned long long)S);
     phase("cross-merge", last);
 }
 
@@ -1502,127 +2421,460 @@ static void emit_pf_side_ext(const std::string& prefix, const WinBytes& m2, U n,
     phase("emit-pf-checkpoints", last);
 }
 
-// Enqueue, one band ahead, the M2 pages a coming band of WM rows will read.
-// four=true: row t reads M[WM[t-10]-1]; else M[WM[t]+n-1].
-static void prefetch_wm_rows(const WinBytes& m2, const WinU64& wm, U t0, U t1, U n, bool four) {
-    if (!m2.pool) return;
-    if (four) {
-        for (U t = std::max<U>(10, t0); t < t1; ++t) {
-            U p = wm.at(t - 10);
-            if (p) m2.prefetch(p - 1, 1);
-        }
-    } else {
-        for (U t = t0; t < t1; ++t) m2.prefetch(wm.at(t) + n - 1, 1);
-    }
-}
-
 // Final four files, read from the M2 and WM scratch files (sequential WM).
+// PARALLEL EMISSION: both walks are sharded at fixed run boundaries (the
+// same combiner arithmetic as the SXCR emitter; rows are the n+10 rows of
+// the padded order, pad rows included). The fixed-size outputs go out by
+// pwrite at global offsets (.meta entirely from the combiner; .ssa/.ssa_t
+// 8 bytes per run at 8*(1+runIndex), buffered per shard), and the
+// variable-word .rlebwt goes through per-shard segment files concatenated
+// in shard order. Every run is finalized by exactly one shard, so all four
+// files are byte-identical to the serial writer by construction.
 static U emit_four_ext(const std::string& prefix, const WinBytes& m2,
-                       const WinU64& wm, U n) {
+                       const WinU64& wm, U n, U threads, const std::string& segDir) {
     double last = now_sec();
     U total = n + 10;
     auto row_char_sample = [&](U t, uint8_t& c, U& sample) {
         if (t < 10) { sample = n + t; c = t == 0 ? m2.at(n - 1) : uint8_t(2); }
         else { U p = wm.at(t - 10); sample = p; c = p == 0 ? uint8_t(2) : m2.at(p - 1); }
     };
+    const U S = emit_shard_count(threads, total);
+    auto pfRows = [&](U t0, U t1) {   // rows [t0,t1): row t reads M[WM[t-10]-1]
+        if (!m2.pool) return;
+        for (U t = std::max<U>(10, t0); t < t1; ++t) {
+            U p = wm.at(t - 10);
+            if (p) m2.prefetch(p - 1, 1);
+        }
+    };
+    struct CountInfo { std::array<U, 256> counts{}, rc{}; U internalStarts = 0; bool firstIsStart = false; };
+    std::vector<CountInfo> info(S);
+    {   // pass 1: sharded count (chars + run starts per row-range shard)
+        std::vector<std::thread> ts;
+        for (U s = 0; s < S; ++s) {
+            U t0 = s * total / S, t1 = (s + 1) * total / S;
+            if (t1 <= t0) continue;
+            ts.emplace_back([&, s, t0, t1] {
+                CountInfo& ci = info[s];
+                pfRows(t0, std::min<U>(t1, t0 + 4096));
+                U pfNext = t0 + 4096;
+                uint8_t prevC; U prevS;
+                row_char_sample(t0, prevC, prevS);
+                ++ci.counts[prevC];
+                ci.firstIsStart = true;
+                if (t0) {
+                    uint8_t pc; U ps;
+                    row_char_sample(t0 - 1, pc, ps);
+                    ci.firstIsStart = (prevC != pc);
+                }
+                if (ci.firstIsStart) ++ci.rc[prevC];
+                for (U t = t0 + 1; t < t1; ++t) {
+                    if (t >= pfNext) { pfRows(t, std::min<U>(t1, t + 4096)); pfNext = t + 4096; }
+                    uint8_t c; U smp;
+                    row_char_sample(t, c, smp);
+                    ++ci.counts[c];
+                    if (c != prevC) { ++ci.internalStarts; ++ci.rc[c]; }
+                    prevC = c;
+                }
+            });
+        }
+        for (auto& t : ts) t.join();
+    }
     std::array<U, 256> counts{}, rc{};
     U final_runs = 0;
-    {
-        uint8_t prev = 0xff; bool any = false;
-        prefetch_wm_rows(m2, wm, 0, std::min(total, U(4096)), n, true);
-        for (U t = 0; t < total; ++t) {
-            if ((t & 4095) == 0)
-                prefetch_wm_rows(m2, wm, t + 4096, std::min(total, t + 8192), n, true);
-            uint8_t c; U s; row_char_sample(t, c, s);
-            ++counts[c];
-            if (!any || c != prev) { ++final_runs; ++rc[c]; prev = c; any = true; }
-        }
+    std::vector<U> base(S, 0);   // global run index of the first start >= t0_s
+    for (U s = 0; s < S; ++s) {
+        base[s] = final_runs;
+        final_runs += info[s].internalStarts + (info[s].firstIsStart ? 1u : 0u);
+        for (unsigned c = 0; c < 256; ++c) { counts[c] += info[s].counts[c]; rc[c] += info[s].rc[c]; }
     }
+    require(final_runs >= 1, "final run count underflow");
     require(counts[2] == 10, "padding count mismatch");
     phase("emit-count", last);
     {
-        OutFile b(prefix + ".rlebwt"), m(prefix + ".rlebwt.meta"),
-               h(prefix + ".ssa"), tl(prefix + ".ssa_t");
+        OutFile b(prefix + ".rlebwt"), m(prefix + ".rlebwt.meta");
         m.w64(total); m.w64(final_runs);
         for (U c : counts) m.w64(c);
         for (U c : rc) m.w64(c);
-        h.w64(final_runs); tl.w64(final_runs);
-        uint8_t cur = 0; U runlen = 0, head = 0, tail = 0; bool any = false;
-        auto flush = [&]() {
-            if (!any) return;
-            U left = runlen;
-            while (left) {
-                U take = std::min<U>(left, 0x7fffff); left -= take;
-                b.w32(uint32_t(cur) | uint32_t(take << 8) | (left ? 0x80000000u : 0u));
-            }
-            h.w64(head); tl.w64(tail);
+        m.flush();
+        auto openX = [&](const std::string& p) {
+            int f = ::open(p.c_str(), O_CREAT | O_EXCL | O_WRONLY, 0666);
+            require(f >= 0, "create output (exists?)");
+            return f;
         };
-        prefetch_wm_rows(m2, wm, 0, std::min(total, U(4096)), n, true);
-        for (U t = 0; t < total; ++t) {
-            if ((t & 4095) == 0)
-                prefetch_wm_rows(m2, wm, t + 4096, std::min(total, t + 8192), n, true);
-            uint8_t c; U s; row_char_sample(t, c, s);
-            if (!any || c != cur) { flush(); cur = c; runlen = 0; head = s; any = true; }
-            ++runlen; tail = s;
+        int hFd = openX(prefix + ".ssa"), tFd = openX(prefix + ".ssa_t");
+        {
+            char hb[8];
+            put_le64(hb, final_runs);
+            xput(hFd, hb, 8, 0, "ssa header write");
+            xput(tFd, hb, 8, 0, "ssa_t header write");
         }
-        flush();
+        std::vector<int> segFd(S, -1);
+        std::vector<std::string> segPath(S);
+        for (U s = 0; s < S; ++s) {
+            segPath[s] = segDir + "/rlebwt-seg-" + std::to_string(s);
+            segFd[s] = ::open(segPath[s].c_str(), O_CREAT | O_EXCL | O_WRONLY, 0666);
+            require(segFd[s] >= 0, "create rlebwt segment");
+        }
+        std::vector<std::thread> ts;
+        for (U s = 0; s < S; ++s) {
+            U t0 = s * total / S, t1 = (s + 1) * total / S;
+            if (t1 <= t0) continue;
+            U b0 = base[s];
+            bool firstIsStart = info[s].firstIsStart;
+            ts.emplace_back([&, s, t0, t1, b0, firstIsStart] {
+                U t = t0;
+                if (!firstIsStart) {  // skip the run continued from the previous shard
+                    uint8_t c; U smp;
+                    row_char_sample(t, c, smp);
+                    for (++t; t < total; ) {
+                        uint8_t c2; U s2;
+                        row_char_sample(t, c2, s2);
+                        if (c2 != c) break;
+                        ++t;
+                    }
+                }
+                std::vector<char> rec; rec.reserve(4 * 65536);
+                U segOff = 0;
+                auto flushRec = [&]() {
+                    if (!rec.empty()) {
+                        xput(segFd[s], rec.data(), rec.size(), segOff, "rlebwt segment write");
+                        segOff += rec.size(); rec.clear();
+                    }
+                };
+                auto emitWords = [&](uint8_t c, U len) {
+                    U left = len;
+                    while (left) {
+                        U take = std::min<U>(left, 0x7fffff); left -= take;
+                        char w[4];
+                        put_le32(w, uint32_t(c) | uint32_t(take << 8) | (left ? 0x80000000u : 0u));
+                        rec.insert(rec.end(), w, w + 4);
+                    }
+                    if (rec.size() >= 4 * 65536) flushRec();
+                };
+                std::vector<U> headBuf, tailBuf;
+                headBuf.reserve(65536); tailBuf.reserve(65536);
+                U bufIdx = b0;
+                auto flushSamples = [&]() {
+                    if (!headBuf.empty()) {
+                        xput(hFd, headBuf.data(), 8 * headBuf.size(), 8 * (1 + bufIdx), "ssa write");
+                        xput(tFd, tailBuf.data(), 8 * tailBuf.size(), 8 * (1 + bufIdx), "ssa_t write");
+                        bufIdx += headBuf.size();
+                        headBuf.clear(); tailBuf.clear();
+                    }
+                };
+                U pfAt = t;
+                auto pfAhead = [&](U cur) {
+                    if (m2.pool && cur >= pfAt) { pfRows(cur, std::min<U>(total, cur + 8192)); pfAt = cur + 8192; }
+                };
+                pfAhead(t);
+                U runIdx = b0;
+                while (t < t1) {
+                    uint8_t c; U head;
+                    row_char_sample(t, c, head);
+                    U e = t + 1;
+                    for (;;) {
+                        if (e >= total) break;
+                        if (e >= pfAt) pfAhead(e);
+                        uint8_t c2; U s2;
+                        row_char_sample(e, c2, s2);
+                        if (c2 != c) break;
+                        ++e;
+                    }
+                    emitWords(c, e - t);
+                    uint8_t tc; U tailSmp;
+                    row_char_sample(e - 1, tc, tailSmp);
+                    headBuf.push_back(head);
+                    tailBuf.push_back(tailSmp);
+                    if (headBuf.size() >= 65536) flushSamples();
+                    ++runIdx;
+                    t = e;
+                }
+                flushRec();
+                flushSamples();
+                require(runIdx == b0 + info[s].internalStarts + (firstIsStart ? 1u : 0u),
+                        "emit shard run coverage");
+            });
+        }
+        for (auto& t : ts) t.join();
+        for (U s = 0; s < S; ++s) require(::close(segFd[s]) == 0, "close rlebwt segment");
+        // ordered concatenation: shard order is run order (order-pure)
+        constexpr U CW = 1u << 20;
+        std::vector<char> cbuf(CW);
+        for (U s = 0; s < S; ++s) {
+            int in = ::open(segPath[s].c_str(), O_RDONLY);
+            require(in >= 0, "reopen rlebwt segment");
+            for (;;) {
+                ssize_t z = ::read(in, cbuf.data(), CW);
+                require(z >= 0, "read rlebwt segment");
+                if (z == 0) break;
+                b.raw(cbuf.data(), size_t(z));
+            }
+            require(::close(in) == 0, "close rlebwt segment read");
+            ::unlink(segPath[s].c_str());
+        }
+        b.flush();
+        require(::close(hFd) == 0 && ::close(tFd) == 0, "close ssa outputs");
     }
+    std::fprintf(stderr, "FOUR_EMIT shards=%llu runs=%llu total=%llu\n",
+                 (unsigned long long)S, (unsigned long long)final_runs, (unsigned long long)total);
     phase("emit-write", last);
     return final_runs;
 }
 
 // Intermediate: merged cyclic order as an SXCR chunk + sidecar, read from
-// the M2 and WM scratch files.
+// the M2 and WM scratch files. PARALLEL EMISSION: both walks are sharded
+// at fixed run boundaries. Pass 1 counts runs per row-range shard (internal
+// starts plus the shard's own first-row start flag); the combiner's prefix
+// sums give the global run count and every shard's global start-index base.
+// Pass 2 emits the fixed 25-byte records by pwrite at 25*globalRunIndex:
+// every run is finalized by exactly one shard (the one containing its start
+// row; a run straddling the shard end is scanned to its true end), so the
+// chunk is byte-identical to the serial writer by construction.
 static U emit_sxcr_ext(const std::string& path, const WinBytes& m2,
-                       const WinU64& wm, U n, U offset) {
+                       const WinU64& wm, U n, U offset, U threads,
+                       const std::vector<SideExt>& inSides, const std::string& segDir) {
     double last = now_sec();
-    U runs = 0;
-    prefetch_wm_rows(m2, wm, 0, std::min(n, U(4096)), n, false);
-    for (U t = 0; t < n; ++t) {
-        if ((t & 4095) == 0)
-            prefetch_wm_rows(m2, wm, t + 4096, std::min(n, t + 8192), n, false);
-        uint8_t c = m2.at(wm.at(t) + n - 1);
-        if (t == 0 || c != m2.at(wm.at(t - 1) + n - 1)) ++runs;
-    }
-    phase("sxcr-count", last);
-    {
-        OutFile f(path);
-        char magic[4]{'S','X','C','R'}; f.raw(magic, 4);
-        f.w32(2); f.w64(offset); f.w64(n); f.w64(runs);
-        uint8_t cur = 0; U runlen = 0, head = 0, tail = 0; bool any = false;
-        auto flush = [&]() {
-            if (!any) return;
-            f.w8(cur); f.w64(runlen); f.w64(head); f.w64(tail);
-        };
-        prefetch_wm_rows(m2, wm, 0, std::min(n, U(4096)), n, false);
-        for (U t = 0; t < n; ++t) {
-            if ((t & 4095) == 0)
-                prefetch_wm_rows(m2, wm, t + 4096, std::min(n, t + 8192), n, false);
-            U p = wm.at(t); uint8_t c = m2.at(p + n - 1);
-            if (!any || c != cur) { flush(); cur = c; runlen = 0; head = p; any = true; }
-            ++runlen; tail = p;
+    const U S = emit_shard_count(threads, n);
+    auto charAt = [&](U t) { return m2.at(wm.at(t) + n - 1); };
+    struct CountInfo { U internalStarts = 0; bool firstIsStart = false; };
+    std::vector<CountInfo> info(S);
+    auto pfRows = [&](U t0, U t1) {   // enqueue the M2 pages rows [t0,t1) read
+        if (!m2.pool) return;
+        for (U t = t0; t < t1; ++t) m2.prefetch(wm.at(t) + n - 1, 1);
+    };
+    {   // pass 1: sharded run count
+        std::vector<std::thread> ts;
+        for (U s = 0; s < S; ++s) {
+            U t0 = s * n / S, t1 = (s + 1) * n / S;
+            if (t1 <= t0) continue;
+            ts.emplace_back([&, s, t0, t1] {
+                CountInfo& ci = info[s];
+                pfRows(t0, std::min<U>(t1, t0 + 4096));
+                U pfNext = t0 + 4096;
+                uint8_t prev = charAt(t0);
+                ci.firstIsStart = (t0 == 0);
+                if (t0) ci.firstIsStart = (prev != charAt(t0 - 1));
+                for (U t = t0 + 1; t < t1; ++t) {
+                    if (t >= pfNext) { pfRows(t, std::min<U>(t1, t + 4096)); pfNext = t + 4096; }
+                    uint8_t c = charAt(t);
+                    if (c != prev) ++ci.internalStarts;
+                    prev = c;
+                }
+            });
         }
-        flush();
+        for (auto& t : ts) t.join();
     }
+    U runs = 0;
+    std::vector<U> base(S, 0);   // global run index of the first start >= t0_s
+    for (U s = 0; s < S; ++s) {
+        base[s] = runs;
+        runs += info[s].internalStarts + (info[s].firstIsStart ? 1u : 0u);
+    }
+    require(runs >= 1, "sxcr run count underflow");
+    phase("sxcr-count", last);
+    {   // pass 2: sharded record emission. v2 (legacy .sxs set): fixed
+        // 25-byte records, pwrite at 25 * global run index. v3 (persisted
+        // set - the order column carries the samples): compact c+varint-len
+        // records via per-shard segments concatenated in shard order.
+        bool persistEmit = !inSides.empty() && !getenv("CROSS_NO_PERSIST_EMIT");
+        U emitVer = 2;
+        for (auto& S : inSides)
+            persistEmit = persistEmit && S.refText && !S.segs.empty();
+        if (persistEmit) emitVer = 3;
+        int fd = ::open(path.c_str(), O_CREAT | O_EXCL | O_WRONLY, 0666);
+        require(fd >= 0, "create SXCR chunk (exists?)");
+        char hdr[32];
+        std::memcpy(hdr, "SXCR", 4);
+        put_le32(hdr + 4, uint32_t(emitVer)); put_le64(hdr + 8, offset); put_le64(hdr + 16, n); put_le64(hdr + 24, runs);
+        xput(fd, hdr, 32, 0, "sxcr header write");
+        std::vector<std::thread> ts;
+        std::vector<int> segFds;
+        std::vector<std::string> segPaths;
+        U v3Off = 32;   // byte offset of the concatenated v3 stream
+        for (U s = 0; s < S; ++s) {
+            U t0 = s * n / S, t1 = (s + 1) * n / S;
+            if (t1 <= t0) continue;
+            U b0 = base[s];
+            bool firstIsStart = info[s].firstIsStart;
+            std::string segPath;
+            int segFd = -1;
+            if (emitVer == 3) {   // compact records: per-shard segment files
+                segPath = segDir + "/sxcr-seg-" + std::to_string(s);
+                segFd = ::open(segPath.c_str(), O_CREAT | O_EXCL | O_WRONLY, 0666);
+                require(segFd >= 0, "create sxcr v3 segment");
+            }
+            ts.emplace_back([&, s, t0, t1, b0, firstIsStart, segFd] {
+                U t = t0;
+                if (!firstIsStart) {  // skip the run continued from the previous shard
+                    uint8_t c = charAt(t);
+                    for (++t; t < n && charAt(t) == c; ++t) {}
+                }
+                std::vector<char> rec;
+                U bufIdx = b0;        // global run index of rec[0] (v2)
+                U recOff = 0;         // segment offset (v3)
+                auto flushRec = [&]() {
+                    if (!rec.empty()) {
+                        if (segFd >= 0) {
+                            xput(segFd, rec.data(), rec.size(), recOff, "sxcr v3 segment write");
+                            recOff += rec.size(); rec.clear();
+                        } else {
+                            xput(fd, rec.data(), rec.size(), 32 + 25 * bufIdx, "sxcr record write");
+                            bufIdx += rec.size() / 25; rec.clear();
+                        }
+                    }
+                };
+                U pfAt = t;
+                auto pfAhead = [&](U cur) {
+                    if (m2.pool && cur >= pfAt) { pfRows(cur, std::min<U>(n, cur + 8192)); pfAt = cur + 8192; }
+                };
+                pfAhead(t);
+                U runIdx = b0;
+                while (t < t1) {
+                    uint8_t c = charAt(t);
+                    U head = wm.at(t);
+                    U e = t + 1;
+                    while (e < n && charAt(e) == c) {
+                        if (e >= pfAt) pfAhead(e);
+                        ++e;
+                    }
+                    if (segFd >= 0) {   // v3: char + varint len (samples in .pos)
+                        char vb[12];
+                        vb[0] = char(c);
+                        std::vector<char> lenbuf;
+                        put_varint(lenbuf, e - t);
+                        rec.push_back(vb[0]);
+                        rec.insert(rec.end(), lenbuf.begin(), lenbuf.end());
+                        if (rec.size() >= (1u << 20)) flushRec();
+                    } else {           // v2: 25-byte sample-bearing record
+                        char b[25];
+                        b[0] = char(c);
+                        put_le64(b + 1, e - t); put_le64(b + 9, head); put_le64(b + 17, wm.at(e - 1));
+                        rec.insert(rec.end(), b, b + 25);
+                        if (rec.size() >= 25 * 4096) flushRec();
+                    }
+                    ++runIdx;
+                    t = e;
+                }
+                flushRec();
+                require(runIdx == b0 + info[s].internalStarts + (firstIsStart ? 1u : 0u),
+                        "sxcr emit shard run coverage");
+            });
+            if (segFd >= 0) {
+                segFds.push_back(segFd);
+                segPaths.push_back(segPath);
+            }
+        }
+        for (auto& t : ts) t.join();
+        if (emitVer == 3) {   // ordered concatenation: shard order is run order
+            for (int sf : segFds) require(::close(sf) == 0, "close sxcr v3 segment");
+            constexpr U CW = 1u << 20;
+            std::vector<char> cbuf(CW);
+            for (auto& sp : segPaths) {
+                int in = ::open(sp.c_str(), O_RDONLY);
+                require(in >= 0, "reopen sxcr v3 segment");
+                for (;;) {
+                    ssize_t z = ::read(in, cbuf.data(), CW);
+                    require(z >= 0, "read sxcr v3 segment");
+                    if (z == 0) break;
+                    xput(fd, cbuf.data(), size_t(z), v3Off, "sxcr v3 concat");
+                    v3Off += U(z);
+                }
+                require(::close(in) == 0, "close sxcr v3 segment read");
+                ::unlink(sp.c_str());
+            }
+        }
+        require(::close(fd) == 0, "close SXCR chunk");
+    }
+    std::fprintf(stderr, "SXCR_EMIT shards=%llu runs=%llu n=%llu\n",
+                 (unsigned long long)S, (unsigned long long)runs, (unsigned long long)n);
     phase("sxcr-write", last);
     {
-        OutFile f(path + ".sxs");
-        char magic[4]{'S','X','S','2'}; f.raw(magic, 4);
-        f.w64(offset); f.w64(n);
-        constexpr U W = 1u << 22;
-        std::vector<uint8_t> buf(W);
-        for (U i = 0; i < n;) {
-            U len = std::min<U>(W, n - i);
-            m2.read(i, buf.data(), len);
-            f.raw(buf.data(), len);
-            i += len;
-        }
-        U pb[4096];
-        for (U i = 0; i < n;) {
-            U len = std::min<U>(4096, n - i);
-            wm.read(i, pb, len);
-            f.raw(pb, 8 * len);
-            i += len;
+        // PROGRESSIVE-SHAPE INVARIANT: level N's output is a valid level
+        // N+1 input in the PERSISTED format. When every input side's text
+        // is referenced (segments), the intermediate emits .pos (SXP3 order
+        // column + period) and a .ref v2 whose segments are the input
+        // sides' segments CONCATENATED (the merged text is exactly the
+        // inputs' texts in order) - zero text copies, zero re-derivation
+        // at any level, and n bytes less disc than the legacy .sxs embed.
+        bool allRef = !inSides.empty();
+        U segTotal = 0;
+        for (auto& S : inSides)
+            allRef = allRef && S.refText && !S.segs.empty() && (segTotal += S.segs.size(), true);
+        if (allRef && !getenv("CROSS_NO_PERSIST_EMIT")) {
+            U per = n;
+            {
+                // minimal cyclic period over the merged text (m2's first copy)
+                std::vector<U> divs;
+                for (U d = 1; d * d <= n; ++d) if (n % d == 0) { divs.push_back(d); if (d != n / d) divs.push_back(n / d); }
+                std::sort(divs.begin(), divs.end());
+                constexpr U W = 1u << 20;
+                std::vector<uint8_t> a(W), b(W);
+                for (U d : divs) {
+                    if (d >= n) continue;
+                    bool ok = true;
+                    for (U i = 0; i + d < n && ok; i += W) {
+                        U len = std::min<U>(W, n - d - i);
+                        m2.read(i, a.data(), len);
+                        m2.read(i + d, b.data(), len);
+                        for (U z = 0; z < len; ++z) if (a[z] != b[z]) { ok = false; break; }
+                    }
+                    if (ok) { per = d; break; }
+                }
+            }
+            // Intermediate pos columns: dense (SXP3) or compact (SXP4).
+            // Compact cuts disc ~2.4x but costs ~2.3x walk wall on the
+            // NEXT level's loads+walks; the plan (XSA_POS_MODE) picks per
+            // scale. CROSS_NO_SXP4 remains the legacy dense alias.
+            const char* cpm = getenv("CROSS_POS_MODE");
+            bool densePos = (cpm && !std::strcmp(cpm, "dense")) || getenv("CROSS_NO_SXP4");
+            if (densePos) {
+                OutFile f(chunk_stem(path) + ".pos");
+                char magic[4]{'S','X','P','3'}; f.raw(magic, 4);
+                f.w32(1); f.w64(offset); f.w64(n); f.w64(per); f.w64(0);
+                U pb[4096];
+                for (U i = 0; i < n;) {
+                    U len = std::min<U>(4096, n - i);
+                    wm.read(i, pb, len);
+                    f.raw(pb, 8 * len);
+                    i += len;
+                }
+            } else {
+                write_pos_sxp4(chunk_stem(path) + ".pos", offset, n, per,
+                               [&](U i) { return wm.at(i); });
+            }
+            {
+                OutFile f(chunk_stem(path) + ".ref");
+                char magic[4]{'S','X','R','F'}; f.raw(magic, 4);
+                f.w32(2); f.w8(0);
+                f.w32(U(segTotal));
+                for (auto& S : inSides)
+                    for (auto& g : S.segs) {
+                        f.raw(g.remap.data(), 256);
+                        f.w32(U(g.path.size()));
+                        f.raw(g.path.data(), g.path.size());
+                        f.w64(g.off); f.w64(g.len);
+                    }
+                f.w64(n);
+            }
+        } else {
+            OutFile f(path + ".sxs");
+            char magic[4]{'S','X','S','2'}; f.raw(magic, 4);
+            f.w64(offset); f.w64(n);
+            constexpr U W = 1u << 22;
+            std::vector<uint8_t> buf(W);
+            for (U i = 0; i < n;) {
+                U len = std::min<U>(W, n - i);
+                m2.read(i, buf.data(), len);
+                f.raw(buf.data(), len);
+                i += len;
+            }
+            U pb[4096];
+            for (U i = 0; i < n;) {
+                U len = std::min<U>(4096, n - i);
+                wm.read(i, pb, len);
+                f.raw(pb, 8 * len);
+                i += len;
+            }
         }
     }
     phase("sidecar-write", last);
@@ -1651,12 +2903,12 @@ struct Preflight {
 static std::deque<std::unique_ptr<Preflight>> g_pfq;
 static void preflight_run(Preflight* pf) {
     try {
-        pf->sc.init(pf->out, U(getpid()));
+        pf->sc.init(pf->out, U(getpid()), 2);
         load_side_ext(pf->left, 48, pf->sc.dir, pf->A);
         load_side_ext(pf->right, 48, pf->sc.dir, pf->B);
         require(pf->A.offset + pf->A.n == pf->B.offset, "pair chunks do not tile");
         U n = pf->A.n + pf->B.n;
-        build_m2_file(pf->A, pf->B, pf->sc.m2);
+        build_m2_file(std::vector<SideExt>{pf->A, pf->B}, pf->sc.m2);
         pf->hashK = hash_spacing();
         if (pf->hashK > n / 2) pf->hashK = std::max<U>(1, n / 2);
         build_hash_sparse(pf->sc.m2, 2 * n, pf->hashK, pf->sc.hs, 48);
@@ -1704,9 +2956,17 @@ static void cross_drop_stale_preflights(const std::string& L, const std::string&
     }
 }
 
-// ---------------------------------------------------------------- pair merge
-static U merge_pair_files(const std::string& leftPath, const std::string& rightPath,
-                          bool dollar, const std::string& out, U threads, bool emitPf = false) {
+// ------------------------------------------------------------ k-way merge
+// ONE code path: k=2 is the certified pairwise merge (CROSS_PAIR line,
+// byte-identical banked format); k>2 (CROSS_KWAY line) is the flat/inter-
+// mediate arity selected at launch. Sides must tile the text: side j's
+// global offset = sum of previous sides' lengths.
+static U merge_kway_files(const std::vector<std::string>& inputs, bool dollar,
+                          const std::string& out, U threads, bool emitPf = false) {
+    const size_t k = inputs.size();
+    require(k >= 1, "k-way merge needs at least one input");
+    const std::string& leftPath = inputs.front();
+    const std::string& rightPath = inputs.back();
     if (dollar)
         for (const char* ext : {".rlebwt", ".rlebwt.meta", ".ssa", ".ssa_t"})
             require(!fs::exists(out + ext), "output exists; refusing to clobber");
@@ -1716,51 +2976,153 @@ static U merge_pair_files(const std::string& leftPath, const std::string& rightP
     Budget bud; CoreStats st;
     bool pre = false;
     PairScratch sc;
-    SideExt A, B;
+    std::vector<SideExt> sides(k);
     U hashK = 0;
-    cross_drop_stale_preflights(leftPath, rightPath);
-    if (auto pf = cross_take_preflight(leftPath, rightPath)) {
+    std::unique_ptr<Preflight> pf;
+    if (k == 2) {
+        cross_drop_stale_preflights(leftPath, rightPath);
+        pf = cross_take_preflight(leftPath, rightPath);
+    }
+    if (pf) {
         // FIX 4: this pair's loads/m2/hash were prefetched during the
         // previous pair's run.
         if (!pf->ok) fail(("preflight failed: " + pf->err).c_str());
-        A = pf->A; B = pf->B; sc = std::move(pf->sc); hashK = pf->hashK;
+        sides[0] = pf->A; sides[1] = pf->B; sc = std::move(pf->sc); hashK = pf->hashK;
         pre = true;
     } else {
-        sc.init(out, U(getpid()));
-        load_side_ext(leftPath, threads, sc.dir, A);
-        load_side_ext(rightPath, threads, sc.dir, B);
-        require(A.offset + A.n == B.offset, "pair chunks do not tile");
+        sc.init(out, U(getpid()), k);
+        // PARALLEL SIDE LOADS: the per-side loads (walk, validation, pos
+        // dump) are independent - the pairwise origin's serial 2-item loop
+        // is the leftover. A thread pool loads them with a MEMORY-AWARE
+        // width: each load's walk transient is ~9x its chunk (text/bwt/lf/
+        // pos/visited, chunk-scale, freed per side), so the concurrent
+        // width is bounded by the phase's RLIMIT_AS. Side j is loaded by
+        // whichever thread takes it; the sides vector is index-stable, so
+        // the load order cannot reach any output (loads are pure functions
+        // of their chunk; the merge is deterministic given the loaded
+        // sides). Barrier: the pool joins before the tiling check and the
+        // core merge, which is already parallel and order-independent.
+        U nMax = 0, runsMax = 0;
+        for (auto& f : inputs) {
+            U o = 0, n = 0, r = 0, ver = 0;
+            sxcr_header(f, o, n, r, ver);
+            nMax = std::max(nMax, n); runsMax = std::max(runsMax, r);
+        }
+        U loadPar = std::min<size_t>(k, threads ? threads : 1);
+        bool anyDerive = false;
+        for (auto& f : inputs) {
+            std::string stem = chunk_stem(f);
+            anyDerive = anyDerive || (!fs::exists(f + ".sxs")
+                && !(fs::exists(stem + ".pos") && fs::exists(stem + ".ref") && !getenv("CROSS_NO_PERSIST")));
+        }
+        if (anyDerive) {
+            // DERIVE-FALLBACK width from the REAL per-chunk header metadata,
+            // not a corpus-size constant: walk_chunk's resident transient =
+            // runs records (25B/run) + seeds (16B/run) + bwt+text+visited
+            // (2n) + lf (8n) + pos (8n). The 1b run A crash was exactly this
+            // misestimate (10n assumed vs ~35n at 62.5M/24M-runs chunks:
+            // a 5-wide pool = ~11 GB virtual > the 8 GiB cap; std::bad_alloc
+            // thrown from walk_chunk's vector allocations). The persist path
+            // has NO walk transient and skips this bound entirely.
+            struct rlimit rl{};
+            U perSide = 42 * runsMax + 18 * nMax + (256u << 20);
+            if (perSide && getrlimit(RLIMIT_AS, &rl) == 0 && rl.rlim_cur != RLIM_INFINITY) {
+                U fit = U(rl.rlim_cur) / 2 / perSide;   // pools + merge own the rest
+                if (fit < 1) fit = 1;
+                loadPar = std::min<size_t>(loadPar, size_t(std::min<U>(fit, 64)));
+            }
+            std::fprintf(stderr, "LOAD_PLAN derive_per_side_mb=%.0f par=%llu\n",
+                         perSide / 1048576.0, (unsigned long long)loadPar);
+        }
+        U innerThreads = std::max<U>(1, threads ? threads / loadPar : 1);
+        std::atomic<size_t> next{0};
+        std::atomic<U> loadSides{0};
+        double loadT0 = now_sec();
+        {
+            std::vector<std::thread> ts;
+            for (U t = 0; t < loadPar; ++t)
+                ts.emplace_back([&] {
+                    for (;;) {
+                        size_t j = next.fetch_add(1);
+                        if (j >= k) return;
+                        double t0 = now_sec();
+                        load_side_ext(inputs[j], innerThreads, sc.dir, sides[j]);
+                        U done = loadSides.fetch_add(1, std::memory_order_relaxed) + 1;
+                        // Per-side progress (the 10GB run was blind within the
+                        // load phase): index, size, wall, mode, done/total.
+                        std::fprintf(stderr, "LOAD_SIDE idx=%llu n=%llu wall=%.3f mode=%s done=%llu/%llu\n",
+                                     (unsigned long long)j, (unsigned long long)sides[j].n,
+                                     now_sec() - t0,
+                                     sides[j].bwtFromRuns ? "persisted-reads"
+                                       : (sides[j].refText ? "walk+ref" : "walk"),
+                                     (unsigned long long)done, (unsigned long long)k);
+                    }
+                });
+            for (auto& t : ts) t.join();
+        }
+        std::fprintf(stderr, "LOAD_STATS sides=%llu par=%llu wall=%.3f per_side_avg=%.3f (serial-equivalent width 1)\n",
+                     (unsigned long long)loadSides.load(), (unsigned long long)loadPar,
+                     now_sec() - loadT0, (now_sec() - loadT0) * loadPar / (double)(k ? k : 1));
+        for (size_t j = 1; j < k; ++j)
+            require(sides[j - 1].offset + sides[j - 1].n == sides[j].offset,
+                    "merge sides do not tile");
     }
-    core_merge_ext(A, B, dollar, threads, bud, st, sc, hashK, pre);
-    U n = A.n + B.n;
+    core_merge_kway(sides, dollar, threads, bud, st, sc, hashK, pre);
+    U n = 0; for (auto& S : sides) n += S.n;
     WinBytes m2; m2.open_ro(sc.m2, 2 * n, 0, true);
     WinU64 wm; wm.open_ro(sc.wm, n, 0);
-    U out_runs = dollar ? emit_four_ext(out, m2, wm, n)
-                        : emit_sxcr_ext(out, m2, wm, n, A.offset);
+    U out_runs = dollar ? emit_four_ext(out, m2, wm, n, threads, sc.dir)
+                        : emit_sxcr_ext(out, m2, wm, n, sides.front().offset, threads, sides, sc.dir);
     if (dollar && emitPf) emit_pf_side_ext(out, m2, n, out_runs);
     sc.cleanup();
     double total = now_sec() - t0;
-    std::printf("CROSS_PAIR mode=%s left=%s right=%s nA=%llu nB=%llu out=%s out_runs=%llu "
-                "wall_total=%.3f comparisons=%llu symbols_compared=%llu probes=%llu max_lce=%llu "
-                "fast_decided=%llu probe_decided=%llu cap_decided=%llu tie_decided=%llu "
-                "lce_over_10k=%llu lce_over_100k=%llu lce_over_1m=%llu "
-                "anchors_A=%llu anchors_B=%llu walk_steps_A=%llu walk_steps_B=%llu "
-                "block_rows_A=%llu block_rows_B=%llu peak_rss_kib=%llu hash_k=%llu "
-                "t_fast=%.3f t_prep=%.3f t_probe=%.3f t_scan=%.3f\n",
-                dollar ? "dollar" : "cyclic", leftPath.c_str(), rightPath.c_str(),
-                (unsigned long long)A.n, (unsigned long long)B.n, out.c_str(),
-                (unsigned long long)out_runs, total,
-                (unsigned long long)bud.comparisons, (unsigned long long)bud.symbols,
-                (unsigned long long)bud.probes, (unsigned long long)bud.max_lce,
-                (unsigned long long)bud.fast_decided, (unsigned long long)bud.probe_decided,
-                (unsigned long long)bud.cap_decided, (unsigned long long)bud.tie_decided,
-                (unsigned long long)bud.lce_over_10k, (unsigned long long)bud.lce_over_100k,
-                (unsigned long long)bud.lce_over_1m,
-                (unsigned long long)st.anchorsA, (unsigned long long)st.anchorsB,
-                (unsigned long long)st.stepsA, (unsigned long long)st.stepsB,
-                (unsigned long long)st.rowsA, (unsigned long long)st.rowsB,
-                (unsigned long long)peak_rss_kib(), (unsigned long long)hashK,
-                bud.tFast, bud.tPrep, bud.tProbe, bud.tScan);
+    if (k == 2) {
+        std::printf("CROSS_PAIR mode=%s left=%s right=%s nA=%llu nB=%llu out=%s out_runs=%llu "
+                    "wall_total=%.3f comparisons=%llu symbols_compared=%llu probes=%llu max_lce=%llu "
+                    "fast_decided=%llu probe_decided=%llu cap_decided=%llu tie_decided=%llu "
+                    "lce_over_10k=%llu lce_over_100k=%llu lce_over_1m=%llu "
+                    "anchors_A=%llu anchors_B=%llu walk_steps_A=%llu walk_steps_B=%llu "
+                    "block_rows_A=%llu block_rows_B=%llu peak_rss_kib=%llu hash_k=%llu "
+                    "t_fast=%.3f t_prep=%.3f t_probe=%.3f t_scan=%.3f\n",
+                    dollar ? "dollar" : "cyclic", leftPath.c_str(), rightPath.c_str(),
+                    (unsigned long long)sides[0].n, (unsigned long long)sides[1].n, out.c_str(),
+                    (unsigned long long)out_runs, total,
+                    (unsigned long long)bud.comparisons, (unsigned long long)bud.symbols,
+                    (unsigned long long)bud.probes, (unsigned long long)bud.max_lce,
+                    (unsigned long long)bud.fast_decided, (unsigned long long)bud.probe_decided,
+                    (unsigned long long)bud.cap_decided, (unsigned long long)bud.tie_decided,
+                    (unsigned long long)bud.lce_over_10k, (unsigned long long)bud.lce_over_100k,
+                    (unsigned long long)bud.lce_over_1m,
+                    (unsigned long long)st.anchorsA(), (unsigned long long)st.anchorsB(),
+                    (unsigned long long)st.stepsA(), (unsigned long long)st.stepsB(),
+                    (unsigned long long)st.rowsA(), (unsigned long long)st.rowsB(),
+                    (unsigned long long)peak_rss_kib(), (unsigned long long)hashK,
+                    bud.tFast, bud.tPrep, bud.tProbe, bud.tScan);
+    } else {
+        std::string sizes;
+        for (size_t j = 0; j < k; ++j)
+            sizes += (j ? "," : "") + std::to_string(sides[j].n);
+        std::printf("CROSS_KWAY k=%llu mode=%s left=%s right=%s n=%llu sizes=%s out=%s out_runs=%llu "
+                    "wall_total=%.3f comparisons=%llu symbols_compared=%llu probes=%llu max_lce=%llu "
+                    "fast_decided=%llu probe_decided=%llu cap_decided=%llu tie_decided=%llu "
+                    "lce_over_10k=%llu lce_over_100k=%llu lce_over_1m=%llu "
+                    "anchors_sum=%llu walk_steps_sum=%llu block_rows_sum=%llu "
+                    "peak_rss_kib=%llu hash_k=%llu "
+                    "t_fast=%.3f t_prep=%.3f t_probe=%.3f t_scan=%.3f\n",
+                    (unsigned long long)k, dollar ? "dollar" : "cyclic", leftPath.c_str(),
+                    rightPath.c_str(), (unsigned long long)n, sizes.c_str(), out.c_str(),
+                    (unsigned long long)out_runs, total,
+                    (unsigned long long)bud.comparisons, (unsigned long long)bud.symbols,
+                    (unsigned long long)bud.probes, (unsigned long long)bud.max_lce,
+                    (unsigned long long)bud.fast_decided, (unsigned long long)bud.probe_decided,
+                    (unsigned long long)bud.cap_decided, (unsigned long long)bud.tie_decided,
+                    (unsigned long long)bud.lce_over_10k, (unsigned long long)bud.lce_over_100k,
+                    (unsigned long long)bud.lce_over_1m,
+                    (unsigned long long)st.sum(st.anchors), (unsigned long long)st.sum(st.steps),
+                    (unsigned long long)st.sum(st.rows),
+                    (unsigned long long)peak_rss_kib(), (unsigned long long)hashK,
+                    bud.tFast, bud.tPrep, bud.tProbe, bud.tScan);
+    }
     std::fflush(stdout);
     return out_runs;
 }
@@ -1770,7 +3132,7 @@ static U merge_pair_files(const std::string& leftPath, const std::string& rightP
 static void build_m2_single(const SideExt& A, const std::string& path) {
     int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
     require(fd >= 0, "create m2 scratch");
-    WinBytes t; t.open_ro(A.sxsPath, A.n, 20);
+    SideText t; open_side_text(A, t);
     constexpr U W = 1u << 22;
     std::vector<uint8_t> buf(W);
     for (int copy = 0; copy < 2; ++copy)
@@ -1787,7 +3149,7 @@ static U finalize_file(const std::string& path, const std::string& prefix, U thr
         require(!fs::exists(prefix + ext), "output exists; refusing to clobber");
     double t0 = now_sec(), last = t0;
     Budget bud; CoreStats st;
-    PairScratch sc; sc.init(prefix, U(getpid()));
+    PairScratch sc; sc.init(prefix, U(getpid()), 1);
     SideExt A;
     load_side_ext(path, threads, sc.dir, A);
     phase("load", last);
@@ -1800,16 +3162,18 @@ static U finalize_file(const std::string& path, const std::string& prefix, U thr
     HashSparse hp; hp.open_ro(sc.hs, hashK, 2 * A.n / hashK + 1);
     Keys keys; keys.init(&m2, &hp, A.n, true, &bud);
     PosOverlay posA;
-    posA.init(A.sxsPath, A.n, 20 + A.n, 0, sc.ovA);
-    build_bwt_file(A, posA, sc.bwtA, threads, 0);
+    posA.init(A.sxsPath, A.n, A.posBase, 0, sc.ov[0]);
+    if (A.bwtFromRuns) build_bwt_from_runs(A, posA, sc.bwt[0], 0);
+    else build_bwt_file(A, posA, sc.bwt[0], threads, 0);
     std::vector<BlockRec> blocks;
     std::vector<uint64_t> anchors;
     {
-        WinBytes bwt; bwt.open_ro(sc.bwtA, A.n, 0);
-        WinBytes text; text.open_ro(A.sxsPath, A.n, 20);
-        anchor_blocks_ext(text, bwt, posA, A.n, 0, A.period, blocks, anchors, st.stepsA, st.rowsA);
+        WinBytes bwt; bwt.open_ro(sc.bwt[0], A.n, 0);
+        SideText text; open_side_text(A, text);
+        anchor_blocks_ext(text, bwt, posA, A.n, 0, A.period, blocks, anchors, st.steps[0], st.rows[0]);
     }
-    st.anchorsA = anchors.size();
+    st.init(1);
+    st.anchors[0] = anchors.size();
     repair_ext(posA, blocks, anchors, 0, A.n, keys);
     phase("anchor+repair", last);
     // WM = the repaired order, streamed from the overlay.
@@ -1826,7 +3190,7 @@ static U finalize_file(const std::string& path, const std::string& prefix, U thr
         ::close(fd);
     }
     WinU64 wm; wm.open_ro(sc.wm, A.n, 0);
-    U out_runs = emit_four_ext(prefix, m2, wm, A.n);
+    U out_runs = emit_four_ext(prefix, m2, wm, A.n, threads, sc.dir);
     if (emitPf) emit_pf_side_ext(prefix, m2, A.n, out_runs);
     sc.cleanup();
     double total = now_sec() - t0;
@@ -1842,8 +3206,8 @@ static U finalize_file(const std::string& path, const std::string& prefix, U thr
                 (unsigned long long)bud.fast_decided, (unsigned long long)bud.probe_decided,
                 (unsigned long long)bud.cap_decided, (unsigned long long)bud.tie_decided,
                 (unsigned long long)bud.lce_over_10k, (unsigned long long)bud.lce_over_100k,
-                (unsigned long long)bud.lce_over_1m, (unsigned long long)st.anchorsA,
-                (unsigned long long)st.stepsA, (unsigned long long)st.rowsA,
+                (unsigned long long)bud.lce_over_1m, (unsigned long long)st.anchorsA(),
+                (unsigned long long)st.stepsA(), (unsigned long long)st.rowsA(),
                 (unsigned long long)peak_rss_kib(), (unsigned long long)hashK);
     std::fflush(stdout);
     return out_runs;
@@ -1872,7 +3236,7 @@ static std::vector<uint64_t> brute_dollar(const std::string& T) {
     return o;
 }
 
-static int selftest(U cases, uint64_t seed, U threads) {
+static int selftest(U cases, uint64_t seed, U threads, U kway) {
     uint64_t s = seed ? seed : 1;
     auto next = [&]() { s ^= s << 13; s ^= s >> 7; s ^= s << 17; return s; };
     const std::vector<std::string> alphabets = {
@@ -1898,10 +3262,11 @@ static int selftest(U cases, uint64_t seed, U threads) {
             }
             return t;
         };
-        std::string A = gen(1 + next() % 60, bool(next() & 1));
-        std::string B = gen(1 + next() % 60, bool(next() & 1));
-        std::string M = A + B;
-        std::vector<uint64_t> posA = brute_cyclic(A), posB = brute_cyclic(B);
+        std::vector<std::string> As;
+        std::string M;
+        for (U z = 0; z < kway; ++z) { As.push_back(gen(1 + next() % 60, bool(next() & 1))); M += As.back(); }
+        std::vector<std::vector<uint64_t>> posS;
+        for (auto& A : As) posS.push_back(brute_cyclic(A));
         // Route through the EXTERNAL path: tiny sidecars in a scratch dir, the
         // windowed core merge, WM read back from its scratch file.
         std::string scratch = "cross-selftest-scratch-" + std::to_string(U(getpid()));
@@ -1909,13 +3274,9 @@ static int selftest(U cases, uint64_t seed, U threads) {
         fs::create_directories(scratch);
         for (int mode = 0; mode < 2; ++mode) {
             bool dollar = mode == 1;
-            std::vector<uint8_t> tA(A.begin(), A.end()), tB(B.begin(), B.end());
             Budget bud; CoreStats st;
-            SideExt SA, SB;
-            SA.n = A.size(); SA.offset = 0; SA.period = min_period(tA, tA.size());
-            SA.sxsPath = scratch + "/A.sxs"; SA.ownsSxs = false;
-            SB.n = B.size(); SB.offset = A.size(); SB.period = min_period(tB, tB.size());
-            SB.sxsPath = scratch + "/B.sxs"; SB.ownsSxs = false;
+            std::vector<SideExt> sides(kway);
+            U off = 0, nTot = 0;
             auto dump = [](const SideExt& S, const std::vector<uint8_t>& t, const std::vector<uint64_t>& pos) {
                 fs::remove(S.sxsPath);   // second mode reuses the names
                 OutFile f(S.sxsPath);
@@ -1924,30 +3285,40 @@ static int selftest(U cases, uint64_t seed, U threads) {
                 f.raw(t.data(), t.size());
                 f.raw(pos.data(), 8 * pos.size());
             };
-            dump(SA, tA, posA);
-            dump(SB, tB, posB);
-            PairScratch sc; sc.init(scratch + "/case", 0);
+            for (U z = 0; z < kway; ++z) {
+                std::vector<uint8_t> tz(As[z].begin(), As[z].end());
+                SideExt& S = sides[z];
+                S.n = As[z].size(); S.offset = off; S.period = min_period(tz, tz.size());
+                S.sxsPath = scratch + "/side-" + std::to_string(z) + ".sxs"; S.ownsSxs = false;
+                S.refText = false; S.posBase = 20 + S.n;
+                dump(S, tz, posS[z]);
+                off += S.n; nTot += S.n;
+            }
+            PairScratch sc; sc.init(scratch + "/case", 0, kway);
             U hashK = hash_spacing();
-            if (hashK > (SA.n + SB.n) / 2) hashK = std::max<U>(1, (SA.n + SB.n) / 2);
-            core_merge_ext(SA, SB, dollar, threads, bud, st, sc, hashK, false);
-            std::vector<uint64_t> WM(SA.n + SB.n, 0);
+            if (hashK > nTot / 2) hashK = std::max<U>(1, nTot / 2);
+            core_merge_kway(sides, dollar, threads, bud, st, sc, hashK, false);
+            std::vector<uint64_t> WM(nTot, 0);
             {
-                WinU64 wm; wm.open_ro(sc.wm, SA.n + SB.n, 0);
-                wm.read(0, WM.data(), SA.n + SB.n);
+                WinU64 wm; wm.open_ro(sc.wm, nTot, 0);
+                wm.read(0, WM.data(), nTot);
             }
             sc.cleanup();
             std::vector<uint64_t> want = dollar ? brute_dollar(M) : brute_cyclic(M);
             if (WM != want) {
-                std::fprintf(stderr, "SELFTEST_FAIL case=%llu mode=%s nA=%zu nB=%zu\n",
+                std::fprintf(stderr, "SELFTEST_FAIL case=%llu mode=%s k=%llu sizes=",
                              (unsigned long long)cs, dollar ? "dollar" : "cyclic",
-                             A.size(), B.size());
+                             (unsigned long long)kway);
+                for (auto& Az : As) std::fprintf(stderr, "%zu,", Az.size());
+                std::fprintf(stderr, "\n");
                 auto hex = [](const std::string& s) {
                     std::string o;
                     char buf[8];
                     for (unsigned char ch : s) { std::snprintf(buf, sizeof buf, "%02x", ch); o += buf; }
                     return o;
                 };
-                std::fprintf(stderr, "A_hex=%s B_hex=%s\n", hex(A).c_str(), hex(B).c_str());
+                for (U z = 0; z < kway; ++z)
+                    std::fprintf(stderr, "SIDE%llu_hex=%s\n", (unsigned long long)z, hex(As[z]).c_str());
                 std::fprintf(stderr, "got :");
                 for (auto p : WM) std::fprintf(stderr, " %u", p);
                 std::fprintf(stderr, "\nwant:");
@@ -1963,8 +3334,9 @@ static int selftest(U cases, uint64_t seed, U threads) {
         }
     }
     fs::remove_all("cross-selftest-scratch-" + std::to_string(U(getpid())));
-    std::printf("SELFTEST_PASS count=%llu seed=%llu\n",
-                (unsigned long long)cases, (unsigned long long)seed);
+    std::printf("SELFTEST_PASS count=%llu seed=%llu kway=%llu\n",
+                (unsigned long long)cases, (unsigned long long)seed,
+                (unsigned long long)kway);
     return 0;
 }
 
@@ -1979,6 +3351,12 @@ static void abortHandler(int sig) {
 int main_impl(int argc, char** argv) {
     std::signal(SIGABRT, abortHandler);
     G_T0 = now_sec();
+    // Cap glibc malloc arenas: every worker thread's arena reserves 64 MB of
+    // address space, and the wide phases (48 hash threads + k anchor sides +
+    // pool workers) reserved ~5 GB of pure arena VSZ - VmPeak 7.9 GB against
+    // a 6 GiB fragment-gate RLIMIT_AS (std::bad_alloc, gate 3 first attempt).
+    // 16 arenas keep parallel allocation wide without the blowup.
+    mallopt(M_ARENA_MAX, 16);
     U threads = 8;
     std::vector<std::string> args(argv + 1, argv + argc);
     auto flag = [&](const char* name) {
@@ -1991,10 +3369,15 @@ int main_impl(int argc, char** argv) {
         return false;
     };
     if (!flag("--threads").empty()) threads = std::stoull(flag("--threads"));
+    U kway = 2;
+    if (!flag("--kway").empty()) {
+        kway = std::stoull(flag("--kway"));
+        require(kway >= 2 && kway < 1000000, "--kway must be >= 2");
+    }
     if (has("--selftest")) {
         U cases = flag("--selftest").empty() ? 2000 : std::stoull(flag("--selftest"));
         uint64_t seed = flag("--seed").empty() ? 20261002 : std::stoull(flag("--seed"));
-        return selftest(cases, seed, threads);
+        return selftest(cases, seed, threads, kway);
     }
     if (has("--pair")) {
         std::string L = flag("--pair"), R = flag("--right");
@@ -2002,10 +3385,10 @@ int main_impl(int argc, char** argv) {
         if (has("--sxcr")) {
             require(!fs::exists(flag("--sxcr")) && !fs::exists(flag("--sxcr") + ".sxs"),
                     "output exists; refusing to clobber");
-            merge_pair_files(L, R, false, flag("--sxcr"), threads);
+            merge_kway_files({L, R}, false, flag("--sxcr"), threads);
         } else {
             require(has("--out-prefix"), "--pair needs --sxcr OUT or --out-prefix PREFIX");
-            merge_pair_files(L, R, true, flag("--out-prefix"), threads, has("--emit-pf"));
+            merge_kway_files({L, R}, true, flag("--out-prefix"), threads, has("--emit-pf"));
         }
         return 0;
     }
@@ -2021,7 +3404,7 @@ int main_impl(int argc, char** argv) {
     auto valued = [&](const std::string& a) {
         return a == "--threads" || a == "--work" || a == "--seed" || a == "--pair" ||
                a == "--right" || a == "--sxcr" || a == "--out-prefix" || a == "--finalize" ||
-               a == "--selftest";
+               a == "--selftest" || a == "--kway";
     };
     for (size_t i = 0; i < args.size(); ++i) {
         if (args[i].rfind("--", 0) == 0) { if (valued(args[i])) ++i; continue; }
@@ -2033,14 +3416,16 @@ int main_impl(int argc, char** argv) {
     }
     require(!dir.empty() && count && total && !prefix.empty(),
             "usage: cross_lcp_merge CHUNK_DIR COUNT TOTAL_BYTES OUT_PREFIX [--work DIR] [--serial] [--threads N]\n"
+            "       cross_lcp_merge ... [--kway K]   (merge arity: 2 = pairwise tree, the default;\n"
+            "                                       count = FLAT one-level, the primary shape)\n"
             "       cross_lcp_merge --pair LEFT --right RIGHT (--sxcr OUT | --out-prefix PREFIX)\n"
             "       cross_lcp_merge --finalize ONE --out-prefix PREFIX\n"
-            "       cross_lcp_merge --selftest CASES [--seed N]");
-    struct Part { std::string file; U offset, n; };
+            "       cross_lcp_merge --selftest CASES [--seed N] [--kway K]");
+    struct Part { std::string file; U offset, n, version = 0; };
     std::vector<Part> parts;
     for (U i = 0; i < count; ++i) {
         Part p{dir + "/chunk-" + std::to_string(i) + ".crle", 0, 0};
-        U runs = 0; sxcr_header(p.file, p.offset, p.n, runs);
+        U runs = 0; sxcr_header(p.file, p.offset, p.n, runs, p.version);
         if (i) require(parts[i - 1].offset + parts[i - 1].n == p.offset, "chunks do not tile");
         parts.push_back(p);
     }
@@ -2060,25 +3445,34 @@ int main_impl(int argc, char** argv) {
             std::string out = final ? prefix : work + "/serial-" + std::to_string(i) + ".crle";
             if (!final)
                 cross_announce_next(acc.file, parts[i].file, out);   // FIX 4 lookahead
-            merge_pair_files(acc.file, parts[i].file, final, out, threads, final && has("--emit-pf"));
+            merge_kway_files({acc.file, parts[i].file}, final, out, threads, final && has("--emit-pf"));
             acc = {out, acc.offset, acc.n + parts[i].n};
         }
         return 0;
     }
+    // Merge topology: --kway K (default 2 = the certified pairwise tree).
+    // K = count is FLAT: one k-way merge, dollar mode, straight from the raw
+    // chunks (the primary shape: one read pass + one write pass, full width
+    // from minute one, boundaries double as restart checkpoints). The
+    // pairwise path is the k=2 case of the ONE k-way core.
     U level = 0;
     while (parts.size() > 1) {
         std::vector<Part> next;
-        for (size_t j = 0; j < parts.size(); j += 2) {
-            if (j + 1 == parts.size()) { next.push_back(parts[j]); continue; }
-            bool final = parts.size() == 2 && j == 0;
+        for (size_t j = 0; j < parts.size(); j += kway) {
+            size_t g = std::min<size_t>(kway, parts.size() - j);
+            if (g == 1) { next.push_back(parts[j]); continue; }
+            bool final = parts.size() <= kway && j == 0;
             std::string out = final ? prefix
-                : work + "/L" + std::to_string(level) + "-" + std::to_string(j / 2) + ".crle";
-            if (j + 3 < parts.size())
+                : work + "/L" + std::to_string(level) + "-" + std::to_string(j / kway) + ".crle";
+            if (kway == 2 && j + 3 < parts.size())
                 cross_announce_next(parts[j + 2].file, parts[j + 3].file,
                                     work + "/L" + std::to_string(level) + "-" +
                                         std::to_string(j / 2 + 1) + ".crle");   // FIX 4 lookahead (same level)
-            merge_pair_files(parts[j].file, parts[j + 1].file, final, out, threads, final && has("--emit-pf"));
-            next.push_back({out, parts[j].offset, parts[j].n + parts[j + 1].n});
+            std::vector<std::string> ins;
+            U nn = 0;
+            for (size_t z = 0; z < g; ++z) { ins.push_back(parts[j + z].file); nn += parts[j + z].n; }
+            merge_kway_files(ins, final, out, threads, final && has("--emit-pf"));
+            next.push_back({out, parts[j].offset, nn});
         }
         parts = std::move(next);
         ++level;

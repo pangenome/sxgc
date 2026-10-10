@@ -41,8 +41,125 @@ struct Writer {
     }
 };
 struct Run { uint8_t c; uint64_t len; uint64_t h, t; };
+// Corpus-reference sidecar (chunk-i.ref): the chunk's text is NOT copied;
+// consumers read remap[corpus[offset..offset+n)] instead. Layout:
+//   "SXRF" | u32 ver=1 | u8 flags=0 | remap[256] | u32 pathLen | path | u64 offset | u64 n
+// offset/n are the chunk's corpus range (already the .crle header values);
+// the remap is embedded so every chunk is self-contained.
+static void emit_ref(const fs::path& refPath, const std::array<uint8_t,256>& remap,
+                     const fs::path& corpus, uint64_t offset, uint64_t n) {
+    int fd = ::open(refPath.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0644);
+    require(fd >= 0, "chunk ref output exists or cannot be created");
+    try {
+        Writer w(fd);
+        for (uint8_t c : {'S','X','R','F'}) w.word(c, 1);
+        w.word(1, 4);
+        w.word(0, 1);
+        for (unsigned i = 0; i < 256; ++i) w.word(remap[i], 1);
+        std::string p = fs::absolute(corpus).string();
+        require(p.size() <= 0xffffffffu, "corpus path too long");
+        w.word(p.size(), 4);
+        for (char c : p) w.word(static_cast<uint8_t>(c), 1);
+        w.word(offset, 8);
+        w.word(n, 8);
+        w.flush();
+        require(::close(fd) == 0, "chunk ref close failed");
+    } catch (...) { ::close(fd); throw; }
+}
+// Order-column sidecar (chunk-i.pos, SXP4): the merge load phase is
+// DERIVATION (BWT/LF walks from the runs) - the pile-scale bottleneck
+// (~0.7 MB/s serial). The chunker ALREADY computes the cyclic order when
+// it builds the runs, so persisting it is one write with zero extra
+// compute: the merge's raw-chunk load collapses to pure reads (1GB: load
+// 1845s -> 3.0s). Layout:
+//   "SXP4" | u32 ver=1 | u64 offset | u64 n | u64 period | u64 rsvd |
+//   u64 groups | per group: startRow, byteOff, basePos | zigzag varints
+// CHUNK_NO_POS=1 restores the legacy artifact set (walk-derived loads).
+// CHUNK_POS_MODE=dense writes the SXP3 8-byte column instead: compact
+// cuts the pos disc ~2.4x but costs ~2.3x walk wall (windowed decode per
+// access); the plan (XSA_POS_MODE) picks per scale - dense when the disc
+// budget allows it, compact when it does not.
+static void emit_pos(const fs::path& posPath, const std::vector<int32_t>& order,
+                     const std::vector<uint8_t>& text, uint64_t offset, uint64_t n) {
+    int fd = ::open(posPath.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0644);
+    require(fd >= 0, "chunk pos output exists or cannot be created");
+    try {
+        Writer w(fd);
+        // Minimal cyclic period (same rule the merge applies): the merge's
+        // periodic anchor form needs it; computed here once, on the
+        // resident text, instead of a merge-time divisor sweep.
+        uint64_t period = n;
+        {
+            std::vector<uint64_t> divs;
+            for (uint64_t d = 1; d * d <= n; ++d)
+                if (n % d == 0) { divs.push_back(d); if (d != n / d) divs.push_back(n / d); }
+            std::sort(divs.begin(), divs.end());
+            for (uint64_t d : divs) {
+                if (d >= n) continue;
+                bool ok = true;
+                for (uint64_t i = 0; i + d < n && ok; ++i) ok = text[i] == text[i + d];
+                if (ok) { period = d; break; }
+            }
+        }
+        const char* pm = getenv("CHUNK_POS_MODE");
+        if (pm && !std::strcmp(pm, "dense")) {
+            // SXP3 dense: 8 bytes/position, random access is a pread.
+            for (uint8_t c : {'S','X','P','3'}) w.word(c, 1);
+            w.word(1, 4);
+            w.word(offset, 8); w.word(n, 8);
+            w.word(period, 8); w.word(0, 8);
+            for (uint64_t i = 0; i < n; ++i) w.word(static_cast<uint64_t>(order[i]), 8);
+            w.flush();
+        } else {
+        // SXP4 body: groups of 4096 rows; per group (startRow, byteOff,
+        // basePos) in the table, zigzag varint position deltas in the
+        // stream. Absolute positions stay 64-bit (bases/n/offsets); only
+        // bounded within-group deltas are narrow. ~3.13 B/position measured
+        // on pile-like 100MB text (8n -> ~3.1n: the chunk-disc lever).
+        for (uint8_t c : {'S','X','P','4'}) w.word(c, 1);
+        w.word(1, 4);
+        w.word(offset, 8); w.word(n, 8);
+        w.word(period, 8); w.word(0, 8);
+        {
+            const uint64_t GRP = 4096;
+            uint64_t groups = (n + GRP - 1) / GRP;
+            std::vector<uint64_t> starts(groups), offs(groups), bases(groups);
+            std::vector<uint8_t> stream;
+            stream.reserve(n * 4 + 64);
+            auto putv = [&](uint64_t v) {
+                while (v >= 0x80) { stream.push_back(uint8_t(v) | 0x80); v >>= 7; }
+                stream.push_back(uint8_t(v));
+            };
+            for (uint64_t g = 0; g < groups; ++g) {
+                uint64_t b0 = g * GRP, len = std::min<uint64_t>(GRP, n - b0);
+                starts[g] = b0;
+                bases[g] = len ? static_cast<uint64_t>(order[b0]) : 0;
+                offs[g] = stream.size();
+                uint64_t prev = bases[g];
+                for (uint64_t i = 1; i < len; ++i) {
+                    uint64_t p = static_cast<uint64_t>(order[b0 + i]);
+                    putv(p >= prev ? 2 * (p - prev) : 2 * (prev - p) - 1);   // standard zigzag
+                    prev = p;
+                }
+            }
+            w.word(groups, 8);
+            w.word(0, 8);   // pad: the group table starts at byte 56
+            uint64_t streamBase = 56 + 24 * groups;
+            for (uint64_t g = 0; g < groups; ++g) {
+                w.word(starts[g], 8);
+                w.word(streamBase + offs[g], 8);
+                w.word(bases[g], 8);
+            }
+            w.flush();
+            write_all(fd, stream.data(), stream.size());
+        }
+        }
+        require(::close(fd) == 0, "chunk pos close failed");
+    } catch (...) { ::close(fd); throw; }
+}
 static void emit(const fs::path& output, const std::vector<uint8_t>& text,
-                 uint64_t offset, unsigned index) {
+                 uint64_t offset, unsigned index,
+                 const std::array<uint8_t,256>& remap, const fs::path& corpus) {
     require(!text.empty() && text.back() == 0x1e, "unaligned chunk");
     uint64_t n = text.size();
     require(n <= INT32_MAX / 2, "libsais doubled chunk exceeds int32 length");
@@ -84,22 +201,44 @@ static void emit(const fs::path& output, const std::vector<uint8_t>& text,
     }
     double wall = std::chrono::duration<double>(Clock::now() - start).count();
     fs::path path = output / ("chunk-" + std::to_string(index) + ".crle");
+    // SXCR v3 (default): COMPACT run records - char + varint length; the
+    // head/tail samples are NOT embedded (they are derivable from the
+    // persisted order column chunk-N.pos, which v3 requires). 25 B/run ->
+    // ~2 B/run: the disc lever that fits the pile (~9.7n -> ~0.8n of runs).
+    // CHUNK_NO_POS=1 restores the v2 sample-bearing 25-byte records.
+    bool v3 = !getenv("CHUNK_NO_POS");
     int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0644);
     require(fd >= 0, "chunk output exists or cannot be created");
     try {
         Writer writer(fd);
         for (uint8_t c : {'S','X','C','R'}) writer.word(c, 1);
-        // SXCR v2: 64-bit run lengths (widened chunk-route format; v1 readers
-        // and v1 chunks fail loud against each other by version).
-        writer.word(2, 4); writer.word(offset, 8); writer.word(n, 8);
+        writer.word(v3 ? 3 : 2, 4); writer.word(offset, 8); writer.word(n, 8);
         writer.word(runs.size(), 8);
-        for (auto r : runs) {
-            writer.word(r.c, 1); writer.word(r.len, 8);
-            writer.word(r.h, 8); writer.word(r.t, 8);
+        if (v3) {
+            for (auto r : runs) {
+                writer.word(r.c, 1);
+                uint64_t len = r.len;
+                while (len >= 0x80) { writer.word(uint64_t(uint8_t(len) | 0x80), 1); len >>= 7; }
+                writer.word(len, 1);
+            }
+        } else {
+            for (auto r : runs) {
+                writer.word(r.c, 1); writer.word(r.len, 8);
+                writer.word(r.h, 8); writer.word(r.t, 8);
+            }
         }
         writer.flush();
         require(::close(fd) == 0, "chunk output close failed");
     } catch (...) { ::close(fd); throw; }
+    // Corpus-referenced text: default ON (the chunk's text lives in the
+    // corpus; merge sides read remap[corpus[offset..offset+n)]). CHUNK_NO_REF
+    // restores the legacy no-sidecar artifact set (text re-derived by walk).
+    if (!getenv("CHUNK_NO_REF"))
+        emit_ref(output / ("chunk-" + std::to_string(index) + ".ref"),
+                 remap, corpus, offset, n);
+    if (!getenv("CHUNK_NO_POS"))
+        emit_pos(output / ("chunk-" + std::to_string(index) + ".pos"),
+                 order, text, offset, n);
     std::printf("CHUNK index=%u offset=%llu n=%llu runs=%zu sort_wall_seconds=%.6f path=%s\n",
                 index, (unsigned long long)offset, (unsigned long long)n,
                 runs.size(), wall, path.c_str());
@@ -141,14 +280,14 @@ int main(int argc, char** argv) {
                 chunk.push_back(remap[original]);
                 ++consumed;
                 if (original == 0x1e && chunk.size() >= target && index + 1 < wanted) {
-                    emit(output, chunk, offset, index++);
+                    emit(output, chunk, offset, index++, remap, input);
                     offset = consumed; chunk.clear();
                 }
             }
         }
         require(consumed == total, "short source read");
         require(!chunk.empty() && chunk.back() == 0x1e, "input must end at document boundary");
-        emit(output, chunk, offset, index++);
+        emit(output, chunk, offset, index++, remap, input);
         require(index == wanted, "document boundaries did not permit requested chunk count");
         std::printf("CHUNKS_PASS count=%u source_bytes=%llu\n", index,
                     (unsigned long long)consumed);
