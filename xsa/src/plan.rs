@@ -23,7 +23,7 @@ use std::path::Path;
 /// legacy chunk sets (CROSS_NO_PERSIST), measured ~1.5 s/MB serial
 /// (~0.7 MB/s - the pile-scale bottleneck that motivated persisting).
 /// Chunk artifacts: 9.9x corpus (.crle runs) + 8x (persisted pos columns).
-pub const CONSTANTS_VERSION: u32 = 2;
+pub const CONSTANTS_VERSION: u32 = 3;
 
 /// Per-byte wall rates (seconds per corpus MB), fragment-calibrated.
 pub struct Rates {
@@ -53,8 +53,21 @@ pub const RATES_V2: Rates = Rates {
 };
 
 /// Disc/RAM shape constants (measured).
-pub const CHUNK_ARTIFACTS_PER_CORPUS_MB: f64 = 17.9; // .crle runs 9.9x + persisted pos 8x
-pub const MERGE_SCRATCH_PER_CORPUS_MB: f64 = 20.0; // m2 2x + hash 2x + wm 1x + pos 8x + bwt 1x + outputs, minus consumed
+/// Pos-column MODE exchange rate (the 1GB A/B, gated 10/10 byte-identical):
+/// dense (SXP3, 8 bytes/position) walks 2.3x faster; compact (SXP4,
+/// zigzag group deltas) takes 2.2-2.4x less disc. The plan PICKS the mode
+/// per scale: dense when the disc budget allows it, compact when it does
+/// not (crle v3 0.8x + pos per mode + ref ~0).
+pub const CRLE_PER_CORPUS_MB: f64 = 0.8;        // SXCR v3 run records (1GB measured 0.78x)
+pub const POS_DENSE_PER_CORPUS_MB: f64 = 8.0;   // SXP3 dense 8n
+pub const POS_COMPACT_PER_CORPUS_MB: f64 = 3.6; // SXP4 (100MB 3.29x, 1GB 3.60x - larger scale wins)
+pub const MERGE_WALK_DENSE_S_PER_MB: f64 = 693.0 / 1000.0;   // 1GB gate5-B (SXP3 pos)
+pub const MERGE_WALK_COMPACT_S_PER_MB: f64 = 1598.0 / 1000.0; // 1GB SXP4 gate (windowed decode)
+pub fn chunk_artifacts_per_corpus_mb(pos_mode: &str) -> f64 {
+    CRLE_PER_CORPUS_MB
+        + if pos_mode == "dense" { POS_DENSE_PER_CORPUS_MB } else { POS_COMPACT_PER_CORPUS_MB }
+}
+pub const MERGE_SCRATCH_PER_CORPUS_MB: f64 = 9.1; // 100MB flat v3+SXP4 measured delta (m2+hash+wm+bwt+outputs, persisted loads keep pos on the chunk set)
 pub const CHUNK_BUILD_RAM_PER_CHUNK_MB: f64 = 27.0; // libsais doubled SA + PLCP + text (measured peak/chunk at fragment)
 pub const MERGE_RSS_GB: f64 = 4.0; // bounded design: pools + memory-aware side parallelism
 pub const DISC_MAX_USED_PERCENT: u32 = 85;
@@ -120,6 +133,7 @@ pub struct Plan {
     pub cap_gb: u64,
     pub phases: Vec<PhaseRow>,
     pub chunk_bytes_mb: f64,
+    pub pos_mode: String,
     pub disc_verdict: String,
     pub ram_verdict: String,
     pub alternatives: Vec<String>,
@@ -139,14 +153,24 @@ pub fn model(
     // Disc timeline: chunk artifacts appear first (9.9x), the merge scratch
     // grows to ~20x (m2/hash/wm/pos/bwt, intermediates consume none in
     // flat), outputs ~1.4x stay.
-    let chunk_disc_mb = mb * CHUNK_ARTIFACTS_PER_CORPUS_MB;
-    let merge_disc_mb = mb * MERGE_SCRATCH_PER_CORPUS_MB;
     let outputs_disc_mb = mb * 1.4;
+    let merge_disc_mb = mb * MERGE_SCRATCH_PER_CORPUS_MB;
+    // Pos-column mode: the exchange rate (dense = fast walk / fat disc,
+    // compact = slow walk / thin disc) is a KNOB, not doctrine. Prefer
+    // dense whenever the disc budget fits its peak with headroom (wall
+    // matters most at scale); fall back to compact when it does not.
+    // (A per-level mix - dense chunk sides, compact accumulators - is the
+    // refinement if a run is partially tight; not yet wired.)
+    let free_mb = survey.scratch_free_bytes as f64 / (1024.0 * 1024.0);
+    let dense_total_mb = mb * chunk_artifacts_per_corpus_mb("dense") + merge_disc_mb + outputs_disc_mb;
+    let pos_mode = if dense_total_mb < free_mb * 0.9 { "dense" } else { "compact" };
+    let chunk_disc_mb = mb * chunk_artifacts_per_corpus_mb(pos_mode);
+    let walk_s_per_mb = if pos_mode == "dense" { r.merge_walk_s_per_mb.max(MERGE_WALK_DENSE_S_PER_MB) } else { r.merge_walk_s_per_mb.max(MERGE_WALK_COMPACT_S_PER_MB) };
     let phases = vec![
         PhaseRow { name: "chunk", wall_s: r.chunk_s_per_mb * mb, disc_peak_mb: chunk_disc_mb, rss_gb: chunk_ram_gb },
         PhaseRow { name: "merge(load)", wall_s: r.merge_load_s_per_mb * mb, disc_peak_mb: chunk_disc_mb + merge_disc_mb, rss_gb: MERGE_RSS_GB },   // pure reads; derivation fallback is r.merge_load_derive_s_per_mb (x27 slower)
         PhaseRow { name: "merge(anchor)", wall_s: r.merge_anchor_s_per_mb * mb, disc_peak_mb: chunk_disc_mb + merge_disc_mb, rss_gb: MERGE_RSS_GB },
-        PhaseRow { name: "merge(walk)", wall_s: r.merge_walk_s_per_mb * mb, disc_peak_mb: chunk_disc_mb + merge_disc_mb, rss_gb: MERGE_RSS_GB },
+        PhaseRow { name: "merge(walk)", wall_s: walk_s_per_mb * mb, disc_peak_mb: chunk_disc_mb + merge_disc_mb, rss_gb: MERGE_RSS_GB },   // pos-mode exchange rate applied
         PhaseRow { name: "merge(emit)", wall_s: r.merge_emit_s_per_mb * mb, disc_peak_mb: chunk_disc_mb + merge_disc_mb + outputs_disc_mb, rss_gb: MERGE_RSS_GB },
         PhaseRow { name: "endpoints", wall_s: r.endpoints_s_per_mb * mb, disc_peak_mb: chunk_disc_mb + outputs_disc_mb, rss_gb: 0.4 },
         PhaseRow { name: "slim", wall_s: r.slim_s_per_mb * mb, disc_peak_mb: chunk_disc_mb + outputs_disc_mb, rss_gb: 0.04 },
@@ -154,7 +178,6 @@ pub fn model(
     ];
     // Verdicts.
     let disc_peak_mb = chunk_disc_mb + merge_disc_mb + outputs_disc_mb;
-    let free_mb = survey.scratch_free_bytes as f64 / (1024.0 * 1024.0);
     // FIT (absolute: projected peak vs free) and HYGIENE (the banked >=15%-
     // free policy, overridable by the operator with an explicit, journaled
     // --scratch-free-pct - a bounded run with many-x headroom on a full
@@ -198,7 +221,7 @@ pub fn model(
     if !survey.cx16 {
         alternatives.push("CPU lacks cmpxchg16b: the merge's page pool requires it (CROSS_NO_POOL=1 runs without the pool, slower)".to_string());
     }
-    Plan { survey, chunks, kway, threads, cap_gb, phases, chunk_bytes_mb, disc_verdict, ram_verdict, alternatives }
+    Plan { survey, chunks, kway, threads, cap_gb, phases, chunk_bytes_mb, pos_mode: pos_mode.to_string(), disc_verdict, ram_verdict, alternatives }
 }
 
 fn hms(s: f64) -> String {
@@ -227,6 +250,17 @@ impl Plan {
             ));
         }
         s.push_str(&format!("XSA_PLAN_TOTAL wall={} wall_s={:.0} chunk_bytes_mb={:.0}\n", hms(total), total, self.chunk_bytes_mb));
+        // The pos-mode pick with its arithmetic: dense = 8n pos disc /
+        // fast walk; compact = 3.6n / 2.3x slower walk. Dense whenever
+        // its peak fits free with 10% headroom, else compact.
+        let mb = self.survey.corpus_bytes as f64 / (1024.0 * 1024.0);
+        let free_gb = self.survey.scratch_free_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+        let dense_gb = (mb * chunk_artifacts_per_corpus_mb("dense")) / 1024.0;
+        let compact_gb = (mb * chunk_artifacts_per_corpus_mb("compact")) / 1024.0;
+        s.push_str(&format!(
+            "XSA_POS_MODE mode={} chunk_set_gb_dense={:.1} chunk_set_gb_compact={:.1} free_gb={:.1} rule=dense-if-10pct-headroom-else-compact (walk s/MB dense={:.3} compact={:.3})\n",
+            self.pos_mode, dense_gb, compact_gb, free_gb, MERGE_WALK_DENSE_S_PER_MB, MERGE_WALK_COMPACT_S_PER_MB,
+        ));
         s.push_str(&format!("XSA_PLAN_DISC {}\n", self.disc_verdict));
         s.push_str(&format!("XSA_PLAN_RAM {}\n", self.ram_verdict));
         for a in &self.alternatives {

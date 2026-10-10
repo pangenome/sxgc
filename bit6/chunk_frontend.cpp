@@ -75,15 +75,16 @@ static void emit_ref(const fs::path& refPath, const std::array<uint8_t,256>& rem
 //   "SXP4" | u32 ver=1 | u64 offset | u64 n | u64 period | u64 rsvd |
 //   u64 groups | per group: startRow, byteOff, basePos | zigzag varints
 // CHUNK_NO_POS=1 restores the legacy artifact set (walk-derived loads).
+// CHUNK_POS_MODE=dense writes the SXP3 8-byte column instead: compact
+// cuts the pos disc ~2.4x but costs ~2.3x walk wall (windowed decode per
+// access); the plan (XSA_POS_MODE) picks per scale - dense when the disc
+// budget allows it, compact when it does not.
 static void emit_pos(const fs::path& posPath, const std::vector<int32_t>& order,
                      const std::vector<uint8_t>& text, uint64_t offset, uint64_t n) {
     int fd = ::open(posPath.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0644);
     require(fd >= 0, "chunk pos output exists or cannot be created");
     try {
         Writer w(fd);
-        for (uint8_t c : {'S','X','P','4'}) w.word(c, 1);
-        w.word(1, 4);
-        w.word(offset, 8); w.word(n, 8);
         // Minimal cyclic period (same rule the merge applies): the merge's
         // periodic anchor form needs it; computed here once, on the
         // resident text, instead of a merge-time divisor sweep.
@@ -100,12 +101,25 @@ static void emit_pos(const fs::path& posPath, const std::vector<int32_t>& order,
                 if (ok) { period = d; break; }
             }
         }
-        w.word(period, 8); w.word(0, 8);
+        const char* pm = getenv("CHUNK_POS_MODE");
+        if (pm && !std::strcmp(pm, "dense")) {
+            // SXP3 dense: 8 bytes/position, random access is a pread.
+            for (uint8_t c : {'S','X','P','3'}) w.word(c, 1);
+            w.word(1, 4);
+            w.word(offset, 8); w.word(n, 8);
+            w.word(period, 8); w.word(0, 8);
+            for (uint64_t i = 0; i < n; ++i) w.word(static_cast<uint64_t>(order[i]), 8);
+            w.flush();
+        } else {
         // SXP4 body: groups of 4096 rows; per group (startRow, byteOff,
         // basePos) in the table, zigzag varint position deltas in the
         // stream. Absolute positions stay 64-bit (bases/n/offsets); only
         // bounded within-group deltas are narrow. ~3.13 B/position measured
         // on pile-like 100MB text (8n -> ~3.1n: the chunk-disc lever).
+        for (uint8_t c : {'S','X','P','4'}) w.word(c, 1);
+        w.word(1, 4);
+        w.word(offset, 8); w.word(n, 8);
+        w.word(period, 8); w.word(0, 8);
         {
             const uint64_t GRP = 4096;
             uint64_t groups = (n + GRP - 1) / GRP;
@@ -138,6 +152,7 @@ static void emit_pos(const fs::path& posPath, const std::vector<int32_t>& order,
             }
             w.flush();
             write_all(fd, stream.data(), stream.size());
+        }
         }
         require(::close(fd) == 0, "chunk pos close failed");
     } catch (...) { ::close(fd); throw; }

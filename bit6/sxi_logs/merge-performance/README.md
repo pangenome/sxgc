@@ -363,3 +363,49 @@ the sample check fired "persisted order disagrees with the referenced
 text". Fixed (return without the extra shift). The sampled checks keep
 earning their keep: this class of bug (correct bulk path, wrong point
 path) is invisible to load-time validation and caught in seconds.
+
+## POS-COLUMN MODE SWITCH (steering 2026-10-10): a KNOB, not doctrine
+
+The measured trade (1GB A/B, both 10/10 byte-identical + chi exact):
+compact (SXP4) cuts pos disc 2.2-2.4x but costs the WALK 2.3x at 1GB
+(1598s vs 693s; loads 1.7s vs 3.0s; the walk is the dominant phase in
+every config - 78% of the 1GB compact merge). Mode is now chosen by the
+plan, not hardcoded:
+* CHUNK_POS_MODE / CROSS_POS_MODE = dense (SXP3 8n) | compact (SXP4),
+  honored by the chunker (persist-at-chunk-time) and the merge
+  (intermediate emission); readers sniff the format either way.
+  CROSS_NO_SXP4 stays as the legacy dense alias.
+* plan.rs CONSTANTS v3: crle 0.8n + pos per mode (dense 8.0n / compact
+  3.6n), merge scratch 9.1n (measured 100MB flat v3+SXP4; persisted loads
+  keep pos on the chunk set, no walked.pos dumps), per-mode walk rates
+  from the 1GB gates (dense 0.693, compact 1.598 s/MB; the fragment-
+  calibrated floor stays as a max()).
+* XSA_POS_MODE journal line with the arithmetic (chunk_set_gb both
+  modes, free, rule = dense-if-10%-headroom-else-compact); chain.rs sets
+  both knobs plan-picked unless the operator set them.
+* verdicts at the scales: 100MB/1GB -> dense (disc allows; wall-optimal);
+  pile (1.31TB, k=32) -> compact AND INFEASIBLE regardless: peak ~18.1TB
+  vs 1.83TB free (3.2x miss even compact) - the honest DISC_FAIL
+  arithmetic; the delete-consumed/progressive shape remains the pile's
+  path (peak = corpus + accumulator + k live sides).
+* gates: tiny k=2/16/32 BOTH modes 6/6 byte-identical; 100MB production
+  dense gate 10/10 + chi EXACT.
+EXCHANGE RATE TABLE (same binary, flat k=16):
+| scale | mode    | pos disc | chunk set | loads  | walk   | merge total |
+| 100MB | dense   |  8.00n   |  8.81n    | 0.125s | 38.5s  | 53.5s       |
+| 100MB | compact |  3.29n   |  4.09n    | 0.225s | 36.3s  | 51.7s       |
+| 1GB   | dense   |  8.00n   |  8.78n    |  3.0s  |  693s  | 1613s       |
+| 1GB   | compact |  3.60n   |  4.38n    |  1.7s  | 1598s  | 2452s       |
+At 100MB the compact walk penalty is ~nil (both walks ~37s - cache-friendly
+interleave depth); it emerges at 1GB where the k=16 overlay interleaves
+past the 4-slot TLS group cache (2.3x). Next lever per steering: an
+LRU/larger decode cache for the compact column may recover much of the
+2.3x; one experiment queued after the same-binary 1GB dense gate.
+TOOLING GOTCHAS (journal for the next lane member): (a) the mode-switch
+chunker edits were initially not re-packaged - the staged chunk_frontend
+in ~/.cache/xsa/<id>/ was stale and the first "dense" 100MB gate silently
+ran COMPACT (green gates, wrong mode: verify the chunk magic, not just
+the pass); (b) `cargo build | tail -1 && gate` masks build failures
+(tail exits 0) - grep for Finished/error explicitly; (c) PosColumn's
+dense branch needs byteBase=40 from the .pos caller (I passed 0 in the
+refactor; SXP4 masked it until the dense tiny gates caught it).

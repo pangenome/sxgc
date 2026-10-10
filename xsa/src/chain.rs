@@ -575,10 +575,21 @@ fn run_chain(options: Options) -> Result<(), String> {
     for line in build_plan.render().lines() {
         journal.line(line);
     }
-    for knob in ["CROSS_NO_POOL", "CROSS_ASYNC_FILL", "CROSS_HASH_K", "CROSS_PIPELINE", "CROSS_SHARDS", "CROSS_NO_REF", "CHUNK_NO_REF"] {
+    for knob in ["CROSS_NO_POOL", "CROSS_ASYNC_FILL", "CROSS_HASH_K", "CROSS_PIPELINE", "CROSS_SHARDS", "CROSS_NO_REF", "CHUNK_NO_REF", "CHUNK_POS_MODE", "CROSS_POS_MODE", "CROSS_NO_SXP4"] {
         if let Some(value) = std::env::var_os(knob) {
             journal.line(&format!("KNOB {knob}={}", value.to_string_lossy()));
         }
+    }
+    // Pos-column mode: the plan's pick (XSA_POS_MODE) unless the operator
+    // already chose. Dense = fast walk / fat disc; compact = thin disc /
+    // slow walk. Both writers honor it; the reader sniffs the format.
+    if std::env::var_os("CHUNK_POS_MODE").is_none() {
+        std::env::set_var("CHUNK_POS_MODE", &build_plan.pos_mode);
+        journal.line(&format!("KNOB CHUNK_POS_MODE={} (plan-picked)", build_plan.pos_mode));
+    }
+    if std::env::var_os("CROSS_POS_MODE").is_none() && std::env::var_os("CROSS_NO_SXP4").is_none() {
+        std::env::set_var("CROSS_POS_MODE", &build_plan.pos_mode);
+        journal.line(&format!("KNOB CROSS_POS_MODE={} (plan-picked)", build_plan.pos_mode));
     }
     // Preflight: disc gate before anything is written (the plan-first
     // verdicts above carry the fit + hygiene contract; this is the belt).

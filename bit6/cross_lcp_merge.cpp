@@ -1665,7 +1665,9 @@ static void load_side_ext(const std::string& path, U threads,
         s.sxsPath = posS; s.ownsSxs = false; s.refText = true; s.posBase = 40;
         s.period = period; s.bwtFromRuns = true;
         {
-            PosColumn pos; pos.open_ro(s.sxsPath, s.n, 0, 0);
+            // 40 = the SXP3 dense header (byteBase); the SXP4 branch
+            // ignores it and derives its own layout from the sniff.
+            PosColumn pos; pos.open_ro(s.sxsPath, s.n, 40, 0);
             U buf[4096];
             for (U i = 0; i < s.n; i += 4096) {
                 U len = std::min<U>(4096, s.n - i);
@@ -2804,7 +2806,13 @@ static U emit_sxcr_ext(const std::string& path, const WinBytes& m2,
                     if (ok) { per = d; break; }
                 }
             }
-            if (getenv("CROSS_NO_SXP4")) {
+            // Intermediate pos columns: dense (SXP3) or compact (SXP4).
+            // Compact cuts disc ~2.4x but costs ~2.3x walk wall on the
+            // NEXT level's loads+walks; the plan (XSA_POS_MODE) picks per
+            // scale. CROSS_NO_SXP4 remains the legacy dense alias.
+            const char* cpm = getenv("CROSS_POS_MODE");
+            bool densePos = (cpm && !std::strcmp(cpm, "dense")) || getenv("CROSS_NO_SXP4");
+            if (densePos) {
                 OutFile f(chunk_stem(path) + ".pos");
                 char magic[4]{'S','X','P','3'}; f.raw(magic, 4);
                 f.w32(1); f.w64(offset); f.w64(n); f.w64(per); f.w64(0);
