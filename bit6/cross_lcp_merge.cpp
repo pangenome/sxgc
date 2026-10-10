@@ -2483,10 +2483,10 @@ static void v2_flow_wait(const std::string& prefix, U band, U window) {
 // One band sub-piece: header + chars + lens + heads packed + tails packed.
 struct V2Piece {
     std::vector<uint8_t> chars;
-    std::vector<U> lens;
+    std::vector<uint32_t> lens;
     std::vector<U> heads, tails;
     void add(uint8_t c, U len, U head, U tail) {
-        chars.push_back(c); lens.push_back(len); heads.push_back(head); tails.push_back(tail);
+        chars.push_back(c); lens.push_back(uint32_t(len)); heads.push_back(head); tails.push_back(tail);
     }
     bool empty() const { return chars.empty(); }
     U size() const { return chars.size(); }
