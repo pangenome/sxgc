@@ -59,7 +59,16 @@ lands; rows go to `curve-1b.results`.
 | shape     | mode  | peak merge disc | end tree | merges | 10/10 bytes | chi |
 |-----------|-------|-----------------|----------|--------|-------------|-----|
 | flat k=10 | dense | 30.5 GB (30.5 n) | 37.7 GB | 1 | PASS | exact |
-| fan-in k=4| dense | (in flight)      |          | 2 | (in flight) | |
+| fan-in k=4| dense | 30.5 GB (30.5 n) | (merged+finish only) | 2 | PASS | exact |
+
+**Delete-as-you-go bounds the inputs, not the peak.** The fan-in k=4 peak
+merge disc (30.48 GB) is the SAME as flat k=10 (30.49 GB): the dominant terms
+are corpus-scale OUTPUTS that stay fully materialized, not the accumulated
+input history. Fan-in merge wall 43:17 vs flat 22:45 at 1 GB (two levels walk
+the corpus twice, and its 400 MiB level-0 sides hit the pool worse than
+flat's 100 MiB sides). The input bound is verified: after the run the chunk
+and mwork dirs are empty. See `CORPUS_SCALE_OUTPUTS_SURVEY.md` for why the peak
+is output-bound and what it would take to make the pile fit.
 
 ## 2. Footprint per corpus byte (100 MB, measured, `du -sb` of each dir)
 
@@ -108,9 +117,11 @@ exact arithmetic for the fan-in shape at k=4.
 | 1 GiB      | 1250   | 1250->313->79->20->5->2->1 (6)          | 420    | ~30 n ~ 39 TB              | ~25 n ~ 33 TB     | DISC_FAIL |
 
 Even the fan-in shape is a **disc miss at pile**: peak ~25-30 n = 33-39 TB vs
-~1.8 TB free. The peak is dominated by the level-0 leaf set (the whole chunk
-set must exist before level 0) plus one group's merge transient. The levers
-that actually fit the pile are (a) `frag.agg` compaction / streamed finish
-(12 n of the 21 n finish term) and (b) a smaller chunk set (compact pos), not
-the merge topology alone. This is called out as a decision for the supervisor
-rather than silently changed.
+~1.8 TB free. The peak is dominated by the corpus-scale OUTPUTS (measured
+30.5 n at 1 GB for BOTH flat and fan-in), not the merge topology — see
+`CORPUS_SCALE_OUTPUTS_SURVEY.md`, which finds the per-run head SA stored 3x,
+tail SA 3x, run structure 2x, and puts the achievable peak (dedup +
+bit-pack + streamed finish) at ~5-8 n = 6.5-10.5 TB, and the product-only
+container (`rlebwt` + lite index) at ~1.5-2.6 n. Whether the pile is
+launchable is therefore a SHIPPED-CONTAINER decision, flagged for the
+supervisor, not a merge-shape decision.
