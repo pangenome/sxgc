@@ -1,1 +1,28 @@
 ### RUN gate-1b-flat10-d mode=dense 2026-10-10T04:55:17+00:00
+rc=0 2026-10-10T05:47:57+00:00
+BYTE_IDENTITY pass=10 fail=0
+xsa chi-rspace: chi = 283296933 (N=1000000665, R=368036609) stream-agg=true buffers=4194304
+CHI_EXACT_OK
+MERGE_PEAK_DISC_USED_BYTES 30498604534 (sampled every 2s during the merge)
+PEAK_DISC_USED_BYTES 37705100057 (scratch tree after finish)
+chunk END rc=0 wall=4:24.07 peak_rss_kb=4351336 disc_scratch_bytes=8772480373
+merge END rc=0 wall=22:45.54 peak_rss_kb=1442912 disc_scratch_bytes=17496858972
+endpoints END rc=0 wall=5:32.30 peak_rss_kb=388752 disc_scratch_bytes=23661479687
+slim END rc=0 wall=18:33.91 peak_rss_kb=30208 disc_scratch_bytes=35438722546
+sweep END rc=0 wall=1:22.58 peak_rss_kb=4096 disc_scratch_bytes=37705099893
+CROSS_PHASE m2-build wall=1.333 cumulative=2.738
+CROSS_PHASE hash-build wall=1.479 cumulative=4.217
+CROSS_PHASE anchor+repair wall=9.100 cumulative=13.317
+CROSS_PHASE cross-merge wall=607.381 cumulative=620.698
+CROSS_PHASE emit-count wall=375.922 cumulative=996.761
+CROSS_PHASE emit-write wall=365.183 cumulative=1361.944
+CROSS_PHASE emit-pf-text wall=0.251 cumulative=1362.195
+CROSS_PHASE emit-pf-checkpoints wall=2.462 cumulative=1364.658
+CROSS_KWAY k=10 mode=dollar left=chunk-0.crle right=chunk-9.crle n=1000000665 sizes=100000503,100043274,100042018,100413205,100005327,100006293,100191696,100100279,100007775,99190295 out=frag out_runs=368036610 wall_total=1364.678 comparisons=4165399125 symbols_compared=67541262140 probes=2872572824 max_lce=51460 fast_decided=3357125680 probe_decided=808273403 cap_decided=42 tie_decided=0 lce_over_10k=238249 lce_over_100k=0 lce_over_1m=0 anchors_sum=47 walk_steps_sum=47 block_rows_sum=217398 peak_rss_kib=1442912 hash_k=0 t_fast=12324.255 t_prep=32.497 t_probe=3303.717 t_scan=4951.154
+LOAD_STATS sides=10 par=10 wall=1.405 per_side_avg=1.405 (serial-equivalent width 1)
+POOL_STATS fd=6 bytes=2000001336 fills=5 hits=0 misses=0 torn=0
+POOL_STATS fd=5 bytes=2000001336 fills=441088685 hits=0 misses=0 torn=0
+POOL_STATS fd=4 bytes=2000001330 fills=692144396 hits=22135452509 misses=344221188 torn=9119
+POOL_STATS fd=4 bytes=2000001330 fills=1309732940 hits=1756653330 misses=979423601 torn=686
+GATE_gate-1b-flat10-d_GREEN
+### RUN gate-1b-k4-d mode=dense 2026-10-10T05:48:05+00:00

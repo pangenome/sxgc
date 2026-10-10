@@ -29,13 +29,27 @@ The walk is **interleave-depth-bound, not side-size-bound, at 100 MB**: k=2 is
 size is a secondary lever (k=4: 6.25 MiB sides 6.0 MB/s vs 25 MiB sides
 4.8 MB/s). All pool hit rates are >99.9% here.
 
-1 GB fixture (10 chunks, 100 MiB sides), same binary — run in flight at
-journal time; rows appended to `gate-1b.results` when it completes. THIS is
-where the M2-pool collapse the README records (97% -> 57% hit rate, walk
-693 s -> 1597 s on the SXP4-era lineage) is expected to appear: the k=16 flat
-walk holds 16 x 100 MiB sides resident and interleaves past the pool, while
-the fan-in k=4 leaves hold only 4 sides. The k=4 L0 side size is 4 x 100 MiB =
-**400 MiB** — the top-level-side datapoint this curve needs.
+1 GB fixture (10 chunks, 100 MiB sides), same binary, measured:
+
+| shape / level        | k | side size | cross-merge wall | walk MB/s | M2 pool hit rate |
+|----------------------|---|-----------|------------------|-----------|------------------|
+| flat k=10 (1 level)  | 10| 100 MiB   | 607.4 s          | 1.65      | 98.5%            |
+| flat k=16 (banked, mergperf-1b-dense) | 16 | 62.5 MiB | 1596.6 s | 0.63 | 57% |
+| fan-in k=4 L0        | 4 | 400 MiB   | (in flight)      |           |                  |
+| fan-in k=4 L1        | 4 | 300 MiB   | (in flight)      |           |                  |
+
+THIS is the pool-collapse curve: at 1 GB, k=16 drops to 57% M2-pool hits and
+0.63 MB/s while k=10 holds 98.5% and 1.65 MB/s - a 2.6x walk speedup for 100 MiB
+vs 62.5 MiB sides. The collapse is the **k x side-size working set** crossing
+the pool, not k alone. The fan-in k=4 rows (400 MiB L0 sides) are being
+measured and land in `gate-1b.results`.
+
+## 1b. Peak disc at 1 GB (measured)
+
+| shape     | mode  | peak merge disc | end tree | merges | 10/10 bytes | chi |
+|-----------|-------|-----------------|----------|--------|-------------|-----|
+| flat k=10 | dense | 30.5 GB (30.5 n) | 37.7 GB | 1 | PASS | exact |
+| fan-in k=4| dense | (in flight)      |          | 2 | (in flight) | |
 
 ## 2. Footprint per corpus byte (100 MB, measured, `du -sb` of each dir)
 
