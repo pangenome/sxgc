@@ -409,3 +409,38 @@ the pass); (b) `cargo build | tail -1 && gate` masks build failures
 (tail exits 0) - grep for Finished/error explicitly; (c) PosColumn's
 dense branch needs byteBase=40 from the .pos caller (I passed 0 in the
 refactor; SXP4 masked it until the dense tiny gates caught it).
+
+## HONEST CORRECTION + the 1GB dense same-binary gate (2026-10-10)
+
+The same-binary 1GB DENSE gate (mergperf-1b-dense, plan-picked dense):
+10/10 byte-identical vs the banked 1b-B run, chi 283296933 EXACT - but
+the WALK came out 1596.6s, equal to the compact 1598.5s, NOT the 693s of
+the gate5-era binary. The "compact costs 2.3x walk" premise from the
+steering was a BINARY-VS-BINARY confound, not a format property:
+* gate5-B binary (6429c5d8): t_fast=12033 t_probe=4466 CPU-s,
+  M2 pool 97% hits (24.1B hits / 0.7B fills), walk 693s.
+* current binary (both pos modes): t_fast=~36900, t_scan 5297->17566,
+  M2 pool 57% hits (1.7B hits / 1.3B fills), walk ~1597s. Identical
+  comparisons/probes counts - the WORK is the same, the per-access
+  cost tripled, in BOTH modes.
+So at 1GB on the current binary dense==compact on walk wall; the pos
+format is NOT the walk bottleneck. The regression entered with the
+SXP4-era binary lineage (PosColumn refactor or the windowed-walk-front
+behavior at 16-side interleave depth - not yet bisected; 100MB gates do
+not show it: dense 38.5s vs compact 36.3s walk parity there).
+In flight: 1GB compact with the 16-slot LRU decoded-group cache for
+PosColumn::at() (the steering's experiment) - tiny gates 6/6 byte-
+identical both modes. If t_scan drops materially, at()-misses were part
+of the story; t_fast (M2 at_span) is unaffected by it either way and is
+the real remaining walk lever (pool-hit collapse points at the M2
+window/pool interplay at k=16 depth - next lane item after this run).
+EXCHANGE TABLE (same current binary, honest):
+| scale | mode    | walk    | merge wall | note |
+| 1GB   | dense   | 1596.6s | 40:01      | 10/10, chi exact |
+| 1GB   | compact | 1598.5s | ~41:xx     | 10/10, chi exact |
+| 100MB | dense   | 38.5s   | 53.5s      | 10/10, chi exact |
+| 100MB | compact | 36.3s   | 51.7s      | 10/10, chi exact |
+The dense chunk set costs 8.0n pos disc vs compact 3.3-3.6n: with walk
+parity measured, compact is the better deal on the current binary at
+both scales; the plan's rule stays (dense only when disc is abundant),
+revisit after the walk regression is bisected and fixed.

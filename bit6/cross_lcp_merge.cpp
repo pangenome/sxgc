@@ -855,23 +855,38 @@ struct PosColumn {
             e.tag[0] = page; e.tag[1] = UINT64_MAX;
             return e.dv[0][i % 4096] + shift;
         }
-        // compact: windowed decoded-group cache. Groups hold GRP=4096 rows
-        // and startRow is GRP-aligned, so group == page: mirror the dense
-        // 4-slot TLS page cache and decode a whole group once per miss
-        // (the per-run samplers hit at() twice per run).
-        thread_local TLS4 tls;
+        // compact: 16-slot LRU decoded-group cache. Groups hold GRP=4096
+        // rows and startRow is GRP-aligned, so group == page. The walk
+        // interleaves k sides per worker thread; 4 slots thrash at k>=8
+        // (every access a group decode - the measured 2.3x compact walk
+        // penalty at 1GB/k=16), 16 slots cover the per-side hot groups.
+        struct TL16 { int fd = -1; U gen = 0; U stamp = 0; U g = UINT64_MAX;
+                      std::unique_ptr<U[]> rows; };
+        thread_local std::array<TL16, 16> cache;
+        thread_local U clock = 0;
         U page = i / 4096;
-        for (unsigned z = 0; z < 4; ++z)
-            if (tls.e[z].fd == fd && tls.e[z].gen == gen && tls.e[z].tag[0] == page)
-                return tls.e[z].dv[0][i % 4096];
-        PosColumn* self = const_cast<PosColumn*>(this);
-        TL& e = tls.e[tls.nxt++ & 3];
-        e.fd = fd; e.gen = gen;
-        U g = page;
-        U gEnd = (g + 1 < groups) ? tab[3 * (g + 1)] : count;
-        self->decodeGroup(g, tab[3 * g], gEnd, e.dv[0]);
-        e.tag[0] = page; e.tag[1] = UINT64_MAX;
-        return e.dv[0][i % 4096];   // decodeGroup output already includes shift
+        U slot = 16;
+        for (U z = 0; z < 16; ++z)
+            if (cache[z].fd == fd && cache[z].gen == gen && cache[z].g == page)
+                { slot = z; break; }
+        if (slot == 16) {
+            for (U z = 0; z < 16; ++z)
+                if (cache[z].fd != fd || cache[z].gen != gen || !cache[z].rows)
+                    { slot = z; break; }
+            if (slot == 16) {   // LRU victim
+                U best = 0;
+                for (U z = 1; z < 16; ++z) if (cache[z].stamp < cache[best].stamp) best = z;
+                slot = best;
+            }
+            TL16& e = cache[slot];
+            if (e.fd != fd || e.gen != gen || !e.rows) e.rows.reset(new U[4096]);
+            e.fd = fd; e.gen = gen;
+            U gEnd = (page + 1 < groups) ? tab[3 * (page + 1)] : count;
+            const_cast<PosColumn*>(this)->decodeGroup(page, tab[3 * page], gEnd, e.rows.get());
+            e.g = page;
+        }
+        cache[slot].stamp = ++clock;
+        return cache[slot].rows[i % 4096];   // decodeGroup output already includes shift
     }
     void read(U i, U* buf, U len) const {   // bulk sequential decode
         if (i + len > count) fail("pos column bulk bounds");
