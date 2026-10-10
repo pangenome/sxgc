@@ -1,0 +1,5 @@
+### ADAPTER_VERIFY 2026-10-10T18:49:56+00:00 corpus=/mnt/nvme2n1/erikg/extcols-scratch/mergperf-1b-snap.txt pftext=/mnt/nvme2n1/erikg/extcols-scratch/mergperf-1b-B/merged/frag.pftext
+compared 1000000665 bytes; remap-active corpus bytes: 224; mismatched blocks: 0
+ADAPTER_IDENTITY
+rc=0 2026-10-10T18:50:30+00:00
+GATE_ADAPTER_IDENTITY_GREEN
