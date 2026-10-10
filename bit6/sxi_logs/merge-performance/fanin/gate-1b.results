@@ -26,3 +26,69 @@ POOL_STATS fd=4 bytes=2000001330 fills=692144396 hits=22135452509 misses=3442211
 POOL_STATS fd=4 bytes=2000001330 fills=1309732940 hits=1756653330 misses=979423601 torn=686
 GATE_gate-1b-flat10-d_GREEN
 ### RUN gate-1b-k4-d mode=dense 2026-10-10T05:48:05+00:00
+rc=0 2026-10-10T06:58:12+00:00
+BYTE_IDENTITY pass=10 fail=0
+xsa chi-rspace: chi = 283296933 (N=1000000665, R=368036609) stream-agg=true buffers=4194304
+CHI_EXACT_OK
+MERGE_PEAK_DISC_USED_BYTES 30479503744 (sampled every 2s during the merge)
+PEAK_DISC_USED_BYTES 28932632257 (scratch tree after finish)
+chunk END rc=0 wall=3:45.04 peak_rss_kb=4354304 disc_scratch_bytes=8772480807
+merge END rc=0 wall=43:16.66 peak_rss_kb=1513500 disc_scratch_bytes=8724391401
+endpoints END rc=0 wall=5:12.35 peak_rss_kb=381636 disc_scratch_bytes=14889012033
+slim END rc=0 wall=16:27.10 peak_rss_kb=30208 disc_scratch_bytes=26666254783
+sweep END rc=0 wall=1:22.85 peak_rss_kb=6144 disc_scratch_bytes=28932632093
+CROSS_PHASE m2-build wall=0.570 cumulative=1.880
+CROSS_PHASE hash-build wall=0.846 cumulative=2.726
+CROSS_PHASE anchor+repair wall=7.358 cumulative=10.084
+CROSS_PHASE cross-merge wall=296.853 cumulative=306.937
+CROSS_PHASE sxcr-count wall=93.987 cumulative=401.175
+CROSS_PHASE sxcr-write wall=104.073 cumulative=505.247
+CROSS_PHASE sidecar-write wall=0.948 cumulative=506.195
+CROSS_PHASE m2-build wall=0.476 cumulative=508.331
+CROSS_PHASE hash-build wall=0.706 cumulative=509.037
+CROSS_PHASE anchor+repair wall=7.285 cumulative=516.322
+CROSS_PHASE cross-merge wall=322.141 cumulative=838.463
+CROSS_PHASE sxcr-count wall=84.121 cumulative=922.768
+CROSS_PHASE sxcr-write wall=96.679 cumulative=1019.446
+CROSS_PHASE sidecar-write wall=0.986 cumulative=1020.433
+CROSS_PHASE m2-build wall=0.238 cumulative=1022.201
+CROSS_PHASE hash-build wall=0.338 cumulative=1022.539
+CROSS_PHASE anchor+repair wall=6.213 cumulative=1028.752
+CROSS_PHASE cross-merge wall=21.835 cumulative=1050.587
+CROSS_PHASE sxcr-count wall=10.245 cumulative=1061.396
+CROSS_PHASE sxcr-write wall=16.019 cumulative=1077.415
+CROSS_PHASE sidecar-write wall=0.483 cumulative=1077.898
+CROSS_PHASE m2-build wall=1.228 cumulative=1083.917
+CROSS_PHASE hash-build wall=1.145 cumulative=1085.062
+CROSS_PHASE anchor+repair wall=23.602 cumulative=1108.664
+CROSS_PHASE cross-merge wall=568.412 cumulative=1677.076
+CROSS_PHASE emit-count wall=460.355 cumulative=2137.588
+CROSS_PHASE emit-write wall=454.451 cumulative=2592.039
+CROSS_PHASE emit-pf-text wall=0.250 cumulative=2592.289
+CROSS_PHASE emit-pf-checkpoints wall=2.906 cumulative=2595.195
+CROSS_KWAY k=4 mode=cyclic left=chunk-0.crle right=chunk-3.crle n=400499000 sizes=100000503,100043274,100042018,100413205 out=L0-0.crle out_runs=150760120 wall_total=506.202 comparisons=965983357 symbols_compared=14151982532 probes=579444468 max_lce=33999 fast_decided=804474439 probe_decided=161508918 cap_decided=0 tie_decided=0 lce_over_10k=28690 lce_over_100k=0 lce_over_1m=0 anchors_sum=16 walk_steps_sum=16 block_rows_sum=81491 peak_rss_kib=1322048 hash_k=0 t_fast=7372.797 t_prep=6.381 t_probe=467.438 t_scan=2281.061
+CROSS_KWAY k=4 mode=cyclic left=chunk-4.crle right=chunk-7.crle n=400303595 sizes=100005327,100006293,100191696,100100279 out=L0-1.crle out_runs=150755001 wall_total=513.880 comparisons=965343817 symbols_compared=14066046546 probes=570009304 max_lce=28383 fast_decided=805421707 probe_decided=159922110 cap_decided=0 tie_decided=0 lce_over_10k=25662 lce_over_100k=0 lce_over_1m=0 anchors_sum=21 walk_steps_sum=21 block_rows_sum=89576 peak_rss_kib=1513500 hash_k=0 t_fast=8744.669 t_prep=6.774 t_probe=499.310 t_scan=2910.081
+CROSS_PAIR mode=cyclic left=chunk-8.crle right=chunk-9.crle nA=100007775 nB=99190295 out=L0-2.crle out_runs=75031047 wall_total=57.138 comparisons=199244542 symbols_compared=2899881577 probes=127057104 max_lce=4208 fast_decided=167537544 probe_decided=31706998 cap_decided=0 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_A=6 anchors_B=4 walk_steps_A=6 walk_steps_B=4 block_rows_A=24002 block_rows_B=22329 peak_rss_kib=1513500 hash_k=0 t_fast=422.205 t_prep=1.231 t_probe=32.575 t_scan=132.821
+CROSS_KWAY k=3 mode=dollar left=L0-0.crle right=L0-2.crle n=1000000665 sizes=400499000,400303595,199198070 out=frag out_runs=368036610 wall_total=1517.045 comparisons=2000176068 symbols_compared=36240829719 probes=1645277486 max_lce=51460 fast_decided=1551531073 probe_decided=448644960 cap_decided=35 tie_decided=0 lce_over_10k=181864 lce_over_100k=0 lce_over_1m=0 anchors_sum=103 walk_steps_sum=103 block_rows_sum=194550 peak_rss_kib=1513500 hash_k=0 t_fast=19361.716 t_prep=17.423 t_probe=3321.198 t_scan=1363.612
+LOAD_STATS sides=4 par=4 wall=1.310 per_side_avg=1.310 (serial-equivalent width 1)
+POOL_STATS fd=6 bytes=800998008 fills=5 hits=0 misses=0 torn=0
+POOL_STATS fd=5 bytes=800998008 fills=70244403 hits=0 misses=0 torn=0
+POOL_STATS fd=4 bytes=800998000 fills=121110101 hits=4657155977 misses=83802900 torn=12366
+POOL_STATS fd=4 bytes=800998000 fills=235497410 hits=778647965 misses=173112261 torn=545
+LOAD_STATS sides=4 par=4 wall=1.295 per_side_avg=1.295 (serial-equivalent width 1)
+POOL_STATS fd=6 bytes=800607192 fills=5 hits=0 misses=0 torn=0
+POOL_STATS fd=5 bytes=800607192 fills=69985978 hits=0 misses=0 torn=0
+POOL_STATS fd=4 bytes=800607190 fills=120293427 hits=4632752785 misses=84345464 torn=8440
+POOL_STATS fd=4 bytes=800607190 fills=232466230 hits=780191301 misses=171192077 torn=510
+LOAD_STATS sides=2 par=2 wall=1.198 per_side_avg=1.198 (serial-equivalent width 1)
+POOL_STATS fd=6 bytes=398396144 fills=5 hits=0 misses=0 torn=0
+POOL_STATS fd=5 bytes=398396144 fills=778118 hits=0 misses=0 torn=0
+POOL_STATS fd=4 bytes=398396140 fills=778118 hits=758689764 misses=652430 torn=0
+POOL_STATS fd=4 bytes=398396140 fills=778118 hits=472884435 misses=544062 torn=0
+LOAD_STATS sides=3 par=3 wall=4.501 per_side_avg=4.501 (serial-equivalent width 1)
+POOL_STATS fd=6 bytes=2000001336 fills=5 hits=0 misses=0 torn=0
+POOL_STATS fd=5 bytes=2000001336 fills=342021919 hits=0 misses=0 torn=0
+POOL_STATS fd=4 bytes=2000001330 fills=693942621 hits=16770068069 misses=541274305 torn=2813
+POOL_STATS fd=4 bytes=2000001330 fills=1311872573 hits=1774826660 misses=961250271 torn=362
+GATE_gate-1b-k4-d_GREEN
+GATE_1B_DONE 2026-10-10T06:58:19+00:00
