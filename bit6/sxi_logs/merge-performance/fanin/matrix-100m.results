@@ -77,3 +77,81 @@ LOAD_STATS sides=2 par=2 wall=0.355 per_side_avg=0.355 (serial-equivalent width 
 LOAD_STATS sides=2 par=2 wall=0.647 per_side_avg=0.647 (serial-equivalent width 1)
 SHAPE_fanin-100m-k2-d_GREEN
 ### RUN fanin-100m-flat16-c mode=compact 2026-10-10T04:42:45+00:00
+rc=0 2026-10-10T04:45:31+00:00
+BYTE_IDENTITY pass=8 fail=0
+CHI xsa chi-rspace: chi = 29716349 (N=100000503, R=38647515) stream-agg=true buffers=4194304
+CHI_EXACT_OK
+MERGE_PEAK_DISC_USED_BYTES 2440807732 (sampled every 2s during the merge)
+chunk END rc=0 wall=0:16.63 peak_rss_kb=361032 disc_scratch_bytes=409409576
+merge END rc=0 wall=0:48.27 peak_rss_kb=1290316 disc_scratch_bytes=1320465320
+endpoints END rc=0 wall=0:30.06 peak_rss_kb=309756 disc_scratch_bytes=1953325883
+slim END rc=0 wall=0:59.84 peak_rss_kb=30188 disc_scratch_bytes=3190058031
+sweep END rc=0 wall=0:09.12 peak_rss_kb=6144 disc_scratch_bytes=3427790724
+CROSS_KWAY k=16 mode=dollar left=chunk-0.crle right=chunk-15.crle n=100000503 sizes=6531673,6278391,6294128,6250143,6250289,6251992,6256106,6301708,6263241,6251123,8283266,6259278,6285300,6251195,6279973,3712697 out=frag out_runs=38647515 wall_total=47.912 comparisons=475295559 symbols_compared=5134689837 probes=140132232 max_lce=1984 fast_decided=438128171 probe_decided=37167378 cap_decided=10 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_sum=90 walk_steps_sum=90 block_rows_sum=21544 peak_rss_kib=1290316 hash_k=0 t_fast=996.231 t_prep=1.515 t_probe=22.137 t_scan=121.538
+LOAD_STATS sides=16 par=16 wall=0.281 per_side_avg=0.281 (serial-equivalent width 1)
+SHAPE_fanin-100m-flat16-c_GREEN
+### RUN fanin-100m-k4-c mode=compact 2026-10-10T04:45:32+00:00
+rc=0 2026-10-10T04:49:17+00:00
+BYTE_IDENTITY pass=8 fail=0
+CHI xsa chi-rspace: chi = 29716349 (N=100000503, R=38647515) stream-agg=true buffers=4194304
+CHI_EXACT_OK
+MERGE_PEAK_DISC_USED_BYTES 2479928961 (sampled every 2s during the merge)
+chunk END rc=0 wall=0:16.64 peak_rss_kb=355172 disc_scratch_bytes=409409976
+merge END rc=0 wall=1:09.89 peak_rss_kb=1561156 disc_scratch_bytes=911070914
+endpoints END rc=0 wall=0:31.99 peak_rss_kb=307708 disc_scratch_bytes=1543931394
+slim END rc=0 wall=1:36.59 peak_rss_kb=30184 disc_scratch_bytes=2780663482
+sweep END rc=0 wall=0:09.26 peak_rss_kb=6144 disc_scratch_bytes=3018396138
+CROSS_KWAY k=4 mode=cyclic left=chunk-0.crle right=chunk-3.crle n=25354335 sizes=6531673,6278391,6294128,6250143 out=L0-0.crle out_runs=9998114 wall_total=10.432 comparisons=59748984 symbols_compared=614967054 probes=17522948 max_lce=1192 fast_decided=56268988 probe_decided=3479996 cap_decided=0 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_sum=16 walk_steps_sum=16 block_rows_sum=5127 peak_rss_kib=1463672 hash_k=0 t_fast=121.430 t_prep=0.145 t_probe=2.904 t_scan=10.297
+CROSS_KWAY k=4 mode=cyclic left=chunk-4.crle right=chunk-7.crle n=25060095 sizes=6250289,6251992,6256106,6301708 out=L0-1.crle out_runs=9931550 wall_total=7.259 comparisons=59720112 symbols_compared=591970975 probes=14772324 max_lce=1059 fast_decided=56090546 probe_decided=3629566 cap_decided=0 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_sum=16 walk_steps_sum=16 block_rows_sum=6035 peak_rss_kib=1463672 hash_k=0 t_fast=94.349 t_prep=0.144 t_probe=2.770 t_scan=8.348
+CROSS_KWAY k=4 mode=cyclic left=chunk-8.crle right=chunk-11.crle n=27056908 sizes=6263241,6251123,8283266,6259278 out=L0-2.crle out_runs=10788978 wall_total=8.699 comparisons=63979715 symbols_compared=625321748 probes=13484006 max_lce=1503 fast_decided=60527386 probe_decided=3452329 cap_decided=0 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_sum=43 walk_steps_sum=43 block_rows_sum=5653 peak_rss_kib=1463672 hash_k=0 t_fast=115.297 t_prep=0.137 t_probe=2.199 t_scan=12.602
+CROSS_KWAY k=4 mode=cyclic left=chunk-12.crle right=chunk-15.crle n=22529165 sizes=6285300,6251195,6279973,3712697 out=L0-3.crle out_runs=8875996 wall_total=7.146 comparisons=53444367 symbols_compared=521065443 probes=12020776 max_lce=1581 fast_decided=50502363 probe_decided=2942004 cap_decided=0 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_sum=15 walk_steps_sum=15 block_rows_sum=4729 peak_rss_kib=1463672 hash_k=0 t_fast=105.507 t_prep=0.119 t_probe=1.832 t_scan=12.092
+CROSS_KWAY k=4 mode=dollar left=L0-0.crle right=L0-3.crle n=100000503 sizes=25354335,25060095,27056908,22529165 out=frag out_runs=38647515 wall_total=35.576 comparisons=239302288 symbols_compared=2810899712 probes=92950674 max_lce=1984 fast_decided=214945085 probe_decided=24357194 cap_decided=9 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_sum=51 walk_steps_sum=51 block_rows_sum=21485 peak_rss_kib=1561156 hash_k=0 t_fast=518.792 t_prep=0.999 t_probe=17.475 t_scan=82.565
+LOAD_STATS sides=4 par=4 wall=0.205 per_side_avg=0.205 (serial-equivalent width 1)
+LOAD_STATS sides=4 par=4 wall=0.205 per_side_avg=0.205 (serial-equivalent width 1)
+LOAD_STATS sides=4 par=4 wall=0.277 per_side_avg=0.277 (serial-equivalent width 1)
+LOAD_STATS sides=4 par=4 wall=0.200 per_side_avg=0.200 (serial-equivalent width 1)
+LOAD_STATS sides=4 par=4 wall=0.790 per_side_avg=0.790 (serial-equivalent width 1)
+SHAPE_fanin-100m-k4-c_GREEN
+### RUN fanin-100m-k2-c mode=compact 2026-10-10T04:49:17+00:00
+rc=0 2026-10-10T04:53:05+00:00
+BYTE_IDENTITY pass=8 fail=0
+CHI xsa chi-rspace: chi = 29716349 (N=100000503, R=38647515) stream-agg=true buffers=4194304
+CHI_EXACT_OK
+MERGE_PEAK_DISC_USED_BYTES 2610117256 (sampled every 2s during the merge)
+chunk END rc=0 wall=0:16.61 peak_rss_kb=355172 disc_scratch_bytes=409410736
+merge END rc=0 wall=1:46.52 peak_rss_kb=1536508 disc_scratch_bytes=911089113
+endpoints END rc=0 wall=0:30.44 peak_rss_kb=309752 disc_scratch_bytes=1543949594
+slim END rc=0 wall=1:03.06 peak_rss_kb=30184 disc_scratch_bytes=2780681678
+sweep END rc=0 wall=0:09.14 peak_rss_kb=6144 disc_scratch_bytes=3018414334
+CROSS_PAIR mode=cyclic left=chunk-0.crle right=chunk-1.crle nA=6531673 nB=6278391 out=L0-0.crle out_runs=5152089 wall_total=5.048 comparisons=12818169 symbols_compared=134597408 probes=4460596 max_lce=623 fast_decided=12181171 probe_decided=636998 cap_decided=0 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_A=3 anchors_B=6 walk_steps_A=3 walk_steps_B=6 block_rows_A=573 block_rows_B=1574 peak_rss_kib=1353308 hash_k=0 t_fast=25.950 t_prep=0.026 t_probe=0.546 t_scan=1.864
+CROSS_PAIR mode=cyclic left=chunk-2.crle right=chunk-3.crle nA=6294128 nB=6250143 out=L0-1.crle out_runs=4927795 wall_total=3.738 comparisons=12570669 symbols_compared=118176317 probes=2641092 max_lce=1192 fast_decided=11877403 probe_decided=693266 cap_decided=0 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_A=3 anchors_B=4 walk_steps_A=3 walk_steps_B=4 block_rows_A=1325 block_rows_B=1655 peak_rss_kib=1355248 hash_k=0 t_fast=25.604 t_prep=0.028 t_probe=0.611 t_scan=1.375
+CROSS_PAIR mode=cyclic left=chunk-4.crle right=chunk-5.crle nA=6250289 nB=6251992 out=L0-2.crle out_runs=4975134 wall_total=3.802 comparisons=12528224 symbols_compared=124139248 probes=3526150 max_lce=1027 fast_decided=11738959 probe_decided=789265 cap_decided=0 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_A=2 anchors_B=5 walk_steps_A=2 walk_steps_B=5 block_rows_A=1178 block_rows_B=1904 peak_rss_kib=1355248 hash_k=0 t_fast=26.843 t_prep=0.032 t_probe=0.708 t_scan=2.476
+CROSS_PAIR mode=cyclic left=chunk-6.crle right=chunk-7.crle nA=6256106 nB=6301708 out=L0-3.crle out_runs=5064059 wall_total=3.837 comparisons=12584491 symbols_compared=118378139 probes=2334296 max_lce=716 fast_decided=11995361 probe_decided=589130 cap_decided=0 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_A=6 anchors_B=3 walk_steps_A=6 walk_steps_B=3 block_rows_A=1549 block_rows_B=1404 peak_rss_kib=1355324 hash_k=0 t_fast=25.164 t_prep=0.024 t_probe=0.542 t_scan=1.737
+CROSS_PAIR mode=cyclic left=chunk-8.crle right=chunk-9.crle nA=6263241 nB=6251123 out=L0-4.crle out_runs=5001373 wall_total=3.527 comparisons=12540652 symbols_compared=117209973 probes=2282828 max_lce=1503 fast_decided=11913876 probe_decided=626776 cap_decided=0 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_A=8 anchors_B=4 walk_steps_A=8 walk_steps_B=4 block_rows_A=1058 block_rows_B=1723 peak_rss_kib=1358168 hash_k=0 t_fast=26.248 t_prep=0.026 t_probe=0.567 t_scan=2.287
+CROSS_PAIR mode=cyclic left=chunk-10.crle right=chunk-11.crle nA=8283266 nB=6259278 out=L0-5.crle out_runs=5893881 wall_total=3.808 comparisons=14568185 symbols_compared=139648847 probes=3022766 max_lce=554 fast_decided=13914518 probe_decided=653667 cap_decided=0 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_A=3 anchors_B=28 walk_steps_A=3 walk_steps_B=28 block_rows_A=1179 block_rows_B=1693 peak_rss_kib=1358168 hash_k=0 t_fast=29.316 t_prep=0.026 t_probe=0.486 t_scan=4.121
+CROSS_PAIR mode=cyclic left=chunk-12.crle right=chunk-13.crle nA=6285300 nB=6251195 out=L0-6.crle out_runs=4980168 wall_total=3.204 comparisons=12562009 symbols_compared=116962780 probes=2456078 max_lce=1581 fast_decided=11926744 probe_decided=635265 cap_decided=0 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_A=5 anchors_B=5 walk_steps_A=5 walk_steps_B=5 block_rows_A=1243 block_rows_B=1504 peak_rss_kib=1360568 hash_k=0 t_fast=25.222 t_prep=0.025 t_probe=0.419 t_scan=1.889
+CROSS_PAIR mode=cyclic left=chunk-14.crle right=chunk-15.crle nA=6279973 nB=3712697 out=L0-7.crle out_runs=3998972 wall_total=2.801 comparisons=10018062 symbols_compared=93612271 probes=2122984 max_lce=749 fast_decided=9559090 probe_decided=458972 cap_decided=0 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_A=3 anchors_B=2 walk_steps_A=3 walk_steps_B=2 block_rows_A=1374 block_rows_B=608 peak_rss_kib=1362032 hash_k=0 t_fast=20.560 t_prep=0.019 t_probe=0.334 t_scan=1.507
+CROSS_PAIR mode=cyclic left=L0-0.crle right=L0-1.crle nA=12810064 nB=12544271 out=L1-0.crle out_runs=9998114 wall_total=6.500 comparisons=25383100 symbols_compared=279423956 probes=8941402 max_lce=755 fast_decided=23607767 probe_decided=1775333 cap_decided=0 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_A=6 anchors_B=14 walk_steps_A=6 walk_steps_B=14 block_rows_A=2162 block_rows_B=3300 peak_rss_kib=1466632 hash_k=0 t_fast=50.737 t_prep=0.071 t_probe=1.402 t_scan=4.637
+CROSS_PAIR mode=cyclic left=L0-2.crle right=L0-3.crle nA=12502281 nB=12557814 out=L1-1.crle out_runs=9931550 wall_total=6.149 comparisons=25089716 symbols_compared=259918369 probes=7221982 max_lce=1059 fast_decided=23267285 probe_decided=1822431 cap_decided=0 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_A=5 anchors_B=3 walk_steps_A=5 walk_steps_B=3 block_rows_A=3689 block_rows_B=2730 peak_rss_kib=1466632 hash_k=0 t_fast=49.992 t_prep=0.073 t_probe=1.310 t_scan=4.976
+CROSS_PAIR mode=cyclic left=L0-4.crle right=L0-5.crle nA=12514364 nB=14542544 out=L1-2.crle out_runs=10788978 wall_total=6.802 comparisons=27086313 symbols_compared=278745030 probes=6882282 max_lce=839 fast_decided=25300640 probe_decided=1785673 cap_decided=0 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_A=4 anchors_B=28 walk_steps_A=4 walk_steps_B=28 block_rows_A=3284 block_rows_B=2900 peak_rss_kib=1466632 hash_k=0 t_fast=54.323 t_prep=0.072 t_probe=1.420 t_scan=6.727
+CROSS_PAIR mode=cyclic left=L0-6.crle right=L0-7.crle nA=12536495 nB=9992670 out=L1-3.crle out_runs=8875996 wall_total=5.689 comparisons=22558181 symbols_compared=233972678 probes=6190544 max_lce=800 fast_decided=21044067 probe_decided=1514114 cap_decided=0 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_A=5 anchors_B=2 walk_steps_A=5 walk_steps_B=2 block_rows_A=2751 block_rows_B=1960 peak_rss_kib=1466632 hash_k=0 t_fast=45.004 t_prep=0.060 t_probe=1.108 t_scan=5.909
+CROSS_PAIR mode=cyclic left=L1-0.crle right=L1-1.crle nA=25354335 nB=25060095 out=L2-0.crle out_runs=19711955 wall_total=12.758 comparisons=50448846 symbols_compared=595759934 probes=20048942 max_lce=1503 fast_decided=45712065 probe_decided=4736781 cap_decided=0 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_A=14 anchors_B=7 walk_steps_A=14 walk_steps_B=7 block_rows_A=5734 block_rows_B=5952 peak_rss_kib=1517340 hash_k=0 t_fast=98.056 t_prep=0.187 t_probe=4.114 t_scan=11.467
+CROSS_PAIR mode=cyclic left=L1-2.crle right=L1-3.crle nA=27056908 nB=22529165 out=L2-1.crle out_runs=19418091 wall_total=12.215 comparisons=49621546 symbols_compared=554463632 probes=16745102 max_lce=1409 fast_decided=45156359 probe_decided=4465187 cap_decided=0 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_A=28 anchors_B=2 walk_steps_A=28 walk_steps_B=2 block_rows_A=5792 block_rows_B=4007 peak_rss_kib=1517340 hash_k=0 t_fast=98.300 t_prep=0.178 t_probe=3.379 t_scan=17.384
+CROSS_PAIR mode=dollar left=L2-0.crle right=L2-1.crle nA=50414430 nB=49586073 out=frag out_runs=38647515 wall_total=25.176 comparisons=100038561 symbols_compared=1234950803 probes=45414614 max_lce=1984 fast_decided=88025731 probe_decided=12012824 cap_decided=6 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_A=7 anchors_B=2 walk_steps_A=7 walk_steps_B=2 block_rows_A=10860 block_rows_B=8357 peak_rss_kib=1536508 hash_k=0 t_fast=204.071 t_prep=0.483 t_probe=10.551 t_scan=37.054
+LOAD_STATS sides=2 par=2 wall=0.206 per_side_avg=0.206 (serial-equivalent width 1)
+LOAD_STATS sides=2 par=2 wall=0.199 per_side_avg=0.199 (serial-equivalent width 1)
+LOAD_STATS sides=2 par=2 wall=0.201 per_side_avg=0.201 (serial-equivalent width 1)
+LOAD_STATS sides=2 par=2 wall=0.228 per_side_avg=0.228 (serial-equivalent width 1)
+LOAD_STATS sides=2 par=2 wall=0.203 per_side_avg=0.203 (serial-equivalent width 1)
+LOAD_STATS sides=2 par=2 wall=0.263 per_side_avg=0.263 (serial-equivalent width 1)
+LOAD_STATS sides=2 par=2 wall=0.201 per_side_avg=0.201 (serial-equivalent width 1)
+LOAD_STATS sides=2 par=2 wall=0.207 per_side_avg=0.207 (serial-equivalent width 1)
+LOAD_STATS sides=2 par=2 wall=0.408 per_side_avg=0.408 (serial-equivalent width 1)
+LOAD_STATS sides=2 par=2 wall=0.397 per_side_avg=0.397 (serial-equivalent width 1)
+LOAD_STATS sides=2 par=2 wall=0.465 per_side_avg=0.465 (serial-equivalent width 1)
+LOAD_STATS sides=2 par=2 wall=0.398 per_side_avg=0.398 (serial-equivalent width 1)
+LOAD_STATS sides=2 par=2 wall=0.719 per_side_avg=0.719 (serial-equivalent width 1)
+LOAD_STATS sides=2 par=2 wall=0.797 per_side_avg=0.797 (serial-equivalent width 1)
+LOAD_STATS sides=2 par=2 wall=1.436 per_side_avg=1.436 (serial-equivalent width 1)
+SHAPE_fanin-100m-k2-c_GREEN
+MATRIX_100M_DONE 2026-10-10T04:53:06+00:00

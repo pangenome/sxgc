@@ -33,15 +33,20 @@ chi = 29716349 (N=100000503, R=38647515). Reference: `mergperf-100m-bank`
 |--------------|--------|---------|-----------|-----|------------|-----------------|----------|
 | flat k=16    | 1      | dense   | PASS      | OK  | 52.7 s     | 3.05 GB         | 3.90 GB  |
 | fan-in k=4   | 2      | dense   | PASS      | OK  | 66.9 s     | 2.95 GB         | 3.02 GB  |
-| fan-in k=2   | 4      | dense   | PASS      | OK  | (see file) |                 |          |
-| flat k=16    | 1      | compact | PASS      | OK  |            |                 |          |
-| fan-in k=4   | 2      | compact | PASS      | OK  |            |                 |          |
-| fan-in k=2   | 4      | compact | PASS      | OK  |            |                 |          |
+| fan-in k=2   | 4      | dense   | PASS      | OK  | 98.4 s     | 2.91 GB         | 3.02 GB  |
+| flat k=16    | 1      | compact | PASS      | OK  | 48.3 s     | 2.44 GB         | 3.43 GB  |
+| fan-in k=4   | 2      | compact | PASS      | OK  | 69.9 s     | 2.48 GB         | 3.02 GB  |
+| fan-in k=2   | 4      | compact | PASS      | OK  | 106.5 s    | 2.61 GB         | 3.02 GB  |
 
 (Full numbers + per-level telemetry: `matrix-100m.results`.) At 100MB the
 chunk set is small, so the delete-as-you-go peak saving is modest
-(2.95 vs 3.05 GB); the end-of-build tree is smaller for fan-in (3.02 vs
-3.90 GB) because the consumed chunks/intermediates are gone.
+(2.95 vs 3.05 GB dense); the end-of-build tree is smaller for fan-in
+(3.02 vs 3.90 GB) because the consumed chunks and per-level intermediates
+are gone. The walk collapses with k at this scale: the k=4 level-0 groups walk
+~25 MiB in 3.6-5.4 s (~5-7 MiB/s) while the ONE flat k=16 walk walks 100 MiB
+in 37.7 s (~2.7 MiB/s) - deeper interleave is slower per byte even though all
+pool hit rates are >99.9% here (the 57% collapse the README records is a 1GB
+k=16 effect; see `gate-1b.results`).
 
 ## Harvested run (predecessor's orphan)
 
