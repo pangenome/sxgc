@@ -61,3 +61,31 @@ chi = 283296933 (N=1000000665, R=368036609). Reference: `mergperf-1b-B`.
 FLAT k=10 (one merge) vs FAN-IN k=4 (levels 10 -> 3 -> 1). The fan-in's
 level-0 groups are 4 x 100 MiB = ~400 MiB sides — the top-level-side
 datapoint for the walk-vs-side-size curve. Numbers in `gate-1b.results`.
+
+RESULT: BOTH GREEN. flat k=10 = 10/10 byte-identical + chi exact (merge
+22:45, peak disc 30.5 n). fan-in k=4 = 10/10 byte-identical + chi exact
+(levels 10->3->1, merge 43:17, peak disc 30.5 n). Delete-as-you-go verified:
+the chunk and mwork dirs are empty after each fan-in run.
+
+## Item 3 — delete-as-you-go peak disc
+
+Measured (`MERGE_PEAK_DISC_USED_BYTES`, 2 s sampler): 100 MB flat 30.5 n vs
+fan-in k=4 29.5 n vs fan-in k=2 29.1 n (dense); compact 24.4 / 24.8 / 26.1 n.
+1 GB flat k=10 30.5 n and fan-in k=4 30.5 n — identical. The peak is
+output-bound, not input-bound; see `CORPUS_SCALE_OUTPUTS_SURVEY.md`.
+
+## STATUS / HARVEST (for the next lane member)
+
+* Item 1 COMPLETE (100 MB shape matrix, all six shapes green).
+* Item 2 COMPLETE (1 GB strong gate, both shapes green).
+* Item 3 measured; item 4 table in `MEASUREMENT_TABLE.md`; item 5 survey in
+  `CORPUS_SCALE_OUTPUTS_SURVEY.md` (the critical-path finding).
+* QUEUED, IN FLIGHT: `curve-1b.sh` (same-binary 1 GB walk curve: k=16 @62.5,
+  k=20 @50, k=5 @200, k=2 @500). It writes `curve-1b.results`. Harvest it,
+  fill the curve rows in `MEASUREMENT_TABLE.md` §1, and state the curve as
+  (side size, k, total live bytes) — same-binary provenance per cell.
+* OPEN DECISION (blocking the pile): the shipped-container contract. The
+  peak is set by corpus-scale outputs; dedup + bit-pack + streamed finish
+  floors at ~5-8 n (6.5-10.5 TB), product-only at ~1.5-2.6 n. Supervisor to
+  choose what must ship; then the dedup tier (drop `head_sa`, `ssa_t`; trim
+  `agg` to topLCP/interiorMin) is the first re-gated step.
