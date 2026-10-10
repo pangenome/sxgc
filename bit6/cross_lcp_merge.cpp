@@ -2435,6 +2435,106 @@ static void emit_pf_side_ext(const std::string& prefix, const WinBytes& m2, U n,
     phase("emit-pf-checkpoints", last);
 }
 
+// ------------------------------------------------------------- v2 pieces
+// PILE-BUILDER v2 emission (CROSS_V2_PIECES=1): the final dollar merge
+// emits frag.rlebwt + .rlebwt.meta byte-identically (the ONLY pre-lite
+// whole file) plus per-run-band PIECES carrying the ONE canonical packed
+// copy of each SA column: {char u8, len u32, head SA packed w, tail SA packed
+// w}, w = bits(n+9). NO .ssa, NO .ssa_t, NO pftext, NO pfck. Pieces are
+// band-aligned sub-files rename-published as shards produce them, flow-
+// controlled against the consumer via the .runcols.consumed sentinel (the
+// consumer unlinks each piece and advances the sentinel), and deleted after
+// the lite container publishes. Scratch only - never a durable artifact.
+static bool v2_pieces_enabled() {
+    const char* e = getenv("CROSS_V2_PIECES");
+    return e && e[0] == '1' && e[1] == '\0';
+}
+static U v2_band_size() {
+    const char* e = getenv("CROSS_V2_BAND");
+    U b = e ? U(strtoull(e, nullptr, 10)) : 65536;
+    if (!b || b > (1u << 26)) b = 65536;
+    return b;
+}
+static U v2_piece_window() {
+    const char* e = getenv("CROSS_V2_PIECE_WINDOW");
+    U b = e ? U(strtoull(e, nullptr, 10)) : 64;
+    if (!b) b = 64;
+    return b;
+}
+// The consumer's progress: highest fully-consumed band (u64 text file,
+// rename-published by pile_finish). Missing = 0.
+static U v2_consumed_band(const std::string& prefix) {
+    int fd = ::open((prefix + ".runcols.consumed").c_str(), O_RDONLY);
+    if (fd < 0) return 0;
+    char b[24]{};
+    ssize_t z = ::read(fd, b, sizeof b - 1);
+    ::close(fd);
+    if (z <= 0) return 0;
+    return U(strtoull(b, nullptr, 10));
+}
+// Wait until the consumer is within the window of this band (flow control:
+// the finish's LCE is slower than the emission; bound the piece backlog so
+// the in-flight window stays a structural constant, not a whole column).
+static void v2_flow_wait(const std::string& prefix, U band, U window) {
+    while (band > v2_consumed_band(prefix) + window) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+}
+// One band sub-piece: header + chars + lens + heads packed + tails packed.
+struct V2Piece {
+    std::vector<uint8_t> chars;
+    std::vector<U> lens;
+    std::vector<U> heads, tails;
+    void add(uint8_t c, U len, U head, U tail) {
+        chars.push_back(c); lens.push_back(len); heads.push_back(head); tails.push_back(tail);
+    }
+    bool empty() const { return chars.empty(); }
+    U size() const { return chars.size(); }
+    void flush(const std::string& dir, const std::string& prefix, U band, U shard,
+                U firstRun, unsigned w, U window) {
+        U rc = chars.size();
+        if (!rc) return;
+        v2_flow_wait(prefix, band, window);
+        std::string tmp = dir + "/t-" + std::to_string(band) + "-" + std::to_string(shard);
+        std::string fin = dir + "/p-" + std::to_string(band) + "-" + std::to_string(shard);
+        require(!fs::exists(fin), "piece exists; refusing to clobber");
+        int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+        require(fd >= 0, "create piece tmp");
+        auto wfull = [&](const void* d, U len) {
+            const char* q = (const char*)d;
+            while (len) { ssize_t z = ::write(fd, q, len); require(z > 0, "piece write"); q += z; len -= U(z); }
+        };
+        char hdr[44];
+        uint32_t magic = 0x31435250;  // "PRC1"
+        memcpy(hdr, &magic, 4);
+        memcpy(hdr + 4, &band, 8); memcpy(hdr + 12, &shard, 4);
+        memcpy(hdr + 16, &firstRun, 8); memcpy(hdr + 24, &rc, 8);
+        memcpy(hdr + 32, &w, 4); U zero = 0; memcpy(hdr + 36, &zero, 8);
+        wfull(hdr, 44);
+        wfull(chars.data(), rc);
+        wfull(lens.data(), 4 * rc);
+        // Pack heads/tails LSB-first (the ri4 sample convention); each piece
+        // is self-contained, so the reservoir drains fully here.
+        U bits = U(w) * rc, words = (bits + 63) / 64;
+        std::vector<U> out(words ? words : 1, 0);
+        auto pack = [&](const std::vector<U>& v) {
+            __uint128_t res = 0; unsigned avail = 0; U wi = 0;
+            for (U i = 0; i < rc; ++i) {
+                res |= __uint128_t(v[i]) << avail; avail += w;
+                if (avail >= 64) { out[wi++] = U(res); res >>= 64; avail -= 64; }
+            }
+            if (avail) out[wi] = U(res);
+        };
+        pack(heads);
+        wfull(out.data(), 8 * words);
+        pack(tails);
+        wfull(out.data(), 8 * words);
+        require(::close(fd) == 0, "close piece tmp");
+        require(::rename(tmp.c_str(), fin.c_str()) == 0, "publish piece");
+        chars.clear(); lens.clear(); heads.clear(); tails.clear();
+    }
+};
+
 // Final four files, read from the M2 and WM scratch files (sequential WM).
 // PARALLEL EMISSION: both walks are sharded at fixed run boundaries (the
 // same combiner arithmetic as the SXCR emitter; rows are the n+10 rows of
@@ -2504,6 +2604,44 @@ static U emit_four_ext(const std::string& prefix, const WinBytes& m2,
     require(final_runs >= 1, "final run count underflow");
     require(counts[2] == 10, "padding count mismatch");
     phase("emit-count", last);
+    const bool v2 = v2_pieces_enabled();
+    const U v2B = v2_band_size();
+    const U v2W = v2_piece_window();
+    const unsigned v2Bits = std::max<unsigned>(1, 64 - __builtin_clzll(n + 9));
+    std::string v2Dir;
+    if (v2) {   // the run-columns index: S shards, per-shard global run base,
+        // n, sample width, band size. Written BEFORE emission so pile_finish
+        // can start (PFCK build from the corpus) while shards still emit.
+        v2Dir = prefix + ".pieces";
+        require(::mkdir(v2Dir.c_str(), 0777) == 0 || errno == EEXIST, "create pieces dir");
+        require(!fs::exists(prefix + ".runcols.idx"), "runcols idx exists; refusing to clobber");
+        std::string tmp = prefix + ".runcols.idx.tmp";
+        int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+        require(fd >= 0, "create runcols idx");
+        auto wfull = [&](const void* d, U len) {
+            const char* q = (const char*)d;
+            while (len) { ssize_t z = ::write(fd, q, len); require(z > 0, "idx write"); q += z; len -= U(z); }
+        };
+        char hdr[32];
+        uint32_t magic = 0x31494352;  // "RCI1"
+        memcpy(hdr, &magic, 4); memcpy(hdr + 4, &S, 4);
+        memcpy(hdr + 8, &final_runs, 8); memcpy(hdr + 16, &n, 8);
+        memcpy(hdr + 24, &v2Bits, 4); memcpy(hdr + 28, &v2B, 4);
+        wfull(hdr, 32);
+        for (U s = 0; s < S; ++s) {
+            char row[16];
+            U cnt = info[s].internalStarts + (info[s].firstIsStart ? 1u : 0u);
+            memcpy(row, &base[s], 8); memcpy(row + 8, &cnt, 8);
+            wfull(row, 16);
+        }
+        require(::close(fd) == 0, "close idx");
+        require(::rename(tmp.c_str(), (prefix + ".runcols.idx").c_str()) == 0, "publish idx");
+        std::fprintf(stderr, "CROSS_V2_IDX path=%s shards=%llu final_runs=%llu n=%llu w=%u band=%llu window=%llu\n",
+                     (prefix + ".runcols.idx").c_str(), (unsigned long long)S,
+                     (unsigned long long)final_runs, (unsigned long long)n,
+                     v2Bits, (unsigned long long)v2B, (unsigned long long)v2W);
+        phase("emit-v2-idx", last);
+    }
     {
         OutFile b(prefix + ".rlebwt"), m(prefix + ".rlebwt.meta");
         m.w64(total); m.w64(final_runs);
@@ -2515,12 +2653,15 @@ static U emit_four_ext(const std::string& prefix, const WinBytes& m2,
             require(f >= 0, "create output (exists?)");
             return f;
         };
-        int hFd = openX(prefix + ".ssa"), tFd = openX(prefix + ".ssa_t");
-        {
-            char hb[8];
-            put_le64(hb, final_runs);
-            xput(hFd, hb, 8, 0, "ssa header write");
-            xput(tFd, hb, 8, 0, "ssa_t header write");
+        int hFd = -1, tFd = -1;
+        if (!v2) {
+            hFd = openX(prefix + ".ssa"), tFd = openX(prefix + ".ssa_t");
+            {
+                char hb[8];
+                put_le64(hb, final_runs);
+                xput(hFd, hb, 8, 0, "ssa header write");
+                xput(tFd, hb, 8, 0, "ssa_t header write");
+            }
         }
         std::vector<int> segFd(S, -1);
         std::vector<std::string> segPath(S);
@@ -2576,6 +2717,22 @@ static U emit_four_ext(const std::string& prefix, const WinBytes& m2,
                         headBuf.clear(); tailBuf.clear();
                     }
                 };
+                U cnt = info[s].internalStarts + (firstIsStart ? 1u : 0u);
+                U shardEnd = b0 + cnt;
+                // v2: band-aligned piece accumulator. A piece is flushed ONLY
+                // at a band boundary or the shard's end, so every piece
+                // covers a sub-range of one band: [pieceStart, pieceEnd),
+                // pieceEnd % B == 0 or pieceEnd == shardEnd.
+                V2Piece piece;
+                U pieceStart = b0;
+                auto v2Emit = [&](uint8_t c, U len, U head, U tail) {
+                    piece.add(c, len, head, tail);
+                    U pieceEnd = pieceStart + piece.size();
+                    if (pieceEnd % v2B == 0 || pieceEnd == shardEnd) {
+                        piece.flush(v2Dir, prefix, pieceStart / v2B, s, pieceStart, v2Bits, v2W);
+                        pieceStart = pieceEnd;
+                    }
+                };
                 U pfAt = t;
                 auto pfAhead = [&](U cur) {
                     if (m2.pool && cur >= pfAt) { pfRows(cur, std::min<U>(total, cur + 8192)); pfAt = cur + 8192; }
@@ -2597,14 +2754,19 @@ static U emit_four_ext(const std::string& prefix, const WinBytes& m2,
                     emitWords(c, e - t);
                     uint8_t tc; U tailSmp;
                     row_char_sample(e - 1, tc, tailSmp);
-                    headBuf.push_back(head);
-                    tailBuf.push_back(tailSmp);
-                    if (headBuf.size() >= 65536) flushSamples();
+                    if (v2) {
+                        v2Emit(c, e - t, head, tailSmp);
+                    } else {
+                        headBuf.push_back(head);
+                        tailBuf.push_back(tailSmp);
+                        if (headBuf.size() >= 65536) flushSamples();
+                    }
                     ++runIdx;
                     t = e;
                 }
                 flushRec();
-                flushSamples();
+                if (!v2) flushSamples();
+                else require(piece.empty(), "v2 emission left an unflushed piece");
                 require(runIdx == b0 + info[s].internalStarts + (firstIsStart ? 1u : 0u),
                         "emit shard run coverage");
             });
@@ -2627,10 +2789,10 @@ static U emit_four_ext(const std::string& prefix, const WinBytes& m2,
             ::unlink(segPath[s].c_str());
         }
         b.flush();
-        require(::close(hFd) == 0 && ::close(tFd) == 0, "close ssa outputs");
+        if (!v2) require(::close(hFd) == 0 && ::close(tFd) == 0, "close ssa outputs");
     }
-    std::fprintf(stderr, "FOUR_EMIT shards=%llu runs=%llu total=%llu\n",
-                 (unsigned long long)S, (unsigned long long)final_runs, (unsigned long long)total);
+    std::fprintf(stderr, "FOUR_EMIT shards=%llu runs=%llu total=%llu v2=%d\n",
+                 (unsigned long long)S, (unsigned long long)final_runs, (unsigned long long)total, int(v2));
     phase("emit-write", last);
     return final_runs;
 }
