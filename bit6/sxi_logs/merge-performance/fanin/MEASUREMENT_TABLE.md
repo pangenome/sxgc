@@ -29,20 +29,30 @@ The walk is **interleave-depth-bound, not side-size-bound, at 100 MB**: k=2 is
 size is a secondary lever (k=4: 6.25 MiB sides 6.0 MB/s vs 25 MiB sides
 4.8 MB/s). All pool hit rates are >99.9% here.
 
-1 GB fixture (10 chunks, 100 MiB sides), same binary, measured:
+1 GB fixture, same binary (a7ec3df9), measured. **Same-binary only** — the
+earlier k=16 row (57% pool, 1597 s) came from the SXP4/LRU binary lineage and
+must NOT be compared against these; it is being re-measured on this binary
+below.
 
 | shape / level        | k | side size | cross-merge wall | walk MB/s | M2 pool hit rate |
 |----------------------|---|-----------|------------------|-----------|------------------|
 | flat k=10 (1 level)  | 10| 100 MiB   | 607.4 s          | 1.65      | 98.5%            |
-| flat k=16 (banked, mergperf-1b-dense) | 16 | 62.5 MiB | 1596.6 s | 0.63 | 57% |
-| fan-in k=4 L0        | 4 | 400 MiB   | (in flight)      |           |                  |
-| fan-in k=4 L1        | 4 | 300 MiB   | (in flight)      |           |                  |
+| fan-in k=4 L0 grp0   | 4 | 400 MiB   | 296.9 s          | 1.35      | 64%              |
+| fan-in k=4 L0 grp1   | 4 | 400 MiB   | 322.1 s          | 1.24      | 64%              |
+| fan-in k=4 L0 grp2   | 2 | 200 MiB   | 21.8 s           | 9.17      | (read from log)  |
+| flat k=16            | 16| 62.5 MiB  | (curve sweep)    |           | (curve sweep)    |
+| flat k=20            | 20| 50 MiB    | (curve sweep)    |           | (curve sweep)    |
+| flat k=5             | 5 | 200 MiB   | (curve sweep)    |           | (curve sweep)    |
+| flat k=2             | 2 | 500 MiB   | (curve sweep)    |           | (curve sweep)    |
 
-THIS is the pool-collapse curve: at 1 GB, k=16 drops to 57% M2-pool hits and
-0.63 MB/s while k=10 holds 98.5% and 1.65 MB/s - a 2.6x walk speedup for 100 MiB
-vs 62.5 MiB sides. The collapse is the **k x side-size working set** crossing
-the pool, not k alone. The fan-in k=4 rows (400 MiB L0 sides) are being
-measured and land in `gate-1b.results`.
+The curve's driver is **not established** by the k=16 57% figure (cross-binary
+trap). The same-binary sweep (`curve-1b.sh`, all at 1 GB on a7ec3df9) is
+separating (side size) vs (k) vs (total live bytes): k=10@100 MiB [done],
+k=16@62.5 MiB, k=20@50 MiB, k=5@200 MiB, k=2@500 MiB. The k=4 fan-in rows
+already hint that WORKING SET (k x side structure bytes), not k alone, is the
+lever: k=4 at 400 MiB sides is 1.3 MB/s but the k=2 sub-group at 200 MiB sides
+is 9.2 MB/s. Curve stated with (side size, k, total live bytes) once the sweep
+lands; rows go to `curve-1b.results`.
 
 ## 1b. Peak disc at 1 GB (measured)
 
