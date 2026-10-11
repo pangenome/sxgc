@@ -1356,7 +1356,7 @@ int main(int argc, char** argv) {
         };
 
         // ---- main band loop: pieces -> repair -> LCE -> sweep -> witnesses
-        double lceWall = 0, repairWall = 0;
+        double lceWall = 0, repairWall = 0, advanceWall = 0;
         std::vector<RawRun> raws;
         uint64_t nbands = (R + src.B - 1) / src.B;
         // LCE + sweep advance for the buffered runs (nbuf/gidx, in stream
@@ -1370,7 +1370,7 @@ int main(int argc, char** argv) {
             double t0 = tnow();
             {
                 std::atomic<size_t> next{0};
-                int tc = std::max(1, std::min(threads, 64));
+                int tc = std::max(1, std::min(threads, 256));
                 std::vector<std::thread> ts;
                 for (int t = 0; t < tc; ++t)
                     ts.emplace_back([&, t] {
@@ -1399,7 +1399,11 @@ int main(int argc, char** argv) {
                     uint64_t iv = interior[i] == INF ? ~uint64_t(0) : interior[i];
                     pf_write_full(bIntFd, &iv, 8, "bridge int");
                 }
-            for (size_t i = 0; i < cnt; ++i) sweep.advance(nbuf[i], topLcp[i], interior[i]);
+            {
+                double ta = tnow();
+                for (size_t i = 0; i < cnt; ++i) sweep.advance(nbuf[i], topLcp[i], interior[i]);
+                advanceWall += tnow() - ta;
+            }
             prevTail = nbuf.back().t;
             nbuf.clear();
             gidx.clear();
@@ -1419,10 +1423,10 @@ int main(int argc, char** argv) {
             if (nbuf.empty()) continue;
             processBuffer();
             if ((band & 63) == 0)
-                fprintf(stderr, "PILE_FINISH_PROGRESS band=%llu/%llu runs=%llu chi_so_far=%llu repair_wall=%.1f lce_wall=%.1f wit_spills=%llu\n",
+                fprintf(stderr, "PILE_FINISH_PROGRESS band=%llu/%llu runs=%llu chi_so_far=%llu repair_wall=%.1f lce_wall=%.1f advance_wall=%.1f wit_spills=%llu\n",
                         (unsigned long long)(band + 1), (unsigned long long)nbands,
                         (unsigned long long)rs.rNorm, (unsigned long long)sweep.chi,
-                        repairWall, lceWall, (unsigned long long)buckets.spilled);
+                        repairWall, lceWall, advanceWall, (unsigned long long)buckets.spilled);
         }
         // The repair stream's final flush (the coalesced tail runs held
         // back for char-merge parity) must advance the sweep exactly like
@@ -1430,7 +1434,13 @@ int main(int argc, char** argv) {
         // every run; the production sweep's last events live here).
         rs.finishStream();
         if (!nbuf.empty()) processBuffer();
-        sweep.finish();
+        {
+            double ta = tnow();
+            sweep.finish();
+            advanceWall += tnow() - ta;
+        }
+        fprintf(stderr, "SWEEP_PHASE_WALLS repair=%.1f lce=%.1f advance_witness=%.1f lce_threads=%d\n",
+                repairWall, lceWall, advanceWall, std::max(1, std::min(threads, 256)));
         pf_check(::close(sparseFd) == 0, "close sparse scratch");
         if (bridge) {
             if (bTailAvail) {

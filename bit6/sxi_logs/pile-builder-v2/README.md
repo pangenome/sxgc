@@ -234,3 +234,117 @@ together in one run:
 * Fan-in walls: the whole fan-in tree merge (3 levels) + finish ran
   concurrent end-to-end in 6349s (finish cumulative), comparable to flat
   despite 3 merge levels - the emission window paces to the consumer.
+
+## The 1GB packed-WM front-door gate: GREEN (2026-10-11, xsa-pa-wmpack-1b)
+
+The nohup'd run from the previous session landed GREEN end-to-end (front
+door, 48 threads, 10 chunks flat k=10, --wit-ram-gb 32, --timeout 21600):
+
+* chi = 283296933 EXACT (in-process assert + V2_CHI_EXPECT_OK).
+* Container 467,814,822 B BYTE-IDENTICAL to the banked G2 lite
+  (cmp clean vs pilev2-g2-1b/frag.sxi2) - the WM packing is product-neutral
+  at 1GB, not just at 100MB.
+* End tree: product + logs only (front-door tree rules asserted loud).
+* MEASURED merge transient (.xsc du, every constituent live at the
+  emission tail): 10,199,887,341 B = **10.20n** (vs 14.46n unpacked at G2;
+  the packed WM 8n -> 3.75n at w=30 is the entire -4.25n).
+* MEASURED whole-tree du peak INCLUDING the transient (front-door 2s
+  sampler): 15,042,581,059 B = **15.04n** (chunk-set remnants ~2.8n +
+  rlebwt 1.546n + pfck 0.364n + pieces + the transient).
+* Walls at 48t: chunk 205.8s, merge walk 725.5s, merge-v2 2802.2s,
+  finish-v2 2867.6s (concurrent window = 2867.6s), container 59.6s,
+  end-to-end ~51.3 min (vs 1:47 at G2 unpacked). Conditions: the stale
+  legacy selftest (st-legacy2, single core) finished mid-run and the
+  standing foreign single-core FastGA job was live - noted, not claimed
+  box-quiet; the sweep phase itself ran with the selftest already done.
+* NORMALIZATION CORRECTION (the previous journal + commit 0cb118c divided
+  whole-tree bytes by 1e9 instead of by n): the 100MB front-door
+  PEAK_DISC numbers are **19.50n unpacked -> 14.88n packed** (n=100,000,503),
+  not "1.95n -> 1.49n". The corrected values are scale-consistent with the
+  1GB whole-tree peak (15.04n); the mis-normalized ones were not.
+
+### The sweep phase walls: the 25x "serial witness machine" suspect is REFUTED
+
+The G2 accounting (sweep 4306s = repair 1276 + LCE 967 + "witness/advance
+~2060s") suggested the serial advance+witness state machine was the wall
+(v1's identical machine ran 83s on precomputed columns). The clean packed
+run measures the sweep at **1389.0s = repair 50.8 + LCE 1217.1 + advance/
+witness ~121s residual** (this binary predates the WIP instrumentation, so
+advance is the sweep wall minus the two measured terms; the WIP re-gate
+prints it directly). Findings:
+
+* The serial machine costs ~121s at 1GB - 1.5x v1's 83s, NOT 25x. The v2
+  witness path additionally appends to RAM buckets (283M values) and the
+  bridge is gone; ~120s is the honest serial cost. Target 1c needs NO
+  band-parallelization or precomputed-column port: the machine is not the
+  wall.
+* The G2 "2060s" was an accounting artifact: in the GATE run the sweep
+  overlapped a slower merge emission (4470s, then the binding phase) and
+  wrote the 11.4GB bridge; the wait + bridge I/O landed in the then-
+  unmeasured regions and was attributed to "witness/advance" by
+  subtraction. Lesson journaled: derived-by-subtraction walls are not
+  measurements; the WIP SWEEP_PHASE_WALLS line exists to prevent exactly
+  this.
+* The REAL sweep wall is the parallel corpus-LCE: 1217.1s at 48 threads
+  (the sweep's binding term, ~88%). It is thread-scaled (the WIP raises
+  the pool cap 64 -> 256) and it is where more threads pay. CAVEAT for the
+  pile projection: at 1GB the corpus is page-cache-warm; at pile scale
+  those windowed preads are NVMe-bound. The 10GB rung measures the
+  transition before any pile wall is trusted.
+
+### Plan model v4 (constants from this gate) + the honest dry-run
+
+V2_MERGE_TRANSIENT_PER_N 14.46 -> derived: 6.45n non-WM (MEASURED:
+m2 2n + hs 2n + bwt 1n + ov ~0.02n + walk columns ~1.43n) + w/8*n packed
+WM (w = bits(n+9)); reproduces the measured 10.20n at 1GB (w=30). At pile
+w=41 -> **11.57n = 13.8 TiB transient alone**; whole-tree incl. transient
+16.41n = ~19.5 TiB (transient + the measured 4.84n non-transient live
+remainder). Wall constants updated to this gate (chunk 205.8s, walk
+725.5s, emit+finish 2867.6s, container 59.6s at 1GB/48t): the pile
+projection at 48 threads is **1401.8h = 58.4 days** (was 2338h from the G2
+constants), EXTRAPOLATED and cache-optimistic until the 10GB rung. The
+dry run is journaled at g5-plan/pile-dry-run.log (XSA_PLAN v=4).
+
+## THE SCRATCH-HOST FINDING (Target 2b): per-shard transients CANNOT collapse the merge transient
+
+Question: can splitting the final merge per k-way side (or any sharding)
+shrink the .xsc so a monolithic pile merge fits this box? Answer: NO, by
+construction. Every large .xsc term is GLOBAL, not per-side:
+
+* m2 (2n): the merged text M is the walk's LCE substrate - the walk
+  compares arbitrary suffix positions across side boundaries, so M must
+  be whole before any boundary planning; there is no per-side m2.
+* hs (2n): the anchor/hash index spans the whole merged text; every walk
+  thread must see anchors from every side.
+* bwt (1n): the emission's whole-text BWT column; per-side BWTs live in
+  the chunk set (a separate per-term, consumed), but the merged bwt is
+  global.
+* walk columns + ov (~1.45n): global by the same argument.
+* WM (w/8*n packed): pinned whole by (a) the emission's two-pass design -
+  counts then values, both full scans of the merged SA; (b) the finish's
+  seam machinery reading class SA sets by single preads anywhere in the
+  WM (interior SA values are NOT carried by the band pieces); (c) the
+  size+`.done` completeness sentinel requires the whole file before the
+  finish's pair phase opens it.
+
+So the packed floor is the measured 10.20n at 1GB / 11.57n at pile
+(w=41) = **13.8 TiB for the transient alone**, plus the live non-transient
+remainder (4.84n measured at 1GB: chunk-set remnants, rlebwt, pfck,
+pieces) -> the monolithic pile merge's whole-tree timeline peak is
+**~16.41n = 19.5 TiB** (EXTRAPOLATED from measured terms; the 64-chunk
+shape's remnant profile is unmeasured - the 10GB rung with 64 chunks
+measures it). The compact-pos floor is mandatory and already priced: the
+chunk set at compact pos is 4.40n = 5.36 TiB at pile (dense would be
+8.77n = 10.7 TiB; compact is plan-picked). Honest accounting:
+
+* (a) THIS BOX: nvme2 (the scratch tree) has 2.8 TB free; nvme1+2+3
+  together 7.1 TB. The monolithic pile merge (19.5 TiB tree) does NOT fit,
+  even ignoring that reader-level striping across devices is unlanded.
+* (b) SCRATCH HOST: the monolithic pile merge needs a host with >= 20 TiB
+  free for the tree (+ the 1.22 TiB corpus if co-hosted, + the witness
+  spill headroom which is unmeasured - the 10GB rung measures it).
+* (c) ALTERNATIVES: fan-in (k=4, G3-gated) does NOT help the top merge -
+  the final level has the same global terms and the intermediates add
+  mwork scratch; reader-level striping (lane item 3) splits I/O, not
+  space, and 7.1 TB < 19.5 TiB anyway; corpus dedup would shrink n but is
+  a PRODUCT decision (changes chi and every downstream constant) - PARKED.

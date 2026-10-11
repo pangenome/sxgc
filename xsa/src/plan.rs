@@ -23,7 +23,7 @@ use std::path::Path;
 /// legacy chunk sets (CROSS_NO_PERSIST), measured ~1.5 s/MB serial
 /// (~0.7 MB/s - the pile-scale bottleneck that motivated persisting).
 /// Chunk artifacts: 9.9x corpus (.crle runs) + 8x (persisted pos columns).
-pub const CONSTANTS_VERSION: u32 = 3;
+pub const CONSTANTS_VERSION: u32 = 4;
 
 /// Per-byte wall rates (seconds per corpus MB), fragment-calibrated.
 pub struct Rates {
@@ -367,7 +367,7 @@ impl Plan {
         let total: f64 = self.phases.iter().map(|p| p.wall_s).sum();
         s.push_str(&format!(
             "XSA_PLAN v={}{} corpus_bytes={} chunks={} kway={} threads={} cap_gb={} cores={} cx16={} mem_available_gb={:.0}\n",
-            CONSTANTS_VERSION, if self.v2.is_some() { " pipeline=v2 (constants measured at the 1GB G2 gate)" } else { "" }, self.survey.corpus_bytes, self.chunks, self.kway, self.threads,
+            CONSTANTS_VERSION, if self.v2.is_some() { " pipeline=v2 (constants measured at the 1GB packed-WM gate xsa-pa-wmpack-1b)" } else { "" }, self.survey.corpus_bytes, self.chunks, self.kway, self.threads,
             self.cap_gb, self.survey.cores, self.survey.cx16,
             self.survey.mem_available_bytes as f64 / (1024.0 * 1024.0 * 1024.0),
         ));
@@ -413,7 +413,7 @@ impl Plan {
                 "XSA_PLAN_V2_TERMS pipeline=v2 corpus_gb={:.0} chunk_set_gb={:.0} merge_transient_gb={:.0} rlebwt_gb={:.0} pfck_scratch_gb={:.0} pieces_window_gb={:.0} container_gb={:.0} tree_peak_gb={:.0} whole_box_gb={:.0}\n",
                 v.corpus_gb, v.chunk_set_gb, v.merge_transient_gb, v.rlebwt_gb, v.pfck_gb, v.pieces_window_gb, v.container_gb, v.tree_peak_gb, v.whole_box_gb,
             ));
-            s.push_str(&format!("XSA_PLAN_V2_TREE tree_peak={:.3}n bound={:.1}n measured_at=1GB-G2; whole_box(corpus+tree)={:.3}n\n", V2_TREE_PEAK_PER_N, V2_TREE_TARGET_PER_N, 1.0 + V2_TREE_PEAK_PER_N));
+            s.push_str(&format!("XSA_PLAN_V2_TREE tree_peak={:.3}n bound={:.1}n measured_at=1GB-G2 (output side, excl. the merge transient); whole_box(corpus+tree)={:.3}n\n", V2_TREE_PEAK_PER_N, V2_TREE_TARGET_PER_N, 1.0 + V2_TREE_PEAK_PER_N));
             s.push_str(&format!("XSA_PLAN_V2_WITNESS {}\n", v.witness_note));
             s.push_str(&format!("XSA_PLAN_V2_MERGE_TRANSIENT {}\n", v.transient_note));
         }
@@ -438,17 +438,46 @@ pub const V2_RLEBWT_PER_N: f64 = 1.546;         // measured 1545900600 B
 pub const V2_PFCK_PER_N: f64 = 0.364;           // measured 363636648 B (scratch; deleted post-sweep)
 pub const V2_CONTAINER_PER_N: f64 = 0.468;      // measured 467814822 B (the product)
 pub const V2_PIECES_WINDOW_PER_N: f64 = 0.052;  // 64 bands x 65536 runs x ~12.5 B/run
-pub const V2_TREE_PEAK_PER_N: f64 = 1.975;      // MEASURED G2 du peak of the scratch tree
+pub const V2_TREE_PEAK_PER_N: f64 = 1.975;      // MEASURED G2 du peak of the scratch tree (output side, excl. the merge transient)
 pub const V2_TREE_TARGET_PER_N: f64 = 2.5;      // the mission's output-side bound
-pub const V2_MERGE_TRANSIENT_PER_N: f64 = 14.46; // MEASURED G2 .xsc du peak (m2 2n + WM 8n + bwt/hash/ov ~4.5n)
+// The merge transient (.xsc du), MEASURED at the 1GB packed-WM front-door gate
+// (xsa-pa-wmpack-1b, 2026-10-11): 10,199,887,341 B = 10.20n with every
+// constituent live. The WM term is w-dependent (w = bits(n+9): 30 at 1GB,
+// 41 at pile), so the model carries the measured non-WM remainder
+// (m2 2n + hs 2n + bwt 1n + ov ~0.02n + ~1.43n walk columns = 6.45n) and
+// adds w/8 for the packed WM; at 1GB (w=30) that reproduces the measured
+// 10.20n exactly. Unpacked G2 measured 14.46n (WM 8n): the packing is the
+// -4.25n at 1GB, product byte-identical (cmp clean vs the banked G2 lite).
+pub const V2_MERGE_TRANSIENT_NONWM_PER_N: f64 = 6.45;
+// The WHOLE scratch tree INCLUDING the merge transient (chunk-set remnants +
+// rlebwt + pfck + pieces + .xsc) peaked at 15.04n at the same 1GB gate
+// (front-door du sample): the monolithic-merge hosting number. The non-
+// transient live remainder (15.04 - 10.20 = 4.84n) is carried measured;
+// the whole-tree peak is derived as transient(n) + 4.84.
+pub const V2_WHOLE_TREE_NONTRANSIENT_PER_N: f64 = 4.84;
+
+// w = bits(n+9) - the SA value width the whole pipeline packs at.
+pub fn v2_sa_width(n: u64) -> u32 { (64 - (n + 9).leading_zeros()).max(1) }
+pub fn v2_merge_transient_per_n(n: u64) -> f64 {
+    V2_MERGE_TRANSIENT_NONWM_PER_N + v2_sa_width(n) as f64 / 8.0
+}
+pub fn v2_whole_tree_peak_per_n(n: u64) -> f64 {
+    v2_merge_transient_per_n(n) + V2_WHOLE_TREE_NONTRANSIENT_PER_N
+}
 pub const V2_CHI_PER_N: f64 = 0.283;            // 1GB fixture ratio; the pile value is UNMEASURED
-// Walls, seconds per corpus MB (G2-measured). The v2 emission and the
-// fused finish run CONCURRENTLY (consumer-paced through the piece-flow
-// window): that row is max(emit, finish), not their sum.
-pub const V2_CHUNK_S_PER_MB: f64 = 264.0 / 953.7;
-pub const V2_MERGE_WALK_S_PER_MB: f64 = 1538.4 / 953.7;   // load + anchor + cross-merge
-pub const V2_EMIT_FINISH_S_PER_MB: f64 = 4575.0 / 953.7;  // concurrent v2 emission + fused finish
-pub const V2_CONTAINER_S_PER_MB: f64 = 60.0 / 953.7;      // m5 EF + m1 runs + publish
+// Walls, seconds per corpus MB (MEASURED at the 1GB packed-WM front-door gate
+// xsa-pa-wmpack-1b, 2026-10-11, n=1000000665, 10 chunks flat k=10, 48 threads,
+// band=65536, window=64, concurrent merge+finish; the G2 unpacked run measured
+// chunk 264 / walk 1538 / emit+finish 4575 - the packed WM and the quieter box
+// roughly halved every wall). CAVEAT (honest extrapolation): at 1GB the corpus
+// fits the page cache, so the fused finish's corpus-LCE term (1217 s of the
+// 1389 s sweep at 48t) runs cache-warm; at pile scale those preads are
+// NVMe-bound. The 10GB rung measures the transition - pile walls from these
+// constants are EXTRAPOLATED and cache-optimistic until then.
+pub const V2_CHUNK_S_PER_MB: f64 = 205.76 / 953.7;
+pub const V2_MERGE_WALK_S_PER_MB: f64 = 725.5 / 953.7;    // load + anchor + cross-merge
+pub const V2_EMIT_FINISH_S_PER_MB: f64 = 2867.6 / 953.7;   // concurrent v2 emission + fused finish (the window's max)
+pub const V2_CONTAINER_S_PER_MB: f64 = 59.6 / 953.7;       // m5 EF + m1 runs + publish (inside the finish)
 
 pub struct V2PerTerms {
     pub corpus_gb: f64,
@@ -477,7 +506,8 @@ pub fn model_v2(
     // The pile plan runs compact pos columns (the chunk set is a transient
     // input, freed as consumed by the merge loads).
     let chunk_set_mb = mb * chunk_artifacts_per_corpus_mb("compact");
-    let transient_mb = mb * V2_MERGE_TRANSIENT_PER_N;
+    let transient_per_n = v2_merge_transient_per_n(survey.corpus_bytes);
+    let transient_mb = mb * transient_per_n;
     let rlebwt_mb = mb * V2_RLEBWT_PER_N;
     let pfck_mb = mb * V2_PFCK_PER_N;
     let pieces_mb = mb * V2_PIECES_WINDOW_PER_N;
@@ -534,8 +564,9 @@ pub fn model_v2(
         V2_CHI_PER_N, witness_ram_gb,
     );
     let transient_note = format!(
-        "merge transient = {:.2}n measured at 1GB (m2 2n + WM 8n + bwt/hash/ov ~4.5n): ~{:.0} GB at this scale - a separate per-term with its own provenance; a monolithic final merge needs that much scratch (stripes / reader-level striping, lane item 3, or a larger scratch host); printed, not hidden in a constant",
-        V2_MERGE_TRANSIENT_PER_N, transient_mb / 1024.0,
+        "merge transient = {:.2}n (MEASURED at the 1GB packed-WM gate: non-WM {:.2}n [m2 2n + hs 2n + bwt 1n + ov ~0.02n + walk columns ~1.43n] + packed WM w/8*n [w={} at this scale; 10.20n total measured at 1GB w=30, unpacked was 14.46n with WM 8n]): ~{:.0} GB at this scale - a separate per-term with its own provenance; the WHOLE scratch tree including this transient peaked at {:.2}n = ~{:.0} GB at this scale (measured 15.04n at 1GB) - the monolithic final merge needs that much scratch on one host (stripes / reader-level striping, lane item 3, or a larger scratch host); printed, not hidden in a constant",
+        transient_per_n, V2_MERGE_TRANSIENT_NONWM_PER_N, v2_sa_width(survey.corpus_bytes), transient_mb / 1024.0,
+        v2_whole_tree_peak_per_n(survey.corpus_bytes), mb * v2_whole_tree_peak_per_n(survey.corpus_bytes) / 1024.0,
     );
     let v2 = V2PerTerms {
         corpus_gb: n_gb,

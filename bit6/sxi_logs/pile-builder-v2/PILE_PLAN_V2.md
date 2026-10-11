@@ -16,10 +16,14 @@ output in `g5-plan/pile-dry-run.log`):
               --chunks 64 --kway 64 --threads 48 --memory-gb 700 \
               --scratch-free-pct 0 --plan-only --v2-pipeline
 
-Verdict it prints: **FEASIBLE (v2 output side): scratch-tree peak ~2406 GB
-(1.975n, bound 2.5n) fits 2847 GB free; whole-box (corpus + tree) ~3624 GB
-= 2.975n** — 3624 GiB = **~3.9 TB whole-box** (decimal). Wall projection at
-48 threads: **2338 h ~ 97.4 days** end-to-end.
+Verdict it prints (XSA_PLAN v=4, constants from the 1GB packed-WM
+gate xsa-pa-wmpack-1b, 2026-10-11): **FEASIBLE (v2 output side):
+scratch-tree peak ~2406 GB (1.975n, bound 2.5n) fits 2860 GB free;
+whole-box (corpus + tree) ~3624 GB = 2.975n** — 3624 GiB = **~3.9 TB
+whole-box** (decimal). Wall projection at 48 threads: **1401.8 h ~ 58.4
+days** end-to-end (EXTRAPOLATED from 1GB-measured constants, and
+page-cache-optimistic: the finish's corpus-LCE runs cache-warm at 1GB;
+the 10GB rung measures the NVMe-bound transition).
 
 ## The two approved decisions (journaled A/A, 2026-10-10)
 
@@ -35,24 +39,27 @@ Verdict it prints: **FEASIBLE (v2 output side): scratch-tree peak ~2406 GB
    PFCK is byte-identical to the banked merge-emitted sidecar (gated at
    1GB in G2). THE LAW is restored: no text is ever materialized to disk.
 
-## Measured 1GB walls (G2: 10 chunks flat k=10, 48 threads, band=65536, window=64)
+## Measured 1GB walls (packed-WM front-door gate xsa-pa-wmpack-1b, 2026-10-11:
+10 chunks flat k=10, 48 threads, band=65536, window=64; the G2 unpacked run
+measured 264/1538/4575 - the packing + quieter box roughly halved every wall)
 
 | phase | wall at 1GB | rate (s/MiB) | pile projection (EXTRAPOLATED) |
 |---|---|---|---|
-| chunk (64-chunk shape: 264s at 10 chunks) | 264 s | 0.277 | 95.9 h |
-| merge walk (load+anchor+cross-merge) | 1538 s | 1.613 | 558.9 h |
-| merge(v2 emission) ∥ fused finish | max(4470, 4575) = 4575 s | 4.796 | 1662.1 h |
-| container (m5 EF + m1 runs + publish) | 60 s | 0.063 | 21.8 h |
-| **total (concurrent pipeline)** | **6521 s end-to-end** | **6.84** | **2338.4 h (~97.4 days)** |
+| chunk | 205.8 s | 0.216 | 74.8 h |
+| merge walk (load+anchor+cross-merge) | 725.5 s | 0.760 | 263.6 h |
+| merge(v2 emission) ∥ fused finish | max(2802, 2868) = 2867.6 s | 3.005 | 1042.0 h |
+| container (m5 EF + m1 runs + publish) | 59.6 s | 0.062 | 21.6 h |
+| **total (concurrent pipeline)** | **~3079 s end-to-end** | **3.23** | **1401.8 h (~58.4 days)** |
 
-The fused finish's own split at 1GB (MEASURED): corpus PFCK build 7.3 s,
-seam classes 202 s (one 8n WM sequential scan + the 30-class rebuild),
-sweep 4306 s (repair stream 1276 s + corpus LCE 967 s + witness/advance),
-m5-ef 27 s, m1-runs 32 s, publish 0.2 s. The v1 chain at the same fixture
-needed 332 s (endpoints) + 1114 s (slim) + 83 s (sweep) = 1529 s of finish
-side — the fused finish pays ~2.8x wall for eliminating every whole-column
-artifact; the concurrency hides it behind the emission (the pipeline's
-binding phase is max(emit, finish), not their sum).
+The fused finish's own split at 1GB (MEASURED, this run): pfck-corpus
++ runcols-idx poll 1206.8 s, seam classes 218.6 s (packed-WM scan),
+sweep 1389.0 s = repair 50.8 s + corpus LCE 1217.1 s (parallel, 48t) +
+advance/witness ~121 s (residual), m5-ef 27.1 s, m1-runs 32.4 s,
+publish 0.14 s. The G2-era "advance+witness ~2060 s" 25x suspect is
+REFUTED: it was a subtraction artifact of the gate run (merge pacing +
+bridge I/O in then-unmeasured regions). The serial machine costs ~121 s
+(1.5x v1's 83 s); the sweep's binding term is the thread-scaled corpus
+LCE, which is what the 96/192-thread curve attacks.
 
 ## Measured 1GB per-terms (G2, all byte-gated vs the bank)
 
@@ -60,22 +67,33 @@ binding phase is max(emit, finish), not their sum).
 |---|---|---|---|
 | corpus (outside the scratch tree) | 1,000,000,665 | 1.000n | 1218 GiB |
 | chunk set, compact pos (transient, freed as consumed) | 4.4n | 4.40n | 5360 GiB |
-| merge transient `.xsc` (m2 2n + WM 8n + bwt/hash/ov ~4.5n) | 14.46e9 du peak | 14.46n | 17614 GiB |
+| merge transient `.xsc` (m2 2n + packed WM w/8·n + hs 2n + bwt 1n + ov/walk ~1.45n) | 10.20e9 du (w=30) | 10.20n | 11.57n (w=41) = 14,099 GiB |
 | frag.rlebwt + meta (the only pre-lite whole file; deleted post-publish) | 1,545,900,600 | 1.546n | 1883 GiB |
 | pfck scratch (corpus-built; deleted post-sweep) | 363,636,648 | 0.364n | 443 GiB |
 | pieces window (64 bands in flight) | ~52 MB | 0.052n | 63 GiB |
 | lite container (the product) | 467,814,822 | 0.468n | 570 GiB |
-| **scratch-tree peak (MEASURED timeline, du-sampled)** | **1,974,887,564** | **1.975n** | **2406 GiB** |
-| whole-box (corpus + tree peak) | — | 2.975n | **~3.9 TB** |
+| **scratch-tree peak, output side (MEASURED timeline, du-sampled, excl. the merge's .xsc)** | **1,974,887,564** | **1.975n** | **2406 GiB** |
+| whole-tree peak INCLUDING the merge transient (front-door du sample; the monolithic-merge hosting number) | 15,042,581,059 | **15.04n** | **16.41n = ~19,995 GiB** |
+| whole-box (corpus + output-side tree peak) | — | 2.975n | **~3.9 TB** |
 
 The mission's output-side bound is 2.5n; the measured tree peak is 1.975n
 (G2 gate assert, `peak-monitor.log`). The merge transient is a separate
-per-term with its own provenance (the charter's accounting): a monolithic
-final merge needs ~17.6 TiB of scratch at pile scale — this box (nvme1+2+3
-= 7.1 TB free total) cannot host it monolithically; the launch requires
-either reader-level striping (lane item 3, space accounted, I/O split not
-landed) or a scratch host with >= 19 TB free. The dry run prints this
-explicitly rather than hiding it in a constant.
+per-term with its own provenance (the charter's accounting): MEASURED
+10.20n at 1GB packed (14.46n unpacked; the WM packing is the -4.25n),
+11.57n = 13.8 TiB at pile (w=41); the whole tree including it peaks at
+15.04n measured / 16.41n = 19.5 TiB extrapolated at pile. **The monolithic
+pile merge does not fit this box** (nvme1+2+3 = 7.1 TB free): per-shard
+transients cannot collapse it — m2, hs, bwt and the walk columns are
+global by construction (the walk's LCE probes arbitrary cross-boundary
+positions; per-side repair state must be complete before boundary
+planning), and the WM is pinned whole by the two-pass emission plus the
+finish's class-SA-set preads (interior SA is not carried by pieces). The
+launch requires a >= 20 TiB-free scratch host (plus corpus if co-hosted,
+plus the unmeasured witness-spill headroom) or landed reader-level
+striping (lane item 3) on a box with >= 19.5 TiB aggregate. Fan-in does
+not help the top merge (same globals at the final level); corpus dedup is
+a product decision (PARKED). The dry run prints this explicitly rather
+than hiding it in a constant.
 
 The witness stream: chi = 0.283n at the 1GB FIXTURE (chi = 283,296,933);
 the pile's chi/n is UNMEASURED (real Pile text, different repeat
@@ -111,8 +129,9 @@ xsa build --input /mnt/nvme2n1/erikg/pile.txt \
     64 $SCRATCH/chunks $SCRATCH/remap-256.bin
 
 # 2) the merge, v2 emission (CROSS_V2_PIECES=1), flow window 64 bands
-#    PRE-REQ: the merge transient (~17.6 TiB at this scale) must fit the
-#    scratch it runs on - stripes / lane item 3 / a bigger host (see above).
+#    PRE-REQ: the merge transient (11.57n = 13.8 TiB at this scale; the
+#    whole tree incl. it ~19.5 TiB) must fit the scratch it runs on -
+#    stripes / lane item 3 / a bigger host (see above).
 ( ulimit -v 137438953472; exec timeout 6220800 \
     env CROSS_V2_PIECES=1 CROSS_V2_PIECE_WINDOW=64 \
     $BIN/cross_lcp_merge --tree $SCRATCH/chunks 64 1307910802540 \
