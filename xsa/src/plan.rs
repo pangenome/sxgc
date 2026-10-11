@@ -416,6 +416,21 @@ impl Plan {
             s.push_str(&format!("XSA_PLAN_V2_TREE tree_peak={:.3}n bound={:.1}n measured_at=1GB-G2 (output side, excl. the merge transient); whole_box(corpus+tree)={:.3}n\n", V2_TREE_PEAK_PER_N, V2_TREE_TARGET_PER_N, 1.0 + V2_TREE_PEAK_PER_N));
             s.push_str(&format!("XSA_PLAN_V2_WITNESS {}\n", v.witness_note));
             s.push_str(&format!("XSA_PLAN_V2_MERGE_TRANSIENT {}\n", v.transient_note));
+            // THE SCRATCH-HOST FINDING, printed by the dry run itself (the
+            // reasoning is journaled in the lane README; these lines are the
+            // verdict): per-shard transients cannot collapse the merge
+            // transient (m2/hs/bwt/walk columns global by construction; the
+            // WM pinned whole by the two-pass emission + class-SA-set
+            // preads), so the monolithic final merge has a hard hosting
+            // number. All cells below carry their provenance above.
+            let need_gb = mb * v2_whole_tree_peak_per_n(self.survey.corpus_bytes) / 1024.0;
+            s.push_str(&format!(
+                "XSA_PLAN_V2_HOSTING monolithic-final-merge needs the WHOLE tree (incl. the merge transient) ~{:.0} GB = {:.2}n on ONE scratch host (+ corpus {:.0} GB if co-hosted, + witness-spill scratch ~0.125x measured of (stream - budget)); THIS scratch has {:.0} GB free - {}\n",
+                need_gb, v2_whole_tree_peak_per_n(self.survey.corpus_bytes), self.survey.corpus_bytes as f64 / (1024.0*1024.0*1024.0), free_gb,
+                if need_gb < free_gb { "FITS" } else { "DOES NOT FIT the monolithic merge" },
+            ));
+            s.push_str(&format!("XSA_PLAN_V2_HOSTING alternatives: fan-in (G3-gated) does NOT help the top merge (the final level has the same global terms and intermediates add mwork scratch); reader-level striping (lane item 3) splits I/O, not space - it needs the same aggregate; corpus dedup would shrink n but is a PRODUCT decision (changes chi and every downstream constant) - PARKED; the remaining honest lever is a scratch host with >= {:.0} GB free (or landed striping over an aggregate that size)\n", need_gb + self.survey.corpus_bytes as f64 / (1024.0*1024.0*1024.0)));
+            s.push_str(&format!("XSA_PLAN_V2_HOSTING per-shard floor note: the chunk set (compact pos, mandatory at this scale: {:.0} GB vs {:.0} GB dense) is a consumed transient that is LIVE alongside the walk-phase transient - it is inside the whole-tree number above, not additional\n", v.chunk_set_gb, dense_gb));
         }
         s.push_str(&format!("XSA_PLAN_DISC {}\n", self.disc_verdict));
         s.push_str(&format!("XSA_PLAN_RAM {}\n", self.ram_verdict));
