@@ -162,6 +162,8 @@ pub struct Plan {
     pub ram_verdict: String,
     pub alternatives: Vec<String>,
     pub fanin: Option<FaninPlan>,
+    /// The v2 pipeline per-term table (model_v2 only).
+    pub v2: Option<V2PerTerms>,
 }
 
 pub fn model(
@@ -246,7 +248,7 @@ pub fn model(
     if !survey.cx16 {
         alternatives.push("CPU lacks cmpxchg16b: the merge's page pool requires it (CROSS_NO_POOL=1 runs without the pool, slower)".to_string());
     }
-    Plan { survey, chunks, kway, threads, cap_gb, phases, chunk_bytes_mb, pos_mode: pos_mode.to_string(), disc_verdict, ram_verdict, alternatives, fanin: None }
+    Plan { survey, chunks, kway, threads, cap_gb, phases, chunk_bytes_mb, pos_mode: pos_mode.to_string(), disc_verdict, ram_verdict, alternatives, fanin: None, v2: None }
 }
 
 fn hms(s: f64) -> String {
@@ -356,7 +358,7 @@ pub fn model_fanin(
         alternatives.push(format!("lower --chunk-mb (smaller chunks cut the front end's ~{}x-chunk-bytes RAM linearly)", CHUNK_BUILD_RAM_PER_CHUNK_MB as u32));
     }
     let fanin = FaninPlan { chunk_bytes_mb, levels, peak_disc_mb: peak_mb, total_merge_wall_s };
-    Plan { survey, chunks, kway, threads, cap_gb, phases, chunk_bytes_mb, pos_mode: pos_mode.to_string(), disc_verdict, ram_verdict, alternatives, fanin: Some(fanin) }
+    Plan { survey, chunks, kway, threads, cap_gb, phases, chunk_bytes_mb, pos_mode: pos_mode.to_string(), disc_verdict, ram_verdict, alternatives, fanin: Some(fanin), v2: None }
 }
 
 impl Plan {
@@ -364,8 +366,8 @@ impl Plan {
         let mut s = String::new();
         let total: f64 = self.phases.iter().map(|p| p.wall_s).sum();
         s.push_str(&format!(
-            "XSA_PLAN v={} corpus_bytes={} chunks={} kway={} threads={} cap_gb={} cores={} cx16={} mem_available_gb={:.0}\n",
-            CONSTANTS_VERSION, self.survey.corpus_bytes, self.chunks, self.kway, self.threads,
+            "XSA_PLAN v={}{} corpus_bytes={} chunks={} kway={} threads={} cap_gb={} cores={} cx16={} mem_available_gb={:.0}\n",
+            CONSTANTS_VERSION, if self.v2.is_some() { " pipeline=v2 (constants measured at the 1GB G2 gate)" } else { "" }, self.survey.corpus_bytes, self.chunks, self.kway, self.threads,
             self.cap_gb, self.survey.cores, self.survey.cx16,
             self.survey.mem_available_bytes as f64 / (1024.0 * 1024.0 * 1024.0),
         ));
@@ -406,6 +408,15 @@ impl Plan {
             "XSA_POS_MODE mode={} chunk_set_gb_dense={:.1} chunk_set_gb_compact={:.1} free_gb={:.1} rule=dense-if-10pct-headroom-else-compact (walk s/MB dense={:.3} compact={:.3})\n",
             self.pos_mode, dense_gb, compact_gb, free_gb, MERGE_WALK_DENSE_S_PER_MB, MERGE_WALK_COMPACT_S_PER_MB,
         ));
+        if let Some(v) = &self.v2 {
+            s.push_str(&format!(
+                "XSA_PLAN_V2_TERMS pipeline=v2 corpus_gb={:.0} chunk_set_gb={:.0} merge_transient_gb={:.0} rlebwt_gb={:.0} pfck_scratch_gb={:.0} pieces_window_gb={:.0} container_gb={:.0} tree_peak_gb={:.0} whole_box_gb={:.0}\n",
+                v.corpus_gb, v.chunk_set_gb, v.merge_transient_gb, v.rlebwt_gb, v.pfck_gb, v.pieces_window_gb, v.container_gb, v.tree_peak_gb, v.whole_box_gb,
+            ));
+            s.push_str(&format!("XSA_PLAN_V2_TREE tree_peak={:.3}n bound={:.1}n measured_at=1GB-G2; whole_box(corpus+tree)={:.3}n\n", V2_TREE_PEAK_PER_N, V2_TREE_TARGET_PER_N, 1.0 + V2_TREE_PEAK_PER_N));
+            s.push_str(&format!("XSA_PLAN_V2_WITNESS {}\n", v.witness_note));
+            s.push_str(&format!("XSA_PLAN_V2_MERGE_TRANSIENT {}\n", v.transient_note));
+        }
         s.push_str(&format!("XSA_PLAN_DISC {}\n", self.disc_verdict));
         s.push_str(&format!("XSA_PLAN_RAM {}\n", self.ram_verdict));
         for a in &self.alternatives {
@@ -413,4 +424,132 @@ impl Plan {
         }
         s
     }
+}
+
+// ------------------------------------------------------------- v2 pipeline
+// The pile-builder v2 per-term table: MEASURED at the 1GB G2 gate
+// (2026-10-11, n=1000000665, 10 chunks flat k=10, 48 threads,
+// band=65536 runs, flow window 64 bands; concurrent merge+finish).
+// The v2 pipeline eliminates every whole-column finish artifact (NO
+// agg/ssa_t/head_sa/ssa/pftext/pfck file ever exists); the product is
+// the lite container (m1/m4/m5/m7/m10/m11) and the only pre-lite whole
+// file is frag.rlebwt, deleted after the container publishes.
+pub const V2_RLEBWT_PER_N: f64 = 1.546;         // measured 1545900600 B
+pub const V2_PFCK_PER_N: f64 = 0.364;           // measured 363636648 B (scratch; deleted post-sweep)
+pub const V2_CONTAINER_PER_N: f64 = 0.468;      // measured 467814822 B (the product)
+pub const V2_PIECES_WINDOW_PER_N: f64 = 0.052;  // 64 bands x 65536 runs x ~12.5 B/run
+pub const V2_TREE_PEAK_PER_N: f64 = 1.975;      // MEASURED G2 du peak of the scratch tree
+pub const V2_TREE_TARGET_PER_N: f64 = 2.5;      // the mission's output-side bound
+pub const V2_MERGE_TRANSIENT_PER_N: f64 = 14.46; // MEASURED G2 .xsc du peak (m2 2n + WM 8n + bwt/hash/ov ~4.5n)
+pub const V2_CHI_PER_N: f64 = 0.283;            // 1GB fixture ratio; the pile value is UNMEASURED
+// Walls, seconds per corpus MB (G2-measured). The v2 emission and the
+// fused finish run CONCURRENTLY (consumer-paced through the piece-flow
+// window): that row is max(emit, finish), not their sum.
+pub const V2_CHUNK_S_PER_MB: f64 = 264.0 / 953.7;
+pub const V2_MERGE_WALK_S_PER_MB: f64 = 1538.4 / 953.7;   // load + anchor + cross-merge
+pub const V2_EMIT_FINISH_S_PER_MB: f64 = 4575.0 / 953.7;  // concurrent v2 emission + fused finish
+pub const V2_CONTAINER_S_PER_MB: f64 = 60.0 / 953.7;      // m5 EF + m1 runs + publish
+
+pub struct V2PerTerms {
+    pub corpus_gb: f64,
+    pub chunk_set_gb: f64,
+    pub merge_transient_gb: f64,
+    pub rlebwt_gb: f64,
+    pub pfck_gb: f64,
+    pub pieces_window_gb: f64,
+    pub container_gb: f64,
+    pub tree_peak_gb: f64,
+    pub whole_box_gb: f64,
+    pub witness_ram_gb: f64,
+    pub witness_note: String,
+    pub transient_note: String,
+}
+
+pub fn model_v2(
+    survey: Survey, chunks: u32, kway: u32, threads: u32, cap_gb: u64,
+    hygiene_free_pct: u32,
+) -> Plan {
+    let mb = survey.corpus_bytes as f64 / (1024.0 * 1024.0);
+    let n_gb = mb / 1024.0;
+    let chunk_bytes_mb = mb / chunks as f64;
+    let chunk_ram_gb = chunk_bytes_mb * CHUNK_BUILD_RAM_PER_CHUNK_MB / 1024.0;
+    let free_mb = survey.scratch_free_bytes as f64 / (1024.0 * 1024.0);
+    // The pile plan runs compact pos columns (the chunk set is a transient
+    // input, freed as consumed by the merge loads).
+    let chunk_set_mb = mb * chunk_artifacts_per_corpus_mb("compact");
+    let transient_mb = mb * V2_MERGE_TRANSIENT_PER_N;
+    let rlebwt_mb = mb * V2_RLEBWT_PER_N;
+    let pfck_mb = mb * V2_PFCK_PER_N;
+    let pieces_mb = mb * V2_PIECES_WINDOW_PER_N;
+    let container_mb = mb * V2_CONTAINER_PER_N;
+    let tree_peak_mb = mb * V2_TREE_PEAK_PER_N;
+    let phases = vec![
+        PhaseRow { name: "chunk".into(), wall_s: V2_CHUNK_S_PER_MB * mb, disc_peak_mb: chunk_set_mb, rss_gb: chunk_ram_gb },
+        PhaseRow { name: "merge(walk)".into(), wall_s: V2_MERGE_WALK_S_PER_MB * mb, disc_peak_mb: chunk_set_mb + transient_mb, rss_gb: MERGE_RSS_GB },
+        // CONCURRENT: the v2 band-piece emission (flow-paced against the
+        // consumer) and the fused finish (corpus PFCK -> seam classes ->
+        // sweep -> witnesses) overlap; the peak carries both sides' live
+        // terms (transient still live, outputs landing).
+        PhaseRow { name: "merge(emit)+fused-finish".into(), wall_s: V2_EMIT_FINISH_S_PER_MB * mb,
+                   disc_peak_mb: chunk_set_mb + transient_mb + rlebwt_mb + pfck_mb + pieces_mb, rss_gb: MERGE_RSS_GB },
+        PhaseRow { name: "container(m5+m1+publish)".into(), wall_s: V2_CONTAINER_S_PER_MB * mb, disc_peak_mb: tree_peak_mb, rss_gb: MERGE_RSS_GB },
+    ];
+    // The OUTPUT-side verdict is the mission's accounting: the scratch tree
+    // (the measured 1.975n timeline: rlebwt + pfck + piece window +
+    // container) must fit the scratch free space; the whole-box number
+    // (corpus + tree peak) is what the mission's ~2.5n target bounds.
+    let tree_ok = tree_peak_mb < free_mb;
+    let free_pct = 100u32.saturating_sub(survey.scratch_used_percent);
+    let hygiene_ok = free_pct >= hygiene_free_pct;
+    let tree_target_ok = V2_TREE_PEAK_PER_N <= V2_TREE_TARGET_PER_N;
+    let disc_ok = tree_ok && tree_target_ok && (hygiene_ok || hygiene_free_pct == 0);
+    let whole_box_gb = n_gb * (1.0 + V2_TREE_PEAK_PER_N);
+    let disc_verdict = if disc_ok {
+        if hygiene_ok {
+            format!("FEASIBLE (v2 output side): scratch-tree peak ~{:.0} GB ({:.3}n, bound {:.1}n) fits {:.0} GB free; whole-box (corpus + tree) ~{:.0} GB = {:.3}n", tree_peak_mb / 1024.0, V2_TREE_PEAK_PER_N, V2_TREE_TARGET_PER_N, free_mb / 1024.0, whole_box_gb, 1.0 + V2_TREE_PEAK_PER_N)
+        } else {
+            format!("FEASIBLE with hygiene override (v2 output side): scratch-tree peak ~{:.0} GB ({:.3}n, bound {:.1}n) fits {:.0} GB free ({}% used; policy >= {}% free overridden by the operator); whole-box (corpus + tree) ~{:.0} GB = {:.3}n", tree_peak_mb / 1024.0, V2_TREE_PEAK_PER_N, V2_TREE_TARGET_PER_N, free_mb / 1024.0, survey.scratch_used_percent, hygiene_free_pct, whole_box_gb, 1.0 + V2_TREE_PEAK_PER_N)
+        }
+    } else if !tree_ok {
+        format!("INFEASIBLE (v2 output side): scratch-tree peak ~{:.0} GB vs {:.0} GB free", tree_peak_mb / 1024.0, free_mb / 1024.0)
+    } else if !tree_target_ok {
+        format!("INFEASIBLE (v2 output side): scratch-tree peak {:.3}n exceeds the {:.1}n mission bound", V2_TREE_PEAK_PER_N, V2_TREE_TARGET_PER_N)
+    } else {
+        format!("INFEASIBLE (hygiene): scratch-tree peak ~{:.0} GB fits {:.0} GB free but only {}% free < the {}% policy; pass --scratch-free-pct to override", tree_peak_mb / 1024.0, free_mb / 1024.0, free_pct, hygiene_free_pct)
+    };
+    let chunk_ram_ok = chunk_ram_gb < cap_gb as f64 * 0.8;
+    let ram_verdict = format!(
+        "{}: chunk front end ~{:.1} GB ({}x chunk bytes) vs cap {} GiB; merge ~{:.1} GB (bounded); fused finish ~{:.1} GB witness RAM budget (--wit-ram-budget, default 1 GB; spills are varint-delta disc runs)",
+        if chunk_ram_ok { "FEASIBLE" } else { "INFEASIBLE" },
+        chunk_ram_gb, CHUNK_BUILD_RAM_PER_CHUNK_MB as u32, cap_gb, MERGE_RSS_GB,
+        8.0 * V2_CHI_PER_N * n_gb,
+    );
+    let mut alternatives = Vec::new();
+    if !chunk_ram_ok {
+        alternatives.push(format!("raise --chunks (smaller chunks cut the front end's ~{}x-chunk-bytes RAM linearly)", CHUNK_BUILD_RAM_PER_CHUNK_MB as u32));
+    }
+    let witness_ram_gb = 8.0 * V2_CHI_PER_N * n_gb;
+    let witness_note = format!(
+        "witness stream = 8B x chi; chi/n = {:.3} is the 1GB FIXTURE ratio (the pile value is unmeasured): ~{:.0} GB at this scale; if it exceeds --wit-ram-budget the overflow spills as sorted varint-delta disc runs (est. <= 0.3x raw, EXTRAPOLATED - unmeasured at spill scale) inside the tree",
+        V2_CHI_PER_N, witness_ram_gb,
+    );
+    let transient_note = format!(
+        "merge transient = {:.2}n measured at 1GB (m2 2n + WM 8n + bwt/hash/ov ~4.5n): ~{:.0} GB at this scale - a separate per-term with its own provenance; a monolithic final merge needs that much scratch (stripes / reader-level striping, lane item 3, or a larger scratch host); printed, not hidden in a constant",
+        V2_MERGE_TRANSIENT_PER_N, transient_mb / 1024.0,
+    );
+    let v2 = V2PerTerms {
+        corpus_gb: n_gb,
+        chunk_set_gb: chunk_set_mb / 1024.0,
+        merge_transient_gb: transient_mb / 1024.0,
+        rlebwt_gb: rlebwt_mb / 1024.0,
+        pfck_gb: pfck_mb / 1024.0,
+        pieces_window_gb: pieces_mb / 1024.0,
+        container_gb: container_mb / 1024.0,
+        tree_peak_gb: tree_peak_mb / 1024.0,
+        whole_box_gb,
+        witness_ram_gb,
+        witness_note,
+        transient_note,
+    };
+    Plan { survey, chunks, kway, threads, cap_gb, phases, chunk_bytes_mb, pos_mode: "compact".to_string(), disc_verdict, ram_verdict, alternatives, fanin: None, v2: Some(v2) }
 }

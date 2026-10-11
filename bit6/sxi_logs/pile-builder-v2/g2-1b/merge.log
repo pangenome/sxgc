@@ -1,0 +1,26 @@
+LOAD_SIDE idx=9 n=99190295 wall=1.326 mode=persisted-reads done=1/10
+LOAD_SIDE idx=1 n=100043274 wall=1.372 mode=persisted-reads done=2/10
+LOAD_SIDE idx=4 n=100005327 wall=1.376 mode=persisted-reads done=3/10
+LOAD_SIDE idx=8 n=100007775 wall=1.380 mode=persisted-reads done=4/10
+LOAD_SIDE idx=0 n=100000503 wall=1.388 mode=persisted-reads done=5/10
+LOAD_SIDE idx=7 n=100100279 wall=1.383 mode=persisted-reads done=6/10
+LOAD_SIDE idx=2 n=100042018 wall=1.394 mode=persisted-reads done=7/10
+LOAD_SIDE idx=5 n=100006293 wall=1.393 mode=persisted-reads done=8/10
+LOAD_SIDE idx=3 n=100413205 wall=1.404 mode=persisted-reads done=9/10
+LOAD_SIDE idx=6 n=100191696 wall=1.404 mode=persisted-reads done=10/10
+LOAD_STATS sides=10 par=10 wall=1.410 per_side_avg=1.410 (serial-equivalent width 1)
+CROSS_PHASE m2-build wall=1.252 cumulative=2.663 peak_rss_kib=9852
+POOL_STATS fd=5 bytes=2000001336 fills=5 hits=0 misses=0 torn=0
+CROSS_PHASE hash-build wall=1.263 cumulative=3.925 peak_rss_kib=606336
+CROSS_PHASE anchor+repair wall=8.757 cumulative=12.682 peak_rss_kib=1577528
+XMERG_TIMING t_pf=2966.280 t_pop=48.671 cell_hits=1075327296 cell_miss=541219484 shards=48
+CROSS_PHASE cross-merge wall=1525.766 cumulative=1538.448 peak_rss_kib=1577528
+POOL_STATS fd=4 bytes=2000001336 fills=542428706 hits=0 misses=0 torn=0
+POOL_STATS fd=3 bytes=2000001330 fills=696403769 hits=21103038013 misses=266723987 torn=191894
+CROSS_PHASE emit-count wall=412.272 cumulative=1950.877 peak_rss_kib=1577528
+CROSS_V2_IDX path=/mnt/nvme2n1/erikg/extcols-scratch/pilev2-g2-1b/merged/frag.runcols.idx shards=48 final_runs=368036610 n=1000000665 w=30 band=65536 window=64
+CROSS_PHASE emit-v2-idx wall=0.000 cumulative=1950.877 peak_rss_kib=1577528
+FOUR_EMIT shards=48 runs=368036610 total=1000000675 v2=1
+CROSS_PHASE emit-write wall=4470.156 cumulative=6421.033 peak_rss_kib=1577528
+CROSS_KWAY k=10 mode=dollar left=/mnt/nvme2n1/erikg/extcols-scratch/gate-1b-flat10-d/chunks/chunk-0.crle right=/mnt/nvme2n1/erikg/extcols-scratch/gate-1b-flat10-d/chunks/chunk-9.crle n=1000000665 sizes=100000503,100043274,100042018,100413205,100005327,100006293,100191696,100100279,100007775,99190295 out=/mnt/nvme2n1/erikg/extcols-scratch/pilev2-g2-1b/merged/frag out_runs=368036610 wall_total=6421.046 comparisons=4165399125 symbols_compared=67541262140 probes=2872572824 max_lce=51460 fast_decided=3357125680 probe_decided=808273403 cap_decided=42 tie_decided=0 lce_over_10k=238249 lce_over_100k=0 lce_over_1m=0 anchors_sum=47 walk_steps_sum=47 block_rows_sum=217398 peak_rss_kib=1577528 hash_k=0 t_fast=33590.168 t_prep=31.404 t_probe=4415.162 t_scan=17646.989
+POOL_STATS fd=3 bytes=2000001330 fills=1223908018 hits=2221860810 misses=514216121 torn=294

@@ -92,6 +92,10 @@ The uniform journal (xsa-build.log) reports chi and per-phase wall / peak
 RSS / disc telemetry.
 
   xsa build --plan-only           print the surveyed+modeled build plan
+  --v2-pipeline          model the pile-builder v2 pipeline instead (the
+                     chunk -> v2-emission merge -> fused-finish chain whose
+                     1GB per-terms are gated; use with --plan-only for the
+                     pile dry-run; the v1 executor ignores it)
                      and exit without building anything (same model as the
                      plan file the build journals first).
   --scratch-free-pct N  disc hygiene policy override (default 15 = the
@@ -151,6 +155,7 @@ struct Options {
     chunks: u32,
     kway: u32,
     plan_only: bool,
+    v2_pipeline: bool,
     stripes: Vec<String>,
     scratch_free_pct: u32,
     remap: Option<PathBuf>,
@@ -213,6 +218,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     let mut chunks = 32u32;
     let mut kway = 2u32;
     let mut plan_only = false;
+    let mut v2_pipeline = false;
     let mut stripes: Vec<String> = Vec::new();
     let mut scratch_free_pct = 15u32;
     let mut remap = None;
@@ -275,6 +281,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
                 }
             }
             "--plan-only" => plan_only = true,
+            "--v2-pipeline" => v2_pipeline = true,
             "--scratch-free-pct" => {
                 i += 1;
                 scratch_free_pct = parse_u32(args.get(i), "--scratch-free-pct")?;
@@ -309,7 +316,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     if fanin && chunk_mb.is_none() {
         return Err("--fanin requires --chunk-mb N (the fixed chunk size)".into());
     }
-    Ok(Options { input, scratch, snap_1e, memory_gb, threads, chunks, kway, plan_only, stripes, scratch_free_pct, remap, chunk_mb, fanin })
+    Ok(Options { input, scratch, snap_1e, memory_gb, threads, chunks, kway, plan_only, v2_pipeline, stripes, scratch_free_pct, remap, chunk_mb, fanin })
 }
 
 /// Last byte of a file (the snap-boundary probe).
@@ -661,7 +668,9 @@ fn run_chain(options: Options) -> Result<(), String> {
         None => options.chunks,
     };
     let survey = super::plan::survey(&input, &scratch, &options.stripes)?;
-    let build_plan = if options.fanin {
+    let build_plan = if options.v2_pipeline {
+        super::plan::model_v2(survey, chunks, options.kway, options.threads, options.memory_gb, options.scratch_free_pct)
+    } else if options.fanin {
         super::plan::model_fanin(survey, chunks, options.kway, options.threads, options.memory_gb, options.scratch_free_pct)
     } else {
         super::plan::model(survey, chunks, options.kway, options.threads, options.memory_gb, options.scratch_free_pct)
