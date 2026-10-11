@@ -182,3 +182,26 @@ Measured 1GB walls (for PILE_PLAN_V2.md; the pfck-corpus phase includes the
 seam-classes 202s (WM scan 8n + 30-class rebuild), sweep 4306s (repair
 1276s + LCE 967s + witnesses), m5-ef 27s, m1-runs 32s, publish 0.2s.
 Finish cumulative 6521s; merge walk ~32 min (48 threads).
+
+## G3 + G4 - 1GB fan-in k=4 + the lite-container write path: GREEN (2026-10-11)
+
+G3 (levels 10->3->1 over the same deterministic 10-chunk set, mwork
+intermediates, window=64) and G4 (the default container-write path) land
+together in one run:
+
+* chi = 283296933 EXACT again (shape independence); classes=30
+  rows=213516 steps=31 max_seam_lce=97059 pred=73250 - same as flat.
+* ENDPOINT_STREAM_PASS r=368036609 == the bank's normalized r.
+* THE PRODUCT IS SHAPE-INDEPENDENT: the lite container is byte-identical
+  across the flat k=10 (G2) and fan-in k=4 (G3) shapes - 467,814,822
+  bytes, members m1/m4/m5/m7/m10/m11, every member count/bytes pair equal.
+* The emission-order witness stream (bridge) is byte-identical to the
+  bank's frag.sA for the fan-in shape too; WITNESS_SAMPLE_CHECK 1025/1025.
+* G4: run WITHOUT --keep-rlebwt - PILE_FINISH_RLEBWT_DELETED in the log;
+  the end tree holds product + logs only (rlebwt, meta, pfck, pieces,
+  idx, consumed sentinel and the mwork intermediates are all gone; the
+  merge's .xsc cleaned itself). NO agg/ssa_t/head_sa/ssa/pftext/pfck file
+  ever exists in either shape's tree.
+* Fan-in walls: the whole fan-in tree merge (3 levels) + finish ran
+  concurrent end-to-end in 6349s (finish cumulative), comparable to flat
+  despite 3 merge levels - the emission window paces to the consumer.

@@ -1,0 +1,127 @@
+PILE_FINISH_IDX shards=48 runs=368036610 n=1000000665 w=30 band=65536
+PILE_FINISH_CORPUS path=/mnt/nvme2n1/erikg/extcols-scratch/mergperf-1b-snap.txt bytes=1000000665 remap_identity=0 read_only=1 rotation=0 derivation=T[i]=REMAP[corpus[i]]
+PILE_FINISH_CYCLIC=1 has_rs=1 has_nl=1 k=1
+PILE_FINISH_PFCK path=/mnt/nvme2n1/erikg/extcols-scratch/pilev2-g3-1b/merged/frag.pfck2 n=1000000665 tau=22 count=45454576 bytes=363636648 wall=7.404 source=corpus_adapter byte_parity=merge_emit_pf
+PILE_FINISH_PHASE pfck-corpus wall=1979.932 cumulative=1979.933
+SLIM_PF_SELF_CHECK checks=256 passed=1 source=corpus_adapter
+SLIM_PF_SELF_CHECK checks=256 passed=1 source=corpus_adapter
+PILE_FINISH_PHASE fingerprints wall=0.019 cumulative=1979.952
+PILE_FINISH_SEAM_OCC terminal=0x1e depth0_count=165626 scan=corpus
+CYCLIC_SEAM_REPAIRED classes=30 rows=213516 discovery_steps=31 limit=368036 phi_samples=368036610 pattern_chain=1 wm_scan=1
+CYCLIC_SEAM_WORK max_seam_lce=97059 exact=1 pattern_chain=1 wm_scan=1
+PILE_FINISH_PHASE seam-classes wall=191.843 cumulative=2171.794
+PFP_TERMINAL byte=0x1e source=padding-row raw_n=1000000675 raw_r=368036610
+PILE_FINISH_PROGRESS band=1/5616 runs=65532 chi_so_far=47773 repair_wall=0.3 lce_wall=0.2 wit_spills=0
+PILE_FINISH_PROGRESS band=65/5616 runs=4259835 chi_so_far=3380322 repair_wall=17.3 lce_wall=11.5 wit_spills=0
+PILE_FINISH_PROGRESS band=129/5616 runs=8454140 chi_so_far=6672249 repair_wall=34.4 lce_wall=24.3 wit_spills=0
+PILE_FINISH_PROGRESS band=193/5616 runs=12648444 chi_so_far=10033953 repair_wall=51.6 lce_wall=33.8 wit_spills=0
+PILE_FINISH_PROGRESS band=257/5616 runs=16842748 chi_so_far=13351106 repair_wall=69.0 lce_wall=43.5 wit_spills=0
+PILE_FINISH_PROGRESS band=321/5616 runs=21037052 chi_so_far=16688806 repair_wall=86.4 lce_wall=53.5 wit_spills=0
+PILE_FINISH_PROGRESS band=385/5616 runs=25231356 chi_so_far=20027465 repair_wall=103.7 lce_wall=63.5 wit_spills=0
+PILE_FINISH_PROGRESS band=449/5616 runs=29425660 chi_so_far=23369312 repair_wall=121.1 lce_wall=74.7 wit_spills=0
+PILE_FINISH_PROGRESS band=513/5616 runs=33619964 chi_so_far=26719619 repair_wall=138.4 lce_wall=86.3 wit_spills=0
+PILE_FINISH_PROGRESS band=577/5616 runs=37814268 chi_so_far=30028549 repair_wall=155.6 lce_wall=97.6 wit_spills=0
+PILE_FINISH_PROGRESS band=641/5616 runs=42008572 chi_so_far=33364644 repair_wall=173.0 lce_wall=109.0 wit_spills=0
+PILE_FINISH_PROGRESS band=705/5616 runs=46202876 chi_so_far=36691450 repair_wall=190.4 lce_wall=120.7 wit_spills=0
+PILE_FINISH_PROGRESS band=769/5616 runs=50397180 chi_so_far=40025837 repair_wall=207.7 lce_wall=131.9 wit_spills=0
+PILE_FINISH_PROGRESS band=833/5616 runs=54591484 chi_so_far=43365913 repair_wall=225.1 lce_wall=143.2 wit_spills=0
+PILE_FINISH_PROGRESS band=897/5616 runs=58785788 chi_so_far=46704898 repair_wall=242.4 lce_wall=154.3 wit_spills=0
+PILE_FINISH_PROGRESS band=961/5616 runs=62980092 chi_so_far=50054201 repair_wall=259.7 lce_wall=166.0 wit_spills=0
+PILE_FINISH_PROGRESS band=1025/5616 runs=67174396 chi_so_far=53388549 repair_wall=277.0 lce_wall=177.0 wit_spills=0
+PILE_FINISH_PROGRESS band=1089/5616 runs=71368700 chi_so_far=56670494 repair_wall=294.4 lce_wall=188.1 wit_spills=0
+PILE_FINISH_PROGRESS band=1153/5616 runs=75563004 chi_so_far=59985909 repair_wall=312.0 lce_wall=199.6 wit_spills=0
+PILE_FINISH_PROGRESS band=1217/5616 runs=79757308 chi_so_far=63328055 repair_wall=329.6 lce_wall=210.9 wit_spills=0
+PILE_FINISH_PROGRESS band=1281/5616 runs=83951612 chi_so_far=66666630 repair_wall=347.0 lce_wall=222.3 wit_spills=0
+PILE_FINISH_PROGRESS band=1345/5616 runs=88145916 chi_so_far=70007114 repair_wall=364.3 lce_wall=233.4 wit_spills=0
+PILE_FINISH_PROGRESS band=1409/5616 runs=92340220 chi_so_far=73344953 repair_wall=381.2 lce_wall=245.0 wit_spills=0
+PILE_FINISH_PROGRESS band=1473/5616 runs=96534524 chi_so_far=76678705 repair_wall=398.5 lce_wall=257.2 wit_spills=0
+PILE_FINISH_PROGRESS band=1537/5616 runs=100728828 chi_so_far=80005742 repair_wall=416.0 lce_wall=268.7 wit_spills=0
+PILE_FINISH_PROGRESS band=1601/5616 runs=104923132 chi_so_far=83339795 repair_wall=433.4 lce_wall=280.1 wit_spills=0
+PILE_FINISH_PROGRESS band=1665/5616 runs=109117436 chi_so_far=86696037 repair_wall=450.8 lce_wall=291.4 wit_spills=0
+PILE_FINISH_PROGRESS band=1729/5616 runs=113311740 chi_so_far=90005843 repair_wall=468.2 lce_wall=301.7 wit_spills=0
+PILE_FINISH_PROGRESS band=1793/5616 runs=117506044 chi_so_far=93469905 repair_wall=485.6 lce_wall=311.6 wit_spills=0
+PILE_FINISH_PROGRESS band=1857/5616 runs=121700348 chi_so_far=96905897 repair_wall=503.0 lce_wall=322.0 wit_spills=0
+PILE_FINISH_PROGRESS band=1921/5616 runs=125894652 chi_so_far=100265178 repair_wall=520.4 lce_wall=333.1 wit_spills=0
+PILE_FINISH_PROGRESS band=1985/5616 runs=130088957 chi_so_far=103725202 repair_wall=537.8 lce_wall=343.6 wit_spills=0
+PILE_FINISH_PROGRESS band=2049/5616 runs=134283261 chi_so_far=107095785 repair_wall=555.2 lce_wall=353.9 wit_spills=0
+PILE_FINISH_PROGRESS band=2113/5616 runs=138477565 chi_so_far=110325828 repair_wall=572.6 lce_wall=363.5 wit_spills=0
+PILE_FINISH_PROGRESS band=2177/5616 runs=142671869 chi_so_far=113617929 repair_wall=590.0 lce_wall=373.0 wit_spills=0
+PILE_FINISH_PROGRESS band=2241/5616 runs=146866173 chi_so_far=116947143 repair_wall=606.7 lce_wall=382.1 wit_spills=0
+PILE_FINISH_PROGRESS band=2305/5616 runs=151060477 chi_so_far=120210720 repair_wall=624.0 lce_wall=392.3 wit_spills=0
+CYCLIC_SEAM_REPAIR terminal=0x1e predecessors_before_zero=73250
+PILE_FINISH_PROGRESS band=2369/5616 runs=155254781 chi_so_far=123381472 repair_wall=641.4 lce_wall=402.4 wit_spills=0
+PILE_FINISH_PROGRESS band=2433/5616 runs=159449085 chi_so_far=126538773 repair_wall=658.7 lce_wall=412.5 wit_spills=0
+PILE_FINISH_PROGRESS band=2497/5616 runs=163643389 chi_so_far=129776382 repair_wall=676.1 lce_wall=422.6 wit_spills=0
+PILE_FINISH_PROGRESS band=2561/5616 runs=167837693 chi_so_far=132989347 repair_wall=693.5 lce_wall=432.6 wit_spills=0
+PILE_FINISH_PROGRESS band=2625/5616 runs=172031997 chi_so_far=136120232 repair_wall=710.9 lce_wall=443.1 wit_spills=0
+PILE_FINISH_PROGRESS band=2689/5616 runs=176226301 chi_so_far=139279666 repair_wall=727.2 lce_wall=452.9 wit_spills=0
+PILE_FINISH_PROGRESS band=2753/5616 runs=180420605 chi_so_far=142443844 repair_wall=744.5 lce_wall=463.8 wit_spills=0
+PILE_FINISH_PROGRESS band=2817/5616 runs=184614909 chi_so_far=145550340 repair_wall=761.9 lce_wall=474.5 wit_spills=0
+PILE_FINISH_PROGRESS band=2881/5616 runs=188809213 chi_so_far=148609702 repair_wall=779.3 lce_wall=485.4 wit_spills=0
+PILE_FINISH_PROGRESS band=2945/5616 runs=193003517 chi_so_far=151700219 repair_wall=796.6 lce_wall=496.6 wit_spills=0
+PILE_FINISH_PROGRESS band=3009/5616 runs=197197821 chi_so_far=154821032 repair_wall=814.0 lce_wall=506.9 wit_spills=0
+PILE_FINISH_PROGRESS band=3073/5616 runs=201392125 chi_so_far=158054481 repair_wall=830.5 lce_wall=517.4 wit_spills=0
+PILE_FINISH_PROGRESS band=3137/5616 runs=205586429 chi_so_far=161300146 repair_wall=847.8 lce_wall=528.4 wit_spills=0
+PILE_FINISH_PROGRESS band=3201/5616 runs=209780733 chi_so_far=164582806 repair_wall=865.2 lce_wall=539.0 wit_spills=0
+PILE_FINISH_PROGRESS band=3265/5616 runs=213975037 chi_so_far=167809214 repair_wall=882.6 lce_wall=549.5 wit_spills=0
+PILE_FINISH_PROGRESS band=3329/5616 runs=218169341 chi_so_far=171058427 repair_wall=899.9 lce_wall=560.1 wit_spills=0
+PILE_FINISH_PROGRESS band=3393/5616 runs=222363645 chi_so_far=174188718 repair_wall=917.3 lce_wall=570.6 wit_spills=0
+PILE_FINISH_PROGRESS band=3457/5616 runs=226557949 chi_so_far=177426936 repair_wall=934.6 lce_wall=581.0 wit_spills=0
+PILE_FINISH_PROGRESS band=3521/5616 runs=230752253 chi_so_far=180659328 repair_wall=951.4 lce_wall=591.2 wit_spills=0
+PILE_FINISH_PROGRESS band=3585/5616 runs=234946557 chi_so_far=183804350 repair_wall=968.8 lce_wall=601.8 wit_spills=0
+PILE_FINISH_PROGRESS band=3649/5616 runs=239140861 chi_so_far=186903888 repair_wall=986.2 lce_wall=613.3 wit_spills=0
+PILE_FINISH_PROGRESS band=3713/5616 runs=243335165 chi_so_far=189996327 repair_wall=1003.5 lce_wall=624.2 wit_spills=0
+PILE_FINISH_PROGRESS band=3777/5616 runs=247529469 chi_so_far=193148090 repair_wall=1020.9 lce_wall=634.7 wit_spills=0
+PILE_FINISH_PROGRESS band=3841/5616 runs=251723773 chi_so_far=196415196 repair_wall=1038.4 lce_wall=645.5 wit_spills=0
+PILE_FINISH_PROGRESS band=3905/5616 runs=255918077 chi_so_far=199572498 repair_wall=1054.9 lce_wall=655.8 wit_spills=0
+PILE_FINISH_PROGRESS band=3969/5616 runs=260112381 chi_so_far=202660190 repair_wall=1072.2 lce_wall=666.2 wit_spills=0
+PILE_FINISH_PROGRESS band=4033/5616 runs=264306685 chi_so_far=205786390 repair_wall=1089.6 lce_wall=676.4 wit_spills=0
+PILE_FINISH_PROGRESS band=4097/5616 runs=268500989 chi_so_far=208894198 repair_wall=1107.0 lce_wall=687.0 wit_spills=0
+PILE_FINISH_PROGRESS band=4161/5616 runs=272695293 chi_so_far=211997859 repair_wall=1124.4 lce_wall=697.4 wit_spills=0
+PILE_FINISH_PROGRESS band=4225/5616 runs=276889597 chi_so_far=215052821 repair_wall=1141.8 lce_wall=708.5 wit_spills=0
+PILE_FINISH_PROGRESS band=4289/5616 runs=281083901 chi_so_far=218130157 repair_wall=1158.5 lce_wall=718.6 wit_spills=0
+PILE_FINISH_PROGRESS band=4353/5616 runs=285278205 chi_so_far=221224179 repair_wall=1175.9 lce_wall=729.4 wit_spills=0
+PILE_FINISH_PROGRESS band=4417/5616 runs=289472509 chi_so_far=224376240 repair_wall=1193.3 lce_wall=739.9 wit_spills=0
+PILE_FINISH_PROGRESS band=4481/5616 runs=293666813 chi_so_far=227520885 repair_wall=1210.8 lce_wall=750.6 wit_spills=0
+PILE_FINISH_PROGRESS band=4545/5616 runs=297861117 chi_so_far=230601864 repair_wall=1228.2 lce_wall=761.3 wit_spills=0
+PILE_FINISH_PROGRESS band=4609/5616 runs=302055421 chi_so_far=233660296 repair_wall=1245.7 lce_wall=771.9 wit_spills=0
+PILE_FINISH_PROGRESS band=4673/5616 runs=306249725 chi_so_far=236693401 repair_wall=1262.7 lce_wall=782.4 wit_spills=0
+PILE_FINISH_PROGRESS band=4737/5616 runs=310444029 chi_so_far=239757026 repair_wall=1280.0 lce_wall=793.0 wit_spills=0
+PILE_FINISH_PROGRESS band=4801/5616 runs=314638333 chi_so_far=242899782 repair_wall=1297.5 lce_wall=803.6 wit_spills=0
+PILE_FINISH_PROGRESS band=4865/5616 runs=318832637 chi_so_far=246149017 repair_wall=1315.4 lce_wall=814.8 wit_spills=0
+PILE_FINISH_PROGRESS band=4929/5616 runs=323026941 chi_so_far=249420291 repair_wall=1332.9 lce_wall=825.8 wit_spills=0
+PILE_FINISH_PROGRESS band=4993/5616 runs=327221245 chi_so_far=252632446 repair_wall=1350.3 lce_wall=836.1 wit_spills=0
+PILE_FINISH_PROGRESS band=5057/5616 runs=331415549 chi_so_far=255725947 repair_wall=1367.7 lce_wall=846.5 wit_spills=0
+PILE_FINISH_PROGRESS band=5121/5616 runs=335609853 chi_so_far=258884553 repair_wall=1382.6 lce_wall=856.1 wit_spills=0
+PILE_FINISH_PROGRESS band=5185/5616 runs=339804157 chi_so_far=262066145 repair_wall=1398.0 lce_wall=865.7 wit_spills=0
+PILE_FINISH_PROGRESS band=5249/5616 runs=343998461 chi_so_far=265225608 repair_wall=1415.1 lce_wall=875.9 wit_spills=0
+PILE_FINISH_PROGRESS band=5313/5616 runs=348192765 chi_so_far=268331821 repair_wall=1432.3 lce_wall=886.5 wit_spills=0
+PILE_FINISH_PROGRESS band=5377/5616 runs=352387069 chi_so_far=271450851 repair_wall=1449.8 lce_wall=896.6 wit_spills=0
+PILE_FINISH_PROGRESS band=5441/5616 runs=356581373 chi_so_far=274535005 repair_wall=1467.0 lce_wall=906.6 wit_spills=0
+PILE_FINISH_PROGRESS band=5505/5616 runs=360775677 chi_so_far=277680778 repair_wall=1484.5 lce_wall=916.7 wit_spills=0
+PILE_FINISH_PROGRESS band=5569/5616 runs=364969981 chi_so_far=280881605 repair_wall=1501.6 lce_wall=926.3 wit_spills=0
+ENDPOINT_STREAM_PASS n=1000000665 k=1 r=368036609 padding_rows=10 cyclic_seam_certified=0 classes=30
+PILE_FINISH_PHASE sweep wall=4117.773 cumulative=6289.568
+xsa chi-rspace: chi = 283296933 (N=1000000665, R=368036609) stream-agg=1 fused=1 corpus_lce=1
+SLIM_SEEDS queries=0 lce_wall=932.4 repair_wall=1514.4 wit_ram_values=283296933 wit_spills=0 wit_disc_bytes=0
+PILE_CONTAINER_BEGIN id=5 codec=105 count=283296933 offset=304
+WITNESS_SAMPLE_CHECK samples=1025 passed=1
+PILE_FINISH_PHASE m5-ef wall=26.600 cumulative=6316.167
+PILE_CONTAINER_BEGIN id=4 codec=4 count=0 offset=133324608
+PILE_CONTAINER_BEGIN id=7 codec=7 count=256 offset=133324624
+PILE_CONTAINER_BEGIN id=10 codec=110 count=368036609 offset=133324880
+PILE_CONTAINER_BEGIN id=11 codec=111 count=359411 offset=133324880
+CYCLIC_SEAM_REPAIR terminal=0x1e predecessors_before_zero=73250
+ENDPOINT_STREAM_PASS n=1000000665 k=1 r=368036609 padding_rows=10 cyclic_seam_certified=0 classes=30
+PILE_CONTAINER_BEGIN id=1 codec=101 count=368036609 offset=136200184
+PILE_FINISH_PHASE m1-runs wall=33.036 cumulative=6349.203
+SXI2_MEMBER id=1 codec=101 count=368036609 bytes=331614638
+SXI2_MEMBER id=4 codec=4 count=0 bytes=12
+SXI2_MEMBER id=5 codec=105 count=283296933 bytes=133324300
+SXI2_MEMBER id=7 codec=7 count=256 bytes=256
+SXI2_MEMBER id=10 codec=110 count=368036609 bytes=0
+SXI2_MEMBER id=11 codec=111 count=359411 bytes=2875304
+SXI2_PASS bytes=467814822 lite=1 members=6
+PILE_FINISH_PHASE publish wall=0.031 cumulative=6349.235
+PILE_FINISH_RLEBWT_DELETED
+PILE_FINISH_DONE chi=283296933 n=1000000665 r=368036609 container=/mnt/nvme2n1/erikg/extcols-scratch/pilev2-g3-1b/frag.sxi2
