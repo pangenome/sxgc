@@ -348,3 +348,20 @@ chunk set at compact pos is 4.40n = 5.36 TiB at pile (dense would be
   mwork scratch; reader-level striping (lane item 3) splits I/O, not
   space, and 7.1 TB < 19.5 TiB anyway; corpus dedup would shrink n but is
   a PRODUCT decision (changes chi and every downstream constant) - PARKED.
+
+## WIP re-gate: the instrumented finish is GATED at 100MB (2026-10-11)
+
+Commit 4a71936's WIP (SWEEP_PHASE_WALLS + advance_wall in the progress
+line + LCE pool cap 64->256) re-gated through the front door
+(xsa-pa-wipregate-100m, 48t): chi=29716349 EXACT, container 48,768,685 B
+byte-identical to the banked m3-100m product (cmp clean), tree rules
+asserted, PEAK_DISC 14.88n whole-tree (consistent with the corrected
+normalization above). The instrumentation prints directly now:
+
+    SWEEP_PHASE_WALLS repair=4.8 lce=97.4 advance_witness=10.6 lce_threads=48
+    PILE_FINISH_PHASE sweep wall=112.9
+
+advance_witness = 10.6s at 100MB (~106s scaled to 1GB) - consistent with
+the ~121s residual measured on the 1GB packed gate; the serial machine is
+confirmed cheap at both scales. The instrumented finish is cleared for
+scale runs (the 96/192-thread curve, the 10GB rung).
