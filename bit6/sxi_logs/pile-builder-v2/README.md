@@ -417,3 +417,25 @@ run journaled at g5-plan/pile-dry-run.log (XSA_PLAN v=5).
 Boxes: the t96 gate ran with the standing foreign single-core FastGA job
 live (noted, one core of 256); the t192 gate additionally overlapped the
 tail of an unrelated interactive session. No other heavy jobs.
+
+## The witness-spill gate at 1GB: GREEN - spills are product-neutral, compression MEASURED 0.125x (2026-10-11)
+
+The spill path (witnesses beyond --wit-ram-budget -> sorted varint-delta
+disc runs -> EF merges bucket RAM + disc) had never been exercised
+(wit_spills=0 in every prior gate). Gated it before the 10GB rung
+(xsa-pa-spill-1b, 96t, --wit-ram-gb 1 vs the 2.27GB stream):
+
+* chi = 283296933 EXACT and the container is BYTE-IDENTICAL to the banked
+  G2 lite WITH 2952 spills (wit_ram_values=283,296,933; ~149.1M values
+  spilled) - the product is unchanged by spilling.
+* MEASURED spill compression: 1,192,633,640 B of spilled values (raw
+  8B each) occupy 149,192,845 B on disc = **0.125x raw** (sorted
+  varint-delta; the plan's "<= 0.3x raw" estimate was conservative).
+* PEAK_DISC 15.19n = the 15.04n no-spill peak + 0.149n of spill disc -
+  the model is self-consistent: spill scratch adds ~0.125 x (stream -
+  budget) to the tree.
+* WALLS CONTAMINATED, not measurements: a foreign multi-core R workload
+  (~36 cores, load 400+) ran concurrently; the sweep's LCE read 2724s
+  (vs 790.5s clean at 96t) and advance_witness 122.8s (vs 83.6s). The
+  spill cost itself is small (spill writes 149MB total). Correctness
+  gates are load-independent; the walls are NOT journaled as 96t walls.
