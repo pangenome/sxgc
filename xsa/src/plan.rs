@@ -23,7 +23,7 @@ use std::path::Path;
 /// legacy chunk sets (CROSS_NO_PERSIST), measured ~1.5 s/MB serial
 /// (~0.7 MB/s - the pile-scale bottleneck that motivated persisting).
 /// Chunk artifacts: 9.9x corpus (.crle runs) + 8x (persisted pos columns).
-pub const CONSTANTS_VERSION: u32 = 4;
+pub const CONSTANTS_VERSION: u32 = 5;
 
 /// Per-byte wall rates (seconds per corpus MB), fragment-calibrated.
 pub struct Rates {
@@ -367,7 +367,7 @@ impl Plan {
         let total: f64 = self.phases.iter().map(|p| p.wall_s).sum();
         s.push_str(&format!(
             "XSA_PLAN v={}{} corpus_bytes={} chunks={} kway={} threads={} cap_gb={} cores={} cx16={} mem_available_gb={:.0}\n",
-            CONSTANTS_VERSION, if self.v2.is_some() { " pipeline=v2 (constants measured at the 1GB packed-WM gate xsa-pa-wmpack-1b)" } else { "" }, self.survey.corpus_bytes, self.chunks, self.kway, self.threads,
+            CONSTANTS_VERSION, if self.v2.is_some() { " pipeline=v2 (constants measured at the 1GB packed-WM thread-curve gates, best point 96t)" } else { "" }, self.survey.corpus_bytes, self.chunks, self.kway, self.threads,
             self.cap_gb, self.survey.cores, self.survey.cx16,
             self.survey.mem_available_bytes as f64 / (1024.0 * 1024.0 * 1024.0),
         ));
@@ -465,19 +465,22 @@ pub fn v2_whole_tree_peak_per_n(n: u64) -> f64 {
     v2_merge_transient_per_n(n) + V2_WHOLE_TREE_NONTRANSIENT_PER_N
 }
 pub const V2_CHI_PER_N: f64 = 0.283;            // 1GB fixture ratio; the pile value is UNMEASURED
-// Walls, seconds per corpus MB (MEASURED at the 1GB packed-WM front-door gate
-// xsa-pa-wmpack-1b, 2026-10-11, n=1000000665, 10 chunks flat k=10, 48 threads,
-// band=65536, window=64, concurrent merge+finish; the G2 unpacked run measured
-// chunk 264 / walk 1538 / emit+finish 4575 - the packed WM and the quieter box
-// roughly halved every wall). CAVEAT (honest extrapolation): at 1GB the corpus
-// fits the page cache, so the fused finish's corpus-LCE term (1217 s of the
-// 1389 s sweep at 48t) runs cache-warm; at pile scale those preads are
-// NVMe-bound. The 10GB rung measures the transition - pile walls from these
-// constants are EXTRAPOLATED and cache-optimistic until then.
-pub const V2_CHUNK_S_PER_MB: f64 = 205.76 / 953.7;
-pub const V2_MERGE_WALK_S_PER_MB: f64 = 725.5 / 953.7;    // load + anchor + cross-merge
-pub const V2_EMIT_FINISH_S_PER_MB: f64 = 2867.6 / 953.7;   // concurrent v2 emission + fused finish (the window's max)
-pub const V2_CONTAINER_S_PER_MB: f64 = 59.6 / 953.7;       // m5 EF + m1 runs + publish (inside the finish)
+// Walls, seconds per corpus MB (MEASURED at the 1GB packed-WM front-door
+// thread-curve runs, 2026-10-11, n=1000000665, 10 chunks flat k=10, 48/96/192
+// threads all GREEN with the container byte-identical; these constants are
+// the 96-THREAD run - the best measured point of the honest curve. THE
+// CURVE IS NOT LINEAR: end-to-end 3077s (48t) -> 2891s (96t, -6%) -> 4717s
+// (192t, +53% vs 48t - oversubscription degrades the walk +59%, the
+// emission +79%, the LCE +67%). Only the finish's corpus-LCE is cleanly
+// thread-scalable (1217s at 48t -> 790s at 96t, 1.54x at 2x threads); at
+// 96t the binding phase is the merge's emit-write (1510s). CAVEAT: at 1GB
+// the corpus is page-cache-warm; at pile scale the LCE preads are
+// NVMe-bound - the 10GB rung measures the transition; pile walls from
+// these constants are EXTRAPOLATED and cache-optimistic until then.
+pub const V2_CHUNK_S_PER_MB: f64 = 203.7 / 953.7;
+pub const V2_MERGE_WALK_S_PER_MB: f64 = 667.7 / 953.7;    // load + anchor + cross-merge
+pub const V2_EMIT_FINISH_S_PER_MB: f64 = 2681.3 / 953.7;   // concurrent v2 emission + fused finish (the window's max)
+pub const V2_CONTAINER_S_PER_MB: f64 = 52.8 / 953.7;       // m5 EF + m1 runs + publish (inside the finish)
 
 pub struct V2PerTerms {
     pub corpus_gb: f64,

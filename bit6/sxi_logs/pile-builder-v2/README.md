@@ -365,3 +365,55 @@ advance_witness = 10.6s at 100MB (~106s scaled to 1GB) - consistent with
 the ~121s residual measured on the 1GB packed gate; the serial machine is
 confirmed cheap at both scales. The instrumented finish is cleared for
 scale runs (the 96/192-thread curve, the 10GB rung).
+
+## THE 1GB THREAD CURVE (48/96/192, front door): all three GREEN, 96t is best (2026-10-11)
+
+Three full 1GB front-door gates (10 chunks flat k=10, packed WM, forced
+witness RAM 32GB - no spills; xsa-pa-wmpack-1b = 48t, xsa-pa-t96-1b,
+xsa-pa-t192-1b). EVERY run: chi = 283296933 exact AND container 467,814,822 B
+byte-identical to the banked G2 lite. The instrumented finish prints the
+sweep split directly (SWEEP_PHASE_WALLS). MEASURED walls, seconds:
+
+| phase (1GB)             | 48t    | 96t    | 192t   |
+|-------------------------|--------|--------|--------|
+| chunk (single core)     | 205.8  | 203.7  | 214.8  |
+| merge walk              | 725.5  | 667.7  | 1062.1 |
+| emit-count              | 474.4  | 444.7  | 384.5  |
+| emit-write              | 1600.9 | 1509.8 | 2873.1 |
+| merge-v2 total          | 2802.2 | 2623.8 | 4324.2 |
+| sweep: repair+piecewait | 50.8   | 482.5  | 92.2   |
+| sweep: corpus LCE       | 1217.1 | 790.5  | 2035.8 |
+| sweep: advance+witness  | ~121   | 83.6   | 256.1  |
+| sweep total             | 1389.0 | 1357.0 | 2386.7 |
+| finish-v2 total         | 2867.6 | 2681.3 | 4499.2 |
+| END-TO-END (measured)   | ~3077  | ~2891  | ~4717  |
+| whole-tree du peak      | 15.04n | 15.03n | 15.04n |
+
+Honest findings (no linearity assumed, none found):
+
+* **96 threads is the best measured point**: -6.0% end-to-end vs 48t.
+* **192 threads is WORSE than 48t by 53%**: oversubscription (2 procs x
+  192 threads on 256 cores) degrades the walk +59%, the emit-write +79%,
+  the LCE +67%, even the serial advance (256 vs ~121 - pure CPU
+  contention). The 10GB rung and the pile launch use 96t.
+* Only the finish's corpus LCE is cleanly thread-scalable: 1217 -> 790s
+  (1.54x at 2x threads, 48->96). At 96t the sweep is no longer the
+  pipeline's binding phase - the merge's emit-write is (1510s).
+* The repair wall is a pacing DIAGNOSTIC, not a cost: it absorbs piece-
+  wait when the finish outpaces the merge (482.5s at 96t vs 50.8 at 48t).
+* Target 1c CLOSES with data at all three thread counts: the serial
+  advance+witness machine costs ~121s (48t, residual) / 83.6s (96t) /
+  256.1s (192t, contended) at 1GB - 1.0-1.5x v1's 83s on precomputed
+  columns. NO band parallelization, NO v1 column port: the machine is not
+  the wall at any thread count; the wall is the parallel LCE (96t: 59% of
+  the sweep) and then the merge's emit-write.
+
+Plan model v5 (constants from the 96t run): pile projection **1309.9h =
+54.6 days** at --threads 96 (was 1401.8h at 48t, 2338h from the G2-era
+constants); still EXTRAPOLATED and cache-optimistic (the 1GB LCE runs
+page-cache-warm; the 10GB rung measures the NVMe-bound transition). Dry
+run journaled at g5-plan/pile-dry-run.log (XSA_PLAN v=5).
+
+Boxes: the t96 gate ran with the standing foreign single-core FastGA job
+live (noted, one core of 256); the t192 gate additionally overlapped the
+tail of an unrelated interactive session. No other heavy jobs.

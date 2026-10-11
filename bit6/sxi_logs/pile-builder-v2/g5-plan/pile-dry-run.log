@@ -1,14 +1,14 @@
-XSA_PLAN v=4 pipeline=v2 (constants measured at the 1GB packed-WM gate xsa-pa-wmpack-1b) corpus_bytes=1307910802540 chunks=64 kway=64 threads=48 cap_gb=700 cores=256 cx16=true mem_available_gb=962
+XSA_PLAN v=5 pipeline=v2 (constants measured at the 1GB packed-WM thread-curve gates, best point 96t) corpus_bytes=1307910802540 chunks=64 kway=64 threads=96 cap_gb=700 cores=256 cx16=true mem_available_gb=876
 XSA_PLAN_PHASES name wall disc_peak_gb rss_gb
-XSA_PLAN_PHASE name=chunk wall=74:45:08 wall_s=269108 disc_peak_gb=5359.6 rss_gb=513.88
-XSA_PLAN_PHASE name=merge(walk) wall=263:34:23 wall_s=948864 disc_peak_gb=19458.9 rss_gb=4.00
-XSA_PLAN_PHASE name=merge(emit)+fused-finish wall=1041:47:44 wall_s=3750464 disc_peak_gb=21848.8 rss_gb=4.00
-XSA_PLAN_PHASE name=container(m5+m1+publish) wall=21:39:09 wall_s=77949 disc_peak_gb=2405.7 rss_gb=4.00
-XSA_PLAN_TOTAL wall=1401:46:25 wall_s=5046386 chunk_bytes_mb=19489
-XSA_POS_MODE mode=compact chunk_set_gb_dense=10719.2 chunk_set_gb_compact=5359.6 free_gb=2859.6 rule=dense-if-10pct-headroom-else-compact (walk s/MB dense=0.693 compact=1.598)
+XSA_PLAN_PHASE name=chunk wall=74:00:14 wall_s=266414 disc_peak_gb=5359.6 rss_gb=513.88
+XSA_PLAN_PHASE name=merge(walk) wall=242:34:28 wall_s=873269 disc_peak_gb=19458.9 rss_gb=4.00
+XSA_PLAN_PHASE name=merge(emit)+fused-finish wall=974:06:46 wall_s=3506807 disc_peak_gb=21848.8 rss_gb=4.00
+XSA_PLAN_PHASE name=container(m5+m1+publish) wall=19:10:55 wall_s=69056 disc_peak_gb=2405.7 rss_gb=4.00
+XSA_PLAN_TOTAL wall=1309:52:25 wall_s=4715545 chunk_bytes_mb=19489
+XSA_POS_MODE mode=compact chunk_set_gb_dense=10719.2 chunk_set_gb_compact=5359.6 free_gb=2858.7 rule=dense-if-10pct-headroom-else-compact (walk s/MB dense=0.693 compact=1.598)
 XSA_PLAN_V2_TERMS pipeline=v2 corpus_gb=1218 chunk_set_gb=5360 merge_transient_gb=14099 rlebwt_gb=1883 pfck_scratch_gb=443 pieces_window_gb=63 container_gb=570 tree_peak_gb=2406 whole_box_gb=3624
 XSA_PLAN_V2_TREE tree_peak=1.975n bound=2.5n measured_at=1GB-G2 (output side, excl. the merge transient); whole_box(corpus+tree)=2.975n
 XSA_PLAN_V2_WITNESS witness stream = 8B x chi; chi/n = 0.283 is the 1GB FIXTURE ratio (the pile value is unmeasured): ~2758 GB at this scale; if it exceeds --wit-ram-budget the overflow spills as sorted varint-delta disc runs (est. <= 0.3x raw, EXTRAPOLATED - unmeasured at spill scale) inside the tree
 XSA_PLAN_V2_MERGE_TRANSIENT merge transient = 11.57n (MEASURED at the 1GB packed-WM gate: non-WM 6.45n [m2 2n + hs 2n + bwt 1n + ov ~0.02n + walk columns ~1.43n] + packed WM w/8*n [w=41 at this scale; 10.20n total measured at 1GB w=30, unpacked was 14.46n with WM 8n]): ~14099 GB at this scale - a separate per-term with its own provenance; the WHOLE scratch tree including this transient peaked at 16.41n = ~19995 GB at this scale (measured 15.04n at 1GB) - the monolithic final merge needs that much scratch on one host (stripes / reader-level striping, lane item 3, or a larger scratch host); printed, not hidden in a constant
-XSA_PLAN_DISC FEASIBLE (v2 output side): scratch-tree peak ~2406 GB (1.975n, bound 2.5n) fits 2860 GB free; whole-box (corpus + tree) ~3624 GB = 2.975n
+XSA_PLAN_DISC FEASIBLE (v2 output side): scratch-tree peak ~2406 GB (1.975n, bound 2.5n) fits 2859 GB free; whole-box (corpus + tree) ~3624 GB = 2.975n
 XSA_PLAN_RAM FEASIBLE: chunk front end ~513.9 GB (27x chunk bytes) vs cap 700 GiB; merge ~4.0 GB (bounded); fused finish ~2757.7 GB witness RAM budget (--wit-ram-budget, default 1 GB; spills are varint-delta disc runs)
