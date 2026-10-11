@@ -149,3 +149,36 @@ to full size, so size==8n implies complete), then seam classes -> sweep
 (pieces flow-controlled; consumed sentinel frees the merge's window).
 The m1 replay barrier decode-counts the rlebwt until all R runs/N rows
 are visible (the body is the emission's final segment concatenation).
+
+## G2 - 1GB flat k=10: GREEN (2026-10-11)
+
+Concurrent pipeline (merge + finish, window=64 bands, the real flow-controlled
+shape), gate runs alone, caps (timeout 21600 + ulimit -v 512GB) on both,
+bridge dir outside the measured tree, --wit-ram-budget 32GB (no witness
+spills: chi*8 = 2.27GB < budget; RAM is not the mission constraint).
+
+* chi = 283296933 EXACT (the banked 1GB constant; in-process assert).
+* rlebwt + meta byte-identical to banked mergperf-1b-B (10-chunk flat
+  k=10 merge, gate-1b-flat10-d chunks).
+* The corpus-built PFCK byte-identical to the bank's --emit-pf sidecar
+  (count=45454576, tau=22) - the M1 parity gate at 1GB.
+* Witness stream (bridge, emission order) byte-identical to
+  mergperf-1b-B/finish/frag.sA (283,296,933 x u64, 2.27 GB cmp clean);
+  WITNESS_SAMPLE_CHECK 1025/1025.
+* Seam parity vs the bank's v1 endpoints log: classes=30 rows=213516
+  discovery_steps=31 limit=368036 phi_samples=368036610 max_seam_lce=97059
+  predecessors_before_zero=73250 - every printed constant identical.
+* ENDPOINT_STREAM_PASS r=368036609 == the bank's normalized r.
+* Container lite: 467,814,822 bytes (0.468n), members m1/m4/m5/m7/m10/m11.
+* SCRATCH-TREE PEAK (excluding the merge's own .xsc transient, which is a
+  separate merge-side per-term): 1,974,887,564 bytes = 1.975n <= 2.5n
+  PASS (the charter's ~2.0n expectation). The merge transient peaked at
+  14.46n (m2 2n + WM 8n + bwt/hash ~4n) and is reported, not hidden.
+* End tree after gate cleanup: product + logs only (rlebwt/pfck deleted
+  post-gate per the rules). NO agg/ssa_t/head_sa/ssa/pftext ever exists.
+
+Measured 1GB walls (for PILE_PLAN_V2.md; the pfck-corpus phase includes the
+~32-min runcols-idx poll while the merge walks): pfck build 7.3s (linear),
+seam-classes 202s (WM scan 8n + 30-class rebuild), sweep 4306s (repair
+1276s + LCE 967s + witnesses), m5-ef 27s, m1-runs 32s, publish 0.2s.
+Finish cumulative 6521s; merge walk ~32 min (48 threads).
