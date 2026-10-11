@@ -439,3 +439,48 @@ disc runs -> EF merges bucket RAM + disc) had never been exercised
   (vs 790.5s clean at 96t) and advance_witness 122.8s (vs 83.6s). The
   spill cost itself is small (spill writes 149MB total). Correctness
   gates are load-independent; the walls are NOT journaled as 96t walls.
+
+## THE 10GB RUNG: LAUNCHED (2026-10-11 23:5x, supervisor-approved, in flight)
+
+Supervisor decision (contacted on the box-quiet conflict): LAUNCH NOW.
+The rung's decision-grade outputs are load-independent; a foreign
+~43-core rotating R workload (load 330-430 since ~19:30) does not block
+them. EVERY WALL from this rung is CONTAMINATED (ceiling, never a
+scaling point; the 1GB thread curve is the only clean wall data) - this
+note is the loud contamination journal the decision requires.
+
+    xsa build --input real10b-ref/pile-10b-snap.txt
+      --scratch xsa-pa-10b-96t --v2-pipeline --chunks 64 --kway 64
+      --threads 96 --memory-gb 512 --wit-ram-gb 8 --timeout 129600
+      --chi-expect 2676929448 --snap-1e   (stdout /tmp/pa-10b-96t.out)
+
+* SNAP_OK n=10,000,017,258 sha256=d440d9e1fe0aeb4c... (banked fixture).
+* 64 chunks (156MB each) flat k=64: the PILE'S OWN SHAPE (the pile launch
+  line is 64/64) - k=64 flat is beyond the gated k<=16 shapes; G3 proved
+  product shape-independence at 1GB; chi is text-only (constant banked
+  from the v1 10GB rung: 2,676,924,448 = ext.sA/8 exactly).
+* --wit-ram-gb 8 vs the ~21.4GB stream -> ~62% forced spills (represent-
+  ative of the pile's ~78% at the plan budget); the spill path was gated
+  GREEN at 1GB first (see the spill-gate entry above).
+* --timeout 129600 (36h; timeout -k 120 on every phase + the finish's
+  --poll-timeout; ulimit -v 512GB).
+
+HARVEST CHECKLIST when it lands (all MEASURED, load-independent):
+1. XSA_BUILD_DONE chi=2676929448 EXACT (V2_CHI_EXPECT_OK).
+2. Real-pile chi/n = chi/10,000,017,258 (replaces the 1GB-fixture 0.283
+   in V2_CHI_PER_N; the witness stream + spill scratch at 10GB scale).
+3. Spill compression at scale: SLIM_SEEDS wit_spills + wit_disc_bytes vs
+   the spilled raw (compare vs the 0.125x measured at 1GB).
+4. The packed transient's true size: du of merged/frag.xsc-* (all
+   constituents live at the emission tail; w = bits(n+9) = 34 at 10GB
+   -> predicted WM 4.25n, transient ~10.70n) + PEAK_DISC_USED_BYTES.
+5. Tree peaks: whole-tree du peak incl. transient + spills vs the
+   2.5n output-side bound.
+6. Per-phase walls: CEILING ONLY (contaminated), vs the EXTRAPOLATED
+   projections from the clean 1GB curve.
+7. Update the plan's load-independent constants (transient per-n at
+   w=34, spill ratio, chi/n pile); wall projections stay from the
+   clean 1GB curve, marked EXTRAPOLATED. Commit with the contamination
+   note. Do NOT burn a clean-wall 10GB re-run without asking.
+8. Known unmeasured-after-this: thread scaling AT 10GB scale (a second
+   10GB run at a different thread count; supervisor gate).
