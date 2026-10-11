@@ -90,7 +90,36 @@ dry-run FEASIBLE). `PILE_PLAN_V2.md` lands in this directory at the end.
   pile) is a scratch term the mission's peak model did not name; it is
   journaled, deleted after the finish, and included in the table.
 
+## FRONT DOOR - xsa build --v2-pipeline EXECUTES: GREEN (2026-10-11)
+
+Branch pile-attack-v1, commit b21c429: the v2 chain is now ONE command
+(one journal) end-to-end: chunk -> banded v2 merge (CROSS_V2_PIECES,
+window 64 bands) CONCURRENT with pile_finish -> lite container publish ->
+rlebwt delete. `xsa build --input ... --scratch ... --v2-pipeline --chunks 16
+--kway 16 --threads 48 --memory-gb 8 --timeout 3600 --chi-expect 29716349
+--snap-1e` (scratch xsa-pa-frontdoor-100m, journaled xsa-build.log):
+
+* chi = 29716349 EXACT (in-process assert + the front door's journal-side
+  re-check, V2_CHI_EXPECT_OK).
+* Container 48,768,685 bytes BYTE-IDENTICAL to the banked m3-100m product
+  (cmp clean) - the front door reproduces the gated pipeline's product.
+* One command, one journal: PHASE chunk / merge-v2 / finish-v2 entries,
+  V2_TIMEOUT (timeout -k 120) + ulimit caps journaled, KNOB
+  CROSS_DELETE_CONSUMED=1 (chunk set freed as consumed - chunks/ empty at
+  end, asserted), V2_EMISSION band/window journaled.
+* End tree: product + logs only. merged/ empty, chunks/ empty; the front
+  door asserts LOUD: no frag.agg/ssa/ssa_t/head_sa/pftext/pfck/pfck2 in the
+  tree, rlebwt+meta deleted post-publish (PILE_FINISH_RLEBWT_RELETED gate),
+  pieces dir fully consumed (no PILE_FINISH_PIECES_DIR_NONEMPTY).
+* Walls at 100MB (48t, box ~quiet, one foreign single-core job noted):
+  chunk 14.5s, merge 153.4s, finish 173.5s concurrent end-to-end
+  (PEAK_DISC_USED_BYTES 1.95n whole-tree incl. the merge transient).
+* pile_finish is now a bundled stage (slim_dump gate build via the rpfbwt
+  deps) verified by the xsa bundle manifest - scale runs are one command
+  from pushed main.
+
 ## M3 - the fused banded finish at 100MB: GREEN (2026-10-11)
+
 
 `pile_finish` (bit6/pile_finish.cpp) completes the v2 pipeline end-to-end at
 100MB, run CONCURRENTLY with the merge (the real pipeline shape: the finish
