@@ -69,6 +69,10 @@ for name, path in [('pfp++', work/'pfp-build/pfp++'), ('rpfbwt', work/'rpfbwt-bu
     shutil.copyfile(path, bundle/name)
 for name, src in [('rpfbwt_endpoints', 'rpfbwt_endpoints.cpp'), ('slim_dump', 'chi_rspace_dump.cpp')]:
     run('bash', repo/'tools/build_slim_dump.sh', bundle/name, 'bit6/'+src, env=env)
+# Pile-builder v2 fused finish (pile_finish): same gate build as slim_dump
+# (sdsl + divsufsort via the isolated rpfbwt deps); the v2 front door
+# (xsa build --v2-pipeline) runs it concurrent with the v2-emission merge.
+run('bash', repo/'tools/build_slim_dump.sh', bundle/'pile_finish', 'bit6/pile_finish.cpp', env=env)
 # External construction chain: libsais chunk front end + externalized cross-LCP
 # merge (gate flags: -O3 front end; -O2 -mcx16 -pthread -latomic merge with the
 # cpuid cx16 startup gate; pool knobs CROSS_* stay env-pass-through).

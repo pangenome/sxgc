@@ -92,12 +92,25 @@ The uniform journal (xsa-build.log) reports chi and per-phase wall / peak
 RSS / disc telemetry.
 
   xsa build --plan-only           print the surveyed+modeled build plan
-  --v2-pipeline          model the pile-builder v2 pipeline instead (the
-                     chunk -> v2-emission merge -> fused-finish chain whose
-                     1GB per-terms are gated; use with --plan-only for the
-                     pile dry-run; the v1 executor ignores it)
-                     and exit without building anything (same model as the
-                     plan file the build journals first).
+  --v2-pipeline          run the pile-builder v2 pipeline: chunk -> banded
+                     v2-emission merge (CROSS_V2_PIECES) -> fused finish
+                     (pile_finish) -> lite container publish -> rlebwt
+                     delete, all under this one command and journal (the
+                     provenance rule: scale runs are one command from
+                     pushed main). The merge and the finish run CONCURRENT,
+                     flow-controlled through the piece window. Without
+                     --plan-only this EXECUTES; with --plan-only it prints
+                     the v2 model and exits (same model the build journals
+                     first). The v1 executor ignores it.
+  --timeout SECONDS    hard wall cap on every phase (timeout -k 120, i.e.
+                     TERM then KILL after 120s) - REQUIRED for --v2-pipeline
+                     execution (caps on every run).
+  --chi-expect N       v2 only: the banked chi constant; the finish asserts
+                     chi == N in-process and the front door re-checks the
+                     journal line (byte-identity + chi are the only arbiter).
+  --wit-ram-gb N       v2 only: the fused finish's witness RAM budget in GiB
+                     (default: --memory-gb / 2; overflow spills as sorted
+                     varint-delta disc runs without changing the product).
   --scratch-free-pct N  disc hygiene policy override (default 15 = the
                      banked >=15%-free rule; 0 = a bounded run that FITS
                      with headroom may proceed on a full drive; the
@@ -156,6 +169,9 @@ struct Options {
     kway: u32,
     plan_only: bool,
     v2_pipeline: bool,
+    chi_expect: Option<u64>,
+    wit_ram_gb: Option<u64>,
+    timeout_s: Option<u64>,
     stripes: Vec<String>,
     scratch_free_pct: u32,
     remap: Option<PathBuf>,
@@ -219,6 +235,9 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     let mut kway = 2u32;
     let mut plan_only = false;
     let mut v2_pipeline = false;
+    let mut chi_expect = None;
+    let mut wit_ram_gb = None;
+    let mut timeout_s = None;
     let mut stripes: Vec<String> = Vec::new();
     let mut scratch_free_pct = 15u32;
     let mut remap = None;
@@ -282,6 +301,36 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
             }
             "--plan-only" => plan_only = true,
             "--v2-pipeline" => v2_pipeline = true,
+            "--chi-expect" => {
+                i += 1;
+                let v = value(args.get(i), "--chi-expect")?
+                    .parse::<u64>().map_err(|_| "--chi-expect: integer expected".to_string())?;
+                if chi_expect.replace(v).is_some() {
+                    return Err("specify --chi-expect only once".into());
+                }
+            }
+            "--wit-ram-gb" => {
+                i += 1;
+                let v = value(args.get(i), "--wit-ram-gb")?
+                    .parse::<u64>().map_err(|_| "--wit-ram-gb: integer expected".to_string())?;
+                if v == 0 {
+                    return Err("--wit-ram-gb must be positive".into());
+                }
+                if wit_ram_gb.replace(v).is_some() {
+                    return Err("specify --wit-ram-gb only once".into());
+                }
+            }
+            "--timeout" => {
+                i += 1;
+                let v = value(args.get(i), "--timeout")?
+                    .parse::<u64>().map_err(|_| "--timeout: integer expected".to_string())?;
+                if v == 0 {
+                    return Err("--timeout must be positive".into());
+                }
+                if timeout_s.replace(v).is_some() {
+                    return Err("specify --timeout only once".into());
+                }
+            }
             "--scratch-free-pct" => {
                 i += 1;
                 scratch_free_pct = parse_u32(args.get(i), "--scratch-free-pct")?;
@@ -316,7 +365,18 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     if fanin && chunk_mb.is_none() {
         return Err("--fanin requires --chunk-mb N (the fixed chunk size)".into());
     }
-    Ok(Options { input, scratch, snap_1e, memory_gb, threads, chunks, kway, plan_only, v2_pipeline, stripes, scratch_free_pct, remap, chunk_mb, fanin })
+    if !v2_pipeline {
+        if chi_expect.is_some() {
+            return Err("--chi-expect is a --v2-pipeline flag".into());
+        }
+        if wit_ram_gb.is_some() {
+            return Err("--wit-ram-gb is a --v2-pipeline flag".into());
+        }
+    }
+    if v2_pipeline && !plan_only && timeout_s.is_none() {
+        return Err("--v2-pipeline execution requires --timeout SECONDS (caps on every run: timeout -k 120 + the ulimit)".into());
+    }
+    Ok(Options { input, scratch, snap_1e, memory_gb, threads, chunks, kway, plan_only, v2_pipeline, chi_expect, wit_ram_gb, timeout_s, stripes, scratch_free_pct, remap, chunk_mb, fanin })
 }
 
 /// Last byte of a file (the snap-boundary probe).
@@ -503,35 +563,69 @@ impl Journal {
 /// Run one phase under /usr/bin/time -v with the hard RLIMIT_AS cap, exactly
 /// as the reference gates do: stdout/stderr land in `log_path`, wall/peak-RSS
 /// telemetry in `time_path`, both under the scratch tree and journaled.
-fn run_phase(
+/// A phase running in the background (spawned; join later). The uniform
+/// journal writes PHASE START at spawn and PHASE END at join, so two
+/// concurrent phases interleave honestly in the one journal.
+struct RunningPhase {
+    tag: String,
+    child: std::process::Child,
+    log_path: PathBuf,
+    time_path: PathBuf,
+}
+
+/// Spawn one phase under /usr/bin/time -v with the hard RLIMIT_AS cap and
+/// optional per-phase environment overrides (journaled in PHASE START).
+fn spawn_phase(
     journal: &mut Journal,
     scratch: &Path,
     tag: &str,
     memory_kb: u64,
     program: &str,
     args: &[String],
-) -> Result<(), String> {
+    env: &[(String, String)],
+) -> Result<RunningPhase, String> {
     let log_path = scratch.join(format!("{tag}.log"));
     let time_path = scratch.join(format!("{tag}.time"));
     let _ = fs::remove_file(&log_path);
     let _ = fs::remove_file(&time_path);
     let command_line = format!("{program} {}", args.join(" "));
-    journal.line(&format!("PHASE {tag} START {command_line}"));
+    let env_note = if env.is_empty() {
+        String::new()
+    } else {
+        format!(" env={}", env.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(" "))
+    };
+    journal.line(&format!("PHASE {tag} START {command_line}{env_note}"));
     let log = File::options().create(true).append(true).open(&log_path)
         .map_err(|e| format!("create {}: {e}", log_path.display()))?;
     let log_err = log.try_clone().map_err(|e| format!("clone {tag} log handle: {e}"))?;
-    let status = Command::new("bash")
-        .arg("-c").arg(PHASE_WRAPPER)
-        .arg("xsa-phase") // $0
-        .arg(memory_kb.to_string()) // $1: RLIMIT_AS in KiB
-        .arg("/usr/bin/time").arg("-v").arg("-o").arg(&time_path)
-        .arg(program).args(args)
-        .current_dir(scratch)
-        .stdout(Stdio::from(log))
-        .stderr(Stdio::from(log_err))
-        .status()
-        .map_err(|e| format!("launch {tag}: {e}"))?;
-    let (wall, peak_rss_kb) = fs::read_to_string(&time_path)
+    let mut command = {
+        let mut cmd = Command::new("bash");
+        cmd.arg("-c").arg(PHASE_WRAPPER)
+            .arg("xsa-phase") // $0
+            .arg(memory_kb.to_string()) // $1: RLIMIT_AS in KiB
+            .arg("/usr/bin/time").arg("-v").arg("-o").arg(&time_path)
+            .arg(program).args(args)
+            .current_dir(scratch)
+            .stdout(Stdio::from(log))
+            .stderr(Stdio::from(log_err));
+        cmd
+    };
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    let child = command.spawn().map_err(|e| format!("launch {tag}: {e}"))?;
+    Ok(RunningPhase { tag: tag.to_string(), child, log_path, time_path })
+}
+
+/// Wait for a spawned phase, journal its telemetry, fail loud on error.
+fn join_phase(
+    journal: &mut Journal,
+    scratch: &Path,
+    mut running: RunningPhase,
+) -> Result<(), String> {
+    let tag = running.tag.clone();
+    let status = running.child.wait().map_err(|e| format!("wait {tag}: {e}"))?;
+    let (wall, peak_rss_kb) = fs::read_to_string(&running.time_path)
         .map(|text| parse_time_report(&text))
         .unwrap_or((None, None));
     let used_after = tree_bytes(scratch);
@@ -543,11 +637,23 @@ fn run_phase(
         used_after,
     ));
     if !status.success() {
-        let tail = fs::read_to_string(&log_path).unwrap_or_default();
+        let tail = fs::read_to_string(&running.log_path).unwrap_or_default();
         let tail: Vec<&str> = tail.lines().rev().take(5).collect::<Vec<_>>().into_iter().rev().collect();
         return Err(format!("PHASE {tag} FAILED (rc {}); log tail:\n{}", status.code().unwrap_or(-1), tail.join("\n")));
     }
     Ok(())
+}
+
+fn run_phase(
+    journal: &mut Journal,
+    scratch: &Path,
+    tag: &str,
+    memory_kb: u64,
+    program: &str,
+    args: &[String],
+) -> Result<(), String> {
+    let running = spawn_phase(journal, scratch, tag, memory_kb, program, args, &[])?;
+    join_phase(journal, scratch, running)
 }
 
 fn require_log_contains(scratch: &Path, tag: &str, needle: &str) -> Result<String, String> {
@@ -567,7 +673,7 @@ fn count_log_contains(scratch: &Path, tag: &str, needle: &str) -> usize {
 /// The bundled native stages (verified by hash on every use).
 fn bundle_tools() -> Result<PathBuf, String> {
     let root = super::bundle::resolve()?;
-    for name in ["chunk_frontend", "cross_lcp_merge", "rpfbwt_endpoints", "slim_dump"] {
+    for name in ["chunk_frontend", "cross_lcp_merge", "pile_finish", "rpfbwt_endpoints", "slim_dump"] {
         let path = root.join(name);
         let ok = fs::metadata(&path).map(|m| m.is_file()).unwrap_or(false);
         if !ok {
@@ -751,6 +857,14 @@ fn run_chain(options: Options) -> Result<(), String> {
     ])?;
     journal.line(&require_log_contains(&scratch, "chunk", "CHUNKS_PASS")?);
 
+    // V2 FRONT DOOR: chunk -> banded v2-emission merge -> fused finish
+    // (CONCURRENT, flow-controlled through the piece window) -> lite
+    // container publish -> rlebwt delete; one command, one journal.
+    if options.v2_pipeline {
+        return run_v2_tail(&mut journal, &options, &scratch, &tools, &input, &remap_path,
+                           n, chunks, memory_kb, &frag);
+    }
+
     // 2. externalized merge tree (delete-as-consumed scratch, --emit-pf).
     // Sample peak disc through the merge: with delete-as-you-go the fan-in
     // peak is mid-merge, not at a phase boundary.
@@ -808,6 +922,178 @@ fn run_chain(options: Options) -> Result<(), String> {
     let peak_disc = tree_bytes(&scratch);
     journal.line(&format!("PEAK_DISC_USED_BYTES {peak_disc} (scratch tree after finish)"));
     journal.line(&format!("XSA_BUILD_DONE {chi}"));
+    Ok(())
+}
+
+/// Collect every file under `root` whose name is in `names` (the v2 tree
+/// rules: no agg/ssa_t/head_sa/pftext/pfck, rlebwt deleted post-publish).
+fn find_files_named(root: &Path, names: &[&str]) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let entries = match fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let file_type = match entry.file_type() {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            if file_type.is_dir() {
+                stack.push(path);
+            } else if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if names.contains(&name) {
+                    found.push(path);
+                }
+            }
+        }
+    }
+    found
+}
+
+/// The v2 front door: banded v2-emission merge and fused finish running
+/// CONCURRENT (flow-controlled through the piece window), then the lite
+/// container publish and the rlebwt delete - all under the one journal,
+/// with the tree rules asserted loud at the end. Byte-identity + chi are
+/// the only arbiter; the front door refuses on any violation.
+#[allow(clippy::too_many_arguments)]
+fn run_v2_tail(
+    journal: &mut Journal,
+    options: &Options,
+    scratch: &Path,
+    tools: &Path,
+    input: &Path,
+    remap_path: &Path,
+    n: u64,
+    chunks: u32,
+    memory_kb: u64,
+    frag: &str,
+) -> Result<(), String> {
+    let s = |path: &str| path.to_string();
+    // Caps on every run: timeout -k 120 (TERM, then KILL) on every phase,
+    // on top of the ulimit wrapper every phase already runs under.
+    let timeout_s = options.timeout_s
+        .ok_or("--v2-pipeline execution requires --timeout SECONDS")?;
+    journal.line(&format!(
+        "V2_TIMEOUT seconds={timeout_s} (timeout -k 120 on every phase; ulimit -v {memory_kb} KiB)"));
+    let cap = |args: &mut Vec<String>| {
+        args.extend(["-k".to_string(), "120".to_string(), timeout_s.to_string()]);
+    };
+
+    // The v2 emission knobs: the G1-G4 gate shape by default; operator env
+    // passes through unchanged and is journaled.
+    let v2_band = std::env::var("CROSS_V2_BAND").unwrap_or_else(|_| "65536".to_string());
+    let v2_window = std::env::var("CROSS_V2_PIECE_WINDOW").unwrap_or_else(|_| "64".to_string());
+    journal.line(&format!("V2_EMISSION CROSS_V2_PIECES=1 band={v2_band} window={v2_window}"));
+    let container = scratch.join(format!("{}.sxi2",
+        input.file_stem().and_then(|stem| stem.to_str()).filter(|stem| !stem.is_empty()).unwrap_or("pile")));
+    let wit_ram_bytes = options.wit_ram_gb.unwrap_or(options.memory_gb / 2).saturating_mul(1 << 30);
+    journal.line(&format!(
+        "V2_WITNESS ram_budget_bytes={wit_ram_bytes} (witnesses beyond the budget spill as sorted varint-delta disc runs; the product is unchanged)"));
+    if let Some(expected) = options.chi_expect {
+        journal.line(&format!("V2_CHI_EXPECT {expected} (the banked constant; the finish asserts chi in-process)"));
+    }
+
+    // The chunk set is a consumed transient (the per-term table's "freed as
+    // consumed"): the merge unlinks each side as its group completes.
+    let mut merge_env = vec![
+        ("CROSS_V2_PIECES".to_string(), "1".to_string()),
+        ("CROSS_V2_BAND".to_string(), v2_band.clone()),
+        ("CROSS_V2_PIECE_WINDOW".to_string(), v2_window.clone()),
+    ];
+    if std::env::var_os("CROSS_DELETE_CONSUMED").is_none() {
+        journal.line("KNOB CROSS_DELETE_CONSUMED=1 (v2: the chunk set is freed as consumed)");
+        merge_env.push(("CROSS_DELETE_CONSUMED".to_string(), "1".to_string()));
+    }
+
+    let mut merge_args: Vec<String> = Vec::new();
+    cap(&mut merge_args);
+    merge_args.push(s(&tools.join("cross_lcp_merge").to_string_lossy()));
+    merge_args.extend([
+        "--tree".into(), s(&scratch.join("chunks").to_string_lossy()), chunks.to_string(),
+        n.to_string(), frag.to_string(),
+        "--threads".into(), options.threads.to_string(),
+        "--kway".into(), options.kway.to_string(),
+        "--work".into(), s(&scratch.join("mwork").to_string_lossy()),
+    ]);
+    let mut finish_args: Vec<String> = Vec::new();
+    cap(&mut finish_args);
+    finish_args.push(s(&tools.join("pile_finish").to_string_lossy()));
+    finish_args.extend([
+        "--prefix".into(), frag.to_string(),
+        "--corpus".into(), s(&input.to_string_lossy()),
+        "--remap".into(), s(&remap_path.to_string_lossy()),
+        "--output".into(), s(&container.to_string_lossy()),
+        "--threads".into(), options.threads.to_string(),
+        "--poll-timeout".into(), timeout_s.to_string(),
+        "--wit-ram-budget".into(), wit_ram_bytes.to_string(),
+    ]);
+    if let Some(expected) = options.chi_expect {
+        finish_args.extend(["--chi-expect".into(), expected.to_string()]);
+    }
+
+    // Spawn BOTH before joining: the finish must start with the merge (it
+    // opens the merge's WM scratch during the pair phase - a late start
+    // fails loud on the WM poll by design).
+    let merge_running = spawn_phase(journal, scratch, "merge-v2", memory_kb, "/usr/bin/timeout", &merge_args, &merge_env)?;
+    let mut finish_running = spawn_phase(journal, scratch, "finish-v2", memory_kb, "/usr/bin/timeout", &finish_args, &[])?;
+    let v2_sampler = DiscSampler::start(scratch.to_path_buf(), Duration::from_secs(2));
+    if let Err(e) = join_phase(journal, scratch, merge_running) {
+        // A dead merge leaves the finish polling for hours; kill it loud.
+        let _ = finish_running.child.kill();
+        let _ = finish_running.child.wait();
+        return Err(format!("{e}; the fused finish was killed after the merge failed"));
+    }
+    join_phase(journal, scratch, finish_running)?;
+    let peak_disc = v2_sampler.peak_bytes();
+
+    // ---- gates (fail loud on every violation)
+    let emit = require_log_contains(scratch, "merge-v2", "FOUR_EMIT")?;
+    if !emit.contains("v2=1") {
+        return Err(format!("merge-v2 did not run the v2 emission: {emit}"));
+    }
+    let done = require_log_contains(scratch, "finish-v2", "PILE_FINISH_DONE")?;
+    let chi = done.split("chi=").nth(1).and_then(|rest| rest.split_whitespace().next())
+        .and_then(|v| v.parse::<u64>().ok())
+        .ok_or_else(|| format!("PILE_FINISH_DONE without a chi constant: {done}"))?;
+    require_log_contains(scratch, "finish-v2", "ENDPOINT_STREAM_PASS")?;
+    require_log_contains(scratch, "finish-v2", "SXI2_PASS")?;
+    require_log_contains(scratch, "finish-v2", "PILE_FINISH_RLEBWT_DELETED")?;
+    let finish_log = fs::read_to_string(scratch.join("finish-v2.log")).unwrap_or_default();
+    if finish_log.lines().any(|l| l.contains("PILE_FINISH_PIECES_DIR_NONEMPTY")) {
+        return Err("finish-v2 left pieces behind (PILE_FINISH_PIECES_DIR_NONEMPTY)".into());
+    }
+    if let Some(expected) = options.chi_expect {
+        if chi != expected {
+            return Err(format!("V2_CHI_MISMATCH chi={chi} expected={expected}"));
+        }
+        journal.line(&format!("V2_CHI_EXPECT_OK chi={chi} == {expected}"));
+    }
+    // THE LAW + the tree rules: no agg/ssa_t/head_sa/pftext/pfck file ever
+    // exists; rlebwt (+meta) is deleted post-publish; the chunk set is fully
+    // consumed. The end tree holds product + logs only.
+    let forbidden = ["frag.agg", "frag.head_sa", "frag.ssa", "frag.ssa_t", "frag.pftext",
+                     "frag.pfck", "frag.pfck2", "frag.rlebwt", "frag.rlebwt.meta"];
+    let found = find_files_named(scratch, &forbidden);
+    if !found.is_empty() {
+        let listing = found.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ");
+        return Err(format!("V2_TREE_RULE_VIOLATION forbidden artifact(s) in the tree: {listing}"));
+    }
+    let chunks_left = fs::read_dir(scratch.join("chunks"))
+        .map(|entries| entries.flatten().filter(|e| e.file_type().map(|t| !t.is_dir()).unwrap_or(false)).count())
+        .unwrap_or(0);
+    if chunks_left > 0 {
+        return Err(format!("V2_TREE_RULE_VIOLATION {chunks_left} chunk file(s) remain under chunks/ (delete-as-consumed did not run)"));
+    }
+    let container_bytes = fs::metadata(&container)
+        .map(|m| m.len())
+        .map_err(|e| format!("container {} missing after publish: {e}", container.display()))?;
+    journal.line(&format!("V2_CONTAINER_PUBLISHED path={} bytes={container_bytes}", container.display()));
+    journal.line(&format!(
+        "PEAK_DISC_USED_BYTES {peak_disc} (du-sampled every 2s across the concurrent merge+finish window)"));
+    journal.line(&format!("XSA_BUILD_DONE chi={chi} pipeline=v2 container={}", container.display()));
     Ok(())
 }
 
