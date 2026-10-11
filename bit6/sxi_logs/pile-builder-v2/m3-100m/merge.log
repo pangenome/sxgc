@@ -1,0 +1,32 @@
+LOAD_SIDE idx=15 n=3712697 wall=0.633 mode=persisted-reads done=1/16
+LOAD_SIDE idx=3 n=6250143 wall=1.015 mode=persisted-reads done=2/16
+LOAD_SIDE idx=6 n=6256106 wall=1.026 mode=persisted-reads done=3/16
+LOAD_SIDE idx=4 n=6250289 wall=1.028 mode=persisted-reads done=4/16
+LOAD_SIDE idx=9 n=6251123 wall=1.027 mode=persisted-reads done=5/16
+LOAD_SIDE idx=2 n=6294128 wall=1.038 mode=persisted-reads done=6/16
+LOAD_SIDE idx=11 n=6259278 wall=1.038 mode=persisted-reads done=7/16
+LOAD_SIDE idx=5 n=6251992 wall=1.050 mode=persisted-reads done=8/16
+LOAD_SIDE idx=13 n=6251195 wall=1.046 mode=persisted-reads done=9/16
+LOAD_SIDE idx=0 n=6531673 wall=1.053 mode=persisted-reads done=10/16
+LOAD_SIDE idx=14 n=6279973 wall=1.046 mode=persisted-reads done=11/16
+LOAD_SIDE idx=12 n=6285300 wall=1.054 mode=persisted-reads done=12/16
+LOAD_SIDE idx=8 n=6263241 wall=1.058 mode=persisted-reads done=13/16
+LOAD_SIDE idx=1 n=6278391 wall=1.076 mode=persisted-reads done=14/16
+LOAD_SIDE idx=7 n=6301708 wall=1.091 mode=persisted-reads done=15/16
+LOAD_SIDE idx=10 n=8283266 wall=1.396 mode=persisted-reads done=16/16
+LOAD_STATS sides=16 par=16 wall=1.403 per_side_avg=1.403 (serial-equivalent width 1)
+CROSS_PHASE m2-build wall=0.145 cumulative=1.549 peak_rss_kib=14336
+POOL_STATS fd=5 bytes=200001008 fills=5 hits=0 misses=0 torn=0
+CROSS_PHASE hash-build wall=0.572 cumulative=2.121 peak_rss_kib=601968
+CROSS_PHASE anchor+repair wall=2.282 cumulative=4.402 peak_rss_kib=1249672
+XMERG_TIMING t_pf=10.652 t_pop=3.952 cell_hits=47157003 cell_miss=27177701 shards=48
+CROSS_PHASE cross-merge wall=29.388 cumulative=33.791 peak_rss_kib=1272644
+POOL_STATS fd=4 bytes=200001008 fills=390628 hits=0 misses=0 torn=0
+POOL_STATS fd=3 bytes=200001006 fills=390628 hits=1192751314 misses=246396 torn=0
+CROSS_PHASE emit-count wall=3.680 cumulative=37.895 peak_rss_kib=1272644
+CROSS_V2_IDX path=/mnt/nvme2n1/erikg/extcols-scratch/pilev2-m3-100m/merged/frag.runcols.idx shards=48 final_runs=38647515 n=100000503 w=27 band=65536 window=999999999
+CROSS_PHASE emit-v2-idx wall=0.000 cumulative=37.895 peak_rss_kib=1272644
+FOUR_EMIT shards=48 runs=38647515 total=100000513 v2=1
+CROSS_PHASE emit-write wall=6.455 cumulative=44.351 peak_rss_kib=1272644
+CROSS_KWAY k=16 mode=dollar left=/mnt/nvme2n1/erikg/extcols-scratch/mergperf-100m-bank/chunks/chunk-0.crle right=/mnt/nvme2n1/erikg/extcols-scratch/mergperf-100m-bank/chunks/chunk-15.crle n=100000503 sizes=6531673,6278391,6294128,6250143,6250289,6251992,6256106,6301708,6263241,6251123,8283266,6259278,6285300,6251195,6279973,3712697 out=/mnt/nvme2n1/erikg/extcols-scratch/pilev2-m3-100m/merged/frag out_runs=38647515 wall_total=44.354 comparisons=475295559 symbols_compared=5134689837 probes=140132232 max_lce=1984 fast_decided=438128171 probe_decided=37167378 cap_decided=10 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_sum=90 walk_steps_sum=90 block_rows_sum=21544 peak_rss_kib=1272644 hash_k=0 t_fast=846.873 t_prep=1.447 t_probe=19.853 t_scan=109.150
+POOL_STATS fd=3 bytes=200001006 fills=390627 hits=277035324 misses=262167 torn=0

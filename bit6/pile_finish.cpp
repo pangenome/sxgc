@@ -43,6 +43,8 @@
 #include <array>
 #include <cmath>
 #include <queue>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 #include <string>
@@ -98,7 +100,7 @@ static void pf_write_full(int fd, const void* p, uint64_t len, const std::string
 // ---------------------------------------------------------------- remap
 static void load_remap_table(const std::string& path, uint8_t out[256]) {
     int fd = ::open(path.c_str(), O_RDONLY);
-    pf_check(fd >= 0, "open remap");
+    pf_check(fd >= 0, std::string("open remap ") + path + ": " + std::strerror(errno));
     uint8_t buf[256];
     pf_read_full(fd, buf, 256, "remap");
     ::close(fd);
@@ -419,23 +421,33 @@ struct PieceSource {
     }
 };
 
-// ------------------------------------------------------- padded frame index
 // ----------------------------------------------------------- seam classes
 // The v1 chain's cyclic seam repair (rpfbwt_endpoints + seam_repair.hpp)
-// recomputed with NO record/seed columns and NO piece random access:
+// recomputed with NO record/seed columns, NO ssa/ssa_t, NO piece random
+// access and NO rlebwt rank walk:
 //
-//  * DISCOVERY: the backward search from row zero extends the terminal
-//    suffix pattern P_d = T[n-d..n). The interval at depth d is exactly the
-//    occurrence set occ(P_d) (every suffix with prefix P_d; the pattern's
-//    own occurrence at n-d is the interval's leftmost row because its
-//    continuation is the 0x02 padding - the smallest byte). The chain
-//    refines occ_{d+1} = {p : p+1 in occ_d and T[p] == T[n-d-1]} from the
-//    ONE sequential corpus scan for the terminal byte.
-//  * ROW INTERVALS: lo = row(first) by ONE binary search over the merge's
-//    own WM scratch (the merged SA order; SA(row) = WM[row-10]), hi =
-//    lo + |occ|. before/after = SA(lo-1)/SA(hi) by single WM preads.
-//  * REBUILD: the occurrence set is LCE-sorted with the v1 comparator and
-//    rebuilt into runs - byte-identical class contents to the v1 chain.
+//  * DISCOVERY: the occurrence chain of the terminal suffix pattern
+//    P_d = T[n-d..n) straight from the corpus. occ_1 = the terminal byte's
+//    positions (one sequential scan); occ_{d+1} = {p : p+1 in occ_d and
+//    T[p] == T[n-d-1]} - the same sets v1's padded-BWT backward search
+//    computes (occurrences never reach the 0x02 padding: P_d has no 0x02).
+//  * ROWS: the merge's own WM scratch is the merged SA in ROW order
+//    (SA(padded row i+w1) = WM[i]; it is NOT sorted, so no binary search
+//    over it exists). ONE sequential WM pass collects row(first_d) for
+//    the few discovery depths; v1's leftmost-row invariant (check(lo ==
+//    row): the pattern's own occurrence at n-d continues into the 0x02
+//    padding - the smallest byte - so it is the interval's first row)
+//    makes lo = row(first) exactly. hi = lo + |occ_d|.
+//  * FLANKS + SA SETS: before = SA[lo-1] (v1's phi; wraps to the longest
+//    padding suffix at lo == 0), after = SA[hi] (v1's phi-inverse walk;
+//    wraps to SA[0] = n at hi == n), and the class SA sets SA[lo..hi) are
+//    single WM preads - no run columns are touched at all.
+//  * REBUILD: the class SA set in row order (v1's phi-walk order - the
+//    exact sequence v1 feeds its comparator) is LCE-sorted with the v1
+//    comparator and rebuilt into runs - byte-identical class contents.
+//  * CROSS-CHECK: the WM-read class SA set must equal the corpus chain's
+//    occurrence set element-for-element (two independent sources for
+//    occ(P_d); any divergence is fatal).
 struct SeamClass { uint64_t lo, hi, first, before = 0, after = 0;
                    std::vector<uint64_t> occ;     // the class SA set (occ(P_d))
                    std::vector<RawRun> runs; };   // lo/hi in NORMALIZED rows
@@ -449,19 +461,7 @@ static void seam_refuse(const char* kind, uint64_t size, uint64_t limit) {
 struct SeamClasses {
     std::vector<SeamClass> classes;
     uint64_t depth = 0, total = 0, maxSeamLce = 0;
-    // Binary search over the WM scratch: smallest row index with SA >= target.
-    static uint64_t wm_lower_bound(int fd, uint64_t n, uint64_t target) {
-        uint64_t lo = 0, hi = n;
-        while (lo < hi) {
-            uint64_t mid = (lo + hi) / 2;
-            uint8_t b[8];
-            pf_pread_full(fd, b, 8, 8 * mid, "wm pread");
-            uint64_t v = 0;
-            for (int i = 0; i < 8; ++i) v |= uint64_t(b[i]) << (8 * i);
-            if (v < target) lo = mid + 1; else hi = mid;
-        }
-        return lo;
-    }
+    // Single WM value: WM[idx] = SA(padded row idx+w1). Row order, NOT sorted.
     static uint64_t wm_at(int fd, uint64_t idx) {
         uint8_t b[8];
         pf_pread_full(fd, b, 8, 8 * idx, "wm pread");
@@ -472,10 +472,12 @@ struct SeamClasses {
     void build(const CorpusText& text, int wmFd, uint64_t n, uint64_t rawR, uint64_t w1,
                const std::function<uint64_t(uint64_t, uint64_t)>& collection_lce,
                const std::function<uint8_t(uint64_t)>& symbol) {
-        uint64_t N = n + 10, r = rawR;
-        uint64_t limit = std::max<uint64_t>(1000, r / 1000);
-        uint8_t terminal = text[n - 1];
-        // occ_1: every position of the terminal byte (one sequential scan).
+        const uint64_t N = n + w1, r = rawR;
+        const uint64_t limit = std::max<uint64_t>(1000, r / 1000);
+        const uint8_t terminal = text[n - 1];
+        // ---- discovery: the occurrence chain of P_d = T[n-d..n) from the
+        // corpus. occ_1 = the terminal byte's positions (one seq scan);
+        // occ_{d+1} = {p : p+1 in occ_d and T[p] == T[n-d-1]}.
         std::vector<uint64_t> occ;
         {
             constexpr uint64_t RB = 1 << 22;
@@ -493,28 +495,22 @@ struct SeamClasses {
                 off += want;
             }
         }
-        fprintf(stderr, "PILE_FINISH_SEAM_OCC terminal=0x%02x depth0_count=%llu scan=corpus\n",
+        fprintf(stderr, "PILE_FINISH_SEAM_OCC terminal=0x%02llx depth0_count=%llu scan=corpus\n",
                 (unsigned long long)terminal, (unsigned long long)occ.size());
-        // The discovery chain: v1 pushes a class per depth while the
-        // interval has more than one row, and stops at the unique row.
+        // v1 pushes a class per depth while the interval holds more than
+        // one row and stops at the unique row (that step counts toward the
+        // depth too); sizes and refusals are v1's.
         std::vector<SeamClass> raw;
         uint64_t d = 0;
         for (;;) {
+            if (d == limit) seam_refuse("discovery_steps", d + 1, limit);
             ++d;
-            if (uint64_t(occ.size()) > limit) seam_refuse("class_size", occ.size(), limit);
-            if (occ.size() <= 1) break;
-            if (d > limit) seam_refuse("discovery_steps", d, limit);
-            uint64_t first = n - d;
-            pf_check(first < n, "seam pattern escaped the text");
-            uint64_t row = wm_lower_bound(wmFd, n, first) + w1;
-            pf_check(wm_at(wmFd, row - w1) == first, "terminal suffix not found in the WM order");
-            uint64_t hi = row + occ.size();
-            pf_check(row >= w1 && hi - w1 <= n - 1, "terminal suffix interval bounds");
-            pf_check(row == wm_lower_bound(wmFd, n, first) + w1, "terminal suffix row");
-            raw.push_back({row - w1, hi - w1, first, 0, 0, occ, {}});
             depth = d;
-            // refine: occ_{d+1} = {p : p+1 in occ_d and T[p] == T[n-d-1]}
-            if (first == 0) seam_refuse("discovery_steps", d + 1, limit);
+            if (occ.size() <= 1) break;
+            if (uint64_t(occ.size()) > limit) seam_refuse("class_size", occ.size(), limit);
+            uint64_t first = n - d;
+            pf_check(first > 0 && first < n, "seam pattern escaped the text");
+            raw.push_back({0, 0, first, 0, 0, occ, {}});
             uint8_t want = text[first - 1];
             pf_check(want != 2, "unexpected dollar during seam discovery");
             std::vector<uint64_t> next;
@@ -524,6 +520,38 @@ struct SeamClasses {
                 if (text[q - 1] == want) next.push_back(q - 1);
             }
             occ.swap(next);
+        }
+        // ---- rows: ONE sequential WM scan collects row(first) for every
+        // pushed depth (the WM is the SA in row order; a value's row IS its
+        // WM index - no search structure over it exists or is needed).
+        std::unordered_map<uint64_t, uint64_t> rowOf;
+        {
+            std::unordered_set<uint64_t> pending;
+            for (const auto& cl : raw) pending.insert(cl.first);
+            constexpr uint64_t WB = 1 << 20;   // 8 MiB scan windows
+            std::vector<uint64_t> buf(WB);
+            uint64_t idx = 0;
+            while (!pending.empty()) {
+                pf_check(idx < n, "seam first suffix missing from the WM order");
+                uint64_t want = std::min<uint64_t>(WB, n - idx);
+                pf_pread_full(wmFd, buf.data(), 8 * want, 8 * idx, "wm scan");
+                for (uint64_t k = 0; k < want && !pending.empty(); ++k) {
+                    auto it = pending.find(buf[k]);
+                    if (it != pending.end()) {
+                        pf_check(rowOf.emplace(*it, idx + k).second, "duplicate WM value");
+                        pending.erase(it);
+                    }
+                }
+                idx += want;
+            }
+        }
+        // lo = row(first) (v1's check(lo == row)); hi = lo + |occ_d|.
+        for (auto& cl : raw) {
+            uint64_t lo = rowOf.at(cl.first);
+            uint64_t hi = lo + cl.occ.size();
+            pf_check(hi <= n, "seam interval escapes the normalized rows");
+            cl.lo = lo;
+            cl.hi = hi;
         }
         // v1: sort by lo, drop nested row intervals, refuse on total rows.
         std::sort(raw.begin(), raw.end(), [](const SeamClass& a, const SeamClass& b) {
@@ -538,16 +566,32 @@ struct SeamClasses {
         }
         for (auto& cl : classes) total += cl.hi - cl.lo;
         if (total > limit) seam_refuse("total_class_rows", total, limit);
-        // before = SA(row(lo)-1) = WM[lo-1]; after = SA(row(hi)) = WM[hi].
-        // (row(lo_norm) = lo_norm + w1, and WM[i] = SA(row i+10).)
-        for (auto& cl : classes) cl.before = wm_at(wmFd, cl.lo - 1);
-        for (auto& cl : classes) cl.after = wm_at(wmFd, cl.hi);
+        // ---- flanks + class SA sets, all single WM preads.
+        // before = SA[lo-1] (v1's phi(first); the padded rows below w1 are
+        // the padding suffixes SA[i] = n+i, so lo == 0 wraps to N-1).
+        // after = SA[hi] (v1's phi-inverse walk; hi == n wraps to SA[0] = n).
+        for (auto& cl : classes) {
+            cl.before = cl.lo ? wm_at(wmFd, cl.lo - 1) : N - 1;
+            cl.after = cl.hi < n ? wm_at(wmFd, cl.hi) : n;
+            pf_check(cl.before < N && cl.after < N, "seam flank outside the padded text");
+            std::vector<uint64_t> sa(cl.hi - cl.lo);
+            if (!sa.empty())
+                pf_pread_full(wmFd, sa.data(), 8 * sa.size(), 8 * cl.lo, "wm class set");
+            // Cross-check: WM row interval vs the corpus chain - two
+            // independent sources for occ(P_d); divergence is fatal.
+            std::vector<uint64_t> chainSet = cl.occ;
+            std::sort(chainSet.begin(), chainSet.end());
+            std::vector<uint64_t> sortedSet = sa;
+            std::sort(sortedSet.begin(), sortedSet.end());
+            pf_check(sortedSet == chainSet, "seam class SA set != the corpus occurrence set");
+            for (uint64_t p : sa) pf_check(p < n, "seam sample outside T");
+            pf_check(sa.front() == cl.first, "class leftmost row is not the terminal suffix");
+            cl.occ = std::move(sa);   // row order = v1's phi-walk order
+        }
         // rebuild each class: v1's LCE comparator + run rebuild, verbatim.
         uint64_t maxSeam = 0;
         for (auto& cl : classes) {
             std::vector<uint64_t> sa = cl.occ;
-            pf_check(sa.size() == cl.hi - cl.lo, "class occurrence count");
-            for (uint64_t p : sa) pf_check(p < n, "seam sample outside T");
             std::sort(sa.begin(), sa.end(), [&](uint64_t a, uint64_t b) {
                 uint64_t len = collection_lce(a, b);
                 maxSeam = std::max(maxSeam, len);
@@ -564,10 +608,21 @@ struct SeamClasses {
             }
         }
         maxSeamLce = maxSeam;
-        fprintf(stderr, "CYCLIC_SEAM_REPAIRED classes=%zu rows=%llu discovery_steps=%llu limit=%llu phi_samples=%llu pattern_chain=1 wm_preads=1\n",
+        if (getenv("SLIM_SEAM_DEBUG"))
+            for (auto& cl : classes) {
+                fprintf(stderr, "SLIM_SEAM_CLASS2 lo=%llu hi=%llu after=%llu runs=%zu:",
+                        (unsigned long long)cl.lo, (unsigned long long)cl.hi,
+                        (unsigned long long)cl.after, cl.runs.size());
+                for (auto& v : cl.runs)
+                    fprintf(stderr, " (%02x,%llu,h=%llu,t=%llu)", v.c,
+                            (unsigned long long)v.len, (unsigned long long)v.head, (unsigned long long)v.tail);
+                fprintf(stderr, "\n");
+            }
+        fprintf(stderr, "CYCLIC_SEAM_REPAIRED classes=%zu rows=%llu discovery_steps=%llu limit=%llu phi_samples=%llu pattern_chain=1 wm_scan=1\n",
                 classes.size(), (unsigned long long)total, (unsigned long long)depth,
                 (unsigned long long)limit, (unsigned long long)r);
-        fprintf(stderr, "CYCLIC_SEAM_WORK max_seam_lce=%llu exact=1 pattern_chain=1\n", (unsigned long long)maxSeam);
+        fprintf(stderr, "CYCLIC_SEAM_WORK max_seam_lce=%llu exact=1 pattern_chain=1 wm_scan=1\n",
+                (unsigned long long)maxSeam);
     }
 };
 
@@ -1151,7 +1206,7 @@ int main(int argc, char** argv) {
         int sparseFd = ::open(sparsePath.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
         pf_check(sparseFd >= 0, "create sparse scratch");
         bool bridge = !bridgeDir.empty();
-        int bCharsFd = -1, bLensFd = -1, bTailsFd = -1, bSAFd = -1;
+        int bCharsFd = -1, bLensFd = -1, bTailsFd = -1, bSAFd = -1, bTopFd = -1, bIntFd = -1;
         unsigned w4 = 1;
         while (w4 < 64 && (uint64_t(1) << w4) <= n - 1) ++w4;
         __uint128_t bTailRes = 0;
@@ -1161,7 +1216,9 @@ int main(int argc, char** argv) {
             bLensFd = ::open((bridgeDir + "/frag.b-lens").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
             bTailsFd = ::open((bridgeDir + "/frag.b-tails").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
             bSAFd = ::open((bridgeDir + "/frag.sA").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
-            pf_check(bCharsFd >= 0 && bLensFd >= 0 && bTailsFd >= 0 && bSAFd >= 0, "create bridge temps");
+            bTopFd = ::open((bridgeDir + "/frag.b-top").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+            bIntFd = ::open((bridgeDir + "/frag.b-int").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+            pf_check(bCharsFd >= 0 && bLensFd >= 0 && bTailsFd >= 0 && bSAFd >= 0 && bTopFd >= 0 && bIntFd >= 0, "create bridge temps");
         }
         auto bridgeTailWrite = [&](uint64_t tail) {
             bTailRes |= __uint128_t(n - 1 - tail) << bTailAvail;
@@ -1182,7 +1239,10 @@ int main(int argc, char** argv) {
         RepairStream rs;
         rs.N = N; rs.n = n; rs.terminal = 0; rs.seam = &seam;
         rs.emit = [&](const NRun& v) {
-            uint64_t idx = rs.rNorm;   // this run's global index (pre-increment)
+            // emitOne() has already incremented rNorm: this run's global
+            // index is rNorm-1 (0-based; sparse m11 tails live at indices
+            // 0, 1024, 2048, ...).
+            uint64_t idx = rs.rNorm - 1;
             if (idx % 1024 == 0) pf_write_full(sparseFd, &v.t, 8, "sparse tail");
             if (bridge) {
                 pf_write_full(bCharsFd, &v.c, 1, "bridge chars");
@@ -1202,23 +1262,15 @@ int main(int argc, char** argv) {
         double lceWall = 0, repairWall = 0;
         std::vector<RawRun> raws;
         uint64_t nbands = (R + src.B - 1) / src.B;
-        for (uint64_t band = 0; band < nbands; ++band) {
-            double t0 = tnow();
-            src.read_band(band, raws);
-            if (band == 0) {
-                pf_check(!raws.empty() && raws[0].len == 1, "run zero is not the terminal padding row");
-                rs.terminal = raws[0].c;
-                pf_check(rs.terminal >= 6 && rs.terminal < 256, "unsupported terminal byte");
-                fprintf(stderr, "PFP_TERMINAL byte=0x%02llx source=padding-row raw_n=%llu raw_r=%llu\n",
-                        (unsigned long long)rs.terminal, (unsigned long long)N, (unsigned long long)R);
-            }
-            for (const auto& raw : raws) rs.feed_raw(raw);
-            repairWall += tnow() - t0;
-            if (nbuf.empty()) continue;
+        // LCE + sweep advance for the buffered runs (nbuf/gidx, in stream
+        // order). Used per band AND for the repair stream's final flush -
+        // the state machine must see every one of the rNorm runs.
+        auto processBuffer = [&]() {
+            if (nbuf.empty()) return;
             size_t cnt = nbuf.size();
             topLcp.assign(cnt, 0);
             interior.assign(cnt, INF);
-            t0 = tnow();
+            double t0 = tnow();
             {
                 std::atomic<size_t> next{0};
                 int tc = std::max(1, std::min(threads, 64));
@@ -1244,17 +1296,43 @@ int main(int argc, char** argv) {
                 for (auto& t : ts) t.join();
             }
             lceWall += tnow() - t0;
+            if (bridge)
+                for (size_t i = 0; i < cnt; ++i) {
+                    pf_write_full(bTopFd, &topLcp[i], 8, "bridge top");
+                    uint64_t iv = interior[i] == INF ? ~uint64_t(0) : interior[i];
+                    pf_write_full(bIntFd, &iv, 8, "bridge int");
+                }
             for (size_t i = 0; i < cnt; ++i) sweep.advance(nbuf[i], topLcp[i], interior[i]);
             prevTail = nbuf.back().t;
             nbuf.clear();
             gidx.clear();
+        };
+        for (uint64_t band = 0; band < nbands; ++band) {
+            double t0 = tnow();
+            src.read_band(band, raws);
+            if (band == 0) {
+                pf_check(!raws.empty() && raws[0].len == 1, "run zero is not the terminal padding row");
+                rs.terminal = raws[0].c;
+                pf_check(rs.terminal >= 6 && rs.terminal < 256, "unsupported terminal byte");
+                fprintf(stderr, "PFP_TERMINAL byte=0x%02llx source=padding-row raw_n=%llu raw_r=%llu\n",
+                        (unsigned long long)rs.terminal, (unsigned long long)N, (unsigned long long)R);
+            }
+            for (const auto& raw : raws) rs.feed_raw(raw);
+            repairWall += tnow() - t0;
+            if (nbuf.empty()) continue;
+            processBuffer();
             if ((band & 63) == 0)
                 fprintf(stderr, "PILE_FINISH_PROGRESS band=%llu/%llu runs=%llu chi_so_far=%llu repair_wall=%.1f lce_wall=%.1f wit_spills=%llu\n",
                         (unsigned long long)(band + 1), (unsigned long long)nbands,
                         (unsigned long long)rs.rNorm, (unsigned long long)sweep.chi,
                         repairWall, lceWall, (unsigned long long)buckets.spilled);
         }
+        // The repair stream's final flush (the coalesced tail runs held
+        // back for char-merge parity) must advance the sweep exactly like
+        // the band runs: the state machine needs ALL rNorm runs (v1 feeds
+        // every run; the production sweep's last events live here).
         rs.finishStream();
+        if (!nbuf.empty()) processBuffer();
         sweep.finish();
         pf_check(::close(sparseFd) == 0, "close sparse scratch");
         if (bridge) {
@@ -1264,7 +1342,8 @@ int main(int argc, char** argv) {
                 bTailRes = 0; bTailAvail = 0;
             }
             pf_check(::close(bCharsFd) == 0 && ::close(bLensFd) == 0 &&
-                     ::close(bTailsFd) == 0 && ::close(bSAFd) == 0, "close bridge temps");
+                     ::close(bTailsFd) == 0 && ::close(bSAFd) == 0 && ::close(bTopFd) == 0 &&
+                     ::close(bIntFd) == 0, "close bridge temps");
         }
         phase("sweep", last);
         const uint64_t chi = sweep.chi, rNorm = rs.rNorm;
@@ -1413,6 +1492,65 @@ int main(int argc, char** argv) {
             lenBits.mem.reserve(rNorm);
             uint64_t replayRuns = 0;
             {
+                // Barrier: the merge publishes the rlebwt body only after
+                // every piece band is emitted (the ordered segment
+                // concatenation is the emission's last step). The sweep's
+                // final consumed band implies the walk is done, but the
+                // concat write may still be in flight - decode-count the
+                // file until it holds all R runs and N rows.
+                double waited = 0;
+                for (;;) {
+                    bool complete = false;
+                    {
+                        int bfd = ::open((prefix + ".rlebwt").c_str(), O_RDONLY);
+                        pf_check(bfd >= 0, "open rlebwt (m1 barrier)");
+                        std::vector<uint8_t> buf(1 << 20);
+                        size_t have = 0, pos = 0;
+                        uint64_t runs = 0, rows = 0;
+                        auto word = [&](uint32_t& w32) -> bool {
+                            if (pos + 4 > have) {
+                                if (pos < have) { memmove(buf.data(), buf.data() + pos, have - pos); have -= pos; }
+                                else have = 0;
+                                pos = 0;
+                                ssize_t z = ::read(bfd, buf.data() + have, buf.size() - have);
+                                if (z <= 0) return false;
+                                have += size_t(z);
+                                if (pos + 4 > have) return false;
+                            }
+                            memcpy(&w32, buf.data() + pos, 4);
+                            pos += 4;
+                            return true;
+                        };
+                        bool ok = true;
+                        for (;;) {
+                            uint32_t w32;
+                            if (!word(w32)) break;
+                            uint8_t c = uint8_t(w32 & 255);
+                            uint64_t len = (w32 >> 8) & 0x7fffff;
+                            bool cont;
+                            do {
+                                cont = w32 >> 31;
+                                if (cont) {
+                                    if (!word(w32)) { ok = false; break; }
+                                    if (uint8_t(w32 & 255) != c) { ok = false; break; }
+                                    len += (w32 >> 8) & 0x7fffff;
+                                }
+                            } while (cont);
+                            if (!ok) break;
+                            ++runs;
+                            rows += len;
+                            if (rows > N) { ok = false; break; }
+                        }
+                        ::close(bfd);
+                        complete = ok && runs == R && rows == N;
+                    }
+                    if (complete) break;
+                    if (waited > pollTimeout) pf_fail("timeout waiting for the complete rlebwt");
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                    waited += 0.1;
+                }
+            }
+            {
                 RepairStream rs2;
                 rs2.N = N; rs2.n = n; rs2.terminal = rs.terminal; rs2.seam = &seam;
                 rs2.sampleChecks = false;
@@ -1488,6 +1626,8 @@ int main(int argc, char** argv) {
             ::unlink((bridgeDir + "/frag.b-chars").c_str());
             ::unlink((bridgeDir + "/frag.b-lens").c_str());
             ::unlink((bridgeDir + "/frag.b-tails").c_str());
+            ::unlink((bridgeDir + "/frag.b-top").c_str());
+            ::unlink((bridgeDir + "/frag.b-int").c_str());
             // frag.sA is a GATE artifact (the emission-order witness bridge):
             // keep it in the bridge dir.
         }

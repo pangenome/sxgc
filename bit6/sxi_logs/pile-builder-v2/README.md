@@ -89,3 +89,63 @@ dry-run FEASIBLE). `PILE_PLAN_V2.md` lands in this directory at the end.
 * The finish's PFCK checkpoint sidecar (R bytes, 0.36n at 1GB / ~0.48 TB at
   pile) is a scratch term the mission's peak model did not name; it is
   journaled, deleted after the finish, and included in the table.
+
+## M3 - the fused banded finish at 100MB: GREEN (2026-10-11)
+
+`pile_finish` (bit6/pile_finish.cpp) completes the v2 pipeline end-to-end at
+100MB, run CONCURRENTLY with the merge (the real pipeline shape: the finish
+opens the merge's WM scratch during the pair phase - the WM is deleted at
+merge end, so a late finish fails loud on the poll timeout by design).
+
+The open seam-class bug is root-caused as TWO independent defects, both fixed:
+
+1. **The WM is row order, not sorted.** `wm.bin` is the merged SA in ROW
+   order (`out += nb` in the emission; consumed as `wm.at(t-10)`), so the
+   rescued code's `wm_lower_bound` binary search could never work (it was
+   never exercised: the smoke test died waiting for the WM). The seam
+   machinery now computes rows with NO search over the WM at all:
+   discovery = the occurrence chain of P_d = T[n-d..n) straight from the
+   corpus; ONE sequential WM scan collects lo = row(first_d) (v1's
+   leftmost-row invariant check(lo==row) makes this exact); before/after and
+   the class SA sets are single WM preads (SA[lo-1] / SA[hi] / SA[lo..hi));
+   and the WM-read SA set must equal the corpus chain set element-for-
+   element (two independent sources; divergence is fatal).
+2. **The repair stream's final flush never reached the sweep.** The last
+   2 runs (the coalesced tail runs held back for char-merge parity,
+   emitted by finishStream after the band loop) were never LCE'd or
+   advanced - the production sweep's last events live exactly there. The
+   per-band LCE block is refactored into processBuffer() and flushed once
+   more after finishStream(). (This was the -2 chi: 29716347 vs 29716349,
+   with the witness stream byte-identical up to the last two witnesses.)
+   Also fixed: the m11 sparse index was off by one (emitOne pre-increments
+   rNorm; sparse tails live at run indices 0, 1024, ...).
+
+Evidence (all in this directory; m3-100m/finish.log, m3-100m/merge.log):
+
+* chi = 29716349 EXACT (banked mergperf-100m XSA_BUILD_DONE constant).
+* Sorted-witness bridge `frag.sA` byte-identical to
+  `mergperf-100m-bank/finish/frag.sA` (29,716,349 x u64).
+* Seam classes byte-identical to the v1 chain's SLIM_SEAM_CLASS2 dump
+  (4 classes, 16573 rows, 11658 rebuilt runs, discovery_steps=5,
+  max_seam_lce=1983, predecessors_before_zero=7268; v1 dump regenerated
+  from the instrumented v1 endpoints under dbg-v1 and cmp'd - see
+  v1-seam-classes.txt / v2-seam-classes.txt).
+* The normalized run stream is byte-identical to the bank's v1 ri4:
+  chars, lens AND packed tails (n-1-tail convention) all cmp clean; the
+  per-run LCE columns (bridge scratch, deleted on success) matched the
+  bank's frag.agg topLCP/interiorMin for all 38,647,515 runs after fix 2.
+* rlebwt + meta byte-identical to the bank (kept pre-lite per G1).
+* Container lite published: 48,768,685 bytes (0.49n) with members
+  {m1 runs, m4 anchors, m5 chi EF, m7 remap, m10 LF-derived, m11 sparse
+  1/1024 tails}; m1 C table == bank ri4 C; m11 sparse tails == bank-derived.
+* NO agg/ssa_t/head_sa/ssa/pftext/pfck file exists anywhere in the tree.
+* The m1 replay re-derives the normalized runs from rlebwt+classes
+  sample-free and cross-checks per-char totals/runFreq (passed).
+
+Pipeline shape notes: the finish waits for the merge's `runcols.idx`,
+builds the PFCK from the corpus, opens the WM as soon as its size hits
+8n (the merge's last shard flush is the only writer that extends the file
+to full size, so size==8n implies complete), then seam classes -> sweep
+(pieces flow-controlled; consumed sentinel frees the merge's window).
+The m1 replay barrier decode-counts the rlebwt until all R runs/N rows
+are visible (the body is the emission's final segment concatenation).
