@@ -82,6 +82,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 #include <fcntl.h>
 #include <sys/resource.h>
@@ -441,9 +442,32 @@ struct WinBytes {
     }
 };
 
+static bool wm_pack_enabled() {
+    const char* e = getenv("CROSS_WM_PACK");
+    return e && e[0] == '1' && e[1] == '\0';
+}
+static unsigned wm_value_bits(U n) {
+    return unsigned(std::max<U>(1, 64 - __builtin_clzll(n + 9)));
+}
+struct WmHeader {
+    uint32_t magic;       // 0x31574D50 = 'PWM1' LE
+    uint32_t wbits;
+    uint64_t count;
+    uint32_t blockVals;   // 4096
+    uint32_t blockBytes;
+    uint64_t reserved;    // 0
+};
+static constexpr U WM_BLOCK_VALS = 4096;
+static U wm_block_bytes(unsigned w) { return (WM_BLOCK_VALS * U(w) + 7) / 8; }
+static U wm_packed_size(U n, unsigned w) {
+    return sizeof(WmHeader) + ((n + WM_BLOCK_VALS - 1) / WM_BLOCK_VALS) * wm_block_bytes(w);
+}
+
 // Cached u64-column reader with byte base and optional constant shift.
 struct WinU64 {
     int fd = -1; U base = 0, count = 0, shift = 0, gen = 0;
+    unsigned wbits = 0;   // packed-WM mode (open_ro_auto on a PWM1 file); 0 = legacy u64 column
+    U blockBytes = 0;
     std::shared_ptr<SharedPages> pool;
     ~WinU64() { pool.reset(); if (fd >= 0) ::close(fd); }
     void open_ro(const std::string& path, U elems, U byteBase, U shiftIn = 0, bool pooled = false) {
@@ -454,6 +478,29 @@ struct WinU64 {
             pool = std::make_shared<SharedPages>();
             pool->start(fd, base + 8 * elems, 8);
         }
+    }
+    // Auto-detect the WM scratch layout: legacy u64-per-row (size == 8*elems)
+    // or the packed PWM1 block format. Readers stay layout-agnostic.
+    void open_ro_auto(const std::string& path, U elems) {
+        struct stat st {};
+        if (::stat(path.c_str(), &st) != 0) fail("stat wm scratch");
+        if (uint64_t(st.st_size) == 8 * elems) {
+            open_ro(path, elems, 0);
+            return;
+        }
+        fd = ::open(path.c_str(), O_RDONLY);
+        if (fd < 0) fail("open packed wm");
+        count = elems; base = 0; shift = 0; gen = g_winGen.fetch_add(1);
+        WmHeader hdr{};
+        xw(fd, &hdr, sizeof hdr, 0, "packed wm header");
+        if (hdr.magic != 0x31574D50) fail("packed wm magic");
+        if (hdr.count != elems) fail("packed wm count");
+        if (hdr.blockVals != WM_BLOCK_VALS) fail("packed wm block shape");
+        if (hdr.wbits < 1 || hdr.wbits >= 64) fail("packed wm width");
+        if (hdr.blockBytes != wm_block_bytes(hdr.wbits)) fail("packed wm block bytes");
+        if (uint64_t(st.st_size) != wm_packed_size(elems, hdr.wbits)) fail("packed wm size");
+        wbits = hdr.wbits;
+        blockBytes = hdr.blockBytes;
     }
     struct TL { const void* o = nullptr; U gen = 0; U tag[2]{UINT64_MAX,UINT64_MAX};
                U d[2][4096]; unsigned nxt = 0; };
@@ -470,6 +517,15 @@ struct WinU64 {
     inline U at(U i) const {
         if (i >= count) fail("windowed u64 bounds");
         U val;
+        if (wbits) {   // packed WM: 4096-value blocks behind the header
+            TL& tls = tlEntry();
+            U page = i / 4096;
+            for (unsigned k = 0; k < 2; ++k) if (tls.tag[k] == page) return tls.d[k][i % 4096] + shift;
+            unsigned slot = tls.nxt++ & 1;
+            loadPackedPage(page, tls.d[slot]);
+            tls.tag[slot] = page;
+            return tls.d[slot][i % 4096] + shift;
+        }
         if (pool) {
             U off = base + 8 * i;
             U page = off / SharedPages::PS;
@@ -493,14 +549,152 @@ struct WinU64 {
         tls.tag[slot] = page;
         return tls.d[slot][i % 4096] + shift;
     }
+    // Unpack one 4096-value packed block into dst (the thread-local page
+    // cache serves it; the WM read pattern is the emission's mostly-
+    // sequential row scan plus pile_finish's small class-window preads).
+    void loadPackedPage(U page, U* dst) const {
+        thread_local std::vector<uint8_t> staging;
+        if (staging.size() != blockBytes) staging.resize(blockBytes);
+        xw(fd, staging.data(), blockBytes, sizeof(WmHeader) + page * blockBytes, "packed wm page");
+        const unsigned w = wbits;
+        __uint128_t res = 0; unsigned avail = 0; U bi = 0;
+        const U mask = (U(1) << w) - 1;
+        for (U k = 0; k < WM_BLOCK_VALS; ++k) {
+            while (avail < w) { res |= __uint128_t(staging[bi]) << avail; ++bi; avail += 8; }
+            dst[k] = U(res) & mask;
+            res >>= w;
+            avail -= w;
+        }
+    }
     void read(U i, U* buf, U len) const {
         if (i + len > count) fail("windowed u64 bulk bounds");
+        if (wbits) {
+            U done = 0;
+            while (done < len) {
+                U page = (i + done) / 4096;
+                U in = (i + done) % 4096;
+                U take = std::min<U>(len - done, 4096 - in);
+                take = std::min<U>(take, count - page * 4096 - in);
+                U tmp[4096];
+                loadPackedPage(page, tmp);
+                std::memcpy(buf + done, tmp + in, 8 * take);
+                done += take;
+            }
+            if (shift) for (U k = 0; k < len; ++k) buf[k] += shift;
+            return;
+        }
         xw(fd, buf, 8 * len, base + 8 * i, "windowed u64 bulk");
         if (shift) for (U k = 0; k < len; ++k) buf[k] += shift;
     }
     void prefetch(U i) const {
         if (!pool) return;
         pool->prefetch((base + 8 * i) / SharedPages::PS);
+    }
+};
+// ------------------------------------------------------------ packed WM
+// CROSS_WM_PACK=1: wm.bin - the merged SA in ROW order, the walk->emission
+// pipe consumed by emit_four_ext/emit_sxcr_ext and pile_finish's seam
+// machinery - is stored w-bits-per-value LSB-first (w = bits(n+9), the
+// pieces' packed-SD convention) in fixed 4096-value blocks behind a
+// 32-byte PWM1 header, instead of u64-per-row: 8n -> ~w/8 n (3.75n at
+// 1GB, 5.125n at pile scale) off the merge transient. The WM is scratch
+// (deleted at pair end, never byte-gated directly); the arbiter stays
+// rlebwt/meta/pieces/witness/chi byte-identity. Block layout (values are
+// arbitrary SA positions - w-packing is their information-theoretic
+// floor; blocks are fixed-size so random access is O(1)):
+//   bytes [0,32):  magic u32 'PWM1', wbits u32, count u64,
+//                   blockVals u32 (=4096), blockBytes u32, reserved u64
+//   block b at byte 32 + b*blockBytes: values [b*4096, min(n,(b+1)*4096))
+//   packed LSB-first, zero-padded to blockBytes.
+// Parallel block packer: walk shards produce disjoint row ranges; a block
+// is packed and written exactly when its last value arrives (the completing
+// thread does the I/O - no block's bytes are ever written by two threads).
+// Staging stays bounded by the in-flight blocks (<= one boundary block per
+// shard boundary).
+struct WmPacker {
+    int fd = -1;
+    std::string path;
+    unsigned w = 0;
+    U n = 0, blockBytes = 0;
+    struct Staging {
+        std::vector<U> vals;
+        std::atomic<U> filled{0};
+    };
+    std::mutex mu;
+    std::unordered_map<U, std::shared_ptr<Staging>> live;
+    void open(const std::string& wmPath, U count) {
+        path = wmPath;
+        w = wm_value_bits(count);
+        require(w >= 1 && w < 64, "packed wm width");
+        n = count;
+        blockBytes = wm_block_bytes(w);
+        fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+        require(fd >= 0, "create packed wm scratch");
+        WmHeader hdr{0x31574D50, w, count, uint32_t(WM_BLOCK_VALS), uint32_t(blockBytes), 0};
+        xput(fd, &hdr, sizeof hdr, 0, "packed wm header");
+    }
+    void put(U idx, U v) {
+        require(idx < n, "packed wm bounds");
+        U b = idx / WM_BLOCK_VALS;
+        thread_local std::unordered_map<const WmPacker*, std::pair<U, std::shared_ptr<Staging>>> cache;
+        auto& c = cache[this];
+        std::shared_ptr<Staging> st = c.second;
+        if (!st || c.first != b) {
+            std::lock_guard<std::mutex> g(mu);
+            auto& p = live[b];
+            if (!p) {
+                p = std::make_shared<Staging>();
+                p->vals.assign(WM_BLOCK_VALS, 0);
+            }
+            st = p;
+            c.first = b;
+            c.second = st;
+        }
+        U blockSize = std::min<U>(WM_BLOCK_VALS, n - b * WM_BLOCK_VALS);
+        require(st->filled.load(std::memory_order_relaxed) < blockSize,
+                "late put to a completed packed-WM block");
+        require(v < (U(1) << w), "packed wm value overflows wbits");
+        st->vals[idx - b * WM_BLOCK_VALS] = v;
+        if (st->filled.fetch_add(1, std::memory_order_acq_rel) + 1 == blockSize) {
+            pack_block(b, *st);
+            std::lock_guard<std::mutex> g(mu);
+            live.erase(b);
+            c.second.reset();
+        }
+    }
+    void pack_block(U b, Staging& st) {
+        U valsInBlock = std::min<U>(WM_BLOCK_VALS, n - b * WM_BLOCK_VALS);
+        // Fixed-size blocks (512*w bytes, word-aligned) so random access is
+        // O(1); the final partial block is zero-padded to blockBytes.
+        U words = blockBytes / 8;
+        require(words * 8 == blockBytes, "packed wm block alignment");
+        std::vector<U> wout(words, 0);
+        __uint128_t res = 0; unsigned avail = 0; U wi = 0;
+        for (U i = 0; i < valsInBlock; ++i) {
+            res |= __uint128_t(st.vals[i]) << avail; avail += w;
+            if (avail >= 64) { wout[wi++] = U(res); res >>= 64; avail -= 64; }
+        }
+        if (avail) wout[wi] = U(res);
+        xput(fd, wout.data(), blockBytes, sizeof(WmHeader) + b * blockBytes, "packed wm block");
+    }
+    void close() {
+        require(fd >= 0, "packed wm close");
+        {
+            std::lock_guard<std::mutex> g(mu);
+            require(live.empty(), "packed wm closed with incomplete blocks");
+        }
+        require(::close(fd) == 0, "packed wm close fd");
+        fd = -1;
+        // Completion sentinel, rename-published AFTER the last block: the
+        // packed blocks land in arbitrary order, so file size alone does
+        // not imply completeness (the legacy u64 layout kept the banked
+        // size==8n approximation; the packed layout gets the exact gate).
+        std::string tmp = path + ".done.tmp", done = path + ".done";
+        int sfd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+        require(sfd >= 0, "create packed wm done tmp");
+        require(::write(sfd, "1\n", 2) == 2, "write packed wm done");
+        require(::close(sfd) == 0, "close packed wm done");
+        require(::rename(tmp.c_str(), done.c_str()) == 0, "publish packed wm done");
     }
 };
 // Corpus-referenced side text. A side's text is either embedded in its
@@ -2163,8 +2357,14 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
     // path (k=2, S=1 is the serial pairwise walk), byte-identical by
     // construction. Planning costs (S-1)*log(n_i)*k*log(n_j) comparisons
     // (boundaries planned in parallel), charged to the same budget.
-    int fd = ::open(sc.wm.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
-    require(fd >= 0, "create wm scratch");
+    int fd = -1;
+    WmPacker wmPacker;
+    const bool packWm = wm_pack_enabled();
+    if (packWm) wmPacker.open(sc.wm, n);
+    else {
+        fd = ::open(sc.wm.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+        require(fd >= 0, "create wm scratch");
+    }
     double tPF = 0, tPop = 0;
     const U S = emit_shard_count(threads, n);
     size_t wide = 0;   // planning probe side: the widest
@@ -2234,7 +2434,11 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
                 constexpr U W = 8192;
                 std::vector<U> buf(W);
                 U nb = 0, out = R[s], emitted = 0, step = 0;
-                auto flushW = [&]() { if (nb) { xput(fd, buf.data(), 8 * nb, 8 * out, "wm write"); out += nb; nb = 0; } };
+                auto flushW = [&]() {
+                    if (!nb) return;
+                    if (packWm) { for (U z = 0; z < nb; ++z) wmPacker.put(out + z, buf[z]); out += nb; nb = 0; }
+                    else { xput(fd, buf.data(), 8 * nb, 8 * out, "wm write"); out += nb; nb = 0; }
+                };
                 // per-side cursors and a binary min-heap of the k fronts.
                 // WINDOWED POS FRONTS: the pairwise-era 4-slot thread-local
                 // reader cache thrashes across k > 4 overlay objects (one
@@ -2325,7 +2529,7 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
             });
         for (auto& t : ts) t.join();
     }
-    ::close(fd);
+    if (packWm) wmPacker.close(); else ::close(fd);
     for (U s = 0; s < S; ++s) {
         const Budget& sb = shardBud[s];
         bud.comparisons += sb.comparisons; bud.fast_decided += sb.fast_decided;
@@ -3246,7 +3450,7 @@ static U merge_kway_files(const std::vector<std::string>& inputs, bool dollar,
     core_merge_kway(sides, dollar, threads, bud, st, sc, hashK, pre);
     U n = 0; for (auto& S : sides) n += S.n;
     WinBytes m2; m2.open_ro(sc.m2, 2 * n, 0, true);
-    WinU64 wm; wm.open_ro(sc.wm, n, 0);
+    WinU64 wm; wm.open_ro_auto(sc.wm, n);
     U out_runs = dollar ? emit_four_ext(out, m2, wm, n, threads, sc.dir)
                         : emit_sxcr_ext(out, m2, wm, n, sides.front().offset, threads, sides, sc.dir);
     if (dollar && emitPf) emit_pf_side_ext(out, m2, n, out_runs);
@@ -3353,7 +3557,16 @@ static U finalize_file(const std::string& path, const std::string& prefix, U thr
     repair_ext(posA, blocks, anchors, 0, A.n, keys);
     phase("anchor+repair", last);
     // WM = the repaired order, streamed from the overlay.
-    {
+    if (wm_pack_enabled()) {
+        WmPacker p;
+        p.open(sc.wm, A.n);
+        for (U i = 0; i < A.n;) {
+            U len = std::min<U>(4096, A.n - i);
+            for (U z = 0; z < len; ++z) p.put(i + z, posA.at(i + z));
+            i += len;
+        }
+        p.close();
+    } else {
         int fd = ::open(sc.wm.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
         require(fd >= 0, "create wm scratch");
         U buf[4096];
@@ -3365,7 +3578,7 @@ static U finalize_file(const std::string& path, const std::string& prefix, U thr
         }
         ::close(fd);
     }
-    WinU64 wm; wm.open_ro(sc.wm, A.n, 0);
+    WinU64 wm; wm.open_ro_auto(sc.wm, A.n);
     U out_runs = emit_four_ext(prefix, m2, wm, A.n, threads, sc.dir);
     if (emitPf) emit_pf_side_ext(prefix, m2, A.n, out_runs);
     sc.cleanup();
@@ -3476,7 +3689,7 @@ static int selftest(U cases, uint64_t seed, U threads, U kway) {
             core_merge_kway(sides, dollar, threads, bud, st, sc, hashK, false);
             std::vector<uint64_t> WM(nTot, 0);
             {
-                WinU64 wm; wm.open_ro(sc.wm, nTot, 0);
+                WinU64 wm; wm.open_ro_auto(sc.wm, nTot);
                 wm.read(0, WM.data(), nTot);
             }
             sc.cleanup();

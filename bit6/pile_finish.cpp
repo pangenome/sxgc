@@ -452,6 +452,94 @@ struct SeamClass { uint64_t lo, hi, first, before = 0, after = 0;
                    std::vector<uint64_t> occ;     // the class SA set (occ(P_d))
                    std::vector<RawRun> runs; };   // lo/hi in NORMALIZED rows
 
+// ---------------------------------------------------------------- packed WM
+// The merge's WM scratch (the merged SA in ROW order) has two layouts:
+// legacy u64-per-row (size == 8n) or, when the merge runs CROSS_WM_PACK=1,
+// the PWM1 block format written by cross_lcp_merge's WmPacker: a 32-byte
+// header {magic 'PWM1', wbits, count, blockVals=4096, blockBytes, 0} then
+// fixed 4096-value blocks packed wbits LSB-first (w = bits(n+9)). This
+// reader auto-detects; all seam reads go through it.
+struct PfWm {
+    int fd = -1;
+    uint64_t n = 0, blockBytes = 0;
+    unsigned w = 0;
+    bool packed = false;
+    static constexpr uint64_t VALS = 4096;
+    static uint64_t packed_size(uint64_t n_, unsigned w_) {
+        uint64_t blocks = (n_ + VALS - 1) / VALS;
+        return 32 + blocks * ((VALS * uint64_t(w_) + 7) / 8);
+    }
+    void open(int openFd, uint64_t count) {
+        pf_check(openFd >= 0, "wm fd");
+        fd = openFd;
+        n = count;
+        struct stat st {};
+        pf_check(::fstat(fd, &st) == 0, "fstat wm");
+        if (uint64_t(st.st_size) == 8 * n) {
+            packed = false;
+            return;
+        }
+        uint8_t hdr[32];
+        pf_pread_full(fd, hdr, 32, 0, "packed wm header");
+        auto rd32 = [&](unsigned off) { uint32_t v; memcpy(&v, hdr + off, 4); return v; };
+        auto rd64 = [&](unsigned off) { uint64_t v; memcpy(&v, hdr + off, 8); return v; };
+        pf_check(rd32(0) == 0x31574D50, "packed wm magic");
+        pf_check(rd64(8) == n, "packed wm count");
+        pf_check(rd32(16) == VALS, "packed wm block shape");
+        w = rd32(4);
+        pf_check(w >= 1 && w < 64, "packed wm width");
+        blockBytes = rd32(20);
+        pf_check(blockBytes == (VALS * uint64_t(w) + 7) / 8, "packed wm block bytes");
+        pf_check(uint64_t(st.st_size) == packed_size(n, w), "packed wm size");
+        packed = true;
+    }
+    // Unpack one fixed block into dst[0..VALS) (values beyond n read as the
+    // zero padding - callers are bounds-checked above the row count).
+    void load_block(uint64_t block, uint64_t* dst) const {
+        static thread_local std::vector<uint8_t> staging;
+        if (staging.size() != blockBytes) staging.resize(blockBytes);
+        pf_pread_full(fd, staging.data(), blockBytes, 32 + block * blockBytes, "packed wm block");
+        __uint128_t res = 0; unsigned avail = 0; uint64_t bi = 0;
+        const uint64_t mask = (uint64_t(1) << w) - 1;
+        for (uint64_t k = 0; k < VALS; ++k) {
+            while (avail < w) { res |= __uint128_t(staging[bi]) << avail; ++bi; avail += 8; }
+            dst[k] = uint64_t(res) & mask;
+            res >>= w;
+            avail -= w;
+        }
+    }
+    uint64_t at(uint64_t idx) const {
+        pf_check(idx < n, "wm bounds");
+        if (!packed) {
+            uint8_t b[8];
+            pf_pread_full(fd, b, 8, 8 * idx, "wm pread");
+            uint64_t v = 0;
+            for (int i = 0; i < 8; ++i) v |= uint64_t(b[i]) << (8 * i);
+            return v;
+        }
+        uint64_t buf[VALS];
+        load_block(idx / VALS, buf);
+        return buf[idx % VALS];
+    }
+    void read(uint64_t idx, uint64_t* out, uint64_t len) const {
+        pf_check(idx + len <= n, "wm bulk bounds");
+        if (!packed) {
+            pf_pread_full(fd, out, 8 * len, 8 * idx, "wm read");
+            return;
+        }
+        uint64_t done = 0;
+        while (done < len) {
+            uint64_t block = (idx + done) / VALS, in = (idx + done) % VALS;
+            uint64_t take = std::min<uint64_t>(len - done, VALS - in);
+            take = std::min<uint64_t>(take, n - block * VALS - in);
+            uint64_t buf[VALS];
+            load_block(block, buf);
+            memcpy(out + done, buf + in, 8 * take);
+            done += take;
+        }
+    }
+};
+
 static void seam_refuse(const char* kind, uint64_t size, uint64_t limit) {
     fprintf(stderr, "CYCLIC_SEAM_REFUSED %s=%llu limit=%llu policy=max(1000,raw_r/1000); no O(n) fallback\n",
             kind, (unsigned long long)size, (unsigned long long)limit);
@@ -461,15 +549,7 @@ static void seam_refuse(const char* kind, uint64_t size, uint64_t limit) {
 struct SeamClasses {
     std::vector<SeamClass> classes;
     uint64_t depth = 0, total = 0, maxSeamLce = 0;
-    // Single WM value: WM[idx] = SA(padded row idx+w1). Row order, NOT sorted.
-    static uint64_t wm_at(int fd, uint64_t idx) {
-        uint8_t b[8];
-        pf_pread_full(fd, b, 8, 8 * idx, "wm pread");
-        uint64_t v = 0;
-        for (int i = 0; i < 8; ++i) v |= uint64_t(b[i]) << (8 * i);
-        return v;
-    }
-    void build(const CorpusText& text, int wmFd, uint64_t n, uint64_t rawR, uint64_t w1,
+    void build(const CorpusText& text, const PfWm& wm, uint64_t n, uint64_t rawR, uint64_t w1,
                const std::function<uint64_t(uint64_t, uint64_t)>& collection_lce,
                const std::function<uint8_t(uint64_t)>& symbol) {
         const uint64_t N = n + w1, r = rawR;
@@ -534,7 +614,7 @@ struct SeamClasses {
             while (!pending.empty()) {
                 pf_check(idx < n, "seam first suffix missing from the WM order");
                 uint64_t want = std::min<uint64_t>(WB, n - idx);
-                pf_pread_full(wmFd, buf.data(), 8 * want, 8 * idx, "wm scan");
+                wm.read(idx, buf.data(), want);
                 for (uint64_t k = 0; k < want && !pending.empty(); ++k) {
                     auto it = pending.find(buf[k]);
                     if (it != pending.end()) {
@@ -571,12 +651,12 @@ struct SeamClasses {
         // the padding suffixes SA[i] = n+i, so lo == 0 wraps to N-1).
         // after = SA[hi] (v1's phi-inverse walk; hi == n wraps to SA[0] = n).
         for (auto& cl : classes) {
-            cl.before = cl.lo ? wm_at(wmFd, cl.lo - 1) : N - 1;
-            cl.after = cl.hi < n ? wm_at(wmFd, cl.hi) : n;
+            cl.before = cl.lo ? wm.at(cl.lo - 1) : N - 1;
+            cl.after = cl.hi < n ? wm.at(cl.hi) : n;
             pf_check(cl.before < N && cl.after < N, "seam flank outside the padded text");
             std::vector<uint64_t> sa(cl.hi - cl.lo);
             if (!sa.empty())
-                pf_pread_full(wmFd, sa.data(), 8 * sa.size(), 8 * cl.lo, "wm class set");
+                wm.read(cl.lo, sa.data(), sa.size());
             // Cross-check: WM row interval vs the corpus chain - two
             // independent sources for occ(P_d); divergence is fatal.
             std::vector<uint64_t> chainSet = cl.occ;
@@ -1156,17 +1236,29 @@ int main(int argc, char** argv) {
 
         // ---- seam classes: pattern chain + the merge's own WM scratch
         // (NO record/seed columns; the discovery is the occurrence chain of
-        // P_d = T[n-d..n), row intervals/before/after by WM binary search)
+        // P_d = T[n-d..n), row intervals/before/after by WM binary search).
+        // The WM layout is auto-detected: legacy u64-per-row (size == 8n) or
+        // the packed PWM1 blocks (size == 32 + blocks*blockBytes, w from the
+        // pieces idx) - the merge writes packed when CROSS_WM_PACK=1.
+        PfWm wm;
         int wmFd = -1;
         {
             std::string glob = wmPath.empty() ? prefix + ".xsc-*/wm.bin" : wmPath;
+            const uint64_t packedExpect = PfWm::packed_size(n, src.w);
+            // Packed completeness gate: blocks land in arbitrary order, so
+            // the finish requires the merge's rename-published .done
+            // sentinel (written after the last block) in addition to the
+            // full size. The legacy layout keeps the banked size==8n rule.
             double waited = 0;
             for (;;) {
                 if (!wmPath.empty()) {
                     struct stat st {};
-                    if (::stat(wmPath.c_str(), &st) == 0 && uint64_t(st.st_size) == 8 * n) {
-                        wmFd = ::open(wmPath.c_str(), O_RDONLY);
-                        break;
+                    if (::stat(wmPath.c_str(), &st) == 0) {
+                        uint64_t sz = uint64_t(st.st_size);
+                        if (sz == 8 * n || (sz == packedExpect && ::stat((wmPath + ".done").c_str(), &st) == 0)) {
+                            wmFd = ::open(wmPath.c_str(), O_RDONLY);
+                            break;
+                        }
                     }
                 } else {
                     for (const auto& e : std::filesystem::directory_iterator(
@@ -1174,9 +1266,12 @@ int main(int argc, char** argv) {
                         if (e.path().string().rfind(prefix + ".xsc-", 0) != 0) continue;
                         std::string cand = e.path().string() + "/wm.bin";
                         struct stat st {};
-                        if (::stat(cand.c_str(), &st) == 0 && uint64_t(st.st_size) == 8 * n) {
-                            wmFd = ::open(cand.c_str(), O_RDONLY);
-                            break;
+                        if (::stat(cand.c_str(), &st) == 0) {
+                            uint64_t sz = uint64_t(st.st_size);
+                            if (sz == 8 * n || (sz == packedExpect && ::stat((cand + ".done").c_str(), &st) == 0)) {
+                                wmFd = ::open(cand.c_str(), O_RDONLY);
+                                break;
+                            }
                         }
                     }
                     if (wmFd >= 0) break;
@@ -1186,6 +1281,7 @@ int main(int argc, char** argv) {
                 waited += 0.1;
             }
             pf_check(wmFd >= 0, "open WM scratch");
+            wm.open(wmFd, n);
         }
         LceWrap seamLce{&fhSeam, {}, n};
         SeamClasses seam;
@@ -1193,10 +1289,11 @@ int main(int argc, char** argv) {
             if (pos >= n) pf_fail("seam symbol outside text");
             return text[pos];
         };
-        seam.build(text, wmFd, n, R, 10,
+        seam.build(text, wm, n, R, 10,
                    [&](uint64_t a, uint64_t b) { return seamLce(a, b); },
                    seamSymbol);
         ::close(wmFd);
+        wmFd = -1;
         phase("seam-classes", last);
 
         // ---- scratch writers

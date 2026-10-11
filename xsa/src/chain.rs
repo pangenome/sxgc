@@ -1007,6 +1007,17 @@ fn run_v2_tail(
         journal.line("KNOB CROSS_DELETE_CONSUMED=1 (v2: the chunk set is freed as consumed)");
         merge_env.push(("CROSS_DELETE_CONSUMED".to_string(), "1".to_string()));
     }
+    // The packed WM (CROSS_WM_PACK=1): the merge's u64-per-row WM scratch
+    // (8n - the transient's largest term) is stored w-bits/value in fixed
+    // 4096-value blocks; the finish auto-detects the layout via the .done
+    // sentinel + PWM1 header. The WM is scratch: byte-identity of the
+    // product (rlebwt/meta/pieces/witness/chi) is the arbiter, gated at
+    // 100MB/1GB. Default ON for the v2 pipeline; operator env passes
+    // through (set CROSS_WM_PACK=0 to force the legacy u64 layout).
+    if std::env::var_os("CROSS_WM_PACK").is_none() {
+        journal.line("KNOB CROSS_WM_PACK=1 (v2: the WM scratch is w-bit packed; 8n -> ~w/8*n off the merge transient)");
+        merge_env.push(("CROSS_WM_PACK".to_string(), "1".to_string()));
+    }
 
     let mut merge_args: Vec<String> = Vec::new();
     cap(&mut merge_args);
