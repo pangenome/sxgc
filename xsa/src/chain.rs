@@ -1018,6 +1018,37 @@ fn run_v2_tail(
         journal.line("KNOB CROSS_WM_PACK=1 (v2: the WM scratch is w-bit packed; 8n -> ~w/8*n off the merge transient)");
         merge_env.push(("CROSS_WM_PACK".to_string(), "1".to_string()));
     }
+    // The page-pool slot count (pile-week-v1): the merge's SharedPages pools
+    // cache the immutable m2/hs scratch (256B pages, direct-mapped slots).
+    // The banked 2^20 default thrashes at gate scales (POOL_STATS at the 96t
+    // 1GB gate: 710M/1.25G fills on the two m2 pools - the SAME immutable
+    // pages pread from NVMe hundreds of millions of times). Size it to
+    // cover the pooled working set (m2 2n is the largest: 2n/256 pages)
+    // within a bounded RAM term: <=3 live pools x (slot word 16B + 2x256B
+    // buffers) <= 45% of the --memory cap. Operator env passes through.
+    let pool_slots = if let Some(v) = std::env::var_os("CROSS_POOL_SLOTS") {
+        let v = v.to_string_lossy().to_string();
+        journal.line(&format!("KNOB CROSS_POOL_SLOTS={v} (operator-passed)"));
+        v
+    } else {
+        let pow2ceil = |mut x: u64| {
+            if x <= 1 { return 1; }
+            x -= 1;
+            let mut p = 1u64;
+            while p < x { p <<= 1; }
+            p
+        };
+        let want = pow2ceil((n / 128).max(1));               // cover m2 (2n bytes)
+        let cap = pow2ceil((memory_kb * 1024 * 45 / 100) / (3 * 528));
+        // want and cap are powers of two by construction; clamp bounds too.
+        let slots = want.min(cap).clamp(1 << 20, 1u64 << 27);
+        let per_pool_gb = slots as f64 * 528.0 / (1.0e9);
+        let cover_pct = (slots as f64) * 256.0 * 100.0 / (2.0 * n as f64);
+        journal.line(&format!(
+            "KNOB CROSS_POOL_SLOTS={slots} (merge page pools: ~{per_pool_gb:.1} GB RAM/pool, <=3 pools; covers ~{cover_pct:.0}% of the m2 working set; bounded by --memory)"));
+        slots.to_string()
+    };
+    merge_env.push(("CROSS_POOL_SLOTS".to_string(), pool_slots));
 
     let mut merge_args: Vec<String> = Vec::new();
     cap(&mut merge_args);
