@@ -1038,21 +1038,74 @@ struct WitBuckets {
 // --------------------------------------------------------------- bit output
 // v1 sxi2_write Bits: LSB-first within bytes; msb(v,w) big-endian inside
 // the code; gamma(v) = (w-1) zero bits then w-bit msb.
+// PILE-WEEK (pile-week-v1): the old writer cost ~6 ops + a push_back branch
+// PER BIT (the m5 EF is ~1e9 bits and m1 another ~5e9 at 1GB: ~50s of the
+// window budget). Same byte stream, word-accumulated: bits enter a 128-bit
+// accumulator LSB-first and whole bytes flush out in order; msb() packs the
+// bit-reversed value (identical bit sequence), and runs of zero bits (the
+// EF high stream's gaps, gamma's prefixes) flush in bulk. The container's
+// byte-identity gates are the arbiter.
 struct BitsOut {
     std::vector<uint8_t> mem;
     uint64_t bitPos = 0;
-    void bit(unsigned b) {
-        if (bitPos % 8 == 0) mem.push_back(0);
-        if (b & 1) mem[bitPos / 8] |= uint8_t(1) << (bitPos % 8);
-        ++bitPos;
+    unsigned __int128 acc = 0;
+    unsigned nbits = 0;
+    void flush8() {
+        while (nbits >= 8) {
+            mem.push_back(uint8_t(acc));
+            acc >>= 8;
+            nbits -= 8;
+        }
     }
-    void msb(uint64_t v, unsigned w) { for (unsigned i = w; i--;) bit(unsigned((v >> i) & 1)); }
-    void lsb(uint64_t v, unsigned w) { for (unsigned i = 0; i < w; ++i) bit(unsigned((v >> i) & 1)); }
+    void bit(unsigned b) {
+        acc |= (__uint128_t)(uint64_t(b & 1)) << nbits;
+        ++nbits;
+        ++bitPos;
+        if (nbits >= 8) flush8();
+    }
+    void putzeros(uint64_t k) {
+        if (!k) return;
+        unsigned take = unsigned(std::min<uint64_t>(k, 8 - nbits));
+        nbits += take; bitPos += take; k -= take;   // zeros are implicit in acc
+        if (nbits >= 8) flush8();
+        while (k >= 8) { mem.push_back(0); bitPos += 8; k -= 8; }
+        if (k) { nbits += unsigned(k); bitPos += k; }
+    }
+    static uint64_t revbits(uint64_t v, unsigned w) {
+        uint64_t r = 0;
+        for (unsigned i = 0; i < w; ++i) r |= ((v >> i) & 1) << (w - 1 - i);
+        return r;
+    }
+    void msb(uint64_t v, unsigned w) {
+        if (!w) return;
+        pf_check(w <= 64, "msb width");
+        acc |= (__uint128_t)(revbits(v, w)) << nbits;
+        nbits += w; bitPos += w;
+        flush8();
+    }
+    void lsb(uint64_t v, unsigned w) {
+        if (!w) return;
+        pf_check(w <= 64, "lsb width");
+        uint64_t m = w == 64 ? ~0ull : ((uint64_t(1) << w) - 1);
+        acc |= (__uint128_t)(v & m) << nbits;
+        nbits += w; bitPos += w;
+        flush8();
+    }
     void gamma(uint64_t v) {
         pf_check(v > 0, "zero gamma");
         unsigned w = 64 - __builtin_clzll(v);
-        for (unsigned i = 1; i < w; ++i) bit(0);
+        putzeros(w - 1);
         msb(v, w);
+    }
+    // The v1 writer's byte count is ALWAYS ceil(bitPos/8) (the group byte is
+    // created at its first bit, even if the stream ends mid-group): flush
+    // the pending partial byte before the stream is consumed.
+    void pad() {
+        if (nbits) {
+            mem.push_back(uint8_t(acc));
+            acc = 0;
+            nbits = 0;
+        }
     }
     size_t bytes() const { return mem.size(); }
 };
@@ -1527,17 +1580,19 @@ int main(int argc, char** argv) {
                 prev = v;
                 low.lsb(v, l);
                 uint64_t mark = (v >> l) + i;
-                while (hpos < mark) { high.bit(0); ++hpos; }
+                if (mark > hpos) { high.putzeros(mark - hpos); hpos = mark; }
                 high.bit(1); ++hpos;
                 ++i;
                 while (sidx < wantSamples.size() && wantSamples[sidx] < v)
                     pf_fail("sampled banked witness missing from the v2 stream: " + std::to_string(wantSamples[sidx]));
                 if (sidx < wantSamples.size() && wantSamples[sidx] == v) ++sidx;
             });
-            while (hpos < highbits) { high.bit(0); ++hpos; }
+            if (highbits > hpos) { high.putzeros(highbits - hpos); hpos = highbits; }
             pf_check(i == chi, "EF count");
             pf_check(low.bitPos == lowbits && high.bitPos == highbits, "EF dimensions");
             pf_check(sidx == wantSamples.size(), "witness sample check incomplete");
+            low.pad();
+            high.pad();
             container.begin(5, 105, chi);
             container.num(l); container.num(lowbits); container.num(highbits);
             container.write(low.mem.data(), low.mem.size());
@@ -1725,6 +1780,8 @@ int main(int argc, char** argv) {
                     pf_check(rs2.totals[c] == rs.totals[c] && rs2.runFreq[c] == rs.runFreq[c],
                              "m1 replay divergence on char " + std::to_string(c));
             }
+            headBits.pad();
+            lenBits.pad();
             container.begin(1, 101, rNorm);
             // C table = prefix sums of the normalized byte totals (the ri4 C)
             uint64_t acc = 0;
