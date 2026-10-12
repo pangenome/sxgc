@@ -851,10 +851,32 @@ fn run_chain(options: Options) -> Result<(), String> {
     let s = |path: &str| path.to_string();
 
     // 1. chunk front end (libsais, document-aligned cyclic BWT chunks).
-    run_phase(&mut journal, &scratch, "chunk", memory_kb, tools.join("chunk_frontend").to_str().unwrap(), &[
-        s(&input.to_string_lossy()), chunks.to_string(),
-        s(&scratch.join("chunks").to_string_lossy()), s(&remap_path.to_string_lossy()),
-    ])?;
+    // PILE-WEEK (pile-week-v1): concurrent per-chunk sorts (the boundary
+    // scan stays serial and byte-identical; each worker is ~27x its chunk
+    // bytes of RAM, so the count is bounded by the memory cap).
+    let mut chunk_env: Vec<(String, String)> = Vec::new();
+    if let Some(w) = std::env::var_os("CHUNK_WORKERS") {
+        journal.line(&format!("KNOB CHUNK_WORKERS={} (operator-passed)", w.to_string_lossy()));
+        chunk_env.push(("CHUNK_WORKERS".to_string(), w.to_string_lossy().to_string()));
+    } else if options.v2_pipeline {
+        let chunk_bytes = (n / u64::from(chunks)).max(1);
+        let per_worker = chunk_bytes.saturating_mul(27);
+        // 55% of the cap for the sort workers (the remap table and buffers
+        // are noise at scale; the serial phase holds one chunk of text).
+        let budget = memory_kb.saturating_mul(1024) * 55 / 100;
+        let workers = (budget / per_worker).clamp(1, u64::from(chunks));
+        journal.line(&format!(
+            "KNOB CHUNK_WORKERS={workers} (concurrent chunk sorts; ~{} GB/worker of the memory cap)",
+            per_worker / 1_000_000_000));
+        chunk_env.push(("CHUNK_WORKERS".to_string(), workers.to_string()));
+    }
+    {
+        let running = spawn_phase(&mut journal, &scratch, "chunk", memory_kb, tools.join("chunk_frontend").to_str().unwrap(), &[
+            s(&input.to_string_lossy()), chunks.to_string(),
+            s(&scratch.join("chunks").to_string_lossy()), s(&remap_path.to_string_lossy()),
+        ], &chunk_env)?;
+        join_phase(&mut journal, &scratch, running)?;
+    }
     journal.line(&require_log_contains(&scratch, "chunk", "CHUNKS_PASS")?);
 
     // V2 FRONT DOOR: chunk -> banded v2-emission merge -> fused finish

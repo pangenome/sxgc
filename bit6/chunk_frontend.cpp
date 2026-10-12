@@ -4,6 +4,7 @@
 #include "third_party/libsais/token-libsais.h"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -11,8 +12,10 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 #include <fcntl.h>
 #include <unistd.h>
@@ -244,6 +247,18 @@ static void emit(const fs::path& output, const std::vector<uint8_t>& text,
                 runs.size(), wall, path.c_str());
     std::fflush(stdout);
 }
+// PILE-WEEK (pile-week-v1) CHUNK PARALLELISM: the chunker was serial per
+// chunk (64 x ~5s at the 10GB pile shape; 204s at the 1GB gate = the largest
+// single-thread term after the merge). The phase split below preserves the
+// banked byte stream exactly: phase 1 is the SAME serial boundary scan
+// (document-aligned at >=target, the last byte of every chunk is 0x1e);
+// phase 2 runs the per-chunk sorts concurrently (each worker preads its
+// range and applies the same remap; emit() is unchanged). RAM bound: each
+// worker is ~27x its chunk bytes (doubled text + SA + PLCP), so the worker
+// count is a knob (CHUNK_WORKERS, default 1 = the banked serial behavior)
+// and the front door sizes it from --memory and journals it. The artifacts
+// are byte-identical by construction (same boundaries, same emit); the 100MB
+// and 1GB gates confirm.
 int main(int argc, char** argv) {
     try {
         require(argc == 4 || argc == 5,
@@ -264,33 +279,100 @@ int main(int argc, char** argv) {
         std::sort(checkmap.begin(), checkmap.end());
         for (unsigned i = 0; i < 256; ++i) require(checkmap[i] == i, "remap not bijective");
         require(remap[0x1e] == 0x1e, "remap changes document separator");
+        unsigned workers = 1;
+        if (const char* w = getenv("CHUNK_WORKERS")) {
+            workers = unsigned(std::stoul(w));
+            require(workers >= 1 && workers < 1000000, "invalid CHUNK_WORKERS");
+        }
         uint64_t total = fs::file_size(input), target = (total + wanted - 1) / wanted;
-        std::ifstream source(input, std::ios::binary);
-        require(bool(source) && total, "empty/unreadable input");
-        std::vector<uint8_t> chunk;
-        chunk.reserve(target + 65536);
-        std::array<char,1<<20> block{};
-        uint64_t offset = 0, consumed = 0;
-        unsigned index = 0;
-        while (source) {
-            source.read(block.data(), block.size());
-            size_t got = static_cast<size_t>(source.gcount());
-            for (size_t i = 0; i < got; ++i) {
-                uint8_t original = static_cast<uint8_t>(block[i]);
-                chunk.push_back(remap[original]);
-                ++consumed;
-                if (original == 0x1e && chunk.size() >= target && index + 1 < wanted) {
-                    emit(output, chunk, offset, index++, remap, input);
-                    offset = consumed; chunk.clear();
+        require(total, "empty/unreadable input");
+        // ---- phase 1: the banked serial boundary scan (chunk boundaries and
+        // the consumed count are computed BEFORE any sort runs).
+        struct Bound { uint64_t offset, len; };
+        std::vector<Bound> bounds;
+        {
+            std::ifstream source(input, std::ios::binary);
+            require(bool(source), "input unreadable");
+            std::array<char,1<<20> block{};
+            uint64_t offset = 0, consumed = 0, chunkLen = 0;
+            unsigned index = 0;
+            while (source) {
+                source.read(block.data(), block.size());
+                size_t got = static_cast<size_t>(source.gcount());
+                for (size_t i = 0; i < got; ++i) {
+                    uint8_t original = static_cast<uint8_t>(block[i]);
+                    ++consumed;
+                    ++chunkLen;
+                    if (original == 0x1e && chunkLen >= target && index + 1 < wanted) {
+                        bounds.push_back({offset, chunkLen});
+                        offset = consumed; chunkLen = 0; ++index;
+                    }
                 }
             }
+            require(consumed == total, "short source read");
+            require(chunkLen && chunkLen <= total, "input must end at document boundary");
+            bounds.push_back({offset, chunkLen});
+            ++index;
+            require(index == wanted, "document boundaries did not permit requested chunk count");
         }
-        require(consumed == total, "short source read");
-        require(!chunk.empty() && chunk.back() == 0x1e, "input must end at document boundary");
-        emit(output, chunk, offset, index++, remap, input);
-        require(index == wanted, "document boundaries did not permit requested chunk count");
-        std::printf("CHUNKS_PASS count=%u source_bytes=%llu\n", index,
-                    (unsigned long long)consumed);
+        // ---- phase 2: concurrent per-chunk sorts (byte-identical emit)
+        {
+            int ifd = ::open(input.c_str(), O_RDONLY);
+            require(ifd >= 0, "reopen input for chunk reads");
+            std::atomic<size_t> next{0};
+            auto runOne = [&](unsigned index) {
+                const Bound& b = bounds[index];
+                std::vector<uint8_t> chunk;
+                chunk.reserve(b.len + 65536);
+                uint64_t done = 0;
+                std::array<char, 1<<20> block{};
+                while (done < b.len) {
+                    size_t want = static_cast<size_t>(std::min<uint64_t>(block.size(), b.len - done));
+                    ssize_t got = ::pread(ifd, block.data(), want, static_cast<off_t>(b.offset + done));
+                    require(got > 0, "chunk range pread failed");
+                    for (size_t i = 0; i < static_cast<size_t>(got); ++i)
+                        chunk.push_back(remap[static_cast<uint8_t>(block[i])]);
+                    done += static_cast<uint64_t>(got);
+                }
+                require(!chunk.empty() && chunk.back() == 0x1e, "unaligned chunk");
+                emit(output, chunk, b.offset, index, remap, input);
+            };
+            if (workers <= 1) {
+                for (size_t i = 0; i < bounds.size(); ++i) runOne(unsigned(i));
+            } else {
+                std::vector<std::thread> ts;
+                std::atomic<unsigned> failed{0};
+                std::string failMsg;
+                for (unsigned t = 0; t < std::min<unsigned>(workers, unsigned(bounds.size())); ++t)
+                    ts.emplace_back([&] {
+                        for (;;) {
+                            size_t i = next.fetch_add(1);
+                            if (i >= bounds.size()) break;
+                            try {
+                                runOne(unsigned(i));
+                            } catch (const std::exception& e) {
+                                unsigned was = 0;
+                                if (!failed.compare_exchange_strong(was, 1)) return;
+                                failMsg = e.what();
+                                return;
+                            } catch (...) {
+                                unsigned was = 0;
+                                if (!failed.compare_exchange_strong(was, 1)) return;
+                                failMsg = "unknown chunk worker failure";
+                                return;
+                            }
+                        }
+                    });
+                for (auto& t : ts) t.join();
+                if (failed.load()) {
+                    std::fprintf(stderr, "CHUNK_FRONTEND_FATAL %s\n", failMsg.c_str());
+                    return 1;
+                }
+            }
+            ::close(ifd);
+        }
+        std::printf("CHUNKS_PASS count=%u source_bytes=%llu workers=%u\n", unsigned(bounds.size()),
+                    (unsigned long long)total, workers);
         return 0;
     } catch (const std::exception& e) {
         std::fprintf(stderr, "CHUNK_FRONTEND_FATAL %s\n", e.what());
