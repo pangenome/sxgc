@@ -484,3 +484,94 @@ HARVEST CHECKLIST when it lands (all MEASURED, load-independent):
    note. Do NOT burn a clean-wall 10GB re-run without asking.
 8. Known unmeasured-after-this: thread scaling AT 10GB scale (a second
    10GB run at a different thread count; supervisor gate).
+
+## PILE-WEEK (branch pile-week-v1 from pile-attack-v1): the convergence attack - milestones 1-3, all gated GREEN at 100MB (2026-10-12)
+
+The mission bar: end-to-end <=500 s/GB at the 1GB fixture (96t, quiet box) -
+projects to <=7.6 days at pile scale. The budget anatomy at 1GB/96t (2891 s
+end-to-end, MEASURED): chunk 203.7 + walk 667.7 + emission window 1954.5
+(emit-count 444.7 + emit-write 1509.8, consumer-paced parts excluded) +
+container ~60.
+
+### THE CORRECTED ITEM-1 ANATOMY (the "pfck-contention 1120s" is an idx-WAIT, not thrash)
+
+The mission brief's item 1 said the finish's pfck-corpus phase (1119.9s
+measured at 96t) "runs concurrent with the merge emission and they thrash
+each other (should be ~7s)". The gate logs say otherwise:
+`PILE_FINISH_PFCK wall=7.206` - the PFCK build itself IS ~7s; the phase wall
+is 1112.6s of STRUCTURED WAIT: the merge publishes `runcols.idx` only after
+emit-COUNT completes (the idx carries final_runs + per-shard counts, which
+only exist then), and the finish's pre-sweep chain is idle behind that poll.
+No thrash; the corpus scans (cyclic + pfck) cost ~7.3s combined. The fix
+that matters in this area: with the pool unlocked (below), emit-count
+collapses, so the idx lands ~immediately after the walk and the wait
+vanishes - no protocol change made or needed. Journaled loudly because the
+mission's mechanism was wrong; the scheduling conclusion survives.
+
+### M1 - the merge page pool was the wall behind THREE phases at once
+
+The 96t CROSS_KWAY budget: comparisons=4,165,745,259,
+symbols_compared=67,539,056,151 (~16 symbols/cmp), probes=2.87e9 - per
+comparison the walk paid ~15us, i.e. ~23.3G pool probes at 2 LOCKED
+cmpxchg16b ops + one global-cacheline nHits fetch_add EACH, plus 710M/1.25G
+synchronous 256B refills (the fixed 2^20-slot table vs a 2n-byte working
+set: the SAME immutable pages pread'd hundreds of millions of times;
+POOL_STATS fd=4 fills=710670758 / 1248681808, emission misses 670M), plus a
+getenv() call per miss. That is the walk's flatness (725.5s at 48t vs 651.6s
+at 96t with 98% hit rates), and it is also emit-count/emit-write's carrier
+(the "emission/verification amplification" of mission item 3: the
+verification work is real - 67.5e9 symbol compares - but its cost was the
+pool, not the algorithm).
+
+The fix (writer protocol UNCHANGED - the model-checked single-CAS128
+claim/publish; reader = two plain 8-byte loads, acceptance on the low half
+alone; safety argument in-source): reader-halves (zero locked ops on the
+hit path), exact per-thread padded telemetry, CROSS_POOL_SLOTS capacity knob
+sized by the front door from the corpus within --memory, getenv hoisted,
+per-comparison clocks now opt-in (CROSS_CMP_TIMING), grid-cell counters
+sharded. Stress: reader-halves rig at max collision pressure - natural
+windows PASS (torn=360 detected/rejected), adversarial 300us windows PASS
+intact / FAIL with the recheck disabled (positive+negative); selftest 2000
+x seed 11 + seeds 20261002/7/99 + kway 4 PASS. Gate xsa-pw1-m1-100m: chi
+exact + container byte-identical to BOTH banks; POOL_STATS fills
+710M/1.25G -> ~390K at gate scale (the working set is now cached).
+
+### M2 - the finish's corpus adapter + PFCK go read-only mmap (zero syscalls)
+
+The sweep's corpus-LCE (790.5s at 96t, 99% TL-cache hit rates) paid a 64KB
+pread + 64KB remap pass per page miss, and an 8-byte pread per fingerprint
+hash-cache miss in every ladder probe (tens of millions of syscalls per
+GB). Both artifacts are IMMUTABLE when read (the corpus is THE LAW's
+read-only store; the PFCK is scratch, complete before its first reader):
+both now mmap read-only (page-cache backed; pread fallback kept). Gate
+xsa-pw2-mmap-100m (same contaminated box, paired with the M1 gate one run
+earlier): chi exact + container byte-identical; finish phase walls
+(ceiling): seam-classes 15.8 -> 0.93s, sweep LCE 109.8 -> 9.4s, finish
+total 165.8 -> 46.3s.
+
+### M3 - chunk parallelism (the serial front end)
+
+Phase split: the banked serial boundary scan (byte-exact boundaries)
+computes all chunk ranges first; the per-chunk libsais sorts then run
+concurrently (each worker preads its corpus range; emit() unchanged).
+CHUNK_WORKERS knob (default 1 = banked), front-door sized at 55% of
+--memory / (27x chunk bytes). Standalone serial-vs-parallel: all 16 chunk
+artifacts byte-identical (workers 1 vs 16). Gate xsa-pw3-chunk-100m: chi
+exact + container byte-identical; chunk wall 14.5 -> 1.96s (ceiling), RSS
+3.7GB under the 8GB cap.
+
+### Post-fix 100MB phase ceilings (all three gates ran with the foreign R
+workload live + the in-flight 10GB rung; NOT measured claims - the paired
+runs are the mechanism evidence; the quiet-box 1GB/96t gate is the arbiter):
+
+chunk 1.96s | merge-v2 40.8s | finish-v2 49.4s (concurrent window) - vs the
+banked front-door 100MB (quiet-ish box): chunk 14.5, merge 153.4, finish
+173.5. The pipeline is now finish-bound at gate scale. Extrapolated (NOT
+measured): the 1GB/96t end-to-end could land anywhere in ~250-500s pending
+the quiet-box gate; the walk's algorithmic floor is ~4.17e9 cmps x ~16
+symbols of plain loads (~2-15s), the sweep's LCE ~94s, the serial advance
+machine ~84s, the m5/m1/publish tail ~60s.
+
+Next: 1GB/96t quiet-box gate (the measured claim for every constant), then
+the plan model v6 + the pile projection against the bar, then the CLEAN 10GB
+re-run at the converged binary through the front door.
