@@ -575,3 +575,51 @@ machine ~84s, the m5/m1/publish tail ~60s.
 Next: 1GB/96t quiet-box gate (the measured claim for every constant), then
 the plan model v6 + the pile projection against the bar, then the CLEAN 10GB
 re-run at the converged binary through the front door.
+
+## PILE-WEEK 5: the advance machine vectorized + the 1GB CORRECTNESS gates GREEN at 96t (2026-10-12)
+
+### M4 - word-accumulated bit writers (m5/m1 tails)
+The old BitsOut cost ~6 ops + a push_back branch PER BIT (~50s of the 1GB
+window). New: 128-bit LSB accumulator, bulk zero runs, msb via bit-reversal;
+pad() preserves the v1 ceil(bitPos/8) byte count. The first cut missed the
+v>>w mask and the 100MB gate caught it (container 2 B short + m5 low stream
+polluted) - the fuzz harness had masked inputs itself and passed wrongly;
+the UNMASKED fuzz reproduces the bug and the fixed writer passes 50x20000
+ops. Gate: chi exact + byte-identical (xsa-pw4-bits-100m).
+
+### M5 - the sweep's advance machine (the serial 256-scan)
+~368M runs x 256 signed compares per char change (83.6s clean at 96t banked).
+AVX2 compare-mask (movemask_pd - one bit per 64-bit lane; the first cut used
+movemask_ps = two bits/lane and the 300-round witness-stream fuzz caught it
+pre-gate) + bit-scan action loop; reset condition and updates UNCHANGED.
+Fuzz: witness streams byte-equal across 300 randomized rounds. Gate
+xsa-pw5-sweep-100m: chi exact + byte-identical. Also: SLIM_FP now prints on
+SUCCESS (was refusal-only) - the LCE budget is finally attributable.
+
+### THE 1GB CORRECTNESS GATES (96t, 10 chunks flat k=10, the banked t96 shape; CONTAMINATED box - the foreign R fleet + the in-flight 10GB rung; every wall below is a CEILING)
+
+xsa-pw1b-96t (M1-M4) and xsa-pw1b-96t-v2 (M1-M5): BOTH chi=283296933 EXACT
+and container 467,814,822 B byte-identical to BOTH banks (t96 + G2, cmp
+clean x4). End-to-end 857.7s -> 737.0s. Phase anatomy (v2, ceiling):
+
+  chunk 123 | walk 170.6 (cross-merge 132.9) | emit-count 26.0 |
+  emit-write 325.0 (NVMe-write-paced under the rung's I/O + consumer flow) |
+  idx-wait ~198 (hidden under walk+count - was 1112 in the banked anatomy) |
+  seam 21.2 | sweep 294.6 = LCE 154.8 + advance 64.7 + repair 74.3 |
+  m5 30.8 | m1 57.3 | publish 0.1
+
+POOL_STATS at 1GB/96t: fills 3.9M (was 710M/1.25G), misses 4.4M/3.3M,
+torn 0, hits 31.8G - the working set is now resident; the fill thrash is gone.
+
+The LCE budget (SLIM_FP, MEASURED at 1GB): queries=473,695,414,
+verified_symbols=12,820,424,563 (mean 27.1 - SHORT answers; the
+"verification amplification" is ~13 verified symbols per run, NOT deep LCEs),
+hash_probes=669M, total_work=17.5G units vs the 128n budget. The sweep's
+LCE is now per-call bookkeeping + short symbol scans through the corpus mmap.
+
+PROJECTION (EXTRAPOLATED, not a claim): a quiet-box run at this code should
+land end-to-end ~400-650s at 1GB/96t (walk ~100-140, LCE ~60-90, advance
+~35-45, m5+m1 ~85, emission ~30-60 NVMe-permitting). The bar (<=500) is in
+range but NOT claimed until the quiet-box gate runs. The 10GB rung (old
+binary) is still in its walk at ~6.7h - the CLEAN 10GB re-run at the
+converged binary happens after it lands and after the quiet 1GB gate.
