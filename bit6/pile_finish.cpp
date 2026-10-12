@@ -34,6 +34,7 @@
 #include <chrono>
 #include <fcntl.h>
 #include <sys/mman.h>
+#include <immintrin.h>
 #include <mutex>
 #include <map>
 #include <sys/stat.h>
@@ -855,6 +856,15 @@ struct Sweep {
     uint64_t n = 0, bigN = 0, chi = 0;
     std::function<void(uint64_t)> emitWitness;
     static constexpr int64_t IINF = INT64_MAX;
+    // PILE-WEEK (pile-week-v1): the per-char-change threshold scan over all
+    // 256 rr_len entries was the serial advance machine's dominant cost
+    // (~368M runs x 256 signed compares at 1GB; measured 83.6s clean at 96t,
+    // 139s on the contaminated convergence run). Same emitted SET, computed
+    // by an AVX2 compare-mask over the 256-entry column plus a bit-scan
+    // action loop (the reset condition `m3 < rr_len[cc]` and the updates are
+    // UNCHANGED; signed compares match scalar int64 exactly; the mask path
+    // is checked by the standing byte-identity gates). Scalar fallback when
+    // AVX2 is absent. rr_len stays int64 - no semantic change at all.
     int64_t rr_len[256];
     uint64_t rr_pos[256];
     bool rr_act[256];
@@ -875,6 +885,51 @@ struct Sweep {
         ++chi;
         emitWitness(value);
     }
+    // mask bit i of word w <=> (m3 < rr_len[64*w + i]) - 4 x u64 = 256 bits.
+    __attribute__((target("avx2")))
+    static void gt_masks(const int64_t* rr, int64_t m3, uint64_t* out4) {
+        const __m256i t = _mm256_set1_epi64x(m3);
+        for (int w = 0; w < 4; ++w) {
+            uint64_t acc = 0;
+            for (int q = 0; q < 16; ++q) {
+                __m256i x = _mm256_loadu_si256((const __m256i*)(rr + 64 * w + 4 * q));
+                // movemask_pd: one bit per 64-bit lane (the cmp result lanes
+                // are 0 / all-ones; movemask_ps would yield TWO bits per lane)
+                uint32_t mk = uint32_t(_mm256_movemask_pd(_mm256_castsi256_pd(_mm256_cmpgt_epi64(x, t))));
+                acc |= uint64_t(mk) << (4 * q);
+            }
+            out4[w] = acc;
+        }
+    }
+    static void gt_masks_scalar(const int64_t* rr, int64_t m3, uint64_t* out4) {
+        for (int w = 0; w < 4; ++w) {
+            uint64_t acc = 0;
+            for (int i = 0; i < 64; ++i)
+                if (m3 < rr[64 * w + i]) acc |= uint64_t(1) << i;
+            out4[w] = acc;
+        }
+    }
+    static bool avx2_ok() {
+        static const bool v = __builtin_cpu_supports("avx2") != 0;
+        return v;
+    }
+    // Emit + reset every cc with rr_len[cc] > m3 (bit index = cc; skip cc 0:
+    // the scalar loop starts at 1).
+    void threshold_reset(int64_t m3, uint64_t* scratch) {
+        if (avx2_ok()) gt_masks(rr_len, m3, scratch);
+        else gt_masks_scalar(rr_len, m3, scratch);
+        scratch[0] &= ~1ull;   // cc 0 is never in the machine
+        for (int w = 0; w < 4; ++w) {
+            uint64_t bits = scratch[w];
+            while (bits) {
+                int cc = w * 64 + ctz64(bits);
+                bits &= bits - 1;
+                if (rr_act[cc]) emit(rr_pos[cc]);
+                rr_len[cc] = m3; rr_pos[cc] = 0; rr_act[cc] = false;
+            }
+        }
+    }
+    static unsigned ctz64(uint64_t v) { return unsigned(__builtin_ctzll(v)); }
     void advance(const NRun& v, uint64_t topLcp, uint64_t interiorMin) {
         int32_t c = v.c;
         int64_t lcp_b = int64_t(topLcp);
@@ -891,12 +946,8 @@ struct Sweep {
         int64_t mm = std::min(m, m2);
         if (c != p) {
             int64_t m3 = std::min(mm, lcp_b);
-            for (int cc = 1; cc < 256; ++cc) {
-                if (m3 < rr_len[cc]) {
-                    if (rr_act[cc]) emit(rr_pos[cc]);
-                    rr_len[cc] = m3; rr_pos[cc] = 0; rr_act[cc] = false;
-                }
-            }
+            alignas(32) uint64_t scratch[4];
+            threshold_reset(m3, scratch);
             if (lcp_b > rr_len[p]) { rr_len[p] = lcp_b; rr_pos[p] = witness(p_sa_last); rr_act[p] = true; }
             if (lcp_b > rr_len[c]) { rr_len[c] = lcp_b; rr_pos[c] = witness(v.h); rr_act[c] = true; }
             m = IINF;
@@ -907,12 +958,11 @@ struct Sweep {
         p_sa_last = v.t;
     }
     void finish() {
-        for (int cc = 1; cc < 256; ++cc) {
-            if (int64_t(-1) < rr_len[cc]) {
-                if (rr_act[cc]) emit(rr_pos[cc]);
-                rr_len[cc] = -1; rr_pos[cc] = 0; rr_act[cc] = false;
-            }
-        }
+        // final flush: m3 = -1 (emit every active witness); the scalar rule
+        // is `int64_t(-1) < rr_len[cc]` with the act flag checked - the
+        // threshold_reset at m3=-1 emits exactly the act set.
+        alignas(32) uint64_t scratch[4];
+        threshold_reset(-1, scratch);
     }
 };
 
@@ -1516,6 +1566,11 @@ int main(int argc, char** argv) {
         }
         fprintf(stderr, "SWEEP_PHASE_WALLS repair=%.1f lce=%.1f advance_witness=%.1f lce_threads=%d\n",
                 repairWall, lceWall, advanceWall, std::max(1, std::min(threads, 256)));
+        // Success-path budget reports (the refusal path always printed these;
+        // the pile-week convergence needs the measured verified-symbol and
+        // ladder-probe counts to attribute the LCE wall honestly).
+        fhSlim.report("pile-finish-corpus");
+        fhSeam.report("pile-finish-seam");
         pf_check(::close(sparseFd) == 0, "close sparse scratch");
         if (bridge) {
             if (bTailAvail) {
