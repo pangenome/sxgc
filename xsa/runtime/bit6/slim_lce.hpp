@@ -196,7 +196,16 @@ template<class Seq> struct SlimFingerprint {
     // live in a PFCK sidecar (bit6/ext_columns.hpp format) and are read
     // through a tiny per-thread cache. At pile scale the checkpoint column is
     // r bytes (~480 GB at R=4.8e11) — never resident.
+    // PILE-WEEK (pile-week-v1): the sidecar is IMMUTABLE once written, so
+    // the file-backed path mmaps it read-only (page-cache backed; zero
+    // syscalls per probe). The old path did one 8-byte pread per hash-cache
+    // miss — at the 1GB/96t gate the fingerprint ladders fire tens of
+    // millions of probes, and the preads (syscall + page-cache lookup each)
+    // dominated the sweep's LCE wall. mmap is byte-identical by construction
+    // (same bytes, same adapter) and the standing byte gates confirm.
     int hashFd=-1; uint64_t hashByteBase=0, hashCount=0;
+    const uint64_t* hashMap= nullptr;      // mmap of [hashByteBase, +8*hashCount)
+    void* hashMapRegion=nullptr; uint64_t hashMapBytes=0;
     mutable SlimSharded verificationWork;
     mutable std::atomic<uint64_t> maxRequested{0};
     void seam_policy(SlimSeamWork& work,uint64_t probe,const char* name) {
@@ -237,12 +246,26 @@ template<class Seq> struct SlimFingerprint {
     }
     // Adopt checkpoints from a PFCK sidecar file (hash entries at
     // hashByteBase, hashCount entries). Writer contract: bit6/ext_columns.hpp.
+    // The sidecar is immutable once written: mmap it read-only (page-cache
+    // backed); a failed mapping falls back to the pread path unchanged.
     SlimFingerprint(const Seq& seq,uint64_t t,bool fault,int fd,uint64_t byteBase,uint64_t count)
         :s(seq),tau(std::max<uint64_t>(1,t)),inject(fault),hashFd(fd),hashByteBase(byteBase),hashCount(count) {
         if(hashCount!=s.size()/tau+1) slim_fail("adopted checkpoint count mismatch");
+        // hashByteBase need not be page-aligned (the PFCK header is 40
+        // bytes): map the whole file and offset the pointer.
+        hashMapBytes=hashByteBase+8*hashCount;
+        void* p=::mmap(nullptr,hashMapBytes,PROT_READ,MAP_SHARED,hashFd,0);
+        if(p!=MAP_FAILED) {
+            hashMap=(const uint64_t*)((const char*)p+hashByteBase);
+            hashMapRegion=p;
+        }
+    }
+    ~SlimFingerprint() {
+        if (hashMapRegion) { ::munmap(hashMapRegion, hashMapBytes); hashMapRegion=nullptr; hashMap=nullptr; }
     }
     inline uint64_t hash_at(uint64_t k) const {
         if(k>=hashCount) slim_fail("checkpoint index out of range");
+        if(hashMap) return hashMap[k];
         if(hashFd<0) return hashes[k];
         struct HC { const void* o=nullptr; uint64_t tag[4]{}; uint64_t val[4]{}; unsigned nxt=0; };
         thread_local HC hc;

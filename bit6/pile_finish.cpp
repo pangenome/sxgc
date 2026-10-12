@@ -33,6 +33,7 @@
 #include <cerrno>
 #include <chrono>
 #include <fcntl.h>
+#include <sys/mman.h>
 #include <mutex>
 #include <map>
 #include <sys/stat.h>
@@ -116,6 +117,18 @@ struct CorpusText {
     int fd = -1;
     uint64_t size_ = 0;
     uint8_t remap[256];
+    // PILE-WEEK (pile-week-v1): the corpus is IMMUTABLE (read-only adapter,
+    // THE LAW: the corpus is never written), so the byte path mmaps it
+    // read-only - page-cache backed, zero syscalls per byte. The old path
+    // did a 64KB pread + a remap pass over the page on every thread-local
+    // cache miss (the sweep's LCE/verification loops are symbol-bound: at
+    // the 1GB/96t gate the corpus-LCE wall was ~790s with 99% TL-cache hit
+    // rates, i.e. the cost was the miss path + remap churn, not I/O).
+    // Byte-identical by construction (T[i]=REMAP[corpus[i]]); the adapter
+    // identity gate + the chi/byte gates confirm. A failed mapping keeps
+    // the pread path unchanged.
+    const uint8_t* cmap = nullptr;
+    void* cmapRegion = nullptr;
     explicit CorpusText(const std::string& path, const uint8_t map[256]) {
         fd = ::open(path.c_str(), O_RDONLY);
         pf_check(fd >= 0, "open corpus (read-only adapter)");
@@ -123,17 +136,26 @@ struct CorpusText {
         pf_check(fstat(fd, &st) == 0, "stat corpus");
         size_ = uint64_t(st.st_size);
         memcpy(remap, map, 256);
+        void* p = ::mmap(nullptr, size_, PROT_READ, MAP_SHARED, fd, 0);
+        if (p != MAP_FAILED) {
+            cmap = (const uint8_t*)p;
+            cmapRegion = p;
+        }
         bool identity = true;
         for (unsigned i = 0; i < 256; ++i) identity = identity && remap[i] == uint8_t(i);
-        fprintf(stderr, "PILE_FINISH_CORPUS path=%s bytes=%llu remap_identity=%d read_only=1 rotation=0 derivation=T[i]=REMAP[corpus[i]]\n",
-                path.c_str(), (unsigned long long)size_, int(identity));
+        fprintf(stderr, "PILE_FINISH_CORPUS path=%s bytes=%llu remap_identity=%d read_only=1 rotation=0 derivation=T[i]=REMAP[corpus[i]] mmap=%d\n",
+                path.c_str(), (unsigned long long)size_, int(identity), int(cmap != nullptr));
     }
-    ~CorpusText() { if (fd >= 0) ::close(fd); }
+    ~CorpusText() {
+        if (cmapRegion) { ::munmap(cmapRegion, size_); cmapRegion = nullptr; cmap = nullptr; }
+        if (fd >= 0) ::close(fd);
+    }
     CorpusText(const CorpusText&) = delete;
     CorpusText& operator=(const CorpusText&) = delete;
     uint64_t size() const { return size_; }
     uint8_t operator[](uint64_t i) const {
         if (i >= size_) pf_fail("corpus adapter bounds");
+        if (cmap) return remap[cmap[i]];
         constexpr uint64_t B = 65536;
         struct Cache { uint64_t next = 0; const CorpusText* owner = nullptr;
                        std::array<uint64_t, 4> tags{{INF, INF, INF, INF}};
