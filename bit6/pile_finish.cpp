@@ -1025,44 +1025,72 @@ struct WitBuckets {
         v.clear();
         ++spilled;
     }
+    // PILE-WEEK (pile-week-v1): each bucket is an independent value range;
+    // sorting every bucket is embarrassingly parallel across buckets (the
+    // old path sorted serially inside for_each_sorted: ~283M x log compares
+    // at 1GB was the m5-ef phase's bulk). RAM bound: one bucket per worker
+    // (the same bound the spill path already maintains). The merged sorted
+    // stream is IDENTICAL - the m5 EF byte gates arbitrate.
+    bool presorted = false;
+    void presort_parallel(int threads) {
+        if (presorted) return;
+        std::atomic<uint64_t> next{0};
+        int tc = std::max(1, std::min(threads, 4096));
+        std::vector<std::thread> ts;
+        for (int t = 0; t < tc && uint64_t(t) < P; ++t)
+            ts.emplace_back([&] {
+                for (;;) {
+                    uint64_t b = next.fetch_add(1);
+                    if (b >= P) break;
+                    std::vector<uint64_t> vals = std::move(buf[b]);
+                    buf[b] = std::vector<uint64_t>();
+                    if (fds[b] >= 0) {
+                        std::string name = prefix + ".wit-" + std::to_string(b);
+                        int fd = ::open(name.c_str(), O_RDONLY);
+                        pf_check(fd >= 0, "open witness bucket " + name);
+                        struct stat st {};
+                        pf_check(fstat(fd, &st) == 0, "stat witness bucket");
+                        std::vector<uint8_t> data(uint64_t(st.st_size));
+                        pf_read_full(fd, data.data(), data.size(), "witness bucket");
+                        ::close(fd);
+                        size_t pos = 0;
+                        while (pos < data.size()) {
+                            uint32_t cnt;
+                            pf_check(pos + 4 <= data.size(), "witness run truncated");
+                            memcpy(&cnt, data.data() + pos, 4); pos += 4;
+                            uint64_t prev = 0;
+                            for (uint32_t i = 0; i < cnt; ++i) {
+                                uint64_t v = 0; unsigned shift = 0;
+                                for (;;) {
+                                    pf_check(pos < data.size(), "witness varint truncated");
+                                    uint8_t x = data[pos++];
+                                    v |= uint64_t(x & 127) << shift;
+                                    if (!(x & 128)) break;
+                                    shift += 7;
+                                    pf_check(shift < 64, "witness varint overflow");
+                                }
+                                vals.push_back(prev + v);
+                                prev += v;
+                            }
+                        }
+                    }
+                    std::sort(vals.begin(), vals.end());
+                    buf[b] = std::move(vals);
+                }
+            });
+        for (auto& t : ts) t.join();
+        presorted = true;
+    }
     // Iterate all witnesses in ascending order (buckets are value-disjoint,
-    // processed in value order; each bucket = RAM part + sorted disc runs).
+    // processed in value order; presort_parallel merged each bucket's RAM
+    // part with its sorted disc runs and sorted the result).
     template <typename Visit>
     void for_each_sorted(Visit&& visit) {
+        pf_check(presorted, "for_each_sorted requires presort_parallel");
         std::vector<uint64_t> vals;
         for (uint64_t b = 0; b < P; ++b) {
-            vals = buf[b];
-            if (fds[b] >= 0) {
-                std::string name = prefix + ".wit-" + std::to_string(b);
-                int fd = ::open(name.c_str(), O_RDONLY);
-                pf_check(fd >= 0, "open witness bucket " + name);
-                struct stat st {};
-                pf_check(fstat(fd, &st) == 0, "stat witness bucket");
-                std::vector<uint8_t> data(uint64_t(st.st_size));
-                pf_read_full(fd, data.data(), data.size(), "witness bucket");
-                ::close(fd);
-                size_t pos = 0;
-                while (pos < data.size()) {
-                    uint32_t cnt;
-                    pf_check(pos + 4 <= data.size(), "witness run truncated");
-                    memcpy(&cnt, data.data() + pos, 4); pos += 4;
-                    uint64_t prev = 0;
-                    for (uint32_t i = 0; i < cnt; ++i) {
-                        uint64_t v = 0; unsigned shift = 0;
-                        for (;;) {
-                            pf_check(pos < data.size(), "witness varint truncated");
-                            uint8_t x = data[pos++];
-                            v |= uint64_t(x & 127) << shift;
-                            if (!(x & 128)) break;
-                            shift += 7;
-                            pf_check(shift < 64, "witness varint overflow");
-                        }
-                        vals.push_back(prev + v);
-                        prev += v;
-                    }
-                }
-            }
-            std::sort(vals.begin(), vals.end());
+            vals = std::move(buf[b]);
+            buf[b] = std::vector<uint64_t>();
             for (uint64_t v : vals) visit(v);
         }
     }
@@ -1630,6 +1658,7 @@ int main(int argc, char** argv) {
             BitsOut low, high;
             uint64_t i = 0, hpos = 0, prev = ~0ull;
             size_t sidx = 0;
+            buckets.presort_parallel(threads);
             buckets.for_each_sorted([&](uint64_t v) {
                 pf_check(prev == ~0ull || v > prev, "witnesses not strictly increasing");
                 prev = v;
