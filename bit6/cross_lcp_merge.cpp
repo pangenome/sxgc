@@ -1629,6 +1629,11 @@ static void build_hash_sparse(const CorpusText& m2, U n2, U k,
         // 1 Mi-entry chunks instead (8 MiB per thread, bounded).
         constexpr U CHUNK = 1u << 20;
         std::vector<U> buf(CHUNK);
+        // Hash sequential corpus reads in bounded bands. Per-byte pooled
+        // reads would charge shared-cache bookkeeping for all 2n symbols.
+        constexpr U TEXT_WINDOW = 1u << 16;
+        std::vector<uint8_t> text(TEXT_WINDOW);
+        U textStart = 0, textEnd = 0;
         U h = 0;
         U jc = j0;
         while (jc < j1) {
@@ -1636,7 +1641,14 @@ static void build_hash_sparse(const CorpusText& m2, U n2, U k,
             for (U j = jc; j < je; ++j) {
                 buf[j - jc] = h;
                 U e = std::min(n2, (j + 1) * k);
-                for (U i = j * k; i < e; ++i) h = h * HASH_BASE + ((U)m2.at(i) + 1);
+                for (U i = j * k; i < e; ++i) {
+                    if (i >= textEnd) {
+                        textStart = i;
+                        textEnd = i + std::min(TEXT_WINDOW, n2 - i);
+                        m2.read(i, text.data(), textEnd - textStart);
+                    }
+                    h = h * HASH_BASE + (U(text[i - textStart]) + 1);
+                }
             }
             xput(fd, buf.data(), 8 * (je - jc), 8 * jc, "sparse hash rel write");
             jc = je;
@@ -3640,9 +3652,13 @@ static U merge_kway_files(const std::vector<std::string>& inputs, bool dollar,
             require(sides[j - 1].offset + sides[j - 1].n == sides[j].offset,
                     "merge sides do not tile");
     }
+    U n = 0; for (auto& S : sides) n += S.n;
+    if (!pre) {
+        hashK = hash_spacing();
+        if (hashK > n / 2) hashK = std::max<U>(1, n / 2);
+    }
     core_merge_kway(sides, dollar, threads, bud, st, sc, hashK, pre);
     sc.release_walk();
-    U n = 0; for (auto& S : sides) n += S.n;
     CorpusText m2; open_merge_text(sides, m2, true);
     WinU64 wm; wm.open_ro_auto(sc.wm, n);
     U out_runs = dollar ? emit_four_ext(out, m2, wm, n, threads, sc.dir)
