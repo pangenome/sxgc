@@ -93,9 +93,25 @@ theorem wall_one (n : Nat) (hn : 64 ≤ n) (A : Enumerator n 1) (hA : Correct A)
     WorstCostAtLeast A (n * n / 64) := by
   simpa using cycle_inversion_wall n 1 hn (by omega) (by omega) A hA
 
+/-- Conditional linear lower endpoint; dense scatter below supplies the
+matching linear upper bound without using the axiom. -/
+theorem wall_n (n : Nat) (hn : 64 ≤ n) (A : Enumerator n n) (hA : Correct A) :
+    WorstCostAtLeast A (n / 64) := by
+  have he : n * n / (64 * n) = n / 64 := Nat.mul_div_mul_right n 64 (by omega)
+  rw [← he]
+  exact cycle_inversion_wall n n hn (by omega) (by omega) A hA
+
 /-- Whole cyclic stream starting at text position zero. -/
 def cycleScan {n : Nat} (π : Permutation n) : List (Nat × Nat) :=
   (List.finRange n).map (fun i => (i.val, (π.forward i).val))
+
+/-- Executable kernels shared by the model and finite eval harness. -/
+def scanRows (n : Nat) (rows : List (Nat × Nat)) : List Nat :=
+  (List.range n).map (fun k =>
+    ((rows.find? (fun item => item.2 == k)).map Prod.fst).getD 0)
+
+def scatterRows (n : Nat) (rows : List (Nat × Nat)) : Array Nat :=
+  rows.foldl (fun a item => a.set! item.2 item.1) (Array.replicate n 0)
 
 /-- Restart a scan for each rank, retaining only a candidate. Lists specify
 the trace; an implementation can stream them without materializing them. -/
@@ -115,6 +131,21 @@ def denseSteps (n : Nat) : Nat := n
 theorem scalar_quadratic (n : Nat) : scalarSteps n = n * n := rfl
 theorem dense_linear (n : Nat) : denseSteps n = n := rfl
 theorem dense_space (n : Nat) : (Array.replicate n (0 : Nat)).size = n := by simp
+
+theorem finRange_values (n : Nat) : (List.finRange n).map Fin.val = List.range n := by
+  apply List.ext_getElem
+  · simp
+  · intro i hi hj
+    simp
+
+theorem scanRows_model {n : Nat} (π : Permutation n) :
+    scanRows n (cycleScan π) = scanInverse π := by
+  unfold scanRows scanInverse
+  rw [← finRange_values n, List.map_map]
+  rfl
+
+theorem scatterRows_model {n : Nat} (π : Permutation n) :
+    scatterRows n (cycleScan π) = denseInverse π := rfl
 
 /-- Every rank occurs exactly once in a complete scan. -/
 theorem scan_find {n : Nat} (π : Permutation n) (k : Fin n) :
@@ -174,7 +205,7 @@ theorem scatter_cell (xs : List (Nat × Nat)) (a : Array Nat) (key value : Nat)
 theorem denseInverse_correct {n : Nat} (π : Permutation n) (k : Fin n) :
     (denseInverse π)[k.val]! = (π.backward k).val := by
   apply scatter_cell
-  · simpa using k.isLt
+  · simp
   · intro item hm he
     obtain ⟨i, _, rfl⟩ := List.mem_map.mp hm
     have hf : π.forward i = k := Fin.ext he
@@ -222,7 +253,7 @@ def EqualRotation (T : CyclicText) (i j : Nat) : Prop :=
   ∀ k, T.symbol (i + k) = T.symbol (j + k)
 
 /-- Reduce extension index modulo any positive period. -/
-theorem at_mod (T : CyclicText) {p : Nat} (hp : 0 < p) (h : ShiftPeriod T p)
+theorem at_mod (T : CyclicText) {p : Nat} (_hp : 0 < p) (h : ShiftPeriod T p)
     (i : Nat) : T.symbol i = T.symbol (i % p) := by
   have many : ∀ a m, T.symbol (a + m * p) = T.symbol a := by
     intro a m
@@ -323,7 +354,7 @@ def emitRow (p copies : Nat) (residues : Array Nat) (row : Nat) : Nat :=
 def emitClass (p copies residue : Nat) : List Nat :=
   (List.range copies).map (fun j => residue + j * p)
 
-theorem emitted_residue {p copies residue j : Nat} (hp : 0 < p) (hr : residue < p)
+theorem emitted_residue {p copies residue j : Nat} (_hp : 0 < p) (hr : residue < p)
     (_hj : j < copies) : (residue + j * p) % p = residue := by
   simp [Nat.add_mod, Nat.mod_eq_of_lt hr]
 
@@ -460,6 +491,27 @@ theorem periodic_emission_complete (T : CyclicText) {p copies : Nat}
   rw [hdiv, hmod, har]
   exact emitted_complete p i
 
+theorem cyclicBefore_irrefl (T : CyclicText) (i : Nat) : ¬ CyclicBefore T i i := by
+  rintro (⟨k, _, _, hk⟩ | ⟨_, hi⟩)
+  · exact Nat.lt_irrefl _ hk
+  · exact Nat.lt_irrefl _ hi
+
+/-- Sortedness also rules out duplicates, so complete emission is a
+permutation of all source positions, rather than a multiset cover. -/
+theorem periodic_emission_injective (T : CyclicText) {p copies : Nat}
+    (h : MinimalPeriod T p) (hc : 0 < copies) (R : OrderedResidues T p)
+    {a b : Nat} (ha : a < p * copies) (hb : b < p * copies)
+    (he : emitRow p copies R.data a = emitRow p copies R.data b) : a = b := by
+  by_cases hab : a < b
+  · have hs := periodic_emission_sorted T h hc R hab hb
+    rw [he] at hs
+    exact False.elim (cyclicBefore_irrefl T _ hs)
+  · by_cases hba : b < a
+    · have hs := periodic_emission_sorted T h hc R hba ha
+      rw [he] at hs
+      exact False.elim (cyclicBefore_irrefl T _ hs)
+    · omega
+
 /-- Symbolic emission cost in the word-RAM model: div, mod, lookup,
 multiply, add. This does not claim constant-time arbitrary-precision Nat. -/
 def rowWordOperations : Nat := 5
@@ -468,5 +520,126 @@ theorem periodic_row_cost : rowWordOperations = 5 := rfl
 
 theorem periodic_table_space (T : CyclicText) {p : Nat} (R : OrderedResidues T p) :
     R.data.size = p := R.size_eq
+
+/-! ## Finite-list interfaces and the r-structured question -/
+
+/-- Canonical infinite extension of a nonempty list. -/
+def ofList (text : List Nat) (hne : 0 < text.length) : CyclicText where
+  n := text.length
+  positive := hne
+  symbol := fun i => text.getD (i % text.length) 0
+  wraps := by intro i; simp
+
+/-- Preserving a shift can be checked on one finite turn. -/
+theorem finite_period_iff (T : CyclicText) (d : Nat) :
+    (∀ i, i < T.n → T.symbol (i + d) = T.symbol i) ↔ ShiftPeriod T d := by
+  constructor
+  · intro he i
+    have e := he (i % T.n) (Nat.mod_lt _ T.positive)
+    rw [at_mod T T.positive T.wraps (i % T.n + d)] at e
+    rw [at_mod T T.positive T.wraps (i + d), at_mod T T.positive T.wraps i]
+    simpa [Nat.add_mod] using e
+  · intro he i _; exact he i
+
+/-- Exact list rotations, used by the independent executable reference. -/
+def cyclicRotation (text : List Nat) (i : Nat) : List Nat :=
+  (List.range text.length).map (fun k => text.getD ((i + k) % text.length) 0)
+
+/-- The theorem applies to actual finite List rotations, not only the
+infinite-extension interface used to simplify the proof. -/
+theorem list_rotation_iff_residue (text : List Nat) (hne : 0 < text.length)
+    {p : Nat} (h : MinimalPeriod (ofList text hne) p) (i j : Nat) :
+    cyclicRotation text i = cyclicRotation text j ↔ i % p = j % p := by
+  have he : cyclicRotation text i = cyclicRotation text j ↔
+      EqualRotation (ofList text hne) i j := by
+    rw [← finite_iff]
+    simp only [cyclicRotation, List.map_inj_left, List.mem_range, ofList]
+  rw [he, equalRotation_iff_residue _ h]
+
+def lexLE : List Nat → List Nat → Bool
+  | [], _ => true
+  | _ :: _, [] => false
+  | a :: as, b :: bs => if a == b then lexLE as bs else a < b
+
+/-- Full comparison, including ascending-position ties. -/
+def referenceOrder (text : List Nat) : List Nat :=
+  (List.range text.length).mergeSort (fun i j =>
+    let a := cyclicRotation text i
+    let b := cyclicRotation text j
+    if a == b then i ≤ j else lexLE a b)
+
+/-- Preprocessing orders p representatives, never n position entries. The
+simple executable reference sorts full rotations; no fast period-discovery
+or representative-sorting complexity theorem is asserted. -/
+def residueTable (text : List Nat) (p : Nat) : Array Nat :=
+  ((List.range p).mergeSort (fun i j =>
+    lexLE (cyclicRotation text i) (cyclicRotation text j))).toArray
+
+def periodicOrder (text : List Nat) (p : Nat) : List Nat :=
+  (List.range text.length).map (emitRow p (text.length / p) (residueTable text p))
+
+/-- C++ divisor search: period=n means no repair. A smaller dividing p is
+accepted precisely when the list is a repetition of its p-symbol prefix. -/
+def cyclicPeriod (text : List Nat) : Nat :=
+  (((List.range (text.length + 1)).filter (fun p =>
+    0 < p && text.length % p == 0 &&
+      (List.range text.length).all (fun i => text.getD i 0 == text.getD (i % p) 0))).head?).getD text.length
+
+/-- Linear BWT runs (not circularly coalesced); r counts maximal adjacent
+blocks, including the first nonempty block. -/
+def runCount : List Nat → Nat
+  | [] => 0
+  | a :: rest => 1 + changes a rest
+where
+  changes : Nat → List Nat → Nat
+    | _, [] => 0
+    | prev, a :: rest => (if prev == a then 0 else 1) + changes a rest
+
+/-- Cyclic BWT with source-position ascending rotation ties. Reconstruction
+also needs its primary row/tie convention: a bare cyclic BWT determines a
+necklace, not necessarily an oriented text. There is no new information in
+SA once BWT + orientation/convention fix the text; the obstacle is computation.
+-/
+def cyclicBWT (text : List Nat) : List Nat :=
+  (referenceOrder text).map (fun i => text.getD ((i + text.length - 1) % text.length) 0)
+
+def RunStructured (text : List Nat) (r : Nat) : Prop :=
+  text ≠ [] ∧ runCount (cyclicBWT text) ≤ r
+
+/-- Executable forward stream for a text-induced permutation. -/
+def textForward (text : List Nat) : List Nat :=
+  (List.range text.length).map (fun i =>
+    ((referenceOrder text).idxOf i))
+
+/-! ### OPEN PROBLEM (documented statement, NOT an axiom or theorem)
+
+For text length n and at most r linear BWT runs, is there one uniform
+algorithm emitting the text-induced inverse permutation in increasing rank,
+with write-only output and read-only cyclic-oracle/input access, whose total
+cost T(n,r) (INCLUDING preprocessing) and peak retained space S(n,r) satisfy
+T(n,r) * S(n,r) = o(n^2) whenever r/n tends to zero? Count all stored samples,
+representative orders, repair/spool metadata and transient arrays. State the
+word size, BWT rank/select query cost, permitted text access and primary-row
+convention. Access to an r-run BWT is a structural oracle stronger than the
+arbitrary numeric stream; the generic wall cannot settle this question.
+
+An operator's ≤1 TB scratch implementation additionally needs an explicit
+byte-space bound (including peak live disk intermediates, not just RAM),
+near-linear total row emission and run-endpoint locating, and fast seam
+repair. A subquadratic time-space product alone does NOT guarantee any
+specified wall-clock factor or a terabyte bound.
+
+The following `Prop` packages a precise asymptotic candidate, without
+asserting it. Functions describe certified total bounds in a future costed
+structural-machine model; that model and certification remain open too.
+For every sequence with n→∞ and r/n→0, the product ratio must tend to zero
+(using integer epsilon denominators, so no real-analysis library is needed).
+-/
+def RunTradeoffQuestion (timeBound spaceBound : Nat → Nat → Nat) : Prop :=
+  ∀ ns rs : Nat → Nat,
+    (∀ N, ∃ K, ∀ k, K ≤ k → N ≤ ns k) →
+    (∀ e, 0 < e → ∃ K, ∀ k, K ≤ k → e * rs k ≤ ns k) →
+    ∀ e, 0 < e → ∃ K, ∀ k, K ≤ k →
+      e * (timeBound (ns k) (rs k) * spaceBound (ns k) (rs k)) ≤ ns k * ns k
 
 end Sxgc.PiWall

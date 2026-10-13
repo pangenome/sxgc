@@ -24,3 +24,8 @@ lean_lib SxgcRevival
 lean_lib SxgcChiMono
 
 lean_lib SxgcUniDelim
+
+-- Cyclic-stream inversion and periodic-class emission (additive registration).
+lean_lib PiWall
+lean_lib PiWallEval
+lean_lib PiWallAxioms
