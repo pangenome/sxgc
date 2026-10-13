@@ -7,7 +7,7 @@
   "runtime/bit6/check_pieces.c": "b5ecf183316d15d9315c38c2b66dacf24c6db71adb34322a567dc6d0172d0474",
   "runtime/bit6/chi_rspace_dump.cpp": "61e2c0d42fcc7a0f6816f5dca0c52463a44c537ee5f58af77cd52898c1f94011",
   "runtime/bit6/chunk_frontend.cpp": "9bd191eb25970e3802e0fe108b178761c015dda8027bf139127b913f9d1ca507",
-  "runtime/bit6/cross_lcp_merge.cpp": "ac178093e746c3951130e753523642d940214c96b3b79ebc151e32a1b9ff5008",
+  "runtime/bit6/cross_lcp_merge.cpp": "799e1eb66697afbb8447a8bb8908d57b563b9e95a9db6c7164beec5bf54d95c2",
   "runtime/bit6/ext_columns.hpp": "83e612e7480850b66acc02f8ee59ef38e1908753e040a7d171ec8a754458bbe8",
   "runtime/bit6/patches/pfp_agc.patch": "0860fa14a5be0f4db6994aa5ccd1a1155bfde48749ee19b6a7e1a2247c9fa4b1",
   "runtime/bit6/patches/rpfbwt_emit_tails.patch": "3b718217ec9280187da2c6db307500facac53543f5bd65f0b8e3701d25a0a4e9",
