@@ -1143,6 +1143,9 @@ struct PosColumn {
     struct TLS4 { TL e[4]; unsigned nxt = 0; };
     static std::atomic<U> g_gen;
     U gen = 0;
+    bool entropy = false;
+    std::array<std::array<U,33>,5> modelFirstCode{}, modelFirstSymbol{}, modelCodeCounts{};
+    std::array<std::vector<uint8_t>,5> modelAlphabet;
     void open_ro(const std::string& path, U elems, U posByteBase, U shiftIn) {
         fd = ::open(path.c_str(), O_RDONLY);
         if (fd < 0) fail("open pos column");
@@ -1172,6 +1175,31 @@ struct PosColumn {
                 tab[3 * g + 2] = le64(tb + 24 * g + 16);  // basePos
             }
             delete[] tb;
+            const unsigned version=uint8_t(hdr[4]) | (unsigned(uint8_t(hdr[5]))<<8);
+            require(version==1 || version==2,"unsupported SXP4 version");
+            entropy=version==2;
+            if (entropy) {
+                for (unsigned context=0;context<5;++context) {
+                auto& firstCode=modelFirstCode[context]; auto& firstSymbol=modelFirstSymbol[context];
+                auto& codeCounts=modelCodeCounts[context]; auto& alphabet=modelAlphabet[context];
+                uint8_t lengths[256]; pread_exact(lengths,256,headerBytes+256*context);
+                std::vector<std::pair<unsigned,unsigned>> sorted;
+                for (unsigned c=0;c<256;++c) if (lengths[c]) {
+                    require(lengths[c]<=32,"SXP4 Huffman length");
+                    sorted.push_back({lengths[c],c}); ++codeCounts[lengths[c]];
+                }
+                require(!sorted.empty(),"SXP4 empty Huffman model");
+                std::sort(sorted.begin(),sorted.end());
+                for (auto item:sorted) alphabet.push_back(uint8_t(item.second));
+                U code=0, base=0;
+                for (unsigned len=1;len<=32;++len) {
+                    code=(code+codeCounts[len-1])<<1;
+                    firstCode[len]=code; firstSymbol[len]=base; base+=codeCounts[len];
+                    require(code+codeCounts[len]<=(1ull<<len),"SXP4 oversubscribed model");
+                }
+                }
+                require(fileSize>=headerBytes+1280,"SXP4 model truncated");
+            }
         } else {
             compact = false;
             headerBytes = byteBase;
@@ -1200,15 +1228,28 @@ struct PosColumn {
         require(spanEnd >= boff, "SXP4 group span");   // a 1-row group has no deltas
         std::vector<uint8_t> buf(spanEnd - boff);
         if (!buf.empty()) pread_exact(buf.data(), spanEnd - boff, boff);
-        U pos = base, idx = b0, p = 0;
+        U pos = base, idx = b0, p = 0, bit=0;
+        auto nextByte = [&](unsigned context) -> uint8_t {
+            if (!entropy) { require(p<buf.size(),"SXP4 byte overrun"); return buf[p++]; }
+            require(context<5,"SXP4 Huffman context overflow");
+            const auto& firstCode=modelFirstCode[context]; const auto& firstSymbol=modelFirstSymbol[context];
+            const auto& codeCounts=modelCodeCounts[context]; const auto& alphabet=modelAlphabet[context];
+            U code=0;
+            for (unsigned len=1;len<=32;++len) {
+                require(bit/8<buf.size(),"SXP4 Huffman overrun");
+                code=(code<<1)|((buf[bit/8]>>(7-bit%8))&1); ++bit;
+                if (code>=firstCode[len] && code-firstCode[len]<codeCounts[len])
+                    return alphabet[firstSymbol[len]+code-firstCode[len]];
+            }
+            fail("SXP4 invalid Huffman code"); return 0;
+        };
         while (idx < end) {
             if (idx >= start) *out++ = pos + shift;
             ++idx;
             if (idx >= end) break;   // stop BEFORE consuming the next delta
             U v = 0, sh = 0;
             for (;;) {
-                require(p < buf.size(), "SXP4 group decode overran its span");
-                uint8_t b = buf[p++];
+                uint8_t b = nextByte(sh/7);
                 v |= U(b & 0x7f) << sh;
                 if (!(b & 0x80)) break;
                 sh += 7;
@@ -1813,7 +1854,8 @@ static void read_pos_header(const std::string& path, U& offset, U& n, U& period)
     char magic[4]{}; f.read(magic, 4);
     require(bool(f) && (!std::memcmp(magic, "SXP3", 4) || !std::memcmp(magic, "SXP4", 4)),
             "chunk pos magic mismatch (SXP3 dense / SXP4 compact)");
-    require(rd_le(f, 4) == 1, "unsupported chunk pos version");
+    U version = rd_le(f, 4);
+    require(version == 1 || (version == 2 && !std::memcmp(magic, "SXP4", 4)), "unsupported chunk pos version");
     offset = rd_le(f, 8); n = rd_le(f, 8); period = rd_le(f, 8);
     require(rd_le(f, 8) == 0, "unknown chunk pos reserved field");
     if (!std::memcmp(magic, "SXP3", 4))

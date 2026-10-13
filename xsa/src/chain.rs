@@ -852,7 +852,7 @@ fn run_chain(options: Options) -> Result<(), String> {
 
     // 1. chunk front end (libsais, document-aligned cyclic BWT chunks).
     // PILE-WEEK (pile-week-v1): concurrent per-chunk sorts (the boundary
-    // scan stays serial and byte-identical; each worker is ~27x its chunk
+    // scan stays serial and byte-identical; each worker is ~12x its chunk
     // bytes of RAM, so the count is bounded by the memory cap).
     let mut chunk_env: Vec<(String, String)> = Vec::new();
     if let Some(w) = std::env::var_os("CHUNK_WORKERS") {
@@ -860,7 +860,7 @@ fn run_chain(options: Options) -> Result<(), String> {
         chunk_env.push(("CHUNK_WORKERS".to_string(), w.to_string_lossy().to_string()));
     } else if options.v2_pipeline {
         let chunk_bytes = (n / u64::from(chunks)).max(1);
-        let per_worker = chunk_bytes.saturating_mul(27);
+        let per_worker = chunk_bytes.saturating_mul(12);
         // 55% of the cap for the sort workers (the remap table and buffers
         // are noise at scale; the serial phase holds one chunk of text).
         let budget = memory_kb.saturating_mul(1024) * 55 / 100;
