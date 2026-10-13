@@ -623,3 +623,12 @@ land end-to-end ~400-650s at 1GB/96t (walk ~100-140, LCE ~60-90, advance
 range but NOT claimed until the quiet-box gate runs. The 10GB rung (old
 binary) is still in its walk at ~6.7h - the CLEAN 10GB re-run at the
 converged binary happens after it lands and after the quiet 1GB gate.
+
+## check_pieces.py is RETIRED (2026-10-13)
+
+The M2 pieces gate ran in Python (struct.unpack over the full ssa/ssa_t
+columns: 58 s at 100 MB, RAM = both columns, unusable at 10 GB+). Replaced by
+bit6/check_pieces.c (shipped in the xsa bundle as `check_pieces`): streaming,
+band-by-band, O(band) RAM, 2.5 s at 100 MB (23x), byte-identical verdict on
+the banked 100 MB A/B, negative test (one corrupted byte at run 24) dies loud
+with exact values. The harvest checklists use the C gate from here on.

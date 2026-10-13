@@ -9,7 +9,7 @@ DEST = ROOT / 'xsa/runtime'
 PATTERNS = ('bit6/*.hpp', 'bit6/pfp_ds_vendor/**/*.hpp',
             'bit6/chi_rspace_dump.cpp', 'bit6/rpfbwt_endpoints.cpp',
             'bit6/chunk_frontend.cpp', 'bit6/cross_lcp_merge.cpp',
-            'bit6/pile_finish.cpp',
+            'bit6/pile_finish.cpp', 'bit6/check_pieces.c',
             'bit6/third_party/libsais/*',
             'bit6/sxi_write.cpp', 'bit6/sxi_text_audit.cpp', 'bit6/phi_inverse_heads.cpp',
             'bit6/sxi_*.py', 'bit6/patches/pfp_agc.patch',

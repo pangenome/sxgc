@@ -5,6 +5,7 @@
   "runtime/agc2flat/src/ghost.rs": "f5caa15a169f3fd5e80762ad74b214c56012fc6215cd8701226698c6e7bf752e",
   "runtime/agc2flat/src/main.rs": "f82b7292863dce8a8dcbef3bece33d5aa7aedd7e398b564e4cca2fe3a886941d",
   "runtime/bit6/__pycache__/sxi_pipeline.cpython-312.pyc": "3dbd88984cced5d850e6984ee568dbc3b9bd8cea0ff12bea04058b643c1e4c8f",
+  "runtime/bit6/check_pieces.c": "b5ecf183316d15d9315c38c2b66dacf24c6db71adb34322a567dc6d0172d0474",
   "runtime/bit6/chi_rspace_dump.cpp": "61e2c0d42fcc7a0f6816f5dca0c52463a44c537ee5f58af77cd52898c1f94011",
   "runtime/bit6/chunk_frontend.cpp": "3f2e5f43138784ef7f597ccd37174f46c086454fdba24e5fb87cd57fcc27be8d",
   "runtime/bit6/cross_lcp_merge.cpp": "ee450d5c61984465e7fe4c4640f5cf50e81c8736f15a0bec0ed1ca1d856eb002",
@@ -20,7 +21,7 @@
   "runtime/bit6/pfp_ds_vendor/pfp/utils.hpp": "582835a8da40e1ad2fe16c2ab1da4050ce5f75275486f106dc52a3fbe7c9c92c",
   "runtime/bit6/pfp_ds_vendor/pfp/wt.hpp": "a1a257e67a133a1d643c99d463a1412255fd7f5bfa939ba5766d45be5db7d129",
   "runtime/bit6/phi_inverse_heads.cpp": "8ac4a15ddc6cb0b3371976b4fd10d30227e8ba084595dd4abe74768f85bbcb3a",
-  "runtime/bit6/pile_finish.cpp": "a8dead7abf1a65439c9ea80ee2b55aba575b06e858f4ec35e1e2fc4296c29952",
+  "runtime/bit6/pile_finish.cpp": "8a01a2819529293951a379a0df723b6657ae75b16953b23d820e2b43558c8dee",
   "runtime/bit6/rpfbwt_endpoints.cpp": "f8fffd15463d80af42d14493eba92184d809e34803581bbda18874d3eebe43bf",
   "runtime/bit6/seam_repair.hpp": "e944bfa966e44b18b13aefc1d320480130ce25ce553f8074eeced08306aa4755",
   "runtime/bit6/slim_lce.hpp": "7eeb8330b31c45ab7c601d741deed3315af517ac7f7b3a4a922e657754f530ec",
@@ -55,5 +56,5 @@
   "vendor/pruned-paths.json": "742feccf44be4ec11c67d23d3c98d2fee77aea92a8834d994eb18d10b96dfc48",
   "vendor/rust-linux-packages.json": "4b24b5bfedd0764f8b1bee064a35d2f68676f4926048cce5fcc30e78db0640db",
   "build.rs": "8c781182490a30c279d98e1c4c3179aa8f80c8f8dae6da35ef1dd8c203c60d4b",
-  "build_tools.py": "d9d4b48d1097d14f5758c666c699f58a57a8a767736c7c57d14feace1d2e4c24"
+  "build_tools.py": "b2df988fa695884d793289aaf4a73d6863377bf0a4a81df1c48055b8614f4236"
 }

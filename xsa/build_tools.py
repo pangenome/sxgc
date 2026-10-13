@@ -73,6 +73,11 @@ for name, src in [('rpfbwt_endpoints', 'rpfbwt_endpoints.cpp'), ('slim_dump', 'c
 # (sdsl + divsufsort via the isolated rpfbwt deps); the v2 front door
 # (xsa build --v2-pipeline) runs it concurrent with the v2-emission merge.
 run('bash', repo/'tools/build_slim_dump.sh', bundle/'pile_finish', 'bit6/pile_finish.cpp', env=env)
+# Pieces gate (check_pieces): C, no deps. Replaces the Python M2 checker
+# (struct.unpack over GB-scale columns, 58s at 100MB, RAM = full columns);
+# streams band-by-band so it stays O(band) at pile scale.
+run('gcc', '-O2', '-std=c11', '-Wall', '-Wextra', repo/'bit6/check_pieces.c',
+    '-o', bundle/'check_pieces', env=env)
 # External construction chain: libsais chunk front end + externalized cross-LCP
 # merge (gate flags: -O3 front end; -O2 -mcx16 -pthread -latomic merge with the
 # cpuid cx16 startup gate; pool knobs CROSS_* stay env-pass-through).
