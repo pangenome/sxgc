@@ -2407,6 +2407,14 @@ struct PairScratch {
         if (!keep_wm) {
             ::unlink(wm.c_str());
             fs::remove_all(dir);
+        } else {
+            // Best-effort empty-dir removal: the finish may have already
+            // unlinked wm.bin (+.done) - then this closes the loop at merge
+            // exit; if it has not, this no-ops (dir non-empty) and the
+            // finish's own remove after its unlink closes it instead.
+            // Either interleaving ends with the dir gone.
+            std::error_code ec;
+            fs::remove(dir, ec);
         }
     }
 };
