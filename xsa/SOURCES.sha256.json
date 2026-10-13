@@ -40,7 +40,7 @@
   "runtime/tools/upstream.lock.json": "bd5d345045de9c1eeff013bdb412e19a285ecf6c713323858f1eb8ea7aa02928",
   "src/build.rs": "b1a3cfcc1f999baccd1fecba8cbf12f66544414d49c41fc03c7ecf7ba60c845e",
   "src/bundle.rs": "b1c1c12282330b46f42b5cdb4f1c8811d22d1476d7091bf02e0a9d8c78da86f4",
-  "src/chain.rs": "9d377a2eaeac2c0a1fa17dc835edcadb8d10d405c46a564b25bbb87c6ac79e5b",
+  "src/chain.rs": "e5b7b1d3878b5ef39d8ba2591539fa3b7bc9a545caa582b7641a48a8cfc7cfc9",
   "src/forks.rs": "65a268d6c58749463ba62dc61bc19d474efcf2ce48994d643002456cc6879495",
   "src/main.rs": "2af0b37313244383d978c410e8ed38d1026f8c6218dcb20c1739d2f4ddff3abc",
   "src/plan.rs": "e476c95079b8a273733e7f5a6b1f13e34bbad1458fa9bb2461c71c536e4cd062",
