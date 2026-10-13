@@ -116,6 +116,89 @@ theorem scalar_quadratic (n : Nat) : scalarSteps n = n * n := rfl
 theorem dense_linear (n : Nat) : denseSteps n = n := rfl
 theorem dense_space (n : Nat) : (Array.replicate n (0 : Nat)).size = n := by simp
 
+/-- Every rank occurs exactly once in a complete scan. -/
+theorem scan_find {n : Nat} (π : Permutation n) (k : Fin n) :
+    (cycleScan π).find? (fun item => item.2 == k.val) =
+      some ((π.backward k).val, k.val) := by
+  have hex : ∃ item ∈ cycleScan π, (item.2 == k.val) = true := by
+    refine ⟨((π.backward k).val, k.val), ?_, by simp⟩
+    simp only [cycleScan, List.mem_map]
+    refine ⟨π.backward k, List.mem_finRange _, ?_⟩
+    rw [π.right_inv]
+  have hs := List.find?_isSome.mpr hex
+  cases he : (cycleScan π).find? (fun item => item.2 == k.val) with
+  | none => simp [he] at hs
+  | some item =>
+    have hm := List.mem_of_find?_eq_some he
+    have hv := List.find?_some he
+    obtain ⟨i, _, rfl⟩ := List.mem_map.mp hm
+    have hf : π.forward i = k := Fin.ext (by simpa using hv)
+    have hb : i = π.backward k := by rw [← hf, π.left_inv]
+    simp [hb, π.right_inv]
+
+theorem scanInverse_correct {n : Nat} (π : Permutation n) :
+    scanInverse π = inversionTask π := by
+  unfold scanInverse inversionTask
+  apply List.map_congr_left
+  intro k _
+  rw [scan_find]
+  rfl
+
+/-- Scatter invariant, including the case where the sought cell was written
+before this suffix of the stream. No uniqueness assumption is needed: all
+writes to that cell must carry its one correct value. -/
+theorem scatter_cell (xs : List (Nat × Nat)) (a : Array Nat) (key value : Nat)
+    (hk : key < a.size)
+    (writes : ∀ item ∈ xs, item.2 = key → item.1 = value)
+    (ready : a[key]! = value ∨ ∃ item ∈ xs, item.2 = key) :
+    (xs.foldl (fun arr item => arr.set! item.2 item.1) a)[key]! = value := by
+  induction xs generalizing a with
+  | nil => simpa using ready
+  | cons item rest ih =>
+    simp only [List.foldl_cons]
+    apply ih
+    · simpa [Array.size_set!] using hk
+    · intro x hx; exact writes x (List.mem_cons_of_mem _ hx)
+    · by_cases he : item.2 = key
+      · left
+        rw [he, Array.getElem!_set!_self _ _ _ hk]
+        exact writes item (by simp) he
+      · rcases ready with ha | ⟨x, hx, hxk⟩
+        · left; rw [Array.getElem!_set!_ne _ _ _ _ he]; exact ha
+        · right
+          refine ⟨x, ?_, hxk⟩
+          rcases List.mem_cons.mp hx with hxi | hxr
+          · subst x; exact False.elim (he hxk)
+          · exact hxr
+
+theorem denseInverse_correct {n : Nat} (π : Permutation n) (k : Fin n) :
+    (denseInverse π)[k.val]! = (π.backward k).val := by
+  apply scatter_cell
+  · simpa using k.isLt
+  · intro item hm he
+    obtain ⟨i, _, rfl⟩ := List.mem_map.mp hm
+    have hf : π.forward i = k := Fin.ext he
+    have hi : i = π.backward k := by rw [← hf, π.left_inv]
+    exact congrArg Fin.val hi
+  · right
+    refine ⟨((π.backward k).val, k.val), ?_, rfl⟩
+    exact List.mem_of_find?_eq_some (scan_find π k)
+
+/-- Actual trace lengths justify the upper budgets, independently of wall. -/
+theorem scan_length {n : Nat} (π : Permutation n) : (cycleScan π).length = n := by
+  simp [cycleScan]
+
+theorem scalar_scan_budget {n : Nat} (π : Permutation n) :
+    ((List.finRange n).map (fun _ => (cycleScan π).length)).sum = n * n := by
+  have hc : ∀ l : List (Fin n), (l.map (fun _ => n)).sum = l.length * n := by
+    intro l
+    induction l with
+    | nil => simp
+    | cons x xs ih => simp [ih, Nat.succ_mul, Nat.add_comm]
+  simp only [scan_length]
+  rw [hc]
+  simp
+
 /-! ## Periodic break: no use of the wall axiom
 
 A cyclic text is its n-periodic infinite extension. A minimal cyclic period
@@ -272,5 +355,118 @@ theorem no_repair_when_aperiodic (T : CyclicText) (h : MinimalPeriod T T.n)
     {i j : Nat} (hi : i < T.n) (hj : j < T.n) : EqualRotation T i j ↔ i = j := by
   simpa [Nat.mod_eq_of_lt hi, Nat.mod_eq_of_lt hj] using
     equalRotation_iff_residue T h i j
+
+/-- Strict lexicographic rotation comparison by its first mismatch. -/
+def RotationLt (T : CyclicText) (i j : Nat) : Prop :=
+  ∃ k, k < T.n ∧ (∀ l, l < k → T.symbol (i + l) = T.symbol (j + l)) ∧
+    T.symbol (i + k) < T.symbol (j + k)
+
+/-- Complete rotations with the legacy ascending-position tie rule. -/
+def CyclicBefore (T : CyclicText) (i j : Nat) : Prop :=
+  RotationLt T i j ∨ (EqualRotation T i j ∧ i < j)
+
+theorem rotationLt_congr (T : CyclicText) {i i' j j' : Nat}
+    (hi : EqualRotation T i i') (hj : EqualRotation T j j') :
+    RotationLt T i j ↔ RotationLt T i' j' := by
+  unfold RotationLt
+  constructor
+  · rintro ⟨k, hk, he, hl⟩
+    refine ⟨k, hk, ?_, ?_⟩
+    · intro l hlt; rw [← hi l, ← hj l]; exact he l hlt
+    · rw [← hi k, ← hj k]; exact hl
+  · rintro ⟨k, hk, he, hl⟩
+    refine ⟨k, hk, ?_, ?_⟩
+    · intro l hlt; rw [hi l, hj l]; exact he l hlt
+    · rw [hi k, hj k]; exact hl
+
+/-- Exact order identity for arithmetic emissions. Distinct classes retain
+representative rotation order; a class emits in ascending source positions. -/
+theorem cyclicBefore_emit_iff (T : CyclicText) {p r s j k : Nat}
+    (h : MinimalPeriod T p) (hr : r < p) (hs : s < p) :
+    CyclicBefore T (r + j * p) (s + k * p) ↔
+      RotationLt T r s ∨ (r = s ∧ j < k) := by
+  have er : EqualRotation T (r + j * p) r :=
+    (equalRotation_iff_residue T h _ _).2 (by simp [Nat.add_mod, Nat.mod_eq_of_lt hr])
+  have es : EqualRotation T (s + k * p) s :=
+    (equalRotation_iff_residue T h _ _).2 (by simp [Nat.add_mod, Nat.mod_eq_of_lt hs])
+  have et : EqualRotation T (r + j * p) (s + k * p) ↔ r = s := by
+    rw [equalRotation_iff_residue T h]
+    simp [Nat.add_mod, Nat.mod_eq_of_lt hr, Nat.mod_eq_of_lt hs]
+  unfold CyclicBefore
+  rw [rotationLt_congr T er es, et]
+  constructor
+  · rintro (hlt | ⟨hrs, hlt⟩)
+    · exact Or.inl hlt
+    · right; subst s
+      exact ⟨rfl, (Nat.mul_lt_mul_right h.1).1 (Nat.lt_of_add_lt_add_left hlt)⟩
+  · rintro (hlt | ⟨hrs, hlt⟩)
+    · exact Or.inl hlt
+    · right; subst s
+      exact ⟨rfl, emitted_ascending h.1 hlt⟩
+
+/-- Preconditions for the p-entry class-order table. Sorting distinct
+representatives is preprocessing, not part of the per-row bound. -/
+structure OrderedResidues (T : CyclicText) (p : Nat) where
+  data : Array Nat
+  size_eq : data.size = p
+  bounded : ∀ a, a < p → data[a]! < p
+  covers : ∀ r, r < p → ∃ a, a < p ∧ data[a]! = r
+  sorted : ∀ a b, a < b → b < p → RotationLt T data[a]! data[b]!
+
+/-- Main streaming correctness theorem: every earlier emitted row precedes
+every later row in the reference cyclic order with ascending ties. -/
+theorem periodic_emission_sorted (T : CyclicText) {p copies : Nat}
+    (h : MinimalPeriod T p) (hc : 0 < copies) (R : OrderedResidues T p)
+    {a b : Nat} (hab : a < b) (hb : b < p * copies) :
+    CyclicBefore T (emitRow p copies R.data a) (emitRow p copies R.data b) := by
+  have ha : a / copies < p := (Nat.div_lt_iff_lt_mul hc).2 (by omega)
+  have hb' : b / copies < p := (Nat.div_lt_iff_lt_mul hc).2 hb
+  have hr := R.bounded (a / copies) ha
+  have hs := R.bounded (b / copies) hb'
+  unfold emitRow
+  apply (cyclicBefore_emit_iff T h hr hs).2
+  have hle : a / copies ≤ b / copies := Nat.div_le_div_right (Nat.le_of_lt hab)
+  by_cases he : a / copies = b / copies
+  · right
+    refine ⟨congrArg (fun q => R.data[q]!) he, ?_⟩
+    have ea := Nat.mod_add_div a copies
+    have eb := Nat.mod_add_div b copies
+    rw [he] at ea
+    omega
+  · left
+    exact R.sorted _ _ (by omega) hb'
+
+/-- Completeness: every source position occurs at some output row. Together
+with sortedness this is the full cyclic order, not just a subset of it. -/
+theorem periodic_emission_complete (T : CyclicText) {p copies : Nat}
+    (h : MinimalPeriod T p) (hc : 0 < copies) (hn : T.n = copies * p)
+    (R : OrderedResidues T p) {i : Nat} (hi : i < T.n) :
+    ∃ row, row < p * copies ∧ emitRow p copies R.data row = i := by
+  obtain ⟨a, ha, har⟩ := R.covers (i % p) (Nat.mod_lt _ h.1)
+  have hj : i / p < copies := (Nat.div_lt_iff_lt_mul h.1).2 (by omega)
+  let row := a * copies + i / p
+  have hrow : row < p * copies := by
+    have hm := Nat.mul_le_mul_right copies (show a + 1 ≤ p by omega)
+    rw [Nat.add_mul] at hm
+    dsimp [row]; omega
+  refine ⟨row, hrow, ?_⟩
+  have hdiv : row / copies = a := by
+    dsimp [row]
+    rw [Nat.add_comm, Nat.add_mul_div_right _ _ hc, Nat.div_eq_of_lt hj]
+    simp
+  have hmod : row % copies = i / p := by
+    dsimp [row]; simp [Nat.add_mod, Nat.mod_eq_of_lt hj]
+  unfold emitRow
+  rw [hdiv, hmod, har]
+  exact emitted_complete p i
+
+/-- Symbolic emission cost in the word-RAM model: div, mod, lookup,
+multiply, add. This does not claim constant-time arbitrary-precision Nat. -/
+def rowWordOperations : Nat := 5
+
+theorem periodic_row_cost : rowWordOperations = 5 := rfl
+
+theorem periodic_table_space (T : CyclicText) {p : Nat} (R : OrderedResidues T p) :
+    R.data.size = p := R.size_eq
 
 end Sxgc.PiWall
