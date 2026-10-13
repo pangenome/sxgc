@@ -2364,6 +2364,164 @@ static U emit_shard_count(U threads, U items) {
 static void put_le32(char* b, uint32_t v) { for (int i = 0; i < 4; ++i) b[i] = char(v >> (8 * i)); }
 static void put_le64(char* b, U v)       { for (int i = 0; i < 8; ++i) b[i] = char(v >> (8 * i)); }
 
+// Sparse walk protocol prototype. Ordered shard admission is intentional:
+// endShard must consume/unlink its run spool before the next shard starts.
+// No row-position file is opened in this mode. Production stays on the old
+// interface until the finish handshake and both byte gates are implemented.
+struct SparseWalkSink {
+    virtual ~SparseWalkSink() = default;
+    virtual void beginShard(U shard, U lo, U hi) = 0;
+    virtual void row(U row, U position) = 0;
+    virtual void endShard() = 0;
+};
+struct SparseRun {
+    uint8_t c = 0;
+    U len = 0, head = 0, tail = 0;
+    bool operator==(const SparseRun& b) const {
+        return c == b.c && len == b.len && head == b.head && tail == b.tail;
+    }
+};
+struct CapturedSeamClass {
+    U lo = 0, hi = 0, first = 0, before = 0, after = 0;
+    std::vector<U> occ;
+    bool operator==(const CapturedSeamClass& b) const {
+        return lo == b.lo && hi == b.hi && first == b.first &&
+               before == b.before && after == b.after && occ == b.occ;
+    }
+};
+struct SparseSeamCapture {
+    struct Hit { U row = UINT64_MAX, before = 0, after = 0; };
+    U n = 0, depth = 0, nextRow = 0, previous = 0, limit = 0;
+    Hit* previousHit = nullptr;
+    std::vector<CapturedSeamClass> raw;
+    std::unordered_map<U, Hit> targets;
+    void discover(const CorpusText& text, U count, U cap) {
+        n = count; limit = cap;
+        require(n > 0 && limit > 0, "sparse seam discovery bounds");
+        std::vector<U> occ;
+        const uint8_t terminal = text.at(n - 1);
+        // Bound even the initial terminal-byte chain BEFORE allocating a
+        // corpus-sized position set. The production refusal budget depends
+        // on raw run count; the caller must supply that bound explicitly.
+        constexpr U W = 1u << 20;
+        std::vector<uint8_t> bytes(W);
+        for (U off = 0; off < n; off += W) {
+            U z = std::min<U>(W, n - off);
+            text.read(off, bytes.data(), z);
+            for (U j = 0; j < z; ++j) if (bytes[j] == terminal) {
+                require(occ.size() < limit, "sparse seam terminal class budget");
+                occ.push_back(off + j);
+            }
+        }
+        for (U d = 1;; ++d) {
+            require(d <= limit, "sparse seam depth budget");
+            depth = d;
+            if (occ.size() <= 1) break;
+            require(d < n, "sparse seam escaped text");
+            // Bound aggregate raw occurrence storage, including nested
+            // classes, rather than quietly allocating depth * class_size.
+            U used = occ.size();
+            for (const auto& cl : raw) used += cl.occ.size();
+            require(used <= limit, "sparse seam aggregate target budget");
+            CapturedSeamClass cl; cl.first = n - d; cl.occ = occ;
+            raw.push_back(std::move(cl));
+            for (U p : occ) targets.emplace(p, Hit{});
+            std::vector<U> next;
+            uint8_t want = text.at(n - d - 1);
+            for (U q : occ) if (q && text.at(q - 1) == want) next.push_back(q - 1);
+            occ.swap(next);
+        }
+        previous = n + 9; // before row 0 is the last padded suffix
+    }
+    void row(U index, U p) {
+        require(index == nextRow++ && p < n, "sparse seam ordered row coverage");
+        if (previousHit) previousHit->after = p;
+        auto it = targets.find(p);
+        previousHit = it == targets.end() ? nullptr : &it->second;
+        if (previousHit) {
+            require(previousHit->row == UINT64_MAX, "duplicate sparse seam target");
+            previousHit->row = index; previousHit->before = previous;
+            previousHit->after = n; // final-row flank wraps to first pad row
+        }
+        previous = p;
+    }
+    std::vector<CapturedSeamClass> finish() const {
+        require(nextRow == n, "incomplete sparse seam walk");
+        std::vector<CapturedSeamClass> sorted = raw, result;
+        for (auto& cl : sorted) {
+            const auto& hit = targets.at(cl.first);
+            require(hit.row != UINT64_MAX, "missing sparse seam first row");
+            cl.lo = hit.row; cl.hi = cl.lo + cl.occ.size();
+            require(cl.hi <= n, "sparse seam interval outside text");
+            std::sort(cl.occ.begin(), cl.occ.end(), [&](U a, U b) {
+                return targets.at(a).row < targets.at(b).row;
+            });
+            for (U i = 0; i < cl.occ.size(); ++i)
+                require(targets.at(cl.occ[i]).row == cl.lo + i,
+                        "sparse seam class differs from corpus occurrence set");
+            require(cl.occ.front() == cl.first, "sparse seam leftmost row");
+            cl.before = hit.before; cl.after = targets.at(cl.occ.back()).after;
+        }
+        std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b) {
+            return a.lo < b.lo || (a.lo == b.lo && a.hi > b.hi);
+        });
+        U total = 0;
+        for (auto& cl : sorted) {
+            if (!result.empty() && cl.lo < result.back().hi) {
+                require(cl.hi <= result.back().hi, "crossing sparse seam intervals");
+                continue;
+            }
+            total += cl.occ.size(); result.push_back(std::move(cl));
+        }
+        require(total <= limit, "sparse seam final class budget");
+        return result;
+    }
+};
+// Scratch records are char + length + two run samples, never one position
+// per row. Consumer stitches a continued boundary run using head from the
+// left shard and tail from the right; global run bases follow that stitch.
+struct SparseRunSpool : SparseWalkSink {
+    const CorpusText& text;
+    U n, lo = 0, hi = 0, next = 0, records = 0;
+    bool dollar;
+    std::string path;
+    int fd = -1;
+    SparseRun pending;
+    SparseSeamCapture* seam;
+    std::function<void(const std::string&, U, U)> consume;
+    SparseRunSpool(const CorpusText& t, U count, bool dollars,
+                   const std::string& file, SparseSeamCapture* capture,
+                   std::function<void(const std::string&, U, U)> consumer)
+        : text(t), n(count), dollar(dollars), path(file), seam(capture), consume(consumer) {}
+    void flush() {
+        if (!pending.len) return;
+        char b[25]; b[0] = char(pending.c);
+        put_le64(b + 1, pending.len); put_le64(b + 9, pending.head); put_le64(b + 17, pending.tail);
+        xput(fd, b, sizeof b, 25 * records++, "sparse run spool write");
+        pending = {};
+    }
+    void beginShard(U, U begin, U end) override {
+        require(fd < 0 && !fs::exists(path), "previous shard not consumed");
+        lo = next = begin; hi = end; records = 0;
+        fd = ::open(path.c_str(), O_CREAT | O_EXCL | O_WRONLY, 0666);
+        require(fd >= 0, "create sparse run spool");
+    }
+    void row(U index, U p) override {
+        require(index == next++ && index < hi && p < n, "sparse run row coverage");
+        if (seam) seam->row(index, p);
+        uint8_t c = dollar ? (p ? text.at(p - 1) : uint8_t(2)) : text.at((p + n - 1) % n);
+        if (pending.len && pending.c != c) flush();
+        if (!pending.len) { pending.c = c; pending.head = p; }
+        ++pending.len; pending.tail = p;
+    }
+    void endShard() override {
+        require(next == hi, "incomplete sparse run shard");
+        flush(); require(::close(fd) == 0, "close sparse run spool"); fd = -1;
+        consume(path, records, hi - lo);
+        require(!fs::exists(path), "sparse run spool consumer did not unlink");
+    }
+};
+
 // ------------------------------------------------------------ external core merge
 // Per-side anchor/repair stats: k-way generalized (k=2 is the pairwise case).
 struct CoreStats {
@@ -2463,7 +2621,8 @@ static void build_bwt_file(const SideExt& S, const PosOverlay& pos, const std::s
 // global order restricted to a side IS its repaired order, so the merged
 // sequence is the k-way interleave of the k repaired orders.
 static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U threads,
-                            Budget& bud, CoreStats& st, const PairScratch& sc, U hashK, bool pre) {
+                            Budget& bud, CoreStats& st, const PairScratch& sc, U hashK, bool pre,
+                            SparseWalkSink* sparse = nullptr) {
     double last = now_sec();
     const size_t k = sides.size();
     require(k >= 1, "k-way merge needs at least one side");
@@ -2576,7 +2735,8 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
     int fd = -1;
     WmPacker wmPacker;
     const bool packWm = wm_pack_enabled();
-    if (packWm) wmPacker.open(sc.wm, n);
+    if (sparse) require(!fs::exists(sc.wm), "sparse walk refuses existing WM");
+    else if (packWm) wmPacker.open(sc.wm, n);
     else {
         fd = ::open(sc.wm.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
         require(fd >= 0, "create wm scratch");
@@ -2644,8 +2804,9 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
     {
         const bool noPf = getenv("CROSS_NO_PF") != nullptr;
         std::vector<std::thread> ts;
-        for (U s = 0; s < S; ++s)
+        for (U s = 0; s < S; ++s) {
             ts.emplace_back([&, s] {
+                if (sparse) sparse->beginShard(s, R[s], R[s + 1]);
                 Keys skeys; skeys.init(&m2, &hp, n, dollar, &shardBud[s]);
                 constexpr U W = 8192;
                 std::vector<U> buf(W);
@@ -2730,7 +2891,9 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
                     U v = hv[0]; size_t j = hs_[0];
                     ++cur[j];
                     shardPop[s] += now_sec() - q1;
-                    buf[nb++] = v; ++emitted;
+                    if (sparse) { sparse->row(R[s] + emitted, v); ++out; }
+                    else buf[nb++] = v;
+                    ++emitted;
                     if (cur[j] < end[j]) hPopReplace(frontAt(j, cur[j]), j);
                     else {   // side exhausted: move last to root, shrink
                         hv[0] = hv[hm - 1]; hs_[0] = hs_[hm - 1]; --hm;
@@ -2742,10 +2905,13 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
                 U want = 0; for (size_t j = 0; j < k; ++j) want += end[j] - aB[s][j];
                 flushW();
                 require(emitted == want && out == R[s + 1], "shard merge coverage");
+                if (sparse) sparse->endShard();
             });
-        for (auto& t : ts) t.join();
+            if (sparse) ts.back().join();
+        }
+        for (auto& t : ts) if (t.joinable()) t.join();
     }
-    if (packWm) wmPacker.close(); else ::close(fd);
+    if (!sparse) { if (packWm) wmPacker.close(); else ::close(fd); }
     for (U s = 0; s < S; ++s) {
         const Budget& sb = shardBud[s];
         bud.comparisons += sb.comparisons; bud.fast_decided += sb.fast_decided;
