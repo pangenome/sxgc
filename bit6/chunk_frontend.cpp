@@ -85,18 +85,18 @@ static void emit_ref(const fs::path& refPath, const std::array<uint8_t,256>& rem
 static uint64_t cyclic_period(const std::vector<uint8_t>& text) {
     const uint64_t n = text.size();
     uint64_t period = n;
-        {
-            std::vector<uint64_t> divs;
-            for (uint64_t d = 1; d * d <= n; ++d)
-                if (n % d == 0) { divs.push_back(d); if (d != n / d) divs.push_back(n / d); }
-            std::sort(divs.begin(), divs.end());
-            for (uint64_t d : divs) {
-                if (d >= n) continue;
-                bool ok = true;
-                for (uint64_t i = 0; i + d < n && ok; ++i) ok = text[i] == text[i + d];
-                if (ok) { period = d; break; }
-            }
+    {
+        std::vector<uint64_t> divs;
+        for (uint64_t d = 1; d * d <= n; ++d)
+            if (n % d == 0) { divs.push_back(d); if (d != n / d) divs.push_back(n / d); }
+        std::sort(divs.begin(), divs.end());
+        for (uint64_t d : divs) {
+            if (d >= n) continue;
+            bool ok = true;
+            for (uint64_t i = 0; i + d < n && ok; ++i) ok = text[i] == text[i + d];
+            if (ok) { period = d; break; }
         }
+    }
     return period;
 }
 static void emit_pos(const fs::path& posPath, const std::vector<int32_t>& order,
