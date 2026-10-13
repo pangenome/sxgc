@@ -1604,9 +1604,9 @@ struct Keys {
 // over a shared scratch file; verified at boundaries like the dense build was.
 static U hash_spacing() {
     const char* e = getenv("CROSS_HASH_K");
-    // Sixteen-byte spacing halves checkpoint scratch versus the old k=8.
+    // Thirty-two-byte spacing quarters checkpoint scratch versus the old k=8.
     // The env override remains available for measured density tradeoffs.
-    U k = e ? std::stoull(e) : 16;
+    U k = e ? std::stoull(e) : 32;
     require(k >= 1 && k <= 4096, "CROSS_HASH_K out of range");
     return k;
 }
