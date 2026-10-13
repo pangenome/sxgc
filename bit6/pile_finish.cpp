@@ -36,6 +36,9 @@
 #include <sys/mman.h>
 #include <immintrin.h>
 #include <mutex>
+#include <condition_variable>
+#include <shared_mutex>
+#include <sys/resource.h>
 #include <map>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -130,6 +133,12 @@ struct CorpusText {
     // the pread path unchanged.
     const uint8_t* cmap = nullptr;
     void* cmapRegion = nullptr;
+    struct Window { void* p = nullptr; uint64_t base = INF, len = 0; std::atomic<uint64_t> age{0}; };
+    mutable std::array<Window, 4> windows{};
+    mutable std::shared_mutex windowMutex;
+    mutable std::atomic<uint64_t> windowClock{0};
+    mutable bool fallbackLogged = false;
+    uint64_t windowBytes = 1ull << 30;
     explicit CorpusText(const std::string& path, const uint8_t map[256]) {
         fd = ::open(path.c_str(), O_RDONLY);
         pf_check(fd >= 0, "open corpus (read-only adapter)");
@@ -137,11 +146,17 @@ struct CorpusText {
         pf_check(fstat(fd, &st) == 0, "stat corpus");
         size_ = uint64_t(st.st_size);
         memcpy(remap, map, 256);
-        void* p = ::mmap(nullptr, size_, PROT_READ, MAP_SHARED, fd, 0);
+        struct rlimit limit {};
+        pf_check(getrlimit(RLIMIT_AS, &limit) == 0, "read corpus address-space limit");
+        uint64_t mapBudget = 32ull << 30;
+        if (limit.rlim_cur != RLIM_INFINITY) mapBudget = std::min<uint64_t>(mapBudget, limit.rlim_cur / 3);
+        windowBytes = std::max<uint64_t>(4096, (mapBudget / windows.size()) & ~uint64_t(4095));
+        void* p = size_ <= std::min<uint64_t>(mapBudget, 1ull << 30) ? ::mmap(nullptr, size_, PROT_READ, MAP_SHARED, fd, 0) : MAP_FAILED;
         if (p != MAP_FAILED) {
             cmap = (const uint8_t*)p;
             cmapRegion = p;
         }
+        if (!cmap) fprintf(stderr, "PILE_FINISH_CORPUS_WINDOWED regions=%zu region_bytes=%llu mapped_cap=%llu\n", windows.size(), (unsigned long long)windowBytes, (unsigned long long)(windows.size() * windowBytes));
         bool identity = true;
         for (unsigned i = 0; i < 256; ++i) identity = identity && remap[i] == uint8_t(i);
         fprintf(stderr, "PILE_FINISH_CORPUS path=%s bytes=%llu remap_identity=%d read_only=1 rotation=0 derivation=T[i]=REMAP[corpus[i]] mmap=%d\n",
@@ -149,6 +164,7 @@ struct CorpusText {
     }
     ~CorpusText() {
         if (cmapRegion) { ::munmap(cmapRegion, size_); cmapRegion = nullptr; cmap = nullptr; }
+        for (auto& w : windows) if (w.p) ::munmap(w.p, w.len);
         if (fd >= 0) ::close(fd);
     }
     CorpusText(const CorpusText&) = delete;
@@ -157,6 +173,36 @@ struct CorpusText {
     uint8_t operator[](uint64_t i) const {
         if (i >= size_) pf_fail("corpus adapter bounds");
         if (cmap) return remap[cmap[i]];
+        {
+            // Shared readers pin mappings through the byte read; only misses evict.
+            uint64_t base = (i / windowBytes) * windowBytes;
+            {
+                std::shared_lock<std::shared_mutex> lock(windowMutex);
+                for (auto& w : windows) if (w.base == base && w.p) {
+                    w.age.store(++windowClock, std::memory_order_relaxed);
+                    return remap[((uint8_t*)w.p)[i - base]];
+                }
+            }
+            std::unique_lock<std::shared_mutex> lock(windowMutex);
+            Window* target = &windows[0];
+            for (auto& w : windows) {
+                if (w.base == base && w.p) { w.age.store(++windowClock, std::memory_order_relaxed); return remap[((uint8_t*)w.p)[i - base]]; }
+                if (w.age.load(std::memory_order_relaxed) < target->age.load(std::memory_order_relaxed)) target = &w;
+            }
+            if (target->p) ::munmap(target->p, target->len);
+            target->p = nullptr; target->base = INF;
+            uint64_t len = std::min(windowBytes, size_ - base);
+            void* p = ::mmap(nullptr, len, PROT_READ, MAP_SHARED, fd, off_t(base));
+            if (p != MAP_FAILED) {
+                target->p = p; target->base = base; target->len = len;
+                target->age.store(++windowClock, std::memory_order_relaxed);
+                return remap[((uint8_t*)p)[i - base]];
+            }
+            if (!fallbackLogged) {
+                fprintf(stderr, "PILE_FINISH_CORPUS_FALLBACK pread=1 window_bytes=%llu errno=%d reason=%s\n", (unsigned long long)windowBytes, errno, strerror(errno));
+                fallbackLogged = true;
+            }
+        }
         constexpr uint64_t B = 65536;
         struct Cache { uint64_t next = 0; const CorpusText* owner = nullptr;
                        std::array<uint64_t, 4> tags{{INF, INF, INF, INF}};
@@ -976,27 +1022,31 @@ struct Sweep {
 // buffer; when the global RAM budget is exceeded the largest bucket is
 // sorted and appended to its disc file as a delta-varint run. The EF pass
 // walks buckets in value order (ranges are disjoint), merging each
-// bucket's RAM part with its sorted runs.
+// bucket's compressed runs with a bounded 64-way heap.
 struct WitBuckets {
     uint64_t P = 0, n = 0;
     std::string prefix;
     uint64_t ramBudget = 1ull << 30;
     std::vector<std::vector<uint64_t>> buf;
     std::vector<int> fds;
+    struct Run { uint64_t offset, bytes; uint32_t count; };
+    std::vector<std::vector<Run>> runs;
     uint64_t totalRam = 0, totalValues = 0, spilled = 0;
     WitBuckets(uint64_t nNorm, uint64_t runs, const std::string& pfx, uint64_t budget)
         : n(nNorm), prefix(pfx), ramBudget(budget) {
         P = 4096;
         while (P < 65536 && P * 262144 < runs) P *= 2;
         buf.resize(P);
+        this->runs.resize(P);
         fds.assign(P, -1);
     }
     uint64_t bucketOf(uint64_t v) const { return v * P / n; }
     void add(uint64_t v) {
         pf_check(v < n, "witness out of range");
         uint64_t b = bucketOf(v);
+        size_t oldCapacity = buf[b].capacity();
         buf[b].push_back(v);
-        totalRam += 8;
+        totalRam += 8 * (buf[b].capacity() - oldCapacity);
         ++totalValues;
         while (totalRam > ramBudget) spillLargest();
     }
@@ -1011,11 +1061,15 @@ struct WitBuckets {
     void spillLargest() {
         uint64_t best = 0;
         for (uint64_t b = 1; b < P; ++b) if (buf[b].size() > buf[best].size()) best = b;
-        if (buf[best].empty()) { totalRam = 0; return; }
+        spillBucket(best);
+    }
+    void spillBucket(uint64_t best) {
+        if (buf[best].empty()) return;
         std::vector<uint64_t>& v = buf[best];
         std::sort(v.begin(), v.end());
         std::vector<uint8_t> out;
         out.reserve(v.size() + 16);
+        pf_check(v.size() <= UINT32_MAX, "witness spill run count overflow");
         uint32_t cnt = uint32_t(v.size());
         out.insert(out.end(), (const char*)&cnt, (const char*)&cnt + 4);
         putVarint(out, v[0]);
@@ -1025,78 +1079,117 @@ struct WitBuckets {
             fds[best] = ::open(name.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_APPEND, 0666);
             pf_check(fds[best] >= 0, "open witness bucket");
         }
+        off_t end = lseek(fds[best], 0, SEEK_END);
+        pf_check(end >= 0, "seek witness bucket");
+        uint64_t offset = uint64_t(end);
+        runs[best].push_back({offset + 4, out.size() - 4, cnt});
         pf_write_full(fds[best], out.data(), out.size(), "witness bucket");
-        totalRam -= 8 * v.size();
-        v.clear();
+        totalRam -= 8 * v.capacity();
+        std::vector<uint64_t>().swap(v);
         ++spilled;
     }
-    // PILE-WEEK (pile-week-v1): each bucket is an independent value range;
-    // sorting every bucket is embarrassingly parallel across buckets (the
-    // old path sorted serially inside for_each_sorted: ~283M x log compares
-    // at 1GB was the m5-ef phase's bulk). RAM bound: one bucket per worker
-    // (the same bound the spill path already maintains). The merged sorted
-    // stream is IDENTICAL - the m5 EF byte gates arbitrate.
-    bool presorted = false;
-    void presort_parallel(int threads) {
-        if (presorted) return;
-        std::atomic<uint64_t> next{0};
-        int tc = std::max(1, std::min(threads, 4096));
-        std::vector<std::thread> ts;
-        for (int t = 0; t < tc && uint64_t(t) < P; ++t)
-            ts.emplace_back([&] {
-                for (;;) {
-                    uint64_t b = next.fetch_add(1);
-                    if (b >= P) break;
-                    std::vector<uint64_t> vals = std::move(buf[b]);
-                    buf[b] = std::vector<uint64_t>();
-                    if (fds[b] >= 0) {
-                        std::string name = prefix + ".wit-" + std::to_string(b);
-                        int fd = ::open(name.c_str(), O_RDONLY);
-                        pf_check(fd >= 0, "open witness bucket " + name);
-                        struct stat st {};
-                        pf_check(fstat(fd, &st) == 0, "stat witness bucket");
-                        std::vector<uint8_t> data(uint64_t(st.st_size));
-                        pf_read_full(fd, data.data(), data.size(), "witness bucket");
-                        ::close(fd);
-                        size_t pos = 0;
-                        while (pos < data.size()) {
-                            uint32_t cnt;
-                            pf_check(pos + 4 <= data.size(), "witness run truncated");
-                            memcpy(&cnt, data.data() + pos, 4); pos += 4;
-                            uint64_t prev = 0;
-                            for (uint32_t i = 0; i < cnt; ++i) {
-                                uint64_t v = 0; unsigned shift = 0;
-                                for (;;) {
-                                    pf_check(pos < data.size(), "witness varint truncated");
-                                    uint8_t x = data[pos++];
-                                    v |= uint64_t(x & 127) << shift;
-                                    if (!(x & 128)) break;
-                                    shift += 7;
-                                    pf_check(shift < 64, "witness varint overflow");
-                                }
-                                vals.push_back(prev + v);
-                                prev += v;
-                            }
-                        }
-                    }
-                    std::sort(vals.begin(), vals.end());
-                    buf[b] = std::move(vals);
-                }
-            });
-        for (auto& t : ts) t.join();
-        presorted = true;
+    void presort_parallel(int) {
+        // Spill the remaining bounded RAM before opening the merge cursors.
+        for (uint64_t b = 0; b < P; ++b) spillBucket(b);
     }
-    // Iterate all witnesses in ascending order (buckets are value-disjoint,
-    // processed in value order; presort_parallel merged each bucket's RAM
-    // part with its sorted disc runs and sorted the result).
     template <typename Visit>
     void for_each_sorted(Visit&& visit) {
-        pf_check(presorted, "for_each_sorted requires presort_parallel");
-        std::vector<uint64_t> vals;
+        struct Cursor {
+            Run run; uint64_t pos = 0, value = 0;
+            uint32_t left; std::array<uint8_t, 4096> data;
+            size_t at = 0, have = 0;
+            uint8_t byte(int fd) {
+                if (at == have) {
+                    have = size_t(std::min<uint64_t>(data.size(), run.bytes - pos));
+                    pf_check(have != 0, "witness varint truncated");
+                    pf_pread_full(fd, data.data(), have, run.offset + pos, "witness run");
+                    pos += have; at = 0;
+                }
+                return data[at++];
+            }
+            void advance(int fd) {
+                uint64_t delta = 0; unsigned shift = 0;
+                for (;;) {
+                    uint8_t x = byte(fd);
+                    pf_check(shift < 64 && (shift != 63 || (x & 127) <= 1), "witness varint overflow");
+                    delta |= uint64_t(x & 127) << shift;
+                    if (!(x & 128)) break;
+                    shift += 7;
+                }
+                pf_check(delta <= INF - value, "witness delta overflow");
+                value += delta; --left;
+            }
+        };
+        using Item = std::pair<uint64_t, size_t>;
+        auto merge = [&](int fd, const std::vector<Run>& input, size_t begin, size_t end, auto emit) {
+            std::vector<Cursor> cursors;
+            cursors.reserve(end - begin);
+            std::priority_queue<Item, std::vector<Item>, std::greater<Item>> heap;
+            for (size_t i = begin; i < end; ++i) {
+                auto run = input[i];
+                pf_check(run.count != 0, "empty witness run");
+                cursors.push_back(Cursor{run, 0, 0, run.count, {}});
+                cursors.back().advance(fd);
+                heap.push({cursors.back().value, cursors.size() - 1});
+            }
+            while (!heap.empty()) {
+                auto [value, index] = heap.top(); heap.pop();
+                emit(value);
+                auto& c = cursors[index];
+                if (c.left) { c.advance(fd); heap.push({c.value, index}); }
+            }
+        };
+        constexpr size_t FANIN = 64;
         for (uint64_t b = 0; b < P; ++b) {
-            vals = std::move(buf[b]);
-            buf[b] = std::vector<uint64_t>();
-            for (uint64_t v : vals) visit(v);
+            if (runs[b].empty()) continue;
+            std::string name = prefix + ".wit-" + std::to_string(b);
+            int fd = ::open(name.c_str(), O_RDONLY);
+            pf_check(fd >= 0, "open witness merge");
+            // Reduce oversized heaps in bounded passes, retaining delta-varint scratch.
+            while (runs[b].size() > FANIN) {
+                std::string nextName = name + ".merge";
+                int out = ::open(nextName.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0600);
+                pf_check(out >= 0, "create witness merge pass");
+                std::vector<Run> next;
+                uint64_t offset = 0;
+                for (size_t begin = 0; begin < runs[b].size(); begin += FANIN) {
+                    size_t end = std::min(runs[b].size(), begin + FANIN);
+                    uint64_t count = 0;
+                    for (size_t j = begin; j < end; ++j) count += runs[b][j].count;
+                    pf_check(count <= UINT32_MAX, "witness merged run count overflow");
+                    uint32_t cnt = uint32_t(count);
+                    pf_write_full(out, &cnt, 4, "witness merge count");
+                    uint64_t bytes = 0, prev = 0;
+                    std::vector<uint8_t> encoded;
+                    encoded.reserve(65536);
+                    auto flush = [&] {
+                        pf_write_full(out, encoded.data(), encoded.size(), "witness merge pass");
+                        bytes += encoded.size(); encoded.clear();
+                    };
+                    merge(fd, runs[b], begin, end, [&](uint64_t value) {
+                        pf_check(value >= prev, "witness merge order");
+                        putVarint(encoded, value - prev); prev = value;
+                        if (encoded.size() >= 65536) flush();
+                    });
+                    flush();
+                    next.push_back({offset + 4, bytes, cnt}); offset += 4 + bytes;
+                }
+                pf_check(::close(out) == 0, "close witness merge pass");
+                ::close(fd); ::close(fds[b]);
+                pf_check(::unlink(name.c_str()) == 0, "delete consumed witness pass");
+                pf_check(::rename(nextName.c_str(), name.c_str()) == 0, "replace witness pass");
+                fds[b] = ::open(name.c_str(), O_WRONLY);
+                pf_check(fds[b] >= 0, "reopen witness scratch accounting");
+                fd = ::open(name.c_str(), O_RDONLY);
+                pf_check(fd >= 0, "reopen witness merge pass");
+                runs[b] = std::move(next);
+            }
+            merge(fd, runs[b], 0, runs[b].size(), visit);
+            ::close(fd);
+            // This bucket's values will never be visited again.
+            ::close(fds[b]); fds[b] = -1;
+            pf_check(::unlink(name.c_str()) == 0, "delete consumed witness bucket");
+            std::vector<Run>().swap(runs[b]);
         }
     }
     uint64_t discBytes() const {
@@ -1129,13 +1222,39 @@ struct WitBuckets {
 // EF high stream's gaps, gamma's prefixes) flush in bulk. The container's
 // byte-identity gates are the arbiter.
 struct BitsOut {
+    std::string path;
+    int fd = -1;
     std::vector<uint8_t> mem;
+    uint64_t byteCount = 0;
+    explicit BitsOut(const std::string& path_) : path(path_) {
+        fd = ::open(path.c_str(), O_RDWR | O_CREAT | O_EXCL, 0600);
+        pf_check(fd >= 0, "create bit spool");
+        mem.reserve(1 << 20);
+    }
+    ~BitsOut() { if (fd >= 0) ::close(fd); ::unlink(path.c_str()); }
+    void drain() {
+        pf_write_full(fd, mem.data(), mem.size(), "bit spool");
+        byteCount += mem.size(); mem.clear();
+    }
+    void byte(uint8_t v) {
+        mem.push_back(v);
+        if (mem.size() == (1 << 20)) drain();
+    }
+    template<class Container> void copyTo(Container& out) {
+        drain();
+        std::array<uint8_t, 1 << 20> block;
+        for (uint64_t pos = 0; pos < byteCount;) {
+            size_t z = size_t(std::min<uint64_t>(block.size(), byteCount - pos));
+            pf_pread_full(fd, block.data(), z, pos, "bit spool");
+            out.write(block.data(), z); pos += z;
+        }
+    }
     uint64_t bitPos = 0;
     unsigned __int128 acc = 0;
     unsigned nbits = 0;
     void flush8() {
         while (nbits >= 8) {
-            mem.push_back(uint8_t(acc));
+            byte(uint8_t(acc));
             acc >>= 8;
             nbits -= 8;
         }
@@ -1151,7 +1270,7 @@ struct BitsOut {
         unsigned take = unsigned(std::min<uint64_t>(k, 8 - nbits));
         nbits += take; bitPos += take; k -= take;   // zeros are implicit in acc
         if (nbits >= 8) flush8();
-        while (k >= 8) { mem.push_back(0); bitPos += 8; k -= 8; }
+        while (k >= 8) { byte(0); bitPos += 8; k -= 8; }
         if (k) { nbits += unsigned(k); bitPos += k; }
     }
     static uint64_t revbits(uint64_t v, unsigned w) {
@@ -1185,12 +1304,12 @@ struct BitsOut {
     // the pending partial byte before the stream is consumed.
     void pad() {
         if (nbits) {
-            mem.push_back(uint8_t(acc));
+            byte(uint8_t(acc));
             acc = 0;
             nbits = 0;
         }
     }
-    size_t bytes() const { return mem.size(); }
+    size_t bytes() const { return byteCount + mem.size(); }
 };
 
 // ------------------------------------------------------------ container out
@@ -1266,6 +1385,43 @@ struct ContainerOut {
         pf_check(::unlink(temp.c_str()) == 0, "unlink container partial");
         done = true;
         fprintf(stderr, "SXI2_PASS bytes=%llu lite=1 members=%zu\n", (unsigned long long)length, ms.size());
+    }
+};
+
+// One pool for all bands; dispatch returns only after every worker flushes its counters.
+struct FinishPool {
+    std::mutex mutex;
+    std::condition_variable work, complete;
+    std::vector<std::thread> workers;
+    std::function<void(int)> task;
+    uint64_t generation = 0;
+    size_t remaining = 0;
+    bool stopping = false;
+    explicit FinishPool(int count) {
+        for (int t = 0; t < count; ++t) workers.emplace_back([this, t] {
+            uint64_t seen = 0;
+            std::unique_lock<std::mutex> lock(mutex);
+            for (;;) {
+                work.wait(lock, [&] { return stopping || generation != seen; });
+                if (stopping) return;
+                seen = generation;
+                auto job = task;
+                lock.unlock(); job(t); lock.lock();
+                if (--remaining == 0) complete.notify_one();
+            }
+        });
+    }
+    void run(std::function<void(int)> job) {
+        std::unique_lock<std::mutex> lock(mutex);
+        task = std::move(job); remaining = workers.size(); ++generation;
+        work.notify_all();
+        complete.wait(lock, [&] { return remaining == 0; });
+        task = {};
+    }
+    ~FinishPool() {
+        { std::lock_guard<std::mutex> lock(mutex); stopping = true; }
+        work.notify_all();
+        for (auto& worker : workers) worker.join();
     }
 };
 
@@ -1517,6 +1673,8 @@ int main(int argc, char** argv) {
         double lceWall = 0, repairWall = 0, advanceWall = 0;
         std::vector<RawRun> raws;
         uint64_t nbands = (R + src.B - 1) / src.B;
+        uint64_t expectedRlebwtBytes = 0;
+        FinishPool pool(std::max(1, std::min(threads, 256)));
         // LCE + sweep advance for the buffered runs (nbuf/gidx, in stream
         // order). Used per band AND for the repair stream's final flush -
         // the state machine must see every one of the rNorm runs.
@@ -1528,10 +1686,7 @@ int main(int argc, char** argv) {
             double t0 = tnow();
             {
                 std::atomic<size_t> next{0};
-                int tc = std::max(1, std::min(threads, 256));
-                std::vector<std::thread> ts;
-                for (int t = 0; t < tc; ++t)
-                    ts.emplace_back([&, t] {
+                pool.run([&](int t) {
                         slim_set_thread_shard(unsigned(t));
                         for (;;) {
                             size_t i = next.fetch_add(1);
@@ -1548,7 +1703,6 @@ int main(int argc, char** argv) {
                         }
                         slimLce.flush_thread();
                     });
-                for (auto& t : ts) t.join();
             }
             lceWall += tnow() - t0;
             if (bridge)
@@ -1576,7 +1730,10 @@ int main(int argc, char** argv) {
                 fprintf(stderr, "PFP_TERMINAL byte=0x%02llx source=padding-row raw_n=%llu raw_r=%llu\n",
                         (unsigned long long)rs.terminal, (unsigned long long)N, (unsigned long long)R);
             }
-            for (const auto& raw : raws) rs.feed_raw(raw);
+            for (const auto& raw : raws) {
+                expectedRlebwtBytes += 4 * ((raw.len + 0x7fffff - 1) / 0x7fffff);
+                rs.feed_raw(raw);
+            }
             repairWall += tnow() - t0;
             if (nbuf.empty()) continue;
             processBuffer();
@@ -1660,7 +1817,7 @@ int main(int argc, char** argv) {
             unsigned l = chi ? unsigned(std::max(0, int(std::log2(double(n + 1) / double(chi))))) : 0;
             if (l > 63) l = 63;
             uint64_t lowbits = chi * l, highbits = chi ? (n >> l) + chi + 1 : 0;
-            BitsOut low, high;
+            BitsOut low(prefix + ".bits-low"), high(prefix + ".bits-high");
             uint64_t i = 0, hpos = 0, prev = ~0ull;
             size_t sidx = 0;
             buckets.presort_parallel(threads);
@@ -1684,8 +1841,8 @@ int main(int argc, char** argv) {
             high.pad();
             container.begin(5, 105, chi);
             container.num(l); container.num(lowbits); container.num(highbits);
-            container.write(low.mem.data(), low.mem.size());
-            container.write(high.mem.data(), high.mem.size());
+            low.copyTo(container);
+            high.copyTo(container);
         }
         if (!wantSamples.empty())
             fprintf(stderr, "WITNESS_SAMPLE_CHECK samples=%zu passed=1\n", wantSamples.size());
@@ -1709,9 +1866,13 @@ int main(int argc, char** argv) {
             pf_check(cnt == (rNorm + 1023) / 1024, "sparse count");
             container.begin(11, 111, cnt);
             container.num(10); container.num(cnt);
-            std::vector<uint64_t> vals(cnt);
-            pf_read_full(fd, vals.data(), 8 * cnt, "sparse values");
-            for (uint64_t v : vals) container.num(v);
+            std::array<uint64_t, 8192> vals;
+            for (uint64_t pos = 0; pos < cnt;) {
+                size_t take = size_t(std::min<uint64_t>(vals.size(), cnt - pos));
+                pf_read_full(fd, vals.data(), 8 * take, "sparse values");
+                for (size_t j = 0; j < take; ++j) container.num(vals[j]);
+                pos += take;
+            }
             ::close(fd);
         }
 
@@ -1760,63 +1921,20 @@ int main(int argc, char** argv) {
                 codes[sym] = code++;
                 prevLen = len;
             }
-            BitsOut headBits, lenBits;
-            headBits.mem.reserve(rNorm / 2);
-            lenBits.mem.reserve(rNorm);
+            BitsOut headBits(prefix + ".bits-head"), lenBits(prefix + ".bits-len");
             uint64_t replayRuns = 0;
             {
                 // Barrier: the merge publishes the rlebwt body only after
                 // every piece band is emitted (the ordered segment
                 // concatenation is the emission's last step). The sweep's
                 // final consumed band implies the walk is done, but the
-                // concat write may still be in flight - decode-count the
-                // file until it holds all R runs and N rows.
+                // concat write may still be in flight. The piece lengths
+                // determine its exact word count; size is the completion sentinel.
                 double waited = 0;
                 for (;;) {
-                    bool complete = false;
-                    {
-                        int bfd = ::open((prefix + ".rlebwt").c_str(), O_RDONLY);
-                        pf_check(bfd >= 0, "open rlebwt (m1 barrier)");
-                        std::vector<uint8_t> buf(1 << 20);
-                        size_t have = 0, pos = 0;
-                        uint64_t runs = 0, rows = 0;
-                        auto word = [&](uint32_t& w32) -> bool {
-                            if (pos + 4 > have) {
-                                if (pos < have) { memmove(buf.data(), buf.data() + pos, have - pos); have -= pos; }
-                                else have = 0;
-                                pos = 0;
-                                ssize_t z = ::read(bfd, buf.data() + have, buf.size() - have);
-                                if (z <= 0) return false;
-                                have += size_t(z);
-                                if (pos + 4 > have) return false;
-                            }
-                            memcpy(&w32, buf.data() + pos, 4);
-                            pos += 4;
-                            return true;
-                        };
-                        bool ok = true;
-                        for (;;) {
-                            uint32_t w32;
-                            if (!word(w32)) break;
-                            uint8_t c = uint8_t(w32 & 255);
-                            uint64_t len = (w32 >> 8) & 0x7fffff;
-                            bool cont;
-                            do {
-                                cont = w32 >> 31;
-                                if (cont) {
-                                    if (!word(w32)) { ok = false; break; }
-                                    if (uint8_t(w32 & 255) != c) { ok = false; break; }
-                                    len += (w32 >> 8) & 0x7fffff;
-                                }
-                            } while (cont);
-                            if (!ok) break;
-                            ++runs;
-                            rows += len;
-                            if (rows > N) { ok = false; break; }
-                        }
-                        ::close(bfd);
-                        complete = ok && runs == R && rows == N;
-                    }
+                    struct stat st {};
+                    bool complete = ::stat((prefix + ".rlebwt").c_str(), &st) == 0 &&
+                                    uint64_t(st.st_size) == expectedRlebwtBytes;
                     if (complete) break;
                     if (waited > pollTimeout) pf_fail("timeout waiting for the complete rlebwt");
                     std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -1878,8 +1996,8 @@ int main(int argc, char** argv) {
             container.write(lens.data(), 256);
             container.num(headBits.bitPos);
             container.num(lenBits.bitPos);
-            container.write(headBits.mem.data(), headBits.mem.size());
-            container.write(lenBits.mem.data(), lenBits.mem.size());
+            headBits.copyTo(container);
+            lenBits.copyTo(container);
         }
         phase("m1-runs", last);
 
