@@ -808,7 +808,12 @@ struct RepairStream {
         }
         if (v.c == terminal) beforeTerminal += v.len;
         if (v.c == 2) v.c = uint8_t(terminal);
-        pf_check(v.c >= 6 && v.c < 256, "unsupported text alphabet");
+        // Alphabet invariant: the production remap vacates 0x01-0x04 as control
+        // markers (permuted with 0xfc-0xff), so remapped TEXT never contains
+        // them; c==2 (the SA-zero dollar row) was rewritten to the terminal
+        // above. 0x00 and 0x05 ARE legal text (real pile bytes; measured 18
+        // and 23 occurrences at 10GB). Forbid exactly the vacated range.
+        pf_check(v.c != 1 && v.c != 2 && v.c != 3 && v.c != 4, "unsupported text alphabet");
         if (srcHave && srcPending.c == v.c) { srcPending.len += v.len; srcPending.tail = v.tail; }
         else {
             if (srcHave) seamSplice({srcPending.c, srcPending.len, srcPending.head, srcPending.tail});
