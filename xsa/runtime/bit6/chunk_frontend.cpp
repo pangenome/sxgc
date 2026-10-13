@@ -76,8 +76,8 @@ static void emit_ref(const fs::path& refPath, const std::array<uint8_t,256>& rem
 // it builds the runs, so persisting it is one write with zero extra
 // compute: the merge's raw-chunk load collapses to pure reads (1GB: load
 // 1845s -> 3.0s). Layout:
-//   "SXP4" | u32 ver=1 | u64 offset | u64 n | u64 period | u64 rsvd |
-//   u64 groups | per group: startRow, byteOff, basePos | zigzag varints
+//   "SXP4" | u32 ver=2 | u64 offset | u64 n | u64 period | u64 rsvd |
+//   u64 groups | per group: startRow, byteOff, basePos | 5 x 256 Huffman lengths | coded zigzag varint bytes
 // CHUNK_NO_POS=1 restores the legacy artifact set (walk-derived loads).
 // CHUNK_POS_MODE=dense writes the SXP3 8-byte column instead: compact
 // cuts the pos disc ~2.4x but costs ~2.3x walk wall (windowed decode per
@@ -137,33 +137,33 @@ static void emit_pos(const fs::path& posPath, const std::vector<int32_t>& order,
             std::array<std::array<unsigned,256>,5> modelLengths{};
             std::array<std::array<uint64_t,256>,5> modelCodes{};
             for (unsigned context=0;context<5;++context) {
-            auto& freq=frequencies[context];
-            struct Node { uint64_t weight; int left, right; };
-            std::vector<Node> nodes(256);
-            using Item = std::pair<uint64_t,int>;
-            std::priority_queue<Item,std::vector<Item>,std::greater<Item>> heap;
-            for (int c = 0; c < 256; ++c) if (freq[c]) heap.push({freq[c],c});
-            if (heap.empty()) heap.push({1,0});
-            while (heap.size() > 1) {
-                auto x=heap.top(); heap.pop(); auto y=heap.top(); heap.pop();
-                int id=nodes.size(); nodes.push_back({x.first+y.first,x.second,y.second});
-                heap.push({nodes.back().weight,id});
-            }
-            auto& lengths=modelLengths[context];
-            auto visit = [&](auto&& self, int id, unsigned depth) -> void {
-                if (id < 256) { lengths[id]=std::max(1u,depth); return; }
-                self(self,nodes[id].left,depth+1); self(self,nodes[id].right,depth+1);
-            };
-            visit(visit,heap.top().second,0);
-            std::vector<std::pair<unsigned,unsigned>> alphabet;
-            for (unsigned c=0;c<256;++c) if (lengths[c]) alphabet.push_back({lengths[c],c});
-            std::sort(alphabet.begin(),alphabet.end());
-            auto& codes=modelCodes[context];
-            uint64_t code=0; unsigned previous=0;
-            for (auto [len,c]:alphabet) {
-                require(len <= 32,"pos Huffman code too long");
-                code <<= len-previous; codes[c]=code++; previous=len;
-            }
+                auto& freq=frequencies[context];
+                struct Node { uint64_t weight; int left, right; };
+                std::vector<Node> nodes(256);
+                using Item = std::pair<uint64_t,int>;
+                std::priority_queue<Item,std::vector<Item>,std::greater<Item>> heap;
+                for (int c = 0; c < 256; ++c) if (freq[c]) heap.push({freq[c],c});
+                if (heap.empty()) heap.push({1,0});
+                while (heap.size() > 1) {
+                    auto x=heap.top(); heap.pop(); auto y=heap.top(); heap.pop();
+                    int id=nodes.size(); nodes.push_back({x.first+y.first,x.second,y.second});
+                    heap.push({nodes.back().weight,id});
+                }
+                auto& lengths=modelLengths[context];
+                auto visit = [&](auto&& self, int id, unsigned depth) -> void {
+                    if (id < 256) { lengths[id]=std::max(1u,depth); return; }
+                    self(self,nodes[id].left,depth+1); self(self,nodes[id].right,depth+1);
+                };
+                visit(visit,heap.top().second,0);
+                std::vector<std::pair<unsigned,unsigned>> alphabet;
+                for (unsigned c=0;c<256;++c) if (lengths[c]) alphabet.push_back({lengths[c],c});
+                std::sort(alphabet.begin(),alphabet.end());
+                auto& codes=modelCodes[context];
+                uint64_t code=0; unsigned previous=0;
+                for (auto [len,c]:alphabet) {
+                    require(len <= 32,"pos Huffman code too long");
+                    code <<= len-previous; codes[c]=code++; previous=len;
+                }
             }
             // SXP4 v2: model follows the unchanged group table.
             // Model must follow table, so seek past its reserved region.

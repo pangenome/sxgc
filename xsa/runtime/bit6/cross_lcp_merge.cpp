@@ -1230,10 +1230,10 @@ struct PosColumn {
         if (!buf.empty()) pread_exact(buf.data(), spanEnd - boff, boff);
         U pos = base, idx = b0, p = 0, bit=0;
         auto nextByte = [&](unsigned context) -> uint8_t {
+            if (!entropy) { require(p<buf.size(),"SXP4 byte overrun"); return buf[p++]; }
             require(context<5,"SXP4 Huffman context overflow");
             const auto& firstCode=modelFirstCode[context]; const auto& firstSymbol=modelFirstSymbol[context];
             const auto& codeCounts=modelCodeCounts[context]; const auto& alphabet=modelAlphabet[context];
-            if (!entropy) { require(p<buf.size(),"SXP4 byte overrun"); return buf[p++]; }
             U code=0;
             for (unsigned len=1;len<=32;++len) {
                 require(bit/8<buf.size(),"SXP4 Huffman overrun");
