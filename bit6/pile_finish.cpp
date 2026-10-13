@@ -37,6 +37,7 @@
 #include <immintrin.h>
 #include <mutex>
 #include <condition_variable>
+#include <shared_mutex>
 #include <sys/resource.h>
 #include <map>
 #include <sys/stat.h>
@@ -132,10 +133,10 @@ struct CorpusText {
     // the pread path unchanged.
     const uint8_t* cmap = nullptr;
     void* cmapRegion = nullptr;
-    struct Window { void* p = nullptr; uint64_t base = INF, len = 0, age = 0; };
+    struct Window { void* p = nullptr; uint64_t base = INF, len = 0; std::atomic<uint64_t> age{0}; };
     mutable std::array<Window, 8> windows{};
-    mutable std::mutex windowMutex;
-    mutable uint64_t windowClock = 0;
+    mutable std::shared_mutex windowMutex;
+    mutable std::atomic<uint64_t> windowClock{0};
     mutable bool fallbackLogged = false;
     uint64_t windowBytes = 1ull << 30;
     explicit CorpusText(const std::string& path, const uint8_t map[256]) {
@@ -173,20 +174,28 @@ struct CorpusText {
         if (i >= size_) pf_fail("corpus adapter bounds");
         if (cmap) return remap[cmap[i]];
         {
-            // Hold the lock through the byte read: eviction cannot unmap an active reader.
-            std::lock_guard<std::mutex> lock(windowMutex);
+            // Shared readers pin mappings through the byte read; only misses evict.
             uint64_t base = (i / windowBytes) * windowBytes;
+            {
+                std::shared_lock<std::shared_mutex> lock(windowMutex);
+                for (auto& w : windows) if (w.base == base && w.p) {
+                    w.age.store(++windowClock, std::memory_order_relaxed);
+                    return remap[((uint8_t*)w.p)[i - base]];
+                }
+            }
+            std::unique_lock<std::shared_mutex> lock(windowMutex);
             Window* target = &windows[0];
             for (auto& w : windows) {
-                if (w.base == base && w.p) { w.age = ++windowClock; return remap[((uint8_t*)w.p)[i - base]]; }
-                if (w.age < target->age) target = &w;
+                if (w.base == base && w.p) { w.age.store(++windowClock, std::memory_order_relaxed); return remap[((uint8_t*)w.p)[i - base]]; }
+                if (w.age.load(std::memory_order_relaxed) < target->age.load(std::memory_order_relaxed)) target = &w;
             }
             if (target->p) ::munmap(target->p, target->len);
             target->p = nullptr; target->base = INF;
             uint64_t len = std::min(windowBytes, size_ - base);
             void* p = ::mmap(nullptr, len, PROT_READ, MAP_SHARED, fd, off_t(base));
             if (p != MAP_FAILED) {
-                *target = {p, base, len, ++windowClock};
+                target->p = p; target->base = base; target->len = len;
+                target->age.store(++windowClock, std::memory_order_relaxed);
                 return remap[((uint8_t*)p)[i - base]];
             }
             if (!fallbackLogged) {
