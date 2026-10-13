@@ -134,7 +134,7 @@ struct CorpusText {
     const uint8_t* cmap = nullptr;
     void* cmapRegion = nullptr;
     struct Window { void* p = nullptr; uint64_t base = INF, len = 0; std::atomic<uint64_t> age{0}; };
-    mutable std::array<Window, 8> windows{};
+    mutable std::array<Window, 4> windows{};
     mutable std::shared_mutex windowMutex;
     mutable std::atomic<uint64_t> windowClock{0};
     mutable bool fallbackLogged = false;
@@ -148,10 +148,10 @@ struct CorpusText {
         memcpy(remap, map, 256);
         struct rlimit limit {};
         pf_check(getrlimit(RLIMIT_AS, &limit) == 0, "read corpus address-space limit");
-        uint64_t mapBudget = 8ull << 30;
-        if (limit.rlim_cur != RLIM_INFINITY) mapBudget = std::min<uint64_t>(mapBudget, limit.rlim_cur / 8);
+        uint64_t mapBudget = 32ull << 30;
+        if (limit.rlim_cur != RLIM_INFINITY) mapBudget = std::min<uint64_t>(mapBudget, limit.rlim_cur / 3);
         windowBytes = std::max<uint64_t>(4096, (mapBudget / windows.size()) & ~uint64_t(4095));
-        void* p = size_ <= mapBudget ? ::mmap(nullptr, size_, PROT_READ, MAP_SHARED, fd, 0) : MAP_FAILED;
+        void* p = size_ <= std::min<uint64_t>(mapBudget, 1ull << 30) ? ::mmap(nullptr, size_, PROT_READ, MAP_SHARED, fd, 0) : MAP_FAILED;
         if (p != MAP_FAILED) {
             cmap = (const uint8_t*)p;
             cmapRegion = p;
