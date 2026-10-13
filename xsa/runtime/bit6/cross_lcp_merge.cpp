@@ -2432,6 +2432,9 @@ struct SparseSeamCapture {
             for (U q : occ) if (q && text.at(q - 1) == want) next.push_back(q - 1);
             occ.swap(next);
         }
+        std::fprintf(stderr, "CROSS_SEAM_DISCOVERED n=%llu depth=%llu raw_classes=%zu aggregate_occurrences=%llu unique_targets=%zu limit=%llu before_walk=1 bounded=1\n",
+                     (unsigned long long)n, (unsigned long long)depth, raw.size(),
+                     (unsigned long long)storedOccurrences, targets.size(), (unsigned long long)limit);
         previous = n + 9; // before row 0 is the last padded suffix
     }
     void row(U index, U p) {
@@ -3884,6 +3887,8 @@ static void cross_drop_stale_preflights(const std::string& L, const std::string&
 static U merge_kway_files(const std::vector<std::string>& inputs, bool dollar,
                           const std::string& out, U threads, bool emitPf = false,
                           bool deferWm = false) {
+    require(dollar || !v2_pieces_enabled(),
+            "WM-free v2 intermediate emission is unsupported; use a single final fan-in");
     const size_t k = inputs.size();
     require(k >= 1, "k-way merge needs at least one input");
     const std::string& leftPath = inputs.front();
