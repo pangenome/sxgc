@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <mutex>
+#include <queue>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -109,36 +110,85 @@ static void emit_pos(const fs::path& posPath, const std::vector<int32_t>& order,
         const bool dense = pm && !std::strcmp(pm, "dense");
         for (uint8_t c : {'S','X','P'}) w.word(c, 1);
         w.word(dense ? '3' : '4', 1);
-        w.word(1, 4); w.word(offset, 8); w.word(n, 8);
+        w.word(dense ? 1 : 2, 4); w.word(offset, 8); w.word(n, 8);
         w.word(period, 8); w.word(0, 8);
         if (dense) {
             for (uint64_t i = 0; i < n; ++i) w.word(order[i], 8);
         } else {
             const uint64_t GRP = 4096, groups = (n + GRP - 1) / GRP;
             w.word(groups, 8); w.word(0, 8);
-            // The table precedes the body: count encoded bytes first, then
-            // stream deltas. Neither the table nor body needs a resident copy.
-            uint64_t byteOff = 56 + 24 * groups;
+            // Static Huffman model over zigzag-varint bytes. Group-local
+            // byte padding preserves bounded random-access decoding.
             auto delta = [&](uint64_t i) {
                 int64_t d = int64_t(order[i]) - order[i - 1];
                 return uint64_t(d >= 0 ? 2 * d : -2 * d - 1);
             };
-            for (uint64_t g = 0; g < groups; ++g) {
-                uint64_t begin = g * GRP, end = std::min(begin + GRP, n);
-                w.word(begin, 8); w.word(byteOff, 8); w.word(order[begin], 8);
-                for (uint64_t i = begin + 1; i < end; ++i) {
-                    uint64_t v = delta(i);
-                    do { ++byteOff; v >>= 7; } while (v);
-                }
-            }
-            for (uint64_t g = 0; g < groups; ++g) {
+            auto bytes = [&](uint64_t g, auto consume) {
                 uint64_t begin = g * GRP, end = std::min(begin + GRP, n);
                 for (uint64_t i = begin + 1; i < end; ++i) {
                     uint64_t v = delta(i);
-                    while (v >= 0x80) { w.word(uint8_t(v) | 0x80, 1); v >>= 7; }
-                    w.word(v, 1);
+                    while (v >= 128) { consume(uint8_t(v) | 128); v >>= 7; }
+                    consume(uint8_t(v));
                 }
+            };
+            std::array<uint64_t,256> freq{};
+            for (uint64_t g = 0; g < groups; ++g) bytes(g, [&](uint8_t c){ ++freq[c]; });
+            struct Node { uint64_t weight; int left, right; };
+            std::vector<Node> nodes(256);
+            using Item = std::pair<uint64_t,int>;
+            std::priority_queue<Item,std::vector<Item>,std::greater<Item>> heap;
+            for (int c = 0; c < 256; ++c) if (freq[c]) heap.push({freq[c],c});
+            if (heap.empty()) heap.push({1,0});
+            while (heap.size() > 1) {
+                auto x=heap.top(); heap.pop(); auto y=heap.top(); heap.pop();
+                int id=nodes.size(); nodes.push_back({x.first+y.first,x.second,y.second});
+                heap.push({nodes.back().weight,id});
             }
+            std::array<unsigned,256> lengths{};
+            auto visit = [&](auto&& self, int id, unsigned depth) -> void {
+                if (id < 256) { lengths[id]=std::max(1u,depth); return; }
+                self(self,nodes[id].left,depth+1); self(self,nodes[id].right,depth+1);
+            };
+            visit(visit,heap.top().second,0);
+            std::vector<std::pair<unsigned,unsigned>> alphabet;
+            for (unsigned c=0;c<256;++c) if (lengths[c]) alphabet.push_back({lengths[c],c});
+            std::sort(alphabet.begin(),alphabet.end());
+            std::array<uint64_t,256> codes{};
+            uint64_t code=0; unsigned previous=0;
+            for (auto [len,c]:alphabet) {
+                require(len <= 32,"pos Huffman code too long");
+                code <<= len-previous; codes[c]=code++; previous=len;
+            }
+            // SXP4 v2: model follows the unchanged group table.
+            // Model must follow table, so seek past its reserved region.
+            w.flush();
+            require(::lseek(fd,56+24*groups,SEEK_SET)>=0,"pos model seek");
+            for (unsigned c=0;c<256;++c) w.word(lengths[c],1);
+            w.flush();
+            require(::lseek(fd,56,SEEK_SET)>=0,"pos table seek");
+            uint64_t byteOff=56+24*groups+256, oldBytes=56+24*groups;
+            for (uint64_t g=0;g<groups;++g) {
+                w.word(g*GRP,8); w.word(byteOff,8); w.word(order[g*GRP],8);
+                uint64_t bits=0;
+                bytes(g,[&](uint8_t c){ bits+=lengths[c]; ++oldBytes; });
+                byteOff+=(bits+7)/8;
+            }
+            w.flush();
+            require(::lseek(fd,56+24*groups+256,SEEK_SET)>=0,"pos body seek");
+            for (uint64_t g=0;g<groups;++g) {
+                uint8_t pending=0; unsigned used=0;
+                bytes(g,[&](uint8_t c){
+                    for (unsigned k=lengths[c];k;--k) {
+                        pending=uint8_t((pending<<1)|((codes[c]>>(k-1))&1));
+                        if (++used==8) { w.word(pending,1); pending=0; used=0; }
+                    }
+                });
+                if (used) w.word(uint8_t(pending<<(8-used)),1);
+            }
+            std::fprintf(stderr,"CHUNK_POS_CODEC n=%llu old_bytes=%llu new_bytes=%llu B_per_pos=%.6f\n",
+                (unsigned long long)n,(unsigned long long)oldBytes,
+                (unsigned long long)byteOff,double(byteOff)/n);
+
         }
         w.flush();
         require(::close(fd) == 0, "chunk pos close failed");
