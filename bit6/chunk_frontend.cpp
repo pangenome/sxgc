@@ -127,12 +127,17 @@ static void emit_pos(const fs::path& posPath, const std::vector<int32_t>& order,
                 uint64_t begin = g * GRP, end = std::min(begin + GRP, n);
                 for (uint64_t i = begin + 1; i < end; ++i) {
                     uint64_t v = delta(i);
-                    while (v >= 128) { consume(uint8_t(v) | 128); v >>= 7; }
-                    consume(uint8_t(v));
+                    unsigned context=0;
+                    while (v >= 128) { consume(uint8_t(v) | 128,context++); v >>= 7; }
+                    consume(uint8_t(v),context);
                 }
             };
-            std::array<uint64_t,256> freq{};
-            for (uint64_t g = 0; g < groups; ++g) bytes(g, [&](uint8_t c){ ++freq[c]; });
+            std::array<std::array<uint64_t,256>,5> frequencies{};
+            for (uint64_t g = 0; g < groups; ++g) bytes(g, [&](uint8_t c,unsigned ctx){ ++frequencies[ctx][c]; });
+            std::array<std::array<unsigned,256>,5> modelLengths{};
+            std::array<std::array<uint64_t,256>,5> modelCodes{};
+            for (unsigned context=0;context<5;++context) {
+            auto& freq=frequencies[context];
             struct Node { uint64_t weight; int left, right; };
             std::vector<Node> nodes(256);
             using Item = std::pair<uint64_t,int>;
@@ -144,7 +149,7 @@ static void emit_pos(const fs::path& posPath, const std::vector<int32_t>& order,
                 int id=nodes.size(); nodes.push_back({x.first+y.first,x.second,y.second});
                 heap.push({nodes.back().weight,id});
             }
-            std::array<unsigned,256> lengths{};
+            auto& lengths=modelLengths[context];
             auto visit = [&](auto&& self, int id, unsigned depth) -> void {
                 if (id < 256) { lengths[id]=std::max(1u,depth); return; }
                 self(self,nodes[id].left,depth+1); self(self,nodes[id].right,depth+1);
@@ -153,31 +158,33 @@ static void emit_pos(const fs::path& posPath, const std::vector<int32_t>& order,
             std::vector<std::pair<unsigned,unsigned>> alphabet;
             for (unsigned c=0;c<256;++c) if (lengths[c]) alphabet.push_back({lengths[c],c});
             std::sort(alphabet.begin(),alphabet.end());
-            std::array<uint64_t,256> codes{};
+            auto& codes=modelCodes[context];
             uint64_t code=0; unsigned previous=0;
             for (auto [len,c]:alphabet) {
                 require(len <= 32,"pos Huffman code too long");
                 code <<= len-previous; codes[c]=code++; previous=len;
             }
+            }
             // SXP4 v2: model follows the unchanged group table.
             // Model must follow table, so seek past its reserved region.
             w.flush();
             require(::lseek(fd,56+24*groups,SEEK_SET)>=0,"pos model seek");
-            for (unsigned c=0;c<256;++c) w.word(lengths[c],1);
+            for (const auto& lengths:modelLengths) for (unsigned c=0;c<256;++c) w.word(lengths[c],1);
             w.flush();
             require(::lseek(fd,56,SEEK_SET)>=0,"pos table seek");
-            uint64_t byteOff=56+24*groups+256, oldBytes=56+24*groups;
+            uint64_t byteOff=56+24*groups+1280, oldBytes=56+24*groups;
             for (uint64_t g=0;g<groups;++g) {
                 w.word(g*GRP,8); w.word(byteOff,8); w.word(order[g*GRP],8);
                 uint64_t bits=0;
-                bytes(g,[&](uint8_t c){ bits+=lengths[c]; ++oldBytes; });
+                bytes(g,[&](uint8_t c,unsigned ctx){ bits+=modelLengths[ctx][c]; ++oldBytes; });
                 byteOff+=(bits+7)/8;
             }
             w.flush();
-            require(::lseek(fd,56+24*groups+256,SEEK_SET)>=0,"pos body seek");
+            require(::lseek(fd,56+24*groups+1280,SEEK_SET)>=0,"pos body seek");
             for (uint64_t g=0;g<groups;++g) {
                 uint8_t pending=0; unsigned used=0;
-                bytes(g,[&](uint8_t c){
+                bytes(g,[&](uint8_t c,unsigned ctx){
+                    const auto& lengths=modelLengths[ctx]; const auto& codes=modelCodes[ctx];
                     for (unsigned k=lengths[c];k;--k) {
                         pending=uint8_t((pending<<1)|((codes[c]>>(k-1))&1));
                         if (++used==8) { w.word(pending,1); pending=0; used=0; }

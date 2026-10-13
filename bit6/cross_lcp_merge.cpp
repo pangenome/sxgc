@@ -1144,8 +1144,8 @@ struct PosColumn {
     static std::atomic<U> g_gen;
     U gen = 0;
     bool entropy = false;
-    std::array<U,33> firstCode{}, firstSymbol{}, codeCounts{};
-    std::vector<uint8_t> alphabet;
+    std::array<std::array<U,33>,5> modelFirstCode{}, modelFirstSymbol{}, modelCodeCounts{};
+    std::array<std::vector<uint8_t>,5> modelAlphabet;
     void open_ro(const std::string& path, U elems, U posByteBase, U shiftIn) {
         fd = ::open(path.c_str(), O_RDONLY);
         if (fd < 0) fail("open pos column");
@@ -1179,7 +1179,10 @@ struct PosColumn {
             require(version==1 || version==2,"unsupported SXP4 version");
             entropy=version==2;
             if (entropy) {
-                uint8_t lengths[256]; pread_exact(lengths,256,headerBytes);
+                for (unsigned context=0;context<5;++context) {
+                auto& firstCode=modelFirstCode[context]; auto& firstSymbol=modelFirstSymbol[context];
+                auto& codeCounts=modelCodeCounts[context]; auto& alphabet=modelAlphabet[context];
+                uint8_t lengths[256]; pread_exact(lengths,256,headerBytes+256*context);
                 std::vector<std::pair<unsigned,unsigned>> sorted;
                 for (unsigned c=0;c<256;++c) if (lengths[c]) {
                     require(lengths[c]<=32,"SXP4 Huffman length");
@@ -1194,7 +1197,8 @@ struct PosColumn {
                     firstCode[len]=code; firstSymbol[len]=base; base+=codeCounts[len];
                     require(code+codeCounts[len]<=(1ull<<len),"SXP4 oversubscribed model");
                 }
-                require(fileSize>=headerBytes+256,"SXP4 model truncated");
+                }
+                require(fileSize>=headerBytes+1280,"SXP4 model truncated");
             }
         } else {
             compact = false;
@@ -1225,7 +1229,10 @@ struct PosColumn {
         std::vector<uint8_t> buf(spanEnd - boff);
         if (!buf.empty()) pread_exact(buf.data(), spanEnd - boff, boff);
         U pos = base, idx = b0, p = 0, bit=0;
-        auto nextByte = [&]() -> uint8_t {
+        auto nextByte = [&](unsigned context) -> uint8_t {
+            require(context<5,"SXP4 Huffman context overflow");
+            const auto& firstCode=modelFirstCode[context]; const auto& firstSymbol=modelFirstSymbol[context];
+            const auto& codeCounts=modelCodeCounts[context]; const auto& alphabet=modelAlphabet[context];
             if (!entropy) { require(p<buf.size(),"SXP4 byte overrun"); return buf[p++]; }
             U code=0;
             for (unsigned len=1;len<=32;++len) {
@@ -1242,7 +1249,7 @@ struct PosColumn {
             if (idx >= end) break;   // stop BEFORE consuming the next delta
             U v = 0, sh = 0;
             for (;;) {
-                uint8_t b = nextByte();
+                uint8_t b = nextByte(sh/7);
                 v |= U(b & 0x7f) << sh;
                 if (!(b & 0x80)) break;
                 sh += 7;
