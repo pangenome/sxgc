@@ -1104,14 +1104,12 @@ struct WitBuckets {
             }
         };
         using Item = std::pair<uint64_t, size_t>;
-        for (uint64_t b = 0; b < P; ++b) {
-            if (runs[b].empty()) continue;
-            int fd = ::open((prefix + ".wit-" + std::to_string(b)).c_str(), O_RDONLY);
-            pf_check(fd >= 0, "open witness merge");
+        auto merge = [&](int fd, const std::vector<Run>& input, size_t begin, size_t end, auto emit) {
             std::vector<Cursor> cursors;
-            cursors.reserve(runs[b].size());
+            cursors.reserve(end - begin);
             std::priority_queue<Item, std::vector<Item>, std::greater<Item>> heap;
-            for (auto run : runs[b]) {
+            for (size_t i = begin; i < end; ++i) {
+                auto run = input[i];
                 pf_check(run.count != 0, "empty witness run");
                 cursors.push_back(Cursor{run, 0, 0, run.count, {}});
                 cursors.back().advance(fd);
@@ -1119,11 +1117,62 @@ struct WitBuckets {
             }
             while (!heap.empty()) {
                 auto [value, index] = heap.top(); heap.pop();
-                visit(value);
+                emit(value);
                 auto& c = cursors[index];
                 if (c.left) { c.advance(fd); heap.push({c.value, index}); }
             }
+        };
+        constexpr size_t FANIN = 64;
+        for (uint64_t b = 0; b < P; ++b) {
+            if (runs[b].empty()) continue;
+            std::string name = prefix + ".wit-" + std::to_string(b);
+            int fd = ::open(name.c_str(), O_RDONLY);
+            pf_check(fd >= 0, "open witness merge");
+            // Reduce oversized heaps in bounded passes, retaining delta-varint scratch.
+            while (runs[b].size() > FANIN) {
+                std::string nextName = name + ".merge";
+                int out = ::open(nextName.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0600);
+                pf_check(out >= 0, "create witness merge pass");
+                std::vector<Run> next;
+                uint64_t offset = 0;
+                for (size_t begin = 0; begin < runs[b].size(); begin += FANIN) {
+                    size_t end = std::min(runs[b].size(), begin + FANIN);
+                    uint64_t count = 0;
+                    for (size_t j = begin; j < end; ++j) count += runs[b][j].count;
+                    pf_check(count <= UINT32_MAX, "witness merged run count overflow");
+                    uint32_t cnt = uint32_t(count);
+                    pf_write_full(out, &cnt, 4, "witness merge count");
+                    uint64_t bytes = 0, prev = 0;
+                    std::vector<uint8_t> encoded;
+                    encoded.reserve(65536);
+                    auto flush = [&] {
+                        pf_write_full(out, encoded.data(), encoded.size(), "witness merge pass");
+                        bytes += encoded.size(); encoded.clear();
+                    };
+                    merge(fd, runs[b], begin, end, [&](uint64_t value) {
+                        pf_check(value >= prev, "witness merge order");
+                        putVarint(encoded, value - prev); prev = value;
+                        if (encoded.size() >= 65536) flush();
+                    });
+                    flush();
+                    next.push_back({offset + 4, bytes, cnt}); offset += 4 + bytes;
+                }
+                pf_check(::close(out) == 0, "close witness merge pass");
+                ::close(fd); ::close(fds[b]);
+                pf_check(::unlink(name.c_str()) == 0, "delete consumed witness pass");
+                pf_check(::rename(nextName.c_str(), name.c_str()) == 0, "replace witness pass");
+                fds[b] = ::open(name.c_str(), O_WRONLY);
+                pf_check(fds[b] >= 0, "reopen witness scratch accounting");
+                fd = ::open(name.c_str(), O_RDONLY);
+                pf_check(fd >= 0, "reopen witness merge pass");
+                runs[b] = std::move(next);
+            }
+            merge(fd, runs[b], 0, runs[b].size(), visit);
             ::close(fd);
+            // This bucket's values will never be visited again.
+            ::close(fds[b]); fds[b] = -1;
+            pf_check(::unlink(name.c_str()) == 0, "delete consumed witness bucket");
+            std::vector<Run>().swap(runs[b]);
         }
     }
     uint64_t discBytes() const {
