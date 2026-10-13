@@ -2396,7 +2396,8 @@ struct SparseSeamCapture {
     std::vector<CapturedSeamClass> raw;
     std::unordered_map<U, Hit> targets;
     void discover(const CorpusText& text, U count, U cap) {
-        n = count; limit = cap;
+        n = count; limit = cap; depth = nextRow = 0; previousHit = nullptr;
+        raw.clear(); targets.clear();
         require(n > 0 && limit > 0, "sparse seam discovery bounds");
         std::vector<U> occ;
         const uint8_t terminal = text.at(n - 1);
@@ -2413,6 +2414,7 @@ struct SparseSeamCapture {
                 occ.push_back(off + j);
             }
         }
+        U storedOccurrences = 0;
         for (U d = 1;; ++d) {
             require(d <= limit, "sparse seam depth budget");
             depth = d;
@@ -2420,9 +2422,8 @@ struct SparseSeamCapture {
             require(d < n, "sparse seam escaped text");
             // Bound aggregate raw occurrence storage, including nested
             // classes, rather than quietly allocating depth * class_size.
-            U used = occ.size();
-            for (const auto& cl : raw) used += cl.occ.size();
-            require(used <= limit, "sparse seam aggregate target budget");
+            require(occ.size() <= limit - storedOccurrences, "sparse seam aggregate target budget");
+            storedOccurrences += occ.size();
             CapturedSeamClass cl; cl.first = n - d; cl.occ = occ;
             raw.push_back(std::move(cl));
             for (U p : occ) targets.emplace(p, Hit{});
@@ -4001,6 +4002,141 @@ static std::vector<uint64_t> brute_dollar(const std::string& T) {
     return o;
 }
 
+// Independent legacy-style oracle: discover directly from the tiny string,
+// locate first in the brute SA, read its interval/flanks from that SA. The
+// sparse capture never uses this row-position vector.
+static std::vector<CapturedSeamClass> brute_seam_classes(const std::string& text,
+                                                        const std::vector<U>& sa, U& depth) {
+    U n = text.size();
+    std::vector<CapturedSeamClass> raw, result;
+    for (U d = 1; d <= n; ++d) {
+        depth = d;
+        std::vector<U> occ;
+        for (U p = 0; p + d <= n; ++p)
+            if (text.compare(p, d, text, n - d, d) == 0) occ.push_back(p);
+        if (occ.size() <= 1) break;
+        CapturedSeamClass cl;
+        cl.first = n - d;
+        auto at = std::find(sa.begin(), sa.end(), cl.first);
+        require(at != sa.end(), "brute seam first missing");
+        cl.lo = at - sa.begin(); cl.hi = cl.lo + occ.size();
+        require(cl.hi <= n, "brute seam interval bounds");
+        cl.before = cl.lo ? sa[cl.lo - 1] : n + 9;
+        cl.after = cl.hi < n ? sa[cl.hi] : n;
+        cl.occ.assign(sa.begin() + cl.lo, sa.begin() + cl.hi);
+        auto check = cl.occ; std::sort(check.begin(), check.end());
+        require(check == occ, "brute seam occurrence set mismatch");
+        raw.push_back(std::move(cl));
+    }
+    std::sort(raw.begin(), raw.end(), [](const auto& a, const auto& b) {
+        return a.lo < b.lo || (a.lo == b.lo && a.hi > b.hi);
+    });
+    for (auto& cl : raw) {
+        if (!result.empty() && cl.lo < result.back().hi) {
+            require(cl.hi <= result.back().hi, "brute seam crossing intervals");
+            continue;
+        }
+        result.push_back(std::move(cl));
+    }
+    return result;
+}
+static std::vector<char> seam_spool_bytes(U n, U depth,
+                                        const std::vector<CapturedSeamClass>& classes) {
+    std::vector<char> b{'S','C','S','1'};
+    auto add = [&](U v) { char x[8]; put_le64(x, v); b.insert(b.end(), x, x + 8); };
+    add(n); add(depth); add(classes.size());
+    for (const auto& cl : classes) {
+        add(cl.lo); add(cl.hi); add(cl.first); add(cl.before); add(cl.after);
+        for (U p : cl.occ) add(p);
+    }
+    return b;
+}
+static void selftest_sparse_walk(const std::vector<SideExt>& sides, bool dollar,
+                                U threads, U hashK, const PairScratch& sc,
+                                const std::string& text, const std::vector<U>& want) {
+    CorpusText corpus; open_merge_text(sides, corpus, true);
+    SparseSeamCapture seam;
+    // A fixed oracle-only bound, including raw nested classes. No production
+    // sizing policy is implied by this test budget.
+    if (dollar) seam.discover(corpus, text.size(), 100000);
+    std::vector<SparseRun> got;
+    std::array<U, 256> counts{}, runCounts{};
+    U consumedRows = 0, consumedShards = 0, globalRuns = 0;
+    auto readExact = [](int fd, void* data, U len, U off) {
+        char* p = static_cast<char*>(data);
+        while (len) {
+            ssize_t z = ::pread(fd, p, len, off);
+            if (z < 0 && errno == EINTR) continue;
+            require(z > 0, "sparse oracle short read");
+            p += z; off += z; len -= z;
+        }
+    };
+    auto consume = [&](const std::string& path, U records, U rows) {
+        require(!fs::exists(sc.wm), "sparse oracle created WM");
+        struct stat st{};
+        require(::stat(path.c_str(), &st) == 0 && U(st.st_size) == 25 * records,
+                "sparse oracle run spool size");
+        int fd = ::open(path.c_str(), O_RDONLY);
+        require(fd >= 0, "sparse oracle open run spool");
+        U total = 0;
+        auto read64 = [](const char* b) {
+            U v = 0; for (unsigned i = 0; i < 8; ++i) v |= U(uint8_t(b[i])) << (8 * i); return v;
+        };
+        for (U j = 0; j < records; ++j) {
+            char b[25]; readExact(fd, b, sizeof b, 25 * j);
+            SparseRun run{uint8_t(b[0]), read64(b + 1), read64(b + 9), read64(b + 17)};
+            require(run.len > 0 && run.head < text.size() && run.tail < text.size(),
+                    "sparse oracle record bounds");
+            counts[run.c] += run.len; total += run.len;
+            if (!got.empty() && got.back().c == run.c) {
+                got.back().len += run.len; got.back().tail = run.tail;
+            } else {
+                got.push_back(run); ++runCounts[run.c]; ++globalRuns;
+            }
+        }
+        require(total == rows && ::close(fd) == 0, "sparse oracle shard counts");
+        require(::unlink(path.c_str()) == 0, "sparse oracle consume unlink");
+        consumedRows += rows; ++consumedShards;
+    };
+    SparseRunSpool sink(corpus, text.size(), dollar, sc.dir + "/runs.spool",
+                        dollar ? &seam : nullptr, consume);
+    Budget bud; CoreStats stats;
+    core_merge_kway(sides, dollar, threads, bud, stats, sc, hashK, false, &sink);
+    require(!fs::exists(sc.wm) && !fs::exists(sc.wm + ".done"), "sparse oracle WM absence");
+    require(consumedRows == text.size() && consumedShards == emit_shard_count(threads, text.size()),
+            "sparse oracle ordered admission coverage");
+    std::vector<SparseRun> expected;
+    std::array<U, 256> expectedCounts{}, expectedRunCounts{};
+    for (U p : want) {
+        uint8_t c = dollar ? (p ? uint8_t(text[p - 1]) : uint8_t(2))
+                           : uint8_t(text[(p + text.size() - 1) % text.size()]);
+        ++expectedCounts[c];
+        if (!expected.empty() && expected.back().c == c) {
+            ++expected.back().len; expected.back().tail = p;
+        } else { expected.push_back({c, 1, p, p}); ++expectedRunCounts[c]; }
+    }
+    require(got == expected && counts == expectedCounts && runCounts == expectedRunCounts &&
+            globalRuns == expected.size(), "sparse oracle run reconstruction mismatch");
+    if (dollar) {
+        U bruteDepth = 0;
+        auto reference = brute_seam_classes(text, want, bruteDepth);
+        auto captured = seam.finish();
+        require(captured == reference && seam.depth == bruteDepth, "sparse oracle seam classes mismatch");
+        auto bytes = seam_spool_bytes(text.size(), seam.depth, captured);
+        auto oldBytes = seam_spool_bytes(text.size(), bruteDepth, reference);
+        std::string spool = sc.dir + "/seam.spool";
+        { OutFile f(spool); f.raw(bytes.data(), bytes.size()); }
+        int fd = ::open(spool.c_str(), O_RDONLY);
+        require(fd >= 0, "sparse oracle open seam spool");
+        struct stat st{};
+        require(::fstat(fd, &st) == 0 && U(st.st_size) == oldBytes.size(), "sparse oracle seam spool size");
+        std::vector<char> disk(oldBytes.size());
+        readExact(fd, disk.data(), disk.size(), 0);
+        require(disk == oldBytes, "sparse oracle seam spool bytes mismatch");
+        require(::close(fd) == 0 && ::unlink(spool.c_str()) == 0, "sparse oracle seam spool consume");
+    }
+}
+
 static int selftest(U cases, uint64_t seed, U threads, U kway) {
     uint64_t s = seed ? seed : 1;
     auto next = [&]() { s ^= s << 13; s ^= s >> 7; s ^= s << 17; return s; };
@@ -4009,6 +4145,9 @@ static int selftest(U cases, uint64_t seed, U threads, U kway) {
         {'\x06'}, {'\x06', '\x07'}, {'\x06', '\x07', '\x08'},
         {'\x06', '\x07', '\x08', '\x1e'}, {'\x06', '\x07', '\x08', '\x09', '\x0a', '\x1e'},
     };
+    const char* scratchRoot = getenv("CROSS_SELFTEST_SCRATCH");
+    const std::string scratch = (scratchRoot ? std::string(scratchRoot) : fs::temp_directory_path().string())
+        + "/cross-selftest-scratch-" + std::to_string(U(getpid()));
     for (U cs = 0; cs < cases; ++cs) {
         auto gen = [&](U n, bool periodic) {
             const std::string& ab = alphabets[next() % alphabets.size()];
@@ -4033,9 +4172,11 @@ static int selftest(U cases, uint64_t seed, U threads, U kway) {
         for (U z = 0; z < kway; ++z) { As.push_back(gen(1 + next() % 60, bool(next() & 1))); M += As.back(); }
         // Explicit nonperiodic wrap-prefix and nested-prefix shapes, followed
         // by the existing randomized periodic/deep-repetition cases.
-        if (cs < 3) {
+        if (cs < 5) {
             const std::string patterns[] = {std::string("\x1e\x0a\x1e", 3),
-                                           std::string("aaaaaa"), std::string("abababa")};
+                                           std::string("aaaaaa"), std::string("abababa"),
+                                           std::string("\x00\x05\x1e\x00\x05", 5),
+                                           std::string("\x1e\x0a\x1e\x0a\x1e", 5)};
             M.clear();
             for (auto& A : As) { A = patterns[cs]; M += A; }
         }
@@ -4043,7 +4184,6 @@ static int selftest(U cases, uint64_t seed, U threads, U kway) {
         for (auto& A : As) posS.push_back(brute_cyclic(A));
         // Route through the EXTERNAL path: tiny sidecars in a scratch dir, the
         // windowed core merge, WM read back from its scratch file.
-        std::string scratch = "cross-selftest-scratch-" + std::to_string(U(getpid()));
         fs::remove_all(scratch);
         fs::create_directories(scratch);
         std::array<uint8_t, 256> remap{};
@@ -4117,12 +4257,15 @@ static int selftest(U cases, uint64_t seed, U threads, U kway) {
                 for (U z = 0; z < kway; ++z)
                     std::fprintf(stderr, "SIDE%llu_hex=%s\n", (unsigned long long)z, hex(As[z]).c_str());
                 std::fprintf(stderr, "got :");
-                for (auto p : WM) std::fprintf(stderr, " %u", p);
+                for (auto p : WM) std::fprintf(stderr, " %llu", (unsigned long long)p);
                 std::fprintf(stderr, "\nwant:");
-                for (auto p : want) std::fprintf(stderr, " %u", p);
+                for (auto p : want) std::fprintf(stderr, " %llu", (unsigned long long)p);
                 std::fprintf(stderr, "\n");
                 return 1;
             }
+            sc.init(scratch + "/sparse", 0, kway);
+            selftest_sparse_walk(sides, dollar, threads, hashK, sc, M, want);
+            sc.cleanup();
         }
         if ((cs + 1) % 200 == 0) {
             std::fprintf(stderr, "SELFTEST_PROGRESS done=%llu/%llu\n",
@@ -4130,7 +4273,8 @@ static int selftest(U cases, uint64_t seed, U threads, U kway) {
             std::fflush(stderr);
         }
     }
-    fs::remove_all("cross-selftest-scratch-" + std::to_string(U(getpid())));
+    fs::remove_all(scratch);
+    std::printf("SPARSE_ORACLE_PASS modes=cyclic,dollar runs=exact seam_spool=exact WM=absent admission=1\n");
     std::printf("SELFTEST_PASS count=%llu seed=%llu kway=%llu\n",
                 (unsigned long long)cases, (unsigned long long)seed,
                 (unsigned long long)kway);
