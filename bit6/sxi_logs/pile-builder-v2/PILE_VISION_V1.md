@@ -97,7 +97,7 @@ Budget arithmetic (the operator's envelopes, checked):
   clean 1 GB measurement after lever 1+2 publishes the real number and the
   residual anatomy if it is above 330.
 
-## THE IMPLEMENTATION SERIES (sole agents, one lever each, gated)
+## THE IMPLEMENTATION SERIES (five runs of the sole agent sxgc.codex-sol-writer / gpt-6-sol, one lever each, gated)
 
 Each agent: sxgc.codex-sol-writer (cheap, strong), sole, given THIS document +
 the audit (AUDIT_2026-10-13_codex_astra.md) + its charter below. Gates per
@@ -105,30 +105,30 @@ agent: D6 byte-identity at 100 MB/1 GB + the D5 pyramid; no new durable
 artifacts; no verification layering without supervisor sign-off. Supervisor
 audits and merges after each.
 
-  SOL-1  FINISH BOUNDED: streaming witness merge (external k-way over spill
+  sol-1  FINISH BOUNDED: streaming witness merge (external k-way over spill
          runs, never all resident), file-backed bit writers, windowed corpus
          mmap with loud fallback, completion sentinel, persistent workers.
          Kills the ~3 TB + 256-722 GB RAM blockers. (The pile cannot launch
          without this; it is first.)
-  SOL-2  MERGE R-SPACE, PART 1: virtual corpus comparator (no m2.bin),
+  sol-2  MERGE R-SPACE, PART 1: virtual corpus comparator (no m2.bin),
          modulo-coordinate wrap, remap-on-read, prompt dead-scratch release,
          checkpoint sparsity tuned. Kills 2n of text on disk; THE LAW
          restored at the merge.
-  SOL-3  CHUNK FRONT END: PLCP dropped via period-p grouping, in-place order
+  sol-3  CHUNK FRONT END: PLCP dropped via period-p grouping, in-place order
          projection, streamed runs/samples, 27n -> ~10-11n. (Low risk, exact;
          more workers.)
-  SOL-4  MERGE R-SPACE, PART 2: shard-local emission + seam capture, kill
+  sol-4  MERGE R-SPACE, PART 2: shard-local emission + seam capture, kill
          whole-WM + its consumers' dependency, stitch global bases.
          (Highest protocol risk; needs the seam spool re-gate. This is what
          dissolves the old 13-20 TiB hardware question - permanently.)
-  SOL-5  CLOSE-OUT: verification slimming per D5 (debug tools off the
+  sol-5  CLOSE-OUT: verification slimming per D5 (debug tools off the
          critical path), plan model rebuilt from measured numbers, the 10 GB
          re-rung (chi cross-checked via the v1 path on the same encoding),
          and the launch table: wall, peak, transient, provenance - the
          operator's go/no-go for the pile launch.
 
-Order: SOL-1, SOL-2, SOL-3 (independent, may interleave), then SOL-4, then
-SOL-5. The 10 GB re-rung can be re-attempted after SOL-1 + alphabet closure
+Order: sol-1, sol-2, sol-3 (independent, may interleave), then sol-4, then
+sol-5. The 10 GB re-rung can be re-attempted after sol-1 + alphabet closure
 (it fits the current disc); the pile launch waits for all of them.
 
 ## FROZEN / OUT OF SCOPE
@@ -139,5 +139,5 @@ SOL-5. The 10 GB re-rung can be re-attempted after SOL-1 + alphabet closure
   depend on them).
 - The one remap (involution) and the 0x1E separator.
 - The banked constants at 100 MB / 1 GB. (The old 10 GB chi constant's era
-  question is resolved by SOL-5's re-banking with cross-check, per
+  question is resolved by sol-5's re-banking with cross-check, per
   REMAP_ERA_FINDING.md - the product gates at fixtures are the oracle.)
