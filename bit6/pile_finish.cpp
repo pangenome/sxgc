@@ -64,6 +64,7 @@ static double tnow() {
 static double G_T0 = tnow();
 #define SLIM_LCE_CORE_ONLY
 #include "slim_lce.hpp"
+#include <sys/wait.h>
 using namespace sxi;
 
 static void pf_fail(const std::string& msg) {
@@ -616,8 +617,52 @@ static void seam_refuse(const char* kind, uint64_t size, uint64_t limit) {
 }
 
 struct SeamClasses {
+    bool fromSpool = false;
     std::vector<SeamClass> classes;
     uint64_t depth = 0, total = 0, maxSeamLce = 0;
+    void build_spool(int fd, uint64_t n, uint64_t rawR,
+                     const std::function<uint64_t(uint64_t, uint64_t)>& collection_lce,
+                     const std::function<uint8_t(uint64_t)>& symbol) {
+        fromSpool = true;
+        const uint64_t limit = std::max<uint64_t>(1000, rawR / 1000);
+        struct stat st{};
+        pf_check(::fstat(fd, &st) == 0 && st.st_size >= 28, "seam spool header size");
+        uint64_t offset = 4;
+        char magic[4]; pf_pread_full(fd, magic, 4, 0, "seam spool magic");
+        pf_check(memcmp(magic, "SCS1", 4) == 0, "seam spool magic");
+        auto next = [&]() {
+            pf_check(offset <= uint64_t(st.st_size) && uint64_t(st.st_size) - offset >= 8,
+                     "truncated seam spool");
+            uint8_t b[8]; pf_pread_full(fd, b, 8, offset, "seam spool value"); offset += 8;
+            uint64_t v = 0; for (unsigned j = 0; j < 8; ++j) v |= uint64_t(b[j]) << (8*j);
+            return v;
+        };
+        pf_check(next() == n, "seam spool corpus length");
+        depth = next(); uint64_t count = next();
+        pf_check(depth > 0 && depth <= limit && count <= limit, "seam spool discovery budget");
+        for (uint64_t i = 0; i < count; ++i) {
+            SeamClass cl{};
+            cl.lo = next(); cl.hi = next(); cl.first = next(); cl.before = next(); cl.after = next();
+            pf_check(cl.lo < cl.hi && cl.hi <= n && cl.first < n &&
+                     cl.before < n+10 && cl.after < n+10, "seam spool class bounds");
+            pf_check(classes.empty() || classes.back().hi <= cl.lo, "seam spool overlapping intervals");
+            uint64_t rows = cl.hi - cl.lo;
+            pf_check(rows <= limit - total, "seam spool aggregate budget");
+            total += rows; cl.occ.reserve(rows);
+            for (uint64_t j = 0; j < rows; ++j) {
+                uint64_t position = next(); pf_check(position < n, "seam spool occurrence bounds");
+                cl.occ.push_back(position);
+            }
+            pf_check(cl.occ.front() == cl.first, "seam spool leftmost row");
+            auto unique = cl.occ; std::sort(unique.begin(), unique.end());
+            pf_check(std::adjacent_find(unique.begin(), unique.end()) == unique.end(), "seam spool duplicate occurrence");
+            classes.push_back(std::move(cl));
+        }
+        pf_check(offset == uint64_t(st.st_size), "seam spool trailing data");
+        fprintf(stderr, "PILE_FINISH_SEAM_SPOOL classes=%zu rows=%llu discovery_steps=%llu limit=%llu WM=absent\n",
+                classes.size(), (unsigned long long)total, (unsigned long long)depth, (unsigned long long)limit);
+        rebuild(n, rawR, limit, collection_lce, symbol);
+    }
     void build(const CorpusText& text, const PfWm& wm, uint64_t n, uint64_t rawR, uint64_t w1,
                const std::function<uint64_t(uint64_t, uint64_t)>& collection_lce,
                const std::function<uint8_t(uint64_t)>& symbol) {
@@ -737,6 +782,11 @@ struct SeamClasses {
             pf_check(sa.front() == cl.first, "class leftmost row is not the terminal suffix");
             cl.occ = std::move(sa);   // row order = v1's phi-walk order
         }
+        rebuild(n, r, limit, collection_lce, symbol);
+    }
+    void rebuild(uint64_t n, uint64_t r, uint64_t limit,
+                 const std::function<uint64_t(uint64_t, uint64_t)>& collection_lce,
+                 const std::function<uint8_t(uint64_t)>& symbol) {
         // rebuild each class: v1's LCE comparator + run rebuild, verbatim.
         uint64_t maxSeam = 0;
         for (auto& cl : classes) {
@@ -767,13 +817,84 @@ struct SeamClasses {
                             (unsigned long long)v.len, (unsigned long long)v.head, (unsigned long long)v.tail);
                 fprintf(stderr, "\n");
             }
-        fprintf(stderr, "CYCLIC_SEAM_REPAIRED classes=%zu rows=%llu discovery_steps=%llu limit=%llu phi_samples=%llu pattern_chain=1 wm_scan=1\n",
+        fprintf(stderr, "CYCLIC_SEAM_REPAIRED classes=%zu rows=%llu discovery_steps=%llu limit=%llu phi_samples=%llu pattern_chain=1 wm_scan=%d seam_spool=%d\n",
                 classes.size(), (unsigned long long)total, (unsigned long long)depth,
-                (unsigned long long)limit, (unsigned long long)r);
-        fprintf(stderr, "CYCLIC_SEAM_WORK max_seam_lce=%llu exact=1 pattern_chain=1 wm_scan=1\n",
-                (unsigned long long)maxSeam);
+                (unsigned long long)limit, (unsigned long long)r, int(!fromSpool), int(fromSpool));
+        fprintf(stderr, "CYCLIC_SEAM_WORK max_seam_lce=%llu exact=1 pattern_chain=1 wm_scan=%d seam_spool=%d\n",
+                (unsigned long long)maxSeam, int(!fromSpool), int(fromSpool));
     }
 };
+
+// Exercise the production spool reader with row orders unrelated to numeric
+// position order, padded flanks, empty discovery and malformed records.
+static int selftest_seam_spool(const std::string& directory) {
+    std::filesystem::create_directories(directory);
+    const std::string file = directory + "/reader-oracle.spool";
+    const std::vector<uint8_t> text{0x1e, 0, 5, 5, 0, 0x1e, 9, 0, 5, 0x1e, 1, 0};
+    const uint64_t n = text.size();
+    auto lce = [&](uint64_t a, uint64_t b) { uint64_t d = 0; while (d < n && text[(a+d)%n] == text[(b+d)%n]) ++d; return d; };
+    auto symbol = [&](uint64_t p) { return text[p]; };
+    for (unsigned mode = 0; mode < 3; ++mode) {
+        std::vector<SeamClass> expected;
+        if (mode) expected.push_back({0, 3, 9, n+9, 4, {9, 3, 0}, {}});
+        if (mode == 2) expected.push_back({6, 9, 8, 6, n, {8, 1, 7}, {}});
+        std::vector<uint8_t> bytes{'S','C','S','1'};
+        auto put = [&](uint64_t v) { for (unsigned j = 0; j < 8; ++j) bytes.push_back(uint8_t(v >> (8*j))); };
+        put(n); put(3); put(expected.size());
+        for (const auto& cl : expected) {
+            put(cl.lo); put(cl.hi); put(cl.first); put(cl.before); put(cl.after);
+            for (uint64_t p : cl.occ) put(p);
+        }
+        int fd = ::open(file.c_str(), O_CREAT | O_TRUNC | O_RDWR, 0600);
+        pf_check(fd >= 0, "create reader oracle spool");
+        pf_write_full(fd, bytes.data(), bytes.size(), "reader oracle bytes");
+        SeamClasses actual; actual.build_spool(fd, n, 100, lce, symbol);
+        pf_check(actual.classes.size() == expected.size(), "reader oracle class count");
+        for (size_t i = 0; i < expected.size(); ++i) {
+            auto& a = actual.classes[i]; auto& e = expected[i];
+            pf_check(a.lo == e.lo && a.hi == e.hi && a.first == e.first &&
+                     a.before == e.before && a.after == e.after && a.occ == e.occ,
+                     "reader oracle adversarial row order");
+            auto order = e.occ;
+            std::sort(order.begin(), order.end(), [&](uint64_t x, uint64_t y) {
+                uint64_t d = lce(x,y); return d == n ? x < y : symbol((x+d)%n) < symbol((y+d)%n);
+            });
+            std::vector<RawRun> reference;
+            for (uint64_t position : order) {
+                uint8_t c = symbol((position+n-1)%n);
+                if (!reference.empty() && reference.back().c == c) { ++reference.back().len; reference.back().tail = position; }
+                else reference.push_back({c,1,position,position});
+            }
+            pf_check(reference.size() == a.runs.size(), "reader oracle rebuilt count");
+            for (size_t j = 0; j < reference.size(); ++j)
+                pf_check(reference[j].c == a.runs[j].c && reference[j].len == a.runs[j].len &&
+                         reference[j].head == a.runs[j].head && reference[j].tail == a.runs[j].tail,
+                         "reader oracle rebuilt runs");
+        }
+        if (mode == 2) {
+            for (unsigned bad = 0; bad < 3; ++bad) {
+                pf_check(::ftruncate(fd, 0) == 0, "reset negative spool");
+                pf_check(::lseek(fd, 0, SEEK_SET) == 0, "reset negative offset");
+                auto malformed = bytes;
+                if (bad == 0) malformed.pop_back();
+                if (bad == 1) { for (unsigned j = 0; j < 8; ++j) malformed[20+j] = 0xff; }
+                if (bad == 2) { for (unsigned j = 0; j < 8; ++j) malformed[76+j] = malformed[68+j]; }
+                pf_write_full(fd, malformed.data(), malformed.size(), "negative spool");
+                pid_t child = ::fork(); pf_check(child >= 0, "fork reader refusal oracle");
+                if (!child) {
+                    int quiet = ::open("/dev/null", O_WRONLY); ::dup2(quiet, STDERR_FILENO); ::close(quiet);
+                    SeamClasses rejected; rejected.build_spool(fd, n, 100, lce, symbol); _exit(0);
+                }
+                int status; pf_check(::waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 2,
+                                     "reader oracle failed to reject malformed spool");
+            }
+        }
+        ::close(fd);
+    }
+    ::unlink(file.c_str());
+    std::printf("SEAM_SPOOL_READER_ORACLE_PASS empty=1 adversarial_orders=2 padded_flanks=1 NUL=1 byte05=1 malformed_refusals=3\n");
+    return 0;
+}
 
 // ---------------------------------------------------------- repair stream
 struct NRun { uint8_t c; uint64_t len, h, t; };
@@ -1463,6 +1584,7 @@ static void fp_self_check(SlimFingerprint<CorpusText>& fh, const CorpusText& tex
 
 int main(int argc, char** argv) {
     try {
+        if (argc == 3 && std::string(argv[1]) == "--selftest-seam-spool") return selftest_seam_spool(argv[2]);
         std::string prefix, corpus, remap, out, bridgeDir, sampleCheck, wmPath;
         uint64_t chiExpect = 0, sampleCount = 1024, pollTimeout = 86400, ramBudget = 1ull << 30;
         int threads = int(std::thread::hardware_concurrency());
@@ -1548,17 +1670,31 @@ int main(int argc, char** argv) {
         fp_self_check(fhSlim, text, n, tau);
         phase("fingerprints", last);
 
-        // ---- seam classes: pattern chain + the merge's own WM scratch
-        // (NO record/seed columns; the discovery is the occurrence chain of
-        // P_d = T[n-d..n), row intervals/before/after by WM binary search).
-        // The WM layout is auto-detected: legacy u64-per-row (size == 8n) or
-        // the packed PWM1 blocks (size == 32 + blocks*blockBytes, w from the
-        // pieces idx) - the merge writes packed when CROSS_WM_PACK=1.
+        // Default v2 protocol: bounded captured seam classes. Explicit
+        // --wm retains legacy scratch compatibility outside the v2 route.
         PfWm wm;
         int wmFd = -1;
         std::string wmFile;   // captured for delete-as-consumed unlink below
-        {
-            std::string glob = wmPath.empty() ? prefix + ".xsc-*/wm.bin" : wmPath;
+        const bool useSpool = wmPath.empty();
+        if (useSpool) {
+            double waited = 0;
+            for (;;) {
+                for (const auto& e : std::filesystem::directory_iterator(
+                         std::filesystem::path(prefix).parent_path())) {
+                    if (e.path().string().rfind(prefix + ".xsc-", 0) != 0 || !e.is_directory()) continue;
+                    std::string candidate = e.path().string() + "/seam.spool";
+                    struct stat st{};
+                    if (::stat((candidate + ".done").c_str(), &st) != 0) continue;
+                    pf_check(st.st_size == 8, "seam spool done size");
+                    wmFd = ::open(candidate.c_str(), O_RDONLY);
+                    pf_check(wmFd >= 0, "published seam spool missing");
+                    wmFile = candidate; break;
+                }
+                if (wmFd >= 0) break;
+                if (waited > pollTimeout) pf_fail("timeout waiting for the merge's seam spool + .done");
+                std::this_thread::sleep_for(std::chrono::milliseconds(100)); waited += 0.1;
+            }
+        } else {
             const uint64_t packedExpect = PfWm::packed_size(n, src.w);
             // Packed completeness gate: blocks land in arbitrary order, so
             // the finish requires the merge's rename-published .done
@@ -1566,32 +1702,12 @@ int main(int argc, char** argv) {
             // full size. The legacy layout keeps the banked size==8n rule.
             double waited = 0;
             for (;;) {
-                if (!wmPath.empty()) {
-                    struct stat st {};
-                    if (::stat(wmPath.c_str(), &st) == 0) {
-                        uint64_t sz = uint64_t(st.st_size);
-                        if (sz == 8 * n || (sz == packedExpect && ::stat((wmPath + ".done").c_str(), &st) == 0)) {
-                            wmFd = ::open(wmPath.c_str(), O_RDONLY);
-                            wmFile = wmPath;
-                            break;
-                        }
+                struct stat st {};
+                if (::stat(wmPath.c_str(), &st) == 0) {
+                    uint64_t sz = uint64_t(st.st_size);
+                    if (sz == 8*n || (sz == packedExpect && ::stat((wmPath + ".done").c_str(), &st) == 0)) {
+                        wmFd = ::open(wmPath.c_str(), O_RDONLY); wmFile = wmPath; break;
                     }
-                } else {
-                    for (const auto& e : std::filesystem::directory_iterator(
-                             std::filesystem::path(prefix).parent_path())) {
-                        if (e.path().string().rfind(prefix + ".xsc-", 0) != 0) continue;
-                        std::string cand = e.path().string() + "/wm.bin";
-                        struct stat st {};
-                        if (::stat(cand.c_str(), &st) == 0) {
-                            uint64_t sz = uint64_t(st.st_size);
-                            if (sz == 8 * n || (sz == packedExpect && ::stat((cand + ".done").c_str(), &st) == 0)) {
-                                wmFd = ::open(cand.c_str(), O_RDONLY);
-                                wmFile = cand;
-                                break;
-                            }
-                        }
-                    }
-                    if (wmFd >= 0) break;
                 }
                 if (waited > pollTimeout) pf_fail("timeout waiting for the merge's WM scratch");
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -1606,18 +1722,27 @@ int main(int argc, char** argv) {
             if (pos >= n) pf_fail("seam symbol outside text");
             return text[pos];
         };
-        seam.build(text, wm, n, R, 10,
-                   [&](uint64_t a, uint64_t b) { return seamLce(a, b); },
-                   seamSymbol);
+        if (useSpool) {
+            seam.build_spool(wmFd, n, R,
+                [&](uint64_t a, uint64_t b) { return seamLce(a, b); }, seamSymbol);
+            int doneFd = ::open((wmFile + ".done").c_str(), O_RDONLY);
+            pf_check(doneFd >= 0, "open seam spool done");
+            uint64_t expected; pf_pread_full(doneFd, &expected, 8, 0, "seam spool done");
+            ::close(doneFd); pf_check(expected == seam.total, "seam spool done row count");
+        } else {
+            seam.build(text, wm, n, R, 10,
+                       [&](uint64_t a, uint64_t b) { return seamLce(a, b); }, seamSymbol);
+        }
         ::close(wmFd);
         wmFd = -1;
-        // WM delete-as-consumed: this finish is the LAST consumer (the merge
-        // deferred its unlink because we run concurrent with it - see
-        // PairScratch::cleanup). Unlink both layouts' artifacts and drop the
-        // now-empty .xsc scratch dir; the front door's tree rules stay clean.
+        // Last-consumer deletion: merge.active keeps the directory alive
+        // during sparse replay. Both sides best-effort-remove the empty dir,
+        // so either exit ordering removes it after the final unlink.
         if (!wmFile.empty()) {
-            ::unlink(wmFile.c_str());
-            ::unlink((wmFile + ".done").c_str());
+            int removed = ::unlink(wmFile.c_str());
+            if (useSpool) pf_check(removed == 0, "unlink consumed seam spool");
+            removed = ::unlink((wmFile + ".done").c_str());
+            if (useSpool) pf_check(removed == 0, "unlink consumed seam spool done");
             std::error_code ec;
             std::filesystem::remove(std::filesystem::path(wmFile).parent_path(), ec);
             if (ec)

@@ -2366,8 +2366,8 @@ static void put_le64(char* b, U v)       { for (int i = 0; i < 8; ++i) b[i] = ch
 
 // Sparse walk protocol prototype. Ordered shard admission is intentional:
 // endShard must consume/unlink its run spool before the next shard starts.
-// No row-position file is opened in this mode. Production stays on the old
-// interface until the finish handshake and both byte gates are implemented.
+// No row-position file is opened in this mode. The v2 final emission uses
+// this interface; legacy intermediate/compatibility emission remains below.
 struct SparseWalkSink {
     virtual ~SparseWalkSink() = default;
     virtual void beginShard(U shard, U lo, U hi) = 0;
@@ -3181,8 +3181,11 @@ struct V2Piece {
 // Admission is one shard at a time, so neither walk retains a level of runs.
 static U emit_sparse_v2(const std::string& prefix, const std::vector<SideExt>& sides,
                         U threads, Budget& budget, CoreStats& stats,
-                        const PairScratch& sc, U hashK, bool pre) {
+                        const PairScratch& sc, U hashK, bool pre, U oracleDiscoveryBudget = 0) {
     U n = 0; for (const auto& side : sides) n += side.n;
+    // Keep the scratch directory live while the second walk still needs it.
+    // Finish may consume the seam before this merge admits its next shard.
+    { OutFile f(sc.dir + "/merge.active"); f.w64(n); }
     CorpusText corpus; open_merge_text(sides, corpus, true);
     const U total = n + 10, S = emit_shard_count(threads, total);
     const U band = v2_band_size(), window = v2_piece_window();
@@ -3197,7 +3200,8 @@ static U emit_sparse_v2(const std::string& prefix, const std::vector<SideExt>& s
     SparseSeamCapture seam;
     // Hard bound BEFORE scanning/allocating. Recheck the product-relative
     // refusal policy once the sparse count pass has supplied raw R.
-    seam.discover(corpus, n, std::max<U>(1000, n / 1000));
+    U inputRuns = 0; for (const auto& side : sides) inputRuns += side.runs;
+    seam.discover(corpus, n, oracleDiscoveryBudget ? oracleDiscoveryBudget : std::max<U>(1000, inputRuns / 1000));
     auto walk = [&](SparseRunReducer& reducer, SparseSeamCapture* capture, bool prepared) {
         reducer.add({corpus.at(n-1), 1, n, n});
         reducer.add({2, 9, n+1, n+9});
@@ -3267,11 +3271,11 @@ static U emit_sparse_v2(const std::string& prefix, const std::vector<SideExt>& s
     walk(output, nullptr, false);
     require(index == runs && piece.empty(), "sparse emission run coverage");
     bwt.flush();
-    // Mirror the existing rlebwt completion sentinel.
-    { OutFile f(prefix + ".rlebwt.done.tmp"); f.w64(total); f.w64(runs); }
-    require(::rename((prefix + ".rlebwt.done.tmp").c_str(), (prefix + ".rlebwt.done").c_str()) == 0, "publish sparse rlebwt done");
     std::fprintf(stderr, "SPARSE_V2_EMIT runs=%llu rows=%llu shards=%llu WM=absent admission=1 passes=2\n",
         (unsigned long long)runs, (unsigned long long)total, (unsigned long long)S);
+    ::unlink((sc.dir + "/merge.active").c_str());
+    std::fprintf(stderr, "FOUR_EMIT shards=%llu runs=%llu total=%llu v2=1 WM=absent\n",
+        (unsigned long long)S, (unsigned long long)runs, (unsigned long long)total);
     return runs;
 }
 
@@ -4067,6 +4071,12 @@ static U finalize_file(const std::string& path, const std::string& prefix, U thr
     load_side_ext(path, threads, sc.dir, A);
     phase("load", last);
     CorpusText m2; open_merge_text({A}, m2, true);
+    if (v2_pieces_enabled()) {
+        U hashK = std::min<U>(hash_spacing(), std::max<U>(1, A.n / 2));
+        U runs = emit_sparse_v2(prefix, {A}, threads, bud, st, sc, hashK, false);
+        sc.cleanup(true);
+        return runs;
+    }
     U hashK = hash_spacing();
     if (hashK > A.n / 2) hashK = std::max<U>(1, A.n / 2);
     build_hash_sparse(m2, 2 * A.n, hashK, sc.hs, threads);
@@ -4410,6 +4420,13 @@ static int selftest(U cases, uint64_t seed, U threads, U kway) {
             {
                 WinU64 wm; wm.open_ro_auto(sc.wm, nTot);
                 wm.read(0, WM.data(), nTot);
+                if (dollar && cs < 20) {
+                    setenv("CROSS_V2_PIECES", "1", 1);
+                    setenv("CROSS_V2_BAND", "3", 1);
+                    setenv("CROSS_V2_PIECE_WINDOW", "1000000", 1);
+                    CorpusText corpus; open_merge_text(sides, corpus, true);
+                    emit_four_ext(scratch + "/dense", corpus, wm, nTot, threads, sc.dir);
+                }
             }
             sc.cleanup();
             std::vector<uint64_t> want = dollar ? brute_dollar(M) : brute_cyclic(M);
@@ -4437,6 +4454,36 @@ static int selftest(U cases, uint64_t seed, U threads, U kway) {
             sc.init(scratch + "/sparse", 0, kway);
             selftest_sparse_walk(sides, dollar, threads, hashK, sc, M, want);
             sc.cleanup();
+            if (dollar && cs < 20) {
+                sc.init(scratch + "/sparseprod", 0, kway);
+                Budget productionBudget; CoreStats productionStats;
+                emit_sparse_v2(scratch + "/prod", sides, threads, productionBudget,
+                               productionStats, sc, hashK, false, 100000);
+                require(!fs::exists(sc.wm), "production oracle WM absence");
+                auto bytes = [](const std::string& path) {
+                    std::ifstream f(path, std::ios::binary);
+                    require(bool(f), "production oracle file missing");
+                    return std::vector<char>(std::istreambuf_iterator<char>(f), {});
+                };
+                for (const char* ext : {".runcols.idx", ".rlebwt", ".rlebwt.meta"}) {
+                    require(bytes(scratch + "/dense" + ext) == bytes(scratch + "/prod" + ext),
+                            "production oracle index/rlebwt mismatch");
+                    fs::remove(scratch + "/dense" + ext); fs::remove(scratch + "/prod" + ext);
+                }
+                U pieces = 0;
+                for (const auto& entry : fs::directory_iterator(scratch + "/dense.pieces")) {
+                    require(bytes(entry.path().string()) == bytes(scratch + "/prod.pieces/" + entry.path().filename().string()),
+                            "production oracle piece mismatch"); ++pieces;
+                }
+                require(pieces == U(std::distance(fs::directory_iterator(scratch + "/prod.pieces"), fs::directory_iterator{})),
+                        "production oracle extra pieces");
+                U expectedDepth;
+                auto expectedClasses = brute_seam_classes(M, want, expectedDepth);
+                require(bytes(sc.dir + "/seam.spool") == seam_spool_bytes(nTot, expectedDepth, expectedClasses),
+                        "production oracle seam spool mismatch");
+                fs::remove_all(scratch + "/dense.pieces"); fs::remove_all(scratch + "/prod.pieces");
+                sc.cleanup();
+            }
         }
         if ((cs + 1) % 200 == 0) {
             std::fprintf(stderr, "SELFTEST_PROGRESS done=%llu/%llu\n",
@@ -4533,6 +4580,9 @@ int main_impl(int argc, char** argv) {
             "       cross_lcp_merge --pair LEFT --right RIGHT (--sxcr OUT | --out-prefix PREFIX)\n"
             "       cross_lcp_merge --finalize ONE --out-prefix PREFIX\n"
             "       cross_lcp_merge --selftest CASES [--seed N] [--kway K]");
+    if (v2_pieces_enabled())
+        require(count <= kway && (!serial || count <= 2),
+                "WM-free v2 currently requires a single final fan-in; multilevel/serial intermediates are unsupported");
     struct Part { std::string file; U offset, n, version = 0; };
     std::vector<Part> parts;
     for (U i = 0; i < count; ++i) {
