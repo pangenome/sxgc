@@ -1620,6 +1620,12 @@ int main(int argc, char** argv) {
             ::unlink((wmFile + ".done").c_str());
             std::error_code ec;
             std::filesystem::remove(std::filesystem::path(wmFile).parent_path(), ec);
+            if (ec)
+                std::fprintf(stderr, "WM_DIR_REMOVE_FAILED path=%s err=%s\n",
+                             wmFile.c_str(), ec.message().c_str());
+            else if (std::filesystem::exists(std::filesystem::path(wmFile).parent_path()))
+                std::fprintf(stderr, "WM_DIR_REMOVE_FAILED_STILL_THERE path=%s\n",
+                             wmFile.c_str());
         }
         phase("seam-classes", last);
 
