@@ -1050,7 +1050,10 @@ struct WitBuckets {
     void spillLargest() {
         uint64_t best = 0;
         for (uint64_t b = 1; b < P; ++b) if (buf[b].size() > buf[best].size()) best = b;
-        if (buf[best].empty()) { totalRam = 0; return; }
+        spillBucket(best);
+    }
+    void spillBucket(uint64_t best) {
+        if (buf[best].empty()) return;
         std::vector<uint64_t>& v = buf[best];
         std::sort(v.begin(), v.end());
         std::vector<uint8_t> out;
@@ -1073,7 +1076,7 @@ struct WitBuckets {
     }
     void presort_parallel(int) {
         // Spill the remaining bounded RAM before opening the merge cursors.
-        while (totalRam) spillLargest();
+        for (uint64_t b = 0; b < P; ++b) spillBucket(b);
     }
     template <typename Visit>
     void for_each_sorted(Visit&& visit) {
@@ -1849,9 +1852,13 @@ int main(int argc, char** argv) {
             pf_check(cnt == (rNorm + 1023) / 1024, "sparse count");
             container.begin(11, 111, cnt);
             container.num(10); container.num(cnt);
-            std::vector<uint64_t> vals(cnt);
-            pf_read_full(fd, vals.data(), 8 * cnt, "sparse values");
-            for (uint64_t v : vals) container.num(v);
+            std::array<uint64_t, 8192> vals;
+            for (uint64_t pos = 0; pos < cnt;) {
+                size_t take = size_t(std::min<uint64_t>(vals.size(), cnt - pos));
+                pf_read_full(fd, vals.data(), 8 * take, "sparse values");
+                for (size_t j = 0; j < take; ++j) container.num(vals[j]);
+                pos += take;
+            }
             ::close(fd);
         }
 
