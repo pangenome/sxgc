@@ -2289,11 +2289,19 @@ struct PairScratch {
             ov.push_back(dir + "/ov" + std::to_string(j) + ".bin");
         }
     }
-    void cleanup() {
-        ::unlink(m2.c_str()); ::unlink(hs.c_str()); ::unlink(wm.c_str());
+    void cleanup(bool keep_wm = false) {
+        // WM delete-as-consumed: in the v2 pipeline the fused finish is the
+        // LAST WM consumer and it runs CONCURRENT with this merge - the
+        // finish polls for wm.bin (+ the packed layout's .done sentinel) and
+        // would lose the file if we unlinked it at merge exit (the tiny
+        // front-door suite caught exactly this race). keep_wm preserves wm
+        // (and .done) for the finish, which unlinks both and removes this
+        // dir when it closes its read fd.
+        ::unlink(m2.c_str()); ::unlink(hs.c_str());
+        if (!keep_wm) ::unlink(wm.c_str());
         for (auto& f : bwt) ::unlink(f.c_str());
         for (auto& f : ov) ::unlink(f.c_str());
-        fs::remove_all(dir);
+        if (!keep_wm) fs::remove_all(dir);
     }
 };
 // M2 file = T||T with T = text_0||...||text_{k-1} in offset order (k sides).
@@ -3450,7 +3458,8 @@ static void cross_drop_stale_preflights(const std::string& L, const std::string&
 // mediate arity selected at launch. Sides must tile the text: side j's
 // global offset = sum of previous sides' lengths.
 static U merge_kway_files(const std::vector<std::string>& inputs, bool dollar,
-                          const std::string& out, U threads, bool emitPf = false) {
+                          const std::string& out, U threads, bool emitPf = false,
+                          bool deferWm = false) {
     const size_t k = inputs.size();
     require(k >= 1, "k-way merge needs at least one input");
     const std::string& leftPath = inputs.front();
@@ -3562,7 +3571,7 @@ static U merge_kway_files(const std::vector<std::string>& inputs, bool dollar,
     U out_runs = dollar ? emit_four_ext(out, m2, wm, n, threads, sc.dir)
                         : emit_sxcr_ext(out, m2, wm, n, sides.front().offset, threads, sides, sc.dir);
     if (dollar && emitPf) emit_pf_side_ext(out, m2, n, out_runs);
-    sc.cleanup();
+    sc.cleanup(deferWm);
     double total = now_sec() - t0;
     if (k == 2) {
         std::printf("CROSS_PAIR mode=%s left=%s right=%s nA=%llu nB=%llu out=%s out_runs=%llu "
@@ -3968,7 +3977,7 @@ int main_impl(int argc, char** argv) {
             std::vector<std::string> ins;
             U nn = 0;
             for (size_t z = 0; z < g; ++z) { ins.push_back(parts[j + z].file); nn += parts[j + z].n; }
-            merge_kway_files(ins, final, out, threads, final && has("--emit-pf"));
+            merge_kway_files(ins, final, out, threads, final && has("--emit-pf"), final);
             // Delete-as-you-go: this group's inputs are consumed. Skipped with
             // the opt-in preflight pipeline, which may still be reading them.
             if (getenv("CROSS_DELETE_CONSUMED") && !getenv("CROSS_PIPELINE"))

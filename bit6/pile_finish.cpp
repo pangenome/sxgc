@@ -1556,6 +1556,7 @@ int main(int argc, char** argv) {
         // pieces idx) - the merge writes packed when CROSS_WM_PACK=1.
         PfWm wm;
         int wmFd = -1;
+        std::string wmFile;   // captured for delete-as-consumed unlink below
         {
             std::string glob = wmPath.empty() ? prefix + ".xsc-*/wm.bin" : wmPath;
             const uint64_t packedExpect = PfWm::packed_size(n, src.w);
@@ -1571,6 +1572,7 @@ int main(int argc, char** argv) {
                         uint64_t sz = uint64_t(st.st_size);
                         if (sz == 8 * n || (sz == packedExpect && ::stat((wmPath + ".done").c_str(), &st) == 0)) {
                             wmFd = ::open(wmPath.c_str(), O_RDONLY);
+                            wmFile = wmPath;
                             break;
                         }
                     }
@@ -1584,6 +1586,7 @@ int main(int argc, char** argv) {
                             uint64_t sz = uint64_t(st.st_size);
                             if (sz == 8 * n || (sz == packedExpect && ::stat((cand + ".done").c_str(), &st) == 0)) {
                                 wmFd = ::open(cand.c_str(), O_RDONLY);
+                                wmFile = cand;
                                 break;
                             }
                         }
@@ -1608,6 +1611,16 @@ int main(int argc, char** argv) {
                    seamSymbol);
         ::close(wmFd);
         wmFd = -1;
+        // WM delete-as-consumed: this finish is the LAST consumer (the merge
+        // deferred its unlink because we run concurrent with it - see
+        // PairScratch::cleanup). Unlink both layouts' artifacts and drop the
+        // now-empty .xsc scratch dir; the front door's tree rules stay clean.
+        if (!wmFile.empty()) {
+            ::unlink(wmFile.c_str());
+            ::unlink((wmFile + ".done").c_str());
+            std::error_code ec;
+            std::filesystem::remove(std::filesystem::path(wmFile).parent_path(), ec);
+        }
         phase("seam-classes", last);
 
         // ---- scratch writers

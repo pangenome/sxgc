@@ -82,81 +82,65 @@ static void emit_ref(const fs::path& refPath, const std::array<uint8_t,256>& rem
 // cuts the pos disc ~2.4x but costs ~2.3x walk wall (windowed decode per
 // access); the plan (XSA_POS_MODE) picks per scale - dense when the disc
 // budget allows it, compact when it does not.
+static uint64_t cyclic_period(const std::vector<uint8_t>& text) {
+    const uint64_t n = text.size();
+    uint64_t period = n;
+    {
+        std::vector<uint64_t> divs;
+        for (uint64_t d = 1; d * d <= n; ++d)
+            if (n % d == 0) { divs.push_back(d); if (d != n / d) divs.push_back(n / d); }
+        std::sort(divs.begin(), divs.end());
+        for (uint64_t d : divs) {
+            if (d >= n) continue;
+            bool ok = true;
+            for (uint64_t i = 0; i + d < n && ok; ++i) ok = text[i] == text[i + d];
+            if (ok) { period = d; break; }
+        }
+    }
+    return period;
+}
 static void emit_pos(const fs::path& posPath, const std::vector<int32_t>& order,
-                     const std::vector<uint8_t>& text, uint64_t offset, uint64_t n) {
+                     uint64_t period, uint64_t offset, uint64_t n) {
     int fd = ::open(posPath.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0644);
     require(fd >= 0, "chunk pos output exists or cannot be created");
     try {
         Writer w(fd);
-        // Minimal cyclic period (same rule the merge applies): the merge's
-        // periodic anchor form needs it; computed here once, on the
-        // resident text, instead of a merge-time divisor sweep.
-        uint64_t period = n;
-        {
-            std::vector<uint64_t> divs;
-            for (uint64_t d = 1; d * d <= n; ++d)
-                if (n % d == 0) { divs.push_back(d); if (d != n / d) divs.push_back(n / d); }
-            std::sort(divs.begin(), divs.end());
-            for (uint64_t d : divs) {
-                if (d >= n) continue;
-                bool ok = true;
-                for (uint64_t i = 0; i + d < n && ok; ++i) ok = text[i] == text[i + d];
-                if (ok) { period = d; break; }
-            }
-        }
         const char* pm = getenv("CHUNK_POS_MODE");
-        if (pm && !std::strcmp(pm, "dense")) {
-            // SXP3 dense: 8 bytes/position, random access is a pread.
-            for (uint8_t c : {'S','X','P','3'}) w.word(c, 1);
-            w.word(1, 4);
-            w.word(offset, 8); w.word(n, 8);
-            w.word(period, 8); w.word(0, 8);
-            for (uint64_t i = 0; i < n; ++i) w.word(static_cast<uint64_t>(order[i]), 8);
-            w.flush();
-        } else {
-        // SXP4 body: groups of 4096 rows; per group (startRow, byteOff,
-        // basePos) in the table, zigzag varint position deltas in the
-        // stream. Absolute positions stay 64-bit (bases/n/offsets); only
-        // bounded within-group deltas are narrow. ~3.13 B/position measured
-        // on pile-like 100MB text (8n -> ~3.1n: the chunk-disc lever).
-        for (uint8_t c : {'S','X','P','4'}) w.word(c, 1);
-        w.word(1, 4);
-        w.word(offset, 8); w.word(n, 8);
+        const bool dense = pm && !std::strcmp(pm, "dense");
+        for (uint8_t c : {'S','X','P'}) w.word(c, 1);
+        w.word(dense ? '3' : '4', 1);
+        w.word(1, 4); w.word(offset, 8); w.word(n, 8);
         w.word(period, 8); w.word(0, 8);
-        {
-            const uint64_t GRP = 4096;
-            uint64_t groups = (n + GRP - 1) / GRP;
-            std::vector<uint64_t> starts(groups), offs(groups), bases(groups);
-            std::vector<uint8_t> stream;
-            stream.reserve(n * 4 + 64);
-            auto putv = [&](uint64_t v) {
-                while (v >= 0x80) { stream.push_back(uint8_t(v) | 0x80); v >>= 7; }
-                stream.push_back(uint8_t(v));
+        if (dense) {
+            for (uint64_t i = 0; i < n; ++i) w.word(order[i], 8);
+        } else {
+            const uint64_t GRP = 4096, groups = (n + GRP - 1) / GRP;
+            w.word(groups, 8); w.word(0, 8);
+            // The table precedes the body: count encoded bytes first, then
+            // stream deltas. Neither the table nor body needs a resident copy.
+            uint64_t byteOff = 56 + 24 * groups;
+            auto delta = [&](uint64_t i) {
+                int64_t d = int64_t(order[i]) - order[i - 1];
+                return uint64_t(d >= 0 ? 2 * d : -2 * d - 1);
             };
             for (uint64_t g = 0; g < groups; ++g) {
-                uint64_t b0 = g * GRP, len = std::min<uint64_t>(GRP, n - b0);
-                starts[g] = b0;
-                bases[g] = len ? static_cast<uint64_t>(order[b0]) : 0;
-                offs[g] = stream.size();
-                uint64_t prev = bases[g];
-                for (uint64_t i = 1; i < len; ++i) {
-                    uint64_t p = static_cast<uint64_t>(order[b0 + i]);
-                    putv(p >= prev ? 2 * (p - prev) : 2 * (prev - p) - 1);   // standard zigzag
-                    prev = p;
+                uint64_t begin = g * GRP, end = std::min(begin + GRP, n);
+                w.word(begin, 8); w.word(byteOff, 8); w.word(order[begin], 8);
+                for (uint64_t i = begin + 1; i < end; ++i) {
+                    uint64_t v = delta(i);
+                    do { ++byteOff; v >>= 7; } while (v);
                 }
             }
-            w.word(groups, 8);
-            w.word(0, 8);   // pad: the group table starts at byte 56
-            uint64_t streamBase = 56 + 24 * groups;
             for (uint64_t g = 0; g < groups; ++g) {
-                w.word(starts[g], 8);
-                w.word(streamBase + offs[g], 8);
-                w.word(bases[g], 8);
+                uint64_t begin = g * GRP, end = std::min(begin + GRP, n);
+                for (uint64_t i = begin + 1; i < end; ++i) {
+                    uint64_t v = delta(i);
+                    while (v >= 0x80) { w.word(uint8_t(v) | 0x80, 1); v >>= 7; }
+                    w.word(v, 1);
+                }
             }
-            w.flush();
-            write_all(fd, stream.data(), stream.size());
         }
-        }
+        w.flush();
         require(::close(fd) == 0, "chunk pos close failed");
     } catch (...) { ::close(fd); throw; }
 }
@@ -170,39 +154,29 @@ static void emit(const fs::path& output, const std::vector<uint8_t>& text,
     std::vector<uint8_t> doubled(2*n);
     std::copy(text.begin(), text.end(), doubled.begin());
     std::copy(text.begin(), text.end(), doubled.begin() + n);
-    std::vector<int32_t> sa(2*n), plcp(2*n);
+    const uint64_t period = cyclic_period(text);
+    std::vector<int32_t> sa(2*n);
     require(libsais(doubled.data(), sa.data(), static_cast<int32_t>(2*n), 0, nullptr) == 0,
             "libsais suffix sort failed");
-    require(libsais_plcp(doubled.data(), sa.data(), plcp.data(), static_cast<int32_t>(2*n)) == 0,
-            "libsais PLCP failed");
-    // Adjacent suffixes with >=n common bytes are the same cyclic rotation.
-    // Regular suffix order breaks periodic ties by remaining length; the
-    // repository breaks them by source position, so reorder each equal group.
-    std::vector<int32_t> order;
-    order.reserve(n);
-    int32_t minimum = INT32_MAX;
-    size_t group = 0;
-    for (size_t i = 0; i < sa.size(); ++i) {
-        if (i) minimum = std::min(minimum, plcp[sa[i]]);
-        if (static_cast<uint64_t>(sa[i]) >= n) continue;
-        if (!order.empty() && minimum < static_cast<int32_t>(n)) {
-            std::sort(order.begin() + group, order.end());
-            group = order.size();
+    // Filtering never overwrites an unread SA entry. Distinct rotations
+    // already have cyclic order in the doubled suffix array.
+    size_t retained = 0;
+    for (size_t i = 0; i < sa.size(); ++i)
+        if (uint64_t(sa[i]) < n) sa[retained++] = sa[i];
+    require(retained == n, "cyclic SA projection failed");
+    if (period < n) {
+        // Equal rotations form contiguous residue classes modulo period.
+        // Emit each class in source-position order, preserving legacy ties.
+        const uint64_t count = n / period;
+        for (uint64_t begin = 0; begin < n; begin += count) {
+            const uint64_t residue = uint64_t(sa[begin]) % period;
+            for (uint64_t j = 0; j < count; ++j)
+                sa[begin + j] = int32_t(residue + j * period);
         }
-        order.push_back(sa[i]);
-        minimum = INT32_MAX;
     }
-    std::sort(order.begin() + group, order.end());
-    require(order.size() == n, "cyclic SA projection failed");
-    std::vector<Run> runs;
-    for (int32_t pos : order) {
-        uint8_t c = text[(static_cast<uint64_t>(pos) + n - 1) % n];
-        if (runs.empty() || runs.back().c != c || runs.back().len == UINT64_MAX)
-            runs.push_back({c, 0, static_cast<uint64_t>(pos), static_cast<uint64_t>(pos)});
-        Run& r = runs.back();
-        ++r.len; r.t = static_cast<uint64_t>(pos);
-    }
+    std::vector<uint8_t>().swap(doubled);
     double wall = std::chrono::duration<double>(Clock::now() - start).count();
+    uint64_t runCount = 0;
     fs::path path = output / ("chunk-" + std::to_string(index) + ".crle");
     // SXCR v3 (default): COMPACT run records - char + varint length; the
     // head/tail samples are NOT embedded (they are derivable from the
@@ -216,21 +190,31 @@ static void emit(const fs::path& output, const std::vector<uint8_t>& text,
         Writer writer(fd);
         for (uint8_t c : {'S','X','C','R'}) writer.word(c, 1);
         writer.word(v3 ? 3 : 2, 4); writer.word(offset, 8); writer.word(n, 8);
-        writer.word(runs.size(), 8);
-        if (v3) {
-            for (auto r : runs) {
-                writer.word(r.c, 1);
-                uint64_t len = r.len;
-                while (len >= 0x80) { writer.word(uint64_t(uint8_t(len) | 0x80), 1); len >>= 7; }
+        writer.word(0, 8); // patched after the bounded streaming walk
+        Run run{};
+        auto flushRun = [&] {
+            if (!run.len) return;
+            ++runCount;
+            writer.word(run.c, 1);
+            if (v3) {
+                uint64_t len = run.len;
+                while (len >= 0x80) { writer.word(uint8_t(len) | 0x80, 1); len >>= 7; }
                 writer.word(len, 1);
+            } else {
+                writer.word(run.len, 8); writer.word(run.h, 8); writer.word(run.t, 8);
             }
-        } else {
-            for (auto r : runs) {
-                writer.word(r.c, 1); writer.word(r.len, 8);
-                writer.word(r.h, 8); writer.word(r.t, 8);
+        };
+        for (uint64_t i = 0; i < n; ++i) {
+            uint64_t pos = uint64_t(sa[i]);
+            uint8_t c = text[pos ? pos - 1 : n - 1];
+            if (!run.len || run.c != c || run.len == UINT64_MAX) {
+                flushRun(); run = {c, 0, pos, pos};
             }
+            ++run.len; run.t = pos;
         }
-        writer.flush();
+        flushRun(); writer.flush();
+        require(::lseek(fd, 24, SEEK_SET) == 24, "chunk run count seek failed");
+        writer.word(runCount, 8); writer.flush();
         require(::close(fd) == 0, "chunk output close failed");
     } catch (...) { ::close(fd); throw; }
     // Corpus-referenced text: default ON (the chunk's text lives in the
@@ -241,10 +225,10 @@ static void emit(const fs::path& output, const std::vector<uint8_t>& text,
                  remap, corpus, offset, n);
     if (!getenv("CHUNK_NO_POS"))
         emit_pos(output / ("chunk-" + std::to_string(index) + ".pos"),
-                 order, text, offset, n);
-    std::printf("CHUNK index=%u offset=%llu n=%llu runs=%zu sort_wall_seconds=%.6f path=%s\n",
+                 sa, period, offset, n);
+    std::printf("CHUNK index=%u offset=%llu n=%llu runs=%llu sort_wall_seconds=%.6f path=%s\n",
                 index, (unsigned long long)offset, (unsigned long long)n,
-                runs.size(), wall, path.c_str());
+                (unsigned long long)runCount, wall, path.c_str());
     std::fflush(stdout);
 }
 // PILE-WEEK (pile-week-v1) CHUNK PARALLELISM: the chunker was serial per
@@ -254,7 +238,7 @@ static void emit(const fs::path& output, const std::vector<uint8_t>& text,
 // (document-aligned at >=target, the last byte of every chunk is 0x1e);
 // phase 2 runs the per-chunk sorts concurrently (each worker preads its
 // range and applies the same remap; emit() is unchanged). RAM bound: each
-// worker is ~27x its chunk bytes (doubled text + SA + PLCP), so the worker
+// worker holds ~11x its chunk bytes (text + doubled text + SA), so the worker
 // count is a knob (CHUNK_WORKERS, default 1 = the banked serial behavior)
 // and the front door sizes it from --memory and journals it. The artifacts
 // are byte-identical by construction (same boundaries, same emit); the 100MB
