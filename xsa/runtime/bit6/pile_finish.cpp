@@ -155,6 +155,7 @@ struct CorpusText {
             cmap = (const uint8_t*)p;
             cmapRegion = p;
         }
+        if (!cmap) fprintf(stderr, "PILE_FINISH_CORPUS_WINDOWED regions=%zu region_bytes=%llu mapped_cap=%llu\n", windows.size(), (unsigned long long)windowBytes, (unsigned long long)(windows.size() * windowBytes));
         bool identity = true;
         for (unsigned i = 0; i < 256; ++i) identity = identity && remap[i] == uint8_t(i);
         fprintf(stderr, "PILE_FINISH_CORPUS path=%s bytes=%llu remap_identity=%d read_only=1 rotation=0 derivation=T[i]=REMAP[corpus[i]] mmap=%d\n",
@@ -1012,7 +1013,7 @@ struct Sweep {
 // buffer; when the global RAM budget is exceeded the largest bucket is
 // sorted and appended to its disc file as a delta-varint run. The EF pass
 // walks buckets in value order (ranges are disjoint), merging each
-// bucket's RAM part with its sorted runs.
+// bucket's compressed runs with a bounded 64-way heap.
 struct WitBuckets {
     uint64_t P = 0, n = 0;
     std::string prefix;
@@ -1027,15 +1028,16 @@ struct WitBuckets {
         P = 4096;
         while (P < 65536 && P * 262144 < runs) P *= 2;
         buf.resize(P);
-        runs.resize(P);
+        this->runs.resize(P);
         fds.assign(P, -1);
     }
     uint64_t bucketOf(uint64_t v) const { return v * P / n; }
     void add(uint64_t v) {
         pf_check(v < n, "witness out of range");
         uint64_t b = bucketOf(v);
+        size_t oldCapacity = buf[b].capacity();
         buf[b].push_back(v);
-        totalRam += 8;
+        totalRam += 8 * (buf[b].capacity() - oldCapacity);
         ++totalValues;
         while (totalRam > ramBudget) spillLargest();
     }
@@ -1058,6 +1060,7 @@ struct WitBuckets {
         std::sort(v.begin(), v.end());
         std::vector<uint8_t> out;
         out.reserve(v.size() + 16);
+        pf_check(v.size() <= UINT32_MAX, "witness spill run count overflow");
         uint32_t cnt = uint32_t(v.size());
         out.insert(out.end(), (const char*)&cnt, (const char*)&cnt + 4);
         putVarint(out, v[0]);
@@ -1067,10 +1070,12 @@ struct WitBuckets {
             fds[best] = ::open(name.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_APPEND, 0666);
             pf_check(fds[best] >= 0, "open witness bucket");
         }
-        uint64_t offset = uint64_t(lseek(fds[best], 0, SEEK_END));
+        off_t end = lseek(fds[best], 0, SEEK_END);
+        pf_check(end >= 0, "seek witness bucket");
+        uint64_t offset = uint64_t(end);
         runs[best].push_back({offset + 4, out.size() - 4, cnt});
         pf_write_full(fds[best], out.data(), out.size(), "witness bucket");
-        totalRam -= 8 * v.size();
+        totalRam -= 8 * v.capacity();
         std::vector<uint64_t>().swap(v);
         ++spilled;
     }
