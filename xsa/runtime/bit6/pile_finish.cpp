@@ -1222,16 +1222,16 @@ struct WitBuckets {
 // EF high stream's gaps, gamma's prefixes) flush in bulk. The container's
 // byte-identity gates are the arbiter.
 struct BitsOut {
+    std::string path;
     int fd = -1;
     std::vector<uint8_t> mem;
     uint64_t byteCount = 0;
-    explicit BitsOut(const std::string& path) {
+    explicit BitsOut(const std::string& path_) : path(path_) {
         fd = ::open(path.c_str(), O_RDWR | O_CREAT | O_EXCL, 0600);
         pf_check(fd >= 0, "create bit spool");
-        pf_check(::unlink(path.c_str()) == 0, "unlink bit spool");
         mem.reserve(1 << 20);
     }
-    ~BitsOut() { if (fd >= 0) ::close(fd); }
+    ~BitsOut() { if (fd >= 0) ::close(fd); ::unlink(path.c_str()); }
     void drain() {
         pf_write_full(fd, mem.data(), mem.size(), "bit spool");
         byteCount += mem.size(); mem.clear();
