@@ -4,7 +4,6 @@
   "runtime/agc2flat/Cargo.toml.in": "e4be99bd86554aac1f62412f229d8931becb4765a67ae79de16eea3cda964f57",
   "runtime/agc2flat/src/ghost.rs": "f5caa15a169f3fd5e80762ad74b214c56012fc6215cd8701226698c6e7bf752e",
   "runtime/agc2flat/src/main.rs": "f82b7292863dce8a8dcbef3bece33d5aa7aedd7e398b564e4cca2fe3a886941d",
-  "runtime/bit6/__pycache__/sxi_pipeline.cpython-312.pyc": "3dbd88984cced5d850e6984ee568dbc3b9bd8cea0ff12bea04058b643c1e4c8f",
   "runtime/bit6/check_pieces.c": "b5ecf183316d15d9315c38c2b66dacf24c6db71adb34322a567dc6d0172d0474",
   "runtime/bit6/chi_rspace_dump.cpp": "61e2c0d42fcc7a0f6816f5dca0c52463a44c537ee5f58af77cd52898c1f94011",
   "runtime/bit6/chunk_frontend.cpp": "3f2e5f43138784ef7f597ccd37174f46c086454fdba24e5fb87cd57fcc27be8d",
