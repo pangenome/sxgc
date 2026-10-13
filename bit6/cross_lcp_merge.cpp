@@ -47,7 +47,7 @@
 //    through per-shard segments concatenated in shard order. Concatenation
 //    is order-pure: byte-identical to the serial walk by construction at
 //    S = --threads shards (CROSS_SHARDS overrides; S=1 IS the serial walk).
-//  * Comparisons use dense prefix fingerprints over M.M with a directly
+//  * Comparisons use sparse prefix fingerprints over virtual M.M with a directly
 //    checked 16-symbol fast path, galloping hash probes, bisection, and FULL
 //    direct verification of every proposed equal prefix and its mismatch
 //    boundary (the SLIM_FP discipline, bit6/slim_lce.hpp). A hash/verification
@@ -801,7 +801,7 @@ struct WmPacker {
 // already exists in the corpus; the disc discipline kills the per-side text
 // copies). One API in two backing modes; consumers are bulk passes and
 // per-row random reads, so a small thread-local page cache suffices (the
-// hot comparison path reads the materialized M2 scratch file, not this).
+// merge comparison uses the corpus-backed virtual view below).
 // One referenced text segment: bytes [off, off+len) of `path`, mapped
 // through `remap`. A side's text is a CONCATENATION of segments (its refs):
 // a corpus window is one segment; a merged intermediate's text is its input
@@ -982,6 +982,93 @@ struct SideText {
     }
 };
 std::atomic<U> SideText::g_gen{1};
+// Virtual doubled text: coordinates [0,2n) wrap into the original
+// referenced corpus segments. Raw bytes stay in bounded WinBytes pages;
+// remapping is applied only when bytes are returned to a consumer.
+struct CorpusText {
+    U n = 0;
+    bool pool = false;
+    std::vector<TextSeg> segs;
+    std::vector<U> starts, fileIndex;
+    std::vector<std::string> paths;
+    std::vector<std::unique_ptr<WinBytes>> files;
+    void open(std::vector<TextSeg> list, bool pooled = false) {
+        for (auto& s : list) {
+            if (!s.len) continue;
+            if (!segs.empty() && segs.back().path == s.path &&
+                segs.back().off + segs.back().len == s.off && segs.back().remap == s.remap)
+                segs.back().len += s.len;
+            else segs.push_back(std::move(s));
+        }
+        for (const auto& s : segs) {
+            starts.push_back(n); n += s.len;
+            auto it = std::find(paths.begin(), paths.end(), s.path);
+            U f = U(it - paths.begin());
+            if (it == paths.end()) {
+                paths.push_back(s.path);
+                auto r = std::make_unique<WinBytes>();
+                U bytes = fs::file_size(s.path);
+                r->open_ro(s.path, bytes, 0, pooled && bytes >= (1u << 20));
+                pool = pool || bool(r->pool);
+                files.push_back(std::move(r));
+            }
+            require(s.off <= files[f]->size && s.len <= files[f]->size - s.off,
+                    "virtual corpus segment bounds");
+            fileIndex.push_back(f);
+        }
+        require(n && n <= UINT64_MAX / 2, "virtual corpus length");
+    }
+    inline size_t segment(U i) const {
+        if (segs.size() == 1) return 0;
+        return size_t(std::upper_bound(starts.begin(), starts.end(), i) - starts.begin() - 1);
+    }
+    inline uint8_t at(U i) const {
+        if (i >= 2 * n) fail("virtual corpus byte bounds");
+        if (i >= n) i -= n;
+        size_t z = segment(i);
+        const auto& s = segs[z];
+        return s.remap[files[fileIndex[z]]->at(s.off + i - starts[z])];
+    }
+    void at_span(U i, void* out, U len) const {
+        if (i > 2 * n || len > 2 * n - i) fail("virtual corpus span bounds");
+        auto* q = static_cast<uint8_t*>(out);
+        while (len) {
+            U p = i >= n ? i - n : i;
+            size_t z = segment(p);
+            const auto& s = segs[z];
+            U take = std::min(len, s.len - (p - starts[z]));
+            files[fileIndex[z]]->at_span(s.off + p - starts[z], q, take);
+            for (U t = 0; t < take; ++t) q[t] = s.remap[q[t]];
+            q += take; i += take; len -= take;
+        }
+    }
+    void read(U i, void* out, U len) const {
+        if (i > 2 * n || len > 2 * n - i) fail("virtual corpus bulk bounds");
+        auto* q = static_cast<uint8_t*>(out);
+        constexpr U W = 1u << 22;
+        while (len) {
+            U p = i >= n ? i - n : i;
+            size_t z = segment(p);
+            const auto& s = segs[z];
+            U take = std::min({len, s.len - (p - starts[z]), W});
+            files[fileIndex[z]]->read(s.off + p - starts[z], q, take);
+            for (U t = 0; t < take; ++t) q[t] = s.remap[q[t]];
+            q += take; i += take; len -= take;
+        }
+    }
+    void prefetch(U i, U len) const {
+        if (!pool || !len || i >= 2 * n) return;
+        len = std::min(len, 2 * n - i);
+        while (len) {
+            U p = i >= n ? i - n : i;
+            size_t z = segment(p);
+            const auto& s = segs[z];
+            U take = std::min(len, s.len - (p - starts[z]));
+            files[fileIndex[z]]->prefetch(s.off + p - starts[z], take);
+            i += take; len -= take;
+        }
+    }
+};
 // Overlay of repaired slices over an immutable position column: the repair
 // writes each sorted block slice sequentially and registers [lo,hi) with its
 // file offset. Anchor blocks NEST (the backward-search walk shrinks the row
@@ -1261,7 +1348,7 @@ struct HashSparse {
     }
     inline U P(U j) const { return col.at(j); }
     // Prefetch the anchors a window hash over [a, a+len) will touch.
-    void prefetch_for(const WinBytes& m2, U a, U len) const {
+    void prefetch_for(const CorpusText& m2, U a, U len) const {
         if (!col.pool) return;
         U ja = (a + k - 1) / k, je = (a + len) / k;
         col.prefetch(ja); col.prefetch(je);
@@ -1271,7 +1358,7 @@ struct HashSparse {
         if (tl) m2.prefetch(je * k, tl);
     }
 };
-static U fold_bytes(const WinBytes& m2, U a, U e) {   // fold(a,e), first byte at B^(e-a-1)
+static U fold_bytes(const CorpusText& m2, U a, U e) {   // fold(a,e), first byte at B^(e-a-1)
     U h = 0;
     for (U i = a; i < e; ++i) h = h * HASH_BASE + ((U)m2.at(i) + 1);
     return h;
@@ -1279,7 +1366,7 @@ static U fold_bytes(const WinBytes& m2, U a, U e) {   // fold(a,e), first byte a
 // Window prefix-hash F(a,e) = fold(M2[a..e)) from sparse anchors + tails:
 //   ja = ceil(a/k), je = floor(e/k)
 //   F = head*B^(e-ja*k) + mid*B^(e-je*k) + tail   (mid = P[je]-P[ja]*B^((je-ja)*k))
-static U win_hash(const WinBytes& m2, const HashSparse& hp, U a, U e) {
+static U win_hash(const CorpusText& m2, const HashSparse& hp, U a, U e) {
     U ja = (a + hp.k - 1) / hp.k, je = e / hp.k;
     if (ja > je) return fold_bytes(m2, a, e);
     U tail = 0;
@@ -1314,13 +1401,13 @@ struct Budget {
 
 // ---------------------------------------------------------------- fingerprints
 struct Keys {
-    const WinBytes* m2 = nullptr;   // windowed M.M, 2n bytes
+    const CorpusText* m2 = nullptr;   // windowed M.M, 2n bytes
     const HashSparse* hp = nullptr; // k-spaced prefix hashes over m2
     U n = 0;
     bool dollar = false;           // final $-suffix mode vs cyclic (M^infty) mode
     Budget* bud = nullptr;
 
-    void init(const WinBytes* m, const HashSparse* h, U len, bool dol, Budget* b) {
+    void init(const CorpusText* m, const HashSparse* h, U len, bool dol, Budget* b) {
         m2 = m; hp = h; n = len; dollar = dol; bud = b;
     }
     // Hash equality of M2[a..a+len) and M2[b..b+len) from the SPARSE anchors
@@ -1512,7 +1599,7 @@ struct Keys {
     }
 };
 
-// k-spaced prefix hashes over the windowed M2 FILE: P[j] = fold(M2[0..j*k)).
+// k-spaced prefix hashes over virtual doubled corpus text: P[j] = fold(M2[0..j*k)).
 // Parallel 3-pass (relative entries in place, absolute range starts, fix-up)
 // over a shared scratch file; verified at boundaries like the dense build was.
 static U hash_spacing() {
@@ -1521,7 +1608,7 @@ static U hash_spacing() {
     require(k >= 1 && k <= 4096, "CROSS_HASH_K out of range");
     return k;
 }
-static void build_hash_sparse(const std::string& m2Path, U n2, U k,
+static void build_hash_sparse(const CorpusText& m2, U n2, U k,
                               const std::string& hsPath, U threads) {
     U entries = n2 / k + 1;
     int fd = ::open(hsPath.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0666);
@@ -1531,7 +1618,6 @@ static void build_hash_sparse(const std::string& m2Path, U n2, U k,
     if (n2 < (1u << 20) || tcount <= 1) tcount = 1;
     U segE = (entries + tcount - 1) / tcount;
     std::vector<U> relend(tcount, 0);
-    WinBytes m2; m2.open_ro(m2Path, n2, 0);
     std::vector<std::thread> ts;
     auto rel = [&](U t) {
         U j0 = t * segE, j1 = std::min(entries - 1, j0 + segE);
@@ -2277,46 +2363,42 @@ struct CoreStats {
 };
 struct PairScratch {
     std::string dir;
-    std::string m2, hs, wm;
+    std::string hs, wm;
     std::vector<std::string> bwt, ov;   // per side
     void init(const std::string& out, U pid, size_t sides) {
         dir = out + ".xsc-" + std::to_string(pid);
         fs::create_directories(dir);
-        m2 = dir + "/m2.bin"; hs = dir + "/hs.bin"; wm = dir + "/wm.bin";
+        hs = dir + "/hs.bin"; wm = dir + "/wm.bin";
         bwt.clear(); ov.clear();
         for (size_t j = 0; j < sides; ++j) {
             bwt.push_back(dir + "/bwt" + std::to_string(j) + ".bin");
             ov.push_back(dir + "/ov" + std::to_string(j) + ".bin");
         }
     }
+    void release_walk() const {
+        ::unlink(hs.c_str());
+        for (const auto& f : bwt) ::unlink(f.c_str());
+        for (const auto& f : ov) ::unlink(f.c_str());
+    }
     void cleanup() {
-        ::unlink(m2.c_str()); ::unlink(hs.c_str()); ::unlink(wm.c_str());
-        for (auto& f : bwt) ::unlink(f.c_str());
-        for (auto& f : ov) ::unlink(f.c_str());
+        release_walk(); ::unlink(wm.c_str());
         fs::remove_all(dir);
     }
 };
-// M2 file = T||T with T = text_0||...||text_{k-1} in offset order (k sides).
-static void build_m2_file(const std::vector<SideExt>& sides, const std::string& path) {
-    int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
-    require(fd >= 0, "create m2 scratch");
-    U n = 0; for (auto& S : sides) n += S.n;
-    constexpr U W = 1u << 22;
-    std::vector<uint8_t> buf(W);
-    for (int copy = 0; copy < 2; ++copy) {
-        U placed = 0;
-        for (auto& S : sides) {
-            SideText t; open_side_text(S, t);
-            for (U i = 0; i < S.n;) {
-                U len = std::min<U>(W, S.n - i);
-                t.read(i, buf.data(), len);
-                xput(fd, buf.data(), len, (U)copy * n + placed + i, "m2 write");
-                i += len;
-            }
-            placed += S.n;
+// Compose references in merge-local coordinates. Legacy embedded sidecars
+// remain readable for the existing selftest/old input protocol; no text is
+// created here. Production sides always carry original-corpus references.
+static void open_merge_text(const std::vector<SideExt>& sides, CorpusText& text, bool pooled = false) {
+    std::vector<TextSeg> list;
+    for (const auto& s : sides) {
+        if (s.refText) list.insert(list.end(), s.segs.begin(), s.segs.end());
+        else {
+            TextSeg g; g.path = s.sxsPath; g.off = 20; g.len = s.n;
+            for (U c = 0; c < 256; ++c) g.remap[c] = uint8_t(c);
+            list.push_back(std::move(g));
         }
     }
-    ::close(fd);
+    text.open(std::move(list), pooled);
 }
 // BWT of a side, streamed: bwt[i] = text[(pos[i]+n-1)%n], written sequentially.
 static void build_bwt_file(const SideExt& S, const PosOverlay& pos, const std::string& path,
@@ -2340,7 +2422,7 @@ static void build_bwt_file(const SideExt& S, const PosOverlay& pos, const std::s
     for (auto& t : ts) t.join();
     ::close(fd);
 }
-// Externalized core merge: M2/sparse-hash/BWT/WM are scratch FILES; the
+// Externalized core merge: sparse-hash/BWT/WM are scratch files; the
 // children's pos are windowed with a repair overlay; per-position RAM is
 // limited to window caches, the rank index, and bounded block buffers.
 // K-WAY EXTERNAL CORE MERGE (k=2 is the certified pairwise case; ONE code
@@ -2360,15 +2442,13 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
     require(k >= 1, "k-way merge needs at least one side");
     st.init(k);
     U n = 0; for (auto& S : sides) n += S.n;
+    CorpusText m2; open_merge_text(sides, m2, true);
     if (!pre) {
-        build_m2_file(sides, sc.m2);
-        phase("m2-build", last);
         hashK = hash_spacing();
         if (hashK > n / 2) hashK = std::max<U>(1, n / 2);   // degenerate-grid guard
-        build_hash_sparse(sc.m2, 2 * n, hashK, sc.hs, threads);
+        build_hash_sparse(m2, 2 * n, hashK, sc.hs, threads);
         phase("hash-build", last);
     }
-    WinBytes m2; m2.open_ro(sc.m2, 2 * n, 0, true);
     HashSparse hp; hp.open_ro(sc.hs, hashK, 2 * n / hashK + 1);
     Keys keys; keys.init(&m2, &hp, n, dollar, &bud);
     // MERGE-LOCAL coordinate rebasing (the banked pairwise contract): every
@@ -2431,6 +2511,7 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
                       anchor_blocks_ext(text, bwt, *pos[j], sides[j].n, localOff[j],
                                         sides[j].period, blocks, anchors,
                                         st.steps[j], st.rows[j]); }
+                    ::unlink(sc.bwt[j].c_str()); // anchor scan was its last consumer
                     st.anchors[j] = anchors.size();
                     repair_ext(*pos[j], blocks, anchors, localOff[j], sides[j].n, skeys);
                 }
@@ -2669,9 +2750,9 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
 //                  (bit6/ext_columns.hpp format; byte-identical to the
 //                  slim's own backward pass — the same recurrence over the
 //                  same bytes). tau = (8n + final_runs - 1) / final_runs.
-// All emitters read the M2/WM scratch files through windows: nothing
+// All emitters read virtual corpus text and WM through windows: nothing
 // per-position is resident.
-static void emit_pf_side_ext(const std::string& prefix, const WinBytes& m2, U n, U final_runs) {
+static void emit_pf_side_ext(const std::string& prefix, const CorpusText& m2, U n, U final_runs) {
     double last = now_sec();
     {
         OutFile t(prefix + ".pftext");
@@ -2847,7 +2928,7 @@ struct V2Piece {
     }
 };
 
-// Final four files, read from the M2 and WM scratch files (sequential WM).
+// Final four files, read from virtual corpus text and windowed WM.
 // PARALLEL EMISSION: both walks are sharded at fixed run boundaries (the
 // same combiner arithmetic as the SXCR emitter; rows are the n+10 rows of
 // the padded order, pad rows included). The fixed-size outputs go out by
@@ -2856,7 +2937,7 @@ struct V2Piece {
 // variable-word .rlebwt goes through per-shard segment files concatenated
 // in shard order. Every run is finalized by exactly one shard, so all four
 // files are byte-identical to the serial writer by construction.
-static U emit_four_ext(const std::string& prefix, const WinBytes& m2,
+static U emit_four_ext(const std::string& prefix, const CorpusText& m2,
                        const WinU64& wm, U n, U threads, const std::string& segDir) {
     double last = now_sec();
     U total = n + 10;
@@ -3110,7 +3191,7 @@ static U emit_four_ext(const std::string& prefix, const WinBytes& m2,
 }
 
 // Intermediate: merged cyclic order as an SXCR chunk + sidecar, read from
-// the M2 and WM scratch files. PARALLEL EMISSION: both walks are sharded
+// virtual corpus text and the WM scratch file. PARALLEL EMISSION: both walks are sharded
 // at fixed run boundaries. Pass 1 counts runs per row-range shard (internal
 // starts plus the shard's own first-row start flag); the combiner's prefix
 // sums give the global run count and every shard's global start-index base.
@@ -3118,7 +3199,7 @@ static U emit_four_ext(const std::string& prefix, const WinBytes& m2,
 // every run is finalized by exactly one shard (the one containing its start
 // row; a run straddling the shard end is scanned to its true end), so the
 // chunk is byte-identical to the serial writer by construction.
-static U emit_sxcr_ext(const std::string& path, const WinBytes& m2,
+static U emit_sxcr_ext(const std::string& path, const CorpusText& m2,
                        const WinU64& wm, U n, U offset, U threads,
                        const std::vector<SideExt>& inSides, const std::string& segDir) {
     double last = now_sec();
@@ -3291,7 +3372,7 @@ static U emit_sxcr_ext(const std::string& path, const WinBytes& m2,
         if (allRef && !getenv("CROSS_NO_PERSIST_EMIT")) {
             U per = n;
             {
-                // minimal cyclic period over the merged text (m2's first copy)
+                // minimal cyclic period over the virtual merged text
                 std::vector<U> divs;
                 for (U d = 1; d * d <= n; ++d) if (n % d == 0) { divs.push_back(d); if (d != n / d) divs.push_back(n / d); }
                 std::sort(divs.begin(), divs.end());
@@ -3371,7 +3452,7 @@ static U emit_sxcr_ext(const std::string& path, const WinBytes& m2,
 
 // ------------------------------------------------------------ node pipeline
 // FIX 4 (node-level pipeline, serial-compatible): while pair k runs, ONE
-// preflight thread builds pair k+1's load/m2/hash phases into that pair's
+// preflight thread builds pair k+1's load/hash phases into that pair's
 // own scratch dir. The tree stays serial (one merge at a time); the
 // lookahead is exactly one; RAM on both sides stays bounded. The preflight
 // starts at ANNOUNCE time (the driver announces the next pair right before
@@ -3396,10 +3477,10 @@ static void preflight_run(Preflight* pf) {
         load_side_ext(pf->right, 48, pf->sc.dir, pf->B);
         require(pf->A.offset + pf->A.n == pf->B.offset, "pair chunks do not tile");
         U n = pf->A.n + pf->B.n;
-        build_m2_file(std::vector<SideExt>{pf->A, pf->B}, pf->sc.m2);
+        CorpusText m2; open_merge_text({pf->A, pf->B}, m2);
         pf->hashK = hash_spacing();
         if (pf->hashK > n / 2) pf->hashK = std::max<U>(1, n / 2);
-        build_hash_sparse(pf->sc.m2, 2 * n, pf->hashK, pf->sc.hs, 48);
+        build_hash_sparse(m2, 2 * n, pf->hashK, pf->sc.hs, 48);
         pf->ok = true;
     } catch (const std::exception& e) {
         pf->err = e.what();
@@ -3472,7 +3553,7 @@ static U merge_kway_files(const std::vector<std::string>& inputs, bool dollar,
         pf = cross_take_preflight(leftPath, rightPath);
     }
     if (pf) {
-        // FIX 4: this pair's loads/m2/hash were prefetched during the
+        // FIX 4: this pair's loads/hash were prefetched during the
         // previous pair's run.
         if (!pf->ok) fail(("preflight failed: " + pf->err).c_str());
         sides[0] = pf->A; sides[1] = pf->B; sc = std::move(pf->sc); hashK = pf->hashK;
@@ -3556,8 +3637,9 @@ static U merge_kway_files(const std::vector<std::string>& inputs, bool dollar,
                     "merge sides do not tile");
     }
     core_merge_kway(sides, dollar, threads, bud, st, sc, hashK, pre);
+    sc.release_walk();
     U n = 0; for (auto& S : sides) n += S.n;
-    WinBytes m2; m2.open_ro(sc.m2, 2 * n, 0, true);
+    CorpusText m2; open_merge_text(sides, m2, true);
     WinU64 wm; wm.open_ro_auto(sc.wm, n);
     U out_runs = dollar ? emit_four_ext(out, m2, wm, n, threads, sc.dir)
                         : emit_sxcr_ext(out, m2, wm, n, sides.front().offset, threads, sides, sc.dir);
@@ -3617,21 +3699,6 @@ static U merge_kway_files(const std::vector<std::string>& inputs, bool dollar,
 
 // Single-chunk finalize: cyclic order -> $ order, then the four files.
 // M2 = T||T over the single side; the repaired order is the WM.
-static void build_m2_single(const SideExt& A, const std::string& path) {
-    int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
-    require(fd >= 0, "create m2 scratch");
-    SideText t; open_side_text(A, t);
-    constexpr U W = 1u << 22;
-    std::vector<uint8_t> buf(W);
-    for (int copy = 0; copy < 2; ++copy)
-        for (U i = 0; i < A.n;) {
-            U len = std::min<U>(W, A.n - i);
-            t.read(i, buf.data(), len);
-            xput(fd, buf.data(), len, (U)copy * A.n + i, "m2 write");
-            i += len;
-        }
-    ::close(fd);
-}
 static U finalize_file(const std::string& path, const std::string& prefix, U threads, bool emitPf = false) {
     if (1) for (const char* ext : {".rlebwt", ".rlebwt.meta", ".ssa", ".ssa_t"})
         require(!fs::exists(prefix + ext), "output exists; refusing to clobber");
@@ -3641,12 +3708,12 @@ static U finalize_file(const std::string& path, const std::string& prefix, U thr
     SideExt A;
     load_side_ext(path, threads, sc.dir, A);
     phase("load", last);
-    build_m2_single(A, sc.m2);
+    CorpusText m2; open_merge_text({A}, m2, true);
     U hashK = hash_spacing();
     if (hashK > A.n / 2) hashK = std::max<U>(1, A.n / 2);
-    build_hash_sparse(sc.m2, 2 * A.n, hashK, sc.hs, threads);
+    build_hash_sparse(m2, 2 * A.n, hashK, sc.hs, threads);
     phase("hash-build", last);
-    WinBytes m2; m2.open_ro(sc.m2, 2 * A.n, 0, true);
+    {
     HashSparse hp; hp.open_ro(sc.hs, hashK, 2 * A.n / hashK + 1);
     Keys keys; keys.init(&m2, &hp, A.n, true, &bud);
     PosOverlay posA;
@@ -3660,6 +3727,7 @@ static U finalize_file(const std::string& path, const std::string& prefix, U thr
         SideText text; open_side_text(A, text);
         anchor_blocks_ext(text, bwt, posA, A.n, 0, A.period, blocks, anchors, st.steps[0], st.rows[0]);
     }
+    ::unlink(sc.bwt[0].c_str()); // closed above; repair uses positions + corpus
     st.init(1);
     st.anchors[0] = anchors.size();
     repair_ext(posA, blocks, anchors, 0, A.n, keys);
@@ -3686,6 +3754,8 @@ static U finalize_file(const std::string& path, const std::string& prefix, U thr
         }
         ::close(fd);
     }
+    } // hash pool and overlay readers are dead before emission
+    sc.release_walk();
     WinU64 wm; wm.open_ro_auto(sc.wm, A.n);
     U out_runs = emit_four_ext(prefix, m2, wm, A.n, threads, sc.dir);
     if (emitPf) emit_pf_side_ext(prefix, m2, A.n, out_runs);
@@ -3726,7 +3796,7 @@ static std::vector<uint64_t> brute_dollar(const std::string& T) {
     std::vector<std::pair<std::string, uint64_t>> v;
     v.reserve(n);
     for (U p = 0; p < n; ++p)
-        v.push_back({T.substr(p) + std::string(p, '\x00'), uint64_t(p)});
+        v.push_back({T.substr(p), uint64_t(p)});
     std::sort(v.begin(), v.end());
     std::vector<uint64_t> o(n);
     for (U i = 0; i < n; ++i) o[i] = v[i].second;
@@ -3737,6 +3807,7 @@ static int selftest(U cases, uint64_t seed, U threads, U kway) {
     uint64_t s = seed ? seed : 1;
     auto next = [&]() { s ^= s << 13; s ^= s >> 7; s ^= s << 17; return s; };
     const std::vector<std::string> alphabets = {
+        {'\x00', '\x05', '\x1e'}, {'\xfc', '\xfd', '\xfe', '\xff', '\x00', '\x05'},
         {'\x06'}, {'\x06', '\x07'}, {'\x06', '\x07', '\x08'},
         {'\x06', '\x07', '\x08', '\x1e'}, {'\x06', '\x07', '\x08', '\x09', '\x0a', '\x1e'},
     };
@@ -3762,6 +3833,14 @@ static int selftest(U cases, uint64_t seed, U threads, U kway) {
         std::vector<std::string> As;
         std::string M;
         for (U z = 0; z < kway; ++z) { As.push_back(gen(1 + next() % 60, bool(next() & 1))); M += As.back(); }
+        // Explicit nonperiodic wrap-prefix and nested-prefix shapes, followed
+        // by the existing randomized periodic/deep-repetition cases.
+        if (cs < 3) {
+            const std::string patterns[] = {std::string("\x1e\x0a\x1e", 3),
+                                           std::string("aaaaaa"), std::string("abababa")};
+            M.clear();
+            for (auto& A : As) { A = patterns[cs]; M += A; }
+        }
         std::vector<std::vector<uint64_t>> posS;
         for (auto& A : As) posS.push_back(brute_cyclic(A));
         // Route through the EXTERNAL path: tiny sidecars in a scratch dir, the
@@ -3769,6 +3848,21 @@ static int selftest(U cases, uint64_t seed, U threads, U kway) {
         std::string scratch = "cross-selftest-scratch-" + std::to_string(U(getpid()));
         fs::remove_all(scratch);
         fs::create_directories(scratch);
+        std::array<uint8_t, 256> remap{};
+        for (U c = 0; c < 256; ++c) remap[c] = uint8_t(c);
+        for (auto pair : {std::pair<unsigned,unsigned>{1,255}, {2,253}, {3,254}, {4,252}})
+            std::swap(remap[pair.first], remap[pair.second]);
+        const std::string corpus = scratch + "/corpus";
+        {
+            OutFile f(corpus);
+            std::vector<uint8_t> raw(M.begin(), M.end());
+            U at = 0;
+            for (U z = 0; z < kway; ++z) {
+                for (U j = 0; j < As[z].size(); ++j, ++at)
+                    if (z & 1) raw[at] = remap[raw[at]]; // inverse equals forward
+            }
+            f.raw(raw.data(), raw.size());
+        }
         for (int mode = 0; mode < 2; ++mode) {
             bool dollar = mode == 1;
             Budget bud; CoreStats st;
@@ -3789,6 +3883,14 @@ static int selftest(U cases, uint64_t seed, U threads, U kway) {
                 S.sxsPath = scratch + "/side-" + std::to_string(z) + ".sxs"; S.ownsSxs = false;
                 S.refText = false; S.posBase = 20 + S.n;
                 dump(S, tz, posS[z]);
+                if ((cs & 1) || cs < 3) {
+                    S.refText = true;
+                    // Keep segment boundaries even when ranges are adjacent:
+                    // alternate maps force both the segment and wrap paths.
+                    TextSeg g; g.path = corpus; g.off = off; g.len = S.n; g.remap = remap;
+                    if (!(z & 1)) for (U c = 0; c < 256; ++c) g.remap[c] = uint8_t(c);
+                    S.segs.push_back(g);
+                }
                 off += S.n; nTot += S.n;
             }
             PairScratch sc; sc.init(scratch + "/case", 0, kway);
