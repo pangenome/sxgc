@@ -1008,7 +1008,7 @@ struct CorpusText {
                 paths.push_back(s.path);
                 auto r = std::make_unique<WinBytes>();
                 U bytes = fs::file_size(s.path);
-                r->open_ro(s.path, bytes, 0, pooled && bytes >= (1u << 20));
+                r->open_ro(s.path, bytes, 0, pooled && !pool && bytes >= (1u << 20));
                 pool = pool || bool(r->pool);
                 files.push_back(std::move(r));
             }
@@ -1611,6 +1611,8 @@ static U hash_spacing() {
 static void build_hash_sparse(const CorpusText& m2, U n2, U k,
                               const std::string& hsPath, U threads) {
     U entries = n2 / k + 1;
+    std::fprintf(stderr, "CROSS_HASH_SPARSE virtual_bytes=%llu k=%llu checkpoint_bytes=%llu\n",
+                 (unsigned long long)n2, (unsigned long long)k, (unsigned long long)(8 * entries));
     int fd = ::open(hsPath.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0666);
     require(fd >= 0, "create sparse hash file");
     if (ftruncate(fd, 8 * entries) != 0) fail("truncate sparse hash file");
@@ -2399,6 +2401,8 @@ static void open_merge_text(const std::vector<SideExt>& sides, CorpusText& text,
         }
     }
     text.open(std::move(list), pooled);
+    std::fprintf(stderr, "CROSS_TEXT_VIEW virtual_bytes=%llu corpus_files=%zu segments=%zu materialized_bytes=0 window_bytes=16384\n",
+                 (unsigned long long)(2 * text.n), text.files.size(), text.segs.size());
 }
 // BWT of a side, streamed: bwt[i] = text[(pos[i]+n-1)%n], written sequentially.
 static void build_bwt_file(const SideExt& S, const PosOverlay& pos, const std::string& path,
@@ -3714,46 +3718,46 @@ static U finalize_file(const std::string& path, const std::string& prefix, U thr
     build_hash_sparse(m2, 2 * A.n, hashK, sc.hs, threads);
     phase("hash-build", last);
     {
-    HashSparse hp; hp.open_ro(sc.hs, hashK, 2 * A.n / hashK + 1);
-    Keys keys; keys.init(&m2, &hp, A.n, true, &bud);
-    PosOverlay posA;
-    posA.init(A.sxsPath, A.n, A.posBase, 0, sc.ov[0]);
-    if (A.bwtFromRuns) build_bwt_from_runs(A, posA, sc.bwt[0], 0);
-    else build_bwt_file(A, posA, sc.bwt[0], threads, 0);
-    std::vector<BlockRec> blocks;
-    std::vector<uint64_t> anchors;
-    {
-        WinBytes bwt; bwt.open_ro(sc.bwt[0], A.n, 0);
-        SideText text; open_side_text(A, text);
-        anchor_blocks_ext(text, bwt, posA, A.n, 0, A.period, blocks, anchors, st.steps[0], st.rows[0]);
-    }
-    ::unlink(sc.bwt[0].c_str()); // closed above; repair uses positions + corpus
-    st.init(1);
-    st.anchors[0] = anchors.size();
-    repair_ext(posA, blocks, anchors, 0, A.n, keys);
-    phase("anchor+repair", last);
-    // WM = the repaired order, streamed from the overlay.
-    if (wm_pack_enabled()) {
-        WmPacker p;
-        p.open(sc.wm, A.n);
-        for (U i = 0; i < A.n;) {
-            U len = std::min<U>(4096, A.n - i);
-            for (U z = 0; z < len; ++z) p.put(i + z, posA.at(i + z));
-            i += len;
+        HashSparse hp; hp.open_ro(sc.hs, hashK, 2 * A.n / hashK + 1);
+        Keys keys; keys.init(&m2, &hp, A.n, true, &bud);
+        PosOverlay posA;
+        posA.init(A.sxsPath, A.n, A.posBase, 0, sc.ov[0]);
+        if (A.bwtFromRuns) build_bwt_from_runs(A, posA, sc.bwt[0], 0);
+        else build_bwt_file(A, posA, sc.bwt[0], threads, 0);
+        std::vector<BlockRec> blocks;
+        std::vector<uint64_t> anchors;
+        {
+            WinBytes bwt; bwt.open_ro(sc.bwt[0], A.n, 0);
+            SideText text; open_side_text(A, text);
+            anchor_blocks_ext(text, bwt, posA, A.n, 0, A.period, blocks, anchors, st.steps[0], st.rows[0]);
         }
-        p.close();
-    } else {
-        int fd = ::open(sc.wm.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
-        require(fd >= 0, "create wm scratch");
-        U buf[4096];
-        for (U i = 0; i < A.n;) {
-            U len = std::min<U>(4096, A.n - i);
-            for (U z = 0; z < len; ++z) buf[z] = posA.at(i + z);
-            xput(fd, buf, 8 * len, 8 * i, "wm write");
-            i += len;
+        ::unlink(sc.bwt[0].c_str()); // closed above; repair uses positions + corpus
+        st.init(1);
+        st.anchors[0] = anchors.size();
+        repair_ext(posA, blocks, anchors, 0, A.n, keys);
+        phase("anchor+repair", last);
+        // WM = the repaired order, streamed from the overlay.
+        if (wm_pack_enabled()) {
+            WmPacker p;
+            p.open(sc.wm, A.n);
+            for (U i = 0; i < A.n;) {
+                U len = std::min<U>(4096, A.n - i);
+                for (U z = 0; z < len; ++z) p.put(i + z, posA.at(i + z));
+                i += len;
+            }
+            p.close();
+        } else {
+            int fd = ::open(sc.wm.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+            require(fd >= 0, "create wm scratch");
+            U buf[4096];
+            for (U i = 0; i < A.n;) {
+                U len = std::min<U>(4096, A.n - i);
+                for (U z = 0; z < len; ++z) buf[z] = posA.at(i + z);
+                xput(fd, buf, 8 * len, 8 * i, "wm write");
+                i += len;
+            }
+            ::close(fd);
         }
-        ::close(fd);
-    }
     } // hash pool and overlay readers are dead before emission
     sc.release_walk();
     WinU64 wm; wm.open_ro_auto(sc.wm, A.n);
