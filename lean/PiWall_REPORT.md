@@ -25,7 +25,7 @@ PiWallEval and PiWallAxioms are additional default targets.
   arbitrary-enumerator quadratic lower endpoint was not proved.
 - Unconditional upper endpoints: `scanInverse_correct`, `PiWall.lean:170`,
   `denseInverse_correct`, `PiWall.lean:205`, whole-scan length and n-scan
-  budget (`PiWall.lean:219`, `222`), and n-cell storage (`133`). Eval kernels
+  budget (`PiWall.lean:219`, `222`), and n-cell storage (`133`, `683`). Eval kernels
   are formally identified with these algorithms (`141`, `147`). The scalar
   budget is conservative; early-stop searches can take fewer observations.
   Lists describe streams/traces, not a claimed constant-memory Lean runtime.
@@ -75,7 +75,7 @@ CONVENTION GATE: GREEN (ascending ties, linear BWT runs, p=n singleton classes)
 ```
 
 Source audit: zero `sorry`, zero `native_decide`, exactly one explicitly
-marked axiom in PiWall.lean. The 35-theorem `#print axioms` audit shows only
+marked axiom in PiWall.lean. The 37-theorem `#print axioms` audit shows only
 wall_one/wall_n depend on cycle_inversion_wall; all constructive results use
 at most propext/Classical.choice/Quot.sound, and none uses sorryAx.
 

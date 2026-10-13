@@ -672,4 +672,17 @@ def RunTradeoffQuestion (timeBound spaceBound : Nat → Nat → Nat) : Prop :=
     ∀ e, 0 < e → ∃ K, ∀ k, K ≤ k →
       e * (timeBound (ns k) (rs k) * spaceBound (ns k) (rs k)) ≤ ns k * ns k
 
+/-- Dense scatter never grows or shrinks its n-cell state. -/
+theorem scatter_size (xs : List (Nat × Nat)) (a : Array Nat) :
+    (xs.foldl (fun arr item => arr.set! item.2 item.1) a).size = a.size := by
+  induction xs generalizing a with
+  | nil => rfl
+  | cons item rest ih =>
+    rw [List.foldl_cons, ih, Array.size_set!]
+
+theorem denseInverse_size {n : Nat} (π : Permutation n) : (denseInverse π).size = n := by
+  unfold denseInverse
+  rw [scatter_size]
+  simp
+
 end Sxgc.PiWall

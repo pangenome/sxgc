@@ -38,3 +38,6 @@ import PiWall
 #print axioms Sxgc.PiWall.list_rotation_iff_residue
 
 #print axioms Sxgc.PiWall.periodic_break
+
+#print axioms Sxgc.PiWall.scatter_size
+#print axioms Sxgc.PiWall.denseInverse_size
