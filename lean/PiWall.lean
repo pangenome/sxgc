@@ -512,6 +512,36 @@ theorem periodic_emission_injective (T : CyclicText) {p copies : Nat}
       exact False.elim (cyclicBefore_irrefl T _ hs)
     · omega
 
+/-- THE PERIODIC BREAK, assembled: exactly n valid, distinct positions,
+complete and in cyclic rank order, using the p-entry representative table. -/
+theorem periodic_break (T : CyclicText) {p copies : Nat}
+    (h : MinimalPeriod T p) (hc : 0 < copies) (hn : T.n = copies * p)
+    (R : OrderedResidues T p) :
+    (∀ row, row < T.n → emitRow p copies R.data row < T.n) ∧
+    (∀ a b, a < b → b < T.n →
+      CyclicBefore T (emitRow p copies R.data a) (emitRow p copies R.data b)) ∧
+    (∀ i, i < T.n → ∃ row, row < T.n ∧ emitRow p copies R.data row = i) ∧
+    (∀ a b, a < T.n → b < T.n →
+      emitRow p copies R.data a = emitRow p copies R.data b → a = b) := by
+  have hn' : T.n = p * copies := by simpa [Nat.mul_comm] using hn
+  refine ⟨?_, ?_, ?_, ?_⟩
+  · intro row hr
+    have hq : row / copies < p := (Nat.div_lt_iff_lt_mul hc).2 (by omega)
+    have hs := R.bounded _ hq
+    have hj := Nat.mod_lt row hc
+    have hm := Nat.mul_le_mul_right p (show row % copies + 1 ≤ copies by omega)
+    rw [Nat.add_mul] at hm
+    unfold emitRow
+    omega
+  · intro a b hab hb
+    apply periodic_emission_sorted T h hc R hab
+    omega
+  · intro i hi
+    obtain ⟨row, hr, he⟩ := periodic_emission_complete T h hc hn R hi
+    exact ⟨row, by omega, he⟩
+  · intro a b ha hb he
+    apply periodic_emission_injective T h hc R (by omega) (by omega) he
+
 /-- Symbolic emission cost in the word-RAM model: div, mod, lookup,
 multiply, add. This does not claim constant-time arbitrary-precision Nat. -/
 def rowWordOperations : Nat := 5

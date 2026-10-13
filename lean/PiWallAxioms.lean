@@ -36,3 +36,5 @@ import PiWall
 #print axioms Sxgc.PiWall.periodic_table_space
 #print axioms Sxgc.PiWall.finite_period_iff
 #print axioms Sxgc.PiWall.list_rotation_iff_residue
+
+#print axioms Sxgc.PiWall.periodic_break

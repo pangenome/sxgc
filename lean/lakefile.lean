@@ -27,5 +27,7 @@ lean_lib SxgcUniDelim
 
 -- Cyclic-stream inversion and periodic-class emission (additive registration).
 lean_lib PiWall
+@[default_target]
 lean_lib PiWallEval
+@[default_target]
 lean_lib PiWallAxioms
