@@ -1006,8 +1006,8 @@ fn run_v2_tail(
 
     // The v2 emission knobs: the G1-G4 gate shape by default; operator env
     // passes through unchanged and is journaled.
-    let v2_band = std::env::var("CROSS_V2_BAND").unwrap_or_else(|_| "65536".to_string());
-    let v2_window = std::env::var("CROSS_V2_PIECE_WINDOW").unwrap_or_else(|_| "64".to_string());
+    let v2_band = "65536".to_string();
+    let v2_window = std::env::var("CROSS_V2_PIECE_WINDOW").unwrap_or_else(|_| "1100".to_string());
     journal.line(&format!("V2_EMISSION CROSS_V2_PIECES=1 band={v2_band} window={v2_window}"));
     let container = scratch.join(format!("{}.sxi2",
         input.file_stem().and_then(|stem| stem.to_str()).filter(|stem| !stem.is_empty()).unwrap_or("pile")));

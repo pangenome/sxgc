@@ -371,6 +371,13 @@ struct RawRun { uint8_t c; uint64_t len, head, tail; };
 
 struct PieceSource {
     std::string prefix, dir;
+    bool streaming = false, terminal = false;
+    int64_t progress = -1;
+    uint64_t window = 0, depth = 0, finalBand = 0, capturedRows = 0;
+    std::map<uint64_t, std::vector<uint64_t>> bandRefs;
+    std::map<uint64_t, uint64_t> bandCounts, classExtents;
+    std::vector<std::vector<uint64_t>> completed;
+    uint64_t delivered = 0;
     uint32_t S = 0;
     uint64_t R = 0, n = 0, B = 65536;
     unsigned w = 0;
@@ -381,11 +388,156 @@ struct PieceSource {
     mutable std::map<std::pair<uint64_t, uint32_t>, View> views;
     mutable unsigned long opened = 0;
 
+    bool read_terminal() {
+        int fd = ::open((dir + "/terminal").c_str(), O_RDONLY);
+        if (fd < 0) return false;
+        struct stat st{}; pf_check(::fstat(fd, &st) == 0 && st.st_size == 36, "terminal marker size");
+        char magic[4]; uint64_t values[4];
+        pf_read_full(fd, magic, 4, "terminal magic"); pf_read_full(fd, values, 32, "terminal fields"); ::close(fd);
+        pf_check(memcmp(magic, "BPT1", 4) == 0 && values[1] > 0 && values[1] <= n+10 &&
+                 values[0] == (values[1]-1)/B && values[2] <= (1u<<26), "terminal dimensions");
+        terminal = true; finalBand = values[0]; R = values[1];
+        if (progress == int64_t(finalBand)) {
+            pf_check(values[2] == capturedRows && values[3] == completed.size(), "terminal capture assertion");
+            pf_check(capturedRows <= std::max<uint64_t>(1000, R/1000) &&
+                     depth <= std::max<uint64_t>(1000, R/1000), "terminal product repair budget");
+            pf_check(bandCounts.at(finalBand) == R-finalBand*B, "terminal run count");
+        }
+        return true;
+    }
+    void load_progress() {
+        uint64_t band = uint64_t(progress+1);
+        const std::string path = dir + "/g-" + std::to_string(band);
+        double waited = 0; int fd = ::open(path.c_str(), O_RDONLY);
+        while (fd < 0) {
+            read_terminal();
+            pf_check(!terminal || band <= finalBand, "progress requested beyond EOF");
+            if (waited > pollTimeout) pf_fail("timeout waiting for band progress " + path);
+            std::this_thread::sleep_for(std::chrono::milliseconds(20)); waited += .02;
+            fd = ::open(path.c_str(), O_RDONLY);
+        }
+        struct stat st{}; pf_check(::fstat(fd, &st) == 0 && st.st_size >= 36, "progress size");
+        char magic[4]; uint64_t fields[4];
+        pf_read_full(fd, magic, 4, "progress magic"); pf_read_full(fd, fields, 32, "progress dimensions");
+        pf_check(memcmp(magic, "BPG1", 4) == 0 && fields[0] == band && fields[1] > 0 && fields[1] <= B &&
+                 fields[2] <= (1u<<26) && fields[3] <= (1u<<26), "malformed band progress");
+        uint64_t offset = 36;
+        auto next = [&]() { uint64_t value;
+            pf_check(offset <= uint64_t(st.st_size) && uint64_t(st.st_size)-offset >= 8, "truncated band progress");
+            pf_read_full(fd, &value, 8, "band progress value"); offset += 8; return value; };
+        auto& refs = bandRefs[band];
+        for (uint64_t i = 0; i < fields[2]; ++i) {
+            uint64_t id = next(); pf_check(id < (1u<<26) && (refs.empty() || refs.back() < id), "progress class references");
+            refs.push_back(id);
+        }
+        for (uint64_t i = 0; i < fields[3]; ++i) {
+            std::vector<uint64_t> cl(8); for (auto& value : cl) value = next();
+            pf_check(cl[0] == completed.size() && cl[1] <= cl[2] && cl[2]/B <= band &&
+                     cl[3] < cl[4] && cl[4] <= n && cl[5] < n && cl[6] < n+10 && cl[7] < n+10,
+                     "progress class bounds");
+            pf_check(completed.empty() || completed.back()[4] <= cl[3], "progress overlapping classes");
+            uint64_t rows = cl[4]-cl[3], extent = cl[2]/B-cl[1]/B;
+            pf_check(extent < window && rows <= (1u<<26)-capturedRows, "progress class refusal");
+            for (uint64_t j = 0; j < rows; ++j) { uint64_t position = next();
+                pf_check(position < n, "progress occurrence bounds"); cl.push_back(position); }
+            pf_check(cl[8] == cl[5], "progress leftmost occurrence");
+            auto unique = std::vector<uint64_t>(cl.begin()+8, cl.end()); std::sort(unique.begin(), unique.end());
+            pf_check(std::adjacent_find(unique.begin(), unique.end()) == unique.end(), "progress duplicate occurrence");
+            capturedRows += rows; classExtents.emplace(cl[0], extent); completed.push_back(std::move(cl));
+        }
+        pf_check(offset == uint64_t(st.st_size), "progress trailing data"); ::close(fd);
+        pf_check(::unlink(path.c_str()) == 0, "unlink consumed progress");
+        bandCounts.emplace(band, fields[1]); progress = int64_t(band);
+        if (band) pf_check(bandCounts.at(band-1) == B, "partial band before EOF");
+        read_terminal();
+    }
+    bool ready_band(uint64_t band) {
+        if (terminal && band > finalBand) return false;
+        while (progress < int64_t(band)) {
+            if (read_terminal() && band > finalBand) return false;
+            load_progress();
+        }
+        uint64_t extent = 0;
+        for (uint64_t id : bandRefs.at(band)) {
+            while (!classExtents.count(id)) {
+                pf_check(!terminal || progress < int64_t(finalBand), "terminal missing referenced class");
+                load_progress();
+            }
+            const auto& cl = completed.at(id);
+            pf_check(cl[1]/B <= band && cl[2]/B >= band, "class reference outside band");
+            extent = std::max(extent, classExtents.at(id));
+        }
+        pf_check(extent < window, "band extent exceeds W-1");
+        while (!terminal && uint64_t(progress) < band+extent) {
+            if (read_terminal()) break;
+            load_progress();
+        }
+        // EOF clamps b+E(b) to N. Terminal also attests final flanks.
+        while (terminal && uint64_t(progress) < std::min(band+extent, finalBand)) load_progress();
+        if (bandCounts.at(band) < B) {
+            double waited = 0;
+            while (!read_terminal()) {
+                if (waited > pollTimeout) pf_fail("timeout waiting for terminal assertion");
+                std::this_thread::sleep_for(std::chrono::milliseconds(20)); waited += .02;
+            }
+            pf_check(band == finalBand, "partial band is not final");
+        }
+        return true;
+    }
+    void consumed_band(uint64_t band) {
+        if (const char* delay = getenv("PILE_FINISH_BAND_DELAY_MS"))
+            std::this_thread::sleep_for(std::chrono::milliseconds(strtoull(delay,nullptr,10)));
+        std::string path = prefix + ".runcols.consumed", tmp = path + ".tmp";
+        FILE* f = fopen(tmp.c_str(), "w"); pf_check(f, "open consumed tmp");
+        fprintf(f, "%llu\n", (unsigned long long)band);
+        pf_check(fclose(f) == 0 && ::rename(tmp.c_str(), path.c_str()) == 0, "publish consumed band");
+        bandRefs.erase(band);
+    }
+    void read_stream_band(uint64_t band, std::vector<RawRun>& out) {
+        uint64_t count = bandCounts.at(band);
+        std::string path = dir + "/p-" + std::to_string(band) + "-0";
+        int fd = ::open(path.c_str(), O_RDONLY); pf_check(fd >= 0, "published band piece missing");
+        char hdr[44]; pf_read_full(fd, hdr, 44, "band piece header");
+        uint32_t magic, shard, width; uint64_t actualBand, first, rc, zero;
+        memcpy(&magic,hdr,4); memcpy(&actualBand,hdr+4,8); memcpy(&shard,hdr+12,4);
+        memcpy(&first,hdr+16,8); memcpy(&rc,hdr+24,8); memcpy(&width,hdr+32,4); memcpy(&zero,hdr+36,8);
+        pf_check(magic == 0x31435250 && actualBand == band && shard == 0 && first == band*B &&
+                 rc == count && width == w && zero == 0, "band piece dimensions");
+        uint64_t words = (uint64_t(w)*count+63)/64;
+        struct stat st{}; pf_check(::fstat(fd,&st)==0 && uint64_t(st.st_size)==44+5*count+16*words, "band piece size");
+        std::vector<uint8_t> chars(count); std::vector<uint32_t> lens(count);
+        std::vector<uint64_t> heads(words), tails(words);
+        pf_read_full(fd,chars.data(),count,"band chars"); pf_read_full(fd,lens.data(),4*count,"band lens");
+        pf_read_full(fd,heads.data(),8*words,"band heads"); pf_read_full(fd,tails.data(),8*words,"band tails"); ::close(fd);
+        auto unpack = [&](const std::vector<uint64_t>& data, uint64_t i) {
+            uint64_t bit = uint64_t(w)*i, wi=bit/64, shift=bit%64, value=data[wi]>>shift;
+            if (shift+w>64) value |= data[wi+1]<<(64-shift);
+            return value & ((uint64_t(1)<<w)-1);
+        };
+        out.clear(); out.reserve(count);
+        for (uint64_t i=0;i<count;++i) {
+            uint64_t head=unpack(heads,i), tail=unpack(tails,i);
+            pf_check(lens[i]>0 && head<n+10 && tail<n+10,"band record bounds");
+            out.push_back({chars[i],lens[i],head,tail});
+        }
+        pf_check(::unlink(path.c_str())==0,"unlink consumed band piece");
+    }
     void load_idx() {
         std::string path = prefix + ".runcols.idx";
+        dir = prefix + ".pieces";
         int fd = ::open(path.c_str(), O_RDONLY);
         double waited = 0;
         while (fd < 0) {
+            int start = ::open((dir + "/start").c_str(), O_RDONLY);
+            if (start >= 0) {
+                char magic[4]; uint64_t fields[4]; struct stat st{};
+                pf_check(::fstat(start,&st)==0 && st.st_size==36, "stream start size");
+                pf_read_full(start,magic,4,"stream start magic"); pf_read_full(start,fields,32,"stream start fields"); ::close(start);
+                pf_check(memcmp(magic,"BPS1",4)==0 && fields[0]>0 && fields[1]>0 && fields[1]<64 &&
+                         fields[2]>0 && fields[2]<=(1u<<26) && fields[3]>0,"stream start dimensions");
+                n=fields[0]; w=fields[1]; depth=fields[2]; window=fields[3]; R=n+10; streaming=true;
+                return;
+            }
             if (waited > pollTimeout) pf_fail("timeout waiting for the merge's runcols idx");
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             waited += 0.1;
@@ -475,6 +627,7 @@ struct PieceSource {
     uint64_t run_head(uint64_t run) const { auto& v = view(run); return samp_read(v, v.offHeads, run - v.firstRun); }
     uint64_t run_tail(uint64_t run) const { auto& v = view(run); return samp_read(v, v.offTails, run - v.firstRun); }
     void read_band(uint64_t band, std::vector<RawRun>& out) {
+        if (streaming) { read_stream_band(band,out); return; }
         uint64_t lo = band * B, hi = std::min<uint64_t>((band + 1) * B, R);
         out.clear();
         out.reserve(hi - lo);
@@ -917,6 +1070,42 @@ struct SeamClasses {
 
 // Exercise the production spool reader with row orders unrelated to numeric
 // position order, padded flanks, empty discovery and malformed records.
+static void selftest_band_progress(const std::string& directory) {
+    const std::string prefix=directory+"/progress-oracle", dir=prefix+".pieces";
+    auto write=[&](const std::string& name,const char* magic,const std::vector<uint64_t>& words){
+        int fd=::open((dir+"/"+name).c_str(),O_CREAT|O_TRUNC|O_WRONLY,0600);
+        pf_check(fd>=0,"create progress oracle");pf_write_full(fd,magic,4,"oracle magic");
+        pf_write_full(fd,words.data(),words.size()*8,"oracle words");::close(fd);
+    };
+    for(unsigned mode=0;mode<10;++mode){
+        std::filesystem::remove_all(dir);std::filesystem::create_directories(dir);
+        write("start","BPS1",{65540,17,3,3});
+        std::vector<uint64_t> first{0,65536,1,0,0};
+        std::vector<uint64_t> last{1,1,1,1,0,0,65535,65536,0,3,9,65549,4,9,3,0};
+        std::vector<uint64_t> terminal{1,65537,3,1};
+        if(mode==1)first[1]=0;
+        if(mode==2)last.pop_back();
+        if(mode==3)last[5]=1;
+        if(mode==4)last[10]=65540;
+        if(mode==5)last[15]=last[14];
+        if(mode==6)terminal[2]=4;
+        if(mode==7)terminal[0]=2;
+        if(mode==8)last.push_back(0);
+        if(mode==9)last[7]=3*65536;
+        write("g-0","BPG1",first);write("g-1","BPG1",last);write("terminal","BPT1",terminal);
+        auto run=[&](){PieceSource src;src.prefix=prefix;src.pollTimeout=.1;src.load_idx();
+            pf_check(src.streaming&&src.ready_band(0)&&src.ready_band(1)&&!src.ready_band(2),"band-only EOF readiness");
+            pf_check(src.R==65537&&src.completed.size()==1&&src.capturedRows==3,"terminal captures");
+            pf_check(src.classExtents.at(0)==1&&src.completed[0][8]==9,"band reader row order");};
+        if(mode==0)run();
+        else {pid_t child=::fork();pf_check(child>=0,"fork progress refusal");
+            if(!child){int quiet=::open("/dev/null",O_WRONLY);::dup2(quiet,STDERR_FILENO);::close(quiet);run();_exit(0);}
+            int status;pf_check(::waitpid(child,&status,0)==child&&WIFEXITED(status)&&WEXITSTATUS(status)==2,"malformed progress accepted");}
+    }
+    std::filesystem::remove_all(dir);
+    std::printf("BAND_PROGRESS_READER_ORACLE_PASS trivial_bases=1 band_only=1 deferred_class=1 EOF_clamp=1 terminal=1 malformed_refusals=9\n");
+}
+
 static int selftest_seam_spool(const std::string& directory) {
     std::filesystem::create_directories(directory);
     const std::string file = directory + "/reader-oracle.spool";
@@ -982,6 +1171,7 @@ static int selftest_seam_spool(const std::string& directory) {
         ::close(fd);
     }
     ::unlink(file.c_str());
+    selftest_band_progress(directory);
     std::printf("SEAM_SPOOL_READER_ORACLE_PASS empty=1 adversarial_orders=2 padded_flanks=1 NUL=1 byte05=1 malformed_refusals=3\n");
     return 0;
 }
@@ -1719,7 +1909,8 @@ int main(int argc, char** argv) {
             build_pfck(text, text.size(), tau, threads, ramBudget, pfckPath);
         });
         src.load_idx();
-        const uint64_t n = src.n, N = n + 10, R = src.R;
+        const uint64_t n = src.n, N = n + 10;
+        uint64_t R = src.R;
         pf_check(text.size() == n, "corpus size != the merge's text length (adapter: T[i]=REMAP[corpus[i]])");
 
         // ---- cyclic determination (v1 parity: has_rs || !has_nl over the
@@ -1753,7 +1944,7 @@ int main(int argc, char** argv) {
         int wmFd = -1;
         std::string wmFile;   // captured for delete-as-consumed unlink below
         const bool useSpool = wmPath.empty();
-        if (useSpool) {
+        if (useSpool && !src.streaming) {
             double waited = 0;
             for (;;) {
                 for (const auto& e : std::filesystem::directory_iterator(
@@ -1771,7 +1962,7 @@ int main(int argc, char** argv) {
                 if (waited > pollTimeout) pf_fail("timeout waiting for the merge's seam spool + .done");
                 std::this_thread::sleep_for(std::chrono::milliseconds(100)); waited += 0.1;
             }
-        } else {
+        } else if (!src.streaming) {
             const uint64_t packedExpect = PfWm::packed_size(n, src.w);
             // Packed completeness gate: blocks land in arbitrary order, so
             // the finish requires the merge's rename-published .done
@@ -1818,7 +2009,9 @@ int main(int argc, char** argv) {
             if (pos >= n) pf_fail("seam symbol outside text");
             return text[pos];
         };
-        if (useSpool) {
+        if (src.streaming) {
+            seam.fromSpool = true; seam.depth = src.depth;
+        } else if (useSpool) {
             seam.build_spool(wmFd, n, R,
                 [&](uint64_t a, uint64_t b) { return seamLce(a, b); }, seamSymbol);
             int doneFd = ::open((wmFile + ".done").c_str(), O_RDONLY);
@@ -1829,7 +2022,7 @@ int main(int argc, char** argv) {
             seam.build(text, wm, n, R, 10,
                        [&](uint64_t a, uint64_t b) { return seamLce(a, b); }, seamSymbol);
         }
-        ::close(wmFd);
+        if (wmFd >= 0) ::close(wmFd);
         wmFd = -1;
         // Last-consumer deletion: merge.active keeps the directory alive
         // during sparse replay. Both sides best-effort-remove the empty dir,
@@ -1960,8 +2153,24 @@ int main(int argc, char** argv) {
             nbuf.clear();
             gidx.clear();
         };
-        for (uint64_t band = 0; band < nbands; ++band) {
+        for (uint64_t band = 0; src.streaming || band < nbands; ++band) {
             double t0 = tnow();
+            if (src.streaming) {
+                if (!src.ready_band(band)) break;
+                SeamClasses batch; batch.fromSpool = true; batch.depth = src.depth;
+                while (src.delivered < src.completed.size()) {
+                    const auto& values = src.completed[src.delivered++];
+                    SeamClass cl{values[3],values[4],values[5],values[6],values[7],{}, {}};
+                    cl.occ.assign(values.begin()+8,values.end()); batch.total += cl.occ.size();
+                    batch.classes.push_back(std::move(cl));
+                }
+                if (!batch.classes.empty()) {
+                    batch.rebuild(n,src.R,1u<<26,[&](uint64_t a,uint64_t b){return seamLce(a,b);},seamSymbol);
+                    seam.total += batch.total; seam.maxSeamLce = std::max(seam.maxSeamLce,batch.maxSeamLce);
+                    for (auto& cl : batch.classes) seam.classes.push_back(std::move(cl));
+                }
+                if (src.terminal) { R=src.R; nbands=src.finalBand+1; }
+            }
             src.read_band(band, raws);
             if (band == 0) {
                 pf_check(!raws.empty() && raws[0].len == 1, "run zero is not the terminal padding row");
@@ -1975,8 +2184,9 @@ int main(int argc, char** argv) {
                 rs.feed_raw(raw);
             }
             repairWall += tnow() - t0;
-            if (nbuf.empty()) continue;
+            if (nbuf.empty()) { if (src.streaming) src.consumed_band(band); continue; }
             processBuffer();
+            if (src.streaming) src.consumed_band(band);
             if ((band & 63) == 0)
                 fprintf(stderr, "PILE_FINISH_PROGRESS band=%llu/%llu runs=%llu chi_so_far=%llu repair_wall=%.1f lce_wall=%.1f advance_wall=%.1f wit_spills=%llu\n",
                         (unsigned long long)(band + 1), (unsigned long long)nbands,
@@ -2254,6 +2464,9 @@ int main(int argc, char** argv) {
             std::string sent = prefix + ".runcols.consumed";
             ::unlink(sent.c_str());
             ::unlink((prefix + ".runcols.idx").c_str());
+            if (src.streaming) {
+                ::unlink((src.dir + "/start").c_str()); ::unlink((src.dir + "/terminal").c_str());
+            }
             if (::rmdir(src.dir.c_str()) != 0)
                 fprintf(stderr, "PILE_FINISH_PIECES_DIR_NONEMPTY %s (left for inspection)\n", src.dir.c_str());
         }
