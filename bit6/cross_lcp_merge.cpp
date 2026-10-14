@@ -3213,7 +3213,7 @@ static U v2_band_size() { return 65536; }
 static U v2_piece_window() {
     const char* e = getenv("CROSS_V2_PIECE_WINDOW");
     U window = e ? U(strtoull(e, nullptr, 10)) : 1100;
-    require(window > 0, "v2 piece window must be positive");
+    require(window > 0 && window <= U(INT64_MAX), "v2 piece window must fit positive signed range");
     return window;
 }
 // Signed -1 is the initial highest consumed band; no off-by-one credit.
@@ -3298,7 +3298,7 @@ struct SequentialV2 : SparseWalkSink {
     std::unordered_map<U, U> firstSizes;
     std::vector<Class> classes;
     U active = UINT64_MAX, publishedClasses = 0;
-    U n, index = 0, rows = 0, next = 0, bandStart = 0;
+    U n, index = 0, rows = 0, next = 0, bandStart = 0, admittedBand = UINT64_MAX;
     U window, width;
     std::string prefix, dir;
     OutFile bwt;
@@ -3320,8 +3320,12 @@ struct SequentialV2 : SparseWalkSink {
         }
         require(::rename((dir + "/start.tmp").c_str(), (dir + "/start").c_str()) == 0,
                 "publish band stream start");
-        v2_flow_wait(prefix, 0, window);
+        admitBand();
         add({t.at(n-1), 1, n, n}); add({2, 9, n+1, n+9});
+    }
+    void admitBand() {
+        U band = index / 65536;
+        if (band != admittedBand) { v2_flow_wait(prefix, band, window); admittedBand = band; }
     }
     U shardCount(U) const override { return 1; }
     void attachCorpus(const CorpusText& t) override { text = &t; }
@@ -3377,7 +3381,7 @@ struct SequentialV2 : SparseWalkSink {
     }
     void add(const SparseRun& run) {
         if (pending.len && pending.c != run.c) flush();
-        if (piece.empty()) v2_flow_wait(prefix, index / 65536, window);
+        admitBand();
         if (!pending.len) pending = run;
         else { pending.len += run.len; pending.tail = run.tail; }
         rows += run.len;
@@ -3391,7 +3395,7 @@ struct SequentialV2 : SparseWalkSink {
         }
         uint8_t c = p ? text->at(p-1) : uint8_t(2);
         if (pending.len && pending.c != c) flush();
-        if (piece.empty()) v2_flow_wait(prefix, index / 65536, window);
+        admitBand();
         auto found = firstSizes.find(p);
         if (found != firstSizes.end()) {
             if (active == UINT64_MAX) {
