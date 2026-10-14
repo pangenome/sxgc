@@ -9,7 +9,7 @@ tag=size+('-stalled' if stalled else '')
 scratch=root/f'sol5i-gate{tag}'
 cmd=[str(binary),'build','--v2-pipeline','--input',str(fixture),'--scratch',str(scratch),'--snap-1e','--chunks','8','--kway','8','--threads','32','--memory-gb','8','--timeout','3600','--chi-expect',chi]
 env=dict(os.environ)
-if stalled:env.update(CROSS_V2_PIECE_WINDOW='2',CROSS_V2_PRODUCER_DELAY_MS='3',PILE_FINISH_BAND_DELAY_MS='15')
+if stalled:env.update(CROSS_V2_PIECE_WINDOW='2',CROSS_V2_PRODUCER_DELAY_MS='3',PILE_FINISH_BAND_DELAY_MS='200')
 peak=pieces=0; start=time.monotonic(); samples=root/'sol5i-tests'/f'du-{tag}.log'
 with (root/f'sol5i-gate{tag}.log').open('w') as log,samples.open('w') as sample:
  p=subprocess.Popen(cmd,stdout=log,stderr=subprocess.STDOUT,env=env)
