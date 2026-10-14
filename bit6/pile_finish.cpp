@@ -1449,6 +1449,81 @@ struct Sweep {
     }
 };
 
+// A cold terminal state is not a chunk transducer: it forgets when an
+// incoming requirement would have fired. Keep this executable counterexample
+// beside the production machine; do not replace the sweep with a fold of
+// cold chunk states. The safe associative object is the state TRANSFORMATION
+// (including ordered output), not Sweep's terminal rr_* columns.
+static int selftest_sweep_monoid() {
+    auto same = [](const Sweep& a, const Sweep& b) {
+        return a.n == b.n && a.bigN == b.bigN && a.chi == b.chi &&
+            a.previous_interior == b.previous_interior && a.m == b.m &&
+            a.p == b.p && a.p_sa_last == b.p_sa_last && a.first == b.first &&
+            std::equal(a.rr_len, a.rr_len + 256, b.rr_len) &&
+            std::equal(a.rr_pos, a.rr_pos + 256, b.rr_pos) &&
+            std::equal(a.rr_act, a.rr_act + 256, b.rr_act);
+    };
+    const std::array<NRun, 3> chunk{{{5,2,9,10}, {6,1,11,11}, {5,1,12,12}}};
+    auto chunkRun = [&](Sweep& s, uint64_t firstInterior) {
+        s.advance(chunk[0], 1, firstInterior);
+        s.advance(chunk[1], 1, INF);
+        s.advance(chunk[2], 0, INF);
+    };
+    std::vector<uint64_t> coldA, coldB, warmA, warmB;
+    Sweep a(100), b(100);
+    a.emitWitness = [&](uint64_t x) { coldA.push_back(x); };
+    b.emitWitness = [&](uint64_t x) { coldB.push_back(x); };
+    chunkRun(a, 0); chunkRun(b, 1);
+    pf_check(same(a,b) && coldA == coldB, "cold chunk collision");
+    Sweep c(100), d(100);
+    c.emitWitness = [&](uint64_t x) { warmA.push_back(x); };
+    d.emitWitness = [&](uint64_t x) { warmB.push_back(x); };
+    for (Sweep* s : {&c, &d}) {
+        s->advance({7,1,20,20}, 0, INF);
+        s->advance({8,1,21,21}, 1, INF);
+    }
+    chunkRun(c, 0); chunkRun(d, 1);
+    pf_check(coldA == std::vector<uint64_t>({90,89}) &&
+             warmA == std::vector<uint64_t>({91,80,79,90,89}) &&
+             warmB == std::vector<uint64_t>({91,89,80,79}), "warm chunk counterexample");
+    std::printf("SWEEP_COLD_SUMMARY_COUNTEREXAMPLE cold=[90,89] warm_A=[91,80,79,90,89] warm_B=[91,89,80,79] incoming_prefix=7:20,8:21 chunk=5:9-10,6:11,5:12 top=1,1,0 interior_A=0,INF,INF interior_B=1,INF,INF\n");
+
+    // Verify the exact state-carry/replay law at every split. This is the
+    // baseline any bounded summary must reproduce, NOT a parallel speedup.
+    uint64_t rng = 0x6b20261014ull, cases = 0;
+    auto draw = [&]() { rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17; return rng; };
+    for (unsigned trial = 0; trial < 2048; ++trial) {
+        size_t count = trial % 33;
+        std::vector<NRun> runs;
+        std::vector<uint64_t> top, interior;
+        const uint8_t alphabet[] = {0,5,6,7,255};
+        for (size_t i = 0; i < count; ++i) {
+            uint8_t ch = alphabet[draw()%5];
+            uint64_t len = 1 + draw()%3, h = draw()%100, t = len == 1 ? h : draw()%100;
+            runs.push_back({ch,len,h,t}); top.push_back(draw()%8);
+            interior.push_back(len == 1 ? INF : draw()%8);
+        }
+        std::vector<uint64_t> expected;
+        Sweep reference(100);
+        reference.emitWitness = [&](uint64_t x) { expected.push_back(x); };
+        for (size_t i = 0; i < count; ++i) reference.advance(runs[i],top[i],interior[i]);
+        reference.finish();
+        for (size_t cut = 0; cut <= count; ++cut) {
+            std::vector<uint64_t> actual;
+            Sweep left(100);
+            left.emitWitness = [&](uint64_t x) { actual.push_back(x); };
+            for (size_t i = 0; i < cut; ++i) left.advance(runs[i],top[i],interior[i]);
+            Sweep right = left; // full entry state, no intermediate flush
+            for (size_t i = cut; i < count; ++i) right.advance(runs[i],top[i],interior[i]);
+            right.finish();
+            pf_check(actual == expected && same(right,reference), "state carry replay law");
+            ++cases;
+        }
+    }
+    std::printf("SWEEP_STATE_CARRY_ORACLE_PASS streams=2048 splits=%llu NUL=1 byte05=1 singleton=1 periodic_colors=1 empty=1 ordered_witnesses=1 final_state=1\n", (unsigned long long)cases);
+    return 0;
+}
+
 // ----------------------------------------------------------- witness buckets
 // VALUE-RANGE buckets: the sweep appends each witness to its bucket's RAM
 // buffer; when the global RAM budget is exceeded the largest bucket is
@@ -1895,6 +1970,7 @@ static void fp_self_check(SlimFingerprint<CorpusText>& fh, const CorpusText& tex
 
 int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::string(argv[1]) == "--selftest-sweep-monoid") return selftest_sweep_monoid();
         if (argc == 3 && std::string(argv[1]) == "--selftest-seam-spool") return selftest_seam_spool(argv[2]);
         std::string prefix, corpus, remap, out, bridgeDir, sampleCheck, wmPath;
         uint64_t chiExpect = 0, sampleCount = 1024, pollTimeout = 86400, ramBudget = 1ull << 30;
