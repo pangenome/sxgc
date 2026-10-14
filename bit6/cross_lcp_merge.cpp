@@ -2650,133 +2650,7 @@ struct SparseRunReducer {
     }
 };
 
-// Up to --threads (capped at 96) independent walks are admitted together,
-// each covering 1/admission of the former shard size. The ordered consumer
-// unlinks each spool before that producer admits another shard. Only the
-// admission-width frontier can exist on disk; rank-boundary skew is unchanged.
-// Only run samples are stored, never a dense row-position column.
-struct ParallelSparseRuns : SparseWalkSink {
-    struct Shard : SparseWalkSink {
-        ParallelSparseRuns& parent;
-        std::mutex mutex;
-        std::condition_variable ready, space;
-        std::vector<SparseRun> batch;
-        std::string path;
-        int fd = -1;
-        U records = 0;
-        bool consumed = false;
-        SparseRun pending;
-        U lo = 0, hi = 0, next = 0, first = 0, last = 0;
-        SparseSeamCapture::Hit *firstHit = nullptr, *lastHit = nullptr;
-        bool done = false;
-        explicit Shard(ParallelSparseRuns& p) : parent(p) {}
-        void send() {
-            if (batch.empty()) return;
-            std::vector<char> bytes(25 * batch.size());
-            for (size_t i = 0; i < batch.size(); ++i) {
-                char* b = bytes.data() + 25*i; b[0] = char(batch[i].c);
-                put_le64(b+1, batch[i].len); put_le64(b+9, batch[i].head); put_le64(b+17, batch[i].tail);
-            }
-            xput(fd, bytes.data(), bytes.size(), 25*records, "parallel run spool write");
-            records += batch.size(); batch.clear();
-        }
-        void flush() {
-            if (!pending.len) return;
-            batch.push_back(pending); pending = {};
-            if (batch.size() == 4096) send();
-        }
-        void beginShard(U id, U begin, U end) override {
-            lo = next = begin; hi = end;
-            batch.reserve(4096);
-            path = parent.directory + "/runs-" + std::to_string(id) + ".spool";
-            fd = ::open(path.c_str(), O_CREAT | O_EXCL | O_WRONLY, 0666);
-            require(fd >= 0, "create parallel run spool");
-        }
-        void row(U index, U p) override {
-            require(index == next++ && index < hi && p < parent.n, "parallel sparse row coverage");
-            if (parent.seam) {
-                // Target-map structure is immutable throughout the walk;
-                // each position belongs to exactly one producer.
-                auto it = parent.seam->targets.find(p);
-                auto* hit = it == parent.seam->targets.end() ? nullptr : &it->second;
-                if (lastHit) lastHit->after = p;
-                if (hit) {
-                    require(hit->row == UINT64_MAX, "duplicate parallel seam target");
-                    hit->row = index; hit->before = last; hit->after = parent.n;
-                }
-                if (index == lo) { first = p; firstHit = hit; }
-                lastHit = hit;
-            }
-            last = p;
-            uint8_t c = p ? parent.text->at(p-1) : uint8_t(2);
-            if (pending.len && pending.c != c) flush();
-            if (!pending.len) { pending.c = c; pending.head = p; }
-            ++pending.len; pending.tail = p;
-        }
-        void endShard() override {
-            require(next == hi, "parallel sparse shard coverage");
-            flush(); send();
-            require(::close(fd) == 0, "close parallel run spool"); fd = -1;
-            std::unique_lock<std::mutex> lock(mutex); done = true; ready.notify_one();
-            space.wait(lock, [&] { return consumed; });
-            std::vector<SparseRun>().swap(batch);
-        }
-    };
-    const CorpusText* text;
-    U n;
-    SparseSeamCapture* seam;
-    SparseRunReducer& reducer;
-    std::string directory;
-    U normalWidth, admitted;
-    std::vector<std::unique_ptr<Shard>> shards;
-    std::thread consumer;
-    ParallelSparseRuns(const CorpusText& t, U count, U width,
-                       SparseSeamCapture* capture, SparseRunReducer& r, const std::string& dir, U admissionLimit = 96,
-                       std::function<void()> initialize = {})
-        : text(&t), n(count), seam(capture), reducer(r), directory(dir), normalWidth(width), admitted(std::min<U>(std::max<U>(1, admissionLimit), std::min<U>(96, width))) {
-        width = std::min<U>(n, width * std::min<U>(96, width));
-        for (U i = 0; i < width; ++i) shards.emplace_back(new Shard(*this));
-        consumer = std::thread([&, initialize] {
-            if (initialize) initialize();
-            for (auto& ptr : shards) {
-                auto& shard = *ptr;
-                std::unique_lock<std::mutex> lock(shard.mutex);
-                shard.ready.wait(lock, [&] { return shard.done; });
-                lock.unlock();
-                reducer.consume(shard.path, shard.records, shard.hi - shard.lo);
-                lock.lock(); shard.consumed = true; shard.space.notify_all();
-            }
-        });
-    }
-    void awaitShard(U id) {
-        auto& shard = *shards.at(id);
-        std::unique_lock<std::mutex> lock(shard.mutex);
-        shard.space.wait(lock, [&] { return shard.consumed; });
-    }
-    void finish() {
-        consumer.join();
-        if (!seam) return;
-        U previous = n+9, covered = 0;
-        SparseSeamCapture::Hit* previousHit = nullptr;
-        for (auto& shard : shards) {
-            if (shard->lo == shard->hi) continue;
-            if (previousHit) previousHit->after = shard->first;
-            if (shard->firstHit) shard->firstHit->before = previous;
-            previous = shard->last; previousHit = shard->lastHit;
-            covered += shard->hi - shard->lo;
-        }
-        seam->nextRow = covered;
-    }
-    void attachCorpus(const CorpusText& corpus) override { text = &corpus; }
-    SparseWalkSink* shardSink(U s) override { return shards.at(s).get(); }
-    U shardCount(U normal) const override {
-        require(normal == normalWidth, "parallel sparse shard plan"); return shards.size();
-    }
-    U admission() const override { return admitted; }
-    void beginShard(U, U, U) override { fail("parallel sink needs shard"); }
-    void row(U, U) override { fail("parallel sink needs shard"); }
-    void endShard() override { fail("parallel sink needs shard"); }
-};
+// Retired: ParallelSparseRuns count/replay admission and per-shard capture.
 
 // ------------------------------------------------------------ external core merge
 // Per-side anchor/repair stats: k-way generalized (k=2 is the pairwise case).
@@ -2884,10 +2758,7 @@ static void build_bwt_file(const SideExt& S, const PosOverlay& pos, const std::s
 // sequence is the k-way interleave of the k repaired orders.
 static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U threads,
                             Budget& bud, CoreStats& st, const PairScratch& sc, U hashK, bool pre,
-                            SparseWalkSink* sparse = nullptr, SparseWalkSink* replay = nullptr,
-                            std::function<void(U)> beforeReplay = {},
-                            std::function<void()> counted = {}) {
-    require(!replay || (sparse && counted), "replay needs sparse counting completion");
+                            SparseWalkSink* sparse = nullptr) {
     const Budget entryWork = bud;
     auto workLine = [](const char* stage, U pass, const Budget& work) {
         std::fprintf(stderr, "CROSS_STAGE_WORK stage=%s pass=%llu comparisons=%llu symbols_compared=%llu probes=%llu\n",
@@ -2905,7 +2776,6 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
     st.init(k);
     U n = 0; for (auto& S : sides) n += S.n;
     CorpusText m2; open_merge_text(sides, m2, true);
-    if (replay) replay->attachCorpus(m2);
     if (sparse) sparse->attachCorpus(m2); // reuse the comparator's pool, within its RAM envelope
     if (!pre) {
         hashK = hash_spacing();
@@ -3087,19 +2957,17 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
     // merged-rank shard start offsets: R_s = sum_j aB[s][j]
     std::vector<U> R(S + 1, 0);
     for (U s = 0; s <= S; ++s) for (size_t j = 0; j < k; ++j) R[s] += aB[s][j];
-    require(!replay || replay->shardCount(normalShards) == S, "replay shard plan differs");
-    const U passes = replay ? 2 : 1;
+    const U passes = 1;
     std::vector<Budget> shardBud(passes * S);
     std::vector<double> shardPF(passes * S, 0.0), shardPop(passes * S, 0.0);
     {
         const bool noPf = getenv("CROSS_NO_PF") != nullptr;
-        std::vector<std::thread> ts, replayThreads;
+        std::vector<std::thread> ts;
         auto launch = [&](SparseWalkSink* target, U pass, std::vector<std::thread>& pool) {
         const U workers = target ? std::min<U>(S, target->admission()) : S;
         for (U worker = 0; worker < workers; ++worker) {
             pool.emplace_back([&, worker, workers, target, pass] {
                 for (U s = worker; s < S; s += workers) {
-                if (pass && beforeReplay) beforeReplay(s);
                 const U work = pass * S + s;
                 SparseWalkSink* sink = target ? target->shardSink(s) : nullptr;
                 if (sink) sink->beginShard(s, R[s], R[s + 1]);
@@ -3207,11 +3075,7 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
         }
         };
         launch(sparse, 0, ts);
-        if (replay && threads > 1) launch(replay, 1, replayThreads);
         for (auto& t : ts) if (t.joinable()) t.join();
-        if (counted) counted();
-        if (replay && threads <= 1) launch(replay, 1, replayThreads);
-        for (auto& t : replayThreads) if (t.joinable()) t.join();
     }
     if (!sparse) { if (packWm) wmPacker.close(); else ::close(fd); }
     for (U pass = 0; pass < passes; ++pass) {
@@ -3345,34 +3209,29 @@ static bool v2_pieces_enabled() {
     const char* e = getenv("CROSS_V2_PIECES");
     return e && e[0] == '1' && e[1] == '\0';
 }
-static U v2_band_size() {
-    const char* e = getenv("CROSS_V2_BAND");
-    U b = e ? U(strtoull(e, nullptr, 10)) : 65536;
-    if (!b || b > (1u << 26)) b = 65536;
-    return b;
-}
+static U v2_band_size() { return 65536; }
 static U v2_piece_window() {
     const char* e = getenv("CROSS_V2_PIECE_WINDOW");
-    U b = e ? U(strtoull(e, nullptr, 10)) : 64;
-    if (!b) b = 64;
-    return b;
+    U window = e ? U(strtoull(e, nullptr, 10)) : 1100;
+    require(window > 0 && window <= U(INT64_MAX), "v2 piece window must fit positive signed range");
+    return window;
 }
-// The consumer's progress: highest fully-consumed band (u64 text file,
-// rename-published by pile_finish). Missing = 0.
-static U v2_consumed_band(const std::string& prefix) {
+// Signed -1 is the initial highest consumed band; no off-by-one credit.
+static int64_t v2_consumed_band(const std::string& prefix) {
     int fd = ::open((prefix + ".runcols.consumed").c_str(), O_RDONLY);
-    if (fd < 0) return 0;
-    char b[24]{};
-    ssize_t z = ::read(fd, b, sizeof b - 1);
-    ::close(fd);
-    if (z <= 0) return 0;
-    return U(strtoull(b, nullptr, 10));
+    if (fd < 0) return -1;
+    char b[24]{}; ssize_t z = ::read(fd, b, sizeof b - 1); ::close(fd);
+    require(z > 0, "empty consumed marker");
+    char* end = nullptr; long long value = strtoll(b, &end, 10);
+    require(end != b && value >= -1, "malformed consumed marker");
+    return value;
 }
-// Wait until the consumer is within the window of this band (flow control:
-// the finish's LCE is slower than the emission; bound the piece backlog so
-// the in-flight window stays a structural constant, not a whole column).
 static void v2_flow_wait(const std::string& prefix, U band, U window) {
-    while (band > v2_consumed_band(prefix) + window) {
+    for (;;) {
+        int64_t consumed = v2_consumed_band(prefix);
+        // Both operands are <= INT64_MAX, so their unsigned sum fits U.
+        U limit = consumed < 0 ? window - 1 : U(consumed) + window;
+        if (band <= limit) return;
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 }
@@ -3431,141 +3290,175 @@ struct V2Piece {
     }
 };
 
-// Two heap traversals share ONE hash build, anchor repair and shard plan.
-// Replay shard s starts after counting shard s is reduced. Run bases become
-// immutable when counting crosses their row-owner boundary; emission waits
-// only for that boundary. The unchanged RCI1/SCS1 consumer needs all counts
-// before publication, so a single heap traversal would require retaining
-// every run sample (unbounded scratch) or a new finish protocol. Combined
-// producer admission stays within --threads; both frontiers unlink on use.
+// The final v2 path has one ordered producer attached directly to the heap.
+// No row spools, counting walk, replay walk, shard bases, or RCI1 publication.
+// BPG1 markers carry band references and newly completed SCS1 class entries.
+struct SequentialV2 : SparseWalkSink {
+    struct Class {
+        CapturedSeamClass value;
+        U firstRun = 0, lastRun = UINT64_MAX;
+    };
+    const CorpusText* text;
+    SparseSeamCapture seam;
+    std::unordered_map<U, U> firstSizes;
+    std::vector<Class> classes;
+    U active = UINT64_MAX, publishedClasses = 0;
+    U n, index = 0, rows = 0, next = 0, bandStart = 0, admittedBand = UINT64_MAX;
+    U window, width;
+    std::string prefix, dir;
+    OutFile bwt;
+    V2Piece piece;
+    SparseRun pending;
+    std::array<U, 256> counts{}, frequencies{};
+    SequentialV2(const std::string& p, const CorpusText& t, U count, U inputRuns)
+        : text(&t), n(count), window(v2_piece_window()),
+          width(std::max<unsigned>(1, 64 - __builtin_clzll(n + 9))),
+          prefix(p), dir(p + ".pieces"), bwt(p + ".rlebwt") {
+        require(::mkdir(dir.c_str(), 0777) == 0, "create sequential pieces directory");
+        seam.discover(t, n, std::min<U>(1u << 26, std::max<U>(1000, inputRuns / 1000)));
+        for (const auto& cl : seam.raw) {
+            firstSizes.emplace(cl.first, cl.hi);
+        }
+        {
+            OutFile f(dir + "/start.tmp"); f.raw("BPS1", 4);
+            f.w64(n); f.w64(width); f.w64(seam.depth); f.w64(window);
+        }
+        require(::rename((dir + "/start.tmp").c_str(), (dir + "/start").c_str()) == 0,
+                "publish band stream start");
+        admitBand();
+        add({t.at(n-1), 1, n, n}); add({2, 9, n+1, n+9});
+    }
+    void admitBand() {
+        U band = index / 65536;
+        if (band != admittedBand) { v2_flow_wait(prefix, band, window); admittedBand = band; }
+    }
+    U shardCount(U) const override { return 1; }
+    void attachCorpus(const CorpusText& t) override { text = &t; }
+    void beginShard(U shard, U lo, U hi) override {
+        require(shard == 0 && lo == 0 && hi == n, "sequential v2 walk bounds");
+    }
+    void publishBand() {
+        const U band = bandStart / 65536, count = piece.size();
+        if (const char* delay = getenv("CROSS_V2_PRODUCER_DELAY_MS"))
+            std::this_thread::sleep_for(std::chrono::milliseconds(strtoull(delay,nullptr,10)));
+        require(count && count <= 65536, "sequential band count");
+        if (active != UINT64_MAX) {
+            // An unclosed class must include a run in the next band. Refuse
+            // before flow control could block on a class larger than W-1.
+            require(band + 1 - classes[active].firstRun / 65536 < window,
+                    "active seam class exceeds W-1 run bands");
+        }
+        piece.flush(dir, prefix, band, 0, bandStart, width, window);
+        std::vector<U> refs;
+        for (U id = 0; id < classes.size(); ++id) {
+            const auto& cl = classes[id];
+            if (cl.firstRun < bandStart + count &&
+                (cl.lastRun == UINT64_MAX || cl.lastRun >= bandStart)) refs.push_back(id);
+        }
+        U complete = classes.size() - (active != UINT64_MAX);
+        {
+            OutFile f(dir + "/g-tmp"); f.raw("BPG1", 4);
+            f.w64(band); f.w64(count); f.w64(refs.size()); f.w64(complete - publishedClasses);
+            for (U id : refs) f.w64(id);
+            for (U id = publishedClasses; id < complete; ++id) {
+                const auto& cl = classes[id]; const auto& v = cl.value;
+                f.w64(id); f.w64(cl.firstRun); f.w64(cl.lastRun);
+                f.w64(v.lo); f.w64(v.hi); f.w64(v.first); f.w64(v.before); f.w64(v.after);
+                for (U position : v.occ) f.w64(position);
+            }
+        }
+        require(::rename((dir + "/g-tmp").c_str(),
+                         (dir + "/g-" + std::to_string(band)).c_str()) == 0, "publish band progress");
+        publishedClasses = complete;
+        bandStart = index;
+    }
+    void flush() {
+        if (!pending.len) return;
+        U left = pending.len;
+        while (left) {
+            U take = std::min<U>(left, 0x7fffff); left -= take;
+            bwt.w32(uint32_t(pending.c) | uint32_t(take << 8) | (left ? 0x80000000u : 0u));
+        }
+        counts[pending.c] += pending.len; ++frequencies[pending.c];
+        piece.add(pending.c, pending.len, pending.head, pending.tail); ++index;
+        pending = {};
+        if (index % 65536 == 0) publishBand();
+    }
+    void add(const SparseRun& run) {
+        if (pending.len && pending.c != run.c) flush();
+        admitBand();
+        if (!pending.len) pending = run;
+        else { pending.len += run.len; pending.tail = run.tail; }
+        rows += run.len;
+    }
+    void row(U row, U p) override {
+        require(row == next++ && p < n, "sequential v2 row coverage");
+        seam.row(row, p);
+        if (active != UINT64_MAX && row == classes[active].value.hi) {
+            auto& cl = classes[active]; cl.value.after = p; cl.lastRun = index;
+            active = UINT64_MAX;
+        }
+        uint8_t c = p ? text->at(p-1) : uint8_t(2);
+        if (pending.len && pending.c != c) flush();
+        admitBand();
+        auto found = firstSizes.find(p);
+        if (found != firstSizes.end()) {
+            if (active == UINT64_MAX) {
+                Class cl; cl.firstRun = index;
+                cl.value.lo = row; cl.value.hi = row + found->second; cl.value.first = p;
+                cl.value.before = seam.targets.at(p).before;
+                classes.push_back(std::move(cl)); active = classes.size()-1;
+            } else require(row + found->second <= classes[active].value.hi, "crossing sequential seam class");
+        }
+        if (active != UINT64_MAX) classes[active].value.occ.push_back(p);
+        if (!pending.len) pending = {c, 1, p, p};
+        else { ++pending.len; pending.tail = p; }
+        ++rows;
+    }
+    void endShard() override {
+        require(next == n, "incomplete sequential v2 walk");
+        if (active != UINT64_MAX) {
+            auto& cl = classes[active]; require(cl.value.hi == n, "incomplete final class");
+            cl.value.after = n; cl.lastRun = index; active = UINT64_MAX;
+        }
+        // Validate every target and both final flanks before terminal publish.
+        auto expected = seam.finish();
+        require(expected.size() == classes.size(), "sequential class count");
+        for (U i = 0; i < expected.size(); ++i)
+            require(expected[i] == classes[i].value, "sequential class capture mismatch");
+        flush();
+        if (!piece.empty()) publishBand();
+        require(publishedClasses == classes.size() && rows == n+10 && counts[2] == 10,
+                "sequential terminal coverage");
+        const U limit = std::max<U>(1000, index / 1000);
+        U targets = 0; for (const auto& cl : classes) targets += cl.value.occ.size();
+        require(targets <= limit && seam.depth <= limit, "sequential product repair budget");
+        for (const auto& cl : classes)
+            require(cl.lastRun / 65536 - cl.firstRun / 65536 < window, "class exceeds W-1 bands");
+        bwt.flush();
+        { OutFile f(prefix + ".rlebwt.meta"); f.w64(n+10); f.w64(index);
+          for (U value : counts) f.w64(value); for (U value : frequencies) f.w64(value); }
+        {
+            OutFile f(dir + "/terminal.tmp"); f.raw("BPT1", 4);
+            f.w64((index-1)/65536); f.w64(index); f.w64(targets); f.w64(classes.size());
+        }
+        require(::rename((dir + "/terminal.tmp").c_str(), (dir + "/terminal").c_str()) == 0,
+                "publish validated terminal marker");
+    }
+};
 static U emit_sparse_v2(const std::string& prefix, const std::vector<SideExt>& sides,
                         U threads, Budget& budget, CoreStats& stats,
                         const PairScratch& sc, U hashK, bool pre) {
-    U n = 0; for (const auto& side : sides) n += side.n;
-    // Keep scratch live until both traversals finish.
-    // Finish may consume the seam before this merge admits its next shard.
-    { OutFile f(sc.dir + "/merge.active"); f.w64(n); }
+    U n = 0, inputRuns = 0; for (const auto& side : sides) { n += side.n; inputRuns += side.runs; }
     CorpusText corpus; open_merge_text(sides, corpus, false);
-    const U total = n + 10, S = emit_shard_count(threads, total);
-    const U band = v2_band_size(), window = v2_piece_window();
-    const unsigned width = std::max<unsigned>(1, 64 - __builtin_clzll(n + 9));
-    std::vector<U> bases(S), sizes(S);
-    std::array<U, 256> counts{}, frequencies{};
-    std::mutex basesMutex;
-    std::condition_variable basesReady;
-    U readyOwners = 0, countOwner = 0, runs = 0;
-    SparseRunReducer count([&](const SparseRun& run, U row) {
-        U owner = countOwner;
-        while (owner + 1 < S && row >= (owner + 1) * total / S) ++owner;
-        if (owner != countOwner) {
-            std::lock_guard<std::mutex> lock(basesMutex);
-            for (U next = countOwner + 1; next <= owner; ++next)
-                bases[next] = bases[next - 1] + sizes[next - 1];
-            countOwner = readyOwners = owner;
-            basesReady.notify_one();
-        }
-        ++sizes[owner]; ++runs; counts[run.c] += run.len; ++frequencies[run.c];
-    });
-    SparseSeamCapture seam;
-    // Hard bound BEFORE scanning/allocating. Recheck the product-relative
-    // refusal policy once the sparse count pass has supplied raw R.
-    U inputRuns = 0; for (const auto& side : sides) inputRuns += side.runs;
-    seam.discover(corpus, n, std::max<U>(1000, inputRuns / 1000));
-    const std::string dir = prefix + ".pieces", replayDir = sc.dir + "/emit";
-    require(::mkdir(dir.c_str(), 0777) == 0 && ::mkdir(replayDir.c_str(), 0777) == 0,
-            "create sparse emission directories");
-    OutFile bwt(prefix + ".rlebwt");
-    V2Piece piece;
-    U index = 0, pieceStart = 0, owner = 0, outputReady = 0;
-    SparseRunReducer output([&](const SparseRun& run, U row) {
-        while (owner + 1 < S && row >= (owner + 1) * total / S) ++owner;
-        if (outputReady <= owner) {
-            std::unique_lock<std::mutex> lock(basesMutex);
-            basesReady.wait(lock, [&] { return readyOwners > owner; });
-            outputReady = readyOwners;
-        }
-        require(index >= bases[owner] && index < bases[owner] + sizes[owner], "sparse emission global base");
-        U left = run.len;
-        while (left) {
-            U take = std::min<U>(left, 0x7fffff); left -= take;
-            bwt.w32(uint32_t(run.c) | uint32_t(take << 8) | (left ? 0x80000000u : 0u));
-        }
-        piece.add(run.c, run.len, run.head, run.tail); ++index;
-        if (index % band == 0 || index == bases[owner] + sizes[owner]) {
-            piece.flush(dir, prefix, pieceStart / band, owner, pieceStart, width, window);
-            pieceStart = index;
-        }
-    });
-    // Padding participates in exactly the same stitching on both streams.
-    count.add({corpus.at(n-1), 1, n, n}); count.add({2, 9, n+1, n+9});
-    const U normal = emit_shard_count(threads, n);
-    const U admission = std::max<U>(1, std::min<U>(96, normal) / 2);
-    ParallelSparseRuns counting(corpus, n, normal, &seam, count, sc.dir, admission);
-    ParallelSparseRuns emitting(corpus, n, normal, nullptr, output, replayDir, admission, [&] {
-        output.add({corpus.at(n-1), 1, n, n}); output.add({2, 9, n+1, n+9});
-    });
-    auto counted = [&] {
-        counting.finish(); count.flush();
-        require(count.rows == total, "sparse padded count coverage");
-        {
-            std::lock_guard<std::mutex> lock(basesMutex);
-            for (U next = countOwner + 1; next < S; ++next)
-                bases[next] = bases[next - 1] + sizes[next - 1];
-            readyOwners = S; basesReady.notify_one();
-        }
-        require(counts[2] == 10, "sparse padding count");
-        U base = 0;
-        for (U shard = 0; shard < S; ++shard) { require(bases[shard] == base, "sparse immutable base"); base += sizes[shard]; }
-        require(base == runs, "sparse global run bases");
-        auto classes = seam.finish();
-        const U limit = std::max<U>(1000, runs / 1000);
-        U targets = 0; for (const auto& cl : classes) targets += cl.occ.size();
-        require(targets <= limit && seam.depth <= limit, "sparse seam product budget");
-        std::fprintf(stderr, "CROSS_SEAM_DISCOVERY depth=%llu raw_classes=%zu targets=%zu final_classes=%zu final_rows=%llu hard_limit=%llu product_limit=%llu bounded=1\n",
-            (unsigned long long)seam.depth, seam.raw.size(), seam.targets.size(), classes.size(),
-            (unsigned long long)targets, (unsigned long long)seam.limit, (unsigned long long)limit);
-        // Close before rename; .done is published only after the spool's final
-        // byte. The finish alone unlinks these files, in either exit ordering.
-        const std::string spool = sc.dir + "/seam.spool";
-        {
-            OutFile f(spool + ".tmp"); f.raw("SCS1", 4);
-            f.w64(n); f.w64(seam.depth); f.w64(classes.size());
-            for (const auto& cl : classes) {
-                f.w64(cl.lo); f.w64(cl.hi); f.w64(cl.first); f.w64(cl.before); f.w64(cl.after);
-                for (U position : cl.occ) f.w64(position);
-            }
-        }
-        require(::rename((spool + ".tmp").c_str(), spool.c_str()) == 0, "publish seam spool");
-        { OutFile f(spool + ".done.tmp"); f.w64(targets); }
-        require(::rename((spool + ".done.tmp").c_str(), (spool + ".done").c_str()) == 0, "publish seam done");
-        seam.raw.clear(); seam.targets.clear(); classes.clear();
-        {
-            OutFile f(prefix + ".runcols.idx.tmp"); f.raw("RCI1", 4); f.w32(S);
-            f.w64(runs); f.w64(n); f.w32(width); f.w32(band);
-            for (U shard = 0; shard < S; ++shard) { f.w64(bases[shard]); f.w64(sizes[shard]); }
-        }
-        require(::rename((prefix + ".runcols.idx.tmp").c_str(), (prefix + ".runcols.idx").c_str()) == 0, "publish sparse idx");
-        {
-            OutFile f(prefix + ".rlebwt.meta"); f.w64(total); f.w64(runs);
-            for (U v : counts) f.w64(v); for (U v : frequencies) f.w64(v);
-        }
-    };
-    core_merge_kway(sides, true, threads, budget, stats, sc, hashK, pre,
-                    &counting, &emitting, [&](U shard) { counting.awaitShard(shard); }, counted);
-    emitting.finish(); output.flush();
-    require(output.rows == total, "sparse padded emission coverage");
+    SequentialV2 output(prefix, corpus, n, inputRuns);
+    core_merge_kway(sides, true, threads, budget, stats, sc, hashK, pre, &output);
     sc.release_walk();
-    require(::rmdir(replayDir.c_str()) == 0, "remove consumed emission directory");
-    require(index == runs && piece.empty(), "sparse emission run coverage");
-    bwt.flush();
-    std::fprintf(stderr, "SPARSE_V2_EMIT runs=%llu rows=%llu shards=%llu WM=absent admission=%llu walk_shards=%llu passes=2 preparation_passes=1 planning_passes=1 overlap=shard\n",
-        (unsigned long long)runs, (unsigned long long)total, (unsigned long long)S,
-        (unsigned long long)(threads > 1 ? 2 * admission : admission),
-        (unsigned long long)std::min<U>(n, emit_shard_count(threads, n) * std::min<U>(96, emit_shard_count(threads, n))));
-    ::unlink((sc.dir + "/merge.active").c_str());
-    std::fprintf(stderr, "FOUR_EMIT shards=%llu runs=%llu total=%llu v2=1 WM=absent\n",
-        (unsigned long long)S, (unsigned long long)runs, (unsigned long long)total);
-    return runs;
+    std::error_code cleanupError;
+    fs::remove(output.dir, cleanupError); // consumer removes it after its last unlink
+    std::fprintf(stderr, "SPARSE_V2_EMIT runs=%llu rows=%llu shards=0 WM=absent admission=1 walk_shards=0 passes=1 preparation_passes=1 planning_passes=1\n",
+        (unsigned long long)output.index, (unsigned long long)(n+10));
+    return output.index;
 }
 
 // Final four files, read from virtual corpus text and windowed WM.
@@ -4714,7 +4607,7 @@ static int selftest(U cases, uint64_t seed, U threads, U kway) {
                 if (dollar && cs < 20) {
                     setenv("CROSS_V2_PIECES", "1", 1);
                     setenv("CROSS_V2_BAND", "3", 1);
-                    setenv("CROSS_V2_PIECE_WINDOW", "1000000", 1);
+                    setenv("CROSS_V2_PIECE_WINDOW", "1", 1);
                     CorpusText corpus; open_merge_text(sides, corpus, true);
                     emit_four_ext(scratch + "/dense", corpus, wm, nTot, threads, sc.dir);
                 }
@@ -4756,22 +4649,48 @@ static int selftest(U cases, uint64_t seed, U threads, U kway) {
                     require(bool(f), "production oracle file missing");
                     return std::vector<char>(std::istreambuf_iterator<char>(f), {});
                 };
-                for (const char* ext : {".runcols.idx", ".rlebwt", ".rlebwt.meta"}) {
+                for (const char* ext : {".rlebwt", ".rlebwt.meta"}) {
                     require(bytes(scratch + "/dense" + ext) == bytes(scratch + "/prod" + ext),
                             "production oracle index/rlebwt mismatch");
                     fs::remove(scratch + "/dense" + ext); fs::remove(scratch + "/prod" + ext);
                 }
-                U pieces = 0;
-                for (const auto& entry : fs::directory_iterator(scratch + "/dense.pieces")) {
-                    require(bytes(entry.path().string()) == bytes(scratch + "/prod.pieces/" + entry.path().filename().string()),
-                            "production oracle piece mismatch"); ++pieces;
+                require(!fs::exists(scratch + "/prod.runcols.idx"), "production has no shard index");
+                auto encoded = bytes(scratch + "/prod.pieces/p-0-0");
+                U first, rc; unsigned width; memcpy(&first, encoded.data()+16,8);
+                memcpy(&rc,encoded.data()+24,8); memcpy(&width,encoded.data()+32,4);
+                require(first == 0, "trivial production base");
+                U words=(rc*width+63)/64;
+                auto sample = [&](U offset,U i) {
+                    U bit=i*width, word=bit/64, shift=bit%64, lo=0,hi=0;
+                    memcpy(&lo,encoded.data()+offset+8*word,8);
+                    U value=lo>>shift;
+                    if (shift+width>64) {memcpy(&hi,encoded.data()+offset+8*(word+1),8);value|=hi<<(64-shift);}
+                    return value&((U(1)<<width)-1);
+                };
+                std::vector<SparseRun> actual;
+                for(U i=0;i<rc;++i) {
+                    uint32_t len;memcpy(&len,encoded.data()+44+rc+4*i,4);
+                    actual.push_back({uint8_t(encoded[44+i]),len,sample(44+5*rc,i),sample(44+5*rc+8*words,i)});
                 }
-                require(pieces == U(std::distance(fs::directory_iterator(scratch + "/prod.pieces"), fs::directory_iterator{})),
-                        "production oracle extra pieces");
-                U expectedDepth;
-                auto expectedClasses = brute_seam_classes(M, want, expectedDepth);
-                require(bytes(sc.dir + "/seam.spool") == seam_spool_bytes(nTot, expectedDepth, expectedClasses),
-                        "production oracle seam spool mismatch");
+                std::vector<SparseRun> expectedRuns;
+                SparseRunReducer reduce([&](const SparseRun& run,U){expectedRuns.push_back(run);});
+                reduce.add({uint8_t(M.back()),1,nTot,nTot});reduce.add({2,9,nTot+1,nTot+9});
+                for(U pos:want) reduce.add({pos?uint8_t(M[pos-1]):uint8_t(2),1,pos,pos});reduce.flush();
+                require(actual==expectedRuns,"single-pass production run columns");
+                auto marker=bytes(scratch+"/prod.pieces/g-0");U offset=4;
+                auto next=[&](){U value;require(offset+8<=marker.size(),"production marker truncated");
+                    memcpy(&value,marker.data()+offset,8);offset+=8;return value;};
+                require(next()==0&&next()==rc,"production band progress");U refs=next(),entries=next();
+                for(U i=0;i<refs;++i)require(next()<entries,"production progress reference");
+                std::vector<CapturedSeamClass> captured;
+                for(U id=0;id<entries;++id){require(next()==id,"production class id");next();next();
+                    CapturedSeamClass cl;cl.lo=next();cl.hi=next();cl.first=next();cl.before=next();cl.after=next();
+                    for(U row=cl.lo;row<cl.hi;++row)cl.occ.push_back(next());captured.push_back(std::move(cl));}
+                require(offset==marker.size(),"production progress trailing data");
+                U expectedDepth;auto expectedClasses=brute_seam_classes(M,want,expectedDepth);
+                require(captured==expectedClasses,"production band seam capture");
+                require(bytes(scratch+"/prod.pieces/terminal").size()==36,"production terminal assertion");
+                fs::remove(scratch+"/dense.runcols.idx");
                 fs::remove_all(scratch + "/dense.pieces"); fs::remove_all(scratch + "/prod.pieces");
                 sc.cleanup();
             }
@@ -4783,7 +4702,7 @@ static int selftest(U cases, uint64_t seed, U threads, U kway) {
         }
     }
     fs::remove_all(scratch);
-    std::printf("SPARSE_ORACLE_PASS modes=cyclic,dollar runs=exact seam_spool=exact production_pieces=exact global_bases=exact stalled_admission=1 WM=absent admission=1\n");
+    std::printf("SPARSE_ORACLE_PASS modes=cyclic,dollar runs=exact seam_spool=exact production_bands=exact trivial_bases=exact terminal=exact legacy_shard_admission=1 WM=absent\n");
     std::printf("SELFTEST_PASS count=%llu seed=%llu kway=%llu\n",
                 (unsigned long long)cases, (unsigned long long)seed,
                 (unsigned long long)kway);

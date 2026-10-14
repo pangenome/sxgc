@@ -1,0 +1,209 @@
+{
+  "source_commit": "ff08c77fcb5c705ec08a9aa9f8fd199fd998b7b0",
+  "package_sha256": "67a0d56d0023ea2879a749e7838987a24fd837413036c5336b61b9efe30ec8ab",
+  "model": {
+    "active_producer_inequalities": 3510,
+    "band_size": 65536,
+    "bases": "65536*b",
+    "deadlocks": 0,
+    "implementation_validated": false,
+    "malformed_extents_refused": 10,
+    "maximum_backlog": 1100,
+    "overlapping_band_spans": true,
+    "randomized_interleavings": 1450,
+    "result": "PASS",
+    "shards": 0,
+    "terminal_cases": 1200
+  },
+  "tiny": {
+    "command": [
+      "/mnt/nvme2n1/erikg/sol5i-cargo/release/xsa",
+      "build",
+      "--v2-pipeline",
+      "--input",
+      "/mnt/nvme2n1/erikg/wmfix-tiny.txt",
+      "--scratch",
+      "/mnt/nvme2n1/erikg/sol5i-gatetiny-stalled",
+      "--snap-1e",
+      "--chunks",
+      "8",
+      "--kway",
+      "8",
+      "--threads",
+      "32",
+      "--memory-gb",
+      "8",
+      "--timeout",
+      "3600",
+      "--chi-expect",
+      "7283197"
+    ],
+    "environment": {
+      "CROSS_V2_PIECE_WINDOW": "2",
+      "CROSS_V2_PRODUCER_DELAY_MS": "3",
+      "PILE_FINISH_BAND_DELAY_MS": "200"
+    },
+    "rc": 0,
+    "wall": 40.76072679902427,
+    "sampled_peak_bytes": 138019522,
+    "sampled_max_band_pieces": 1,
+    "cmp_rc": 0,
+    "remaining_protocol_scratch": []
+  },
+  "oracles": {
+    "final-k1": [
+      "SPARSE_ORACLE_PASS modes=cyclic,dollar runs=exact seam_spool=exact production_bands=exact trivial_bases=exact terminal=exact legacy_shard_admission=1 WM=absent",
+      "SELFTEST_PASS count=200 seed=20261002 kway=1"
+    ],
+    "final-k2": [
+      "SPARSE_ORACLE_PASS modes=cyclic,dollar runs=exact seam_spool=exact production_bands=exact trivial_bases=exact terminal=exact legacy_shard_admission=1 WM=absent",
+      "SELFTEST_PASS count=200 seed=20261002 kway=2"
+    ],
+    "final-k8": [
+      "SPARSE_ORACLE_PASS modes=cyclic,dollar runs=exact seam_spool=exact production_bands=exact trivial_bases=exact terminal=exact legacy_shard_admission=1 WM=absent",
+      "SELFTEST_PASS count=200 seed=20261002 kway=8"
+    ],
+    "seam": [
+      "BAND_PROGRESS_READER_ORACLE_PASS trivial_bases=1 band_only=1 deferred_class=1 EOF_clamp=1 terminal=1 delayed_full_band_EOF=1 backward_terminal_refused=1 malformed_refusals=12",
+      "SEAM_SPOOL_READER_ORACLE_PASS empty=1 adversarial_orders=2 padded_flanks=1 NUL=1 byte05=1 malformed_refusals=3"
+    ],
+    "pfck": [
+      "PFCK_ORACLE_PASS cases=77 grids=1,7,22,31,10000 threads=1,8 forced_window=4096"
+    ]
+  },
+  "gateA": {
+    "command": [
+      "/mnt/nvme2n1/erikg/sol5i-cargo/release/xsa",
+      "build",
+      "--v2-pipeline",
+      "--input",
+      "/mnt/nvme2n1/erikg/extcols-scratch/mergperf-100m-snap.txt",
+      "--scratch",
+      "/mnt/nvme2n1/erikg/sol5i-gate100m",
+      "--snap-1e",
+      "--chunks",
+      "8",
+      "--kway",
+      "8",
+      "--threads",
+      "32",
+      "--memory-gb",
+      "8",
+      "--timeout",
+      "3600",
+      "--chi-expect",
+      "29716349"
+    ],
+    "environment": {},
+    "rc": 0,
+    "wall": 98.70621278998442,
+    "sampled_peak_bytes": 604370720,
+    "sampled_max_band_pieces": 1,
+    "cmp_rc": 0,
+    "remaining_protocol_scratch": [],
+    "verbatim": [
+      "V2_CHI_EXPECT_OK chi=29716349 == 29716349",
+      "V2_CONTAINER_PUBLISHED path=/mnt/nvme2n1/erikg/sol5i-gate100m/mergperf-100m-snap.sxi2 bytes=48768685",
+      "XSA_BUILD_DONE chi=29716349 pipeline=v2 container=/mnt/nvme2n1/erikg/sol5i-gate100m/mergperf-100m-snap.sxi2"
+    ]
+  },
+  "gateB_preflow": {
+    "command": [
+      "/mnt/nvme2n1/erikg/sol5i-cargo/release/xsa",
+      "build",
+      "--v2-pipeline",
+      "--input",
+      "/mnt/nvme2n1/erikg/extcols-scratch/mergperf-1b-snap.txt",
+      "--scratch",
+      "/mnt/nvme2n1/erikg/sol5i-gate1b",
+      "--snap-1e",
+      "--chunks",
+      "8",
+      "--kway",
+      "8",
+      "--threads",
+      "32",
+      "--memory-gb",
+      "8",
+      "--timeout",
+      "3600",
+      "--chi-expect",
+      "283296933"
+    ],
+    "environment": {},
+    "rc": 0,
+    "wall": 1433.8631514050066,
+    "sampled_peak_bytes": 6360058405,
+    "sampled_max_band_pieces": 4,
+    "cmp_rc": 0,
+    "remaining_protocol_scratch": []
+  },
+  "flow_oracle": "FLOW_ORACLE_PASS initial_minus_one=1 oversized_positive_window=1 unsigned_credit=1 blocked_until_consumed=1",
+  "final_source_commit": "b772d83938b3a21d54629aa9c4f408d98bc5277d",
+  "final_package_sha256": "5b103804641d67793c61737cdd3735c6d417ee02ee2fcb91a792062533a9c343",
+  "gateB": {
+    "command": [
+      "/mnt/nvme2n1/erikg/sol5i-cargo/release/xsa",
+      "build",
+      "--v2-pipeline",
+      "--input",
+      "/mnt/nvme2n1/erikg/extcols-scratch/mergperf-1b-snap.txt",
+      "--scratch",
+      "/mnt/nvme2n1/erikg/sol5i-gate1b",
+      "--snap-1e",
+      "--chunks",
+      "8",
+      "--kway",
+      "8",
+      "--threads",
+      "32",
+      "--memory-gb",
+      "8",
+      "--timeout",
+      "3600",
+      "--chi-expect",
+      "283296933"
+    ],
+    "environment": {},
+    "rc": 0,
+    "wall": 1423.6781028250698,
+    "sampled_peak_bytes": 6360056483,
+    "sampled_max_band_pieces": 4,
+    "cmp_rc": 0,
+    "remaining_protocol_scratch": [],
+    "verbatim": [
+      "V2_CHI_EXPECT_OK chi=283296933 == 283296933",
+      "V2_CONTAINER_PUBLISHED path=/mnt/nvme2n1/erikg/sol5i-gate1b/mergperf-1b-snap.sxi2 bytes=467814822",
+      "XSA_BUILD_DONE chi=283296933 pipeline=v2 container=/mnt/nvme2n1/erikg/sol5i-gate1b/mergperf-1b-snap.sxi2"
+    ]
+  },
+  "final_oracle_summaries": {
+    "final-k1": [
+      "SPARSE_ORACLE_PASS modes=cyclic,dollar runs=exact seam_spool=exact production_bands=exact trivial_bases=exact terminal=exact legacy_shard_admission=1 WM=absent",
+      "SELFTEST_PASS count=200 seed=20261002 kway=1"
+    ],
+    "final-k2": [
+      "SPARSE_ORACLE_PASS modes=cyclic,dollar runs=exact seam_spool=exact production_bands=exact trivial_bases=exact terminal=exact legacy_shard_admission=1 WM=absent",
+      "SELFTEST_PASS count=200 seed=20261002 kway=2"
+    ],
+    "final-k8": [
+      "SPARSE_ORACLE_PASS modes=cyclic,dollar runs=exact seam_spool=exact production_bands=exact trivial_bases=exact terminal=exact legacy_shard_admission=1 WM=absent",
+      "SELFTEST_PASS count=200 seed=20261002 kway=8"
+    ],
+    "seam": [
+      "BAND_PROGRESS_READER_ORACLE_PASS trivial_bases=1 band_only=1 deferred_class=1 EOF_clamp=1 terminal=1 delayed_full_band_EOF=1 backward_terminal_refused=1 malformed_refusals=12",
+      "SEAM_SPOOL_READER_ORACLE_PASS empty=1 adversarial_orders=2 padded_flanks=1 NUL=1 byte05=1 malformed_refusals=3"
+    ],
+    "pfck": [
+      "PFCK_ORACLE_PASS cases=77 grids=1,7,22,31,10000 threads=1,8 forced_window=4096"
+    ],
+    "flow": [
+      "FLOW_ORACLE_PASS initial_minus_one=1 oversized_positive_window=1 unsigned_credit=1 blocked_until_consumed=1"
+    ]
+  },
+  "gates_source_commit": "b772d83",
+  "container_sha256": {
+    "100m": "b4753899592c952542f7416ee9ce5836e19b99971afa74d02281493b3a289ba5",
+    "1b": "38f03eb43aaea5997819c8f7922a244a3eb0be945bf1d3b0feb1f2fd9d23144f"
+  }
+}
