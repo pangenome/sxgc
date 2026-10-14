@@ -9,6 +9,7 @@
     "implementation_validated": false,
     "malformed_extents_refused": 10,
     "maximum_backlog": 1100,
+    "overlapping_band_spans": true,
     "randomized_interleavings": 1450,
     "result": "PASS",
     "shards": 0,
@@ -63,7 +64,7 @@
       "SELFTEST_PASS count=200 seed=20261002 kway=8"
     ],
     "seam": [
-      "BAND_PROGRESS_READER_ORACLE_PASS trivial_bases=1 band_only=1 deferred_class=1 EOF_clamp=1 terminal=1 delayed_full_band_EOF=1 malformed_refusals=10",
+      "BAND_PROGRESS_READER_ORACLE_PASS trivial_bases=1 band_only=1 deferred_class=1 EOF_clamp=1 terminal=1 delayed_full_band_EOF=1 backward_terminal_refused=1 malformed_refusals=12",
       "SEAM_SPOOL_READER_ORACLE_PASS empty=1 adversarial_orders=2 padded_flanks=1 NUL=1 byte05=1 malformed_refusals=3"
     ],
     "pfck": [
@@ -142,5 +143,7 @@
     "cmp_rc": 0,
     "remaining_protocol_scratch": []
   },
-  "flow_oracle": "FLOW_ORACLE_PASS initial_minus_one=1 oversized_positive_window=1 unsigned_credit=1 blocked_until_consumed=1"
+  "flow_oracle": "FLOW_ORACLE_PASS initial_minus_one=1 oversized_positive_window=1 unsigned_credit=1 blocked_until_consumed=1",
+  "final_source_commit": "b772d83938b3a21d54629aa9c4f408d98bc5277d",
+  "final_package_sha256": "5b103804641d67793c61737cdd3735c6d417ee02ee2fcb91a792062533a9c343"
 }
