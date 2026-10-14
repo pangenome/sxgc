@@ -411,7 +411,7 @@ struct PieceSource {
         double waited = 0; int fd = ::open(path.c_str(), O_RDONLY);
         while (fd < 0) {
             read_terminal();
-            pf_check(!terminal || band <= finalBand, "progress requested beyond EOF");
+            if (terminal && band > finalBand) return;
             if (waited > pollTimeout) pf_fail("timeout waiting for band progress " + path);
             std::this_thread::sleep_for(std::chrono::milliseconds(20)); waited += .02;
             fd = ::open(path.c_str(), O_RDONLY);
@@ -456,6 +456,7 @@ struct PieceSource {
         while (progress < int64_t(band)) {
             if (read_terminal() && band > finalBand) return false;
             load_progress();
+            if (terminal && band > finalBand) return false;
         }
         uint64_t extent = 0;
         for (uint64_t id : bandRefs.at(band)) {

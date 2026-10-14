@@ -2650,133 +2650,7 @@ struct SparseRunReducer {
     }
 };
 
-// Up to --threads (capped at 96) independent walks are admitted together,
-// each covering 1/admission of the former shard size. The ordered consumer
-// unlinks each spool before that producer admits another shard. Only the
-// admission-width frontier can exist on disk; rank-boundary skew is unchanged.
-// Only run samples are stored, never a dense row-position column.
-struct ParallelSparseRuns : SparseWalkSink {
-    struct Shard : SparseWalkSink {
-        ParallelSparseRuns& parent;
-        std::mutex mutex;
-        std::condition_variable ready, space;
-        std::vector<SparseRun> batch;
-        std::string path;
-        int fd = -1;
-        U records = 0;
-        bool consumed = false;
-        SparseRun pending;
-        U lo = 0, hi = 0, next = 0, first = 0, last = 0;
-        SparseSeamCapture::Hit *firstHit = nullptr, *lastHit = nullptr;
-        bool done = false;
-        explicit Shard(ParallelSparseRuns& p) : parent(p) {}
-        void send() {
-            if (batch.empty()) return;
-            std::vector<char> bytes(25 * batch.size());
-            for (size_t i = 0; i < batch.size(); ++i) {
-                char* b = bytes.data() + 25*i; b[0] = char(batch[i].c);
-                put_le64(b+1, batch[i].len); put_le64(b+9, batch[i].head); put_le64(b+17, batch[i].tail);
-            }
-            xput(fd, bytes.data(), bytes.size(), 25*records, "parallel run spool write");
-            records += batch.size(); batch.clear();
-        }
-        void flush() {
-            if (!pending.len) return;
-            batch.push_back(pending); pending = {};
-            if (batch.size() == 4096) send();
-        }
-        void beginShard(U id, U begin, U end) override {
-            lo = next = begin; hi = end;
-            batch.reserve(4096);
-            path = parent.directory + "/runs-" + std::to_string(id) + ".spool";
-            fd = ::open(path.c_str(), O_CREAT | O_EXCL | O_WRONLY, 0666);
-            require(fd >= 0, "create parallel run spool");
-        }
-        void row(U index, U p) override {
-            require(index == next++ && index < hi && p < parent.n, "parallel sparse row coverage");
-            if (parent.seam) {
-                // Target-map structure is immutable throughout the walk;
-                // each position belongs to exactly one producer.
-                auto it = parent.seam->targets.find(p);
-                auto* hit = it == parent.seam->targets.end() ? nullptr : &it->second;
-                if (lastHit) lastHit->after = p;
-                if (hit) {
-                    require(hit->row == UINT64_MAX, "duplicate parallel seam target");
-                    hit->row = index; hit->before = last; hit->after = parent.n;
-                }
-                if (index == lo) { first = p; firstHit = hit; }
-                lastHit = hit;
-            }
-            last = p;
-            uint8_t c = p ? parent.text->at(p-1) : uint8_t(2);
-            if (pending.len && pending.c != c) flush();
-            if (!pending.len) { pending.c = c; pending.head = p; }
-            ++pending.len; pending.tail = p;
-        }
-        void endShard() override {
-            require(next == hi, "parallel sparse shard coverage");
-            flush(); send();
-            require(::close(fd) == 0, "close parallel run spool"); fd = -1;
-            std::unique_lock<std::mutex> lock(mutex); done = true; ready.notify_one();
-            space.wait(lock, [&] { return consumed; });
-            std::vector<SparseRun>().swap(batch);
-        }
-    };
-    const CorpusText* text;
-    U n;
-    SparseSeamCapture* seam;
-    SparseRunReducer& reducer;
-    std::string directory;
-    U normalWidth, admitted;
-    std::vector<std::unique_ptr<Shard>> shards;
-    std::thread consumer;
-    ParallelSparseRuns(const CorpusText& t, U count, U width,
-                       SparseSeamCapture* capture, SparseRunReducer& r, const std::string& dir, U admissionLimit = 96,
-                       std::function<void()> initialize = {})
-        : text(&t), n(count), seam(capture), reducer(r), directory(dir), normalWidth(width), admitted(std::min<U>(std::max<U>(1, admissionLimit), std::min<U>(96, width))) {
-        width = std::min<U>(n, width * std::min<U>(96, width));
-        for (U i = 0; i < width; ++i) shards.emplace_back(new Shard(*this));
-        consumer = std::thread([&, initialize] {
-            if (initialize) initialize();
-            for (auto& ptr : shards) {
-                auto& shard = *ptr;
-                std::unique_lock<std::mutex> lock(shard.mutex);
-                shard.ready.wait(lock, [&] { return shard.done; });
-                lock.unlock();
-                reducer.consume(shard.path, shard.records, shard.hi - shard.lo);
-                lock.lock(); shard.consumed = true; shard.space.notify_all();
-            }
-        });
-    }
-    void awaitShard(U id) {
-        auto& shard = *shards.at(id);
-        std::unique_lock<std::mutex> lock(shard.mutex);
-        shard.space.wait(lock, [&] { return shard.consumed; });
-    }
-    void finish() {
-        consumer.join();
-        if (!seam) return;
-        U previous = n+9, covered = 0;
-        SparseSeamCapture::Hit* previousHit = nullptr;
-        for (auto& shard : shards) {
-            if (shard->lo == shard->hi) continue;
-            if (previousHit) previousHit->after = shard->first;
-            if (shard->firstHit) shard->firstHit->before = previous;
-            previous = shard->last; previousHit = shard->lastHit;
-            covered += shard->hi - shard->lo;
-        }
-        seam->nextRow = covered;
-    }
-    void attachCorpus(const CorpusText& corpus) override { text = &corpus; }
-    SparseWalkSink* shardSink(U s) override { return shards.at(s).get(); }
-    U shardCount(U normal) const override {
-        require(normal == normalWidth, "parallel sparse shard plan"); return shards.size();
-    }
-    U admission() const override { return admitted; }
-    void beginShard(U, U, U) override { fail("parallel sink needs shard"); }
-    void row(U, U) override { fail("parallel sink needs shard"); }
-    void endShard() override { fail("parallel sink needs shard"); }
-};
+// Retired: ParallelSparseRuns count/replay admission and per-shard capture.
 
 // ------------------------------------------------------------ external core merge
 // Per-side anchor/repair stats: k-way generalized (k=2 is the pairwise case).
@@ -3439,9 +3313,6 @@ struct SequentialV2 : SparseWalkSink {
         seam.discover(t, n, std::min<U>(1u << 26, std::max<U>(1000, inputRuns / 1000)));
         for (const auto& cl : seam.raw) {
             firstSizes.emplace(cl.first, cl.hi);
-            // Conservative pre-walk upper bound: arbitrary starting offset.
-            require((cl.hi + 65535) / 65536 < window,
-                    "seam class exceeds W-1 run bands");
         }
         {
             OutFile f(dir + "/start.tmp"); f.raw("BPS1", 4);
@@ -3462,6 +3333,12 @@ struct SequentialV2 : SparseWalkSink {
         if (const char* delay = getenv("CROSS_V2_PRODUCER_DELAY_MS"))
             std::this_thread::sleep_for(std::chrono::milliseconds(strtoull(delay,nullptr,10)));
         require(count && count <= 65536, "sequential band count");
+        if (active != UINT64_MAX) {
+            // An unclosed class must include a run in the next band. Refuse
+            // before flow control could block on a class larger than W-1.
+            require(band + 1 - classes[active].firstRun / 65536 < window,
+                    "active seam class exceeds W-1 run bands");
+        }
         piece.flush(dir, prefix, band, 0, bandStart, width, window);
         std::vector<U> refs;
         for (U id = 0; id < classes.size(); ++id) {
