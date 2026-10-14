@@ -1220,7 +1220,8 @@ static int selftest_seam_spool(const std::string& directory) {
 // not merely independently invoking feed_raw with a fresh RepairStream.
 // In streaming mode class readiness is still required before local repair;
 // ready_band's bounded extent/terminal assertion supplies that dependency.
-// The current implementation stays serial; this audit is not a speed claim.
+// The default stays serial. The opt-in exact-checkpoint scheduler below
+// validates the carry but retains a serial planner; it is not a speed claim.
 struct NRun { uint8_t c; uint64_t len, h, t; };
 struct RepairStream {
     uint64_t N = 0, n = 0, w1 = 10, terminal = 0;
@@ -1962,8 +1963,9 @@ static bool repair_state_equal(const RepairStream& a, const RepairStream& b) {
         a.firstRunSeen == b.firstRunSeen && a.rNorm == b.rNorm &&
         a.nNorm == b.nNorm && a.totals == b.totals && a.runFreq == b.runFreq;
 }
-static void repair_chunks(RepairStream& rs, const std::vector<RawRun>& raw,
+static std::array<double, 3> repair_chunks(RepairStream& rs, const std::vector<RawRun>& raw,
                           FinishPool& pool, size_t chunkRuns) {
+    const double begin = tnow();
     pf_check(chunkRuns > 0, "zero repair chunk");
     struct Chunk {
         RepairStream entry, exit;
@@ -1981,6 +1983,7 @@ static void repair_chunks(RepairStream& rs, const std::vector<RawRun>& raw,
     }
     // One already-ready band bounds both checkpoint storage and reorder output.
     // No worker reads beyond that band or changes readiness/consumption gating.
+    const double planned = tnow();
     std::atomic<size_t> next{0};
     pool.run([&](int) {
         for (;;) {
@@ -1993,6 +1996,7 @@ static void repair_chunks(RepairStream& rs, const std::vector<RawRun>& raw,
             pf_check(repair_state_equal(local, chunk.exit), "repair checkpoint replay mismatch");
         }
     });
+    const double repaired = tnow();
     const uint64_t finalR = rs.rNorm;
     rs.emit = emit;
     for (const auto& chunk : chunks) {
@@ -2001,6 +2005,7 @@ static void repair_chunks(RepairStream& rs, const std::vector<RawRun>& raw,
         pf_check(rs.rNorm == chunk.exit.rNorm, "repair chunk output count");
     }
     rs.rNorm = finalR;
+    return {planned - begin, repaired - planned, tnow() - repaired};
 }
 
 static int selftest_repair_chunks() {
@@ -2013,18 +2018,19 @@ static int selftest_repair_chunks() {
         std::vector<RawRun> raw{{9,1,64,64}, {2,9,65,73}};
         if (seed & 1) raw.back() = {2,10,65,0};
         uint64_t n = (seed & 1) ? 1 : 0;
-        if (!(seed & 1)) { raw.push_back({2,1,0,0}); ++n; }
+        if (!(seed & 1)) ++n;
         for (unsigned i = 0; i < 24; ++i) {
             uint8_t alphabet[] = {0,5,9,10};
             uint64_t len = 1 + ((seed * 17 + i * 13) % 4);
-            raw.push_back({alphabet[((i / (1 + seed % 3)) + seed) % 4],len,1,1});
+            raw.push_back({alphabet[((i / (1 + seed % 3)) + seed) % 4],len,1 + i, len == 1 ? 1 + i : 25 + i});
+            if (!(seed & 1) && i == seed % 24) raw.push_back({2,1,0,0});
             n += len;
         }
         raw.front().head = raw.front().tail = n;
         SeamClasses seam;
         if (seed & 2) {
-            seam.classes.push_back({2,5,1,1,1,{},{{5,1,1,1},{0,2,1,1}}});
-            seam.classes.push_back({8,12,1,1,1,{},{{9,4,1,1}}});
+            seam.classes.push_back({2,5,1,17,19,{},{{5,1,7,7},{0,2,8,9}}});
+            seam.classes.push_back({8,12,1,21,23,{},{{9,4,11,13}}});
         }
         std::vector<NRun> expected;
         RepairStream initial; initial.N=n+10; initial.n=n; initial.terminal=9; initial.seam=&seam;
@@ -2048,6 +2054,27 @@ static int selftest_repair_chunks() {
         }
     }
     printf("CHUNKED_REPAIR_ORACLE_PASS streams=128 widths=%llu workers=4 both_coalescers=1 class_flanks=1 padding_straddle=1 dollar=1 legal_00_05=1\n", (unsigned long long)cases);
+    return 0;
+}
+
+// CPU-only attribution: the legacy repair timer also charges producer waits,
+// class rebuilds and piece I/O, so it cannot by itself measure this scheduler.
+static int benchmark_repair_chunks() {
+    constexpr uint64_t count = 1u << 20;
+    std::vector<RawRun> raw{{9,1,count+1,count+1},{2,9,0,0},{2,1,0,0}};
+    for (uint64_t i=0; i<count; ++i) raw.push_back({uint8_t(i%2 ? 5 : 9),1,1,1});
+    RepairStream initial; initial.N=count+11; initial.n=count+1; initial.terminal=9;
+    initial.emit=[](const NRun&) {};
+    auto serial=initial;
+    double begin=tnow();
+    for (const auto& r:raw) serial.feed_raw(r);
+    double serialWall=tnow()-begin;
+    FinishPool pool(16);
+    auto parallel=initial;
+    auto wall=repair_chunks(parallel,raw,pool,4096);
+    pf_check(repair_state_equal(serial,parallel), "repair benchmark state");
+    fprintf(stdout,"REPAIR_CHUNK_CPU_BENCH runs=%zu threads=16 chunk_runs=4096 serial=%.6f planner=%.6f workers=%.6f ordered_drain=%.6f duplicated_planner_work=1\n",
+            raw.size(),serialWall,wall[0],wall[1],wall[2]);
     return 0;
 }
 
@@ -2089,12 +2116,14 @@ static void fp_self_check(SlimFingerprint<CorpusText>& fh, const CorpusText& tex
 
 int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::string(argv[1]) == "--benchmark-repair-chunks") return benchmark_repair_chunks();
         if (argc == 2 && std::string(argv[1]) == "--selftest-repair-chunks") return selftest_repair_chunks();
         if (argc == 2 && std::string(argv[1]) == "--selftest-sweep-monoid") return selftest_sweep_monoid();
         if (argc == 3 && std::string(argv[1]) == "--selftest-seam-spool") return selftest_seam_spool(argv[2]);
         std::string prefix, corpus, remap, out, bridgeDir, sampleCheck, wmPath;
         uint64_t chiExpect = 0, sampleCount = 1024, pollTimeout = 86400, ramBudget = 1ull << 30;
         int threads = int(std::thread::hardware_concurrency());
+        uint64_t repairChunkRuns = 0; // experimental exact-checkpoint planner
         bool keepRlebwt = false, keepPfck = false;
         for (int i = 1; i < argc; ++i) {
             std::string a = argv[i];
@@ -2109,6 +2138,7 @@ int main(int argc, char** argv) {
             else if (a == "--bridge-dir") bridgeDir = need("--bridge-dir");
             else if (a == "--witness-sample-check") sampleCheck = need("--witness-sample-check");
             else if (a == "--wm") wmPath = need("--wm");
+            else if (a == "--repair-chunk-runs") repairChunkRuns = strtoull(need("--repair-chunk-runs").c_str(), nullptr, 10);
             else if (a == "--chi-expect") chiExpect = strtoull(need("--chi-expect").c_str(), nullptr, 10);
             else if (a == "--sample-count") sampleCount = strtoull(need("--sample-count").c_str(), nullptr, 10);
             else if (a == "--poll-timeout") pollTimeout = strtoull(need("--poll-timeout").c_str(), nullptr, 10);
@@ -2121,7 +2151,8 @@ int main(int argc, char** argv) {
         pf_check(!prefix.empty() && !corpus.empty() && !remap.empty() && !out.empty(),
                  "usage: pile_finish --prefix MERGED/frag --corpus CORPUS --remap MAP.bin --output CONTAINER.sxi2 "
                  "[--bridge-dir DIR] [--witness-sample-check BANKED.sA] [--chi-expect N] [--threads N] "
-                 "[--keep-rlebwt] [--keep-pfck] [--poll-timeout S]");
+                 "[--keep-rlebwt] [--keep-pfck] [--poll-timeout S] [--repair-chunk-runs N]");
+        pf_check(!repairChunkRuns || repairChunkRuns >= 1024, "experimental repair chunks require at least 1024 runs");
         double last = tnow();
         uint8_t remapTable[256];
         load_remap_table(remap, remapTable);
@@ -2331,10 +2362,12 @@ int main(int argc, char** argv) {
 
         // ---- main band loop: pieces -> repair -> LCE -> sweep -> witnesses
         double lceWall = 0, repairWall = 0, advanceWall = 0;
+        std::array<double, 3> repairChunkWall{};
         std::vector<RawRun> raws;
         uint64_t nbands = (R + src.B - 1) / src.B;
         uint64_t expectedRlebwtBytes = 0;
         FinishPool pool(std::max(1, std::min(threads, 256)));
+        if (repairChunkRuns) fprintf(stderr, "PILE_FINISH_REPAIR_CHUNKS runs=%llu reorder=one_ready_band planner=exact_serial_replay experimental=1\n", (unsigned long long)repairChunkRuns);
         // sol6b audit: phase A is ALREADY decoupled here: independent top and
         // interior queries finish in pool.run before any Sweep::advance call.
         // Preserve prevTail/gidx and singleton INF if selection is restructured;
@@ -2412,7 +2445,11 @@ int main(int argc, char** argv) {
             }
             for (const auto& raw : raws) {
                 expectedRlebwtBytes += 4 * ((raw.len + 0x7fffff - 1) / 0x7fffff);
-                rs.feed_raw(raw);
+                if (!repairChunkRuns) rs.feed_raw(raw);
+            }
+            if (repairChunkRuns) {
+                auto wall = repair_chunks(rs, raws, pool, repairChunkRuns);
+                for (size_t i=0; i<wall.size(); ++i) repairChunkWall[i] += wall[i];
             }
             repairWall += tnow() - t0;
             if (nbuf.empty()) { if (src.streaming) src.consumed_band(band); continue; }
@@ -2437,6 +2474,7 @@ int main(int argc, char** argv) {
         }
         fprintf(stderr, "SWEEP_PHASE_WALLS repair=%.1f lce=%.1f advance_witness=%.1f lce_threads=%d\n",
                 repairWall, lceWall, advanceWall, std::max(1, std::min(threads, 256)));
+        if (repairChunkRuns) fprintf(stderr, "REPAIR_CHUNK_PHASE_WALLS planner=%.3f workers=%.3f ordered_drain=%.3f outer_includes_readiness_and_piece_IO=1\n", repairChunkWall[0], repairChunkWall[1], repairChunkWall[2]);
         // Success-path budget reports (the refusal path always printed these;
         // the pile-week convergence needs the measured verified-symbol and
         // ladder-probe counts to attribute the LCE wall honestly).
