@@ -1,0 +1,120 @@
+{
+  "100m": {
+    "before": {
+      "comparisons": 715421580,
+      "symbols_compared": 8055757000,
+      "probes": 180431482
+    },
+    "after": {
+      "comparisons": 355643748,
+      "symbols_compared": 4017075186,
+      "probes": 90131924
+    },
+    "percent_change": {
+      "comparisons": -50.288926425730686,
+      "symbols_compared": -50.13410675123393,
+      "probes": -50.046453644935426
+    },
+    "finish_verified_symbols": 1176027277,
+    "finish_slim_fp": [
+      "SLIM_FP pile-finish-corpus tau=22 bytes=36363824 queries=49845539 verified_symbols=1176027277 hash_probes=41570537 mean_verified=23.593430838 max_verified=34068 max_requested_lce=34067 verification_work=1295629815 hash_probe_charges=166282654 suffix_symbol_reads=1745729067 total_work=1461912469 total_limit=12800064384 verification_limit=67108864 probe_limit=22",
+      "SLIM_FP pile-finish-seam tau=22 bytes=36363824 queries=239674 verified_symbols=1186819 hash_probes=41148 mean_verified=4.951805369 max_verified=1984 max_requested_lce=1983 verification_work=1298118 hash_probe_charges=165104 suffix_symbol_reads=1745286 total_work=1463222 total_limit=1600008048 verification_limit=67108864 probe_limit=22"
+    ],
+    "stage_work": [
+      "CROSS_STAGE_WORK stage=prepare pass=0 comparisons=9869 symbols_compared=37474 probes=1142",
+      "CROSS_STAGE_WORK stage=plan pass=0 comparisons=0 symbols_compared=0 probes=0",
+      "CROSS_STAGE_WORK stage=heap pass=0 comparisons=355633879 symbols_compared=4017037712 probes=90130782"
+    ],
+    "merge_cross": "CROSS_KWAY k=8 mode=dollar left=/mnt/nvme2n1/erikg/sol5i-gate100m/chunks/chunk-0.crle right=/mnt/nvme2n1/erikg/sol5i-gate100m/chunks/chunk-7.crle n=100000503 sizes=12510365,12502358,12531589,12501760,12500405,12517291,12501417,12435318 out=/mnt/nvme2n1/erikg/sol5i-gate100m/merged/frag out_runs=38647515 wall_total=85.801 comparisons=355643748 symbols_compared=4017075186 probes=90131924 max_lce=1984 fast_decided=323540044 probe_decided=32103694 cap_decided=10 tie_decided=0 lce_over_10k=0 lce_over_100k=0 lce_over_1m=0 anchors_sum=201 walk_steps_sum=201 block_rows_sum=22980 peak_rss_kib=544344 hash_k=32 t_fast=0.000 t_prep=0.000 t_probe=0.000 t_scan=0.000",
+    "gate": {
+      "command": [
+        "/mnt/nvme2n1/erikg/sol5i-cargo/release/xsa",
+        "build",
+        "--v2-pipeline",
+        "--input",
+        "/mnt/nvme2n1/erikg/extcols-scratch/mergperf-100m-snap.txt",
+        "--scratch",
+        "/mnt/nvme2n1/erikg/sol5i-gate100m",
+        "--snap-1e",
+        "--chunks",
+        "8",
+        "--kway",
+        "8",
+        "--threads",
+        "32",
+        "--memory-gb",
+        "8",
+        "--timeout",
+        "3600",
+        "--chi-expect",
+        "29716349"
+      ],
+      "environment": {},
+      "rc": 0,
+      "wall": 98.70621278998442,
+      "sampled_peak_bytes": 604370720,
+      "sampled_max_band_pieces": 1,
+      "cmp_rc": 0,
+      "remaining_protocol_scratch": []
+    }
+  },
+  "1b": {
+    "before": {
+      "comparisons": 7354449974,
+      "symbols_compared": 120997390177,
+      "probes": 3975078066
+    },
+    "after": {
+      "comparisons": 3674629435,
+      "symbols_compared": 60485597061,
+      "probes": 1987510452
+    },
+    "percent_change": {
+      "comparisons": -50.03529226535195,
+      "symbols_compared": -50.01082504959887,
+      "probes": -50.00071900474721
+    },
+    "finish_verified_symbols": 12820424563,
+    "finish_slim_fp": [
+      "SLIM_FP pile-finish-corpus tau=22 bytes=363636608 queries=473695414 verified_symbols=12820424563 hash_probes=669260274 mean_verified=27.064700616 max_verified=97060 max_requested_lce=97059 verification_work=14816771223 hash_probe_charges=2677041604 suffix_symbol_reads=28110010031 total_work=17493812827 total_limit=128000085120 verification_limit=67108864 probe_limit=22",
+      "SLIM_FP pile-finish-seam tau=22 bytes=363636608 queries=4038381 verified_symbols=29271872 hash_probes=1363613 mean_verified=7.248417621 max_verified=97060 max_requested_lce=97059 verification_work=32912154 hash_probe_charges=5454937 suffix_symbol_reads=57520755 total_work=38367091 total_limit=16000010640 verification_limit=67108864 probe_limit=22"
+    ],
+    "stage_work": [
+      "CROSS_STAGE_WORK stage=prepare pass=0 comparisons=89749 symbols_compared=209139 probes=144",
+      "CROSS_STAGE_WORK stage=plan pass=0 comparisons=0 symbols_compared=0 probes=0",
+      "CROSS_STAGE_WORK stage=heap pass=0 comparisons=3674539686 symbols_compared=60485387922 probes=1987510308"
+    ],
+    "merge_cross": "CROSS_KWAY k=8 mode=dollar left=/mnt/nvme2n1/erikg/sol5i-gate1b/chunks/chunk-0.crle right=/mnt/nvme2n1/erikg/sol5i-gate1b/chunks/chunk-7.crle n=1000000665 sizes=125011915,125055474,125001704,125003137,125000580,125003677,125001891,124922287 out=/mnt/nvme2n1/erikg/sol5i-gate1b/merged/frag out_runs=368036610 wall_total=1270.563 comparisons=3674629435 symbols_compared=60485597061 probes=1987510452 max_lce=51460 fast_decided=2930705331 probe_decided=743924063 cap_decided=41 tie_decided=0 lce_over_10k=211066 lce_over_100k=0 lce_over_1m=0 anchors_sum=56 walk_steps_sum=56 block_rows_sum=207623 peak_rss_kib=2908588 hash_k=32 t_fast=0.000 t_prep=0.000 t_probe=0.000 t_scan=0.000",
+    "gate": {
+      "command": [
+        "/mnt/nvme2n1/erikg/sol5i-cargo/release/xsa",
+        "build",
+        "--v2-pipeline",
+        "--input",
+        "/mnt/nvme2n1/erikg/extcols-scratch/mergperf-1b-snap.txt",
+        "--scratch",
+        "/mnt/nvme2n1/erikg/sol5i-gate1b",
+        "--snap-1e",
+        "--chunks",
+        "8",
+        "--kway",
+        "8",
+        "--threads",
+        "32",
+        "--memory-gb",
+        "8",
+        "--timeout",
+        "3600",
+        "--chi-expect",
+        "283296933"
+      ],
+      "environment": {},
+      "rc": 0,
+      "wall": 1423.6781028250698,
+      "sampled_peak_bytes": 6360056483,
+      "sampled_max_band_pieces": 4,
+      "cmp_rc": 0,
+      "remaining_protocol_scratch": []
+    }
+  }
+}
