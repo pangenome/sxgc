@@ -372,7 +372,7 @@ struct RawRun { uint8_t c; uint64_t len, head, tail; };
 struct PieceSource {
     std::string prefix, dir;
     bool streaming = false, terminal = false;
-    int64_t progress = -1;
+    int64_t progress = -1, consumed = -1;
     uint64_t window = 0, depth = 0, finalBand = 0, capturedRows = 0;
     std::map<uint64_t, std::vector<uint64_t>> bandRefs;
     std::map<uint64_t, uint64_t> bandCounts, classExtents;
@@ -437,6 +437,12 @@ struct PieceSource {
                      "progress class bounds");
             pf_check(completed.empty() || completed.back()[4] <= cl[3], "progress overlapping classes");
             uint64_t rows = cl[4]-cl[3], extent = cl[2]/B-cl[1]/B;
+            pf_check(int64_t(cl[1]/B) > consumed, "class captured after its band was consumed");
+            for (uint64_t owner = cl[1]/B; owner <= cl[2]/B; ++owner) {
+                const auto& owners = bandRefs.at(owner);
+                pf_check(std::find(owners.begin(), owners.end(), cl[0]) != owners.end(),
+                         "progress omitted intersecting class reference");
+            }
             pf_check(extent < window && rows <= (1u<<26)-capturedRows, "progress class refusal");
             for (uint64_t j = 0; j < rows; ++j) { uint64_t position = next();
                 pf_check(position < n, "progress occurrence bounds"); cl.push_back(position); }
@@ -492,6 +498,7 @@ struct PieceSource {
         FILE* f = fopen(tmp.c_str(), "w"); pf_check(f, "open consumed tmp");
         fprintf(f, "%llu\n", (unsigned long long)band);
         pf_check(fclose(f) == 0 && ::rename(tmp.c_str(), path.c_str()) == 0, "publish consumed band");
+        consumed = int64_t(band);
         bandRefs.erase(band);
     }
     void read_stream_band(uint64_t band, std::vector<RawRun>& out) {
@@ -1078,7 +1085,7 @@ static void selftest_band_progress(const std::string& directory) {
         pf_check(fd>=0,"create progress oracle");pf_write_full(fd,magic,4,"oracle magic");
         pf_write_full(fd,words.data(),words.size()*8,"oracle words");::close(fd);
     };
-    for(unsigned mode=0;mode<10;++mode){
+    for(unsigned mode=0;mode<11;++mode){
         std::filesystem::remove_all(dir);std::filesystem::create_directories(dir);
         write("start","BPS1",{65540,17,3,3});
         std::vector<uint64_t> first{0,65536,1,0,0};
@@ -1093,6 +1100,7 @@ static void selftest_band_progress(const std::string& directory) {
         if(mode==7)terminal[0]=2;
         if(mode==8)last.push_back(0);
         if(mode==9)last[7]=3*65536;
+        if(mode==10)first={0,65536,0,0};
         write("g-0","BPG1",first);write("g-1","BPG1",last);write("terminal","BPT1",terminal);
         auto run=[&](){PieceSource src;src.prefix=prefix;src.pollTimeout=.1;src.load_idx();
             pf_check(src.streaming&&src.ready_band(0)&&src.ready_band(1)&&!src.ready_band(2),"band-only EOF readiness");
@@ -1103,8 +1111,15 @@ static void selftest_band_progress(const std::string& directory) {
             if(!child){int quiet=::open("/dev/null",O_WRONLY);::dup2(quiet,STDERR_FILENO);::close(quiet);run();_exit(0);}
             int status;pf_check(::waitpid(child,&status,0)==child&&WIFEXITED(status)&&WEXITSTATUS(status)==2,"malformed progress accepted");}
     }
+    std::filesystem::remove_all(dir); std::filesystem::create_directories(dir);
+    write("start","BPS1",{65536,17,1,1}); write("g-0","BPG1",{0,65536,0,0});
+    PieceSource exact; exact.prefix=prefix; exact.pollTimeout=1; exact.load_idx();
+    pf_check(exact.ready_band(0),"full final band readiness");
+    std::thread delayed([&]{std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        write("terminal","BPT1",{0,65536,0,0});});
+    pf_check(!exact.ready_band(1),"delayed terminal full-band EOF"); delayed.join();
     std::filesystem::remove_all(dir);
-    std::printf("BAND_PROGRESS_READER_ORACLE_PASS trivial_bases=1 band_only=1 deferred_class=1 EOF_clamp=1 terminal=1 malformed_refusals=9\n");
+    std::printf("BAND_PROGRESS_READER_ORACLE_PASS trivial_bases=1 band_only=1 deferred_class=1 EOF_clamp=1 terminal=1 delayed_full_band_EOF=1 malformed_refusals=10\n");
 }
 
 static int selftest_seam_spool(const std::string& directory) {

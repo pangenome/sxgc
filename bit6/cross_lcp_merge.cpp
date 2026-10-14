@@ -4596,7 +4596,7 @@ static int selftest(U cases, uint64_t seed, U threads, U kway) {
                 if (dollar && cs < 20) {
                     setenv("CROSS_V2_PIECES", "1", 1);
                     setenv("CROSS_V2_BAND", "3", 1);
-                    setenv("CROSS_V2_PIECE_WINDOW", "1000000", 1);
+                    setenv("CROSS_V2_PIECE_WINDOW", "1", 1);
                     CorpusText corpus; open_merge_text(sides, corpus, true);
                     emit_four_ext(scratch + "/dense", corpus, wm, nTot, threads, sc.dir);
                 }
