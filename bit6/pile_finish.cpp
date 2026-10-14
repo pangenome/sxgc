@@ -1208,6 +1208,19 @@ static int selftest_seam_spool(const std::string& directory) {
 }
 
 // ---------------------------------------------------------- repair stream
+// sol6b dependency audit: repair is NOT intrinsically a corpus-wide serial
+// recurrence. rows/row are additive prefix coordinates; next is a cursor in
+// sorted, disjoint seam intervals (a chunk may binary-search its entry class).
+// srcPending and pending are the two boundary coalescers, with head from the
+// left and tail from the right. A seam interval crossing a chunk must retain
+// its entry/exit flank and insert cl.runs exactly once at cl.lo. Counts and
+// character totals reduce additively after boundary merges. Dollar/padding
+// guards need the absolute raw-row prefix and the preceding terminal count.
+// Thus independent normalization needs BOTH pending runs and prefix metadata,
+// not merely independently invoking feed_raw with a fresh RepairStream.
+// In streaming mode class readiness is still required before local repair;
+// ready_band's bounded extent/terminal assertion supplies that dependency.
+// The current implementation stays serial; this audit is not a speed claim.
 struct NRun { uint8_t c; uint64_t len, h, t; };
 struct RepairStream {
     uint64_t N = 0, n = 0, w1 = 10, terminal = 0;
@@ -2215,6 +2228,10 @@ int main(int argc, char** argv) {
         uint64_t nbands = (R + src.B - 1) / src.B;
         uint64_t expectedRlebwtBytes = 0;
         FinishPool pool(std::max(1, std::min(threads, 256)));
+        // sol6b audit: phase A is ALREADY decoupled here: independent top and
+        // interior queries finish in pool.run before any Sweep::advance call.
+        // Preserve prevTail/gidx and singleton INF if selection is restructured;
+        // evaluating a different query multiset would invalidate work identity.
         // LCE + sweep advance for the buffered runs (nbuf/gidx, in stream
         // order). Used per band AND for the repair stream's final flush -
         // the state machine must see every one of the rNorm runs.
