@@ -264,7 +264,7 @@ struct CorpusText {
 // H(i) = H_segment(i) + BASE^(segment_end-i) * H(segment_end), modulo 2^64.
 static uint64_t pfck_spacing() {
     const char* env = std::getenv("PFCK_SPACING");
-    if (!env) return 24;
+    if (!env) return 22;
     char* end = nullptr; errno = 0;
     uint64_t tau = strtoull(env, &end, 10);
     pf_check(*env && *env != '-' && end && !*end && !errno && tau > 0 && tau <= UINT64_MAX / 2,

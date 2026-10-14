@@ -2731,20 +2731,27 @@ struct ParallelSparseRuns : SparseWalkSink {
     std::vector<std::unique_ptr<Shard>> shards;
     std::thread consumer;
     ParallelSparseRuns(const CorpusText& t, U count, U width,
-                       SparseSeamCapture* capture, SparseRunReducer& r, const std::string& dir)
-        : text(&t), n(count), seam(capture), reducer(r), directory(dir), normalWidth(width), admitted(std::min<U>(96, width)) {
-        width = std::min<U>(n, width * admitted);
+                       SparseSeamCapture* capture, SparseRunReducer& r, const std::string& dir, U admissionLimit = 96,
+                       std::function<void()> initialize = {})
+        : text(&t), n(count), seam(capture), reducer(r), directory(dir), normalWidth(width), admitted(std::min<U>(std::max<U>(1, admissionLimit), std::min<U>(96, width))) {
+        width = std::min<U>(n, width * std::min<U>(96, width));
         for (U i = 0; i < width; ++i) shards.emplace_back(new Shard(*this));
-        consumer = std::thread([&] {
+        consumer = std::thread([&, initialize] {
+            if (initialize) initialize();
             for (auto& ptr : shards) {
                 auto& shard = *ptr;
                 std::unique_lock<std::mutex> lock(shard.mutex);
                 shard.ready.wait(lock, [&] { return shard.done; });
                 lock.unlock();
                 reducer.consume(shard.path, shard.records, shard.hi - shard.lo);
-                lock.lock(); shard.consumed = true; shard.space.notify_one();
+                lock.lock(); shard.consumed = true; shard.space.notify_all();
             }
         });
+    }
+    void awaitShard(U id) {
+        auto& shard = *shards.at(id);
+        std::unique_lock<std::mutex> lock(shard.mutex);
+        shard.space.wait(lock, [&] { return shard.consumed; });
     }
     void finish() {
         consumer.join();
@@ -2877,13 +2884,28 @@ static void build_bwt_file(const SideExt& S, const PosOverlay& pos, const std::s
 // sequence is the k-way interleave of the k repaired orders.
 static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U threads,
                             Budget& bud, CoreStats& st, const PairScratch& sc, U hashK, bool pre,
-                            SparseWalkSink* sparse = nullptr) {
+                            SparseWalkSink* sparse = nullptr, SparseWalkSink* replay = nullptr,
+                            std::function<void(U)> beforeReplay = {},
+                            std::function<void()> counted = {}) {
+    require(!replay || (sparse && counted), "replay needs sparse counting completion");
+    const Budget entryWork = bud;
+    auto workLine = [](const char* stage, U pass, const Budget& work) {
+        std::fprintf(stderr, "CROSS_STAGE_WORK stage=%s pass=%llu comparisons=%llu symbols_compared=%llu probes=%llu\n",
+                     stage, (unsigned long long)pass, (unsigned long long)work.comparisons,
+                     (unsigned long long)work.symbols, (unsigned long long)work.probes);
+    };
+    auto difference = [](const Budget& after, const Budget& before) {
+        Budget result; result.comparisons = after.comparisons - before.comparisons;
+        result.symbols = after.symbols - before.symbols; result.probes = after.probes - before.probes;
+        return result;
+    };
     double last = now_sec();
     const size_t k = sides.size();
     require(k >= 1, "k-way merge needs at least one side");
     st.init(k);
     U n = 0; for (auto& S : sides) n += S.n;
     CorpusText m2; open_merge_text(sides, m2, true);
+    if (replay) replay->attachCorpus(m2);
     if (sparse) sparse->attachCorpus(m2); // reuse the comparator's pool, within its RAM envelope
     if (!pre) {
         hashK = hash_spacing();
@@ -2972,6 +2994,8 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
         }
     }
     phase("anchor+repair", last);
+    const Budget preparedWork = bud;
+    workLine("prepare", 0, difference(bud, entryWork));
     // K-way cross merge under the total order, streamed into the WM file.
     // PARALLEL EMISSION (k-way): the walk is sharded at fixed order
     // boundaries. The merged total order is strict and the global order
@@ -3059,21 +3083,27 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
         }
         for (auto& t : pt) t.join();
     }
+    workLine("plan", 0, difference(bud, preparedWork));
     // merged-rank shard start offsets: R_s = sum_j aB[s][j]
     std::vector<U> R(S + 1, 0);
     for (U s = 0; s <= S; ++s) for (size_t j = 0; j < k; ++j) R[s] += aB[s][j];
-    std::vector<Budget> shardBud(S);
-    std::vector<double> shardPF(S, 0.0), shardPop(S, 0.0);
+    require(!replay || replay->shardCount(normalShards) == S, "replay shard plan differs");
+    const U passes = replay ? 2 : 1;
+    std::vector<Budget> shardBud(passes * S);
+    std::vector<double> shardPF(passes * S, 0.0), shardPop(passes * S, 0.0);
     {
         const bool noPf = getenv("CROSS_NO_PF") != nullptr;
-        std::vector<std::thread> ts;
-        const U workers = sparse ? std::min<U>(S, sparse->admission()) : S;
+        std::vector<std::thread> ts, replayThreads;
+        auto launch = [&](SparseWalkSink* target, U pass, std::vector<std::thread>& pool) {
+        const U workers = target ? std::min<U>(S, target->admission()) : S;
         for (U worker = 0; worker < workers; ++worker) {
-            ts.emplace_back([&, worker] {
+            pool.emplace_back([&, worker, workers, target, pass] {
                 for (U s = worker; s < S; s += workers) {
-                SparseWalkSink* sink = sparse ? sparse->shardSink(s) : nullptr;
+                if (pass && beforeReplay) beforeReplay(s);
+                const U work = pass * S + s;
+                SparseWalkSink* sink = target ? target->shardSink(s) : nullptr;
                 if (sink) sink->beginShard(s, R[s], R[s + 1]);
-                Keys skeys; skeys.init(&m2, &hp, n, dollar, &shardBud[s]);
+                Keys skeys; skeys.init(&m2, &hp, n, dollar, &shardBud[work]);
                 constexpr U W = 8192;
                 std::vector<U> buf(W);
                 U nb = 0, out = R[s], emitted = 0, step = 0;
@@ -3150,13 +3180,13 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
                                 m2.prefetch(p, 16);
                                 if (hp.col.pool) hp.col.prefetch(p / hashK + firstJb);
                             }
-                        shardPF[s] += now_sec() - q0;
+                        shardPF[work] += now_sec() - q0;
                         pfAt = step + 32;
                     }
                     double q1 = now_sec();
                     U v = hv[0]; size_t j = hs_[0];
                     ++cur[j];
-                    shardPop[s] += now_sec() - q1;
+                    shardPop[work] += now_sec() - q1;
                     if (sink) { sink->row(R[s] + emitted, v); ++out; }
                     else buf[nb++] = v;
                     ++emitted;
@@ -3175,10 +3205,24 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
                 }
             });
         }
+        };
+        launch(sparse, 0, ts);
+        if (replay && threads > 1) launch(replay, 1, replayThreads);
         for (auto& t : ts) if (t.joinable()) t.join();
+        if (counted) counted();
+        if (replay && threads <= 1) launch(replay, 1, replayThreads);
+        for (auto& t : replayThreads) if (t.joinable()) t.join();
     }
     if (!sparse) { if (packWm) wmPacker.close(); else ::close(fd); }
-    for (U s = 0; s < S; ++s) {
+    for (U pass = 0; pass < passes; ++pass) {
+        Budget heapWork;
+        for (U s = pass * S; s < (pass + 1) * S; ++s) {
+            heapWork.comparisons += shardBud[s].comparisons;
+            heapWork.symbols += shardBud[s].symbols; heapWork.probes += shardBud[s].probes;
+        }
+        workLine("heap", pass, heapWork);
+    }
+    for (U s = 0; s < passes * S; ++s) {
         const Budget& sb = shardBud[s];
         bud.comparisons += sb.comparisons; bud.fast_decided += sb.fast_decided;
         bud.probe_decided += sb.probe_decided; bud.cap_decided += sb.cap_decided;
@@ -3387,14 +3431,18 @@ struct V2Piece {
     }
 };
 
-// Two bounded sparse walks replace the WM count/emission passes. The first
-// counts completed runs and captures seam targets; the second emits pieces.
-// Bounded shard admission overlaps independent walks with ordered reduction.
+// Two heap traversals share ONE hash build, anchor repair and shard plan.
+// Replay shard s starts after counting shard s is reduced. Run bases become
+// immutable when counting crosses their row-owner boundary; emission waits
+// only for that boundary. The unchanged RCI1/SCS1 consumer needs all counts
+// before publication, so a single heap traversal would require retaining
+// every run sample (unbounded scratch) or a new finish protocol. Combined
+// producer admission stays within --threads; both frontiers unlink on use.
 static U emit_sparse_v2(const std::string& prefix, const std::vector<SideExt>& sides,
                         U threads, Budget& budget, CoreStats& stats,
                         const PairScratch& sc, U hashK, bool pre) {
     U n = 0; for (const auto& side : sides) n += side.n;
-    // Keep the scratch directory live while the second walk still needs it.
+    // Keep scratch live until both traversals finish.
     // Finish may consume the seam before this merge admits its next shard.
     { OutFile f(sc.dir + "/merge.active"); f.w64(n); }
     CorpusText corpus; open_merge_text(sides, corpus, false);
@@ -3403,9 +3451,19 @@ static U emit_sparse_v2(const std::string& prefix, const std::vector<SideExt>& s
     const unsigned width = std::max<unsigned>(1, 64 - __builtin_clzll(n + 9));
     std::vector<U> bases(S), sizes(S);
     std::array<U, 256> counts{}, frequencies{};
-    U owner = 0, runs = 0;
+    std::mutex basesMutex;
+    std::condition_variable basesReady;
+    U readyOwners = 0, countOwner = 0, runs = 0;
     SparseRunReducer count([&](const SparseRun& run, U row) {
+        U owner = countOwner;
         while (owner + 1 < S && row >= (owner + 1) * total / S) ++owner;
+        if (owner != countOwner) {
+            std::lock_guard<std::mutex> lock(basesMutex);
+            for (U next = countOwner + 1; next <= owner; ++next)
+                bases[next] = bases[next - 1] + sizes[next - 1];
+            countOwner = readyOwners = owner;
+            basesReady.notify_one();
+        }
         ++sizes[owner]; ++runs; counts[run.c] += run.len; ++frequencies[run.c];
     });
     SparseSeamCapture seam;
@@ -3413,60 +3471,19 @@ static U emit_sparse_v2(const std::string& prefix, const std::vector<SideExt>& s
     // refusal policy once the sparse count pass has supplied raw R.
     U inputRuns = 0; for (const auto& side : sides) inputRuns += side.runs;
     seam.discover(corpus, n, std::max<U>(1000, inputRuns / 1000));
-    auto walk = [&](SparseRunReducer& reducer, SparseSeamCapture* capture, bool prepared) {
-        reducer.add({corpus.at(n-1), 1, n, n});
-        reducer.add({2, 9, n+1, n+9});
-        ParallelSparseRuns sink(corpus, n, emit_shard_count(threads, n), capture, reducer, sc.dir);
-        core_merge_kway(sides, true, threads, budget, stats, sc, hashK, prepared, &sink);
-        sink.finish();
-        reducer.flush();
-        require(reducer.rows == total, "sparse padded row coverage");
-    };
-    walk(count, &seam, pre);
-    require(counts[2] == 10, "sparse padding count");
-    U base = 0;
-    for (U shard = 0; shard < S; ++shard) { bases[shard] = base; base += sizes[shard]; }
-    require(base == runs, "sparse global run bases");
-    auto classes = seam.finish();
-    const U limit = std::max<U>(1000, runs / 1000);
-    U targets = 0; for (const auto& cl : classes) targets += cl.occ.size();
-    require(targets <= limit && seam.depth <= limit, "sparse seam product budget");
-    std::fprintf(stderr, "CROSS_SEAM_DISCOVERY depth=%llu raw_classes=%zu targets=%zu final_classes=%zu final_rows=%llu hard_limit=%llu product_limit=%llu bounded=1\n",
-        (unsigned long long)seam.depth, seam.raw.size(), seam.targets.size(), classes.size(),
-        (unsigned long long)targets, (unsigned long long)seam.limit, (unsigned long long)limit);
-    // Close before rename; .done is published only after the spool's final
-    // byte. The finish alone unlinks these files, in either exit ordering.
-    const std::string spool = sc.dir + "/seam.spool";
-    {
-        OutFile f(spool + ".tmp"); f.raw("SCS1", 4);
-        f.w64(n); f.w64(seam.depth); f.w64(classes.size());
-        for (const auto& cl : classes) {
-            f.w64(cl.lo); f.w64(cl.hi); f.w64(cl.first); f.w64(cl.before); f.w64(cl.after);
-            for (U position : cl.occ) f.w64(position);
-        }
-    }
-    require(::rename((spool + ".tmp").c_str(), spool.c_str()) == 0, "publish seam spool");
-    { OutFile f(spool + ".done.tmp"); f.w64(targets); }
-    require(::rename((spool + ".done.tmp").c_str(), (spool + ".done").c_str()) == 0, "publish seam done");
-    seam.raw.clear(); seam.targets.clear(); classes.clear();
-    sc.release_walk();
-    const std::string dir = prefix + ".pieces";
-    require(::mkdir(dir.c_str(), 0777) == 0, "create sparse pieces dir");
-    {
-        OutFile f(prefix + ".runcols.idx.tmp"); f.raw("RCI1", 4); f.w32(S);
-        f.w64(runs); f.w64(n); f.w32(width); f.w32(band);
-        for (U shard = 0; shard < S; ++shard) { f.w64(bases[shard]); f.w64(sizes[shard]); }
-    }
-    require(::rename((prefix + ".runcols.idx.tmp").c_str(), (prefix + ".runcols.idx").c_str()) == 0, "publish sparse idx");
-    {
-        OutFile f(prefix + ".rlebwt.meta"); f.w64(total); f.w64(runs);
-        for (U v : counts) f.w64(v); for (U v : frequencies) f.w64(v);
-    }
+    const std::string dir = prefix + ".pieces", replayDir = sc.dir + "/emit";
+    require(::mkdir(dir.c_str(), 0777) == 0 && ::mkdir(replayDir.c_str(), 0777) == 0,
+            "create sparse emission directories");
     OutFile bwt(prefix + ".rlebwt");
     V2Piece piece;
-    U index = 0, pieceStart = 0; owner = 0;
+    U index = 0, pieceStart = 0, owner = 0, outputReady = 0;
     SparseRunReducer output([&](const SparseRun& run, U row) {
         while (owner + 1 < S && row >= (owner + 1) * total / S) ++owner;
+        if (outputReady <= owner) {
+            std::unique_lock<std::mutex> lock(basesMutex);
+            basesReady.wait(lock, [&] { return readyOwners > owner; });
+            outputReady = readyOwners;
+        }
         require(index >= bases[owner] && index < bases[owner] + sizes[owner], "sparse emission global base");
         U left = run.len;
         while (left) {
@@ -3479,12 +3496,71 @@ static U emit_sparse_v2(const std::string& prefix, const std::vector<SideExt>& s
             pieceStart = index;
         }
     });
-    walk(output, nullptr, false);
+    // Padding participates in exactly the same stitching on both streams.
+    count.add({corpus.at(n-1), 1, n, n}); count.add({2, 9, n+1, n+9});
+    const U normal = emit_shard_count(threads, n);
+    const U admission = std::max<U>(1, std::min<U>(96, normal) / 2);
+    ParallelSparseRuns counting(corpus, n, normal, &seam, count, sc.dir, admission);
+    ParallelSparseRuns emitting(corpus, n, normal, nullptr, output, replayDir, admission, [&] {
+        output.add({corpus.at(n-1), 1, n, n}); output.add({2, 9, n+1, n+9});
+    });
+    auto counted = [&] {
+        counting.finish(); count.flush();
+        require(count.rows == total, "sparse padded count coverage");
+        {
+            std::lock_guard<std::mutex> lock(basesMutex);
+            for (U next = countOwner + 1; next < S; ++next)
+                bases[next] = bases[next - 1] + sizes[next - 1];
+            readyOwners = S; basesReady.notify_one();
+        }
+        require(counts[2] == 10, "sparse padding count");
+        U base = 0;
+        for (U shard = 0; shard < S; ++shard) { require(bases[shard] == base, "sparse immutable base"); base += sizes[shard]; }
+        require(base == runs, "sparse global run bases");
+        auto classes = seam.finish();
+        const U limit = std::max<U>(1000, runs / 1000);
+        U targets = 0; for (const auto& cl : classes) targets += cl.occ.size();
+        require(targets <= limit && seam.depth <= limit, "sparse seam product budget");
+        std::fprintf(stderr, "CROSS_SEAM_DISCOVERY depth=%llu raw_classes=%zu targets=%zu final_classes=%zu final_rows=%llu hard_limit=%llu product_limit=%llu bounded=1\n",
+            (unsigned long long)seam.depth, seam.raw.size(), seam.targets.size(), classes.size(),
+            (unsigned long long)targets, (unsigned long long)seam.limit, (unsigned long long)limit);
+        // Close before rename; .done is published only after the spool's final
+        // byte. The finish alone unlinks these files, in either exit ordering.
+        const std::string spool = sc.dir + "/seam.spool";
+        {
+            OutFile f(spool + ".tmp"); f.raw("SCS1", 4);
+            f.w64(n); f.w64(seam.depth); f.w64(classes.size());
+            for (const auto& cl : classes) {
+                f.w64(cl.lo); f.w64(cl.hi); f.w64(cl.first); f.w64(cl.before); f.w64(cl.after);
+                for (U position : cl.occ) f.w64(position);
+            }
+        }
+        require(::rename((spool + ".tmp").c_str(), spool.c_str()) == 0, "publish seam spool");
+        { OutFile f(spool + ".done.tmp"); f.w64(targets); }
+        require(::rename((spool + ".done.tmp").c_str(), (spool + ".done").c_str()) == 0, "publish seam done");
+        seam.raw.clear(); seam.targets.clear(); classes.clear();
+        {
+            OutFile f(prefix + ".runcols.idx.tmp"); f.raw("RCI1", 4); f.w32(S);
+            f.w64(runs); f.w64(n); f.w32(width); f.w32(band);
+            for (U shard = 0; shard < S; ++shard) { f.w64(bases[shard]); f.w64(sizes[shard]); }
+        }
+        require(::rename((prefix + ".runcols.idx.tmp").c_str(), (prefix + ".runcols.idx").c_str()) == 0, "publish sparse idx");
+        {
+            OutFile f(prefix + ".rlebwt.meta"); f.w64(total); f.w64(runs);
+            for (U v : counts) f.w64(v); for (U v : frequencies) f.w64(v);
+        }
+    };
+    core_merge_kway(sides, true, threads, budget, stats, sc, hashK, pre,
+                    &counting, &emitting, [&](U shard) { counting.awaitShard(shard); }, counted);
+    emitting.finish(); output.flush();
+    require(output.rows == total, "sparse padded emission coverage");
+    sc.release_walk();
+    require(::rmdir(replayDir.c_str()) == 0, "remove consumed emission directory");
     require(index == runs && piece.empty(), "sparse emission run coverage");
     bwt.flush();
-    std::fprintf(stderr, "SPARSE_V2_EMIT runs=%llu rows=%llu shards=%llu WM=absent admission=%llu walk_shards=%llu passes=2\n",
+    std::fprintf(stderr, "SPARSE_V2_EMIT runs=%llu rows=%llu shards=%llu WM=absent admission=%llu walk_shards=%llu passes=2 preparation_passes=1 planning_passes=1 overlap=shard\n",
         (unsigned long long)runs, (unsigned long long)total, (unsigned long long)S,
-        (unsigned long long)std::min<U>(96, emit_shard_count(threads, n)),
+        (unsigned long long)(threads > 1 ? 2 * admission : admission),
         (unsigned long long)std::min<U>(n, emit_shard_count(threads, n) * std::min<U>(96, emit_shard_count(threads, n))));
     ::unlink((sc.dir + "/merge.active").c_str());
     std::fprintf(stderr, "FOUR_EMIT shards=%llu runs=%llu total=%llu v2=1 WM=absent\n",
