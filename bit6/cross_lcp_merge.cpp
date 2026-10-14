@@ -3227,8 +3227,13 @@ static int64_t v2_consumed_band(const std::string& prefix) {
     return value;
 }
 static void v2_flow_wait(const std::string& prefix, U band, U window) {
-    while (int64_t(band) > v2_consumed_band(prefix) + int64_t(window))
+    for (;;) {
+        int64_t consumed = v2_consumed_band(prefix);
+        // Both operands are <= INT64_MAX, so their unsigned sum fits U.
+        U limit = consumed < 0 ? window - 1 : U(consumed) + window;
+        if (band <= limit) return;
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
 }
 // One band sub-piece: header + chars + lens + heads packed + tails packed.
 struct V2Piece {
