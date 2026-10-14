@@ -110,5 +110,37 @@
       "symbols_compared": 4017075186,
       "probes": 90131924
     }
-  }
+  },
+  "gateB_preflow": {
+    "command": [
+      "/mnt/nvme2n1/erikg/sol5i-cargo/release/xsa",
+      "build",
+      "--v2-pipeline",
+      "--input",
+      "/mnt/nvme2n1/erikg/extcols-scratch/mergperf-1b-snap.txt",
+      "--scratch",
+      "/mnt/nvme2n1/erikg/sol5i-gate1b",
+      "--snap-1e",
+      "--chunks",
+      "8",
+      "--kway",
+      "8",
+      "--threads",
+      "32",
+      "--memory-gb",
+      "8",
+      "--timeout",
+      "3600",
+      "--chi-expect",
+      "283296933"
+    ],
+    "environment": {},
+    "rc": 0,
+    "wall": 1433.8631514050066,
+    "sampled_peak_bytes": 6360058405,
+    "sampled_max_band_pieces": 4,
+    "cmp_rc": 0,
+    "remaining_protocol_scratch": []
+  },
+  "flow_oracle": "FLOW_ORACLE_PASS initial_minus_one=1 oversized_positive_window=1 unsigned_credit=1 blocked_until_consumed=1"
 }
