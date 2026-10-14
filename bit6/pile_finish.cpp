@@ -6,8 +6,7 @@
 // remap adapter T[i]=REMAP[corpus[i]] (THE LAW: the text lives exactly once,
 // in the corpus; no text is ever materialized to disk - supervisor decision
 // 2A, 2026-10-10; the adapter identity is gated byte-exact against the
-// banked 1GB pftext, and the PFCK built here is byte-identical to the
-// merge's --emit-pf sidecar), and produces the PILE LITE container {m1
+// banked 1GB pftext; PFCK uses an independent, exact suffix-hash grid), and produces the PILE LITE container {m1
 // runs, m4 anchors, m5 chi EF, m7 remap, m10 LF, m11 sparse 1/1024 tails}
 // (members 2/8/9 belong to the WARM container; supervisor decision 1A).
 //
@@ -40,6 +39,7 @@
 #include <shared_mutex>
 #include <sys/resource.h>
 #include <map>
+#include <memory>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <thread>
@@ -171,6 +171,36 @@ struct CorpusText {
     CorpusText(const CorpusText&) = delete;
     CorpusText& operator=(const CorpusText&) = delete;
     uint64_t size() const { return size_; }
+    // Bulk reads pin one of the adapter's shared windows for a whole block.
+    // Workers share the four-window cap; they never allocate private mappings.
+    void read_block(uint64_t off, uint8_t* dst, uint64_t len) const {
+        pf_check(off <= size_ && len <= size_ - off, "corpus block bounds");
+        while (len) {
+            uint64_t take = cmap ? len : std::min(len, windowBytes - off % windowBytes);
+            if (cmap) {
+                for (uint64_t i = 0; i < take; ++i) dst[i] = remap[cmap[off + i]];
+            } else {
+                // Populate via the normal adapter miss/fallback machinery, then
+                // retry if another worker evicted the window before we pinned it.
+                (void)(*this)[off];
+                std::shared_lock<std::shared_mutex> lock(windowMutex);
+                const Window* hit = nullptr;
+                for (const auto& w : windows)
+                    if (w.p && w.base == off / windowBytes * windowBytes) hit = &w;
+                if (hit) {
+                    const uint8_t* src = (const uint8_t*)hit->p + off - hit->base;
+                    for (uint64_t i = 0; i < take; ++i) dst[i] = remap[src[i]];
+                } else {
+                    lock.unlock();
+                    // A bounded block fallback avoids cache thrashing when the
+                    // worker count exceeds the number of resident windows.
+                    pf_pread_full(fd, dst, take, off, "corpus block fallback");
+                    for (uint64_t i = 0; i < take; ++i) dst[i] = remap[dst[i]];
+                }
+            }
+            off += take; dst += take; len -= take;
+        }
+    }
     uint8_t operator[](uint64_t i) const {
         if (i >= size_) pf_fail("corpus adapter bounds");
         if (cmap) return remap[cmap[i]];
@@ -228,16 +258,25 @@ struct CorpusText {
 };
 
 // ------------------------------------------------------------- PFCK build
-// tau-spaced suffix-hash checkpoints over the corpus adapter, byte-identical
-// to cross_lcp_merge --emit-pf's sidecar (same recurrence over the same
-// bytes). tau = (8n + R - 1)/R.
-static void build_pfck(const CorpusText& corpus, uint64_t n, uint64_t runs, const std::string& out) {
+// Fixed-grid suffix hashes, independent of merge run count. Each segment
+// first hashes with a zero suffix prologue; a suffix scan of segment totals
+// establishes the real prologues, then workers correct the checkpoint file.
+// H(i) = H_segment(i) + BASE^(segment_end-i) * H(segment_end), modulo 2^64.
+static uint64_t pfck_spacing() {
+    const char* env = std::getenv("PFCK_SPACING");
+    if (!env) return 24;
+    char* end = nullptr; errno = 0;
+    uint64_t tau = strtoull(env, &end, 10);
+    pf_check(*env && *env != '-' && end && !*end && !errno && tau > 0 && tau <= UINT64_MAX / 2,
+             "PFCK_SPACING must be a positive integer <= UINT64_MAX/2");
+    return tau;
+}
+static void build_pfck(const CorpusText& corpus, uint64_t n, uint64_t tau,
+                       int threads, uint64_t ramBudget, const std::string& out) {
     double t0 = tnow();
-    uint64_t tau = std::max<uint64_t>(1, (8 * n + runs - 1) / runs);
     uint64_t count = n / tau + 1;
-    pf_check(::access(out.c_str(), F_OK) != 0, "pfck exists; refusing to clobber");
-    int fd = ::open(out.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
-    pf_check(fd >= 0, "create pfck");
+    int fd = ::open(out.c_str(), O_RDWR | O_CREAT | O_EXCL, 0666);
+    pf_check(fd >= 0, "create pfck (refusing to clobber)");
     auto wfull = [&](const void* d, uint64_t len, uint64_t off) {
         const char* q = (const char*)d;
         while (len) {
@@ -247,42 +286,84 @@ static void build_pfck(const CorpusText& corpus, uint64_t n, uint64_t runs, cons
         }
     };
     char hdr[40];
-    uint32_t magic = 0x4B434650;  // "PFCK"
-    uint32_t ver = 1; uint64_t rsv = 0;
+    uint32_t magic = 0x4B434650, ver = 1; uint64_t rsv = 0;
     memcpy(hdr, &magic, 4); memcpy(hdr + 4, &ver, 4);
     memcpy(hdr + 8, &n, 8); memcpy(hdr + 16, &tau, 8);
     memcpy(hdr + 24, &count, 8); memcpy(hdr + 32, &rsv, 8);
     wfull(hdr, 40, 0);
-    constexpr uint64_t EMB = 1u << 22;
-    constexpr uint64_t BW = 1u << 20;
-    std::vector<uint64_t> ent;
-    std::vector<uint8_t> band(BW);
-    uint64_t h = 0;
-    for (uint64_t hi = n; hi > 0; ) {
-        uint64_t lo = hi > tau * EMB ? hi - tau * EMB : 0;
-        ent.clear();
-        uint64_t bh = hi;
-        while (bh > lo) {
-            uint64_t bl = bh > BW ? bh - BW : lo;
-            for (uint64_t i = 0; i < bh - bl; ++i) band[i] = corpus[bl + i];
-            for (uint64_t i = bh; i-- > bl; ) {
+    constexpr uint64_t BW = 1u << 20, EC = 1u << 16;
+    // At most 1.5 MiB per worker, taken from a small fraction of the finish
+    // allowance so readiness overlaps merge within the shared envelope.
+    const uint64_t workerBytes = BW + 8 * EC;
+    int workers = int(std::min<uint64_t>(std::max(1, std::min(threads, 256)),
+                       std::max<uint64_t>(1, ramBudget / 16 / workerBytes)));
+    uint64_t blocks = n / tau + (n % tau != 0);
+    uint64_t segments = std::min<uint64_t>(std::max<uint64_t>(1, blocks), workers * 4);
+    workers = std::min<int>(workers, int(segments));
+    auto boundary = [&](uint64_t k) {
+        if (k == segments) return n;
+        return (blocks / segments * k + blocks % segments * k / segments) * tau;
+    };
+    std::vector<uint64_t> totals(segments), prologue(segments);
+    auto parallel = [&](const std::function<void(uint64_t)>& job) {
+        std::atomic<uint64_t> next{0};
+        std::vector<std::thread> pool;
+        for (int t = 0; t < workers; ++t) pool.emplace_back([&] {
+            for (;;) { uint64_t k = next.fetch_add(1); if (k >= segments) break; job(k); }
+        });
+        for (auto& t : pool) t.join();
+    };
+    parallel([&](uint64_t k) {
+        uint64_t lo = boundary(k), hi = boundary(k + 1), h = 0;
+        std::vector<uint8_t> band(BW);
+        std::vector<uint64_t> ent; ent.reserve(EC);
+        auto flush = [&](uint64_t first) {
+            std::reverse(ent.begin(), ent.end());
+            wfull(ent.data(), ent.size() * 8, 40 + first * 8); ent.clear();
+        };
+        for (uint64_t bh = hi; bh > lo;) {
+            uint64_t bl = bh - std::min<uint64_t>(BW, bh - lo);
+            corpus.read_block(bl, band.data(), bh - bl);
+            for (uint64_t i = bh; i-- > bl;) {
                 h = uint64_t(band[i - bl]) + 1 + SlimFingerprint<CorpusText>::BASE * h;
-                if (i % tau == 0) ent.push_back(h);
+                if (i % tau == 0) {
+                    ent.push_back(h);
+                    if (ent.size() == EC) flush(i / tau);
+                }
             }
             bh = bl;
         }
-        std::reverse(ent.begin(), ent.end());
-        uint64_t firstIdx = (lo + tau - 1) / tau;
-        if (!ent.empty()) wfull(ent.data(), 8 * ent.size(), 40 + 8 * firstIdx);
-        hi = lo;
+        if (!ent.empty()) flush(lo / tau);
+        totals[k] = h;
+    });
+    uint64_t suffix = 0;
+    for (uint64_t k = segments; k-- > 0;) {
+        prologue[k] = suffix;
+        suffix = totals[k] + SlimFingerprint<CorpusText>::power(boundary(k + 1) - boundary(k)) * suffix;
     }
+    parallel([&](uint64_t k) {
+        uint64_t lo = boundary(k) / tau, hi = boundary(k + 1);
+        uint64_t end = hi / tau + (hi % tau != 0);
+        std::vector<uint64_t> ent(EC);
+        uint64_t stride = SlimFingerprint<CorpusText>::power(tau);
+        uint64_t factor = end > lo ? SlimFingerprint<CorpusText>::power(hi - (end - 1) * tau) : 0;
+        while (end > lo) {
+            uint64_t first = end - std::min<uint64_t>(EC, end - lo);
+            pf_pread_full(fd, ent.data(), (end - first) * 8, 40 + first * 8, "pfck correction");
+            for (uint64_t j = end - first; j-- > 0;) {
+                ent[j] += factor * prologue[k]; factor *= stride;
+            }
+            wfull(ent.data(), (end - first) * 8, 40 + first * 8); end = first;
+        }
+    });
     if (n % tau == 0) { uint64_t zero = 0; wfull(&zero, 8, 40 + 8 * (n / tau)); }
     struct stat st {};
     pf_check(fstat(fd, &st) == 0 && uint64_t(st.st_size) == 40 + 8 * count, "pfck size");
     pf_check(::close(fd) == 0, "close pfck");
-    fprintf(stderr, "PILE_FINISH_PFCK path=%s n=%llu tau=%llu count=%llu bytes=%llu wall=%.3f source=corpus_adapter byte_parity=merge_emit_pf\n",
+    fprintf(stderr, "PILE_FINISH_PFCK path=%s n=%llu tau=%llu count=%llu bytes=%llu wall=%.3f workers=%d segments=%llu worker_bytes=%llu source=corpus_adapter fixed_grid=1\n",
             out.c_str(), (unsigned long long)n, (unsigned long long)tau, (unsigned long long)count,
-            (unsigned long long)(40 + 8 * count), tnow() - t0);
+            (unsigned long long)(40 + 8 * count), tnow() - t0, workers,
+            (unsigned long long)segments, (unsigned long long)workerBytes);
 }
 
 // ------------------------------------------------------------ piece source
@@ -1630,9 +1711,15 @@ int main(int argc, char** argv) {
         PieceSource src;
         src.prefix = prefix;
         src.pollTimeout = pollTimeout;
+        CorpusText text(corpus, remapTable);
+        const uint64_t tau = pfck_spacing();
+        std::string pfckPath = prefix + ".pfck2";
+        // Start before either publication poll: only corpus + remap are needed.
+        std::thread readiness([&] {
+            build_pfck(text, text.size(), tau, threads, ramBudget, pfckPath);
+        });
         src.load_idx();
         const uint64_t n = src.n, N = n + 10, R = src.R;
-        CorpusText text(corpus, remapTable);
         pf_check(text.size() == n, "corpus size != the merge's text length (adapter: T[i]=REMAP[corpus[i]])");
 
         // ---- cyclic determination (v1 parity: has_rs || !has_nl over the
@@ -1659,25 +1746,6 @@ int main(int argc, char** argv) {
         bool cyclic = hasRS || !hasNL;
         pf_check(cyclic, "newline-class corpora (no 0x1E, newlines present) use the v1 chain; the v2 finish refuses");
         fprintf(stderr, "PILE_FINISH_CYCLIC=1 has_rs=%d has_nl=%d k=1\n", int(hasRS), int(hasNL));
-
-        // ---- PFCK from the corpus; two fingerprint instances (seam 16n
-        // budget, slim 128n budget - the v1 discipline), both corpus-backed
-        std::string pfckPath = prefix + ".pfck2";
-        build_pfck(text, n, R, pfckPath);
-        phase("pfck-corpus", last);
-        uint64_t tau = std::max<uint64_t>(1, (8 * n + R - 1) / R);
-        uint64_t ckptCount = n / tau + 1;
-        int pfckFd = ::open(pfckPath.c_str(), O_RDONLY);
-        pf_check(pfckFd >= 0, "reopen pfck");
-        SlimFingerprint<CorpusText> fhSeam(text, tau, false, pfckFd, 40, ckptCount);
-        SlimSeamWork workSeam(std::max<uint64_t>(100000000ULL, 16 * n), UINT64_MAX);
-        fhSeam.seam_policy(workSeam, tau, "pile-finish-seam");
-        fp_self_check(fhSeam, text, n, tau);
-        SlimFingerprint<CorpusText> fhSlim(text, tau, false, pfckFd, 40, ckptCount);
-        SlimSeamWork workSlim(std::max<uint64_t>(1000000000ULL, 128 * n), UINT64_MAX);
-        fhSlim.seam_policy(workSlim, tau, "pile-finish-corpus");
-        fp_self_check(fhSlim, text, n, tau);
-        phase("fingerprints", last);
 
         // Default v2 protocol: bounded captured seam classes. Explicit
         // --wm retains legacy scratch compatibility outside the v2 route.
@@ -1725,6 +1793,25 @@ int main(int argc, char** argv) {
             pf_check(wmFd >= 0, "open WM scratch");
             wm.open(wmFd, n);
         }
+        double joinStart = tnow();
+        readiness.join();
+        fprintf(stderr, "PILE_FINISH_PFCK_WAIT wall=%.3f overlapped=1\n", tnow() - joinStart);
+        phase("readiness-pfck", last);
+        uint64_t ckptCount = n / tau + 1;
+        int pfckFd = ::open(pfckPath.c_str(), O_RDONLY);
+        pf_check(pfckFd >= 0, "reopen pfck");
+        auto fhSeamOwner = std::make_unique<SlimFingerprint<CorpusText>>(text, tau, false, pfckFd, 40, ckptCount);
+        auto& fhSeam = *fhSeamOwner;
+        SlimSeamWork workSeam(std::max<uint64_t>(100000000ULL, 16 * n), UINT64_MAX);
+        fhSeam.seam_policy(workSeam, tau, "pile-finish-seam");
+        fp_self_check(fhSeam, text, n, tau);
+        auto fhSlimOwner = std::make_unique<SlimFingerprint<CorpusText>>(text, tau, false, pfckFd, 40, ckptCount);
+        auto& fhSlim = *fhSlimOwner;
+        SlimSeamWork workSlim(std::max<uint64_t>(1000000000ULL, 128 * n), UINT64_MAX);
+        fhSlim.seam_policy(workSlim, tau, "pile-finish-corpus");
+        fp_self_check(fhSlim, text, n, tau);
+        phase("fingerprints", last);
+
         LceWrap seamLce{&fhSeam, {}, n};
         SeamClasses seam;
         auto seamSymbol = [&](uint64_t pos) -> uint8_t {
@@ -1936,8 +2023,10 @@ int main(int argc, char** argv) {
                 (unsigned long long)buckets.discBytes());
 
         // ---- the PFCK's work is done: delete it before the container pass
+        fhSlimOwner.reset();
+        fhSeamOwner.reset();
+        pf_check(::close(pfckFd) == 0, "close pfck fd");
         if (!keepPfck) {
-            pf_check(::close(pfckFd) == 0, "close pfck fd");
             pf_check(::unlink(pfckPath.c_str()) == 0, "unlink pfck scratch");
         }
 
