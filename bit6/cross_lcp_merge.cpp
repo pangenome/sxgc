@@ -3449,6 +3449,8 @@ static U emit_sparse_v2(const std::string& prefix, const std::vector<SideExt>& s
     SequentialV2 output(prefix, corpus, n, inputRuns);
     core_merge_kway(sides, true, threads, budget, stats, sc, hashK, pre, &output);
     sc.release_walk();
+    std::error_code cleanupError;
+    fs::remove(output.dir, cleanupError); // consumer removes it after its last unlink
     std::fprintf(stderr, "SPARSE_V2_EMIT runs=%llu rows=%llu shards=0 WM=absent admission=1 walk_shards=0 passes=1 preparation_passes=1 planning_passes=1\n",
         (unsigned long long)output.index, (unsigned long long)(n+10));
     return output.index;
