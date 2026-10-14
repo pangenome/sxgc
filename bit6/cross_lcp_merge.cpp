@@ -3482,8 +3482,10 @@ static U emit_sparse_v2(const std::string& prefix, const std::vector<SideExt>& s
     walk(output, nullptr, false);
     require(index == runs && piece.empty(), "sparse emission run coverage");
     bwt.flush();
-    std::fprintf(stderr, "SPARSE_V2_EMIT runs=%llu rows=%llu shards=%llu WM=absent admission=1 passes=2\n",
-        (unsigned long long)runs, (unsigned long long)total, (unsigned long long)S);
+    std::fprintf(stderr, "SPARSE_V2_EMIT runs=%llu rows=%llu shards=%llu WM=absent admission=%llu walk_shards=%llu passes=2\n",
+        (unsigned long long)runs, (unsigned long long)total, (unsigned long long)S,
+        (unsigned long long)std::min<U>(96, emit_shard_count(threads, n)),
+        (unsigned long long)std::min<U>(n, emit_shard_count(threads, n) * std::min<U>(96, emit_shard_count(threads, n))));
     ::unlink((sc.dir + "/merge.active").c_str());
     std::fprintf(stderr, "FOUR_EMIT shards=%llu runs=%llu total=%llu v2=1 WM=absent\n",
         (unsigned long long)S, (unsigned long long)runs, (unsigned long long)total);
