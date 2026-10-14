@@ -1,0 +1,229 @@
+files=8 rows=1000000665 bytes=3254670089 B/pos=3.254667925 deltas=999756520 (4096 block bases excluded)
+MAG width=1 count=11527
+MAG width=2 count=18414
+MAG width=3 count=84669
+MAG width=4 count=488025
+MAG width=5 count=2050721
+MAG width=6 count=5610873
+MAG width=7 count=10313012
+MAG width=8 count=14354881
+MAG width=9 count=17948290
+MAG width=10 count=20496759
+MAG width=11 count=21795383
+MAG width=12 count=21745034
+MAG width=13 count=20796020
+MAG width=14 count=19216806
+MAG width=15 count=17146611
+MAG width=16 count=12289625
+MAG width=17 count=8692377
+MAG width=18 count=8167548
+MAG width=19 count=8675877
+MAG width=20 count=9093198
+MAG width=21 count=14173550
+MAG width=22 count=26241892
+MAG width=23 count=50510622
+MAG width=24 count=95537793
+MAG width=25 count=170298714
+MAG width=26 count=253949602
+MAG width=27 count=170048697
+PATCH signed_width=8 exceptions=981179279 fraction=0.981418235 bytes4=4.925672939 bytes6=6.888509408
+PATCH signed_width=9 exceptions=966824398 fraction=0.967059858 bytes4=4.993239431 bytes6=6.927359146
+PATCH signed_width=10 exceptions=948876108 fraction=0.949107197 bytes4=5.046428786 bytes6=6.944643180
+PATCH signed_width=11 exceptions=928379349 fraction=0.928605446 bytes4=5.089421783 bytes6=6.946632675
+PATCH signed_width=12 exceptions=906583966 fraction=0.906804755 bytes4=5.127219019 bytes6=6.940828529
+PATCH signed_width=13 exceptions=884838932 fraction=0.885054425 bytes4=5.165217700 bytes6=6.935326550
+PATCH signed_width=14 exceptions=864042912 fraction=0.864253340 bytes4=5.207013362 bytes6=6.935520042
+PATCH signed_width=15 exceptions=844826106 fraction=0.845031854 bytes4=5.255127417 bytes6=6.945191126
+PATCH signed_width=16 exceptions=827679495 fraction=0.827881067 bytes4=5.311524270 bytes6=6.967286405
+PATCH signed_width=17 exceptions=815389870 fraction=0.815588449 bytes4=5.387353798 bytes6=7.018530697
+PATCH signed_width=18 exceptions=806697493 fraction=0.806893956 bytes4=5.477575822 bytes6=7.091363733
+PATCH signed_width=19 exceptions=798529945 fraction=0.798724418 bytes4=5.569897674 bytes6=7.167346511
+PATCH signed_width=20 exceptions=789854068 fraction=0.790046429 bytes4=5.660185714 bytes6=7.240278571
+PATCH signed_width=21 exceptions=780760870 fraction=0.780951016 bytes4=5.748804064 bytes6=7.310706096
+PATCH signed_width=22 exceptions=766587320 fraction=0.766774014 bytes4=5.817096057 bytes6=7.350644085
+PATCH signed_width=23 exceptions=740345428 fraction=0.740525731 bytes4=5.837102925 bytes6=7.318154387
+PATCH signed_width=24 exceptions=689834806 fraction=0.690002808 bytes4=5.760011232 bytes6=7.140016847
+PATCH signed_width=25 exceptions=594297013 fraction=0.594441748 bytes4=5.502766991 bytes6=6.691650486
+PATCH signed_width=26 exceptions=423998299 fraction=0.424101559 bytes4=4.946406237 bytes6=5.794609355
+PATCH signed_width=27 exceptions=170048697 fraction=0.170090111 bytes4=4.055360442 bytes6=4.395540663
+PATCH signed_width=28 exceptions=0 fraction=0.000000000 bytes4=3.500000000 bytes6=3.500000000
+PATCH signed_width=29 exceptions=0 fraction=0.000000000 bytes4=3.625000000 bytes6=3.625000000
+PATCH signed_width=30 exceptions=0 fraction=0.000000000 bytes4=3.750000000 bytes6=3.750000000
+PATCH signed_width=31 exceptions=0 fraction=0.000000000 bytes4=3.875000000 bytes6=3.875000000
+PATCH signed_width=32 exceptions=0 fraction=0.000000000 bytes4=4.000000000 bytes6=4.000000000
+PFOR_OPT block=512 best_B/pos=3.499889065 (6-byte exceptions,8-byte base,no headers/alignment)
+PFOR_OPT4 block=512 best_B/pos=3.491279582 (4-byte exceptions,8-byte base,no headers/alignment)
+BLOCK size=512 pct=100 zigzag_width=1 blocks=5
+BLOCK size=512 pct=100 zigzag_width=8 blocks=7
+BLOCK size=512 pct=100 zigzag_width=9 blocks=24
+BLOCK size=512 pct=100 zigzag_width=10 blocks=14
+BLOCK size=512 pct=100 zigzag_width=11 blocks=1
+BLOCK size=512 pct=100 zigzag_width=12 blocks=8
+BLOCK size=512 pct=100 zigzag_width=13 blocks=22
+BLOCK size=512 pct=100 zigzag_width=14 blocks=24
+BLOCK size=512 pct=100 zigzag_width=15 blocks=60
+BLOCK size=512 pct=100 zigzag_width=16 blocks=252
+BLOCK size=512 pct=100 zigzag_width=17 blocks=315
+BLOCK size=512 pct=100 zigzag_width=18 blocks=571
+BLOCK size=512 pct=100 zigzag_width=19 blocks=141
+BLOCK size=512 pct=100 zigzag_width=20 blocks=44
+BLOCK size=512 pct=100 zigzag_width=21 blocks=147
+BLOCK size=512 pct=100 zigzag_width=22 blocks=125
+BLOCK size=512 pct=100 zigzag_width=23 blocks=254
+BLOCK size=512 pct=100 zigzag_width=24 blocks=71
+BLOCK size=512 pct=100 zigzag_width=25 blocks=118
+BLOCK size=512 pct=100 zigzag_width=26 blocks=361
+BLOCK size=512 pct=100 zigzag_width=27 blocks=1986
+BLOCK size=512 pct=100 zigzag_width=28 blocks=1948578
+BLOCK size=512 pct=99 zigzag_width=1 blocks=5
+BLOCK size=512 pct=99 zigzag_width=7 blocks=9
+BLOCK size=512 pct=99 zigzag_width=8 blocks=25
+BLOCK size=512 pct=99 zigzag_width=9 blocks=80
+BLOCK size=512 pct=99 zigzag_width=10 blocks=44
+BLOCK size=512 pct=99 zigzag_width=11 blocks=7
+BLOCK size=512 pct=99 zigzag_width=12 blocks=9
+BLOCK size=512 pct=99 zigzag_width=13 blocks=26
+BLOCK size=512 pct=99 zigzag_width=14 blocks=35
+BLOCK size=512 pct=99 zigzag_width=15 blocks=102
+BLOCK size=512 pct=99 zigzag_width=16 blocks=331
+BLOCK size=512 pct=99 zigzag_width=17 blocks=753
+BLOCK size=512 pct=99 zigzag_width=18 blocks=684
+BLOCK size=512 pct=99 zigzag_width=19 blocks=256
+BLOCK size=512 pct=99 zigzag_width=20 blocks=117
+BLOCK size=512 pct=99 zigzag_width=21 blocks=212
+BLOCK size=512 pct=99 zigzag_width=22 blocks=242
+BLOCK size=512 pct=99 zigzag_width=23 blocks=256
+BLOCK size=512 pct=99 zigzag_width=24 blocks=191
+BLOCK size=512 pct=99 zigzag_width=25 blocks=330
+BLOCK size=512 pct=99 zigzag_width=26 blocks=922
+BLOCK size=512 pct=99 zigzag_width=27 blocks=5669
+BLOCK size=512 pct=99 zigzag_width=28 blocks=1942823
+BLOCK size=512 pct=90 zigzag_width=1 blocks=6
+BLOCK size=512 pct=90 zigzag_width=5 blocks=8
+BLOCK size=512 pct=90 zigzag_width=6 blocks=7
+BLOCK size=512 pct=90 zigzag_width=7 blocks=15
+BLOCK size=512 pct=90 zigzag_width=8 blocks=59
+BLOCK size=512 pct=90 zigzag_width=9 blocks=238
+BLOCK size=512 pct=90 zigzag_width=10 blocks=42
+BLOCK size=512 pct=90 zigzag_width=11 blocks=37
+BLOCK size=512 pct=90 zigzag_width=12 blocks=95
+BLOCK size=512 pct=90 zigzag_width=13 blocks=102
+BLOCK size=512 pct=90 zigzag_width=14 blocks=320
+BLOCK size=512 pct=90 zigzag_width=15 blocks=563
+BLOCK size=512 pct=90 zigzag_width=16 blocks=1676
+BLOCK size=512 pct=90 zigzag_width=17 blocks=2894
+BLOCK size=512 pct=90 zigzag_width=18 blocks=1863
+BLOCK size=512 pct=90 zigzag_width=19 blocks=1022
+BLOCK size=512 pct=90 zigzag_width=20 blocks=1089
+BLOCK size=512 pct=90 zigzag_width=21 blocks=944
+BLOCK size=512 pct=90 zigzag_width=22 blocks=697
+BLOCK size=512 pct=90 zigzag_width=23 blocks=620
+BLOCK size=512 pct=90 zigzag_width=24 blocks=1237
+BLOCK size=512 pct=90 zigzag_width=25 blocks=2775
+BLOCK size=512 pct=90 zigzag_width=26 blocks=10905
+BLOCK size=512 pct=90 zigzag_width=27 blocks=155279
+BLOCK size=512 pct=90 zigzag_width=28 blocks=1770635
+PFOR_OPT block=1024 best_B/pos=3.499098505 (6-byte exceptions,8-byte base,no headers/alignment)
+PFOR_OPT4 block=1024 best_B/pos=3.492564559 (4-byte exceptions,8-byte base,no headers/alignment)
+BLOCK size=1024 pct=100 zigzag_width=1 blocks=2
+BLOCK size=1024 pct=100 zigzag_width=12 blocks=1
+BLOCK size=1024 pct=100 zigzag_width=13 blocks=1
+BLOCK size=1024 pct=100 zigzag_width=14 blocks=6
+BLOCK size=1024 pct=100 zigzag_width=15 blocks=3
+BLOCK size=1024 pct=100 zigzag_width=16 blocks=74
+BLOCK size=1024 pct=100 zigzag_width=17 blocks=39
+BLOCK size=1024 pct=100 zigzag_width=18 blocks=93
+BLOCK size=1024 pct=100 zigzag_width=19 blocks=24
+BLOCK size=1024 pct=100 zigzag_width=20 blocks=4
+BLOCK size=1024 pct=100 zigzag_width=21 blocks=20
+BLOCK size=1024 pct=100 zigzag_width=22 blocks=28
+BLOCK size=1024 pct=100 zigzag_width=23 blocks=68
+BLOCK size=1024 pct=100 zigzag_width=24 blocks=14
+BLOCK size=1024 pct=100 zigzag_width=25 blocks=37
+BLOCK size=1024 pct=100 zigzag_width=26 blocks=88
+BLOCK size=1024 pct=100 zigzag_width=27 blocks=426
+BLOCK size=1024 pct=100 zigzag_width=28 blocks=975638
+BLOCK size=1024 pct=99 zigzag_width=1 blocks=2
+BLOCK size=1024 pct=99 zigzag_width=7 blocks=4
+BLOCK size=1024 pct=99 zigzag_width=9 blocks=12
+BLOCK size=1024 pct=99 zigzag_width=10 blocks=3
+BLOCK size=1024 pct=99 zigzag_width=12 blocks=1
+BLOCK size=1024 pct=99 zigzag_width=13 blocks=3
+BLOCK size=1024 pct=99 zigzag_width=14 blocks=5
+BLOCK size=1024 pct=99 zigzag_width=15 blocks=19
+BLOCK size=1024 pct=99 zigzag_width=16 blocks=93
+BLOCK size=1024 pct=99 zigzag_width=17 blocks=146
+BLOCK size=1024 pct=99 zigzag_width=18 blocks=151
+BLOCK size=1024 pct=99 zigzag_width=19 blocks=59
+BLOCK size=1024 pct=99 zigzag_width=20 blocks=25
+BLOCK size=1024 pct=99 zigzag_width=21 blocks=46
+BLOCK size=1024 pct=99 zigzag_width=22 blocks=62
+BLOCK size=1024 pct=99 zigzag_width=23 blocks=85
+BLOCK size=1024 pct=99 zigzag_width=24 blocks=53
+BLOCK size=1024 pct=99 zigzag_width=25 blocks=108
+BLOCK size=1024 pct=99 zigzag_width=26 blocks=283
+BLOCK size=1024 pct=99 zigzag_width=27 blocks=1522
+BLOCK size=1024 pct=99 zigzag_width=28 blocks=973884
+BLOCK size=1024 pct=90 zigzag_width=1 blocks=3
+BLOCK size=1024 pct=90 zigzag_width=5 blocks=3
+BLOCK size=1024 pct=90 zigzag_width=7 blocks=4
+BLOCK size=1024 pct=90 zigzag_width=8 blocks=1
+BLOCK size=1024 pct=90 zigzag_width=9 blocks=58
+BLOCK size=1024 pct=90 zigzag_width=10 blocks=7
+BLOCK size=1024 pct=90 zigzag_width=11 blocks=9
+BLOCK size=1024 pct=90 zigzag_width=12 blocks=10
+BLOCK size=1024 pct=90 zigzag_width=13 blocks=18
+BLOCK size=1024 pct=90 zigzag_width=14 blocks=56
+BLOCK size=1024 pct=90 zigzag_width=15 blocks=90
+BLOCK size=1024 pct=90 zigzag_width=16 blocks=431
+BLOCK size=1024 pct=90 zigzag_width=17 blocks=860
+BLOCK size=1024 pct=90 zigzag_width=18 blocks=626
+BLOCK size=1024 pct=90 zigzag_width=19 blocks=341
+BLOCK size=1024 pct=90 zigzag_width=20 blocks=308
+BLOCK size=1024 pct=90 zigzag_width=21 blocks=326
+BLOCK size=1024 pct=90 zigzag_width=22 blocks=236
+BLOCK size=1024 pct=90 zigzag_width=23 blocks=216
+BLOCK size=1024 pct=90 zigzag_width=24 blocks=401
+BLOCK size=1024 pct=90 zigzag_width=25 blocks=1026
+BLOCK size=1024 pct=90 zigzag_width=26 blocks=4147
+BLOCK size=1024 pct=90 zigzag_width=27 blocks=68305
+BLOCK size=1024 pct=90 zigzag_width=28 blocks=899084
+PFOR_OPT block=4096 best_B/pos=3.499415684 (6-byte exceptions,8-byte base,no headers/alignment)
+PFOR_OPT4 block=4096 best_B/pos=3.496150762 (4-byte exceptions,8-byte base,no headers/alignment)
+BLOCK size=4096 pct=100 zigzag_width=16 blocks=7
+BLOCK size=4096 pct=100 zigzag_width=17 blocks=1
+BLOCK size=4096 pct=100 zigzag_width=18 blocks=6
+BLOCK size=4096 pct=100 zigzag_width=19 blocks=3
+BLOCK size=4096 pct=100 zigzag_width=24 blocks=1
+BLOCK size=4096 pct=100 zigzag_width=25 blocks=4
+BLOCK size=4096 pct=100 zigzag_width=26 blocks=9
+BLOCK size=4096 pct=100 zigzag_width=27 blocks=28
+BLOCK size=4096 pct=100 zigzag_width=28 blocks=244086
+BLOCK size=4096 pct=99 zigzag_width=16 blocks=10
+BLOCK size=4096 pct=99 zigzag_width=17 blocks=3
+BLOCK size=4096 pct=99 zigzag_width=18 blocks=12
+BLOCK size=4096 pct=99 zigzag_width=19 blocks=6
+BLOCK size=4096 pct=99 zigzag_width=21 blocks=2
+BLOCK size=4096 pct=99 zigzag_width=22 blocks=3
+BLOCK size=4096 pct=99 zigzag_width=23 blocks=2
+BLOCK size=4096 pct=99 zigzag_width=24 blocks=3
+BLOCK size=4096 pct=99 zigzag_width=25 blocks=4
+BLOCK size=4096 pct=99 zigzag_width=26 blocks=15
+BLOCK size=4096 pct=99 zigzag_width=27 blocks=106
+BLOCK size=4096 pct=99 zigzag_width=28 blocks=243979
+BLOCK size=4096 pct=90 zigzag_width=9 blocks=4
+BLOCK size=4096 pct=90 zigzag_width=14 blocks=1
+BLOCK size=4096 pct=90 zigzag_width=15 blocks=2
+BLOCK size=4096 pct=90 zigzag_width=16 blocks=26
+BLOCK size=4096 pct=90 zigzag_width=17 blocks=52
+BLOCK size=4096 pct=90 zigzag_width=18 blocks=40
+BLOCK size=4096 pct=90 zigzag_width=19 blocks=42
+BLOCK size=4096 pct=90 zigzag_width=20 blocks=36
+BLOCK size=4096 pct=90 zigzag_width=21 blocks=26
+BLOCK size=4096 pct=90 zigzag_width=22 blocks=20
+BLOCK size=4096 pct=90 zigzag_width=23 blocks=21
+BLOCK size=4096 pct=90 zigzag_width=24 blocks=50
+BLOCK size=4096 pct=90 zigzag_width=25 blocks=118
+BLOCK size=4096 pct=90 zigzag_width=26 blocks=543
+BLOCK size=4096 pct=90 zigzag_width=27 blocks=13003
+BLOCK size=4096 pct=90 zigzag_width=28 blocks=230161
