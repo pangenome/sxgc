@@ -44,8 +44,8 @@
       "PILE_FINISH_BAND_DELAY_MS": "200"
     },
     "rc": 0,
-    "wall": 40.78887189901434,
-    "sampled_peak_bytes": 138020070,
+    "wall": 40.76072679902427,
+    "sampled_peak_bytes": 138019522,
     "sampled_max_band_pieces": 1,
     "cmp_rc": 0,
     "remaining_protocol_scratch": []
@@ -96,8 +96,8 @@
     ],
     "environment": {},
     "rc": 0,
-    "wall": 98.20410877210088,
-    "sampled_peak_bytes": 605139824,
+    "wall": 98.70621278998442,
+    "sampled_peak_bytes": 604370720,
     "sampled_max_band_pieces": 1,
     "cmp_rc": 0,
     "remaining_protocol_scratch": [],
@@ -105,12 +105,7 @@
       "V2_CHI_EXPECT_OK chi=29716349 == 29716349",
       "V2_CONTAINER_PUBLISHED path=/mnt/nvme2n1/erikg/sol5i-gate100m/mergperf-100m-snap.sxi2 bytes=48768685",
       "XSA_BUILD_DONE chi=29716349 pipeline=v2 container=/mnt/nvme2n1/erikg/sol5i-gate100m/mergperf-100m-snap.sxi2"
-    ],
-    "mergeWork": {
-      "comparisons": 355643748,
-      "symbols_compared": 4017075186,
-      "probes": 90131924
-    }
+    ]
   },
   "gateB_preflow": {
     "command": [
