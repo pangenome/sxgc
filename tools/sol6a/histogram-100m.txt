@@ -48,6 +48,7 @@ PATCH signed_width=30 exceptions=0 fraction=0.000000000 bytes4=3.750000000 bytes
 PATCH signed_width=31 exceptions=0 fraction=0.000000000 bytes4=3.875000000 bytes6=3.875000000
 PATCH signed_width=32 exceptions=0 fraction=0.000000000 bytes4=4.000000000 bytes6=4.000000000
 PFOR_OPT block=512 best_B/pos=2.994858372 (6-byte exceptions,8-byte base,no headers/alignment)
+PFOR_OPT4 block=512 best_B/pos=2.990297239 (4-byte exceptions,8-byte base,no headers/alignment)
 BLOCK size=512 pct=100 zigzag_width=9 blocks=4
 BLOCK size=512 pct=100 zigzag_width=12 blocks=1
 BLOCK size=512 pct=100 zigzag_width=13 blocks=17
@@ -97,6 +98,7 @@ BLOCK size=512 pct=90 zigzag_width=22 blocks=4129
 BLOCK size=512 pct=90 zigzag_width=23 blocks=138928
 BLOCK size=512 pct=90 zigzag_width=24 blocks=48427
 PFOR_OPT block=1024 best_B/pos=2.993555494 (6-byte exceptions,8-byte base,no headers/alignment)
+PFOR_OPT4 block=1024 best_B/pos=2.990259306 (4-byte exceptions,8-byte base,no headers/alignment)
 BLOCK size=1024 pct=100 zigzag_width=13 blocks=1
 BLOCK size=1024 pct=100 zigzag_width=15 blocks=3
 BLOCK size=1024 pct=100 zigzag_width=16 blocks=8
@@ -137,6 +139,7 @@ BLOCK size=1024 pct=90 zigzag_width=22 blocks=1626
 BLOCK size=1024 pct=90 zigzag_width=23 blocks=73075
 BLOCK size=1024 pct=90 zigzag_width=24 blocks=21619
 PFOR_OPT block=4096 best_B/pos=2.992952097 (6-byte exceptions,8-byte base,no headers/alignment)
+PFOR_OPT4 block=4096 best_B/pos=2.991373481 (4-byte exceptions,8-byte base,no headers/alignment)
 BLOCK size=4096 pct=100 zigzag_width=16 blocks=1
 BLOCK size=4096 pct=100 zigzag_width=17 blocks=5
 BLOCK size=4096 pct=100 zigzag_width=19 blocks=24

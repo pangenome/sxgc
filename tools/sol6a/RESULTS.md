@@ -93,6 +93,17 @@ estimate evaluates every width 0..32, adds an 8-byte base and 4 or 6 bytes per
 exception, and picks the smallest result. It excludes headers, patch counts,
 byte rounding, indexes and alignment, so actual storage would be larger.
 
+## Optimistic block-adaptive PFOR storage
+
+| Rows/block | 100 MB B/pos, 4-byte patches | 100 MB, 6-byte patches | 1 GB, 4-byte patches | 1 GB, 6-byte patches |
+|---:|---:|---:|---:|---:|
+| 512 | 2.990297239 | 2.994858372 | 3.491279582 | 3.499889065 |
+| 1024 | 2.990259306 | 2.993555494 | 3.492564559 | 3.499098505 |
+| 4096 | 2.991373481 | 2.992952097 | 3.496150762 | 3.499415684 |
+
+These are conventional full-value patch estimates with unrealistically cheap
+metadata, not a lower bound for all possible separately compressed exceptions.
+
 ## Block width distribution (1 GB)
 
 Counts grouped by width, retaining all nonempty tails in the raw evidence.
@@ -127,7 +138,8 @@ is unchanged. There is no new SXP5 format specification.
 
 No new merge/container gates or production selftests were run: the histogram
 fails the width bar, and production source is byte-for-byte unchanged from base.
-No claim is made of a newly observed work-counter identity check.
+No new-format work-counter identity check applies; the completed compact leg
+was read back and matched the base counters exactly (details below).
 Historical baseline evidence in tools/sol5i/work-counters.json, verbatim:
 
 - Gate A chi 29716349; cmp rc=0; comparisons=355643748,
@@ -135,15 +147,47 @@ Historical baseline evidence in tools/sol5i/work-counters.json, verbatim:
 - Gate B chi 283296933; cmp rc=0; comparisons=3674629435,
   symbols_compared=60485597061, probes=1987510452.
 
-Those results predate this task. No new wall comparison or du-sampled merge
-scratch peak applies to this negative pivot. The running sol6 chain was not
+Those results predate this task. During analysis the shared chain completed
+its compact leg and started dense chunking. Read-only checks now additionally
+establish for that compact leg:
+
+- PILE_FINISH_DONE chi=283296933 n=1000000665 r=368036609.
+- cmp against extcols-scratch/pilev2-g2-1b/frag.sxi2 returned 0.
+- comparisons=3674629435 symbols_compared=60485597061 probes=1987510452:
+  all three identical to the recorded post-sol5i base.
+- merge-v2.time: elapsed 22:26.65 (1346.65 s), exit status 0;
+  CROSS_KWAY wall_total=1346.582.
+- sol6.log: PEAK_DISC_USED_BYTES 6355855237, du-sampled every 2 seconds
+  across concurrent merge+finish. Exact previously measured .pos bytes:
+  3254670089.
+
+**Timing label: contaminated ceiling** (the finish and these read-only histogram
+scans overlapped the merge). This is the shared chain's existing compact leg,
+not a new-format trial or a newly launched sol6a merge. Dense wall remains pending;
+there is no candidate wall or candidate scratch peak because no codec was landed. The running sol6 chain was not
 signaled, rewritten, reconfigured or gated concurrently. Histogram elapsed
 runtime is not a merge-wall measurement. RUNG10BV2_RC was absent on the checks;
-no completion or dense A/B result is inferred. Existing .pos byte totals above
-are exact, not sampled scratch peaks.
+the compact-leg completion was subsequently visible in phase logs, while no
+completed dense A/B result is inferred. Existing .pos byte totals above are exact.
+
+## Analyzer correctness checks
+
+check-v2.py creates 8192 shuffled positions in both SXP3 and an independently
+encoded SXP4 v2, using variable canonical Huffman lengths and two 4096-row groups.
+The analyzer's lookup path, its --slow bitwise path, and the dense reference
+produce identical histograms, exception fractions, PFOR costs and coverage
+widths (exclude only the size summary when comparing dense).
+The all-100-MB real SXP4 v1 versus dense identity check also passed.
+
+An attempted additional full real chunk-0 lookup/slow recheck returned assertion
+failure at opening the input: the shared chain had just legitimately deleted
+consumed chunk files. Both complete real 1 GB histogram passes had already
+finished successfully and agreed on all preexisting fields; this disappearance
+does not invalidate their evidence. No chain process was interrupted.
 
 ## Reproduction and limitations
 
+Run python3 tools/sol6a/check-v2.py to reproduce the synthetic inputs.
 Compile with c++ -O3 -std=c++17 tools/sol6a/pos_histogram.cpp -o
 /mnt/nvme2n1/erikg/sol6a-histogram/hist, then supply the .pos paths listed above.
 Compare 100 MB compact and dense reports after dropping their first summary
