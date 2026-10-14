@@ -2415,7 +2415,6 @@ struct SparseWalkSink {
     virtual ~SparseWalkSink() = default;
     virtual void attachCorpus(const CorpusText&) {}
     virtual SparseWalkSink* shardSink(U) { return this; }
-    virtual bool parallel() const { return false; }
     virtual U shardCount(U normal) const { return normal; }
     virtual U admission() const { return 1; }
     virtual void beginShard(U shard, U lo, U hi) = 0;
@@ -2651,10 +2650,10 @@ struct SparseRunReducer {
     }
 };
 
-// Eight independent walks are admitted together, each covering one eighth
-// of the former shard size. The ordered consumer unlinks every run spool
-// before the next batch is admitted. Worst-case spool rows remain bounded
-// by the former single-shard row budget (plus rank-boundary rounding).
+// Up to --threads (capped at 96) independent walks are admitted together,
+// each covering 1/admission of the former shard size. The ordered consumer
+// unlinks each spool before that producer admits another shard. Only the
+// admission-width frontier can exist on disk; rank-boundary skew is unchanged.
 // Only run samples are stored, never a dense row-position column.
 struct ParallelSparseRuns : SparseWalkSink {
     struct Shard : SparseWalkSink {
@@ -2670,9 +2669,7 @@ struct ParallelSparseRuns : SparseWalkSink {
         U lo = 0, hi = 0, next = 0, first = 0, last = 0;
         SparseSeamCapture::Hit *firstHit = nullptr, *lastHit = nullptr;
         bool done = false;
-        explicit Shard(ParallelSparseRuns& p) : parent(p) {
-            batch.reserve(4096);
-        }
+        explicit Shard(ParallelSparseRuns& p) : parent(p) {}
         void send() {
             if (batch.empty()) return;
             std::vector<char> bytes(25 * batch.size());
@@ -2690,6 +2687,7 @@ struct ParallelSparseRuns : SparseWalkSink {
         }
         void beginShard(U id, U begin, U end) override {
             lo = next = begin; hi = end;
+            batch.reserve(4096);
             path = parent.directory + "/runs-" + std::to_string(id) + ".spool";
             fd = ::open(path.c_str(), O_CREAT | O_EXCL | O_WRONLY, 0666);
             require(fd >= 0, "create parallel run spool");
@@ -2721,6 +2719,7 @@ struct ParallelSparseRuns : SparseWalkSink {
             require(::close(fd) == 0, "close parallel run spool"); fd = -1;
             std::unique_lock<std::mutex> lock(mutex); done = true; ready.notify_one();
             space.wait(lock, [&] { return consumed; });
+            std::vector<SparseRun>().swap(batch);
         }
     };
     const CorpusText* text;
@@ -2728,13 +2727,13 @@ struct ParallelSparseRuns : SparseWalkSink {
     SparseSeamCapture* seam;
     SparseRunReducer& reducer;
     std::string directory;
-    U normalWidth;
+    U normalWidth, admitted;
     std::vector<std::unique_ptr<Shard>> shards;
     std::thread consumer;
     ParallelSparseRuns(const CorpusText& t, U count, U width,
                        SparseSeamCapture* capture, SparseRunReducer& r, const std::string& dir)
-        : text(&t), n(count), seam(capture), reducer(r), directory(dir), normalWidth(width) {
-        width = std::min<U>(n, width * 8);
+        : text(&t), n(count), seam(capture), reducer(r), directory(dir), normalWidth(width), admitted(std::min<U>(96, width)) {
+        width = std::min<U>(n, width * admitted);
         for (U i = 0; i < width; ++i) shards.emplace_back(new Shard(*this));
         consumer = std::thread([&] {
             for (auto& ptr : shards) {
@@ -2763,11 +2762,10 @@ struct ParallelSparseRuns : SparseWalkSink {
     }
     void attachCorpus(const CorpusText& corpus) override { text = &corpus; }
     SparseWalkSink* shardSink(U s) override { return shards.at(s).get(); }
-    bool parallel() const override { return true; }
     U shardCount(U normal) const override {
         require(normal == normalWidth, "parallel sparse shard plan"); return shards.size();
     }
-    U admission() const override { return 8; }
+    U admission() const override { return admitted; }
     void beginShard(U, U, U) override { fail("parallel sink needs shard"); }
     void row(U, U) override { fail("parallel sink needs shard"); }
     void endShard() override { fail("parallel sink needs shard"); }
@@ -3010,8 +3008,12 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
         require(sides[wide].n > 0, "k-way planning needs a non-empty probe side");
         std::vector<std::thread> pt;
         std::mutex planMu;
-        for (U s = 1; s < S; ++s) {
-            pt.emplace_back([&, s] {
+        std::atomic<U> nextPlan{1};
+        for (U worker = 0; worker < std::min<U>(S-1, std::max<U>(1, threads)); ++worker) {
+            pt.emplace_back([&] {
+                for (;;) {
+                U s = nextPlan.fetch_add(1);
+                if (s >= S) break;
                 // Thread-local keys/budget: the shared-key comparator is
                 // never touched from planning threads (its scratch is
                 // thread-local but its Budget is not).
@@ -3052,11 +3054,8 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
                 bud.probe_decided += pb.probe_decided; bud.cap_decided += pb.cap_decided;
                 bud.tie_decided += pb.tie_decided; bud.note_lce(pb.max_lce);
                 bud.tFast += pb.tFast; bud.tPrep += pb.tPrep; bud.tProbe += pb.tProbe; bud.tScan += pb.tScan;
+                }
             });
-            if (pt.size() >= std::max<U>(1, threads)) {
-                for (auto& t : pt) t.join();
-                pt.clear();
-            }
         }
         for (auto& t : pt) t.join();
     }
@@ -3068,8 +3067,10 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
     {
         const bool noPf = getenv("CROSS_NO_PF") != nullptr;
         std::vector<std::thread> ts;
-        for (U s = 0; s < S; ++s) {
-            ts.emplace_back([&, s] {
+        const U workers = sparse ? std::min<U>(S, sparse->admission()) : S;
+        for (U worker = 0; worker < workers; ++worker) {
+            ts.emplace_back([&, worker] {
+                for (U s = worker; s < S; s += workers) {
                 SparseWalkSink* sink = sparse ? sparse->shardSink(s) : nullptr;
                 if (sink) sink->beginShard(s, R[s], R[s + 1]);
                 Keys skeys; skeys.init(&m2, &hp, n, dollar, &shardBud[s]);
@@ -3171,11 +3172,8 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
                 flushW();
                 require(emitted == want && out == R[s + 1], "shard merge coverage");
                 if (sink) sink->endShard();
+                }
             });
-            if (sparse && (s + 1 == S || (s + 1) % sparse->admission() == 0)) {
-                for (auto& t : ts) if (t.joinable()) t.join();
-                ts.clear();
-            }
         }
         for (auto& t : ts) if (t.joinable()) t.join();
     }
@@ -3391,7 +3389,7 @@ struct V2Piece {
 
 // Two bounded sparse walks replace the WM count/emission passes. The first
 // counts completed runs and captures seam targets; the second emits pieces.
-// Bounded eight-shard admission overlaps independent walks with ordered reduction.
+// Bounded shard admission overlaps independent walks with ordered reduction.
 static U emit_sparse_v2(const std::string& prefix, const std::vector<SideExt>& sides,
                         U threads, Budget& budget, CoreStats& stats,
                         const PairScratch& sc, U hashK, bool pre) {
