@@ -69,5 +69,46 @@
     "pfck": [
       "PFCK_ORACLE_PASS cases=77 grids=1,7,22,31,10000 threads=1,8 forced_window=4096"
     ]
+  },
+  "gateA": {
+    "command": [
+      "/mnt/nvme2n1/erikg/sol5i-cargo/release/xsa",
+      "build",
+      "--v2-pipeline",
+      "--input",
+      "/mnt/nvme2n1/erikg/extcols-scratch/mergperf-100m-snap.txt",
+      "--scratch",
+      "/mnt/nvme2n1/erikg/sol5i-gate100m",
+      "--snap-1e",
+      "--chunks",
+      "8",
+      "--kway",
+      "8",
+      "--threads",
+      "32",
+      "--memory-gb",
+      "8",
+      "--timeout",
+      "3600",
+      "--chi-expect",
+      "29716349"
+    ],
+    "environment": {},
+    "rc": 0,
+    "wall": 98.20410877210088,
+    "sampled_peak_bytes": 605139824,
+    "sampled_max_band_pieces": 1,
+    "cmp_rc": 0,
+    "remaining_protocol_scratch": [],
+    "verbatim": [
+      "V2_CHI_EXPECT_OK chi=29716349 == 29716349",
+      "V2_CONTAINER_PUBLISHED path=/mnt/nvme2n1/erikg/sol5i-gate100m/mergperf-100m-snap.sxi2 bytes=48768685",
+      "XSA_BUILD_DONE chi=29716349 pipeline=v2 container=/mnt/nvme2n1/erikg/sol5i-gate100m/mergperf-100m-snap.sxi2"
+    ],
+    "mergeWork": {
+      "comparisons": 355643748,
+      "symbols_compared": 4017075186,
+      "probes": 90131924
+    }
   }
 }
