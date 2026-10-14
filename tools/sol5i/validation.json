@@ -1,0 +1,73 @@
+{
+  "source_commit": "ff08c77fcb5c705ec08a9aa9f8fd199fd998b7b0",
+  "package_sha256": "67a0d56d0023ea2879a749e7838987a24fd837413036c5336b61b9efe30ec8ab",
+  "model": {
+    "active_producer_inequalities": 3510,
+    "band_size": 65536,
+    "bases": "65536*b",
+    "deadlocks": 0,
+    "implementation_validated": false,
+    "malformed_extents_refused": 10,
+    "maximum_backlog": 1100,
+    "randomized_interleavings": 1450,
+    "result": "PASS",
+    "shards": 0,
+    "terminal_cases": 1200
+  },
+  "tiny": {
+    "command": [
+      "/mnt/nvme2n1/erikg/sol5i-cargo/release/xsa",
+      "build",
+      "--v2-pipeline",
+      "--input",
+      "/mnt/nvme2n1/erikg/wmfix-tiny.txt",
+      "--scratch",
+      "/mnt/nvme2n1/erikg/sol5i-gatetiny-stalled",
+      "--snap-1e",
+      "--chunks",
+      "8",
+      "--kway",
+      "8",
+      "--threads",
+      "32",
+      "--memory-gb",
+      "8",
+      "--timeout",
+      "3600",
+      "--chi-expect",
+      "7283197"
+    ],
+    "environment": {
+      "CROSS_V2_PIECE_WINDOW": "2",
+      "CROSS_V2_PRODUCER_DELAY_MS": "3",
+      "PILE_FINISH_BAND_DELAY_MS": "200"
+    },
+    "rc": 0,
+    "wall": 40.78887189901434,
+    "sampled_peak_bytes": 138020070,
+    "sampled_max_band_pieces": 1,
+    "cmp_rc": 0,
+    "remaining_protocol_scratch": []
+  },
+  "oracles": {
+    "final-k1": [
+      "SPARSE_ORACLE_PASS modes=cyclic,dollar runs=exact seam_spool=exact production_bands=exact trivial_bases=exact terminal=exact legacy_shard_admission=1 WM=absent",
+      "SELFTEST_PASS count=200 seed=20261002 kway=1"
+    ],
+    "final-k2": [
+      "SPARSE_ORACLE_PASS modes=cyclic,dollar runs=exact seam_spool=exact production_bands=exact trivial_bases=exact terminal=exact legacy_shard_admission=1 WM=absent",
+      "SELFTEST_PASS count=200 seed=20261002 kway=2"
+    ],
+    "final-k8": [
+      "SPARSE_ORACLE_PASS modes=cyclic,dollar runs=exact seam_spool=exact production_bands=exact trivial_bases=exact terminal=exact legacy_shard_admission=1 WM=absent",
+      "SELFTEST_PASS count=200 seed=20261002 kway=8"
+    ],
+    "seam": [
+      "BAND_PROGRESS_READER_ORACLE_PASS trivial_bases=1 band_only=1 deferred_class=1 EOF_clamp=1 terminal=1 delayed_full_band_EOF=1 malformed_refusals=10",
+      "SEAM_SPOOL_READER_ORACLE_PASS empty=1 adversarial_orders=2 padded_flanks=1 NUL=1 byte05=1 malformed_refusals=3"
+    ],
+    "pfck": [
+      "PFCK_ORACLE_PASS cases=77 grids=1,7,22,31,10000 threads=1,8 forced_window=4096"
+    ]
+  }
+}
