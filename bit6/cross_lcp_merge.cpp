@@ -2416,6 +2416,8 @@ struct SparseWalkSink {
     virtual void attachCorpus(const CorpusText&) {}
     virtual SparseWalkSink* shardSink(U) { return this; }
     virtual bool parallel() const { return false; }
+    virtual U shardCount(U normal) const { return normal; }
+    virtual U admission() const { return 1; }
     virtual void beginShard(U shard, U lo, U hi) = 0;
     virtual void row(U row, U position) = 0;
     virtual void endShard() = 0;
@@ -2649,34 +2651,49 @@ struct SparseRunReducer {
     }
 };
 
-// Producers hold only bounded batches of run samples. One ordered consumer
-// stitches boundary runs while all shard walks run concurrently; no shard
-// run file or dense row column is retained, even if an early shard is slow.
+// Eight independent walks are admitted together, each covering one eighth
+// of the former shard size. The ordered consumer unlinks every run spool
+// before the next batch is admitted. Worst-case spool rows remain bounded
+// by the former single-shard row budget (plus rank-boundary rounding).
+// Only run samples are stored, never a dense row-position column.
 struct ParallelSparseRuns : SparseWalkSink {
     struct Shard : SparseWalkSink {
         ParallelSparseRuns& parent;
         std::mutex mutex;
         std::condition_variable ready, space;
-        std::vector<SparseRun> batch, queued;
+        std::vector<SparseRun> batch;
+        std::string path;
+        int fd = -1;
+        U records = 0;
+        bool consumed = false;
         SparseRun pending;
         U lo = 0, hi = 0, next = 0, first = 0, last = 0;
         SparseSeamCapture::Hit *firstHit = nullptr, *lastHit = nullptr;
         bool done = false;
         explicit Shard(ParallelSparseRuns& p) : parent(p) {
-            batch.reserve(4096); queued.reserve(4096);
+            batch.reserve(4096);
         }
         void send() {
             if (batch.empty()) return;
-            std::unique_lock<std::mutex> lock(mutex);
-            space.wait(lock, [&] { return queued.empty(); });
-            batch.swap(queued); ready.notify_one();
+            std::vector<char> bytes(25 * batch.size());
+            for (size_t i = 0; i < batch.size(); ++i) {
+                char* b = bytes.data() + 25*i; b[0] = char(batch[i].c);
+                put_le64(b+1, batch[i].len); put_le64(b+9, batch[i].head); put_le64(b+17, batch[i].tail);
+            }
+            xput(fd, bytes.data(), bytes.size(), 25*records, "parallel run spool write");
+            records += batch.size(); batch.clear();
         }
         void flush() {
             if (!pending.len) return;
             batch.push_back(pending); pending = {};
             if (batch.size() == 4096) send();
         }
-        void beginShard(U, U begin, U end) override { lo = next = begin; hi = end; }
+        void beginShard(U id, U begin, U end) override {
+            lo = next = begin; hi = end;
+            path = parent.directory + "/runs-" + std::to_string(id) + ".spool";
+            fd = ::open(path.c_str(), O_CREAT | O_EXCL | O_WRONLY, 0666);
+            require(fd >= 0, "create parallel run spool");
+        }
         void row(U index, U p) override {
             require(index == next++ && index < hi && p < parent.n, "parallel sparse row coverage");
             if (parent.seam) {
@@ -2701,33 +2718,32 @@ struct ParallelSparseRuns : SparseWalkSink {
         void endShard() override {
             require(next == hi, "parallel sparse shard coverage");
             flush(); send();
-            std::lock_guard<std::mutex> lock(mutex); done = true; ready.notify_one();
+            require(::close(fd) == 0, "close parallel run spool"); fd = -1;
+            std::unique_lock<std::mutex> lock(mutex); done = true; ready.notify_one();
+            space.wait(lock, [&] { return consumed; });
         }
     };
     const CorpusText* text;
     U n;
     SparseSeamCapture* seam;
     SparseRunReducer& reducer;
+    std::string directory;
+    U normalWidth;
     std::vector<std::unique_ptr<Shard>> shards;
     std::thread consumer;
     ParallelSparseRuns(const CorpusText& t, U count, U width,
-                       SparseSeamCapture* capture, SparseRunReducer& r)
-        : text(&t), n(count), seam(capture), reducer(r) {
+                       SparseSeamCapture* capture, SparseRunReducer& r, const std::string& dir)
+        : text(&t), n(count), seam(capture), reducer(r), directory(dir), normalWidth(width) {
+        width = std::min<U>(n, width * 8);
         for (U i = 0; i < width; ++i) shards.emplace_back(new Shard(*this));
         consumer = std::thread([&] {
-            std::vector<SparseRun> rows; rows.reserve(4096);
             for (auto& ptr : shards) {
                 auto& shard = *ptr;
-                U before = reducer.rows;
-                for (;;) {
-                    std::unique_lock<std::mutex> lock(shard.mutex);
-                    shard.ready.wait(lock, [&] { return shard.done || !shard.queued.empty(); });
-                    if (shard.queued.empty()) break;
-                    rows.swap(shard.queued); shard.space.notify_one(); lock.unlock();
-                    for (const auto& run : rows) reducer.add(run);
-                    rows.clear();
-                }
-                require(reducer.rows - before == shard.hi - shard.lo, "parallel sparse consumed coverage");
+                std::unique_lock<std::mutex> lock(shard.mutex);
+                shard.ready.wait(lock, [&] { return shard.done; });
+                lock.unlock();
+                reducer.consume(shard.path, shard.records, shard.hi - shard.lo);
+                lock.lock(); shard.consumed = true; shard.space.notify_one();
             }
         });
     }
@@ -2748,6 +2764,10 @@ struct ParallelSparseRuns : SparseWalkSink {
     void attachCorpus(const CorpusText& corpus) override { text = &corpus; }
     SparseWalkSink* shardSink(U s) override { return shards.at(s).get(); }
     bool parallel() const override { return true; }
+    U shardCount(U normal) const override {
+        require(normal == normalWidth, "parallel sparse shard plan"); return shards.size();
+    }
+    U admission() const override { return 8; }
     void beginShard(U, U, U) override { fail("parallel sink needs shard"); }
     void row(U, U) override { fail("parallel sink needs shard"); }
     void endShard() override { fail("parallel sink needs shard"); }
@@ -2980,7 +3000,8 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
         require(fd >= 0, "create wm scratch");
     }
     double tPF = 0, tPop = 0;
-    const U S = emit_shard_count(threads, n);
+    const U normalShards = emit_shard_count(threads, n);
+    const U S = sparse ? sparse->shardCount(normalShards) : normalShards;
     size_t wide = 0;   // planning probe side: the widest
     for (size_t j = 1; j < k; ++j) if (sides[j].n > sides[wide].n) wide = j;
     std::vector<std::vector<U>> aB(S + 1, std::vector<U>(k, 0));
@@ -2989,7 +3010,7 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
         require(sides[wide].n > 0, "k-way planning needs a non-empty probe side");
         std::vector<std::thread> pt;
         std::mutex planMu;
-        for (U s = 1; s < S; ++s)
+        for (U s = 1; s < S; ++s) {
             pt.emplace_back([&, s] {
                 // Thread-local keys/budget: the shared-key comparator is
                 // never touched from planning threads (its scratch is
@@ -3032,6 +3053,11 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
                 bud.tie_decided += pb.tie_decided; bud.note_lce(pb.max_lce);
                 bud.tFast += pb.tFast; bud.tPrep += pb.tPrep; bud.tProbe += pb.tProbe; bud.tScan += pb.tScan;
             });
+            if (pt.size() >= std::max<U>(1, threads)) {
+                for (auto& t : pt) t.join();
+                pt.clear();
+            }
+        }
         for (auto& t : pt) t.join();
     }
     // merged-rank shard start offsets: R_s = sum_j aB[s][j]
@@ -3146,7 +3172,10 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
                 require(emitted == want && out == R[s + 1], "shard merge coverage");
                 if (sink) sink->endShard();
             });
-            if (sparse && !sparse->parallel()) ts.back().join();
+            if (sparse && (s + 1 == S || (s + 1) % sparse->admission() == 0)) {
+                for (auto& t : ts) if (t.joinable()) t.join();
+                ts.clear();
+            }
         }
         for (auto& t : ts) if (t.joinable()) t.join();
     }
@@ -3362,7 +3391,7 @@ struct V2Piece {
 
 // Two bounded sparse walks replace the WM count/emission passes. The first
 // counts completed runs and captures seam targets; the second emits pieces.
-// Bounded producer queues overlap shard walks with ordered reduction, without run spools.
+// Bounded eight-shard admission overlaps independent walks with ordered reduction.
 static U emit_sparse_v2(const std::string& prefix, const std::vector<SideExt>& sides,
                         U threads, Budget& budget, CoreStats& stats,
                         const PairScratch& sc, U hashK, bool pre) {
@@ -3389,7 +3418,7 @@ static U emit_sparse_v2(const std::string& prefix, const std::vector<SideExt>& s
     auto walk = [&](SparseRunReducer& reducer, SparseSeamCapture* capture, bool prepared) {
         reducer.add({corpus.at(n-1), 1, n, n});
         reducer.add({2, 9, n+1, n+9});
-        ParallelSparseRuns sink(corpus, n, emit_shard_count(threads, n), capture, reducer);
+        ParallelSparseRuns sink(corpus, n, emit_shard_count(threads, n), capture, reducer, sc.dir);
         core_merge_kway(sides, true, threads, budget, stats, sc, hashK, prepared, &sink);
         sink.finish();
         reducer.flush();
@@ -4717,7 +4746,7 @@ int main_impl(int argc, char** argv) {
     U kway = 2;
     if (!flag("--kway").empty()) {
         kway = std::stoull(flag("--kway"));
-        require(kway >= 2 && kway < 1000000, "--kway must be >= 2");
+        require(kway >= (has("--selftest") ? 1u : 2u) && kway < 1000000, "--kway must be >= 2 (selftest permits 1)");
     }
     if (has("--selftest")) {
         U cases = flag("--selftest").empty() ? 2000 : std::stoull(flag("--selftest"));
