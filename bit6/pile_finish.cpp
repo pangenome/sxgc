@@ -630,10 +630,19 @@ struct SeamClasses {
         uint64_t offset = 4;
         char magic[4]; pf_pread_full(fd, magic, 4, 0, "seam spool magic");
         pf_check(memcmp(magic, "SCS1", 4) == 0, "seam spool magic");
+        // SCS1 classes are already banded in row order. Consume its values
+        // through one bounded sequential buffer instead of a pread per word.
+        std::array<uint8_t, 65536> input{};
+        uint64_t inputBase = 0, inputSize = 0;
         auto next = [&]() {
             pf_check(offset <= uint64_t(st.st_size) && uint64_t(st.st_size) - offset >= 8,
                      "truncated seam spool");
-            uint8_t b[8]; pf_pread_full(fd, b, 8, offset, "seam spool value"); offset += 8;
+            if (offset < inputBase || offset + 8 > inputBase + inputSize) {
+                inputBase = offset;
+                inputSize = std::min<uint64_t>(input.size(), uint64_t(st.st_size) - offset);
+                pf_pread_full(fd, input.data(), inputSize, offset, "seam spool buffer");
+            }
+            const uint8_t* b = input.data() + offset - inputBase; offset += 8;
             uint64_t v = 0; for (unsigned j = 0; j < 8; ++j) v |= uint64_t(b[j]) << (8*j);
             return v;
         };
