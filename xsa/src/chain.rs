@@ -1115,7 +1115,8 @@ fn run_v2_tail(
 
     // ---- gates (fail loud on every violation)
     let emit = require_log_contains(scratch, "merge-v2", "SPARSE_V2_EMIT")?;
-    if !emit.contains("passes=1") || !emit.contains("shards=0") {
+    if !emit.split_whitespace().any(|field| field == "passes=1")
+        || !emit.split_whitespace().any(|field| field == "shards=0") {
         return Err(format!("merge-v2 did not run the v2 emission: {emit}"));
     }
     let done = require_log_contains(scratch, "finish-v2", "PILE_FINISH_DONE")?;

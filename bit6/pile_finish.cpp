@@ -397,11 +397,13 @@ struct PieceSource {
         pf_check(memcmp(magic, "BPT1", 4) == 0 && values[1] > 0 && values[1] <= n+10 &&
                  values[0] == (values[1]-1)/B && values[2] <= (1u<<26), "terminal dimensions");
         terminal = true; finalBand = values[0]; R = values[1];
+        pf_check(progress <= int64_t(finalBand), "terminal progress moved backward");
         if (progress == int64_t(finalBand)) {
             pf_check(values[2] == capturedRows && values[3] == completed.size(), "terminal capture assertion");
             pf_check(capturedRows <= std::max<uint64_t>(1000, R/1000) &&
                      depth <= std::max<uint64_t>(1000, R/1000), "terminal product repair budget");
             pf_check(bandCounts.at(finalBand) == R-finalBand*B, "terminal run count");
+            for (const auto& cl : completed) pf_check(cl[2] < R, "terminal class run bounds");
         }
         return true;
     }
@@ -1085,7 +1087,7 @@ static void selftest_band_progress(const std::string& directory) {
         pf_check(fd>=0,"create progress oracle");pf_write_full(fd,magic,4,"oracle magic");
         pf_write_full(fd,words.data(),words.size()*8,"oracle words");::close(fd);
     };
-    for(unsigned mode=0;mode<11;++mode){
+    for(unsigned mode=0;mode<12;++mode){
         std::filesystem::remove_all(dir);std::filesystem::create_directories(dir);
         write("start","BPS1",{65540,17,3,3});
         std::vector<uint64_t> first{0,65536,1,0,0};
@@ -1101,6 +1103,7 @@ static void selftest_band_progress(const std::string& directory) {
         if(mode==8)last.push_back(0);
         if(mode==9)last[7]=3*65536;
         if(mode==10)first={0,65536,0,0};
+        if(mode==11)last[7]=65537;
         write("g-0","BPG1",first);write("g-1","BPG1",last);write("terminal","BPT1",terminal);
         auto run=[&](){PieceSource src;src.prefix=prefix;src.pollTimeout=.1;src.load_idx();
             pf_check(src.streaming&&src.ready_band(0)&&src.ready_band(1)&&!src.ready_band(2),"band-only EOF readiness");
@@ -1118,8 +1121,20 @@ static void selftest_band_progress(const std::string& directory) {
     std::thread delayed([&]{std::this_thread::sleep_for(std::chrono::milliseconds(30));
         write("terminal","BPT1",{0,65536,0,0});});
     pf_check(!exact.ready_band(1),"delayed terminal full-band EOF"); delayed.join();
+    std::filesystem::remove_all(dir); std::filesystem::create_directories(dir);
+    write("start","BPS1",{65540,17,3,3});
+    write("g-0","BPG1",{0,65536,1,0,0});
+    write("g-1","BPG1",{1,1,1,1,0,0,65535,65536,0,3,9,65549,4,9,3,0});
+    pid_t late = ::fork(); pf_check(late >= 0,"fork backward terminal refusal");
+    if (!late) {
+        int quiet=::open("/dev/null",O_WRONLY); ::dup2(quiet,STDERR_FILENO); ::close(quiet);
+        PieceSource src; src.prefix=prefix; src.load_idx(); src.load_progress(); src.load_progress();
+        write("terminal","BPT1",{0,65536,3,1}); src.read_terminal(); _exit(0);
+    }
+    int lateStatus; pf_check(::waitpid(late,&lateStatus,0)==late && WIFEXITED(lateStatus) &&
+                            WEXITSTATUS(lateStatus)==2,"backward terminal accepted");
     std::filesystem::remove_all(dir);
-    std::printf("BAND_PROGRESS_READER_ORACLE_PASS trivial_bases=1 band_only=1 deferred_class=1 EOF_clamp=1 terminal=1 delayed_full_band_EOF=1 malformed_refusals=10\n");
+    std::printf("BAND_PROGRESS_READER_ORACLE_PASS trivial_bases=1 band_only=1 deferred_class=1 EOF_clamp=1 terminal=1 delayed_full_band_EOF=1 backward_terminal_refused=1 malformed_refusals=12\n");
 }
 
 static int selftest_seam_spool(const std::string& directory) {

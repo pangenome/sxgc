@@ -23,14 +23,16 @@ def trial(seed, window, last, terminal_class=False, stall_side=None):
     rng = random.Random(seed)
     extents = [0] * (last + 1)
     classes = []
-    # Disjoint classes mirror the maximal seam intervals retained by SCS1.
+    # Disjoint row classes can touch the same run band. Exercise overlapping
+    # band spans too; readiness uses the maximum full extent at each band.
     lo = 0
     while lo <= last:
         if rng.randrange(5) == 0:
             hi = min(last, lo + rng.randrange(window))
             classes.append((lo, hi))
-            extents[lo:hi+1] = [hi-lo] * (hi-lo+1)
-            lo = hi + 1
+            for band in range(lo, hi+1):
+                extents[band] = max(extents[band], hi-lo)
+            lo = hi if hi > lo and rng.randrange(3) == 0 else hi + 1
         else:
             lo += 1
     if terminal_class and last:
@@ -38,7 +40,8 @@ def trial(seed, window, last, terminal_class=False, stall_side=None):
         classes.append((last-1, last))
         extents = [0] * (last+1)
         for lo, hi in classes:
-            extents[lo:hi+1] = [hi-lo] * (hi-lo+1)
+            for band in range(lo, hi+1):
+                extents[band] = max(extents[band], hi-lo)
     validate_window(window, extents)
     progress = consumed = -1
     terminal = False
@@ -133,7 +136,7 @@ def main():
                          active_producer_inequalities=inequalities,
                          maximum_backlog=peak, malformed_extents_refused=10,
                          implementation_validated=False, shards=0, band_size=65536,
-                         bases='65536*b'), sort_keys=True))
+                         bases='65536*b', overlapping_band_spans=True), sort_keys=True))
 
 
 if __name__ == '__main__':
