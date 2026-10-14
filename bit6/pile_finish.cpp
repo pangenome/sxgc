@@ -1945,6 +1945,112 @@ struct FinishPool {
     }
 };
 
+// Exact checkpoints are a correctness baseline for parallel repair. The planner
+// deliberately runs the existing transducer: copying it captures BOTH pending
+// coalescers, raw/normalized prefixes, dollar/padding guards, class cursor and
+// entry/exit flanks (in the immutable, ready seam table). This first version
+// duplicates repair work; keep it opt-in until a cheaper planner is measured.
+static bool repair_state_equal(const RepairStream& a, const RepairStream& b) {
+    return a.rows == b.rows && a.row == b.row && a.next == b.next &&
+        a.srcHave == b.srcHave && (!a.srcHave ||
+        (a.srcPending.c == b.srcPending.c && a.srcPending.len == b.srcPending.len &&
+         a.srcPending.head == b.srcPending.head && a.srcPending.tail == b.srcPending.tail)) &&
+        a.have == b.have && (!a.have || (a.pending.c == b.pending.c &&
+         a.pending.len == b.pending.len && a.pending.h == b.pending.h && a.pending.t == b.pending.t)) &&
+        a.certified == b.certified && a.dollarSeen == b.dollarSeen &&
+        a.zeroes == b.zeroes && a.beforeTerminal == b.beforeTerminal &&
+        a.firstRunSeen == b.firstRunSeen && a.rNorm == b.rNorm &&
+        a.nNorm == b.nNorm && a.totals == b.totals && a.runFreq == b.runFreq;
+}
+static void repair_chunks(RepairStream& rs, const std::vector<RawRun>& raw,
+                          FinishPool& pool, size_t chunkRuns) {
+    pf_check(chunkRuns > 0, "zero repair chunk");
+    struct Chunk {
+        RepairStream entry, exit;
+        size_t lo, hi;
+        std::vector<NRun> output;
+    };
+    std::vector<Chunk> chunks;
+    auto emit = rs.emit;
+    rs.emit = [](const NRun&) {};
+    for (size_t lo = 0; lo < raw.size(); lo += chunkRuns) {
+        size_t hi = std::min(raw.size(), lo + chunkRuns);
+        RepairStream entry = rs;
+        for (size_t i = lo; i < hi; ++i) rs.feed_raw(raw[i]);
+        chunks.push_back({std::move(entry), rs, lo, hi, {}});
+    }
+    // One already-ready band bounds both checkpoint storage and reorder output.
+    // No worker reads beyond that band or changes readiness/consumption gating.
+    std::atomic<size_t> next{0};
+    pool.run([&](int) {
+        for (;;) {
+            size_t i = next.fetch_add(1);
+            if (i >= chunks.size()) break;
+            auto& chunk = chunks[i];
+            RepairStream local = chunk.entry;
+            local.emit = [&](const NRun& run) { chunk.output.push_back(run); };
+            for (size_t j = chunk.lo; j < chunk.hi; ++j) local.feed_raw(raw[j]);
+            pf_check(repair_state_equal(local, chunk.exit), "repair checkpoint replay mismatch");
+        }
+    });
+    const uint64_t finalR = rs.rNorm;
+    rs.emit = emit;
+    for (const auto& chunk : chunks) {
+        rs.rNorm = chunk.entry.rNorm;
+        for (const auto& run : chunk.output) { ++rs.rNorm; emit(run); }
+        pf_check(rs.rNorm == chunk.exit.rNorm, "repair chunk output count");
+    }
+    rs.rNorm = finalR;
+}
+
+static int selftest_repair_chunks() {
+    FinishPool pool(4);
+    uint64_t cases = 0;
+    for (unsigned seed = 0; seed < 128; ++seed) {
+        // Separate and straddling padding; adjacent equal raw chars; dollar
+        // rewriting into the terminal; legal 0x00/0x05 bytes. Every split is
+        // exercised, including both sides of each class and its flanks.
+        std::vector<RawRun> raw{{9,1,64,64}, {2,9,65,73}};
+        if (seed & 1) raw.back() = {2,10,65,0};
+        uint64_t n = (seed & 1) ? 1 : 0;
+        if (!(seed & 1)) { raw.push_back({2,1,0,0}); ++n; }
+        for (unsigned i = 0; i < 24; ++i) {
+            uint8_t alphabet[] = {0,5,9,10};
+            uint64_t len = 1 + ((seed * 17 + i * 13) % 4);
+            raw.push_back({alphabet[((i / (1 + seed % 3)) + seed) % 4],len,1,1});
+            n += len;
+        }
+        raw.front().head = raw.front().tail = n;
+        SeamClasses seam;
+        if (seed & 2) {
+            seam.classes.push_back({2,5,1,1,1,{},{{5,1,1,1},{0,2,1,1}}});
+            seam.classes.push_back({8,12,1,1,1,{},{{9,4,1,1}}});
+        }
+        std::vector<NRun> expected;
+        RepairStream initial; initial.N=n+10; initial.n=n; initial.terminal=9; initial.seam=&seam;
+        initial.emit = [&](const NRun& r) { expected.push_back(r); };
+        RepairStream serial=initial;
+        for (const auto& r : raw) serial.feed_raw(r);
+        serial.finishStream();
+        for (size_t width=1; width<=raw.size(); ++width) {
+            std::vector<NRun> actual;
+            RepairStream test=initial;
+            test.emit = [&](const NRun& r) { actual.push_back(r); };
+            repair_chunks(test,raw,pool,width);
+            test.finishStream();
+            pf_check(repair_state_equal(serial,test), "repair oracle final state");
+            pf_check(expected.size()==actual.size(), "repair oracle run count");
+            for (size_t i=0; i<actual.size(); ++i)
+                pf_check(expected[i].c==actual[i].c && expected[i].len==actual[i].len &&
+                         expected[i].h==actual[i].h && expected[i].t==actual[i].t,
+                         "repair oracle serialized run bytes");
+            ++cases;
+        }
+    }
+    printf("CHUNKED_REPAIR_ORACLE_PASS streams=128 widths=%llu workers=4 both_coalescers=1 class_flanks=1 padding_straddle=1 dollar=1 legal_00_05=1\n", (unsigned long long)cases);
+    return 0;
+}
+
 // ------------------------------------------------------------- LCE wrapper
 // Cyclic collection_lce over the corpus adapter (SlimLCEParseFree's cyclic
 // branch, byte-for-byte), with its own fail-loud work journal.
@@ -1983,6 +2089,7 @@ static void fp_self_check(SlimFingerprint<CorpusText>& fh, const CorpusText& tex
 
 int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::string(argv[1]) == "--selftest-repair-chunks") return selftest_repair_chunks();
         if (argc == 2 && std::string(argv[1]) == "--selftest-sweep-monoid") return selftest_sweep_monoid();
         if (argc == 3 && std::string(argv[1]) == "--selftest-seam-spool") return selftest_seam_spool(argv[2]);
         std::string prefix, corpus, remap, out, bridgeDir, sampleCheck, wmPath;
