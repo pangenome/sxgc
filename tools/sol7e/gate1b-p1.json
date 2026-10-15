@@ -1,0 +1,126 @@
+{
+  "size": "1b",
+  "P": 1,
+  "kind": "sweep",
+  "merge": [
+    "/mnt/nvme2n1/erikg/sol7e-freshstart/cross_lcp_merge",
+    "--tree",
+    "/mnt/nvme2n1/erikg/sol7e-input-1b/chunks",
+    "8",
+    "1000000665",
+    "/mnt/nvme2n1/erikg/sol7e-gate-1b-p1-sweep/merged/frag",
+    "--threads",
+    "96",
+    "--kway",
+    "8",
+    "--work",
+    "/mnt/nvme2n1/erikg/sol7e-gate-1b-p1-sweep/mwork"
+  ],
+  "finish": [
+    "/mnt/nvme2n1/erikg/sol7e-freshstart/pile_finish",
+    "--prefix",
+    "/mnt/nvme2n1/erikg/sol7e-gate-1b-p1-sweep/merged/frag",
+    "--corpus",
+    "/mnt/nvme2n1/erikg/extcols-scratch/mergperf-1b-snap.txt",
+    "--remap",
+    "/mnt/nvme2n1/erikg/sol7e-input-1b/remap-256.bin",
+    "--output",
+    "/mnt/nvme2n1/erikg/sol7e-gate-1b-p1-sweep/frag.sxi2",
+    "--threads",
+    "96",
+    "--poll-timeout",
+    "3600",
+    "--wit-ram-budget",
+    "4294967296",
+    "--chi-expect",
+    "283296933"
+  ],
+  "merge_rc": 0,
+  "finish_rc": 0,
+  "cmp_rc": 0,
+  "requested_bank": "/mnt/nvme2n1/erikg/extcols-scratch/pilev2-g2-1b/frag.sxi2",
+  "requested_bank_exists": true,
+  "actual_bank": "/mnt/nvme2n1/erikg/extcols-scratch/pilev2-g2-1b/frag.sxi2",
+  "merge_wall": 611.794505758211,
+  "total_wall": 681.1675339369103,
+  "quiet_box_attested": false,
+  "oracle_replay": false,
+  "stages": {
+    "prepare": [
+      89749,
+      209139,
+      144
+    ],
+    "plan": [
+      0,
+      0,
+      0
+    ],
+    "heap": [
+      3674539686,
+      60485387922,
+      1987510308
+    ],
+    "WALK": [
+      3674629435,
+      60485597061,
+      1987510452
+    ],
+    "PLANNING": [
+      0,
+      0,
+      0
+    ],
+    "OVERLAP": [
+      0,
+      0,
+      0
+    ]
+  },
+  "SEAM": [
+    0,
+    0,
+    0
+  ],
+  "OVERLAP": [
+    0,
+    0,
+    0
+  ],
+  "PLANNING": [
+    0,
+    0,
+    0
+  ],
+  "WALK": [
+    3674629435,
+    60485597061,
+    1987510452
+  ],
+  "serial_whole": [
+    3674629435,
+    60485597061,
+    1987510452
+  ],
+  "walk_whole": [
+    3674629435,
+    60485597061,
+    1987510452
+  ],
+  "overhead": [
+    0,
+    0,
+    0
+  ],
+  "overhead_over_serial": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "overhead_over_walk": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "STOP_30_PERCENT": false
+}

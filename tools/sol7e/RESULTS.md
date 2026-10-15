@@ -55,3 +55,8 @@ not a claim of 60.5B additional symbols. PLANNING+OVERLAP+SEAM divided by WALK
 is (+0.001530%, -0.012011%, -0.004283%) per metric. No 30% stop was triggered.
 The diagnostic's 761.807 s internal merge wall includes the explicit reference
 replay and is NOT a launch wall. The standalone replay-free P sweep follows.
+
+P=1 replay-free 1 GB gate is now independently green: chi=283296933, cmp=0,
+WALK=(3674629435,60485597061,1987510452) EXACTLY, PLANNING=OVERLAP=SEAM=(0,0,0).
+Observed merge wall 611.795 s, end-to-end 681.168 s; unrelated CPU load means
+these are not quiet-box attestations. See gate1b-p1.json.
