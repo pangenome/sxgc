@@ -36,9 +36,20 @@ with (root/'merge.log').open('w') as ml,(root/'finish.log').open('w') as fl:
     def sample():
         with (root/'sol7f-du.log').open('w') as log:
             while not stop.is_set():
-                allocated=int(subprocess.check_output(['du','-s','-B1',str(root)],text=True).split()[0])
-                chunk_bytes=int(subprocess.check_output(['du','-s','-B1',str(chunks)],text=True).split()[0])
-                apparent=int(subprocess.check_output(['du','-sb',str(root)],text=True).split()[0])
+                def usage(args):
+                    # Concurrent band unlink may make du return 1 while it
+                    # still prints a valid total. Preserve the sample and
+                    # continue sampling instead of killing this thread.
+                    r=subprocess.run(args,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+                    if r.returncode:
+                        with (root/'sol7f-du-warnings.log').open('a') as warnings:
+                            warnings.write(r.stderr)
+                    return int(r.stdout.split()[0]) if r.stdout.split() else None
+                allocated=usage(['du','-s','-B1',str(root)])
+                chunk_bytes=usage(['du','-s','-B1',str(chunks)])
+                apparent=usage(['du','-sb',str(root)])
+                if None in (allocated,chunk_bytes,apparent):
+                    stop.wait(10);continue
                 log.write(f'{time.monotonic()-start} {allocated} {chunk_bytes} {allocated+chunk_bytes} {apparent}\n');log.flush()
                 stop.wait(10)
     sampler=__import__('threading').Thread(target=sample);sampler.start()

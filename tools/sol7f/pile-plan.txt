@@ -1,0 +1,15 @@
+XSA_PLAN v=6 pipeline=v2 (sol7f sparse transport; 1GB P8 merge and serial finish service rates; scale extrapolated) corpus_bytes=1310000000000 chunks=1310 kway=1310 threads=96 cap_gb=100 cores=256 cx16=true mem_available_gb=745
+XSA_PLAN_PHASES name wall disc_peak_gb rss_gb
+XSA_PLAN_PHASE name=chunk wall=10:11:20 wall_s=36680 disc_peak_gb=5368.1 rss_gb=25.15
+XSA_PLAN_PHASE name=merge(walk) wall=105:53:30 wall_s=381210 disc_peak_gb=8442.6 rss_gb=4.00
+XSA_PLAN_PHASE name=merge(emit)+fused-finish wall=157:12:00 wall_s=565920 disc_peak_gb=12159.7 rss_gb=4.00
+XSA_PLAN_PHASE name=container(m5+m1+publish) wall=0:00:00 wall_s=0 disc_peak_gb=2409.6 rss_gb=4.00
+XSA_PLAN_TOTAL wall=273:16:50 wall_s=983810 chunk_bytes_mb=954
+XSA_POS_MODE mode=compact chunk_set_gb_dense=10736.3 chunk_set_gb_compact=5368.1 free_gb=12572.9 rule=dense-if-10pct-headroom-else-compact (walk s/MB dense=0.693 compact=1.598)
+XSA_PLAN_V2_TERMS pipeline=v2 corpus_gb=1220 chunk_set_gb=5368 merge_transient_gb=3074 rlebwt_gb=1886 pfck_scratch_gb=444 pieces_window_gb=2 container_gb=571 tree_peak_gb=2410 whole_box_gb=3630
+XSA_PLAN_V2_TREE tree_peak=1.975n bound=2.5n measured_at=1GB-G2 (output side, excl. the merge transient); whole_box(corpus+tree)=2.975n
+XSA_PLAN_V2_WITNESS witness stream = 8B x chi; chi/n = 0.283 is the 1GB FIXTURE ratio (the pile value is unmeasured): ~2762 GB at this scale; if it exceeds --wit-ram-budget the overflow spills as sorted varint-delta disc runs (est. <= 0.3x raw, EXTRAPOLATED - unmeasured at spill scale) inside the tree
+XSA_PLAN_V2_MERGE_TRANSIENT sparse-v2 hash/overlap 0.52n (634.4 GiB); virtual corpus and WM absent; compact inputs 4.4n + rlebwt 1.546n + pfck .364n + bounded PRC1/BPG1 window (2.148 GiB, W=1100); output ratios measured at 1GB G2, large-scale ratios extrapolated; configured segment credits added by chain planner; fresh-start P=8 segment spools reserve the configured credit budget (2440.1 GiB), reclaimed by hole punching before credit release; witness spill reserve 813.6 GiB (0.3x overflow, EXTRAPOLATED)
+XSA_PLAN_V2_HOSTING all-phase scratch peak 12159.7 GiB = 9.967n on one host, including configured spools, retained compact inputs, hash/overlap, output/window/container and explicit witness spill allowance; free 12572.9 GiB: FITS (corpus itself excluded; add 1220.0 GiB if co-hosted)
+XSA_PLAN_DISC FEASIBLE: ALL-PHASE peak 12159.7 GiB vs 12572.9 GiB free (includes configured spool credits)
+XSA_PLAN_RAM FEASIBLE: chunk front end ~25.1 GB (27x chunk bytes) vs cap 100 GiB; merge ~4.0 GB (bounded); fused finish ~2762.2 GB witness RAM budget (--wit-ram-budget, default 1 GB; spills are varint-delta disc runs)
