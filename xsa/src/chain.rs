@@ -788,7 +788,7 @@ fn run_chain(options: Options) -> Result<(), String> {
             return Err("CROSS_V2_PRODUCERS must be in 1..4096".into());
         }
         if producers > 1 {
-            // Match native fixed per-producer credits, including the minimum
+            // Match native shared spool credits, including the minimum
             // progress reserve. Default is 2n; explicit knob is bytes.
             let spool_bytes = std::env::var("CROSS_V2_SPOOL_BYTES")
                 .map(|s| s.parse::<u64>().map_err(|_| "CROSS_V2_SPOOL_BYTES must be an integer"))
@@ -802,7 +802,7 @@ fn run_chain(options: Options) -> Result<(), String> {
             }
             if let Some(v2) = &mut build_plan.v2 {
                 v2.merge_transient_gb += extra_mb / 1024.0;
-                v2.transient_note.push_str(&format!("; fresh-start P={producers} segment spools reserve an configured credit budget ({:.1} GiB), reclaimed by hole punching before credit release", extra_mb / 1024.0));
+                v2.transient_note.push_str(&format!("; fresh-start P={producers} segment spools reserve the configured credit budget ({:.1} GiB), reclaimed by hole punching before credit release", extra_mb / 1024.0));
             }
             let peak_mb = build_plan.phases.iter().map(|p| p.disc_peak_mb).fold(0.0, f64::max);
             if peak_mb * 1048576.0 > build_plan.survey.scratch_free_bytes as f64 {

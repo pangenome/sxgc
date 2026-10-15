@@ -3813,6 +3813,11 @@ struct ParallelV2 : SparseWalkSink {
                   blockedSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
               }
               base = committed; parent.occupied += charge; }
+            // XFS speculative EOF preallocation can otherwise allocate far
+            // beyond the credited write. Explicitly allocate the charged
+            // extent first, so pwrite only converts existing unwritten pages.
+            require(::fallocate(fd, 0, 25*base, charge) == 0,
+                    "allocate credited parallel spool extent");
             xput(fd, buffer.data(), buffer.size(), 25*base, "parallel spool write");
             { std::lock_guard<std::mutex> lock(parent.mu); committed += buffer.size()/25; }
             buffer.clear(); parent.cv.notify_all();

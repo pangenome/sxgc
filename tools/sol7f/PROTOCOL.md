@@ -35,3 +35,12 @@ checks exact-at-budget admission, zero final outstanding credits, empty ranges,
 terminal-only-after-coverage, randomized producer starts, and multiple P=8
 completion orders. The model tests liveness assuming eventual independent ACKs;
 it does not claim recovery from a crashed consumer or durable worker retries.
+
+XFS discovery: ordinary extending pwrite may speculatively allocate EOF extents
+well beyond its byte count. An initial 1GB run was stopped when du showed this
+violated the intended physical bound despite correct logical credits. The final
+implementation first fallocates exactly the credited page-aligned write extent;
+pwrite then converts already allocated pages. The scratch-filesystem oracle
+checks 2000 extending writes with an eleven-batch live budget, including punch
+and allocation, using st_blocks rather than apparent length. The initial run is
+retained as an aborted diagnostic, not a qualified performance measurement.
