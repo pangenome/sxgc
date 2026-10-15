@@ -442,33 +442,8 @@ impl Plan {
 pub const V2_RLEBWT_PER_N: f64 = 1.546;         // measured 1545900600 B
 pub const V2_PFCK_PER_N: f64 = 0.364;           // measured 363636648 B (scratch; deleted post-sweep)
 pub const V2_CONTAINER_PER_N: f64 = 0.468;      // measured 467814822 B (the product)
-pub const V2_PIECES_WINDOW_PER_N: f64 = 0.052;  // 64 bands x 65536 runs x ~12.5 B/run
 pub const V2_TREE_PEAK_PER_N: f64 = 1.975;      // MEASURED G2 du peak of the scratch tree (output side, excl. the merge transient)
 pub const V2_TREE_TARGET_PER_N: f64 = 2.5;      // the mission's output-side bound
-// The merge transient (.xsc du), MEASURED at the 1GB packed-WM front-door gate
-// (xsa-pa-wmpack-1b, 2026-10-11): 10,199,887,341 B = 10.20n with every
-// constituent live. The WM term is w-dependent (w = bits(n+9): 30 at 1GB,
-// 41 at pile), so the model carries the measured non-WM remainder
-// (m2 2n + hs 2n + bwt 1n + ov ~0.02n + ~1.43n walk columns = 6.45n) and
-// adds w/8 for the packed WM; at 1GB (w=30) that reproduces the measured
-// 10.20n exactly. Unpacked G2 measured 14.46n (WM 8n): the packing is the
-// -4.25n at 1GB, product byte-identical (cmp clean vs the banked G2 lite).
-pub const V2_MERGE_TRANSIENT_NONWM_PER_N: f64 = 6.45;
-// The WHOLE scratch tree INCLUDING the merge transient (chunk-set remnants +
-// rlebwt + pfck + pieces + .xsc) peaked at 15.04n at the same 1GB gate
-// (front-door du sample): the monolithic-merge hosting number. The non-
-// transient live remainder (15.04 - 10.20 = 4.84n) is carried measured;
-// the whole-tree peak is derived as transient(n) + 4.84.
-pub const V2_WHOLE_TREE_NONTRANSIENT_PER_N: f64 = 4.84;
-
-// w = bits(n+9) - the SA value width the whole pipeline packs at.
-pub fn v2_sa_width(n: u64) -> u32 { (64 - (n + 9).leading_zeros()).max(1) }
-pub fn v2_merge_transient_per_n(n: u64) -> f64 {
-    V2_MERGE_TRANSIENT_NONWM_PER_N + v2_sa_width(n) as f64 / 8.0
-}
-pub fn v2_whole_tree_peak_per_n(n: u64) -> f64 {
-    v2_merge_transient_per_n(n) + V2_WHOLE_TREE_NONTRANSIENT_PER_N
-}
 pub const V2_CHI_PER_N: f64 = 0.283;            // 1GB fixture ratio; the pile value is UNMEASURED
 // Seconds per MiB; sol7f rate table from the quiet-box 1 GB measurements
 // supplied with the sol7f mission (n ~= 1,000,000,000 bytes = 953.674 MiB):
