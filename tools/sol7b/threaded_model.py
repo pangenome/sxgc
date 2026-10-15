@@ -198,16 +198,26 @@ def main():
             cases += 1
     # Negative controls: proposed shortcuts are structurally invalid.
     # Waiting for whole-range EOF before draining a bounded queue is stuck.
-    assert 5 > 4  # producer's fifth slab cannot fit; EOF not yet reachable
+    bad_queue = dict(queued=4, capacity=4, remaining=1, producer_done=False)
+    enabled = dict(enqueue=bad_queue['queued'] < bad_queue['capacity'],
+                   complete=bad_queue['remaining'] == 0,
+                   drain=bad_queue['producer_done'])
+    assert not any(enabled.values()), (bad_queue, enabled)
     # A producer ending at band 0 cannot clamp a class requiring band 1.
-    assert min(0 + 1, 0) < base.requirement(0, [1, 1], 1)
+    progress, local_last, global_last = 0, 0, 1
+    local_ready = progress >= min(0 + 1, local_last)
+    globally_ready = progress >= base.requirement(0, [1, 1], global_last)
+    assert local_ready and not globally_ready
     print(json.dumps(dict(result='PASS', threaded_interleavings=cases,
         successful_schedules=424, failed_or_gapped_ranges_aborted=48,
         completion_permutations=24, producer_counts=[1,4,8,16],
         windows=[1,2,3,64,1100], queue_capacity=4, peak_queue=peak_queue,
         peak_pieces=peak_pieces, retries=retries, duplicate_deliveries_suppressed=duplicates,
         deadlocks=0, lost_rows=0, duplicate_rows=0,
-        local_eof_clamping_refused=True, global_terminal_only=True,
+        negative_controls=dict(wait_for_range_done=bad_queue,
+                               runnable_actions=enabled,
+                               local_eof_false_readiness=local_ready and not globally_ready),
+        global_terminal_only=True,
         implementation_validated=False,
         abstraction='known canonical bands; ordered upstream transport'), sort_keys=True))
 
