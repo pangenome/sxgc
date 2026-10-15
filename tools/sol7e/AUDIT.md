@@ -25,3 +25,12 @@ is a launch-wall measurement. The stopped gate logs are retained in scratch.
 
 The box has sustained unrelated impg/sample_projection CPU activity. No quiet-
 box performance attestation can be made from runs under those conditions.
+
+Production dependency correction: the inherited runtime mirror did not contain
+sol7a's RAM cache, borrowed spans, SIMD prefix reads, or front prefetch, although
+the native source did. Preserving that divergence would leave the shipped
+pipeline on the older read path. The runtime source is now synchronized exactly
+with native, deliberately promoting the already banked sol7a implementation
+alongside sol7e. All source-manifest entries validate. Rust driver cargo check
+passed before this C++-only synchronization; native/runtime are now identical
+and the synchronized runtime receives a standalone build and P=16 selftest.

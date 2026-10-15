@@ -27,3 +27,10 @@ validation are green. Cargo check passed after fixing the changed chain.rs
 entry in the source manifest; the first manifest rejection remains recorded.
 
 1 GB gate and wall sweep: pending. No quiet-box launch claim yet.
+
+Reusable reference path: P=16 oracle counters were coarsened additively to
+P=4 for the same nested split targets, then independently validated against
+the actual P=4 planner/source identity. The 100 MB P=4 reference-only gate
+passed chi=29716349 and cmp=0 with replay=0. A corrupted reference identity
+was refused before terminal publication (`REFERENCE_MISMATCH_REFUSED
+no_terminal=1`). See reference-test.json; its wall is a nonquiet diagnostic.
