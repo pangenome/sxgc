@@ -985,8 +985,13 @@ struct SideText {
 };
 std::atomic<U> SideText::g_gen{1};
 // Virtual doubled text: coordinates [0,2n) wrap into the original
-// referenced corpus segments. Raw bytes stay in bounded WinBytes pages;
-// remapping is applied only when bytes are returned to a consumer.
+// referenced corpus segments. A fitting corpus is remapped once into RAM;
+// larger corpora retain bounded WinBytes pages and remap on return.
+// The old path DID use its corpus pool: the banked sol5i 1GB run records
+// 30,567,717,347 hits / 2,992,893 misses. Its cost was repeated short-span
+// copies/remapping (and per-byte pool probes on page-crossing spans), not
+// absent hits. The 5-fill POOL_STATS printed during hash-build belongs to
+// that builder's temporary boundary-check hash reader, not the walk.
 struct CorpusText {
     U n = 0;
     bool pool = false;
@@ -1793,7 +1798,9 @@ static void build_hash_sparse(const CorpusText& m2, U n2, U k,
     for (U t = 0; t < tcount; ++t) ts.emplace_back(fix, t);
     for (auto& t : ts) t.join();
     // Verify absolute hashes at gap boundaries: window hash from sparse P
-    // must equal a direct recomputation over the windowed text.
+    // must equal a direct recomputation over the windowed text. This reader
+    // dies before the walk opens its own hp: its tiny POOL_STATS are NOT the
+    // walk's hit rate (bytes is checkpoint_bytes, not corpus length).
     HashSparse hp; hp.open_ro(hsPath, k, entries);
     U cands[] = {k, n2 / 2 / k * k, n2 / k * k};
     for (U c : cands) {
