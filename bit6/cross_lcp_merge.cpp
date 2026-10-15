@@ -1017,7 +1017,12 @@ struct CorpusText {
         if (cached && i < 2 * n) {
             U p = i >= n ? i - n : i;
             if (len <= n - p) {
-                ++cacheHits[SharedPages::tid()];
+                unsigned t = SharedPages::tid();
+                // tid() saturates in long-lived selftests; overflow threads
+                // share only the last counter and must charge it atomically.
+                if (t == SharedPages::TIDS - 1)
+                    __atomic_fetch_add(&cacheHits[t], U(1), __ATOMIC_RELAXED);
+                else ++cacheHits[t];
                 return cached.get() + p;
             }
         }
@@ -2851,7 +2856,7 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
     st.init(k);
     U n = 0; for (auto& S : sides) n += S.n;
     CorpusText m2; open_merge_text(sides, m2, true);
-    if (sparse) sparse->attachCorpus(m2); // reuse the comparator's pool, within its RAM envelope
+    if (sparse) sparse->attachCorpus(m2); // reuse the comparator's text cache, within its RAM envelope
     if (!pre) {
         hashK = hash_spacing();
         if (hashK > n / 2) hashK = std::max<U>(1, n / 2);   // degenerate-grid guard
