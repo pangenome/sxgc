@@ -993,6 +993,9 @@ struct CorpusText {
     std::vector<U> starts, fileIndex;
     std::vector<std::string> paths;
     std::vector<std::unique_ptr<WinBytes>> files;
+    // Immutable, remapped corpus RAM replaces (never supplements) this view's
+    // pool when it fits the same buffer budget. No doubled text is stored.
+    std::unique_ptr<uint8_t[]> cached;
     void open(std::vector<TextSeg> list, bool pooled = false) {
         for (auto& s : list) {
             if (!s.len) continue;
@@ -1001,6 +1004,10 @@ struct CorpusText {
                 segs.back().len += s.len;
             else segs.push_back(std::move(s));
         }
+        U cacheBytes = 0;
+        for (const auto& s : segs) cacheBytes += s.len;
+        const bool cacheFits = pooled && !no_pool() &&
+            cacheBytes <= 2 * SharedPages::pool_slot_count() * SharedPages::PS;
         for (const auto& s : segs) {
             starts.push_back(n); n += s.len;
             auto it = std::find(paths.begin(), paths.end(), s.path);
@@ -1009,7 +1016,7 @@ struct CorpusText {
                 paths.push_back(s.path);
                 auto r = std::make_unique<WinBytes>();
                 U bytes = fs::file_size(s.path);
-                r->open_ro(s.path, bytes, 0, pooled && !pool && bytes >= (1u << 20));
+                r->open_ro(s.path, bytes, 0, pooled && !cacheFits && !pool && bytes >= (1u << 20));
                 pool = pool || bool(r->pool);
                 files.push_back(std::move(r));
             }
@@ -1018,6 +1025,15 @@ struct CorpusText {
             fileIndex.push_back(f);
         }
         require(n && n <= UINT64_MAX / 2, "virtual corpus length");
+        if (cacheFits) {
+            cached.reset(new uint8_t[n]);
+            // read() remaps each segment exactly once, before publication to
+            // comparator threads. It deliberately bypasses the page pools.
+            read(0, cached.get(), n);
+            std::fprintf(stderr, "CORPUS_RAM_CACHE bytes=%llu budget_bytes=%llu immutable=1 remapped=1 doubled=0\n",
+                (unsigned long long)n,
+                (unsigned long long)(2 * SharedPages::pool_slot_count() * SharedPages::PS));
+        }
     }
     inline size_t segment(U i) const {
         if (segs.size() == 1) return 0;
@@ -1026,6 +1042,7 @@ struct CorpusText {
     inline uint8_t at(U i) const {
         if (i >= 2 * n) fail("virtual corpus byte bounds");
         if (i >= n) i -= n;
+        if (cached) return cached[i];
         size_t z = segment(i);
         const auto& s = segs[z];
         return s.remap[files[fileIndex[z]]->at(s.off + i - starts[z])];
@@ -1033,6 +1050,13 @@ struct CorpusText {
     void at_span(U i, void* out, U len) const {
         if (i > 2 * n || len > 2 * n - i) fail("virtual corpus span bounds");
         auto* q = static_cast<uint8_t*>(out);
+        if (cached) {
+            U p = i >= n ? i - n : i;
+            U take = std::min(len, n - p);
+            std::memcpy(q, cached.get() + p, take);
+            if (take < len) std::memcpy(q + take, cached.get(), len - take);
+            return;
+        }
         while (len) {
             U p = i >= n ? i - n : i;
             size_t z = segment(p);
