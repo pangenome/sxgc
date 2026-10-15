@@ -1,0 +1,52 @@
+[
+  {
+    "label": "100gb",
+    "n": 100000000000,
+    "scenario_free_bytes": 2600000000000,
+    "spool_budget_bytes": 200000000000,
+    "command": [
+      "/home/erikg/worktrees/sxgc/pi-worktree-ee077b15-aa52-468a-a198-7fa055d7ae8f-s0-0/xsa/target/debug/xsa",
+      "build",
+      "--input",
+      "/mnt/nvme2n1/erikg/sol7f-plans/100gb.sparse",
+      "--scratch",
+      "/mnt/nvme2n1/erikg/sol7f-plans/100gb-scratch",
+      "--v2-pipeline",
+      "--plan-only",
+      "--chunks",
+      "100",
+      "--kway",
+      "100",
+      "--threads",
+      "96",
+      "--memory-gb",
+      "100"
+    ],
+    "rc": 0
+  },
+  {
+    "label": "pile",
+    "n": 1310000000000,
+    "scenario_free_bytes": 13500000000000,
+    "spool_budget_bytes": 2620000000000,
+    "command": [
+      "/home/erikg/worktrees/sxgc/pi-worktree-ee077b15-aa52-468a-a198-7fa055d7ae8f-s0-0/xsa/target/debug/xsa",
+      "build",
+      "--input",
+      "/mnt/nvme2n1/erikg/sol7f-plans/pile.sparse",
+      "--scratch",
+      "/mnt/nvme2n1/erikg/sol7f-plans/pile-scratch",
+      "--v2-pipeline",
+      "--plan-only",
+      "--chunks",
+      "1310",
+      "--kway",
+      "1310",
+      "--threads",
+      "96",
+      "--memory-gb",
+      "100"
+    ],
+    "rc": 0
+  }
+]

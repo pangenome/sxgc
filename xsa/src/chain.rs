@@ -797,9 +797,9 @@ fn run_chain(options: Options) -> Result<(), String> {
                     }
                     s.parse::<u64>().map_err(|_| "CROSS_V2_SPOOL_BYTES must be an integer")
                 })
-                .unwrap_or(Ok(corpus_bytes.saturating_mul(2).max(producers * 102400)))?;
-            if spool_bytes < producers * 102400 {
-                return Err("CROSS_V2_SPOOL_BYTES must be >= P*102400".into());
+                .unwrap_or(Ok(corpus_bytes.saturating_mul(2).max(producers * 106496)))?;
+            if spool_bytes < producers * 106496 {
+                return Err("CROSS_V2_SPOOL_BYTES must be >= P*106496".into());
             }
             let extra_mb = spool_bytes as f64 / 1048576.0;
             for phase in &mut build_plan.phases {
@@ -1078,7 +1078,7 @@ fn run_v2_tail(
     journal.line(&format!("V2_PRODUCERS S={v2_producers} fresh_start=1 seam_reference=CROSS_SEAM_REFERENCE"));
     let v2_window = std::env::var("CROSS_V2_PIECE_WINDOW").unwrap_or_else(|_| "1100".to_string());
     journal.line(&format!("V2_EMISSION CROSS_V2_PIECES=1 band={v2_band} window={v2_window}"));
-    journal.line(&format!("KNOB CROSS_V2_SPOOL_BYTES={} (default 2n, minimum P*102400; shared credits with active-range reserve)",
+    journal.line(&format!("KNOB CROSS_V2_SPOOL_BYTES={} (default 2n, minimum P*106496; shared credits with active-range reserve)",
         std::env::var("CROSS_V2_SPOOL_BYTES").unwrap_or_else(|_| "auto".into())));
     let container = scratch.join(format!("{}.sxi2",
         input.file_stem().and_then(|stem| stem.to_str()).filter(|stem| !stem.is_empty()).unwrap_or("pile")));

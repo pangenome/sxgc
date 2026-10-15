@@ -1,11 +1,10 @@
 # Flow-bounded compressed segment transport
 
 `CROSS_V2_SPOOL_BYTES` is an unsigned decimal byte budget. Default: max(2n,
-P*102400); explicit budgets smaller than P*102400 are rejected. P=1 retains
+P*106496); explicit budgets smaller than P*106496 are rejected. P=1 retains
 the direct serial sink and writes no segment spools. No corpus text is spooled.
 
-Producers reserve shared credits before writing each 4096-record / 102400-byte
-batch. Charges round up to filesystem pages (4096 bytes); the effective budget
+Producers reserve shared credits before writing each 4096-record batch (maximum page charge 106496 bytes). Charges round up to filesystem pages (4096 bytes); the effective budget
 rounds down to whole batches. One batch is reserved for the currently ordered
 range: other producers may consume at most budget minus that batch. This avoids
 the classic deadlock where later ranges occupy all credits while the reducer
@@ -44,3 +43,19 @@ pwrite then converts already allocated pages. The scratch-filesystem oracle
 checks 2000 extending writes with an eleven-batch live budget, including punch
 and allocation, using st_blocks rather than apparent length. The initial run is
 retained as an aborted diagnostic, not a qualified performance measurement.
+
+
+The first strict-credit 1GB trial crossed 320 seconds before completing, so
+backpressure alone did not meet the wall bar on this shared box. The final
+transport also packs each batch losslessly: character byte, unsigned LEB128 run
+length, n-width endpoints, and an omitted duplicate tail for singleton segments.
+An eight-byte header binds payload bytes and record count/codec. Incompressible
+batches fall back to the original 25-byte records. Every batch occupies an
+independent fixed-address 106496-byte logical slot, allocating only its rounded
+payload. This preserves constant metadata in RAM and supports committed-prefix
+reads without an ever-growing offset index. The reducer validates framing and
+restores the identical segment tuples before canonical publication. The codec
+oracle covers widths 1..8, full batches, partial batches, UINT64_MAX lengths,
+singletons and raw fallback; native column/class and byte gates exercise it.
+The 400-schedule credit proof is unchanged: a batch's page charge is known
+before admission, and the active range retains one maximum-batch reserve.
