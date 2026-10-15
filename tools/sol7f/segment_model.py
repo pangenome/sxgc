@@ -18,8 +18,12 @@ def trial(seed):
     used = [0]*p; quota = 3 * (1 + seed%4); active = [0]; blocked = [0]*p
     committed = [0]*p; done = [False]*p
     actual = []; observed = []; errors = []
-    bands = []; acked = []; terminal = [False]
+    bands = []; acked = []; terminal = [False]; peaks = [0,0]; completion = []
     def downstream():
+        # Adversarially withhold ACKs until W is exhausted. This consumer
+        # depends on canonical bands only, never on upstream range completion.
+        if n==2400:
+            with cv: cv.wait_for(lambda: len(bands)==1100 or terminal[0])
         while True:
             with cv:
                 cv.wait_for(lambda: bands or terminal[0])
@@ -45,12 +49,13 @@ def trial(seed):
             with cv:
                 while sum(used)+len(batch)>quota-(0 if i==active[0] else 3):
                     blocked[i]+=1; cv.wait()
-                used[i]+=len(batch)
+                used[i]+=len(batch); peaks[0]=max(peaks[0],sum(used))
+                assert sum(used)<=quota
             disk[i].extend(batch)
             if (seed+i+start)%7==0: time.sleep(.00001)
             with cv:
                 committed[i]+=len(batch); cv.notify_all()
-        with cv: done[i]=True; cv.notify_all()
+        with cv: done[i]=True; completion.append(i); cv.notify_all()
     def reducer():
         row=0
         for i in range(p):
@@ -69,7 +74,7 @@ def trial(seed):
                     assert length==1 or not targets.intersection(segment)
                     with cv:
                         cv.wait_for(lambda: len(bands)<1100)
-                        bands.append(tuple(segment)); cv.notify_all()
+                        bands.append(tuple(segment)); peaks[1]=max(peaks[1],len(bands)); cv.notify_all()
                     actual.extend(segment)
                     observed.append((c,length,head,tail))
                     row+=length
@@ -106,6 +111,8 @@ def trial(seed):
             else:out.append([c,length,head,tail])
         return out
     assert coalesce(observed)==coalesce((chars[i],1,positions[i],positions[i]) for i in range(n))
-    return n
-rows=sum(trial(seed) for seed in range(400))
-print(json.dumps(dict(result='PASS', schedules=400, spool_budget='global_with_active_batch_reserve', boundary='inclusive', publisher_stalls=True, W=1100, rows=rows, P=[1,4,8,16], exact_rows=True, exact_runs=True, singleton_targets=True, repeated_cuts=True, publication='committed_prefix_only', terminal='all_ranges_only', persistent_recovery=False),sort_keys=True))
+    if n==2400: assert peaks[1]==1100
+    return n,sum(blocked),peaks,tuple(completion),p
+trials=[trial(seed) for seed in range(400)]
+rows=sum(t[0] for t in trials)
+print(json.dumps(dict(result='PASS', deadlocks=0, lost_rows=0, duplicate_rows=0, blocks=sum(t[1] for t in trials), peak_bands=max(t[2][1] for t in trials), P8_completion_orders=len({t[3] for t in trials if t[4]==8}), schedules=400, spool_budget='global_with_active_batch_reserve', boundary='inclusive', publisher_stalls=True, W=1100, rows=rows, P=[1,4,8,16], exact_rows=True, exact_runs=True, singleton_targets=True, repeated_cuts=True, publication='committed_prefix_only', terminal='all_ranges_only', persistent_recovery=False),sort_keys=True))
