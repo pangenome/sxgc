@@ -63,6 +63,7 @@
 //
 // Build: c++ -O3 -std=c++17 -pthread bit6/cross_lcp_merge.cpp -o /tmp/cross_lcp_merge
 #include <algorithm>
+#include <emmintrin.h>
 #include <atomic>
 #include <array>
 #include <chrono>
@@ -996,7 +997,7 @@ struct CorpusText {
     // Immutable, remapped corpus RAM replaces (never supplements) this view's
     // pool when it fits the same buffer budget. No doubled text is stored.
     std::unique_ptr<uint8_t[]> cached;
-    std::array<U, SharedPages::TIDS> cacheHits{};
+    mutable std::array<U, SharedPages::TIDS> cacheHits{};
     ~CorpusText() {
         if (cached) {
             U hits = 0; for (U h : cacheHits) hits += h;
@@ -1011,7 +1012,7 @@ struct CorpusText {
         if (cached && i < 2 * n) {
             U p = i >= n ? i - n : i;
             if (len <= n - p) {
-                ++const_cast<CorpusText*>(this)->cacheHits[SharedPages::tid()];
+                ++cacheHits[SharedPages::tid()];
                 return cached.get() + p;
             }
         }
@@ -1487,6 +1488,22 @@ struct Budget {
     double tFast = 0, tPrep = 0, tProbe = 0, tScan = 0;
 };
 
+// Exact mismatch offset, vectorized only over complete, in-bounds blocks.
+// This changes byte loading, never the comparator's charged logical work.
+static inline U equal_prefix(const uint8_t* a, const uint8_t* b, U len) {
+    U i = 0;
+    while (len - i >= 16) {
+        unsigned same = unsigned(_mm_movemask_epi8(_mm_cmpeq_epi8(
+            _mm_loadu_si128(reinterpret_cast<const __m128i*>(a + i)),
+            _mm_loadu_si128(reinterpret_cast<const __m128i*>(b + i)))));
+        unsigned different = (~same) & 65535u;
+        if (different) return i + __builtin_ctz(different);
+        i += 16;
+    }
+    while (i < len && a[i] == b[i]) ++i;
+    return i;
+}
+
 // ---------------------------------------------------------------- fingerprints
 struct Keys {
     const CorpusText* m2 = nullptr;   // windowed M.M, 2n bytes
@@ -1525,12 +1542,11 @@ struct Keys {
             uint8_t aStorage[16], bStorage[16];
             const uint8_t* ab = m2->span(p1, aStorage, fast);
             const uint8_t* bb = m2->span(p2, bStorage, fast);
-            for (; j < fast; ++j) {
-                if (ab[j] != bb[j]) {
-                    bud->symbols += j + 1; ++bud->fast_decided; bud->note_lce(j);
-                    if (tOn) bud->tFast += now_sec() - t0;
-                    return ab[j] < bb[j] ? -1 : 1;
-                }
+            j = equal_prefix(ab, bb, fast);
+            if (j < fast) {
+                bud->symbols += j + 1; ++bud->fast_decided; bud->note_lce(j);
+                if (tOn) bud->tFast += now_sec() - t0;
+                return ab[j] < bb[j] ? -1 : 1;
             }
         }
         if (tOn) bud->tFast += now_sec() - t0;
@@ -1639,8 +1655,7 @@ struct Keys {
                 U w = std::min<U>(64, scanEnd - i);
                 const uint8_t* ab = m2->span(p1 + i, aStorage, w);
                 const uint8_t* bb = m2->span(p2 + i, bStorage, w);
-                U z = 0;
-                while (z < w && ab[z] == bb[z]) ++z;
+                U z = equal_prefix(ab, bb, w);
                 i += z;
                 if (z < w) break;
             }
