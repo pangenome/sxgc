@@ -1,0 +1,176 @@
+{
+  "base": "21ad74b",
+  "branch": "sol-7b-parallel-producer",
+  "disposition": "route-c-audit-only",
+  "production_changes": false,
+  "checks": [
+    {
+      "command": "CROSS_SHARDS=8 /mnt/nvme2n1/erikg/sol7b-audit/cross_lcp_merge --selftest 200 --seed 1 --kway 1 --threads 8",
+      "result": "passed",
+      "log": "/mnt/nvme2n1/erikg/sol7b-audit/selftest-k1.log",
+      "output": [
+        "SELFTEST_PASS count=200 seed=1 kway=1"
+      ]
+    },
+    {
+      "command": "CROSS_SHARDS=8 /mnt/nvme2n1/erikg/sol7b-audit/cross_lcp_merge --selftest 200 --seed 1 --kway 2 --threads 8",
+      "result": "passed",
+      "log": "/mnt/nvme2n1/erikg/sol7b-audit/selftest-k2.log",
+      "output": [
+        "SELFTEST_PASS count=200 seed=1 kway=2"
+      ]
+    },
+    {
+      "command": "CROSS_SHARDS=8 /mnt/nvme2n1/erikg/sol7b-audit/cross_lcp_merge --selftest 200 --seed 1 --kway 8 --threads 8",
+      "result": "passed",
+      "log": "/mnt/nvme2n1/erikg/sol7b-audit/selftest-k8.log",
+      "output": [
+        "SELFTEST_PASS count=200 seed=1 kway=8"
+      ]
+    },
+    {
+      "command": "/mnt/nvme2n1/erikg/sol7b-audit/pile_finish --selftest-sweep-monoid",
+      "result": "passed",
+      "log": "/mnt/nvme2n1/erikg/sol7b-audit/sweep-current.log",
+      "output": [
+        "SWEEP_STATE_CARRY_ORACLE_PASS streams=2048 splits=34785 NUL=1 byte05=1 singleton=1 periodic_colors=1 empty=1 ordered_witnesses=1 final_state=1"
+      ]
+    },
+    {
+      "command": "/mnt/nvme2n1/erikg/sol7b-audit/pile_finish --selftest-repair-chunks",
+      "result": "passed",
+      "log": "/mnt/nvme2n1/erikg/sol7b-audit/repair-current.log",
+      "output": [
+        "CHUNKED_REPAIR_ORACLE_PASS streams=128 widths=3392 workers=4 both_coalescers=1 class_flanks=1 padding_straddle=1 dollar=1 legal_00_05=1"
+      ]
+    },
+    {
+      "command": "/mnt/nvme2n1/erikg/sol7b-audit/pile_finish --selftest-seam-spool /mnt/nvme2n1/erikg/sol7b-audit/seam-current",
+      "result": "passed",
+      "log": "/mnt/nvme2n1/erikg/sol7b-audit/seam-current.log",
+      "output": [
+        "BAND_PROGRESS_READER_ORACLE_PASS trivial_bases=1 band_only=1 deferred_class=1 EOF_clamp=1 terminal=1 delayed_full_band_EOF=1 backward_terminal_refused=1 malformed_refusals=12",
+        "SEAM_SPOOL_READER_ORACLE_PASS empty=1 adversarial_orders=2 padded_flanks=1 NUL=1 byte05=1 malformed_refusals=3"
+      ]
+    },
+    {
+      "command": "/mnt/nvme2n1/erikg/sol7b-audit/flow_oracle ",
+      "result": "passed",
+      "log": "/mnt/nvme2n1/erikg/sol7b-audit/flow-current.log",
+      "output": [
+        "FLOW_ORACLE_PASS initial_minus_one=1 oversized_positive_window=1 unsigned_credit=1 blocked_until_consumed=1"
+      ]
+    },
+    {
+      "command": "python3 tools/sol5i/wait_model.py",
+      "result": "passed",
+      "output": {
+        "active_producer_inequalities": 3510,
+        "band_size": 65536,
+        "bases": "65536*b",
+        "deadlocks": 0,
+        "implementation_validated": false,
+        "malformed_extents_refused": 10,
+        "maximum_backlog": 1100,
+        "overlapping_band_spans": true,
+        "randomized_interleavings": 1450,
+        "result": "PASS",
+        "shards": 0,
+        "terminal_cases": 1200
+      }
+    },
+    {
+      "command": "python3 tools/sol7b/threaded_model.py",
+      "result": "passed",
+      "output": {
+        "abstraction": "known canonical bands; ordered upstream transport",
+        "completion_permutations": 24,
+        "deadlocks": 0,
+        "duplicate_deliveries_suppressed": 760,
+        "duplicate_rows": 0,
+        "failed_or_gapped_ranges_aborted": 48,
+        "global_terminal_only": true,
+        "implementation_validated": false,
+        "lost_rows": 0,
+        "negative_controls": {
+          "local_eof_false_readiness": true,
+          "runnable_actions": {
+            "complete": false,
+            "drain": false,
+            "enqueue": false
+          },
+          "wait_for_range_done": {
+            "capacity": 4,
+            "producer_done": false,
+            "queued": 4,
+            "remaining": 1
+          }
+        },
+        "peak_pieces": 1100,
+        "peak_queue": 4,
+        "producer_counts": [
+          1,
+          4,
+          8,
+          16
+        ],
+        "queue_capacity": 4,
+        "result": "PASS",
+        "retries": 760,
+        "successful_schedules": 424,
+        "threaded_interleavings": 472,
+        "windows": [
+          1,
+          2,
+          3,
+          64,
+          1100
+        ]
+      }
+    },
+    {
+      "command": "python3 tools/sol7b/work_witness.py /mnt/nvme2n1/erikg/sol7b-audit/cross_lcp_merge /mnt/nvme2n1/erikg/sol7b-audit",
+      "result": "passed",
+      "summary": "native cyclic/dollar exact order passes; sharded work differs"
+    }
+  ],
+  "builds": [
+    {
+      "command": "c++ -O3 -std=c++17 -pthread bit6/cross_lcp_merge.cpp -o /mnt/nvme2n1/erikg/sol7b-audit/cross_lcp_merge",
+      "result": "failed",
+      "summary": "undefined 16-byte atomic symbols; corrected with -latomic"
+    },
+    {
+      "command": "c++ -O3 -std=c++17 -pthread bit6/cross_lcp_merge.cpp -latomic -o /mnt/nvme2n1/erikg/sol7b-audit/cross_lcp_merge",
+      "result": "passed"
+    },
+    {
+      "command": "c++ -O3 -std=c++17 -pthread -I/home/erikg/usr/include bit6/pile_finish.cpp -L/home/erikg/usr/lib -lsdsl -ldivsufsort -ldivsufsort64 -latomic -o /mnt/nvme2n1/erikg/sol7b-audit/pile_finish",
+      "result": "passed"
+    },
+    {
+      "command": "c++ -O3 -std=c++17 -pthread tools/sol5i/flow_oracle.cpp -latomic -o /mnt/nvme2n1/erikg/sol7b-audit/flow_oracle",
+      "result": "passed"
+    }
+  ],
+  "not_run": [
+    "100MB chi/container/cmp gate",
+    "1GB chi/container/cmp gate",
+    "1GB P=1/P=8 counter gate",
+    "96t/100GiB P=4/8/16 wall sweep"
+  ],
+  "wall_measurements": [],
+  "concurrency": "compiler, native selftests and small standing oracles overlapped; no benchmark timings reported",
+  "source_sha256": {
+    "bit6/cross_lcp_merge.cpp": "4f706596125883cfa80be532dc882f4463f99427ed21472f855e352171d7a005",
+    "bit6/pile_finish.cpp": "8cc609d2b9fef737f40dd3811b6b5d2bd8703629f69668e683545bd0a4c288db",
+    "tools/sol5i/flow_oracle.cpp": "4cb84b4c1b46ac704945965d7646f4546cf58812abd9338b2e7729e3b1e2acbc"
+  },
+  "manualNotes": "contact_supervisor was unavailable in the callable catalog. Work rebaseline was not assumed authorized. No production changes were made.",
+  "residualRisks": [
+    "Merge remains serial; <=300s acceptance bar remains open.",
+    "Model assumes canonical band descriptors, not row-to-band reconstruction or real seam capture.",
+    "Proposed fixed logical shards require a new honest work baseline.",
+    "Reducer throughput and persistent retry/.done integration are unmeasured."
+  ]
+}
