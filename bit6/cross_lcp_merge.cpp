@@ -1110,6 +1110,13 @@ struct CorpusText {
         }
     }
     void prefetch(U i, U len) const {
+        if (cached && len && i < 2 * n) {
+            U p = i >= n ? i - n : i;
+            __builtin_prefetch(cached.get() + p, 0, 3);
+            if (len > 1 && len <= n - p)
+                __builtin_prefetch(cached.get() + p + len - 1, 0, 3);
+            return;
+        }
         if (!pool || !len || i >= 2 * n) return;
         len = std::min(len, 2 * n - i);
         while (len) {
@@ -3061,8 +3068,15 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
                 std::vector<std::vector<U>> pwin(k);
                 for (size_t j = 0; j < k; ++j) { cur[j] = aB[s][j]; end[j] = aB[s + 1][j]; wbase[j] = cur[j]; }
                 auto frontAt = [&](size_t j, U idx) -> U {   // idx: global row in [cur[j], end[j])
-                    if (idx >= wbase[j] && idx - wbase[j] < pwin[j].size())
-                        return pwin[j][idx - wbase[j]];
+                    if (idx >= wbase[j] && idx - wbase[j] < pwin[j].size()) {
+                        U w = idx - wbase[j];
+                        // The immutable corpus has no asynchronous pool
+                        // workers. Hide RAM latency using the already decoded
+                        // next fronts, without changing heap order or work.
+                        if (m2.cached && w + 16 < pwin[j].size())
+                            m2.prefetch(pwin[j][w + 16], 16);
+                        return pwin[j][w];
+                    }
                     require(idx < end[j], "window front bounds");
                     U len = std::min<U>(WIN, end[j] - idx);
                     pwin[j].resize(len);
