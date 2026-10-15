@@ -63,6 +63,7 @@
 //
 // Build: c++ -O3 -std=c++17 -pthread bit6/cross_lcp_merge.cpp -o /tmp/cross_lcp_merge
 #include <algorithm>
+#include <emmintrin.h>
 #include <atomic>
 #include <array>
 #include <chrono>
@@ -984,8 +985,13 @@ struct SideText {
 };
 std::atomic<U> SideText::g_gen{1};
 // Virtual doubled text: coordinates [0,2n) wrap into the original
-// referenced corpus segments. Raw bytes stay in bounded WinBytes pages;
-// remapping is applied only when bytes are returned to a consumer.
+// referenced corpus segments. A fitting corpus is remapped once into RAM;
+// larger corpora retain bounded WinBytes pages and remap on return.
+// The old path DID use its corpus pool: the banked sol5i 1GB run records
+// 30,567,717,347 hits / 2,992,893 misses. Its cost was repeated short-span
+// copies/remapping (and per-byte pool probes on page-crossing spans), not
+// absent hits. The 5-fill POOL_STATS printed during hash-build belongs to
+// that builder's temporary boundary-check hash reader, not the walk.
 struct CorpusText {
     U n = 0;
     bool pool = false;
@@ -993,6 +999,36 @@ struct CorpusText {
     std::vector<U> starts, fileIndex;
     std::vector<std::string> paths;
     std::vector<std::unique_ptr<WinBytes>> files;
+    // Immutable, remapped corpus RAM replaces (never supplements) this view's
+    // pool when it fits the same buffer budget. No doubled text is stored.
+    std::unique_ptr<uint8_t[]> cached;
+    mutable std::array<U, SharedPages::TIDS> cacheHits{};
+    ~CorpusText() {
+        if (cached) {
+            U hits = 0; for (U h : cacheHits) hits += h;
+            std::fprintf(stderr, "CORPUS_CACHE_STATS bytes=%llu hits=%llu demand_misses=0 preload_bytes=%llu\n",
+                (unsigned long long)n, (unsigned long long)hits, (unsigned long long)n);
+        }
+    }
+    // The data are immutable after open(), so a span can be borrowed without
+    // pool probes, seqlocks, copies, or per-symbol remapping. Wraps retain the
+    // general reader. Each charging thread owns its telemetry entry.
+    inline const uint8_t* span(U i, uint8_t* fallback, U len) const {
+        if (cached && i < 2 * n) {
+            U p = i >= n ? i - n : i;
+            if (len <= n - p) {
+                unsigned t = SharedPages::tid();
+                // tid() saturates in long-lived selftests; overflow threads
+                // share only the last counter and must charge it atomically.
+                if (t == SharedPages::TIDS - 1)
+                    __atomic_fetch_add(&cacheHits[t], U(1), __ATOMIC_RELAXED);
+                else ++cacheHits[t];
+                return cached.get() + p;
+            }
+        }
+        at_span(i, fallback, len);
+        return fallback;
+    }
     void open(std::vector<TextSeg> list, bool pooled = false) {
         for (auto& s : list) {
             if (!s.len) continue;
@@ -1001,6 +1037,10 @@ struct CorpusText {
                 segs.back().len += s.len;
             else segs.push_back(std::move(s));
         }
+        U cacheBytes = 0;
+        for (const auto& s : segs) cacheBytes += s.len;
+        const bool cacheFits = pooled && !no_pool() &&
+            cacheBytes <= 2 * SharedPages::pool_slot_count() * SharedPages::PS;
         for (const auto& s : segs) {
             starts.push_back(n); n += s.len;
             auto it = std::find(paths.begin(), paths.end(), s.path);
@@ -1009,7 +1049,7 @@ struct CorpusText {
                 paths.push_back(s.path);
                 auto r = std::make_unique<WinBytes>();
                 U bytes = fs::file_size(s.path);
-                r->open_ro(s.path, bytes, 0, pooled && !pool && bytes >= (1u << 20));
+                r->open_ro(s.path, bytes, 0, pooled && !cacheFits && !pool && bytes >= (1u << 20));
                 pool = pool || bool(r->pool);
                 files.push_back(std::move(r));
             }
@@ -1018,6 +1058,15 @@ struct CorpusText {
             fileIndex.push_back(f);
         }
         require(n && n <= UINT64_MAX / 2, "virtual corpus length");
+        if (cacheFits) {
+            cached.reset(new uint8_t[n]);
+            // read() remaps each segment exactly once, before publication to
+            // comparator threads. It deliberately bypasses the page pools.
+            read(0, cached.get(), n);
+            std::fprintf(stderr, "CORPUS_RAM_CACHE bytes=%llu budget_bytes=%llu immutable=1 remapped=1 doubled=0\n",
+                (unsigned long long)n,
+                (unsigned long long)(2 * SharedPages::pool_slot_count() * SharedPages::PS));
+        }
     }
     inline size_t segment(U i) const {
         if (segs.size() == 1) return 0;
@@ -1026,6 +1075,7 @@ struct CorpusText {
     inline uint8_t at(U i) const {
         if (i >= 2 * n) fail("virtual corpus byte bounds");
         if (i >= n) i -= n;
+        if (cached) return cached[i];
         size_t z = segment(i);
         const auto& s = segs[z];
         return s.remap[files[fileIndex[z]]->at(s.off + i - starts[z])];
@@ -1033,6 +1083,13 @@ struct CorpusText {
     void at_span(U i, void* out, U len) const {
         if (i > 2 * n || len > 2 * n - i) fail("virtual corpus span bounds");
         auto* q = static_cast<uint8_t*>(out);
+        if (cached) {
+            U p = i >= n ? i - n : i;
+            U take = std::min(len, n - p);
+            std::memcpy(q, cached.get() + p, take);
+            if (take < len) std::memcpy(q + take, cached.get(), len - take);
+            return;
+        }
         while (len) {
             U p = i >= n ? i - n : i;
             size_t z = segment(p);
@@ -1058,6 +1115,13 @@ struct CorpusText {
         }
     }
     void prefetch(U i, U len) const {
+        if (cached && len && i < 2 * n) {
+            U p = i >= n ? i - n : i;
+            __builtin_prefetch(cached.get() + p, 0, 3);
+            if (len > 1 && len <= n - p)
+                __builtin_prefetch(cached.get() + p + len - 1, 0, 3);
+            return;
+        }
         if (!pool || !len || i >= 2 * n) return;
         len = std::min(len, 2 * n - i);
         while (len) {
@@ -1441,6 +1505,22 @@ struct Budget {
     double tFast = 0, tPrep = 0, tProbe = 0, tScan = 0;
 };
 
+// Exact mismatch offset, vectorized only over complete, in-bounds blocks.
+// This changes byte loading, never the comparator's charged logical work.
+static inline U equal_prefix(const uint8_t* a, const uint8_t* b, U len) {
+    U i = 0;
+    while (len - i >= 16) {
+        unsigned same = unsigned(_mm_movemask_epi8(_mm_cmpeq_epi8(
+            _mm_loadu_si128(reinterpret_cast<const __m128i*>(a + i)),
+            _mm_loadu_si128(reinterpret_cast<const __m128i*>(b + i)))));
+        unsigned different = (~same) & 65535u;
+        if (different) return i + __builtin_ctz(different);
+        i += 16;
+    }
+    while (i < len && a[i] == b[i]) ++i;
+    return i;
+}
+
 // ---------------------------------------------------------------- fingerprints
 struct Keys {
     const CorpusText* m2 = nullptr;   // windowed M.M, 2n bytes
@@ -1476,15 +1556,14 @@ struct Keys {
         const bool tOn = cmp_timing();
         double t0 = tOn ? now_sec() : 0.0;
         {
-            uint8_t ab[16], bb[16];
-            m2->at_span(p1, ab, fast);
-            m2->at_span(p2, bb, fast);
-            for (; j < fast; ++j) {
-                if (ab[j] != bb[j]) {
-                    bud->symbols += j + 1; ++bud->fast_decided; bud->note_lce(j);
-                    if (tOn) bud->tFast += now_sec() - t0;
-                    return ab[j] < bb[j] ? -1 : 1;
-                }
+            uint8_t aStorage[16], bStorage[16];
+            const uint8_t* ab = m2->span(p1, aStorage, fast);
+            const uint8_t* bb = m2->span(p2, bStorage, fast);
+            j = equal_prefix(ab, bb, fast);
+            if (j < fast) {
+                bud->symbols += j + 1; ++bud->fast_decided; bud->note_lce(j);
+                if (tOn) bud->tFast += now_sec() - t0;
+                return ab[j] < bb[j] ? -1 : 1;
             }
         }
         if (tOn) bud->tFast += now_sec() - t0;
@@ -1530,8 +1609,8 @@ struct Keys {
         auto materialize = [&](SideScr& sc) {
             if (sc.ready) return;
             U hlen = (sc.aq + 1) * hp->k - sc.p;        // <= k <= 64
-            uint8_t hb[64];
-            m2->at_span(sc.p, hb, hlen);
+            uint8_t storage[64];
+            const uint8_t* hb = m2->span(sc.p, storage, hlen);
             U h = 0;
             for (U z = 0; z < hlen; ++z) h = h * HASH_BASE + ((U)hb[z] + 1);
             sc.h = h;
@@ -1555,9 +1634,9 @@ struct Keys {
             U mid = (m <= 1) ? 0 : (hp->P(jb) - sc.pj * upow((m - 1) * hp->k));
             U tail = 0;
             if (sc.r) {
-                uint8_t tb[64];
+                uint8_t storage[64];
                 U tlen = std::min<U>(sc.r, 64);
-                m2->at_span(jb * hp->k, tb, tlen);
+                const uint8_t* tb = m2->span(jb * hp->k, storage, tlen);
                 for (U i = 0; i < tlen; ++i) tail = tail * HASH_BASE + ((U)tb[i] + 1);
                 for (U i = 64; i < sc.r; ++i)   // k<=64 enforced by the clamp
                     tail = tail * HASH_BASE + ((U)m2->at(jb * hp->k + i) + 1);
@@ -1588,13 +1667,12 @@ struct Keys {
         U scanEnd = (lo >= mMax || (lo + 1) * k > cap) ? cap : (lo + 1) * k;
         U i = fast;
         {
-            uint8_t ab[64], bb[64];
+            uint8_t aStorage[64], bStorage[64];
             while (i < scanEnd) {
                 U w = std::min<U>(64, scanEnd - i);
-                m2->at_span(p1 + i, ab, w);
-                m2->at_span(p2 + i, bb, w);
-                U z = 0;
-                while (z < w && ab[z] == bb[z]) ++z;
+                const uint8_t* ab = m2->span(p1 + i, aStorage, w);
+                const uint8_t* bb = m2->span(p2 + i, bStorage, w);
+                U z = equal_prefix(ab, bb, w);
                 i += z;
                 if (z < w) break;
             }
@@ -1732,7 +1810,9 @@ static void build_hash_sparse(const CorpusText& m2, U n2, U k,
     for (U t = 0; t < tcount; ++t) ts.emplace_back(fix, t);
     for (auto& t : ts) t.join();
     // Verify absolute hashes at gap boundaries: window hash from sparse P
-    // must equal a direct recomputation over the windowed text.
+    // must equal a direct recomputation over the windowed text. This reader
+    // dies before the walk opens its own hp: its tiny POOL_STATS are NOT the
+    // walk's hit rate (bytes is checkpoint_bytes, not corpus length).
     HashSparse hp; hp.open_ro(hsPath, k, entries);
     U cands[] = {k, n2 / 2 / k * k, n2 / k * k};
     for (U c : cands) {
@@ -2776,7 +2856,7 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
     st.init(k);
     U n = 0; for (auto& S : sides) n += S.n;
     CorpusText m2; open_merge_text(sides, m2, true);
-    if (sparse) sparse->attachCorpus(m2); // reuse the comparator's pool, within its RAM envelope
+    if (sparse) sparse->attachCorpus(m2); // reuse the comparator's text cache, within its RAM envelope
     if (!pre) {
         hashK = hash_spacing();
         if (hashK > n / 2) hashK = std::max<U>(1, n / 2);   // degenerate-grid guard
@@ -2993,8 +3073,15 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
                 std::vector<std::vector<U>> pwin(k);
                 for (size_t j = 0; j < k; ++j) { cur[j] = aB[s][j]; end[j] = aB[s + 1][j]; wbase[j] = cur[j]; }
                 auto frontAt = [&](size_t j, U idx) -> U {   // idx: global row in [cur[j], end[j])
-                    if (idx >= wbase[j] && idx - wbase[j] < pwin[j].size())
-                        return pwin[j][idx - wbase[j]];
+                    if (idx >= wbase[j] && idx - wbase[j] < pwin[j].size()) {
+                        U w = idx - wbase[j];
+                        // The immutable corpus has no asynchronous pool
+                        // workers. Hide RAM latency using the already decoded
+                        // next fronts, without changing heap order or work.
+                        if (m2.cached && w + 16 < pwin[j].size())
+                            m2.prefetch(pwin[j][w + 16], 16);
+                        return pwin[j][w];
+                    }
                     require(idx < end[j], "window front bounds");
                     U len = std::min<U>(WIN, end[j] - idx);
                     pwin[j].resize(len);
