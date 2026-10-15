@@ -399,5 +399,79 @@
     "result": "passed",
     "summary": "Rerun after replay-window optimization: 40 fresh cases with per-seam references; 40 seeded cases also retain exact ordered trace.",
     "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/counter-summary.log"
+  },
+  {
+    "command": [
+      "python3",
+      "tools/sol7e/attest_sweep.py",
+      "padded"
+    ],
+    "result": "passed",
+    "output": [
+      "PWAY_LEDGER_PASS P=1 WALK=[3674629435, 60485597061, 1987510452] PLANNING=[0, 0, 0] OVERLAP=[0, 0, 0] SEAM=[0, 0, 0] chi=283296933 cmp=0 replay=0",
+      "PWAY_LEDGER_PASS P=4 WALK=[3674619757, 60480105257, 1987526302] PLANNING=[15835, 75965, 800] OVERLAP=[0, 0, 0] SEAM=[-9678, -5491804, 15850] chi=283296933 cmp=0 replay=0",
+      "PWAY_LEDGER_PASS P=8 WALK=[3674599453, 60478673268, 1987483450] PLANNING=[36937, 203480, 2216] OVERLAP=[0, 0, 0] SEAM=[-29982, -6923793, -27002] chi=283296933 cmp=0 replay=0",
+      "PWAY_LEDGER_PASS P=16 WALK=[3674606698, 60477880116, 1987420158] PLANNING=[78957, 452649, 5180] OVERLAP=[0, 0, 0] SEAM=[-22737, -7716945, -90294] chi=283296933 cmp=0 replay=0",
+      "PWAY_SWEEP_ATTESTED cases=4 P=1,4,8,16 per_producer_sums=exact baseline=exact no_replay=1 overhead_under_30pct=1 quiet_box=UNVALIDATED"
+    ],
+    "log": "tools/sol7e/ledger-summary.log"
+  },
+  {
+    "command": [
+      "verify",
+      "xsa/SOURCES.sha256.json"
+    ],
+    "result": "passed",
+    "output": [
+      "SOURCE_MANIFEST_PASS all_entries=exact runtime_native=identical"
+    ]
+  },
+  {
+    "command": [
+      "git",
+      "diff",
+      "--check"
+    ],
+    "result": "passed",
+    "output": []
+  },
+  {
+    "command": [
+      "c++",
+      "-O3",
+      "-std=c++17",
+      "-pthread",
+      "xsa/runtime/bit6/cross_lcp_merge.cpp",
+      "-latomic",
+      "-o",
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/runtime-cross_lcp_merge"
+    ],
+    "result": "passed",
+    "output": [
+      "Final padded runtime snapshot compiled successfully."
+    ]
+  },
+  {
+    "command": [
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/runtime-cross_lcp_merge",
+      "--selftest",
+      "10",
+      "--seed",
+      "1",
+      "--kway",
+      "8",
+      "--threads",
+      "16"
+    ],
+    "environment": {
+      "CROSS_V2_PRODUCERS": "16",
+      "CROSS_SHARDS": "16"
+    },
+    "result": "passed",
+    "output": [
+      "SPARSE_ORACLE_PASS modes=cyclic,dollar runs=exact seam_spool=exact production_bands=exact trivial_bases=exact terminal=exact legacy_shard_admission=1 WM=absent",
+      "SELFTEST_PASS count=10 seed=1 kway=8"
+    ],
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/runtime-final-selftest.log"
   }
 ]
