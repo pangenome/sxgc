@@ -38,4 +38,4 @@ COUNTER_IDENTITY_PASS fixture=4 P=8 mode=cyclic serial=[2033, 2456, 0] PLANNING=
 COUNTER_IDENTITY_PASS fixture=4 P=8 mode=dollar serial=[2031, 2446, 0] PLANNING=[4166, 4659, 0] OVERLAP=[0, 0, 0] SEAM=[0, 0, 0] total=[6197, 7105, 0]
 COUNTER_IDENTITY_PASS fixture=4 P=16 mode=cyclic serial=[2033, 2456, 0] PLANNING=[6644, 7241, 0] OVERLAP=[0, 0, 0] SEAM=[0, 0, 0] total=[8677, 9697, 0]
 COUNTER_IDENTITY_PASS fixture=4 P=16 mode=dollar serial=[2031, 2446, 0] PLANNING=[6642, 7231, 0] OVERLAP=[0, 0, 0] SEAM=[0, 0, 0] total=[8673, 9677, 0]
-SEAM_COUNTER_WITNESS_PASS cases=40 fixtures=5 P=1,4,8,16 modes=cyclic,dollar per_producer_sum=exact ordered_comparison_trace=exact SEAM=0 planning_replay=fully_charged bounded_work=FAIL
+SEAM_COUNTER_WITNESS_PASS cases=40 fixtures=5 P=1,4,8,16 modes=cyclic,dollar per_producer_sum=exact ordered_comparison_trace=exact SEAM=0 planning_replay=fully_charged launch_gates=UNVALIDATED

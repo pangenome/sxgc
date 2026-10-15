@@ -104,6 +104,9 @@ int main() {
         Budget budget; CoreStats stats;
         RowWitness sink(text.size(), p);
         core_merge_kway(sides, dollar, 16, budget, stats, sc, 4, false, &sink);
+        std::fprintf(stderr, "SEAM_TOTAL comparisons=%llu symbols=%llu probes=%llu\n",
+                     (unsigned long long)budget.comparisons,
+                     (unsigned long long)budget.symbols, (unsigned long long)budget.probes);
         seams += sink.check(dollar ? brute_dollar(text) : brute_cyclic(text));
         sc.cleanup(); ++cases;
     }
