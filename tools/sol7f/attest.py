@@ -4,7 +4,7 @@ from pathlib import Path
 base=Path('/mnt/nvme2n1/erikg');out=Path('tools/sol7f')
 records=[]
 for size in ['100m','1b']:
-    p8=base/f'sol7f-gate-{size}-p8-packed-final'
+    p8=base/(f'sol7f-gate-{size}-p8-'+('measured-final' if size=='1b' else 'packed-final'))
     p1=base/f'sol7f-gate-{size}-p1-serial-final'
     a=json.loads((p8/'result.json').read_text());s=json.loads((p1/'result.json').read_text())
     n={'100m':100000503,'1b':1000000665}[size]

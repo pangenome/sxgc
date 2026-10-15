@@ -1,0 +1,215 @@
+[
+  {
+    "name": "segment-codec",
+    "command": "c++ -O2 ... tools/sol7f/codec_oracle.cpp; sol7f-codec-oracle",
+    "result": "passed",
+    "output": [
+      "SOL7F_SEGMENT_CODEC_PASS cases=512 widths=1..8 records=1..4096 u64_lengths=1 singleton_tail_elision=1 exact_roundtrip=1 packed=480 raw_fallback=32"
+    ],
+    "log": "tools/sol7f/codec-result.log"
+  },
+  {
+    "name": "extent-accounting",
+    "command": "python3 tools/sol7f/extent_oracle.py /mnt/nvme2n1/erikg/sol7f-extent-oracle-packed",
+    "result": "passed",
+    "output": [
+      "SOL7F_XFS_EXPLICIT_EXTENT_PASS batches=2000 live_batches=11 variable_page_charges=1 fixed_slot_bytes=106496 budget_bytes=1171456 allocated_peak_bytes=438272 metadata_allowance_bytes=65536"
+    ],
+    "log": "tools/sol7f/extent-result.log"
+  },
+  {
+    "name": "native-production-oracles",
+    "command": "CROSS_V2_PRODUCERS=8 CROSS_V2_SPOOL_BYTES=851968 sol7f-merge --selftest 20 --seed 1 --kway 8 --threads 16",
+    "result": "passed",
+    "output": [
+      "SPARSE_ORACLE_PASS modes=cyclic,dollar runs=exact seam_spool=exact production_bands=exact trivial_bases=exact terminal=exact legacy_shard_admission=1 WM=absent",
+      "SELFTEST_PASS count=20 seed=1 kway=8"
+    ],
+    "log": "/mnt/nvme2n1/erikg/sol7f-selftest-packed.log"
+  },
+  {
+    "name": "packaged-runtime-oracles",
+    "command": "CROSS_V2_PRODUCERS=16 CROSS_V2_SPOOL_BYTES=1703936 bundled/cross_lcp_merge --selftest 20 --seed 1 --kway 8 --threads 16",
+    "result": "passed",
+    "output": [
+      "SPARSE_ORACLE_PASS modes=cyclic,dollar runs=exact seam_spool=exact production_bands=exact trivial_bases=exact terminal=exact legacy_shard_admission=1 WM=absent",
+      "SELFTEST_PASS count=20 seed=1 kway=8"
+    ],
+    "log": "/mnt/nvme2n1/erikg/sol7f-runtime-p16.log"
+  },
+  {
+    "name": "fresh-and-seeded-counter-oracle",
+    "command": "python3 tools/sol7e/work_witness.py sol7f-witness-final sol7f-witness-results",
+    "result": "passed",
+    "output": [
+      "SEAM_HALO_PASS fixture=4 P=16 mode=dollar seam=14 PLANNING=[333, 348, 0] OVERLAP=[0, 0, 0] SEAM=[-19, -16, 0] rows=exact",
+      "SEAM_HALO_PASS fixture=4 P=16 mode=dollar seam=15 PLANNING=[295, 306, 0] OVERLAP=[0, 0, 0] SEAM=[11, 9, 0] rows=exact",
+      "FRESH_SEAM_COUNTER_WITNESS_PASS cases=40 fixtures=5 P=1,4,8,16 modes=cyclic,dollar rows=exact seeded_reference=exact per_seam_journal=exact OVERLAP=0 P1_extra=0"
+    ],
+    "log": "/mnt/nvme2n1/erikg/sol7f-witness-final.log"
+  },
+  {
+    "name": "canonical-flow",
+    "command": "sol7f-flow-final",
+    "result": "passed",
+    "output": [
+      "FLOW_ORACLE_PASS initial_minus_one=1 oversized_positive_window=1 unsigned_credit=1 blocked_until_consumed=1"
+    ],
+    "log": "/mnt/nvme2n1/erikg/sol7f-flow-final.log"
+  },
+  {
+    "name": "sweep",
+    "command": "pile_finish --selftest-sweep-monoid",
+    "result": "passed",
+    "output": [
+      "SWEEP_STATE_CARRY_ORACLE_PASS streams=2048 splits=34785 NUL=1 byte05=1 singleton=1 periodic_colors=1 empty=1 ordered_witnesses=1 final_state=1"
+    ],
+    "log": "/mnt/nvme2n1/erikg/sol7f-sweep.log"
+  },
+  {
+    "name": "repair",
+    "command": "pile_finish --selftest-repair-chunks",
+    "result": "passed",
+    "output": [
+      "ENDPOINT_STREAM_PASS n=61 k=1 r=17 padding_rows=10 cyclic_seam_certified=1 classes=2",
+      "ENDPOINT_STREAM_PASS n=61 k=1 r=17 padding_rows=10 cyclic_seam_certified=1 classes=2",
+      "CHUNKED_REPAIR_ORACLE_PASS streams=128 widths=3392 workers=4 both_coalescers=1 class_flanks=1 padding_straddle=1 dollar=1 legal_00_05=1"
+    ],
+    "log": "/mnt/nvme2n1/erikg/sol7f-repair.log"
+  },
+  {
+    "name": "seam-spool-reader",
+    "command": "pile_finish --selftest-seam-spool sol7f-seam-spool",
+    "result": "passed",
+    "output": [
+      "BAND_PROGRESS_READER_ORACLE_PASS trivial_bases=1 band_only=1 deferred_class=1 EOF_clamp=1 terminal=1 delayed_full_band_EOF=1 backward_terminal_refused=1 malformed_refusals=12",
+      "SEAM_SPOOL_READER_ORACLE_PASS empty=1 adversarial_orders=2 padded_flanks=1 NUL=1 byte05=1 malformed_refusals=3"
+    ],
+    "log": "/mnt/nvme2n1/erikg/sol7f-seam-spool.log"
+  },
+  {
+    "name": "front-door-build",
+    "command": "cargo build --manifest-path xsa/Cargo.toml",
+    "result": "passed",
+    "output": [
+      "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4m 34s"
+    ],
+    "log": "/mnt/nvme2n1/erikg/sol7f-cargo-packed-final.log"
+  },
+  {
+    "name": "capacity-plans",
+    "command": "python3 tools/sol7f/plans.py xsa/target/debug/xsa",
+    "result": "passed",
+    "output": [
+      "SOL7F_PLAN_REFUSAL_PASS oversized_configured_budget=1 below_progress_reserve=1",
+      "SOL7F_PLAN_ONLY_PASS cases=2 configured_spool=2n capacity_scenarios=2.6TB,13.5TB sparse_inputs=1"
+    ],
+    "log": "/mnt/nvme2n1/erikg/sol7f-plans-packed-driver.log"
+  },
+  {
+    "name": "model-result.json",
+    "result": "passed",
+    "output": {
+      "P": [
+        1,
+        4,
+        8,
+        16
+      ],
+      "P8_completion_orders": 68,
+      "W": 1100,
+      "blocks": 49971,
+      "boundary": "inclusive",
+      "deadlocks": 0,
+      "duplicate_rows": 0,
+      "exact_rows": true,
+      "exact_runs": true,
+      "lost_rows": 0,
+      "peak_bands": 1100,
+      "persistent_recovery": false,
+      "publication": "committed_prefix_only",
+      "publisher_stalls": true,
+      "repeated_cuts": true,
+      "result": "PASS",
+      "rows": 66735,
+      "schedules": 400,
+      "singleton_targets": true,
+      "spool_budget": "global_with_active_batch_reserve",
+      "terminal": "all_ranges_only"
+    }
+  },
+  {
+    "name": "standing-threaded.json",
+    "result": "passed",
+    "output": {
+      "abstraction": "known canonical bands; ordered upstream transport",
+      "completion_permutations": 24,
+      "deadlocks": 0,
+      "duplicate_deliveries_suppressed": 760,
+      "duplicate_rows": 0,
+      "failed_or_gapped_ranges_aborted": 48,
+      "global_terminal_only": true,
+      "implementation_validated": false,
+      "lost_rows": 0,
+      "negative_controls": {
+        "local_eof_false_readiness": true,
+        "runnable_actions": {
+          "complete": false,
+          "drain": false,
+          "enqueue": false
+        },
+        "wait_for_range_done": {
+          "capacity": 4,
+          "producer_done": false,
+          "queued": 4,
+          "remaining": 1
+        }
+      },
+      "peak_pieces": 1100,
+      "peak_queue": 4,
+      "producer_counts": [
+        1,
+        4,
+        8,
+        16
+      ],
+      "queue_capacity": 4,
+      "result": "PASS",
+      "retries": 760,
+      "successful_schedules": 424,
+      "threaded_interleavings": 472,
+      "windows": [
+        1,
+        2,
+        3,
+        64,
+        1100
+      ]
+    }
+  },
+  {
+    "name": "standing-wait.json",
+    "result": "passed",
+    "output": {
+      "active_producer_inequalities": 3510,
+      "band_size": 65536,
+      "bases": "65536*b",
+      "deadlocks": 0,
+      "implementation_validated": false,
+      "malformed_extents_refused": 10,
+      "maximum_backlog": 1100,
+      "overlapping_band_spans": true,
+      "randomized_interleavings": 1450,
+      "result": "PASS",
+      "shards": 0,
+      "terminal_cases": 1200
+    }
+  },
+  {
+    "name": "source-manifest",
+    "result": "passed",
+    "entries": 57,
+    "native_runtime_identical": true,
+    "source_sha256": "74edde327600de23916cc23290e26c4b20bb614fcba2ff6d555199956d995111"
+  }
+]
