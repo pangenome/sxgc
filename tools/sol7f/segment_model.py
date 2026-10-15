@@ -6,18 +6,26 @@ from concurrent.futures import ThreadPoolExecutor
 def trial(seed):
     rng = random.Random(seed)
     p = [1,4,8,16][seed%4]
-    n = rng.randrange(0,250)
+    n = 2400 if seed%50==0 else rng.randrange(0,250)
     # Identical BWT characters across producer seams, singleton targets,
     # repeated cuts, and empty ranges are all legal.
-    chars = [rng.randrange(3) if rng.randrange(3)==0 else 0 for _ in range(n)]
+    chars = [i%3 for i in range(n)] if seed%50==0 else [rng.randrange(3) if rng.randrange(3)==0 else 0 for _ in range(n)]
     positions = list(range(n)); rng.shuffle(positions)
     targets = set(rng.sample(positions,min(n,rng.randrange(25))))
     cuts = sorted([0,n]+[rng.randrange(n+1) for _ in range(p-1)])
     cv = threading.Condition()
     disk = [[] for _ in range(p)]
-    used = [0]*p; quota = 3 * (1 + seed%4); blocked = [0]*p
+    used = [0]*p; quota = 3 * (1 + seed%4); active = [0]; blocked = [0]*p
     committed = [0]*p; done = [False]*p
     actual = []; observed = []; errors = []
+    bands = []; acked = []; terminal = [False]
+    def downstream():
+        while True:
+            with cv:
+                cv.wait_for(lambda: bands or terminal[0])
+                if not bands: break
+                acked.append(bands.pop(0)); cv.notify_all()
+            if len(acked)%17==0: time.sleep(.00001)
     def producer(i):
         records = []; pending = None
         def flush():
@@ -35,7 +43,7 @@ def trial(seed):
         for start in range(0,len(records),3):
             batch = records[start:start+3]
             with cv:
-                while used[i]+len(batch)>quota:
+                while sum(used)+len(batch)>quota-(0 if i==active[0] else 3):
                     blocked[i]+=1; cv.wait()
                 used[i]+=len(batch)
             disk[i].extend(batch)
@@ -48,6 +56,7 @@ def trial(seed):
         for i in range(p):
             record=0
             assert row==cuts[i]
+            with cv: active[0]=i; cv.notify_all()
             while True:
                 with cv:
                     cv.wait_for(lambda: committed[i]>record or done[i])
@@ -58,6 +67,9 @@ def trial(seed):
                     assert segment[0]==head and segment[-1]==tail
                     assert all(value==c for value in chars[row:row+length])
                     assert length==1 or not targets.intersection(segment)
+                    with cv:
+                        cv.wait_for(lambda: len(bands)<1100)
+                        bands.append(tuple(segment)); cv.notify_all()
                     actual.extend(segment)
                     observed.append((c,length,head,tail))
                     row+=length
@@ -71,9 +83,11 @@ def trial(seed):
                     assert row==cuts[i+1]
                     break
         assert row==n
+        with cv: terminal[0]=True; cv.notify_all()
     def guard(fn,*args):
         try: fn(*args)
         except BaseException as e: errors.append(repr(e))
+    sink=threading.Thread(target=guard,args=(downstream,));sink.start()
     consumer=threading.Thread(target=guard,args=(reducer,));consumer.start()
     producers=[threading.Thread(target=guard,args=(producer,i)) for i in range(p)]
     rng.shuffle(producers)
@@ -81,6 +95,9 @@ def trial(seed):
     for t in producers:t.join(5);assert not t.is_alive()
     consumer.join(5);assert not consumer.is_alive()
     assert not errors,errors
+    sink.join(5);assert not sink.is_alive()
+    assert [x for band in acked for x in band]==positions
+    assert all(x==0 for x in used)
     assert actual==positions
     def coalesce(runs):
         out=[]
@@ -91,4 +108,4 @@ def trial(seed):
     assert coalesce(observed)==coalesce((chars[i],1,positions[i],positions[i]) for i in range(n))
     return n
 rows=sum(trial(seed) for seed in range(400))
-print(json.dumps(dict(result='PASS', schedules=400, spool_budget='partitioned_per_producer', boundary='inclusive', publisher_stalls=True, W=1100, rows=rows, P=[1,4,8,16], exact_rows=True, exact_runs=True, singleton_targets=True, repeated_cuts=True, publication='committed_prefix_only', terminal='all_ranges_only', persistent_recovery=False),sort_keys=True))
+print(json.dumps(dict(result='PASS', schedules=400, spool_budget='global_with_active_batch_reserve', boundary='inclusive', publisher_stalls=True, W=1100, rows=rows, P=[1,4,8,16], exact_rows=True, exact_runs=True, singleton_targets=True, repeated_cuts=True, publication='committed_prefix_only', terminal='all_ranges_only', persistent_recovery=False),sort_keys=True))
