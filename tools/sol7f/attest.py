@@ -26,8 +26,11 @@ for size in ['100m','1b']:
     stalls=[dict(producer=int(p),blocks=int(b),seconds=float(t),budget_bytes=int(q)) for p,b,t,q in re.findall(r'CROSS_SPOOL_STALL producer=(\d+) blocks=(\d+) seconds=([\d.]+) quota_bytes=(\d+)',log)]
     assert len(stalls)==8
     samples=[list(map(float,line.split())) for line in (p8/'sol7f-du.log').read_text().splitlines()]
+    assert samples[0][0]<15
+    assert max((b[0]-a[0] for a,b in zip(samples,samples[1:])),default=0)<15
+    assert samples[-1][0]>=a['total_wall']-15,(samples[-1][0],a['total_wall'])
     peak=max(int(x[3]) for x in samples)
-    item=dict(size=size,n=n,P8=a,P1=s,stalls=stalls,total_blocks=sum(x['blocks'] for x in stalls),summed_blocked_thread_seconds=sum(x['seconds'] for x in stalls),allocated_disc_peak_bytes=peak,disc_peak_per_n=peak/n,output_only_peak_bytes=max(int(x[1]) for x in samples),output_apparent_peak_bytes=max(int(x[4]) for x in samples),sampler_cadence_s=10,disc_bar_pass=peak<=8.6*n,wall_bar_pass=a['merge_wall']<=320,quiet_box_attested=False)
+    item=dict(size=size,n=n,P8=a,P1=s,stalls=stalls,total_blocks=sum(x['blocks'] for x in stalls),summed_blocked_thread_seconds=sum(x['seconds'] for x in stalls),allocated_disc_peak_bytes=peak,disc_peak_per_n=peak/n,output_only_peak_bytes=max(int(x[1]) for x in samples),output_apparent_peak_bytes=max(int(x[4]) for x in samples),sampler_cadence_s=10,sampler_complete=True,disc_bar_pass=(peak<=8.6*n) if size=='1b' else None,wall_bar_pass=(a['merge_wall']<=320) if size=='1b' else None,quiet_box_attested=False)
     if size=='1b':
         assert s['WALK']==[3674629435,60485597061,1987510452]
         assert a['WALK']==[3674599453,60478673268,1987483450]

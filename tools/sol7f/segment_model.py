@@ -114,5 +114,33 @@ def trial(seed):
     if n==2400: assert peaks[1]==1100
     return n,sum(blocked),peaks,tuple(completion),p
 trials=[trial(seed) for seed in range(400)]
+# Exhaust every P=8 local EOF order independently of the threaded schedules.
+# Eight producers share an eight-batch budget. Active committed prefixes
+# can drain before any EOF; EOF order is independent of payload publication.
+from itertools import permutations
+p8_eof_orders=0; prefix_credit_releases=0
+for order in permutations(range(8)):
+    used=0; eof=[False]*8; drained=[False]*8; published=[False]*8; active=0; output=[]
+    for producer in reversed(order):
+        limit=8-(0 if producer==active else 1)
+        if used+1>limit:
+            # Drain the committed active prefix without waiting for its EOF.
+            # Waiting for local EOF here would deadlock this schedule.
+            assert published[active] and not drained[active]
+            drained[active]=True;output.append(active);used-=1
+            prefix_credit_releases+=1
+        assert used+1<=limit
+        published[producer]=True;used+=1
+    for arrived in (None,)+order:
+        if arrived is not None:eof[arrived]=True
+        while active<8:
+            if not drained[active]:
+                drained[active]=True;output.append(active);used-=1
+            if not eof[active]:break
+            active+=1
+        if active==8:assert all(eof)
+    assert output==list(range(8)) and active==8 and used==0
+    p8_eof_orders+=1
+assert p8_eof_orders==40320 and prefix_credit_releases==35280
 rows=sum(t[0] for t in trials)
-print(json.dumps(dict(result='PASS', deadlocks=0, lost_rows=0, duplicate_rows=0, blocks=sum(t[1] for t in trials), peak_bands=max(t[2][1] for t in trials), P8_completion_orders=len({t[3] for t in trials if t[4]==8}), schedules=400, spool_budget='global_with_active_batch_reserve', boundary='inclusive', publisher_stalls=True, W=1100, rows=rows, P=[1,4,8,16], exact_rows=True, exact_runs=True, singleton_targets=True, repeated_cuts=True, publication='committed_prefix_only', terminal='all_ranges_only', persistent_recovery=False),sort_keys=True))
+print(json.dumps(dict(result='PASS', P8_EOF_permutations=p8_eof_orders, prefix_credit_releases=prefix_credit_releases, deadlocks=0, lost_rows=0, duplicate_rows=0, blocks=sum(t[1] for t in trials), peak_bands=max(t[2][1] for t in trials), P8_completion_orders=len({t[3] for t in trials if t[4]==8}), schedules=400, spool_budget='global_with_active_batch_reserve', boundary='inclusive', publisher_stalls=True, W=1100, rows=rows, P=[1,4,8,16], exact_rows=True, exact_runs=True, singleton_targets=True, repeated_cuts=True, publication='committed_prefix_only', terminal='all_ranges_only', persistent_recovery=False),sort_keys=True))

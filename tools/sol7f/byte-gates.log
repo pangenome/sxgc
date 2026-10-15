@@ -1,0 +1,12 @@
+100m P=8:
+SXI2_PASS bytes=48768685 lite=1 members=6
+PILE_FINISH_DONE chi=29716349 n=100000503 r=38647515 container=/mnt/nvme2n1/erikg/sol7f-gate-100m-p8-packed-final/frag.sxi2
+merge_rc=0 finish_rc=0 cmp_rc=0
+1b P=8:
+SXI2_PASS bytes=467814822 lite=1 members=6
+PILE_FINISH_DONE chi=283296933 n=1000000665 r=368036609 container=/mnt/nvme2n1/erikg/sol7f-gate-1b-p8-measured-final/frag.sxi2
+merge_rc=0 finish_rc=0 cmp_rc=0
+1b P=1:
+SXI2_PASS bytes=467814822 lite=1 members=6
+PILE_FINISH_DONE chi=283296933 n=1000000665 r=368036609 container=/mnt/nvme2n1/erikg/sol7f-gate-1b-p1-serial-final/frag.sxi2
+merge_rc=0 finish_rc=0 cmp_rc=0

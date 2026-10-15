@@ -1,0 +1,55 @@
+CROSS_STAGE_WORK stage=prepare pass=0 comparisons=89749 symbols_compared=209139 probes=144
+CROSS_STAGE_WORK stage=plan pass=0 comparisons=36937 symbols_compared=203480 probes=2216
+CROSS_SPOOL_STALL producer=0 blocks=0 seconds=0.000000 quota_bytes=1999994880
+CROSS_SPOOL_STALL producer=1 blocks=1 seconds=18.510841 quota_bytes=1999994880
+CROSS_SPOOL_STALL producer=2 blocks=1 seconds=18.508728 quota_bytes=1999994880
+CROSS_SPOOL_STALL producer=3 blocks=2 seconds=18.512771 quota_bytes=1999994880
+CROSS_SPOOL_STALL producer=4 blocks=2 seconds=18.519576 quota_bytes=1999994880
+CROSS_SPOOL_STALL producer=5 blocks=2 seconds=18.518772 quota_bytes=1999994880
+CROSS_SPOOL_STALL producer=6 blocks=2 seconds=18.505658 quota_bytes=1999994880
+CROSS_SPOOL_STALL producer=7 blocks=1 seconds=18.402830 quota_bytes=1999994880
+CROSS_STAGE_WORK stage=heap pass=0 comparisons=3674509704 symbols_compared=60478464129 probes=1987483306
+CROSS_STAGE_WORK stage=WALK pass=0 comparisons=3674599453 symbols_compared=60478673268 probes=1987483450
+CROSS_STAGE_WORK stage=PLANNING pass=0 comparisons=36937 symbols_compared=203480 probes=2216
+CROSS_STAGE_WORK stage=OVERLAP pass=0 comparisons=0 symbols_compared=0 probes=0
+CROSS_SEAM_TOTAL comparisons=-29982 symbols_compared=-6923793 probes=-27002 reference=serial_range signed=1 replay=0
+CROSS_STAGE_WORK stage=producer pass=0 comparisons=446043946 symbols_compared=10625696079 probes=451493210
+CROSS_STAGE_WORK stage=planning_seam pass=0 comparisons=0 symbols_compared=0 probes=0
+CROSS_STAGE_WORK stage=overlap_seam pass=0 comparisons=0 symbols_compared=0 probes=0
+CROSS_STAGE_WORK stage=reference_range pass=0 comparisons=446043966 symbols_compared=10625697154 probes=451493298
+CROSS_SEAM_WORK seam=0 comparisons=-20 symbols_compared=-1075 probes=-88 signed=1
+CROSS_STAGE_WORK stage=producer pass=1 comparisons=453275568 symbols_compared=7998667949 probes=302169232
+CROSS_STAGE_WORK stage=planning_seam pass=1 comparisons=5277 symbols_compared=31698 probes=504
+CROSS_STAGE_WORK stage=overlap_seam pass=1 comparisons=0 symbols_compared=0 probes=0
+CROSS_STAGE_WORK stage=reference_range pass=1 comparisons=453286407 symbols_compared=8003380913 probes=302208588
+CROSS_SEAM_WORK seam=1 comparisons=-10839 symbols_compared=-4712964 probes=-39356 signed=1
+CROSS_STAGE_WORK stage=producer pass=2 comparisons=446458618 symbols_compared=7138812258 probes=205908776
+CROSS_STAGE_WORK stage=planning_seam pass=2 comparisons=5279 symbols_compared=20349 probes=284
+CROSS_STAGE_WORK stage=overlap_seam pass=2 comparisons=0 symbols_compared=0 probes=0
+CROSS_STAGE_WORK stage=reference_range pass=2 comparisons=446463558 symbols_compared=7138129519 probes=205866152
+CROSS_SEAM_WORK seam=2 comparisons=-4940 symbols_compared=682739 probes=42624 signed=1
+CROSS_STAGE_WORK stage=producer pass=3 comparisons=467909518 symbols_compared=7094636496 probes=218797314
+CROSS_STAGE_WORK stage=planning_seam pass=3 comparisons=5274 symbols_compared=31175 probes=442
+CROSS_STAGE_WORK stage=overlap_seam pass=3 comparisons=0 symbols_compared=0 probes=0
+CROSS_STAGE_WORK stage=reference_range pass=3 comparisons=467913149 symbols_compared=7096251496 probes=218794638
+CROSS_SEAM_WORK seam=3 comparisons=-3631 symbols_compared=-1615000 probes=2676 signed=1
+CROSS_STAGE_WORK stage=producer pass=4 comparisons=466656968 symbols_compared=6931132732 probes=208987690
+CROSS_STAGE_WORK stage=planning_seam pass=4 comparisons=5279 symbols_compared=28472 probes=204
+CROSS_STAGE_WORK stage=overlap_seam pass=4 comparisons=0 symbols_compared=0 probes=0
+CROSS_STAGE_WORK stage=reference_range pass=4 comparisons=466662186 symbols_compared=6931828004 probes=209003748
+CROSS_SEAM_WORK seam=4 comparisons=-5218 symbols_compared=-695272 probes=-16058 signed=1
+CROSS_STAGE_WORK stage=producer pass=5 comparisons=466576465 symbols_compared=6842683224 probes=191276442
+CROSS_STAGE_WORK stage=planning_seam pass=5 comparisons=5274 symbols_compared=32284 probes=272
+CROSS_STAGE_WORK stage=overlap_seam pass=5 comparisons=0 symbols_compared=0 probes=0
+CROSS_STAGE_WORK stage=reference_range pass=5 comparisons=466577510 symbols_compared=6841377367 probes=191258164
+CROSS_SEAM_WORK seam=5 comparisons=-1045 symbols_compared=1305857 probes=18278 signed=1
+CROSS_STAGE_WORK stage=producer pass=6 comparisons=467203016 symbols_compared=7046805396 probes=207675302
+CROSS_STAGE_WORK stage=planning_seam pass=6 comparisons=5277 symbols_compared=27144 probes=312
+CROSS_STAGE_WORK stage=overlap_seam pass=6 comparisons=0 symbols_compared=0 probes=0
+CROSS_STAGE_WORK stage=reference_range pass=6 comparisons=467202286 symbols_compared=7046130082 probes=207683082
+CROSS_SEAM_WORK seam=6 comparisons=730 symbols_compared=675314 probes=-7780 signed=1
+CROSS_STAGE_WORK stage=producer pass=7 comparisons=460385605 symbols_compared=6800029995 probes=201175340
+CROSS_STAGE_WORK stage=planning_seam pass=7 comparisons=5277 symbols_compared=32358 probes=198
+CROSS_STAGE_WORK stage=overlap_seam pass=7 comparisons=0 symbols_compared=0 probes=0
+CROSS_STAGE_WORK stage=reference_range pass=7 comparisons=460390624 symbols_compared=6802593387 probes=201202638
+CROSS_SEAM_WORK seam=7 comparisons=-5019 symbols_compared=-2563392 probes=-27298 signed=1

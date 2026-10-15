@@ -59,3 +59,10 @@ oracle covers widths 1..8, full batches, partial batches, UINT64_MAX lengths,
 singletons and raw fallback; native column/class and byte gates exercise it.
 The 400-schedule credit proof is unchanged: a batch's page charge is known
 before admission, and the active range retains one maximum-batch reserve.
+
+The final model additionally exhausts all 40,320 P=8 EOF delivery permutations.
+In 35,280 schedules, admitting the final writer requires consuming the active
+committed prefix before any EOF. This explicitly exercises the prefix-progress
+rule; waiting for local EOF at that point would deadlock. Every permutation
+retains ordered rows and global-only terminal. This strengthens the original
+400-schedule pre-implementation credit proof.
