@@ -1528,6 +1528,9 @@ struct Keys {
     U n = 0;
     bool dollar = false;           // final $-suffix mode vs cyclic (M^infty) mode
     Budget* bud = nullptr;
+#ifdef SOL7D_TRACE
+    std::vector<std::pair<U, U>>* trace = nullptr; // native witness only
+#endif
 
     void init(const CorpusText* m, const HashSparse* h, U len, bool dol, Budget* b) {
         m2 = m; hp = h; n = len; dollar = dol; bud = b;
@@ -1547,6 +1550,9 @@ struct Keys {
     int cmp(U p1, U p2) const {
         require(p1 != p2 && p1 < n && p2 < n, "comparator bounds");
         ++bud->comparisons;
+#ifdef SOL7D_TRACE
+        if (trace) trace->emplace_back(p1, p2);
+#endif
         U cap = dollar ? std::min(n - p1, n - p2) : n;
         U fast = std::min<U>(cap, 16), j = 0;
         // Per-comparison phase timers are DIAGNOSTIC (CROSS_KWAY's t_fast/...)
@@ -3047,8 +3053,15 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
     };
     std::vector<HeapCheckpoint> checkpoints(seedHeap ? S : 0);
     Budget seedWork;
+#ifdef SOL7D_TRACE
+    std::vector<std::pair<U, U>> seedTrace;
+    std::vector<std::vector<std::pair<U, U>>> producerTrace(S);
+#endif
     if (seedHeap) {
         Keys replayKeys; replayKeys.init(&m2, &hp, n, dollar, &seedWork);
+#ifdef SOL7D_TRACE
+        replayKeys.trace = &seedTrace;
+#endif
         std::vector<U> cur(k, 0), values;
         std::vector<size_t> heapSides;
         auto less = [&](size_t a, size_t b) {
@@ -3116,6 +3129,9 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
                 SparseWalkSink* sink = target ? target->shardSink(s) : nullptr;
                 if (sink) sink->beginShard(s, R[s], R[s + 1]);
                 Keys skeys; skeys.init(&m2, &hp, n, dollar, &shardBud[work]);
+#ifdef SOL7D_TRACE
+                skeys.trace = &producerTrace[s];
+#endif
                 constexpr U W = 8192;
                 std::vector<U> buf(W);
                 U nb = 0, out = R[s], emitted = 0, step = 0;
@@ -3236,6 +3252,16 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
         launch(sparse, 0, ts);
         for (auto& t : ts) if (t.joinable()) t.join();
     }
+#ifdef SOL7D_TRACE
+    if (seedHeap) {
+        std::vector<std::pair<U, U>> combined;
+        for (const auto& trace : producerTrace)
+            combined.insert(combined.end(), trace.begin(), trace.end());
+        require(combined == seedTrace, "seeded comparison trace identity");
+        std::fprintf(stderr, "SEAM_TRACE_PASS pairs=%llu ordered_operands=exact\n",
+                     (unsigned long long)combined.size());
+    }
+#endif
     if (!sparse) { if (packWm) wmPacker.close(); else ::close(fd); }
     for (U pass = 0; pass < passes; ++pass) {
         Budget heapWork;

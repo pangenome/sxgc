@@ -3918,6 +3918,7 @@
     }
   ],
   "logical_identity": true,
+  "ordered_comparison_operands_exact": true,
   "bounded_work_pass": false,
   "reason": "Exact serial replay contributes 100% of serial heap work before rank planning.",
   "production_parallel_validated": false,

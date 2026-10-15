@@ -1,5 +1,6 @@
 // Test the surviving rank planner's row handoff directly, before any band
 // protocol promotion. This is deliberately NOT a production sink.
+#define SOL7D_TRACE 1
 #define main cross_merge_program_main
 #include "../../bit6/cross_lcp_merge.cpp"
 #undef main

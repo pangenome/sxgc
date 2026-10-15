@@ -37,6 +37,8 @@ for line in log.read_text().splitlines():
         assert key not in target
         target[key] = values
 assert len(cases) == 40
+assert log.read_text().count('SEAM_TRACE_PASS ') == 30
+assert 'SHARD_ROW_SEAM_WITNESS_PASS cases=40 seams=242' in log.read_text()
 baselines = {(case['fixture'], case['mode']): case for case in cases if case['P'] == 1}
 for case in cases:
     stages = case['stages']
@@ -60,7 +62,7 @@ for case in cases:
                 SEAM=[observed[i] - expected[i] for i in range(3)], total=observed,
                 overhead=[planning[i] / base['heap'][i] if base['heap'][i] else None for i in range(3)])
 result = dict(result='PASS', metrics=metrics, cases=cases,
-              logical_identity=True, bounded_work_pass=False,
+              logical_identity=True, ordered_comparison_operands_exact=True, bounded_work_pass=False,
               reason='Exact serial replay contributes 100% of serial heap work before rank planning.',
               production_parallel_validated=False, one_gb_validated=False, log=str(log))
 (scratch / 'counter-witness.json').write_text(json.dumps(result, indent=2) + '\n')
@@ -68,4 +70,4 @@ for case in cases:
     print('COUNTER_IDENTITY_PASS fixture={fixture} P={P} mode={mode} serial={serial} '
           'PLANNING={PLANNING} OVERLAP={OVERLAP} SEAM={SEAM} total={total}'.format(**case))
 print('SEAM_COUNTER_WITNESS_PASS cases=40 fixtures=5 P=1,4,8,16 modes=cyclic,dollar '
-      'per_producer_sum=exact SEAM=0 planning_replay=fully_charged bounded_work=FAIL')
+      'per_producer_sum=exact ordered_comparison_trace=exact SEAM=0 planning_replay=fully_charged bounded_work=FAIL')
