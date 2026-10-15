@@ -15,3 +15,13 @@ completion. Local range completion must never publish global EOF.
 The contact_supervisor tool is absent from the complete callable tool catalog;
 no substitute messaging is used. The supplied final decision is sufficient to
 proceed. No new scope decision is inferred.
+
+The first 100 MB diagnostic was stopped during serial oracle acquisition:
+scalar position reads repeatedly decode SXP4 groups. The oracle now uses
+4096-row front windows, matching producer physical reads while retaining the
+exact comparison operands. The 40-case fresh witness and original 40-case
+seeded ordered-trace witness were rerun successfully. No scalar oracle wall
+is a launch-wall measurement. The stopped gate logs are retained in scratch.
+
+The box has sustained unrelated impg/sample_projection CPU activity. No quiet-
+box performance attestation can be made from runs under those conditions.

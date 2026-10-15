@@ -2988,6 +2988,19 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
 #ifdef SOL7D_TRACE
         replayKeys.trace = &seedTrace;
 #endif
+        // The oracle must not turn each scalar front access into an SXP4
+        // group decode. Borrow the same immutable bulk front windows as the
+        // producer; this changes physical reads, never comparator operands.
+        std::vector<U> replayBase(k, UINT64_MAX);
+        std::vector<std::vector<U>> replayWindows(k);
+        auto replayFront = [&](size_t side, U cursor) {
+            auto& window = replayWindows[side];
+            if (replayBase[side] == UINT64_MAX || cursor < replayBase[side] || cursor-replayBase[side] >= window.size()) {
+                window.resize(std::min<U>(4096, sides[side].n-cursor));
+                pos[side]->read(cursor,window.data(),window.size()); replayBase[side]=cursor;
+            }
+            return window[cursor-replayBase[side]];
+        };
         std::vector<U> cur(k, 0), values;
         std::vector<size_t> heapSides;
         auto less = [&](size_t a, size_t b) {
@@ -2997,7 +3010,7 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
             std::swap(values[a], values[b]); std::swap(heapSides[a], heapSides[b]);
         };
         for (size_t j = 0; j < k; ++j) if (sides[j].n) {
-            values.push_back(pos[j]->at(0)); heapSides.push_back(j);
+            values.push_back(replayFront(j,0)); heapSides.push_back(j);
             size_t i = values.size() - 1;
             while (i && less(i, (i - 1) / 2)) {
                 size_t par = (i - 1) / 2; swap(i, par); i = par;
@@ -3016,7 +3029,7 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
             if (row == n) break;
             require(!values.empty(), "checkpoint replay heap coverage");
             size_t j = heapSides[0];
-            if (++cur[j] < sides[j].n) values[0] = pos[j]->at(cur[j]);
+            if (++cur[j] < sides[j].n) values[0] = replayFront(j,cur[j]);
             else {
                 values[0] = values.back(); heapSides[0] = heapSides.back();
                 values.pop_back(); heapSides.pop_back();
