@@ -2984,6 +2984,7 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
     for (size_t j = 1; j < k; ++j) if (sides[j].n > sides[wide].n) wide = j;
     std::vector<std::vector<U>> aB(S + 1, std::vector<U>(k, 0));
     for (size_t j = 0; j < k; ++j) aB[S][j] = sides[j].n;
+    std::vector<Budget> planningWork(S);
     {
         require(sides[wide].n > 0, "k-way planning needs a non-empty probe side");
         std::vector<std::thread> pt;
@@ -3028,6 +3029,7 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
                 U bElem = pos[wide]->at(lo);   // the boundary element X_s
                 for (size_t j = 0; j < k; ++j)
                     aB[s][j] = (j == wide) ? lo : rankIn(j, bElem);
+                planningWork[s] = pb;
                 std::lock_guard<std::mutex> g(planMu);
                 bud.comparisons += pb.comparisons; bud.probes += pb.probes;
                 bud.symbols += pb.symbols; bud.fast_decided += pb.fast_decided;
@@ -3051,13 +3053,16 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
         std::vector<U> cur, values;
         std::vector<size_t> sides;
     };
+    const bool seamOracle = S > 1 && getenv("CROSS_SEAM_ORACLE") != nullptr;
+    const bool replayHeap = seedHeap || seamOracle;
     std::vector<HeapCheckpoint> checkpoints(seedHeap ? S : 0);
+    std::vector<Budget> rangeReference(S);
     Budget seedWork;
 #ifdef SOL7D_TRACE
     std::vector<std::pair<U, U>> seedTrace;
     std::vector<std::vector<std::pair<U, U>>> producerTrace(S);
 #endif
-    if (seedHeap) {
+    if (replayHeap) {
         Keys replayKeys; replayKeys.init(&m2, &hp, n, dollar, &seedWork);
 #ifdef SOL7D_TRACE
         replayKeys.trace = &seedTrace;
@@ -3077,11 +3082,14 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
                 size_t par = (i - 1) / 2; swap(i, par); i = par;
             }
         }
-        U boundary = 1;
+        U boundary = 1, referenceRange = 0;
+        Budget referenceBefore;
         for (U row = 0; row <= n; ++row) {
             while (boundary < S && R[boundary] == row) {
                 require(cur == aB[boundary], "checkpoint cursor/rank identity");
-                checkpoints[boundary] = {cur, values, heapSides};
+                if (seedHeap) checkpoints[boundary] = {cur, values, heapSides};
+                rangeReference[referenceRange] = difference(seedWork, referenceBefore);
+                referenceBefore = seedWork; referenceRange = boundary;
                 ++boundary;
             }
             if (row == n) break;
@@ -3101,7 +3109,10 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
                 swap(i, m); i = m;
             }
         }
+        rangeReference[referenceRange] = difference(seedWork, referenceBefore);
         require(boundary == S, "checkpoint boundary coverage");
+        if (seamOracle) workLine("oracle_reference", 0, seedWork);
+        if (seedHeap) {
         bud.comparisons += seedWork.comparisons; bud.symbols += seedWork.symbols;
         bud.probes += seedWork.probes; bud.fast_decided += seedWork.fast_decided;
         bud.probe_decided += seedWork.probe_decided; bud.cap_decided += seedWork.cap_decided;
@@ -3113,6 +3124,7 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
         bud.tProbe += seedWork.tProbe; bud.tScan += seedWork.tScan;
         workLine("planning_seed", 0, seedWork);
         workLine("overlap", 0, Budget{});
+        }
     }
     const U passes = 1;
     std::vector<Budget> shardBud(passes * S);
@@ -3270,8 +3282,20 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
             heapWork.symbols += shardBud[s].symbols; heapWork.probes += shardBud[s].probes;
         }
         workLine("heap", pass, heapWork);
-        if (getenv("CROSS_SEED_HEAP"))
-            for (U s = 0; s < S; ++s) workLine("producer", s, shardBud[pass * S + s]);
+        if (getenv("CROSS_SEED_HEAP") || getenv("CROSS_SEAM_ORACLE"))
+            for (U s = 0; s < S; ++s) {
+                workLine("producer", s, shardBud[pass * S + s]);
+                workLine("planning_seam", s, planningWork[s]);
+                workLine("overlap_seam", s, Budget{});
+                const Budget& actual = shardBud[pass * S + s];
+                const Budget& ref = S == 1 ? actual : rangeReference[s];
+                workLine("reference_range", s, ref);
+                std::fprintf(stderr, "CROSS_SEAM_WORK seam=%llu comparisons=%lld symbols_compared=%lld probes=%lld signed=1\n",
+                    (unsigned long long)s,
+                    (long long)actual.comparisons - (long long)ref.comparisons,
+                    (long long)actual.symbols - (long long)ref.symbols,
+                    (long long)actual.probes - (long long)ref.probes);
+            }
     }
     for (U s = 0; s < passes * S; ++s) {
         const Budget& sb = shardBud[s];
