@@ -367,7 +367,7 @@ impl Plan {
         let total: f64 = self.phases.iter().map(|p| p.wall_s).sum();
         s.push_str(&format!(
             "XSA_PLAN v={}{} corpus_bytes={} chunks={} kway={} threads={} cap_gb={} cores={} cx16={} mem_available_gb={:.0}\n",
-            CONSTANTS_VERSION, if self.v2.is_some() { " pipeline=v2 (constants measured at the 1GB packed-WM thread-curve gates, best point 96t)" } else { "" }, self.survey.corpus_bytes, self.chunks, self.kway, self.threads,
+            CONSTANTS_VERSION, if self.v2.is_some() { " pipeline=v2 (sol7f sparse transport; 1GB P8 merge and serial finish service rates; scale extrapolated)" } else { "" }, self.survey.corpus_bytes, self.chunks, self.kway, self.threads,
             self.cap_gb, self.survey.cores, self.survey.cx16,
             self.survey.mem_available_bytes as f64 / (1024.0 * 1024.0 * 1024.0),
         ));

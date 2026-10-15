@@ -36,7 +36,10 @@ with (root/'merge.log').open('w') as ml,(root/'finish.log').open('w') as fl:
     def sample():
         with (root/'sol7f-du.log').open('w') as log:
             while not stop.is_set():
-                log.write(str(time.monotonic()-start)+' '+subprocess.check_output(['du','-s','-B1',str(root)],text=True).split()[0]+'\n');log.flush()
+                allocated=int(subprocess.check_output(['du','-s','-B1',str(root)],text=True).split()[0])
+                chunk_bytes=int(subprocess.check_output(['du','-s','-B1',str(chunks)],text=True).split()[0])
+                apparent=int(subprocess.check_output(['du','-sb',str(root)],text=True).split()[0])
+                log.write(f'{time.monotonic()-start} {allocated} {chunk_bytes} {allocated+chunk_bytes} {apparent}\n');log.flush()
                 stop.wait(10)
     sampler=__import__('threading').Thread(target=sample);sampler.start()
     m=subprocess.Popen(merge,env=env,stdout=ml,stderr=ml,preexec_fn=cap)
@@ -64,5 +67,7 @@ if seam:
     result['overhead_over_serial']=[result['overhead'][i]/result['serial_whole'][i] if result['serial_whole'][i] else None for i in range(3)]
     result['overhead_over_walk']=[result['overhead'][i]/result['walk_whole'][i] if result['walk_whole'][i] else None for i in range(3)]
     result['STOP_30_PERCENT']=size=='1b' and any(x is not None and x>.30 for x in result['overhead_over_walk'])
+result['spool_budget_bytes']=env['CROSS_V2_SPOOL_BYTES']
+result['du_columns']=['elapsed_s','output_allocated_bytes','input_chunks_allocated_bytes','total_allocated_bytes','output_apparent_bytes']
 (root/'result.json').write_text(json.dumps(result,indent=2)+'\n');print(json.dumps(result),flush=True)
 assert mr==fr==cmp==0
