@@ -1528,6 +1528,9 @@ struct Keys {
     U n = 0;
     bool dollar = false;           // final $-suffix mode vs cyclic (M^infty) mode
     Budget* bud = nullptr;
+#ifdef SOL7D_TRACE
+    std::vector<std::pair<U, U>>* trace = nullptr; // native witness only
+#endif
 
     void init(const CorpusText* m, const HashSparse* h, U len, bool dol, Budget* b) {
         m2 = m; hp = h; n = len; dollar = dol; bud = b;
@@ -1547,6 +1550,9 @@ struct Keys {
     int cmp(U p1, U p2) const {
         require(p1 != p2 && p1 < n && p2 < n, "comparator bounds");
         ++bud->comparisons;
+#ifdef SOL7D_TRACE
+        if (trace) trace->emplace_back(p1, p2);
+#endif
         U cap = dollar ? std::min(n - p1, n - p2) : n;
         U fast = std::min<U>(cap, 16), j = 0;
         // Per-comparison phase timers are DIAGNOSTIC (CROSS_KWAY's t_fast/...)
@@ -3037,6 +3043,77 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
     // merged-rank shard start offsets: R_s = sum_j aB[s][j]
     std::vector<U> R(S + 1, 0);
     for (U s = 0; s <= S; ++s) for (size_t j = 0; j < k; ++j) R[s] += aB[s][j];
+    // Experimental exact continuation oracle. Rank searches above do not
+    // traverse a heap: acquiring these checkpoints requires a charged replay.
+    // Kept opt-in because this construction adds a full serial walk of work.
+    const bool seedHeap = S > 1 && getenv("CROSS_SEED_HEAP") != nullptr;
+    struct HeapCheckpoint {
+        std::vector<U> cur, values;
+        std::vector<size_t> sides;
+    };
+    std::vector<HeapCheckpoint> checkpoints(seedHeap ? S : 0);
+    Budget seedWork;
+#ifdef SOL7D_TRACE
+    std::vector<std::pair<U, U>> seedTrace;
+    std::vector<std::vector<std::pair<U, U>>> producerTrace(S);
+#endif
+    if (seedHeap) {
+        Keys replayKeys; replayKeys.init(&m2, &hp, n, dollar, &seedWork);
+#ifdef SOL7D_TRACE
+        replayKeys.trace = &seedTrace;
+#endif
+        std::vector<U> cur(k, 0), values;
+        std::vector<size_t> heapSides;
+        auto less = [&](size_t a, size_t b) {
+            return replayKeys.cmp(values[a], values[b]) < 0;
+        };
+        auto swap = [&](size_t a, size_t b) {
+            std::swap(values[a], values[b]); std::swap(heapSides[a], heapSides[b]);
+        };
+        for (size_t j = 0; j < k; ++j) if (sides[j].n) {
+            values.push_back(pos[j]->at(0)); heapSides.push_back(j);
+            size_t i = values.size() - 1;
+            while (i && less(i, (i - 1) / 2)) {
+                size_t par = (i - 1) / 2; swap(i, par); i = par;
+            }
+        }
+        U boundary = 1;
+        for (U row = 0; row <= n; ++row) {
+            while (boundary < S && R[boundary] == row) {
+                require(cur == aB[boundary], "checkpoint cursor/rank identity");
+                checkpoints[boundary] = {cur, values, heapSides};
+                ++boundary;
+            }
+            if (row == n) break;
+            require(!values.empty(), "checkpoint replay heap coverage");
+            size_t j = heapSides[0];
+            if (++cur[j] < sides[j].n) values[0] = pos[j]->at(cur[j]);
+            else {
+                values[0] = values.back(); heapSides[0] = heapSides.back();
+                values.pop_back(); heapSides.pop_back();
+            }
+            size_t i = 0;
+            for (;;) {
+                size_t l = 2 * i + 1, r = l + 1, m = i;
+                if (l < values.size() && less(l, m)) m = l;
+                if (r < values.size() && less(r, m)) m = r;
+                if (m == i) break;
+                swap(i, m); i = m;
+            }
+        }
+        require(boundary == S, "checkpoint boundary coverage");
+        bud.comparisons += seedWork.comparisons; bud.symbols += seedWork.symbols;
+        bud.probes += seedWork.probes; bud.fast_decided += seedWork.fast_decided;
+        bud.probe_decided += seedWork.probe_decided; bud.cap_decided += seedWork.cap_decided;
+        bud.tie_decided += seedWork.tie_decided;
+        bud.lce_over_10k += seedWork.lce_over_10k; bud.lce_over_100k += seedWork.lce_over_100k;
+        bud.lce_over_1m += seedWork.lce_over_1m;
+        bud.max_lce = std::max(bud.max_lce, seedWork.max_lce);
+        bud.tFast += seedWork.tFast; bud.tPrep += seedWork.tPrep;
+        bud.tProbe += seedWork.tProbe; bud.tScan += seedWork.tScan;
+        workLine("planning_seed", 0, seedWork);
+        workLine("overlap", 0, Budget{});
+    }
     const U passes = 1;
     std::vector<Budget> shardBud(passes * S);
     std::vector<double> shardPF(passes * S, 0.0), shardPop(passes * S, 0.0);
@@ -3052,6 +3129,9 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
                 SparseWalkSink* sink = target ? target->shardSink(s) : nullptr;
                 if (sink) sink->beginShard(s, R[s], R[s + 1]);
                 Keys skeys; skeys.init(&m2, &hp, n, dollar, &shardBud[work]);
+#ifdef SOL7D_TRACE
+                skeys.trace = &producerTrace[s];
+#endif
                 constexpr U W = 8192;
                 std::vector<U> buf(W);
                 U nb = 0, out = R[s], emitted = 0, step = 0;
@@ -3071,7 +3151,7 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
                 constexpr U WIN = 4096;
                 std::vector<U> cur(k), end(k), wbase(k, 0);
                 std::vector<std::vector<U>> pwin(k);
-                for (size_t j = 0; j < k; ++j) { cur[j] = aB[s][j]; end[j] = aB[s + 1][j]; wbase[j] = cur[j]; }
+                for (size_t j = 0; j < k; ++j) { cur[j] = aB[s][j]; end[j] = seedHeap ? sides[j].n : aB[s + 1][j]; wbase[j] = cur[j]; }
                 auto frontAt = [&](size_t j, U idx) -> U {   // idx: global row in [cur[j], end[j])
                     if (idx >= wbase[j] && idx - wbase[j] < pwin[j].size()) {
                         U w = idx - wbase[j];
@@ -3118,10 +3198,18 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
                     hv[0] = v; hs_[0] = side;
                     hSift();
                 };
-                for (size_t j = 0; j < k; ++j)
-                    if (cur[j] < end[j]) hPush(frontAt(j, cur[j]), j);
+                if (seedHeap && s) {
+                    const auto& checkpoint = checkpoints[s];
+                    require(cur == checkpoint.cur, "seeded producer cursors");
+                    hm = checkpoint.values.size();
+                    std::copy(checkpoint.values.begin(), checkpoint.values.end(), hv.begin());
+                    std::copy(checkpoint.sides.begin(), checkpoint.sides.end(), hs_.begin());
+                } else {
+                    for (size_t j = 0; j < k; ++j)
+                        if (cur[j] < end[j]) hPush(frontAt(j, cur[j]), j);
+                }
                 U pfAt = 0;
-                while (hm > 0) {
+                while (hm > 0 && (!seedHeap || emitted < R[s + 1] - R[s])) {
                     if (!noPf && m2.pool && (step & 31) == 0) {
                         // Front speculation: each side's next few fronts,
                         // served from the bulk windows (no overlay reads).
@@ -3153,7 +3241,7 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
                     if (nb == W) flushW();
                     ++step;
                 }
-                U want = 0; for (size_t j = 0; j < k; ++j) want += end[j] - aB[s][j];
+                U want = 0; for (size_t j = 0; j < k; ++j) want += aB[s + 1][j] - aB[s][j];
                 flushW();
                 require(emitted == want && out == R[s + 1], "shard merge coverage");
                 if (sink) sink->endShard();
@@ -3164,6 +3252,16 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
         launch(sparse, 0, ts);
         for (auto& t : ts) if (t.joinable()) t.join();
     }
+#ifdef SOL7D_TRACE
+    if (seedHeap) {
+        std::vector<std::pair<U, U>> combined;
+        for (const auto& trace : producerTrace)
+            combined.insert(combined.end(), trace.begin(), trace.end());
+        require(combined == seedTrace, "seeded comparison trace identity");
+        std::fprintf(stderr, "SEAM_TRACE_PASS pairs=%llu ordered_operands=exact\n",
+                     (unsigned long long)combined.size());
+    }
+#endif
     if (!sparse) { if (packWm) wmPacker.close(); else ::close(fd); }
     for (U pass = 0; pass < passes; ++pass) {
         Budget heapWork;
@@ -3172,6 +3270,8 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
             heapWork.symbols += shardBud[s].symbols; heapWork.probes += shardBud[s].probes;
         }
         workLine("heap", pass, heapWork);
+        if (getenv("CROSS_SEED_HEAP"))
+            for (U s = 0; s < S; ++s) workLine("producer", s, shardBud[pass * S + s]);
     }
     for (U s = 0; s < passes * S; ++s) {
         const Budget& sb = shardBud[s];
