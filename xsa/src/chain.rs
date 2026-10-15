@@ -791,7 +791,12 @@ fn run_chain(options: Options) -> Result<(), String> {
             // Match native shared spool credits, including the minimum
             // progress reserve. Default is 2n; explicit knob is bytes.
             let spool_bytes = std::env::var("CROSS_V2_SPOOL_BYTES")
-                .map(|s| s.parse::<u64>().map_err(|_| "CROSS_V2_SPOOL_BYTES must be an integer"))
+                .map(|s| {
+                    if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
+                        return Err("CROSS_V2_SPOOL_BYTES must be an integer");
+                    }
+                    s.parse::<u64>().map_err(|_| "CROSS_V2_SPOOL_BYTES must be an integer")
+                })
                 .unwrap_or(Ok(corpus_bytes.saturating_mul(2).max(producers * 102400)))?;
             if spool_bytes < producers * 102400 {
                 return Err("CROSS_V2_SPOOL_BYTES must be >= P*102400".into());
@@ -835,8 +840,9 @@ fn run_chain(options: Options) -> Result<(), String> {
         }
         // Default direct sink has the attested P=1 service time; the P=8
         // rate is only appropriate when explicitly selected.
-        let producers = std::env::var("CROSS_V2_PRODUCERS").unwrap_or_else(|_| "1".into());
-        if producers != "8" {
+        let producers = std::env::var("CROSS_V2_PRODUCERS").ok()
+            .and_then(|s| s.parse::<u64>().ok()).unwrap_or(1);
+        if producers != 8 {
             for phase in &mut build_plan.phases {
                 if phase.name == "merge(walk)" { phase.wall_s *= 734.041 / 291.0; }
             }
