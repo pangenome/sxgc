@@ -34,3 +34,24 @@ the actual P=4 planner/source identity. The 100 MB P=4 reference-only gate
 passed chi=29716349 and cmp=0 with replay=0. A corrupted reference identity
 was refused before terminal publication (`REFERENCE_MISMATCH_REFUSED
 no_terminal=1`). See reference-test.json; its wall is a nonquiet diagnostic.
+
+## 1 GB P=16 diagnostic gate
+
+```text
+SXI2_PASS bytes=467814822 lite=1 members=6
+PILE_FINISH_DONE chi=283296933 n=1000000665 r=368036609 container=/mnt/nvme2n1/erikg/sol7e-gate-1b-p16-oracle/frag.sxi2
+merge_rc=0 finish_rc=0 cmp_rc=0
+CROSS_STAGE_WORK stage=WALK pass=0 comparisons=3674606698 symbols_compared=60477880116 probes=1987420158
+CROSS_STAGE_WORK stage=PLANNING pass=0 comparisons=78957 symbols_compared=452649 probes=5180
+CROSS_STAGE_WORK stage=OVERLAP pass=0 comparisons=0 symbols_compared=0 probes=0
+CROSS_SEAM_TOTAL comparisons=-22737 symbols_compared=-7716945 probes=-90294 reference=serial_range signed=1 replay=1
+```
+
+Serial reference plus prepare is EXACTLY
+(3674629435,60485597061,1987510452), matching the supplied baseline.
+All 16 per-range journals are retained verbatim in seams-1b.log. Fresh heaps
+slightly reduce symbols/probes on this fixture: the measured SEAM is signed,
+not a claim of 60.5B additional symbols. PLANNING+OVERLAP+SEAM divided by WALK
+is (+0.001530%, -0.012011%, -0.004283%) per metric. No 30% stop was triggered.
+The diagnostic's 761.807 s internal merge wall includes the explicit reference
+replay and is NOT a launch wall. The standalone replay-free P sweep follows.
