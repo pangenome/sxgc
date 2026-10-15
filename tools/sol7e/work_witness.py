@@ -55,11 +55,12 @@ for f, s in zip(fresh, seeded):
     for index, actual in f['producers'].items():
         assert f['seam'][index] == [actual[i] - f['reference'][index][i] for i in range(3)]
         print(f"SEAM_HALO_PASS fixture={f['fixture']} P={f['P']} mode={f['mode']} seam={index} PLANNING={f['planning'][index]} OVERLAP={f['overlap'][index]} SEAM={f['seam'][index]} rows=exact")
-    f['WALK'] = f['stages']['heap']
+    f['WALK_HEAP'] = f['stages']['heap']
+    f['WALK'] = summed([f['stages']['prepare'], f['WALK_HEAP']])
     f['PLANNING'] = f['stages']['plan']
     f['OVERLAP'] = [0,0,0]
     f['SEAM'] = summed(f['seam'].values())
-    assert f['total'] == summed([f['stages']['prepare'], f['WALK'], f['PLANNING']])
+    assert f['total'] == summed([f['WALK'], f['PLANNING']])
     if f['P'] == 1: assert f['PLANNING'] == f['OVERLAP'] == f['SEAM'] == [0,0,0]
 (root/'counter-witness.json').write_text(json.dumps(dict(result='PASS', cases=fresh, oracle_log=str(seedlog), fresh_log=str(freshlog), production_bands_validated=False), indent=2)+'\n')
 print('FRESH_SEAM_COUNTER_WITNESS_PASS cases=40 fixtures=5 P=1,4,8,16 modes=cyclic,dollar rows=exact seeded_reference=exact per_seam_journal=exact OVERLAP=0 P1_extra=0')

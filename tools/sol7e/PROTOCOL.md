@@ -50,3 +50,8 @@ ranges and remaps. It requires immutable inputs: metadata-preserving malicious
 modification is outside this contract. Without a reference, P>1 reports SEAM
 as unmeasured, never zero. Source journals should be regenerated after changing
 the algorithm (format version sol7e-range-v1).
+
+For compatibility the existing CROSS_KWAY summary retains the full charged
+budget, including planning. The named WALK/PLANNING/OVERLAP/SEAM journals are
+the unblended ledger. Witness JSON uses WALK_HEAP for the sum of range heap
+budgets, and WALK for WALK_HEAP plus prepare, matching the production ledger.
