@@ -1,0 +1,10 @@
+cd5fbd3 sol7e: eliminate false sharing from all hot per-thread reader telemetry
+4b45dd3 sol7e: keep witness whole-walk and range-heap ledger names consistent
+4d96bf2 sol7e: attest P1 exact 1 GB baseline and zero extra counters
+3752edb sol7e: attest P16 1 GB chi and byte identity with four-counter decomposition
+6d79432 sol7e: ship banked RAM-cache path and validate replay-free seam references
+19e9c2c sol7e: attest P16 100 MB chi and container byte identity
+0102805 sol7e: bulk-decode oracle fronts without changing seeded comparison traces
+6a3406f sol7e: enable fresh P-way compressed spools with ordered band reduction and reusable seam references
+ccca5c2 sol7e: attest 40 fresh-start row cases with signed per-seam oracle journals
+be70c72 sol7e: record fresh-start accounting and ordered sink ownership

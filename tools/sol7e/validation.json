@@ -1,0 +1,477 @@
+[
+  {
+    "command": [
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/cross_lcp_merge",
+      "--selftest",
+      "200",
+      "--seed",
+      "1",
+      "--kway",
+      "1",
+      "--threads",
+      "16"
+    ],
+    "result": "passed",
+    "output": [
+      "SPARSE_ORACLE_PASS modes=cyclic,dollar runs=exact seam_spool=exact production_bands=exact trivial_bases=exact terminal=exact legacy_shard_admission=1 WM=absent",
+      "SELFTEST_PASS count=200 seed=1 kway=1"
+    ],
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/selftest-p1-k1.log"
+  },
+  {
+    "command": [
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/cross_lcp_merge",
+      "--selftest",
+      "200",
+      "--seed",
+      "1",
+      "--kway",
+      "2",
+      "--threads",
+      "16"
+    ],
+    "result": "passed",
+    "output": [
+      "SPARSE_ORACLE_PASS modes=cyclic,dollar runs=exact seam_spool=exact production_bands=exact trivial_bases=exact terminal=exact legacy_shard_admission=1 WM=absent",
+      "SELFTEST_PASS count=200 seed=1 kway=2"
+    ],
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/selftest-p4-k2.log"
+  },
+  {
+    "command": [
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/cross_lcp_merge",
+      "--selftest",
+      "200",
+      "--seed",
+      "1",
+      "--kway",
+      "8",
+      "--threads",
+      "16"
+    ],
+    "result": "passed",
+    "output": [
+      "SPARSE_ORACLE_PASS modes=cyclic,dollar runs=exact seam_spool=exact production_bands=exact trivial_bases=exact terminal=exact legacy_shard_admission=1 WM=absent",
+      "SELFTEST_PASS count=200 seed=1 kway=8"
+    ],
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/selftest-p8-k8.log"
+  },
+  {
+    "command": [
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/cross_lcp_merge",
+      "--selftest",
+      "200",
+      "--seed",
+      "1",
+      "--kway",
+      "8",
+      "--threads",
+      "16"
+    ],
+    "result": "passed",
+    "output": [
+      "SPARSE_ORACLE_PASS modes=cyclic,dollar runs=exact seam_spool=exact production_bands=exact trivial_bases=exact terminal=exact legacy_shard_admission=1 WM=absent",
+      "SELFTEST_PASS count=200 seed=1 kway=8"
+    ],
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/selftest-p16-k8.log"
+  },
+  {
+    "command": [
+      "c++",
+      "-O3",
+      "-std=c++17",
+      "-pthread",
+      "xsa/runtime/bit6/cross_lcp_merge.cpp",
+      "-latomic",
+      "-o",
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/runtime-cross_lcp_merge"
+    ],
+    "result": "passed",
+    "output": [],
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/build-runtime.log"
+  },
+  {
+    "command": [
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/runtime-cross_lcp_merge",
+      "--selftest",
+      "20",
+      "--seed",
+      "1",
+      "--kway",
+      "8",
+      "--threads",
+      "16"
+    ],
+    "result": "passed",
+    "output": [
+      "SPARSE_ORACLE_PASS modes=cyclic,dollar runs=exact seam_spool=exact production_bands=exact trivial_bases=exact terminal=exact legacy_shard_admission=1 WM=absent",
+      "SELFTEST_PASS count=20 seed=1 kway=8"
+    ],
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/runtime-selftest.log"
+  },
+  {
+    "command": [
+      "c++",
+      "-O3",
+      "-std=c++17",
+      "-pthread",
+      "tools/sol7d/seam_witness.cpp",
+      "-latomic",
+      "-o",
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/seam_witness"
+    ],
+    "result": "passed",
+    "output": [],
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/build-witness.log"
+  },
+  {
+    "command": [
+      "python3",
+      "tools/sol7e/work_witness.py",
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/seam_witness",
+      "/mnt/nvme2n1/erikg/sol7e-freshstart"
+    ],
+    "result": "passed",
+    "output": [
+      "SEAM_HALO_PASS fixture=4 P=16 mode=dollar seam=13 PLANNING=[295, 301, 0] OVERLAP=[0, 0, 0] SEAM=[-3, 1, 0] rows=exact",
+      "SEAM_HALO_PASS fixture=4 P=16 mode=dollar seam=14 PLANNING=[333, 348, 0] OVERLAP=[0, 0, 0] SEAM=[-19, -16, 0] rows=exact",
+      "SEAM_HALO_PASS fixture=4 P=16 mode=dollar seam=15 PLANNING=[295, 306, 0] OVERLAP=[0, 0, 0] SEAM=[11, 9, 0] rows=exact",
+      "FRESH_SEAM_COUNTER_WITNESS_PASS cases=40 fixtures=5 P=1,4,8,16 modes=cyclic,dollar rows=exact seeded_reference=exact per_seam_journal=exact OVERLAP=0 P1_extra=0"
+    ],
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/counter-summary.log"
+  },
+  {
+    "command": [
+      "python3",
+      "tools/sol7d/work_witness.py",
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/seam_witness",
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/seed-regression"
+    ],
+    "result": "passed",
+    "output": [
+      "COUNTER_IDENTITY_PASS fixture=4 P=8 mode=dollar serial=[2031, 2446, 0] PLANNING=[4166, 4659, 0] OVERLAP=[0, 0, 0] SEAM=[0, 0, 0] total=[6197, 7105, 0]",
+      "COUNTER_IDENTITY_PASS fixture=4 P=16 mode=cyclic serial=[2033, 2456, 0] PLANNING=[6644, 7241, 0] OVERLAP=[0, 0, 0] SEAM=[0, 0, 0] total=[8677, 9697, 0]",
+      "COUNTER_IDENTITY_PASS fixture=4 P=16 mode=dollar serial=[2031, 2446, 0] PLANNING=[6642, 7231, 0] OVERLAP=[0, 0, 0] SEAM=[0, 0, 0] total=[8673, 9677, 0]",
+      "SEAM_COUNTER_WITNESS_PASS cases=40 fixtures=5 P=1,4,8,16 modes=cyclic,dollar per_producer_sum=exact ordered_comparison_trace=exact SEAM=0 planning_replay=fully_charged launch_gates=UNVALIDATED"
+    ],
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/legacy-seed-witness.log"
+  },
+  {
+    "command": [
+      "python3",
+      "tools/sol7e/segment_model.py"
+    ],
+    "result": "passed",
+    "output": [
+      "{\"P\": [1, 4, 8, 16], \"exact_rows\": true, \"exact_runs\": true, \"persistent_recovery\": false, \"publication\": \"committed_prefix_only\", \"repeated_cuts\": true, \"result\": \"PASS\", \"rows\": 48615, \"schedules\": 400, \"singleton_targets\": true, \"terminal\": \"all_ranges_only\"}"
+    ],
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/segment-model.log"
+  },
+  {
+    "command": [
+      "python3",
+      "tools/sol7b/threaded_model.py"
+    ],
+    "result": "passed",
+    "output": [
+      "{\"abstraction\": \"known canonical bands; ordered upstream transport\", \"completion_permutations\": 24, \"deadlocks\": 0, \"duplicate_deliveries_suppressed\": 760, \"duplicate_rows\": 0, \"failed_or_gapped_ranges_aborted\": 48, \"global_terminal_only\": true, \"implementation_validated\": false, \"lost_rows\": 0, \"negative_controls\": {\"local_eof_false_readiness\": true, \"runnable_actions\": {\"complete\": false, \"drain\": false, \"enqueue\": false}, \"wait_for_range_done\": {\"capacity\": 4, \"producer_done\": false, \"queued\": 4, \"remaining\": 1}}, \"peak_pieces\": 1100, \"peak_queue\": 4, \"producer_counts\": [1, 4, 8, 16], \"queue_capacity\": 4, \"result\": \"PASS\", \"retries\": 760, \"successful_schedules\": 424, \"threaded_interleavings\": 472, \"windows\": [1, 2, 3, 64, 1100]}"
+    ],
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/threaded-model.log"
+  },
+  {
+    "command": [
+      "python3",
+      "tools/sol5i/wait_model.py"
+    ],
+    "result": "passed",
+    "output": [
+      "{\"active_producer_inequalities\": 3510, \"band_size\": 65536, \"bases\": \"65536*b\", \"deadlocks\": 0, \"implementation_validated\": false, \"malformed_extents_refused\": 10, \"maximum_backlog\": 1100, \"overlapping_band_spans\": true, \"randomized_interleavings\": 1450, \"result\": \"PASS\", \"shards\": 0, \"terminal_cases\": 1200}"
+    ],
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/wait-model.log"
+  },
+  {
+    "command": [
+      "c++",
+      "-O3",
+      "-std=c++17",
+      "-pthread",
+      "tools/sol5i/flow_oracle.cpp",
+      "-latomic",
+      "-o",
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/flow_oracle"
+    ],
+    "result": "passed",
+    "output": [],
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/build-flow.log"
+  },
+  {
+    "command": [
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/flow_oracle"
+    ],
+    "result": "passed",
+    "output": [
+      "FLOW_ORACLE_PASS initial_minus_one=1 oversized_positive_window=1 unsigned_credit=1 blocked_until_consumed=1"
+    ],
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/flow.log"
+  },
+  {
+    "command": [
+      "c++",
+      "-O3",
+      "-std=c++17",
+      "-pthread",
+      "-I/home/erikg/usr/include",
+      "bit6/pile_finish.cpp",
+      "-L/home/erikg/usr/lib",
+      "-lsdsl",
+      "-ldivsufsort",
+      "-ldivsufsort64",
+      "-latomic",
+      "-o",
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/pile_finish"
+    ],
+    "result": "passed",
+    "output": [],
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/build-finish.log"
+  },
+  {
+    "command": [
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/pile_finish",
+      "--selftest-sweep-monoid"
+    ],
+    "result": "passed",
+    "output": [
+      "SWEEP_STATE_CARRY_ORACLE_PASS streams=2048 splits=34785 NUL=1 byte05=1 singleton=1 periodic_colors=1 empty=1 ordered_witnesses=1 final_state=1"
+    ],
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/sweep.log"
+  },
+  {
+    "command": [
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/pile_finish",
+      "--selftest-repair-chunks"
+    ],
+    "result": "passed",
+    "output": [
+      "ENDPOINT_STREAM_PASS n=61 k=1 r=17 padding_rows=10 cyclic_seam_certified=1 classes=2",
+      "ENDPOINT_STREAM_PASS n=61 k=1 r=17 padding_rows=10 cyclic_seam_certified=1 classes=2",
+      "ENDPOINT_STREAM_PASS n=61 k=1 r=17 padding_rows=10 cyclic_seam_certified=1 classes=2",
+      "CHUNKED_REPAIR_ORACLE_PASS streams=128 widths=3392 workers=4 both_coalescers=1 class_flanks=1 padding_straddle=1 dollar=1 legal_00_05=1"
+    ],
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/repair.log"
+  },
+  {
+    "command": [
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/pile_finish",
+      "--selftest-seam-spool",
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/seam-spool"
+    ],
+    "result": "passed",
+    "output": [
+      "BAND_PROGRESS_READER_ORACLE_PASS trivial_bases=1 band_only=1 deferred_class=1 EOF_clamp=1 terminal=1 delayed_full_band_EOF=1 backward_terminal_refused=1 malformed_refusals=12",
+      "SEAM_SPOOL_READER_ORACLE_PASS empty=1 adversarial_orders=2 padded_flanks=1 NUL=1 byte05=1 malformed_refusals=3"
+    ],
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/seam-spool.log"
+  },
+  {
+    "command": [
+      "c++",
+      "-O3",
+      "-std=c++17",
+      "-pthread",
+      "bit6/cross_lcp_merge.cpp",
+      "-latomic",
+      "-o",
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/cross_lcp_merge"
+    ],
+    "result": "passed",
+    "output": [],
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/build-final-merge.log"
+  },
+  {
+    "command": [
+      "c++",
+      "-O3",
+      "-std=c++17",
+      "-pthread",
+      "tools/sol7e/cache_oracle.cpp",
+      "-latomic",
+      "-o",
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/cache_oracle"
+    ],
+    "result": "passed",
+    "output": [],
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/build-cache.log"
+  },
+  {
+    "command": [
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/cache_oracle"
+    ],
+    "result": "passed",
+    "output": [
+      "CACHE_P16_ORACLE_PASS readers=16 spans=3200000 remaps=3 segments=3 nonzero_offsets=1 wrap=1 retained_borrows=2 immutable_shared_cache=1 decoded_front_budget_P16_k8_bytes=4194304"
+    ],
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/cache-p16.log"
+  },
+  {
+    "command": [
+      "cargo",
+      "check",
+      "--manifest-path",
+      "xsa/Cargo.toml"
+    ],
+    "result": "failed",
+    "output": [],
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/cargo-check.log"
+  },
+  {
+    "command": [
+      "cargo",
+      "check",
+      "--manifest-path",
+      "xsa/Cargo.toml"
+    ],
+    "result": "passed",
+    "output": [
+      "Finished dev profile in 4m24s; 14 existing warnings"
+    ],
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/cargo-check-retry.log",
+    "notes": "Updated src/chain.rs source manifest after initial manifest rejection. Bundled C++ snapshot precedes physical-read-only replay-window optimization; final native code compiled separately."
+  },
+  {
+    "command": [
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/cross_lcp_merge",
+      "--tree",
+      "/mnt/nvme2n1/erikg/sol7e-input-100m/chunks",
+      "8",
+      "100000503",
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/reference-negative/frag",
+      "--threads",
+      "16",
+      "--kway",
+      "8",
+      "--work",
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/reference-negative/work"
+    ],
+    "result": "passed",
+    "output": [
+      "REFERENCE_MISMATCH_REFUSED no_terminal=1"
+    ],
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/reference-negative/log"
+  },
+  {
+    "command": [
+      "c++",
+      "-O3",
+      "-std=c++17",
+      "-pthread",
+      "xsa/runtime/bit6/cross_lcp_merge.cpp",
+      "-latomic",
+      "-o",
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/runtime-cross_lcp_merge"
+    ],
+    "result": "passed",
+    "summary": "Final runtime snapshot equals native source byte-for-byte; standalone compile succeeded.",
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/runtime-synchronized-selftest.log"
+  },
+  {
+    "command": [
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/runtime-cross_lcp_merge",
+      "--selftest",
+      "20",
+      "--seed",
+      "1",
+      "--kway",
+      "8",
+      "--threads",
+      "16"
+    ],
+    "result": "passed",
+    "summary": "Final runtime P=16 production bands/runs/classes pass; SELFTEST_PASS count=20 seed=1 kway=8",
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/runtime-synchronized-selftest.log"
+  },
+  {
+    "command": [
+      "python3",
+      "tools/sol7e/work_witness.py",
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/seam_witness",
+      "/mnt/nvme2n1/erikg/sol7e-freshstart"
+    ],
+    "result": "passed",
+    "summary": "Rerun after replay-window optimization: 40 fresh cases with per-seam references; 40 seeded cases also retain exact ordered trace.",
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/counter-summary.log"
+  },
+  {
+    "command": [
+      "python3",
+      "tools/sol7e/attest_sweep.py",
+      "padded"
+    ],
+    "result": "passed",
+    "output": [
+      "PWAY_LEDGER_PASS P=1 WALK=[3674629435, 60485597061, 1987510452] PLANNING=[0, 0, 0] OVERLAP=[0, 0, 0] SEAM=[0, 0, 0] chi=283296933 cmp=0 replay=0",
+      "PWAY_LEDGER_PASS P=4 WALK=[3674619757, 60480105257, 1987526302] PLANNING=[15835, 75965, 800] OVERLAP=[0, 0, 0] SEAM=[-9678, -5491804, 15850] chi=283296933 cmp=0 replay=0",
+      "PWAY_LEDGER_PASS P=8 WALK=[3674599453, 60478673268, 1987483450] PLANNING=[36937, 203480, 2216] OVERLAP=[0, 0, 0] SEAM=[-29982, -6923793, -27002] chi=283296933 cmp=0 replay=0",
+      "PWAY_LEDGER_PASS P=16 WALK=[3674606698, 60477880116, 1987420158] PLANNING=[78957, 452649, 5180] OVERLAP=[0, 0, 0] SEAM=[-22737, -7716945, -90294] chi=283296933 cmp=0 replay=0",
+      "PWAY_SWEEP_ATTESTED cases=4 P=1,4,8,16 per_producer_sums=exact baseline=exact no_replay=1 overhead_under_30pct=1 quiet_box=UNVALIDATED"
+    ],
+    "log": "tools/sol7e/ledger-summary.log"
+  },
+  {
+    "command": [
+      "verify",
+      "xsa/SOURCES.sha256.json"
+    ],
+    "result": "passed",
+    "output": [
+      "SOURCE_MANIFEST_PASS all_entries=exact runtime_native=identical"
+    ]
+  },
+  {
+    "command": [
+      "git",
+      "diff",
+      "--check"
+    ],
+    "result": "passed",
+    "output": []
+  },
+  {
+    "command": [
+      "c++",
+      "-O3",
+      "-std=c++17",
+      "-pthread",
+      "xsa/runtime/bit6/cross_lcp_merge.cpp",
+      "-latomic",
+      "-o",
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/runtime-cross_lcp_merge"
+    ],
+    "result": "passed",
+    "output": [
+      "Final padded runtime snapshot compiled successfully."
+    ]
+  },
+  {
+    "command": [
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/runtime-cross_lcp_merge",
+      "--selftest",
+      "10",
+      "--seed",
+      "1",
+      "--kway",
+      "8",
+      "--threads",
+      "16"
+    ],
+    "environment": {
+      "CROSS_V2_PRODUCERS": "16",
+      "CROSS_SHARDS": "16"
+    },
+    "result": "passed",
+    "output": [
+      "SPARSE_ORACLE_PASS modes=cyclic,dollar runs=exact seam_spool=exact production_bands=exact trivial_bases=exact terminal=exact legacy_shard_admission=1 WM=absent",
+      "SELFTEST_PASS count=10 seed=1 kway=8"
+    ],
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/runtime-final-selftest.log"
+  }
+]

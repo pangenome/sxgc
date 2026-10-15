@@ -63,6 +63,7 @@
 //
 // Build: c++ -O3 -std=c++17 -pthread bit6/cross_lcp_merge.cpp -o /tmp/cross_lcp_merge
 #include <algorithm>
+#include <emmintrin.h>
 #include <atomic>
 #include <array>
 #include <chrono>
@@ -220,6 +221,12 @@ static std::atomic<U> g_winGen{1};   // window caches are thread-local keyed by
 // 11-step pre-fix orphan schedules replay clean. The verdicts cover the
 // WRITER protocol, which is bit-identical here; the reader change carries
 // the argument above plus the standing byte-identity/chi gates.
+struct alignas(64) LocalCounter { U value = 0; };
+static_assert(sizeof(LocalCounter) == 64, "telemetry cache-line ownership");
+static inline void count_local(LocalCounter* cells, unsigned tid, unsigned last) {
+    if (tid == last) __atomic_fetch_add(&cells[tid].value, U(1), __ATOMIC_RELAXED);
+    else ++cells[tid].value;
+}
 struct SharedPages {
     static constexpr U PS = 256;              // page size (bytes)
     U SLOTS = 1u << 20;                       // pow2 slot count (CROSS_POOL_SLOTS)
@@ -238,16 +245,16 @@ struct SharedPages {
     std::atomic<bool> stopping{false};
     // exact per-thread telemetry (see the protocol comment above)
     static constexpr U TIDS = 4096;
-    std::unique_ptr<U[]> hits, misses, tornC, fillsC;   // [TIDS], one per charging thread
+    std::unique_ptr<LocalCounter[]> hits, misses, tornC, fillsC;   // [TIDS], one per charging thread
     static unsigned tid() {
         static std::atomic<unsigned> next{0};
         thread_local unsigned t = next.fetch_add(1, std::memory_order_relaxed);
         return t < TIDS ? t : TIDS - 1;
     }
-    void hit() const { ++hits[tid()]; }
-    void miss() const { ++misses[tid()]; }
-    void torn() const { ++tornC[tid()]; }
-    void notedFill() const { ++fillsC[tid()]; }
+    void hit() const { count_local(hits.get(), tid(), TIDS-1); }
+    void miss() const { count_local(misses.get(), tid(), TIDS-1); }
+    void torn() const { count_local(tornC.get(), tid(), TIDS-1); }
+    void notedFill() const { count_local(fillsC.get(), tid(), TIDS-1); }
     static U pool_slot_count() {
         static const U v = [] {
             const char* e = getenv("CROSS_POOL_SLOTS");
@@ -278,8 +285,8 @@ struct SharedPages {
             slots[z].b0 = block.get() + 2 * z * PS;
             slots[z].b1 = block.get() + (2 * z + 1) * PS;
         }
-        hits.reset(new U[TIDS]{}); misses.reset(new U[TIDS]{});
-        tornC.reset(new U[TIDS]{}); fillsC.reset(new U[TIDS]{});
+        hits.reset(new LocalCounter[TIDS]{}); misses.reset(new LocalCounter[TIDS]{});
+        tornC.reset(new LocalCounter[TIDS]{}); fillsC.reset(new LocalCounter[TIDS]{});
         queue.reset(new std::atomic<U>[QCAP]);
         for (U t = 0; t < nthreads; ++t)
             workers.emplace_back([this] { worker(); });
@@ -290,7 +297,7 @@ struct SharedPages {
         workers.clear();
         U h = 0, m = 0, t = 0, f = 0;
         if (hits)
-            for (U z = 0; z < TIDS; ++z) { h += hits[z]; m += misses[z]; t += tornC[z]; f += fillsC[z]; }
+            for (U z = 0; z < TIDS; ++z) { h += hits[z].value; m += misses[z].value; t += tornC[z].value; f += fillsC[z].value; }
         std::fprintf(stderr, "POOL_STATS fd=%d bytes=%llu slots=%llu fills=%llu hits=%llu misses=%llu torn=%llu\n",
                      fd, (unsigned long long)bytes, (unsigned long long)SLOTS,
                      (unsigned long long)f, (unsigned long long)h,
@@ -420,15 +427,15 @@ struct SharedPages {
 // discipline as the pool telemetry - the old single-word atomics serialized
 // every grid-cell materialize on one cacheline at high thread counts).
 static constexpr unsigned CELL_TIDS = 4096;
-static U g_cellHitsArr[CELL_TIDS], g_cellMissArr[CELL_TIDS];   // zero-init BSS
+static LocalCounter g_cellHitsArr[CELL_TIDS], g_cellMissArr[CELL_TIDS];   // zero-init BSS
 static unsigned cell_tid() {
     static std::atomic<unsigned> next{0};
     thread_local unsigned t = next.fetch_add(1, std::memory_order_relaxed);
     return t < CELL_TIDS ? t : CELL_TIDS - 1;
 }
-static U cell_sum(const U (&arr)[CELL_TIDS]) {
+static U cell_sum(const LocalCounter (&arr)[CELL_TIDS]) {
     U v = 0;
-    for (unsigned z = 0; z < CELL_TIDS; ++z) v += arr[z];
+    for (unsigned z = 0; z < CELL_TIDS; ++z) v += arr[z].value;
     return v;
 }
 
@@ -984,8 +991,13 @@ struct SideText {
 };
 std::atomic<U> SideText::g_gen{1};
 // Virtual doubled text: coordinates [0,2n) wrap into the original
-// referenced corpus segments. Raw bytes stay in bounded WinBytes pages;
-// remapping is applied only when bytes are returned to a consumer.
+// referenced corpus segments. A fitting corpus is remapped once into RAM;
+// larger corpora retain bounded WinBytes pages and remap on return.
+// The old path DID use its corpus pool: the banked sol5i 1GB run records
+// 30,567,717,347 hits / 2,992,893 misses. Its cost was repeated short-span
+// copies/remapping (and per-byte pool probes on page-crossing spans), not
+// absent hits. The 5-fill POOL_STATS printed during hash-build belongs to
+// that builder's temporary boundary-check hash reader, not the walk.
 struct CorpusText {
     U n = 0;
     bool pool = false;
@@ -993,6 +1005,40 @@ struct CorpusText {
     std::vector<U> starts, fileIndex;
     std::vector<std::string> paths;
     std::vector<std::unique_ptr<WinBytes>> files;
+    // Immutable, remapped corpus RAM replaces (never supplements) this view's
+    // pool when it fits the same buffer budget. No doubled text is stored.
+    std::unique_ptr<uint8_t[]> cached;
+    // A private counter must also own its cache line. Adjacent U counters
+    // serialize P borrowing producers on each span despite immutable text.
+    using CacheHit = LocalCounter;
+    static_assert(sizeof(CacheHit) == 64, "cache telemetry line ownership");
+    mutable std::array<CacheHit, SharedPages::TIDS> cacheHits{};
+    ~CorpusText() {
+        if (cached) {
+            U hits = 0; for (const auto& h : cacheHits) hits += h.value;
+            std::fprintf(stderr, "CORPUS_CACHE_STATS bytes=%llu hits=%llu demand_misses=0 preload_bytes=%llu\n",
+                (unsigned long long)n, (unsigned long long)hits, (unsigned long long)n);
+        }
+    }
+    // The data are immutable after open(), so a span can be borrowed without
+    // pool probes, seqlocks, copies, or per-symbol remapping. Wraps retain the
+    // general reader. Each charging thread owns its telemetry entry.
+    inline const uint8_t* span(U i, uint8_t* fallback, U len) const {
+        if (cached && i < 2 * n) {
+            U p = i >= n ? i - n : i;
+            if (len <= n - p) {
+                unsigned t = SharedPages::tid();
+                // tid() saturates in long-lived selftests; overflow threads
+                // share only the last counter and must charge it atomically.
+                if (t == SharedPages::TIDS - 1)
+                    __atomic_fetch_add(&cacheHits[t].value, U(1), __ATOMIC_RELAXED);
+                else ++cacheHits[t].value;
+                return cached.get() + p;
+            }
+        }
+        at_span(i, fallback, len);
+        return fallback;
+    }
     void open(std::vector<TextSeg> list, bool pooled = false) {
         for (auto& s : list) {
             if (!s.len) continue;
@@ -1001,6 +1047,10 @@ struct CorpusText {
                 segs.back().len += s.len;
             else segs.push_back(std::move(s));
         }
+        U cacheBytes = 0;
+        for (const auto& s : segs) cacheBytes += s.len;
+        const bool cacheFits = pooled && !no_pool() &&
+            cacheBytes <= 2 * SharedPages::pool_slot_count() * SharedPages::PS;
         for (const auto& s : segs) {
             starts.push_back(n); n += s.len;
             auto it = std::find(paths.begin(), paths.end(), s.path);
@@ -1009,7 +1059,7 @@ struct CorpusText {
                 paths.push_back(s.path);
                 auto r = std::make_unique<WinBytes>();
                 U bytes = fs::file_size(s.path);
-                r->open_ro(s.path, bytes, 0, pooled && !pool && bytes >= (1u << 20));
+                r->open_ro(s.path, bytes, 0, pooled && !cacheFits && !pool && bytes >= (1u << 20));
                 pool = pool || bool(r->pool);
                 files.push_back(std::move(r));
             }
@@ -1018,6 +1068,15 @@ struct CorpusText {
             fileIndex.push_back(f);
         }
         require(n && n <= UINT64_MAX / 2, "virtual corpus length");
+        if (cacheFits) {
+            cached.reset(new uint8_t[n]);
+            // read() remaps each segment exactly once, before publication to
+            // comparator threads. It deliberately bypasses the page pools.
+            read(0, cached.get(), n);
+            std::fprintf(stderr, "CORPUS_RAM_CACHE bytes=%llu budget_bytes=%llu immutable=1 remapped=1 doubled=0\n",
+                (unsigned long long)n,
+                (unsigned long long)(2 * SharedPages::pool_slot_count() * SharedPages::PS));
+        }
     }
     inline size_t segment(U i) const {
         if (segs.size() == 1) return 0;
@@ -1026,6 +1085,7 @@ struct CorpusText {
     inline uint8_t at(U i) const {
         if (i >= 2 * n) fail("virtual corpus byte bounds");
         if (i >= n) i -= n;
+        if (cached) return cached[i];
         size_t z = segment(i);
         const auto& s = segs[z];
         return s.remap[files[fileIndex[z]]->at(s.off + i - starts[z])];
@@ -1033,6 +1093,13 @@ struct CorpusText {
     void at_span(U i, void* out, U len) const {
         if (i > 2 * n || len > 2 * n - i) fail("virtual corpus span bounds");
         auto* q = static_cast<uint8_t*>(out);
+        if (cached) {
+            U p = i >= n ? i - n : i;
+            U take = std::min(len, n - p);
+            std::memcpy(q, cached.get() + p, take);
+            if (take < len) std::memcpy(q + take, cached.get(), len - take);
+            return;
+        }
         while (len) {
             U p = i >= n ? i - n : i;
             size_t z = segment(p);
@@ -1058,6 +1125,13 @@ struct CorpusText {
         }
     }
     void prefetch(U i, U len) const {
+        if (cached && len && i < 2 * n) {
+            U p = i >= n ? i - n : i;
+            __builtin_prefetch(cached.get() + p, 0, 3);
+            if (len > 1 && len <= n - p)
+                __builtin_prefetch(cached.get() + p + len - 1, 0, 3);
+            return;
+        }
         if (!pool || !len || i >= 2 * n) return;
         len = std::min(len, 2 * n - i);
         while (len) {
@@ -1441,6 +1515,22 @@ struct Budget {
     double tFast = 0, tPrep = 0, tProbe = 0, tScan = 0;
 };
 
+// Exact mismatch offset, vectorized only over complete, in-bounds blocks.
+// This changes byte loading, never the comparator's charged logical work.
+static inline U equal_prefix(const uint8_t* a, const uint8_t* b, U len) {
+    U i = 0;
+    while (len - i >= 16) {
+        unsigned same = unsigned(_mm_movemask_epi8(_mm_cmpeq_epi8(
+            _mm_loadu_si128(reinterpret_cast<const __m128i*>(a + i)),
+            _mm_loadu_si128(reinterpret_cast<const __m128i*>(b + i)))));
+        unsigned different = (~same) & 65535u;
+        if (different) return i + __builtin_ctz(different);
+        i += 16;
+    }
+    while (i < len && a[i] == b[i]) ++i;
+    return i;
+}
+
 // ---------------------------------------------------------------- fingerprints
 struct Keys {
     const CorpusText* m2 = nullptr;   // windowed M.M, 2n bytes
@@ -1482,15 +1572,14 @@ struct Keys {
         const bool tOn = cmp_timing();
         double t0 = tOn ? now_sec() : 0.0;
         {
-            uint8_t ab[16], bb[16];
-            m2->at_span(p1, ab, fast);
-            m2->at_span(p2, bb, fast);
-            for (; j < fast; ++j) {
-                if (ab[j] != bb[j]) {
-                    bud->symbols += j + 1; ++bud->fast_decided; bud->note_lce(j);
-                    if (tOn) bud->tFast += now_sec() - t0;
-                    return ab[j] < bb[j] ? -1 : 1;
-                }
+            uint8_t aStorage[16], bStorage[16];
+            const uint8_t* ab = m2->span(p1, aStorage, fast);
+            const uint8_t* bb = m2->span(p2, bStorage, fast);
+            j = equal_prefix(ab, bb, fast);
+            if (j < fast) {
+                bud->symbols += j + 1; ++bud->fast_decided; bud->note_lce(j);
+                if (tOn) bud->tFast += now_sec() - t0;
+                return ab[j] < bb[j] ? -1 : 1;
             }
         }
         if (tOn) bud->tFast += now_sec() - t0;
@@ -1536,17 +1625,17 @@ struct Keys {
         auto materialize = [&](SideScr& sc) {
             if (sc.ready) return;
             U hlen = (sc.aq + 1) * hp->k - sc.p;        // <= k <= 64
-            uint8_t hb[64];
-            m2->at_span(sc.p, hb, hlen);
+            uint8_t storage[64];
+            const uint8_t* hb = m2->span(sc.p, storage, hlen);
             U h = 0;
             for (U z = 0; z < hlen; ++z) h = h * HASH_BASE + ((U)hb[z] + 1);
             sc.h = h;
             Cell& c = cells[&sc == &tscr[0] ? 0 : 1][sc.aq & 4095];
-            if (c.aq == sc.aq && c.gen == hsGen) { sc.pj = c.pj; ++g_cellHitsArr[cell_tid()]; }
+            if (c.aq == sc.aq && c.gen == hsGen) { sc.pj = c.pj; count_local(g_cellHitsArr, cell_tid(), CELL_TIDS-1); }
             else {
                 sc.pj = hp->P(sc.aq + 1);
                 c.aq = sc.aq; c.gen = hsGen; c.pj = sc.pj;
-                ++g_cellMissArr[cell_tid()];
+                count_local(g_cellMissArr, cell_tid(), CELL_TIDS-1);
             }
             sc.ready = true;
         };
@@ -1561,9 +1650,9 @@ struct Keys {
             U mid = (m <= 1) ? 0 : (hp->P(jb) - sc.pj * upow((m - 1) * hp->k));
             U tail = 0;
             if (sc.r) {
-                uint8_t tb[64];
+                uint8_t storage[64];
                 U tlen = std::min<U>(sc.r, 64);
-                m2->at_span(jb * hp->k, tb, tlen);
+                const uint8_t* tb = m2->span(jb * hp->k, storage, tlen);
                 for (U i = 0; i < tlen; ++i) tail = tail * HASH_BASE + ((U)tb[i] + 1);
                 for (U i = 64; i < sc.r; ++i)   // k<=64 enforced by the clamp
                     tail = tail * HASH_BASE + ((U)m2->at(jb * hp->k + i) + 1);
@@ -1594,13 +1683,12 @@ struct Keys {
         U scanEnd = (lo >= mMax || (lo + 1) * k > cap) ? cap : (lo + 1) * k;
         U i = fast;
         {
-            uint8_t ab[64], bb[64];
+            uint8_t aStorage[64], bStorage[64];
             while (i < scanEnd) {
                 U w = std::min<U>(64, scanEnd - i);
-                m2->at_span(p1 + i, ab, w);
-                m2->at_span(p2 + i, bb, w);
-                U z = 0;
-                while (z < w && ab[z] == bb[z]) ++z;
+                const uint8_t* ab = m2->span(p1 + i, aStorage, w);
+                const uint8_t* bb = m2->span(p2 + i, bStorage, w);
+                U z = equal_prefix(ab, bb, w);
                 i += z;
                 if (z < w) break;
             }
@@ -1738,7 +1826,9 @@ static void build_hash_sparse(const CorpusText& m2, U n2, U k,
     for (U t = 0; t < tcount; ++t) ts.emplace_back(fix, t);
     for (auto& t : ts) t.join();
     // Verify absolute hashes at gap boundaries: window hash from sparse P
-    // must equal a direct recomputation over the windowed text.
+    // must equal a direct recomputation over the windowed text. This reader
+    // dies before the walk opens its own hp: its tiny POOL_STATS are NOT the
+    // walk's hit rate (bytes is checkpoint_bytes, not corpus length).
     HashSparse hp; hp.open_ro(hsPath, k, entries);
     U cands[] = {k, n2 / 2 / k * k, n2 / k * k};
     for (U c : cands) {
@@ -2420,6 +2510,7 @@ static void put_le64(char* b, U v)       { for (int i = 0; i < 8; ++i) b[i] = ch
 struct SparseWalkSink {
     virtual ~SparseWalkSink() = default;
     virtual void attachCorpus(const CorpusText&) {}
+    virtual void finishWalk() {}
     virtual SparseWalkSink* shardSink(U) { return this; }
     virtual U shardCount(U normal) const { return normal; }
     virtual U admission() const { return 1; }
@@ -2782,7 +2873,7 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
     st.init(k);
     U n = 0; for (auto& S : sides) n += S.n;
     CorpusText m2; open_merge_text(sides, m2, true);
-    if (sparse) sparse->attachCorpus(m2); // reuse the comparator's pool, within its RAM envelope
+    if (sparse) sparse->attachCorpus(m2); // reuse the comparator's text cache, within its RAM envelope
     if (!pre) {
         hashK = hash_spacing();
         if (hashK > n / 2) hashK = std::max<U>(1, n / 2);   // degenerate-grid guard
@@ -2904,6 +2995,7 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
     for (size_t j = 1; j < k; ++j) if (sides[j].n > sides[wide].n) wide = j;
     std::vector<std::vector<U>> aB(S + 1, std::vector<U>(k, 0));
     for (size_t j = 0; j < k; ++j) aB[S][j] = sides[j].n;
+    std::vector<Budget> planningWork(S);
     {
         require(sides[wide].n > 0, "k-way planning needs a non-empty probe side");
         std::vector<std::thread> pt;
@@ -2948,6 +3040,7 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
                 U bElem = pos[wide]->at(lo);   // the boundary element X_s
                 for (size_t j = 0; j < k; ++j)
                     aB[s][j] = (j == wide) ? lo : rankIn(j, bElem);
+                planningWork[s] = pb;
                 std::lock_guard<std::mutex> g(planMu);
                 bud.comparisons += pb.comparisons; bud.probes += pb.probes;
                 bud.symbols += pb.symbols; bud.fast_decided += pb.fast_decided;
@@ -2971,17 +3064,33 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
         std::vector<U> cur, values;
         std::vector<size_t> sides;
     };
+    const bool seamOracle = S > 1 && getenv("CROSS_SEAM_ORACLE") != nullptr;
+    const bool replayHeap = seedHeap || seamOracle;
     std::vector<HeapCheckpoint> checkpoints(seedHeap ? S : 0);
+    std::vector<Budget> rangeReference(S);
     Budget seedWork;
 #ifdef SOL7D_TRACE
     std::vector<std::pair<U, U>> seedTrace;
     std::vector<std::vector<std::pair<U, U>>> producerTrace(S);
 #endif
-    if (seedHeap) {
+    if (replayHeap) {
         Keys replayKeys; replayKeys.init(&m2, &hp, n, dollar, &seedWork);
 #ifdef SOL7D_TRACE
         replayKeys.trace = &seedTrace;
 #endif
+        // The oracle must not turn each scalar front access into an SXP4
+        // group decode. Borrow the same immutable bulk front windows as the
+        // producer; this changes physical reads, never comparator operands.
+        std::vector<U> replayBase(k, UINT64_MAX);
+        std::vector<std::vector<U>> replayWindows(k);
+        auto replayFront = [&](size_t side, U cursor) {
+            auto& window = replayWindows[side];
+            if (replayBase[side] == UINT64_MAX || cursor < replayBase[side] || cursor-replayBase[side] >= window.size()) {
+                window.resize(std::min<U>(4096, sides[side].n-cursor));
+                pos[side]->read(cursor,window.data(),window.size()); replayBase[side]=cursor;
+            }
+            return window[cursor-replayBase[side]];
+        };
         std::vector<U> cur(k, 0), values;
         std::vector<size_t> heapSides;
         auto less = [&](size_t a, size_t b) {
@@ -2991,23 +3100,26 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
             std::swap(values[a], values[b]); std::swap(heapSides[a], heapSides[b]);
         };
         for (size_t j = 0; j < k; ++j) if (sides[j].n) {
-            values.push_back(pos[j]->at(0)); heapSides.push_back(j);
+            values.push_back(replayFront(j,0)); heapSides.push_back(j);
             size_t i = values.size() - 1;
             while (i && less(i, (i - 1) / 2)) {
                 size_t par = (i - 1) / 2; swap(i, par); i = par;
             }
         }
-        U boundary = 1;
+        U boundary = 1, referenceRange = 0;
+        Budget referenceBefore;
         for (U row = 0; row <= n; ++row) {
             while (boundary < S && R[boundary] == row) {
                 require(cur == aB[boundary], "checkpoint cursor/rank identity");
-                checkpoints[boundary] = {cur, values, heapSides};
+                if (seedHeap) checkpoints[boundary] = {cur, values, heapSides};
+                rangeReference[referenceRange] = difference(seedWork, referenceBefore);
+                referenceBefore = seedWork; referenceRange = boundary;
                 ++boundary;
             }
             if (row == n) break;
             require(!values.empty(), "checkpoint replay heap coverage");
             size_t j = heapSides[0];
-            if (++cur[j] < sides[j].n) values[0] = pos[j]->at(cur[j]);
+            if (++cur[j] < sides[j].n) values[0] = replayFront(j,cur[j]);
             else {
                 values[0] = values.back(); heapSides[0] = heapSides.back();
                 values.pop_back(); heapSides.pop_back();
@@ -3021,7 +3133,10 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
                 swap(i, m); i = m;
             }
         }
+        rangeReference[referenceRange] = difference(seedWork, referenceBefore);
         require(boundary == S, "checkpoint boundary coverage");
+        if (seamOracle) workLine("oracle_reference", 0, seedWork);
+        if (seedHeap) {
         bud.comparisons += seedWork.comparisons; bud.symbols += seedWork.symbols;
         bud.probes += seedWork.probes; bud.fast_decided += seedWork.fast_decided;
         bud.probe_decided += seedWork.probe_decided; bud.cap_decided += seedWork.cap_decided;
@@ -3033,6 +3148,52 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
         bud.tProbe += seedWork.tProbe; bud.tScan += seedWork.tScan;
         workLine("planning_seed", 0, seedWork);
         workLine("overlap", 0, Budget{});
+        }
+    }
+    // A diagnostic oracle run can persist per-range reference counters. A
+    // timed run reuses them without replay. Bind the journal to every split,
+    // mode and source identity; changed input metadata refuses reuse.
+    bool haveReference = replayHeap || S == 1;
+    if (const char* referencePath = getenv("CROSS_SEAM_REFERENCE")) {
+        std::string identity = "sol7e-range-v1";
+        auto word = [&](U value) { identity.append(reinterpret_cast<const char*>(&value),8); };
+        auto fileIdentity = [&](const std::string& path) {
+            struct stat info{}; require(::stat(path.c_str(), &info) == 0, "reference source stat");
+            word(path.size()); identity += path;
+            word(info.st_dev); word(info.st_ino); word(info.st_size);
+            word(info.st_mtim.tv_sec); word(info.st_mtim.tv_nsec);
+        };
+        word(n); word(k); word(S); word(dollar); word(hashK);
+        for (auto& boundary : aB) for (U cursor : boundary) word(cursor);
+        for (const auto& side : sides) {
+            word(side.n); word(side.offset); word(side.period); word(side.posBase); word(side.refText);
+            fileIdentity(side.sxsPath);
+            for (const auto& seg : side.segs) {
+                fileIdentity(seg.path); word(seg.off); word(seg.len);
+                identity.append(reinterpret_cast<const char*>(seg.remap.data()), seg.remap.size());
+            }
+        }
+        if (seamOracle) {
+            require(!fs::exists(referencePath), "reference journal already exists");
+            OutFile reference(referencePath); reference.w64(identity.size());
+            reference.raw(identity.data(), identity.size());
+            for (const auto& range : rangeReference) {
+                reference.w64(range.comparisons); reference.w64(range.symbols); reference.w64(range.probes);
+            }
+        } else if (S > 1) {
+            std::ifstream reference(referencePath, std::ios::binary);
+            U size = 0; reference.read(reinterpret_cast<char*>(&size),8);
+            require(bool(reference) && size == identity.size(), "reference journal identity size");
+            std::string stored(size,'\0'); reference.read(stored.data(),size);
+            require(bool(reference) && stored == identity, "reference journal input/split identity");
+            for (auto& range : rangeReference) {
+                reference.read(reinterpret_cast<char*>(&range.comparisons),8);
+                reference.read(reinterpret_cast<char*>(&range.symbols),8);
+                reference.read(reinterpret_cast<char*>(&range.probes),8);
+            }
+            require(bool(reference) && reference.peek() == EOF, "reference journal exact extent");
+            haveReference = true;
+        }
     }
     const U passes = 1;
     std::vector<Budget> shardBud(passes * S);
@@ -3073,8 +3234,15 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
                 std::vector<std::vector<U>> pwin(k);
                 for (size_t j = 0; j < k; ++j) { cur[j] = aB[s][j]; end[j] = seedHeap ? sides[j].n : aB[s + 1][j]; wbase[j] = cur[j]; }
                 auto frontAt = [&](size_t j, U idx) -> U {   // idx: global row in [cur[j], end[j])
-                    if (idx >= wbase[j] && idx - wbase[j] < pwin[j].size())
-                        return pwin[j][idx - wbase[j]];
+                    if (idx >= wbase[j] && idx - wbase[j] < pwin[j].size()) {
+                        U w = idx - wbase[j];
+                        // The immutable corpus has no asynchronous pool
+                        // workers. Hide RAM latency using the already decoded
+                        // next fronts, without changing heap order or work.
+                        if (m2.cached && w + 16 < pwin[j].size())
+                            m2.prefetch(pwin[j][w + 16], 16);
+                        return pwin[j][w];
+                    }
                     require(idx < end[j], "window front bounds");
                     U len = std::min<U>(WIN, end[j] - idx);
                     pwin[j].resize(len);
@@ -3164,6 +3332,7 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
         };
         launch(sparse, 0, ts);
         for (auto& t : ts) if (t.joinable()) t.join();
+        if (sparse) sparse->finishWalk();
     }
 #ifdef SOL7D_TRACE
     if (seedHeap) {
@@ -3183,8 +3352,42 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
             heapWork.symbols += shardBud[s].symbols; heapWork.probes += shardBud[s].probes;
         }
         workLine("heap", pass, heapWork);
-        if (getenv("CROSS_SEED_HEAP"))
-            for (U s = 0; s < S; ++s) workLine("producer", s, shardBud[pass * S + s]);
+        Budget walkingWork = difference(preparedWork, entryWork);
+        walkingWork.comparisons += heapWork.comparisons;
+        walkingWork.symbols += heapWork.symbols; walkingWork.probes += heapWork.probes;
+        workLine("WALK", pass, walkingWork);
+        Budget planWork;
+        for (const auto& pb : planningWork) {
+            planWork.comparisons += pb.comparisons; planWork.symbols += pb.symbols; planWork.probes += pb.probes;
+        }
+        if (seedHeap) { planWork.comparisons += seedWork.comparisons; planWork.symbols += seedWork.symbols; planWork.probes += seedWork.probes; }
+        workLine("PLANNING", pass, planWork);
+        workLine("OVERLAP", pass, Budget{});
+        if (haveReference) {
+            Budget reference;
+            if (S == 1) reference = heapWork;
+            else for (const auto& rb : rangeReference) {
+                reference.comparisons += rb.comparisons; reference.symbols += rb.symbols; reference.probes += rb.probes;
+            }
+            std::fprintf(stderr, "CROSS_SEAM_TOTAL comparisons=%lld symbols_compared=%lld probes=%lld reference=serial_range signed=1 replay=%u\n",
+                (long long)heapWork.comparisons - (long long)reference.comparisons,
+                (long long)heapWork.symbols - (long long)reference.symbols,
+                (long long)heapWork.probes - (long long)reference.probes, unsigned(replayHeap));
+        } else std::fprintf(stderr, "CROSS_SEAM_TOTAL status=unmeasured reference_required=CROSS_SEAM_REFERENCE\n");
+        if (getenv("CROSS_SEED_HEAP") || getenv("CROSS_SEAM_ORACLE") || getenv("CROSS_SEAM_REFERENCE"))
+            for (U s = 0; s < S; ++s) {
+                workLine("producer", s, shardBud[pass * S + s]);
+                workLine("planning_seam", s, planningWork[s]);
+                workLine("overlap_seam", s, Budget{});
+                const Budget& actual = shardBud[pass * S + s];
+                const Budget& ref = S == 1 ? actual : rangeReference[s];
+                workLine("reference_range", s, ref);
+                std::fprintf(stderr, "CROSS_SEAM_WORK seam=%llu comparisons=%lld symbols_compared=%lld probes=%lld signed=1\n",
+                    (unsigned long long)s,
+                    (long long)actual.comparisons - (long long)ref.comparisons,
+                    (long long)actual.symbols - (long long)ref.symbols,
+                    (long long)actual.probes - (long long)ref.probes);
+            }
     }
     for (U s = 0; s < passes * S; ++s) {
         const Budget& sb = shardBud[s];
@@ -3515,6 +3718,24 @@ struct SequentialV2 : SparseWalkSink {
         else { ++pending.len; pending.tail = p; }
         ++rows;
     }
+    // A spool segment contains no target in its interior. Target rows are
+    // always singleton records; preserving head/tail also preserves both
+    // flanks when a class or a BWT run crosses any number of producer seams.
+    void segment(const SparseRun& run) {
+        require(run.len && run.len <= n - next, "parallel segment bounds");
+        U start = next;
+        row(start, run.head);
+        require(pending.c == run.c, "parallel segment character");
+        if (run.len == 1) {
+            require(run.head == run.tail, "singleton segment endpoints");
+            return;
+        }
+        require(active == UINT64_MAX && seam.previousHit == nullptr,
+                "target rows must be singleton segments");
+        next += run.len - 1; rows += run.len - 1;
+        seam.nextRow += run.len - 1; seam.previous = run.tail;
+        pending.len += run.len - 1; pending.tail = run.tail;
+    }
     void endShard() override {
         require(next == n, "incomplete sequential v2 walk");
         if (active != UINT64_MAX) {
@@ -3546,18 +3767,154 @@ struct SequentialV2 : SparseWalkSink {
                 "publish validated terminal marker");
     }
 };
+// Independent single-pass producers append immutable compressed segments.
+// The ordered reducer reads committed prefixes before producer completion;
+// only it owns SequentialV2, canonical run-band numbering and terminal EOF.
+// RAM is O(P*4096) records plus existing decoded fronts. Scratch is <=25*n
+// bytes (one record per row in the worst case), and is unlinked by range.
+// This is not persistent crash recovery: process failure refuses completion.
+struct ParallelV2 : SparseWalkSink {
+    SequentialV2& output;
+    U count;
+    std::mutex mu;
+    std::condition_variable cv;
+    std::thread reducer;
+    struct Producer : SparseWalkSink {
+        ParallelV2& parent;
+        U id, lo = 0, hi = 0, next = 0, committed = 0;
+        bool started = false, done = false;
+        int fd = -1;
+        std::string path;
+        SparseRun pending;
+        std::vector<char> buffer;
+        Producer(ParallelV2& p, U i) : parent(p), id(i),
+            path(p.output.dir + "/walk-" + std::to_string(i)) { buffer.reserve(25*4096); }
+        void drain() {
+            if (buffer.empty()) return;
+            U base;
+            { std::lock_guard<std::mutex> lock(parent.mu); base = committed; }
+            xput(fd, buffer.data(), buffer.size(), 25*base, "parallel spool write");
+            { std::lock_guard<std::mutex> lock(parent.mu); committed += buffer.size()/25; }
+            buffer.clear(); parent.cv.notify_all();
+        }
+        void flush() {
+            if (!pending.len) return;
+            char b[25]; b[0] = char(pending.c);
+            put_le64(b+1,pending.len); put_le64(b+9,pending.head); put_le64(b+17,pending.tail);
+            buffer.insert(buffer.end(), b, b+25); pending = {};
+            if (buffer.size() == 25*4096) drain();
+        }
+        void beginShard(U shard, U begin, U end) override {
+            require(shard == id && begin <= end && end <= parent.output.n, "parallel producer bounds");
+            lo = next = begin; hi = end;
+            fd = ::open(path.c_str(), O_CREAT | O_EXCL | O_RDWR, 0600);
+            require(fd >= 0, "create parallel spool");
+            { std::lock_guard<std::mutex> lock(parent.mu); started = true; }
+            parent.cv.notify_all();
+        }
+        void row(U rank, U p) override {
+            require(rank == next++ && rank < hi && p < parent.output.n, "parallel producer row coverage");
+            // Keys only: the reducer mutates Hit values, never this map's
+            // structure. Concurrent const key lookup does not read a Hit.
+            const auto& targets = parent.output.seam.targets;
+            bool target = targets.find(p) != targets.end();
+            uint8_t c = p ? parent.output.text->at(p-1) : uint8_t(2);
+            if (target || (pending.len && pending.c != c)) flush();
+            if (!pending.len) pending = {c, 0, p, p};
+            ++pending.len; pending.tail = p;
+            if (target) flush();
+        }
+        void endShard() override {
+            require(next == hi, "parallel producer completion");
+            flush(); drain();
+            { std::lock_guard<std::mutex> lock(parent.mu); done = true; }
+            parent.cv.notify_all();
+        }
+    };
+    std::vector<std::unique_ptr<Producer>> producers;
+    ParallelV2(SequentialV2& o, U p) : output(o), count(p) {
+        for (U i = 0; i < p; ++i) producers.emplace_back(new Producer(*this,i));
+    }
+    U shardCount(U) const override { return count; }
+    U admission() const override { return count; }
+    SparseWalkSink* shardSink(U i) override { return producers.at(i).get(); }
+    void beginShard(U, U, U) override { fail("parallel parent begin"); }
+    void row(U, U) override { fail("parallel parent row"); }
+    void endShard() override { fail("parallel parent end"); }
+    void attachCorpus(const CorpusText& corpus) override {
+        output.attachCorpus(corpus);
+        reducer = std::thread([this] {
+            output.beginShard(0,0,output.n);
+            std::vector<char> buffer(25*4096);
+            auto read64 = [](const char* b) { U v=0; for(unsigned j=0;j<8;++j) v|=U(uint8_t(b[j]))<<(8*j); return v; };
+            for (auto& pointer : producers) {
+                auto& p = *pointer;
+                U records = 0, row = 0;
+                for (;;) {
+                    U available; bool done;
+                    {
+                        std::unique_lock<std::mutex> lock(mu);
+                        cv.wait(lock, [&] { return p.started && (p.committed > records || p.done); });
+                        available = p.committed; done = p.done;
+                    }
+                    if (!records) { require(p.lo == output.next, "parallel range adjacency"); row = p.lo; }
+                    while (records < available) {
+                        U take = std::min<U>(4096, available-records), bytes = 25*take, read = 0;
+                        while (read < bytes) {
+                            ssize_t z = ::pread(p.fd,buffer.data()+read,bytes-read,25*records+read);
+                            if (z < 0 && errno == EINTR) continue;
+                            require(z > 0, "parallel spool read"); read += U(z);
+                        }
+                        for (U j=0;j<take;++j) {
+                            const char* b=buffer.data()+25*j;
+                            SparseRun run{uint8_t(b[0]),read64(b+1),read64(b+9),read64(b+17)};
+                            require(run.len <= p.hi-row, "parallel spool range coverage");
+                            output.segment(run); row += run.len;
+                        }
+                        records += take;
+                    }
+                    if (done) {
+                        require(row == p.hi && output.next == p.hi, "parallel reducer completion");
+                        require(::close(p.fd) == 0 && ::unlink(p.path.c_str()) == 0, "parallel spool consume");
+                        p.fd = -1; break;
+                    }
+                }
+            }
+            output.endShard();
+        });
+    }
+    void finishWalk() override {
+        require(reducer.joinable(), "parallel reducer started"); reducer.join();
+    }
+};
+static U v2_producers(U n) {
+    const char* e = getenv("CROSS_V2_PRODUCERS");
+    U p = e ? std::stoull(e) : 1;
+    require(p >= 1 && p <= 4096, "CROSS_V2_PRODUCERS out of range");
+    return std::min(p,n);
+}
 static U emit_sparse_v2(const std::string& prefix, const std::vector<SideExt>& sides,
                         U threads, Budget& budget, CoreStats& stats,
                         const PairScratch& sc, U hashK, bool pre) {
     U n = 0, inputRuns = 0; for (const auto& side : sides) { n += side.n; inputRuns += side.runs; }
     CorpusText corpus; open_merge_text(sides, corpus, false);
     SequentialV2 output(prefix, corpus, n, inputRuns);
-    core_merge_kway(sides, true, threads, budget, stats, sc, hashK, pre, &output);
+    const U producers = v2_producers(n);
+    std::fprintf(stderr, "CROSS_PRODUCER_RESOURCES P=%llu decoded_front_bytes_max=%llu segment_buffer_bytes=%llu spool_bytes_bound=%llu\n",
+        (unsigned long long)producers, (unsigned long long)(producers*sides.size()*4096*8),
+        (unsigned long long)(producers*4096*25), (unsigned long long)(producers>1 ? 25*n : 0));
+    if (producers == 1)
+        core_merge_kway(sides, true, threads, budget, stats, sc, hashK, pre, &output);
+    else {
+        ParallelV2 parallel(output, producers);
+        core_merge_kway(sides, true, threads, budget, stats, sc, hashK, pre, &parallel);
+    }
     sc.release_walk();
     std::error_code cleanupError;
     fs::remove(output.dir, cleanupError); // consumer removes it after its last unlink
-    std::fprintf(stderr, "SPARSE_V2_EMIT runs=%llu rows=%llu shards=0 WM=absent admission=1 walk_shards=0 passes=1 preparation_passes=1 planning_passes=1\n",
-        (unsigned long long)output.index, (unsigned long long)(n+10));
+    std::fprintf(stderr, "SPARSE_V2_EMIT runs=%llu rows=%llu shards=0 WM=absent admission=%llu walk_shards=%llu passes=1 preparation_passes=1 planning_passes=1\n",
+        (unsigned long long)output.index, (unsigned long long)(n+10),
+        (unsigned long long)producers, (unsigned long long)producers);
     return output.index;
 }
 

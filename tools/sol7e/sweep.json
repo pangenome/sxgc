@@ -1,0 +1,575 @@
+{
+  "quiet_box_attested": false,
+  "results": [
+    {
+      "size": "1b",
+      "P": 1,
+      "kind": "padded",
+      "merge": [
+        "/mnt/nvme2n1/erikg/sol7e-freshstart/cross_lcp_merge",
+        "--tree",
+        "/mnt/nvme2n1/erikg/sol7e-input-1b/chunks",
+        "8",
+        "1000000665",
+        "/mnt/nvme2n1/erikg/sol7e-gate-1b-p1-padded/merged/frag",
+        "--threads",
+        "96",
+        "--kway",
+        "8",
+        "--work",
+        "/mnt/nvme2n1/erikg/sol7e-gate-1b-p1-padded/mwork"
+      ],
+      "finish": [
+        "/mnt/nvme2n1/erikg/sol7e-freshstart/pile_finish",
+        "--prefix",
+        "/mnt/nvme2n1/erikg/sol7e-gate-1b-p1-padded/merged/frag",
+        "--corpus",
+        "/mnt/nvme2n1/erikg/extcols-scratch/mergperf-1b-snap.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/sol7e-input-1b/remap-256.bin",
+        "--output",
+        "/mnt/nvme2n1/erikg/sol7e-gate-1b-p1-padded/frag.sxi2",
+        "--threads",
+        "96",
+        "--poll-timeout",
+        "3600",
+        "--wit-ram-budget",
+        "4294967296",
+        "--chi-expect",
+        "283296933"
+      ],
+      "merge_rc": 0,
+      "finish_rc": 0,
+      "cmp_rc": 0,
+      "requested_bank": "/mnt/nvme2n1/erikg/extcols-scratch/pilev2-g2-1b/frag.sxi2",
+      "requested_bank_exists": true,
+      "actual_bank": "/mnt/nvme2n1/erikg/extcols-scratch/pilev2-g2-1b/frag.sxi2",
+      "merge_wall": 734.0413116230629,
+      "total_wall": 821.9825438540429,
+      "quiet_box_attested": false,
+      "oracle_replay": false,
+      "stages": {
+        "prepare": [
+          89749,
+          209139,
+          144
+        ],
+        "plan": [
+          0,
+          0,
+          0
+        ],
+        "heap": [
+          3674539686,
+          60485387922,
+          1987510308
+        ],
+        "WALK": [
+          3674629435,
+          60485597061,
+          1987510452
+        ],
+        "PLANNING": [
+          0,
+          0,
+          0
+        ],
+        "OVERLAP": [
+          0,
+          0,
+          0
+        ]
+      },
+      "SEAM": [
+        0,
+        0,
+        0
+      ],
+      "OVERLAP": [
+        0,
+        0,
+        0
+      ],
+      "PLANNING": [
+        0,
+        0,
+        0
+      ],
+      "WALK": [
+        3674629435,
+        60485597061,
+        1987510452
+      ],
+      "serial_whole": [
+        3674629435,
+        60485597061,
+        1987510452
+      ],
+      "walk_whole": [
+        3674629435,
+        60485597061,
+        1987510452
+      ],
+      "overhead": [
+        0,
+        0,
+        0
+      ],
+      "overhead_over_serial": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "overhead_over_walk": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "STOP_30_PERCENT": false
+    },
+    {
+      "size": "1b",
+      "P": 4,
+      "kind": "padded",
+      "merge": [
+        "/mnt/nvme2n1/erikg/sol7e-freshstart/cross_lcp_merge",
+        "--tree",
+        "/mnt/nvme2n1/erikg/sol7e-input-1b/chunks",
+        "8",
+        "1000000665",
+        "/mnt/nvme2n1/erikg/sol7e-gate-1b-p4-padded/merged/frag",
+        "--threads",
+        "96",
+        "--kway",
+        "8",
+        "--work",
+        "/mnt/nvme2n1/erikg/sol7e-gate-1b-p4-padded/mwork"
+      ],
+      "finish": [
+        "/mnt/nvme2n1/erikg/sol7e-freshstart/pile_finish",
+        "--prefix",
+        "/mnt/nvme2n1/erikg/sol7e-gate-1b-p4-padded/merged/frag",
+        "--corpus",
+        "/mnt/nvme2n1/erikg/extcols-scratch/mergperf-1b-snap.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/sol7e-input-1b/remap-256.bin",
+        "--output",
+        "/mnt/nvme2n1/erikg/sol7e-gate-1b-p4-padded/frag.sxi2",
+        "--threads",
+        "96",
+        "--poll-timeout",
+        "3600",
+        "--wit-ram-budget",
+        "4294967296",
+        "--chi-expect",
+        "283296933"
+      ],
+      "merge_rc": 0,
+      "finish_rc": 0,
+      "cmp_rc": 0,
+      "requested_bank": "/mnt/nvme2n1/erikg/extcols-scratch/pilev2-g2-1b/frag.sxi2",
+      "requested_bank_exists": true,
+      "actual_bank": "/mnt/nvme2n1/erikg/extcols-scratch/pilev2-g2-1b/frag.sxi2",
+      "merge_wall": 392.7630766220391,
+      "total_wall": 555.6100794961676,
+      "quiet_box_attested": false,
+      "oracle_replay": false,
+      "stages": {
+        "prepare": [
+          89749,
+          209139,
+          144
+        ],
+        "plan": [
+          15835,
+          75965,
+          800
+        ],
+        "heap": [
+          3674530008,
+          60479896118,
+          1987526158
+        ],
+        "WALK": [
+          3674619757,
+          60480105257,
+          1987526302
+        ],
+        "PLANNING": [
+          15835,
+          75965,
+          800
+        ],
+        "OVERLAP": [
+          0,
+          0,
+          0
+        ],
+        "producer": [
+          899330349,
+          18629077925,
+          753701886
+        ],
+        "planning_seam": [
+          0,
+          0,
+          0
+        ],
+        "overlap_seam": [
+          0,
+          0,
+          0
+        ],
+        "reference_range": [
+          899330373,
+          18629078067,
+          753701886
+        ]
+      },
+      "SEAM": [
+        -9678,
+        -5491804,
+        15850
+      ],
+      "OVERLAP": [
+        0,
+        0,
+        0
+      ],
+      "PLANNING": [
+        15835,
+        75965,
+        800
+      ],
+      "WALK": [
+        3674619757,
+        60480105257,
+        1987526302
+      ],
+      "serial_whole": [
+        3674629435,
+        60485597061,
+        1987510452
+      ],
+      "walk_whole": [
+        3674619757,
+        60480105257,
+        1987526302
+      ],
+      "overhead": [
+        6157,
+        -5415839,
+        16650
+      ],
+      "overhead_over_serial": [
+        1.6755431013957466e-06,
+        -8.953931618692797e-05,
+        8.37731443537586e-06
+      ],
+      "overhead_over_walk": [
+        1.6755475143438086e-06,
+        -8.954744666839296e-05,
+        8.377247628494529e-06
+      ],
+      "STOP_30_PERCENT": false,
+      "speedup": 1.8689162890162414,
+      "amdahl_residual": 0.3800925922522221
+    },
+    {
+      "size": "1b",
+      "P": 8,
+      "kind": "padded",
+      "merge": [
+        "/mnt/nvme2n1/erikg/sol7e-freshstart/cross_lcp_merge",
+        "--tree",
+        "/mnt/nvme2n1/erikg/sol7e-input-1b/chunks",
+        "8",
+        "1000000665",
+        "/mnt/nvme2n1/erikg/sol7e-gate-1b-p8-padded/merged/frag",
+        "--threads",
+        "96",
+        "--kway",
+        "8",
+        "--work",
+        "/mnt/nvme2n1/erikg/sol7e-gate-1b-p8-padded/mwork"
+      ],
+      "finish": [
+        "/mnt/nvme2n1/erikg/sol7e-freshstart/pile_finish",
+        "--prefix",
+        "/mnt/nvme2n1/erikg/sol7e-gate-1b-p8-padded/merged/frag",
+        "--corpus",
+        "/mnt/nvme2n1/erikg/extcols-scratch/mergperf-1b-snap.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/sol7e-input-1b/remap-256.bin",
+        "--output",
+        "/mnt/nvme2n1/erikg/sol7e-gate-1b-p8-padded/frag.sxi2",
+        "--threads",
+        "96",
+        "--poll-timeout",
+        "3600",
+        "--wit-ram-budget",
+        "4294967296",
+        "--chi-expect",
+        "283296933"
+      ],
+      "merge_rc": 0,
+      "finish_rc": 0,
+      "cmp_rc": 0,
+      "requested_bank": "/mnt/nvme2n1/erikg/extcols-scratch/pilev2-g2-1b/frag.sxi2",
+      "requested_bank_exists": true,
+      "actual_bank": "/mnt/nvme2n1/erikg/extcols-scratch/pilev2-g2-1b/frag.sxi2",
+      "merge_wall": 267.79129317821935,
+      "total_wall": 404.9821295309812,
+      "quiet_box_attested": false,
+      "oracle_replay": false,
+      "stages": {
+        "prepare": [
+          89749,
+          209139,
+          144
+        ],
+        "plan": [
+          36937,
+          203480,
+          2216
+        ],
+        "heap": [
+          3674509704,
+          60478464129,
+          1987483306
+        ],
+        "WALK": [
+          3674599453,
+          60478673268,
+          1987483450
+        ],
+        "PLANNING": [
+          36937,
+          203480,
+          2216
+        ],
+        "OVERLAP": [
+          0,
+          0,
+          0
+        ],
+        "producer": [
+          446043946,
+          10625696079,
+          451493210
+        ],
+        "planning_seam": [
+          0,
+          0,
+          0
+        ],
+        "overlap_seam": [
+          0,
+          0,
+          0
+        ],
+        "reference_range": [
+          446043966,
+          10625697154,
+          451493298
+        ]
+      },
+      "SEAM": [
+        -29982,
+        -6923793,
+        -27002
+      ],
+      "OVERLAP": [
+        0,
+        0,
+        0
+      ],
+      "PLANNING": [
+        36937,
+        203480,
+        2216
+      ],
+      "WALK": [
+        3674599453,
+        60478673268,
+        1987483450
+      ],
+      "serial_whole": [
+        3674629435,
+        60485597061,
+        1987510452
+      ],
+      "walk_whole": [
+        3674599453,
+        60478673268,
+        1987483450
+      ],
+      "overhead": [
+        6955,
+        -6720313,
+        -24786
+      ],
+      "overhead_over_serial": [
+        1.8927078561324374e-06,
+        -0.00011110600418183082,
+        -1.247087781352709e-05
+      ],
+      "overhead_over_walk": [
+        1.8927232992215872e-06,
+        -0.00011111872395447867,
+        -1.247104724318585e-05
+      ],
+      "STOP_30_PERCENT": false,
+      "speedup": 2.741094764177216,
+      "amdahl_residual": 0.274077418396594
+    },
+    {
+      "size": "1b",
+      "P": 16,
+      "kind": "padded",
+      "merge": [
+        "/mnt/nvme2n1/erikg/sol7e-freshstart/cross_lcp_merge",
+        "--tree",
+        "/mnt/nvme2n1/erikg/sol7e-input-1b/chunks",
+        "8",
+        "1000000665",
+        "/mnt/nvme2n1/erikg/sol7e-gate-1b-p16-padded/merged/frag",
+        "--threads",
+        "96",
+        "--kway",
+        "8",
+        "--work",
+        "/mnt/nvme2n1/erikg/sol7e-gate-1b-p16-padded/mwork"
+      ],
+      "finish": [
+        "/mnt/nvme2n1/erikg/sol7e-freshstart/pile_finish",
+        "--prefix",
+        "/mnt/nvme2n1/erikg/sol7e-gate-1b-p16-padded/merged/frag",
+        "--corpus",
+        "/mnt/nvme2n1/erikg/extcols-scratch/mergperf-1b-snap.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/sol7e-input-1b/remap-256.bin",
+        "--output",
+        "/mnt/nvme2n1/erikg/sol7e-gate-1b-p16-padded/frag.sxi2",
+        "--threads",
+        "96",
+        "--poll-timeout",
+        "3600",
+        "--wit-ram-budget",
+        "4294967296",
+        "--chi-expect",
+        "283296933"
+      ],
+      "merge_rc": 0,
+      "finish_rc": 0,
+      "cmp_rc": 0,
+      "requested_bank": "/mnt/nvme2n1/erikg/extcols-scratch/pilev2-g2-1b/frag.sxi2",
+      "requested_bank_exists": true,
+      "actual_bank": "/mnt/nvme2n1/erikg/extcols-scratch/pilev2-g2-1b/frag.sxi2",
+      "merge_wall": 312.5161197669804,
+      "total_wall": 425.4791337521747,
+      "quiet_box_attested": false,
+      "oracle_replay": false,
+      "stages": {
+        "prepare": [
+          89749,
+          209139,
+          144
+        ],
+        "plan": [
+          78957,
+          452649,
+          5180
+        ],
+        "heap": [
+          3674516949,
+          60477670977,
+          1987420014
+        ],
+        "WALK": [
+          3674606698,
+          60477880116,
+          1987420158
+        ],
+        "PLANNING": [
+          78957,
+          452649,
+          5180
+        ],
+        "OVERLAP": [
+          0,
+          0,
+          0
+        ],
+        "producer": [
+          209883306,
+          6789116133,
+          298582320
+        ],
+        "planning_seam": [
+          0,
+          0,
+          0
+        ],
+        "overlap_seam": [
+          0,
+          0,
+          0
+        ],
+        "reference_range": [
+          209883333,
+          6789116889,
+          298582374
+        ]
+      },
+      "SEAM": [
+        -22737,
+        -7716945,
+        -90294
+      ],
+      "OVERLAP": [
+        0,
+        0,
+        0
+      ],
+      "PLANNING": [
+        78957,
+        452649,
+        5180
+      ],
+      "WALK": [
+        3674606698,
+        60477880116,
+        1987420158
+      ],
+      "serial_whole": [
+        3674629435,
+        60485597061,
+        1987510452
+      ],
+      "walk_whole": [
+        3674606698,
+        60477880116,
+        1987420158
+      ],
+      "overhead": [
+        56220,
+        -7264296,
+        -85114
+      ],
+      "overhead_over_serial": [
+        1.529950189385559e-05,
+        -0.00012009959978858974,
+        -4.282442888003489e-05
+      ],
+      "overhead_over_walk": [
+        1.529959656106848e-05,
+        -0.00012011492443297729,
+        -4.2826374512399404e-05
+      ],
+      "STOP_30_PERCENT": false,
+      "speedup": 2.3488110378766445,
+      "amdahl_residual": 0.38746380592807517
+    }
+  ]
+}

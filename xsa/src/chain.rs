@@ -774,13 +774,37 @@ fn run_chain(options: Options) -> Result<(), String> {
         None => options.chunks,
     };
     let survey = super::plan::survey(&input, &scratch, &options.stripes)?;
-    let build_plan = if options.v2_pipeline {
+    let mut build_plan = if options.v2_pipeline {
         super::plan::model_v2(survey, chunks, options.kway, options.threads, options.memory_gb, options.scratch_free_pct)
     } else if options.fanin {
         super::plan::model_fanin(survey, chunks, options.kway, options.threads, options.memory_gb, options.scratch_free_pct)
     } else {
         super::plan::model(survey, chunks, options.kway, options.threads, options.memory_gb, options.scratch_free_pct)
     };
+    if options.v2_pipeline {
+        let producers = std::env::var("CROSS_V2_PRODUCERS").unwrap_or_else(|_| "1".into())
+            .parse::<u64>().map_err(|_| "CROSS_V2_PRODUCERS must be an integer")?;
+        if !(1..=4096).contains(&producers) {
+            return Err("CROSS_V2_PRODUCERS must be in 1..4096".into());
+        }
+        if producers > 1 {
+            // Fresh heaps write compressed segments concurrently; in the
+            // worst case every row is a separate 25-byte record. Reserve
+            // this additional input-dependent bound before moving bytes.
+            let extra_mb = 25.0 * corpus_bytes as f64 / 1048576.0;
+            for phase in &mut build_plan.phases {
+                if phase.name.starts_with("merge") { phase.disc_peak_mb += extra_mb; }
+            }
+            if let Some(v2) = &mut build_plan.v2 {
+                v2.merge_transient_gb += extra_mb / 1024.0;
+                v2.transient_note.push_str(&format!("; fresh-start P={producers} segment spools reserve an ADDITIONAL worst-case 25n ({:.1} GiB), reclaimed by ordered range", extra_mb / 1024.0));
+            }
+            let peak_mb = build_plan.phases.iter().map(|p| p.disc_peak_mb).fold(0.0, f64::max);
+            if peak_mb * 1048576.0 > build_plan.survey.scratch_free_bytes as f64 {
+                build_plan.alternatives.push("free scratch for P-way segment spools (additional bound 25n), or use CROSS_V2_PRODUCERS=1".into());
+            }
+        }
+    }
     if options.plan_only {
         print!("{}", build_plan.render());
         return Ok(());
@@ -795,7 +819,7 @@ fn run_chain(options: Options) -> Result<(), String> {
     for line in build_plan.render().lines() {
         journal.line(line);
     }
-    for knob in ["CROSS_NO_POOL", "CROSS_ASYNC_FILL", "CROSS_HASH_K", "CROSS_PIPELINE", "CROSS_SHARDS", "CROSS_NO_REF", "CHUNK_NO_REF", "CHUNK_POS_MODE", "CROSS_POS_MODE", "CROSS_NO_SXP4"] {
+    for knob in ["CROSS_NO_POOL", "CROSS_ASYNC_FILL", "CROSS_HASH_K", "CROSS_PIPELINE", "CROSS_SHARDS", "CROSS_V2_PRODUCERS", "CROSS_SEAM_REFERENCE", "CROSS_SEAM_ORACLE", "CROSS_NO_REF", "CHUNK_NO_REF", "CHUNK_POS_MODE", "CROSS_POS_MODE", "CROSS_NO_SXP4"] {
         if let Some(value) = std::env::var_os(knob) {
             journal.line(&format!("KNOB {knob}={}", value.to_string_lossy()));
         }
@@ -1007,6 +1031,8 @@ fn run_v2_tail(
     // The v2 emission knobs: the G1-G4 gate shape by default; operator env
     // passes through unchanged and is journaled.
     let v2_band = "65536".to_string();
+    let v2_producers = std::env::var("CROSS_V2_PRODUCERS").unwrap_or_else(|_| "1".to_string());
+    journal.line(&format!("V2_PRODUCERS S={v2_producers} fresh_start=1 seam_reference=CROSS_SEAM_REFERENCE"));
     let v2_window = std::env::var("CROSS_V2_PIECE_WINDOW").unwrap_or_else(|_| "1100".to_string());
     journal.line(&format!("V2_EMISSION CROSS_V2_PIECES=1 band={v2_band} window={v2_window}"));
     let container = scratch.join(format!("{}.sxi2",
@@ -1022,6 +1048,7 @@ fn run_v2_tail(
     // consumed"): the merge unlinks each side as its group completes.
     let mut merge_env = vec![
         ("CROSS_V2_PIECES".to_string(), "1".to_string()),
+        ("CROSS_V2_PRODUCERS".to_string(), v2_producers),
         ("CROSS_V2_BAND".to_string(), v2_band.clone()),
         ("CROSS_V2_PIECE_WINDOW".to_string(), v2_window.clone()),
     ];

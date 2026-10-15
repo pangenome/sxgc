@@ -1,5 +1,7 @@
 // Test the surviving rank planner's row handoff directly, before any band
 // protocol promotion. This is deliberately NOT a production sink.
+// sol7e also runs this with CROSS_SEAM_ORACLE=1 and fresh heaps, comparing
+// each range budget to the independently seeded serial trajectory.
 #define SOL7D_TRACE 1
 #define main cross_merge_program_main
 #include "../../bit6/cross_lcp_merge.cpp"

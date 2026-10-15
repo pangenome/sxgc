@@ -35,6 +35,8 @@ for line in log.read_text().splitlines():
     if match:
         assert current is not None
         stage, index = match[1], int(match[2])
+        if stage in ('planning_seam', 'overlap_seam', 'reference_range'):
+            continue
         values = list(map(int, match.groups()[2:]))
         target = current['producers'] if stage == 'producer' else current['stages']
         key = index if stage == 'producer' else stage
