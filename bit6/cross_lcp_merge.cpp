@@ -996,6 +996,28 @@ struct CorpusText {
     // Immutable, remapped corpus RAM replaces (never supplements) this view's
     // pool when it fits the same buffer budget. No doubled text is stored.
     std::unique_ptr<uint8_t[]> cached;
+    std::array<U, SharedPages::TIDS> cacheHits{};
+    ~CorpusText() {
+        if (cached) {
+            U hits = 0; for (U h : cacheHits) hits += h;
+            std::fprintf(stderr, "CORPUS_CACHE_STATS bytes=%llu hits=%llu demand_misses=0 preload_bytes=%llu\n",
+                (unsigned long long)n, (unsigned long long)hits, (unsigned long long)n);
+        }
+    }
+    // The data are immutable after open(), so a span can be borrowed without
+    // pool probes, seqlocks, copies, or per-symbol remapping. Wraps retain the
+    // general reader. Each charging thread owns its telemetry entry.
+    inline const uint8_t* span(U i, uint8_t* fallback, U len) const {
+        if (cached && i < 2 * n) {
+            U p = i >= n ? i - n : i;
+            if (len <= n - p) {
+                ++const_cast<CorpusText*>(this)->cacheHits[SharedPages::tid()];
+                return cached.get() + p;
+            }
+        }
+        at_span(i, fallback, len);
+        return fallback;
+    }
     void open(std::vector<TextSeg> list, bool pooled = false) {
         for (auto& s : list) {
             if (!s.len) continue;
@@ -1500,9 +1522,9 @@ struct Keys {
         const bool tOn = cmp_timing();
         double t0 = tOn ? now_sec() : 0.0;
         {
-            uint8_t ab[16], bb[16];
-            m2->at_span(p1, ab, fast);
-            m2->at_span(p2, bb, fast);
+            uint8_t aStorage[16], bStorage[16];
+            const uint8_t* ab = m2->span(p1, aStorage, fast);
+            const uint8_t* bb = m2->span(p2, bStorage, fast);
             for (; j < fast; ++j) {
                 if (ab[j] != bb[j]) {
                     bud->symbols += j + 1; ++bud->fast_decided; bud->note_lce(j);
@@ -1554,8 +1576,8 @@ struct Keys {
         auto materialize = [&](SideScr& sc) {
             if (sc.ready) return;
             U hlen = (sc.aq + 1) * hp->k - sc.p;        // <= k <= 64
-            uint8_t hb[64];
-            m2->at_span(sc.p, hb, hlen);
+            uint8_t storage[64];
+            const uint8_t* hb = m2->span(sc.p, storage, hlen);
             U h = 0;
             for (U z = 0; z < hlen; ++z) h = h * HASH_BASE + ((U)hb[z] + 1);
             sc.h = h;
@@ -1579,9 +1601,9 @@ struct Keys {
             U mid = (m <= 1) ? 0 : (hp->P(jb) - sc.pj * upow((m - 1) * hp->k));
             U tail = 0;
             if (sc.r) {
-                uint8_t tb[64];
+                uint8_t storage[64];
                 U tlen = std::min<U>(sc.r, 64);
-                m2->at_span(jb * hp->k, tb, tlen);
+                const uint8_t* tb = m2->span(jb * hp->k, storage, tlen);
                 for (U i = 0; i < tlen; ++i) tail = tail * HASH_BASE + ((U)tb[i] + 1);
                 for (U i = 64; i < sc.r; ++i)   // k<=64 enforced by the clamp
                     tail = tail * HASH_BASE + ((U)m2->at(jb * hp->k + i) + 1);
@@ -1612,11 +1634,11 @@ struct Keys {
         U scanEnd = (lo >= mMax || (lo + 1) * k > cap) ? cap : (lo + 1) * k;
         U i = fast;
         {
-            uint8_t ab[64], bb[64];
+            uint8_t aStorage[64], bStorage[64];
             while (i < scanEnd) {
                 U w = std::min<U>(64, scanEnd - i);
-                m2->at_span(p1 + i, ab, w);
-                m2->at_span(p2 + i, bb, w);
+                const uint8_t* ab = m2->span(p1 + i, aStorage, w);
+                const uint8_t* bb = m2->span(p2 + i, bStorage, w);
                 U z = 0;
                 while (z < w && ab[z] == bb[z]) ++z;
                 i += z;
