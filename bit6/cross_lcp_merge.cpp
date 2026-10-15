@@ -87,6 +87,7 @@
 #include <unordered_map>
 #include <vector>
 #include <fcntl.h>
+#include <linux/falloc.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -3770,18 +3771,30 @@ struct SequentialV2 : SparseWalkSink {
 // Independent single-pass producers append immutable compressed segments.
 // The ordered reducer reads committed prefixes before producer completion;
 // only it owns SequentialV2, canonical run-band numbering and terminal EOF.
-// RAM is O(P*4096) records plus existing decoded fronts. Scratch is <=25*n
-// bytes (one record per row in the worst case), and is unlinked by range.
+// RAM is O(P*4096) records plus existing decoded fronts. Physical spool
+// scratch is credit-bounded, punched on consumption, and unlinked by range.
 // This is not persistent crash recovery: process failure refuses completion.
+// Shared byte credits retain one aligned batch exclusively for the current
+// ordered range. Later producers can fill the remaining budget but cannot
+// prevent its producer from progressing. Extents are punched before credits
+// return. No text is written to these files.
+static U v2_spool_budget(U n, U p) {
+    const char* e = getenv("CROSS_V2_SPOOL_BYTES");
+    if (e) require(*e && std::string(e).find_first_not_of("0123456789") == std::string::npos, "CROSS_V2_SPOOL_BYTES must be an integer");
+    U bytes = e ? std::stoull(e) : std::max<U>(p*102400, n > UINT64_MAX/2 ? UINT64_MAX : 2*n);
+    require(bytes >= p*102400, "CROSS_V2_SPOOL_BYTES must be >= P*102400");
+    return bytes;
+}
 struct ParallelV2 : SparseWalkSink {
     SequentialV2& output;
-    U count;
+    U count, quota, occupied = 0, activeProducer = 0;
     std::mutex mu;
     std::condition_variable cv;
     std::thread reducer;
     struct Producer : SparseWalkSink {
         ParallelV2& parent;
-        U id, lo = 0, hi = 0, next = 0, committed = 0;
+        U id, lo = 0, hi = 0, next = 0, committed = 0, reclaimed = 0, blocks = 0;
+        double blockedSeconds = 0;
         bool started = false, done = false;
         int fd = -1;
         std::string path;
@@ -3791,8 +3804,15 @@ struct ParallelV2 : SparseWalkSink {
             path(p.output.dir + "/walk-" + std::to_string(i)) { buffer.reserve(25*4096); }
         void drain() {
             if (buffer.empty()) return;
-            U base;
-            { std::lock_guard<std::mutex> lock(parent.mu); base = committed; }
+            U base, charge = (buffer.size()+4095)/4096*4096;
+            { std::unique_lock<std::mutex> lock(parent.mu);
+              auto ready = [&] { return parent.occupied + charge <= parent.quota - (id == parent.activeProducer ? 0 : 102400); };
+              if (!ready()) {
+                  ++blocks; auto start = std::chrono::steady_clock::now();
+                  parent.cv.wait(lock, ready);
+                  blockedSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
+              }
+              base = committed; parent.occupied += charge; }
             xput(fd, buffer.data(), buffer.size(), 25*base, "parallel spool write");
             { std::lock_guard<std::mutex> lock(parent.mu); committed += buffer.size()/25; }
             buffer.clear(); parent.cv.notify_all();
@@ -3832,7 +3852,8 @@ struct ParallelV2 : SparseWalkSink {
         }
     };
     std::vector<std::unique_ptr<Producer>> producers;
-    ParallelV2(SequentialV2& o, U p) : output(o), count(p) {
+    ParallelV2(SequentialV2& o, U p) : output(o), count(p),
+        quota(v2_spool_budget(o.n,p)/102400*102400) {
         for (U i = 0; i < p; ++i) producers.emplace_back(new Producer(*this,i));
     }
     U shardCount(U) const override { return count; }
@@ -3849,6 +3870,8 @@ struct ParallelV2 : SparseWalkSink {
             auto read64 = [](const char* b) { U v=0; for(unsigned j=0;j<8;++j) v|=U(uint8_t(b[j]))<<(8*j); return v; };
             for (auto& pointer : producers) {
                 auto& p = *pointer;
+                { std::lock_guard<std::mutex> lock(mu); activeProducer = p.id; }
+                cv.notify_all();
                 U records = 0, row = 0;
                 for (;;) {
                     U available; bool done;
@@ -3871,7 +3894,15 @@ struct ParallelV2 : SparseWalkSink {
                             require(run.len <= p.hi-row, "parallel spool range coverage");
                             output.segment(run); row += run.len;
                         }
+                        // All writes except final EOF are full aligned batches. Punch
+                        // only consumed extents; the last partial batch has no successor.
+                        U offset = 25*records;
+                        require(::fallocate(p.fd, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE,
+                                            offset, (bytes+4095)/4096*4096) == 0,
+                                "reclaim parallel spool extents (requires hole punching)");
                         records += take;
+                        { std::lock_guard<std::mutex> lock(mu); p.reclaimed = records; occupied -= (bytes+4095)/4096*4096; }
+                        cv.notify_all();
                     }
                     if (done) {
                         require(row == p.hi && output.next == p.hi, "parallel reducer completion");
@@ -3885,6 +3916,10 @@ struct ParallelV2 : SparseWalkSink {
     }
     void finishWalk() override {
         require(reducer.joinable(), "parallel reducer started"); reducer.join();
+        for (const auto& p : producers)
+            std::fprintf(stderr, "CROSS_SPOOL_STALL producer=%llu blocks=%llu seconds=%.6f quota_bytes=%llu\n",
+                (unsigned long long)p->id, (unsigned long long)p->blocks, p->blockedSeconds,
+                (unsigned long long)quota);
     }
 };
 static U v2_producers(U n) {
@@ -3902,7 +3937,7 @@ static U emit_sparse_v2(const std::string& prefix, const std::vector<SideExt>& s
     const U producers = v2_producers(n);
     std::fprintf(stderr, "CROSS_PRODUCER_RESOURCES P=%llu decoded_front_bytes_max=%llu segment_buffer_bytes=%llu spool_bytes_bound=%llu\n",
         (unsigned long long)producers, (unsigned long long)(producers*sides.size()*4096*8),
-        (unsigned long long)(producers*4096*25), (unsigned long long)(producers>1 ? 25*n : 0));
+        (unsigned long long)(producers*4096*25), (unsigned long long)(producers>1 ? v2_spool_budget(n,producers) : 0));
     if (producers == 1)
         core_merge_kway(sides, true, threads, budget, stats, sc, hashK, pre, &output);
     else {
