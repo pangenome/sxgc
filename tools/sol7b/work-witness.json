@@ -1,0 +1,126 @@
+{
+  "result": "PASS",
+  "byte_order_oracles": "native brute cyclic/dollar and sparse-v2 checks passed",
+  "work_identity": false,
+  "caveat": "S denotes logical shards, not physical worker count; this is not a 1GB gate",
+  "results": {
+    "1": {
+      "command": [
+        "/mnt/nvme2n1/erikg/sol7b-audit/cross_lcp_merge",
+        "--selftest",
+        "1",
+        "--seed",
+        "1",
+        "--kway",
+        "8",
+        "--threads",
+        "8"
+      ],
+      "environment": {
+        "CROSS_SHARDS": "1"
+      },
+      "modes": {
+        "cyclic": [
+          {
+            "stage": "prepare",
+            "comparisons": 8,
+            "symbols": 16,
+            "probes": 0
+          },
+          {
+            "stage": "plan",
+            "comparisons": 0,
+            "symbols": 0,
+            "probes": 0
+          },
+          {
+            "stage": "heap",
+            "comparisons": 93,
+            "symbols": 1535,
+            "probes": 124
+          }
+        ],
+        "dollar": [
+          {
+            "stage": "prepare",
+            "comparisons": 8,
+            "symbols": 15,
+            "probes": 0
+          },
+          {
+            "stage": "plan",
+            "comparisons": 0,
+            "symbols": 0,
+            "probes": 0
+          },
+          {
+            "stage": "heap",
+            "comparisons": 95,
+            "symbols": 738,
+            "probes": 0
+          }
+        ]
+      },
+      "native_selftest_rc": 0
+    },
+    "8": {
+      "command": [
+        "/mnt/nvme2n1/erikg/sol7b-audit/cross_lcp_merge",
+        "--selftest",
+        "1",
+        "--seed",
+        "1",
+        "--kway",
+        "8",
+        "--threads",
+        "8"
+      ],
+      "environment": {
+        "CROSS_SHARDS": "8"
+      },
+      "modes": {
+        "cyclic": [
+          {
+            "stage": "prepare",
+            "comparisons": 8,
+            "symbols": 16,
+            "probes": 0
+          },
+          {
+            "stage": "plan",
+            "comparisons": 266,
+            "symbols": 3388,
+            "probes": 266
+          },
+          {
+            "stage": "heap",
+            "comparisons": 72,
+            "symbols": 1728,
+            "probes": 144
+          }
+        ],
+        "dollar": [
+          {
+            "stage": "prepare",
+            "comparisons": 8,
+            "symbols": 15,
+            "probes": 0
+          },
+          {
+            "stage": "plan",
+            "comparisons": 294,
+            "symbols": 1881,
+            "probes": 0
+          },
+          {
+            "stage": "heap",
+            "comparisons": 78,
+            "symbols": 686,
+            "probes": 0
+          }
+        ]
+      },
+      "native_selftest_rc": 0
+    }
+  }
+}
