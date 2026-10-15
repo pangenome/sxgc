@@ -6,27 +6,29 @@
 
 struct RowWitness : SparseWalkSink {
     struct Range : SparseWalkSink {
-        std::vector<U>& rows;
+        U n;
+        std::vector<U> rows;
         U lo = 0, hi = 0, next = 0;
         bool started = false, done = false;
-        explicit Range(std::vector<U>& r) : rows(r) {}
+        explicit Range(U count) : n(count) {}
         void beginShard(U, U a, U b) override {
-            require(!started && a <= b && b <= rows.size(), "witness range bounds");
+            require(!started && a <= b && b <= n, "witness range bounds");
             started = true; lo = next = a; hi = b;
+            rows.reserve(b - a);
         }
         void row(U rank, U position) override {
             require(started && !done && rank == next && rank < hi, "witness exact row owner");
-            rows[next++] = position;
+            rows.push_back(position); ++next;
         }
         void endShard() override {
             require(started && !done && next == hi, "witness range completion");
             done = true;
         }
     };
-    std::vector<U> rows;
+    U n;
     std::vector<std::unique_ptr<Range>> ranges;
-    RowWitness(U n, U p) : rows(n, n + 1) {
-        for (U i = 0; i < p; ++i) ranges.emplace_back(new Range(rows));
+    RowWitness(U count, U p) : n(count) {
+        for (U i = 0; i < p; ++i) ranges.emplace_back(new Range(n));
     }
     U shardCount(U) const override { return ranges.size(); }
     U admission() const override { return ranges.size(); }
@@ -35,6 +37,8 @@ struct RowWitness : SparseWalkSink {
     void row(U, U) override { fail("witness parent row"); }
     void endShard() override { fail("witness parent end"); }
     U check(const std::vector<U>& want) {
+        std::vector<U> rows;
+        for (auto& r : ranges) rows.insert(rows.end(), r->rows.begin(), r->rows.end());
         require(rows == want, "witness complete native brute row identity");
         U next = 0, seams = 0;
         for (auto& r : ranges) {
