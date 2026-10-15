@@ -1,0 +1,1 @@
+SOL7F_SEGMENT_CODEC_PASS cases=512 widths=1..8 records=1..4096 u64_lengths=1 singleton_tail_elision=1 exact_roundtrip=1 packed=480 raw_fallback=32

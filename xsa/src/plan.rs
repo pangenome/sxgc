@@ -23,7 +23,7 @@ use std::path::Path;
 /// legacy chunk sets (CROSS_NO_PERSIST), measured ~1.5 s/MB serial
 /// (~0.7 MB/s - the pile-scale bottleneck that motivated persisting).
 /// Chunk artifacts: 9.9x corpus (.crle runs) + 8x (persisted pos columns).
-pub const CONSTANTS_VERSION: u32 = 5;
+pub const CONSTANTS_VERSION: u32 = 6;
 
 /// Per-byte wall rates (seconds per corpus MB), fragment-calibrated.
 pub struct Rates {
@@ -367,7 +367,7 @@ impl Plan {
         let total: f64 = self.phases.iter().map(|p| p.wall_s).sum();
         s.push_str(&format!(
             "XSA_PLAN v={}{} corpus_bytes={} chunks={} kway={} threads={} cap_gb={} cores={} cx16={} mem_available_gb={:.0}\n",
-            CONSTANTS_VERSION, if self.v2.is_some() { " pipeline=v2 (constants measured at the 1GB packed-WM thread-curve gates, best point 96t)" } else { "" }, self.survey.corpus_bytes, self.chunks, self.kway, self.threads,
+            CONSTANTS_VERSION, if self.v2.is_some() { " pipeline=v2 (sol7f sparse transport; 1GB P8 merge and serial finish service rates; scale extrapolated)" } else { "" }, self.survey.corpus_bytes, self.chunks, self.kway, self.threads,
             self.cap_gb, self.survey.cores, self.survey.cx16,
             self.survey.mem_available_bytes as f64 / (1024.0 * 1024.0 * 1024.0),
         ));
@@ -416,21 +416,11 @@ impl Plan {
             s.push_str(&format!("XSA_PLAN_V2_TREE tree_peak={:.3}n bound={:.1}n measured_at=1GB-G2 (output side, excl. the merge transient); whole_box(corpus+tree)={:.3}n\n", V2_TREE_PEAK_PER_N, V2_TREE_TARGET_PER_N, 1.0 + V2_TREE_PEAK_PER_N));
             s.push_str(&format!("XSA_PLAN_V2_WITNESS {}\n", v.witness_note));
             s.push_str(&format!("XSA_PLAN_V2_MERGE_TRANSIENT {}\n", v.transient_note));
-            // THE SCRATCH-HOST FINDING, printed by the dry run itself (the
-            // reasoning is journaled in the lane README; these lines are the
-            // verdict): per-shard transients cannot collapse the merge
-            // transient (m2/hs/bwt/walk columns global by construction; the
-            // WM pinned whole by the two-pass emission + class-SA-set
-            // preads), so the monolithic final merge has a hard hosting
-            // number. All cells below carry their provenance above.
-            let need_gb = mb * v2_whole_tree_peak_per_n(self.survey.corpus_bytes) / 1024.0;
+            let need_gb = self.phases.iter().map(|p| p.disc_peak_mb).fold(0.0, f64::max) / 1024.0;
             s.push_str(&format!(
-                "XSA_PLAN_V2_HOSTING monolithic-final-merge needs the WHOLE tree (incl. the merge transient) ~{:.0} GB = {:.2}n on ONE scratch host (+ corpus {:.0} GB if co-hosted, + witness-spill scratch ~0.125x measured of (stream - budget)); THIS scratch has {:.0} GB free - {}\n",
-                need_gb, v2_whole_tree_peak_per_n(self.survey.corpus_bytes), self.survey.corpus_bytes as f64 / (1024.0*1024.0*1024.0), free_gb,
-                if need_gb < free_gb { "FITS" } else { "DOES NOT FIT the monolithic merge" },
-            ));
-            s.push_str(&format!("XSA_PLAN_V2_HOSTING alternatives: fan-in (G3-gated) does NOT help the top merge (the final level has the same global terms and intermediates add mwork scratch); reader-level striping (lane item 3) splits I/O, not space - it needs the same aggregate; corpus dedup would shrink n but is a PRODUCT decision (changes chi and every downstream constant) - PARKED; the remaining honest lever is a scratch host with >= {:.0} GB free (or landed striping over an aggregate that size)\n", need_gb + self.survey.corpus_bytes as f64 / (1024.0*1024.0*1024.0)));
-            s.push_str(&format!("XSA_PLAN_V2_HOSTING per-shard floor note: the chunk set (compact pos, mandatory at this scale: {:.0} GB vs {:.0} GB dense) is a consumed transient that is LIVE alongside the walk-phase transient - it is inside the whole-tree number above, not additional\n", v.chunk_set_gb, dense_gb));
+                "XSA_PLAN_V2_HOSTING all-phase scratch peak {:.1} GiB = {:.3}n on one host, including configured spools, retained compact inputs, hash/overlap, output/window/container and explicit witness spill allowance; free {:.1} GiB: {} (corpus itself excluded; add {:.1} GiB if co-hosted)\n",
+                need_gb, need_gb / v.corpus_gb, free_gb,
+                if need_gb <= free_gb { "FITS" } else { "DOES NOT FIT" }, v.corpus_gb));
         }
         s.push_str(&format!("XSA_PLAN_DISC {}\n", self.disc_verdict));
         s.push_str(&format!("XSA_PLAN_RAM {}\n", self.ram_verdict));
@@ -452,50 +442,19 @@ impl Plan {
 pub const V2_RLEBWT_PER_N: f64 = 1.546;         // measured 1545900600 B
 pub const V2_PFCK_PER_N: f64 = 0.364;           // measured 363636648 B (scratch; deleted post-sweep)
 pub const V2_CONTAINER_PER_N: f64 = 0.468;      // measured 467814822 B (the product)
-pub const V2_PIECES_WINDOW_PER_N: f64 = 0.052;  // 64 bands x 65536 runs x ~12.5 B/run
 pub const V2_TREE_PEAK_PER_N: f64 = 1.975;      // MEASURED G2 du peak of the scratch tree (output side, excl. the merge transient)
 pub const V2_TREE_TARGET_PER_N: f64 = 2.5;      // the mission's output-side bound
-// The merge transient (.xsc du), MEASURED at the 1GB packed-WM front-door gate
-// (xsa-pa-wmpack-1b, 2026-10-11): 10,199,887,341 B = 10.20n with every
-// constituent live. The WM term is w-dependent (w = bits(n+9): 30 at 1GB,
-// 41 at pile), so the model carries the measured non-WM remainder
-// (m2 2n + hs 2n + bwt 1n + ov ~0.02n + ~1.43n walk columns = 6.45n) and
-// adds w/8 for the packed WM; at 1GB (w=30) that reproduces the measured
-// 10.20n exactly. Unpacked G2 measured 14.46n (WM 8n): the packing is the
-// -4.25n at 1GB, product byte-identical (cmp clean vs the banked G2 lite).
-pub const V2_MERGE_TRANSIENT_NONWM_PER_N: f64 = 6.45;
-// The WHOLE scratch tree INCLUDING the merge transient (chunk-set remnants +
-// rlebwt + pfck + pieces + .xsc) peaked at 15.04n at the same 1GB gate
-// (front-door du sample): the monolithic-merge hosting number. The non-
-// transient live remainder (15.04 - 10.20 = 4.84n) is carried measured;
-// the whole-tree peak is derived as transient(n) + 4.84.
-pub const V2_WHOLE_TREE_NONTRANSIENT_PER_N: f64 = 4.84;
-
-// w = bits(n+9) - the SA value width the whole pipeline packs at.
-pub fn v2_sa_width(n: u64) -> u32 { (64 - (n + 9).leading_zeros()).max(1) }
-pub fn v2_merge_transient_per_n(n: u64) -> f64 {
-    V2_MERGE_TRANSIENT_NONWM_PER_N + v2_sa_width(n) as f64 / 8.0
-}
-pub fn v2_whole_tree_peak_per_n(n: u64) -> f64 {
-    v2_merge_transient_per_n(n) + V2_WHOLE_TREE_NONTRANSIENT_PER_N
-}
 pub const V2_CHI_PER_N: f64 = 0.283;            // 1GB fixture ratio; the pile value is UNMEASURED
-// Walls, seconds per corpus MB (MEASURED at the 1GB packed-WM front-door
-// thread-curve runs, 2026-10-11, n=1000000665, 10 chunks flat k=10, 48/96/192
-// threads all GREEN with the container byte-identical; these constants are
-// the 96-THREAD run - the best measured point of the honest curve. THE
-// CURVE IS NOT LINEAR: end-to-end 3077s (48t) -> 2891s (96t, -6%) -> 4717s
-// (192t, +53% vs 48t - oversubscription degrades the walk +59%, the
-// emission +79%, the LCE +67%). Only the finish's corpus-LCE is cleanly
-// thread-scalable (1217s at 48t -> 790s at 96t, 1.54x at 2x threads); at
-// 96t the binding phase is the merge's emit-write (1510s). CAVEAT: at 1GB
-// the corpus is page-cache-warm; at pile scale the LCE preads are
-// NVMe-bound - the 10GB rung measures the transition; pile walls from
-// these constants are EXTRAPOLATED and cache-optimistic until then.
-pub const V2_CHUNK_S_PER_MB: f64 = 203.7 / 953.7;
-pub const V2_MERGE_WALK_S_PER_MB: f64 = 667.7 / 953.7;    // load + anchor + cross-merge
-pub const V2_EMIT_FINISH_S_PER_MB: f64 = 2681.3 / 953.7;   // concurrent v2 emission + fused finish (the window's max)
-pub const V2_CONTAINER_S_PER_MB: f64 = 52.8 / 953.7;       // m5 EF + m1 runs + publish (inside the finish)
+// Seconds per MiB; sol7f rate table from the quiet-box 1 GB measurements
+// supplied with the sol7f mission (n ~= 1,000,000,000 bytes = 953.674 MiB):
+// chunk 28s, P=8 full merge 291s, serial finish 432s. These are phase
+// service times, conservatively summed despite pipeline overlap. P=1 merge
+// uses sol7e's attested 734.041s baseline (tools/sol7e/RESULTS.md).
+// Pile extrapolation remains unvalidated for cold-cache IO and spill costs.
+pub const V2_CHUNK_S_PER_MB: f64 = 28.0 / 953.67431640625;
+pub const V2_MERGE_WALK_S_PER_MB: f64 = 291.0 / 953.67431640625;
+pub const V2_EMIT_FINISH_S_PER_MB: f64 = 432.0 / 953.67431640625;
+pub const V2_CONTAINER_S_PER_MB: f64 = 0.0; // already included in finish service time
 
 pub struct V2PerTerms {
     pub corpus_gb: f64,
@@ -524,11 +483,19 @@ pub fn model_v2(
     // The pile plan runs compact pos columns (the chunk set is a transient
     // input, freed as consumed by the merge loads).
     let chunk_set_mb = mb * chunk_artifacts_per_corpus_mb("compact");
-    let transient_per_n = v2_merge_transient_per_n(survey.corpus_bytes);
+    // Current sparse-v2 transport has no materialized 2n text or WM.
+    // Hash checkpoints: 2*n/32 * 8 = .5n; overlap allowance .02n.
+    // Compact chunk inputs remain 4.4n; outputs retain measured G2 ratios.
+    let transient_per_n = 0.52;
     let transient_mb = mb * transient_per_n;
     let rlebwt_mb = mb * V2_RLEBWT_PER_N;
     let pfck_mb = mb * V2_PFCK_PER_N;
-    let pieces_mb = mb * V2_PIECES_WINDOW_PER_N;
+    let window = std::env::var("CROSS_V2_PIECE_WINDOW").ok()
+        .and_then(|v| v.parse::<u64>().ok()).unwrap_or(1100);
+    // PRC1: char + u32 len + two packed positions; headers and BPG1
+    // class metadata receive a conservative 32-byte/run allowance.
+    let pieces_mb = (survey.corpus_bytes as f64).min(window as f64 * 65536.0)
+        * 32.0 / 1048576.0;
     let container_mb = mb * V2_CONTAINER_PER_N;
     let tree_peak_mb = mb * V2_TREE_PEAK_PER_N;
     let phases = vec![
@@ -539,7 +506,7 @@ pub fn model_v2(
         // sweep -> witnesses) overlap; the peak carries both sides' live
         // terms (transient still live, outputs landing).
         PhaseRow { name: "merge(emit)+fused-finish".into(), wall_s: V2_EMIT_FINISH_S_PER_MB * mb,
-                   disc_peak_mb: chunk_set_mb + transient_mb + rlebwt_mb + pfck_mb + pieces_mb, rss_gb: MERGE_RSS_GB },
+                   disc_peak_mb: chunk_set_mb + transient_mb + rlebwt_mb + pfck_mb + pieces_mb + container_mb, rss_gb: MERGE_RSS_GB },
         PhaseRow { name: "container(m5+m1+publish)".into(), wall_s: V2_CONTAINER_S_PER_MB * mb, disc_peak_mb: tree_peak_mb, rss_gb: MERGE_RSS_GB },
     ];
     // The OUTPUT-side verdict is the mission's accounting: the scratch tree
@@ -582,10 +549,7 @@ pub fn model_v2(
         V2_CHI_PER_N, witness_ram_gb,
     );
     let transient_note = format!(
-        "merge transient = {:.2}n (MEASURED at the 1GB packed-WM gate: non-WM {:.2}n [m2 2n + hs 2n + bwt 1n + ov ~0.02n + walk columns ~1.43n] + packed WM w/8*n [w={} at this scale; 10.20n total measured at 1GB w=30, unpacked was 14.46n with WM 8n]): ~{:.0} GB at this scale - a separate per-term with its own provenance; the WHOLE scratch tree including this transient peaked at {:.2}n = ~{:.0} GB at this scale (measured 15.04n at 1GB) - the monolithic final merge needs that much scratch on one host (stripes / reader-level striping, lane item 3, or a larger scratch host); printed, not hidden in a constant",
-        transient_per_n, V2_MERGE_TRANSIENT_NONWM_PER_N, v2_sa_width(survey.corpus_bytes), transient_mb / 1024.0,
-        v2_whole_tree_peak_per_n(survey.corpus_bytes), mb * v2_whole_tree_peak_per_n(survey.corpus_bytes) / 1024.0,
-    );
+        "sparse-v2 hash/overlap {:.2}n ({:.1} GiB); virtual corpus and WM absent; compact inputs 4.4n + rlebwt 1.546n + pfck .364n + bounded PRC1/BPG1 window ({:.3} GiB, W={window}); output ratios measured at 1GB G2, large-scale ratios extrapolated; configured segment credits added by chain planner", transient_per_n, transient_mb / 1024.0, pieces_mb / 1024.0);
     let v2 = V2PerTerms {
         corpus_gb: n_gb,
         chunk_set_gb: chunk_set_mb / 1024.0,

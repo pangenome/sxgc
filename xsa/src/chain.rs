@@ -788,20 +788,63 @@ fn run_chain(options: Options) -> Result<(), String> {
             return Err("CROSS_V2_PRODUCERS must be in 1..4096".into());
         }
         if producers > 1 {
-            // Fresh heaps write compressed segments concurrently; in the
-            // worst case every row is a separate 25-byte record. Reserve
-            // this additional input-dependent bound before moving bytes.
-            let extra_mb = 25.0 * corpus_bytes as f64 / 1048576.0;
+            // Match native shared spool credits, including the minimum
+            // progress reserve. Default is 2n; explicit knob is bytes.
+            let spool_bytes = std::env::var("CROSS_V2_SPOOL_BYTES")
+                .map(|s| {
+                    if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
+                        return Err("CROSS_V2_SPOOL_BYTES must be an integer");
+                    }
+                    s.parse::<u64>().map_err(|_| "CROSS_V2_SPOOL_BYTES must be an integer")
+                })
+                .unwrap_or(Ok(corpus_bytes.saturating_mul(2).max(producers * 106496)))?;
+            if spool_bytes < producers * 106496 {
+                return Err("CROSS_V2_SPOOL_BYTES must be >= P*106496".into());
+            }
+            let extra_mb = spool_bytes as f64 / 1048576.0;
             for phase in &mut build_plan.phases {
                 if phase.name.starts_with("merge") { phase.disc_peak_mb += extra_mb; }
             }
             if let Some(v2) = &mut build_plan.v2 {
                 v2.merge_transient_gb += extra_mb / 1024.0;
-                v2.transient_note.push_str(&format!("; fresh-start P={producers} segment spools reserve an ADDITIONAL worst-case 25n ({:.1} GiB), reclaimed by ordered range", extra_mb / 1024.0));
+                v2.transient_note.push_str(&format!("; fresh-start P={producers} segment spools reserve the configured credit budget ({:.1} GiB), reclaimed by hole punching before credit release", extra_mb / 1024.0));
             }
             let peak_mb = build_plan.phases.iter().map(|p| p.disc_peak_mb).fold(0.0, f64::max);
             if peak_mb * 1048576.0 > build_plan.survey.scratch_free_bytes as f64 {
-                build_plan.alternatives.push("free scratch for P-way segment spools (additional bound 25n), or use CROSS_V2_PRODUCERS=1".into());
+                build_plan.alternatives.push("free scratch for P-way segment spools (configured byte budget), or use CROSS_V2_PRODUCERS=1".into());
+            }
+        }
+    }
+    if options.v2_pipeline {
+        // Carry the existing EXTRAPOLATED spill allowance explicitly, rather
+        // than hiding a potentially corpus-sized term in the output ratio.
+        if let Some(v2) = &mut build_plan.v2 {
+            let witness_cap_gb = options.wit_ram_gb.unwrap_or(options.memory_gb / 2) as f64;
+            let spill_gb = (v2.witness_ram_gb - witness_cap_gb).max(0.0) * 0.3;
+            for phase in &mut build_plan.phases {
+                if phase.name == "merge(emit)+fused-finish" { phase.disc_peak_mb += spill_gb * 1024.0; }
+            }
+            v2.transient_note.push_str(&format!("; witness spill reserve {:.1} GiB (0.3x overflow, EXTRAPOLATED)", spill_gb));
+        }
+        let peak_mb = build_plan.phases.iter().map(|p| p.disc_peak_mb).fold(0.0, f64::max);
+        let fits = peak_mb * 1048576.0 <= build_plan.survey.scratch_free_bytes as f64;
+        build_plan.disc_verdict = format!("{}: ALL-PHASE peak {:.1} GiB vs {:.1} GiB free (includes configured spool credits)",
+            if fits { "FEASIBLE" } else { "INFEASIBLE" }, peak_mb / 1024.0,
+            build_plan.survey.scratch_free_bytes as f64 / 1073741824.0);
+        if !fits && !build_plan.alternatives.iter().any(|s| s.contains("segment spools")) {
+            build_plan.alternatives.push("free scratch for all-phase v2 peak".into());
+        }
+        if 100u32.saturating_sub(build_plan.survey.scratch_used_percent) < options.scratch_free_pct {
+            build_plan.alternatives.push("scratch hygiene policy: pass --scratch-free-pct to override".into());
+            build_plan.disc_verdict.push_str("; INFEASIBLE under scratch hygiene policy");
+        }
+        // Default direct sink has the attested P=1 service time; the P=8
+        // rate is only appropriate when explicitly selected.
+        let producers = std::env::var("CROSS_V2_PRODUCERS").ok()
+            .and_then(|s| s.parse::<u64>().ok()).unwrap_or(1);
+        if producers != 8 {
+            for phase in &mut build_plan.phases {
+                if phase.name == "merge(walk)" { phase.wall_s *= 734.041 / 291.0; }
             }
         }
     }
@@ -1035,6 +1078,8 @@ fn run_v2_tail(
     journal.line(&format!("V2_PRODUCERS S={v2_producers} fresh_start=1 seam_reference=CROSS_SEAM_REFERENCE"));
     let v2_window = std::env::var("CROSS_V2_PIECE_WINDOW").unwrap_or_else(|_| "1100".to_string());
     journal.line(&format!("V2_EMISSION CROSS_V2_PIECES=1 band={v2_band} window={v2_window}"));
+    journal.line(&format!("KNOB CROSS_V2_SPOOL_BYTES={} (default 2n, minimum P*106496; shared credits with active-range reserve)",
+        std::env::var("CROSS_V2_SPOOL_BYTES").unwrap_or_else(|_| "auto".into())));
     let container = scratch.join(format!("{}.sxi2",
         input.file_stem().and_then(|stem| stem.to_str()).filter(|stem| !stem.is_empty()).unwrap_or("pile")));
     let wit_ram_bytes = options.wit_ram_gb.unwrap_or(options.memory_gb / 2).saturating_mul(1 << 30);

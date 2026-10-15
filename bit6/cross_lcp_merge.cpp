@@ -87,6 +87,7 @@
 #include <unordered_map>
 #include <vector>
 #include <fcntl.h>
+#include <linux/falloc.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -3770,18 +3771,78 @@ struct SequentialV2 : SparseWalkSink {
 // Independent single-pass producers append immutable compressed segments.
 // The ordered reducer reads committed prefixes before producer completion;
 // only it owns SequentialV2, canonical run-band numbering and terminal EOF.
-// RAM is O(P*4096) records plus existing decoded fronts. Scratch is <=25*n
-// bytes (one record per row in the worst case), and is unlinked by range.
+// RAM is O(P*4096) records plus existing decoded fronts. Physical spool
+// scratch is credit-bounded, punched on consumption, and unlinked by range.
 // This is not persistent crash recovery: process failure refuses completion.
+// Shared byte credits retain one aligned batch exclusively for the current
+// ordered range. Later producers can fill the remaining budget but cannot
+// prevent its producer from progressing. Extents are punched before credits
+// return. No text is written to these files.
+// Independent fixed-address blocks allow variable-size segment payloads
+// without a growing in-memory offset index. Gaps allocate no data pages.
+static constexpr U spoolSlot = 106496; // page-rounded 8 + 4096*25
+static U spoolRead64(const char* b) {
+    U v=0; for(unsigned j=0;j<8;++j) v|=U(uint8_t(b[j]))<<(8*j); return v;
+}
+static std::vector<char> spoolEncode(const std::vector<char>& raw, unsigned width) {
+    std::vector<char> packed; packed.reserve(raw.size()+32);
+    for (size_t i=0;i<raw.size();i+=25) {
+        const char* b=raw.data()+i; U len=spoolRead64(b+1);
+        packed.push_back(b[0]);
+        U x=len; do { packed.push_back(char((x&127) | (x>=128 ? 128 : 0))); x>>=7; } while(x);
+        for(unsigned j=0;j<width;++j) packed.push_back(b[9+j]);
+        if(len>1) for(unsigned j=0;j<width;++j) packed.push_back(b[17+j]);
+        if(packed.size()>=raw.size()) break;
+    }
+    bool compressed=packed.size()<raw.size();
+    const auto& payload=compressed ? packed : raw;
+    std::vector<char> block(8);
+    uint32_t bytes=payload.size(), records=uint32_t(raw.size()/25) | (compressed ? 0x80000000u : 0);
+    for(unsigned j=0;j<4;++j) { block[j]=char(bytes>>(8*j)); block[4+j]=char(records>>(8*j)); }
+    block.insert(block.end(),payload.begin(),payload.end()); return block;
+}
+static void spoolDecode(const std::vector<char>& block, U take, unsigned width, std::vector<char>& raw) {
+    uint32_t bytes=0, flags=0;
+    for(unsigned j=0;j<4;++j) { bytes|=uint32_t(uint8_t(block[j]))<<(8*j); flags|=uint32_t(uint8_t(block[4+j]))<<(8*j); }
+    require(bytes+8==block.size() && (flags&0x7fffffffu)==take, "spool block header");
+    if(!(flags&0x80000000u)) { require(bytes==25*take,"raw spool block size"); raw.assign(block.begin()+8,block.end()); return; }
+    raw.assign(25*take,0); size_t cursor=8;
+    for(U i=0;i<take;++i) {
+        char* b=raw.data()+25*i;
+        require(cursor<block.size(),"packed spool character"); b[0]=block[cursor++];
+        U len=0; unsigned shift=0;
+        for(;;) {
+            require(cursor<block.size() && shift<64,"packed spool length");
+            uint8_t byte=uint8_t(block[cursor++]);
+            require(shift<63 || (byte&127)<=1,"packed spool length overflow");
+            len|=U(byte&127)<<shift; if(!(byte&128)) break; shift+=7;
+        }
+        require(len>0 && cursor+width*(len>1 ? 2 : 1)<=block.size(),"packed spool endpoints");
+        put_le64(b+1,len);
+        for(unsigned j=0;j<width;++j) b[9+j]=block[cursor++];
+        if(len>1) for(unsigned j=0;j<width;++j) b[17+j]=block[cursor++];
+        else std::memcpy(b+17,b+9,8);
+    }
+    require(cursor==block.size(),"packed spool trailing data");
+}
+static U v2_spool_budget(U n, U p) {
+    const char* e = getenv("CROSS_V2_SPOOL_BYTES");
+    if (e) require(*e && std::string(e).find_first_not_of("0123456789") == std::string::npos, "CROSS_V2_SPOOL_BYTES must be an integer");
+    U bytes = e ? std::stoull(e) : std::max<U>(p*spoolSlot, n > UINT64_MAX/2 ? UINT64_MAX : 2*n);
+    require(bytes >= p*spoolSlot, "CROSS_V2_SPOOL_BYTES must be >= P*106496");
+    return bytes;
+}
 struct ParallelV2 : SparseWalkSink {
     SequentialV2& output;
-    U count;
+    U count, quota, occupied = 0, activeProducer = 0;
+    unsigned positionBytes;
     std::mutex mu;
     std::condition_variable cv;
     std::thread reducer;
     struct Producer : SparseWalkSink {
         ParallelV2& parent;
-        U id, lo = 0, hi = 0, next = 0, committed = 0;
+        U id, lo = 0, hi = 0, next = 0, committed = 0, reclaimed = 0, blocks = 0;
+        double blockedSeconds = 0;
         bool started = false, done = false;
         int fd = -1;
         std::string path;
@@ -3791,9 +3852,22 @@ struct ParallelV2 : SparseWalkSink {
             path(p.output.dir + "/walk-" + std::to_string(i)) { buffer.reserve(25*4096); }
         void drain() {
             if (buffer.empty()) return;
-            U base;
-            { std::lock_guard<std::mutex> lock(parent.mu); base = committed; }
-            xput(fd, buffer.data(), buffer.size(), 25*base, "parallel spool write");
+            auto block = spoolEncode(buffer,parent.positionBytes);
+            U base, charge = (block.size()+4095)/4096*4096;
+            { std::unique_lock<std::mutex> lock(parent.mu);
+              auto ready = [&] { return parent.occupied + charge <= parent.quota - (id == parent.activeProducer ? 0 : spoolSlot); };
+              if (!ready()) {
+                  ++blocks; auto start = std::chrono::steady_clock::now();
+                  parent.cv.wait(lock, ready);
+                  blockedSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
+              }
+              base = committed; parent.occupied += charge; }
+            // XFS speculative EOF preallocation can otherwise allocate far
+            // beyond the credited write. Explicitly allocate the charged
+            // extent first, so pwrite only converts existing unwritten pages.
+            require(::fallocate(fd, 0, (base/4096)*spoolSlot, charge) == 0,
+                    "allocate credited parallel spool extent");
+            xput(fd, block.data(), block.size(), (base/4096)*spoolSlot, "parallel spool write");
             { std::lock_guard<std::mutex> lock(parent.mu); committed += buffer.size()/25; }
             buffer.clear(); parent.cv.notify_all();
         }
@@ -3832,7 +3906,9 @@ struct ParallelV2 : SparseWalkSink {
         }
     };
     std::vector<std::unique_ptr<Producer>> producers;
-    ParallelV2(SequentialV2& o, U p) : output(o), count(p) {
+    ParallelV2(SequentialV2& o, U p) : output(o), count(p),
+        quota(v2_spool_budget(o.n,p)/spoolSlot*spoolSlot),
+        positionBytes(((64-__builtin_clzll(o.n-1 ? o.n-1 : 1))+7)/8) {
         for (U i = 0; i < p; ++i) producers.emplace_back(new Producer(*this,i));
     }
     U shardCount(U) const override { return count; }
@@ -3845,10 +3921,12 @@ struct ParallelV2 : SparseWalkSink {
         output.attachCorpus(corpus);
         reducer = std::thread([this] {
             output.beginShard(0,0,output.n);
-            std::vector<char> buffer(25*4096);
+            std::vector<char> buffer(25*4096), block(spoolSlot);
             auto read64 = [](const char* b) { U v=0; for(unsigned j=0;j<8;++j) v|=U(uint8_t(b[j]))<<(8*j); return v; };
             for (auto& pointer : producers) {
                 auto& p = *pointer;
+                { std::lock_guard<std::mutex> lock(mu); activeProducer = p.id; }
+                cv.notify_all();
                 U records = 0, row = 0;
                 for (;;) {
                     U available; bool done;
@@ -3859,19 +3937,35 @@ struct ParallelV2 : SparseWalkSink {
                     }
                     if (!records) { require(p.lo == output.next, "parallel range adjacency"); row = p.lo; }
                     while (records < available) {
-                        U take = std::min<U>(4096, available-records), bytes = 25*take, read = 0;
-                        while (read < bytes) {
-                            ssize_t z = ::pread(p.fd,buffer.data()+read,bytes-read,25*records+read);
-                            if (z < 0 && errno == EINTR) continue;
-                            require(z > 0, "parallel spool read"); read += U(z);
-                        }
+                        U take = std::min<U>(4096, available-records), offset=(records/4096)*spoolSlot;
+                        auto readFull = [&](char* data, U bytes, U start) {
+                            U read=0;
+                            while(read<bytes) {
+                                ssize_t z=::pread(p.fd,data+read,bytes-read,start+read);
+                                if(z<0 && errno==EINTR) continue;
+                                require(z>0,"parallel spool read"); read+=U(z);
+                            }
+                        };
+                        block.resize(8); readFull(block.data(),8,offset);
+                        U payload=0; for(unsigned j=0;j<4;++j) payload|=U(uint8_t(block[j]))<<(8*j);
+                        require(payload<=25*take,"spool payload bound");
+                        block.resize(8+payload); readFull(block.data()+8,payload,offset+8);
+                        spoolDecode(block,take,positionBytes,buffer);
+                        U charge=(block.size()+4095)/4096*4096;
                         for (U j=0;j<take;++j) {
                             const char* b=buffer.data()+25*j;
                             SparseRun run{uint8_t(b[0]),read64(b+1),read64(b+9),read64(b+17)};
                             require(run.len <= p.hi-row, "parallel spool range coverage");
                             output.segment(run); row += run.len;
                         }
+                        // All writes except final EOF are full aligned batches. Punch
+                        // only consumed extents; the last partial batch has no successor.
+                        require(::fallocate(p.fd, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE,
+                                            offset, charge) == 0,
+                                "reclaim parallel spool extents (requires hole punching)");
                         records += take;
+                        { std::lock_guard<std::mutex> lock(mu); p.reclaimed = records; occupied -= charge; }
+                        cv.notify_all();
                     }
                     if (done) {
                         require(row == p.hi && output.next == p.hi, "parallel reducer completion");
@@ -3885,6 +3979,10 @@ struct ParallelV2 : SparseWalkSink {
     }
     void finishWalk() override {
         require(reducer.joinable(), "parallel reducer started"); reducer.join();
+        for (const auto& p : producers)
+            std::fprintf(stderr, "CROSS_SPOOL_STALL producer=%llu blocks=%llu seconds=%.6f quota_bytes=%llu\n",
+                (unsigned long long)p->id, (unsigned long long)p->blocks, p->blockedSeconds,
+                (unsigned long long)quota);
     }
 };
 static U v2_producers(U n) {
@@ -3902,7 +4000,7 @@ static U emit_sparse_v2(const std::string& prefix, const std::vector<SideExt>& s
     const U producers = v2_producers(n);
     std::fprintf(stderr, "CROSS_PRODUCER_RESOURCES P=%llu decoded_front_bytes_max=%llu segment_buffer_bytes=%llu spool_bytes_bound=%llu\n",
         (unsigned long long)producers, (unsigned long long)(producers*sides.size()*4096*8),
-        (unsigned long long)(producers*4096*25), (unsigned long long)(producers>1 ? 25*n : 0));
+        (unsigned long long)(producers*(3*4096*25+64)), (unsigned long long)(producers>1 ? v2_spool_budget(n,producers) : 0));
     if (producers == 1)
         core_merge_kway(sides, true, threads, budget, stats, sc, hashK, pre, &output);
     else {

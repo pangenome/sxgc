@@ -1,0 +1,1 @@
+SOL7F_XFS_EXPLICIT_EXTENT_PASS batches=2000 live_batches=11 variable_page_charges=1 fixed_slot_bytes=106496 budget_bytes=1171456 allocated_peak_bytes=438272 metadata_allowance_bytes=65536

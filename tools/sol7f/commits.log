@@ -1,0 +1,14 @@
+47317d8 sol7f: attest 1GB physical peak, complete sampler, P1 identity and all P8 EOF orders
+948da15 sol7f: attest packed native/runtime oracles, source provenance and first exact 1GB gate
+052490c sol7f: bank full capacity plans and keep du sampling alive across consumer unlinks
+d4720b0 sol7f: pack segment blocks to preserve P-way overlap within 2n credits
+60dc3c5 sol7f: align planner decimal-byte validation and numeric producer selection
+6d41ee8 sol7f: retire unused historical whole-WM hosting constants
+a215c49 sol7f: suppress XFS speculative EOF allocation and remove obsolete hosting refusal
+d68672c sol7f: version the measured sparse-v2 planner table
+09825da sol7f: reserve container overlap and explicit witness spill allowance in all-phase peak
+55cf4e6 sol7f: sample allocated spool extents and count retained input chunks honestly
+8e32a46 sol7f: attest full W exhaustion and document physical credit protocol
+e4c4468 sol7f: bound shared spool extents with active-range credits and honest v2 plans
+a149e24 sol7f: prove shared credits with earliest-range progress reserve and downstream ACKs
+bc4c5d0 sol7f: model partitioned spool credits before pipeline changes

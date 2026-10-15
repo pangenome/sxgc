@@ -1,0 +1,1 @@
+{"active_producer_inequalities": 3510, "band_size": 65536, "bases": "65536*b", "deadlocks": 0, "implementation_validated": false, "malformed_extents_refused": 10, "maximum_backlog": 1100, "overlapping_band_spans": true, "randomized_interleavings": 1450, "result": "PASS", "shards": 0, "terminal_cases": 1200}
