@@ -34,3 +34,19 @@ with native, deliberately promoting the already banked sol7a implementation
 alongside sol7e. All source-manifest entries validate. Rust driver cargo check
 passed before this C++-only synchronization; native/runtime are now identical
 and the synchronized runtime receives a standalone build and P=16 selftest.
+
+P-way scaling correction: inspection after the initial P=4 wall exposed false
+sharing in sol7a's `CorpusText::cacheHits`: adjacent per-thread U counters share
+a cache line, and every borrowed span writes one. The text bytes are immutable
+but the telemetry line still migrates between producers. Cache-hit entries are
+now alignas(64), with a static size assertion; logical work and hit counts are
+unchanged. The initial P=4 observed 516.822 s (P=1 611.795 s), and the initial
+P=8 run was stopped to avoid treating that implementation as the final sweep.
+Final walls will use the padded telemetry, with the old logs retained.
+
+The same inspection found adjacent counters in both the SharedPages hit/miss/
+fill telemetry and the grid-cell hit/miss telemetry. All three hot telemetry
+families now use cache-line-sized LocalCounter entries. Overflow threads share
+only the last entry and increment it atomically. No comparison, symbol, probe,
+heap, source or split decision depends on telemetry. The final sweep repeats
+P=1/4/8/16 with this layout; pre-padding results remain diagnostic history.

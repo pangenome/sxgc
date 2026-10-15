@@ -221,6 +221,12 @@ static std::atomic<U> g_winGen{1};   // window caches are thread-local keyed by
 // 11-step pre-fix orphan schedules replay clean. The verdicts cover the
 // WRITER protocol, which is bit-identical here; the reader change carries
 // the argument above plus the standing byte-identity/chi gates.
+struct alignas(64) LocalCounter { U value = 0; };
+static_assert(sizeof(LocalCounter) == 64, "telemetry cache-line ownership");
+static inline void count_local(LocalCounter* cells, unsigned tid, unsigned last) {
+    if (tid == last) __atomic_fetch_add(&cells[tid].value, U(1), __ATOMIC_RELAXED);
+    else ++cells[tid].value;
+}
 struct SharedPages {
     static constexpr U PS = 256;              // page size (bytes)
     U SLOTS = 1u << 20;                       // pow2 slot count (CROSS_POOL_SLOTS)
@@ -239,16 +245,16 @@ struct SharedPages {
     std::atomic<bool> stopping{false};
     // exact per-thread telemetry (see the protocol comment above)
     static constexpr U TIDS = 4096;
-    std::unique_ptr<U[]> hits, misses, tornC, fillsC;   // [TIDS], one per charging thread
+    std::unique_ptr<LocalCounter[]> hits, misses, tornC, fillsC;   // [TIDS], one per charging thread
     static unsigned tid() {
         static std::atomic<unsigned> next{0};
         thread_local unsigned t = next.fetch_add(1, std::memory_order_relaxed);
         return t < TIDS ? t : TIDS - 1;
     }
-    void hit() const { ++hits[tid()]; }
-    void miss() const { ++misses[tid()]; }
-    void torn() const { ++tornC[tid()]; }
-    void notedFill() const { ++fillsC[tid()]; }
+    void hit() const { count_local(hits.get(), tid(), TIDS-1); }
+    void miss() const { count_local(misses.get(), tid(), TIDS-1); }
+    void torn() const { count_local(tornC.get(), tid(), TIDS-1); }
+    void notedFill() const { count_local(fillsC.get(), tid(), TIDS-1); }
     static U pool_slot_count() {
         static const U v = [] {
             const char* e = getenv("CROSS_POOL_SLOTS");
@@ -279,8 +285,8 @@ struct SharedPages {
             slots[z].b0 = block.get() + 2 * z * PS;
             slots[z].b1 = block.get() + (2 * z + 1) * PS;
         }
-        hits.reset(new U[TIDS]{}); misses.reset(new U[TIDS]{});
-        tornC.reset(new U[TIDS]{}); fillsC.reset(new U[TIDS]{});
+        hits.reset(new LocalCounter[TIDS]{}); misses.reset(new LocalCounter[TIDS]{});
+        tornC.reset(new LocalCounter[TIDS]{}); fillsC.reset(new LocalCounter[TIDS]{});
         queue.reset(new std::atomic<U>[QCAP]);
         for (U t = 0; t < nthreads; ++t)
             workers.emplace_back([this] { worker(); });
@@ -291,7 +297,7 @@ struct SharedPages {
         workers.clear();
         U h = 0, m = 0, t = 0, f = 0;
         if (hits)
-            for (U z = 0; z < TIDS; ++z) { h += hits[z]; m += misses[z]; t += tornC[z]; f += fillsC[z]; }
+            for (U z = 0; z < TIDS; ++z) { h += hits[z].value; m += misses[z].value; t += tornC[z].value; f += fillsC[z].value; }
         std::fprintf(stderr, "POOL_STATS fd=%d bytes=%llu slots=%llu fills=%llu hits=%llu misses=%llu torn=%llu\n",
                      fd, (unsigned long long)bytes, (unsigned long long)SLOTS,
                      (unsigned long long)f, (unsigned long long)h,
@@ -421,15 +427,15 @@ struct SharedPages {
 // discipline as the pool telemetry - the old single-word atomics serialized
 // every grid-cell materialize on one cacheline at high thread counts).
 static constexpr unsigned CELL_TIDS = 4096;
-static U g_cellHitsArr[CELL_TIDS], g_cellMissArr[CELL_TIDS];   // zero-init BSS
+static LocalCounter g_cellHitsArr[CELL_TIDS], g_cellMissArr[CELL_TIDS];   // zero-init BSS
 static unsigned cell_tid() {
     static std::atomic<unsigned> next{0};
     thread_local unsigned t = next.fetch_add(1, std::memory_order_relaxed);
     return t < CELL_TIDS ? t : CELL_TIDS - 1;
 }
-static U cell_sum(const U (&arr)[CELL_TIDS]) {
+static U cell_sum(const LocalCounter (&arr)[CELL_TIDS]) {
     U v = 0;
-    for (unsigned z = 0; z < CELL_TIDS; ++z) v += arr[z];
+    for (unsigned z = 0; z < CELL_TIDS; ++z) v += arr[z].value;
     return v;
 }
 
@@ -1002,10 +1008,14 @@ struct CorpusText {
     // Immutable, remapped corpus RAM replaces (never supplements) this view's
     // pool when it fits the same buffer budget. No doubled text is stored.
     std::unique_ptr<uint8_t[]> cached;
-    mutable std::array<U, SharedPages::TIDS> cacheHits{};
+    // A private counter must also own its cache line. Adjacent U counters
+    // serialize P borrowing producers on each span despite immutable text.
+    using CacheHit = LocalCounter;
+    static_assert(sizeof(CacheHit) == 64, "cache telemetry line ownership");
+    mutable std::array<CacheHit, SharedPages::TIDS> cacheHits{};
     ~CorpusText() {
         if (cached) {
-            U hits = 0; for (U h : cacheHits) hits += h;
+            U hits = 0; for (const auto& h : cacheHits) hits += h.value;
             std::fprintf(stderr, "CORPUS_CACHE_STATS bytes=%llu hits=%llu demand_misses=0 preload_bytes=%llu\n",
                 (unsigned long long)n, (unsigned long long)hits, (unsigned long long)n);
         }
@@ -1021,8 +1031,8 @@ struct CorpusText {
                 // tid() saturates in long-lived selftests; overflow threads
                 // share only the last counter and must charge it atomically.
                 if (t == SharedPages::TIDS - 1)
-                    __atomic_fetch_add(&cacheHits[t], U(1), __ATOMIC_RELAXED);
-                else ++cacheHits[t];
+                    __atomic_fetch_add(&cacheHits[t].value, U(1), __ATOMIC_RELAXED);
+                else ++cacheHits[t].value;
                 return cached.get() + p;
             }
         }
@@ -1621,11 +1631,11 @@ struct Keys {
             for (U z = 0; z < hlen; ++z) h = h * HASH_BASE + ((U)hb[z] + 1);
             sc.h = h;
             Cell& c = cells[&sc == &tscr[0] ? 0 : 1][sc.aq & 4095];
-            if (c.aq == sc.aq && c.gen == hsGen) { sc.pj = c.pj; ++g_cellHitsArr[cell_tid()]; }
+            if (c.aq == sc.aq && c.gen == hsGen) { sc.pj = c.pj; count_local(g_cellHitsArr, cell_tid(), CELL_TIDS-1); }
             else {
                 sc.pj = hp->P(sc.aq + 1);
                 c.aq = sc.aq; c.gen = hsGen; c.pj = sc.pj;
-                ++g_cellMissArr[cell_tid()];
+                count_local(g_cellMissArr, cell_tid(), CELL_TIDS-1);
             }
             sc.ready = true;
         };

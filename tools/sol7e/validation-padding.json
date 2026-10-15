@@ -1,0 +1,139 @@
+[
+  {
+    "command": [
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/cross_lcp_merge",
+      "--selftest",
+      "200",
+      "--seed",
+      "1",
+      "--kway",
+      "8",
+      "--threads",
+      "16"
+    ],
+    "result": "passed",
+    "output": [
+      "SPARSE_ORACLE_PASS modes=cyclic,dollar runs=exact seam_spool=exact production_bands=exact trivial_bases=exact terminal=exact legacy_shard_admission=1 WM=absent",
+      "SELFTEST_PASS count=200 seed=1 kway=8"
+    ],
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/padded-selftest.log"
+  },
+  {
+    "command": [
+      "c++",
+      "-O3",
+      "-std=c++17",
+      "-pthread",
+      "tools/sol7e/cache_oracle.cpp",
+      "-latomic",
+      "-o",
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/padded-cache"
+    ],
+    "result": "passed",
+    "output": [],
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/padded-build-cache.log"
+  },
+  {
+    "command": [
+      "c++",
+      "-O3",
+      "-std=c++17",
+      "-pthread",
+      "tools/sol7d/seam_witness.cpp",
+      "-latomic",
+      "-o",
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/padded-witness"
+    ],
+    "result": "passed",
+    "output": [],
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/padded-build-witness.log"
+  },
+  {
+    "command": [
+      "c++",
+      "-O3",
+      "-std=c++17",
+      "-pthread",
+      "tools/sol5i/flow_oracle.cpp",
+      "-latomic",
+      "-o",
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/padded-flow"
+    ],
+    "result": "passed",
+    "output": [],
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/padded-build-flow.log"
+  },
+  {
+    "command": [
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/padded-cache"
+    ],
+    "result": "passed",
+    "output": [
+      "CACHE_P16_ORACLE_PASS readers=16 spans=3200000 remaps=3 segments=3 nonzero_offsets=1 wrap=1 retained_borrows=2 immutable_shared_cache=1 decoded_front_budget_P16_k8_bytes=4194304"
+    ],
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/padded-cache.log"
+  },
+  {
+    "command": [
+      "python3",
+      "tools/sol7e/work_witness.py",
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/padded-witness",
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/padded-witness-results"
+    ],
+    "result": "passed",
+    "output": [
+      "SEAM_HALO_PASS fixture=4 P=16 mode=dollar seam=14 PLANNING=[333, 348, 0] OVERLAP=[0, 0, 0] SEAM=[-19, -16, 0] rows=exact",
+      "SEAM_HALO_PASS fixture=4 P=16 mode=dollar seam=15 PLANNING=[295, 306, 0] OVERLAP=[0, 0, 0] SEAM=[11, 9, 0] rows=exact",
+      "FRESH_SEAM_COUNTER_WITNESS_PASS cases=40 fixtures=5 P=1,4,8,16 modes=cyclic,dollar rows=exact seeded_reference=exact per_seam_journal=exact OVERLAP=0 P1_extra=0"
+    ],
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/padded-witness.log"
+  },
+  {
+    "command": [
+      "python3",
+      "tools/sol7d/work_witness.py",
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/padded-witness",
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/padded-seed-results"
+    ],
+    "result": "passed",
+    "output": [
+      "COUNTER_IDENTITY_PASS fixture=4 P=16 mode=cyclic serial=[2033, 2456, 0] PLANNING=[6644, 7241, 0] OVERLAP=[0, 0, 0] SEAM=[0, 0, 0] total=[8677, 9697, 0]",
+      "COUNTER_IDENTITY_PASS fixture=4 P=16 mode=dollar serial=[2031, 2446, 0] PLANNING=[6642, 7231, 0] OVERLAP=[0, 0, 0] SEAM=[0, 0, 0] total=[8673, 9677, 0]",
+      "SEAM_COUNTER_WITNESS_PASS cases=40 fixtures=5 P=1,4,8,16 modes=cyclic,dollar per_producer_sum=exact ordered_comparison_trace=exact SEAM=0 planning_replay=fully_charged launch_gates=UNVALIDATED"
+    ],
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/padded-seed.log"
+  },
+  {
+    "command": [
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/padded-flow"
+    ],
+    "result": "passed",
+    "output": [
+      "FLOW_ORACLE_PASS initial_minus_one=1 oversized_positive_window=1 unsigned_credit=1 blocked_until_consumed=1"
+    ],
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/padded-flow.log"
+  },
+  {
+    "command": [
+      "python3",
+      "tools/sol7e/segment_model.py"
+    ],
+    "result": "passed",
+    "output": [
+      "{\"P\": [1, 4, 8, 16], \"exact_rows\": true, \"exact_runs\": true, \"persistent_recovery\": false, \"publication\": \"committed_prefix_only\", \"repeated_cuts\": true, \"result\": \"PASS\", \"rows\": 48615, \"schedules\": 400, \"singleton_targets\": true, \"terminal\": \"all_ranges_only\"}"
+    ],
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/padded-segment.log"
+  },
+  {
+    "command": [
+      "python3",
+      "tools/sol7e/gate.py",
+      "100m",
+      "16",
+      "padded"
+    ],
+    "result": "passed",
+    "output": [],
+    "log": "/mnt/nvme2n1/erikg/sol7e-freshstart/padded-gate100m.log"
+  }
+]
