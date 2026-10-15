@@ -3037,6 +3037,70 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
     // merged-rank shard start offsets: R_s = sum_j aB[s][j]
     std::vector<U> R(S + 1, 0);
     for (U s = 0; s <= S; ++s) for (size_t j = 0; j < k; ++j) R[s] += aB[s][j];
+    // Experimental exact continuation oracle. Rank searches above do not
+    // traverse a heap: acquiring these checkpoints requires a charged replay.
+    // Kept opt-in because this construction adds a full serial walk of work.
+    const bool seedHeap = S > 1 && getenv("CROSS_SEED_HEAP") != nullptr;
+    struct HeapCheckpoint {
+        std::vector<U> cur, values;
+        std::vector<size_t> sides;
+    };
+    std::vector<HeapCheckpoint> checkpoints(seedHeap ? S : 0);
+    Budget seedWork;
+    if (seedHeap) {
+        Keys replayKeys; replayKeys.init(&m2, &hp, n, dollar, &seedWork);
+        std::vector<U> cur(k, 0), values;
+        std::vector<size_t> heapSides;
+        auto less = [&](size_t a, size_t b) {
+            return replayKeys.cmp(values[a], values[b]) < 0;
+        };
+        auto swap = [&](size_t a, size_t b) {
+            std::swap(values[a], values[b]); std::swap(heapSides[a], heapSides[b]);
+        };
+        for (size_t j = 0; j < k; ++j) if (sides[j].n) {
+            values.push_back(pos[j]->at(0)); heapSides.push_back(j);
+            size_t i = values.size() - 1;
+            while (i && less(i, (i - 1) / 2)) {
+                size_t par = (i - 1) / 2; swap(i, par); i = par;
+            }
+        }
+        U boundary = 1;
+        for (U row = 0; row <= n; ++row) {
+            while (boundary < S && R[boundary] == row) {
+                require(cur == aB[boundary], "checkpoint cursor/rank identity");
+                checkpoints[boundary] = {cur, values, heapSides};
+                ++boundary;
+            }
+            if (row == n) break;
+            require(!values.empty(), "checkpoint replay heap coverage");
+            size_t j = heapSides[0];
+            if (++cur[j] < sides[j].n) values[0] = pos[j]->at(cur[j]);
+            else {
+                values[0] = values.back(); heapSides[0] = heapSides.back();
+                values.pop_back(); heapSides.pop_back();
+            }
+            size_t i = 0;
+            for (;;) {
+                size_t l = 2 * i + 1, r = l + 1, m = i;
+                if (l < values.size() && less(l, m)) m = l;
+                if (r < values.size() && less(r, m)) m = r;
+                if (m == i) break;
+                swap(i, m); i = m;
+            }
+        }
+        require(boundary == S, "checkpoint boundary coverage");
+        bud.comparisons += seedWork.comparisons; bud.symbols += seedWork.symbols;
+        bud.probes += seedWork.probes; bud.fast_decided += seedWork.fast_decided;
+        bud.probe_decided += seedWork.probe_decided; bud.cap_decided += seedWork.cap_decided;
+        bud.tie_decided += seedWork.tie_decided;
+        bud.lce_over_10k += seedWork.lce_over_10k; bud.lce_over_100k += seedWork.lce_over_100k;
+        bud.lce_over_1m += seedWork.lce_over_1m;
+        bud.max_lce = std::max(bud.max_lce, seedWork.max_lce);
+        bud.tFast += seedWork.tFast; bud.tPrep += seedWork.tPrep;
+        bud.tProbe += seedWork.tProbe; bud.tScan += seedWork.tScan;
+        workLine("planning_seed", 0, seedWork);
+        workLine("overlap", 0, Budget{});
+    }
     const U passes = 1;
     std::vector<Budget> shardBud(passes * S);
     std::vector<double> shardPF(passes * S, 0.0), shardPop(passes * S, 0.0);
@@ -3071,7 +3135,7 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
                 constexpr U WIN = 4096;
                 std::vector<U> cur(k), end(k), wbase(k, 0);
                 std::vector<std::vector<U>> pwin(k);
-                for (size_t j = 0; j < k; ++j) { cur[j] = aB[s][j]; end[j] = aB[s + 1][j]; wbase[j] = cur[j]; }
+                for (size_t j = 0; j < k; ++j) { cur[j] = aB[s][j]; end[j] = seedHeap ? sides[j].n : aB[s + 1][j]; wbase[j] = cur[j]; }
                 auto frontAt = [&](size_t j, U idx) -> U {   // idx: global row in [cur[j], end[j])
                     if (idx >= wbase[j] && idx - wbase[j] < pwin[j].size()) {
                         U w = idx - wbase[j];
@@ -3118,10 +3182,18 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
                     hv[0] = v; hs_[0] = side;
                     hSift();
                 };
-                for (size_t j = 0; j < k; ++j)
-                    if (cur[j] < end[j]) hPush(frontAt(j, cur[j]), j);
+                if (seedHeap && s) {
+                    const auto& checkpoint = checkpoints[s];
+                    require(cur == checkpoint.cur, "seeded producer cursors");
+                    hm = checkpoint.values.size();
+                    std::copy(checkpoint.values.begin(), checkpoint.values.end(), hv.begin());
+                    std::copy(checkpoint.sides.begin(), checkpoint.sides.end(), hs_.begin());
+                } else {
+                    for (size_t j = 0; j < k; ++j)
+                        if (cur[j] < end[j]) hPush(frontAt(j, cur[j]), j);
+                }
                 U pfAt = 0;
-                while (hm > 0) {
+                while (hm > 0 && (!seedHeap || emitted < R[s + 1] - R[s])) {
                     if (!noPf && m2.pool && (step & 31) == 0) {
                         // Front speculation: each side's next few fronts,
                         // served from the bulk windows (no overlay reads).
@@ -3153,7 +3225,7 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
                     if (nb == W) flushW();
                     ++step;
                 }
-                U want = 0; for (size_t j = 0; j < k; ++j) want += end[j] - aB[s][j];
+                U want = 0; for (size_t j = 0; j < k; ++j) want += aB[s + 1][j] - aB[s][j];
                 flushW();
                 require(emitted == want && out == R[s + 1], "shard merge coverage");
                 if (sink) sink->endShard();
@@ -3172,6 +3244,8 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
             heapWork.symbols += shardBud[s].symbols; heapWork.probes += shardBud[s].probes;
         }
         workLine("heap", pass, heapWork);
+        if (getenv("CROSS_SEED_HEAP"))
+            for (U s = 0; s < S; ++s) workLine("producer", s, shardBud[pass * S + s]);
     }
     for (U s = 0; s < passes * S; ++s) {
         const Budget& sb = shardBud[s];
