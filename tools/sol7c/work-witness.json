@@ -1,0 +1,527 @@
+{
+  "result": "PASS",
+  "candidate_contract": "REJECTED",
+  "reason": "Nonzero heap residual with no duplicated overlap rows; negative residual cannot be nonnegative overhead.",
+  "native_order_checks": "dense cyclic/dollar brute order and legacy sparse seam/run checks passed",
+  "production_parallel_validated": false,
+  "one_gb_validated": false,
+  "new_seam_mechanism": false,
+  "results": {
+    "1": {
+      "command": [
+        "/mnt/nvme2n1/erikg/sol7c-audit/cross_lcp_merge",
+        "--selftest",
+        "1",
+        "--seed",
+        "1",
+        "--kway",
+        "8",
+        "--threads",
+        "16"
+      ],
+      "environment": {
+        "CROSS_SHARDS": "1"
+      },
+      "modes": {
+        "cyclic": [
+          {
+            "stage": "prepare",
+            "comparisons": 8,
+            "symbols": 16,
+            "probes": 0
+          },
+          {
+            "stage": "plan",
+            "comparisons": 0,
+            "symbols": 0,
+            "probes": 0
+          },
+          {
+            "stage": "heap",
+            "comparisons": 93,
+            "symbols": 1535,
+            "probes": 124
+          },
+          {
+            "stage": "overlap",
+            "comparisons": 0,
+            "symbols": 0,
+            "probes": 0
+          },
+          {
+            "stage": "unaccounted_heap_delta",
+            "comparisons": 0,
+            "symbols": 0,
+            "probes": 0
+          },
+          {
+            "stage": "planning_over_serial_heap",
+            "comparisons": 0.0,
+            "symbols": 0.0,
+            "probes": 0.0
+          }
+        ],
+        "dollar": [
+          {
+            "stage": "prepare",
+            "comparisons": 8,
+            "symbols": 15,
+            "probes": 0
+          },
+          {
+            "stage": "plan",
+            "comparisons": 0,
+            "symbols": 0,
+            "probes": 0
+          },
+          {
+            "stage": "heap",
+            "comparisons": 95,
+            "symbols": 738,
+            "probes": 0
+          },
+          {
+            "stage": "overlap",
+            "comparisons": 0,
+            "symbols": 0,
+            "probes": 0
+          },
+          {
+            "stage": "unaccounted_heap_delta",
+            "comparisons": 0,
+            "symbols": 0,
+            "probes": 0
+          },
+          {
+            "stage": "planning_over_serial_heap",
+            "comparisons": 0.0,
+            "symbols": 0.0,
+            "probes": null
+          }
+        ]
+      },
+      "production_v2": [
+        {
+          "stage": "prepare",
+          "comparisons": 8,
+          "symbols": 15,
+          "probes": 0
+        },
+        {
+          "stage": "plan",
+          "comparisons": 0,
+          "symbols": 0,
+          "probes": 0
+        },
+        {
+          "stage": "heap",
+          "comparisons": 95,
+          "symbols": 738,
+          "probes": 0
+        }
+      ],
+      "log": "/mnt/nvme2n1/erikg/sol7c-audit/work-shards1.log"
+    },
+    "4": {
+      "command": [
+        "/mnt/nvme2n1/erikg/sol7c-audit/cross_lcp_merge",
+        "--selftest",
+        "1",
+        "--seed",
+        "1",
+        "--kway",
+        "8",
+        "--threads",
+        "16"
+      ],
+      "environment": {
+        "CROSS_SHARDS": "4"
+      },
+      "modes": {
+        "cyclic": [
+          {
+            "stage": "prepare",
+            "comparisons": 8,
+            "symbols": 16,
+            "probes": 0
+          },
+          {
+            "stage": "plan",
+            "comparisons": 112,
+            "symbols": 1428,
+            "probes": 112
+          },
+          {
+            "stage": "heap",
+            "comparisons": 72,
+            "symbols": 1728,
+            "probes": 144
+          },
+          {
+            "stage": "overlap",
+            "comparisons": 0,
+            "symbols": 0,
+            "probes": 0
+          },
+          {
+            "stage": "unaccounted_heap_delta",
+            "comparisons": -21,
+            "symbols": 193,
+            "probes": 20
+          },
+          {
+            "stage": "planning_over_serial_heap",
+            "comparisons": 1.2043010752688172,
+            "symbols": 0.9302931596091205,
+            "probes": 0.9032258064516129
+          }
+        ],
+        "dollar": [
+          {
+            "stage": "prepare",
+            "comparisons": 8,
+            "symbols": 15,
+            "probes": 0
+          },
+          {
+            "stage": "plan",
+            "comparisons": 126,
+            "symbols": 808,
+            "probes": 0
+          },
+          {
+            "stage": "heap",
+            "comparisons": 78,
+            "symbols": 686,
+            "probes": 0
+          },
+          {
+            "stage": "overlap",
+            "comparisons": 0,
+            "symbols": 0,
+            "probes": 0
+          },
+          {
+            "stage": "unaccounted_heap_delta",
+            "comparisons": -17,
+            "symbols": -52,
+            "probes": 0
+          },
+          {
+            "stage": "planning_over_serial_heap",
+            "comparisons": 1.3263157894736841,
+            "symbols": 1.094850948509485,
+            "probes": null
+          }
+        ]
+      },
+      "production_v2": [
+        {
+          "stage": "prepare",
+          "comparisons": 8,
+          "symbols": 15,
+          "probes": 0
+        },
+        {
+          "stage": "plan",
+          "comparisons": 0,
+          "symbols": 0,
+          "probes": 0
+        },
+        {
+          "stage": "heap",
+          "comparisons": 95,
+          "symbols": 738,
+          "probes": 0
+        }
+      ],
+      "log": "/mnt/nvme2n1/erikg/sol7c-audit/work-shards4.log"
+    },
+    "8": {
+      "command": [
+        "/mnt/nvme2n1/erikg/sol7c-audit/cross_lcp_merge",
+        "--selftest",
+        "1",
+        "--seed",
+        "1",
+        "--kway",
+        "8",
+        "--threads",
+        "16"
+      ],
+      "environment": {
+        "CROSS_SHARDS": "8"
+      },
+      "modes": {
+        "cyclic": [
+          {
+            "stage": "prepare",
+            "comparisons": 8,
+            "symbols": 16,
+            "probes": 0
+          },
+          {
+            "stage": "plan",
+            "comparisons": 266,
+            "symbols": 3388,
+            "probes": 266
+          },
+          {
+            "stage": "heap",
+            "comparisons": 72,
+            "symbols": 1728,
+            "probes": 144
+          },
+          {
+            "stage": "overlap",
+            "comparisons": 0,
+            "symbols": 0,
+            "probes": 0
+          },
+          {
+            "stage": "unaccounted_heap_delta",
+            "comparisons": -21,
+            "symbols": 193,
+            "probes": 20
+          },
+          {
+            "stage": "planning_over_serial_heap",
+            "comparisons": 2.860215053763441,
+            "symbols": 2.2071661237785016,
+            "probes": 2.1451612903225805
+          }
+        ],
+        "dollar": [
+          {
+            "stage": "prepare",
+            "comparisons": 8,
+            "symbols": 15,
+            "probes": 0
+          },
+          {
+            "stage": "plan",
+            "comparisons": 294,
+            "symbols": 1881,
+            "probes": 0
+          },
+          {
+            "stage": "heap",
+            "comparisons": 78,
+            "symbols": 686,
+            "probes": 0
+          },
+          {
+            "stage": "overlap",
+            "comparisons": 0,
+            "symbols": 0,
+            "probes": 0
+          },
+          {
+            "stage": "unaccounted_heap_delta",
+            "comparisons": -17,
+            "symbols": -52,
+            "probes": 0
+          },
+          {
+            "stage": "planning_over_serial_heap",
+            "comparisons": 3.094736842105263,
+            "symbols": 2.548780487804878,
+            "probes": null
+          }
+        ]
+      },
+      "production_v2": [
+        {
+          "stage": "prepare",
+          "comparisons": 8,
+          "symbols": 15,
+          "probes": 0
+        },
+        {
+          "stage": "plan",
+          "comparisons": 0,
+          "symbols": 0,
+          "probes": 0
+        },
+        {
+          "stage": "heap",
+          "comparisons": 95,
+          "symbols": 738,
+          "probes": 0
+        }
+      ],
+      "log": "/mnt/nvme2n1/erikg/sol7c-audit/work-shards8.log"
+    },
+    "16": {
+      "command": [
+        "/mnt/nvme2n1/erikg/sol7c-audit/cross_lcp_merge",
+        "--selftest",
+        "1",
+        "--seed",
+        "1",
+        "--kway",
+        "8",
+        "--threads",
+        "16"
+      ],
+      "environment": {
+        "CROSS_SHARDS": "16"
+      },
+      "modes": {
+        "cyclic": [
+          {
+            "stage": "prepare",
+            "comparisons": 8,
+            "symbols": 16,
+            "probes": 0
+          },
+          {
+            "stage": "plan",
+            "comparisons": 560,
+            "symbols": 7140,
+            "probes": 560
+          },
+          {
+            "stage": "heap",
+            "comparisons": 72,
+            "symbols": 1728,
+            "probes": 144
+          },
+          {
+            "stage": "overlap",
+            "comparisons": 0,
+            "symbols": 0,
+            "probes": 0
+          },
+          {
+            "stage": "unaccounted_heap_delta",
+            "comparisons": -21,
+            "symbols": 193,
+            "probes": 20
+          },
+          {
+            "stage": "planning_over_serial_heap",
+            "comparisons": 6.021505376344086,
+            "symbols": 4.651465798045603,
+            "probes": 4.516129032258065
+          }
+        ],
+        "dollar": [
+          {
+            "stage": "prepare",
+            "comparisons": 8,
+            "symbols": 15,
+            "probes": 0
+          },
+          {
+            "stage": "plan",
+            "comparisons": 630,
+            "symbols": 4040,
+            "probes": 0
+          },
+          {
+            "stage": "heap",
+            "comparisons": 78,
+            "symbols": 686,
+            "probes": 0
+          },
+          {
+            "stage": "overlap",
+            "comparisons": 0,
+            "symbols": 0,
+            "probes": 0
+          },
+          {
+            "stage": "unaccounted_heap_delta",
+            "comparisons": -17,
+            "symbols": -52,
+            "probes": 0
+          },
+          {
+            "stage": "planning_over_serial_heap",
+            "comparisons": 6.631578947368421,
+            "symbols": 5.4742547425474255,
+            "probes": null
+          }
+        ]
+      },
+      "production_v2": [
+        {
+          "stage": "prepare",
+          "comparisons": 8,
+          "symbols": 15,
+          "probes": 0
+        },
+        {
+          "stage": "plan",
+          "comparisons": 0,
+          "symbols": 0,
+          "probes": 0
+        },
+        {
+          "stage": "heap",
+          "comparisons": 95,
+          "symbols": 738,
+          "probes": 0
+        }
+      ],
+      "log": "/mnt/nvme2n1/erikg/sol7c-audit/work-shards16.log"
+    }
+  },
+  "rejections": [
+    {
+      "shards": 4,
+      "mode": "cyclic",
+      "signed_residual": {
+        "comparisons": -21,
+        "symbols": 193,
+        "probes": 20
+      }
+    },
+    {
+      "shards": 4,
+      "mode": "dollar",
+      "signed_residual": {
+        "comparisons": -17,
+        "symbols": -52,
+        "probes": 0
+      }
+    },
+    {
+      "shards": 8,
+      "mode": "cyclic",
+      "signed_residual": {
+        "comparisons": -21,
+        "symbols": 193,
+        "probes": 20
+      }
+    },
+    {
+      "shards": 8,
+      "mode": "dollar",
+      "signed_residual": {
+        "comparisons": -17,
+        "symbols": -52,
+        "probes": 0
+      }
+    },
+    {
+      "shards": 16,
+      "mode": "cyclic",
+      "signed_residual": {
+        "comparisons": -21,
+        "symbols": 193,
+        "probes": 20
+      }
+    },
+    {
+      "shards": 16,
+      "mode": "dollar",
+      "signed_residual": {
+        "comparisons": -17,
+        "symbols": -52,
+        "probes": 0
+      }
+    }
+  ]
+}
