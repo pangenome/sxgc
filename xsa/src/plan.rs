@@ -23,7 +23,7 @@ use std::path::Path;
 /// legacy chunk sets (CROSS_NO_PERSIST), measured ~1.5 s/MB serial
 /// (~0.7 MB/s - the pile-scale bottleneck that motivated persisting).
 /// Chunk artifacts: 9.9x corpus (.crle runs) + 8x (persisted pos columns).
-pub const CONSTANTS_VERSION: u32 = 5;
+pub const CONSTANTS_VERSION: u32 = 6;
 
 /// Per-byte wall rates (seconds per corpus MB), fragment-calibrated.
 pub struct Rates {
