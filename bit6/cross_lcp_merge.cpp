@@ -2500,6 +2500,7 @@ static void put_le64(char* b, U v)       { for (int i = 0; i < 8; ++i) b[i] = ch
 struct SparseWalkSink {
     virtual ~SparseWalkSink() = default;
     virtual void attachCorpus(const CorpusText&) {}
+    virtual void finishWalk() {}
     virtual SparseWalkSink* shardSink(U) { return this; }
     virtual U shardCount(U normal) const { return normal; }
     virtual U admission() const { return 1; }
@@ -3126,6 +3127,51 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
         workLine("overlap", 0, Budget{});
         }
     }
+    // A diagnostic oracle run can persist per-range reference counters. A
+    // timed run reuses them without replay. Bind the journal to every split,
+    // mode and source identity; changed input metadata refuses reuse.
+    bool haveReference = replayHeap || S == 1;
+    if (const char* referencePath = getenv("CROSS_SEAM_REFERENCE")) {
+        std::string identity = "sol7e-range-v1";
+        auto word = [&](U value) { identity.append(reinterpret_cast<const char*>(&value),8); };
+        auto fileIdentity = [&](const std::string& path) {
+            struct stat info{}; require(::stat(path.c_str(), &info) == 0, "reference source stat");
+            word(path.size()); identity += path;
+            word(info.st_dev); word(info.st_ino); word(info.st_size);
+            word(info.st_mtim.tv_sec); word(info.st_mtim.tv_nsec);
+        };
+        word(n); word(k); word(S); word(dollar); word(hashK);
+        for (auto& boundary : aB) for (U cursor : boundary) word(cursor);
+        for (const auto& side : sides) {
+            word(side.n); word(side.offset); word(side.period); word(side.posBase); word(side.refText);
+            fileIdentity(side.sxsPath);
+            for (const auto& seg : side.segs) {
+                fileIdentity(seg.path); word(seg.off); word(seg.len);
+                identity.append(reinterpret_cast<const char*>(seg.remap.data()), seg.remap.size());
+            }
+        }
+        if (seamOracle) {
+            require(!fs::exists(referencePath), "reference journal already exists");
+            OutFile reference(referencePath); reference.w64(identity.size());
+            reference.raw(identity.data(), identity.size());
+            for (const auto& range : rangeReference) {
+                reference.w64(range.comparisons); reference.w64(range.symbols); reference.w64(range.probes);
+            }
+        } else if (S > 1) {
+            std::ifstream reference(referencePath, std::ios::binary);
+            U size = 0; reference.read(reinterpret_cast<char*>(&size),8);
+            require(bool(reference) && size == identity.size(), "reference journal identity size");
+            std::string stored(size,'\0'); reference.read(stored.data(),size);
+            require(bool(reference) && stored == identity, "reference journal input/split identity");
+            for (auto& range : rangeReference) {
+                reference.read(reinterpret_cast<char*>(&range.comparisons),8);
+                reference.read(reinterpret_cast<char*>(&range.symbols),8);
+                reference.read(reinterpret_cast<char*>(&range.probes),8);
+            }
+            require(bool(reference) && reference.peek() == EOF, "reference journal exact extent");
+            haveReference = true;
+        }
+    }
     const U passes = 1;
     std::vector<Budget> shardBud(passes * S);
     std::vector<double> shardPF(passes * S, 0.0), shardPop(passes * S, 0.0);
@@ -3263,6 +3309,7 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
         };
         launch(sparse, 0, ts);
         for (auto& t : ts) if (t.joinable()) t.join();
+        if (sparse) sparse->finishWalk();
     }
 #ifdef SOL7D_TRACE
     if (seedHeap) {
@@ -3282,7 +3329,29 @@ static void core_merge_kway(const std::vector<SideExt>& sides, bool dollar, U th
             heapWork.symbols += shardBud[s].symbols; heapWork.probes += shardBud[s].probes;
         }
         workLine("heap", pass, heapWork);
-        if (getenv("CROSS_SEED_HEAP") || getenv("CROSS_SEAM_ORACLE"))
+        Budget walkingWork = difference(preparedWork, entryWork);
+        walkingWork.comparisons += heapWork.comparisons;
+        walkingWork.symbols += heapWork.symbols; walkingWork.probes += heapWork.probes;
+        workLine("WALK", pass, walkingWork);
+        Budget planWork;
+        for (const auto& pb : planningWork) {
+            planWork.comparisons += pb.comparisons; planWork.symbols += pb.symbols; planWork.probes += pb.probes;
+        }
+        if (seedHeap) { planWork.comparisons += seedWork.comparisons; planWork.symbols += seedWork.symbols; planWork.probes += seedWork.probes; }
+        workLine("PLANNING", pass, planWork);
+        workLine("OVERLAP", pass, Budget{});
+        if (haveReference) {
+            Budget reference;
+            if (S == 1) reference = heapWork;
+            else for (const auto& rb : rangeReference) {
+                reference.comparisons += rb.comparisons; reference.symbols += rb.symbols; reference.probes += rb.probes;
+            }
+            std::fprintf(stderr, "CROSS_SEAM_TOTAL comparisons=%lld symbols_compared=%lld probes=%lld reference=serial_range signed=1 replay=%u\n",
+                (long long)heapWork.comparisons - (long long)reference.comparisons,
+                (long long)heapWork.symbols - (long long)reference.symbols,
+                (long long)heapWork.probes - (long long)reference.probes, unsigned(replayHeap));
+        } else std::fprintf(stderr, "CROSS_SEAM_TOTAL status=unmeasured reference_required=CROSS_SEAM_REFERENCE\n");
+        if (getenv("CROSS_SEED_HEAP") || getenv("CROSS_SEAM_ORACLE") || getenv("CROSS_SEAM_REFERENCE"))
             for (U s = 0; s < S; ++s) {
                 workLine("producer", s, shardBud[pass * S + s]);
                 workLine("planning_seam", s, planningWork[s]);
@@ -3626,6 +3695,24 @@ struct SequentialV2 : SparseWalkSink {
         else { ++pending.len; pending.tail = p; }
         ++rows;
     }
+    // A spool segment contains no target in its interior. Target rows are
+    // always singleton records; preserving head/tail also preserves both
+    // flanks when a class or a BWT run crosses any number of producer seams.
+    void segment(const SparseRun& run) {
+        require(run.len && run.len <= n - next, "parallel segment bounds");
+        U start = next;
+        row(start, run.head);
+        require(pending.c == run.c, "parallel segment character");
+        if (run.len == 1) {
+            require(run.head == run.tail, "singleton segment endpoints");
+            return;
+        }
+        require(active == UINT64_MAX && seam.previousHit == nullptr,
+                "target rows must be singleton segments");
+        next += run.len - 1; rows += run.len - 1;
+        seam.nextRow += run.len - 1; seam.previous = run.tail;
+        pending.len += run.len - 1; pending.tail = run.tail;
+    }
     void endShard() override {
         require(next == n, "incomplete sequential v2 walk");
         if (active != UINT64_MAX) {
@@ -3657,18 +3744,154 @@ struct SequentialV2 : SparseWalkSink {
                 "publish validated terminal marker");
     }
 };
+// Independent single-pass producers append immutable compressed segments.
+// The ordered reducer reads committed prefixes before producer completion;
+// only it owns SequentialV2, canonical run-band numbering and terminal EOF.
+// RAM is O(P*4096) records plus existing decoded fronts. Scratch is <=25*n
+// bytes (one record per row in the worst case), and is unlinked by range.
+// This is not persistent crash recovery: process failure refuses completion.
+struct ParallelV2 : SparseWalkSink {
+    SequentialV2& output;
+    U count;
+    std::mutex mu;
+    std::condition_variable cv;
+    std::thread reducer;
+    struct Producer : SparseWalkSink {
+        ParallelV2& parent;
+        U id, lo = 0, hi = 0, next = 0, committed = 0;
+        bool started = false, done = false;
+        int fd = -1;
+        std::string path;
+        SparseRun pending;
+        std::vector<char> buffer;
+        Producer(ParallelV2& p, U i) : parent(p), id(i),
+            path(p.output.dir + "/walk-" + std::to_string(i)) { buffer.reserve(25*4096); }
+        void drain() {
+            if (buffer.empty()) return;
+            U base;
+            { std::lock_guard<std::mutex> lock(parent.mu); base = committed; }
+            xput(fd, buffer.data(), buffer.size(), 25*base, "parallel spool write");
+            { std::lock_guard<std::mutex> lock(parent.mu); committed += buffer.size()/25; }
+            buffer.clear(); parent.cv.notify_all();
+        }
+        void flush() {
+            if (!pending.len) return;
+            char b[25]; b[0] = char(pending.c);
+            put_le64(b+1,pending.len); put_le64(b+9,pending.head); put_le64(b+17,pending.tail);
+            buffer.insert(buffer.end(), b, b+25); pending = {};
+            if (buffer.size() == 25*4096) drain();
+        }
+        void beginShard(U shard, U begin, U end) override {
+            require(shard == id && begin <= end && end <= parent.output.n, "parallel producer bounds");
+            lo = next = begin; hi = end;
+            fd = ::open(path.c_str(), O_CREAT | O_EXCL | O_RDWR, 0600);
+            require(fd >= 0, "create parallel spool");
+            { std::lock_guard<std::mutex> lock(parent.mu); started = true; }
+            parent.cv.notify_all();
+        }
+        void row(U rank, U p) override {
+            require(rank == next++ && rank < hi && p < parent.output.n, "parallel producer row coverage");
+            // Keys only: the reducer mutates Hit values, never this map's
+            // structure. Concurrent const key lookup does not read a Hit.
+            const auto& targets = parent.output.seam.targets;
+            bool target = targets.find(p) != targets.end();
+            uint8_t c = p ? parent.output.text->at(p-1) : uint8_t(2);
+            if (target || (pending.len && pending.c != c)) flush();
+            if (!pending.len) pending = {c, 0, p, p};
+            ++pending.len; pending.tail = p;
+            if (target) flush();
+        }
+        void endShard() override {
+            require(next == hi, "parallel producer completion");
+            flush(); drain();
+            { std::lock_guard<std::mutex> lock(parent.mu); done = true; }
+            parent.cv.notify_all();
+        }
+    };
+    std::vector<std::unique_ptr<Producer>> producers;
+    ParallelV2(SequentialV2& o, U p) : output(o), count(p) {
+        for (U i = 0; i < p; ++i) producers.emplace_back(new Producer(*this,i));
+    }
+    U shardCount(U) const override { return count; }
+    U admission() const override { return count; }
+    SparseWalkSink* shardSink(U i) override { return producers.at(i).get(); }
+    void beginShard(U, U, U) override { fail("parallel parent begin"); }
+    void row(U, U) override { fail("parallel parent row"); }
+    void endShard() override { fail("parallel parent end"); }
+    void attachCorpus(const CorpusText& corpus) override {
+        output.attachCorpus(corpus);
+        reducer = std::thread([this] {
+            output.beginShard(0,0,output.n);
+            std::vector<char> buffer(25*4096);
+            auto read64 = [](const char* b) { U v=0; for(unsigned j=0;j<8;++j) v|=U(uint8_t(b[j]))<<(8*j); return v; };
+            for (auto& pointer : producers) {
+                auto& p = *pointer;
+                U records = 0, row = 0;
+                for (;;) {
+                    U available; bool done;
+                    {
+                        std::unique_lock<std::mutex> lock(mu);
+                        cv.wait(lock, [&] { return p.started && (p.committed > records || p.done); });
+                        available = p.committed; done = p.done;
+                    }
+                    if (!records) { require(p.lo == output.next, "parallel range adjacency"); row = p.lo; }
+                    while (records < available) {
+                        U take = std::min<U>(4096, available-records), bytes = 25*take, read = 0;
+                        while (read < bytes) {
+                            ssize_t z = ::pread(p.fd,buffer.data()+read,bytes-read,25*records+read);
+                            if (z < 0 && errno == EINTR) continue;
+                            require(z > 0, "parallel spool read"); read += U(z);
+                        }
+                        for (U j=0;j<take;++j) {
+                            const char* b=buffer.data()+25*j;
+                            SparseRun run{uint8_t(b[0]),read64(b+1),read64(b+9),read64(b+17)};
+                            require(run.len <= p.hi-row, "parallel spool range coverage");
+                            output.segment(run); row += run.len;
+                        }
+                        records += take;
+                    }
+                    if (done) {
+                        require(row == p.hi && output.next == p.hi, "parallel reducer completion");
+                        require(::close(p.fd) == 0 && ::unlink(p.path.c_str()) == 0, "parallel spool consume");
+                        p.fd = -1; break;
+                    }
+                }
+            }
+            output.endShard();
+        });
+    }
+    void finishWalk() override {
+        require(reducer.joinable(), "parallel reducer started"); reducer.join();
+    }
+};
+static U v2_producers(U n) {
+    const char* e = getenv("CROSS_V2_PRODUCERS");
+    U p = e ? std::stoull(e) : 1;
+    require(p >= 1 && p <= 4096, "CROSS_V2_PRODUCERS out of range");
+    return std::min(p,n);
+}
 static U emit_sparse_v2(const std::string& prefix, const std::vector<SideExt>& sides,
                         U threads, Budget& budget, CoreStats& stats,
                         const PairScratch& sc, U hashK, bool pre) {
     U n = 0, inputRuns = 0; for (const auto& side : sides) { n += side.n; inputRuns += side.runs; }
     CorpusText corpus; open_merge_text(sides, corpus, false);
     SequentialV2 output(prefix, corpus, n, inputRuns);
-    core_merge_kway(sides, true, threads, budget, stats, sc, hashK, pre, &output);
+    const U producers = v2_producers(n);
+    std::fprintf(stderr, "CROSS_PRODUCER_RESOURCES P=%llu decoded_front_bytes_max=%llu segment_buffer_bytes=%llu spool_bytes_bound=%llu\n",
+        (unsigned long long)producers, (unsigned long long)(producers*sides.size()*4096*8),
+        (unsigned long long)(producers*4096*25), (unsigned long long)(producers>1 ? 25*n : 0));
+    if (producers == 1)
+        core_merge_kway(sides, true, threads, budget, stats, sc, hashK, pre, &output);
+    else {
+        ParallelV2 parallel(output, producers);
+        core_merge_kway(sides, true, threads, budget, stats, sc, hashK, pre, &parallel);
+    }
     sc.release_walk();
     std::error_code cleanupError;
     fs::remove(output.dir, cleanupError); // consumer removes it after its last unlink
-    std::fprintf(stderr, "SPARSE_V2_EMIT runs=%llu rows=%llu shards=0 WM=absent admission=1 walk_shards=0 passes=1 preparation_passes=1 planning_passes=1\n",
-        (unsigned long long)output.index, (unsigned long long)(n+10));
+    std::fprintf(stderr, "SPARSE_V2_EMIT runs=%llu rows=%llu shards=0 WM=absent admission=%llu walk_shards=%llu passes=1 preparation_passes=1 planning_passes=1\n",
+        (unsigned long long)output.index, (unsigned long long)(n+10),
+        (unsigned long long)producers, (unsigned long long)producers);
     return output.index;
 }
 
