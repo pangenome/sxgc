@@ -541,7 +541,7 @@ pub fn model_v2(
         // sweep -> witnesses) overlap; the peak carries both sides' live
         // terms (transient still live, outputs landing).
         PhaseRow { name: "merge(emit)+fused-finish".into(), wall_s: V2_EMIT_FINISH_S_PER_MB * mb,
-                   disc_peak_mb: chunk_set_mb + transient_mb + rlebwt_mb + pfck_mb + pieces_mb, rss_gb: MERGE_RSS_GB },
+                   disc_peak_mb: chunk_set_mb + transient_mb + rlebwt_mb + pfck_mb + pieces_mb + container_mb, rss_gb: MERGE_RSS_GB },
         PhaseRow { name: "container(m5+m1+publish)".into(), wall_s: V2_CONTAINER_S_PER_MB * mb, disc_peak_mb: tree_peak_mb, rss_gb: MERGE_RSS_GB },
     ];
     // The OUTPUT-side verdict is the mission's accounting: the scratch tree

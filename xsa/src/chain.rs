@@ -811,6 +811,16 @@ fn run_chain(options: Options) -> Result<(), String> {
         }
     }
     if options.v2_pipeline {
+        // Carry the existing EXTRAPOLATED spill allowance explicitly, rather
+        // than hiding a potentially corpus-sized term in the output ratio.
+        if let Some(v2) = &mut build_plan.v2 {
+            let witness_cap_gb = options.wit_ram_gb.unwrap_or(options.memory_gb / 2) as f64;
+            let spill_gb = (v2.witness_ram_gb - witness_cap_gb).max(0.0) * 0.3;
+            for phase in &mut build_plan.phases {
+                if phase.name == "merge(emit)+fused-finish" { phase.disc_peak_mb += spill_gb * 1024.0; }
+            }
+            v2.transient_note.push_str(&format!("; witness spill reserve {:.1} GiB (0.3x overflow, EXTRAPOLATED)", spill_gb));
+        }
         let peak_mb = build_plan.phases.iter().map(|p| p.disc_peak_mb).fold(0.0, f64::max);
         let fits = peak_mb * 1048576.0 <= build_plan.survey.scratch_free_bytes as f64;
         build_plan.disc_verdict = format!("{}: ALL-PHASE peak {:.1} GiB vs {:.1} GiB free (includes configured spool credits)",
@@ -819,10 +829,14 @@ fn run_chain(options: Options) -> Result<(), String> {
         if !fits && !build_plan.alternatives.iter().any(|s| s.contains("segment spools")) {
             build_plan.alternatives.push("free scratch for all-phase v2 peak".into());
         }
+        if 100u32.saturating_sub(build_plan.survey.scratch_used_percent) < options.scratch_free_pct {
+            build_plan.alternatives.push("scratch hygiene policy: pass --scratch-free-pct to override".into());
+            build_plan.disc_verdict.push_str("; INFEASIBLE under scratch hygiene policy");
+        }
         // Default direct sink has the attested P=1 service time; the P=8
         // rate is only appropriate when explicitly selected.
         let producers = std::env::var("CROSS_V2_PRODUCERS").unwrap_or_else(|_| "1".into());
-        if producers == "1" {
+        if producers != "8" {
             for phase in &mut build_plan.phases {
                 if phase.name == "merge(walk)" { phase.wall_s *= 734.041 / 291.0; }
             }
