@@ -1,9 +1,15 @@
 // Keys-only measurement: no suffix positions are stored or written.
 #define main retired_merge_main
+#ifdef SOL8B_MERGE_SOURCE
+#include SOL8B_MERGE_SOURCE
+#else
 #include "../../bit6/cross_lcp_merge.cpp"
+#endif
 #undef main
 #include <cmath>
+#include "../sol8b/pricing.hpp"
 int main(int argc,char**argv) {
+    if(argc>1 && std::string(argv[1])=="--hybrid") return hybrid_price(argc,argv);
     require(argc==3,"measure CORPUS REMAP");
     TextSeg s;s.path=argv[1];s.len=fs::file_size(s.path);
     std::ifstream map(argv[2],std::ios::binary);map.read((char*)s.remap.data(),256);
