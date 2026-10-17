@@ -1,0 +1,4 @@
+100m: chi=29716349 producer_rc=0 finish_rc=0 cmp_rc=0
+RADIX_WORK N=8 sweep_bytes=500002515 sweeps=5 prefix_ops=500002515 key_ops=100000503 key_bytes=800003996 singleton=14090494 residue=85910009 comparisons=639864223 symbols=9551567601 probes=442927806 segments=4 selection_passes=0 position_cap=32000000 peak_position_slots=63592958 peak_position_record_bytes=1017487328 full_SA=0 persistent_positions=0
+1b: chi=283296933 producer_rc=0 finish_rc=0 cmp_rc=0
+RADIX_WORK N=8 sweep_bytes=36000023940 sweeps=36 prefix_ops=36000023940 key_ops=1000000665 key_bytes=8000005292 singleton=78026361 residue=921974304 comparisons=9556970969 symbols=157116619752 probes=6856701970 segments=35 selection_passes=0 position_cap=32000000 peak_position_slots=63992090 peak_position_record_bytes=1023873440 full_SA=0 persistent_positions=0

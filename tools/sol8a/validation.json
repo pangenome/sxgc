@@ -1,0 +1,137 @@
+[
+  {
+    "command": [
+      "/mnt/nvme2n1/erikg/sol8a-measure/radix_sweep",
+      "--selftest",
+      "200",
+      "--seed",
+      "1",
+      "--kway",
+      "1",
+      "--threads",
+      "16"
+    ],
+    "result": "passed",
+    "returncode": 0,
+    "output": [
+      "SPARSE_ORACLE_PASS modes=cyclic,dollar runs=exact seam_spool=exact production_bands=exact trivial_bases=exact terminal=exact legacy_shard_admission=1 WM=absent",
+      "SELFTEST_PASS count=200 seed=1 kway=1"
+    ]
+  },
+  {
+    "command": [
+      "/mnt/nvme2n1/erikg/sol8a-measure/radix_sweep",
+      "--selftest",
+      "200",
+      "--seed",
+      "1",
+      "--kway",
+      "2",
+      "--threads",
+      "16"
+    ],
+    "result": "passed",
+    "returncode": 0,
+    "output": [
+      "SPARSE_ORACLE_PASS modes=cyclic,dollar runs=exact seam_spool=exact production_bands=exact trivial_bases=exact terminal=exact legacy_shard_admission=1 WM=absent",
+      "SELFTEST_PASS count=200 seed=1 kway=2"
+    ]
+  },
+  {
+    "command": [
+      "/mnt/nvme2n1/erikg/sol8a-measure/radix_sweep",
+      "--selftest",
+      "200",
+      "--seed",
+      "1",
+      "--kway",
+      "8",
+      "--threads",
+      "16"
+    ],
+    "result": "passed",
+    "returncode": 0,
+    "output": [
+      "SPARSE_ORACLE_PASS modes=cyclic,dollar runs=exact seam_spool=exact production_bands=exact trivial_bases=exact terminal=exact legacy_shard_admission=1 WM=absent",
+      "SELFTEST_PASS count=200 seed=1 kway=8"
+    ]
+  },
+  {
+    "command": [
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/pile_finish",
+      "--selftest-sweep-monoid"
+    ],
+    "result": "passed",
+    "returncode": 0,
+    "output": [
+      "SWEEP_STATE_CARRY_ORACLE_PASS streams=2048 splits=34785 NUL=1 byte05=1 singleton=1 periodic_colors=1 empty=1 ordered_witnesses=1 final_state=1"
+    ]
+  },
+  {
+    "command": [
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/pile_finish",
+      "--selftest-repair-chunks"
+    ],
+    "result": "passed",
+    "returncode": 0,
+    "output": [
+      "ENDPOINT_STREAM_PASS n=61 k=1 r=17 padding_rows=10 cyclic_seam_certified=1 classes=2",
+      "ENDPOINT_STREAM_PASS n=61 k=1 r=17 padding_rows=10 cyclic_seam_certified=1 classes=2",
+      "ENDPOINT_STREAM_PASS n=61 k=1 r=17 padding_rows=10 cyclic_seam_certified=1 classes=2",
+      "ENDPOINT_STREAM_PASS n=61 k=1 r=17 padding_rows=10 cyclic_seam_certified=1 classes=2",
+      "ENDPOINT_STREAM_PASS n=61 k=1 r=17 padding_rows=10 cyclic_seam_certified=1 classes=2",
+      "ENDPOINT_STREAM_PASS n=61 k=1 r=17 padding_rows=10 cyclic_seam_certified=1 classes=2",
+      "ENDPOINT_STREAM_PASS n=61 k=1 r=17 padding_rows=10 cyclic_seam_certified=1 classes=2",
+      "ENDPOINT_STREAM_PASS n=61 k=1 r=17 padding_rows=10 cyclic_seam_certified=1 classes=2",
+      "ENDPOINT_STREAM_PASS n=61 k=1 r=17 padding_rows=10 cyclic_seam_certified=1 classes=2",
+      "CHUNKED_REPAIR_ORACLE_PASS streams=128 widths=3392 workers=4 both_coalescers=1 class_flanks=1 padding_straddle=1 dollar=1 legal_00_05=1"
+    ]
+  },
+  {
+    "command": [
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/pile_finish",
+      "--selftest-seam-spool",
+      "/mnt/nvme2n1/erikg/sol8a-standing/spool"
+    ],
+    "result": "passed",
+    "returncode": 0,
+    "output": [
+      "BAND_PROGRESS_READER_ORACLE_PASS trivial_bases=1 band_only=1 deferred_class=1 EOF_clamp=1 terminal=1 delayed_full_band_EOF=1 backward_terminal_refused=1 malformed_refusals=12",
+      "SEAM_SPOOL_READER_ORACLE_PASS empty=1 adversarial_orders=2 padded_flanks=1 NUL=1 byte05=1 malformed_refusals=3"
+    ]
+  },
+  {
+    "command": [
+      "/mnt/nvme2n1/erikg/sol7e-freshstart/flow_oracle"
+    ],
+    "result": "passed",
+    "returncode": 0,
+    "output": [
+      "FLOW_ORACLE_PASS initial_minus_one=1 oversized_positive_window=1 unsigned_credit=1 blocked_until_consumed=1"
+    ]
+  },
+  {
+    "command": [
+      "python3",
+      "tools/sol7f/segment_model.py"
+    ],
+    "result": "passed",
+    "returncode": 0,
+    "output": [
+      "{\"P\": [1, 4, 8, 16], \"P8_EOF_permutations\": 40320, \"P8_completion_orders\": 68, \"W\": 1100, \"blocks\": 50062, \"boundary\": \"inclusive\", \"deadlocks\": 0, \"duplicate_rows\": 0, \"exact_rows\": true, \"exact_runs\": true, \"lost_rows\": 0, \"peak_bands\": 1100, \"persistent_recovery\": false, \"prefix_credit_releases\": 35280, \"publication\": \"committed_prefix_only\", \"publisher_stalls\": true, \"repeated_cuts\": true, \"result\": \"PASS\", \"rows\": 66735, \"schedules\": 400, \"singleton_targets\": true, \"spool_budget\": \"global_with_active_batch_reserve\", \"terminal\": \"all_ranges_only\"}"
+    ]
+  },
+  {
+    "command": [
+      "cargo",
+      "check",
+      "--manifest-path",
+      "xsa/Cargo.toml"
+    ],
+    "result": "passed",
+    "returncode": 0,
+    "output": [
+      "Finished dev profile in 4m 31s; 13 existing Rust warnings"
+    ]
+  }
+]
