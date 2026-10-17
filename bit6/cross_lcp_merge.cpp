@@ -90,6 +90,8 @@
 #include <linux/falloc.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
+#include <sys/mman.h>
+#include <map>
 #include <unistd.h>
 
 namespace fs = std::filesystem;
@@ -5432,10 +5434,11 @@ int main_impl(int argc, char** argv) {
     if (has("--binbwt")) return binbwt_main(flag("--binbwt"),flag("--remap"),flag("--out-prefix"),
         threads,
         flag("--bin-leaf").empty()?24:std::stoull(flag("--bin-leaf")),
-        flag("--bin-depth-cap").empty()?32:std::stoull(flag("--bin-depth-cap")),
+        flag("--bin-depth-cap").empty()?16:std::stoull(flag("--bin-depth-cap")),
         flag("--bin-live-cap").empty()?U(1)<<32:std::stoull(flag("--bin-live-cap")),
         flag("--bin-level-bytes").empty()?1:std::stoull(flag("--bin-level-bytes")),
-        flag("--bin-mode")!="cyclic");
+        flag("--bin-mode")!="cyclic", has("--bin-freq-sched"),
+        flag("--bin-split").empty()?0:std::stoull(flag("--bin-split")));
     U kway = 2;
     if (!flag("--kway").empty()) {
         kway = std::stoull(flag("--kway"));

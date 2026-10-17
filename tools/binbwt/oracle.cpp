@@ -83,7 +83,7 @@ int main(int argc, char** argv) {
                                 BinWork w;
                                 std::vector<U> got;
                                 got.reserve(n);
-                                bin_order(text, dollar, threads, leaf, dcap, lc, lb, w,
+                                bin_order(text, dollar, threads, leaf, dcap, lc, lb, false, 0, w,
                                           [&](U row, U p) {
                                               require(row == got.size(), "oracle row continuity");
                                               got.push_back(p);
