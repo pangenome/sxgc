@@ -103,3 +103,21 @@ exact singleton count. All original summaries/top-ten counts were reproduced.
 The additional counts-only pile model predicts 45 collecting segments and one
 count sweep (46 scans, 60.26TB, 8.369h at 2GB/s), with a 256GB position window.
 This is an extrapolation of the measured 1GB distribution, not a pile result.
+
+## Standing suite and source provenance
+
+Final-source native selftests pass 200 cases at each k=1,2,8 (cyclic/dollar,
+production column/class/band oracles). The unchanged finish's sweep-state,
+chunked-repair and malformed spool/EOF oracles pass; the inherited flow oracle
+passes. The 400-schedule segment model passes, including all 40,320 P=8 EOF
+permutations, zero deadlocks/lost/duplicate rows and peak band backlog 1100.
+Full commands and verbatim summaries are in `validation.json` and the complete
+model summary in `segment-model-result.json`.
+
+Native/runtime sources are byte-identical; all 57 source manifest entries
+validate. `provenance.json` binds source and tested producer executable hashes.
+The native/runtime source hash is
+`d9ef970619d2e84c90dd0ae939b0ee6f9f7a00a68a2280429ead158e0bcae459`.
+The Rust front door still selects its inherited chunk/merge route; the radix
+slice is invoked directly with the native/runtime producer CLI. No claim is
+made that cluster scheduling or disk segmentation is already integrated.
