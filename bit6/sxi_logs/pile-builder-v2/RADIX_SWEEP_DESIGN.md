@@ -69,3 +69,38 @@ assumption is introduced.
 Measurement, selected N, source locations, gates and counters are recorded in
 `tools/sol8a/RESULTS.md` when acquired. No 10GB or pile result follows from the
 1GB measurements. The active 100GB run's scratch is never opened or modified.
+
+## Distribution-priced pass model
+
+`tools/sol8a/pile_model.py` counts the production-remapped first two symbols
+without positions, then scales those counts from the exact 1GB fixture to
+1.31TB and applies the slice's contiguous-range packing rule. It projects
+**45 collecting segments + one count sweep = 46 sweeps**, rather than the
+balanced lower bound of 42 above. Maximum prefix bucket projects to
+31,245,390,512 positions, just below the chosen 32-billion cap. This small
+margin is a distribution risk; a different pile mix may activate the expensive
+bounded selection fallback. The complete model parameters and result are
+`tools/sol8a/pile-model.json`.
+
+At 2GB/s (isolated sequential transfer service times, decimal):
+
+| Transfer | Bytes | Seconds |
+|---|---:|---:|
+|46 corpus sweeps|60,260,000,000,000|30,130 (8.369h)|
+|position-only segment writes, summed|10,480,000,000,000|5,240|
+|position-only readbacks, summed|10,480,000,000,000|5,240|
+|sparse hash build source (virtual doubled)|2,620,000,000,000|1,310|
+|k=32 hash checkpoint writes|655,000,000,000|327.5|
+|retained rlebwt writes, extrapolated|1,928,510,548,700|964.255|
+|rlebwt replay reads, extrapolated|1,928,510,548,700|964.255|
+|container writes, extrapolated|612,837,009,283|306.419|
+|finish pfck source sweep|1,310,000,000,000|655|
+|finish pfck writes (.364n allowance)|476,840,000,000|238.42|
+
+The first three rows total 40,610s=11.281h before residue CPU and finish.
+Fingerprint lookup traffic, extra internal sorting passes, witness spilling,
+filesystem metadata, physical read amplification and shared-device contention
+are not determined by these sequential rates. They must be added rather than
+silently assumed free. Producer and finish can overlap; this table is service
+work, not a predicted end-to-end elapsed time. The slice has no position writes
+or readbacks: those rows price the proposed future disk segmentation only.

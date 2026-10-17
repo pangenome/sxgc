@@ -3,7 +3,7 @@
 import json,os,subprocess,sys,time
 from pathlib import Path
 base=Path('/mnt/nvme2n1/erikg');size=sys.argv[1]
-root=base/f'sol8a-gate-{size}';root.mkdir(exist_ok=True)
+root=base/(f'sol8a-gate-{size}'+('-'+sys.argv[2] if len(sys.argv)>2 else ''));root.mkdir(exist_ok=True)
 fixture=base/'extcols-scratch'/f'mergperf-{size}-snap.txt'
 remap=base/'sol6c-gate100m/remap-256.bin'
 prefix=root/'frag';output=root/'product.sxi2'

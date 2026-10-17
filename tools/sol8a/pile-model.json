@@ -1,0 +1,14 @@
+{
+  "source_suffixes": 1000000665,
+  "source_prefix_buckets": 25871,
+  "pile_bytes": 1310000000000,
+  "position_cap": 32000000000,
+  "position_bytes_per_segment": 256000000000,
+  "projected_segments": 45,
+  "projected_sweeps": 46,
+  "projected_text_read_bytes": 60260000000000,
+  "projected_text_read_seconds": 30130.0,
+  "oversized_prefix_buckets": 0,
+  "max_projected_prefix_bucket": 31245390512,
+  "qualification": "1GB prefix distribution extrapolation; not pile measurement; oversized selection scans excluded"
+}

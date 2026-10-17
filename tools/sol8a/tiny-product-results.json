@@ -1,0 +1,194 @@
+[
+  {
+    "fixture": 0,
+    "cap": 1,
+    "n": 6,
+    "chi": 2,
+    "raw_runs": "exact",
+    "witnesses": "exact"
+  },
+  {
+    "fixture": 0,
+    "cap": 7,
+    "n": 6,
+    "chi": 2,
+    "raw_runs": "exact",
+    "witnesses": "exact"
+  },
+  {
+    "fixture": 1,
+    "cap": 1,
+    "n": 3,
+    "chi": 2,
+    "raw_runs": "exact",
+    "witnesses": "exact"
+  },
+  {
+    "fixture": 1,
+    "cap": 7,
+    "n": 3,
+    "chi": 2,
+    "raw_runs": "exact",
+    "witnesses": "exact"
+  },
+  {
+    "fixture": 2,
+    "cap": 1,
+    "n": 36,
+    "chi": 2,
+    "raw_runs": "exact",
+    "witnesses": "exact"
+  },
+  {
+    "fixture": 2,
+    "cap": 7,
+    "n": 36,
+    "chi": 2,
+    "raw_runs": "exact",
+    "witnesses": "exact"
+  },
+  {
+    "fixture": 3,
+    "cap": 1,
+    "n": 64,
+    "chi": 2,
+    "raw_runs": "exact",
+    "witnesses": "exact"
+  },
+  {
+    "fixture": 3,
+    "cap": 7,
+    "n": 64,
+    "chi": 2,
+    "raw_runs": "exact",
+    "witnesses": "exact"
+  },
+  {
+    "fixture": 4,
+    "cap": 1,
+    "n": 63,
+    "chi": 3,
+    "raw_runs": "exact",
+    "witnesses": "exact"
+  },
+  {
+    "fixture": 4,
+    "cap": 7,
+    "n": 63,
+    "chi": 3,
+    "raw_runs": "exact",
+    "witnesses": "exact"
+  },
+  {
+    "fixture": 5,
+    "cap": 1,
+    "n": 26,
+    "chi": 5,
+    "raw_runs": "exact",
+    "witnesses": "exact"
+  },
+  {
+    "fixture": 5,
+    "cap": 7,
+    "n": 26,
+    "chi": 5,
+    "raw_runs": "exact",
+    "witnesses": "exact"
+  },
+  {
+    "fixture": 6,
+    "cap": 1,
+    "n": 22,
+    "chi": 2,
+    "raw_runs": "exact",
+    "witnesses": "exact"
+  },
+  {
+    "fixture": 6,
+    "cap": 7,
+    "n": 22,
+    "chi": 2,
+    "raw_runs": "exact",
+    "witnesses": "exact"
+  },
+  {
+    "fixture": 7,
+    "cap": 1,
+    "n": 31,
+    "chi": 0,
+    "raw_runs": "exact",
+    "witnesses": "exact"
+  },
+  {
+    "fixture": 7,
+    "cap": 7,
+    "n": 31,
+    "chi": 0,
+    "raw_runs": "exact",
+    "witnesses": "exact"
+  },
+  {
+    "fixture": 8,
+    "cap": 1,
+    "n": 16,
+    "chi": 4,
+    "raw_runs": "exact",
+    "witnesses": "exact"
+  },
+  {
+    "fixture": 8,
+    "cap": 7,
+    "n": 16,
+    "chi": 4,
+    "raw_runs": "exact",
+    "witnesses": "exact"
+  },
+  {
+    "fixture": 9,
+    "cap": 1,
+    "n": 128,
+    "chi": 80,
+    "raw_runs": "exact",
+    "witnesses": "exact"
+  },
+  {
+    "fixture": 9,
+    "cap": 7,
+    "n": 128,
+    "chi": 80,
+    "raw_runs": "exact",
+    "witnesses": "exact"
+  },
+  {
+    "fixture": 10,
+    "cap": 1,
+    "n": 128,
+    "chi": 85,
+    "raw_runs": "exact",
+    "witnesses": "exact"
+  },
+  {
+    "fixture": 10,
+    "cap": 7,
+    "n": 128,
+    "chi": 85,
+    "raw_runs": "exact",
+    "witnesses": "exact"
+  },
+  {
+    "fixture": 11,
+    "cap": 1,
+    "n": 128,
+    "chi": 96,
+    "raw_runs": "exact",
+    "witnesses": "exact"
+  },
+  {
+    "fixture": 11,
+    "cap": 7,
+    "n": 128,
+    "chi": 96,
+    "raw_runs": "exact",
+    "witnesses": "exact"
+  }
+]

@@ -73,3 +73,33 @@ Fresh radix brute-order oracle:
 on the shared box). Final source additionally fixes N>n tiny cyclic prefix
 certification, and journals prefix-filter operations; the production 100MB
 semantics are identical. A final-source rebuild and tiny/1GB qualification follow.
+
+## Full tiny product and final-source 100MB milestone
+
+`tiny_product.py` independently sorts brute cyclic rotations, computes direct
+cyclic LCPs, and applies a scalar sweep. For 12 fixtures at caps 1 and 7, it
+compares the producer's raw padded RLE bytes with the brute finite suffix order,
+then compares ALL emitted witnesses and chi with the independent brute result.
+Fixtures include legal NUL/05, the exact wrap prefix, periodic texts, nested
+repeats and three real 127-byte fixture windows. Containers are validated by
+the unchanged finish. Exact per-case chi is in `tiny-product-results.json`.
+
+```text
+RADIX_TINY_PRODUCT_PASS cases=24 fixtures=12 real_windows=3 NUL=1 byte05=1 wrap_prefix=1 periodic=1 nested=1 cap=1,7 raw_runs=brute_exact chi=brute_exact witnesses=all_exact container=validated
+100MB FINAL SOURCE:
+SXI2_PASS bytes=48768685 lite=1 members=6
+PILE_FINISH_DONE chi=29716349 n=100000503 r=38647515 container=/mnt/nvme2n1/erikg/sol8a-gate-100m-final/product.sxi2
+producer_rc=0 finish_rc=0 cmp_rc=0
+```
+
+Final-source 100MB producer 72.396s; completion 82.254s, shared box, no quiet-box
+performance claim. The 3,270-case radix order suite also passes with
+CROSS_NO_POOL=1, exercising the bounded file-window path rather than the RAM
+cache. Both paths match brute suffix/rotation order exactly.
+
+Histogram evidence was extended with logarithmic multiplicity-bin counts:
+entry j counts buckets with multiplicity in [2^j, 2^(j+1)-1]. Bin zero is
+exact singleton count. All original summaries/top-ten counts were reproduced.
+The additional counts-only pile model predicts 45 collecting segments and one
+count sweep (46 scans, 60.26TB, 8.369h at 2GB/s), with a 256GB position window.
+This is an extrapolation of the measured 1GB distribution, not a pile result.
