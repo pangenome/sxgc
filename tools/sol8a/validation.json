@@ -120,5 +120,18 @@
     "output": [
       "{\"P\": [1, 4, 8, 16], \"P8_EOF_permutations\": 40320, \"P8_completion_orders\": 68, \"W\": 1100, \"blocks\": 50062, \"boundary\": \"inclusive\", \"deadlocks\": 0, \"duplicate_rows\": 0, \"exact_rows\": true, \"exact_runs\": true, \"lost_rows\": 0, \"peak_bands\": 1100, \"persistent_recovery\": false, \"prefix_credit_releases\": 35280, \"publication\": \"committed_prefix_only\", \"publisher_stalls\": true, \"repeated_cuts\": true, \"result\": \"PASS\", \"rows\": 66735, \"schedules\": 400, \"singleton_targets\": true, \"spool_budget\": \"global_with_active_batch_reserve\", \"terminal\": \"all_ranges_only\"}"
     ]
+  },
+  {
+    "command": [
+      "cargo",
+      "check",
+      "--manifest-path",
+      "xsa/Cargo.toml"
+    ],
+    "result": "passed",
+    "returncode": 0,
+    "output": [
+      "Finished dev profile in 4m 31s; 13 existing Rust warnings"
+    ]
   }
 ]

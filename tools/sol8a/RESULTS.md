@@ -121,3 +121,9 @@ The native/runtime source hash is
 The Rust front door still selects its inherited chunk/merge route; the radix
 slice is invoked directly with the native/runtime producer CLI. No claim is
 made that cluster scheduling or disk segmentation is already integrated.
+
+Cargo check passes in 4m31s (13 Rust warnings; no Rust source change).
+`measure_oracle.py` adds 20 independent dictionary-prefix histogram checks,
+including all-zero keys colliding with finite-suffix zero padding, N greater
+than corpus length, full-byte input and the production remap. All exact
+multiplicities, singleton/residue counts and logarithmic bins match.
