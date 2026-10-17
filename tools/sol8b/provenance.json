@@ -1,0 +1,19 @@
+{
+  "base": "f74a5e8",
+  "branch": "sol-8b-bucketed-fronts",
+  "sha256": {
+    "bit6/cross_lcp_merge.cpp": "d9ef970619d2e84c90dd0ae939b0ee6f9f7a00a68a2280429ead158e0bcae459",
+    "xsa/runtime/bit6/cross_lcp_merge.cpp": "d9ef970619d2e84c90dd0ae939b0ee6f9f7a00a68a2280429ead158e0bcae459",
+    "/mnt/nvme2n1/erikg/sol8b-pricing/instrumented.cpp": "f2d67693c4b3041d95aab4757a32f55356d5f59f9b1f232fc8f60ff27eb50891",
+    "/mnt/nvme2n1/erikg/sol8b-boundary/instrumented.cpp": "630f3a1e87c736005c4a3200d72501c6539d161013a01027bed8f767c09f3634",
+    "/mnt/nvme2n1/erikg/sol8b-pricing/measure-lce": "b81f143bb17f1e2ea7e8d2ebaf6013b18c02ddc5e5489ea73dd901744ba2cee6",
+    "/mnt/nvme2n1/erikg/sol8b-boundary/measure-lce": "57f6c55874d75ed2fe1c49e397a92a3233a456d53036705171ab9d291a5d61c9",
+    "/mnt/nvme2n1/erikg/sol8b-pricing/measure-final": "7acc11d94a46f17853bdacd52f45532f5b7037791603c108e0cef28f926379c0",
+    "/mnt/nvme2n1/erikg/sol8b-pricing/lce-oracle-final": "8b782de203730664c2be03a02e1629fd2ab7b0c4748d20bc658c3c1af72f542a",
+    "/mnt/nvme2n1/erikg/sol6c-gate100m/remap-256.bin": "b4f387767707f3095a0981148a1753f8da5885c30c19753b3b93887153e611be"
+  },
+  "n": 1000000665,
+  "fixture": "/mnt/nvme2n1/erikg/extcols-scratch/mergperf-1b-snap.txt",
+  "chunks": "/mnt/nvme2n1/erikg/sol7e-input-1b/chunks",
+  "note": "Conditional binary predates the optional boundary-only hook. Native production sources are unchanged. Both generated translation units and tested binaries are separately hashed."
+}

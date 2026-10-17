@@ -1,0 +1,36 @@
+CORPUS_RAM_CACHE bytes=1000000665 budget_bytes=17179869184 immutable=1 remapped=1 doubled=0
+HYBRID_PRICE_LOAD chunk=7 n=124922287
+HYBRID_PRICE_LOAD chunk=3 n=125003137
+HYBRID_PRICE_LOAD chunk=2 n=125001704
+HYBRID_PRICE_LOAD chunk=6 n=125001891
+HYBRID_PRICE_LOAD chunk=1 n=125055474
+HYBRID_PRICE_LOAD chunk=5 n=125003677
+HYBRID_PRICE_LOAD chunk=0 n=125011915
+HYBRID_PRICE_LOAD chunk=4 n=125000580
+CORPUS_RAM_CACHE bytes=1000000665 budget_bytes=17179869184 immutable=1 remapped=1 doubled=0
+CROSS_TEXT_VIEW virtual_bytes=2000001330 corpus_files=1 segments=1 materialized_bytes=0 window_bytes=16384
+CROSS_HASH_SPARSE virtual_bytes=2000001330 k=32 checkpoint_bytes=500000336
+POOL_STATS fd=7 bytes=500000336 slots=33554432 fills=5 hits=1 misses=5 torn=0
+CROSS_PHASE hash-build wall=2.108 cumulative=2331488.005 peak_rss_kib=3620844
+CROSS_PHASE anchor+repair wall=15.424 cumulative=2331503.429 peak_rss_kib=4057360
+CROSS_STAGE_WORK stage=prepare pass=0 comparisons=89749 symbols_compared=209139 probes=144
+CROSS_STAGE_WORK stage=plan pass=0 comparisons=0 symbols_compared=0 probes=0
+CROSS_STAGE_WORK stage=heap pass=0 comparisons=3674539686 symbols_compared=60485387922 probes=1987510308
+CROSS_STAGE_WORK stage=WALK pass=0 comparisons=3674629435 symbols_compared=60485597061 probes=1987510452
+CROSS_STAGE_WORK stage=PLANNING pass=0 comparisons=0 symbols_compared=0 probes=0
+CROSS_STAGE_WORK stage=OVERLAP pass=0 comparisons=0 symbols_compared=0 probes=0
+CROSS_SEAM_TOTAL comparisons=0 symbols_compared=0 probes=0 reference=serial_range signed=1 replay=0
+XMERG_TIMING t_pf=0.000 t_pop=37.742 cell_hits=954277834 cell_miss=533570226 shards=1
+CROSS_PHASE cross-merge wall=678.397 cumulative=2332181.826 peak_rss_kib=6893764
+POOL_STATS fd=6 bytes=500000336 slots=33554432 fills=971975 hits=1032260643 misses=971975 torn=0
+CORPUS_CACHE_STATS bytes=1000000665 hits=12659815567 demand_misses=0 preload_bytes=1000000665
+HYBRID_BASELINE comparisons=3674629435 symbols=60485597061 rows=1000000665
+HYBRID_PRICE_PASS byte=0
+HYBRID_PRICE_PASS byte=1
+HYBRID_PRICE_PASS byte=2
+HYBRID_PRICE_PASS byte=3
+HYBRID_PRICE_PASS byte=4
+HYBRID_PRICE_PASS byte=5
+HYBRID_PRICE_PASS byte=6
+HYBRID_PRICE_PASS byte=7
+CORPUS_CACHE_STATS bytes=1000000665 hits=0 demand_misses=0 preload_bytes=1000000665

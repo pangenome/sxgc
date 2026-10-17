@@ -1,0 +1,23 @@
+{
+  "branch": "sol-8b-bucketed-fronts",
+  "base": "f74a5e8",
+  "scratch": ["/mnt/nvme2n1/erikg/sol8b-pricing", "/mnt/nvme2n1/erikg/sol8b-boundary"],
+  "measurement_cap_bytes": 107374182400,
+  "threads_requested": 96,
+  "pool_slots": 33554432,
+  "pricing_oracle": "HYBRID_PRICING_ORACLE_PASS cases=42 d=4,6,8 NUL=1 byte05=1 wrap_prefix=1 periodic=1 full_alphabet=1 nonidentity_remap=1 finite_suffixes=1 contributor_counts=exact mass=exact log_tax=exact",
+  "conditional_oracle_ram": "HYBRID_CONDITIONAL_LCE_ORACLE_PASS cases=18 d=4,6,8 NUL=1 byte05=1 wrap_prefix=1 periodic=1 finite_ends=1 hash_tail=1 counters=brute_exact",
+  "conditional_oracle_file_windows": "HYBRID_CONDITIONAL_LCE_ORACLE_PASS cases=18 d=4,6,8 NUL=1 byte05=1 wrap_prefix=1 periodic=1 finite_ends=1 hash_tail=1 counters=brute_exact",
+  "full_D5_product_suite": "NOT RUN: pricing-only stop; no bucketed producer implemented",
+  "100m_product_gate": "NOT RUN: pricing-only stop; expected bank chi=29716349",
+  "1b_product_gate": "NOT RUN: pricing-only stop; expected bank chi=283296933",
+  "hybrid_symbols_comparisons_wall": "NOT MEASURED: no hybrid producer",
+  "boundary_sampling": "1024 suffix-weighted full-width keys, deduplicated and sorted; independent lower_bound on every repaired chunk",
+  "quiet_box": false,
+  "limitations": [
+    "Concurrent unrelated host work was active; conditional pricing walk also overlapped boundary measurements.",
+    "Boundary extrapolation is a mechanical model, not a full-directory timing or confidence bound.",
+    "Finger/galloping searches and larger decoded-group caches are not priced.",
+    "Pile occupancy and baseline-conditional LCE transport are modeling assumptions."
+  ]
+}

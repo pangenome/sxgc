@@ -50,3 +50,24 @@ Reproduce:
 
 The requested contact_supervisor capability was searched first and is absent
 from the callable tool catalog. No substitute external messaging is performed.
+
+## Literal boundary-search microbenchmark
+
+`SOL8B_BOUNDARY_ONLY=1` in the generated build returns just after inherited
+anchor repair. For each d it constructs 1024 suffix-weighted prefix keys,
+deduplicates and sorts them, and lower_bounds every key independently in each
+complete repaired chunk list. Searches use PosOverlay::at / the existing
+16-slot compact-group decoder; no position vector or new decoded-group cache
+is added. Finite keys sort before legal NUL extensions. Returned row ranks are
+summed as a non-elidable checksum. Timings exclude load/hash/repair and include
+only the sampled boundary loops. Output records exact probe and prefix-byte
+counts separately from tail comparison counters.
+
+Multiplying seconds/search by observed bucket count and chunk count is a
+mechanical service-work extrapolation, not a measured full-directory run or a
+statistical confidence bound. Dividing by P=8 assumes ideal parallel scaling.
+The keys are sampled by suffix mass, not uniformly by distinct bucket. Cache
+locality, concurrent workloads, changed bucket distribution, a larger decoder
+cache, finger/galloping search or a directory shared across workers can change
+this price. The stop applies to the literal independent whole-list binary
+search method, not to all algorithms harvesting sorted chunk prefixes.
