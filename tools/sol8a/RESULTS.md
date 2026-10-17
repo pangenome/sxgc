@@ -41,3 +41,35 @@ allowed during radix passes; never a full SA or persistent per-suffix position
 column. The design doc includes the balanced-case pile scan arithmetic and
 explicitly distinguishes the 2.18TB core envelope from the >3.85TB inherited
 finish overlap. The 2–3TB all-phase target is not established.
+
+## Slice milestone
+
+`--radix CORPUS --remap MAP --out-prefix PREFIX --position-cap 32000000`
+selects the replacement producer directly; it consumes no chunks or compressed
+position index. A two-symbol histogram plans contiguous key ranges. Every range
+is collected in one sequential text sweep, partitioned by stable radix digits,
+and emitted by numeric-key bucket order. Singleton buckets need no suffix
+comparison. Residues use Keys::cmp with an explicitly certified radix prefix;
+its existing borrowed-window/hash/verified-LCE path is reused. Prefix skipping
+is charged as key bytes rather than re-counting them as comparator symbols.
+Old callers retain certified=0 and their original comparator work.
+
+Two RAM record banks hold at most 2B position slots (32B bytes; each slot has
+an 8-byte key and an 8-byte position). B is clamped below n/2; neither a full
+SA nor a persistent position file is created. Degenerate n<=2 necessarily needs
+one position slot. Both banks die before the next range. An oversized initial
+prefix bucket uses bounded repeated heap selection, consuming and freeing each
+batch before the next scan, so periodic cyclic inputs remain correct at cap=1.
+This is a fallback with poor asymptotic time, not a pile performance claim.
+Emission calls the unchanged SequentialV2 row interface in strict order;
+canonical pieces, flow window, band publication, seam capture and EOF remain
+owned by that sink. One ordered producer is implemented; cluster scheduling
+and disk-backed rolling positions are deferred.
+
+Fresh radix brute-order oracle:
+`RADIX_ORACLE_PASS cases=3270 fixtures=109 N=3,4,5,6,8 modes=cyclic,dollar cap=1,7,32 NUL=1 byte05=1 wrap_prefix_1e_0a_1e=1 periodic_giant_bucket=1 nested_repeats=1 nonidentity_remap=1 exact_brute_SA=1 bounded_selection_passes=59480`
+
+100MB initial byte/chi gate passes (producer 69.894s, consumer complete 78.462s
+on the shared box). Final source additionally fixes N>n tiny cyclic prefix
+certification, and journals prefix-filter operations; the production 100MB
+semantics are identical. A final-source rebuild and tiny/1GB qualification follow.

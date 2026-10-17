@@ -1558,14 +1558,15 @@ struct Keys {
     //         is smaller once the common prefix covers it.
     // cyclic: key(p) = M^infty[p..]; LCE == n proves period |p1-p2|, a tie
     //         broken by ascending position (the chunk front end's rule).
-    int cmp(U p1, U p2) const {
+    int cmp(U p1, U p2, U certified = 0) const {
         require(p1 != p2 && p1 < n && p2 < n, "comparator bounds");
         ++bud->comparisons;
 #ifdef SOL7D_TRACE
         if (trace) trace->emplace_back(p1, p2);
 #endif
         U cap = dollar ? std::min(n - p1, n - p2) : n;
-        U fast = std::min<U>(cap, 16), j = 0;
+        require(certified <= std::min<U>(cap, 8), "certified radix prefix bounds");
+        U fast = std::min<U>(cap, 16), j = certified;
         // Per-comparison phase timers are DIAGNOSTIC (CROSS_KWAY's t_fast/...)
         // and cost 2-4 clock_gettime calls per comparison - unmeasurable
         // against the old pool path, a third of the budget once reads are
@@ -1576,15 +1577,15 @@ struct Keys {
             uint8_t aStorage[16], bStorage[16];
             const uint8_t* ab = m2->span(p1, aStorage, fast);
             const uint8_t* bb = m2->span(p2, bStorage, fast);
-            j = equal_prefix(ab, bb, fast);
+            j += equal_prefix(ab + certified, bb + certified, fast - certified);
             if (j < fast) {
-                bud->symbols += j + 1; ++bud->fast_decided; bud->note_lce(j);
+                bud->symbols += j + 1 - certified; ++bud->fast_decided; bud->note_lce(j);
                 if (tOn) bud->tFast += now_sec() - t0;
                 return ab[j] < bb[j] ? -1 : 1;
             }
         }
         if (tOn) bud->tFast += now_sec() - t0;
-        bud->symbols += j;
+        bud->symbols += j - certified;
         if (fast == cap) {
             ++bud->cap_decided;
             if (dollar) return p1 > p2 ? -1 : 1;   // $ is minimal: shorter first
@@ -5272,6 +5273,136 @@ static void abortHandler(int sig) {
     backtrace_symbols_fd(bt, n, 2);
     _exit(99);
 }
+// Operator-amended D2: bounded transient positions, no full SA/position file.
+// This producer shares the corpus view, exact LCE comparator and downstream
+// SequentialV2 publisher with the older path. Text ranges are never merged.
+struct RadixWork {
+    U sweepBytes=0, sweeps=0, keyOps=0, keyBytes=0, singleton=0, residue=0;
+    U segments=0, peakPositions=0, cap=0, selectionPasses=0;
+};
+struct RadixRecord { U key, position; };
+static unsigned radix_length(const CorpusText& t,U p,unsigned N,bool dollar) {
+    return dollar ? unsigned(std::min<U>(N,t.n-p)) : N;
+}
+static U radix_key(const CorpusText& t,U p,unsigned N,bool dollar,RadixWork& w) {
+    unsigned len=radix_length(t,p,N,dollar);uint8_t storage[8];
+    // For tiny cyclic corpora N may exceed n: never ask span for >2n.
+    U k=0;
+    if(len<=t.n){const uint8_t* bytes=t.span(p,storage,len);
+        for(unsigned j=0;j<len;++j)k=(k<<8)|bytes[j];}
+    else for(unsigned j=0;j<len;++j)k=(k<<8)|t.at((p+j)%t.n);
+    k <<= 8*(N-len);++w.keyOps;w.keyBytes+=len;return k;
+}
+// Prefix symbols use byte+1 and a true end symbol 0, so legal NUL/05 and
+// 0x1e are ordinary remapped bytes. No document-local truncation occurs.
+template<class F> static void radix_scan(const CorpusText& t,bool dollar,RadixWork& w,F f) {
+    constexpr U W=1u<<20;std::vector<uint8_t> storage(std::min(W,t.n));
+    for(U start=0;start<t.n;){U len=std::min(W,t.n-start);
+        const uint8_t* bytes=t.span(start,storage.data(),len);
+        for(U j=0;j<len;++j){U p=start+j;
+            unsigned next=j+1<len?unsigned(bytes[j+1])+1:
+                (p+1<t.n?unsigned(t.at(p+1))+1:(dollar?0:unsigned(t.at(0))+1));
+            f(p,(unsigned(bytes[j])+1)*257+next);
+        }start+=len;
+    }w.sweepBytes+=t.n;++w.sweeps;
+}
+template<class Emit> static void radix_order(const CorpusText& text,Keys& keys,unsigned N,U requested,
+                                             RadixWork& w,Emit emit) {
+    require(N>=2&&N<=8&&requested,"radix width/cap");
+    // Two record banks together cannot cover the complete corpus (except
+    // unavoidable 1/2-byte degenerate texts). Both are freed after emission.
+    w.cap=std::min<U>(requested,std::max<U>(1,(text.n-1)/2));
+    std::vector<U> counts(257*257,0);
+    radix_scan(text,keys.dollar,w,[&](U,unsigned k){++counts[k];});
+    U row=0;
+    auto compare=[&](U a,U b,U certified){return a!=b&&keys.cmp(a,b,certified)<0;};
+    for(U lower=0;lower<counts.size();){
+        while(lower<counts.size()&&!counts[lower])++lower;
+        if(lower==counts.size())break;
+        U upper=lower,total=0;
+        while(upper<counts.size()&&counts[upper]<=w.cap-total){total+=counts[upper++];}
+        if(upper==lower){
+            // A prefix bucket exceeds the rolling bound. Exact bounded
+            // selection survives periodic texts even when every N-key ties.
+            // Each selected batch is emitted before selecting the next.
+            U done=0,previous=0;bool havePrevious=false;
+            while(done<counts[lower]){
+                U take=std::min(w.cap,counts[lower]-done);std::vector<U> heap;heap.reserve(take);
+                U certified=keys.dollar?std::min<U>(2,text.n-1):2;
+                auto less=[&](U a,U b){return compare(a,b,certified);};
+                radix_scan(text,keys.dollar,w,[&](U p,unsigned k){
+                    if(k!=lower||(havePrevious&&!less(previous,p)))return;
+                    if(heap.size()<take){heap.push_back(p);std::push_heap(heap.begin(),heap.end(),less);}
+                    else if(less(p,heap.front())){std::pop_heap(heap.begin(),heap.end(),less);heap.back()=p;std::push_heap(heap.begin(),heap.end(),less);}
+                });
+                require(heap.size()==take,"bounded radix selection coverage");
+                std::sort_heap(heap.begin(),heap.end(),less);
+                for(U p:heap)emit(row++,p);
+                previous=heap.back();havePrevious=true;done+=take;
+                w.peakPositions=std::max<U>(w.peakPositions,heap.capacity());
+                ++w.selectionPasses;++w.segments;
+            }
+            ++lower;continue;
+        }
+        {
+            std::vector<RadixRecord> records;records.reserve(total);
+            radix_scan(text,keys.dollar,w,[&](U p,unsigned k){if(k>=lower&&k<upper)
+                records.push_back({radix_key(text,p,N,keys.dollar,w),p});});
+            require(records.size()==total&&total<=w.cap,"radix rolling segment bound");
+            std::vector<RadixRecord> temp(total);
+            w.peakPositions=std::max<U>(w.peakPositions,records.capacity()+temp.capacity());
+            // Stable finite-length digit first, then big-endian key bytes.
+            // Padding zero alone is insufficient when NUL is legal.
+            for(unsigned pass=0;pass<=N;++pass){
+                std::array<U,256> sizes{},off{};
+                auto digit=[&](const RadixRecord& r){return pass==0?
+                    radix_length(text,r.position,N,keys.dollar):unsigned((r.key>>(8*(pass-1)))&255);};
+                for(const auto& r:records)++sizes[digit(r)];
+                for(unsigned d=1;d<256;++d)off[d]=off[d-1]+sizes[d-1];
+                for(const auto& r:records)temp[off[digit(r)]++]=r;
+                records.swap(temp);
+            }
+            for(U lo=0;lo<total;){U hi=lo+1;
+                while(hi<total&&records[hi].key==records[lo].key&&
+                    radix_length(text,records[hi].position,N,keys.dollar)==radix_length(text,records[lo].position,N,keys.dollar))++hi;
+                if(hi-lo==1)++w.singleton;
+                else{w.residue+=hi-lo;
+                    std::sort(records.begin()+lo,records.begin()+hi,[&](const RadixRecord& a,const RadixRecord& b){
+                        return compare(a.position,b.position,std::min<U>(N,keys.dollar?text.n-std::max(a.position,b.position):text.n));});}
+                for(U i=lo;i<hi;++i)emit(row++,records[i].position);
+                lo=hi;
+            }
+            ++w.segments;
+        } // Both position banks are destroyed before the next sweep.
+        lower=upper;
+    }
+    require(row==text.n&&w.peakPositions<=2*w.cap,"radix full coverage/position bound");
+}
+static int radix_main(const std::string& path,const std::string& mapPath,const std::string& prefix,
+                      unsigned N,U cap,U threads) {
+    require(!prefix.empty()&&!fs::exists(prefix+".rlebwt")&&!fs::exists(prefix+".pieces"),"fresh radix output required");
+    TextSeg segment;segment.path=path;segment.len=fs::file_size(path);
+    std::ifstream map(mapPath,std::ios::binary);map.read((char*)segment.remap.data(),256);
+    require(bool(map),"radix remap read");auto permutation=segment.remap;std::sort(permutation.begin(),permutation.end());
+    for(unsigned c=0;c<256;++c)require(permutation[c]==c,"radix remap bijection");
+    require(segment.remap[0x1e]==0x1e,"radix separator remap");
+    CorpusText text;text.open({segment},true);
+    const std::string hash=prefix+".radix-hs";require(!fs::exists(hash),"fresh radix hash scratch");
+    build_hash_sparse(text,2*text.n,32,hash,threads);
+    HashSparse hp;hp.open_ro(hash,32,2*text.n/32+1);
+    require(::unlink(hash.c_str())==0,"unlink open radix hash scratch");
+    Budget budget;Keys keys;keys.init(&text,&hp,text.n,true,&budget);
+    SequentialV2 output(prefix,text,text.n,text.n);
+    output.beginShard(0,0,text.n);RadixWork work;
+    radix_order(text,keys,N,cap,work,[&](U row,U p){output.row(row,p);});
+    output.endShard();std::error_code ec;fs::remove(output.dir,ec);
+    std::fprintf(stderr,"RADIX_WORK N=%u sweep_bytes=%llu sweeps=%llu prefix_ops=%llu key_ops=%llu key_bytes=%llu singleton=%llu residue=%llu comparisons=%llu symbols=%llu probes=%llu segments=%llu selection_passes=%llu position_cap=%llu peak_position_slots=%llu peak_position_record_bytes=%llu full_SA=0 persistent_positions=0\n",
+        N,(unsigned long long)work.sweepBytes,(unsigned long long)work.sweeps,(unsigned long long)(work.sweeps*text.n),(unsigned long long)work.keyOps,(unsigned long long)work.keyBytes,
+        (unsigned long long)work.singleton,(unsigned long long)work.residue,(unsigned long long)budget.comparisons,(unsigned long long)budget.symbols,(unsigned long long)budget.probes,
+        (unsigned long long)work.segments,(unsigned long long)work.selectionPasses,(unsigned long long)work.cap,(unsigned long long)work.peakPositions,(unsigned long long)(work.peakPositions*sizeof(RadixRecord)));
+    return 0;
+}
+
 int main_impl(int argc, char** argv) {
     std::signal(SIGABRT, abortHandler);
     G_T0 = now_sec();
@@ -5293,6 +5424,9 @@ int main_impl(int argc, char** argv) {
         return false;
     };
     if (!flag("--threads").empty()) threads = std::stoull(flag("--threads"));
+    if (has("--radix")) return radix_main(flag("--radix"),flag("--remap"),flag("--out-prefix"),
+        flag("--radix-bytes").empty()?8:std::stoul(flag("--radix-bytes")),
+        flag("--position-cap").empty()?32000000:std::stoull(flag("--position-cap")),threads);
     U kway = 2;
     if (!flag("--kway").empty()) {
         kway = std::stoull(flag("--kway"));
