@@ -19,7 +19,14 @@ static int hybrid_price(int argc, char** argv) {
     require(!fs::exists(std::string(argv[5])+".xsc-0"),"fresh pricing scratch");
     PairScratch sc;sc.init(argv[5],0,ends.size());
     std::vector<SideExt> sides(ends.size());
-    for(size_t j=0;j<sides.size();++j)load_side_ext(std::string(argv[4])+"/chunk-"+std::to_string(j)+".crle",96,sc.dir,sides[j]);
+    std::atomic<size_t> nextSide{0};std::vector<std::thread> loaders;
+    for(size_t worker=0;worker<std::min<size_t>(96,sides.size());++worker)loaders.emplace_back([&]{
+        for(;;){size_t j=nextSide.fetch_add(1);if(j>=sides.size())break;
+            load_side_ext(std::string(argv[4])+"/chunk-"+std::to_string(j)+".crle",std::max<U>(1,96/sides.size()),sc.dir,sides[j]);
+            std::fprintf(stderr,"HYBRID_PRICE_LOAD chunk=%zu n=%lu\n",j,sides[j].n);
+        }
+    });
+    for(auto& loader:loaders)loader.join();
     struct Discard : SparseWalkSink {
         U rows=0; U shardCount(U) const override{return 1;}
         void beginShard(U,U,U)override{} void row(U,U)override{++rows;} void endShard()override{}
@@ -107,7 +114,7 @@ static int hybrid_price(int argc, char** argv) {
         std::printf("],\"contributor_mass\":[");for(U i=0;i<=ends.size();++i)std::printf("%s%lu",i?",":"",contributorMass[i]);
         std::printf("]");
 #ifdef SOL8B_LCE
-        std::printf(",\"baseline_conditional_model_symbols\":%.0Lf,\"baseline_conditional_model_pile_per_1gb\":%.0Lf,\"observed_merge_mass\":%lu,\"unobserved_merge_mass\":%lu",model,pileModel,observedMass,missingMass);
+        std::printf(",\"baseline_conditional_model_symbols\":%.0Lf,\"baseline_conditional_model_pile_per_1gb\":%.0Lf,\"observed_merge_mass\":%lu,\"unobserved_merge_mass\":%lu,\"pile_unobserved_tail_mass\":%lu",model,pileModel,observedMass,missingMass,n-observedMass);
 #endif
         std::printf("}\n");std::fflush(stdout);
     }
