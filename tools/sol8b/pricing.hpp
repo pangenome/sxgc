@@ -33,6 +33,7 @@ static int hybrid_price(int argc, char** argv) {
     } sink;
     Budget measured;CoreStats stats;
     core_merge_kway(sides,true,96,measured,stats,sc,32,false,&sink);
+    if(std::getenv("SOL8B_BOUNDARY_ONLY")){sc.cleanup();return 0;}
     require(sink.rows==n,"complete pricing walk");
     std::fprintf(stderr,"HYBRID_BASELINE comparisons=%lu symbols=%lu rows=%lu\n",measured.comparisons,measured.symbols,sink.rows);
     sc.cleanup();

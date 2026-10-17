@@ -6,6 +6,7 @@ root=Path(__file__).resolve().parents[2]
 scratch=Path(sys.argv[1]);scratch.mkdir(parents=True,exist_ok=True)
 source=(root/'bit6/cross_lcp_merge.cpp').read_text()
 replacements={
+    '    const Budget preparedWork = bud;': '    if (std::getenv("SOL8B_BOUNDARY_ONLY")) { sol8b_boundary_price(pos,keys,sides); return; }\n    const Budget preparedWork = bud;',
     '        ++bud->comparisons;\n#ifdef SOL7D_TRACE': '        Sol8bGuard<Keys> sol8bGuard(this,p1,p2);\n        ++bud->comparisons;\n#ifdef SOL7D_TRACE',
     '    workLine("plan", 0, difference(bud, preparedWork));':'    workLine("plan", 0, difference(bud, preparedWork));\n    sol8bEnabled.store(true);',
     '        if (sparse) sparse->finishWalk();':'        sol8bEnabled.store(false);\n        if (sparse) sparse->finishWalk();',

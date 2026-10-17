@@ -5,12 +5,14 @@ int main(int argc,char**argv) {
     require(argc==2,"lce_oracle FRESH_SCRATCH");
     require(!fs::exists(argv[1]),"fresh scratch");fs::create_directories(argv[1]);
     U cases=0;
-    for(std::string data:{std::string(15,' '),std::string("abcabcabcabcabc"),std::string("\0\5\0\5\0\5\0\5\0\5\0\5\0\5\0",15),std::string("\x1e\x0a\x1e\x1e\x0a\x1e\x1e\x0a\x1e\x1e\x0a\x1e",12)}) {
+    for(std::string data:{std::string(15,' '),std::string(95,' '),std::string("abababababababababababababababababababababababababababababababababababababababab"),std::string("abcabcabcabcabc"),std::string("\0\5\0\5\0\5\0\5\0\5\0\5\0\5\0",15),std::string("\x1e\x0a\x1e\x1e\x0a\x1e\x1e\x0a\x1e\x1e\x0a\x1e",12)}) {
         auto path=std::string(argv[1])+"/text";
         {std::ofstream out(path,std::ios::binary);out.write(data.data(),data.size());}
         TextSeg seg;seg.path=path;seg.len=data.size();for(U c=0;c<256;++c)seg.remap[c]=c;
         CorpusText text;text.open({seg},true);
-        Budget budget;Keys keys;keys.init(&text,nullptr,data.size(),true,&budget);
+        auto hs=path+".hs";build_hash_sparse(text,2*text.n,1,hs,1);
+        HashSparse hp;hp.open_ro(hs,1,2*text.n+1);::unlink(hs.c_str());
+        Budget budget;Keys keys;keys.init(&text,&hp,data.size(),true,&budget);
         for(auto& m:sol8bTails)m.clear();
         std::unordered_map<U,Sol8bTail> expected[3];
         sol8bEnabled.store(true);
@@ -37,5 +39,5 @@ int main(int argc,char**argv) {
         ::unlink(path.c_str());
     }
     fs::remove(argv[1]);
-    std::printf("HYBRID_CONDITIONAL_LCE_ORACLE_PASS cases=%lu d=4,6,8 NUL=1 byte05=1 wrap_prefix=1 periodic=1 finite_ends=1 counters=brute_exact\n",cases);
+    std::printf("HYBRID_CONDITIONAL_LCE_ORACLE_PASS cases=%lu d=4,6,8 NUL=1 byte05=1 wrap_prefix=1 periodic=1 finite_ends=1 hash_tail=1 counters=brute_exact\n",cases);
 }
