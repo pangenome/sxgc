@@ -22,6 +22,7 @@ for size,suffix,chi in [('100m','-final',29716349),('1b','',283296933)]:
     assert work['peak_position_slots']<=2*work['position_cap']
     assert work['peak_position_record_bytes']==16*work['peak_position_slots']
     work['derived_radix_digit_ops']=2*9*work['key_ops']
+    work['derived_bucket_key_checks']=work['key_ops']-work['segments']
     work['derived_radix_offset_ops']=255*9*work['segments']
     work['certified_prefix_symbols_elided']=8*work['comparisons']
     if size=='1b':

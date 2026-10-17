@@ -104,3 +104,15 @@ are not determined by these sequential rates. They must be added rather than
 silently assumed free. Producer and finish can overlap; this table is service
 work, not a predicted end-to-end elapsed time. The slice has no position writes
 or readbacks: those rows price the proposed future disk segmentation only.
+
+For a conservative ledger carrying all known categories simultaneously, one
+position bank + source + k32 hash + pfck + retained rlebwt + container is
+5.239188TB. The inherited W=1100 piece allowance (32 bytes/run * 65,536 * 1100)
+is another 2,306,867,200 bytes. Carrying the inherited .3n witness-spill
+compression allowance adds 393GB, yielding **5.634494TB** plus metadata and
+unmodeled temporary overlap (two position banks: **5.890494TB**). This sum is
+conservative about phase overlap but is not a proven worst-case upper bound:
+product/run ratios and witness compression are extrapolations. It states an
+honest planning reserve for the unchanged finish rather than advertising the
+2.179TB core subtotal as the complete disk requirement. The current Rust
+front-door planner is unchanged and does not represent this experimental path.
