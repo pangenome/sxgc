@@ -343,45 +343,37 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize
             require(sum == live, "bin window arena sizing");
         }
         // Fill pass: place every position of this window into its bin slice.
+        // Single-threaded on purpose: many threads writing into 256 stream heads
+        // measured 2-5x SLOWER than one (per-thread per-bin write streams destroy
+        // write combining), and it keeps the arena order canonical - ascending
+        // position inside every bin - so the work counters are identical for
+        // every thread count.
         {
             const double t0 = now_sec();
-            std::vector<std::array<U, 256>> base(NT);
-            {
-                std::array<U, 256> seen{};
-                for (unsigned c = 0; c < 256; ++c) seen[c] = off[c];
-                for (U t = 0; t < NT; ++t)
-                    for (unsigned c = 0; c < 256; ++c) {
-                        base[t][c] = seen[c];
-                        seen[c] += hists[t][c];
+            std::vector<uint8_t> buf(std::min<U>(1u << 20, n));
+            std::array<U, 256> cur{};
+            for (unsigned c = b0; c < b1; ++c) cur[c] = off[c];
+            for (U at = 0; at < n;) {
+                U len = std::min<U>(1u << 20, n - at);
+                const uint8_t* b = text.span(at, buf.data(), len);
+                if (b1 - b0 == 256) {
+                    // Whole corpus in this window: no per-byte range test.
+                    for (U j = 0; j < len; ++j) {
+                        U p = at + j;
+                        arena.data()[cur[b[j]]++] = bin_tail_of(p, n, dollar);
                     }
-                for (unsigned c = b0; c < b1; ++c)
-                    require(seen[c] == off[c] + bins[c], "bin window offset coverage");
-            }
-            auto fillChunk = [&](U t) {
-                auto cur = base[t];
-                constexpr U W = 1u << 20;
-                std::vector<uint8_t> buf(std::min(W, std::max<U>(1, chunk[t + 1] - chunk[t])));
-                for (U at = chunk[t]; at < chunk[t + 1];) {
-                    U len = std::min(W, chunk[t + 1] - at);
-                    const uint8_t* b = text.span(at, buf.data(), len);
+                } else {
                     for (U j = 0; j < len; ++j) {
                         unsigned c = b[j];
-                        if (c >= b0 && c < b1) {
-                            U p = at + j;
-                            arena.data()[cur[c]++] = bin_tail_of(p, n, dollar);
-                        }
+                        if (c < b0 || c >= b1) continue;
+                        U p = at + j;
+                        arena.data()[cur[c]++] = bin_tail_of(p, n, dollar);
                     }
-                    at += len;
                 }
-                for (unsigned c = b0; c < b1; ++c)
-                    require(cur[c] == base[t][c] + hists[t][c], "bin fill coverage");
-            };
-            if (NT == 1) fillChunk(0);
-            else {
-                std::vector<std::thread> pool;
-                for (U t = 0; t < NT; ++t) pool.emplace_back(fillChunk, t);
-                for (auto& th : pool) th.join();
+                at += len;
             }
+            for (unsigned c = b0; c < b1; ++c)
+                require(cur[c] == off[c] + bins[c], "bin fill coverage");
             total.tSweep += now_sec() - t0;
             total.sweepBytes += n; ++total.sweepPasses;
         }
