@@ -72,7 +72,18 @@ static double G_T0 = tnow();
 #include <sys/wait.h>
 using namespace sxi;
 
-static void pf_fail(const std::string& msg) {
+// PER-UNIT (v3, finish-decomposed): every failure path in the fold and in the
+// verification loop is `[[cold]] [[noreturn]]` and OUT OF LINE. The fold's hot
+// functions (RepairStream::feed_raw, CorpusText::operator[], the fingerprint
+// ladder, Sweep::advance) otherwise each carry a few hundred bytes of
+// fprintf/printf-argument setup and a std::string construction in their own
+// body, which is instruction-cache and branch-density cost paid on EVERY row.
+// Literals take the const char* overload, so a passing check builds nothing.
+[[noreturn]] __attribute__((noinline, cold)) static void pf_fail(const char* msg) {
+    fprintf(stderr, "FATAL pile_finish: %s\n", msg);
+    exit(2);
+}
+[[noreturn]] __attribute__((noinline, cold)) static void pf_fail(const std::string& msg) {
     fprintf(stderr, "FATAL pile_finish: %s\n", msg.c_str());
     exit(2);
 }
@@ -3020,27 +3031,57 @@ int main(int argc, char** argv) {
             BitsOut low(prefix + ".bits-low"), high(prefix + ".bits-high");
             uint64_t i = 0, hpos = 0, prev = ~0ull;
             size_t sidx = 0;
+            auto emitWitness = [&](uint64_t v) {
+                pf_check(prev == ~0ull || v > prev, "witnesses not strictly increasing");
+                prev = v;
+                low.lsb(v, l);
+                uint64_t mark = (v >> l) + i;
+                if (mark > hpos) { high.putzeros(mark - hpos); hpos = mark; }
+                high.bit(1); ++hpos;
+                ++i;
+                while (sidx < wantSamples.size() && wantSamples[sidx] < v)
+                    pf_fail("sampled banked witness missing from the v2 stream: " + std::to_string(wantSamples[sidx]));
+                if (sidx < wantSamples.size() && wantSamples[sidx] == v) ++sidx;
+            };
+            // finish-decomposed (m5): the witness set is already VALUE-RANGE
+            // bucketed in RAM under the budget. When nothing spilled, sorting
+            // each bucket in parallel and walking the buckets in range order is
+            // the IDENTICAL sorted stream, and the old path's spill-all +
+            // pread/varint merge (1.4 GB written and re-read at 1 GB, ~17 s)
+            // buys nothing. Strictly-increasing is asserted row by row either
+            // way, so a bucketing or order mistake is refused, not written.
+            const bool resident = buckets.spilled == 0;
             {
-                PfRegion rp("m5-presort", PF_M5);
-                buckets.presort_parallel(threads);
+                PfRegion rp(resident ? "m5-sort" : "m5-presort", PF_M5);
+                if (resident) {
+                    std::atomic<uint64_t> nextBucket{0};
+                    pool.run([&](int) {
+                        for (;;) {
+                            uint64_t b = nextBucket.fetch_add(1);
+                            if (b >= buckets.P) break;
+                            std::sort(buckets.buf[b].begin(), buckets.buf[b].end());
+                        }
+                    });
+                } else {
+                    buckets.presort_parallel(threads);
+                }
                 rp.close(); rp.report(buckets.totalValues, "witnesses");
             }
             {
                 PfRegion re("m5-encode", PF_M5);
-                buckets.for_each_sorted([&](uint64_t v) {
-                    pf_check(prev == ~0ull || v > prev, "witnesses not strictly increasing");
-                    prev = v;
-                    low.lsb(v, l);
-                    uint64_t mark = (v >> l) + i;
-                    if (mark > hpos) { high.putzeros(mark - hpos); hpos = mark; }
-                    high.bit(1); ++hpos;
-                    ++i;
-                    while (sidx < wantSamples.size() && wantSamples[sidx] < v)
-                        pf_fail("sampled banked witness missing from the v2 stream: " + std::to_string(wantSamples[sidx]));
-                    if (sidx < wantSamples.size() && wantSamples[sidx] == v) ++sidx;
-                });
+                if (resident) {
+                    for (uint64_t b = 0; b < buckets.P; ++b) {
+                        for (uint64_t v : buckets.buf[b]) emitWitness(v);
+                        std::vector<uint64_t>().swap(buckets.buf[b]);   // release as we go
+                    }
+                } else {
+                    buckets.for_each_sorted(emitWitness);
+                }
                 re.close(); re.report(i, "witnesses");
             }
+            fprintf(stderr, "PILE_FINISH_WITNESS_PATH resident=%d buckets=%llu spilled=%llu values=%llu\n",
+                    int(resident), (unsigned long long)buckets.P,
+                    (unsigned long long)buckets.spilled, (unsigned long long)buckets.totalValues);
             if (highbits > hpos) { high.putzeros(highbits - hpos); hpos = highbits; }
             pf_check(i == chi, "EF count");
             pf_check(low.bitPos == lowbits && high.bitPos == highbits, "EF dimensions");
