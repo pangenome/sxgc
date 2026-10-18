@@ -337,7 +337,6 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize
                       U depthCap, U liveCap, U levelBytes, bool freqSched,
                       U splitSize, BinWork& total, Emit&& emit) {
     const U n = text.n;
-    const bool publishSink = bin_publish_sink<Emit>::value;
     // The sink's ascending capture-target list, joined against the corpus in the
     // fill pass. Empty for the per-row oracle path.
     const std::vector<U>* joinTargets = nullptr;
@@ -936,8 +935,12 @@ struct BinBandSink {
         rleFd = -1;
         own.tBandWrite = tWrite;
         own.tFlowWait = tFlow;
-        { OutFile f(prefix + ".rlebwt.meta"); f.w64(n + 10); f.w64(index);
-          for (U value : counts) f.w64(value); for (U value : frequencies) f.w64(value); }
+        {
+            OutFile f(prefix + ".rlebwt.meta");
+            f.w64(n + 10); f.w64(index);
+            for (U value : counts) f.w64(value);
+            for (U value : frequencies) f.w64(value);
+        }
         {
             OutFile f(dir + "/terminal.tmp"); f.raw("BPT1", 4);
             f.w64((index - 1) / 65536); f.w64(index); f.w64(targetRows);
