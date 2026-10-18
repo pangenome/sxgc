@@ -1026,6 +1026,12 @@ struct CorpusText {
     // The data are immutable after open(), so a span can be borrowed without
     // pool probes, seqlocks, copies, or per-symbol remapping. Wraps retain the
     // general reader. Each charging thread owns its telemetry entry.
+    // Is the whole (remapped) corpus resident in this view's own RAM buffer? A
+    // sequential reader should then borrow the pointer (span) instead of paying
+    // a copy; when it is NOT resident, span() goes through the shared page pool
+    // (256-byte pages) and a large span degrades to one pool fill per 256 bytes,
+    // so the same reader must use read() (one pread per span) instead.
+    inline bool ramCached() const { return bool(cached); }
     inline const uint8_t* span(U i, uint8_t* fallback, U len) const {
         if (cached && i < 2 * n) {
             U p = i >= n ? i - n : i;
@@ -5459,7 +5465,7 @@ int main_impl(int argc, char** argv) {
         flag("--bin-level-bytes").empty()?1:std::stoull(flag("--bin-level-bytes")),
         flag("--bin-mode")!="cyclic", has("--bin-freq-sched"),
         flag("--bin-split").empty()?0:std::stoull(flag("--bin-split")),
-        flag("--bin-sink")=="serial", has("--bin-probe"));
+        flag("--bin-sink")=="serial", has("--bin-probe"), has("--bin-fill-only"));
     U kway = 2;
     if (!flag("--kway").empty()) {
         kway = std::stoull(flag("--kway"));

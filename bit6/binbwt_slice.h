@@ -401,10 +401,16 @@ static void bin_build_serial(const CorpusText& t, bool dollar, U* slice, U* scra
     w.peakLiveBytes = std::max<U>(w.peakLiveBytes, 2 * m * sizeof(U));
 }
 
+// `fillOnly` is a MEASUREMENT INSTRUMENT, not a product path: the windows are
+// counted and filled exactly as the product does, and then the refinement and
+// the emission are skipped (rows are accounted, nothing is produced). It exists
+// so the fill term can be timed ALONE on a corpus bigger than the RAM budget,
+// which is the pile's regime; every other gate drives fillOnly=false.
 template <class Emit>
 static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize,
                       U depthCap, U liveCap, U levelBytes, bool freqSched,
-                      U splitSize, BinWork& total, Emit&& emit) {
+                      U splitSize, BinWork& total, Emit&& emit,
+                      bool fillOnly = false) {
     const U n = text.n;
     // The sink's ascending capture-target list, joined against the corpus in the
     // fill pass. Empty for the per-row oracle path.
@@ -441,6 +447,18 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize
     chunk[NT] = n;
     std::vector<std::array<U, 256>> hists(NT);
     for (auto& h : hists) h.fill(0);
+    // ONE decision for every sequential corpus reader in this function: a
+    // RAM-cached view hands out a pointer (zero copy), a pooled view must be
+    // read in bulk (one pread per span) - span() on a pooled view is the
+    // comparator's 256-byte page path and would degrade a megabyte span into
+    // one page fill per 256 bytes, which is what the pile's 1.31 TB corpus sees
+    // (it can never be RAM cached).
+    const bool ramCached = text.ramCached();
+    auto seqSpan = [&](U at, uint8_t* buf, U len) {
+        if (ramCached) return text.span(at, buf, len);
+        text.read(at, buf, len);
+        return const_cast<const uint8_t*>(buf);
+    };
     {
         const double t0 = now_sec();
         auto countChunk = [&](U t) {
@@ -449,7 +467,7 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize
             std::vector<uint8_t> buf(std::min(W, std::max<U>(1, chunk[t + 1] - chunk[t])));
             for (U at = chunk[t]; at < chunk[t + 1];) {
                 U len = std::min(W, chunk[t + 1] - at);
-                const uint8_t* b = text.span(at, buf.data(), len);
+                const uint8_t* b = seqSpan(at, buf.data(), len);
                 for (U j = 0; j < len; ++j) ++h[b[j]];
                 at += len;
             }
@@ -568,7 +586,7 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize
                 U hits = 0;
                 for (U at = lo; at < hi;) {
                     U len = std::min<U>(1u << 20, hi - at);
-                    const uint8_t* b = text.span(at, buf.data(), len);
+                    const uint8_t* b = seqSpan(at, buf.data(), len);
                     for (U j = 0; j < len; ++j) {
                         U p = at + j;
                         unsigned c = b[j];
@@ -622,6 +640,20 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize
             total.tFill += now_sec() - t0;
             total.tSweep += now_sec() - t0;
             total.sweepBytes += n; ++total.sweepPasses;
+        }
+        if (fillOnly) {
+            // Fill-only probe: no refinement, no emission, nothing written. The
+            // rows are accounted so the row coverage check still means something,
+            // and the live-slot bound is still journaled.
+            row += live;
+            total.emittedRows += live;
+            const U liveSlots = 2 * live;
+            total.peakLiveSlots = std::max<U>(total.peakLiveSlots, liveSlots);
+            total.peakLiveBytes = std::max<U>(total.peakLiveBytes,
+                                              liveSlots * sizeof(U));
+            if constexpr (bin_publish_sink<Emit>::value) emit.windowDone();
+            b0 = b1;
+            continue;
         }
         // Bin claim order. EDF (ascending byte = emission order) keeps the
         // emitter fed; `freq` claims the largest bins first instead.
@@ -1357,7 +1389,10 @@ static void bin_journal(const BinWork& total, bool dollar, U threads,
 static int binbwt_main(const std::string& path, const std::string& mapPath,
                        const std::string& prefix, U threads, U leafSize,
                        U depthCap, U liveCap, U levelBytes, bool dollar,
-                       bool freqSched, U splitSize, bool serialSink, bool probe) {
+                       bool freqSched, U splitSize, bool serialSink, bool probe,
+                       bool fillOnly = false) {
+    // `--bin-fill-only` implies the probe's "write nothing at all" contract.
+    if (fillOnly) probe = true;
     if (!probe)
         require(!prefix.empty() && !fs::exists(prefix + ".rlebwt") &&
                 !fs::exists(prefix + ".pieces"), "fresh bin-bwt output required");
@@ -1387,9 +1422,9 @@ static int binbwt_main(const std::string& path, const std::string& mapPath,
         // same ones the producer reports and a 10 GB build term can be measured
         // in minutes instead of after the finish. Nothing else is written.
         bin_order(text, dollar, threads, leafSize, depthCap, liveCap, levelBytes,
-                  freqSched, splitSize, total, [](U, U) {});
+                  freqSched, splitSize, total, [](U, U) {}, fillOnly);
         BinJournal j;
-        j.sink = "probe-none";
+        j.sink = fillOnly ? "probe-fill-only" : "probe-none";
         bin_journal(total, dollar, threads, levelBytes, leafSize, depthCap,
                     freqSched, splitSize, now_sec() - tStart, j);
         return 0;
