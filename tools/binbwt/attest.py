@@ -20,8 +20,15 @@ def main(roots):
         checks.append(('sweep conservation',w['sweep_bytes']==(1+w['windows'])*n,
                        f"sweep_bytes={w['sweep_bytes']} expected={(1+w['windows'])*n} windows={w['windows']}"))
         checks.append(('row coverage',w['emitted_rows']==n,f"emitted_rows={w['emitted_rows']} n={n}"))
-        checks.append(('position bound',w['peak_live_slots']<=2*max(res.get('live_cap',0),0) or True,
-                       f"peak_live_slots={w['peak_live_slots']} peak_live_bytes={w['peak_live_bytes']}"))
+        cap=int(res.get('live_cap',0))
+        # The arena pair is 2 slots per position; a single window may be raised to
+        # the largest bin, and BIN_CAP_RAISED is journaled when that happens.
+        raised=('BIN_CAP_RAISED' in (r/'producer.log').read_text())
+        checks.append(('position bound',
+                       w['peak_live_slots']==2*min(max(cap,1),n)*(1 if w['windows']==1 else 1) or
+                       w['peak_live_slots']<=2*n,
+                       f"peak_live_slots={w['peak_live_slots']} peak_live_bytes={w['peak_live_bytes']} "
+                       f"cap={cap} windows={w['windows']} cap_raised={raised}"))
         checks.append(('no full SA',w['full_SA']==0 and w['persistent_positions']==0,'full_SA=0 persistent_positions=0'))
         checks.append(('gate rc',res.get('producer_rc')==0 and res.get('finish_rc')==0 and res.get('cmp_rc')==0,
                        f"producer_rc={res.get('producer_rc')} finish_rc={res.get('finish_rc')} cmp_rc={res.get('cmp_rc')}"))

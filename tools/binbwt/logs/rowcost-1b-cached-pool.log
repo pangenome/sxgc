@@ -1,0 +1,3 @@
+CORPUS_RAM_CACHE bytes=1000000665 budget_bytes=17179869184 immutable=1 remapped=1 doubled=0
+CORPUS_CACHE_STATS bytes=1000000665 hits=9966014454 demand_misses=0 preload_bytes=1000000665
+ROWCOST mode=noop n=1000000665 wall_s=32.106 emit_s=0.622 build_s=27.581 sweep_s=3.955 ns_per_row_emit=32.106
