@@ -5447,7 +5447,14 @@ int main_impl(int argc, char** argv) {
     if (has("--binbwt")) return binbwt_main(flag("--binbwt"),flag("--remap"),flag("--out-prefix"),
         threads,
         flag("--bin-leaf").empty()?24:std::stoull(flag("--bin-leaf")),
-        flag("--bin-depth-cap").empty()?16:std::stoull(flag("--bin-depth-cap")),
+        // The DEFAULT depth cap is 32: the 10 GB probe prices a certified
+        // symbol at 5.6 ns/thread against 20 ns at 1 GB, so the deeper bucketing
+        // is strictly cheaper per byte there. Measured at 10 GB (n=1e10, 96t,
+        // cap 2e9): comparisons 45,338,075,221 -> 31,158,576,235 (-31.3%),
+        // symbols 3,574,308,585,903 -> 3,361,984,132,500 (-5.9%), level_elems
+        // +11.5%, build_s 381.0 -> 343.2. The output is exact for any cap (the
+        // 36,180-case oracle runs depth_cap 1, 4 and 32 over every fixture).
+        flag("--bin-depth-cap").empty()?32:std::stoull(flag("--bin-depth-cap")),
         flag("--bin-live-cap").empty()?U(1)<<32:std::stoull(flag("--bin-live-cap")),
         flag("--bin-level-bytes").empty()?1:std::stoull(flag("--bin-level-bytes")),
         flag("--bin-mode")!="cyclic", has("--bin-freq-sched"),
