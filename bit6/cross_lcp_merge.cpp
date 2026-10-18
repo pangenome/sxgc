@@ -5452,7 +5452,7 @@ int main_impl(int argc, char** argv) {
         flag("--bin-level-bytes").empty()?1:std::stoull(flag("--bin-level-bytes")),
         flag("--bin-mode")!="cyclic", has("--bin-freq-sched"),
         flag("--bin-split").empty()?0:std::stoull(flag("--bin-split")),
-        flag("--bin-sink")=="serial");
+        flag("--bin-sink")=="serial", has("--bin-probe"));
     U kway = 2;
     if (!flag("--kway").empty()) {
         kway = std::stoull(flag("--kway"));
