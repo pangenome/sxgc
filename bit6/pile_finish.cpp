@@ -38,6 +38,11 @@
 #include <condition_variable>
 #include <shared_mutex>
 #include <sys/resource.h>
+#include <signal.h>
+#include <ucontext.h>
+#include <sys/time.h>
+#include <dlfcn.h>
+#include <elf.h>
 #include <map>
 #include <memory>
 #include <sys/stat.h>
@@ -71,9 +76,248 @@ static void pf_fail(const std::string& msg) {
     fprintf(stderr, "FATAL pile_finish: %s\n", msg.c_str());
     exit(2);
 }
+// MEASURE-FIRST (v3): the per-run/per-symbol checks below are the fold's hot
+// path, so the two-argument form MUST NOT build a std::string when it passes.
+// The old signature took `const std::string&`, i.e. every call site with a
+// literal constructed (and, past 15 chars, malloc'd + freed) a temporary on
+// every row - measured as the single largest per-unit cost of the serial
+// fold. The const char* overload is now the literal path; the std::string
+// overload survives for genuinely dynamic messages only.
+static void pf_check(bool ok, const char* msg) {
+    if (!ok) pf_fail(msg);
+}
 static void pf_check(bool ok, const std::string& msg) {
     if (!ok) pf_fail(msg);
 }
+
+// ------------------------------------------------ phase attribution + sampler
+// The finish is one serial thread plus one LCE pool; the question this run
+// exists to answer is WHERE that serial thread's nanoseconds go. Two
+// independent instruments, both self-hosted (perf_event_paranoid=4 forbids
+// perf(1) counters on this box):
+//   (a) a phase tag every instrumented region sets, plus per-phase
+//       getrusage//proc deltas (minflt/majflt = the page-cache miss proxy,
+//       /proc/self/io read_bytes = the device-read proxy);
+//   (b) an ITIMER_PROF sampler: SIGPROF is delivered to a running thread, the
+//       handler records the instruction pointer + the phase tag, and the dump
+//       resolves PCs to symbols with dladdr (build with -rdynamic). One sample
+//       = 1 ms of CPU anywhere in the process, so the histogram is a CPU-time
+//       profile of the whole pipeline, per phase.
+enum PfPhase { PF_IDLE = 0, PF_REPAIR, PF_READBAND, PF_PIECEWAIT, PF_LCE, PF_ADVANCE,
+              PF_M5, PF_M1, PF_SEAM, PF_PFCK, PF_EMIT, PF_NPHASE };
+static const char* const pf_phase_name[PF_NPHASE] = {
+    "idle", "repair", "readband", "piecewait", "lce", "advance", "m5", "m1", "seam", "pfck", "emit" };
+static std::atomic<int> g_pfPhase{PF_IDLE};
+struct PfPhaseScope {
+    int prev;
+    explicit PfPhaseScope(int p) : prev(g_pfPhase.load(std::memory_order_relaxed)) {
+        g_pfPhase.store(p, std::memory_order_relaxed);
+    }
+    ~PfPhaseScope() { g_pfPhase.store(prev, std::memory_order_relaxed); }
+};
+static bool pf_prof_on = false;
+static constexpr unsigned PF_PROF_SLOTS = 1u << 16;
+struct PfSample { std::atomic<uint64_t> pc{(uint64_t)-1}; std::atomic<uint64_t> count{0}; };
+static PfSample g_pfProf[PF_NPHASE][PF_PROF_SLOTS];
+static std::atomic<uint64_t> g_pfProfDrop{0};
+static void pf_prof_handler(int, siginfo_t*, void* ctx) {
+#if defined(__x86_64__)
+    ucontext_t* u = (ucontext_t*)ctx;
+    uint64_t pc = (uint64_t)u->uc_mcontext.gregs[REG_RIP];
+    int ph = g_pfPhase.load(std::memory_order_relaxed);
+    if (ph < 0 || ph >= PF_NPHASE) ph = PF_IDLE;
+    unsigned slot = unsigned((pc >> 2) * 2654435761u >> 16) & (PF_PROF_SLOTS - 1);
+    for (unsigned probe = 0; probe < 8; ++probe, slot = (slot + 1) & (PF_PROF_SLOTS - 1)) {
+        uint64_t cur = g_pfProf[ph][slot].pc.load(std::memory_order_relaxed);
+        if (cur == pc) { g_pfProf[ph][slot].count.fetch_add(1, std::memory_order_relaxed); return; }
+        if (cur == (uint64_t)-1 &&
+            g_pfProf[ph][slot].pc.compare_exchange_strong(cur, pc, std::memory_order_relaxed)) {
+            g_pfProf[ph][slot].count.fetch_add(1, std::memory_order_relaxed); return;
+        }
+    }
+    g_pfProfDrop.fetch_add(1, std::memory_order_relaxed);
+#else
+    (void)ctx;
+#endif
+}
+// Histogram dump: samples are 1 ms of CPU, so count/total is a CPU-time share.
+static void pf_prof_start() {
+    const char* env = getenv("PILE_FINISH_PROF");
+    if (!env || *env == '0') return;
+    struct sigaction sa {};
+    sa.sa_sigaction = pf_prof_handler;
+    sa.sa_flags = SA_SIGINFO | SA_RESTART;
+    sigemptyset(&sa.sa_mask);
+    pf_check(sigaction(SIGPROF, &sa, nullptr) == 0, "install SIGPROF sampler");
+    struct itimerval it {};
+    it.it_interval.tv_usec = 1000;
+    it.it_value.tv_usec = 1000;
+    pf_check(setitimer(ITIMER_PROF, &it, nullptr) == 0, "arm ITIMER_PROF sampler");
+    pf_prof_on = true;
+    fprintf(stderr, "PILE_FINISH_PROF on=1 period_ms=1 slots=%u rdynamic_symbols=1\n", PF_PROF_SLOTS);
+}
+struct PfProfRow { uint64_t pc, count; };
+// dladdr only sees GLOBAL symbols, and the finish's hot code is local
+// (lambdas, static helpers), so resolve against the ELF .symtab of our own
+// image instead: every STT_FUNC with a size, sorted by address.
+struct PfSym { uint64_t lo, hi, nameOff; };
+static std::vector<PfSym> g_pfSyms;
+static std::vector<char> g_pfSymStr;
+static void pf_load_symtab() {
+    if (!g_pfSyms.empty()) return;
+    FILE* f = fopen("/proc/self/exe", "rb");
+    if (!f) return;
+    Elf64_Ehdr eh {};
+    if (fread(&eh, sizeof eh, 1, f) != 1 || memcmp(eh.e_ident, ELFMAG, SELFMAG) != 0) { fclose(f); return; }
+    std::vector<Elf64_Shdr> sh(eh.e_shnum);
+    fseek(f, off_t(eh.e_shoff), SEEK_SET);
+    if (fread(sh.data(), sizeof(Elf64_Shdr), sh.size(), f) != sh.size()) { fclose(f); return; }
+    for (const auto& s : sh) {
+        if (s.sh_type != SHT_SYMTAB || !s.sh_entsize || !s.sh_size || s.sh_link >= sh.size()) continue;
+        const auto& strsh = sh[s.sh_link];
+        g_pfSymStr.resize(strsh.sh_size);
+        fseek(f, off_t(strsh.sh_offset), SEEK_SET);
+        if (fread(g_pfSymStr.data(), 1, g_pfSymStr.size(), f) != g_pfSymStr.size()) break;
+        std::vector<Elf64_Sym> sym(s.sh_size / sizeof(Elf64_Sym));
+        fseek(f, off_t(s.sh_offset), SEEK_SET);
+        if (fread(sym.data(), sizeof(Elf64_Sym), sym.size(), f) != sym.size()) break;
+        for (const auto& y : sym) {
+            if (ELF64_ST_TYPE(y.st_info) != STT_FUNC || !y.st_size || !y.st_name) continue;
+            if (y.st_name >= g_pfSymStr.size()) continue;
+            g_pfSyms.push_back({y.st_value, y.st_value + y.st_size, y.st_name});
+        }
+        std::sort(g_pfSyms.begin(), g_pfSyms.end(), [](const PfSym& a, const PfSym& b) { return a.lo < b.lo; });
+        break;
+    }
+    fclose(f);
+    fprintf(stderr, "PILE_FINISH_PROF_SYMTAB funcs=%zu\n", g_pfSyms.size());
+}
+static const char* pf_sym_of(uint64_t pc, uint64_t& off) {
+    size_t lo = 0, hi = g_pfSyms.size();
+    while (lo < hi) { size_t mid = (lo + hi) / 2; if (g_pfSyms[mid].lo <= pc) lo = mid + 1; else hi = mid; }
+    if (!lo) { off = 0; return "?"; }
+    for (size_t i = lo; i-- > 0 && i + 8 > lo;) {
+        if (pc >= g_pfSyms[i].lo && pc < g_pfSyms[i].hi) {
+            off = pc - g_pfSyms[i].lo;
+            const char* n = g_pfSymStr.data() + g_pfSyms[i].nameOff;
+            // Demangle-ish: strip nothing, but prefer the readable tail of
+            // an Itanium-mangled name is not attempted; the offset is enough.
+            return n;
+        }
+        if (i == 0) break;
+    }
+    off = 0;
+    Dl_info info {};
+    if (dladdr((void*)pc, &info) && info.dli_sname) { off = pc - (uint64_t)info.dli_saddr; return info.dli_sname; }
+    return "?";
+}
+static void pf_prof_dump(const char* label) {
+    if (!pf_prof_on) return;
+    struct itimerval off {};
+    setitimer(ITIMER_PROF, &off, nullptr);
+    pf_load_symtab();
+    double total = 0;
+    std::vector<PfProfRow> rows[PF_NPHASE];
+    for (int ph = 0; ph < PF_NPHASE; ++ph) {
+        for (unsigned s = 0; s < PF_PROF_SLOTS; ++s) {
+            uint64_t c = g_pfProf[ph][s].count.load(std::memory_order_relaxed);
+            if (!c) continue;
+            rows[ph].push_back({g_pfProf[ph][s].pc.load(std::memory_order_relaxed), c});
+            total += double(c);
+        }
+        std::sort(rows[ph].begin(), rows[ph].end(), [](const PfProfRow& a, const PfProfRow& b) { return a.count > b.count; });
+    }
+    fprintf(stderr, "PILE_FINISH_PROF_DUMP %s samples=%.0f dropped=%llu\n", label, total,
+            (unsigned long long)g_pfProfDrop.load());
+    for (int ph = 0; ph < PF_NPHASE; ++ph) {
+        uint64_t phTotal = 0;
+        for (const auto& r : rows[ph]) phTotal += r.count;
+        if (!phTotal) continue;
+        fprintf(stderr, "PILE_FINISH_PROF_PHASE phase=%s samples=%llu of_total=%.2f%%\n",
+                pf_phase_name[ph], (unsigned long long)phTotal,
+                total ? 100.0 * double(phTotal) / total : 0.0);
+        for (size_t i = 0; i < rows[ph].size() && i < 8; ++i) {
+            uint64_t off = 0;
+            const char* name = pf_sym_of(rows[ph][i].pc, off);
+            fprintf(stderr, "PILE_FINISH_PROF phase=%s in_phase=%.2f%% of_cpu=%.2f%% samples=%llu sym=%s+%llu\n",
+                    pf_phase_name[ph], 100.0 * double(rows[ph][i].count) / double(phTotal),
+                    total ? 100.0 * double(rows[ph][i].count) / total : 0.0,
+                    (unsigned long long)rows[ph][i].count, name, (unsigned long long)off);
+        }
+    }
+}
+// Kernel+user accounting deltas: minor/major faults (page-cache/TLB misses on
+// the mmap'd corpus) and bytes actually pulled from devices.
+struct PfProcSnap { uint64_t minflt = 0, majflt = 0, readBytes = 0, rchar = 0; };
+static PfProcSnap pf_proc_snap() {
+    PfProcSnap s;
+    struct rusage ru {};
+    if (getrusage(RUSAGE_SELF, &ru) == 0) { s.minflt = uint64_t(ru.ru_minflt); s.majflt = uint64_t(ru.ru_majflt); }
+    FILE* f = fopen("/proc/self/io", "r");
+    if (f) {
+        char line[256];
+        while (fgets(line, sizeof line, f)) {
+            unsigned long long v = 0;
+            if (sscanf(line, "read_bytes: %llu", &v) == 1) s.readBytes = v;
+            else if (sscanf(line, "rchar: %llu", &v) == 1) s.rchar = v;
+        }
+        fclose(f);
+    }
+    return s;
+}
+// One instrumented region: wall + CPU + fault/IO deltas + the caller's own
+// per-unit counters. Rates are printed only when the denominator is real.
+struct PfRegion {
+    const char* name;
+    double t0 = 0, cpu0 = 0;
+    int prevPhase = PF_IDLE;
+    PfProcSnap snap0{};
+    PfRegion(const char* n, int p) : name(n) {
+        prevPhase = g_pfPhase.load(std::memory_order_relaxed);
+        g_pfPhase.store(p, std::memory_order_relaxed);
+        struct rusage ru {};
+        getrusage(RUSAGE_SELF, &ru);
+        cpu0 = double(ru.ru_utime.tv_sec) + 1e-6 * double(ru.ru_utime.tv_usec) +
+               double(ru.ru_stime.tv_sec) + 1e-6 * double(ru.ru_stime.tv_usec);
+        snap0 = pf_proc_snap();
+        t0 = tnow();
+    }
+    double wall = 0, cpu = 0;
+    uint64_t minflt = 0, majflt = 0, readBytes = 0;
+    void close() {
+        wall = tnow() - t0;
+        struct rusage ru {};
+        getrusage(RUSAGE_SELF, &ru);
+        cpu = double(ru.ru_utime.tv_sec) + 1e-6 * double(ru.ru_utime.tv_usec) +
+              double(ru.ru_stime.tv_sec) + 1e-6 * double(ru.ru_stime.tv_usec) - cpu0;
+        PfProcSnap s = pf_proc_snap();
+        minflt = s.minflt - snap0.minflt; majflt = s.majflt - snap0.majflt;
+        readBytes = s.readBytes - snap0.readBytes;
+        g_pfPhase.store(prevPhase, std::memory_order_relaxed);
+    }
+    void report(uint64_t units, const char* unitName) const {
+        fprintf(stderr, "PILE_FINISH_REGION %s wall=%.3f cpu=%.3f minflt=%llu majflt=%llu dev_read=%llu units=%llu %s_ns=%.2f\n",
+                name, wall, cpu, (unsigned long long)minflt, (unsigned long long)majflt,
+                (unsigned long long)readBytes, (unsigned long long)units, unitName,
+                units ? 1e9 * wall / double(units) : 0.0);
+    }
+};
+// Sum over many short regions (one per band / one per buffer).
+struct PfAcc {
+    const char* name;
+    double wall = 0, cpu = 0;
+    uint64_t minflt = 0, majflt = 0, readBytes = 0;
+    explicit PfAcc(const char* n) : name(n) {}
+    void add(const PfRegion& r) {
+        wall += r.wall; cpu += r.cpu; minflt += r.minflt; majflt += r.majflt; readBytes += r.readBytes;
+    }
+    void report(const char* unitName, uint64_t units) const {
+        fprintf(stderr, "PILE_FINISH_REGION %s wall=%.3f cpu=%.3f minflt=%llu majflt=%llu dev_read=%llu units=%llu %s_ns=%.2f\n",
+                name, wall, cpu, (unsigned long long)minflt, (unsigned long long)majflt,
+                (unsigned long long)readBytes, (unsigned long long)units, unitName,
+                units ? 1e9 * wall / double(units) : 0.0);
+    }
+};
 static void phase(const char* name, double& last) {
     fprintf(stderr, "PILE_FINISH_PHASE %s wall=%.3f cumulative=%.3f\n", name, tnow() - last, tnow() - G_T0);
     last = tnow();
@@ -118,6 +362,30 @@ static void load_remap_table(const std::string& path, uint8_t out[256]) {
 }
 
 // ------------------------------------------------------- corpus adapter
+// Corpus-access profile (MEASURE-FIRST). Per thread: number of adapter reads
+// and number of 4 KiB page TRANSITIONS between consecutive reads. A page hop is
+// the honest miss proxy the corpus path can produce without perf counters: one
+// hop = a new TLB/page-cache entry to resolve, so hops/calls is the locality of
+// what each phase actually asks for. Cache-line padded (adjacent threads must
+// not share a line just because they both charge) and thread-indexed through
+// slim_tid(), which the finish's LCE pool already registers.
+struct alignas(64) PfAccessStat { uint64_t calls = 0, hops = 0, lastPage = ~0ull; };
+static constexpr unsigned PF_ACCESS_TIDS = 512;
+static std::array<PfAccessStat, PF_ACCESS_TIDS> g_pfAccess{};
+static std::atomic<bool> g_pfAccessOn{false};
+static inline void pf_access_charge(uint64_t i) {
+    PfAccessStat& a = g_pfAccess[slim_tid()];
+    ++a.calls;
+    uint64_t page = i >> 12;
+    if (page != a.lastPage) { ++a.hops; a.lastPage = page; }
+}
+static void pf_access_totals(uint64_t& calls, uint64_t& hops) {
+    calls = hops = 0;
+    for (unsigned t = 0; t < PF_ACCESS_TIDS; ++t) { calls += g_pfAccess[t].calls; hops += g_pfAccess[t].hops; }
+}
+static void pf_access_reset() {
+    for (unsigned t = 0; t < PF_ACCESS_TIDS; ++t) { g_pfAccess[t].calls = 0; g_pfAccess[t].hops = 0; g_pfAccess[t].lastPage = ~0ull; }
+}
 struct CorpusText {
     int fd = -1;
     uint64_t size_ = 0;
@@ -203,6 +471,7 @@ struct CorpusText {
     }
     uint8_t operator[](uint64_t i) const {
         if (i >= size_) pf_fail("corpus adapter bounds");
+        if (g_pfAccessOn.load(std::memory_order_relaxed)) pf_access_charge(i);
         if (cmap) return remap[cmap[i]];
         {
             // Shared readers pin mappings through the byte read; only misses evict.
@@ -2154,6 +2423,9 @@ int main(int argc, char** argv) {
                  "[--keep-rlebwt] [--keep-pfck] [--poll-timeout S] [--repair-chunk-runs N]");
         pf_check(!repairChunkRuns || repairChunkRuns >= 1024, "experimental repair chunks require at least 1024 runs");
         double last = tnow();
+        pf_prof_start();
+        if (const char* acc = getenv("PILE_FINISH_ACCESS"))
+            g_pfAccessOn.store(*acc && *acc != '0', std::memory_order_relaxed);
         uint8_t remapTable[256];
         load_remap_table(remap, remapTable);
         PieceSource src;
@@ -2341,6 +2613,10 @@ int main(int argc, char** argv) {
         RepairStream rs;
         rs.N = N; rs.n = n; rs.terminal = 0; rs.seam = &seam;
         rs.emit = [&](const NRun& v) {
+            // Sub-phase tag: the sampler separates the transducer's own work
+            // from the sink callback below (this store is ~1 ns/run and is the
+            // only cost the instrument adds to the fold).
+            g_pfPhase.store(PF_EMIT, std::memory_order_relaxed);
             // emitOne() has already incremented rNorm: this run's global
             // index is rNorm-1 (0-based; sparse m11 tails live at indices
             // 0, 1024, 2048, ...).
@@ -2354,6 +2630,7 @@ int main(int argc, char** argv) {
             }
             nbuf.push_back(v);
             gidx.push_back(idx);
+            g_pfPhase.store(PF_REPAIR, std::memory_order_relaxed);
         };
         sweep.emitWitness = [&](uint64_t value) {
             buckets.add(value);
@@ -2362,6 +2639,15 @@ int main(int argc, char** argv) {
 
         // ---- main band loop: pieces -> repair -> LCE -> sweep -> witnesses
         double lceWall = 0, repairWall = 0, advanceWall = 0;
+        // v3 attribution: the repair wall is a pacing diagnostic that absorbs
+        // piece-wait; these split it into WAIT (polling the producer's wire) and
+        // WORK (band decode + the repair transducer), and count the units each
+        // one moves so every wall has a per-unit rate.
+        double waitWall = 0, readWall = 0, feedWall = 0, rlebwtWaitWall = 0;
+        PfAcc waitAcc{"piece-wait"}, readAcc{"readband"}, feedAcc{"repair-feed"};
+        PfAcc lceAcc{"lce"}, advAcc{"advance-witness"};
+        uint64_t rawRunsFed = 0, bandReads = 0, advRuns = 0;
+        pf_access_reset();
         std::array<double, 3> repairChunkWall{};
         std::vector<RawRun> raws;
         uint64_t nbands = (R + src.B - 1) / src.B;
@@ -2382,6 +2668,7 @@ int main(int argc, char** argv) {
             interior.assign(cnt, INF);
             double t0 = tnow();
             {
+                PfRegion r("lce", PF_LCE);
                 std::atomic<size_t> next{0};
                 pool.run([&](int t) {
                         slim_set_thread_shard(unsigned(t));
@@ -2400,6 +2687,7 @@ int main(int argc, char** argv) {
                         }
                         slimLce.flush_thread();
                     });
+                r.close(); lceAcc.add(r);
             }
             lceWall += tnow() - t0;
             if (bridge)
@@ -2409,18 +2697,26 @@ int main(int argc, char** argv) {
                     pf_write_full(bIntFd, &iv, 8, "bridge int");
                 }
             {
+                PfRegion r("advance-witness", PF_ADVANCE);
                 double ta = tnow();
                 for (size_t i = 0; i < cnt; ++i) sweep.advance(nbuf[i], topLcp[i], interior[i]);
                 advanceWall += tnow() - ta;
+                r.close(); advAcc.add(r);
             }
+            advRuns += cnt;
             prevTail = nbuf.back().t;
             nbuf.clear();
             gidx.clear();
         };
         for (uint64_t band = 0; src.streaming || band < nbands; ++band) {
             double t0 = tnow();
+            double tw = 0;
             if (src.streaming) {
-                if (!src.ready_band(band)) break;
+                {
+                    PfRegion r("ready-band", PF_PIECEWAIT);
+                    if (!src.ready_band(band)) { r.close(); break; }
+                    r.close(); waitAcc.add(r); tw += r.wall;
+                }
                 SeamClasses batch; batch.fromSpool = true; batch.depth = src.depth;
                 while (src.delivered < src.completed.size()) {
                     const auto& values = src.completed[src.delivered++];
@@ -2435,7 +2731,13 @@ int main(int argc, char** argv) {
                 }
                 if (src.terminal) { R=src.R; nbands=src.finalBand+1; }
             }
-            src.read_band(band, raws);
+            {
+                PfRegion r("readband", PF_READBAND);
+                src.read_band(band, raws);
+                r.close(); readAcc.add(r); readWall += r.wall;
+            }
+            waitWall += tw;
+            ++bandReads;
             if (band == 0) {
                 pf_check(!raws.empty() && raws[0].len == 1, "run zero is not the terminal padding row");
                 rs.terminal = raws[0].c;
@@ -2443,10 +2745,15 @@ int main(int argc, char** argv) {
                 fprintf(stderr, "PFP_TERMINAL byte=0x%02llx source=padding-row raw_n=%llu raw_r=%llu\n",
                         (unsigned long long)rs.terminal, (unsigned long long)N, (unsigned long long)R);
             }
-            for (const auto& raw : raws) {
-                expectedRlebwtBytes += 4 * ((raw.len + 0x7fffff - 1) / 0x7fffff);
-                if (!repairChunkRuns) rs.feed_raw(raw);
+            {
+                PfRegion r("repair-feed", PF_REPAIR);
+                for (const auto& raw : raws) {
+                    expectedRlebwtBytes += 4 * ((raw.len + 0x7fffff - 1) / 0x7fffff);
+                    if (!repairChunkRuns) rs.feed_raw(raw);
+                }
+                r.close(); feedAcc.add(r); feedWall += r.wall;
             }
+            rawRunsFed += raws.size();
             if (repairChunkRuns) {
                 auto wall = repair_chunks(rs, raws, pool, repairChunkRuns);
                 for (size_t i=0; i<wall.size(); ++i) repairChunkWall[i] += wall[i];
@@ -2468,12 +2775,32 @@ int main(int argc, char** argv) {
         rs.finishStream();
         if (!nbuf.empty()) processBuffer();
         {
+            PfRegion r("advance-finish", PF_ADVANCE);
             double ta = tnow();
             sweep.finish();
             advanceWall += tnow() - ta;
+            r.close(); advAcc.add(r);
         }
         fprintf(stderr, "SWEEP_PHASE_WALLS repair=%.1f lce=%.1f advance_witness=%.1f lce_threads=%d\n",
                 repairWall, lceWall, advanceWall, std::max(1, std::min(threads, 256)));
+        // v3 anatomy: repairWall = pieceWait + bandRead + feed + residual.
+        waitAcc.report("bands", bandReads);
+        readAcc.report("raw_runs", rawRunsFed);
+        feedAcc.report("raw_runs", rawRunsFed);
+        lceAcc.report("runs", advRuns);
+        advAcc.report("runs", advRuns);
+        {
+            uint64_t calls = 0, hops = 0;
+            pf_access_totals(calls, hops);
+            fprintf(stderr, "PILE_FINISH_SWEEP_ANATOMY piecewait=%.3f readband=%.3f feed=%.3f repair_total=%.3f raw_runs=%llu bands=%llu rlebwt_wait=%.3f ns_per_raw_run=%.2f\n",
+                    waitWall, readWall, feedWall, repairWall,
+                    (unsigned long long)rawRunsFed, (unsigned long long)bandReads, rlebwtWaitWall,
+                    rawRunsFed ? 1e9 * feedWall / double(rawRunsFed) : 0.0);
+            fprintf(stderr, "PILE_FINISH_CORPUS_ACCESS phase=sweep calls=%llu page_hops=%llu hop_rate=%.4f ns_per_call=%.2f\n",
+                    (unsigned long long)calls, (unsigned long long)hops,
+                    calls ? double(hops) / double(calls) : 0.0,
+                    calls ? 1e9 * (lceWall + feedWall) / double(calls) : 0.0);
+        }
         if (repairChunkRuns) fprintf(stderr, "REPAIR_CHUNK_PHASE_WALLS planner=%.3f workers=%.3f ordered_drain=%.3f outer_includes_readiness_and_piece_IO=1\n", repairChunkWall[0], repairChunkWall[1], repairChunkWall[2]);
         // Success-path budget reports (the refusal path always printed these;
         // the pile-week convergence needs the measured verified-symbol and
@@ -2535,25 +2862,34 @@ int main(int argc, char** argv) {
         // ---- m5 EF over the sorted bucket stream
         ContainerOut container(out, 6);
         {
+            PfRegion r("m5-ef", PF_M5);
             unsigned l = chi ? unsigned(std::max(0, int(std::log2(double(n + 1) / double(chi))))) : 0;
             if (l > 63) l = 63;
             uint64_t lowbits = chi * l, highbits = chi ? (n >> l) + chi + 1 : 0;
             BitsOut low(prefix + ".bits-low"), high(prefix + ".bits-high");
             uint64_t i = 0, hpos = 0, prev = ~0ull;
             size_t sidx = 0;
-            buckets.presort_parallel(threads);
-            buckets.for_each_sorted([&](uint64_t v) {
-                pf_check(prev == ~0ull || v > prev, "witnesses not strictly increasing");
-                prev = v;
-                low.lsb(v, l);
-                uint64_t mark = (v >> l) + i;
-                if (mark > hpos) { high.putzeros(mark - hpos); hpos = mark; }
-                high.bit(1); ++hpos;
-                ++i;
-                while (sidx < wantSamples.size() && wantSamples[sidx] < v)
-                    pf_fail("sampled banked witness missing from the v2 stream: " + std::to_string(wantSamples[sidx]));
-                if (sidx < wantSamples.size() && wantSamples[sidx] == v) ++sidx;
-            });
+            {
+                PfRegion rp("m5-presort", PF_M5);
+                buckets.presort_parallel(threads);
+                rp.close(); rp.report(buckets.totalValues, "witnesses");
+            }
+            {
+                PfRegion re("m5-encode", PF_M5);
+                buckets.for_each_sorted([&](uint64_t v) {
+                    pf_check(prev == ~0ull || v > prev, "witnesses not strictly increasing");
+                    prev = v;
+                    low.lsb(v, l);
+                    uint64_t mark = (v >> l) + i;
+                    if (mark > hpos) { high.putzeros(mark - hpos); hpos = mark; }
+                    high.bit(1); ++hpos;
+                    ++i;
+                    while (sidx < wantSamples.size() && wantSamples[sidx] < v)
+                        pf_fail("sampled banked witness missing from the v2 stream: " + std::to_string(wantSamples[sidx]));
+                    if (sidx < wantSamples.size() && wantSamples[sidx] == v) ++sidx;
+                });
+                re.close(); re.report(i, "witnesses");
+            }
             if (highbits > hpos) { high.putzeros(highbits - hpos); hpos = highbits; }
             pf_check(i == chi, "EF count");
             pf_check(low.bitPos == lowbits && high.bitPos == highbits, "EF dimensions");
@@ -2564,6 +2900,7 @@ int main(int argc, char** argv) {
             container.num(l); container.num(lowbits); container.num(highbits);
             low.copyTo(container);
             high.copyTo(container);
+            r.close(); r.report(i, "witnesses");
         }
         if (!wantSamples.empty())
             fprintf(stderr, "WITNESS_SAMPLE_CHECK samples=%zu passed=1\n", wantSamples.size());
@@ -2602,6 +2939,7 @@ int main(int argc, char** argv) {
         // (the repair replayed sample-free: the normalized chars/lens are a
         // deterministic function of the raw runs and the class table).
         {
+            PfRegion rM1("m1-runs", PF_M1);
             std::array<uint64_t, 256> freqC{};
             uint64_t freqTotal = 0;
             for (unsigned c = 0; c < 256; ++c) { freqC[c] = rs.runFreq[c]; freqTotal += rs.runFreq[c]; }
@@ -2645,6 +2983,7 @@ int main(int argc, char** argv) {
             BitsOut headBits(prefix + ".bits-head"), lenBits(prefix + ".bits-len");
             uint64_t replayRuns = 0;
             {
+                PfRegion rw("m1-rlebwt-wait", PF_M1);
                 // Barrier: the merge publishes the rlebwt body only after
                 // every piece band is emitted (the ordered segment
                 // concatenation is the emission's last step). The sweep's
@@ -2661,8 +3000,10 @@ int main(int argc, char** argv) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(100));
                     waited += 0.1;
                 }
+                rw.close(); rw.report(expectedRlebwtBytes, "bytes");
             }
             {
+                PfRegion rr("m1-replay", PF_M1);
                 RepairStream rs2;
                 rs2.N = N; rs2.n = n; rs2.terminal = rs.terminal; rs2.seam = &seam;
                 rs2.sampleChecks = false;
@@ -2707,6 +3048,7 @@ int main(int argc, char** argv) {
                 for (unsigned c = 0; c < 256; ++c)
                     pf_check(rs2.totals[c] == rs.totals[c] && rs2.runFreq[c] == rs.runFreq[c],
                              "m1 replay divergence on char " + std::to_string(c));
+                rr.close(); rr.report(replayRuns, "runs");
             }
             headBits.pad();
             lenBits.pad();
@@ -2719,6 +3061,7 @@ int main(int argc, char** argv) {
             container.num(lenBits.bitPos);
             headBits.copyTo(container);
             lenBits.copyTo(container);
+            rM1.close(); rM1.report(rNorm, "runs");
         }
         phase("m1-runs", last);
 
@@ -2755,6 +3098,7 @@ int main(int argc, char** argv) {
         }
         fprintf(stderr, "PILE_FINISH_DONE chi=%llu n=%llu r=%llu container=%s\n",
                 (unsigned long long)chi, (unsigned long long)n, (unsigned long long)rNorm, out.c_str());
+        pf_prof_dump("finish");
         return 0;
     } catch (const std::exception& e) {
         fprintf(stderr, "FATAL pile_finish: %s\n", e.what());
