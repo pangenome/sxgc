@@ -869,8 +869,9 @@ struct BinBandSink {
             }
             const double t0 = now_sec();
             const U rc = job.chars.size();
-            v2_write_piece(dir, prefix, job.band, 0, job.firstRun, job.chars.data(),
-                           job.lens.data(), job.heads.data(), job.tails.data(), rc, width);
+            v2_write_piece(dir, job.band, 0, job.firstRun, job.chars.data(),
+                           job.lens.data(), job.heads.data(), job.tails.data(), rc,
+                           width);
             std::vector<uint32_t> w32;
             w32.reserve(rc + 16);
             for (U i = 0; i < rc; ++i) {

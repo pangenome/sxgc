@@ -134,9 +134,10 @@ Fixture gates (producer + fused finish concurrently, `cmp` against the banks):
 1b single window:    PILE_FINISH_DONE chi=283296933 n=1000000665 r=368036609
 1b single window:    producer=0 finish=0 cmp=0
 1b windows=5 cap250M: chi=283296933 r=368036609 producer=0 finish=0 cmp=0
-1b single window, HEAD binary (sha256 7c8a048e..., bit-identical on rebuild):
-                     chi=283296933 r=368036609 producer=0 finish=0 cmp=0
-                     producer 267.2 s at load 328, of which flow_wait 174.0 s
+1b single window, HEAD binary sha256 5fa842fc... (bit-identical on rebuild),
+  run twice: at load 328 producer 267.2 s / flow_wait 174.0 s;
+             at load  83 producer 209.4 s.  Both: chi=283296933 r=368036609
+             producer=0 finish=0 cmp=0
 ```
 
 Attestation (sweep conservation, row coverage, position bound, no full SA, gate
@@ -146,7 +147,8 @@ values**, rows actually published by the parallel sink):
 ```text
 ATTEST_PASS binbwt-gate-100m-v2 / binbwt-gate-100m-mw8-v2 / binbwt-gate-100m-t1v2
             binbwt-gate-1b-v2 / binbwt-gate-1b-v2free / binbwt-gate-1b-mw250m-v2
-            binbwt-gate-1b-v2h   (the last one on the exact HEAD-built binary)
+            binbwt-gate-1b-v2h / binbwt-gate-1b-v2final  (both on the exact
+            HEAD-built binary; v2final is the final source state)
 ```
 
 Counters at 1GB, v1 vs v2 (identical, i.e. the publication shape did not move the

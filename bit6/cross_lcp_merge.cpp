@@ -3542,19 +3542,16 @@ static void v2_flow_wait(const std::string& prefix, U band, U window) {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 }
-// One band sub-piece: header + chars + lens + heads packed + tails packed.
 // One band piece file body: header + chars + lens + packed heads + packed
 // tails, published by rename. A single definition serves both the serial sink
 // and the v2 parallel band writers, so the two paths cannot diverge. The
 // caller owns flow control (v2_flow_wait) so that it can also own its own
 // writer-slot credit before committing to a band. Returns the packed-carry
 // word count (0 for an empty column).
-static U v2_write_piece(const std::string& dir, const std::string& prefix, U band,
-                        U shard, U firstRun, const uint8_t* chars,
-                        const uint32_t* lens, const U* heads, const U* tails,
-                        U rc, unsigned w) {
+static U v2_write_piece(const std::string& dir, U band, U shard, U firstRun,
+                        const uint8_t* chars, const uint32_t* lens,
+                        const U* heads, const U* tails, U rc, unsigned w) {
     if (!rc) return 0;
-    (void)prefix;
     std::string tmp = dir + "/t-" + std::to_string(band) + "-" + std::to_string(shard);
     std::string fin = dir + "/p-" + std::to_string(band) + "-" + std::to_string(shard);
     require(!fs::exists(fin), "piece exists; refusing to clobber");
@@ -3607,7 +3604,7 @@ struct V2Piece {
         U rc = chars.size();
         if (!rc) return;
         v2_flow_wait(prefix, band, window);
-        v2_write_piece(dir, prefix, band, shard, firstRun, chars.data(), lens.data(),
+        v2_write_piece(dir, band, shard, firstRun, chars.data(), lens.data(),
                        heads.data(), tails.data(), rc, w);
         chars.clear(); lens.clear(); heads.clear(); tails.clear();
     }
