@@ -1,7 +1,7 @@
 # bin-depth: the two-byte top level, as two sequential 1-byte levels
 
 Branch `bin-depth`, base `pile-week-v1 @ 6dbac0f`. Every number below is
-measured on this box with the box statejournaled next to it (the box carried
+measured on this box with the box state journaled next to it (the box carried
 other production work throughout: load average 12-100, named per row). Nothing
 in `/mnt/nvme2n1/erikg/binbwt10gb`, `binbwt100gb`, `fd-build/`,
 `binbwt-v2-build/` or the ladder process was touched. All scratch is
@@ -79,6 +79,17 @@ above are untouched):
 
 ```text
 BINBWT_ORACLE_FREQ_PASS cases=6432 fixtures=134 modes=cyclic,dollar threads=1,3,8 leaf=1,24 depth_cap=16 level_bytes=1,2 cap=7,all freq_sched=1 exact_brute_SA=1 multi_window_runs=2904 window_instances=33096
+```
+
+### The default path (no extra flags, `--bin-level-bytes 1`) — unchanged
+
+The refactor must not disturb the shipped default, so it is re-gated too:
+
+```text
+$ BINBWT_BIN=<this tree> python3 tools/binbwt/gate.py 100m lbd-default 96 4294967296
+{"producer_rc": 0, "finish_rc": 0, "cmp_rc": 0, "producer_wall_s": 3.2405}
+xsa chi-rspace: chi = 29716349 (N=100000503, R=38647515) stream-agg=1 fused=1 corpus_lce=1
+sha256 b4753899592c952542f7416ee9ce5836e19b99971afa74d02281493b3a289ba5  (== the bank)
 ```
 
 ### 100 MB, `--bin-level-bytes 2` (`gate.py 100m lbd2 96 4294967296`)
