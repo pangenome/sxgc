@@ -527,13 +527,11 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize
         //  * it merge-joins the sink's ascending capture-target list against the
         //    ascending positions, so each target's bin slice index IS its row and
         //    no per-row hash lookup survives anywhere. Each chunk owns the
-        //    target sub-range of its own position range (two bisects), and the
-        //    cursor advances only for a position this window actually PLACES, so
-        //    a target is joined exactly once - in the window that admits its
-        //    bin. (The serial pass advanced on every position, which silently
-        //    dropped every target whose bin was not in the first window; the
-        //    banked multi-window gates only passed because the fixtures' terminal
-        //    byte is 0x1e, i.e. inside window 1.)
+        //    target sub-range of its own position range (two bisects) and walks
+        //    it in step with its positions, so the join stays lock-free and
+        //    strictly ascending; a match is flagged only when THIS window places
+        //    the position, i.e. every target gets its hit in the one window whose
+        //    bin range admits it (asserted at the last window).
         {
             const double t0 = now_sec();
             // slot0[t][c]: this chunk's first slot in bin c's slice.
@@ -574,9 +572,14 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize
                     for (U j = 0; j < len; ++j) {
                         U p = at + j;
                         unsigned c = b[j];
-                        if (!allBins && (c < b0 || c >= b1)) continue;
+                        // The join is over POSITIONS, not over this window's
+                        // bins: the cursor matches every target of the chunk in
+                        // ascending order (which is why a plain in-step merge is
+                        // enough), and the hit is carried into the arena only if
+                        // this window is the one that places the position.
                         bool hit = ti < tiEnd && (*joinTargets)[ti] == p;
                         if (hit) ++ti;
+                        if (!allBins && (c < b0 || c >= b1)) continue;
                         const U slot = cur[c]++;
                         // The BWT symbol of this row: M[p-1], already in the
                         // window buffer one byte behind (p == 0 is the padding
@@ -590,6 +593,9 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize
                     prev = b[len - 1];
                     at += len;
                 }
+                // Every target of this chunk's position range was matched, in
+                // ascending order, exactly once.
+                require(ti == tiEnd, "bin fill chunk target join coverage");
                 // Every slot of this chunk's regions is written exactly once,
                 // and no slot of any other chunk's region is touched.
                 for (unsigned c = b0; c < b1; ++c)
@@ -604,9 +610,11 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize
                 for (U t = 0; t < NT; ++t) fillPool.emplace_back(fillChunk, t);
                 for (auto& th : fillPool) th.join();
             }
-            // Every capture target of the corpus is joined exactly once, in the
-            // one window whose bin range admits it. (This is the fill's own
-            // check, kept out of BinWork::targetHits, which the sink owns.)
+            // Every capture target of the corpus is flagged in exactly one
+            // window - the one whose bin range admits its position - so the
+            // per-window counts must add up to the target list. (This is the
+            // fill's own check, kept out of BinWork::targetHits, which the sink
+            // owns.)
             joinedTotal += joined.load(std::memory_order_relaxed);
             require(joinedTotal <= joinCount, "bin fill target join overrun");
             if (b1 == 256)
