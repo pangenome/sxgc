@@ -2201,12 +2201,27 @@ struct FinishPool {
             }
         });
     }
-    void run(std::function<void(int)> job) {
+    // finish-decomposed: the barrier is split so a caller can DISPATCH a job
+    // and keep working (the ordered fold of the next band) before waiting for
+    // it. start()/wait() must strictly alternate; a second start() without a
+    // wait() would clobber `remaining` and silently drop half the job.
+    std::atomic<bool> dispatched{false};
+    void start(std::function<void(int)> job) {
         std::unique_lock<std::mutex> lock(mutex);
+        pf_check(!dispatched.load(std::memory_order_relaxed), "finish pool dispatched twice without wait");
         task = std::move(job); remaining = workers.size(); ++generation;
+        dispatched.store(true, std::memory_order_relaxed);
         work.notify_all();
+    }
+    void wait() {
+        std::unique_lock<std::mutex> lock(mutex);
         complete.wait(lock, [&] { return remaining == 0; });
         task = {};
+        dispatched.store(false, std::memory_order_relaxed);
+    }
+    void run(std::function<void(int)> job) {
+        start(std::move(job));
+        wait();
     }
     ~FinishPool() {
         { std::lock_guard<std::mutex> lock(mutex); stopping = true; }
@@ -2606,9 +2621,24 @@ int main(int argc, char** argv) {
 
         Sweep sweep(n);
         LceWrap slimLce{&fhSlim, {}, n};
-        std::vector<NRun> nbuf;
-        std::vector<uint64_t> gidx;   // global normalized run index per nbuf entry
-        std::vector<uint64_t> topLcp, interior;
+        // finish-decomposed: one band's buffered fold output (the runs the
+        // repair transducer emitted for that band, their global run indices,
+        // and the LCE columns the verification stage fills in). Two of these
+        // exist so band k's VERIFICATION can run on the pool while band k+1's
+        // STATE MAINTENANCE (feed_raw) runs on this thread. A slot is a pure
+        // per-band buffer: nothing in it is a summary of a boundary, and the
+        // exact transducer state (rs) still transits every band on one thread.
+        struct BandSlot {
+            std::vector<NRun> nbuf;
+            std::vector<uint64_t> gidx;   // global normalized run index per nbuf entry
+            std::vector<uint64_t> topLcp, interior;
+            std::vector<RawRun> raws;
+            uint64_t prevTail = 0;
+            size_t cnt = 0;
+            explicit BandSlot(size_t reserve) { nbuf.reserve(reserve); gidx.reserve(reserve); }
+        };
+        BandSlot slots[2]{BandSlot(1 << 17), BandSlot(1 << 17)};
+        BandSlot* feedTarget = &slots[0];
         uint64_t prevTail = 0;
         RepairStream rs;
         rs.N = N; rs.n = n; rs.terminal = 0; rs.seam = &seam;
@@ -2628,8 +2658,8 @@ int main(int argc, char** argv) {
                 pf_write_full(bLensFd, &len32, 4, "bridge lens");
                 bridgeTailWrite(v.t);
             }
-            nbuf.push_back(v);
-            gidx.push_back(idx);
+            feedTarget->nbuf.push_back(v);
+            feedTarget->gidx.push_back(idx);
             g_pfPhase.store(PF_REPAIR, std::memory_order_relaxed);
         };
         sweep.emitWitness = [&](uint64_t value) {
@@ -2649,72 +2679,110 @@ int main(int argc, char** argv) {
         uint64_t rawRunsFed = 0, bandReads = 0, advRuns = 0;
         pf_access_reset();
         std::array<double, 3> repairChunkWall{};
-        std::vector<RawRun> raws;
         uint64_t nbands = (R + src.B - 1) / src.B;
         uint64_t expectedRlebwtBytes = 0;
         FinishPool pool(std::max(1, std::min(threads, 256)));
         if (repairChunkRuns) fprintf(stderr, "PILE_FINISH_REPAIR_CHUNKS runs=%llu reorder=one_ready_band planner=exact_serial_replay experimental=1\n", (unsigned long long)repairChunkRuns);
-        // sol6b audit: phase A is ALREADY decoupled here: independent top and
-        // interior queries finish in pool.run before any Sweep::advance call.
-        // Preserve prevTail/gidx and singleton INF if selection is restructured;
-        // evaluating a different query multiset would invalidate work identity.
-        // LCE + sweep advance for the buffered runs (nbuf/gidx, in stream
-        // order). Used per band AND for the repair stream's final flush -
-        // the state machine must see every one of the rNorm runs.
-        auto processBuffer = [&]() {
-            if (nbuf.empty()) return;
-            size_t cnt = nbuf.size();
-            topLcp.assign(cnt, 0);
-            interior.assign(cnt, INF);
+        // sol6b audit: the top/interior query set for a band is a pure function
+        // of that band's own buffered runs (its head/tail SA coordinates, its
+        // gidx, and the previous band's last tail). It does not read the
+        // transducer, the seam cursor, or any producer state, which is exactly
+        // why it can be moved off this thread without changing one query.
+        //
+        // ---- the fold rides the verification (finish-decomposed) ----------
+        // STEP 0 measured the defect: read -> feed_raw (SERIAL) -> LCE (92x
+        // parallel) -> advance (SERIAL) were strictly serialised per band, so
+        // the sweep wall was the SUM of a parallel stage and two serial ones.
+        // The verification of band k is a pure function of that band's own
+        // buffered runs (its head/tail SA coordinates, its gidx, the previous
+        // band's last tail - the sol6b audit) plus the immutable corpus and
+        // PFCK sidecar, so it can run on the pool while the ordered fold
+        // (feed_raw) of band k+1 proceeds on this thread. The query multiset,
+        // its order and its arguments are unchanged; only the schedule moves.
+        auto lceJob = [&](BandSlot& s) {
+            size_t cnt = s.cnt;
+            std::vector<NRun>& nb = s.nbuf;
+            std::vector<uint64_t>& gx = s.gidx;
+            uint64_t prevTailS = s.prevTail;
+            // The claim counter MUST be shared by every worker of this job:
+            // a per-thread local would make each worker walk the whole band
+            // (96x the queries, which the seam-work journal refuses loudly).
+            auto next = std::make_shared<std::atomic<size_t>>(0);
+            return std::function<void(int)>([&, cnt, &nb, &gx, prevTailS, next](int t) {
+                slim_set_thread_shard(unsigned(t));
+                for (;;) {
+                    size_t i = next->fetch_add(1);
+                    if (i >= cnt) break;
+                    const NRun& v = nb[i];
+                    uint64_t first = v.h, tail = v.t;
+                    pf_check(first < n, "position resolution failed");
+                    if (v.len == 1) pf_check(first == tail, "head-SA value/range or singleton mismatch");
+                    pf_check(tail < n, "position resolution failed");
+                    uint64_t prev = gx[i] == 0 ? 0 : (i ? nb[i - 1].t : prevTailS);
+                    pf_check(prev < n, "previous position resolution failed");
+                    s.topLcp[i] = gx[i] ? slimLce(prev, first) : 0;
+                    s.interior[i] = v.len == 1 ? INF : slimLce(first, tail);
+                }
+                slimLce.flush_thread();
+            });
+        };
+        // Verification dispatched, ordered fold continues on this thread.
+        BandSlot* lcePending = nullptr;
+        double lceStart = 0, lceWaitWall = 0, overlapWorkWall = 0;
+        auto dispatchLce = [&](BandSlot& s) {
+            pf_check(!lcePending, "lce already dispatched");
+            s.topLcp.assign(s.cnt, 0);
+            s.interior.assign(s.cnt, INF);
+            lcePending = &s;
+            lceStart = tnow();
+            pool.start(lceJob(s));
+        };
+        auto awaitLce = [&]() {
+            if (!lcePending) return;
             double t0 = tnow();
-            {
-                PfRegion r("lce", PF_LCE);
-                std::atomic<size_t> next{0};
-                pool.run([&](int t) {
-                        slim_set_thread_shard(unsigned(t));
-                        for (;;) {
-                            size_t i = next.fetch_add(1);
-                            if (i >= cnt) break;
-                            const NRun& v = nbuf[i];
-                            uint64_t first = v.h, tail = v.t;
-                            pf_check(first < n, "position resolution failed");
-                            if (v.len == 1) pf_check(first == tail, "head-SA value/range or singleton mismatch");
-                            pf_check(tail < n, "position resolution failed");
-                            uint64_t prev = gidx[i] == 0 ? 0 : (i ? nbuf[i - 1].t : prevTail);
-                            pf_check(prev < n, "previous position resolution failed");
-                            topLcp[i] = gidx[i] ? slimLce(prev, first) : 0;
-                            interior[i] = v.len == 1 ? INF : slimLce(first, tail);
-                        }
-                        slimLce.flush_thread();
-                    });
-                r.close(); lceAcc.add(r);
-            }
-            lceWall += tnow() - t0;
+            pool.wait();
+            lceWaitWall += tnow() - t0;
+            lceWall += tnow() - lceStart;
+            lcePending = nullptr;
+        };
+        // Stage 3 (serial, ordered): the state machine must see every run in
+        // stream order and the witnesses must reach the buckets in the same
+        // order as before; only this stage may not move.
+        auto finishAdvance = [&](BandSlot& s) {
+            if (!s.cnt) return;
             if (bridge)
-                for (size_t i = 0; i < cnt; ++i) {
-                    pf_write_full(bTopFd, &topLcp[i], 8, "bridge top");
-                    uint64_t iv = interior[i] == INF ? ~uint64_t(0) : interior[i];
+                for (size_t i = 0; i < s.cnt; ++i) {
+                    pf_write_full(bTopFd, &s.topLcp[i], 8, "bridge top");
+                    uint64_t iv = s.interior[i] == INF ? ~uint64_t(0) : s.interior[i];
                     pf_write_full(bIntFd, &iv, 8, "bridge int");
                 }
             {
                 PfRegion r("advance-witness", PF_ADVANCE);
                 double ta = tnow();
-                for (size_t i = 0; i < cnt; ++i) sweep.advance(nbuf[i], topLcp[i], interior[i]);
+                for (size_t i = 0; i < s.cnt; ++i) sweep.advance(s.nbuf[i], s.topLcp[i], s.interior[i]);
                 advanceWall += tnow() - ta;
                 r.close(); advAcc.add(r);
             }
-            advRuns += cnt;
-            prevTail = nbuf.back().t;
-            nbuf.clear();
-            gidx.clear();
+            advRuns += s.cnt;
+            // prevTail belongs to the FEED stage (it is the last tail emitted by
+            // the most recently fed band, i.e. the neighbour for the next
+            // band's first query). It must NOT be written here: with the
+            // pipeline the next band is fed BEFORE this advance runs, so
+            // restamping it from an older slot silently changes one top-LCP
+            // query per band boundary (measured: +571 witnesses at 100m).
+            s.nbuf.clear();
+            s.gidx.clear();
+            s.cnt = 0;
         };
-        for (uint64_t band = 0; src.streaming || band < nbands; ++band) {
+        // Stage 1 (serial, ordered): the exact transducer transits every band
+        // boundary on this thread - no summaries, no cold reconstruction.
+        auto feed = [&](uint64_t band, BandSlot& s) -> bool {
             double t0 = tnow();
             double tw = 0;
             if (src.streaming) {
                 {
                     PfRegion r("ready-band", PF_PIECEWAIT);
-                    if (!src.ready_band(band)) { r.close(); break; }
+                    if (!src.ready_band(band)) { r.close(); return false; }
                     r.close(); waitAcc.add(r); tw += r.wall;
                 }
                 SeamClasses batch; batch.fromSpool = true; batch.depth = src.depth;
@@ -2733,47 +2801,125 @@ int main(int argc, char** argv) {
             }
             {
                 PfRegion r("readband", PF_READBAND);
-                src.read_band(band, raws);
+                src.read_band(band, s.raws);
                 r.close(); readAcc.add(r); readWall += r.wall;
             }
             waitWall += tw;
             ++bandReads;
             if (band == 0) {
-                pf_check(!raws.empty() && raws[0].len == 1, "run zero is not the terminal padding row");
-                rs.terminal = raws[0].c;
+                pf_check(!s.raws.empty() && s.raws[0].len == 1, "run zero is not the terminal padding row");
+                rs.terminal = s.raws[0].c;
                 pf_check(rs.terminal >= 6 && rs.terminal < 256, "unsupported terminal byte");
                 fprintf(stderr, "PFP_TERMINAL byte=0x%02llx source=padding-row raw_n=%llu raw_r=%llu\n",
                         (unsigned long long)rs.terminal, (unsigned long long)N, (unsigned long long)R);
             }
+            s.prevTail = prevTail;
+            pf_check(s.nbuf.empty() && s.gidx.empty(), "band slot not empty at feed");
+            feedTarget = &s;
             {
                 PfRegion r("repair-feed", PF_REPAIR);
-                for (const auto& raw : raws) {
+                for (const auto& raw : s.raws) {
                     expectedRlebwtBytes += 4 * ((raw.len + 0x7fffff - 1) / 0x7fffff);
                     if (!repairChunkRuns) rs.feed_raw(raw);
                 }
                 r.close(); feedAcc.add(r); feedWall += r.wall;
             }
-            rawRunsFed += raws.size();
+            rawRunsFed += s.raws.size();
             if (repairChunkRuns) {
-                auto wall = repair_chunks(rs, raws, pool, repairChunkRuns);
+                auto wall = repair_chunks(rs, s.raws, pool, repairChunkRuns);
                 for (size_t i=0; i<wall.size(); ++i) repairChunkWall[i] += wall[i];
             }
             repairWall += tnow() - t0;
-            if (nbuf.empty()) { if (src.streaming) src.consumed_band(band); continue; }
-            processBuffer();
+            s.cnt = s.nbuf.size();
+            if (s.cnt) prevTail = s.nbuf.back().t;
+            // Flow credit. read_stream_band already unlinked this band's piece
+            // and copied its raw runs into RAM; the transducer has consumed
+            // them; everything left for this band (LCE + advance) touches only
+            // this slot. Declaring consumption here - one stage earlier than
+            // the pre-decomposition loop - is what lets the producer publish
+            // band k+1 while this band's VERIFICATION is still running, and it
+            // keeps consumed(k) BEFORE ready(k+1) so a W=1 window cannot
+            // deadlock. The wire shape is untouched (one integer, one file).
             if (src.streaming) src.consumed_band(band);
+            return true;
+        };
+        // Pipeline depth 1: the ordered stages alternate with the verification
+        // of the previous band. `pipelined` is off only for the experimental
+        // exact-checkpoint planner, which reuses the same pool internally.
+        const bool pipelined = !repairChunkRuns;
+        uint64_t band = 0;
+        int cur = 0;
+        bool active = feed(band, slots[cur]);
+        if (active && slots[cur].cnt) dispatchLce(slots[cur]);
+        while (active) {
+            int nxt = cur ^ 1;
+            bool more = false;
+            // In streaming mode the band count is the producer's to grow, so
+            // the next feed is always attempted and ready_band answers; in
+            // file mode the band count is fixed here.
+            bool wantNext = src.streaming || band + 1 < nbands;
+            if (wantNext) {
+                if (pipelined) {
+                    double t0 = tnow();
+                    more = feed(band + 1, slots[nxt]);
+                    // The verification of `band` ran under that feed; whatever
+                    // is left of it is pure exposed stall.
+                    overlapWorkWall += tnow() - t0;
+                    awaitLce();
+                } else {
+                    awaitLce();
+                    more = feed(band + 1, slots[nxt]);
+                }
+            } else {
+                awaitLce();
+            }
+            finishAdvance(slots[cur]);
             if ((band & 63) == 0)
-                fprintf(stderr, "PILE_FINISH_PROGRESS band=%llu/%llu runs=%llu chi_so_far=%llu repair_wall=%.1f lce_wall=%.1f advance_wall=%.1f wit_spills=%llu\n",
+                fprintf(stderr, "PILE_FINISH_PROGRESS band=%llu/%llu runs=%llu chi_so_far=%llu repair_wall=%.1f lce_wall=%.1f lce_wait=%.1f advance_wall=%.1f wit_spills=%llu\n",
                         (unsigned long long)(band + 1), (unsigned long long)nbands,
                         (unsigned long long)rs.rNorm, (unsigned long long)sweep.chi,
-                        repairWall, lceWall, advanceWall, (unsigned long long)buckets.spilled);
+                        repairWall, lceWall, lceWaitWall, advanceWall, (unsigned long long)buckets.spilled);
+            if (!more) break;
+            if (slots[nxt].cnt) dispatchLce(slots[nxt]);
+            cur = nxt;
+            ++band;
         }
+        awaitLce();
         // The repair stream's final flush (the coalesced tail runs held
         // back for char-merge parity) must advance the sweep exactly like
         // the band runs: the state machine needs ALL rNorm runs (v1 feeds
         // every run; the production sweep's last events live here).
         rs.finishStream();
-        if (!nbuf.empty()) processBuffer();
+        // The final flush's coalesced tail runs continue the LAST band's slot:
+        // it is empty and its prevTail is that band's last emitted tail, so the
+        // same query coordinates apply. Verification + advance run here, after
+        // every band has been through both stages.
+        {
+            BandSlot& tail = *feedTarget;
+            // finishStream() has ALREADY appended the held-back coalesced tail
+            // runs to this slot's nbuf; what must hold is that the slot was
+            // emptied by the last advance (cnt == 0), so those runs are the
+            // only content and their neighbour is prevTail.
+            pf_check(tail.cnt == 0, "tail slot carry");
+            tail.cnt = tail.nbuf.size();
+            if (tail.cnt) {
+                // The tail runs continue after the LAST band's last emitted run,
+                // so the neighbour for the first tail query is that run's tail
+                // (prevTail), NOT this slot's stale pre-band capture. Getting
+                // this wrong changes exactly one top-LCP query per run and the
+                // verified-symbol journal catches it even when the container
+                // does not (measured: -4 symbols, identical chi and bytes).
+                tail.prevTail = prevTail;
+                tail.topLcp.assign(tail.cnt, 0);
+                tail.interior.assign(tail.cnt, INF);
+                lcePending = &tail;
+                lceStart = tnow();
+                pool.run(lceJob(tail));
+                lceWall += tnow() - lceStart;
+                lcePending = nullptr;
+                finishAdvance(tail);
+            }
+        }
         {
             PfRegion r("advance-finish", PF_ADVANCE);
             double ta = tnow();
@@ -2789,6 +2935,11 @@ int main(int argc, char** argv) {
         feedAcc.report("raw_runs", rawRunsFed);
         lceAcc.report("runs", advRuns);
         advAcc.report("runs", advRuns);
+        fprintf(stderr, "PILE_FINISH_REGION lce-span wall=%.3f waited=%.3f overlapped=%.3f units=%llu runs_ns=%.2f\n",
+                lceWall, lceWaitWall, std::max(0.0, lceWall - lceWaitWall),
+                (unsigned long long)advRuns, advRuns ? 1e9 * lceWall / double(advRuns) : 0.0);
+        fprintf(stderr, "PILE_FINISH_OVERLAP feed_spans=%.3f lce_spans=%.3f exposed_lce=%.3f serial_fold=%.3f\n",
+                overlapWorkWall, lceWall, lceWaitWall, feedWall + advanceWall + readWall + lceWaitWall);
         {
             uint64_t calls = 0, hops = 0;
             pf_access_totals(calls, hops);
