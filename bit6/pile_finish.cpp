@@ -1527,17 +1527,26 @@ struct RepairStream {
                 (unsigned long long)head, (unsigned long long)tail, (unsigned long long)terminal);
         pf_fail("unsupported PFP padding boundary");
     }
-    void append(const NRun& v) {
+    // PER-UNIT (finish-decomposed): the sink is a template parameter on the hot
+    // path. `emit` is a std::function, i.e. an indirect call that cannot inline
+    // the run's bookkeeping into the transducer; the band loop passes its sink
+    // directly, so emitOne/append/seamSplice/feed_raw fold into one specialised
+    // straight-line body per call site. The std::function overloads survive for
+    // the replay, the chunk planner and the selftests, and are byte-for-byte the
+    // same semantics (they pass `emit` as the sink).
+    template<class Sink> void append(const NRun& v, Sink& sink) {
         if (!v.len) return;
         if (have && pending.c == v.c) { pending.len += v.len; pending.t = v.t; }
-        else { if (have) emitOne(); pending = v; have = true; }
+        else { if (have) emitOne(sink); pending = v; have = true; }
     }
-    void emitOne() {
+    template<class Sink> void emitOne(Sink& sink) {
         ++rNorm; nNorm += pending.len;
         totals[pending.c] += pending.len;
         ++runFreq[pending.c];
-        emit(pending);
+        sink(pending);
     }
+    void append(const NRun& v) { append(v, emit); }
+    void emitOne() { emitOne(emit); }
     RawRun trim_padding(const RawRun& in, uint64_t row2) const {
         RawRun v = in;
         if (row2 >= w1) return v;
@@ -1555,7 +1564,8 @@ struct RepairStream {
         }
         return v;
     }
-    void feed_raw(const RawRun& raw) {
+    void feed_raw(const RawRun& raw) { feed_raw(raw, emit); }
+    template<class Sink> void feed_raw(const RawRun& raw, Sink& sink) {
         if (!firstRunSeen) {
             firstRunSeen = true;
             if (sampleChecks)
@@ -1588,25 +1598,26 @@ struct RepairStream {
         pf_check(v.c != 1 && v.c != 2 && v.c != 3 && v.c != 4, "unsupported text alphabet");
         if (srcHave && srcPending.c == v.c) { srcPending.len += v.len; srcPending.tail = v.tail; }
         else {
-            if (srcHave) seamSplice({srcPending.c, srcPending.len, srcPending.head, srcPending.tail});
+            if (srcHave) seamSplice({srcPending.c, srcPending.len, srcPending.head, srcPending.tail}, sink);
             srcPending = v; srcHave = true;
         }
     }
-    void seamSplice(NRun v) {
+    void seamSplice(NRun v) { seamSplice(v, emit); }
+    template<class Sink> void seamSplice(NRun v, Sink& sink) {
         uint64_t end = row + v.len;
         while (row < end) {
             if (seam && next < seam->classes.size() && row >= seam->classes[next].lo) {
                 SeamClass& cl = seam->classes[next];
                 if (row == cl.lo)
                     for (const auto& piece : cl.runs)
-                        append({piece.c, piece.len, piece.head, piece.tail});
+                        append({piece.c, piece.len, piece.head, piece.tail}, sink);
                 row = std::min(end, cl.hi);
                 if (row == cl.hi) { v.h = cl.after; ++next; }
             } else {
                 uint64_t stop = (seam && next < seam->classes.size()) ? std::min(end, seam->classes[next].lo) : end;
                 NRun piece{v.c, stop - row, v.h, v.t};
                 if (stop < end && seam) piece.t = seam->classes[next].before;
-                append(piece);
+                append(piece, sink);
                 row = stop;
             }
         }
@@ -2653,7 +2664,10 @@ int main(int argc, char** argv) {
         uint64_t prevTail = 0;
         RepairStream rs;
         rs.N = N; rs.n = n; rs.terminal = 0; rs.seam = &seam;
-        rs.emit = [&](const NRun& v) {
+        // The band loop's sink. Passed DIRECTLY as the transducer's template sink
+        // (hot path, inlined) and also installed as rs.emit for the final flush,
+        // so both paths emit through identical code.
+        auto bandSink = [&](const NRun& v) {
             // Sub-phase tag: the sampler separates the transducer's own work
             // from the sink callback below (this store is ~1 ns/run and is the
             // only cost the instrument adds to the fold).
@@ -2673,6 +2687,7 @@ int main(int argc, char** argv) {
             feedTarget->gidx.push_back(idx);
             g_pfPhase.store(PF_REPAIR, std::memory_order_relaxed);
         };
+        rs.emit = bandSink;
         sweep.emitWitness = [&](uint64_t value) {
             buckets.add(value);
             if (bridge) pf_write_full(bSAFd, &value, 8, "bridge sA");
@@ -2692,7 +2707,17 @@ int main(int argc, char** argv) {
         std::array<double, 3> repairChunkWall{};
         uint64_t nbands = (R + src.B - 1) / src.B;
         uint64_t expectedRlebwtBytes = 0;
-        FinishPool pool(std::max(1, std::min(threads, 256)));
+        // The verification pool. Default is --threads (the gate's knob); the
+        // env override exists only to measure the fold/verification contention
+        // curve, and at 100m it says 96 beats 64 and 48 (the verification is the
+        // binding term, so giving it fewer threads is strictly worse).
+        int poolThreads = std::max(1, std::min(threads, 256));
+        if (const char* pt = getenv("PILE_FINISH_POOL")) {
+            long v = std::strtol(pt, nullptr, 10);
+            pf_check(v >= 1 && v <= 256, "PILE_FINISH_POOL out of range");
+            poolThreads = int(v);
+        }
+        FinishPool pool(poolThreads);
         if (repairChunkRuns) fprintf(stderr, "PILE_FINISH_REPAIR_CHUNKS runs=%llu reorder=one_ready_band planner=exact_serial_replay experimental=1\n", (unsigned long long)repairChunkRuns);
         // sol6b audit: the top/interior query set for a band is a pure function
         // of that band's own buffered runs (its head/tail SA coordinates, its
@@ -2831,7 +2856,7 @@ int main(int argc, char** argv) {
                 PfRegion r("repair-feed", PF_REPAIR);
                 for (const auto& raw : s.raws) {
                     expectedRlebwtBytes += 4 * ((raw.len + 0x7fffff - 1) / 0x7fffff);
-                    if (!repairChunkRuns) rs.feed_raw(raw);
+                    if (!repairChunkRuns) rs.feed_raw(raw, bandSink);
                 }
                 r.close(); feedAcc.add(r); feedWall += r.wall;
             }
@@ -2872,11 +2897,19 @@ int main(int argc, char** argv) {
             if (wantNext) {
                 if (pipelined) {
                     double t0 = tnow();
+                    // State maintenance of band k+1 runs while band k's
+                    // verification finishes.
                     more = feed(band + 1, slots[nxt]);
-                    // The verification of `band` ran under that feed; whatever
-                    // is left of it is pure exposed stall.
                     overlapWorkWall += tnow() - t0;
                     awaitLce();
+                    // Start the NEXT verification before the ordered advance:
+                    // advance(k) needs only slot k's finished columns and
+                    // slot k+1 is already fed and waiting, so the serial
+                    // advance no longer costs a band's worth of verification
+                    // slot (measured: the fold alone is 29 ns/raw run, the
+                    // verification is 13 ms/band, so leaving the pool idle
+                    // through the advance was the largest remaining hole).
+                    if (more && slots[nxt].cnt) dispatchLce(slots[nxt]);
                 } else {
                     awaitLce();
                     more = feed(band + 1, slots[nxt]);
@@ -2891,7 +2924,6 @@ int main(int argc, char** argv) {
                         (unsigned long long)rs.rNorm, (unsigned long long)sweep.chi,
                         repairWall, lceWall, lceWaitWall, advanceWall, (unsigned long long)buckets.spilled);
             if (!more) break;
-            if (slots[nxt].cnt) dispatchLce(slots[nxt]);
             cur = nxt;
             ++band;
         }
