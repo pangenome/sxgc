@@ -181,6 +181,20 @@ Load average during that pair: 27.9-44.6 (the live 100GB run was on the box; no
 quiet-box claim). The v1 lane's banked 203.0 s was measured at load 50.6-59.9, so
 the A/B is the defensible number, not the absolute one.
 
+The same pair repeated later at load 104.6 / 92.8 (logs kept:
+`/mnt/nvme2n1/erikg/binbwt-pw/ab-v1.log`, `ab-v2.log`):
+
+| | v1 | v2 |
+|---|---:|---:|
+| sweep | 11.906 s | 0.039 + 13.852 s |
+| build critical path | 36.904 s | 24.338 s |
+| publication term | **345.388 s** | **9.483 s** (36x) |
+| producer wall | **386.06 s** | **49.31 s** (7.8x) |
+
+So the sink term is the load-sensitive one in v1 too (185.3 -> 345.4 s for the
+same work) while v2's sequential stitch barely moves (11.4 -> 9.5 s): the A/B
+ratio improves with box load, 5.1x at load 28-45 and 7.8x at load 93-105.
+
 With the transport's default window the picture is different and it is the
 important operational finding: at 1GB the v2 producer spends **147.874 s of its
 191.7 s inside `v2_flow_wait`** waiting for `pile_finish` to consume bands, i.e.
