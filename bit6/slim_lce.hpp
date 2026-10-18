@@ -28,7 +28,11 @@ static void slim_phase(const char* label, double& last) {
     fprintf(stderr, "SLIM_PHASE %s wall=%.3f cumulative=%.3f peak_rss_kib=%ld\n",
             label, now-last, now-G_T0, u.ru_maxrss); last=now;
 }
-static void slim_fail(const char* s) { fprintf(stderr,"FATAL SLIM: %s\n",s); exit(2); }
+// PER-UNIT (finish-decomposed): the failure path is cold and out of line. It
+// was inlined into every hot loop that can fail (the fingerprint ladder, the
+// direct-verify loop, the corpus byte read), where its fprintf argument setup
+// cost instruction-cache and branch-density on every symbol.
+[[noreturn]] __attribute__((noinline, cold)) static void slim_fail(const char* s) { fprintf(stderr,"FATAL SLIM: %s\n",s); exit(2); }
 
 // Per-thread sharded counter. The parse-free query loop fires billions of
 // relaxed adds per run; one shared cache line serializes them (the measured
@@ -212,12 +216,27 @@ template<class Seq> struct SlimFingerprint {
         seamWork=&work;probeLimit=probe;reportName=name;
         verificationLimit=std::min<uint64_t>(1ULL<<26,std::max<uint64_t>(1000,s.size()));
     }
+    [[noreturn]] __attribute__((noinline, cold)) void refuse_budget(const char* site,uint64_t count,uint64_t requested) const {
+        fprintf(stderr,"CYCLIC_SEAM_REFUSED site=%s requested_lce=%llu requested_work=%llu total_work=%llu total_limit=%llu no_O_n_fallback=1\n",site,
+            (unsigned long long)requested,(unsigned long long)count,(unsigned long long)seamWork->totalUsed(),(unsigned long long)seamWork->limit);
+        report(reportName);slim_fail("CYCLIC_SEAM_REFUSED: total compressed-work budget exhausted; no O(n) fallback");
+    }
     void charge(uint64_t count,const char* site,uint64_t requested=0) const {
-        if(seamWork && !seamWork->reserve(count)) {
-            fprintf(stderr,"CYCLIC_SEAM_REFUSED site=%s requested_lce=%llu requested_work=%llu total_work=%llu total_limit=%llu no_O_n_fallback=1\n",site,
-                (unsigned long long)requested,(unsigned long long)count,(unsigned long long)seamWork->totalUsed(),(unsigned long long)seamWork->limit);
-            report(reportName);slim_fail("CYCLIC_SEAM_REFUSED: total compressed-work budget exhausted; no O(n) fallback");
-        }
+        if(seamWork && !seamWork->reserve(count)) refuse_budget(site,count,requested);
+    }
+    // The other two refusal sites are hoisted here for the same reason: they
+    // used to sit inside suffix() and lce(), i.e. inside the loops that run
+    // once per verified symbol.
+    [[noreturn]] __attribute__((noinline, cold)) void refuse_probe(uint64_t span) const {
+        fprintf(stderr,"CYCLIC_SEAM_REFUSED probe_symbols=%llu probe_limit=%llu\n",(unsigned long long)span,(unsigned long long)probeLimit);
+        report(reportName);slim_fail("CYCLIC_SEAM_REFUSED: fingerprint probe exceeds polylog-work policy; no O(n) fallback");
+    }
+    [[noreturn]] __attribute__((noinline, cold)) void refuse_verify(uint64_t guess,uint64_t i,uint64_t j,uint64_t cap,uint64_t queryProbes,uint64_t quickWork) const {
+        fprintf(stderr,"CYCLIC_SEAM_REFUSED requested_lce=%llu sequence_size=%llu i=%llu j=%llu cap=%llu verification_limit=%llu query_hash_probes=%llu total_hash_probes=%llu suffix_symbol_reads=%llu completed_verified_symbols=%llu quick_comparisons=%llu exact_requested_lce=0\n",
+            (unsigned long long)guess,(unsigned long long)s.size(),(unsigned long long)i,(unsigned long long)j,(unsigned long long)cap,(unsigned long long)verificationLimit,
+            (unsigned long long)queryProbes,(unsigned long long)jumps.read(),(unsigned long long)suffixReads.read(),(unsigned long long)checked.read(),(unsigned long long)quickWork);
+        report(reportName);
+        slim_fail("CYCLIC_SEAM_REFUSED: LCE verification exceeds compressed-work policy; no O(n) fallback");
     }
     mutable SlimSharded calls, checked, jumps, hashProbes, suffixReads;
     mutable std::atomic<uint64_t> maxChecked{0};
@@ -280,10 +299,7 @@ template<class Seq> struct SlimFingerprint {
     uint64_t suffix(uint64_t i) const {
         if(i==s.size())return 0;
         uint64_t end=std::min<uint64_t>(s.size(),((i+tau-1)/tau)*tau);
-        if(end-i>probeLimit) {
-            fprintf(stderr,"CYCLIC_SEAM_REFUSED probe_symbols=%llu probe_limit=%llu\n",(unsigned long long)(end-i),(unsigned long long)probeLimit);
-            report(reportName);slim_fail("CYCLIC_SEAM_REFUSED: fingerprint probe exceeds polylog-work policy; no O(n) fallback");
-        }
+        if(end-i>probeLimit) refuse_probe(end-i);
         charge(1,"hash-probe");
         hashProbes.add(1);
         suffixReads.add(end-i);
@@ -329,13 +345,8 @@ template<class Seq> struct SlimFingerprint {
         uint64_t mx=maxRequested.load(std::memory_order_relaxed);
         while(guess>mx && !maxRequested.compare_exchange_weak(mx,guess,std::memory_order_relaxed)) {}
         uint64_t directWork=guess+(guess<cap);
-        if(quickWork>verificationLimit || directWork>verificationLimit-quickWork) {
-            fprintf(stderr,"CYCLIC_SEAM_REFUSED requested_lce=%llu sequence_size=%llu i=%llu j=%llu cap=%llu verification_limit=%llu query_hash_probes=%llu total_hash_probes=%llu suffix_symbol_reads=%llu completed_verified_symbols=%llu quick_comparisons=%llu exact_requested_lce=0\n",
-                (unsigned long long)guess,(unsigned long long)s.size(),(unsigned long long)i,(unsigned long long)j,(unsigned long long)cap,(unsigned long long)verificationLimit,
-                (unsigned long long)queryProbes,(unsigned long long)jumps.read(),(unsigned long long)suffixReads.read(),(unsigned long long)checked.read(),(unsigned long long)quickWork);
-            report(reportName);
-            slim_fail("CYCLIC_SEAM_REFUSED: LCE verification exceeds compressed-work policy; no O(n) fallback");
-        }
+        if(quickWork>verificationLimit || directWork>verificationLimit-quickWork)
+            refuse_verify(guess,i,j,cap,queryProbes,quickWork);
         charge(directWork,"direct-verify",guess);
         verificationWork.add(directWork);
         for(uint64_t k=0;k<guess;++k) if(s[i+k]!=s[j+k])
@@ -346,7 +357,7 @@ template<class Seq> struct SlimFingerprint {
         jumps.add(queryProbes);
         return guess;
     }
-    void report(const char* name)const {fprintf(stderr,"SLIM_FP %s tau=%llu bytes=%llu queries=%llu verified_symbols=%llu hash_probes=%llu mean_verified=%.9f max_verified=%llu max_requested_lce=%llu verification_work=%llu hash_probe_charges=%llu suffix_symbol_reads=%llu total_work=%llu total_limit=%llu verification_limit=%llu probe_limit=%llu\n",name,
+    __attribute__((noinline, cold)) void report(const char* name)const {fprintf(stderr,"SLIM_FP %s tau=%llu bytes=%llu queries=%llu verified_symbols=%llu hash_probes=%llu mean_verified=%.9f max_verified=%llu max_requested_lce=%llu verification_work=%llu hash_probe_charges=%llu suffix_symbol_reads=%llu total_work=%llu total_limit=%llu verification_limit=%llu probe_limit=%llu\n",name,
         (unsigned long long)tau,(unsigned long long)(hashCount*8),(unsigned long long)calls.read(),
         (unsigned long long)checked.read(),(unsigned long long)jumps.read(),
         calls.read()?double(checked.read())/calls.read():0.0,(unsigned long long)maxChecked.load(),
