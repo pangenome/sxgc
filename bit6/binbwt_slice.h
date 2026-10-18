@@ -25,6 +25,7 @@ struct BinWork {
     U runsPublished = 0, bands = 0;     // BWT runs and run bands published
     U targetHits = 0;                   // capture targets found by the join
     U bandJobs = 0;                     // band payloads handed to a writer
+    double tCount = 0, tFill = 0;       // the two placing sweeps, separately
     double tStitch = 0;                 // ordered pass: rows -> runs -> bands
     double tBandWrite = 0;              // writer threads' busy seconds (sum)
     double tFlowWait = 0;               // v2_flow_wait seconds in the slot wait
@@ -43,6 +44,7 @@ struct BinWork {
         cpuBuild += o.cpuBuild; tAlloc += o.tAlloc; tWait += o.tWait;
         runsPublished += o.runsPublished; bands += o.bands;
         targetHits += o.targetHits; bandJobs += o.bandJobs;
+        tCount += o.tCount; tFill += o.tFill;
         tStitch += o.tStitch; tBandWrite += o.tBandWrite; tFlowWait += o.tFlowWait;
     }
 };
@@ -371,6 +373,7 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize
             for (U t = 0; t < NT; ++t) pool.emplace_back(countChunk, t);
             for (auto& th : pool) th.join();
         }
+        total.tCount += now_sec() - t0;
         total.tSweep += now_sec() - t0;
         total.sweepBytes += n; ++total.sweepPasses;
     }
@@ -450,6 +453,7 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize
             require(ti == joinCount, "bin fill target join coverage");
             for (unsigned c = b0; c < b1; ++c)
                 require(cur[c] == off[c] + bins[c], "bin fill coverage");
+            total.tFill += now_sec() - t0;
             total.tSweep += now_sec() - t0;
             total.sweepBytes += n; ++total.sweepPasses;
         }
@@ -1009,6 +1013,7 @@ static int binbwt_main(const std::string& path, const std::string& mapPath,
         "build_cpu_s=%.3f ns_per_symbol_thread=%.3f "
         "ns_per_comparison_thread=%.3f sink_open_s=%.3f order_s=%.3f "
         "endshard_s=%.3f alloc_s=%.3f wait_s=%.3f "
+        "count_s=%.3f fill_s=%.3f "
         "sink=%s serial_runs=%llu runs=%llu bands=%llu target_hits=%llu "
         "band_jobs=%llu writers=%llu stitch_s=%.3f band_write_s=%.3f "
         "flow_wait_s=%.3f ns_per_row_stitch=%.3f "
@@ -1029,7 +1034,7 @@ static int binbwt_main(const std::string& path, const std::string& mapPath,
         total.symbols ? 1e9 * total.cpuBuild / double(total.symbols) : 0.0,
         total.comparisons ? 1e9 * total.cpuBuild / double(total.comparisons) : 0.0,
         tSink1 - tSink0, tOrder - tSink1, tEnds - tOrder, total.tAlloc,
-        total.tWait,
+        total.tWait, total.tCount, total.tFill,
         serialSink ? "serial-v1" : "parallel-v2",
         (unsigned long long)serialRuns,
         (unsigned long long)total.runsPublished,
