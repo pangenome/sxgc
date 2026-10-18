@@ -207,11 +207,15 @@ see risks): t8 wall 162 s at load 31.6-64.2, t32 wall 115 s at load 31.0-56.1.
 ### Revised pile projection (`tools/binbwt/pile_projection_v2.py`)
 
 ```text
-window cap                                    win   count    fill   build  stitch   total  v1 total
-20G slots = 320GB arena pair                   66    0.49   84.91    8.55    4.15   98.10    143.30
-65G slots = 1040GB arena pair                  21    0.49   27.02    8.55    4.15   40.21     96.31
-131G slots = 2096GB arena pair                 10    0.49   12.87    8.55    4.15   26.06     84.82
+window cap                              win   count    fill   build  stitch   total  v1 total  total@load93
+20G slots = 320GB arena pair             66    0.49   84.91    8.55    4.15   98.10    143.30        244.55
+65G slots = 1040GB arena pair            21    0.49   27.02    8.55    4.15   40.21     96.31         86.81
+131G slots = 2096GB arena pair           10    0.49   12.87    8.55    4.15   26.06     84.82         48.25
 ```
+
+`total@load93` is the same arithmetic with the fill measured at load 93-105
+(13.85 s per 1 GB pass instead of 5.08 s): the honest range for a loaded box.
+It says plainly that the launch now waits on the *placing pass*, not on the sink.
 
 (hours; n = 1.31e12. `total` = count + windows x fill + 96-thread build critical
 path + ordered stitch, summed because at 1GB the build finished 22.2 s before the

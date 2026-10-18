@@ -47,7 +47,11 @@ M = {
     'v1_build_crit_banked_s': 30.434,
     # fill packing+join cost measured on the single-window pass
     'fill_v2_over_v1': 5.084 / (4.165 - 0.038),
+    # the SAME 1GB pass under neighbour load (ab-v2.log, load 92.8-113.1)
+    'v2_fill_loaded_s': 13.852,
 }
+M['v2_fill_window_loaded_s'] = (M['v2_fill_loaded_s'] / (M['v1_sweep_s'] - M['v2_count_s'])
+                                * M['v1_fill_per_window_s'])
 M['v2_fill_per_window_s'] = M['v1_fill_per_window_s'] * M['fill_v2_over_v1']
 emit_ns_row = M['v2_stitch_s'] * 1e9 / n1
 emit_ns_row_v1 = M['v1_sink_s'] * 1e9 / n1        # this window's A/B run
@@ -77,7 +81,10 @@ for cap, label in [(20000000000, '20G slots = 320GB arena pair'),
                      emit_h=h(emit),
                      total_h=h(count + fill + emit + build),
                      total_banked_build_h=h(count + fill + emit + build_banked),
-                     total_v1_h=h(count + fill_v1 + emit_v1 + build_banked)))
+                     total_v1_h=h(count + fill_v1 + emit_v1 + build_banked),
+                     fill_loaded_h=h(w * M['v2_fill_window_loaded_s'] * npile / n1),
+                     total_loaded_h=h(count + w * M['v2_fill_window_loaded_s'] * npile / n1
+                                      + emit + build)))
 
 print("MEASURED 1GB producer-only, threads=96, load 27.9-44.6, back to back:")
 print(f"  v1 wall {M['v1_wall_s']:.2f}s = sweep {M['v1_sweep_s']:.3f}s + build "
@@ -95,12 +102,12 @@ print(f"  publication rate {emit_ns_row:.2f} ns/row vs {emit_ns_row_v1b:.1f} ns/
 print(f"  fill packing+join cost: {M['v2_fill_s']:.3f}s vs "
       f"{M['v1_sweep_s']-M['v2_count_s']:.3f}s = +{100*(M['fill_v2_over_v1']-1):.0f}%")
 print()
-print(f"{'window cap':44s} {'win':>4s} {'count':>7s} {'fill':>7s} {'build':>7s} "
-      f"{'stitch':>7s} {'total':>7s} {'v1 total':>9s}")
+print(f"{'window cap':38s} {'win':>4s} {'count':>7s} {'fill':>7s} {'build':>7s} "
+      f"{'stitch':>7s} {'total':>7s} {'v1 total':>9s} {'total@load93':>13s}")
 for r in rows:
-    print(f"{r['label']:44s} {r['windows']:4d} {r['count_h']:7.2f} {r['fill_h']:7.2f} "
+    print(f"{r['label']:38s} {r['windows']:4d} {r['count_h']:7.2f} {r['fill_h']:7.2f} "
           f"{r['build_h']:7.2f} {r['emit_h']:7.2f} {r['total_h']:7.2f} "
-          f"{r['total_v1_h']:9.2f}")
+          f"{r['total_v1_h']:9.2f} {r['total_loaded_h']:13.2f}")
 print()
 print("hours are pile hours (n=1,310,000,000,000). 'total' = count + windows*fill +")
 print("96-thread build critical path + ordered stitch, summed: at 1GB the build finished")
@@ -115,6 +122,10 @@ print(f"In v2 the largest term is the WINDOWED PLACING PASS, {rows[-1]['fill_h']
 print("load-sensitive term on the box: 3.8-188s per 1GB pass depending on load).")
 print(f"Second is the per-bin construction {h(build):.2f}h, third the ordered stitch "
       f"{h(emit):.2f}h (was {h(emit_v1):.2f}h banked).")
+print(f"Quiet-box fill {M['v2_fill_per_window_s']:.2f}s/window; the same pass measured "
+      f"{M['v2_fill_loaded_s']:.2f}s at load 93-105, i.e. {M['v2_fill_window_loaded_s']:.2f}s/window.")
+print("The 'total@load93' column is that measurement - it is the honest range for a")
+print("loaded box, and it says the launch waits on the fill, not on the sink.")
 print(f"Using the banked v1 build path instead: {rows[0]['total_banked_build_h']:.2f} / "
       f"{rows[1]['total_banked_build_h']:.2f} / {rows[2]['total_banked_build_h']:.2f} h.")
 print(f"Count term check: measured {h(count_direct):.3f}h (0.038s/GB direct) vs banked "
