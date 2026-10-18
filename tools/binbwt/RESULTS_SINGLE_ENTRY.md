@@ -214,6 +214,29 @@ cmp container /mnt/nvme2n1/erikg/extcols-scratch/pilev2-g2-1b/frag.sxi2  -> rc=0
 sha256 38f03eb43aaea5997819c8f7922a244a3eb0be945bf1d3b0feb1f2fd9d23144f   (== the bank)
 ```
 
+Multi-window through the same entry (the window arithmetic and the arena
+discipline, not just W=1) - 100 MB at `--bin-live-cap 30000000`, `--memory-gb 8`:
+
+```text
+$ xsa build --v2-pipeline --input .../mergperf-100m-snap.txt --scratch /mnt/nvme2n1/erikg/se-100m-w4 \
+      --threads 96 --memory-gb 8 --bin-live-cap 30000000 --timeout 3600 --chi-expect 29716349
+V2_BIN_WINDOWS windows=4 plan_windows=4 peak_live_slots=59899654 peak_live_bytes=479197232
+  (sweep_bytes=500002515 == (1+4)*100000503, the gate's conservation check)
+V2_CHI_EXPECT_OK chi=29716349 == 29716349
+comparisons=319751186 symbols=7214408208      (identical to the single-window run)
+cmp container <bank> -> rc=0
+```
+
+and the misconfiguration the plan cannot see is refused at the front door rather
+than accepted (a cap below the largest bin, exit code 1):
+
+```text
+$ xsa build --v2-pipeline ... --bin-live-cap 1000 --memory-gb 8
+xsa: error: build: V2_BIN_CAP_RAISED: --bin-live-cap 1000 is below the largest bin; the producer raised it
+(BIN_CAP_RAISED requested=1000 largest_bin=16803424). The plan priced a different arena - raise --bin-live-cap
+(and --memory-gb if needed) and re-run
+```
+
 Walls, labelled: the box carried foreign work throughout (`analysis` lanes plus
 the neighbouring 100 GB run's tail); `loadavg 72-125` at every gate, **no
 quiet-box claim**. 100m: one-entry 16.14 s wall (bin 4.13, finish 15.54, they
@@ -267,7 +290,7 @@ verified_symbols=12820424563` corpus + `29271872` seam, with `hash_probes`,
 verified_symbols=1176027277` - the exact numbers `RESULTS_FINISH_DECOMP.md`
 quotes.
 
-Rust unit tests (14, all green): the window arithmetic against every measured
+Rust unit tests (14, all green, `cargo test --release` in the real tree): the window arithmetic against every measured
 point, the build-curve interpolation/clamping/monotonicity, the four inert-knob
 refusals, `--bin-live-cap` scoping, the witness-budget refusal and the
 still-required `--timeout`.
