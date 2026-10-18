@@ -90,6 +90,8 @@
 #include <linux/falloc.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
+#include <sys/mman.h>
+#include <map>
 #include <unistd.h>
 
 namespace fs = std::filesystem;
@@ -3540,7 +3542,54 @@ static void v2_flow_wait(const std::string& prefix, U band, U window) {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 }
-// One band sub-piece: header + chars + lens + heads packed + tails packed.
+// One band piece file body: header + chars + lens + packed heads + packed
+// tails, published by rename. A single definition serves both the serial sink
+// and the v2 parallel band writers, so the two paths cannot diverge. The
+// caller owns flow control (v2_flow_wait) so that it can also own its own
+// writer-slot credit before committing to a band. Returns the packed-carry
+// word count (0 for an empty column).
+static U v2_write_piece(const std::string& dir, U band, U shard, U firstRun,
+                        const uint8_t* chars, const uint32_t* lens,
+                        const U* heads, const U* tails, U rc, unsigned w) {
+    if (!rc) return 0;
+    std::string tmp = dir + "/t-" + std::to_string(band) + "-" + std::to_string(shard);
+    std::string fin = dir + "/p-" + std::to_string(band) + "-" + std::to_string(shard);
+    require(!fs::exists(fin), "piece exists; refusing to clobber");
+    int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    require(fd >= 0, "create piece tmp");
+    auto wfull = [&](const void* d, U len) {
+        const char* q = (const char*)d;
+        while (len) { ssize_t z = ::write(fd, q, len); require(z > 0, "piece write"); q += z; len -= U(z); }
+    };
+    char hdr[44];
+    uint32_t magic = 0x31435250;  // "PRC1"
+    memcpy(hdr, &magic, 4);
+    memcpy(hdr + 4, &band, 8); memcpy(hdr + 12, &shard, 4);
+    memcpy(hdr + 16, &firstRun, 8); memcpy(hdr + 24, &rc, 8);
+    memcpy(hdr + 32, &w, 4); U zero = 0; memcpy(hdr + 36, &zero, 8);
+    wfull(hdr, 44);
+    wfull(chars, rc);
+    wfull(lens, 4 * rc);
+    // Pack heads/tails LSB-first (the ri4 sample convention); each piece
+    // is self-contained, so the reservoir drains fully here.
+    U bits = U(w) * rc, words = (bits + 63) / 64;
+    std::vector<U> out(words ? words : 1, 0);
+    auto pack = [&](const U* v) {
+        __uint128_t res = 0; unsigned avail = 0; U wi = 0;
+        for (U i = 0; i < rc; ++i) {
+            res |= __uint128_t(v[i]) << avail; avail += w;
+            if (avail >= 64) { out[wi++] = U(res); res >>= 64; avail -= 64; }
+        }
+        if (avail) out[wi] = U(res);
+    };
+    pack(heads);
+    wfull(out.data(), 8 * words);
+    pack(tails);
+    wfull(out.data(), 8 * words);
+    require(::close(fd) == 0, "close piece tmp");
+    require(::rename(tmp.c_str(), fin.c_str()) == 0, "publish piece");
+    return words;
+}
 struct V2Piece {
     std::vector<uint8_t> chars;
     std::vector<uint32_t> lens;
@@ -3555,42 +3604,8 @@ struct V2Piece {
         U rc = chars.size();
         if (!rc) return;
         v2_flow_wait(prefix, band, window);
-        std::string tmp = dir + "/t-" + std::to_string(band) + "-" + std::to_string(shard);
-        std::string fin = dir + "/p-" + std::to_string(band) + "-" + std::to_string(shard);
-        require(!fs::exists(fin), "piece exists; refusing to clobber");
-        int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
-        require(fd >= 0, "create piece tmp");
-        auto wfull = [&](const void* d, U len) {
-            const char* q = (const char*)d;
-            while (len) { ssize_t z = ::write(fd, q, len); require(z > 0, "piece write"); q += z; len -= U(z); }
-        };
-        char hdr[44];
-        uint32_t magic = 0x31435250;  // "PRC1"
-        memcpy(hdr, &magic, 4);
-        memcpy(hdr + 4, &band, 8); memcpy(hdr + 12, &shard, 4);
-        memcpy(hdr + 16, &firstRun, 8); memcpy(hdr + 24, &rc, 8);
-        memcpy(hdr + 32, &w, 4); U zero = 0; memcpy(hdr + 36, &zero, 8);
-        wfull(hdr, 44);
-        wfull(chars.data(), rc);
-        wfull(lens.data(), 4 * rc);
-        // Pack heads/tails LSB-first (the ri4 sample convention); each piece
-        // is self-contained, so the reservoir drains fully here.
-        U bits = U(w) * rc, words = (bits + 63) / 64;
-        std::vector<U> out(words ? words : 1, 0);
-        auto pack = [&](const std::vector<U>& v) {
-            __uint128_t res = 0; unsigned avail = 0; U wi = 0;
-            for (U i = 0; i < rc; ++i) {
-                res |= __uint128_t(v[i]) << avail; avail += w;
-                if (avail >= 64) { out[wi++] = U(res); res >>= 64; avail -= 64; }
-            }
-            if (avail) out[wi] = U(res);
-        };
-        pack(heads);
-        wfull(out.data(), 8 * words);
-        pack(tails);
-        wfull(out.data(), 8 * words);
-        require(::close(fd) == 0, "close piece tmp");
-        require(::rename(tmp.c_str(), fin.c_str()) == 0, "publish piece");
+        v2_write_piece(dir, band, shard, firstRun, chars.data(), lens.data(),
+                       heads.data(), tails.data(), rc, w);
         chars.clear(); lens.clear(); heads.clear(); tails.clear();
     }
 };
@@ -5403,6 +5418,8 @@ static int radix_main(const std::string& path,const std::string& mapPath,const s
     return 0;
 }
 
+#include "binbwt_slice.h"
+
 int main_impl(int argc, char** argv) {
     std::signal(SIGABRT, abortHandler);
     G_T0 = now_sec();
@@ -5427,6 +5444,15 @@ int main_impl(int argc, char** argv) {
     if (has("--radix")) return radix_main(flag("--radix"),flag("--remap"),flag("--out-prefix"),
         flag("--radix-bytes").empty()?8:std::stoul(flag("--radix-bytes")),
         flag("--position-cap").empty()?32000000:std::stoull(flag("--position-cap")),threads);
+    if (has("--binbwt")) return binbwt_main(flag("--binbwt"),flag("--remap"),flag("--out-prefix"),
+        threads,
+        flag("--bin-leaf").empty()?24:std::stoull(flag("--bin-leaf")),
+        flag("--bin-depth-cap").empty()?16:std::stoull(flag("--bin-depth-cap")),
+        flag("--bin-live-cap").empty()?U(1)<<32:std::stoull(flag("--bin-live-cap")),
+        flag("--bin-level-bytes").empty()?1:std::stoull(flag("--bin-level-bytes")),
+        flag("--bin-mode")!="cyclic", has("--bin-freq-sched"),
+        flag("--bin-split").empty()?0:std::stoull(flag("--bin-split")),
+        flag("--bin-sink")=="serial");
     U kway = 2;
     if (!flag("--kway").empty()) {
         kway = std::stoull(flag("--kway"));

@@ -38,6 +38,11 @@
 #include <condition_variable>
 #include <shared_mutex>
 #include <sys/resource.h>
+#include <signal.h>
+#include <ucontext.h>
+#include <sys/time.h>
+#include <dlfcn.h>
+#include <elf.h>
 #include <map>
 #include <memory>
 #include <sys/stat.h>
@@ -67,13 +72,263 @@ static double G_T0 = tnow();
 #include <sys/wait.h>
 using namespace sxi;
 
-static void pf_fail(const std::string& msg) {
+// PER-UNIT (v3, finish-decomposed): every failure path in the fold and in the
+// verification loop is `[[cold]] [[noreturn]]` and OUT OF LINE. The fold's hot
+// functions (RepairStream::feed_raw, CorpusText::operator[], the fingerprint
+// ladder, Sweep::advance) otherwise each carry a few hundred bytes of
+// fprintf/printf-argument setup and a std::string construction in their own
+// body, which is instruction-cache and branch-density cost paid on EVERY row.
+// Literals take the const char* overload, so a passing check builds nothing.
+[[noreturn]] __attribute__((noinline, cold)) static void pf_fail(const char* msg) {
+    fprintf(stderr, "FATAL pile_finish: %s\n", msg);
+    exit(2);
+}
+[[noreturn]] __attribute__((noinline, cold)) static void pf_fail(const std::string& msg) {
     fprintf(stderr, "FATAL pile_finish: %s\n", msg.c_str());
     exit(2);
+}
+// MEASURE-FIRST (v3): the per-run/per-symbol checks below are the fold's hot
+// path, so the two-argument form MUST NOT build a std::string when it passes.
+// The old signature took `const std::string&`, i.e. every call site with a
+// literal constructed (and, past 15 chars, malloc'd + freed) a temporary on
+// every row - measured as the single largest per-unit cost of the serial
+// fold. The const char* overload is now the literal path; the std::string
+// overload survives for genuinely dynamic messages only.
+static void pf_check(bool ok, const char* msg) {
+    if (!ok) pf_fail(msg);
 }
 static void pf_check(bool ok, const std::string& msg) {
     if (!ok) pf_fail(msg);
 }
+
+// ------------------------------------------------ phase attribution + sampler
+// The finish is one serial thread plus one LCE pool; the question this run
+// exists to answer is WHERE that serial thread's nanoseconds go. Two
+// independent instruments, both self-hosted (perf_event_paranoid=4 forbids
+// perf(1) counters on this box):
+//   (a) a phase tag every instrumented region sets, plus per-phase
+//       getrusage//proc deltas (minflt/majflt = the page-cache miss proxy,
+//       /proc/self/io read_bytes = the device-read proxy);
+//   (b) an ITIMER_PROF sampler: SIGPROF is delivered to a running thread, the
+//       handler records the instruction pointer + the phase tag, and the dump
+//       resolves PCs to symbols with dladdr (build with -rdynamic). One sample
+//       = 1 ms of CPU anywhere in the process, so the histogram is a CPU-time
+//       profile of the whole pipeline, per phase.
+enum PfPhase { PF_IDLE = 0, PF_REPAIR, PF_READBAND, PF_PIECEWAIT, PF_LCE, PF_ADVANCE,
+              PF_M5, PF_M1, PF_SEAM, PF_PFCK, PF_EMIT, PF_NPHASE };
+static const char* const pf_phase_name[PF_NPHASE] = {
+    "idle", "repair", "readband", "piecewait", "lce", "advance", "m5", "m1", "seam", "pfck", "emit" };
+static std::atomic<int> g_pfPhase{PF_IDLE};
+struct PfPhaseScope {
+    int prev;
+    explicit PfPhaseScope(int p) : prev(g_pfPhase.load(std::memory_order_relaxed)) {
+        g_pfPhase.store(p, std::memory_order_relaxed);
+    }
+    ~PfPhaseScope() { g_pfPhase.store(prev, std::memory_order_relaxed); }
+};
+static bool pf_prof_on = false;
+static constexpr unsigned PF_PROF_SLOTS = 1u << 16;
+struct PfSample { std::atomic<uint64_t> pc{(uint64_t)-1}; std::atomic<uint64_t> count{0}; };
+static PfSample g_pfProf[PF_NPHASE][PF_PROF_SLOTS];
+static std::atomic<uint64_t> g_pfProfDrop{0};
+static void pf_prof_handler(int, siginfo_t*, void* ctx) {
+#if defined(__x86_64__)
+    ucontext_t* u = (ucontext_t*)ctx;
+    uint64_t pc = (uint64_t)u->uc_mcontext.gregs[REG_RIP];
+    int ph = g_pfPhase.load(std::memory_order_relaxed);
+    if (ph < 0 || ph >= PF_NPHASE) ph = PF_IDLE;
+    unsigned slot = unsigned((pc >> 2) * 2654435761u >> 16) & (PF_PROF_SLOTS - 1);
+    for (unsigned probe = 0; probe < 8; ++probe, slot = (slot + 1) & (PF_PROF_SLOTS - 1)) {
+        uint64_t cur = g_pfProf[ph][slot].pc.load(std::memory_order_relaxed);
+        if (cur == pc) { g_pfProf[ph][slot].count.fetch_add(1, std::memory_order_relaxed); return; }
+        if (cur == (uint64_t)-1 &&
+            g_pfProf[ph][slot].pc.compare_exchange_strong(cur, pc, std::memory_order_relaxed)) {
+            g_pfProf[ph][slot].count.fetch_add(1, std::memory_order_relaxed); return;
+        }
+    }
+    g_pfProfDrop.fetch_add(1, std::memory_order_relaxed);
+#else
+    (void)ctx;
+#endif
+}
+// Histogram dump: samples are 1 ms of CPU, so count/total is a CPU-time share.
+static void pf_prof_start() {
+    const char* env = getenv("PILE_FINISH_PROF");
+    if (!env || *env == '0') return;
+    struct sigaction sa {};
+    sa.sa_sigaction = pf_prof_handler;
+    sa.sa_flags = SA_SIGINFO | SA_RESTART;
+    sigemptyset(&sa.sa_mask);
+    pf_check(sigaction(SIGPROF, &sa, nullptr) == 0, "install SIGPROF sampler");
+    struct itimerval it {};
+    it.it_interval.tv_usec = 1000;
+    it.it_value.tv_usec = 1000;
+    pf_check(setitimer(ITIMER_PROF, &it, nullptr) == 0, "arm ITIMER_PROF sampler");
+    pf_prof_on = true;
+    fprintf(stderr, "PILE_FINISH_PROF on=1 period_ms=1 slots=%u rdynamic_symbols=1\n", PF_PROF_SLOTS);
+}
+struct PfProfRow { uint64_t pc, count; };
+// dladdr only sees GLOBAL symbols, and the finish's hot code is local
+// (lambdas, static helpers), so resolve against the ELF .symtab of our own
+// image instead: every STT_FUNC with a size, sorted by address.
+struct PfSym { uint64_t lo, hi, nameOff; };
+static std::vector<PfSym> g_pfSyms;
+static std::vector<char> g_pfSymStr;
+static void pf_load_symtab() {
+    if (!g_pfSyms.empty()) return;
+    FILE* f = fopen("/proc/self/exe", "rb");
+    if (!f) return;
+    Elf64_Ehdr eh {};
+    if (fread(&eh, sizeof eh, 1, f) != 1 || memcmp(eh.e_ident, ELFMAG, SELFMAG) != 0) { fclose(f); return; }
+    std::vector<Elf64_Shdr> sh(eh.e_shnum);
+    fseek(f, off_t(eh.e_shoff), SEEK_SET);
+    if (fread(sh.data(), sizeof(Elf64_Shdr), sh.size(), f) != sh.size()) { fclose(f); return; }
+    for (const auto& s : sh) {
+        if (s.sh_type != SHT_SYMTAB || !s.sh_entsize || !s.sh_size || s.sh_link >= sh.size()) continue;
+        const auto& strsh = sh[s.sh_link];
+        g_pfSymStr.resize(strsh.sh_size);
+        fseek(f, off_t(strsh.sh_offset), SEEK_SET);
+        if (fread(g_pfSymStr.data(), 1, g_pfSymStr.size(), f) != g_pfSymStr.size()) break;
+        std::vector<Elf64_Sym> sym(s.sh_size / sizeof(Elf64_Sym));
+        fseek(f, off_t(s.sh_offset), SEEK_SET);
+        if (fread(sym.data(), sizeof(Elf64_Sym), sym.size(), f) != sym.size()) break;
+        for (const auto& y : sym) {
+            if (ELF64_ST_TYPE(y.st_info) != STT_FUNC || !y.st_size || !y.st_name) continue;
+            if (y.st_name >= g_pfSymStr.size()) continue;
+            g_pfSyms.push_back({y.st_value, y.st_value + y.st_size, y.st_name});
+        }
+        std::sort(g_pfSyms.begin(), g_pfSyms.end(), [](const PfSym& a, const PfSym& b) { return a.lo < b.lo; });
+        break;
+    }
+    fclose(f);
+    fprintf(stderr, "PILE_FINISH_PROF_SYMTAB funcs=%zu\n", g_pfSyms.size());
+}
+static const char* pf_sym_of(uint64_t pc, uint64_t& off) {
+    size_t lo = 0, hi = g_pfSyms.size();
+    while (lo < hi) { size_t mid = (lo + hi) / 2; if (g_pfSyms[mid].lo <= pc) lo = mid + 1; else hi = mid; }
+    if (!lo) { off = 0; return "?"; }
+    for (size_t i = lo; i-- > 0 && i + 8 > lo;) {
+        if (pc >= g_pfSyms[i].lo && pc < g_pfSyms[i].hi) {
+            off = pc - g_pfSyms[i].lo;
+            const char* n = g_pfSymStr.data() + g_pfSyms[i].nameOff;
+            // Demangle-ish: strip nothing, but prefer the readable tail of
+            // an Itanium-mangled name is not attempted; the offset is enough.
+            return n;
+        }
+        if (i == 0) break;
+    }
+    off = 0;
+    Dl_info info {};
+    if (dladdr((void*)pc, &info) && info.dli_sname) { off = pc - (uint64_t)info.dli_saddr; return info.dli_sname; }
+    return "?";
+}
+static void pf_prof_dump(const char* label) {
+    if (!pf_prof_on) return;
+    struct itimerval off {};
+    setitimer(ITIMER_PROF, &off, nullptr);
+    pf_load_symtab();
+    double total = 0;
+    std::vector<PfProfRow> rows[PF_NPHASE];
+    for (int ph = 0; ph < PF_NPHASE; ++ph) {
+        for (unsigned s = 0; s < PF_PROF_SLOTS; ++s) {
+            uint64_t c = g_pfProf[ph][s].count.load(std::memory_order_relaxed);
+            if (!c) continue;
+            rows[ph].push_back({g_pfProf[ph][s].pc.load(std::memory_order_relaxed), c});
+            total += double(c);
+        }
+        std::sort(rows[ph].begin(), rows[ph].end(), [](const PfProfRow& a, const PfProfRow& b) { return a.count > b.count; });
+    }
+    fprintf(stderr, "PILE_FINISH_PROF_DUMP %s samples=%.0f dropped=%llu\n", label, total,
+            (unsigned long long)g_pfProfDrop.load());
+    for (int ph = 0; ph < PF_NPHASE; ++ph) {
+        uint64_t phTotal = 0;
+        for (const auto& r : rows[ph]) phTotal += r.count;
+        if (!phTotal) continue;
+        fprintf(stderr, "PILE_FINISH_PROF_PHASE phase=%s samples=%llu of_total=%.2f%%\n",
+                pf_phase_name[ph], (unsigned long long)phTotal,
+                total ? 100.0 * double(phTotal) / total : 0.0);
+        for (size_t i = 0; i < rows[ph].size() && i < 8; ++i) {
+            uint64_t off = 0;
+            const char* name = pf_sym_of(rows[ph][i].pc, off);
+            fprintf(stderr, "PILE_FINISH_PROF phase=%s in_phase=%.2f%% of_cpu=%.2f%% samples=%llu sym=%s+%llu\n",
+                    pf_phase_name[ph], 100.0 * double(rows[ph][i].count) / double(phTotal),
+                    total ? 100.0 * double(rows[ph][i].count) / total : 0.0,
+                    (unsigned long long)rows[ph][i].count, name, (unsigned long long)off);
+        }
+    }
+}
+// Kernel+user accounting deltas: minor/major faults (page-cache/TLB misses on
+// the mmap'd corpus) and bytes actually pulled from devices.
+struct PfProcSnap { uint64_t minflt = 0, majflt = 0, readBytes = 0, rchar = 0; };
+static PfProcSnap pf_proc_snap() {
+    PfProcSnap s;
+    struct rusage ru {};
+    if (getrusage(RUSAGE_SELF, &ru) == 0) { s.minflt = uint64_t(ru.ru_minflt); s.majflt = uint64_t(ru.ru_majflt); }
+    FILE* f = fopen("/proc/self/io", "r");
+    if (f) {
+        char line[256];
+        while (fgets(line, sizeof line, f)) {
+            unsigned long long v = 0;
+            if (sscanf(line, "read_bytes: %llu", &v) == 1) s.readBytes = v;
+            else if (sscanf(line, "rchar: %llu", &v) == 1) s.rchar = v;
+        }
+        fclose(f);
+    }
+    return s;
+}
+// One instrumented region: wall + CPU + fault/IO deltas + the caller's own
+// per-unit counters. Rates are printed only when the denominator is real.
+struct PfRegion {
+    const char* name;
+    double t0 = 0, cpu0 = 0;
+    int prevPhase = PF_IDLE;
+    PfProcSnap snap0{};
+    PfRegion(const char* n, int p) : name(n) {
+        prevPhase = g_pfPhase.load(std::memory_order_relaxed);
+        g_pfPhase.store(p, std::memory_order_relaxed);
+        struct rusage ru {};
+        getrusage(RUSAGE_SELF, &ru);
+        cpu0 = double(ru.ru_utime.tv_sec) + 1e-6 * double(ru.ru_utime.tv_usec) +
+               double(ru.ru_stime.tv_sec) + 1e-6 * double(ru.ru_stime.tv_usec);
+        snap0 = pf_proc_snap();
+        t0 = tnow();
+    }
+    double wall = 0, cpu = 0;
+    uint64_t minflt = 0, majflt = 0, readBytes = 0;
+    void close() {
+        wall = tnow() - t0;
+        struct rusage ru {};
+        getrusage(RUSAGE_SELF, &ru);
+        cpu = double(ru.ru_utime.tv_sec) + 1e-6 * double(ru.ru_utime.tv_usec) +
+              double(ru.ru_stime.tv_sec) + 1e-6 * double(ru.ru_stime.tv_usec) - cpu0;
+        PfProcSnap s = pf_proc_snap();
+        minflt = s.minflt - snap0.minflt; majflt = s.majflt - snap0.majflt;
+        readBytes = s.readBytes - snap0.readBytes;
+        g_pfPhase.store(prevPhase, std::memory_order_relaxed);
+    }
+    void report(uint64_t units, const char* unitName) const {
+        fprintf(stderr, "PILE_FINISH_REGION %s wall=%.3f cpu=%.3f minflt=%llu majflt=%llu dev_read=%llu units=%llu %s_ns=%.2f\n",
+                name, wall, cpu, (unsigned long long)minflt, (unsigned long long)majflt,
+                (unsigned long long)readBytes, (unsigned long long)units, unitName,
+                units ? 1e9 * wall / double(units) : 0.0);
+    }
+};
+// Sum over many short regions (one per band / one per buffer).
+struct PfAcc {
+    const char* name;
+    double wall = 0, cpu = 0;
+    uint64_t minflt = 0, majflt = 0, readBytes = 0;
+    explicit PfAcc(const char* n) : name(n) {}
+    void add(const PfRegion& r) {
+        wall += r.wall; cpu += r.cpu; minflt += r.minflt; majflt += r.majflt; readBytes += r.readBytes;
+    }
+    void report(const char* unitName, uint64_t units) const {
+        fprintf(stderr, "PILE_FINISH_REGION %s wall=%.3f cpu=%.3f minflt=%llu majflt=%llu dev_read=%llu units=%llu %s_ns=%.2f\n",
+                name, wall, cpu, (unsigned long long)minflt, (unsigned long long)majflt,
+                (unsigned long long)readBytes, (unsigned long long)units, unitName,
+                units ? 1e9 * wall / double(units) : 0.0);
+    }
+};
 static void phase(const char* name, double& last) {
     fprintf(stderr, "PILE_FINISH_PHASE %s wall=%.3f cumulative=%.3f\n", name, tnow() - last, tnow() - G_T0);
     last = tnow();
@@ -118,6 +373,30 @@ static void load_remap_table(const std::string& path, uint8_t out[256]) {
 }
 
 // ------------------------------------------------------- corpus adapter
+// Corpus-access profile (MEASURE-FIRST). Per thread: number of adapter reads
+// and number of 4 KiB page TRANSITIONS between consecutive reads. A page hop is
+// the honest miss proxy the corpus path can produce without perf counters: one
+// hop = a new TLB/page-cache entry to resolve, so hops/calls is the locality of
+// what each phase actually asks for. Cache-line padded (adjacent threads must
+// not share a line just because they both charge) and thread-indexed through
+// slim_tid(), which the finish's LCE pool already registers.
+struct alignas(64) PfAccessStat { uint64_t calls = 0, hops = 0, lastPage = ~0ull; };
+static constexpr unsigned PF_ACCESS_TIDS = 512;
+static std::array<PfAccessStat, PF_ACCESS_TIDS> g_pfAccess{};
+static std::atomic<bool> g_pfAccessOn{false};
+static inline void pf_access_charge(uint64_t i) {
+    PfAccessStat& a = g_pfAccess[slim_tid()];
+    ++a.calls;
+    uint64_t page = i >> 12;
+    if (page != a.lastPage) { ++a.hops; a.lastPage = page; }
+}
+static void pf_access_totals(uint64_t& calls, uint64_t& hops) {
+    calls = hops = 0;
+    for (unsigned t = 0; t < PF_ACCESS_TIDS; ++t) { calls += g_pfAccess[t].calls; hops += g_pfAccess[t].hops; }
+}
+static void pf_access_reset() {
+    for (unsigned t = 0; t < PF_ACCESS_TIDS; ++t) { g_pfAccess[t].calls = 0; g_pfAccess[t].hops = 0; g_pfAccess[t].lastPage = ~0ull; }
+}
 struct CorpusText {
     int fd = -1;
     uint64_t size_ = 0;
@@ -203,6 +482,7 @@ struct CorpusText {
     }
     uint8_t operator[](uint64_t i) const {
         if (i >= size_) pf_fail("corpus adapter bounds");
+        if (g_pfAccessOn.load(std::memory_order_relaxed)) pf_access_charge(i);
         if (cmap) return remap[cmap[i]];
         {
             // Shared readers pin mappings through the byte read; only misses evict.
@@ -1208,6 +1488,20 @@ static int selftest_seam_spool(const std::string& directory) {
 }
 
 // ---------------------------------------------------------- repair stream
+// sol6b dependency audit: repair is NOT intrinsically a corpus-wide serial
+// recurrence. rows/row are additive prefix coordinates; next is a cursor in
+// sorted, disjoint seam intervals (a chunk may binary-search its entry class).
+// srcPending and pending are the two boundary coalescers, with head from the
+// left and tail from the right. A seam interval crossing a chunk must retain
+// its entry/exit flank and insert cl.runs exactly once at cl.lo. Counts and
+// character totals reduce additively after boundary merges. Dollar/padding
+// guards need the absolute raw-row prefix and the preceding terminal count.
+// Thus independent normalization needs BOTH pending runs and prefix metadata,
+// not merely independently invoking feed_raw with a fresh RepairStream.
+// In streaming mode class readiness is still required before local repair;
+// ready_band's bounded extent/terminal assertion supplies that dependency.
+// The default stays serial. The opt-in exact-checkpoint scheduler below
+// validates the carry but retains a serial planner; it is not a speed claim.
 struct NRun { uint8_t c; uint64_t len, h, t; };
 struct RepairStream {
     uint64_t N = 0, n = 0, w1 = 10, terminal = 0;
@@ -1233,17 +1527,26 @@ struct RepairStream {
                 (unsigned long long)head, (unsigned long long)tail, (unsigned long long)terminal);
         pf_fail("unsupported PFP padding boundary");
     }
-    void append(const NRun& v) {
+    // PER-UNIT (finish-decomposed): the sink is a template parameter on the hot
+    // path. `emit` is a std::function, i.e. an indirect call that cannot inline
+    // the run's bookkeeping into the transducer; the band loop passes its sink
+    // directly, so emitOne/append/seamSplice/feed_raw fold into one specialised
+    // straight-line body per call site. The std::function overloads survive for
+    // the replay, the chunk planner and the selftests, and are byte-for-byte the
+    // same semantics (they pass `emit` as the sink).
+    template<class Sink> void append(const NRun& v, Sink& sink) {
         if (!v.len) return;
         if (have && pending.c == v.c) { pending.len += v.len; pending.t = v.t; }
-        else { if (have) emitOne(); pending = v; have = true; }
+        else { if (have) emitOne(sink); pending = v; have = true; }
     }
-    void emitOne() {
+    template<class Sink> void emitOne(Sink& sink) {
         ++rNorm; nNorm += pending.len;
         totals[pending.c] += pending.len;
         ++runFreq[pending.c];
-        emit(pending);
+        sink(pending);
     }
+    void append(const NRun& v) { append(v, emit); }
+    void emitOne() { emitOne(emit); }
     RawRun trim_padding(const RawRun& in, uint64_t row2) const {
         RawRun v = in;
         if (row2 >= w1) return v;
@@ -1261,7 +1564,8 @@ struct RepairStream {
         }
         return v;
     }
-    void feed_raw(const RawRun& raw) {
+    void feed_raw(const RawRun& raw) { feed_raw(raw, emit); }
+    template<class Sink> void feed_raw(const RawRun& raw, Sink& sink) {
         if (!firstRunSeen) {
             firstRunSeen = true;
             if (sampleChecks)
@@ -1294,25 +1598,26 @@ struct RepairStream {
         pf_check(v.c != 1 && v.c != 2 && v.c != 3 && v.c != 4, "unsupported text alphabet");
         if (srcHave && srcPending.c == v.c) { srcPending.len += v.len; srcPending.tail = v.tail; }
         else {
-            if (srcHave) seamSplice({srcPending.c, srcPending.len, srcPending.head, srcPending.tail});
+            if (srcHave) seamSplice({srcPending.c, srcPending.len, srcPending.head, srcPending.tail}, sink);
             srcPending = v; srcHave = true;
         }
     }
-    void seamSplice(NRun v) {
+    void seamSplice(NRun v) { seamSplice(v, emit); }
+    template<class Sink> void seamSplice(NRun v, Sink& sink) {
         uint64_t end = row + v.len;
         while (row < end) {
             if (seam && next < seam->classes.size() && row >= seam->classes[next].lo) {
                 SeamClass& cl = seam->classes[next];
                 if (row == cl.lo)
                     for (const auto& piece : cl.runs)
-                        append({piece.c, piece.len, piece.head, piece.tail});
+                        append({piece.c, piece.len, piece.head, piece.tail}, sink);
                 row = std::min(end, cl.hi);
                 if (row == cl.hi) { v.h = cl.after; ++next; }
             } else {
                 uint64_t stop = (seam && next < seam->classes.size()) ? std::min(end, seam->classes[next].lo) : end;
                 NRun piece{v.c, stop - row, v.h, v.t};
                 if (stop < end && seam) piece.t = seam->classes[next].before;
-                append(piece);
+                append(piece, sink);
                 row = stop;
             }
         }
@@ -1448,6 +1753,81 @@ struct Sweep {
         threshold_reset(-1, scratch);
     }
 };
+
+// A cold terminal state is not a chunk transducer: it forgets when an
+// incoming requirement would have fired. Keep this executable counterexample
+// beside the production machine; do not replace the sweep with a fold of
+// cold chunk states. The safe associative object is the state TRANSFORMATION
+// (including ordered output), not Sweep's terminal rr_* columns.
+static int selftest_sweep_monoid() {
+    auto same = [](const Sweep& a, const Sweep& b) {
+        return a.n == b.n && a.bigN == b.bigN && a.chi == b.chi &&
+            a.previous_interior == b.previous_interior && a.m == b.m &&
+            a.p == b.p && a.p_sa_last == b.p_sa_last && a.first == b.first &&
+            std::equal(a.rr_len, a.rr_len + 256, b.rr_len) &&
+            std::equal(a.rr_pos, a.rr_pos + 256, b.rr_pos) &&
+            std::equal(a.rr_act, a.rr_act + 256, b.rr_act);
+    };
+    const std::array<NRun, 3> chunk{{{5,2,9,10}, {6,1,11,11}, {5,1,12,12}}};
+    auto chunkRun = [&](Sweep& s, uint64_t firstInterior) {
+        s.advance(chunk[0], 1, firstInterior);
+        s.advance(chunk[1], 1, INF);
+        s.advance(chunk[2], 0, INF);
+    };
+    std::vector<uint64_t> coldA, coldB, warmA, warmB;
+    Sweep a(100), b(100);
+    a.emitWitness = [&](uint64_t x) { coldA.push_back(x); };
+    b.emitWitness = [&](uint64_t x) { coldB.push_back(x); };
+    chunkRun(a, 0); chunkRun(b, 1);
+    pf_check(same(a,b) && coldA == coldB, "cold chunk collision");
+    Sweep c(100), d(100);
+    c.emitWitness = [&](uint64_t x) { warmA.push_back(x); };
+    d.emitWitness = [&](uint64_t x) { warmB.push_back(x); };
+    for (Sweep* s : {&c, &d}) {
+        s->advance({7,1,20,20}, 0, INF);
+        s->advance({8,1,21,21}, 1, INF);
+    }
+    chunkRun(c, 0); chunkRun(d, 1);
+    pf_check(coldA == std::vector<uint64_t>({90,89}) &&
+             warmA == std::vector<uint64_t>({91,80,79,90,89}) &&
+             warmB == std::vector<uint64_t>({91,89,80,79}), "warm chunk counterexample");
+    std::printf("SWEEP_COLD_SUMMARY_COUNTEREXAMPLE cold=[90,89] warm_A=[91,80,79,90,89] warm_B=[91,89,80,79] incoming_prefix=7:20,8:21 chunk=5:9-10,6:11,5:12 top=1,1,0 interior_A=0,INF,INF interior_B=1,INF,INF\n");
+
+    // Verify the exact state-carry/replay law at every split. This is the
+    // baseline any bounded summary must reproduce, NOT a parallel speedup.
+    uint64_t rng = 0x6b20261014ull, cases = 0;
+    auto draw = [&]() { rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17; return rng; };
+    for (unsigned trial = 0; trial < 2048; ++trial) {
+        size_t count = trial % 33;
+        std::vector<NRun> runs;
+        std::vector<uint64_t> top, interior;
+        const uint8_t alphabet[] = {0,5,6,7,255};
+        for (size_t i = 0; i < count; ++i) {
+            uint8_t ch = alphabet[draw()%5];
+            uint64_t len = 1 + draw()%3, h = draw()%100, t = len == 1 ? h : draw()%100;
+            runs.push_back({ch,len,h,t}); top.push_back(draw()%8);
+            interior.push_back(len == 1 ? INF : draw()%8);
+        }
+        std::vector<uint64_t> expected;
+        Sweep reference(100);
+        reference.emitWitness = [&](uint64_t x) { expected.push_back(x); };
+        for (size_t i = 0; i < count; ++i) reference.advance(runs[i],top[i],interior[i]);
+        reference.finish();
+        for (size_t cut = 0; cut <= count; ++cut) {
+            std::vector<uint64_t> actual;
+            Sweep left(100);
+            left.emitWitness = [&](uint64_t x) { actual.push_back(x); };
+            for (size_t i = 0; i < cut; ++i) left.advance(runs[i],top[i],interior[i]);
+            Sweep right = left; // full entry state, no intermediate flush
+            for (size_t i = cut; i < count; ++i) right.advance(runs[i],top[i],interior[i]);
+            right.finish();
+            pf_check(actual == expected && same(right,reference), "state carry replay law");
+            ++cases;
+        }
+    }
+    std::printf("SWEEP_STATE_CARRY_ORACLE_PASS streams=2048 splits=%llu NUL=1 byte05=1 singleton=1 periodic_colors=1 empty=1 ordered_witnesses=1 final_state=1\n", (unsigned long long)cases);
+    return 0;
+}
 
 // ----------------------------------------------------------- witness buckets
 // VALUE-RANGE buckets: the sweep appends each witness to its bucket's RAM
@@ -1843,12 +2223,27 @@ struct FinishPool {
             }
         });
     }
-    void run(std::function<void(int)> job) {
+    // finish-decomposed: the barrier is split so a caller can DISPATCH a job
+    // and keep working (the ordered fold of the next band) before waiting for
+    // it. start()/wait() must strictly alternate; a second start() without a
+    // wait() would clobber `remaining` and silently drop half the job.
+    std::atomic<bool> dispatched{false};
+    void start(std::function<void(int)> job) {
         std::unique_lock<std::mutex> lock(mutex);
+        pf_check(!dispatched.load(std::memory_order_relaxed), "finish pool dispatched twice without wait");
         task = std::move(job); remaining = workers.size(); ++generation;
+        dispatched.store(true, std::memory_order_relaxed);
         work.notify_all();
+    }
+    void wait() {
+        std::unique_lock<std::mutex> lock(mutex);
         complete.wait(lock, [&] { return remaining == 0; });
         task = {};
+        dispatched.store(false, std::memory_order_relaxed);
+    }
+    void run(std::function<void(int)> job) {
+        start(std::move(job));
+        wait();
     }
     ~FinishPool() {
         { std::lock_guard<std::mutex> lock(mutex); stopping = true; }
@@ -1856,6 +2251,138 @@ struct FinishPool {
         for (auto& worker : workers) worker.join();
     }
 };
+
+// Exact checkpoints are a correctness baseline for parallel repair. The planner
+// deliberately runs the existing transducer: copying it captures BOTH pending
+// coalescers, raw/normalized prefixes, dollar/padding guards, class cursor and
+// entry/exit flanks (in the immutable, ready seam table). This first version
+// duplicates repair work; keep it opt-in until a cheaper planner is measured.
+static bool repair_state_equal(const RepairStream& a, const RepairStream& b) {
+    return a.rows == b.rows && a.row == b.row && a.next == b.next &&
+        a.srcHave == b.srcHave && (!a.srcHave ||
+        (a.srcPending.c == b.srcPending.c && a.srcPending.len == b.srcPending.len &&
+         a.srcPending.head == b.srcPending.head && a.srcPending.tail == b.srcPending.tail)) &&
+        a.have == b.have && (!a.have || (a.pending.c == b.pending.c &&
+         a.pending.len == b.pending.len && a.pending.h == b.pending.h && a.pending.t == b.pending.t)) &&
+        a.certified == b.certified && a.dollarSeen == b.dollarSeen &&
+        a.zeroes == b.zeroes && a.beforeTerminal == b.beforeTerminal &&
+        a.firstRunSeen == b.firstRunSeen && a.rNorm == b.rNorm &&
+        a.nNorm == b.nNorm && a.totals == b.totals && a.runFreq == b.runFreq;
+}
+static std::array<double, 3> repair_chunks(RepairStream& rs, const std::vector<RawRun>& raw,
+                          FinishPool& pool, size_t chunkRuns) {
+    const double begin = tnow();
+    pf_check(chunkRuns > 0, "zero repair chunk");
+    struct Chunk {
+        RepairStream entry, exit;
+        size_t lo, hi;
+        std::vector<NRun> output;
+    };
+    std::vector<Chunk> chunks;
+    auto emit = rs.emit;
+    rs.emit = [](const NRun&) {};
+    for (size_t lo = 0; lo < raw.size(); lo += chunkRuns) {
+        size_t hi = std::min(raw.size(), lo + chunkRuns);
+        RepairStream entry = rs;
+        for (size_t i = lo; i < hi; ++i) rs.feed_raw(raw[i]);
+        chunks.push_back({std::move(entry), rs, lo, hi, {}});
+    }
+    // One already-ready band bounds both checkpoint storage and reorder output.
+    // No worker reads beyond that band or changes readiness/consumption gating.
+    const double planned = tnow();
+    std::atomic<size_t> next{0};
+    pool.run([&](int) {
+        for (;;) {
+            size_t i = next.fetch_add(1);
+            if (i >= chunks.size()) break;
+            auto& chunk = chunks[i];
+            RepairStream local = chunk.entry;
+            local.emit = [&](const NRun& run) { chunk.output.push_back(run); };
+            for (size_t j = chunk.lo; j < chunk.hi; ++j) local.feed_raw(raw[j]);
+            pf_check(repair_state_equal(local, chunk.exit), "repair checkpoint replay mismatch");
+        }
+    });
+    const double repaired = tnow();
+    const uint64_t finalR = rs.rNorm;
+    rs.emit = emit;
+    for (const auto& chunk : chunks) {
+        rs.rNorm = chunk.entry.rNorm;
+        for (const auto& run : chunk.output) { ++rs.rNorm; emit(run); }
+        pf_check(rs.rNorm == chunk.exit.rNorm, "repair chunk output count");
+    }
+    rs.rNorm = finalR;
+    return {planned - begin, repaired - planned, tnow() - repaired};
+}
+
+static int selftest_repair_chunks() {
+    FinishPool pool(4);
+    uint64_t cases = 0;
+    for (unsigned seed = 0; seed < 128; ++seed) {
+        // Separate and straddling padding; adjacent equal raw chars; dollar
+        // rewriting into the terminal; legal 0x00/0x05 bytes. Every split is
+        // exercised, including both sides of each class and its flanks.
+        std::vector<RawRun> raw{{9,1,64,64}, {2,9,65,73}};
+        if (seed & 1) raw.back() = {2,10,65,0};
+        uint64_t n = (seed & 1) ? 1 : 0;
+        if (!(seed & 1)) ++n;
+        for (unsigned i = 0; i < 24; ++i) {
+            uint8_t alphabet[] = {0,5,9,10};
+            uint64_t len = 1 + ((seed * 17 + i * 13) % 4);
+            raw.push_back({alphabet[((i / (1 + seed % 3)) + seed) % 4],len,1 + i, len == 1 ? 1 + i : 25 + i});
+            if (!(seed & 1) && i == seed % 24) raw.push_back({2,1,0,0});
+            n += len;
+        }
+        raw.front().head = raw.front().tail = n;
+        SeamClasses seam;
+        if (seed & 2) {
+            seam.classes.push_back({2,5,1,17,19,{},{{5,1,7,7},{0,2,8,9}}});
+            seam.classes.push_back({8,12,1,21,23,{},{{9,4,11,13}}});
+        }
+        std::vector<NRun> expected;
+        RepairStream initial; initial.N=n+10; initial.n=n; initial.terminal=9; initial.seam=&seam;
+        initial.emit = [&](const NRun& r) { expected.push_back(r); };
+        RepairStream serial=initial;
+        for (const auto& r : raw) serial.feed_raw(r);
+        serial.finishStream();
+        for (size_t width=1; width<=raw.size(); ++width) {
+            std::vector<NRun> actual;
+            RepairStream test=initial;
+            test.emit = [&](const NRun& r) { actual.push_back(r); };
+            repair_chunks(test,raw,pool,width);
+            test.finishStream();
+            pf_check(repair_state_equal(serial,test), "repair oracle final state");
+            pf_check(expected.size()==actual.size(), "repair oracle run count");
+            for (size_t i=0; i<actual.size(); ++i)
+                pf_check(expected[i].c==actual[i].c && expected[i].len==actual[i].len &&
+                         expected[i].h==actual[i].h && expected[i].t==actual[i].t,
+                         "repair oracle serialized run bytes");
+            ++cases;
+        }
+    }
+    printf("CHUNKED_REPAIR_ORACLE_PASS streams=128 widths=%llu workers=4 both_coalescers=1 class_flanks=1 padding_straddle=1 dollar=1 legal_00_05=1\n", (unsigned long long)cases);
+    return 0;
+}
+
+// CPU-only attribution: the legacy repair timer also charges producer waits,
+// class rebuilds and piece I/O, so it cannot by itself measure this scheduler.
+static int benchmark_repair_chunks() {
+    constexpr uint64_t count = 1u << 20;
+    std::vector<RawRun> raw{{9,1,count+1,count+1},{2,9,0,0},{2,1,0,0}};
+    for (uint64_t i=0; i<count; ++i) raw.push_back({uint8_t(i%2 ? 5 : 9),1,1,1});
+    RepairStream initial; initial.N=count+11; initial.n=count+1; initial.terminal=9;
+    initial.emit=[](const NRun&) {};
+    auto serial=initial;
+    double begin=tnow();
+    for (const auto& r:raw) serial.feed_raw(r);
+    double serialWall=tnow()-begin;
+    FinishPool pool(16);
+    auto parallel=initial;
+    auto wall=repair_chunks(parallel,raw,pool,4096);
+    pf_check(repair_state_equal(serial,parallel), "repair benchmark state");
+    fprintf(stdout,"REPAIR_CHUNK_CPU_BENCH runs=%zu threads=16 chunk_runs=4096 serial=%.6f planner=%.6f workers=%.6f ordered_drain=%.6f duplicated_planner_work=1\n",
+            raw.size(),serialWall,wall[0],wall[1],wall[2]);
+    return 0;
+}
 
 // ------------------------------------------------------------- LCE wrapper
 // Cyclic collection_lce over the corpus adapter (SlimLCEParseFree's cyclic
@@ -1895,10 +2422,14 @@ static void fp_self_check(SlimFingerprint<CorpusText>& fh, const CorpusText& tex
 
 int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::string(argv[1]) == "--benchmark-repair-chunks") return benchmark_repair_chunks();
+        if (argc == 2 && std::string(argv[1]) == "--selftest-repair-chunks") return selftest_repair_chunks();
+        if (argc == 2 && std::string(argv[1]) == "--selftest-sweep-monoid") return selftest_sweep_monoid();
         if (argc == 3 && std::string(argv[1]) == "--selftest-seam-spool") return selftest_seam_spool(argv[2]);
         std::string prefix, corpus, remap, out, bridgeDir, sampleCheck, wmPath;
         uint64_t chiExpect = 0, sampleCount = 1024, pollTimeout = 86400, ramBudget = 1ull << 30;
         int threads = int(std::thread::hardware_concurrency());
+        uint64_t repairChunkRuns = 0; // experimental exact-checkpoint planner
         bool keepRlebwt = false, keepPfck = false;
         for (int i = 1; i < argc; ++i) {
             std::string a = argv[i];
@@ -1913,6 +2444,7 @@ int main(int argc, char** argv) {
             else if (a == "--bridge-dir") bridgeDir = need("--bridge-dir");
             else if (a == "--witness-sample-check") sampleCheck = need("--witness-sample-check");
             else if (a == "--wm") wmPath = need("--wm");
+            else if (a == "--repair-chunk-runs") repairChunkRuns = strtoull(need("--repair-chunk-runs").c_str(), nullptr, 10);
             else if (a == "--chi-expect") chiExpect = strtoull(need("--chi-expect").c_str(), nullptr, 10);
             else if (a == "--sample-count") sampleCount = strtoull(need("--sample-count").c_str(), nullptr, 10);
             else if (a == "--poll-timeout") pollTimeout = strtoull(need("--poll-timeout").c_str(), nullptr, 10);
@@ -1925,8 +2457,12 @@ int main(int argc, char** argv) {
         pf_check(!prefix.empty() && !corpus.empty() && !remap.empty() && !out.empty(),
                  "usage: pile_finish --prefix MERGED/frag --corpus CORPUS --remap MAP.bin --output CONTAINER.sxi2 "
                  "[--bridge-dir DIR] [--witness-sample-check BANKED.sA] [--chi-expect N] [--threads N] "
-                 "[--keep-rlebwt] [--keep-pfck] [--poll-timeout S]");
+                 "[--keep-rlebwt] [--keep-pfck] [--poll-timeout S] [--repair-chunk-runs N]");
+        pf_check(!repairChunkRuns || repairChunkRuns >= 1024, "experimental repair chunks require at least 1024 runs");
         double last = tnow();
+        pf_prof_start();
+        if (const char* acc = getenv("PILE_FINISH_ACCESS"))
+            g_pfAccessOn.store(*acc && *acc != '0', std::memory_order_relaxed);
         uint8_t remapTable[256];
         load_remap_table(remap, remapTable);
         PieceSource src;
@@ -2107,13 +2643,35 @@ int main(int argc, char** argv) {
 
         Sweep sweep(n);
         LceWrap slimLce{&fhSlim, {}, n};
-        std::vector<NRun> nbuf;
-        std::vector<uint64_t> gidx;   // global normalized run index per nbuf entry
-        std::vector<uint64_t> topLcp, interior;
+        // finish-decomposed: one band's buffered fold output (the runs the
+        // repair transducer emitted for that band, their global run indices,
+        // and the LCE columns the verification stage fills in). Two of these
+        // exist so band k's VERIFICATION can run on the pool while band k+1's
+        // STATE MAINTENANCE (feed_raw) runs on this thread. A slot is a pure
+        // per-band buffer: nothing in it is a summary of a boundary, and the
+        // exact transducer state (rs) still transits every band on one thread.
+        struct BandSlot {
+            std::vector<NRun> nbuf;
+            std::vector<uint64_t> gidx;   // global normalized run index per nbuf entry
+            std::vector<uint64_t> topLcp, interior;
+            std::vector<RawRun> raws;
+            uint64_t prevTail = 0;
+            size_t cnt = 0;
+            explicit BandSlot(size_t reserve) { nbuf.reserve(reserve); gidx.reserve(reserve); }
+        };
+        BandSlot slots[2]{BandSlot(1 << 17), BandSlot(1 << 17)};
+        BandSlot* feedTarget = &slots[0];
         uint64_t prevTail = 0;
         RepairStream rs;
         rs.N = N; rs.n = n; rs.terminal = 0; rs.seam = &seam;
-        rs.emit = [&](const NRun& v) {
+        // The band loop's sink. Passed DIRECTLY as the transducer's template sink
+        // (hot path, inlined) and also installed as rs.emit for the final flush,
+        // so both paths emit through identical code.
+        auto bandSink = [&](const NRun& v) {
+            // Sub-phase tag: the sampler separates the transducer's own work
+            // from the sink callback below (this store is ~1 ns/run and is the
+            // only cost the instrument adds to the fold).
+            g_pfPhase.store(PF_EMIT, std::memory_order_relaxed);
             // emitOne() has already incremented rNorm: this run's global
             // index is rNorm-1 (0-based; sparse m11 tails live at indices
             // 0, 1024, 2048, ...).
@@ -2125,9 +2683,11 @@ int main(int argc, char** argv) {
                 pf_write_full(bLensFd, &len32, 4, "bridge lens");
                 bridgeTailWrite(v.t);
             }
-            nbuf.push_back(v);
-            gidx.push_back(idx);
+            feedTarget->nbuf.push_back(v);
+            feedTarget->gidx.push_back(idx);
+            g_pfPhase.store(PF_REPAIR, std::memory_order_relaxed);
         };
+        rs.emit = bandSink;
         sweep.emitWitness = [&](uint64_t value) {
             buckets.add(value);
             if (bridge) pf_write_full(bSAFd, &value, 8, "bridge sA");
@@ -2135,59 +2695,132 @@ int main(int argc, char** argv) {
 
         // ---- main band loop: pieces -> repair -> LCE -> sweep -> witnesses
         double lceWall = 0, repairWall = 0, advanceWall = 0;
-        std::vector<RawRun> raws;
+        // v3 attribution: the repair wall is a pacing diagnostic that absorbs
+        // piece-wait; these split it into WAIT (polling the producer's wire) and
+        // WORK (band decode + the repair transducer), and count the units each
+        // one moves so every wall has a per-unit rate.
+        double waitWall = 0, readWall = 0, feedWall = 0, rlebwtWaitWall = 0;
+        PfAcc waitAcc{"piece-wait"}, readAcc{"readband"}, feedAcc{"repair-feed"};
+        PfAcc lceAcc{"lce"}, advAcc{"advance-witness"};
+        uint64_t rawRunsFed = 0, bandReads = 0, advRuns = 0;
+        pf_access_reset();
+        std::array<double, 3> repairChunkWall{};
         uint64_t nbands = (R + src.B - 1) / src.B;
         uint64_t expectedRlebwtBytes = 0;
-        FinishPool pool(std::max(1, std::min(threads, 256)));
-        // LCE + sweep advance for the buffered runs (nbuf/gidx, in stream
-        // order). Used per band AND for the repair stream's final flush -
-        // the state machine must see every one of the rNorm runs.
-        auto processBuffer = [&]() {
-            if (nbuf.empty()) return;
-            size_t cnt = nbuf.size();
-            topLcp.assign(cnt, 0);
-            interior.assign(cnt, INF);
+        // The verification pool. Default is --threads (the gate's knob); the
+        // env override exists only to measure the fold/verification contention
+        // curve, and at 100m it says 96 beats 64 and 48 (the verification is the
+        // binding term, so giving it fewer threads is strictly worse).
+        int poolThreads = std::max(1, std::min(threads, 256));
+        if (const char* pt = getenv("PILE_FINISH_POOL")) {
+            long v = std::strtol(pt, nullptr, 10);
+            pf_check(v >= 1 && v <= 256, "PILE_FINISH_POOL out of range");
+            poolThreads = int(v);
+        }
+        FinishPool pool(poolThreads);
+        if (repairChunkRuns) fprintf(stderr, "PILE_FINISH_REPAIR_CHUNKS runs=%llu reorder=one_ready_band planner=exact_serial_replay experimental=1\n", (unsigned long long)repairChunkRuns);
+        // sol6b audit: the top/interior query set for a band is a pure function
+        // of that band's own buffered runs (its head/tail SA coordinates, its
+        // gidx, and the previous band's last tail). It does not read the
+        // transducer, the seam cursor, or any producer state, which is exactly
+        // why it can be moved off this thread without changing one query.
+        //
+        // ---- the fold rides the verification (finish-decomposed) ----------
+        // STEP 0 measured the defect: read -> feed_raw (SERIAL) -> LCE (92x
+        // parallel) -> advance (SERIAL) were strictly serialised per band, so
+        // the sweep wall was the SUM of a parallel stage and two serial ones.
+        // The verification of band k is a pure function of that band's own
+        // buffered runs (its head/tail SA coordinates, its gidx, the previous
+        // band's last tail - the sol6b audit) plus the immutable corpus and
+        // PFCK sidecar, so it can run on the pool while the ordered fold
+        // (feed_raw) of band k+1 proceeds on this thread. The query multiset,
+        // its order and its arguments are unchanged; only the schedule moves.
+        auto lceJob = [&](BandSlot& s) {
+            size_t cnt = s.cnt;
+            std::vector<NRun>& nb = s.nbuf;
+            std::vector<uint64_t>& gx = s.gidx;
+            uint64_t prevTailS = s.prevTail;
+            // The claim counter MUST be shared by every worker of this job:
+            // a per-thread local would make each worker walk the whole band
+            // (96x the queries, which the seam-work journal refuses loudly).
+            auto next = std::make_shared<std::atomic<size_t>>(0);
+            return std::function<void(int)>([&, cnt, &nb, &gx, prevTailS, next](int t) {
+                slim_set_thread_shard(unsigned(t));
+                for (;;) {
+                    size_t i = next->fetch_add(1);
+                    if (i >= cnt) break;
+                    const NRun& v = nb[i];
+                    uint64_t first = v.h, tail = v.t;
+                    pf_check(first < n, "position resolution failed");
+                    if (v.len == 1) pf_check(first == tail, "head-SA value/range or singleton mismatch");
+                    pf_check(tail < n, "position resolution failed");
+                    uint64_t prev = gx[i] == 0 ? 0 : (i ? nb[i - 1].t : prevTailS);
+                    pf_check(prev < n, "previous position resolution failed");
+                    s.topLcp[i] = gx[i] ? slimLce(prev, first) : 0;
+                    s.interior[i] = v.len == 1 ? INF : slimLce(first, tail);
+                }
+                slimLce.flush_thread();
+            });
+        };
+        // Verification dispatched, ordered fold continues on this thread.
+        BandSlot* lcePending = nullptr;
+        double lceStart = 0, lceWaitWall = 0, overlapWorkWall = 0;
+        auto dispatchLce = [&](BandSlot& s) {
+            pf_check(!lcePending, "lce already dispatched");
+            s.topLcp.assign(s.cnt, 0);
+            s.interior.assign(s.cnt, INF);
+            lcePending = &s;
+            lceStart = tnow();
+            pool.start(lceJob(s));
+        };
+        auto awaitLce = [&]() {
+            if (!lcePending) return;
             double t0 = tnow();
-            {
-                std::atomic<size_t> next{0};
-                pool.run([&](int t) {
-                        slim_set_thread_shard(unsigned(t));
-                        for (;;) {
-                            size_t i = next.fetch_add(1);
-                            if (i >= cnt) break;
-                            const NRun& v = nbuf[i];
-                            uint64_t first = v.h, tail = v.t;
-                            pf_check(first < n, "position resolution failed");
-                            if (v.len == 1) pf_check(first == tail, "head-SA value/range or singleton mismatch");
-                            pf_check(tail < n, "position resolution failed");
-                            uint64_t prev = gidx[i] == 0 ? 0 : (i ? nbuf[i - 1].t : prevTail);
-                            pf_check(prev < n, "previous position resolution failed");
-                            topLcp[i] = gidx[i] ? slimLce(prev, first) : 0;
-                            interior[i] = v.len == 1 ? INF : slimLce(first, tail);
-                        }
-                        slimLce.flush_thread();
-                    });
-            }
-            lceWall += tnow() - t0;
+            pool.wait();
+            lceWaitWall += tnow() - t0;
+            lceWall += tnow() - lceStart;
+            lcePending = nullptr;
+        };
+        // Stage 3 (serial, ordered): the state machine must see every run in
+        // stream order and the witnesses must reach the buckets in the same
+        // order as before; only this stage may not move.
+        auto finishAdvance = [&](BandSlot& s) {
+            if (!s.cnt) return;
             if (bridge)
-                for (size_t i = 0; i < cnt; ++i) {
-                    pf_write_full(bTopFd, &topLcp[i], 8, "bridge top");
-                    uint64_t iv = interior[i] == INF ? ~uint64_t(0) : interior[i];
+                for (size_t i = 0; i < s.cnt; ++i) {
+                    pf_write_full(bTopFd, &s.topLcp[i], 8, "bridge top");
+                    uint64_t iv = s.interior[i] == INF ? ~uint64_t(0) : s.interior[i];
                     pf_write_full(bIntFd, &iv, 8, "bridge int");
                 }
             {
+                PfRegion r("advance-witness", PF_ADVANCE);
                 double ta = tnow();
-                for (size_t i = 0; i < cnt; ++i) sweep.advance(nbuf[i], topLcp[i], interior[i]);
+                for (size_t i = 0; i < s.cnt; ++i) sweep.advance(s.nbuf[i], s.topLcp[i], s.interior[i]);
                 advanceWall += tnow() - ta;
+                r.close(); advAcc.add(r);
             }
-            prevTail = nbuf.back().t;
-            nbuf.clear();
-            gidx.clear();
+            advRuns += s.cnt;
+            // prevTail belongs to the FEED stage (it is the last tail emitted by
+            // the most recently fed band, i.e. the neighbour for the next
+            // band's first query). It must NOT be written here: with the
+            // pipeline the next band is fed BEFORE this advance runs, so
+            // restamping it from an older slot silently changes one top-LCP
+            // query per band boundary (measured: +571 witnesses at 100m).
+            s.nbuf.clear();
+            s.gidx.clear();
+            s.cnt = 0;
         };
-        for (uint64_t band = 0; src.streaming || band < nbands; ++band) {
+        // Stage 1 (serial, ordered): the exact transducer transits every band
+        // boundary on this thread - no summaries, no cold reconstruction.
+        auto feed = [&](uint64_t band, BandSlot& s) -> bool {
             double t0 = tnow();
+            double tw = 0;
             if (src.streaming) {
-                if (!src.ready_band(band)) break;
+                {
+                    PfRegion r("ready-band", PF_PIECEWAIT);
+                    if (!src.ready_band(band)) { r.close(); return false; }
+                    r.close(); waitAcc.add(r); tw += r.wall;
+                }
                 SeamClasses batch; batch.fromSpool = true; batch.depth = src.depth;
                 while (src.delivered < src.completed.size()) {
                     const auto& values = src.completed[src.delivered++];
@@ -2202,41 +2835,167 @@ int main(int argc, char** argv) {
                 }
                 if (src.terminal) { R=src.R; nbands=src.finalBand+1; }
             }
-            src.read_band(band, raws);
+            {
+                PfRegion r("readband", PF_READBAND);
+                src.read_band(band, s.raws);
+                r.close(); readAcc.add(r); readWall += r.wall;
+            }
+            waitWall += tw;
+            ++bandReads;
             if (band == 0) {
-                pf_check(!raws.empty() && raws[0].len == 1, "run zero is not the terminal padding row");
-                rs.terminal = raws[0].c;
+                pf_check(!s.raws.empty() && s.raws[0].len == 1, "run zero is not the terminal padding row");
+                rs.terminal = s.raws[0].c;
                 pf_check(rs.terminal >= 6 && rs.terminal < 256, "unsupported terminal byte");
                 fprintf(stderr, "PFP_TERMINAL byte=0x%02llx source=padding-row raw_n=%llu raw_r=%llu\n",
                         (unsigned long long)rs.terminal, (unsigned long long)N, (unsigned long long)R);
             }
-            for (const auto& raw : raws) {
-                expectedRlebwtBytes += 4 * ((raw.len + 0x7fffff - 1) / 0x7fffff);
-                rs.feed_raw(raw);
+            s.prevTail = prevTail;
+            pf_check(s.nbuf.empty() && s.gidx.empty(), "band slot not empty at feed");
+            feedTarget = &s;
+            {
+                PfRegion r("repair-feed", PF_REPAIR);
+                for (const auto& raw : s.raws) {
+                    expectedRlebwtBytes += 4 * ((raw.len + 0x7fffff - 1) / 0x7fffff);
+                    if (!repairChunkRuns) rs.feed_raw(raw, bandSink);
+                }
+                r.close(); feedAcc.add(r); feedWall += r.wall;
+            }
+            rawRunsFed += s.raws.size();
+            if (repairChunkRuns) {
+                auto wall = repair_chunks(rs, s.raws, pool, repairChunkRuns);
+                for (size_t i=0; i<wall.size(); ++i) repairChunkWall[i] += wall[i];
             }
             repairWall += tnow() - t0;
-            if (nbuf.empty()) { if (src.streaming) src.consumed_band(band); continue; }
-            processBuffer();
+            s.cnt = s.nbuf.size();
+            if (s.cnt) prevTail = s.nbuf.back().t;
+            // Flow credit. read_stream_band already unlinked this band's piece
+            // and copied its raw runs into RAM; the transducer has consumed
+            // them; everything left for this band (LCE + advance) touches only
+            // this slot. Declaring consumption here - one stage earlier than
+            // the pre-decomposition loop - is what lets the producer publish
+            // band k+1 while this band's VERIFICATION is still running, and it
+            // keeps consumed(k) BEFORE ready(k+1) so a W=1 window cannot
+            // deadlock. The wire shape is untouched (one integer, one file).
             if (src.streaming) src.consumed_band(band);
+            return true;
+        };
+        // Pipeline depth 1: the ordered stages alternate with the verification
+        // of the previous band. `pipelined` is off only for the experimental
+        // exact-checkpoint planner, which reuses the same pool internally.
+        const bool pipelined = !repairChunkRuns;
+        uint64_t band = 0;
+        int cur = 0;
+        bool active = feed(band, slots[cur]);
+        if (active && slots[cur].cnt) dispatchLce(slots[cur]);
+        while (active) {
+            int nxt = cur ^ 1;
+            bool more = false;
+            // In streaming mode the band count is the producer's to grow, so
+            // the next feed is always attempted and ready_band answers; in
+            // file mode the band count is fixed here.
+            bool wantNext = src.streaming || band + 1 < nbands;
+            if (wantNext) {
+                if (pipelined) {
+                    double t0 = tnow();
+                    // State maintenance of band k+1 runs while band k's
+                    // verification finishes.
+                    more = feed(band + 1, slots[nxt]);
+                    overlapWorkWall += tnow() - t0;
+                    awaitLce();
+                    // Start the NEXT verification before the ordered advance:
+                    // advance(k) needs only slot k's finished columns and
+                    // slot k+1 is already fed and waiting, so the serial
+                    // advance no longer costs a band's worth of verification
+                    // slot (measured: the fold alone is 29 ns/raw run, the
+                    // verification is 13 ms/band, so leaving the pool idle
+                    // through the advance was the largest remaining hole).
+                    if (more && slots[nxt].cnt) dispatchLce(slots[nxt]);
+                } else {
+                    awaitLce();
+                    more = feed(band + 1, slots[nxt]);
+                }
+            } else {
+                awaitLce();
+            }
+            finishAdvance(slots[cur]);
             if ((band & 63) == 0)
-                fprintf(stderr, "PILE_FINISH_PROGRESS band=%llu/%llu runs=%llu chi_so_far=%llu repair_wall=%.1f lce_wall=%.1f advance_wall=%.1f wit_spills=%llu\n",
+                fprintf(stderr, "PILE_FINISH_PROGRESS band=%llu/%llu runs=%llu chi_so_far=%llu repair_wall=%.1f lce_wall=%.1f lce_wait=%.1f advance_wall=%.1f wit_spills=%llu\n",
                         (unsigned long long)(band + 1), (unsigned long long)nbands,
                         (unsigned long long)rs.rNorm, (unsigned long long)sweep.chi,
-                        repairWall, lceWall, advanceWall, (unsigned long long)buckets.spilled);
+                        repairWall, lceWall, lceWaitWall, advanceWall, (unsigned long long)buckets.spilled);
+            if (!more) break;
+            cur = nxt;
+            ++band;
         }
+        awaitLce();
         // The repair stream's final flush (the coalesced tail runs held
         // back for char-merge parity) must advance the sweep exactly like
         // the band runs: the state machine needs ALL rNorm runs (v1 feeds
         // every run; the production sweep's last events live here).
         rs.finishStream();
-        if (!nbuf.empty()) processBuffer();
+        // The final flush's coalesced tail runs continue the LAST band's slot:
+        // it is empty and its prevTail is that band's last emitted tail, so the
+        // same query coordinates apply. Verification + advance run here, after
+        // every band has been through both stages.
         {
+            BandSlot& tail = *feedTarget;
+            // finishStream() has ALREADY appended the held-back coalesced tail
+            // runs to this slot's nbuf; what must hold is that the slot was
+            // emptied by the last advance (cnt == 0), so those runs are the
+            // only content and their neighbour is prevTail.
+            pf_check(tail.cnt == 0, "tail slot carry");
+            tail.cnt = tail.nbuf.size();
+            if (tail.cnt) {
+                // The tail runs continue after the LAST band's last emitted run,
+                // so the neighbour for the first tail query is that run's tail
+                // (prevTail), NOT this slot's stale pre-band capture. Getting
+                // this wrong changes exactly one top-LCP query per run and the
+                // verified-symbol journal catches it even when the container
+                // does not (measured: -4 symbols, identical chi and bytes).
+                tail.prevTail = prevTail;
+                tail.topLcp.assign(tail.cnt, 0);
+                tail.interior.assign(tail.cnt, INF);
+                lcePending = &tail;
+                lceStart = tnow();
+                pool.run(lceJob(tail));
+                lceWall += tnow() - lceStart;
+                lcePending = nullptr;
+                finishAdvance(tail);
+            }
+        }
+        {
+            PfRegion r("advance-finish", PF_ADVANCE);
             double ta = tnow();
             sweep.finish();
             advanceWall += tnow() - ta;
+            r.close(); advAcc.add(r);
         }
         fprintf(stderr, "SWEEP_PHASE_WALLS repair=%.1f lce=%.1f advance_witness=%.1f lce_threads=%d\n",
                 repairWall, lceWall, advanceWall, std::max(1, std::min(threads, 256)));
+        // v3 anatomy: repairWall = pieceWait + bandRead + feed + residual.
+        waitAcc.report("bands", bandReads);
+        readAcc.report("raw_runs", rawRunsFed);
+        feedAcc.report("raw_runs", rawRunsFed);
+        lceAcc.report("runs", advRuns);
+        advAcc.report("runs", advRuns);
+        fprintf(stderr, "PILE_FINISH_REGION lce-span wall=%.3f waited=%.3f overlapped=%.3f units=%llu runs_ns=%.2f\n",
+                lceWall, lceWaitWall, std::max(0.0, lceWall - lceWaitWall),
+                (unsigned long long)advRuns, advRuns ? 1e9 * lceWall / double(advRuns) : 0.0);
+        fprintf(stderr, "PILE_FINISH_OVERLAP feed_spans=%.3f lce_spans=%.3f exposed_lce=%.3f serial_fold=%.3f\n",
+                overlapWorkWall, lceWall, lceWaitWall, feedWall + advanceWall + readWall + lceWaitWall);
+        {
+            uint64_t calls = 0, hops = 0;
+            pf_access_totals(calls, hops);
+            fprintf(stderr, "PILE_FINISH_SWEEP_ANATOMY piecewait=%.3f readband=%.3f feed=%.3f repair_total=%.3f raw_runs=%llu bands=%llu rlebwt_wait=%.3f ns_per_raw_run=%.2f\n",
+                    waitWall, readWall, feedWall, repairWall,
+                    (unsigned long long)rawRunsFed, (unsigned long long)bandReads, rlebwtWaitWall,
+                    rawRunsFed ? 1e9 * feedWall / double(rawRunsFed) : 0.0);
+            fprintf(stderr, "PILE_FINISH_CORPUS_ACCESS phase=sweep calls=%llu page_hops=%llu hop_rate=%.4f ns_per_call=%.2f\n",
+                    (unsigned long long)calls, (unsigned long long)hops,
+                    calls ? double(hops) / double(calls) : 0.0,
+                    calls ? 1e9 * (lceWall + feedWall) / double(calls) : 0.0);
+        }
+        if (repairChunkRuns) fprintf(stderr, "REPAIR_CHUNK_PHASE_WALLS planner=%.3f workers=%.3f ordered_drain=%.3f outer_includes_readiness_and_piece_IO=1\n", repairChunkWall[0], repairChunkWall[1], repairChunkWall[2]);
         // Success-path budget reports (the refusal path always printed these;
         // the pile-week convergence needs the measured verified-symbol and
         // ladder-probe counts to attribute the LCE wall honestly).
@@ -2297,14 +3056,14 @@ int main(int argc, char** argv) {
         // ---- m5 EF over the sorted bucket stream
         ContainerOut container(out, 6);
         {
+            PfRegion r("m5-ef", PF_M5);
             unsigned l = chi ? unsigned(std::max(0, int(std::log2(double(n + 1) / double(chi))))) : 0;
             if (l > 63) l = 63;
             uint64_t lowbits = chi * l, highbits = chi ? (n >> l) + chi + 1 : 0;
             BitsOut low(prefix + ".bits-low"), high(prefix + ".bits-high");
             uint64_t i = 0, hpos = 0, prev = ~0ull;
             size_t sidx = 0;
-            buckets.presort_parallel(threads);
-            buckets.for_each_sorted([&](uint64_t v) {
+            auto emitWitness = [&](uint64_t v) {
                 pf_check(prev == ~0ull || v > prev, "witnesses not strictly increasing");
                 prev = v;
                 low.lsb(v, l);
@@ -2315,7 +3074,46 @@ int main(int argc, char** argv) {
                 while (sidx < wantSamples.size() && wantSamples[sidx] < v)
                     pf_fail("sampled banked witness missing from the v2 stream: " + std::to_string(wantSamples[sidx]));
                 if (sidx < wantSamples.size() && wantSamples[sidx] == v) ++sidx;
-            });
+            };
+            // finish-decomposed (m5): the witness set is already VALUE-RANGE
+            // bucketed in RAM under the budget. When nothing spilled, sorting
+            // each bucket in parallel and walking the buckets in range order is
+            // the IDENTICAL sorted stream, and the old path's spill-all +
+            // pread/varint merge (1.4 GB written and re-read at 1 GB, ~17 s)
+            // buys nothing. Strictly-increasing is asserted row by row either
+            // way, so a bucketing or order mistake is refused, not written.
+            const bool resident = buckets.spilled == 0;
+            {
+                PfRegion rp(resident ? "m5-sort" : "m5-presort", PF_M5);
+                if (resident) {
+                    std::atomic<uint64_t> nextBucket{0};
+                    pool.run([&](int) {
+                        for (;;) {
+                            uint64_t b = nextBucket.fetch_add(1);
+                            if (b >= buckets.P) break;
+                            std::sort(buckets.buf[b].begin(), buckets.buf[b].end());
+                        }
+                    });
+                } else {
+                    buckets.presort_parallel(threads);
+                }
+                rp.close(); rp.report(buckets.totalValues, "witnesses");
+            }
+            {
+                PfRegion re("m5-encode", PF_M5);
+                if (resident) {
+                    for (uint64_t b = 0; b < buckets.P; ++b) {
+                        for (uint64_t v : buckets.buf[b]) emitWitness(v);
+                        std::vector<uint64_t>().swap(buckets.buf[b]);   // release as we go
+                    }
+                } else {
+                    buckets.for_each_sorted(emitWitness);
+                }
+                re.close(); re.report(i, "witnesses");
+            }
+            fprintf(stderr, "PILE_FINISH_WITNESS_PATH resident=%d buckets=%llu spilled=%llu values=%llu\n",
+                    int(resident), (unsigned long long)buckets.P,
+                    (unsigned long long)buckets.spilled, (unsigned long long)buckets.totalValues);
             if (highbits > hpos) { high.putzeros(highbits - hpos); hpos = highbits; }
             pf_check(i == chi, "EF count");
             pf_check(low.bitPos == lowbits && high.bitPos == highbits, "EF dimensions");
@@ -2326,6 +3124,7 @@ int main(int argc, char** argv) {
             container.num(l); container.num(lowbits); container.num(highbits);
             low.copyTo(container);
             high.copyTo(container);
+            r.close(); r.report(i, "witnesses");
         }
         if (!wantSamples.empty())
             fprintf(stderr, "WITNESS_SAMPLE_CHECK samples=%zu passed=1\n", wantSamples.size());
@@ -2364,6 +3163,7 @@ int main(int argc, char** argv) {
         // (the repair replayed sample-free: the normalized chars/lens are a
         // deterministic function of the raw runs and the class table).
         {
+            PfRegion rM1("m1-runs", PF_M1);
             std::array<uint64_t, 256> freqC{};
             uint64_t freqTotal = 0;
             for (unsigned c = 0; c < 256; ++c) { freqC[c] = rs.runFreq[c]; freqTotal += rs.runFreq[c]; }
@@ -2407,6 +3207,7 @@ int main(int argc, char** argv) {
             BitsOut headBits(prefix + ".bits-head"), lenBits(prefix + ".bits-len");
             uint64_t replayRuns = 0;
             {
+                PfRegion rw("m1-rlebwt-wait", PF_M1);
                 // Barrier: the merge publishes the rlebwt body only after
                 // every piece band is emitted (the ordered segment
                 // concatenation is the emission's last step). The sweep's
@@ -2423,8 +3224,10 @@ int main(int argc, char** argv) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(100));
                     waited += 0.1;
                 }
+                rw.close(); rw.report(expectedRlebwtBytes, "bytes");
             }
             {
+                PfRegion rr("m1-replay", PF_M1);
                 RepairStream rs2;
                 rs2.N = N; rs2.n = n; rs2.terminal = rs.terminal; rs2.seam = &seam;
                 rs2.sampleChecks = false;
@@ -2469,6 +3272,7 @@ int main(int argc, char** argv) {
                 for (unsigned c = 0; c < 256; ++c)
                     pf_check(rs2.totals[c] == rs.totals[c] && rs2.runFreq[c] == rs.runFreq[c],
                              "m1 replay divergence on char " + std::to_string(c));
+                rr.close(); rr.report(replayRuns, "runs");
             }
             headBits.pad();
             lenBits.pad();
@@ -2481,6 +3285,7 @@ int main(int argc, char** argv) {
             container.num(lenBits.bitPos);
             headBits.copyTo(container);
             lenBits.copyTo(container);
+            rM1.close(); rM1.report(rNorm, "runs");
         }
         phase("m1-runs", last);
 
@@ -2517,6 +3322,7 @@ int main(int argc, char** argv) {
         }
         fprintf(stderr, "PILE_FINISH_DONE chi=%llu n=%llu r=%llu container=%s\n",
                 (unsigned long long)chi, (unsigned long long)n, (unsigned long long)rNorm, out.c_str());
+        pf_prof_dump("finish");
         return 0;
     } catch (const std::exception& e) {
         fprintf(stderr, "FATAL pile_finish: %s\n", e.what());
