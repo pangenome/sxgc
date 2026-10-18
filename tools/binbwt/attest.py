@@ -9,7 +9,8 @@ def parse(log):
     kv={}
     for tok in m.group(0).split()[1:]:
         k,_,v=tok.partition('=')
-        kv[k]=float(v) if ('.' in v or 'e' in v) else int(v)
+        try: kv[k]=float(v) if ('.' in v or 'e' in v) else int(v)
+        except ValueError: kv[k]=v   # e.g. sink=parallel-v2
     return kv,m.group(0)
 def main(roots):
     for root in roots:
@@ -34,6 +35,21 @@ def main(roots):
                        f"producer_rc={res.get('producer_rc')} finish_rc={res.get('finish_rc')} cmp_rc={res.get('cmp_rc')}"))
         checks.append(('work charged',w['comparisons']>0 and w['symbols']>=w['comparisons'],
                        f"comparisons={w['comparisons']} symbols={w['symbols']}"))
+        # The canonical fill invariant: scheduling must never change the work.
+        # These are the banked v1 (serial sink) values for the same corpus; a
+        # parallel sink that moved one comparison or symbol changed the
+        # construction and this fails loudly.
+        banked={'100m':(319751186,7214408208),'1b':(3612105756,112713502363)}[res['size']]
+        checks.append(('construction counters bit-identical to v1',
+                       w['comparisons']==banked[0] and w['symbols']==banked[1],
+                       f"comparisons={w['comparisons']} (v1 {banked[0]}) "
+                       f"symbols={w['symbols']} (v1 {banked[1]}) sink={w.get('sink','?')}"))
+        if w.get('sink')=='parallel-v2':
+            checks.append(('rows published by the parallel sink',
+                           w['runs']>0 and w['bands']>0 and w['runs']>=w['bands'],
+                           f"runs={w['runs']} bands={w['bands']} writers={w.get('writers')} "
+                           f"stitch_s={w.get('stitch_s')} band_write_s={w.get('band_write_s')} "
+                           f"flow_wait_s={w.get('flow_wait_s')}"))
         ok=all(c[1] for c in checks)
         print(('ATTEST_PASS ' if ok else 'ATTEST_FAIL ')+r.name)
         for name,good,detail in checks:
