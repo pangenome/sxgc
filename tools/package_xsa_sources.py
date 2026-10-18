@@ -6,7 +6,7 @@ import shutil
 import json
 ROOT = Path(__file__).resolve().parents[1]
 DEST = ROOT / 'xsa/runtime'
-PATTERNS = ('bit6/*.hpp', 'bit6/pfp_ds_vendor/**/*.hpp',
+PATTERNS = ('bit6/*.hpp', 'bit6/binbwt_slice.h', 'bit6/pfp_ds_vendor/**/*.hpp',
             'bit6/chi_rspace_dump.cpp', 'bit6/rpfbwt_endpoints.cpp',
             'bit6/chunk_frontend.cpp', 'bit6/cross_lcp_merge.cpp',
             'bit6/pile_finish.cpp', 'bit6/check_pieces.c',
