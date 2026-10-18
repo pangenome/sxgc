@@ -120,5 +120,57 @@ int main(int argc, char** argv) {
                 "exact_brute_SA=1 multi_window_runs=%llu window_instances=%llu\n",
                 (unsigned long long)cases, fixtures.size(),
                 (unsigned long long)multiWindows, (unsigned long long)windows);
+    // ---- frequency-scheduled claim order (its own line, its own case set) ----
+    // `--bin-freq-sched` ranks a byte-1 bin's 2-gram sub-bins by size, which
+    // changes the CLAIM order and (with the batching) the job boundaries. The
+    // arena layout and therefore the product must not move, so the same brute
+    // order is required. Same corpus fixtures, both top levels, all three thread
+    // counts, and both cap regimes (1 window and every window).
+    U freqCases = 0, freqWindows = 0, freqMulti = 0;
+    for (U f = 0; f < fixtures.size(); ++f) {
+        const std::string& t = fixtures[f];
+        std::string M;
+        for (unsigned char c : t) M += char(remap[c]);
+        const std::string path = std::string(argv[1]) + "/oracle-corpus";
+        TextSeg seg; seg.path = path; seg.len = t.size(); seg.remap = remap;
+        { fs::remove(path); OutFile file(path); file.raw(t.data(), t.size()); }
+        CorpusText text; text.open({seg}, true);
+        for (bool dollar : {false, true}) {
+            auto want = brute(M, dollar);
+            U n = text.n;
+            for (U threads : {1u, 3u, 8u})
+                for (U leaf : {1u, 24u})
+                    for (U lb : {1u, 2u})
+                        for (U lc : std::array<U,2>{7, U(1) << 40}) {
+                            BinWork w;
+                            std::vector<U> got;
+                            got.reserve(n);
+                            bin_order(text, dollar, threads, leaf, 16, lc, lb, true, 0, w,
+                                      [&](U row, U p) {
+                                          require(row == got.size(), "freq oracle row continuity");
+                                          got.push_back(p);
+                                      });
+                            require(got.size() == n, "freq oracle row coverage");
+                            if (got != want) {
+                                std::fprintf(stderr,
+                                    "BINBWT_ORACLE_FREQ_FAIL fixture=%llu dollar=%u threads=%llu "
+                                    "leaf=%llu lb=%llu cap=%llu\n",
+                                    (unsigned long long)f, unsigned(dollar),
+                                    (unsigned long long)threads, (unsigned long long)leaf,
+                                    (unsigned long long)lb, (unsigned long long)lc);
+                                return 1;
+                            }
+                            freqWindows += w.windows;
+                            if (w.windows > 1) ++freqMulti;
+                            ++freqCases;
+                        }
+        }
+    }
+    std::printf("BINBWT_ORACLE_FREQ_PASS cases=%llu fixtures=%zu modes=cyclic,dollar "
+                "threads=1,3,8 leaf=1,24 depth_cap=16 level_bytes=1,2 cap=7,all "
+                "freq_sched=1 exact_brute_SA=1 multi_window_runs=%llu "
+                "window_instances=%llu\n",
+                (unsigned long long)freqCases, fixtures.size(),
+                (unsigned long long)freqMulti, (unsigned long long)freqWindows);
     return 0;
 }

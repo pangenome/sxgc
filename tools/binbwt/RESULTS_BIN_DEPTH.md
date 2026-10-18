@@ -70,7 +70,16 @@ BINBWT_ORACLE_PASS cases=36180 fixtures=134 modes=cyclic,dollar threads=1,3,8 le
 
 Both `--bin-level-bytes 1` and `2` are exercised, including the periodic, nested,
 single-byte, max-byte and non-identity-remap fixtures, and 22,500 multi-window
-instances. (4m15s old binary, 3m54s new.)
+instances. (4m15s old binary, 3m54s new; the case set is unchanged - the same
+line the v1/v2 reports banked.)
+
+`--bin-freq-sched` changes the claim order and the batched job boundaries, so it
+gets its own line over the same fixtures (its case set is additive; the 36,180
+above are untouched):
+
+```text
+BINBWT_ORACLE_FREQ_PASS cases=6432 fixtures=134 modes=cyclic,dollar threads=1,3,8 leaf=1,24 depth_cap=16 level_bytes=1,2 cap=7,all freq_sched=1 exact_brute_SA=1 multi_window_runs=2904 window_instances=33096
+```
 
 ### 100 MB, `--bin-level-bytes 2` (`gate.py 100m lbd2 96 4294967296`)
 
@@ -97,6 +106,18 @@ xsa chi-rspace: chi = 283296933 (N=1000000665, R=368036609) stream-agg=1 fused=1
 cmp product.sxi2 <bank> -> rc=0
 sha256 38f03eb43aaea5997819c8f7922a244a3eb0be945bf1d3b0feb1f2fd9d23144f  (== the bank)
 ```
+
+### 1 GB, `--bin-level-bytes 2 --bin-freq-sched` (`gate.py 1b lbd2freq 96 4294967296`)
+
+The scheduled + batched claim order must not move the product; it does not.
+
+```text
+{"size": "1b", ..., "producer_rc": 0, "finish_rc": 0, "cmp_rc": 0,
+ "producer_wall_s": 193.210, "total_wall_s": 313.548}
+BIN_WORK dollar=1 threads=96 level_bytes=2 leaf=24 depth_cap=16 freq_sched=1 split=0 bins=256 top_bins=25869 windows=1 sweep_bytes=2000001330 sweep_passes=2 level_passes=37097339 level_elems=10179725668 bin_passes=37097339 comparisons=3612105290 symbols=112713501609 cert_decided=68 ties=0 leaf_sorts=127119203 leaf_elems=925152076 peak_live_slots=2000001330 peak_live_bytes=16000010640 emitted_rows=1000000665 sweep_s=3.943 build_s=26.950 emit_s=161.230 total_s=191.957 ... wait_s=25.325 count_s=0.045 fill_s=3.898 sink=parallel-v2 runs=368036610 bands=5616 target_hits=213516 band_jobs=5616 writers=8 stitch_s=161.230 band_write_s=6.551 flow_wait_s=149.131 ...
+xsa chi-rspace: chi = 283296933 (N=1000000665, R=368036609) stream-agg=1 fused=1 corpus_lce=1
+cmp product.sxi2 <bank> -> rc=0
+sha256 38f03eb43aaea5997819c8f7922a244a3eb0be945bf1d3b0feb1f2fd9d23144f  (== the bank)
 
 **Counter identity against v2's 1 GB line:** emitted_rows 1000000665 (same),
 runs 368036610 (same), bands 5616 (same), target_hits 213516 (same), chi
@@ -292,8 +313,10 @@ The two levers these measurements rank, neither of them the top level:
   check; the split loop is single-level and would need the group-splitting loop
   the serial path shows before it could be offered.
 * The batched job (`BinJob::seg[4]`) is exercised only for sub-bins with
-  `m <= leaf`; the oracle covers it at leaf=1,4,24 through every fixture, but a
-  65K-sub-bin window at pile scale is not directly gated.
+  `m <= leaf`; the oracle covers it at leaf=1,24 through every fixture (both top
+  levels, threads 1/3/8, cap 7 and all) and the 1 GB frequency-scheduled gate
+  covers the 25,869-sub-bin window, but a pile-scale 65K-sub-bin window is not
+  directly gated.
 * Everything inherited stands: leaf LCE re-walks (now measured as the 10 GB
   symbol inflation), the `CORPUS_RAM_CACHE` dependency of the 1 GB gate rate
   (the 10 GB runs here were fully RAM-cached; a 1.31 TB corpus cannot be), and
