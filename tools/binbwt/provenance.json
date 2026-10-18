@@ -1,0 +1,20 @@
+{
+  "branch": "bin-bwt-v1",
+  "base": "b9e85ea",
+  "head": "bed0757c2144f6cd1fa899edf5f66b083406c5a4",
+  "sources": {
+    "bit6/cross_lcp_merge.cpp": "50509bccb96da9615c8153ec05cfbc7816a0d5d500fa263dbc054def15b2e45b",
+    "bit6/binbwt_slice.h": "5bed7a82c84ee897d67957f343b158eb69051ca607895000c9e92dfefe0078d1"
+  },
+  "binaries": {
+    "binbwt": "ca5255f609b5987fbc0d2731cf9cdf550c6855353143396c18ecb2908544d421",
+    "oracle": "f156c00b7dbdb28577f22fedde0fc5ba408684bdf173493b96c309caec6844aa",
+    "rowcost": "c02d0fcd61d27c14123535e41491d69292b9d0780bac7c67e2307efa97cd92a1"
+  },
+  "build": {
+    "binbwt": "c++ -O3 -std=c++17 -pthread bit6/cross_lcp_merge.cpp -latomic",
+    "oracle": "c++ -O2 -std=c++17 -pthread tools/binbwt/oracle.cpp -latomic",
+    "rowcost": "c++ -O3 -std=c++17 -pthread tools/binbwt/rowcost.cpp -latomic"
+  },
+  "note": "rebuilding bit6/cross_lcp_merge.cpp from this tree at -O3 reproduces the gated binbwt binary byte for byte"
+}
