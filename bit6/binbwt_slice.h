@@ -19,6 +19,16 @@ struct BinWork {
     U leafSorts = 0, leafElems = 0, singletonBins = 0;
     U peakLiveSlots = 0, peakLiveBytes = 0, emittedRows = 0;
     U builtBins = 0;
+    // ---- two-byte top level (level 1 = the byte-1 bins, level 2 = one more
+    // sequential 1-byte level) --------------------------------------------
+    U topBins = 0;                      // non-empty 2-gram sub-bins dispatched
+    // Hot-bin anatomy: the largest byte-1 bin of each window, told apart from
+    // the window totals (rows, the split's sub-bins, the busiest thread, the
+    // leaf work billed to that bin, and the wall from availability to done).
+    U hotRows = 0, hotBin = 0, hotTopBins = 0, hotSubMax = 0, hotWindows = 0;
+    U hotLeafSorts = 0, hotLeafElems = 0, hotLevelElems = 0;
+    U hotSymbols = 0, hotComparisons = 0;
+    double hotCpuS = 0, hotThreadS = 0, hotSpanS = 0;
     double tSweep = 0, tBuild = 0, tEmit = 0, cpuBuild = 0;
     double tAlloc = 0, tWait = 0;
     // ---- v2 parallel sink, charged SEPARATELY from construction -----------
@@ -37,6 +47,15 @@ struct BinWork {
         certDecided += o.certDecided; leafSorts += o.leafSorts;
         leafElems += o.leafElems; singletonBins += o.singletonBins;
         builtBins += o.builtBins;
+        topBins += o.topBins;
+        if (o.hotRows > hotRows) {
+            hotRows = o.hotRows; hotBin = o.hotBin; hotTopBins = o.hotTopBins;
+            hotSubMax = o.hotSubMax; hotLeafSorts = o.hotLeafSorts;
+            hotLeafElems = o.hotLeafElems; hotLevelElems = o.hotLevelElems;
+            hotSymbols = o.hotSymbols; hotComparisons = o.hotComparisons;
+            hotCpuS = o.hotCpuS; hotThreadS = o.hotThreadS; hotSpanS = o.hotSpanS;
+        }
+        hotWindows += o.hotWindows;
         peakLiveSlots = std::max(peakLiveSlots, o.peakLiveSlots);
         peakLiveBytes = std::max(peakLiveBytes, o.peakLiveBytes);
         emittedRows += o.emittedRows;
@@ -259,7 +278,55 @@ static U* bin_sort_rec(const CorpusText& t, bool dollar, U* src, U* dst, U m,
 // [canon, canon+m). src/dst are the basement pair of the bin slice; a task that
 // splits writes the children's regions into dst and hands them out, so leaf
 // tasks are independent and a bin's own tree is worked by many threads.
-struct BinTask { U* src; U* dst; U* canon; U m; U depth; unsigned bin; };
+struct BinTask { U* src; U* dst; U* canon; U m; U depth; unsigned bin; U key; };
+
+// One claimable unit of the window queue. Either the LEVEL-2 split of a byte-1
+// bin (`split`, one segment = the whole bin slice) or one to four independent
+// segments that all share `depth` (a batched group of small 2-gram sub-bins, or
+// a single sub-bin). Segments are disjoint equal-length slice pairs, so a batch
+// is just a loop of independent refinements on the claiming thread.
+struct BinSeg { U* src; U* dst; U* canon; U m; };
+struct BinJob {
+    U key = 0;
+    unsigned bin = 0;
+    U depth = 0;
+    unsigned segs = 0;
+    bool split = false;
+    BinSeg seg[4];
+};
+
+// One sequential 1-byte level of the TOP split, over a byte-1 bin's arena slice.
+// NEVER a 65,536-code table (the v1 measurement: 66,049 codes per coarse task
+// cost 10x CPU): 257 codes, one byte, exactly the code bin_sort_rec computes at
+// `depth`. Codes and offsets come back so the caller can dispatch the sub-bins
+// (and rank them when the queue is frequency scheduled). The scatter goes
+// arena -> scratch; a sub-bin's refinement then reads scratch and writes the
+// arena cell back, so this split does the same two passes the refinement's first
+// level would have done - no extra traffic, no copy back.
+static void bin_split1(const CorpusText& t, bool dollar, const U* src, U* dst,
+                       U m, U depth, std::array<U, 257>& count,
+                       std::array<U, 258>& start, BinWork& w) {
+    count.fill(0);
+    for (U i = 0; i < m; ++i) ++count[bin_code(t, dollar, src[i], depth, 1)];
+    ++w.levelPasses; w.levelElems += m;
+    U sum = 0;
+    for (U c = 0; c < 257; ++c) { start[c] = sum; sum += count[c]; }
+    require(sum == m, "bin top-level bucket coverage");
+    start[257] = m;
+    std::array<U, 257> fill;
+    for (U c = 0; c < 257; ++c) fill[c] = start[c];
+    for (U i = 0; i < m; ++i) {
+        const U word = src[i];
+        dst[fill[bin_code(t, dollar, word, depth, 1)]++] = word;
+    }
+    ++w.binPasses;
+    // Code 0 holds a dollar suffix that ends inside this node: at most one
+    // position here, but keep the exact rule bin_sort_rec uses (ascending length
+    // == descending tail) so the sub-bin is canonical whatever happens.
+    if (count[0] > 1)
+        std::sort(dst, dst + count[0],
+                  [](U a, U b) { return bin_word_tail(a) > bin_word_tail(b); });
+}
 
 template <class Push>
 static void bin_task_run(const CorpusText& t, bool dollar, const BinTask& tk,
@@ -307,18 +374,20 @@ static void bin_task_run(const CorpusText& t, bool dollar, const BinTask& tk,
     for (U c = 1; c < codes; ++c) {
         if (!count[c]) continue;
         push(BinTask{tk.dst + start[c], tk.src + start[c], tk.canon + start[c],
-                     count[c], tk.depth + levelBytes, tk.bin});
+                     count[c], tk.depth + levelBytes, tk.bin, tk.key});
     }
 }
 
-// One bin start-to-finish on the calling thread (used for --threads 1).
+// One bin start-to-finish on the calling thread (used for --threads 1). `depth`
+// is the prefix the slice's members already share (0 for a whole byte-1 bin, 1
+// for a 2-gram sub-bin of the top split).
 static void bin_build_serial(const CorpusText& t, bool dollar, U* slice, U* scratch,
-                             U m, U splitSize, U leafSize, U depthCap,
+                             U m, U depth, U splitSize, U leafSize, U depthCap,
                              U levelBytes, BinWork& w) {
     if (m <= 1) { ++w.singletonBins; ++w.builtBins; return; }
     std::vector<BinTask> stack;
     std::vector<BinTask> children;
-    stack.push_back(BinTask{slice, scratch, slice, m, 0, 0});
+    stack.push_back(BinTask{slice, scratch, slice, m, depth, 0, 0});
     while (!stack.empty()) {
         BinTask tk = stack.back();
         stack.pop_back();
@@ -344,6 +413,20 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize
     const U joinCount = joinTargets ? joinTargets->size() : 0;
     require(n && threads >= 1 && leafSize >= 1 && depthCap >= levelBytes &&
             levelBytes >= 1 && levelBytes <= 2, "bin-bwt parameters");
+    // ---- the TOP level's depth in bytes -------------------------------------
+    // levelBytes == 1: the fill pass alone is the top level (byte-1 bins), and a
+    // bin's refinement starts at depth 0 (the byte after the bin symbol).
+    // levelBytes == 2: the top level is TWO SEQUENTIAL 1-BYTE LEVELS - the
+    // existing byte-1 bins (level 1, the fill pass, 256 streams) plus one more
+    // 257-code split of each bin by its SECOND tail byte (level 2). The 2-gram
+    // sub-bins are then first-class queue units refined from depth 1, so every
+    // bin starts 256x smaller and one level shallower, and no 65,536-entry code
+    // table exists anywhere: the interior refinement always codes ONE byte per
+    // level (innerBytes). The partitioning is exactly the true 2-gram grouping
+    // and the concat order stays (byte1, byte2, tail), so the global consuming
+    // identity is unchanged.
+    const U topSplit = levelBytes - 1;          // extra 1-byte top levels
+    const U innerBytes = 1;                     // code tables are always 257
     if (!splitSize) splitSize = std::max<U>(4 * leafSize, n / (threads * 64));
     const U NT = std::max<U>(1, std::min<U>(threads, 64));
     // Corpus chunk split for the counting sweep; the fill sweep reuses the exact
@@ -481,27 +564,70 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize
             total.emittedRows += bins[c];
         };
         std::vector<BinWork> work(std::max<U>(1, threads));
+        // ---- per-bin attribution for the hot-bin anatomy journal -----------
+        // Billed per thread, per byte-1 bin, only so that the largest bin's
+        // construction wall and its leaf work can be told apart from the window
+        // totals (the operator's `--bin-level-bytes 2` question). Counting these
+        // deltas is a handful of adds per task, not per row.
+        struct BinStat {
+            U leafSorts = 0, leafElems = 0, levelElems = 0, symbols = 0;
+            U comparisons = 0, topBins = 0;
+            double busy = 0;
+        };
+        const U nw = std::max<U>(1, threads);
+        std::vector<std::array<BinStat, 256>> stats(nw);
+        std::array<U, 256> subCount{}, subMax{};
+        std::array<double, 256> claimT{}, doneT{};
+        claimT.fill(0); doneT.fill(0);
         if (threads == 1) {
             for (unsigned c = b0; c < b1; ++c) {
                 if (!bins[c]) continue;
                 const double t0 = now_sec();
-                bin_build_serial(text, dollar, arena.data() + off[c],
-                                 scratch.data() + off[c], bins[c], splitSize,
-                                 leafSize, depthCap, levelBytes, work[0]);
+                U* slice = arena.data() + off[c];
+                U* scr = scratch.data() + off[c];
+                const U m = bins[c];
+                U depth = 0;
+                std::array<U, 257> count{};
+                std::array<U, 258> start{};
+                if (topSplit && m > 1) {
+                    // Level 2 of the top level, inline: one 257-code byte, then
+                    // the sub-bins start one symbol deeper.
+                    bin_split1(text, dollar, slice, scr, m, 0, count, start, work[0]);
+                    std::memcpy(slice, scr, m * sizeof(U));
+                    depth = topSplit;
+                    U liveSub = 0;
+                    for (U cc = 0; cc < 257; ++cc)
+                        if (count[cc]) { ++liveSub; subMax[c] = std::max(subMax[c], count[cc]); }
+                    subCount[c] = liveSub;
+                    work[0].topBins += liveSub;
+                }
+                if (!topSplit)
+                    bin_build_serial(text, dollar, slice, scr, m, 0, splitSize,
+                                     leafSize, depthCap, innerBytes, work[0]);
+                else
+                    for (U cc = 0; cc < 257; ++cc)
+                        if (count[cc])
+                            bin_build_serial(text, dollar, slice + start[cc],
+                                             scr + start[cc], count[cc], depth,
+                                             splitSize, leafSize, depthCap,
+                                             innerBytes, work[0]);
                 work[0].cpuBuild += now_sec() - t0;
                 emitBin(c);
             }
             total.tBuild += work[0].cpuBuild;
         } else {
-            // Task queue over bin sub-trees: a bin's own tree is worked by as
-            // many threads as it has coarse nodes, so a single huge bin cannot
-            // serialize the window.
+            // Task queue over BIN SUB-TREES, keyed so the claim order is the
+            // emitter's need: with the two-byte top level every 2-gram sub-bin
+            // of a byte-1 bin is its own queue unit (key = byte1*257 + rank), so
+            // the queue load-balances across all ~65K 2-gram bins while the
+            // lowest incomplete byte-1 bin is still always worked first. Small
+            // sub-bins batch into one job (up to binBatchSegs segments) to keep
+            // the queue's fixed cost off the tiny units.
+            constexpr unsigned binBatchSegs = 4;
             struct Shared {
                 std::mutex mtx;
                 std::condition_variable cv;
-                // Keyed by bin index: the lowest incomplete bin is always
-                // worked first, which is exactly the emitter's next need.
-                std::multimap<unsigned, BinTask> queue;
+                std::multimap<U, BinJob> queue;
                 std::unique_ptr<std::atomic<unsigned>[]> pending;
                 std::atomic<U> outstanding{0};
                 Shared() : pending(new std::atomic<unsigned>[256]) {
@@ -510,19 +636,27 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize
             } sh;
             std::array<std::atomic<unsigned>, 256> done;
             for (auto& d : done) d.store(0, std::memory_order_relaxed);
-            for (unsigned c : order) sh.pending[c].store(1);
             sh.outstanding.store(order.size());
-            for (unsigned c : order)
-                sh.queue.emplace(c, BinTask{arena.data() + off[c],
-                                            scratch.data() + off[c],
-                                            arena.data() + off[c], bins[c], 0, c});
+            for (unsigned c : order) {
+                sh.pending[c].store(1);
+                BinJob job;
+                job.key = U(c) * 257u;
+                job.bin = c;
+                job.depth = 0;
+                job.split = topSplit > 0;
+                job.segs = 1;
+                job.seg[0] = BinSeg{arena.data() + off[c], scratch.data() + off[c],
+                                    arena.data() + off[c], bins[c]};
+                claimT[c] = now_sec();
+                sh.queue.emplace(job.key, job);
+            }
             std::vector<std::thread> pool;
             pool.reserve(threads - 1);
             for (U t = 0; t + 1 < threads; ++t)
                 pool.emplace_back([&, t] {
                     BinWork& w = work[t];
                     for (;;) {
-                        BinTask tk;
+                        BinJob job;
                         {
                             std::unique_lock<std::mutex> lk(sh.mtx);
                             sh.cv.wait(lk, [&] {
@@ -531,21 +665,102 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize
                             });
                             if (sh.queue.empty()) return;
                             auto it = sh.queue.begin();
-                            tk = it->second;
+                            job = it->second;
                             sh.queue.erase(it);
                         }
+                        const U ls0 = w.leafSorts, sy0 = w.symbols, cp0 = w.comparisons;
+                        const U ll0 = w.leafElems, le0 = w.levelElems, tb0 = w.topBins;
                         const double t0 = now_sec();
-                        bin_task_run(text, dollar, tk, splitSize, leafSize,
-                                     depthCap, levelBytes, w, [&](const BinTask& c) {
+                        if (job.split) {
+                            // ---- level 2 of the two-byte top level ----------
+                            const U* as = job.seg[0].src;   // arena slice
+                            U* aw = job.seg[0].canon;       // arena slice, writable
+                            U* sc = job.seg[0].dst;         // scratch slice
+                            const U m = job.seg[0].m;
+                            std::array<U, 257> count{};
+                            std::array<U, 258> start{};
+                            if (m > 1)
+                                bin_split1(text, dollar, as, sc, m, 0, count, start, w);
+                            else if (m == 1) sc[0] = as[0];
+                            // Dispatch the sub-bins. rank[i] is the i-th claimed
+                            // sub-bin: ascending second byte (EDD, the emission
+                            // order) or largest first (frequency). Either order
+                            // leaves the ARENA layout in byte order - only the
+                            // claim order changes - so the sink is untouched.
+                            std::array<unsigned, 257> rank{};
+                            unsigned live = 0;
+                            for (unsigned cc = 0; cc < 257; ++cc)
+                                if (count[cc]) rank[live++] = cc;
+                            if (freqSched)
+                                std::stable_sort(rank.begin(), rank.begin() + live,
+                                                 [&](unsigned a, unsigned b) {
+                                                     return count[a] > count[b];
+                                                 });
+                            subCount[job.bin] = live;
+                            for (unsigned i = 0; i < live; ++i)
+                                subMax[job.bin] = std::max(subMax[job.bin], count[rank[i]]);
+                            w.topBins += live;
                             std::lock_guard<std::mutex> lk(sh.mtx);
-                            ++sh.pending[c.bin];
-                            sh.queue.emplace(c.bin, c);
-                            sh.cv.notify_one();
-                        });
-                        w.cpuBuild += now_sec() - t0;
-                        if (--sh.pending[tk.bin] == 0) {
+                            for (unsigned i = 0; i < live;) {
+                                BinJob sub;
+                                sub.key = U(job.bin) * 257u + i;
+                                sub.bin = job.bin;
+                                sub.depth = topSplit;
+                                sub.split = false;
+                                sub.segs = 0;
+                                const bool small = count[rank[i]] <= leafSize;
+                                do {
+                                    const unsigned cc = rank[i];
+                                    sub.seg[sub.segs++] = BinSeg{sc + start[cc],
+                                                                 aw + start[cc],
+                                                                 aw + start[cc],
+                                                                 count[cc]};
+                                    ++i;
+                                } while (small && i < live &&
+                                         sub.segs < binBatchSegs &&
+                                         count[rank[i]] <= leafSize);
+                                ++sh.pending[job.bin];
+                                sh.queue.emplace(sub.key, sub);
+                            }
+                            sh.cv.notify_all();
+                        } else {
+                            for (unsigned z = 0; z < job.segs; ++z) {
+                                const BinTask tk{job.seg[z].src, job.seg[z].dst,
+                                                 job.seg[z].canon, job.seg[z].m,
+                                                 job.depth, job.bin, job.key};
+                                bin_task_run(text, dollar, tk, splitSize, leafSize,
+                                             depthCap, innerBytes, w,
+                                             [&](const BinTask& c) {
+                                    BinJob child;
+                                    child.key = c.key;
+                                    child.bin = c.bin;
+                                    child.depth = c.depth;
+                                    child.split = false;
+                                    child.segs = 1;
+                                    child.seg[0] = BinSeg{c.src, c.dst, c.canon, c.m};
+                                    std::lock_guard<std::mutex> lk(sh.mtx);
+                                    ++sh.pending[c.bin];
+                                    sh.queue.emplace(child.key, child);
+                                    sh.cv.notify_one();
+                                });
+                            }
+                        }
+                        const double dt = now_sec() - t0;
+                        w.cpuBuild += dt;
+                        {
+                            BinStat& st = stats[t][job.bin];
+                            st.busy += dt;
+                            st.leafSorts += w.leafSorts - ls0;
+                            st.symbols += w.symbols - sy0;
+                            st.comparisons += w.comparisons - cp0;
+                            st.leafElems += w.leafElems - ll0;
+                            st.levelElems += w.levelElems - le0;
+                            st.topBins += w.topBins - tb0;
+                        }
+                        if (--sh.pending[job.bin] == 0) {
                             ++w.builtBins;
-                            done[tk.bin].store(1, std::memory_order_release);
+                            doneT[job.bin] = now_sec();
+                            done[job.bin].store(1, std::memory_order_release);
                             if (--sh.outstanding == 0) {
                                 std::lock_guard<std::mutex> lk(sh.mtx);
                                 sh.cv.notify_all();
@@ -574,6 +789,45 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize
             }
             work.front().cpuBuild = cpu;
             total.tBuild += slowest;
+            // ---- hot-bin anatomy: the window's largest byte-1 bin ----------
+            // Journaled apart from the window totals: this is the bin whose
+            // leaf sorts decide whether the top split paid off, and its span is
+            // a floor on the window's critical path.
+            unsigned hot = 256;
+            U hotRows = 0;
+            for (unsigned c = b0; c < b1; ++c)
+                if (bins[c] > hotRows) { hotRows = bins[c]; hot = c; }
+            if (hot < 256 && hotRows) {
+                BinStat agg{};
+                double busyMax = 0;
+                for (U t = 0; t < nw; ++t) {
+                    const BinStat& st = stats[t][hot];
+                    agg.leafSorts += st.leafSorts;
+                    agg.leafElems += st.leafElems;
+                    agg.levelElems += st.levelElems;
+                    agg.symbols += st.symbols;
+                    agg.comparisons += st.comparisons;
+                    agg.topBins += st.topBins;
+                    agg.busy += st.busy;
+                    busyMax = std::max(busyMax, st.busy);
+                }
+                BinWork& hw = work.front();
+                if (hotRows > hw.hotRows) {
+                    hw.hotRows = hotRows;
+                    hw.hotBin = hot;
+                    hw.hotTopBins = subCount[hot] ? subCount[hot] : agg.topBins;
+                    hw.hotSubMax = subMax[hot];
+                    hw.hotLeafSorts = agg.leafSorts;
+                    hw.hotLeafElems = agg.leafElems;
+                    hw.hotLevelElems = agg.levelElems;
+                    hw.hotSymbols = agg.symbols;
+                    hw.hotComparisons = agg.comparisons;
+                    hw.hotCpuS = agg.busy;
+                    hw.hotThreadS = busyMax;
+                    hw.hotSpanS = doneT[hot] > claimT[hot] ? doneT[hot] - claimT[hot] : 0;
+                    hw.hotWindows = 1;
+                }
+            }
         }
         if constexpr (bin_publish_sink<Emit>::value) emit.windowDone();
         for (auto& w : work) total.absorb(w);
@@ -952,14 +1206,81 @@ struct BinBandSink {
     }
 };
 
+// The BIN_WORK journal, shared by the producer (with a sink) and by
+// `--bin-probe` (construction only, no output at all), so a 1-byte and a 2-byte
+// top level diff line for line. Every counter kept anywhere above appears here.
+struct BinJournal {
+    const char* sink = "parallel-v2";
+    U serialRuns = 0, writers = 0;
+    double tSinkOpen = 0, tOrder = 0, tEnds = 0;
+};
+static void bin_journal(const BinWork& total, bool dollar, U threads,
+                        U levelBytes, U leafSize, U depthCap, bool freqSched,
+                        U splitSize, double wall, const BinJournal& j) {
+    std::fprintf(stderr,
+        "BIN_WORK dollar=%u threads=%llu level_bytes=%llu leaf=%llu depth_cap=%llu "
+        "freq_sched=%u split=%llu bins=256 top_bins=%llu windows=%llu "
+        "sweep_bytes=%llu sweep_passes=%llu level_passes=%llu level_elems=%llu "
+        "bin_passes=%llu comparisons=%llu symbols=%llu cert_decided=%llu "
+        "ties=%llu leaf_sorts=%llu leaf_elems=%llu peak_live_slots=%llu "
+        "peak_live_bytes=%llu emitted_rows=%llu sweep_s=%.3f build_s=%.3f "
+        "emit_s=%.3f total_s=%.3f build_cpu_s=%.3f ns_per_symbol_thread=%.3f "
+        "ns_per_comparison_thread=%.3f sink_open_s=%.3f order_s=%.3f "
+        "endshard_s=%.3f alloc_s=%.3f wait_s=%.3f count_s=%.3f fill_s=%.3f "
+        "sink=%s serial_runs=%llu runs=%llu bands=%llu target_hits=%llu "
+        "band_jobs=%llu writers=%llu stitch_s=%.3f band_write_s=%.3f "
+        "flow_wait_s=%.3f ns_per_row_stitch=%.3f "
+        "full_SA=0 persistent_positions=0\n",
+        unsigned(dollar), (unsigned long long)threads,
+        (unsigned long long)levelBytes, (unsigned long long)leafSize,
+        (unsigned long long)depthCap, unsigned(freqSched),
+        (unsigned long long)splitSize,
+        (unsigned long long)total.topBins,
+        (unsigned long long)total.windows,
+        (unsigned long long)total.sweepBytes, (unsigned long long)total.sweepPasses,
+        (unsigned long long)total.levelPasses, (unsigned long long)total.levelElems,
+        (unsigned long long)total.binPasses, (unsigned long long)total.comparisons,
+        (unsigned long long)total.symbols, (unsigned long long)total.certDecided,
+        (unsigned long long)total.ties, (unsigned long long)total.leafSorts,
+        (unsigned long long)total.leafElems, (unsigned long long)total.peakLiveSlots,
+        (unsigned long long)total.peakLiveBytes, (unsigned long long)total.emittedRows,
+        total.tSweep, total.tBuild, total.tEmit, wall, total.cpuBuild,
+        total.symbols ? 1e9 * total.cpuBuild / double(total.symbols) : 0.0,
+        total.comparisons ? 1e9 * total.cpuBuild / double(total.comparisons) : 0.0,
+        j.tSinkOpen, j.tOrder, j.tEnds, total.tAlloc,
+        total.tWait, total.tCount, total.tFill,
+        j.sink, (unsigned long long)j.serialRuns,
+        (unsigned long long)total.runsPublished,
+        (unsigned long long)total.bands, (unsigned long long)total.targetHits,
+        (unsigned long long)total.bandJobs, (unsigned long long)j.writers,
+        total.tStitch, total.tBandWrite, total.tFlowWait,
+        total.emittedRows ? 1e9 * total.tStitch / double(total.emittedRows) : 0.0);
+    // The largest byte-1 bin of the largest window, alone: the hot-bin anatomy
+    // the operator asked for (`--bin-level-bytes 1` vs `2` on the SAME corpus).
+    std::fprintf(stderr,
+        "BIN_HOT windows_with_anatomy=%llu bin=%llu rows=%llu top_bins=%llu "
+        "sub_max=%llu span_s=%.3f cpu_s=%.3f thread_max_s=%.3f leaf_sorts=%llu "
+        "leaf_elems=%llu level_elems=%llu symbols=%llu comparisons=%llu\n",
+        (unsigned long long)total.hotWindows, (unsigned long long)total.hotBin,
+        (unsigned long long)total.hotRows, (unsigned long long)total.hotTopBins,
+        (unsigned long long)total.hotSubMax, total.hotSpanS, total.hotCpuS,
+        total.hotThreadS, (unsigned long long)total.hotLeafSorts,
+        (unsigned long long)total.hotLeafElems, (unsigned long long)total.hotLevelElems,
+        (unsigned long long)total.hotSymbols, (unsigned long long)total.hotComparisons);
+}
+
 // ---- producer entry point: the parallel sink publishes the concatenated bins
 static int binbwt_main(const std::string& path, const std::string& mapPath,
                        const std::string& prefix, U threads, U leafSize,
                        U depthCap, U liveCap, U levelBytes, bool dollar,
-                       bool freqSched, U splitSize, bool serialSink) {
-    require(!prefix.empty() && !fs::exists(prefix + ".rlebwt") &&
-            !fs::exists(prefix + ".pieces"), "fresh bin-bwt output required");
-    require(depthCap >= levelBytes && levelBytes >= 1 && levelBytes <= 2,
+                       bool freqSched, U splitSize, bool serialSink, bool probe) {
+    if (!probe)
+        require(!prefix.empty() && !fs::exists(prefix + ".rlebwt") &&
+                !fs::exists(prefix + ".pieces"), "fresh bin-bwt output required");
+    // `--bin-level-bytes` is the TOP level's depth in bytes (1 or 2) and nothing
+    // else: the interior refinement always codes one byte per level, so a
+    // 2-byte top level never builds a 65,536-code table.
+    require(depthCap >= 1 && levelBytes >= 1 && levelBytes <= 2,
             "bin-bwt parameters");
     TextSeg segment; segment.path = path; segment.len = fs::file_size(path);
     std::ifstream map(mapPath, std::ios::binary);
@@ -975,6 +1296,20 @@ static int binbwt_main(const std::string& path, const std::string& mapPath,
     require(text.n, "bin-bwt empty corpus");
     const double tStart = now_sec();
     BinWork total;
+    if (probe) {
+        // MEASUREMENT INSTRUMENT: the construction alone, no sink, no output
+        // file, no output directory. Emits every row to a no-op callback (the
+        // per-row oracle path), so the construction counters and walls are the
+        // same ones the producer reports and a 10 GB build term can be measured
+        // in minutes instead of after the finish. Nothing else is written.
+        bin_order(text, dollar, threads, leafSize, depthCap, liveCap, levelBytes,
+                  freqSched, splitSize, total, [](U, U) {});
+        BinJournal j;
+        j.sink = "probe-none";
+        bin_journal(total, dollar, threads, levelBytes, leafSize, depthCap,
+                    freqSched, splitSize, now_sec() - tStart, j);
+        return 0;
+    }
     // `serialSink` runs the UNCHANGED v1 sink (SequentialV2 fed one row at a
     // time) so that the two sinks can be diffed byte for byte on any corpus:
     // it is the equivalence oracle for the parallel publisher, and it keeps the
@@ -1007,45 +1342,14 @@ static int binbwt_main(const std::string& path, const std::string& mapPath,
     std::error_code ec;
     fs::remove(sinkDir, ec);
     const double wall = now_sec() - tStart;
-    std::fprintf(stderr,
-        "BIN_WORK dollar=%u threads=%llu level_bytes=%llu leaf=%llu depth_cap=%llu "
-        "freq_sched=%u split=%llu bins=256 windows=%llu sweep_bytes=%llu "
-        "sweep_passes=%llu level_passes=%llu level_elems=%llu bin_passes=%llu "
-        "comparisons=%llu symbols=%llu cert_decided=%llu ties=%llu "
-        "leaf_sorts=%llu leaf_elems=%llu peak_live_slots=%llu peak_live_bytes=%llu "
-        "emitted_rows=%llu sweep_s=%.3f build_s=%.3f emit_s=%.3f total_s=%.3f "
-        "build_cpu_s=%.3f ns_per_symbol_thread=%.3f "
-        "ns_per_comparison_thread=%.3f sink_open_s=%.3f order_s=%.3f "
-        "endshard_s=%.3f alloc_s=%.3f wait_s=%.3f "
-        "count_s=%.3f fill_s=%.3f "
-        "sink=%s serial_runs=%llu runs=%llu bands=%llu target_hits=%llu "
-        "band_jobs=%llu writers=%llu stitch_s=%.3f band_write_s=%.3f "
-        "flow_wait_s=%.3f ns_per_row_stitch=%.3f "
-        "full_SA=0 persistent_positions=0\n",
-        unsigned(dollar), (unsigned long long)threads,
-        (unsigned long long)levelBytes, (unsigned long long)leafSize,
-        (unsigned long long)depthCap, unsigned(freqSched),
-        (unsigned long long)splitSize,
-        (unsigned long long)total.windows,
-        (unsigned long long)total.sweepBytes, (unsigned long long)total.sweepPasses,
-        (unsigned long long)total.levelPasses, (unsigned long long)total.levelElems,
-        (unsigned long long)total.binPasses, (unsigned long long)total.comparisons,
-        (unsigned long long)total.symbols, (unsigned long long)total.certDecided,
-        (unsigned long long)total.ties, (unsigned long long)total.leafSorts,
-        (unsigned long long)total.leafElems, (unsigned long long)total.peakLiveSlots,
-        (unsigned long long)total.peakLiveBytes, (unsigned long long)total.emittedRows,
-        total.tSweep, total.tBuild, total.tEmit, wall, total.cpuBuild,
-        total.symbols ? 1e9 * total.cpuBuild / double(total.symbols) : 0.0,
-        total.comparisons ? 1e9 * total.cpuBuild / double(total.comparisons) : 0.0,
-        tSink1 - tSink0, tOrder - tSink1, tEnds - tOrder, total.tAlloc,
-        total.tWait, total.tCount, total.tFill,
-        serialSink ? "serial-v1" : "parallel-v2",
-        (unsigned long long)serialRuns,
-        (unsigned long long)total.runsPublished,
-        (unsigned long long)total.bands, (unsigned long long)total.targetHits,
-        (unsigned long long)total.bandJobs,
-        (unsigned long long)(parallel ? parallel->writersUsed : 0),
-        total.tStitch, total.tBandWrite, total.tFlowWait,
-        total.emittedRows ? 1e9 * total.tStitch / double(total.emittedRows) : 0.0);
+    BinJournal j;
+    j.sink = serialSink ? "serial-v1" : "parallel-v2";
+    j.serialRuns = serialRuns;
+    j.writers = parallel ? parallel->writersUsed : 0;
+    j.tSinkOpen = tSink1 - tSink0;
+    j.tOrder = tOrder - tSink1;
+    j.tEnds = tEnds - tOrder;
+    bin_journal(total, dollar, threads, levelBytes, leafSize, depthCap, freqSched,
+                splitSize, wall, j);
     return 0;
 }
