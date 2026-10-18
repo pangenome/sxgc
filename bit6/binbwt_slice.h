@@ -428,9 +428,14 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize
     const U topSplit = levelBytes - 1;          // extra 1-byte top levels
     const U innerBytes = 1;                     // code tables are always 257
     if (!splitSize) splitSize = std::max<U>(4 * leafSize, n / (threads * 64));
-    const U NT = std::max<U>(1, std::min<U>(threads, 64));
-    // Corpus chunk split for the counting sweep; the fill sweep reuses the exact
-    // same boundaries so per-thread bin counts ARE the fill offsets.
+    // Chunks: the counting sweep counts per chunk, and the fill's scatter is one
+    // pass per chunk (see the fill pass), so this is both the count width and the
+    // fill width. It was capped at 64 when only the count used it; the fill wants
+    // the whole machine, so the cap is the histogram table's size (256 chunks =
+    // 256 x 256 counts = 512 KB), not a performance guard.
+    const U NT = std::max<U>(1, std::min<U>(threads, 256));
+    // Corpus chunk split for the counting sweep; the fill scatter reuses the exact
+    // same boundaries so per-chunk bin counts ARE the fill offsets.
     std::vector<U> chunk(NT + 1, 0);
     for (U t = 0; t <= NT; ++t) chunk[t] = n / NT * t;
     chunk[NT] = n;
@@ -475,6 +480,7 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize
         liveCap = largest;
     }
     U row = 0;
+    U joinedTotal = 0;              // capture targets joined by all windows
     for (unsigned b0 = 0; b0 < 256;) {
         unsigned b1 = b0;
         U live = 0;
@@ -491,12 +497,28 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize
             off[b1] = sum;
             require(sum == live, "bin window arena sizing");
         }
-        // Fill pass: place every position of this window into its bin slice.
-        // Single-threaded on purpose: many threads writing into 256 stream heads
-        // measured 2-5x SLOWER than one (per-thread per-bin write streams destroy
-        // write combining), and it keeps the arena order canonical - ascending
-        // position inside every bin - so the work counters are identical for
-        // every thread count.
+        // Fill pass: place every position of this window into its bin slice,
+        // PARALLEL over the same corpus chunks the counting sweep used - the
+        // classic counting-sort scatter, and this is the term that decided the
+        // pile (a serial full-corpus sweep per window: 655 windows x 1.15 h at
+        // 2e9 slots).
+        //
+        // The counting sweep already counted, per chunk t and per byte c,
+        // exactly `hists[t][c]` positions. ONE prefix sum over (chunk x bin)
+        // therefore gives every (bin, chunk) pair its first arena slot:
+        //
+        //     slot0(t, c) = off[c] + sum_{t' < t} hists[t'][c]
+        //
+        // The (bin, chunk) regions are DISJOINT, so every thread scatters its
+        // own chunk's positions into its own regions with no lock, no atomic
+        // and no shared cursor - and concatenated in chunk order they hold the
+        // bin's positions in ASCENDING POSITION order, which is exactly the
+        // canonical order the serial pass produced. The arena layout is
+        // identical slot for slot (asserted below), so nothing downstream of
+        // the fill - the refinement, the row order, the sink - can tell the
+        // difference. The v1 note that many fill threads were 2-5x SLOWER
+        // measured many threads hammering 256 SHARED stream heads; here each
+        // thread owns all of its streams.
         //
         // The same pass also does the two things that make parallel publication
         // possible, so that NEITHER costs a random access:
@@ -504,37 +526,91 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize
         //    column (the byte is already in the window buffer, one behind);
         //  * it merge-joins the sink's ascending capture-target list against the
         //    ascending positions, so each target's bin slice index IS its row and
-        //    no per-row hash lookup survives anywhere.
+        //    no per-row hash lookup survives anywhere. Each chunk owns the
+        //    target sub-range of its own position range (two bisects), and the
+        //    cursor advances only for a position this window actually PLACES, so
+        //    a target is joined exactly once - in the window that admits its
+        //    bin. (The serial pass advanced on every position, which silently
+        //    dropped every target whose bin was not in the first window; the
+        //    banked multi-window gates only passed because the fixtures' terminal
+        //    byte is 0x1e, i.e. inside window 1.)
         {
             const double t0 = now_sec();
-            std::vector<uint8_t> buf(std::min<U>(1u << 20, n));
-            std::array<U, 256> cur{};
-            for (unsigned c = b0; c < b1; ++c) cur[c] = off[c];
-            const bool allBins = (b1 - b0 == 256);
-            U ti = 0;                    // cursor in the ascending target list
-            uint8_t prev = 0;            // M[p-1] for the first byte of a span
-            for (U at = 0; at < n;) {
-                U len = std::min<U>(1u << 20, n - at);
-                const uint8_t* b = text.span(at, buf.data(), len);
-                for (U j = 0; j < len; ++j) {
-                    U p = at + j;
-                    unsigned c = b[j];
-                    bool hit = ti < joinCount && (*joinTargets)[ti] == p;
-                    if (hit) ++ti;
-                    if (!allBins && (c < b0 || c >= b1)) continue;
-                    const U slot = cur[c]++;
-                    // The BWT symbol of this row: M[p-1], already in the window
-                    // buffer one byte behind (p == 0 is the padding row whose
-                    // symbol is 2, exactly SequentialV2's `p ? at(p-1) : 2`).
-                    const uint8_t sym = p ? (j ? b[j - 1] : prev) : uint8_t(2);
-                    arena.data()[slot] = bin_word(bin_tail_of(p, n, dollar), sym, hit);
+            // slot0[t][c]: this chunk's first slot in bin c's slice.
+            std::vector<std::array<U, 256>> slot0(NT);
+            for (unsigned c = b0; c < b1; ++c) {
+                U sum = off[c];
+                for (U t = 0; t < NT; ++t) {
+                    slot0[t][c] = sum;
+                    sum += hists[t][c];
                 }
-                prev = b[len - 1];
-                at += len;
+                require(sum == off[c] + bins[c], "bin fill chunk offsets");
             }
-            require(ti == joinCount, "bin fill target join coverage");
-            for (unsigned c = b0; c < b1; ++c)
-                require(cur[c] == off[c] + bins[c], "bin fill coverage");
+            std::atomic<U> joined{0};
+            auto fillChunk = [&](U t) {
+                std::array<U, 256> cur{};
+                for (unsigned c = b0; c < b1; ++c) cur[c] = slot0[t][c];
+                const U lo = chunk[t], hi = chunk[t + 1];
+                const bool allBins = (b1 - b0 == 256);
+                // This chunk's slice of the ascending capture-target list.
+                U ti = 0, tiEnd = 0;
+                if (joinCount) {
+                    ti = U(std::lower_bound(joinTargets->begin(),
+                                            joinTargets->end(), lo) -
+                           joinTargets->begin());
+                    tiEnd = U(std::lower_bound(joinTargets->begin(),
+                                               joinTargets->end(), hi) -
+                             joinTargets->begin());
+                }
+                std::vector<uint8_t> buf(
+                    std::min<U>(1u << 20, std::max<U>(1, hi - lo)));
+                // M[p-1] for the first byte of a span: one byte behind the
+                // chunk, never inside this thread's own range.
+                uint8_t prev = lo ? text.at(lo - 1) : 0;
+                U hits = 0;
+                for (U at = lo; at < hi;) {
+                    U len = std::min<U>(1u << 20, hi - at);
+                    const uint8_t* b = text.span(at, buf.data(), len);
+                    for (U j = 0; j < len; ++j) {
+                        U p = at + j;
+                        unsigned c = b[j];
+                        if (!allBins && (c < b0 || c >= b1)) continue;
+                        bool hit = ti < tiEnd && (*joinTargets)[ti] == p;
+                        if (hit) ++ti;
+                        const U slot = cur[c]++;
+                        // The BWT symbol of this row: M[p-1], already in the
+                        // window buffer one byte behind (p == 0 is the padding
+                        // row whose symbol is 2, exactly SequentialV2's
+                        // `p ? at(p-1) : 2`).
+                        const uint8_t sym = p ? (j ? b[j - 1] : prev) : uint8_t(2);
+                        arena.data()[slot] =
+                            bin_word(bin_tail_of(p, n, dollar), sym, hit);
+                        hits += hit;
+                    }
+                    prev = b[len - 1];
+                    at += len;
+                }
+                // Every slot of this chunk's regions is written exactly once,
+                // and no slot of any other chunk's region is touched.
+                for (unsigned c = b0; c < b1; ++c)
+                    require(cur[c] == slot0[t][c] + hists[t][c],
+                            "bin fill chunk coverage");
+                joined.fetch_add(hits, std::memory_order_relaxed);
+            };
+            if (NT == 1) fillChunk(0);
+            else {
+                std::vector<std::thread> fillPool;
+                fillPool.reserve(NT);
+                for (U t = 0; t < NT; ++t) fillPool.emplace_back(fillChunk, t);
+                for (auto& th : fillPool) th.join();
+            }
+            // Every capture target of the corpus is joined exactly once, in the
+            // one window whose bin range admits it. (This is the fill's own
+            // check, kept out of BinWork::targetHits, which the sink owns.)
+            joinedTotal += joined.load(std::memory_order_relaxed);
+            require(joinedTotal <= joinCount, "bin fill target join overrun");
+            if (b1 == 256)
+                require(joinedTotal == joinCount, "bin fill target join coverage");
             total.tFill += now_sec() - t0;
             total.tSweep += now_sec() - t0;
             total.sweepBytes += n; ++total.sweepPasses;
