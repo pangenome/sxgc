@@ -58,6 +58,9 @@ struct BinWork {
     U windowFiles = 0, windowLoads = 0; // files created / per-bin bulk loads
     double tWinWrite = 0, tWinRead = 0; // the two file phases, wall
     double tCreditWait = 0;             // build waiting for a filled window
+    // ---- the write path's own cost (pwrite, no mapping) --------------------
+    U winFillBufBytes = 0;              // peak staging buffers (threads x <= 4 MiB)
+    U winFillWrites = 0;                // pwrite() calls the fill issued
     void absorb(const BinWork& o) {
         sweepBytes += o.sweepBytes; sweepPasses += o.sweepPasses;
         windows += o.windows; bins += o.bins; binPasses += o.binPasses;
@@ -100,6 +103,8 @@ struct BinWork {
         windowFiles += o.windowFiles; windowLoads += o.windowLoads;
         tWinWrite += o.tWinWrite; tWinRead += o.tWinRead;
         tCreditWait += o.tCreditWait;
+        winFillBufBytes = std::max(winFillBufBytes, o.winFillBufBytes);
+        winFillWrites += o.winFillWrites;
     }
 };
 
@@ -243,10 +248,19 @@ struct BinArena {
 // The on-disc image IS the arena: the fill writes the SAME slot for the SAME
 // position as the RAM arena did (the (bin, chunk) slot0 prefix-sum layout), so
 // nothing downstream of the read can tell the difference. The fill writes
-// through a MAP_SHARED mapping of the file (the same pointer the arena gave it,
-// so the scatter's inner loop is untouched and its counters cannot move); the
+// through buffered `pwrite` at absolute slot offsets (see BinFillSink below - a
+// window file of ANY size therefore charges ZERO bytes of address space); the
 // build reads each bin's slice back with ONE sequential bulk pread into its
 // bounded working set.
+//
+// WHY PWRITE AND NOT MAP_SHARED. The write path used to be a MAP_SHARED mapping
+// of the whole window, i.e. the mapping charged the window's bytes against the
+// phase's RLIMIT_AS. At 10 GB with the DEFAULT live cap that window was
+// 44.6 GB, and under PHASE_CAP_KB=104857600 (--memory-gb 100) the mmap FAILED
+// live (sol10.log: BIN_WINDOW index=0 live_slots=5.58e9 file_bytes=44.6 GB,
+// CROSS_LCP_FATAL bin window file mmap). A window file is DISC: writing it
+// through pwrite charges page cache (reclaimable, throttled by the kernel at
+// write() time) and not one byte of address space.
 //
 // THE HEADER IS THE CRASH REFUSAL. It carries the window ordinal, the admitted
 // byte range, the slot count, the words written and a completion word. A reader
@@ -273,13 +287,155 @@ struct BinWindowHeader {
 
 static inline void bin_window_sabotage(const std::string& path);
 
-// One window file. `create` truncates it and maps it writable for the fill;
-// `openRead` opens an EXISTING file, verifies the header and hands out bulk
-// sequential reads. All failures are `require` -> CROSS_LCP_FATAL.
+// The write path's staging budget, PER FILL THREAD. The scatter interleaves up
+// to 256 bin streams, so each (thread, bin) region gets its own append buffer
+// and no flush is ever triggered per position: a thread's buffers together are
+// `bin_fill_stage_bytes_per_thread` bytes (water-filled over the window's bins,
+// see BinFillSink::view), so the write path's RAM is threads x 32 MiB whatever
+// the window size is (the plan prices the same term: xsa/src/plan.rs
+// BIN_FILL_STAGE_BYTES_PER_THREAD).
+//
+// WHY 32 MiB AND NOT 4. The write rate is a function of the WRITE SIZE, not of
+// the byte count: measured on this box (XFS, nvme2n1, load ~90), pwrite of
+// 16 KB = 3.3 GB/s, 64 KB = 6.2, 256 KB = 8.2, while the mmap path's dirty
+// stores are ~16 GB/s but leave the writeback to the kernel. A per-stream
+// buffer sized by the budget (4 MiB / 256 bins = 16 KB) measured 12x the mmap
+// fill; water-filled to ~128 KB per stream it lands within ~2x of the mmap
+// fill's store phase, and the window's fsync - the phase both arms pay - is
+// unchanged. The buffers never exceed a (bin, chunk) region, so the write
+// pattern is identical to the mmap arm's page pattern.
+static constexpr U bin_fill_stage_bytes_per_thread = 32u << 20;
+static constexpr U bin_fill_stage_slots_per_thread =
+    bin_fill_stage_bytes_per_thread / bin_window_slot_bytes;
+
+// ------------------------------------------ the FILL's DESTINATION (2 arms)
+// The scatter writes `word` into slot `slot` of bin `c`. Both arms present the
+// SAME two calls inside the chunk loop - `view.put(c, slot, word)` and, once,
+// `view.finish()` - so bin_order's scatter and every counter it keeps are the
+// same code on both arms and only the store behind the call differs:
+//
+//   * BinRamFillSink : `p[slot] = word` (the A/B reference arm: the RAM arena);
+//   * BinFillSink    : append to this thread's buffer for that bin, and pwrite
+//                      the buffer out when it is full. Charges ZERO address
+//                      space, whatever the window's size.
+//
+// WHY THE BUFFER IS PER (thread, bin). The scatter writes each (bin, chunk)
+// region STRICTLY ASCENDING (`slot = cur[c]++`), so a per-bin stream is a pure
+// append - a flush writes exactly the slots it holds, at their absolute file
+// offset, and the on-disc image is byte-identical to the RAM arena. One buffer
+// per thread would be useless instead: consecutive positions land in arbitrary
+// bins, so a single stream would flush on nearly every write.
+struct BinRamFillSink {
+    U* p = nullptr;
+    U stageBytes() const { return 0; }
+    U writes() const { return 0; }
+    struct View {
+        U* p = nullptr;
+        inline void put(unsigned, U slot, U word) { p[slot] = word; }
+        void finish() {}
+    };
+    View view(unsigned, unsigned, const std::array<U, 256>&,
+              const std::array<U, 256>&) const {
+        return View{p};
+    }
+};
+
+struct BinFillSink {
+    struct Counters { std::atomic<U> stageBytes{0}, writes{0}; };
+    int fd = -1;
+    U slots = 0;        // the window's slot count (every write is bounded by it)
+    U stageSlots = 0;   // per-stream buffer capacity, slots (>= 1)
+    // Reference-counted so the sink is copyable and every fill thread's view can
+    // charge the same counters (one window is filled by many threads).
+    std::shared_ptr<Counters> c = std::make_shared<Counters>();
+    U stageBytes() const { return c->stageBytes.load(std::memory_order_relaxed); }
+    U writes() const { return c->writes.load(std::memory_order_relaxed); }
+    struct Stream {
+        std::unique_ptr<U[]> buf;
+        U cap = 0;              // allocated slots
+        U next = 0;             // absolute slot that buf[0] holds (flush cursor)
+        U fill = 0;             // slots valid in buf
+        U slot0 = 0, count = 0; // the (bin, chunk) region this stream owns
+    };
+    struct View {
+        BinFillSink* s = nullptr;
+        unsigned b0 = 0;
+        std::vector<Stream> st;   // [bin - b0]
+        inline void put(unsigned c, U slot, U word) {
+            Stream& t = st[c - b0];
+            if (t.fill == t.cap) flush(t);
+            require(slot == t.next + t.fill, "bin window fill stream append (slot order)");
+            t.buf[t.fill++] = word;
+        }
+        void flush(Stream& t) {
+            if (!t.fill) return;
+            const size_t off = size_t(bin_window_hdr_bytes) +
+                               size_t(t.next) * bin_window_slot_bytes;
+            const size_t len = size_t(t.fill) * bin_window_slot_bytes;
+            require(off + len <= size_t(bin_window_hdr_bytes) +
+                                    size_t(s->slots) * bin_window_slot_bytes,
+                    "bin window fill write beyond the window");
+            const uint8_t* p = reinterpret_cast<const uint8_t*>(t.buf.get());
+            for (size_t done = 0; done < len;) {
+                const ssize_t got = ::pwrite(s->fd, p + done, len - done,
+                                             off_t(off + done));
+                require(got > 0, "bin window fill pwrite (short write)");
+                done += size_t(got);
+            }
+            t.next += t.fill; t.fill = 0;
+            s->c->writes.fetch_add(1, std::memory_order_relaxed);
+        }
+        void finish() {
+            for (Stream& t : st) {
+                flush(t);
+                require(t.next == t.slot0 + t.count,
+                        "bin window fill region coverage (every slot written once)");
+            }
+        }
+    };
+    View view(unsigned b0, unsigned b1, const std::array<U, 256>& start,
+              const std::array<U, 256>& count) {
+        View v;
+        v.s = this; v.b0 = b0;
+        v.st.resize(b1 - b0);
+        // WATER-FILL the thread's staging budget over the window's bins: the
+        // largest per-stream buffer `s` such that sum_c min(count_c, s) fits the
+        // budget. Small regions get their whole (bin, chunk) and are flushed
+        // ONCE; the big ones share what is left, so every pwrite is as large as
+        // the budget allows (the write rate is a function of the write size).
+        U total = 0, maxCount = 0;
+        for (unsigned c = b0; c < b1; ++c) total += count[c], maxCount = std::max(maxCount, count[c]);
+        const U budget = stageSlots ? stageSlots : 1;
+        U lo_ = 1, hi_ = std::max<U>(1, maxCount);
+        while (lo_ < hi_) {
+            const U mid = lo_ + (hi_ - lo_ + 1) / 2;
+            U sum = 0;
+            for (unsigned c = b0; c < b1; ++c) sum += std::min<U>(count[c], mid);
+            if (sum <= budget) lo_ = mid; else hi_ = mid - 1;
+        }
+        U allocated = 0;
+        for (unsigned c = b0; c < b1; ++c) {
+            Stream& t = v.st[c - b0];
+            t.slot0 = start[c]; t.count = count[c]; t.next = start[c];
+            if (!t.count) continue;
+            t.cap = std::min<U>(t.count, lo_);
+            t.buf.reset(new U[t.cap]);
+            allocated += t.cap;
+        }
+        (void)total;
+        c->stageBytes.fetch_add(allocated * bin_window_slot_bytes,
+                                std::memory_order_relaxed);
+        return v;
+    }
+};
+
+// One window file. `create` truncates it and writes the header; `fillSink`
+// hands the fill a buffered-pwrite destination; `openRead` opens an EXISTING
+// file, verifies the header and hands out bulk sequential reads. All failures
+// are `require` -> CROSS_LCP_FATAL.
 struct BinWindow {
     std::string path;
     int fd = -1;
-    U* map = nullptr;      // fill arm: the writable mapping (== the arena)
     U slots = 0, b0 = 0, b1 = 0, index = 0;
     U bytes = 0;           // header + slot array
 
@@ -299,7 +455,11 @@ struct BinWindow {
         const ssize_t got = ::pwrite(fd, &h, sizeof(h), 0);
         require(got == ssize_t(sizeof(h)), "bin window header write");
     }
-    // ---- create + map (the FILL arm) --------------------------------------
+    // ---- create (the FILL arm) --------------------------------------------
+    // The file is created at its FULL size (sparse - ftruncate allocates no
+    // blocks) and the header is written; the slot array is filled by pwrite in
+    // the order the fill scatters it. No mapping exists, so nothing here can
+    // fail on the phase's address-space limit.
     void create(const std::string& p, U idx, U sl, U lo, U hi) {
         path = p; index = idx; slots = sl; b0 = lo; b1 = hi;
         bytes = slotBytes(sl);
@@ -307,25 +467,29 @@ struct BinWindow {
         fd = ::open(path.c_str(), O_RDWR | O_CREAT | O_EXCL, 0644);
         require(fd >= 0, "bin window file create (scratch tree writable?)");
         require(::ftruncate(fd, off_t(bytes)) == 0, "bin window file truncate");
-        writeHeader(0);
-        if (slots) {
-            void* m = ::mmap(nullptr, size_t(bytes), PROT_READ | PROT_WRITE,
-                             MAP_SHARED, fd, 0);
-            require(m != MAP_FAILED, "bin window file mmap");
-            map = static_cast<U*>(m);
-            ::madvise(map, size_t(bytes), MADV_HUGEPAGE);
+        // PREALLOCATE the extents. The scatter writes each (bin, chunk) region
+        // separately, i.e. tens of thousands of 8-64 KB writes spread over the
+        // window, so on a sparse file EVERY write would allocate blocks (and pay
+        // an XFS transaction) - measured at 17 us per 16 KB write, 12x the mmap
+        // path. With the extents already there a write is a page-cache copy.
+        if (bytes) {
+            const int rc = ::posix_fallocate(fd, 0, off_t(bytes));
+            require(rc == 0, "bin window file preallocate (scratch full?)");
         }
+        writeHeader(0);
     }
-    U* data() { return map ? map + bin_window_hdr_bytes / bin_window_slot_bytes : nullptr; }
+    // ---- the FILL arm's destination: buffered pwrite, no mapping ----------
+    BinFillSink fillSink(unsigned /*b0_*/, unsigned /*b1_*/) const {
+        BinFillSink s;
+        s.fd = fd; s.slots = slots;
+        // The whole per-thread budget; the view water-fills it over the bins.
+        s.stageSlots = bin_fill_stage_slots_per_thread;
+        return s;
+    }
     // ---- seal (the FILL arm ends here) ------------------------------------
     // The completion word is written after every slot is written, so a file
     // whose fill was killed is REFUSED by its reader instead of being rebuilt.
     void seal() {
-        if (map) {
-            ::msync(map, size_t(bytes), MS_ASYNC);
-            require(::munmap(map, size_t(bytes)) == 0, "bin window file munmap");
-            map = nullptr;
-        }
         writeHeader(slots);
         ::fsync(fd);
     }
@@ -367,7 +531,6 @@ struct BinWindow {
     }
     // Keep the FILE, drop the handles (the builder re-opens it with openRead).
     void close() {
-        if (map) { ::munmap(map, size_t(bytes)); map = nullptr; }
         if (fd >= 0) { ::close(fd); fd = -1; }
     }
     void erase() {
@@ -415,6 +578,112 @@ struct BinWindowOpts {
     U buildCap = 0;       // per-group build working set, slots (0 = whole window)
     bool disc = true;     // false = the RAM-arena A/B arm
 };
+
+// ------------------------------------------------- THE PHASE CAP (auto cap)
+// `--bin-live-cap` USED TO DEFAULT TO UNBOUNDED, i.e. "one window over the whole
+// corpus", and the plan priced the arena pair (16 B/slot) as if that were the
+// only RAM term. It is not: the phase also holds the corpus text and the fill's
+// staging, so at 10 GB under --memory-gb 100 the derived window was 44.6 GB, the
+// arena pair 89 GB and the corpus cache 10 GB - over the phase's RLIMIT_AS, and
+// the run died (sol10.log). The DEFAULT cap is therefore DERIVED here, from the
+// phase budget, with these terms (bytes):
+//
+//   usable = BIN_PHASE_HEADROOM_PCT% x RLIMIT_AS      10% headroom
+//   cache  = min(n, 2 x CROSS_POOL_SLOTS x 256 B)     the corpus text CorpusText
+//            keeps in RAM: it caches the corpus when it fits the page-pool budget
+//            (2 buffers x 256 B page per slot), else the pools themselves
+//   stage  = threads x bin_fill_stage_bytes_per_thread  the fill's pwrite staging
+//   group  = 16 B x min(cap, n)                        arena + scratch pair of the
+//            group the build sorts in place (a bin is indivisible, so the group
+//            is the largest bin of the window, never above the whole window)
+//   usable - cache - stage >= group                    ==> cap
+//
+// THE WINDOW FILE IS NOT IN THAT EQUATION, on purpose: since the write path is
+// buffered pwrite (BinFillSink) a window file of ANY size charges ZERO bytes of
+// address space. The window's bytes are DISC and are priced against the scratch
+// budget by the plan (xsa/src/plan.rs: credit x cap x 8 B <= 90% of free).
+//
+// xsa/src/plan.rs implements the same formula for its render and its refusal; the
+// constants below are the contract between the two (BIN_GROUP_SLOT_BYTES,
+// BIN_FILL_STAGE_BYTES, BIN_PHASE_HEADROOM_PCT, the 2x256 B pool page).
+struct BinCapTerms {
+    U limit = 0;    // RLIMIT_AS of this phase (0 = unbounded)
+    U usable = 0;   // headroom x limit
+    U cache = 0;    // the corpus text in RAM
+    U stage = 0;    // the fill's staging buffers
+    U group = 0;    // what is left for the arena+scratch pair
+    U cap = 0;      // derived live cap, slots
+    std::string source;
+};
+static constexpr U bin_group_slot_bytes = 2 * bin_window_slot_bytes;   // arena+scratch
+static constexpr U bin_pool_page_bytes = 256;                          // SharedPages::PS
+static constexpr U bin_pool_pages_per_slot = 2;                        // two buffers/slot
+static constexpr U bin_phase_headroom_pct = 90;                        // fit inside 90%
+
+static inline U bin_corpus_cache_bytes(U n) {
+    const U budget = bin_pool_pages_per_slot * SharedPages::pool_slot_count() *
+                     bin_pool_page_bytes;
+    return std::min<U>(n, budget);
+}
+static inline U bin_phase_limit_bytes() {
+    struct rlimit rl{};
+    if (::getrlimit(RLIMIT_AS, &rl) != 0 || rl.rlim_cur == RLIM_INFINITY) return 0;
+    return U(rl.rlim_cur);
+}
+// The derived default. LOUD when the fixed terms alone cannot fit the phase.
+static inline BinCapTerms bin_derive_live_cap(U n, U threads) {
+    BinCapTerms t;
+    t.limit = bin_phase_limit_bytes();
+    t.cache = bin_corpus_cache_bytes(n);
+    t.stage = threads * bin_fill_stage_bytes_per_thread;
+    if (!t.limit) {
+        // No RLIMIT_AS: there is no budget to derive from, so nothing is derived
+        // silently - the cap is the whole corpus (one window) and the journal says
+        // so. The front door always runs under `ulimit -v`, so this is the
+        // bare-binary case.
+        t.cap = std::max<U>(1, n);
+        t.source = "no RLIMIT_AS on this phase: one window over the corpus (nothing to derive from)";
+        return t;
+    }
+    t.usable = t.limit * bin_phase_headroom_pct / 100;
+    require(t.usable > t.cache + t.stage,
+            "bin live cap: the phase budget cannot hold the corpus cache and the fill staging");
+    t.group = t.usable - t.cache - t.stage;
+    t.cap = std::max<U>(1, std::min<U>(t.group / bin_group_slot_bytes, std::max<U>(1, n)));
+    t.source = "auto from RLIMIT_AS " + std::to_string(t.limit) + " B: " +
+               std::to_string(bin_phase_headroom_pct) + "% usable " +
+               std::to_string(t.usable) + " - corpus cache " + std::to_string(t.cache) +
+               " - fill staging " + std::to_string(t.stage) + " = " +
+               std::to_string(t.group) + " B for the " +
+               std::to_string(bin_group_slot_bytes) + " B/slot arena pair";
+    return t;
+}
+// An EXPLICIT cap is only accepted if it fits the same budget: a cap the phase
+// cannot hold is refused HERE, loudly, instead of failing as a bad_alloc (or an
+// mmap) in the middle of a window.
+static inline void bin_check_live_cap(U cap, U n, U threads, const char* source) {
+    const U limit = bin_phase_limit_bytes();
+    if (!limit) return;
+    const U usable = limit * bin_phase_headroom_pct / 100;
+    const U cache = bin_corpus_cache_bytes(n);
+    const U stage = threads * bin_fill_stage_bytes_per_thread;
+    const U group = bin_group_slot_bytes * std::min<U>(cap, n);
+    if (cache + stage + group <= usable) return;
+    const U fits = usable > cache + stage
+                     ? (usable - cache - stage) / bin_group_slot_bytes : 0;
+    char msg[512];
+    std::snprintf(msg, sizeof(msg),
+        "bin live cap: %s %llu slots does not fit the phase budget (RLIMIT_AS %llu B): "
+        "corpus cache %llu + fill staging %llu + arena pair %llu B (16 B/slot) = %llu B "
+        "exceeds the usable %llu B (%d%% of the limit); %llu slots is the largest cap "
+        "this phase can hold - lower --bin-live-cap (or raise --memory-gb)",
+        source, (unsigned long long)cap, (unsigned long long)limit,
+        (unsigned long long)cache, (unsigned long long)stage,
+        (unsigned long long)group, (unsigned long long)(cache + stage + group),
+        (unsigned long long)usable, int(bin_phase_headroom_pct),
+        (unsigned long long)fits);
+    fail(msg);
+}
 
 static inline U bin_codes(U levelBytes) {
     U c = 1;
@@ -865,11 +1134,12 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U targetSi
         winOff[k][plan[k].b1] = sum;
         require(sum == plan[k].live, "bin window arena sizing");
     }
-    // ---- THE FILL PASS: one window, into `dst` ----------------------------
-    // `dst` is the window image: a rolling window FILE's slot array (the
-    // product) or a RAM arena (the A/B arm). The scatter is identical either
-    // way - the same slot for the same position - so no counter can move.
-    auto fillInto = [&](U* dst, unsigned b0, unsigned b1,
+    // ---- THE FILL PASS: one window, into a DESTINATION --------------------
+    // The destination is the window image: a rolling window FILE's slot array
+    // (the product, written by buffered pwrite) or a RAM arena (the A/B arm,
+    // written by a plain store). The scatter is identical either way - the same
+    // slot for the same position - so no counter can move.
+    auto fillInto = [&](auto& sink, unsigned b0, unsigned b1,
                         const std::array<U, 257>& off,
                         BinWork& w) -> U {
         U joinedOut = 0;
@@ -924,6 +1194,11 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U targetSi
             auto fillChunk = [&](U t) {
                 std::array<U, 256> cur{};
                 for (unsigned c = b0; c < b1; ++c) cur[c] = slot0[t][c];
+                // This chunk's per-bin destination streams: the RAM arena's
+                // pointer (one store per row) or the window file's per-(thread,
+                // bin) append buffers (one buffered pwrite per flush). The
+                // scatter below is IDENTICAL on both arms.
+                auto dst = sink.view(b0, b1, slot0[t], hists[t]);
                 const U lo = chunk[t], hi = chunk[t + 1];
                 const bool allBins = (b1 - b0 == 256);
                 // This chunk's slice of the ascending capture-target list.
@@ -962,8 +1237,8 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U targetSi
                         // row whose symbol is 2, exactly SequentialV2's
                         // `p ? at(p-1) : 2`).
                         const uint8_t sym = p ? (j ? b[j - 1] : prev) : uint8_t(2);
-                        dst[slot] =
-                            bin_word(bin_tail_of(p, n, dollar), sym, hit);
+                        dst.put(c, slot,
+                                bin_word(bin_tail_of(p, n, dollar), sym, hit));
                         hits += hit;
                     }
                     prev = b[len - 1];
@@ -972,6 +1247,10 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U targetSi
                 // Every target of this chunk's position range was matched, in
                 // ascending order, exactly once.
                 require(ti == tiEnd, "bin fill chunk target join coverage");
+                // Flush this thread's remaining buffers and prove each stream
+                // wrote exactly its own (bin, chunk) region - the write path's
+                // own slot-wise coverage check, on top of the scatter's.
+                dst.finish();
                 // Every slot of this chunk's regions is written exactly once,
                 // and no slot of any other chunk's region is touched.
                 for (unsigned c = b0; c < b1; ++c)
@@ -996,6 +1275,10 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U targetSi
             // has been filled; here only this window's count is bounded.
             joinedOut = joined.load(std::memory_order_relaxed);
             require(joinedOut <= joinCount, "bin fill target join overrun");
+            // What the write path itself cost: the staging buffers handed out
+            // and the pwrite calls issued (0/0 on the RAM arena arm).
+            w.winFillBufBytes = std::max(w.winFillBufBytes, sink.stageBytes());
+            w.winFillWrites += sink.writes();
             w.tFill += now_sec() - t0;
             w.tSweep += now_sec() - t0;
             w.sweepBytes += n; ++w.sweepPasses;
@@ -1369,7 +1652,8 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U targetSi
                 if (wopt.disc) {
                     BinWindow win;
                     win.create(winPath(k), k, plan[k].live, plan[k].b0, plan[k].b1);
-                    joined = fillInto(win.data(), plan[k].b0, plan[k].b1, winOff[k], w);
+                    auto sink = win.fillSink(plan[k].b0, plan[k].b1);
+                    joined = fillInto(sink, plan[k].b0, plan[k].b1, winOff[k], w);
                     // Seal: the completion word goes in AFTER every slot, and the
                     // fsync is where the window's write I/O is actually paid.
                     win.seal();
@@ -1379,7 +1663,8 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U targetSi
                     ++w.windowFiles;
                 } else {
                     std::unique_ptr<BinArena> ra(new BinArena(plan[k].live));
-                    joined = fillInto(ra->data(), plan[k].b0, plan[k].b1, winOff[k], w);
+                    BinRamFillSink sink{ra->data()};
+                    joined = fillInto(sink, plan[k].b0, plan[k].b1, winOff[k], w);
                     ramArena[k] = std::move(ra);
                 }
                 {
@@ -1392,14 +1677,19 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U targetSi
                     sh.filled[k] = 1;
                     // LIVE SCRATCH, PER WINDOW: this is the whole disc footprint
                     // the pipeline is holding right now, and it is bounded by
-                    // credit x cap x slot, never by the corpus.
+                    // credit x cap x slot, never by the corpus. `addr_bytes` is
+                    // what the window's write path charges the phase's address
+                    // space: 0 (pwrite + bounded staging buffers, never a map).
                     std::fprintf(stderr,
                         "BIN_WINDOW index=%llu b0=%u b1=%u live_slots=%llu "
-                        "file_bytes=%llu live_scratch_bytes=%llu credit=%llu\n",
+                        "file_bytes=%llu live_scratch_bytes=%llu credit=%llu "
+                        "fill_buf_bytes=%llu fill_pwrites=%llu addr_bytes=0\n",
                         (unsigned long long)k, plan[k].b0, plan[k].b1,
                         (unsigned long long)plan[k].live,
                         (unsigned long long)(wopt.disc ? plan[k].live * bin_window_slot_bytes : 0),
-                        (unsigned long long)sh.liveBytes, (unsigned long long)credit);
+                        (unsigned long long)sh.liveBytes, (unsigned long long)credit,
+                        (unsigned long long)w.winFillBufBytes,
+                        (unsigned long long)w.winFillWrites);
                 }
                 sh.cv.notify_all();
             }
@@ -1953,6 +2243,7 @@ static void bin_journal(const BinWork& total, bool dollar, U threads,
         "flow_wait_s=%.3f ns_per_row_stitch=%.3f "
         "win_file_bytes=%llu win_file_read_bytes=%llu peak_window_file_bytes=%llu "
         "window_files=%llu window_loads=%llu win_write_s=%.3f win_read_s=%.3f "
+        "win_fill_buf_bytes=%llu win_fill_pwrites=%llu "
         "credit_wait_s=%.3f "
         "depth_max=%llu leaf_rows_max=%llu over_target_leaves=%llu "
         "over_target_rows=%llu structural_leaves=%llu structural_rows=%llu "
@@ -1987,7 +2278,10 @@ static void bin_journal(const BinWork& total, bool dollar, U threads,
         (unsigned long long)total.peakWindowFileBytes,
         (unsigned long long)total.windowFiles,
         (unsigned long long)total.windowLoads,
-        total.tWinWrite, total.tWinRead, total.tCreditWait,
+        total.tWinWrite, total.tWinRead,
+        (unsigned long long)total.winFillBufBytes,
+        (unsigned long long)total.winFillWrites,
+        total.tCreditWait,
         (unsigned long long)total.depthMax,
         (unsigned long long)total.leafRowsMax,
         (unsigned long long)total.overTargetLeaves,
@@ -2014,9 +2308,9 @@ static void bin_journal(const BinWork& total, bool dollar, U threads,
 // ---- producer entry point: the parallel sink publishes the concatenated bins
 static int binbwt_main(const std::string& path, const std::string& mapPath,
                        const std::string& prefix, U threads, U targetSize,
-                       U depthCap, U liveCap, U levelBytes, bool dollar,
-                       bool freqSched, U splitSize, bool serialSink, bool probe,
-                       bool fillOnly, BinWindowOpts wopt) {
+                       U depthCap, U liveCap, bool liveCapGiven, U levelBytes,
+                       bool dollar, bool freqSched, U splitSize, bool serialSink,
+                       bool probe, bool fillOnly, BinWindowOpts wopt) {
     // `--bin-fill-only` implies the probe's "write nothing at all" contract.
     if (fillOnly) probe = true;
     // The window scratch tree: the caller's --bin-window-dir if it gave one,
@@ -2049,6 +2343,35 @@ static int binbwt_main(const std::string& path, const std::string& mapPath,
     CorpusText text;
     text.open({segment}, true);
     require(text.n, "bin-bwt empty corpus");
+    // ---- THE LIVE CAP: derived from the phase budget, or checked against it --
+    // The default is no longer unbounded (see BinCapTerms): a window is sized so
+    // that the corpus cache + the fill staging + the arena pair it needs all fit
+    // inside the phase's RLIMIT_AS with 10% headroom. An EXPLICIT cap that does
+    // not fit is refused right here, loudly, instead of dying mid-window.
+    if (!liveCapGiven) {
+        BinCapTerms ct = bin_derive_live_cap(text.n, threads);
+        liveCap = ct.cap;
+        std::fprintf(stderr,
+            "BIN_LIVE_CAP source=auto cap=%llu n=%llu threads=%llu rlimit_as=%llu "
+            "usable=%llu cache=%llu stage=%llu group=%llu headroom_pct=%d (%s)\n",
+            (unsigned long long)ct.cap, (unsigned long long)text.n,
+            (unsigned long long)threads, (unsigned long long)ct.limit,
+            (unsigned long long)ct.usable, (unsigned long long)ct.cache,
+            (unsigned long long)ct.stage, (unsigned long long)ct.group,
+            int(bin_phase_headroom_pct), ct.source.c_str());
+    } else {
+        bin_check_live_cap(liveCap, text.n, threads, "--bin-live-cap");
+        BinCapTerms ct = bin_derive_live_cap(text.n, threads);
+        std::fprintf(stderr,
+            "BIN_LIVE_CAP source=operator cap=%llu n=%llu threads=%llu rlimit_as=%llu "
+            "usable=%llu cache=%llu stage=%llu group=%llu headroom_pct=%d fits=1 "
+            "(the largest cap this phase could hold is %llu)\n",
+            (unsigned long long)liveCap, (unsigned long long)text.n,
+            (unsigned long long)threads, (unsigned long long)ct.limit,
+            (unsigned long long)ct.usable, (unsigned long long)ct.cache,
+            (unsigned long long)ct.stage, (unsigned long long)ct.group,
+            int(bin_phase_headroom_pct), (unsigned long long)ct.cap);
+    }
     const double tStart = now_sec();
     BinWork total;
     if (probe) {

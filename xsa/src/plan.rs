@@ -429,6 +429,7 @@ impl Plan {
             s.push_str(&format!("XSA_PLAN_V2_TREE tree_peak={:.3}n bound={:.1}n measured_at=1GB-G2 (output side; the bin producer's own addition is the rolling window files, priced above); whole_box(corpus+tree)={:.3}n; position column disc=0.000n (transient rolling window files only)\n", V2_TREE_PEAK_PER_N, V2_TREE_TARGET_PER_N, 1.0 + V2_TREE_PEAK_PER_N));
             s.push_str(&format!("XSA_PLAN_V2_WITNESS {}\n", v.witness_note));
             s.push_str(&format!("XSA_PLAN_V2_TRANSIENT {}\n", v.transient_note));
+            s.push_str(&format!("XSA_PLAN_V2_CAP {}\n", v.bin_cap_note));
             s.push_str(&format!(
                 "XSA_PLAN_V2_BIN live_cap_slots={} windows={} window_file_gb={:.1} ram_group_gb={:.1} count_s={:.0} fill_s={:.0} build_s={:.0} stitch_s={:.0} producer_s={:.0} finish_s={:.0}\n",
                 v.bin_live_cap, v.bin_windows, v.bin_window_file_gb, v.bin_ram_group_gb,
@@ -542,6 +543,95 @@ pub const BIN_WINDOW_CREDIT: u64 = 2;
 /// term is 16 B x the largest bin a window admits - the number that forces
 /// sharding at pile scale, and the number the operator's 100 GB envelope binds.
 pub const BIN_GROUP_SLOT_BYTES: u64 = 16;
+/// The fill's WRITE-path staging buffers, per thread (bit6/binbwt_slice.h
+/// `bin_fill_stage_bytes_per_thread`): the per-(thread, bin) append buffers the
+/// scatter pwrites from, water-filled over the window's bins. Bounded by the
+/// thread count, so it is a fixed term of the cap derivation - and it MUST
+/// match the producer's constant, since both compute the same cap. 32 MiB is
+/// MEASURED: the pwrite rate is a function of the write size (16 KB 3.3 GB/s,
+/// 64 KB 6.2, 256 KB 8.2) and 32 MiB/thread water-fills to ~128 KB per stream,
+/// where 16 MiB measures worse (2.61 s vs 2.05 s for the 1 GB fill) and 64 MiB
+/// worse still (2.83 s, the staging stops fitting in cache).
+pub const BIN_FILL_STAGE_BYTES_PER_THREAD: u64 = 32 << 20;
+/// Every RAM term of a phase must fit inside this percentage of --memory-gb
+/// (bit6/binbwt_slice.h `bin_phase_headroom_pct`).
+pub const BIN_PHASE_HEADROOM_PCT: u64 = 90;
+/// One corpus page-pool slot's RAM: two 256 B page buffers (cross_lcp_merge.cpp,
+/// SharedPages: PS = 256, two buffers per slot). The corpus cache
+/// (CorpusText) caches the whole corpus in RAM when it fits this budget.
+pub const BIN_POOL_BYTES_PER_SLOT: u64 = 2 * 256;
+/// The page-pool slot count the front door passes as CROSS_POOL_SLOTS: cover the
+/// corpus text (n/128) within 45% of the memory cap, clamped to [2^20, 2^27].
+/// One function, called by the plan (to price the cache term) and by the chain
+/// (to set the env), so the two can never disagree.
+pub fn bin_pool_slots(n: u64, mem_bytes: u64) -> u64 {
+    let pow2ceil = |mut x: u64| {
+        if x <= 1 { return 1; }
+        x -= 1;
+        let mut p = 1u64;
+        while p < x { p <<= 1; }
+        p
+    };
+    let want = pow2ceil((n / 128).max(1));
+    let cap = pow2ceil((mem_bytes * 45 / 100) / (3 * 528));
+    want.min(cap).clamp(1 << 20, 1u64 << 27)
+}
+/// The corpus text the producer holds in RAM: CorpusText caches the whole corpus
+/// when it fits the pool budget, so the term is min(n, 512 B x pool slots).
+pub fn bin_corpus_cache_bytes(n: u64, mem_bytes: u64) -> u64 {
+    (BIN_POOL_BYTES_PER_SLOT * bin_pool_slots(n, mem_bytes)).min(n)
+}
+/// The cap derivation, term by term (bit6/binbwt_slice.h `BinCapTerms`, which
+/// implements the same arithmetic against the live RLIMIT_AS).
+pub struct BinCapTerms {
+    pub limit: u64,   // --memory-gb in bytes (the phase's RLIMIT_AS)
+    pub usable: u64,  // headroom x limit
+    pub cache: u64,   // the corpus text in RAM
+    pub stage: u64,   // the fill's pwrite staging buffers
+    pub group: u64,   // what is left for the arena+scratch pair
+    pub cap: u64,     // derived live cap, slots
+    pub disc_cap: u64,// the scratch side's own bound on the cap
+    pub bound_by: &'static str,
+}
+/// THE FILE(R): memory x 90% = cache + staging + 16 B/slot x min(cap, n), and
+/// SCRATCH x 90% = credit x cap x 8 B + the producer's own disc output (rlebwt +
+/// piece window). The first bound is the arena pair the build sorts a bin in;
+/// the second exists so the rolling window files can never be planned into a
+/// scratch tree that has no room for them.
+pub fn bin_derive_live_cap(
+    n: u64, threads: u64, mem_bytes: u64, free_bytes: u64,
+    producer_disc_bytes: u64,
+) -> BinCapTerms {
+    let usable = mem_bytes * BIN_PHASE_HEADROOM_PCT / 100;
+    let cache = bin_corpus_cache_bytes(n, mem_bytes);
+    let stage = threads * BIN_FILL_STAGE_BYTES_PER_THREAD;
+    let group = usable.saturating_sub(cache + stage);
+    let addr_cap = (group / BIN_GROUP_SLOT_BYTES).max(1).min(n.max(1));
+    let disc_budget = (free_bytes * BIN_PHASE_HEADROOM_PCT / 100)
+        .saturating_sub(producer_disc_bytes);
+    let disc_cap = (disc_budget / (BIN_WINDOW_CREDIT * BIN_WINDOW_SLOT_BYTES))
+        .max(1).min(n.max(1));
+    let (cap, bound_by) = if addr_cap <= disc_cap {
+        (addr_cap, "address space (--memory-gb): corpus cache + fill staging + 16 B/slot arena pair")
+    } else {
+        (disc_cap, "scratch: credit x window file + the producer's own disc output")
+    };
+    BinCapTerms { limit: mem_bytes, usable, cache, stage, group,
+                  cap, disc_cap: disc_cap, bound_by }
+}
+/// Does an EXPLICIT cap fit the phase budget? `None` = it does, `Some(largest)`
+/// = it does not and `largest` is the most this phase could hold.
+pub fn bin_cap_over_budget(
+    cap: u64, n: u64, threads: u64, mem_bytes: u64,
+) -> Option<u64> {
+    let usable = mem_bytes * BIN_PHASE_HEADROOM_PCT / 100;
+    let fixed = bin_corpus_cache_bytes(n, mem_bytes)
+        + threads * BIN_FILL_STAGE_BYTES_PER_THREAD;
+    let need = fixed.saturating_add(
+        BIN_GROUP_SLOT_BYTES.saturating_mul(cap.min(n.max(1))));
+    if need <= usable { return None; }
+    Some(usable.saturating_sub(fixed) / BIN_GROUP_SLOT_BYTES)
+}
 /// The per-bin construction critical path, seconds per 1 GB fixture, at the
 /// thread counts it was measured at (t=8/32: bin-bwt v1 build_s; t=96: the v2
 /// producer-only run). The build is memory-bandwidth bound long before 96
@@ -680,6 +770,7 @@ pub struct V2PerTerms {
     pub bin_finish_s: f64,
     pub bin_e2e_s: f64,      // max(producer, finish): they run concurrently
     pub bin_note: String,
+    pub bin_cap_note: String, // the derived/live cap's own arithmetic, term by term
 }
 
 /// The bin plan. `live_cap` is the operator's `--bin-live-cap` (None = let the
@@ -696,20 +787,56 @@ pub fn model_v2(
     // One window needs one slot per position of the contiguous bin range it
     // admits; `cap` bounds that live set. The arena pair is 16 B/slot.
     let mem_bytes = cap_gb.saturating_mul(1 << 30);
+    // ---- the disc terms the cap's SCRATCH bound needs (pure functions of n) --
+    let rlebwt_mb = mb * V2_RLEBWT_PER_N;
+    let pfck_mb = mb * V2_PFCK_PER_N;
+    let piece_window = std::env::var("CROSS_V2_PIECE_WINDOW").ok()
+        .and_then(|v| v.parse::<u64>().ok()).unwrap_or(1100);
+    // PRC1: char + u32 len + two packed positions; headers and BPG1 class
+    // metadata receive a conservative 32-byte/run allowance.
+    let pieces_mb = (n as f64).min(piece_window as f64 * 65536.0) * 32.0 / 1048576.0;
+    let container_mb = mb * V2_CONTAINER_PER_N;
+    let tree_peak_mb = mb * V2_TREE_PEAK_PER_N;
+    let producer_disc_bytes = ((rlebwt_mb + pieces_mb) * 1024.0 * 1024.0) as u64;
+    // ---- THE LIVE CAP: DERIVED, NEVER UNBOUNDED ---------------------------
+    // The default used to be `85% of --memory-gb / 16 B`, i.e. the arena pair
+    // alone, and the 10 GB run died because the window's MAP_SHARED mapping and
+    // the corpus cache were not in that arithmetic at all. The derivation is now
+    // the honest sum of every RAM term of the producer phase, at
+    // BIN_PHASE_HEADROOM_PCT of the phase cap:
+    //
+    //   memory x 90%  =  corpus cache (min(n, 512 B x pool slots))      [CorpusText]
+    //                  + fill staging (threads x 4 MiB)                  [BinFillSink]
+    //                  + 16 B/slot x min(cap, n)                        [arena+scratch]
+    //   scratch x 90% = credit x cap x 8 B + rlebwt(1.546n) + pieces      [the window files]
+    //
+    // The window FILE is on the SCRATCH side, not the memory side: since the
+    // write path is buffered pwrite it charges no address space at all (that is
+    // the other half of this change - see bit6/binbwt_slice.h BinFillSink).
+    // The FINISH's own footprint is a separate process under the same cap and is
+    // checked against it on its own (ram_verdict), not subtracted here.
+    let auto = bin_derive_live_cap(n, threads as u64, mem_bytes,
+                                  survey.scratch_free_bytes, producer_disc_bytes);
     let (cap, cap_source) = match live_cap {
-        Some(0) => (n, "--bin-live-cap 0: unbounded (one window)".to_string()),
+        Some(0) => (n, "--bin-live-cap 0: unbounded (one window, no windowing)".to_string()),
         Some(v) => (
             v.min(n.max(1)),
             if v > n { format!("--bin-live-cap {v} exceeds n={n}: capped at n (one window)") }
             else { format!("--bin-live-cap {v} (operator)") },
         ),
-        None => {
-            // 85% of the cap in the arena pair, split two ways (arena+scratch),
-            // leaves room for the text window buffers and the sink's band
-            // buffers; never above n (more slots than positions is meaningless).
-            let auto = (mem_bytes * 85 / 100 / BIN_GROUP_SLOT_BYTES).clamp(1, n.max(1));
-            (auto, format!("auto from --memory-gb {cap_gb}: 85% of the cap / 16 B per build-group slot"))
-        }
+        None => (
+            auto.cap,
+            format!("auto from --memory-gb {cap_gb} (bound by {})",
+                    if auto.bound_by.starts_with("address") { "address space" } else { "scratch" }),
+        ),
+    };
+    // An EXPLICIT cap that the phase cannot hold is INFEASIBLE here (and the
+    // front door refuses it before spawning anything): the producer would die
+    // mid-window with a bad_alloc, which is exactly what the plan exists to
+    // prevent.
+    let explicit_over_budget = match live_cap {
+        Some(v) if v != 0 => bin_cap_over_budget(v, n, threads as u64, mem_bytes),
+        _ => None,
     };
     let windows = bin_windows(n, cap);
     // ---- THE POSITION STORE, the disc-windows way --------------------------
@@ -746,15 +873,8 @@ pub fn model_v2(
     let e2e_s = producer_s.max(finish_s);
     // ---- the disc side: rlebwt -> pieces window -> pfck2 -> container, with
     // rlebwt deleted after the container publishes (the measured 1.975n peak).
-    let rlebwt_mb = mb * V2_RLEBWT_PER_N;
-    let pfck_mb = mb * V2_PFCK_PER_N;
-    let window = std::env::var("CROSS_V2_PIECE_WINDOW").ok()
-        .and_then(|v| v.parse::<u64>().ok()).unwrap_or(1100);
-    // PRC1: char + u32 len + two packed positions; headers and BPG1 class
-    // metadata receive a conservative 32-byte/run allowance.
-    let pieces_mb = (n as f64).min(window as f64 * 65536.0) * 32.0 / 1048576.0;
-    let container_mb = mb * V2_CONTAINER_PER_N;
-    let tree_peak_mb = mb * V2_TREE_PEAK_PER_N;
+    // The byte counts themselves are computed above, where the cap derivation
+    // needs them (the scratch bound of the cap).
     let producer_disc_mb = rlebwt_mb + pieces_mb;
     let phases = vec![
         PhaseRow { name: "bin(sweep)".into(), wall_s: count_s + fill_s,
@@ -805,18 +925,41 @@ pub fn model_v2(
     // so it contributes 0 B of RAM. Every phase runs under the SAME RLIMIT_AS,
     // so 90% of it is the bar; over the bar the run dies with a bad_alloc
     // mid-window, which is exactly what the plan is for.
-    let arena_bytes = cap.saturating_mul(BIN_GROUP_SLOT_BYTES);
-    let arena_ok = arena_bytes <= mem_bytes / 10 * 9;
+    // THE PHASE-CAP CHECK, stated in the terms the derivation uses: the build
+    // group's arena pair + the corpus cache + the fill staging must fit inside
+    // BIN_PHASE_HEADROOM_PCT of --memory-gb. An explicit cap that does not is
+    // INFEASIBLE (the front door refuses it before it spawns the producer).
+    let cache_bytes = bin_corpus_cache_bytes(n, mem_bytes);
+    let stage_bytes = threads as u64 * BIN_FILL_STAGE_BYTES_PER_THREAD;
+    let arena_bytes = cap.saturating_mul(BIN_GROUP_SLOT_BYTES)
+        .saturating_add(cache_bytes).saturating_add(stage_bytes);
+    let arena_ok = arena_bytes <= mem_bytes * BIN_PHASE_HEADROOM_PCT / 100
+        && explicit_over_budget.is_none();
+    // THE FINISH's own footprint, checked against the SAME phase cap (it is its
+    // own process under the same RLIMIT_AS): the witness stream it holds in RAM.
+    let finish_bytes = (8.0 * V2_CHI_PER_N * n as f64) as u64;
+    let finish_ok = finish_bytes <= mem_bytes * BIN_PHASE_HEADROOM_PCT / 100;
     let witness_ram_gb = 8.0 * V2_CHI_PER_N * n_gb;
     let ram_verdict = format!(
-        "{}: RAM term = ONE BUILD GROUP ~{:.1} GiB ({} B/slot x {} group slots - the bin being sorted in place, W={} windows, {}); the position WINDOW is {:.1} GiB of FILE ({} credit x {} slots x {} B), 0 B of RAM; fused finish witness stream ~{:.0} GB (--wit-ram-gb, default half the cap; overflow spills as sorted varint-delta disc runs) + its own pfck2 grid",
+        "{}: RAM term = ONE BUILD GROUP ~{:.1} GiB ({} B/slot x {} group slots - the bin being sorted in place, W={} windows, {}) + the corpus cache {:.1} GiB + the fill staging {:.1} GiB = {:.1} GiB against the usable {}% of --memory-gb {} GiB ({}); the position WINDOW is {:.1} GiB of FILE ({} credit x {} slots x {} B), 0 B of address space (buffered pwrite, no mapping); fused finish witness stream ~{:.0} GB {} the same cap (--wit-ram-gb, default half the cap; the overflow spills as sorted varint-delta disc runs, so an over-cap witness stream costs disc, not feasibility) + its own pfck2 grid",
         if arena_ok { "FEASIBLE" } else { "INFEASIBLE" },
-        ram_group_gb, BIN_GROUP_SLOT_BYTES, cap, windows, cap_source, window_file_gb,
+        ram_group_gb, BIN_GROUP_SLOT_BYTES, cap, windows, cap_source,
+        cache_bytes as f64 / (1u64 << 30) as f64, stage_bytes as f64 / (1u64 << 30) as f64,
+        arena_bytes as f64 / (1u64 << 30) as f64, BIN_PHASE_HEADROOM_PCT, cap_gb,
+        if arena_ok { "fits" } else { "DOES NOT FIT - lower --bin-live-cap or raise --memory-gb" },
+        window_file_gb,
         BIN_WINDOW_CREDIT, cap, BIN_WINDOW_SLOT_BYTES, witness_ram_gb,
+        if finish_ok { "fits" } else { "does not fit (it spills)" },
     );
     let mut alternatives = Vec::new();
+    if explicit_over_budget.is_some() {
+        alternatives.push(format!(
+            "the --bin-live-cap you passed cannot fit the phase budget: at --memory-gb {cap_gb} the corpus cache ({} B) + fill staging ({} B) + 16 B/slot arena pair leave room for {} slots. Lower --bin-live-cap or raise --memory-gb (the producer refuses this cap at startup, before it allocates anything)",
+            cache_bytes, stage_bytes,
+            bin_cap_over_budget(live_cap.unwrap_or(0), n, threads as u64, mem_bytes).unwrap_or(0)));
+    }
     if !arena_ok {
-        alternatives.push(format!("lower --bin-live-cap (a build group is {} B/slot: {} slots would fit 90% of --memory-gb {cap_gb}) or raise --memory-gb; a bin larger than the group raises the cap and the front door fails loud, so SHARDING is the other lever", BIN_GROUP_SLOT_BYTES, mem_bytes / 10 * 9 / BIN_GROUP_SLOT_BYTES));
+        alternatives.push(format!("lower --bin-live-cap (a build group is {} B/slot: {} slots would fit {}% of --memory-gb {cap_gb} once the corpus cache and the fill staging are paid) or raise --memory-gb; a bin larger than the group raises the cap and the front door fails loud, so SHARDING is the other lever", BIN_GROUP_SLOT_BYTES, mem_bytes * BIN_PHASE_HEADROOM_PCT / 100 / BIN_GROUP_SLOT_BYTES, BIN_PHASE_HEADROOM_PCT));
     }
     if !disc_ok {
         alternatives.push("free or add scratch space (the bin shape's tree is rlebwt 1.546n + the bounded piece window + the container 0.468n, with rlebwt deleted at publish)".to_string());
@@ -829,7 +972,7 @@ pub fn model_v2(
         V2_CHI_PER_N, witness_ram_gb,
     );
     let transient_note = format!(
-        "no chunk set, no merge transient, no persistent position column: the producer's scratch is the piece window ({:.3} GiB, W={window} bands x 65536 runs), the rlebwt it is publishing ({:.1} GiB) and the ROLLING WINDOW FILES ({:.1} GiB on disc = {} credit x cap x {} B, one file per live window, unlinked the moment its bins are built); the build's RAM is one group ({:.1} GiB, 16 B/slot) and NEVER the window; inputs the finish consumes are unlinked as read",
+        "no chunk set, no merge transient, no persistent position column: the producer's scratch is the piece window ({:.3} GiB, W={piece_window} bands x 65536 runs), the rlebwt it is publishing ({:.1} GiB) and the ROLLING WINDOW FILES ({:.1} GiB on disc = {} credit x cap x {} B, one file per live window, unlinked the moment its bins are built); the build's RAM is one group ({:.1} GiB, 16 B/slot) and NEVER the window; inputs the finish consumes are unlinked as read",
         pieces_mb / 1024.0, rlebwt_mb / 1024.0, window_file_gb, BIN_WINDOW_CREDIT,
         BIN_WINDOW_SLOT_BYTES, ram_group_gb,
     );
@@ -840,6 +983,29 @@ pub fn model_v2(
         bin_build_s_per_gb(threads), BIN_STITCH_NS_PER_BYTE, producer_s * 1e9 / n as f64,
         FINISH_DECOMP_NS_PER_BYTE, e2e_s * 1e9 / n as f64,
         100.0 * (producer_s * 1e9 / n as f64) / 41.68,
+    );
+    // THE CAP'S ARITHMETIC, printed: both bounds, every term, and which one binds.
+    let cap_note = format!(
+        "live_cap_slots={cap} source={cap_source} bound_by={}; \
+MEMORY bound: {}% of --memory-gb {} GiB ({} B) = {} B usable - corpus cache {} B \
+(min(n, {} B x pool slots {})) - fill staging {} B ({} threads x {} B) = {} B \
+/ {} B per build-group slot = {} slots; SCRATCH bound: {}% of {:.1} GiB free = {} B \
+- rlebwt+pieces {} B = {} B / (credit {} x {} B per slot) = {} slots; \
+window_file_gb={:.2} = credit x cap x 8 B ON DISC (0 B of address space: the fill \
+writes with buffered pwrite, never a mapping); the finish is its own process under \
+the same cap: witness {:.1} GiB {} headroom_pct={}",
+        auto.bound_by, BIN_PHASE_HEADROOM_PCT, cap_gb, mem_bytes, auto.usable,
+        auto.cache, BIN_POOL_BYTES_PER_SLOT, bin_pool_slots(n, mem_bytes),
+        auto.stage, threads, BIN_FILL_STAGE_BYTES_PER_THREAD, auto.group,
+        BIN_GROUP_SLOT_BYTES, auto.group / BIN_GROUP_SLOT_BYTES,
+        BIN_PHASE_HEADROOM_PCT,
+        survey.scratch_free_bytes as f64 / (1u64 << 30) as f64,
+        survey.scratch_free_bytes * BIN_PHASE_HEADROOM_PCT / 100, producer_disc_bytes,
+        survey.scratch_free_bytes * BIN_PHASE_HEADROOM_PCT / 100 - producer_disc_bytes,
+        BIN_WINDOW_CREDIT, BIN_WINDOW_SLOT_BYTES, auto.disc_cap,
+        window_file_gb, witness_ram_gb,
+        if finish_ok { "fits it," } else { "exceeds it (the finish spills the overflow as sorted varint-delta disc runs; --wit-ram-gb caps the in-RAM part)," },
+        BIN_PHASE_HEADROOM_PCT,
     );
     let v2 = V2PerTerms {
         corpus_gb: n_gb,
@@ -867,6 +1033,7 @@ pub fn model_v2(
         bin_finish_s: finish_s,
         bin_e2e_s: e2e_s,
         bin_note,
+        bin_cap_note: cap_note,
     };
     Plan { survey, chunks: 1, kway: 1, threads, cap_gb, phases, chunk_bytes_mb: mb,
            pos_mode: "none (no position column in the bin shape)".to_string(),
@@ -887,6 +1054,74 @@ mod tests {
         assert_eq!(bin_windows(1_310_000_000_000, 65_000_000_000), 21);
         assert_eq!(bin_windows(1_310_000_000_000, 131_000_000_000), 10);
         assert_eq!(bin_windows(5, 0), 5, "a zero cap must not divide by zero");
+    }
+
+    #[test]
+    fn the_auto_live_cap_fits_the_phase_budget_with_headroom() {
+        // THE CONFIG THAT FAILED LIVE (sol10.log): 10 GB corpus, --memory-gb 100
+        // (PHASE_CAP_KB=104857600), 96 threads, default cap. The old default was
+        // 85% of the cap / 16 B = 5,704,253,440 slots, which priced the arena
+        // pair alone: the window that came out was 44.6 GB of MAP_SHARED and the
+        // mapping blew the cap. The derived cap must satisfy the whole equation.
+        let n = 10_000_017_258u64;
+        let mem = 100u64 << 30;
+        let free = 2569u64 << 30;                     // the box's scratch free
+        let disc = (1.546 * n as f64) as u64;          // rlebwt + piece window
+        let t = bin_derive_live_cap(n, 96, mem, free, disc);
+        assert!(t.cache + t.stage + BIN_GROUP_SLOT_BYTES * t.cap <= mem * BIN_PHASE_HEADROOM_PCT / 100,
+                "the derived cap's RAM terms must fit the headroom");
+        assert_eq!(t.cache, n, "a 10 GB corpus fits the pool budget, so the cache IS the corpus");
+        assert_eq!(t.stage, 96 * BIN_FILL_STAGE_BYTES_PER_THREAD);
+        assert!(t.cap < n, "10 GB at --memory-gb 100 must still be windowed");
+        assert!(t.cap < 5_704_253_440, "the 85%-of-cap default was over budget");
+        assert_eq!(bin_windows(n, t.cap), 2, "the 10 GB rung is two windows");
+        // The window FILE is disc: credit x cap x 8 B, and it must fit scratch.
+        assert!((BIN_WINDOW_CREDIT * t.cap * BIN_WINDOW_SLOT_BYTES) < free * BIN_PHASE_HEADROOM_PCT / 100 - disc);
+        // The 1 GB and 100 MB fixtures stay ONE window at the gate's memory caps
+        // (that is what the byte-identity banks were produced with).
+        let c1 = bin_derive_live_cap(1_000_000_665, 96, 40u64 << 30, free, disc / 10);
+        assert_eq!(c1.cap, 1_000_000_665, "1 GB @ --memory-gb 40 is one window");
+        let c100 = bin_derive_live_cap(100_000_503, 96, 24u64 << 30, free, disc / 100);
+        assert_eq!(c100.cap, 100_000_503, "100 MB @ --memory-gb 24 is one window");
+    }
+
+    #[test]
+    fn an_explicit_cap_over_the_budget_reports_the_largest_that_fits() {
+        let n = 10_000_017_258u64;
+        let mem = 100u64 << 30;
+        assert_eq!(bin_cap_over_budget(n, n, 96, mem), Some(largest_fit(n, 96, mem)),
+                   "an unbounded cap at 10 GB/100 GiB cannot fit");
+        let t = bin_derive_live_cap(n, 96, mem, 2569u64 << 30, 0);
+        assert_eq!(bin_cap_over_budget(t.cap, n, 96, mem), None,
+                   "the derived cap always fits");
+        // A 1 GB fixture at --memory-gb 40 with cap = n fits.
+        assert_eq!(bin_cap_over_budget(1_000_000_665, 1_000_000_665, 96, 40u64 << 30), None);
+    }
+
+    fn largest_fit(n: u64, threads: u64, mem_bytes: u64) -> u64 {
+        let usable = mem_bytes * BIN_PHASE_HEADROOM_PCT / 100;
+        let fixed = bin_corpus_cache_bytes(n, mem_bytes)
+            + threads * BIN_FILL_STAGE_BYTES_PER_THREAD;
+        usable.saturating_sub(fixed) / BIN_GROUP_SLOT_BYTES
+    }
+
+    #[test]
+    fn the_pool_sizing_and_the_cache_term_agree() {
+        // The chain sets CROSS_POOL_SLOTS with bin_pool_slots; the plan prices
+        // the cache with min(n, 512 B x those slots). A 10 GB corpus under 45% of
+        // 100 GiB (17.18 GB of pool budget) fits, so the cache term is n itself.
+        let n = 10_000_017_258u64;
+        let mem = 100u64 << 30;
+        let slots = bin_pool_slots(n, mem);
+        assert_eq!(slots, 33_554_432, "the 10 GB pool sizing");
+        assert_eq!(bin_corpus_cache_bytes(n, mem), n);
+        // A pile-size corpus cannot be cached: the term is the pool budget.
+        let pile = 1_310_000_000_000u64;
+        assert_eq!(bin_corpus_cache_bytes(pile, mem), BIN_POOL_BYTES_PER_SLOT * slots);
+        let t = bin_derive_live_cap(pile, 96, mem, 2569u64 << 30, (1.546 * pile as f64) as u64);
+        assert!(t.cache + t.stage + BIN_GROUP_SLOT_BYTES * t.cap <= mem * BIN_PHASE_HEADROOM_PCT / 100);
+        assert_eq!(t.bound_by.starts_with("address"), true,
+                   "at the pile the memory side binds (the scratch side has room)");
     }
 
     #[test]

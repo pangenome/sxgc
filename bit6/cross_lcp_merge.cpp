@@ -5447,6 +5447,26 @@ int main_impl(int argc, char** argv) {
         return false;
     };
     if (!flag("--threads").empty()) threads = std::stoull(flag("--threads"));
+    // `--bin-cap-print N` prints the DERIVED live cap this process would use for
+    // a corpus of N bytes, from this phase's actual RLIMIT_AS and the actual
+    // pool budget, and exits. It is the cross-check between the plan's formula
+    // (xsa/src/plan.rs) and the producer's (binbwt_slice.h BinCapTerms): the same
+    // run's plan and producer must print the same cap.
+    if (has("--bin-cap-print")) {
+        const U nn = std::stoull(flag("--bin-cap-print"));
+        BinCapTerms ct = bin_derive_live_cap(nn, threads);
+        std::printf("BIN_CAP_DERIVED n=%llu threads=%llu rlimit_as=%llu usable=%llu "
+                    "cache=%llu stage=%llu group=%llu headroom_pct=%d cap=%llu "
+                    "windows=%llu\n",
+                    (unsigned long long)nn, (unsigned long long)threads,
+                    (unsigned long long)ct.limit, (unsigned long long)ct.usable,
+                    (unsigned long long)ct.cache, (unsigned long long)ct.stage,
+                    (unsigned long long)ct.group, int(bin_phase_headroom_pct),
+                    (unsigned long long)ct.cap,
+                    (unsigned long long)((nn + ct.cap - 1) / (ct.cap ? ct.cap : 1)));
+        std::printf("BIN_CAP_SOURCE %s\n", ct.source.c_str());
+        return 0;
+    }
     if (has("--radix")) return radix_main(flag("--radix"),flag("--remap"),flag("--out-prefix"),
         flag("--radix-bytes").empty()?8:std::stoul(flag("--radix-bytes")),
         flag("--position-cap").empty()?32000000:std::stoull(flag("--position-cap")),threads);
@@ -5467,6 +5487,9 @@ int main_impl(int argc, char** argv) {
         if (!flag("--bin-build-cap").empty())
             bwo.buildCap = std::stoull(flag("--bin-build-cap"));
         bwo.disc = !has("--bin-window-ram");
+        const std::string capFlag = flag("--bin-live-cap");
+        const bool binLiveCapGiven = !capFlag.empty();
+        const U binLiveCap = binLiveCapGiven ? std::stoull(capFlag) : 0;
         return binbwt_main(flag("--binbwt"),flag("--remap"),flag("--out-prefix"),
         threads,
         // THE TARGET SIZE: the leaf bound, automatic by default (0). Depth is an
@@ -5494,7 +5517,14 @@ int main_impl(int argc, char** argv) {
         // nothing when it does not fire (a cap is a comparison), and if it does
         // fire the leaf is journalled loudly (BIN_LEAF_OVER_TARGET).
         flag("--bin-depth-cap").empty()?4096:std::stoull(flag("--bin-depth-cap")),
-        flag("--bin-live-cap").empty()?U(1)<<32:std::stoull(flag("--bin-live-cap")),
+        // THE LIVE CAP. DEFAULT = DERIVED, never unbounded: absent the flag the
+        // producer sizes the windows from the phase's RLIMIT_AS so that the
+        // corpus cache + the fill's staging + the arena pair the build needs all
+        // fit with 10% headroom (bit6/binbwt_slice.h BinCapTerms; the plan's
+        // render prices the same terms). An EXPLICIT cap that cannot fit that
+        // budget is refused LOUD at startup instead of dying mid-window.
+        binLiveCap,
+        binLiveCapGiven,
         flag("--bin-level-bytes").empty()?1:std::stoull(flag("--bin-level-bytes")),
         flag("--bin-mode")!="cyclic", has("--bin-freq-sched"),
         flag("--bin-split").empty()?0:std::stoull(flag("--bin-split")),

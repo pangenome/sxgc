@@ -1058,6 +1058,31 @@ fn run_chain(options: Options) -> Result<(), String> {
         // plan priced).
         let v2 = build_plan.v2.as_ref().ok_or("internal: v2 plan has no bin terms")?;
         let (bin_live_cap, plan_windows) = (v2.bin_live_cap, v2.bin_windows);
+        // An EXPLICIT cap the phase cannot hold is refused HERE, before a single
+        // process is spawned: the producer would otherwise die mid-window with a
+        // bad_alloc (or, before the pwrite write path, on a window-file mmap -
+        // the 10 GB sol10.log failure). The producer checks the same budget
+        // against its own RLIMIT_AS and refuses too; this is the front door's
+        // half of the same contract.
+        if let Some(v) = options.bin_live_cap {
+            if let Some(fits) = super::plan::bin_cap_over_budget(v, n, options.threads as u64, options.memory_gb * (1 << 30)) {
+                return Err(format!(
+                    "V2_BIN_CAP_OVER_BUDGET: --bin-live-cap {v} cannot fit the phase budget: \
+                     the corpus cache ({} B) + the fill staging ({} B) + 16 B/slot x min(cap, n) \
+                     exceed {}% of --memory-gb {}; {} slots is the largest cap this phase can \
+                     hold (lower --bin-live-cap, or raise --memory-gb / shard the corpus)",
+                    super::plan::bin_corpus_cache_bytes(n, options.memory_gb * (1 << 30)),
+                    options.threads as u64 * super::plan::BIN_FILL_STAGE_BYTES_PER_THREAD,
+                    super::plan::BIN_PHASE_HEADROOM_PCT, options.memory_gb, fits));
+            }
+        }
+        // The producer is always handed the plan's cap EXPLICITLY: for the
+        // default the plan DERIVED it from --memory-gb (and the scratch), and
+        // passing it keeps the plan and the run from ever pricing two different
+        // windows. The producer still validates it against the live RLIMIT_AS.
+        journal.line(&format!("V2_BIN_CAP live_cap_slots={bin_live_cap} windows={plan_windows} \
+             source={} (the plan's pick; the producer re-checks it against the phase RLIMIT_AS)",
+            if options.bin_live_cap.is_some() { "operator" } else { "auto from --memory-gb" }));
         return run_v2_tail(&mut journal, &options, &scratch, &tools, &input, &remap_path,
                            n, memory_kb, &frag, bin_live_cap, plan_windows);
     }
@@ -1251,16 +1276,10 @@ fn run_v2_tail(
         journal.line(&format!("KNOB CROSS_POOL_SLOTS={v} (operator-passed)"));
         v
     } else {
-        let pow2ceil = |mut x: u64| {
-            if x <= 1 { return 1; }
-            x -= 1;
-            let mut p = 1u64;
-            while p < x { p <<= 1; }
-            p
-        };
-        let want = pow2ceil((n / 128).max(1));               // covers the corpus text (n bytes) with headroom
-        let cap = pow2ceil((memory_kb * 1024 * 45 / 100) / (3 * 528));
-        let slots = want.min(cap).clamp(1 << 20, 1u64 << 27);
+        // ONE function for this sizing, in plan.rs, because the PLAN prices the
+        // same budget as the corpus-cache term of the derived live cap
+        // (plan::bin_corpus_cache_bytes): the two must never disagree.
+        let slots = super::plan::bin_pool_slots(n, memory_kb * 1024);
         let per_pool_gb = slots as f64 * 528.0 / (1.0e9);
         let cover_pct = (slots as f64) * 256.0 * 100.0 / (n.max(1) as f64);
         journal.line(&format!(
