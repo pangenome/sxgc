@@ -362,6 +362,75 @@ int main(int argc, char** argv) {
                     (unsigned long long)refused);
     }
 
+    // ---- TARGET-SIZE RECURSION: ADAPTIVE DEPTH (its own case set) ----------
+    // The rule is now "split until the node is <= targetSize", so the depth of
+    // the tree is an OUTPUT of the text. These cases force that output to be
+    // deep: a text whose rows keep sharing prefixes must keep being divided,
+    // level after level, instead of being handed to a leaf sort at a cap. They
+    // assert the three things the rule claims:
+    //   * the exact brute order on every fixture, in both modes;
+    //   * leaf_rows_max <= target and over_target_leaves == 0, i.e. the TARGET
+    //     bounded every leaf - the depth cap never had to fire;
+    //   * the tree actually went deep: depth_max reaches 4 across the set (a
+    //     fixture of 32 identical symbols under target 1 has to be divided four
+    //     or more levels down before any node reaches the target).
+    // depthCap is 256, the product default: high enough that only a corpus that
+    // CANNOT be divided (identical rotations) can ever reach it.
+    U adaptCases = 0, adaptWindows = 0, adaptDepthMax = 0;
+    for (U f = 0; f < fixtures.size(); ++f) {
+        const std::string& t = fixtures[f];
+        std::string M;
+        for (unsigned char c : t) M += char(remap[c]);
+        const std::string path = std::string(argv[1]) + "/oracle-corpus";
+        TextSeg seg; seg.path = path; seg.len = t.size(); seg.remap = remap;
+        { fs::remove(path); OutFile file(path); file.raw(t.data(), t.size()); }
+        CorpusText text; text.open({seg}, true);
+        for (bool dollar : {false, true}) {
+            auto want = brute(M, dollar);
+            U n = text.n;
+            for (U threads : {1u, 8u})
+                for (U target : {1u, 2u, 3u, 17u})
+                    for (U lc : std::array<U,2>{7, U(1) << 40}) {
+                        if (target >= n) continue;      // nothing to divide
+                        BinWork w;
+                        std::vector<U> got;
+                        got.reserve(n);
+                        bin_order(text, dollar, threads, target, 256, lc, 1, false, 0, w,
+                                  [&](U row, U p) {
+                                      require(row == got.size(), "adaptive oracle row continuity");
+                                      got.push_back(p);
+                                  }, false, woptMain);
+                        require(got.size() == n, "adaptive oracle row coverage");
+                        if (got != want) {
+                            std::fprintf(stderr,
+                                "BINBWT_ORACLE_ADAPTIVE_FAIL fixture=%llu dollar=%u threads=%llu "
+                                "target=%llu cap=%llu\n",
+                                (unsigned long long)f, unsigned(dollar),
+                                (unsigned long long)threads, (unsigned long long)target,
+                                (unsigned long long)lc);
+                            return 1;
+                        }
+                        // Every leaf is bounded by the TARGET unless the text
+                        // itself ended inside the node (depth >= n: the suffixes
+                        // agree to their end and there is nothing left to divide).
+                        require(w.leafRowsMax <= target || w.structuralLeaves > 0,
+                                "adaptive oracle leaf exceeded the target");
+                        require(w.overTargetLeaves == 0,
+                                "adaptive oracle: the depth cap fired as the rule");
+                        adaptDepthMax = std::max(adaptDepthMax, w.depthMax);
+                        adaptWindows += w.windows;
+                        ++adaptCases;
+                    }
+        }
+    }
+    require(adaptDepthMax >= 4,
+            "adaptive oracle never produced a deep tree (the fixtures must force depth)");
+    std::printf("BINBWT_ORACLE_ADAPTIVE_PASS cases=%llu fixtures=%zu modes=cyclic,dollar "
+                "threads=1,8 target=1,2,3,17 depth_cap=256 level_bytes=1 cap=7,all "
+                "depth_max=%llu leaf_rows_max_le_target=1 over_target_leaves=0 "
+                "exact_brute_SA=1 window_instances=%llu\n",
+                (unsigned long long)adaptCases, fixtures.size(),
+                (unsigned long long)adaptDepthMax, (unsigned long long)adaptWindows);
     std::printf("BINBWT_ORACLE_FREQ_PASS cases=%llu fixtures=%zu modes=cyclic,dollar "
                 "threads=1,3,8 leaf=1,24 depth_cap=16 level_bytes=1,2 cap=7,all "
                 "freq_sched=1 exact_brute_SA=1 multi_window_runs=%llu "

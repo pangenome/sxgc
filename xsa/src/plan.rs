@@ -426,12 +426,30 @@ impl Plan {
                 "XSA_PLAN_V2_TERMS pipeline=v2bin corpus_gb={:.1} rlebwt_gb={:.1} pfck2_scratch_gb={:.1} pieces_window_gb={:.1} container_gb={:.1} tree_peak_gb={:.1} whole_box_gb={:.1}\n",
                 v.corpus_gb, v.rlebwt_gb, v.pfck_gb, v.pieces_window_gb, v.container_gb, v.tree_peak_gb, v.whole_box_gb,
             ));
-            s.push_str(&format!("XSA_PLAN_V2_TREE tree_peak={:.3}n bound={:.1}n measured_at=1GB-G2 (output side; the bin producer adds no transient file); whole_box(corpus+tree)={:.3}n; position column disc=0.000n (anonymous RAM arena)\n", V2_TREE_PEAK_PER_N, V2_TREE_TARGET_PER_N, 1.0 + V2_TREE_PEAK_PER_N));
+            s.push_str(&format!("XSA_PLAN_V2_TREE tree_peak={:.3}n bound={:.1}n measured_at=1GB-G2 (output side; the bin producer's own addition is the rolling window files, priced above); whole_box(corpus+tree)={:.3}n; position column disc=0.000n (transient rolling window files only)\n", V2_TREE_PEAK_PER_N, V2_TREE_TARGET_PER_N, 1.0 + V2_TREE_PEAK_PER_N));
             s.push_str(&format!("XSA_PLAN_V2_WITNESS {}\n", v.witness_note));
             s.push_str(&format!("XSA_PLAN_V2_TRANSIENT {}\n", v.transient_note));
             s.push_str(&format!(
-                "XSA_PLAN_V2_BIN live_cap_slots={} windows={} arena_pair_gb={:.1} count_s={:.0} fill_s={:.0} build_s={:.0} stitch_s={:.0} producer_s={:.0} finish_s={:.0}\n",
-                v.bin_live_cap, v.bin_windows, v.bin_arena_gb, v.bin_count_s, v.bin_fill_s, v.bin_build_s, v.bin_stitch_s, v.bin_producer_s, v.bin_finish_s,
+                "XSA_PLAN_V2_BIN live_cap_slots={} windows={} window_file_gb={:.1} ram_group_gb={:.1} count_s={:.0} fill_s={:.0} build_s={:.0} stitch_s={:.0} producer_s={:.0} finish_s={:.0}\n",
+                v.bin_live_cap, v.bin_windows, v.bin_window_file_gb, v.bin_ram_group_gb,
+                v.bin_count_s, v.bin_fill_s, v.bin_build_s, v.bin_stitch_s, v.bin_producer_s, v.bin_finish_s,
+            ));
+            // THE TARGET-SIZE TREE: the leaf bound is the only shape knob, and the
+            // depth below it is an output of the byte census. Both are printed so
+            // the plan cannot be read as if a depth cap decided the leaves.
+            s.push_str(&format!(
+                "XSA_PLAN_V2_TARGET rows={} leaves={} levels_per_row={:.2} largest_leaf_rows<={} rule=subdivide-while-rows>target (depth is an OUTPUT of the census; the depth cap is a fail-loud backstop, not the rule)\n",
+                v.bin_target_rows, v.bin_leaves, v.bin_levels_mean, v.bin_target_rows,
+            ));
+            // THE POSITION STORE, stated once: the window is a FILE, the RAM is
+            // one group. This is the disc-windows amendment to D2 (the rolling
+            // amendment): positions materialize transiently in bounded rolling
+            // window files, never as a persistent per-suffix column.
+            s.push_str(&format!(
+                "XSA_PLAN_V2_POSITION_STORE window_file_gb={:.2} = credit({}) x cap({}) x {} B ON DISC (one rolling file per live window, unlinked when built); ram_group_gb={:.2} = {} B/slot x the group being sorted in place; position_io_gb={:.1} = 16 x n / (8+8) B a position written once and read once; position_io_s={:.0} at the 5.238 GB/s device floor (overlapped by the fill and the build, so not on the critical path); persistent_position_column=0 full_SA=0\n",
+                v.bin_window_file_gb, BIN_WINDOW_CREDIT, v.bin_live_cap, BIN_WINDOW_SLOT_BYTES,
+                v.bin_ram_group_gb, BIN_GROUP_SLOT_BYTES,
+                16.0 * v.corpus_gb, BIN_WINDOW_IO_NS_PER_BYTE * v.corpus_gb,
             ));
             s.push_str(&format!(
                 "XSA_PLAN_V2_BIN_END e2e_s={:.0} e2e={} producer={} finish={} rule=max(producer,finish) (concurrent, flow-controlled through the piece window)\n",
@@ -483,14 +501,24 @@ pub const V2_CHI_PER_N: f64 = 0.283;            // 1GB fixture ratio; the pile v
 /// 1.36 s/GB; the v2 binary measured 0.043 s/GB. The banked figure is kept,
 /// i.e. conservative.
 pub const BIN_COUNT_NS_PER_BYTE: f64 = 1.36;
-/// The placing pass for the FIRST window, measured on the single-window 1 GB
-/// run: 5.084 s of fill, i.e. packing (tail|symbol|hit) plus the target merge
-/// join.
-pub const BIN_FILL_FIRST_NS_PER_BYTE: f64 = 5.084;
-/// The marginal placing pass per EXTRA window: v1's banked (15.70-4.23)/4 =
-/// 2.87 s/GB per window x 1.232 (the v2 packing+join cost measured against the
-/// same v1 pass) = 3.535 s/GB. Each window places only its own bin range.
-pub const BIN_FILL_WINDOW_NS_PER_BYTE: f64 = 3.535;
+/// The placing pass, per window, at the DEVICE FLOOR. This term was re-priced
+/// by the parallel-fill scatter and is no longer a serial full-corpus sweep:
+/// the fill is a prefix-sum scatter over NT chunks (measured 213.006 s ->
+/// 4.045 s at 10 GB/6 windows = 14.8 GB/s RAM-cached, 21.1 GB/s on a quiet box,
+/// 16.8 GB/s warm on the 100 GB snapshot). A 1.31 TB corpus cannot be cached, so
+/// the plan uses the measured DEVICE floor for 96 independent O_DIRECT streams,
+/// 5.238 GB/s - i.e. 1/5.238e9 s per byte = 0.191 ns/byte per window pass.
+/// The window count is what makes this a term at all: every window re-reads the
+/// whole corpus (sweep_bytes = (1+windows) x n, asserted on every run).
+pub const BIN_FILL_FIRST_NS_PER_BYTE: f64 = 1.0e9 / 5.238e9;
+pub const BIN_FILL_WINDOW_NS_PER_BYTE: f64 = 1.0e9 / 5.238e9;
+/// THE WINDOW FILES' OWN I/O (disc-windows): every position is written to a
+/// window file exactly once and read back exactly once, 8 B each way, so the
+/// run moves 16n bytes of position I/O. It overlaps the fill (the fill IS the
+/// writer) and the build (the bulk preads are the loader), so it is printed as
+/// its own term and NOT added to the critical path; at the device floor it is
+/// 16n/5.238 GB/s = 0.382 ns/byte, i.e. ~1.2 h at pile scale.
+pub const BIN_WINDOW_IO_NS_PER_BYTE: f64 = 16.0e9 / 5.238e9;
 /// The ONE ordered stitch thread (band writers overlapped): 11.41 ns/row at
 /// 1 GB = 11.408 s/GB. Thread-count insensitive by construction - it is a
 /// single ordered consumer of the bins.
@@ -498,15 +526,102 @@ pub const BIN_STITCH_NS_PER_BYTE: f64 = 11.408;
 /// The decomposed finish's OWN work: 141.68 s wall at 1 GB minus 22.74 s of
 /// producer backpressure (piece wait) = 118.9 s/GB.
 pub const FINISH_DECOMP_NS_PER_BYTE: f64 = 118.9;
-/// Position-arena bytes per admitted slot: an arena PLUS a scratch arena, 8 B
-/// each. Anonymous RAM, never a file: the bin shape has no position column.
-pub const BIN_ARENA_BYTES_PER_SLOT: u64 = 16;
+/// THE POSITION STORE IS A FILE NOW (disc-windows): a window's positions live in
+/// a bounded ROLLING FILE in the scratch tree, one 8 B arena word per admitted
+/// slot (tail|symbol|hit), written by the fill through a MAP_SHARED mapping and
+/// read back one bulk pread per bin. `cap` slots admit `cap` positions, and the
+/// fill may run `BIN_WINDOW_CREDIT` windows ahead of the build, so the live
+/// scratch term is credit x cap x 8 B - ON DISC, not in RAM.
+pub const BIN_WINDOW_SLOT_BYTES: u64 = 8;
+/// Windows the fill may run ahead of the build (bit6/binbwt_slice.h,
+/// BinWindowOpts::credit; the product default). Live window-file bytes = this x
+/// cap x 8 B, and each file is unlinked the moment its bins are built.
+pub const BIN_WINDOW_CREDIT: u64 = 2;
+/// The BUILD's RAM working set: one bin slice PAIR (arena + scratch), 8 B per
+/// slot each. A bin is indivisible (its slice is sorted in place), so the RAM
+/// term is 16 B x the largest bin a window admits - the number that forces
+/// sharding at pile scale, and the number the operator's 100 GB envelope binds.
+pub const BIN_GROUP_SLOT_BYTES: u64 = 16;
 /// The per-bin construction critical path, seconds per 1 GB fixture, at the
 /// thread counts it was measured at (t=8/32: bin-bwt v1 build_s; t=96: the v2
 /// producer-only run). The build is memory-bandwidth bound long before 96
 /// threads (24.7 ns/symbol-thread at t=96 vs 5.46 uncontended), so the curve is
 /// interpolated in log2(threads) between measured points and clamped.
-pub const BIN_BUILD_POINTS: [(f64, f64); 3] = [(8.0, 107.93), (32.0, 35.86), (96.0, 23.489)];
+/// The 96-thread point is the 10 GB rung with the target-size default (300.4 s
+/// build for 10 GB = 30.04 s/GB, RESULTS_AUTO_RADIX.md), not the 1 GB fixture
+/// (18-23 s/GB): a bigger corpus holds deeper repeats, and the plan must price
+/// the corpus it is asked about. Both anchors are measured; the larger one is
+/// used because the pile is larger than both.
+pub const BIN_BUILD_POINTS: [(f64, f64); 3] = [(8.0, 107.93), (32.0, 35.86), (96.0, 30.04)];
+
+/// THE TARGET SIZE (rows) - the leaf bound of the recursion, i.e. the largest
+/// number of rows a single comparison sort may take (bit6/binbwt_slice.h,
+/// bin_sort_rec). Depth is an OUTPUT of the data, so this is the one shape knob
+/// and the plan must price what the producer will actually use.
+///
+/// MEASURED LADDER (tools/binbwt/RESULTS_AUTO_RADIX.md, 1 GB fixture, 96t, one
+/// window, --bin-probe, box load 65-96 labelled): the leaf sort pays log2(m)
+/// LCE walks per row while a bucketing level pays ONE coded symbol per row, so
+/// the exchange rate runs steeply TOWARD SMALL leaves:
+///
+/// ```text
+///   target     build_s   build_cpu_s   symbols      comparisons  leaf_rows_max
+///   24 (old)    20.55      1928        101.1e9      3.00e9       4.74e6 (!)
+///   262144      17.29      1544        205.0e9      19.0e9       0.77e6
+///   1e6         18.16      1627        222.3e9      21.1e9       1.00e6
+///   4e6         42.62      3628        248.0e9      23.6e9       3.97e6
+///   8e6         45.08      3349        260.2e9      24.9e9       7.93e6
+///   16e6        57.65      3715        272.5e9      26.3e9      15.92e6
+///   32e6        57.60      2049        280.6e9      27.2e9      29.49e6
+/// ```
+///
+/// The operator's candidate range (8-32M rows) measures 2-3x SLOWER than
+/// 256K-1.3M here, and the reason is the trade the numbers show: at 8-32M the
+/// tree is 1-16 levels deep and the leaf sorts own log2(m) x LCE, while at
+/// 256K-1.3M the tree is 40-200 levels deep and each level is one cheap coded
+/// symbol per row. The default is therefore 1M rows: at the bottom of the
+/// measured flat region (256K-1.3M, all within 6% of each other on build_s) and
+/// 1M leaves per 1 TB of corpus, i.e. ~4 x 10^4 leaves per thread at pile scale,
+/// so the queue never starves. It also keeps the largest serial stretch (one
+/// leaf sort) at a million rows.
+pub const BIN_TARGET_ROWS: u64 = 1 << 20;
+/// The automatic rule the producer applies when the target is not pinned,
+/// mirrored here so the plan prices the run the producer will perform:
+/// clamp(n / (8 x threads), 256K, 1M). It scales DOWN for small corpora (a
+/// 100 MB fixture still yields thousands of leaves) and saturates at the 1M rows
+/// that BOTH ladders picked (1 GB: 17.29 s build at 262144, 18.16 at 1e6;
+/// 10 GB: 458.5 s wall at 262144, 444.1 at 1e6, 485.1 at 4e6). 4M+ is never
+/// chosen: the ladder measures it worse, not better.
+/// level_elems per row - the emergent tree depth, weighted by the rows coded at
+/// each level - as a function of the leaf bound. MEASURED on the target-size
+/// ladder (1 GB fixture, 96t, RESULT_AUTO_RADIX.md; the 10 GB probe reproduces
+/// the ordering): the tree gets shallower as the leaf bound grows, ~0.5 levels
+/// per doubling of the target, which is exactly the trade the ladder prices (a
+/// level is one coded symbol per row; a leaf is log2(m) LCE walks per row).
+/// Interpolated in log2(target) and clamped outside the measured range.
+pub const BIN_LEVELS_POINTS: [(f64, f64); 6] =
+    [(2.62144e5, 3.49), (1.0e6, 2.75), (4.0e6, 1.75), (8.0e6, 1.31), (1.6e7, 0.88), (3.2e7, 0.61)];
+
+pub fn bin_levels_per_row(target: u64) -> f64 {
+    let t = (target.max(2) as f64).log2();
+    let first = BIN_LEVELS_POINTS[0];
+    let last = BIN_LEVELS_POINTS[BIN_LEVELS_POINTS.len() - 1];
+    if t <= first.0.log2() { return first.1; }
+    if t >= last.0.log2() { return last.1; }
+    for pair in BIN_LEVELS_POINTS.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        if t <= b.0.log2() {
+            let frac = (t - a.0.log2()) / (b.0.log2() - a.0.log2());
+            return a.1 + frac * (b.1 - a.1);
+        }
+    }
+    last.1
+}
+
+pub fn bin_target_rows_auto(n: u64, threads: u32) -> u64 {
+    let share = n / (8 * threads.max(1) as u64).max(1);
+    share.clamp(1 << 18, 1 << 20)
+}
 
 /// The window count of the bin shape: `cap` slots admit at most `cap`
 /// positions, so the corpus is placed in ceil(n/cap) windows. A window is
@@ -550,9 +665,13 @@ pub struct V2PerTerms {
     pub witness_note: String,
     pub transient_note: String,
     // ---- the bin shape (what the executor runs)
-    pub bin_live_cap: u64,   // resolved position-arena bound, in slots
+    pub bin_live_cap: u64,   // resolved position-window bound, in slots
     pub bin_windows: u64,    // ceil(n / cap)
-    pub bin_arena_gb: f64,   // 16 B/slot x cap, anonymous RAM
+    pub bin_window_file_gb: f64, // credit x cap x 8 B: LIVE WINDOW-FILE bytes (disc)
+    pub bin_ram_group_gb: f64,   // 16 B/slot x the group the build refines (RAM)
+    pub bin_target_rows: u64,    // the leaf bound the producer will use
+    pub bin_leaves: u64,         // ~ceil(n / target): comparison sorts
+    pub bin_levels_mean: f64,    // measured level_elems per row at this target
     pub bin_count_s: f64,
     pub bin_fill_s: f64,
     pub bin_build_s: f64,
@@ -567,7 +686,7 @@ pub struct V2PerTerms {
 /// plan pick from the memory cap; Some(0) = unbounded, one window).
 pub fn model_v2(
     survey: Survey, _chunks: u32, _kway: u32, threads: u32, cap_gb: u64,
-    hygiene_free_pct: u32, live_cap: Option<u64>,
+    hygiene_free_pct: u32, live_cap: Option<u64>, target: Option<u64>,
 ) -> Plan {
     let n = survey.corpus_bytes;
     let mb = n as f64 / (1024.0 * 1024.0);
@@ -588,12 +707,34 @@ pub fn model_v2(
             // 85% of the cap in the arena pair, split two ways (arena+scratch),
             // leaves room for the text window buffers and the sink's band
             // buffers; never above n (more slots than positions is meaningless).
-            let auto = (mem_bytes * 85 / 100 / BIN_ARENA_BYTES_PER_SLOT).clamp(1, n.max(1));
-            (auto, format!("auto from --memory-gb {cap_gb}: 85% of the cap / 16 B per slot"))
+            let auto = (mem_bytes * 85 / 100 / BIN_GROUP_SLOT_BYTES).clamp(1, n.max(1));
+            (auto, format!("auto from --memory-gb {cap_gb}: 85% of the cap / 16 B per build-group slot"))
         }
     };
     let windows = bin_windows(n, cap);
-    let arena_gb = (cap as f64 * BIN_ARENA_BYTES_PER_SLOT as f64) / (1024.0 * 1024.0 * 1024.0);
+    // ---- THE POSITION STORE, the disc-windows way --------------------------
+    // The window is a FILE: `cap` slots x 8 B on disc, `BIN_WINDOW_CREDIT` of
+    // them live at once, each unlinked the moment its bins are built. There is
+    // NO RAM arena term for the window any more (the disc-windows pivot): the
+    // RAM the build needs is ONE GROUP - the arena+scratch pair it sorts a bin
+    // in place in, 16 B per slot of that group. A bin is indivisible, so the
+    // group is the largest bin the window admits; the plan carries `cap` as its
+    // bound because the producer RAISES `cap` to the largest bin (BIN_CAP_RAISED
+    // - a misconfiguration the front door fails loud on), and the honest RAM
+    // number for a window is therefore 16 B x cap, i.e. the sharding driver.
+    let window_file_gb =
+        (BIN_WINDOW_CREDIT * cap * BIN_WINDOW_SLOT_BYTES) as f64 / (1024.0 * 1024.0 * 1024.0);
+    let ram_group_gb = (cap as f64 * BIN_GROUP_SLOT_BYTES as f64) / (1024.0 * 1024.0 * 1024.0);
+    // ---- THE TARGET-SIZE TREE (levels are emergent from the census) --------
+    // The recursion splits a node while it holds more than `target` rows, so the
+    // tree's DEPTH is an output of the byte census and the leaf count is
+    // arithmetic: ~ceil(n/target) comparison sorts, each of at most `target`
+    // rows. `bin_levels_mean` is the measured level_elems/row ratio of the
+    // ladder run at this target (RESULTS_AUTO_RADIX.md): it is what the plan
+    // means by "depth", and it is the only tree number that is not arithmetic.
+    let target_rows = target.unwrap_or_else(|| bin_target_rows_auto(n, threads));
+    let leaves = ((n + target_rows - 1) / target_rows).max(1);
+    let levels_mean = bin_levels_per_row(target_rows);
     // ---- the terms, each = measured rate x byte count
     let count_s = BIN_COUNT_NS_PER_BYTE * n as f64 / 1e9;
     let fill_s = (BIN_FILL_FIRST_NS_PER_BYTE
@@ -617,11 +758,14 @@ pub fn model_v2(
     let producer_disc_mb = rlebwt_mb + pieces_mb;
     let phases = vec![
         PhaseRow { name: "bin(sweep)".into(), wall_s: count_s + fill_s,
-                   disc_peak_mb: pieces_mb, rss_gb: arena_gb },
+                   disc_peak_mb: pieces_mb + window_file_gb * 1024.0,
+                   rss_gb: ram_group_gb },
         PhaseRow { name: "bin(build)".into(), wall_s: build_s,
-                   disc_peak_mb: pieces_mb, rss_gb: arena_gb },
+                   disc_peak_mb: pieces_mb + window_file_gb * 1024.0,
+                   rss_gb: ram_group_gb },
         PhaseRow { name: "bin(stitch)".into(), wall_s: stitch_s,
-                   disc_peak_mb: producer_disc_mb, rss_gb: arena_gb },
+                   disc_peak_mb: producer_disc_mb + window_file_gb * 1024.0,
+                   rss_gb: ram_group_gb },
         // CONCURRENT with the producer: the decomposed fused finish (pfck2 ->
         // seam classes -> sweep -> witnesses -> container publish), which owns
         // the tree peak.
@@ -631,6 +775,10 @@ pub fn model_v2(
     ];
     // ---- verdicts
     let tree_ok = tree_peak_mb < free_mb;
+    // The window files are IN the tree (scratch tree, bounded, unlinked as
+    // built): the all-phase disc peak has to carry them next to whatever else is
+    // live at that moment.
+    let window_file_mb = window_file_gb * 1024.0;
     let free_pct = 100u32.saturating_sub(survey.scratch_used_percent);
     let hygiene_ok = free_pct >= hygiene_free_pct;
     let tree_target_ok = V2_TREE_PEAK_PER_N <= V2_TREE_TARGET_PER_N;
@@ -652,20 +800,23 @@ pub fn model_v2(
         format!("INFEASIBLE (hygiene): scratch-tree peak ~{:.0} GB fits {:.0} GB free but only {}% free < the {}% policy; pass --scratch-free-pct to override",
             tree_peak_mb / 1024.0, free_mb / 1024.0, free_pct, hygiene_free_pct)
     };
-    // The arena pair is the producer's whole RAM term; every phase runs under
-    // the SAME RLIMIT_AS, so 90% of it is the bar. Over the bar the run dies
-    // with a bad_alloc mid-window, which is exactly what the plan is for.
-    let arena_bytes = cap.saturating_mul(BIN_ARENA_BYTES_PER_SLOT);
+    // The RAM term is ONE BUILD GROUP (arena + scratch pair of the bin being
+    // sorted in place): 16 B x the group's slots. The window itself is a FILE,
+    // so it contributes 0 B of RAM. Every phase runs under the SAME RLIMIT_AS,
+    // so 90% of it is the bar; over the bar the run dies with a bad_alloc
+    // mid-window, which is exactly what the plan is for.
+    let arena_bytes = cap.saturating_mul(BIN_GROUP_SLOT_BYTES);
     let arena_ok = arena_bytes <= mem_bytes / 10 * 9;
     let witness_ram_gb = 8.0 * V2_CHI_PER_N * n_gb;
     let ram_verdict = format!(
-        "{}: position arena pair ~{:.1} GiB ({} B/slot x {cap} slots, W={windows}, {cap_source}) vs cap {cap_gb} GiB per phase; fused finish witness stream ~{:.0} GB (--wit-ram-gb, default half the cap; overflow spills as sorted varint-delta disc runs) + its own pfck2 grid",
+        "{}: RAM term = ONE BUILD GROUP ~{:.1} GiB ({} B/slot x {} group slots - the bin being sorted in place, W={} windows, {}); the position WINDOW is {:.1} GiB of FILE ({} credit x {} slots x {} B), 0 B of RAM; fused finish witness stream ~{:.0} GB (--wit-ram-gb, default half the cap; overflow spills as sorted varint-delta disc runs) + its own pfck2 grid",
         if arena_ok { "FEASIBLE" } else { "INFEASIBLE" },
-        arena_gb, BIN_ARENA_BYTES_PER_SLOT, witness_ram_gb,
+        ram_group_gb, BIN_GROUP_SLOT_BYTES, cap, windows, cap_source, window_file_gb,
+        BIN_WINDOW_CREDIT, cap, BIN_WINDOW_SLOT_BYTES, witness_ram_gb,
     );
     let mut alternatives = Vec::new();
     if !arena_ok {
-        alternatives.push(format!("lower --bin-live-cap (the arena pair is 16 B/slot: {} slots would fit 90% of --memory-gb {cap_gb}) or raise --memory-gb", mem_bytes / 10 * 9 / BIN_ARENA_BYTES_PER_SLOT));
+        alternatives.push(format!("lower --bin-live-cap (a build group is {} B/slot: {} slots would fit 90% of --memory-gb {cap_gb}) or raise --memory-gb; a bin larger than the group raises the cap and the front door fails loud, so SHARDING is the other lever", BIN_GROUP_SLOT_BYTES, mem_bytes / 10 * 9 / BIN_GROUP_SLOT_BYTES));
     }
     if !disc_ok {
         alternatives.push("free or add scratch space (the bin shape's tree is rlebwt 1.546n + the bounded piece window + the container 0.468n, with rlebwt deleted at publish)".to_string());
@@ -678,12 +829,14 @@ pub fn model_v2(
         V2_CHI_PER_N, witness_ram_gb,
     );
     let transient_note = format!(
-        "no chunk set, no merge transient, no position column: the producer's only scratch is the piece window ({:.3} GiB, W={window} bands x 65536 runs) and the rlebwt it is publishing ({:.1} GiB); the arena pair ({:.1} GiB) is anonymous RAM; inputs the finish consumes are unlinked as read",
-        pieces_mb / 1024.0, rlebwt_mb / 1024.0, arena_gb,
+        "no chunk set, no merge transient, no persistent position column: the producer's scratch is the piece window ({:.3} GiB, W={window} bands x 65536 runs), the rlebwt it is publishing ({:.1} GiB) and the ROLLING WINDOW FILES ({:.1} GiB on disc = {} credit x cap x {} B, one file per live window, unlinked the moment its bins are built); the build's RAM is one group ({:.1} GiB, 16 B/slot) and NEVER the window; inputs the finish consumes are unlinked as read",
+        pieces_mb / 1024.0, rlebwt_mb / 1024.0, window_file_gb, BIN_WINDOW_CREDIT,
+        BIN_WINDOW_SLOT_BYTES, ram_group_gb,
     );
     let bin_note = format!(
-        "{} windows = ceil(n/{cap}); bins are indivisible so a window is packed to <= cap by whole bins (every measured point matches ceil exactly: 1 GB cap 250M -> 5, 1 GB cap>=n -> 1); a single bin larger than the cap makes the producer raise it (BIN_CAP_RAISED) and the front door FAILS LOUD rather than price a different arena. Terms (s/GB at 1 GB): count {:.3} fill {:.3}+{:.3}/window build {:.3}@{threads}t stitch {:.3} = producer {:.2}; finish {:.2} (own work); e2e = max = {:.2}. Measured 1 GB producer wall 41.68 s and with-finish 142.18 s (flow-limited): the model holds the producer term to {:.1}%",
-        windows, count_s * 1e9 / n as f64, BIN_FILL_FIRST_NS_PER_BYTE, BIN_FILL_WINDOW_NS_PER_BYTE,
+        "{} windows = ceil(n/{cap}) (each window re-reads the whole corpus: fill = windows x n at the 5.238 GB/s device floor = {:.2} h at this scale); bins are indivisible so a window is packed to <= cap by whole bins (every measured point matches ceil exactly: 1 GB cap 250M -> 5, 1 GB cap>=n -> 1); a single bin larger than the cap makes the producer raise it (BIN_CAP_RAISED) and the front door FAILS LOUD rather than price a different arena. The TREE: {} leaves = ceil(n/target), each a comparison sort of <= {target_rows} rows (depth is an OUTPUT of the byte census; mean levels/row {:.2} measured at this target, i.e. the emergent depth is {:.0} for the busiest bucket, not a parameter). Terms (s/GB at 1 GB): count {:.3} fill {:.3}+{:.3}/window build {:.3}@{threads}t stitch {:.3} = producer {:.2}; finish {:.2} (own work); e2e = max = {:.2}. Measured 1 GB producer wall 41.68 s and with-finish 142.18 s (flow-limited): the model holds the producer term to {:.1}%",
+        windows, fill_s / 3600.0, leaves, levels_mean, (leaves as f64).log(257.0),
+        count_s * 1e9 / n as f64, BIN_FILL_FIRST_NS_PER_BYTE, BIN_FILL_WINDOW_NS_PER_BYTE,
         bin_build_s_per_gb(threads), BIN_STITCH_NS_PER_BYTE, producer_s * 1e9 / n as f64,
         FINISH_DECOMP_NS_PER_BYTE, e2e_s * 1e9 / n as f64,
         100.0 * (producer_s * 1e9 / n as f64) / 41.68,
@@ -701,7 +854,11 @@ pub fn model_v2(
         transient_note,
         bin_live_cap: cap,
         bin_windows: windows,
-        bin_arena_gb: arena_gb,
+        bin_window_file_gb: window_file_gb,
+        bin_ram_group_gb: ram_group_gb,
+        bin_target_rows: target_rows,
+        bin_leaves: leaves,
+        bin_levels_mean: levels_mean,
         bin_count_s: count_s,
         bin_fill_s: fill_s,
         bin_build_s: build_s,
@@ -737,11 +894,13 @@ mod tests {
         // The measured points themselves.
         assert!((bin_build_s_per_gb(8) - 107.93).abs() < 1e-9);
         assert!((bin_build_s_per_gb(32) - 35.86).abs() < 1e-9);
-        assert!((bin_build_s_per_gb(96) - 23.489).abs() < 1e-9);
+        // The 96-thread point is the 10 GB rung with the target-size default
+        // (300.369 s build / 10 GB = 30.0369 s/GB), not the 1 GB fixture.
+        assert!((bin_build_s_per_gb(96) - 30.04).abs() < 1e-9);
         // Clamped outside the measured range (more threads buy nothing: the
         // build is memory-bandwidth bound).
         assert!((bin_build_s_per_gb(1) - 107.93).abs() < 1e-9);
-        assert!((bin_build_s_per_gb(256) - 23.489).abs() < 1e-9);
+        assert!((bin_build_s_per_gb(256) - 30.04).abs() < 1e-9);
         // Monotone non-increasing in log2(threads) between the points.
         let mut last = f64::INFINITY;
         for t in [8u32, 12, 16, 24, 32, 48, 64, 96] {

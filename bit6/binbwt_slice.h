@@ -22,11 +22,23 @@ struct BinWork {
     // ---- two-byte top level (level 1 = the byte-1 bins, level 2 = one more
     // sequential 1-byte level) --------------------------------------------
     U topBins = 0;                      // non-empty 2-gram sub-bins dispatched
+    // ---- TARGET-SIZE RECURSION (depth is an OUTPUT of the data) ------------
+    // The leaf bound in rows (`targetSize`, 0 = automatic) and what the tree
+    // actually did: the deepest split depth reached, the largest leaf that was
+    // handed to a comparison sort, and the leaves the depth cap had to take
+    // over target (the fail-loud backstop, see `bin_sort_rec`).
+    U targetSize = 0;                   // the leaf bound this window used
+    U depthMax = 0;                     // deepest split depth actually coded
+    U leafRowsMax = 0;                  // largest single leaf (rows)
+    U overTargetLeaves = 0, overTargetRows = 0;  // the depth-cap backstop fired
+    U structuralLeaves = 0, structuralRows = 0;  // the TEXT ended inside the node
+    U noProgressLevels = 0;             // splits that could not divide a node
+    double tLeaf = 0;                   // wall/cpu seconds in leaf comparison sorts
     // Hot-bin anatomy: the largest byte-1 bin of each window, told apart from
     // the window totals (rows, the split's sub-bins, the busiest thread, the
     // leaf work billed to that bin, and the wall from availability to done).
     U hotRows = 0, hotBin = 0, hotTopBins = 0, hotSubMax = 0, hotWindows = 0;
-    U hotLeafSorts = 0, hotLeafElems = 0, hotLevelElems = 0;
+    U hotLeafSorts = 0, hotLeafElems = 0, hotLeafRowsMax = 0, hotLevelElems = 0;
     U hotSymbols = 0, hotComparisons = 0;
     double hotCpuS = 0, hotThreadS = 0, hotSpanS = 0;
     double tSweep = 0, tBuild = 0, tEmit = 0, cpuBuild = 0;
@@ -55,10 +67,20 @@ struct BinWork {
         leafElems += o.leafElems; singletonBins += o.singletonBins;
         builtBins += o.builtBins;
         topBins += o.topBins;
+        if (o.targetSize > targetSize) targetSize = o.targetSize;
+        depthMax = std::max(depthMax, o.depthMax);
+        leafRowsMax = std::max(leafRowsMax, o.leafRowsMax);
+        overTargetLeaves += o.overTargetLeaves;
+        overTargetRows += o.overTargetRows;
+        structuralLeaves += o.structuralLeaves;
+        structuralRows += o.structuralRows;
+        noProgressLevels += o.noProgressLevels;
+        tLeaf += o.tLeaf;
         if (o.hotRows > hotRows) {
             hotRows = o.hotRows; hotBin = o.hotBin; hotTopBins = o.hotTopBins;
             hotSubMax = o.hotSubMax; hotLeafSorts = o.hotLeafSorts;
-            hotLeafElems = o.hotLeafElems; hotLevelElems = o.hotLevelElems;
+            hotLeafElems = o.hotLeafElems; hotLeafRowsMax = o.hotLeafRowsMax;
+            hotLevelElems = o.hotLevelElems;
             hotSymbols = o.hotSymbols; hotComparisons = o.hotComparisons;
             hotCpuS = o.hotCpuS; hotThreadS = o.hotThreadS; hotSpanS = o.hotSpanS;
         }
@@ -417,11 +439,36 @@ template <class E> struct bin_publish_sink<E, std::void_t<
 // are disjoint equal-length slices; the array that holds the sorted slice is
 // returned. Depth-first refinement keeps every transient position array inside
 // the caller's bounded bin slice.
+//
+// THE RULE IS THE TARGET, NOT A DEPTH. A node splits by its next byte for as
+// long as it holds MORE THAN `targetSize` rows, so the tree's depth is an
+// OUTPUT of the data: a bucket whose rows keep sharing prefixes keeps being
+// divided (one cheap bucketing level = one symbol coded per row) instead of
+// being handed to a comparison sort that has to re-walk those shared prefixes
+// (log m walks of the same bytes). `depthCap` is not the rule any more - it is
+// the fail-loud BACKSTOP for the one case that cannot be divided (a cyclic
+// corpus of literally identical rotations), and when it fires the leaf is
+// journalled (`overTargetLeaves` / BIN_LEAF_OVER_TARGET) instead of being
+// silently taken. The order is exact whatever the cap: the leaf sort is a total
+// order at any m.
 static U* bin_sort_rec(const CorpusText& t, bool dollar, U* src, U* dst, U m,
-                       U depth, U depthCap, U leafSize, U levelBytes,
+                       U depth, U depthCap, U targetSize, U levelBytes,
                        BinWork& w) {
     if (m <= 1) return src;
-    if (m <= leafSize || depth >= depthCap || depth >= t.n) {
+    // Two DIFFERENT reasons can make a node a leaf besides size, and they are
+    // counted apart: the depth CAP (the backstop - loudly journalled, because a
+    // leaf oversize of the target is a serial stretch nothing bounds) and the
+    // TEXT ITSELF (`depth >= t.n`: the suffixes inside the node agree all the way
+    // to their end, so there is no byte left to divide on - exact and expected).
+    const bool capHit = depth >= depthCap;
+    const bool structHit = depth >= t.n;
+    if (m <= targetSize || capHit || structHit) {
+        // THE LEAF: an LCP-carrying comparison sort that starts at the depth the
+        // bucketing already certified, so no shared prefix inside this leaf is
+        // ever re-walked. Leaf rows are bounded by `targetSize`, which is what
+        // makes the largest serial stretch of the whole pile build a KNOWN
+        // number of rows (BIN_WORK leaf_rows_max).
+        const double tl = now_sec();
         auto less = [&](U a, U b) {
             return bin_tail_cmp(t, dollar, a, b, depth, w) < 0;
         };
@@ -433,6 +480,29 @@ static U* bin_sort_rec(const CorpusText& t, bool dollar, U* src, U* dst, U m,
             }
         } else std::sort(src, src + m, less);
         ++w.leafSorts; w.leafElems += m;
+        w.leafRowsMax = std::max(w.leafRowsMax, m);
+        if (m > targetSize && capHit) {
+            // The cap, not the target, decided this leaf: say so, loudly. The
+            // oracle drives depth caps of 1 and 4 ON PURPOSE (to prove the order
+            // is exact at any cap), so the line is rate-limited to the first few
+            // and every millionth rather than drowned in; the COUNTER is exact.
+            ++w.overTargetLeaves; w.overTargetRows += m;
+            if (w.overTargetLeaves <= 8 || w.overTargetLeaves % 1000000 == 0)
+            std::fprintf(stderr,
+                "BIN_LEAF_OVER_TARGET rows=%llu target=%llu depth=%llu "
+                "depth_cap=%llu (the depth cap had to take a leaf over target; "
+                "the order is exact, the serial stretch is not bounded by the target)\n",
+                (unsigned long long)m, (unsigned long long)targetSize,
+                (unsigned long long)depth, (unsigned long long)depthCap);
+        }
+        else if (m > targetSize) {
+            // The text, not the cap: the node's suffixes cannot be divided any
+            // further (they share every symbol to their end), so a leaf over the
+            // target is the exact answer. Counted, not warned about - and it is
+            // the shape a duplicate-only corpus has.
+            ++w.structuralLeaves; w.structuralRows += m;
+        }
+        w.tLeaf += now_sec() - tl;
         return src;
     }
     const U codes = bin_codes(levelBytes);
@@ -441,6 +511,7 @@ static U* bin_sort_rec(const CorpusText& t, bool dollar, U* src, U* dst, U m,
     for (U i = 0; i < m; ++i)
         ++count[bin_code(t, dollar, src[i], depth, levelBytes)];
     ++w.levelPasses; w.levelElems += m;
+    w.depthMax = std::max<U>(w.depthMax, depth + levelBytes);
     {
         U sum = 0;
         for (U c = 0; c < codes; ++c) { start[c] = sum; sum += count[c]; }
@@ -454,6 +525,15 @@ static U* bin_sort_rec(const CorpusText& t, bool dollar, U* src, U* dst, U m,
         }
     }
     ++w.binPasses;
+    // A split that leaves every row in one bucket has bought one symbol of
+    // certified depth and nothing else; it is legal (the next byte still has to
+    // be consumed) but it is counted, because a long run of them is the one
+    // shape that makes bucketing no cheaper than a leaf sort.
+    {
+        U biggest = count[0];
+        for (U c = 1; c < codes; ++c) biggest = std::max(biggest, count[c]);
+        if (biggest == m) ++w.noProgressLevels;
+    }
     // Bucket 0 holds the dollar suffixes exhausted at this depth: they all share
     // the node prefix up to their own end, so ascending length (== descending
     // position) is their exact order and no comparison is needed.
@@ -464,7 +544,7 @@ static U* bin_sort_rec(const CorpusText& t, bool dollar, U* src, U* dst, U m,
         if (count[c] <= 1) continue;
         U* child = bin_sort_rec(t, dollar, dst + start[c], src + start[c],
                                 count[c], depth + levelBytes, depthCap,
-                                leafSize, levelBytes, w);
+                                targetSize, levelBytes, w);
         if (child != dst + start[c])
             std::memcpy(dst + start[c], child, count[c] * sizeof(U));
     }
@@ -528,7 +608,7 @@ static void bin_split1(const CorpusText& t, bool dollar, const U* src, U* dst,
 
 template <class Push>
 static void bin_task_run(const CorpusText& t, bool dollar, const BinTask& tk,
-                         U splitSize, U leafSize, U depthCap, U levelBytes,
+                         U splitSize, U targetSize, U depthCap, U levelBytes,
                          BinWork& w, Push push) {
     if (tk.m <= 1) {
         if (tk.m && tk.src != tk.canon)
@@ -536,9 +616,12 @@ static void bin_task_run(const CorpusText& t, bool dollar, const BinTask& tk,
         return;
     }
     if (tk.m <= splitSize || tk.depth >= depthCap || tk.depth >= t.n) {
-        // Below the split threshold one thread refines the whole subtree.
+        // Below the dispatch threshold one thread refines the whole subtree - and
+        // with splitSize == targetSize that subtree IS one leaf (or a handful of
+        // them), so the longest a single thread can be busy is one leaf sort of
+        // at most `targetSize` rows plus this node's own two passes.
         U* r = bin_sort_rec(t, dollar, tk.src, tk.dst, tk.m, tk.depth, depthCap,
-                            leafSize, levelBytes, w);
+                            targetSize, levelBytes, w);
         if (r != tk.canon) std::memcpy(tk.canon, r, tk.m * sizeof(U));
         return;
     }
@@ -547,6 +630,7 @@ static void bin_task_run(const CorpusText& t, bool dollar, const BinTask& tk,
     for (U i = 0; i < tk.m; ++i)
         ++count[bin_code(t, dollar, tk.src[i], tk.depth, levelBytes)];
     ++w.levelPasses; w.levelElems += tk.m;
+    w.depthMax = std::max<U>(w.depthMax, tk.depth + levelBytes);
     {
         U sum = 0;
         for (U c = 0; c < codes; ++c) { start[c] = sum; sum += count[c]; }
@@ -560,6 +644,11 @@ static void bin_task_run(const CorpusText& t, bool dollar, const BinTask& tk,
         }
     }
     ++w.binPasses;
+    {
+        U biggest = count[0];
+        for (U c = 1; c < codes; ++c) biggest = std::max(biggest, count[c]);
+        if (biggest == tk.m) ++w.noProgressLevels;
+    }
     // Bucket 0: dollar suffixes exhausted at this depth. They share the node
     // prefix up to their own end, so ascending length (descending tail) is
     // their exact order and no comparison is needed.
@@ -580,7 +669,7 @@ static void bin_task_run(const CorpusText& t, bool dollar, const BinTask& tk,
 // is the prefix the slice's members already share (0 for a whole byte-1 bin, 1
 // for a 2-gram sub-bin of the top split).
 static void bin_build_serial(const CorpusText& t, bool dollar, U* slice, U* scratch,
-                             U m, U depth, U splitSize, U leafSize, U depthCap,
+                             U m, U depth, U splitSize, U targetSize, U depthCap,
                              U levelBytes, BinWork& w) {
     if (m <= 1) { ++w.singletonBins; ++w.builtBins; return; }
     std::vector<BinTask> stack;
@@ -590,7 +679,7 @@ static void bin_build_serial(const CorpusText& t, bool dollar, U* slice, U* scra
         BinTask tk = stack.back();
         stack.pop_back();
         children.clear();
-        bin_task_run(t, dollar, tk, splitSize, leafSize, depthCap, levelBytes, w,
+        bin_task_run(t, dollar, tk, splitSize, targetSize, depthCap, levelBytes, w,
                      [&](const BinTask& c) { children.push_back(c); });
         for (const auto& c : children) stack.push_back(c);
     }
@@ -605,7 +694,7 @@ static void bin_build_serial(const CorpusText& t, bool dollar, U* slice, U* scra
 // so the fill term can be timed ALONE on a corpus bigger than the RAM budget,
 // which is the pile's regime; every other gate drives fillOnly=false.
 template <class Emit>
-static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize,
+static void bin_order(const CorpusText& text, bool dollar, U threads, U targetSize,
                       U depthCap, U liveCap, U levelBytes, bool freqSched,
                       U splitSize, BinWork& total, Emit&& emit,
                       bool fillOnly = false,
@@ -616,8 +705,46 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize
     const std::vector<U>* joinTargets = nullptr;
     if constexpr (bin_publish_sink<Emit>::value) joinTargets = &emit.joinTargets();
     const U joinCount = joinTargets ? joinTargets->size() : 0;
-    require(n && threads >= 1 && leafSize >= 1 && depthCap >= levelBytes &&
+    require(n && threads >= 1 && depthCap >= levelBytes &&
             levelBytes >= 1 && levelBytes <= 2, "bin-bwt parameters");
+    // ---- THE TARGET SIZE: the leaf bound, automatic by default -------------
+    // Depth is an OUTPUT of the data (see bin_sort_rec), so the only shape knob
+    // is how many rows a single comparison sort may take. It is priced from the
+    // two measured rates of this machine:
+    //   * a bucketing level costs one symbol coded per row (a random byte read
+    //     plus the scatter write) - the cheapest thing the machine does;
+    //   * a leaf comparison sort costs log2(m) LCE walks per row from the
+    //     certified depth, and log2(m) is exactly what a bigger leaf buys back
+    //     in bucketing levels.
+    // A leaf must also leave the queue enough units to fill the machine: the tree
+    // produces about n/S leaves, so S is chosen to keep n/S well above the thread
+    // count on the SMALL fixtures while pinning the largest serial stretch (one
+    // leaf sort) to a bounded, cache-scale working set on the big ones. The
+    // measured ladder is in tools/binbwt/RESULTS_AUTO_RADIX.md; the default below
+    // is the value that ladder picked, clamped so that it is never smaller than a
+    // handful of L2-sized runs nor larger than the 32M rows where a leaf sort's
+    // log2 term starts to dominate the bucketing it saves.
+    //
+    // MEASURED (tools/binbwt/RESULTS_AUTO_RADIX.md: the 1 GB and 10 GB ladders,
+    // 96 threads, construction only):
+    //   1 GB, one window:   target 262144 -> build 17.29 s, 1e6 -> 18.16,
+    //                       4e6 -> 42.62, 8e6 -> 45.08, 16e6 -> 57.65,
+    //                       32e6 -> 57.60; the retired 24-row rule -> 20.55.
+    //   10 GB, six windows: 24 (old) -> 481.7 s wall, 262144 -> 458.5,
+    //                       1e6 -> 444.1, 4e6 -> 485.1, 16e6 -> ..., 32e6 -> ...
+    // So the optimum is a FLAT FLOOR between 256K and ~1.3M rows at both scales,
+    // and the operator's candidate range of 8-32M rows measures 2-3x WORSE at
+    // 1 GB (the leaf sort's log2(m) LCE walks per row cost more than the
+    // bucketing levels they save; a level is one coded symbol per row).
+    // The automatic rule therefore scales DOWN for small corpora (so a 100 MB
+    // fixture still produces thousands of leaves to fill the queue) and saturates
+    // at the measured 1M floor, which is the value both ladders picked.
+    if (!targetSize) {
+        const U share = std::max<U>(1, n / (8 * std::max<U>(1, threads)));
+        targetSize = std::min<U>(1u << 20, std::max<U>(1u << 18, share));
+    }
+    require(targetSize >= 1, "bin-bwt target size");
+    total.targetSize = std::max(total.targetSize, targetSize);
     // ---- the TOP level's depth in bytes -------------------------------------
     // levelBytes == 1: the fill pass alone is the top level (byte-1 bins), and a
     // bin's refinement starts at depth 0 (the byte after the bin symbol).
@@ -632,7 +759,24 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize
     // identity is unchanged.
     const U topSplit = levelBytes - 1;          // extra 1-byte top levels
     const U innerBytes = 1;                     // code tables are always 257
-    if (!splitSize) splitSize = std::max<U>(4 * leafSize, n / (threads * 64));
+    // THE DISPATCH THRESHOLD. A node above it is split on the queue (one job per
+    // child, so the children of a huge bin are worked in parallel); a node at or
+    // below it is refined by the claiming thread - and with the default (== the
+    // target) that refinement IS one leaf sort, so the longest a single job can
+    // hold a thread is one leaf sort of at most `targetSize` rows plus the two
+    // passes of the node that produced it. There is no upper bound to escape to:
+    // the old default (`n/(threads*64)`, i.e. 1.63M at 10 GB/96t) is smaller than
+    // a real target, so the tree below it was already depth-capped and the depth
+    // cap, not the target, decided where the leaves landed.
+    // FLOORED by the target and never below a thread's fair share of the window:
+    // a job is dispatched per node above this, so a threshold as small as a tiny
+    // target turns the queue itself into the bottleneck (measured: target 24 with
+    // splitSize 24 = one job per 24 rows = 41M jobs at 1 GB, and the 1 GB probe
+    // did not finish in 40 minutes). The bound that matters runs the OTHER way:
+    // splitSize >= target means a dispatched node is always split, never leaf-
+    // sorted whole on the claiming thread.
+    if (!splitSize)
+        splitSize = std::max<U>({targetSize, U(4096), n / (threads * 64)});
     // Chunks: the counting sweep counts per chunk, and the fill's scatter is one
     // pass per chunk (see the fill pass), so this is both the count width and the
     // fill width. It was capped at 64 when only the count used it; the fill wants
@@ -897,7 +1041,8 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize
         // totals (the operator's `--bin-level-bytes 2` question). Counting these
         // deltas is a handful of adds per task, not per row.
         struct BinStat {
-            U leafSorts = 0, leafElems = 0, levelElems = 0, symbols = 0;
+            U leafSorts = 0, leafElems = 0, leafRowsMax = 0, levelElems = 0;
+            U symbols = 0;
             U comparisons = 0, topBins = 0;
             double busy = 0;
         };
@@ -930,13 +1075,13 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize
                 }
                 if (!topSplit)
                     bin_build_serial(text, dollar, slice, scr, m, 0, splitSize,
-                                     leafSize, depthCap, innerBytes, work[0]);
+                                     targetSize, depthCap, innerBytes, work[0]);
                 else
                     for (U cc = 0; cc < 257; ++cc)
                         if (count[cc])
                             bin_build_serial(text, dollar, slice + start[cc],
                                              scr + start[cc], count[cc], depth,
-                                             splitSize, leafSize, depthCap,
+                                             splitSize, targetSize, depthCap,
                                              innerBytes, work[0]);
                 work[0].cpuBuild += now_sec() - t0;
                 emitBin(c);
@@ -996,6 +1141,10 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize
                             sh.queue.erase(it);
                         }
                         const U ls0 = w.leafSorts, sy0 = w.symbols, cp0 = w.comparisons;
+                        const U lr0 = w.leafRowsMax;
+                        // Per-JOB leaf attribution: reset the running max so the
+                        // largest leaf THIS job made is what the bin is billed.
+                        w.leafRowsMax = 0;
                         const U ll0 = w.leafElems, le0 = w.levelElems, tb0 = w.topBins;
                         const double t0 = now_sec();
                         if (job.split) {
@@ -1035,7 +1184,10 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize
                                 sub.depth = topSplit;
                                 sub.split = false;
                                 sub.segs = 0;
-                                const bool small = count[rank[i]] <= leafSize;
+                                // Batch only units that are small against the
+                                // target, so a batch is at most one leaf's worth
+                                // of work and the claim order still load-balances.
+                                const bool small = count[rank[i]] * binBatchSegs <= targetSize;
                                 do {
                                     const unsigned cc = rank[i];
                                     sub.seg[sub.segs++] = BinSeg{sc + start[cc],
@@ -1045,7 +1197,7 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize
                                     ++i;
                                 } while (small && i < live &&
                                          sub.segs < binBatchSegs &&
-                                         count[rank[i]] <= leafSize);
+                                         count[rank[i]] * binBatchSegs <= targetSize);
                                 ++sh.pending[job.bin];
                                 sh.queue.emplace(sub.key, sub);
                             }
@@ -1055,7 +1207,7 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize
                                 const BinTask tk{job.seg[z].src, job.seg[z].dst,
                                                  job.seg[z].canon, job.seg[z].m,
                                                  job.depth, job.bin, job.key};
-                                bin_task_run(text, dollar, tk, splitSize, leafSize,
+                                bin_task_run(text, dollar, tk, splitSize, targetSize,
                                              depthCap, innerBytes, w,
                                              [&](const BinTask& c) {
                                     BinJob child;
@@ -1081,6 +1233,8 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize
                             st.symbols += w.symbols - sy0;
                             st.comparisons += w.comparisons - cp0;
                             st.leafElems += w.leafElems - ll0;
+                            st.leafRowsMax = std::max(st.leafRowsMax, w.leafRowsMax);
+                            w.leafRowsMax = std::max(w.leafRowsMax, lr0);
                             st.levelElems += w.levelElems - le0;
                             st.topBins += w.topBins - tb0;
                         }
@@ -1131,6 +1285,7 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize
                     const BinStat& st = stats[t][hot];
                     agg.leafSorts += st.leafSorts;
                     agg.leafElems += st.leafElems;
+                    agg.leafRowsMax = std::max(agg.leafRowsMax, st.leafRowsMax);
                     agg.levelElems += st.levelElems;
                     agg.symbols += st.symbols;
                     agg.comparisons += st.comparisons;
@@ -1146,6 +1301,7 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize
                     hw.hotSubMax = subMax[hot];
                     hw.hotLeafSorts = agg.leafSorts;
                     hw.hotLeafElems = agg.leafElems;
+                    hw.hotLeafRowsMax = agg.leafRowsMax;
                     hw.hotLevelElems = agg.levelElems;
                     hw.hotSymbols = agg.symbols;
                     hw.hotComparisons = agg.comparisons;
@@ -1780,10 +1936,10 @@ struct BinJournal {
     double tSinkOpen = 0, tOrder = 0, tEnds = 0;
 };
 static void bin_journal(const BinWork& total, bool dollar, U threads,
-                        U levelBytes, U leafSize, U depthCap, bool freqSched,
+                        U levelBytes, U targetSize, U depthCap, bool freqSched,
                         U splitSize, double wall, const BinJournal& j) {
     std::fprintf(stderr,
-        "BIN_WORK dollar=%u threads=%llu level_bytes=%llu leaf=%llu depth_cap=%llu "
+        "BIN_WORK dollar=%u threads=%llu level_bytes=%llu target=%llu depth_cap=%llu "
         "freq_sched=%u split=%llu bins=256 top_bins=%llu windows=%llu "
         "sweep_bytes=%llu sweep_passes=%llu level_passes=%llu level_elems=%llu "
         "bin_passes=%llu comparisons=%llu symbols=%llu cert_decided=%llu "
@@ -1798,9 +1954,12 @@ static void bin_journal(const BinWork& total, bool dollar, U threads,
         "win_file_bytes=%llu win_file_read_bytes=%llu peak_window_file_bytes=%llu "
         "window_files=%llu window_loads=%llu win_write_s=%.3f win_read_s=%.3f "
         "credit_wait_s=%.3f "
+        "depth_max=%llu leaf_rows_max=%llu over_target_leaves=%llu "
+        "over_target_rows=%llu structural_leaves=%llu structural_rows=%llu "
+        "no_progress_levels=%llu leaf_s=%.3f "
         "full_SA=0 persistent_positions=0\n",
         unsigned(dollar), (unsigned long long)threads,
-        (unsigned long long)levelBytes, (unsigned long long)leafSize,
+        (unsigned long long)levelBytes, (unsigned long long)targetSize,
         (unsigned long long)depthCap, unsigned(freqSched),
         (unsigned long long)splitSize,
         (unsigned long long)total.topBins,
@@ -1828,24 +1987,33 @@ static void bin_journal(const BinWork& total, bool dollar, U threads,
         (unsigned long long)total.peakWindowFileBytes,
         (unsigned long long)total.windowFiles,
         (unsigned long long)total.windowLoads,
-        total.tWinWrite, total.tWinRead, total.tCreditWait);
+        total.tWinWrite, total.tWinRead, total.tCreditWait,
+        (unsigned long long)total.depthMax,
+        (unsigned long long)total.leafRowsMax,
+        (unsigned long long)total.overTargetLeaves,
+        (unsigned long long)total.overTargetRows,
+        (unsigned long long)total.structuralLeaves,
+        (unsigned long long)total.structuralRows,
+        (unsigned long long)total.noProgressLevels, total.tLeaf);
     // The largest byte-1 bin of the largest window, alone: the hot-bin anatomy
     // the operator asked for (`--bin-level-bytes 1` vs `2` on the SAME corpus).
     std::fprintf(stderr,
         "BIN_HOT windows_with_anatomy=%llu bin=%llu rows=%llu top_bins=%llu "
         "sub_max=%llu span_s=%.3f cpu_s=%.3f thread_max_s=%.3f leaf_sorts=%llu "
-        "leaf_elems=%llu level_elems=%llu symbols=%llu comparisons=%llu\n",
+        "leaf_elems=%llu leaf_rows_max=%llu level_elems=%llu symbols=%llu "
+        "comparisons=%llu\n",
         (unsigned long long)total.hotWindows, (unsigned long long)total.hotBin,
         (unsigned long long)total.hotRows, (unsigned long long)total.hotTopBins,
         (unsigned long long)total.hotSubMax, total.hotSpanS, total.hotCpuS,
         total.hotThreadS, (unsigned long long)total.hotLeafSorts,
-        (unsigned long long)total.hotLeafElems, (unsigned long long)total.hotLevelElems,
+        (unsigned long long)total.hotLeafElems,
+        (unsigned long long)total.hotLeafRowsMax, (unsigned long long)total.hotLevelElems,
         (unsigned long long)total.hotSymbols, (unsigned long long)total.hotComparisons);
 }
 
 // ---- producer entry point: the parallel sink publishes the concatenated bins
 static int binbwt_main(const std::string& path, const std::string& mapPath,
-                       const std::string& prefix, U threads, U leafSize,
+                       const std::string& prefix, U threads, U targetSize,
                        U depthCap, U liveCap, U levelBytes, bool dollar,
                        bool freqSched, U splitSize, bool serialSink, bool probe,
                        bool fillOnly, BinWindowOpts wopt) {
@@ -1889,11 +2057,11 @@ static int binbwt_main(const std::string& path, const std::string& mapPath,
         // per-row oracle path), so the construction counters and walls are the
         // same ones the producer reports and a 10 GB build term can be measured
         // in minutes instead of after the finish. Nothing else is written.
-        bin_order(text, dollar, threads, leafSize, depthCap, liveCap, levelBytes,
+        bin_order(text, dollar, threads, targetSize, depthCap, liveCap, levelBytes,
                   freqSched, splitSize, total, [](U, U) {}, fillOnly, wopt);
         BinJournal j;
         j.sink = fillOnly ? "probe-fill-only" : "probe-none";
-        bin_journal(total, dollar, threads, levelBytes, leafSize, depthCap,
+        bin_journal(total, dollar, threads, levelBytes, targetSize, depthCap,
                     freqSched, splitSize, now_sec() - tStart, j);
         return 0;
     }
@@ -1916,11 +2084,11 @@ static int binbwt_main(const std::string& path, const std::string& mapPath,
     }
     const double tSink1 = now_sec();
     if (serialSink)
-        bin_order(text, dollar, threads, leafSize, depthCap, liveCap, levelBytes,
+        bin_order(text, dollar, threads, targetSize, depthCap, liveCap, levelBytes,
                   freqSched, splitSize, total,
                   [&](U row, U p) { serial->row(row, p); }, false, wopt);
     else
-        bin_order(text, dollar, threads, leafSize, depthCap, liveCap, levelBytes,
+        bin_order(text, dollar, threads, targetSize, depthCap, liveCap, levelBytes,
                   freqSched, splitSize, total, *parallel, false, wopt);
     const double tOrder = now_sec();
     if (serialSink) { serial->endShard(); serialRuns = serial->index; }
@@ -1936,7 +2104,7 @@ static int binbwt_main(const std::string& path, const std::string& mapPath,
     j.tSinkOpen = tSink1 - tSink0;
     j.tOrder = tOrder - tSink1;
     j.tEnds = tEnds - tOrder;
-    bin_journal(total, dollar, threads, levelBytes, leafSize, depthCap, freqSched,
+    bin_journal(total, dollar, threads, levelBytes, targetSize, depthCap, freqSched,
                 splitSize, wall, j);
     return 0;
 }

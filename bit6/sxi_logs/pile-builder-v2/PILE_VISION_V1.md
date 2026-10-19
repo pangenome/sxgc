@@ -141,3 +141,132 @@ sol-5. The 10 GB re-rung can be re-attempted after sol-1 + alphabet closure
 - The banked constants at 100 MB / 1 GB. (The old 10 GB chi constant's era
   question is resolved by sol-5's re-banking with cross-check, per
   REMAP_ERA_FINDING.md - the product gates at fixtures are the oracle.)
+
+---
+
+# ADDENDUM (2026-10-19): THE BIN ERA — what the week measured, what it killed, and what the machine is now
+
+This document is still the doctrine (D1-D6 stand, D2 with the rolling amendment
+below). What changed is the SHAPE: the chunk -> merge -> adopt chain this file
+describes was retired by measurement, and the pile builder is now a different
+machine. This addendum is the ledger of that pivot, written so the next reader
+does not have to re-derive it, and so the retired parts are not mistaken for the
+plan.
+
+## 1. Why the comparison merge retired
+
+The merge walk's cost was never the comparison count; it was the POSITION STORE.
+Every shape that could certify a merge needed per-suffix positions on disc
+(dense 8n or compact 3.6n) and re-derived them at ~0.7-1.6 s/MB
+(`RATES_V2.merge_load_derive_s_per_mb`), i.e. 13-20 TiB of hardware for the pile.
+Four separate redesigns (WM removal, checkpoint sparsity, shard-local emission,
+design B) each removed a term and left the same shape: a global merge that must
+consult positions it does not have.
+
+The bin machine removes the question instead of answering it. A byte-1 bin's rows
+ARE a contiguous slice of the global BWT, so CONCATENATION of the 256 bins in
+byte order is the BWT: there is nothing to merge, no global order to consult, no
+per-suffix position column anywhere. That is why the merge walk is gone and not
+merely tuned.
+
+## 2. The ledger: measured, killed, kept
+
+| # | measured | verdict |
+|---|---|---|
+| 1 | Serial fill sweep: 316 MB/s, 655 windows x 1.15 h = **754 h** at pile (bin-depth §4) | KILLED by the prefix-sum scatter: 213.006 s -> 4.045 s at 10 GB/6 windows (52.7x; 21.1 GB/s on a quiet box, 75x the serial per-pass rate). Fill share of the construction term 33.3% -> 1.0%. |
+| 2 | Serial comparison merge + position columns (13-20 TiB pile hardware) | RETIRED: replaced by the bin concat + ordered stitch. No position column exists in the product path (`full_SA=0 persistent_positions=0`). |
+| 3 | `--bin-level-bytes 2` as a 65,536-code table (10x worse CPU) | KILLED: the top level is two SEQUENTIAL 1-byte levels (257 codes each). The flag is now free: 1.402 s vs 26.045 s at 100 MB, 24.86 s vs 151.79 s at 1 GB. |
+| 4 | `--bin-depth-cap 32` as the recursion's rule | DEMOTED to a fail-loud backstop. The depth cap was deciding where leaves landed, and at 10 GB it took a leaf with **hundreds of millions of rows** to a single-threaded comparison sort (measured `thread_max_s=148.71` inside the hot bin, i.e. one thread for 149 s). A cap can only ever be right for one corpus; the target size is right for all of them. |
+| 5 | The finished-artifact fold, serial per band | DECOMPOSED: the fold rides the stitch and the verification fans out per band. Finish own work 211.8 -> **118.9 s/GB** (the pile's 43.3 h term). |
+| 6 | The 1.31 TB corpus cannot be built unsharded (3.48 TB of arena pair for a single 217e9-row bin) | TRANSFORMED, not solved: the window is a bounded ROLLING FILE now (8 B/slot on disc, `credit` of them live, unlinked when built), so the window is 0 B of RAM. A BIN is still indivisible (its slice is sorted in place), so the RAM term is one build group - which is why sharding at ~250-340 GB per shard remains the launch shape. |
+
+## 3. The machine as it is (auto-radix, `xsa build`, one entry)
+
+1. **The multi-pass reader.** Pass 1 counts bytes per corpus chunk per bin
+   (`hists[t][c]`), 64-way parallel, one full pass. That count is enough to
+   prefix-sum every (bin, chunk) region boundary, so pass 2 - the fill - is a
+   PARALLEL SCATTER: each thread writes its own chunk's positions into its own
+   regions, no lock, no cursor, and concatenated in chunk order the regions hold
+   each bin's positions in ascending position order (asserted, not assumed).
+2. **Rolling window FILES.** A window's positions live in a bounded file in the
+   scratch tree (`bw-w<k%credit>.pos`, a 4 KiB header + one 8 B arena word per
+   admitted slot). The fill writes through a MAP_SHARED mapping - the same
+   pointer the RAM arena gave it - and the build reads each bin's slice back with
+   ONE sequential bulk pread. A window file carries a completion word; a missing,
+   truncated, stale or corrupt one is a HARD REFUSAL, never a silent rebuild
+   (five sabotage modes are exercised by the oracle).
+3. **Target-size recursive bins.** The top level's byte-1 masses come free from
+   the count pass. Any bin holding more than `--bin-target-size` rows subdivides
+   by its NEXT BYTE - count within its own slice, prefix-sum, scatter into the
+   arena/scratch pair - and recurses. Depth is an OUTPUT: a bucket whose rows
+   keep sharing prefixes keeps being divided one cheap coded symbol at a time,
+   and only a node that is already small (or whose suffixes end inside it) becomes
+   a leaf, an LCP-carrying comparison sort from the certified depth. The depth
+   cap survives only as a fail-loud backstop for a corpus that cannot be divided.
+   Measured (1 GB, 96t): leaf rows are bounded by the target (the old cap left a
+   4.7M-row leaf and 183,229 over-target leaves; the target leaves none), and
+   build is 15-20% faster at a 256K-1.3M target than at the retired 24-row rule.
+4. **The ordered stitch IS the merge.** Bins are published in byte order into the
+   unchanged band/piece protocol by one sequential pass that coalesces runs,
+   numbers them, closes 65536-run bands and hands each band to a writer thread;
+   the run's position, BWT symbol and capture-target flag already travel in the
+   arena word, so the stitch never reads the corpus at random and never hashes a
+   row.
+5. **The decomposed finish** (`pile_finish`) consumes those pieces CONCURRENTLY,
+   flow-controlled through the piece window, and publishes the lite container,
+   then deletes the rlebwt.
+
+**Pile arithmetic as it stands** (1.3079 TB, 5 shards, measured anchors only):
+build ~12.9 h + fill ~0.5 h + stitch/finish **43.3 h** is ~57 h end to end, i.e.
+finish-dominated. The launch limiter is the finish term and the per-shard arena
+capacity, NOT the fill (which this week's scatter removed) and not the merge
+(which no longer exists).
+
+## 4. D2, amended (the rolling amendment, operator-directed)
+
+D2 stands as written: no persistent per-suffix position column, ever, at any
+phase - no SA, no PLCP on doubled text, no WM, no order vectors. The amendment is
+about TRANSIENT materialization: suffix positions MAY appear in bounded rolling
+segments (the window files) during the read/scatter/bucket passes. The
+implementation must enforce a numeric slot cap, release each segment before the
+next, and journal the high-water mark: `peak_live_slots`, `peak_live_bytes`,
+`peak_window_file_bytes`, `window_files`, `window_loads`, `win_file_write_bytes`,
+`win_file_read_bytes` are printed on every run, and the oracle asserts the bound
+(`peak_live_slots <= 2*max(cap, n)`, `peak_window_file_bytes <= credit*cap*8`).
+D1 is untouched: the corpus file is the only text; every text read goes through
+`CorpusText` windows and nothing text-sized is ever written.
+
+## 5. THE PFP-RADIX DOMAIN MAP (operator's idea; the pangenome-side sequel)
+
+The machine's structure is: a COUNT pass over a corpus that produces per-key
+masses; a PREFIX-SUM; a PARALLEL SCATTER into per-key regions; bounded rolling
+window files; target-size recursion inside a key's slice; concatenation in key
+order as the order. The only thing that changes between domains is WHAT THE RADIX
+TOKEN IS:
+
+* **byte radix (this machine, built and gated) = web text.** The token is a byte
+  of the corpus, the "dictionary" is the text itself. This is the regime the pile
+  is in, and it is what `xsa build` runs today. Byte depth 3-200 gets a leaf under
+  the target; that is the whole story for text.
+* **PHRASE radix = cancer cohorts / raw read collections / structural-variant
+  pangenomes.** The token is a PHRASE from a PFP dictionary (a phrase is a
+  superbyte), so the alphabet is ~10^6-10^8 tokens instead of 256. Near-identical
+  clone sets (tumour/normal pairs, cohorts of the same locus) differ in single
+  bases inside otherwise identical multi-kb blocks: under byte radix they stay in
+  the same bucket for 6-10 levels and every level costs a random read of a
+  near-identical block; under phrase radix the SAME divergence becomes a branch at
+  PHRASE DEPTH 1-2, because the dictionary already resolved the shared text into
+  one token. Raw read collections behave the same way: the reads ARE phrases from
+  a small dictionary, which is why PFP compresses them at all. Structural-variant
+  pangenomes add the same argument one level out: haplotype blocks are near-
+  identical phrases with rare edits.
+* **What carries over unchanged:** the count/scatter prefix-sum (per phrase
+  instead of per byte), the bounded rolling window files (8 B per position,
+  unchanged), the target-size recursion (the leaf bound is rows, not bytes, so it
+  transfers verbatim), the ordered stitch (concatenation in phrase order is the
+  phrase-order BWT), and the decomposed finish. What changes is the tokenizer and
+  the census table's width - not the machine.
+
+This is marked as the SEQUEL: the byte machine is the thing that is built, gated
+and measured this week, and no phrase-radix claim ships until it has a census, an
+oracle and a byte-identity gate of its own.

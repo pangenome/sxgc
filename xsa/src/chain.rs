@@ -33,11 +33,24 @@ use sha2::{Digest, Sha256};
 
 pub const USAGE: &str = "usage:
   xsa build --input <corpus> --scratch <dir> [--snap-1e] [--memory-gb N] [--threads N]
-                    [--chunks N] [--kway N] [--remap <256-byte-map>] [--v2-pipeline
-                    --bin-live-cap SLOTS --chi-expect N --wit-ram-gb N --timeout S]
+                    [--remap <256-byte-map>] [--bin-live-cap SLOTS]
+                    [--bin-target-size ROWS] [--chi-expect N] [--wit-ram-gb N]
+                    [--timeout S] [--legacy-merge [--chunks N] [--kway N]]
 
-The consolidated external construction chain (chunk -> merge tree -> adopt
-finish -> chi sweep), one cargo-built command with bundled provenance.
+ONE ENTRY. `xsa build` runs the BIN pipeline by default (auto-radix): the
+multi-pass reader (count sweep -> prefix-sum scatter), the bounded rolling
+window FILES, the target-size recursive bins (each bin subdivides by its next
+byte until every leaf is <= the target, so tree depth is an OUTPUT of the data)
+and the ordered stitch straight into the unchanged band/piece protocol, which
+the decomposed fused finish consumes concurrently. There is no chunk phase, no
+merge walk and no position column on this route.
+
+  --legacy-merge     the PRE-BIN route (chunk front end -> k-way merge tree ->
+                     adopt finish) for A/B only. It is the only route that takes
+                     --chunks/--chunk-mb/--kway/--fanin, and it is not the
+                     document. Kept because the banked byte-identity fixtures
+                     were built with it, and a claim about the new route needs
+                     the old one beside it.
 
   --input PATH       corpus file: ONE cyclic 0x1E-terminated byte string
                      (s1 0x1E s2 0x1E ... sk 0x1E); mid-document input fails
@@ -93,20 +106,34 @@ The uniform journal (xsa-build.log) reports chi and per-phase wall / peak
 RSS / disc telemetry.
 
   xsa build --plan-only           print the surveyed+modeled build plan
-  --v2-pipeline          run the pile-builder v2 pipeline: the BIN SHAPE, one
-                     entry end to end. bin-bwt sweeps the corpus once, groups
-                     every position into the bin of its first remapped byte
-                     (256 byte-bins), builds each bin's tail order in parallel
-                     and stitches the bins in byte order straight into the
-                     unchanged band/piece protocol; the decomposed fused finish
-                     (pile_finish) consumes those pieces CONCURRENTLY
+  --v2-pipeline          ACCEPTED AND IGNORED (auto-radix). It used to select
+                     the bin pipeline; the bin pipeline is now the DEFAULT, so
+                     the flag selects nothing and the journal records that it was
+                     seen and ignored. `--legacy-merge` is what selects the old
+                     route now.
+  THE DEFAULT ROUTE (the bin pipeline, no flag needed): bin-bwt sweeps the
+                     corpus (count sweep -> prefix-sum scatter), groups every
+                     position into the bin of its first remapped byte (256
+                     byte-bins) and SUBDIVIDES each bin by its next byte until
+                     every leaf is <= the target size, so the tree's depth is an
+                     OUTPUT of the data and the largest serial stretch is one
+                     leaf sort; it stitches the bins in byte order straight into
+                     the unchanged band/piece protocol. The decomposed fused
+                     finish (pile_finish) consumes those pieces CONCURRENTLY
                      (flow-controlled through the piece window) and publishes
                      the lite container, then deletes the rlebwt. There is NO
                      chunk phase and NO merge walk on this route.
-                     Without --plan-only this EXECUTES; with --plan-only it
-                     prints the bin plan and exits (the same plan the build
-                     journals first). The v1 executor ignores it.
-  --bin-live-cap N     v2 only: the position-arena bound, in SLOTS (one slot
+                     With --plan-only it prints the plan and exits (the same
+                     plan the build journals first).
+  --legacy-merge         the PRE-BIN route: chunk front end (libsais) -> k-way
+                     merge tree -> adopt finish. A/B only; the only route that
+                     accepts --chunks/--chunk-mb/--kway/--fanin.
+  --bin-target-size N  the leaf bound of the recursion, in ROWS (default: 0 =
+                     AUTOMATIC). Bins subdivide until a node holds <= N rows; the
+                     subtree's depth is whatever the text demands. It is priced
+                     from the measured leaf-sort rate and the bucketing cost, and
+                     the value the run used is journaled (BIN_WORK target=...).
+  --bin-live-cap N     the position-arena bound, in SLOTS (one slot
                      per admitted position; the arena pair is 16 B/slot of
                      anonymous RAM, never a file). The corpus is processed in
                      ceil(n/cap) windows, each admitting a contiguous range of
@@ -128,11 +155,11 @@ RSS / disc telemetry.
                      (default: --memory-gb / 2; overflow spills as sorted
                      varint-delta disc runs without changing the product).
 
-  INERT UNDER --v2-pipeline (refused loud, never silently ignored): --chunks,
-  --chunk-mb, --kway, --fanin - the bin shape has no chunk set to fan in and
-  no k-way walk; the producer sweeps the corpus itself. The merge path stays in
-  the binary behind --radix and in the v1 executor for A/B, and is priced by
-  the v1/fan-in plans, not by the v2 plan.
+  INERT UNDER THE BIN PIPELINE (the default; refused loud, never silently
+  ignored): --chunks, --chunk-mb, --kway, --fanin - the bin shape has no chunk
+  set to fan in and no k-way walk; the producer sweeps the corpus itself. The
+  merge path stays in the binary behind --legacy-merge for A/B, and is priced by
+  the v1/fan-in plans, not by the bin plan.
   --scratch-free-pct N  disc hygiene policy override (default 15 = the
                      banked >=15%-free rule; 0 = a bounded run that FITS
                      with headroom may proceed on a full drive; the
@@ -190,10 +217,24 @@ struct Options {
     chunks: u32,
     kway: u32,
     plan_only: bool,
-    v2_pipeline: bool,
+    /// THE DEFAULT (auto-radix): the bin pipeline - one `xsa build`, the
+    /// multi-pass reader, the rolling window files, target-size recursive bins
+    /// and the ordered stitch. `bin_pipeline == !legacy_merge`.
+    bin_pipeline: bool,
+    /// `--legacy-merge`: the pre-bin route (chunk front end + k-way merge walk).
+    legacy_merge: bool,
+    /// `--v2-pipeline` was passed. It is ACCEPTED AND IGNORED (the bin pipeline
+    /// is the default now); the journal records that it was seen and ignored so
+    /// a log can never pretend the flag still selects a route.
+    v2_flag_given: bool,
     chi_expect: Option<u64>,
     wit_ram_gb: Option<u64>,
     bin_live_cap: Option<u64>,
+    /// --bin-target-size S: the leaf bound of the target-size recursion (rows).
+    /// 0 / absent = AUTOMATIC: the producer derives it from the census and the
+    /// measured leaf-sort rate, and journals the value it used (BIN_WORK
+    /// target=). Depth is an OUTPUT of the data, so this is the only shape knob.
+    bin_target_size: Option<u64>,
     timeout_s: Option<u64>,
     stripes: Vec<String>,
     scratch_free_pct: u32,
@@ -257,10 +298,12 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     let mut chunks = 32u32;
     let mut kway = 2u32;
     let mut plan_only = false;
-    let mut v2_pipeline = false;
+    let mut legacy_merge = false;
+    let mut v2_flag_given = false;
     let mut chi_expect = None;
     let mut wit_ram_gb = None;
     let mut bin_live_cap = None;
+    let mut bin_target_size = None;
     let mut timeout_s = None;
     let mut stripes: Vec<String> = Vec::new();
     let mut scratch_free_pct = 15u32;
@@ -326,7 +369,11 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
                 }
             }
             "--plan-only" => plan_only = true,
-            "--v2-pipeline" => v2_pipeline = true,
+            // AUTO-RADIX (operator-directed): the bin pipeline is the DEFAULT and
+            // --v2-pipeline is ACCEPTED AND IGNORED, journalled as such. The
+            // pre-bin chunk+merge route is behind --legacy-merge.
+            "--v2-pipeline" => v2_flag_given = true,
+            "--legacy-merge" => legacy_merge = true,
             "--chi-expect" => {
                 i += 1;
                 let v = value(args.get(i), "--chi-expect")?
@@ -352,6 +399,17 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
                     .parse::<u64>().map_err(|_| "--bin-live-cap: integer expected".to_string())?;
                 if bin_live_cap.replace(v).is_some() {
                     return Err("specify --bin-live-cap only once".into());
+                }
+            }
+            "--bin-target-size" => {
+                i += 1;
+                let v = value(args.get(i), "--bin-target-size")?
+                    .parse::<u64>().map_err(|_| "--bin-target-size: integer expected".to_string())?;
+                if v < 2 {
+                    return Err("--bin-target-size must be >= 2 rows (0 = automatic, which is the default)".into());
+                }
+                if bin_target_size.replace(v).is_some() {
+                    return Err("specify --bin-target-size only once".into());
                 }
             }
             "--timeout" => {
@@ -393,21 +451,22 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     }
     let input = input.ok_or("need --input <corpus>")?;
     let scratch = scratch.ok_or("need --scratch <dir>")?;
+    let bin_pipeline = !legacy_merge;
     // NO SILENT MISCONFIGURATION: the chunk/k-way/fan-in knobs do not exist on
     // the bin route (the producer sweeps the corpus itself), so explicitly
     // passing one is refused rather than ignored.
-    if v2_pipeline {
+    if bin_pipeline {
         if chunks_given {
-            return Err("--chunks is INERT under --v2-pipeline: the bin shape has no chunk phase (the producer sweeps the corpus itself); drop the flag".into());
+            return Err("--chunks is INERT under the bin pipeline (the default; the producer sweeps the corpus itself, there is no chunk phase); drop the flag, or pass --legacy-merge for the chunk+merge route".into());
         }
         if chunk_mb.is_some() {
-            return Err("--chunk-mb is INERT under --v2-pipeline: the bin shape has no chunk phase; drop the flag".into());
+            return Err("--chunk-mb is INERT under the bin pipeline (the default; no chunk phase); drop the flag, or pass --legacy-merge".into());
         }
         if kway_given {
-            return Err("--kway is INERT under --v2-pipeline: the bin shape has no k-way walk (bins are ordered by their own construction); drop the flag".into());
+            return Err("--kway is INERT under the bin pipeline (the default; bins are ordered by their own construction, there is no k-way walk); drop the flag, or pass --legacy-merge".into());
         }
         if fanin {
-            return Err("--fanin is INERT under --v2-pipeline: there is nothing to fan in; drop the flag".into());
+            return Err("--fanin is INERT under the bin pipeline (the default; there is nothing to fan in); drop the flag, or pass --legacy-merge".into());
         }
         if let Some(wit) = wit_ram_gb {
             if wit > memory_gb {
@@ -421,21 +480,27 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     if fanin && chunk_mb.is_none() {
         return Err("--fanin requires --chunk-mb N (the fixed chunk size)".into());
     }
-    if !v2_pipeline {
+    if legacy_merge {
         if chi_expect.is_some() {
-            return Err("--chi-expect is a --v2-pipeline flag".into());
+            return Err("--chi-expect is a bin-pipeline flag (drop --legacy-merge)".into());
         }
         if wit_ram_gb.is_some() {
-            return Err("--wit-ram-gb is a --v2-pipeline flag".into());
+            return Err("--wit-ram-gb is a bin-pipeline flag (drop --legacy-merge)".into());
         }
         if bin_live_cap.is_some() {
-            return Err("--bin-live-cap is a --v2-pipeline flag".into());
+            return Err("--bin-live-cap is a bin-pipeline flag (drop --legacy-merge)".into());
+        }
+        if bin_target_size.is_some() {
+            return Err("--bin-target-size is a bin-pipeline flag (drop --legacy-merge)".into());
         }
     }
-    if v2_pipeline && !plan_only && timeout_s.is_none() {
-        return Err("--v2-pipeline execution requires --timeout SECONDS (caps on every run: timeout -k 120 + the ulimit)".into());
+    if bin_pipeline && !plan_only && timeout_s.is_none() {
+        return Err("bin-pipeline execution requires --timeout SECONDS (caps on every run: timeout -k 120 + the ulimit)".into());
     }
-    Ok(Options { input, scratch, snap_1e, memory_gb, threads, chunks, kway, plan_only, v2_pipeline, chi_expect, wit_ram_gb, bin_live_cap, timeout_s, stripes, scratch_free_pct, remap, chunk_mb, fanin })
+    Ok(Options { input, scratch, snap_1e, memory_gb, threads, chunks, kway, plan_only,
+                 bin_pipeline, legacy_merge, v2_flag_given, chi_expect, wit_ram_gb,
+                 bin_live_cap, bin_target_size, timeout_s, stripes, scratch_free_pct,
+                 remap, chunk_mb, fanin })
 }
 
 /// Last byte of a file (the snap-boundary probe).
@@ -833,15 +898,16 @@ fn run_chain(options: Options) -> Result<(), String> {
         None => options.chunks,
     };
     let survey = super::plan::survey(&input, &scratch, &options.stripes)?;
-    let mut build_plan = if options.v2_pipeline {
+    let mut build_plan = if options.bin_pipeline {
         super::plan::model_v2(survey, chunks, options.kway, options.threads, options.memory_gb,
-                              options.scratch_free_pct, options.bin_live_cap)
+                              options.scratch_free_pct, options.bin_live_cap,
+                              options.bin_target_size)
     } else if options.fanin {
         super::plan::model_fanin(survey, chunks, options.kway, options.threads, options.memory_gb, options.scratch_free_pct)
     } else {
         super::plan::model(survey, chunks, options.kway, options.threads, options.memory_gb, options.scratch_free_pct)
     };
-    if options.v2_pipeline {
+    if options.bin_pipeline {
         // The chunk-knob surface of the MERGE pipeline is gone from this route:
         // the bin shape has no chunk set, no segment spools and no k-way walk.
         // A knob that would silently misconfigure the run is REFUSED.
@@ -865,7 +931,7 @@ fn run_chain(options: Options) -> Result<(), String> {
         }
         let peak_mb = build_plan.phases.iter().map(|p| p.disc_peak_mb).fold(0.0, f64::max);
         let fits = peak_mb * 1048576.0 <= build_plan.survey.scratch_free_bytes as f64;
-        build_plan.disc_verdict = format!("{}: ALL-PHASE peak {:.1} GiB vs {:.1} GiB free (bin shape: rlebwt + piece window + container; the position arena is RAM)",
+        build_plan.disc_verdict = format!("{}: ALL-PHASE peak {:.1} GiB vs {:.1} GiB free (bin shape: rolling window FILES + rlebwt + piece window + container; the build's RAM is one group, never the window)",
             if fits { "FEASIBLE" } else { "INFEASIBLE" }, peak_mb / 1024.0,
             build_plan.survey.scratch_free_bytes as f64 / 1073741824.0);
         if !fits {
@@ -899,7 +965,7 @@ fn run_chain(options: Options) -> Result<(), String> {
     // already chose. Dense = fast walk / fat disc; compact = thin disc /
     // slow walk. Both writers honor it; the reader sniffs the format. The bin
     // shape has no position column at all, so the knob is not set there.
-    if options.v2_pipeline {
+    if options.bin_pipeline {
         if std::env::var_os("CHUNK_POS_MODE").is_some() || std::env::var_os("CROSS_POS_MODE").is_some() {
             return Err("CHUNK_POS_MODE/CROSS_POS_MODE are INERT under --v2-pipeline: the bin shape keeps positions only in a transient RAM arena, never in a column; unset them".into());
         }
@@ -930,7 +996,7 @@ fn run_chain(options: Options) -> Result<(), String> {
     // The chunk count / k-way arity are NOT part of the bin shape; the journal
     // prints them as "-" there so a log can never be read as if a chunk set or
     // a k-way walk existed on this route.
-    let (chunks_note, kway_note) = if options.v2_pipeline {
+    let (chunks_note, kway_note) = if options.bin_pipeline {
         ("-".to_string(), "-".to_string())
     } else {
         (chunks.to_string(), options.kway.to_string())
@@ -939,8 +1005,19 @@ fn run_chain(options: Options) -> Result<(), String> {
         "XSA_BUILD START input={} scratch={} memory_gb={} threads={} chunks={} kway={} remap={} pipeline={}",
         input.display(), scratch.display(), options.memory_gb, options.threads,
         chunks_note, kway_note, if options.remap.is_some() { "provided" } else { "production" },
-        if options.v2_pipeline { "v2bin" } else if options.fanin { "v1-fanin" } else { "v1" }
+        if options.bin_pipeline { "v2bin" } else if options.fanin { "v1-fanin" } else { "v1" }
     ));
+    // THE FLAG FLIP (auto-radix): the bin pipeline is the default route, so the
+    // flag that used to select it is no longer a route selector. It is ACCEPTED
+    // AND IGNORED - journalled here, in the plan's own log, so no run can be
+    // mistaken for one that was configured by it.
+    if options.v2_flag_given {
+        journal.line(if options.legacy_merge {
+            "NOTE --v2-pipeline ACCEPTED AND IGNORED: --legacy-merge was also given, and the merge route wins (the bin pipeline is the default since auto-radix)"
+        } else {
+            "NOTE --v2-pipeline ACCEPTED AND IGNORED: the bin pipeline is the DEFAULT (auto-radix) - the flag no longer selects a route; pass --legacy-merge for the chunk+merge route"
+        });
+    }
     // Snap preflight: the demonstrated refusal fires before any phase runs.
     let n = check_snap_boundary(&input)?;
     if options.snap_1e {
@@ -955,7 +1032,7 @@ fn run_chain(options: Options) -> Result<(), String> {
     // The v2 bin shape has NO chunk set, no merge work directory and no
     // finish side-stream directory: only the merged/ prefix (rlebwt + pieces)
     // exists, and the tree rules assert nothing else is left behind.
-    let dirs: &[&str] = if options.v2_pipeline { &["merged"] } else { &["chunks", "merged", "mwork", "finish"] };
+    let dirs: &[&str] = if options.bin_pipeline { &["merged"] } else { &["chunks", "merged", "mwork", "finish"] };
     for dir in dirs {
         fs::create_dir_all(scratch.join(dir)).map_err(|e| format!("create {dir}: {e}"))?;
     }
@@ -975,7 +1052,7 @@ fn run_chain(options: Options) -> Result<(), String> {
     // consumer, CONCURRENT and flow-controlled through the piece window, then
     // the lite container publish and the rlebwt delete - one command, one
     // journal. The chunk phase and the merge walk are NOT on this route.
-    if options.v2_pipeline {
+    if options.bin_pipeline {
         // The executor reads the arena bound from the PLAN (plan-first: the
         // plan is the journal's first entry, so the run must execute what the
         // plan priced).
@@ -1222,6 +1299,12 @@ fn run_v2_tail(
         "--threads".into(), options.threads.to_string(),
         "--bin-live-cap".into(), bin_live_cap.to_string(),
     ]);
+    // The target-size recursion's leaf bound, when the operator pinned it. Absent
+    // = automatic (the producer's measured default), and the journal prints the
+    // value the run actually used (BIN_WORK target=) either way.
+    if let Some(target) = options.bin_target_size {
+        producer_args.extend(["--bin-target-size".into(), target.to_string()]);
+    }
     let mut finish_args: Vec<String> = Vec::new();
     finish_args.extend(["-k".to_string(), "120".to_string(), timeout_s.to_string()]);
     finish_args.push(s(&tools.join("pile_finish").to_string_lossy()));
@@ -1424,9 +1507,74 @@ mod tests {
     }
 
     #[test]
+    fn bin_live_cap_is_a_bin_pipeline_flag_and_is_carried() {
+        let options = parse_chain(&v2_args(&["--bin-live-cap", "250000000"])).unwrap();
+        assert_eq!(options.bin_live_cap, Some(250_000_000));
+        let default = parse_chain(&v2_args(&[])).unwrap();
+        assert_eq!(default.bin_live_cap, None, "absent = the plan picks from --memory-gb");
+        // On the LEGACY route the flag does not exist (it is a bin-pipeline knob).
+        let err = parse_chain(&["--input", "/tmp/c", "--scratch", "/tmp/s", "--legacy-merge",
+                                "--timeout", "3600", "--bin-live-cap", "7"]
+                              .iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap_err();
+        assert!(err.contains("--bin-live-cap is a bin-pipeline flag"), "{err}");
+    }
+
+    #[test]
+    fn bin_target_size_is_carried_and_refused_on_the_legacy_route() {
+        let options = parse_chain(&v2_args(&["--bin-target-size", "1048576"])).unwrap();
+        assert_eq!(options.bin_target_size, Some(1_048_576));
+        assert_eq!(parse_chain(&v2_args(&[])).unwrap().bin_target_size, None,
+                   "absent = the producer's measured automatic default");
+        let err = parse_chain(&v2_args(&["--bin-target-size", "1"])).unwrap_err();
+        assert!(err.contains("--bin-target-size must be >= 2"), "{err}");
+        let err = parse_chain(&["--input", "/tmp/c", "--scratch", "/tmp/s", "--legacy-merge",
+                                "--timeout", "3600", "--bin-target-size", "1048576"]
+                              .iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap_err();
+        assert!(err.contains("--bin-target-size is a bin-pipeline flag"), "{err}");
+    }
+
+    #[test]
+    fn the_bin_pipeline_is_the_default_and_v2_pipeline_is_ignored() {
+        // THE FLAG FLIP: no route flag at all selects the bin pipeline, and
+        // --v2-pipeline is accepted (not an unknown option) and journalled as
+        // ignored rather than silently ignored.
+        let plain: Vec<String> = ["--input", "/tmp/c", "--scratch", "/tmp/s", "--timeout", "3600"]
+            .iter().map(|s| s.to_string()).collect();
+        let options = parse_chain(&plain).unwrap();
+        assert!(options.bin_pipeline && !options.legacy_merge);
+        assert!(!options.v2_flag_given);
+        let with_flag = parse_chain(&v2_args(&[])).unwrap();
+        assert!(with_flag.bin_pipeline, "--v2-pipeline still means the bin pipeline");
+        assert!(with_flag.v2_flag_given, "the journal must record that it was seen");
+        // The same knobs, byte-for-byte the same options except for the flag's
+        // own record: --v2-pipeline changes NOTHING about the run.
+        assert_eq!(with_flag.threads, options.threads);
+        assert_eq!(with_flag.memory_gb, options.memory_gb);
+        assert_eq!(with_flag.bin_live_cap, options.bin_live_cap);
+        assert_eq!(with_flag.bin_target_size, options.bin_target_size);
+        // --legacy-merge is the ONLY way back to the chunk+merge route.
+        let legacy = parse_chain(&["--input", "/tmp/c", "--scratch", "/tmp/s",
+                                   "--legacy-merge", "--timeout", "3600"]
+                                 .iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap();
+        assert!(legacy.legacy_merge && !legacy.bin_pipeline);
+    }
+
+    #[test]
+    fn legacy_merge_is_the_only_route_that_takes_the_chunk_knobs() {
+        let legacy = parse_chain(&["--input", "/tmp/c", "--scratch", "/tmp/s", "--legacy-merge",
+                                   "--chunks", "32", "--kway", "4", "--timeout", "3600"]
+                                 .iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap();
+        assert!(legacy.legacy_merge);
+        assert_eq!(legacy.chunks, 32);
+        assert_eq!(legacy.kway, 4);
+    }
+
+    #[test]
     fn v2_refuses_the_inert_chunk_knobs_loudly() {
         // The bin shape is one sweep -> bins -> stitch: a chunk/k-way/fan-in
-        // knob would silently misconfigure the run, so each is refused.
+        // knob would silently misconfigure the run, so each is refused - on the
+        // DEFAULT route (v2_args passes --v2-pipeline, which is now a no-op that
+        // must not change any of this).
         for (extra, needle) in [
             (&["--chunks", "32"][..], "--chunks is INERT"),
             (&["--chunk-mb", "512"][..], "--chunk-mb is INERT"),
@@ -1439,27 +1587,16 @@ mod tests {
     }
 
     #[test]
-    fn bin_live_cap_is_a_v2_flag_and_is_carried() {
-        let options = parse_chain(&v2_args(&["--bin-live-cap", "250000000"])).unwrap();
-        assert_eq!(options.bin_live_cap, Some(250_000_000));
-        let default = parse_chain(&v2_args(&[])).unwrap();
-        assert_eq!(default.bin_live_cap, None, "absent = the plan picks from --memory-gb");
-        // Without --v2-pipeline the flag does not exist.
-        let err = parse_chain(&["--input", "/tmp/c", "--scratch", "/tmp/s",
-                                "--bin-live-cap", "7"].iter().map(|s| s.to_string())
-                              .collect::<Vec<_>>()).unwrap_err();
-        assert!(err.contains("--bin-live-cap is a --v2-pipeline flag"), "{err}");
-    }
-
-    #[test]
     fn wit_ram_over_the_memory_cap_is_refused() {
         let err = parse_chain(&v2_args(&["--memory-gb", "8", "--wit-ram-gb", "16"])).unwrap_err();
         assert!(err.contains("exceeds --memory-gb"), "{err}");
     }
 
     #[test]
-    fn v2_execution_still_requires_a_timeout() {
-        let args: Vec<String> = ["--input", "/tmp/corpus", "--scratch", "/tmp/scratch", "--v2-pipeline"]
+    fn bin_pipeline_execution_still_requires_a_timeout() {
+        // The DEFAULT route is the bin pipeline, so the cap requirement belongs to
+        // the plain invocation, not to a flag.
+        let args: Vec<String> = ["--input", "/tmp/corpus", "--scratch", "/tmp/scratch"]
             .iter().map(|s| s.to_string()).collect();
         let err = parse_chain(&args).unwrap_err();
         assert!(err.contains("requires --timeout"), "{err}");

@@ -5450,22 +5450,56 @@ int main_impl(int argc, char** argv) {
     if (has("--radix")) return radix_main(flag("--radix"),flag("--remap"),flag("--out-prefix"),
         flag("--radix-bytes").empty()?8:std::stoul(flag("--radix-bytes")),
         flag("--position-cap").empty()?32000000:std::stoull(flag("--position-cap")),threads);
-    if (has("--binbwt")) return binbwt_main(flag("--binbwt"),flag("--remap"),flag("--out-prefix"),
+    if (has("--binbwt")) {
+        // The disc-backed window options (bit6/binbwt_slice.h, BinWindowOpts).
+        // They were reachable only from the oracle before this; the PRODUCT path
+        // used to be unable to compile at all because the `wopt` argument was
+        // never passed (inherited breakage: bit6/binbwt_slice.h at 0c04ea0 takes
+        // a 15th parameter and cross_lcp_merge.cpp passed 14 - the disc-windows
+        // gate was run from a tree with this call fixed). They are now real
+        // flags: `--bin-window-dir` (scratch), `--bin-window-credit` (windows the
+        // fill may run ahead), `--bin-build-cap` (the build's RAM working set in
+        // slots) and `--bin-window-ram` (the RAM-arena A/B arm of the same code).
+        BinWindowOpts bwo;
+        bwo.dir = flag("--bin-window-dir");
+        if (!flag("--bin-window-credit").empty())
+            bwo.credit = std::stoull(flag("--bin-window-credit"));
+        if (!flag("--bin-build-cap").empty())
+            bwo.buildCap = std::stoull(flag("--bin-build-cap"));
+        bwo.disc = !has("--bin-window-ram");
+        return binbwt_main(flag("--binbwt"),flag("--remap"),flag("--out-prefix"),
         threads,
-        flag("--bin-leaf").empty()?24:std::stoull(flag("--bin-leaf")),
-        // The DEFAULT depth cap is 32: the 10 GB probe prices a certified
-        // symbol at 5.6 ns/thread against 20 ns at 1 GB, so the deeper bucketing
-        // is strictly cheaper per byte there. Measured at 10 GB (n=1e10, 96t,
-        // cap 2e9): comparisons 45,338,075,221 -> 31,158,576,235 (-31.3%),
-        // symbols 3,574,308,585,903 -> 3,361,984,132,500 (-5.9%), level_elems
-        // +11.5%, build_s 381.0 -> 343.2. The output is exact for any cap (the
-        // 36,180-case oracle runs depth_cap 1, 4 and 32 over every fixture).
-        flag("--bin-depth-cap").empty()?32:std::stoull(flag("--bin-depth-cap")),
+        // THE TARGET SIZE: the leaf bound, automatic by default (0). Depth is an
+        // OUTPUT of the data now (binbwt_slice.h, bin_sort_rec), so this is the
+        // one shape knob, and it is the largest number of rows a single
+        // comparison sort may take - i.e. the largest serial stretch a leaf can
+        // cost. `--bin-leaf` is the superseded name of the same knob and is
+        // accepted as an alias so the older measurement scripts still run.
+        (flag("--bin-target-size").empty()
+             ? (flag("--bin-leaf").empty() ? U(0) : std::stoull(flag("--bin-leaf")))
+             : std::stoull(flag("--bin-target-size"))),
+        // The depth cap is no longer the recursion's rule, only its fail-loud
+        // backstop: it exists so a corpus that cannot be divided (cyclic text of
+        // identical rotations) terminates, and when it fires the leaf is
+        // journalled (BIN_LEAF_OVER_TARGET / over_target_leaves) instead of being
+        // taken silently. Its default is therefore far above anything text
+        // needs (the deepest bucket any measured corpus produced is reported as
+        // depth_max in BIN_WORK) and it costs nothing when it does not fire.
+        // MEASURED (RESULTS_AUTO_RADIX.md, 10 GB probe): with the target at 1M
+        // rows the tree reaches depth 879 on the one bucket that cannot be
+        // divided any cheaper (a duplicate block), so a cap of 1024 removes every
+        // over-target leaf (leaf_rows_max 6,048,267 -> 999,817, over_target 2 ->
+        // 0) for +5.9% build. 4096 is chosen as the default so the TARGET is the
+        // rule and the cap is only what it says it is: a backstop. It costs
+        // nothing when it does not fire (a cap is a comparison), and if it does
+        // fire the leaf is journalled loudly (BIN_LEAF_OVER_TARGET).
+        flag("--bin-depth-cap").empty()?4096:std::stoull(flag("--bin-depth-cap")),
         flag("--bin-live-cap").empty()?U(1)<<32:std::stoull(flag("--bin-live-cap")),
         flag("--bin-level-bytes").empty()?1:std::stoull(flag("--bin-level-bytes")),
         flag("--bin-mode")!="cyclic", has("--bin-freq-sched"),
         flag("--bin-split").empty()?0:std::stoull(flag("--bin-split")),
-        flag("--bin-sink")=="serial", has("--bin-probe"), has("--bin-fill-only"));
+        flag("--bin-sink")=="serial", has("--bin-probe"), has("--bin-fill-only"), bwo);
+    }
     U kway = 2;
     if (!flag("--kway").empty()) {
         kway = std::stoull(flag("--kway"));
