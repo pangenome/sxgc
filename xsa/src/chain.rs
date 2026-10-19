@@ -1287,6 +1287,10 @@ fn run_v2_tail(
         slots.to_string()
     };
     producer_env.push(("CROSS_POOL_SLOTS".to_string(), pool_slots));
+    // The producer is handed the cap EXPLICITLY (auto or operator), so it cannot
+    // tell the two apart from the number: name the source for the journal.
+    producer_env.push(("CROSS_BIN_CAP_SOURCE".to_string(),
+        if options.bin_live_cap.is_some() { "operator" } else { "auto" }.to_string()));
     if std::env::var_os("CROSS_NO_POOL").is_some() {
         journal.line("KNOB CROSS_NO_POOL (file-window path: exact, 77x slower on the placing pass)");
     }

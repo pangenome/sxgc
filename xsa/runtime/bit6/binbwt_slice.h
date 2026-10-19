@@ -289,11 +289,22 @@ static inline void bin_window_sabotage(const std::string& path);
 
 // The write path's staging budget, PER FILL THREAD. The scatter interleaves up
 // to 256 bin streams, so each (thread, bin) region gets its own append buffer
-// and no flush can ever be triggered per position: a thread's buffers together
-// are `bin_fill_stage_bytes_per_thread` bytes, split evenly across the window's
-// bins, so the write path's RAM is threads x 4 MiB whatever the window size is
-// (the plan prices the same term: xsa/src/plan.rs BIN_FILL_STAGE_BYTES).
-static constexpr U bin_fill_stage_bytes_per_thread = 4u << 20;
+// and no flush is ever triggered per position: a thread's buffers together are
+// `bin_fill_stage_bytes_per_thread` bytes (water-filled over the window's bins,
+// see BinFillSink::view), so the write path's RAM is threads x 32 MiB whatever
+// the window size is (the plan prices the same term: xsa/src/plan.rs
+// BIN_FILL_STAGE_BYTES_PER_THREAD).
+//
+// WHY 32 MiB AND NOT 4. The write rate is a function of the WRITE SIZE, not of
+// the byte count: measured on this box (XFS, nvme2n1, load ~90), pwrite of
+// 16 KB = 3.3 GB/s, 64 KB = 6.2, 256 KB = 8.2, while the mmap path's dirty
+// stores are ~16 GB/s but leave the writeback to the kernel. A per-stream
+// buffer sized by the budget (4 MiB / 256 bins = 16 KB) measured 12x the mmap
+// fill; water-filled to ~128 KB per stream it lands within ~2x of the mmap
+// fill's store phase, and the window's fsync - the phase both arms pay - is
+// unchanged. The buffers never exceed a (bin, chunk) region, so the write
+// pattern is identical to the mmap arm's page pattern.
+static constexpr U bin_fill_stage_bytes_per_thread = 32u << 20;
 static constexpr U bin_fill_stage_slots_per_thread =
     bin_fill_stage_bytes_per_thread / bin_window_slot_bytes;
 
@@ -387,15 +398,31 @@ struct BinFillSink {
         View v;
         v.s = this; v.b0 = b0;
         v.st.resize(b1 - b0);
+        // WATER-FILL the thread's staging budget over the window's bins: the
+        // largest per-stream buffer `s` such that sum_c min(count_c, s) fits the
+        // budget. Small regions get their whole (bin, chunk) and are flushed
+        // ONCE; the big ones share what is left, so every pwrite is as large as
+        // the budget allows (the write rate is a function of the write size).
+        U total = 0, maxCount = 0;
+        for (unsigned c = b0; c < b1; ++c) total += count[c], maxCount = std::max(maxCount, count[c]);
+        const U budget = stageSlots ? stageSlots : 1;
+        U lo_ = 1, hi_ = std::max<U>(1, maxCount);
+        while (lo_ < hi_) {
+            const U mid = lo_ + (hi_ - lo_ + 1) / 2;
+            U sum = 0;
+            for (unsigned c = b0; c < b1; ++c) sum += std::min<U>(count[c], mid);
+            if (sum <= budget) lo_ = mid; else hi_ = mid - 1;
+        }
         U allocated = 0;
         for (unsigned c = b0; c < b1; ++c) {
             Stream& t = v.st[c - b0];
             t.slot0 = start[c]; t.count = count[c]; t.next = start[c];
             if (!t.count) continue;
-            t.cap = std::min<U>(t.count, stageSlots ? stageSlots : 1);
+            t.cap = std::min<U>(t.count, lo_);
             t.buf.reset(new U[t.cap]);
             allocated += t.cap;
         }
+        (void)total;
         c->stageBytes.fetch_add(allocated * bin_window_slot_bytes,
                                 std::memory_order_relaxed);
         return v;
@@ -440,14 +467,23 @@ struct BinWindow {
         fd = ::open(path.c_str(), O_RDWR | O_CREAT | O_EXCL, 0644);
         require(fd >= 0, "bin window file create (scratch tree writable?)");
         require(::ftruncate(fd, off_t(bytes)) == 0, "bin window file truncate");
+        // PREALLOCATE the extents. The scatter writes each (bin, chunk) region
+        // separately, i.e. tens of thousands of 8-64 KB writes spread over the
+        // window, so on a sparse file EVERY write would allocate blocks (and pay
+        // an XFS transaction) - measured at 17 us per 16 KB write, 12x the mmap
+        // path. With the extents already there a write is a page-cache copy.
+        if (bytes) {
+            const int rc = ::posix_fallocate(fd, 0, off_t(bytes));
+            require(rc == 0, "bin window file preallocate (scratch full?)");
+        }
         writeHeader(0);
     }
     // ---- the FILL arm's destination: buffered pwrite, no mapping ----------
-    BinFillSink fillSink(unsigned b0_, unsigned b1_) const {
+    BinFillSink fillSink(unsigned /*b0_*/, unsigned /*b1_*/) const {
         BinFillSink s;
         s.fd = fd; s.slots = slots;
-        s.stageSlots = std::max<U>(1, bin_fill_stage_slots_per_thread /
-                                         std::max<U>(1, b1_ - b0_));
+        // The whole per-thread budget; the view water-fills it over the bins.
+        s.stageSlots = bin_fill_stage_slots_per_thread;
         return s;
     }
     // ---- seal (the FILL arm ends here) ------------------------------------
@@ -2326,10 +2362,17 @@ static int binbwt_main(const std::string& path, const std::string& mapPath,
     } else {
         bin_check_live_cap(liveCap, text.n, threads, "--bin-live-cap");
         BinCapTerms ct = bin_derive_live_cap(text.n, threads);
+        // `--bin-live-cap` is ALWAYS explicit on the product route: the front
+        // door derives the default and passes it, so the producer cannot tell a
+        // plan pick from an operator pick by looking at the number. The front
+        // door sets CROSS_BIN_CAP_SOURCE=auto when it derived the value, and the
+        // journal names the source instead of guessing.
+        const char* src = ::getenv("CROSS_BIN_CAP_SOURCE");
         std::fprintf(stderr,
-            "BIN_LIVE_CAP source=operator cap=%llu n=%llu threads=%llu rlimit_as=%llu "
+            "BIN_LIVE_CAP source=%s cap=%llu n=%llu threads=%llu rlimit_as=%llu "
             "usable=%llu cache=%llu stage=%llu group=%llu headroom_pct=%d fits=1 "
             "(the largest cap this phase could hold is %llu)\n",
+            (src && *src) ? src : "operator",
             (unsigned long long)liveCap, (unsigned long long)text.n,
             (unsigned long long)threads, (unsigned long long)ct.limit,
             (unsigned long long)ct.usable, (unsigned long long)ct.cache,

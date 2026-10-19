@@ -959,7 +959,7 @@ pub fn model_v2(
             bin_cap_over_budget(live_cap.unwrap_or(0), n, threads as u64, mem_bytes).unwrap_or(0)));
     }
     if !arena_ok {
-        alternatives.push(format!("lower --bin-live-cap (a build group is {} B/slot: {} slots would fit {}% of --memory-gb {cap_gb} once the corpus cache and the fill staging are paid) or raise --memory-gb; a bin larger than the group raises the cap and the front door fails loud, so SHARDING is the other lever", BIN_GROUP_SLOT_BYTES, mem_bytes * BIN_PHASE_HEADROOM_PCT / 100 / BIN_GROUP_SLOT_BYTES, BIN_PHASE_HEADROOM_PCT));
+        alternatives.push(format!("lower --bin-live-cap (a build group is {} B/slot: {} slots fit {}% of --memory-gb {cap_gb} once the corpus cache ({} B) and the fill staging ({} B) are paid) or raise --memory-gb; a bin larger than the group raises the cap and the front door fails loud, so SHARDING is the other lever", BIN_GROUP_SLOT_BYTES, (mem_bytes * BIN_PHASE_HEADROOM_PCT / 100).saturating_sub(cache_bytes + stage_bytes) / BIN_GROUP_SLOT_BYTES, BIN_PHASE_HEADROOM_PCT, cache_bytes, stage_bytes));
     }
     if !disc_ok {
         alternatives.push("free or add scratch space (the bin shape's tree is rlebwt 1.546n + the bounded piece window + the container 0.468n, with rlebwt deleted at publish)".to_string());

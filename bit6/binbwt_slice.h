@@ -2362,10 +2362,17 @@ static int binbwt_main(const std::string& path, const std::string& mapPath,
     } else {
         bin_check_live_cap(liveCap, text.n, threads, "--bin-live-cap");
         BinCapTerms ct = bin_derive_live_cap(text.n, threads);
+        // `--bin-live-cap` is ALWAYS explicit on the product route: the front
+        // door derives the default and passes it, so the producer cannot tell a
+        // plan pick from an operator pick by looking at the number. The front
+        // door sets CROSS_BIN_CAP_SOURCE=auto when it derived the value, and the
+        // journal names the source instead of guessing.
+        const char* src = ::getenv("CROSS_BIN_CAP_SOURCE");
         std::fprintf(stderr,
-            "BIN_LIVE_CAP source=operator cap=%llu n=%llu threads=%llu rlimit_as=%llu "
+            "BIN_LIVE_CAP source=%s cap=%llu n=%llu threads=%llu rlimit_as=%llu "
             "usable=%llu cache=%llu stage=%llu group=%llu headroom_pct=%d fits=1 "
             "(the largest cap this phase could hold is %llu)\n",
+            (src && *src) ? src : "operator",
             (unsigned long long)liveCap, (unsigned long long)text.n,
             (unsigned long long)threads, (unsigned long long)ct.limit,
             (unsigned long long)ct.usable, (unsigned long long)ct.cache,
