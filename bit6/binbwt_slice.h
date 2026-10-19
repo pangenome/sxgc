@@ -39,6 +39,13 @@ struct BinWork {
     double tStitch = 0;                 // ordered pass: rows -> runs -> bands
     double tBandWrite = 0;              // writer threads' busy seconds (sum)
     double tFlowWait = 0;               // v2_flow_wait seconds in the slot wait
+    // ---- disc-backed windows (the operator's bounded rolling files) --------
+    U winFileWriteBytes = 0;            // window-file bytes the fill wrote
+    U winFileReadBytes = 0;             // window-file bytes the build read back
+    U peakWindowFileBytes = 0;          // live scratch: every live window file
+    U windowFiles = 0, windowLoads = 0; // files created / per-bin bulk loads
+    double tWinWrite = 0, tWinRead = 0; // the two file phases, wall
+    double tCreditWait = 0;             // build waiting for a filled window
     void absorb(const BinWork& o) {
         sweepBytes += o.sweepBytes; sweepPasses += o.sweepPasses;
         windows += o.windows; bins += o.bins; binPasses += o.binPasses;
@@ -65,6 +72,12 @@ struct BinWork {
         targetHits += o.targetHits; bandJobs += o.bandJobs;
         tCount += o.tCount; tFill += o.tFill;
         tStitch += o.tStitch; tBandWrite += o.tBandWrite; tFlowWait += o.tFlowWait;
+        winFileWriteBytes += o.winFileWriteBytes;
+        winFileReadBytes += o.winFileReadBytes;
+        peakWindowFileBytes = std::max(peakWindowFileBytes, o.peakWindowFileBytes);
+        windowFiles += o.windowFiles; windowLoads += o.windowLoads;
+        tWinWrite += o.tWinWrite; tWinRead += o.tWinRead;
+        tCreditWait += o.tCreditWait;
     }
 };
 
@@ -194,6 +207,191 @@ struct BinArena {
     BinArena(const BinArena&) = delete;
     BinArena& operator=(const BinArena&) = delete;
     U* data() { return p; }
+};
+
+// -------------------------------------------------- disc-backed window files
+// THE OPERATOR'S ORIGINAL MULTI-PASS SCHEME, RESTORED. A window's positions
+// live in a BOUNDED ROLLING FILE in the scratch tree, never in an anonymous RAM
+// arena:
+//
+//   [0, 4096)                header (page aligned, so the slot array starts on
+//                            a page boundary and every pread is aligned)
+//   [4096, 4096 + 8*slots)   `slots` 8-byte arena words, slot i at 4096 + 8i
+//
+// The on-disc image IS the arena: the fill writes the SAME slot for the SAME
+// position as the RAM arena did (the (bin, chunk) slot0 prefix-sum layout), so
+// nothing downstream of the read can tell the difference. The fill writes
+// through a MAP_SHARED mapping of the file (the same pointer the arena gave it,
+// so the scatter's inner loop is untouched and its counters cannot move); the
+// build reads each bin's slice back with ONE sequential bulk pread into its
+// bounded working set.
+//
+// THE HEADER IS THE CRASH REFUSAL. It carries the window ordinal, the admitted
+// byte range, the slot count, the words written and a completion word. A reader
+// verifies size + magic + ordinal + geometry + completion BEFORE it trusts a
+// byte, and REFUSES LOUD otherwise: a missing, stale or truncated window file is
+// a hard error, never a silent rebuild.
+//
+// SLOT WIDTH. 8 B is the honest width and it is what the arena word already is
+// (`bin_word`: tail 54b | symbol 8b | hit 2b). It is the minimum that carries
+// the three per-row facts the sort must permute together; stripping it to 6 B
+// (41-bit pile tail + 8-bit symbol + 1-bit hit) would shave 25% of the window
+// I/O at pile scale but costs a repack pass per element on the build's critical
+// path, so the width stays 8 B and the number is reported, not assumed.
+static constexpr U bin_window_hdr_bytes = 4096;
+static constexpr U bin_window_slot_bytes = sizeof(U);
+static constexpr char bin_window_magic[8] = {'B','W','I','N','D','O','W','1'};
+static constexpr char bin_window_done[8]  = {'B','W','D','O','N','E','0','1'};
+
+struct BinWindowHeader {
+    char magic[8];
+    char done[8];
+    U version, index, slots, b0, b1, wordsWritten;
+};  // 8 + 8 + 6*8 = 64 B, the rest of the 4096 B page is unused
+
+static inline void bin_window_sabotage(const std::string& path);
+
+// One window file. `create` truncates it and maps it writable for the fill;
+// `openRead` opens an EXISTING file, verifies the header and hands out bulk
+// sequential reads. All failures are `require` -> CROSS_LCP_FATAL.
+struct BinWindow {
+    std::string path;
+    int fd = -1;
+    U* map = nullptr;      // fill arm: the writable mapping (== the arena)
+    U slots = 0, b0 = 0, b1 = 0, index = 0;
+    U bytes = 0;           // header + slot array
+
+    BinWindow() = default;
+    BinWindow(const BinWindow&) = delete;
+    BinWindow& operator=(const BinWindow&) = delete;
+
+    static U slotBytes(U slots) {
+        return bin_window_hdr_bytes + slots * bin_window_slot_bytes;
+    }
+    void writeHeader(U wordsWritten) {
+        BinWindowHeader h{};
+        std::memcpy(h.magic, bin_window_magic, 8);
+        if (wordsWritten == slots) std::memcpy(h.done, bin_window_done, 8);
+        h.version = 1; h.index = index; h.slots = slots;
+        h.b0 = b0; h.b1 = b1; h.wordsWritten = wordsWritten;
+        const ssize_t got = ::pwrite(fd, &h, sizeof(h), 0);
+        require(got == ssize_t(sizeof(h)), "bin window header write");
+    }
+    // ---- create + map (the FILL arm) --------------------------------------
+    void create(const std::string& p, U idx, U sl, U lo, U hi) {
+        path = p; index = idx; slots = sl; b0 = lo; b1 = hi;
+        bytes = slotBytes(sl);
+        ::unlink(path.c_str());
+        fd = ::open(path.c_str(), O_RDWR | O_CREAT | O_EXCL, 0644);
+        require(fd >= 0, "bin window file create (scratch tree writable?)");
+        require(::ftruncate(fd, off_t(bytes)) == 0, "bin window file truncate");
+        writeHeader(0);
+        if (slots) {
+            void* m = ::mmap(nullptr, size_t(bytes), PROT_READ | PROT_WRITE,
+                             MAP_SHARED, fd, 0);
+            require(m != MAP_FAILED, "bin window file mmap");
+            map = static_cast<U*>(m);
+            ::madvise(map, size_t(bytes), MADV_HUGEPAGE);
+        }
+    }
+    U* data() { return map ? map + bin_window_hdr_bytes / bin_window_slot_bytes : nullptr; }
+    // ---- seal (the FILL arm ends here) ------------------------------------
+    // The completion word is written after every slot is written, so a file
+    // whose fill was killed is REFUSED by its reader instead of being rebuilt.
+    void seal() {
+        if (map) {
+            ::msync(map, size_t(bytes), MS_ASYNC);
+            require(::munmap(map, size_t(bytes)) == 0, "bin window file munmap");
+            map = nullptr;
+        }
+        writeHeader(slots);
+        ::fsync(fd);
+    }
+    // ---- open an existing file and verify it (the BUILD arm) --------------
+    void openRead(U idx, U sl, U lo, U hi) {
+        index = idx; slots = sl; b0 = lo; b1 = hi;
+        bytes = slotBytes(sl);
+        bin_window_sabotage(path);
+        fd = ::open(path.c_str(), O_RDONLY);
+        require(fd >= 0, "bin window file MISSING under the build - refusing to rebuild");
+        struct stat st{};
+        require(::fstat(fd, &st) == 0, "bin window file stat");
+        require(U(st.st_size) == bytes, "bin window file TRUNCATED/WRONG SIZE - refusing to rebuild");
+        BinWindowHeader h{};
+        require(::pread(fd, &h, sizeof(h), 0) == ssize_t(sizeof(h)), "bin window header read");
+        require(std::memcmp(h.magic, bin_window_magic, 8) == 0,
+                "bin window file BAD MAGIC - refusing to rebuild");
+        require(std::memcmp(h.done, bin_window_done, 8) == 0,
+                "bin window file INCOMPLETE (no completion word) - refusing to rebuild");
+        require(h.version == 1, "bin window file version");
+        require(h.index == index, "bin window file STALE (ordinal mismatch) - refusing");
+        require(h.slots == slots && h.b0 == b0 && h.b1 == b1,
+                "bin window file GEOMETRY MISMATCH - refusing");
+        require(h.wordsWritten == slots, "bin window file short fill - refusing");
+    }
+    // One bulk sequential read of a bin's slice, at its arena slot offset.
+    void read(U slot, U* dst, U count) {
+        if (!count) return;
+        require(fd >= 0, "bin window read before open");
+        require(slot + count <= slots, "bin window read range");
+        const size_t off = size_t(bin_window_hdr_bytes + slot * bin_window_slot_bytes);
+        const size_t len = size_t(count * bin_window_slot_bytes);
+        uint8_t* p = reinterpret_cast<uint8_t*>(dst);
+        for (size_t done = 0; done < len;) {
+            const ssize_t got = ::pread(fd, p + done, len - done, off_t(off + done));
+            require(got > 0, "bin window bulk read (short pread)");
+            done += size_t(got);
+        }
+    }
+    // Keep the FILE, drop the handles (the builder re-opens it with openRead).
+    void close() {
+        if (map) { ::munmap(map, size_t(bytes)); map = nullptr; }
+        if (fd >= 0) { ::close(fd); fd = -1; }
+    }
+    void erase() {
+        close();
+        if (!path.empty()) { ::unlink(path.c_str()); path.clear(); }
+    }
+};
+
+// TEST INSTRUMENT, NOT A PRODUCT PATH: `BIN_WINDOW_SABOTAGE={unlink,truncate,
+// stale,nomagic,nodone}` damages every window file immediately before the build
+// opens it, so the crash-refusal path (missing / truncated / stale / corrupt
+// window file => CROSS_LCP_FATAL, never a silent rebuild) is EXERCISED by the
+// oracle instead of trusted in prose. No product run sets this variable.
+static inline void bin_window_sabotage(const std::string& path);
+static inline void bin_window_sabotage(const std::string& path) {
+    const char* mode = ::getenv("BIN_WINDOW_SABOTAGE");
+    if (!mode || !*mode) return;
+    const std::string m(mode);
+    if (m == "unlink") { ::unlink(path.c_str()); return; }
+    const int fd = ::open(path.c_str(), O_RDWR);
+    if (fd < 0) return;
+    BinWindowHeader h{};
+    const bool have = ::pread(fd, &h, sizeof(h), 0) == ssize_t(sizeof(h));
+    if (have && m == "truncate") {
+        struct stat st{};
+        (void)!::fstat(fd, &st);
+        (void)!::ftruncate(fd, st.st_size / 2);
+    } else if (have && m == "stale") {
+        h.index += 7;
+        (void)!::pwrite(fd, &h, sizeof(h), 0);
+    } else if (have && m == "nomagic") {
+        std::memcpy(h.magic, "XVANDAL1", 8);
+        (void)!::pwrite(fd, &h, sizeof(h), 0);
+    } else if (have && m == "nodone") {
+        std::memcpy(h.done, "\0\0\0\0\0\0\0\0", 8);
+        (void)!::pwrite(fd, &h, sizeof(h), 0);
+    }
+    ::close(fd);
+}
+
+// How the windows are backed and how far the fill may run ahead of the build.
+struct BinWindowOpts {
+    std::string dir;      // the rolling files' directory (scratch tree)
+    U credit = 2;         // windows the fill may be ahead of the build
+    U buildCap = 0;       // per-group build working set, slots (0 = whole window)
+    bool disc = true;     // false = the RAM-arena A/B arm
 };
 
 static inline U bin_codes(U levelBytes) {
@@ -410,7 +608,8 @@ template <class Emit>
 static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize,
                       U depthCap, U liveCap, U levelBytes, bool freqSched,
                       U splitSize, BinWork& total, Emit&& emit,
-                      bool fillOnly = false) {
+                      bool fillOnly = false,
+                      const BinWindowOpts& wopt = BinWindowOpts()) {
     const U n = text.n;
     // The sink's ascending capture-target list, joined against the corpus in the
     // fill pass. Empty for the per-row oracle path.
@@ -498,23 +697,38 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize
         liveCap = largest;
     }
     U row = 0;
-    U joinedTotal = 0;              // capture targets joined by all windows
+    // ---- THE WINDOW PLAN, computed up front -------------------------------
+    // The fill may run ahead of the build by a bounded CREDIT of windows, so the
+    // partition has to exist before either phase starts: whole bins packed to
+    // `liveCap` slots per window, and every window's bin offsets (the arena
+    // layout) precomputed once. Nothing here is per-position.
+    struct WinPlan { unsigned b0, b1; U live; };
+    std::vector<WinPlan> plan;
     for (unsigned b0 = 0; b0 < 256;) {
         unsigned b1 = b0;
         U live = 0;
         while (b1 < 256 && live + bins[b1] <= liveCap) { live += bins[b1]; ++b1; }
         require(b1 > b0, "bin window admits at least one bin");
-        ++total.windows; total.bins += b1 - b0;
-        const double tAlloc0 = now_sec();
-        BinArena arena(live), scratch(live);
-        total.tAlloc += now_sec() - tAlloc0;
-        std::array<U, 257> off{};
-        {
-            U sum = 0;
-            for (unsigned c = b0; c < b1; ++c) { off[c] = sum; sum += bins[c]; }
-            off[b1] = sum;
-            require(sum == live, "bin window arena sizing");
+        plan.push_back(WinPlan{b0, b1, live});
+        b0 = b1;
+    }
+    std::vector<std::array<U, 257>> winOff(plan.size());
+    for (size_t k = 0; k < plan.size(); ++k) {
+        U sum = 0;
+        for (unsigned c = plan[k].b0; c < plan[k].b1; ++c) {
+            winOff[k][c] = sum; sum += bins[c];
         }
+        winOff[k][plan[k].b1] = sum;
+        require(sum == plan[k].live, "bin window arena sizing");
+    }
+    // ---- THE FILL PASS: one window, into `dst` ----------------------------
+    // `dst` is the window image: a rolling window FILE's slot array (the
+    // product) or a RAM arena (the A/B arm). The scatter is identical either
+    // way - the same slot for the same position - so no counter can move.
+    auto fillInto = [&](U* dst, unsigned b0, unsigned b1,
+                        const std::array<U, 257>& off,
+                        BinWork& w) -> U {
+        U joinedOut = 0;
         // Fill pass: place every position of this window into its bin slice,
         // PARALLEL over the same corpus chunks the counting sweep used - the
         // classic counting-sort scatter, and this is the term that decided the
@@ -604,7 +818,7 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize
                         // row whose symbol is 2, exactly SequentialV2's
                         // `p ? at(p-1) : 2`).
                         const uint8_t sym = p ? (j ? b[j - 1] : prev) : uint8_t(2);
-                        arena.data()[slot] =
+                        dst[slot] =
                             bin_word(bin_tail_of(p, n, dollar), sym, hit);
                         hits += hit;
                     }
@@ -633,28 +847,25 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize
             // per-window counts must add up to the target list. (This is the
             // fill's own check, kept out of BinWork::targetHits, which the sink
             // owns.)
-            joinedTotal += joined.load(std::memory_order_relaxed);
-            require(joinedTotal <= joinCount, "bin fill target join overrun");
-            if (b1 == 256)
-                require(joinedTotal == joinCount, "bin fill target join coverage");
-            total.tFill += now_sec() - t0;
-            total.tSweep += now_sec() - t0;
-            total.sweepBytes += n; ++total.sweepPasses;
+            // The corpus-wide coverage check ("every target joined exactly
+            // once across windows") runs in the driver, after the last window
+            // has been filled; here only this window's count is bounded.
+            joinedOut = joined.load(std::memory_order_relaxed);
+            require(joinedOut <= joinCount, "bin fill target join overrun");
+            w.tFill += now_sec() - t0;
+            w.tSweep += now_sec() - t0;
+            w.sweepBytes += n; ++w.sweepPasses;
         }
-        if (fillOnly) {
-            // Fill-only probe: no refinement, no emission, nothing written. The
-            // rows are accounted so the row coverage check still means something,
-            // and the live-slot bound is still journaled.
-            row += live;
-            total.emittedRows += live;
-            const U liveSlots = 2 * live;
-            total.peakLiveSlots = std::max<U>(total.peakLiveSlots, liveSlots);
-            total.peakLiveBytes = std::max<U>(total.peakLiveBytes,
-                                              liveSlots * sizeof(U));
-            if constexpr (bin_publish_sink<Emit>::value) emit.windowDone();
-            b0 = b1;
-            continue;
-        }
+        return joinedOut;
+    };
+    // ---- THE BUILD: one memory GROUP of one window's bins ------------------
+    // The window file is the whole window; the build's RAM is the group it is
+    // working on (arena + scratch slice pair, `live` slots here), loaded bin by
+    // bin with one sequential bulk read per bin. With `buildCap == 0` the group
+    // is the whole window, i.e. exactly the RAM arena's working set.
+    auto buildGroup = [&](unsigned b0, unsigned b1, U live,
+                          const std::array<U, 257>& off,
+                          BinArena& arena, BinArena& scratch) {
         // Bin claim order. EDF (ascending byte = emission order) keeps the
         // emitter fed; `freq` claims the largest bins first instead.
         std::vector<unsigned> order;
@@ -945,12 +1156,250 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U leafSize
                 }
             }
         }
-        if constexpr (bin_publish_sink<Emit>::value) emit.windowDone();
         for (auto& w : work) total.absorb(w);
-        const U liveSlots = 2 * live;   // arena + scratch slice pair per window
+        // The BUILD WORKING SET, which is what has to fit --memory-gb: one
+        // arena + scratch slice pair for THIS group, never the whole window.
+        const U liveSlots = 2 * live;
         total.peakLiveSlots = std::max<U>(total.peakLiveSlots, liveSlots);
         total.peakLiveBytes = std::max<U>(total.peakLiveBytes, liveSlots * sizeof(U));
-        b0 = b1;
+    };
+    // ======================================================================
+    // THE WINDOW PIPELINE: fill ahead by a bounded CREDIT of windows, build
+    // behind it, delete each window's file once its bins are built.
+    //
+    //   filler thread:  window k -> file k            (NT-thread scatter)
+    //   builder (this): window k -> bins -> sink      (group by group)
+    //
+    // Live scratch is therefore O(credit x cap x slot) FILE BYTES and the
+    // build's RAM is one group's arena+scratch pair - never the corpus and
+    // never the whole window. Window files are named `k % credit`, so the same
+    // paths are REUSED across windows (no inode churn) and the header's ordinal
+    // is what catches a stale one.
+    const U credit = std::max<U>(1, wopt.credit);
+    auto winPath = [&](size_t k) {
+        return wopt.dir + "/bw-w" + std::to_string(k % credit) + ".pos";
+    };
+    if (wopt.disc) {
+        require(!wopt.dir.empty(), "bin window backing is a FILE but no scratch dir was given");
+        std::error_code ec;
+        fs::create_directories(wopt.dir, ec);
+        require(fs::is_directory(wopt.dir),
+                "bin window scratch directory is not usable");
+    }
+    struct Shard {
+        std::mutex mtx;
+        std::condition_variable cv;
+        std::vector<char> filled;      // 1 = window k's file sealed and readable
+        size_t built = 0;              // windows whose build finished (credit gate)
+        bool stop = false;
+        BinWork fill;                  // the filler's own counters
+        U joinedTotal = 0;
+        U liveBytes = 0, peakLiveBytes = 0;   // sealed-but-unbuilt window bytes
+    } sh;
+    sh.filled.assign(plan.size(), 0);
+    std::vector<std::unique_ptr<BinArena>> ramArena(plan.size());  // RAM A/B arm
+
+    auto fillerRun = [&]() {
+        try {
+            for (size_t k = 0; k < plan.size(); ++k) {
+                {
+                    std::unique_lock<std::mutex> lk(sh.mtx);
+                    sh.cv.wait(lk, [&] { return sh.stop || k < sh.built + credit; });
+                    if (sh.stop) return;
+                }
+                BinWork w;
+                U joined = 0;
+                const double tw0 = now_sec();
+                if (wopt.disc) {
+                    BinWindow win;
+                    win.create(winPath(k), k, plan[k].live, plan[k].b0, plan[k].b1);
+                    joined = fillInto(win.data(), plan[k].b0, plan[k].b1, winOff[k], w);
+                    // Seal: the completion word goes in AFTER every slot, and the
+                    // fsync is where the window's write I/O is actually paid.
+                    win.seal();
+                    win.close();
+                    w.tWinWrite += now_sec() - tw0;
+                    w.winFileWriteBytes += plan[k].live * bin_window_slot_bytes;
+                    ++w.windowFiles;
+                } else {
+                    std::unique_ptr<BinArena> ra(new BinArena(plan[k].live));
+                    joined = fillInto(ra->data(), plan[k].b0, plan[k].b1, winOff[k], w);
+                    ramArena[k] = std::move(ra);
+                }
+                {
+                    std::lock_guard<std::mutex> lk(sh.mtx);
+                    sh.fill.absorb(w);
+                    sh.joinedTotal += joined;
+                    require(sh.joinedTotal <= joinCount, "bin fill target join overrun");
+                    sh.liveBytes += plan[k].live * bin_window_slot_bytes;
+                    sh.peakLiveBytes = std::max(sh.peakLiveBytes, sh.liveBytes);
+                    sh.filled[k] = 1;
+                    // LIVE SCRATCH, PER WINDOW: this is the whole disc footprint
+                    // the pipeline is holding right now, and it is bounded by
+                    // credit x cap x slot, never by the corpus.
+                    std::fprintf(stderr,
+                        "BIN_WINDOW index=%llu b0=%u b1=%u live_slots=%llu "
+                        "file_bytes=%llu live_scratch_bytes=%llu credit=%llu\n",
+                        (unsigned long long)k, plan[k].b0, plan[k].b1,
+                        (unsigned long long)plan[k].live,
+                        (unsigned long long)(wopt.disc ? plan[k].live * bin_window_slot_bytes : 0),
+                        (unsigned long long)sh.liveBytes, (unsigned long long)credit);
+                }
+                sh.cv.notify_all();
+            }
+        } catch (const std::exception& e) {
+            std::lock_guard<std::mutex> lk(sh.mtx);
+            sh.stop = true;
+            sh.cv.notify_all();
+            throw;
+        }
+    };
+    std::thread filler(fillerRun);
+    auto drainFiller = [&]() {
+        if (!filler.joinable()) return;
+        {
+            std::lock_guard<std::mutex> lk(sh.mtx);
+            sh.stop = true;
+        }
+        sh.cv.notify_all();
+        filler.join();
+    };
+    try {
+        for (size_t k = 0; k < plan.size(); ++k) {
+            const unsigned b0 = plan[k].b0, b1 = plan[k].b1;
+            const U live = plan[k].live;
+            const std::array<U, 257>& off = winOff[k];
+            ++total.windows; total.bins += b1 - b0;
+            {
+                // The credit gate, on BOTH arms: the build never looks at a
+                // window the fill has not sealed.
+                std::unique_lock<std::mutex> lk(sh.mtx);
+                const double t0 = now_sec();
+                sh.cv.wait(lk, [&] { return sh.stop || sh.filled[k]; });
+                total.tCreditWait += now_sec() - t0;
+                require(sh.filled[k],
+                        "bin fill stopped before this window was ready");
+            }
+            if (fillOnly) {
+                // Fill-only probe: the fill and the window write are the whole
+                // measurement; nothing is read back, refined or emitted, and no
+                // output is written anywhere.
+                row += live;
+                total.emittedRows += live;
+                if (wopt.disc) {
+                    ::unlink(winPath(k).c_str());
+                } else {
+                    ramArena[k].reset();
+                }
+                {
+                    std::lock_guard<std::mutex> lk(sh.mtx);
+                    sh.liveBytes -= live * bin_window_slot_bytes;
+                    ++sh.built;
+                }
+                sh.cv.notify_all();
+                if constexpr (bin_publish_sink<Emit>::value) emit.windowDone();
+                continue;
+            }
+            // The build working set: one arena+scratch group. `--bin-build-cap`
+            // is the RAM budget in slots; a bin is INDIVISIBLE (its slice is
+            // sorted in place), so a single bin larger than the budget RAISES it
+            // and says so - the front door treats that as the same
+            // misconfiguration BIN_CAP_RAISED is.
+            U groupCap = wopt.buildCap ? wopt.buildCap : live;
+            if (wopt.buildCap) {
+                U winMax = 0;
+                for (unsigned c = b0; c < b1; ++c) winMax = std::max(winMax, bins[c]);
+                if (winMax > groupCap) {
+                    std::fprintf(stderr,
+                        "BIN_BUILD_CAP_RAISED requested=%llu largest_bin_in_window=%llu "
+                        "using=%llu (a bin slice is sorted in place and cannot be split; "
+                        "the RAM working set is 2 x this many 8-byte words)\n",
+                        (unsigned long long)wopt.buildCap, (unsigned long long)winMax,
+                        (unsigned long long)winMax);
+                    groupCap = winMax;
+                }
+            }
+            BinWindow win;
+            if (wopt.disc) {
+                win.path = winPath(k);
+                win.openRead(k, live, b0, b1);
+            }
+            for (unsigned g0 = b0; g0 < b1;) {
+                unsigned g1 = g0;
+                U gLive = 0;
+                while (g1 < b1 && (g1 == g0 || gLive + bins[g1] <= groupCap)) {
+                    gLive += bins[g1]; ++g1;
+                }
+                require(g1 > g0, "bin window build group admits at least one bin");
+                std::array<U, 257> goff{};
+                {
+                    U sum = 0;
+                    for (unsigned c = g0; c < g1; ++c) { goff[c] = sum; sum += bins[c]; }
+                    goff[g1] = sum;
+                    require(sum == gLive, "bin build group sizing");
+                }
+                const double tAlloc0 = now_sec();
+                BinArena arena(gLive), scratch(gLive);
+                total.tAlloc += now_sec() - tAlloc0;
+                {
+                    // One sequential bulk read per bin, spread over the threads
+                    // that are about to refine them (disjoint slices, no lock).
+                    const double tr0 = now_sec();
+                    const U lw = std::max<U>(1, std::min<U>(threads, U(g1 - g0)));
+                    auto loadRun = [&](U z) {
+                        for (unsigned c = g0 + unsigned(z); c < g1; c += unsigned(lw))
+                            if (bins[c]) {
+                                if (wopt.disc)
+                                    win.read(off[c], arena.data() + goff[c], bins[c]);
+                                else
+                                    std::memcpy(arena.data() + goff[c],
+                                                ramArena[k]->data() + off[c],
+                                                size_t(bins[c] * bin_window_slot_bytes));
+                            }
+                    };
+                    if (lw == 1) loadRun(0);
+                    else {
+                        std::vector<std::thread> lp;
+                        for (U z = 1; z < lw; ++z) lp.emplace_back(loadRun, z);
+                        loadRun(0);
+                        for (auto& th : lp) th.join();
+                    }
+                    total.tWinRead += now_sec() - tr0;
+                    total.winFileReadBytes += gLive * bin_window_slot_bytes;
+                    total.windowLoads += g1 - g0;
+                }
+                buildGroup(g0, g1, gLive, goff, arena, scratch);
+                g0 = g1;
+            }
+            if (wopt.disc) { win.erase(); }
+            else { ramArena[k].reset(); }
+            {
+                std::lock_guard<std::mutex> lk(sh.mtx);
+                sh.liveBytes -= live * bin_window_slot_bytes;
+                ++sh.built;
+                std::fprintf(stderr,
+                    "BIN_WINDOW_DONE index=%llu bins=%u built_windows=%llu "
+                    "live_scratch_bytes=%llu\n",
+                    (unsigned long long)k, b1 - b0, (unsigned long long)sh.built,
+                    (unsigned long long)sh.liveBytes);
+            }
+            sh.cv.notify_all();
+            if constexpr (bin_publish_sink<Emit>::value) emit.windowDone();
+        }
+    } catch (...) {
+        drainFiller();
+        for (size_t k = 0; k < plan.size(); ++k)
+            if (wopt.disc) ::unlink(winPath(k).c_str());
+        throw;
+    }
+    drainFiller();
+    {
+        std::lock_guard<std::mutex> lk(sh.mtx);
+        total.absorb(sh.fill);
+        total.peakWindowFileBytes = std::max(total.peakWindowFileBytes, sh.peakLiveBytes);
+        if (sh.joinedTotal != joinCount && !fillOnly)
+            require(false, "bin fill target join coverage");
+        require(sh.joinedTotal <= joinCount, "bin fill target join overrun");
     }
     require(row == n, "bin-bwt row coverage");
 }
@@ -1346,6 +1795,9 @@ static void bin_journal(const BinWork& total, bool dollar, U threads,
         "sink=%s serial_runs=%llu runs=%llu bands=%llu target_hits=%llu "
         "band_jobs=%llu writers=%llu stitch_s=%.3f band_write_s=%.3f "
         "flow_wait_s=%.3f ns_per_row_stitch=%.3f "
+        "win_file_bytes=%llu win_file_read_bytes=%llu peak_window_file_bytes=%llu "
+        "window_files=%llu window_loads=%llu win_write_s=%.3f win_read_s=%.3f "
+        "credit_wait_s=%.3f "
         "full_SA=0 persistent_positions=0\n",
         unsigned(dollar), (unsigned long long)threads,
         (unsigned long long)levelBytes, (unsigned long long)leafSize,
@@ -1370,7 +1822,13 @@ static void bin_journal(const BinWork& total, bool dollar, U threads,
         (unsigned long long)total.bands, (unsigned long long)total.targetHits,
         (unsigned long long)total.bandJobs, (unsigned long long)j.writers,
         total.tStitch, total.tBandWrite, total.tFlowWait,
-        total.emittedRows ? 1e9 * total.tStitch / double(total.emittedRows) : 0.0);
+        total.emittedRows ? 1e9 * total.tStitch / double(total.emittedRows) : 0.0,
+        (unsigned long long)total.winFileWriteBytes,
+        (unsigned long long)total.winFileReadBytes,
+        (unsigned long long)total.peakWindowFileBytes,
+        (unsigned long long)total.windowFiles,
+        (unsigned long long)total.windowLoads,
+        total.tWinWrite, total.tWinRead, total.tCreditWait);
     // The largest byte-1 bin of the largest window, alone: the hot-bin anatomy
     // the operator asked for (`--bin-level-bytes 1` vs `2` on the SAME corpus).
     std::fprintf(stderr,
@@ -1390,9 +1848,19 @@ static int binbwt_main(const std::string& path, const std::string& mapPath,
                        const std::string& prefix, U threads, U leafSize,
                        U depthCap, U liveCap, U levelBytes, bool dollar,
                        bool freqSched, U splitSize, bool serialSink, bool probe,
-                       bool fillOnly = false) {
+                       bool fillOnly, BinWindowOpts wopt) {
     // `--bin-fill-only` implies the probe's "write nothing at all" contract.
     if (fillOnly) probe = true;
+    // The window scratch tree: the caller's --bin-window-dir if it gave one,
+    // else the sink's own scratch root (beside the output prefix), else /tmp for
+    // the probe arms (which write no product at all).
+    if (wopt.dir.empty()) {
+        if (!prefix.empty())
+            wopt.dir = std::filesystem::path(prefix).parent_path().string() +
+                       "/binbwt-windows";
+        else
+            wopt.dir = "/tmp/binbwt-windows-" + std::to_string(::getpid());
+    }
     if (!probe)
         require(!prefix.empty() && !fs::exists(prefix + ".rlebwt") &&
                 !fs::exists(prefix + ".pieces"), "fresh bin-bwt output required");
@@ -1422,7 +1890,7 @@ static int binbwt_main(const std::string& path, const std::string& mapPath,
         // same ones the producer reports and a 10 GB build term can be measured
         // in minutes instead of after the finish. Nothing else is written.
         bin_order(text, dollar, threads, leafSize, depthCap, liveCap, levelBytes,
-                  freqSched, splitSize, total, [](U, U) {}, fillOnly);
+                  freqSched, splitSize, total, [](U, U) {}, fillOnly, wopt);
         BinJournal j;
         j.sink = fillOnly ? "probe-fill-only" : "probe-none";
         bin_journal(total, dollar, threads, levelBytes, leafSize, depthCap,
@@ -1450,10 +1918,10 @@ static int binbwt_main(const std::string& path, const std::string& mapPath,
     if (serialSink)
         bin_order(text, dollar, threads, leafSize, depthCap, liveCap, levelBytes,
                   freqSched, splitSize, total,
-                  [&](U row, U p) { serial->row(row, p); });
+                  [&](U row, U p) { serial->row(row, p); }, false, wopt);
     else
         bin_order(text, dollar, threads, leafSize, depthCap, liveCap, levelBytes,
-                  freqSched, splitSize, total, *parallel);
+                  freqSched, splitSize, total, *parallel, false, wopt);
     const double tOrder = now_sec();
     if (serialSink) { serial->endShard(); serialRuns = serial->index; }
     else { parallel->finish(); total.absorb(parallel->own); }
