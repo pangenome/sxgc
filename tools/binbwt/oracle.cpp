@@ -54,8 +54,49 @@ int main(int argc, char** argv) {
         bin_order(text, false, 3, 4, 32, 1, 1, false, 0, w, [](U, U) {}, false, wopt);
         return 0;   // reaching here means the refusal did NOT fire
     }
-    std::vector<std::string> fixtures = {
-        std::string("\0", 1), std::string("\0\0", 2),
+    // ---- PART 4 child: the periodic SANITY refusal ------------------------
+    // The fail-loud bug guard, asserted from the OUTSIDE (require() exits 2):
+    // with the period probe disabled a node of 64 identical rotations can never
+    // divide and can never be certified, so the producer must refuse at
+    // BIN_NO_PROGRESS_SANITY_BOUND rather than take an unbounded serial stretch.
+    if (::getenv("BINBW_ORACLE_PERIOD_CHILD")) {
+        std::array<uint8_t, 256> id{};
+        for (unsigned c = 0; c < 256; ++c) id[c] = uint8_t(c);
+        const std::string t(64, 'a');
+        const std::string path = std::string(argv[1]) + "/oracle-corpus";
+        TextSeg seg; seg.path = path; seg.len = t.size(); seg.remap = id;
+        { fs::remove(path); OutFile file(path); file.raw(t.data(), t.size()); }
+        CorpusText text; text.open({seg}, true);
+        BinWindowOpts wopt;
+        wopt.dir = std::string(argv[1]) + "/windows";
+        wopt.credit = 1; wopt.disc = true;
+        BinWork w;
+        bin_order(text, false, 1, 1, 0, (U(1) << 40), 1, false, 0, w,
+                  [](U, U) {}, false, wopt);
+        return 0;   // reaching here means the sanity refusal did NOT fire
+    }
+    // ---- PART 4 child: the periodic SANITY refusal ------------------------
+    // The fail-loud bug guard, asserted from the OUTSIDE (require() exits 2):
+    // with the period probe disabled a node of 64 identical rotations can never
+    // divide and can never be certified, so the producer must refuse at
+    // BIN_NO_PROGRESS_SANITY_BOUND rather than take an unbounded serial stretch.
+    if (::getenv("BINBW_ORACLE_PERIOD_CHILD")) {
+        std::array<uint8_t, 256> id{};
+        for (unsigned c = 0; c < 256; ++c) id[c] = uint8_t(c);
+        const std::string t(64, 'a');
+        const std::string path = std::string(argv[1]) + "/oracle-corpus";
+        TextSeg seg; seg.path = path; seg.len = t.size(); seg.remap = id;
+        { fs::remove(path); OutFile file(path); file.raw(t.data(), t.size()); }
+        CorpusText text; text.open({seg}, true);
+        BinWindowOpts wopt;
+        wopt.dir = std::string(argv[1]) + "/windows";
+        wopt.credit = 1; wopt.disc = true;
+        BinWork w;
+        bin_order(text, false, 1, 1, 0, (U(1) << 40), 1, false, 0, w,
+                  [](U, U) {}, false, wopt);
+        return 0;   // reaching here means the sanity refusal did NOT fire
+    }
+    std::vector<std::string> fixtures = {        std::string("\0", 1), std::string("\0\0", 2),
         std::string("\x00\x05\x1e\x00\x05", 5), std::string("\x1e\x0a\x1e", 3),
         std::string("a", 1), std::string("aa", 2),
         std::string(64, 'a'),
@@ -377,6 +418,7 @@ int main(int argc, char** argv) {
     // depthCap is 256, the product default: high enough that only a corpus that
     // CANNOT be divided (identical rotations) can ever reach it.
     U adaptCases = 0, adaptWindows = 0, adaptDepthMax = 0;
+    BinWork lastCounters;   // PART 1 gate: the lazy arm's counters for the pair
     for (U f = 0; f < fixtures.size(); ++f) {
         const std::string& t = fixtures[f];
         std::string M;
@@ -425,6 +467,334 @@ int main(int argc, char** argv) {
     }
     require(adaptDepthMax >= 4,
             "adaptive oracle never produced a deep tree (the fixtures must force depth)");
+
+    // ---- PART 1: PREFETCH-VS-LAZY EQUIVALENCE (the staged leaf sort) --------
+    // The leaf staging (bin_stage_leaf / BinLeafStage) changes only WHERE a
+    // comparator byte comes from, so the ORDER and every construction counter
+    // must be identical with the staged path ON and OFF. Tiny fixtures are RAM
+    // cached, so the staging has to be FORCED to engage at all
+    // (BIN_LEAF_STAGE_FORCE); it is the same code path a pooled pile view takes.
+    // Both arms are run per fixture/mode/config and compared row by row and
+    // counter by counter; the counters compared are the ones that decide the
+    // product (comparisons, symbols, cert_decided, ties, leaf_sorts, leaf_elems,
+    // level_passes, level_elems, bin_passes, emitted_rows, depth_max).
+    {
+        U stageCases = 0, stageHits = 0, stageBytes = 0, stageArms = 0;
+        const char* prevForce = ::getenv("BIN_LEAF_STAGE_FORCE");
+        const bool hadForce = prevForce != nullptr;
+        std::string saved = hadForce ? prevForce : "";
+        for (U f = 0; f < fixtures.size(); ++f) {
+            const std::string& t = fixtures[f];
+            std::string M;
+            for (unsigned char c : t) M += char(remap[c]);
+            const std::string path = std::string(argv[1]) + "/oracle-corpus";
+            TextSeg seg; seg.path = path; seg.len = t.size(); seg.remap = remap;
+            { fs::remove(path); OutFile file(path); file.raw(t.data(), t.size()); }
+            CorpusText text; text.open({seg}, true);
+            for (bool dollar : {false, true}) {
+                auto want = brute(M, dollar);
+                U n = text.n;
+                for (U threads : {1u, 3u, 8u})
+                    for (U target : {1u, 3u, 9u})
+                        for (bool forced : {false, true}) {
+                            if (forced) setenv("BIN_LEAF_STAGE_FORCE", "1", 1);
+                            else unsetenv("BIN_LEAF_STAGE_FORCE");
+                            BinWork w;
+                            std::vector<U> got;
+                            got.reserve(n);
+                            bin_order(text, dollar, threads, target, 0, U(1) << 40, 1,
+                                      false, 0, w, [&](U row, U p) {
+                                          require(row == got.size(), "stage oracle row continuity");
+                                          got.push_back(p);
+                                      }, false, woptMain);
+                            require(got == want, "stage oracle: staged order differs from brute");
+                            if (!forced) {
+                                // The reference arm's counters, kept for the pair.
+                                lastCounters = w;
+                            } else {
+                                // Counters that must not move when the staging is on.
+                                require(w.comparisons == lastCounters.comparisons &&
+                                        w.symbols == lastCounters.symbols &&
+                                        w.certDecided == lastCounters.certDecided &&
+                                        w.ties == lastCounters.ties &&
+                                        w.leafSorts == lastCounters.leafSorts &&
+                                        w.leafElems == lastCounters.leafElems &&
+                                        w.levelPasses == lastCounters.levelPasses &&
+                                        w.levelElems == lastCounters.levelElems &&
+                                        w.binPasses == lastCounters.binPasses &&
+                                        w.emittedRows == lastCounters.emittedRows &&
+                                        w.depthMax == lastCounters.depthMax &&
+                                        w.periodicRows == lastCounters.periodicRows,
+                                        "stage oracle: the staged path moved a construction counter");
+                                stageHits += w.stageHits + w.stagePartials;
+                                stageBytes += w.stageBytes;
+                                ++stageArms;
+                            }
+                            ++stageCases;
+                        }
+            }
+        }
+        if (hadForce) setenv("BIN_LEAF_STAGE_FORCE", saved.c_str(), 1);
+        else unsetenv("BIN_LEAF_STAGE_FORCE");
+        std::printf("BINBWT_ORACLE_STAGE_PASS cases=%llu staged_arms=%llu fixtures=%zu "
+                    "modes=cyclic,dollar threads=1,3,8 target=1,3,9 depth_cap=0 level_bytes=1 "
+                    "stage_hits=%llu stage_bytes=%llu counters_identical=1 exact_brute_SA=1 "
+                    "both_paths=1\n",
+                    (unsigned long long)stageCases, (unsigned long long)stageArms,
+                    fixtures.size(), (unsigned long long)stageHits,
+                    (unsigned long long)stageBytes);
+    }
+
+    // ---- PART 1: PREFETCH-VS-LAZY EQUIVALENCE (the staged leaf sort) --------
+    // The leaf staging (bin_stage_leaf / BinLeafStage) changes only WHERE a
+    // comparator byte comes from, so the ORDER and every construction counter
+    // must be identical with the staged path ON and OFF. Tiny fixtures are RAM
+    // cached, so the staging has to be FORCED to engage at all
+    // (BIN_LEAF_STAGE_FORCE); it is the same code path a pooled pile view takes.
+    // Both arms are run per fixture/mode/config and compared row by row and
+    // counter by counter; the counters compared are the ones that decide the
+    // product (comparisons, symbols, cert_decided, ties, leaf_sorts, leaf_elems,
+    // level_passes, level_elems, bin_passes, emitted_rows, depth_max).
+    {
+        U stageCases = 0, stageHits = 0, stageBytes = 0, stageArms = 0;
+        const char* prevForce = ::getenv("BIN_LEAF_STAGE_FORCE");
+        const bool hadForce = prevForce != nullptr;
+        std::string saved = hadForce ? prevForce : "";
+        for (U f = 0; f < fixtures.size(); ++f) {
+            const std::string& t = fixtures[f];
+            std::string M;
+            for (unsigned char c : t) M += char(remap[c]);
+            const std::string path = std::string(argv[1]) + "/oracle-corpus";
+            TextSeg seg; seg.path = path; seg.len = t.size(); seg.remap = remap;
+            { fs::remove(path); OutFile file(path); file.raw(t.data(), t.size()); }
+            CorpusText text; text.open({seg}, true);
+            for (bool dollar : {false, true}) {
+                auto want = brute(M, dollar);
+                U n = text.n;
+                for (U threads : {1u, 3u, 8u})
+                    for (U target : {1u, 3u, 9u})
+                        for (bool forced : {false, true}) {
+                            if (forced) setenv("BIN_LEAF_STAGE_FORCE", "1", 1);
+                            else unsetenv("BIN_LEAF_STAGE_FORCE");
+                            BinWork w;
+                            std::vector<U> got;
+                            got.reserve(n);
+                            bin_order(text, dollar, threads, target, 0, U(1) << 40, 1,
+                                      false, 0, w, [&](U row, U p) {
+                                          require(row == got.size(), "stage oracle row continuity");
+                                          got.push_back(p);
+                                      }, false, woptMain);
+                            require(got == want, "stage oracle: staged order differs from brute");
+                            if (!forced) {
+                                // The reference arm's counters, kept for the pair.
+                                lastCounters = w;
+                            } else {
+                                // Counters that must not move when the staging is on.
+                                require(w.comparisons == lastCounters.comparisons &&
+                                        w.symbols == lastCounters.symbols &&
+                                        w.certDecided == lastCounters.certDecided &&
+                                        w.ties == lastCounters.ties &&
+                                        w.leafSorts == lastCounters.leafSorts &&
+                                        w.leafElems == lastCounters.leafElems &&
+                                        w.levelPasses == lastCounters.levelPasses &&
+                                        w.levelElems == lastCounters.levelElems &&
+                                        w.binPasses == lastCounters.binPasses &&
+                                        w.emittedRows == lastCounters.emittedRows &&
+                                        w.depthMax == lastCounters.depthMax &&
+                                        w.periodicRows == lastCounters.periodicRows,
+                                        "stage oracle: the staged path moved a construction counter");
+                                stageHits += w.stageHits + w.stagePartials;
+                                stageBytes += w.stageBytes;
+                                ++stageArms;
+                            }
+                            ++stageCases;
+                        }
+            }
+        }
+        if (hadForce) setenv("BIN_LEAF_STAGE_FORCE", saved.c_str(), 1);
+        else unsetenv("BIN_LEAF_STAGE_FORCE");
+        std::printf("BINBWT_ORACLE_STAGE_PASS cases=%llu staged_arms=%llu fixtures=%zu "
+                    "modes=cyclic,dollar threads=1,3,8 target=1,3,9 depth_cap=0 level_bytes=1 "
+                    "stage_hits=%llu stage_bytes=%llu counters_identical=1 exact_brute_SA=1 "
+                    "both_paths=1\n",
+                    (unsigned long long)stageCases, (unsigned long long)stageArms,
+                    fixtures.size(), (unsigned long long)stageHits,
+                    (unsigned long long)stageBytes);
+    }
+
+    // ---- PART 1: PREFETCH-VS-LAZY EQUIVALENCE (the staged leaf sort) --------
+    // The leaf staging (bin_stage_leaf / BinLeafStage) changes only WHERE a
+    // comparator byte comes from, so the ORDER and every construction counter
+    // must be identical with the staged path ON and OFF. Tiny fixtures are RAM
+    // cached, so the staging has to be FORCED to engage at all
+    // (BIN_LEAF_STAGE_FORCE); it is the same code path a pooled pile view takes.
+    // Both arms are run per fixture/mode/config and compared row by row and
+    // counter by counter; the counters compared are the ones that decide the
+    // product (comparisons, symbols, cert_decided, ties, leaf_sorts, leaf_elems,
+    // level_passes, level_elems, bin_passes, emitted_rows, depth_max).
+    {
+        U stageCases = 0, stageHits = 0, stageBytes = 0, stageArms = 0;
+        const char* prevForce = ::getenv("BIN_LEAF_STAGE_FORCE");
+        const bool hadForce = prevForce != nullptr;
+        std::string saved = hadForce ? prevForce : "";
+        for (U f = 0; f < fixtures.size(); ++f) {
+            const std::string& t = fixtures[f];
+            std::string M;
+            for (unsigned char c : t) M += char(remap[c]);
+            const std::string path = std::string(argv[1]) + "/oracle-corpus";
+            TextSeg seg; seg.path = path; seg.len = t.size(); seg.remap = remap;
+            { fs::remove(path); OutFile file(path); file.raw(t.data(), t.size()); }
+            CorpusText text; text.open({seg}, true);
+            for (bool dollar : {false, true}) {
+                auto want = brute(M, dollar);
+                U n = text.n;
+                for (U threads : {1u, 3u, 8u})
+                    for (U target : {1u, 3u, 9u})
+                        for (bool forced : {false, true}) {
+                            if (forced) setenv("BIN_LEAF_STAGE_FORCE", "1", 1);
+                            else unsetenv("BIN_LEAF_STAGE_FORCE");
+                            BinWork w;
+                            std::vector<U> got;
+                            got.reserve(n);
+                            bin_order(text, dollar, threads, target, 0, U(1) << 40, 1,
+                                      false, 0, w, [&](U row, U p) {
+                                          require(row == got.size(), "stage oracle row continuity");
+                                          got.push_back(p);
+                                      }, false, woptMain);
+                            require(got == want, "stage oracle: staged order differs from brute");
+                            if (!forced) {
+                                // The reference arm's counters, kept for the pair.
+                                lastCounters = w;
+                            } else {
+                                // Counters that must not move when the staging is on.
+                                require(w.comparisons == lastCounters.comparisons &&
+                                        w.symbols == lastCounters.symbols &&
+                                        w.certDecided == lastCounters.certDecided &&
+                                        w.ties == lastCounters.ties &&
+                                        w.leafSorts == lastCounters.leafSorts &&
+                                        w.leafElems == lastCounters.leafElems &&
+                                        w.levelPasses == lastCounters.levelPasses &&
+                                        w.levelElems == lastCounters.levelElems &&
+                                        w.binPasses == lastCounters.binPasses &&
+                                        w.emittedRows == lastCounters.emittedRows &&
+                                        w.depthMax == lastCounters.depthMax &&
+                                        w.periodicRows == lastCounters.periodicRows,
+                                        "stage oracle: the staged path moved a construction counter");
+                                stageHits += w.stageHits + w.stagePartials;
+                                stageBytes += w.stageBytes;
+                                ++stageArms;
+                            }
+                            ++stageCases;
+                        }
+            }
+        }
+        if (hadForce) setenv("BIN_LEAF_STAGE_FORCE", saved.c_str(), 1);
+        else unsetenv("BIN_LEAF_STAGE_FORCE");
+        std::printf("BINBWT_ORACLE_STAGE_PASS cases=%llu staged_arms=%llu fixtures=%zu "
+                    "modes=cyclic,dollar threads=1,3,8 target=1,3,9 depth_cap=0 level_bytes=1 "
+                    "stage_hits=%llu stage_bytes=%llu counters_identical=1 exact_brute_SA=1 "
+                    "both_paths=1\n",
+                    (unsigned long long)stageCases, (unsigned long long)stageArms,
+                    fixtures.size(), (unsigned long long)stageHits,
+                    (unsigned long long)stageBytes);
+    }
+
+    // ---- PART 4: THE PERIODIC TIE-BREAK (no depth cap in the user's face) ---
+    // The product default is `--bin-depth-cap 0` = AUTO, i.e. the target is the
+    // ONLY rule and the recursion ends either at the target or at a node whose
+    // rotations are provably identical (bin_node_period). These cases run the
+    // NO-CAP rule on every fixture in both modes and assert:
+    //   * the exact brute order (the tie-break's ascending-position order is the
+    //     comparator's own cyclic rule, so this is not a new total order);
+    //   * the depth cap never fired (over_target_leaves == 0) - there is no cap;
+    //   * every leaf is bounded by the target UNLESS the text ended inside the
+    //     node or the node was proven periodic;
+    //   * the periodic path actually fired on the strictly periodic fixtures
+    //     (64 identical bytes, "abab...ab", and the doubled "mississippi"), and
+    //     produced no comparisons at all for them.
+    {
+        U perCases = 0, perWindows = 0, perLeaves = 0, perRows = 0, perPeriodMax = 0;
+        for (U f = 0; f < fixtures.size(); ++f) {
+            const std::string& t = fixtures[f];
+            std::string M;
+            for (unsigned char c : t) M += char(remap[c]);
+            const std::string path = std::string(argv[1]) + "/oracle-corpus";
+            TextSeg seg; seg.path = path; seg.len = t.size(); seg.remap = remap;
+            { fs::remove(path); OutFile file(path); file.raw(t.data(), t.size()); }
+            CorpusText text; text.open({seg}, true);
+            for (bool dollar : {false, true}) {
+                auto want = brute(M, dollar);
+                U n = text.n;
+                for (U threads : {1u, 3u, 8u})
+                    for (U target : {1u, 4u, 24u})
+                        for (U lc : std::array<U,2>{7, U(1) << 40}) {
+                            BinWork w;
+                            std::vector<U> got;
+                            got.reserve(n);
+                            // depthCap 0 == AUTO: the product default.
+                            bin_order(text, dollar, threads, target, 0, lc, 1, false, 0, w,
+                                      [&](U row, U p) {
+                                          require(row == got.size(), "periodic oracle row continuity");
+                                          got.push_back(p);
+                                      }, false, woptMain);
+                            require(got.size() == n, "periodic oracle row coverage");
+                            if (got != want) {
+                                std::fprintf(stderr,
+                                    "BINBWT_ORACLE_PERIODIC_FAIL fixture=%llu dollar=%u "
+                                    "threads=%llu target=%llu cap=%llu\n",
+                                    (unsigned long long)f, unsigned(dollar),
+                                    (unsigned long long)threads, (unsigned long long)target,
+                                    (unsigned long long)lc);
+                                for (U i = 0; i < n; ++i)
+                                    std::fprintf(stderr, " got[%llu]=%llu want[%llu]=%llu\n",
+                                        (unsigned long long)i, (unsigned long long)got[i],
+                                        (unsigned long long)i, (unsigned long long)want[i]);
+                                return 1;
+                            }
+                            require(w.overTargetLeaves == 0,
+                                    "periodic oracle: a cap fired, but AUTO has no cap");
+                            require(w.leafRowsMax <= target || w.structuralLeaves > 0 ||
+                                        w.periodicLeaves > 0,
+                                    "periodic oracle leaf exceeded the target");
+                            if (w.periodicLeaves) {
+                                // A proven-periodic node is ordered by position with
+                                // ZERO text comparisons from the tie-break itself.
+                                require(w.periodicRows > 0 && w.periodicPeriodMax > 0,
+                                        "periodic oracle journal");
+                            }
+                            perCases++;
+                            perWindows += w.windows;
+                            perLeaves += w.periodicLeaves;
+                            perRows += w.periodicRows;
+                            perPeriodMax = std::max(perPeriodMax, w.periodicPeriodMax);
+                        }
+            }
+        }
+        require(perLeaves > 0, "periodic tie-break never fired on the periodic fixtures");
+        // The fail-loud bug guard: with the period probe switched OFF, a 64-byte
+        // node of identical rotations cannot divide and cannot be certified, so
+        // the producer MUST refuse at the sanity bound (exit 2 + the message).
+        {
+            const std::string p = std::string(argv[1]) + "/periodic-refusal";
+            std::error_code ec; std::filesystem::remove_all(p, ec);
+            std::filesystem::create_directories(p, ec);
+            const std::string child = std::string(argv[1]) + "/periodic-child";
+            std::string cmd = "BIN_PERIOD_PROBE=0 BINBW_ORACLE_PERIOD_CHILD=" + p + " " +
+                              std::string(argv[0]) + " " + child + " >/dev/null 2>&1";
+            int rc = std::system(cmd.c_str());
+            require(WIFEXITED(rc) && WEXITSTATUS(rc) == 2,
+                    "periodic sanity refusal did not exit 2");
+            std::printf("BINBWT_ORACLE_PERIODIC_REFUSAL said=*BIN_PERIOD_SANITY* rc=2\n");
+        }
+        std::printf("BINBWT_ORACLE_PERIODIC_PASS cases=%llu fixtures=%zu modes=cyclic,dollar "
+                    "threads=1,3,8 target=1,4,24 depth_cap=0 (AUTO, no cap) level_bytes=1 "
+                    "cap=7,all periodic_leaves=%llu periodic_rows=%llu "
+                    "periodic_period_max=%llu over_target_leaves=0 exact_brute_SA=1 "
+                    "window_instances=%llu\n",
+                    (unsigned long long)perCases, fixtures.size(),
+                    (unsigned long long)perLeaves, (unsigned long long)perRows,
+                    (unsigned long long)perPeriodMax, (unsigned long long)perWindows);
+    }
     std::printf("BINBWT_ORACLE_ADAPTIVE_PASS cases=%llu fixtures=%zu modes=cyclic,dollar "
                 "threads=1,8 target=1,2,3,17 depth_cap=256 level_bytes=1 cap=7,all "
                 "depth_max=%llu leaf_rows_max_le_target=1 over_target_leaves=0 "

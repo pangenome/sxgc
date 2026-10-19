@@ -33,6 +33,18 @@ struct BinWork {
     U overTargetLeaves = 0, overTargetRows = 0;  // the depth-cap backstop fired
     U structuralLeaves = 0, structuralRows = 0;  // the TEXT ended inside the node
     U noProgressLevels = 0;             // splits that could not divide a node
+    // PART 4: the periodic tie-break (see bin_node_period) - the nodes that
+    // could never be divided because their rotations are identical, ordered by
+    // ascending source position with ZERO comparisons, and the largest period
+    // proven. `overTargetLeaves` can no longer be produced by periodicity.
+    U periodicLeaves = 0, periodicRows = 0, periodicPeriodMax = 0;
+    // PART 1: leaf-task staging (see BinLeafStage): the leaves that staged, the
+    // bytes one bulk pread moved, how many comparator reads the stage answered
+    // (both sides / one side / neither) and how many leaves skipped it because
+    // the view was already RAM-cached.
+    U stageLeaves = 0, stageMembers = 0, stageBytes = 0;
+    U stageHits = 0, stagePartials = 0, stageMisses = 0, stageSkippedRam = 0;
+    double tStage = 0;
     double tLeaf = 0;                   // wall/cpu seconds in leaf comparison sorts
     // Hot-bin anatomy: the largest byte-1 bin of each window, told apart from
     // the window totals (rows, the split's sub-bins, the busiest thread, the
@@ -78,6 +90,13 @@ struct BinWork {
         structuralLeaves += o.structuralLeaves;
         structuralRows += o.structuralRows;
         noProgressLevels += o.noProgressLevels;
+        periodicLeaves += o.periodicLeaves;
+        periodicRows += o.periodicRows;
+        periodicPeriodMax = std::max(periodicPeriodMax, o.periodicPeriodMax);
+        stageLeaves += o.stageLeaves; stageMembers += o.stageMembers;
+        stageBytes += o.stageBytes; stageHits += o.stageHits;
+        stagePartials += o.stagePartials; stageMisses += o.stageMisses;
+        stageSkippedRam += o.stageSkippedRam; tStage += o.tStage;
         tLeaf += o.tLeaf;
         if (o.hotRows > hotRows) {
             hotRows = o.hotRows; hotBin = o.hotBin; hotTopBins = o.hotTopBins;
@@ -150,11 +169,112 @@ static inline U bin_pos_of(U t, U n, bool dollar) {
     return t ? t - 1 : n - 1;
 }
 
+// ------------------------------------------------- PART 1: LEAF-TASK STAGING
+// The members of a leaf are known BEFORE the comparison sort runs (they are the
+// leaf's arena slice) and the comparator's first read for every member starts at
+// tail + certified. So the leaf can ask for its own text in advance, in bulk,
+// instead of paying a demand miss per comparison.
+//
+// The regime this exists for is the one where the corpus does NOT fit in RAM
+// (`CorpusText::ramCached() == false`, i.e. the pile and any pooled view): there
+// every comparator span is a page-pool probe, and a leaf sort's 2 log m probes
+// per row at ~1 us each is what the 77x un-cached construction measured. When
+// the view IS RAM-cached the stage is a memcpy and is switched OFF (counted as
+// `stageSkippedRam`) - the measurement says so, the code does not guess.
+//
+// THE BOUND, and why the stage is a SPAN and not a per-member window. A leaf can
+// hold `targetSize` rows (1M by default) and its members are scattered over the
+// whole corpus, so "512 B for every member" is 512 MB per thread and the
+// per-member pread count is one syscall per row - at pile scale that is n
+// syscalls and 64x the corpus in scattered reads. What IS affordable is ONE bulk
+// read of a bounded span: the leaf's tails are sorted, a two-pointer pass picks
+// the (span, member-count) window that covers the MOST members within the byte
+// budget, and that span is read with a single sequential pread (the stream
+// floor). Members inside the span read warm memory; members outside it fall back
+// to the pool exactly as before, so the ORDER and every construction counter are
+// unchanged by construction (the stage only decides WHERE a byte comes from).
+static constexpr U bin_leaf_stage_bytes_per_thread = 8u << 20;   // per-thread budget
+static constexpr U bin_leaf_stage_min_bytes = 4096;  // below this (and below the
+// whole corpus, so a small corpus can still stage its own text), skip the read
+// The per-thread budget is a constant; BIN_LEAF_STAGE=0 is the LAZY arm of the
+// charter's prefetch-vs-lazy equivalence gate (the same construction with the
+// staging removed - every counter must be identical), and
+// BIN_LEAF_STAGE_BYTES resizes it. Nothing in the product route sets either.
+// TEST HOOK: stage even when the view is RAM-cached. A tiny fixture cannot make
+// the staging engage on its own (any corpus under the pool budget is cached), so
+// the brute-force oracle forces it to drive the staged comparator path at
+// thousands of tiny scales. Product never sets it.
+static inline bool bin_leaf_stage_force() {
+    // Deliberately NOT cached: the oracle toggles it between the two arms of the
+    // equivalence pass in ONE process (a cached static made that pass vacuous -
+    // stage_hits=0 - which is exactly what a gate is for).
+    const char* e = std::getenv("BIN_LEAF_STAGE_FORCE");
+    return e && *e && *e != '0';
+}
+static inline U bin_leaf_stage_budget() {
+    static const U v = [] {
+        const char* off = std::getenv("BIN_LEAF_STAGE");
+        if (off && *off == '0') return U(0);
+        const char* e = std::getenv("BIN_LEAF_STAGE_BYTES");
+        if (!e || !*e) return bin_leaf_stage_bytes_per_thread;
+        return U(std::strtoull(e, nullptr, 10));
+    }();
+    return v;
+}
+struct BinLeafStage {
+    std::vector<uint8_t> buf;
+    U lo = 0, hi = 0;      // covered corpus span [lo, hi)
+    bool on = false;
+    U bytes = 0;           // bytes actually read into buf
+    // The staged byte at absolute text offset `q`, if it is in the span.
+    inline bool covers(U q, U take) const { return on && q >= lo && q + take <= hi; }
+    inline const uint8_t* at(U q) const { return buf.data() + (q - lo); }
+};
+// Fill `st` with the densest span of this leaf's tails that fits `budget` bytes
+// of text (a single bulk read). Returns the number of members covered.
+inline U bin_stage_leaf(const CorpusText& t, const U* src, U m, U depth, U budget,
+                        BinLeafStage& st, BinWork& w) {
+    st.on = false; st.bytes = 0; st.lo = st.hi = 0;
+    if (!budget || m < 2) return 0;
+    const U n = t.n;
+    // The comparator starts at `certified` and the certified prefix is free, so
+    // the staged window starts at tail + depth; it must also clear the end of
+    // the text for a dollar suffix, so the span is clamped by n.
+    std::vector<U> key(m);
+    for (U i = 0; i < m; ++i) key[i] = bin_word_tail(src[i]);
+    std::sort(key.begin(), key.end());
+    U bestI = 0, bestJ = 0, bestMembers = 0;
+    for (U i = 0, j = 0; i < m; ++i) {
+        if (j < i) j = i;
+        while (j < m && (key[j] + depth >= n || key[j] + depth - (key[i] + depth) < budget))
+            ++j;
+        if (j > i && j - i > bestMembers) { bestMembers = j - i; bestI = i; bestJ = j; }
+    }
+    if (!bestMembers) return 0;
+    U lo = key[bestI] + depth;
+    U hi = std::min<U>(n, key[bestJ - 1] + depth + 1);
+    if (hi <= lo) return 0;
+    // One bulk read - and the span is capped by the budget even when the densest
+    // window is wider (a 1M-row leaf on a dense text can be a whole chromosome).
+    if (hi - lo > budget) hi = lo + budget;
+    if (hi - lo < std::min<U>(bin_leaf_stage_min_bytes, n)) return 0;
+    st.buf.resize(hi - lo);
+    t.read(lo, st.buf.data(), hi - lo);
+    st.lo = lo; st.hi = hi; st.on = true; st.bytes = hi - lo;
+    U covered = 0;
+    for (U i = 0; i < m; ++i) covered += (key[i] + depth >= lo && key[i] + depth < hi);
+    ++w.stageLeaves;
+    w.stageBytes += st.bytes;
+    w.stageMembers += covered;
+    return covered;
+}
+
 // Total order on two distinct tails, exact, through the CorpusText view only.
 // certified = a provably equal prefix length (the bin's refined depth), so no
 // shared prefix inside a bin is ever re-walked by a comparison.
 static inline int bin_tail_cmp(const CorpusText& t, bool dollar, U word_a, U word_b,
-                               U certified, BinWork& w) {
+                               U certified, BinWork& w,
+                               const BinLeafStage* stage = nullptr) {
     const U n = t.n;
     // Arena words in, tails out (bin_word): the packed symbol/hit bits must not
     // influence the order.
@@ -177,8 +297,18 @@ static inline int bin_tail_cmp(const CorpusText& t, bool dollar, U word_a, U wor
         if (take > room) take = room;
         require(take, "bin tail compare window");
         uint8_t ab[64], bb[64];
-        const uint8_t* A = t.span(a + j, ab, take);
-        const uint8_t* B = t.span(b + j, bb, take);
+        // PART 1: the staged span answers the read when it covers the range; the
+        // bytes are the same bytes (one bulk pread of the same immutable text),
+        // so no counter and no comparison can move.
+        const bool ha = stage && stage->covers(a + j, take);
+        const bool hb = stage && stage->covers(b + j, take);
+        const uint8_t* A = ha ? stage->at(a + j) : t.span(a + j, ab, take);
+        const uint8_t* B = hb ? stage->at(b + j) : t.span(b + j, bb, take);
+        if (stage) {
+            if (ha && hb) ++w.stageHits;
+            else if (ha || hb) ++w.stagePartials;
+            else ++w.stageMisses;
+        }
         U d = equal_prefix(A, B, take);
         if (d < take) {
             j += d; w.symbols += j + 1 - entry;
@@ -192,6 +322,147 @@ static inline int bin_tail_cmp(const CorpusText& t, bool dollar, U word_a, U wor
     // Equal rotations: the global rule is ascending SOURCE position.
     ++w.ties;
     return bin_pos_of(a, n, false) < bin_pos_of(b, n, false) ? -1 : 1;
+}
+
+// ------------------------------------------- PART 4: THE PERIODIC TIE-BREAK
+// The target-size rule is the ONLY policy: a node is subdivided until it holds
+// <= targetSize rows, and depth is an OUTPUT of the data. There is exactly ONE
+// shape in which subdivision cannot progress, and it is not a tuning question:
+// PERFECT PERIODICITY. Every member of the node lands in the same sub-bin at
+// every depth because the rotations are literally identical, so no byte the
+// bucketing codes can ever separate them. The old answer was a user-facing
+// `--bin-depth-cap` (default 4096) that took the node as an over-target LEAF and
+// comparison-sorted it: exact, but each comparison walks the rotations to their
+// end, i.e. m log m full-length LCE walks for a node whose order is known.
+//
+// The exact answer is cheaper and needs no knob: two rotations a and b of a
+// cyclic text are equal iff the text has period (b - a) around the cycle, and
+// every member's rotation is equal to every other's iff
+//
+//     G = gcd(n, (tail_i - tail_0) mod n)   is a period of the cyclic text.
+//
+// `G is a period` is tested exactly (one span equality of length n-G, the same
+// CorpusText view bin_tail_cmp walks), so the probe NEVER produces a wrong
+// answer - a node it cannot prove periodic just keeps subdividing. When it does
+// prove it, all m rotations are identical and the total order is the
+// comparator's own cyclic tie-break: ASCENDING SOURCE POSITION, which in tail
+// coordinates is ascending tail (`tail = p + 1 mod n`, so 1,2,...,n-1,0 is
+// exactly positions 0,1,...,n-2,n-1). That sort touches no text at all.
+//
+// THE SANITY BOUND. `--bin-depth-cap` is gone from the user's face; the
+// recursion is bounded only by BIN_NO_PROGRESS_SANITY_BOUND, which is not a
+// policy but a BUG DETECTOR: a node that still makes no progress at that depth
+// and is not provably periodic means the period probe or the code table is
+// broken, and the producer FAILS LOUD instead of quietly taking an unbounded
+// serial stretch.
+static constexpr U bin_no_progress_sanity_bound = U(1) << 20;
+// The period probe's cadence and its scan budget. The probe is O(m) gcd work
+// plus ONE exact span equality, so it must not run at every no-progress level
+// (a duplicate block reaches depth 879 on the 10 GB probe: 879 probes x m rows
+// of divides would cost more than the bucketing they sit in). Every 64th
+// certified byte is enough for the answer to arrive early, and the span scan is
+// bounded so a NEAR-periodic text (period p for a long run, then a difference)
+// costs one bounded scan per probe instead of a corpus pass. When the scan
+// budget cannot certify the period and the node's own certificate does not
+// cover it either, the node is NOT claimed periodic and keeps dividing - the
+// probe never answers wrong, it only answers late.
+static constexpr U bin_period_probe_stride = 64;
+static constexpr U bin_period_scan_budget = U(1) << 28;
+
+// Do the n-`len`-long cyclic spans at `a` and `b` agree? (The period test: period
+// G of a cyclic word of length n == T[0..n-G) equals T[G..n).) Same 64-byte
+// windowed span read bin_tail_cmp uses, so it sees exactly the adapter's text.
+static inline bool bin_ranges_equal(const CorpusText& t, U a, U b, U len) {
+    const U n = t.n;
+    uint8_t ab[64], bb[64];
+    U j = 0;
+    while (j < len) {
+        U take = std::min<U>(64, len - j);
+        U room_a = 2 * n - (a + j), room_b = 2 * n - (b + j);
+        take = std::min(take, std::min(room_a, room_b));
+        require(take, "bin period compare window");
+        const uint8_t* A = t.span(a + j, ab, take);
+        const uint8_t* B = t.span(b + j, bb, take);
+        if (std::memcmp(A, B, size_t(take)) != 0) return false;
+        j += take;
+    }
+    return true;
+}
+
+static inline U bin_gcd(U a, U b) {
+    while (b) { U r = a % b; a = b; b = r; }
+    return a;
+}
+
+// The period that makes this node's m rotations provably identical, or 0 when
+// the node is not provably periodic (finite suffixes are never equal, so dollar
+// mode never takes this path). Cost: O(m) tail reads plus, only when a period
+// candidate survives the gcd, ONE exact span comparison of n-G symbols bounded
+// by BIN_PERIOD_SCAN_BUDGET (or by the node's own certified `depth`, which is
+// free: if the node already agreed on >= n-G symbols then the period holds).
+static inline U bin_node_period(const CorpusText& t, bool dollar, const U* src, U m,
+                                U depth) {
+    if (dollar || m < 2) return 0;
+    // TEST HOOK for the fail-loud sanity path (BIN_PERIOD_PROBE=0): with the
+    // probe off, a periodic node cannot progress and cannot be certified, so the
+    // producer must refuse at BIN_NO_PROGRESS_SANITY_BOUND instead of quietly
+    // taking an unbounded serial stretch. The oracle drives that refusal in a
+    // child process; the product never sets it.
+    static const bool probeOn = [] {
+        const char* e = std::getenv("BIN_PERIOD_PROBE");
+        return !(e && *e == '0');
+    }();
+    if (!probeOn) return 0;
+    const U n = t.n;
+    const U t0 = bin_word_tail(src[0]);
+    U g = n;
+    for (U i = 1; i < m; ++i) {
+        const U d = bin_word_tail(src[i]);
+        const U diff = d > t0 ? d - t0 : t0 - d;
+        g = bin_gcd(g, std::min(diff, n - diff));
+        if (g <= 1) break;          // period 1 == "every byte equal": still tested
+    }
+    if (g == 0 || g >= n) return 0;
+    const U span = n - g;
+    // The node's own certificate: it has already proven that its members agree
+    // on their first `depth` symbols, so a period that fits inside that window
+    // needs no further reading.
+    if (depth >= span) return g;
+    if (span <= bin_period_scan_budget) {
+        // One exact test. `g` divides n by construction (it is a gcd with n).
+        if (!bin_ranges_equal(t, 0, g, span)) return 0;
+        return g;
+    }
+    // A period longer than the scan budget cannot be certified by scanning, but
+    // it CAN be certified by the node itself when the node holds EVERY position
+    // of its residue class: consecutive members g apart prove T[a..a+depth) ==
+    // T[a+g..a+g+depth) pointwise (the certificate), so a closed chain covers
+    // the whole cycle for any depth >= 1. That is the shape of a whole-corpus
+    // repeat (a 10 GB run of one byte is a node of all n positions, g = 1), and
+    // it is exact: every member is present, no gap is assumed.
+    if (m >= 2) {
+        std::vector<U> tails(m);
+        for (U i = 0; i < m; ++i) tails[i] = bin_word_tail(src[i]);
+        std::sort(tails.begin(), tails.end());
+        bool chain = (tails[0] + n - tails[m - 1]) == g;   // closes the cycle
+        for (U i = 1; chain && i < m; ++i) chain = (tails[i] - tails[i - 1]) == g;
+        if (chain) return g;
+    }
+    return 0;   // cannot certify: keep dividing (both answers stay exact)
+}
+
+// The exact order of a provably periodic node: ascending source position.
+// In tail coordinates `tail = p + 1 mod n`, so ascending position is ascending
+// tail EXCEPT that tail 0 is position n-1 and therefore sorts LAST - the same
+// mapping bin_pos_of() applies, which is what bin_tail_cmp's cyclic tie-break
+// orders by. (Getting this wrong is a silent permutation: the probe's first
+// version emitted 63,0,1,...,62 for a 64-row all-'a' node and the ADAPTIVE
+// oracle caught it in one run.)
+static inline void bin_periodic_sort(U* src, U m, U n) {
+    std::sort(src, src + m, [n](U a, U b) {
+        const U ka = bin_word_tail(a), kb = bin_word_tail(b);
+        return (ka ? ka : n) < (kb ? kb : n);
+    });
 }
 
 // Bucket code of tail p at `depth`: a present byte v becomes v+1 so an
@@ -285,6 +556,18 @@ struct BinWindowHeader {
     U version, index, slots, b0, b1, wordsWritten;
 };  // 8 + 8 + 6*8 = 64 B, the rest of the 4096 B page is unused
 
+// CACHE HYGIENE (operator, prefetch charter): a window file is bounded on disc
+// and its bytes are dead the instant its bins are built, so tell the kernel NOW
+// instead of leaving tens of GB of dead page cache competing with the corpus -
+// the corpus is the second-tier pool and our own scratch writes are what evict
+// it. Advisory, byte-neutral, and issued at the one place that knows the file is
+// finished (the unlink site).
+static inline void bin_window_release_cache(const std::string& path) {
+    int fd = ::open(path.c_str(), O_RDONLY);
+    if (fd < 0) return;
+    ::posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED);
+    ::close(fd);
+}
 static inline void bin_window_sabotage(const std::string& path);
 
 // The write path's staging budget, PER FILL THREAD. The scatter interleaves up
@@ -534,6 +817,11 @@ struct BinWindow {
         if (fd >= 0) { ::close(fd); fd = -1; }
     }
     void erase() {
+        // THE window-file cache release (see bin_window_release_cache): the
+        // file's bytes are dead once its bins are built, and at pile scale this
+        // is the single largest thing that competes with the corpus for the page
+        // cache. Advisory, byte-neutral, and done on the fd that is still open.
+        if (fd >= 0) ::posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED);
         close();
         if (!path.empty()) { ::unlink(path.c_str()); path.clear(); }
     }
@@ -635,7 +923,13 @@ static inline BinCapTerms bin_derive_live_cap(U n, U threads) {
     BinCapTerms t;
     t.limit = bin_phase_limit_bytes();
     t.cache = bin_corpus_cache_bytes(n);
-    t.stage = threads * bin_fill_stage_bytes_per_thread;
+    // PART 1/3: the phase's staging RAM is now TWO terms, both per thread and
+    // both constants: the fill's pwrite buffers and the leaf-sort staging span.
+    // The plan prices the identical arithmetic (xsa/src/plan.rs
+    // BIN_FILL_STAGE_BYTES_PER_THREAD + BIN_LEAF_STAGE_BYTES_PER_THREAD), so the
+    // derived cap and the producer's own check can never disagree.
+    t.stage = threads * (bin_fill_stage_bytes_per_thread +
+                         bin_leaf_stage_bytes_per_thread);
     if (!t.limit) {
         // No RLIMIT_AS: there is no budget to derive from, so nothing is derived
         // silently - the cap is the whole corpus (one window) and the journal says
@@ -653,7 +947,9 @@ static inline BinCapTerms bin_derive_live_cap(U n, U threads) {
     t.source = "auto from RLIMIT_AS " + std::to_string(t.limit) + " B: " +
                std::to_string(bin_phase_headroom_pct) + "% usable " +
                std::to_string(t.usable) + " - corpus cache " + std::to_string(t.cache) +
-               " - fill staging " + std::to_string(t.stage) + " = " +
+               " - staging (fill " + std::to_string(threads * bin_fill_stage_bytes_per_thread) +
+               " + leaf " + std::to_string(threads * bin_leaf_stage_bytes_per_thread) + ") " +
+               std::to_string(t.stage) + " = " +
                std::to_string(t.group) + " B for the " +
                std::to_string(bin_group_slot_bytes) + " B/slot arena pair";
     return t;
@@ -729,7 +1025,11 @@ static U* bin_sort_rec(const CorpusText& t, bool dollar, U* src, U* dst, U m,
     // leaf oversize of the target is a serial stretch nothing bounds) and the
     // TEXT ITSELF (`depth >= t.n`: the suffixes inside the node agree all the way
     // to their end, so there is no byte left to divide on - exact and expected).
-    const bool capHit = depth >= depthCap;
+    // `depthCap == 0` is the PRODUCT default: no policy cap at all, i.e. the
+    // target is the only rule and BIN_NO_PROGRESS_SANITY_BOUND is the bug guard
+    // (PART 4). An explicit cap remains for the oracle, which proves the order
+    // is exact at cap 1, 4 and 32 on purpose.
+    const bool capHit = depthCap && depth >= depthCap;
     const bool structHit = depth >= t.n;
     if (m <= targetSize || capHit || structHit) {
         // THE LEAF: an LCP-carrying comparison sort that starts at the depth the
@@ -738,8 +1038,22 @@ static U* bin_sort_rec(const CorpusText& t, bool dollar, U* src, U* dst, U m,
         // makes the largest serial stretch of the whole pile build a KNOWN
         // number of rows (BIN_WORK leaf_rows_max).
         const double tl = now_sec();
+        // PART 1: stage the leaf's members BEFORE the comparison sort runs. The
+        // budget is per thread, the read is ONE bulk pread of the densest covered
+        // span, and a RAM-cached view skips it (a memcpy would only add traffic).
+        BinLeafStage stage;
+        const U stageBudget = bin_leaf_stage_budget();
+        if (!t.ramCached() || bin_leaf_stage_force()) {
+            if (stageBudget) {
+                const double ts = now_sec();
+                bin_stage_leaf(t, src, m, depth, stageBudget, stage, w);
+                w.tStage += now_sec() - ts;
+            }
+        } else {
+            ++w.stageSkippedRam;
+        }
         auto less = [&](U a, U b) {
-            return bin_tail_cmp(t, dollar, a, b, depth, w) < 0;
+            return bin_tail_cmp(t, dollar, a, b, depth, w, stage.on ? &stage : nullptr) < 0;
         };
         if (m <= 16) {                       // insertion sort for tiny leaves
             for (U i = 1; i < m; ++i) {
@@ -798,10 +1112,43 @@ static U* bin_sort_rec(const CorpusText& t, bool dollar, U* src, U* dst, U m,
     // certified depth and nothing else; it is legal (the next byte still has to
     // be consumed) but it is counted, because a long run of them is the one
     // shape that makes bucketing no cheaper than a leaf sort.
+    //
+    // PART 4: and it is the ONLY shape in which subdivision cannot progress, so
+    // it is also where the periodic tie-break is probed: if every rotation in
+    // this node is provably identical (bin_node_period), the exact order is
+    // ascending source position and the node is finished with zero comparisons.
     {
         U biggest = count[0];
         for (U c = 1; c < codes; ++c) biggest = std::max(biggest, count[c]);
-        if (biggest == m) ++w.noProgressLevels;
+        if (biggest == m) {
+            ++w.noProgressLevels;
+            const U nd = depth + levelBytes;
+            const U per = (nd % bin_period_probe_stride == 0 ||
+                           nd >= bin_no_progress_sanity_bound)
+                              ? bin_node_period(t, dollar, src, m, depth)
+                              : U(0);
+            if (per) {
+                const double tp = now_sec();
+                bin_periodic_sort(src, m, t.n);
+                ++w.periodicLeaves;
+                w.periodicRows += m;
+                w.periodicPeriodMax = std::max(w.periodicPeriodMax, per);
+                w.tLeaf += now_sec() - tp;
+                return src;
+            }
+            // Not provably periodic and still not dividing: the only remaining
+            // explanation is a bug (the code table, or the period probe itself).
+            if (depth + levelBytes >= bin_no_progress_sanity_bound) {
+                std::fprintf(stderr,
+                    "BIN_PERIOD_SANITY depth=%llu level_bytes=%llu rows=%llu n=%llu "
+                    "dollar=%u (a split that cannot progress and no period found at the "
+                    "sanity bound is a BUG, not a tuning question)\n",
+                    (unsigned long long)(depth + levelBytes),
+                    (unsigned long long)levelBytes, (unsigned long long)m,
+                    (unsigned long long)t.n, unsigned(dollar));
+                require(false, "bin-bwt no-progress past the sanity bound");
+            }
+        }
     }
     // Bucket 0 holds the dollar suffixes exhausted at this depth: they all share
     // the node prefix up to their own end, so ascending length (== descending
@@ -884,7 +1231,7 @@ static void bin_task_run(const CorpusText& t, bool dollar, const BinTask& tk,
             std::memcpy(tk.canon, tk.src, tk.m * sizeof(U));
         return;
     }
-    if (tk.m <= splitSize || tk.depth >= depthCap || tk.depth >= t.n) {
+    if (tk.m <= splitSize || (depthCap && tk.depth >= depthCap) || tk.depth >= t.n) {
         // Below the dispatch threshold one thread refines the whole subtree - and
         // with splitSize == targetSize that subtree IS one leaf (or a handful of
         // them), so the longest a single thread can be busy is one leaf sort of
@@ -916,7 +1263,37 @@ static void bin_task_run(const CorpusText& t, bool dollar, const BinTask& tk,
     {
         U biggest = count[0];
         for (U c = 1; c < codes; ++c) biggest = std::max(biggest, count[c]);
-        if (biggest == tk.m) ++w.noProgressLevels;
+        if (biggest == tk.m) {
+            ++w.noProgressLevels;
+            const U nd = tk.depth + levelBytes;
+            const U per = (nd % bin_period_probe_stride == 0 ||
+                           nd >= bin_no_progress_sanity_bound)
+                              ? bin_node_period(t, dollar, tk.src, tk.m, tk.depth)
+                              : U(0);
+            // PART 4: a dispatched node that cannot divide is probed for
+            // periodicity exactly like an inline one; the answer must land in
+            // `canon`, and for a periodic node it is ascending source position.
+            if (per) {
+                const double tp = now_sec();
+                bin_periodic_sort(tk.src, tk.m, t.n);
+                ++w.periodicLeaves;
+                w.periodicRows += tk.m;
+                w.periodicPeriodMax = std::max(w.periodicPeriodMax, per);
+                w.tLeaf += now_sec() - tp;
+                if (tk.src != tk.canon) std::memcpy(tk.canon, tk.src, tk.m * sizeof(U));
+                return;
+            }
+            if (tk.depth + levelBytes >= bin_no_progress_sanity_bound) {
+                std::fprintf(stderr,
+                    "BIN_PERIOD_SANITY depth=%llu level_bytes=%llu rows=%llu n=%llu "
+                    "dollar=%u (a split that cannot progress and no period found at the "
+                    "sanity bound is a BUG, not a tuning question)\n",
+                    (unsigned long long)(tk.depth + levelBytes),
+                    (unsigned long long)levelBytes, (unsigned long long)tk.m,
+                    (unsigned long long)t.n, unsigned(dollar));
+                require(false, "bin-bwt no-progress past the sanity bound");
+            }
+        }
     }
     // Bucket 0: dollar suffixes exhausted at this depth. They share the node
     // prefix up to their own end, so ascending length (descending tail) is
@@ -974,7 +1351,7 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U targetSi
     const std::vector<U>* joinTargets = nullptr;
     if constexpr (bin_publish_sink<Emit>::value) joinTargets = &emit.joinTargets();
     const U joinCount = joinTargets ? joinTargets->size() : 0;
-    require(n && threads >= 1 && depthCap >= levelBytes &&
+    require(n && threads >= 1 && (!depthCap || depthCap >= levelBytes) &&
             levelBytes >= 1 && levelBytes <= 2, "bin-bwt parameters");
     // ---- THE TARGET SIZE: the leaf bound, automatic by default -------------
     // Depth is an OUTPUT of the data (see bin_sort_rec), so the only shape knob
@@ -1733,6 +2110,7 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U targetSi
                 row += live;
                 total.emittedRows += live;
                 if (wopt.disc) {
+                    bin_window_release_cache(winPath(k));
                     ::unlink(winPath(k).c_str());
                 } else {
                     ramArena[k].reset();
@@ -2247,7 +2625,11 @@ static void bin_journal(const BinWork& total, bool dollar, U threads,
         "credit_wait_s=%.3f "
         "depth_max=%llu leaf_rows_max=%llu over_target_leaves=%llu "
         "over_target_rows=%llu structural_leaves=%llu structural_rows=%llu "
-        "no_progress_levels=%llu leaf_s=%.3f "
+        "no_progress_levels=%llu periodic_leaves=%llu periodic_rows=%llu "
+        "periodic_period_max=%llu sanity_bound=%llu leaf_s=%.3f "
+        "stage_budget_bytes=%llu stage_leaves=%llu stage_members=%llu "
+        "stage_bytes=%llu stage_hits=%llu stage_partials=%llu stage_misses=%llu "
+        "stage_skipped_ram=%llu stage_s=%.3f "
         "full_SA=0 persistent_positions=0\n",
         unsigned(dollar), (unsigned long long)threads,
         (unsigned long long)levelBytes, (unsigned long long)targetSize,
@@ -2288,7 +2670,11 @@ static void bin_journal(const BinWork& total, bool dollar, U threads,
         (unsigned long long)total.overTargetRows,
         (unsigned long long)total.structuralLeaves,
         (unsigned long long)total.structuralRows,
-        (unsigned long long)total.noProgressLevels, total.tLeaf);
+        (unsigned long long)total.noProgressLevels,
+        (unsigned long long)total.periodicLeaves,
+        (unsigned long long)total.periodicRows,
+        (unsigned long long)total.periodicPeriodMax,
+        (unsigned long long)bin_no_progress_sanity_bound, total.tLeaf);
     // The largest byte-1 bin of the largest window, alone: the hot-bin anatomy
     // the operator asked for (`--bin-level-bytes 1` vs `2` on the SAME corpus).
     std::fprintf(stderr,
