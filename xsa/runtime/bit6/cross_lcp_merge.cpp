@@ -5501,22 +5501,19 @@ int main_impl(int argc, char** argv) {
         (flag("--bin-target-size").empty()
              ? (flag("--bin-leaf").empty() ? U(0) : std::stoull(flag("--bin-leaf")))
              : std::stoull(flag("--bin-target-size"))),
-        // The depth cap is no longer the recursion's rule, only its fail-loud
-        // backstop: it exists so a corpus that cannot be divided (cyclic text of
-        // identical rotations) terminates, and when it fires the leaf is
-        // journalled (BIN_LEAF_OVER_TARGET / over_target_leaves) instead of being
-        // taken silently. Its default is therefore far above anything text
-        // needs (the deepest bucket any measured corpus produced is reported as
-        // depth_max in BIN_WORK) and it costs nothing when it does not fire.
-        // MEASURED (RESULTS_AUTO_RADIX.md, 10 GB probe): with the target at 1M
-        // rows the tree reaches depth 879 on the one bucket that cannot be
-        // divided any cheaper (a duplicate block), so a cap of 1024 removes every
-        // over-target leaf (leaf_rows_max 6,048,267 -> 999,817, over_target 2 ->
-        // 0) for +5.9% build. 4096 is chosen as the default so the TARGET is the
-        // rule and the cap is only what it says it is: a backstop. It costs
-        // nothing when it does not fire (a cap is a comparison), and if it does
-        // fire the leaf is journalled loudly (BIN_LEAF_OVER_TARGET).
-        flag("--bin-depth-cap").empty()?4096:std::stoull(flag("--bin-depth-cap")),
+        // THE DEPTH CAP IS NO LONGER IN THE USER'S FACE (prefetch charter, PART
+        // 4): the default is 0 = AUTO, i.e. the target-size rule is the ONLY
+        // policy and the recursion is bounded by nothing but the bug detector
+        // bin_no_progress_sanity_bound (2^20 certified bytes with no progress
+        // and no provable period FAILS LOUD). The shape the old cap existed for -
+        // a cyclic text of identical rotations - is now recognised exactly and
+        // ordered by ascending source position (bin_node_period /
+        // bin_periodic_sort), which is the comparator's own cyclic tie-break, so
+        // `--bin-depth-cap` no longer has to be tuned and an over-target leaf can
+        // no longer be produced by periodicity. The flag survives ONLY for the
+        // oracle, which drives caps of 1, 4, 16 and 32 to prove the order is
+        // exact at any cap; nothing in the product route sets it.
+        flag("--bin-depth-cap").empty()?0:std::stoull(flag("--bin-depth-cap")),
         // THE LIVE CAP. DEFAULT = DERIVED, never unbounded: absent the flag the
         // producer sizes the windows from the phase's RLIMIT_AS so that the
         // corpus cache + the fill's staging + the arena pair the build needs all

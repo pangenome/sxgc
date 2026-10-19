@@ -480,6 +480,96 @@ struct CorpusText {
             off += take; dst += take; len -= take;
         }
     }
+    // ---------------------------------------------- PART 2: THE PREFETCH
+    // The verification of a band is a pure function of that band's buffered runs
+    // (the sol6b audit), so the adapter offsets it will read are known BEFORE it
+    // is dispatched: each run carries its head and tail SA coordinate, i.e. two
+    // text positions, and the LCE walks start there. This is the primitive that
+    // turns those known offsets into populated page tables.
+    //
+    // WHY POPULATE AND NOT pread. The corpus is page cache (the corpus is
+    // read-only and read many times over by the verification), so the cost a
+    // lazy reader pays is the MINOR FAULT that installs the page-table entry,
+    // not the device read. MADV_POPULATE_READ (Linux >= 5.14) does exactly that
+    // for a range in ONE syscall, in the prefetching thread, and the entries are
+    // then present for every verification worker (same mm). Where the kernel has
+    // no MADV_POPULATE_READ the fallback touches one byte per page, which is the
+    // same faults, paid by the prefetcher instead of by 92 workers.
+    //
+    // It is bounded and idempotent: a range whose pages are already present
+    // costs a short kernel walk and no I/O, so calling it again for a band that
+    // shares pages with an earlier band is free (and the RUNS PARTITION the SA
+    // rows, so each target is prefetched exactly once in the whole run).
+    void prefetch_range(uint64_t off, uint64_t len) const {
+        if (!len || off >= size_) return;
+        len = std::min<uint64_t>(len, size_ - off);
+        const uint64_t page = 4096;
+        if (cmap) {
+            uint64_t lo = off & ~(page - 1), hi = (off + len + page - 1) & ~(page - 1);
+            hi = std::min<uint64_t>(hi, size_);
+            pf_populate(static_cast<const char*>(cmapRegion) + lo, hi - lo);
+            return;
+        }
+        // Windowed adapter: the range must live in a mapping this process owns.
+        // Pin the covering window under the shared lock (the same lock the byte
+        // path uses, so the range cannot be evicted while it is populated).
+        std::shared_lock<std::shared_mutex> lock(windowMutex);
+        for (const auto& w : windows) {
+            if (!w.p) continue;
+            uint64_t lo = std::max<uint64_t>(off, w.base);
+            uint64_t hi = std::min<uint64_t>(off + len, w.base + w.len);
+            if (lo >= hi) continue;
+            uint64_t a = lo & ~(page - 1), b = (hi + page - 1) & ~(page - 1);
+            b = std::min<uint64_t>(b, w.base + w.len);
+            if (a < w.base) a = w.base;
+            if (b > a) pf_populate((const uint8_t*)w.p + (a - w.base), b - a);
+            return;
+        }
+        // Not mapped yet: one byte through the normal path installs the window,
+        // then the range is populated by the recursive call (which now hits).
+        (void)(*this)[off];
+        prefetch_range(off, len);
+    }
+    mutable std::atomic<uint64_t> pfRanges{0}, pfBytes{0}, pfPages{0}, pfMissed{0},
+        pfWillneed{0}, pfResidentPages{0}, pfSampledPages{0};
+    mutable std::atomic<double> pfWall{0};
+    static void pf_populate(const void* addr, uint64_t len) {
+        // Page-aligned by both call sites (madvise refuses anything else).
+        int rc = ::madvise(const_cast<void*>(addr), size_t(len), MADV_POPULATE_READ);
+        if (rc == 0) return;
+        // Fallback: no MADV_POPULATE_READ in this kernel - touch one byte per
+        // page; the faults are the same ones the workers would have taken.
+        const uint64_t page = 4096;
+        volatile uint8_t sink = 0;
+        for (uint64_t z = 0; z < len; z += page) sink ^= ((const uint8_t*)addr)[z];
+        (void)sink;
+    }
+    // ------------------------------------------------------ CACHE RESIDENCY
+    // Is the corpus still in the page cache? Sampled (never assumed) at the end
+    // of the finish: mincore() the adapter's own mappings at a stride of 64 pages
+    // and count how many of the sampled pages are resident. A second number the
+    // same probe reports is the kernel's own Cached/Shmem counters, read before
+    // and after the run by the caller. `mmap=1` needs no sampling - the whole
+    // file is one mapping - but the same stride is used so the numbers compare.
+    void sample_residency() const {
+        const uint64_t page = 4096, stride = 64 * page;
+        uint64_t sampled = 0, resident = 0;
+        auto count = [&](const void* base, uint64_t len) {
+            std::vector<unsigned char> vec(1);
+            for (uint64_t off = 0; off < len; off += stride) {
+                uint64_t alen = std::min<uint64_t>(page, len - off);
+                uint8_t* addr = (uint8_t*)const_cast<void*>(base) + off;
+                vec.assign((alen + page - 1) / page, 0);
+                if (::mincore(addr, size_t(alen), vec.data()) != 0) { ++sampled; continue; }
+                ++sampled;
+                resident += vec[0] & 1;
+            }
+        };
+        if (cmap) count(cmap, size_);
+        else for (const auto& w : windows) if (w.p) count(w.p, w.len);
+        pfSampledPages.store(sampled);
+        pfResidentPages.store(resident);
+    }
     uint8_t operator[](uint64_t i) const {
         if (i >= size_) pf_fail("corpus adapter bounds");
         if (g_pfAccessOn.load(std::memory_order_relaxed)) pf_access_charge(i);
@@ -536,6 +626,43 @@ struct CorpusText {
         return c.data[slot][i % B];
     }
 };
+
+// One /proc/meminfo field, in kB (0 when it cannot be read): the residency probe
+// reports the kernel's own Cached counter alongside its mincore sample so the
+// two can be cross-checked.
+static long pf_meminfo_kb(const char* field) {
+    FILE* f = std::fopen("/proc/meminfo", "r");
+    if (!f) return 0;
+    char line[256];
+    long v = 0;
+    const size_t n = std::strlen(field);
+    while (std::fgets(line, sizeof line, f)) {
+        if (std::strncmp(line, field, n) == 0 && line[n] == ':') { v = std::atol(line + n + 1); break; }
+    }
+    std::fclose(f);
+    return v;
+}
+
+// ------------------------------------------------- CACHE HYGIENE (operator)
+// Our own scratch I/O is what evicts the corpus from the page cache: every
+// window file, witness spool and product write dirties pages the kernel would
+// otherwise keep for the text. The corpus is the SECOND-TIER POOL (hundreds of
+// GB of free RAM on this box), so a scratch file whose bytes are done with is
+// told so explicitly, page by page, at the moment it stops being needed.
+//   * DONTNEED rather than O_DIRECT: the pwrite fill's staging is 32 MiB/thread
+//     water-filled over 256 interleaved bin streams, so its file offsets are
+//     neither 512-byte nor 4096-byte aligned per write - O_DIRECT would need an
+//     aligned staging rewrite (and its throughput was measured separately, see
+//     RESULTS_PREFETCH.md). DONTNEED needs no alignment and cannot change a byte.
+//   * the call is advisory and CANNOT alter the file's bytes, so every
+//     byte-identity bank is unaffected by construction.
+static void pf_release_cache(int fd) {
+    if (fd < 0) return;
+    struct stat st {};
+    if (fstat(fd, &st) != 0) return;
+    if (st.st_size <= 0) return;
+    ::posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED);
+}
 
 // ------------------------------------------------------------- PFCK build
 // Fixed-grid suffix hashes, independent of merge run count. Each segment
@@ -2201,6 +2328,135 @@ struct ContainerOut {
 };
 
 // One pool for all bands; dispatch returns only after every worker flushes its counters.
+// ------------------------------------------------- PART 2: THE PREFETCHER
+// One background thread that populates the corpus adapter's page tables for the
+// NEXT band's verification targets while the serial fold walks the current one.
+// The serial fold IS the clock: it is cheap (29 ns/raw run) and strictly
+// ordered, so "submit the ranges right after read_band(k+1), before the fold"
+// gives the prefetcher the whole fold plus the tail of the pool's previous
+// verification to finish the population, and the fan-out then starts against
+// warm page tables.
+//
+// Pipelining: read -> feed(SERIAL) -> prefetch(NEXT band) -> LCE(PARALLEL, warm)
+// -> advance. The prefetcher OWNS no state of the fold and touches only the
+// immutable corpus, so it cannot reorder anything; it is a pure read-ahead.
+//
+// Bounded: the queue holds at most PILE_PREFETCH_JOBS jobs of at most
+// `budgetBytes` each (default 32 MiB), so the prefetcher's footprint is that
+// budget in RANGES (the pages it populates belong to the corpus mapping, which
+// the verification reads anyway). Ranges are COALESCED (sorted, merged when the
+// gap is under PILE_PREFETCH_GAP) so a dense band costs a handful of madvise
+// calls instead of one per run. When the queue is full the submit is DROPPED and
+// counted (`skipped`), never queued: the verification's demand path still reads
+// the bytes, it just pays the faults itself.
+struct PfPrefetcher {
+    struct Stats {
+        std::atomic<uint64_t> jobs{0}, ranges{0}, bytes{0}, skipped{0}, droppedBytes{0};
+        std::atomic<uint64_t> busyUsec{0};
+    } st;
+    static constexpr unsigned JOBS = 2;
+    const CorpusText* corpus = nullptr;
+    std::mutex mtx;
+    std::condition_variable wake, idle;
+    std::vector<std::pair<uint64_t, uint64_t>> q;   // pending ranges, in order
+    bool have = false, stop = false;
+    unsigned inflight = 0;                          // jobs submitted, not done
+    std::thread th;
+    uint64_t budgetBytes = 32u << 20;
+    uint64_t gap = 1u << 16;
+    explicit PfPrefetcher(const CorpusText* c) : corpus(c) {
+        th = std::thread([this] {
+            std::unique_lock<std::mutex> lk(mtx);
+            for (;;) {
+                wake.wait(lk, [&] { return stop || have; });
+                if (stop && !have) return;
+                std::vector<std::pair<uint64_t, uint64_t>> job = std::move(q);
+                q.clear();
+                have = false;
+                lk.unlock();
+                const double t0 = tnow();
+                for (const auto& r : job) corpus->prefetch_range(r.first, r.second);
+                st.busyUsec.fetch_add(uint64_t(1e6 * (tnow() - t0)), std::memory_order_relaxed);
+                lk.lock();
+                --inflight;
+                idle.notify_all();
+            }
+        });
+    }
+    // Build the band's target list: each run's head and tail SA coordinate, one
+    // window each, coalesced and byte-bounded. Called on the fold's thread.
+    void submit(const std::vector<RawRun>& raws, uint64_t n, uint64_t windowBytes) {
+        if (!corpus || raws.empty()) return;
+        {
+            std::lock_guard<std::mutex> lk(mtx);
+            if (inflight >= JOBS) {
+                st.skipped.fetch_add(1, std::memory_order_relaxed);
+                st.droppedBytes.fetch_add(2 * raws.size() * windowBytes, std::memory_order_relaxed);
+                return;
+            }
+        }
+        std::vector<std::pair<uint64_t, uint64_t>> r;
+        r.reserve(2 * raws.size());
+        for (const auto& raw : raws) {
+            for (uint64_t pos : {raw.head, raw.tail}) {
+                if (pos >= n) continue;
+                r.emplace_back(pos, std::min<uint64_t>(windowBytes, n - pos));
+            }
+        }
+        std::sort(r.begin(), r.end());
+        std::vector<std::pair<uint64_t, uint64_t>> m;
+        m.reserve(r.size());
+        uint64_t total = 0;
+        for (const auto& x : r) {
+            if (!m.empty() && x.first <= m.back().first + m.back().second + gap) {
+                uint64_t end = std::max(m.back().first + m.back().second, x.first + x.second);
+                m.back().second = end - m.back().first;
+            } else {
+                m.push_back(x);
+            }
+            total += x.second;
+            if (total >= budgetBytes) break;   // bounded: the rest keeps its faults
+        }
+        if (m.empty()) return;
+        {
+            std::lock_guard<std::mutex> lk(mtx);
+            if (inflight >= JOBS) {
+                st.skipped.fetch_add(1, std::memory_order_relaxed);
+                return;
+            }
+            ++inflight;
+            for (const auto& x : m) {
+                q.push_back(x);
+                st.ranges.fetch_add(1, std::memory_order_relaxed);
+                st.bytes.fetch_add(x.second, std::memory_order_relaxed);
+            }
+            have = true;
+        }
+        st.jobs.fetch_add(1, std::memory_order_relaxed);
+        wake.notify_one();
+    }
+    // Wait for the queue to drain (used at the end of the sweep only; the band
+    // loop never blocks on the prefetcher).
+    void drain() {
+        std::unique_lock<std::mutex> lk(mtx);
+        idle.wait(lk, [&] { return inflight == 0; });
+    }
+    void report() const {
+        std::fprintf(stderr,
+            "PILE_FINISH_PREFETCH jobs=%llu ranges=%llu bytes=%llu skipped=%llu "
+            "dropped_bytes=%llu busy_s=%.3f ranges_max=%llu\n",
+            (unsigned long long)st.jobs.load(), (unsigned long long)st.ranges.load(),
+            (unsigned long long)st.bytes.load(), (unsigned long long)st.skipped.load(),
+            (unsigned long long)st.droppedBytes.load(), 1e-6 * double(st.busyUsec.load()),
+            0ull);
+    }
+    ~PfPrefetcher() {
+        { std::lock_guard<std::mutex> lk(mtx); stop = true; }
+        wake.notify_all();
+        if (th.joinable()) th.join();
+    }
+};
+
 struct FinishPool {
     std::mutex mutex;
     std::condition_variable work, complete;
@@ -2928,6 +3184,26 @@ int main(int argc, char** argv) {
             ++band;
         }
         awaitLce();
+        // CACHE RESIDENCY (operator): sampled, never assumed. This is the number
+        // that says whether the corpus stayed in the page cache through OUR OWN
+        // scratch writes - the second-tier pool either survived or it did not.
+        {
+            text.sample_residency();
+            const long cached_kb = pf_meminfo_kb("Cached");
+            std::fprintf(stderr,
+                "PILE_FINISH_CACHE_RESIDENCY sampled_pages=%llu resident_pages=%llu "
+                "resident_pct=%.2f stride_pages=64 meminfo_cached_gb=%.2f "
+                "corpus_gb=%.2f willneed_ranges=%llu adapter_ranges=%llu unmapped=%llu\n",
+                (unsigned long long)text.pfSampledPages.load(),
+                (unsigned long long)text.pfResidentPages.load(),
+                text.pfSampledPages.load()
+                    ? 100.0 * double(text.pfResidentPages.load()) / double(text.pfSampledPages.load())
+                    : 0.0,
+                cached_kb / (1024.0 * 1024.0), double(text.size()) / (1ull << 30),
+                (unsigned long long)text.pfWillneed.load(),
+                (unsigned long long)text.pfRanges.load(),
+                (unsigned long long)text.pfMissed.load());
+        }
         // The repair stream's final flush (the coalesced tail runs held
         // back for char-merge parity) must advance the sweep exactly like
         // the band runs: the state machine needs ALL rNorm runs (v1 feeds
@@ -3316,6 +3592,13 @@ int main(int argc, char** argv) {
             // keep it in the bridge dir.
         }
         if (!keepRlebwt) {
+            // CACHE HYGIENE: the rlebwt has been fully replayed by m1 at this
+            // point, so its pages are dead - release them before the unlink so
+            // the corpus keeps the page cache it needs.
+            {
+                int rfd = ::open((prefix + ".rlebwt").c_str(), O_RDONLY);
+                if (rfd >= 0) { pf_release_cache(rfd); ::close(rfd); }
+            }
             pf_check(::unlink((prefix + ".rlebwt").c_str()) == 0, "unlink rlebwt");
             pf_check(::unlink((prefix + ".rlebwt.meta").c_str()) == 0, "unlink rlebwt.meta");
             fprintf(stderr, "PILE_FINISH_RLEBWT_DELETED\n");
