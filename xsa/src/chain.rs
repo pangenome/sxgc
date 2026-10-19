@@ -931,7 +931,7 @@ fn run_chain(options: Options) -> Result<(), String> {
         }
         let peak_mb = build_plan.phases.iter().map(|p| p.disc_peak_mb).fold(0.0, f64::max);
         let fits = peak_mb * 1048576.0 <= build_plan.survey.scratch_free_bytes as f64;
-        build_plan.disc_verdict = format!("{}: ALL-PHASE peak {:.1} GiB vs {:.1} GiB free (bin shape: rlebwt + piece window + container; the position arena is RAM)",
+        build_plan.disc_verdict = format!("{}: ALL-PHASE peak {:.1} GiB vs {:.1} GiB free (bin shape: rolling window FILES + rlebwt + piece window + container; the build's RAM is one group, never the window)",
             if fits { "FEASIBLE" } else { "INFEASIBLE" }, peak_mb / 1024.0,
             build_plan.survey.scratch_free_bytes as f64 / 1073741824.0);
         if !fits {

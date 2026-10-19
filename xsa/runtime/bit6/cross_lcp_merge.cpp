@@ -5485,7 +5485,15 @@ int main_impl(int argc, char** argv) {
         // taken silently. Its default is therefore far above anything text
         // needs (the deepest bucket any measured corpus produced is reported as
         // depth_max in BIN_WORK) and it costs nothing when it does not fire.
-        flag("--bin-depth-cap").empty()?256:std::stoull(flag("--bin-depth-cap")),
+        // MEASURED (RESULTS_AUTO_RADIX.md, 10 GB probe): with the target at 1M
+        // rows the tree reaches depth 879 on the one bucket that cannot be
+        // divided any cheaper (a duplicate block), so a cap of 1024 removes every
+        // over-target leaf (leaf_rows_max 6,048,267 -> 999,817, over_target 2 ->
+        // 0) for +5.9% build. 4096 is chosen as the default so the TARGET is the
+        // rule and the cap is only what it says it is: a backstop. It costs
+        // nothing when it does not fire (a cap is a comparison), and if it does
+        // fire the leaf is journalled loudly (BIN_LEAF_OVER_TARGET).
+        flag("--bin-depth-cap").empty()?4096:std::stoull(flag("--bin-depth-cap")),
         flag("--bin-live-cap").empty()?U(1)<<32:std::stoull(flag("--bin-live-cap")),
         flag("--bin-level-bytes").empty()?1:std::stoull(flag("--bin-level-bytes")),
         flag("--bin-mode")!="cyclic", has("--bin-freq-sched"),

@@ -446,9 +446,10 @@ impl Plan {
             // amendment): positions materialize transiently in bounded rolling
             // window files, never as a persistent per-suffix column.
             s.push_str(&format!(
-                "XSA_PLAN_V2_POSITION_STORE window_file_gb={:.2} = credit({}) x cap({}) x {} B ON DISC (one rolling file per live window, unlinked when built); ram_group_gb={:.2} = {} B/slot x the group being sorted in place; persistent_position_column=0 full_SA=0\n",
+                "XSA_PLAN_V2_POSITION_STORE window_file_gb={:.2} = credit({}) x cap({}) x {} B ON DISC (one rolling file per live window, unlinked when built); ram_group_gb={:.2} = {} B/slot x the group being sorted in place; position_io_gb={:.1} = 16 x n / (8+8) B a position written once and read once; position_io_s={:.0} at the 5.238 GB/s device floor (overlapped by the fill and the build, so not on the critical path); persistent_position_column=0 full_SA=0\n",
                 v.bin_window_file_gb, BIN_WINDOW_CREDIT, v.bin_live_cap, BIN_WINDOW_SLOT_BYTES,
                 v.bin_ram_group_gb, BIN_GROUP_SLOT_BYTES,
+                16.0 * v.corpus_gb, BIN_WINDOW_IO_NS_PER_BYTE * v.corpus_gb,
             ));
             s.push_str(&format!(
                 "XSA_PLAN_V2_BIN_END e2e_s={:.0} e2e={} producer={} finish={} rule=max(producer,finish) (concurrent, flow-controlled through the piece window)\n",
@@ -500,14 +501,24 @@ pub const V2_CHI_PER_N: f64 = 0.283;            // 1GB fixture ratio; the pile v
 /// 1.36 s/GB; the v2 binary measured 0.043 s/GB. The banked figure is kept,
 /// i.e. conservative.
 pub const BIN_COUNT_NS_PER_BYTE: f64 = 1.36;
-/// The placing pass for the FIRST window, measured on the single-window 1 GB
-/// run: 5.084 s of fill, i.e. packing (tail|symbol|hit) plus the target merge
-/// join.
-pub const BIN_FILL_FIRST_NS_PER_BYTE: f64 = 5.084;
-/// The marginal placing pass per EXTRA window: v1's banked (15.70-4.23)/4 =
-/// 2.87 s/GB per window x 1.232 (the v2 packing+join cost measured against the
-/// same v1 pass) = 3.535 s/GB. Each window places only its own bin range.
-pub const BIN_FILL_WINDOW_NS_PER_BYTE: f64 = 3.535;
+/// The placing pass, per window, at the DEVICE FLOOR. This term was re-priced
+/// by the parallel-fill scatter and is no longer a serial full-corpus sweep:
+/// the fill is a prefix-sum scatter over NT chunks (measured 213.006 s ->
+/// 4.045 s at 10 GB/6 windows = 14.8 GB/s RAM-cached, 21.1 GB/s on a quiet box,
+/// 16.8 GB/s warm on the 100 GB snapshot). A 1.31 TB corpus cannot be cached, so
+/// the plan uses the measured DEVICE floor for 96 independent O_DIRECT streams,
+/// 5.238 GB/s - i.e. 1/5.238e9 s per byte = 0.191 ns/byte per window pass.
+/// The window count is what makes this a term at all: every window re-reads the
+/// whole corpus (sweep_bytes = (1+windows) x n, asserted on every run).
+pub const BIN_FILL_FIRST_NS_PER_BYTE: f64 = 1.0e9 / 5.238e9;
+pub const BIN_FILL_WINDOW_NS_PER_BYTE: f64 = 1.0e9 / 5.238e9;
+/// THE WINDOW FILES' OWN I/O (disc-windows): every position is written to a
+/// window file exactly once and read back exactly once, 8 B each way, so the
+/// run moves 16n bytes of position I/O. It overlaps the fill (the fill IS the
+/// writer) and the build (the bulk preads are the loader), so it is printed as
+/// its own term and NOT added to the critical path; at the device floor it is
+/// 16n/5.238 GB/s = 0.382 ns/byte, i.e. ~1.2 h at pile scale.
+pub const BIN_WINDOW_IO_NS_PER_BYTE: f64 = 16.0e9 / 5.238e9;
 /// The ONE ordered stitch thread (band writers overlapped): 11.41 ns/row at
 /// 1 GB = 11.408 s/GB. Thread-count insensitive by construction - it is a
 /// single ordered consumer of the bins.
@@ -536,7 +547,12 @@ pub const BIN_GROUP_SLOT_BYTES: u64 = 16;
 /// producer-only run). The build is memory-bandwidth bound long before 96
 /// threads (24.7 ns/symbol-thread at t=96 vs 5.46 uncontended), so the curve is
 /// interpolated in log2(threads) between measured points and clamped.
-pub const BIN_BUILD_POINTS: [(f64, f64); 3] = [(8.0, 107.93), (32.0, 35.86), (96.0, 23.489)];
+/// The 96-thread point is the 10 GB rung with the target-size default (300.4 s
+/// build for 10 GB = 30.04 s/GB, RESULTS_AUTO_RADIX.md), not the 1 GB fixture
+/// (18-23 s/GB): a bigger corpus holds deeper repeats, and the plan must price
+/// the corpus it is asked about. Both anchors are measured; the larger one is
+/// used because the pile is larger than both.
+pub const BIN_BUILD_POINTS: [(f64, f64); 3] = [(8.0, 107.93), (32.0, 35.86), (96.0, 30.04)];
 
 /// THE TARGET SIZE (rows) - the leaf bound of the recursion, i.e. the largest
 /// number of rows a single comparison sort may take (bit6/binbwt_slice.h,
@@ -818,8 +834,8 @@ pub fn model_v2(
         BIN_WINDOW_SLOT_BYTES, ram_group_gb,
     );
     let bin_note = format!(
-        "{} windows = ceil(n/{cap}); bins are indivisible so a window is packed to <= cap by whole bins (every measured point matches ceil exactly: 1 GB cap 250M -> 5, 1 GB cap>=n -> 1); a single bin larger than the cap makes the producer raise it (BIN_CAP_RAISED) and the front door FAILS LOUD rather than price a different arena. The TREE: {} leaves = ceil(n/target), each a comparison sort of <= {target_rows} rows (depth is an OUTPUT of the byte census; mean levels/row {:.2} measured at this target, i.e. the emergent depth is {:.0} for the busiest bucket, not a parameter). Terms (s/GB at 1 GB): count {:.3} fill {:.3}+{:.3}/window build {:.3}@{threads}t stitch {:.3} = producer {:.2}; finish {:.2} (own work); e2e = max = {:.2}. Measured 1 GB producer wall 41.68 s and with-finish 142.18 s (flow-limited): the model holds the producer term to {:.1}%",
-        windows, leaves, levels_mean, (leaves as f64).log(257.0),
+        "{} windows = ceil(n/{cap}) (each window re-reads the whole corpus: fill = windows x n at the 5.238 GB/s device floor = {:.2} h at this scale); bins are indivisible so a window is packed to <= cap by whole bins (every measured point matches ceil exactly: 1 GB cap 250M -> 5, 1 GB cap>=n -> 1); a single bin larger than the cap makes the producer raise it (BIN_CAP_RAISED) and the front door FAILS LOUD rather than price a different arena. The TREE: {} leaves = ceil(n/target), each a comparison sort of <= {target_rows} rows (depth is an OUTPUT of the byte census; mean levels/row {:.2} measured at this target, i.e. the emergent depth is {:.0} for the busiest bucket, not a parameter). Terms (s/GB at 1 GB): count {:.3} fill {:.3}+{:.3}/window build {:.3}@{threads}t stitch {:.3} = producer {:.2}; finish {:.2} (own work); e2e = max = {:.2}. Measured 1 GB producer wall 41.68 s and with-finish 142.18 s (flow-limited): the model holds the producer term to {:.1}%",
+        windows, fill_s / 3600.0, leaves, levels_mean, (leaves as f64).log(257.0),
         count_s * 1e9 / n as f64, BIN_FILL_FIRST_NS_PER_BYTE, BIN_FILL_WINDOW_NS_PER_BYTE,
         bin_build_s_per_gb(threads), BIN_STITCH_NS_PER_BYTE, producer_s * 1e9 / n as f64,
         FINISH_DECOMP_NS_PER_BYTE, e2e_s * 1e9 / n as f64,
@@ -878,11 +894,13 @@ mod tests {
         // The measured points themselves.
         assert!((bin_build_s_per_gb(8) - 107.93).abs() < 1e-9);
         assert!((bin_build_s_per_gb(32) - 35.86).abs() < 1e-9);
-        assert!((bin_build_s_per_gb(96) - 23.489).abs() < 1e-9);
+        // The 96-thread point is the 10 GB rung with the target-size default
+        // (300.369 s build / 10 GB = 30.0369 s/GB), not the 1 GB fixture.
+        assert!((bin_build_s_per_gb(96) - 30.04).abs() < 1e-9);
         // Clamped outside the measured range (more threads buy nothing: the
         // build is memory-bandwidth bound).
         assert!((bin_build_s_per_gb(1) - 107.93).abs() < 1e-9);
-        assert!((bin_build_s_per_gb(256) - 23.489).abs() < 1e-9);
+        assert!((bin_build_s_per_gb(256) - 30.04).abs() < 1e-9);
         // Monotone non-increasing in log2(threads) between the points.
         let mut last = f64::INFINITY;
         for t in [8u32, 12, 16, 24, 32, 48, 64, 96] {

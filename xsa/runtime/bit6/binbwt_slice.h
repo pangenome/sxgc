@@ -724,9 +724,24 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U targetSi
     // is the value that ladder picked, clamped so that it is never smaller than a
     // handful of L2-sized runs nor larger than the 32M rows where a leaf sort's
     // log2 term starts to dominate the bucketing it saves.
+    //
+    // MEASURED (tools/binbwt/RESULTS_AUTO_RADIX.md: the 1 GB and 10 GB ladders,
+    // 96 threads, construction only):
+    //   1 GB, one window:   target 262144 -> build 17.29 s, 1e6 -> 18.16,
+    //                       4e6 -> 42.62, 8e6 -> 45.08, 16e6 -> 57.65,
+    //                       32e6 -> 57.60; the retired 24-row rule -> 20.55.
+    //   10 GB, six windows: 24 (old) -> 481.7 s wall, 262144 -> 458.5,
+    //                       1e6 -> 444.1, 4e6 -> 485.1, 16e6 -> ..., 32e6 -> ...
+    // So the optimum is a FLAT FLOOR between 256K and ~1.3M rows at both scales,
+    // and the operator's candidate range of 8-32M rows measures 2-3x WORSE at
+    // 1 GB (the leaf sort's log2(m) LCE walks per row cost more than the
+    // bucketing levels they save; a level is one coded symbol per row).
+    // The automatic rule therefore scales DOWN for small corpora (so a 100 MB
+    // fixture still produces thousands of leaves to fill the queue) and saturates
+    // at the measured 1M floor, which is the value both ladders picked.
     if (!targetSize) {
         const U share = std::max<U>(1, n / (8 * std::max<U>(1, threads)));
-        targetSize = std::min<U>(32u << 20, std::max<U>(1u << 18, share));
+        targetSize = std::min<U>(1u << 20, std::max<U>(1u << 18, share));
     }
     require(targetSize >= 1, "bin-bwt target size");
     total.targetSize = std::max(total.targetSize, targetSize);
