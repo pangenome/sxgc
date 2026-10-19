@@ -686,6 +686,14 @@ static inline bool bin_window_dontneed_seal() {
     const char* e = ::getenv("BIN_WINDOW_DONTNEED_SEAL");
     return e && *e && *e != '0';
 }
+// The ERASE-time release is the default and is what the pile-regime A/B turns
+// off for its control arm (`BIN_WINDOW_DONTNEED=0`): without it the window files
+// stay in the page cache after their bins are built, which is exactly the state
+// the hygiene work exists to prevent. Product default 1.
+static inline bool bin_window_dontneed_erase() {
+    const char* e = ::getenv("BIN_WINDOW_DONTNEED");
+    return !(e && *e == '0');
+}
 static inline void bin_window_sabotage(const std::string& path);
 
 // The write path's staging budget, PER FILL THREAD. The scatter interleaves up
@@ -940,7 +948,7 @@ struct BinWindow {
         // file's bytes are dead once its bins are built, and at pile scale this
         // is the single largest thing that competes with the corpus for the page
         // cache. Advisory, byte-neutral, and done on the fd that is still open.
-        if (fd >= 0) ::posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED);
+        if (fd >= 0 && bin_window_dontneed_erase()) ::posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED);
         close();
         if (!path.empty()) { ::unlink(path.c_str()); path.clear(); }
     }

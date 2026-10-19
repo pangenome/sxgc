@@ -761,6 +761,15 @@ static void pf_cache_journal(const CorpusText& text, const char* label,
         text.pfColdWall.load());
 }
 
+// PART A's finish-side hygiene switch: `PILE_FINISH_HYGIENE=0` turns OFF the
+// witness-spool release and the rlebwt release, i.e. the finish lets its own
+// scratch squat the page cache. The pile-regime A/B's control arm uses it; the
+// product default is 1 (hygiene on).
+static bool pf_hygiene_on() {
+    const char* e = std::getenv("PILE_FINISH_HYGIENE");
+    return !(e && *e == '0');
+}
+
 // ------------------------------------------------- CACHE HYGIENE (operator)
 // Our own scratch I/O is what evicts the corpus from the page cache: every
 // window file, witness spool and product write dirties pages the kernel would
@@ -2095,7 +2104,7 @@ struct WitBuckets {
     // so a spilled witness stream never squats on the corpus's page cache.
     uint64_t cacheReleasedBytes = 0, cacheReleaseCalls = 0;
     void releaseChunk(int fd, const std::string& path) {
-        if (fd < 0) return;
+        if (fd < 0 || !pf_hygiene_on()) return;
         struct stat st {};
         if (fstat(fd, &st) == 0 && st.st_size > 0) {
             if (::posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED) == 0) {
@@ -4021,7 +4030,7 @@ int main(int argc, char** argv) {
             // CACHE HYGIENE: the rlebwt has been fully replayed by m1 at this
             // point, so its pages are dead - release them before the unlink so
             // the corpus keeps the page cache it needs.
-            {
+            if (pf_hygiene_on()) {
                 int rfd = ::open((prefix + ".rlebwt").c_str(), O_RDONLY);
                 if (rfd >= 0) { pf_release_cache(rfd); ::close(rfd); }
             }
