@@ -2848,8 +2848,14 @@ static int binbwt_main(const std::string& path, const std::string& mapPath,
     // `--bin-level-bytes` is the TOP level's depth in bytes (1 or 2) and nothing
     // else: the interior refinement always codes one byte per level, so a
     // 2-byte top level never builds a 65,536-code table.
-    require(depthCap >= 1 && levelBytes >= 1 && levelBytes <= 2,
-            "bin-bwt parameters");
+    //
+    // `depth_cap == 0` (AUTO) is the PRODUCT default since PART 4: the target-size
+    // rule is the only policy and bin_no_progress_sanity_bound is the bug guard,
+    // so the only thing this check may reject is a level width. (Until this fix
+    // the check still demanded `depthCap >= 1`, i.e. it refused the merge tip's
+    // OWN default and every default-shaped producer run died with
+    // `CROSS_LCP_FATAL bin-bwt parameters` - found while driving part 2's arms.)
+    require(levelBytes >= 1 && levelBytes <= 2, "bin-bwt parameters");
     TextSeg segment; segment.path = path; segment.len = fs::file_size(path);
     std::ifstream map(mapPath, std::ios::binary);
     map.read((char*)segment.remap.data(), 256);
