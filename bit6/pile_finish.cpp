@@ -2529,7 +2529,13 @@ struct PfPrefetcher {
     const CorpusText* corpus = nullptr;
     std::mutex mtx;
     std::condition_variable wake, idle;
-    std::vector<std::pair<uint64_t, uint64_t>> q;   // pending reads, ascending
+    // The queue holds JOBS *batches of RAW target windows*. ALL the coalescing work
+    // - the sort, the merge, the chunking - happens on the prefetch thread, never
+    // on the fold thread: measured, sorting 262k window pairs per band on the fold
+    // thread cost 84-140 s of serial time on the 1 GB fixture and turned a
+    // break-even sweep into a 43% REGRESSION (lazy 137.5 s vs sweep 196.6 s, rep 1).
+    // The fold thread's whole cost is now two pushes per run.
+    std::vector<std::vector<std::pair<uint64_t, uint64_t>>> qjobs;
     bool have = false, stop = false;
     unsigned inflight = 0;                          // jobs submitted, not done
     std::thread th;
@@ -2551,14 +2557,62 @@ struct PfPrefetcher {
             for (;;) {
                 wake.wait(lk, [&] { return stop || have; });
                 if (stop && !have) return;
-                std::vector<std::pair<uint64_t, uint64_t>> job = std::move(q);
-                q.clear();
+                std::vector<std::vector<std::pair<uint64_t, uint64_t>>> jobs = std::move(qjobs);
+                qjobs.clear();
                 have = false;
                 lk.unlock();
                 const double t0 = tnow();
                 double wil = 0, minc = 0;
                 std::vector<unsigned char> res;
-                for (const auto& r : job) {
+                for (auto& raw : jobs) {
+                    // ---- PART B: coalesce the batch into a monotone front ----
+                    std::vector<std::pair<uint64_t, uint64_t>> m;   // merged, ascending
+                    if (mode == 2) {
+                        m = std::move(raw);                         // arrival order, no sort
+                    } else {
+                        std::sort(raw.begin(), raw.end());
+                        uint64_t merged = 0;
+                        for (const auto& x : raw) {
+                            if (!m.empty() && x.first <= m.back().first + m.back().second + gap) {
+                                const uint64_t end = std::max(m.back().first + m.back().second,
+                                                              x.first + x.second);
+                                merged += (end - m.back().first) - m.back().second;
+                                m.back().second = end - m.back().first;
+                            } else {
+                                m.push_back(x);
+                                merged += x.second;
+                            }
+                            // The budget bounds the MERGED bytes (the bytes actually
+                            // read); the raw windows are only the request. The rest
+                            // of the band keeps its demand faults.
+                            if (merged >= budgetBytes) break;
+                        }
+                        raw.clear();
+                    }
+                    // Skip-chunked monotone front: split every merged read into
+                    // chunks of at most chunkBytes, preserving ascending order, and
+                    // count the fronts (a new front starts wherever the next chunk
+                    // is not contiguous with the previous one, i.e. where the sweep
+                    // must skip).
+                    std::vector<std::pair<uint64_t, uint64_t>> job;
+                    job.reserve(m.size() * 2);
+                    uint64_t lastEnd = INF, touched = 0;
+                    for (const auto& x : m) {
+                        uint64_t off = x.first, left = x.second;
+                        uint64_t chunk = mode == 2 ? left : std::min<uint64_t>(left, chunkBytes);
+                        while (left) {
+                            const uint64_t take = std::min<uint64_t>(chunk, left);
+                            if (off != lastEnd) st.fronts.fetch_add(1, std::memory_order_relaxed);
+                            job.emplace_back(off, take);
+                            touched += take;
+                            lastEnd = off + take;
+                            off += take; left -= take;
+                            chunk = std::min<uint64_t>(left, chunkBytes);
+                        }
+                    }
+                    st.mergedReads.fetch_add(job.size(), std::memory_order_relaxed);
+                    st.touchedBytes.fetch_add(touched, std::memory_order_relaxed);
+                    for (const auto& r : job) {
                     // PART B: the sweep skips the pages the kernel already has. A
                     // band's targets largely repeat the previous band's (the SA is
                     // walked in order), so without this the front re-reads the
@@ -2624,19 +2678,22 @@ struct PfPrefetcher {
                     st.reads.fetch_add(1, std::memory_order_relaxed);
                     st.readBytes.fetch_add(r.second, std::memory_order_relaxed);
                     st.fetchedBytes.fetch_add(issued, std::memory_order_relaxed);
+                    }
                 }
                 st.busyUsec.fetch_add(uint64_t(1e6 * (tnow() - t0)), std::memory_order_relaxed);
                 st.willneedUsec.fetch_add(uint64_t(1e6 * wil), std::memory_order_relaxed);
                 st.mincoreUsec.fetch_add(uint64_t(1e6 * minc), std::memory_order_relaxed);
                 lk.lock();
-                --inflight;
+                // inflight counts SUBMITTED jobs; one drain cycle may carry several.
+                inflight -= unsigned(jobs.size());
                 idle.notify_all();
             }
         });
     }
     // Build the band's target list: each run's head and tail SA coordinate, one
-    // window each; then either coalesce them into a monotone front (sweep) or
-    // hand them over in arrival order (scattered). Called on the fold's thread.
+    // window each. This is the ONLY work the fold thread does - two pushes per raw
+    // run; the sort/merge/chunk/issue all happen on the prefetch thread (see the
+    // qjobs comment: doing it here cost 84-140 s of serial time at 1 GB).
     void submit(const std::vector<RawRun>& raws, uint64_t n, uint64_t win) {
         if (!corpus || raws.empty()) return;
         {
@@ -2659,62 +2716,18 @@ struct PfPrefetcher {
         }
         if (r.empty()) return;
         st.rawWindows.fetch_add(r.size(), std::memory_order_relaxed);
-        std::vector<std::pair<uint64_t, uint64_t>> m;   // merged reads, ascending
-        if (mode == 2) {
-            m = std::move(r);                            // arrival order, no sort
-        } else {
-            std::sort(r.begin(), r.end());
-            uint64_t merged = 0;
-            for (const auto& x : r) {
-                if (!m.empty() && x.first <= m.back().first + m.back().second + gap) {
-                    const uint64_t end = std::max(m.back().first + m.back().second, x.first + x.second);
-                    merged += (end - m.back().first) - m.back().second;
-                    m.back().second = end - m.back().first;
-                } else {
-                    m.push_back(x);
-                    merged += x.second;
-                }
-                // The budget bounds the MERGED bytes (the bytes actually read); the
-                // raw windows are only the request. The rest keeps its faults.
-                if (merged >= budgetBytes) break;
-            }
-        }
-        // Skip-chunked monotone front: split every merged read into chunks of at
-        // most chunkBytes, preserving ascending order, and count the fronts (a
-        // new front starts wherever the next chunk is not contiguous with the
-        // previous one, i.e. where the sweep must skip).
-        std::vector<std::pair<uint64_t, uint64_t>> issued;
-        issued.reserve(m.size());
-        uint64_t lastEnd = INF;
-        for (const auto& x : m) {
-            uint64_t off = x.first, left = x.second;
-            uint64_t chunk = mode == 2 ? left : std::min<uint64_t>(left, chunkBytes);
-            while (left) {
-                const uint64_t take = std::min<uint64_t>(chunk, left);
-                if (off != lastEnd) st.fronts.fetch_add(1, std::memory_order_relaxed);
-                issued.emplace_back(off, take);
-                lastEnd = off + take;
-                off += take; left -= take;
-                chunk = std::min<uint64_t>(left, chunkBytes);
-            }
-        }
-        // The touched mass: the union of the issued reads (they are disjoint and
-        // ascending, so the sum IS the distinct bytes this batch asked for).
-        uint64_t touched = 0;
-        for (const auto& x : issued) touched += x.second;
         {
             std::lock_guard<std::mutex> lk(mtx);
-            if (inflight >= JOBS) {
+            if (inflight >= JOBS) {          // re-checked: the thread may have finished one
                 st.skipped.fetch_add(1, std::memory_order_relaxed);
+                st.droppedBytes.fetch_add(r.size() * windowBytes, std::memory_order_relaxed);
                 return;
             }
             ++inflight;
-            for (const auto& x : issued) q.push_back(x);
+            qjobs.push_back(std::move(r));
             have = true;
         }
         st.jobs.fetch_add(1, std::memory_order_relaxed);
-        st.mergedReads.fetch_add(issued.size(), std::memory_order_relaxed);
-        st.touchedBytes.fetch_add(touched, std::memory_order_relaxed);
         wake.notify_one();
     }
     // Wait for the queue to drain (used at the end of the sweep only; the band
@@ -3336,7 +3349,12 @@ int main(int argc, char** argv) {
                 pfq->gap = pf_env_u64("PILE_PREFETCH_GAP", 1ull << 16, 0, 1ull << 30);
                 pfq->chunkBytes = pf_env_u64("PILE_FINISH_PREFETCH_CHUNK", 4ull << 20, 4096, 1ull << 32);
                 pfq->JOBS = unsigned(pf_env_u64("PILE_FINISH_PREFETCH_JOBS", 2, 1, 64));
-                pfq->skipResident = pf_env_u64("PILE_FINISH_PREFETCH_SKIP_RESIDENT", 1, 0, 1) != 0;
+                // The scattered arm is DEFINED as "issue every target window as it
+                // arrives", so it does not consult residency (and must not: at 256 B
+                // per window that would be one mincore syscall per window, i.e. 78M
+                // of them on the 1 GB fixture - measured at 132 s of syscall time).
+                pfq->skipResident = pmode == 1 &&
+                    pf_env_u64("PILE_FINISH_PREFETCH_SKIP_RESIDENT", 1, 0, 1) != 0;
                 pfq->report();   // the POLICY line, before the first band
             }
         }

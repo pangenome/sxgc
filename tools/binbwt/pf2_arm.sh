@@ -40,9 +40,17 @@ case "$ARM" in
   sweep) MODE=1 ;;
   *) echo "unknown arm $ARM" >&2; exit 2 ;;
 esac
-# PART C: cold corpus BEFORE the arm (outside the finish, so the claim is about
-# the corpus as the finish finds it).
-if [ "$COLD" = 1 ] && [ -x "$COLDTOOL" ]; then "$COLDTOOL" "$CORPUS" >> "$ARMROOT/cold.log" 2>&1; fi
+# PART C: the corpus is dropped from the page cache immediately before the arm
+# (outside the finish, so the claim is about the corpus as the finish finds it).
+# THE SCRATCH IS DROPPED WITH IT: the piece wire and the rlebwt are this run's own
+# scratch, and they are HARD-LINKED from the pristine output, so whichever arm
+# ran first would otherwise pay 4.7 GB of piece reads that its successors find
+# cached (measured: arm order moved the readband term by 4.7 GB vs 28 MB). An
+# arm's wall may only differ in its read DISCIPLINE, never in what was resident
+# when it started.
+if [ "$COLD" = 1 ] && [ -x "$COLDTOOL" ]; then
+  "$COLDTOOL" "$CORPUS" "$ARMROOT/frag.rlebwt" "$ARMROOT/frag.pieces"/* >> "$ARMROOT/cold.log" 2>&1
+fi
 echo "=== ARM tag=$TAG arm=$ARM mode=$MODE jobs=$JOBS budget_mib=$BUDGET_MIB cold=$COLD threads=$TH $(date +%T) $(uptime|sed 's/.*load average/load/')"
 PILE_FINISH_PREFETCH=$MODE \
 PILE_FINISH_PREFETCH_JOBS=$JOBS \
