@@ -49,12 +49,18 @@ walk, and no per-suffix position column anywhere in the product path
    14.8 GB/s; 21.1 GB/s on a quiet box)**.
 2. **Rolling window FILES.** Positions live in bounded rolling files in the
    scratch tree (a 4 KiB header + one 8 B arena word per admitted slot) — never
-   in a corpus-sized arena. The fill writes through a `MAP_SHARED` mapping (the
-   same pointer the RAM arena gave it, so the scatter's inner loop and its
-   counters cannot move) and the build reads each bin's slice back with ONE
-   sequential bulk `pread`. Each file carries a completion word: missing,
-   truncated, stale or corrupt ⇒ **hard refusal, never a silent rebuild** (all
-   five sabotage modes are exercised by the oracle).
+   in a corpus-sized arena. The fill writes them through **buffered `pwrite`**
+   (per-(thread, bin) append buffers, water-filled to ~128 KB per stream and
+   preallocated extents) and the build reads each bin's slice back with ONE
+   sequential bulk `pread`. The write path used to be a `MAP_SHARED` mapping,
+   which charged the whole window against the phase's `RLIMIT_AS` and died live
+   at 10 GB on a 44.6 GB mapping (`sol10.log`); a window file of ANY size now
+   charges ZERO bytes of address space, and the default `--bin-live-cap` is
+   DERIVED from `--memory-gb` so the corpus cache + the fill staging + the arena
+   pair always fit the phase cap with 10% headroom
+   (`tools/binbwt/RESULTS_PWRITE_FILL.md`). Each file carries a completion word:
+   missing, truncated, stale or corrupt ⇒ **hard refusal, never a silent
+   rebuild** (all five sabotage modes are exercised by the oracle).
 3. **Target-size recursive bins.** Bins subdivide by their next byte until every
    leaf is ≤ the target size, so **the tree's depth is an OUTPUT of the data**,
    not a parameter: a bucket whose rows keep sharing prefixes keeps being divided
