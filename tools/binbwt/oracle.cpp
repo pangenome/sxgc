@@ -54,11 +54,25 @@ int main(int argc, char** argv) {
         bin_order(text, false, 3, 4, 32, 1, 1, false, 0, w, [](U, U) {}, false, wopt);
         return 0;   // reaching here means the refusal did NOT fire
     }
-    // ---- PART 4 child: the periodic SANITY refusal ------------------------
-    // The fail-loud bug guard, asserted from the OUTSIDE (require() exits 2):
-    // with the period probe disabled a node of 64 identical rotations can never
-    // divide and can never be certified, so the producer must refuse at
-    // BIN_NO_PROGRESS_SANITY_BOUND rather than take an unbounded serial stretch.
+    // ---- PART 4 child: the periodic SANITY guard --------------------------
+    // The fail-loud bug guard's exactness side, asserted from the OUTSIDE.
+    //
+    // A node of identical rotations cannot divide and cannot be certified with
+    // the period probe disabled, so ONE of two exact outcomes must happen:
+    //   * the TEXT ends inside the node (depth >= n): the node is a STRUCTURAL
+    //     leaf and the comparison sort of identical rotations IS the exact answer
+    //     (ascending source position) - no refusal, no wrong order;
+    //   * the SANITY BOUND is reached first (a node agreeing for more than
+    //     BIN_NO_PROGRESS_SANITY_BOUND bytes): the producer MUST refuse.
+    //
+    // This child used to assert ONLY the refusal on a 64-byte text, which the
+    // code cannot produce: 64 identical rotations reach depth 64 == n and take
+    // the structural-leaf path, so the assertion failed and took the rest of the
+    // suite (ADAPTIVE, FREQ) down with it. Measured identically at base e3edef0
+    // and at this tip - the TEST was stale since PART 4 introduced `structHit`,
+    // not the code. The child now checks the side the 64-byte text can exercise
+    // (exact position order + the structural-leaf journal) and attests it on
+    // stdout, which the parent requires verbatim.
     if (::getenv("BINBW_ORACLE_PERIOD_CHILD")) {
         std::array<uint8_t, 256> id{};
         for (unsigned c = 0; c < 256; ++c) id[c] = uint8_t(c);
@@ -71,30 +85,26 @@ int main(int argc, char** argv) {
         wopt.dir = std::string(argv[1]) + "/windows";
         wopt.credit = 1; wopt.disc = true;
         BinWork w;
+        const U n = text.n;
+        std::vector<U> got;
+        got.reserve(n);
         bin_order(text, false, 1, 1, 0, (U(1) << 40), 1, false, 0, w,
-                  [](U, U) {}, false, wopt);
-        return 0;   // reaching here means the sanity refusal did NOT fire
-    }
-    // ---- PART 4 child: the periodic SANITY refusal ------------------------
-    // The fail-loud bug guard, asserted from the OUTSIDE (require() exits 2):
-    // with the period probe disabled a node of 64 identical rotations can never
-    // divide and can never be certified, so the producer must refuse at
-    // BIN_NO_PROGRESS_SANITY_BOUND rather than take an unbounded serial stretch.
-    if (::getenv("BINBW_ORACLE_PERIOD_CHILD")) {
-        std::array<uint8_t, 256> id{};
-        for (unsigned c = 0; c < 256; ++c) id[c] = uint8_t(c);
-        const std::string t(64, 'a');
-        const std::string path = std::string(argv[1]) + "/oracle-corpus";
-        TextSeg seg; seg.path = path; seg.len = t.size(); seg.remap = id;
-        { fs::remove(path); OutFile file(path); file.raw(t.data(), t.size()); }
-        CorpusText text; text.open({seg}, true);
-        BinWindowOpts wopt;
-        wopt.dir = std::string(argv[1]) + "/windows";
-        wopt.credit = 1; wopt.disc = true;
-        BinWork w;
-        bin_order(text, false, 1, 1, 0, (U(1) << 40), 1, false, 0, w,
-                  [](U, U) {}, false, wopt);
-        return 0;   // reaching here means the sanity refusal did NOT fire
+                  [&](U row, U p) {
+                      require(row == got.size(), "period child row continuity");
+                      got.push_back(p);
+                  }, false, wopt);
+        require(got.size() == n, "period child row count");
+        // Identical rotations: the exact total order is ASCENDING SOURCE POSITION.
+        for (U i = 0; i < n; ++i)
+            require(got[i] == i, "period child: identical rotations are not in position order");
+        require(w.structuralLeaves > 0 && w.structuralRows > 0,
+                "period child: the structural-leaf journal did not fire");
+        std::printf("BINBWT_ORACLE_PERIOD_CHILD exact_position_order=1 rows=%llu "
+                    "structural_leaves=%llu structural_rows=%llu probe_off=1\n",
+                    (unsigned long long)got.size(),
+                    (unsigned long long)w.structuralLeaves,
+                    (unsigned long long)w.structuralRows);
+        return 0;
     }
     std::vector<std::string> fixtures = {        std::string("\0", 1), std::string("\0\0", 2),
         std::string("\x00\x05\x1e\x00\x05", 5), std::string("\x1e\x0a\x1e", 3),
@@ -771,20 +781,27 @@ int main(int argc, char** argv) {
             }
         }
         require(perLeaves > 0, "periodic tie-break never fired on the periodic fixtures");
-        // The fail-loud bug guard: with the period probe switched OFF, a 64-byte
-        // node of identical rotations cannot divide and cannot be certified, so
-        // the producer MUST refuse at the sanity bound (exit 2 + the message).
+        // The fail-loud bug guard's exactness side (see the child at the top of
+        // main): with the period probe OFF the 64 identical rotations must come
+        // out in ascending position order and be journalled as structural leaves.
         {
             const std::string p = std::string(argv[1]) + "/periodic-refusal";
             std::error_code ec; std::filesystem::remove_all(p, ec);
             std::filesystem::create_directories(p, ec);
             const std::string child = std::string(argv[1]) + "/periodic-child";
-            std::string cmd = "BIN_PERIOD_PROBE=0 BINBW_ORACLE_PERIOD_CHILD=" + p + " " +
-                              std::string(argv[0]) + " " + child + " >/dev/null 2>&1";
-            int rc = std::system(cmd.c_str());
-            require(WIFEXITED(rc) && WEXITSTATUS(rc) == 2,
-                    "periodic sanity refusal did not exit 2");
-            std::printf("BINBWT_ORACLE_PERIODIC_REFUSAL said=*BIN_PERIOD_SANITY* rc=2\n");
+            const std::string outPath = std::string(argv[1]) + "/periodic-child.out";
+            const std::string cmd = "BIN_PERIOD_PROBE=0 BINBW_ORACLE_PERIOD_CHILD=" + p + " " +
+                                    std::string(argv[0]) + " " + child + " > " + outPath +
+                                    " 2>/dev/null";
+            const int rc = std::system(cmd.c_str());
+            require(WIFEXITED(rc) && WEXITSTATUS(rc) == 0,
+                    "periodic probe-off child did not exit 0 (exact order + journal)");
+            std::string childOut;
+            { std::ifstream f(outPath); childOut.assign(std::istreambuf_iterator<char>(f),
+                                                        std::istreambuf_iterator<char>()); }
+            require(childOut.find("exact_position_order=1") != std::string::npos,
+                    "periodic probe-off child did not attest the exact position order");
+            std::printf("BINBWT_ORACLE_PERIODIC_SANITY %s", childOut.c_str());
         }
         std::printf("BINBWT_ORACLE_PERIODIC_PASS cases=%llu fixtures=%zu modes=cyclic,dollar "
                     "threads=1,3,8 target=1,4,24 depth_cap=0 (AUTO, no cap) level_bytes=1 "
