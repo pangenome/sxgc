@@ -3069,8 +3069,304 @@ static int benchmark_repair_chunks() {
     return 0;
 }
 
-// ------------------------------------------------------------- LCE wrapper
-// Cyclic collection_lce over the corpus adapter (SlimLCEParseFree's cyclic
+// ------------------------------------------------------------------ PROB-CHI
+// The claims list and the checker that make a HASH-TRUSTED chi certain.
+// Analysis + the probability model: tools/binbwt/PROB_CHI_ANALYSIS.md.
+// The formal statement: lean/ProbChi.lean.
+//
+// CLAIM SEMANTICS (one line, no exceptions):
+//
+//   claim(i, j, g, cap)  means   T[i..i+g) == T[j..j+g)
+//                          and   (g == cap  or  T[i+g] != T[j+g])
+//
+// i.e. exactly `g == min(lce(i,j), cap)`. That is the ONLY arithmetic fact the
+// sweep consumes (`topLcp` and `interiorMin`, pile_finish.cpp lceJob), so a
+// claims list that the text satisfies makes the sweep's inputs identical to the
+// FULL tier's inputs; the sweep is a deterministic function of those inputs and
+// therefore emits the identical container. The probability lives in the
+// constructor's speed and never reaches the product.
+// Bucket count is a function of n, not a constant: bucket b covers the text
+// positions [b*n/NB, (b+1)*n/NB), so the checker's i-side sweep stays inside one
+// position window at every scale. 1024 buckets at 100 MB..1 GB (5.6 MB of claim
+// records per bucket at 1 GB); the cap keeps a pile claims list biddable in
+// RAM-per-worker terms and is the place a pile-scale run must switch to
+// band-fused checking (see PROB_CHI_ANALYSIS.md 3.2: a pile spool is ~7.4 TB).
+static inline uint64_t pf_claim_buckets(uint64_t n) {
+    uint64_t b = n >> 20;
+    if (b < 1024) b = 1024;
+    if (b > 8192) b = 8192;
+    return b;
+}
+
+static inline uint8_t* pf_varint_put(uint8_t* p, uint64_t v) {
+    while (v >= 0x80) { *p++ = uint8_t(v) | 0x80; v >>= 7; }
+    *p++ = uint8_t(v);
+    return p;
+}
+static inline const uint8_t* pf_varint_get(const uint8_t* p, const uint8_t* end, uint64_t& v) {
+    v = 0;
+    for (unsigned sh = 0; p < end; sh += 7) {
+        uint8_t b = *p++;
+        if (sh > 63) pf_fail("claims: varint overflow");
+        v |= uint64_t(b & 0x7F) << sh;
+        if (!(b & 0x80)) return p;
+    }
+    pf_fail("claims: truncated varint");
+}
+
+// A claim is verified by reading the text AT THE CLAIMED POSITIONS. Nothing here
+// searches, probes, hashes or consults the structure: two spans, one boundary.
+struct PfClaimView { uint64_t i, j, g; uint8_t truncated; };
+// Returns 0 when the claim HOLDS; otherwise the offset of the first violation
+// (== g means "the boundary is equal, so the answer was not maximal").
+static inline uint64_t pf_claim_violation(const CorpusText& t, const PfClaimView& c) {
+    // Bounds: the span is always inside the text (cap = min(limit, n-i, n-j));
+    // the BOUNDARY byte is only needed for a non-truncated claim, where
+    // g < cap <= n-i, so i+g+1 <= n holds by the claim's construction.
+    pf_check(c.i + c.g <= t.size() && c.j + c.g <= t.size(), "claim span outside text");
+    if (!c.truncated) pf_check(c.i + c.g + 1 <= t.size() && c.j + c.g + 1 <= t.size(),
+                               "claim boundary outside text");
+    for (uint64_t k = 0; k < c.g; ++k)
+        if (t[c.i + k] != t[c.j + k]) return k;
+    if (!c.truncated && t[c.i + c.g] == t[c.j + c.g]) return c.g;
+    return UINT64_MAX;
+}
+
+// ---- the SPOOL sink: hash-trust + a position-bucketed claims list on scratch.
+// Claims are bucketed by `i` (bucket b covers text positions
+// [b*n/NB, (b+1)*n/NB)), which is what makes the checker's i-side a monotone
+// sweep instead of 4.7e8 independent random starts.
+struct PfClaimSpool : SlimClaimSink {
+    std::string dir;
+    uint64_t n = 0, nb = 0;
+    std::atomic<uint64_t> claimCount{0}, spanSymbols{0}, encodedBytes{0};
+    std::vector<int> fd;
+    std::vector<uint64_t> written;
+    std::mutex mu;
+    struct Buf { std::vector<std::vector<uint8_t>> d; };
+    std::vector<std::unique_ptr<Buf>> bufs;
+    explicit PfClaimSpool(const std::string& d, uint64_t textSize)
+        : dir(d), n(textSize), nb(pf_claim_buckets(textSize)) {
+        std::filesystem::create_directories(dir);
+        fd.assign(nb, -1);
+        written.assign(nb, 0);
+        bufs.resize(512);
+        for (uint64_t b = 0; b < nb; ++b) {
+            char name[64];
+            snprintf(name, sizeof name, "b%04llu.vc", (unsigned long long)b);
+            fd[b] = ::open((dir + "/" + name).c_str(), O_RDWR | O_CREAT | O_EXCL, 0666);
+            pf_check(fd[b] >= 0, std::string("create claims bucket ") + name);
+        }
+    }
+    ~PfClaimSpool() {
+        for (int f : fd) if (f >= 0) ::close(f);
+    }
+    Buf* buf() {
+        unsigned t = slim_tid();
+        if (bufs[t]) return bufs[t].get();
+        std::lock_guard<std::mutex> g(mu);
+        if (!bufs[t]) { bufs[t] = std::make_unique<Buf>(); bufs[t]->d.resize(nb); }
+        return bufs[t].get();
+    }
+    void flushBucket(unsigned b, Buf& t) {
+        std::vector<uint8_t>& d = t.d[b];
+        if (d.empty()) return;
+        std::lock_guard<std::mutex> g(mu);
+        const char* p = (const char*)d.data();
+        uint64_t off = written[b], len = d.size();
+        while (len) {
+            ssize_t z = ::pwrite(fd[b], p, len, off_t(off));
+            pf_check(z > 0, "claims bucket write");
+            p += z; off += uint64_t(z); len -= uint64_t(z);
+        }
+        written[b] = off;
+        encodedBytes.fetch_add(d.size(), std::memory_order_relaxed);
+        d.clear();
+    }
+    void claim(uint64_t i, uint64_t j, uint64_t g, uint64_t cap) override {
+        pf_check(i < n && j < n && g <= n, "claim outside text");
+        unsigned b = unsigned((__uint128_t(i) * nb) / n);
+        if (b >= nb) b = unsigned(nb - 1);
+        Buf* t = buf();
+        std::vector<uint8_t>& d = t->d[b];
+        uint8_t tmp[32];
+        uint8_t* e = pf_varint_put(tmp, i);
+        e = pf_varint_put(e, j);
+        e = pf_varint_put(e, g);
+        *e++ = uint8_t(g == cap ? 1 : 0);
+        d.insert(d.end(), tmp, e);
+        claimCount.fetch_add(1, std::memory_order_relaxed);
+        spanSymbols.fetch_add(g + (g < cap), std::memory_order_relaxed);
+        if (d.size() >= (8u << 10)) flushBucket(b, *t);
+    }
+    void close() {
+        for (uint64_t b = 0; b < nb; ++b)
+            for (auto& t : bufs) if (t) flushBucket(unsigned(b), *t);
+        std::string meta = "PROBCHI_CLAIMS 1\nbuckets " + std::to_string(nb) +
+                           "\nn " + std::to_string(n) +
+                           "\nclaims " + std::to_string(claimCount.load()) +
+                           "\nspan_symbols " + std::to_string(spanSymbols.load()) +
+                           "\nencoded_bytes " + std::to_string(encodedBytes.load()) +
+                           "\nbucket_bytes";
+        for (uint64_t b = 0; b < nb; ++b) meta += " " + std::to_string(written[b]);
+        meta += "\n";
+        const std::string path = dir + "/meta";
+        int f = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+        pf_check(f >= 0, "create claims meta");
+        pf_check(::write(f, meta.data(), meta.size()) == ssize_t(meta.size()), "write claims meta");
+        pf_check(::close(f) == 0, "close claims meta");
+        fprintf(stderr, "PILE_FINISH_CLAIMS_SPOOL dir=%s claims=%llu span_symbols=%llu "
+                        "encoded_bytes=%llu buckets=%llu n=%llu\n",
+                dir.c_str(), (unsigned long long)claimCount.load(),
+                (unsigned long long)spanSymbols.load(),
+                (unsigned long long)encodedBytes.load(),
+                (unsigned long long)nb, (unsigned long long)n);
+    }
+};
+
+// ---- the FUSED sink: verify in the worker that proposed the answer.
+// No spool, no sorting, the same access pattern as the FULL tier's inline
+// confirmation - but no hash probing and no verification-budget accounting. It
+// is the pile-scale shape (a pile claims spool would be ~7.4 TB against a ~2 TB
+// scratch ceiling) and the honest A/B of "is the position sort worth a spool?".
+struct PfClaimFused : SlimClaimSink {
+    const CorpusText* text = nullptr;
+    std::atomic<uint64_t> claimCount{0}, comparedSymbols{0};
+    double t0 = 0, wall = 0;
+    std::atomic<uint64_t> badClaims{0};
+    void claim(uint64_t i, uint64_t j, uint64_t g, uint64_t cap) override {
+        claimCount.fetch_add(1, std::memory_order_relaxed);
+        PfClaimView c{i, j, g, uint8_t(g == cap ? 1 : 0)};
+        const uint64_t bad = pf_claim_violation(*text, c);
+        comparedSymbols.fetch_add(g + (g < cap), std::memory_order_relaxed);
+        if (bad != UINT64_MAX) {
+            badClaims.fetch_add(1, std::memory_order_relaxed);
+            fprintf(stderr, "PILE_FINISH_CLAIM_VIOLATION mode=fused i=%llu j=%llu g=%llu cap=%llu "
+                            "truncated=%u at_offset=%llu Ti=%u Tj=%u Ti_g=%u Tj_g=%u\n",
+                    (unsigned long long)i, (unsigned long long)j, (unsigned long long)g,
+                    (unsigned long long)cap, unsigned(c.truncated), (unsigned long long)bad,
+                    unsigned((*text)[i + std::min(bad, g)]), unsigned((*text)[j + std::min(bad, g)]),
+                    unsigned((*text)[i + g]), unsigned((*text)[j + g]));
+            pf_fail("hash-trusted LCE answer is FALSE (fused checker)");
+        }
+    }
+};
+
+// ---- THE CHECKER PASS. Reads the claims, reads the text at the claimed
+// positions, confirms. A worker OWNS a bucket, sorts it by `i` and sweeps it
+// from low to high, so every worker's i-side is a monotone front inside one
+// position window: the pass is NB sorted sweeps over the text plus the scattered
+// `j` side. No searching, no probing, no structure, no history.
+static void pf_check_claims(const CorpusText& text, const std::string& dir, int threads) {
+    const double t0 = tnow();
+    const std::string metaPath = dir + "/meta";
+    FILE* f = fopen(metaPath.c_str(), "rb");
+    pf_check(f != nullptr, "open claims meta (" + metaPath + ")");
+    uint64_t buckets = 0, n = 0, claims = 0, spanSymbols = 0, encodedBytes = 0;
+    std::vector<uint64_t> bucketBytes;
+    char key[64];
+    pf_check(fscanf(f, "%63s", key) == 1 && std::string(key) == "PROBCHI_CLAIMS", "claims meta magic");
+    uint64_t version = 0;
+    pf_check(fscanf(f, "%llu", (unsigned long long*)&version) == 1 && version == 1, "claims meta version");
+    pf_check(fscanf(f, "%63s %llu", key, (unsigned long long*)&buckets) == 2 && std::string(key) == "buckets", "claims meta buckets");
+    pf_check(fscanf(f, "%63s %llu", key, (unsigned long long*)&n) == 2 && std::string(key) == "n", "claims meta n");
+    pf_check(fscanf(f, "%63s %llu", key, (unsigned long long*)&claims) == 2 && std::string(key) == "claims", "claims meta claims");
+    pf_check(fscanf(f, "%63s %llu", key, (unsigned long long*)&spanSymbols) == 2 && std::string(key) == "span_symbols", "claims meta span_symbols");
+    pf_check(fscanf(f, "%63s %llu", key, (unsigned long long*)&encodedBytes) == 2 && std::string(key) == "encoded_bytes", "claims meta encoded_bytes");
+    pf_check(fscanf(f, "%63s", key) == 1 && std::string(key) == "bucket_bytes", "claims meta bucket_bytes");
+    bucketBytes.resize(buckets);
+    for (uint64_t b = 0; b < buckets; ++b)
+        pf_check(fscanf(f, "%llu", (unsigned long long*)&bucketBytes[b]) == 1, "claims meta bucket size");
+    pf_check(fclose(f) == 0, "close claims meta");
+    pf_check(buckets > 0 && buckets <= 65536, "claims meta bucket count out of range");
+    pf_check(n == text.size(), "claims meta n != corpus size (the claims belong to a different text)");
+
+    struct PerThread { std::atomic<uint64_t> claims{0}, symbols{0}, bad{0}, buckets{0}; };
+    const int T = std::max(1, std::min(threads, 256));
+    std::unique_ptr<PerThread[]> per(new PerThread[unsigned(T)]);
+    std::atomic<uint64_t> badSeq{~0ull}, badBucket{0}, checked{0}, maxBucketClaims{0};
+    std::mutex badMu;
+    std::atomic<uint64_t> nextBucket{0};
+    auto worker = [&](int t) {
+        slim_set_thread_shard(unsigned(t));
+        std::vector<uint8_t> raw;
+        std::vector<PfClaimView> view;
+        for (;;) {
+            uint64_t b = nextBucket.fetch_add(1);
+            if (b >= buckets) break;
+            if (!bucketBytes[b]) { continue; }
+            raw.resize(bucketBytes[b]);
+            char name[64];
+            snprintf(name, sizeof name, "/b%04llu.vc", (unsigned long long)b);
+            int bfd = ::open((dir + name).c_str(), O_RDONLY);
+            pf_check(bfd >= 0, std::string("open claims bucket ") + name);
+            pf_pread_full(bfd, raw.data(), raw.size(), 0, "claims bucket read");
+            pf_check(::close(bfd) == 0, "close claims bucket");
+            view.clear();
+            const uint8_t* p = raw.data();
+            const uint8_t* end = p + raw.size();
+            while (p < end) {
+                PfClaimView c{};
+                p = pf_varint_get(p, end, c.i);
+                p = pf_varint_get(p, end, c.j);
+                p = pf_varint_get(p, end, c.g);
+                if (p >= end) pf_fail("claims: truncated record flag");
+                c.truncated = uint8_t(*p++ & 1);
+                view.push_back(c);
+            }
+            // POSITION ORDER: this bucket is one worker's monotone i-front.
+            std::sort(view.begin(), view.end(), [](const PfClaimView& a, const PfClaimView& c) { return a.i < c.i; });
+            const size_t cnt = view.size();
+            {
+                uint64_t mx = maxBucketClaims.load(std::memory_order_relaxed);
+                while (cnt > mx && !maxBucketClaims.compare_exchange_weak(mx, cnt, std::memory_order_relaxed)) {}
+            }
+            for (size_t k = 0; k < cnt; ++k) {
+                const PfClaimView& c = view[k];
+                const uint64_t bad = pf_claim_violation(text, c);
+                per[unsigned(t)].claims.fetch_add(1, std::memory_order_relaxed);
+                per[unsigned(t)].symbols.fetch_add(c.g + (c.truncated ? 0 : 1), std::memory_order_relaxed);
+                if (bad != UINT64_MAX) {
+                    per[unsigned(t)].bad.fetch_add(1, std::memory_order_relaxed);
+                    if (badSeq.load() == ~0ull) { std::lock_guard<std::mutex> g(badMu);
+                        if (badSeq.load() == ~0ull) {
+                            badSeq.exchange(view[k].i);
+                            badBucket.store(b);
+                            fprintf(stderr, "PILE_FINISH_CLAIM_VIOLATION mode=checker bucket=%llu i=%llu j=%llu g=%llu "
+                                            "truncated=%u at_offset=%llu Ti=%u Tj=%u\n",
+                                    (unsigned long long)b, (unsigned long long)c.i, (unsigned long long)c.j,
+                                    (unsigned long long)c.g, unsigned(c.truncated), (unsigned long long)bad,
+                                    unsigned(text[c.i + std::min(bad, c.g)]), unsigned(text[c.j + std::min(bad, c.g)]));
+                        } }
+                }
+            }
+            per[unsigned(t)].buckets.fetch_add(1, std::memory_order_relaxed);
+            checked.fetch_add(1, std::memory_order_relaxed);
+        }
+    };
+    std::vector<std::thread> pool;
+    for (int t = 0; t < T; ++t) pool.emplace_back(worker, t);
+    for (auto& th : pool) th.join();
+    uint64_t done = 0, symbols = 0, bad = 0, swept = 0;
+    for (int t = 0; t < T; ++t) { done += per[t].claims.load(); symbols += per[t].symbols.load();
+                                  bad += per[t].bad.load(); swept += per[t].buckets.load(); }
+    const double wall = tnow() - t0;
+    const uint64_t firstBad = badSeq.load();
+    fprintf(stderr, "PILE_FINISH_CHECK_CLAIMS claims=%llu claims_declared=%llu symbols_compared=%llu "
+                    "buckets=%llu swept=%llu max_bucket_claims=%llu threads=%d wall=%.3f "
+                    "violations=%llu first_bad_i=%s source=claim_list independent_of_structure=1\n",
+            (unsigned long long)done, (unsigned long long)claims,
+            (unsigned long long)symbols, (unsigned long long)buckets, (unsigned long long)swept,
+            (unsigned long long)maxBucketClaims.load(), T, wall,
+            (unsigned long long)bad, firstBad == ~0ull ? "none" : std::to_string(firstBad).c_str());
+    pf_check(done == claims, "claims list is INCOMPLETE: checked " + std::to_string(done) +
+                             " of " + std::to_string(claims) + " records");
+    pf_check(bad == 0, "claims list FAILED: " + std::to_string(bad) +
+                       " claims the text does not satisfy (first at bucket " +
+                       std::to_string(badBucket.load()) + ")");
+}
+
+
 // branch, byte-for-byte), with its own fail-loud work journal.
 struct LceWrap {
     SlimFingerprint<CorpusText>* fh = nullptr;
@@ -3111,9 +3407,10 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string(argv[1]) == "--selftest-repair-chunks") return selftest_repair_chunks();
         if (argc == 2 && std::string(argv[1]) == "--selftest-sweep-monoid") return selftest_sweep_monoid();
         if (argc == 3 && std::string(argv[1]) == "--selftest-seam-spool") return selftest_seam_spool(argv[2]);
-        std::string prefix, corpus, remap, out, bridgeDir, sampleCheck, wmPath;
         uint64_t chiExpect = 0, sampleCount = 1024, pollTimeout = 86400, ramBudget = 1ull << 30;
         int threads = int(std::thread::hardware_concurrency());
+        std::string prefix, corpus, remap, out, bridgeDir, sampleCheck, wmPath;
+        std::string checkClaimsDir;   // PROB-CHI: standalone checker mode
         uint64_t repairChunkRuns = 0; // experimental exact-checkpoint planner
         bool keepRlebwt = false, keepPfck = false;
         for (int i = 1; i < argc; ++i) {
@@ -3125,6 +3422,7 @@ int main(int argc, char** argv) {
             if (a == "--prefix") prefix = need("--prefix");
             else if (a == "--corpus") corpus = need("--corpus");
             else if (a == "--remap") remap = need("--remap");
+            else if (a == "--check-claims") checkClaimsDir = need("--check-claims");
             else if (a == "--output") out = need("--output");
             else if (a == "--bridge-dir") bridgeDir = need("--bridge-dir");
             else if (a == "--witness-sample-check") sampleCheck = need("--witness-sample-check");
@@ -3139,7 +3437,8 @@ int main(int argc, char** argv) {
             else if (a == "--keep-pfck") keepPfck = true;
             else pf_fail("unknown argument " + a);
         }
-        pf_check(!prefix.empty() && !corpus.empty() && !remap.empty() && !out.empty(),
+        pf_check(!checkClaimsDir.empty() ||
+                 (!prefix.empty() && !corpus.empty() && !remap.empty() && !out.empty()),
                  "usage: pile_finish --prefix MERGED/frag --corpus CORPUS --remap MAP.bin --output CONTAINER.sxi2 "
                  "[--bridge-dir DIR] [--witness-sample-check BANKED.sA] [--chi-expect N] [--threads N] "
                  "[--keep-rlebwt] [--keep-pfck] [--poll-timeout S] [--repair-chunk-runs N]");
@@ -3150,6 +3449,17 @@ int main(int argc, char** argv) {
             g_pfAccessOn.store(*acc && *acc != '0', std::memory_order_relaxed);
         uint8_t remapTable[256];
         load_remap_table(remap, remapTable);
+        if (!checkClaimsDir.empty()) {
+            // PROB-CHI STANDALONE CHECKER: `--check-claims DIR --corpus C --remap M`.
+            // No pieces, no merge, no rlebwt, no pfck, no structure - only the
+            // claims and the text. This is the artifact that must be runnable at
+            // the pile, where no banked container exists to cmp against.
+            CorpusText text(corpus, remapTable);
+            pf_check_claims(text, checkClaimsDir, threads);
+            fprintf(stderr, "PILE_FINISH_CHECK_CLAIMS_DONE dir=%s corpus=%s n=%llu threads=%d\n",
+                    checkClaimsDir.c_str(), corpus.c_str(), (unsigned long long)text.size(), threads);
+            return 0;
+        }
         PieceSource src;
         src.prefix = prefix;
         src.pollTimeout = pollTimeout;
@@ -3254,6 +3564,39 @@ int main(int argc, char** argv) {
         SlimSeamWork workSlim(std::max<uint64_t>(1000000000ULL, 128 * n), UINT64_MAX);
         fhSlim.seam_policy(workSlim, tau, "pile-finish-corpus");
         fp_self_check(fhSlim, text, n, tau);
+        // ---- PROB-CHI: install the tier. TRUST=1 spools a position-bucketed
+        // claims list (checked later / standalone), TRUST=2 checks fused in the
+        // proposing worker. Both take exactness away from the constructor and
+        // hand it to the checker; nothing about the ANSWERS changes (the sink
+        // path returns the same `guess` the verifier would have confirmed), so
+        // a clean corpus must produce a byte-identical container either way.
+        const int trustMode = int(pf_env_u64("PILE_FINISH_LCE_TRUST", 0, 0, 2));
+        const std::string claimsDir = [] {
+            const char* e = std::getenv("PILE_FINISH_CLAIMS_DIR");
+            return std::string(e ? e : "");
+        }();
+        std::unique_ptr<PfClaimSpool> claimSpool;
+        PfClaimFused fusedSink;
+        fusedSink.text = &text;
+        if (trustMode == 1) {
+            pf_check(!claimsDir.empty(), "PILE_FINISH_LCE_TRUST=1 requires PILE_FINISH_CLAIMS_DIR");
+            claimSpool = std::make_unique<PfClaimSpool>(claimsDir, n);
+            fhSeam.sink = claimSpool.get();
+            fhSlim.sink = claimSpool.get();
+        } else if (trustMode == 2) {
+            fhSeam.sink = &fusedSink;
+            fhSlim.sink = &fusedSink;
+        }
+        const uint64_t lceFault = pf_env_u64("PILE_FINISH_LCE_FAULT", 0, 0, 1ull << 40);
+        const bool trackDegrees = pf_env_u64("PILE_FINISH_PROBE_DEGREES", 0, 0, 1) != 0;
+        fhSeam.faultEvery = fhSlim.faultEvery = lceFault;
+        fhSeam.trackDegrees = fhSlim.trackDegrees = trackDegrees;
+        fprintf(stderr, "PILE_FINISH_TIER lce_trust=%d claims_dir=%s lce_fault=%llu probe_degrees=%d "
+                        "tier=%s constructor=%s\n",
+                trustMode, claimsDir.empty() ? "-" : claimsDir.c_str(),
+                (unsigned long long)lceFault, int(trackDegrees),
+                trustMode == 0 ? "T0-full" : "T3-hash-trust+checker",
+                trustMode == 0 ? "byte-verifies-every-answer" : "emits-claims-only");
         phase("fingerprints", last);
 
         LceWrap seamLce{&fhSeam, {}, n};
@@ -3777,6 +4120,35 @@ int main(int argc, char** argv) {
         // ladder-probe counts to attribute the LCE wall honestly).
         fhSlim.report("pile-finish-corpus");
         fhSeam.report("pile-finish-seam");
+        // ---- PROB-CHI: close the ledger and (optionally) run the checker.
+        // COMPLETENESS is a counter equality, not a promise: every LCE answer
+        // that was HASH-DERIVED must have become a claim. `calls` counts every
+        // segment query; the answers that were already byte-exact (the
+        // <=16-symbol quick path) are not hash-derived and carry no claim.
+        if (trustMode) {
+            const uint64_t hashAnswers = (fhSlim.calls.read() - fhSlim.exactFast.read()) +
+                                         (fhSeam.calls.read() - fhSeam.exactFast.read());
+            if (trustMode == 1) {
+                claimSpool->close();
+                pf_check(claimSpool->claimCount.load() == hashAnswers,
+                         "claims list is INCOMPLETE: " + std::to_string(claimSpool->claimCount.load()) +
+                         " claims for " + std::to_string(hashAnswers) + " hash-derived answers");
+                fprintf(stderr, "PILE_FINISH_CLAIMS_LEDGER hash_answers=%llu claims=%llu "
+                                "exact_fast=%llu span_symbols=%llu complete=1\n",
+                        (unsigned long long)hashAnswers, (unsigned long long)claimSpool->claimCount.load(),
+                        (unsigned long long)(fhSlim.exactFast.read() + fhSeam.exactFast.read()),
+                        (unsigned long long)claimSpool->spanSymbols.load());
+                if (pf_env_u64("PILE_FINISH_CHECK_CLAIMS", 0, 0, 1)) pf_check_claims(text, claimsDir, threads);
+            } else {
+                pf_check(fusedSink.claimCount.load() == hashAnswers,
+                         "fused claim ledger mismatch: " + std::to_string(fusedSink.claimCount.load()) +
+                         " claims for " + std::to_string(hashAnswers) + " hash-derived answers");
+                fprintf(stderr, "PILE_FINISH_CLAIMS_LEDGER hash_answers=%llu claims=%llu checked_fused=1 "
+                                "symbols_compared=%llu complete=1 violations=0\n",
+                        (unsigned long long)hashAnswers, (unsigned long long)fusedSink.claimCount.load(),
+                        (unsigned long long)fusedSink.comparedSymbols.load());
+            }
+        }
         pf_check(::close(sparseFd) == 0, "close sparse scratch");
         if (bridge) {
             if (bTailAvail) {
