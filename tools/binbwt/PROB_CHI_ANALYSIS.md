@@ -455,9 +455,15 @@ t3fused  SWEEP_PHASE_WALLS repair=48.8 lce=91.5 advance_witness=39.2  finish 2:0
 floor    SWEEP_PHASE_WALLS repair=52.0 lce=92.5 advance_witness=37.8  finish 1:57.85  chi=283296933 cmp_bank=0
 t0-r1    SWEEP_PHASE_WALLS repair=60.8 lce=101.8                              finish 2:11.83  cmp_bank=0
 t0-r2    SWEEP_PHASE_WALLS repair=51.6 lce=94.2                               finish 1:59.77  cmp_bank=0
+t3spool2 SWEEP_PHASE_WALLS repair=43.9 lce=84.1   (same binary as the floor arm) finish 1:50.51  sha=bank
 ```
 
-All six runs: sha256 == the bank's. **A hash-trusted construction that never
+`t3spool2` re-ran the spool tier with the FINAL committed-tree binary
+(`sha256 e1f6417faea12fe099cbd2dae2fcbd11d8b626a338c6e4ec533cfd3c0e3a65a9`,
+verified reproducible by rebuilding from the tree): same chi, same sha, same
+claim count (125,011,605), checker 6.983 s / 0 violations.
+
+All seven runs (six arms + the A/B pairs below): sha256 == the bank's. **A hash-trusted construction that never
 byte-confirmed a single answer produced the banked container byte for byte.**
 
 The claims ledger at 1 GB (`t3spool` / `t3fused`):
@@ -486,20 +492,35 @@ CHECKER_RC=0   (Elapsed 0:08.70)
 
 ### 6.2 The headline number the operator asked for: what the tier BUYS
 
-| | T0 FULL | T3 hash-trust+checker | floor (measure) |
+**Paired A/B, the decisive measurement.** Three pairs, alternating FULL (T0) and
+hash-trust-with-NO-check (the floor arm), same pristine producer output, same
+binary (`sha256 e1f6417f...`, built from this branch's tree), same box, load
+recorded per run. Every one of the six runs is sha256-identical to the bank.
+
+| pair | T0 lce | floor lce | Δ lce | T0 finish | floor finish | Δ finish |
+|---|---|---|---|---|---|---|
+| 1 | 95.7 | 92.3 | **3.4** | 2:01.50 | 1:57.83 | 3.7 |
+| 2 | 92.8 | 91.8 | **1.0** | 1:58.90 | 1:57.70 | 1.2 |
+| 3 | 94.2 | 85.5 | **8.7** | 2:01.08 | 1:51.21 | 9.9 |
+| mean | 94.2 | 89.9 | **4.4** (1.0 … 8.7) | 2:00.5 | 1:55.6 | **4.9** |
+
+So the FULL tier's inline confirmation of **12.82e9 symbols** costs **1 to 10 s**
+of the finish (mean 4.9 s, 4%), and the *checker's* separate sorted pass costs
+**7.0-8.6 s** (measured twice: 8.592 s at load ~209, 6.983 s at load ~143).
+
+| | T0 FULL | T3 hash-trust+checker | floor (measure only) |
 |---|---|---|---|
 | inline byte confirmation | 12,820,424,563 symbols | 0 | 0 |
-| LCE wall (1 GB, load 118-211) | 94.2 / 99.8 / 101.8 s (mean 98.6, spread 7.6) | 91.5 (fused) / 92.9 (spool) | 92.5 s |
-| finish wall | 1:59.77 .. 2:11.83 | 2:01.17 / 2:02.41 | 1:57.85 |
+| LCE wall (1 GB, load 95-211) | 92.8 / 94.2 / 95.7 / 94.2 / 99.8 / 101.8 | 84.1 / 91.5 / 92.3 / 92.5 / 92.9 | 85.5 / 91.8 / 92.3 / 92.5 |
+| finish wall | 1:58.90 … 2:11.83 | 1:50.51 (spool) / 2:01.17 (fused) | 1:51.21 … 1:57.85 |
 | claims emitted | 0 | 125,011,605 (11.5 B each) | 125,011,605 |
-| checker pass | — | **8.592 s** (9.02e9 symbols, 1.05e9 sym/s, 96 t) | — |
+| checker pass | — | **6.98-8.59 s** (9.02e9 symbols, 1.05e9-1.29e9 sym/s, 96 t) | — |
 | product certain? | yes (by construction) | **yes (by certificate)** | no |
 
 **The honest verdict: at fixture scale the probabilistic tier is wall-NEUTRAL.**
-The constructor's inline confirmation costs ≲ 7 s of an ~99 s LCE wall
-(≲ 5% of the finish), which is *inside this box's own run-to-run spread*
-(94.2-101.8 s), and the checker's separate sorted pass costs 8.6 s. Removing the
-confirmation and paying it back as a position-sorted pass is a wash.
+Taking the confirmation out of the constructor and paying it back as a
+position-sorted pass costs 7-9 s of checker against 1-10 s of saved confirmation.
+There is no wall win to bank, and the paired variance is as large as the effect.
 
 **Why the operator's asymmetry does not pay in wall time — and it is a
 measurement, not a guess.** The confirmation is a *linear scan*: each answer's
@@ -517,11 +538,11 @@ resident**.
 1. **The certificate, which is the only gate that scales.** At the pile there is
    no banked container and no reference chi: `cmp` does not exist, `--chi-expect`
    does not exist. The claims list + checker is a per-position acceptance test
-   that runs on the real artifact. Measured price: 8.6 s at 1 GB = 9.02
+   that runs on the real artifact. Measured price: 7.0-8.6 s at 1 GB = 9.02
    symbols/text byte. EXTRAPOLATED linearly: 1.18e13 symbol comparisons at the
-   pile, 3.1 h at the measured 1.05e9 symbols/s — 2.6% of a 5-day build, and it
-   is the *difference between a product and a lottery ticket* (T2's 1.2e-5
-   expected wrong facts).
+   pile, ~2.6-3.1 h at the measured rate — 2-3% of a 5-day build, and it is the
+   difference between a product and a lottery ticket (T2's 1.2e-5 expected wrong
+   facts).
 2. **The verification BUDGET disappears.** The FULL tier refuses loudly when
    `verification_limit` (2^26 units/query) or the per-fingerprint work cap is
    exhausted (`refuse_verify`, `refuse_budget` in `slim_lce.hpp`). Hash-trust
