@@ -206,11 +206,55 @@ construction and the oracle's STAGE pass proves it (section 5).
 
 ## 3. PART C: the cold-corpus three-way at 1 GB
 
-*(tables filled from the campaign; see /mnt/nvme2n1/erikg/pf2-results.tsv)*
+Fixture: `extcols-scratch/mergperf-1b-snap.txt` (1,000,000,665 B), 96 threads,
+ONE pristine producer output (5 windows, 8.0 GB of window files,`BIN_WORK`
+counters identical to the banked run: comparisons=21,184,557,983,
+symbols=223,383,555,397), hard-linked per arm so every arm consumes the identical
+piece wire. Every arm: corpus AND its own scratch dropped from the page cache
+before it starts; `chi=283296933` and `sha256=38f03eb4...144f` (== the 1 GB bank)
+on EVERY arm (12/12). The wall is `PILE_FINISH_PHASE sweep` (the band loop), and
+each line carries the box load it ran under - the box carried the operator's live
+10 GB A/B the whole time.
 
-## 4. PART C: the balance curve at 1 GB
+### 3.1 Cold START only (`PILE_FINISH_COLD_CORPUS=1`, one drop before the sweep)
 
-*(tables filled from the campaign)*
+| rep | lazy (mode 0) | batch-scattered (mode 2) | batch-sweep (mode 1) | load |
+|---|---|---|---|---|
+| 1 | **139.0 s** | 121.1 s | 144.2 s | 238-266 |
+| 2 | **131.2 s** | 138.4 s | 138.0 s | 235-295 |
+
+### 3.2 Continuously cold (`PILE_FINISH_COLD_EVERY=64`, 88 drops = 88 GB of forced
+corpus eviction during the run - the pile regime at fixture scale)
+
+| rep | lazy (mode 0) | batch-scattered (mode 2) | batch-sweep (mode 1) | load |
+|---|---|---|---|---|
+| 1 | **167.6 s** | 173.0 s | 197.9 s | 241-295 |
+
+### 3.3 Why it is flat, in numbers
+
+| arm (e64) | device reads (readband + advance) | prefetch fetched | prefetch CPU | sweep wall |
+|---|---|---|---|---|
+| lazy | 10.6 + 7.7 = 18.3 GB | - | - | 167.6 s |
+| scattered | 6.0 + 5.2 = 11.2 GB | 32.1 GB requested | 171 s busy | 173.0 s |
+| sweep | 10.7 + 8.0 = 18.7 GB | 0.74 GB (74% of one corpus) | 106 s busy | 197.9 s |
+
+The prefetcher does not REDUCE the device traffic, because **the demand path is
+already a monotone sweep**: the producer publishes runs in SA order, so a band's
+corpus reads arrive with ascending head coordinates and the LCE walks long spans
+from them. `max_seam_lce` is 97060 at 1 GB and 699594 at 10 GB - the reads are
+large and ordered, not the scattered 4 KiB windows PART B's premise assumes.
+What the prefetcher adds is CPU (the coalescing of ~262k windows per band) and
+populate contention, and at 1 GB nothing is cold long enough for that to pay:
+the corpus re-warms inside ~64 bands (section 1.3). **The 1 GB fixture cannot
+show the hierarchy tax, and the knob sweep cannot either - the wall tracks the
+box load, not the knobs.** Reported as a negative result; the pile regime is
+measured at 10 GB (section 4).
+
+## 4. PART C (operator's steer): the 10 GB hygiene A/B
+
+*(arms hyg0/hyg1 running detached: `tools/binbwt/pf2_hygiene10g.sh`,
+`/mnt/nvme2n1/erikg/pf2-10g-hyg{0,1}/`; the residency journal prints every 64
+bands, so a partial arm is still the readout. Tables filled as they land.)*
 
 ## 5. GATES
 

@@ -32,22 +32,27 @@ case "$ARM" in
   *) echo "unknown arm $ARM (hyg0|hyg1)" >&2; exit 2 ;;
 esac
 # The live 10 GB shape: bounded corpus cache, streaming piece wire, phase caps.
+# PHASE CAP: 60 GiB, not the live run.s 100 GiB, because the box carries two live
+# 10 GB arms of the operator.s A/B and 108 GiB was available when this launched.
+# BOTH arms run under the identical cap, so the A/B is internally comparable; the
+# reconciliation against the live arms carries the cap difference in its label.
+PHASE_CAP_KB="${PHASE_CAP_KB:-62914560}"
 export CROSS_POOL_SLOTS=33554432 CROSS_V2_PIECES=1 CROSS_V2_PIECE_WINDOW=1100
 export PILE_FINISH_PREFETCH=1 PILE_FINISH_PREFETCH_ASSIST=populate
 export PILE_FINISH_PREFETCH_JOBS=2 PILE_FINISH_PREFETCH_BUDGET=33554432
 export PILE_FINISH_COLD_CORPUS=1 PILE_FINISH_CACHE_JOURNAL=1 PILE_FINISH_HYGIENE="$HYG"
 export BIN_WINDOW_DONTNEED="$HYG"
 START=$(date +%s)
-echo "=== HYGIENE_AB arm=$ARM hygiene=$HYG threads=$TH start=$(date +%T) $(uptime|sed 's/.*load average/load/')"
+echo "=== HYGIENE_AB arm=$ARM hygiene=$HYG threads=$TH cap_kb=$PHASE_CAP_KB start=$(date +%T) $(uptime|sed 's/.*load average/load/')"
 (
-  ulimit -v 104857600
+  ulimit -v "$PHASE_CAP_KB"
   /usr/bin/time -v -o "$ROOT/bin.time" "$BB" --binbwt "$CORPUS" --remap "$REMAP" \
     --out-prefix "$ROOT/frag" --threads "$TH" 2> "$ROOT/bin.log"
   echo "BIN_RC=$?" >> "$ROOT/status"
 ) &
 BP=$!
 (
-  ulimit -v 104857600
+  ulimit -v "$PHASE_CAP_KB"
   /usr/bin/time -v -o "$ROOT/finish.time" "$PFB" --prefix "$ROOT/frag" --corpus "$CORPUS" \
     --remap "$REMAP" --output "$ROOT/product.sxi2" --threads "$TH" \
     --poll-timeout 2147483647 --wit-ram-budget 8589934592 2> "$ROOT/finish.log"
