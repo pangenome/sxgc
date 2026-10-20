@@ -44,6 +44,9 @@ struct BinWork {
     // the view was already RAM-cached.
     U stageLeaves = 0, stageMembers = 0, stageBytes = 0;
     U stageHits = 0, stagePartials = 0, stageMisses = 0, stageSkippedRam = 0;
+    // PART B: the read discipline's counters - the member windows the staged
+    // leaves asked for, and the coalesced monotone reads that answered them.
+    U stageRawWindows = 0, stageMergedReads = 0;
     double tStage = 0;
     double tLeaf = 0;                   // wall/cpu seconds in leaf comparison sorts
     // Hot-bin anatomy: the largest byte-1 bin of each window, told apart from
@@ -97,6 +100,7 @@ struct BinWork {
         stageBytes += o.stageBytes; stageHits += o.stageHits;
         stagePartials += o.stagePartials; stageMisses += o.stageMisses;
         stageSkippedRam += o.stageSkippedRam; tStage += o.tStage;
+        stageRawWindows += o.stageRawWindows; stageMergedReads += o.stageMergedReads;
         tLeaf += o.tLeaf;
         if (o.hotRows > hotRows) {
             hotRows = o.hotRows; hotBin = o.hotBin; hotTopBins = o.hotTopBins;
@@ -221,51 +225,156 @@ static inline U bin_leaf_stage_budget() {
     }();
     return v;
 }
+// PART B (operator's design): the staging buffer IS the reorder buffer.
+// The single densest span of PART 1 leaves budget on the table whenever a leaf's
+// starts fall into SEVERAL dense clusters (which is what a leaf of scattered SA
+// rows looks like on a real corpus), and one span per leaf is one monotone read
+// where a few coalesced reads would cover strictly more members for the same
+// bytes. So the stage is now a small set of DISJOINT, ASCENDING spans that share
+// one buffer: the leaf's start positions are sorted, each span COALESCES every
+// member whose start falls inside it (the gaps between those members are read
+// too - that is what turns many scattered windows into one monotone read), and
+// the spans are read in ascending order. Members inside any span read warm
+// memory, members outside fall back to the pool exactly as before, so the ORDER
+// and every construction counter are unchanged by construction.
+//
+// `BIN_LEAF_STAGE_SEGS` (default 4) is how many fronts one leaf may open; 1 is
+// byte-for-byte the PART 1 behaviour (the densest single span), so the two can be
+// measured against each other.
+static constexpr U bin_leaf_stage_segments_max = 16;
+static inline U bin_leaf_stage_segments() {
+    static const U v = [] {
+        const char* e = std::getenv("BIN_LEAF_STAGE_SEGS");
+        if (!e || !*e) return U(4);
+        char* end = nullptr; errno = 0;
+        unsigned long long z = std::strtoull(e, &end, 10);
+        if (!(*e && *e != '-' && end && !*end && !errno) || z < 1 ||
+            z > bin_leaf_stage_segments_max) return U(4);
+        return U(z);
+    }();
+    return v;
+}
 struct BinLeafStage {
-    std::vector<uint8_t> buf;
-    U lo = 0, hi = 0;      // covered corpus span [lo, hi)
+    std::vector<uint8_t> buf;   // ONE buffer: the read target and the reorder buffer
+    struct Seg { U lo, hi, off; };
+    std::vector<Seg> segs;      // ascending, disjoint corpus spans
     bool on = false;
-    U bytes = 0;           // bytes actually read into buf
-    // The staged byte at absolute text offset `q`, if it is in the span.
-    inline bool covers(U q, U take) const { return on && q >= lo && q + take <= hi; }
-    inline const uint8_t* at(U q) const { return buf.data() + (q - lo); }
+    U bytes = 0;                // bytes actually read into buf
+    // PART B counters: the member windows the leaf asked for, and how many
+    // coalesced monotone reads answered them (raw_windows -> merged_reads).
+    U rawWindows = 0, mergedReads = 0;
+    mutable size_t hint = 0;
+    // Is [q, q+take) inside a staged span? Most hits repeat the last segment (a
+    // comparison walks forward), so the hint is checked first; with at most
+    // bin_leaf_stage_segments_max segments the fallback scan is bounded.
+    inline bool covers(U q, U take) const {
+        if (!on) return false;
+        if (hint < segs.size()) {
+            const Seg& s = segs[hint];
+            if (q >= s.lo && q + take <= s.hi) return true;
+        }
+        for (size_t i = 0; i < segs.size(); ++i) {
+            const Seg& s = segs[i];
+            if (q >= s.lo && q + take <= s.hi) { hint = i; return true; }
+        }
+        return false;
+    }
+    inline const uint8_t* at(U q) const {
+        if (hint < segs.size()) {
+            const Seg& s = segs[hint];
+            if (q >= s.lo && q < s.hi) return buf.data() + s.off + (q - s.lo);
+        }
+        for (size_t i = 0; i < segs.size(); ++i) {
+            const Seg& s = segs[i];
+            if (q >= s.lo && q < s.hi) { hint = i; return buf.data() + s.off + (q - s.lo); }
+        }
+        require(false, "bin leaf stage: byte outside every staged span");
+        return buf.data();   // unreachable: require() aborts
+    }
 };
-// Fill `st` with the densest span of this leaf's tails that fits `budget` bytes
-// of text (a single bulk read). Returns the number of members covered.
+// Fill `st` with up to BIN_LEAF_STAGE_SEGS coalesced spans of this leaf's starts
+// that together fit `budget` bytes of text (each span one bulk read). Returns the
+// number of members covered.
 inline U bin_stage_leaf(const CorpusText& t, const U* src, U m, U depth, U budget,
                         BinLeafStage& st, BinWork& w) {
-    st.on = false; st.bytes = 0; st.lo = st.hi = 0;
+    st.on = false; st.bytes = 0; st.segs.clear(); st.hint = 0;
+    st.rawWindows = st.mergedReads = 0;
     if (!budget || m < 2) return 0;
     const U n = t.n;
     // The comparator starts at `certified` and the certified prefix is free, so
-    // the staged window starts at tail + depth; it must also clear the end of
-    // the text for a dollar suffix, so the span is clamped by n.
-    std::vector<U> key(m);
-    for (U i = 0; i < m; ++i) key[i] = bin_word_tail(src[i]);
-    std::sort(key.begin(), key.end());
-    U bestI = 0, bestJ = 0, bestMembers = 0;
-    for (U i = 0, j = 0; i < m; ++i) {
-        if (j < i) j = i;
-        while (j < m && (key[j] + depth >= n || key[j] + depth - (key[i] + depth) < budget))
-            ++j;
-        if (j > i && j - i > bestMembers) { bestMembers = j - i; bestI = i; bestJ = j; }
+    // every staged window starts at tail + depth; it must also clear the end of
+    // the text for a dollar suffix, so the starts are clamped by n.
+    std::vector<U> starts;
+    starts.reserve(m);
+    for (U i = 0; i < m; ++i) {
+        const U s = bin_word_tail(src[i]) + depth;
+        if (s < n) starts.push_back(s);
     }
-    if (!bestMembers) return 0;
-    U lo = key[bestI] + depth;
-    U hi = std::min<U>(n, key[bestJ - 1] + depth + 1);
-    if (hi <= lo) return 0;
-    // One bulk read - and the span is capped by the budget even when the densest
-    // window is wider (a 1M-row leaf on a dense text can be a whole chromosome).
-    if (hi - lo > budget) hi = lo + budget;
-    if (hi - lo < std::min<U>(bin_leaf_stage_min_bytes, n)) return 0;
-    st.buf.resize(hi - lo);
-    t.read(lo, st.buf.data(), hi - lo);
-    st.lo = lo; st.hi = hi; st.on = true; st.bytes = hi - lo;
+    if (starts.empty()) return 0;
+    std::sort(starts.begin(), starts.end());
+    st.rawWindows = U(starts.size());
+    const U segMax = bin_leaf_stage_segments();
+    const U floorBytes = std::min<U>(bin_leaf_stage_min_bytes, n);
+    std::vector<uint8_t> taken(starts.size(), 0);
+    std::vector<std::pair<U, U>> spans;   // (lo, hi), ascending
+    U remaining = budget;
+    for (U s = 0; s < segMax; ++s) {
+        const U perSeg = std::min<U>(std::max<U>(floorBytes, budget / segMax), remaining);
+        if (perSeg <= 1) break;
+        // Densest cluster of the NOT-YET-TAKEN starts that fits perSeg bytes: the
+        // same two-pointer as PART 1, over the remaining starts only.
+        U bestI = 0, bestJ = 0, bestMembers = 0;
+        for (U i = 0; i < starts.size(); ++i) {
+            if (taken[i]) continue;
+            U j = i, members = 0;
+            while (j < starts.size() && starts[j] - starts[i] < perSeg) {
+                if (!taken[j]) ++members;
+                ++j;
+            }
+            if (members > bestMembers) { bestMembers = members; bestI = i; bestJ = j; }
+        }
+        if (!bestMembers) break;
+        const U lo = starts[bestI];
+        U hi = lo + 1;
+        for (U z = bestI; z < bestJ; ++z) {
+            if (taken[z]) continue;
+            hi = std::max<U>(hi, std::min<U>(n, starts[z] + 1));
+        }
+        // The span is budget-capped and can never clip a member it counted: every
+        // counted start is < lo + perSeg by construction, and perSeg <= remaining.
+        hi = std::min<U>(hi, lo + perSeg);
+        if (hi <= lo) break;
+        for (U z = bestI; z < bestJ; ++z)
+            if (!taken[z] && starts[z] < hi) taken[z] = 1;
+        if (hi - lo >= floorBytes || hi - lo >= n) {
+            spans.emplace_back(lo, hi);
+            remaining -= hi - lo;
+        }
+    }
+    if (spans.empty()) return 0;
+    std::sort(spans.begin(), spans.end());
+    U total = 0;
+    for (const auto& sp : spans) total += sp.second - sp.first;
+    if (total < floorBytes && total < n) return 0;
+    st.buf.resize(total);
+    U off = 0;
+    for (const auto& sp : spans) {                 // ascending monotone front
+        const U len = sp.second - sp.first;
+        t.read(sp.first, st.buf.data() + off, len);
+        st.segs.push_back(BinLeafStage::Seg{sp.first, sp.second, off});
+        off += len;
+    }
+    st.on = true; st.bytes = total; st.mergedReads = U(spans.size());
     U covered = 0;
-    for (U i = 0; i < m; ++i) covered += (key[i] + depth >= lo && key[i] + depth < hi);
+    for (U i = 0; i < starts.size(); ++i) {
+        for (const auto& sp : spans)
+            if (starts[i] >= sp.first && starts[i] < sp.second) { ++covered; break; }
+    }
     ++w.stageLeaves;
     w.stageBytes += st.bytes;
     w.stageMembers += covered;
+    w.stageRawWindows += st.rawWindows;
+    w.stageMergedReads += st.mergedReads;
     return covered;
 }
 
@@ -568,6 +677,23 @@ static inline void bin_window_release_cache(const std::string& path) {
     ::posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED);
     ::close(fd);
 }
+// The charter also asks for a release "after each window SEALS". It is a KNOB and
+// not the default, because this same file is READ BACK by the build in this very
+// process a moment later: dropping it at seal makes the build pay device reads
+// for bytes it just wrote. Both ways are measured (RESULTS_PREFETCH2.md); the
+// erase-time release (above) is the default because it cannot cost a read.
+static inline bool bin_window_dontneed_seal() {
+    const char* e = ::getenv("BIN_WINDOW_DONTNEED_SEAL");
+    return e && *e && *e != '0';
+}
+// The ERASE-time release is the default and is what the pile-regime A/B turns
+// off for its control arm (`BIN_WINDOW_DONTNEED=0`): without it the window files
+// stay in the page cache after their bins are built, which is exactly the state
+// the hygiene work exists to prevent. Product default 1.
+static inline bool bin_window_dontneed_erase() {
+    const char* e = ::getenv("BIN_WINDOW_DONTNEED");
+    return !(e && *e == '0');
+}
 static inline void bin_window_sabotage(const std::string& path);
 
 // The write path's staging budget, PER FILL THREAD. The scatter interleaves up
@@ -775,6 +901,7 @@ struct BinWindow {
     void seal() {
         writeHeader(slots);
         ::fsync(fd);
+        if (bin_window_dontneed_seal()) ::posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED);
     }
     // ---- open an existing file and verify it (the BUILD arm) --------------
     void openRead(U idx, U sl, U lo, U hi) {
@@ -821,7 +948,7 @@ struct BinWindow {
         // file's bytes are dead once its bins are built, and at pile scale this
         // is the single largest thing that competes with the corpus for the page
         // cache. Advisory, byte-neutral, and done on the fd that is still open.
-        if (fd >= 0) ::posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED);
+        if (fd >= 0 && bin_window_dontneed_erase()) ::posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED);
         close();
         if (!path.empty()) { ::unlink(path.c_str()); path.clear(); }
     }
@@ -2629,7 +2756,8 @@ static void bin_journal(const BinWork& total, bool dollar, U threads,
         "periodic_period_max=%llu sanity_bound=%llu leaf_s=%.3f "
         "stage_budget_bytes=%llu stage_leaves=%llu stage_members=%llu "
         "stage_bytes=%llu stage_hits=%llu stage_partials=%llu stage_misses=%llu "
-        "stage_skipped_ram=%llu stage_s=%.3f "
+        "stage_raw_windows=%llu stage_merged_reads=%llu stage_segs_max=%llu "
+        "stage_avg_read_bytes=%.1f stage_skipped_ram=%llu stage_s=%.3f "
         "full_SA=0 persistent_positions=0\n",
         unsigned(dollar), (unsigned long long)threads,
         (unsigned long long)levelBytes, (unsigned long long)targetSize,
@@ -2674,7 +2802,20 @@ static void bin_journal(const BinWork& total, bool dollar, U threads,
         (unsigned long long)total.periodicLeaves,
         (unsigned long long)total.periodicRows,
         (unsigned long long)total.periodicPeriodMax,
-        (unsigned long long)bin_no_progress_sanity_bound, total.tLeaf);
+        (unsigned long long)bin_no_progress_sanity_bound, total.tLeaf,
+        (unsigned long long)bin_leaf_stage_budget(),
+        (unsigned long long)total.stageLeaves,
+        (unsigned long long)total.stageMembers,
+        (unsigned long long)total.stageBytes,
+        (unsigned long long)total.stageHits,
+        (unsigned long long)total.stagePartials,
+        (unsigned long long)total.stageMisses,
+        (unsigned long long)total.stageRawWindows,
+        (unsigned long long)total.stageMergedReads,
+        (unsigned long long)bin_leaf_stage_segments(),
+        total.stageMergedReads
+            ? double(total.stageBytes) / double(total.stageMergedReads) : 0.0,
+        (unsigned long long)total.stageSkippedRam, total.tStage);
     // The largest byte-1 bin of the largest window, alone: the hot-bin anatomy
     // the operator asked for (`--bin-level-bytes 1` vs `2` on the SAME corpus).
     std::fprintf(stderr,
@@ -2715,8 +2856,14 @@ static int binbwt_main(const std::string& path, const std::string& mapPath,
     // `--bin-level-bytes` is the TOP level's depth in bytes (1 or 2) and nothing
     // else: the interior refinement always codes one byte per level, so a
     // 2-byte top level never builds a 65,536-code table.
-    require(depthCap >= 1 && levelBytes >= 1 && levelBytes <= 2,
-            "bin-bwt parameters");
+    //
+    // `depth_cap == 0` (AUTO) is the PRODUCT default since PART 4: the target-size
+    // rule is the only policy and bin_no_progress_sanity_bound is the bug guard,
+    // so the only thing this check may reject is a level width. (Until this fix
+    // the check still demanded `depthCap >= 1`, i.e. it refused the merge tip's
+    // OWN default and every default-shaped producer run died with
+    // `CROSS_LCP_FATAL bin-bwt parameters` - found while driving part 2's arms.)
+    require(levelBytes >= 1 && levelBytes <= 2, "bin-bwt parameters");
     TextSeg segment; segment.path = path; segment.len = fs::file_size(path);
     std::ifstream map(mapPath, std::ios::binary);
     map.read((char*)segment.remap.data(), 256);
