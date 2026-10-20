@@ -222,15 +222,25 @@ list for the deep tail (max verified 97k-class, measured; the escape list is
 | finish LCE wall (measured 154.8 s of a 737 s end-to-end) | → ~0 | → ~0 |
 
 And where does the column come from? Not from 473M LCE queries moved to the
-producer (that would only relocate the 12.8n symbol cost). It comes from the
-amortisation the finish does not have: **Kasai's construction computes the whole
-LCP array in `O(n)` symbol comparisons total** (the invariant `lcp[rank[p+1]] >=
-lcp[rank[p]] - 1` pays for the re-walk), i.e. ~2n reads instead of 12.8n. The
-producer can run it over each window's finished bin slices because it already has
-the positions in SA order; what it needs is the *inverse* permutation `rank[p]`
-for the window, which is the only real cost (`n*w` bits if held for the whole
-corpus; per window it is `window_cap * w` bits — at 1 GB one window, 3.75 GB;
-at pile, one window of the derived cap).
+producer (that would only relocate the 12.8n symbol cost), and **not** from a
+naive pairwise LCE over adjacent ranks either: measured on the 1 GB fixture,
+computing every adjacent LCP from scratch costs **53,288,895,864 symbol
+comparisons = 53.3n** (that is what `sa_anchor_verify --full` does when it proves
+the k=1 file is a suffix array: mean adjacent LCP 53.289, max 97,059) — *worse*
+than the finish's 12.8n. The column only pays in the form the finish does not
+have: **Kasai's amortisation**, where the invariant `lcp[rank[p+1]] >=
+lcp[rank[p]] - 1` means the first `h-1` symbols are KNOWN and never re-compared,
+so the whole array costs `O(n)` comparisons (~2n: one increment or one mismatch
+per step) even though the sum of the stored values is 53.3n. The producer can run
+it over each window's finished bin slices because it already has the positions in
+SA order; what it needs is the *inverse* permutation `rank[p]` for the window,
+which is the only real cost (`n*w` bits if held for the whole corpus; per window
+it is `window_cap * w` bits — at 1 GB one window, 3.75 GB; at pile, one window of
+the derived cap).
+
+**The measured lesson**: 0.74n bytes of LCP column + an O(n) Kasai pass replaces
+12.8n verified symbols. A naive LCP pass (53.3n) would not; the amortisation is
+the whole win.
 
 Ratio, both ways:
 

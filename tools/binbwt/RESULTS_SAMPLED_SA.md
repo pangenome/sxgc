@@ -30,19 +30,16 @@ proves nothing.
 ### 1b. The fixture-scale verifier (`sa_anchor_verify`, 100 MB, k=1 = the sledgehammer)
 
 ```
-SA_VERIFY_ORDER ok=1 anchors=100000503 k=1 ranks_covered=100000503
-  first_symbol_ascents=207 equal_first_symbol=100000295
-SA_VERIFY_FULL ok=1 ranks=100000503 permutation=1 strictly_increasing=1
-  adjacent_compare_symbols=4093670730 mean_lcp=40.937 max_lcp=34067
+SA_VERIFY_ORDER ok=1 anchors=100000503 k=1 ranks_covered=100000503 first_symbol_ascents=207 equal_first_symbol=100000295 (necessary condition: SA order => non-decreasing first symbol)
+SA_VERIFY_FULL ok=1 ranks=100000503 permutation=1 strictly_increasing=1 adjacent_compare_symbols=4093670730 mean_lcp=40.937 max_lcp=34067
 SA_VERIFY_PASS mode=full-sa anchors=100000503 k=1
-VERIFY_WALL=23.61 maxrss_kb=893024
 ```
 
 The `k=1` anchor file of the 100 MB fixture **is a valid suffix array** of that
 corpus, verified independently of the producer: it is a permutation of [0, n),
 its suffixes are strictly increasing (4.09e9 symbol comparisons of adjacent
-pairs over the remapped corpus), mean adjacent LCP 40.9, max 34,067. The
-sledgehammer statement is checkable, and it is checked.
+pairs over the remapped corpus), mean adjacent LCP 40.9, max 34,067 (wall 23.6 s,
+maxrss 893 MB). The sledgehammer statement is checkable, and it is checked.
 
 ## 2. THE SWEEP: 100 MB fixture (`mergperf-100m-snap.txt`)
 
@@ -89,11 +86,31 @@ standing gate, with the knob on.
 Anchor sizes match `8n/k + 48` to the byte: 15,625,011 × 8 + 48 = 125,000,136;
 976,564 × 8 + 48 = 7,812,560.
 
-### 3a. The k=1 full-SA verification at 1 GB
+### 3a. The k=1 full-SA verification at 1 GB (the sledgehammer, at fixture scale)
+
+One more row of the same sweep driver, k=1, then the full verifier on its 8 GB
+anchor file:
 
 ```
-(§4 below - the run completed after this table was written)
+1      8000005368   1000000665     104.39    145.88    145.9     identical    12820424563 PASS     order-ok (loadavg@start=168.76)
+
+SA_VERIFY_ORDER ok=1 anchors=1000000665 k=1 ranks_covered=1000000665 first_symbol_ascents=229 equal_first_symbol=1000000435 (necessary condition: SA order => non-decreasing first symbol)
+SA_VERIFY_FULL ok=1 ranks=1000000665 permutation=1 strictly_increasing=1 adjacent_compare_symbols=53288895864 mean_lcp=53.289 max_lcp=97059
+SA_VERIFY_PASS mode=full-sa anchors=1000000665 k=1
+VERIFY_WALL=253.25 MAXRSS_KB=8913004
 ```
+
+So the producer's ordered SA at 1 GB is proven to be exactly the suffix array of
+the 1 GB fixture — a permutation of [0, 10^9+665), strictly increasing, checked
+over 53,288,895,864 adjacent symbol comparisons — while the container it also
+produced is byte-identical to the bank. Two independent corroborations fall out:
+
+* `max_lcp` of the full SA is **97,059**, and the finish's own
+  `max_verified=97060` = `max_lcp + 1` — the boundary check. The deepest repeat in
+  the corpus is the same object seen from both ends of the pipeline.
+* the naive cost of the adjacent-LCP column is **53.3n** symbol comparisons
+  (measured here), *worse* than the finish's 12.8n — see §5.2: the LCP column
+  only pays in Kasai's amortised form.
 
 ## 4. THE CURVE, READ HONESTLY: "placement cost vs sampling constant"
 
@@ -173,7 +190,13 @@ values out of the producer without a persistent column); do not build on it.
 | bytes | 736 MB | ~0.97 TB |
 | finish verified symbols | 12.82e9 → **0** | 1.68e13 → **0** |
 | finish LCE wall | 165.0 s of a 229 s finish / 737 s end-to-end banked (21%) → ~0 | ~9 h of the projected 43.3 h finish → ~0 |
-| producer cost | one Kasai pass, **O(n) total symbol comparisons (~2n)**, versus the 12.8n the finish spends now | same ratio |
+| producer cost | one Kasai pass, **O(n) total symbol comparisons (~2n)**, versus the 12.8n the finish spends now — and versus the **53.3n** a NAIVE pairwise adjacent-LCP pass costs (measured, §3a) | same ratio |
+
+**The amortisation is the whole win**: computing the same column by naive
+pairwise LCE costs 53.3n (measured), i.e. 4x WORSE than the finish's current
+12.8n; only Kasai's `lcp[rank[p+1]] >= lcp[rank[p]] - 1` invariant (the first
+`h-1` symbols are known, never re-compared) brings it to O(n). Any
+implementation of §5.2 must be the amortised form.
 
 The constant that makes "sampling" worth it is therefore **not a k, it is a
 different column**: 0.74n bytes of LCP at the run boundaries, computed by the
