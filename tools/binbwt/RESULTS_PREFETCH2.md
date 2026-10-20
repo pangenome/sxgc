@@ -197,10 +197,26 @@ over the not-yet-covered starts and read in ascending order - the staging buffer
 doubles as the reorder buffer (`BinLeafStage::Seg{lo,hi,off}`, `covers()/at()`
 with a last-segment hint). `BIN_LEAF_STAGE_SEGS=1` is byte-for-byte the part-1
 behaviour. New counters on `BIN_WORK`: `stage_raw_windows`, `stage_merged_reads`,
-`stage_avg_read_bytes`, `stage_segs_max`. The counters the ORDER depends on
-(comparisons, symbols, cert_decided, ties, leaf_sorts, leaf_elems, level_passes,
-level_elems, bin_passes, emitted_rows, depth_max, periodic_rows) are untouched by
-construction and the oracle's STAGE pass proves it (section 5).
+`stage_avg_read_bytes`, `stage_segs_max`.
+
+The measured effect needs a view that is NOT RAM-cached (on a cached view the
+stage is skipped: `stage_skipped_ram=62228` on the 1 GB producer). So: the 100 MB
+fixture with a squeezed corpus pool (`CROSS_POOL_SLOTS=32768` = 16 MB pool), 96
+threads, three producer runs, the SAME construction every time:
+
+| `BIN_LEAF_STAGE_SEGS` | producer `total_s` | `stage_bytes` | `stage_members` | `stage_hits` | `stage_misses` | `stage_merged_reads` | `avg_read` |
+|---|---|---|---|---|---|---|---|
+| 1 (part 1) | 477.6 s | 137.2 GB | 12.57 M | 77.2 M | 1528 M | 21,377 | 6.42 MB |
+| **4 (default)** | **396.8 s** | **101.4 GB** | **16.08 M** | **114.8 M** | 1438 M | 69,397 | 1.46 MB |
+| 16 | (did not finish inside the 15-minute window; killed - reported, not guessed) | | | | | | |
+
+**-17% producer wall, -26% read traffic, +28% members covered, +49% comparator
+hits**, with `comparisons=1864294192` and `symbols=15227961956` IDENTICAL in every
+run - the same construction, read from fewer, better-placed places. The counters
+the ORDER depends on (comparisons, symbols, cert_decided, ties, leaf_sorts,
+leaf_elems, level_passes, level_elems, bin_passes, emitted_rows, depth_max,
+periodic_rows) are untouched by construction and the oracle's STAGE pass proves
+it (section 5.1: `counters_identical=1`).
 
 ---
 
