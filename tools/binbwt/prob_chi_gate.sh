@@ -24,15 +24,23 @@ mkdir -p "$ROOT/logs"
 
 say() { printf '%s %s\n' "$(date +%T)" "$*" | tee -a "$ROOT/logs/gate.log"; }
 
+# PRODUCE: the same binned producer the banked fixture came from
+# (tools/binbwt/pf2_produce.sh, FILE MODE: CROSS_V2_PIECES unset, so the producer
+# publishes the COMPLETE piece set and the three finish arms can share it).
+# The chunk k-way merge is NOT this producer: it emits the dense ssa/ssa_t
+# columns (D2 violation) instead of v2 band pieces. Learned by doing.
 if [ ! -f "$PROD/frag.rlebwt.meta" ]; then
-  say "MERGE_START $(uptime | sed 's/.*load average/load/')"
-  /usr/bin/time -v -o "$ROOT/logs/merge.time" \
-    /mnt/nvme2n1/erikg/pc-build/binbwt "$CHUNKS" 8 "$TOTAL" "$PROD/frag" \
-    --threads "$TH" --kway 8 --work "$ROOT/mwork" \
-    > "$ROOT/logs/merge.log" 2>&1
-  say "MERGE_RC=$? $(grep -oE 'Elapsed .*' "$ROOT/logs/merge.time" | tail -1)"
+  say "PRODUCE_START $(uptime | sed 's/.*load average/load/')"
+  mkdir -p "$PROD"
+  ( ulimit -v "${PHASE_CAP_KB:-16777216}"; CROSS_POOL_SLOTS=33554432 CROSS_V2_PIECE_WINDOW=1000000 \
+    /usr/bin/time -v -o "$ROOT/logs/produce.time" \
+    /mnt/nvme2n1/erikg/pc-build/binbwt --binbwt "$CORPUS" --remap "$REMAP" \
+      --out-prefix "$PROD/frag" --threads "$TH" --bin-live-cap 250000000 \
+      > "$ROOT/logs/produce.log" 2>&1 )
+  say "PRODUCE_RC=$? $(grep -oE 'Elapsed .*' "$ROOT/logs/produce.time" | tail -1)"
+  grep -E "BIN_WORK" "$ROOT/logs/produce.log" | tail -1 | sed 's/^/  [produce] /' | tee -a "$ROOT/logs/gate.log"
 else
-  say "MERGE_SKIP pristine exists"
+  say "PRODUCE_SKIP pristine exists"
 fi
 
 arm() {   # arm TAG [env...]
@@ -70,4 +78,7 @@ say "CHECKER_RC=$? $(grep -oE 'Elapsed .*' "$ROOT/logs/checker.time" | tail -1)"
 grep -E "PILE_FINISH_CHECK_CLAIMS|FATAL" "$ROOT/logs/checker.log" | sed 's/^/  [checker] /' | tee -a "$ROOT/logs/gate.log"
 # ---- T3b: hash-trust + FUSED in-worker checking (the pile-scale shape)
 arm t3fused PILE_FINISH_LCE_TRUST=2
+# ---- FLOOR: hash-trust with NO check at all. A MEASUREMENT ARM, not a tier:
+# it prices the constructor's floor so the checker's own price is separable.
+arm floor PILE_FINISH_LCE_TRUST=3
 say "GATE_DONE $(uptime | sed 's/.*load average/load/')"

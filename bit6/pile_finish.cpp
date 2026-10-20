@@ -3252,6 +3252,18 @@ struct PfClaimFused : SlimClaimSink {
     }
 };
 
+// ---- the FLOOR sink: emit and count, check nothing. This is a MEASUREMENT arm
+// only (PILE_FINISH_LCE_TRUST=3): it prices the constructor's floor when it
+// verifies nothing at all, so the checker's own price is separable. It is NOT a
+// product tier - nothing is certified.
+struct PfClaimNull : SlimClaimSink {
+    std::atomic<uint64_t> claimCount{0}, spanSymbols{0};
+    void claim(uint64_t, uint64_t, uint64_t g, uint64_t cap) override {
+        claimCount.fetch_add(1, std::memory_order_relaxed);
+        spanSymbols.fetch_add(g + (g < cap), std::memory_order_relaxed);
+    }
+};
+
 // ---- THE CHECKER PASS. Reads the claims, reads the text at the claimed
 // positions, confirms. A worker OWNS a bucket, sorts it by `i` and sweeps it
 // from low to high, so every worker's i-side is a monotone front inside one
@@ -3570,13 +3582,14 @@ int main(int argc, char** argv) {
         // hand it to the checker; nothing about the ANSWERS changes (the sink
         // path returns the same `guess` the verifier would have confirmed), so
         // a clean corpus must produce a byte-identical container either way.
-        const int trustMode = int(pf_env_u64("PILE_FINISH_LCE_TRUST", 0, 0, 2));
+        const int trustMode = int(pf_env_u64("PILE_FINISH_LCE_TRUST", 0, 0, 3));
         const std::string claimsDir = [] {
             const char* e = std::getenv("PILE_FINISH_CLAIMS_DIR");
             return std::string(e ? e : "");
         }();
         std::unique_ptr<PfClaimSpool> claimSpool;
         PfClaimFused fusedSink;
+        PfClaimNull nullSink;
         fusedSink.text = &text;
         if (trustMode == 1) {
             pf_check(!claimsDir.empty(), "PILE_FINISH_LCE_TRUST=1 requires PILE_FINISH_CLAIMS_DIR");
@@ -3586,6 +3599,9 @@ int main(int argc, char** argv) {
         } else if (trustMode == 2) {
             fhSeam.sink = &fusedSink;
             fhSlim.sink = &fusedSink;
+        } else if (trustMode == 3) {
+            fhSeam.sink = &nullSink;   // FLOOR ARM: measure, certify nothing
+            fhSlim.sink = &nullSink;
         }
         const uint64_t lceFault = pf_env_u64("PILE_FINISH_LCE_FAULT", 0, 0, 1ull << 40);
         const bool trackDegrees = pf_env_u64("PILE_FINISH_PROBE_DEGREES", 0, 0, 1) != 0;
@@ -3595,7 +3611,8 @@ int main(int argc, char** argv) {
                         "tier=%s constructor=%s\n",
                 trustMode, claimsDir.empty() ? "-" : claimsDir.c_str(),
                 (unsigned long long)lceFault, int(trackDegrees),
-                trustMode == 0 ? "T0-full" : "T3-hash-trust+checker",
+                trustMode == 0 ? "T0-full" :
+                (trustMode == 3 ? "T2-floor-only(measurement,not-a-tier)" : "T3-hash-trust+checker"),
                 trustMode == 0 ? "byte-verifies-every-answer" : "emits-claims-only");
         phase("fingerprints", last);
 
@@ -4139,6 +4156,13 @@ int main(int argc, char** argv) {
                         (unsigned long long)(fhSlim.exactFast.read() + fhSeam.exactFast.read()),
                         (unsigned long long)claimSpool->spanSymbols.load());
                 if (pf_env_u64("PILE_FINISH_CHECK_CLAIMS", 0, 0, 1)) pf_check_claims(text, claimsDir, threads);
+            } else if (trustMode == 3) {
+                pf_check(nullSink.claimCount.load() == hashAnswers,
+                         "floor ledger mismatch: " + std::to_string(nullSink.claimCount.load()) +
+                         " claims for " + std::to_string(hashAnswers) + " hash-derived answers");
+                fprintf(stderr, "PILE_FINISH_CLAIMS_LEDGER hash_answers=%llu claims=%llu checked=0 "
+                                "floor_arm=1 NOT_CERTIFIED=1 complete=1\n",
+                        (unsigned long long)hashAnswers, (unsigned long long)nullSink.claimCount.load());
             } else {
                 pf_check(fusedSink.claimCount.load() == hashAnswers,
                          "fused claim ledger mismatch: " + std::to_string(fusedSink.claimCount.load()) +
