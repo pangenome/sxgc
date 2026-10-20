@@ -405,6 +405,23 @@ the fixed binary is what prices it.
 The two 10 GB arms agree to within 10% in band rate - both are inside the
 windowed-lock regime, so neither rate says anything about the hygiene knobs.
 
+**The operator's pre-kill arms, read (not run) from their own logs, as
+contention ceilings only** (the supervisor killed them: superseded binaries, four
+concurrent 10 GB finishes on one device):
+
+| arm (pre-kill, superseded binaries) | last band | `lce_wall` | `lce_wait` | share | `wit_spills` |
+|---|---|---|---|---|---|
+| `pre-10g-base` (no prefetch) | 1153 | 6457.6 s | 6389.7 s | 98.9% | 0 |
+| `pre-10g-pf` (part-1 prefetch) | 4161 | 26164.6 s | 25940.7 s | 99.1% | 0 |
+
+Same signature as my arms - 98.9-99.1% pool wait, zero spilling - i.e. those
+arms were measuring the SAME per-byte window lock, not the prefetch policy. That
+is why their A/B could not separate base from pf, and it is the reconciliation
+the launch table needs: **every 10 GB finish number on this box to date,
+including the ladder's, is a windowed-adapter crowding number.** (The one thing
+they do attest is that the base arm's `bin_rc=0` producer completed: 35968 s total
+wall for that arm's pair, contention-inclusive.)
+
 
 ### 4.7 Recommendation for the supervisor
 
