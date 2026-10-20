@@ -76,6 +76,14 @@ struct BinWork {
     // ---- the write path's own cost (pwrite, no mapping) --------------------
     U winFillBufBytes = 0;              // peak staging buffers (threads x <= 4 MiB)
     U winFillWrites = 0;                // pwrite() calls the fill issued
+    // ---- the SAMPLED-SA anchor side-stream (--sa-sample-k) ----------------
+    // The emit pass holds the global SA in order, so every k-th rank's SA value
+    // is a sequential read of the slice it is streaming anyway. OFF (k=0) is the
+    // product default and changes nothing at all.
+    U saSampleK = 0;                    // the sampling constant this run used
+    U saSamples = 0;                    // anchors written (== count in the header)
+    U saSampleBytes = 0;                // the file's bytes, header included
+    double tSaSample = 0;               // wall spent emitting them
     void absorb(const BinWork& o) {
         sweepBytes += o.sweepBytes; sweepPasses += o.sweepPasses;
         windows += o.windows; bins += o.bins; binPasses += o.binPasses;
@@ -128,6 +136,9 @@ struct BinWork {
         tCreditWait += o.tCreditWait;
         winFillBufBytes = std::max(winFillBufBytes, o.winFillBufBytes);
         winFillWrites += o.winFillWrites;
+        if (o.saSampleK) saSampleK = o.saSampleK;
+        saSamples += o.saSamples; saSampleBytes += o.saSampleBytes;
+        tSaSample += o.tSaSample;
     }
 };
 
@@ -986,12 +997,144 @@ static inline void bin_window_sabotage(const std::string& path) {
     ::close(fd);
 }
 
+// ------------------------------------------------- THE SAMPLED-SA ANCHORS
+// Option "sample the suffix array": the emit pass of `bin_order` walks the
+// finished per-bin slices in GLOBAL RANK ORDER on one thread, and every word in
+// a slice already carries its text position (bin_word_tail -> bin_pos_of). So
+// emitting the suffix array's value at every k-th RANK is a sequential read of
+// an array the pass is streaming anyway: 8 B/entry, no comparisons, no LCE, no
+// text read. This is the ONLY way to get SA[rank] out of the producer without a
+// persistent SA column (the charter's `full_SA=0 persistent_positions=0`).
+//
+// FILE LAYOUT (little endian), version 1 - all fixed width, sequential:
+//   0  u32 magic   'SXSA' == 0x41535853
+//   4  u32 version == 1
+//   8  u64 n        the corpus length (rows emitted == n)
+//  16  u64 k        the sampling constant (>= 1); rank of entry j is j*k
+//  24  u64 count    number of anchor entries (patched at close)
+//  32  u64 rows     rows the emit pass saw (patched at close)
+//  40  u64 pad      reserved 0: THE RANK SPACE IS THE EMIT PASS'S ROW COUNTER,
+//                   i.e. rank r is the r-th REAL BWT row. The container's row
+//                   numbering prepends 10 padding rows (BinBandSink::addRun in
+//                   its constructor), so container_row = r + 10. `pad` records
+//                   that offset so a consumer can never confuse the two.
+//  48  ...          count x u64: SA[j*k] for j = 0..count-1, ascending rank
+// The consumer recovers SA[rank] for a non-anchor rank by walking from the
+// nearest anchor below it - that is the curve Phase 4 measures. Correctness of
+// every entry against the brute-force SA is gated by sa_anchor_oracle.
+static constexpr uint32_t SA_ANCHOR_MAGIC = 0x41535853u;   // 'S','X','S','A'
+static constexpr uint32_t SA_ANCHOR_VERSION = 1;
+static constexpr uint32_t SA_ANCHOR_HEADER_BYTES = 48;
+// The container's row numbering: BinBandSink seeds 1 + 9 padding rows before the
+// first real bin (binbwt_slice.h, its constructor), so a container row is an
+// emit-pass rank + 10. Recorded in the header, never assumed.
+static constexpr uint64_t SA_ANCHOR_ROW_PAD = 10;
+struct SaAnchorWriter {
+    int fd = -1;
+    U k = 0, n = 0, count = 0, rows = 0, lastRank = 0;
+    std::string path;
+    std::vector<uint64_t> buf;          // one buffered write per 1 MiB
+    double tWrite = 0;
+    bool started = false, finished = false;
+    SaAnchorWriter() = default;
+    SaAnchorWriter(const SaAnchorWriter&) = delete;
+    SaAnchorWriter& operator=(const SaAnchorWriter&) = delete;
+    ~SaAnchorWriter() { if (fd >= 0) { ::close(fd); fd = -1; } }
+    bool on() const { return k != 0; }
+    static U expectedCount(U rows, U k) { return rows ? (rows - 1) / k + 1 : 0; }
+    void open(const std::string& p, U kk, U nn) {
+        require(kk >= 1, "sa-sample-k must be >= 1 (0 is OFF)");
+        require(!p.empty(), "--sa-sample-out is required when --sa-sample-k > 0");
+        k = kk; n = nn; path = p;
+        fd = ::open(p.c_str(), O_CREAT | O_EXCL | O_RDWR, 0666);
+        require(fd >= 0, "create --sa-sample-out (refusing to clobber)");
+        buf.reserve(1u << 17);          // 1 MiB of SA values
+        uint8_t h[SA_ANCHOR_HEADER_BYTES] = {};
+        const uint32_t magic = SA_ANCHOR_MAGIC, ver = SA_ANCHOR_VERSION;
+        std::memcpy(h + 0, &magic, 4);
+        std::memcpy(h + 4, &ver, 4);
+        std::memcpy(h + 8, &n, 8);
+        std::memcpy(h + 16, &k, 8);
+        const uint64_t padRows = SA_ANCHOR_ROW_PAD;
+        std::memcpy(h + 40, &padRows, 8);
+        // count/rows stay 0 here and are patched by finish().
+        require(::pwrite(fd, h, SA_ANCHOR_HEADER_BYTES, 0) == ssize_t(SA_ANCHOR_HEADER_BYTES),
+                "write sa-anchor header");
+        started = true;
+    }
+    void flush() {
+        if (buf.empty()) return;
+        const size_t bytes = buf.size() * sizeof(uint64_t);
+        const off_t at = off_t(SA_ANCHOR_HEADER_BYTES) + off_t(count - buf.size()) * 8;
+        size_t done = 0;
+        while (done < bytes) {
+            const ssize_t w = ::pwrite(fd, (const char*)buf.data() + done, bytes - done,
+                                      at + off_t(done));
+            require(w > 0, "write sa-anchor entry");
+            done += size_t(w);
+        }
+        const double t0 = now_sec();
+        (void)t0;
+        buf.clear();
+    }
+    // One bin's ordered slice: emit the ranks in [baseRow, baseRow+m) that are
+    // multiples of k. Sequential over the slice (stride k), never a random read.
+    void emitSlice(const U* slice, U m, U baseRow, U nn, bool dollar) {
+        if (!on() || !m) return;
+        const double t0 = now_sec();
+        require(baseRow == rows, "sa-anchor slice rank continuity");
+        U r = ((baseRow + k - 1) / k) * k;          // first rank >= baseRow, % k == 0
+        for (; r < baseRow + m; r += k) {
+            const U i = r - baseRow;
+            const U p = bin_pos_of(bin_word_tail(slice[i]), nn, dollar);
+            require(p < nn, "sa-anchor position bounds");
+            if (count) require(r > lastRank, "sa-anchor rank order");
+            lastRank = r;
+            buf.push_back(uint64_t(p));
+            ++count;
+            if (buf.size() >= (1u << 17)) flush();
+        }
+        rows = baseRow + m;
+        tWrite += now_sec() - t0;
+    }
+    // Patch count/rows into the header, prove the count matches the arithmetic,
+    // and stamp the counters into the run's work record.
+    void finish(BinWork& w) {
+        if (!on()) return;
+        require(!finished, "sa-anchor finish twice");
+        flush();
+        const U want = expectedCount(rows, k);
+        require(count == want, "sa-anchor count does not match (rows-1)/k+1");
+        require(::pwrite(fd, &count, 8, 24) == 8, "patch sa-anchor count");
+        require(::pwrite(fd, &rows, 8, 32) == 8, "patch sa-anchor rows");
+        require(::fsync(fd) == 0, "sync sa-anchor file");
+        struct stat st{};
+        require(::fstat(fd, &st) == 0, "stat sa-anchor file");
+        require(uint64_t(st.st_size) == SA_ANCHOR_HEADER_BYTES + uint64_t(count) * 8,
+                "sa-anchor file size");
+        w.saSampleK = k; w.saSamples = count;
+        w.saSampleBytes = uint64_t(st.st_size); w.tSaSample += tWrite;
+        std::fprintf(stderr,
+            "SA_ANCHOR_DONE k=%llu entries=%llu bytes=%llu rows=%llu n=%llu "
+            "bytes_per_entry=8 write_s=%.3f path=%s\n",
+            (unsigned long long)k, (unsigned long long)count,
+            (unsigned long long)w.saSampleBytes, (unsigned long long)rows,
+            (unsigned long long)n, tWrite, path.c_str());
+        ::close(fd); fd = -1;
+        finished = true;
+    }
+};
+
 // How the windows are backed and how far the fill may run ahead of the build.
 struct BinWindowOpts {
     std::string dir;      // the rolling files' directory (scratch tree)
     U credit = 2;         // windows the fill may be ahead of the build
     U buildCap = 0;       // per-group build working set, slots (0 = whole window)
     bool disc = true;     // false = the RAM-arena A/B arm
+    // THE SAMPLED-SA ANCHORS (default OFF; the product path is untouched):
+    // emit SA[j*k] for every rank j*k to `saSamplePath` during the emit pass.
+    U saSampleK = 0;
+    std::string saSamplePath;
 };
 
 // ------------------------------------------------- THE PHASE CAP (auto cap)
@@ -1614,6 +1757,17 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U targetSi
         liveCap = largest;
     }
     U row = 0;
+    // ---- THE SAMPLED-SA ANCHOR STREAM (option B), OFF by default -----------
+    // Opened before the window plan so a bad path fails before a byte of work,
+    // and finished after the last bin so the header's count is the arithmetic
+    // one. `k == 0` leaves this inert: no fd, no branch taken per row beyond a
+    // predictable `if (saAnchor.on())` per BIN.
+    SaAnchorWriter saAnchor;
+    if (wopt.saSampleK) {
+        require(!fillOnly, "--sa-sample-k cannot be used with --bin-fill-only "
+                           "(nothing is emitted there)");
+        saAnchor.open(wopt.saSamplePath, wopt.saSampleK, n);
+    }
     // ---- THE WINDOW PLAN, computed up front -------------------------------
     // The fill may run ahead of the build by a bounded CREDIT of windows, so the
     // partition has to exist before either phase starts: whole bins packed to
@@ -1808,6 +1962,7 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U targetSi
         auto emitBin = [&](unsigned c) {
             const double t0 = now_sec();
             const U* slice = arena.data() + off[c];
+            const U baseRow = row;
             if constexpr (bin_publish_sink<Emit>::value) {
                 // The sink publishes the whole ordered slice itself (parallel
                 // band writers at run boundaries); it owns nothing of the
@@ -1818,6 +1973,12 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U targetSi
                 for (U i = 0; i < bins[c]; ++i)
                     emit(row++, bin_pos_of(bin_word_tail(slice[i]), n, dollar));
             }
+            // THE ANCHOR SIDE-STREAM: the SAME ordered slice, read again with
+            // stride k. `baseRow` is this bin's first global rank, so the anchor
+            // ranks are baseRow's first multiple of k onward - both arms of the
+            // emit produce the identical stream because the slice and the rank
+            // base are identical.
+            if (saAnchor.on()) saAnchor.emitSlice(slice, bins[c], baseRow, n, dollar);
             total.tEmit += now_sec() - t0;
             total.emittedRows += bins[c];
         };
@@ -2353,6 +2514,7 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U targetSi
         require(sh.joinedTotal <= joinCount, "bin fill target join overrun");
     }
     require(row == n, "bin-bwt row coverage");
+    saAnchor.finish(total);
 }
 
 // ------------------------------------------ bin-bwt v2: the parallel sink
@@ -2758,7 +2920,8 @@ static void bin_journal(const BinWork& total, bool dollar, U threads,
         "stage_bytes=%llu stage_hits=%llu stage_partials=%llu stage_misses=%llu "
         "stage_raw_windows=%llu stage_merged_reads=%llu stage_segs_max=%llu "
         "stage_avg_read_bytes=%.1f stage_skipped_ram=%llu stage_s=%.3f "
-        "full_SA=0 persistent_positions=0\n",
+        "full_SA=0 persistent_positions=0 "
+        "sa_sample_k=%llu sa_samples=%llu sa_sample_bytes=%llu sa_sample_s=%.3f\n",
         unsigned(dollar), (unsigned long long)threads,
         (unsigned long long)levelBytes, (unsigned long long)targetSize,
         (unsigned long long)depthCap, unsigned(freqSched),
@@ -2815,7 +2978,9 @@ static void bin_journal(const BinWork& total, bool dollar, U threads,
         (unsigned long long)bin_leaf_stage_segments(),
         total.stageMergedReads
             ? double(total.stageBytes) / double(total.stageMergedReads) : 0.0,
-        (unsigned long long)total.stageSkippedRam, total.tStage);
+        (unsigned long long)total.stageSkippedRam, total.tStage,
+        (unsigned long long)total.saSampleK, (unsigned long long)total.saSamples,
+        (unsigned long long)total.saSampleBytes, total.tSaSample);
     // The largest byte-1 bin of the largest window, alone: the hot-bin anatomy
     // the operator asked for (`--bin-level-bytes 1` vs `2` on the SAME corpus).
     std::fprintf(stderr,

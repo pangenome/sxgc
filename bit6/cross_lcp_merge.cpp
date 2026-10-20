@@ -5487,6 +5487,19 @@ int main_impl(int argc, char** argv) {
         if (!flag("--bin-build-cap").empty())
             bwo.buildCap = std::stoull(flag("--bin-build-cap"));
         bwo.disc = !has("--bin-window-ram");
+        // THE SAMPLED-SA ANCHORS (option B, OFF by default): emit SA[j*k] for
+        // every k-th global rank from the emit pass's already-ordered slices
+        // (`SA_ANCHOR_DONE`, bit6/binbwt_slice.h). `k == 0` is inert: no file is
+        // created, no per-bin branch is taken, and the product is byte-identical.
+        if (!flag("--sa-sample-k").empty()) {
+            bwo.saSampleK = std::stoull(flag("--sa-sample-k"));
+            require(bwo.saSampleK <= (U(1) << 40), "--sa-sample-k out of range");
+        }
+        bwo.saSamplePath = flag("--sa-sample-out");
+        if (bwo.saSampleK && bwo.saSamplePath.empty())
+            require(false, "--sa-sample-k needs --sa-sample-out");
+        if (!bwo.saSampleK && !bwo.saSamplePath.empty())
+            require(false, "--sa-sample-out without --sa-sample-k is inert; refuse");
         const std::string capFlag = flag("--bin-live-cap");
         const bool binLiveCapGiven = !capFlag.empty();
         const U binLiveCap = binLiveCapGiven ? std::stoull(capFlag) : 0;
