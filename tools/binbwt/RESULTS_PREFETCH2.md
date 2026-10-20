@@ -285,23 +285,27 @@ producer's bands) is 95-99% of its LCE span.
 
 ### 4.1 The residency readout (the point of the A/B)
 
-`hyg0` (hygiene OFF), band samples from `PILE_FINISH_CACHE_RESIDENCY` (stride
-1024 pages = 4 MiB, 2385 samples per line over the 10 GB corpus):
+`hyg0` (hygiene OFF) and `hyg1` (hygiene ON) band samples from
+`PILE_FINISH_CACHE_RESIDENCY` (stride 1024 pages = 4 MiB, 2385 samples per line
+over the 10 GB corpus):
 
-| band | 1 | 65 | 129 | 193 | 257 | 321 | 385 | 449 | 513 | 577 | 641 |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| corpus resident % | 97.95 | 99.79 | 99.96 | 99.96 | 99.83 | 99.83 | **85.20** | 99.54 | 100 | 100 | 100 |
+| band | 1 | 65 | 129 | 193 | 257 | 321 | 385 | 449 | 513 | 577 | 641 | 705 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| hyg0 corpus resident % | 97.95 | 99.79 | 99.96 | 99.96 | 99.83 | 99.83 | **85.20** | 99.54 | 100 | 100 | 100 | 100 |
+| hyg1 corpus resident % | 99.71 | 99.96 | 99.96 | 100 | 100 | 100 | 100 | 100 | 100 | 100 | 100 | 100 |
 
-and `meminfo_cached_gb` never dropped below ~62 GB while the arm's own window
-files were 42 GB of live scratch.
+(`hyg0` reached band 2625 with two dips: 85.2% at band 385 and 94.2% at 1281,
+both recovering inside one sample; `hyg1` reached band 705, all >= 99.7%. The two
+arms OVERLAPPED in time - hyg0 ran 00:02-04:29, hyg1 02:36-04:29 - so they sat in
+the same box conditions, which is the only fair thing about them.)
 
 **Honest reading: at 10 GB on a 1 TB box the corpus is NEVER squeezed**, hygiene
-or not. 10 GB of read-only text against 60-90 GB of page cache is not the pile's
-regime; the one dip (85% at band 385) is the window-file writeback of the
-concurrent producer, and it recovers by itself. The hygiene machinery is correct
-and byte-neutral (section 5), but this fixture cannot price it either - the
-condition it exists for is `corpus_bytes >> pool_bytes`, i.e. the 1.31 TB pile
-(corpus cache there is the 17.2 GB pool budget, not the corpus).
+or not. 10 GB of read-only text against 60-211 GB of page cache is not the pile's
+regime; the dips are the concurrent producer's window-file writeback and they
+recover by themselves. The hygiene machinery is correct and byte-neutral (section
+5), but this fixture cannot price it either - the condition it exists for is
+`corpus_bytes >> pool_bytes`, i.e. the 1.31 TB pile (corpus cache there is the
+17.2 GB pool budget, not the corpus).
 
 ### 4.2 The cold-corpus precondition FAILS at 10 GB, and why
 
@@ -451,20 +455,29 @@ been dead code behind a stale assertion).
 ### 5.2 The fixture banks (byte identity, through the arms)
 
 1 GB (`mergperf-1b-snap.txt`, bank `pilev2-g2-1b/frag.sxi2`,
-sha `38f03eb4...144f`): **12/12 arms** - three modes x two cold models x two reps
-plus the two knob points - reported `CMP=0` and `SHA=38f03eb4...144f`, with
-`chi=283296933` on every one.
+sha `38f03eb4...144f`): **13/13 arms** - three modes x two cold models x two reps,
+the two knob points, and the post-window-fix arms - reported `CMP=0` and
+`SHA=38f03eb4...144f`, with `chi=283296933` on every one.
 
 100 MB (`mergperf-100m-snap.txt`, bank `xsa-pw3-chunk-100m/mergperf-100m-snap.sxi2`,
 sha `b4753899...a5`): every 100 MB arm reported
 `CMP=0 SHA=b4753899592c952542f7416ee9ce5836e19b99971afa74d02281493b3a289ba5`
 with `chi=29716349`.
 
-Representative line (full 1 GB sweep arm, cold start):
+Representative lines (full 1 GB sweep arm, cold start; and the two arms that gate
+the window-pinning fix AFTER it landed):
 
 ```
 REP=1 TAG=1b-prod ARM=sweep MODE=1 JOBS=2 BUDGET_MIB=32 COLD=1 COLD_EVERY=0 ASSIST=populate RC=0 SWEEP_WALL=144.166 CHI=283296933 CMP=0 SHA=38f03eb43aaea5997819c8f7922a244a3eb0be945bf1d3b0feb1f2fd9d23144f
+REP=2 TAG=1b-prod ARM=lazy MODE=0 JOBS=2 BUDGET_MIB=32 COLD=1 COLD_EVERY=0 ASSIST=populate RC=0 SWEEP_WALL=140.188 CHI=283296933 CMP=0 SHA=38f03eb43aaea5997819c8f7922a244a3eb0be945bf1d3b0feb1f2fd9d23144f   (forced WINDOWED adapter, pinned=1 - the lock-free path)
+REP=3 TAG=1b-prod ARM=sweep MODE=1 JOBS=2 BUDGET_MIB=32 COLD=1 COLD_EVERY=0 ASSIST=populate RC=0 SWEEP_WALL=163.215 CHI=283296933 CMP=0 SHA=38f03eb43aaea5997819c8f7922a244a3eb0be945bf1d3b0feb1f2fd9d23144f   (default mmap adapter, after the fix)
+REP=1 TAG=100m-probe ARM=sweep ... CMP=0 SHA=b4753899592c952542f7416ee9ce5836e19b99971afa74d02281493b3a289ba5
 ```
+
+**Scope note on the oracle:** it compiles `bit6/cross_lcp_merge.cpp` (the
+producer), not `bit6/pile_finish.cpp`, so the post-oracle changes (window
+pinning, the corpus-window knob) are gated by these product banks, which were run
+AFTER the change - including one arm that forces the pinned path.
 
 ### 5.3 The cache policy is invisible to the product
 
@@ -474,25 +487,29 @@ knob ON and OFF, cold and warm, sweep and lazy).
 
 ## 6. Residual risks
 
-1. **The 10 GB thesis is UNPROVEN on this box.** The three-way is flat at 1 GB
-   (section 3) and the 10 GB arms are producer-paced under 240-360 load. The
-   decisive number - the pile's finish term - is still the ladder's, not mine.
-   Recommendation in 4.3.
-2. **`PILE_FINISH_PREFETCH` defaults to 0 (lazy).** Nothing in the product route
-   turns the prefetcher on, because at the scales measured it does not pay. That
-   is deliberate and reversible with one variable.
-3. **The cold-corpus knob is defeated by any other mapper** (section 4.2). It is a
-   measurement device; a product run must never depend on it.
-4. **The prefetch thread's coalescing is ~80-106 s of CPU per 1 GB pass** (sorts of
+1. **The window-pinning fix removes ~110x of per-band cost at 10 GB, and that
+   projection is arithmetic from the 1 GB control, not a 10 GB measurement.** The
+   decisive 10 GB number (finish wall on the fixed binary, hygiene A/B) still has
+   to be taken on a quiet box - see 4.7.
+2. **Pinning charges ADDRESS SPACE**: `need x windowBytes = mapBudget =
+   RLIMIT_AS/3` by construction, so it cannot exceed the budget the cap arithmetic
+   already assumes - but it IS eager, and a corpus that just fits the window set
+   now maps all of it at startup (page tables, not RSS).
+3. **The three-way is flat at 1 GB** (section 3) and the sweep does not pay: the
+   demand path is already a monotone SA walk, so PART B's premise (scattered
+   4 KiB reads) does not describe this pipeline. The prefetcher stays OFF by
+   default (`PILE_FINISH_PREFETCH=0`); the delivered PART B win is the producer's
+   leaf staging (-17% producer wall on a squeezed pool, section 2.4).
+4. **The cold-corpus knob is defeated by any other process that maps the corpus**
+   (section 4.2). It is a measurement device; a product run must never depend on it.
+5. **The prefetch thread's coalescing is ~80-106 s of CPU per 1 GB pass** (sorts of
    ~262k window pairs per band). It is off the fold's critical path now, but on a
    loaded box that CPU is not free.
-5. **`BIN_LEAF_STAGE_SEGS` defaults to 4** (part 1's single span is 1). The
-   oracle proves order equality and counter equality; the SPEED claim rests on
-   the pile regime, which this box could not measure (staging is skipped on a
-   RAM-cached view - `stage_skipped_ram=62228` on the 1 GB producer).
-6. **Two base-commit defects were found and are reported, not papered over:** the
-   unwired prefetcher and the stale oracle assertion (section 0). A third - the
-   producer refusing its own AUTO depth cap - is fixed at `bit6/binbwt_slice.h:2859`.
+6. **`BIN_LEAF_STAGE_SEGS=16` was not measured** (it did not finish inside the
+   15-minute window and was killed - reported, not guessed). The default is 4.
+7. **Three base-commit defects were found and are reported, not papered over:** the
+   unwired prefetcher (section 0), the stale oracle assertion (section 0) and the
+   producer refusing its own AUTO depth cap (fixed at `bit6/binbwt_slice.h:2859`).
 
 ## 7. Branch and commits
 
@@ -507,3 +524,6 @@ knob ON and OFF, cold and warm, sweep and lazy).
 | `09dcb1d` | runtime mirror + SOURCES.sha256.json digests |
 | `80014bb` | the 10 GB residency readout + the clean-arm recommendation |
 | `7b3c70a` | oracle repair: the stale periodic-sanity assertion (base defect) so ADAPTIVE/FREQ run |
+| `05e5011` | gates verbatim + residual risks + the commit table |
+| `aa78719` | the producer leaf-staging A/B on a squeezed pool |
+| `efd4762` | the 10 GB anatomy reconciled (per-byte window lock) and fixed (pin every window when they all fit) |
