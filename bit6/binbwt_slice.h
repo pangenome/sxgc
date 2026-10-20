@@ -1013,7 +1013,11 @@ static inline void bin_window_sabotage(const std::string& path) {
 //  16  u64 k        the sampling constant (>= 1); rank of entry j is j*k
 //  24  u64 count    number of anchor entries (patched at close)
 //  32  u64 rows     rows the emit pass saw (patched at close)
-//  40  u64 pad      reserved, 0 = no padding rows precede rank 0
+//  40  u64 pad      reserved 0: THE RANK SPACE IS THE EMIT PASS'S ROW COUNTER,
+//                   i.e. rank r is the r-th REAL BWT row. The container's row
+//                   numbering prepends 10 padding rows (BinBandSink::addRun in
+//                   its constructor), so container_row = r + 10. `pad` records
+//                   that offset so a consumer can never confuse the two.
 //  48  ...          count x u64: SA[j*k] for j = 0..count-1, ascending rank
 // The consumer recovers SA[rank] for a non-anchor rank by walking from the
 // nearest anchor below it - that is the curve Phase 4 measures. Correctness of
@@ -1021,6 +1025,10 @@ static inline void bin_window_sabotage(const std::string& path) {
 static constexpr uint32_t SA_ANCHOR_MAGIC = 0x41535853u;   // 'S','X','S','A'
 static constexpr uint32_t SA_ANCHOR_VERSION = 1;
 static constexpr uint32_t SA_ANCHOR_HEADER_BYTES = 48;
+// The container's row numbering: BinBandSink seeds 1 + 9 padding rows before the
+// first real bin (binbwt_slice.h, its constructor), so a container row is an
+// emit-pass rank + 10. Recorded in the header, never assumed.
+static constexpr uint64_t SA_ANCHOR_ROW_PAD = 10;
 struct SaAnchorWriter {
     int fd = -1;
     U k = 0, n = 0, count = 0, rows = 0, lastRank = 0;
@@ -1047,7 +1055,9 @@ struct SaAnchorWriter {
         std::memcpy(h + 4, &ver, 4);
         std::memcpy(h + 8, &n, 8);
         std::memcpy(h + 16, &k, 8);
-        // count/rows/pad stay 0 here and are patched by finish().
+        const uint64_t padRows = SA_ANCHOR_ROW_PAD;
+        std::memcpy(h + 40, &padRows, 8);
+        // count/rows stay 0 here and are patched by finish().
         require(::pwrite(fd, h, SA_ANCHOR_HEADER_BYTES, 0) == ssize_t(SA_ANCHOR_HEADER_BYTES),
                 "write sa-anchor header");
         started = true;

@@ -71,6 +71,13 @@ sequential extra read of `m/k` words per bin, one buffered `write()`. It costs
 what "the sledgehammer with an added constant" gets right: the *emission* really
 is nearly free.
 
+Rank space (a detail nobody can be allowed to guess): the rung's rank is the emit
+pass's own row counter, i.e. the r-th **real** BWT row. The container's row
+numbering prepends 10 padding rows (`BinBandSink` seeds 1 + 9 in its constructor,
+`bit6/binbwt_slice.h`), so `container_row = r + 10`. The anchor header records
+that offset in its `pad` field and `sa_anchor_verify` refuses a file whose `pad`
+is not 10, so the two spaces can never be silently confused.
+
 What it does not get right is the *use* (next section).
 
 ## 2. THE MECHANISM: what the finish's expensive walks actually are

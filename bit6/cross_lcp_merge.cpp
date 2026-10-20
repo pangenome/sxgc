@@ -5493,7 +5493,7 @@ int main_impl(int argc, char** argv) {
         // created, no per-bin branch is taken, and the product is byte-identical.
         if (!flag("--sa-sample-k").empty()) {
             bwo.saSampleK = std::stoull(flag("--sa-sample-k"));
-            require(bwo.saSampleK >= 1, "--sa-sample-k must be >= 1 (0 = OFF)");
+            require(bwo.saSampleK <= (U(1) << 40), "--sa-sample-k out of range");
         }
         bwo.saSamplePath = flag("--sa-sample-out");
         if (bwo.saSampleK && bwo.saSamplePath.empty())

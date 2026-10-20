@@ -66,7 +66,7 @@ static AnchorFile read_anchor_file(const std::string& path) {
     f.read((char*)&a.pad, 8);
     require(a.magic == SA_ANCHOR_MAGIC, "sa-anchor oracle: magic");
     require(a.version == SA_ANCHOR_VERSION, "sa-anchor oracle: version");
-    require(a.pad == 0, "sa-anchor oracle: pad");
+    require(a.pad == SA_ANCHOR_ROW_PAD, "sa-anchor oracle: pad");
     require(a.k >= 1, "sa-anchor oracle: k");
     require(fsize == SA_ANCHOR_HEADER_BYTES + a.count * 8, "sa-anchor oracle: file size");
     a.sa.resize(a.count);

@@ -6,7 +6,8 @@
 //   sa_anchor_verify ANCHOR_FILE CORPUS REMAP [--full]
 //
 // Always checked (any k):
-//   * the header describes itself: magic, version, pad=0, k >= 1,
+//   * the header describes itself: magic, version, pad=10 (the container's
+//     padding offset: container_row = emit_rank + 10), k >= 1,
 //     count == (rows-1)/k+1, rows == corpus length, file size exact;
 //   * every entry is a position in [0, n);
 //   * THE ORDER CHECK: the first symbol of the suffix at each anchor,
@@ -72,7 +73,7 @@ int main(int argc, char** argv) {
     std::memcpy(&pad, anchor.p + 40, 8);
     if (magic != MAGIC) die("bad magic");
     if (version != VERSION) die("bad version");
-    if (pad != 0) die("pad != 0");
+    if (pad != 10) die("pad != 10 (the container's 1+9 padding rows before rank 0)");
     if (k < 1) die("k < 1");
     if (rows != corpus.n) die("header rows != corpus length");
     if (n != corpus.n) die("header n != corpus length");
