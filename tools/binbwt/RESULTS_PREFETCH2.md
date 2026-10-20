@@ -252,9 +252,66 @@ measured at 10 GB (section 4).
 
 ## 4. PART C (operator's steer): the 10 GB hygiene A/B
 
-*(arms hyg0/hyg1 running detached: `tools/binbwt/pf2_hygiene10g.sh`,
-`/mnt/nvme2n1/erikg/pf2-10g-hyg{0,1}/`; the residency journal prints every 64
-bands, so a partial arm is still the readout. Tables filled as they land.)*
+Arms: `tools/binbwt/pf2_hygiene10g.sh hyg0|hyg1` - the live 10 GB shape (producer
+and finish CONCURRENT, streaming wire, 96 threads, auto bin cap under a 60 GiB
+phase ulimit), prefetch sweep ON, cold-corpus drop before the sweep, residency
+journal on; the ONLY difference is `PILE_FINISH_HYGIENE` +
+`BIN_WINDOW_DONTNEED` (0 = every dead scratch page stays in the page cache,
+1 = released at erase/merge). Logs: `/mnt/nvme2n1/erikg/pf2-10g-hyg{0,1}/`.
+
+**Both arms are producer-paced on this box, so their wall is a
+contention-number, not a finish number.** The supervisor killed the operator's
+`pre-10g-base` / `pre-10g-pf` arms mid-run (superseded binaries + four concurrent
+10 GB finishes thrashing the same device); while my arm ran, the box carried the
+ladder's 12h-deep finish, 17 other `pile_finish` processes at one point, and a
+load average of 240-360. The finish's own `lce_wait` (time waiting for the
+producer's bands) is 95-99% of its LCE span.
+
+### 4.1 The residency readout (the point of the A/B)
+
+`hyg0` (hygiene OFF), band samples from `PILE_FINISH_CACHE_RESIDENCY` (stride
+1024 pages = 4 MiB, 2385 samples per line over the 10 GB corpus):
+
+| band | 1 | 65 | 129 | 193 | 257 | 321 | 385 | 449 | 513 | 577 | 641 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| corpus resident % | 97.95 | 99.79 | 99.96 | 99.96 | 99.83 | 99.83 | **85.20** | 99.54 | 100 | 100 | 100 |
+
+and `meminfo_cached_gb` never dropped below ~62 GB while the arm's own window
+files were 42 GB of live scratch.
+
+**Honest reading: at 10 GB on a 1 TB box the corpus is NEVER squeezed**, hygiene
+or not. 10 GB of read-only text against 60-90 GB of page cache is not the pile's
+regime; the one dip (85% at band 385) is the window-file writeback of the
+concurrent producer, and it recovers by itself. The hygiene machinery is correct
+and byte-neutral (section 5), but this fixture cannot price it either - the
+condition it exists for is `corpus_bytes >> pool_bytes`, i.e. the 1.31 TB pile
+(corpus cache there is the 17.2 GB pool budget, not the corpus).
+
+### 4.2 The cold-corpus precondition FAILS at 10 GB, and why
+
+At 10 GB the corpus adapter is WINDOWED (`mmap=0`, 4 x 8 GB regions), and three
+other processes (the ladder's finish, the two pre-10g arms before the supervisor
+killed them) have the same file mapped. Measured: `label=cold-start
+resident_pct=99.87` right after the drop. `MADV_DONTNEED` can only drop clean
+MAP_SHARED pages that no other address space maps; with a second process holding
+the file mapped, the drop is silently a no-op. The 1 GB arms (no other process
+mapped that fixture) DID go cold - `resident_pct=0.00` - which is why their table
+is the clean one.
+
+### 4.3 Recommendation for the supervisor
+
+Schedule ONE clean 10 GB arm (`hyg0` alone, nothing else on the device, after the
+ladder lands) and then `hyg1`; with no competing mapper the cold-corpus drop will
+take, and with the box quiet the finish's wall will be the finish's wall. The
+harness is ready and needs no code change:
+
+```
+nohup setsid bash tools/binbwt/pf2_hygiene_ab.sh 96 > /mnt/nvme2n1/erikg/pf2-logs/hygiene-ab-clean.log 2>&1 &
+```
+
+Better still at the pile's own scale: the 1.31 TB corpus with `--memory-gb 100`,
+where the corpus cache is 17.2 GB against a 1.31 TB text - THAT is where the
+hygiene term is a first-order number.
 
 ## 5. GATES
 
