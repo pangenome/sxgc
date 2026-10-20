@@ -314,7 +314,95 @@ the file mapped, the drop is silently a no-op. The 1 GB arms (no other process
 mapped that fixture) DID go cold - `resident_pct=0.00` - which is why their table
 is the clean one.
 
-### 4.3 Recommendation for the supervisor
+### 4.4 The 10 GB anatomy RECONCILED: it is the corpus adapter's per-byte lock
+
+`hyg0` (the 10 GB arm, hygiene OFF) at band 2433/152589:
+
+```
+PILE_FINISH_PROGRESS band=2433/152589 runs=159514622 chi_so_far=126314147 repair_wall=272.0 lce_wall=14142.9 lce_wait=13945.6 advance_wall=107.3 wit_spills=0
+```
+
+**Attribution of the arm's wall** (from the progress counters and the phase
+journal; every number is the arm's own):
+
+| term | wall | share | what it is |
+|---|---|---|---|
+| pool wait (`pool.wait()`) | 13945.6 s | 98.6% | this thread waiting for the verification pool to finish ONE band's LCE job (`bit6/pile_finish.cpp:3451`, `awaitLce` = `pool.wait()`) |
+| fold (`repair_wall`) | 272.0 s | 1.9% | piece-wait + band decode + the ordered transducer |
+| advance (`advance_wall`) | 107.3 s | 0.8% | the serial sweep state machine + witness emission |
+| witness spool | **0** | 0% | `wit_spills=0` for the whole arm |
+
+**The spool suspect is DEAD, by counter.** The witness buckets hold 8 B per
+witness against `--wit-ram-budget 8589934592`, so spilling starts only past
+~1.07e9 witnesses; `chi_so_far` was 1.26e8 at band 2433, i.e. 12% of the first
+spill threshold. Nothing has spilt, `PILE_FINISH_WITNESS_PATH resident=1` is the
+regime, and the m5 witness phases have not even started.
+
+**The memory suspect is also dead.** `PILE_FINISH_CACHE_RESIDENCY` reports the
+corpus 99.5-100% resident throughout (97.95% at band 1, one 85.2% dip while the
+concurrent producer's window files wrote back), with 62-92 GB of `Cached`. Warm
+page-cache hits are not 3 µs each - so a 5.8 s per-band pool wait (2433 bands /
+14143 s) is not memory latency either.
+
+**What it is: the WINDOWED corpus adapter takes a `shared_mutex` on every byte.**
+At 10 GB the adapter cannot map the whole file (`mmap=0`, 4 x 5 GiB regions), so
+every corpus byte goes through `CorpusText::operator[]`'s window path
+(`bit6/pile_finish.cpp:677`): `std::shared_lock<std::shared_mutex> windowMutex`
+plus a linear scan of the window table, PER SYMBOL. 96 verification threads
+hitting one shared_mutex ~1.8e6 times per band is a cache-line convoy, and that
+is the whole 5.8 s. The 1 GB arms never showed it because 1 GB fits the map
+budget: the adapter is `mmap=1` and `operator[]` is `remap[cmap[i]]` - no lock.
+
+**The controlled experiment that proves it** (same 1 GB corpus, same pristine
+producer output, same code, lazy reads; the ONLY change is a forced windowed
+adapter - one 1 GiB window covering the whole file, so NO eviction is possible):
+
+| 1 GB adapter | bands done | `lce_wall` | `lce_wait` | wall/band |
+|---|---|---|---|---|
+| whole-file mmap (`mmap=1`) | 5616 (whole run) | 166.4 s | 25.6 s (15%) | **29.6 ms** |
+| windowed, 1 x 1 GiB, no eviction | 257 (killed, 5 h projected) | 857.6 s | 836.6 s (97.5%) | **3337 ms** |
+
+113x per band, 97.5% of it pool wait - the 10 GB arm's exact signature. The
+10 GB number is not a memory story and not a spool story; it is a lock story.
+
+### 4.5 THE FIX (measured, 1 GB): pin every window when they all fit
+
+If every byte of the corpus fits in the window set, no window can EVER be
+evicted, so the window table is immutable after construction and the byte path
+needs no lock at all. The adapter now maps every window up front in that case and
+`operator[]` becomes a table index plus a load - the same cost as the whole-file
+mapping (`bit6/pile_finish.cpp:459` constructor, `:690` byte path, `pinned=1` on
+the banner). When the corpus does NOT fit the window set (the 1.31 TB pile with
+4 x 5 GiB windows) the locked LRU path is unchanged.
+
+Same forced-window 1 GB arm, after the fix:
+
+```
+PILE_FINISH_CORPUS_WINDOWED regions=4 region_bytes=1073741824 mapped_cap=4294967296 need_windows=1 pinned=1
+REP=2 TAG=1b-prod ARM=lazy MODE=0 JOBS=2 BUDGET_MIB=32 COLD=1 COLD_EVERY=0 ASSIST=populate RC=0 SWEEP_WALL=140.188 CHI=283296933 CMP=0 SHA=38f03eb43aaea5997819c8f7922a244a3eb0be945bf1d3b0feb1f2fd9d23144f
+```
+
+140.2 s for the WHOLE 5616-band run, byte-identical - equal to the mmap arms
+(139.0 / 131.2 / 137.5 s). The 10 GB run is `need_windows=2` against 4 regions,
+so it takes the same pinned path: **its 5.8 s/band should collapse to the
+per-band work the 1 GB run measures (29.6 ms/band), i.e. a projected ~4.5 h
+finish at 10 GB instead of the ~10 days the windowed lock implied.** That
+projection is arithmetic, not a measurement - see 4.3: ONE clean 10 GB arm on
+the fixed binary is what prices it.
+
+### 4.6 Band rate journal (contention asterisk on both sides)
+
+| arm | bands | wall | rate | box |
+|---|---|---|---|---|
+| hyg0 (10 GB, hygiene OFF) | 2433 | 2 h 33 m | 1 band / 3.8 s | load 240-360, 17 pile_finish processes at one point |
+| hyg1 (10 GB, hygiene ON) | see log | started 02:36 | ~1 band / 3.5 s | load 184-290 |
+| ladder's 10 GB finish (operator's) | see its log | 12 h+ | ~1 band / 5-6 s | same box, same pathology |
+
+The two 10 GB arms agree to within 10% in band rate - both are inside the
+windowed-lock regime, so neither rate says anything about the hygiene knobs.
+
+
+### 4.7 Recommendation for the supervisor
 
 Schedule ONE clean 10 GB arm (`hyg0` alone, nothing else on the device, after the
 ladder lands) and then `hyg1`; with no competing mapper the cold-corpus drop will

@@ -419,6 +419,9 @@ struct CorpusText {
     mutable std::atomic<uint64_t> windowClock{0};
     mutable bool fallbackLogged = false;
     uint64_t windowBytes = 1ull << 30;
+    // >0 only when every window is mapped up front and none can be evicted (see
+    // the constructor): the byte path then has no lock, no LRU and no munmap.
+    uint64_t pinnedWindows = 0;
     explicit CorpusText(const std::string& path, const uint8_t map[256]) {
         fd = ::open(path.c_str(), O_RDONLY);
         pf_check(fd >= 0, "open corpus (read-only adapter)");
@@ -431,12 +434,63 @@ struct CorpusText {
         uint64_t mapBudget = 32ull << 30;
         if (limit.rlim_cur != RLIM_INFINITY) mapBudget = std::min<uint64_t>(mapBudget, limit.rlim_cur / 3);
         windowBytes = std::max<uint64_t>(4096, (mapBudget / windows.size()) & ~uint64_t(4095));
-        void* p = size_ <= std::min<uint64_t>(mapBudget, 1ull << 30) ? ::mmap(nullptr, size_, PROT_READ, MAP_SHARED, fd, 0) : MAP_FAILED;
+        // MEASUREMENT KNOB (the product never sets it): force the WINDOWED byte
+        // path even when the whole file would fit, with an explicit window size,
+        // so the two corpus read paths can be priced against each other at any
+        // scale. They are not equivalent in cost: `operator[]` on the whole-file
+        // mapping is `remap[cmap[i]]` with NO synchronisation, while the windowed
+        // path takes a shared_mutex on EVERY byte and scans the window table
+        // (see operator[] below). The 10 GB finish runs windowed because 10 GB
+        // exceeds the map budget under the phase ulimit; the 1 GB arms run
+        // mmap'd, and that difference alone is what the 1 GB/10 GB wall gap is
+        // made of (RESULTS_PREFETCH2.md section 4.4).
+        bool forceWindowed = false;
+        if (const char* wb = std::getenv("PILE_FINISH_CORPUS_WINDOW_BYTES")) {
+            char* end = nullptr; errno = 0;
+            const unsigned long long v = std::strtoull(wb, &end, 10);
+            pf_check(*wb && *wb != '-' && end && !*end && !errno && v >= 4096,
+                     "PILE_FINISH_CORPUS_WINDOW_BYTES must be an integer >= 4096");
+            windowBytes = std::max<uint64_t>(4096, uint64_t(v) & ~uint64_t(4095));
+            forceWindowed = true;
+        }
+        void* p = (!forceWindowed && size_ <= std::min<uint64_t>(mapBudget, 1ull << 30))
+                      ? ::mmap(nullptr, size_, PROT_READ, MAP_SHARED, fd, 0) : MAP_FAILED;
         if (p != MAP_FAILED) {
             cmap = (const uint8_t*)p;
             cmapRegion = p;
         }
-        if (!cmap) fprintf(stderr, "PILE_FINISH_CORPUS_WINDOWED regions=%zu region_bytes=%llu mapped_cap=%llu\n", windows.size(), (unsigned long long)windowBytes, (unsigned long long)(windows.size() * windowBytes));
+        if (!cmap) {
+            // ---- THE NO-EVICTION CASE (the pile's and the 10 GB run's shape) ----
+            // If every byte of the corpus fits in the window set, then NO window
+            // can ever be evicted, so the byte path needs no lock at all: map
+            // every window up front, freeze the table, and let `operator[]` index
+            // it directly. That is not an optimisation detail - the locked window
+            // path costs a shared_mutex per BYTE, which at 10 GB is the finish's
+            // entire wall (measured: 1 GB corpus, ONE 1 GiB window covering
+            // everything, no eviction, lazy reads - lce_wall 857.6 s for 257 bands
+            // vs 166 s for all 5616 bands on the mmap path, i.e. 110x per band,
+            // 97.5% of it pool wait; RESULTS_PREFETCH2.md 4.4).
+            const uint64_t need = (size_ + windowBytes - 1) / windowBytes;
+            bool all = need <= windows.size();
+            if (all) {
+                for (uint64_t k = 0; k < need; ++k) {
+                    const uint64_t base = k * windowBytes;
+                    const uint64_t len = std::min<uint64_t>(windowBytes, size_ - base);
+                    void* q = ::mmap(nullptr, size_t(len), PROT_READ, MAP_SHARED, fd, off_t(base));
+                    if (q == MAP_FAILED) { all = false; break; }
+                    windows[k].p = q; windows[k].base = base; windows[k].len = len;
+                }
+                if (!all) {   // roll back: leave the locked path in charge
+                    for (auto& w : windows) if (w.p) { ::munmap(w.p, w.len); w.p = nullptr; w.base = INF; w.len = 0; }
+                } else {
+                    pinnedWindows = need;
+                }
+            }
+            fprintf(stderr, "PILE_FINISH_CORPUS_WINDOWED regions=%zu region_bytes=%llu mapped_cap=%llu need_windows=%llu pinned=%d\n",
+                    windows.size(), (unsigned long long)windowBytes,
+                    (unsigned long long)(windows.size() * windowBytes),
+                    (unsigned long long)need, int(pinnedWindows));
+        }
         bool identity = true;
         for (unsigned i = 0; i < 256; ++i) identity = identity && remap[i] == uint8_t(i);
         fprintf(stderr, "PILE_FINISH_CORPUS path=%s bytes=%llu remap_identity=%d read_only=1 rotation=0 derivation=T[i]=REMAP[corpus[i]] mmap=%d\n",
@@ -652,6 +706,16 @@ struct CorpusText {
         if (i >= size_) pf_fail("corpus adapter bounds");
         if (g_pfAccessOn.load(std::memory_order_relaxed)) pf_access_charge(i);
         if (cmap) return remap[cmap[i]];
+        // NO-EVICTION FAST PATH: every window is mapped and frozen, so the table
+        // is immutable and this is a pure index + load - the same cost as the
+        // whole-file mapping. This is what makes the 10 GB finish's verification
+        // term the same shape as the 1 GB one's.
+        if (pinnedWindows) {
+            const uint64_t k = i / windowBytes;
+            const Window& w = windows[k];
+            if (w.p && i >= w.base && i - w.base < w.len) return remap[((const uint8_t*)w.p)[i - w.base]];
+            pf_fail("corpus adapter: byte outside every pinned window");
+        }
         {
             // Shared readers pin mappings through the byte read; only misses evict.
             uint64_t base = (i / windowBytes) * windowBytes;
