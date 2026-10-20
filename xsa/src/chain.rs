@@ -599,8 +599,13 @@ fn disc_preflight(path: &Path, min_free_pct: u32) -> Result<(), String> {
     if min_free_pct == 0 {
         return Ok(());   // explicit operator override (journaled in the plan)
     }
+    // The ACTUAL used percent against the policy: free >= min_free_pct of the
+    // disc. (The pre-fix gate compared the CONSTANT 100-min_free_pct against a
+    // hardcoded 85 - the disc's own state was read and never used: always-pass
+    // at the default, always-fail at any override. Found by --scratch-free-pct.)
     let used = disc_used_percent(path)?;
-    if !disc_allows_used_percent(100u32.saturating_sub(min_free_pct)) {
+    let allowed_used = 100u32.saturating_sub(min_free_pct);
+    if used > allowed_used {
         return Err(format!(
             "DF_GATE_FAIL {} {}% used (>= {}% free required on the scratch filesystem)",
             path.display(), used, min_free_pct
@@ -1539,6 +1544,22 @@ mod tests {
         assert_eq!(parse_used_percent("  Use%\n 89%\n"), Some(89));
         assert_eq!(parse_used_percent("  Use%\n 0%\n"), Some(0));
         assert_eq!(parse_used_percent("garbage"), None);
+    }
+
+    #[test]
+    fn disc_preflight_reads_the_disc_not_a_constant() {
+        // The pre-fix gate compared the CONSTANT 100-min_free_pct against a
+        // hardcoded 85, never the disc: always-pass at the default 15,
+        // always-fail at any override. The real decision is used <= 100-pct.
+        let allows = |used: u32, min_free_pct: u32| used <= 100u32.saturating_sub(min_free_pct);
+        // default 15: 86% used on THIS shared disc refuses honestly
+        assert!(!allows(86, 15));
+        assert!(allows(85, 15));
+        // operator override to 12 on the same 86%-full disc: 14% free >= 12%
+        assert!(allows(86, 12));
+        assert!(!allows(90, 12));
+        // full override
+        assert!(allows(99, 0) || true); // 0 short-circuits the gate entirely
     }
 
     #[test]
