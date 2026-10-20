@@ -431,7 +431,14 @@ struct CorpusText {
         memcpy(remap, map, 256);
         struct rlimit limit {};
         pf_check(getrlimit(RLIMIT_AS, &limit) == 0, "read corpus address-space limit");
-        uint64_t mapBudget = 32ull << 30;
+        // The pin budget WANTS to cover the corpus: the pinned lock-free byte
+        // path is ~113x the windowed shared-lock+scan path (RESULTS_PREFETCH2.md
+        // 4.4), so the budget is corpus-sized with a 32 GiB floor for tiny
+        // corpora, and RLIMIT_AS/3 remains the hard bound. At the pile the
+        // finish phase must run with an envelope that permits this (see
+        // --finish-as-gb): pinned windows charge ADDRESS SPACE, not RSS - the
+        // pages are page-cache backed and reclaimable.
+        uint64_t mapBudget = std::max<uint64_t>(32ull << 30, size_);
         if (limit.rlim_cur != RLIM_INFINITY) mapBudget = std::min<uint64_t>(mapBudget, limit.rlim_cur / 3);
         windowBytes = std::max<uint64_t>(4096, (mapBudget / windows.size()) & ~uint64_t(4095));
         // MEASUREMENT KNOB (the product never sets it): force the WINDOWED byte

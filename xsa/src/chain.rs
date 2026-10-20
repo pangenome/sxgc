@@ -154,6 +154,13 @@ RSS / disc telemetry.
   --wit-ram-gb N       v2 only: the fused finish's witness RAM budget in GiB
                      (default: --memory-gb / 2; overflow spills as sorted
                      varint-delta disc runs without changing the product).
+  --finish-as-gb N     v2 only: the finish phase's own RLIMIT_AS in GiB
+                     (default: --memory-gb). The finish maps corpus windows to
+                     pin the corpus for the lock-free byte path; mapped windows
+                     charge ADDRESS SPACE, not RSS - the pages are page-cache
+                     backed and reclaimable - so the finish can pin a corpus far
+                     larger than the build's envelope. The pin budget is
+                     corpus-sized and hard-bounded by this cap / 3.
 
   INERT UNDER THE BIN PIPELINE (the default; refused loud, never silently
   ignored): --chunks, --chunk-mb, --kway, --fanin - the bin shape has no chunk
@@ -229,6 +236,11 @@ struct Options {
     v2_flag_given: bool,
     chi_expect: Option<u64>,
     wit_ram_gb: Option<u64>,
+    /// `--finish-as-gb N`: the finish phase's own RLIMIT_AS in GiB. Mapped
+    /// corpus windows charge address space, not RSS, so the finish can pin a
+    /// corpus far larger than the build's memory envelope. Default: inherit
+    /// `memory_gb`.
+    finish_as_gb: Option<u64>,
     bin_live_cap: Option<u64>,
     /// --bin-target-size S: the leaf bound of the target-size recursion (rows).
     /// 0 / absent = AUTOMATIC: the producer derives it from the census and the
@@ -302,6 +314,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     let mut v2_flag_given = false;
     let mut chi_expect = None;
     let mut wit_ram_gb = None;
+    let mut finish_as_gb = None;
     let mut bin_live_cap = None;
     let mut bin_target_size = None;
     let mut timeout_s = None;
@@ -393,6 +406,17 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
                     return Err("specify --wit-ram-gb only once".into());
                 }
             }
+            "--finish-as-gb" => {
+                i += 1;
+                let v = value(args.get(i), "--finish-as-gb")?
+                    .parse::<u64>().map_err(|_| "--finish-as-gb: integer expected".to_string())?;
+                if v == 0 {
+                    return Err("--finish-as-gb must be positive (omit it to inherit --memory-gb)".into());
+                }
+                if finish_as_gb.replace(v).is_some() {
+                    return Err("specify --finish-as-gb only once".into());
+                }
+            }
             "--bin-live-cap" => {
                 i += 1;
                 let v = value(args.get(i), "--bin-live-cap")?
@@ -469,8 +493,9 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
             return Err("--fanin is INERT under the bin pipeline (the default; there is nothing to fan in); drop the flag, or pass --legacy-merge".into());
         }
         if let Some(wit) = wit_ram_gb {
-            if wit > memory_gb {
-                return Err(format!("--wit-ram-gb {wit} exceeds --memory-gb {memory_gb}: the finish runs under the same RLIMIT_AS cap"));
+            let eff = finish_as_gb.unwrap_or(memory_gb);
+            if wit > eff {
+                return Err(format!("--wit-ram-gb {wit} exceeds the finish's effective AS cap {eff} GiB (--memory-gb {memory_gb} unless --finish-as-gb overrides it)"));
             }
         }
     }
@@ -499,7 +524,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     }
     Ok(Options { input, scratch, snap_1e, memory_gb, threads, chunks, kway, plan_only,
                  bin_pipeline, legacy_merge, v2_flag_given, chi_expect, wit_ram_gb,
-                 bin_live_cap, bin_target_size, timeout_s, stripes, scratch_free_pct,
+                 finish_as_gb, bin_live_cap, bin_target_size, timeout_s, stripes, scratch_free_pct,
                  remap, chunk_mb, fanin })
 }
 
@@ -1041,6 +1066,14 @@ fn run_chain(options: Options) -> Result<(), String> {
     // execute, so a journal attests WHICH binaries ran (the bin reports' rule).
     journal_bundle_provenance(&mut journal, &tools, &["cross_lcp_merge", "pile_finish"])?;
     let memory_kb = options.memory_gb * 1048576;
+    // The finish phase's own RLIMIT_AS: mapped corpus windows charge address
+    // space (page-cache backed, reclaimable - NOT RSS), so pinning the corpus
+    // for the lock-free byte path wants a fatter AS than the build's envelope.
+    // Default: inherit the build's cap.
+    let finish_as_kb = match options.finish_as_gb {
+        Some(v) => v * 1048576,
+        None => memory_kb,
+    };
     let merged = scratch.join("merged");
     let finish = scratch.join("finish");
     let prefix = merged.join("frag");
@@ -1084,7 +1117,7 @@ fn run_chain(options: Options) -> Result<(), String> {
              source={} (the plan's pick; the producer re-checks it against the phase RLIMIT_AS)",
             if options.bin_live_cap.is_some() { "operator" } else { "auto from --memory-gb" }));
         return run_v2_tail(&mut journal, &options, &scratch, &tools, &input, &remap_path,
-                           n, memory_kb, &frag, bin_live_cap, plan_windows);
+                           n, memory_kb, finish_as_kb, &frag, bin_live_cap, plan_windows);
     }
 
     // 1. chunk front end (libsais, document-aligned cyclic BWT chunks).
@@ -1243,6 +1276,7 @@ fn run_v2_tail(
     remap_path: &Path,
     n: u64,
     memory_kb: u64,
+    finish_as_kb: u64,
     frag: &str,
     bin_live_cap: u64,
     plan_windows: u64,
@@ -1347,7 +1381,7 @@ fn run_v2_tail(
     // Spawn BOTH before joining: the finish must start with the producer (it
     // polls the producer's piece directory from row zero).
     let producer_running = spawn_phase(journal, scratch, "bin-v2", memory_kb, "/usr/bin/timeout", &producer_args, &producer_env)?;
-    let mut finish_running = spawn_phase(journal, scratch, "finish-v2", memory_kb, "/usr/bin/timeout", &finish_args, &[])?;
+    let mut finish_running = spawn_phase(journal, scratch, "finish-v2", finish_as_kb, "/usr/bin/timeout", &finish_args, &[])?;
     let v2_sampler = DiscSampler::start(scratch.to_path_buf(), Duration::from_secs(2));
     if let Err(e) = join_phase(journal, scratch, producer_running) {
         // A dead producer leaves the finish polling for hours; kill it loud.
@@ -1612,7 +1646,26 @@ mod tests {
     #[test]
     fn wit_ram_over_the_memory_cap_is_refused() {
         let err = parse_chain(&v2_args(&["--memory-gb", "8", "--wit-ram-gb", "16"])).unwrap_err();
-        assert!(err.contains("exceeds --memory-gb"), "{err}");
+        assert!(err.contains("exceeds the finish's effective AS cap"), "{err}");
+        // --finish-as-gb raises the finish's cap, so the same --wit-ram-gb is
+        // legal against it, and is refused again when it exceeds THAT cap.
+        let ok = parse_chain(&v2_args(&["--memory-gb", "8", "--finish-as-gb", "64",
+                                       "--wit-ram-gb", "16"]));
+        assert!(ok.is_ok(), "{:?}", ok.unwrap_err());
+        let err2 = parse_chain(&v2_args(&["--memory-gb", "8", "--finish-as-gb", "12",
+                                        "--wit-ram-gb", "16"])).unwrap_err();
+        assert!(err2.contains("exceeds the finish's effective AS cap 12 GiB"), "{err2}");
+    }
+
+    #[test]
+    fn finish_as_gb_parses_and_defaults() {
+        let base = parse_chain(&v2_args(&["--memory-gb", "8"])).unwrap();
+        assert_eq!(base.finish_as_gb, None);
+        let with = parse_chain(&v2_args(&["--memory-gb", "8", "--finish-as-gb", "64"])).unwrap();
+        assert_eq!(with.finish_as_gb, Some(64));
+        assert!(parse_chain(&v2_args(&["--memory-gb", "8", "--finish-as-gb", "0"])).is_err());
+        assert!(parse_chain(&v2_args(&["--memory-gb", "8", "--finish-as-gb", "64",
+                                      "--finish-as-gb", "32"])).is_err());
     }
 
     #[test]
