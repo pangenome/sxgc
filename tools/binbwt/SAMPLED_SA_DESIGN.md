@@ -79,7 +79,7 @@ The finish's cost centre is `LceWrap` (`bit6/pile_finish.cpp:3075`), a cyclic
 wrapper around `SlimFingerprint::lce` (`bit6/slim_lce.hpp:313`): a fibre of
 tau-spaced polynomial suffix hashes (`hash_at`, `suffix`, `equal`) plus a direct
 symbol verify of the proposed answer. It is exact — every returned length is
-re-verified symbol by symbol (`bit6/slim_lce.hpp:336-345`).
+re-verified symbol by symbol (`bit6/slim_lce.hpp:352-355`).
 
 It is called from **exactly one place**, the per-band verification job
 (`bit6/pile_finish.cpp:3484` `lceJob`):
@@ -143,7 +143,7 @@ The ancestral machinery is the HPRC-era r-index
 `r-index-toehold/README.md`). Its sample is:
 
 ```cpp
-// rindex_build.cpp:73-79 - the run loop
+// rindex_build.cpp:65-80 - the run loop
 if (c != b) { run_char.push_back(b); run_len.push_back(cnt);
               sa_sample.push_back(prev_sa);   // SA value at each run's LAST row
               b = c; cnt = 1; }
