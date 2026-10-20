@@ -373,7 +373,14 @@ Three terms, all measured or exactly countable:
    pile scratch ceiling of ~2 TB. So at pile scale the *only* viable shape is:
    **bucketed spool, consumed and deleted band-by-band (or fused)**, so live
    claim bytes are bounded by one band's worth. The fixture measurements below
-   are run in both shapes precisely to price the sorting.
+   are run in both shapes precisely to price the sorting. **Concretely at the
+   pile**: buckets are capped at 8192 (`pf_claim_buckets`), so a bucket would hold
+   2e7..7.6e7 claims = 0.6-2.4 GB of `PfClaimView` records, times 96 workers —
+   i.e. tens of GB. The checker therefore FAILS LOUD above
+   `PILE_FINISH_CLAIM_BUCKET_MAX` (default 1 GiB per bucket) rather than
+   degrading, and the message names the two shapes that do work at that size
+   (fused, or a band-consumed spool). Measured at 1 GB: 1024 buckets, 73 KB ..
+   1.5 MB per bucket, max 156,516 claims — two orders below the default cap.
 
 ### 3.3 What this buys beyond speed: the gate that scales
 

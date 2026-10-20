@@ -3291,6 +3291,18 @@ static void pf_check_claims(const CorpusText& text, const std::string& dir, int 
         pf_check(fscanf(f, "%llu", (unsigned long long*)&bucketBytes[b]) == 1, "claims meta bucket size");
     pf_check(fclose(f) == 0, "close claims meta");
     pf_check(buckets > 0 && buckets <= 65536, "claims meta bucket count out of range");
+    // FIAT: one bucket is loaded whole (that is what makes the i side sortable
+    // and monotone), so a bucket larger than the budget is a claims list that
+    // must be checked in a different SHAPE, not a check that silently degrades.
+    // At the pile the spool is 1.9-7.1 TB and a bucket can be ~1 GB of records:
+    // that run must use the fused sink (PILE_FINISH_LCE_TRUST=2) or a
+    // band-consumed spool. Failing loud here is the point.
+    const uint64_t bucketMax = pf_env_u64("PILE_FINISH_CLAIM_BUCKET_MAX", 1ull << 30, 1ull << 20, 1ull << 40);
+    for (uint64_t b = 0; b < buckets; ++b)
+        pf_check(bucketBytes[b] <= bucketMax,
+                 "claims bucket " + std::to_string(b) + " is " + std::to_string(bucketBytes[b]) +
+                 " B, over PILE_FINISH_CLAIM_BUCKET_MAX=" + std::to_string(bucketMax) +
+                 " (raise it, add buckets, or check fused: PILE_FINISH_LCE_TRUST=2)");
     pf_check(n == text.size(), "claims meta n != corpus size (the claims belong to a different text)");
 
     struct PerThread { std::atomic<uint64_t> claims{0}, symbols{0}, bad{0}, buckets{0}; };
