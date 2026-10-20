@@ -315,4 +315,91 @@ hygiene term is a first-order number.
 
 ## 5. GATES
 
-*(verbatim, section filled at the end)*
+### 5.1 The full oracle (all passes), on the final tree
+
+`c++ -O2 -std=c++17 -pthread tools/binbwt/oracle.cpp -latomic`, scratch
+`/mnt/nvme2n1/erikg/pf2-oracle4`, box carrying the ladder's finish and the 10 GB
+hygiene arm. Verbatim (55 min at load 180-250):
+
+```
+BINBWT_ORACLE_REFUSAL mode=unlink rc=2 said=*MISSING*
+BINBWT_ORACLE_REFUSAL mode=truncate rc=2 said=*TRUNCATED*
+BINBWT_ORACLE_REFUSAL mode=stale rc=2 said=*STALE*
+BINBWT_ORACLE_REFUSAL mode=nomagic rc=2 said=*BAD MAGIC*
+BINBWT_ORACLE_REFUSAL mode=nodone rc=2 said=*INCOMPLETE*
+BINBWT_ORACLE_PASS cases=36180 fixtures=134 modes=cyclic,dollar threads=1,3,8 leaf=1,4,24 depth_cap=1,4,32 level_bytes=1,2 cap=1,7,all NUL=1 byte05=1 wrap_prefix_1e_0a_1e=1 periodic=1 nested=1 single_byte=1 max_byte=1 nonidentity_remap=1 exact_brute_SA=1 multi_window_runs=22500 window_instances=343530
+BINBWT_ORACLE_WINDOW_PASS cases=12864 fixtures=134 modes=cyclic,dollar threads=3 level_bytes=1,2 cap=1,7 credit=1,2,3 build_cap=0,5 disc=1 ram=1 file_reuse_runs=11248 window_instances=176784 window_files=88392 exact_brute_SA=1
+BINBWT_ORACLE_REFUSAL_PASS refusals=5 modes=unlink,truncate,stale,nomagic,nodone control=exact_brute_SA
+BINBWT_ORACLE_STAGE_PASS cases=4824 staged_arms=2412 fixtures=134 modes=cyclic,dollar threads=1,3,8 target=1,3,9 depth_cap=0 level_bytes=1 stage_hits=42 stage_bytes=297 counters_identical=1 exact_brute_SA=1 both_paths=1
+BINBWT_ORACLE_STAGE_PASS cases=4824 staged_arms=2412 fixtures=134 modes=cyclic,dollar threads=1,3,8 target=1,3,9 depth_cap=0 level_bytes=1 stage_hits=42 stage_bytes=297 counters_identical=1 exact_brute_SA=1 both_paths=1
+BINBWT_ORACLE_STAGE_PASS cases=4824 staged_arms=2412 fixtures=134 modes=cyclic,dollar threads=1,3,8 target=1,3,9 depth_cap=0 level_bytes=1 stage_hits=42 stage_bytes=297 counters_identical=1 exact_brute_SA=1 both_paths=1
+BINBWT_ORACLE_PERIODIC_SANITY BINBWT_ORACLE_PERIOD_CHILD exact_position_order=1 rows=64 structural_leaves=1 structural_rows=64 probe_off=1
+BINBWT_ORACLE_PERIODIC_PASS cases=4824 fixtures=134 modes=cyclic,dollar threads=1,3,8 target=1,4,24 depth_cap=0 (AUTO, no cap) level_bytes=1 cap=7,all periodic_leaves=54 periodic_rows=2304 periodic_period_max=2 over_target_leaves=0 exact_brute_SA=1 window_instances=24822
+BINBWT_ORACLE_ADAPTIVE_PASS cases=4016 fixtures=134 modes=cyclic,dollar threads=1,8 target=1,2,3,17 depth_cap=256 level_bytes=1 cap=7,all depth_max=64 leaf_rows_max_le_target=1 over_target_leaves=0 exact_brute_SA=1 window_instances=21736
+BINBWT_ORACLE_FREQ_PASS cases=6432 fixtures=134 modes=cyclic,dollar threads=1,3,8 leaf=1,24 depth_cap=16 level_bytes=1,2 cap=7,all freq_sched=1 exact_brute_SA=1 multi_window_runs=2904 window_instances=33096
+```
+
+**`counters_identical=1` is PART B's named gate: the multi-front staging sweep
+moves no construction counter.** Note that the PERIODIC/ADAPTIVE/FREQ passes only
+became reachable at all after the oracle repair described in section 0 (they had
+been dead code behind a stale assertion).
+
+### 5.2 The fixture banks (byte identity, through the arms)
+
+1 GB (`mergperf-1b-snap.txt`, bank `pilev2-g2-1b/frag.sxi2`,
+sha `38f03eb4...144f`): **12/12 arms** - three modes x two cold models x two reps
+plus the two knob points - reported `CMP=0` and `SHA=38f03eb4...144f`, with
+`chi=283296933` on every one.
+
+100 MB (`mergperf-100m-snap.txt`, bank `xsa-pw3-chunk-100m/mergperf-100m-snap.sxi2`,
+sha `b4753899...a5`): every 100 MB arm reported
+`CMP=0 SHA=b4753899592c952542f7416ee9ce5836e19b99971afa74d02281493b3a289ba5`
+with `chi=29716349`.
+
+Representative line (full 1 GB sweep arm, cold start):
+
+```
+REP=1 TAG=1b-prod ARM=sweep MODE=1 JOBS=2 BUDGET_MIB=32 COLD=1 COLD_EVERY=0 ASSIST=populate RC=0 SWEEP_WALL=144.166 CHI=283296933 CMP=0 SHA=38f03eb43aaea5997819c8f7922a244a3eb0be945bf1d3b0feb1f2fd9d23144f
+```
+
+### 5.3 The cache policy is invisible to the product
+
+DONTNEED/WILLNEED/MADV_DONTNEED are advisory and cannot change a byte; the
+100 MB and 1 GB banks above are the proof (they were produced with every hygiene
+knob ON and OFF, cold and warm, sweep and lazy).
+
+## 6. Residual risks
+
+1. **The 10 GB thesis is UNPROVEN on this box.** The three-way is flat at 1 GB
+   (section 3) and the 10 GB arms are producer-paced under 240-360 load. The
+   decisive number - the pile's finish term - is still the ladder's, not mine.
+   Recommendation in 4.3.
+2. **`PILE_FINISH_PREFETCH` defaults to 0 (lazy).** Nothing in the product route
+   turns the prefetcher on, because at the scales measured it does not pay. That
+   is deliberate and reversible with one variable.
+3. **The cold-corpus knob is defeated by any other mapper** (section 4.2). It is a
+   measurement device; a product run must never depend on it.
+4. **The prefetch thread's coalescing is ~80-106 s of CPU per 1 GB pass** (sorts of
+   ~262k window pairs per band). It is off the fold's critical path now, but on a
+   loaded box that CPU is not free.
+5. **`BIN_LEAF_STAGE_SEGS` defaults to 4** (part 1's single span is 1). The
+   oracle proves order equality and counter equality; the SPEED claim rests on
+   the pile regime, which this box could not measure (staging is skipped on a
+   RAM-cached view - `stage_skipped_ram=62228` on the 1 GB producer).
+6. **Two base-commit defects were found and are reported, not papered over:** the
+   unwired prefetcher and the stale oracle assertion (section 0). A third - the
+   producer refusing its own AUTO depth cap - is fixed at `bit6/binbwt_slice.h:2859`.
+
+## 7. Branch and commits
+
+`prefetch2`, branched from `pile-week-v1` @ `e3edef0`:
+
+| commit | what |
+|---|---|
+| `0c63005` | part A+B machinery: WILLNEED assist, DONTNEED at seal/erase/witness chunks, per-phase residency journal, cold-corpus knob, the WIRED prefetcher with coalescing counters, the multi-front leaf staging sweep |
+| `e54af20` | cold drop that actually drops (MADV_DONTNEED on the mapping first), resident-skipping sweep, merged-bytes budget, the measurement harness |
+| `3205ad7` | part B fix: ALL coalescing on the prefetch thread (43% regression removed), scattered arm without per-window mincore, arms cold their own scratch |
+| `072caf7` | hygiene switches for the pile A/B + the 10 GB harness + RESULTS draft |
+| `09dcb1d` | runtime mirror + SOURCES.sha256.json digests |
+| `80014bb` | the 10 GB residency readout + the clean-arm recommendation |
+| `7b3c70a` | oracle repair: the stale periodic-sanity assertion (base defect) so ADAPTIVE/FREQ run |
