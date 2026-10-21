@@ -27,8 +27,11 @@ timings are not, and the report treats them as such.
   21.9/24.0 s vs armed 22.5/23.8 s), because the exits make multi-million-row
   leaves (5.92M rows) and the 96-thread schedule loses occupancy: producer
   efficiency `build_cpu_s/(96·build_s)` falls from 0.95 to 0.67–0.72.
-* **At 100 MB the wall DOES improve**: 2.27 s → 1.72 s (−24%), CPU 68.2 → 45.6
-  (−33%), leaf CPU 62.6 → 18.6 (−70%).
+* **At 100 MB and 32 threads the wall DOES improve**: 2.27 s → 1.72 s (−24%),
+  CPU 68.2 → 45.6 (−33%), leaf CPU 62.6 → 18.6 (−70%). **At 96 threads it does
+  not**: probe wall 1.250 → 1.625 s (+30%) with CPU −2% and leaf CPU −71%, and
+  the product's producer-only sink path is 3.42 → 3.56 s (+4%) — the same
+  occupancy cause as at 1 GB, so the wall win is a low-thread-count effect.
 * **The degenerate (H=0) tree exit the charter exists for did not fire on the
   1 GB bank**: `entropy_noprog_exits = 0` of 370 evals. The 1 GB `0x20` bin's
   cost is **leaf sorting**, not levels (`leaf_elems` = 167.2M of its 167.2M rows),
@@ -182,7 +185,12 @@ The OFF arm's counters are the banked reference exactly (`level_passes=258`,
 `symbols=223383555397`, `leaf_sorts=62228`, `emitted_rows=1000000665`,
 `depth_max=193` at 1 GB) — the refactor and the rule changed no default byte.
 The ON arm's producer wall in these runs (30.7 / 199.2 s) is **not** an A/B: the
-finish is competing and the thread pool is 96; §4 is the instrumented A/B.
+finish competes for the same cores and the gate boxes carried load 55–84
+(§4 is the instrumented A/B). The 100 MB pair's 15.08 → 30.71 s is contention,
+not structure: the SAME producer+sink product path run with no finish at all, at
+load 21, is `order_s` 3.422 → 3.562 s (off → ON, +4.1%) and `build_cpu_s`
+92.7 → 89.7 (−3.2%). The finish itself is unaffected in kind: its wall moves with
+the load it shares, and the product it writes is byte-identical.
 
 ## 4. The A/B: target-size-only (off) vs entropy rule (ON, θ = 1.5)
 
@@ -213,6 +221,23 @@ is why the OFF arm's repeats range 1989–2978 CPU-s and the paired run is used.
 
 The 100 MB win is the **in-leaf arm**: `level_passes` moves from 157 tree levels
 to 2.12M in-RAM levels, and the leaf term falls 70%.
+
+**The wall win is thread-count dependent, and the 96-thread arm says why**
+(probe, two interleaved passes, load 21–38; and the real product with its sink,
+producer only, no finish, load 21):
+
+| 100 MB | off | ON θ=1.5 | Δ |
+|---|---|---|---|
+| probe `build_s`, 96 threads | 1.250 / 1.271 | 1.625 / 1.672 | **+30%** |
+| probe `build_cpu_s`, 96 threads | 91.5 / 93.5 | 87.9 / 89.5 | −2.6% |
+| probe `leaf_s`, 96 threads | 81.3 / 82.4 | 23.7 / 23.8 | −71% |
+| probe efficiency `cpu/(96·wall)` | 0.76 | 0.57 | −25% |
+| product producer+sink `order_s`, 96 threads | 3.422 | 3.562 | **+4.1%** |
+| product producer+sink `build_cpu_s`, 96 threads | 92.7 | 89.7 | −3.2% |
+
+At 32 threads the work win dominates (the pool is the binding term); at 96
+threads the shorter busy span is spent waiting, at both scales. This is the same
+finding as §4.2, not a 100 MB special case.
 
 ### 4.2 1 GB, 96 threads (load 65–70 during the paired runs)
 
@@ -367,11 +392,12 @@ here are the cross-check of theirs:
 
 ## 7. Residual risks
 
-1. **The 1 GB wall does not improve.** The rule's exits create serial leaves
-   (5.92M rows, `over_target_leaves=5`, `leaf_rows_max` ×5.6) and producer
-   efficiency falls 0.95 → 0.67–0.72, so a −27.5% CPU win is a wall wash. Any claim
-   that this rule speeds up the 1 GB producer is FALSE as built; the wall win
-   exists at 100 MB (−24%) and not at 96 threads / 1 GB.
+1. **The wall win only exists at low thread counts.** At 1 GB/96 threads the
+   exits create serial leaves (5.92M rows, `over_target_leaves=5`,
+   `leaf_rows_max` ×5.6) and producer efficiency falls 0.95 → 0.67–0.72, so a
+   −27.5% CPU win is a wall wash. At 100 MB it is a −24% wall win at 32 threads
+   and a +30% probe / +4% product wall LOSS at 96 threads, same cause. Any claim
+   that this rule speeds up the producer at 96 threads is FALSE as built.
 2. **The H=0 monster exit is unexercised on the real corpus at 1 GB**
    (`entropy_noprog_exits=0`). It is proven on the oracle (7,158 zero-entropy
    exits, 1,576 degenerate cases) and on the synthetic monster (the H<θ exit:
