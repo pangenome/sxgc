@@ -818,6 +818,231 @@ int main(int argc, char** argv) {
                 "exact_brute_SA=1 window_instances=%llu\n",
                 (unsigned long long)adaptCases, fixtures.size(),
                 (unsigned long long)adaptDepthMax, (unsigned long long)adaptWindows);
+    // ---- THE ENTROPY RULE PASS (its own case set) ---------------------------
+    // tools/binbwt/ENTROPY_RULE_DESIGN.md. The rule changes WHEN a bucket stops
+    // splitting, NEVER what the tree produces: every exit hands the residue to
+    // the exact LCP-carrying comparator, so the gate is BYTE IDENTITY against the
+    // target-size-only arm plus the brute SA, at every threshold from "take every
+    // level" to "exit at the first level". The named risks the pass discharges:
+    //   (a) ORDER IDENTITY: armed == off == brute SA, both modes, on every
+    //       fixture, at theta 0 / 0.5 / 1.5 / 3 / 8;
+    //   (b) a bucket that goes DEGENERATE mid-recursion must exit CLEANLY: the
+    //       fixtures below make one byte dominate deep inside the tree, and the
+    //       pass requires `entropy_no_prog_exits > 0` with an exact order;
+    //   (c) a PERIODIC bucket (H = 0, provably identical rotations) must still
+    //       take the EXISTING tie-break, not the comparison exit: armed runs when
+    //       require `periodic_rows` is never LESS than the off arm's (the rule
+    //       probes the period unconditionally, so it can only find it sooner);
+    //   (d) MIXED fixtures (diverse head, degenerate body, periodic tail) in one
+    //       text, where the three regimes meet inside one recursion;
+    //   (e) theta = 0 with the in-leaf arm OFF is TODAY'S RULE wherever the tree
+    //       makes progress: the counters must be IDENTICAL to the off arm.
+    //   (f) the IN-LEAF arm (PART 2) fired with its row floor forced to 1, and the
+    //       leaf's own BWT output is still the brute SA.
+    {
+        // The adversarial fixtures, on top of the shared ones: each targets one
+        // regime boundary the rule has to survive.
+        std::vector<std::string> ef;
+        std::vector<const char*> efName;
+        {   // 1. a 300-row bucket whose next byte is 'a' for 299 of 300 rows: the
+            //    byte-0x20 monster at the FIRST level, non-periodic.
+            ef.push_back(std::string(300, 'a') + "bcdbcd");
+            efName.push_back("monster-top");
+        }
+        {   // 2. the SAME collapse DEEP in the tree: 40 rows share a 16-byte diverse
+            //    prefix, then all agree on a run of 'a' - the entropy collapses
+            //    mid-recursion, not at the root.
+            std::string t;
+            uint64_t x = 0x243F6A8885A308D3ULL;
+            std::string pre;
+            for (U i = 0; i < 16; ++i) {
+                x = x * 6364136223846793005ULL + 1442695040888963407ULL;
+                pre += char(1 + ((x >> 40) % 200));      // never 0, never 0x1e
+            }
+            for (U k = 0; k < 40; ++k) { t += pre; t += std::string(24, 'a'); t += char('A' + k); }
+            ef.push_back(t);
+            efName.push_back("monster-deep");
+        }
+        {   // 3. MIXED: diverse head, degenerate body, periodic tail.
+            std::string t;
+            t += "mississippimississippimississippi";
+            t += std::string(200, 'a');
+            t += std::string("abababababababababababababababab");
+            t += std::string(200, 'a');
+            t += "xyxyxyxyxyxy";
+            ef.push_back(t);
+            efName.push_back("mixed");
+        }
+        {   // 4. a PERIODIC block with a diverse continuation: the tie-break must
+            //    own the periodic part and the comparator the rest.
+            std::string t;
+            for (U k = 0; k < 24; ++k) t += std::string("abababababab", 12) + char('A' + k);
+            ef.push_back(t);
+            efName.push_back("periodic-mixed");
+        }
+        // The arms: (bits, in-leaf arm on?, leaf row floor). `leafFloor` huge
+        // (2^40) DISABLES the in-leaf arm (every leaf is <= it), which is what the
+        // tree-only arms need.
+        struct EArm { double bits; bool leaf; U leafFloor; double leafBits; const char* name; };
+        const std::vector<EArm> arms = {
+            {0.0, false, U(1) << 40, 0.0, "tree-theta0"},
+            {0.5, false, U(1) << 40, 0.0, "tree-theta0.5"},
+            {1.5, false, U(1) << 40, 0.0, "tree-theta1.5"},
+            {3.0, false, U(1) << 40, 0.0, "tree-theta3"},
+            {8.0, false, U(1) << 40, 0.0, "tree-theta8"},
+            {1.5, true, 1, 0.0, "treeleaf-theta1.5"},
+            {8.0, true, 1, 0.0, "treeleaf-theta8"},
+        };
+        BinWindowOpts woptEnt;
+        woptEnt.dir = std::string(argv[1]) + "/windows-entropy";
+        woptEnt.credit = 2;
+        woptEnt.disc = true;
+        U entCases = 0, entWindows = 0;
+        U entEvals = 0, entTaken = 0, entExits = 0, entExitRows = 0, entNoProg = 0;
+        U entLeafEvals = 0, entLeafTaken = 0, entLeafExits = 0;
+        U entTheta0Identical = 0, entPeriodicChecked = 0, entDegenerate = 0;
+        U entOverTarget = 0;
+        auto runEnt = [&](CorpusText& text, bool dollar, U threads, U leaf,
+                          const BinWindowOpts& wo, BinWork& w, std::vector<U>& got,
+                          const char* what) {
+            got.clear();
+            got.reserve(text.n);
+            bin_order(text, dollar, threads, leaf, 0, U(1) << 40, 1, false, 0, w,
+                      [&](U row, U p) {
+                          require(row == got.size(), what);
+                          got.push_back(p);
+                      }, false, wo);
+            require(got.size() == text.n, what);
+        };
+        for (U f = 0; f < fixtures.size() + ef.size(); ++f) {
+            const std::string& t = f < fixtures.size() ? fixtures[f] : ef[f - fixtures.size()];
+            const char* name = f < fixtures.size() ? "shared" : efName[f - fixtures.size()];
+            std::string M;
+            for (unsigned char c : t) M += char(remap[c]);
+            const std::string path = std::string(argv[1]) + "/oracle-corpus";
+            TextSeg seg; seg.path = path; seg.len = t.size(); seg.remap = remap;
+            { fs::remove(path); OutFile file(path); file.raw(t.data(), t.size()); }
+            CorpusText text; text.open({seg}, true);
+            for (bool dollar : {false, true}) {
+                auto want = brute(M, dollar);
+                for (U threads : {1u, 3u})
+                    for (U leaf : {1u, 24u}) {
+                        // THE OFF ARM: today's rule, the reference for both the
+                        // order and (arm tree-theta0) the counters.
+                        BinWork wOff; std::vector<U> off;
+                        runEnt(text, dollar, threads, leaf, woptEnt, wOff, off,
+                               "entropy oracle row continuity (off arm)");
+                        if (off != want) {
+                            std::fprintf(stderr,
+                                "ENTROPY_ORACLE_FAIL off-arm fixture=%llu(%s) dollar=%u "
+                                "threads=%llu leaf=%llu\n", (unsigned long long)f, name,
+                                unsigned(dollar), (unsigned long long)threads,
+                                (unsigned long long)leaf);
+                            return 1;
+                        }
+                        entWindows += wOff.windows;
+                        for (const EArm& arm : arms) {
+                            BinWindowOpts wo = woptEnt;
+                            wo.entropyOpts.armed = true;
+                            wo.entropyOpts.minBits = arm.bits;
+                            wo.entropyOpts.leafMinBits = arm.leafBits;
+                            wo.entropyOpts.leafFloor = arm.leaf ? arm.leafFloor
+                                                                : (U(1) << 40);
+                            BinWork wOn; std::vector<U> got;
+                            runEnt(text, dollar, threads, leaf, wo, wOn, got,
+                                   "entropy oracle row continuity (armed arm)");
+                            if (got != want) {
+                                std::fprintf(stderr,
+                                    "ENTROPY_ORACLE_FAIL arm=%s fixture=%llu(%s) dollar=%u "
+                                    "threads=%llu leaf=%llu\n", arm.name,
+                                    (unsigned long long)f, name, unsigned(dollar),
+                                    (unsigned long long)threads, (unsigned long long)leaf);
+                                for (U i = 0; i < got.size(); ++i)
+                                    if (got[i] != want[i])
+                                        std::fprintf(stderr,
+                                            " got[%llu]=%llu want[%llu]=%llu\n",
+                                            (unsigned long long)i, (unsigned long long)got[i],
+                                            (unsigned long long)i, (unsigned long long)want[i]);
+                                return 1;
+                            }
+                            require(got == off,
+                                    "entropy oracle: the armed arm moved the ORDER against "
+                                    "the target-size-only arm");
+                            // The rule's own book-keeping must close exactly.
+                            require(wOn.entropyTaken + wOn.entropyExits == wOn.entropyEvals,
+                                    "entropy oracle: taken + exits != evals");
+                            require(wOn.entropyExits == 0 || wOn.entropyExitRows > 0,
+                                    "entropy oracle: exits with no rows");
+                            // THE PERIODIC TIE-BREAK IS NEVER LOST, and the rule can
+                            // only find a period EARLIER than the stride-64 probe
+                            // would (it probes every no-progress level).
+                            if (!dollar)
+                                require(wOn.periodicRows >= wOff.periodicRows,
+                                        "entropy oracle: the rule lost the periodic tie-break");
+                            if (!dollar && (wOff.periodicRows || wOn.periodicRows))
+                                ++entPeriodicChecked;
+                            if (wOn.entropyNoProgExits) ++entDegenerate;
+                            entEvals += wOn.entropyEvals;
+                            entTaken += wOn.entropyTaken;
+                            entExits += wOn.entropyExits;
+                            entExitRows += wOn.entropyExitRows;
+                            entNoProg += wOn.entropyNoProgExits;
+                            entLeafEvals += wOn.entropyLeafEvals;
+                            entLeafTaken += wOn.entropyLeafTaken;
+                            entLeafExits += wOn.entropyLeafExits;
+                            entOverTarget += wOn.entropyOverTargetLeaves;
+                            // (e) theta = 0 with the in-leaf arm OFF is TODAY'S
+                            // rule wherever the tree can progress: identical
+                            // counters wherever the off arm never failed to divide.
+                            if (arm.bits == 0.0 && !arm.leaf && wOff.noProgressLevels == 0) {
+                                require(wOn.levelPasses == wOff.levelPasses &&
+                                            wOn.levelElems == wOff.levelElems &&
+                                            wOn.binPasses == wOff.binPasses &&
+                                            wOn.comparisons == wOff.comparisons &&
+                                            wOn.symbols == wOff.symbols &&
+                                            wOn.leafSorts == wOff.leafSorts &&
+                                            wOn.leafElems == wOff.leafElems &&
+                                            wOn.entropyExits == 0,
+                                        "entropy oracle: theta=0 moved a counter against the "
+                                        "off arm on a tree that never failed to divide");
+                                ++entTheta0Identical;
+                            }
+                            ++entCases;
+                        }
+                    }
+            }
+        }
+        require(entNoProg > 0,
+                "entropy oracle: no zero-entropy exit ever fired (the degenerate/monster "
+                "fixtures must force one)");
+        require(entExits > 0 && entTaken > 0,
+                "entropy oracle: the rule never fired in either direction");
+        require(entLeafEvals > 0 && entLeafTaken > 0,
+                "entropy oracle: the in-leaf arm never took a level");
+        require(entDegenerate > 0, "entropy oracle: no degenerate-bucket case");
+        require(entPeriodicChecked > 0,
+                "entropy oracle: no periodic fixture met the rule");
+        require(entTheta0Identical > 0,
+                "entropy oracle: theta=0 identity was never exercised");
+        std::printf("BINBWT_ORACLE_ENTROPY_PASS cases=%llu fixtures=%zu adversarial=%zu "
+                    "arms=%zu modes=cyclic,dollar threads=1,3 leaf=1,24 "
+                    "theta=0,0.5,1.5,3,8 in_leaf_arm=forced_row_floor_1,off "
+                    "entropy_evals=%llu taken=%llu exits=%llu exit_rows=%llu "
+                    "zero_entropy_exits=%llu leaf_evals=%llu leaf_taken=%llu "
+                    "leaf_exits=%llu over_target_leaves=%llu "
+                    "order_identical_to_off_arm=1 exact_brute_SA=1 "
+                    "degenerate_exit=%llu mixed_fixtures=%zu periodic_checked=%llu "
+                    "theta0_counter_identical=%llu window_instances=%llu\n",
+                    (unsigned long long)entCases, fixtures.size(), ef.size(), arms.size(),
+                    (unsigned long long)entEvals, (unsigned long long)entTaken,
+                    (unsigned long long)entExits, (unsigned long long)entExitRows,
+                    (unsigned long long)entNoProg, (unsigned long long)entLeafEvals,
+                    (unsigned long long)entLeafTaken, (unsigned long long)entLeafExits,
+                    (unsigned long long)entOverTarget, (unsigned long long)entDegenerate,
+                    ef.size(), (unsigned long long)entPeriodicChecked,
+                    (unsigned long long)entTheta0Identical,
+                    (unsigned long long)entWindows);
+    }
     std::printf("BINBWT_ORACLE_FREQ_PASS cases=%llu fixtures=%zu modes=cyclic,dollar "
                 "threads=1,3,8 leaf=1,24 depth_cap=16 level_bytes=1,2 cap=7,all "
                 "freq_sched=1 exact_brute_SA=1 multi_window_runs=%llu "
