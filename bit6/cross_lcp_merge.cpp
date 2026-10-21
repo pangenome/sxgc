@@ -5514,10 +5514,6 @@ int main_impl(int argc, char** argv) {
                 u("--phrase-probe-depth", bwo.phraseOpts.probeDepth);
             bwo.phraseOpts.probeStride =
                 u("--phrase-probe-stride", bwo.phraseOpts.probeStride);
-            bwo.phraseOpts.probeDepth =
-                u("--phrase-probe-depth", bwo.phraseOpts.probeDepth);
-            bwo.phraseOpts.probeStride =
-                u("--phrase-probe-stride", bwo.phraseOpts.probeStride);
             require(bwo.phraseOpts.minLen >= 16 && bwo.phraseOpts.seed >= 16 &&
                     bwo.phraseOpts.skipMinLen >= 16 &&
                         bwo.phraseOpts.maxLen >= bwo.phraseOpts.minLen &&

@@ -12,6 +12,19 @@
 // inside a bin is consumed once by a bucketing pass and is never walked again by
 // a comparison; leaves sort by raw LCE through the CorpusText cache starting at
 // the certified depth.
+//
+// PHRASE RADIX (tools/binbwt/PHRASE_RADIX_DESIGN.md) adds ONE thing to this
+// machine: at a node whose split made no progress (`biggest == m`, the
+// deep-boilerplate signature) a small content-addressed dictionary may certify a
+// WHOLE PHRASE at the node's depth, so 879 byte levels become one level of width
+// s. It is off unless `--phrase-radix` is given, and when it is off no line of it
+// executes (`bin_phrase_now == nullptr`).
+#include "phrase_radix.h"
+// The dictionary of the CURRENT bin_order call (null when the flag is off).
+// Constant for the whole call: the build threads only ever read it, and the
+// driver sets/clears it, so no per-node pointer has to be threaded through the
+// queue's task structs.
+static const PhraseDict* bin_phrase_now = nullptr;
 struct BinWork {
     U sweepBytes = 0, sweepPasses = 0, windows = 0, bins = 0, binPasses = 0;
     U levelPasses = 0, levelElems = 0;      // bucketing passes / elements coded
@@ -76,6 +89,18 @@ struct BinWork {
     // ---- the write path's own cost (pwrite, no mapping) --------------------
     U winFillBufBytes = 0;              // peak staging buffers (threads x <= 4 MiB)
     U winFillWrites = 0;                // pwrite() calls the fill issued
+    // ---- PHRASE RADIX: the census of the OTHER regime ----------------------
+    // Probes fired at no-progress nodes, the rows and bytes they certified in ONE
+    // level each, and the deepest depth a phrase certified. `phrase_skips` is what
+    // replaces runs of `no_progress_levels`, and `phrase_skip_bytes` is the EXACT
+    // number of text bytes the dictionary answered (the coverage estimate in
+    // PHRASE_DICT is only an estimate; this is the measured one).
+    U phraseProbes = 0, phraseProbeRows = 0;    // probes fired / rows examined
+    U phraseSkips = 0, phraseSkipRows = 0;      // skips taken / rows certified
+    U phraseSkipBytes = 0;                      // EXACT bytes certified by skips
+    U phraseSkipMaxLen = 0, phraseSkipDepthMax = 0;
+    U phraseVerifyFails = 0;                     // candidates byte-verify rejected
+    U phraseProbeNoEnt = 0, phraseProbeDis = 0;  // probe refused: no entry / not uniform
     void absorb(const BinWork& o) {
         sweepBytes += o.sweepBytes; sweepPasses += o.sweepPasses;
         windows += o.windows; bins += o.bins; binPasses += o.binPasses;
@@ -128,6 +153,13 @@ struct BinWork {
         tCreditWait += o.tCreditWait;
         winFillBufBytes = std::max(winFillBufBytes, o.winFillBufBytes);
         winFillWrites += o.winFillWrites;
+        phraseProbes += o.phraseProbes; phraseProbeRows += o.phraseProbeRows;
+        phraseSkips += o.phraseSkips; phraseSkipRows += o.phraseSkipRows;
+        phraseSkipBytes += o.phraseSkipBytes;
+        phraseSkipMaxLen = std::max(phraseSkipMaxLen, o.phraseSkipMaxLen);
+        phraseSkipDepthMax = std::max(phraseSkipDepthMax, o.phraseSkipDepthMax);
+        phraseVerifyFails += o.phraseVerifyFails;
+        phraseProbeNoEnt += o.phraseProbeNoEnt; phraseProbeDis += o.phraseProbeDis;
     }
 };
 
@@ -992,6 +1024,12 @@ struct BinWindowOpts {
     U credit = 2;         // windows the fill may be ahead of the build
     U buildCap = 0;       // per-group build working set, slots (0 = whole window)
     bool disc = true;     // false = the RAM-arena A/B arm
+    // PHRASE RADIX (off by default; the product path is unchanged). `phraseOpts`
+    // is the policy the caller asked for; `phrase` is the dictionary built from
+    // it, and it is null whenever the flag is absent or the dictionary turned out
+    // empty - in which case the byte radix runs EXACTLY as today.
+    PhraseOpts phraseOpts;
+    const PhraseDict* phrase = nullptr;
 };
 
 // ------------------------------------------------- THE PHASE CAP (auto cap)
@@ -1143,6 +1181,92 @@ template <class E> struct bin_publish_sink<E, std::void_t<
 // journalled (`overTargetLeaves` / BIN_LEAF_OVER_TARGET) instead of being
 // silently taken. The order is exact whatever the cap: the leaf sort is a total
 // order at any m.
+// ------------------------------------------ PHRASE RADIX: the skip, in the tree
+// THE SKIP LEMMA (tools/binbwt/PHRASE_RADIX_DESIGN.md §2). A node certified at
+// depth d holds rows that all agree on the first d bytes. If EVERY row resolves
+// to the SAME dictionary entry E and every row's text at tail+d compares equal to
+// E's bytes for E.len, then the node may be re-certified at depth d+E.len: no
+// byte before d+E.len differs between rows, so no discriminating information is
+// discarded and the order inside the node is decided by the bytes after it,
+// exactly as before. That is the whole correctness argument, and the oracle
+// proves it against a brute suffix array.
+//
+// The lookup is one 8-byte key against one direct-mapped slot; the hash only
+// picks a CANDIDATE and the byte comparison is what certifies it. A hash
+// collision, a stale entry or an evicted entry can therefore only make the skip
+// not fire - never make it wrong.
+//
+// WHERE IT FIRES: only when the byte radix is already grinding, i.e. a split that
+// put every row in one bucket. The diverse majority of the corpus divides
+// normally and never pays a probe. "Both regimes automatically": the data decides
+// node by node, there is no flag or threshold deciding which region is which.
+static U bin_phrase_skip(const CorpusText& t, bool dollar, U depth, const U* src,
+                         U m, BinWork& w) {
+    const PhraseDict* pd = bin_phrase_now;
+    if (!pd || !pd->armed() || m < pd->o.skipMinRows) return 0;
+    const U n = t.n;
+    ++w.phraseProbes; w.phraseProbeRows += m;
+    // THE EXHAUSTED-INSIDE-THE-PHRASE CASE, which is what a first attempt at this
+    // got wrong. A node holds rows that agree on `depth` bytes, and in dollar mode
+    // some of them may END inside the phrase - at most `depth + 16` positions of
+    // the corpus can, but ONE of them in a 6M-row node was enough to refuse every
+    // skip at 10 GB (measured: 82 probes, 486M probe_rows, 0 skips). It is not a
+    // refusal, it is the ordinary bucket-0 rule: a suffix that ends inside the
+    // certified region is a PREFIX of the other rows, so it is the smallest, and
+    // `bin_code` already sends an exhausted row to code 0 (which sorts first) with
+    // ascending length as its exact order. So such a row takes no part in choosing
+    // the entry and is verified only for the bytes it actually has.
+    int32_t chosen = -1;
+    {
+        uint8_t buf[16];
+        for (U i = 0; i < m; ++i) {
+            const U x = bin_word_tail(src[i]) + depth;
+            const uint8_t* b16;
+            if (dollar) {
+                if (x >= n || n - x < 16) continue;   // ends inside the phrase
+                b16 = t.span(x, buf, 16);
+            } else {
+                const U xr = x % n;
+                if (xr + 16 <= n) b16 = t.span(xr, buf, 16);
+                else { PhraseDict::copyAt(t, false, xr, 16, buf); b16 = buf; }
+            }
+            const int32_t e = pd->lookup16(b16);
+            if (e < 0) { ++w.phraseProbeNoEnt; return 0; }   // no phrase here
+            if (chosen < 0) chosen = e;
+            else if (chosen != e) { ++w.phraseProbeDis; return 0; }
+        }
+    }
+    if (chosen < 0) return 0;                    // every row ends inside the key
+    const PhraseDict::Entry& E = pd->entry(chosen);
+    const U len = U(E.len);
+    if (len < std::max<U>(pd->o.skipMinLen, 16)) return 0;
+    {
+        // BYTE-VERIFY every row, for as many bytes as it HAS. Mid-phrase suffixes
+        // are the correctness core (design doc §4) and this is the line that makes
+        // them safe: the hash picked the candidate, it may not certify it.
+        const uint8_t* ref = pd->text(E);
+        uint8_t vb[4096];
+        for (U i = 0; i < m; ++i) {
+            const U x = bin_word_tail(src[i]) + depth;
+            U take = len;
+            if (dollar) {
+                if (x >= n) continue;
+                take = std::min<U>(len, n - x);
+            }
+            if (!PhraseDict::verify(t, dollar, x, take, ref, vb)) {
+                ++w.phraseVerifyFails;
+                return 0;
+            }
+        }
+    }
+    ++w.phraseSkips; w.phraseSkipRows += m;
+    w.phraseSkipBytes += len * m;
+    w.phraseSkipMaxLen = std::max(w.phraseSkipMaxLen, len);
+    w.phraseSkipDepthMax = std::max(w.phraseSkipDepthMax, depth + len);
+    w.depthMax = std::max<U>(w.depthMax, depth + len);
+    return len;
+}
+
 static U* bin_sort_rec(const CorpusText& t, bool dollar, U* src, U* dst, U m,
                        U depth, U depthCap, U targetSize, U levelBytes,
                        BinWork& w) {
@@ -1214,6 +1338,22 @@ static U* bin_sort_rec(const CorpusText& t, bool dollar, U* src, U* dst, U m,
         }
         w.tLeaf += now_sec() - tl;
         return src;
+    }
+    // ---- PHRASE RADIX: the one trigger -------------------------------------
+    // A node that is DEEP (>= probeDepth certified bytes) and HEAVY (>= the row
+    // floor) is where the corpus's long shared prefixes live: at 10 GB the census
+    // reaches depth_max=854 with a 1,048,416-row leaf and NO node that fails to
+    // divide, so a "cannot divide" trigger would never fire on the corpus this
+    // exists for. The stride damps a failed probe inside a long chain (see
+    // PhraseOpts::probeStride): <= 15 extra byte levels, and nothing is lost
+    // because the dictionary has an entry at every offset of every block.
+    if (const PhraseDict* pd = bin_phrase_now) {
+        if (pd->armed() && m >= pd->o.skipMinRows && depth >= pd->o.probeDepth &&
+            (pd->o.probeStride <= 1 || depth % pd->o.probeStride == 0)) {
+            if (const U skipLen = bin_phrase_skip(t, dollar, depth, src, m, w))
+                return bin_sort_rec(t, dollar, src, dst, m, depth + skipLen,
+                                    depthCap, targetSize, levelBytes, w);
+        }
     }
     const U codes = bin_codes(levelBytes);
     std::vector<U> count(codes, 0);
@@ -1368,6 +1508,22 @@ static void bin_task_run(const CorpusText& t, bool dollar, const BinTask& tk,
         if (r != tk.canon) std::memcpy(tk.canon, r, tk.m * sizeof(U));
         return;
     }
+    // PHRASE RADIX: the same single trigger as the inline recursion (see the
+    // comment there). A skip must land in `canon`.
+    if (const PhraseDict* pd = bin_phrase_now) {
+        if (pd->armed() && tk.m >= pd->o.skipMinRows &&
+            tk.depth >= pd->o.probeDepth &&
+            (pd->o.probeStride <= 1 || tk.depth % pd->o.probeStride == 0)) {
+            if (const U skipLen =
+                    bin_phrase_skip(t, dollar, tk.depth, tk.src, tk.m, w)) {
+                U* r = bin_sort_rec(t, dollar, tk.src, tk.dst, tk.m,
+                                    tk.depth + skipLen, depthCap, targetSize,
+                                    levelBytes, w);
+                if (r != tk.canon) std::memcpy(tk.canon, r, tk.m * sizeof(U));
+                return;
+            }
+        }
+    }
     const U codes = bin_codes(levelBytes);
     std::vector<U> count(codes, 0), start(codes, 0);
     for (U i = 0; i < tk.m; ++i)
@@ -1473,6 +1629,12 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U targetSi
                       bool fillOnly = false,
                       const BinWindowOpts& wopt = BinWindowOpts()) {
     const U n = text.n;
+    // PHRASE RADIX: publish this call's dictionary for the build threads (they
+    // only read it) and take it back down on the way out. Nothing else about this
+    // function changes; with `wopt.phrase == nullptr` the pointer is null and
+    // bin_phrase_skip returns immediately without touching a counter.
+    bin_phrase_now = wopt.phrase;
+    struct PhraseUnset { ~PhraseUnset() { bin_phrase_now = nullptr; } } phraseUnset;
     // The sink's ascending capture-target list, joined against the corpus in the
     // fill pass. Empty for the per-row oracle path.
     const std::vector<U>* joinTargets = nullptr;
@@ -2832,6 +2994,34 @@ static void bin_journal(const BinWork& total, bool dollar, U threads,
         (unsigned long long)total.hotSymbols, (unsigned long long)total.hotComparisons);
 }
 
+// PHRASE_WORK: the census of the OTHER regime, next to BIN_WORK's own. A
+// separate line on purpose - BIN_WORK's field set is parsed by the gate scripts
+// and by the census diffs, so it must not grow shape.
+static void bin_phrase_journal_work(const BinWork& w, const PhraseDict* pd) {
+    const bool on = pd && pd->armed();
+    std::fprintf(stderr,
+        "PHRASE_WORK armed=%u probe_depth=%llu probe_stride=%llu skip_min_rows=%llu "
+        "probes=%llu probe_rows=%llu skips=%llu skip_rows=%llu "
+        "skip_bytes=%llu skip_max_len=%llu skip_depth_max=%llu verify_fails=%llu "
+        "refused_no_entry=%llu refused_not_uniform=%llu "
+        "no_progress_levels=%llu level_passes=%llu level_elems=%llu "
+        "comparisons=%llu symbols=%llu full_SA=0 persistent_positions=0\n",
+        unsigned(on), (unsigned long long)(pd ? pd->o.probeDepth : 0),
+        (unsigned long long)(pd ? pd->o.probeStride : 0),
+        (unsigned long long)(pd ? pd->o.skipMinRows : 0),
+        (unsigned long long)w.phraseProbes,
+        (unsigned long long)w.phraseProbeRows, (unsigned long long)w.phraseSkips,
+        (unsigned long long)w.phraseSkipRows, (unsigned long long)w.phraseSkipBytes,
+        (unsigned long long)w.phraseSkipMaxLen,
+        (unsigned long long)w.phraseSkipDepthMax,
+        (unsigned long long)w.phraseVerifyFails,
+        (unsigned long long)w.phraseProbeNoEnt,
+        (unsigned long long)w.phraseProbeDis,
+        (unsigned long long)w.noProgressLevels,
+        (unsigned long long)w.levelPasses, (unsigned long long)w.levelElems,
+        (unsigned long long)w.comparisons, (unsigned long long)w.symbols);
+}
+
 // ---- producer entry point: the parallel sink publishes the concatenated bins
 static int binbwt_main(const std::string& path, const std::string& mapPath,
                        const std::string& prefix, U threads, U targetSize,
@@ -2876,6 +3066,17 @@ static int binbwt_main(const std::string& path, const std::string& mapPath,
     CorpusText text;
     text.open({segment}, true);
     require(text.n, "bin-bwt empty corpus");
+    // ---- PHRASE RADIX: one parse pass, before any window exists -------------
+    // The dictionary is built from the corpus the tree is about to build, off the
+    // product path, and journalled so a second run can be diffed (the parse's
+    // determinism is one of the oracle's cases). With the flag absent this block
+    // does nothing at all and `wopt.phrase` stays null.
+    PhraseDict phraseDict;
+    if (wopt.phraseOpts.enabled) {
+        phraseDict.parse(text, dollar, wopt.phraseOpts);
+        phrase_journal_dict(phraseDict, text.n);
+    }
+    if (phraseDict.armed()) wopt.phrase = &phraseDict;
     // ---- THE LIVE CAP: derived from the phase budget, or checked against it --
     // The default is no longer unbounded (see BinCapTerms): a window is sized so
     // that the corpus cache + the fill staging + the arena pair it needs all fit
@@ -2926,6 +3127,7 @@ static int binbwt_main(const std::string& path, const std::string& mapPath,
         j.sink = fillOnly ? "probe-fill-only" : "probe-none";
         bin_journal(total, dollar, threads, levelBytes, targetSize, depthCap,
                     freqSched, splitSize, now_sec() - tStart, j);
+        bin_phrase_journal_work(total, phraseDict.armed() ? &phraseDict : nullptr);
         return 0;
     }
     // `serialSink` runs the UNCHANGED v1 sink (SequentialV2 fed one row at a
@@ -2969,5 +3171,6 @@ static int binbwt_main(const std::string& path, const std::string& mapPath,
     j.tEnds = tEnds - tOrder;
     bin_journal(total, dollar, threads, levelBytes, targetSize, depthCap, freqSched,
                 splitSize, wall, j);
+    bin_phrase_journal_work(total, phraseDict.armed() ? &phraseDict : nullptr);
     return 0;
 }
