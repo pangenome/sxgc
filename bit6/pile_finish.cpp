@@ -3501,7 +3501,7 @@ struct LocateIsa {
 // band's last run's rank and end rank (for the adjacency test) and the counters.
 struct KasaiState {
     uint64_t lastHeadRank = 0, lastEndRank = 0;
-    uint64_t gaps = 0, disorder = 0, bands = 0;
+    uint64_t gaps = 0, disorder = 0, noncontig = 0, bands = 0;
     std::atomic<uint64_t> fallback{0};   // queries that needed the walk (rank holes)
 };
 
@@ -4127,6 +4127,7 @@ int main(int argc, char** argv) {
             // run's rank is. The last worker to arrive stages the slice, the rest
             // wait on a flag; the claim counter is reset behind that barrier.
             auto headRank = std::make_shared<std::vector<uint64_t>>(cnt);
+            auto tailRank = std::make_shared<std::vector<uint64_t>>(cnt);
             auto band = std::make_shared<LcpColumn::Band>();
             auto arrived = std::make_shared<std::atomic<int>>(0);
             auto staged = std::make_shared<std::atomic<int>>(0);
@@ -4137,30 +4138,37 @@ int main(int argc, char** argv) {
             ++kasaiState.bands;
             return std::function<void(int)>(
                 [&, cnt, &nb, &gx, prevTailS, next, headRank, band, arrived, staged,
-                 prevEndS, prevHeadS, firstBand, P](int t) {
+                 prevEndS, prevHeadS, firstBand, P, tailRank](int t) {
                 slim_set_thread_shard(unsigned(t));
                 // PHASE 1: every run's exact rank, in parallel.
                 for (;;) {
                     const size_t i = next->fetch_add(1);
                     if (i >= cnt) break;
                     const uint64_t rk = locateIsa.at(nb[i].h);
-                    pf_check(rk + nb[i].len <= n, "KASAI: run rank range outside [0,n)");
+                    pf_check(rk < n, "KASAI: run head rank outside [0,n)");
                     (*headRank)[i] = rk;
-                    if (nb[i].len >= 2) {
-                        const uint64_t rt = locateIsa.at(nb[i].t);
-                        pf_check(rt == rk + nb[i].len - 1,
-                                 "KASAI: a run is not a contiguous rank interval (head rank " +
-                                 std::to_string(rk) + " + len " + std::to_string(nb[i].len) +
-                                 " implies tail rank " + std::to_string(rk + nb[i].len - 1) +
-                                 ", the locate table says " + std::to_string(rt) + ")");
-                    }
+                    // A run's rows are USUALLY the contiguous rank interval
+                    // [rk, rk+len-1], but not always: the class/dollar repair can
+                    // leave a HOLE inside a run (measured at 1 GB: a len-2 run
+                    // whose ranks are {4576075, 4576077}). The interior answer is
+                    // then the min-LCP over the interval between the TWO ENDPOINT
+                    // RANKS, which is what the tail lookup below gives - so the
+                    // tail's rank is taken from the locate table, never assumed
+                    // to be rk+len-1.
+                    (*tailRank)[i] = nb[i].len >= 2 ? locateIsa.at(nb[i].t) : rk;
+                    pf_check((*tailRank)[i] < n, "KASAI: run tail rank outside [0,n)");
                 }
                 // BARRIER: last arrival stages the slice.
                 if (arrived->fetch_add(1) + 1 == P) {
                     uint64_t lo = ~uint64_t(0), hi = 0;
                     for (size_t i = 0; i < cnt; ++i) {
-                        lo = std::min(lo, (*headRank)[i]);
-                        hi = std::max(hi, (*headRank)[i] + nb[i].len - 1);
+                        // Both ENDPOINT ranks are what the column answers need:
+                        // a run's own rows can skip a rank (a hole inside a run),
+                        // so hi is not headRank+len-1 in general.
+                        lo = std::min({lo, (*headRank)[i], (*tailRank)[i]});
+                        hi = std::max({hi, (*headRank)[i], (*tailRank)[i]});
+                        if (nb[i].len >= 2 && (*tailRank)[i] != (*headRank)[i] + nb[i].len - 1)
+                            kasaiState.noncontig += 1;
                         // The stream is ascending EXCEPT for the terminal row,
                         // which the transducer emits late (measured: rank 1186920
                         // arrives after rank 1194188 at 100 MB). Order is not
@@ -4204,9 +4212,14 @@ int main(int argc, char** argv) {
                     }
                     uint64_t inter = INF;
                     if (v.len >= 2) {
+                        // min-LCP over the rank interval between the run's two
+                        // ENDPOINT RANKS (exact even when the run's own rows skip
+                        // a rank: LCE(SA[a],SA[c]) = min col[a..c-1] for any a<c).
+                        const uint64_t rt = (*tailRank)[i];
+                        const uint64_t a = std::min(r, rt), c = std::max(r, rt);
+                        pf_check(c > a, "KASAI: an interior run collapsed to one rank");
                         inter = ~uint64_t(0);
-                        for (uint64_t t2 = r; t2 + 1 < r + v.len; ++t2)
-                            inter = std::min(inter, band->at(t2));
+                        for (uint64_t t2 = a; t2 < c; ++t2) inter = std::min(inter, band->at(t2));
                         pf_check(inter != ~uint64_t(0), "empty interior interval");
                     }
                     if (kasaiAudit) {
@@ -4457,9 +4470,10 @@ int main(int argc, char** argv) {
             pf_check(lcpCol.maxEnd <= n, "KASAI CLOSURE: a band's rank slice runs past n");
             fprintf(stderr,
                     "PILE_FINISH_KASAI_CLOSURE bands=%llu rank_holes=%llu disorder=%llu "
-                    "walk_fallbacks=%llu max_rank_end=%llu n=%llu\n",
+                    "noncontiguous_runs=%llu walk_fallbacks=%llu max_rank_end=%llu n=%llu\n",
                     (unsigned long long)kasaiState.bands, (unsigned long long)kasaiState.gaps,
                     (unsigned long long)kasaiState.disorder,
+                    (unsigned long long)kasaiState.noncontig,
                     (unsigned long long)kasaiState.fallback.load(),
                     (unsigned long long)lcpCol.maxEnd, (unsigned long long)n);
         }

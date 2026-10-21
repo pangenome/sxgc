@@ -33,13 +33,13 @@ case "$ARM" in
   audit) ENVARM=(PILE_FINISH_KASAI_AUDIT=1) ;;
   *) echo "unknown arm $ARM" >&2; exit 2 ;;
 esac
-COLARG=(); [ "$COL" != none ] && COLARG=(--lcp-column "$COL")
+COLARG=(); [ "$COL" != none ] && COLARG=(--lcp-column "$COL" --sa-locate "$COL.isa")
 LOAD=$(cut -d' ' -f1 /proc/loadavg)
 echo "=== ARM tag=$TAG arm=$ARM col=$COL threads=$TH loadavg=$LOAD $(date +%T)"
 env "${ENVARM[@]}" ${EXTRA:-} \
   /usr/bin/time -v -o "$D/finish.time" "$PF" --prefix "$D/frag" \
     --corpus "$CORPUS" --remap "$REMAP" --output "$D/product.sxi2" \
-    --threads "$TH" --poll-timeout 7200 --wit-ram-budget 4294967296 \
+    --threads "$TH" --poll-timeout ${POLLTIMEOUT:-300} --wit-ram-budget 4294967296 \
     --chi-expect "$CHI" --keep-rlebwt "${COLARG[@]}" > /dev/null 2> "$D/finish.log"
 RC=$?
 ELAPSED=$(grep -oE "Elapsed \(wall clock\).*" "$D/finish.time" | head -1 | sed 's/.*: //')
