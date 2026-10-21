@@ -360,7 +360,33 @@ deterministic, RAM-small (7.9 MB of phrase text answered 10 GB of corpus with
 
 ---
 
-## 9. Repro
+## 9. Branch and commits
+
+Branch `phrase-radix-2`, from `phrase-radix-recover @ 1914080`:
+
+| commit | what |
+|---|---|
+| `00adb8a` | the front-end flags (xsa CLI + plan), the packaged mirror, and the one replay artefact removed |
+| `cab60d3` | the gates, the A/B, and the finding (this document) |
+| `a104a1c` | the contemporaneous 10 GB OFF arm and its 13% wall error bar |
+
+Inherited from `phrase-radix-recover`: `2b6654d` the design document, `12d925f`
+the insurance WIP, `ad73a08` the parse + tree hook + oracle family, `90b3a2f`
+the DEEP+LARGE trigger fix, `1914080` the supervisor's recovery of the
+uncommitted tail.
+
+Reconciliation of `1914080` against the dead charter's session journal: exactly
+one replay artefact remained (the `--phrase-probe-depth`/`--phrase-probe-stride`
+pair parsed twice in `cross_lcp_merge.cpp`), now removed; the recovered
+`phrase_radix.h` is functional as committed (the PHRASE_DICT format has no
+`-Wformat` warnings and every journaled field appears exactly once), and the
+whole oracle family including the new phrase arms is green on the final tree, so
+the remaining order-fragile journal mutations were already reflected in the
+state committed at `1914080`.
+
+---
+
+## 10. Repro
 
 ```sh
 # build
