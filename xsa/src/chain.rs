@@ -35,6 +35,7 @@ pub const USAGE: &str = "usage:
   xsa build --input <corpus> --scratch <dir> [--snap-1e] [--memory-gb N] [--threads N]
                     [--remap <256-byte-map>] [--bin-live-cap SLOTS]
                     [--bin-target-size ROWS] [--chi-expect N] [--wit-ram-gb N]
+                    [--phrase-radix [--phrase-KNOB N ...]]
                     [--timeout S] [--legacy-merge [--chunks N] [--kway N]]
 
 ONE ENTRY. `xsa build` runs the BIN pipeline by default (auto-radix): the
@@ -144,6 +145,29 @@ RSS / disc telemetry.
                      than the cap makes the producer raise it (BIN_CAP_RAISED),
                      which the front door treats as a MISCONFIGURATION and
                      fails loud (the plan priced a different arena).
+  --phrase-radix       ARM THE PHRASE DICTIONARY (tools/binbwt/PHRASE_RADIX_DESIGN.md).
+                     DEFAULT OFF, and off is the product: with the flag absent no
+                     producer argument is added, no parse runs and no line of
+                     the mechanism executes - the product stays byte-identical.
+                     ON, the producer parses the corpus before the bins start
+                     (a winnowed repeat sample -> a small direct-mapped
+                     dictionary of phrase blocks) and, at a node that is both
+                     DEEP (>= --phrase-probe-depth certified bytes) and HEAVY
+                     (>= --phrase-skip-min-rows rows), may certify a whole
+                     phrase at that depth and skip s byte levels at once. The
+                     parse is NOT free: measured 27 s per GiB of corpus, plus
+                     the winnow's whole sample array in RAM (8 B x 0.0834 n ~
+                     0.67n), and the plan prints both (XSA_PLAN_V2_PHRASE).
+                     CAVEAT, measured: at 100 MB, 1 GB and 10 GB the skip fires
+                     ZERO times (PHRASE_WORK skips=0) - every tree node's rows
+                     already differ at their own depth (no_progress_levels=0), so
+                     a node-level phrase certificate cannot apply. The arm costs
+                     the parse and buys nothing on those corpora; see the
+                     RESULTS note. Knobs: --phrase-min-len, --phrase-min-freq,
+                     --phrase-max-len, --phrase-seed, --phrase-window,
+                     --phrase-block-max, --phrase-pool-max, --phrase-table-bits,
+                     --phrase-reps, --phrase-skip-min-rows, --phrase-skip-min-len,
+                     --phrase-probe-depth, --phrase-probe-stride.
   --timeout SECONDS    hard wall cap on every phase (timeout -k 120, i.e.
                      TERM then KILL after 120s) - REQUIRED for --v2-pipeline
                      execution (caps on every run). Standing policy is a huge
@@ -214,6 +238,64 @@ const DISC_MAX_USED_PERCENT: u32 = 85;
 /// A lower inherited hard limit always wins and is journaled, never raised.
 const PHASE_WRAPPER: &str = "ulimit -v \"$1\" 2>/dev/null || ulimit -v \"$(ulimit -H -v)\" 2>/dev/null || true; shift; printf 'PHASE_CAP_KB=%s\\n' \"$(ulimit -v)\" >&2; exec \"$@\"";
 
+/// The producer's dictionary knobs (bit6/cross_lcp_merge.cpp). Kept in one
+/// table so the parser, the usage text and the validation cannot drift apart.
+pub const PHRASE_KNOBS: [&str; 13] = [
+    "--phrase-min-len", "--phrase-min-freq", "--phrase-max-len", "--phrase-seed",
+    "--phrase-window", "--phrase-block-max", "--phrase-pool-max", "--phrase-table-bits",
+    "--phrase-reps", "--phrase-skip-min-rows", "--phrase-skip-min-len",
+    "--phrase-probe-depth", "--phrase-probe-stride",
+];
+
+/// The phrase-radix arm (tools/binbwt/PHRASE_RADIX_DESIGN.md, bit6/phrase_radix.h).
+/// DEFAULT OFF, and it stays off in every observable way when the flag is
+/// absent: no producer argument, no plan line, no parse, no state.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PhraseOptions {
+    pub enabled: bool,
+    /// (flag, value) pairs in command order, appended to the producer exactly as
+    /// given. Validated here with the producer's own constraints, because a
+    /// front door that accepts a dictionary the producer will refuse is a
+    /// misconfiguration discovered hours later.
+    pub knobs: Vec<(&'static str, u64)>,
+}
+
+/// The producer's own `--phrase-*` constraints (bit6/cross_lcp_merge.cpp: the
+/// `require(...)` under `if (has("--phrase-radix"))`), mirrored so both ends
+/// refuse the same dictionary.
+fn validate_phrase(p: &PhraseOptions) -> Result<(), String> {
+    let get = |name: &str| p.knobs.iter().find(|(f, _)| *f == name).map(|(_, v)| *v);
+    let min_len = get("--phrase-min-len").unwrap_or(64);
+    let max_len = get("--phrase-max-len").unwrap_or(4096);
+    let seed = get("--phrase-seed").unwrap_or(32);
+    let window = get("--phrase-window").unwrap_or(24);
+    let table_bits = get("--phrase-table-bits").unwrap_or(20);
+    let reps = get("--phrase-reps").unwrap_or(8);
+    let skip_min_len = get("--phrase-skip-min-len").unwrap_or(16);
+    if min_len < 16 {
+        return Err(format!("--phrase-min-len {min_len} < 16 (a phrase shorter than 16 bytes cannot beat one byte level)"));
+    }
+    if seed < 16 {
+        return Err(format!("--phrase-seed {seed} < 16 (the winnow's k-mer must be long enough to identify a phrase)"));
+    }
+    if skip_min_len < 16 {
+        return Err(format!("--phrase-skip-min-len {skip_min_len} < 16 (a skip shorter than a page of levels is not worth a probe)"));
+    }
+    if max_len < min_len {
+        return Err(format!("--phrase-max-len {max_len} < --phrase-min-len {min_len}"));
+    }
+    if window < 2 {
+        return Err(format!("--phrase-window {window} < 2 (the winnow window must hold at least two k-mers)"));
+    }
+    if !(8..=26).contains(&table_bits) {
+        return Err(format!("--phrase-table-bits {table_bits} outside [8, 26] (2^26 slots x 24 B = 1.5 GiB is the ceiling)"));
+    }
+    if reps < 2 {
+        return Err(format!("--phrase-reps {reps} < 2 (the length sample needs two occurrences)"));
+    }
+    Ok(())
+}
+
 #[derive(Debug)]
 struct Options {
     input: PathBuf,
@@ -247,6 +329,9 @@ struct Options {
     /// measured leaf-sort rate, and journals the value it used (BIN_WORK
     /// target=). Depth is an OUTPUT of the data, so this is the only shape knob.
     bin_target_size: Option<u64>,
+    /// --phrase-radix and its dictionary knobs. DEFAULT OFF; when off nothing is
+    /// added to the producer command line and the product path is bit-identical.
+    phrase: PhraseOptions,
     timeout_s: Option<u64>,
     stripes: Vec<String>,
     scratch_free_pct: u32,
@@ -317,6 +402,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     let mut finish_as_gb = None;
     let mut bin_live_cap = None;
     let mut bin_target_size = None;
+    let mut phrase = PhraseOptions::default();
     let mut timeout_s = None;
     let mut stripes: Vec<String> = Vec::new();
     let mut scratch_free_pct = 15u32;
@@ -436,6 +522,23 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
                     return Err("specify --bin-target-size only once".into());
                 }
             }
+            "--phrase-radix" => {
+                if phrase.enabled {
+                    return Err("specify --phrase-radix only once".into());
+                }
+                phrase.enabled = true;
+            }
+            f if PHRASE_KNOBS.iter().any(|k| *k == f) => {
+                i += 1;
+                let v = value(args.get(i), f)?
+                    .parse::<u64>().map_err(|_| format!("{f}: integer expected"))?;
+                if phrase.knobs.iter().any(|(k, _)| *k == f) {
+                    return Err(format!("specify {f} only once"));
+                }
+                // `knobs` holds 'static names; only the table's own entries reach here.
+                let name = PHRASE_KNOBS[PHRASE_KNOBS.iter().position(|k| *k == f).unwrap()];
+                phrase.knobs.push((name, v));
+            }
             "--timeout" => {
                 i += 1;
                 let v = value(args.get(i), "--timeout")?
@@ -518,13 +621,22 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
         if bin_target_size.is_some() {
             return Err("--bin-target-size is a bin-pipeline flag (drop --legacy-merge)".into());
         }
+        if phrase.enabled || !phrase.knobs.is_empty() {
+            return Err("--phrase-radix is a bin-pipeline flag (drop --legacy-merge: the merge route has no bin tree to certify)".into());
+        }
+    }
+    if !phrase.enabled && !phrase.knobs.is_empty() {
+        return Err(format!("{} needs --phrase-radix (the dictionary is off by default and its knobs do nothing without it)", phrase.knobs[0].0));
+    }
+    if phrase.enabled {
+        validate_phrase(&phrase)?;
     }
     if bin_pipeline && !plan_only && timeout_s.is_none() {
         return Err("bin-pipeline execution requires --timeout SECONDS (caps on every run: timeout -k 120 + the ulimit)".into());
     }
     Ok(Options { input, scratch, snap_1e, memory_gb, threads, chunks, kway, plan_only,
                  bin_pipeline, legacy_merge, v2_flag_given, chi_expect, wit_ram_gb,
-                 finish_as_gb, bin_live_cap, bin_target_size, timeout_s, stripes, scratch_free_pct,
+                 finish_as_gb, bin_live_cap, bin_target_size, phrase, timeout_s, stripes, scratch_free_pct,
                  remap, chunk_mb, fanin })
 }
 
@@ -957,6 +1069,7 @@ fn run_chain(options: Options) -> Result<(), String> {
             for phase in &mut build_plan.phases {
                 if phase.name == "fused-finish" { phase.disc_peak_mb += spill_gb * 1024.0; }
             }
+            v2.bin_phrase_note = super::plan::bin_phrase_note(corpus_bytes, options.phrase.enabled);
             v2.transient_note.push_str(&format!("; witness spill reserve {:.1} GiB (0.3x overflow, EXTRAPOLATED)", spill_gb));
         }
         let peak_mb = build_plan.phases.iter().map(|p| p.disc_peak_mb).fold(0.0, f64::max);
@@ -1121,6 +1234,20 @@ fn run_chain(options: Options) -> Result<(), String> {
         journal.line(&format!("V2_BIN_CAP live_cap_slots={bin_live_cap} windows={plan_windows} \
              source={} (the plan's pick; the producer re-checks it against the phase RLIMIT_AS)",
             if options.bin_live_cap.is_some() { "operator" } else { "auto from --memory-gb" }));
+        // The phrase arm, stated once in the journal: OFF by default, and when ON
+        // the exact knobs the producer will receive (the command line is journaled
+        // by spawn_phase too, but a run's log must be able to answer "was the
+        // dictionary armed and with what" without hunting for the argv).
+        if options.phrase.enabled {
+            let knobs: Vec<String> = options.phrase.knobs.iter()
+                .map(|(f, v)| format!("{}={v}", f.trim_start_matches("--phrase-")))
+                .collect();
+            journal.line(&format!("V2_PHRASE armed=1 knobs={} (default OFF; the parse runs before the bins, \
+                 and PHRASE_DICT/PHRASE_WORK journal what it found and what it skipped)",
+                if knobs.is_empty() { "none (producer defaults)".to_string() } else { knobs.join(",") }));
+        } else {
+            journal.line("V2_PHRASE armed=0 (--phrase-radix absent: no parse, no dictionary, byte radix only)");
+        }
         return run_v2_tail(&mut journal, &options, &scratch, &tools, &input, &remap_path,
                            n, memory_kb, finish_as_kb, &frag, bin_live_cap, plan_windows);
     }
@@ -1367,6 +1494,16 @@ fn run_v2_tail(
     if let Some(target) = options.bin_target_size {
         producer_args.extend(["--bin-target-size".into(), target.to_string()]);
     }
+    // PHRASE RADIX: absent -> nothing is added, and no line of the mechanism runs
+    // (the producer keeps `bin_phrase_now == nullptr`). Present -> the flag and
+    // the operator's knobs, in the order given, so the journal's command line is
+    // the whole dictionary provenance.
+    if options.phrase.enabled {
+        producer_args.push("--phrase-radix".into());
+        for (flag, v) in &options.phrase.knobs {
+            producer_args.extend([(*flag).to_string(), v.to_string()]);
+        }
+    }
     let mut finish_args: Vec<String> = Vec::new();
     finish_args.extend(["-k".to_string(), "120".to_string(), timeout_s.to_string()]);
     finish_args.push(s(&tools.join("pile_finish").to_string_lossy()));
@@ -1595,6 +1732,66 @@ mod tests {
                                 "--timeout", "3600", "--bin-live-cap", "7"]
                               .iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap_err();
         assert!(err.contains("--bin-live-cap is a bin-pipeline flag"), "{err}");
+    }
+
+    #[test]
+    fn phrase_radix_is_off_by_default_and_carried_when_asked() {
+        // DEFAULT OFF: absent, the arm is disabled and carries no knob at all, so
+        // the producer command line is byte-identical to the product path's.
+        let off = parse_chain(&v2_args(&[])).unwrap();
+        assert!(!off.phrase.enabled);
+        assert!(off.phrase.knobs.is_empty());
+        // Asked for: enabled, and the knobs are carried IN COMMAND ORDER.
+        let on = parse_chain(&v2_args(&["--phrase-radix", "--phrase-min-len", "32",
+                                        "--phrase-table-bits", "22"]))
+            .unwrap();
+        assert!(on.phrase.enabled);
+        assert_eq!(on.phrase.knobs,
+                   vec![("--phrase-min-len", 32u64), ("--phrase-table-bits", 22u64)]);
+        // Everything else about the run is untouched by the arm.
+        assert_eq!(on.threads, off.threads);
+        assert_eq!(on.bin_live_cap, off.bin_live_cap);
+        assert_eq!(on.bin_target_size, off.bin_target_size);
+    }
+
+    #[test]
+    fn a_phrase_knob_without_phrase_radix_is_refused() {
+        let err = parse_chain(&v2_args(&["--phrase-min-len", "32"])).unwrap_err();
+        assert!(err.contains("needs --phrase-radix"), "{err}");
+    }
+
+    #[test]
+    fn phrase_radix_is_refused_on_the_legacy_route() {
+        let legacy = |extra: &[&str]| {
+            let mut args: Vec<String> = ["--input", "/tmp/c", "--scratch", "/tmp/s",
+                                        "--legacy-merge", "--timeout", "3600"]
+                .iter().map(|s| s.to_string()).collect();
+            args.extend(extra.iter().map(|s| s.to_string()));
+            args
+        };
+        let err = parse_chain(&legacy(&["--phrase-radix"])).unwrap_err();
+        assert!(err.contains("--phrase-radix is a bin-pipeline flag"), "{err}");
+        let err = parse_chain(&legacy(&["--phrase-min-freq", "4"])).unwrap_err();
+        assert!(err.contains("--phrase-radix is a bin-pipeline flag"), "{err}");
+    }
+
+    #[test]
+    fn phrase_knobs_are_validated_with_the_producers_own_constraints() {
+        let bad = |extra: &[&str]| {
+            let mut a: Vec<String> = vec!["--phrase-radix".into()];
+            a.extend(extra.iter().map(|s| s.to_string()));
+            parse_chain(&v2_args(&a.iter().map(|s| s.as_str()).collect::<Vec<_>>())).unwrap_err()
+        };
+        assert!(bad(&["--phrase-min-len", "8"]).contains("< 16"));
+        assert!(bad(&["--phrase-seed", "4"]).contains("< 16"));
+        assert!(bad(&["--phrase-skip-min-len", "4"]).contains("< 16"));
+        assert!(bad(&["--phrase-min-len", "512", "--phrase-max-len", "64"])
+                    .contains("< --phrase-min-len"));
+        assert!(bad(&["--phrase-window", "1"]).contains("< 2"));
+        assert!(bad(&["--phrase-table-bits", "30"]).contains("outside [8, 26]"));
+        assert!(bad(&["--phrase-reps", "1"]).contains("< 2"));
+        // A knob given twice is a misconfiguration, not a last-wins.
+        assert!(bad(&["--phrase-reps", "4", "--phrase-reps", "8"]).contains("only once"));
     }
 
     #[test]

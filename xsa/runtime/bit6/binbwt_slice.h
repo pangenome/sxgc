@@ -12,6 +12,19 @@
 // inside a bin is consumed once by a bucketing pass and is never walked again by
 // a comparison; leaves sort by raw LCE through the CorpusText cache starting at
 // the certified depth.
+//
+// PHRASE RADIX (tools/binbwt/PHRASE_RADIX_DESIGN.md) adds ONE thing to this
+// machine: at a node whose split made no progress (`biggest == m`, the
+// deep-boilerplate signature) a small content-addressed dictionary may certify a
+// WHOLE PHRASE at the node's depth, so 879 byte levels become one level of width
+// s. It is off unless `--phrase-radix` is given, and when it is off no line of it
+// executes (`bin_phrase_now == nullptr`).
+#include "phrase_radix.h"
+// The dictionary of the CURRENT bin_order call (null when the flag is off).
+// Constant for the whole call: the build threads only ever read it, and the
+// driver sets/clears it, so no per-node pointer has to be threaded through the
+// queue's task structs.
+static const PhraseDict* bin_phrase_now = nullptr;
 struct BinWork {
     U sweepBytes = 0, sweepPasses = 0, windows = 0, bins = 0, binPasses = 0;
     U levelPasses = 0, levelElems = 0;      // bucketing passes / elements coded
@@ -76,6 +89,26 @@ struct BinWork {
     // ---- the write path's own cost (pwrite, no mapping) --------------------
     U winFillBufBytes = 0;              // peak staging buffers (threads x <= 4 MiB)
     U winFillWrites = 0;                // pwrite() calls the fill issued
+    // ---- the SAMPLED-SA anchor side-stream (--sa-sample-k) ----------------
+    // The emit pass holds the global SA in order, so every k-th rank's SA value
+    // is a sequential read of the slice it is streaming anyway. OFF (k=0) is the
+    // product default and changes nothing at all.
+    U saSampleK = 0;                    // the sampling constant this run used
+    U saSamples = 0;                    // anchors written (== count in the header)
+    U saSampleBytes = 0;                // the file's bytes, header included
+    double tSaSample = 0;               // wall spent emitting them
+    // ---- PHRASE RADIX: the census of the OTHER regime ----------------------
+    // Probes fired at no-progress nodes, the rows and bytes they certified in ONE
+    // level each, and the deepest depth a phrase certified. `phrase_skips` is what
+    // replaces runs of `no_progress_levels`, and `phrase_skip_bytes` is the EXACT
+    // number of text bytes the dictionary answered (the coverage estimate in
+    // PHRASE_DICT is only an estimate; this is the measured one).
+    U phraseProbes = 0, phraseProbeRows = 0;    // probes fired / rows examined
+    U phraseSkips = 0, phraseSkipRows = 0;      // skips taken / rows certified
+    U phraseSkipBytes = 0;                      // EXACT bytes certified by skips
+    U phraseSkipMaxLen = 0, phraseSkipDepthMax = 0;
+    U phraseVerifyFails = 0;                     // candidates byte-verify rejected
+    U phraseProbeNoEnt = 0, phraseProbeDis = 0;  // probe refused: no entry / not uniform
     void absorb(const BinWork& o) {
         sweepBytes += o.sweepBytes; sweepPasses += o.sweepPasses;
         windows += o.windows; bins += o.bins; binPasses += o.binPasses;
@@ -128,6 +161,16 @@ struct BinWork {
         tCreditWait += o.tCreditWait;
         winFillBufBytes = std::max(winFillBufBytes, o.winFillBufBytes);
         winFillWrites += o.winFillWrites;
+        if (o.saSampleK) saSampleK = o.saSampleK;
+        saSamples += o.saSamples; saSampleBytes += o.saSampleBytes;
+        tSaSample += o.tSaSample;
+        phraseProbes += o.phraseProbes; phraseProbeRows += o.phraseProbeRows;
+        phraseSkips += o.phraseSkips; phraseSkipRows += o.phraseSkipRows;
+        phraseSkipBytes += o.phraseSkipBytes;
+        phraseSkipMaxLen = std::max(phraseSkipMaxLen, o.phraseSkipMaxLen);
+        phraseSkipDepthMax = std::max(phraseSkipDepthMax, o.phraseSkipDepthMax);
+        phraseVerifyFails += o.phraseVerifyFails;
+        phraseProbeNoEnt += o.phraseProbeNoEnt; phraseProbeDis += o.phraseProbeDis;
     }
 };
 
@@ -986,12 +1029,150 @@ static inline void bin_window_sabotage(const std::string& path) {
     ::close(fd);
 }
 
+// ------------------------------------------------- THE SAMPLED-SA ANCHORS
+// Option "sample the suffix array": the emit pass of `bin_order` walks the
+// finished per-bin slices in GLOBAL RANK ORDER on one thread, and every word in
+// a slice already carries its text position (bin_word_tail -> bin_pos_of). So
+// emitting the suffix array's value at every k-th RANK is a sequential read of
+// an array the pass is streaming anyway: 8 B/entry, no comparisons, no LCE, no
+// text read. This is the ONLY way to get SA[rank] out of the producer without a
+// persistent SA column (the charter's `full_SA=0 persistent_positions=0`).
+//
+// FILE LAYOUT (little endian), version 1 - all fixed width, sequential:
+//   0  u32 magic   'SXSA' == 0x41535853
+//   4  u32 version == 1
+//   8  u64 n        the corpus length (rows emitted == n)
+//  16  u64 k        the sampling constant (>= 1); rank of entry j is j*k
+//  24  u64 count    number of anchor entries (patched at close)
+//  32  u64 rows     rows the emit pass saw (patched at close)
+//  40  u64 pad      reserved 0: THE RANK SPACE IS THE EMIT PASS'S ROW COUNTER,
+//                   i.e. rank r is the r-th REAL BWT row. The container's row
+//                   numbering prepends 10 padding rows (BinBandSink::addRun in
+//                   its constructor), so container_row = r + 10. `pad` records
+//                   that offset so a consumer can never confuse the two.
+//  48  ...          count x u64: SA[j*k] for j = 0..count-1, ascending rank
+// The consumer recovers SA[rank] for a non-anchor rank by walking from the
+// nearest anchor below it - that is the curve Phase 4 measures. Correctness of
+// every entry against the brute-force SA is gated by sa_anchor_oracle.
+static constexpr uint32_t SA_ANCHOR_MAGIC = 0x41535853u;   // 'S','X','S','A'
+static constexpr uint32_t SA_ANCHOR_VERSION = 1;
+static constexpr uint32_t SA_ANCHOR_HEADER_BYTES = 48;
+// The container's row numbering: BinBandSink seeds 1 + 9 padding rows before the
+// first real bin (binbwt_slice.h, its constructor), so a container row is an
+// emit-pass rank + 10. Recorded in the header, never assumed.
+static constexpr uint64_t SA_ANCHOR_ROW_PAD = 10;
+struct SaAnchorWriter {
+    int fd = -1;
+    U k = 0, n = 0, count = 0, rows = 0, lastRank = 0;
+    std::string path;
+    std::vector<uint64_t> buf;          // one buffered write per 1 MiB
+    double tWrite = 0;
+    bool started = false, finished = false;
+    SaAnchorWriter() = default;
+    SaAnchorWriter(const SaAnchorWriter&) = delete;
+    SaAnchorWriter& operator=(const SaAnchorWriter&) = delete;
+    ~SaAnchorWriter() { if (fd >= 0) { ::close(fd); fd = -1; } }
+    bool on() const { return k != 0; }
+    static U expectedCount(U rows, U k) { return rows ? (rows - 1) / k + 1 : 0; }
+    void open(const std::string& p, U kk, U nn) {
+        require(kk >= 1, "sa-sample-k must be >= 1 (0 is OFF)");
+        require(!p.empty(), "--sa-sample-out is required when --sa-sample-k > 0");
+        k = kk; n = nn; path = p;
+        fd = ::open(p.c_str(), O_CREAT | O_EXCL | O_RDWR, 0666);
+        require(fd >= 0, "create --sa-sample-out (refusing to clobber)");
+        buf.reserve(1u << 17);          // 1 MiB of SA values
+        uint8_t h[SA_ANCHOR_HEADER_BYTES] = {};
+        const uint32_t magic = SA_ANCHOR_MAGIC, ver = SA_ANCHOR_VERSION;
+        std::memcpy(h + 0, &magic, 4);
+        std::memcpy(h + 4, &ver, 4);
+        std::memcpy(h + 8, &n, 8);
+        std::memcpy(h + 16, &k, 8);
+        const uint64_t padRows = SA_ANCHOR_ROW_PAD;
+        std::memcpy(h + 40, &padRows, 8);
+        // count/rows stay 0 here and are patched by finish().
+        require(::pwrite(fd, h, SA_ANCHOR_HEADER_BYTES, 0) == ssize_t(SA_ANCHOR_HEADER_BYTES),
+                "write sa-anchor header");
+        started = true;
+    }
+    void flush() {
+        if (buf.empty()) return;
+        const size_t bytes = buf.size() * sizeof(uint64_t);
+        const off_t at = off_t(SA_ANCHOR_HEADER_BYTES) + off_t(count - buf.size()) * 8;
+        size_t done = 0;
+        while (done < bytes) {
+            const ssize_t w = ::pwrite(fd, (const char*)buf.data() + done, bytes - done,
+                                      at + off_t(done));
+            require(w > 0, "write sa-anchor entry");
+            done += size_t(w);
+        }
+        const double t0 = now_sec();
+        (void)t0;
+        buf.clear();
+    }
+    // One bin's ordered slice: emit the ranks in [baseRow, baseRow+m) that are
+    // multiples of k. Sequential over the slice (stride k), never a random read.
+    void emitSlice(const U* slice, U m, U baseRow, U nn, bool dollar) {
+        if (!on() || !m) return;
+        const double t0 = now_sec();
+        require(baseRow == rows, "sa-anchor slice rank continuity");
+        U r = ((baseRow + k - 1) / k) * k;          // first rank >= baseRow, % k == 0
+        for (; r < baseRow + m; r += k) {
+            const U i = r - baseRow;
+            const U p = bin_pos_of(bin_word_tail(slice[i]), nn, dollar);
+            require(p < nn, "sa-anchor position bounds");
+            if (count) require(r > lastRank, "sa-anchor rank order");
+            lastRank = r;
+            buf.push_back(uint64_t(p));
+            ++count;
+            if (buf.size() >= (1u << 17)) flush();
+        }
+        rows = baseRow + m;
+        tWrite += now_sec() - t0;
+    }
+    // Patch count/rows into the header, prove the count matches the arithmetic,
+    // and stamp the counters into the run's work record.
+    void finish(BinWork& w) {
+        if (!on()) return;
+        require(!finished, "sa-anchor finish twice");
+        flush();
+        const U want = expectedCount(rows, k);
+        require(count == want, "sa-anchor count does not match (rows-1)/k+1");
+        require(::pwrite(fd, &count, 8, 24) == 8, "patch sa-anchor count");
+        require(::pwrite(fd, &rows, 8, 32) == 8, "patch sa-anchor rows");
+        require(::fsync(fd) == 0, "sync sa-anchor file");
+        struct stat st{};
+        require(::fstat(fd, &st) == 0, "stat sa-anchor file");
+        require(uint64_t(st.st_size) == SA_ANCHOR_HEADER_BYTES + uint64_t(count) * 8,
+                "sa-anchor file size");
+        w.saSampleK = k; w.saSamples = count;
+        w.saSampleBytes = uint64_t(st.st_size); w.tSaSample += tWrite;
+        std::fprintf(stderr,
+            "SA_ANCHOR_DONE k=%llu entries=%llu bytes=%llu rows=%llu n=%llu "
+            "bytes_per_entry=8 write_s=%.3f path=%s\n",
+            (unsigned long long)k, (unsigned long long)count,
+            (unsigned long long)w.saSampleBytes, (unsigned long long)rows,
+            (unsigned long long)n, tWrite, path.c_str());
+        ::close(fd); fd = -1;
+        finished = true;
+    }
+};
+
 // How the windows are backed and how far the fill may run ahead of the build.
 struct BinWindowOpts {
     std::string dir;      // the rolling files' directory (scratch tree)
     U credit = 2;         // windows the fill may be ahead of the build
     U buildCap = 0;       // per-group build working set, slots (0 = whole window)
     bool disc = true;     // false = the RAM-arena A/B arm
+    // THE SAMPLED-SA ANCHORS (default OFF; the product path is untouched):
+    // emit SA[j*k] for every rank j*k to `saSamplePath` during the emit pass.
+    U saSampleK = 0;
+    std::string saSamplePath;
+    // PHRASE RADIX (off by default; the product path is unchanged). `phraseOpts`
+    // is the policy the caller asked for; `phrase` is the dictionary built from
+    // it, and it is null whenever the flag is absent or the dictionary turned out
+    // empty - in which case the byte radix runs EXACTLY as today.
+    PhraseOpts phraseOpts;
+    const PhraseDict* phrase = nullptr;
 };
 
 // ------------------------------------------------- THE PHASE CAP (auto cap)
@@ -1143,6 +1324,92 @@ template <class E> struct bin_publish_sink<E, std::void_t<
 // journalled (`overTargetLeaves` / BIN_LEAF_OVER_TARGET) instead of being
 // silently taken. The order is exact whatever the cap: the leaf sort is a total
 // order at any m.
+// ------------------------------------------ PHRASE RADIX: the skip, in the tree
+// THE SKIP LEMMA (tools/binbwt/PHRASE_RADIX_DESIGN.md §2). A node certified at
+// depth d holds rows that all agree on the first d bytes. If EVERY row resolves
+// to the SAME dictionary entry E and every row's text at tail+d compares equal to
+// E's bytes for E.len, then the node may be re-certified at depth d+E.len: no
+// byte before d+E.len differs between rows, so no discriminating information is
+// discarded and the order inside the node is decided by the bytes after it,
+// exactly as before. That is the whole correctness argument, and the oracle
+// proves it against a brute suffix array.
+//
+// The lookup is one 8-byte key against one direct-mapped slot; the hash only
+// picks a CANDIDATE and the byte comparison is what certifies it. A hash
+// collision, a stale entry or an evicted entry can therefore only make the skip
+// not fire - never make it wrong.
+//
+// WHERE IT FIRES: only when the byte radix is already grinding, i.e. a split that
+// put every row in one bucket. The diverse majority of the corpus divides
+// normally and never pays a probe. "Both regimes automatically": the data decides
+// node by node, there is no flag or threshold deciding which region is which.
+static U bin_phrase_skip(const CorpusText& t, bool dollar, U depth, const U* src,
+                         U m, BinWork& w) {
+    const PhraseDict* pd = bin_phrase_now;
+    if (!pd || !pd->armed() || m < pd->o.skipMinRows) return 0;
+    const U n = t.n;
+    ++w.phraseProbes; w.phraseProbeRows += m;
+    // THE EXHAUSTED-INSIDE-THE-PHRASE CASE, which is what a first attempt at this
+    // got wrong. A node holds rows that agree on `depth` bytes, and in dollar mode
+    // some of them may END inside the phrase - at most `depth + 16` positions of
+    // the corpus can, but ONE of them in a 6M-row node was enough to refuse every
+    // skip at 10 GB (measured: 82 probes, 486M probe_rows, 0 skips). It is not a
+    // refusal, it is the ordinary bucket-0 rule: a suffix that ends inside the
+    // certified region is a PREFIX of the other rows, so it is the smallest, and
+    // `bin_code` already sends an exhausted row to code 0 (which sorts first) with
+    // ascending length as its exact order. So such a row takes no part in choosing
+    // the entry and is verified only for the bytes it actually has.
+    int32_t chosen = -1;
+    {
+        uint8_t buf[16];
+        for (U i = 0; i < m; ++i) {
+            const U x = bin_word_tail(src[i]) + depth;
+            const uint8_t* b16;
+            if (dollar) {
+                if (x >= n || n - x < 16) continue;   // ends inside the phrase
+                b16 = t.span(x, buf, 16);
+            } else {
+                const U xr = x % n;
+                if (xr + 16 <= n) b16 = t.span(xr, buf, 16);
+                else { PhraseDict::copyAt(t, false, xr, 16, buf); b16 = buf; }
+            }
+            const int32_t e = pd->lookup16(b16);
+            if (e < 0) { ++w.phraseProbeNoEnt; return 0; }   // no phrase here
+            if (chosen < 0) chosen = e;
+            else if (chosen != e) { ++w.phraseProbeDis; return 0; }
+        }
+    }
+    if (chosen < 0) return 0;                    // every row ends inside the key
+    const PhraseDict::Entry& E = pd->entry(chosen);
+    const U len = U(E.len);
+    if (len < std::max<U>(pd->o.skipMinLen, 16)) return 0;
+    {
+        // BYTE-VERIFY every row, for as many bytes as it HAS. Mid-phrase suffixes
+        // are the correctness core (design doc §4) and this is the line that makes
+        // them safe: the hash picked the candidate, it may not certify it.
+        const uint8_t* ref = pd->text(E);
+        uint8_t vb[4096];
+        for (U i = 0; i < m; ++i) {
+            const U x = bin_word_tail(src[i]) + depth;
+            U take = len;
+            if (dollar) {
+                if (x >= n) continue;
+                take = std::min<U>(len, n - x);
+            }
+            if (!PhraseDict::verify(t, dollar, x, take, ref, vb)) {
+                ++w.phraseVerifyFails;
+                return 0;
+            }
+        }
+    }
+    ++w.phraseSkips; w.phraseSkipRows += m;
+    w.phraseSkipBytes += len * m;
+    w.phraseSkipMaxLen = std::max(w.phraseSkipMaxLen, len);
+    w.phraseSkipDepthMax = std::max(w.phraseSkipDepthMax, depth + len);
+    w.depthMax = std::max<U>(w.depthMax, depth + len);
+    return len;
+}
+
 static U* bin_sort_rec(const CorpusText& t, bool dollar, U* src, U* dst, U m,
                        U depth, U depthCap, U targetSize, U levelBytes,
                        BinWork& w) {
@@ -1214,6 +1481,22 @@ static U* bin_sort_rec(const CorpusText& t, bool dollar, U* src, U* dst, U m,
         }
         w.tLeaf += now_sec() - tl;
         return src;
+    }
+    // ---- PHRASE RADIX: the one trigger -------------------------------------
+    // A node that is DEEP (>= probeDepth certified bytes) and HEAVY (>= the row
+    // floor) is where the corpus's long shared prefixes live: at 10 GB the census
+    // reaches depth_max=854 with a 1,048,416-row leaf and NO node that fails to
+    // divide, so a "cannot divide" trigger would never fire on the corpus this
+    // exists for. The stride damps a failed probe inside a long chain (see
+    // PhraseOpts::probeStride): <= 15 extra byte levels, and nothing is lost
+    // because the dictionary has an entry at every offset of every block.
+    if (const PhraseDict* pd = bin_phrase_now) {
+        if (pd->armed() && m >= pd->o.skipMinRows && depth >= pd->o.probeDepth &&
+            (pd->o.probeStride <= 1 || depth % pd->o.probeStride == 0)) {
+            if (const U skipLen = bin_phrase_skip(t, dollar, depth, src, m, w))
+                return bin_sort_rec(t, dollar, src, dst, m, depth + skipLen,
+                                    depthCap, targetSize, levelBytes, w);
+        }
     }
     const U codes = bin_codes(levelBytes);
     std::vector<U> count(codes, 0);
@@ -1368,6 +1651,22 @@ static void bin_task_run(const CorpusText& t, bool dollar, const BinTask& tk,
         if (r != tk.canon) std::memcpy(tk.canon, r, tk.m * sizeof(U));
         return;
     }
+    // PHRASE RADIX: the same single trigger as the inline recursion (see the
+    // comment there). A skip must land in `canon`.
+    if (const PhraseDict* pd = bin_phrase_now) {
+        if (pd->armed() && tk.m >= pd->o.skipMinRows &&
+            tk.depth >= pd->o.probeDepth &&
+            (pd->o.probeStride <= 1 || tk.depth % pd->o.probeStride == 0)) {
+            if (const U skipLen =
+                    bin_phrase_skip(t, dollar, tk.depth, tk.src, tk.m, w)) {
+                U* r = bin_sort_rec(t, dollar, tk.src, tk.dst, tk.m,
+                                    tk.depth + skipLen, depthCap, targetSize,
+                                    levelBytes, w);
+                if (r != tk.canon) std::memcpy(tk.canon, r, tk.m * sizeof(U));
+                return;
+            }
+        }
+    }
     const U codes = bin_codes(levelBytes);
     std::vector<U> count(codes, 0), start(codes, 0);
     for (U i = 0; i < tk.m; ++i)
@@ -1473,6 +1772,12 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U targetSi
                       bool fillOnly = false,
                       const BinWindowOpts& wopt = BinWindowOpts()) {
     const U n = text.n;
+    // PHRASE RADIX: publish this call's dictionary for the build threads (they
+    // only read it) and take it back down on the way out. Nothing else about this
+    // function changes; with `wopt.phrase == nullptr` the pointer is null and
+    // bin_phrase_skip returns immediately without touching a counter.
+    bin_phrase_now = wopt.phrase;
+    struct PhraseUnset { ~PhraseUnset() { bin_phrase_now = nullptr; } } phraseUnset;
     // The sink's ascending capture-target list, joined against the corpus in the
     // fill pass. Empty for the per-row oracle path.
     const std::vector<U>* joinTargets = nullptr;
@@ -1614,6 +1919,17 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U targetSi
         liveCap = largest;
     }
     U row = 0;
+    // ---- THE SAMPLED-SA ANCHOR STREAM (option B), OFF by default -----------
+    // Opened before the window plan so a bad path fails before a byte of work,
+    // and finished after the last bin so the header's count is the arithmetic
+    // one. `k == 0` leaves this inert: no fd, no branch taken per row beyond a
+    // predictable `if (saAnchor.on())` per BIN.
+    SaAnchorWriter saAnchor;
+    if (wopt.saSampleK) {
+        require(!fillOnly, "--sa-sample-k cannot be used with --bin-fill-only "
+                           "(nothing is emitted there)");
+        saAnchor.open(wopt.saSamplePath, wopt.saSampleK, n);
+    }
     // ---- THE WINDOW PLAN, computed up front -------------------------------
     // The fill may run ahead of the build by a bounded CREDIT of windows, so the
     // partition has to exist before either phase starts: whole bins packed to
@@ -1808,6 +2124,7 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U targetSi
         auto emitBin = [&](unsigned c) {
             const double t0 = now_sec();
             const U* slice = arena.data() + off[c];
+            const U baseRow = row;
             if constexpr (bin_publish_sink<Emit>::value) {
                 // The sink publishes the whole ordered slice itself (parallel
                 // band writers at run boundaries); it owns nothing of the
@@ -1818,6 +2135,12 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U targetSi
                 for (U i = 0; i < bins[c]; ++i)
                     emit(row++, bin_pos_of(bin_word_tail(slice[i]), n, dollar));
             }
+            // THE ANCHOR SIDE-STREAM: the SAME ordered slice, read again with
+            // stride k. `baseRow` is this bin's first global rank, so the anchor
+            // ranks are baseRow's first multiple of k onward - both arms of the
+            // emit produce the identical stream because the slice and the rank
+            // base are identical.
+            if (saAnchor.on()) saAnchor.emitSlice(slice, bins[c], baseRow, n, dollar);
             total.tEmit += now_sec() - t0;
             total.emittedRows += bins[c];
         };
@@ -2353,6 +2676,7 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U targetSi
         require(sh.joinedTotal <= joinCount, "bin fill target join overrun");
     }
     require(row == n, "bin-bwt row coverage");
+    saAnchor.finish(total);
 }
 
 // ------------------------------------------ bin-bwt v2: the parallel sink
@@ -2758,7 +3082,8 @@ static void bin_journal(const BinWork& total, bool dollar, U threads,
         "stage_bytes=%llu stage_hits=%llu stage_partials=%llu stage_misses=%llu "
         "stage_raw_windows=%llu stage_merged_reads=%llu stage_segs_max=%llu "
         "stage_avg_read_bytes=%.1f stage_skipped_ram=%llu stage_s=%.3f "
-        "full_SA=0 persistent_positions=0\n",
+        "full_SA=0 persistent_positions=0 "
+        "sa_sample_k=%llu sa_samples=%llu sa_sample_bytes=%llu sa_sample_s=%.3f\n",
         unsigned(dollar), (unsigned long long)threads,
         (unsigned long long)levelBytes, (unsigned long long)targetSize,
         (unsigned long long)depthCap, unsigned(freqSched),
@@ -2815,7 +3140,9 @@ static void bin_journal(const BinWork& total, bool dollar, U threads,
         (unsigned long long)bin_leaf_stage_segments(),
         total.stageMergedReads
             ? double(total.stageBytes) / double(total.stageMergedReads) : 0.0,
-        (unsigned long long)total.stageSkippedRam, total.tStage);
+        (unsigned long long)total.stageSkippedRam, total.tStage,
+        (unsigned long long)total.saSampleK, (unsigned long long)total.saSamples,
+        (unsigned long long)total.saSampleBytes, total.tSaSample);
     // The largest byte-1 bin of the largest window, alone: the hot-bin anatomy
     // the operator asked for (`--bin-level-bytes 1` vs `2` on the SAME corpus).
     std::fprintf(stderr,
@@ -2830,6 +3157,34 @@ static void bin_journal(const BinWork& total, bool dollar, U threads,
         (unsigned long long)total.hotLeafElems,
         (unsigned long long)total.hotLeafRowsMax, (unsigned long long)total.hotLevelElems,
         (unsigned long long)total.hotSymbols, (unsigned long long)total.hotComparisons);
+}
+
+// PHRASE_WORK: the census of the OTHER regime, next to BIN_WORK's own. A
+// separate line on purpose - BIN_WORK's field set is parsed by the gate scripts
+// and by the census diffs, so it must not grow shape.
+static void bin_phrase_journal_work(const BinWork& w, const PhraseDict* pd) {
+    const bool on = pd && pd->armed();
+    std::fprintf(stderr,
+        "PHRASE_WORK armed=%u probe_depth=%llu probe_stride=%llu skip_min_rows=%llu "
+        "probes=%llu probe_rows=%llu skips=%llu skip_rows=%llu "
+        "skip_bytes=%llu skip_max_len=%llu skip_depth_max=%llu verify_fails=%llu "
+        "refused_no_entry=%llu refused_not_uniform=%llu "
+        "no_progress_levels=%llu level_passes=%llu level_elems=%llu "
+        "comparisons=%llu symbols=%llu full_SA=0 persistent_positions=0\n",
+        unsigned(on), (unsigned long long)(pd ? pd->o.probeDepth : 0),
+        (unsigned long long)(pd ? pd->o.probeStride : 0),
+        (unsigned long long)(pd ? pd->o.skipMinRows : 0),
+        (unsigned long long)w.phraseProbes,
+        (unsigned long long)w.phraseProbeRows, (unsigned long long)w.phraseSkips,
+        (unsigned long long)w.phraseSkipRows, (unsigned long long)w.phraseSkipBytes,
+        (unsigned long long)w.phraseSkipMaxLen,
+        (unsigned long long)w.phraseSkipDepthMax,
+        (unsigned long long)w.phraseVerifyFails,
+        (unsigned long long)w.phraseProbeNoEnt,
+        (unsigned long long)w.phraseProbeDis,
+        (unsigned long long)w.noProgressLevels,
+        (unsigned long long)w.levelPasses, (unsigned long long)w.levelElems,
+        (unsigned long long)w.comparisons, (unsigned long long)w.symbols);
 }
 
 // ---- producer entry point: the parallel sink publishes the concatenated bins
@@ -2876,6 +3231,17 @@ static int binbwt_main(const std::string& path, const std::string& mapPath,
     CorpusText text;
     text.open({segment}, true);
     require(text.n, "bin-bwt empty corpus");
+    // ---- PHRASE RADIX: one parse pass, before any window exists -------------
+    // The dictionary is built from the corpus the tree is about to build, off the
+    // product path, and journalled so a second run can be diffed (the parse's
+    // determinism is one of the oracle's cases). With the flag absent this block
+    // does nothing at all and `wopt.phrase` stays null.
+    PhraseDict phraseDict;
+    if (wopt.phraseOpts.enabled) {
+        phraseDict.parse(text, dollar, wopt.phraseOpts);
+        phrase_journal_dict(phraseDict, text.n);
+    }
+    if (phraseDict.armed()) wopt.phrase = &phraseDict;
     // ---- THE LIVE CAP: derived from the phase budget, or checked against it --
     // The default is no longer unbounded (see BinCapTerms): a window is sized so
     // that the corpus cache + the fill staging + the arena pair it needs all fit
@@ -2926,6 +3292,7 @@ static int binbwt_main(const std::string& path, const std::string& mapPath,
         j.sink = fillOnly ? "probe-fill-only" : "probe-none";
         bin_journal(total, dollar, threads, levelBytes, targetSize, depthCap,
                     freqSched, splitSize, now_sec() - tStart, j);
+        bin_phrase_journal_work(total, phraseDict.armed() ? &phraseDict : nullptr);
         return 0;
     }
     // `serialSink` runs the UNCHANGED v1 sink (SequentialV2 fed one row at a
@@ -2969,5 +3336,6 @@ static int binbwt_main(const std::string& path, const std::string& mapPath,
     j.tEnds = tEnds - tOrder;
     bin_journal(total, dollar, threads, levelBytes, targetSize, depthCap, freqSched,
                 splitSize, wall, j);
+    bin_phrase_journal_work(total, phraseDict.armed() ? &phraseDict : nullptr);
     return 0;
 }

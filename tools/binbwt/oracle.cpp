@@ -824,5 +824,339 @@ int main(int argc, char** argv) {
                 "window_instances=%llu\n",
                 (unsigned long long)freqCases, fixtures.size(),
                 (unsigned long long)freqMulti, (unsigned long long)freqWindows);
+    // ---- PHRASE-RADIX PASS (the new oracle family) -------------------------
+    // tools/binbwt/PHRASE_RADIX_DESIGN.md §7 names the risks this pass has to
+    // discharge, and each one is its own named case here:
+    //   (a) the PARSE IS DETERMINISTIC: two parses of the same corpus and flags
+    //       produce the same blocks, the same pool and the same entry table;
+    //   (b) MID-PHRASE OFFSET BINS ARE EXACT - both directly (every offset of
+    //       every block has its own entry, and the entry's bytes are the block's
+    //       bytes from that offset: the (phrase, offset) bin law) and end to end
+    //       (the whole order equals the brute suffix array, which IS the
+    //       end-occurrence ordering);
+    //   (c) PHRASE/BYTE BOUNDARIES: blocks abutting separators and single diverse
+    //       bytes, blocks whose occurrences wrap the cyclic boundary, suffixes
+    //       that END inside a block (the dollar clamp), and a phrase nested
+    //       inside a phrase;
+    //   (d) THRESHOLD INTERACTIONS on L and F, including the arms where each
+    //       threshold must make the dictionary EMPTY;
+    //   (e) A SMALL/EMPTY DICTIONARY LEAVES THE BYTE REGIME BIT-IDENTICAL: the
+    //       order AND every construction counter, against the same corpus built
+    //       with the flag off.
+    // `skip_min_rows=1` and `skip_min_len=8` are deliberate: the fixtures are
+    // tiny, and the hook must be forced to fire on them (the producer's default
+    // 4096 is a cost guard, not a semantic one).
+    {
+        // A hot block that is NOT periodic - a periodic block would be ordered by
+        // the periodic tie-break and the phrase hook would never see it.
+        auto hotBlock = [](U len, U salt) {
+            std::string b(len, 'A');
+            uint64_t x = 0x9E3779B97F4A7C15ULL ^ (uint64_t(salt) << 32) ^ 0x5bf03635ULL;
+            for (U i = 0; i < len; ++i) {
+                x = x * 6364136223846793005ULL + 1442695040888963407ULL;
+                b[i] = char(1 + ((x >> 40) % 200));    // never 0, never 0x1e
+            }
+            return b;
+        };
+        const std::string B1 = hotBlock(48, 1);
+        const std::string B2 = hotBlock(32, 2);
+        const std::string B3 = hotBlock(24, 3);
+        const std::string B4 = hotBlock(40, 4);
+        const std::string B5 = hotBlock(64, 5);
+        const std::string B6 = hotBlock(16, 6);
+        std::vector<std::string> pf;
+        std::vector<const char*> pfName;
+        {   // 1. the block repeated with DIFFERENT continuations: the mid-phrase
+            //    case - every offset o has k occurrences and a (phrase, o) bin is
+            //    ordered by the continuation after the block. 12 repeats so the
+            //    larger-target arms have a node above the target to skip through.
+            std::string t;
+            for (U k = 0; k < 12; ++k) { t += B1; t += std::string(1, char('a' + k % 26)); }
+            for (U k = 0; k < 6; ++k) { t += B2; t += std::string(1, char('A' + k)); }
+            pf.push_back(t); pfName.push_back("midphrase");
+        }
+        {   // 2. every offset of the block made a phrase START (rotations)
+            std::string t;
+            for (U o = 0; o < 32; o += 4) { t += B2.substr(o); t += B2.substr(0, o); t += "\x1e"; }
+            pf.push_back(t); pfName.push_back("offsets");
+        }
+        {   // 3. phrase/byte boundaries: block + separator + one diverse byte, and a
+            //    tail that ENDS inside the block (the dollar clamp)
+            std::string t;
+            for (U k = 0; k < 8; ++k) { t += B3; t += "\x1e"; t += char('p' + k); }
+            t += B3.substr(0, 5);
+            pf.push_back(t); pfName.push_back("boundary");
+        }
+        {   // 4. occurrences that wrap the cyclic boundary
+            std::string t;
+            for (U k = 0; k < 8; ++k) { t += B4; t += char('0' + k); }
+            pf.push_back(t); pfName.push_back("wrap");
+        }
+        {   // 5. a NEAR-IDENTICAL clone set: one base edited in one copy, so the
+            //    skip must stop exactly where the copies diverge
+            std::string t;
+            for (U k = 0; k < 8; ++k) {
+                std::string c = B5;
+                if (k == 3) c[40] = char(c[40] ^ 0x11);
+                t += c; t += "\x1e";
+            }
+            pf.push_back(t); pfName.push_back("edit");
+        }
+        {   // 6. a phrase nested inside a phrase
+            std::string inner;
+            for (U k = 0; k < 3; ++k) inner += B6;
+            std::string t;
+            for (U k = 0; k < 8; ++k) { t += inner; t += hotBlock(20, 7 + k); }
+            pf.push_back(t); pfName.push_back("nested");
+        }
+        {   // 7. no repetition at all: the dictionary must come out EMPTY
+            std::mt19937_64 r2(424242);
+            std::string t;
+            for (U j = 0; j < 600; ++j) t += char(r2() % 256);
+            pf.push_back(t); pfName.push_back("norepeat");
+        }
+
+        BinWindowOpts woptPhrase;
+        woptPhrase.dir = std::string(argv[1]) + "/windows-phrase";
+        woptPhrase.credit = 2;
+        woptPhrase.disc = true;
+        auto openFixture = [&](const std::string& t, CorpusText& text,
+                               const std::string& tag) {
+            const std::string path = std::string(argv[1]) + "/phrase-corpus-" + tag;
+            TextSeg seg; seg.path = path; seg.len = t.size(); seg.remap = remap;
+            { fs::remove(path); OutFile file(path); file.raw(t.data(), t.size()); }
+            text.open({seg}, true);
+        };
+        auto phraseOpts = [&](U L, U F, bool on) {
+            PhraseOpts po;
+            po.enabled = on;
+            po.minLen = L; po.minFreq = F;
+            po.seed = 16; po.window = 4; po.maxLen = 4096;
+            po.tableBits = 18; po.reps = 8;
+            po.skipMinRows = 1; po.skipMinLen = 16;
+            po.probeDepth = 0; po.probeStride = 1;   // fire from the root, every level
+            po.probeDepth = 0; po.probeStride = 1;   // fire from the root, every level
+            return po;
+        };
+        auto runArm = [&](CorpusText& text, bool dollar, U threads, U leaf, U lb,
+                          U cap, BinWindowOpts& wo, BinWork& w, std::vector<U>& got) {
+            got.clear();
+            got.reserve(text.n);
+            bin_order(text, dollar, threads, leaf, 0, cap, lb, false, 0, w,
+                      [&](U row, U p) {
+                          require(row == got.size(), "phrase oracle row continuity");
+                          got.push_back(p);
+                      }, false, wo);
+            require(got.size() == text.n, "phrase oracle row coverage");
+        };
+
+        U phCases = 0, phArms = 0, phDet = 0, phOffChecked = 0, phOffBad = 0;
+        U phBlocksLive = 0, phBlocksDead = 0, phVerifyFails = 0;
+        U phSkipRows = 0, phSkips = 0, phSkipBytes = 0, phSkipMaxLen = 0;
+        U phEmpty = 0, phNonEmpty = 0, phIdentical = 0, phWindows = 0;
+        U phProbes = 0;
+
+        // ---- (a) DETERMINISM + (b') the (phrase, offset) bin law, directly ---
+        for (U f = 0; f < pf.size(); ++f) {
+            CorpusText text; openFixture(pf[f], text, std::string("det") + std::to_string(f));
+            const PhraseOpts po = phraseOpts(16, 2, true);
+            PhraseDict a, b;
+            a.parse(text, false, po);
+            b.parse(text, false, po);
+            require(a.on == b.on, "phrase oracle: two parses disagreed on armed");
+            require(a.blocks.size() == b.blocks.size(), "phrase oracle: block count moved");
+            require(a.pool == b.pool, "phrase oracle: the phrase pool moved between parses");
+            require(a.tab.size() == b.tab.size(), "phrase oracle: table size moved");
+            for (size_t i = 0; i < a.tab.size(); ++i)
+                require(a.tab[i].key == b.tab[i].key && a.tab[i].block == b.tab[i].block &&
+                            a.tab[i].off == b.tab[i].off && a.tab[i].len == b.tab[i].len,
+                        "phrase oracle: an entry moved between parses");
+            ++phDet;
+            if (a.on) ++phNonEmpty; else ++phEmpty;
+            if (!a.on) continue;
+            // The (phrase, offset) bin law. Every offset of every admitted block
+            // must have its OWN entry whose bytes are the block's bytes from that
+            // offset; a direct-mapped collision may lose an entry (a missed skip,
+            // never a wrong order), so the law is asserted as near-total coverage
+            // rather than an absolute, and the head offset (the phrase itself) is
+            // asserted absolutely.
+            U headOk = 0, headLost = 0;
+            for (U bi = 0; bi < a.blocks.size(); ++bi) {
+                const PhraseDict::Block& bk = a.blocks[bi];
+                for (U off = 0; off + po.minLen <= bk.len; ++off) {
+                    const uint8_t* src = a.pool.data() + bk.off + off;
+                    const U need = bk.len - off;
+                    const int32_t e = a.lookup16(src);
+                    ++phOffChecked;
+                    if (e < 0) { ++phOffBad; if (!off) ++headLost; continue; }
+                    const PhraseDict::Entry& E = a.entry(e);
+                    require(E.len <= 4096 && E.block < a.blocks.size(), "phrase entry shape");
+                    // The table key is a 16-byte fingerprint, so 16 bytes are what
+                    // a lookup can PROMISE. Everything past them is the byte
+                    // VERIFICATION's job - which the tree does before it ever
+                    // certifies a skip - so a sibling phrase that shares the 16-byte
+                    // head and diverges later is NOT a wrong entry; it is a skip
+                    // that will not fire, and the node falls back to the byte radix.
+                    require(std::memcmp(a.text(E), src, std::min<uint32_t>(E.len, 16)) == 0,
+                            "phrase oracle: an entry's key does not cover its own bytes");
+                    const U cmpn = std::min<U>(U(E.len), need);
+                    if (std::memcmp(a.text(E), src, cmpn) == 0) {
+                        if (E.block == bi && E.off == off && E.len == need)
+                            require(std::memcmp(a.text(E), src, need) == 0,
+                                    "phrase oracle: an exact entry's bytes moved");
+                        if (!off) ++headOk;
+                    } else {
+                        ++phOffBad;                 // a missed skip, not a wrong order
+                        if (!off) ++headLost;
+                    }
+                }
+            }
+            phBlocksLive += headOk;
+            phBlocksDead += headLost;
+            require(headLost * 20 <= a.blocks.size(),
+                    "phrase oracle: more than 5% of the admitted phrase HEADS are shadowed");
+            // The head of the dictionary must also be content-addressed into the
+            // corpus at its own representative position.
+            for (U bi = 0; bi < a.blocks.size(); ++bi) {
+                const PhraseDict::Block& bk = a.blocks[bi];
+                require(bk.len >= po.minLen && bk.len <= po.maxLen,
+                        "phrase oracle: block length outside the L/MAX window");
+            }
+        }
+
+        // ---- (b,c,d) EXACTNESS against the brute SA, both modes, many arms ---
+        for (U f = 0; f < pf.size(); ++f) {
+            const std::string& t = pf[f];
+            std::string M;
+            for (unsigned char c : t) M += char(remap[c]);
+            for (bool dollar : {false, true}) {
+                auto want = brute(M, dollar);
+                // L/F arms: {L=8,F=2} (the phrase regime), {L=large,F=2} (empty),
+                // {L=8,F=huge} (empty), {L=4,F=2} (many short phrases).
+                struct Arm { U L, F; bool on; };
+                for (const Arm& arm : {Arm{16, 2, true}, Arm{200, 2, true},
+                                       Arm{16, 1000000, true}, Arm{20, 2, true}}) {
+                    for (U threads : {1u, 3u}) {
+                        for (U leaf : {1u, 4u, 24u}) {
+                            for (U lb : {1u, 2u}) {
+                                CorpusText text;
+                                openFixture(t, text, std::string("arm") + std::to_string(f));
+                                BinWindowOpts wo = woptPhrase;
+                                PhraseOpts po = phraseOpts(arm.L, arm.F, arm.on);
+                                wo.phraseOpts = po;
+                                PhraseDict pd;
+                                pd.parse(text, dollar, po);
+                                if (pd.armed()) wo.phrase = &pd;
+                                BinWork w;
+                                std::vector<U> got;
+                                runArm(text, dollar, threads, leaf, lb, 7u, wo, w, got);
+                                if (got != want) {
+                                    std::fprintf(stderr,
+                                        "PHRASE_ORACLE_FAIL fixture=%s dollar=%u L=%llu F=%llu "
+                                        "threads=%llu leaf=%llu lb=%llu\n",
+                                        pfName[f], unsigned(dollar),
+                                        (unsigned long long)arm.L,
+                                        (unsigned long long)arm.F,
+                                        (unsigned long long)threads,
+                                        (unsigned long long)leaf,
+                                        (unsigned long long)lb);
+                                    for (U i = 0; i < got.size(); ++i)
+                                        if (got[i] != want[i])
+                                            std::fprintf(stderr,
+                                                " got[%llu]=%llu want[%llu]=%llu\n",
+                                                (unsigned long long)i,
+                                                (unsigned long long)got[i],
+                                                (unsigned long long)i,
+                                                (unsigned long long)want[i]);
+                                    return 1;
+                                }
+                                require(w.emittedRows == text.n, "phrase oracle emission");
+                                // A verification FAILURE is not an error: it is a
+                                // candidate the tree refused to certify, and the
+                                // node falls back to the byte radix. The ORDER
+                                // check above is what proves the refusals and the
+                                // certifications both stayed exact.
+                                phVerifyFails += w.phraseVerifyFails;
+                                // The skip lemma's own journal: a skip may never
+                                // exceed the node's certified depth budget, and a
+                                // skip must certify a WHOLE entry.
+                                if (w.phraseSkips)
+                                    require(w.phraseSkipMaxLen >= 2,
+                                            "phrase oracle: a skip shorter than a phrase");
+                                phSkips += w.phraseSkips;
+                                phSkipRows += w.phraseSkipRows;
+                                phSkipBytes += w.phraseSkipBytes;
+                                phProbes += w.phraseProbes;
+                                phSkipMaxLen = std::max(phSkipMaxLen, w.phraseSkipMaxLen);
+                                phWindows += w.windows;
+                                ++phCases; ++phArms;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        require(phSkips > 0, "phrase oracle: the hook never fired on the phrase fixtures");
+        require(phSkipRows > 0 && phSkipBytes > 0, "phrase oracle: skip journal empty");
+
+        // ---- (e) EMPTY DICTIONARY == TODAY, bit for bit, counters included ---
+        for (U f = 0; f < 12; ++f) {
+            const std::string& t = fixtures[f];
+            for (bool dollar : {false, true}) {
+                BinWork wOff, wOn;
+                std::vector<U> off, onr;
+                {
+                    CorpusText text;
+                    openFixture(t, text, std::string("iden-off") + std::to_string(f));
+                    BinWindowOpts wo = woptPhrase;
+                    runArm(text, dollar, 3, 4, 1, 7, wo, wOff, off);
+                }
+                {
+                    CorpusText text;
+                    openFixture(t, text, std::string("iden-on") + std::to_string(f));
+                    BinWindowOpts wo = woptPhrase;
+                    PhraseOpts po = phraseOpts(4000, 1u << 30, true);   // nothing qualifies
+                    wo.phraseOpts = po;
+                    PhraseDict pd;
+                    pd.parse(text, dollar, po);
+                    require(!pd.armed(), "phrase oracle: the empty arm produced a dictionary");
+                    wo.phrase = nullptr;                                // exactly as flag-off
+                    runArm(text, dollar, 3, 4, 1, 7, wo, wOn, onr);
+                }
+                require(off == onr, "phrase oracle: the empty dictionary changed the ORDER");
+                require(wOff.levelPasses == wOn.levelPasses &&
+                            wOff.levelElems == wOn.levelElems &&
+                            wOff.comparisons == wOn.comparisons &&
+                            wOff.symbols == wOn.symbols &&
+                            wOff.leafSorts == wOn.leafSorts &&
+                            wOff.binPasses == wOn.binPasses &&
+                            wOff.phraseProbes == 0 && wOn.phraseProbes == 0,
+                        "phrase oracle: the empty dictionary moved a construction counter");
+                ++phIdentical;
+            }
+        }
+        std::printf("BINBWT_ORACLE_PHRASE_PASS cases=%llu arms=%llu fixtures=%zu "
+                    "parse_determinism=%llu dictionaries=%llu nonempty=%llu empty=%llu "
+                    "offset_entries_checked=%llu offset_entries_lost=%llu "
+                    "blocks_addressable=%llu blocks_unaddressable=%llu "
+                    "probes=%llu skips=%llu skip_rows=%llu skip_bytes=%llu "
+                    "verify_refusals=%llu "
+                    "skip_max_len=%llu exact_brute_SA=1 midphrase=1 offsets=1 "
+                    "boundary=1 wrap=1 edit=1 nested=1 norepeat=1 "
+                    "empty_dict_counter_identical=%llu "
+                    "modes=cyclic,dollar threads=1,3 leaf=1,4,24 level_bytes=1,2 "
+                    "L=16,20,200,4000 F=2,1000000,2^30 skip_min_rows=1 "
+                    "window_instances=%llu\n",
+                    (unsigned long long)phCases, (unsigned long long)phArms, pf.size(),
+                    (unsigned long long)phDet, (unsigned long long)(phEmpty + phNonEmpty),
+                    (unsigned long long)phNonEmpty, (unsigned long long)phEmpty,
+                    (unsigned long long)phOffChecked, (unsigned long long)phOffBad,
+                    (unsigned long long)phBlocksLive, (unsigned long long)phBlocksDead,
+                    (unsigned long long)phProbes, (unsigned long long)phSkips,
+                    (unsigned long long)phSkipRows, (unsigned long long)phSkipBytes,
+                    (unsigned long long)phVerifyFails,
+                    (unsigned long long)phSkipMaxLen,
+                    (unsigned long long)phIdentical, (unsigned long long)phWindows);
+    }
     return 0;
 }

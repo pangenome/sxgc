@@ -187,12 +187,43 @@ struct SlimSeamWork {
     }
 };
 
+// ------------------------------------------------ PROB-CHI: THE CLAIM SINK
+// THE DEFAULT FINGERPRINT IS EXACT BY ITSELF: every hash-proposed answer is
+// byte-verified over its whole prefix and at its boundary (lce() below), so a
+// 64-bit collision cannot escape. `prob-chi` splits that guarantee into two
+// halves that can run at different times and in different orders:
+//   * the CONSTRUCTOR becomes a PROPOSER - with a sink installed, lce() skips
+//     the byte verification entirely and hands the proposed answer to the sink
+//     as a CLAIM. The claim is (i, j, g, cap): "T[i..i+g) == T[j..j+g) and
+//     either g == cap (truncated by the query) or T[i+g] != T[j+g]".
+//   * the CHECKER (the sink) owns exactness, later, by reading the text at the
+//     claimed positions - it never searches and never probes.
+// A sink therefore makes the fingerprint PROBABILISTIC by construction and the
+// product certain only if the sink is exact. See tools/binbwt/PROB_CHI_ANALYSIS.md.
+struct SlimClaimSink {
+    virtual ~SlimClaimSink() {}
+    // g: claimed answer; cap: the query's cap (g == cap => no maximality claim).
+    virtual void claim(uint64_t i, uint64_t j, uint64_t g, uint64_t cap) = 0;
+};
+
 // Polynomial suffix hash in Z/(2^64), base odd. Collisions cannot escape the
 // direct verifier. A suffix at any position needs at most tau-1 symbol reads.
 template<class Seq> struct SlimFingerprint {
     const Seq& s; uint64_t tau; std::vector<uint64_t> hashes;
     static constexpr uint64_t BASE=0x9e3779b185ebca87ULL;
     bool inject;
+    // PROB-CHI (see SlimClaimSink above): non-null => hash-trust mode. The
+    // answer is emitted as a claim and NO byte verification happens here.
+    SlimClaimSink* sink=nullptr;
+    // PROB-CHI negative-test hook: perturb every faultEvery-th hash-path
+    // answer by one symbol (0 = off, the product default). In the full tier the
+    // direct verifier refuses such an answer loudly; in hash-trust mode the
+    // CHECKER is the thing that must catch it.
+    uint64_t faultEvery=0;
+    // PROB-CHI accounting: the collision bound is a union bound over the DEGREE
+    // of every hash test, so the exact sum of tested lengths is a counter, not
+    // an estimate. Off by default (one branch per hash test).
+    bool trackDegrees=false;
     uint64_t verificationLimit=INF, probeLimit=INF; // Seam adapter only.
     const char* reportName="unrestricted";
     SlimSeamWork* seamWork=nullptr;
@@ -239,7 +270,14 @@ template<class Seq> struct SlimFingerprint {
         slim_fail("CYCLIC_SEAM_REFUSED: LCE verification exceeds compressed-work policy; no O(n) fallback");
     }
     mutable SlimSharded calls, checked, jumps, hashProbes, suffixReads;
+    // PROB-CHI counters (exact; they are the claims list's own ledger):
+    //   claimed     - symbols named by claims handed to the sink
+    //   exactFast   - answers that were already byte-exact (the <=16-symbol
+    //                 quick path and i==j), i.e. NOT hash-derived, no claim
+    //   probeDegree - sum of the tested lengths of every hash equality test
+    mutable SlimSharded claimed, exactFast, probeDegree;
     mutable std::atomic<uint64_t> maxChecked{0};
+    mutable std::atomic<uint64_t> faultSeq{0};
     void record_checked(uint64_t count) const {
         checked.add(count);
         uint64_t mx=maxChecked.load(std::memory_order_relaxed);
@@ -248,6 +286,7 @@ template<class Seq> struct SlimFingerprint {
     void flushThread() const {
         calls.flushThread(); checked.flushThread(); jumps.flushThread();
         hashProbes.flushThread(); suffixReads.flushThread(); verificationWork.flushThread();
+        claimed.flushThread(); exactFast.flushThread(); probeDegree.flushThread();
     }
     SlimFingerprint(const Seq& seq,uint64_t t,bool fault=false):s(seq),tau(std::max<uint64_t>(1,t)),inject(fault) {
         hashes.resize(s.size()/tau+1);
@@ -307,6 +346,7 @@ template<class Seq> struct SlimFingerprint {
         while(end>i){--end;h=(uint64_t)s[end]+1+BASE*h;}return h;
     }
     bool equal(uint64_t i,uint64_t j,uint64_t len) const {
+        if(trackDegrees) probeDegree.add(len);
         uint64_t p=power(len);
         return suffix(i)-p*suffix(i+len)==suffix(j)-p*suffix(j+len);
     }
@@ -324,7 +364,7 @@ template<class Seq> struct SlimFingerprint {
             ++lo;
         }
         verificationWork.add(quickWork);
-        if(lo<quick && !inject){record_checked(lo+1);return lo;}
+        if(lo<quick && !inject){if(sink)exactFast.add(1);record_checked(lo+1);return lo;}
         uint64_t queryProbes=0;
         uint64_t hi=cap;
         // Exponential search avoids log(|D|) probes on short phrase tails.
@@ -340,10 +380,25 @@ template<class Seq> struct SlimFingerprint {
         // G3 explicitly perturbs a proposed answer; lowering tau is not a
         // collision injector (it merely increases sampling density).
         uint64_t guess=lo;
-        if(inject && guess<cap)++guess;
-        else if(inject && guess) --guess;
+        // PROB-CHI fault hook: `inject` perturbs EVERY answer (the standing G3
+        // test); `faultEvery` perturbs every Nth hash-path answer, which is the
+        // scale-relevant test - one corrupted fact in 4.7e8.
+        bool pert=inject;
+        if(faultEvery && faultSeq.fetch_add(1,std::memory_order_relaxed)%faultEvery==0) pert=true;
+        if(pert && guess<cap)++guess;
+        else if(pert && guess) --guess;
         uint64_t mx=maxRequested.load(std::memory_order_relaxed);
         while(guess>mx && !maxRequested.compare_exchange_weak(mx,guess,std::memory_order_relaxed)) {}
+        // ---- PROB-CHI HASH-TRUST EXIT: hand the proposed answer to the sink as
+        // a claim and return it unverified. No charge, no verification-work
+        // accounting, and `verified_symbols` stays 0 because nothing was
+        // verified here - the sink owns exactness and its own ledger.
+        if(sink) {
+            sink->claim(i,j,guess,cap);
+            claimed.add(guess+(guess<cap));
+            jumps.add(queryProbes);
+            return guess;
+        }
         uint64_t directWork=guess+(guess<cap);
         if(quickWork>verificationLimit || directWork>verificationLimit-quickWork)
             refuse_verify(guess,i,j,cap,queryProbes,quickWork);
@@ -357,13 +412,15 @@ template<class Seq> struct SlimFingerprint {
         jumps.add(queryProbes);
         return guess;
     }
-    __attribute__((noinline, cold)) void report(const char* name)const {fprintf(stderr,"SLIM_FP %s tau=%llu bytes=%llu queries=%llu verified_symbols=%llu hash_probes=%llu mean_verified=%.9f max_verified=%llu max_requested_lce=%llu verification_work=%llu hash_probe_charges=%llu suffix_symbol_reads=%llu total_work=%llu total_limit=%llu verification_limit=%llu probe_limit=%llu\n",name,
+    __attribute__((noinline, cold)) void report(const char* name)const {fprintf(stderr,"SLIM_FP %s tau=%llu bytes=%llu queries=%llu verified_symbols=%llu hash_probes=%llu mean_verified=%.9f max_verified=%llu max_requested_lce=%llu verification_work=%llu hash_probe_charges=%llu suffix_symbol_reads=%llu total_work=%llu total_limit=%llu verification_limit=%llu probe_limit=%llu hash_trust=%d claimed_symbols=%llu exact_fast=%llu probe_degrees=%llu\n",name,
         (unsigned long long)tau,(unsigned long long)(hashCount*8),(unsigned long long)calls.read(),
         (unsigned long long)checked.read(),(unsigned long long)jumps.read(),
         calls.read()?double(checked.read())/calls.read():0.0,(unsigned long long)maxChecked.load(),
         (unsigned long long)maxRequested.load(),(unsigned long long)verificationWork.read(),(unsigned long long)hashProbes.read(),(unsigned long long)suffixReads.read(),
         (unsigned long long)(seamWork?seamWork->totalUsed():0),(unsigned long long)(seamWork?seamWork->limit:INF),
-        (unsigned long long)verificationLimit,(unsigned long long)probeLimit);}
+        (unsigned long long)verificationLimit,(unsigned long long)probeLimit,
+        int(sink!=nullptr),(unsigned long long)claimed.read(),(unsigned long long)exactFast.read(),
+        (unsigned long long)probeDegree.read());}
 };
 
 // Random access to the walk-emitted text sidecar: optional bounded
