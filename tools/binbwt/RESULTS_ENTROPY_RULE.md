@@ -262,6 +262,13 @@ finding as §4.2, not a 100 MB special case.
 | `BIN_HOT` bin=32 `level_elems` | 1,028,971,402 | 1,344,928,670 | the bin's rows leave levels for in-leaf radix |
 | `BIN_HOT` bin=32 `leaf_sorts` | 23,701 | 7,507,019 | its one big leaf sort becomes in-leaf levels |
 
+**On the banks the H=0 and periodic paths never fire at all**: both scales, both
+arms, `no_progress_levels=0` and `periodic_leaves=0` — so the armed arm's
+unconditional period probe costs nothing on this corpus, and the question "does
+the rule lose the periodic tie-break" is answered by the oracle
+(`periodic_checked=98` cases, `periodic_leaves=54`, `periodic_rows=2304`, and the
+64-'a' fixture), not by the bank.
+
 **Why the wall does not move.** The producer's work falls by a quarter and its
 leaf term by three quarters, but the exits convert 117.2M rows into 33
 comparison-sorted leaves, the largest 5.92M rows (vs the target's 1.05M). Those
