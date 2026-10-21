@@ -131,8 +131,15 @@ col[n-1] = LCE(SA[n-1], SA[0])         # the wrap entry, one bounded walk
 The ratchet `col[rank(p+1)] >= col[rank(p)] - 1` holds for cyclic rotations by
 the same argument as for sentinel-ed suffixes (shifting both sides of a length-h
 match down by one leaves a length-(h-1) match, and the successor of
-`rotation(p+1)` sorts between `rotation(p+1)` and `rotation(q+1)`), with the
-equal-rotation case (`h == n`) trivially satisfying it. Comparisons are therefore
+`rotation(p+1)` sorts between `rotation(p+1)` and `rotation(q+1)`).
+
+**One exception, found by the oracle before it could cost a gate** (§7): when
+`h == n` the two rotations are IDENTICAL and the sorted order carries no
+information to shift - the classic Kasai form never sees this because a
+sentinel-ed text has `LCP < n` always. Carrying `n-1` forward there is wrong:
+the oracle's periodic arm returned `col = 63` where the truth is `0`. The walk
+restarts the ratchet at `h = 0` whenever `len == n`. After the fix the 100 MB
+fixture measures `kasai_comparisons = 200,005,074 = 2.000n` exactly. Comparisons are therefore
 `<= 2n + resets`; the tool **asserts** `kasai_comparisons <= 3n` and journals the
 exact count and the ratio, because a broken ratchet shows up as `~53n` (measured,
 §1) and must never pass silently.
@@ -161,14 +168,32 @@ The finish gains one option and one knob:
   (the exactness gate: the audit compares every `topLcp` and `interior` value
   the sweep is about to consume against the old path's answer).
 
-`lceJob` becomes, per band: one `pread` of the column slice
-`[rankStart-1, rankStart + live)`, then for each run a `col[]` read and a range
-minimum. `rankStart` is the running `sum(len)` over the runs the ordered fold has
-emitted so far — assigned in `feed()` (the only serial, ordered stage), so a band
-slot carries its own rank base and the pool touches nothing shared. The total of
-all bands' `len` is asserted `== n` at the end of the sweep: that assert is the
-mapping's own closure condition (runs are contiguous and exhaustive in rank
-space) and it costs one compare.
+`lceJob` becomes, per band, two phases inside ONE pool job: (1) every run's
+exact rank from the locate table (in parallel — the lookups are random), then a
+barrier at which the last worker stages the band's column slice with one
+`pread`; (2) the `col[]` reads and the range minima.
+
+**THE RANK IS NOT A CUMULATIVE SUM OF THE RUN LENGTHS — measured, and this is
+the one place where the charter's own plan was wrong.** The run stream does not
+tile the rank space:
+
+* the seam-class splice advances the transducer's row past the rows its
+  reconstructed runs describe (at 100 MB the first class block is one row short
+  of its declared span, and the terminal row is emitted LATE — rank 1186920
+  arrives after rank 1194188). Measured on the 100 MB fixture: **6 rank holes
+  and 2 order inversions in 38,647,515 runs**, all at the seam classes.
+* a running `sum(len)` therefore drifts: the first attempt shifted EVERY later
+  rank by one and the audit caught 159 consecutive wrong `topLcp` values in one
+  band before the mapping was moved.
+
+So the finish reads the ISA — `kasai_column`'s `--sa-locate` file, the same
+inversion stage 2 already produced — one random lookup per run (`NRun::rk`, the
+transducer's own row, is carried alongside as the diagnostic, not the source),
+and every run also proves its own contiguity: `ISA[tail] == ISA[head] + len - 1`.
+`topLcp` is the column read only where the previous run in the stream ENDS at
+this run's rank; across a hole or an inversion it is the old walk for that ONE
+query, counted (`walk_fallbacks=6` at 100 MB). The interior family needs no such
+care: a run's own rows are rank-contiguous, so `min col[r .. r+len-2]` is exact.
 
 In the Kasai arm the sweep's inputs are *identical by construction* to the old
 arm's; the T3 claims checker (`--check-claims`, `PROB_CHI_ANALYSIS.md`) is
@@ -234,8 +259,11 @@ implementation does not have to re-derive it.
    `topLcp`/`interior` for a synthetic run structure — i.e. the stage-4 mapping
    (`topLcp = col[r-1]`, `interior = min col[r..r+len-2]`) is verified as
    arithmetic, not as a container byte-identity.
-5. **The finish's own closure**: `sum(len) over all runs == n`, asserted at the
-   end of the sweep in the Kasai arm.
+5. **The finish's own closure**: `max_rank_end <= n`, and the hole/inversion
+   census journalled (`PILE_FINISH_KASAI_CLOSURE rank_holes=.. disorder=..
+   walk_fallbacks=..`). The run stream does NOT tile the rank space (see §2), so
+   a tiling assert would be a lie; the per-run contiguity assert
+   (`ISA[tail] == ISA[head]+len-1`) and the audit arm are the real gates.
 6. **The audit arm**: `PILE_FINISH_KASAI_AUDIT=1` asserts old==new for every
    value the sweep consumes, at fixture scale.
 7. **The bank gates**: 100 MB and 1 GB byte-identical to the banked containers
@@ -264,3 +292,23 @@ implementation does not have to re-derive it.
 * **Equal rotations.** `col[n-1]` (the wrap) is computed but never consumed; the
   equal-rotation case (`h == n`) is exercised by the all-equal and periodic
   oracle arms, where the finish's own cyclic LCE returns `n` too.
+
+## 7. What the tiny oracle caught before any fixture gate ran
+
+Three defects, all found at n <= 1024 for the price of seconds, all of which
+would have produced a byte-different container at 100 MB and been very expensive
+to localise there:
+
+1. **`h = n` (identical rotations) breaks the ratchet** (§2 stage 3). The
+   oracle's `periodic-ab` arm reported `col[31] = 63` against truth `0`.
+2. **`B > n` divides the position space into empty buckets** — the coverage gate
+   fired on the `n = 1` corpus. `B = min(B, n)`.
+3. **The finish's rank mapping is not the run-length sum** (§2 stage 4) — this
+   one was caught at fixture scale, by the audit arm, in one band, because the
+   audit asserts every value the sweep is about to consume rather than the final
+   container bytes. It is the reason the phase-2 work has a *locate table* at
+   all.
+
+The lesson recorded for the pile: the audit arm is not a debugging aid, it is
+the gate that pinpoints the class of bug the container's byte-identity can only
+report as "different".
