@@ -835,8 +835,14 @@ int main(int argc, char** argv) {
     //       probes the period unconditionally, so it can only find it sooner);
     //   (d) MIXED fixtures (diverse head, degenerate body, periodic tail) in one
     //       text, where the three regimes meet inside one recursion;
-    //   (e) theta = 0 with the in-leaf arm OFF is TODAY'S RULE wherever the tree
-    //       makes progress: the counters must be IDENTICAL to the off arm.
+    //   (e) theta = 0 with the in-leaf arm OFF takes EVERY level that buys any
+    //       bits: every exit it takes is a ZERO-entropy exit (H = 0), and where
+    //       it takes no exit at all its counters are IDENTICAL to the off arm.
+    //       H = 0 is broader than `biggest == m`: code 0 (the dollar-exhausted
+    //       rows) is outside the normalisation, so a node whose LIVE rows all
+    //       share one next byte has H = 0 while biggest < m. The 64-'a' fixture
+    //       is exactly that shape, and the rule exits it after ONE level where
+    //       the target-size rule grinds 63 - measured by this pass.
     //   (f) the IN-LEAF arm (PART 2) fired with its row floor forced to 1, and the
     //       leaf's own BWT output is still the brute SA.
     {
@@ -991,21 +997,31 @@ int main(int argc, char** argv) {
                             entLeafTaken += wOn.entropyLeafTaken;
                             entLeafExits += wOn.entropyLeafExits;
                             entOverTarget += wOn.entropyOverTargetLeaves;
-                            // (e) theta = 0 with the in-leaf arm OFF is TODAY'S
-                            // rule wherever the tree can progress: identical
-                            // counters wherever the off arm never failed to divide.
-                            if (arm.bits == 0.0 && !arm.leaf && wOff.noProgressLevels == 0) {
-                                require(wOn.levelPasses == wOff.levelPasses &&
-                                            wOn.levelElems == wOff.levelElems &&
-                                            wOn.binPasses == wOff.binPasses &&
-                                            wOn.comparisons == wOff.comparisons &&
-                                            wOn.symbols == wOff.symbols &&
-                                            wOn.leafSorts == wOff.leafSorts &&
-                                            wOn.leafElems == wOff.leafElems &&
-                                            wOn.entropyExits == 0,
-                                        "entropy oracle: theta=0 moved a counter against the "
-                                        "off arm on a tree that never failed to divide");
-                                ++entTheta0Identical;
+                            // (e) theta = 0: the rule takes every level that buys
+                            // a bit, so every exit it takes must be a ZERO-entropy
+                            // exit. Where it takes NO exit it is today's rule, and
+                            // the counters must be IDENTICAL (this is only
+                            // meaningful when the off arm never failed to divide,
+                            // because the armed arm probes the period
+                            // unconditionally on a no-progress node and may finish
+                            // it with the zero-comparison tie-break instead of
+                            // subdividing).
+                            if (arm.bits == 0.0 && !arm.leaf) {
+                                require(wOn.entropyExits == wOn.entropyNoProgExits,
+                                        "entropy oracle: theta=0 exited a node whose level "
+                                        "buys bits (H > 0)");
+                                if (wOff.noProgressLevels == 0 && wOn.entropyExits == 0) {
+                                    require(wOn.levelPasses == wOff.levelPasses &&
+                                                wOn.levelElems == wOff.levelElems &&
+                                                wOn.binPasses == wOff.binPasses &&
+                                                wOn.comparisons == wOff.comparisons &&
+                                                wOn.symbols == wOff.symbols &&
+                                                wOn.leafSorts == wOff.leafSorts &&
+                                                wOn.leafElems == wOff.leafElems,
+                                            "entropy oracle: theta=0 moved a counter against "
+                                            "the off arm without taking an exit");
+                                    ++entTheta0Identical;
+                                }
                             }
                             ++entCases;
                         }

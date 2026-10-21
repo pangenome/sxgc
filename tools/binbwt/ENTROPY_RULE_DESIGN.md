@@ -184,9 +184,16 @@ and every existing oracle case, counter and byte stays identical.
 
 ## 4. THE H = 0 CASE IS THE EXISTING PERIODIC TIE-BREAK — the rule GENERALIZES it
 
-`biggest == m` is the special case `H = 0`: the split put every row in one
+`biggest == m` is ONE shape of `H = 0`: the split put every row in one
 bucket, so the level coded one symbol and bought ZERO bits, and H = 0 <= θ always.
-The tree already answers that case exactly, and it answers it better than the
+**[Measured correction, oracle pass]** H = 0 is strictly broader than that: code
+0 (the dollar-exhausted rows) is outside the normalisation in
+`bin_hist_entropy`, so a node whose LIVE rows all share one next byte has H = 0
+while `biggest < m`. The 64-'a' dollar fixture is exactly that shape: the
+target-size rule grinds 63 levels under it and the rule exits it after ONE level
+(the oracle counts the exit in `entropy_no_prog_exits`; see
+`RESULTS_ENTROPY_RULE.md` §2). The tree already answers the `biggest == m` case
+exactly, and it answers it better than the
 comparison sort: `bin_node_period` proves the node's rotations identical and
 `bin_periodic_sort` orders them by ascending source position with ZERO
 comparisons. So the rule ORDER is:
