@@ -5510,7 +5510,8 @@ int main_impl(int argc, char** argv) {
                 u("--phrase-skip-min-rows", bwo.phraseOpts.skipMinRows);
             bwo.phraseOpts.skipMinLen =
                 u("--phrase-skip-min-len", bwo.phraseOpts.skipMinLen);
-            require(bwo.phraseOpts.minLen >= 8 && bwo.phraseOpts.seed >= 8 &&
+            require(bwo.phraseOpts.minLen >= 16 && bwo.phraseOpts.seed >= 16 &&
+                    bwo.phraseOpts.skipMinLen >= 16 &&
                         bwo.phraseOpts.maxLen >= bwo.phraseOpts.minLen &&
                         bwo.phraseOpts.window >= 2 && bwo.phraseOpts.tableBits >= 8 &&
                         bwo.phraseOpts.tableBits <= 26 && bwo.phraseOpts.reps >= 2,

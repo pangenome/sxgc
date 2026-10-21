@@ -1207,20 +1207,20 @@ static U bin_phrase_skip(const CorpusText& t, bool dollar, U depth, const U* src
     int32_t chosen = -1;
     U avail = ~U(0);
     {
-        uint8_t buf[8];
+        uint8_t buf[16];
         for (U i = 0; i < m; ++i) {
             const U x = bin_word_tail(src[i]) + depth;
-            const uint8_t* b8;
+            const uint8_t* b16;
             if (dollar) {
-                if (x + 8 > n) return 0;     // this suffix ends inside the key
+                if (x + 16 > n) return 0;    // this suffix ends inside the key
                 avail = std::min(avail, n - x);
-                b8 = t.span(x, buf, 8);
+                b16 = t.span(x, buf, 16);
             } else {
                 const U xr = x % n;
-                if (xr + 8 <= n) b8 = t.span(xr, buf, 8);
-                else { PhraseDict::copyAt(t, false, xr, 8, buf); b8 = buf; }
+                if (xr + 16 <= n) b16 = t.span(xr, buf, 16);
+                else { PhraseDict::copyAt(t, false, xr, 16, buf); b16 = buf; }
             }
-            const int32_t e = pd->lookup8(b8);
+            const int32_t e = pd->lookup16(b16);
             if (e < 0) return 0;             // no phrase here
             if (chosen < 0) chosen = e;
             else if (chosen != e) return 0;  // not the same phrase for every row

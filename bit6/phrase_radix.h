@@ -43,6 +43,7 @@
 struct PhraseOpts {
     bool enabled = false;
     U minLen = 64;               // L: a phrase shorter than this is not a phrase
+                                 // (>= 16: the entry key is a 16-byte fingerprint)
     U minFreq = 2;               // F: more often than this to be worth a token
     U maxLen = 4096;             // per-block length cap (a block may be huge)
     U seed = 32;                 // K: the k-mer the winnow hashes
@@ -53,6 +54,7 @@ struct PhraseOpts {
     U reps = 8;                  // representative occurrences per candidate
     U skipMinRows = 4096;        // a node smaller than this is not probed
     U skipMinLen = 16;           // a skip shorter than this is not worth a probe
+                                 // (the key is 16 bytes, so 16 is also the floor)
 };
 
 // The parse's journal. Every field is EXACT except where labelled "estimate".
@@ -107,6 +109,7 @@ struct KmerWinnow {
         const U M = len - K + 1;              // k-mers in this chunk
         dq.clear(); dqi.clear();
         size_t head = 0;                       // deque front (no erase-from-front)
+        U lastEmit = U(~U(0));
         uint64_t h = 0;
         for (U j = 0; j < K; ++j) h = h * B + uint64_t(buf[j]) + 1u;
         for (U i = 0;; ++i) {
@@ -119,7 +122,16 @@ struct KmerWinnow {
                 dqi.erase(dqi.begin(), dqi.begin() + long(head));
                 head = 0;
             }
-            if (i + 1 >= W) emit(dq[head], base + dqi[head]);
+            // WINNOWING emits the window minimum, and the same minimum is the
+            // answer for up to W consecutive windows - so consecutive duplicate
+            // POSITIONS are collapsed. Without this a single occurrence produces
+            // up to W samples and the frequency floor F would count one occurrence
+            // as several (measured: the "no repetition at all" fixture produced a
+            // non-empty dictionary at F=2, which is exactly the bug).
+            if (i + 1 >= W) {
+                const U pos = base + dqi[head];
+                if (pos != lastEmit) { emit(dq[head], pos); lastEmit = pos; }
+            }
             if (i + 1 == M) break;
             h = (h - (uint64_t(buf[i]) + 1u) * BK1) * B + uint64_t(buf[i + K]) + 1u;
         }
@@ -150,10 +162,20 @@ struct PhraseDict {
 
     // The lookup: one 8-byte key against one direct-mapped slot. Returns the
     // entry index of the CANDIDATE (never a certificate - the caller verifies).
-    inline int32_t lookup8(const uint8_t* b8) const {
-        uint64_t raw;
-        std::memcpy(&raw, b8, 8);
-        const uint64_t key = phrase_mix(raw) | 1u;
+    // THE KEY IS SIXTEEN BYTES, not eight. Eight was measured: an 8-byte key
+    // collides across the interior of a repeated block (two offsets of one block
+    // share 8 bytes and diverge later), so more than half of the offset entries
+    // were shadowed by a sibling that would only fail verification. The key length
+    // is what a lookup can PROMISE; everything past it is the byte
+    // VERIFICATION's job, so the right fix is to promise more.
+    static inline uint64_t key16(const uint8_t* b) {
+        uint64_t a, c;
+        std::memcpy(&a, b, 8);
+        std::memcpy(&c, b + 8, 8);
+        return phrase_mix(phrase_mix(a) ^ (c * 0x9E3779B97F4A7C15ULL)) | 1u;
+    }
+    inline int32_t lookup16(const uint8_t* b16) const {
+        const uint64_t key = key16(b16);
         const size_t slot = size_t(key) & mask;
         const Entry& e = tab[slot];
         if (!e.key || e.key != key) return -1;
@@ -212,6 +234,9 @@ struct PhraseDict {
         on = false;
         dollar = dollarMode;
         blocks.clear(); pool.clear(); tab.clear(); st = PhraseStats();
+        require(o.minLen >= 16 && o.skipMinLen >= 16,
+                "phrase-radix: L and the skip floor must be >= 16 (the entry key is a "
+                "16-byte fingerprint, so a shorter phrase has no key)");
         if (!o.enabled || t.n < 2 * (o.minLen + o.seed)) {
             // The empty dictionary is a legitimate answer: with no discoverable
             // phrase the byte radix must run EXACTLY as today.
@@ -358,7 +383,13 @@ struct PhraseDict {
             for (U c = 0; c < cand.size(); ++c) {
                 if (!candCnt[c]) { ++st.blocksRejected; continue; }
                 const U p0 = candPos[c * o.reps];
-                U len = dollar ? (p0 < n ? std::min<U>(o.maxLen, n - p0) : 0) : o.maxLen;
+                // A phrase can never be longer than the corpus: in cyclic mode
+                // M^inf makes a longer "block" a repetition of the corpus (a
+                // block of 4096 bytes over a 786-byte fixture really was built by
+                // wrapping, and it is pure dead weight - plus it hides the head of
+                // every short block behind its own offset entries).
+                U len = dollar ? (p0 < n ? std::min<U>(o.maxLen, n - p0) : 0)
+                               : std::min<U>(o.maxLen, n);
                 if (dollar && p0 >= n) { ++st.blocksRejected; continue; }
                 // The length only has to be SAFE (it is verified at use); it does
                 // not have to be the true maximal repeat, so a bounded sample of
@@ -368,11 +399,9 @@ struct PhraseDict {
                 if (len < o.minLen) { ++st.blocksRejected; continue; }
                 if (pool.size() + len > o.poolMax) { ++st.blocksRejected; continue; }
                 // probe the head key against the corpus bytes we are about to add
-                uint8_t head[8];
-                copyAt(t, dollar, p0, 8, head);
-                uint64_t hraw = 0;
-                std::memcpy(&hraw, head, 8);
-                const uint64_t hkey = phrase_mix(hraw) | 1u;
+                uint8_t head[16];
+                copyAt(t, dollar, p0, 16, head);
+                const uint64_t hkey = key16(head);
                 if (tab[size_t(hkey) & mask].key) { ++st.blocksRejected; continue; }
                 const U off = U(pool.size());
                 pool.resize(off + len);
@@ -397,9 +426,7 @@ struct PhraseDict {
                     if (used >= stopAt) { ++st.entriesDropped; break; }
                     const uint32_t l = uint32_t(len - oo);
                     const uint8_t* src = pool.data() + off + oo;
-                    uint64_t raw = 0;
-                    std::memcpy(&raw, src, l < 8 ? l : 8);
-                    const uint64_t key = phrase_mix(raw) | 1u;
+                    const uint64_t key = key16(src);   // l >= minLen >= 16
                     Entry& e = tab[size_t(key) & mask];
                     if (!e.key) ++used;
                     else if (e.len >= l) { ++st.entriesDropped; continue; }
