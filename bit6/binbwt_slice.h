@@ -100,6 +100,7 @@ struct BinWork {
     U phraseSkipBytes = 0;                      // EXACT bytes certified by skips
     U phraseSkipMaxLen = 0, phraseSkipDepthMax = 0;
     U phraseVerifyFails = 0;                     // candidates byte-verify rejected
+    U phraseProbeNoEnt = 0, phraseProbeDis = 0;  // probe refused: no entry / not uniform
     void absorb(const BinWork& o) {
         sweepBytes += o.sweepBytes; sweepPasses += o.sweepPasses;
         windows += o.windows; bins += o.bins; binPasses += o.binPasses;
@@ -158,6 +159,7 @@ struct BinWork {
         phraseSkipMaxLen = std::max(phraseSkipMaxLen, o.phraseSkipMaxLen);
         phraseSkipDepthMax = std::max(phraseSkipDepthMax, o.phraseSkipDepthMax);
         phraseVerifyFails += o.phraseVerifyFails;
+        phraseProbeNoEnt += o.phraseProbeNoEnt; phraseProbeDis += o.phraseProbeDis;
     }
 };
 
@@ -1204,16 +1206,24 @@ static U bin_phrase_skip(const CorpusText& t, bool dollar, U depth, const U* src
     if (!pd || !pd->armed() || m < pd->o.skipMinRows) return 0;
     const U n = t.n;
     ++w.phraseProbes; w.phraseProbeRows += m;
+    // THE EXHAUSTED-INSIDE-THE-PHRASE CASE, which is what a first attempt at this
+    // got wrong. A node holds rows that agree on `depth` bytes, and in dollar mode
+    // some of them may END inside the phrase - at most `depth + 16` positions of
+    // the corpus can, but ONE of them in a 6M-row node was enough to refuse every
+    // skip at 10 GB (measured: 82 probes, 486M probe_rows, 0 skips). It is not a
+    // refusal, it is the ordinary bucket-0 rule: a suffix that ends inside the
+    // certified region is a PREFIX of the other rows, so it is the smallest, and
+    // `bin_code` already sends an exhausted row to code 0 (which sorts first) with
+    // ascending length as its exact order. So such a row takes no part in choosing
+    // the entry and is verified only for the bytes it actually has.
     int32_t chosen = -1;
-    U avail = ~U(0);
     {
         uint8_t buf[16];
         for (U i = 0; i < m; ++i) {
             const U x = bin_word_tail(src[i]) + depth;
             const uint8_t* b16;
             if (dollar) {
-                if (x + 16 > n) return 0;    // this suffix ends inside the key
-                avail = std::min(avail, n - x);
+                if (x >= n || n - x < 16) continue;   // ends inside the phrase
                 b16 = t.span(x, buf, 16);
             } else {
                 const U xr = x % n;
@@ -1221,22 +1231,29 @@ static U bin_phrase_skip(const CorpusText& t, bool dollar, U depth, const U* src
                 else { PhraseDict::copyAt(t, false, xr, 16, buf); b16 = buf; }
             }
             const int32_t e = pd->lookup16(b16);
-            if (e < 0) return 0;             // no phrase here
+            if (e < 0) { ++w.phraseProbeNoEnt; return 0; }   // no phrase here
             if (chosen < 0) chosen = e;
-            else if (chosen != e) return 0;  // not the same phrase for every row
+            else if (chosen != e) { ++w.phraseProbeDis; return 0; }
         }
     }
+    if (chosen < 0) return 0;                    // every row ends inside the key
     const PhraseDict::Entry& E = pd->entry(chosen);
-    const U len = dollar ? std::min<U>(U(E.len), avail) : U(E.len);
-    if (len < std::max<U>(pd->o.skipMinLen, 1)) return 0;
+    const U len = U(E.len);
+    if (len < std::max<U>(pd->o.skipMinLen, 16)) return 0;
     {
-        // BYTE-VERIFY every row. Mid-phrase suffixes are the correctness core
-        // (§4), and this is the line that makes them safe.
+        // BYTE-VERIFY every row, for as many bytes as it HAS. Mid-phrase suffixes
+        // are the correctness core (design doc §4) and this is the line that makes
+        // them safe: the hash picked the candidate, it may not certify it.
         const uint8_t* ref = pd->text(E);
         uint8_t vb[4096];
         for (U i = 0; i < m; ++i) {
             const U x = bin_word_tail(src[i]) + depth;
-            if (!PhraseDict::verify(t, dollar, x, len, ref, vb)) {
+            U take = len;
+            if (dollar) {
+                if (x >= n) continue;
+                take = std::min<U>(len, n - x);
+            }
+            if (!PhraseDict::verify(t, dollar, x, take, ref, vb)) {
                 ++w.phraseVerifyFails;
                 return 0;
             }
@@ -2986,6 +3003,7 @@ static void bin_phrase_journal_work(const BinWork& w, const PhraseDict* pd) {
         "PHRASE_WORK armed=%u probe_depth=%llu probe_stride=%llu skip_min_rows=%llu "
         "probes=%llu probe_rows=%llu skips=%llu skip_rows=%llu "
         "skip_bytes=%llu skip_max_len=%llu skip_depth_max=%llu verify_fails=%llu "
+        "refused_no_entry=%llu refused_not_uniform=%llu "
         "no_progress_levels=%llu level_passes=%llu level_elems=%llu "
         "comparisons=%llu symbols=%llu full_SA=0 persistent_positions=0\n",
         unsigned(on), (unsigned long long)(pd ? pd->o.probeDepth : 0),
@@ -2997,6 +3015,8 @@ static void bin_phrase_journal_work(const BinWork& w, const PhraseDict* pd) {
         (unsigned long long)w.phraseSkipMaxLen,
         (unsigned long long)w.phraseSkipDepthMax,
         (unsigned long long)w.phraseVerifyFails,
+        (unsigned long long)w.phraseProbeNoEnt,
+        (unsigned long long)w.phraseProbeDis,
         (unsigned long long)w.noProgressLevels,
         (unsigned long long)w.levelPasses, (unsigned long long)w.levelElems,
         (unsigned long long)w.comparisons, (unsigned long long)w.symbols);

@@ -84,6 +84,9 @@ struct PhraseStats {
     U poolBytes = 0;             // phrase text bytes resident
     U entries = 0;               // offset entries inserted
     U entriesDropped = 0;        // offsets refused because the table filled
+    // WHY a candidate was refused, counted apart (a dictionary that is small for
+    // the wrong reason is a tuning failure, not a design one).
+    U rejNoReps = 0, rejShort = 0, rejPool = 0, rejHead = 0;
     U tableSlots = 0, tableUsed = 0;
     U lenMin = 0, lenMax = 0, lenSum = 0;   // admitted block lengths
     U freqMax = 0;
@@ -396,7 +399,7 @@ struct PhraseDict {
             size_t used = 0;
             const size_t stopAt = tab.size() * 9 / 10;
             for (U c = 0; c < cand.size(); ++c) {
-                if (!candCnt[c]) { ++st.blocksRejected; continue; }
+                if (!candCnt[c]) { ++st.blocksRejected; ++st.rejNoReps; continue; }
                 const U p0 = candPos[c * o.reps];
                 // A phrase can never be longer than the corpus: in cyclic mode
                 // M^inf makes a longer "block" a repetition of the corpus (a
@@ -405,19 +408,19 @@ struct PhraseDict {
                 // every short block behind its own offset entries).
                 U len = dollar ? (p0 < n ? std::min<U>(o.maxLen, n - p0) : 0)
                                : std::min<U>(o.maxLen, n);
-                if (dollar && p0 >= n) { ++st.blocksRejected; continue; }
+                if (dollar && p0 >= n) { ++st.blocksRejected; ++st.rejNoReps; continue; }
                 // The length only has to be SAFE (it is verified at use); it does
                 // not have to be the true maximal repeat, so a bounded sample of
                 // occurrences bounds it.
                 for (U r = 1; r < candCnt[c] && len >= o.minLen; ++r)
                     len = std::min<U>(len, lcpAt(p0, candPos[c * o.reps + r], len));
-                if (len < o.minLen) { ++st.blocksRejected; continue; }
-                if (pool.size() + len > o.poolMax) { ++st.blocksRejected; continue; }
+                if (len < o.minLen) { ++st.blocksRejected; ++st.rejShort; continue; }
+                if (pool.size() + len > o.poolMax) { ++st.blocksRejected; ++st.rejPool; continue; }
                 // probe the head key against the corpus bytes we are about to add
                 uint8_t head[16];
                 copyAt(t, dollar, p0, 16, head);
                 const uint64_t hkey = key16(head);
-                if (tab[size_t(hkey) & mask].key) { ++st.blocksRejected; continue; }
+                if (tab[size_t(hkey) & mask].key) { ++st.blocksRejected; ++st.rejHead; continue; }
                 const U off = U(pool.size());
                 pool.resize(off + len);
                 copyAt(t, dollar, p0, len, pool.data() + off);
@@ -471,7 +474,8 @@ static void phrase_journal_dict(const PhraseDict& pd, U n) {
         "PHRASE_DICT enabled=%u armed=%u dollar=%u min_len=%llu min_freq=%llu "
         "max_len=%llu seed=%llu window=%llu block_max=%llu pool_max=%llu "
         "table_bits=%llu kmers=%llu samples=%llu parse_passes=%llu distinct=%llu "
-        "candidates=%llu blocks=%llu blocks_rejected=%llu pool_bytes=%llu "
+        "candidates=%llu blocks=%llu blocks_rejected=%llu rej_noreps=%llu "
+        "rej_short=%llu rej_pool=%llu rej_head=%llu pool_bytes=%llu "
         "entries=%llu entries_dropped=%llu table_slots=%llu table_used=%llu "
         "len_min=%llu len_max=%llu len_mean=%.1f freq_max=%llu "
         "coverage_estimate=%.6f byte_radix_share_estimate=%.6f peak_samples=%llu "
@@ -485,7 +489,9 @@ static void phrase_journal_dict(const PhraseDict& pd, U n) {
         (unsigned long long)s.kmers, (unsigned long long)s.samples,
         (unsigned long long)s.parsePasses, (unsigned long long)s.distinct,
         (unsigned long long)s.candidates, (unsigned long long)s.blocks,
-        (unsigned long long)s.blocksRejected, (unsigned long long)s.poolBytes,
+        (unsigned long long)s.blocksRejected, (unsigned long long)s.rejNoReps,
+        (unsigned long long)s.rejShort, (unsigned long long)s.rejPool,
+        (unsigned long long)s.rejHead, (unsigned long long)s.poolBytes,
         (unsigned long long)s.entries, (unsigned long long)s.entriesDropped,
         (unsigned long long)s.tableSlots, (unsigned long long)s.tableUsed,
         (unsigned long long)s.lenMin, (unsigned long long)s.lenMax,

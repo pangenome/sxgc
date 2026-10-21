@@ -935,6 +935,7 @@ int main(int argc, char** argv) {
             po.tableBits = 18; po.reps = 8;
             po.skipMinRows = 1; po.skipMinLen = 16;
             po.probeDepth = 0; po.probeStride = 1;   // fire from the root, every level
+            po.probeDepth = 0; po.probeStride = 1;   // fire from the root, every level
             return po;
         };
         auto runArm = [&](CorpusText& text, bool dollar, U threads, U leaf, U lb,
