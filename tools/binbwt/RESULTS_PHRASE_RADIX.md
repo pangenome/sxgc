@@ -209,13 +209,21 @@ work**. `build_s` (24.33 OFF vs 25.45 ON) is the same work: the whole delta is
 
 | arm | WALL s | maxrss | level_passes | level_elems | comparisons | symbols | leaf_sorts | depth_max | probes | **skips** |
 |---|---|---|---|---|---|---|---|---|---|---|
-| OFF | **647.43** | 42.46 GB | 6,347 | 41,021,242,629 | 214,876,750,387 | 4,982,269,168,684 | 537,319 | 854 | 0 | 0 |
+| OFF (paired with the ON arms below) | **647.43** | 42.46 GB | 6,347 | 41,021,242,629 | 214,876,750,387 | 4,982,269,168,684 | 537,319 | 854 | 0 | 0 |
 | ON, shipped defaults | **811.23** | 42.53 GB | 6,347 | 41,021,242,629 | 214,876,750,387 | 4,982,269,168,684 | 537,319 | 854 | 82 | **0** |
-| ON, ceiling dict (L=32, 262144 blocks, 2^22) | *(not a clean pair²)* | – | 6,347 | 41,021,242,629 | 214,876,750,387 | 4,982,269,168,684 | 537,319 | 854 | 82 | **0** |
+| ON, ceiling dict (L=32, 262144 blocks, 2^22) | *~790 (03:59->04:12)²* | – | 6,347 | 41,021,242,629 | 214,876,750,387 | 4,982,269,168,684 | 537,319 | 854 | 82 | **0** |
+| OFF, contemporaneous repeat after the oracle³ | **731.73** | 42.48 GB | 6,347 | 41,021,242,629 | 214,876,750,387 | 4,982,269,168,684 | 537,319 | 854 | 0 | 0 |
 
-² The ceiling-dictionary arm ran later, on a busier box: `total_s=524.743`,
-`build_s=380.344`. Its counters are identical to the OFF row above, which is the
-honest comparison; its wall is not.
+² The ceiling-dictionary arm ran later, on a busier box (`total_s=524.743`,
+`build_s=380.344`). Its counters are identical to the rows above, which is the
+honest comparison; its wall is not a pair with anything.
+
+³ Same shape, quiet box (loadavg 38.8 at start): `build_s=584.955`,
+`total_s=720.523`, `build_cpu_s=19302.066`, `leaf_s=15907.296`, and `BIN_HOT`
+identical to the first OFF row (bin=32 rows=1659881407 cpu_s=3349.218). The two
+OFF walls (647.43 / 731.73) differ by 13% on an unchanged binary, which is the
+honest error bar on any wall in this table; the parse is the exact number
+(261.31 s default, 272.59 s ceiling) and the counters are exact.
 
 Probe refusal accounting at 10 GB, ceiling dictionary:
 `probes=82 probe_rows=485900731 refused_no_entry=10 refused_not_uniform=72` —
@@ -331,8 +339,10 @@ deterministic, RAM-small (7.9 MB of phrase text answered 10 GB of corpus with
    (`periodic_leaves=0` at 10 GB), so the same census argument applies to it.
    Not this lane's subject, but the surface is shared.
 3. **The 10 GB walls are not a clean pair**: the ON arms ran at loadavg ~87 while
-   OFF ran at ~38. The exact sentence is "parse_s = 261.31 / 272.59 from the
-   journal; counters identical"; the *wall* deltas (647 vs 811) are indicative.
+   OFF ran at ~38, and two OFF runs of the same binary differ by 13%
+   (647.43 / 731.73 s). The exact sentence is "parse_s = 261.31 / 272.59 from
+   the journal; counters identical"; the *wall* deltas (647 / 731 vs 811) are
+   indicative and must not be quoted as a speedup.
 4. **`bin_phrase_now` is a file-static** set per `bin_order` call. The producer
    runs one per process, so this is sound today; two concurrent `bin_order`
    calls in one process would race. Not defended against, on purpose.
