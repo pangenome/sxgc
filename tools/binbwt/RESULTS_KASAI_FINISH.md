@@ -263,6 +263,30 @@ pile-shaped (rank-blocked / two-pass) is the next charter, not a knob.
 The inversion has the same shape of risk at the pile (§5) and, unlike the walk,
 was measured in its bounded-RAM form here (64 buckets, byte-identical output).
 
+**The cold-walk measurement was attempted and it FAILED to produce a cold walk**,
+which is recorded rather than papered over. `KASAI_COLD_WALK=1` drops the 8 GB SA
+stream and the corpus with `madvise(MADV_DONTNEED)` on the mappings *and*
+`posix_fadvise(POSIX_FADV_DONTNEED)` on the fds, immediately before the walk:
+
+```
+KASAI_COLD_WALK dropped sa_bytes=8000005368 corpus_bytes=1000000665
+walk_s=22.049   (warm reference: walk_s=22.887)
+```
+
+Unchanged, i.e. the pages stayed resident: 1e9 random reads in 22 s is 22 ns
+each, which cannot be a device read. So the pile's random-read regime has NO
+measured number here at all — the knob exists in the tool, it does not work on
+this kernel/FS, and no one should quote the fixture walk rate as if it were a
+cold one.
+
+One more measurement worth recording: the **bucketed** arm with a budget big
+enough to give `buckets=1` degenerates (it writes and reads back a 12 GB dump for
+nothing: `invert_s=299.5 s` vs the direct arm's `254.6 s` on the same input).
+`--invert auto` never picks that shape (it chooses direct whenever `4n + n/8`
+fits a third of the RAM budget), but a caller who forces `--invert bucketed` with
+a fat budget pays the dump. The bounded-RAM form that matters is the multi-bucket
+one (measured at 100 MB: `--buckets 64`, byte-identical, 19.3 s vs direct 22-30 s).
+
 ## 7. Residual risks
 
 * **The rank holes are a real property of the finish's run stream** (39 holes,

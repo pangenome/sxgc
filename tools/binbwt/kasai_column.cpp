@@ -851,6 +851,20 @@ int main(int argc, char** argv) {
                  (unsigned long long)ir.buckets, (unsigned long long)ir.span,
                  (unsigned long long)ir.peakBucketBytes);
 
+    // MEASUREMENT KNOB (KASAI_COLD_WALK=1): drop the SA stream out of the page
+    // cache between the inversion and the walk, so the walk's random neighbour
+    // reads pay the device. This is the pile's regime in miniature; the fixture
+    // number (everything cached) is NOT extrapolable, and this is how the gap is
+    // measured instead of asserted.
+    if (std::getenv("KASAI_COLD_WALK") && *std::getenv("KASAI_COLD_WALK") != '0') {
+        // BOTH mechanisms: madvise on the mapping and fadvise on the file.
+        ::madvise((void*)saMap.p, saMap.n, MADV_DONTNEED);
+        ::madvise((void*)txt.p, txt.n, MADV_DONTNEED);
+        ::posix_fadvise(saMap.fd, 0, 0, POSIX_FADV_DONTNEED);
+        ::posix_fadvise(txt.fd, 0, 0, POSIX_FADV_DONTNEED);
+        std::fprintf(stderr, "KASAI_COLD_WALK dropped sa_bytes=%llu corpus_bytes=%llu\n",
+                     (unsigned long long)saMap.n, (unsigned long long)txt.n);
+    }
     Mapped isaMap;
     isaMap.open(isaPath);
     unsigned isaWidth = 0;
