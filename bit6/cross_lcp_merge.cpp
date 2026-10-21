@@ -5510,6 +5510,10 @@ int main_impl(int argc, char** argv) {
                 u("--phrase-skip-min-rows", bwo.phraseOpts.skipMinRows);
             bwo.phraseOpts.skipMinLen =
                 u("--phrase-skip-min-len", bwo.phraseOpts.skipMinLen);
+            bwo.phraseOpts.probeDepth =
+                u("--phrase-probe-depth", bwo.phraseOpts.probeDepth);
+            bwo.phraseOpts.probeStride =
+                u("--phrase-probe-stride", bwo.phraseOpts.probeStride);
             require(bwo.phraseOpts.minLen >= 16 && bwo.phraseOpts.seed >= 16 &&
                     bwo.phraseOpts.skipMinLen >= 16 &&
                         bwo.phraseOpts.maxLen >= bwo.phraseOpts.minLen &&

@@ -934,6 +934,7 @@ int main(int argc, char** argv) {
             po.seed = 16; po.window = 4; po.maxLen = 4096;
             po.tableBits = 18; po.reps = 8;
             po.skipMinRows = 1; po.skipMinLen = 16;
+            po.probeDepth = 0; po.probeStride = 1;   // fire from the root, every level
             return po;
         };
         auto runArm = [&](CorpusText& text, bool dollar, U threads, U leaf, U lb,

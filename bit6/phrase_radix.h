@@ -55,6 +55,21 @@ struct PhraseOpts {
     U skipMinRows = 4096;        // a node smaller than this is not probed
     U skipMinLen = 16;           // a skip shorter than this is not worth a probe
                                  // (the key is 16 bytes, so 16 is also the floor)
+    // WHEN a node is probed. A probe costs one pass over the node's rows, so the
+    // trigger has to name the nodes where a phrase is LIKELY, not all of them.
+    // The measured signature of the corpus's long shared prefixes is DEPTH WITH
+    // MASS: the 10 GB census reaches depth_max=854 with leaf_rows_max=1,048,416
+    // and no_progress_levels=0 - i.e. 854 levels of LOPSIDED splits (one row
+    // peels off per level, the mass stays), never a node that cannot divide. A
+    // `biggest == m` trigger would therefore never fire on the corpus this is
+    // for; "certified >= probeDepth bytes shared by >= skipMinRows rows" is the
+    // shape that actually occurs. The stride damps the cost of a FAILED probe in
+    // a long chain: probing every level of an 854-deep chain would pay 854 wasted
+    // passes, while probing every 16th pays <= 15 extra byte levels (which are
+    // the cheapest thing the machine does) and loses nothing, because the
+    // dictionary registers an entry at EVERY offset of a block.
+    U probeDepth = 16;           // probe only once this many bytes are certified
+    U probeStride = 16;          // and only at depths that are a multiple of it
 };
 
 // The parse's journal. Every field is EXACT except where labelled "estimate".

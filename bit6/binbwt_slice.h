@@ -1322,6 +1322,22 @@ static U* bin_sort_rec(const CorpusText& t, bool dollar, U* src, U* dst, U m,
         w.tLeaf += now_sec() - tl;
         return src;
     }
+    // ---- PHRASE RADIX: the one trigger -------------------------------------
+    // A node that is DEEP (>= probeDepth certified bytes) and HEAVY (>= the row
+    // floor) is where the corpus's long shared prefixes live: at 10 GB the census
+    // reaches depth_max=854 with a 1,048,416-row leaf and NO node that fails to
+    // divide, so a "cannot divide" trigger would never fire on the corpus this
+    // exists for. The stride damps a failed probe inside a long chain (see
+    // PhraseOpts::probeStride): <= 15 extra byte levels, and nothing is lost
+    // because the dictionary has an entry at every offset of every block.
+    if (const PhraseDict* pd = bin_phrase_now) {
+        if (pd->armed() && m >= pd->o.skipMinRows && depth >= pd->o.probeDepth &&
+            (pd->o.probeStride <= 1 || depth % pd->o.probeStride == 0)) {
+            if (const U skipLen = bin_phrase_skip(t, dollar, depth, src, m, w))
+                return bin_sort_rec(t, dollar, src, dst, m, depth + skipLen,
+                                    depthCap, targetSize, levelBytes, w);
+        }
+    }
     const U codes = bin_codes(levelBytes);
     std::vector<U> count(codes, 0);
     std::vector<U> start(codes, 0);
@@ -1381,17 +1397,6 @@ static U* bin_sort_rec(const CorpusText& t, bool dollar, U* src, U* dst, U m,
                     (unsigned long long)levelBytes, (unsigned long long)m,
                     (unsigned long long)t.n, unsigned(dollar));
                 require(false, "bin-bwt no-progress past the sanity bound");
-            }
-            // PHRASE RADIX: the byte radix could not divide this node, which is
-            // exactly the signature of the corpus's long repeated blocks. Ask the
-            // dictionary whether a WHOLE PHRASE is certified here; if it is, the
-            // next |phrase| bytes cost one level instead of |phrase| of them.
-            // The pair is handed over as (dst, src) because the single-bucket
-            // scatter already left the node's rows in `dst`, so the skip costs
-            // nothing beyond the probe and the byte verification.
-            if (const U skipLen = bin_phrase_skip(t, dollar, depth, src, m, w)) {
-                return bin_sort_rec(t, dollar, dst, src, m, depth + skipLen,
-                                    depthCap, targetSize, levelBytes, w);
             }
         }
     }
@@ -1486,6 +1491,22 @@ static void bin_task_run(const CorpusText& t, bool dollar, const BinTask& tk,
         if (r != tk.canon) std::memcpy(tk.canon, r, tk.m * sizeof(U));
         return;
     }
+    // PHRASE RADIX: the same single trigger as the inline recursion (see the
+    // comment there). A skip must land in `canon`.
+    if (const PhraseDict* pd = bin_phrase_now) {
+        if (pd->armed() && tk.m >= pd->o.skipMinRows &&
+            tk.depth >= pd->o.probeDepth &&
+            (pd->o.probeStride <= 1 || tk.depth % pd->o.probeStride == 0)) {
+            if (const U skipLen =
+                    bin_phrase_skip(t, dollar, tk.depth, tk.src, tk.m, w)) {
+                U* r = bin_sort_rec(t, dollar, tk.src, tk.dst, tk.m,
+                                    tk.depth + skipLen, depthCap, targetSize,
+                                    levelBytes, w);
+                if (r != tk.canon) std::memcpy(tk.canon, r, tk.m * sizeof(U));
+                return;
+            }
+        }
+    }
     const U codes = bin_codes(levelBytes);
     std::vector<U> count(codes, 0), start(codes, 0);
     for (U i = 0; i < tk.m; ++i)
@@ -1537,17 +1558,6 @@ static void bin_task_run(const CorpusText& t, bool dollar, const BinTask& tk,
                     (unsigned long long)levelBytes, (unsigned long long)tk.m,
                     (unsigned long long)t.n, unsigned(dollar));
                 require(false, "bin-bwt no-progress past the sanity bound");
-            }
-            // PHRASE RADIX: same hook as the inline recursion, on a dispatched
-            // node. The single-bucket scatter left the rows in tk.dst, so the skip
-            // continues from (tk.dst, tk.src) and must land in `canon`.
-            if (const U skipLen =
-                    bin_phrase_skip(t, dollar, tk.depth, tk.src, tk.m, w)) {
-                U* r = bin_sort_rec(t, dollar, tk.dst, tk.src, tk.m,
-                                    tk.depth + skipLen, depthCap, targetSize,
-                                    levelBytes, w);
-                if (r != tk.canon) std::memcpy(tk.canon, r, tk.m * sizeof(U));
-                return;
             }
         }
     }
@@ -2973,11 +2983,15 @@ static void bin_journal(const BinWork& total, bool dollar, U threads,
 static void bin_phrase_journal_work(const BinWork& w, const PhraseDict* pd) {
     const bool on = pd && pd->armed();
     std::fprintf(stderr,
-        "PHRASE_WORK armed=%u probes=%llu probe_rows=%llu skips=%llu skip_rows=%llu "
+        "PHRASE_WORK armed=%u probe_depth=%llu probe_stride=%llu skip_min_rows=%llu "
+        "probes=%llu probe_rows=%llu skips=%llu skip_rows=%llu "
         "skip_bytes=%llu skip_max_len=%llu skip_depth_max=%llu verify_fails=%llu "
         "no_progress_levels=%llu level_passes=%llu level_elems=%llu "
         "comparisons=%llu symbols=%llu full_SA=0 persistent_positions=0\n",
-        unsigned(on), (unsigned long long)w.phraseProbes,
+        unsigned(on), (unsigned long long)(pd ? pd->o.probeDepth : 0),
+        (unsigned long long)(pd ? pd->o.probeStride : 0),
+        (unsigned long long)(pd ? pd->o.skipMinRows : 0),
+        (unsigned long long)w.phraseProbes,
         (unsigned long long)w.phraseProbeRows, (unsigned long long)w.phraseSkips,
         (unsigned long long)w.phraseSkipRows, (unsigned long long)w.phraseSkipBytes,
         (unsigned long long)w.phraseSkipMaxLen,
