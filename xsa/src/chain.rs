@@ -34,7 +34,7 @@ use sha2::{Digest, Sha256};
 pub const USAGE: &str = "usage:
   xsa build --input <corpus> --scratch <dir> [--snap-1e] [--memory-gb N] [--threads N]
                     [--remap <256-byte-map>] [--bin-live-cap SLOTS]
-                    [--bin-target-size ROWS] [--chi-expect N] [--wit-ram-gb N]
+                    [--bin-target-size ROWS] [--bin-entropy-min [BITS]] [--chi-expect N] [--wit-ram-gb N]
                     [--phrase-radix [--phrase-KNOB N ...]]
                     [--timeout S] [--legacy-merge [--chunks N] [--kway N]]
 
@@ -129,6 +129,9 @@ RSS / disc telemetry.
   --legacy-merge         the PRE-BIN route: chunk front end (libsais) -> k-way
                      merge tree -> adopt finish. A/B only; the only route that
                      accepts --chunks/--chunk-mb/--kway/--fanin.
+  --bin-entropy-min [B] arm the entropy rule: a radix level is taken iff the
+                     next-byte histogram's entropy exceeds B bits (default B = 1.5,
+                     the measured bracket's middle). Absent = OFF (byte-identical default).
   --bin-target-size N  the leaf bound of the recursion, in ROWS (default: 0 =
                      AUTOMATIC). Bins subdivide until a node holds <= N rows; the
                      subtree's depth is whatever the text demands. It is priced
@@ -329,6 +332,11 @@ struct Options {
     /// measured leaf-sort rate, and journals the value it used (BIN_WORK
     /// target=). Depth is an OUTPUT of the data, so this is the only shape knob.
     bin_target_size: Option<u64>,
+    /// `--bin-entropy-min [BITS]`: arm the entropy rule (the radix/comparison
+    /// exchange rate). `None` = OFF (the product default, byte-identical);
+    /// `Some(None)` = armed at the calibrated 1.5 bits; `Some(Some(b))` = armed
+    /// at the operator's bits.
+    bin_entropy_min: Option<Option<f64>>,
     /// --phrase-radix and its dictionary knobs. DEFAULT OFF; when off nothing is
     /// added to the producer command line and the product path is bit-identical.
     phrase: PhraseOptions,
@@ -402,6 +410,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     let mut finish_as_gb = None;
     let mut bin_live_cap = None;
     let mut bin_target_size = None;
+    let mut bin_entropy_min = None;
     let mut phrase = PhraseOptions::default();
     let mut timeout_s = None;
     let mut stripes: Vec<String> = Vec::new();
@@ -522,6 +531,23 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
                     return Err("specify --bin-target-size only once".into());
                 }
             }
+            "--bin-entropy-min" => {
+                let b = match args.get(i + 1) {
+                    Some(v) if !v.starts_with('-') => {
+                        i += 1;
+                        Some(v.parse::<f64>().map_err(|_| "--bin-entropy-min: a bits value was given but is not a number".to_string())?)
+                    }
+                    _ => None,
+                };
+                if let Some(bits) = b {
+                    if !(0.0..=32.0).contains(&bits) {
+                        return Err("--bin-entropy-min must be in [0, 32] bits".into());
+                    }
+                }
+                if bin_entropy_min.replace(b).is_some() {
+                    return Err("specify --bin-entropy-min only once".into());
+                }
+            }
             "--phrase-radix" => {
                 if phrase.enabled {
                     return Err("specify --phrase-radix only once".into());
@@ -636,7 +662,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     }
     Ok(Options { input, scratch, snap_1e, memory_gb, threads, chunks, kway, plan_only,
                  bin_pipeline, legacy_merge, v2_flag_given, chi_expect, wit_ram_gb,
-                 finish_as_gb, bin_live_cap, bin_target_size, phrase, timeout_s, stripes, scratch_free_pct,
+                 finish_as_gb, bin_live_cap, bin_target_size, bin_entropy_min, phrase, timeout_s, stripes, scratch_free_pct,
                  remap, chunk_mb, fanin })
 }
 
@@ -1493,6 +1519,16 @@ fn run_v2_tail(
     // value the run actually used (BIN_WORK target=) either way.
     if let Some(target) = options.bin_target_size {
         producer_args.extend(["--bin-target-size".into(), target.to_string()]);
+    }
+    // THE ENTROPY RULE: absent -> OFF (theta 0, every byte-identical gate the
+    // product default). Present (optionally with a value) -> armed at the
+    // producer's calibrated theta (1.5, the middle of the measured bracket
+    // [1.18, 1.67]) or the operator's bits.
+    if let Some(bits) = options.bin_entropy_min {
+        producer_args.push("--bin-entropy-min".into());
+        if let Some(b) = bits {
+            producer_args.push(b.to_string());
+        }
     }
     // PHRASE RADIX: absent -> nothing is added, and no line of the mechanism runs
     // (the producer keeps `bin_phrase_now == nullptr`). Present -> the flag and

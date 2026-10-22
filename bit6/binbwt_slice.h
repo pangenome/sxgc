@@ -1671,11 +1671,80 @@ static U* bin_leaf_order(const CorpusText& t, bool dollar, U* src, U* dst, U m,
     ++w.entropyLeafExits; w.entropyLeafRows += m;
     return bin_leaf_cmp_sort(t, dollar, src, m, depth, targetSize, depthCap, w);
 }
+// THE DFS WORK LIST LIVES ON THE HEAP, NOT ON THE C STACK.
+//
+// bin_sort_rec is a pre-order depth-first walk of a tree whose DEPTH IS THE DATA's
+// depth: every level certifies one more byte, and a node whose next byte is
+// uniform (one bucket, `noProgressLevels`) STILL has to consume that byte, so a
+// chain of such levels is exactly as long as the shared prefix it walks. Measured
+// on the 10 GB pile: 13,121 levels reachable, and the only ceiling below the
+// BIN_NO_PROGRESS_SANITY_BOUND (2^20) is the length of the corpus itself. As a
+// self-recursive function each level cost one C frame (~620 B at -O2), so the walk
+// ran out of the 8 MB thread stack long before any guard could fire, and the
+// symptom was a SIGSEGV inside the comparator of the leaf at the bottom of the
+// chain - found at 10 GB + `--bin-target-size 65536`, reproduced on the UNMODIFIED
+// base binary at 88a7cb0, gdb backtrace `bin_tail_cmp <- bin_sort_rec x 13,121`,
+// and it disappears when the thread stack is raised to 1 GB. The successor
+// charter's direction (smaller leaves -> deeper chains) walks straight into it.
+//
+// RAISING THE THREAD STACK IS NOT THE FIX: the phase is budgeted by RLIMIT_AS
+// (bin_derive_live_cap / bin_check_live_cap) and a per-thread stack reservation is
+// charged against exactly that budget - 64 threads x 64 MB of address space is
+// 4 GB the live-cap arithmetic would not know it had spent.
+//
+// So the work list is explicit. The ALGORITHM IS UNCHANGED: the visit ORDER
+// (children pushed in descending bucket so they pop in ascending bucket, exactly
+// as the recursion visited them), every counter, every comparison and every byte
+// of the output are identical - only the storage of the pending work moves. That
+// is what the oracle suite and the BIN_WORK counters (identical at 100 MB, 1 GB
+// and 10 GB) assert.
+//
+// THE FRAME CONTRACT is the recursive call's own: on entry the node's m rows are
+// in `src`, and when the node is finished its ordered rows are in `src` again. A
+// node that splits scatters into `dst`, hands each child `(src = dst + start[c],
+// dst = src + start[c])`, and pushes a COLLECT frame that copies the assembled
+// result back into its own `src` once the children are done. The function returns
+// the top-level `src` (the callers normalize with `if (r != canon) memcpy(...)`).
+//
+// THE COLLECT COPY IS THE ONE TERM THIS SHAPE ADDS, and it is priced: a splitting
+// node now costs three passes over its rows (count, scatter, collect) where the
+// recursion cost two (count, scatter). At the deepest measured point on the pile
+// that is 68.8e9 level elements = ~470 GB of copy traffic, i.e. under 1% of the
+// 15,603 CPU-s that run's construction took (ANALYTIC) - paid for an invariant
+// simple enough to review, since "the answer always lands back in the frame's own
+// src" makes the buffer discipline local to one frame instead of a return value
+// threaded through 55,570 of them.
+struct BinSortFrame {
+    U* src; U* dst; U m; U depth; bool collect;
+};
 
 static U* bin_sort_rec(const CorpusText& t, bool dollar, U* src, U* dst, U m,
                        U depth, U depthCap, U targetSize, U levelBytes,
                        BinWork& w) {
-    if (m <= 1) return src;
+    const U codes = bin_codes(levelBytes);
+    // Reused across nodes (the recursion malloc'd three of these per level).
+    std::vector<U> count(codes, 0), start(codes, 0), fill(codes, 0);
+    std::vector<BinSortFrame> stack;
+    stack.reserve(256);
+    stack.push_back(BinSortFrame{src, dst, m, depth, false});
+    while (!stack.empty()) {
+    const BinSortFrame f = stack.back();
+    stack.pop_back();
+    if (f.collect) {                       // children assembled into `dst`
+        if (f.m && f.src != f.dst) std::memcpy(f.src, f.dst, f.m * sizeof(U));
+        continue;
+    }
+    if (f.m <= 1) continue;
+    // A walk deeper than the no-progress sanity bound is a BUG, the same verdict
+    // the periodic probe below reaches for a node that cannot divide; refusing
+    // here keeps a pathological corpus from growing this heap list without end.
+    require(stack.size() < size_t(bin_no_progress_sanity_bound),
+            "bin-bwt DFS work list past the no-progress sanity bound (a walk deeper "
+            "than the sanity bound is a BUG, not a tuning question)");
+    U* csrc = f.src;                    // the node's rows, read side
+    U* cdst = f.dst;                    // the scatter side
+    const U cm = f.m;
+    U cdepth = f.depth;
     // Two DIFFERENT reasons can make a node a leaf besides size, and they are
     // counted apart: the depth CAP (the backstop - loudly journalled, because a
     // leaf oversize of the target is a serial stretch nothing bounds) and the
@@ -1685,13 +1754,16 @@ static U* bin_sort_rec(const CorpusText& t, bool dollar, U* src, U* dst, U m,
     // target is the only rule and BIN_NO_PROGRESS_SANITY_BOUND is the bug guard
     // (PART 4). An explicit cap remains for the oracle, which proves the order
     // is exact at cap 1, 4 and 32 on purpose.
-    const bool capHit = depthCap && depth >= depthCap;
-    const bool structHit = depth >= t.n;
-    if (m <= targetSize || capHit || structHit) {
+    const bool capHit = depthCap && cdepth >= depthCap;
+    const bool structHit = cdepth >= t.n;
+    if (cm <= targetSize || capHit || structHit) {
         // THE LEAF (its own machine: bin_leaf_cmp_sort, and the entropy rule's
-        // in-leaf arm when the rule is armed - see bin_leaf_order).
-        return bin_leaf_order(t, dollar, src, dst, m, depth, targetSize, depthCap,
-                              levelBytes, w);
+        // in-leaf arm when the rule is armed - see bin_leaf_order). The frame
+        // contract: the answer must land in the frame's own src.
+        U* r = bin_leaf_order(t, dollar, csrc, cdst, cm, cdepth, targetSize,
+                              depthCap, levelBytes, w);
+        if (r != csrc) std::memcpy(csrc, r, cm * sizeof(U));
+        continue;                          // the leaf sorted `src` in place
     }
     // ---- PHRASE RADIX: the one trigger -------------------------------------
     // A node that is DEEP (>= probeDepth certified bytes) and HEAVY (>= the row
@@ -1702,30 +1774,29 @@ static U* bin_sort_rec(const CorpusText& t, bool dollar, U* src, U* dst, U m,
     // PhraseOpts::probeStride): <= 15 extra byte levels, and nothing is lost
     // because the dictionary has an entry at every offset of every block.
     if (const PhraseDict* pd = bin_phrase_now) {
-        if (pd->armed() && m >= pd->o.skipMinRows && depth >= pd->o.probeDepth &&
-            (pd->o.probeStride <= 1 || depth % pd->o.probeStride == 0)) {
-            if (const U skipLen = bin_phrase_skip(t, dollar, depth, src, m, w))
-                return bin_sort_rec(t, dollar, src, dst, m, depth + skipLen,
-                                    depthCap, targetSize, levelBytes, w);
+        if (pd->armed() && cm >= pd->o.skipMinRows && cdepth >= pd->o.probeDepth &&
+            (pd->o.probeStride <= 1 || cdepth % pd->o.probeStride == 0)) {
+            if (const U skipLen = bin_phrase_skip(t, dollar, cdepth, csrc, cm, w)) {
+                stack.push_back(BinSortFrame{csrc, cdst, cm, cdepth + skipLen, false});
+                continue;
+            }
         }
     }
-    const U codes = bin_codes(levelBytes);
-    std::vector<U> count(codes, 0);
-    std::vector<U> start(codes, 0);
-    for (U i = 0; i < m; ++i)
-        ++count[bin_code(t, dollar, src[i], depth, levelBytes)];
-    ++w.levelPasses; w.levelElems += m;
-    w.depthMax = std::max<U>(w.depthMax, depth + levelBytes);
+    std::fill(count.begin(), count.end(), U(0));
+    for (U i = 0; i < cm; ++i)
+        ++count[bin_code(t, dollar, csrc[i], cdepth, levelBytes)];
+    ++w.levelPasses; w.levelElems += cm;
+    w.depthMax = std::max<U>(w.depthMax, cdepth + levelBytes);
     {
         U sum = 0;
         for (U c = 0; c < codes; ++c) { start[c] = sum; sum += count[c]; }
-        require(sum == m, "bin bucket coverage");
+        require(sum == cm, "bin bucket coverage");
     }
     {
-        std::vector<U> fill = start;
-        for (U i = 0; i < m; ++i) {
-            U p = src[i];
-            dst[fill[bin_code(t, dollar, p, depth, levelBytes)]++] = p;
+        for (U c = 0; c < codes; ++c) fill[c] = start[c];
+        for (U i = 0; i < cm; ++i) {
+            U p = csrc[i];
+            cdst[fill[bin_code(t, dollar, p, cdepth, levelBytes)]++] = p;
         }
     }
     ++w.binPasses;
@@ -1741,40 +1812,42 @@ static U* bin_sort_rec(const CorpusText& t, bool dollar, U* src, U* dst, U m,
     U biggest = count[0];
     for (U c = 1; c < codes; ++c) biggest = std::max(biggest, count[c]);
     {
-        if (biggest == m) {
+        U biggest = count[0];
+        for (U c = 1; c < codes; ++c) biggest = std::max(biggest, count[c]);
+        if (biggest == cm) {
             ++w.noProgressLevels;
-            const U nd = depth + levelBytes;
-            // THE ENTROPY RULE runs the period probe UNCONDITIONALLY: with the
-            // rule armed this node is about to be handed to the comparison sort
-            // (H = 0 <= theta), so one O(m) gcd pass here buys the zero-comparison
-            // answer for the periodic case and costs a single pass for the rest.
+            const U nd = cdepth + levelBytes;
+            // THE ENTROPY RULE runs the period probe UNCONDITIONALLY when armed:
+            // this node is about to be handed to the comparison sort (H = 0 <=
+            // theta), so one O(m) gcd pass here buys the zero-comparison answer
+            // for the periodic case and costs a single pass for the rest.
             const U per = (nd % bin_period_probe_stride == 0 ||
                            nd >= bin_no_progress_sanity_bound ||
                            bin_entropy_now.armed)
-                              ? bin_node_period(t, dollar, src, m, depth)
+                              ? bin_node_period(t, dollar, csrc, cm, cdepth)
                               : U(0);
             if (per) {
                 const double tp = now_sec();
-                bin_periodic_sort(src, m, t.n);
+                bin_periodic_sort(csrc, cm, t.n);
                 ++w.periodicLeaves;
-                w.periodicRows += m;
+                w.periodicRows += cm;
                 w.periodicPeriodMax = std::max(w.periodicPeriodMax, per);
                 w.tLeaf += now_sec() - tp;
-                return src;
+                continue;                  // sorted in place, in `src`
             }
             // Not provably periodic and still not dividing: with the rule armed
-            // this is the byte-0x20-monster regime and the LCP-carrying
-            // comparison sort is the EXACT answer (see the exit below), so the
-            // sanity refusal - a bug detector for "nothing can explain this" -
-            // is deliberately unreachable on the armed path.
-            if (depth + levelBytes >= bin_no_progress_sanity_bound &&
+            // this is the degenerate regime and the LCP-carrying comparison sort
+            // is the EXACT answer (the entropy exit below), so the sanity
+            // refusal - a bug detector for "nothing can explain this" - is
+            // deliberately unreachable on the armed path.
+            if (cdepth + levelBytes >= bin_no_progress_sanity_bound &&
                 !bin_entropy_now.armed) {
                 std::fprintf(stderr,
                     "BIN_PERIOD_SANITY depth=%llu level_bytes=%llu rows=%llu n=%llu "
                     "dollar=%u (a split that cannot progress and no period found at the "
                     "sanity bound is a BUG, not a tuning question)\n",
-                    (unsigned long long)(depth + levelBytes),
-                    (unsigned long long)levelBytes, (unsigned long long)m,
+                    (unsigned long long)(cdepth + levelBytes),
+                    (unsigned long long)levelBytes, (unsigned long long)cm,
                     (unsigned long long)t.n, unsigned(dollar));
                 require(false, "bin-bwt no-progress past the sanity bound");
             }
@@ -1786,35 +1859,38 @@ static U* bin_sort_rec(const CorpusText& t, bool dollar, U* src, U* dst, U m,
     // `true` means COMPARISON-BOUND: the children below go to the LCP-carrying
     // leaf rather than into another level.
     const bool entExit = bin_entropy_now.armed
-                             ? bin_entropy_exit(w, count.data(), codes, m, depth)
+                             ? bin_entropy_exit(w, count.data(), codes, cm, cdepth)
                              : false;
     // Bucket 0 holds the dollar suffixes exhausted at this depth: they all share
     // the node prefix up to their own end, so ascending length (== descending
     // position) is their exact order and no comparison is needed.
     if (count[0] > 1)
-        std::sort(dst, dst + count[0],
+        std::sort(cdst, cdst + count[0],
                   [](U a, U b) { return bin_word_tail(a) > bin_word_tail(b); });
-    for (U c = 1; c < codes; ++c) {
+    // The children assemble the node in `dst`; the COLLECT frame lands after them
+    // (LIFO) and copies it back into `src`, which is the frame contract.
+    stack.push_back(BinSortFrame{csrc, cdst, cm, cdepth, true});
+    // Descending, so the pops visit buckets in ASCENDING order exactly as the
+    // recursion did (the visit order is counters-neutral, but it is kept).
+    for (U c = codes; c-- > 1;) {
         if (count[c] <= 1) continue;
         // THE EXIT: the scatter above is already paid for and it certified
-        // `depth + level_bytes` for every child, so the residue is ordered by the
-        // leaf machine at that certified depth - one leaf sort of this child
-        // instead of a whole subtree of levels under it.
+        // `cdepth + level_bytes` for every child, so the residue is ordered by
+        // the leaf machine at that certified depth - one leaf sort of this
+        // child instead of a whole subtree of levels under it. The child's rows
+        // live in cdst after the scatter; the collect frame copies them back.
         if (entExit) {
-            U* r = bin_leaf_order(t, dollar, dst + start[c], src + start[c], count[c],
-                                  depth + levelBytes, targetSize, depthCap,
-                                  levelBytes, w);
-            if (r != dst + start[c])
-                std::memcpy(dst + start[c], r, count[c] * sizeof(U));
+            U* r = bin_leaf_order(t, dollar, cdst + start[c], csrc + start[c],
+                                  count[c], cdepth + levelBytes, targetSize,
+                                  depthCap, levelBytes, w);
+            if (r != cdst + start[c])
+                std::memcpy(cdst + start[c], r, count[c] * sizeof(U));
             continue;
         }
-        U* child = bin_sort_rec(t, dollar, dst + start[c], src + start[c],
-                                count[c], depth + levelBytes, depthCap,
-                                targetSize, levelBytes, w);
-        if (child != dst + start[c])
-            std::memcpy(dst + start[c], child, count[c] * sizeof(U));
+        stack.push_back(BinSortFrame{cdst + start[c], csrc + start[c],
+                                     count[c], cdepth + levelBytes, false});    }
     }
-    return dst;
+    return src;
 }
 
 // A refinement task: order the m tails of [src, src+m) that share their first
