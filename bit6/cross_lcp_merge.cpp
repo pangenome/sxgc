@@ -5500,6 +5500,40 @@ int main_impl(int argc, char** argv) {
             require(false, "--sa-sample-k needs --sa-sample-out");
         if (!bwo.saSampleK && !bwo.saSamplePath.empty())
             require(false, "--sa-sample-out without --sa-sample-k is inert; refuse");
+        // ---- PHRASE RADIX (tools/binbwt/PHRASE_RADIX_DESIGN.md) --------------
+        // DEFAULT OFF. With the flag absent every phrase field keeps its default
+        // and `bwo.phraseOpts.enabled` stays false, so the producer runs the byte
+        // radix and nothing else: the product path must stay bit-identical.
+        if (has("--phrase-radix")) {
+            bwo.phraseOpts.enabled = true;
+            auto u = [&](const char* n, U dflt) {
+                const std::string v = flag(n);
+                return v.empty() ? dflt : std::stoull(v);
+            };
+            bwo.phraseOpts.minLen = u("--phrase-min-len", bwo.phraseOpts.minLen);
+            bwo.phraseOpts.minFreq = u("--phrase-min-freq", bwo.phraseOpts.minFreq);
+            bwo.phraseOpts.maxLen = u("--phrase-max-len", bwo.phraseOpts.maxLen);
+            bwo.phraseOpts.seed = u("--phrase-seed", bwo.phraseOpts.seed);
+            bwo.phraseOpts.window = u("--phrase-window", bwo.phraseOpts.window);
+            bwo.phraseOpts.blockMax = u("--phrase-block-max", bwo.phraseOpts.blockMax);
+            bwo.phraseOpts.poolMax = u("--phrase-pool-max", bwo.phraseOpts.poolMax);
+            bwo.phraseOpts.tableBits = u("--phrase-table-bits", bwo.phraseOpts.tableBits);
+            bwo.phraseOpts.reps = u("--phrase-reps", bwo.phraseOpts.reps);
+            bwo.phraseOpts.skipMinRows =
+                u("--phrase-skip-min-rows", bwo.phraseOpts.skipMinRows);
+            bwo.phraseOpts.skipMinLen =
+                u("--phrase-skip-min-len", bwo.phraseOpts.skipMinLen);
+            bwo.phraseOpts.probeDepth =
+                u("--phrase-probe-depth", bwo.phraseOpts.probeDepth);
+            bwo.phraseOpts.probeStride =
+                u("--phrase-probe-stride", bwo.phraseOpts.probeStride);
+            require(bwo.phraseOpts.minLen >= 16 && bwo.phraseOpts.seed >= 16 &&
+                    bwo.phraseOpts.skipMinLen >= 16 &&
+                        bwo.phraseOpts.maxLen >= bwo.phraseOpts.minLen &&
+                        bwo.phraseOpts.window >= 2 && bwo.phraseOpts.tableBits >= 8 &&
+                        bwo.phraseOpts.tableBits <= 26 && bwo.phraseOpts.reps >= 2,
+                    "--phrase-* parameters");
+        }
         const std::string capFlag = flag("--bin-live-cap");
         const bool binLiveCapGiven = !capFlag.empty();
         const U binLiveCap = binLiveCapGiven ? std::stoull(capFlag) : 0;
