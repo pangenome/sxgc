@@ -31,3 +31,6 @@ lean_lib PiWall
 lean_lib PiWallEval
 @[default_target]
 lean_lib PiWallAxioms
+
+-- PROB-CHI: the verifier that makes a hash-trusted chi certain.
+lean_lib ProbChi
