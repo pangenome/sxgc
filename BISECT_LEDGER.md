@@ -53,9 +53,25 @@ Tiny-scale verification at `04a83f3`: full oracle suite
 (`tools/binbwt/oracle.cpp`, brute-force SA exact vs every family) - result pending, see
 `solB-step6-oracle.log` / ledger update below.
 
-## Oracle result (step 6, tiny scale)
+## Oracle result (step 6, tiny scale) - GREEN
 
-PENDING
+`solB-step6-oracle-r2.log` (relaunched 18:52 after the r1 run died in the 17:33 storm mid
+family-1 with no family verdicts): completed 20:12, **ORACLE_RC=0, zero FAIL lines, all
+10 families PASS exact vs brute SA**, matching the `3362a45` hand-merge's own proof:
+
+- `BINBWT_ORACLE_PASS cases=36180 ... exact_brute_SA=1` (multi_window_runs=22500, window_instances=343530)
+- `BINBWT_ORACLE_WINDOW_PASS cases=12864 ... exact_brute_SA=1`
+- `BINBWT_ORACLE_REFUSAL_PASS refusals=5 modes=unlink,truncate,stale,nomagic,nodone`
+- `BINBWT_ORACLE_STAGE_PASS cases=4824 ... counters_identical=1 both_paths=1` (three STAGE passes)
+- `BINBWT_ORACLE_PERIODIC_PASS cases=4824 ... over_target_leaves=0 exact_brute_SA=1`
+- `BINBWT_ORACLE_ADAPTIVE_PASS cases=4016 ... leaf_rows_max_le_target=1 over_target_leaves=0`
+- `BINBWT_ORACLE_ENTROPY_PASS cases=7728 ... order_identical_to_off_arm=1 exact_brute_SA=1 theta0_counter_identical=762`
+- `BINBWT_ORACLE_FREQ_PASS cases=6432 ... exact_brute_SA=1`
+- `BINBWT_ORACLE_PHRASE_PASS cases=672 ... exact_brute_SA=1` (dictionaries=7, probes=385312, blocks_unaddressable=0)
+
+This is the brute-force-oracle tier of the pyramid at the integrated tip `04a83f3`: the
+work-list + entropy-rule coexistence is exact at tiny scale, including the adversarial
+fixtures (nested, periodic, degenerate, mixed).
 
 ## Root-cause section
 
