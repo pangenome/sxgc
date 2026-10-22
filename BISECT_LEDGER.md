@@ -27,12 +27,12 @@ in clear weather: 961 GB available, the operator's rung100 pair holding ~200 GB,
 
 | step | tree (bisect-stack) | change under test | gate log | verdict | rc | wall | last-log-line / notes |
 |------|---------------------|-------------------|----------|---------|----|------|------------------------|
-| 1 prob-chi | `4aa2047` | prob-chi (`d3079bf`) | `solB-step1-probchi-r2.log` | PENDING | - | - | r1 log `solB-d3079bf-probchi.log`: ENV-KILL ~17:33 (storm), no verdict; r2 started 18:37:53 |
-| 2 sampled-sa | `e73039f` | sampled-sa (`07e9769`) | `solB-step2-sampled-sa-r2.log` | PENDING | - | - | r1 log `solB-07e9769-sampled-sa.log`: ENV-KILL ~17:33 (storm), no verdict; r2 started 18:37:54 |
-| 3 phrase-radix | `edff29c` | phrase-radix (`1d86e84`) | `solB-step3-phrase-radix-r2.log` | PENDING | - | - | r1 (16:39 launch): ENV-KILL ~17:33 (storm), no verdict; r2 started 18:37:56 |
-| 4 kasai-finish | `8b28dec` | kasai-finish (`88a7cb0`) | `solB-step4-kasai-finish-r2.log` | PENDING | - | - | r1 (16:47 launch): ENV-KILL ~17:33 (storm), no verdict; r2 started 18:37:57 |
-| 5 entropy-rule | `9ec4c1f` | entropy-rule (`d816309`) | `solB-step5-entropy-rule-r2.log` | NOT YET LAUNCHED | - | - | launching when r2 capacity frees; binary staged: sha256 `e8b865c3...` |
-| 6 seg-triage | `04a83f3` | seg-triage hand-merge (`3362a45`) | `solB-step6-segtriage-r2.log` | NOT YET LAUNCHED | - | - | launching when r2 capacity frees; binary staged: sha256 `1b764a6a...`; r1 oracle (16:30 launch) died in the storm mid family-1 (97 MB of BIN_WINDOW fills, zero family PASS lines) - no verdict; oracle r2 relaunched 18:52 from the `951dae5` tree (bit6 == `3362a45` byte-identical), log `solB-step6-oracle-r2.log` |
+| 1 prob-chi | `4aa2047` | prob-chi (`d3079bf`) | `solB-step1-probchi-r2.log` | **PASS (healthy-arm, 45+ min rule)** | - | 4h47m+ healthy at 23:20 | r2 started 18:37:53; producer window 3/4, finish band 41,281/152,589 chi_so_far on-pace; run continues for the rc/product upgrade |
+| 2 sampled-sa | `e73039f` | sampled-sa (`07e9769`) | `solB-step2-sampled-sa-r2.log` | **PASS (healthy-arm, 45+ min rule)** | - | 4h47m+ healthy at 23:20 | r2 started 18:37:54; lockstep with step 1 (band 41,345) |
+| 3 phrase-radix | `edff29c` | phrase-radix (`1d86e84`) | `solB-step3-phrase-radix-r2.log` | **PASS (healthy-arm, 45+ min rule)** | - | 4h47m+ healthy at 23:20 | r2 started 18:37:56; lockstep (band 41,409) |
+| 4 kasai-finish | `8b28dec` | kasai-finish (`88a7cb0`) | `solB-step4-kasai-finish-r2.log` | **PASS (healthy-arm, 45+ min rule)** | - | 4h47m+ healthy at 23:20 | r2 started 18:37:57; lockstep (band 41,473) |
+| 5 entropy-rule | `9ec4c1f` | entropy-rule (`d816309`) | `solB-step5-entropy-rule-r2.log` | PENDING | - | - | launched 23:25 (binary staged: sha256 `e8b865c3...`) |
+| 6 seg-triage | `04a83f3` | seg-triage hand-merge (`3362a45`) | `solB-step6-segtriage-r2.log` | PENDING | - | - | launched 23:25 (binary staged: sha256 `1b764a6a...`); oracle r2 already GREEN (all 10 families) |
 
 ## Step-6 merge notes (04a83f3)
 
