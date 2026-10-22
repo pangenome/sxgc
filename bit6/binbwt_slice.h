@@ -1444,6 +1444,15 @@ static U bin_phrase_skip(const CorpusText& t, bool dollar, U depth, const U* src
 // dst = src + start[c])`, and pushes a COLLECT frame that copies the assembled
 // result back into its own `src` once the children are done. The function returns
 // the top-level `src` (the callers normalize with `if (r != canon) memcpy(...)`).
+//
+// THE COLLECT COPY IS THE ONE TERM THIS SHAPE ADDS, and it is priced: a splitting
+// node now costs three passes over its rows (count, scatter, collect) where the
+// recursion cost two (count, scatter). At the deepest measured point on the pile
+// that is 68.8e9 level elements = ~470 GB of copy traffic, i.e. under 1% of the
+// 15,603 CPU-s that run's construction took (ANALYTIC) - paid for an invariant
+// simple enough to review, since "the answer always lands back in the frame's own
+// src" makes the buffer discipline local to one frame instead of a return value
+// threaded through 55,570 of them.
 struct BinSortFrame {
     U* src; U* dst; U m; U depth; bool collect;
 };

@@ -625,6 +625,19 @@ the target that matters; same product shape, --bin-target-size forced):
           comparisons=11707477158 leaf_sorts=5023936 level_passes=255542
   (and those three counters are the fp-lce S-sweep rows' own numbers, to the
    digit: the fix is neutral against the PRE-fix binary at a deep target too)
+
+OPTIMIZATION INDEPENDENCE — the whole set again at `-O3` (the tree's own repro
+flag; the arms above are `-O2`), because a fix whose correctness depends on the
+frame layout would be no fix at all:
+  oracle                   ORACLE_O3_RC=0, every family exact_brute_SA=1, ZERO
+                           FATAL lines (36,180 cases + window/refusal/stage/
+                           periodic/adaptive/freq/phrase)
+  100 MB / 1 GB products   cmp_rc=0, sha256 == bank (b4753899... / 38f03eb4...)
+  100 MB / 4 K, 1 GB / 4 K DEEPTARGET_CMP = IDENTICAL
+  10 GB / 64 K probe        RC=0 WALL=408.65 (pile cap), and its counters are
+                           IDENTICAL to the -O2 run's field for field
+                           (comparisons 165771478755, symbols 4286942284805,
+                            level_passes 170494, depth_max 55570, ...)
 ```
 
 **The counter equivalence at the crash point** — the crash configuration, two
