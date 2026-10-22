@@ -15,20 +15,24 @@ single entry `xsa build ... --threads 96 --memory-gb 55 --finish-as-gb 400 --wit
   load - NOT code guilt).
 - **CODE-FAIL** = any non-137 fault with a real signature (assert / mismatch / segv / RC=139).
 
-**Box weather during all gates**: 300+ GB of foreign `impg` processes; 256-core box shared by up
-to 4 concurrent 10 GB gates + the step-6 oracle; RAM 1007 GB total, ~475-790 GB available at
-gate starts; nvme free 1.8 TB. Walls are therefore contention-inflated, not code signals.
+**Box weather**: round 1 ran under the night's 300+ GB foreign `impg` storm and was
+ENV-KILLED with the whole box at ~17:33 (all four gates SIGKILL'd silently - logs end at
+their PHASE START lines, no END/RC markers, no surviving processes; the step-6 oracle run
+died in the same window despite an operator belief it survived - its log froze at 17:07).
+Per the 2026-10-22 18:32 steering those runs are NOT verdicts. Round 2 (-r2 suffix) relaunch
+in clear weather: 961 GB available, the operator's rung100 pair holding ~200 GB, gates at
+~65 GB each.
 
 ## Ledger
 
 | step | tree (bisect-stack) | change under test | gate log | verdict | rc | wall | last-log-line / notes |
 |------|---------------------|-------------------|----------|---------|----|------|------------------------|
-| 1 prob-chi | `4aa2047` | prob-chi (`d3079bf`) | `solB-d3079bf-probchi.log` | PENDING (live, 45+ min healthy) | - | - | started 15:42:03, inherited from previous run |
-| 2 sampled-sa | `e73039f` | sampled-sa (`07e9769`) | `solB-07e9769-sampled-sa.log` | PENDING (live, 45+ min healthy) | - | - | started 15:48:16, inherited from previous run |
-| 3 phrase-radix | `edff29c` | phrase-radix (`1d86e84`) | `solB-step3-phrase-radix.log` | PENDING | - | - | started 16:39:19 |
-| 4 kasai-finish | `8b28dec` | kasai-finish (`88a7cb0`) | `solB-step4-kasai-finish.log` | PENDING | - | - | started 16:47:16 |
-| 5 entropy-rule | `9ec4c1f` | entropy-rule (`d816309`) | `solB-step5-entropy-rule.log` | NOT YET LAUNCHED | - | - | binary staged: sha256 `e8b865c3...` |
-| 6 seg-triage | `04a83f3` | seg-triage hand-merge (`3362a45`) | `solB-step6-segtriage.log` | NOT YET LAUNCHED | - | - | merge landed clean (bit6 byte-identical to the proven hand-merge); binary staged: sha256 `1b764a6a...` |
+| 1 prob-chi | `4aa2047` | prob-chi (`d3079bf`) | `solB-step1-probchi-r2.log` | PENDING | - | - | r1 log `solB-d3079bf-probchi.log`: ENV-KILL ~17:33 (storm), no verdict; r2 started 18:37:53 |
+| 2 sampled-sa | `e73039f` | sampled-sa (`07e9769`) | `solB-step2-sampled-sa-r2.log` | PENDING | - | - | r1 log `solB-07e9769-sampled-sa.log`: ENV-KILL ~17:33 (storm), no verdict; r2 started 18:37:54 |
+| 3 phrase-radix | `edff29c` | phrase-radix (`1d86e84`) | `solB-step3-phrase-radix-r2.log` | PENDING | - | - | r1 (16:39 launch): ENV-KILL ~17:33 (storm), no verdict; r2 started 18:37:56 |
+| 4 kasai-finish | `8b28dec` | kasai-finish (`88a7cb0`) | `solB-step4-kasai-finish-r2.log` | PENDING | - | - | r1 (16:47 launch): ENV-KILL ~17:33 (storm), no verdict; r2 started 18:37:57 |
+| 5 entropy-rule | `9ec4c1f` | entropy-rule (`d816309`) | `solB-step5-entropy-rule-r2.log` | NOT YET LAUNCHED | - | - | launching when r2 capacity frees; binary staged: sha256 `e8b865c3...` |
+| 6 seg-triage | `04a83f3` | seg-triage hand-merge (`3362a45`) | `solB-step6-segtriage-r2.log` | NOT YET LAUNCHED | - | - | launching when r2 capacity frees; binary staged: sha256 `1b764a6a...`; r1 oracle (16:30 launch) died in the storm mid family-1 (97 MB of BIN_WINDOW fills, zero family PASS lines) - no verdict; oracle r2 relaunched 18:52 from the `951dae5` tree (bit6 == `3362a45` byte-identical), log `solB-step6-oracle-r2.log` |
 
 ## Step-6 merge notes (04a83f3)
 
