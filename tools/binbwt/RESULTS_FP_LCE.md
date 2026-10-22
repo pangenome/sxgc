@@ -44,9 +44,14 @@ Short version:
   per-level recursion.** Reproduced on the UNMODIFIED base binary, backtraced
   under gdb (crash 13,121 frames down in `bin_tail_cmp`'s prologue), proved by
   raising the thread stack to 1 GB (completes; `depth_max=55,570`), and fixed by
-  moving the DFS work list to the heap. Now green: full oracle suite, 100 MB,
-  1 GB and 10 GB product gates byte-identical, and the 10 GB / 64 K run's counters
-  identical to the digit across the two binaries (§8).
+  moving the DFS work list to the heap. Now green: the full oracle suite, the
+  100 MB and 1 GB product gates **(and their 4 K deep-target variants)
+  byte-identical**, the 10 GB / 64 K construction counters identical to the digit
+  across the two binaries **at both the bare-binary cap and the pile regime's
+  60 GiB cap (where the pre-fix binary still segfaults)**, and the 10 GB / 64 K
+  run itself completing under the default 8 MB thread stack (§8).
+  **One thing is NOT green and is not claimed: the 10 GB *product* run at a deep
+  target**, which hits a separate piece-stream standstill (§8.6).
 
 ---
 
@@ -56,7 +61,7 @@ Everything the other charters need, in one place, with its provenance. **No
 number here is a guess**; where two same-configuration runs disagree, both are
 shown, because this box's same-binary CPU-second error bar is ±13-34% (measured
 three ways: the S sweep's 16 K row run twice, and the three same-config 1 GB
-census/AB runs in §1 and §4).
+census/A-B runs in §1 and §5).
 
 ### 0.1 The measured counters
 
@@ -481,8 +486,9 @@ believes a 0.33.
 
 ### 7.2 What the table says
 
-1. **`θ ∈ [1.05, 2.39] bits` on the reliable rows**, and it is **monotone in the
-   target**: 1.05 at the shipped 1 M, 2.12-2.26 at 64 K-4 K, 2.39 at 10 GB/64 K.
+1. **`θ ∈ [1.05, 2.39] bits` on the reliable rows**, and it **rises as the
+   target falls** (the 16 K pair is the one row where `c_lvl`'s noise breaks the
+   order): 1.05 at the shipped 1 M, 2.12-2.26 at 64 K-4 K, 2.39 at 10 GB/64 K.
 2. **The mechanism is `c_cmp` falling, not `c_lvl` rising.** From worse to better
    targets, `c_cmp` falls 78.5 → 47.1 ns (a deeper leaf starts from a deeper
    certified depth, so its comparisons find the divergence sooner) while `c_lvl`
@@ -644,6 +650,69 @@ stack arm at load 62-93, the fixed arm at load 21-42), so the 11-12% CPU
 difference is confounded and is not attributed to the fix. What the fix must be —
 and is — is counter-neutral.
 
+### 8.5 The PILE-REGIME before/after (the shape the product actually runs)
+
+The crash was found at the bare-binary cap (`--bin-live-cap` auto = `n`, one
+window). The product runs the pile regime instead — `RLIMIT_AS` 60 GiB, so the
+auto cap is ~2.7e9 slots and a 10 GB corpus becomes FOUR windows. The same argv
+(`pile-10b-snap.txt`, `--bin-target-size 65536`, 64 threads, `--bin-probe`,
+`ulimit -s 8192`), the two binaries, at that cap:
+
+```
+PRE-FIX  (88a7cb0):   RC=139 Command terminated by signal 11   WALL=131.25
+FIXED:                RC=0  WALL=384.71  maxrss=54.2 GB  windows=4
+  comparisons=165771478755 symbols=4286942284805 level_passes=170494
+  level_elems=68825392789 leaf_sorts=5682720 leaf_elems=9999161091
+  depth_max=55570 leaf_rows_max=65536 no_progress_levels=666 emitted_rows=10000017258
+  build_cpu_s=15223.488 build_s=314.535 total_s=373.093
+```
+
+The configuration the pile regime would actually use **never worked before this
+fix** — not with the deep target. `depth_max = 55,570` is identical at both caps,
+as it must be (it is the data's depth, not the cap's).
+
+### 8.6 A SECOND WALL IN THE SAME CORNER, FOUND, ATTRIBUTED, NOT FIXED
+
+The 10 GB deep-target **product** gate (producer + fused finish concurrent, the
+bank's own shape) is **NOT reported as passed**, because it did not pass. It is
+reported as UNMEASURED, exactly as the sweep's 10 GB rows were — and it is
+attributed, which took four arms:
+
+| arm | producer binary | target | threads p/f | piece window | pieces written | outcome |
+|---|---|---|---|---|---|---|
+| A | **fixed** | 65,536 | 64/96 | 1100 | **1,000, then frozen** | standstill, killed at 2 h 05 m |
+| B | **pre-fix (88a7cb0)** | 65,536 | 64/96 | 1100 | n/a | `--bin-probe`: **SIGSEGV at 131 s** (8.5) — the product arm was not attempted, construction never got that far |
+| C | fixed | 65,536 | 64/96 | **1,000,000** | **105,910 (all four windows built in ~9 min)** | producer completes; finish then advances at **0.13 bands/s** |
+| D | fixed | **auto (shipped)** | 64/96 | 1100 | 2,199, then frozen | **standstill at the same place** |
+| E | **pre-fix (88a7cb0)** | auto | 64/96 | 1100 | 2,199, then frozen | **identical standstill** — pieces 2199, band 65 at the same offset, same `chi_so_far` |
+| F | fixed | auto | **96/96** | 1100 | 2,199, then frozen | **identical standstill** |
+
+What arms A/C/D/E/F settle, and it is the point: **the product standstill reproduces
+with the UNMODIFIED pre-fix binary, at the SHIPPED automatic target, byte for
+byte the same way** (2,199 pieces, `band=65/152589`, `runs=4259836`,
+`chi_so_far=3227709`). So it is **pre-existing, not this fix's, and not a
+deep-target effect**. Thread count is not the trigger either (arm F).
+
+The finish is the side that does not work: in arm C every piece existed on disc
+(the producer had exited) and the finish STILL advanced at 0.13 bands/s while
+**asleep ~98% of the time** (`repair_wall 30.7 s + lce_wall 4630 CPU-s (= 48 s
+of wall at 96 threads) + advance_wall 7.7 s` against 82 minutes of elapsed) — so
+it is blocked, not slow, and it is not piece-starved. The banked 10 GB product
+(`pf2-10g-hyg0`) completed this phase in 30 min, and the one configuration
+difference that remains untested is **the finish binary itself**: every gate in
+this repository drives `sol7e-freshstart/pile_finish` (green at 100 MB and 1 GB,
+here and in the fp-lce lane), while the bank was built by `pf2-build/pile_finish`
+(rebuilt after the fact, so it cannot be re-run byte-identically). **That is
+where this stops**, and it is handed over rather than guessed at: a 10 GB
+producer↔finish product run with `sol7e-freshstart/pile_finish` does not complete
+on this box, with or without this fix.
+
+What the successor gets: the **construction** at a deep target is now correct and
+fast (8.5), the **container** at a deep target is byte-identical at the scales
+that gate (100 MB/4 K, 1 GB/4 K), and the 10 GB product run needs the finish-side
+flow issue looked at first — with `CROSS_V2_PIECE_WINDOW=1000000` mandatory, since
+1100 deadlocks the producer against the finish at this scale (arm A vs C).
+
 ---
 
 ## 9. What this document tells the other charters
@@ -664,8 +733,9 @@ and is — is counter-neutral.
    `build_cpu_s` 15,603 (64 threads) vs 27,291 for the shipped 1 M default on
    the same corpus — **−43% construction CPU at 10 GB, matching the 1 GB −31%**
    (§6.6). The 10 GB sweep rows that `RESULTS_S_SWEEP.md` reported as UNMEASURED
-   are now measured at 64 K; the 10 GB *product* at that target is gated
-   separately (§8.4).
+   are now measured at 64 K. The 10 GB *product* at that target does NOT complete
+   yet, for a finish-side reason that is pre-existing and attributed (§8.6) —
+   **do not read "the target is free at 10 GB" as gated until that is closed.**
 
 ---
 
@@ -699,10 +769,18 @@ and is — is counter-neutral.
    the 10 GB deep point, 42 MB at the 2^20 sanity bound). That is inside the
    `bin_derive_live_cap` arithmetic's noise, but it is a new term in a
    budgeted phase.
-8. **The 10 GB product gate runs at 64 K only** — the other sweep points (16 K,
-   4 K) are measured for counters but their 10 GB containers are not banked. The
-   deep-target byte identity that IS verified is 100 MB/4 K and 1 GB/4 K (§8.4).
-9. **`BIN_CMP_HIST` is this lane's instrumentation and does not exist on `main`**
+8. **A 10 GB product run with `sol7e-freshstart/pile_finish` does not complete on
+   this box — with or without this fix, at the deep target AND at the shipped
+   automatic target** (§8.6, arms A-F): the pre-fix binary standstills
+   identically, so it is pre-existing, but it means **no 10 GB product byte
+   identity is claimed here.** The byte identity that IS verified is 100 MB, 1 GB,
+   100 MB/4 K and 1 GB/4 K (§8.4). Reproducing the banked 10 GB product needs the
+   finish binary lineage re-established (`pf2-build/pile_finish` was rebuilt after
+   its bank was made) and `CROSS_V2_PIECE_WINDOW=1000000`.
+9. **The 10 GB deep-target counters are gated at 64 K only** — 16 K and 4 K at
+   10 GB are unmeasured (the construction would be measured the same way, but it
+   was not).
+10. **`BIN_CMP_HIST` is this lane's instrumentation and does not exist on `main`**
    (§0.2): every `r_c`/`w` number here was produced on the fp-lce arm. The
    `seg-triage` branch carries the fix and this document, not the fp code.
 
