@@ -63,6 +63,7 @@
 //
 // Build: c++ -O3 -std=c++17 -pthread bit6/cross_lcp_merge.cpp -o /tmp/cross_lcp_merge
 #include <algorithm>
+#include <cmath>
 #include <emmintrin.h>
 #include <atomic>
 #include <array>
@@ -5534,8 +5535,36 @@ int main_impl(int argc, char** argv) {
                         bwo.phraseOpts.tableBits <= 26 && bwo.phraseOpts.reps >= 2,
                     "--phrase-* parameters");
         }
-        const std::string capFlag = flag("--bin-live-cap");
-        const bool binLiveCapGiven = !capFlag.empty();
+        // ---- THE ENTROPY RULE (tools/binbwt/ENTROPY_RULE_DESIGN.md) ----------
+        // DEFAULT OFF. `--bin-entropy-min BITS` arms the rule: a radix level on a
+        // bucket is taken iff the entropy H (bits) of the bucket's next-byte
+        // histogram exceeds BITS, i.e. iff the level buys more comparison-bits
+        // than the level rows it costs. Given WITHOUT a value the calibrated
+        // default is used (bin_entropy_default_bits = 1.5, the middle of the
+        // measured bracket [1.18, 1.67]). With the flag absent `armed` stays
+        // false: theta is 0, the comparison never fires, the product executes
+        // today's instructions and every existing gate is byte-identical.
+        //
+        // `--bin-target-size` keeps its meaning but changes ROLE: armed, it is
+        // the BACKSTOP (the largest serial stretch a leaf may cost), not the
+        // thing that decides the shape of the tree.
+        if (has("--bin-entropy-min")) {
+            const std::string v = flag("--bin-entropy-min");
+            bwo.entropyOpts.armed = true;
+            bwo.entropyOpts.minBits =
+                v.empty() ? bin_entropy_default_bits : std::stod(v);
+            require(bwo.entropyOpts.minBits >= 0.0 && bwo.entropyOpts.minBits <= 32.0,
+                    "--bin-entropy-min out of range (bits, 0..32)");
+            bwo.entropyOpts.leafMinBits =
+                bwo.entropyOpts.minBits * bin_entropy_leaf_ramp;
+            // The sweep knobs: the in-leaf threshold and its row floor. Env-only,
+            // because the product route derives both and only the A/B moves them.
+            if (const char* e = ::getenv("BIN_ENTROPY_LEAF_MIN"))
+                bwo.entropyOpts.leafMinBits = std::stod(e);
+            if (const char* e = ::getenv("BIN_ENTROPY_LEAF_FLOOR"))
+                bwo.entropyOpts.leafFloor = std::stoull(e);
+        }
+        const std::string capFlag = flag("--bin-live-cap");        const bool binLiveCapGiven = !capFlag.empty();
         const U binLiveCap = binLiveCapGiven ? std::stoull(capFlag) : 0;
         return binbwt_main(flag("--binbwt"),flag("--remap"),flag("--out-prefix"),
         threads,
