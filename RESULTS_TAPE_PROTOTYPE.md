@@ -81,3 +81,25 @@ each change.
 - **The tie-tail at pile scale.** The survey (kgram_survey) measured the
   10 GB tail as 1.24 % uniform runs + 0.038 % genuine repeats at a 12-byte key;
   the pile's numbers are still computing.
+
+## Optimization attempts that REGRESSED (all verified correct, all slower)
+
+Recorded because a negative with a mechanism is worth more than a silent revert.
+Every variant below produced a `SA_CHECK_PASS` at 1.07 GB and was still slower
+than the simple comparison sort (29.6 s), so none was kept.
+
+| variant | 1 GB sort+emit | mechanism of the regression |
+|---|---|---|
+| baseline: 16-byte key + `khi` integer tie check + `std::sort` | **29.6 s** | — |
+| LSD radix on the 8-byte prefix, index array permuted | 57.7 s | the radix passes read `rows[idx[i]]`, i.e. RANDOM access into 24-byte records, 4 passes x 2 reads — it converts a mostly-sequential comparison sort into a random-access one |
+| LSD radix, 4 x 16-bit passes (2 passes was a bug: only 32 of 64 key bits) | — | fixed the bug; the access pattern conclusion above stands |
+| MSD distribute on the top 16 bits, then per-bucket sort | 50.5 s | needs a second full row buffer; allocating/freeing 1 GB per band turned into a page-fault storm (sys 6m27s of a 63s run) |
+| Row shrunk to 16 B (drop `khi`) | 53.2 s | equal-8-byte-key rows now ALL fall through to a real suffix comparison (~60% of rows vs 52% at 16 bytes), and each `suf_cmp` costs more than an integer `khi` compare |
+
+Also observed: identical code measured 43.4 s and 57.2 s in two runs — the
+difference is page-cache state of the corpus. Single-run timings on this box
+carry ~30% variance; only same-session A/B is trustworthy.
+
+**Where that leaves the sort**: it is memory-traffic bound, and the lever that is
+left is a properly packed layout (12-16 B rows with the key remainder, positions
+reused buffers, no per-band allocation), not a different sorting algorithm.

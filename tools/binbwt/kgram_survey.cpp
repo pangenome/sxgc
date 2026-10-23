@@ -37,6 +37,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <thread>
 #include <vector>
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -101,6 +102,8 @@ struct KV {
 int main(int argc, char** argv) {
     std::string corpus;
     int do_exact = 1;
+    int exact_threads = 32;
+    int exact_k3 = 1;
     std::vector<int> ks = {4, 8, 12, 16};
     u64 samples = 50000000ull;
     u64 topN = 12;
@@ -112,6 +115,8 @@ int main(int argc, char** argv) {
         auto nxt = [&]() { if (i + 1 >= argc) die("missing value"); return std::string(argv[++i]); };
         if (a == "--corpus") corpus = nxt();
         else if (a == "--exact") do_exact = std::atoi(nxt().c_str());
+        else if (a == "--exact-threads") exact_threads = std::atoi(nxt().c_str());
+        else if (a == "--exact-k3") exact_k3 = std::atoi(nxt().c_str());
         else if (a == "--samples") samples = std::strtoull(nxt().c_str(), nullptr, 10);
         else if (a == "--top") topN = std::strtoull(nxt().c_str(), nullptr, 10);
         else if (a == "--leaf") leaf = std::strtoull(nxt().c_str(), nullptr, 10);
@@ -156,11 +161,31 @@ int main(int argc, char** argv) {
         std::vector<u64> h1(256, 0);
         std::vector<u64> h2(1ull << 16, 0);
         std::vector<u64> h3(1ull << 24, 0);
-        for (u64 i = 0; i < n; ++i) {
-            u32 c0 = T[i];
-            h1[c0]++;
-            if (i + 1 < n) h2[(c0 << 8) | T[i + 1]]++;
-            if (i + 2 < n) h3[(c0 << 16) | ((u32)T[i + 1] << 8) | T[i + 2]]++;
+        const int ET = std::max(1, exact_threads);
+        std::vector<std::vector<u64>> l1(ET, std::vector<u64>(256, 0));
+        std::vector<std::vector<u64>> l2(ET, std::vector<u64>(1ull << 16, 0));
+        std::vector<std::thread> et;
+        for (int t = 0; t < ET; ++t)
+            et.emplace_back([&, t]() {
+                const u64 lo = n * (u64)t / (u64)ET, hi = n * (u64)(t + 1) / (u64)ET;
+                auto& a1 = l1[t];
+                auto& a2 = l2[t];
+                for (u64 i = lo; i < hi; ++i) {
+                    u32 c0 = T[i];
+                    a1[c0]++;
+                    if (i + 1 < n) a2[(c0 << 8) | T[i + 1]]++;
+                }
+            });
+        for (auto& th : et) th.join();
+        for (int t = 0; t < ET; ++t) {
+            for (int i = 0; i < 256; ++i) h1[i] += l1[t][i];
+            for (int i = 0; i < 65536; ++i) h2[i] += l2[t][i];
+        }
+        if (exact_k3) {
+            // O(n) cache-missing increments: ~a day at pile scale single-threaded.
+            std::fprintf(stderr, "EXACT_K3_START (slow by construction)\n");
+            for (u64 i = 0; i + 2 < n; ++i)
+                h3[((u32)T[i] << 16) | ((u32)T[i + 1] << 8) | T[i + 2]]++;
         }
         auto report = [&](std::vector<u64>& h, int k, const char* tag) {
             u64 total = 0, live = 0;
@@ -193,7 +218,7 @@ int main(int argc, char** argv) {
         };
         report(h1, 1, "byte");
         report(h2, 2, "pair");
-        report(h3, 3, "triple");
+        if (exact_k3) report(h3, 3, "triple");
     }
 
     // ---------------- (B) sampled group shape for deeper k ----------------
