@@ -31,8 +31,8 @@ in clear weather: 961 GB available, the operator's rung100 pair holding ~200 GB,
 | 2 sampled-sa | `e73039f` | sampled-sa (`07e9769`) | `solB-step2-sampled-sa-r2.log` | **PASS (COMPLETED)** | **RC=0** | 6h53m e2e | bin-v2 rc=0 wall 6:38:02 (peak RSS 51.9 GB); finish-v2 rc=0 wall 6:48:38 (peak RSS 26.5 GB); chi exact 2676929430; PRODUCT sha == BANK sha `e99fc0b3...f688` **byte-identical**; no orphans to reap |
 | 3 phrase-radix | `edff29c` | phrase-radix (`1d86e84`) | `solB-step3-phrase-radix-r2.log` | **PASS (COMPLETED, first to drain)** | **RC=0** | 6h25m e2e | bin-v2 rc=0 wall 6:03:11 (peak RSS 51.8 GB); finish-v2 rc=0 wall 6:20:55 (peak RSS 26.5 GB); `V2_CHI_EXPECT_OK chi=2676929430 == 2676929430`; PRODUCT sha256 `e99fc0b3...f688` == BANK sha256 `e99fc0b3...f688` **byte-identical** (4,463,793,539 B); wit_spills=95393 (within the 0.3x spill model); no orphans to reap |
 | 4 kasai-finish | `8b28dec` | kasai-finish (`88a7cb0`) | `solB-step4-kasai-finish-r2.log` | **PASS (COMPLETED)** | **RC=0** | 6h58m e2e | bin-v2 rc=0 wall 6:44:27 (peak RSS 51.8 GB); finish-v2 rc=0 wall 6:53:42 (peak RSS 26.5 GB); chi exact 2676929430; PRODUCT sha == BANK sha `e99fc0b3...f688` **byte-identical**; no orphans to reap |
-| 5 entropy-rule | `9ec4c1f` | entropy-rule (`d816309`) | `solB-step5-entropy-rule-r2.log` | **PASS (healthy-arm, 45+ min rule)** | - | 58m healthy at 00:23 | r2 started 23:25; producer window 1/4 at 39 cores, RSS 50.2 GB, finish spawned, chi tracking; no fault lines; run continues for the rc/product upgrade |
-| 6 seg-triage | `04a83f3` | seg-triage hand-merge (`3362a45`) | `solB-step6-segtriage-r2.log` | **PASS (healthy-arm, 45+ min rule)** | - | 58m healthy at 00:23 | r2 started 23:25; producer window 1/4 at 39 cores, RSS 52.0 GB, finish spawned, chi tracking; no fault lines; oracle r2 GREEN (all 10 families); run continues - this gate IS the completion run of the final integrated tree |
+| 5 entropy-rule | `9ec4c1f` | entropy-rule (`d816309`) | `solB-step5-entropy-rule-r2.log` | **PASS (healthy-arm, 45+ min rule; left running)** | - | 4h08m healthy at 03:29, still running | producer window 4/4 (final, bins 119-256) at 66 cores / 48.6 GB RSS; finish band 41,345/152,589, chi_so_far 2,101,909,342 on-pace; zero fault lines; GATE_ line lands in the log when it drains |
+| 6 seg-triage | `04a83f3` | seg-triage hand-merge (`3362a45`) | `solB-step6-segtriage-r2.log` | **PASS (healthy-arm, 45+ min rule; left running) + oracle ALL 10 FAMILIES GREEN** | - | 4h08m healthy at 03:29, still running | producer window 4/4 (final) at 67 cores / 50.3 GB RSS; finish band 41,345/152,589 in lockstep with step 5; zero fault lines; this gate IS the completion run of the final integrated tree (single entry, full envelope, chi-expect banked in-process, product sha'd vs bank on RC=0) |
 
 ## Step-6 merge notes (04a83f3)
 
@@ -83,15 +83,16 @@ non-PASS events of the night were the r1 ENV-KILLs (the 17:33 box-wide memory st
 the r1 gates, the r1 oracle, and the async runner itself - rc-less silent SIGKILLs, no code
 signature, not code guilt per the binding classification).
 
-The definitive residuals are the rc/product upgrades: all six r2 gates were healthy-verdicted
-while still running (the 45+ min rule exists precisely because the box is saturated - six
-96-thread producers plus the operator's two 100 GB rungs oversubscribe the 256-core box), and
-they are left running detached to land `GATE RC=0 + chi exact + product sha256 vs bank`
-confirmations. The step-6 gate doubles as the full completion gate on the final integrated
-tree: same tree (`04a83f3`), single entry, full envelope, chi-expect 2676929430 banked
-in-process, product sha'd against `/mnt/nvme2n1/erikg/pf2-10g-hyg0/product.sxi2` on RC=0.
-A separate seventh 10 GB launch was deliberately NOT made: the box does not allow it
-(CPU-saturated), and it would be a byte-for-byte duplicate of the already-running step-6 gate.
+**Upgrade status at budget end (03:30)**: steps 1-4 have DRAINED with full COMPLETED verdicts -
+each RC=0, `V2_CHI_EXPECT_OK chi=2676929430 == 2676929430`, and every product sha256
+**byte-identical to the bank** `e99fc0b35e7fadb030934f7c75f0b62d4d0631a626213f5173f2eca599f5f688`
+(4,463,793,539 B), peak RSS exactly the modeled envelope (51.8-51.9 GB producer, 26.5 GB
+finish), no orphans after any verdict. Steps 5-6 (launched 3h later) were healthy-verdicted at
+58m and are left running detached, healthy and in lockstep on their final windows at budget
+end; their `GATE_ RC` / `PRODUCT` / `BANK` lines land in
+`solB-step5-entropy-rule-r2.log` / `solB-step6-segtriage-r2.log` when they drain -
+collect with `grep -E '^GATE_|^PRODUCT|^BANK'`, and reap any orphaned pile_finish /
+cross_lcp_merge matching their scratch paths afterwards (steps 1-4 left none).
 
 ## Root-cause section
 
