@@ -458,6 +458,9 @@ impl Plan {
                 v.bin_e2e_s, hms(v.bin_e2e_s), hms(v.bin_producer_s), hms(v.bin_finish_s),
             ));
             s.push_str(&format!("XSA_PLAN_V2_BIN_NOTE {}\n", v.bin_note));
+            if let Some(note) = &v.bin_phrase_note {
+                s.push_str(&format!("XSA_PLAN_V2_PHRASE {note}\n"));
+            }
             let need_gb = self.phases.iter().map(|p| p.disc_peak_mb).fold(0.0, f64::max) / 1024.0;
             s.push_str(&format!(
                 "XSA_PLAN_V2_HOSTING all-phase scratch peak {:.1} GiB = {:.3}n on one host; free {:.1} GiB: {} (corpus itself excluded; add {:.1} GiB if co-hosted)\n",
@@ -567,6 +570,39 @@ pub const BIN_PHASE_HEADROOM_PCT: u64 = 90;
 /// SharedPages: PS = 256, two buffers per slot). The corpus cache
 /// (CorpusText) caches the whole corpus in RAM when it fits this budget.
 pub const BIN_POOL_BYTES_PER_SLOT: u64 = 2 * 256;
+// ---- PHRASE RADIX (tools/binbwt/PHRASE_RADIX_DESIGN.md) --------------------
+// The phrase arm is OFF unless --phrase-radix is given, and when it is on the
+// producer pays a PARSE before the bins start. These are measurements, not
+// guesses (bit6/phrase_radix.h journals them as PHRASE_DICT sweep_s/sort_s/
+// reps_s/parse_s):
+//   parse_s  3.780 at 100 MB, 26.936 at 1 GB, 261.310 at 10 GB  -> ~27 s/GiB
+//   samples  8,469,786 at 100 MB, 83,920,908 at 1 GB, 834,562,176 at 10 GB
+//            -> 0.0834 winnow samples per corpus byte (2/(W+1) for W=24)
+//   peak_samples is the WHOLE sample array in RAM at once: 8 B x 0.0834 n
+//   = 0.667n. That is the arm's real memory term and the plan must show it.
+pub const BIN_PHRASE_PARSE_S_PER_GB: f64 = 27.0;
+pub const BIN_PHRASE_SAMPLES_PER_N: f64 = 0.0834;
+pub const BIN_PHRASE_SAMPLE_BYTES: f64 = 8.0;
+/// The plan's phrase line: None when the arm is off (the default), so a plan of
+/// the product path does not mention a mechanism it will not run.
+pub fn bin_phrase_note(corpus_bytes: u64, armed: bool) -> Option<String> {
+    if !armed {
+        return None;
+    }
+    let n_gb = corpus_bytes as f64 / (1u64 << 30) as f64;
+    let parse_s = BIN_PHRASE_PARSE_S_PER_GB * n_gb;
+    let samples = BIN_PHRASE_SAMPLES_PER_N * corpus_bytes as f64;
+    let sample_gb = samples * BIN_PHRASE_SAMPLE_BYTES / (1u64 << 30) as f64;
+    let rate = BIN_PHRASE_SAMPLES_PER_N;
+    let per_gb = BIN_PHRASE_PARSE_S_PER_GB;
+    Some(format!(
+        "armed=1 (--phrase-radix) default=OFF product_path=unchanged parse_s={parse_s:.0} \
+         (measured {per_gb:.0} s/GiB: 3.78 s at 100 MB, 26.94 s at 1 GB, 261.31 s at 10 GB) \
+         parse_samples={samples:.0} peak_sample_ram_gb={sample_gb:.1} (8 B x {rate:.4} n, the winnow's sampled k-mers, held all at once) \
+         dict_ram<=pool_max (default 16 MiB) verify=byte-compared (a hash collision can only LOSE a skip, never produce a wrong order) \
+         effect=construction work is unchanged except at nodes a phrase certifies (PHRASE_WORK skips=; measured 0 skips at 100 MB, 1 GB and 10 GB with the shipped dictionary)"
+    ))
+}
 /// The page-pool slot count the front door passes as CROSS_POOL_SLOTS: cover the
 /// corpus text (n/128) within 45% of the memory cap, clamped to [2^20, 2^27].
 /// One function, called by the plan (to price the cache term) and by the chain
@@ -779,6 +815,10 @@ pub struct V2PerTerms {
     pub bin_note: String,
     pub bin_cap_note: String,
     pub ram_split_note: String, // the derived/live cap's own arithmetic, term by term
+    /// `--phrase-radix`: Some(note) only when the operator armed the phrase
+    /// dictionary. The plan must never claim the arm is free: the parse is a
+    /// real producer-side cost and it is priced here from the measured rate.
+    pub bin_phrase_note: Option<String>,
 }
 
 /// The bin plan. `live_cap` is the operator's `--bin-live-cap` (None = let the
@@ -1078,6 +1118,7 @@ the same cap and owns its witness stream + pfck grid",
         bin_note,
         bin_cap_note: cap_note,
         ram_split_note,
+        bin_phrase_note: None,
     };
     Plan { survey, chunks: 1, kway: 1, threads, cap_gb, phases, chunk_bytes_mb: mb,
            pos_mode: "none (no position column in the bin shape)".to_string(),
@@ -1087,6 +1128,25 @@ the same cap and owns its witness stream + pfck grid",
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_phrase_plan_line_is_absent_when_the_arm_is_off_and_priced_when_on() {
+        // The product path's plan must not mention a mechanism it will not run.
+        assert!(bin_phrase_note(1_000_000_665, false).is_none());
+        let note = bin_phrase_note(1_000_000_665, true).expect("on = a line");
+        // The parse is a real cost and the plan must state it, at the measured
+        // rate (26.94 s at 1 GB), not hide it in the producer term.
+        assert!(note.contains("parse_s=25"), "{note}");
+        assert!(note.contains("27 s/GiB"), "{note}");
+        // The arm's real RAM term: the winnow's whole sample array, 8 B x 0.0834 n.
+        assert!(note.contains("peak_sample_ram_gb=0.6"), "{note}");
+        assert!(note.contains("default=OFF"), "{note}");
+        assert!(note.contains("product_path=unchanged"), "{note}");
+        // 10 GB is the rung this exists for: 261 s of parse, 6.3 GiB of samples.
+        let big = bin_phrase_note(10_000_000_000, true).unwrap();
+        assert!(big.contains("parse_s=251") || big.contains("parse_s=252"), "{big}");
+        assert!(big.contains("peak_sample_ram_gb=6.2"), "{big}");
+    }
 
     #[test]
     fn bin_window_arithmetic_matches_the_measured_points() {

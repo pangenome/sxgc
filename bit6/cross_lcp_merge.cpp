@@ -63,6 +63,7 @@
 //
 // Build: c++ -O3 -std=c++17 -pthread bit6/cross_lcp_merge.cpp -o /tmp/cross_lcp_merge
 #include <algorithm>
+#include <cmath>
 #include <emmintrin.h>
 #include <atomic>
 #include <array>
@@ -5487,8 +5488,83 @@ int main_impl(int argc, char** argv) {
         if (!flag("--bin-build-cap").empty())
             bwo.buildCap = std::stoull(flag("--bin-build-cap"));
         bwo.disc = !has("--bin-window-ram");
-        const std::string capFlag = flag("--bin-live-cap");
-        const bool binLiveCapGiven = !capFlag.empty();
+        // THE SAMPLED-SA ANCHORS (option B, OFF by default): emit SA[j*k] for
+        // every k-th global rank from the emit pass's already-ordered slices
+        // (`SA_ANCHOR_DONE`, bit6/binbwt_slice.h). `k == 0` is inert: no file is
+        // created, no per-bin branch is taken, and the product is byte-identical.
+        if (!flag("--sa-sample-k").empty()) {
+            bwo.saSampleK = std::stoull(flag("--sa-sample-k"));
+            require(bwo.saSampleK <= (U(1) << 40), "--sa-sample-k out of range");
+        }
+        bwo.saSamplePath = flag("--sa-sample-out");
+        if (bwo.saSampleK && bwo.saSamplePath.empty())
+            require(false, "--sa-sample-k needs --sa-sample-out");
+        if (!bwo.saSampleK && !bwo.saSamplePath.empty())
+            require(false, "--sa-sample-out without --sa-sample-k is inert; refuse");
+        // ---- PHRASE RADIX (tools/binbwt/PHRASE_RADIX_DESIGN.md) --------------
+        // DEFAULT OFF. With the flag absent every phrase field keeps its default
+        // and `bwo.phraseOpts.enabled` stays false, so the producer runs the byte
+        // radix and nothing else: the product path must stay bit-identical.
+        if (has("--phrase-radix")) {
+            bwo.phraseOpts.enabled = true;
+            auto u = [&](const char* n, U dflt) {
+                const std::string v = flag(n);
+                return v.empty() ? dflt : std::stoull(v);
+            };
+            bwo.phraseOpts.minLen = u("--phrase-min-len", bwo.phraseOpts.minLen);
+            bwo.phraseOpts.minFreq = u("--phrase-min-freq", bwo.phraseOpts.minFreq);
+            bwo.phraseOpts.maxLen = u("--phrase-max-len", bwo.phraseOpts.maxLen);
+            bwo.phraseOpts.seed = u("--phrase-seed", bwo.phraseOpts.seed);
+            bwo.phraseOpts.window = u("--phrase-window", bwo.phraseOpts.window);
+            bwo.phraseOpts.blockMax = u("--phrase-block-max", bwo.phraseOpts.blockMax);
+            bwo.phraseOpts.poolMax = u("--phrase-pool-max", bwo.phraseOpts.poolMax);
+            bwo.phraseOpts.tableBits = u("--phrase-table-bits", bwo.phraseOpts.tableBits);
+            bwo.phraseOpts.reps = u("--phrase-reps", bwo.phraseOpts.reps);
+            bwo.phraseOpts.skipMinRows =
+                u("--phrase-skip-min-rows", bwo.phraseOpts.skipMinRows);
+            bwo.phraseOpts.skipMinLen =
+                u("--phrase-skip-min-len", bwo.phraseOpts.skipMinLen);
+            bwo.phraseOpts.probeDepth =
+                u("--phrase-probe-depth", bwo.phraseOpts.probeDepth);
+            bwo.phraseOpts.probeStride =
+                u("--phrase-probe-stride", bwo.phraseOpts.probeStride);
+            require(bwo.phraseOpts.minLen >= 16 && bwo.phraseOpts.seed >= 16 &&
+                    bwo.phraseOpts.skipMinLen >= 16 &&
+                        bwo.phraseOpts.maxLen >= bwo.phraseOpts.minLen &&
+                        bwo.phraseOpts.window >= 2 && bwo.phraseOpts.tableBits >= 8 &&
+                        bwo.phraseOpts.tableBits <= 26 && bwo.phraseOpts.reps >= 2,
+                    "--phrase-* parameters");
+        }
+        // ---- THE ENTROPY RULE (tools/binbwt/ENTROPY_RULE_DESIGN.md) ----------
+        // DEFAULT OFF. `--bin-entropy-min BITS` arms the rule: a radix level on a
+        // bucket is taken iff the entropy H (bits) of the bucket's next-byte
+        // histogram exceeds BITS, i.e. iff the level buys more comparison-bits
+        // than the level rows it costs. Given WITHOUT a value the calibrated
+        // default is used (bin_entropy_default_bits = 1.5, the middle of the
+        // measured bracket [1.18, 1.67]). With the flag absent `armed` stays
+        // false: theta is 0, the comparison never fires, the product executes
+        // today's instructions and every existing gate is byte-identical.
+        //
+        // `--bin-target-size` keeps its meaning but changes ROLE: armed, it is
+        // the BACKSTOP (the largest serial stretch a leaf may cost), not the
+        // thing that decides the shape of the tree.
+        if (has("--bin-entropy-min")) {
+            const std::string v = flag("--bin-entropy-min");
+            bwo.entropyOpts.armed = true;
+            bwo.entropyOpts.minBits =
+                v.empty() ? bin_entropy_default_bits : std::stod(v);
+            require(bwo.entropyOpts.minBits >= 0.0 && bwo.entropyOpts.minBits <= 32.0,
+                    "--bin-entropy-min out of range (bits, 0..32)");
+            bwo.entropyOpts.leafMinBits =
+                bwo.entropyOpts.minBits * bin_entropy_leaf_ramp;
+            // The sweep knobs: the in-leaf threshold and its row floor. Env-only,
+            // because the product route derives both and only the A/B moves them.
+            if (const char* e = ::getenv("BIN_ENTROPY_LEAF_MIN"))
+                bwo.entropyOpts.leafMinBits = std::stod(e);
+            if (const char* e = ::getenv("BIN_ENTROPY_LEAF_FLOOR"))
+                bwo.entropyOpts.leafFloor = std::stoull(e);
+        }
+        const std::string capFlag = flag("--bin-live-cap");        const bool binLiveCapGiven = !capFlag.empty();
         const U binLiveCap = binLiveCapGiven ? std::stoull(capFlag) : 0;
         return binbwt_main(flag("--binbwt"),flag("--remap"),flag("--out-prefix"),
         threads,

@@ -1827,7 +1827,14 @@ static int selftest_seam_spool(const std::string& directory) {
 // ready_band's bounded extent/terminal assertion supplies that dependency.
 // The default stays serial. The opt-in exact-checkpoint scheduler below
 // validates the carry but retains a serial planner; it is not a speed claim.
-struct NRun { uint8_t c; uint64_t len, h, t; };
+// `rk` is the run's BWT RANK BASE, i.e. the transducer's own ROW index for the
+// run's first row (row 0 == the first non-padding BWT row). It is filled by
+// append()/emitOne() and is the ONLY exact rank source in the finish: a running
+// sum of the run lengths is NOT exact, because the seam-class splice can advance
+// `row` past the rows its reconstructed runs describe (measured at 100 MB: the
+// first class block ends one row short, and a cumulative sum silently shifts
+// EVERY subsequent rank by one). The KASAI arm indexes the LCP column with this.
+struct NRun { uint8_t c; uint64_t len, h, t; uint64_t rk = 0; };
 struct RepairStream {
     uint64_t N = 0, n = 0, w1 = 10, terminal = 0;
     SeamClasses* seam = nullptr;
@@ -1859,11 +1866,15 @@ struct RepairStream {
     // straight-line body per call site. The std::function overloads survive for
     // the replay, the chunk planner and the selftests, and are byte-for-byte the
     // same semantics (they pass `emit` as the sink).
-    template<class Sink> void append(const NRun& v, Sink& sink) {
+    // `base` is the BWT rank of the piece's first row. A new pending run inherits
+    // it; a coalesced continuation keeps the run's original base (the rows are
+    // contiguous, so the merged run's base is the first piece's).
+    template<class Sink> void appendAt(const NRun& v, uint64_t base, Sink& sink) {
         if (!v.len) return;
         if (have && pending.c == v.c) { pending.len += v.len; pending.t = v.t; }
-        else { if (have) emitOne(sink); pending = v; have = true; }
+        else { if (have) emitOne(sink); pending = v; pending.rk = base; have = true; }
     }
+    template<class Sink> void append(const NRun& v, Sink& sink) { appendAt(v, row, sink); }
     template<class Sink> void emitOne(Sink& sink) {
         ++rNorm; nNorm += pending.len;
         totals[pending.c] += pending.len;
@@ -1933,9 +1944,15 @@ struct RepairStream {
         while (row < end) {
             if (seam && next < seam->classes.size() && row >= seam->classes[next].lo) {
                 SeamClass& cl = seam->classes[next];
-                if (row == cl.lo)
-                    for (const auto& piece : cl.runs)
-                        append({piece.c, piece.len, piece.head, piece.tail}, sink);
+                if (row == cl.lo) {
+                    // The class's reconstructed runs are contiguous from the
+                    // class's first row: stamp each piece's own rank base.
+                    uint64_t base = row;
+                    for (const auto& piece : cl.runs) {
+                        appendAt({piece.c, piece.len, piece.head, piece.tail}, base, sink);
+                        base += piece.len;
+                    }
+                }
                 row = std::min(end, cl.hi);
                 if (row == cl.hi) { v.h = cl.after; ++next; }
             } else {
@@ -3069,8 +3086,328 @@ static int benchmark_repair_chunks() {
     return 0;
 }
 
-// ------------------------------------------------------------- LCE wrapper
-// Cyclic collection_lce over the corpus adapter (SlimLCEParseFree's cyclic
+// ------------------------------------------------------------------ PROB-CHI
+// The claims list and the checker that make a HASH-TRUSTED chi certain.
+// Analysis + the probability model: tools/binbwt/PROB_CHI_ANALYSIS.md.
+// The formal statement: lean/ProbChi.lean.
+//
+// CLAIM SEMANTICS (one line, no exceptions):
+//
+//   claim(i, j, g, cap)  means   T[i..i+g) == T[j..j+g)
+//                          and   (g == cap  or  T[i+g] != T[j+g])
+//
+// i.e. exactly `g == min(lce(i,j), cap)`. That is the ONLY arithmetic fact the
+// sweep consumes (`topLcp` and `interiorMin`, pile_finish.cpp lceJob), so a
+// claims list that the text satisfies makes the sweep's inputs identical to the
+// FULL tier's inputs; the sweep is a deterministic function of those inputs and
+// therefore emits the identical container. The probability lives in the
+// constructor's speed and never reaches the product.
+// Bucket count is a function of n, not a constant: bucket b covers the text
+// positions [b*n/NB, (b+1)*n/NB), so the checker's i-side sweep stays inside one
+// position window at every scale. 1024 buckets at 100 MB..1 GB (5.6 MB of claim
+// records per bucket at 1 GB); the cap keeps a pile claims list biddable in
+// RAM-per-worker terms and is the place a pile-scale run must switch to
+// band-fused checking (see PROB_CHI_ANALYSIS.md 3.2: a pile spool is ~7.4 TB).
+static inline uint64_t pf_claim_buckets(uint64_t n) {
+    uint64_t b = n >> 20;
+    if (b < 1024) b = 1024;
+    if (b > 8192) b = 8192;
+    return b;
+}
+
+static inline uint8_t* pf_varint_put(uint8_t* p, uint64_t v) {
+    while (v >= 0x80) { *p++ = uint8_t(v) | 0x80; v >>= 7; }
+    *p++ = uint8_t(v);
+    return p;
+}
+static inline const uint8_t* pf_varint_get(const uint8_t* p, const uint8_t* end, uint64_t& v) {
+    v = 0;
+    for (unsigned sh = 0; p < end; sh += 7) {
+        uint8_t b = *p++;
+        if (sh > 63) pf_fail("claims: varint overflow");
+        v |= uint64_t(b & 0x7F) << sh;
+        if (!(b & 0x80)) return p;
+    }
+    pf_fail("claims: truncated varint");
+}
+
+// A claim is verified by reading the text AT THE CLAIMED POSITIONS. Nothing here
+// searches, probes, hashes or consults the structure: two spans, one boundary.
+struct PfClaimView { uint64_t i, j, g; uint8_t truncated; };
+// Returns 0 when the claim HOLDS; otherwise the offset of the first violation
+// (== g means "the boundary is equal, so the answer was not maximal").
+static inline uint64_t pf_claim_violation(const CorpusText& t, const PfClaimView& c) {
+    // Bounds: the span is always inside the text (cap = min(limit, n-i, n-j));
+    // the BOUNDARY byte is only needed for a non-truncated claim, where
+    // g < cap <= n-i, so i+g+1 <= n holds by the claim's construction.
+    pf_check(c.i + c.g <= t.size() && c.j + c.g <= t.size(), "claim span outside text");
+    if (!c.truncated) pf_check(c.i + c.g + 1 <= t.size() && c.j + c.g + 1 <= t.size(),
+                               "claim boundary outside text");
+    for (uint64_t k = 0; k < c.g; ++k)
+        if (t[c.i + k] != t[c.j + k]) return k;
+    if (!c.truncated && t[c.i + c.g] == t[c.j + c.g]) return c.g;
+    return UINT64_MAX;
+}
+
+// ---- the SPOOL sink: hash-trust + a position-bucketed claims list on scratch.
+// Claims are bucketed by `i` (bucket b covers text positions
+// [b*n/NB, (b+1)*n/NB)), which is what makes the checker's i-side a monotone
+// sweep instead of 4.7e8 independent random starts.
+struct PfClaimSpool : SlimClaimSink {
+    std::string dir;
+    uint64_t n = 0, nb = 0;
+    std::atomic<uint64_t> claimCount{0}, spanSymbols{0}, encodedBytes{0};
+    std::vector<int> fd;
+    std::vector<uint64_t> written;
+    std::mutex mu;
+    struct Buf { std::vector<std::vector<uint8_t>> d; };
+    std::vector<std::unique_ptr<Buf>> bufs;
+    explicit PfClaimSpool(const std::string& d, uint64_t textSize)
+        : dir(d), n(textSize), nb(pf_claim_buckets(textSize)) {
+        std::filesystem::create_directories(dir);
+        fd.assign(nb, -1);
+        written.assign(nb, 0);
+        bufs.resize(512);
+        for (uint64_t b = 0; b < nb; ++b) {
+            char name[64];
+            snprintf(name, sizeof name, "b%04llu.vc", (unsigned long long)b);
+            fd[b] = ::open((dir + "/" + name).c_str(), O_RDWR | O_CREAT | O_EXCL, 0666);
+            pf_check(fd[b] >= 0, std::string("create claims bucket ") + name);
+        }
+    }
+    ~PfClaimSpool() {
+        for (int f : fd) if (f >= 0) ::close(f);
+    }
+    Buf* buf() {
+        unsigned t = slim_tid();
+        if (bufs[t]) return bufs[t].get();
+        std::lock_guard<std::mutex> g(mu);
+        if (!bufs[t]) { bufs[t] = std::make_unique<Buf>(); bufs[t]->d.resize(nb); }
+        return bufs[t].get();
+    }
+    void flushBucket(unsigned b, Buf& t) {
+        std::vector<uint8_t>& d = t.d[b];
+        if (d.empty()) return;
+        std::lock_guard<std::mutex> g(mu);
+        const char* p = (const char*)d.data();
+        uint64_t off = written[b], len = d.size();
+        while (len) {
+            ssize_t z = ::pwrite(fd[b], p, len, off_t(off));
+            pf_check(z > 0, "claims bucket write");
+            p += z; off += uint64_t(z); len -= uint64_t(z);
+        }
+        written[b] = off;
+        encodedBytes.fetch_add(d.size(), std::memory_order_relaxed);
+        d.clear();
+    }
+    void claim(uint64_t i, uint64_t j, uint64_t g, uint64_t cap) override {
+        pf_check(i < n && j < n && g <= n, "claim outside text");
+        unsigned b = unsigned((__uint128_t(i) * nb) / n);
+        if (b >= nb) b = unsigned(nb - 1);
+        Buf* t = buf();
+        std::vector<uint8_t>& d = t->d[b];
+        uint8_t tmp[32];
+        uint8_t* e = pf_varint_put(tmp, i);
+        e = pf_varint_put(e, j);
+        e = pf_varint_put(e, g);
+        *e++ = uint8_t(g == cap ? 1 : 0);
+        d.insert(d.end(), tmp, e);
+        claimCount.fetch_add(1, std::memory_order_relaxed);
+        spanSymbols.fetch_add(g + (g < cap), std::memory_order_relaxed);
+        if (d.size() >= (8u << 10)) flushBucket(b, *t);
+    }
+    void close() {
+        for (uint64_t b = 0; b < nb; ++b)
+            for (auto& t : bufs) if (t) flushBucket(unsigned(b), *t);
+        std::string meta = "PROBCHI_CLAIMS 1\nbuckets " + std::to_string(nb) +
+                           "\nn " + std::to_string(n) +
+                           "\nclaims " + std::to_string(claimCount.load()) +
+                           "\nspan_symbols " + std::to_string(spanSymbols.load()) +
+                           "\nencoded_bytes " + std::to_string(encodedBytes.load()) +
+                           "\nbucket_bytes";
+        for (uint64_t b = 0; b < nb; ++b) meta += " " + std::to_string(written[b]);
+        meta += "\n";
+        const std::string path = dir + "/meta";
+        int f = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+        pf_check(f >= 0, "create claims meta");
+        pf_check(::write(f, meta.data(), meta.size()) == ssize_t(meta.size()), "write claims meta");
+        pf_check(::close(f) == 0, "close claims meta");
+        fprintf(stderr, "PILE_FINISH_CLAIMS_SPOOL dir=%s claims=%llu span_symbols=%llu "
+                        "encoded_bytes=%llu buckets=%llu n=%llu\n",
+                dir.c_str(), (unsigned long long)claimCount.load(),
+                (unsigned long long)spanSymbols.load(),
+                (unsigned long long)encodedBytes.load(),
+                (unsigned long long)nb, (unsigned long long)n);
+    }
+};
+
+// ---- the FUSED sink: verify in the worker that proposed the answer.
+// No spool, no sorting, the same access pattern as the FULL tier's inline
+// confirmation - but no hash probing and no verification-budget accounting. It
+// is the pile-scale shape (a pile claims spool would be ~7.4 TB against a ~2 TB
+// scratch ceiling) and the honest A/B of "is the position sort worth a spool?".
+struct PfClaimFused : SlimClaimSink {
+    const CorpusText* text = nullptr;
+    std::atomic<uint64_t> claimCount{0}, comparedSymbols{0};
+    double t0 = 0, wall = 0;
+    std::atomic<uint64_t> badClaims{0};
+    void claim(uint64_t i, uint64_t j, uint64_t g, uint64_t cap) override {
+        claimCount.fetch_add(1, std::memory_order_relaxed);
+        PfClaimView c{i, j, g, uint8_t(g == cap ? 1 : 0)};
+        const uint64_t bad = pf_claim_violation(*text, c);
+        comparedSymbols.fetch_add(g + (g < cap), std::memory_order_relaxed);
+        if (bad != UINT64_MAX) {
+            badClaims.fetch_add(1, std::memory_order_relaxed);
+            fprintf(stderr, "PILE_FINISH_CLAIM_VIOLATION mode=fused i=%llu j=%llu g=%llu cap=%llu "
+                            "truncated=%u at_offset=%llu Ti=%u Tj=%u Ti_g=%u Tj_g=%u\n",
+                    (unsigned long long)i, (unsigned long long)j, (unsigned long long)g,
+                    (unsigned long long)cap, unsigned(c.truncated), (unsigned long long)bad,
+                    unsigned((*text)[i + std::min(bad, g)]), unsigned((*text)[j + std::min(bad, g)]),
+                    unsigned((*text)[i + g]), unsigned((*text)[j + g]));
+            pf_fail("hash-trusted LCE answer is FALSE (fused checker)");
+        }
+    }
+};
+
+// ---- the FLOOR sink: emit and count, check nothing. This is a MEASUREMENT arm
+// only (PILE_FINISH_LCE_TRUST=3): it prices the constructor's floor when it
+// verifies nothing at all, so the checker's own price is separable. It is NOT a
+// product tier - nothing is certified.
+struct PfClaimNull : SlimClaimSink {
+    std::atomic<uint64_t> claimCount{0}, spanSymbols{0};
+    void claim(uint64_t, uint64_t, uint64_t g, uint64_t cap) override {
+        claimCount.fetch_add(1, std::memory_order_relaxed);
+        spanSymbols.fetch_add(g + (g < cap), std::memory_order_relaxed);
+    }
+};
+
+// ---- THE CHECKER PASS. Reads the claims, reads the text at the claimed
+// positions, confirms. A worker OWNS a bucket, sorts it by `i` and sweeps it
+// from low to high, so every worker's i-side is a monotone front inside one
+// position window: the pass is NB sorted sweeps over the text plus the scattered
+// `j` side. No searching, no probing, no structure, no history.
+static void pf_check_claims(const CorpusText& text, const std::string& dir, int threads) {
+    const double t0 = tnow();
+    const std::string metaPath = dir + "/meta";
+    FILE* f = fopen(metaPath.c_str(), "rb");
+    pf_check(f != nullptr, "open claims meta (" + metaPath + ")");
+    uint64_t buckets = 0, n = 0, claims = 0, spanSymbols = 0, encodedBytes = 0;
+    std::vector<uint64_t> bucketBytes;
+    char key[64];
+    pf_check(fscanf(f, "%63s", key) == 1 && std::string(key) == "PROBCHI_CLAIMS", "claims meta magic");
+    uint64_t version = 0;
+    pf_check(fscanf(f, "%llu", (unsigned long long*)&version) == 1 && version == 1, "claims meta version");
+    pf_check(fscanf(f, "%63s %llu", key, (unsigned long long*)&buckets) == 2 && std::string(key) == "buckets", "claims meta buckets");
+    pf_check(fscanf(f, "%63s %llu", key, (unsigned long long*)&n) == 2 && std::string(key) == "n", "claims meta n");
+    pf_check(fscanf(f, "%63s %llu", key, (unsigned long long*)&claims) == 2 && std::string(key) == "claims", "claims meta claims");
+    pf_check(fscanf(f, "%63s %llu", key, (unsigned long long*)&spanSymbols) == 2 && std::string(key) == "span_symbols", "claims meta span_symbols");
+    pf_check(fscanf(f, "%63s %llu", key, (unsigned long long*)&encodedBytes) == 2 && std::string(key) == "encoded_bytes", "claims meta encoded_bytes");
+    pf_check(fscanf(f, "%63s", key) == 1 && std::string(key) == "bucket_bytes", "claims meta bucket_bytes");
+    bucketBytes.resize(buckets);
+    for (uint64_t b = 0; b < buckets; ++b)
+        pf_check(fscanf(f, "%llu", (unsigned long long*)&bucketBytes[b]) == 1, "claims meta bucket size");
+    pf_check(fclose(f) == 0, "close claims meta");
+    pf_check(buckets > 0 && buckets <= 65536, "claims meta bucket count out of range");
+    // FIAT: one bucket is loaded whole (that is what makes the i side sortable
+    // and monotone), so a bucket larger than the budget is a claims list that
+    // must be checked in a different SHAPE, not a check that silently degrades.
+    // At the pile the spool is 1.9-7.1 TB and a bucket can be ~1 GB of records:
+    // that run must use the fused sink (PILE_FINISH_LCE_TRUST=2) or a
+    // band-consumed spool. Failing loud here is the point.
+    const uint64_t bucketMax = pf_env_u64("PILE_FINISH_CLAIM_BUCKET_MAX", 1ull << 30, 1ull << 20, 1ull << 40);
+    for (uint64_t b = 0; b < buckets; ++b)
+        pf_check(bucketBytes[b] <= bucketMax,
+                 "claims bucket " + std::to_string(b) + " is " + std::to_string(bucketBytes[b]) +
+                 " B, over PILE_FINISH_CLAIM_BUCKET_MAX=" + std::to_string(bucketMax) +
+                 " (raise it, add buckets, or check fused: PILE_FINISH_LCE_TRUST=2)");
+    pf_check(n == text.size(), "claims meta n != corpus size (the claims belong to a different text)");
+
+    struct PerThread { std::atomic<uint64_t> claims{0}, symbols{0}, bad{0}, buckets{0}; };
+    const int T = std::max(1, std::min(threads, 256));
+    std::unique_ptr<PerThread[]> per(new PerThread[unsigned(T)]);
+    std::atomic<uint64_t> badSeq{~0ull}, badBucket{0}, checked{0}, maxBucketClaims{0};
+    std::mutex badMu;
+    std::atomic<uint64_t> nextBucket{0};
+    auto worker = [&](int t) {
+        slim_set_thread_shard(unsigned(t));
+        std::vector<uint8_t> raw;
+        std::vector<PfClaimView> view;
+        for (;;) {
+            uint64_t b = nextBucket.fetch_add(1);
+            if (b >= buckets) break;
+            if (!bucketBytes[b]) { continue; }
+            raw.resize(bucketBytes[b]);
+            char name[64];
+            snprintf(name, sizeof name, "/b%04llu.vc", (unsigned long long)b);
+            int bfd = ::open((dir + name).c_str(), O_RDONLY);
+            pf_check(bfd >= 0, std::string("open claims bucket ") + name);
+            pf_pread_full(bfd, raw.data(), raw.size(), 0, "claims bucket read");
+            pf_check(::close(bfd) == 0, "close claims bucket");
+            view.clear();
+            const uint8_t* p = raw.data();
+            const uint8_t* end = p + raw.size();
+            while (p < end) {
+                PfClaimView c{};
+                p = pf_varint_get(p, end, c.i);
+                p = pf_varint_get(p, end, c.j);
+                p = pf_varint_get(p, end, c.g);
+                if (p >= end) pf_fail("claims: truncated record flag");
+                c.truncated = uint8_t(*p++ & 1);
+                view.push_back(c);
+            }
+            // POSITION ORDER: this bucket is one worker's monotone i-front.
+            std::sort(view.begin(), view.end(), [](const PfClaimView& a, const PfClaimView& c) { return a.i < c.i; });
+            const size_t cnt = view.size();
+            {
+                uint64_t mx = maxBucketClaims.load(std::memory_order_relaxed);
+                while (cnt > mx && !maxBucketClaims.compare_exchange_weak(mx, cnt, std::memory_order_relaxed)) {}
+            }
+            for (size_t k = 0; k < cnt; ++k) {
+                const PfClaimView& c = view[k];
+                const uint64_t bad = pf_claim_violation(text, c);
+                per[unsigned(t)].claims.fetch_add(1, std::memory_order_relaxed);
+                per[unsigned(t)].symbols.fetch_add(c.g + (c.truncated ? 0 : 1), std::memory_order_relaxed);
+                if (bad != UINT64_MAX) {
+                    per[unsigned(t)].bad.fetch_add(1, std::memory_order_relaxed);
+                    if (badSeq.load() == ~0ull) { std::lock_guard<std::mutex> g(badMu);
+                        if (badSeq.load() == ~0ull) {
+                            badSeq.exchange(view[k].i);
+                            badBucket.store(b);
+                            fprintf(stderr, "PILE_FINISH_CLAIM_VIOLATION mode=checker bucket=%llu i=%llu j=%llu g=%llu "
+                                            "truncated=%u at_offset=%llu Ti=%u Tj=%u\n",
+                                    (unsigned long long)b, (unsigned long long)c.i, (unsigned long long)c.j,
+                                    (unsigned long long)c.g, unsigned(c.truncated), (unsigned long long)bad,
+                                    unsigned(text[c.i + std::min(bad, c.g)]), unsigned(text[c.j + std::min(bad, c.g)]));
+                        } }
+                }
+            }
+            per[unsigned(t)].buckets.fetch_add(1, std::memory_order_relaxed);
+            checked.fetch_add(1, std::memory_order_relaxed);
+        }
+    };
+    std::vector<std::thread> pool;
+    for (int t = 0; t < T; ++t) pool.emplace_back(worker, t);
+    for (auto& th : pool) th.join();
+    uint64_t done = 0, symbols = 0, bad = 0, swept = 0;
+    for (int t = 0; t < T; ++t) { done += per[t].claims.load(); symbols += per[t].symbols.load();
+                                  bad += per[t].bad.load(); swept += per[t].buckets.load(); }
+    const double wall = tnow() - t0;
+    const uint64_t firstBad = badSeq.load();
+    fprintf(stderr, "PILE_FINISH_CHECK_CLAIMS claims=%llu claims_declared=%llu symbols_compared=%llu "
+                    "buckets=%llu swept=%llu max_bucket_claims=%llu threads=%d wall=%.3f "
+                    "violations=%llu first_bad_i=%s source=claim_list independent_of_structure=1\n",
+            (unsigned long long)done, (unsigned long long)claims,
+            (unsigned long long)symbols, (unsigned long long)buckets, (unsigned long long)swept,
+            (unsigned long long)maxBucketClaims.load(), T, wall,
+            (unsigned long long)bad, firstBad == ~0ull ? "none" : std::to_string(firstBad).c_str());
+    pf_check(done == claims, "claims list is INCOMPLETE: checked " + std::to_string(done) +
+                             " of " + std::to_string(claims) + " records");
+    pf_check(bad == 0, "claims list FAILED: " + std::to_string(bad) +
+                       " claims the text does not satisfy (first at bucket " +
+                       std::to_string(badBucket.load()) + ")");
+}
+
+
 // branch, byte-for-byte), with its own fail-loud work journal.
 struct LceWrap {
     SlimFingerprint<CorpusText>* fh = nullptr;
@@ -3091,6 +3428,184 @@ struct LceWrap {
         return answer;
     }
 };
+// ------------------------------------------------------ THE LCP COLUMN (kasai)
+// `tools/binbwt/kasai_column`'s product, read as a table. col[r] =
+// LCE(SA[r], SA[r+1]) over the same cyclic text, u8 fast path + a sorted escape
+// list for values >= 255 (KASAI_FINISH_DESIGN.md). The finish reads it in RANK
+// ORDER along the ordered fold - each band stages its own CONTIGUOUS rank slice
+// with one pread - so the sweep's two query families cost a column read and a
+// range minimum instead of an LCE walk:
+//
+//     topLcp[i]   = col[r_i - 1]                     r_i = cumulative run length
+//     interior[i] = min(col[r_i .. r_i + len_i - 2])
+//
+// THE MAPPING IS THE CLOSURE CONDITION: the runs are contiguous BWT intervals in
+// ascending rank order, so sum(len) over every emitted run == n and r_i is the
+// running sum. That is asserted at the end of the sweep, and
+// PILE_FINISH_KASAI_AUDIT=1 asserts every value this table returns equals the
+// SlimFingerprint answer it replaces.
+static std::atomic<uint64_t> g_kasaiDbg{0};
+
+// ------------------------------------------------- THE LOCATE TABLE (ISA, i.e.
+// position -> rank). The run's rank CANNOT be derived from a cumulative sum of
+// the run lengths: the seam-class splice advances the transducer's row past the
+// rows its reconstructed runs describe, so a sum silently shifts every later
+// rank (measured at 100 MB: the first class block is one row short of its span
+// and 159 consecutive topLcp values came out wrong). `kasai_column`'s ISA is
+// therefore the finish's locate table, exactly as the design document prices it:
+// one random read per run, in the pool, on a page-cache-resident array.
+struct LocateIsa {
+    int fd = -1;
+    const uint8_t* map = nullptr;
+    uint64_t bytes = 0, n = 0;
+    unsigned width = 0;
+    uint64_t lookups = 0;
+    void open(const std::string& path, uint64_t nExpect) {
+        static constexpr uint32_t MAGIC = 0x53495853u;   // 'SXIS'
+        static constexpr uint32_t VERSION = 1;
+        fd = ::open(path.c_str(), O_RDONLY);
+        pf_check(fd >= 0, "open --sa-locate " + path + ": " + std::strerror(errno));
+        struct stat st {};
+        pf_check(::fstat(fd, &st) == 0, "stat --sa-locate");
+        bytes = uint64_t(st.st_size);
+        uint8_t h[32];
+        pf_read_full(fd, h, 32, "locate header");
+        uint32_t magic = 0, ver = 0, w = 0;
+        std::memcpy(&magic, h + 0, 4);
+        std::memcpy(&ver, h + 4, 4);
+        std::memcpy(&n, h + 8, 8);
+        std::memcpy(&w, h + 16, 4);
+        pf_check(magic == MAGIC, "--sa-locate magic");
+        pf_check(ver == VERSION, "--sa-locate version");
+        pf_check(n == nExpect, "--sa-locate n != the corpus length");
+        pf_check(w == 4 || w == 8, "--sa-locate width must be 4 or 8");
+        pf_check(bytes == 32 + n * w, "--sa-locate file size != 32 + n*width");
+        width = w;
+        map = (const uint8_t*)::mmap(nullptr, bytes, PROT_READ, MAP_SHARED, fd, 0);
+        pf_check(map != MAP_FAILED, "mmap --sa-locate: " + std::string(std::strerror(errno)));
+        ::madvise((void*)map, bytes, MADV_RANDOM);
+        fprintf(stderr, "PILE_FINISH_LOCATE_ISA path=%s n=%llu width=%u bytes=%llu\n",
+                path.c_str(), (unsigned long long)n, width, (unsigned long long)bytes);
+    }
+    inline uint64_t at(uint64_t p) const {
+        pf_check(p < n, "locate lookup outside [0,n)");
+        uint64_t r;
+        if (width == 4) { uint32_t v; std::memcpy(&v, map + 32 + p * 4, 4); r = v; }
+        else std::memcpy(&r, map + 32 + p * 8, 8);
+        pf_check(r < n, "locate entry outside [0,n)");
+        return r;
+    }
+};
+
+// The rank-space bookkeeping that must survive a band boundary: the previous
+// band's last run's rank and end rank (for the adjacency test) and the counters.
+struct KasaiState {
+    uint64_t lastHeadRank = 0, lastEndRank = 0;
+    uint64_t gaps = 0, disorder = 0, noncontig = 0, bands = 0;
+    std::atomic<uint64_t> fallback{0};   // queries that needed the walk (rank holes)
+};
+
+struct LcpColumn {
+    int fd = -1;
+    uint64_t n = 0, escapeCount = 0, maxLcp = 0, flags = 0, fileBytes = 0;
+    std::vector<std::pair<uint64_t, uint64_t>> esc;   // (rank, exact value), sorted
+    uint64_t preads = 0, stagedBytes = 0, maxEnd = 0;
+    static void pread_at(int f, void* p, uint64_t len, uint64_t at, const char* what) {
+        char* c = (char*)p;
+        uint64_t done = 0;
+        while (done < len) {
+            const ssize_t g = ::pread(f, c + done, size_t(len - done), off_t(at + done));
+            pf_check(g > 0, std::string("pread ") + what);
+            done += uint64_t(g);
+        }
+    }
+    struct Band {
+        uint64_t base = 0;
+        std::vector<uint8_t> u8;
+        std::vector<std::pair<uint64_t, uint64_t>> deep;   // escaped ranks in this slice
+        uint64_t at(uint64_t rank) const {
+            pf_check(rank >= base && rank - base < u8.size(),
+                     "column read outside the staged band slice");
+            const uint8_t v = u8[size_t(rank - base)];
+            if (v != 255) return uint64_t(v);
+            size_t lo = 0, hi = deep.size();
+            while (lo < hi) {
+                const size_t mid = (lo + hi) / 2;
+                if (deep[mid].first < rank) lo = mid + 1; else hi = mid;
+            }
+            pf_check(lo < deep.size() && deep[lo].first == rank,
+                     "escaped column rank " + std::to_string(rank) + " has no escape entry");
+            return deep[lo].second;
+        }
+    };
+    void open(const std::string& path, uint64_t nExpect) {
+        static constexpr uint32_t MAGIC = 0x434c5853u;   // 'SXLC'
+        static constexpr uint32_t VERSION = 1;
+        static constexpr uint32_t HDR = 48;
+        fd = ::open(path.c_str(), O_RDONLY);
+        pf_check(fd >= 0, "open --lcp-column " + path + ": " + std::strerror(errno));
+        struct stat st {};
+        pf_check(::fstat(fd, &st) == 0, "stat --lcp-column");
+        fileBytes = uint64_t(st.st_size);
+        uint8_t h[HDR];
+        pf_read_full(fd, h, HDR, "lcp column header");
+        uint32_t magic = 0, version = 0;
+        std::memcpy(&magic, h + 0, 4);
+        std::memcpy(&version, h + 4, 4);
+        std::memcpy(&n, h + 8, 8);
+        uint64_t rows = 0;
+        std::memcpy(&rows, h + 16, 8);
+        std::memcpy(&escapeCount, h + 24, 8);
+        std::memcpy(&maxLcp, h + 32, 8);
+        std::memcpy(&flags, h + 40, 8);
+        pf_check(magic == MAGIC, "--lcp-column magic");
+        pf_check(version == VERSION, "--lcp-column version");
+        pf_check(n == nExpect, "--lcp-column n != the corpus length");
+        pf_check(rows == n, "--lcp-column rows != n");
+        pf_check(flags == 1, "--lcp-column flags: only u8+escape is defined");
+        pf_check(fileBytes == uint64_t(HDR) + n + escapeCount * 16,
+                 "--lcp-column file size != 48 + n + escapes*16");
+        esc.resize(size_t(escapeCount));
+        if (escapeCount) {
+            std::vector<uint8_t> buf(size_t(escapeCount * 16));
+            pread_at(fd, buf.data(), buf.size(), uint64_t(HDR) + n, "lcp column escapes");
+            for (size_t i = 0; i < esc.size(); ++i) {
+                std::memcpy(&esc[i].first, buf.data() + i * 16, 8);
+                std::memcpy(&esc[i].second, buf.data() + i * 16 + 8, 8);
+                pf_check(esc[i].first < n, "--lcp-column escape rank out of range");
+                pf_check(esc[i].second >= 255, "--lcp-column escape below the u8 cap");
+                if (i) pf_check(esc[i].first > esc[i - 1].first, "--lcp-column escapes not strictly ordered");
+            }
+        }
+        fprintf(stderr,
+                "PILE_FINISH_LCP_COLUMN path=%s n=%llu escapes=%llu max_lcp=%llu "
+                "bytes=%llu bytes_per_rank=%.4f\n",
+                path.c_str(), (unsigned long long)n, (unsigned long long)escapeCount,
+                (unsigned long long)maxLcp, (unsigned long long)fileBytes,
+                double(fileBytes) / double(n + 1));
+    }
+    // One pread per band: the b-th band's rank slice, contiguous and ascending.
+    void load(Band& b, uint64_t base, uint64_t len) {
+        pf_check(base + len <= n, "column band slice outside [0,n)");
+        b.base = base;
+        b.u8.resize(size_t(len ? len : 1));
+        if (len) pread_at(fd, b.u8.data(), len, uint64_t(48) + base, "lcp column slice");
+        b.deep.clear();
+        // patch the escapes that fall inside this slice (sorted by rank, so the
+        // slice is one contiguous range of the escape list)
+        size_t lo = 0, hi = esc.size();
+        while (lo < hi) {
+            const size_t mid = (lo + hi) / 2;
+            if (esc[mid].first < base) lo = mid + 1; else hi = mid;
+        }
+        for (size_t i = lo; i < esc.size() && esc[i].first < base + len; ++i)
+            b.deep.push_back(esc[i]);
+        ++preads;
+        stagedBytes += len;
+        if (base + len > maxEnd) maxEnd = base + len;
+    }
+};
+
 static void fp_self_check(SlimFingerprint<CorpusText>& fh, const CorpusText& text, uint64_t n, uint64_t tau) {
     uint64_t checks = std::min<uint64_t>(256, n);
     for (uint64_t k = 0; k < checks; ++k) {
@@ -3111,9 +3626,12 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string(argv[1]) == "--selftest-repair-chunks") return selftest_repair_chunks();
         if (argc == 2 && std::string(argv[1]) == "--selftest-sweep-monoid") return selftest_sweep_monoid();
         if (argc == 3 && std::string(argv[1]) == "--selftest-seam-spool") return selftest_seam_spool(argv[2]);
-        std::string prefix, corpus, remap, out, bridgeDir, sampleCheck, wmPath;
         uint64_t chiExpect = 0, sampleCount = 1024, pollTimeout = 86400, ramBudget = 1ull << 30;
         int threads = int(std::thread::hardware_concurrency());
+        std::string prefix, corpus, remap, out, bridgeDir, sampleCheck, wmPath;
+        std::string checkClaimsDir;   // PROB-CHI: standalone checker mode
+        std::string lcpColumnPath;    // KASAI: the prebuilt LCP column (--lcp-column)
+        std::string locateIsaPath;    // KASAI: the locate table (--sa-locate)
         uint64_t repairChunkRuns = 0; // experimental exact-checkpoint planner
         bool keepRlebwt = false, keepPfck = false;
         for (int i = 1; i < argc; ++i) {
@@ -3125,6 +3643,9 @@ int main(int argc, char** argv) {
             if (a == "--prefix") prefix = need("--prefix");
             else if (a == "--corpus") corpus = need("--corpus");
             else if (a == "--remap") remap = need("--remap");
+            else if (a == "--check-claims") checkClaimsDir = need("--check-claims");
+            else if (a == "--lcp-column") lcpColumnPath = need("--lcp-column");
+            else if (a == "--sa-locate") locateIsaPath = need("--sa-locate");
             else if (a == "--output") out = need("--output");
             else if (a == "--bridge-dir") bridgeDir = need("--bridge-dir");
             else if (a == "--witness-sample-check") sampleCheck = need("--witness-sample-check");
@@ -3139,10 +3660,12 @@ int main(int argc, char** argv) {
             else if (a == "--keep-pfck") keepPfck = true;
             else pf_fail("unknown argument " + a);
         }
-        pf_check(!prefix.empty() && !corpus.empty() && !remap.empty() && !out.empty(),
+        pf_check(!checkClaimsDir.empty() ||
+                 (!prefix.empty() && !corpus.empty() && !remap.empty() && !out.empty()),
                  "usage: pile_finish --prefix MERGED/frag --corpus CORPUS --remap MAP.bin --output CONTAINER.sxi2 "
                  "[--bridge-dir DIR] [--witness-sample-check BANKED.sA] [--chi-expect N] [--threads N] "
-                 "[--keep-rlebwt] [--keep-pfck] [--poll-timeout S] [--repair-chunk-runs N]");
+                 "[--keep-rlebwt] [--keep-pfck] [--poll-timeout S] [--repair-chunk-runs N] "
+                 "[--lcp-column COLUMN.sxlc --sa-locate ISA.sxis]");
         pf_check(!repairChunkRuns || repairChunkRuns >= 1024, "experimental repair chunks require at least 1024 runs");
         double last = tnow();
         pf_prof_start();
@@ -3150,6 +3673,17 @@ int main(int argc, char** argv) {
             g_pfAccessOn.store(*acc && *acc != '0', std::memory_order_relaxed);
         uint8_t remapTable[256];
         load_remap_table(remap, remapTable);
+        if (!checkClaimsDir.empty()) {
+            // PROB-CHI STANDALONE CHECKER: `--check-claims DIR --corpus C --remap M`.
+            // No pieces, no merge, no rlebwt, no pfck, no structure - only the
+            // claims and the text. This is the artifact that must be runnable at
+            // the pile, where no banked container exists to cmp against.
+            CorpusText text(corpus, remapTable);
+            pf_check_claims(text, checkClaimsDir, threads);
+            fprintf(stderr, "PILE_FINISH_CHECK_CLAIMS_DONE dir=%s corpus=%s n=%llu threads=%d\n",
+                    checkClaimsDir.c_str(), corpus.c_str(), (unsigned long long)text.size(), threads);
+            return 0;
+        }
         PieceSource src;
         src.prefix = prefix;
         src.pollTimeout = pollTimeout;
@@ -3164,6 +3698,32 @@ int main(int argc, char** argv) {
         const uint64_t n = src.n, N = n + 10;
         uint64_t R = src.R;
         pf_check(text.size() == n, "corpus size != the merge's text length (adapter: T[i]=REMAP[corpus[i]])");
+
+        // ---- KASAI: the prebuilt LCP column (kasai-finish), proved HERE, before
+        // a byte of the sweep runs: n identity, the file's own arithmetic, and a
+        // strictly ordered escape list. `PILE_FINISH_KASAI=0` keeps the old
+        // SlimFingerprint walk on the identical inputs (the A/B arm).
+        const bool kasaiOff = pf_env_u64("PILE_FINISH_KASAI", 1, 0, 1) == 0;
+        const int kasaiAudit = int(pf_env_u64("PILE_FINISH_KASAI_AUDIT", 0, 0, 2));
+        LcpColumn lcpCol;
+        LocateIsa locateIsa;
+        KasaiState kasaiState;
+        const bool kasaiOn = !lcpColumnPath.empty() && !kasaiOff;
+        if (kasaiOn) {
+            pf_check(!locateIsaPath.empty(),
+                     "the Kasai arm needs the locate table: --sa-locate ISA.sxis "
+                     "(a run's rank is not derivable from the run lengths)");
+            lcpCol.open(lcpColumnPath, n);
+            locateIsa.open(locateIsaPath, n);
+        }
+        else if (!lcpColumnPath.empty())
+            fprintf(stderr, "PILE_FINISH_LCP_COLUMN_IGNORED path=%s reason=PILE_FINISH_KASAI=0\n",
+                    lcpColumnPath.c_str());
+        else
+            pf_check(!kasaiAudit, "PILE_FINISH_KASAI_AUDIT=1 requires --lcp-column");
+        fprintf(stderr, "PILE_FINISH_KASAI arm=%s audit=%d column=%s\n",
+                kasaiOn ? "on" : "off", int(kasaiAudit),
+                lcpColumnPath.empty() ? "none" : lcpColumnPath.c_str());
 
         // ---- cyclic determination (v1 parity: has_rs || !has_nl over the
         // normalized text, which is the corpus byte stream - identity-gated)
@@ -3254,6 +3814,49 @@ int main(int argc, char** argv) {
         SlimSeamWork workSlim(std::max<uint64_t>(1000000000ULL, 128 * n), UINT64_MAX);
         fhSlim.seam_policy(workSlim, tau, "pile-finish-corpus");
         fp_self_check(fhSlim, text, n, tau);
+        // ---- PROB-CHI: install the tier. TRUST=1 spools a position-bucketed
+        // claims list (checked later / standalone), TRUST=2 checks fused in the
+        // proposing worker. Both take exactness away from the constructor and
+        // hand it to the checker; nothing about the ANSWERS changes (the sink
+        // path returns the same `guess` the verifier would have confirmed), so
+        // a clean corpus must produce a byte-identical container either way.
+        const int trustMode = int(pf_env_u64("PILE_FINISH_LCE_TRUST", 0, 0, 3));
+        const std::string claimsDir = [] {
+            const char* e = std::getenv("PILE_FINISH_CLAIMS_DIR");
+            return std::string(e ? e : "");
+        }();
+        std::unique_ptr<PfClaimSpool> claimSpool;
+        PfClaimFused fusedSink;
+        PfClaimNull nullSink;
+        fusedSink.text = &text;
+        if (trustMode == 1) {
+            // The claims tier exists to certify the LCE WALKS. In the Kasai arm
+            // there are no band walks left to claim about, so the tier would
+            // certify nothing while looking like a gate: refuse.
+            pf_check(!kasaiOn, "PILE_FINISH_LCE_TRUST=1 is incompatible with the Kasai arm "
+                               "(no LCE queries to claim); use TRUST=0/2/3 or PILE_FINISH_KASAI=0");
+            pf_check(!claimsDir.empty(), "PILE_FINISH_LCE_TRUST=1 requires PILE_FINISH_CLAIMS_DIR");
+            claimSpool = std::make_unique<PfClaimSpool>(claimsDir, n);
+            fhSeam.sink = claimSpool.get();
+            fhSlim.sink = claimSpool.get();
+        } else if (trustMode == 2) {
+            fhSeam.sink = &fusedSink;
+            fhSlim.sink = &fusedSink;
+        } else if (trustMode == 3) {
+            fhSeam.sink = &nullSink;   // FLOOR ARM: measure, certify nothing
+            fhSlim.sink = &nullSink;
+        }
+        const uint64_t lceFault = pf_env_u64("PILE_FINISH_LCE_FAULT", 0, 0, 1ull << 40);
+        const bool trackDegrees = pf_env_u64("PILE_FINISH_PROBE_DEGREES", 0, 0, 1) != 0;
+        fhSeam.faultEvery = fhSlim.faultEvery = lceFault;
+        fhSeam.trackDegrees = fhSlim.trackDegrees = trackDegrees;
+        fprintf(stderr, "PILE_FINISH_TIER lce_trust=%d claims_dir=%s lce_fault=%llu probe_degrees=%d "
+                        "tier=%s constructor=%s\n",
+                trustMode, claimsDir.empty() ? "-" : claimsDir.c_str(),
+                (unsigned long long)lceFault, int(trackDegrees),
+                trustMode == 0 ? "T0-full" :
+                (trustMode == 3 ? "T2-floor-only(measurement,not-a-tier)" : "T3-hash-trust+checker"),
+                trustMode == 0 ? "byte-verifies-every-answer" : "emits-claims-only");
         phase("fingerprints", last);
 
         LceWrap seamLce{&fhSeam, {}, n};
@@ -3340,11 +3943,12 @@ int main(int argc, char** argv) {
         struct BandSlot {
             std::vector<NRun> nbuf;
             std::vector<uint64_t> gidx;   // global normalized run index per nbuf entry
+            std::vector<uint64_t> rk;     // KASAI: the run's BWT rank base (NRun::rk)
             std::vector<uint64_t> topLcp, interior;
             std::vector<RawRun> raws;
             uint64_t prevTail = 0;
             size_t cnt = 0;
-            explicit BandSlot(size_t reserve) { nbuf.reserve(reserve); gidx.reserve(reserve); }
+            explicit BandSlot(size_t reserve) { nbuf.reserve(reserve); gidx.reserve(reserve); rk.reserve(reserve); }
         };
         BandSlot slots[2]{BandSlot(1 << 17), BandSlot(1 << 17)};
         BandSlot* feedTarget = &slots[0];
@@ -3372,6 +3976,7 @@ int main(int argc, char** argv) {
             }
             feedTarget->nbuf.push_back(v);
             feedTarget->gidx.push_back(idx);
+            feedTarget->rk.push_back(v.rk);
             g_pfPhase.store(PF_REPAIR, std::memory_order_relaxed);
         };
         rs.emit = bandSink;
@@ -3490,22 +4095,167 @@ int main(int argc, char** argv) {
             // a per-thread local would make each worker walk the whole band
             // (96x the queries, which the seam-work journal refuses loudly).
             auto next = std::make_shared<std::atomic<size_t>>(0);
-            return std::function<void(int)>([&, cnt, &nb, &gx, prevTailS, next](int t) {
+            if (!kasaiOn) {
+                // THE OLD ARM (`PILE_FINISH_KASAI=0`), unchanged: every answer is
+                // a full SlimFingerprint LCE walk, re-verified symbol by symbol.
+                return std::function<void(int)>([&, cnt, &nb, &gx, prevTailS, next](int t) {
+                    slim_set_thread_shard(unsigned(t));
+                    for (;;) {
+                        size_t i = next->fetch_add(1);
+                        if (i >= cnt) break;
+                        const NRun& v = nb[i];
+                        uint64_t first = v.h, tail = v.t;
+                        pf_check(first < n, "position resolution failed");
+                        if (v.len == 1) pf_check(first == tail, "head-SA value/range or singleton mismatch");
+                        pf_check(tail < n, "position resolution failed");
+                        uint64_t prev = gx[i] == 0 ? 0 : (i ? nb[i - 1].t : prevTailS);
+                        pf_check(prev < n, "previous position resolution failed");
+                        s.topLcp[i] = gx[i] ? slimLce(prev, first) : 0;
+                        s.interior[i] = v.len == 1 ? INF : slimLce(first, tail);
+                    }
+                    slimLce.flush_thread();
+                });
+            }
+            // ---- THE KASAI ARM --------------------------------------------------
+            // rank = ISA[head] from the LOCATE TABLE (exact), the value from ONE
+            // staged column slice, and - only where the run stream skips a rank
+            // (the seam-class holes) - the old walk for that single query, because
+            // an adjacent-rank LCP is not defined across a hole.
+            //
+            // Two phases inside ONE pool job: the lookups are random reads and
+            // must be parallel, but the slice bounds are only known once every
+            // run's rank is. The last worker to arrive stages the slice, the rest
+            // wait on a flag; the claim counter is reset behind that barrier.
+            auto headRank = std::make_shared<std::vector<uint64_t>>(cnt);
+            auto tailRank = std::make_shared<std::vector<uint64_t>>(cnt);
+            auto band = std::make_shared<LcpColumn::Band>();
+            auto arrived = std::make_shared<std::atomic<int>>(0);
+            auto staged = std::make_shared<std::atomic<int>>(0);
+            const int P = std::max(1, poolThreads);
+            const uint64_t prevEndS = kasaiState.lastEndRank;
+            const uint64_t prevHeadS = kasaiState.lastHeadRank;
+            const bool firstBand = kasaiState.bands == 0;
+            ++kasaiState.bands;
+            return std::function<void(int)>(
+                [&, cnt, &nb, &gx, prevTailS, next, headRank, band, arrived, staged,
+                 prevEndS, prevHeadS, firstBand, P, tailRank](int t) {
                 slim_set_thread_shard(unsigned(t));
+                // PHASE 1: every run's exact rank, in parallel.
                 for (;;) {
-                    size_t i = next->fetch_add(1);
+                    const size_t i = next->fetch_add(1);
+                    if (i >= cnt) break;
+                    const uint64_t rk = locateIsa.at(nb[i].h);
+                    pf_check(rk < n, "KASAI: run head rank outside [0,n)");
+                    (*headRank)[i] = rk;
+                    // A run's rows are USUALLY the contiguous rank interval
+                    // [rk, rk+len-1], but not always: the class/dollar repair can
+                    // leave a HOLE inside a run (measured at 1 GB: a len-2 run
+                    // whose ranks are {4576075, 4576077}). The interior answer is
+                    // then the min-LCP over the interval between the TWO ENDPOINT
+                    // RANKS, which is what the tail lookup below gives - so the
+                    // tail's rank is taken from the locate table, never assumed
+                    // to be rk+len-1.
+                    (*tailRank)[i] = nb[i].len >= 2 ? locateIsa.at(nb[i].t) : rk;
+                    pf_check((*tailRank)[i] < n, "KASAI: run tail rank outside [0,n)");
+                }
+                // BARRIER: last arrival stages the slice.
+                if (arrived->fetch_add(1) + 1 == P) {
+                    uint64_t lo = ~uint64_t(0), hi = 0;
+                    for (size_t i = 0; i < cnt; ++i) {
+                        // Both ENDPOINT ranks are what the column answers need:
+                        // a run's own rows can skip a rank (a hole inside a run),
+                        // so hi is not headRank+len-1 in general.
+                        lo = std::min({lo, (*headRank)[i], (*tailRank)[i]});
+                        hi = std::max({hi, (*headRank)[i], (*tailRank)[i]});
+                        if (nb[i].len >= 2 && (*tailRank)[i] != (*headRank)[i] + nb[i].len - 1)
+                            kasaiState.noncontig += 1;
+                        // The stream is ascending EXCEPT for the terminal row,
+                        // which the transducer emits late (measured: rank 1186920
+                        // arrives after rank 1194188 at 100 MB). Order is not
+                        // needed for correctness - only ADJACENCY is (the walk
+                        // fallback covers the rest) - so this is counted, not
+                        // refused.
+                        if (i && (*headRank)[i] <= (*headRank)[i - 1])
+                            kasaiState.disorder += 1;
+                        const uint64_t prevEnd = i ? (*headRank)[i - 1] + nb[i - 1].len : prevEndS;
+                        if (prevEnd != (*headRank)[i]) kasaiState.gaps += 1;
+                    }
+                    if (!firstBand && (*headRank)[0] <= prevHeadS) kasaiState.disorder += 1;
+                    const uint64_t base = lo ? lo - 1 : 0;
+                    lcpCol.load(*band, base, hi - base + 1);
+                    kasaiState.lastHeadRank = (*headRank)[0];
+                    kasaiState.lastEndRank = (*headRank)[cnt - 1] + nb[cnt - 1].len;
+                    next->store(0);
+                    staged->store(1, std::memory_order_release);
+                }
+                while (!staged->load(std::memory_order_acquire)) std::this_thread::yield();
+                // PHASE 2: the column reads.
+                for (;;) {
+                    const size_t i = next->fetch_add(1);
                     if (i >= cnt) break;
                     const NRun& v = nb[i];
-                    uint64_t first = v.h, tail = v.t;
-                    pf_check(first < n, "position resolution failed");
-                    if (v.len == 1) pf_check(first == tail, "head-SA value/range or singleton mismatch");
-                    pf_check(tail < n, "position resolution failed");
-                    uint64_t prev = gx[i] == 0 ? 0 : (i ? nb[i - 1].t : prevTailS);
-                    pf_check(prev < n, "previous position resolution failed");
-                    s.topLcp[i] = gx[i] ? slimLce(prev, first) : 0;
-                    s.interior[i] = v.len == 1 ? INF : slimLce(first, tail);
+                    const uint64_t r = (*headRank)[i];
+                    const uint64_t prevEnd = i ? (*headRank)[i - 1] + nb[i - 1].len : prevEndS;
+                    uint64_t top = 0;
+                    if (gx[i]) {
+                        if (prevEnd == r) top = band->at(r - 1);
+                        else {
+                            // THE HOLE: the run stream skipped a rank, so this
+                            // run's predecessor is not rank-adjacent and col[r-1]
+                            // is not the answer. One walk, counted (the holes are
+                            // the seam classes: 4 at 100 MB, 30 at 1 GB).
+                            const uint64_t prevPos = i ? nb[i - 1].t : prevTailS;
+                            pf_check(prevPos < n, "previous position resolution failed");
+                            top = slimLce(prevPos, v.h);
+                            kasaiState.fallback.fetch_add(1, std::memory_order_relaxed);
+                        }
+                    }
+                    uint64_t inter = INF;
+                    if (v.len >= 2) {
+                        // min-LCP over the rank interval between the run's two
+                        // ENDPOINT RANKS (exact even when the run's own rows skip
+                        // a rank: LCE(SA[a],SA[c]) = min col[a..c-1] for any a<c).
+                        const uint64_t rt = (*tailRank)[i];
+                        const uint64_t a = std::min(r, rt), c = std::max(r, rt);
+                        pf_check(c > a, "KASAI: an interior run collapsed to one rank");
+                        inter = ~uint64_t(0);
+                        for (uint64_t t2 = a; t2 < c; ++t2) inter = std::min(inter, band->at(t2));
+                        pf_check(inter != ~uint64_t(0), "empty interior interval");
+                    }
+                    if (kasaiAudit) {
+                        // THE AUDIT ARM: the column answer must equal the LCE walk
+                        // it replaces, entry for entry - the exactness gate at
+                        // fixture scale (KASAI_FINISH_DESIGN.md gate 6).
+                        const uint64_t first = v.h, tail = v.t;
+                        pf_check(first < n && tail < n, "position resolution failed");
+                        if (v.len == 1) pf_check(first == tail, "head-SA value/range or singleton mismatch");
+                        const uint64_t prev = gx[i] == 0 ? 0 : (i ? nb[i - 1].t : prevTailS);
+                        const uint64_t topOld = gx[i] ? slimLce(prev, first) : 0;
+                        const uint64_t intOld = v.len == 1 ? INF : slimLce(first, tail);
+                        if (topOld != top) {
+                            if (kasaiAudit >= 2 && g_kasaiDbg.fetch_add(1) == 0) {
+                                const size_t lo = i > 80 ? i - 80 : 0;
+                                for (size_t j = lo; j <= i + 4 && j < cnt; ++j)
+                                    fprintf(stderr, "KASAI_RUN j=%zu rank=%llu len=%llu head=%llu tail=%llu\n",
+                                            j, (unsigned long long)(*headRank)[j],
+                                            (unsigned long long)nb[j].len,
+                                            (unsigned long long)nb[j].h,
+                                            (unsigned long long)nb[j].t);
+                            }
+                            if (kasaiAudit < 2)
+                                pf_fail("KASAI AUDIT topLcp mismatch at run " + std::to_string(r) +
+                                        ": column=" + std::to_string(top) + " walk=" + std::to_string(topOld));
+                            pf_check(g_kasaiDbg.load() <= 64,
+                                     "KASAI AUDIT: column and walk disagree (see KASAI_DBG lines)");
+                        }
+                        if (intOld != inter)
+                            pf_fail("KASAI AUDIT interior mismatch at run " + std::to_string(r) +
+                                    ": column=" + std::to_string(inter) + " walk=" + std::to_string(intOld));
+                    }
+                    s.topLcp[i] = top;
+                    s.interior[i] = inter;
                 }
-                slimLce.flush_thread();
+                if (kasaiAudit) slimLce.flush_thread();
             });
         };
         // Verification dispatched, ordered fold continues on this thread.
@@ -3554,6 +4304,7 @@ int main(int argc, char** argv) {
             // query per band boundary (measured: +571 witnesses at 100m).
             s.nbuf.clear();
             s.gidx.clear();
+            s.rk.clear();
             s.cnt = 0;
         };
         // Stage 1 (serial, ordered): the exact transducer transits every band
@@ -3604,7 +4355,7 @@ int main(int argc, char** argv) {
                         (unsigned long long)rs.terminal, (unsigned long long)N, (unsigned long long)R);
             }
             s.prevTail = prevTail;
-            pf_check(s.nbuf.empty() && s.gidx.empty(), "band slot not empty at feed");
+            pf_check(s.nbuf.empty() && s.gidx.empty() && s.rk.empty(), "band slot not empty at feed");
             feedTarget = &s;
             {
                 PfRegion r("repair-feed", PF_REPAIR);
@@ -3709,6 +4460,23 @@ int main(int argc, char** argv) {
         // the band runs: the state machine needs ALL rNorm runs (v1 feeds
         // every run; the production sweep's last events live here).
         rs.finishStream();
+        if (kasaiOn) {
+            // The rank space is not covered exactly: the seam classes leave
+            // HOLES (a row the class's runs do not describe). What must hold is
+            // that the stream stays inside [0,n) in ascending order (asserted per
+            // band), that the walks ran only at holes, and that the highest rank
+            // any band reached is inside the space. The exactness of every value
+            // is the AUDIT arm's job, not this counter's.
+            pf_check(lcpCol.maxEnd <= n, "KASAI CLOSURE: a band's rank slice runs past n");
+            fprintf(stderr,
+                    "PILE_FINISH_KASAI_CLOSURE bands=%llu rank_holes=%llu disorder=%llu "
+                    "noncontiguous_runs=%llu walk_fallbacks=%llu max_rank_end=%llu n=%llu\n",
+                    (unsigned long long)kasaiState.bands, (unsigned long long)kasaiState.gaps,
+                    (unsigned long long)kasaiState.disorder,
+                    (unsigned long long)kasaiState.noncontig,
+                    (unsigned long long)kasaiState.fallback.load(),
+                    (unsigned long long)lcpCol.maxEnd, (unsigned long long)n);
+        }
         // The final flush's coalesced tail runs continue the LAST band's slot:
         // it is empty and its prevTail is that band's last emitted tail, so the
         // same query coordinates apply. Verification + advance run here, after
@@ -3746,6 +4514,16 @@ int main(int argc, char** argv) {
             advanceWall += tnow() - ta;
             r.close(); advAcc.add(r);
         }
+        // THE KASAI ARM's own accounting: what the column cost the finish (I/O
+        // and bytes) against what the walks used to cost (the fingerprint's
+        // verified symbols and hash probes, journaled by fhSlim.report below).
+        if (kasaiOn)
+            fprintf(stderr,
+                    "PILE_FINISH_LCP_COLUMN_READS preads=%llu staged_bytes=%llu escapes=%llu "
+                    "max_lcp=%llu audit=%d arm=kasai\n",
+                    (unsigned long long)lcpCol.preads, (unsigned long long)lcpCol.stagedBytes,
+                    (unsigned long long)lcpCol.escapeCount, (unsigned long long)lcpCol.maxLcp,
+                    int(kasaiAudit));
         fprintf(stderr, "SWEEP_PHASE_WALLS repair=%.1f lce=%.1f advance_witness=%.1f lce_threads=%d\n",
                 repairWall, lceWall, advanceWall, std::max(1, std::min(threads, 256)));
         // v3 anatomy: repairWall = pieceWait + bandRead + feed + residual.
@@ -3777,6 +4555,42 @@ int main(int argc, char** argv) {
         // ladder-probe counts to attribute the LCE wall honestly).
         fhSlim.report("pile-finish-corpus");
         fhSeam.report("pile-finish-seam");
+        // ---- PROB-CHI: close the ledger and (optionally) run the checker.
+        // COMPLETENESS is a counter equality, not a promise: every LCE answer
+        // that was HASH-DERIVED must have become a claim. `calls` counts every
+        // segment query; the answers that were already byte-exact (the
+        // <=16-symbol quick path) are not hash-derived and carry no claim.
+        if (trustMode) {
+            const uint64_t hashAnswers = (fhSlim.calls.read() - fhSlim.exactFast.read()) +
+                                         (fhSeam.calls.read() - fhSeam.exactFast.read());
+            if (trustMode == 1) {
+                claimSpool->close();
+                pf_check(claimSpool->claimCount.load() == hashAnswers,
+                         "claims list is INCOMPLETE: " + std::to_string(claimSpool->claimCount.load()) +
+                         " claims for " + std::to_string(hashAnswers) + " hash-derived answers");
+                fprintf(stderr, "PILE_FINISH_CLAIMS_LEDGER hash_answers=%llu claims=%llu "
+                                "exact_fast=%llu span_symbols=%llu complete=1\n",
+                        (unsigned long long)hashAnswers, (unsigned long long)claimSpool->claimCount.load(),
+                        (unsigned long long)(fhSlim.exactFast.read() + fhSeam.exactFast.read()),
+                        (unsigned long long)claimSpool->spanSymbols.load());
+                if (pf_env_u64("PILE_FINISH_CHECK_CLAIMS", 0, 0, 1)) pf_check_claims(text, claimsDir, threads);
+            } else if (trustMode == 3) {
+                pf_check(nullSink.claimCount.load() == hashAnswers,
+                         "floor ledger mismatch: " + std::to_string(nullSink.claimCount.load()) +
+                         " claims for " + std::to_string(hashAnswers) + " hash-derived answers");
+                fprintf(stderr, "PILE_FINISH_CLAIMS_LEDGER hash_answers=%llu claims=%llu checked=0 "
+                                "floor_arm=1 NOT_CERTIFIED=1 complete=1\n",
+                        (unsigned long long)hashAnswers, (unsigned long long)nullSink.claimCount.load());
+            } else {
+                pf_check(fusedSink.claimCount.load() == hashAnswers,
+                         "fused claim ledger mismatch: " + std::to_string(fusedSink.claimCount.load()) +
+                         " claims for " + std::to_string(hashAnswers) + " hash-derived answers");
+                fprintf(stderr, "PILE_FINISH_CLAIMS_LEDGER hash_answers=%llu claims=%llu checked_fused=1 "
+                                "symbols_compared=%llu complete=1 violations=0\n",
+                        (unsigned long long)hashAnswers, (unsigned long long)fusedSink.claimCount.load(),
+                        (unsigned long long)fusedSink.comparedSymbols.load());
+            }
+        }
         pf_check(::close(sparseFd) == 0, "close sparse scratch");
         if (bridge) {
             if (bTailAvail) {
