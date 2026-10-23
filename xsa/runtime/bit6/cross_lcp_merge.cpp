@@ -5566,6 +5566,9 @@ int main_impl(int argc, char** argv) {
         }
         const std::string capFlag = flag("--bin-live-cap");        const bool binLiveCapGiven = !capFlag.empty();
         const U binLiveCap = binLiveCapGiven ? std::stoull(capFlag) : 0;
+        const std::string tapeEmit = flag("--tape-emit");
+        const U tapeEmitChunk = flag("--tape-emit-chunk").empty()
+                                    ? 0 : std::stoull(flag("--tape-emit-chunk"));
         return binbwt_main(flag("--binbwt"),flag("--remap"),flag("--out-prefix"),
         threads,
         // THE TARGET SIZE: the leaf bound, automatic by default (0). Depth is an
@@ -5601,7 +5604,7 @@ int main_impl(int argc, char** argv) {
         flag("--bin-level-bytes").empty()?1:std::stoull(flag("--bin-level-bytes")),
         flag("--bin-mode")!="cyclic", has("--bin-freq-sched"),
         flag("--bin-split").empty()?0:std::stoull(flag("--bin-split")),
-        flag("--bin-sink")=="serial", has("--bin-probe"), has("--bin-fill-only"), bwo);
+        flag("--bin-sink")=="serial", has("--bin-probe"), has("--bin-fill-only"), bwo,tapeEmit,tapeEmitChunk);
     }
     U kway = 2;
     if (!flag("--kway").empty()) {

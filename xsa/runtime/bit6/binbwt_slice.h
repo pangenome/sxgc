@@ -1288,6 +1288,9 @@ struct BinWindowOpts {
     // emit SA[j*k] for every rank j*k to `saSamplePath` during the emit pass.
     U saSampleK = 0;
     std::string saSamplePath;
+    // THE TAPE-EMIT PATH: an external SA stream to build the product from.
+    std::string tapeEmitSa;
+    U tapeEmitChunk = 0;
     // PHRASE RADIX (off by default; the product path is unchanged). `phraseOpts`
     // is the policy the caller asked for; `phrase` is the dictionary built from
     // it, and it is null whenever the flag is absent or the dictionary turned out
@@ -3575,11 +3578,118 @@ static void bin_phrase_journal_work(const BinWork& w, const PhraseDict* pd) {
 }
 
 // ---- producer entry point: the parallel sink publishes the concatenated bins
+// ============================ THE TAPE-EMIT PATH ==========================
+// Emit the product's band stream from an EXTERNAL SA stream (the tape machine's
+// `scatter_sort` output) instead of from the bin tree. Everything downstream -
+// the sink, the band pieces, the .rlebwt extents, the progress records, the
+// padding rows, the seam classes - is the EXISTING emission code, untouched:
+// this only replaces "where the rank-ordered rows come from".
+//
+// Per row the sink needs a packed word: (tail = pos+1, sym = the preceding byte,
+// hit = a sparse seam target). tail and sym are both cheap; `hit` is a
+// membership test against the sink's own (small, ascending) target list, and the
+// preceding byte is a single read at pos-1. At pile scale both want to move into
+// scatter_sort's sequential pass (which already stands on every position); this
+// driver takes the simple correct form first and MEASURES it, so the cost of the
+// simple form is known rather than assumed.
+static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
+                      U threads, const std::string& saPath, U chunk) {
+    const U n = text.n;
+    std::unique_ptr<BinBandSink> sink(new BinBandSink(prefix, text, n, dollar, threads));
+    // Sparse membership over the seam targets: a few thousand positions. A tiny
+    // open-addressed table (power-of-two, linear probe) keeps the per-row test at
+    // one probe instead of a 12-deep binary search; this header deliberately does
+    // not include <unordered_set>, and at pile scale the per-row test is 1.3e12
+    // of them.
+    std::vector<U> tgt(sink->joinTargets().begin(), sink->joinTargets().end());
+    U tcap = 16;
+    while (tcap < tgt.size() * 4 + 16) tcap <<= 1;
+    std::vector<U> tslot(tcap, 0);          // 0 = empty (a target is never position 0 plus 1)
+    auto thash = [](U x) { return (x * 0x9e3779b97f4a7c15ull) >> 40; };
+    for (U t : tgt) {
+        U i = thash(t + 1) & (tcap - 1);
+        while (tslot[i]) i = (i + 1) & (tcap - 1);
+        tslot[i] = t + 1;
+    }
+    auto isTarget = [&](U p) {
+        if (tgt.empty()) return false;
+        U i = thash(p + 1) & (tcap - 1);
+        for (;;) {
+            const U v = tslot[i];
+            if (!v) return false;
+            if (v == p + 1) return true;
+            i = (i + 1) & (tcap - 1);
+        }
+    };
+    std::fprintf(stderr, "TAPE_EMIT_START n=%llu targets=%zu chunk=%llu prefix=%s\n",
+                 (unsigned long long)n, tgt.size(), (unsigned long long)chunk,
+                 prefix.c_str());
+    const double t0 = now_sec();
+    int fd = ::open(saPath.c_str(), O_RDONLY);
+    require(fd >= 0, "tape-emit: cannot open the SA stream");
+    struct stat st{};
+    require(::fstat(fd, &st) == 0, "tape-emit: stat SA stream");
+    U hdr[6] = {0, 0, 0, 0, 0, 0};
+    require(::pread(fd, hdr, 48, 0) == 48, "tape-emit: SA header");
+    require(hdr[2] == n, "tape-emit: SA stream is for a different corpus");
+    const U entries = (U((unsigned long long)st.st_size) - 48) / 8;
+    require(entries == n, "tape-emit: SA entry count != n");
+    std::vector<U> pos(chunk);
+    std::vector<U> words(chunk);
+    U baseRow = 0, hits = 0;
+    double tRead = 0, tWord = 0, tPub = 0;
+    while (baseRow < n) {
+        const U want = std::min<U>(chunk, n - baseRow);
+        const double tr = now_sec();
+        size_t got = 0, bytes = size_t(want) * 8;
+        while (got < bytes) {
+            ssize_t r = ::pread(fd, ((char*)pos.data()) + got, bytes - got,
+                                off_t(48 + (unsigned long long)baseRow * 8 + got));
+            require(r > 0, "tape-emit: short SA read");
+            got += size_t(r);
+        }
+        tRead += now_sec() - tr;
+        const double tw = now_sec();
+        for (U i = 0; i < want; ++i) {
+            const U p = pos[i];
+            require(p < n, "tape-emit: SA position out of range");
+            // The BWT symbol of this row is M[p-1], and position 0 is the
+            // PADDING row whose symbol is 2 - exactly the fill pass's
+            // `p ? at(p-1) : 2` (binbwt_slice.h fill loop). Getting this wrong
+            // costs the last unit of the `counts[2] == 10` terminal-coverage
+            // check: 9 padding symbols instead of 10.
+            const uint8_t sym = p ? text.at(p - 1) : uint8_t(2);
+            const bool hit = isTarget(p);
+            if (hit) ++hits;
+            words[i] = bin_word(p + 1, sym, hit);
+        }
+        tWord += now_sec() - tw;
+        const double tp = now_sec();
+        sink->publishBin(0, words.data(), want, baseRow);
+        tPub += now_sec() - tp;
+        baseRow += want;
+    }
+    ::close(fd);
+    const double tEnd0 = now_sec();
+    sink->finish();
+    const double tEnd = now_sec() - tEnd0;
+    std::error_code ec;
+    fs::remove(sink->dir, ec);
+    std::fprintf(stderr,
+        "TAPE_EMIT_DONE rows=%llu runs=%llu hits=%llu wall=%.2f read_s=%.2f word_s=%.2f "
+        "publish_s=%.2f finish_s=%.2f\n",
+        (unsigned long long)n, (unsigned long long)sink->runs(),
+        (unsigned long long)hits, now_sec() - t0, tRead, tWord, tPub, tEnd);
+}
+
 static int binbwt_main(const std::string& path, const std::string& mapPath,
                        const std::string& prefix, U threads, U targetSize,
                        U depthCap, U liveCap, bool liveCapGiven, U levelBytes,
                        bool dollar, bool freqSched, U splitSize, bool serialSink,
-                       bool probe, bool fillOnly, BinWindowOpts wopt) {
+                       bool probe, bool fillOnly, BinWindowOpts wopt,
+                       const std::string& tapeEmitSa, U tapeEmitChunk) {
+    wopt.tapeEmitSa = tapeEmitSa;
+    wopt.tapeEmitChunk = tapeEmitChunk;
     // `--bin-fill-only` implies the probe's "write nothing at all" contract.
     if (fillOnly) probe = true;
     // The window scratch tree: the caller's --bin-window-dir if it gave one,
@@ -3618,6 +3728,14 @@ static int binbwt_main(const std::string& path, const std::string& mapPath,
     CorpusText text;
     text.open({segment}, true);
     require(text.n, "bin-bwt empty corpus");
+    // ---- THE TAPE-EMIT BRANCH (--tape-emit SA): skip the bin tree entirely and
+    // emit the product from an external SA stream. Everything downstream of the
+    // sink is the existing emission path.
+    if (!wopt.tapeEmitSa.empty()) {
+        tape_emit(prefix, text, dollar, threads, wopt.tapeEmitSa,
+                  wopt.tapeEmitChunk ? wopt.tapeEmitChunk : (U(1) << 22));
+        return 0;
+    }
     // ---- PHRASE RADIX: one parse pass, before any window exists -------------
     // The dictionary is built from the corpus the tree is about to build, off the
     // product path, and journalled so a second run can be diffed (the parse's
