@@ -3636,6 +3636,19 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
     require(entries == n, "tape-emit: SA entry count != n");
     std::vector<U> pos(chunk);
     std::vector<U> words(chunk);
+    // THE SYMBOL STREAM: scatter_sort emits one remapped BWT symbol per rank
+    // beside the SA (M[p-1], position 0 -> the padding symbol 2), computed during
+    // its SEQUENTIAL scatter pass. Using it removes the per-row text.at() call,
+    // which is the LOCKED windowed corpus adapter - measured at 113x the lock-free
+    // path in the prefetch charter, and the reason the first 10 GB emit burned 34
+    // cores for 50 minutes and published nothing.
+    std::vector<uint8_t> syms(chunk);
+    const std::string symPath = saPath + ".sym";
+    int sfd = ::open(symPath.c_str(), O_RDONLY);
+    const bool haveSyms = sfd >= 0;
+    if (!haveSyms)
+        std::fprintf(stderr, "TAPE_EMIT_WARN no %s: falling back to the LOCKED "
+                             "per-row corpus read (slow)\n", symPath.c_str());
     U baseRow = 0, hits = 0;
     double tRead = 0, tWord = 0, tPub = 0;
     while (baseRow < n) {
@@ -3648,6 +3661,15 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
             require(r > 0, "tape-emit: short SA read");
             got += size_t(r);
         }
+        if (haveSyms) {
+            size_t sgot = 0;
+            while (sgot < want) {
+                ssize_t r = ::pread(sfd, ((char*)syms.data()) + sgot, want - sgot,
+                                    off_t((unsigned long long)baseRow + sgot));
+                require(r > 0, "tape-emit: short sym read");
+                sgot += size_t(r);
+            }
+        }
         tRead += now_sec() - tr;
         const double tw = now_sec();
         for (U i = 0; i < want; ++i) {
@@ -3658,7 +3680,7 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
             // `p ? at(p-1) : 2` (binbwt_slice.h fill loop). Getting this wrong
             // costs the last unit of the `counts[2] == 10` terminal-coverage
             // check: 9 padding symbols instead of 10.
-            const uint8_t sym = p ? text.at(p - 1) : uint8_t(2);
+            const uint8_t sym = haveSyms ? syms[i] : (p ? text.at(p - 1) : uint8_t(2));
             const bool hit = isTarget(p);
             if (hit) ++hits;
             words[i] = bin_word(p + 1, sym, hit);
@@ -3670,6 +3692,7 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
         baseRow += want;
     }
     ::close(fd);
+    if (sfd >= 0) ::close(sfd);
     const double tEnd0 = now_sec();
     sink->finish();
     const double tEnd = now_sec() - tEnd0;

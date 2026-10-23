@@ -69,6 +69,9 @@ struct Row {
 
 static const u8* T = nullptr;
 static u64 N = 0;
+static const u8* REMAP = nullptr;   // optional: raw byte -> remapped symbol
+static inline u64 pack_sym(u64 p, u8 sym) { return p | (u64(sym) << 48); }
+static inline u64 unpack_pos(u64 v) { return v & ((1ull << 48) - 1); }
 
 // The 16-byte padded key at p, big-endian packed.
 static inline void key_at(u64 p, u64& klo, u64& khi) {
@@ -114,6 +117,8 @@ int main(int argc, char** argv) {
     u64 par_bands = 1;
     u64 sample_n = 4000000;
     bool keep_rows = false;
+    std::string sort_mode = "std";
+    std::string remapPath;
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -126,6 +131,8 @@ int main(int argc, char** argv) {
         else if (a == "--par-bands") par_bands = std::strtoull(nxt().c_str(), nullptr, 10);
         else if (a == "--sample") sample_n = std::strtoull(nxt().c_str(), nullptr, 10);
         else if (a == "--keep-rows") keep_rows = true;
+        else if (a == "--sort") sort_mode = nxt();
+        else if (a == "--remap") remapPath = nxt();
         else die("unknown arg " + a);
     }
     if (corpus.empty() || out.empty()) die("--corpus and --out required");
@@ -138,6 +145,15 @@ int main(int argc, char** argv) {
     T = (const u8*)::mmap(nullptr, (size_t)N, PROT_READ, MAP_PRIVATE, fd, 0);
     if (T == MAP_FAILED) die("mmap corpus");
     ::madvise((void*)T, (size_t)N, MADV_WILLNEED);
+    std::vector<u8> remapBuf;
+    if (!remapPath.empty()) {
+        int rf = ::open(remapPath.c_str(), O_RDONLY);
+        if (rf < 0) die("cannot open remap");
+        remapBuf.resize(256);
+        if (::read(rf, remapBuf.data(), 256) != 256) die("remap short read");
+        ::close(rf);
+        REMAP = remapBuf.data();
+    }
 
     const u64 ram_bytes = (u64)(ram_gb * 1e9);
     const u64 row_bytes = sizeof(Row);
@@ -235,7 +251,16 @@ int main(int argc, char** argv) {
         for (u64 p = lo; p < hi; ++p) {
             Row r{};
             key_at(p, r.klo, r.khi);
-            r.pos = p;
+            // Carry the row's BWT symbol IN THE ROW. M[p-1] is free here: the
+            // scatter is walking the text in order, so the byte behind p is
+            // already in cache. Position 0 is the padding row whose symbol is 2,
+            // matching the sink's own `p ? at(p-1) : 2`. Without this the
+            // emission would pay one LOCKED corpus read per row.
+            {
+                u8 raw = (p == 0) ? 0 : T[p - 1];
+                u8 sy = (p == 0) ? u8(2) : (REMAP ? REMAP[raw] : raw);
+                r.pos = pack_sym(p, sy);
+            }
             // band = upper_bound(bounds, key): the first bound >= key
             u64 b = (u64)(std::upper_bound(bounds.begin(), bounds.end(), r,
                 [](const Row& key, const Row& bd) {
@@ -301,7 +326,7 @@ int main(int argc, char** argv) {
             std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
                 if (a.klo != b.klo) return a.klo < b.klo;
                 if (a.khi != b.khi) return a.khi < b.khi;
-                return suf_cmp(a.pos, b.pos) < 0;   // the tie set
+                return suf_cmp(unpack_pos(a.pos), unpack_pos(b.pos)) < 0;   // the tie set
             });
             u64 ties = 0;
             for (size_t i = 1; i < rows.size(); ++i)
@@ -313,9 +338,16 @@ int main(int argc, char** argv) {
             std::snprintf(oname, sizeof oname, "%s/out%06" PRIu64, scratch.c_str(), b);
             int of = ::open(oname, O_WRONLY | O_CREAT | O_TRUNC, 0666);
             if (of < 0) die("create band out");
+            char sname[512];
+            std::snprintf(sname, sizeof sname, "%s/sym%06" PRIu64, scratch.c_str(), b);
+            int sf = ::open(sname, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+            if (sf < 0) die("create band sym");
             obuf.clear();
             for (const Row& r : rows) {
-                obuf.insert(obuf.end(), (const u8*)&r.pos, (const u8*)&r.pos + 8);
+                const u64 p = unpack_pos(r.pos);
+                const u8 sy = (u8)(r.pos >> 48);
+                if (::write(sf, &sy, 1) != 1) die("write band sym byte");
+                obuf.insert(obuf.end(), (const u8*)&p, (const u8*)&p + 8);
                 if (obuf.size() >= (1u << 20)) {
                     size_t off = 0;
                     while (off < obuf.size()) {
@@ -336,6 +368,8 @@ int main(int argc, char** argv) {
             }
             ::fsync(of);
             ::close(of);
+            ::fsync(sf);
+            ::close(sf);
             rows.clear();
             rows.shrink_to_fit();
             band_wall[b] = now_sec() - bt0;
@@ -356,7 +390,11 @@ int main(int argc, char** argv) {
     if (ofd < 0) die("create out");
     u64 hdr[6] = {0x434C5853ull /*'SXLC'*/, 1, N, N, 0, 0};
     if (::write(ofd, hdr, 48) != 48) die("write header");
+    const std::string symPath = out + ".sym";
+    int sfd = ::open(symPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (sfd < 0) die("create sym stream");
     std::vector<u8> cat(1u << 22);
+    std::vector<u8> symcat(1u << 22);
     for (u64 b = 0; b < nb; ++b) {
         char oname[512];
         std::snprintf(oname, sizeof oname, "%s/out%06" PRIu64, scratch.c_str(), b);
@@ -373,11 +411,30 @@ int main(int argc, char** argv) {
                 off += size_t(w);
             }
         }
+        // the symbol stream for this band, in the same rank order
+        std::snprintf(oname, sizeof oname, "%s/sym%06" PRIu64, scratch.c_str(), b);
+        int sf = ::open(oname, O_RDONLY);
+        if (sf < 0) die("open band sym");
+        for (;;) {
+            ssize_t r = ::read(sf, symcat.data(), symcat.size());
+            if (r < 0) die("read band sym");
+            if (r == 0) break;
+            size_t off = 0;
+            while (off < size_t(r)) {
+                ssize_t w = ::write(sfd, symcat.data() + off, size_t(r) - off);
+                if (w <= 0) die("write sym");
+                off += size_t(w);
+            }
+        }
+        ::close(sf);
+        ::unlink(oname);
         ::close(f);
         ::unlink(oname);
     }
     ::fsync(ofd);
     ::close(ofd);
+    ::fsync(sfd);
+    ::close(sfd);
     const u64 ties = ties_total.load(), sorted_rows = rows_total.load();
 
     std::fprintf(stderr,
