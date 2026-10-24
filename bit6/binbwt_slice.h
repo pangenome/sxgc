@@ -3118,7 +3118,11 @@ struct BinBandSink {
         require(!fs::exists(prefix + ".rlebwt"), "band rlebwt exists; refusing to clobber");
         rleFd = ::open((prefix + ".rlebwt").c_str(), O_CREAT | O_EXCL | O_WRONLY, 0666);
         require(rleFd >= 0, "create band rlebwt");
-        writersUsed = std::min<U>(8, std::max<U>(1, threadCount / 8));
+        // THE PUBLISH BOTTLENECK: 8 writers for ~53,000 band files at 10 GB,
+        // with publish blocking on only 16 slots. Measured: publish 852-1034 s
+        // of a 1161-1271 s emit, i.e. syscall-bound, not compute-bound (a
+        // per-row target bitmap made it WORSE, which is how this was found).
+        writersUsed = std::min<U>(32, std::max<U>(1, threadCount / 3));
         slotsFree = std::max<U>(2, 2 * writersUsed);
         if (slotsFree > window) slotsFree = window;
         require(slotsFree >= 1 && writersUsed >= 1, "band writer pool");
@@ -3611,6 +3615,11 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
         while (tslot[i]) i = (i + 1) & (tcap - 1);
         tslot[i] = t + 1;
     }
+    std::vector<uint64_t> tblock((n >> 6) + 2, 0);
+    for (U t : tgt) tblock[t >> 6] |= (1ull << (t & 63));
+    auto maybeTarget = [&](U p) {
+        return tgt.empty() ? false : ((tblock[p >> 6] >> (p & 63)) & 1ull) != 0;
+    };
     auto isTarget = [&](U p) {
         if (tgt.empty()) return false;
         U i = thash(p + 1) & (tcap - 1);
@@ -3681,7 +3690,7 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
             // costs the last unit of the `counts[2] == 10` terminal-coverage
             // check: 9 padding symbols instead of 10.
             const uint8_t sym = haveSyms ? syms[i] : (p ? text.at(p - 1) : uint8_t(2));
-            const bool hit = isTarget(p);
+            const bool hit = maybeTarget(p) && isTarget(p);
             if (hit) ++hits;
             words[i] = bin_word(p + 1, sym, hit);
         }

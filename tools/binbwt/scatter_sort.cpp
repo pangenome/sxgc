@@ -64,7 +64,7 @@ static inline u64 bswap64(u64 x) { return __builtin_bswap64(x); }
 // bytes past the text end are zero, which is exactly the dollar convention's
 // "shorter is smaller".)
 struct Row {
-    u64 klo, khi, pos;
+    u64 klo, khi, kq, pos;   // 24-byte key (3 big-endian words) + packed pos/sym
 };
 
 static const u8* T = nullptr;
@@ -74,23 +74,25 @@ static inline u64 pack_sym(u64 p, u8 sym) { return p | (u64(sym) << 48); }
 static inline u64 unpack_pos(u64 v) { return v & ((1ull << 48) - 1); }
 
 // The 16-byte padded key at p, big-endian packed.
-static inline void key_at(u64 p, u64& klo, u64& khi) {
-    u8 b[16];
+static inline void key_at(u64 p, u64& klo, u64& khi, u64& kq) {
+    u8 b[24];
     const u64 avail = p < N ? N - p : 0;
-    const u64 take = avail < 16 ? avail : 16;
+    const u64 take = avail < 24 ? avail : 24;
     if (take) std::memcpy(b, T + p, take);
-    if (take < 16) std::memset(b + take, 0, 16 - take);
+    if (take < 24) std::memset(b + take, 0, 24 - take);
     // THE KEY LIVES IN THE PRODUCT ALPHABET. remap[] is not order-preserving
     // (remap[1]=255, remap[2]=253, ...), so building the key from raw bytes sorts
     // in the wrong order - the bug that made the 150 MB stream differ from the
     // bin machine's while the 4 MB slice (which happens to contain none of the
     // remapped bytes) matched exactly.
-    if (REMAP) for (int i = 0; i < 16; ++i) b[i] = REMAP[b[i]];
-    u64 lo, hi;
+    if (REMAP) for (int i = 0; i < 24; ++i) b[i] = REMAP[b[i]];
+    u64 lo, hi, q;
     std::memcpy(&lo, b, 8);
     std::memcpy(&hi, b + 8, 8);
+    std::memcpy(&q, b + 16, 8);
     klo = bswap64(lo);
     khi = bswap64(hi);
+    kq = bswap64(q);
 }
 
 // Full suffix comparison in dollar mode (shorter is smaller).
@@ -197,13 +199,14 @@ int main(int argc, char** argv) {
         u64 q = p + j;
         if (q >= N) q = N - 1;
         Row r{};
-        key_at(q, r.klo, r.khi);
+        key_at(q, r.klo, r.khi, r.kq);
         r.pos = q;
         samp.push_back(r);
     }
     std::sort(samp.begin(), samp.end(), [](const Row& a, const Row& b) {
         if (a.klo != b.klo) return a.klo < b.klo;
-        return a.khi < b.khi;
+        if (a.khi != b.khi) return a.khi < b.khi;
+        return a.kq < b.kq;
     });
     std::vector<Row> bounds;   // upper bounds of each band except the last
     bounds.reserve(bands);
@@ -215,7 +218,7 @@ int main(int argc, char** argv) {
     // Drop duplicate boundaries (they'd create empty bands) - a sampled
     // quantile can repeat when a key value is very frequent.
     bounds.erase(std::unique(bounds.begin(), bounds.end(), [](const Row& a, const Row& b) {
-        return a.klo == b.klo && a.khi == b.khi;
+        return a.klo == b.klo && a.khi == b.khi && a.kq == b.kq;
     }), bounds.end());
     const u64 nb = bounds.size() + 1;
     const double t_sample = now_sec() - t0;
@@ -263,7 +266,7 @@ int main(int argc, char** argv) {
         const u64 lo = N * t / nparts, hi = N * (t + 1) / nparts;
         for (u64 p = lo; p < hi; ++p) {
             Row r{};
-            key_at(p, r.klo, r.khi);
+            key_at(p, r.klo, r.khi, r.kq);
             // Carry the row's BWT symbol IN THE ROW. M[p-1] is free here: the
             // scatter is walking the text in order, so the byte behind p is
             // already in cache. Position 0 is the padding row whose symbol is 2,
@@ -278,7 +281,8 @@ int main(int argc, char** argv) {
             u64 b = (u64)(std::upper_bound(bounds.begin(), bounds.end(), r,
                 [](const Row& key, const Row& bd) {
                     if (key.klo != bd.klo) return key.klo < bd.klo;
-                    return key.khi < bd.khi;
+                    if (key.khi != bd.khi) return key.khi < bd.khi;
+                    return key.kq < bd.kq;
                 }) - bounds.begin());
             auto& v = bufs[t][b];
             v.insert(v.end(), (const u8*)&r, (const u8*)&r + sizeof(Row));
@@ -344,7 +348,8 @@ int main(int argc, char** argv) {
             });
             u64 ties = 0;
             for (size_t i = 1; i < rows.size(); ++i)
-                if (rows[i].klo == rows[i - 1].klo && rows[i].khi == rows[i - 1].khi) ++ties;
+                if (rows[i].klo == rows[i-1].klo && rows[i].khi == rows[i-1].khi &&
+                    rows[i].kq == rows[i-1].kq) ++ties;
             ties_total.fetch_add(ties);
             rows_total.fetch_add(rows.size());
             // ordered positions -> this band's part file
