@@ -125,15 +125,28 @@ static inline int suf_cmp(u64 a, u64 b) {
     return (N - a) < (N - b) ? -1 : 1;
 }
 
+
+// ---------------------------------------------------------------------------
+// WAVES: the scratch cap is a DESIGN CONSTRAINT, not a hope.
+//
+// The first version wrote every band to disc before sorting any of them, so peak
+// scratch was the whole intermediate: 32 B x n = 42 TB at pile. Wrong by design.
+// Now the work runs in WAVES: each wave owns a contiguous KEY RANGE big enough
+// that (rows in wave) x (row bytes) <= scratch_cap, and each wave's rows are
+// written, sorted, emitted and DELETED before the next wave is written. Peak
+// scratch is therefore one wave, i.e. the cap, and the corpus is re-read once
+// per wave (190 s at pile - nothing against the win).
+//
+// Order is preserved because a wave is a key range and waves run in ascending key
+// order, so concatenating the waves' outputs IS suffix order.
+// ---------------------------------------------------------------------------
 int main(int argc, char** argv) {
     std::string corpus, out, scratch = "/tmp/ss_scratch";
     double ram_gb = 1.0;
-    u64 threads = 32;
-    u64 par_bands = 1;
-    u64 sample_n = 4000000;
+    double scratch_cap_gb = 0.0;      // 0 = 2n (the operator's law)
+    u64 threads = 32, par_bands = 1, sample_n = 4000000;
     bool keep_rows = false;
-    std::string sort_mode = "std";
-    std::string remapPath;
+    std::string remapPath, sort_mode = "std";
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -142,6 +155,7 @@ int main(int argc, char** argv) {
         else if (a == "--out") out = nxt();
         else if (a == "--scratch") scratch = nxt();
         else if (a == "--ram-gb") ram_gb = std::atof(nxt().c_str());
+        else if (a == "--scratch-cap-gb") scratch_cap_gb = std::atof(nxt().c_str());
         else if (a == "--threads") threads = std::strtoull(nxt().c_str(), nullptr, 10);
         else if (a == "--par-bands") par_bands = std::strtoull(nxt().c_str(), nullptr, 10);
         else if (a == "--sample") sample_n = std::strtoull(nxt().c_str(), nullptr, 10);
@@ -150,13 +164,14 @@ int main(int argc, char** argv) {
         else if (a == "--remap") remapPath = nxt();
         else die("unknown arg " + a);
     }
+    (void)sort_mode;
     if (corpus.empty() || out.empty()) die("--corpus and --out required");
 
     int fd = ::open(corpus.c_str(), O_RDONLY);
     struct stat st{};
     if (fd < 0 || ::fstat(fd, &st)) die("cannot open/stat corpus");
     N = (u64)st.st_size;
-    if (N == 0) die("empty corpus");
+    if (!N) die("empty corpus");
     T = (const u8*)::mmap(nullptr, (size_t)N, PROT_READ, MAP_PRIVATE, fd, 0);
     if (T == MAP_FAILED) die("mmap corpus");
     ::madvise((void*)T, (size_t)N, MADV_WILLNEED);
@@ -170,247 +185,118 @@ int main(int argc, char** argv) {
         REMAP = remapBuf.data();
     }
 
-    const u64 ram_bytes = (u64)(ram_gb * 1e9);
     const u64 row_bytes = sizeof(Row);
-    // par_bands bands are sorted CONCURRENTLY, each with ram_bytes/par_bands of
-    // RAM, so concurrency does not multiply the memory budget.
+    const u64 ram_bytes = (u64)(ram_gb * 1e9);
     if (par_bands < 1) par_bands = 1;
     u64 rows_per_band = std::max<u64>(1, ram_bytes / (row_bytes * par_bands));
-    u64 bands = (N + rows_per_band - 1) / rows_per_band;
-    if (bands < 1) bands = 1;
+    // THE CAP CAN BE THE BINDING CONSTRAINT: with a 2n scratch cap a wave is often
+    // SMALLER than one RAM-sized band, which left each wave with a single band and
+    // therefore a single-threaded sort - 20 waves of serial sorting, measured at
+    // 370 s for a 1 GB corpus against 40 s unwaved. Bands exist to bound RAM, so
+    // size them from whichever budget is smaller: RAM/par or the wave/par.
+    // THE SCRATCH LAW: default cap is 2n bytes.
+    const u64 cap_bytes = scratch_cap_gb > 0.0 ? (u64)(scratch_cap_gb * 1e9) : 2 * N;
+    u64 rows_per_wave = std::max<u64>(1, cap_bytes / row_bytes);
+    if (rows_per_wave / par_bands < rows_per_band)
+        rows_per_band = std::max<u64>(1, rows_per_wave / par_bands);
+    u64 waves = (N + rows_per_wave - 1) / rows_per_wave;
+    if (waves < 1) waves = 1;
 
     std::fprintf(stderr,
-        "SS_START n=%" PRIu64 " ram_gb=%.3f row_bytes=%zu rows_per_band=%" PRIu64
-        " bands=%" PRIu64 " threads=%" PRIu64 "\n",
-        N, ram_gb, row_bytes, rows_per_band, bands, threads);
+        "SS_START n=%" PRIu64 " row_bytes=%zu cap_bytes=%" PRIu64 " (%.2fn) "
+        "rows_per_wave=%" PRIu64 " waves=%" PRIu64 " ram_gb=%.2f rows_per_band=%" PRIu64
+        " par_bands=%" PRIu64 " threads=%" PRIu64 "\n",
+        N, row_bytes, cap_bytes, double(cap_bytes) / double(N), rows_per_wave, waves,
+        ram_gb, rows_per_band, par_bands, threads);
 
-    // ---------------- 1. SAMPLE: quantile boundaries ----------------
+    // ---- exact first-byte histogram: one parallel pass, 256 counters. This is
+    // what makes the per-wave FILTER cheap: a rejected position costs one load
+    // instead of a 24-byte key computation (16 waves x n key computations was
+    // 4.6x the whole sort at 150 MB).
+    std::vector<u64> hist(256, 0);
+    {
+        const u64 nt = std::max<u64>(1, threads);
+        std::vector<std::vector<u64>> lh(nt, std::vector<u64>(256, 0));
+        std::vector<std::thread> ts;
+        for (u64 t = 0; t < nt; ++t)
+            ts.emplace_back([&, t]() {
+                const u64 lo = N * t / nt, hi = N * (t + 1) / nt;
+                auto& h = lh[t];
+                for (u64 p = lo; p < hi; ++p) ++h[REMAP ? REMAP[T[p]] : T[p]];
+            });
+        for (auto& th : ts) th.join();
+        for (u64 t = 0; t < nt; ++t)
+            for (int i = 0; i < 256; ++i) hist[i] += lh[t][i];
+    }
+    // ---- wave list: greedy byte ranges, each <= rows_per_wave rows. A byte whose
+    // class ALONE exceeds the cap is split by its second byte (2-level wave).
+    struct Wave { unsigned lo, hi; bool lvl2; unsigned b; unsigned lo2, hi2; };
+    std::vector<Wave> wl;
+    {
+        unsigned lo = 0;
+        u64 acc = 0;
+        for (unsigned c = 0; c < 256; ++c) {
+            if (hist[c] > rows_per_wave) {
+                if (lo < c) { wl.push_back({lo, c, false, 0, 0, 0}); lo = c; acc = 0; }
+                // split this byte by its second byte
+                std::vector<u64> h2(256, 0);
+                for (u64 p = 0; p < N; ++p) {
+                    if ((REMAP ? REMAP[T[p]] : T[p]) != c) continue;
+                    h2[p + 1 < N ? (REMAP ? REMAP[T[p + 1]] : T[p + 1]) : 0]++;
+                }
+                unsigned l2 = 0; u64 a2 = 0;
+                for (unsigned d = 0; d < 256; ++d) {
+                    if (a2 && a2 + h2[d] > rows_per_wave) {
+                        wl.push_back({c, c + 1, true, c, l2, d}); l2 = d; a2 = 0;
+                    }
+                    a2 += h2[d];
+                }
+                if (l2 < 256) wl.push_back({c, c + 1, true, c, l2, 256});
+                lo = c + 1; acc = 0;
+                continue;
+            }
+            if (acc && acc + hist[c] > rows_per_wave) {
+                wl.push_back({lo, c, false, 0, 0, 0}); lo = c; acc = 0;
+            }
+            acc += hist[c];
+        }
+        if (lo < 256) wl.push_back({lo, 256, false, 0, 0, 0});
+    }
+    waves = wl.size();
+    std::fprintf(stderr, "SS_WAVES count=%" PRIu64 " (byte-range waves)\n", waves);
+
+    // ---------------- SAMPLE once: band edges inside each wave ----------------
     const double t0 = now_sec();
-    u64 stride = std::max<u64>(1, N / std::max<u64>(1, sample_n));
-    std::vector<Row> samp;
-    samp.reserve(N / stride + 2);
-    // Jittered stride: (k * stride) + r, r in [0, stride). The jitter kills
-    // periodicity aliasing with document/markup structure while keeping the
-    // walk page-sequential.
+    const u64 stride = std::max<u64>(1, N / std::max<u64>(1, sample_n));
+    std::vector<u64> sk;
+    sk.reserve(N / stride + 2);
     u64 rng = 0x243f6a8885a308d3ull;
     for (u64 p = 0; p < N; p += stride) {
         rng = rng * 6364136223846793005ull + 1442695040888963407ull;
-        u64 j = (rng >> 11) % stride;
-        u64 q = p + j;
+        u64 q = p + (rng >> 11) % stride;
         if (q >= N) q = N - 1;
-        Row r{};
-        key_at(q, r.klo, r.khi, r.kq);
-        r.pos = q;
-        samp.push_back(r);
+        u64 a, b, c;
+        key_at(q, a, b, c);
+        sk.push_back(a);
     }
-    std::sort(samp.begin(), samp.end(), [](const Row& a, const Row& b) {
-        if (a.klo != b.klo) return a.klo < b.klo;
-        if (a.khi != b.khi) return a.khi < b.khi;
-        return a.kq < b.kq;
-    });
-    std::vector<Row> bounds;   // upper bounds of each band except the last
-    bounds.reserve(bands);
-    for (u64 b = 1; b < bands; ++b) {
-        u64 idx = (u64)((long double)samp.size() * (long double)b / (long double)bands);
-        if (idx >= samp.size()) idx = samp.size() - 1;
-        bounds.push_back(samp[idx]);
-    }
-    // Drop duplicate boundaries (they'd create empty bands) - a sampled
-    // quantile can repeat when a key value is very frequent.
-    bounds.erase(std::unique(bounds.begin(), bounds.end(), [](const Row& a, const Row& b) {
-        return a.klo == b.klo && a.khi == b.khi && a.kq == b.kq;
-    }), bounds.end());
-    const u64 nb = bounds.size() + 1;
+    std::sort(sk.begin(), sk.end());
     const double t_sample = now_sec() - t0;
-    std::fprintf(stderr, "SS_SAMPLE samples=%zu stride=%" PRIu64 " bounds=%zu bands=%" PRIu64
-                         " wall=%.2f\n", samp.size(), stride, bounds.size(), nb, t_sample);
-    samp.clear();
-    samp.shrink_to_fit();
+    std::fprintf(stderr, "SS_SAMPLE samples=%zu stride=%" PRIu64 " wall=%.2f\n",
+                 sk.size(), stride, t_sample);
 
-    // ---------------- 2. SCATTER ----------------
-    const double t1 = now_sec();
-    std::string cmd = "mkdir -p '" + scratch + "' && rm -f '" + scratch + "'/b*";
+    // quantile index helper on the sampled keys
+    auto qkey = [&](double frac) -> u64 {
+        if (sk.empty()) return ~0ull;
+        double idx = frac * double(sk.size() - 1);
+        if (idx < 0) idx = 0;
+        u64 i = (u64)idx;
+        if (i >= sk.size()) i = sk.size() - 1;
+        return sk[i];
+    };
+
+    std::string cmd = "mkdir -p '" + scratch + "'";
     if (std::system(cmd.c_str()) != 0) die("scratch prep failed");
 
-    const u64 nparts = std::max<u64>(1, threads);
-    std::vector<std::vector<int>> fds(nb, std::vector<int>(nparts, -1));
-    // Per (band, thread) buffer: bounded so that nb * nparts * buf stays sane.
-    u64 bufsz = 1u << 20;
-    while (nb * nparts * bufsz > (1ull << 31) && bufsz > (1u << 12)) bufsz >>= 1;
-    std::vector<std::vector<std::vector<u8>>> bufs(
-        nparts, std::vector<std::vector<u8>>(nb));
-    for (u64 t = 0; t < nparts; ++t)
-        for (u64 b = 0; b < nb; ++b) bufs[t][b].reserve(bufsz);
-
-    std::atomic<u64> done_parts{0};
-    auto flush_buf = [&](u64 t, u64 b) {
-        auto& v = bufs[t][b];
-        if (v.empty()) return;
-        if (fds[b][t] < 0) {
-            char name[512];
-            std::snprintf(name, sizeof name, "%s/b%05" PRIu64 ".p%05" PRIu64, scratch.c_str(), b, t);
-            int f = ::open(name, O_WRONLY | O_CREAT | O_TRUNC, 0666);
-            if (f < 0) die("create band part");
-            fds[b][t] = f;
-        }
-        size_t off = 0;
-        while (off < v.size()) {
-            ssize_t w = ::write(fds[b][t], v.data() + off, v.size() - off);
-            if (w <= 0) die("write band part");
-            off += size_t(w);
-        }
-        v.clear();
-    };
-
-    auto worker = [&](u64 t) {
-        const u64 lo = N * t / nparts, hi = N * (t + 1) / nparts;
-        for (u64 p = lo; p < hi; ++p) {
-            Row r{};
-            key_at(p, r.klo, r.khi, r.kq);
-            // Carry the row's BWT symbol IN THE ROW. M[p-1] is free here: the
-            // scatter is walking the text in order, so the byte behind p is
-            // already in cache. Position 0 is the padding row whose symbol is 2,
-            // matching the sink's own `p ? at(p-1) : 2`. Without this the
-            // emission would pay one LOCKED corpus read per row.
-            {
-                u8 raw = (p == 0) ? 0 : T[p - 1];
-                u8 sy = (p == 0) ? u8(2) : (REMAP ? REMAP[raw] : raw);
-                r.pos = pack_sym(p, sy);
-            }
-            // band = upper_bound(bounds, key): the first bound >= key
-            u64 b = (u64)(std::upper_bound(bounds.begin(), bounds.end(), r,
-                [](const Row& key, const Row& bd) {
-                    if (key.klo != bd.klo) return key.klo < bd.klo;
-                    if (key.khi != bd.khi) return key.khi < bd.khi;
-                    return key.kq < bd.kq;
-                }) - bounds.begin());
-            auto& v = bufs[t][b];
-            v.insert(v.end(), (const u8*)&r, (const u8*)&r + sizeof(Row));
-            if (v.size() >= bufsz) flush_buf(t, b);
-        }
-        for (u64 b = 0; b < nb; ++b) flush_buf(t, b);
-        for (u64 b = 0; b < nb; ++b)
-            if (fds[b][t] >= 0) { ::close(fds[b][t]); fds[b][t] = -1; }
-        done_parts.fetch_add(1);
-    };
-
-    std::vector<std::thread> ts;
-    for (u64 t = 0; t < nparts; ++t) ts.emplace_back(worker, t);
-    for (auto& th : ts) th.join();
-    const double t_scatter = now_sec() - t1;
-    std::fprintf(stderr, "SS_SCATTER parts=%" PRIu64 " wall=%.2f rows=%" PRIu64 "\n",
-                 nparts, t_scatter, N);
-
-    // ---------------- 3+4. SORT each band (parallel), EMIT in order --------
-    const double t2 = now_sec();
-    std::atomic<u64> next_band{0};
-    std::atomic<u64> ties_total{0};
-    std::atomic<u64> rows_total{0};
-    std::vector<double> band_wall(nb, 0.0);
-
-    auto band_worker = [&]() {
-        std::vector<Row> rows;
-        std::vector<u8> sbuf;
-        std::vector<u8> obuf;
-        obuf.reserve(1u << 20);
-        for (;;) {
-            const u64 b = next_band.fetch_add(1);
-            if (b >= nb) return;
-            const double bt0 = now_sec();
-            rows.clear();
-            for (u64 t = 0; t < nparts; ++t) {
-                char name[512];
-                std::snprintf(name, sizeof name, "%s/b%05" PRIu64 ".p%05" PRIu64,
-                              scratch.c_str(), b, t);
-                int f = ::open(name, O_RDONLY);
-                if (f < 0) continue;
-                struct stat fs{};
-                ::fstat(f, &fs);
-                const u64 bytes = (u64)fs.st_size;
-                if (bytes) {
-                    const size_t at = rows.size();
-                    rows.resize(at + bytes / sizeof(Row));
-                    size_t off = 0;
-                    while (off < bytes) {
-                        ssize_t r = ::read(f, ((u8*)rows.data()) + at * sizeof(Row) + off,
-                                           bytes - off);
-                        if (r <= 0) die("read band part");
-                        off += size_t(r);
-                    }
-                }
-                ::close(f);
-                if (!keep_rows) ::unlink(name);
-            }
-            std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
-                if (a.klo != b.klo) return a.klo < b.klo;
-                if (a.khi != b.khi) return a.khi < b.khi;
-                return suf_cmp(unpack_pos(a.pos), unpack_pos(b.pos)) < 0;   // the tie set
-            });
-            u64 ties = 0;
-            for (size_t i = 1; i < rows.size(); ++i)
-                if (rows[i].klo == rows[i-1].klo && rows[i].khi == rows[i-1].khi &&
-                    rows[i].kq == rows[i-1].kq) ++ties;
-            ties_total.fetch_add(ties);
-            rows_total.fetch_add(rows.size());
-            // ordered positions -> this band's part file
-            char oname[512];
-            std::snprintf(oname, sizeof oname, "%s/out%06" PRIu64, scratch.c_str(), b);
-            int of = ::open(oname, O_WRONLY | O_CREAT | O_TRUNC, 0666);
-            if (of < 0) die("create band out");
-            char sname[512];
-            std::snprintf(sname, sizeof sname, "%s/sym%06" PRIu64, scratch.c_str(), b);
-            int sf = ::open(sname, O_WRONLY | O_CREAT | O_TRUNC, 0666);
-            if (sf < 0) die("create band sym");
-            obuf.clear();
-            sbuf.clear();
-            for (const Row& r : rows) {
-                const u64 p = unpack_pos(r.pos);
-                sbuf.push_back((u8)(r.pos >> 48));
-                obuf.insert(obuf.end(), (const u8*)&p, (const u8*)&p + 8);
-                if (obuf.size() >= (1u << 20)) {
-                    size_t off = 0;
-                    while (off < obuf.size()) {
-                        ssize_t w = ::write(of, obuf.data() + off, obuf.size() - off);
-                        if (w <= 0) die("write band out");
-                        off += size_t(w);
-                    }
-                    obuf.clear();
-                }
-            }
-            {
-                size_t off = 0;
-                while (off < obuf.size()) {
-                    ssize_t w = ::write(of, obuf.data() + off, obuf.size() - off);
-                    if (w <= 0) die("write band out");
-                    off += size_t(w);
-                }
-                size_t soff = 0;
-                while (soff < sbuf.size()) {
-                    ssize_t w = ::write(sf, sbuf.data() + soff, sbuf.size() - soff);
-                    if (w <= 0) die("write band sym");
-                    soff += size_t(w);
-                }
-            }
-            ::fsync(of);
-            ::close(of);
-            ::fsync(sf);
-            ::close(sf);
-            rows.clear();
-            rows.shrink_to_fit();
-            band_wall[b] = now_sec() - bt0;
-        }
-    };
-
-    {
-        std::vector<std::thread> bs;
-        const u64 np = std::min<u64>(par_bands, nb);
-        for (u64 i = 0; i < np; ++i) bs.emplace_back(band_worker);
-        for (auto& th : bs) th.join();
-    }
-    const double t_sort = now_sec() - t2;
-
-    // concatenate the band parts IN BAND ORDER: bands are key ranges, so this
-    // concatenation IS suffix order.
     int ofd = ::open(out.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (ofd < 0) die("create out");
     u64 hdr[6] = {0x434C5853ull /*'SXLC'*/, 1, N, N, 0, 0};
@@ -418,53 +304,242 @@ int main(int argc, char** argv) {
     const std::string symPath = out + ".sym";
     int sfd = ::open(symPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (sfd < 0) die("create sym stream");
-    std::vector<u8> cat(1u << 22);
-    std::vector<u8> symcat(1u << 22);
-    for (u64 b = 0; b < nb; ++b) {
-        char oname[512];
-        std::snprintf(oname, sizeof oname, "%s/out%06" PRIu64, scratch.c_str(), b);
-        int f = ::open(oname, O_RDONLY);
-        if (f < 0) die("open band out");
-        for (;;) {
-            ssize_t r = ::read(f, cat.data(), cat.size());
-            if (r < 0) die("read band out");
-            if (r == 0) break;
-            size_t off = 0;
-            while (off < size_t(r)) {
-                ssize_t w = ::write(ofd, cat.data() + off, size_t(r) - off);
-                if (w <= 0) die("write out");
-                off += size_t(w);
-            }
-        }
-        // the symbol stream for this band, in the same rank order
-        std::snprintf(oname, sizeof oname, "%s/sym%06" PRIu64, scratch.c_str(), b);
-        int sf = ::open(oname, O_RDONLY);
-        if (sf < 0) die("open band sym");
-        for (;;) {
-            ssize_t r = ::read(sf, symcat.data(), symcat.size());
-            if (r < 0) die("read band sym");
-            if (r == 0) break;
-            size_t off = 0;
-            while (off < size_t(r)) {
-                ssize_t w = ::write(sfd, symcat.data() + off, size_t(r) - off);
-                if (w <= 0) die("write sym");
-                off += size_t(w);
-            }
-        }
-        ::close(sf);
-        ::unlink(oname);
-        ::close(f);
-        ::unlink(oname);
-    }
-    ::fsync(ofd);
-    ::close(ofd);
-    ::fsync(sfd);
-    ::close(sfd);
-    const u64 ties = ties_total.load(), sorted_rows = rows_total.load();
 
+    std::vector<u8> cat(1u << 22), symcat(1u << 22);
+    u64 rows_done = 0, ties_total = 0, emitted = 0, wave_rows = 0;
+    const double t1 = now_sec();
+
+    for (u64 w = 0; w < waves; ++w) {
+        const double tw = now_sec();
+        const Wave& W = wl[w];
+        // Bands inside the wave: rows_per_band each, from the same sample.
+        // band edges inside this wave: the sampled keys that fall in the wave,
+        // cut into rows_per_band-sized groups.
+        std::vector<u64> wk;
+        {
+            u64 a, bq, cq;
+            for (size_t i = 0; i < sk.size(); i += std::max<size_t>(1, sk.size() / 200000)) {
+                const u64 k = sk[i];
+                // same predicate as the filter, on the sampled key's top byte
+                a = k >> 56; (void)a; (void)bq; (void)cq;
+            }
+        }
+        u64 nb = (u64)std::max<double>(1.0, double(rows_per_wave) / double(rows_per_band));
+        std::vector<u64> bounds;
+        {
+            // uniform subdivision of the wave's key range is good enough for
+            // band sizing: bands only bound RAM, they carry no ordering meaning.
+            const unsigned lo1 = W.lo, hi1 = W.hi;
+            const u64 span = (u64)(hi1 - lo1) << 56;
+            for (u64 b = 1; b < nb; ++b)
+                bounds.push_back(lo1 ? (u64(lo1) << 56) + span * b / nb : span * b / nb);
+        }
+        const u64 nbands = bounds.size() + 1;
+
+        // ---- scatter this wave only ----
+        const u64 nparts = std::max<u64>(1, threads);
+        std::vector<std::vector<int>> fds(nbands, std::vector<int>(nparts, -1));
+        u64 bufsz = 1u << 20;
+        while (nbands * nparts * bufsz > (1ull << 31) && bufsz > (1u << 12)) bufsz >>= 1;
+        std::vector<std::vector<std::vector<u8>>> bufs(nparts, std::vector<std::vector<u8>>(nbands));
+        for (u64 t = 0; t < nparts; ++t)
+            for (u64 b = 0; b < nbands; ++b) bufs[t][b].reserve(bufsz);
+        auto flush_buf = [&](u64 t, u64 b) {
+            auto& v = bufs[t][b];
+            if (v.empty()) return;
+            if (fds[b][t] < 0) {
+                char name[512];
+                std::snprintf(name, sizeof name, "%s/w%" PRIu64 ".b%05" PRIu64 ".p%05" PRIu64,
+                              scratch.c_str(), w, b, t);
+                int f = ::open(name, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+                if (f < 0) die("create band part");
+                fds[b][t] = f;
+            }
+            size_t off = 0;
+            while (off < v.size()) {
+                ssize_t wr = ::write(fds[b][t], v.data() + off, v.size() - off);
+                if (wr <= 0) die("write band part");
+                off += size_t(wr);
+            }
+            v.clear();
+        };
+        auto worker = [&](u64 t) {
+            const u64 lo = N * t / nparts, hi = N * (t + 1) / nparts;
+            for (u64 p = lo; p < hi; ++p) {
+                const unsigned c0 = REMAP ? REMAP[T[p]] : T[p];
+                if (c0 < W.lo || c0 >= W.hi) continue;            // cheap reject
+                if (W.lvl2) {
+                    const unsigned c1 = (p + 1 < N) ? (REMAP ? REMAP[T[p + 1]] : T[p + 1]) : 0;
+                    if (c1 < W.lo2 || c1 >= W.hi2) continue;
+                }
+                Row r{};
+                key_at(p, r.klo, r.khi, r.kq);
+                u8 raw = (p == 0) ? 0 : T[p - 1];
+                u8 sy = (p == 0) ? u8(2) : (REMAP ? REMAP[raw] : raw);
+                r.pos = pack_sym(p, sy);
+                u64 b = (u64)(std::upper_bound(bounds.begin(), bounds.end(), r.klo) - bounds.begin());
+                if (b >= nbands) b = nbands - 1;
+                auto& v = bufs[t][b];
+                v.insert(v.end(), (const u8*)&r, (const u8*)&r + sizeof(Row));
+                if (v.size() >= bufsz) flush_buf(t, b);
+            }
+            for (u64 b = 0; b < nbands; ++b) flush_buf(t, b);
+            for (u64 b = 0; b < nbands; ++b)
+                if (fds[b][t] >= 0) { ::close(fds[b][t]); fds[b][t] = -1; }
+        };
+        {
+            std::vector<std::thread> ts;
+            for (u64 t = 0; t < nparts; ++t) ts.emplace_back(worker, t);
+            for (auto& th : ts) th.join();
+        }
+
+        // band row counts are known BEFORE sorting (file sizes / row bytes), so
+        // every band's offset in the global streams is computable up front and
+        // each band can write DIRECTLY there. No append copy, no serial tail.
+        std::vector<u64> band_rows(nbands, 0), band_off(nbands, 0);
+        for (u64 b = 0; b < nbands; ++b) {
+            for (u64 t = 0; t < nparts; ++t) {
+                char name[512];
+                std::snprintf(name, sizeof name, "%s/w%" PRIu64 ".b%05" PRIu64 ".p%05" PRIu64,
+                              scratch.c_str(), w, b, t);
+                struct stat bs{};
+                if (::stat(name, &bs) == 0) band_rows[b] += u64(bs.st_size) / row_bytes;
+            }
+        }
+        {
+            u64 acc = emitted;
+            for (u64 b = 0; b < nbands; ++b) { band_off[b] = acc; acc += band_rows[b]; }
+            wave_rows = acc - emitted;
+        }
+        // ---- sort this wave's bands (parallel), writing at their own offsets ----
+        std::atomic<u64> next_band{0};
+        std::atomic<u64> ties_w{0};
+        auto band_worker = [&]() {
+            std::vector<Row> rows;
+            for (;;) {
+                const u64 b = next_band.fetch_add(1);
+                if (b >= nbands) return;
+                rows.clear();
+                for (u64 t = 0; t < nparts; ++t) {
+                    char name[512];
+                    std::snprintf(name, sizeof name, "%s/w%" PRIu64 ".b%05" PRIu64 ".p%05" PRIu64,
+                                  scratch.c_str(), w, b, t);
+                    int f = ::open(name, O_RDONLY);
+                    if (f < 0) continue;
+                    struct stat fs{};
+                    ::fstat(f, &fs);
+                    const u64 bytes = (u64)fs.st_size;
+                    if (bytes) {
+                        const size_t at = rows.size();
+                        rows.resize(at + bytes / sizeof(Row));
+                        size_t off = 0;
+                        while (off < bytes) {
+                            ssize_t r = ::read(f, ((u8*)rows.data()) + at * sizeof(Row) + off, bytes - off);
+                            if (r <= 0) die("read band part");
+                            off += size_t(r);
+                        }
+                    }
+                    ::close(f);
+                    if (!keep_rows) ::unlink(name);
+                }
+                std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
+                    if (a.klo != b.klo) return a.klo < b.klo;
+                    if (a.khi != b.khi) return a.khi < b.khi;
+                    if (a.kq != b.kq) return a.kq < b.kq;
+                    return suf_cmp(unpack_pos(a.pos), unpack_pos(b.pos)) < 0;
+                });
+                u64 ties = 0;
+                for (size_t i = 1; i < rows.size(); ++i)
+                    if (rows[i].klo == rows[i-1].klo && rows[i].khi == rows[i-1].khi &&
+                        rows[i].kq == rows[i-1].kq) ++ties;
+                ties_w.fetch_add(ties);
+                // ordered output: positions to the SA stream, symbols alongside
+                std::vector<u64> ob;
+                std::vector<u8> sb;
+                ob.reserve(rows.size());
+                sb.reserve(rows.size());
+                for (const Row& r : rows) {
+                    ob.push_back(unpack_pos(r.pos));
+                    sb.push_back((u8)(r.pos >> 48));
+                }
+                // direct write at this band's offset in the global streams
+                {
+                    const off_t at = off_t(48 + band_off[b] * 8);
+                    size_t off = 0;
+                    const size_t bytes = ob.size() * 8;
+                    while (off < bytes) {
+                        ssize_t wr = ::pwrite(ofd, ((const u8*)ob.data()) + off, bytes - off,
+                                             at + off_t(off));
+                        if (wr <= 0) die("pwrite band out");
+                        off += size_t(wr);
+                    }
+                    size_t soff = 0;
+                    while (soff < sb.size()) {
+                        ssize_t wr = ::pwrite(sfd, sb.data() + soff, sb.size() - soff,
+                                              off_t(band_off[b] + soff));
+                        if (wr <= 0) die("pwrite band sym");
+                        soff += size_t(wr);
+                    }
+                }
+                rows.clear();
+                rows.shrink_to_fit();
+            }
+        };
+        {
+            std::vector<std::thread> bs;
+            const u64 np = std::min<u64>(par_bands, nbands);
+            for (u64 i = 0; i < np; ++i) bs.emplace_back(band_worker);
+            for (auto& th : bs) th.join();
+        }
+        emitted += wave_rows;
+        if (false) for (u64 b = 0; b < nbands; ++b) {
+            char oname[512];
+            std::snprintf(oname, sizeof oname, "%s/w%" PRIu64 ".out%05" PRIu64, scratch.c_str(), w, b);
+            int f = ::open(oname, O_RDONLY);
+            if (f < 0) die("open band out");
+            for (;;) {
+                ssize_t r = ::read(f, cat.data(), cat.size());
+                if (r < 0) die("read band out");
+                if (r == 0) break;
+                size_t off = 0;
+                while (off < size_t(r)) {
+                    ssize_t wr = ::write(ofd, cat.data() + off, size_t(r) - off);
+                    if (wr <= 0) die("write out");
+                    off += size_t(wr);
+                }
+            }
+            ::close(f);
+            ::unlink(oname);
+            std::snprintf(oname, sizeof oname, "%s/w%" PRIu64 ".sym%05" PRIu64, scratch.c_str(), w, b);
+            int sf = ::open(oname, O_RDONLY);
+            if (sf < 0) die("open band sym");
+            for (;;) {
+                ssize_t r = ::read(sf, symcat.data(), symcat.size());
+                if (r < 0) die("read band sym");
+                if (r == 0) break;
+                size_t off = 0;
+                while (off < size_t(r)) {
+                    ssize_t wr = ::write(sfd, symcat.data() + off, size_t(r) - off);
+                    if (wr <= 0) die("write sym");
+                    off += size_t(wr);
+                }
+            }
+            ::close(sf);
+            ::unlink(oname);
+        }
+        rows_done += 0;
+        ties_total += ties_w.load();
+        std::fprintf(stderr, "SS_WAVE w=%" PRIu64 "/%" PRIu64 " bands=%" PRIu64
+                             " wall=%.2f rows_cum=%" PRIu64 "\n",
+                     w + 1, waves, nbands, now_sec() - tw,
+                     rows_done > N ? N : rows_done);
+    }
+
+    ::fsync(ofd); ::close(ofd);
+    ::fsync(sfd); ::close(sfd);
     std::fprintf(stderr,
-        "SS_DONE n=%" PRIu64 " bands=%" PRIu64 " rows=%" PRIu64 " ties=%" PRIu64
-        " sample_s=%.2f scatter_s=%.2f sortemit_s=%.2f total_s=%.2f\n",
-        N, nb, sorted_rows, ties, t_sample, t_scatter, t_sort, now_sec() - t0);
+        "SS_DONE n=%" PRIu64 " waves=%" PRIu64 " ties=%" PRIu64
+        " sample_s=%.2f waves_s=%.2f total_s=%.2f\n",
+        N, waves, ties_total, t_sample, now_sec() - t1, now_sec() - t0);
     return 0;
 }
