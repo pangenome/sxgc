@@ -90,6 +90,7 @@ struct BinWork {
     U windowFiles = 0, windowLoads = 0; // files created / per-bin bulk loads
     double tWinWrite = 0, tWinRead = 0; // the two file phases, wall
     double tCreditWait = 0;             // build waiting for a filled window
+    double tSlotWait = 0;               // publish waiting for a free band writer slot
     // ---- the write path's own cost (pwrite, no mapping) --------------------
     U winFillBufBytes = 0;              // peak staging buffers (threads x <= 4 MiB)
     U winFillWrites = 0;                // pwrite() calls the fill issued
@@ -183,6 +184,7 @@ struct BinWork {
         windowFiles += o.windowFiles; windowLoads += o.windowLoads;
         tWinWrite += o.tWinWrite; tWinRead += o.tWinRead;
         tCreditWait += o.tCreditWait;
+        tSlotWait += o.tSlotWait;
         winFillBufBytes = std::max(winFillBufBytes, o.winFillBufBytes);
         winFillWrites += o.winFillWrites;
         if (o.saSampleK) saSampleK = o.saSampleK;
@@ -3055,17 +3057,22 @@ static void bin_order(const CorpusText& text, bool dollar, U threads, U targetSi
 // reference set in O(classes + refs).
 struct BinBandSink {
     struct Class { CapturedSeamClass value; U firstRun = 0, lastRun = UINT64_MAX; };
+    // A run is ONE record. Four separate vectors meant four push_backs per run
+    // (chars, lens, heads, tails), each growing independently: measured 60 ns per
+    // ROW in the publish loop, which was 100% of publish's 1,024 s at 10 GB with
+    // slot_wait at 0.00 s. One 24-byte record is one append.
+    struct BandRun {
+        uint8_t c;
+        uint32_t len;
+        U head, tail;
+    };
     struct Band {
-        std::vector<uint8_t> chars;
-        std::vector<uint32_t> lens;
-        std::vector<U> heads, tails;
-        U size() const { return chars.size(); }
+        std::vector<BandRun> runs;
+        U size() const { return runs.size(); }
     };
     struct BandJob {
         U band = 0, firstRun = 0, words = 0, rlebwtOff = 0;
-        std::vector<uint8_t> chars;
-        std::vector<uint32_t> lens;
-        std::vector<U> heads, tails;
+        std::vector<BandRun> runs;
         std::vector<char> gmark;
     };
     // ---- fixed shape -----------------------------------------------------
@@ -3151,6 +3158,7 @@ struct BinBandSink {
         (void)bin;
         require(baseRow == next, "bin-bwt sink row coverage");
         const double t0 = now_sec();
+        const double trow0 = t0;
         auto posOf = [&](U i) { return bin_pos_of(bin_word_tail(words[i]), n, dollar); };
         for (U i = 0; i < m; ++i) {
             const U row = baseRow + i;
@@ -3212,7 +3220,8 @@ struct BinBandSink {
             ++next; ++rows;
         }
         if (m) prevLastPos = posOf(m - 1);
-        own.tStitch += now_sec() - t0;
+        const double trow = now_sec() - trow0;
+        own.tStitch += trow;
     }
     void addRun(const SparseRun& run) {
         if (pending.len && pending.c != run.c) flushRun();
@@ -3225,9 +3234,7 @@ struct BinBandSink {
         counts[pending.c] += pending.len; ++frequencies[pending.c];
         require(pending.len == U(uint32_t(pending.len)),
                 "bin-bwt run length exceeds the piece length field");
-        band.chars.push_back(pending.c);
-        band.lens.push_back(uint32_t(pending.len));
-        band.heads.push_back(pending.head); band.tails.push_back(pending.tail);
+        band.runs.push_back(BandRun{pending.c, uint32_t(pending.len), pending.head, pending.tail});
         bandWords += (pending.len + 0x7fffff - 1) / 0x7fffff;
         ++index; ++own.runsPublished;
         pending = SparseRun{};
@@ -3276,14 +3283,15 @@ struct BinBandSink {
         BandJob job;
         job.band = bandNo; job.firstRun = bandStart;
         job.words = bandWords; job.rlebwtOff = wordsDone;
-        job.chars.swap(band.chars); job.lens.swap(band.lens);
-        job.heads.swap(band.heads); job.tails.swap(band.tails);
+        job.runs.swap(band.runs);
         job.gmark = std::move(gmark);
         band = Band();
         {   // bounded in-flight bands: one slot per queued or running band
+            const double tw0 = now_sec();
             std::unique_lock<std::mutex> lk(mu);
             cvSlot.wait(lk, [&] { return slotsFree > 0; });
             --slotsFree;
+            own.tSlotWait += now_sec() - tw0;
         }
         // The transport's flow credit, unchanged (v2_flow_wait): band bandNo is
         // published only while the consumer is within `window` bands of it.
@@ -3313,15 +3321,24 @@ struct BinBandSink {
                 jobs.pop_front();
             }
             const double t0 = now_sec();
-            const U rc = job.chars.size();
-            v2_write_piece(dir, job.band, 0, job.firstRun, job.chars.data(),
-                           job.lens.data(), job.heads.data(), job.tails.data(), rc,
+            const U rc = job.runs.size();
+            std::vector<uint8_t> jchars(rc);
+            std::vector<uint32_t> jlens(rc);
+            std::vector<U> jheads(rc), jtails(rc);
+            for (U i = 0; i < rc; ++i) {
+                jchars[i] = job.runs[i].c;
+                jlens[i] = job.runs[i].len;
+                jheads[i] = job.runs[i].head;
+                jtails[i] = job.runs[i].tail;
+            }
+            v2_write_piece(dir, job.band, 0, job.firstRun, jchars.data(),
+                           jlens.data(), jheads.data(), jtails.data(), rc,
                            width);
             std::vector<uint32_t> w32;
             w32.reserve(rc + 16);
             for (U i = 0; i < rc; ++i) {
-                const uint32_t c = job.chars[i];
-                U left = job.lens[i];
+                const uint32_t c = job.runs[i].c;
+                U left = job.runs[i].len;
                 require(left, "bin-bwt band run length");
                 while (left) {
                     U take = std::min<U>(left, 0x7fffff); left -= take;
@@ -3707,6 +3724,9 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
     const double tEnd = now_sec() - tEnd0;
     std::error_code ec;
     fs::remove(sink->dir, ec);
+    std::fprintf(stderr,
+        "TAPE_EMIT_STATS slot_wait_s=%.2f row_loop_s=%.2f (of publish) writers=%llu\n",
+        sink->own.tSlotWait, sink->own.tStitch, (unsigned long long)sink->writersUsed);
     std::fprintf(stderr,
         "TAPE_EMIT_DONE rows=%llu runs=%llu hits=%llu wall=%.2f read_s=%.2f word_s=%.2f "
         "publish_s=%.2f finish_s=%.2f\n",
