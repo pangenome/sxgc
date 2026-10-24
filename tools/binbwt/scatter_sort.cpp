@@ -43,6 +43,10 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <mutex>
+#include <condition_variable>
+#include <functional>
+#include <memory>
 
 using u8 = uint8_t;
 using u32 = uint32_t;
@@ -125,6 +129,62 @@ static inline int suf_cmp(u64 a, u64 b) {
     return (N - a) < (N - b) ? -1 : 1;
 }
 
+
+
+// ---------------------------------------------------------------------------
+// THE POOL: threads and buffers live for the WHOLE run.
+//
+// The first wave implementation spawned `threads` threads per wave and allocated
+// `nparts x nbands` staging buffers per wave. With ~20 waves at the 2n cap that is
+// 20 thread-spawn storms and 20 rounds of allocator churn - measured 34% of the
+// wall as sys time. A wave should cost its work and nothing else.
+// ---------------------------------------------------------------------------
+struct Pool {
+    std::vector<std::thread> ts;
+    std::mutex mu;
+    std::condition_variable cv, done;
+    std::function<void(unsigned)> fn;
+    u64 gen = 0;
+    unsigned pending = 0;
+    bool stop = false;
+    explicit Pool(unsigned n) {
+        for (unsigned i = 0; i < n; ++i) ts.emplace_back([this, i] { loop(i); });
+    }
+    ~Pool() {
+        { std::lock_guard<std::mutex> lk(mu); stop = true; }
+        cv.notify_all();
+        for (auto& t : ts) t.join();
+    }
+    void run(const std::function<void(unsigned)>& f) {
+        {
+            std::unique_lock<std::mutex> lk(mu);
+            fn = f;
+            ++gen;
+            pending = (unsigned)ts.size();
+        }
+        cv.notify_all();
+        std::unique_lock<std::mutex> lk(mu);
+        done.wait(lk, [&] { return pending == 0; });
+    }
+    void loop(unsigned i) {
+        u64 seen = 0;
+        for (;;) {
+            std::function<void(unsigned)> f;
+            {
+                std::unique_lock<std::mutex> lk(mu);
+                cv.wait(lk, [&] { return stop || gen != seen; });
+                if (stop) return;
+                seen = gen;
+                f = fn;
+            }
+            f(i);
+            {
+                std::lock_guard<std::mutex> lk(mu);
+                if (--pending == 0) done.notify_all();
+            }
+        }
+    }
+};
 
 // ---------------------------------------------------------------------------
 // WAVES: the scratch cap is a DESIGN CONSTRAINT, not a hope.
@@ -297,6 +357,7 @@ int main(int argc, char** argv) {
         return sk[i];
     };
 
+    std::unique_ptr<Pool> pool(new Pool((unsigned)std::max<u64>(1, threads)));
     std::string cmd = "mkdir -p '" + scratch + "'";
     if (std::system(cmd.c_str()) != 0) die("scratch prep failed");
 
@@ -390,11 +451,7 @@ int main(int argc, char** argv) {
             for (u64 b = 0; b < nbands; ++b)
                 if (fds[b][t] >= 0) { ::close(fds[b][t]); fds[b][t] = -1; }
         };
-        {
-            std::vector<std::thread> ts;
-            for (u64 t = 0; t < nparts; ++t) ts.emplace_back(worker, t);
-            for (auto& th : ts) th.join();
-        }
+        pool->run([&](unsigned t) { worker(t); });
 
         // band row counts are known BEFORE sorting (file sizes / row bytes), so
         // every band's offset in the global streams is computable up front and
@@ -488,12 +545,7 @@ int main(int argc, char** argv) {
                 rows.shrink_to_fit();
             }
         };
-        {
-            std::vector<std::thread> bs;
-            const u64 np = std::min<u64>(par_bands, nbands);
-            for (u64 i = 0; i < np; ++i) bs.emplace_back(band_worker);
-            for (auto& th : bs) th.join();
-        }
+        pool->run([&](unsigned) { band_worker(); });
         emitted += wave_rows;
         if (false) for (u64 b = 0; b < nbands; ++b) {
             char oname[512];
