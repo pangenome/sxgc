@@ -103,3 +103,57 @@ carry ~30% variance; only same-session A/B is trustworthy.
 **Where that leaves the sort**: it is memory-traffic bound, and the lever that is
 left is a properly packed layout (12-16 B rows with the key remainder, positions
 reused buffers, no per-band allocation), not a different sorting algorithm.
+
+## THE PRODUCT AT 10 GB: byte-identical to the bank
+
+With the remap bug fixed and the symbol stream buffered, the tape machine produces
+the banked container exactly:
+
+| | value |
+|---|---|
+| runs (r) | **3,474,891,368** (exactly the bank's; 1,519 short before the fix) |
+| chi | **2,676,929,430** (the finish's in-process assert passed) |
+| container sha256 | **e99fc0b35e7fadb030934f7c75f0b62d4d0631a626213f5173f2eca599f5f688** |
+| bank sha256 | same |
+| SA verification | SA_CHECK_PASS, all 10,000,017,258 ranks, in PRODUCT (remapped) order |
+
+Stages: scatter+sort 848.6 s (sample 1.51, scatter 37.21, sort+emit 747.71);
+emit 1161.15 s (word 296.09, publish 852.28, read 12.13); finish fused and
+overlapped.
+
+### HONEST ACCOUNTING: it is not faster yet
+
+Product wall ~33.5 min vs the bin machine's ~25.5 min producer at the same 10 GB.
+The tape machine is ~30% SLOWER at this scale. Its value so far is (a) exactness
+proven at 10 billion ranks in product order, and (b) a cost structure with no
+random access at all. Pile projection from the measured rates as-is: ~31 h sort +
+~42 h emit ~= 3 days - comparable to the bin machine's ~4-day estimate, not yet a
+win.
+
+Three measured levers, all engineering rather than architecture:
+1. the remapped comparator costs 2x (sort+emit 380 -> 748 s when the remap branch
+   went in); a 64 KB remapped lookaside or remapping a key block once per
+   comparison recovers most of it;
+2. `publish` is single-threaded (852 s of the 1161); word-building is already
+   chunked and parallelizable;
+3. the row is 24 B; the pile plan is 10-12 B.
+
+### A GATE FINDING THAT MATTERS
+
+The remap bug produced the EXACT SAME chi at 1 GB (303,812,551) and at 10 GB
+(2,676,929,430) while emitting the WRONG permutation (r short by 25 and 1,519
+respectively). **chi alone would have certified a wrong build.** Only container
+byte-identity caught it. This is the concrete case for the arbiter this project
+enforced all along, and it belongs in the paper.
+
+### Bug ledger for this stage (all found by running, not by review)
+
+- one `text.at()` per row = the LOCKED windowed corpus adapter, 1e10 times: 34
+  cores for 50 minutes publishing nothing. Fixed by carrying the BWT symbol in
+  the row (free at scatter time).
+- the sink's flow control (`v2_flow_wait`) REQUIRES a live consumer: finish-after-
+  emit deadlocked; the product path runs them fused. Fixed by starting the finish
+  first.
+- one `write()` per row for the symbol stream: sort+emit 380 -> 1752 s. Buffered.
+- keys built in the RAW alphabet instead of the product's remapped one (above).
+- `sa_check` had no `--remap`, so it validated the wrong order. Added.
