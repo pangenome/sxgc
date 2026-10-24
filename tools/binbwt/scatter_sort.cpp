@@ -405,8 +405,23 @@ int main(int argc, char** argv) {
 
     int ofd = ::open(out.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (ofd < 0) die("create out");
-    u64 hdr[6] = {0x434C5853ull /*'SXLC'*/, 1, N, N, 0, 0};
-    if (::write(ofd, hdr, 48) != 48) die("write header");
+    // THE STREAM IS IN THE PRODUCT'S OWN SAMPLED-SA ANCHOR FORMAT ('SXSA'), so
+    // kasai_column and every existing tool can consume it directly. The old header
+    // here was 'SXLC' (the COLUMN magic) with n at the wrong offset, which made the
+    // LCP column unbuildable from a tape SA - i.e. it silently disabled the Kasai
+    // arm of the finish, the one thing that removes the finish's LCE wall.
+    {
+        u64 h[6];
+        const uint32_t magic = 0x41535853u, ver = 1;   // 'SXSA', version 1
+        std::memcpy(h, &magic, 4);
+        std::memcpy((char*)h + 4, &ver, 4);
+        h[1] = N;    // n
+        h[2] = 1;    // k (full SA)
+        h[3] = N;    // count
+        h[4] = N;    // rows
+        h[5] = 10;   // SA_ANCHOR_ROW_PAD
+        if (::write(ofd, h, 48) != 48) die("write header");
+    }
     const std::string symPath = out + ".sym";
     int sfd = ::open(symPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (sfd < 0) die("create sym stream");
