@@ -313,26 +313,26 @@ int main(int argc, char** argv) {
         const double tw = now_sec();
         const Wave& W = wl[w];
         // Bands inside the wave: rows_per_band each, from the same sample.
-        // band edges inside this wave: the sampled keys that fall in the wave,
-        // cut into rows_per_band-sized groups.
-        std::vector<u64> wk;
-        {
-            u64 a, bq, cq;
-            for (size_t i = 0; i < sk.size(); i += std::max<size_t>(1, sk.size() / 200000)) {
-                const u64 k = sk[i];
-                // same predicate as the filter, on the sampled key's top byte
-                a = k >> 56; (void)a; (void)bq; (void)cq;
-            }
-        }
-        u64 nb = (u64)std::max<double>(1.0, double(rows_per_wave) / double(rows_per_band));
+        // BAND EDGES MUST BE DATA QUANTILES, NOT UNIFORM IN KEY SPACE. Uniform
+        // subdivision put nearly every row of a fat wave in ONE band (spaces
+        // dominate the alphabet), which serialised the sort: measured 271 s for a
+        // single wave of the 10 GB run. The sample is already sorted, so the
+        // wave's slice of it gives exact-enough quantiles.
+        const u64 nb = (u64)std::max<double>(1.0, double(rows_per_wave) / double(rows_per_band));
         std::vector<u64> bounds;
         {
-            // uniform subdivision of the wave's key range is good enough for
-            // band sizing: bands only bound RAM, they carry no ordering meaning.
-            const unsigned lo1 = W.lo, hi1 = W.hi;
-            const u64 span = (u64)(hi1 - lo1) << 56;
-            for (u64 b = 1; b < nb; ++b)
-                bounds.push_back(lo1 ? (u64(lo1) << 56) + span * b / nb : span * b / nb);
+            const u64 klo_s = (u64(W.lo) << 56);
+            const u64 khi_s = (W.hi >= 256) ? ~0ull : (u64(W.hi) << 56);
+            auto lo_it = std::lower_bound(sk.begin(), sk.end(), klo_s);
+            auto hi_it = std::upper_bound(sk.begin(), sk.end(), khi_s);
+            const u64 n_in = (u64)(hi_it - lo_it);
+            for (u64 b = 1; b < nb && n_in > 1; ++b) {
+                const u64 idx = (u64)((long double)n_in * b / nb);
+                if (idx == 0 || idx >= n_in) continue;
+                const u64 k = *(lo_it + idx);
+                if (bounds.empty() || k > bounds.back()) bounds.push_back(k);
+            }
+            if (bounds.empty() && nb > 1) bounds.push_back(khi_s);  // degenerate: one band
         }
         const u64 nbands = bounds.size() + 1;
 
