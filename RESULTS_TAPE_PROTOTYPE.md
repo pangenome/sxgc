@@ -237,3 +237,34 @@ byte's sample instead of the wave's two-byte range, so bands were wildly unbalan
 Fixed. NOTE: re-measurements taken while another stage was running are contaminated -
 the 1 GB numbers in this session vary by 25% depending on what else is on the box,
 so single-run comparisons are only valid on an idle machine.
+
+## PIPELINE SHAPE, settled by measurement: FUSED wins
+
+10 GB, same tree, same SA, clean box both times, both byte-identical:
+
+| shape | emit | finish | total |
+|---|---|---|---|
+| sequential (emit, then finish) | 374 s | 1,637 s | **2,011 s** |
+| fused (both concurrently, 96+96) | (1,292 s contended) | overlapping | **1,661 s** |
+
+Fusion wins by 17% - not because contention is cheap (it costs the emit 3.8x) but
+because THE EMIT FITS INSIDE THE FINISH: 374 s of emit against 1,637 s of finish.
+Overlapping it is nearly free.
+
+## THEREFORE THE PILE BOTTLENECK IS THE FINISH, NOT THE PRODUCER
+
+| stage | 10 GB | pile (x131) |
+|---|---|---|
+| order (scatter+sort, 2n cap) | 804 s | ~29 h |
+| emit | 374 s | ~13 h (overlapped) |
+| FINISH | 1,637 s | ~59 h |
+
+164 s/GB of finish is the same serial fold spine the earlier charters measured
+(~100 s/GB at the 1 GB fixture, worse here on a 3.47e9-run stream). It is not a
+tape-machine artifact: it is the chi construction.
+
+PILE ARITHMETIC: ~29 h order + ~59 h finish ~= 3.7 days, peak scratch 2.6 TB.
+
+The tape machine cut the producer from ~52 h (bin machine, unverified at 100 GB) to
+~29 h with a 2n scratch guarantee and exactness proven at 10e9 ranks. The next
+target is the finish's serial fold, or fewer/longer runs so the fold has less to do.
