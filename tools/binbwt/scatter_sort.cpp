@@ -74,6 +74,19 @@ struct Row {
 static const u8* T = nullptr;
 static u64 N = 0;
 static const u8* REMAP = nullptr;   // optional: raw byte -> remapped symbol
+// Two raw bytes -> their two remapped bytes, packed big-endian. A tie comparison
+// then consumes 2 bytes per table lookup instead of 1.
+static uint16_t PAIRMAP[65536];
+static bool PAIRMAP_READY = false;
+static inline void build_pairmap() {
+    for (unsigned a = 0; a < 256; ++a)
+        for (unsigned b = 0; b < 256; ++b) {
+            const unsigned ma = REMAP ? REMAP[a] : a;
+            const unsigned mb = REMAP ? REMAP[b] : b;
+            PAIRMAP[(a << 8) | b] = (uint16_t)((ma << 8) | mb);
+        }
+    PAIRMAP_READY = true;
+}
 static inline u64 pack_sym(u64 p, u8 sym) { return p | (u64(sym) << 48); }
 static inline u64 unpack_pos(u64 v) { return v & ((1ull << 48) - 1); }
 
@@ -100,10 +113,34 @@ static inline void key_at(u64 p, u64& klo, u64& khi, u64& kq) {
 }
 
 // Full suffix comparison in dollar mode (shorter is smaller).
-static inline int suf_cmp(u64 a, u64 b) {
+// `from` is safe to pass as 24: the comparator only reaches here when the first
+// 24 key bytes are EQUAL, so comparing them again is pure waste (and it is the
+// dominant cost of the tie set).
+static inline int suf_cmp_from(u64 a, u64 b, u64 from) {
     const u64 cap = std::min(N - a, N - b);
+    if (from >= cap) {
+        if (a == b) return 0;
+        return (N - a) < (N - b) ? -1 : 1;
+    }
+    if (PAIRMAP_READY) {
+        u64 i = from;
+        while (i + 2 <= cap) {
+            const uint16_t x = PAIRMAP[(unsigned(T[a + i]) << 8) | T[a + i + 1]];
+            const uint16_t y = PAIRMAP[(unsigned(T[b + i]) << 8) | T[b + i + 1]];
+            if (x != y) return x < y ? -1 : 1;
+            i += 2;
+        }
+        for (; i < cap; ++i) {
+            const u8 xb = REMAP ? REMAP[T[a + i]] : T[a + i];
+            const u8 yb = REMAP ? REMAP[T[b + i]] : T[b + i];
+            if (xb != yb) return xb < yb ? -1 : 1;
+        }
+        if (a == b) return 0;
+        return (N - a) < (N - b) ? -1 : 1;
+    }
+    const u64 cap0 = cap;
     if (!REMAP) {   // fast path: identity alphabet, 8 bytes at a time
-        u64 i = 0;
+        u64 i = from;
         while (i + 8 <= cap) {
             u64 x, y;
             std::memcpy(&x, T + a + i, 8);
@@ -120,7 +157,7 @@ static inline int suf_cmp(u64 a, u64 b) {
         for (; i < cap; ++i)
             if (T[a + i] != T[b + i]) return T[a + i] < T[b + i] ? -1 : 1;
     } else {        // product alphabet: compare remapped symbols
-        for (u64 i = 0; i < cap; ++i) {
+        for (u64 i = from; i < cap0; ++i) {
             const u8 xb = REMAP[T[a + i]], yb = REMAP[T[b + i]];
             if (xb != yb) return xb < yb ? -1 : 1;
         }
@@ -244,6 +281,7 @@ int main(int argc, char** argv) {
         ::close(rf);
         REMAP = remapBuf.data();
     }
+    build_pairmap();
 
     const u64 row_bytes = sizeof(Row);
     const u64 ram_bytes = (u64)(ram_gb * 1e9);
@@ -567,7 +605,7 @@ int main(int argc, char** argv) {
                     if (a.klo != b.klo) return a.klo < b.klo;
                     if (a.khi != b.khi) return a.khi < b.khi;
                     if (a.kq != b.kq) return a.kq < b.kq;
-                    return suf_cmp(unpack_pos(a.pos), unpack_pos(b.pos)) < 0;
+                    return suf_cmp_from(unpack_pos(a.pos), unpack_pos(b.pos), 24) < 0;
                 });
                 tSort[b] = now_sec() - bs0;
                 const double bw0 = now_sec();
