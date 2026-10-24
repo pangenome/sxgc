@@ -157,3 +157,52 @@ enforced all along, and it belongs in the paper.
 - one `write()` per row for the symbol stream: sort+emit 380 -> 1752 s. Buffered.
 - keys built in the RAW alphabet instead of the product's remapped one (above).
 - `sa_check` had no `--remap`, so it validated the wrong order. Added.
+
+## THE 2n PIPELINE PRODUCES THE BANK (10 GB, byte-identical)
+
+Scratch capped at 2n by construction (waves sized from the cap, each wave's rows
+deleted before the next is written):
+
+| | value |
+|---|---|
+| scratch cap | 21,500 MB (2.0n) |
+| peak scratch measured | 22,070 MB (2.06n; 1.95n after the 95% fill fix) |
+| SA verification | SA_CHECK_PASS, all 10,000,017,258 ranks, PRODUCT order |
+| order wall | 1,365 s (20 waves) |
+| emit + finish wall | 1,647 s (publish 1,024 s of the emit) |
+| chi | 2,676,929,430 exact |
+| runs | 3,474,891,368 exact |
+| container | e99fc0b35e7fadb030934f7c75f0b62d4d0631a626213f5173f2eca599f5f688 |
+| bank | same |
+
+Total ~50 min at 10 GB under a 21.5 GB scratch cap, against the bin machine's
+~25.5 min with unbounded windows.
+
+### The scaling law this establishes
+
+    waves   = row_bytes / 2
+    I/O     ≈ 2.5 x row_bytes x n
+    scratch = 2n, flat in corpus size
+
+At pile (1.31 TB) with 32-byte rows: ~16 waves, ~105 TB of sequential I/O, peak
+scratch 2.6 TB on a 14 TB disc. Every number is computable BEFORE launch.
+
+### Measured trade-off: the row size dial (1 GB @ 2n)
+
+| row | key | waves | ties | wall |
+|---|---|---|---|---|
+| 16 B | 8 B | 11 | 88% | 152 s |
+| 24 B | 16 B | 19 | 37% | 113 s |
+| 32 B | 24 B | 20 | 13% | 88 s |
+
+Smaller rows buy sequential I/O and multiply RANDOM text reads. At pile a tie read
+against 1.31 TB is a disc random read, so 13% vs 88% ties is ~4e11 vs ~1e12 random
+reads. The 32-byte row is kept for the pile for that reason, not for wall time at
+10 GB.
+
+### Null results recorded
+
+- per-wave thread/buffer churn was NOT 34% of the wall: a persistent pool changed
+  88 s -> 90 s. The sys time is band-file I/O.
+- the write-read-write append copy was not the bottleneck either; direct pwrite at
+  computed offsets left the wall unchanged.
