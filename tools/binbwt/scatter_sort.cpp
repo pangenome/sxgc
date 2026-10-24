@@ -80,6 +80,12 @@ static inline void key_at(u64 p, u64& klo, u64& khi) {
     const u64 take = avail < 16 ? avail : 16;
     if (take) std::memcpy(b, T + p, take);
     if (take < 16) std::memset(b + take, 0, 16 - take);
+    // THE KEY LIVES IN THE PRODUCT ALPHABET. remap[] is not order-preserving
+    // (remap[1]=255, remap[2]=253, ...), so building the key from raw bytes sorts
+    // in the wrong order - the bug that made the 150 MB stream differ from the
+    // bin machine's while the 4 MB slice (which happens to contain none of the
+    // remapped bytes) matched exactly.
+    if (REMAP) for (int i = 0; i < 16; ++i) b[i] = REMAP[b[i]];
     u64 lo, hi;
     std::memcpy(&lo, b, 8);
     std::memcpy(&hi, b + 8, 8);
@@ -90,22 +96,29 @@ static inline void key_at(u64 p, u64& klo, u64& khi) {
 // Full suffix comparison in dollar mode (shorter is smaller).
 static inline int suf_cmp(u64 a, u64 b) {
     const u64 cap = std::min(N - a, N - b);
-    u64 i = 0;
-    while (i + 8 <= cap) {
-        u64 x, y;
-        std::memcpy(&x, T + a + i, 8);
-        std::memcpy(&y, T + b + i, 8);
-        if (x != y) {
-            u8 xs[8], ys[8];
-            std::memcpy(xs, &x, 8);
-            std::memcpy(ys, &y, 8);
-            for (int j = 0; j < 8; ++j)
-                if (xs[j] != ys[j]) return xs[j] < ys[j] ? -1 : 1;
+    if (!REMAP) {   // fast path: identity alphabet, 8 bytes at a time
+        u64 i = 0;
+        while (i + 8 <= cap) {
+            u64 x, y;
+            std::memcpy(&x, T + a + i, 8);
+            std::memcpy(&y, T + b + i, 8);
+            if (x != y) {
+                u8 xs[8], ys[8];
+                std::memcpy(xs, &x, 8);
+                std::memcpy(ys, &y, 8);
+                for (int j = 0; j < 8; ++j)
+                    if (xs[j] != ys[j]) return xs[j] < ys[j] ? -1 : 1;
+            }
+            i += 8;
         }
-        i += 8;
+        for (; i < cap; ++i)
+            if (T[a + i] != T[b + i]) return T[a + i] < T[b + i] ? -1 : 1;
+    } else {        // product alphabet: compare remapped symbols
+        for (u64 i = 0; i < cap; ++i) {
+            const u8 xb = REMAP[T[a + i]], yb = REMAP[T[b + i]];
+            if (xb != yb) return xb < yb ? -1 : 1;
+        }
     }
-    for (; i < cap; ++i)
-        if (T[a + i] != T[b + i]) return T[a + i] < T[b + i] ? -1 : 1;
     if (a == b) return 0;
     return (N - a) < (N - b) ? -1 : 1;
 }
@@ -293,6 +306,7 @@ int main(int argc, char** argv) {
 
     auto band_worker = [&]() {
         std::vector<Row> rows;
+        std::vector<u8> sbuf;
         std::vector<u8> obuf;
         obuf.reserve(1u << 20);
         for (;;) {
@@ -343,10 +357,10 @@ int main(int argc, char** argv) {
             int sf = ::open(sname, O_WRONLY | O_CREAT | O_TRUNC, 0666);
             if (sf < 0) die("create band sym");
             obuf.clear();
+            sbuf.clear();
             for (const Row& r : rows) {
                 const u64 p = unpack_pos(r.pos);
-                const u8 sy = (u8)(r.pos >> 48);
-                if (::write(sf, &sy, 1) != 1) die("write band sym byte");
+                sbuf.push_back((u8)(r.pos >> 48));
                 obuf.insert(obuf.end(), (const u8*)&p, (const u8*)&p + 8);
                 if (obuf.size() >= (1u << 20)) {
                     size_t off = 0;
@@ -364,6 +378,12 @@ int main(int argc, char** argv) {
                     ssize_t w = ::write(of, obuf.data() + off, obuf.size() - off);
                     if (w <= 0) die("write band out");
                     off += size_t(w);
+                }
+                size_t soff = 0;
+                while (soff < sbuf.size()) {
+                    ssize_t w = ::write(sf, sbuf.data() + soff, sbuf.size() - soff);
+                    if (w <= 0) die("write band sym");
+                    soff += size_t(w);
                 }
             }
             ::fsync(of);

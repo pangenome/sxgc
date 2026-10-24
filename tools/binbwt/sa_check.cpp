@@ -37,6 +37,7 @@ static void die(const char* m, int code) {
 }
 
 static const u8* T = nullptr;
+static const u8* RMP = nullptr;   // optional raw -> remapped (the PRODUCT order)
 static u64 N = 0;
 static bool DOLLAR = true;
 
@@ -62,6 +63,13 @@ static inline int suf_cmp(u64 a, u64 b) {
             continue;
         }
         if (x != y) {
+            if (RMP) {
+                u8 xs[8], ys[8];
+                std::memcpy(xs, &x, 8);
+                std::memcpy(ys, &y, 8);
+                for (int j = 0; j < 8; ++j)
+                    if (RMP[xs[j]] != RMP[ys[j]]) return RMP[xs[j]] < RMP[ys[j]] ? -1 : 1;
+            }
             u8 xs[8], ys[8];
             std::memcpy(xs, &x, 8);
             std::memcpy(ys, &y, 8);
@@ -90,13 +98,14 @@ static inline int suf_cmp(u64 a, u64 b) {
 }
 
 int main(int argc, char** argv) {
-    std::string corpus, sapath;
+    std::string corpus, sapath, remapPath;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         auto nxt = [&]() { if (i + 1 >= argc) die("missing value", 2); return std::string(argv[++i]); };
         if (a == "--corpus") corpus = nxt();
         else if (a == "--sa") sapath = nxt();
         else if (a == "--dollar") DOLLAR = std::atoi(nxt().c_str()) != 0;
+        else if (a == "--remap") remapPath = nxt();
         else die(("unknown arg " + a).c_str(), 2);
     }
     if (corpus.empty() || sapath.empty()) die("--corpus and --sa required", 2);
@@ -108,6 +117,15 @@ int main(int argc, char** argv) {
     T = (const u8*)::mmap(nullptr, (size_t)N, PROT_READ, MAP_PRIVATE, fd, 0);
     if (T == MAP_FAILED) die("mmap corpus", 2);
 
+    std::vector<u8> rmpBuf;
+    if (!remapPath.empty()) {
+        int rf = ::open(remapPath.c_str(), O_RDONLY);
+        if (rf < 0) die("remap", 2);
+        rmpBuf.resize(256);
+        if (::read(rf, rmpBuf.data(), 256) != 256) die("remap short", 2);
+        ::close(rf);
+        RMP = rmpBuf.data();
+    }
     int sfd = ::open(sapath.c_str(), O_RDONLY);
     struct stat ss{};
     if (sfd < 0 || ::fstat(sfd, &ss)) die("sa", 2);
