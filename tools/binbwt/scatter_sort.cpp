@@ -196,7 +196,10 @@ int main(int argc, char** argv) {
     // size them from whichever budget is smaller: RAM/par or the wave/par.
     // THE SCRATCH LAW: default cap is 2n bytes.
     const u64 cap_bytes = scratch_cap_gb > 0.0 ? (u64)(scratch_cap_gb * 1e9) : 2 * N;
-    u64 rows_per_wave = std::max<u64>(1, cap_bytes / row_bytes);
+    // Waves are filled greedily by byte class, so a wave can overshoot the target
+    // by one class (measured 2.06n against a 2.0n cap). Fill to 95% of the cap and
+    // the overshoot stays inside the law instead of breaking it.
+    u64 rows_per_wave = std::max<u64>(1, (cap_bytes - cap_bytes / 20) / row_bytes);
     if (rows_per_wave / par_bands < rows_per_band)
         rows_per_band = std::max<u64>(1, rows_per_wave / par_bands);
     u64 waves = (N + rows_per_wave - 1) / rows_per_wave;
