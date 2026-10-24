@@ -260,8 +260,12 @@ int main(int argc, char** argv) {
     // by one class (measured 2.06n against a 2.0n cap). Fill to 95% of the cap and
     // the overshoot stays inside the law instead of breaking it.
     u64 rows_per_wave = std::max<u64>(1, (cap_bytes - cap_bytes / 20) / row_bytes);
-    if (rows_per_wave / par_bands < rows_per_band)
-        rows_per_band = std::max<u64>(1, rows_per_wave / par_bands);
+    // BANDS MUST OUTNUMBER WORKERS. With bands == par_bands the work-stealing
+    // queue is a 1:1 map: each worker gets exactly one band and the wall is set by
+    // the fattest one (measured: 2.43 s of sort summed in a 1.14 s wave = ~2 cores
+    // busy of 8). Oversubscribe 4x so stealing can balance the fat bands.
+    if (rows_per_wave / (4 * par_bands) < rows_per_band)
+        rows_per_band = std::max<u64>(1, rows_per_wave / (4 * par_bands));
     u64 waves = (N + rows_per_wave - 1) / rows_per_wave;
     if (waves < 1) waves = 1;
 
@@ -427,31 +431,84 @@ int main(int argc, char** argv) {
             }
             v.clear();
         };
+        // THE SCAN USES pread INTO A REUSABLE BUFFER, not a faulting mmap walk.
+        // Measured: the mmap scan cost ~19 ns per position per wave (a page fault
+        // every 4 KB and a TLB walk), against 6.89 GB/s for buffered sequential
+        // reads. The mmap stays for the RANDOM tie comparisons in suf_cmp, where
+        // it is the right tool.
         auto worker = [&](u64 t) {
             const u64 lo = N * t / nparts, hi = N * (t + 1) / nparts;
-            for (u64 p = lo; p < hi; ++p) {
-                const unsigned c0 = REMAP ? REMAP[T[p]] : T[p];
-                if (c0 < W.lo || c0 >= W.hi) continue;            // cheap reject
-                if (W.lvl2) {
-                    const unsigned c1 = (p + 1 < N) ? (REMAP ? REMAP[T[p + 1]] : T[p + 1]) : 0;
-                    if (c1 < W.lo2 || c1 >= W.hi2) continue;
+            const u64 CH = 4u << 20;
+            std::vector<u8> buf(CH + 64);
+            for (u64 base = lo; base < hi;) {
+                const u64 chunk = std::min<u64>(CH, hi - base);
+                // one byte of run-up (the symbol byte at p-1) plus 32 bytes of
+                // look-ahead so a 16-byte key and the symbol are always in range
+                const u64 from = (base ? base - 1 : base);
+                const u64 want = std::min<u64>(chunk + 1 + 48, N - from);
+                size_t got = 0;
+                while (got < want) {
+                    ssize_t r = ::pread(fd, buf.data() + got, want - got, off_t(from + got));
+                    if (r <= 0) die("pread scan");
+                    got += size_t(r);
                 }
-                Row r{};
-                key_at(p, r.klo, r.khi, r.kq);
-                u8 raw = (p == 0) ? 0 : T[p - 1];
-                u8 sy = (p == 0) ? u8(2) : (REMAP ? REMAP[raw] : raw);
-                r.pos = pack_sym(p, sy);
-                u64 b = (u64)(std::upper_bound(bounds.begin(), bounds.end(), r.klo) - bounds.begin());
-                if (b >= nbands) b = nbands - 1;
-                auto& v = bufs[t][b];
-                v.insert(v.end(), (const u8*)&r, (const u8*)&r + sizeof(Row));
-                if (v.size() >= bufsz) flush_buf(t, b);
+                // ZERO-PAD PAST EOF: key_at's contract is that bytes past the end
+                // of the text are 0 (the dollar convention's "shorter is smaller").
+                // A buffer read stops at EOF, so the tail must be zeroed or the
+                // last positions get STALE bytes as their key - which is exactly
+                // what failed SA_CHECK_ORDER_FAIL at rank 1,776,069.
+                if (from + want == N && want < buf.size())
+                    std::memset(buf.data() + want, 0, buf.size() - want);
+                // REMAP THE CHUNK ONCE, in place, instead of 24 lookups per row.
+                // Per-row key building with byte-by-byte REMAP[] was the real cost:
+                // ~400 ns/row for the included rows (~43M per wave at 1 GB), which
+                // dominated the whole scan. One sequential pass over the chunk
+                // makes every key a plain big-endian load.
+                if (REMAP)
+                    for (u64 i = 0; i < got; ++i) buf[i] = REMAP[buf[i]];
+                const u64 off = base - from;   // index in buf of position `base`
+                for (u64 j = 0; j < chunk; ++j) {
+                    const u64 p = base + j;
+                    const u64 bj = off + j;
+                    const unsigned c0 = buf[bj];
+                    if (c0 < W.lo || c0 >= W.hi) continue;
+                    if (W.lvl2) {
+                        const unsigned c1 = (p + 1 < N) ? buf[bj + 1] : 0;
+                        if (c1 < W.lo2 || c1 >= W.hi2) continue;
+                    }
+                    // THE WHOLE 24-BYTE KEY. Leaving kq unset here was a real bug:
+                    // the comparator's third word then read uninitialised memory,
+                    // and it still passed sa_check once - the verifier catches order
+                    // errors, not undefined values that happen to agree.
+                    u64 a1, a2, a3;
+                    std::memcpy(&a1, buf.data() + bj, 8);
+                    std::memcpy(&a2, buf.data() + bj + 8, 8);
+                    std::memcpy(&a3, buf.data() + bj + 16, 8);
+                    a1 = bswap64(a1); a2 = bswap64(a2); a3 = bswap64(a3);
+                    u8 sy;
+                    if (p == 0) sy = 2;
+                    else {
+                        sy = buf[bj - 1];
+                    }
+                    Row r{};
+                    r.klo = a1;
+                    r.khi = a2;
+                    r.kq = a3;
+                    r.pos = pack_sym(p, sy);
+                    u64 b = (u64)(std::upper_bound(bounds.begin(), bounds.end(), a1) - bounds.begin());
+                    if (b >= nbands) b = nbands - 1;
+                    auto& v = bufs[t][b];
+                    v.insert(v.end(), (const u8*)&r, (const u8*)&r + sizeof(Row));
+                    if (v.size() >= bufsz) flush_buf(t, b);
+                }
+                base += chunk;
             }
             for (u64 b = 0; b < nbands; ++b) flush_buf(t, b);
             for (u64 b = 0; b < nbands; ++b)
                 if (fds[b][t] >= 0) { ::close(fds[b][t]); fds[b][t] = -1; }
         };
         pool->run([&](unsigned t) { worker(t); });
+        const double tScan = now_sec() - tw;
 
         // band row counts are known BEFORE sorting (file sizes / row bytes), so
         // every band's offset in the global streams is computable up front and
@@ -474,12 +531,14 @@ int main(int argc, char** argv) {
         // ---- sort this wave's bands (parallel), writing at their own offsets ----
         std::atomic<u64> next_band{0};
         std::atomic<u64> ties_w{0};
+        std::vector<double> tRead(nbands, 0.0), tSort(nbands, 0.0), tWrite(nbands, 0.0);
         auto band_worker = [&]() {
             std::vector<Row> rows;
             for (;;) {
                 const u64 b = next_band.fetch_add(1);
                 if (b >= nbands) return;
                 rows.clear();
+                const double br0 = now_sec();
                 for (u64 t = 0; t < nparts; ++t) {
                     char name[512];
                     std::snprintf(name, sizeof name, "%s/w%" PRIu64 ".b%05" PRIu64 ".p%05" PRIu64,
@@ -502,12 +561,16 @@ int main(int argc, char** argv) {
                     ::close(f);
                     if (!keep_rows) ::unlink(name);
                 }
+                tRead[b] = now_sec() - br0;
+                const double bs0 = now_sec();
                 std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
                     if (a.klo != b.klo) return a.klo < b.klo;
                     if (a.khi != b.khi) return a.khi < b.khi;
                     if (a.kq != b.kq) return a.kq < b.kq;
                     return suf_cmp(unpack_pos(a.pos), unpack_pos(b.pos)) < 0;
                 });
+                tSort[b] = now_sec() - bs0;
+                const double bw0 = now_sec();
                 u64 ties = 0;
                 for (size_t i = 1; i < rows.size(); ++i)
                     if (rows[i].klo == rows[i-1].klo && rows[i].khi == rows[i-1].khi &&
@@ -541,6 +604,7 @@ int main(int argc, char** argv) {
                         soff += size_t(wr);
                     }
                 }
+                tWrite[b] = now_sec() - bw0;
                 rows.clear();
                 rows.shrink_to_fit();
             }
@@ -584,10 +648,19 @@ int main(int argc, char** argv) {
         }
         rows_done += 0;
         ties_total += ties_w.load();
-        std::fprintf(stderr, "SS_WAVE w=%" PRIu64 "/%" PRIu64 " bands=%" PRIu64
-                             " wall=%.2f rows_cum=%" PRIu64 "\n",
-                     w + 1, waves, nbands, now_sec() - tw,
-                     rows_done > N ? N : rows_done);
+        {
+            double rd = 0, so = 0, wr = 0, rdm = 0, som = 0, wrm = 0;
+            for (u64 b = 0; b < nbands; ++b) {
+                rd += tRead[b]; so += tSort[b]; wr += tWrite[b];
+                rdm = std::max(rdm, tRead[b]); som = std::max(som, tSort[b]); wrm = std::max(wrm, tWrite[b]);
+            }
+            std::fprintf(stderr,
+                "SS_WAVE w=%" PRIu64 "/%" PRIu64 " bands=%" PRIu64 " wall=%.2f"
+                " scan=%.2f | band_sum read=%.2f sort=%.2f write=%.2f"
+                " | band_max read=%.2f sort=%.2f write=%.2f\n",
+                w + 1, waves, nbands, now_sec() - tw, tScan,
+                rd, so, wr, rdm, som, wrm);
+        }
     }
 
     ::fsync(ofd); ::close(ofd);
