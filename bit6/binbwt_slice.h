@@ -3725,8 +3725,9 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
     std::error_code ec;
     fs::remove(sink->dir, ec);
     std::fprintf(stderr,
-        "TAPE_EMIT_STATS slot_wait_s=%.2f row_loop_s=%.2f (of publish) writers=%llu\n",
-        sink->own.tSlotWait, sink->own.tStitch, (unsigned long long)sink->writersUsed);
+        "TAPE_EMIT_STATS slot_wait_s=%.2f flow_wait_s=%.2f row_loop_s=%.2f writers=%llu\n",
+        sink->own.tSlotWait, sink->own.tFlowWait, sink->own.tStitch,
+        (unsigned long long)sink->writersUsed);
     std::fprintf(stderr,
         "TAPE_EMIT_DONE rows=%llu runs=%llu hits=%llu wall=%.2f read_s=%.2f word_s=%.2f "
         "publish_s=%.2f finish_s=%.2f\n",

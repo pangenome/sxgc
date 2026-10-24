@@ -427,8 +427,20 @@ int main(int argc, char** argv) {
         const u64 nb = (u64)std::max<double>(1.0, double(rows_per_wave) / double(rows_per_band));
         std::vector<u64> bounds;
         {
-            const u64 klo_s = (u64(W.lo) << 56);
-            const u64 khi_s = (W.hi >= 256) ? ~0ull : (u64(W.hi) << 56);
+            // For a TWO-LEVEL wave the population is the wave's two-byte range,
+            // not the whole first byte: quantiles taken over the wrong population
+            // produce wildly unbalanced bands (measured: one band's sort at 341 s
+            // inside a 352 s wave - the space wave).
+            u64 klo_s, khi_s;
+            if (W.lvl2) {
+                klo_s = (u64(W.lo) << 56) | (u64(W.lo2) << 48);
+                khi_s = (u64(W.hi) << 56) | (u64(W.hi2 >= 256 ? 255 : W.hi2) << 48) |
+                        ((W.hi2 >= 256) ? ~0ull : 0ull);
+                if (W.hi2 >= 256) khi_s = ~0ull;
+            } else {
+                klo_s = (u64(W.lo) << 56);
+                khi_s = (W.hi >= 256) ? ~0ull : ((u64(W.hi) << 56) - 1);
+            }
             auto lo_it = std::lower_bound(sk.begin(), sk.end(), klo_s);
             auto hi_it = std::upper_bound(sk.begin(), sk.end(), khi_s);
             const u64 n_in = (u64)(hi_it - lo_it);

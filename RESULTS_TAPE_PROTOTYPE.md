@@ -206,3 +206,34 @@ reads. The 32-byte row is kept for the pile for that reason, not for wall time a
   88 s -> 90 s. The sys time is band-file I/O.
 - the write-read-write append copy was not the bottleneck either; direct pwrite at
   computed offsets left the wall unchanged.
+
+## PIPELINE SHAPE: fusing the emit with the finish costs 3.8x (contention, not work)
+
+Measured at 10 GB, same tree, same SA, same box:
+
+| configuration | emit wall | publish | notes |
+|---|---|---|---|
+| emit ALONE (window unbounded, no consumer) | **340 s** | 103 s (10 ns/row) | true cost of the emit |
+| emit FUSED with the finish (96 + 96 threads) | **1,292 s** | 1,051 s | 3.8x |
+
+The emit does not do more work when fused - the two processes contend for memory
+bandwidth. 1,050 - 103 = ~950 s of pure contention.
+
+This explains the apparently superlinear publish cost: 13 ns/row at 200 MB (where
+both stages are small), 19 ns/row at 1 GB solo, 58 ns/row at 1 GB fused, 105 ns/row
+at 10 GB fused. **publish itself is ~10-19 ns/row.**
+
+CONSEQUENCE for the pipeline design: for the tape machine, fusion is not obviously
+right. The bin machine's finish was the long pole, so fusing helped (31 min vs
+54 min at 10 GB). Here the emit is 340 s and the finish is the long pole, so the
+right shape is either strictly sequential (340 + finish) or a THREAD-PARTITIONED
+concurrency (emit 24 / finish 72) rather than 96 + 96.
+
+## WAVE IMBALANCE BUG (found by the per-wave timers)
+
+`SS_WAVE` showed wave 2 at 10 GB: wall 352 s with a single band's sort at 341 s.
+Cause: for a TWO-LEVEL wave the band quantiles were computed over the whole first
+byte's sample instead of the wave's two-byte range, so bands were wildly unbalanced.
+Fixed. NOTE: re-measurements taken while another stage was running are contaminated -
+the 1 GB numbers in this session vary by 25% depending on what else is on the box,
+so single-run comparisons are only valid on an idle machine.
