@@ -268,3 +268,36 @@ PILE ARITHMETIC: ~29 h order + ~59 h finish ~= 3.7 days, peak scratch 2.6 TB.
 The tape machine cut the producer from ~52 h (bin machine, unverified at 100 GB) to
 ~29 h with a 2n scratch guarantee and exactness proven at 10e9 ranks. The next
 target is the finish's serial fold, or fewer/longer runs so the fold has less to do.
+
+## KASAI COLUMN AT 10 GB: a 2.7x LOSS (negative result, kept off)
+
+The finish's sweep is 1,312 s of which lce_wall = 1,302 s (and `lce_threads=96`,
+so the LCE queries are ALREADY parallel; they are the critical path regardless).
+The Kasai arm removes those queries by reading a prebuilt LCP column. Building that
+column from the 10 GB tape SA cost:
+
+    invert_s=3294.9 (benchmarked: ISA inversion is a random scatter of 1e10 entries,
+                     ~330 ns each), dump_s=300.8, walk_s=263.8 (the ratchet itself,
+                     2.000n comparisons - cheap as designed)
+    total 4,476 s, column 13.39 GB
+
+Against 1,302 s of LCE saved, that is a 3.4x cost for a 1.3x saving: a 2.7x LOSS.
+The Kasai charter measured a wash at the 1 GB fixture; at 10x it clearly loses
+because the inversion scales with the random-scatter cost while the LCE it replaces
+is a cached walk. **The arm stays off.**
+
+Also found on the way: the tape SA's private header ('SXLC') made kasai_column
+refuse the stream, which SILENTLY left the arm off. Fixed (SXSA anchor format).
+
+## WHERE THE FINISH'S TIME GOES (10 GB, 1,637 s)
+
+    sweep            1,312 s   (lce 1,302 | repair 565 | advance_witness 612 - overlapping)
+    m5-ef              163 s
+    m1-runs            156 s
+    publish              1 s
+
+The finish is LCE-bound on a 96-thread critical path. The ideas that remain are
+structural, not tuning: capture the LCP of each adjacent pair WHILE THE PRODUCER
+SORTS (the comparisons already happen there - 83-93% of build CPU is leaf LCE, and
+adjacency information is produced as a side effect), rather than re-deriving the
+column afterwards through an inversion.
