@@ -3088,6 +3088,17 @@ struct BinBandSink {
     U prevLastPos = 0;                  // position of the previous row; n+9 first
     SparseSeamCapture::Hit* boundaryHit = nullptr;   // a hit awaiting its `after`
     SparseRun pending;                  // the BWT run being extended
+    // ---- RUN RANKS BY PREFIX SUM -------------------------------------------
+    // xsa_finish's Kasai arm needs the RANK of each run's head and tail POSITION.
+    // A full ISA is 10.5 TB at pile (80 GB at 10 GB) and breaks the 2n law, but
+    // ranks are MONOTONIC in run order, so the finish carries a counter and
+    // prefix-sums the run lengths. The only exceptions are "holes" left by the
+    // class/dollar repair, and THIS sink knows the true ranks (the row index when
+    // the run opened and closed) - so it records exactly those deviations.
+    U pendHeadRank = 0;                 // row index where the pending run opened
+    U bandBaseRank = 0, bandCumLen = 0; // band's first row index / run-length prefix
+    U excRuns = 0;
+    std::vector<U> runExc;              // flat triples (run, head rank, tail rank)
     std::array<U, 256> counts{}, frequencies{};
     std::vector<Class> classes;
     U active = UINT64_MAX, publishedClasses = 0, refFrom = 0;
@@ -3215,7 +3226,10 @@ struct BinBandSink {
                 }
                 if (active != UINT64_MAX) classes[active].value.occ.push_back(hp);
             }
-            if (!pending.len) pending = SparseRun{c, 1, posOf(i), posOf(i)};
+            if (!pending.len) {
+                pending = SparseRun{c, 1, posOf(i), posOf(i)};
+                pendHeadRank = row;
+            }
             else pending.tail = posOf(i), ++pending.len;
             ++next; ++rows;
         }
@@ -3231,6 +3245,16 @@ struct BinBandSink {
     }
     void flushRun() {
         if (!pending.len) return;
+        {
+            const U predicted = bandBaseRank + bandCumLen;
+            if (predicted != pendHeadRank) {
+                runExc.push_back(index);
+                runExc.push_back(pendHeadRank);
+                runExc.push_back(pendHeadRank + pending.len - 1);
+                ++excRuns;
+            }
+            bandCumLen += pending.len;
+        }
         counts[pending.c] += pending.len; ++frequencies[pending.c];
         require(pending.len == U(uint32_t(pending.len)),
                 "bin-bwt run length exceeds the piece length field");
@@ -3284,6 +3308,8 @@ struct BinBandSink {
         job.band = bandNo; job.firstRun = bandStart;
         job.words = bandWords; job.rlebwtOff = wordsDone;
         job.runs.swap(band.runs);
+        bandBaseRank = next;      // the next row index starts the next band
+        bandCumLen = 0;
         job.gmark = std::move(gmark);
         band = Band();
         {   // bounded in-flight bands: one slot per queued or running band
@@ -3365,6 +3391,19 @@ struct BinBandSink {
         }
     }
     // ---- terminal, exactly SequentialV2::endShard's validations ---------
+    // The run-rank exception list: u32 magic 'SXRE', u32 version, u64 count, then
+    // count triples (run index, true head rank, true tail rank).
+    U writeRunExc(const std::string& path) {
+        const int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+        require(fd >= 0, "create run-rank exception list");
+        uint64_t h[2] = {0x45525853ull, U(runExc.size() / 3)};
+        xput(fd, h, 16, 0, "runexc header");
+        if (!runExc.empty())
+            xput(fd, runExc.data(), runExc.size() * sizeof(U), 16, "runexc body");
+        require(::fsync(fd) == 0, "sync runexc");
+        ::close(fd);
+        return U(runExc.size() / 3);
+    }
     void finish() {
         require(next == n, "incomplete bin-bwt walk");
         if (active != UINT64_MAX) {
@@ -3729,6 +3768,11 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
     if (sfd >= 0) ::close(sfd);
     const double tEnd0 = now_sec();
     sink->finish();
+    {
+        const U nExc = sink->writeRunExc(prefix + ".runexc");
+        std::fprintf(stderr, "TAPE_EMIT_RUNEXC path=%s count=%llu\n",
+                     (prefix + ".runexc").c_str(), (unsigned long long)nExc);
+    }
     const double tEnd = now_sec() - tEnd0;
     std::error_code ec;
     fs::remove(sink->dir, ec);
