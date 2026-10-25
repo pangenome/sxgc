@@ -116,6 +116,43 @@ static inline void key_at(u64 p, u64& klo, u64& khi, u64& kq) {
 // `from` is safe to pass as 24: the comparator only reaches here when the first
 // 24 key bytes are EQUAL, so comparing them again is pure waste (and it is the
 // dominant cost of the tie set).
+// The same comparison, but it also reports HOW FAR the two suffixes agree. The
+// caller is the merge sort, where that number IS the adjacent-rank LCP - the value
+// the finish otherwise re-derives later with 1.28e11 random text reads.
+static inline int suf_cmp_lcp(u64 a, u64 b, u64 from, u64& lcp) {
+    const u64 cap = std::min(N - a, N - b);
+    lcp = from;
+    u64 i = from;
+    if (PAIRMAP_READY) {
+        while (i + 2 <= cap) {
+            const uint16_t x = PAIRMAP[(unsigned(T[a + i]) << 8) | T[a + i + 1]];
+            const uint16_t y = PAIRMAP[(unsigned(T[b + i]) << 8) | T[b + i + 1]];
+            if (x != y) {
+                lcp = i + ((x >> 8) == (y >> 8) ? 1 : 0);
+                return ((x >> 8) == (y >> 8)) ? (((x & 0xff) < (y & 0xff)) ? -1 : 1)
+                                              : ((x < y) ? -1 : 1);
+            }
+            i += 2;
+        }
+        for (; i < cap; ++i) {
+            const u8 xb = REMAP ? REMAP[T[a + i]] : T[a + i];
+            const u8 yb = REMAP ? REMAP[T[b + i]] : T[b + i];
+            if (xb != yb) { lcp = i; return xb < yb ? -1 : 1; }
+        }
+        lcp = cap;
+        if (a == b) return 0;
+        return (N - a) < (N - b) ? -1 : 1;
+    }
+    for (; i < cap; ++i) {
+        const u8 xb = REMAP ? REMAP[T[a + i]] : T[a + i];
+        const u8 yb = REMAP ? REMAP[T[b + i]] : T[b + i];
+        if (xb != yb) { lcp = i; return xb < yb ? -1 : 1; }
+    }
+    lcp = cap;
+    if (a == b) return 0;
+    return (N - a) < (N - b) ? -1 : 1;
+}
+
 static inline int suf_cmp_from(u64 a, u64 b, u64 from) {
     const u64 cap = std::min(N - a, N - b);
     if (from >= cap) {
@@ -237,8 +274,106 @@ struct Pool {
 // Order is preserved because a wave is a key range and waves run in ascending key
 // order, so concatenating the waves' outputs IS suffix order.
 // ---------------------------------------------------------------------------
+// =========================== THE LCP-CARRYING MERGE ==========================
+// Sorting a band with a comparison sort throws away the one thing the finish
+// needs: how far each adjacent pair agreed. A bottom-up merge does not - the
+// comparison that decides who goes next IS the cross-run LCP, and the classic
+// merge identity finishes the job:
+//
+//   emitting e from run A, having last emitted from B:
+//       lcp(e) = min( internal_lcp_of_B_head , cross_lcp )
+//
+// so the whole adjacent-LCP array costs ONE STORE per element on top of the
+// comparisons the sort was making anyway. No inversion, no random scatter, no
+// re-derivation: the finish's 1.28e11 random reads become a sequential stream.
+//
+// v[] is sorted in place; out_lcp[k] = LCP(v[k-1], v[k]) (out_lcp[0] = 0).
+// Values >= 255 are recorded in `esc` as (rank, value).
+// Exact row comparison that also yields the LCP. The three key words are
+// big-endian, so an integer compare IS the byte order, and clz of the xor gives
+// the number of leading EQUAL bytes for free. Only a full 24-byte tie falls
+// through to the text.
+static inline int row_cmp_lcp(const Row& a, const Row& b, u64& lcp) {
+    if (a.klo != b.klo) {
+        lcp = u64(__builtin_clzll(a.klo ^ b.klo)) >> 3;
+        return a.klo < b.klo ? -1 : 1;
+    }
+    if (a.khi != b.khi) {
+        lcp = 8 + (u64(__builtin_clzll(a.khi ^ b.khi)) >> 3);
+        return a.khi < b.khi ? -1 : 1;
+    }
+    if (a.kq != b.kq) {
+        lcp = 16 + (u64(__builtin_clzll(a.kq ^ b.kq)) >> 3);
+        return a.kq < b.kq ? -1 : 1;
+    }
+    return suf_cmp_lcp(unpack_pos(a.pos), unpack_pos(b.pos), 24, lcp);
+}
+
+static void merge_sort_lcp(std::vector<Row>& v, std::vector<uint8_t>& out_lcp,
+                           std::vector<std::pair<u64, u64>>& esc, u64 rank_base) {
+    const size_t n = v.size();
+    if (n < 2) { out_lcp.assign(n ? n : 0, 0); return; }
+    std::vector<Row> buf(n);
+    std::vector<uint8_t> lcp_a(n, 0), lcp_b(n, 0);
+    Row* a = v.data();
+    Row* b = buf.data();
+    uint8_t* la = lcp_a.data();
+    uint8_t* lb = lcp_b.data();
+    auto store = [&](size_t k, u64 val) {
+        if (val >= 255) { esc.emplace_back(rank_base + k, val); lb[k] = 255; }
+        else lb[k] = uint8_t(val);
+    };
+    for (size_t w = 1; w < n; w <<= 1) {
+        for (size_t i0 = 0; i0 < n; i0 += 2 * w) {
+            const size_t i1 = std::min(i0 + w, n), i2 = std::min(i0 + 2 * w, n);
+            if (i1 >= i2) { for (size_t k = i0; k < i2; ++k) { b[k] = a[k]; lb[k] = la[k]; } continue; }
+            size_t i = i0, j = i1, k = i0;
+            int prev = 0;          // 0 none, 1 from A, 2 from B
+            u64 cross_last = 0;    // the last comparison's cross-LCP
+            while (i < i1 && j < i2) {
+                u64 cross = 0;
+                const int c = row_cmp_lcp(a[i], a[j], cross);
+                if (c < 0) {
+                    b[k] = a[i];
+                    if (k == i0) lb[k] = la[i];                       // block start: inherit
+                    else if (prev == 1) lb[k] = la[i];                // same run: internal
+                    else store(k, std::min<u64>(la[j], cross));       // switched: min(other internal, cross)
+                    prev = 1; ++i;
+                } else {
+                    b[k] = a[j];
+                    if (k == i0) lb[k] = la[j];
+                    else if (prev == 2) lb[k] = la[j];
+                    else store(k, std::min<u64>(la[i], cross));
+                    prev = 2; ++j;
+                }
+                cross_last = cross;
+                ++k;
+            }
+            // TAILS: the first element of a tail continues from the last comparison,
+            // which is exactly lcp(last emitted, tail head).
+            while (i < i1) {
+                b[k] = a[i];
+                if (prev == 1) lb[k] = la[i]; else store(k, cross_last);
+                prev = 1; ++i; ++k;
+            }
+            while (j < i2) {
+                b[k] = a[j];
+                if (prev == 2) lb[k] = la[j]; else store(k, cross_last);
+                prev = 2; ++j; ++k;
+            }
+        }
+        std::swap(a, b);
+        std::swap(la, lb);
+    }
+    if (a != v.data()) {
+        std::memcpy(v.data(), a, n * sizeof(Row));
+        std::memcpy(lcp_a.data(), la, n);
+    }
+    out_lcp.assign(lcp_a.begin(), lcp_a.end());
+}
+
 int main(int argc, char** argv) {
-    std::string corpus, out, scratch = "/tmp/ss_scratch";
+    std::string corpus, out, scratch = "/tmp/ss_scratch", lcpOut;
     double ram_gb = 1.0;
     double scratch_cap_gb = 0.0;      // 0 = 2n (the operator's law)
     u64 threads = 32, par_bands = 1, sample_n = 4000000;
@@ -259,6 +394,7 @@ int main(int argc, char** argv) {
         else if (a == "--keep-rows") keep_rows = true;
         else if (a == "--sort") sort_mode = nxt();
         else if (a == "--remap") remapPath = nxt();
+        else if (a == "--lcp-out") lcpOut = nxt();
         else die("unknown arg " + a);
     }
     (void)sort_mode;
@@ -426,6 +562,28 @@ int main(int argc, char** argv) {
     int sfd = ::open(symPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (sfd < 0) die("create sym stream");
 
+    // the LCP column: n bytes of adjacent-rank LCP + escapes, in the SXLC format
+    // the finish already reads via --lcp-column.
+    int lfd = -1;
+    if (!lcpOut.empty()) {
+        lfd = ::open(lcpOut.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+        if (lfd < 0) die("create lcp column");
+        std::vector<u8> lh(48, 0);
+        const uint32_t magic = 0x434C5853u, ver = 1;
+        std::memcpy(lh.data() + 0, &magic, 4);
+        std::memcpy(lh.data() + 4, &ver, 4);
+        const u64 rows = N, zero = 0, flags = 1;
+        std::memcpy(lh.data() + 8, &rows, 8);
+        std::memcpy(lh.data() + 16, &rows, 8);
+        std::memcpy(lh.data() + 24, &zero, 8);
+        std::memcpy(lh.data() + 32, &zero, 8);
+        std::memcpy(lh.data() + 40, &flags, 8);
+        if (::write(lfd, lh.data(), 48) != 48) die("write lcp header");
+        if (::ftruncate(lfd, off_t(48 + N)) != 0) die("size lcp column");
+    }
+    std::vector<std::pair<u64,u64>> gEsc;
+    std::mutex escMu;
+    std::vector<u64> bandFirstPos, bandLastPos;
     std::vector<u8> cat(1u << 22), symcat(1u << 22);
     u64 rows_done = 0, ties_total = 0, emitted = 0, wave_rows = 0;
     const double t1 = now_sec();
@@ -597,6 +755,8 @@ int main(int argc, char** argv) {
         std::atomic<u64> next_band{0};
         std::atomic<u64> ties_w{0};
         std::vector<double> tRead(nbands, 0.0), tSort(nbands, 0.0), tWrite(nbands, 0.0);
+        bandFirstPos.assign(nbands, 0);
+        bandLastPos.assign(nbands, 0);
         auto band_worker = [&]() {
             std::vector<Row> rows;
             for (;;) {
@@ -628,12 +788,38 @@ int main(int argc, char** argv) {
                 }
                 tRead[b] = now_sec() - br0;
                 const double bs0 = now_sec();
-                std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
-                    if (a.klo != b.klo) return a.klo < b.klo;
-                    if (a.khi != b.khi) return a.khi < b.khi;
-                    if (a.kq != b.kq) return a.kq < b.kq;
-                    return suf_cmp_from(unpack_pos(a.pos), unpack_pos(b.pos), 24) < 0;
-                });
+                std::vector<u8> bandLcp;
+                std::vector<std::pair<u64,u64>> bandEsc;
+                if (!lcpOut.empty()) {
+                    merge_sort_lcp(rows, bandLcp, bandEsc, band_off[b]);
+                } else {
+                    // product path: the plain comparison sort. The merge-with-LCP
+                    // is opt-in until its propagation is verified exact.
+                    std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
+                        if (a.klo != b.klo) return a.klo < b.klo;
+                        if (a.khi != b.khi) return a.khi < b.khi;
+                        if (a.kq != b.kq) return a.kq < b.kq;
+                        return suf_cmp_from(unpack_pos(a.pos), unpack_pos(b.pos), 24) < 0;
+                    });
+                }
+                if (lfd >= 0) {
+                    // the band's LCP stream lands at its own offset: rank order is
+                    // band order, so this is a straight pwrite.
+                    const u64 at = 48 + band_off[b];
+                    size_t off = 0;
+                    while (off < bandLcp.size()) {
+                        ssize_t wr = ::pwrite(lfd, bandLcp.data() + off, bandLcp.size() - off,
+                                              off_t(at + off));
+                        if (wr <= 0) die("pwrite lcp");
+                        off += size_t(wr);
+                    }
+                    if (!bandEsc.empty()) {
+                        std::lock_guard<std::mutex> lk(escMu);
+                        for (auto& e : bandEsc) gEsc.push_back(e);
+                    }
+                    bandFirstPos[b] = rows.empty() ? 0 : unpack_pos(rows.front().pos);
+                    bandLastPos[b] = rows.empty() ? 0 : unpack_pos(rows.back().pos);
+                }
                 tSort[b] = now_sec() - bs0;
                 const double bw0 = now_sec();
                 u64 ties = 0;
@@ -675,6 +861,21 @@ int main(int argc, char** argv) {
             }
         };
         pool->run([&](unsigned) { band_worker(); });
+        // BAND BOUNDARIES: the LCP between a band's last row and the next band's
+        // first row belongs to neither merge, so it is computed here - one
+        // comparison per boundary, and there are only ~31 per wave.
+        if (lfd >= 0) {
+            for (u64 b = 0; b + 1 < nbands; ++b) {
+                u64 cross = 0;
+                suf_cmp_lcp(bandLastPos[b], bandFirstPos[b + 1], 0, cross);
+                const u8 v = (cross >= 255) ? 255 : u8(cross);
+                if (cross >= 255) {
+                    std::lock_guard<std::mutex> lk(escMu);
+                    gEsc.emplace_back(band_off[b + 1], cross);
+                }
+                if (::pwrite(lfd, &v, 1, off_t(48 + band_off[b + 1])) != 1) die("pwrite boundary lcp");
+            }
+        }
         emitted += wave_rows;
         if (false) for (u64 b = 0; b < nbands; ++b) {
             char oname[512];
@@ -728,6 +929,20 @@ int main(int argc, char** argv) {
         }
     }
 
+    if (lfd >= 0) {
+        std::sort(gEsc.begin(), gEsc.end());
+        for (auto& e : gEsc) {
+            u64 pair[2] = {e.first, e.second};
+            if (::pwrite(lfd, pair, 16, off_t(48 + off_t(N) + off_t(&e - gEsc.data()) * 16)) != 16)
+                die("write lcp escape");
+        }
+        const u64 ne = gEsc.size();
+        u64 maxL = 0;
+        for (auto& e : gEsc) maxL = std::max(maxL, e.second);
+        if (::pwrite(lfd, &ne, 8, 24) != 8) die("patch escapes");
+        if (::pwrite(lfd, &maxL, 8, 32) != 8) die("patch maxlcp");
+        ::fsync(lfd); ::close(lfd);
+    }
     ::fsync(ofd); ::close(ofd);
     ::fsync(sfd); ::close(sfd);
     std::fprintf(stderr,
