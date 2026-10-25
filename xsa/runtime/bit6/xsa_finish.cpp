@@ -3827,7 +3827,11 @@ int main(int argc, char** argv) {
         TrueIsa trueIsa;
         const bool isaDebug = !pf_env_str("XSA_FINISH_ISA_DEBUG").empty();
         if (isaDebug) trueIsa.load(pf_env_str("XSA_FINISH_ISA_DEBUG"), n);
-        uint64_t devMax = 0, devRuns = 0, devSum = 0;
+        uint64_t devMax = 0, devRuns = 0, devSum = 0;   // derived (cursor) rank vs ground truth
+        uint64_t rkDevMax = 0, rkDevRuns = 0, rkDevSum = 0;   // transducer row base vs ground truth
+        uint64_t devDump = 0;
+        uint64_t streamFnv = 1469598103934665603ull, streamH = 0, streamT = 0, streamLen = 0, streamRuns = 0;
+        uint64_t gapDump = 0;
         const bool runRankExcEmpty = runRanksPath.empty();   // false => use the prefix sum
         uint64_t rowCursor = 0;      // prefix-sum row cursor carried across bands
         KasaiState kasaiState;
@@ -4090,6 +4094,11 @@ int main(int argc, char** argv) {
         // (hot path, inlined) and also installed as rs.emit for the final flush,
         // so both paths emit through identical code.
         auto bandSink = [&](const NRun& v) {
+            // Stream fingerprint (dev): identical piece sets must produce an
+            // identical (c,len,h,t) sequence, and a differing one must be visible.
+            streamFnv = (streamFnv ^ (v.len * 0x9e3779b97f4a7c15ull + v.h + (v.t << 1) + v.c)) *
+                        0x100000001b3ull;
+            streamH += v.h; streamT += v.t; streamLen += v.len; ++streamRuns;
             // Sub-phase tag: the sampler separates the transducer's own work
             // from the sink callback below (this store is ~1 ns/run and is the
             // only cost the instrument adds to the fold).
@@ -4271,6 +4280,7 @@ int main(int argc, char** argv) {
                 [&, cnt, &nb, &gx, prevTailS, next, headRank, band, arrived, staged,
                  prevEndS, prevHeadS, firstBand, P, tailRank](int t) {
                 slim_set_thread_shard(unsigned(t));
+                const int wid = t;   // worker index; `t` is shadowed by the run tail below
                 // PHASE 1: every run's exact rank WITHOUT an inverse.
                 //
                 // THE DESIGN: ranks ARE cumulative run lengths over the run list the
@@ -4311,11 +4321,23 @@ int main(int argc, char** argv) {
                                 pf_check(locateIsa.at(nb[i].t) == t,
                                          "KASAI AUDIT: derived tail rank != ISA");
                         }
-                        if (isaDebug) {
+                        if (isaDebug && wid == 0) {
                             const uint64_t truth = trueIsa.at(nb[i].h);
                             const uint64_t dev = truth > h ? truth - h : h - truth;
                             if (dev) { ++devRuns; devSum += dev; }
                             if (dev > devMax) devMax = dev;
+                            // Is the transducer's OWN row base (the row the sweep
+                            // state machine stamps on the run) already exact?
+                            const uint64_t rkRank = nb[i].rk >= 10 ? nb[i].rk - 10 : 0;
+                            const uint64_t rkDev = truth > rkRank ? truth - rkRank : rkRank - truth;
+                            if (rkDev) { ++rkDevRuns; rkDevSum += rkDev; if (rkDev > rkDevMax) rkDevMax = rkDev; }
+                            if (dev && devDump < 24) {
+                                ++devDump;
+                                fprintf(stderr, "XSA_FINISH_DEVDUMP i=%zu head=%llu len=%llu cursor=%llu rk=%llu truth=%llu dev=%lld rkdev=%lld\n",
+                                        i, (unsigned long long)nb[i].h, (unsigned long long)nb[i].len,
+                                        (unsigned long long)h, (unsigned long long)rkRank,
+                                        (unsigned long long)truth, (long long)dev, (long long)rkDev);
+                            }
                         }
                         (*headRank)[i] = h;
                         (*tailRank)[i] = t;
@@ -4350,7 +4372,16 @@ int main(int argc, char** argv) {
                         if (i && (*headRank)[i] <= (*headRank)[i - 1])
                             kasaiState.disorder += 1;
                         const uint64_t prevEnd = i ? (*headRank)[i - 1] + nb[i - 1].len : prevEndS;
-                        if (prevEnd != (*headRank)[i]) kasaiState.gaps += 1;
+                        if (prevEnd != (*headRank)[i]) {
+                            kasaiState.gaps += 1;
+                            if (wid == 0 && gapDump < 8) {
+                                ++gapDump;
+                                fprintf(stderr, "XSA_FINISH_GAPDUMP i=%zu prevEnd=%llu head=%llu len=%llu rk=%llu head_pos=%llu tail_pos=%llu\n",
+                                        i, (unsigned long long)prevEnd, (unsigned long long)(*headRank)[i],
+                                        (unsigned long long)nb[i].len, (unsigned long long)nb[i].rk,
+                                        (unsigned long long)nb[i].h, (unsigned long long)nb[i].t);
+                            }
+                        }
                     }
                     if (!firstBand && (*headRank)[0] <= prevHeadS) kasaiState.disorder += 1;
                     const uint64_t base = lo ? lo - 1 : 0;
@@ -4640,10 +4671,18 @@ int main(int argc, char** argv) {
             // any band reached is inside the space. The exactness of every value
             // is the AUDIT arm's job, not this counter's.
             pf_check(lcpCol.maxEnd <= n, "KASAI CLOSURE: a band's rank slice runs past n");
-            if (isaDebug)
-            fprintf(stderr, "XSA_FINISH_RANK_DEV deviating_runs=%llu max_dev=%llu mean_dev=%.2f\n",
-                    (unsigned long long)devRuns, (unsigned long long)devMax,
-                    devRuns ? double(devSum) / double(devRuns) : 0.0);
+            if (isaDebug) {
+                fprintf(stderr, "XSA_FINISH_STREAM_FNV runs=%llu fnv=%llu hsum=%llu tsum=%llu lensum=%llu\n",
+                        (unsigned long long)streamRuns, (unsigned long long)streamFnv,
+                        (unsigned long long)streamH, (unsigned long long)streamT,
+                        (unsigned long long)streamLen);
+                fprintf(stderr, "XSA_FINISH_RANK_DEV deviating_runs=%llu max_dev=%llu mean_dev=%.2f\n",
+                        (unsigned long long)devRuns, (unsigned long long)devMax,
+                        devRuns ? double(devSum) / double(devRuns) : 0.0);
+                fprintf(stderr, "XSA_FINISH_RANK_DEV_RK deviating_runs=%llu max_dev=%llu mean_dev=%.2f\n",
+                        (unsigned long long)rkDevRuns, (unsigned long long)rkDevMax,
+                        rkDevRuns ? double(rkDevSum) / double(rkDevRuns) : 0.0);
+            }
         fprintf(stderr,
                     "XSA_FINISH_KASAI_CLOSURE bands=%llu rank_holes=%llu disorder=%llu "
                     "noncontiguous_runs=%llu walk_fallbacks=%llu max_rank_end=%llu n=%llu\n",
