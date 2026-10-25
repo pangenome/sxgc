@@ -354,3 +354,30 @@ on; the finish can look up by position.
 
 Status: sink side lands and is measured; finish side is additive and OFF unless
 --run-ranks is passed (the ISA arm is untouched), so the product path is unaffected.
+
+## THE RANKS NEED THE INVERSE: three designs, one blocker (negative result)
+
+Attempted, in order, to supply the Kasai arm's run ranks WITHOUT the 10.5 TB ISA:
+
+ 1. exception list keyed by RUN INDEX   -> the repair renumbers runs.
+ 2. exception list keyed by HEAD POSITION -> the repair changes run LENGTHS, so a
+    cursor drifts wherever it does (measured: prefix-sum rank outside [0,n]).
+ 3. prefix sum over the finish's OWN post-repair stream -> measured closure counters
+    rank_holes=262459 disorder=261744 noncontiguous_runs=67321. The stream is NOT in
+    rank order, so no cursor over it can equal a rank.
+
+CONCLUSION: for this arm a POSITION -> RANK inverse is load-bearing, not an artifact
+of the implementation. The 10.5 TB ISA does not fit the 2n law, so the honest options
+for the pile are:
+
+ (a) run the arm only where an ISA fits (up to ~100 GB: 0.8 TB at 8 B), and run the
+     old LCE arm at pile (~59 h of finish);
+ (b) store the inverse SAMPLED (every k-th position) and resolve a query by walking
+     the move structure (phi) from the nearest anchor - the r-index query path,
+     which the container already has as member 11 - trading 10.5 TB for ~n/k * 8 B
+     plus bounded walk steps;
+ (c) make the repair stream rank-ordered, which would make design 3 valid and needs
+     no inverse at all - the deepest change and the only one that removes the cost
+     rather than amortising it.
+
+The arm now REFUSES to publish when the closure counters are non-zero.
