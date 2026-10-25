@@ -314,62 +314,53 @@ static void merge_sort_lcp(std::vector<Row>& v, std::vector<uint8_t>& out_lcp,
     const size_t n = v.size();
     if (n < 2) { out_lcp.assign(n ? n : 0, 0); return; }
     std::vector<Row> buf(n);
-    std::vector<uint8_t> lcp_a(n, 0), lcp_b(n, 0);
+    // FULL u64 values are carried through the levels: an element's index in an
+    // intermediate buffer is NOT its final rank, so recording escapes at that point
+    // attached them to the wrong ranks (measured: rank 279 with an escape of 297
+    // against a true value of 14). Convert once, at the end, by final rank.
+    std::vector<u64> lcp_a(n, 0), lcp_b(n, 0);
     Row* a = v.data();
     Row* b = buf.data();
-    uint8_t* la = lcp_a.data();
-    uint8_t* lb = lcp_b.data();
-    auto store = [&](size_t k, u64 val) {
-        if (val >= 255) { esc.emplace_back(rank_base + k, val); lb[k] = 255; }
-        else lb[k] = uint8_t(val);
-    };
+    u64* la = lcp_a.data();
+    u64* lb = lcp_b.data();
     for (size_t w = 1; w < n; w <<= 1) {
         for (size_t i0 = 0; i0 < n; i0 += 2 * w) {
             const size_t i1 = std::min(i0 + w, n), i2 = std::min(i0 + 2 * w, n);
             if (i1 >= i2) { for (size_t k = i0; k < i2; ++k) { b[k] = a[k]; lb[k] = la[k]; } continue; }
             size_t i = i0, j = i1, k = i0;
-            int prev = 0;          // 0 none, 1 from A, 2 from B
-            u64 cross_last = 0;    // the last comparison's cross-LCP
+            int prev = 0;
+            u64 l = 0;   // LCP(last emitted, other run's current head) == last cross
             while (i < i1 && j < i2) {
                 u64 cross = 0;
                 const int c = row_cmp_lcp(a[i], a[j], cross);
                 if (c < 0) {
                     b[k] = a[i];
-                    if (k == i0) lb[k] = la[i];                       // block start: inherit
-                    else if (prev == 1) lb[k] = la[i];                // same run: internal
-                    else store(k, std::min<u64>(la[j], cross));       // switched: min(other internal, cross)
+                    lb[k] = (k == i0 || prev == 1) ? la[i] : l;
                     prev = 1; ++i;
                 } else {
                     b[k] = a[j];
-                    if (k == i0) lb[k] = la[j];
-                    else if (prev == 2) lb[k] = la[j];
-                    else store(k, std::min<u64>(la[i], cross));
+                    lb[k] = (k == i0 || prev == 2) ? la[j] : l;
                     prev = 2; ++j;
                 }
-                cross_last = cross;
+                l = cross;
                 ++k;
             }
-            // TAILS: the first element of a tail continues from the last comparison,
-            // which is exactly lcp(last emitted, tail head).
-            while (i < i1) {
-                b[k] = a[i];
-                if (prev == 1) lb[k] = la[i]; else store(k, cross_last);
-                prev = 1; ++i; ++k;
-            }
-            while (j < i2) {
-                b[k] = a[j];
-                if (prev == 2) lb[k] = la[j]; else store(k, cross_last);
-                prev = 2; ++j; ++k;
-            }
+            while (i < i1) { b[k] = a[i]; lb[k] = (prev == 1) ? la[i] : l; prev = 1; ++i; ++k; }
+            while (j < i2) { b[k] = a[j]; lb[k] = (prev == 2) ? la[j] : l; prev = 2; ++j; ++k; }
         }
         std::swap(a, b);
         std::swap(la, lb);
     }
     if (a != v.data()) {
         std::memcpy(v.data(), a, n * sizeof(Row));
-        std::memcpy(lcp_a.data(), la, n);
+        std::memcpy(lcp_a.data(), la, n * sizeof(u64));
     }
-    out_lcp.assign(lcp_a.begin(), lcp_a.end());
+    out_lcp.assign(n, 0);
+    for (size_t k = 0; k < n; ++k) {
+        const u64 val = lcp_a[k];
+        if (val >= 255) { esc.emplace_back(rank_base + k, val); out_lcp[k] = 255; }
+        else out_lcp[k] = uint8_t(val);
+    }
 }
 
 int main(int argc, char** argv) {
@@ -586,6 +577,7 @@ int main(int argc, char** argv) {
     std::vector<u64> bandFirstPos, bandLastPos;
     std::vector<u8> cat(1u << 22), symcat(1u << 22);
     u64 rows_done = 0, ties_total = 0, emitted = 0, wave_rows = 0;
+    u64 prev_wave_last = ~0ull;   // last row position emitted by the previous wave
     const double t1 = now_sec();
 
     for (u64 w = 0; w < waves; ++w) {
@@ -817,8 +809,8 @@ int main(int argc, char** argv) {
                         std::lock_guard<std::mutex> lk(escMu);
                         for (auto& e : bandEsc) gEsc.push_back(e);
                     }
-                    bandFirstPos[b] = rows.empty() ? 0 : unpack_pos(rows.front().pos);
-                    bandLastPos[b] = rows.empty() ? 0 : unpack_pos(rows.back().pos);
+                    bandFirstPos[b] = rows.empty() ? ~0ull : unpack_pos(rows.front().pos);
+                    bandLastPos[b] = rows.empty() ? ~0ull : unpack_pos(rows.back().pos);
                 }
                 tSort[b] = now_sec() - bs0;
                 const double bw0 = now_sec();
@@ -865,16 +857,28 @@ int main(int argc, char** argv) {
         // first row belongs to neither merge, so it is computed here - one
         // comparison per boundary, and there are only ~31 per wave.
         if (lfd >= 0) {
-            for (u64 b = 0; b + 1 < nbands; ++b) {
+            // EMPTY BANDS ARE SKIPPED: an empty band has no row, and using 0 as its
+            // "first position" made the boundary comparison "(0,0)" whose LCP is n -
+            // the 7 bad ranks col_check found. Chain each non-empty band to the
+            // previous NON-EMPTY one instead.
+            // The FIRST non-empty band of this wave is chained to the LAST row of the
+            // previous WAVE: wave seams were not being written at all, and 4 of the 22
+            // seams at 150 MB had a true LCP of 1 (the rest were 0 and passed by luck).
+            u64 prev_last = prev_wave_last;
+            for (u64 b = 0; b < nbands; ++b) {
+                if (bandFirstPos[b] == ~0ull) continue;          // empty band
+                if (prev_last == ~0ull) { prev_last = bandLastPos[b]; continue; }
                 u64 cross = 0;
-                suf_cmp_lcp(bandLastPos[b], bandFirstPos[b + 1], 0, cross);
+                suf_cmp_lcp(prev_last, bandFirstPos[b], 0, cross);
                 const u8 v = (cross >= 255) ? 255 : u8(cross);
                 if (cross >= 255) {
                     std::lock_guard<std::mutex> lk(escMu);
-                    gEsc.emplace_back(band_off[b + 1], cross);
+                    gEsc.emplace_back(band_off[b], cross);
                 }
-                if (::pwrite(lfd, &v, 1, off_t(48 + band_off[b + 1])) != 1) die("pwrite boundary lcp");
+                if (::pwrite(lfd, &v, 1, off_t(48 + band_off[b])) != 1) die("pwrite boundary lcp");
+                prev_last = bandLastPos[b];
             }
+            prev_wave_last = prev_last;
         }
         emitted += wave_rows;
         if (false) for (u64 b = 0; b < nbands; ++b) {
