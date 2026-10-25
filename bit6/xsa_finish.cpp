@@ -3497,6 +3497,40 @@ struct LocateIsa {
     }
 };
 
+// ============================ RUN RANKS WITHOUT AN ISA =======================
+// The Kasai arm needs rank(run head) and rank(run tail). A full ISA is 80 GB at
+// 10 GB and 10.5 TB at pile - it breaks the 2n law. But ranks are MONOTONIC in run
+// order, so the fold carries a row cursor and prefix-sums the run lengths; the
+// producer emits ONLY the deviations it knows for certain (the holes left by the
+// class/dollar repair) as <prefix>.runexc. Megabytes instead of terabytes.
+struct RunRankExc {
+    std::unordered_map<uint64_t, std::pair<uint64_t, uint64_t>> by;
+    uint64_t head(uint64_t run, uint64_t predicted) const {
+        auto it = by.find(run);
+        return it == by.end() ? predicted : it->second.first;
+    }
+    uint64_t tail(uint64_t run, uint64_t predicted) const {
+        auto it = by.find(run);
+        return it == by.end() ? predicted : it->second.second;
+    }
+    void load(const std::string& path) {
+        int fd = ::open(path.c_str(), O_RDONLY);
+        pf_check(fd >= 0, "open --run-ranks " + path + ": " + std::strerror(errno));
+        uint64_t h[2] = {0, 0};
+        pf_read_full(fd, h, 16, "runranks header");
+        pf_check((h[0] & 0xffffffffull) == 0x45525853ull, "--run-ranks magic (SXRE)");
+        const uint64_t count = h[1];
+        std::vector<uint64_t> triples(count * 3);
+        if (count) pf_read_full(fd, triples.data(), count * 24, "runranks body");
+        ::close(fd);
+        by.reserve(count * 2);
+        for (uint64_t i = 0; i < count; ++i)
+            by.emplace(triples[i * 3], std::make_pair(triples[i * 3 + 1], triples[i * 3 + 2]));
+        fprintf(stderr, "XSA_FINISH_RUN_RANKS path=%s exceptions=%llu\n",
+                path.c_str(), (unsigned long long)count);
+    }
+};
+
 // The rank-space bookkeeping that must survive a band boundary: the previous
 // band's last run's rank and end rank (for the adjacency test) and the counters.
 struct KasaiState {
@@ -3632,6 +3666,7 @@ int main(int argc, char** argv) {
         std::string checkClaimsDir;   // PROB-CHI: standalone checker mode
         std::string lcpColumnPath;    // KASAI: the prebuilt LCP column (--lcp-column)
         std::string locateIsaPath;    // KASAI: the locate table (--sa-locate)
+        std::string runRanksPath;     // KASAI: prefix-sum run ranks (--run-ranks)
         uint64_t repairChunkRuns = 0; // experimental exact-checkpoint planner
         bool keepRlebwt = false, keepPfck = false;
         for (int i = 1; i < argc; ++i) {
@@ -3645,6 +3680,7 @@ int main(int argc, char** argv) {
             else if (a == "--remap") remap = need("--remap");
             else if (a == "--check-claims") checkClaimsDir = need("--check-claims");
             else if (a == "--lcp-column") lcpColumnPath = need("--lcp-column");
+            else if (a == "--run-ranks") runRanksPath = need("--run-ranks");
             else if (a == "--sa-locate") locateIsaPath = need("--sa-locate");
             else if (a == "--output") out = need("--output");
             else if (a == "--bridge-dir") bridgeDir = need("--bridge-dir");
@@ -3707,14 +3743,22 @@ int main(int argc, char** argv) {
         const int kasaiAudit = int(pf_env_u64("XSA_FINISH_KASAI_AUDIT", 0, 0, 2));
         LcpColumn lcpCol;
         LocateIsa locateIsa;
+        RunRankExc runRankExc;
+        const bool runRankExcEmpty = runRanksPath.empty();   // false => use the prefix sum
+        uint64_t rowCursor = 0;      // prefix-sum row cursor carried across bands
         KasaiState kasaiState;
         const bool kasaiOn = !lcpColumnPath.empty() && !kasaiOff;
         if (kasaiOn) {
-            pf_check(!locateIsaPath.empty(),
-                     "the Kasai arm needs the locate table: --sa-locate ISA.sxis "
-                     "(a run's rank is not derivable from the run lengths)");
+            // RANKS COME FROM THE PREFIX SUM + EXCEPTIONS, not from a full ISA:
+            // --run-ranks is the 2n-compatible supply; --sa-locate remains accepted
+            // for the older flow (it is a 10.5 TB object at pile and must not be the
+            // only path).
+            pf_check(!runRanksPath.empty() || !locateIsaPath.empty(),
+                     "the Kasai arm needs run ranks: --run-ranks FILE (preferred) or "
+                     "--sa-locate ISA.sxis (a full inverse, 10.5 TB at pile)");
             lcpCol.open(lcpColumnPath, n);
-            locateIsa.open(locateIsaPath, n);
+            if (!locateIsaPath.empty()) locateIsa.open(locateIsaPath, n);
+            if (!runRanksPath.empty()) runRankExc.load(runRanksPath);
         }
         else if (!lcpColumnPath.empty())
             fprintf(stderr, "XSA_FINISH_LCP_COLUMN_IGNORED path=%s reason=XSA_FINISH_KASAI=0\n",
@@ -4140,10 +4184,27 @@ int main(int argc, char** argv) {
                 [&, cnt, &nb, &gx, prevTailS, next, headRank, band, arrived, staged,
                  prevEndS, prevHeadS, firstBand, P, tailRank](int t) {
                 slim_set_thread_shard(unsigned(t));
-                // PHASE 1: every run's exact rank, in parallel.
+                // PHASE 1: every run's exact rank. When --run-ranks is in use the
+                // ranks are PREFIX-SUMMED here (sequentially, ~1 ns/run - cnt is a
+                // band) and corrected by the exception list; the full ISA is only
+                // the legacy arm.
+                if (!runRankExcEmpty) {
+                    uint64_t cursor = rowCursor;
+                    for (size_t i = 0; i < cnt; ++i) {
+                        const uint64_t g = gx[i];             // global run index
+                        (*headRank)[i] = runRankExc.head(g, cursor);
+                        (*tailRank)[i] = nb[i].len >= 2 ? runRankExc.tail(g, cursor + nb[i].len - 1)
+                                                        : (*headRank)[i];
+                        pf_check((*headRank)[i] < n && (*tailRank)[i] < n,
+                                 "KASAI: prefix-sum run rank outside [0,n)");
+                        cursor += nb[i].len;
+                    }
+                    rowCursor = cursor;
+                }
                 for (;;) {
                     const size_t i = next->fetch_add(1);
                     if (i >= cnt) break;
+                    if (!runRankExcEmpty) continue;             // ranks already set
                     const uint64_t rk = locateIsa.at(nb[i].h);
                     pf_check(rk < n, "KASAI: run head rank outside [0,n)");
                     (*headRank)[i] = rk;

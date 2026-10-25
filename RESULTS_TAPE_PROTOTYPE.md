@@ -327,3 +327,30 @@ exception list (run, true head rank, true tail rank). No inversion, no 10.5 TB.
 Status: designed and started; the sink-side edit was reverted rather than left half
 -wired (it landed in the wrong class - binbwt_slice.h has more than one flushRun and
 one finish()). The tree is green at 41e4ce1 with everything else landed.
+
+## RUN RANKS BY PREFIX SUM: where it stands, and the one thing it gets wrong
+
+DONE and measured:
+ - BinBandSink carries a rank counter and prefix-sums run lengths, emitting ONLY the
+   deviations it knows for certain: <prefix>.runexc, 'SXRE' + count + triples
+   (run index, true head rank, true tail rank). 65,535 exceptions of 57,279,189 runs
+   at 150 MB (0.11%), 1.57 MB of file - not the 80 GB / 10.5 TB ISA.
+ - xsa_finish gains --run-ranks and a RunRankExc provider; the Kasai arm accepts
+   --run-ranks INSTEAD of --sa-locate, and the lcp-column escape list is deduped
+   (a band's own merge and the seam can escape the same rank, and the column
+   requires STRICT ordering).
+
+BLOCKER, and it is semantic not mechanical: the arm now turns ON and then fails with
+    FATAL: KASAI: an interior run collapsed to one rank
+The finish's runs are POST-REPAIR (RepairStream merges/splits runs downstream of the
+sink), so a finish run index and length are NOT the sink's. Prefix-sum + exceptions
+keyed by the SINK's numbering do not line up with the finish's.
+
+That is exactly why the original design reached for an ISA: it answers by POSITION,
+which survives any renumbering. To keep the 2n law the exceptions must therefore be
+keyed by something the finish still recognises after repair - the run's HEAD
+POSITION, not its index. The sink knows the head position of every run it deviates
+on; the finish can look up by position.
+
+Status: sink side lands and is measured; finish side is additive and OFF unless
+--run-ranks is passed (the ISA arm is untouched), so the product path is unaffected.

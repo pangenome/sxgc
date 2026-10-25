@@ -934,7 +934,17 @@ int main(int argc, char** argv) {
     }
 
     if (lfd >= 0) {
-        std::sort(gEsc.begin(), gEsc.end());
+        // DEDUPE BY RANK, keeping the LAST value written for a rank: a band's own
+        // merge can escape the rank that the seam also escapes (the block-start
+        // inheritance), and the finish requires a STRICTLY ordered escape list.
+        std::sort(gEsc.begin(), gEsc.end(),
+                  [](const std::pair<u64,u64>& a, const std::pair<u64,u64>& b) {
+                      return a.first != b.first ? a.first < b.first : a.second < b.second;
+                  });
+        gEsc.erase(std::unique(gEsc.begin(), gEsc.end(),
+                               [](const std::pair<u64,u64>& a, const std::pair<u64,u64>& b) {
+                                   return a.first == b.first;
+                               }), gEsc.end());
         for (auto& e : gEsc) {
             u64 pair[2] = {e.first, e.second};
             if (::pwrite(lfd, pair, 16, off_t(48 + off_t(N) + off_t(&e - gEsc.data()) * 16)) != 16)
