@@ -413,3 +413,46 @@ Remaining sound options:
  (c) rank-ordered repair stream, which makes approach 3 valid with no inverse at all.
 
 The arm keeps its refusal guard, so none of this can publish a wrong container.
+
+# THE RANK SUPPLY FOR THE KASAI ARM — the design, stated once, unambiguously
+
+## What is needed
+`xsa_finish`'s Kasai arm asks, for every run, `rank(head position)` and
+`rank(tail position)`. That is the INVERSE of the suffix array at 2r points.
+
+## Why the obvious supplies fail (four measured attempts, do not repeat them)
+| supply | why it fails |
+|---|---|
+| full ISA | 80 GB at 10 GB, **10.5 TB at pile** - breaks the 2n law |
+| exceptions keyed by run index | the repair RENUMBERS runs |
+| exceptions keyed by head position | the repair changes run LENGTHS -> cursor drifts |
+| prefix sum over the finish's own stream | the stream is NOT rank-ordered (disorder 175,550 at 150 MB) |
+| sampled ISA + RESYNC ONLY | resync fixes the anchors; between them the cursor still assumes rank order, which is false |
+
+**The last row is the confusion to avoid: anchors alone are not the design. The WALK
+is the design.** An anchor only fixes a starting point; reaching an unanchored position
+requires stepping in rank space.
+
+## The design that is sound: anchors + PSI walk
+Two facts:
+ 1. `ISA[p+1] = psi(ISA[p])`   where psi is the forward BWT step (inverse of LF/phi).
+ 2. anchors: `ISA[a]` stored for `a = 0, k, 2k, ...`   (n/k entries, 10 GB at pile k=1024)
+
+So `rank(p)`: take `a = p - (p mod k)`, read `ISA[a]`, then apply psi `(p - a)` times.
+Across the fold the head positions are NEARLY monotone, so the (position, rank) pair is
+CARRIED from run to run: total stepping is O(n) for the whole fold, not 2r x k, and the
+anchors are used only to re-enter after a backwards jump.
+
+## What psi needs
+`psi(i) = select_BWT(c, i - C[c] + 1)` for the c with `C[c] <= i < C[c+1]` - i.e. SELECT
+over the run-length BWT. `phi_inverse_heads.cpp` emits `head[j] =
+inverse_phi(tail[(j+R-1)%R])`, a raw u64 inverse-phi over the run table, which is the
+materialised form of the same step; either supply works, and psi as a table is
+`r` entries (4.5e11 x 8 B = 3.6 TB at pile - so prefer the SELECT form, which is O(r)).
+
+## Status
+ - anchors: written by the producer, VERIFIED (25/25 by seeking SA[anchor]).
+ - SampIsa reader and the resync are in the finish and correct as far as they go.
+ - THE WALK IS NOT IMPLEMENTED. That is the remaining piece, plus SELECT over the RLE BWT.
+ - The arm REFUSES to publish unless holes/disorder/noncontig are all zero, so no
+   unsound supply can bank a container.
