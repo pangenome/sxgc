@@ -3622,7 +3622,9 @@ struct LcpColumn {
     }
     // One pread per band: the b-th band's rank slice, contiguous and ascending.
     void load(Band& b, uint64_t base, uint64_t len) {
-        pf_check(base + len <= n, "column band slice outside [0,n)");
+        pf_check(base + len <= n, "column band slice outside [0,n) base=" +
+                                  std::to_string(base) + " len=" + std::to_string(len) +
+                                  " n=" + std::to_string(n));
         b.base = base;
         b.u8.resize(size_t(len ? len : 1));
         if (len) pread_at(fd, b.u8.data(), len, uint64_t(48) + base, "lcp column slice");
@@ -3755,9 +3757,11 @@ int main(int argc, char** argv) {
             // --run-ranks is the 2n-compatible supply; --sa-locate remains accepted
             // for the older flow (it is a 10.5 TB object at pile and must not be the
             // only path).
-            pf_check(!runRanksPath.empty() || !locateIsaPath.empty(),
-                     "the Kasai arm needs run ranks: --run-ranks FILE (preferred) or "
-                     "--sa-locate ISA.sxis (a full inverse, 10.5 TB at pile)");
+            // Ranks are DERIVED from the finish's own run stream (see PHASE 1), so
+            // neither --run-ranks nor --sa-locate is required to run the arm. The ISA
+            // is only the audit reference.
+            pf_check(!kasaiAudit || !locateIsaPath.empty(),
+                     "XSA_FINISH_KASAI_AUDIT=1 needs --sa-locate ISA.sxis as the reference");
             lcpCol.open(lcpColumnPath, n);
             if (!locateIsaPath.empty()) locateIsa.open(locateIsaPath, n);
             if (!runRanksPath.empty()) runRankExc.load(runRanksPath);
@@ -4186,45 +4190,53 @@ int main(int argc, char** argv) {
                 [&, cnt, &nb, &gx, prevTailS, next, headRank, band, arrived, staged,
                  prevEndS, prevHeadS, firstBand, P, tailRank](int t) {
                 slim_set_thread_shard(unsigned(t));
-                // PHASE 1: every run's exact rank. When --run-ranks is in use the
-                // ranks are PREFIX-SUMMED here (sequentially, ~1 ns/run - cnt is a
-                // band) and corrected by the exception list; the full ISA is only
-                // the legacy arm.
-                if (!runRankExcEmpty) {
+                // PHASE 1: every run's exact rank WITHOUT an inverse.
+                //
+                // THE DESIGN: ranks ARE cumulative run lengths over the run list the
+                // finish itself emits. So the cursor below is not an estimate that
+                // needs correcting - it is the definition. An earlier version shipped
+                // a producer-side exception table keyed by run index, then by head
+                // position; both drifted, because the repair changes run LENGTHS and
+                // every length change shifts every later rank. Nothing producer-side
+                // can survive that; the finish's own stream is the only authority.
+                //
+                // The full ISA (--sa-locate, 10.5 TB at pile) is therefore a
+                // REFERENCE, used only by the audit arm to check every derived rank.
+                {
                     uint64_t cursor = rowCursor;
                     for (size_t i = 0; i < cnt; ++i) {
-                        // lookup key = this run's HEAD POSITION (post-repair safe)
-                        (*headRank)[i] = runRankExc.head(nb[i].h, cursor);
-                        (*tailRank)[i] = nb[i].len >= 2
-                                             ? runRankExc.tail(nb[i].h, cursor + nb[i].len - 1)
-                                             : (*headRank)[i];
-                        // The rank space includes the PADDING rows (the bin-walk seeds
-                        // n..n+9), so a run's rank may legitimately reach n+pad; the
-                        // column itself is n bytes and the arm never indexes it there.
-                        pf_check((*headRank)[i] <= n + 16 && (*tailRank)[i] <= n + 16,
-                                 "KASAI: prefix-sum run rank outside [0,n]");
+                        // TRAILING PADDING RUNS live ABOVE n (the bin-walk seeds
+                        // n..n+9 plus the seam rows; CLOSURE's max_rank_end is n-2,
+                        // so the real content ends there). A run that STRADDLES the
+                        // end - the seam run covering the last text bytes AND the
+                        // padding rows - is treated the same way: it never indexes
+                        // the column, and clamping its tail would fake a
+                        // non-contiguity (measured: it turned noncontiguous_runs from
+                        // 0 into 1 and then failed 'an interior run collapsed').
+                        if (cursor >= n || cursor + nb[i].len > n) {
+                            // sentinel: outside the column's rank range, so downstream
+                            // skips this run entirely (it is padding / the seam tail)
+                            (*headRank)[i] = n;
+                            (*tailRank)[i] = n;
+                            cursor += nb[i].len;
+                            continue;
+                        }
+                        const uint64_t h = cursor;
+                        const uint64_t t = nb[i].len >= 2 ? cursor + nb[i].len - 1 : h;
+                        if (kasaiAudit >= 1) {
+                            pf_check(locateIsa.at(nb[i].h) == h,
+                                     "KASAI AUDIT: derived head rank != ISA");
+                            if (nb[i].len >= 2)
+                                pf_check(locateIsa.at(nb[i].t) == t,
+                                         "KASAI AUDIT: derived tail rank != ISA");
+                        }
+                        (*headRank)[i] = h;
+                        (*tailRank)[i] = t;
                         cursor += nb[i].len;
                     }
                     rowCursor = cursor;
                 }
-                for (;;) {
-                    const size_t i = next->fetch_add(1);
-                    if (i >= cnt) break;
-                    if (!runRankExcEmpty) continue;             // ranks already set
-                    const uint64_t rk = locateIsa.at(nb[i].h);
-                    pf_check(rk < n, "KASAI: run head rank outside [0,n)");
-                    (*headRank)[i] = rk;
-                    // A run's rows are USUALLY the contiguous rank interval
-                    // [rk, rk+len-1], but not always: the class/dollar repair can
-                    // leave a HOLE inside a run (measured at 1 GB: a len-2 run
-                    // whose ranks are {4576075, 4576077}). The interior answer is
-                    // then the min-LCP over the interval between the TWO ENDPOINT
-                    // RANKS, which is what the tail lookup below gives - so the
-                    // tail's rank is taken from the locate table, never assumed
-                    // to be rk+len-1.
-                    (*tailRank)[i] = nb[i].len >= 2 ? locateIsa.at(nb[i].t) : rk;
-                    pf_check((*tailRank)[i] < n, "KASAI: run tail rank outside [0,n)");
-                }
+                (void)next;
                 // BARRIER: last arrival stages the slice.
                 if (arrived->fetch_add(1) + 1 == P) {
                     uint64_t lo = ~uint64_t(0), hi = 0;
@@ -4232,8 +4244,14 @@ int main(int argc, char** argv) {
                         // Both ENDPOINT ranks are what the column answers need:
                         // a run's own rows can skip a rank (a hole inside a run),
                         // so hi is not headRank+len-1 in general.
-                        lo = std::min({lo, (*headRank)[i], (*tailRank)[i]});
-                        hi = std::max({hi, (*headRank)[i], (*tailRank)[i]});
+                        // The sentinel rank (n) marks padding runs: it must not
+                        // extend the band's column slice, which lives in [0,n-1].
+                        if ((*headRank)[i] < n) lo = std::min(lo, (*headRank)[i]);
+                        if ((*tailRank)[i] < n) {
+                            lo = std::min(lo, (*tailRank)[i]);
+                            hi = std::max(hi, (*tailRank)[i]);
+                        }
+                        if ((*headRank)[i] < n) hi = std::max(hi, (*headRank)[i]);
                         if (nb[i].len >= 2 && (*tailRank)[i] != (*headRank)[i] + nb[i].len - 1)
                             kasaiState.noncontig += 1;
                         // The stream is ascending EXCEPT for the terminal row,
@@ -4278,7 +4296,7 @@ int main(int argc, char** argv) {
                         }
                     }
                     uint64_t inter = INF;
-                    if (v.len >= 2) {
+                    if (v.len >= 2 && r < n && (*tailRank)[i] < n) {
                         // min-LCP over the rank interval between the run's two
                         // ENDPOINT RANKS (exact even when the run's own rows skip
                         // a rank: LCE(SA[a],SA[c]) = min col[a..c-1] for any a<c).
