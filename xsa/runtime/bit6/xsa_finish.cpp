@@ -3505,12 +3505,14 @@ struct LocateIsa {
 // class/dollar repair) as <prefix>.runexc. Megabytes instead of terabytes.
 struct RunRankExc {
     std::unordered_map<uint64_t, std::pair<uint64_t, uint64_t>> by;
-    uint64_t head(uint64_t run, uint64_t predicted) const {
-        auto it = by.find(run);
+    // KEYED BY HEAD POSITION: the fold's runs are post-repair, so their indices do
+    // not match the producer's; positions survive the renumbering.
+    uint64_t head(uint64_t pos, uint64_t predicted) const {
+        auto it = by.find(pos);
         return it == by.end() ? predicted : it->second.first;
     }
-    uint64_t tail(uint64_t run, uint64_t predicted) const {
-        auto it = by.find(run);
+    uint64_t tail(uint64_t pos, uint64_t predicted) const {
+        auto it = by.find(pos);
         return it == by.end() ? predicted : it->second.second;
     }
     void load(const std::string& path) {
@@ -4191,12 +4193,16 @@ int main(int argc, char** argv) {
                 if (!runRankExcEmpty) {
                     uint64_t cursor = rowCursor;
                     for (size_t i = 0; i < cnt; ++i) {
-                        const uint64_t g = gx[i];             // global run index
-                        (*headRank)[i] = runRankExc.head(g, cursor);
-                        (*tailRank)[i] = nb[i].len >= 2 ? runRankExc.tail(g, cursor + nb[i].len - 1)
-                                                        : (*headRank)[i];
-                        pf_check((*headRank)[i] < n && (*tailRank)[i] < n,
-                                 "KASAI: prefix-sum run rank outside [0,n)");
+                        // lookup key = this run's HEAD POSITION (post-repair safe)
+                        (*headRank)[i] = runRankExc.head(nb[i].h, cursor);
+                        (*tailRank)[i] = nb[i].len >= 2
+                                             ? runRankExc.tail(nb[i].h, cursor + nb[i].len - 1)
+                                             : (*headRank)[i];
+                        // The rank space includes the PADDING rows (the bin-walk seeds
+                        // n..n+9), so a run's rank may legitimately reach n+pad; the
+                        // column itself is n bytes and the arm never indexes it there.
+                        pf_check((*headRank)[i] <= n + 16 && (*tailRank)[i] <= n + 16,
+                                 "KASAI: prefix-sum run rank outside [0,n]");
                         cursor += nb[i].len;
                     }
                     rowCursor = cursor;

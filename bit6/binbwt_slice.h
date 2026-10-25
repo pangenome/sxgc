@@ -3248,7 +3248,10 @@ struct BinBandSink {
         {
             const U predicted = bandBaseRank + bandCumLen;
             if (predicted != pendHeadRank) {
-                runExc.push_back(index);
+                // KEYED BY HEAD POSITION, not run index: the finish's runs are
+                // POST-REPAIR (RepairStream merges/splits downstream of this sink),
+                // so a run index does not survive the repair - a position does.
+                runExc.push_back(pending.head);
                 runExc.push_back(pendHeadRank);
                 runExc.push_back(pendHeadRank + pending.len - 1);
                 ++excRuns;
