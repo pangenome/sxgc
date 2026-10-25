@@ -14,7 +14,7 @@ for r in summary['results']:
     for stage,index,a,b,c in re.findall(r'CROSS_STAGE_WORK stage=(\w+) pass=(\d+) comparisons=(\d+) symbols_compared=(\d+) probes=(\d+)',log):
         groups.setdefault(stage,{})[int(index)]=[int(a),int(b),int(c)]
     assert r['merge_rc']==r['finish_rc']==r['cmp_rc']==0
-    assert 'PILE_FINISH_DONE chi=283296933' in finish
+    assert 'XSA_FINISH_DONE chi=283296933' in finish
     assert groups['WALK'][0]==plus([groups['heap'][0],groups['prepare'][0]])==r['WALK']
     assert groups['PLANNING'][0]==groups['plan'][0]==r['PLANNING']
     assert groups['OVERLAP'][0]==r['OVERLAP']==[0,0,0]

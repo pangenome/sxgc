@@ -4,7 +4,7 @@ bytes, chi and every emitted witness must match, from the real producer+finish."
 import json,os,struct,subprocess
 from pathlib import Path
 base=Path('/mnt/nvme2n1/erikg');root=Path(os.environ.get('BINBWT_TINY_ROOT',str(base/'binbwt-tiny-product')));root.mkdir(parents=True,exist_ok=True)
-producer=Path(os.environ.get('BINBWT_BIN',str(base/'binbwt-build/binbwt')));finish=Path(os.environ.get('PILE_FINISH_BIN',str(base/'sol7e-freshstart/pile_finish')))
+producer=Path(os.environ.get('BINBWT_BIN',str(base/'binbwt-build/binbwt')));finish=Path(os.environ.get('XSA_FINISH_BIN',str(base/'sol7e-freshstart/xsa_finish')))
 map_path=base/'sol6c-gate100m/remap-256.bin';mapping=map_path.read_bytes();inverse=bytes(mapping.index(i) for i in range(256))
 fixtures=[b'\x00\x05\x1e\x00\x05\x1e',b'\x1e\x0a\x1e',b'\x1e\x0a\x1e'*12,b'a'*63+b'\x1e',b'ab'*31+b'\x1e',b'aaaaabaaaabaaaabaaaabaaba\x1e',b'\x00'*20+b'\x05\x1e',b'\x1e'*31,b'abcababcababcab\x1e']
 with (base/'extcols-scratch/mergperf-1b-snap.txt').open('rb') as f:

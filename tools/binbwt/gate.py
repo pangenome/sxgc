@@ -19,7 +19,7 @@ env=dict(os.environ,CROSS_POOL_SLOTS='33554432',CROSS_V2_PIECES='1',
          CROSS_V2_PIECE_WINDOW=os.environ.get('GATE_PIECE_WINDOW','1100'))
 producer=[os.environ.get('BINBWT_BIN',str(base/'binbwt-build/binbwt')),'--binbwt',str(fixture),'--remap',str(remap),
           '--out-prefix',str(prefix),'--threads',threads,'--bin-live-cap',livecap]
-consumer=[os.environ.get('PILE_FINISH_BIN',str(base/'sol7e-freshstart/pile_finish')),'--prefix',str(prefix),'--corpus',str(fixture),
+consumer=[os.environ.get('XSA_FINISH_BIN',str(base/'sol7e-freshstart/xsa_finish')),'--prefix',str(prefix),'--corpus',str(fixture),
           '--remap',str(remap),'--output',str(output),'--threads','96','--poll-timeout','7200',
           '--wit-ram-budget',str(4*1024**3),
           '--chi-expect',{'100m':'29716349','1b':'283296933'}[size]]

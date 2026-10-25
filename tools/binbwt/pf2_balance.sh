@@ -2,9 +2,9 @@
 # PART C, measurement 2: THE BALANCE CURVE at 1 GB, cold corpus.
 #
 # Two knobs, one grid:
-#   PIPELINE DEPTH  PILE_FINISH_PREFETCH_JOBS   = bands of targets in flight at
+#   PIPELINE DEPTH  XSA_FINISH_PREFETCH_JOBS   = bands of targets in flight at
 #                   once (the density of merged in-flight tasks);
-#   STAGING SIZE    PILE_FINISH_PREFETCH_BUDGET = bytes of merged front one job
+#   STAGING SIZE    XSA_FINISH_PREFETCH_BUDGET = bytes of merged front one job
 #                   may stage (the buffer budget).
 #
 # The point of the curve is that they TRADE: depth x budget is the read-ahead's

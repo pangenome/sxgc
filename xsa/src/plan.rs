@@ -481,7 +481,7 @@ impl Plan {
 // THE BIN SHAPE: `xsa build --v2-pipeline` drives bin-bwt as the producer (ONE
 // sweep -> 256 byte-bins -> parallel per-bin construction -> ordered stitch
 // into the unchanged band/piece protocol) and the decomposed fused finish
-// (pile_finish) as the consumer, CONCURRENT and flow-controlled through the
+// (xsa_finish) as the consumer, CONCURRENT and flow-controlled through the
 // piece window. There is no chunk phase and no merge walk: every chunk /
 // k-way / merge-walk term has left this model with the route (the merge path
 // survives in the binary behind --radix and in the v1 executor for A/B, and is

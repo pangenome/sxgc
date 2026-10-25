@@ -80,11 +80,11 @@ using namespace sxi;
 // body, which is instruction-cache and branch-density cost paid on EVERY row.
 // Literals take the const char* overload, so a passing check builds nothing.
 [[noreturn]] __attribute__((noinline, cold)) static void pf_fail(const char* msg) {
-    fprintf(stderr, "FATAL pile_finish: %s\n", msg);
+    fprintf(stderr, "FATAL xsa_finish: %s\n", msg);
     exit(2);
 }
 [[noreturn]] __attribute__((noinline, cold)) static void pf_fail(const std::string& msg) {
-    fprintf(stderr, "FATAL pile_finish: %s\n", msg.c_str());
+    fprintf(stderr, "FATAL xsa_finish: %s\n", msg.c_str());
     exit(2);
 }
 // MEASURE-FIRST (v3): the per-run/per-symbol checks below are the fold's hot
@@ -153,7 +153,7 @@ static void pf_prof_handler(int, siginfo_t*, void* ctx) {
 }
 // Histogram dump: samples are 1 ms of CPU, so count/total is a CPU-time share.
 static void pf_prof_start() {
-    const char* env = getenv("PILE_FINISH_PROF");
+    const char* env = getenv("XSA_FINISH_PROF");
     if (!env || *env == '0') return;
     struct sigaction sa {};
     sa.sa_sigaction = pf_prof_handler;
@@ -165,7 +165,7 @@ static void pf_prof_start() {
     it.it_value.tv_usec = 1000;
     pf_check(setitimer(ITIMER_PROF, &it, nullptr) == 0, "arm ITIMER_PROF sampler");
     pf_prof_on = true;
-    fprintf(stderr, "PILE_FINISH_PROF on=1 period_ms=1 slots=%u rdynamic_symbols=1\n", PF_PROF_SLOTS);
+    fprintf(stderr, "XSA_FINISH_PROF on=1 period_ms=1 slots=%u rdynamic_symbols=1\n", PF_PROF_SLOTS);
 }
 struct PfProfRow { uint64_t pc, count; };
 // dladdr only sees GLOBAL symbols, and the finish's hot code is local
@@ -201,7 +201,7 @@ static void pf_load_symtab() {
         break;
     }
     fclose(f);
-    fprintf(stderr, "PILE_FINISH_PROF_SYMTAB funcs=%zu\n", g_pfSyms.size());
+    fprintf(stderr, "XSA_FINISH_PROF_SYMTAB funcs=%zu\n", g_pfSyms.size());
 }
 static const char* pf_sym_of(uint64_t pc, uint64_t& off) {
     size_t lo = 0, hi = g_pfSyms.size();
@@ -238,19 +238,19 @@ static void pf_prof_dump(const char* label) {
         }
         std::sort(rows[ph].begin(), rows[ph].end(), [](const PfProfRow& a, const PfProfRow& b) { return a.count > b.count; });
     }
-    fprintf(stderr, "PILE_FINISH_PROF_DUMP %s samples=%.0f dropped=%llu\n", label, total,
+    fprintf(stderr, "XSA_FINISH_PROF_DUMP %s samples=%.0f dropped=%llu\n", label, total,
             (unsigned long long)g_pfProfDrop.load());
     for (int ph = 0; ph < PF_NPHASE; ++ph) {
         uint64_t phTotal = 0;
         for (const auto& r : rows[ph]) phTotal += r.count;
         if (!phTotal) continue;
-        fprintf(stderr, "PILE_FINISH_PROF_PHASE phase=%s samples=%llu of_total=%.2f%%\n",
+        fprintf(stderr, "XSA_FINISH_PROF_PHASE phase=%s samples=%llu of_total=%.2f%%\n",
                 pf_phase_name[ph], (unsigned long long)phTotal,
                 total ? 100.0 * double(phTotal) / total : 0.0);
         for (size_t i = 0; i < rows[ph].size() && i < 8; ++i) {
             uint64_t off = 0;
             const char* name = pf_sym_of(rows[ph][i].pc, off);
-            fprintf(stderr, "PILE_FINISH_PROF phase=%s in_phase=%.2f%% of_cpu=%.2f%% samples=%llu sym=%s+%llu\n",
+            fprintf(stderr, "XSA_FINISH_PROF phase=%s in_phase=%.2f%% of_cpu=%.2f%% samples=%llu sym=%s+%llu\n",
                     pf_phase_name[ph], 100.0 * double(rows[ph][i].count) / double(phTotal),
                     total ? 100.0 * double(rows[ph][i].count) / total : 0.0,
                     (unsigned long long)rows[ph][i].count, name, (unsigned long long)off);
@@ -307,7 +307,7 @@ struct PfRegion {
         g_pfPhase.store(prevPhase, std::memory_order_relaxed);
     }
     void report(uint64_t units, const char* unitName) const {
-        fprintf(stderr, "PILE_FINISH_REGION %s wall=%.3f cpu=%.3f minflt=%llu majflt=%llu dev_read=%llu units=%llu %s_ns=%.2f\n",
+        fprintf(stderr, "XSA_FINISH_REGION %s wall=%.3f cpu=%.3f minflt=%llu majflt=%llu dev_read=%llu units=%llu %s_ns=%.2f\n",
                 name, wall, cpu, (unsigned long long)minflt, (unsigned long long)majflt,
                 (unsigned long long)readBytes, (unsigned long long)units, unitName,
                 units ? 1e9 * wall / double(units) : 0.0);
@@ -323,14 +323,14 @@ struct PfAcc {
         wall += r.wall; cpu += r.cpu; minflt += r.minflt; majflt += r.majflt; readBytes += r.readBytes;
     }
     void report(const char* unitName, uint64_t units) const {
-        fprintf(stderr, "PILE_FINISH_REGION %s wall=%.3f cpu=%.3f minflt=%llu majflt=%llu dev_read=%llu units=%llu %s_ns=%.2f\n",
+        fprintf(stderr, "XSA_FINISH_REGION %s wall=%.3f cpu=%.3f minflt=%llu majflt=%llu dev_read=%llu units=%llu %s_ns=%.2f\n",
                 name, wall, cpu, (unsigned long long)minflt, (unsigned long long)majflt,
                 (unsigned long long)readBytes, (unsigned long long)units, unitName,
                 units ? 1e9 * wall / double(units) : 0.0);
     }
 };
 static void phase(const char* name, double& last) {
-    fprintf(stderr, "PILE_FINISH_PHASE %s wall=%.3f cumulative=%.3f\n", name, tnow() - last, tnow() - G_T0);
+    fprintf(stderr, "XSA_FINISH_PHASE %s wall=%.3f cumulative=%.3f\n", name, tnow() - last, tnow() - G_T0);
     last = tnow();
 }
 static void pf_read_full(int fd, void* p, uint64_t len, const std::string& what) {
@@ -452,11 +452,11 @@ struct CorpusText {
         // mmap'd, and that difference alone is what the 1 GB/10 GB wall gap is
         // made of (RESULTS_PREFETCH2.md section 4.4).
         bool forceWindowed = false;
-        if (const char* wb = std::getenv("PILE_FINISH_CORPUS_WINDOW_BYTES")) {
+        if (const char* wb = std::getenv("XSA_FINISH_CORPUS_WINDOW_BYTES")) {
             char* end = nullptr; errno = 0;
             const unsigned long long v = std::strtoull(wb, &end, 10);
             pf_check(*wb && *wb != '-' && end && !*end && !errno && v >= 4096,
-                     "PILE_FINISH_CORPUS_WINDOW_BYTES must be an integer >= 4096");
+                     "XSA_FINISH_CORPUS_WINDOW_BYTES must be an integer >= 4096");
             windowBytes = std::max<uint64_t>(4096, uint64_t(v) & ~uint64_t(4095));
             forceWindowed = true;
         }
@@ -493,14 +493,14 @@ struct CorpusText {
                     pinnedWindows = need;
                 }
             }
-            fprintf(stderr, "PILE_FINISH_CORPUS_WINDOWED regions=%zu region_bytes=%llu mapped_cap=%llu need_windows=%llu pinned=%d\n",
+            fprintf(stderr, "XSA_FINISH_CORPUS_WINDOWED regions=%zu region_bytes=%llu mapped_cap=%llu need_windows=%llu pinned=%d\n",
                     windows.size(), (unsigned long long)windowBytes,
                     (unsigned long long)(windows.size() * windowBytes),
                     (unsigned long long)need, int(pinnedWindows));
         }
         bool identity = true;
         for (unsigned i = 0; i < 256; ++i) identity = identity && remap[i] == uint8_t(i);
-        fprintf(stderr, "PILE_FINISH_CORPUS path=%s bytes=%llu remap_identity=%d read_only=1 rotation=0 derivation=T[i]=REMAP[corpus[i]] mmap=%d\n",
+        fprintf(stderr, "XSA_FINISH_CORPUS path=%s bytes=%llu remap_identity=%d read_only=1 rotation=0 derivation=T[i]=REMAP[corpus[i]] mmap=%d\n",
                 path.c_str(), (unsigned long long)size_, int(identity), int(cmap != nullptr));
     }
     ~CorpusText() {
@@ -749,7 +749,7 @@ struct CorpusText {
                 return remap[((uint8_t*)p)[i - base]];
             }
             if (!fallbackLogged) {
-                fprintf(stderr, "PILE_FINISH_CORPUS_FALLBACK pread=1 window_bytes=%llu errno=%d reason=%s\n", (unsigned long long)windowBytes, errno, strerror(errno));
+                fprintf(stderr, "XSA_FINISH_CORPUS_FALLBACK pread=1 window_bytes=%llu errno=%d reason=%s\n", (unsigned long long)windowBytes, errno, strerror(errno));
                 fallbackLogged = true;
             }
         }
@@ -796,12 +796,12 @@ static long pf_meminfo_kb(const char* field) {
 // PART A (operator): the corpus's page-cache residency is SAMPLED per phase, not
 // assumed once at the end. A single mincore() walk at a coarse stride is a few
 // ms at 1 GB and tens of ms at 10 GB, so the per-phase lines are OFF by default
-// (PILE_FINISH_CACHE_JOURNAL=1 turns them on) and the end-of-finish line is
+// (XSA_FINISH_CACHE_JOURNAL=1 turns them on) and the end-of-finish line is
 // always printed. The numbers are of the ADAPTER's own mappings (the same view
 // the workers read through), plus the kernel's own Cached/Dirty/Free counters so
 // the two can be cross-checked.
 static bool pf_cache_journal_on() {
-    const char* e = std::getenv("PILE_FINISH_CACHE_JOURNAL");
+    const char* e = std::getenv("XSA_FINISH_CACHE_JOURNAL");
     return e && *e && *e != '0';
 }
 static void pf_cache_journal(const CorpusText& text, const char* label,
@@ -812,7 +812,7 @@ static void pf_cache_journal(const CorpusText& text, const char* label,
     const uint64_t page = 4096;
     const double residentGb = double(r.resident) * double(stridePages * page) / 1e9;
     std::fprintf(stderr,
-        "PILE_FINISH_CACHE_RESIDENCY label=%s sampled_pages=%llu resident_pages=%llu "
+        "XSA_FINISH_CACHE_RESIDENCY label=%s sampled_pages=%llu resident_pages=%llu "
         "resident_pct=%.2f stride_pages=%llu corpus_gb=%.3f resident_gb=%.3f "
         "meminfo_cached_gb=%.2f meminfo_dirty_gb=%.2f meminfo_free_gb=%.2f "
         "meminfo_shmem_gb=%.2f populate_ranges=%llu willneed_ranges=%llu "
@@ -832,12 +832,12 @@ static void pf_cache_journal(const CorpusText& text, const char* label,
         text.pfColdWall.load());
 }
 
-// PART A's finish-side hygiene switch: `PILE_FINISH_HYGIENE=0` turns OFF the
+// PART A's finish-side hygiene switch: `XSA_FINISH_HYGIENE=0` turns OFF the
 // witness-spool release and the rlebwt release, i.e. the finish lets its own
 // scratch squat the page cache. The pile-regime A/B's control arm uses it; the
 // product default is 1 (hygiene on).
 static bool pf_hygiene_on() {
-    const char* e = std::getenv("PILE_FINISH_HYGIENE");
+    const char* e = std::getenv("XSA_FINISH_HYGIENE");
     return !(e && *e == '0');
 }
 
@@ -965,7 +965,7 @@ static void build_pfck(const CorpusText& corpus, uint64_t n, uint64_t tau,
     struct stat st {};
     pf_check(fstat(fd, &st) == 0 && uint64_t(st.st_size) == 40 + 8 * count, "pfck size");
     pf_check(::close(fd) == 0, "close pfck");
-    fprintf(stderr, "PILE_FINISH_PFCK path=%s n=%llu tau=%llu count=%llu bytes=%llu wall=%.3f workers=%d segments=%llu worker_bytes=%llu source=corpus_adapter fixed_grid=1\n",
+    fprintf(stderr, "XSA_FINISH_PFCK path=%s n=%llu tau=%llu count=%llu bytes=%llu wall=%.3f workers=%d segments=%llu worker_bytes=%llu source=corpus_adapter fixed_grid=1\n",
             out.c_str(), (unsigned long long)n, (unsigned long long)tau, (unsigned long long)count,
             (unsigned long long)(40 + 8 * count), tnow() - t0, workers,
             (unsigned long long)segments, (unsigned long long)workerBytes);
@@ -1099,7 +1099,7 @@ struct PieceSource {
         return true;
     }
     void consumed_band(uint64_t band) {
-        if (const char* delay = getenv("PILE_FINISH_BAND_DELAY_MS"))
+        if (const char* delay = getenv("XSA_FINISH_BAND_DELAY_MS"))
             std::this_thread::sleep_for(std::chrono::milliseconds(strtoull(delay,nullptr,10)));
         std::string path = prefix + ".runcols.consumed", tmp = path + ".tmp";
         FILE* f = fopen(tmp.c_str(), "w"); pf_check(f, "open consumed tmp");
@@ -1180,7 +1180,7 @@ struct PieceSource {
         pf_check(acc == R, "idx shard counts != R");
         ::close(fd);
         dir = prefix + ".pieces";
-        fprintf(stderr, "PILE_FINISH_IDX shards=%u runs=%llu n=%llu w=%u band=%llu\n",
+        fprintf(stderr, "XSA_FINISH_IDX shards=%u runs=%llu n=%llu w=%u band=%llu\n",
                 S, (unsigned long long)R, (unsigned long long)n, w, (unsigned long long)B);
     }
     uint32_t shard_of(uint64_t r) const {
@@ -1517,7 +1517,7 @@ struct SeamClasses {
             classes.push_back(std::move(cl));
         }
         pf_check(offset == uint64_t(st.st_size), "seam spool trailing data");
-        fprintf(stderr, "PILE_FINISH_SEAM_SPOOL classes=%zu rows=%llu discovery_steps=%llu limit=%llu WM=absent\n",
+        fprintf(stderr, "XSA_FINISH_SEAM_SPOOL classes=%zu rows=%llu discovery_steps=%llu limit=%llu WM=absent\n",
                 classes.size(), (unsigned long long)total, (unsigned long long)depth, (unsigned long long)limit);
         rebuild(n, rawR, limit, collection_lce, symbol);
     }
@@ -1547,7 +1547,7 @@ struct SeamClasses {
                 off += want;
             }
         }
-        fprintf(stderr, "PILE_FINISH_SEAM_OCC terminal=0x%02llx depth0_count=%llu scan=corpus\n",
+        fprintf(stderr, "XSA_FINISH_SEAM_OCC terminal=0x%02llx depth0_count=%llu scan=corpus\n",
                 (unsigned long long)terminal, (unsigned long long)occ.size());
         // v1 pushes a class per depth while the interval holds more than
         // one row and stops at the unique row (that step counts toward the
@@ -2603,12 +2603,12 @@ struct ContainerOut {
 // pays the faults itself. `depth` (JOBS) is the pipeline-depth knob of the
 // balance curve: how many bands of targets may be in flight at once.
 //
-// MODES (`PILE_FINISH_PREFETCH`, product default 0 = the lazy arm):
+// MODES (`XSA_FINISH_PREFETCH`, product default 0 = the lazy arm):
 //   0 / off        - no read-ahead at all (the demand path's faults).
 //   1 / sweep      - sort + coalesce + one monotone front (the thesis).
 //   2 / scattered  - the same targets issued in ARRIVAL order, no sort, no
 //                    coalesce: the "batch-scattered" arm of the three-way.
-// `PILE_FINISH_PREFETCH_ASSIST` selects what the front does with each read:
+// `XSA_FINISH_PREFETCH_ASSIST` selects what the front does with each read:
 //   populate (default) - MADV_POPULATE_READ (blocking, one front, one thread)
 //   willneed           - POSIX_FADV_WILLNEED (non-blocking, the kernel queues)
 //   both               - WILLNEED first, then POPULATE (assist + guarantee)
@@ -2838,7 +2838,7 @@ struct PfPrefetcher {
         const uint64_t reads = st.reads.load(), bytes = st.readBytes.load();
         const uint64_t touched = st.touchedBytes.load();
         std::fprintf(stderr,
-            "PILE_FINISH_PREFETCH_POLICY mode=%d (%s) assist=%d (%s) skip_resident=%d "
+            "XSA_FINISH_PREFETCH_POLICY mode=%d (%s) assist=%d (%s) skip_resident=%d "
             "window_bytes=%llu budget_bytes=%llu gap_bytes=%llu chunk_bytes=%llu jobs=%u "
             "source=next_band_targets\n",
             mode, mode == 2 ? "scattered" : "sweep",
@@ -2848,7 +2848,7 @@ struct PfPrefetcher {
             (unsigned long long)gap, (unsigned long long)chunkBytes, JOBS);
         const uint64_t fetched = st.fetchedBytes.load();
         std::fprintf(stderr,
-            "PILE_FINISH_PREFETCH jobs=%llu raw_windows=%llu merged_reads=%llu "
+            "XSA_FINISH_PREFETCH jobs=%llu raw_windows=%llu merged_reads=%llu "
             "coalesce_ratio=%.3f fronts=%llu reads=%llu avg_read_bytes=%.1f bytes=%llu "
             "touched_bytes=%llu fetched_bytes=%llu fetched_mass_pct=%.4f "
             "skip_resident_reads=%llu skip_resident_bytes=%llu residency_unknown=%llu "
@@ -2883,14 +2883,14 @@ struct PfPrefetcher {
 // The prefetcher's knobs, read ONCE (a per-band getenv would be a syscall in the
 // fold). mode 0 disables the prefetcher entirely - the product default.
 static int pf_prefetch_mode() {
-    const char* e = std::getenv("PILE_FINISH_PREFETCH");
+    const char* e = std::getenv("XSA_FINISH_PREFETCH");
     if (!e || !*e) return 0;
     if (!std::strcmp(e, "sweep") || !std::strcmp(e, "on")) return 1;
     if (!std::strcmp(e, "scattered")) return 2;
     char* end = nullptr; errno = 0;
     long v = std::strtol(e, &end, 10);
     pf_check(*e && end && !*end && !errno && v >= 0 && v <= 2,
-             "PILE_FINISH_PREFETCH must be 0|1|2|off|sweep|scattered");
+             "XSA_FINISH_PREFETCH must be 0|1|2|off|sweep|scattered");
     return int(v);
 }
 static uint64_t pf_env_u64(const char* name, uint64_t def, uint64_t lo, uint64_t hi) {
@@ -3097,7 +3097,7 @@ static int benchmark_repair_chunks() {
 //                          and   (g == cap  or  T[i+g] != T[j+g])
 //
 // i.e. exactly `g == min(lce(i,j), cap)`. That is the ONLY arithmetic fact the
-// sweep consumes (`topLcp` and `interiorMin`, pile_finish.cpp lceJob), so a
+// sweep consumes (`topLcp` and `interiorMin`, xsa_finish.cpp lceJob), so a
 // claims list that the text satisfies makes the sweep's inputs identical to the
 // FULL tier's inputs; the sweep is a deterministic function of those inputs and
 // therefore emits the identical container. The probability lives in the
@@ -3232,7 +3232,7 @@ struct PfClaimSpool : SlimClaimSink {
         pf_check(f >= 0, "create claims meta");
         pf_check(::write(f, meta.data(), meta.size()) == ssize_t(meta.size()), "write claims meta");
         pf_check(::close(f) == 0, "close claims meta");
-        fprintf(stderr, "PILE_FINISH_CLAIMS_SPOOL dir=%s claims=%llu span_symbols=%llu "
+        fprintf(stderr, "XSA_FINISH_CLAIMS_SPOOL dir=%s claims=%llu span_symbols=%llu "
                         "encoded_bytes=%llu buckets=%llu n=%llu\n",
                 dir.c_str(), (unsigned long long)claimCount.load(),
                 (unsigned long long)spanSymbols.load(),
@@ -3258,7 +3258,7 @@ struct PfClaimFused : SlimClaimSink {
         comparedSymbols.fetch_add(g + (g < cap), std::memory_order_relaxed);
         if (bad != UINT64_MAX) {
             badClaims.fetch_add(1, std::memory_order_relaxed);
-            fprintf(stderr, "PILE_FINISH_CLAIM_VIOLATION mode=fused i=%llu j=%llu g=%llu cap=%llu "
+            fprintf(stderr, "XSA_FINISH_CLAIM_VIOLATION mode=fused i=%llu j=%llu g=%llu cap=%llu "
                             "truncated=%u at_offset=%llu Ti=%u Tj=%u Ti_g=%u Tj_g=%u\n",
                     (unsigned long long)i, (unsigned long long)j, (unsigned long long)g,
                     (unsigned long long)cap, unsigned(c.truncated), (unsigned long long)bad,
@@ -3270,7 +3270,7 @@ struct PfClaimFused : SlimClaimSink {
 };
 
 // ---- the FLOOR sink: emit and count, check nothing. This is a MEASUREMENT arm
-// only (PILE_FINISH_LCE_TRUST=3): it prices the constructor's floor when it
+// only (XSA_FINISH_LCE_TRUST=3): it prices the constructor's floor when it
 // verifies nothing at all, so the checker's own price is separable. It is NOT a
 // product tier - nothing is certified.
 struct PfClaimNull : SlimClaimSink {
@@ -3312,14 +3312,14 @@ static void pf_check_claims(const CorpusText& text, const std::string& dir, int 
     // and monotone), so a bucket larger than the budget is a claims list that
     // must be checked in a different SHAPE, not a check that silently degrades.
     // At the pile the spool is 1.9-7.1 TB and a bucket can be ~1 GB of records:
-    // that run must use the fused sink (PILE_FINISH_LCE_TRUST=2) or a
+    // that run must use the fused sink (XSA_FINISH_LCE_TRUST=2) or a
     // band-consumed spool. Failing loud here is the point.
-    const uint64_t bucketMax = pf_env_u64("PILE_FINISH_CLAIM_BUCKET_MAX", 1ull << 30, 1ull << 20, 1ull << 40);
+    const uint64_t bucketMax = pf_env_u64("XSA_FINISH_CLAIM_BUCKET_MAX", 1ull << 30, 1ull << 20, 1ull << 40);
     for (uint64_t b = 0; b < buckets; ++b)
         pf_check(bucketBytes[b] <= bucketMax,
                  "claims bucket " + std::to_string(b) + " is " + std::to_string(bucketBytes[b]) +
-                 " B, over PILE_FINISH_CLAIM_BUCKET_MAX=" + std::to_string(bucketMax) +
-                 " (raise it, add buckets, or check fused: PILE_FINISH_LCE_TRUST=2)");
+                 " B, over XSA_FINISH_CLAIM_BUCKET_MAX=" + std::to_string(bucketMax) +
+                 " (raise it, add buckets, or check fused: XSA_FINISH_LCE_TRUST=2)");
     pf_check(n == text.size(), "claims meta n != corpus size (the claims belong to a different text)");
 
     struct PerThread { std::atomic<uint64_t> claims{0}, symbols{0}, bad{0}, buckets{0}; };
@@ -3373,7 +3373,7 @@ static void pf_check_claims(const CorpusText& text, const std::string& dir, int 
                         if (badSeq.load() == ~0ull) {
                             badSeq.exchange(view[k].i);
                             badBucket.store(b);
-                            fprintf(stderr, "PILE_FINISH_CLAIM_VIOLATION mode=checker bucket=%llu i=%llu j=%llu g=%llu "
+                            fprintf(stderr, "XSA_FINISH_CLAIM_VIOLATION mode=checker bucket=%llu i=%llu j=%llu g=%llu "
                                             "truncated=%u at_offset=%llu Ti=%u Tj=%u\n",
                                     (unsigned long long)b, (unsigned long long)c.i, (unsigned long long)c.j,
                                     (unsigned long long)c.g, unsigned(c.truncated), (unsigned long long)bad,
@@ -3393,7 +3393,7 @@ static void pf_check_claims(const CorpusText& text, const std::string& dir, int 
                                   bad += per[t].bad.load(); swept += per[t].buckets.load(); }
     const double wall = tnow() - t0;
     const uint64_t firstBad = badSeq.load();
-    fprintf(stderr, "PILE_FINISH_CHECK_CLAIMS claims=%llu claims_declared=%llu symbols_compared=%llu "
+    fprintf(stderr, "XSA_FINISH_CHECK_CLAIMS claims=%llu claims_declared=%llu symbols_compared=%llu "
                     "buckets=%llu swept=%llu max_bucket_claims=%llu threads=%d wall=%.3f "
                     "violations=%llu first_bad_i=%s source=claim_list independent_of_structure=1\n",
             (unsigned long long)done, (unsigned long long)claims,
@@ -3442,7 +3442,7 @@ struct LceWrap {
 // THE MAPPING IS THE CLOSURE CONDITION: the runs are contiguous BWT intervals in
 // ascending rank order, so sum(len) over every emitted run == n and r_i is the
 // running sum. That is asserted at the end of the sweep, and
-// PILE_FINISH_KASAI_AUDIT=1 asserts every value this table returns equals the
+// XSA_FINISH_KASAI_AUDIT=1 asserts every value this table returns equals the
 // SlimFingerprint answer it replaces.
 static std::atomic<uint64_t> g_kasaiDbg{0};
 
@@ -3484,7 +3484,7 @@ struct LocateIsa {
         map = (const uint8_t*)::mmap(nullptr, bytes, PROT_READ, MAP_SHARED, fd, 0);
         pf_check(map != MAP_FAILED, "mmap --sa-locate: " + std::string(std::strerror(errno)));
         ::madvise((void*)map, bytes, MADV_RANDOM);
-        fprintf(stderr, "PILE_FINISH_LOCATE_ISA path=%s n=%llu width=%u bytes=%llu\n",
+        fprintf(stderr, "XSA_FINISH_LOCATE_ISA path=%s n=%llu width=%u bytes=%llu\n",
                 path.c_str(), (unsigned long long)n, width, (unsigned long long)bytes);
     }
     inline uint64_t at(uint64_t p) const {
@@ -3578,7 +3578,7 @@ struct LcpColumn {
             }
         }
         fprintf(stderr,
-                "PILE_FINISH_LCP_COLUMN path=%s n=%llu escapes=%llu max_lcp=%llu "
+                "XSA_FINISH_LCP_COLUMN path=%s n=%llu escapes=%llu max_lcp=%llu "
                 "bytes=%llu bytes_per_rank=%.4f\n",
                 path.c_str(), (unsigned long long)n, (unsigned long long)escapeCount,
                 (unsigned long long)maxLcp, (unsigned long long)fileBytes,
@@ -3662,14 +3662,14 @@ int main(int argc, char** argv) {
         }
         pf_check(!checkClaimsDir.empty() ||
                  (!prefix.empty() && !corpus.empty() && !remap.empty() && !out.empty()),
-                 "usage: pile_finish --prefix MERGED/frag --corpus CORPUS --remap MAP.bin --output CONTAINER.sxi2 "
+                 "usage: xsa_finish --prefix MERGED/frag --corpus CORPUS --remap MAP.bin --output CONTAINER.sxi2 "
                  "[--bridge-dir DIR] [--witness-sample-check BANKED.sA] [--chi-expect N] [--threads N] "
                  "[--keep-rlebwt] [--keep-pfck] [--poll-timeout S] [--repair-chunk-runs N] "
                  "[--lcp-column COLUMN.sxlc --sa-locate ISA.sxis]");
         pf_check(!repairChunkRuns || repairChunkRuns >= 1024, "experimental repair chunks require at least 1024 runs");
         double last = tnow();
         pf_prof_start();
-        if (const char* acc = getenv("PILE_FINISH_ACCESS"))
+        if (const char* acc = getenv("XSA_FINISH_ACCESS"))
             g_pfAccessOn.store(*acc && *acc != '0', std::memory_order_relaxed);
         uint8_t remapTable[256];
         load_remap_table(remap, remapTable);
@@ -3680,7 +3680,7 @@ int main(int argc, char** argv) {
             // the pile, where no banked container exists to cmp against.
             CorpusText text(corpus, remapTable);
             pf_check_claims(text, checkClaimsDir, threads);
-            fprintf(stderr, "PILE_FINISH_CHECK_CLAIMS_DONE dir=%s corpus=%s n=%llu threads=%d\n",
+            fprintf(stderr, "XSA_FINISH_CHECK_CLAIMS_DONE dir=%s corpus=%s n=%llu threads=%d\n",
                     checkClaimsDir.c_str(), corpus.c_str(), (unsigned long long)text.size(), threads);
             return 0;
         }
@@ -3701,10 +3701,10 @@ int main(int argc, char** argv) {
 
         // ---- KASAI: the prebuilt LCP column (kasai-finish), proved HERE, before
         // a byte of the sweep runs: n identity, the file's own arithmetic, and a
-        // strictly ordered escape list. `PILE_FINISH_KASAI=0` keeps the old
+        // strictly ordered escape list. `XSA_FINISH_KASAI=0` keeps the old
         // SlimFingerprint walk on the identical inputs (the A/B arm).
-        const bool kasaiOff = pf_env_u64("PILE_FINISH_KASAI", 1, 0, 1) == 0;
-        const int kasaiAudit = int(pf_env_u64("PILE_FINISH_KASAI_AUDIT", 0, 0, 2));
+        const bool kasaiOff = pf_env_u64("XSA_FINISH_KASAI", 1, 0, 1) == 0;
+        const int kasaiAudit = int(pf_env_u64("XSA_FINISH_KASAI_AUDIT", 0, 0, 2));
         LcpColumn lcpCol;
         LocateIsa locateIsa;
         KasaiState kasaiState;
@@ -3717,11 +3717,11 @@ int main(int argc, char** argv) {
             locateIsa.open(locateIsaPath, n);
         }
         else if (!lcpColumnPath.empty())
-            fprintf(stderr, "PILE_FINISH_LCP_COLUMN_IGNORED path=%s reason=PILE_FINISH_KASAI=0\n",
+            fprintf(stderr, "XSA_FINISH_LCP_COLUMN_IGNORED path=%s reason=XSA_FINISH_KASAI=0\n",
                     lcpColumnPath.c_str());
         else
-            pf_check(!kasaiAudit, "PILE_FINISH_KASAI_AUDIT=1 requires --lcp-column");
-        fprintf(stderr, "PILE_FINISH_KASAI arm=%s audit=%d column=%s\n",
+            pf_check(!kasaiAudit, "XSA_FINISH_KASAI_AUDIT=1 requires --lcp-column");
+        fprintf(stderr, "XSA_FINISH_KASAI arm=%s audit=%d column=%s\n",
                 kasaiOn ? "on" : "off", int(kasaiAudit),
                 lcpColumnPath.empty() ? "none" : lcpColumnPath.c_str());
 
@@ -3748,7 +3748,7 @@ int main(int argc, char** argv) {
         }
         bool cyclic = hasRS || !hasNL;
         pf_check(cyclic, "newline-class corpora (no 0x1E, newlines present) use the v1 chain; the v2 finish refuses");
-        fprintf(stderr, "PILE_FINISH_CYCLIC=1 has_rs=%d has_nl=%d k=1\n", int(hasRS), int(hasNL));
+        fprintf(stderr, "XSA_FINISH_CYCLIC=1 has_rs=%d has_nl=%d k=1\n", int(hasRS), int(hasNL));
 
         // Default v2 protocol: bounded captured seam classes. Explicit
         // --wm retains legacy scratch compatibility outside the v2 route.
@@ -3798,7 +3798,7 @@ int main(int argc, char** argv) {
         }
         double joinStart = tnow();
         readiness.join();
-        fprintf(stderr, "PILE_FINISH_PFCK_WAIT wall=%.3f overlapped=1\n", tnow() - joinStart);
+        fprintf(stderr, "XSA_FINISH_PFCK_WAIT wall=%.3f overlapped=1\n", tnow() - joinStart);
         phase("readiness-pfck", last);
         if (pf_cache_journal_on()) pf_cache_journal(text, "readiness-pfck", 1024);
         uint64_t ckptCount = n / tau + 1;
@@ -3820,9 +3820,9 @@ int main(int argc, char** argv) {
         // hand it to the checker; nothing about the ANSWERS changes (the sink
         // path returns the same `guess` the verifier would have confirmed), so
         // a clean corpus must produce a byte-identical container either way.
-        const int trustMode = int(pf_env_u64("PILE_FINISH_LCE_TRUST", 0, 0, 3));
+        const int trustMode = int(pf_env_u64("XSA_FINISH_LCE_TRUST", 0, 0, 3));
         const std::string claimsDir = [] {
-            const char* e = std::getenv("PILE_FINISH_CLAIMS_DIR");
+            const char* e = std::getenv("XSA_FINISH_CLAIMS_DIR");
             return std::string(e ? e : "");
         }();
         std::unique_ptr<PfClaimSpool> claimSpool;
@@ -3833,9 +3833,9 @@ int main(int argc, char** argv) {
             // The claims tier exists to certify the LCE WALKS. In the Kasai arm
             // there are no band walks left to claim about, so the tier would
             // certify nothing while looking like a gate: refuse.
-            pf_check(!kasaiOn, "PILE_FINISH_LCE_TRUST=1 is incompatible with the Kasai arm "
-                               "(no LCE queries to claim); use TRUST=0/2/3 or PILE_FINISH_KASAI=0");
-            pf_check(!claimsDir.empty(), "PILE_FINISH_LCE_TRUST=1 requires PILE_FINISH_CLAIMS_DIR");
+            pf_check(!kasaiOn, "XSA_FINISH_LCE_TRUST=1 is incompatible with the Kasai arm "
+                               "(no LCE queries to claim); use TRUST=0/2/3 or XSA_FINISH_KASAI=0");
+            pf_check(!claimsDir.empty(), "XSA_FINISH_LCE_TRUST=1 requires XSA_FINISH_CLAIMS_DIR");
             claimSpool = std::make_unique<PfClaimSpool>(claimsDir, n);
             fhSeam.sink = claimSpool.get();
             fhSlim.sink = claimSpool.get();
@@ -3846,11 +3846,11 @@ int main(int argc, char** argv) {
             fhSeam.sink = &nullSink;   // FLOOR ARM: measure, certify nothing
             fhSlim.sink = &nullSink;
         }
-        const uint64_t lceFault = pf_env_u64("PILE_FINISH_LCE_FAULT", 0, 0, 1ull << 40);
-        const bool trackDegrees = pf_env_u64("PILE_FINISH_PROBE_DEGREES", 0, 0, 1) != 0;
+        const uint64_t lceFault = pf_env_u64("XSA_FINISH_LCE_FAULT", 0, 0, 1ull << 40);
+        const bool trackDegrees = pf_env_u64("XSA_FINISH_PROBE_DEGREES", 0, 0, 1) != 0;
         fhSeam.faultEvery = fhSlim.faultEvery = lceFault;
         fhSeam.trackDegrees = fhSlim.trackDegrees = trackDegrees;
-        fprintf(stderr, "PILE_FINISH_TIER lce_trust=%d claims_dir=%s lce_fault=%llu probe_degrees=%d "
+        fprintf(stderr, "XSA_FINISH_TIER lce_trust=%d claims_dir=%s lce_fault=%llu probe_degrees=%d "
                         "tier=%s constructor=%s\n",
                 trustMode, claimsDir.empty() ? "-" : claimsDir.c_str(),
                 (unsigned long long)lceFault, int(trackDegrees),
@@ -4004,17 +4004,17 @@ int main(int argc, char** argv) {
         // curve, and at 100m it says 96 beats 64 and 48 (the verification is the
         // binding term, so giving it fewer threads is strictly worse).
         int poolThreads = std::max(1, std::min(threads, 256));
-        if (const char* pt = getenv("PILE_FINISH_POOL")) {
+        if (const char* pt = getenv("XSA_FINISH_POOL")) {
             long v = std::strtol(pt, nullptr, 10);
-            pf_check(v >= 1 && v <= 256, "PILE_FINISH_POOL out of range");
+            pf_check(v >= 1 && v <= 256, "XSA_FINISH_POOL out of range");
             poolThreads = int(v);
         }
         FinishPool pool(poolThreads);
         // ---- PART 2/B: THE BAND PREFETCHER (read ahead of the verified band)
         // OFF by default: the product's lazy demand path is unchanged unless the
-        // operator asks for an arm (PILE_FINISH_PREFETCH=1 sweep | 2 scattered).
-        // Depth (`PILE_FINISH_PREFETCH_JOBS`) and the per-job staging budget
-        // (`PILE_FINISH_PREFETCH_BUDGET`) are the balance curve's two knobs: how
+        // operator asks for an arm (XSA_FINISH_PREFETCH=1 sweep | 2 scattered).
+        // Depth (`XSA_FINISH_PREFETCH_JOBS`) and the per-job staging budget
+        // (`XSA_FINISH_PREFETCH_BUDGET`) are the balance curve's two knobs: how
         // many bands of targets are in flight, and how much of the merged front
         // one job may stage.
         std::unique_ptr<PfPrefetcher> pfq;
@@ -4023,29 +4023,29 @@ int main(int argc, char** argv) {
             if (pmode) {
                 pfq = std::make_unique<PfPrefetcher>(&text);
                 pfq->mode = pmode;
-                const char* a = std::getenv("PILE_FINISH_PREFETCH_ASSIST");
+                const char* a = std::getenv("XSA_FINISH_PREFETCH_ASSIST");
                 if (a && *a) {
                     const std::string s(a);
                     pfq->assist = s == "willneed" ? 1 : (s == "both" ? 2 : (s == "populate" ? 0 : -1));
-                    pf_check(pfq->assist >= 0, "PILE_FINISH_PREFETCH_ASSIST must be populate|willneed|both");
+                    pf_check(pfq->assist >= 0, "XSA_FINISH_PREFETCH_ASSIST must be populate|willneed|both");
                 }
-                pfq->windowBytes = pf_env_u64("PILE_FINISH_PREFETCH_WINDOW", 256, 1, 1ull << 26);
-                pfq->budgetBytes = pf_env_u64("PILE_FINISH_PREFETCH_BUDGET", 32ull << 20, 4096, 1ull << 34);
+                pfq->windowBytes = pf_env_u64("XSA_FINISH_PREFETCH_WINDOW", 256, 1, 1ull << 26);
+                pfq->budgetBytes = pf_env_u64("XSA_FINISH_PREFETCH_BUDGET", 32ull << 20, 4096, 1ull << 34);
                 pfq->gap = pf_env_u64("PILE_PREFETCH_GAP", 1ull << 16, 0, 1ull << 30);
-                pfq->chunkBytes = pf_env_u64("PILE_FINISH_PREFETCH_CHUNK", 4ull << 20, 4096, 1ull << 32);
-                pfq->JOBS = unsigned(pf_env_u64("PILE_FINISH_PREFETCH_JOBS", 2, 1, 64));
+                pfq->chunkBytes = pf_env_u64("XSA_FINISH_PREFETCH_CHUNK", 4ull << 20, 4096, 1ull << 32);
+                pfq->JOBS = unsigned(pf_env_u64("XSA_FINISH_PREFETCH_JOBS", 2, 1, 64));
                 // The scattered arm is DEFINED as "issue every target window as it
                 // arrives", so it does not consult residency (and must not: at 256 B
                 // per window that would be one mincore syscall per window, i.e. 78M
                 // of them on the 1 GB fixture - measured at 132 s of syscall time).
                 pfq->skipResident = pmode == 1 &&
-                    pf_env_u64("PILE_FINISH_PREFETCH_SKIP_RESIDENT", 1, 0, 1) != 0;
+                    pf_env_u64("XSA_FINISH_PREFETCH_SKIP_RESIDENT", 1, 0, 1) != 0;
                 pfq->report();   // the POLICY line, before the first band
             }
         }
         // ---- PART C: THE COLD-CORPUS TRICK ----------------------------------
-        // `PILE_FINISH_COLD_CORPUS=1` drops the WHOLE corpus from the page cache
-        // immediately before the band sweep starts, and `PILE_FINISH_COLD_EVERY=n`
+        // `XSA_FINISH_COLD_CORPUS=1` drops the WHOLE corpus from the page cache
+        // immediately before the band sweep starts, and `XSA_FINISH_COLD_EVERY=n`
         // drops it again every n bands (the pile regime: the text cannot stay
         // resident through a pass). The drops are counted and timed, never silent.
         struct ColdCorpus {
@@ -4058,18 +4058,18 @@ int main(int argc, char** argv) {
                 const double t0 = tnow(); text->cold_all(); wall += tnow() - t0;
             }
             void report() const {
-                fprintf(stderr, "PILE_FINISH_COLD_CORPUS enabled=%d every_bands=%llu drops=%llu "
+                fprintf(stderr, "XSA_FINISH_COLD_CORPUS enabled=%d every_bands=%llu drops=%llu "
                         "bytes=%llu wall=%.3f corpus_gb=%.3f\n",
                         int(text != nullptr), (unsigned long long)every,
                         (unsigned long long)drops, (unsigned long long)bytes, wall,
                         text ? double(text->size()) / 1e9 : 0.0);
             }
         } cold;
-        if (pf_env_u64("PILE_FINISH_COLD_CORPUS", 0, 0, 1)) {
+        if (pf_env_u64("XSA_FINISH_COLD_CORPUS", 0, 0, 1)) {
             cold.text = &text;
-            cold.every = pf_env_u64("PILE_FINISH_COLD_EVERY", 0, 0, 1ull << 34);
+            cold.every = pf_env_u64("XSA_FINISH_COLD_EVERY", 0, 0, 1ull << 34);
         }
-        if (repairChunkRuns) fprintf(stderr, "PILE_FINISH_REPAIR_CHUNKS runs=%llu reorder=one_ready_band planner=exact_serial_replay experimental=1\n", (unsigned long long)repairChunkRuns);
+        if (repairChunkRuns) fprintf(stderr, "XSA_FINISH_REPAIR_CHUNKS runs=%llu reorder=one_ready_band planner=exact_serial_replay experimental=1\n", (unsigned long long)repairChunkRuns);
         // sol6b audit: the top/interior query set for a band is a pure function
         // of that band's own buffered runs (its head/tail SA coordinates, its
         // gidx, and the previous band's last tail). It does not read the
@@ -4096,7 +4096,7 @@ int main(int argc, char** argv) {
             // (96x the queries, which the seam-work journal refuses loudly).
             auto next = std::make_shared<std::atomic<size_t>>(0);
             if (!kasaiOn) {
-                // THE OLD ARM (`PILE_FINISH_KASAI=0`), unchanged: every answer is
+                // THE OLD ARM (`XSA_FINISH_KASAI=0`), unchanged: every answer is
                 // a full SlimFingerprint LCE walk, re-verified symbol by symbol.
                 return std::function<void(int)>([&, cnt, &nb, &gx, prevTailS, next](int t) {
                     slim_set_thread_shard(unsigned(t));
@@ -4433,7 +4433,7 @@ int main(int argc, char** argv) {
             }
             finishAdvance(slots[cur]);
             if ((band & 63) == 0)
-                fprintf(stderr, "PILE_FINISH_PROGRESS band=%llu/%llu runs=%llu chi_so_far=%llu repair_wall=%.1f lce_wall=%.1f lce_wait=%.1f advance_wall=%.1f wit_spills=%llu\n",
+                fprintf(stderr, "XSA_FINISH_PROGRESS band=%llu/%llu runs=%llu chi_so_far=%llu repair_wall=%.1f lce_wall=%.1f lce_wait=%.1f advance_wall=%.1f wit_spills=%llu\n",
                         (unsigned long long)(band + 1), (unsigned long long)nbands,
                         (unsigned long long)rs.rNorm, (unsigned long long)sweep.chi,
                         repairWall, lceWall, lceWaitWall, advanceWall, (unsigned long long)buckets.spilled);
@@ -4469,7 +4469,7 @@ int main(int argc, char** argv) {
             // is the AUDIT arm's job, not this counter's.
             pf_check(lcpCol.maxEnd <= n, "KASAI CLOSURE: a band's rank slice runs past n");
             fprintf(stderr,
-                    "PILE_FINISH_KASAI_CLOSURE bands=%llu rank_holes=%llu disorder=%llu "
+                    "XSA_FINISH_KASAI_CLOSURE bands=%llu rank_holes=%llu disorder=%llu "
                     "noncontiguous_runs=%llu walk_fallbacks=%llu max_rank_end=%llu n=%llu\n",
                     (unsigned long long)kasaiState.bands, (unsigned long long)kasaiState.gaps,
                     (unsigned long long)kasaiState.disorder,
@@ -4519,7 +4519,7 @@ int main(int argc, char** argv) {
         // verified symbols and hash probes, journaled by fhSlim.report below).
         if (kasaiOn)
             fprintf(stderr,
-                    "PILE_FINISH_LCP_COLUMN_READS preads=%llu staged_bytes=%llu escapes=%llu "
+                    "XSA_FINISH_LCP_COLUMN_READS preads=%llu staged_bytes=%llu escapes=%llu "
                     "max_lcp=%llu audit=%d arm=kasai\n",
                     (unsigned long long)lcpCol.preads, (unsigned long long)lcpCol.stagedBytes,
                     (unsigned long long)lcpCol.escapeCount, (unsigned long long)lcpCol.maxLcp,
@@ -4532,19 +4532,19 @@ int main(int argc, char** argv) {
         feedAcc.report("raw_runs", rawRunsFed);
         lceAcc.report("runs", advRuns);
         advAcc.report("runs", advRuns);
-        fprintf(stderr, "PILE_FINISH_REGION lce-span wall=%.3f waited=%.3f overlapped=%.3f units=%llu runs_ns=%.2f\n",
+        fprintf(stderr, "XSA_FINISH_REGION lce-span wall=%.3f waited=%.3f overlapped=%.3f units=%llu runs_ns=%.2f\n",
                 lceWall, lceWaitWall, std::max(0.0, lceWall - lceWaitWall),
                 (unsigned long long)advRuns, advRuns ? 1e9 * lceWall / double(advRuns) : 0.0);
-        fprintf(stderr, "PILE_FINISH_OVERLAP feed_spans=%.3f lce_spans=%.3f exposed_lce=%.3f serial_fold=%.3f\n",
+        fprintf(stderr, "XSA_FINISH_OVERLAP feed_spans=%.3f lce_spans=%.3f exposed_lce=%.3f serial_fold=%.3f\n",
                 overlapWorkWall, lceWall, lceWaitWall, feedWall + advanceWall + readWall + lceWaitWall);
         {
             uint64_t calls = 0, hops = 0;
             pf_access_totals(calls, hops);
-            fprintf(stderr, "PILE_FINISH_SWEEP_ANATOMY piecewait=%.3f readband=%.3f feed=%.3f repair_total=%.3f raw_runs=%llu bands=%llu rlebwt_wait=%.3f ns_per_raw_run=%.2f\n",
+            fprintf(stderr, "XSA_FINISH_SWEEP_ANATOMY piecewait=%.3f readband=%.3f feed=%.3f repair_total=%.3f raw_runs=%llu bands=%llu rlebwt_wait=%.3f ns_per_raw_run=%.2f\n",
                     waitWall, readWall, feedWall, repairWall,
                     (unsigned long long)rawRunsFed, (unsigned long long)bandReads, rlebwtWaitWall,
                     rawRunsFed ? 1e9 * feedWall / double(rawRunsFed) : 0.0);
-            fprintf(stderr, "PILE_FINISH_CORPUS_ACCESS phase=sweep calls=%llu page_hops=%llu hop_rate=%.4f ns_per_call=%.2f\n",
+            fprintf(stderr, "XSA_FINISH_CORPUS_ACCESS phase=sweep calls=%llu page_hops=%llu hop_rate=%.4f ns_per_call=%.2f\n",
                     (unsigned long long)calls, (unsigned long long)hops,
                     calls ? double(hops) / double(calls) : 0.0,
                     calls ? 1e9 * (lceWall + feedWall) / double(calls) : 0.0);
@@ -4568,24 +4568,24 @@ int main(int argc, char** argv) {
                 pf_check(claimSpool->claimCount.load() == hashAnswers,
                          "claims list is INCOMPLETE: " + std::to_string(claimSpool->claimCount.load()) +
                          " claims for " + std::to_string(hashAnswers) + " hash-derived answers");
-                fprintf(stderr, "PILE_FINISH_CLAIMS_LEDGER hash_answers=%llu claims=%llu "
+                fprintf(stderr, "XSA_FINISH_CLAIMS_LEDGER hash_answers=%llu claims=%llu "
                                 "exact_fast=%llu span_symbols=%llu complete=1\n",
                         (unsigned long long)hashAnswers, (unsigned long long)claimSpool->claimCount.load(),
                         (unsigned long long)(fhSlim.exactFast.read() + fhSeam.exactFast.read()),
                         (unsigned long long)claimSpool->spanSymbols.load());
-                if (pf_env_u64("PILE_FINISH_CHECK_CLAIMS", 0, 0, 1)) pf_check_claims(text, claimsDir, threads);
+                if (pf_env_u64("XSA_FINISH_CHECK_CLAIMS", 0, 0, 1)) pf_check_claims(text, claimsDir, threads);
             } else if (trustMode == 3) {
                 pf_check(nullSink.claimCount.load() == hashAnswers,
                          "floor ledger mismatch: " + std::to_string(nullSink.claimCount.load()) +
                          " claims for " + std::to_string(hashAnswers) + " hash-derived answers");
-                fprintf(stderr, "PILE_FINISH_CLAIMS_LEDGER hash_answers=%llu claims=%llu checked=0 "
+                fprintf(stderr, "XSA_FINISH_CLAIMS_LEDGER hash_answers=%llu claims=%llu checked=0 "
                                 "floor_arm=1 NOT_CERTIFIED=1 complete=1\n",
                         (unsigned long long)hashAnswers, (unsigned long long)nullSink.claimCount.load());
             } else {
                 pf_check(fusedSink.claimCount.load() == hashAnswers,
                          "fused claim ledger mismatch: " + std::to_string(fusedSink.claimCount.load()) +
                          " claims for " + std::to_string(hashAnswers) + " hash-derived answers");
-                fprintf(stderr, "PILE_FINISH_CLAIMS_LEDGER hash_answers=%llu claims=%llu checked_fused=1 "
+                fprintf(stderr, "XSA_FINISH_CLAIMS_LEDGER hash_answers=%llu claims=%llu checked_fused=1 "
                                 "symbols_compared=%llu complete=1 violations=0\n",
                         (unsigned long long)hashAnswers, (unsigned long long)fusedSink.claimCount.load(),
                         (unsigned long long)fusedSink.comparedSymbols.load());
@@ -4702,7 +4702,7 @@ int main(int argc, char** argv) {
                 }
                 re.close(); re.report(i, "witnesses");
             }
-            fprintf(stderr, "PILE_FINISH_WITNESS_PATH resident=%d buckets=%llu spilled=%llu values=%llu "
+            fprintf(stderr, "XSA_FINISH_WITNESS_PATH resident=%d buckets=%llu spilled=%llu values=%llu "
                     "cache_release_calls=%llu cache_released_bytes=%llu\n",
                     int(resident), (unsigned long long)buckets.P,
                     (unsigned long long)buckets.spilled, (unsigned long long)buckets.totalValues,
@@ -4900,7 +4900,7 @@ int main(int argc, char** argv) {
                 ::unlink((src.dir + "/start").c_str()); ::unlink((src.dir + "/terminal").c_str());
             }
             if (::rmdir(src.dir.c_str()) != 0)
-                fprintf(stderr, "PILE_FINISH_PIECES_DIR_NONEMPTY %s (left for inspection)\n", src.dir.c_str());
+                fprintf(stderr, "XSA_FINISH_PIECES_DIR_NONEMPTY %s (left for inspection)\n", src.dir.c_str());
         }
         if (bridge) {
             ::unlink((bridgeDir + "/frag.b-chars").c_str());
@@ -4921,14 +4921,14 @@ int main(int argc, char** argv) {
             }
             pf_check(::unlink((prefix + ".rlebwt").c_str()) == 0, "unlink rlebwt");
             pf_check(::unlink((prefix + ".rlebwt.meta").c_str()) == 0, "unlink rlebwt.meta");
-            fprintf(stderr, "PILE_FINISH_RLEBWT_DELETED\n");
+            fprintf(stderr, "XSA_FINISH_RLEBWT_DELETED\n");
         }
-        fprintf(stderr, "PILE_FINISH_DONE chi=%llu n=%llu r=%llu container=%s\n",
+        fprintf(stderr, "XSA_FINISH_DONE chi=%llu n=%llu r=%llu container=%s\n",
                 (unsigned long long)chi, (unsigned long long)n, (unsigned long long)rNorm, out.c_str());
         pf_prof_dump("finish");
         return 0;
     } catch (const std::exception& e) {
-        fprintf(stderr, "FATAL pile_finish: %s\n", e.what());
+        fprintf(stderr, "FATAL xsa_finish: %s\n", e.what());
         return 1;
     }
 }

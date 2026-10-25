@@ -76,7 +76,7 @@ each change.
 ## What is NOT done yet
 
 - **Product emission.** The tape machine emits the SA; it does not yet emit the
-  rle-BWT + rungs that `pile_finish` consumes, so no container has been built
+  rle-BWT + rungs that `xsa_finish` consumes, so no container has been built
   from it and no byte-identity against a banked container has been shown.
 - **The tie-tail at pile scale.** The survey (kgram_survey) measured the
   10 GB tail as 1.24 % uniform runs + 0.038 % genuine repeats at a 12-byte key;

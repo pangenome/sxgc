@@ -76,7 +76,7 @@ walk, and no per-suffix position column anywhere in the product path
    close 65536-run bands, hand each band to a writer thread. The row's position,
    BWT symbol and capture-target flag already travel in the 8-byte arena word, so
    the stitch never reads the corpus at random and never hashes a row.
-5. **The decomposed finish.** `pile_finish` consumes those pieces CONCURRENTLY,
+5. **The decomposed finish.** `xsa_finish` consumes those pieces CONCURRENTLY,
    flow-controlled through the piece window, verifies (χ + sampled witnesses),
    publishes the lite container and deletes the rlebwt. Its own work is
    **118.9 s/GB** after decomposition (211.8 s/GB before).

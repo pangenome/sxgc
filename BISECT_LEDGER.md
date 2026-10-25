@@ -47,7 +47,7 @@ producer-touching changes beyond `d816309`'s own content, so no re-resolution wa
 Runtime mirror refresh per packaging rule: only `xsa/runtime/bit6/binbwt_slice.h` was stale on
 the quarantined side (as at every earlier step); `tools/package_xsa_sources.py` run twice,
 idempotent, mirrors verified byte-identical to `bit6/` sources (`cmp`) for binbwt_slice.h,
-cross_lcp_merge.cpp, pile_finish.cpp, phrase_radix.h, slim_lce.hpp.
+cross_lcp_merge.cpp, xsa_finish.cpp, phrase_radix.h, slim_lce.hpp.
 
 Tiny-scale verification at `04a83f3`: full oracle suite
 (`tools/binbwt/oracle.cpp`, brute-force SA exact vs every family) - result pending, see
@@ -91,7 +91,7 @@ finish), no orphans after any verdict. Steps 5-6 (launched 3h later) were health
 58m and are left running detached, healthy and in lockstep on their final windows at budget
 end; their `GATE_ RC` / `PRODUCT` / `BANK` lines land in
 `solB-step5-entropy-rule-r2.log` / `solB-step6-segtriage-r2.log` when they drain -
-collect with `grep -E '^GATE_|^PRODUCT|^BANK'`, and reap any orphaned pile_finish /
+collect with `grep -E '^GATE_|^PRODUCT|^BANK'`, and reap any orphaned xsa_finish /
 cross_lcp_merge matching their scratch paths afterwards (steps 1-4 left none).
 
 ## Root-cause section

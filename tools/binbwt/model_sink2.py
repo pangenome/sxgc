@@ -15,11 +15,11 @@ is WHO writes them and WHEN:
              A writer publishes, for band k: the piece p-k-0 (rename) FIRST,
              then the .rlebwt extent by pwrite at that band's run-boundary
              offset, then g-k (rename).
-  consumer   pile_finish, unchanged: reads g-k in monotone band order, then
+  consumer   xsa_finish, unchanged: reads g-k in monotone band order, then
              p-k-0, then publishes the consumed marker, which is the only
              thing that releases flow credit.
 
-Ordering obligations the consumer relies on (bit6/pile_finish.cpp):
+Ordering obligations the consumer relies on (bit6/xsa_finish.cpp):
   O1 load_progress() polls g-<band> BEFORE read_stream_band() opens
      p-<band>-0, so g-k must never exist while p-k-0 is absent ("published
      band piece missing" otherwise).

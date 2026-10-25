@@ -3,7 +3,7 @@
 #
 #   bash tools/binbwt/entropy_bank_gate.sh NAME SIZE ROOT [threads] [extra producer flags...]
 #
-# Runs the REAL product pipeline (binbwt --binbwt -> pile_finish) over the banked
+# Runs the REAL product pipeline (binbwt --binbwt -> xsa_finish) over the banked
 # fixture with whatever producer flags are passed, and requires:
 #
 #   1. producer rc=0 and finish rc=0,
@@ -27,7 +27,7 @@ EXTRA=("$@")
 BASE=/mnt/nvme2n1/erikg
 REMAP=$BASE/sol6c-gate100m/remap-256.bin
 BIN="${BINBWT_BIN:-$BASE/er2-build/binbwt}"
-PF="${PILE_FINISH_BIN:-$BASE/sol7e-freshstart/pile_finish}"
+PF="${XSA_FINISH_BIN:-$BASE/sol7e-freshstart/xsa_finish}"
 case "$SIZE" in
   100m) FIX=$BASE/extcols-scratch/mergperf-100m-snap.txt
         BANK=$BASE/extcols-scratch/xsa-pw3-chunk-100m/mergperf-100m-snap.sxi2

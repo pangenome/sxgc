@@ -120,7 +120,7 @@ RSS / disc telemetry.
                      OUTPUT of the data and the largest serial stretch is one
                      leaf sort; it stitches the bins in byte order straight into
                      the unchanged band/piece protocol. The decomposed fused
-                     finish (pile_finish) consumes those pieces CONCURRENTLY
+                     finish (xsa_finish) consumes those pieces CONCURRENTLY
                      (flow-controlled through the piece window) and publishes
                      the lite container, then deletes the rlebwt. There is NO
                      chunk phase and NO merge walk on this route.
@@ -965,7 +965,7 @@ fn count_log_contains(scratch: &Path, tag: &str, needle: &str) -> usize {
 /// The bundled native stages (verified by hash on every use).
 fn bundle_tools() -> Result<PathBuf, String> {
     let root = super::bundle::resolve()?;
-    for name in ["chunk_frontend", "cross_lcp_merge", "pile_finish", "rpfbwt_endpoints", "slim_dump"] {
+    for name in ["chunk_frontend", "cross_lcp_merge", "xsa_finish", "rpfbwt_endpoints", "slim_dump"] {
         let path = root.join(name);
         let ok = fs::metadata(&path).map(|m| m.is_file()).unwrap_or(false);
         if !ok {
@@ -1208,7 +1208,7 @@ fn run_chain(options: Options) -> Result<(), String> {
     // Provenance: every bundled stage is hash-verified by bundle::resolve()
     // already; journal the sha256 of the stages this build will actually
     // execute, so a journal attests WHICH binaries ran (the bin reports' rule).
-    journal_bundle_provenance(&mut journal, &tools, &["cross_lcp_merge", "pile_finish"])?;
+    journal_bundle_provenance(&mut journal, &tools, &["cross_lcp_merge", "xsa_finish"])?;
     let memory_kb = options.memory_gb * 1048576;
     // The finish phase's own RLIMIT_AS: mapped corpus windows charge address
     // space (page-cache backed, reclaimable - NOT RSS), so pinning the corpus
@@ -1418,7 +1418,7 @@ fn journal_bundle_provenance(journal: &mut Journal, tools: &Path, names: &[&str]
 /// The v2 front door: THE BIN SHAPE. bin-bwt (one sweep -> 256 byte-bins ->
 /// parallel per-bin construction -> ordered stitch into the unchanged
 /// band/piece protocol) is the producer; the decomposed fused finish
-/// (pile_finish) is the consumer; they run CONCURRENT, flow-controlled through
+/// (xsa_finish) is the consumer; they run CONCURRENT, flow-controlled through
 /// the piece window; then the lite container publishes and the rlebwt is
 /// deleted - all under the one journal. There is no chunk phase and no merge
 /// walk on this route. Byte-identity + chi are the only arbiter; the front door
@@ -1542,7 +1542,7 @@ fn run_v2_tail(
     }
     let mut finish_args: Vec<String> = Vec::new();
     finish_args.extend(["-k".to_string(), "120".to_string(), timeout_s.to_string()]);
-    finish_args.push(s(&tools.join("pile_finish").to_string_lossy()));
+    finish_args.push(s(&tools.join("xsa_finish").to_string_lossy()));
     finish_args.extend([
         "--prefix".into(), frag.to_string(),
         "--corpus".into(), s(&input.to_string_lossy()),
@@ -1616,18 +1616,18 @@ fn run_v2_tail(
     let finish_log = fs::read_to_string(scratch.join("finish-v2.log"))
         .map_err(|e| format!("read finish-v2 log: {e}"))?;
     for line in finish_log.lines() {
-        if line.starts_with("SLIM_FP ") || line.starts_with("SLIM_SEEDS ") || line.starts_with("PILE_FINISH_PFCK ") {
+        if line.starts_with("SLIM_FP ") || line.starts_with("SLIM_SEEDS ") || line.starts_with("XSA_FINISH_PFCK ") {
             journal.line(&format!("V2_FINISH_COUNTER {line}"));
         }
     }
-    let done = require_log_contains(scratch, "finish-v2", "PILE_FINISH_DONE")?;
+    let done = require_log_contains(scratch, "finish-v2", "XSA_FINISH_DONE")?;
     let chi = field(&done, "chi").and_then(|v| v.parse::<u64>().ok())
-        .ok_or_else(|| format!("PILE_FINISH_DONE without a chi constant: {done}"))?;
+        .ok_or_else(|| format!("XSA_FINISH_DONE without a chi constant: {done}"))?;
     require_log_contains(scratch, "finish-v2", "ENDPOINT_STREAM_PASS")?;
     require_log_contains(scratch, "finish-v2", "SXI2_PASS")?;
-    require_log_contains(scratch, "finish-v2", "PILE_FINISH_RLEBWT_DELETED")?;
-    if finish_log.lines().any(|l| l.contains("PILE_FINISH_PIECES_DIR_NONEMPTY")) {
-        return Err("finish-v2 left pieces behind (PILE_FINISH_PIECES_DIR_NONEMPTY)".into());
+    require_log_contains(scratch, "finish-v2", "XSA_FINISH_RLEBWT_DELETED")?;
+    if finish_log.lines().any(|l| l.contains("XSA_FINISH_PIECES_DIR_NONEMPTY")) {
+        return Err("finish-v2 left pieces behind (XSA_FINISH_PIECES_DIR_NONEMPTY)".into());
     }
     if let Some(expected) = options.chi_expect {
         if chi != expected {

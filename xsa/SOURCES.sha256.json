@@ -22,7 +22,6 @@
   "runtime/bit6/pfp_ds_vendor/pfp/wt.hpp": "a1a257e67a133a1d643c99d463a1412255fd7f5bfa939ba5766d45be5db7d129",
   "runtime/bit6/phi_inverse_heads.cpp": "8ac4a15ddc6cb0b3371976b4fd10d30227e8ba084595dd4abe74768f85bbcb3a",
   "runtime/bit6/phrase_radix.h": "4cf3685251c260df44328fab4c759b4d5e0727516e8034245a7df59a6a272634",
-  "runtime/bit6/pile_finish.cpp": "02e26b0318b70408aa41e611d4104c08106e4dd012601c60075a909c5477a5d4",
   "runtime/bit6/rpfbwt_endpoints.cpp": "f8fffd15463d80af42d14493eba92184d809e34803581bbda18874d3eebe43bf",
   "runtime/bit6/seam_repair.hpp": "e944bfa966e44b18b13aefc1d320480130ce25ce553f8074eeced08306aa4755",
   "runtime/bit6/slim_lce.hpp": "f64bfac64d4631fba501b6b7db930cc1f1aae31ad7aade39fab13907421931b4",
@@ -37,15 +36,16 @@
   "runtime/bit6/third_party/libsais/libsais.h": "6f1dd253ece20508c27d87958abfd80541443812b4a1292e0a67879edd873446",
   "runtime/bit6/third_party/libsais/token-libsais.c": "1eeec709186bb28c02c1d7113809d19db9e83045ebd3ce6b4654ddad4659df61",
   "runtime/bit6/third_party/libsais/token-libsais.h": "5a855c8f159abf78dafcab96dc20240b81a308f0099f6fa1f7def47450b0f3df",
+  "runtime/bit6/xsa_finish.cpp": "93fede3fa4be01ce9d3722a6de5cd9b7692ab50ef3bbc6030378b6a9c0d10878",
   "runtime/tools/build_slim_dump.sh": "aeaba3f3e7996a95fb570069076f1c4d179ca015eec6d5267a8f090b469b8860",
   "runtime/tools/tool_manifest.py": "0712748587f804849613597124dd96a50d987a1c2274f475c54f0e40cb21f31f",
   "runtime/tools/upstream.lock.json": "bd5d345045de9c1eeff013bdb412e19a285ecf6c713323858f1eb8ea7aa02928",
   "src/build.rs": "b1a3cfcc1f999baccd1fecba8cbf12f66544414d49c41fc03c7ecf7ba60c845e",
   "src/bundle.rs": "b1c1c12282330b46f42b5cdb4f1c8811d22d1476d7091bf02e0a9d8c78da86f4",
-  "src/chain.rs": "0d94296f6045f643a85b0da210897f2ff07189e80c838357f6a5e9161a6e1351",
+  "src/chain.rs": "91d57a5341ddb54c70a170aae8d920bfa0a9e67cf5d60b92ad0dbf8ad8092cf9",
   "src/forks.rs": "65a268d6c58749463ba62dc61bc19d474efcf2ce48994d643002456cc6879495",
   "src/main.rs": "2af0b37313244383d978c410e8ed38d1026f8c6218dcb20c1739d2f4ddff3abc",
-  "src/plan.rs": "4c083231cfc0337da85ec1587a298cb68cc9bef41a6f9b9d12d0da516b20c6d5",
+  "src/plan.rs": "2b95064089f830428b3f1fa9a26ef34a3804d1fed69e47f28906303ba687bd9a",
   "src/product.rs": "fe3ff93d3fd25336995f8cb5c2afb77698eb8102078a835dca6e23a4f80fb20b",
   "src/sxi.rs": "37523875a9c82ac24592fa7ba05703aa235532270908496790e3a2433a569e3c",
   "src/sxi2.rs": "0e934320d25739c632f00f961e7b018feaaf14fbd92b41fe67db9194d26fa5af",
@@ -57,5 +57,5 @@
   "vendor/pruned-paths.json": "742feccf44be4ec11c67d23d3c98d2fee77aea92a8834d994eb18d10b96dfc48",
   "vendor/rust-linux-packages.json": "4b24b5bfedd0764f8b1bee064a35d2f68676f4926048cce5fcc30e78db0640db",
   "build.rs": "8c781182490a30c279d98e1c4c3179aa8f80c8f8dae6da35ef1dd8c203c60d4b",
-  "build_tools.py": "b2df988fa695884d793289aaf4a73d6863377bf0a4a81df1c48055b8614f4236"
+  "build_tools.py": "80bdf15e59f2a40a5aaeaffb586037a16714f4486b464f6b0465a0822036bdac"
 }
