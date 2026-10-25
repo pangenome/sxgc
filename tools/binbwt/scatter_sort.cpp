@@ -364,7 +364,8 @@ static void merge_sort_lcp(std::vector<Row>& v, std::vector<uint8_t>& out_lcp,
 }
 
 int main(int argc, char** argv) {
-    std::string corpus, out, scratch = "/tmp/ss_scratch", lcpOut;
+    std::string corpus, out, scratch = "/tmp/ss_scratch", lcpOut, isaOut;
+    u64 isaK = 1024;
     double ram_gb = 1.0;
     double scratch_cap_gb = 0.0;      // 0 = 2n (the operator's law)
     u64 threads = 32, par_bands = 1, sample_n = 4000000;
@@ -386,6 +387,8 @@ int main(int argc, char** argv) {
         else if (a == "--sort") sort_mode = nxt();
         else if (a == "--remap") remapPath = nxt();
         else if (a == "--lcp-out") lcpOut = nxt();
+        else if (a == "--isa-sample-out") isaOut = nxt();
+        else if (a == "--isa-sample-k") isaK = std::strtoull(nxt().c_str(), nullptr, 10);
         else die("unknown arg " + a);
     }
     (void)sort_mode;
@@ -530,6 +533,19 @@ int main(int argc, char** argv) {
     std::string cmd = "mkdir -p '" + scratch + "'";
     if (std::system(cmd.c_str()) != 0) die("scratch prep failed");
 
+    // SAMPLED INVERSE: ISA[p] for every k-th POSITION. Anchors are keyed by
+    // position, which is invariant under the finish's repair (run indices are not,
+    // and run lengths change), so an anchor lets the finish RESYNC its rank cursor.
+    // 10 GB at pile with k=1024, against 10.5 TB for the full inverse.
+    int ifd = -1;
+    if (!isaOut.empty()) {
+        ifd = ::open(isaOut.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+        if (ifd < 0) die("create sampled ISA");
+        u64 ih[4] = {1363761235ull /*'SXIQ'*/, 1ull, N, isaK};
+        if (::write(ifd, ih, 32) != 32) die("write ISA header");
+        const u64 ne = (N + isaK - 1) / isaK;
+        if (::ftruncate(ifd, off_t(32 + ne * 8)) != 0) die("size sampled ISA");
+    }
     int ofd = ::open(out.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (ofd < 0) die("create out");
     // THE STREAM IS IN THE PRODUCT'S OWN SAMPLED-SA ANCHOR FORMAT ('SXSA'), so
@@ -824,9 +840,15 @@ int main(int argc, char** argv) {
                 std::vector<u8> sb;
                 ob.reserve(rows.size());
                 sb.reserve(rows.size());
-                for (const Row& r : rows) {
-                    ob.push_back(unpack_pos(r.pos));
-                    sb.push_back((u8)(r.pos >> 48));
+                for (size_t ri = 0; ri < rows.size(); ++ri) {
+                    const u64 pp = unpack_pos(rows[ri].pos);
+                    ob.push_back(pp);
+                    sb.push_back((u8)(rows[ri].pos >> 48));
+                    if (ifd >= 0 && pp % isaK == 0) {
+                        const u64 rk = band_off[b] + (u64)ri;   // this row's global rank
+                        if (::pwrite(ifd, &rk, 8, off_t(32 + (pp / isaK) * 8)) != 8)
+                            die("pwrite ISA anchor");
+                    }
                 }
                 // direct write at this band's offset in the global streams
                 {

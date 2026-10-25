@@ -381,3 +381,35 @@ for the pile are:
      rather than amortising it.
 
 The arm now REFUSES to publish when the closure counters are non-zero.
+
+## SAMPLED INVERSE: built, verified, and still not sufficient (4th negative result)
+
+Built the whole sampled-inverse path:
+ - producer: --isa-sample-out/-k writes ISA[p] = rank for every k-th POSITION, inside
+   the band worker's output loop (rank = band_off + index). Anchors VERIFIED: 25/25
+   by seeking SA[anchor] and comparing to p (tools check in the session log).
+ - finish: --isa-sample loads a SampIsa, and the fold RESYNCS its rank cursor at every
+   anchored head position.
+
+Result at 150 MB with k=64 (18.7 MB of anchors, 0.125n):
+    rank_holes=175918  disorder=175550  noncontiguous_runs=37672
+
+WHY IT STILL FAILS: resynchronising at anchors only helps if the cursor is right
+BETWEEN them, and that assumes consecutive stream runs are consecutive in rank. They
+are not (disorder 175,550 runs). Answering rank(p) for an unanchored p therefore needs
+a POSITION -> POSITION step in rank space (psi = inverse phi), not just an anchor.
+
+So the four attempts localise the requirement precisely:
+
+   run index keying        -> repair renumbers
+   head-position keying    -> repair changes LENGTHS (cursor drifts)
+   prefix sum over stream  -> stream is not rank-ordered
+   sampled ISA + resync    -> stream disorder is commoner than the anchor spacing
+
+Remaining sound options:
+ (a) full ISA where it fits (about 0.8 TB at 100 GB), LCE arm at pile;
+ (b) sampled ISA + PSI (inverse phi, which bit6/phi_inverse_heads.cpp can build) so an
+     unanchored query walks forward in position space - bounded steps, r entries;
+ (c) rank-ordered repair stream, which makes approach 3 valid with no inverse at all.
+
+The arm keeps its refusal guard, so none of this can publish a wrong container.

@@ -3497,6 +3497,44 @@ struct LocateIsa {
     }
 };
 
+// ============================ THE SAMPLED INVERSE ===========================
+// Anchors are keyed by POSITION, which survives the finish's repair; run indices and
+// run lengths do not. The fold resyncs its rank cursor whenever a run's head sits on
+// an anchor, so the cursor only has to stay correct for < k positions.
+struct SampIsa {
+    int fd = -1;
+    const uint8_t* map = nullptr;
+    uint64_t bytes = 0, n = 0, k = 0, entries = 0;
+    void open(const std::string& path, uint64_t nExpect) {
+        fd = ::open(path.c_str(), O_RDONLY);
+        pf_check(fd >= 0, "open --isa-sample " + path + ": " + std::strerror(errno));
+        struct stat st {};
+        pf_check(::fstat(fd, &st) == 0, "stat --isa-sample");
+        bytes = uint64_t(st.st_size);
+        uint64_t h[4] = {0, 0, 0, 0};
+        pf_read_full(fd, h, 32, "isa-sample header");
+        pf_check(h[0] == 1363761235ull, "--isa-sample magic (SXIQ)");
+        n = h[2]; k = h[3];
+        pf_check(n == nExpect, "--isa-sample n != the corpus length");
+        pf_check(k >= 1, "--isa-sample k");
+        entries = (n + k - 1) / k;
+        pf_check(bytes == 32 + entries * 8, "--isa-sample size != 32 + entries*8");
+        map = (const uint8_t*)::mmap(nullptr, bytes, PROT_READ, MAP_SHARED, fd, 0);
+        pf_check(map != MAP_FAILED, "mmap --isa-sample");
+        fprintf(stderr, "XSA_FINISH_ISA_SAMPLE path=%s n=%llu k=%llu entries=%llu bytes=%llu\n",
+                path.c_str(), (unsigned long long)n, (unsigned long long)k,
+                (unsigned long long)entries, (unsigned long long)bytes);
+    }
+    bool has(uint64_t p) const { return p % k == 0 && p / k < entries; }
+    uint64_t at(uint64_t p) const {   // rank of an anchored position
+        uint64_t r;
+        std::memcpy(&r, map + 32 + (p / k) * 8, 8);
+        pf_check(r < n, "--isa-sample rank outside [0,n)");
+        return r;
+    }
+    uint64_t lookups = 0;
+};
+
 // ============================ RUN RANKS WITHOUT AN ISA =======================
 // The Kasai arm needs rank(run head) and rank(run tail). A full ISA is 80 GB at
 // 10 GB and 10.5 TB at pile - it breaks the 2n law. But ranks are MONOTONIC in run
@@ -3671,6 +3709,7 @@ int main(int argc, char** argv) {
         std::string lcpColumnPath;    // KASAI: the prebuilt LCP column (--lcp-column)
         std::string locateIsaPath;    // KASAI: the locate table (--sa-locate)
         std::string runRanksPath;     // KASAI: prefix-sum run ranks (--run-ranks)
+        std::string isaSamplePath;    // KASAI: sampled inverse anchors (--isa-sample)
         uint64_t repairChunkRuns = 0; // experimental exact-checkpoint planner
         bool keepRlebwt = false, keepPfck = false;
         for (int i = 1; i < argc; ++i) {
@@ -3685,6 +3724,7 @@ int main(int argc, char** argv) {
             else if (a == "--check-claims") checkClaimsDir = need("--check-claims");
             else if (a == "--lcp-column") lcpColumnPath = need("--lcp-column");
             else if (a == "--run-ranks") runRanksPath = need("--run-ranks");
+            else if (a == "--isa-sample") isaSamplePath = need("--isa-sample");
             else if (a == "--sa-locate") locateIsaPath = need("--sa-locate");
             else if (a == "--output") out = need("--output");
             else if (a == "--bridge-dir") bridgeDir = need("--bridge-dir");
@@ -3748,6 +3788,7 @@ int main(int argc, char** argv) {
         LcpColumn lcpCol;
         LocateIsa locateIsa;
         RunRankExc runRankExc;
+        SampIsa sampIsa;
         const bool runRankExcEmpty = runRanksPath.empty();   // false => use the prefix sum
         uint64_t rowCursor = 0;      // prefix-sum row cursor carried across bands
         KasaiState kasaiState;
@@ -3765,6 +3806,7 @@ int main(int argc, char** argv) {
             lcpCol.open(lcpColumnPath, n);
             if (!locateIsaPath.empty()) locateIsa.open(locateIsaPath, n);
             if (!runRanksPath.empty()) runRankExc.load(runRanksPath);
+            if (!isaSamplePath.empty()) sampIsa.open(isaSamplePath, n);
         }
         else if (!lcpColumnPath.empty())
             fprintf(stderr, "XSA_FINISH_LCP_COLUMN_IGNORED path=%s reason=XSA_FINISH_KASAI=0\n",
