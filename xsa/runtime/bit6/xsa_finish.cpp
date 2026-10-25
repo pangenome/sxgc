@@ -3501,6 +3501,41 @@ struct LocateIsa {
 // Anchors are keyed by POSITION, which survives the finish's repair; run indices and
 // run lengths do not. The fold resyncs its rank cursor whenever a run's head sits on
 // an anchor, so the cursor only has to stay correct for < k positions.
+// DEBUG ONLY (XSA_FINISH_ISA_DEBUG=<SA stream>): build the TRUE inverse so the derived
+// ranks can be compared run by run. Affordable on fixtures (n x 8 B), never at pile.
+static std::string pf_env_str(const char* k) {
+    const char* v = ::getenv(k);
+    return v ? std::string(v) : std::string();
+}
+
+struct TrueIsa {
+    std::vector<uint64_t> v;
+    void load(const std::string& path, uint64_t n) {
+        pf_check(n <= (1ull << 32), "XSA_FINISH_ISA_DEBUG is a fixture-scale diagnostic");
+        int fd = ::open(path.c_str(), O_RDONLY);
+        pf_check(fd >= 0, "open XSA_FINISH_ISA_DEBUG SA stream");
+        struct stat st {};
+        pf_check(::fstat(fd, &st) == 0 && uint64_t(st.st_size) == 48 + 8 * n, "debug SA stream size");
+        std::vector<uint64_t> sa(n);
+        // pread at +48: the stream carries a 48-byte anchor header (reading from 0
+        // turned the header into SA entries and indexed out of range - segfault).
+        {
+            size_t got = 0;
+            while (got < n * 8) {
+                ssize_t r = ::pread(fd, ((char*)sa.data()) + got, n * 8 - got, off_t(48 + got));
+                pf_check(r > 0, "debug SA body read");
+                got += size_t(r);
+            }
+        }
+        ::close(fd);
+        v.assign(n, 0);
+        for (uint64_t r = 0; r < n; ++r) v[sa[r]] = r;
+        fprintf(stderr, "XSA_FINISH_ISA_DEBUG n=%llu inverse built (%llu MB)\n",
+                (unsigned long long)n, (unsigned long long)(n * 8 >> 20));
+    }
+    uint64_t at(uint64_t p) const { return v[p]; }
+};
+
 struct SampIsa {
     int fd = -1;
     const uint8_t* map = nullptr;
@@ -3789,6 +3824,10 @@ int main(int argc, char** argv) {
         LocateIsa locateIsa;
         RunRankExc runRankExc;
         SampIsa sampIsa;
+        TrueIsa trueIsa;
+        const bool isaDebug = !pf_env_str("XSA_FINISH_ISA_DEBUG").empty();
+        if (isaDebug) trueIsa.load(pf_env_str("XSA_FINISH_ISA_DEBUG"), n);
+        uint64_t devMax = 0, devRuns = 0, devSum = 0;
         const bool runRankExcEmpty = runRanksPath.empty();   // false => use the prefix sum
         uint64_t rowCursor = 0;      // prefix-sum row cursor carried across bands
         KasaiState kasaiState;
@@ -4272,6 +4311,12 @@ int main(int argc, char** argv) {
                                 pf_check(locateIsa.at(nb[i].t) == t,
                                          "KASAI AUDIT: derived tail rank != ISA");
                         }
+                        if (isaDebug) {
+                            const uint64_t truth = trueIsa.at(nb[i].h);
+                            const uint64_t dev = truth > h ? truth - h : h - truth;
+                            if (dev) { ++devRuns; devSum += dev; }
+                            if (dev > devMax) devMax = dev;
+                        }
                         (*headRank)[i] = h;
                         (*tailRank)[i] = t;
                         cursor += nb[i].len;
@@ -4595,7 +4640,11 @@ int main(int argc, char** argv) {
             // any band reached is inside the space. The exactness of every value
             // is the AUDIT arm's job, not this counter's.
             pf_check(lcpCol.maxEnd <= n, "KASAI CLOSURE: a band's rank slice runs past n");
-            fprintf(stderr,
+            if (isaDebug)
+            fprintf(stderr, "XSA_FINISH_RANK_DEV deviating_runs=%llu max_dev=%llu mean_dev=%.2f\n",
+                    (unsigned long long)devRuns, (unsigned long long)devMax,
+                    devRuns ? double(devSum) / double(devRuns) : 0.0);
+        fprintf(stderr,
                     "XSA_FINISH_KASAI_CLOSURE bands=%llu rank_holes=%llu disorder=%llu "
                     "noncontiguous_runs=%llu walk_fallbacks=%llu max_rank_end=%llu n=%llu\n",
                     (unsigned long long)kasaiState.bands, (unsigned long long)kasaiState.gaps,

@@ -456,3 +456,24 @@ materialised form of the same step; either supply works, and psi as a table is
  - THE WALK IS NOT IMPLEMENTED. That is the remaining piece, plus SELECT over the RLE BWT.
  - The arm REFUSES to publish unless holes/disorder/noncontig are all zero, so no
    unsound supply can bank a container.
+
+## MEASURED: how wrong the derived ranks actually are (fixture-scale ground truth)
+
+XSA_FINISH_ISA_DEBUG=<SA stream> builds the TRUE inverse (fixture scale only) and compares
+every run's derived head rank:
+
+    150 MB, anchors k=64:   deviating_runs = 13,853 of 57,279,187  (0.024%)
+                            max_dev = 11,132    mean_dev = 3.80
+    closure:                rank_holes=435  disorder=413   (was 175,918 without anchors)
+
+Consequences, and they decide the implementation:
+ - anchors alone fix 99.976% of runs, so the STRUCTURE is right and only the tail needs
+   help;
+ - k alone cannot fix it: the drift reaches 11,132 ranks, so no affordable k covers it
+   (k=8 would cost 1.0n and STILL miss the tail);
+ - therefore the PSI WALK is needed, but only as a CARRIED pair: advance
+   (position, rank) from run to run and re-enter from an anchor after a backwards jump.
+   With a 0.024% excursion rate the re-entries are rare, so the total stepping is O(n),
+   not 2r x k.
+
+This diagnostic is the acceptance test: deviating_runs must be 0 with the walk in place.
