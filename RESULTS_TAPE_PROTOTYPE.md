@@ -301,3 +301,29 @@ structural, not tuning: capture the LCP of each adjacent pair WHILE THE PRODUCER
 SORTS (the comparisons already happen there - 83-93% of build CPU is leaf LCE, and
 adjacency information is produced as a side effect), rather than re-deriving the
 column afterwards through an inversion.
+
+## THE KASAI ARM'S REAL REQUIREMENT (and why the ISA is not the answer)
+
+`xsa_finish`'s Kasai arm calls `locateIsa.at(head)` and `.at(tail)` - it needs the
+RANK of each run's head and tail POSITION. Its `--sa-locate` format is a full ISA
+(32-byte header + n x width), which is:
+
+    10 GB corpus -> 80 GB file      pile -> 10.5 TB      <- breaks the 2n law
+
+So a full ISA is not shippable at pile. But three facts make it unnecessary:
+
+ 1. only run ENDPOINTS are ever queried: 2r lookups, not n;
+ 2. ranks are MONOTONIC in run order (runs are published in rank order), so the
+    finish can PREDICT every run's head rank by prefix-summing run lengths;
+ 3. the sink already knows each run's TRUE head/tail rank as it publishes (the row
+    index at run open and at close), so the deviations are cheap to record.
+
+The deviations are the "holes" the code already documents ("a len-2 run whose ranks
+are {4576075, 4576077}"), left by the class/dollar repair - rare, not systematic.
+
+=> THE 2n-COMPATIBLE SUPPLY: finish derives ranks by prefix sum; sink emits a tiny
+exception list (run, true head rank, true tail rank). No inversion, no 10.5 TB.
+
+Status: designed and started; the sink-side edit was reverted rather than left half
+-wired (it landed in the wrong class - binbwt_slice.h has more than one flushRun and
+one finish()). The tree is green at 41e4ce1 with everything else landed.
