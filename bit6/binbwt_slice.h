@@ -3655,9 +3655,17 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
     require(fd >= 0, "tape-emit: cannot open the SA stream");
     struct stat st{};
     require(::fstat(fd, &st) == 0, "tape-emit: stat SA stream");
+    // THE SAMPLED-SA ANCHOR HEADER ('SXSA', version 1): magic at 0, version at 4,
+    // n at 8, k at 16, count at 24, rows at 32, pad at 40 - the layout the product's
+    // own --sa-sample-k writes and kasai_column requires. Reading it as six u64s
+    // with n at index 2 was the OLD private layout and refused every stream
+    // scatter_sort now produces.
     U hdr[6] = {0, 0, 0, 0, 0, 0};
     require(::pread(fd, hdr, 48, 0) == 48, "tape-emit: SA header");
-    require(hdr[2] == n, "tape-emit: SA stream is for a different corpus");
+    const uint32_t saMagic = (uint32_t)(hdr[0] & 0xffffffffu);   // bytes 0..3
+    const uint64_t saN = hdr[1];                                  // bytes 8..15 = n
+    require(saMagic == 0x41535853u, "tape-emit: SA stream is not an SXSA anchor");
+    require(saN == n, "tape-emit: SA stream is for a different corpus");
     const U entries = (U((unsigned long long)st.st_size) - 48) / 8;
     require(entries == n, "tape-emit: SA entry count != n");
     std::vector<U> pos(chunk);
