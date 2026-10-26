@@ -942,3 +942,13 @@ and all four selftests exit zero. Source manifest verifies all 59 files;
 runtime mirror is byte-identical. Fixture repair 0.026638 s; split
 88.87/90.85/78.51/0/69.57/23.72/75.96/113.19/42.23/96.60 ticks/input.
 Evidence: `tools/binbwt/evidence/repair-half-final/`.
+
+The restored sink-specialized repeat passes all exact bytes/audits but product
+repair is **10.923889 s**, lce 17.311875, advance 5.597937. Split:
+43.24/91.03/88.30/0.01/73.65/24.01/80.20/412.36/209.96/24.42 ticks/input.
+Thus even the nominal best candidate has no demonstrated repeatable gain.
+**All C++ changes from this second repair pass are being reverted to
+56b8b9d**, together with its packaged mirror/manifest. Evidence/docs remain.
+The ~4.5 s target is unmet; no speedup is claimed. The large character/copy
+probe variation and code-layout sensitivity are unresolved. The final
+reverted-source gates below supersede the provisional retained-source result.
