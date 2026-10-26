@@ -921,3 +921,14 @@ fallback/mismatch counters zero. All four existing guard/chunk/monoid/seam-spool
 selftests exit zero. Fixture repair 0.023879 s; split
 76.79/80.11/74.47/0/72.98/24.04/75.85/153.72/24.36/70.11 ticks/input.
 Evidence: `tools/binbwt/evidence/repair-half-inline/`.
+
+Forced-inlining 150 MB gate is byte-exact and audit-clean but repair is
+**10.317565 s** (lce 17.536055, advance 6.378899), so this candidate is
+rejected and reverted. Split:
+51.63/70.83/98.68/0.02/74.67/24.01/82.44/517.46/25.78/24.38 ticks/input.
+The retained source is the sink-specialized candidate, pending final repeat.
+The requested ~4.5 s target has not been achieved. The 8.74 s best observation
+is within plausible run variation of the starting 8.98 s; it is not evidence
+of a robust algorithmic speedup. Both actual algorithmic/code-layout trials
+that regressed have been removed; the retained changes refine attribution
+and remove unsampled probe selection overhead without altering audits.
