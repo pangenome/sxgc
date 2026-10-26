@@ -1,0 +1,8 @@
+['--selftest-stream-guard'] exit=0
+STREAM_GUARD_SELFTEST_PASS head,tail,zero,overflow,holes,disorder,noncontiguous,fallback refusals=8
+['--selftest-repair-chunks'] exit=0
+CHUNKED_REPAIR_ORACLE_PASS streams=128 widths=3392 workers=4 both_coalescers=1 class_flanks=1 padding_straddle=1 dollar=1 legal_00_05=1
+['--selftest-sweep-monoid'] exit=0
+SWEEP_STATE_CARRY_ORACLE_PASS streams=2048 splits=34785 NUL=1 byte05=1 singleton=1 periodic_colors=1 empty=1 ordered_witnesses=1 final_state=1
+['--selftest-seam-spool', '/tmp/repair-half-reverted-spool'] exit=0
+SEAM_SPOOL_READER_ORACLE_PASS empty=1 adversarial_orders=2 padded_flanks=1 NUL=1 byte05=1 malformed_refusals=3

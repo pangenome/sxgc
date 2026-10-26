@@ -952,3 +952,15 @@ Thus even the nominal best candidate has no demonstrated repeatable gain.
 The ~4.5 s target is unmet; no speedup is claimed. The large character/copy
 probe variation and code-layout sensitivity are unresolved. The final
 reverted-source gates below supersede the provisional retained-source result.
+
+### Second repair pass: baseline fully restored
+
+C++, runtime mirror and source manifest are byte-identical to 56b8b9d.
+Repackaging and Cargo release build succeed. Reverted-source fixture SHA is
+exact, chi 145685 / runs 192138, closure/fallback/mismatch counters zero.
+All four selftests exit zero and all 59 packaged source hashes verify.
+Fixture repair 0.024552 s, lce 0.032678, advance 0.019142. Original seven-term
+split: decode 82.35, raw 70.00, coalesce 153.19, seam 0, stamp 69.47,
+guard 23.94, output/staging 98.40 ticks/input. Only documentation and evidence
+will differ from the starting commit. Evidence:
+`tools/binbwt/evidence/repair-half-reverted/`.

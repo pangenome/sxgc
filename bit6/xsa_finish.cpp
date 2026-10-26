@@ -60,7 +60,6 @@
 #include <string>
 #include <stdexcept>
 #include <functional>
-#include <type_traits>
 #include <filesystem>
 
 static constexpr uint64_t INF = UINT64_MAX;
@@ -1976,7 +1975,7 @@ static int selftest_stream_guard() {
 // Probe overhead is included, so these are attribution counters, not a CPU
 // frequency estimate. No files, ISA, or per-run scratch are introduced.
 struct RepairCycles {
-    enum Term { RAW, COALESCE, SEAM, STAMP, GUARD, OUTPUT, CHAR_BRANCH, SOURCE_COPY, STAGING, TERMS };
+    enum Term { RAW, COALESCE, SEAM, STAMP, GUARD, OUTPUT, TERMS };
     uint64_t ticks[TERMS]{}, inputs = 0, samples = 0, readTicks = 0;
     bool enabled = true, active = false;
     int phase = RAW;
@@ -2007,10 +2006,10 @@ struct RepairCycles {
         fprintf(stderr, "SWEEP_CYCLES phase=repair enabled=%d inputs=%llu samples=%llu "
                 "sample_stride_mean=1024 exclusive=1 probe_overhead_included=1 "
                 "read_decode=%.2f raw=%.2f coalescing=%.2f seamSplice=%.2f "
-                "stamping=%.2f require_stream_run=%.2f output_staging=%.2f char_branch=%.2f source_copy=%.2f staging_writes=%.2f units=tsc_ticks_per_input\n",
+                "stamping=%.2f require_stream_run=%.2f output_staging=%.2f units=tsc_ticks_per_input\n",
                 int(enabled), (unsigned long long)inputs, (unsigned long long)samples,
                 inputs ? double(readTicks)/inputs : 0.0,
-                mean(RAW), mean(COALESCE), mean(SEAM), mean(STAMP), mean(GUARD), mean(OUTPUT), mean(CHAR_BRANCH), mean(SOURCE_COPY), mean(STAGING));
+                mean(RAW), mean(COALESCE), mean(SEAM), mean(STAMP), mean(GUARD), mean(OUTPUT));
     }
     double mean(int term) const { return samples ? double(ticks[term])/samples : 0.0; }
 };
@@ -2050,8 +2049,8 @@ struct RepairStream {
     // `base` is the BWT rank of the piece's first row. A new pending run inherits
     // it; a coalesced continuation keeps the run's original base (the rows are
     // contiguous, so the merged run's base is the first piece's).
-    template<bool Measured = true, class Sink> void appendAt(const NRun& v, uint64_t base, Sink& sink) {
-        RepairCycles::Scope cycleScope(Measured ? cycles : nullptr, RepairCycles::COALESCE);
+    template<class Sink> void appendAt(const NRun& v, uint64_t base, Sink& sink) {
+        RepairCycles::Scope cycleScope(cycles, RepairCycles::COALESCE);
         if (!v.len) return;
         if (have && pending.c == v.c) {
             pending.len += v.len; pending.t = v.t;
@@ -2059,20 +2058,18 @@ struct RepairStream {
             // stamp, when present, belongs to the first piece and survives).
             pending.tt = v.tt;
         } else {
-            if (have) emitOne<Measured>(sink);
-            RepairCycles::Scope stampScope(Measured ? cycles : nullptr, RepairCycles::STAMP);
+            if (have) emitOne(sink);
+            RepairCycles::Scope stampScope(cycles, RepairCycles::STAMP);
             pending = v; pending.rk = base; have = true;
         }
     }
-    template<bool Measured = true, class Sink> void append(const NRun& v, Sink& sink) { appendAt<Measured>(v, row, sink); }
-    template<bool Measured = true, class Sink> void emitOne(Sink& sink) {
-        RepairCycles::Scope cycleScope(Measured ? cycles : nullptr, RepairCycles::STAMP);
+    template<class Sink> void append(const NRun& v, Sink& sink) { appendAt(v, row, sink); }
+    template<class Sink> void emitOne(Sink& sink) {
+        RepairCycles::Scope cycleScope(cycles, RepairCycles::STAMP);
         ++rNorm; nNorm += pending.len;
         totals[pending.c] += pending.len;
         ++runFreq[pending.c];
-        if constexpr (std::is_invocable_v<Sink&, const NRun&, std::integral_constant<bool, Measured>>)
-            sink(pending, std::integral_constant<bool, Measured>{});
-        else sink(pending);
+        sink(pending);
     }
     void append(const NRun& v) { append(v, emit); }
     void emitOne() { emitOne(emit); }
@@ -2103,13 +2100,6 @@ struct RepairStream {
     template<class Sink> void feed_raw(const RawRun& raw, Sink& sink,
                                        RawRun& source, bool& sourceHave) {
         RepairCycles::Input cycleInput(cycles);
-        if (cycles && cycles->active) feed_raw_impl<true>(raw, sink, source, sourceHave);
-        else feed_raw_impl<false>(raw, sink, source, sourceHave);
-    }
-    // Select once per input; unsampled runs contain no nested timer probes.
-    // Both instantiations execute exactly the same transducer and audits.
-    template<bool Measured, class Sink>
-    void feed_raw_impl(const RawRun& raw, Sink& sink, RawRun& source, bool& sourceHave) {
         if (!firstRunSeen) {
             firstRunSeen = true;
             if (sampleChecks)
@@ -2140,7 +2130,7 @@ struct RepairStream {
         // above. 0x00 and 0x05 ARE legal text (real pile bytes; measured 18
         // and 23 occurrences at 10GB). Forbid exactly the vacated range.
         pf_check(v.c != 1 && v.c != 2 && v.c != 3 && v.c != 4, "unsupported text alphabet");
-        RepairCycles::Scope coalesceScope(Measured ? cycles : nullptr, RepairCycles::CHAR_BRANCH);
+        RepairCycles::Scope coalesceScope(cycles, RepairCycles::COALESCE);
         if (sourceHave && source.c == v.c) { source.len += v.len; source.tail = v.tail; }
         else {
             if (sourceHave) {
@@ -2150,19 +2140,18 @@ struct RepairStream {
                     // splice is exactly one append, with the same row stamp;
                     // avoid constructing a second temporary and entering the
                     // class traversal for every ordinary character change.
-                    append<Measured>({source.c, source.len, source.head, source.tail}, sink);
+                    append({source.c, source.len, source.head, source.tail}, sink);
                     row = end;
                 } else {
-                    seamSplice<Measured>({source.c, source.len, source.head, source.tail}, sink);
+                    seamSplice({source.c, source.len, source.head, source.tail}, sink);
                 }
             }
-            { RepairCycles::Scope copyScope(Measured ? cycles : nullptr, RepairCycles::SOURCE_COPY);
-                source = v; sourceHave = true; }
+            source = v; sourceHave = true;
         }
     }
     void seamSplice(NRun v) { seamSplice(v, emit); }
-    template<bool Measured = true, class Sink> void seamSplice(NRun v, Sink& sink) {
-        RepairCycles::Scope cycleScope(Measured ? cycles : nullptr, RepairCycles::SEAM);
+    template<class Sink> void seamSplice(NRun v, Sink& sink) {
+        RepairCycles::Scope cycleScope(cycles, RepairCycles::SEAM);
         uint64_t end = row + v.len;
         while (row < end) {
             if (seam && next < seam->classes.size() && row >= seam->classes[next].lo) {
@@ -2176,12 +2165,12 @@ struct RepairStream {
                              "seam splice run/rank count");
                     uint64_t base = row;
                     for (size_t k = 0; k < cl.runs.size(); ++k) {
-                        RepairCycles::Scope stampScope(Measured ? cycles : nullptr, RepairCycles::STAMP);
+                        RepairCycles::Scope stampScope(cycles, RepairCycles::STAMP);
                         const auto& piece = cl.runs[k];
                         NRun nr{piece.c, piece.len, piece.head, piece.tail, base};
                         nr.ht = cl.runTrue[k].first;
                         nr.tt = cl.runTrue[k].second;
-                        appendAt<Measured>(nr, base, sink);
+                        appendAt(nr, base, sink);
                         base += piece.len;
                     }
                 }
@@ -2191,7 +2180,7 @@ struct RepairStream {
                 uint64_t stop = (seam && next < seam->classes.size()) ? std::min(end, seam->classes[next].lo) : end;
                 NRun piece{v.c, stop - row, v.h, v.t};
                 if (stop < end && seam) piece.t = seam->classes[next].before;
-                append<Measured>(piece, sink);
+                append(piece, sink);
                 row = stop;
             }
         }
@@ -4494,11 +4483,10 @@ int main(int argc, char** argv) {
         // (hot path, inlined) and also installed as rs.emit for the final flush,
         // so both paths emit through identical code.
         uint64_t certifiedRows = 0;
-        auto bandSink = [&](const NRun& v, auto measured) {
-            constexpr bool Measured = decltype(measured)::value;
-            RepairCycles::Scope outputScope(Measured ? rs.cycles : nullptr, RepairCycles::OUTPUT);
+        auto bandSink = [&](const NRun& v) {
+            RepairCycles::Scope outputScope(rs.cycles, RepairCycles::OUTPUT);
             {
-                RepairCycles::Scope guardScope(Measured ? rs.cycles : nullptr, RepairCycles::GUARD);
+                RepairCycles::Scope guardScope(rs.cycles, RepairCycles::GUARD);
                 require_stream_run(v, certifiedRows, n);
             }
             certifiedRows += v.len;
@@ -4531,13 +4519,12 @@ int main(int argc, char** argv) {
                 pf_write_full(bLensFd, &len32, 4, "bridge lens");
                 bridgeTailWrite(v.t);
             }
-            { RepairCycles::Scope stagingScope(Measured ? rs.cycles : nullptr, RepairCycles::STAGING);
-                feedTarget->nbuf.push_back(v);
-                feedTarget->gidx.push_back(idx);
-                feedTarget->rk.push_back(v.rk); }
+            feedTarget->nbuf.push_back(v);
+            feedTarget->gidx.push_back(idx);
+            feedTarget->rk.push_back(v.rk);
             g_pfPhase.store(PF_REPAIR, std::memory_order_relaxed);
         };
-        rs.emit = [&](const NRun& v) { bandSink(v, std::true_type{}); };
+        rs.emit = bandSink;
         sweep.emitWitness = [&](uint64_t value) {
             buckets.add(value);
             if (bridge) pf_write_full(bSAFd, &value, 8, "bridge sA");
