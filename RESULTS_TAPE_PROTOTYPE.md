@@ -842,3 +842,12 @@ versus instrument-only 0.021937 s: no fixture speedup is claimed. Its split
 62.86/55.64/73.94/0/72.23/24.15/75.53/169.15/23.09/63.19 ticks/input.
 Large-input validation will determine whether this is useful.
 Evidence: `tools/binbwt/evidence/repair-half-direct/`.
+
+Direct-append 150 MB gate: exact expected product/debug SHA, chi/runs and
+zero closure/fallback/stream mismatches. Product repair **12.666650 s**,
+lce 19.625701, advance 6.152293. Split: decode 44.84, raw 63.24, coalesce
+76.50, seam 0.01, stamp 74.60, guard 23.81, sink 80.43, character 534.39,
+source-copy 39.14, staging 24.37 ticks/input. This is a regression against
+10.369899 s instrument-only and 8.984302 s starting measurement; the direct
+append candidate is rejected and reverted in the next candidate. All bytes
+were correct. No guard is waived to pursue the timing target.
