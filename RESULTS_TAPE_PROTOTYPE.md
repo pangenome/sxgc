@@ -901,3 +901,12 @@ Fixture repair 0.026452 s; split
 65.09/82.56/68.40/0/74.68/23.94/77.13/121.38/64.99/67.35 ticks/input.
 This fixture wall regresses, so only the large gate can justify retaining it.
 Evidence: `tools/binbwt/evidence/repair-half-outline/`.
+
+Outlined-sample 150 MB gate remains byte-exact and audit-clean, but product
+repair regresses to **16.901419 s** (lce 23.398593, advance 5.678931).
+Split: 43.08/80.93/72.57/0.01/72.70/23.74/91.44/497.74/332.99/24.21
+ ticks/input. This candidate is rejected; its wrapper is reverted next.
+Symbol inspection of the prior sink-specialized binary shows the false-tag
+sink still has an out-of-line operator: template visibility alone did not
+ensure sink inlining. The next candidate explicitly requests inlining at
+that call boundary, retaining all sink operations and checks.

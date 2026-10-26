@@ -1,0 +1,7 @@
+CORPUS_RAM_CACHE bytes=150000001 budget_bytes=536870912 immutable=1 remapped=1 doubled=0
+CROSS_SEAM_DISCOVERED n=150000001 depth=3 raw_classes=2 aggregate_occurrences=25469 unique_targets=25469 limit=150000 work_limit=2400000016 before_walk=1 bounded=1
+TAPE_EMIT_START n=150000001 targets=25469 chunk=16777216 prefix=/tmp/repair-half-outline-150/product/frag
+TAPE_EMIT_RUNEXC path=/tmp/repair-half-outline-150/product/frag.runexc count=65535
+TAPE_EMIT_STATS slot_wait_s=0.00 flow_wait_s=0.00 row_loop_s=3.30 writers=32
+TAPE_EMIT_DONE rows=150000001 runs=57279189 hits=25469 wall=5.13 read_s=0.18 word_s=1.46 publish_s=3.30 finish_s=0.01
+CORPUS_CACHE_STATS bytes=150000001 hits=0 demand_misses=0 preload_bytes=150000001
