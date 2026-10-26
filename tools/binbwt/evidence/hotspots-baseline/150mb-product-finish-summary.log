@@ -1,0 +1,10 @@
+XSA_FINISH_DEBUG_ARTIFACTS enabled=0 product_dump_scratch_bytes=0
+XSA_FINISH_SEAM_ANCHORS checks=25454 mismatches=0 source=--isa-sample
+XSA_FINISH_SEAM_ANCHORS checks=15 mismatches=0 source=--isa-sample
+ENDPOINT_STREAM_PASS n=150000001 k=1 r=57279187 padding_rows=10 cyclic_seam_certified=0 classes=2
+XSA_FINISH_KASAI_CLOSURE bands=876 rank_holes=0 disorder=0 noncontiguous_runs=0 walk_fallbacks=0 max_rank_end=150000001 n=150000001
+XSA_FINISH_KASAI_ANCHORS checks=1154503 mismatches=0 source=--isa-sample
+xsa chi-rspace: chi = 44034231 (N=150000001, R=57279187) stream-agg=1 fused=1 corpus_lce=1
+ENDPOINT_STREAM_PASS n=150000001 k=1 r=57279187 padding_rows=10 cyclic_seam_certified=0 classes=2
+SXI2_PASS bytes=72468278 lite=1 members=6
+XSA_FINISH_DONE chi=44034231 n=150000001 r=57279187 container=/tmp/hotspots-baseline-150mb/product/product.sxi2

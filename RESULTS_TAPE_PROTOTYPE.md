@@ -621,3 +621,38 @@ The sparse-row LCE term is answerable from the column we already built: its two 
 run endpoints whose ranks the cursor KNOWS, so topLcp = min(col[r_prev .. r_cur-1]) - a
 range-min over ~3,000 bytes instead of a 450 us text walk. That is the next change, and
 it is the only available 10x+ in the finish.
+
+## Hot-spot follow-up (2026-10-26): establish the actual product path
+
+At starting commit `4402f71`, Kasai phase 2 ALREADY answers every run from the
+loaded column band. `gx[i]` is a global run index, not a sparse-row predicate.
+The two unconditional `slimLce` calls are in `!kasaiOn`; the other two are
+behind explicit `kasaiAudit`. The requested sparse-row replacement is therefore
+already present. This follow-up makes the interior contiguity assertion explicit
+at the read and removes the unnecessary min/max endpoint reorder. No fallback,
+rank source, guard, or audit was removed.
+
+A fresh existing `seed_first_gate.py` fixture baseline passed product and debug:
+SHA `98f1f6dc82befd1659112678bbc3debcf6c40ec417fcea86df47a8a51019c658`,
+chi 145685, runs 192138, closure 0/0/0, fallbacks 0, STREAM_VS_BWT mismatches 0.
+`XSA_FINISH_CORPUS_ACCESS phase=sweep calls=0` establishes that this starting
+product path already performs zero text walks, including sparse runs.
+The existing `lce-span` wall INCLUDES overlap with repair and advance; it is
+not an additive sparse-LCE term. The previous 24.4 + 17.4 + 6.2 second budget
+must not be read as three independent serial costs.
+
+Baseline product 150 MB (after the fixture gate): repair 15.207 s (readband
+1.130, feed 13.849), lce span 21.733 s of which only 0.007 s waited and
+21.726 s overlapped, advance_witness 5.8 s. These are fresh measurements,
+not a claimed optimization. Baseline evidence is under
+`tools/binbwt/evidence/hotspots-baseline/`; full logs under
+`/tmp/hotspots-baseline-{tiny,150mb}/`.
+
+Fix 1 fixture gate passed the same expected SHA, chi, runs, all closure and BWT
+checks, and zero product dump scratch. Product walls: repair 0.029 s,
+lce span 0.037 s (wait 0.001), advance_witness 0.016 s; baseline fixture
+repair 0.035, lce span 0.050 (wait 0.007), advance 0.020 s. These short timings
+are noisy; the contiguity clarification is not a sparse-LCE speedup claim.
+The gate now retains the existing phase/cycle/anatomy counters in its evidence
+summaries instead of dropping them. Cargo source mirror/manifest refreshed and
+release build passed before this gate.

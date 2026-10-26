@@ -137,7 +137,9 @@ for mode in ('product', 'debug'):
     (evidence/(a.label+'-'+mode+'-check.log')).write_text(checked)
     summary = '\n'.join(line for line in finish.splitlines() if any(key in line for key in (
         'DEBUG_ARTIFACTS', 'KASAI_CLOSURE', 'KASAI_ANCHORS', 'SEAM_ANCHORS',
-        'chi-rspace:', 'ENDPOINT_STREAM_PASS', 'XSA_FINISH_DONE', 'SXI2_PASS')))
+        'chi-rspace:', 'ENDPOINT_STREAM_PASS', 'XSA_FINISH_DONE', 'SXI2_PASS',
+        'SWEEP_CYCLES', 'SWEEP_PHASE_WALLS', 'SWEEP_STATS', 'SWEEP_ANATOMY',
+        'CORPUS_ACCESS phase=sweep', 'REGION lce-span')))
     (evidence/(a.label+'-'+mode+'-finish-summary.log')).write_text(summary+'\n')
     (evidence/(a.label+'-'+mode+'-emit.log')).write_text(emission)
 assert result['product_sha256'] == result['debug_sha256'], 'debug changes product bytes'

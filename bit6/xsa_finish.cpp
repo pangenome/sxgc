@@ -4761,7 +4761,10 @@ int main(int argc, char** argv) {
                     staged->store(1, std::memory_order_release);
                 }
                 while (!staged->load(std::memory_order_acquire)) std::this_thread::yield();
-                // PHASE 2: the column reads.
+                // PHASE 2: column answers for EVERY run, including sparse m11
+                // rows. gx is the global run index, not a sparse-row flag.
+                // Closure above certifies the previous row is the previous
+                // run's tail; only the explicit kasaiAudit arm may walk text.
                 for (;;) {
                     const size_t i = next->fetch_add(1);
                     if (i >= cnt) break;
@@ -4782,10 +4785,10 @@ int main(int argc, char** argv) {
                         // min-LCP over the rank interval between the run's two
                         // ENDPOINT RANKS: LCE(SA[a],SA[c]) = min col[a+1..c].
                         const uint64_t rt = (*tailRank)[i];
-                        const uint64_t a = std::min(r, rt), c = std::max(r, rt);
-                        pf_check(c > a, "KASAI: an interior run collapsed to one rank");
+                        pf_check(rt == r + v.len - 1,
+                                 "KASAI CLOSURE: noncontiguous interior query (refusing publication)");
                         inter = ~uint64_t(0);
-                        for (uint64_t t2 = a + 1; t2 <= c; ++t2) inter = std::min(inter, band->at(t2));
+                        for (uint64_t t2 = r + 1; t2 <= rt; ++t2) inter = std::min(inter, band->at(t2));
                         pf_check(inter != ~uint64_t(0), "empty interior interval");
                     }
                     if (kasaiAudit) {
