@@ -650,9 +650,18 @@ not a claimed optimization. Baseline evidence is under
 
 Fix 1 fixture gate passed the same expected SHA, chi, runs, all closure and BWT
 checks, and zero product dump scratch. Product walls: repair 0.029 s,
-lce span 0.037 s (wait 0.001), advance_witness 0.016 s; baseline fixture
+lce span 0.037 s (wait 0.001), advance_witness 0.019 s; baseline fixture
 repair 0.035, lce span 0.050 (wait 0.007), advance 0.020 s. These short timings
 are noisy; the contiguity clarification is not a sparse-LCE speedup claim.
 The gate now retains the existing phase/cycle/anatomy counters in its evidence
 summaries instead of dropping them. Cargo source mirror/manifest refreshed and
 release build passed before this gate.
+
+Fix 1 150 MB gate also passed expected SHA
+`d7eeac0f574a9a6e272732737d20b6d18a533336fea8f46f10287cb0e2b063a5`,
+chi 44034231, runs 57279187, closure 0/0/0, fallbacks 0, zero BWT mismatches
+and zero product dump scratch. Product walls: repair 15.013 s (read 1.213,
+feed 13.582), lce span 21.988 (wait 0.003), advance_witness 6.285 s.
+Sweep corpus accesses remain zero. No sparse-text-walk cost existed to remove
+on this checkout. Fix 1 source and packaged manifest remain those attested
+by the fixture gate; the next change instruments repair before optimizing it.

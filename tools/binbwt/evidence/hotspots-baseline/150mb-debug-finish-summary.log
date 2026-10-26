@@ -8,3 +8,9 @@ xsa chi-rspace: chi = 44034231 (N=150000001, R=57279187) stream-agg=1 fused=1 co
 ENDPOINT_STREAM_PASS n=150000001 k=1 r=57279187 padding_rows=10 cyclic_seam_certified=0 classes=2
 SXI2_PASS bytes=72468278 lite=1 members=6
 XSA_FINISH_DONE chi=44034231 n=150000001 r=57279187 container=/tmp/hotspots-baseline-150mb/debug/product.sxi2
+SWEEP_STATS advances=57279186 char_changes=57279186 scans=0 fired=0 mean_fired=0.00 max_fired=0 emits=44034231 chi=44034231
+SWEEP_PHASE_WALLS repair=76.7 lce=83.6 advance_witness=6.3 lce_threads=96
+XSA_FINISH_REGION advance-witness wall=6.273 cpu=439.312 minflt=261056 majflt=0 dev_read=0 units=57279187 runs_ns=109.51
+XSA_FINISH_REGION lce-span wall=83.579 waited=0.002 overlapped=83.577 units=57279187 runs_ns=1459.15
+XSA_FINISH_SWEEP_ANATOMY piecewait=0.091 readband=1.116 feed=75.364 repair_total=76.708 raw_runs=57279189 bands=875 rlebwt_wait=0.000 ns_per_raw_run=1315.73
+XSA_FINISH_CORPUS_ACCESS phase=sweep calls=0 page_hops=0 hop_rate=0.0000 ns_per_call=0.00
