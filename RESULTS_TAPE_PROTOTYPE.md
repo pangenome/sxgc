@@ -781,3 +781,26 @@ into that opt-in mode; no parallel repair mode was added or used in the gates.
 After rebuilding the packaged mirror/manifest, the final fixture gate again
 passed the expected SHA, chi/runs, all-zero closure/fallbacks/mismatches and
 zero product dump scratch (`hotspots-final/fixture-*`).
+
+The final binary's 150 MB product/debug gate also passed both expected SHAs,
+chi 44034231, runs 57279187, closure 0/0/0, fallbacks 0, BWT mismatches 0,
+independent column chi 44034231 and zero product dump scratch. This gate used
+exactly the final packaged source; source manifest verification passed all
+59 files and the runtime mirror matches the edited C++ byte for byte.
+
+Final product walls (seconds): repair **8.984302**, feed 7.354, lce span
+15.840102 (exposed wait 0.003, overlapped 15.837), advance_witness 6.169265.
+Final fixture walls: repair 0.022149, lce span 0.030724, advance 0.019316.
+Both sizes again report zero sweep corpus accesses: sparse text walks remain
+zero before and after. Final 150 MB cycle split (55,936 samples): read/decode
+48.71, raw 133.99, coalescing 279.46, seamSplice 0.01, stamping 72.14,
+require_stream_run 24.09, output/staging 56.57 TSC ticks/input.
+
+The final repair run is 51.0% below the instrument-only baseline and 40.9%
+below the starting-code run. The earlier optimized run was 11.841864 s:
+report the observed 8.98–11.84 s range rather than promising the fastest
+single-run improvement. The final counter-isolation edit changes setup only,
+so this variation is not credited to an additional repair algorithm change.
+All evidence is in `tools/binbwt/evidence/hotspots-final/`; all green gates
+were committed and pushed on `pile-week-v1`, with source manifests refreshed.
+No pile-scale performance claim is made.
