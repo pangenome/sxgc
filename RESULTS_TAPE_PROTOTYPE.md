@@ -964,3 +964,39 @@ split: decode 82.35, raw 70.00, coalesce 153.19, seam 0, stamp 69.47,
 guard 23.94, output/staging 98.40 ticks/input. Only documentation and evidence
 will differ from the starting commit. Evidence:
 `tools/binbwt/evidence/repair-half-reverted/`.
+
+### Second repair pass: final result — target unmet, source reverted
+
+Final reverted-source 150 MB product AND debug gates pass expected SHA
+`d7eeac0f574a9a6e272732737d20b6d18a533336fea8f46f10287cb0e2b063a5`,
+chi 44034231 / runs 57279187, closure 0/0/0, walk_fallbacks 0,
+STREAM_VS_BWT mismatches 0, and zero product dump scratch. Both emit phases
+completed with CROSS_V2_PIECE_WINDOW=100000000 before either finish began.
+No guard or audit was weakened, no repair parallelism was added, and all
+final selftests exit zero. All production source changes are reverted.
+
+| 150 MB product repair trial | Seconds | Disposition |
+| --- | ---: | --- |
+| Starting historical observation | 8.984302 | Original source |
+| Finer probes | 10.369899 | Reverted |
+| Direct ordinary append | 12.666650 | Reverted |
+| Specialized transducer probes | 8.802295 | Reverted |
+| Specialized sink probes | 8.741546 | Reverted |
+| Outlined sampled path | 16.901419 | Reverted |
+| Forced sink inline | 10.317565 | Reverted |
+| Sink specialization repeat | 10.923889 | Reverted |
+| Final original source repeat | 11.273767 | Restored |
+
+Final original-source lce wall is 18.026374 s and advance_witness 5.918330 s.
+Final original seven-term split (55,936 samples): decode 44.60, raw 204.64,
+coalesce 361.95, seamSplice 0.01, stamping 71.26, require_stream_run 24.44,
+output/staging 57.80 TSC ticks/input. The finer ten-term trial splits above
+remain available as evidence, but those probes are reverted too. The original
+source repeat differs substantially from the historical wall, underscoring
+that this session does not establish a robust speedup. The ~4.5 s target is
+**not achieved**. Residual issue: character/coalescer attribution remains large,
+probe/code-layout sensitivity is unresolved, and the extra counters themselves
+perturb attribution. No pile-scale or performance acceptance claim is made.
+Only this results document and `tools/binbwt/evidence/repair-half-*/` differ
+from 56b8b9d. Supervisor/intercom tools were unavailable in this runtime
+(tool discovery found no matching callable tool); no supervisor message was sent.
