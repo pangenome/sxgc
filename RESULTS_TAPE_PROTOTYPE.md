@@ -910,3 +910,14 @@ Symbol inspection of the prior sink-specialized binary shows the false-tag
 sink still has an out-of-line operator: template visibility alone did not
 ensure sink inlining. The next candidate explicitly requests inlining at
 that call boundary, retaining all sink operations and checks.
+
+### Second repair pass: enforce sink inlining
+
+The sampled-outline candidate is reverted. The sink now requests always_inline,
+so the serial transducer sees accounting/staging directly rather than paying
+an out-of-line call despite having a concrete template sink. No output,
+guard, or audit is changed. Fixture SHA/chi/runs remain exact, all closure/
+fallback/mismatch counters zero. All four existing guard/chunk/monoid/seam-spool
+selftests exit zero. Fixture repair 0.023879 s; split
+76.79/80.11/74.47/0/72.98/24.04/75.85/153.72/24.36/70.11 ticks/input.
+Evidence: `tools/binbwt/evidence/repair-half-inline/`.

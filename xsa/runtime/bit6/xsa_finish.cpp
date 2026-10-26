@@ -2103,14 +2103,8 @@ struct RepairStream {
     template<class Sink> void feed_raw(const RawRun& raw, Sink& sink,
                                        RawRun& source, bool& sourceHave) {
         RepairCycles::Input cycleInput(cycles);
-        if (cycles && cycles->active) feed_sampled(raw, sink, source, sourceHave);
+        if (cycles && cycles->active) feed_raw_impl<true>(raw, sink, source, sourceHave);
         else feed_raw_impl<false>(raw, sink, source, sourceHave);
-    }
-    // Keep the rare, timer-heavy instantiation out of the ordinary fold's
-    // instruction stream. Sampling still selects the same input ordinals.
-    template<class Sink> __attribute__((noinline))
-    void feed_sampled(const RawRun& raw, Sink& sink, RawRun& source, bool& sourceHave) {
-        feed_raw_impl<true>(raw, sink, source, sourceHave);
     }
     // Select once per input; unsampled runs contain no nested timer probes.
     // Both instantiations execute exactly the same transducer and audits.
@@ -4500,7 +4494,7 @@ int main(int argc, char** argv) {
         // (hot path, inlined) and also installed as rs.emit for the final flush,
         // so both paths emit through identical code.
         uint64_t certifiedRows = 0;
-        auto bandSink = [&](const NRun& v, auto measured) {
+        auto bandSink = [&](const NRun& v, auto measured) __attribute__((always_inline)) {
             constexpr bool Measured = decltype(measured)::value;
             RepairCycles::Scope outputScope(Measured ? rs.cycles : nullptr, RepairCycles::OUTPUT);
             {
