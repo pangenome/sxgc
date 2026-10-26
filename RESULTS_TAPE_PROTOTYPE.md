@@ -863,3 +863,11 @@ counters and all three selftests exiting zero. Repair 0.021286 s; split
 60.65/64.14/78.41/0/69.89/22.55/72.03/114.79/39.57/43.30 ticks/input
 in the previously documented term order (188 samples). The sink's probes
 are still runtime-selected. Evidence: `tools/binbwt/evidence/repair-half-specialize/`.
+
+Transducer-specialized 150 MB product/debug gate passes exact expected SHA,
+chi/runs, closure 0/0/0, fallbacks 0 and independent stream mismatches 0.
+Product repair **8.802295 s**, lce 15.876573, advance 6.374982. The split
+(decode/raw/coalesce/seam/stamp/guard/sink/character/copy/staging) is
+43.32/64.74/85.81/0.01/71.70/23.62/79.68/288.11/134.59/24.44 ticks/input,
+55,936 samples. This recovers the direct-field regression but is only 2%
+below the starting 8.984302 s observation; the requested halving is not met.
