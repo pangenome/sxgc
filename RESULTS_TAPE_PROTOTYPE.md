@@ -871,3 +871,14 @@ Product repair **8.802295 s**, lce 15.876573, advance 6.374982. The split
 43.32/64.74/85.81/0.01/71.70/23.62/79.68/288.11/134.59/24.44 ticks/input,
 55,936 samples. This recovers the direct-field regression but is only 2%
 below the starting 8.984302 s observation; the requested halving is not met.
+
+### Second repair pass: propagate probe choice through the sink
+
+The sink accepts the same compile-time measurement tag as the transducer;
+unsampled guard/accounting/staging execute without timer-selection branches.
+The guard itself remains unconditional. Generic/replay sinks retain their
+single-argument interface; final flush uses the measured sink wrapper.
+Packaged fixture SHA/chi/runs are exact, closure/fallback/mismatch counters
+zero, selftests exit zero. Product repair 0.021705 s; split
+67.19/77.77/84.36/0/71.70/25.43/87.34/109.15/37.77/85.96 ticks/input.
+Evidence: `tools/binbwt/evidence/repair-half-sink/`.

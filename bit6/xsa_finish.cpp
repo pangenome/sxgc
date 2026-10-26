@@ -60,6 +60,7 @@
 #include <string>
 #include <stdexcept>
 #include <functional>
+#include <type_traits>
 #include <filesystem>
 
 static constexpr uint64_t INF = UINT64_MAX;
@@ -2069,7 +2070,9 @@ struct RepairStream {
         ++rNorm; nNorm += pending.len;
         totals[pending.c] += pending.len;
         ++runFreq[pending.c];
-        sink(pending);
+        if constexpr (std::is_invocable_v<Sink&, const NRun&, std::integral_constant<bool, Measured>>)
+            sink(pending, std::integral_constant<bool, Measured>{});
+        else sink(pending);
     }
     void append(const NRun& v) { append(v, emit); }
     void emitOne() { emitOne(emit); }
@@ -4491,10 +4494,11 @@ int main(int argc, char** argv) {
         // (hot path, inlined) and also installed as rs.emit for the final flush,
         // so both paths emit through identical code.
         uint64_t certifiedRows = 0;
-        auto bandSink = [&](const NRun& v) {
-            RepairCycles::Scope outputScope(rs.cycles, RepairCycles::OUTPUT);
+        auto bandSink = [&](const NRun& v, auto measured) {
+            constexpr bool Measured = decltype(measured)::value;
+            RepairCycles::Scope outputScope(Measured ? rs.cycles : nullptr, RepairCycles::OUTPUT);
             {
-                RepairCycles::Scope guardScope(rs.cycles, RepairCycles::GUARD);
+                RepairCycles::Scope guardScope(Measured ? rs.cycles : nullptr, RepairCycles::GUARD);
                 require_stream_run(v, certifiedRows, n);
             }
             certifiedRows += v.len;
@@ -4527,13 +4531,13 @@ int main(int argc, char** argv) {
                 pf_write_full(bLensFd, &len32, 4, "bridge lens");
                 bridgeTailWrite(v.t);
             }
-            { RepairCycles::Scope stagingScope(rs.cycles, RepairCycles::STAGING);
+            { RepairCycles::Scope stagingScope(Measured ? rs.cycles : nullptr, RepairCycles::STAGING);
                 feedTarget->nbuf.push_back(v);
                 feedTarget->gidx.push_back(idx);
                 feedTarget->rk.push_back(v.rk); }
             g_pfPhase.store(PF_REPAIR, std::memory_order_relaxed);
         };
-        rs.emit = bandSink;
+        rs.emit = [&](const NRun& v) { bandSink(v, std::true_type{}); };
         sweep.emitWitness = [&](uint64_t value) {
             buckets.add(value);
             if (bridge) pf_write_full(bSAFd, &value, 8, "bridge sA");
