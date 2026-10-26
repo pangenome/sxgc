@@ -665,3 +665,29 @@ feed 13.582), lce span 21.988 (wait 0.003), advance_witness 6.285 s.
 Sweep corpus accesses remain zero. No sparse-text-walk cost existed to remove
 on this checkout. Fix 1 source and packaged manifest remain those attested
 by the fixture gate; the next change instruments repair before optimizing it.
+
+### Repair: first measured split, before any repair optimization
+
+The first instrumented fixture gate passed expected bytes and all acceptance
+checks. Its ONE product measurement (188 hashed samples / 192140 raw inputs):
+
+| Exclusive repair term | TSC ticks/input |
+| --- | ---: |
+| band read/decode (all bands, unsampled) | 112.79 |
+| input validation/normalization | 52.35 |
+| source + normalized coalescing | **386.05** |
+| seamSplice, excluding children | 48.30 |
+| stamping and emitted-run accounting | 67.98 |
+| require_stream_run | 22.22 |
+| output/staging, excluding guard | 95.87 |
+
+The guard is not the dominant term on this fixture. Coalescing is; output
+stores are second among the transducer terms. Sampling hashes input ordinals
+(mean stride 1024) to avoid aliasing the sparse writes; nested rdtsc scopes
+charge exclusive ticks, including probe overhead. The tiny sample is noisy
+and cannot by itself price the 150 MB path. No new instrumentation harness,
+product dump scratch, full ISA, or parallel repair was introduced. Counters
+are journaled as `SWEEP_CYCLES phase=repair`; an explicit
+`XSA_FINISH_REPAIR_CYCLES=0` disables per-run sampling. Product walls with
+counters: repair 0.043254 s, lce span 0.060509 s, advance 0.019503 s.
+Evidence: `tools/binbwt/evidence/hotspots-counters/fixture-*`.

@@ -1969,7 +1969,53 @@ static int selftest_stream_guard() {
     printf("STREAM_GUARD_SELFTEST_PASS head,tail,zero,overflow,holes,disorder,noncontiguous,fallback refusals=8\n");
     return 0;
 }
+// Serial repair attribution. Sample hashed input ordinals (not every 1024th
+// ordinal, which would alias the sparse-tail writes). Nested scopes charge
+// exclusive TSC ticks; read/decode is timed once per band, without sampling.
+// Probe overhead is included, so these are attribution counters, not a CPU
+// frequency estimate. No files, ISA, or per-run scratch are introduced.
+struct RepairCycles {
+    enum Term { RAW, COALESCE, SEAM, STAMP, GUARD, OUTPUT, TERMS };
+    uint64_t ticks[TERMS]{}, inputs = 0, samples = 0, readTicks = 0;
+    bool enabled = true, active = false;
+    int phase = RAW;
+    uint64_t last = 0;
+    void change(int to) {
+        const uint64_t now = __rdtsc();
+        ticks[phase] += now - last; last = now; phase = to;
+    }
+    struct Scope {
+        RepairCycles* c;
+        int previous = RAW;
+        Scope(RepairCycles* counter, int term) : c(counter && counter->active ? counter : nullptr) {
+            if (c) { previous = c->phase; c->change(term); }
+        }
+        ~Scope() { if (c) c->change(previous); }
+    };
+    struct Input {
+        RepairCycles* c;
+        explicit Input(RepairCycles* counter) : c(counter) {
+            if (!c) return;
+            const uint64_t ordinal = c->inputs++;
+            c->active = c->enabled && ((ordinal * 11400714819323198485ull) >> 54) == 0;
+            if (c->active) { ++c->samples; c->phase = RAW; c->last = __rdtsc(); }
+        }
+        ~Input() { if (c && c->active) { c->change(RAW); c->active = false; } }
+    };
+    void report() const {
+        fprintf(stderr, "SWEEP_CYCLES phase=repair enabled=%d inputs=%llu samples=%llu "
+                "sample_stride_mean=1024 exclusive=1 probe_overhead_included=1 "
+                "read_decode=%.2f raw=%.2f coalescing=%.2f seamSplice=%.2f "
+                "stamping=%.2f require_stream_run=%.2f output_staging=%.2f units=tsc_ticks_per_input\n",
+                int(enabled), (unsigned long long)inputs, (unsigned long long)samples,
+                inputs ? double(readTicks)/inputs : 0.0,
+                mean(RAW), mean(COALESCE), mean(SEAM), mean(STAMP), mean(GUARD), mean(OUTPUT));
+    }
+    double mean(int term) const { return samples ? double(ticks[term])/samples : 0.0; }
+};
+
 struct RepairStream {
+    RepairCycles* cycles = nullptr; // only the ordered product transducer
     uint64_t N = 0, n = 0, w1 = 10, terminal = 0;
     SeamClasses* seam = nullptr;
     std::function<void(const NRun&)> emit;
@@ -2004,16 +2050,22 @@ struct RepairStream {
     // it; a coalesced continuation keeps the run's original base (the rows are
     // contiguous, so the merged run's base is the first piece's).
     template<class Sink> void appendAt(const NRun& v, uint64_t base, Sink& sink) {
+        RepairCycles::Scope cycleScope(cycles, RepairCycles::COALESCE);
         if (!v.len) return;
         if (have && pending.c == v.c) {
             pending.len += v.len; pending.t = v.t;
             // The merged run's TRUE tail is the newest piece's tail (the head
             // stamp, when present, belongs to the first piece and survives).
             pending.tt = v.tt;
-        } else { if (have) emitOne(sink); pending = v; pending.rk = base; have = true; }
+        } else {
+            if (have) emitOne(sink);
+            RepairCycles::Scope stampScope(cycles, RepairCycles::STAMP);
+            pending = v; pending.rk = base; have = true;
+        }
     }
     template<class Sink> void append(const NRun& v, Sink& sink) { appendAt(v, row, sink); }
     template<class Sink> void emitOne(Sink& sink) {
+        RepairCycles::Scope cycleScope(cycles, RepairCycles::STAMP);
         ++rNorm; nNorm += pending.len;
         totals[pending.c] += pending.len;
         ++runFreq[pending.c];
@@ -2040,6 +2092,7 @@ struct RepairStream {
     }
     void feed_raw(const RawRun& raw) { feed_raw(raw, emit); }
     template<class Sink> void feed_raw(const RawRun& raw, Sink& sink) {
+        RepairCycles::Input cycleInput(cycles);
         if (!firstRunSeen) {
             firstRunSeen = true;
             if (sampleChecks)
@@ -2070,6 +2123,7 @@ struct RepairStream {
         // above. 0x00 and 0x05 ARE legal text (real pile bytes; measured 18
         // and 23 occurrences at 10GB). Forbid exactly the vacated range.
         pf_check(v.c != 1 && v.c != 2 && v.c != 3 && v.c != 4, "unsupported text alphabet");
+        RepairCycles::Scope coalesceScope(cycles, RepairCycles::COALESCE);
         if (srcHave && srcPending.c == v.c) { srcPending.len += v.len; srcPending.tail = v.tail; }
         else {
             if (srcHave) seamSplice({srcPending.c, srcPending.len, srcPending.head, srcPending.tail}, sink);
@@ -2078,6 +2132,7 @@ struct RepairStream {
     }
     void seamSplice(NRun v) { seamSplice(v, emit); }
     template<class Sink> void seamSplice(NRun v, Sink& sink) {
+        RepairCycles::Scope cycleScope(cycles, RepairCycles::SEAM);
         uint64_t end = row + v.len;
         while (row < end) {
             if (seam && next < seam->classes.size() && row >= seam->classes[next].lo) {
@@ -2091,6 +2146,7 @@ struct RepairStream {
                              "seam splice run/rank count");
                     uint64_t base = row;
                     for (size_t k = 0; k < cl.runs.size(); ++k) {
+                        RepairCycles::Scope stampScope(cycles, RepairCycles::STAMP);
                         const auto& piece = cl.runs[k];
                         NRun nr{piece.c, piece.len, piece.head, piece.tail, base};
                         nr.ht = cl.runTrue[k].first;
@@ -4397,14 +4453,21 @@ int main(int argc, char** argv) {
         BandSlot slots[2]{BandSlot(1 << 17), BandSlot(1 << 17)};
         BandSlot* feedTarget = &slots[0];
         uint64_t prevTail = 0;
+        RepairCycles repairCycles;
+        repairCycles.enabled = pf_env_u64("XSA_FINISH_REPAIR_CYCLES", 1, 0, 1);
         RepairStream rs;
+        rs.cycles = &repairCycles;
         rs.N = N; rs.n = n; rs.terminal = 0; rs.seam = &seam;
         // The band loop's sink. Passed DIRECTLY as the transducer's template sink
         // (hot path, inlined) and also installed as rs.emit for the final flush,
         // so both paths emit through identical code.
         uint64_t certifiedRows = 0;
         auto bandSink = [&](const NRun& v) {
-            require_stream_run(v, certifiedRows, n);
+            RepairCycles::Scope outputScope(rs.cycles, RepairCycles::OUTPUT);
+            {
+                RepairCycles::Scope guardScope(rs.cycles, RepairCycles::GUARD);
+                require_stream_run(v, certifiedRows, n);
+            }
             certifiedRows += v.len;
             // Stream fingerprint (dev): identical piece sets must produce an
             // identical (c,len,h,t) sequence, and a differing one must be visible.
@@ -4915,7 +4978,9 @@ int main(int argc, char** argv) {
             }
             {
                 PfRegion r("readband", PF_READBAND);
+                const uint64_t readStart = __rdtsc();
                 src.read_band(band, s.raws);
+                repairCycles.readTicks += __rdtsc() - readStart;
                 r.close(); readAcc.add(r); readWall += r.wall;
             }
             // PART 2/B: hand the NEXT band's verification targets to the
@@ -5123,7 +5188,8 @@ int main(int argc, char** argv) {
                     (unsigned long long)lcpCol.preads, (unsigned long long)lcpCol.stagedBytes,
                     (unsigned long long)lcpCol.escapeCount, (unsigned long long)lcpCol.maxLcp,
                     int(kasaiAudit));
-        fprintf(stderr, "SWEEP_PHASE_WALLS repair=%.1f lce=%.1f advance_witness=%.1f lce_threads=%d\n",
+        repairCycles.report();
+        fprintf(stderr, "SWEEP_PHASE_WALLS repair=%.6f lce=%.6f advance_witness=%.6f lce_threads=%d\n",
                 repairWall, lceWall, advanceWall, std::max(1, std::min(threads, 256)));
         // v3 anatomy: repairWall = pieceWait + bandRead + feed + residual.
         waitAcc.report("bands", bandReads);
