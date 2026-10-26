@@ -5,9 +5,11 @@ bridge-without-debug PASS rc=2 published=False
 rank-exceptions-without-debug PASS rc=2 published=False
 full-ISA-env-audit PASS rc=2 published=False
 column-env-disable PASS rc=2 published=False
+column-env-disable-debug PASS rc=2 published=False
 kasai PASS rc=0 published=True
 kasai-no-anchor PASS rc=0 published=True
 finite-walk PASS rc=0 published=True
 debug-kasai PASS rc=0 published=True
 bad-anchor PASS rc=2 published=False
+bad-anchor-debug PASS rc=2 published=False
 SEED_FIRST_REGRESSION_PASS sha256=98f1f6dc82befd1659112678bbc3debcf6c40ec417fcea86df47a8a51019c658

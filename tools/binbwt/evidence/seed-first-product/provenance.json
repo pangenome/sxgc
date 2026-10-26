@@ -7,7 +7,7 @@
   "runtime_mirror_equals_source_equals_compiled_snapshot": true,
   "build_command": "python3 tools/package_xsa_sources.py && cd xsa && cargo build --release",
   "build_log": "/tmp/seed-first-product/periodic-fix-build.log",
-  "build_seconds": 352,
   "existing_rust_warnings": 18,
-  "checker_sha256": "a3b174a5aec5974697380c122f44fd11033b401473b9f83bcc0b74cf005e4324"
+  "checker_sha256": "a3b174a5aec5974697380c122f44fd11033b401473b9f83bcc0b74cf005e4324",
+  "cargo_reported_duration": "5m 52s (not a separately timed command wall)"
 }

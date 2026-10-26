@@ -68,6 +68,8 @@ finish('full-ISA-env-audit', ['--lcp-column', a.column, '--sa-locate', '/nonexis
        fail='full ISA audit requires explicit --debug-artifacts')
 finish('column-env-disable', ['--lcp-column', a.column], env={'XSA_FINISH_KASAI': '0'},
        fail='a supplied LCP column cannot be disabled')
+finish('column-env-disable-debug', ['--debug-artifacts', '--lcp-column', a.column],
+       env={'XSA_FINISH_KASAI': '0'}, fail='a supplied LCP column cannot be disabled')
 col = ['--lcp-column', a.column, '--chi-expect', str(a.chi)]
 finish('kasai', col+['--isa-sample', a.isa_sample])
 finish('kasai-no-anchor', col)
@@ -82,6 +84,7 @@ old, = struct.unpack_from('<Q', bad, 32)
 struct.pack_into('<Q', bad, 32, old+1)
 (r/'bad.isamp').write_bytes(bad)
 finish('bad-anchor', col+['--isa-sample', str(r/'bad.isamp')], fail='ANCHOR')
+finish('bad-anchor-debug', col+['--debug-artifacts', '--isa-sample', str(r/'bad.isamp')], fail='ANCHOR')
 reference = (r/'kasai/product.sxi2').read_bytes()
 for name in ('kasai-no-anchor', 'finite-walk', 'debug-kasai'):
     assert reference == (r/name/'product.sxi2').read_bytes(), name
