@@ -2063,6 +2063,21 @@ struct RepairStream {
             pending = v; pending.rk = base; have = true;
         }
     }
+    // Ordinary source runs carry no true-rank stamps. Populate the delayed
+    // normalized record directly instead of materializing and copying NRun.
+    template<class Sink> void appendSource(const RawRun& v, Sink& sink) {
+        RepairCycles::Scope cycleScope(cycles, RepairCycles::COALESCE);
+        if (!v.len) return;
+        if (have && pending.c == v.c) {
+            pending.len += v.len; pending.t = v.tail; pending.tt = ~0ull;
+        } else {
+            if (have) emitOne(sink);
+            RepairCycles::Scope stampScope(cycles, RepairCycles::STAMP);
+            pending.c = v.c; pending.len = v.len;
+            pending.h = v.head; pending.t = v.tail; pending.rk = row;
+            pending.ht = ~0ull; pending.tt = ~0ull; have = true;
+        }
+    }
     template<class Sink> void append(const NRun& v, Sink& sink) { appendAt(v, row, sink); }
     template<class Sink> void emitOne(Sink& sink) {
         RepairCycles::Scope cycleScope(cycles, RepairCycles::STAMP);
@@ -2140,7 +2155,7 @@ struct RepairStream {
                     // splice is exactly one append, with the same row stamp;
                     // avoid constructing a second temporary and entering the
                     // class traversal for every ordinary character change.
-                    append({source.c, source.len, source.head, source.tail}, sink);
+                    appendSource(source, sink);
                     row = end;
                 } else {
                     seamSplice({source.c, source.len, source.head, source.tail}, sink);

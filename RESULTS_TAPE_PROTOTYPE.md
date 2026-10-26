@@ -829,3 +829,16 @@ sink accounting 79.32, character branch 289.55, source copy 291.51,
 staging 24.39. The source-copy attribution grows markedly with the large
 working set; probe/scheduler/cache effects preclude treating fixture ratios
 as large-input predictions. Build work ran concurrently on other cores.
+
+### Second repair pass: direct ordinary-source append
+
+Ordinary source runs now populate the delayed normalized record's fields
+directly; seam runs still use the existing stamped append. Both coalescers,
+head/tail stamp semantics, and every audit remain. Fixture product/debug SHA
+is the expected SHA, all closure/fallback/mismatch counters zero; all three
+existing guard/chunk/monoid selftests exit zero. Fixture repair 0.025445 s
+versus instrument-only 0.021937 s: no fixture speedup is claimed. Its split
+(decode/raw/coalesce/seam/stamp/guard/sink/character/copy/staging) is
+62.86/55.64/73.94/0/72.23/24.15/75.53/169.15/23.09/63.19 ticks/input.
+Large-input validation will determine whether this is useful.
+Evidence: `tools/binbwt/evidence/repair-half-direct/`.
