@@ -4494,7 +4494,7 @@ int main(int argc, char** argv) {
         // (hot path, inlined) and also installed as rs.emit for the final flush,
         // so both paths emit through identical code.
         uint64_t certifiedRows = 0;
-        auto bandSink = [&](const NRun& v, auto measured) __attribute__((always_inline)) {
+        auto bandSink = [&](const NRun& v, auto measured) {
             constexpr bool Measured = decltype(measured)::value;
             RepairCycles::Scope outputScope(Measured ? rs.cycles : nullptr, RepairCycles::OUTPUT);
             {

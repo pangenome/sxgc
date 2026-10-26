@@ -932,3 +932,13 @@ is within plausible run variation of the starting 8.98 s; it is not evidence
 of a robust algorithmic speedup. Both actual algorithmic/code-layout trials
 that regressed have been removed; the retained changes refine attribution
 and remove unsampled probe selection overhead without altering audits.
+
+### Second repair pass: final restored-source fixture gate
+
+The forced-inline and outlined wrappers are removed. The final source is
+byte-for-byte the sink-specialized candidate. Repackaged/rebuilt fixture
+again passes exact expected SHA, chi/runs, zero closure/fallback/mismatches,
+and all four selftests exit zero. Source manifest verifies all 59 files;
+runtime mirror is byte-identical. Fixture repair 0.026638 s; split
+88.87/90.85/78.51/0/69.57/23.72/75.96/113.19/42.23/96.60 ticks/input.
+Evidence: `tools/binbwt/evidence/repair-half-final/`.
