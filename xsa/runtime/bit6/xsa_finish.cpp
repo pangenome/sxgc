@@ -1369,7 +1369,12 @@ struct PieceSource {
 //    occ(P_d); any divergence is fatal).
 struct SeamClass { uint64_t lo, hi, first, before = 0, after = 0;
                    std::vector<uint64_t> occ;     // the class SA set (occ(P_d))
-                   std::vector<RawRun> runs; };   // lo/hi in NORMALIZED rows
+                   std::vector<RawRun> runs;   // lo/hi in NORMALIZED rows
+                   // TRUE head/tail rank per entry of `runs` (see rebuild): the
+                   // class rows are emitted in rebuild order, but the true order
+                   // puts the class seed (the wrap suffix ending at the text
+                   // end) first and the rest in the same content order.
+                   std::vector<std::pair<uint64_t, uint64_t>> runTrue; };
 
 // ---------------------------------------------------------------- packed WM
 // The merge's WM scratch (the merged SA in ROW order) has two layouts:
@@ -1467,6 +1472,10 @@ static void seam_refuse(const char* kind, uint64_t size, uint64_t limit) {
 
 struct SeamClasses {
     bool fromSpool = false;
+    // --isa-sample, installed by the fold before build/rebuild: the class
+    // true-rank model is verified against it at every anchored occurrence.
+    // Called as (position, modelRank); a disagreement must pf_fail inside.
+    std::function<void(uint64_t, uint64_t)> anchorVerify;
     std::vector<SeamClass> classes;
     uint64_t depth = 0, total = 0, maxSeamLce = 0;
     void build_spool(int fd, uint64_t n, uint64_t rawR,
@@ -1519,7 +1528,7 @@ struct SeamClasses {
         pf_check(offset == uint64_t(st.st_size), "seam spool trailing data");
         fprintf(stderr, "XSA_FINISH_SEAM_SPOOL classes=%zu rows=%llu discovery_steps=%llu limit=%llu WM=absent\n",
                 classes.size(), (unsigned long long)total, (unsigned long long)depth, (unsigned long long)limit);
-        rebuild(n, rawR, limit, collection_lce, symbol);
+        rebuild(n, rawR, limit, collection_lce, symbol, anchorVerify);
     }
     void build(const CorpusText& text, const PfWm& wm, uint64_t n, uint64_t rawR, uint64_t w1,
                const std::function<uint64_t(uint64_t, uint64_t)>& collection_lce,
@@ -1640,12 +1649,33 @@ struct SeamClasses {
             pf_check(sa.front() == cl.first, "class leftmost row is not the terminal suffix");
             cl.occ = std::move(sa);   // row order = v1's phi-walk order
         }
-        rebuild(n, r, limit, collection_lce, symbol);
+        rebuild(n, r, limit, collection_lce, symbol, anchorVerify);
     }
     void rebuild(uint64_t n, uint64_t r, uint64_t limit,
                  const std::function<uint64_t(uint64_t, uint64_t)>& collection_lce,
                  const std::function<uint8_t(uint64_t)>& symbol) {
+        rebuild(n, r, limit, collection_lce, symbol, nullptr);
+    }
+    // `anchorVerify` (optional, --isa-sample): every anchored class occurrence
+    // is checked against the model below and any disagreement refuses - the
+    // product-scale proof that the stamped true ranks are the SA's ranks.
+    uint64_t anchorChecks = 0;   // verification passes across all classes
+    void rebuild(uint64_t n, uint64_t r, uint64_t limit,
+                 const std::function<uint64_t(uint64_t, uint64_t)>& collection_lce,
+                 const std::function<uint8_t(uint64_t)>& symbol,
+                 const std::function<void(uint64_t, uint64_t)>& anchorVerify) {
         // rebuild each class: v1's LCE comparator + run rebuild, verbatim.
+        //
+        // THE TRUE ORDER OF A CLASS: the rebuild sorts occ(P_d) by cyclic
+        // content, but the TRUE suffix array places the class SEED (the chain
+        // seed at position n-d, the suffix that ENDS at the text end - the SA's
+        // sentinel convention for the cyclic wrap) FIRST and the remaining
+        // occurrences in exactly that same content order (measured exactly,
+        // 101/101 at 2 MB and via the anchors at 150 MB). So the true rank of
+        // the i-th rebuild-order occurrence is
+        //     rank(i) = lo + (i == iSeed ? 0 : 1 + i - (i > iSeed))
+        // and every emitted class run gets its true endpoints stamped so the
+        // Kasai phase 1 never has to trust the stream's row accounting there.
         uint64_t maxSeam = 0;
         for (auto& cl : classes) {
             std::vector<uint64_t> sa = cl.occ;
@@ -1654,17 +1684,49 @@ struct SeamClasses {
                 maxSeam = std::max(maxSeam, len);
                 return len == n ? a < b : symbol((a + len) % n) < symbol((b + len) % n);
             });
-            for (uint64_t p : sa) {
+            const uint64_t iSeed = uint64_t(
+                std::find(sa.begin(), sa.end(), cl.first) - sa.begin());
+            pf_check(iSeed < sa.size(), "seam class seed missing from its own occurrence set");
+            auto trueIdx = [&](uint64_t i) {
+                return i == iSeed ? 0 : 1 + i - (i > iSeed ? 1 : 0);
+            };
+            // ANCHOR VERIFICATION: the model must reproduce the sampled ISA at
+            // every anchored occurrence of the class, or the supply refuses.
+            if (anchorVerify) {
+                for (uint64_t i = 0; i < sa.size(); ++i) {
+                    anchorVerify(sa[i], cl.lo + trueIdx(i));
+                    ++anchorChecks;
+                }
+            }
+            cl.runTrue.clear();
+            cl.runs.clear();
+            uint64_t runStartIdx = 0;
+            for (uint64_t i = 0; i < sa.size(); ++i) {
+                const uint64_t p = sa[i];
                 uint8_t c = symbol((p + n - 1) % n);
                 if (!cl.runs.empty() && cl.runs.back().c == c) {
                     ++cl.runs.back().len;
                     cl.runs.back().tail = p;
                 } else {
+                    if (!cl.runs.empty())
+                        cl.runTrue.push_back({cl.lo + trueIdx(runStartIdx),
+                                              cl.lo + trueIdx(i - 1)});
                     cl.runs.push_back({c, 1, p, p});
+                    runStartIdx = i;
                 }
             }
+            if (!cl.runs.empty())
+                cl.runTrue.push_back({cl.lo + trueIdx(runStartIdx),
+                                      cl.lo + trueIdx(sa.size() - 1)});
+            pf_check(cl.runTrue.size() == cl.runs.size(), "seam class run/rank count");
+            uint64_t stamped = 0;
+            for (auto& v : cl.runs) stamped += v.len;
+            pf_check(stamped == cl.hi - cl.lo, "seam class rows != its span");
         }
         maxSeamLce = maxSeam;
+        if (anchorVerify)
+            fprintf(stderr, "XSA_FINISH_SEAM_ANCHORS checks=%llu mismatches=0 source=--isa-sample\n",
+                    (unsigned long long)anchorChecks);
         if (getenv("SLIM_SEAM_DEBUG"))
             for (auto& cl : classes) {
                 fprintf(stderr, "SLIM_SEAM_CLASS2 lo=%llu hi=%llu after=%llu runs=%zu:",
@@ -1834,7 +1896,12 @@ static int selftest_seam_spool(const std::string& directory) {
 // `row` past the rows its reconstructed runs describe (measured at 100 MB: the
 // first class block ends one row short, and a cumulative sum silently shifts
 // EVERY subsequent rank by one). The KASAI arm indexes the LCP column with this.
-struct NRun { uint8_t c; uint64_t len, h, t; uint64_t rk = 0; };
+struct NRun { uint8_t c; uint64_t len, h, t; uint64_t rk = 0;
+             // TRUE head/tail ranks, stamped by the seam splice for class runs
+             // (~0 = use the cursor). The class rows are emitted in REBUILD order
+             // while the true SA order puts the class seed first, so a class run's
+             // true endpoints are not its stream rows.
+             uint64_t ht = ~0ull, tt = ~0ull; };
 struct RepairStream {
     uint64_t N = 0, n = 0, w1 = 10, terminal = 0;
     SeamClasses* seam = nullptr;
@@ -1871,8 +1938,12 @@ struct RepairStream {
     // contiguous, so the merged run's base is the first piece's).
     template<class Sink> void appendAt(const NRun& v, uint64_t base, Sink& sink) {
         if (!v.len) return;
-        if (have && pending.c == v.c) { pending.len += v.len; pending.t = v.t; }
-        else { if (have) emitOne(sink); pending = v; pending.rk = base; have = true; }
+        if (have && pending.c == v.c) {
+            pending.len += v.len; pending.t = v.t;
+            // The merged run's TRUE tail is the newest piece's tail (the head
+            // stamp, when present, belongs to the first piece and survives).
+            pending.tt = v.tt;
+        } else { if (have) emitOne(sink); pending = v; pending.rk = base; have = true; }
     }
     template<class Sink> void append(const NRun& v, Sink& sink) { appendAt(v, row, sink); }
     template<class Sink> void emitOne(Sink& sink) {
@@ -1946,10 +2017,16 @@ struct RepairStream {
                 SeamClass& cl = seam->classes[next];
                 if (row == cl.lo) {
                     // The class's reconstructed runs are contiguous from the
-                    // class's first row: stamp each piece's own rank base.
+                    // class's first row: stamp each piece's own rank base, and
+                    // its TRUE head/tail rank (the emitted order is the rebuild
+                    // order; the true order puts the class seed first).
                     uint64_t base = row;
-                    for (const auto& piece : cl.runs) {
-                        appendAt({piece.c, piece.len, piece.head, piece.tail}, base, sink);
+                    for (size_t k = 0; k < cl.runs.size(); ++k) {
+                        const auto& piece = cl.runs[k];
+                        NRun nr{piece.c, piece.len, piece.head, piece.tail, base};
+                        nr.ht = cl.runTrue[k].first;
+                        nr.tt = cl.runTrue[k].second;
+                        appendAt(nr, base, sink);
                         base += piece.len;
                     }
                 }
@@ -2965,7 +3042,8 @@ static bool repair_state_equal(const RepairStream& a, const RepairStream& b) {
         (a.srcPending.c == b.srcPending.c && a.srcPending.len == b.srcPending.len &&
          a.srcPending.head == b.srcPending.head && a.srcPending.tail == b.srcPending.tail)) &&
         a.have == b.have && (!a.have || (a.pending.c == b.pending.c &&
-         a.pending.len == b.pending.len && a.pending.h == b.pending.h && a.pending.t == b.pending.t)) &&
+         a.pending.len == b.pending.len && a.pending.h == b.pending.h && a.pending.t == b.pending.t &&
+         a.pending.ht == b.pending.ht && a.pending.tt == b.pending.tt)) &&
         a.certified == b.certified && a.dollarSeen == b.dollarSeen &&
         a.zeroes == b.zeroes && a.beforeTerminal == b.beforeTerminal &&
         a.firstRunSeen == b.firstRunSeen && a.rNorm == b.rNorm &&
@@ -3429,15 +3507,16 @@ struct LceWrap {
     }
 };
 // ------------------------------------------------------ THE LCP COLUMN (kasai)
-// `tools/binbwt/kasai_column`'s product, read as a table. col[r] =
-// LCE(SA[r], SA[r+1]) over the same cyclic text, u8 fast path + a sorted escape
-// list for values >= 255 (KASAI_FINISH_DESIGN.md). The finish reads it in RANK
-// ORDER along the ordered fold - each band stages its own CONTIGUOUS rank slice
-// with one pread - so the sweep's two query families cost a column read and a
-// range minimum instead of an LCE walk:
+// The prebuilt LCP column, read as a table. THE CONVENTION (measured against
+// scatter_sort's --lcp-out, 300/300 at the 2 MB fixture): col[r] is the LEFT-
+// neighbour LCP, LCP[r] = lce(SA[r-1], SA[r]) - the standard LCP array. The
+// finish reads it in RANK ORDER along the ordered fold - each band stages its
+// own CONTIGUOUS rank slice with one pread - so the sweep's two query families
+// cost a column read and a range minimum instead of an LCE walk:
 //
-//     topLcp[i]   = col[r_i - 1]                     r_i = cumulative run length
-//     interior[i] = min(col[r_i .. r_i + len_i - 2])
+//     topLcp[i]   = col[r_i]              (lce(prev row, this row))
+//     interior[i] = min(col[r_i + 1 .. r_i + len_i - 1])
+//                                   (lce(SA[a], SA[c]) = min LCP[a+1..c], any a<c)
 //
 // THE MAPPING IS THE CLOSURE CONDITION: the runs are contiguous BWT intervals in
 // ascending rank order, so sum(len) over every emitted run == n and r_i is the
@@ -3499,8 +3578,10 @@ struct LocateIsa {
 
 // ============================ THE SAMPLED INVERSE ===========================
 // Anchors are keyed by POSITION, which survives the finish's repair; run indices and
-// run lengths do not. The fold resyncs its rank cursor whenever a run's head sits on
-// an anchor, so the cursor only has to stay correct for < k positions.
+// run lengths do not. The fold VERIFIES its rank cursor at every anchored head and
+// tail (ISA[p] from the producer, one probe per anchored endpoint) and refuses on
+// any disagreement: the cursor is the definition of rank over the emitted stream,
+// so an anchor mismatch means the stream itself left the true suffix order.
 // DEBUG ONLY (XSA_FINISH_ISA_DEBUG=<SA stream>): build the TRUE inverse so the derived
 // ranks can be compared run by run. Affordable on fixtures (n x 8 B), never at pile.
 static std::string pf_env_str(const char* k) {
@@ -3827,13 +3908,18 @@ int main(int argc, char** argv) {
         TrueIsa trueIsa;
         const bool isaDebug = !pf_env_str("XSA_FINISH_ISA_DEBUG").empty();
         if (isaDebug) trueIsa.load(pf_env_str("XSA_FINISH_ISA_DEBUG"), n);
-        uint64_t devMax = 0, devRuns = 0, devSum = 0;   // derived (cursor) rank vs ground truth
-        uint64_t rkDevMax = 0, rkDevRuns = 0, rkDevSum = 0;   // transducer row base vs ground truth
-        uint64_t devDump = 0;
+        // Dev counters vs ground truth. Atomics: the psi-walk phase 1 is
+        // per-run parallel, so several workers may touch them.
+        std::atomic<uint64_t> devMax{0}, devRuns{0}, devSum{0};
+        int64_t devPrevOff = 0;   // signed cursor offset at the previous run (cursor path, dev-only)
+        std::atomic<uint64_t> devTransDump{0};
+        std::atomic<uint64_t> rkDevMax{0}, rkDevRuns{0}, rkDevSum{0};
+        std::atomic<uint64_t> devDump{0};
         uint64_t streamFnv = 1469598103934665603ull, streamH = 0, streamT = 0, streamLen = 0, streamRuns = 0;
         uint64_t gapDump = 0;
         const bool runRankExcEmpty = runRanksPath.empty();   // false => use the prefix sum
         uint64_t rowCursor = 0;      // prefix-sum row cursor carried across bands
+        uint64_t anchorChecks = 0;   // --isa-sample verifications performed (head+tail)
         KasaiState kasaiState;
         const bool kasaiOn = !lcpColumnPath.empty() && !kasaiOff;
         if (kasaiOn) {
@@ -3996,6 +4082,21 @@ int main(int argc, char** argv) {
 
         LceWrap seamLce{&fhSeam, {}, n};
         SeamClasses seam;
+        // THE CLASS TRUE-RANK SUPPLY's verification: the rebuild checks every
+        // anchored class occurrence against --isa-sample and refuses on any
+        // disagreement (product-scale proof; fixture scale adds TrueIsa on top).
+        seam.anchorVerify = sampIsa.map ? [&](uint64_t pos, uint64_t modelRank) {
+            if (!sampIsa.has(pos)) return;
+            const uint64_t truth = sampIsa.at(pos);
+            if (truth != modelRank) {
+                fprintf(stderr,
+                        "XSA_FINISH_SEAM_ANCHOR_MISMATCH pos=%llu model_rank=%llu anchor_rank=%llu\n",
+                        (unsigned long long)pos, (unsigned long long)modelRank,
+                        (unsigned long long)truth);
+                pf_fail("SEAM ANCHOR: the class true-rank model disagrees with "
+                        "the sampled ISA (refusing)");
+            }
+        } : std::function<void(uint64_t, uint64_t)>{};
         auto seamSymbol = [&](uint64_t pos) -> uint8_t {
             if (pos >= n) pf_fail("seam symbol outside text");
             return text[pos];
@@ -4041,6 +4142,21 @@ int main(int argc, char** argv) {
         pf_check(::access(sparsePath.c_str(), F_OK) != 0, "sparse scratch exists");
         int sparseFd = ::open(sparsePath.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
         pf_check(sparseFd >= 0, "create sparse scratch");
+        // Dev-only offline-analysis dumps (see bandSink / finishAdvance).
+        int streamDumpFd = -1, answersDumpFd = -1;
+        const std::string streamDumpPath = pf_env_str("XSA_FINISH_DUMP_STREAM");
+        const std::string answersDumpPath = pf_env_str("XSA_FINISH_DUMP_ANSWERS");
+        if (!streamDumpPath.empty()) {
+            streamDumpFd = ::open(streamDumpPath.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+            pf_check(streamDumpFd >= 0, "create XSA_FINISH_DUMP_STREAM");
+            fprintf(stderr, "XSA_FINISH_DUMP_STREAM path=%s\n", streamDumpPath.c_str());
+        }
+        if (!answersDumpPath.empty()) {
+            answersDumpFd = ::open(answersDumpPath.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+            pf_check(answersDumpFd >= 0, "create XSA_FINISH_DUMP_ANSWERS");
+            fprintf(stderr, "XSA_FINISH_DUMP_ANSWERS path=%s\n", answersDumpPath.c_str());
+        }
+        const bool streamDump = streamDumpFd >= 0, answersDump = answersDumpFd >= 0;
         bool bridge = !bridgeDir.empty();
         int bCharsFd = -1, bLensFd = -1, bTailsFd = -1, bSAFd = -1, bTopFd = -1, bIntFd = -1;
         unsigned w4 = 1;
@@ -4099,6 +4215,14 @@ int main(int argc, char** argv) {
             streamFnv = (streamFnv ^ (v.len * 0x9e3779b97f4a7c15ull + v.h + (v.t << 1) + v.c)) *
                         0x100000001b3ull;
             streamH += v.h; streamT += v.t; streamLen += v.len; ++streamRuns;
+            // XSA_FINISH_DUMP_STREAM (dev only): the emitted run stream, one
+            // 40-byte record per run, for offline ground-truth analysis.
+            if (streamDump) {
+                struct { uint64_t idx, rk, h, t; uint32_t len; uint8_t c, pad[3]; } rec;
+                rec.idx = rs.rNorm - 1; rec.rk = v.rk; rec.h = v.h; rec.t = v.t;
+                rec.len = uint32_t(v.len); rec.c = v.c; memset(rec.pad, 0, 3);
+                pf_write_full(streamDumpFd, &rec, sizeof rec, "stream dump");
+            }
             // Sub-phase tag: the sampler separates the transducer's own work
             // from the sink callback below (this store is ~1 ns/run and is the
             // only cost the instrument adds to the fold).
@@ -4283,28 +4407,40 @@ int main(int argc, char** argv) {
                 const int wid = t;   // worker index; `t` is shadowed by the run tail below
                 // PHASE 1: every run's exact rank WITHOUT an inverse.
                 //
-                // THE DESIGN: ranks ARE cumulative run lengths over the run list the
-                // finish itself emits. So the cursor below is not an estimate that
-                // needs correcting - it is the definition. An earlier version shipped
-                // a producer-side exception table keyed by run index, then by head
-                // position; both drifted, because the repair changes run LENGTHS and
-                // every length change shifts every later rank. Nothing producer-side
-                // can survive that; the finish's own stream is the only authority.
+                // TWO SUPPLIES, ONE CURSOR: the prefix sum over the emitted run
+                // list is the definition of rank everywhere EXCEPT inside the
+                // seam-class spans, where the repair emits the class rows in
+                // REBUILD (cyclic-content) order while the true suffix array -
+                // the order the column, the anchors and the emit's own raw stream
+                // all follow - places the class SEED (the wrap suffix that ends
+                // at the text end; the SA's sentinel convention) FIRST and the
+                // rest in the same content order. The splice stamps each class
+                // run's true head/tail rank (NRun::ht/tt, SeamClasses::rebuild);
+                // phase 1 takes the stamp when present, the cursor otherwise.
+                // THE ANCHOR CHECK: at every anchored head/tail the derived rank
+                // is compared with the producer's position-keyed ISA sample and
+                // any disagreement refuses - the product-scale verification of
+                // both supplies.
                 //
-                // The full ISA (--sa-locate, 10.5 TB at pile) is therefore a
-                // REFERENCE, used only by the audit arm to check every derived rank.
-                {
+                // SINGLE WORKER (the race fix): this block used to run in EVERY
+                // pool worker over the same shared arrays. `rowCursor` was read
+                // at worker-start and written at phase-1 end, so a worker that
+                // woke late read an already-advanced cursor, mixed foreign values
+                // into headRank/tailRank, and double-advanced the stream for the
+                // next band. Measured at 150 MB with the race present:
+                // deviating_runs 21.6M of 57.3M, rank_holes 35.6M, and DIFFERENT
+                // closure counters on every run of the same pieces - all four
+                // prior "stream is not rank-ordered" negative results were
+                // measured through this race.
+                if (wid == 0) {
                     uint64_t cursor = rowCursor;
                     for (size_t i = 0; i < cnt; ++i) {
                         // TRAILING PADDING RUNS live ABOVE n (the bin-walk seeds
-                        // n..n+9 plus the seam rows; CLOSURE's max_rank_end is n-2,
-                        // so the real content ends there). A run that STRADDLES the
-                        // end - the seam run covering the last text bytes AND the
-                        // padding rows - is treated the same way: it never indexes
-                        // the column, and clamping its tail would fake a
-                        // non-contiguity (measured: it turned noncontiguous_runs from
-                        // 0 into 1 and then failed 'an interior run collapsed').
-                        if (cursor >= n || cursor + nb[i].len > n) {
+                        // n..n+9 plus the seam rows). A run that STRADDLES the
+                        // end is treated the same way: it never indexes the
+                        // column, and clamping its tail would fake a
+                        // non-contiguity.
+                        if (nb[i].ht == ~0ull && (cursor >= n || cursor + nb[i].len > n)) {
                             // sentinel: outside the column's rank range, so downstream
                             // skips this run entirely (it is padding / the seam tail)
                             (*headRank)[i] = n;
@@ -4312,8 +4448,37 @@ int main(int argc, char** argv) {
                             cursor += nb[i].len;
                             continue;
                         }
-                        const uint64_t h = cursor;
-                        const uint64_t t = nb[i].len >= 2 ? cursor + nb[i].len - 1 : h;
+                        const uint64_t h = nb[i].ht != ~0ull ? nb[i].ht : cursor;
+                        // A stamped run is truly contiguous through the span
+                        // boundary (the span is true-placed); only a run that
+                        // CONTAINS the class seed is not, and the rebuild stamps
+                        // BOTH endpoints for it.
+                        const uint64_t t = nb[i].len >= 2
+                            ? (nb[i].tt != ~0ull ? nb[i].tt :
+                               (nb[i].ht != ~0ull ? h + nb[i].len - 1 : cursor + nb[i].len - 1))
+                            : h;
+                        if (sampIsa.map) {
+                            if (nb[i].h < n && sampIsa.has(nb[i].h)) {
+                                const uint64_t truth = sampIsa.at(nb[i].h);
+                                if (truth != h) {
+                                    fprintf(stderr, "XSA_FINISH_ANCHOR_MISMATCH kind=head i=%zu pos=%llu derived=%llu anchor=%llu len=%llu\n",
+                                            i, (unsigned long long)nb[i].h, (unsigned long long)h,
+                                            (unsigned long long)truth, (unsigned long long)nb[i].len);
+                                    pf_fail("KASAI ANCHOR: derived head rank != the sampled ISA anchor");
+                                }
+                                ++anchorChecks;
+                            }
+                            if (nb[i].len >= 2 && nb[i].t < n && sampIsa.has(nb[i].t)) {
+                                const uint64_t truth = sampIsa.at(nb[i].t);
+                                if (truth != t) {
+                                    fprintf(stderr, "XSA_FINISH_ANCHOR_MISMATCH kind=tail i=%zu pos=%llu derived=%llu anchor=%llu len=%llu\n",
+                                            i, (unsigned long long)nb[i].t, (unsigned long long)t,
+                                            (unsigned long long)truth, (unsigned long long)nb[i].len);
+                                    pf_fail("KASAI ANCHOR: derived tail rank != the sampled ISA anchor");
+                                }
+                                ++anchorChecks;
+                            }
+                        }
                         if (kasaiAudit >= 1) {
                             pf_check(locateIsa.at(nb[i].h) == h,
                                      "KASAI AUDIT: derived head rank != ISA");
@@ -4321,18 +4486,38 @@ int main(int argc, char** argv) {
                                 pf_check(locateIsa.at(nb[i].t) == t,
                                          "KASAI AUDIT: derived tail rank != ISA");
                         }
-                        if (isaDebug && wid == 0) {
+                        if (isaDebug) {
                             const uint64_t truth = trueIsa.at(nb[i].h);
                             const uint64_t dev = truth > h ? truth - h : h - truth;
-                            if (dev) { ++devRuns; devSum += dev; }
-                            if (dev > devMax) devMax = dev;
+                            if (dev) { devRuns.fetch_add(1); devSum.fetch_add(dev); }
+                            uint64_t prev = devMax.load(std::memory_order_relaxed);
+                            while (dev > prev &&
+                                   !devMax.compare_exchange_weak(prev, dev, std::memory_order_relaxed)) {}
+                            // The OFFSET PROFILE: the signed cursor offset and its
+                            // transitions localise the stream's tiling breaks (a
+                            // hole flips the offset by its size; an anti-hole flips
+                            // it back). One line per transition, dev-only.
+                            {
+                                const int64_t off = int64_t(truth) - int64_t(h);
+                                if (off != devPrevOff) {
+                                    devPrevOff = off;
+                                    if (devTransDump.fetch_add(1) < 96) {
+                                        fprintf(stderr, "XSA_FINISH_DEVTRANS run_idx=%llu i=%zu off=%lld head=%llu len=%llu cursor=%llu truth=%llu\n",
+                                                (unsigned long long)(streamRuns + i), i, (long long)off,
+                                                (unsigned long long)nb[i].h, (unsigned long long)nb[i].len,
+                                                (unsigned long long)h, (unsigned long long)truth);
+                                    }
+                                }
+                            }
                             // Is the transducer's OWN row base (the row the sweep
                             // state machine stamps on the run) already exact?
                             const uint64_t rkRank = nb[i].rk >= 10 ? nb[i].rk - 10 : 0;
                             const uint64_t rkDev = truth > rkRank ? truth - rkRank : rkRank - truth;
-                            if (rkDev) { ++rkDevRuns; rkDevSum += rkDev; if (rkDev > rkDevMax) rkDevMax = rkDev; }
-                            if (dev && devDump < 24) {
-                                ++devDump;
+                            if (rkDev) { rkDevRuns.fetch_add(1); rkDevSum.fetch_add(rkDev); }
+                            prev = rkDevMax.load(std::memory_order_relaxed);
+                            while (rkDev > prev &&
+                                   !rkDevMax.compare_exchange_weak(prev, rkDev, std::memory_order_relaxed)) {}
+                            if (dev && devDump.fetch_add(1) < 24) {
                                 fprintf(stderr, "XSA_FINISH_DEVDUMP i=%zu head=%llu len=%llu cursor=%llu rk=%llu truth=%llu dev=%lld rkdev=%lld\n",
                                         i, (unsigned long long)nb[i].h, (unsigned long long)nb[i].len,
                                         (unsigned long long)h, (unsigned long long)rkRank,
@@ -4371,7 +4556,10 @@ int main(int argc, char** argv) {
                         // refused.
                         if (i && (*headRank)[i] <= (*headRank)[i - 1])
                             kasaiState.disorder += 1;
-                        const uint64_t prevEnd = i ? (*headRank)[i - 1] + nb[i - 1].len : prevEndS;
+                        const uint64_t prevEnd =
+                            i ? ((*tailRank)[i - 1] < n ? (*tailRank)[i - 1] + 1
+                                                        : (*headRank)[i - 1] + nb[i - 1].len)
+                              : prevEndS;
                         if (prevEnd != (*headRank)[i]) {
                             kasaiState.gaps += 1;
                             if (wid == 0 && gapDump < 8) {
@@ -4387,7 +4575,9 @@ int main(int argc, char** argv) {
                     const uint64_t base = lo ? lo - 1 : 0;
                     lcpCol.load(*band, base, hi - base + 1);
                     kasaiState.lastHeadRank = (*headRank)[0];
-                    kasaiState.lastEndRank = (*headRank)[cnt - 1] + nb[cnt - 1].len;
+                    kasaiState.lastEndRank = (*tailRank)[cnt - 1] < n
+                        ? (*tailRank)[cnt - 1] + 1
+                        : (*headRank)[cnt - 1] + nb[cnt - 1].len;
                     next->store(0);
                     staged->store(1, std::memory_order_release);
                 }
@@ -4398,10 +4588,13 @@ int main(int argc, char** argv) {
                     if (i >= cnt) break;
                     const NRun& v = nb[i];
                     const uint64_t r = (*headRank)[i];
-                    const uint64_t prevEnd = i ? (*headRank)[i - 1] + nb[i - 1].len : prevEndS;
+                    const uint64_t prevEnd =
+                        i ? ((*tailRank)[i - 1] < n ? (*tailRank)[i - 1] + 1
+                                                    : (*headRank)[i - 1] + nb[i - 1].len)
+                          : prevEndS;
                     uint64_t top = 0;
                     if (gx[i]) {
-                        if (prevEnd == r) top = band->at(r - 1);
+                        if (prevEnd == r) top = band->at(r);
                         else {
                             // THE HOLE: the run stream skipped a rank, so this
                             // run's predecessor is not rank-adjacent and col[r-1]
@@ -4422,7 +4615,7 @@ int main(int argc, char** argv) {
                         const uint64_t a = std::min(r, rt), c = std::max(r, rt);
                         pf_check(c > a, "KASAI: an interior run collapsed to one rank");
                         inter = ~uint64_t(0);
-                        for (uint64_t t2 = a; t2 < c; ++t2) inter = std::min(inter, band->at(t2));
+                        for (uint64_t t2 = a + 1; t2 <= c; ++t2) inter = std::min(inter, band->at(t2));
                         pf_check(inter != ~uint64_t(0), "empty interior interval");
                     }
                     if (kasaiAudit) {
@@ -4494,7 +4687,13 @@ int main(int argc, char** argv) {
             {
                 PfRegion r("advance-witness", PF_ADVANCE);
                 double ta = tnow();
-                for (size_t i = 0; i < s.cnt; ++i) sweep.advance(s.nbuf[i], s.topLcp[i], s.interior[i]);
+                for (size_t i = 0; i < s.cnt; ++i) {
+                    // XSA_FINISH_DUMP_ANSWERS (dev only): the verified per-run
+                    // answers, for offline A/B between the arms.
+                    if (answersDump)
+                        pf_write_full(answersDumpFd, &s.topLcp[i], 16, "answers dump top+inter");
+                    sweep.advance(s.nbuf[i], s.topLcp[i], s.interior[i]);
+                }
                 advanceWall += tnow() - ta;
                 r.close(); advAcc.add(r);
             }
@@ -4529,7 +4728,9 @@ int main(int argc, char** argv) {
                     batch.classes.push_back(std::move(cl));
                 }
                 if (!batch.classes.empty()) {
-                    batch.rebuild(n,src.R,1u<<26,[&](uint64_t a,uint64_t b){return seamLce(a,b);},seamSymbol);
+                    batch.anchorVerify = seam.anchorVerify;
+                    batch.rebuild(n,src.R,1u<<26,[&](uint64_t a,uint64_t b){return seamLce(a,b);},seamSymbol,
+                                  batch.anchorVerify);
                     seam.total += batch.total; seam.maxSeamLce = std::max(seam.maxSeamLce,batch.maxSeamLce);
                     for (auto& cl : batch.classes) seam.classes.push_back(std::move(cl));
                 }
@@ -4677,11 +4878,11 @@ int main(int argc, char** argv) {
                         (unsigned long long)streamH, (unsigned long long)streamT,
                         (unsigned long long)streamLen);
                 fprintf(stderr, "XSA_FINISH_RANK_DEV deviating_runs=%llu max_dev=%llu mean_dev=%.2f\n",
-                        (unsigned long long)devRuns, (unsigned long long)devMax,
-                        devRuns ? double(devSum) / double(devRuns) : 0.0);
+                        (unsigned long long)devRuns.load(), (unsigned long long)devMax.load(),
+                        devRuns.load() ? double(devSum.load()) / double(devRuns.load()) : 0.0);
                 fprintf(stderr, "XSA_FINISH_RANK_DEV_RK deviating_runs=%llu max_dev=%llu mean_dev=%.2f\n",
-                        (unsigned long long)rkDevRuns, (unsigned long long)rkDevMax,
-                        rkDevRuns ? double(rkDevSum) / double(rkDevRuns) : 0.0);
+                        (unsigned long long)rkDevRuns.load(), (unsigned long long)rkDevMax.load(),
+                        rkDevRuns.load() ? double(rkDevSum.load()) / double(rkDevRuns.load()) : 0.0);
             }
         fprintf(stderr,
                     "XSA_FINISH_KASAI_CLOSURE bands=%llu rank_holes=%llu disorder=%llu "
@@ -4691,6 +4892,9 @@ int main(int argc, char** argv) {
                     (unsigned long long)kasaiState.noncontig,
                     (unsigned long long)kasaiState.fallback.load(),
                     (unsigned long long)lcpCol.maxEnd, (unsigned long long)n);
+            if (sampIsa.map)
+                fprintf(stderr, "XSA_FINISH_KASAI_ANCHORS checks=%llu mismatches=0 source=--isa-sample\n",
+                        (unsigned long long)anchorChecks);
         }
         // The final flush's coalesced tail runs continue the LAST band's slot:
         // it is empty and its prevTail is that band's last emitted tail, so the
@@ -4807,6 +5011,8 @@ int main(int argc, char** argv) {
             }
         }
         pf_check(::close(sparseFd) == 0, "close sparse scratch");
+        if (streamDumpFd >= 0) pf_check(::close(streamDumpFd) == 0, "close stream dump");
+        if (answersDumpFd >= 0) pf_check(::close(answersDumpFd) == 0, "close answers dump");
         if (bridge) {
             if (bTailAvail) {
                 uint64_t word = uint64_t(bTailRes);
