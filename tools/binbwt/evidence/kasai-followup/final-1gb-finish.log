@@ -1,0 +1,21 @@
+XSA_FINISH_CORPUS_WINDOWED regions=4 region_bytes=8589934592 mapped_cap=34359738368 need_windows=1 pinned=1
+XSA_FINISH_CORPUS path=/mnt/nvme2n1/erikg/ss-1g.txt bytes=1073741825 remap_identity=0 read_only=1 rotation=0 derivation=T[i]=REMAP[corpus[i]] mmap=0
+XSA_FINISH_LCP_COLUMN path=/mnt/nvme2n1/erikg/col1g/col n=1073741825 escapes=14452305 max_lcp=97059 bytes=1304978753 bytes_per_rank=1.2154
+XSA_FINISH_ISA_SAMPLE path=/mnt/nvme2n1/erikg/col1g/sa.isamp n=1073741825 k=64 entries=16777217 bytes=134217768
+XSA_FINISH_KASAI arm=on audit=0 column=/mnt/nvme2n1/erikg/col1g/col
+XSA_FINISH_CYCLIC=1 has_rs=1 has_nl=1 k=1
+XSA_FINISH_PFCK path=/tmp/kasai-final-evidence/1gb/frag.pfck2 n=1073741825 tau=22 count=48806447 bytes=390451616 wall=0.491 workers=42 segments=168 worker_bytes=1572864 source=corpus_adapter fixed_grid=1
+XSA_FINISH_PFCK_WAIT wall=0.085 overlapped=1
+XSA_FINISH_PHASE readiness-pfck wall=0.492 cumulative=0.494
+SLIM_PF_SELF_CHECK checks=256 passed=1 source=corpus_adapter
+SLIM_PF_SELF_CHECK checks=256 passed=1 source=corpus_adapter
+XSA_FINISH_TIER lce_trust=0 claims_dir=- lce_fault=0 probe_degrees=0 tier=T0-full constructor=byte-verifies-every-answer
+XSA_FINISH_PHASE fingerprints wall=0.003 cumulative=0.497
+XSA_FINISH_PHASE seam-classes wall=0.000 cumulative=0.497
+PFP_TERMINAL byte=0x1e source=padding-row raw_n=1073741835 raw_r=394663027
+XSA_FINISH_PROGRESS band=1/6023 runs=131068 chi_so_far=47754 repair_wall=0.0 lce_wall=0.0 lce_wait=0.0 advance_wall=0.0 wit_spills=0
+XSA_FINISH_PROGRESS band=65/6023 runs=4325372 chi_so_far=3379078 repair_wall=1.0 lce_wall=1.5 lce_wait=0.0 advance_wall=0.5 wit_spills=0
+XSA_FINISH_SEAM_ANCHORS checks=176212 mismatches=0 source=--isa-sample
+CYCLIC_SEAM_REPAIRED classes=1 rows=176212 discovery_steps=5 limit=67108864 phi_samples=394663027 pattern_chain=1 wm_scan=0 seam_spool=1
+CYCLIC_SEAM_WORK max_seam_lce=97059 exact=1 pattern_chain=1 wm_scan=0 seam_spool=1
+FATAL xsa_finish: KASAI STAMP: head stamp disagrees with derived cursor

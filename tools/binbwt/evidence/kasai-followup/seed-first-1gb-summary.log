@@ -1,0 +1,8 @@
+ENDPOINT_STREAM_PASS n=1073741825 k=1 r=394663025 padding_rows=10 cyclic_seam_certified=0 classes=4
+XSA_FINISH_STREAM_FNV runs=394663025 fnv=11422408412432991047 hsum=211685296447498632 tsum=211688860338766907 lensum=1073741825
+XSA_FINISH_RANK_DEV deviating_runs=0 max_dev=0 mean_dev=0.00
+XSA_FINISH_RANK_DEV_RK deviating_runs=394663022 max_dev=10 mean_dev=10.00
+XSA_FINISH_KASAI_CLOSURE bands=6022 rank_holes=0 disorder=0 noncontiguous_runs=0 walk_fallbacks=0 max_rank_end=1073741823 n=1073741825
+xsa chi-rspace: chi = 303812548 (N=1073741825, R=394663025) stream-agg=1 fused=1 corpus_lce=1
+ENDPOINT_STREAM_PASS n=1073741825 k=1 r=394663025 padding_rows=10 cyclic_seam_certified=0 classes=4
+XSA_FINISH_DONE chi=303812548 n=1073741825 r=394663025 container=/tmp/kasai-fixed-evidence/1gb/product.sxi2

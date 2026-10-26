@@ -1,0 +1,7 @@
+{
+  "bundle": "/home/erikg/sxgc/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-14gc3qlr/bundle",
+  "runtime_source_sha256": "ad768a6ab2d43e2cbe1166175ee9cf87508dbec0c7a89cca720af319573d808e",
+  "manifest_entries": 59,
+  "all_manifest_hashes_match": true,
+  "compiled_snapshot_matches_source": true
+}

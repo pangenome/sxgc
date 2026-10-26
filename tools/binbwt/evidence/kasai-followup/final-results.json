@@ -1,0 +1,158 @@
+[
+  {
+    "label": "repair-chunks",
+    "command": [
+      "/home/erikg/sxgc/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-14gc3qlr/bundle/xsa_finish",
+      "--selftest-repair-chunks"
+    ],
+    "returncode": 0,
+    "seconds": 0.286
+  },
+  {
+    "label": "sweep-monoid",
+    "command": [
+      "/home/erikg/sxgc/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-14gc3qlr/bundle/xsa_finish",
+      "--selftest-sweep-monoid"
+    ],
+    "returncode": 0,
+    "seconds": 0.06
+  },
+  {
+    "label": "seam-spool",
+    "command": [
+      "/home/erikg/sxgc/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-14gc3qlr/bundle/xsa_finish",
+      "--selftest-seam-spool",
+      "/tmp/kasai-final-evidence/spool"
+    ],
+    "returncode": 0,
+    "seconds": 0.07
+  },
+  {
+    "label": "tiny-emit",
+    "command": [
+      "/home/erikg/sxgc/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-14gc3qlr/bundle/cross_lcp_merge",
+      "--binbwt",
+      "/tmp/psi_tiny.txt",
+      "--remap",
+      "/mnt/nvme2n1/erikg/tape10/remap.bin",
+      "--out-prefix",
+      "/tmp/kasai-final-evidence/tiny/frag",
+      "--threads",
+      "4",
+      "--tape-emit",
+      "/tmp/sxgc-review-evidence/tiny.sa",
+      "--tape-emit-chunk",
+      "16777216"
+    ],
+    "returncode": 0,
+    "seconds": 0.282
+  },
+  {
+    "label": "tiny-finish",
+    "command": [
+      "/home/erikg/sxgc/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-14gc3qlr/bundle/xsa_finish",
+      "--prefix",
+      "/tmp/kasai-final-evidence/tiny/frag",
+      "--corpus",
+      "/tmp/psi_tiny.txt",
+      "--remap",
+      "/mnt/nvme2n1/erikg/tape10/remap.bin",
+      "--output",
+      "/tmp/kasai-final-evidence/tiny/product.sxi2",
+      "--threads",
+      "4",
+      "--lcp-column",
+      "/tmp/sxgc-review-evidence/tiny.col",
+      "--isa-sample",
+      "/tmp/sxgc-review-evidence/tiny.isamp",
+      "--sample-count",
+      "64"
+    ],
+    "returncode": 2,
+    "seconds": 0.021
+  },
+  {
+    "label": "150mb-emit",
+    "command": [
+      "/home/erikg/sxgc/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-14gc3qlr/bundle/cross_lcp_merge",
+      "--binbwt",
+      "/dev/shm/t150m.txt",
+      "--remap",
+      "/mnt/nvme2n1/erikg/tape10/remap.bin",
+      "--out-prefix",
+      "/tmp/kasai-final-evidence/150mb/frag",
+      "--threads",
+      "96",
+      "--tape-emit",
+      "/mnt/nvme2n1/erikg/rxt2/sa",
+      "--tape-emit-chunk",
+      "16777216"
+    ],
+    "returncode": 0,
+    "seconds": 5.731
+  },
+  {
+    "label": "150mb-finish",
+    "command": [
+      "/home/erikg/sxgc/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-14gc3qlr/bundle/xsa_finish",
+      "--prefix",
+      "/tmp/kasai-final-evidence/150mb/frag",
+      "--corpus",
+      "/dev/shm/t150m.txt",
+      "--remap",
+      "/mnt/nvme2n1/erikg/tape10/remap.bin",
+      "--output",
+      "/tmp/kasai-final-evidence/150mb/product.sxi2",
+      "--threads",
+      "96",
+      "--lcp-column",
+      "/mnt/nvme2n1/erikg/rxt2/col",
+      "--isa-sample",
+      "/dev/shm/is2.isamp"
+    ],
+    "returncode": 2,
+    "seconds": 0.51
+  },
+  {
+    "label": "1gb-emit",
+    "command": [
+      "/home/erikg/sxgc/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-14gc3qlr/bundle/cross_lcp_merge",
+      "--binbwt",
+      "/mnt/nvme2n1/erikg/ss-1g.txt",
+      "--remap",
+      "/mnt/nvme2n1/erikg/tape10/remap.bin",
+      "--out-prefix",
+      "/tmp/kasai-final-evidence/1gb/frag",
+      "--threads",
+      "96",
+      "--tape-emit",
+      "/mnt/nvme2n1/erikg/col1g/sa",
+      "--tape-emit-chunk",
+      "16777216"
+    ],
+    "returncode": 0,
+    "seconds": 37.805
+  },
+  {
+    "label": "1gb-finish",
+    "command": [
+      "/home/erikg/sxgc/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-14gc3qlr/bundle/xsa_finish",
+      "--prefix",
+      "/tmp/kasai-final-evidence/1gb/frag",
+      "--corpus",
+      "/mnt/nvme2n1/erikg/ss-1g.txt",
+      "--remap",
+      "/mnt/nvme2n1/erikg/tape10/remap.bin",
+      "--output",
+      "/tmp/kasai-final-evidence/1gb/product.sxi2",
+      "--threads",
+      "96",
+      "--lcp-column",
+      "/mnt/nvme2n1/erikg/col1g/col",
+      "--isa-sample",
+      "/mnt/nvme2n1/erikg/col1g/sa.isamp"
+    ],
+    "returncode": 2,
+    "seconds": 3.673
+  }
+]

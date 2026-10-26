@@ -1,0 +1,10 @@
+XSA_FINISH_DUMP_STREAM PRODUCT_REFUSAL_PASS
+XSA_FINISH_DUMP_ANSWERS PRODUCT_REFUSAL_PASS
+XSA_FINISH_ISA_DEBUG PRODUCT_REFUSAL_PASS
+baseline PASS rc=0 published=True
+walk PASS rc=0 published=True
+debug-walk PASS rc=0 published=True
+kasai PASS rc=2 published=False
+kasai-no-anchor PASS rc=2 published=False
+WALK_BASELINE_IDENTICAL sha256=e91f9d9c6f206e94efa96e7d1e05d980c55353cded6dc24f355b0ec9e7615aa3
+EXPLICIT_DEBUG_DUMPS_PASS walk_bytes_identical=1

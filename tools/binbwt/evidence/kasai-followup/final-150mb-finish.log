@@ -1,0 +1,19 @@
+XSA_FINISH_CORPUS path=/dev/shm/t150m.txt bytes=150000001 remap_identity=0 read_only=1 rotation=0 derivation=T[i]=REMAP[corpus[i]] mmap=1
+XSA_FINISH_LCP_COLUMN path=/mnt/nvme2n1/erikg/rxt2/col n=150000001 escapes=1763155 max_lcp=69631 bytes=178210529 bytes_per_rank=1.1881
+XSA_FINISH_ISA_SAMPLE path=/dev/shm/is2.isamp n=150000001 k=64 entries=2343751 bytes=18750040
+XSA_FINISH_KASAI arm=on audit=0 column=/mnt/nvme2n1/erikg/rxt2/col
+XSA_FINISH_CYCLIC=1 has_rs=1 has_nl=1 k=1
+XSA_FINISH_PFCK path=/tmp/kasai-final-evidence/150mb/frag.pfck2 n=150000001 tau=22 count=6818182 bytes=54545496 wall=0.079 workers=42 segments=168 worker_bytes=1572864 source=corpus_adapter fixed_grid=1
+XSA_FINISH_PFCK_WAIT wall=0.008 overlapped=1
+XSA_FINISH_PHASE readiness-pfck wall=0.079 cumulative=0.081
+SLIM_PF_SELF_CHECK checks=256 passed=1 source=corpus_adapter
+SLIM_PF_SELF_CHECK checks=256 passed=1 source=corpus_adapter
+XSA_FINISH_TIER lce_trust=0 claims_dir=- lce_fault=0 probe_degrees=0 tier=T0-full constructor=byte-verifies-every-answer
+XSA_FINISH_PHASE fingerprints wall=0.003 cumulative=0.083
+XSA_FINISH_PHASE seam-classes wall=0.000 cumulative=0.083
+PFP_TERMINAL byte=0x1e source=padding-row raw_n=150000011 raw_r=57279189
+XSA_FINISH_PROGRESS band=1/875 runs=131068 chi_so_far=50217 repair_wall=0.0 lce_wall=0.0 lce_wait=0.0 advance_wall=0.0 wit_spills=0
+XSA_FINISH_SEAM_ANCHORS checks=25454 mismatches=0 source=--isa-sample
+CYCLIC_SEAM_REPAIRED classes=1 rows=25454 discovery_steps=3 limit=67108864 phi_samples=57279189 pattern_chain=1 wm_scan=0 seam_spool=1
+CYCLIC_SEAM_WORK max_seam_lce=1983 exact=1 pattern_chain=1 wm_scan=0 seam_spool=1
+FATAL xsa_finish: KASAI STAMP: head stamp disagrees with derived cursor

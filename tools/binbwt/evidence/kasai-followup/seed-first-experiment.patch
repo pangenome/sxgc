@@ -1,0 +1,104 @@
+--- a/bit6/xsa_finish.cpp
++++ b/bit6/xsa_finish.cpp
+@@ -1472,6 +1472,7 @@
+ 
+ struct SeamClasses {
+     bool fromSpool = false;
++    bool rankOrdered = false; // Kasai column uses finite-suffix order.
+     // --isa-sample, installed by the fold before build/rebuild: the class
+     // true-rank model is verified against it at every anchored occurrence.
+     // Called as (position, modelRank); a disagreement must pf_fail inside.
+@@ -1664,18 +1665,9 @@
+                  const std::function<uint64_t(uint64_t, uint64_t)>& collection_lce,
+                  const std::function<uint8_t(uint64_t)>& symbol,
+                  const std::function<void(uint64_t, uint64_t)>& anchorVerify) {
+-        // rebuild each class: v1's LCE comparator + run rebuild, verbatim.
+-        //
+-        // THE TRUE ORDER OF A CLASS: the rebuild sorts occ(P_d) by cyclic
+-        // content, but the TRUE suffix array places the class SEED (the chain
+-        // seed at position n-d, the suffix that ENDS at the text end - the SA's
+-        // sentinel convention for the cyclic wrap) FIRST and the remaining
+-        // occurrences in exactly that same content order (measured exactly,
+-        // 101/101 at 2 MB and via the anchors at 150 MB). So the true rank of
+-        // the i-th rebuild-order occurrence is
+-        //     rank(i) = lo + (i == iSeed ? 0 : 1 + i - (i > iSeed))
+-        // and every emitted class run gets its true endpoints stamped so the
+-        // Kasai phase 1 never has to trust the stream's row accounting there.
++        // The legacy walk arm uses cyclic-content order. The finite-suffix
++        // column instead requires the terminal seed first. Move the actual row,
++        // not merely its rank certificate, before rebuilding/coalescing runs.
+         uint64_t maxSeam = 0;
+         for (auto& cl : classes) {
+             std::vector<uint64_t> sa = cl.occ;
+@@ -1684,11 +1676,12 @@
+                 maxSeam = std::max(maxSeam, len);
+                 return len == n ? a < b : symbol((a + len) % n) < symbol((b + len) % n);
+             });
+-            const uint64_t iSeed = uint64_t(
+-                std::find(sa.begin(), sa.end(), cl.first) - sa.begin());
+-            pf_check(iSeed < sa.size(), "seam class seed missing from its own occurrence set");
++            auto seed = std::find(sa.begin(), sa.end(), cl.first);
++            pf_check(seed != sa.end(), "seam class seed missing from its own occurrence set");
++            if (rankOrdered) std::rotate(sa.begin(), seed, seed + 1);
++            const uint64_t iSeed = uint64_t(std::find(sa.begin(), sa.end(), cl.first) - sa.begin());
+             auto trueIdx = [&](uint64_t i) {
+-                return i == iSeed ? 0 : 1 + i - (i > iSeed ? 1 : 0);
++                return rankOrdered ? i : (i == iSeed ? 0 : 1 + i - (i > iSeed ? 1 : 0));
+             };
+             // ANCHOR VERIFICATION: the model must reproduce the sampled ISA at
+             // every anchored occurrence of the class, or the supply refuses.
+@@ -3828,6 +3821,7 @@
+         int threads = int(std::thread::hardware_concurrency());
+         std::string prefix, corpus, remap, out, bridgeDir, sampleCheck, wmPath;
+         std::string checkClaimsDir;   // PROB-CHI: standalone checker mode
++        bool debugArtifacts = false;
+         std::string lcpColumnPath;    // KASAI: the prebuilt LCP column (--lcp-column)
+         std::string locateIsaPath;    // KASAI: the locate table (--sa-locate)
+         std::string runRanksPath;     // KASAI: prefix-sum run ranks (--run-ranks)
+@@ -3844,6 +3838,7 @@
+             else if (a == "--corpus") corpus = need("--corpus");
+             else if (a == "--remap") remap = need("--remap");
+             else if (a == "--check-claims") checkClaimsDir = need("--check-claims");
++            else if (a == "--debug-artifacts") debugArtifacts = true;
+             else if (a == "--lcp-column") lcpColumnPath = need("--lcp-column");
+             else if (a == "--run-ranks") runRanksPath = need("--run-ranks");
+             else if (a == "--isa-sample") isaSamplePath = need("--isa-sample");
+@@ -3913,6 +3908,9 @@
+         SampIsa sampIsa;
+         TrueIsa trueIsa;
+         const bool isaDebug = !pf_env_str("XSA_FINISH_ISA_DEBUG").empty();
++        pf_check(debugArtifacts || (!isaDebug && pf_env_str("XSA_FINISH_DUMP_STREAM").empty() &&
++                                    pf_env_str("XSA_FINISH_DUMP_ANSWERS").empty()),
++                 "offline ISA/dumps require explicit --debug-artifacts (outside product space contract)");
+         if (isaDebug) trueIsa.load(pf_env_str("XSA_FINISH_ISA_DEBUG"), n);
+         // Dev counters vs ground truth. Atomics: the psi-walk phase 1 is
+         // per-run parallel, so several workers may touch them.
+@@ -4088,6 +4086,7 @@
+ 
+         LceWrap seamLce{&fhSeam, {}, n};
+         SeamClasses seam;
++        seam.rankOrdered = kasaiOn;
+         // THE CLASS TRUE-RANK SUPPLY's verification: the rebuild checks every
+         // anchored class occurrence against --isa-sample and refuses on any
+         // disagreement (product-scale proof; fixture scale adds TrueIsa on top).
+@@ -4454,7 +4453,11 @@
+                             cursor += nb[i].len;
+                             continue;
+                         }
+-                        const uint64_t h = nb[i].ht != ~0ull ? nb[i].ht : cursor;
++                        pf_check(nb[i].ht == ~0ull || nb[i].ht == cursor,
++                                 "KASAI STAMP: head stamp disagrees with derived cursor");
++                        pf_check(nb[i].tt == ~0ull || nb[i].tt == cursor + nb[i].len - 1,
++                                 "KASAI STAMP: tail stamp disagrees with derived cursor");
++                        const uint64_t h = cursor;
+                         // A stamped run is truly contiguous through the span
+                         // boundary (the span is true-placed); only a run that
+                         // CONTAINS the class seed is not, and the rebuild stamps
+@@ -4732,6 +4735,7 @@
+                     r.close(); waitAcc.add(r); tw += r.wall;
+                 }
+                 SeamClasses batch; batch.fromSpool = true; batch.depth = src.depth;
++                batch.rankOrdered = seam.rankOrdered;
+                 while (src.delivered < src.completed.size()) {
+                     const auto& values = src.completed[src.delivered++];
+                     SeamClass cl{values[3],values[4],values[5],values[6],values[7],{}, {}};

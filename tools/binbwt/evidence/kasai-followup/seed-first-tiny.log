@@ -1,0 +1,71 @@
+XSA_FINISH_CORPUS path=/tmp/psi_tiny.txt bytes=454752 remap_identity=0 read_only=1 rotation=0 derivation=T[i]=REMAP[corpus[i]] mmap=1
+XSA_FINISH_PFCK path=/tmp/kasai-fixed-evidence/tiny/frag.pfck2 n=454752 tau=22 count=20671 bytes=165408 wall=0.004 workers=4 segments=16 worker_bytes=1572864 source=corpus_adapter fixed_grid=1
+XSA_FINISH_ISA_DEBUG n=454752 inverse built (3 MB)
+XSA_FINISH_LCP_COLUMN path=/tmp/sxgc-review-evidence/tiny.col n=454752 escapes=755 max_lcp=491 bytes=466880 bytes_per_rank=1.0267
+XSA_FINISH_ISA_SAMPLE path=/tmp/sxgc-review-evidence/tiny.isamp n=454752 k=64 entries=7106 bytes=56880
+XSA_FINISH_KASAI arm=on audit=0 column=/tmp/sxgc-review-evidence/tiny.col
+XSA_FINISH_CYCLIC=1 has_rs=1 has_nl=1 k=1
+XSA_FINISH_PFCK_WAIT wall=0.000 overlapped=1
+XSA_FINISH_PHASE readiness-pfck wall=0.010 cumulative=0.011
+SLIM_PF_SELF_CHECK checks=256 passed=1 source=corpus_adapter
+SLIM_PF_SELF_CHECK checks=256 passed=1 source=corpus_adapter
+XSA_FINISH_TIER lce_trust=0 claims_dir=- lce_fault=0 probe_degrees=0 tier=T0-full constructor=byte-verifies-every-answer
+XSA_FINISH_PHASE fingerprints wall=0.000 cumulative=0.011
+XSA_FINISH_PHASE seam-classes wall=0.000 cumulative=0.011
+XSA_FINISH_SEAM_ANCHORS checks=101 mismatches=0 source=--isa-sample
+CYCLIC_SEAM_REPAIRED classes=1 rows=101 discovery_steps=2 limit=67108864 phi_samples=192140 pattern_chain=1 wm_scan=0 seam_spool=1
+CYCLIC_SEAM_WORK max_seam_lce=60 exact=1 pattern_chain=1 wm_scan=0 seam_spool=1
+PFP_TERMINAL byte=0x1e source=padding-row raw_n=454762 raw_r=192140
+CYCLIC_SEAM_REPAIR terminal=0x1e predecessors_before_zero=38
+XSA_FINISH_PROGRESS band=1/3 runs=131068 chi_so_far=53151 repair_wall=0.0 lce_wall=0.0 lce_wait=0.0 advance_wall=0.0 wit_spills=0
+XSA_FINISH_CACHE_RESIDENCY label=finish sampled_pages=2 resident_pages=2 resident_pct=100.00 stride_pages=64 corpus_gb=0.000 resident_gb=0.001 meminfo_cached_gb=901.02 meminfo_dirty_gb=0.01 meminfo_free_gb=39.64 meminfo_shmem_gb=113.46 populate_ranges=0 willneed_ranges=0 willneed_bytes=0 willneed_failed=0 cold_drops=0 cold_bytes=0 cold_wall=0.000
+XSA_FINISH_COLD_CORPUS enabled=0 every_bands=0 drops=0 bytes=0 wall=0.000 corpus_gb=0.000
+ENDPOINT_STREAM_PASS n=454752 k=1 r=192138 padding_rows=10 cyclic_seam_certified=0 classes=1
+XSA_FINISH_STREAM_FNV runs=192138 fnv=15831744447519336520 hsum=42050348009 tsum=42055162179 lensum=454752
+XSA_FINISH_RANK_DEV deviating_runs=0 max_dev=0 mean_dev=0.00
+XSA_FINISH_RANK_DEV_RK deviating_runs=192135 max_dev=10 mean_dev=10.00
+XSA_FINISH_KASAI_CLOSURE bands=3 rank_holes=0 disorder=0 noncontiguous_runs=0 walk_fallbacks=0 max_rank_end=454748 n=454752
+XSA_FINISH_KASAI_ANCHORS checks=3925 mismatches=0 source=--isa-sample
+XSA_FINISH_LCP_COLUMN_READS preads=4 staged_bytes=454755 escapes=755 max_lcp=491 audit=0 arm=kasai
+SWEEP_PHASE_WALLS repair=0.0 lce=0.1 advance_witness=0.0 lce_threads=4
+XSA_FINISH_REGION piece-wait wall=0.000 cpu=0.001 minflt=4 majflt=0 dev_read=0 units=3 bands_ns=86516.61
+XSA_FINISH_REGION readband wall=0.006 cpu=0.026 minflt=1466 majflt=0 dev_read=0 units=192140 raw_runs_ns=33.61
+XSA_FINISH_REGION repair-feed wall=0.022 cpu=0.077 minflt=2303 majflt=0 dev_read=0 units=192140 raw_runs_ns=116.57
+XSA_FINISH_REGION lce wall=0.000 cpu=0.000 minflt=0 majflt=0 dev_read=0 units=192138 runs_ns=0.00
+XSA_FINISH_REGION advance-witness wall=0.018 cpu=0.062 minflt=150 majflt=0 dev_read=0 units=192138 runs_ns=94.02
+XSA_FINISH_REGION lce-span wall=0.059 waited=0.023 overlapped=0.036 units=192138 runs_ns=305.11
+XSA_FINISH_OVERLAP feed_spans=0.021 lce_spans=0.059 exposed_lce=0.023 serial_fold=0.070
+XSA_FINISH_SWEEP_ANATOMY piecewait=0.000 readband=0.006 feed=0.022 repair_total=0.029 raw_runs=192140 bands=3 rlebwt_wait=0.000 ns_per_raw_run=116.57
+XSA_FINISH_CORPUS_ACCESS phase=sweep calls=0 page_hops=0 hop_rate=0.0000 ns_per_call=0.00
+SLIM_FP pile-finish-corpus tau=22 bytes=165368 queries=0 verified_symbols=0 hash_probes=0 mean_verified=0.000000000 max_verified=0 max_requested_lce=0 verification_work=0 hash_probe_charges=512 suffix_symbol_reads=5312 total_work=512 total_limit=1000000000 verification_limit=454752 probe_limit=22 hash_trust=0 claimed_symbols=0 exact_fast=0 probe_degrees=0
+SLIM_FP pile-finish-seam tau=22 bytes=165368 queries=589 verified_symbols=1703 hash_probes=17 mean_verified=2.891341256 max_verified=61 max_requested_lce=60 verification_work=1770 hash_probe_charges=580 suffix_symbol_reads=5956 total_work=2350 total_limit=100000000 verification_limit=454752 probe_limit=22 hash_trust=0 claimed_symbols=0 exact_fast=0 probe_degrees=0
+XSA_FINISH_PHASE sweep wall=0.074 cumulative=0.086
+xsa chi-rspace: chi = 145685 (N=454752, R=192138) stream-agg=1 fused=1 corpus_lce=1
+SLIM_SEEDS queries=0 lce_wall=0.1 repair_wall=0.0 wit_ram_values=145685 wit_spills=0 wit_disc_bytes=0
+XSA_FINISH_REGION m5-sort wall=0.002 cpu=0.007 minflt=0 majflt=0 dev_read=0 units=145685 witnesses_ns=12.47
+XSA_FINISH_REGION m5-encode wall=0.005 cpu=0.005 minflt=11 majflt=0 dev_read=0 units=145685 witnesses_ns=31.42
+XSA_FINISH_WITNESS_PATH resident=1 buckets=4096 spilled=0 values=145685 cache_release_calls=0 cache_released_bytes=0
+PILE_CONTAINER_BEGIN id=5 codec=105 count=145685 offset=304
+XSA_FINISH_REGION m5-ef wall=0.008 cpu=0.013 minflt=271 majflt=0 dev_read=0 units=145685 witnesses_ns=55.06
+XSA_FINISH_PHASE m5-ef wall=0.008 cumulative=0.094
+PILE_CONTAINER_BEGIN id=4 codec=4 count=0 offset=65176
+PILE_CONTAINER_BEGIN id=7 codec=7 count=256 offset=65192
+PILE_CONTAINER_BEGIN id=10 codec=110 count=192138 offset=65448
+PILE_CONTAINER_BEGIN id=11 codec=111 count=188 offset=65448
+XSA_FINISH_REGION m1-rlebwt-wait wall=0.000 cpu=0.000 minflt=0 majflt=0 dev_read=0 units=768560 bytes_ns=0.01
+CYCLIC_SEAM_REPAIR terminal=0x1e predecessors_before_zero=38
+ENDPOINT_STREAM_PASS n=454752 k=1 r=192138 padding_rows=10 cyclic_seam_certified=0 classes=1
+XSA_FINISH_REGION m1-replay wall=0.013 cpu=0.013 minflt=12 majflt=0 dev_read=0 units=192138 runs_ns=69.47
+PILE_CONTAINER_BEGIN id=1 codec=101 count=192138 offset=66968
+XSA_FINISH_REGION m1-runs wall=0.015 cpu=0.015 minflt=14 majflt=0 dev_read=0 units=192138 runs_ns=76.54
+XSA_FINISH_PHASE m1-runs wall=0.015 cumulative=0.109
+SXI2_MEMBER id=1 codec=101 count=192138 bytes=172949
+SXI2_MEMBER id=4 codec=4 count=0 bytes=12
+SXI2_MEMBER id=5 codec=105 count=145685 bytes=64868
+SXI2_MEMBER id=7 codec=7 count=256 bytes=256
+SXI2_MEMBER id=10 codec=110 count=192138 bytes=0
+SXI2_MEMBER id=11 codec=111 count=188 bytes=1520
+SXI2_PASS bytes=239917 lite=1 members=6
+XSA_FINISH_PHASE publish wall=0.001 cumulative=0.110
+XSA_FINISH_RLEBWT_DELETED
+XSA_FINISH_DONE chi=145685 n=454752 r=192138 container=/tmp/kasai-fixed-evidence/tiny/product.sxi2

@@ -1,0 +1,18 @@
+XSA_FINISH_CORPUS path=/tmp/psi_tiny.txt bytes=454752 remap_identity=0 read_only=1 rotation=0 derivation=T[i]=REMAP[corpus[i]] mmap=1
+XSA_FINISH_LCP_COLUMN path=/tmp/sxgc-review-evidence/tiny.col n=454752 escapes=755 max_lcp=491 bytes=466880 bytes_per_rank=1.0267
+XSA_FINISH_ISA_SAMPLE path=/tmp/sxgc-review-evidence/tiny.isamp n=454752 k=64 entries=7106 bytes=56880
+XSA_FINISH_KASAI arm=on audit=0 column=/tmp/sxgc-review-evidence/tiny.col
+XSA_FINISH_CYCLIC=1 has_rs=1 has_nl=1 k=1
+XSA_FINISH_PFCK path=/tmp/kasai-final-evidence/tiny/frag.pfck2 n=454752 tau=22 count=20671 bytes=165408 wall=0.004 workers=4 segments=16 worker_bytes=1572864 source=corpus_adapter fixed_grid=1
+XSA_FINISH_PFCK_WAIT wall=0.000 overlapped=1
+XSA_FINISH_PHASE readiness-pfck wall=0.004 cumulative=0.005
+SLIM_PF_SELF_CHECK checks=256 passed=1 source=corpus_adapter
+SLIM_PF_SELF_CHECK checks=256 passed=1 source=corpus_adapter
+XSA_FINISH_TIER lce_trust=0 claims_dir=- lce_fault=0 probe_degrees=0 tier=T0-full constructor=byte-verifies-every-answer
+XSA_FINISH_PHASE fingerprints wall=0.000 cumulative=0.005
+XSA_FINISH_PHASE seam-classes wall=0.000 cumulative=0.005
+XSA_FINISH_SEAM_ANCHORS checks=101 mismatches=0 source=--isa-sample
+CYCLIC_SEAM_REPAIRED classes=1 rows=101 discovery_steps=2 limit=67108864 phi_samples=192140 pattern_chain=1 wm_scan=0 seam_spool=1
+CYCLIC_SEAM_WORK max_seam_lce=60 exact=1 pattern_chain=1 wm_scan=0 seam_spool=1
+PFP_TERMINAL byte=0x1e source=padding-row raw_n=454762 raw_r=192140
+FATAL xsa_finish: KASAI STAMP: head stamp disagrees with derived cursor
