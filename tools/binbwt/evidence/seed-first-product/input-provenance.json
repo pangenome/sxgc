@@ -1,0 +1,67 @@
+{
+  "remap": {
+    "path": "/mnt/nvme2n1/erikg/tape10/remap.bin",
+    "bytes": 256,
+    "sha256": "b4f387767707f3095a0981148a1753f8da5885c30c19753b3b93887153e611be"
+  },
+  "fixture-corpus": {
+    "path": "/tmp/psi_tiny.txt",
+    "bytes": 454752,
+    "sha256": "b534236bcddd1b013184d582e4b2c67418ddcc3ce20d83b829461bc080cea881"
+  },
+  "fixture-sa": {
+    "path": "/tmp/sxgc-review-evidence/tiny.sa",
+    "bytes": 3638064,
+    "sha256": "8d83c21496a9ed37183e038e1f7a34ada996609227873a95768ef1e704ba5bad"
+  },
+  "fixture-column": {
+    "path": "/tmp/sxgc-review-evidence/tiny.col",
+    "bytes": 466880,
+    "sha256": "ae85b04d7dd21594313733f4521b86e459c408256e2c9cef0bc5b607894e42ce"
+  },
+  "fixture-isamp": {
+    "path": "/tmp/sxgc-review-evidence/tiny.isamp",
+    "bytes": 56880,
+    "sha256": "a0da25171505febd4a2e2089dbb3d663ff9f4a54826a6d7c62d26edf1d49f512"
+  },
+  "150mb-corpus": {
+    "path": "/dev/shm/t150m.txt",
+    "bytes": 150000001,
+    "sha256": "817cb1645943e7a3241b4a773820c7df6a27c6268f98ac3ecbd0331802beab9e"
+  },
+  "150mb-sa": {
+    "path": "/mnt/nvme2n1/erikg/rxt2/sa",
+    "bytes": 1200000056,
+    "sha256": "38f0113c082e4d0238dbd4fb2562de6d0feebf2053b98ffd6e0d0502d43c31f0"
+  },
+  "150mb-column": {
+    "path": "/mnt/nvme2n1/erikg/rxt2/col",
+    "bytes": 178210529,
+    "sha256": "7d19da36272620247de87884f23c15bba808704b86f08d9d8633f2a63b05575b"
+  },
+  "150mb-isamp": {
+    "path": "/dev/shm/is2.isamp",
+    "bytes": 18750040,
+    "sha256": "dbe31de5dbcf5b77782ae7c6d0feb049412026b1b80b7bef4ac0b553155078cf"
+  },
+  "1gb-corpus": {
+    "path": "/mnt/nvme2n1/erikg/ss-1g.txt",
+    "bytes": 1073741825,
+    "sha256": "fe366c8b73263a1e2d62307f7537178680ad18351b9b3782de6bee22709d7689"
+  },
+  "1gb-sa": {
+    "path": "/mnt/nvme2n1/erikg/col1g/sa",
+    "bytes": 8589934648,
+    "sha256": "6ff5a019a7df120ff8ffc1b1b32f328c82d02ef7dc68604d1b24ec27aea55d34"
+  },
+  "1gb-column": {
+    "path": "/mnt/nvme2n1/erikg/col1g/col",
+    "bytes": 1304978753,
+    "sha256": "3be74c9581541dd2afc2bd7d827d10b62a578533bd4dcb73b7c1e5b34957812a"
+  },
+  "1gb-isamp": {
+    "path": "/mnt/nvme2n1/erikg/col1g/sa.isamp",
+    "bytes": 134217768,
+    "sha256": "a931d60ab19ce7b6f90132c1ac89f4999bf75fa06cda62ff6dabacef0a6a6b80"
+  }
+}

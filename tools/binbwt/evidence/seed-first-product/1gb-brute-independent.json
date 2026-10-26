@@ -1,0 +1,20 @@
+{
+  "command": [
+    "/tmp/stream_vs_bwt",
+    "--corpus",
+    "/mnt/nvme2n1/erikg/ss-1g.txt",
+    "--remap",
+    "/mnt/nvme2n1/erikg/tape10/remap.bin",
+    "--sa",
+    "/mnt/nvme2n1/erikg/col1g/sa",
+    "--container",
+    "/tmp/seed-first-product/1gb/product/product.sxi2",
+    "--chi-expect",
+    "303812548"
+  ],
+  "returncode": 0,
+  "seconds": 439.629,
+  "checker_sha256": "a3b174a5aec5974697380c122f44fd11033b401473b9f83bcc0b74cf005e4324",
+  "convention": "finite SA; wrapped predecessor; direct finite LCP at EVERY rank; independent scalar chi; no column, ISA, product Sweep or bank",
+  "log": "tools/binbwt/evidence/seed-first-product/1gb-brute-independent.log"
+}

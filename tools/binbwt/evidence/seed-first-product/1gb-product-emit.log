@@ -1,0 +1,6 @@
+CROSS_SEAM_DISCOVERED n=1073741825 depth=5 raw_classes=4 aggregate_occurrences=183772 unique_targets=183772 limit=1073741 work_limit=17179869200 before_walk=1 bounded=1
+TAPE_EMIT_START n=1073741825 targets=183772 chunk=16777216 prefix=/tmp/seed-first-product/1gb/product/frag
+TAPE_EMIT_RUNEXC path=/tmp/seed-first-product/1gb/product/frag.runexc count=65535
+TAPE_EMIT_STATS slot_wait_s=0.00 flow_wait_s=0.02 row_loop_s=19.84 writers=32
+TAPE_EMIT_DONE rows=1073741825 runs=394663027 hits=183772 wall=44.01 read_s=0.94 word_s=23.04 publish_s=19.84 finish_s=0.03
+POOL_STATS fd=4 bytes=1073741825 slots=1048576 fills=174160 hits=9618 misses=174160 torn=0

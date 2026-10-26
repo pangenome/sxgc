@@ -1,1 +1,1 @@
-BINBWT_TINY_PRODUCT_PASS cases=48 fixtures=12 real_windows=3 NUL=1 byte05=1 wrap_prefix=1 periodic=1 nested=1 cap=1,7 threads=1,3 raw_runs=brute_exact chi=brute_exact witnesses=all_exact container=validated
+BINBWT_TINY_PRODUCT_PASS cases=48 fixtures=12 real_windows=3 NUL=1 byte05=1 wrap_prefix=1 periodic=1 nested=1 cap=1,7 threads=1,3 raw_runs=brute_exact chi=brute_exact witnesses=all_exact container=validated bwt=brute_exact

@@ -1,3 +1,10 @@
+> Historical review below used the superseded cyclic-bank contract. The
+> operator adopted finite-SA seed-first on 2026-10-26. Current implementation,
+> seven-check review, direct all-row evidence and space limitations are recorded
+> in [SEED_FIRST_PRODUCT_REVIEW.md](SEED_FIRST_PRODUCT_REVIEW.md) and the latest
+> RESULTS section of [RESULTS_TAPE_PROTOTYPE.md](RESULTS_TAPE_PROTOTYPE.md).
+> Bank mismatches below are not failures under the current contract.
+
 # Follow-up implementation and adversarial review (2026-10-26)
 
 **Result: FAIL / incomplete.** Commit c2cfdb3 fixes unconditional stamp authority,

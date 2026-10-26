@@ -39,6 +39,7 @@ def brute(t):
         previous=(c,tail);prior_inside=inside
     result.extend(pos[cc] for cc in range(1,256) if active[cc])
     return runs,sorted(result)
+checker=os.environ.get('STREAM_VS_BWT_BIN')
 results=[]
 for index,t in enumerate(fixtures):
     assert not any(c in t for c in [1,2,3,4])
@@ -61,6 +62,12 @@ for index,t in enumerate(fixtures):
         with (d/'finish.log').open('w') as log:subprocess.run(c,stdout=log,stderr=log,check=True)
         b=(bridge/'frag.sA').read_bytes();got=sorted(struct.unpack('<'+'Q'*(len(b)//8),b))
         assert got==expected,(index,cap,got,expected)
+        if checker:
+            exact_sa=sorted(range(len(t)),key=lambda p:t[p:])
+            sa_path=d/'brute.sxsa'
+            sa_path.write_bytes(struct.pack('<IIQQQQQ',0x41535853,1,len(t),1,len(t),len(t),10)+b''.join(struct.pack('<Q',p) for p in exact_sa))
+            with (d/'bwt-check.log').open('w') as log:
+                subprocess.run([checker,'--corpus',str(corpus),'--remap',str(map_path),'--sa',str(sa_path),'--container',str(d/'product.sxi2')],stdout=log,stderr=log,check=True)
         results.append(dict(fixture=index,cap=cap,threads=threads,n=len(t),chi=len(expected),raw_runs='exact',witnesses='exact'))
 (root/'results.json').write_text(json.dumps(results,indent=2)+'\n')
-print(f'BINBWT_TINY_PRODUCT_PASS cases={len(results)} fixtures={len(fixtures)} real_windows=3 NUL=1 byte05=1 wrap_prefix=1 periodic=1 nested=1 cap=1,7 threads=1,3 raw_runs=brute_exact chi=brute_exact witnesses=all_exact container=validated')
+print(f'BINBWT_TINY_PRODUCT_PASS cases={len(results)} fixtures={len(fixtures)} real_windows=3 NUL=1 byte05=1 wrap_prefix=1 periodic=1 nested=1 cap=1,7 threads=1,3 raw_runs=brute_exact chi=brute_exact witnesses=all_exact container=validated' + (' bwt=brute_exact' if checker else ' bwt=not_checked'))

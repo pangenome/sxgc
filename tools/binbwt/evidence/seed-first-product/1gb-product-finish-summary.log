@@ -1,0 +1,12 @@
+XSA_FINISH_DEBUG_ARTIFACTS enabled=0 product_dump_scratch_bytes=0
+XSA_FINISH_SEAM_ANCHORS checks=176212 mismatches=0 source=--isa-sample
+XSA_FINISH_SEAM_ANCHORS checks=14 mismatches=0 source=--isa-sample
+XSA_FINISH_SEAM_ANCHORS checks=6926 mismatches=0 source=--isa-sample
+XSA_FINISH_SEAM_ANCHORS checks=620 mismatches=0 source=--isa-sample
+ENDPOINT_STREAM_PASS n=1073741825 k=1 r=394663025 padding_rows=10 cyclic_seam_certified=0 classes=4
+XSA_FINISH_KASAI_CLOSURE bands=6023 rank_holes=0 disorder=0 noncontiguous_runs=0 walk_fallbacks=0 max_rank_end=1073741825 n=1073741825
+XSA_FINISH_KASAI_ANCHORS checks=7938716 mismatches=0 source=--isa-sample
+xsa chi-rspace: chi = 303812548 (N=1073741825, R=394663025) stream-agg=1 fused=1 corpus_lce=1
+ENDPOINT_STREAM_PASS n=1073741825 k=1 r=394663025 padding_rows=10 cyclic_seam_certified=0 classes=4
+SXI2_PASS bytes=501714919 lite=1 members=6
+XSA_FINISH_DONE chi=303812548 n=1073741825 r=394663025 container=/tmp/seed-first-product/1gb/product/product.sxi2
