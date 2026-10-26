@@ -819,3 +819,13 @@ The coalescing/stamping path warrants removing its temporary 56-byte NRun
 construction before considering the much smaller mandatory guard. Existing
 stream-guard, repair-chunk, and sweep-monoid selftests all exit zero.
 Evidence: `tools/binbwt/evidence/repair-half-instrument/`.
+
+The finer-instrumentation 150 MB gate also passes both exact expected SHAs,
+chi 44034231 / runs 57279187, closure 0/0/0, fallbacks 0 and independent
+STREAM_VS_BWT mismatches 0. Product repair 10.369899 s, lce 17.368060 s,
+advance 6.214468 s. Exclusive ticks/input (55,936 samples): decode 39.45,
+raw 55.16, normalized coalescing 89.42, seam 0.01, stamp 71.69, guard 24.25,
+sink accounting 79.32, character branch 289.55, source copy 291.51,
+staging 24.39. The source-copy attribution grows markedly with the large
+working set; probe/scheduler/cache effects preclude treating fixture ratios
+as large-input predictions. Build work ran concurrently on other cores.
