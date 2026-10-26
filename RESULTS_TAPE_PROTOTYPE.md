@@ -851,3 +851,15 @@ source-copy 39.14, staging 24.37 ticks/input. This is a regression against
 10.369899 s instrument-only and 8.984302 s starting measurement; the direct
 append candidate is rejected and reverted in the next candidate. All bytes
 were correct. No guard is waived to pursue the timing target.
+
+### Second repair pass: compile away unsampled transducer probes
+
+The direct-field append is reverted. A single per-input dispatch now selects
+identical sampled/unsampled transducer template instantiations; unsampled
+nested scopes use a compile-time null counter. Every normalization, seam,
+coalescing, stream guard, rank stamp, fingerprint and output action remains.
+The fixture gate is byte-identical with all zero closure/fallback/mismatch
+counters and all three selftests exiting zero. Repair 0.021286 s; split
+60.65/64.14/78.41/0/69.89/22.55/72.03/114.79/39.57/43.30 ticks/input
+in the previously documented term order (188 samples). The sink's probes
+are still runtime-selected. Evidence: `tools/binbwt/evidence/repair-half-specialize/`.

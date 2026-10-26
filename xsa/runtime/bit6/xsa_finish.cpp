@@ -2049,8 +2049,8 @@ struct RepairStream {
     // `base` is the BWT rank of the piece's first row. A new pending run inherits
     // it; a coalesced continuation keeps the run's original base (the rows are
     // contiguous, so the merged run's base is the first piece's).
-    template<class Sink> void appendAt(const NRun& v, uint64_t base, Sink& sink) {
-        RepairCycles::Scope cycleScope(cycles, RepairCycles::COALESCE);
+    template<bool Measured = true, class Sink> void appendAt(const NRun& v, uint64_t base, Sink& sink) {
+        RepairCycles::Scope cycleScope(Measured ? cycles : nullptr, RepairCycles::COALESCE);
         if (!v.len) return;
         if (have && pending.c == v.c) {
             pending.len += v.len; pending.t = v.t;
@@ -2058,29 +2058,14 @@ struct RepairStream {
             // stamp, when present, belongs to the first piece and survives).
             pending.tt = v.tt;
         } else {
-            if (have) emitOne(sink);
-            RepairCycles::Scope stampScope(cycles, RepairCycles::STAMP);
+            if (have) emitOne<Measured>(sink);
+            RepairCycles::Scope stampScope(Measured ? cycles : nullptr, RepairCycles::STAMP);
             pending = v; pending.rk = base; have = true;
         }
     }
-    // Ordinary source runs carry no true-rank stamps. Populate the delayed
-    // normalized record directly instead of materializing and copying NRun.
-    template<class Sink> void appendSource(const RawRun& v, Sink& sink) {
-        RepairCycles::Scope cycleScope(cycles, RepairCycles::COALESCE);
-        if (!v.len) return;
-        if (have && pending.c == v.c) {
-            pending.len += v.len; pending.t = v.tail; pending.tt = ~0ull;
-        } else {
-            if (have) emitOne(sink);
-            RepairCycles::Scope stampScope(cycles, RepairCycles::STAMP);
-            pending.c = v.c; pending.len = v.len;
-            pending.h = v.head; pending.t = v.tail; pending.rk = row;
-            pending.ht = ~0ull; pending.tt = ~0ull; have = true;
-        }
-    }
-    template<class Sink> void append(const NRun& v, Sink& sink) { appendAt(v, row, sink); }
-    template<class Sink> void emitOne(Sink& sink) {
-        RepairCycles::Scope cycleScope(cycles, RepairCycles::STAMP);
+    template<bool Measured = true, class Sink> void append(const NRun& v, Sink& sink) { appendAt<Measured>(v, row, sink); }
+    template<bool Measured = true, class Sink> void emitOne(Sink& sink) {
+        RepairCycles::Scope cycleScope(Measured ? cycles : nullptr, RepairCycles::STAMP);
         ++rNorm; nNorm += pending.len;
         totals[pending.c] += pending.len;
         ++runFreq[pending.c];
@@ -2115,6 +2100,13 @@ struct RepairStream {
     template<class Sink> void feed_raw(const RawRun& raw, Sink& sink,
                                        RawRun& source, bool& sourceHave) {
         RepairCycles::Input cycleInput(cycles);
+        if (cycles && cycles->active) feed_raw_impl<true>(raw, sink, source, sourceHave);
+        else feed_raw_impl<false>(raw, sink, source, sourceHave);
+    }
+    // Select once per input; unsampled runs contain no nested timer probes.
+    // Both instantiations execute exactly the same transducer and audits.
+    template<bool Measured, class Sink>
+    void feed_raw_impl(const RawRun& raw, Sink& sink, RawRun& source, bool& sourceHave) {
         if (!firstRunSeen) {
             firstRunSeen = true;
             if (sampleChecks)
@@ -2145,7 +2137,7 @@ struct RepairStream {
         // above. 0x00 and 0x05 ARE legal text (real pile bytes; measured 18
         // and 23 occurrences at 10GB). Forbid exactly the vacated range.
         pf_check(v.c != 1 && v.c != 2 && v.c != 3 && v.c != 4, "unsupported text alphabet");
-        RepairCycles::Scope coalesceScope(cycles, RepairCycles::CHAR_BRANCH);
+        RepairCycles::Scope coalesceScope(Measured ? cycles : nullptr, RepairCycles::CHAR_BRANCH);
         if (sourceHave && source.c == v.c) { source.len += v.len; source.tail = v.tail; }
         else {
             if (sourceHave) {
@@ -2155,19 +2147,19 @@ struct RepairStream {
                     // splice is exactly one append, with the same row stamp;
                     // avoid constructing a second temporary and entering the
                     // class traversal for every ordinary character change.
-                    appendSource(source, sink);
+                    append<Measured>({source.c, source.len, source.head, source.tail}, sink);
                     row = end;
                 } else {
-                    seamSplice({source.c, source.len, source.head, source.tail}, sink);
+                    seamSplice<Measured>({source.c, source.len, source.head, source.tail}, sink);
                 }
             }
-            { RepairCycles::Scope copyScope(cycles, RepairCycles::SOURCE_COPY);
+            { RepairCycles::Scope copyScope(Measured ? cycles : nullptr, RepairCycles::SOURCE_COPY);
                 source = v; sourceHave = true; }
         }
     }
     void seamSplice(NRun v) { seamSplice(v, emit); }
-    template<class Sink> void seamSplice(NRun v, Sink& sink) {
-        RepairCycles::Scope cycleScope(cycles, RepairCycles::SEAM);
+    template<bool Measured = true, class Sink> void seamSplice(NRun v, Sink& sink) {
+        RepairCycles::Scope cycleScope(Measured ? cycles : nullptr, RepairCycles::SEAM);
         uint64_t end = row + v.len;
         while (row < end) {
             if (seam && next < seam->classes.size() && row >= seam->classes[next].lo) {
@@ -2181,12 +2173,12 @@ struct RepairStream {
                              "seam splice run/rank count");
                     uint64_t base = row;
                     for (size_t k = 0; k < cl.runs.size(); ++k) {
-                        RepairCycles::Scope stampScope(cycles, RepairCycles::STAMP);
+                        RepairCycles::Scope stampScope(Measured ? cycles : nullptr, RepairCycles::STAMP);
                         const auto& piece = cl.runs[k];
                         NRun nr{piece.c, piece.len, piece.head, piece.tail, base};
                         nr.ht = cl.runTrue[k].first;
                         nr.tt = cl.runTrue[k].second;
-                        appendAt(nr, base, sink);
+                        appendAt<Measured>(nr, base, sink);
                         base += piece.len;
                     }
                 }
@@ -2196,7 +2188,7 @@ struct RepairStream {
                 uint64_t stop = (seam && next < seam->classes.size()) ? std::min(end, seam->classes[next].lo) : end;
                 NRun piece{v.c, stop - row, v.h, v.t};
                 if (stop < end && seam) piece.t = seam->classes[next].before;
-                append(piece, sink);
+                append<Measured>(piece, sink);
                 row = stop;
             }
         }
