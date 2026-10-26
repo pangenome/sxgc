@@ -477,3 +477,87 @@ Consequences, and they decide the implementation:
    not 2r x k.
 
 This diagnostic is the acceptance test: deviating_runs must be 0 with the walk in place.
+
+# THE KASAI ARM IS EXACT (2026-10-26): three defects found, all gates green
+
+Worked the verification pyramid DOWN to a 454 KB fixture first, and every layer
+after that was a gate, not a hypothesis. Three defects, each measured:
+
+## 1. THE PHASE-1 RACE (the root of all four negative results above)
+The rank cursor ran redundantly in EVERY pool worker over the same shared
+arrays. A worker that woke late read an already-advanced `rowCursor`, mixed
+foreign values into `headRank`/`tailRank`, and double-advanced the stream for
+the next band. Measured at 150 MB with the race present: deviating_runs
+21,626,880 of 57,279,187, rank_holes 35,653,440, and DIFFERENT closure
+counters on every run of the SAME deterministic pieces (emit verified
+byte-identical, rlebwt sha 2d9f898e...). **All four "the stream is not
+rank-ordered" negative results recorded above were measured through this
+race.** Phase 1 now runs on worker 0 alone behind the existing arrival
+barrier.
+
+## 2. THE COLUMN CONVENTION (the arm's systemic answer defect)
+The finish read `col[r-1]` for the top LCP and `min(col[a..c-1])` for the
+interior, assuming `col[r] = LCE(SA[r], SA[r+1])`. scatter_sort's
+`--lcp-out` emits the STANDARD left-neighbour array `LCP[r] = lce(SA[r-1],
+SA[r])` - verified 300/300 at the fixture against brute-force cyclic LCE.
+The off-by-one shifted every column answer one run late: 140,543 of 192,138
+answers differed from the walk arm at the 2 MB fixture (chi 172,940 vs
+145,686). This defect was present in EVERY kasai-arm chi ever measured
+(150 MB: 49,091,769 vs the v1 arm's 44,034,233). Reads are now
+`col[r]` and `min(col[a+1..c])`.
+
+## 3. THE SEAM CLASS TRUE ORDER (the real rank defect, 0.014% of runs)
+With the race fixed, the 150 MB cursor is exact for 57,271,333 of 57,279,187
+runs; the residual 7,854 runs live inside the two seam-class spans, and the
+mechanism is now exact: the repair emits each class in cyclic-content order,
+but the TRUE suffix array places the class SEED (the chain seed at position
+n-d - the wrap suffix that ends at the text end; the SA's sentinel convention
+for the cyclic boundary) FIRST and the remaining occurrences in that same
+content order. Verified 101/101 at the 454 KB fixture by brute force and at
+150 MB/1 GB by the position anchors at every anchored class occurrence
+(25,469 + 183,772 checks, zero mismatches). The splice stamps each class
+run's true head/tail rank (`NRun::ht/tt`); phase 1 takes the stamp over the
+cursor. The lo/hi span placement was CORRECT all along.
+
+## THE PSI-WALK NEGATIVE RESULT (mechanism, as the task's rules requested)
+The prescribed anchors + sparse-select supply was built and measured: at 150 MB
+53.76% of consecutive run heads jump BACKWARDS in position (so a carried pair
+along the stream costs 7.8e6 x n of forward stepping), and - decisively - the
+SA is not LF-consistent: 39 rows at the 454 KB fixture where
+`LF(row) != isa[SA[row]-1]`, all in the separator class, caused by the same
+wrap-suffix sentinel convention. Anchor-to-anchor psi chains therefore
+disagree with the sampled ISA and REFUSE (the chain check fired, as designed).
+Exact ranks on this corpus family cannot come from select-based psi; the
+cursor + class true-order stamps + anchor verification is exact, O(1) per run,
+needs no pre-pass and no run table, and the anchors certify it at any scale.
+
+## THE GATES (all with the packaged runtime-mirror build)
+
+- 454 KB fixture: kasai chi 145,686 == v1 chi 145,686; containers
+  byte-identical (e91f9d9c...5aa3); deviating_runs=0.
+- 150 MB (`/dev/shm/t150m.txt`, rxt2/col, is2.sa/is2.isamp):
+  `XSA_FINISH_RANK_DEV deviating_runs=0` over all 57,279,187 runs vs the true
+  ISA; kasai chi 44,034,233 == v1 chi 44,034,233; containers byte-identical
+  (`24688d22...ae05`); `XSA_FINISH_KASAI_ANCHORS checks=1154503 mismatches=0`;
+  `XSA_FINISH_SEAM_ANCHORS checks=25454+15 mismatches=0`.
+- 1 GB (`ss-1g.txt`, col1g triple): **container sha256
+  `31ce2e4f4b5990d5a9c79393e4092777992a326accdc2a7bd1b726fd58c03402`, exactly
+  the banked value, with the Kasai arm ON**; chi 303,812,551 asserted
+  in-process; deviating_runs=0 over all 394,663,026 runs (8.6 GB true ISA);
+  7,938,716 endpoint anchor checks + 183,772 class-occurrence checks, zero
+  mismatches. Wall: emit 48 s, finish ~19 min (includes the 8.6 GB debug ISA
+  build; without it ~14 min).
+
+## THE CLOSURE COUNTERS: what zero means, and why they are not zero
+`rank_holes`/`disorder` count the runs where the STREAM order breaks against
+the TRUE order. With exact ranks they are 6/2/0 at 150 MB and 12/4/0 at 1 GB -
+the honest count of the seed-displacement breaks inside the seam classes
+(3-4 per class). These breaks are BANKED: the v1 arm's answers (and the
+container shas, including the banked 31ce... and the 10 GB product) are
+computed on the stream in exactly this order, and each break is covered by
+the walk fallback, which reproduces v1's answer by construction (proven by
+the byte-identical containers). Making the counters zero would mean
+re-ordering the seam classes in the stream - which changes the v1 arm's own
+answers and therefore the container sha: the "closure all-zero" criterion and
+the banked-parity criterion are mutually exclusive. Parity is the product
+gate and it is green at both scales.
