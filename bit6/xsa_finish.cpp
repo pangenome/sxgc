@@ -3828,6 +3828,7 @@ int main(int argc, char** argv) {
         int threads = int(std::thread::hardware_concurrency());
         std::string prefix, corpus, remap, out, bridgeDir, sampleCheck, wmPath;
         std::string checkClaimsDir;   // PROB-CHI: standalone checker mode
+        bool debugArtifacts = false;
         std::string lcpColumnPath;    // KASAI: the prebuilt LCP column (--lcp-column)
         std::string locateIsaPath;    // KASAI: the locate table (--sa-locate)
         std::string runRanksPath;     // KASAI: prefix-sum run ranks (--run-ranks)
@@ -3844,6 +3845,7 @@ int main(int argc, char** argv) {
             else if (a == "--corpus") corpus = need("--corpus");
             else if (a == "--remap") remap = need("--remap");
             else if (a == "--check-claims") checkClaimsDir = need("--check-claims");
+            else if (a == "--debug-artifacts") debugArtifacts = true;
             else if (a == "--lcp-column") lcpColumnPath = need("--lcp-column");
             else if (a == "--run-ranks") runRanksPath = need("--run-ranks");
             else if (a == "--isa-sample") isaSamplePath = need("--isa-sample");
@@ -3913,6 +3915,9 @@ int main(int argc, char** argv) {
         SampIsa sampIsa;
         TrueIsa trueIsa;
         const bool isaDebug = !pf_env_str("XSA_FINISH_ISA_DEBUG").empty();
+        pf_check(debugArtifacts || (!isaDebug && pf_env_str("XSA_FINISH_DUMP_STREAM").empty() &&
+                                    pf_env_str("XSA_FINISH_DUMP_ANSWERS").empty()),
+                 "offline ISA/dumps require explicit --debug-artifacts (outside product space contract)");
         if (isaDebug) trueIsa.load(pf_env_str("XSA_FINISH_ISA_DEBUG"), n);
         // Dev counters vs ground truth. Atomics: the psi-walk phase 1 is
         // per-run parallel, so several workers may touch them.
@@ -4413,20 +4418,11 @@ int main(int argc, char** argv) {
                 const int wid = t;   // worker index; `t` is shadowed by the run tail below
                 // PHASE 1: every run's exact rank WITHOUT an inverse.
                 //
-                // TWO SUPPLIES, ONE CURSOR: the prefix sum over the emitted run
-                // list is the definition of rank everywhere EXCEPT inside the
-                // seam-class spans, where the repair emits the class rows in
-                // REBUILD (cyclic-content) order while the true suffix array -
-                // the order the column, the anchors and the emit's own raw stream
-                // all follow - places the class SEED (the wrap suffix that ends
-                // at the text end; the SA's sentinel convention) FIRST and the
-                // rest in the same content order. The splice stamps each class
-                // run's true head/tail rank (NRun::ht/tt, SeamClasses::rebuild);
-                // phase 1 takes the stamp when present, the cursor otherwise.
-                // THE ANCHOR CHECK: at every anchored head/tail the derived rank
-                // is compared with the producer's position-keyed ISA sample and
-                // any disagreement refuses - the product-scale verification of
-                // both supplies.
+                // The rank is the prefix sum of emitted row lengths. Seam
+                // stamps must agree with this independently derived cursor at
+                // both endpoints; disagreement refuses before column reads.
+                // Sparse ISA anchors are an additional check, not authority to
+                // override the cursor or waive closure.
                 //
                 // SINGLE WORKER (the race fix): this block used to run in EVERY
                 // pool worker over the same shared arrays. `rowCursor` was read
@@ -4441,6 +4437,12 @@ int main(int argc, char** argv) {
                 if (wid == 0) {
                     uint64_t cursor = rowCursor;
                     for (size_t i = 0; i < cnt; ++i) {
+                        // Stamps are assertions, never an alternate rank supply.
+                        // Check even a straddling/padding run before skipping it.
+                        pf_check(nb[i].ht == ~0ull || nb[i].ht == cursor,
+                                 "KASAI STAMP: head stamp disagrees with derived cursor");
+                        pf_check(nb[i].tt == ~0ull || nb[i].tt == cursor + nb[i].len - 1,
+                                 "KASAI STAMP: tail stamp disagrees with derived cursor");
                         // TRAILING PADDING RUNS live ABOVE n (the bin-walk seeds
                         // n..n+9 plus the seam rows). A run that STRADDLES the
                         // end is treated the same way: it never indexes the
@@ -4454,15 +4456,8 @@ int main(int argc, char** argv) {
                             cursor += nb[i].len;
                             continue;
                         }
-                        const uint64_t h = nb[i].ht != ~0ull ? nb[i].ht : cursor;
-                        // A stamped run is truly contiguous through the span
-                        // boundary (the span is true-placed); only a run that
-                        // CONTAINS the class seed is not, and the rebuild stamps
-                        // BOTH endpoints for it.
-                        const uint64_t t = nb[i].len >= 2
-                            ? (nb[i].tt != ~0ull ? nb[i].tt :
-                               (nb[i].ht != ~0ull ? h + nb[i].len - 1 : cursor + nb[i].len - 1))
-                            : h;
+                        const uint64_t h = cursor;
+                        const uint64_t t = cursor + nb[i].len - 1;
                         if (sampIsa.map) {
                             if (nb[i].h < n && sampIsa.has(nb[i].h)) {
                                 const uint64_t truth = sampIsa.at(nb[i].h);
@@ -4875,33 +4870,6 @@ int main(int argc, char** argv) {
         // the band runs: the state machine needs ALL rNorm runs (v1 feeds
         // every run; the production sweep's last events live here).
         rs.finishStream();
-        if (kasaiOn) {
-            // Bounds alone do not establish the rank-closure contract.
-            pf_check(lcpCol.maxEnd <= n, "KASAI CLOSURE: a band's rank slice runs past n");
-            if (isaDebug) {
-                fprintf(stderr, "XSA_FINISH_STREAM_FNV runs=%llu fnv=%llu hsum=%llu tsum=%llu lensum=%llu\n",
-                        (unsigned long long)streamRuns, (unsigned long long)streamFnv,
-                        (unsigned long long)streamH, (unsigned long long)streamT,
-                        (unsigned long long)streamLen);
-                fprintf(stderr, "XSA_FINISH_RANK_DEV deviating_runs=%llu max_dev=%llu mean_dev=%.2f\n",
-                        (unsigned long long)devRuns.load(), (unsigned long long)devMax.load(),
-                        devRuns.load() ? double(devSum.load()) / double(devRuns.load()) : 0.0);
-                fprintf(stderr, "XSA_FINISH_RANK_DEV_RK deviating_runs=%llu max_dev=%llu mean_dev=%.2f\n",
-                        (unsigned long long)rkDevRuns.load(), (unsigned long long)rkDevMax.load(),
-                        rkDevRuns.load() ? double(rkDevSum.load()) / double(rkDevRuns.load()) : 0.0);
-            }
-        fprintf(stderr,
-                    "XSA_FINISH_KASAI_CLOSURE bands=%llu rank_holes=%llu disorder=%llu "
-                    "noncontiguous_runs=%llu walk_fallbacks=%llu max_rank_end=%llu n=%llu\n",
-                    (unsigned long long)kasaiState.bands, (unsigned long long)kasaiState.gaps,
-                    (unsigned long long)kasaiState.disorder,
-                    (unsigned long long)kasaiState.noncontig,
-                    (unsigned long long)kasaiState.fallback.load(),
-                    (unsigned long long)lcpCol.maxEnd, (unsigned long long)n);
-            if (sampIsa.map)
-                fprintf(stderr, "XSA_FINISH_KASAI_ANCHORS checks=%llu mismatches=0 source=--isa-sample\n",
-                        (unsigned long long)anchorChecks);
-        }
         // The final flush's coalesced tail runs continue the LAST band's slot:
         // it is empty and its prevTail is that band's last emitted tail, so the
         // same query coordinates apply. Verification + advance run here, after
@@ -4931,6 +4899,33 @@ int main(int argc, char** argv) {
                 lcePending = nullptr;
                 finishAdvance(tail);
             }
+        }
+        if (kasaiOn) {
+            // Bounds alone do not establish the rank-closure contract.
+            pf_check(lcpCol.maxEnd <= n, "KASAI CLOSURE: a band's rank slice runs past n");
+            if (isaDebug) {
+                fprintf(stderr, "XSA_FINISH_STREAM_FNV runs=%llu fnv=%llu hsum=%llu tsum=%llu lensum=%llu\n",
+                        (unsigned long long)streamRuns, (unsigned long long)streamFnv,
+                        (unsigned long long)streamH, (unsigned long long)streamT,
+                        (unsigned long long)streamLen);
+                fprintf(stderr, "XSA_FINISH_RANK_DEV deviating_runs=%llu max_dev=%llu mean_dev=%.2f\n",
+                        (unsigned long long)devRuns.load(), (unsigned long long)devMax.load(),
+                        devRuns.load() ? double(devSum.load()) / double(devRuns.load()) : 0.0);
+                fprintf(stderr, "XSA_FINISH_RANK_DEV_RK deviating_runs=%llu max_dev=%llu mean_dev=%.2f\n",
+                        (unsigned long long)rkDevRuns.load(), (unsigned long long)rkDevMax.load(),
+                        rkDevRuns.load() ? double(rkDevSum.load()) / double(rkDevRuns.load()) : 0.0);
+            }
+        fprintf(stderr,
+                    "XSA_FINISH_KASAI_CLOSURE bands=%llu rank_holes=%llu disorder=%llu "
+                    "noncontiguous_runs=%llu walk_fallbacks=%llu max_rank_end=%llu n=%llu\n",
+                    (unsigned long long)kasaiState.bands, (unsigned long long)kasaiState.gaps,
+                    (unsigned long long)kasaiState.disorder,
+                    (unsigned long long)kasaiState.noncontig,
+                    (unsigned long long)kasaiState.fallback.load(),
+                    (unsigned long long)lcpCol.maxEnd, (unsigned long long)n);
+            if (sampIsa.map)
+                fprintf(stderr, "XSA_FINISH_KASAI_ANCHORS checks=%llu mismatches=0 source=--isa-sample\n",
+                        (unsigned long long)anchorChecks);
         }
         // Check AFTER the final tail band, before finalizing or publishing.
         // Bank parity and sparse anchor checks cannot waive closure failures.
