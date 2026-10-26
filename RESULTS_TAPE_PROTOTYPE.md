@@ -691,3 +691,17 @@ are journaled as `SWEEP_CYCLES phase=repair`; an explicit
 `XSA_FINISH_REPAIR_CYCLES=0` disables per-run sampling. Product walls with
 counters: repair 0.043254 s, lce span 0.060509 s, advance 0.019503 s.
 Evidence: `tools/binbwt/evidence/hotspots-counters/fixture-*`.
+
+The instrument-only 150 MB gate then passed both expected containers and all
+closure/stream/scratch checks. With 55,936 samples its product split is:
+read/decode 44.19; raw 58.76; **coalescing 911.87**; seamSplice 58.27;
+stamping 76.94; guard 24.43; output/staging 56.14 TSC ticks/input. The large
+fixture confirms the coalescing path dominates this instrumentation; the guard
+and staging-store hypotheses are not supported as the primary target.
+Instrumented product walls: repair 18.349461 s (feed 16.853, read 1.266),
+lce span 25.556722 s, advance 6.282960 s. Probes themselves perturb timing;
+the noninstrumented Fix 1 measurement remains 15.013 s repair. The next
+experiment keeps the source coalescer local across an ordered band and folds
+ordinary, nonintersecting source runs directly into the normalized coalescer.
+Both coalescers, all guards, and the exact cross-band transducer state remain;
+seam-intersecting source runs continue through the full splice.
