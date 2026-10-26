@@ -561,3 +561,33 @@ re-ordering the seam classes in the stream - which changes the v1 arm's own
 answers and therefore the container sha: the "closure all-zero" criterion and
 the banked-parity criterion are mutually exclusive. Parity is the product
 gate and it is green at both scales.
+
+# DECISION (operator): adopt SEED-FIRST. The bank parity is superseded.
+
+The two conventions differ only at the wrap-sentinel seam:
+  seed-first (finite-suffix order): closure 0/0/0, fallbacks 0 at every scale,
+      chi 145685 / 44034231 / 303812548, 1 GB runs 394663025
+  bank (cyclic order):              closure 6/2, 12/4, walk fallbacks, chi +1..+3,
+      1 GB runs 394663026
+Mechanism: the finite-SA BWT and the bank's cyclic BWT differ at 26 rows on the
+454 KB fixture from rank 5615; the displaced seed sits at finite rank 5615 but the
+cyclic rebuild places it at row 5653, so "fixing" the order rotates intervening bytes.
+
+WHY THE OPERATOR CHOSE SEED-FIRST: the displacement is a wrap-sentinel artifact, not a
+property of the index. Seed-first is rank-ordered BY CONSTRUCTION, which makes the
+closure counters meaningful (zero), removes the walk fallback entirely, and keeps the
+Kasai arm's column as the only rank input. A machine that needs a fallback to paper over
+its own stream order is "weird"; this one is not.
+
+CONSEQUENCE: the old banked shas (e91f9d9c, 24688d22, e99fc0b3) are SUPERSEDED. They
+certified the cyclic convention. A sha can no longer be the arbiter.
+
+## THE NEW ARBITER (stronger than a sha)
+ 1. STREAM == BWT(SA). Expand the emitted band stream (chars + lens) to the full BWT
+    string and compare it, row by row, with T[SA[r]-1] computed from the VERIFIED SA
+    (sa_check already proves the SA exact in the product alphabet over all n ranks).
+    Zero mismatches over all n rows is a direct proof of the stream, not a fingerprint.
+ 2. CHI independently re-derived at fixture scale from the true SA (brute force), and
+    the T3 claims checker at larger scales.
+ 3. Closure counters must be EXACTLY ZERO (holes/disorder/noncontig) and
+    walk_fallbacks == 0, with the refusal guard enforced and no debug escape.
