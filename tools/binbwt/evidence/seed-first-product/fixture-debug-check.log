@@ -1,0 +1,4 @@
+STREAM_VS_BWT rows=454752 runs=192138 mismatches=0 convention=finite-SA,wrapped-predecessor
+STREAM_ENDPOINTS runs=192138 mismatches=0
+STREAM_VS_BWT rows=454752 runs=192138 mismatches=0 convention=finite-SA,wrapped-predecessor
+CHI_INDEPENDENT value=145685 lcp_source=brute-finite-SA

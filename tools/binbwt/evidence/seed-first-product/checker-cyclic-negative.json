@@ -1,0 +1,16 @@
+{
+  "command": [
+    "/tmp/stream_vs_bwt",
+    "--corpus",
+    "/tmp/psi_tiny.txt",
+    "--remap",
+    "/mnt/nvme2n1/erikg/tape10/remap.bin",
+    "--sa",
+    "/tmp/sxgc-review-evidence/tiny.sa",
+    "--stream",
+    "/tmp/sxgc-review-evidence/dump-check/stream"
+  ],
+  "returncode": 3,
+  "stdout": "STREAM_VS_BWT rows=454752 runs=192138 mismatches=26 convention=finite-SA,wrapped-predecessor\nSTREAM_ENDPOINTS runs=192138 mismatches=52\n",
+  "stderr": "MISMATCH row=5615 got=46 want=100\nMISMATCH row=5617 got=10 want=46\nMISMATCH row=5618 got=46 want=10\nMISMATCH row=5621 got=79 want=46\nMISMATCH row=5622 got=63 want=79\nMISMATCH row=5623 got=51 want=63\nMISMATCH row=5624 got=115 want=51\nMISMATCH row=5625 got=46 want=115\n"
+}

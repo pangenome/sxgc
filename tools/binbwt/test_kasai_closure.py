@@ -1,75 +1,90 @@
 #!/usr/bin/env python3
-"""Regression for a known nonclosing fixture: reject Kasai, preserve walk bytes.
+"""Seed-first regression: closing publication plus unconditional refusal guards.
 
-Uses independently prepared column/anchors; never constructs a full ISA.
+No historical bank is read. Checks anchored/unanchored columns and the finite
+LCE arm, explicit diagnostics, malformed anchors, and env-only debug refusal.
+The packaged --selftest-stream-guard separately injects bad head/tail stamps,
+all four closure counters, zero lengths and overflowing extents.
 """
 import argparse
 import hashlib
 import os
 from pathlib import Path
 import shutil
+import struct
 import subprocess
 
 p = argparse.ArgumentParser(description=__doc__)
-for name in ('emit', 'finish', 'baseline', 'corpus', 'remap', 'column', 'isa-sample', 'root'):
+for name in ('emit', 'finish', 'corpus', 'remap', 'column', 'isa-sample', 'root'):
     p.add_argument('--' + name, required=True)
+p.add_argument('--sa')
+p.add_argument('--chi', type=int, default=145685)
 a = p.parse_args()
 r = Path(a.root)
 r.mkdir(parents=True, exist_ok=False)
 pristine = r / 'pristine'
 pristine.mkdir()
+clean = {k: v for k, v in os.environ.items() if not k.startswith(('XSA_FINISH_', 'CROSS_'))}
 cmd = [a.emit, '--binbwt', a.corpus, '--remap', a.remap,
-       '--out-prefix', str(pristine / 'frag'), '--threads', '4']
-with (r / 'emit.log').open('w') as log:
-    subprocess.run(cmd, env=dict(os.environ, CROSS_V2_PIECE_WINDOW='100000000'),
+       '--out-prefix', str(pristine/'frag'), '--threads', '4']
+if a.sa:
+    cmd += ['--tape-emit', a.sa]
+with (r/'emit.log').open('w') as log:
+    subprocess.run(cmd, env=dict(clean, CROSS_V2_PIECE_WINDOW='100000000'),
                    stdout=log, stderr=subprocess.STDOUT, check=True)
-# Environment variables alone must never enable O(r)/O(n) diagnostics.
-for key in ('XSA_FINISH_DUMP_STREAM', 'XSA_FINISH_DUMP_ANSWERS', 'XSA_FINISH_ISA_DEBUG'):
-    d = r / key
-    shutil.copytree(pristine, d)
-    target = d / 'forbidden-artifact'
-    cmd = [a.finish, '--prefix', str(d / 'frag'), '--corpus', a.corpus,
-           '--remap', a.remap, '--output', str(d / 'product.sxi2'), '--threads', '4']
-    result = subprocess.run(cmd, env=dict(os.environ, **{key: str(target)}),
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    (d / 'finish.log').write_text(result.stdout)
-    assert result.returncode == 2 and 'require explicit --debug-artifacts' in result.stdout
-    assert not target.exists() and not (d / 'product.sxi2').exists()
-    print(key, 'PRODUCT_REFUSAL_PASS')
-for name, exe, kasai, anchors in (
-    ('baseline', a.baseline, False, False), ('walk', a.finish, False, False),
-    ('debug-walk', a.finish, False, False),
-    ('kasai', a.finish, True, True), ('kasai-no-anchor', a.finish, True, False)):
-    d = r / name
-    shutil.copytree(pristine, d)
-    out = d / 'product.sxi2'
-    cmd = [exe, '--prefix', str(d / 'frag'), '--corpus', a.corpus,
-           '--remap', a.remap, '--output', str(out), '--threads', '4',
-           '--sample-count', '64', '--poll-timeout', '10']
-    if kasai:
-        cmd += ['--lcp-column', a.column]
-    if anchors:
-        cmd += ['--isa-sample', a.isa_sample]
-    env = dict(os.environ)
-    if name == 'debug-walk':
-        cmd += ['--debug-artifacts']
-        env.update(XSA_FINISH_DUMP_STREAM=str(d / 'stream'),
-                   XSA_FINISH_DUMP_ANSWERS=str(d / 'answers'))
-    with (d / 'finish.log').open('w') as log:
-        result = subprocess.run(cmd, env=env, stdout=log, stderr=subprocess.STDOUT)
-    if kasai:
-        assert result.returncode == 2, (name, result.returncode)
-        assert 'KASAI STAMP:' in (d / 'finish.log').read_text()
-        assert not out.exists() and not Path(str(out) + '.partial').exists()
-    else:
-        assert result.returncode == 0, (name, result.returncode)
-        assert out.exists()
-    print(name, 'PASS', 'rc=' + str(result.returncode), 'published=' + str(out.exists()))
-baseline = (r / 'baseline/product.sxi2').read_bytes()
-assert baseline == (r / 'walk/product.sxi2').read_bytes()
-print('WALK_BASELINE_IDENTICAL sha256=' + hashlib.sha256(baseline).hexdigest())
+assert (pristine/'frag.pieces').exists() and (pristine/'frag.rlebwt').exists()
 
-assert baseline == (r / 'debug-walk/product.sxi2').read_bytes()
-assert (r / 'debug-walk/stream').stat().st_size % 40 == 0
-assert (r / 'debug-walk/answers').stat().st_size * 40 == (r / 'debug-walk/stream').stat().st_size * 16
-print('EXPLICIT_DEBUG_DUMPS_PASS walk_bytes_identical=1')
+
+def finish(name, args=(), env=None, fail=None):
+    d = r/name
+    shutil.copytree(pristine, d)
+    out = d/'product.sxi2'
+    cmd = [a.finish, '--prefix', str(d/'frag'), '--corpus', a.corpus,
+           '--remap', a.remap, '--output', str(out), '--threads', '4',
+           '--sample-count', '64', '--poll-timeout', '10'] + list(args)
+    result = subprocess.run(cmd, env=dict(clean, **(env or {})),
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    (d/'finish.log').write_text(result.stdout)
+    if fail:
+        assert result.returncode == 2 and fail in result.stdout, (name, result.stdout)
+        assert not out.exists() and not Path(str(out)+'.partial').exists()
+    else:
+        assert result.returncode == 0 and out.is_file(), (name, result.stdout)
+        assert f'XSA_FINISH_DONE chi={a.chi} ' in result.stdout
+    print(name, 'PASS', 'rc='+str(result.returncode), 'published='+str(out.exists()))
+    return d
+
+
+for key in ('XSA_FINISH_DUMP_STREAM', 'XSA_FINISH_DUMP_ANSWERS', 'XSA_FINISH_ISA_DEBUG'):
+    target = r/(key+'-forbidden')
+    finish(key, env={key: str(target)}, fail='require explicit --debug-artifacts')
+    assert not target.exists()
+finish('bridge-without-debug', ['--bridge-dir', str(r/'forbidden-bridge')],
+       fail='bridge dumps require explicit --debug-artifacts')
+assert not (r/'forbidden-bridge').exists()
+finish('rank-exceptions-without-debug', ['--run-ranks', '/nonexistent'],
+       fail='offline rank exceptions require explicit --debug-artifacts')
+finish('full-ISA-env-audit', ['--lcp-column', a.column, '--sa-locate', '/nonexistent'],
+       fail='full ISA audit requires explicit --debug-artifacts')
+finish('column-env-disable', ['--lcp-column', a.column], env={'XSA_FINISH_KASAI': '0'},
+       fail='a supplied LCP column cannot be disabled')
+col = ['--lcp-column', a.column, '--chi-expect', str(a.chi)]
+finish('kasai', col+['--isa-sample', a.isa_sample])
+finish('kasai-no-anchor', col)
+finish('finite-walk', ['--chi-expect', str(a.chi)])
+finish('debug-kasai', col+['--debug-artifacts'], env={
+       'XSA_FINISH_DUMP_STREAM': str(r/'stream'),
+       'XSA_FINISH_DUMP_ANSWERS': str(r/'answers')})
+bad = bytearray(Path(a.isa_sample).read_bytes())
+# Sample rank for position zero: first payload entry after the 32-byte header.
+assert len(bad) >= 40
+old, = struct.unpack_from('<Q', bad, 32)
+struct.pack_into('<Q', bad, 32, old+1)
+(r/'bad.isamp').write_bytes(bad)
+finish('bad-anchor', col+['--isa-sample', str(r/'bad.isamp')], fail='ANCHOR')
+reference = (r/'kasai/product.sxi2').read_bytes()
+for name in ('kasai-no-anchor', 'finite-walk', 'debug-kasai'):
+    assert reference == (r/name/'product.sxi2').read_bytes(), name
+assert (r/'stream').stat().st_size % 40 == 0
+assert (r/'answers').stat().st_size * 40 == (r/'stream').stat().st_size * 16
+print('SEED_FIRST_REGRESSION_PASS sha256='+hashlib.sha256(reference).hexdigest())

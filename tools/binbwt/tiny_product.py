@@ -11,14 +11,14 @@ with (base/'extcols-scratch/mergperf-1b-snap.txt').open('rb') as f:
     for offset in [0,10003,831123]:
         f.seek(offset);fixtures.append(f.read(127).translate(mapping)+b'\x1e')
 def brute(t):
-    n=len(t);sa=sorted(range(n),key=lambda p:(t[p:]+t[:p],p));runs=[]
+    n=len(t);sa=sorted(range(n),key=lambda p:t[p:]);runs=[]
     for p in sa:
         c=t[(p-1)%n]
         if runs and runs[-1][0]==c:runs[-1][1]+=1;runs[-1][3]=p
         else:runs.append([c,1,p,p])
     def lcp(a,b):
         k=0
-        while k<n and t[(a+k)%n]==t[(b+k)%n]:k+=1
+        while k<min(n-a,n-b) and t[a+k]==t[b+k]:k+=1
         return k
     inf=10**30;rr=[-1]*256;pos=[0]*256;active=[False]*256;result=[]
     m=inf;prior_inside=inf;previous=None
@@ -55,7 +55,7 @@ for index,t in enumerate(fixtures):
       for threads in [1,3]:
         d=root/f'case-{index}-cap-{cap}-t{threads}';d.mkdir(exist_ok=True);corpus=d/'corpus';corpus.write_bytes(t.translate(inverse));prefix=d/'frag';bridge=d/'bridge';bridge.mkdir(exist_ok=True)
         p=[str(producer),'--binbwt',str(corpus),'--remap',str(map_path),'--out-prefix',str(prefix),'--bin-live-cap',str(cap),'--bin-leaf','4','--threads',str(threads)]
-        c=[str(finish),'--prefix',str(prefix),'--corpus',str(corpus),'--remap',str(map_path),'--output',str(d/'product.sxi2'),'--threads','2','--bridge-dir',str(bridge),'--keep-rlebwt','--chi-expect',str(len(expected))]
+        c=[str(finish),'--prefix',str(prefix),'--corpus',str(corpus),'--remap',str(map_path),'--output',str(d/'product.sxi2'),'--threads','2','--debug-artifacts','--bridge-dir',str(bridge),'--keep-rlebwt','--chi-expect',str(len(expected))]
         with (d/'producer.log').open('w') as log:subprocess.run(p,stdout=log,stderr=log,check=True)
         assert Path(str(prefix)+'.rlebwt').read_bytes()==expected_rle,(index,cap,'raw runs')
         with (d/'finish.log').open('w') as log:subprocess.run(c,stdout=log,stderr=log,check=True)

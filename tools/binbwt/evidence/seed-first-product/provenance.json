@@ -1,0 +1,13 @@
+{
+  "bundle": "/home/erikg/sxgc/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-yqy6tffu/bundle",
+  "source_entries_verified": 59,
+  "bundle_entries_verified": 296,
+  "source_sha256": "7309aeb6f57e7a033f87af527737aa1b1936382aa11dfd6816299cb677eec4c4",
+  "bundle_manifest_sha256": "54b45da8ad5c2c24960ca0f64f5a060cda144afeabb64a781548f55500621ced",
+  "runtime_mirror_equals_source_equals_compiled_snapshot": true,
+  "build_command": "python3 tools/package_xsa_sources.py && cd xsa && cargo build --release",
+  "build_log": "/tmp/seed-first-product/periodic-fix-build.log",
+  "build_seconds": 352,
+  "existing_rust_warnings": 18,
+  "checker_sha256": "a3b174a5aec5974697380c122f44fd11033b401473b9f83bcc0b74cf005e4324"
+}

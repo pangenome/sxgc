@@ -1664,32 +1664,24 @@ struct SeamClasses {
                  const std::function<uint64_t(uint64_t, uint64_t)>& collection_lce,
                  const std::function<uint8_t(uint64_t)>& symbol,
                  const std::function<void(uint64_t, uint64_t)>& anchorVerify) {
-        // rebuild each class: v1's LCE comparator + run rebuild, verbatim.
-        //
-        // THE TRUE ORDER OF A CLASS: the rebuild sorts occ(P_d) by cyclic
-        // content, but the TRUE suffix array places the class SEED (the chain
-        // seed at position n-d, the suffix that ENDS at the text end - the SA's
-        // sentinel convention for the cyclic wrap) FIRST and the remaining
-        // occurrences in exactly that same content order (measured exactly,
-        // 101/101 at 2 MB and via the anchors at 150 MB). So the true rank of
-        // the i-th rebuild-order occurrence is
-        //     rank(i) = lo + (i == iSeed ? 0 : 1 + i - (i > iSeed))
-        // and every emitted class run gets its true endpoints stamped so the
-        // Kasai phase 1 never has to trust the stream's row accounting there.
+        // Product convention: finite suffix order. The terminal chain seed
+        // sorts before every proper extension. Move the row itself before
+        // coalescing, so stamps certify stream order rather than replace it.
         uint64_t maxSeam = 0;
         for (auto& cl : classes) {
             std::vector<uint64_t> sa = cl.occ;
             std::sort(sa.begin(), sa.end(), [&](uint64_t a, uint64_t b) {
                 uint64_t len = collection_lce(a, b);
                 maxSeam = std::max(maxSeam, len);
-                return len == n ? a < b : symbol((a + len) % n) < symbol((b + len) % n);
+                // Equal rotations still have distinct finite suffixes. A
+                // proper prefix sorts first, including periodic chain members.
+                const uint64_t cap = std::min(n - a, n - b);
+                return len >= cap ? a > b : symbol(a + len) < symbol(b + len);
             });
-            const uint64_t iSeed = uint64_t(
-                std::find(sa.begin(), sa.end(), cl.first) - sa.begin());
-            pf_check(iSeed < sa.size(), "seam class seed missing from its own occurrence set");
-            auto trueIdx = [&](uint64_t i) {
-                return i == iSeed ? 0 : 1 + i - (i > iSeed ? 1 : 0);
-            };
+            auto seed = std::find(sa.begin(), sa.end(), cl.first);
+            pf_check(seed != sa.end(), "seam class seed missing from its own occurrence set");
+            std::rotate(sa.begin(), seed, seed + 1);
+            auto trueIdx = [](uint64_t i) { return i; };
             // ANCHOR VERIFICATION: the model must reproduce the sampled ISA at
             // every anchored occurrence of the class, or the supply refuses.
             if (anchorVerify) {
@@ -1834,8 +1826,12 @@ static int selftest_seam_spool(const std::string& directory) {
                      "reader oracle adversarial row order");
             auto order = e.occ;
             std::sort(order.begin(), order.end(), [&](uint64_t x, uint64_t y) {
-                uint64_t d = lce(x,y); return d == n ? x < y : symbol((x+d)%n) < symbol((y+d)%n);
+                uint64_t d = lce(x,y), cap = std::min(n-x,n-y);
+                return d >= cap ? x > y : symbol(x+d) < symbol(y+d);
             });
+            auto seed = std::find(order.begin(), order.end(), e.first);
+            pf_check(seed != order.end(), "reader oracle seed");
+            std::rotate(order.begin(), seed, seed + 1);
             std::vector<RawRun> reference;
             for (uint64_t position : order) {
                 uint8_t c = symbol((position+n-1)%n);
@@ -1889,19 +1885,48 @@ static int selftest_seam_spool(const std::string& directory) {
 // ready_band's bounded extent/terminal assertion supplies that dependency.
 // The default stays serial. The opt-in exact-checkpoint scheduler below
 // validates the carry but retains a serial planner; it is not a speed claim.
-// `rk` is the run's BWT RANK BASE, i.e. the transducer's own ROW index for the
-// run's first row (row 0 == the first non-padding BWT row). It is filled by
-// append()/emitOne() and is the ONLY exact rank source in the finish: a running
-// sum of the run lengths is NOT exact, because the seam-class splice can advance
-// `row` past the rows its reconstructed runs describe (measured at 100 MB: the
-// first class block ends one row short, and a cumulative sum silently shifts
-// EVERY subsequent rank by one). The KASAI arm indexes the LCP column with this.
+// rk is the transducer's source-row bookkeeping. Derived stream ranks are
+// prefix sums of lengths; seam stamps must agree with those ranks or refuse.
 struct NRun { uint8_t c; uint64_t len, h, t; uint64_t rk = 0;
-             // TRUE head/tail ranks, stamped by the seam splice for class runs
-             // (~0 = use the cursor). The class rows are emitted in REBUILD order
-             // while the true SA order puts the class seed first, so a class run's
-             // true endpoints are not its stream rows.
              uint64_t ht = ~0ull, tt = ~0ull; };
+// Shared by every arm; debug mode cannot waive either certificate.
+static void require_stream_run(const NRun& v, uint64_t row, uint64_t n) {
+    pf_check(v.len && row <= n && v.len <= n - row,
+             "STREAM CLOSURE: invalid row extent (refusing publication)");
+    pf_check(v.ht == ~0ull || v.ht == row,
+             "STREAM STAMP: head disagrees with derived rank (refusing publication)");
+    pf_check(v.tt == ~0ull || v.tt == row + v.len - 1,
+             "STREAM STAMP: tail disagrees with derived rank (refusing publication)");
+}
+static void require_zero_closure(uint64_t holes, uint64_t disorder,
+                                 uint64_t noncontiguous, uint64_t fallbacks) {
+    pf_check(holes == 0 && disorder == 0 && noncontiguous == 0 && fallbacks == 0,
+             "KASAI CLOSURE: rank holes, disorder, noncontiguous runs, or fallback (refusing publication)");
+}
+static int selftest_stream_guard() {
+    require_stream_run({5, 3, 0, 0, 0, 7, 9}, 7, 10);
+    require_zero_closure(0, 0, 0, 0);
+    for (unsigned mode = 0; mode < 8; ++mode) {
+        pid_t child = ::fork(); pf_check(child >= 0, "fork stream guard test");
+        if (!child) {
+            int quiet = ::open("/dev/null", O_WRONLY);
+            ::dup2(quiet, STDERR_FILENO); ::close(quiet);
+            NRun v{5, 3, 0, 0, 0, 7, 9};
+            if (mode == 0) v.ht = 8;
+            if (mode == 1) v.tt = 8;
+            if (mode == 2) v.len = 0;
+            if (mode == 3) v.len = 4;
+            if (mode < 4) require_stream_run(v, 7, 10);
+            else require_zero_closure(mode == 4, mode == 5, mode == 6, mode == 7);
+            _exit(0);
+        }
+        int status;
+        pf_check(::waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 2,
+                 "stream guard failed to refuse");
+    }
+    printf("STREAM_GUARD_SELFTEST_PASS head,tail,zero,overflow,holes,disorder,noncontiguous,fallback refusals=8\n");
+    return 0;
+}
 struct RepairStream {
     uint64_t N = 0, n = 0, w1 = 10, terminal = 0;
     SeamClasses* seam = nullptr;
@@ -2018,8 +2043,8 @@ struct RepairStream {
                 if (row == cl.lo) {
                     // The class's reconstructed runs are contiguous from the
                     // class's first row: stamp each piece's own rank base, and
-                    // its TRUE head/tail rank (the emitted order is the rebuild
-                    // order; the true order puts the class seed first).
+                    // its independently verified head/tail rank. Both the
+                    // emitted class and the rank model put the seed first.
                     pf_check(cl.runTrue.size() == cl.runs.size(),
                              "seam splice run/rank count");
                     uint64_t base = row;
@@ -3497,10 +3522,16 @@ struct LceWrap {
     SlimFingerprint<CorpusText>* fh = nullptr;
     SlimSharded seedQueries;
     uint64_t n = 0;
+    bool finite = false; // Seam discovery compares rotations; product LCP compares suffixes.
     void flush_thread() const { fh->flushThread(); seedQueries.flushThread(); }
     uint64_t operator()(uint64_t i, uint64_t j) const {
         uint64_t size = n, answer = 0;
         if (i >= size || j >= size) pf_fail("cyclic LCE bounds");
+        if (finite) {
+            const uint64_t cap = std::min(n - i, n - j);
+            if (i == j) { seedQueries.add(1); return cap; }
+            return std::min(fh->lce(i, j, cap), cap);
+        }
         if (i == j) { seedQueries.add(1); return size; }
         while (answer < size) {
             uint64_t cap = std::min({size - answer, size - i, size - j});
@@ -3698,7 +3729,7 @@ struct RunRankExc {
 struct KasaiState {
     uint64_t lastHeadRank = 0, lastEndRank = 0;
     uint64_t gaps = 0, disorder = 0, noncontig = 0, bands = 0;
-    std::atomic<uint64_t> fallback{0};   // queries that needed the walk (rank holes)
+    std::atomic<uint64_t> fallback{0};   // invariant zero: no fallback implementation exists
 };
 
 struct LcpColumn {
@@ -3821,6 +3852,7 @@ static void fp_self_check(SlimFingerprint<CorpusText>& fh, const CorpusText& tex
 int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string(argv[1]) == "--benchmark-repair-chunks") return benchmark_repair_chunks();
+        if (argc == 2 && std::string(argv[1]) == "--selftest-stream-guard") return selftest_stream_guard();
         if (argc == 2 && std::string(argv[1]) == "--selftest-repair-chunks") return selftest_repair_chunks();
         if (argc == 2 && std::string(argv[1]) == "--selftest-sweep-monoid") return selftest_sweep_monoid();
         if (argc == 3 && std::string(argv[1]) == "--selftest-seam-spool") return selftest_seam_spool(argv[2]);
@@ -3867,7 +3899,7 @@ int main(int argc, char** argv) {
         pf_check(!checkClaimsDir.empty() ||
                  (!prefix.empty() && !corpus.empty() && !remap.empty() && !out.empty()),
                  "usage: xsa_finish --prefix MERGED/frag --corpus CORPUS --remap MAP.bin --output CONTAINER.sxi2 "
-                 "[--bridge-dir DIR] [--witness-sample-check BANKED.sA] [--chi-expect N] [--threads N] "
+                 "[--debug-artifacts] [--bridge-dir DIR] [--witness-sample-check BANKED.sA] [--chi-expect N] [--threads N] "
                  "[--keep-rlebwt] [--keep-pfck] [--poll-timeout S] [--repair-chunk-runs N] "
                  "[--lcp-column COLUMN.sxlc --sa-locate ISA.sxis]");
         pf_check(!repairChunkRuns || repairChunkRuns >= 1024, "experimental repair chunks require at least 1024 runs");
@@ -3905,9 +3937,11 @@ int main(int argc, char** argv) {
 
         // ---- KASAI: the prebuilt LCP column (kasai-finish), proved HERE, before
         // a byte of the sweep runs: n identity, the file's own arithmetic, and a
-        // strictly ordered escape list. `XSA_FINISH_KASAI=0` keeps the old
-        // SlimFingerprint walk on the identical inputs (the A/B arm).
+        // strictly ordered escape list. A supplied column always enables its
+        // rank and closure guards; no environment switch can turn them off.
         const bool kasaiOff = pf_env_u64("XSA_FINISH_KASAI", 1, 0, 1) == 0;
+        pf_check(!kasaiOff || lcpColumnPath.empty(),
+                 "a supplied LCP column cannot be disabled by XSA_FINISH_KASAI");
         const int kasaiAudit = int(pf_env_u64("XSA_FINISH_KASAI_AUDIT", 0, 0, 2));
         LcpColumn lcpCol;
         LocateIsa locateIsa;
@@ -3918,6 +3952,14 @@ int main(int argc, char** argv) {
         pf_check(debugArtifacts || (!isaDebug && pf_env_str("XSA_FINISH_DUMP_STREAM").empty() &&
                                     pf_env_str("XSA_FINISH_DUMP_ANSWERS").empty()),
                  "offline ISA/dumps require explicit --debug-artifacts (outside product space contract)");
+        pf_check(debugArtifacts || bridgeDir.empty(),
+                 "bridge dumps require explicit --debug-artifacts");
+        pf_check(debugArtifacts || runRanksPath.empty(),
+                 "offline rank exceptions require explicit --debug-artifacts");
+        pf_check(debugArtifacts || (locateIsaPath.empty() && !kasaiAudit),
+                 "full ISA audit requires explicit --debug-artifacts");
+        fprintf(stderr, "XSA_FINISH_DEBUG_ARTIFACTS enabled=%d product_dump_scratch_bytes=0\n",
+                int(debugArtifacts));
         if (isaDebug) trueIsa.load(pf_env_str("XSA_FINISH_ISA_DEBUG"), n);
         // Dev counters vs ground truth. Atomics: the psi-walk phase 1 is
         // per-run parallel, so several workers may touch them.
@@ -4194,7 +4236,7 @@ int main(int argc, char** argv) {
         };
 
         Sweep sweep(n);
-        LceWrap slimLce{&fhSlim, {}, n};
+        LceWrap slimLce{&fhSlim, {}, n, true};
         // finish-decomposed: one band's buffered fold output (the runs the
         // repair transducer emitted for that band, their global run indices,
         // and the LCE columns the verification stage fills in). Two of these
@@ -4220,7 +4262,10 @@ int main(int argc, char** argv) {
         // The band loop's sink. Passed DIRECTLY as the transducer's template sink
         // (hot path, inlined) and also installed as rs.emit for the final flush,
         // so both paths emit through identical code.
+        uint64_t certifiedRows = 0;
         auto bandSink = [&](const NRun& v) {
+            require_stream_run(v, certifiedRows, n);
+            certifiedRows += v.len;
             // Stream fingerprint (dev): identical piece sets must produce an
             // identical (c,len,h,t) sequence, and a differing one must be visible.
             streamFnv = (streamFnv ^ (v.len * 0x9e3779b97f4a7c15ull + v.h + (v.t << 1) + v.c)) *
@@ -4229,6 +4274,7 @@ int main(int argc, char** argv) {
             // XSA_FINISH_DUMP_STREAM (dev only): the emitted run stream, one
             // 40-byte record per run, for offline ground-truth analysis.
             if (streamDump) {
+                pf_check(v.len <= UINT32_MAX, "debug stream length exceeds record format");
                 struct { uint64_t idx, rk, h, t; uint32_t len; uint8_t c, pad[3]; } rec;
                 rec.idx = rs.rNorm - 1; rec.rk = v.rk; rec.h = v.h; rec.t = v.t;
                 rec.len = uint32_t(v.len); rec.c = v.c; memset(rec.pad, 0, 3);
@@ -4371,8 +4417,8 @@ int main(int argc, char** argv) {
             // (96x the queries, which the seam-work journal refuses loudly).
             auto next = std::make_shared<std::atomic<size_t>>(0);
             if (!kasaiOn) {
-                // THE OLD ARM (`XSA_FINISH_KASAI=0`), unchanged: every answer is
-                // a full SlimFingerprint LCE walk, re-verified symbol by symbol.
+                // Without a column, compute the same finite-suffix LCPs by
+                // a full verified LCE capped at the text end (never wrap).
                 return std::function<void(int)>([&, cnt, &nb, &gx, prevTailS, next](int t) {
                     slim_set_thread_shard(unsigned(t));
                     for (;;) {
@@ -4392,15 +4438,11 @@ int main(int argc, char** argv) {
                 });
             }
             // ---- THE KASAI ARM --------------------------------------------------
-            // rank = ISA[head] from the LOCATE TABLE (exact), the value from ONE
-            // staged column slice, and - only where the run stream skips a rank
-            // (the seam-class holes) - the old walk for that single query, because
-            // an adjacent-rank LCP is not defined across a hole.
-            //
-            // Two phases inside ONE pool job: the lookups are random reads and
-            // must be parallel, but the slice bounds are only known once every
-            // run's rank is. The last worker to arrive stages the slice, the rest
-            // wait on a flag; the claim counter is reset behind that barrier.
+            // Derive ranks from the ordered stream lengths. Worker zero
+            // constructs the rank arrays; all workers arrive before the last
+            // arrival stages the column slice and publishes it with release.
+            // Every worker acquires that publication before reading the slice.
+            // Nonadjacency is an error, never a request for a walk fallback.
             auto headRank = std::make_shared<std::vector<uint64_t>>(cnt);
             auto tailRank = std::make_shared<std::vector<uint64_t>>(cnt);
             auto band = std::make_shared<LcpColumn::Band>();
@@ -4537,8 +4579,7 @@ int main(int argc, char** argv) {
                     uint64_t lo = ~uint64_t(0), hi = 0;
                     for (size_t i = 0; i < cnt; ++i) {
                         // Both ENDPOINT ranks are what the column answers need:
-                        // a run's own rows can skip a rank (a hole inside a run),
-                        // so hi is not headRank+len-1 in general.
+                        // head and tail both lie in the contiguous stream span.
                         // The sentinel rank (n) marks padding runs: it must not
                         // extend the band's column slice, which lives in [0,n-1].
                         if ((*headRank)[i] < n) lo = std::min(lo, (*headRank)[i]);
@@ -4549,12 +4590,7 @@ int main(int argc, char** argv) {
                         if ((*headRank)[i] < n) hi = std::max(hi, (*headRank)[i]);
                         if (nb[i].len >= 2 && (*tailRank)[i] != (*headRank)[i] + nb[i].len - 1)
                             kasaiState.noncontig += 1;
-                        // The stream is ascending EXCEPT for the terminal row,
-                        // which the transducer emits late (measured: rank 1186920
-                        // arrives after rank 1194188 at 100 MB). Order is not
-                        // needed for correctness - only ADJACENCY is (the walk
-                        // fallback covers the rest) - so this is counted, not
-                        // refused.
+                        // Seed-first stream ranks must be contiguous and increasing.
                         if (i && (*headRank)[i] <= (*headRank)[i - 1])
                             kasaiState.disorder += 1;
                         const uint64_t prevEnd =
@@ -4573,9 +4609,8 @@ int main(int argc, char** argv) {
                         }
                     }
                     if (!firstBand && (*headRank)[0] <= prevHeadS) kasaiState.disorder += 1;
-                    pf_check(kasaiState.gaps == 0 && kasaiState.disorder == 0 &&
-                             kasaiState.noncontig == 0,
-                             "KASAI CLOSURE: rank holes, disorder, or noncontiguous runs (refusing publication)");
+                    require_zero_closure(kasaiState.gaps, kasaiState.disorder,
+                                         kasaiState.noncontig, kasaiState.fallback.load());
                     const uint64_t base = lo ? lo - 1 : 0;
                     lcpCol.load(*band, base, hi - base + 1);
                     kasaiState.lastHeadRank = (*headRank)[0];
@@ -4598,23 +4633,14 @@ int main(int argc, char** argv) {
                           : prevEndS;
                     uint64_t top = 0;
                     if (gx[i]) {
-                        if (prevEnd == r) top = band->at(r);
-                        else {
-                            // THE HOLE: the run stream skipped a rank, so this
-                            // run's predecessor is not rank-adjacent and col[r-1]
-                            // is not the answer. One walk, counted (the holes are
-                            // the seam classes: 4 at 100 MB, 30 at 1 GB).
-                            const uint64_t prevPos = i ? nb[i - 1].t : prevTailS;
-                            pf_check(prevPos < n, "previous position resolution failed");
-                            top = slimLce(prevPos, v.h);
-                            kasaiState.fallback.fetch_add(1, std::memory_order_relaxed);
-                        }
+                        pf_check(prevEnd == r,
+                                 "KASAI CLOSURE: nonadjacent top query (refusing publication)");
+                        top = band->at(r);
                     }
                     uint64_t inter = INF;
                     if (v.len >= 2 && r < n && (*tailRank)[i] < n) {
                         // min-LCP over the rank interval between the run's two
-                        // ENDPOINT RANKS (exact even when the run's own rows skip
-                        // a rank: LCE(SA[a],SA[c]) = min col[a..c-1] for any a<c).
+                        // ENDPOINT RANKS: LCE(SA[a],SA[c]) = min col[a+1..c].
                         const uint64_t rt = (*tailRank)[i];
                         const uint64_t a = std::min(r, rt), c = std::max(r, rt);
                         pf_check(c > a, "KASAI: an interior run collapsed to one rank");
@@ -4927,12 +4953,13 @@ int main(int argc, char** argv) {
                 fprintf(stderr, "XSA_FINISH_KASAI_ANCHORS checks=%llu mismatches=0 source=--isa-sample\n",
                         (unsigned long long)anchorChecks);
         }
+        pf_check(certifiedRows == n,
+                 "STREAM CLOSURE: incomplete stream (refusing publication)");
         // Check AFTER the final tail band, before finalizing or publishing.
         // Bank parity and sparse anchor checks cannot waive closure failures.
         if (kasaiOn) {
-            pf_check(kasaiState.gaps == 0 && kasaiState.disorder == 0 &&
-                     kasaiState.noncontig == 0,
-                     "KASAI CLOSURE: rank holes, disorder, or noncontiguous runs (refusing publication)");
+            require_zero_closure(kasaiState.gaps, kasaiState.disorder,
+                                         kasaiState.noncontig, kasaiState.fallback.load());
         }
         {
             PfRegion r("advance-finish", PF_ADVANCE);

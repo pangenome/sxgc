@@ -74,10 +74,13 @@ static int selftest(){B t[]={'a','b','a'},r[256];std::iota(r,r+256,0);B sa[24]{}
  caught=false;try{Compare over{t,sa,r,3};over.add({4,'a'});}catch(...){caught=true;}require(caught,"detect long stream");
  B bits[]={0x65};Bits b{bits,7};require(b.gamma()==1 && b.gamma()==2 && b.gamma()==3,"gamma decoding");
  caught=false;try{b.bit();}catch(...){caught=true;}require(caught,"bit bounds");
+ // Nonidentity product alphabet, including legal NUL/05, and p=0 wrap.
+ r['a']=0;r['b']=5;Compare mapped{t,sa,r,3};mapped.add({1,5});mapped.add({2,0});require(mapped.finish(),"remap/wrap");
  // Canonical 1-bit Huffman codes a=0,b=1; lengths 1,2 => bits 1,0,1,0.
  std::vector<B> m(2322);m[2048+'a']=m[2048+'b']=1;m[2304]=2;m[2312]=4;m[2320]=2;m[2321]=5;
  M1 decoder(m.data(),m.size(),2);auto x=decoder.next(),y=decoder.next();require(x.c=='a' && x.len==1 && y.c=='b' && y.len==2,"m1 decoding");decoder.finish();
- printf("STREAM_VS_BWT_SELFTEST_PASS corruption,truncation,extent,gamma,Huffman\n");return 0;}
+ caught=false;try{M1 truncated(m.data(),2321,2);}catch(...){caught=true;}require(caught,"m1 extent");
+ printf("STREAM_VS_BWT_SELFTEST_PASS corruption,truncation,extent,remap,wrap,gamma,Huffman\n");return 0;}
 int main(int argc,char** argv){try{
  std::string corpus,sap,remapp,stream,container,col;bool wantchi=false;U expect=UINT64_MAX;
  for(int i=1;i<argc;++i){std::string a=argv[i];auto value=[&]{require(i+1<argc,"missing argument");return std::string(argv[++i]);};
