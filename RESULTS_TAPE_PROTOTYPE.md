@@ -730,3 +730,45 @@ Existing selftests passed: STREAM_GUARD refusals=8; CHUNKED_REPAIR_ORACLE
 streams=128, widths=3392, both coalescers/class flanks/padding straddle/dollar/
 legal 00 and 05 covered. Full fixture gate evidence is under
 `tools/binbwt/evidence/hotspots-repair/fixture-*`.
+
+### Repair optimization: 150 MB green
+
+Both containers match expected SHA
+`d7eeac0f574a9a6e272732737d20b6d18a533336fea8f46f10287cb0e2b063a5`,
+chi 44034231, runs 57279187, closure 0/0/0, walk_fallbacks 0, STREAM_VS_BWT
+mismatches 0, and product dump scratch 0. Emit completed with window 100000000
+and both artifacts before every finish; no overlapping emit/finish was used.
+
+| Product term (seconds) | Starting code | Instrument-only | Optimized |
+| --- | ---: | ---: | ---: |
+| repair | 15.207 | 18.349461 | **11.841864** |
+| repair feed | 13.849 | 16.853 | **10.165** |
+| LCE span (overlapped) | 21.733 | 25.556722 | 18.802154 |
+| exposed LCE wait | 0.007 | 0.008 | 0.004 |
+| advance_witness | 5.752 | 6.282960 | 6.206666 |
+| sparse text walks (count, not seconds) | 0 | 0 | 0 |
+
+Optimized repair is 35.5% below the instrument-only baseline and 22.1% below
+the original uninstrumented run, despite retaining the sampled counters.
+The sparse text-walk wall was already absent on this checkout; the LCE span
+is not additive with repair/advance and is not a standalone sparse-LCE wall.
+These are single runs with page-cache/scheduler/probe noise, not extrapolated
+pile-time guarantees.
+
+| Exclusive repair term (TSC ticks/input) | Instrument-only | Optimized |
+| --- | ---: | ---: |
+| band read/decode | 44.19 | 50.00 |
+| raw validation/normalization | 58.76 | 209.44 |
+| coalescing | 911.87 | 371.09 |
+| seamSplice excluding children | 58.27 | 0.01 |
+| stamping/accounting | 76.94 | 73.00 |
+| require_stream_run | 24.43 | 24.71 |
+| output/staging excluding guard | 56.14 | 56.62 |
+
+Coalescing + seam ticks fell 61.7%; guard and output terms remain essentially
+unchanged. Raw tick attribution rose; this is not a uniform speedup across
+all subterms. Counter samples are 55,936 in both runs. All original audits
+remain, the product still has no full ISA or debug dump scratch, and repair
+is serial. Existing `test_kasai_closure.py` also passed all negative refusals,
+anchored/unanchored/walk/debug byte comparisons, and bad-anchor refusals with
+the expected fixture SHA (`hotspots-repair/regression.log`).
