@@ -2103,8 +2103,14 @@ struct RepairStream {
     template<class Sink> void feed_raw(const RawRun& raw, Sink& sink,
                                        RawRun& source, bool& sourceHave) {
         RepairCycles::Input cycleInput(cycles);
-        if (cycles && cycles->active) feed_raw_impl<true>(raw, sink, source, sourceHave);
+        if (cycles && cycles->active) feed_sampled(raw, sink, source, sourceHave);
         else feed_raw_impl<false>(raw, sink, source, sourceHave);
+    }
+    // Keep the rare, timer-heavy instantiation out of the ordinary fold's
+    // instruction stream. Sampling still selects the same input ordinals.
+    template<class Sink> __attribute__((noinline))
+    void feed_sampled(const RawRun& raw, Sink& sink, RawRun& source, bool& sourceHave) {
+        feed_raw_impl<true>(raw, sink, source, sourceHave);
     }
     // Select once per input; unsampled runs contain no nested timer probes.
     // Both instantiations execute exactly the same transducer and audits.

@@ -890,3 +890,14 @@ Product repair **8.741546 s**, lce 15.323830, advance 5.871286. Split
 (55,936 samples). Feed remains 7.370 s; this is a small improvement, not
 halving. Source-character/copy attribution remains large. No simultaneous
 build ran during this candidate's product timing.
+
+### Second repair pass: outline the sampled transducer
+
+A noinline wrapper keeps the timer-heavy sampled instantiation out of the
+ordinary loop. Sampling ordinals, all audits, and the state machine are
+unchanged. Packaged fixture gate passes expected bytes/chi/runs, all-zero
+closure/fallback/mismatch counters, and the three selftests exit zero.
+Fixture repair 0.026452 s; split
+65.09/82.56/68.40/0/74.68/23.94/77.13/121.38/64.99/67.35 ticks/input.
+This fixture wall regresses, so only the large gate can justify retaining it.
+Evidence: `tools/binbwt/evidence/repair-half-outline/`.
