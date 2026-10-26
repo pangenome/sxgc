@@ -2020,6 +2020,8 @@ struct RepairStream {
                     // class's first row: stamp each piece's own rank base, and
                     // its TRUE head/tail rank (the emitted order is the rebuild
                     // order; the true order puts the class seed first).
+                    pf_check(cl.runTrue.size() == cl.runs.size(),
+                             "seam splice run/rank count");
                     uint64_t base = row;
                     for (size_t k = 0; k < cl.runs.size(); ++k) {
                         const auto& piece = cl.runs[k];
@@ -3117,6 +3119,8 @@ static int selftest_repair_chunks() {
         if (seed & 2) {
             seam.classes.push_back({2,5,1,17,19,{},{{5,1,7,7},{0,2,8,9}}});
             seam.classes.push_back({8,12,1,21,23,{},{{9,4,11,13}}});
+            seam.classes[0].runTrue = {{2,2},{3,4}};
+            seam.classes[1].runTrue = {{8,11}};
         }
         std::vector<NRun> expected;
         RepairStream initial; initial.N=n+10; initial.n=n; initial.terminal=9; initial.seam=&seam;
@@ -3134,8 +3138,10 @@ static int selftest_repair_chunks() {
             pf_check(expected.size()==actual.size(), "repair oracle run count");
             for (size_t i=0; i<actual.size(); ++i)
                 pf_check(expected[i].c==actual[i].c && expected[i].len==actual[i].len &&
-                         expected[i].h==actual[i].h && expected[i].t==actual[i].t,
-                         "repair oracle serialized run bytes");
+                         expected[i].h==actual[i].h && expected[i].t==actual[i].t &&
+                         expected[i].rk==actual[i].rk && expected[i].ht==actual[i].ht &&
+                         expected[i].tt==actual[i].tt,
+                         "repair oracle serialized run bytes and rank stamps");
             ++cases;
         }
     }
@@ -4572,6 +4578,9 @@ int main(int argc, char** argv) {
                         }
                     }
                     if (!firstBand && (*headRank)[0] <= prevHeadS) kasaiState.disorder += 1;
+                    pf_check(kasaiState.gaps == 0 && kasaiState.disorder == 0 &&
+                             kasaiState.noncontig == 0,
+                             "KASAI CLOSURE: rank holes, disorder, or noncontiguous runs (refusing publication)");
                     const uint64_t base = lo ? lo - 1 : 0;
                     lcpCol.load(*band, base, hi - base + 1);
                     kasaiState.lastHeadRank = (*headRank)[0];
@@ -4690,8 +4699,10 @@ int main(int argc, char** argv) {
                 for (size_t i = 0; i < s.cnt; ++i) {
                     // XSA_FINISH_DUMP_ANSWERS (dev only): the verified per-run
                     // answers, for offline A/B between the arms.
-                    if (answersDump)
-                        pf_write_full(answersDumpFd, &s.topLcp[i], 16, "answers dump top+inter");
+                    if (answersDump) {
+                        const uint64_t answers[2]{s.topLcp[i], s.interior[i]};
+                        pf_write_full(answersDumpFd, answers, sizeof answers, "answers dump top+inter");
+                    }
                     sweep.advance(s.nbuf[i], s.topLcp[i], s.interior[i]);
                 }
                 advanceWall += tnow() - ta;
@@ -4865,12 +4876,7 @@ int main(int argc, char** argv) {
         // every run; the production sweep's last events live here).
         rs.finishStream();
         if (kasaiOn) {
-            // The rank space is not covered exactly: the seam classes leave
-            // HOLES (a row the class's runs do not describe). What must hold is
-            // that the stream stays inside [0,n) in ascending order (asserted per
-            // band), that the walks ran only at holes, and that the highest rank
-            // any band reached is inside the space. The exactness of every value
-            // is the AUDIT arm's job, not this counter's.
+            // Bounds alone do not establish the rank-closure contract.
             pf_check(lcpCol.maxEnd <= n, "KASAI CLOSURE: a band's rank slice runs past n");
             if (isaDebug) {
                 fprintf(stderr, "XSA_FINISH_STREAM_FNV runs=%llu fnv=%llu hsum=%llu tsum=%llu lensum=%llu\n",
@@ -4925,6 +4931,13 @@ int main(int argc, char** argv) {
                 lcePending = nullptr;
                 finishAdvance(tail);
             }
+        }
+        // Check AFTER the final tail band, before finalizing or publishing.
+        // Bank parity and sparse anchor checks cannot waive closure failures.
+        if (kasaiOn) {
+            pf_check(kasaiState.gaps == 0 && kasaiState.disorder == 0 &&
+                     kasaiState.noncontig == 0,
+                     "KASAI CLOSURE: rank holes, disorder, or noncontiguous runs (refusing publication)");
         }
         {
             PfRegion r("advance-finish", PF_ADVANCE);
