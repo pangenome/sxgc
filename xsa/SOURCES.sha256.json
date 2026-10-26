@@ -36,7 +36,7 @@
   "runtime/bit6/third_party/libsais/libsais.h": "6f1dd253ece20508c27d87958abfd80541443812b4a1292e0a67879edd873446",
   "runtime/bit6/third_party/libsais/token-libsais.c": "1eeec709186bb28c02c1d7113809d19db9e83045ebd3ce6b4654ddad4659df61",
   "runtime/bit6/third_party/libsais/token-libsais.h": "5a855c8f159abf78dafcab96dc20240b81a308f0099f6fa1f7def47450b0f3df",
-  "runtime/bit6/xsa_finish.cpp": "a8cb37bba7f21acbf942fd7a390f7a09188859cd15892ddd57655d5e8ff01a50",
+  "runtime/bit6/xsa_finish.cpp": "8e53927c4b2e618bccc80880ec48af4a95bc0ceacced4740caefeb70852ffda2",
   "runtime/tools/build_slim_dump.sh": "aeaba3f3e7996a95fb570069076f1c4d179ca015eec6d5267a8f090b469b8860",
   "runtime/tools/tool_manifest.py": "0712748587f804849613597124dd96a50d987a1c2274f475c54f0e40cb21f31f",
   "runtime/tools/upstream.lock.json": "bd5d345045de9c1eeff013bdb412e19a285ecf6c713323858f1eb8ea7aa02928",

@@ -705,3 +705,28 @@ experiment keeps the source coalescer local across an ordered band and folds
 ordinary, nonintersecting source runs directly into the normalized coalescer.
 Both coalescers, all guards, and the exact cross-band transducer state remain;
 seam-intersecting source runs continue through the full splice.
+
+### Repair optimization: fixture green before escalation
+
+The ordinary source-run path now performs one direct normalized append when
+its half-open row span ends before (or at) the next seam class. Intersecting
+runs retain the full class traversal. The source pending record is local to
+the serial band loop and restored at the boundary; the delayed record and
+normalized pending run still carry across bands exactly. No guard or audit
+was removed, and no repair worker was added.
+
+The first optimized fixture gate is byte-identical (expected SHA, chi 145685,
+runs 192138, closure/fallbacks/mismatches all zero, product dump scratch zero).
+Product repair falls from instrumented 0.043254 to 0.022513 s; feed from
+0.031 to 0.015 s. Lce span 0.031572 s, advance 0.019508 s. Its 188-sample
+split is read/decode 63.17, raw 68.72, coalescing 152.66, seamSplice 0.00,
+stamping 72.77, guard 23.19, output/staging 119.47 TSC ticks/input. Compare
+coalescing + seam together (434.35 -> 152.66); the direct append no longer
+enters the seam timing scope for ordinary runs. Zero sampled seam ticks does
+not mean seam work is absent: those rare class runs did not land in the sample.
+The guard remains mandatory on every emitted run, sampled or not.
+
+Existing selftests passed: STREAM_GUARD refusals=8; CHUNKED_REPAIR_ORACLE
+streams=128, widths=3392, both coalescers/class flanks/padding straddle/dollar/
+legal 00 and 05 covered. Full fixture gate evidence is under
+`tools/binbwt/evidence/hotspots-repair/fixture-*`.

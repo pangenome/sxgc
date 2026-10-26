@@ -2092,6 +2092,13 @@ struct RepairStream {
     }
     void feed_raw(const RawRun& raw) { feed_raw(raw, emit); }
     template<class Sink> void feed_raw(const RawRun& raw, Sink& sink) {
+        feed_raw(raw, sink, srcPending, srcHave);
+    }
+    // Keep the source coalescer local to the ordered band loop. The sink reads
+    // emitted-run accounting, not this delayed source record; separating them
+    // lets the compiler retain the source fields across the callback.
+    template<class Sink> void feed_raw(const RawRun& raw, Sink& sink,
+                                       RawRun& source, bool& sourceHave) {
         RepairCycles::Input cycleInput(cycles);
         if (!firstRunSeen) {
             firstRunSeen = true;
@@ -2124,10 +2131,22 @@ struct RepairStream {
         // and 23 occurrences at 10GB). Forbid exactly the vacated range.
         pf_check(v.c != 1 && v.c != 2 && v.c != 3 && v.c != 4, "unsupported text alphabet");
         RepairCycles::Scope coalesceScope(cycles, RepairCycles::COALESCE);
-        if (srcHave && srcPending.c == v.c) { srcPending.len += v.len; srcPending.tail = v.tail; }
+        if (sourceHave && source.c == v.c) { source.len += v.len; source.tail = v.tail; }
         else {
-            if (srcHave) seamSplice({srcPending.c, srcPending.len, srcPending.head, srcPending.tail}, sink);
-            srcPending = v; srcHave = true;
+            if (sourceHave) {
+                const uint64_t end = row + source.len;
+                if (!seam || next == seam->classes.size() || end <= seam->classes[next].lo) {
+                    // Both coalescers still run in order. Outside a seam the
+                    // splice is exactly one append, with the same row stamp;
+                    // avoid constructing a second temporary and entering the
+                    // class traversal for every ordinary character change.
+                    append({source.c, source.len, source.head, source.tail}, sink);
+                    row = end;
+                } else {
+                    seamSplice({source.c, source.len, source.head, source.tail}, sink);
+                }
+            }
+            source = v; sourceHave = true;
         }
     }
     void seamSplice(NRun v) { seamSplice(v, emit); }
@@ -5005,10 +5024,13 @@ int main(int argc, char** argv) {
             feedTarget = &s;
             {
                 PfRegion r("repair-feed", PF_REPAIR);
+                RawRun source = rs.srcPending;
+                bool sourceHave = rs.srcHave;
                 for (const auto& raw : s.raws) {
                     expectedRlebwtBytes += 4 * ((raw.len + 0x7fffff - 1) / 0x7fffff);
-                    if (!repairChunkRuns) rs.feed_raw(raw, bandSink);
+                    if (!repairChunkRuns) rs.feed_raw(raw, bandSink, source, sourceHave);
                 }
+                if (!repairChunkRuns) { rs.srcPending = source; rs.srcHave = sourceHave; }
                 r.close(); feedAcc.add(r); feedWall += r.wall;
             }
             rawRunsFed += s.raws.size();
