@@ -1653,8 +1653,9 @@ struct SeamClasses {
     }
     void rebuild(uint64_t n, uint64_t r, uint64_t limit,
                  const std::function<uint64_t(uint64_t, uint64_t)>& collection_lce,
-                 const std::function<uint8_t(uint64_t)>& symbol) {
-        rebuild(n, r, limit, collection_lce, symbol, nullptr);
+                 const std::function<uint8_t(uint64_t)>& symbol,
+                 unsigned threads = 1) {
+        rebuild(n, r, limit, collection_lce, symbol, nullptr, threads);
     }
     // `anchorVerify` (optional, --isa-sample): every anchored class occurrence
     // is checked against the model below and any disagreement refuses - the
@@ -1663,21 +1664,62 @@ struct SeamClasses {
     void rebuild(uint64_t n, uint64_t r, uint64_t limit,
                  const std::function<uint64_t(uint64_t, uint64_t)>& collection_lce,
                  const std::function<uint8_t(uint64_t)>& symbol,
-                 const std::function<void(uint64_t, uint64_t)>& anchorVerify) {
+                 const std::function<void(uint64_t, uint64_t)>& anchorVerify,
+                 unsigned threads = 1) {
         // Product convention: finite suffix order. The terminal chain seed
         // sorts before every proper extension. Move the row itself before
         // coalescing, so stamps certify stream order rather than replace it.
         uint64_t maxSeam = 0;
+        // ---- GATHER, THEN SORT --------------------------------------------------
+        // The old comparator called collection_lce(), a random-access TEXT WALK, for
+        // every one of its O(m log m) comparisons: O(m log m) scattered text reads to
+        // order m members. Instead read each member's first K bytes ONCE - O(m)
+        // scattered reads, issued IN PARALLEL because they are independent - then sort
+        // an index array in RAM on that key, and fall back to a text walk only where
+        // K-byte prefixes are EQUAL. Same order; a fraction of the text contact.
         for (auto& cl : classes) {
             std::vector<uint64_t> sa = cl.occ;
-            std::sort(sa.begin(), sa.end(), [&](uint64_t a, uint64_t b) {
-                uint64_t len = collection_lce(a, b);
+            const size_t msz = sa.size();
+            size_t K = 32;
+            while (K > 8 && (uint64_t(K) * uint64_t(msz)) > (uint64_t(256) << 20)) K >>= 1;
+            K = size_t(std::min<uint64_t>(K, n));
+            std::vector<uint8_t> key(msz * K);
+            {
+                const unsigned nt = std::max(1u, std::min<unsigned>(unsigned(threads),
+                                       unsigned(msz ? (msz + 8191) / 8192 : 1)));
+                std::vector<std::thread> gp;
+                gp.reserve(nt);
+                for (unsigned t = 0; t < nt; ++t)
+                    gp.emplace_back([&, t] {
+                        const size_t i0 = msz * t / nt, i1 = msz * (t + 1) / nt;
+                        for (size_t i = i0; i < i1; ++i) {
+                            const uint64_t p = sa[i];
+                            uint8_t* dst = key.data() + i * K;
+                            for (size_t j = 0; j < K; ++j) {
+                                const uint64_t q = p + j;
+                                dst[j] = symbol(q < n ? q : p);   // finite: nothing past the end
+                            }
+                        }
+                    });
+                for (auto& th : gp) th.join();
+            }
+            std::vector<uint32_t> idx(msz);
+            for (size_t i = 0; i < msz; ++i) idx[i] = uint32_t(i);
+            std::sort(idx.begin(), idx.end(), [&](uint32_t ia, uint32_t ib) {
+                const int kc = std::memcmp(key.data() + size_t(ia) * K, key.data() + size_t(ib) * K, K);
+                if (kc != 0) return kc < 0;
+                // TIE at depth K: only now is a text walk needed.
+                const uint64_t a = sa[ia], b = sa[ib];
+                const uint64_t len = collection_lce(a, b);
                 maxSeam = std::max(maxSeam, len);
-                // Equal rotations still have distinct finite suffixes. A
-                // proper prefix sorts first, including periodic chain members.
                 const uint64_t cap = std::min(n - a, n - b);
                 return len >= cap ? a > b : symbol(a + len) < symbol(b + len);
             });
+            {
+                std::vector<uint64_t> ord(msz);
+                for (size_t i = 0; i < msz; ++i) ord[i] = sa[idx[i]];
+                sa.swap(ord);
+            }
             auto seed = std::find(sa.begin(), sa.end(), cl.first);
             pf_check(seed != sa.end(), "seam class seed missing from its own occurrence set");
             std::rotate(sa.begin(), seed, seed + 1);
@@ -2102,6 +2144,50 @@ struct Sweep {
     int64_t rr_len[256];
     uint64_t rr_pos[256];
     bool rr_act[256];
+    // ---- ACTIVE-SET INDEX ---------------------------------------------------
+    // threshold_reset used to scan all 256 rr_len entries per character change
+    // (2 KB of AVX2 work, 57.3M times at 150 MB) to find the set with
+    // rr_len[cc] > m3, which MEASURES at 1.47 entries on average. A binary
+    // max-heap over rr_len finds exactly that set in O(k log 256) instead: the
+    // same set, emitted in ascending cc order (the scalar/AVX2 loop's order), so
+    // the witness stream is byte-identical.
+    int32_t heap[256];
+    int32_t heapPos[256];
+    int32_t heapN = 0;
+    void heapSwap(int32_t a, int32_t b) {
+        std::swap(heap[a], heap[b]); heapPos[heap[a]] = a; heapPos[heap[b]] = b;
+    }
+    void heapUp(int32_t i) {
+        while (i > 0) {
+            const int32_t p = (i - 1) / 2;
+            if (rr_len[heap[i]] > rr_len[heap[p]]) { heapSwap(i, p); i = p; } else break;
+        }
+    }
+    void heapDown(int32_t i) {
+        for (;;) {
+            const int32_t l = 2 * i + 1, r = l + 1;
+            int32_t b = i;
+            if (l < heapN && rr_len[heap[l]] > rr_len[heap[b]]) b = l;
+            if (r < heapN && rr_len[heap[r]] > rr_len[heap[b]]) b = r;
+            if (b == i) break;
+            heapSwap(i, b); i = b;
+        }
+    }
+    void heapInit() {
+        heapN = 0;
+        for (int cc = 0; cc < 256; ++cc) heapPos[cc] = -1;
+        for (int cc = 0; cc < 256; ++cc) {
+            heap[heapN] = cc; heapPos[cc] = heapN; ++heapN;
+        }
+        for (int32_t i = heapN / 2; i >= 0; --i) heapDown(i);
+    }
+    void heapRaise(int cc, int64_t v) {   // rr_len[cc] increases
+        rr_len[cc] = v;
+        if (heapPos[cc] >= 0) heapUp(heapPos[cc]);
+    }
+    // INSTRUMENTATION (product-cheap: plain increments, printed once at finish).
+    uint64_t statAdvance = 0, statCharChange = 0, statScanWords = 0, statFired = 0;
+    uint64_t statActSeen = 0, statEmit = 0, statMaxAct = 0;
     uint64_t previous_interior = INF;
     int64_t m = IINF;
     int32_t p = -1;
@@ -2109,6 +2195,7 @@ struct Sweep {
     bool first = true;
     explicit Sweep(uint64_t nNorm) : n(nNorm), bigN(nNorm) {
         for (int c = 0; c < 256; ++c) { rr_len[c] = -1; rr_pos[c] = 0; rr_act[c] = false; }
+        heapInit();
     }
     uint64_t witness(uint64_t pos) const {
         pf_check(pos < n, "chi-rspace: endpoint outside text");
@@ -2116,7 +2203,7 @@ struct Sweep {
         return bigN - pos;
     }
     void emit(uint64_t value) {
-        ++chi;
+        ++chi; ++statEmit;
         emitWitness(value);
     }
     // mask bit i of word w <=> (m3 < rr_len[64*w + i]) - 4 x u64 = 256 bits.
@@ -2150,9 +2237,50 @@ struct Sweep {
     // Emit + reset every cc with rr_len[cc] > m3 (bit index = cc; skip cc 0:
     // the scalar loop starts at 1).
     void threshold_reset(int64_t m3, uint64_t* scratch) {
+        // HEAP PATH: pop everything with rr_len > m3 (measured 1.47 entries per
+        // call), then emit in ASCENDING cc order - the order the 256-bit scan
+        // produced - so the witness stream does not change by one byte.
+        {
+            int32_t fired[256];
+            int32_t nf = 0;
+            for (int w = 0; w < 4; ++w) scratch[w] = 0;
+            while (heapN && rr_len[heap[0]] > m3 && nf < 256) {
+                const int32_t cc = heap[0];
+                fired[nf++] = cc;
+                if (cc) scratch[cc >> 6] |= uint64_t(1) << (cc & 63);
+                rr_len[cc] = m3;
+                heapDown(0);
+            }
+            // ascending cc order == what the old bit-scan produced
+            for (int32_t a = 1; a < nf; ++a) {
+                const int32_t v = fired[a];
+                int32_t b = a - 1;
+                while (b >= 0 && fired[b] > v) { fired[b + 1] = fired[b]; --b; }
+                fired[b + 1] = v;
+            }
+            scratch[0] &= ~1ull;   // cc 0 is never in the machine
+            // the 256-wide AVX2 scan this replaced is kept for the audit arm
+            for (int32_t j = 0; j < nf; ++j) {
+                const int cc = fired[j];
+                if (!cc) continue;
+                if (rr_act[cc]) emit(rr_pos[cc]);
+                rr_pos[cc] = 0; rr_act[cc] = false;
+            }
+            return;
+        }
         if (avx2_ok()) gt_masks(rr_len, m3, scratch);
         else gt_masks_scalar(rr_len, m3, scratch);
         scratch[0] &= ~1ull;   // cc 0 is never in the machine
+        // what the 256-wide scan actually finds
+        {
+            uint64_t any = 0;
+            for (int w4 = 0; w4 < 4; ++w4) any |= scratch[w4];
+            uint64_t bits2 = any, n2 = 0;
+            while (bits2) { bits2 &= bits2 - 1; ++n2; }
+            statFired += n2; ++statScanWords;
+            if (n2 > statMaxAct) statMaxAct = n2;
+            statActSeen += n2;
+        }
         for (int w = 0; w < 4; ++w) {
             uint64_t bits = scratch[w];
             while (bits) {
@@ -2178,12 +2306,14 @@ struct Sweep {
         int64_t m2 = previous_interior == INF ? IINF : int64_t(previous_interior);
         previous_interior = interiorMin;
         int64_t mm = std::min(m, m2);
+        ++statAdvance;
         if (c != p) {
+            ++statCharChange;
             int64_t m3 = std::min(mm, lcp_b);
             alignas(32) uint64_t scratch[4];
             threshold_reset(m3, scratch);
-            if (lcp_b > rr_len[p]) { rr_len[p] = lcp_b; rr_pos[p] = witness(p_sa_last); rr_act[p] = true; }
-            if (lcp_b > rr_len[c]) { rr_len[c] = lcp_b; rr_pos[c] = witness(v.h); rr_act[c] = true; }
+            if (lcp_b > rr_len[p]) { heapRaise(p, lcp_b); rr_pos[p] = witness(p_sa_last); rr_act[p] = true; }
+            if (lcp_b > rr_len[c]) { heapRaise(c, lcp_b); rr_pos[c] = witness(v.h); rr_act[c] = true; }
             m = IINF;
         } else {
             m = std::min(mm, lcp_b);
@@ -2197,6 +2327,13 @@ struct Sweep {
         // threshold_reset at m3=-1 emits exactly the act set.
         alignas(32) uint64_t scratch[4];
         threshold_reset(-1, scratch);
+        fprintf(stderr, "SWEEP_STATS advances=%llu char_changes=%llu scans=%llu fired=%llu "
+                        "mean_fired=%.2f max_fired=%llu emits=%llu chi=%llu\n",
+                (unsigned long long)statAdvance, (unsigned long long)statCharChange,
+                (unsigned long long)statScanWords, (unsigned long long)statFired,
+                statScanWords ? double(statFired) / double(statScanWords) : 0.0,
+                (unsigned long long)statMaxAct, (unsigned long long)statEmit,
+                (unsigned long long)chi);
     }
 };
 
@@ -4154,6 +4291,7 @@ int main(int argc, char** argv) {
             if (pos >= n) pf_fail("seam symbol outside text");
             return text[pos];
         };
+        const double seamBuildT0 = tnow();
         if (src.streaming) {
             seam.fromSpool = true; seam.depth = src.depth;
         } else if (useSpool) {
@@ -4167,6 +4305,8 @@ int main(int argc, char** argv) {
             seam.build(text, wm, n, R, 10,
                        [&](uint64_t a, uint64_t b) { return seamLce(a, b); }, seamSymbol);
         }
+        fprintf(stderr, "SEAM_PHASE build=%.3f classes=%zu rows=%llu\n",
+                tnow() - seamBuildT0, seam.classes.size(), (unsigned long long)seam.total);
         if (wmFd >= 0) ::close(wmFd);
         wmFd = -1;
         // Last-consumer deletion: merge.active keeps the directory alive
@@ -4761,8 +4901,10 @@ int main(int argc, char** argv) {
                 }
                 if (!batch.classes.empty()) {
                     batch.anchorVerify = seam.anchorVerify;
+                    const double seamRebuildT0 = tnow();
                     batch.rebuild(n,src.R,1u<<26,[&](uint64_t a,uint64_t b){return seamLce(a,b);},seamSymbol,
-                                  batch.anchorVerify);
+                                  batch.anchorVerify, unsigned(std::max<int>(1, threads)));
+                    fprintf(stderr, "SEAM_PHASE rebuild=%.3f\n", tnow() - seamRebuildT0);
                     seam.total += batch.total; seam.maxSeamLce = std::max(seam.maxSeamLce,batch.maxSeamLce);
                     for (auto& cl : batch.classes) seam.classes.push_back(std::move(cl));
                 }
