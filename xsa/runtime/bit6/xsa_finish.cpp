@@ -4473,9 +4473,11 @@ int main(int argc, char** argv) {
         BandSlot* feedTarget = &slots[0];
         uint64_t prevTail = 0;
         RepairCycles repairCycles;
-        repairCycles.enabled = pf_env_u64("XSA_FINISH_REPAIR_CYCLES", 1, 0, 1);
+        repairCycles.enabled = pf_env_u64("XSA_FINISH_REPAIR_CYCLES", 1, 0, 1) && !repairChunkRuns;
         RepairStream rs;
-        rs.cycles = &repairCycles;
+        // Experimental checkpoint replay copies rs into workers. Attribution
+        // belongs only to the serial transducer, never a shared worker counter.
+        rs.cycles = repairChunkRuns ? nullptr : &repairCycles;
         rs.N = N; rs.n = n; rs.terminal = 0; rs.seam = &seam;
         // The band loop's sink. Passed DIRECTLY as the transducer's template sink
         // (hot path, inlined) and also installed as rs.emit for the final flush,

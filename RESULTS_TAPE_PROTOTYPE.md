@@ -744,7 +744,7 @@ and both artifacts before every finish; no overlapping emit/finish was used.
 | repair | 15.207 | 18.349461 | **11.841864** |
 | repair feed | 13.849 | 16.853 | **10.165** |
 | LCE span (overlapped) | 21.733 | 25.556722 | 18.802154 |
-| exposed LCE wait | 0.007 | 0.008 | 0.004 |
+| exposed LCE wait | 0.007 | 0.004 | 0.004 |
 | advance_witness | 5.752 | 6.282960 | 6.206666 |
 | sparse text walks (count, not seconds) | 0 | 0 | 0 |
 
@@ -772,3 +772,12 @@ remain, the product still has no full ISA or debug dump scratch, and repair
 is serial. Existing `test_kasai_closure.py` also passed all negative refusals,
 anchored/unanchored/walk/debug byte comparisons, and bad-anchor refusals with
 the expected fixture SHA (`hotspots-repair/regression.log`).
+
+Final review isolated the serial counter from the pre-existing experimental
+checkpoint worker mode: `--repair-chunk-runs` disables repair cycle sampling
+rather than copying a shared counter pointer into workers. The ordinary serial
+product path is unchanged. This avoids introducing an instrumentation race
+into that opt-in mode; no parallel repair mode was added or used in the gates.
+After rebuilding the packaged mirror/manifest, the final fixture gate again
+passed the expected SHA, chi/runs, all-zero closure/fallbacks/mismatches and
+zero product dump scratch (`hotspots-final/fixture-*`).
