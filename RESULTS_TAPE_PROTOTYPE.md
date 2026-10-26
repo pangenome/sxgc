@@ -882,3 +882,11 @@ Packaged fixture SHA/chi/runs are exact, closure/fallback/mismatch counters
 zero, selftests exit zero. Product repair 0.021705 s; split
 67.19/77.77/84.36/0/71.70/25.43/87.34/109.15/37.77/85.96 ticks/input.
 Evidence: `tools/binbwt/evidence/repair-half-sink/`.
+
+Sink-specialized 150 MB product/debug gate passes exact expected SHA,
+chi/runs, closure 0/0/0, fallbacks 0 and STREAM_VS_BWT mismatches 0.
+Product repair **8.741546 s**, lce 15.323830, advance 5.871286. Split
+40.23/69.95/84.36/0.01/71.92/23.97/79.34/298.42/138.80/24.07 ticks/input
+(55,936 samples). Feed remains 7.370 s; this is a small improvement, not
+halving. Source-character/copy attribution remains large. No simultaneous
+build ran during this candidate's product timing.
