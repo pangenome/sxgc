@@ -1975,7 +1975,7 @@ static int selftest_stream_guard() {
 // Probe overhead is included, so these are attribution counters, not a CPU
 // frequency estimate. No files, ISA, or per-run scratch are introduced.
 struct RepairCycles {
-    enum Term { RAW, COALESCE, SEAM, STAMP, GUARD, OUTPUT, TERMS };
+    enum Term { RAW, COALESCE, SEAM, STAMP, GUARD, OUTPUT, CHAR_BRANCH, SOURCE_COPY, STAGING, TERMS };
     uint64_t ticks[TERMS]{}, inputs = 0, samples = 0, readTicks = 0;
     bool enabled = true, active = false;
     int phase = RAW;
@@ -2006,10 +2006,10 @@ struct RepairCycles {
         fprintf(stderr, "SWEEP_CYCLES phase=repair enabled=%d inputs=%llu samples=%llu "
                 "sample_stride_mean=1024 exclusive=1 probe_overhead_included=1 "
                 "read_decode=%.2f raw=%.2f coalescing=%.2f seamSplice=%.2f "
-                "stamping=%.2f require_stream_run=%.2f output_staging=%.2f units=tsc_ticks_per_input\n",
+                "stamping=%.2f require_stream_run=%.2f output_staging=%.2f char_branch=%.2f source_copy=%.2f staging_writes=%.2f units=tsc_ticks_per_input\n",
                 int(enabled), (unsigned long long)inputs, (unsigned long long)samples,
                 inputs ? double(readTicks)/inputs : 0.0,
-                mean(RAW), mean(COALESCE), mean(SEAM), mean(STAMP), mean(GUARD), mean(OUTPUT));
+                mean(RAW), mean(COALESCE), mean(SEAM), mean(STAMP), mean(GUARD), mean(OUTPUT), mean(CHAR_BRANCH), mean(SOURCE_COPY), mean(STAGING));
     }
     double mean(int term) const { return samples ? double(ticks[term])/samples : 0.0; }
 };
@@ -2130,7 +2130,7 @@ struct RepairStream {
         // above. 0x00 and 0x05 ARE legal text (real pile bytes; measured 18
         // and 23 occurrences at 10GB). Forbid exactly the vacated range.
         pf_check(v.c != 1 && v.c != 2 && v.c != 3 && v.c != 4, "unsupported text alphabet");
-        RepairCycles::Scope coalesceScope(cycles, RepairCycles::COALESCE);
+        RepairCycles::Scope coalesceScope(cycles, RepairCycles::CHAR_BRANCH);
         if (sourceHave && source.c == v.c) { source.len += v.len; source.tail = v.tail; }
         else {
             if (sourceHave) {
@@ -2146,7 +2146,8 @@ struct RepairStream {
                     seamSplice({source.c, source.len, source.head, source.tail}, sink);
                 }
             }
-            source = v; sourceHave = true;
+            { RepairCycles::Scope copyScope(cycles, RepairCycles::SOURCE_COPY);
+                source = v; sourceHave = true; }
         }
     }
     void seamSplice(NRun v) { seamSplice(v, emit); }
@@ -4519,9 +4520,10 @@ int main(int argc, char** argv) {
                 pf_write_full(bLensFd, &len32, 4, "bridge lens");
                 bridgeTailWrite(v.t);
             }
-            feedTarget->nbuf.push_back(v);
-            feedTarget->gidx.push_back(idx);
-            feedTarget->rk.push_back(v.rk);
+            { RepairCycles::Scope stagingScope(rs.cycles, RepairCycles::STAGING);
+                feedTarget->nbuf.push_back(v);
+                feedTarget->gidx.push_back(idx);
+                feedTarget->rk.push_back(v.rk); }
             g_pfPhase.store(PF_REPAIR, std::memory_order_relaxed);
         };
         rs.emit = bandSink;

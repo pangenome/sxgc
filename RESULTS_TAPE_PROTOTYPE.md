@@ -804,3 +804,18 @@ so this variation is not credited to an additional repair algorithm change.
 All evidence is in `tools/binbwt/evidence/hotspots-final/`; all green gates
 were committed and pushed on `pile-week-v1`, with source manifests refreshed.
 No pile-scale performance claim is made.
+
+### Second repair pass: finer fixture attribution
+
+The finer exclusive counters retain all guards and distinguish source character
+branches, source record copies, and staging writes. Packaged fixture gate is
+byte-identical (`98f1f6dc82befd1659112678bbc3debcf6c40ec417fcea86df47a8a51019c658`),
+chi 145685 / runs 192138, closure/fallbacks/stream mismatches zero. Product
+repair is 0.021937 s. TSC ticks/input (188 samples): decode 61.17, raw 54.89,
+normalized coalescing 73.30, seam 0, stamp 71.81, guard 23.30, sink accounting
+74.79, source character branch 107.45, source copy 56.81, staging 46.17.
+Probe overhead is included; these small scopes are not calibrated CPU costs.
+The coalescing/stamping path warrants removing its temporary 56-byte NRun
+construction before considering the much smaller mandatory guard. Existing
+stream-guard, repair-chunk, and sweep-monoid selftests all exit zero.
+Evidence: `tools/binbwt/evidence/repair-half-instrument/`.

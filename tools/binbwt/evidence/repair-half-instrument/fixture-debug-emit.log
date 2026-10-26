@@ -1,0 +1,7 @@
+CORPUS_RAM_CACHE bytes=454752 budget_bytes=536870912 immutable=1 remapped=1 doubled=0
+CROSS_SEAM_DISCOVERED n=454752 depth=2 raw_classes=1 aggregate_occurrences=101 unique_targets=101 limit=1000 work_limit=100000000 before_walk=1 bounded=1
+TAPE_EMIT_START n=454752 targets=101 chunk=16777216 prefix=/tmp/repair-half-instrument-tiny/debug/frag
+TAPE_EMIT_RUNEXC path=/tmp/repair-half-instrument-tiny/debug/frag.runexc count=65535
+TAPE_EMIT_STATS slot_wait_s=0.00 flow_wait_s=0.00 row_loop_s=0.01 writers=1
+TAPE_EMIT_DONE rows=454752 runs=192140 hits=101 wall=0.15 read_s=0.00 word_s=0.00 publish_s=0.01 finish_s=0.01
+CORPUS_CACHE_STATS bytes=454752 hits=0 demand_misses=0 preload_bytes=454752
