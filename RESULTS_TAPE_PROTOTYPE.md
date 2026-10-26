@@ -591,3 +591,33 @@ certified the cyclic convention. A sha can no longer be the arbiter.
     the T3 claims checker at larger scales.
  3. Closure counters must be EXACTLY ZERO (holes/disorder/noncontig) and
     walk_fallbacks == 0, with the refusal guard enforced and no debug escape.
+
+## ADVANCE_WITNESS: measured at cycle level, and the heap WON (142 vs 183 cy/run)
+
+In-sweep rdtsc split of advance() at 150 MB (57,279,186 runs, every one a character change):
+
+    heap threshold_reset : total 220.6   thresh 142.3   other  78.2  cycles/run
+    AVX2 256-wide scan   : total 245.7   thresh 183.4   other  62.3  cycles/run
+    unimstrumented wall  : 6.2 s either way (108 ns/run, ~270 cycles at 2.5 GHz)
+
+So the active-set heap is ~19% cheaper in the threshold path and the AVX2 sweep is the
+slower of the two (2 KB across 32 cache lines + movemasks per run to find 1.47 entries).
+The "wall neutral" note in the heap commit was wrong at the precision available; the
+cycle counters settle it. Heap retained.
+
+REMAINING SPLIT: threshold ~65%, the emit/state path ~35% (per-run NRun read, two
+witness() calls, the std::function emit into WitBuckets::add). Floor for an O(R) fold at
+~20-30 cy/run would be ~4-5 h at pile against today's ~16 h, so advance_witness is worth
+at most a 3x and it is NOT the whale.
+
+## THE FINISH'S PILE BUDGET, per term (150 MB measured -> 1.31 TB)
+
+    sparse-row LCE (1 per 1024 runs, ~450 us each)  24.4 s -> ~59 h   <-- THE WHALE
+    repair                                          17.4 s -> ~44 h
+    advance_witness                                  6.2 s -> ~16 h
+    total                                           ~48 s -> ~117 h
+
+The sparse-row LCE term is answerable from the column we already built: its two ends are
+run endpoints whose ranks the cursor KNOWS, so topLcp = min(col[r_prev .. r_cur-1]) - a
+range-min over ~3,000 bytes instead of a 450 us text walk. That is the next change, and
+it is the only available 10x+ in the finish.
