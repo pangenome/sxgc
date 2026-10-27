@@ -1,0 +1,4 @@
+XSA_FINISH_DEBUG_ARTIFACTS enabled=1 product_dump_scratch_bytes=0
+XSA_FINISH_KASAI_CLOSURE bands=4 rank_holes=0 disorder=0 noncontiguous_runs=0 walk_fallbacks=0 max_rank_end=454752 n=454752
+SXI2_PASS bytes=239917 lite=1 members=6
+XSA_FINISH_DONE chi=145685 n=454752 r=192138 container=/tmp/fused-tiny-k1/product/product.sxi2

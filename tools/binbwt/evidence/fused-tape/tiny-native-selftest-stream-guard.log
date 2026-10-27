@@ -1,0 +1,1 @@
+STREAM_GUARD_SELFTEST_PASS head,tail,zero,overflow,holes,disorder,noncontiguous,fallback refusals=8

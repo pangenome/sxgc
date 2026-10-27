@@ -1,0 +1,47 @@
+# Bounded producer/emitter tape
+
+`scatter_sort --tape-bands DIR` replaces the full SA and symbol streams with
+ordered, consumable band files. Each row is an 8-byte little-endian packed
+position (low 48 bits) and carried symbol (bits 48..55). A manifest records n
+and version 1. Closed files become visible through `.done`; the emitter
+publishes their rows through the existing sink, unlinks the band, then creates
+`.consumed`. Empty bands are acknowledged too. An end count published before
+sorting the final wave covers trailing empty bands without deadlocking.
+
+K defaults to 8. Admission of band b waits for consumption of b-K, bounding
+both running and ready bands. Ascending admission is independent of worker
+completion, so a slow early band cannot be starved by later bands. All bands
+are drained before scattering the next wave. Each band's 32-byte scatter rows
+are deleted before its 8-byte output is written; output replaces at least four
+times as much disk data. Thus packed bands do not add to the wave's logical
+byte highwater. A fresh tape directory is mandatory. The supervising runner
+terminates the peer on failure and enforces a disk reserve before ENOSPC.
+
+The existing optional LCP column is supported. It must be budgeted separately
+from scatter rows. Runs using a generated column can lower the wave cap, e.g.
+0.5n with a roughly 1.34n column on the 10 GB fixture. Allocated filesystem
+blocks and markers also count in the measured result.
+
+`fused_gate.py` runs both processes, then the unchanged finish. It samples
+`du -s -B1` once per second and reports order scratch, all newly allocated
+files, and intermediates excluding the container and explicit debug dump.
+Existing read-only checker fixtures are reported as external inputs, never
+passed to the producer or emitter. Sampling is an observed lower bound, not
+an exact continuous maximum. The unchanged downstream piece/sink/finish
+artifacts have their own footprint: **2n for the complete product pipeline
+must not be inferred from a 2n order-stage result.**
+
+A bounded validation sample is optional: `--order-sample-out` writes at most
+1,048,576 ranks, with explicit `--order-sample-lo/count`. The runner retains
+4096 central ranks (32,816 bytes including header) and runs
+`sa_check --sample-first-rank LO`. This checks exact adjacent finite suffix
+order, position bounds and sample uniqueness; it does not claim a global
+permutation check. The full-SA checker mode keeps its original strict checks.
+
+The first native 454,752-byte gate passes with K=1, debug/product identity,
+4095 sampled adjacent pairs, full STREAM_VS_BWT comparison, closure 0/0/0,
+walk fallbacks 0 and six finish selftests plus checker selftest. The container
+is byte-identical to the existing fixture baseline. Tiny allocated scratch
+exceeds 2n due to filesystem block rounding and its generated column; it is
+not a large-corpus scratch attestation. Packaged gates and large rungs follow.
+No qualified timing comparison has been made.

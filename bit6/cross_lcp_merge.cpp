@@ -5566,7 +5566,8 @@ int main_impl(int argc, char** argv) {
         }
         const std::string capFlag = flag("--bin-live-cap");        const bool binLiveCapGiven = !capFlag.empty();
         const U binLiveCap = binLiveCapGiven ? std::stoull(capFlag) : 0;
-        const std::string tapeEmit = flag("--tape-emit");
+        const std::string tapeEmit = flag("--tape-bands").empty() ? flag("--tape-emit") : "bands:" + flag("--tape-bands");
+        require(flag("--tape-bands").empty() || flag("--tape-emit").empty(), "choose one tape input");
         const U tapeEmitChunk = flag("--tape-emit-chunk").empty()
                                     ? 0 : std::stoull(flag("--tape-emit-chunk"));
         return binbwt_main(flag("--binbwt"),flag("--remap"),flag("--out-prefix"),

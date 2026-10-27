@@ -99,10 +99,13 @@ static inline int suf_cmp(u64 a, u64 b) {
 
 int main(int argc, char** argv) {
     std::string corpus, sapath, remapPath;
+    bool sample = false;
+    u64 sampleFirst = 0;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         auto nxt = [&]() { if (i + 1 >= argc) die("missing value", 2); return std::string(argv[++i]); };
-        if (a == "--corpus") corpus = nxt();
+        if (a == "--sample-first-rank") { sample = true; sampleFirst = std::strtoull(nxt().c_str(), nullptr, 10); }
+        else if (a == "--corpus") corpus = nxt();
         else if (a == "--sa") sapath = nxt();
         else if (a == "--dollar") DOLLAR = std::atoi(nxt().c_str()) != 0;
         else if (a == "--remap") remapPath = nxt();
@@ -140,6 +143,19 @@ int main(int argc, char** argv) {
                 " dollar=%d\n", N, count, rows_field, DOLLAR ? 1 : 0);
     const u64* SA = R + 6;
 
+    if (sample) {
+        if (!count || count > 1048576 || sampleFirst >= N || count > N - sampleFirst ||
+            R[0] != 0x0000000141535853ull || R[1] != N || R[2] != 1 || R[3] != count || bytes != 48 + count * 8)
+            die("invalid bounded order sample", 2);
+        std::vector<u64> positions(SA, SA + count);
+        for (u64 p : positions) if (p >= N) die("sample position out of range", 4);
+        std::sort(positions.begin(), positions.end());
+        if (std::adjacent_find(positions.begin(), positions.end()) != positions.end()) die("duplicate sample position", 4);
+        for (u64 r = 0; r + 1 < count; ++r)
+            if (suf_cmp(SA[r], SA[r + 1]) >= 0) die("sample order failure", 3);
+        std::printf("SA_CHECK_SAMPLE_PASS first_rank=%" PRIu64 " entries=%" PRIu64 " adjacent_pairs=%" PRIu64 " global_permutation=not_checked\n", sampleFirst, count, count - 1);
+        return 0;
+    }
     if (count != N) {
         std::printf("SA_CHECK_PERMUTATION_FAIL count=%" PRIu64 " n=%" PRIu64 "\n", count, N);
         return 4;

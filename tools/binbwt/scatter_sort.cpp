@@ -370,12 +370,19 @@ int main(int argc, char** argv) {
     double scratch_cap_gb = 0.0;      // 0 = 2n (the operator's law)
     u64 threads = 32, par_bands = 1, sample_n = 4000000;
     bool keep_rows = false;
-    std::string remapPath, sort_mode = "std";
+    std::string remapPath, sort_mode = "std", tapeBands, orderSample;
+    u64 sampleLo = 0, sampleCount = 4096;
+    u64 pendingBands = 8;
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         auto nxt = [&]() { if (i + 1 >= argc) die("missing value for " + a); return std::string(argv[++i]); };
-        if (a == "--corpus") corpus = nxt();
+        if (a == "--order-sample-out") orderSample = nxt();
+        else if (a == "--order-sample-lo") sampleLo = std::strtoull(nxt().c_str(), nullptr, 10);
+        else if (a == "--order-sample-count") sampleCount = std::strtoull(nxt().c_str(), nullptr, 10);
+        else if (a == "--tape-bands") tapeBands = nxt();
+        else if (a == "--pending-bands") pendingBands = std::strtoull(nxt().c_str(), nullptr, 10);
+        else if (a == "--corpus") corpus = nxt();
         else if (a == "--out") out = nxt();
         else if (a == "--scratch") scratch = nxt();
         else if (a == "--ram-gb") ram_gb = std::atof(nxt().c_str());
@@ -392,8 +399,10 @@ int main(int argc, char** argv) {
         else die("unknown arg " + a);
     }
     (void)sort_mode;
-    if (corpus.empty() || out.empty()) die("--corpus and --out required");
+    if (corpus.empty() || (out.empty() && tapeBands.empty())) die("--corpus and --out required");
 
+    if (!tapeBands.empty() && (!pendingBands || keep_rows))
+        die("tape bands require K>0 and no keep-rows");
     int fd = ::open(corpus.c_str(), O_RDONLY);
     struct stat st{};
     if (fd < 0 || ::fstat(fd, &st)) die("cannot open/stat corpus");
@@ -424,6 +433,8 @@ int main(int argc, char** argv) {
     // size them from whichever budget is smaller: RAM/par or the wave/par.
     // THE SCRATCH LAW: default cap is 2n bytes.
     const u64 cap_bytes = scratch_cap_gb > 0.0 ? (u64)(scratch_cap_gb * 1e9) : 2 * N;
+    if (!tapeBands.empty() && (cap_bytes > 2 * N || N >= (1ull << 48)))
+        die("tape bands require wave cap <= 2n and n < 2^48");
     // Waves are filled greedily by byte class, so a wave can overshoot the target
     // by one class (measured 2.06n against a 2.0n cap). Fill to 95% of the cap and
     // the overshoot stays inside the law instead of breaking it.
@@ -484,6 +495,7 @@ int main(int argc, char** argv) {
                     if (a2 && a2 + h2[d] > rows_per_wave) {
                         wl.push_back({c, c + 1, true, c, l2, d}); l2 = d; a2 = 0;
                     }
+                    if (!tapeBands.empty() && h2[d] > rows_per_wave) die("byte-pair class exceeds wave cap");
                     a2 += h2[d];
                 }
                 if (l2 < 256) wl.push_back({c, c + 1, true, c, l2, 256});
@@ -546,8 +558,38 @@ int main(int argc, char** argv) {
         const u64 ne = (N + isaK - 1) / isaK;
         if (::ftruncate(ifd, off_t(32 + ne * 8)) != 0) die("size sampled ISA");
     }
-    int ofd = ::open(out.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
-    if (ofd < 0) die("create out");
+    int sampleFd = -1;
+    if (!orderSample.empty()) {
+        if (!sampleCount || sampleCount > 1048576 || sampleLo >= N || sampleCount > N - sampleLo)
+            die("order sample range invalid (maximum 1048576 rows)");
+        sampleFd = ::open(orderSample.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+        if (sampleFd < 0) die("create bounded order sample");
+        u64 sh[6] = {0x0000000141535853ull, N, 1, sampleCount, N, 10};
+        if (::write(sampleFd, sh, 48) != 48) die("write order sample header");
+    }
+    u64 globalBand = 0;
+    auto bandPath = [&](u64 b, const char* suffix) {
+        return tapeBands + "/band_" + std::to_string(b) + suffix;
+    };
+    auto marker = [&](const std::string& path) {
+        int f = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+        if (f < 0) die("create tape marker " + path);
+        ::close(f);
+    };
+    if (!tapeBands.empty()) {
+        struct stat ts{};
+        if (::stat(tapeBands.c_str(), &ts) != 0 || !S_ISDIR(ts.st_mode)) die("tape directory must exist and be fresh");
+        if (::access((tapeBands + "/manifest").c_str(), F_OK) == 0) die("stale tape manifest");
+        int mf = ::open((tapeBands + "/manifest").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+        if (mf < 0) die("create tape manifest");
+        std::string meta = std::to_string(N) + " 1\n";
+        if (::write(mf, meta.data(), meta.size()) != (ssize_t)meta.size()) die("write tape manifest");
+        ::close(mf);
+        marker(tapeBands + "/ready");
+        std::fprintf(stderr, "SS_TAPE K=%llu packed_row_bytes=8 wave_cap=%llu\n", (unsigned long long)pendingBands, (unsigned long long)cap_bytes);
+    }
+    int ofd = tapeBands.empty() ? ::open(out.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666) : -1;
+    if (tapeBands.empty() && ofd < 0) die("create out");
     // THE STREAM IS IN THE PRODUCT'S OWN SAMPLED-SA ANCHOR FORMAT ('SXSA'), so
     // kasai_column and every existing tool can consume it directly. The old header
     // here was 'SXLC' (the COLUMN magic) with n at the wrong offset, which made the
@@ -563,11 +605,11 @@ int main(int argc, char** argv) {
         h[3] = N;    // count
         h[4] = N;    // rows
         h[5] = 10;   // SA_ANCHOR_ROW_PAD
-        if (::write(ofd, h, 48) != 48) die("write header");
+        if (ofd >= 0 && ::write(ofd, h, 48) != 48) die("write header");
     }
     const std::string symPath = out + ".sym";
-    int sfd = ::open(symPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
-    if (sfd < 0) die("create sym stream");
+    int sfd = tapeBands.empty() ? ::open(symPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666) : -1;
+    if (tapeBands.empty() && sfd < 0) die("create sym stream");
 
     // the LCP column: n bytes of adjacent-rank LCP + escapes, in the SXLC format
     // the finish already reads via --lcp-column.
@@ -770,6 +812,11 @@ int main(int argc, char** argv) {
             for (;;) {
                 const u64 b = next_band.fetch_add(1);
                 if (b >= nbands) return;
+                const u64 tapeBand = globalBand + b;
+                if (!tapeBands.empty() && tapeBand >= pendingBands) {
+                    while (::access(bandPath(tapeBand - pendingBands, ".consumed").c_str(), F_OK) != 0)
+                        ::usleep(10000);
+                }
                 rows.clear();
                 const double br0 = now_sec();
                 for (u64 t = 0; t < nparts; ++t) {
@@ -850,8 +897,28 @@ int main(int argc, char** argv) {
                             die("pwrite ISA anchor");
                     }
                 }
+                if (sampleFd >= 0) {
+                    const u64 lo = std::max(sampleLo, band_off[b]);
+                    const u64 hi = std::min(sampleLo + sampleCount, band_off[b] + u64(ob.size()));
+                    if (lo < hi && ::pwrite(sampleFd, ob.data() + (lo - band_off[b]), (hi - lo) * 8,
+                                           off_t(48 + (lo - sampleLo) * 8)) != ssize_t((hi - lo) * 8))
+                        die("write bounded order sample");
+                }
+                if (!tapeBands.empty()) {
+                    // Compact wire: low 48 bits position, next 8 bits carried symbol.
+                    for (size_t i = 0; i < ob.size(); ++i) ob[i] |= u64(sb[i]) << 48;
+                    int bf = ::open(bandPath(tapeBand, ".sa").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+                    if (bf < 0) die("create tape band");
+                    size_t off = 0, bytes = ob.size() * 8;
+                    while (off < bytes) {
+                        ssize_t wr = ::write(bf, (const char*)ob.data() + off, bytes - off);
+                        if (wr <= 0) die("write tape band");
+                        off += size_t(wr);
+                    }
+                    if (::close(bf)) die("close tape band");
+                    marker(bandPath(tapeBand, ".done"));
+                } else {
                 // direct write at this band's offset in the global streams
-                {
                     const off_t at = off_t(48 + band_off[b] * 8);
                     size_t off = 0;
                     const size_t bytes = ob.size() * 8;
@@ -874,6 +941,16 @@ int main(int argc, char** argv) {
                 rows.shrink_to_fit();
             }
         };
+        if (!tapeBands.empty()) {
+            if (w + 1 == waves) {
+                int ef = ::open((tapeBands + "/end").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+                if (ef < 0) die("create tape end");
+                std::string count = std::to_string(globalBand + nbands) + "\n";
+                if (::write(ef, count.data(), count.size()) != (ssize_t)count.size()) die("write tape end");
+                ::close(ef);
+                marker(tapeBands + "/end.ready");
+            }
+        }
         pool->run([&](unsigned) { band_worker(); });
         // BAND BOUNDARIES: the LCP between a band's last row and the next band's
         // first row belongs to neither merge, so it is computed here - one
@@ -901,6 +978,12 @@ int main(int argc, char** argv) {
                 prev_last = bandLastPos[b];
             }
             prev_wave_last = prev_last;
+        }
+        if (!tapeBands.empty()) {
+            // Drain before scattering another wave: no cross-wave disk overlap.
+            for (u64 b = 0; b < nbands; ++b)
+                while (::access(bandPath(globalBand + b, ".consumed").c_str(), F_OK) != 0) ::usleep(10000);
+            globalBand += nbands;
         }
         emitted += wave_rows;
         if (false) for (u64 b = 0; b < nbands; ++b) {
@@ -955,6 +1038,7 @@ int main(int argc, char** argv) {
         }
     }
 
+    if (emitted != N) die("scatter row coverage != n");
     if (lfd >= 0) {
         // DEDUPE BY RANK, keeping the LAST value written for a rank: a band's own
         // merge can escape the rank that the seam also escapes (the block-start
@@ -979,8 +1063,10 @@ int main(int argc, char** argv) {
         if (::pwrite(lfd, &maxL, 8, 32) != 8) die("patch maxlcp");
         ::fsync(lfd); ::close(lfd);
     }
-    ::fsync(ofd); ::close(ofd);
-    ::fsync(sfd); ::close(sfd);
+    if (sampleFd >= 0) { ::fsync(sampleFd); ::close(sampleFd); }
+    if (ofd >= 0) { ::fsync(ofd); ::close(ofd); }
+    if (sfd >= 0) { ::fsync(sfd); ::close(sfd); }
+    if (!tapeBands.empty()) marker(tapeBands + "/producer.done");
     std::fprintf(stderr,
         "SS_DONE n=%" PRIu64 " waves=%" PRIu64 " ties=%" PRIu64
         " sample_s=%.2f waves_s=%.2f total_s=%.2f\n",

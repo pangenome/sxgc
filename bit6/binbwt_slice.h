@@ -3693,7 +3693,20 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
                  (unsigned long long)n, tgt.size(), (unsigned long long)chunk,
                  prefix.c_str());
     const double t0 = now_sec();
-    int fd = ::open(saPath.c_str(), O_RDONLY);
+    const bool bands = saPath.compare(0, 6, "bands:") == 0;
+    const std::string dir = bands ? saPath.substr(6) : std::string();
+    auto bandPath = [&](U b, const char* suffix) { return dir + "/band_" + std::to_string(b) + suffix; };
+    auto waitFile = [&](const std::string& path) {
+        while (::access(path.c_str(), F_OK) != 0) ::usleep(10000);
+    };
+    int fd = -1;
+    if (bands) {
+        waitFile(dir + "/ready");
+        std::ifstream mf(dir + "/manifest");
+        U mn = 0, version = 0; mf >> mn >> version;
+        require(mf.good() && mn == n && version == 1, "tape bands: incompatible manifest");
+    } else {
+    fd = ::open(saPath.c_str(), O_RDONLY);
     require(fd >= 0, "tape-emit: cannot open the SA stream");
     struct stat st{};
     require(::fstat(fd, &st) == 0, "tape-emit: stat SA stream");
@@ -3710,6 +3723,7 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
     require(saN == n, "tape-emit: SA stream is for a different corpus");
     const U entries = (U((unsigned long long)st.st_size) - 48) / 8;
     require(entries == n, "tape-emit: SA entry count != n");
+    }
     std::vector<U> pos(chunk);
     std::vector<U> words(chunk);
     // THE SYMBOL STREAM: scatter_sort emits one remapped BWT symbol per rank
@@ -3720,8 +3734,8 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
     // cores for 50 minutes and published nothing.
     std::vector<uint8_t> syms(chunk);
     const std::string symPath = saPath + ".sym";
-    int sfd = ::open(symPath.c_str(), O_RDONLY);
-    const bool haveSyms = sfd >= 0;
+    int sfd = bands ? -1 : ::open(symPath.c_str(), O_RDONLY);
+    const bool haveSyms = bands || sfd >= 0;
     if (!haveSyms)
         std::fprintf(stderr, "TAPE_EMIT_WARN no %s: falling back to the LOCKED "
                              "per-row corpus read (slow)\n", symPath.c_str());
@@ -3768,17 +3782,39 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
     }
     U baseRow = 0, hits = 0;
     double tRead = 0, tWord = 0, tPub = 0;
-    while (baseRow < n) {
-        const U want = std::min<U>(chunk, n - baseRow);
+    U band = 0, bandRows = 0, bandRead = 0;
+    for (;;) {
+        if (baseRow == n) {
+            if (!bands) break;
+            waitFile(dir + "/end.ready");
+            std::ifstream ef(dir + "/end"); U count = 0; ef >> count;
+            require(count >= band, "tape bands: invalid end count");
+            if (count == band) break;
+        }
+        if (bands && fd < 0) {
+            waitFile(bandPath(band, ".done"));
+            fd = ::open(bandPath(band, ".sa").c_str(), O_RDONLY);
+            struct stat bs{};
+            require(fd >= 0 && ::fstat(fd, &bs) == 0 && bs.st_size % 8 == 0, "tape bands: bad band");
+            bandRows = U(bs.st_size) / 8; bandRead = 0;
+            require(bandRows <= n - baseRow, "tape bands: too many rows");
+        }
+        const U want = bands ? std::min<U>(chunk, bandRows - bandRead) : std::min<U>(chunk, n - baseRow);
         const double tr = now_sec();
         size_t got = 0, bytes = size_t(want) * 8;
         while (got < bytes) {
             ssize_t r = ::pread(fd, ((char*)pos.data()) + got, bytes - got,
-                                off_t(48 + (unsigned long long)baseRow * 8 + got));
+                                off_t((bands ? bandRead * 8 : 48 + (unsigned long long)baseRow * 8) + got));
             require(r > 0, "tape-emit: short SA read");
             got += size_t(r);
         }
-        if (haveSyms) {
+        if (bands) {
+            for (U i = 0; i < want; ++i) {
+                require((pos[i] >> 56) == 0, "tape bands: invalid packed row");
+                syms[i] = uint8_t(pos[i] >> 48);
+                pos[i] &= (U(1) << 48) - 1;
+            }
+        } else if (haveSyms) {
             size_t sgot = 0;
             while (sgot < want) {
                 ssize_t r = ::pread(sfd, ((char*)syms.data()) + sgot, want - sgot,
@@ -3802,9 +3838,19 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
         for (U count : workerHits) hits += count;
         tWord += now_sec() - tw;
         const double tp = now_sec();
-        sink->publishBin(0, words.data(), want, baseRow);
+        if (want) sink->publishBin(bands ? unsigned(band) : 0, words.data(), want, baseRow);
         tPub += now_sec() - tp;
         baseRow += want;
+        if (bands) {
+            bandRead += want;
+            if (bandRead == bandRows) {
+                ::close(fd); fd = -1;
+                require(::unlink(bandPath(band, ".sa").c_str()) == 0, "tape bands: unlink band");
+                int cf = ::open(bandPath(band, ".consumed").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+                require(cf >= 0, "tape bands: publish consumed"); ::close(cf);
+                ++band;
+            }
+        }
     }
     {
         std::lock_guard<std::mutex> lock(wordMutex);

@@ -1,0 +1,212 @@
+{
+  "n": 454752,
+  "K": 1,
+  "source_manifest": "06394839dd6039bdf35ecb1e1111d337acc130a4b691480de56825caac9a8ef1",
+  "commands": [
+    {
+      "label": "order",
+      "command": [
+        "/tmp/scatter_fused",
+        "--corpus",
+        "/tmp/psi_tiny.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--scratch",
+        "/tmp/fused-tiny-k1/order/waves",
+        "--tape-bands",
+        "/tmp/fused-tiny-k1/order/bands",
+        "--pending-bands",
+        "1",
+        "--ram-gb",
+        "48",
+        "--par-bands",
+        "8",
+        "--threads",
+        "8",
+        "--order-sample-out",
+        "/tmp/fused-tiny-k1/order-sample.sxsa",
+        "--order-sample-lo",
+        "225328",
+        "--order-sample-count",
+        "4096",
+        "--lcp-out",
+        "/tmp/fused-tiny-k1/order/column"
+      ],
+      "pid": 2583371,
+      "returncode": 0,
+      "seconds": 10.117
+    },
+    {
+      "label": "emit",
+      "command": [
+        "/tmp/fused-native-bundle/cross_lcp_merge",
+        "--binbwt",
+        "/tmp/psi_tiny.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--out-prefix",
+        "/tmp/fused-tiny-k1/product/frag",
+        "--threads",
+        "8",
+        "--tape-bands",
+        "/tmp/fused-tiny-k1/order/bands"
+      ],
+      "pid": 2583372,
+      "returncode": 0,
+      "seconds": 10.117
+    },
+    {
+      "label": "sample-order",
+      "command": [
+        "/tmp/sa_check_fused",
+        "--corpus",
+        "/tmp/psi_tiny.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--sa",
+        "/tmp/fused-tiny-k1/order-sample.sxsa",
+        "--sample-first-rank",
+        "225328"
+      ],
+      "pid": 2583656,
+      "returncode": 0,
+      "seconds": 1.011
+    },
+    {
+      "label": "finish",
+      "command": [
+        "/tmp/fused-native-bundle/xsa_finish",
+        "--prefix",
+        "/tmp/fused-tiny-k1/product/frag",
+        "--corpus",
+        "/tmp/psi_tiny.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--output",
+        "/tmp/fused-tiny-k1/product/product.sxi2",
+        "--threads",
+        "8",
+        "--sample-count",
+        "64",
+        "--chi-expect",
+        "145685",
+        "--lcp-column",
+        "/tmp/fused-tiny-k1/order/column",
+        "--debug-artifacts"
+      ],
+      "pid": 2583678,
+      "returncode": 0,
+      "seconds": 1.019
+    },
+    {
+      "label": "check",
+      "command": [
+        "/tmp/stream_vs_bwt",
+        "--corpus",
+        "/tmp/psi_tiny.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--sa",
+        "/tmp/psi_tiny.sa",
+        "--container",
+        "/tmp/fused-tiny-k1/product/product.sxi2",
+        "--stream",
+        "/tmp/fused-tiny-k1/band-stream.bin"
+      ],
+      "pid": 2583716,
+      "returncode": 0,
+      "seconds": 1.014
+    },
+    {
+      "label": "selftest-stream-guard",
+      "command": [
+        "/tmp/fused-native-bundle/xsa_finish",
+        "--selftest-stream-guard"
+      ],
+      "pid": 2583752,
+      "returncode": 0,
+      "seconds": 1.014
+    },
+    {
+      "label": "selftest-repair-chunks",
+      "command": [
+        "/tmp/fused-native-bundle/xsa_finish",
+        "--selftest-repair-chunks"
+      ],
+      "pid": 2583779,
+      "returncode": 0,
+      "seconds": 1.014
+    },
+    {
+      "label": "selftest-sweep-monoid",
+      "command": [
+        "/tmp/fused-native-bundle/xsa_finish",
+        "--selftest-sweep-monoid"
+      ],
+      "pid": 2583787,
+      "returncode": 0,
+      "seconds": 1.013
+    },
+    {
+      "label": "selftest-packed-bits",
+      "command": [
+        "/tmp/fused-native-bundle/xsa_finish",
+        "--selftest-packed-bits"
+      ],
+      "pid": 2583838,
+      "returncode": 0,
+      "seconds": 1.016
+    },
+    {
+      "label": "selftest-witness-batch",
+      "command": [
+        "/tmp/fused-native-bundle/xsa_finish",
+        "--selftest-witness-batch"
+      ],
+      "pid": 2583861,
+      "returncode": 0,
+      "seconds": 1.014
+    },
+    {
+      "label": "selftest-seam-spool",
+      "command": [
+        "/tmp/fused-native-bundle/xsa_finish",
+        "--selftest-seam-spool",
+        "/tmp/fused-tiny-k1/selftest-spool"
+      ],
+      "pid": 2583872,
+      "returncode": 0,
+      "seconds": 1.014
+    },
+    {
+      "label": "checker-selftest",
+      "command": [
+        "/tmp/stream_vs_bwt",
+        "--selftest"
+      ],
+      "pid": 2583910,
+      "returncode": 0,
+      "seconds": 1.012
+    }
+  ],
+  "peak_order_allocated": 1294336,
+  "peak_all_allocated": 14344192,
+  "peak_intermediate_allocated": 6414336,
+  "scratch_sample_period_seconds": 1,
+  "scratch_scope": "order=waves+unconsumed packed bands+optional generated column; all=entire new run directory; intermediate=all minus container and explicit debug dump; read-only validation fixtures excluded",
+  "timing_qualification": "single-run observations; no paired N>=3 A/B; speed effects unverifiable",
+  "no_full_sa_or_sym_generated": true,
+  "sample": {
+    "first_rank": 225328,
+    "count": 4096,
+    "adjacent_pairs": 4095,
+    "global_permutation_checked": false
+  },
+  "closure": "XSA_FINISH_KASAI_CLOSURE bands=4 rank_holes=0 disorder=0 noncontiguous_runs=0 walk_fallbacks=0 max_rank_end=454752 n=454752",
+  "chi": 145685,
+  "runs": 192138,
+  "sha256": "98f1f6dc82befd1659112678bbc3debcf6c40ec417fcea86df47a8a51019c658",
+  "peak_order_over_n": 2.846245865878545,
+  "peak_intermediate_over_n": 14.1051298290057,
+  "passed": true
+}
