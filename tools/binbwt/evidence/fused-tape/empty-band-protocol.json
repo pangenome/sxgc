@@ -1,0 +1,13 @@
+{
+  "passed": true,
+  "n": 454752,
+  "bands": 114,
+  "empty_bands": [
+    0,
+    113
+  ],
+  "K": 1,
+  "max_band_rows": 4096,
+  "sha256": "98f1f6dc82befd1659112678bbc3debcf6c40ec417fcea86df47a8a51019c658",
+  "trailing_empty_acknowledged": true
+}

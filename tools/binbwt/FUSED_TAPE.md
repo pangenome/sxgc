@@ -69,3 +69,14 @@ an 8/1024-byte-per-position rank anchor, not a full inverse or a full SA.
 The order sample checker rejects swapped ranks and out-of-range positions;
 without the explicit sample flag it still rejects an incomplete permutation.
 Its original full-SA mode passes the tiny fixture.
+
+The packaged protocol test feeds 114 bands with K=1, including explicit
+leading and trailing empty bands; every file is deleted before its consumed
+acknowledgement. The resulting tiny container remains byte-identical.
+`fused_scratch.py` independently samples only wave parts plus packed bands,
+the exact scope of the original waves+SA+sym accounting; it starts before the
+first scatter file. The main gate continues to measure generated columns,
+ISA anchors and all downstream intermediates, so those costs remain visible.
+All 59 packaged source hashes verify; final Cargo binaries match the gated
+bundle byte-for-byte. publishBin through the tape_emit boundary is unchanged
+from 41d23cf, and xsa_finish.cpp is untouched.
