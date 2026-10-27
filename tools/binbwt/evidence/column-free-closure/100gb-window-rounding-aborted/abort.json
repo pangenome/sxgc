@@ -1,0 +1,32 @@
+{
+  "reason": "100 GB map budget rounded down by 15448 bytes to four page-aligned windows, producing need_windows=5, pinned=0; every LCE symbol took shared_mutex path. Stopped rather than spending the budget on this known wrong resource path. No container accepted.",
+  "signals": "SIGINT to runner; runner caught KeyboardInterrupt and terminated/reaped all three stages",
+  "closure": "not reached",
+  "stream_sample": "not reached",
+  "last_sample": {
+    "components": {
+      "other:.": 0,
+      "other:du.tsv": 131072,
+      "other:emit.log": 4096,
+      "other:finish.log": 4096,
+      "other:order": 0,
+      "other:order-sample.sxsa": 4096,
+      "other:order.log": 4096,
+      "other:product": 0,
+      "other:product/frag.runcols.consumed": 4096,
+      "other:results.json": 4096,
+      "other:scratch-components.jsonl": 1048576,
+      "packed_bands": 8192,
+      "pfck2": 39045169152,
+      "pieces": 7705108480,
+      "rlebwt": 2268856320,
+      "sparse2": 4096,
+      "waves": 87201890304
+    },
+    "elapsed": 1687.286,
+    "phase": "order+emit+finish",
+    "total_bytes": 136222240768,
+    "traversal_seconds": 0.046958
+  },
+  "cleanup": "Only this aborted attempt order/ and product/ removed after evidence archived; corpus/remap/accepted containers untouched."
+}

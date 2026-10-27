@@ -1,0 +1,5 @@
+SS_START n=107374181464 row_bytes=32 cap_bytes=96636763317 (0.90n) rows_per_wave=2868903911 waves=38 ram_gb=48.00 rows_per_band=89653247 par_bands=8 threads=96
+SS_WAVES count=52 (byte-range waves)
+SS_SAMPLE samples=4000082 stride=26843 wall=0.98
+SS_TAPE K=16 packed_row_bytes=8 wave_cap=96636763317
+SS_WAVE w=1/52 bands=32 wall=458.18 scan=5.48 | band_sum read=89.12 sort=3271.80 write=25.17 | band_max read=5.32 sort=236.74 write=1.95

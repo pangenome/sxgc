@@ -230,9 +230,23 @@ try:
                 # to whole seconds so an idle polling loop cannot reset this.
                 cpu_seconds = (int(fields[13])+int(fields[14])) // os.sysconf('SC_CLK_TCK')
                 signature.append((proc.pid, cpu_seconds, io['wchar'], io['write_bytes']))
-            except (FileNotFoundError, ProcessLookupError, PermissionError):
+            except (FileNotFoundError, ProcessLookupError, PermissionError) as error:
                 if proc.poll() is None:
-                    raise  # unreadable live process is not evidence of progress
+                    # PF_EXITING is kernel evidence of teardown, not polling
+                    # activity. /proc/io can become unreadable during exit_mm
+                    # before waitpid can reap a process with many mappings.
+                    try:
+                        ending = Path(f'/proc/{proc.pid}/stat').read_text().split()
+                    except FileNotFoundError:
+                        ending = None
+                    if ending is not None and not (int(ending[8]) & 4):
+                        if proc.poll() is None: raise error
+                    else:
+                        try: proc.wait(timeout=5)
+                        except subprocess.TimeoutExpired: raise error
+                        result.setdefault('kernel_exit_races', []).append(dict(
+                            label=entry['label'], pid=proc.pid, pf_exiting=ending is not None,
+                            returncode=proc.returncode))
         if signature != last_signature:
             last_progress = time.monotonic()
             last_signature = signature

@@ -1,0 +1,23 @@
+{
+  "passed": true,
+  "cases": [
+    {
+      "case": "unlimited",
+      "n": 107374181464,
+      "capacity": 107374182400,
+      "need": 4,
+      "pinned": 4,
+      "claims_refused": true,
+      "log": "XSA_FINISH_CORPUS_WINDOWED regions=4 region_bytes=26843545600 mapped_cap=107374182400 need_windows=4 pinned=4\nXSA_FINISH_CORPUS path=/mnt/nvme2n1/erikg/pile-100gb-snap.txt bytes=107374181464 remap_identity=0 read_only=1 rotation=0 derivation=T[i]=REMAP[corpus[i]] mmap=0\nFATAL xsa_finish: open claims meta (/tmp/tmpchd7npkz/meta)\n"
+    },
+    {
+      "case": "limited",
+      "n": 107374181464,
+      "capacity": 42949672960,
+      "need": 10,
+      "pinned": 0,
+      "claims_refused": true,
+      "log": "XSA_FINISH_CORPUS_WINDOWED regions=4 region_bytes=10737418240 mapped_cap=42949672960 need_windows=10 pinned=0\nXSA_FINISH_CORPUS path=/mnt/nvme2n1/erikg/pile-100gb-snap.txt bytes=107374181464 remap_identity=0 read_only=1 rotation=0 derivation=T[i]=REMAP[corpus[i]] mmap=0\nFATAL xsa_finish: open claims meta (/tmp/tmpchd7npkz/meta)\n"
+    }
+  ]
+}

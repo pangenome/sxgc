@@ -1,0 +1,18 @@
+{
+  "command": "python3 tools/package_xsa_sources.py && cd xsa && cargo build --release",
+  "result": "passed",
+  "elapsed": "4m10s",
+  "packaged_bundle": "/home/erikg/sxgc/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-ztc0x1mx/bundle",
+  "source_sha256": "f7cfc4343caf47d94ace5c1dc886389669e409a479e7290f0ee015e061b583a5",
+  "native_gate_binary_identity": {
+    "xsa_finish": true,
+    "cross_lcp_merge": true
+  },
+  "all_59_source_hashes_verified": true,
+  "tests": [
+    "window budget unlimited: pinned=4, mapped capacity n+936 bytes",
+    "window budget 120GiB RLIMIT_AS: mapped capacity <= RLIMIT_AS/3, pinned=0, empty claims still refused",
+    "dead emitter integration passed",
+    "150 MB product hash and all enabled audits identical"
+  ]
+}

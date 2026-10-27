@@ -438,7 +438,15 @@ struct CorpusText {
         // finish phase must run with an envelope that permits this (see
         // --finish-as-gb): pinned windows charge ADDRESS SPACE, not RSS - the
         // pages are page-cache backed and reclaimable.
-        uint64_t mapBudget = std::max<uint64_t>(32ull << 30, size_);
+        // Four page-aligned windows must cover the entire corpus. Rounding
+        // size_/4 DOWN loses up to four pages and otherwise selects the locked
+        // byte path even with unlimited address space (100 GB needed 5 windows
+        // for only 15448 uncovered bytes). Round the desired budget up first;
+        // RLIMIT_AS/3 below remains the hard cap, never rounded upward.
+        const uint64_t mapQuantum = windows.size() * 4096;
+        pf_check(size_ <= UINT64_MAX - (mapQuantum - 1), "corpus mapping size overflow");
+        const uint64_t alignedSize = (size_ + mapQuantum - 1) / mapQuantum * mapQuantum;
+        uint64_t mapBudget = std::max<uint64_t>(32ull << 30, alignedSize);
         if (limit.rlim_cur != RLIM_INFINITY) mapBudget = std::min<uint64_t>(mapBudget, limit.rlim_cur / 3);
         windowBytes = std::max<uint64_t>(4096, (mapBudget / windows.size()) & ~uint64_t(4095));
         // MEASUREMENT KNOB (the product never sets it): force the WINDOWED byte

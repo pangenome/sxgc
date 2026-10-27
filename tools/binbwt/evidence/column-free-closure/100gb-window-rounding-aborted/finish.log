@@ -1,0 +1,15 @@
+XSA_FINISH_CORPUS_WINDOWED regions=4 region_bytes=26843541504 mapped_cap=107374166016 need_windows=5 pinned=0
+XSA_FINISH_CORPUS path=/mnt/nvme2n1/erikg/pile-100gb-snap.txt bytes=107374181464 remap_identity=0 read_only=1 rotation=0 derivation=T[i]=REMAP[corpus[i]] mmap=0
+XSA_FINISH_PFCK path=/mnt/nvme2n1/erikg/fused-closure-100gb/product/frag.pfck2 n=107374181464 tau=22 count=4880644613 bytes=39045156944 wall=16.840 workers=42 segments=168 worker_bytes=1572864 source=corpus_adapter fixed_grid=1
+XSA_FINISH_DEBUG_ARTIFACTS enabled=0 product_dump_scratch_bytes=0
+XSA_FINISH_KASAI arm=off audit=0 column=none
+XSA_FINISH_CYCLIC=1 has_rs=1 has_nl=1 k=1
+XSA_FINISH_PFCK_WAIT wall=0.000 overlapped=1
+XSA_FINISH_PHASE readiness-pfck wall=151.723 cumulative=151.724
+SLIM_PF_SELF_CHECK checks=256 passed=1 source=corpus_adapter
+SLIM_PF_SELF_CHECK checks=256 passed=1 source=corpus_adapter
+XSA_FINISH_TIER lce_trust=0 claims_dir=- lce_fault=0 probe_degrees=0 tier=T0-full constructor=byte-verifies-every-answer
+XSA_FINISH_PHASE fingerprints wall=1.206 cumulative=152.930
+SEAM_PHASE build=0.000 classes=0 rows=0
+XSA_FINISH_PHASE seam-classes wall=0.000 cumulative=152.930
+PFP_TERMINAL byte=0x1e source=padding-row raw_n=107374181474 raw_r=107374181474

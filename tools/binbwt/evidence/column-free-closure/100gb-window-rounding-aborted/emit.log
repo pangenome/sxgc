@@ -1,0 +1,2 @@
+CROSS_SEAM_DISCOVERED n=107374181464 depth=17 raw_classes=16 aggregate_occurrences=22388157 unique_targets=22388157 limit=67108864 work_limit=1717986903424 before_walk=1 bounded=1
+TAPE_EMIT_START n=107374181464 targets=22388157 chunk=4194304 prefix=/mnt/nvme2n1/erikg/fused-closure-100gb/product/frag
