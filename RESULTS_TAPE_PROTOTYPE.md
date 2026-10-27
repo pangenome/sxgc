@@ -1137,3 +1137,19 @@ Every emission exits with CROSS_V2_PIECE_WINDOW=100000000 before finish.
 Evidence and raw phase observations: `tools/binbwt/evidence/parallel-finish/`.
 These correctness gates are not N>=3 idle-box timing evidence. No phase gain,
 serial-cost floor, or pile-scale speedup is claimed.
+
+### m1 follow-up: two independent ordered streams
+
+The first parallel m1 implementation adds bit-fragment construction and an
+ordered re-encoding pass at every batch boundary, plus a full finish-pool
+barrier. The follow-up removes that extra work: the head-code and gamma-length
+streams already have independent bit accumulators, buffers and files. A
+separate two-worker pool gives each stream one ordered owner. Each repaired
+batch is encoded directly into those existing spools; there is no m1 fragment
+concatenation. A one-worker configuration encodes both streams on that worker.
+The repaired input remains bounded at 1,048,576 chars/lengths, and all stream
+and frequency audits stay in the ordered transducer. Member publication still
+waits for both streams. This is a code-level reduction in redundant work;
+no N>=3 idle-box timing conclusion is drawn from the exploratory gates.
+
+The m1 two-stream follow-up passes all four packaged configurations: 150 MB product/debug, forced-spill 150 MB, one-worker/no-symbol fallback with chunk 1000003, and 10 GB product. Both expected SHA-256 values, chi/run counts, closure 0/0/0, fallbacks 0 and all exact checker/selftest results remain unchanged. Product debug dump scratch is zero. Evidence: `tools/binbwt/evidence/m1-stream-pair/`. No qualified timing claim.

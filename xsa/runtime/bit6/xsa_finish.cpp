@@ -5610,6 +5610,11 @@ int main(int argc, char** argv) {
                 prevLen = len;
             }
             BitsOut headBits(prefix + ".bits-head"), lenBits(prefix + ".bits-len");
+            // These streams have separate accumulators, buffers and files.
+            // Keep one ordered owner per stream: no fragment re-encoding or
+            // large-pool barrier is needed to encode a bounded repaired batch.
+            const int encodeThreads = std::min(2, poolThreads);
+            FinishPool encodePool(encodeThreads);
             uint64_t replayRuns = 0;
             {
                 PfRegion rw("m1-rlebwt-wait", PF_M1);
@@ -5642,23 +5647,12 @@ int main(int argc, char** argv) {
                 chars.reserve(REPLAY_BATCH); lengths.reserve(REPLAY_BATCH);
                 auto encodeBatch = [&] {
                     if (chars.empty()) return;
-                    const size_t parts = std::min<size_t>(poolThreads, (chars.size() + 16383) / 16384);
-                    struct Fragment { BitsOut head, len; };
-                    std::vector<Fragment> fragments(parts);
-                    std::atomic<size_t> next{0};
-                    pool.run([&](int) {
-                        for (;;) {
-                            const size_t k = next.fetch_add(1, std::memory_order_relaxed);
-                            if (k >= parts) break;
-                            auto& f = fragments[k];
-                            for (size_t j = chars.size() * k / parts; j < chars.size() * (k + 1) / parts; ++j) {
-                                f.head.msb(codes[chars[j]], lens[chars[j]]);
-                                f.len.gamma(lengths[j]);
-                            }
-                            f.head.pad(); f.len.pad();
-                        }
+                    encodePool.run([&](int t) {
+                        if (t == 0)
+                            for (uint8_t c : chars) headBits.msb(codes[c], lens[c]);
+                        if (t == 1 || encodeThreads == 1)
+                            for (uint64_t len : lengths) lenBits.gamma(len);
                     });
-                    for (auto& f : fragments) { headBits.appendPacked(f.head); lenBits.appendPacked(f.len); }
                     chars.clear(); lengths.clear();
                 };
                 rs2.emit = [&](const NRun& v) {
