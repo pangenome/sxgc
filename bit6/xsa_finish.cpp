@@ -2506,7 +2506,7 @@ struct WitBuckets {
     // are dead the moment they have been merged into the visit order. Released
     // page by page (DONTNEED) at the one place that knows the chunk is finished,
     // so a spilled witness stream never squats on the corpus's page cache.
-    uint64_t cacheReleasedBytes = 0, cacheReleaseCalls = 0;
+    std::atomic<uint64_t> cacheReleasedBytes{0}, cacheReleaseCalls{0};
     void releaseChunk(int fd, const std::string& path) {
         if (fd < 0 || !pf_hygiene_on()) return;
         struct stat st {};
@@ -2549,7 +2549,7 @@ struct WitBuckets {
         for (uint64_t b = 1; b < P; ++b) if (buf[b].size() > buf[best].size()) best = b;
         spillBucket(best);
     }
-    void spillBucket(uint64_t best) {
+    void spillBucket(uint64_t best, bool account = true) {
         if (buf[best].empty()) return;
         std::vector<uint64_t>& v = buf[best];
         std::sort(v.begin(), v.end());
@@ -2570,16 +2570,28 @@ struct WitBuckets {
         uint64_t offset = uint64_t(end);
         runs[best].push_back({offset + 4, out.size() - 4, cnt});
         pf_write_full(fds[best], out.data(), out.size(), "witness bucket");
-        totalRam -= 8 * v.capacity();
+        if (account) { totalRam -= 8 * v.capacity(); ++spilled; }
         std::vector<uint64_t>().swap(v);
-        ++spilled;
     }
-    void presort_parallel(int) {
-        // Spill the remaining bounded RAM before opening the merge cursors.
-        for (uint64_t b = 0; b < P; ++b) spillBucket(b);
+    template<class Pool> void presort_parallel(Pool& pool) {
+        uint64_t retained = 0;
+        for (const auto& v : buf) retained += 8 * v.capacity();
+        pf_check(retained == totalRam, "witness RAM accounting before presort");
+        std::atomic<uint64_t> next{0}, count{0};
+        pool.run([&](int) {
+            for (;;) {
+                const uint64_t b = next.fetch_add(1, std::memory_order_relaxed);
+                if (b >= P) break;
+                if (!buf[b].empty()) {
+                    spillBucket(b, false);
+                    count.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+        });
+        totalRam = 0; spilled += count.load();
     }
     template <typename Visit>
-    void for_each_sorted(Visit&& visit) {
+    void for_each_sorted(Visit&& visit, uint64_t beginBucket = 0, uint64_t endBucket = ~0ull) {
         struct Cursor {
             Run run; uint64_t pos = 0, value = 0;
             uint32_t left; std::array<uint8_t, 4096> data;
@@ -2626,7 +2638,7 @@ struct WitBuckets {
             }
         };
         constexpr size_t FANIN = 64;
-        for (uint64_t b = 0; b < P; ++b) {
+        for (uint64_t b = beginBucket; b < std::min(P, endBucket); ++b) {
             if (runs[b].empty()) continue;
             std::string name = prefix + ".wit-" + std::to_string(b);
             int fd = ::open(name.c_str(), O_RDONLY);
@@ -2714,19 +2726,20 @@ struct BitsOut {
     int fd = -1;
     std::vector<uint8_t> mem;
     uint64_t byteCount = 0;
+    BitsOut() = default; // bounded, memory-only encoded worker fragment
     explicit BitsOut(const std::string& path_) : path(path_) {
         fd = ::open(path.c_str(), O_RDWR | O_CREAT | O_EXCL, 0600);
         pf_check(fd >= 0, "create bit spool");
         mem.reserve(1 << 20);
     }
-    ~BitsOut() { if (fd >= 0) ::close(fd); ::unlink(path.c_str()); }
+    ~BitsOut() { if (fd >= 0) ::close(fd); if (!path.empty()) ::unlink(path.c_str()); }
     void drain() {
         pf_write_full(fd, mem.data(), mem.size(), "bit spool");
         byteCount += mem.size(); mem.clear();
     }
     void byte(uint8_t v) {
         mem.push_back(v);
-        if (mem.size() == (1 << 20)) drain();
+        if (fd >= 0 && mem.size() == (1 << 20)) drain();
     }
     template<class Container> void copyTo(Container& out) {
         drain();
@@ -2797,8 +2810,58 @@ struct BitsOut {
             nbits = 0;
         }
     }
+    // Concatenate an unpadded bit sequence at the current bit offset. The
+    // source is padded only for storage; its padding bits never enter this
+    // stream. In particular, bucket/slot boundaries are NOT byte boundaries.
+    void appendPacked(const BitsOut& part) {
+        pf_check(part.fd < 0 && part.nbits == 0 &&
+                 part.mem.size() == (part.bitPos + 7) / 8, "invalid packed fragment");
+        const uint64_t whole = part.bitPos / 8;
+        uint64_t at = 0;
+        if (!nbits && fd < 0) {
+            mem.insert(mem.end(), part.mem.begin(), part.mem.begin() + whole);
+            at = whole; bitPos += 8 * whole;
+        } else if (!nbits) {
+            while (at < whole) {
+                size_t take = size_t(std::min<uint64_t>(whole - at, (1 << 20) - mem.size()));
+                mem.insert(mem.end(), part.mem.begin() + at, part.mem.begin() + at + take);
+                at += take; bitPos += 8 * take;
+                if (fd >= 0 && mem.size() == (1 << 20)) drain();
+            }
+        } else {
+            for (; at < whole; ++at) lsb(part.mem[at], 8);
+        }
+        if (part.bitPos & 7) lsb(part.mem[whole], unsigned(part.bitPos & 7));
+    }
     size_t bytes() const { return byteCount + mem.size(); }
 };
+
+static int selftest_packed_bits() {
+    uint64_t cases = 0;
+    for (unsigned offset = 0; offset < 64; ++offset) {
+        BitsOut expected, actual;
+        for (unsigned j = 0; j < offset; ++j) { expected.bit(j & 1); actual.bit(j & 1); }
+        for (unsigned size = 0; size <= 257; ++size) {
+            BitsOut part;
+            for (unsigned j = 0; j < size; ++j) {
+                const unsigned bit = unsigned((j * 13 + size * 7) ^ (j >> 2)) & 1;
+                expected.bit(bit); part.bit(bit);
+            }
+            part.pad(); actual.appendPacked(part); ++cases;
+        }
+        expected.pad(); actual.pad();
+        pf_check(expected.bitPos == actual.bitPos && expected.mem == actual.mem,
+                 "packed concatenation disagrees with scalar bits");
+    }
+    BitsOut large, joined;
+    large.putzeros((1 << 23) + 17); large.bit(1); large.pad();
+    joined.appendPacked(large); joined.pad();
+    pf_check(joined.bitPos == large.bitPos && joined.mem == large.mem,
+             "large packed fragment disagrees");
+    printf("PACKED_BITS_SELFTEST_PASS fragments=%llu offsets=64 empty=1 padding=1 large=1\n",
+           (unsigned long long)cases);
+    return 0;
+}
 
 // ------------------------------------------------------------ container out
 // SXI2 v6 writer (the lite member set). Mirrors bit6/sxi2_write.cpp's Out
@@ -4064,6 +4127,7 @@ static void fp_self_check(SlimFingerprint<CorpusText>& fh, const CorpusText& tex
 int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string(argv[1]) == "--benchmark-repair-chunks") return benchmark_repair_chunks();
+        if (argc == 2 && std::string(argv[1]) == "--selftest-packed-bits") return selftest_packed_bits();
         if (argc == 2 && std::string(argv[1]) == "--selftest-stream-guard") return selftest_stream_guard();
         if (argc == 2 && std::string(argv[1]) == "--selftest-repair-chunks") return selftest_repair_chunks();
         if (argc == 2 && std::string(argv[1]) == "--selftest-sweep-monoid") return selftest_sweep_monoid();
@@ -5345,18 +5409,6 @@ int main(int argc, char** argv) {
             BitsOut low(prefix + ".bits-low"), high(prefix + ".bits-high");
             uint64_t i = 0, hpos = 0, prev = ~0ull;
             size_t sidx = 0;
-            auto emitWitness = [&](uint64_t v) {
-                pf_check(prev == ~0ull || v > prev, "witnesses not strictly increasing");
-                prev = v;
-                low.lsb(v, l);
-                uint64_t mark = (v >> l) + i;
-                if (mark > hpos) { high.putzeros(mark - hpos); hpos = mark; }
-                high.bit(1); ++hpos;
-                ++i;
-                while (sidx < wantSamples.size() && wantSamples[sidx] < v)
-                    pf_fail("sampled banked witness missing from the v2 stream: " + std::to_string(wantSamples[sidx]));
-                if (sidx < wantSamples.size() && wantSamples[sidx] == v) ++sidx;
-            };
             // finish-decomposed (m5): the witness set is already VALUE-RANGE
             // bucketed in RAM under the budget. When nothing spilled, sorting
             // each bucket in parallel and walking the buckets in range order is
@@ -5377,28 +5429,95 @@ int main(int argc, char** argv) {
                         }
                     });
                 } else {
-                    buckets.presort_parallel(threads);
+                    buckets.presort_parallel(pool);
                 }
                 rp.close(); rp.report(buckets.totalValues, "witnesses");
             }
             {
                 PfRegion re("m5-encode", PF_M5);
-                if (resident) {
-                    for (uint64_t b = 0; b < buckets.P; ++b) {
-                        for (uint64_t v : buckets.buf[b]) emitWitness(v);
-                        std::vector<uint64_t>().swap(buckets.buf[b]);   // release as we go
-                    }
-                } else {
-                    buckets.for_each_sorted(emitWitness);
+                // Bucket value ranges are disjoint. Counts give each bucket
+                // its exact global EF ordinal, and range boundaries give its
+                // high-stream bit interval, without decoding any value twice.
+                std::vector<uint64_t> ordinal(buckets.P + 1, 0);
+                for (uint64_t b = 0; b < buckets.P; ++b) {
+                    uint64_t count = resident ? buckets.buf[b].size() : 0;
+                    if (!resident) for (const auto& run : buckets.runs[b]) count += run.count;
+                    ordinal[b + 1] = ordinal[b] + count;
                 }
+                pf_check(ordinal.back() == chi, "EF bucket count");
+                auto lower = [&](uint64_t b) {
+                    return uint64_t((__uint128_t(b) * n + buckets.P - 1) / buckets.P);
+                };
+                auto highStart = [&](uint64_t b) {
+                    return !chi ? 0 : b == buckets.P ? highbits : (lower(b) >> l) + ordinal[b];
+                };
+                struct Fragment {
+                    BitsOut low, high;
+                    uint64_t count = 0, first = ~0ull, last = ~0ull;
+                    size_t samples = 0;
+                };
+                const uint64_t slots = std::max(1, poolThreads);
+                for (uint64_t base = 0; base < buckets.P; base += slots) {
+                    const uint64_t count = std::min(slots, buckets.P - base);
+                    std::vector<Fragment> fragments(count);
+                    std::atomic<uint64_t> next{0};
+                    pool.run([&](int) {
+                        for (;;) {
+                            const uint64_t slot = next.fetch_add(1, std::memory_order_relaxed);
+                            if (slot >= count) break;
+                            const uint64_t b = base + slot;
+                            auto& f = fragments[slot];
+                            const uint64_t valueLo = lower(b), valueHi = lower(b + 1);
+                            uint64_t cursor = highStart(b);
+                            const uint64_t stop = highStart(b + 1);
+                            auto sample = std::lower_bound(wantSamples.begin(), wantSamples.end(), lower(b));
+                            const auto sampleEnd = std::lower_bound(sample, wantSamples.end(), lower(b + 1));
+                            auto encode = [&](uint64_t v) {
+                                pf_check(v >= valueLo && v < valueHi, "EF witness bucket range");
+                                pf_check(f.last == ~0ull || v > f.last, "witnesses not strictly increasing");
+                                if (!f.count) f.first = v;
+                                f.last = v;
+                                f.low.lsb(v, l);
+                                const uint64_t mark = (v >> l) + ordinal[b] + f.count;
+                                pf_check(mark >= cursor && mark < stop, "EF bucket high extent");
+                                f.high.putzeros(mark - cursor); f.high.bit(1);
+                                cursor = mark + 1; ++f.count;
+                                if (sample != sampleEnd && *sample < v)
+                                    pf_fail("sampled banked witness missing from the v2 stream: " + std::to_string(*sample));
+                                if (sample != sampleEnd && *sample == v) { ++sample; ++f.samples; }
+                            };
+                            if (resident) {
+                                for (uint64_t v : buckets.buf[b]) encode(v);
+                                std::vector<uint64_t>().swap(buckets.buf[b]);
+                            } else {
+                                buckets.for_each_sorted(encode, b, b + 1);
+                            }
+                            pf_check(f.count == ordinal[b + 1] - ordinal[b], "EF bucket replay count");
+                            pf_check(sample == sampleEnd, "witness sample check incomplete");
+                            f.high.putzeros(stop - cursor);
+                            f.low.pad(); f.high.pad();
+                        }
+                    });
+                    // Ordered concatenation preserves the global monotonicity
+                    // guard as well as every unaligned bucket boundary.
+                    for (auto& f : fragments) {
+                        if (f.count) {
+                            pf_check(prev == ~0ull || f.first > prev, "witnesses not strictly increasing");
+                            prev = f.last;
+                        }
+                        low.appendPacked(f.low); high.appendPacked(f.high);
+                        i += f.count; sidx += f.samples;
+                    }
+                }
+                hpos = high.bitPos;
                 re.close(); re.report(i, "witnesses");
             }
             fprintf(stderr, "XSA_FINISH_WITNESS_PATH resident=%d buckets=%llu spilled=%llu values=%llu "
                     "cache_release_calls=%llu cache_released_bytes=%llu\n",
                     int(resident), (unsigned long long)buckets.P,
                     (unsigned long long)buckets.spilled, (unsigned long long)buckets.totalValues,
-                    (unsigned long long)buckets.cacheReleaseCalls,
-                    (unsigned long long)buckets.cacheReleasedBytes);
+                    (unsigned long long)buckets.cacheReleaseCalls.load(),
+                    (unsigned long long)buckets.cacheReleasedBytes.load());
             if (highbits > hpos) { high.putzeros(highbits - hpos); hpos = highbits; }
             pf_check(i == chi, "EF count");
             pf_check(low.bitPos == lowbits && high.bitPos == highbits, "EF dimensions");
@@ -5517,10 +5636,35 @@ int main(int argc, char** argv) {
                 RepairStream rs2;
                 rs2.N = N; rs2.n = n; rs2.terminal = rs.terminal; rs2.seam = &seam;
                 rs2.sampleChecks = false;
+                std::vector<uint8_t> chars;
+                std::vector<uint64_t> lengths;
+                constexpr size_t REPLAY_BATCH = 1 << 20;
+                chars.reserve(REPLAY_BATCH); lengths.reserve(REPLAY_BATCH);
+                auto encodeBatch = [&] {
+                    if (chars.empty()) return;
+                    const size_t parts = std::min<size_t>(poolThreads, (chars.size() + 16383) / 16384);
+                    struct Fragment { BitsOut head, len; };
+                    std::vector<Fragment> fragments(parts);
+                    std::atomic<size_t> next{0};
+                    pool.run([&](int) {
+                        for (;;) {
+                            const size_t k = next.fetch_add(1, std::memory_order_relaxed);
+                            if (k >= parts) break;
+                            auto& f = fragments[k];
+                            for (size_t j = chars.size() * k / parts; j < chars.size() * (k + 1) / parts; ++j) {
+                                f.head.msb(codes[chars[j]], lens[chars[j]]);
+                                f.len.gamma(lengths[j]);
+                            }
+                            f.head.pad(); f.len.pad();
+                        }
+                    });
+                    for (auto& f : fragments) { headBits.appendPacked(f.head); lenBits.appendPacked(f.len); }
+                    chars.clear(); lengths.clear();
+                };
                 rs2.emit = [&](const NRun& v) {
-                    headBits.msb(codes[v.c], lens[v.c]);
-                    lenBits.gamma(v.len);
+                    chars.push_back(v.c); lengths.push_back(v.len);
                     ++replayRuns;
+                    if (chars.size() == REPLAY_BATCH) encodeBatch();
                 };
                 int fd = ::open((prefix + ".rlebwt").c_str(), O_RDONLY);
                 pf_check(fd >= 0, "open rlebwt for the m1 replay");
@@ -5554,6 +5698,7 @@ int main(int argc, char** argv) {
                 }
                 ::close(fd);
                 rs2.finishStream();
+                encodeBatch();
                 pf_check(replayRuns == rNorm, "m1 replay run count");
                 for (unsigned c = 0; c < 256; ++c)
                     pf_check(rs2.totals[c] == rs.totals[c] && rs2.runFreq[c] == rs.runFreq[c],

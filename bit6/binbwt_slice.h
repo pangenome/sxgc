@@ -3725,6 +3725,47 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
     if (!haveSyms)
         std::fprintf(stderr, "TAPE_EMIT_WARN no %s: falling back to the LOCKED "
                              "per-row corpus read (slow)\n", symPath.c_str());
+    // Reuse the word workers for every chunk. Inputs stay immutable during
+    // a job, and the completion barrier precedes ordered publication.
+    const U wordWorkers = std::max<U>(1, std::min<U>(threads, (chunk + 65535) / 65536));
+    std::vector<U> workerHits(wordWorkers, 0);
+    auto buildWords = [&](U worker, U want) {
+        U localHits = 0;
+        const U lo = want * worker / wordWorkers;
+        const U hi = want * (worker + 1) / wordWorkers;
+        for (U i = lo; i < hi; ++i) {
+            const U p = pos[i];
+            require(p < n, "tape-emit: SA position out of range");
+            // SA-zero uses the padding symbol 2, as in the fill pass.
+            const uint8_t sym = haveSyms ? syms[i] : (p ? text.at(p - 1) : uint8_t(2));
+            const bool hit = maybeTarget(p) && isTarget(p);
+            if (hit) ++localHits;
+            words[i] = bin_word(p + 1, sym, hit);
+        }
+        workerHits[worker] = localHits;
+    };
+    std::mutex wordMutex;
+    std::condition_variable wordWork, wordDone;
+    uint64_t wordGeneration = 0;
+    U wordWant = 0, wordRemaining = 0;
+    bool wordStop = false;
+    std::vector<std::thread> wordPool;
+    for (U worker = 1; worker < wordWorkers; ++worker) {
+        wordPool.emplace_back([&, worker] {
+            uint64_t seen = 0;
+            std::unique_lock<std::mutex> lock(wordMutex);
+            for (;;) {
+                wordWork.wait(lock, [&] { return wordStop || seen != wordGeneration; });
+                if (wordStop) return;
+                seen = wordGeneration;
+                const U want = wordWant;
+                lock.unlock();
+                buildWords(worker, want);
+                lock.lock();
+                if (--wordRemaining == 0) wordDone.notify_one();
+            }
+        });
+    }
     U baseRow = 0, hits = 0;
     double tRead = 0, tWord = 0, tPub = 0;
     while (baseRow < n) {
@@ -3748,35 +3789,16 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
         }
         tRead += now_sec() - tr;
         const double tw = now_sec();
-        // Contiguous, disjoint word ranges; publication remains ordered on
-        // the calling thread after every worker has joined. Count hits locally
-        // so the row loop has no shared writes or atomic operations.
-        const U workers = std::max<U>(1, std::min<U>(threads, (want + 65535) / 65536));
-        std::vector<U> workerHits(workers, 0);
-        auto buildWords = [&](U worker) {
-            U localHits = 0;
-            const U lo = want * worker / workers;
-            const U hi = want * (worker + 1) / workers;
-            for (U i = lo; i < hi; ++i) {
-            const U p = pos[i];
-            require(p < n, "tape-emit: SA position out of range");
-            // The BWT symbol of this row is M[p-1], and position 0 is the
-            // PADDING row whose symbol is 2 - exactly the fill pass's
-            // `p ? at(p-1) : 2` (binbwt_slice.h fill loop). Getting this wrong
-            // costs the last unit of the `counts[2] == 10` terminal-coverage
-            // check: 9 padding symbols instead of 10.
-            const uint8_t sym = haveSyms ? syms[i] : (p ? text.at(p - 1) : uint8_t(2));
-            const bool hit = maybeTarget(p) && isTarget(p);
-            if (hit) ++localHits;
-            words[i] = bin_word(p + 1, sym, hit);
+        {
+            std::lock_guard<std::mutex> lock(wordMutex);
+            wordWant = want; wordRemaining = wordWorkers - 1; ++wordGeneration;
         }
-            workerHits[worker] = localHits;
-        };
-        std::vector<std::thread> wordPool;
-        for (U worker = 1; worker < workers; ++worker)
-            wordPool.emplace_back(buildWords, worker);
-        buildWords(0);
-        for (auto& worker : wordPool) worker.join();
+        wordWork.notify_all();
+        buildWords(0, want);
+        {
+            std::unique_lock<std::mutex> lock(wordMutex);
+            wordDone.wait(lock, [&] { return wordRemaining == 0; });
+        }
         for (U count : workerHits) hits += count;
         tWord += now_sec() - tw;
         const double tp = now_sec();
@@ -3784,6 +3806,12 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
         tPub += now_sec() - tp;
         baseRow += want;
     }
+    {
+        std::lock_guard<std::mutex> lock(wordMutex);
+        wordStop = true;
+    }
+    wordWork.notify_all();
+    for (auto& worker : wordPool) worker.join();
     ::close(fd);
     if (sfd >= 0) ::close(sfd);
     const double tEnd0 = now_sec();

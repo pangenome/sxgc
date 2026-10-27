@@ -1079,3 +1079,61 @@ Both emissions completed with CROSS_V2_PIECE_WINDOW=100000000 before finish;
 product debug dump scratch is zero. Evidence, exact commands, hashes and raw
 observations: `tools/binbwt/evidence/parallel-word/`. These are correctness
 gates, not N>=3 idle-box timing trials; no speedup or pile projection is claimed.
+
+### Finish parallelization implementation
+
+The tape word workers now persist across chunks, with generation/completion
+barriers around each disjoint range build; ordered `publishBin` still runs
+only after completion. The one-worker and short-final-chunk paths use the
+same loop and checks.
+
+m5 presort spills independent buckets on the existing finish pool, validating
+capacity accounting before aggregating freed RAM and spill counts at the
+barrier. EF encoding assigns a global witness ordinal and high-bit interval
+to each value-range bucket from bucket counts and exact range boundaries.
+Workers merge/encode complete buckets into memory fragments; at most one pool
+batch of fragments is live. Concatenation preserves partial-byte boundaries,
+all per-value bounds and strict-order checks, cross-bucket strict order,
+EF counts/dimensions and sampled witness membership. Cache-release counters
+are atomic because different bucket owners now update them concurrently.
+
+m1's exact repair transducer remains serial: its source/output pending runs,
+padding/dollar state, seam cursor and accounting cross band boundaries.
+It feeds bounded batches of 1,048,576 chars/lengths to parallel Huffman/gamma
+encoders. Their bit fragments join in stream order without intermediate
+padding. All replay count, byte-total and frequency divergence audits remain.
+The 256-symbol codebook construction and container offset/CRC publication
+remain serial; they do not admit independent writes through the current
+streaming container interface. No normalized full-run spool, inverse, or
+product debug scratch is introduced.
+
+The new packed-bit oracle compares scalar per-bit encoding with concatenated
+fragments at all 64 starting offsets, including empty, partial-byte and
+larger-than-buffer fragments. Exact size gates below exercise resident and
+spilled witnesses as well as the product byte identity.
+
+### Finish parallelization: exact gates
+
+Release packaging/build passes. All four new gate configurations pass their
+expected product SHA, chi/run counts, closure 0/0/0, fallbacks 0, zero product
+debug dump scratch and all five finish selftests plus checker selftests:
+
+- 150 MB, 96 threads: product and debug SHA `d7eeac0f...`; complete expanded
+  m1 and band stream/endpoint comparison against SA has zero mismatches;
+  independent chi from the column equals 44034231 (57279187 runs).
+- 150 MB, 4 threads and 1 MiB witness budget: same exact product; spilled
+  witness path, 4096 buckets, 966790 spills and 8174 cache-release calls
+  exercise the bounded multi-pass merge, including fan-in reduction.
+- 150 MB, one thread, chunk 1000003 and a private SA copy without `.sym`:
+  same exact product; exercises the corpus-symbol fallback, unaligned final
+  chunk, one-worker emission barrier and one-worker encoding fragments.
+- 10 GB, 96 threads: SHA
+  `22d0ce7493c6238a9d2e7f4e9a0decdf5841ff72a845d856bebaecd6d34bdaee`,
+  chi 2676929428 / runs 3474891366, closure 0/0/0, walk fallbacks 0 and
+  STREAM_VS_BWT mismatches 0. Uses the normalized verification column;
+  neither product executable constructs or reads an inverse.
+
+Every emission exits with CROSS_V2_PIECE_WINDOW=100000000 before finish.
+Evidence and raw phase observations: `tools/binbwt/evidence/parallel-finish/`.
+These correctness gates are not N>=3 idle-box timing evidence. No phase gain,
+serial-cost floor, or pile-scale speedup is claimed.
