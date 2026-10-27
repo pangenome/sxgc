@@ -1,0 +1,51 @@
+SS_START n=150000001 row_bytes=32 cap_bytes=150000000 (1.00n) rows_per_wave=4453125 waves=34 ram_gb=48.00 rows_per_band=139160 par_bands=8 threads=96
+SS_WAVES count=46 (byte-range waves)
+SS_SAMPLE samples=4054055 stride=37 wall=0.35
+SS_TAPE K=16 packed_row_bytes=8 wave_cap=150000000
+SS_WAVE w=1/46 bands=31 wall=0.63 scan=0.30 | band_sum read=2.05 sort=0.50 write=0.08 | band_max read=0.10 sort=0.08 write=0.01
+SS_WAVE w=2/46 bands=31 wall=2.02 scan=0.05 | band_sum read=0.31 sort=2.33 write=0.05 | band_max read=0.14 sort=1.68 write=0.02
+SS_WAVE w=3/46 bands=32 wall=1.56 scan=0.05 | band_sum read=0.44 sort=1.83 write=0.08 | band_max read=0.10 sort=1.26 write=0.02
+SS_WAVE w=4/46 bands=32 wall=0.77 scan=0.06 | band_sum read=0.56 sort=1.15 write=0.06 | band_max read=0.08 sort=0.46 write=0.01
+SS_WAVE w=5/46 bands=32 wall=0.99 scan=0.07 | band_sum read=0.92 sort=1.25 write=0.06 | band_max read=0.10 sort=0.60 write=0.01
+SS_WAVE w=6/46 bands=32 wall=0.40 scan=0.08 | band_sum read=1.28 sort=0.57 write=0.04 | band_max read=0.10 sort=0.04 write=0.01
+SS_WAVE w=7/46 bands=32 wall=0.95 scan=0.03 | band_sum read=0.23 sort=0.58 write=0.04 | band_max read=0.18 sort=0.55 write=0.02
+SS_WAVE w=8/46 bands=32 wall=0.47 scan=0.15 | band_sum read=1.74 sort=0.64 write=0.11 | band_max read=0.09 sort=0.07 write=0.01
+SS_WAVE w=9/46 bands=30 wall=1.88 scan=0.14 | band_sum read=1.37 sort=3.75 write=0.07 | band_max read=0.10 sort=1.19 write=0.01
+SS_WAVE w=10/46 bands=32 wall=1.17 scan=0.14 | band_sum read=1.22 sort=2.76 write=0.11 | band_max read=0.09 sort=0.81 write=0.02
+SS_WAVE w=11/46 bands=32 wall=0.45 scan=0.15 | band_sum read=1.47 sort=0.82 write=0.19 | band_max read=0.11 sort=0.04 write=0.03
+SS_WAVE w=12/46 bands=32 wall=0.37 scan=0.14 | band_sum read=1.59 sort=0.23 write=0.05 | band_max read=0.08 sort=0.01 write=0.01
+SS_WAVE w=13/46 bands=32 wall=0.38 scan=0.07 | band_sum read=0.67 sort=0.59 write=0.03 | band_max read=0.07 sort=0.17 write=0.01
+SS_WAVE w=14/46 bands=32 wall=0.73 scan=0.11 | band_sum read=1.52 sort=0.98 write=0.08 | band_max read=0.11 sort=0.41 write=0.01
+SS_WAVE w=15/46 bands=32 wall=0.18 scan=0.03 | band_sum read=0.07 sort=0.07 write=0.03 | band_max read=0.02 sort=0.07 write=0.00
+SS_WAVE w=16/46 bands=32 wall=0.72 scan=0.14 | band_sum read=1.71 sort=0.73 write=0.08 | band_max read=0.09 sort=0.39 write=0.01
+SS_WAVE w=17/46 bands=32 wall=0.41 scan=0.14 | band_sum read=1.67 sort=0.48 write=0.12 | band_max read=0.08 sort=0.02 write=0.01
+SS_WAVE w=18/46 bands=32 wall=0.44 scan=0.15 | band_sum read=1.85 sort=0.54 write=0.08 | band_max read=0.10 sort=0.02 write=0.01
+SS_WAVE w=19/46 bands=32 wall=0.38 scan=0.06 | band_sum read=0.63 sort=0.59 write=0.03 | band_max read=0.08 sort=0.07 write=0.00
+SS_WAVE w=20/46 bands=32 wall=0.31 scan=0.06 | band_sum read=0.60 sort=0.47 write=0.03 | band_max read=0.07 sort=0.05 write=0.01
+SS_WAVE w=21/46 bands=32 wall=0.34 scan=0.09 | band_sum read=1.09 sort=0.56 write=0.06 | band_max read=0.09 sort=0.04 write=0.01
+SS_WAVE w=22/46 bands=32 wall=0.29 scan=0.03 | band_sum read=0.09 sort=0.15 write=0.03 | band_max read=0.04 sort=0.15 write=0.01
+SS_WAVE w=23/46 bands=32 wall=0.94 scan=0.13 | band_sum read=1.30 sort=1.21 write=0.17 | band_max read=0.08 sort=0.64 write=0.02
+SS_WAVE w=24/46 bands=32 wall=0.52 scan=0.14 | band_sum read=1.49 sort=0.75 write=0.10 | band_max read=0.10 sort=0.15 write=0.01
+SS_WAVE w=25/46 bands=32 wall=0.28 scan=0.07 | band_sum read=0.63 sort=0.36 write=0.04 | band_max read=0.07 sort=0.03 write=0.01
+SS_WAVE w=26/46 bands=32 wall=0.35 scan=0.12 | band_sum read=1.16 sort=0.52 write=0.05 | band_max read=0.09 sort=0.03 write=0.01
+SS_WAVE w=27/46 bands=32 wall=0.31 scan=0.04 | band_sum read=0.08 sort=0.15 write=0.03 | band_max read=0.04 sort=0.15 write=0.01
+SS_WAVE w=28/46 bands=32 wall=0.34 scan=0.14 | band_sum read=1.96 sort=0.11 write=0.09 | band_max read=0.07 sort=0.01 write=0.01
+SS_WAVE w=29/46 bands=32 wall=0.46 scan=0.14 | band_sum read=1.41 sort=0.75 write=0.07 | band_max read=0.09 sort=0.15 write=0.01
+SS_WAVE w=30/46 bands=32 wall=0.40 scan=0.13 | band_sum read=1.75 sort=0.39 write=0.06 | band_max read=0.10 sort=0.02 write=0.01
+SS_WAVE w=31/46 bands=32 wall=0.34 scan=0.09 | band_sum read=1.13 sort=0.54 write=0.06 | band_max read=0.10 sort=0.05 write=0.01
+SS_WAVE w=32/46 bands=32 wall=0.39 scan=0.04 | band_sum read=0.16 sort=0.43 write=0.04 | band_max read=0.06 sort=0.20 write=0.01
+SS_WAVE w=33/46 bands=32 wall=0.89 scan=0.07 | band_sum read=0.60 sort=1.00 write=0.02 | band_max read=0.07 sort=0.63 write=0.00
+SS_WAVE w=34/46 bands=32 wall=0.93 scan=0.09 | band_sum read=1.18 sort=1.18 write=0.05 | band_max read=0.09 sort=0.64 write=0.01
+SS_WAVE w=35/46 bands=32 wall=0.14 scan=0.03 | band_sum read=0.07 sort=0.04 write=0.03 | band_max read=0.01 sort=0.04 write=0.00
+SS_WAVE w=36/46 bands=32 wall=0.36 scan=0.13 | band_sum read=1.47 sort=0.36 write=0.05 | band_max read=0.08 sort=0.01 write=0.01
+SS_WAVE w=37/46 bands=32 wall=0.67 scan=0.07 | band_sum read=0.85 sort=0.98 write=0.05 | band_max read=0.09 sort=0.37 write=0.01
+SS_WAVE w=38/46 bands=32 wall=0.31 scan=0.04 | band_sum read=0.16 sort=0.28 write=0.04 | band_max read=0.06 sort=0.12 write=0.01
+SS_WAVE w=39/46 bands=32 wall=0.34 scan=0.07 | band_sum read=0.62 sort=0.59 write=0.03 | band_max read=0.07 sort=0.06 write=0.00
+SS_WAVE w=40/46 bands=32 wall=0.27 scan=0.04 | band_sum read=0.15 sort=0.34 write=0.03 | band_max read=0.04 sort=0.10 write=0.00
+SS_WAVE w=41/46 bands=32 wall=0.30 scan=0.07 | band_sum read=0.70 sort=0.52 write=0.04 | band_max read=0.08 sort=0.06 write=0.01
+SS_WAVE w=42/46 bands=32 wall=0.30 scan=0.09 | band_sum read=1.12 sort=0.58 write=0.05 | band_max read=0.08 sort=0.04 write=0.01
+SS_WAVE w=43/46 bands=32 wall=0.19 scan=0.04 | band_sum read=0.10 sort=0.17 write=0.03 | band_max read=0.02 sort=0.05 write=0.00
+SS_WAVE w=44/46 bands=32 wall=0.38 scan=0.14 | band_sum read=1.59 sort=0.55 write=0.12 | band_max read=0.07 sort=0.02 write=0.01
+SS_WAVE w=45/46 bands=32 wall=0.40 scan=0.13 | band_sum read=1.78 sort=0.65 write=0.14 | band_max read=0.08 sort=0.03 write=0.02
+SS_WAVE w=46/46 bands=32 wall=0.36 scan=0.12 | band_sum read=1.80 sort=0.21 write=0.08 | band_max read=0.08 sort=0.01 write=0.01
+SS_DONE n=150000001 waves=46 ties=15692465 sample_s=0.35 waves_s=26.80 total_s=27.17

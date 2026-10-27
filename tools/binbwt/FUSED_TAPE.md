@@ -118,3 +118,9 @@ hit accounting and every downstream guard are unchanged. The native tiny
 byte gate, full BWT check and all six finish selftests pass again after this
 correction. Packaged 150 MB/10 GB gates must be renewed before relaunching
 100 GB; no timing improvement is claimed from this discovery.
+
+The capacity-corrected emitter passes the renewed 150 MB byte gate with K=16:
+required SHA, chi 44,034,231, runs 57,279,187, closure 0/0/0, fallbacks 0,
+full STREAM_VS_BWT zero mismatches and zero product debug dump scratch.
+This run uses the existing read-only reference column and sampled ISA;
+the previous fully generated-column measurement remains separately recorded.

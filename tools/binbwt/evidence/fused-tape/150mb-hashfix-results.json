@@ -1,0 +1,146 @@
+{
+  "n": 150000001,
+  "K": 16,
+  "source_manifest": "06394839dd6039bdf35ecb1e1111d337acc130a4b691480de56825caac9a8ef1",
+  "commands": [
+    {
+      "label": "order",
+      "command": [
+        "/tmp/scatter_fused",
+        "--corpus",
+        "/dev/shm/t150m.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--scratch",
+        "/mnt/nvme2n1/erikg/fused-150-hashfix/order/waves",
+        "--tape-bands",
+        "/mnt/nvme2n1/erikg/fused-150-hashfix/order/bands",
+        "--pending-bands",
+        "16",
+        "--ram-gb",
+        "48",
+        "--par-bands",
+        "8",
+        "--threads",
+        "96",
+        "--order-sample-out",
+        "/mnt/nvme2n1/erikg/fused-150-hashfix/order-sample.sxsa",
+        "--order-sample-lo",
+        "74997952",
+        "--order-sample-count",
+        "4096",
+        "--scratch-cap-gb",
+        "0.15"
+      ],
+      "pid": 2804121,
+      "returncode": 0,
+      "seconds": 29.748
+    },
+    {
+      "label": "emit",
+      "command": [
+        "/tmp/fused-native-bundle/cross_lcp_merge",
+        "--binbwt",
+        "/dev/shm/t150m.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--out-prefix",
+        "/mnt/nvme2n1/erikg/fused-150-hashfix/product/frag",
+        "--threads",
+        "96",
+        "--tape-bands",
+        "/mnt/nvme2n1/erikg/fused-150-hashfix/order/bands"
+      ],
+      "pid": 2804122,
+      "returncode": 0,
+      "seconds": 28.726
+    },
+    {
+      "label": "sample-order",
+      "command": [
+        "/tmp/sa_check_fused",
+        "--corpus",
+        "/dev/shm/t150m.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--sa",
+        "/mnt/nvme2n1/erikg/fused-150-hashfix/order-sample.sxsa",
+        "--sample-first-rank",
+        "74997952"
+      ],
+      "pid": 2805748,
+      "returncode": 0,
+      "seconds": 1.021
+    },
+    {
+      "label": "finish",
+      "command": [
+        "/tmp/fused-native-bundle/xsa_finish",
+        "--prefix",
+        "/mnt/nvme2n1/erikg/fused-150-hashfix/product/frag",
+        "--corpus",
+        "/dev/shm/t150m.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--output",
+        "/mnt/nvme2n1/erikg/fused-150-hashfix/product/product.sxi2",
+        "--threads",
+        "96",
+        "--sample-count",
+        "64",
+        "--chi-expect",
+        "44034231",
+        "--lcp-column",
+        "/mnt/nvme2n1/erikg/rxt2/col",
+        "--isa-sample",
+        "/dev/shm/is2.isamp"
+      ],
+      "pid": 2805759,
+      "returncode": 0,
+      "seconds": 18.439
+    },
+    {
+      "label": "check",
+      "command": [
+        "/tmp/stream_vs_bwt",
+        "--corpus",
+        "/dev/shm/t150m.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--sa",
+        "/mnt/nvme2n1/erikg/rxt2/sa",
+        "--container",
+        "/mnt/nvme2n1/erikg/fused-150-hashfix/product/product.sxi2"
+      ],
+      "pid": 2806620,
+      "returncode": 0,
+      "seconds": 11.209
+    }
+  ],
+  "peak_order_allocated": 140931072,
+  "peak_all_allocated": 977252352,
+  "peak_intermediate_allocated": 977252352,
+  "scratch_sample_period_seconds": 1,
+  "scratch_scope": "order=waves+unconsumed packed bands+optional generated column; all=entire new run directory; intermediate=all minus container and explicit debug dump; read-only validation fixtures excluded",
+  "timing_qualification": "single-run observations; no paired N>=3 A/B; speed effects unverifiable",
+  "binary_sha256": {
+    "cross_lcp_merge": "5f559a8d0857c8abc9fc6820a5725d3d361e963b90da7e29fd77d8b514da15b9",
+    "xsa_finish": "f156d0951ed510c7cddb8775655050ff5e10866b366462c90d56bc35a2955aa1"
+  },
+  "sorter_sha256": "9bd4bb90d3e2f98fb91ff3f089b12ac98f86bcc2fad242aef08a123c8ec099a9",
+  "sample_checker_sha256": "ad485276bb25302408981c7e5175a8420d944200b9bee190b121ba2f710201dc",
+  "no_full_sa_or_sym_generated": true,
+  "sample": {
+    "first_rank": 74997952,
+    "count": 4096,
+    "adjacent_pairs": 4095,
+    "global_permutation_checked": false
+  },
+  "closure": "XSA_FINISH_KASAI_CLOSURE bands=876 rank_holes=0 disorder=0 noncontiguous_runs=0 walk_fallbacks=0 max_rank_end=150000001 n=150000001",
+  "chi": 44034231,
+  "runs": 57279187,
+  "sha256": "d7eeac0f574a9a6e272732737d20b6d18a533336fea8f46f10287cb0e2b063a5",
+  "peak_order_over_n": 0.9395404737363968,
+  "peak_intermediate_over_n": 6.515015636566562,
+  "passed": true
+}
