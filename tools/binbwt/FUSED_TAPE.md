@@ -101,3 +101,20 @@ speedup is established. The unchanged downstream intermediates exceed 2n,
 so the measured wave/band bound is not a 2n total-product scratch claim.
 Full independent STREAM_VS_BWT comparison passes with zero mismatches.
 All six finish selftests and the checker selftest exit zero.
+
+## 100 GB target-table capacity correction
+
+The first 100 GB attempt exposed an existing emitter limit before producing
+any scatter/band data or container: 22,388,157 seam targets require a 2^27-slot
+table, but the hash used only 24 start-index bits. All start buckets were in
+[0,2^24), forcing at least R(R+1)/2 probe steps for R=5,610,941 excess targets.
+The emitter had not reached TAPE_EMIT_START. Stack attachment was unavailable;
+the diagnosis follows the exact index range and target cardinality. The run
+was stopped cleanly, with no container accepted.
+
+The hash now takes the high log2(table-capacity) bits of the same Fibonacci
+product, so insertion and lookup address the full actual table. Target tests,
+hit accounting and every downstream guard are unchanged. The native tiny
+byte gate, full BWT check and all six finish selftests pass again after this
+correction. Packaged 150 MB/10 GB gates must be renewed before relaunching
+100 GB; no timing improvement is claimed from this discovery.

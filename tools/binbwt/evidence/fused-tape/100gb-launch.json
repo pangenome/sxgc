@@ -1,0 +1,70 @@
+{
+  "n": 107374181464,
+  "terminator_hex": "1e",
+  "detached_pid": 2775756,
+  "K": 16,
+  "wave_cap_bytes": 107374181464,
+  "K_reason": "16 admits more independent band jobs within the fixed 1n wave; delete-before-write and the end-of-wave drain still bound logical wave/band bytes independently of K. RAM is available on this 1 TiB box. Actual physical scratch remains measured, not inferred from K.",
+  "scratch_sampler_started_before_scatter": true,
+  "disk_free_at_launch_sample": 1021660295168,
+  "disk_reserve_policy": "preflight >=9n free; stop if free < max(2 GB,n/20)",
+  "timing_qualification": "configuration choice, no paired timing or speedup claim",
+  "commands": [
+    {
+      "label": "order",
+      "command": [
+        "/tmp/scatter_fused",
+        "--corpus",
+        "/mnt/nvme2n1/erikg/pile-100gb-snap.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--scratch",
+        "/mnt/nvme2n1/erikg/fused-100gb-packaged/order/waves",
+        "--tape-bands",
+        "/mnt/nvme2n1/erikg/fused-100gb-packaged/order/bands",
+        "--pending-bands",
+        "16",
+        "--ram-gb",
+        "48",
+        "--par-bands",
+        "8",
+        "--threads",
+        "96",
+        "--order-sample-out",
+        "/mnt/nvme2n1/erikg/fused-100gb-packaged/order-sample.sxsa",
+        "--order-sample-lo",
+        "53687088684",
+        "--order-sample-count",
+        "4096",
+        "--lcp-out",
+        "/mnt/nvme2n1/erikg/fused-100gb-packaged/order/column",
+        "--isa-sample-out",
+        "/mnt/nvme2n1/erikg/fused-100gb-packaged/order/isa-sample",
+        "--isa-sample-k",
+        "1024",
+        "--scratch-cap-gb",
+        "107.374181464"
+      ],
+      "pid": 2775758,
+      "started": 3174348.695522924
+    },
+    {
+      "label": "emit",
+      "command": [
+        "/home/erikg/sxgc/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-g2psep1f/bundle/cross_lcp_merge",
+        "--binbwt",
+        "/mnt/nvme2n1/erikg/pile-100gb-snap.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--out-prefix",
+        "/mnt/nvme2n1/erikg/fused-100gb-packaged/product/frag",
+        "--threads",
+        "96",
+        "--tape-bands",
+        "/mnt/nvme2n1/erikg/fused-100gb-packaged/order/bands"
+      ],
+      "pid": 2775759,
+      "started": 3174348.696401366
+    }
+  ]
+}

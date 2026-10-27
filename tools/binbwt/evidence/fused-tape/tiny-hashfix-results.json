@@ -1,0 +1,215 @@
+{
+  "n": 454752,
+  "K": 8,
+  "source_manifest": "06394839dd6039bdf35ecb1e1111d337acc130a4b691480de56825caac9a8ef1",
+  "commands": [
+    {
+      "label": "order",
+      "command": [
+        "/tmp/scatter_fused",
+        "--corpus",
+        "/tmp/psi_tiny.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--scratch",
+        "/tmp/fused-tiny-hashfix/order/waves",
+        "--tape-bands",
+        "/tmp/fused-tiny-hashfix/order/bands",
+        "--pending-bands",
+        "8",
+        "--ram-gb",
+        "48",
+        "--par-bands",
+        "8",
+        "--threads",
+        "8",
+        "--order-sample-out",
+        "/tmp/fused-tiny-hashfix/order-sample.sxsa",
+        "--order-sample-lo",
+        "225328",
+        "--order-sample-count",
+        "4096"
+      ],
+      "pid": 2801935,
+      "returncode": 0,
+      "seconds": 2.04
+    },
+    {
+      "label": "emit",
+      "command": [
+        "/tmp/fused-native-bundle/cross_lcp_merge",
+        "--binbwt",
+        "/tmp/psi_tiny.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--out-prefix",
+        "/tmp/fused-tiny-hashfix/product/frag",
+        "--threads",
+        "8",
+        "--tape-bands",
+        "/tmp/fused-tiny-hashfix/order/bands"
+      ],
+      "pid": 2801936,
+      "returncode": 0,
+      "seconds": 2.039
+    },
+    {
+      "label": "sample-order",
+      "command": [
+        "/tmp/sa_check_fused",
+        "--corpus",
+        "/tmp/psi_tiny.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--sa",
+        "/tmp/fused-tiny-hashfix/order-sample.sxsa",
+        "--sample-first-rank",
+        "225328"
+      ],
+      "pid": 2802005,
+      "returncode": 0,
+      "seconds": 1.016
+    },
+    {
+      "label": "finish",
+      "command": [
+        "/tmp/fused-native-bundle/xsa_finish",
+        "--prefix",
+        "/tmp/fused-tiny-hashfix/product/frag",
+        "--corpus",
+        "/tmp/psi_tiny.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--output",
+        "/tmp/fused-tiny-hashfix/product/product.sxi2",
+        "--threads",
+        "8",
+        "--sample-count",
+        "64",
+        "--chi-expect",
+        "145685",
+        "--lcp-column",
+        "/tmp/psi_tiny.col",
+        "--isa-sample",
+        "/tmp/psi_tiny.isamp"
+      ],
+      "pid": 2802024,
+      "returncode": 0,
+      "seconds": 1.02
+    },
+    {
+      "label": "check",
+      "command": [
+        "/tmp/stream_vs_bwt",
+        "--corpus",
+        "/tmp/psi_tiny.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--sa",
+        "/tmp/psi_tiny.sa",
+        "--container",
+        "/tmp/fused-tiny-hashfix/product/product.sxi2"
+      ],
+      "pid": 2802084,
+      "returncode": 0,
+      "seconds": 1.016
+    },
+    {
+      "label": "selftest-stream-guard",
+      "command": [
+        "/tmp/fused-native-bundle/xsa_finish",
+        "--selftest-stream-guard"
+      ],
+      "pid": 2802119,
+      "returncode": 0,
+      "seconds": 1.014
+    },
+    {
+      "label": "selftest-repair-chunks",
+      "command": [
+        "/tmp/fused-native-bundle/xsa_finish",
+        "--selftest-repair-chunks"
+      ],
+      "pid": 2802152,
+      "returncode": 0,
+      "seconds": 1.019
+    },
+    {
+      "label": "selftest-sweep-monoid",
+      "command": [
+        "/tmp/fused-native-bundle/xsa_finish",
+        "--selftest-sweep-monoid"
+      ],
+      "pid": 2802167,
+      "returncode": 0,
+      "seconds": 1.014
+    },
+    {
+      "label": "selftest-packed-bits",
+      "command": [
+        "/tmp/fused-native-bundle/xsa_finish",
+        "--selftest-packed-bits"
+      ],
+      "pid": 2802219,
+      "returncode": 0,
+      "seconds": 1.018
+    },
+    {
+      "label": "selftest-witness-batch",
+      "command": [
+        "/tmp/fused-native-bundle/xsa_finish",
+        "--selftest-witness-batch"
+      ],
+      "pid": 2802242,
+      "returncode": 0,
+      "seconds": 1.014
+    },
+    {
+      "label": "selftest-seam-spool",
+      "command": [
+        "/tmp/fused-native-bundle/xsa_finish",
+        "--selftest-seam-spool",
+        "/tmp/fused-tiny-hashfix/selftest-spool"
+      ],
+      "pid": 2802287,
+      "returncode": 0,
+      "seconds": 1.019
+    },
+    {
+      "label": "checker-selftest",
+      "command": [
+        "/tmp/stream_vs_bwt",
+        "--selftest"
+      ],
+      "pid": 2802314,
+      "returncode": 0,
+      "seconds": 1.017
+    }
+  ],
+  "peak_order_allocated": 643072,
+  "peak_all_allocated": 6189056,
+  "peak_intermediate_allocated": 5947392,
+  "scratch_sample_period_seconds": 1,
+  "scratch_scope": "order=waves+unconsumed packed bands+optional generated column; all=entire new run directory; intermediate=all minus container and explicit debug dump; read-only validation fixtures excluded",
+  "timing_qualification": "single-run observations; no paired N>=3 A/B; speed effects unverifiable",
+  "binary_sha256": {
+    "cross_lcp_merge": "5f559a8d0857c8abc9fc6820a5725d3d361e963b90da7e29fd77d8b514da15b9",
+    "xsa_finish": "f156d0951ed510c7cddb8775655050ff5e10866b366462c90d56bc35a2955aa1"
+  },
+  "sorter_sha256": "9bd4bb90d3e2f98fb91ff3f089b12ac98f86bcc2fad242aef08a123c8ec099a9",
+  "sample_checker_sha256": "ad485276bb25302408981c7e5175a8420d944200b9bee190b121ba2f710201dc",
+  "no_full_sa_or_sym_generated": true,
+  "sample": {
+    "first_rank": 225328,
+    "count": 4096,
+    "adjacent_pairs": 4095,
+    "global_permutation_checked": false
+  },
+  "closure": "XSA_FINISH_KASAI_CLOSURE bands=4 rank_holes=0 disorder=0 noncontiguous_runs=0 walk_fallbacks=0 max_rank_end=454752 n=454752",
+  "chi": 145685,
+  "runs": 192138,
+  "sha256": "98f1f6dc82befd1659112678bbc3debcf6c40ec417fcea86df47a8a51019c658",
+  "peak_order_over_n": 1.4141158257687707,
+  "peak_intermediate_over_n": 13.078319611568503,
+  "passed": true
+}

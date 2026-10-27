@@ -3666,9 +3666,12 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
     // of them.
     std::vector<U> tgt(sink->joinTargets().begin(), sink->joinTargets().end());
     U tcap = 16;
-    while (tcap < tgt.size() * 4 + 16) tcap <<= 1;
+    unsigned tbits = 4;
+    while (tcap < tgt.size() * 4 + 16) { tcap <<= 1; ++tbits; }
     std::vector<U> tslot(tcap, 0);          // 0 = empty (a target is never position 0 plus 1)
-    auto thash = [](U x) { return (x * 0x9e3779b97f4a7c15ull) >> 40; };
+    // Use every index bit of the actual table. A fixed 24-bit hash collapses
+    // a >2^24-target table into one full linear-probe cluster at 100 GB.
+    auto thash = [tbits](U x) { return (x * 0x9e3779b97f4a7c15ull) >> (64 - tbits); };
     for (U t : tgt) {
         U i = thash(t + 1) & (tcap - 1);
         while (tslot[i]) i = (i + 1) & (tcap - 1);

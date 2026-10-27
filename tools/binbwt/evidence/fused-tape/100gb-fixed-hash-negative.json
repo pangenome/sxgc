@@ -1,0 +1,13 @@
+{
+  "targets": 22388157,
+  "old_hash_bits": 24,
+  "old_hash_start_domain": 16777216,
+  "table_capacity": 134217728,
+  "excess_targets_over_start_domain": 5610941,
+  "seconds_before_stop": 782.838,
+  "reason": "Stopped before first scatter: existing fixed 24-bit seam-target hash has only 2^24 start slots for 22,388,157 targets in a 2^27 table; pathological linear-probe clustering. No container produced.",
+  "ptrace": "unavailable; stack attachment denied; diagnosis follows exact hash range and live pre-TAPE_EMIT_START state",
+  "scratch_before_stop": "no wave/band files; initial scatter preflight still active",
+  "fix": "derive Fibonacci hash shift from table capacity",
+  "minimum_forced_linear_probe_steps": 15741332258211
+}
