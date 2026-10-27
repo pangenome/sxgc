@@ -1,0 +1,25 @@
+[
+  {
+    "case": "unflagged-partial",
+    "expected_exit": 4,
+    "actual_exit": 4,
+    "output": "SA_CHECK corpus_n=454752 sa_entries=4096 rows=4096 dollar=1\nSA_CHECK_PERMUTATION_FAIL count=4096 n=454752\n"
+  },
+  {
+    "case": "swapped",
+    "expected_exit": 3,
+    "actual_exit": 3,
+    "output": "SA_CHECK corpus_n=454752 sa_entries=4096 rows=4096 dollar=1\nsa_check: sample order failure\n"
+  },
+  {
+    "case": "out-of-range",
+    "expected_exit": 4,
+    "actual_exit": 4,
+    "output": "SA_CHECK corpus_n=454752 sa_entries=4096 rows=4096 dollar=1\nsa_check: sample position out of range\n"
+  },
+  {
+    "case": "full-mode-preserved",
+    "actual_exit": 0,
+    "output": "SA_CHECK corpus_n=454752 sa_entries=454752 rows=454752 dollar=1\nSA_CHECK_PASS entries=454752 dollar=1\n"
+  }
+]

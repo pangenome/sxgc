@@ -23,6 +23,8 @@ p.add_argument('--threads', type=int, default=96)
 p.add_argument('--pending-bands', type=int, default=8)
 p.add_argument('--wave-cap-gb', type=float)
 p.add_argument('--produce-column', action='store_true')
+p.add_argument('--produce-isa', action='store_true')
+p.add_argument('--isa-stride', type=int, default=1024)
 p.add_argument('--debug', action='store_true')
 p.add_argument('--selftests', action='store_true')
 p.add_argument('--sample-checker', default='/tmp/sa_check_fused')
@@ -124,6 +126,9 @@ try:
     if a.produce_column:
         a.column = str(order/'column')
         cmd += ['--lcp-out', a.column]
+    if a.produce_isa:
+        a.isa_sample = str(order/'isa-sample')
+        cmd += ['--isa-sample-out', a.isa_sample, '--isa-sample-k', a.isa_stride]
     if a.wave_cap_gb: cmd += ['--scratch-cap-gb', a.wave_cap_gb]
     producer = spawn('order', cmd, env)
     consumer = spawn('emit', [bundle/'cross_lcp_merge', '--binbwt', a.corpus, '--remap', a.remap,

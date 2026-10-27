@@ -1,0 +1,3 @@
+STREAM_VS_BWT rows=150000001 runs=57279187 mismatches=0 convention=finite-SA,wrapped-predecessor
+STREAM_ENDPOINTS runs=57279187 mismatches=0
+STREAM_VS_BWT rows=150000001 runs=57279187 mismatches=0 convention=finite-SA,wrapped-predecessor

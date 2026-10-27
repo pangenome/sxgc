@@ -52,3 +52,20 @@ finite predecessor LCP column is byte-identical to `/tmp/psi_tiny.col`.
 The attempted 150 MB 0.5n wave cap was rejected **before scatter**: the largest
 byte-pair class (space/space, 3,734,619 rows) alone requires 0.839n including the
 95% wave target. The next attempt uses a 1n wave cap; the guard is retained.
+
+The packaged 150 MB gate passes the required SHA
+`d7eeac0f574a9a6e272732737d20b6d18a533336fea8f46f10287cb0e2b063a5`,
+chi 44,034,231, runs 57,279,187, closure 0/0/0, fallbacks 0 and both complete
+BWT/endpoint comparisons with zero mismatches. Its generated column is also
+byte-identical to the existing reference column. K=8, wave cap=1n.
+Observed allocated order scratch **including the generated column** is
+418,557,952 bytes (2.7904n); total intermediates reach 1,344,118,784 bytes
+(8.9608n). This is a negative for a 2n *total* scratch claim on this small rung.
+The 10 GB measurement is required before any larger-rung scratch claim.
+
+The driver can also request the sorter's existing sampled ISA output with
+`--produce-isa --isa-stride 1024` and pass it to the unchanged finish. This is
+an 8/1024-byte-per-position rank anchor, not a full inverse or a full SA.
+The order sample checker rejects swapped ranks and out-of-range positions;
+without the explicit sample flag it still rejects an incomplete permutation.
+Its original full-SA mode passes the tiny fixture.
