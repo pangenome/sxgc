@@ -1,0 +1,89 @@
+XSA_FINISH_CORPUS path=/dev/shm/t150m.txt bytes=150000001 remap_identity=0 read_only=1 rotation=0 derivation=T[i]=REMAP[corpus[i]] mmap=1
+XSA_FINISH_PFCK path=/mnt/nvme2n1/erikg/fused-concurrent-150-audit-v2/product/frag.pfck2 n=150000001 tau=22 count=6818182 bytes=54545496 wall=0.038 workers=42 segments=168 worker_bytes=1572864 source=corpus_adapter fixed_grid=1
+XSA_FINISH_DEBUG_ARTIFACTS enabled=0 product_dump_scratch_bytes=0
+XSA_FINISH_LCP_COLUMN path=/mnt/nvme2n1/erikg/rxt2/col n=150000001 escapes=1763155 max_lcp=69631 bytes=178210529 bytes_per_rank=1.1881
+XSA_FINISH_ISA_SAMPLE path=/dev/shm/is2.isamp n=150000001 k=64 entries=2343751 bytes=18750040
+XSA_FINISH_KASAI arm=on audit=0 column=/mnt/nvme2n1/erikg/rxt2/col
+XSA_FINISH_CYCLIC=1 has_rs=1 has_nl=1 k=1
+XSA_FINISH_PFCK_WAIT wall=0.000 overlapped=1
+XSA_FINISH_PHASE readiness-pfck wall=0.471 cumulative=0.472
+SLIM_PF_SELF_CHECK checks=256 passed=1 source=corpus_adapter
+SLIM_PF_SELF_CHECK checks=256 passed=1 source=corpus_adapter
+XSA_FINISH_TIER lce_trust=0 claims_dir=- lce_fault=0 probe_degrees=0 tier=T0-full constructor=byte-verifies-every-answer
+XSA_FINISH_PHASE fingerprints wall=0.001 cumulative=0.474
+SEAM_PHASE build=0.000 classes=0 rows=0
+XSA_FINISH_PHASE seam-classes wall=0.000 cumulative=0.474
+PFP_TERMINAL byte=0x1e source=padding-row raw_n=150000011 raw_r=150000011
+XSA_FINISH_PROGRESS band=1/2289 runs=131068 chi_so_far=50217 repair_wall=1.7 lce_wall=0.0 lce_wait=0.0 advance_wall=0.0 wit_spills=0
+XSA_FINISH_SEAM_ANCHORS checks=25454 mismatches=0 source=--isa-sample
+CYCLIC_SEAM_REPAIRED classes=1 rows=25454 discovery_steps=3 limit=67108864 phi_samples=150000011 pattern_chain=1 wm_scan=0 seam_spool=1
+CYCLIC_SEAM_WORK max_seam_lce=1983 exact=1 pattern_chain=1 wm_scan=0 seam_spool=1
+SEAM_PHASE rebuild=0.026
+XSA_FINISH_PROGRESS band=65/2289 runs=4325372 chi_so_far=3394228 repair_wall=5.4 lce_wall=4.2 lce_wait=0.0 advance_wall=0.4 wit_spills=0
+XSA_FINISH_PROGRESS band=129/2289 runs=8519676 chi_so_far=6729292 repair_wall=6.6 lce_wall=5.9 lce_wait=0.0 advance_wall=0.9 wit_spills=0
+XSA_FINISH_PROGRESS band=193/2289 runs=12713980 chi_so_far=10062805 repair_wall=7.5 lce_wall=7.3 lce_wait=0.0 advance_wall=1.3 wit_spills=0
+XSA_FINISH_PROGRESS band=257/2289 runs=16908284 chi_so_far=13403516 repair_wall=8.9 lce_wall=9.2 lce_wait=0.0 advance_wall=1.7 wit_spills=0
+XSA_FINISH_PROGRESS band=321/2289 runs=21102588 chi_so_far=16786398 repair_wall=10.9 lce_wall=11.8 lce_wait=0.0 advance_wall=2.3 wit_spills=0
+XSA_FINISH_SEAM_ANCHORS checks=15 mismatches=0 source=--isa-sample
+CYCLIC_SEAM_REPAIRED classes=1 rows=15 discovery_steps=3 limit=67108864 phi_samples=150000011 pattern_chain=1 wm_scan=0 seam_spool=1
+CYCLIC_SEAM_WORK max_seam_lce=0 exact=1 pattern_chain=1 wm_scan=0 seam_spool=1
+SEAM_PHASE rebuild=0.001
+CYCLIC_SEAM_REPAIR terminal=0x1e predecessors_before_zero=11132
+XSA_FINISH_PROGRESS band=385/2289 runs=25296892 chi_so_far=20002273 repair_wall=12.3 lce_wall=13.7 lce_wait=0.0 advance_wall=2.7 wit_spills=0
+XSA_FINISH_PROGRESS band=449/2289 runs=29491196 chi_so_far=23125128 repair_wall=14.8 lce_wall=16.6 lce_wait=0.0 advance_wall=3.1 wit_spills=0
+XSA_FINISH_PROGRESS band=513/2289 runs=33685500 chi_so_far=26344758 repair_wall=15.7 lce_wall=17.9 lce_wait=0.0 advance_wall=3.4 wit_spills=0
+XSA_FINISH_PROGRESS band=577/2289 runs=37879804 chi_so_far=29496366 repair_wall=17.6 lce_wall=20.2 lce_wait=0.0 advance_wall=3.8 wit_spills=0
+XSA_FINISH_PROGRESS band=641/2289 runs=42074108 chi_so_far=32640124 repair_wall=19.2 lce_wall=22.2 lce_wait=0.0 advance_wall=4.2 wit_spills=0
+XSA_FINISH_PROGRESS band=705/2289 runs=46268412 chi_so_far=35730383 repair_wall=22.0 lce_wall=25.4 lce_wait=0.0 advance_wall=4.5 wit_spills=0
+XSA_FINISH_PROGRESS band=769/2289 runs=50462716 chi_so_far=38867753 repair_wall=23.5 lce_wall=27.3 lce_wait=0.0 advance_wall=4.9 wit_spills=0
+XSA_FINISH_PROGRESS band=833/2289 runs=54657020 chi_so_far=42012039 repair_wall=24.4 lce_wall=28.6 lce_wait=0.0 advance_wall=5.2 wit_spills=0
+XSA_FINISH_CACHE_RESIDENCY label=finish sampled_pages=573 resident_pages=573 resident_pct=100.00 stride_pages=64 corpus_gb=0.150 resident_gb=0.150 meminfo_cached_gb=730.00 meminfo_dirty_gb=0.14 meminfo_free_gb=201.89 meminfo_shmem_gb=125.86 populate_ranges=0 willneed_ranges=0 willneed_bytes=0 willneed_failed=0 cold_drops=0 cold_bytes=0 cold_wall=0.000
+XSA_FINISH_COLD_CORPUS enabled=0 every_bands=0 drops=0 bytes=0 wall=0.000 corpus_gb=0.000
+ENDPOINT_STREAM_PASS n=150000001 k=1 r=57279187 padding_rows=10 cyclic_seam_certified=0 classes=2
+XSA_FINISH_KASAI_CLOSURE bands=876 rank_holes=0 disorder=0 noncontiguous_runs=0 walk_fallbacks=0 max_rank_end=150000001 n=150000001
+XSA_FINISH_KASAI_ANCHORS checks=1154503 mismatches=0 source=--isa-sample
+SWEEP_STATS advances=57279186 char_changes=57279186 scans=0 fired=0 mean_fired=0.00 max_fired=0 emits=44034231 chi=44034231
+XSA_FINISH_LCP_COLUMN_READS preads=876 staged_bytes=150000876 escapes=1763155 max_lcp=69631 audit=0 arm=kasai
+SWEEP_CYCLES phase=repair enabled=1 inputs=57279189 samples=55936 sample_stride_mean=1024 exclusive=1 probe_overhead_included=1 read_decode=37.78 raw=221.60 coalescing=370.88 seamSplice=0.01 stamping=76.74 require_stream_run=25.12 output_staging=61.88 units=tsc_ticks_per_input
+SWEEP_PHASE_WALLS repair=25.246317 lce=29.714675 advance_witness=5.396964 lce_threads=96
+XSA_FINISH_REGION piece-wait wall=13.829 cpu=7.364 minflt=848 majflt=0 dev_read=0 units=875 bands_ns=15804712.49
+XSA_FINISH_REGION readband wall=1.082 cpu=43.968 minflt=140297 majflt=0 dev_read=0 units=57279189 raw_runs_ns=18.89
+XSA_FINISH_REGION repair-feed wall=10.186 cpu=30.792 minflt=27313 majflt=0 dev_read=0 units=57279189 raw_runs_ns=177.82
+XSA_FINISH_REGION lce wall=0.000 cpu=0.000 minflt=0 majflt=0 dev_read=0 units=57279187 runs_ns=0.00
+XSA_FINISH_REGION advance-witness wall=5.397 cpu=431.948 minflt=219323 majflt=0 dev_read=0 units=57279187 runs_ns=94.23
+XSA_FINISH_REGION lce-span wall=29.715 waited=0.010 overlapped=29.704 units=57279187 runs_ns=518.77
+XSA_FINISH_OVERLAP feed_spans=23.631 lce_spans=29.715 exposed_lce=0.010 serial_fold=16.675
+XSA_FINISH_SWEEP_ANATOMY piecewait=13.829 readband=1.082 feed=10.186 repair_total=25.246 raw_runs=57279189 bands=875 rlebwt_wait=0.000 ns_per_raw_run=177.82
+XSA_FINISH_CORPUS_ACCESS phase=sweep calls=0 page_hops=0 hop_rate=0.0000 ns_per_call=0.00
+SLIM_FP pile-finish-corpus tau=22 bytes=54545456 queries=0 verified_symbols=0 hash_probes=0 mean_verified=0.000000000 max_verified=0 max_requested_lce=0 verification_work=0 hash_probe_charges=512 suffix_symbol_reads=5344 total_work=512 total_limit=19200000128 verification_limit=67108864 probe_limit=22 hash_trust=0 claimed_symbols=0 exact_fast=0 probe_degrees=0
+SLIM_FP pile-finish-seam tau=22 bytes=54545456 queries=6055 verified_symbols=435660 hash_probes=46227 mean_verified=71.950454170 max_verified=1984 max_requested_lce=1983 verification_work=532540 hash_probe_charges=185420 suffix_symbol_reads=1938728 total_work=717960 total_limit=2400000016 verification_limit=67108864 probe_limit=22 hash_trust=0 claimed_symbols=0 exact_fast=0 probe_degrees=0
+XSA_FINISH_PHASE sweep wall=31.520 cumulative=31.993
+xsa chi-rspace: chi = 44034231 (N=150000001, R=57279187) stream-agg=1 fused=1 corpus_lce=1
+SLIM_SEEDS queries=0 lce_wall=29.7 repair_wall=25.2 wit_ram_values=44034231 wit_spills=0 wit_disc_bytes=0
+XSA_FINISH_REGION m5-sort wall=0.035 cpu=3.318 minflt=34204 majflt=0 dev_read=0 units=44034231 witnesses_ns=0.80
+XSA_FINISH_REGION m5-encode wall=0.143 cpu=2.771 minflt=805 majflt=0 dev_read=0 units=44034231 witnesses_ns=3.25
+XSA_FINISH_WITNESS_PATH resident=1 buckets=4096 spilled=0 values=44034231 cache_release_calls=0 cache_released_bytes=0
+PILE_CONTAINER_BEGIN id=5 codec=105 count=44034231 offset=304
+XSA_FINISH_REGION m5-ef wall=0.238 cpu=6.149 minflt=35271 majflt=0 dev_read=0 units=44034231 witnesses_ns=5.39
+XSA_FINISH_PHASE m5-ef wall=0.280 cumulative=32.273
+PILE_CONTAINER_BEGIN id=4 codec=4 count=0 offset=20383888
+PILE_CONTAINER_BEGIN id=7 codec=7 count=256 offset=20383904
+PILE_CONTAINER_BEGIN id=10 codec=110 count=57279187 offset=20384160
+PILE_CONTAINER_BEGIN id=11 codec=111 count=55937 offset=20384160
+XSA_FINISH_REGION m1-rlebwt-wait wall=0.000 cpu=0.000 minflt=0 majflt=0 dev_read=0 units=229116756 bytes_ns=0.00
+CYCLIC_SEAM_REPAIR terminal=0x1e predecessors_before_zero=11132
+ENDPOINT_STREAM_PASS n=150000001 k=1 r=57279187 padding_rows=10 cyclic_seam_certified=0 classes=2
+XSA_FINISH_REGION m1-replay wall=2.526 cpu=2.526 minflt=775 majflt=0 dev_read=0 units=57279187 runs_ns=44.10
+PILE_CONTAINER_BEGIN id=1 codec=101 count=57279187 offset=20831672
+XSA_FINISH_REGION m1-runs wall=2.649 cpu=2.649 minflt=1039 majflt=0 dev_read=0 units=57279187 runs_ns=46.25
+XSA_FINISH_PHASE m1-runs wall=2.722 cumulative=34.995
+SXI2_MEMBER id=1 codec=101 count=57279187 bytes=51636606
+SXI2_MEMBER id=4 codec=4 count=0 bytes=12
+SXI2_MEMBER id=5 codec=105 count=44034231 bytes=20383582
+SXI2_MEMBER id=7 codec=7 count=256 bytes=256
+SXI2_MEMBER id=10 codec=110 count=57279187 bytes=0
+SXI2_MEMBER id=11 codec=111 count=55937 bytes=447512
+SXI2_PASS bytes=72468278 lite=1 members=6
+XSA_FINISH_PHASE publish wall=0.021 cumulative=35.017
+XSA_FINISH_RLEBWT_DELETED
+XSA_FINISH_DONE chi=44034231 n=150000001 r=57279187 container=/mnt/nvme2n1/erikg/fused-concurrent-150-audit-v2/product/product.sxi2

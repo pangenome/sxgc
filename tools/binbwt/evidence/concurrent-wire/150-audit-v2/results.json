@@ -1,0 +1,279 @@
+{
+  "n": 150000001,
+  "K": 16,
+  "source_manifest": "06394839dd6039bdf35ecb1e1111d337acc130a4b691480de56825caac9a8ef1",
+  "commands": [
+    {
+      "label": "finish",
+      "command": [
+        "/tmp/fused-native-bundle/xsa_finish",
+        "--prefix",
+        "/mnt/nvme2n1/erikg/fused-concurrent-150-audit-v2/product/frag",
+        "--corpus",
+        "/dev/shm/t150m.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--output",
+        "/mnt/nvme2n1/erikg/fused-concurrent-150-audit-v2/product/product.sxi2",
+        "--threads",
+        "96",
+        "--sample-count",
+        "64",
+        "--chi-expect",
+        "44034231",
+        "--lcp-column",
+        "/mnt/nvme2n1/erikg/rxt2/col",
+        "--isa-sample",
+        "/dev/shm/is2.isamp"
+      ],
+      "pid": 3166595,
+      "returncode": 0,
+      "seconds": 36.019
+    },
+    {
+      "label": "order",
+      "command": [
+        "/tmp/scatter_fused",
+        "--corpus",
+        "/dev/shm/t150m.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--scratch",
+        "/mnt/nvme2n1/erikg/fused-concurrent-150-audit-v2/order/waves",
+        "--tape-bands",
+        "/mnt/nvme2n1/erikg/fused-concurrent-150-audit-v2/order/bands",
+        "--pending-bands",
+        "16",
+        "--ram-gb",
+        "48",
+        "--par-bands",
+        "8",
+        "--threads",
+        "96",
+        "--order-sample-out",
+        "/mnt/nvme2n1/erikg/fused-concurrent-150-audit-v2/order-sample.sxsa",
+        "--order-sample-lo",
+        "74997952",
+        "--order-sample-count",
+        "4096",
+        "--scratch-cap-gb",
+        "0.15"
+      ],
+      "pid": 3166596,
+      "returncode": 0,
+      "seconds": 33.019
+    },
+    {
+      "label": "emit",
+      "command": [
+        "/tmp/fused-native-bundle/cross_lcp_merge",
+        "--binbwt",
+        "/dev/shm/t150m.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--out-prefix",
+        "/mnt/nvme2n1/erikg/fused-concurrent-150-audit-v2/product/frag",
+        "--threads",
+        "96",
+        "--tape-bands",
+        "/mnt/nvme2n1/erikg/fused-concurrent-150-audit-v2/order/bands"
+      ],
+      "pid": 3166597,
+      "returncode": 0,
+      "seconds": 33.018
+    },
+    {
+      "label": "sample-order",
+      "command": [
+        "/tmp/sa_check_fused",
+        "--corpus",
+        "/dev/shm/t150m.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--sa",
+        "/mnt/nvme2n1/erikg/fused-concurrent-150-audit-v2/order-sample.sxsa",
+        "--sample-first-rank",
+        "74997952"
+      ],
+      "pid": 3168073,
+      "returncode": 0,
+      "seconds": 1.001
+    },
+    {
+      "label": "check",
+      "command": [
+        "/tmp/stream_vs_bwt",
+        "--corpus",
+        "/dev/shm/t150m.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--sa",
+        "/mnt/nvme2n1/erikg/rxt2/sa",
+        "--container",
+        "/mnt/nvme2n1/erikg/fused-concurrent-150-audit-v2/product/product.sxi2"
+      ],
+      "pid": 3168077,
+      "returncode": 0,
+      "seconds": 11.002
+    },
+    {
+      "label": "selftest-stream-guard",
+      "command": [
+        "/tmp/fused-native-bundle/xsa_finish",
+        "--selftest-stream-guard"
+      ],
+      "pid": 3168406,
+      "returncode": 0,
+      "seconds": 1.001
+    },
+    {
+      "label": "selftest-repair-chunks",
+      "command": [
+        "/tmp/fused-native-bundle/xsa_finish",
+        "--selftest-repair-chunks"
+      ],
+      "pid": 3168416,
+      "returncode": 0,
+      "seconds": 1.001
+    },
+    {
+      "label": "selftest-sweep-monoid",
+      "command": [
+        "/tmp/fused-native-bundle/xsa_finish",
+        "--selftest-sweep-monoid"
+      ],
+      "pid": 3168464,
+      "returncode": 0,
+      "seconds": 1.001
+    },
+    {
+      "label": "selftest-packed-bits",
+      "command": [
+        "/tmp/fused-native-bundle/xsa_finish",
+        "--selftest-packed-bits"
+      ],
+      "pid": 3168487,
+      "returncode": 0,
+      "seconds": 1.001
+    },
+    {
+      "label": "selftest-witness-batch",
+      "command": [
+        "/tmp/fused-native-bundle/xsa_finish",
+        "--selftest-witness-batch"
+      ],
+      "pid": 3168518,
+      "returncode": 0,
+      "seconds": 1.001
+    },
+    {
+      "label": "selftest-seam-spool",
+      "command": [
+        "/tmp/fused-native-bundle/xsa_finish",
+        "--selftest-seam-spool",
+        "/mnt/nvme2n1/erikg/fused-concurrent-150-audit-v2/selftest-spool"
+      ],
+      "pid": 3168844,
+      "returncode": 0,
+      "seconds": 1.001
+    },
+    {
+      "label": "checker-selftest",
+      "command": [
+        "/tmp/stream_vs_bwt",
+        "--selftest"
+      ],
+      "pid": 3168986,
+      "returncode": 0,
+      "seconds": 1.001
+    }
+  ],
+  "peak_order_allocated": 140238848,
+  "peak_all_allocated": 406822912,
+  "peak_intermediate_allocated": 406822912,
+  "scratch_sample_period_seconds": 1,
+  "scratch_scope": "order=waves+unconsumed packed bands+optional generated column; all=entire new run directory; intermediate=all minus container and explicit debug dump; read-only validation fixtures excluded",
+  "timing_qualification": "single-run observations; no paired N>=3 A/B; speed effects unverifiable",
+  "binary_sha256": {
+    "cross_lcp_merge": "5f559a8d0857c8abc9fc6820a5725d3d361e963b90da7e29fd77d8b514da15b9",
+    "xsa_finish": "f156d0951ed510c7cddb8775655050ff5e10866b366462c90d56bc35a2955aa1"
+  },
+  "sorter_sha256": "9bd4bb90d3e2f98fb91ff3f089b12ac98f86bcc2fad242aef08a123c8ec099a9",
+  "sample_checker_sha256": "ad485276bb25302408981c7e5175a8420d944200b9bee190b121ba2f710201dc",
+  "piece_window": 21,
+  "component_peaks": {
+    "packed_bands": 30162944,
+    "waves": 140218368,
+    "other:order": 0,
+    "pfck2": 54546432,
+    "other:product": 0,
+    "other:du.tsv": 4096,
+    "other:finish.log": 12288,
+    "other:results.json": 8192,
+    "other:order.log": 8192,
+    "other:emit.log": 4096,
+    "other:.": 4096,
+    "pieces": 15900672,
+    "rlebwt": 235405312,
+    "sparse2": 917504,
+    "other:order-sample.sxsa": 36864,
+    "other:product/frag.runcols.consumed": 4096,
+    "other:product/frag.rlebwt.meta": 8192,
+    "other:product/frag.runexc": 1572864,
+    "container": 131072000,
+    "bits-low": 0,
+    "bits-high": 0,
+    "bits-head": 31457280,
+    "bits-len": 13631488,
+    "other:sample-order.log": 4096,
+    "other:check.log": 4096,
+    "other:selftest-stream-guard.log": 4096,
+    "other:selftest-repair-chunks.log": 495616,
+    "other:selftest-sweep-monoid.log": 3657728,
+    "other:selftest-packed-bits.log": 4096,
+    "other:selftest-witness-batch.log": 4096,
+    "other:selftest-seam-spool.log": 4096,
+    "other:selftest-spool": 0,
+    "other:checker-selftest.log": 4096
+  },
+  "peak_live_wire_bytes": 251305984,
+  "peak_live_wire_over_n": 1.6753732154975118,
+  "whole_peak_sample": {
+    "elapsed": 18.025,
+    "phase": "order+emit+finish",
+    "total_bytes": 406822912,
+    "components": {
+      "packed_bands": 65536,
+      "waves": 116379648,
+      "other:order": 0,
+      "pfck2": 54546432,
+      "pieces": 4096,
+      "rlebwt": 235405312,
+      "sparse2": 393216,
+      "other:product/frag.runcols.consumed": 4096,
+      "other:product": 0,
+      "other:du.tsv": 4096,
+      "other:finish.log": 4096,
+      "other:results.json": 4096,
+      "other:order.log": 4096,
+      "other:emit.log": 4096,
+      "other:order-sample.sxsa": 4096,
+      "other:.": 0
+    },
+    "traversal_seconds": 0.01877
+  },
+  "no_full_sa_or_sym_generated": true,
+  "sample": {
+    "first_rank": 74997952,
+    "count": 4096,
+    "adjacent_pairs": 4095,
+    "global_permutation_checked": false
+  },
+  "closure": "XSA_FINISH_KASAI_CLOSURE bands=876 rank_holes=0 disorder=0 noncontiguous_runs=0 walk_fallbacks=0 max_rank_end=150000001 n=150000001",
+  "chi": 44034231,
+  "runs": 57279187,
+  "sha256": "d7eeac0f574a9a6e272732737d20b6d18a533336fea8f46f10287cb0e2b063a5",
+  "peak_order_over_n": 0.9349256471004956,
+  "peak_intermediate_over_n": 2.7121527285856484,
+  "passed": true
+}

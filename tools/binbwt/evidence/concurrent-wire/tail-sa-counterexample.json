@@ -1,0 +1,9 @@
+{
+  "piece": "p-416-0",
+  "run": 27262976,
+  "len": 6,
+  "head_sa": 90585844,
+  "tail_sa": 116952685,
+  "proposed_tail_sa": 90585849,
+  "explanation": "Stored values are corpus positions, not SA ranks. Rank closure does not derive the tail corpus position."
+}
