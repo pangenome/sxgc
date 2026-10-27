@@ -253,6 +253,9 @@ try:
     result['peak_order_over_n'] = result['peak_order_allocated']/n
     result['peak_intermediate_over_n'] = result['peak_intermediate_allocated']/n
     result['passed'] = True
+    result['passed_scope'] = 'byte product and enabled audits; space acceptance evaluated separately'
+    result['space_acceptance_passed'] = (result['peak_all_allocated'] <= 2*n and
+                                         result['peak_live_wire_bytes'] <= 0.5*n)
     sample('done')
     save()
     print(json.dumps(result, indent=2))

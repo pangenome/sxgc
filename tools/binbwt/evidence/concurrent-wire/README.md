@@ -30,3 +30,29 @@ Two blockers invalidate the requested total-space prediction:
 
 No C++ sources have been changed, no guard weakened, no run above 150 MB
 launched for this change. The >10 GB hold remains in force.
+
+## Column-free product arm
+
+The product command has neither --lcp-column nor --isa-sample. Required
+150 MB SHA, chi and runs remain identical. Full STREAM_VS_BWT reports zero
+mismatches; six finish selftests and checker selftest all exit zero.
+Whole-run peak: 427,745,280 bytes = 2.851635181n; live pieces+BWT peak:
+1.630289909n. See 150-product/scratch-decomposition.md for the reconciled
+stack after this change. Different sampled overlaps explain the larger peak
+than the audit arm; there is no timing or space speedup inference between arms.
+Product stage walls (seconds): finish 35.023, order 32.022, emit 32.022.
+Audit stage walls: finish 36.019, order 33.019, emit 33.018.
+
+The column-free arm does not emit KASAI closure counters. That audit is
+therefore **unattested**, not asserted zero from the audit arm. `passed` in
+the gate result means byte-product and enabled audits only, not this task's
+whole acceptance. The 2n target, 0.5n live-wire target, stored-tail removal,
+and column-free closure acceptance are not achieved. The n-sized retained
+BWT and PFCK remain, as do bounded waves. No 10 GB requalification or 100 GB
+launch was attempted with these unresolved requirements. The earlier 10 GB
+product checksum is not evidence for this changed orchestration.
+
+Tail removal was refused for the named 150 MB run in the counterexample;
+no C++ implementation was edited, no incorrect byte product was retained.
+A further design change must address final m1 replay storage and exact
+rank-to-position resolution before claiming the requested reductions.

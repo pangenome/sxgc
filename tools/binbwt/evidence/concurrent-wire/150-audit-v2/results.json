@@ -275,5 +275,7 @@
   "sha256": "d7eeac0f574a9a6e272732737d20b6d18a533336fea8f46f10287cb0e2b063a5",
   "peak_order_over_n": 0.9349256471004956,
   "peak_intermediate_over_n": 2.7121527285856484,
-  "passed": true
+  "passed": true,
+  "passed_scope": "byte product and enabled audits; requested space acceptance failed",
+  "space_acceptance_passed": false
 }
