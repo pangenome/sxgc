@@ -109,6 +109,20 @@ new is published and the container format is untouched.
 
 See `evidence/route-b-m1/` for the raw results and component series.
 
+Also re-run, unchanged, on the route-B binary: the producer's own selftest
+(`cross_lcp_merge --selftest 60 --kway 2` and `--selftest 40 --kway 3`:
+`SELFTEST_PASS`, including the production-oracle wire comparison, which is
+FORCED on for that selftest), `test_fused_protocol.py` (114 bands, leading and
+trailing empty bands, K=1 -> the SAME route-B container sha `cdb1a1e8...` as the
+K=8 fused run, i.e. the container is a function of the run stream and not of the
+band schedule), `test_fused_concurrency.py` (dead emitter still reaps the
+waiter) and `test_scratch_components.py`.
+
+Pre-existing, NOT caused here: `bit6/test_cargo_sources.py` fails its registry
+payload budget (10,319,156 B > 9,990,000 B); the base commit cf22a08 fails the
+same test at 10,313,295 B, so this change adds 5,861 B (+0.06%) to an
+already-over-budget payload.
+
 | rung | arm | chi | runs | closure | full stream check | container sha256 |
 |---|---|---:|---:|---|---|---|
 | 454,752 B | route B | 145685 | 192138 | 0/0/0, fallbacks 0 | rows=454752 runs=192138 mismatches=0 | `cdb1a1e89bed6c23dec6eede48c5c6765c41cc08422355f585c6f3c93f1a0a1d` |
@@ -205,10 +219,36 @@ the observed 2.1769n is what a 0.25 s sampler actually saw.
 
 XFS speculative allocation is included, not subtracted - and it is large on the
 two files this arm writes: `bits-head` allocates 4,284,481,536 B for a
-2,350,630,395 B stream (1.82x) and the container allocates 8,591,900,672 B for
-4,507,343,105 B (1.91x). Clamping those with `posix_fallocate` (reserve exactly
-what is written) is the next named lever, as is the producer's wave cap
-(`--wave-cap-gb 10.0` = 1.00n logical, 1.38n allocated).
+2,350,630,395 B stream (1.82x; the legacy arm's bits-head is inflated the same
+way, 1.86x) and the container allocates 8,591,900,672 B for 4,507,343,105 B
+(1.91x). Those are real allocated blocks, so a `posix_fallocate` clamp is a
+genuine saving (~0.19n + ~0.41n at their own peaks), though it does not move the
+coincident peak, where bits-head was already allocated up to its logical size.
+
+### What would bring the peak under 2n (measured numbers, not guesses)
+
+The route-B peak instant is `waves 1.111 + pfck2 0.364 + witness 0.271 +
+bits-head 0.214 + pieces 0.114 + bits-len 0.099 + sparse 0.003 = 2.177n`. The
+producer's wave scratch alone is 1.111n there (1.378n at its own peak), and the
+largest remapped byte class at 10 GB needs **0.778249n** under the sorter's own
+0.95 wave target (FUSED_TAPE.md), so `--wave-cap-gb` cannot go much below 0.85n:
+that floor plus the finish's own terms does not fit in 2n.
+
+The one lever that removes the 0.313n this arm added would be to stage the m1
+payload instead of streaming it into the sweep:
+
+* stage the run chars in RAM (1 byte/run = 0.347n, `n`-scaled: 3.5 GB at 10 GB,
+  **34.7 GB at 100 GB**) and keep only the gamma length bits on disc (0.0835n),
+  then encode the head stream after the sweep. Peak becomes ~1.95n and the
+  container becomes byte-identical to the legacy arm's (the exact-run codebook
+  needs the complete run histogram, which the staged chars provide);
+* stage both streams in RAM (0.43n, 43 GB at the pile): peak ~1.86n, which is
+  the operator's predicted 1.9n.
+
+Neither is implemented: they trade disc bytes for anonymous, non-reclaimable
+RAM 1:1, and the pile launch's memory envelope (finish RSS was ~180 GB,
+page-cache backed, plus the sorter's 48 GB) has not been qualified for another
+35-43 GB. That is a decision for the operator, not a silent change here.
 
 ### The A/B that matters: same binaries, same args, same 0.25 s sampler
 
