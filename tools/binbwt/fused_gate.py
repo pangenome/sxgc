@@ -13,12 +13,14 @@ import re
 import shutil
 import subprocess
 import time
+from scratch_components import snapshot
 
 p = argparse.ArgumentParser(description=__doc__)
 for name in ('bundle', 'sorter', 'root', 'corpus', 'remap'):
     p.add_argument('--' + name, required=True)
 for name in ('sa', 'column', 'isa-sample', 'sha-expect', 'chi', 'runs', 'baseline'):
     p.add_argument('--' + name)
+p.add_argument('--evidence-dir', help='write full component time series and peak decomposition here')
 p.add_argument('--threads', type=int, default=96)
 p.add_argument('--pending-bands', type=int, default=8)
 p.add_argument('--wave-cap-gb', type=float)
@@ -30,6 +32,9 @@ p.add_argument('--selftests', action='store_true')
 p.add_argument('--sample-checker', default='/tmp/sa_check_fused')
 p.add_argument('--checker', default='/tmp/stream_vs_bwt')
 a = p.parse_args()
+n = Path(a.corpus).stat().st_size
+if n > 10_000_017_258:
+    p.error('operator hold: corpus exceeds the accepted 10 GB fixture; whole-run peak must be bounded before larger runs')
 root = Path(a.root).resolve()
 root.mkdir(parents=True, exist_ok=False)
 order = root / 'order'
@@ -40,7 +45,6 @@ product = root / 'product'
 product.mkdir()
 bundle = Path(a.bundle).resolve()
 prefix = product / 'frag'
-n = Path(a.corpus).stat().st_size
 sample_count = min(4096, n)
 sample_lo = (n - sample_count) // 2
 result = dict(n=n, K=a.pending_bands, source_manifest=json.loads((bundle/'MANIFEST.sha256').read_text())['source_sha256'],
@@ -62,22 +66,34 @@ env = dict(clean, CROSS_V2_PIECE_WINDOW='100000000')
 processes = []
 samples = (root / 'du.tsv').open('w', buffering=1)
 samples.write('elapsed\tphase\torder_allocated\tall_allocated\tintermediate_allocated\tfree\n')
+evidence = Path(a.evidence_dir) if a.evidence_dir else root
+evidence.mkdir(parents=True, exist_ok=True)
+component_samples = (evidence/'scratch-components.jsonl').open('w', buffering=1)
+result['component_peaks'] = {}
 start = time.monotonic()
 
 def save():
+    if 'whole_peak_sample' in result:
+        peak = result['whole_peak_sample']
+        table = ['| Component | Bytes at whole peak | n at whole peak | Independent peak bytes | Independent peak / n |', '|---|---:|---:|---:|---:|']
+        for key in sorted(result['component_peaks']):
+            value = peak['components'].get(key, 0)
+            high = result['component_peaks'][key]
+            table.append(f'| {key} | {value} | {value/n:.9f} | {high} | {high/n:.9f} |')
+        table.append(f"| TOTAL | {peak['total_bytes']} | {peak['total_bytes']/n:.9f} | | |")
+        (evidence/'scratch-decomposition.md').write_text('\n'.join(table)+'\n')
     (root/'results.json').write_text(json.dumps(result, indent=2)+'\n')
 
-def du(path):
-    # Files can disappear during traversal; du still reports their allocated size.
-    r = subprocess.run(['du', '-s', '-B1', str(path)], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-    return int(r.stdout.split()[0]) if r.stdout else 0
-
 def sample(phase):
-    o, total = du(order), du(root)
-    excluded = 0
-    for f in [product/'product.sxi2', root/'band-stream.bin']:
-        try: excluded += f.stat().st_blocks*512
-        except FileNotFoundError: pass
+    o, total, parts = snapshot(root)
+    elapsed = round(time.monotonic()-start, 3)
+    record = dict(elapsed=elapsed, phase=phase, total_bytes=total, components=parts)
+    component_samples.write(json.dumps(record, sort_keys=True)+'\n')
+    for key, value in parts.items():
+        result['component_peaks'][key] = max(result['component_peaks'].get(key, 0), value)
+    if total >= result['peak_all_allocated']:
+        result['whole_peak_sample'] = record
+    excluded = parts.get('container', 0) + parts.get('debug_dump', 0)
     intermediate = max(0, total - excluded)
     free = shutil.disk_usage(root).free
     samples.write(f'{time.monotonic()-start:.3f}\t{phase}\t{o}\t{total}\t{intermediate}\t{free}\n')
@@ -206,3 +222,4 @@ except BaseException as error:
     raise
 finally:
     samples.close()
+    component_samples.close()
