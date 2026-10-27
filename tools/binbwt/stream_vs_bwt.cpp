@@ -41,10 +41,14 @@ struct M1{Bits heads{},lens{};U runs=0;std::array<U,64> first{},count{},base{};s
  void finish(){require(!runs && heads.pos==heads.size && lens.pos==lens.size,"unused runs/bits");}
 };
 struct Compare{const B* text;const B* sa;const B* remap;U n,row=0,bad=0,runs=0;
+ U sampleFirst=0,sampleCount=0,checked=0;
  void add(Run v){require(v.len && row<=n && v.len<=n-row,"invalid stream length");++runs;
- for(U end=row+v.len;row<end;++row){U p=le(sa+row*8);require(p<n,"SA out of range");B want=remap[text[p?p-1:n-1]];
- if(v.c!=want){if(bad<8)fprintf(stderr,"MISMATCH row=%llu got=%u want=%u\n",(unsigned long long)row,v.c,want);++bad;}}}
- bool finish(){require(row==n,"stream does not cover n rows");printf("STREAM_VS_BWT rows=%llu runs=%llu mismatches=%llu convention=finite-SA,wrapped-predecessor\n",(unsigned long long)row,(unsigned long long)runs,(unsigned long long)bad);return !bad;}
+ U end=row+v.len;
+ U lo=sampleCount?std::max(row,sampleFirst):row;
+ U hi=sampleCount?std::min(end,sampleFirst+sampleCount):end;
+ for(U rank=lo;rank<hi;++rank){U p=le(sa+(sampleCount?rank-sampleFirst:rank)*8);require(p<n,"SA out of range");B want=remap[text[p?p-1:n-1]];
+ if(v.c!=want){if(bad<8)fprintf(stderr,"MISMATCH row=%llu got=%u want=%u\n",(unsigned long long)rank,v.c,want);++bad;}++checked;}row=end;}
+ bool finish(){require(row==n,"stream does not cover n rows");require(checked==(sampleCount?sampleCount:n),"comparison coverage");if(sampleCount)printf("STREAM_VS_BWT_SAMPLE first_rank=%llu sampled_rows=%llu total_rows=%llu mismatches=%llu\n",(unsigned long long)sampleFirst,(unsigned long long)checked,(unsigned long long)n,(unsigned long long)bad);printf("STREAM_VS_BWT rows=%llu runs=%llu mismatches=%llu convention=finite-SA,wrapped-predecessor\n",(unsigned long long)row,(unsigned long long)runs,(unsigned long long)bad);return !bad;}
 };
 // Independent scalar scan of SA-derived runs, using direct finite LCE. No
 // product Sweep or column code is included. --chi-column substitutes the
@@ -74,6 +78,11 @@ static int selftest(){B t[]={'a','b','a'},r[256];std::iota(r,r+256,0);B sa[24]{}
  caught=false;try{Compare over{t,sa,r,3};over.add({4,'a'});}catch(...){caught=true;}require(caught,"detect long stream");
  B bits[]={0x65};Bits b{bits,7};require(b.gamma()==1 && b.gamma()==2 && b.gamma()==3,"gamma decoding");
  caught=false;try{b.bit();}catch(...){caught=true;}require(caught,"bit bounds");
+ // Explicit rank-offset sample crosses two runs and checks exactly its rows.
+ Compare sample{t,sa+8,r,3};sample.sampleFirst=1;sample.sampleCount=2;
+ sample.add({1,'b'});sample.add({2,'a'});require(sample.finish() && sample.checked==2,"sample offset/coverage");
+ Compare wrongSample{t,sa+8,r,3};wrongSample.sampleFirst=1;wrongSample.sampleCount=2;
+ wrongSample.add({2,'b'});wrongSample.add({1,'a'});require(!wrongSample.finish(),"sample corruption");
  // Nonidentity product alphabet, including legal NUL/05, and p=0 wrap.
  r['a']=0;r['b']=5;Compare mapped{t,sa,r,3};mapped.add({1,5});mapped.add({2,0});require(mapped.finish(),"remap/wrap");
  // Canonical 1-bit Huffman codes a=0,b=1; lengths 1,2 => bits 1,0,1,0.
@@ -82,12 +91,15 @@ static int selftest(){B t[]={'a','b','a'},r[256];std::iota(r,r+256,0);B sa[24]{}
  caught=false;try{M1 truncated(m.data(),2321,2);}catch(...){caught=true;}require(caught,"m1 extent");
  printf("STREAM_VS_BWT_SELFTEST_PASS corruption,truncation,extent,remap,wrap,gamma,Huffman\n");return 0;}
 int main(int argc,char** argv){try{
- std::string corpus,sap,remapp,stream,container,col;bool wantchi=false;U expect=UINT64_MAX;
+ std::string corpus,sap,remapp,stream,container,col;bool wantchi=false;U expect=UINT64_MAX,sampleFirst=UINT64_MAX;
  for(int i=1;i<argc;++i){std::string a=argv[i];auto value=[&]{require(i+1<argc,"missing argument");return std::string(argv[++i]);};
- if(a=="--selftest")return selftest();else if(a=="--corpus")corpus=value();else if(a=="--sa")sap=value();else if(a=="--remap")remapp=value();else if(a=="--stream")stream=value();else if(a=="--container")container=value();else if(a=="--chi")wantchi=true;else if(a=="--chi-column"){col=value();wantchi=true;}else if(a=="--chi-expect"){expect=std::stoull(value());wantchi=true;}else throw std::runtime_error("unknown argument");}
+ if(a=="--selftest")return selftest();else if(a=="--corpus")corpus=value();else if(a=="--sa")sap=value();else if(a=="--sample-first-rank")sampleFirst=std::stoull(value());else if(a=="--remap")remapp=value();else if(a=="--stream")stream=value();else if(a=="--container")container=value();else if(a=="--chi")wantchi=true;else if(a=="--chi-column"){col=value();wantchi=true;}else if(a=="--chi-expect"){expect=std::stoull(value());wantchi=true;}else throw std::runtime_error("unknown argument");}
  require(!corpus.empty() && !sap.empty() && !remapp.empty(),"need --corpus --sa --remap");require(!stream.empty() || !container.empty(),"need --stream or --container");
- Map t(corpus),sa(sap),remap(remapp);require(remap.size==256 && sa.size==48+8*t.size,"input sizes");
- require(le(sa.p+8)==t.size && le(sa.p+24)==t.size,"SA header n/rows");bool pass=true;
+ Map t(corpus),sa(sap),remap(remapp);require(remap.size==256 && sa.size>=48,"input sizes");
+ U rows=le(sa.p+24);bool sampled=sampleFirst!=UINT64_MAX;
+ require(le(sa.p+8)==t.size && sa.size==48+8*rows,"SA header n/rows");
+ if(sampled){require(rows>0 && sampleFirst<=t.size && rows<=t.size-sampleFirst,"sample bounds");require(stream.empty() && !wantchi,"sample mode supports container BWT only");}
+ else require(rows==t.size,"full SA required without explicit sample mode");bool pass=true;
  if(!stream.empty()){Map dump(stream);require(dump.size%40==0,"truncated stream record");Compare check{t.p,sa.p+48,remap.p,t.size};U endpointBad=0;for(U off=0;off<dump.size;off+=40){require(le(dump.p+off)==off/40,"stream record index");U start=check.row;
  check.add({le(dump.p+off+32,4),dump.p[off+36]});
  endpointBad += le(dump.p+off+16)!=le(sa.p+48+8*start);
@@ -95,7 +107,7 @@ int main(int argc,char** argv){try{
  pass&=check.finish();pass&=endpointBad==0;
  printf("STREAM_ENDPOINTS runs=%llu mismatches=%llu\n",(unsigned long long)check.runs,(unsigned long long)endpointBad);}
  if(!container.empty()){Map product(container);require(product.size>=64 && !memcmp(product.p,"SXI2",4) && le(product.p+8)==t.size,"container header");U count=le(product.p+32,4);require(count<100 && product.size>=64+40*count,"member directory");bool found=false;
- for(U i=0;i<count;++i){const B* d=product.p+64+40*i;if(le(d,4)!=1)continue;require(!found && le(d+4,4)==101,"m1 codec");found=true;U off=le(d+8),size=le(d+16),r=le(d+24);require(off<=product.size && size<=product.size-off,"m1 bounds");M1 decoder(product.p+off,size,r);Compare check{t.p,sa.p+48,remap.p,t.size};while(decoder.runs)check.add(decoder.next());decoder.finish();pass&=check.finish();}require(found,"missing m1");}
+ for(U i=0;i<count;++i){const B* d=product.p+64+40*i;if(le(d,4)!=1)continue;require(!found && le(d+4,4)==101,"m1 codec");found=true;U off=le(d+8),size=le(d+16),r=le(d+24);require(off<=product.size && size<=product.size-off,"m1 bounds");M1 decoder(product.p+off,size,r);Compare check{t.p,sa.p+48,remap.p,t.size};if(sampled){check.sampleFirst=sampleFirst;check.sampleCount=rows;}while(decoder.runs)check.add(decoder.next());decoder.finish();pass&=check.finish();}require(found,"missing m1");}
  if(wantchi){U got=chi(t,sa,remap.p,col);if(expect!=UINT64_MAX)require(got==expect,"independent chi mismatch");}
  return pass?0:3;
  }catch(const std::exception& e){fprintf(stderr,"stream_vs_bwt: %s\n",e.what());return 2;}}

@@ -1,0 +1,11 @@
+XSA_FINISH_SEAM_SPOOL classes=0 rows=0 discovery_steps=3 limit=1000 WM=absent
+CYCLIC_SEAM_REPAIRED classes=0 rows=0 discovery_steps=3 limit=1000 phi_samples=100 pattern_chain=1 wm_scan=0 seam_spool=1
+CYCLIC_SEAM_WORK max_seam_lce=0 exact=1 pattern_chain=1 wm_scan=0 seam_spool=1
+XSA_FINISH_SEAM_SPOOL classes=1 rows=3 discovery_steps=3 limit=1000 WM=absent
+CYCLIC_SEAM_REPAIRED classes=1 rows=3 discovery_steps=3 limit=1000 phi_samples=100 pattern_chain=1 wm_scan=0 seam_spool=1
+CYCLIC_SEAM_WORK max_seam_lce=0 exact=1 pattern_chain=1 wm_scan=0 seam_spool=1
+XSA_FINISH_SEAM_SPOOL classes=2 rows=6 discovery_steps=3 limit=1000 WM=absent
+CYCLIC_SEAM_REPAIRED classes=2 rows=6 discovery_steps=3 limit=1000 phi_samples=100 pattern_chain=1 wm_scan=0 seam_spool=1
+CYCLIC_SEAM_WORK max_seam_lce=0 exact=1 pattern_chain=1 wm_scan=0 seam_spool=1
+BAND_PROGRESS_READER_ORACLE_PASS trivial_bases=1 band_only=1 deferred_class=1 EOF_clamp=1 terminal=1 delayed_full_band_EOF=1 backward_terminal_refused=1 malformed_refusals=12
+SEAM_SPOOL_READER_ORACLE_PASS empty=1 adversarial_orders=2 padded_flanks=1 NUL=1 byte05=1 malformed_refusals=3

@@ -4764,27 +4764,6 @@ int main(int argc, char** argv) {
             // a per-thread local would make each worker walk the whole band
             // (96x the queries, which the seam-work journal refuses loudly).
             auto next = std::make_shared<std::atomic<size_t>>(0);
-            if (!kasaiOn) {
-                // Without a column, compute the same finite-suffix LCPs by
-                // a full verified LCE capped at the text end (never wrap).
-                return std::function<void(int)>([&, cnt, &nb, &gx, prevTailS, next](int t) {
-                    slim_set_thread_shard(unsigned(t));
-                    for (;;) {
-                        size_t i = next->fetch_add(1);
-                        if (i >= cnt) break;
-                        const NRun& v = nb[i];
-                        uint64_t first = v.h, tail = v.t;
-                        pf_check(first < n, "position resolution failed");
-                        if (v.len == 1) pf_check(first == tail, "head-SA value/range or singleton mismatch");
-                        pf_check(tail < n, "position resolution failed");
-                        uint64_t prev = gx[i] == 0 ? 0 : (i ? nb[i - 1].t : prevTailS);
-                        pf_check(prev < n, "previous position resolution failed");
-                        s.topLcp[i] = gx[i] ? slimLce(prev, first) : 0;
-                        s.interior[i] = v.len == 1 ? INF : slimLce(first, tail);
-                    }
-                    slimLce.flush_thread();
-                });
-            }
             // ---- THE KASAI ARM --------------------------------------------------
             // Derive ranks from the ordered stream lengths. Worker zero
             // constructs the rank arrays; all workers arrive before the last
@@ -4960,7 +4939,7 @@ int main(int argc, char** argv) {
                     require_zero_closure(kasaiState.gaps, kasaiState.disorder,
                                          kasaiState.noncontig, kasaiState.fallback.load());
                     const uint64_t base = lo ? lo - 1 : 0;
-                    lcpCol.load(*band, base, hi - base + 1);
+                    if (kasaiOn) lcpCol.load(*band, base, hi - base + 1);
                     kasaiState.lastHeadRank = (*headRank)[0];
                     kasaiState.lastEndRank = (*tailRank)[cnt - 1] < n
                         ? (*tailRank)[cnt - 1] + 1
@@ -4969,6 +4948,24 @@ int main(int argc, char** argv) {
                     staged->store(1, std::memory_order_release);
                 }
                 while (!staged->load(std::memory_order_acquire)) std::this_thread::yield();
+                if (!kasaiOn) {
+                    slim_set_thread_shard(unsigned(t));
+                    for (;;) {
+                        size_t i = next->fetch_add(1);
+                        if (i >= cnt) break;
+                        const NRun& v = nb[i];
+                        uint64_t first = v.h, tail = v.t;
+                        pf_check(first < n, "position resolution failed");
+                        if (v.len == 1) pf_check(first == tail, "head-SA value/range or singleton mismatch");
+                        pf_check(tail < n, "position resolution failed");
+                        uint64_t prev = gx[i] == 0 ? 0 : (i ? nb[i - 1].t : prevTailS);
+                        pf_check(prev < n, "previous position resolution failed");
+                        s.topLcp[i] = gx[i] ? slimLce(prev, first) : 0;
+                        s.interior[i] = v.len == 1 ? INF : slimLce(first, tail);
+                    }
+                    slimLce.flush_thread();
+                    return;
+                }
                 // PHASE 2: column answers for EVERY run, including sparse m11
                 // rows. gx is the global run index, not a sparse-row flag.
                 // Closure above certifies the previous row is the previous
@@ -5284,7 +5281,7 @@ int main(int argc, char** argv) {
                 finishAdvance(tail);
             }
         }
-        if (kasaiOn) {
+        {
             // Bounds alone do not establish the rank-closure contract.
             pf_check(lcpCol.maxEnd <= n, "KASAI CLOSURE: a band's rank slice runs past n");
             if (isaDebug) {
@@ -5306,7 +5303,7 @@ int main(int argc, char** argv) {
                     (unsigned long long)kasaiState.disorder,
                     (unsigned long long)kasaiState.noncontig,
                     (unsigned long long)kasaiState.fallback.load(),
-                    (unsigned long long)lcpCol.maxEnd, (unsigned long long)n);
+                    (unsigned long long)(kasaiOn ? lcpCol.maxEnd : rowCursor), (unsigned long long)n);
             if (sampIsa.map)
                 fprintf(stderr, "XSA_FINISH_KASAI_ANCHORS checks=%llu mismatches=0 source=--isa-sample\n",
                         (unsigned long long)anchorChecks);
@@ -5315,10 +5312,9 @@ int main(int argc, char** argv) {
                  "STREAM CLOSURE: incomplete stream (refusing publication)");
         // Check AFTER the final tail band, before finalizing or publishing.
         // Bank parity and sparse anchor checks cannot waive closure failures.
-        if (kasaiOn) {
-            require_zero_closure(kasaiState.gaps, kasaiState.disorder,
-                                         kasaiState.noncontig, kasaiState.fallback.load());
-        }
+        require_zero_closure(kasaiState.gaps, kasaiState.disorder,
+                             kasaiState.noncontig, kasaiState.fallback.load());
+        pf_check(rowCursor == n, "KASAI CLOSURE: derived ranks do not cover n");
         {
             PfRegion r("advance-finish", PF_ADVANCE);
             double ta = tnow();

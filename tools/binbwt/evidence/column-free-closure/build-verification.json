@@ -1,0 +1,13 @@
+{
+  "command": "python3 tools/package_xsa_sources.py && cd xsa && cargo build --release",
+  "result": "passed",
+  "elapsed": "4m09s",
+  "packaged_bundle": "/home/erikg/sxgc/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-8f3zmjxw/bundle",
+  "source_sha256": "b15c39ffc3eb8e93046960c624df69a911d581a1e695e3e3da6ce50095a02bc7",
+  "native_gate_binary_identity": {
+    "xsa_finish": true,
+    "cross_lcp_merge": true
+  },
+  "failure_path_integration": "passed",
+  "checker_selftest": "passed, includes offset/coverage and corrupt sampled rank comparisons"
+}

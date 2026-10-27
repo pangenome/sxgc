@@ -29,6 +29,7 @@ p.add_argument('--produce-isa', action='store_true')
 p.add_argument('--isa-stride', type=int, default=1024)
 p.add_argument('--debug', action='store_true')
 p.add_argument('--audit-column', action='store_true', help='explicit debug/audit arm only')
+p.add_argument('--space-qualification', help='accepted column-free 10 GB results authorizing measured 100 GB capacity preflight')
 p.add_argument('--piece-window', type=int, help='override automatic 0.15n piece credit budget')
 p.add_argument('--selftests', action='store_true')
 p.add_argument('--sample-checker', default='/tmp/sa_check_fused')
@@ -39,8 +40,23 @@ if (a.column or a.isa_sample or a.produce_column or a.produce_isa) and not a.aud
 if a.produce_column or a.produce_isa:
     p.error('concurrent finish requires audit columns to exist before launch; supply read-only fixtures')
 n = Path(a.corpus).stat().st_size
+qualification = None
 if n > 10_000_017_258:
-    p.error('operator hold: corpus exceeds the accepted 10 GB fixture; whole-run peak must be bounded before larger runs')
+    if not a.space_qualification:
+        p.error('large rung requires an accepted column-free 10 GB space qualification')
+    qualification = json.loads(Path(a.space_qualification).read_text())
+    assert qualification.get('passed') and not qualification.get('error'), 'qualification failed'
+    assert qualification['n'] == 10_000_017_258
+    assert qualification['sha256'] == '22d0ce7493c6238a9d2e7f4e9a0decdf5841ff72a845d856bebaecd6d34bdaee'
+    assert qualification['chi'] == 2676929428 and qualification['runs'] == 3474891366
+    for key in ('rank_holes', 'disorder', 'noncontiguous_runs', 'walk_fallbacks'):
+        assert re.search(r'\b'+key+r'=0\b', qualification['closure'])
+    assert qualification['stream_sample']['mismatches'] == 0
+    finish_command = next(c['command'] for c in qualification['commands'] if c['label'] == 'finish')
+    assert '--lcp-column' not in finish_command and '--isa-sample' not in finish_command
+    assert qualification['peak_all_allocated'] <= 3*qualification['n'], '10 GB whole-run 3n gate failed'
+    assert n <= 107_374_181_464, 'rung exceeds qualified corpus'
+
 root = Path(a.root).resolve()
 root.mkdir(parents=True, exist_ok=False)
 order = root / 'order'
@@ -149,10 +165,17 @@ def run(label, cmd, e=clean):
     return finish_entry(item)
 
 try:
-    # 100 GB observed downstream scratch is about 6.5n; plus a <=2n wave,
-    # output and reserve. Refuse an obviously impossible launch.
-    if n > 50_000_000_000 and shutil.disk_usage(root).free < 9.0*n:
-        raise RuntimeError('preflight requires 9n free for unchanged downstream plus bounded order')
+    if qualification:
+        ratio = qualification['peak_all_allocated']/qualification['n']
+        prediction = ratio*n
+        required = max(3*n, int(1.25*prediction+n/20))
+        free = shutil.disk_usage(root).free
+        result['capacity_preflight'] = dict(qualification=str(Path(a.space_qualification).resolve()),
+            measured_peak_over_n=ratio, predicted_peak_bytes=prediction,
+            required_free_bytes=required, free_bytes=free, safety_factor=1.25)
+        save()
+        if free < required:
+            raise RuntimeError('measured large-rung preflight fails: shrink window/K before launch')
     cmd = [a.sorter, '--corpus', a.corpus, '--remap', a.remap, '--scratch', order/'waves',
            '--tape-bands', order/'bands', '--pending-bands', a.pending_bands,
            '--ram-gb', '48', '--par-bands', '8', '--threads', a.threads,
@@ -222,12 +245,11 @@ try:
                             global_permutation_checked=False)
     text = texts['finish']
     assert 'product_dump_scratch_bytes=0' in text
-    if a.column:
-        closure = next(line for line in text.splitlines() if 'XSA_FINISH_KASAI_CLOSURE' in line)
-        for name in ('rank_holes', 'disorder', 'noncontiguous_runs', 'walk_fallbacks'):
-            assert re.search(r'\b'+name+r'=0\b', closure), closure
-        result['closure'] = closure
-    else: result['closure'] = 'walk arm; no rank column supplied'
+    # Rank closure is mandatory for column and verified-walk arms.
+    closure = next(line for line in text.splitlines() if 'XSA_FINISH_KASAI_CLOSURE' in line)
+    for name in ('rank_holes', 'disorder', 'noncontiguous_runs', 'walk_fallbacks'):
+        assert re.search(r'\b'+name+r'=0\b', closure), closure
+    result['closure'] = closure
     done = re.search(r'XSA_FINISH_DONE chi=(\d+) n=(\d+) r=(\d+)', text)
     assert done and int(done[2]) == n
     result.update(chi=int(done[1]), runs=int(done[3]))
@@ -244,6 +266,12 @@ try:
         if a.debug: cmd += ['--stream', root/'band-stream.bin']
         text = run('check', cmd)
         assert f'rows={n} runs={result["runs"]} mismatches=0 ' in text
+    sample_text = run('check-sample', [a.checker, '--corpus', a.corpus, '--remap', a.remap,
+                      '--sa', root/'order-sample.sxsa', '--sample-first-rank', sample_lo,
+                      '--container', product/'product.sxi2'])
+    assert f'sampled_rows={sample_count} total_rows={n} mismatches=0' in sample_text
+    result['stream_sample'] = dict(first_rank=sample_lo, count=sample_count, mismatches=0,
+                                  decoded_extent_rows=n, source='retained sorter SA sample')
     if a.selftests:
         for flag in ('stream-guard', 'repair-chunks', 'sweep-monoid', 'packed-bits', 'witness-batch', 'seam-spool'):
             cmd = [bundle/'xsa_finish', '--selftest-'+flag]
