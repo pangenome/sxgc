@@ -1,0 +1,14 @@
+XSA_FINISH_DEBUG_ARTIFACTS enabled=0 product_dump_scratch_bytes=0
+XSA_FINISH_SEAM_ANCHORS checks=460105 mismatches=0 source=--isa-sample
+XSA_FINISH_SEAM_ANCHORS checks=1607031 mismatches=0 source=--isa-sample
+XSA_FINISH_SEAM_ANCHORS checks=42 mismatches=0 source=--isa-sample
+XSA_FINISH_SEAM_ANCHORS checks=55 mismatches=0 source=--isa-sample
+XSA_FINISH_SEAM_ANCHORS checks=42 mismatches=0 source=--isa-sample
+XSA_FINISH_SEAM_ANCHORS checks=42 mismatches=0 source=--isa-sample
+XSA_FINISH_SEAM_ANCHORS checks=2 mismatches=0 source=--isa-sample
+XSA_FINISH_SEAM_ANCHORS checks=647 mismatches=0 source=--isa-sample
+XSA_FINISH_SEAM_ANCHORS checks=56 mismatches=0 source=--isa-sample
+XSA_FINISH_KASAI_CLOSURE bands=53004 rank_holes=0 disorder=0 noncontiguous_runs=0 walk_fallbacks=0 max_rank_end=10000017258 n=10000017258
+XSA_FINISH_KASAI_ANCHORS checks=4372036 mismatches=0 source=--isa-sample
+SXI2_PASS bytes=4463793538 lite=1 members=6
+XSA_FINISH_DONE chi=2676929428 n=10000017258 r=3474891366 container=/mnt/nvme2n1/erikg/fused-10gb-packaged/product/product.sxi2

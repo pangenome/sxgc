@@ -1,0 +1,71 @@
+{
+  "root": "/mnt/nvme2n1/erikg/fused-10gb-packaged",
+  "n": 10000017258,
+  "full_sa_stream_bytes": 80000138112,
+  "largest_final_files": [
+    {
+      "path": "order/column",
+      "bytes": 13390872330
+    },
+    {
+      "path": "product/product.sxi2",
+      "bytes": 4463793538
+    },
+    {
+      "path": "order/isa-sample",
+      "bytes": 78125168
+    },
+    {
+      "path": "product/frag.runexc",
+      "bytes": 1572856
+    },
+    {
+      "path": "du.tsv",
+      "bytes": 200663
+    },
+    {
+      "path": "finish.log",
+      "bytes": 139855
+    },
+    {
+      "path": "du-wave-bands.tsv",
+      "bytes": 80795
+    },
+    {
+      "path": "order-sample.sxsa",
+      "bytes": 32816
+    },
+    {
+      "path": "order.log",
+      "bytes": 6492
+    },
+    {
+      "path": "results.json",
+      "bytes": 4988
+    },
+    {
+      "path": "emit.log",
+      "bytes": 693
+    },
+    {
+      "path": "scratch-wave-bands.json",
+      "bytes": 421
+    },
+    {
+      "path": "sample-order.log",
+      "bytes": 172
+    },
+    {
+      "path": "order/bands/manifest",
+      "bytes": 14
+    },
+    {
+      "path": "order/bands/end",
+      "bytes": 5
+    }
+  ],
+  "no_generated_full_sa": true,
+  "rank_sample_bytes": 32816,
+  "consumer_inputs": "--tape-bands only; old r10sf/sa is passed solely to the independent validation checker",
+  "proof": "producer skips opening both full-SA and sym descriptors in band mode; rank coverage uses consumable packed files; final inventory has no 8n file"
+}

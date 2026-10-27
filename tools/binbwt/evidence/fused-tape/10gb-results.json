@@ -1,0 +1,223 @@
+{
+  "n": 10000017258,
+  "K": 8,
+  "source_manifest": "06394839dd6039bdf35ecb1e1111d337acc130a4b691480de56825caac9a8ef1",
+  "commands": [
+    {
+      "label": "order",
+      "command": [
+        "/tmp/scatter_fused",
+        "--corpus",
+        "/mnt/nvme2n1/erikg/extcols-scratch/real10b-ref/pile-10b-snap.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--scratch",
+        "/mnt/nvme2n1/erikg/fused-10gb-packaged/order/waves",
+        "--tape-bands",
+        "/mnt/nvme2n1/erikg/fused-10gb-packaged/order/bands",
+        "--pending-bands",
+        "8",
+        "--ram-gb",
+        "48",
+        "--par-bands",
+        "8",
+        "--threads",
+        "96",
+        "--order-sample-out",
+        "/mnt/nvme2n1/erikg/fused-10gb-packaged/order-sample.sxsa",
+        "--order-sample-lo",
+        "5000006581",
+        "--order-sample-count",
+        "4096",
+        "--lcp-out",
+        "/mnt/nvme2n1/erikg/fused-10gb-packaged/order/column",
+        "--isa-sample-out",
+        "/mnt/nvme2n1/erikg/fused-10gb-packaged/order/isa-sample",
+        "--isa-sample-k",
+        "1024",
+        "--scratch-cap-gb",
+        "10.0"
+      ],
+      "pid": 2599379,
+      "returncode": 0,
+      "seconds": 2015.944
+    },
+    {
+      "label": "emit",
+      "command": [
+        "/home/erikg/sxgc/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-g2psep1f/bundle/cross_lcp_merge",
+        "--binbwt",
+        "/mnt/nvme2n1/erikg/extcols-scratch/real10b-ref/pile-10b-snap.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--out-prefix",
+        "/mnt/nvme2n1/erikg/fused-10gb-packaged/product/frag",
+        "--threads",
+        "96",
+        "--tape-bands",
+        "/mnt/nvme2n1/erikg/fused-10gb-packaged/order/bands"
+      ],
+      "pid": 2599380,
+      "returncode": 0,
+      "seconds": 1722.923
+    },
+    {
+      "label": "sample-order",
+      "command": [
+        "/tmp/sa_check_fused",
+        "--corpus",
+        "/mnt/nvme2n1/erikg/extcols-scratch/real10b-ref/pile-10b-snap.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--sa",
+        "/mnt/nvme2n1/erikg/fused-10gb-packaged/order-sample.sxsa",
+        "--sample-first-rank",
+        "5000006581"
+      ],
+      "pid": 2701145,
+      "returncode": 0,
+      "seconds": 1.32
+    },
+    {
+      "label": "finish",
+      "command": [
+        "/home/erikg/sxgc/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-g2psep1f/bundle/xsa_finish",
+        "--prefix",
+        "/mnt/nvme2n1/erikg/fused-10gb-packaged/product/frag",
+        "--corpus",
+        "/mnt/nvme2n1/erikg/extcols-scratch/real10b-ref/pile-10b-snap.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--output",
+        "/mnt/nvme2n1/erikg/fused-10gb-packaged/product/product.sxi2",
+        "--threads",
+        "96",
+        "--sample-count",
+        "64",
+        "--chi-expect",
+        "2676929428",
+        "--lcp-column",
+        "/mnt/nvme2n1/erikg/fused-10gb-packaged/order/column",
+        "--isa-sample",
+        "/mnt/nvme2n1/erikg/fused-10gb-packaged/order/isa-sample"
+      ],
+      "pid": 2701157,
+      "returncode": 0,
+      "seconds": 1534.768
+    },
+    {
+      "label": "check",
+      "command": [
+        "/tmp/stream_vs_bwt",
+        "--corpus",
+        "/mnt/nvme2n1/erikg/extcols-scratch/real10b-ref/pile-10b-snap.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--sa",
+        "/mnt/nvme2n1/erikg/r10sf/sa",
+        "--container",
+        "/mnt/nvme2n1/erikg/fused-10gb-packaged/product/product.sxi2"
+      ],
+      "pid": 2757998,
+      "returncode": 0,
+      "seconds": 556.496
+    },
+    {
+      "label": "selftest-stream-guard",
+      "command": [
+        "/home/erikg/sxgc/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-g2psep1f/bundle/xsa_finish",
+        "--selftest-stream-guard"
+      ],
+      "pid": 2775281,
+      "returncode": 0,
+      "seconds": 1.017
+    },
+    {
+      "label": "selftest-repair-chunks",
+      "command": [
+        "/home/erikg/sxgc/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-g2psep1f/bundle/xsa_finish",
+        "--selftest-repair-chunks"
+      ],
+      "pid": 2775387,
+      "returncode": 0,
+      "seconds": 1.027
+    },
+    {
+      "label": "selftest-sweep-monoid",
+      "command": [
+        "/home/erikg/sxgc/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-g2psep1f/bundle/xsa_finish",
+        "--selftest-sweep-monoid"
+      ],
+      "pid": 2775428,
+      "returncode": 0,
+      "seconds": 1.028
+    },
+    {
+      "label": "selftest-packed-bits",
+      "command": [
+        "/home/erikg/sxgc/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-g2psep1f/bundle/xsa_finish",
+        "--selftest-packed-bits"
+      ],
+      "pid": 2775457,
+      "returncode": 0,
+      "seconds": 1.027
+    },
+    {
+      "label": "selftest-witness-batch",
+      "command": [
+        "/home/erikg/sxgc/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-g2psep1f/bundle/xsa_finish",
+        "--selftest-witness-batch"
+      ],
+      "pid": 2775509,
+      "returncode": 0,
+      "seconds": 1.026
+    },
+    {
+      "label": "selftest-seam-spool",
+      "command": [
+        "/home/erikg/sxgc/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-g2psep1f/bundle/xsa_finish",
+        "--selftest-seam-spool",
+        "/mnt/nvme2n1/erikg/fused-10gb-packaged/selftest-spool"
+      ],
+      "pid": 2775514,
+      "returncode": 0,
+      "seconds": 1.02
+    },
+    {
+      "label": "checker-selftest",
+      "command": [
+        "/tmp/stream_vs_bwt",
+        "--selftest"
+      ],
+      "pid": 2775577,
+      "returncode": 0,
+      "seconds": 1.029
+    }
+  ],
+  "peak_order_allocated": 20386529280,
+  "peak_all_allocated": 85521260544,
+  "peak_intermediate_allocated": 85521260544,
+  "scratch_sample_period_seconds": 1,
+  "scratch_scope": "order=waves+unconsumed packed bands+optional generated column; all=entire new run directory; intermediate=all minus container and explicit debug dump; read-only validation fixtures excluded",
+  "timing_qualification": "single-run observations; no paired N>=3 A/B; speed effects unverifiable",
+  "binary_sha256": {
+    "cross_lcp_merge": "66a185967107da9bd9230faea38fba15adb3ab7b0c59e027fffc8379b4128cd7",
+    "xsa_finish": "f156d0951ed510c7cddb8775655050ff5e10866b366462c90d56bc35a2955aa1"
+  },
+  "sorter_sha256": "9bd4bb90d3e2f98fb91ff3f089b12ac98f86bcc2fad242aef08a123c8ec099a9",
+  "sample_checker_sha256": "ad485276bb25302408981c7e5175a8420d944200b9bee190b121ba2f710201dc",
+  "no_full_sa_or_sym_generated": true,
+  "sample": {
+    "first_rank": 5000006581,
+    "count": 4096,
+    "adjacent_pairs": 4095,
+    "global_permutation_checked": false
+  },
+  "closure": "XSA_FINISH_KASAI_CLOSURE bands=53004 rank_holes=0 disorder=0 noncontiguous_runs=0 walk_fallbacks=0 max_rank_end=10000017258 n=10000017258",
+  "chi": 2676929428,
+  "runs": 3474891366,
+  "sha256": "22d0ce7493c6238a9d2e7f4e9a0decdf5841ff72a845d856bebaecd6d34bdaee",
+  "peak_order_over_n": 2.0386494096988486,
+  "peak_intermediate_over_n": 8.552111295166327,
+  "passed": true
+}
