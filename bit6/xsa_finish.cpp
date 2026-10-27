@@ -2202,10 +2202,11 @@ struct RepairStream {
 // bit6/teralcp_chi.cpp): no walks, no SA, no text access in the sweep
 // itself. Cyclic corpora only (the pile class); newline-class corpora are
 // refused and use the v1 chain.
-struct Sweep {
+template<class Sink = std::function<void(uint64_t)>>
+struct SweepImpl {
     bool cyclic = true;
     uint64_t n = 0, bigN = 0, chi = 0;
-    std::function<void(uint64_t)> emitWitness;
+    Sink emitWitness;
     static constexpr int64_t IINF = INT64_MAX;
     // PILE-WEEK (pile-week-v1): the per-char-change threshold scan over all
     // 256 rr_len entries was the serial advance machine's dominant cost
@@ -2268,7 +2269,8 @@ struct Sweep {
     int32_t p = -1;
     uint64_t p_sa_last = 0;
     bool first = true;
-    explicit Sweep(uint64_t nNorm) : n(nNorm), bigN(nNorm) {
+    explicit SweepImpl(uint64_t nNorm, Sink sink = {})
+        : n(nNorm), bigN(nNorm), emitWitness(std::move(sink)) {
         for (int c = 0; c < 256; ++c) { rr_len[c] = -1; rr_pos[c] = 0; rr_act[c] = false; }
         heapInit();
     }
@@ -2412,6 +2414,8 @@ struct Sweep {
     }
 };
 
+using Sweep = SweepImpl<>;
+
 // A cold terminal state is not a chunk transducer: it forgets when an
 // incoming requirement would have fired. Keep this executable counterexample
 // beside the production machine; do not replace the sweep with a fold of
@@ -2494,7 +2498,7 @@ static int selftest_sweep_monoid() {
 // walks buckets in value order (ranges are disjoint), merging each
 // bucket's compressed runs with a bounded 64-way heap.
 struct WitBuckets {
-    uint64_t P = 0, n = 0;
+    uint64_t P = 0, n = 0, reciprocal = 0;
     std::string prefix;
     uint64_t ramBudget = 1ull << 30;
     std::vector<std::vector<uint64_t>> buf;
@@ -2522,19 +2526,30 @@ struct WitBuckets {
         : n(nNorm), prefix(pfx), ramBudget(budget) {
         P = 4096;
         while (P < 65536 && P * 262144 < runs) P *= 2;
+        pf_check(n > 0 && n <= ~uint64_t(0) / P, "witness bucket numerator overflow");
+        reciprocal = n == 1 ? 0 : uint64_t((__uint128_t(1) << 64) / n);
         buf.resize(P);
         this->runs.resize(P);
         fds.assign(P, -1);
     }
-    uint64_t bucketOf(uint64_t v) const { return v * P / n; }
-    void add(uint64_t v) {
-        pf_check(v < n, "witness out of range");
-        uint64_t b = bucketOf(v);
-        size_t oldCapacity = buf[b].capacity();
-        buf[b].push_back(v);
-        totalRam += 8 * (buf[b].capacity() - oldCapacity);
-        ++totalValues;
-        while (totalRam > ramBudget) spillLargest();
+    uint64_t bucketOf(uint64_t v) const {
+        const uint64_t x = v * P;
+        if (n == 1) return x;
+        uint64_t q = uint64_t((__uint128_t(x) * reciprocal) >> 64);
+        return q + uint64_t(x - q * n >= n);
+    }
+    void addBatch(const uint64_t* values, size_t count) {
+        for (size_t j = 0; j < count; ++j) {
+            const uint64_t v = values[j];
+            pf_check(v < n, "witness out of range");
+            const uint64_t b = bucketOf(v);
+            auto& bucket = buf[b];
+            const size_t oldCapacity = bucket.capacity();
+            bucket.push_back(v);
+            totalRam += 8 * (bucket.capacity() - oldCapacity);
+            ++totalValues;
+            while (totalRam > ramBudget) spillLargest();
+        }
     }
     static void putVarint(std::vector<uint8_t>& out, uint64_t v) {
         do {
@@ -2710,6 +2725,55 @@ struct WitBuckets {
             }
     }
 };
+
+struct WitnessBatch {
+    WitBuckets* buckets;
+    int bridgeFd;
+    std::array<uint64_t, 4096> values{};
+    size_t count = 0;
+    void flush() {
+        if (!count) return;
+        buckets->addBatch(values.data(), count);
+        if (bridgeFd >= 0) pf_write_full(bridgeFd, values.data(), count * 8, "bridge sA");
+        count = 0;
+    }
+    void operator()(uint64_t value) {
+        values[count++] = value;
+        if (count == values.size()) flush();
+    }
+};
+
+static int selftest_witness_batch() {
+    uint64_t cases = 0, seed = 1;
+    for (uint64_t n : {1ull, 2ull, 3ull, 17ull, 65535ull, 150000001ull,
+                       10000017258ull, 1300000000000ull, (~0ull / 65536)}) {
+        for (uint64_t runs : {0ull, 3474891366ull, 1300000000000ull}) {
+            WitBuckets buckets(n, runs, "/unused-witness-selftest", 1ull << 20);
+            for (unsigned j = 0; j < 100000; ++j) {
+                seed = seed * 6364136223846793005ull + 1;
+                const uint64_t v = j < 2 ? (j ? n - 1 : 0) : seed % n;
+                pf_check(buckets.bucketOf(v) == v * buckets.P / n,
+                         "witness reciprocal quotient mismatch");
+                ++cases;
+            }
+            WitnessBatch sink{&buckets, -1};
+            for (unsigned j = 0; j < 5003; ++j) sink(uint64_t(j) % n);
+            sink.flush();
+            pf_check(!sink.count && buckets.totalValues == 5003 && !buckets.spilled,
+                     "witness batch count or flush mismatch");
+            uint64_t count = 0;
+            for (uint64_t b = 0; b < buckets.P; ++b)
+                for (uint64_t v : buckets.buf[b]) {
+                    pf_check(v < n && v * buckets.P / n == b, "witness batch bucket mismatch");
+                    ++count;
+                }
+            pf_check(count == 5003, "witness batch lost values");
+        }
+    }
+    printf("WITNESS_BATCH_SELFTEST_PASS quotients=%llu partial=1 full=1 buckets=1\n",
+           (unsigned long long)cases);
+    return 0;
+}
 
 // --------------------------------------------------------------- bit output
 // v1 sxi2_write Bits: LSB-first within bytes; msb(v,w) big-endian inside
@@ -4128,6 +4192,7 @@ int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string(argv[1]) == "--benchmark-repair-chunks") return benchmark_repair_chunks();
         if (argc == 2 && std::string(argv[1]) == "--selftest-packed-bits") return selftest_packed_bits();
+        if (argc == 2 && std::string(argv[1]) == "--selftest-witness-batch") return selftest_witness_batch();
         if (argc == 2 && std::string(argv[1]) == "--selftest-stream-guard") return selftest_stream_guard();
         if (argc == 2 && std::string(argv[1]) == "--selftest-repair-chunks") return selftest_repair_chunks();
         if (argc == 2 && std::string(argv[1]) == "--selftest-sweep-monoid") return selftest_sweep_monoid();
@@ -4514,7 +4579,7 @@ int main(int argc, char** argv) {
             }
         };
 
-        Sweep sweep(n);
+        SweepImpl<WitnessBatch> sweep(n, WitnessBatch{&buckets, bridge ? bSAFd : -1});
         LceWrap slimLce{&fhSlim, {}, n, true};
         // finish-decomposed: one band's buffered fold output (the runs the
         // repair transducer emitted for that band, their global run indices,
@@ -4589,11 +4654,6 @@ int main(int argc, char** argv) {
             g_pfPhase.store(PF_REPAIR, std::memory_order_relaxed);
         };
         rs.emit = bandSink;
-        sweep.emitWitness = [&](uint64_t value) {
-            buckets.add(value);
-            if (bridge) pf_write_full(bSAFd, &value, 8, "bridge sA");
-        };
-
         // ---- main band loop: pieces -> repair -> LCE -> sweep -> witnesses
         double lceWall = 0, repairWall = 0, advanceWall = 0;
         // v3 attribution: the repair wall is a pacing diagnostic that absorbs
@@ -5263,6 +5323,7 @@ int main(int argc, char** argv) {
             PfRegion r("advance-finish", PF_ADVANCE);
             double ta = tnow();
             sweep.finish();
+            sweep.emitWitness.flush();
             advanceWall += tnow() - ta;
             r.close(); advAcc.add(r);
         }
@@ -5610,11 +5671,6 @@ int main(int argc, char** argv) {
                 prevLen = len;
             }
             BitsOut headBits(prefix + ".bits-head"), lenBits(prefix + ".bits-len");
-            // These streams have separate accumulators, buffers and files.
-            // Keep one ordered owner per stream: no fragment re-encoding or
-            // large-pool barrier is needed to encode a bounded repaired batch.
-            const int encodeThreads = std::min(2, poolThreads);
-            FinishPool encodePool(encodeThreads);
             uint64_t replayRuns = 0;
             {
                 PfRegion rw("m1-rlebwt-wait", PF_M1);
@@ -5641,24 +5697,10 @@ int main(int argc, char** argv) {
                 RepairStream rs2;
                 rs2.N = N; rs2.n = n; rs2.terminal = rs.terminal; rs2.seam = &seam;
                 rs2.sampleChecks = false;
-                std::vector<uint8_t> chars;
-                std::vector<uint64_t> lengths;
-                constexpr size_t REPLAY_BATCH = 1 << 20;
-                chars.reserve(REPLAY_BATCH); lengths.reserve(REPLAY_BATCH);
-                auto encodeBatch = [&] {
-                    if (chars.empty()) return;
-                    encodePool.run([&](int t) {
-                        if (t == 0)
-                            for (uint8_t c : chars) headBits.msb(codes[c], lens[c]);
-                        if (t == 1 || encodeThreads == 1)
-                            for (uint64_t len : lengths) lenBits.gamma(len);
-                    });
-                    chars.clear(); lengths.clear();
-                };
                 rs2.emit = [&](const NRun& v) {
-                    chars.push_back(v.c); lengths.push_back(v.len);
+                    headBits.msb(codes[v.c], lens[v.c]);
+                    lenBits.gamma(v.len);
                     ++replayRuns;
-                    if (chars.size() == REPLAY_BATCH) encodeBatch();
                 };
                 int fd = ::open((prefix + ".rlebwt").c_str(), O_RDONLY);
                 pf_check(fd >= 0, "open rlebwt for the m1 replay");
@@ -5692,7 +5734,6 @@ int main(int argc, char** argv) {
                 }
                 ::close(fd);
                 rs2.finishStream();
-                encodeBatch();
                 pf_check(replayRuns == rNorm, "m1 replay run count");
                 for (unsigned c = 0; c < 256; ++c)
                     pf_check(rs2.totals[c] == rs.totals[c] && rs2.runFreq[c] == rs.runFreq[c],

@@ -1153,3 +1153,38 @@ waits for both streams. This is a code-level reduction in redundant work;
 no N>=3 idle-box timing conclusion is drawn from the exploratory gates.
 
 The m1 two-stream follow-up passes all four packaged configurations: 150 MB product/debug, forced-spill 150 MB, one-worker/no-symbol fallback with chunk 1000003, and 10 GB product. Both expected SHA-256 values, chi/run counts, closure 0/0/0, fallbacks 0 and all exact checker/selftest results remain unchanged. Product debug dump scratch is zero. Evidence: `tools/binbwt/evidence/m1-stream-pair/`. No qualified timing claim.
+
+### Batched witness delivery: exact gates; m1 replay restored
+
+Production sweep dispatch now has a concrete `WitnessBatch` sink, rather than
+one std::function call per witness. It fills a 4096-value local array, then
+hands each complete/partial block to `WitBuckets::addBatch`; optional bridge
+writes also preserve order in blocks. Final flushing precedes all counts and
+EF construction. Every witness bound and capacity-accounted RAM/spill check
+remains in place, in the original value order.
+
+`bucketOf` caches floor(2^64/n), obtains a quotient by high multiplication,
+and corrects at most once. A constructor guard proves v*P fits in u64 for
+all v<n. The arithmetic oracle compares against division on 2700000 cases,
+including singleton texts, endpoints, large lengths and all bucket sizes;
+full/partial batch delivery and bucket membership also pass.
+
+Both m1 parallel candidates passed all exact byte/audit gates, but neither
+has qualified N>=3 idle-box performance evidence. Their extra batching and
+scheduling work is not accepted in production: the original m1 replay block
+is restored byte-for-byte from 448a7c9. This is not a proof that parallel
+encoding is impossible. The ordered repair state remains a real dependency;
+a useful parallel m1 design still needs controlled measurement. Candidate
+code/evidence remain in the preceding commits, not in the final replay.
+
+Final packaged 150 MB product/debug, 1 MiB/4-worker spilled-witness 150 MB,
+and 10 GB product gates pass both full expected SHA-256 values, chi/run
+counts, closure 0/0/0, fallbacks 0 and all product/stream/endpoint comparisons.
+Product debug dump scratch is zero. All six finish selftests and checker
+selftests exit zero. Every emit completes with piece window 100000000 before
+finish. Evidence: `tools/binbwt/evidence/batch-witness/`.
+
+No idle-box N>=3 timing series has been established. The requested 20–30
+ns/run advance floor, repair-feed reduction and pile-scale gain are not
+claimed. Repair-feed source remains unchanged; the missing finer-probe,
+dominant-substage optimization and controlled A/B work remain outstanding.
