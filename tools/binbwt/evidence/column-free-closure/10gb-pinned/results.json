@@ -1,0 +1,318 @@
+{
+  "n": 10000017258,
+  "K": 16,
+  "source_manifest": "f7cfc4343caf47d94ace5c1dc886389669e409a479e7290f0ee015e061b583a5",
+  "commands": [
+    {
+      "label": "finish",
+      "command": [
+        "/home/erikg/sxgc/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-ztc0x1mx/bundle/xsa_finish",
+        "--prefix",
+        "/mnt/nvme2n1/erikg/fused-closure-pinned-10gb/product/frag",
+        "--corpus",
+        "/mnt/nvme2n1/erikg/extcols-scratch/real10b-ref/pile-10b-snap.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--output",
+        "/mnt/nvme2n1/erikg/fused-closure-pinned-10gb/product/product.sxi2",
+        "--threads",
+        "96",
+        "--sample-count",
+        "64",
+        "--chi-expect",
+        "2676929428"
+      ],
+      "pid": 3335435,
+      "returncode": 0,
+      "seconds": 2253.407
+    },
+    {
+      "label": "order",
+      "command": [
+        "/tmp/scatter_fused",
+        "--corpus",
+        "/mnt/nvme2n1/erikg/extcols-scratch/real10b-ref/pile-10b-snap.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--scratch",
+        "/mnt/nvme2n1/erikg/fused-closure-pinned-10gb/order/waves",
+        "--tape-bands",
+        "/mnt/nvme2n1/erikg/fused-closure-pinned-10gb/order/bands",
+        "--pending-bands",
+        "16",
+        "--ram-gb",
+        "48",
+        "--par-bands",
+        "8",
+        "--threads",
+        "96",
+        "--order-sample-out",
+        "/mnt/nvme2n1/erikg/fused-closure-pinned-10gb/order-sample.sxsa",
+        "--order-sample-lo",
+        "5000006581",
+        "--order-sample-count",
+        "4096",
+        "--scratch-cap-gb",
+        "10.0"
+      ],
+      "pid": 3335436,
+      "returncode": 0,
+      "seconds": 2006.738
+    },
+    {
+      "label": "emit",
+      "command": [
+        "/home/erikg/sxgc/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-ztc0x1mx/bundle/cross_lcp_merge",
+        "--binbwt",
+        "/mnt/nvme2n1/erikg/extcols-scratch/real10b-ref/pile-10b-snap.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--out-prefix",
+        "/mnt/nvme2n1/erikg/fused-closure-pinned-10gb/product/frag",
+        "--threads",
+        "96",
+        "--tape-bands",
+        "/mnt/nvme2n1/erikg/fused-closure-pinned-10gb/order/bands"
+      ],
+      "pid": 3335437,
+      "returncode": 0,
+      "seconds": 2006.738
+    },
+    {
+      "label": "sample-order",
+      "command": [
+        "/tmp/sa_check_fused",
+        "--corpus",
+        "/mnt/nvme2n1/erikg/extcols-scratch/real10b-ref/pile-10b-snap.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--sa",
+        "/mnt/nvme2n1/erikg/fused-closure-pinned-10gb/order-sample.sxsa",
+        "--sample-first-rank",
+        "5000006581"
+      ],
+      "pid": 3399684,
+      "returncode": 0,
+      "seconds": 1.001
+    },
+    {
+      "label": "check",
+      "command": [
+        "/tmp/stream_vs_bwt_closure",
+        "--corpus",
+        "/mnt/nvme2n1/erikg/extcols-scratch/real10b-ref/pile-10b-snap.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--sa",
+        "/mnt/nvme2n1/erikg/r10sf/sa",
+        "--container",
+        "/mnt/nvme2n1/erikg/fused-closure-pinned-10gb/product/product.sxi2"
+      ],
+      "pid": 3399858,
+      "returncode": 0,
+      "seconds": 661.097
+    },
+    {
+      "label": "check-sample",
+      "command": [
+        "/tmp/stream_vs_bwt_closure",
+        "--corpus",
+        "/mnt/nvme2n1/erikg/extcols-scratch/real10b-ref/pile-10b-snap.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--sa",
+        "/mnt/nvme2n1/erikg/fused-closure-pinned-10gb/order-sample.sxsa",
+        "--sample-first-rank",
+        "5000006581",
+        "--container",
+        "/mnt/nvme2n1/erikg/fused-closure-pinned-10gb/product/product.sxi2"
+      ],
+      "pid": 3423136,
+      "returncode": 0,
+      "seconds": 58.01
+    },
+    {
+      "label": "selftest-stream-guard",
+      "command": [
+        "/home/erikg/sxgc/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-ztc0x1mx/bundle/xsa_finish",
+        "--selftest-stream-guard"
+      ],
+      "pid": 3424859,
+      "returncode": 0,
+      "seconds": 1.001
+    },
+    {
+      "label": "selftest-repair-chunks",
+      "command": [
+        "/home/erikg/sxgc/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-ztc0x1mx/bundle/xsa_finish",
+        "--selftest-repair-chunks"
+      ],
+      "pid": 3424900,
+      "returncode": 0,
+      "seconds": 1.001
+    },
+    {
+      "label": "selftest-sweep-monoid",
+      "command": [
+        "/home/erikg/sxgc/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-ztc0x1mx/bundle/xsa_finish",
+        "--selftest-sweep-monoid"
+      ],
+      "pid": 3424924,
+      "returncode": 0,
+      "seconds": 1.001
+    },
+    {
+      "label": "selftest-packed-bits",
+      "command": [
+        "/home/erikg/sxgc/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-ztc0x1mx/bundle/xsa_finish",
+        "--selftest-packed-bits"
+      ],
+      "pid": 3425029,
+      "returncode": 0,
+      "seconds": 1.001
+    },
+    {
+      "label": "selftest-witness-batch",
+      "command": [
+        "/home/erikg/sxgc/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-ztc0x1mx/bundle/xsa_finish",
+        "--selftest-witness-batch"
+      ],
+      "pid": 3425064,
+      "returncode": 0,
+      "seconds": 1.002
+    },
+    {
+      "label": "selftest-seam-spool",
+      "command": [
+        "/home/erikg/sxgc/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-ztc0x1mx/bundle/xsa_finish",
+        "--selftest-seam-spool",
+        "/mnt/nvme2n1/erikg/fused-closure-pinned-10gb/selftest-spool"
+      ],
+      "pid": 3425108,
+      "returncode": 0,
+      "seconds": 1.001
+    },
+    {
+      "label": "checker-selftest",
+      "command": [
+        "/tmp/stream_vs_bwt_closure",
+        "--selftest"
+      ],
+      "pid": 3425145,
+      "returncode": 0,
+      "seconds": 1.002
+    }
+  ],
+  "peak_order_allocated": 15044878336,
+  "peak_all_allocated": 36721053696,
+  "peak_intermediate_allocated": 36721053696,
+  "scratch_sample_period_seconds": 1,
+  "scratch_scope": "order=waves+unconsumed packed bands+optional generated column; all=entire new run directory; intermediate=all minus container and explicit debug dump; read-only validation fixtures excluded",
+  "timing_qualification": "single-run observations; no paired N>=3 A/B; speed effects unverifiable",
+  "binary_sha256": {
+    "cross_lcp_merge": "5f559a8d0857c8abc9fc6820a5725d3d361e963b90da7e29fd77d8b514da15b9",
+    "xsa_finish": "c2de2941b20d4581a7363263435afdd7be5847927751344b5782f012d62dcfde"
+  },
+  "sorter_sha256": "9bd4bb90d3e2f98fb91ff3f089b12ac98f86bcc2fad242aef08a123c8ec099a9",
+  "sample_checker_sha256": "ad485276bb25302408981c7e5175a8420d944200b9bee190b121ba2f710201dc",
+  "stream_checker_sha256": "69c076a102c3cbfe3e2352c59828b20a62137ad13d7626c951326e13a1fcde9c",
+  "piece_window": 1307,
+  "component_peaks": {
+    "packed_bands": 2367881216,
+    "waves": 15044771840,
+    "other:order": 0,
+    "pfck2": 3636465664,
+    "other:product": 2928640,
+    "other:du.tsv": 262144,
+    "other:scratch-components.jsonl": 2490368,
+    "other:finish.log": 262144,
+    "other:results.json": 12288,
+    "other:order.log": 8192,
+    "other:emit.log": 4096,
+    "other:.": 4096,
+    "pieces": 1167179776,
+    "rlebwt": 20917776384,
+    "sparse2": 33423360,
+    "other:order-sample.sxsa": 36864,
+    "other:product/frag.runcols.consumed": 4096,
+    "witness_spills": 3038904320,
+    "other:product/frag.rlebwt.meta": 8192,
+    "other:product/frag.runexc": 1572864,
+    "other:scratch-decomposition.md": 4096,
+    "container": 7517372416,
+    "bits-low": 403701760,
+    "bits-high": 2016411648,
+    "bits-head": 4164943872,
+    "bits-len": 1076887552,
+    "other:sample-order.log": 4096,
+    "other:check.log": 4096,
+    "other:check-sample.log": 4096,
+    "other:selftest-stream-guard.log": 4096,
+    "other:selftest-repair-chunks.log": 495616,
+    "other:selftest-sweep-monoid.log": 3657728,
+    "other:selftest-packed-bits.log": 4096,
+    "other:selftest-witness-batch.log": 4096,
+    "other:selftest-seam-spool.log": 4096,
+    "other:selftest-spool": 0,
+    "other:checker-selftest.log": 4096
+  },
+  "peak_live_wire_bytes": 22084939776,
+  "peak_live_wire_over_n": 2.208490166187671,
+  "whole_peak_sample": {
+    "elapsed": 1912.595,
+    "phase": "order+emit+finish",
+    "total_bytes": 36721053696,
+    "components": {
+      "packed_bands": 151552,
+      "waves": 8282816512,
+      "other:order": 0,
+      "pfck2": 3636379648,
+      "pieces": 1134129152,
+      "rlebwt": 20917776384,
+      "sparse2": 33423360,
+      "witness_spills": 2711556096,
+      "other:product/frag.runcols.consumed": 4096,
+      "other:product": 2928640,
+      "other:du.tsv": 262144,
+      "other:scratch-components.jsonl": 1441792,
+      "other:finish.log": 131072,
+      "other:results.json": 4096,
+      "other:order.log": 8192,
+      "other:emit.log": 4096,
+      "other:order-sample.sxsa": 36864,
+      "other:.": 0
+    },
+    "traversal_seconds": 0.35744
+  },
+  "kernel_exit_races": [
+    {
+      "label": "order",
+      "pid": 3335436,
+      "pf_exiting": true,
+      "returncode": 0
+    }
+  ],
+  "no_full_sa_or_sym_generated": true,
+  "sample": {
+    "first_rank": 5000006581,
+    "count": 4096,
+    "adjacent_pairs": 4095,
+    "global_permutation_checked": false
+  },
+  "closure": "XSA_FINISH_KASAI_CLOSURE bands=53004 rank_holes=0 disorder=0 noncontiguous_runs=0 walk_fallbacks=0 max_rank_end=10000017258 n=10000017258",
+  "chi": 2676929428,
+  "runs": 3474891366,
+  "sha256": "22d0ce7493c6238a9d2e7f4e9a0decdf5841ff72a845d856bebaecd6d34bdaee",
+  "stream_sample": {
+    "first_rank": 5000006581,
+    "count": 4096,
+    "mismatches": 0,
+    "decoded_extent_rows": 10000017258,
+    "source": "retained sorter SA sample"
+  },
+  "peak_order_over_n": 1.5044852371593778,
+  "peak_intermediate_over_n": 3.67209903229149,
+  "passed": true,
+  "passed_scope": "byte product and enabled audits; space acceptance evaluated separately",
+  "space_acceptance_passed": false
+}

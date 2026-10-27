@@ -27,3 +27,15 @@ Additionally, full independent BWT comparison against the read-only full SA fixt
 The first renewed attempt was stopped cleanly with all three stages reaped and no container accepted. Its corpus-sized mapping budget rounded each of four windows down to pages, leaving 15448 bytes uncovered: need_windows=5 and pinned=0. The fallback takes a shared mutex on every corpus byte; this is not a useful qualification of the intended pinned product path. The desired mapping budget now rounds UP to four pages before applying the unchanged hard RLIMIT_AS/3 ceiling. Under insufficient address space the locked bounded path remains; no resource limit or byte/audit guard is waived. Native and packaged gates must be repeated before relaunch. The aborted logs and complete sampler are retained under 100gb-window-rounding-aborted.
 
 The mapping correction passes the renewed 150 MB byte/closure/full-BWT/sample gates and all seven selftests. Observed whole peak: 3.090431979n. The native finish and emitter are byte-identical to the successful packaged release build. A launch permission-bit mistake was corrected before any stage ran. Two subsequent attempts exposed /proc/io becoming unreadable during kernel exit_mm; the final runner accepts only a proven PF_EXITING process that becomes waitable within five seconds, records the kernel exit race, and still rejects unreadable live processes. The successful run records order PF_EXITING=true, returncode=0; no progress timeout, disk guard or byte audit is waived.
+
+## 10gb-pinned concurrent column-free gate
+
+SHA `22d0ce7493c6238a9d2e7f4e9a0decdf5841ff72a845d856bebaecd6d34bdaee`, chi 2676929428, runs 3474891366.
+XSA_FINISH_KASAI_CLOSURE bands=53004 rank_holes=0 disorder=0 noncontiguous_runs=0 walk_fallbacks=0 max_rank_end=10000017258 n=10000017258
+
+Observed whole-run peak 36721053696 bytes = 3.67209903229149n. Stacked table and complete one-second component samples are retained in 10gb-pinned.
+
+Order / emit / finish walls (seconds): 2006.738 / 2006.738 / 2253.407. These are overlapping stage lifetimes, not additive.
+
+Sampled STREAM_VS_BWT: {'first_rank': 5000006581, 'count': 4096, 'mismatches': 0, 'decoded_extent_rows': 10000017258, 'source': 'retained sorter SA sample'}. All m1 runs are decoded and their total extent checked; only the named central 4096 ranks are compared to remapped corpus predecessors. Local exact suffix order checks cover 4095 adjacent pairs.
+Additionally, full independent BWT comparison against the read-only full SA fixture passes with zero mismatches.

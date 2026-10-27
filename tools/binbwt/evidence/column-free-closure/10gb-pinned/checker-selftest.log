@@ -1,0 +1,11 @@
+MISMATCH row=0 got=97 want=98
+MISMATCH row=0 got=97 want=98
+MISMATCH row=1 got=98 want=97
+STREAM_VS_BWT rows=3 runs=2 mismatches=0 convention=finite-SA,wrapped-predecessor
+STREAM_VS_BWT rows=3 runs=1 mismatches=1 convention=finite-SA,wrapped-predecessor
+STREAM_VS_BWT_SAMPLE first_rank=1 sampled_rows=2 total_rows=3 mismatches=0
+STREAM_VS_BWT rows=3 runs=2 mismatches=0 convention=finite-SA,wrapped-predecessor
+STREAM_VS_BWT_SAMPLE first_rank=1 sampled_rows=2 total_rows=3 mismatches=1
+STREAM_VS_BWT rows=3 runs=2 mismatches=1 convention=finite-SA,wrapped-predecessor
+STREAM_VS_BWT rows=3 runs=2 mismatches=0 convention=finite-SA,wrapped-predecessor
+STREAM_VS_BWT_SELFTEST_PASS corruption,truncation,extent,remap,wrap,gamma,Huffman
