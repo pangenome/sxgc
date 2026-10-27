@@ -1,0 +1,29 @@
+SS_START n=454752 row_bytes=32 cap_bytes=909504 (2.00n) rows_per_wave=27000 waves=17 ram_gb=48.00 rows_per_band=843 par_bands=8 threads=8
+SS_WAVES count=24 (byte-range waves)
+SS_SAMPLE samples=454752 stride=1 wall=0.04
+SS_TAPE K=8 packed_row_bytes=8 wave_cap=909504
+SS_WAVE w=1/24 bands=30 wall=0.11 scan=0.07 | band_sum read=0.01 sort=0.00 write=0.00 | band_max read=0.00 sort=0.00 write=0.00
+SS_WAVE w=2/24 bands=31 wall=0.05 scan=0.01 | band_sum read=0.01 sort=0.00 write=0.01 | band_max read=0.00 sort=0.00 write=0.00
+SS_WAVE w=3/24 bands=32 wall=0.06 scan=0.01 | band_sum read=0.01 sort=0.00 write=0.01 | band_max read=0.00 sort=0.00 write=0.00
+SS_WAVE w=4/24 bands=32 wall=0.07 scan=0.01 | band_sum read=0.03 sort=0.00 write=0.01 | band_max read=0.00 sort=0.00 write=0.00
+SS_WAVE w=5/24 bands=32 wall=0.05 scan=0.00 | band_sum read=0.00 sort=0.00 write=0.01 | band_max read=0.00 sort=0.00 write=0.00
+SS_WAVE w=6/24 bands=31 wall=0.05 scan=0.01 | band_sum read=0.02 sort=0.00 write=0.01 | band_max read=0.00 sort=0.00 write=0.00
+SS_WAVE w=7/24 bands=32 wall=0.05 scan=0.01 | band_sum read=0.02 sort=0.00 write=0.01 | band_max read=0.00 sort=0.00 write=0.00
+SS_WAVE w=8/24 bands=32 wall=0.06 scan=0.01 | band_sum read=0.02 sort=0.00 write=0.01 | band_max read=0.00 sort=0.00 write=0.00
+SS_WAVE w=9/24 bands=32 wall=0.06 scan=0.01 | band_sum read=0.03 sort=0.00 write=0.01 | band_max read=0.00 sort=0.00 write=0.00
+SS_WAVE w=10/24 bands=32 wall=0.06 scan=0.01 | band_sum read=0.02 sort=0.00 write=0.01 | band_max read=0.00 sort=0.00 write=0.00
+SS_WAVE w=11/24 bands=32 wall=0.05 scan=0.00 | band_sum read=0.01 sort=0.00 write=0.01 | band_max read=0.00 sort=0.00 write=0.00
+SS_WAVE w=12/24 bands=32 wall=0.05 scan=0.00 | band_sum read=0.00 sort=0.00 write=0.01 | band_max read=0.00 sort=0.00 write=0.00
+SS_WAVE w=13/24 bands=32 wall=0.05 scan=0.01 | band_sum read=0.02 sort=0.00 write=0.01 | band_max read=0.00 sort=0.00 write=0.00
+SS_WAVE w=14/24 bands=32 wall=0.05 scan=0.01 | band_sum read=0.02 sort=0.00 write=0.01 | band_max read=0.00 sort=0.00 write=0.00
+SS_WAVE w=15/24 bands=32 wall=0.05 scan=0.01 | band_sum read=0.02 sort=0.00 write=0.01 | band_max read=0.00 sort=0.00 write=0.00
+SS_WAVE w=16/24 bands=32 wall=0.06 scan=0.01 | band_sum read=0.02 sort=0.00 write=0.01 | band_max read=0.00 sort=0.00 write=0.00
+SS_WAVE w=17/24 bands=32 wall=0.05 scan=0.01 | band_sum read=0.02 sort=0.00 write=0.01 | band_max read=0.00 sort=0.00 write=0.00
+SS_WAVE w=18/24 bands=32 wall=0.05 scan=0.01 | band_sum read=0.03 sort=0.00 write=0.01 | band_max read=0.00 sort=0.00 write=0.00
+SS_WAVE w=19/24 bands=32 wall=0.05 scan=0.01 | band_sum read=0.02 sort=0.00 write=0.01 | band_max read=0.00 sort=0.00 write=0.00
+SS_WAVE w=20/24 bands=32 wall=0.05 scan=0.01 | band_sum read=0.02 sort=0.00 write=0.01 | band_max read=0.00 sort=0.00 write=0.00
+SS_WAVE w=21/24 bands=32 wall=0.06 scan=0.01 | band_sum read=0.02 sort=0.00 write=0.01 | band_max read=0.00 sort=0.00 write=0.00
+SS_WAVE w=22/24 bands=32 wall=0.05 scan=0.00 | band_sum read=0.00 sort=0.00 write=0.01 | band_max read=0.00 sort=0.00 write=0.00
+SS_WAVE w=23/24 bands=32 wall=0.05 scan=0.01 | band_sum read=0.02 sort=0.00 write=0.01 | band_max read=0.00 sort=0.00 write=0.00
+SS_WAVE w=24/24 bands=32 wall=0.05 scan=0.01 | band_sum read=0.01 sort=0.00 write=0.01 | band_max read=0.00 sort=0.00 write=0.00
+SS_DONE n=454752 waves=24 ties=32795 sample_s=0.04 waves_s=1.38 total_s=1.42

@@ -1,0 +1,2 @@
+SA_CHECK corpus_n=454752 sa_entries=4096 rows=4096 dollar=1
+SA_CHECK_SAMPLE_PASS first_rank=225328 entries=4096 adjacent_pairs=4095 global_permutation=not_checked

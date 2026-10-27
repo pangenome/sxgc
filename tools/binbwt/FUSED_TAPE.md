@@ -45,3 +45,10 @@ is byte-identical to the existing fixture baseline. Tiny allocated scratch
 exceeds 2n due to filesystem block rounding and its generated column; it is
 not a large-corpus scratch attestation. Packaged gates and large rungs follow.
 No qualified timing comparison has been made.
+
+Packaged tiny gate also passes with K=8, all six finish selftests, checker
+selftest, full BWT comparison and the identical baseline SHA. Its generated
+finite predecessor LCP column is byte-identical to `/tmp/psi_tiny.col`.
+The attempted 150 MB 0.5n wave cap was rejected **before scatter**: the largest
+byte-pair class (space/space, 3,734,619 rows) alone requires 0.839n including the
+95% wave target. The next attempt uses a 1n wave cap; the guard is retained.
