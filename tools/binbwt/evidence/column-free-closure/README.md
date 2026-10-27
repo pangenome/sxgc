@@ -39,3 +39,9 @@ Order / emit / finish walls (seconds): 2006.738 / 2006.738 / 2253.407. These are
 
 Sampled STREAM_VS_BWT: {'first_rank': 5000006581, 'count': 4096, 'mismatches': 0, 'decoded_extent_rows': 10000017258, 'source': 'retained sorter SA sample'}. All m1 runs are decoded and their total extent checked; only the named central 4096 ranks are compared to remapped corpus predecessors. Local exact suffix order checks cover 4095 adjacent pairs.
 Additionally, full independent BWT comparison against the read-only full SA fixture passes with zero mismatches.
+
+## Final 100 GB status: not attested
+
+The pinned relaunch confirmed need_windows=4 and pinned=4, with a 394288627847-byte prediction against 993392971776 bytes free; the original 966367633176-byte (9n) admission guard passed. At the last observation (5396.052 seconds), the producer had completed wave 1/52 and was actively sorting wave 2; finish had reached band 8321, 545390588 normalized runs and provisional chi 433667745. This is not a final chi/run count.
+
+While this agent waited, the detached runner was terminated outside this agent and its entire run directory, including sampler/log evidence, was removed. The runner was observed as a zombie, all three product processes were gone, and independent concurrent source modifications had appeared. Only this agent's now-idle coordinator was stopped. No 100 GB container, final whole-run peak, final closure, or sampled BWT result is accepted or claimed. The preserved launch metadata and kernel exit observation are in 100gb-launch.json and 100gb-external-termination.json. A coordinated relaunch is required. The external CLI exposes no contact_supervisor capability, so this agent did not manufacture a trusted native supervisor message or restart into another writer's changed workspace.

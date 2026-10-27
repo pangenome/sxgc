@@ -1,0 +1,21 @@
+{
+  "status": "not-attested",
+  "reason": "Detached runner terminated outside this agent and its run directory was removed while this agent was waiting. Concurrent source modifications appeared in bit6/xsa_finish.cpp, runtime copy and manifest, plus new tools/binbwt/m1_stream.cpp. No new run launched against an ambiguous shared-workspace state.",
+  "observed_utc": "2026-10-27T21:00:11Z",
+  "runner_pid": 3425299,
+  "runner_kernel_state": "Z",
+  "runner_raw_exit_code": 9,
+  "run_directory_exists": false,
+  "last_observed_sample_seconds": 5396.052,
+  "last_observed_order": "SS_WAVE w=1/52 bands=32 wall=453.80 scan=5.66 | band_sum read=92.94 sort=3371.59 write=30.23 | band_max read=5.02 sort=228.62 write=2.25",
+  "last_observed_finish": "XSA_FINISH_PROGRESS band=8321/1638400 runs=545390588 chi_so_far=433667745 repair_wall=1757.7 lce_wall=828.1 lce_wait=244.6 advance_wall=126.2 wit_spills=128715",
+  "last_observed_free_bytes": 943005052928,
+  "whole_run_peak": "unavailable: sampler directory removed externally",
+  "container_sha256": null,
+  "chi_final": null,
+  "runs_final": null,
+  "closure": "not reached",
+  "sampled_stream_check": "not reached",
+  "orchestration": "contact_supervisor is not exposed in this external CLI adapter; tool discovery found none. Parent runner metadata explicitly marks supervisor capability unsupported, so no native protocol was fabricated.",
+  "cleanup": "Stopped only our idle /tmp/closure_pinned_ladder.py coordinator after confirming all three product stage PIDs were gone; no other writer process or source changes touched."
+}
