@@ -4,8 +4,8 @@
     "cross_lcp_merge.cpp": true,
     "binbwt_slice.h": true
   },
-  "final_cargo_bundle": "/home/erikg/sxgc/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-br87n3nn/bundle",
-  "gate_bundle": "/home/erikg/sxgc/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-g2psep1f/bundle",
+  "final_cargo_bundle": "/home/erikg/sxgc/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-6zjl84f6/bundle",
+  "gate_bundle": "/home/erikg/sxgc/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-6zjl84f6/bundle",
   "final_gate_binary_identity": {
     "cross_lcp_merge": true,
     "xsa_finish": true
@@ -13,7 +13,14 @@
   "unchanged_downstream_files": [
     "bit6/xsa_finish.cpp"
   ],
-  "release_builds": "four required package+release build invocations completed successfully; existing Rust warnings",
+  "release_builds": "five required package+release build invocations completed successfully; existing Rust warnings",
   "notes": "BinBandSink and publishBin have no edits; only tape input and CLI dispatch changed in emitter sources.",
-  "publishBin_through_tape_emit_boundary_unchanged": true
+  "publishBin_through_tape_emit_boundary_unchanged": true,
+  "hash_capacity_fix_native_packaged_identity": true,
+  "core_sources_sha256": {
+    "bit6/binbwt_slice.h": "a3b857f407e1bbb163a1ab11a47700dbba9192590c052c713b7776abef956f07",
+    "bit6/cross_lcp_merge.cpp": "18f484745bada2c24a64d97d9eda30f004964104aa23aceed2e26d828c1e4068",
+    "tools/binbwt/scatter_sort.cpp": "a2d1a2f15a29d7fbf51e7ebfe1bea25e934ce3c6af403f78c7e8962a0b5548eb",
+    "tools/binbwt/sa_check.cpp": "ef8b913c968f26a053d55407396b41f7cc54995ed3800d0959a8a40b1ed2f059"
+  }
 }

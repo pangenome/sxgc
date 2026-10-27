@@ -1,0 +1,10 @@
+{
+  "peak_allocated_wave_bands": 13457100800,
+  "peak_over_n": 1.345707757577552,
+  "max_live_band_files": 16,
+  "max_observed_band_bytes": 2118754064,
+  "samples": 3663,
+  "period_seconds": 1,
+  "scope": "scatter wave parts plus unconsumed packed bands and protocol metadata; column/ISA counted separately by fused_gate",
+  "measurement": "du allocated blocks; one-second samples are a lower bound on continuous peak"
+}

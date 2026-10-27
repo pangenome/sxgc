@@ -124,3 +124,24 @@ required SHA, chi 44,034,231, runs 57,279,187, closure 0/0/0, fallbacks 0,
 full STREAM_VS_BWT zero mismatches and zero product debug dump scratch.
 This run uses the existing read-only reference column and sampled ISA;
 the previous fully generated-column measurement remains separately recorded.
+
+## 10gb-hashfix measured result
+
+SHA `22d0ce7493c6238a9d2e7f4e9a0decdf5841ff72a845d856bebaecd6d34bdaee`, chi 2676929428, runs 3474891366.
+XSA_FINISH_KASAI_CLOSURE bands=53004 rank_holes=0 disorder=0 noncontiguous_runs=0 walk_fallbacks=0 max_rank_end=10000017258 n=10000017258. Product debug dump scratch is zero.
+Wave/band allocated highwater: 13,457,100,800 bytes
+(1.345708n), sampled once a second.
+Order including column/ISA: 19,968,954,368 bytes
+(1.996892n). All product intermediates:
+85,714,210,816 bytes (8.571406n).
+K=16, maximum observed live packed band files=16.
+No full SA or standalone symbol stream was generated. Only a 4096-row
+validation sample was retained; 4095 adjacent pairs pass exact sa_check.
+Sample starts at rank 5000006581; global permutation is not
+checked by that sample. Order/emit/finish observed walls (seconds):
+1688.027/1382.184/1445.371. These are single
+run operational observations; no paired N>=3 comparison, timing effect, or
+speedup is established. The unchanged downstream intermediates exceed 2n,
+so the measured wave/band bound is not a 2n total-product scratch claim.
+Full independent STREAM_VS_BWT comparison passes with zero mismatches.
+All six finish selftests and the checker selftest exit zero.
