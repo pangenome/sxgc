@@ -1188,3 +1188,48 @@ No idle-box N>=3 timing series has been established. The requested 20–30
 ns/run advance floor, repair-feed reduction and pile-scale gain are not
 claimed. Repair-feed source remains unchanged; the missing finer-probe,
 dominant-substage optimization and controlled A/B work remain outstanding.
+
+### Final retained scope and remaining acceptance work
+
+| Item | Final state |
+| --- | --- |
+| Tape word building | Parallel disjoint ranges on persistent workers; ordered serial publication retained |
+| m5 presort / EF encoding | Parallel independent value buckets; ordered bit concatenation and publication retained |
+| m1-runs / m1-replay | Original serial replay restored; two byte-exact parallel candidates were not retained without qualified performance evidence |
+| advance-witness | Concrete 4096-value batch sink and exact cached bucket division retained; target cost floor unvalidated |
+| repair-feed | Unchanged; dominant-substage optimization remains undone |
+| N>=3 idle A/B timing acceptance | Not met; no speedup, phase reduction or pile projection claimed |
+
+The regions are nested: m5-ef includes presort/encode, and m1-runs includes
+m1-replay. Their walls must not be added as independent phase costs. The
+correctness gate also samples directory sizes recursively; its timings are
+not a replacement for isolated native A/B trials.
+
+After the final native gate completed, a separate process-CPU snapshot found
+five external Python jobs actively accruing CPU. The box remained non-idle;
+`batch-witness/final-idle-probe.json` records that condition and zero qualified
+timing trials. Other users' jobs were not altered. The remaining work is:
+obtain an idle measurement window, perform alternating N>=3 native A/B trials
+with product hashes, establish or reject witness cost improvements, revisit
+m1 parallelism, and restore/use the finer repair probes to optimize its
+measured dominant sub-stage. The full performance mandate is **not complete**.
+
+All 59 packaged source hashes verify, the two C++ runtime mirrors are exact,
+and the final m1 replay block is byte-identical to 448a7c9; see
+`batch-witness/source-check.json`. All retained C++ changes have packaged
+release builds and exact 150 MB followed by 10 GB gates. Corpus fixtures are
+untouched; no full inverse is constructed or read by the product path, and
+product debug dump scratch remains zero. No guard or audit was weakened.
+
+To recreate the temporary verification column without an inverse:
+
+```sh
+python3 tools/binbwt/normalize_lcp_column.py \
+  --sa /mnt/nvme2n1/erikg/r10sf/sa \
+  --successor-column /mnt/nvme2n1/erikg/col10/col \
+  --output /dev/shm/sxgc-r10sf-validation/col
+```
+
+The output must be absent before this command. The original column remains
+read-only. Exact gate commands, native binary hashes, closures, product hashes
+and checker/selftest exit codes are recorded in the evidence JSON files.

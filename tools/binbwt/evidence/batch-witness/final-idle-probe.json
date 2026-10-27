@@ -1,0 +1,36 @@
+{
+  "timestamp_utc": "2026-10-27T04:03:50Z",
+  "observation_seconds": 2.098,
+  "clock_ticks_per_second": 100,
+  "external_active_processes": [
+    {
+      "pid": 1816055,
+      "comm": "python",
+      "cpu_ticks_advanced": 210
+    },
+    {
+      "pid": 3722492,
+      "comm": "python",
+      "cpu_ticks_advanced": 210
+    },
+    {
+      "pid": 3723075,
+      "comm": "python",
+      "cpu_ticks_advanced": 210
+    },
+    {
+      "pid": 3723833,
+      "comm": "python",
+      "cpu_ticks_advanced": 210
+    },
+    {
+      "pid": 4175994,
+      "comm": "python",
+      "cpu_ticks_advanced": 210
+    }
+  ],
+  "idle_box": false,
+  "qualified_timing_trials": 0,
+  "required_repeats": 3,
+  "decision": "Do not use correctness-gate observations as performance acceptance; external work is active."
+}
