@@ -26,7 +26,7 @@ class ConcurrentFailure(unittest.TestCase):
             proc = subprocess.run(['python3', str(Path(__file__).with_name('fused_gate.py')),
                                    '--bundle', str(bundle), '--sorter', str(bundle / 'sorter'),
                                    '--root', str(run), '--corpus', str(corpus), '--remap', str(corpus),
-                                   '--sample-checker', str(bundle / 'sorter')],
+                                   '--sample-checker', str(bundle / 'sorter'), '--checker', str(bundle / 'sorter')],
                                   capture_output=True, text=True, timeout=15)
             self.assertNotEqual(proc.returncode, 0)
             result = json.loads((run / 'results.json').read_text())

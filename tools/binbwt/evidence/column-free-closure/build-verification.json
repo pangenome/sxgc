@@ -9,5 +9,9 @@
     "cross_lcp_merge": true
   },
   "failure_path_integration": "passed",
-  "checker_selftest": "passed, includes offset/coverage and corrupt sampled rank comparisons"
+  "checker_selftest": "passed, includes offset/coverage and corrupt sampled rank comparisons",
+  "stream_checker_sha256": "69c076a102c3cbfe3e2352c59828b20a62137ad13d7626c951326e13a1fcde9c",
+  "all_three_cargo_release_invocations": "passed (4m09s; 8m10s including lock wait; 7m53s including lock wait)",
+  "source_hash_verification_count": 59,
+  "source_hashes_verified": true
 }

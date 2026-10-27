@@ -1,0 +1,6 @@
+CROSS_SEAM_DISCOVERED n=10000017258 depth=10 raw_classes=9 aggregate_occurrences=2068022 unique_targets=2068022 limit=10000017 work_limit=160000276128 before_walk=1 bounded=1
+TAPE_EMIT_START n=10000017258 targets=2068022 chunk=4194304 prefix=/mnt/nvme2n1/erikg/fused-closure-10gb/product/frag
+TAPE_EMIT_RUNEXC path=/mnt/nvme2n1/erikg/fused-closure-10gb/product/frag.runexc count=65535
+TAPE_EMIT_STATS slot_wait_s=0.01 flow_wait_s=610.15 row_loop_s=772.06 writers=32
+TAPE_EMIT_DONE rows=10000017258 runs=3474891368 hits=2068022 wall=1933.81 read_s=45.62 word_s=25.91 publish_s=772.06 finish_s=0.70
+POOL_STATS fd=4 bytes=10000017258 slots=1048576 fills=1857415 hits=210618 misses=1857415 torn=0

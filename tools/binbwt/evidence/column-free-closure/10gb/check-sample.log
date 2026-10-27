@@ -1,0 +1,2 @@
+STREAM_VS_BWT_SAMPLE first_rank=5000006581 sampled_rows=4096 total_rows=10000017258 mismatches=0
+STREAM_VS_BWT rows=10000017258 runs=3474891366 mismatches=0 convention=finite-SA,wrapped-predecessor
