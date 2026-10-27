@@ -32,6 +32,13 @@ p.add_argument('--audit-column', action='store_true', help='explicit debug/audit
 p.add_argument('--space-qualification', help='accepted column-free 10 GB results authorizing measured 100 GB capacity preflight')
 p.add_argument('--piece-window', type=int, help='override automatic 0.15n piece credit budget')
 p.add_argument('--selftests', action='store_true')
+p.add_argument('--sample-period', type=float, default=0.25,
+               help='allocated-scratch sample period in seconds (default 0.25: one-second sampling has missed a peak)')
+p.add_argument('--m1-replay', action='store_true',
+               help='legacy two-pass m1 arm (rlebwt wire + replay); A/B decode only')
+p.add_argument('--m1-checker', default='/tmp/m1_stream',
+               help='m1 stream decoder used for the route-B round-trip A/B')
+p.add_argument('--m1-ab', help='banked container to compare the decoded m1 run stream against')
 p.add_argument('--sample-checker', default='/tmp/sa_check_fused')
 p.add_argument('--checker', default='/tmp/stream_vs_bwt')
 a = p.parse_args()
@@ -71,7 +78,8 @@ sample_count = min(4096, n)
 sample_lo = (n - sample_count) // 2
 result = dict(n=n, K=a.pending_bands, source_manifest=json.loads((bundle/'MANIFEST.sha256').read_text())['source_sha256'],
               commands=[], peak_order_allocated=0, peak_all_allocated=0,
-              peak_intermediate_allocated=0, scratch_sample_period_seconds=1,
+              peak_intermediate_allocated=0, scratch_sample_period_seconds=a.sample_period,
+              m1_arm='legacy-replay' if a.m1_replay else 'route-b',
               scratch_scope='order=waves+unconsumed packed bands+optional generated column; all=entire new run directory; intermediate=all minus container and explicit debug dump; read-only validation fixtures excluded',
               timing_qualification='single-run observations; no paired N>=3 A/B; speed effects unverifiable')
 def file_sha(path):
@@ -96,6 +104,9 @@ piece_window = a.piece_window if a.piece_window is not None else max(
 if piece_window < 2: p.error('piece window must be >=2 for seam lookahead')
 result['piece_window'] = piece_window
 env = dict(clean, CROSS_V2_PIECE_WINDOW=str(piece_window))
+if a.m1_replay:
+    # The legacy arm needs the wire the new arm deletes.
+    env['CROSS_RLEBWT'] = '1'
 processes = []
 samples = (root / 'du.tsv').open('w', buffering=1)
 samples.write('elapsed\tphase\torder_allocated\tall_allocated\tintermediate_allocated\tfree\n')
@@ -166,7 +177,7 @@ def run(label, cmd, e=clean):
     item = spawn(label, cmd, e)
     while item[0].poll() is None:
         sample(label)
-        time.sleep(max(0.0, last_sample_started+1-time.monotonic()))
+        time.sleep(max(0.0, last_sample_started+a.sample_period-time.monotonic()))
     return finish_entry(item)
 
 try:
@@ -199,6 +210,7 @@ try:
     if a.chi: cmd += ['--chi-expect', a.chi]
     if a.column: cmd += ['--lcp-column', a.column]
     if a.isa_sample: cmd += ['--isa-sample', a.isa_sample]
+    if a.m1_replay: cmd += ['--m1-replay']
     fe = dict(clean)
     if a.debug:
         cmd += ['--debug-artifacts']
@@ -252,8 +264,20 @@ try:
             last_signature = signature
         elif time.monotonic() - last_progress > 60:
             raise RuntimeError('pipeline parked for 60s: no CPU or I/O progress; terminating all stages')
-        if pending: time.sleep(max(0.0, last_sample_started+1-time.monotonic()))
+        if pending: time.sleep(max(0.0, last_sample_started+a.sample_period-time.monotonic()))
     assert 'SS_DONE' in texts['order'] and 'TAPE_EMIT_DONE' in texts['emit']
+    if a.m1_replay:
+        # The legacy finish consumes the wire and unlinks it after publishing;
+        # that line is the proof the two-pass arm really ran on a wire.
+        assert 'XSA_FINISH_RLEBWT_DELETED' in texts['finish'], 'legacy arm did not consume an rlebwt wire'
+    else:
+        # The route-B claim is that the wire is never written: an absent file, a
+        # never-allocated component, and the finish's own absence guard.
+        assert not Path(str(prefix)+'.rlebwt').exists(), 'route-B arm wrote an rlebwt wire'
+        assert not Path(str(prefix)+'.rlebwt.meta').exists(), 'route-B arm wrote rlebwt.meta'
+        assert result['component_peaks'].get('rlebwt', 0) == 0, 'route-B sampled rlebwt blocks'
+        assert 'XSA_FINISH_RLEBWT_NEVER_WRITTEN' in texts['finish'], 'finish did not report route B'
+        assert 'CROSS_RLEBWT_ABSENT arm=route-b' in texts['emit'], 'producer did not report route B'
     assert not list((order/'bands').glob('*.sa')), 'unconsumed bands'
     assert not list((order/'waves').iterdir()), 'unconsumed scatter parts'
     assert not list(Path(str(prefix)+'.pieces').glob('p-*')), 'unconsumed pieces'
@@ -291,6 +315,16 @@ try:
     assert f'sampled_rows={sample_count} total_rows={n} mismatches=0' in sample_text
     result['stream_sample'] = dict(first_rank=sample_lo, count=sample_count, mismatches=0,
                                   decoded_extent_rows=n, source='retained sorter SA sample')
+    if a.m1_ab:
+        # GATE (b): decode the m1 member of BOTH containers and compare the
+        # decoded normalized run stream run by run. Exact equality, no sampling.
+        text = run('m1-ab', [a.m1_checker, product/'product.sxi2', '--compare', a.m1_ab])
+        assert 'M1_AB_RESULT PASS' in text, 'm1 decoded run stream differs from the A/B arm'
+        result['m1_ab'] = dict(baseline=str(Path(a.m1_ab).resolve()), equal=True,
+                               line=next(l for l in text.splitlines() if l.startswith('M1_AB ')))
+    text = run('m1-stream', [a.m1_checker, product/'product.sxi2'])
+    result['m1_stream'] = dict(line=next(l for l in text.splitlines() if l.startswith('M1_STREAM ')),
+                               codebook=next(l for l in text.splitlines() if l.startswith('M1_CODEBOOK ')))
     if a.selftests:
         for flag in ('stream-guard', 'repair-chunks', 'sweep-monoid', 'packed-bits', 'witness-batch', 'seam-spool'):
             cmd = [bundle/'xsa_finish', '--selftest-'+flag]
@@ -303,6 +337,7 @@ try:
     result['passed_scope'] = 'byte product and enabled audits; space acceptance evaluated separately'
     result['space_acceptance_passed'] = (result['peak_all_allocated'] <= 2*n and
                                          result['peak_live_wire_bytes'] <= 0.5*n)
+
     sample('done')
     save()
     print(json.dumps(result, indent=2))

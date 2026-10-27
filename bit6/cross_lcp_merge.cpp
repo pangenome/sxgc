@@ -3524,6 +3524,29 @@ static bool v2_pieces_enabled() {
     return e && e[0] == '1' && e[1] == '\0';
 }
 static U v2_band_size() { return 65536; }
+// ROUTE B (default): the v2 producer does NOT write the rlebwt wire.
+//
+// That wire existed for one consumer: the finish's two-pass m1, whose head
+// codebook needs the complete run histogram and therefore could not encode
+// during its own sweep. m1 now encodes during the sweep from a codebook derived
+// from the corpus byte histogram (a permutation invariant of the text), so the
+// wire has no reader. It measured 2.09n of allocated scratch at 10 GB - more
+// than half the observed whole-run peak (3.976n).
+//
+// `CROSS_RLEBWT=1` restores the wire byte-identically for the legacy A/B decode
+// arm; it is also forced on by the production-oracle selftest below, which
+// compares this producer's wire against the four-file emitter. The non-v2
+// four-file emitter (emit_four_ext) is untouched: its .ssa/.ssa_t/.rlebwt set is
+// a banked contract with other consumers.
+static bool g_rlebwtForced = false;
+static bool rlebwt_wire_enabled() {
+    if (g_rlebwtForced) return true;
+    static const bool env = [] {
+        const char* e = getenv("CROSS_RLEBWT");
+        return e && *e && std::strcmp(e, "0") != 0;
+    }();
+    return env;
+}
 static U v2_piece_window() {
     const char* e = getenv("CROSS_V2_PIECE_WINDOW");
     U window = e ? U(strtoull(e, nullptr, 10)) : 1100;
@@ -3633,14 +3656,18 @@ struct SequentialV2 : SparseWalkSink {
     U n, index = 0, rows = 0, next = 0, bandStart = 0, admittedBand = UINT64_MAX;
     U window, width;
     std::string prefix, dir;
-    OutFile bwt;
+    // The wire is OPTIONAL: an engaged pointer means this producer was asked for
+    // the legacy rlebwt stream (CROSS_RLEBWT=1). Route B leaves it null, so the
+    // file is never created, never written and never concatenated.
+    std::unique_ptr<OutFile> bwt;
     V2Piece piece;
     SparseRun pending;
     std::array<U, 256> counts{}, frequencies{};
     SequentialV2(const std::string& p, const CorpusText& t, U count, U inputRuns)
         : text(&t), n(count), window(v2_piece_window()),
           width(std::max<unsigned>(1, 64 - __builtin_clzll(n + 9))),
-          prefix(p), dir(p + ".pieces"), bwt(p + ".rlebwt") {
+          prefix(p), dir(p + ".pieces") {
+        if (rlebwt_wire_enabled()) bwt = std::make_unique<OutFile>(p + ".rlebwt");
         require(::mkdir(dir.c_str(), 0777) == 0, "create sequential pieces directory");
         seam.discover(t, n, std::min<U>(1u << 26, std::max<U>(1000, inputRuns / 1000)));
         for (const auto& cl : seam.raw) {
@@ -3652,6 +3679,9 @@ struct SequentialV2 : SparseWalkSink {
         }
         require(::rename((dir + "/start.tmp").c_str(), (dir + "/start").c_str()) == 0,
                 "publish band stream start");
+        std::fprintf(stderr, "CROSS_V2_WIRE rlebwt=%d rlebwt_meta=%d arm=%s\n",
+                     int(bool(bwt)), int(bool(bwt)),
+                     bwt ? "legacy-four-file" : "route-b-pieces-only");
         admitBand();
         add({t.at(n-1), 1, n, n}); add({2, 9, n+1, n+9});
     }
@@ -3702,9 +3732,9 @@ struct SequentialV2 : SparseWalkSink {
     void flush() {
         if (!pending.len) return;
         U left = pending.len;
-        while (left) {
+        while (bwt && left) {
             U take = std::min<U>(left, 0x7fffff); left -= take;
-            bwt.w32(uint32_t(pending.c) | uint32_t(take << 8) | (left ? 0x80000000u : 0u));
+            bwt->w32(uint32_t(pending.c) | uint32_t(take << 8) | (left ? 0x80000000u : 0u));
         }
         counts[pending.c] += pending.len; ++frequencies[pending.c];
         piece.add(pending.c, pending.len, pending.head, pending.tail); ++index;
@@ -3780,9 +3810,18 @@ struct SequentialV2 : SparseWalkSink {
         require(targets <= limit && seam.depth <= limit, "sequential product repair budget");
         for (const auto& cl : classes)
             require(cl.lastRun / 65536 - cl.firstRun / 65536 < window, "class exceeds W-1 bands");
-        bwt.flush();
-        { OutFile f(prefix + ".rlebwt.meta"); f.w64(n+10); f.w64(index);
-          for (U value : counts) f.w64(value); for (U value : frequencies) f.w64(value); }
+        if (bwt) {
+            bwt->flush();
+            { OutFile f(prefix + ".rlebwt.meta"); f.w64(n+10); f.w64(index);
+              for (U value : counts) f.w64(value); for (U value : frequencies) f.w64(value); }
+            std::fprintf(stderr, "CROSS_RLEBWT_WRITTEN path=%s runs=%llu\n",
+                         (prefix + ".rlebwt").c_str(), (unsigned long long)index);
+        } else {
+            // Route B: the counts/frequencies tallies stay (they are the coverage
+            // guards above); only their publication as a wire is gone.
+            std::fprintf(stderr, "CROSS_RLEBWT_ABSENT arm=route-b runs=%llu frequencies_dropped=1\n",
+                         (unsigned long long)index);
+        }
         {
             OutFile f(dir + "/terminal.tmp"); f.raw("BPT1", 4);
             f.w64((index-1)/65536); f.w64(index); f.w64(targets); f.w64(classes.size());
@@ -5219,8 +5258,13 @@ static int selftest(U cases, uint64_t seed, U threads, U kway) {
             if (dollar && cs < 20) {
                 sc.init(scratch + "/sparseprod", 0, kway);
                 Budget productionBudget; CoreStats productionStats;
+                // The oracle compares the four-file emitter's wire with this
+                // producer's, so the wire is FORCED on for the selftest: route B
+                // removing it must not remove the comparison that validates it.
+                g_rlebwtForced = true;
                 emit_sparse_v2(scratch + "/prod", sides, threads, productionBudget,
                                productionStats, sc, hashK, false);
+                g_rlebwtForced = false;
                 require(!fs::exists(sc.wm), "production oracle WM absence");
                 auto bytes = [](const std::string& path) {
                     std::ifstream f(path, std::ios::binary);

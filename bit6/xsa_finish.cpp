@@ -2908,6 +2908,148 @@ struct BitsOut {
     size_t bytes() const { return byteCount + mem.size(); }
 };
 
+// ---------------------------------------------------- ROUTE B: one-pass m1
+// THE PROBLEM the two-pass m1 solved: its head stream is a Huffman code over
+// the NORMALIZED RUN SYMBOLS, and the codebook was built from run frequencies
+// that are only complete at the end of the sweep. So the sweep could not
+// encode; the merge's rlebwt wire (4+ bytes per run) staged every run, and m1
+// replayed it from the beginning (the "m1-rle bwt wait" + "m1 replay" phases).
+// That wire is 2.09n of allocated scratch at 10 GB - more than half the
+// measured 3.976n whole-run peak.
+//
+// WHY ONE PASS SUFFICES: the BWT is a PERMUTATION of the text, so the histogram
+// of the symbols it emits is the histogram of the text's bytes. The m1 symbol
+// histogram is therefore knowable BEFORE the first run exists - it is the
+// remapped corpus byte histogram, and the finish already owns the corpus. What
+// the corpus histogram is NOT is the histogram of run STARTS (a frequent byte
+// forms long runs, so it starts fewer runs than its byte share), which is why
+// the corpus code is a slightly longer code than the exact one; m1 PUBLISHES
+// its code lengths, so the decoder is unaffected and the streams stay exactly
+// decodable. Measured on the accepted 10 GB container (tools/binbwt/m1_stream
+// --hist): corpus-histogram lengths cost 5.411692 bits/run against 5.311431 for
+// the exact-run lengths, i.e. +1.89% of the head stream = +0.0044n of container
+// bytes, in exchange for -2.09n of scratch and the whole replay phase.
+//
+// THE CANONICAL DERIVATION (reproducible, and the decoder's inverse):
+//   1. weights w[c] = max(corpus byte count of c, 1). The +1 pseudo-count is
+//      what makes the code TOTAL: every one of the 256 symbols gets a code, so
+//      no emitted symbol can lack one and no length is ever zero.
+//   2. Huffman tree by (weight, creation index) - the priority queue is keyed
+//      on (w, idx) exactly as the frozen legacy derivation is, so ties break by
+//      ascending symbol index first, then by internal-node creation order.
+//   3. lengths by an iterative depth-first walk; every leaf depth is its length.
+//   4. canonical codes: sort symbols by (length, symbol) ascending, then
+//      code = 0; for each in that order: code <<= (len - previous_len);
+//      codes[symbol] = code++; previous_len = len. That is the same
+//      length-then-symbol canonical form the m1 reader reconstructs from its
+//      256 published lengths alone (tools/binbwt/stream_vs_bwt.cpp M1, and
+//      xsa/src/sxi2.rs), so this encoder needs to publish nothing new.
+// The head stream is written MSB-first inside each code (BitsOut::msb) and the
+// lengths keep the existing gamma code, byte for byte.
+struct M1Code {
+    std::array<uint64_t, 256> lens{};
+    std::array<uint64_t, 256> codes{};
+};
+
+static M1Code canonical_huffman_m1(const std::array<uint64_t, 256>& weight) {
+    M1Code out;
+    struct Node { uint64_t w; int left, right, sym; };
+    std::vector<Node> tree;
+    tree.reserve(512);
+    using Q = std::pair<uint64_t, int>;
+    std::priority_queue<Q, std::vector<Q>, std::greater<Q>> q;
+    for (int c = 0; c < 256; ++c) {
+        const uint64_t w = std::max<uint64_t>(weight[size_t(c)], 1);
+        q.push({w, int(tree.size())});
+        tree.push_back({w, -1, -1, c});
+    }
+    while (q.size() > 1) {
+        const auto a = q.top(); q.pop();
+        const auto b = q.top(); q.pop();
+        const uint64_t w = a.first + b.first;
+        pf_check(w >= a.first && w >= b.first, "m1 codebook weight overflow");
+        tree.push_back({w, a.second, b.second, -1});
+        q.push({w, int(tree.size() - 1)});
+    }
+    std::vector<std::pair<int, unsigned>> stack{{int(q.top().second), 0}};
+    while (!stack.empty()) {
+        const auto [idx, depth] = stack.back(); stack.pop_back();
+        if (tree[size_t(idx)].sym >= 0) {
+            pf_check(depth >= 1 && depth <= 63, "m1 codebook depth exceeds 63 bits");
+            out.lens[size_t(tree[size_t(idx)].sym)] = depth;
+            continue;
+        }
+        pf_check(tree[size_t(idx)].right >= 0, "m1 codebook internal node without two children");
+        stack.push_back({tree[size_t(idx)].left, depth + 1});
+        stack.push_back({tree[size_t(idx)].right, depth + 1});
+    }
+    std::vector<std::pair<unsigned, unsigned>> order;
+    order.reserve(256);
+    for (unsigned c = 0; c < 256; ++c) {
+        pf_check(out.lens[c] >= 1 && out.lens[c] <= 63, "m1 codebook is not total");
+        order.push_back({unsigned(out.lens[c]), c});
+    }
+    std::sort(order.begin(), order.end());
+    uint64_t code = 0;
+    unsigned prevLen = 0;
+    for (const auto& [len, sym] : order) {
+        code <<= (len - prevLen);
+        pf_check(code < (uint64_t(1) << len), "m1 canonical code is oversubscribed");
+        out.codes[sym] = code++;
+        prevLen = len;
+    }
+    return out;
+}
+
+// The remapped corpus byte histogram: m1's codebook weights. `read_block` is
+// the adapter's own byte path (T[i] = REMAP[corpus[i]]), so this counts the
+// NORMALIZED symbols, i.e. exactly the alphabet m1 emits. Blocks are strided
+// across threads; every count is exact and the total is required to be n.
+static std::array<uint64_t, 256> corpus_byte_histogram(const CorpusText& text, int threads) {
+    const uint64_t n = text.size();
+    const int T = std::max(1, std::min<int>(threads, 32));
+    constexpr uint64_t block = 1ull << 20;
+    const uint64_t blocks = (n + block - 1) / block;
+    std::vector<std::array<uint64_t, 256>> partial(static_cast<size_t>(T));
+    std::vector<std::thread> pool;
+    pool.reserve(size_t(T));
+    for (int t = 0; t < T; ++t) {
+        pool.emplace_back([&, t] {
+            std::vector<uint8_t> buf(static_cast<size_t>(block));
+            auto& h = partial[size_t(t)];
+            for (uint64_t b = uint64_t(t); b < blocks; b += uint64_t(T)) {
+                const uint64_t off = b * block;
+                const uint64_t len = std::min<uint64_t>(block, n - off);
+                if (!len) continue;
+                text.read_block(off, buf.data(), len);
+                for (uint64_t i = 0; i < len; ++i) ++h[buf[size_t(i)]];
+            }
+        });
+    }
+    for (auto& th : pool) th.join();
+    std::array<uint64_t, 256> total{};
+    for (const auto& h : partial)
+        for (unsigned c = 0; c < 256; ++c) {
+            pf_check(total[c] <= UINT64_MAX - h[c], "corpus histogram overflow");
+            total[c] += h[c];
+        }
+    uint64_t sum = 0;
+    for (unsigned c = 0; c < 256; ++c) { pf_check(sum <= UINT64_MAX - total[c], "corpus histogram total overflow"); sum += total[c]; }
+    pf_check(sum == n, "corpus histogram total != n");
+    return total;
+}
+
+// A helper thread that must never outlive the main scope: pf_fail() exits, but
+// an exception must not reach std::thread's terminate().
+struct ThreadGuard {
+    std::thread t;
+    ThreadGuard() = default;
+    ThreadGuard(const ThreadGuard&) = delete;
+    ThreadGuard& operator=(const ThreadGuard&) = delete;
+    ~ThreadGuard() { if (t.joinable()) t.join(); }
+    void join() { if (t.joinable()) t.join(); }
+};
+
 static int selftest_packed_bits() {
     uint64_t cases = 0;
     for (unsigned offset = 0; offset < 64; ++offset) {
@@ -4216,6 +4358,11 @@ int main(int argc, char** argv) {
         std::string isaSamplePath;    // KASAI: sampled inverse anchors (--isa-sample)
         uint64_t repairChunkRuns = 0; // experimental exact-checkpoint planner
         bool keepRlebwt = false, keepPfck = false;
+        // ROUTE B default: m1 is encoded DURING the sweep and the merge's
+        // rlebwt wire is never written. `--m1-replay` restores the two-pass
+        // (rlebwt + replay) arm for A/B decode only; it is the frozen legacy
+        // path and must stay byte-identical to the banked container SHAs.
+        bool m1Replay = pf_env_str("XSA_FINISH_M1_REPLAY") == "1";
         for (int i = 1; i < argc; ++i) {
             std::string a = argv[i];
             auto need = [&](const char* what) -> std::string {
@@ -4243,15 +4390,21 @@ int main(int argc, char** argv) {
             else if (a == "--wit-ram-budget") ramBudget = strtoull(need("--wit-ram-budget").c_str(), nullptr, 10);
             else if (a == "--keep-rlebwt") keepRlebwt = true;
             else if (a == "--keep-pfck") keepPfck = true;
+            else if (a == "--m1-replay") m1Replay = true;
             else pf_fail("unknown argument " + a);
         }
         pf_check(!checkClaimsDir.empty() ||
                  (!prefix.empty() && !corpus.empty() && !remap.empty() && !out.empty()),
                  "usage: xsa_finish --prefix MERGED/frag --corpus CORPUS --remap MAP.bin --output CONTAINER.sxi2 "
                  "[--debug-artifacts] [--bridge-dir DIR] [--witness-sample-check BANKED.sA] [--chi-expect N] [--threads N] "
-                 "[--keep-rlebwt] [--keep-pfck] [--poll-timeout S] [--repair-chunk-runs N] "
+                 "[--keep-rlebwt] [--keep-pfck] [--poll-timeout S] [--repair-chunk-runs N] [--m1-replay] "
                  "[--lcp-column COLUMN.sxlc --sa-locate ISA.sxis]");
         pf_check(!repairChunkRuns || repairChunkRuns >= 1024, "experimental repair chunks require at least 1024 runs");
+        fprintf(stderr, "XSA_FINISH_M1_ARM %s\n",
+                m1Replay ? "legacy-replay (rlebwt wire, exact-run codebook)"
+                         : "route-b one-pass (corpus-histogram codebook, no rlebwt)");
+        pf_check(m1Replay || !keepRlebwt,
+                 "--keep-rlebwt asks for the rlebwt wire, which route B never writes; pass --m1-replay");
         double last = tnow();
         pf_prof_start();
         if (const char* acc = getenv("XSA_FINISH_ACCESS"))
@@ -4279,6 +4432,19 @@ int main(int argc, char** argv) {
         std::thread readiness([&] {
             build_pfck(text, text.size(), tau, threads, ramBudget, pfckPath);
         });
+        // ROUTE B: the m1 codebook weights, computed while the producer
+        // publishes its wire. The corpus is the only input (a permutation
+        // invariant of the BWT), the pass is read-only through the adapter's own
+        // byte path, and it is JOINED before the first run is encoded below, so
+        // it can never change what the sweep emits - only how the first bit is
+        // written. Skipped entirely by the legacy replay arm, whose codebook
+        // comes from the complete run histogram after the sweep.
+        std::unique_ptr<std::array<uint64_t, 256>> m1Weights;
+        ThreadGuard m1WeightsThread;
+        if (!m1Replay) {
+            m1Weights = std::make_unique<std::array<uint64_t, 256>>();
+            m1WeightsThread.t = std::thread([&] { *m1Weights = corpus_byte_histogram(text, 8); });
+        }
         src.load_idx();
         const uint64_t n = src.n, N = n + 10;
         uint64_t R = src.R;
@@ -4609,6 +4775,33 @@ int main(int argc, char** argv) {
         BandSlot slots[2]{BandSlot(1 << 17), BandSlot(1 << 17)};
         BandSlot* feedTarget = &slots[0];
         uint64_t prevTail = 0;
+        // ROUTE B: the m1 head/length streams and the codebook they encode with,
+        // allocated BEFORE the sweep because the sweep encodes. The weights were
+        // tallied from the corpus while the producer published its wire; joining
+        // here means the codebook is fixed before the first run exists, so the
+        // sweep is still a single deterministic pass with no lookahead.
+        std::unique_ptr<BitsOut> m1Head, m1Len;
+        M1Code m1Code{};
+        std::array<unsigned char, 256> m1LensOut{};
+        uint64_t m1SweepRuns = 0;
+        if (!m1Replay) {
+            m1WeightsThread.join();
+            m1Code = canonical_huffman_m1(*m1Weights);
+            for (unsigned c = 0; c < 256; ++c) m1LensOut[c] = (unsigned char)m1Code.lens[c];
+            uint64_t maxLen = 0, minLen = 64, symbols = 0;
+            for (unsigned c = 0; c < 256; ++c) {
+                maxLen = std::max<uint64_t>(maxLen, m1Code.lens[c]);
+                minLen = std::min<uint64_t>(minLen, m1Code.lens[c]);
+                symbols += (*m1Weights)[c] ? 1 : 0;
+            }
+            fprintf(stderr, "XSA_FINISH_M1_CODEBOOK arm=route-b source=corpus_byte_histogram "
+                    "symbols=256 observed_symbols=%llu min_len=%llu max_len=%llu pseudo_count=1 "
+                    "weights_sum=%llu\n",
+                    (unsigned long long)symbols, (unsigned long long)minLen,
+                    (unsigned long long)maxLen, (unsigned long long)n);
+            m1Head = std::make_unique<BitsOut>(prefix + ".bits-head");
+            m1Len = std::make_unique<BitsOut>(prefix + ".bits-len");
+        }
         RepairCycles repairCycles;
         repairCycles.enabled = pf_env_u64("XSA_FINISH_REPAIR_CYCLES", 1, 0, 1) && !repairChunkRuns;
         RepairStream rs;
@@ -4632,6 +4825,15 @@ int main(int argc, char** argv) {
             streamFnv = (streamFnv ^ (v.len * 0x9e3779b97f4a7c15ull + v.h + (v.t << 1) + v.c)) *
                         0x100000001b3ull;
             streamH += v.h; streamT += v.t; streamLen += v.len; ++streamRuns;
+            // ROUTE B: ENCODE HERE, one pass, in stream order. The head symbol
+            // uses the corpus-histogram canonical code (published in m1); the
+            // length keeps the existing gamma code, which is stateless and needs
+            // no codebook at all. Nothing is staged: no rlebwt, no replay.
+            if (m1Head) {
+                m1Head->msb(m1Code.codes[v.c], unsigned(m1Code.lens[v.c]));
+                m1Len->gamma(v.len);
+                ++m1SweepRuns;
+            }
             // XSA_FINISH_DUMP_STREAM (dev only): the emitted run stream, one
             // 40-byte record per run, for offline ground-truth analysis.
             if (streamDump) {
@@ -5628,12 +5830,31 @@ int main(int argc, char** argv) {
             ::close(fd);
         }
 
-        // ---- m1 runs: Huffman over the normalized run chars (frequencies
-        // accumulated during the sweep), encoded from a final rlebwt re-scan
-        // (the repair replayed sample-free: the normalized chars/lens are a
-        // deterministic function of the raw runs and the class table).
+        // ---- m1 runs.
+        // The head stream is a Huffman code over the NORMALIZED RUN SYMBOLS; the
+        // length stream is gamma-coded (stateless, no codebook at all). Only the
+        // head needs a codebook, and route B derives that codebook from a
+        // permutation invariant of the text (see canonical_huffman_m1 and
+        // corpus_byte_histogram above), so m1 is ENCODED DURING THE SWEEP in
+        // stream order (bandSink): the merge's rlebwt wire is never written and
+        // never read, and there is no replay and no second pass.
+        // LEGACY (--m1-replay, A/B decode only): the EXACT codebook needs the
+        // complete run histogram, so the runs are replayed from the rlebwt wire
+        // instead. That block is frozen - it is the path the banked container
+        // SHAs were produced by, and it must stay byte-identical.
         {
             PfRegion rM1("m1-runs", PF_M1);
+            // The legacy arm stages its streams only now (its codebook needs the
+            // complete run histogram); the one-pass arm's streams already hold
+            // every run, encoded during the sweep.
+            if (m1Replay) {
+                m1Head = std::make_unique<BitsOut>(prefix + ".bits-head");
+                m1Len = std::make_unique<BitsOut>(prefix + ".bits-len");
+            }
+            BitsOut& headBits = *m1Head;
+            BitsOut& lenBits = *m1Len;
+            uint64_t encodedRuns = m1SweepRuns;
+          if (m1Replay) {
             std::array<uint64_t, 256> freqC{};
             uint64_t freqTotal = 0;
             for (unsigned c = 0; c < 256; ++c) { freqC[c] = rs.runFreq[c]; freqTotal += rs.runFreq[c]; }
@@ -5657,7 +5878,7 @@ int main(int argc, char** argv) {
                 tree.push_back({w, a.second, b.second, -1});
                 q.push({w, int(tree.size() - 1)});
             }
-            std::array<unsigned char, 256> lens{};
+            std::array<unsigned char, 256>& lens = m1LensOut;
             std::function<void(int, unsigned)> visit = [&](int idx, unsigned depth) {
                 if (tree[idx].sym >= 0) { pf_check(depth && depth <= 63, "Huffman depth"); lens[tree[idx].sym] = uint8_t(depth); return; }
                 visit(tree[idx].left, depth + 1);
@@ -5674,7 +5895,6 @@ int main(int argc, char** argv) {
                 codes[sym] = code++;
                 prevLen = len;
             }
-            BitsOut headBits(prefix + ".bits-head"), lenBits(prefix + ".bits-len");
             uint64_t replayRuns = 0;
             {
                 PfRegion rw("m1-rlebwt-wait", PF_M1);
@@ -5744,13 +5964,36 @@ int main(int argc, char** argv) {
                              "m1 replay divergence on char " + std::to_string(c));
                 rr.close(); rr.report(replayRuns, "runs");
             }
+            encodedRuns = replayRuns;
+          } else {
+            // ROUTE B guards, before a byte of the container is written.
+            // (1) The codebook was weighted by a histogram over the SAME
+            // alphabet the sweep emitted, and the C table m1 publishes is that
+            // histogram's prefix sum. 256 exact equalities therefore prove that
+            // the corpus histogram, the codebook weights and the emitted symbol
+            // totals agree - the "the BWT is a permutation of the text" premise
+            // this arm rests on, checked per cell instead of assumed.
+            // (2) The wire this arm exists to delete must really be absent: a
+            // stale rlebwt means the producer was not told CROSS_RLEBWT=0 and
+            // the scratch saving is not what the run would claim.
+            for (unsigned c = 0; c < 256; ++c)
+                pf_check((*m1Weights)[c] == rs.totals[c],
+                         "corpus byte histogram diverges from the emitted symbol totals on char " +
+                         std::to_string(c));
+            struct stat wire {};
+            pf_check(::stat((prefix + ".rlebwt").c_str(), &wire) != 0,
+                     "route B found an rlebwt wire: the producer must run with CROSS_RLEBWT=0");
+            fprintf(stderr, "XSA_FINISH_M1_HISTOGRAM cells=256 agreement=exact weights=corpus_byte_histogram "
+                    "rlebwt_absent=1 runs=%llu\n", (unsigned long long)rNorm);
+          }
+            pf_check(encodedRuns == rNorm, "m1 encoded run count");
             headBits.pad();
             lenBits.pad();
             container.begin(1, 101, rNorm);
             // C table = prefix sums of the normalized byte totals (the ri4 C)
             uint64_t acc = 0;
             for (unsigned c = 0; c < 256; ++c) { uint64_t v = acc; acc += rs.totals[c]; container.num(v); }
-            container.write(lens.data(), 256);
+            container.write(m1LensOut.data(), 256);
             container.num(headBits.bitPos);
             container.num(lenBits.bitPos);
             headBits.copyTo(container);
@@ -5786,7 +6029,13 @@ int main(int argc, char** argv) {
             // frag.sA is a GATE artifact (the emission-order witness bridge):
             // keep it in the bridge dir.
         }
-        if (!keepRlebwt) {
+        if (!m1Replay) {
+            // ROUTE B: there is no rlebwt to release or unlink - the arm exists
+            // to never write it. The absence was already asserted before m1 was
+            // published; state it again here so the log cannot be read as a
+            // silent skip.
+            fprintf(stderr, "XSA_FINISH_RLEBWT_NEVER_WRITTEN arm=route-b\n");
+        } else if (!keepRlebwt) {
             // CACHE HYGIENE: the rlebwt has been fully replayed by m1 at this
             // point, so its pages are dead - release them before the unlink so
             // the corpus keeps the page cache it needs.

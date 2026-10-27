@@ -3133,9 +3133,19 @@ struct BinBandSink {
         require(::rename((dir + "/start.tmp").c_str(), (dir + "/start").c_str()) == 0,
                 "publish band stream start");
         prevLastPos = n + 9;            // seam.previous: the flank before row 0
-        require(!fs::exists(prefix + ".rlebwt"), "band rlebwt exists; refusing to clobber");
-        rleFd = ::open((prefix + ".rlebwt").c_str(), O_CREAT | O_EXCL | O_WRONLY, 0666);
-        require(rleFd >= 0, "create band rlebwt");
+        // ROUTE B (default): NO rlebwt wire. It existed for the finish's
+        // two-pass m1, which needed the complete run stream; m1 now encodes
+        // during its own sweep from a codebook derived from the corpus byte
+        // histogram, so the wire has no reader. At 10 GB the file measured
+        // 20,917,776,384 allocated bytes (2.091774n) against a 3.975649n whole
+        // run peak: deleting it is the single largest scratch term known.
+        // CROSS_RLEBWT=1 restores the wire, byte-identically, for the legacy
+        // A/B decode arm (and for the production-oracle selftest).
+        if (rlebwt_wire_enabled()) {
+            require(!fs::exists(prefix + ".rlebwt"), "band rlebwt exists; refusing to clobber");
+            rleFd = ::open((prefix + ".rlebwt").c_str(), O_CREAT | O_EXCL | O_WRONLY, 0666);
+            require(rleFd >= 0, "create band rlebwt");
+        }
         // THE PUBLISH BOTTLENECK: 8 writers for ~53,000 band files at 10 GB,
         // with publish blocking on only 16 slots. Measured: publish 852-1034 s
         // of a 1161-1271 s emit, i.e. syscall-bound, not compute-bound (a
@@ -3363,19 +3373,21 @@ struct BinBandSink {
             v2_write_piece(dir, job.band, 0, job.firstRun, jchars.data(),
                            jlens.data(), jheads.data(), jtails.data(), rc,
                            width);
-            std::vector<uint32_t> w32;
-            w32.reserve(rc + 16);
-            for (U i = 0; i < rc; ++i) {
-                const uint32_t c = job.runs[i].c;
-                U left = job.runs[i].len;
-                require(left, "bin-bwt band run length");
-                while (left) {
-                    U take = std::min<U>(left, 0x7fffff); left -= take;
-                    w32.push_back(c | uint32_t(take << 8) | (left ? 0x80000000u : 0u));
+            if (rleFd >= 0) {   // route B: no wire, so no word stream to build
+                std::vector<uint32_t> w32;
+                w32.reserve(rc + 16);
+                for (U i = 0; i < rc; ++i) {
+                    const uint32_t c = job.runs[i].c;
+                    U left = job.runs[i].len;
+                    require(left, "bin-bwt band run length");
+                    while (left) {
+                        U take = std::min<U>(left, 0x7fffff); left -= take;
+                        w32.push_back(c | uint32_t(take << 8) | (left ? 0x80000000u : 0u));
+                    }
                 }
+                require(w32.size() == job.words, "bin-bwt band rlebwt word count");
+                xput(rleFd, w32.data(), 4 * w32.size(), 4 * job.rlebwtOff, "band rlebwt extent");
             }
-            require(w32.size() == job.words, "bin-bwt band rlebwt word count");
-            xput(rleFd, w32.data(), 4 * w32.size(), 4 * job.rlebwtOff, "band rlebwt extent");
             require(job.gmark.size() >= 36, "band progress payload");
             const std::string tmp = dir + "/g-tmp-" + std::to_string(job.band);
             const std::string fin = dir + "/g-" + std::to_string(job.band);
@@ -3436,16 +3448,22 @@ struct BinBandSink {
         cvJob.notify_all();
         for (auto& th : writers) th.join();
         writers.clear();
-        require(::close(rleFd) == 0, "close band rlebwt");
-        rleFd = -1;
-        own.tBandWrite = tWrite;
-        own.tFlowWait = tFlow;
-        {
+        if (rleFd >= 0) {
+            require(::close(rleFd) == 0, "close band rlebwt");
+            rleFd = -1;
             OutFile f(prefix + ".rlebwt.meta");
             f.w64(n + 10); f.w64(index);
             for (U value : counts) f.w64(value);
             for (U value : frequencies) f.w64(value);
+        } else {
+            // The counts/frequencies tallies stay: counts[2] == 10 above and the
+            // run-coverage require are guards, not wire bookkeeping. Only their
+            // publication as the meta file is gone with the wire.
+            std::fprintf(stderr, "CROSS_RLEBWT_ABSENT arm=route-b producer=bin-band-sink "
+                                 "runs=%llu meta_absent=1\n", (unsigned long long)index);
         }
+        own.tBandWrite = tWrite;
+        own.tFlowWait = tFlow;
         {
             OutFile f(dir + "/terminal.tmp"); f.raw("BPT1", 4);
             f.w64((index - 1) / 65536); f.w64(index); f.w64(targetRows);
