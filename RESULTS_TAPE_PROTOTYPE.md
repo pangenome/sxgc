@@ -1000,3 +1000,82 @@ perturb attribution. No pile-scale or performance acceptance claim is made.
 Only this results document and `tools/binbwt/evidence/repair-half-*/` differ
 from 56b8b9d. Supervisor/intercom tools were unavailable in this runtime
 (tool discovery found no matching callable tool); no supervisor message was sent.
+
+## Parallelization and serial-cost follow-up (448a7c9 base)
+
+The tape word loop now builds contiguous disjoint ranges on worker threads.
+Each worker reads immutable SA/symbol/target tables, writes only its own
+`words[]` range, and accumulates a local hit count. All workers join before
+`publishBin`; publication and its ordering remain on the calling thread.
+The final partial chunk and the existing no-symbol fallback retain their
+bounds checks. Source snapshots were refreshed before the Cargo release build.
+
+The code audit of the finish phases finds the following boundaries:
+
+| Phase | Safe work split | Ordered dependency |
+| --- | --- | --- |
+| m5-ef | Value-range witness buckets, after determining prefix counts | Member publication, bit concatenation and cross-bucket monotonicity audit |
+| m5-encode | Independent bucket-local EF fragments, using global ordinal and bit offsets | Fragment padding must not enter the concatenated bitstream |
+| m1-replay | Encoding bounded fragments of the exact repaired run stream | Repair carries two pending coalescers, padding/dollar state and a seam cursor across bands; cold per-band replay is unsafe |
+| m1-runs | Huffman/gamma encoding after the codebook exists | Codebook construction is tiny; container offset/CRC updates and member publication are ordered |
+
+`PfRegion` uses `RUSAGE_SELF`, which counts process-wide CPU, while the band
+pipeline runs LCE workers concurrently with the serial fold. Consequently the
+supplied 48x repair-feed and 86x advance CPU/wall ratios include overlapping
+worker activity; those ratios alone do not locate a contended instruction.
+This does not change the supplied wall measurements. Attribution must use the
+per-input probes and repeated controlled trials.
+
+Timing qualification: unrelated training/test processes were active when this
+follow-up began (five long-lived training processes each near one CPU, plus
+other transient work; load average approximately 13–20 on 256 logical CPUs).
+No idle-box performance claim is made from correctness-gate observations.
+The 10 GB supplied baseline is taken as given, not reconstructed here.
+The requested finer ten-term repair split is present in historical commit
+`dff9211` and its evidence, but **the checked-out 448a7c9 source has the seven-term
+split** because the prior unsuccessful experiments were reverted.
+Supervisor/intercom tool discovery returned no callable `contact_supervisor`
+or equivalent; no supervisor message was sent.
+
+### Rejected input: legacy 10 GB column convention
+
+The historical `/mnt/nvme2n1/erikg/col10/col` cannot be passed directly to the
+current finish: it stores **cyclic successor** LCP at rank r, whereas the
+current finish/checker use **finite predecessor** LCP at rank r. A read-only
+sample of 8 fixed and 512 deterministic random ranks found 389/520 mismatches
+when interpreted directly. Its in-flight gate was terminated; it supplies no
+acceptance or timing conclusion. The initial interpretation as a foreign SA
+was too strong: shifting by one rank and capping by both finite suffix lengths
+matches all 520 sampled direct LCEs. Inspection of `kasai_column.cpp` confirms
+the legacy convention. The raw failed comparison and aborted run are retained.
+
+`normalize_lcp_column.py` converts the legacy column into a separate validation
+input under `/dev/shm/sxgc-r10sf-validation/`. It reads SA by rank, shifts the
+body and escape ranks, drops the cyclic wrap entry, caps every value at the
+shorter suffix length, and updates escapes. It creates **no inverse** and is
+not integrated into either product executable. Its scalar oracle covers
+singleton, wrap, finite truncation, escaped values and partial chunks. The
+existing full product hash and exact checker remain the acceptance proof;
+the gate additionally refuses incompatible sampled LCPs before emission.
+
+An unnecessary fresh-column regeneration was started before this convention
+was identified, then killed; only its private temporary inverse/dump files
+were removed. Corpus, SA and historical column fixtures are untouched. The
+normalization path supersedes that abandoned regeneration attempt.
+
+### Tape word parallelization: exact gates
+
+Packaged 150 MB product and explicit-debug runs pass SHA
+`d7eeac0f574a9a6e272732737d20b6d18a533336fea8f46f10287cb0e2b063a5`,
+chi 44034231 / runs 57279187, closure 0/0/0 and walk fallbacks 0.
+The debug stream has zero byte and endpoint mismatches against SA; the
+independent column-backed chi check also passes. The packaged 10 GB product
+passes SHA `22d0ce7493c6238a9d2e7f4e9a0decdf5841ff72a845d856bebaecd6d34bdaee`,
+chi 2676929428 / runs 3474891366, closure 0/0/0, fallbacks 0 and published-m1
+STREAM_VS_BWT mismatches 0. The 10 GB gate uses a verification-only LCP column normalized against r10sf/sa
+`/dev/shm/sxgc-r10sf-validation/col`; the product does not allocate an ISA or run a second
+10 GB debug dump. All four existing selftests exit zero at both sizes.
+Both emissions completed with CROSS_V2_PIECE_WINDOW=100000000 before finish;
+product debug dump scratch is zero. Evidence, exact commands, hashes and raw
+observations: `tools/binbwt/evidence/parallel-word/`. These are correctness
+gates, not N>=3 idle-box timing trials; no speedup or pile projection is claimed.

@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "/home/erikg/sxgc/tools/binbwt/parallel_gate.py", line 92, in <module>
+    result['column_preflight'] = [preflight_column(path) for path in sorted(set(
+                                  ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/erikg/sxgc/tools/binbwt/parallel_gate.py", line 89, in preflight_column
+    assert got == want, ('foreign/incompatible LCP column', path, r, got, want)
+           ^^^^^^^^^^^
+AssertionError: ('foreign/incompatible LCP column', '/mnt/nvme2n1/erikg/col10/col', 1, 1, 2)

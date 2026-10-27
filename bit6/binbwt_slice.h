@@ -3748,7 +3748,16 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
         }
         tRead += now_sec() - tr;
         const double tw = now_sec();
-        for (U i = 0; i < want; ++i) {
+        // Contiguous, disjoint word ranges; publication remains ordered on
+        // the calling thread after every worker has joined. Count hits locally
+        // so the row loop has no shared writes or atomic operations.
+        const U workers = std::max<U>(1, std::min<U>(threads, (want + 65535) / 65536));
+        std::vector<U> workerHits(workers, 0);
+        auto buildWords = [&](U worker) {
+            U localHits = 0;
+            const U lo = want * worker / workers;
+            const U hi = want * (worker + 1) / workers;
+            for (U i = lo; i < hi; ++i) {
             const U p = pos[i];
             require(p < n, "tape-emit: SA position out of range");
             // The BWT symbol of this row is M[p-1], and position 0 is the
@@ -3758,9 +3767,17 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
             // check: 9 padding symbols instead of 10.
             const uint8_t sym = haveSyms ? syms[i] : (p ? text.at(p - 1) : uint8_t(2));
             const bool hit = maybeTarget(p) && isTarget(p);
-            if (hit) ++hits;
+            if (hit) ++localHits;
             words[i] = bin_word(p + 1, sym, hit);
         }
+            workerHits[worker] = localHits;
+        };
+        std::vector<std::thread> wordPool;
+        for (U worker = 1; worker < workers; ++worker)
+            wordPool.emplace_back(buildWords, worker);
+        buildWords(0);
+        for (auto& worker : wordPool) worker.join();
+        for (U count : workerHits) hits += count;
         tWord += now_sec() - tw;
         const double tp = now_sec();
         sink->publishBin(0, words.data(), want, baseRow);

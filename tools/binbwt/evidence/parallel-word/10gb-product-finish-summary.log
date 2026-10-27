@@ -1,0 +1,24 @@
+XSA_FINISH_DEBUG_ARTIFACTS enabled=0 product_dump_scratch_bytes=0
+ENDPOINT_STREAM_PASS n=10000017258 k=1 r=3474891366 padding_rows=10 cyclic_seam_certified=0 classes=9
+XSA_FINISH_KASAI_CLOSURE bands=53004 rank_holes=0 disorder=0 noncontiguous_runs=0 walk_fallbacks=0 max_rank_end=10000017258 n=10000017258
+SWEEP_STATS advances=3474891365 char_changes=3474891365 scans=0 fired=0 mean_fired=0.00 max_fired=0 emits=2676929428 chi=2676929428
+SWEEP_CYCLES phase=repair enabled=1 inputs=3474891368 samples=3393449 sample_stride_mean=1024 exclusive=1 probe_overhead_included=1 read_decode=31.09 raw=160.71 coalescing=308.21 seamSplice=0.01 stamping=73.03 require_stream_run=24.77 output_staging=58.36 units=tsc_ticks_per_input
+SWEEP_PHASE_WALLS repair=571.848541 lce=1357.011063 advance_witness=741.027500 lce_threads=96
+XSA_FINISH_REGION piece-wait wall=4.715 cpu=8.237 minflt=16369 majflt=0 dev_read=0 units=53023 bands_ns=88917.82
+XSA_FINISH_REGION readband wall=54.036 cpu=84.889 minflt=432121 majflt=0 dev_read=0 units=3474891368 raw_runs_ns=15.55
+XSA_FINISH_REGION repair-feed wall=501.477 cpu=522.283 minflt=194962 majflt=0 dev_read=0 units=3474891368 raw_runs_ns=144.31
+XSA_FINISH_REGION lce wall=0.000 cpu=0.000 minflt=0 majflt=0 dev_read=0 units=3474891366 runs_ns=0.00
+XSA_FINISH_REGION advance-witness wall=741.038 cpu=32013.184 minflt=13389348 majflt=0 dev_read=0 units=3474891366 runs_ns=213.25
+XSA_FINISH_REGION lce-span wall=1357.011 waited=0.657 overlapped=1356.354 units=3474891366 runs_ns=390.52
+XSA_FINISH_SWEEP_ANATOMY piecewait=4.715 readband=54.036 feed=501.477 repair_total=571.849 raw_runs=3474891368 bands=53023 rlebwt_wait=0.000 ns_per_raw_run=144.31
+XSA_FINISH_CORPUS_ACCESS phase=sweep calls=0 page_hops=0 hop_rate=0.0000 ns_per_call=0.00
+xsa chi-rspace: chi = 2676929428 (N=10000017258, R=3474891366) stream-agg=1 fused=1 corpus_lce=1
+XSA_FINISH_REGION m5-presort wall=4.547 cpu=4.545 minflt=282951 majflt=0 dev_read=0 units=2676929428 witnesses_ns=1.70
+XSA_FINISH_REGION m5-encode wall=181.199 cpu=170.532 minflt=36128 majflt=0 dev_read=0 units=2676929428 witnesses_ns=67.69
+XSA_FINISH_REGION m5-ef wall=188.823 cpu=178.153 minflt=319629 majflt=0 dev_read=0 units=2676929428 witnesses_ns=70.54
+XSA_FINISH_REGION m1-rlebwt-wait wall=0.000 cpu=0.000 minflt=0 majflt=0 dev_read=0 units=13899565472 bytes_ns=0.00
+ENDPOINT_STREAM_PASS n=10000017258 k=1 r=3474891366 padding_rows=10 cyclic_seam_certified=0 classes=9
+XSA_FINISH_REGION m1-replay wall=152.216 cpu=152.206 minflt=18574 majflt=0 dev_read=0 units=3474891366 runs_ns=43.80
+XSA_FINISH_REGION m1-runs wall=159.769 cpu=159.760 minflt=19679 majflt=0 dev_read=0 units=3474891366 runs_ns=45.98
+SXI2_PASS bytes=4463793538 lite=1 members=6
+XSA_FINISH_DONE chi=2676929428 n=10000017258 r=3474891366 container=/mnt/nvme2n1/erikg/parallel-word-10gb-valid-column/product/product.sxi2

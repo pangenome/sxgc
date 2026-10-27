@@ -1,0 +1,1 @@
+NORMALIZE_COLUMN_SELFTEST_PASS cases=5 singleton=1 wrap=1 finite_cap=1 escapes=1 chunks=1 inverse_bytes=0
