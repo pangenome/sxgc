@@ -1,0 +1,43 @@
+| Component | Bytes at whole peak | n at whole peak | Independent peak bytes | Independent peak / n |
+|---|---:|---:|---:|---:|
+| column | 9557270528 | 0.955725403 | 13758107648 | 1.375808390 |
+| container | 0 | 0.000000000 | 4463796224 | 0.446378852 |
+| isa_sample | 78127104 | 0.007812697 | 78131200 | 0.007813107 |
+| other:. | 0 | 0.000000000 | 4096 | 0.000000410 |
+| other:check.log | 0 | 0.000000000 | 4096 | 0.000000410 |
+| other:checker-selftest.log | 0 | 0.000000000 | 4096 | 0.000000410 |
+| other:du.tsv | 40960 | 0.000004096 | 131072 | 0.000013107 |
+| other:emit.log | 4096 | 0.000000410 | 4096 | 0.000000410 |
+| other:finish.log | 0 | 0.000000000 | 262144 | 0.000026214 |
+| other:order | 0 | 0.000000000 | 0 | 0.000000000 |
+| other:order-sample.sxsa | 36864 | 0.000003686 | 36864 | 0.000003686 |
+| other:order.log | 8192 | 0.000000819 | 8192 | 0.000000819 |
+| other:order/bands | 155648 | 0.000015565 | 163840 | 0.000016384 |
+| other:order/waves | 135168 | 0.000013517 | 135168 | 0.000013517 |
+| other:product | 0 | 0.000000000 | 2920448 | 0.000292044 |
+| other:product/frag.bits-head | 0 | 0.000000000 | 4164943872 | 0.416493668 |
+| other:product/frag.bits-high | 0 | 0.000000000 | 2016411648 | 0.201640817 |
+| other:product/frag.bits-len | 0 | 0.000000000 | 941621248 | 0.094161962 |
+| other:product/frag.bits-low | 0 | 0.000000000 | 403701760 | 0.040370106 |
+| other:product/frag.pieces | 3858432 | 0.000385843 | 3973120 | 0.000397311 |
+| other:product/frag.rlebwt.meta | 0 | 0.000000000 | 8192 | 0.000000819 |
+| other:product/frag.runcols.consumed | 0 | 0.000000000 | 4096 | 0.000000410 |
+| other:product/frag.runexc | 0 | 0.000000000 | 1572864 | 0.000157286 |
+| other:product/product.sxi2.partial | 0 | 0.000000000 | 8587182080 | 0.858716726 |
+| other:results.json | 4096 | 0.000000410 | 12288 | 0.000001229 |
+| other:sample-order.log | 0 | 0.000000000 | 4096 | 0.000000410 |
+| other:selftest-packed-bits.log | 0 | 0.000000000 | 4096 | 0.000000410 |
+| other:selftest-repair-chunks.log | 0 | 0.000000000 | 495616 | 0.000049562 |
+| other:selftest-seam-spool.log | 0 | 0.000000000 | 4096 | 0.000000410 |
+| other:selftest-spool | 0 | 0.000000000 | 0 | 0.000000000 |
+| other:selftest-stream-guard.log | 0 | 0.000000000 | 4096 | 0.000000410 |
+| other:selftest-sweep-monoid.log | 0 | 0.000000000 | 3657728 | 0.000365772 |
+| other:selftest-witness-batch.log | 0 | 0.000000000 | 4096 | 0.000000410 |
+| packed_bands | 4096 | 0.000000410 | 2349592576 | 0.234958852 |
+| pfck2 | 0 | 0.000000000 | 3636379648 | 0.363637337 |
+| pieces | 45862141952 | 4.586206280 | 47361941504 | 4.736185977 |
+| rlebwt | 21443375104 | 2.144333810 | 21443375104 | 2.144333810 |
+| sparse2 | 0 | 0.000000000 | 33423360 | 0.003342330 |
+| waves | 4712886272 | 0.471287814 | 10351878144 | 1.035186028 |
+| witness_spills | 0 | 0.000000000 | 2975350784 | 0.297534565 |
+| TOTAL | 81658048512 | 8.165790759 | | |

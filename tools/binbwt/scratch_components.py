@@ -14,7 +14,9 @@ def component(relative):
     if '.wit-' in name: return 'witness_spills'
     for suffix in ('rlebwt', 'sparse2', 'pfck2'):
         if name.endswith('.' + suffix): return suffix
-    if s == 'product/product.sxi2': return 'container'
+    if s in ('product/product.sxi2', 'product/product.sxi2.partial'): return 'container'
+    for suffix in ('bits-head', 'bits-len', 'bits-high', 'bits-low'):
+        if name.endswith('.' + suffix): return suffix
     if s == 'band-stream.bin': return 'debug_dump'
     return 'other:' + s
 

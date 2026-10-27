@@ -1,0 +1,116 @@
+{
+  "status": "Product gate completed green; observed space gate failed; streaming redesign remains unimplemented.",
+  "historical_peak_bytes": 85714210816,
+  "historical_peak_over_n": 8.571406289067026,
+  "historical_decomposition_available": false,
+  "binaries_identical_to_accepted_10gb": true,
+  "cpp_edited": false,
+  "runs_above_10gb_launched": false,
+  "raw_runs": 3474891368,
+  "position_width_bits": 34,
+  "piece_payload_lower_bound": {
+    "chars_bytes": 3474891368,
+    "lengths_bytes": 13899565472,
+    "heads_bits": 118146306512,
+    "tails_bits": 118146306512,
+    "total_bytes": 46911033468,
+    "total_over_n": 4.691095250907816
+  },
+  "sequential_emit_complete_lower_bound": {
+    "piece_payload_bytes": 46911033468,
+    "rlebwt_payload_bytes": 13899565472,
+    "total_bytes": 60810598940,
+    "total_over_n": 6.081049399324947,
+    "qualification": "Current wire and emit-to-completion-before-finish sequencing only; excludes column, headers, progress records, block rounding, and speculative allocation. This is a lower bound, not a universal algorithmic limit."
+  },
+  "manual_stat_observation": {
+    "path": "product/frag.rlebwt",
+    "logical_bytes": 4810866688,
+    "allocated_bytes": 8558215168,
+    "filesystem": "xfs",
+    "qualification": "Manual stat during emission; not the whole-peak timestamp. Shows allocated blocks exceed logical bytes."
+  },
+  "coordination": "No contact_supervisor/intercom tool is exposed; cannot resolve the sequencing ambiguity through the requested channel.",
+  "residual_risks": [
+    "Streaming product redesign not implemented; current sequential wire has a payload lower bound above 3n.",
+    "Historical 8.571406n aggregate cannot be retrospectively decomposed; reported stack comes from an unchanged-binary repeat.",
+    "10 GB primary series used the original per-file traversal and one-second sleep; actual timestamps quantify slower cadence. Corrected grouped cadence was separately validated on 150 MB.",
+    "du samples are non-atomic lower bounds on continuous peak and exclude open unlinked allocations."
+  ],
+  "historical_peak_sample": {
+    "elapsed": 1305.497,
+    "phase": "order+emit",
+    "order_allocated": 19968954368,
+    "all_allocated": 85714210816,
+    "intermediate_allocated": 85714210816
+  },
+  "historical_peak_inference": "Finish starts only after producer and emitter return. At this aggregate peak, finish-generated sparse2, witness spills, pfck2 and container were absent. The old trace cannot divide the remaining bytes among waves, packed bands, column, pieces and rlebwt.",
+  "grouped_sampler_probe_seconds": 0.287,
+  "product_gate_passed": true,
+  "observed_peak_bytes": 81658048512,
+  "observed_peak_over_n": 8.165790758678309,
+  "space_gate_passed": false,
+  "sampling_cadence_by_phase": {
+    "check": {
+      "samples": 804,
+      "median_interval_seconds": 1.150000000000091,
+      "max_interval_seconds": 1.175000000000182
+    },
+    "checker-selftest": {
+      "samples": 1,
+      "median_interval_seconds": null,
+      "max_interval_seconds": 0
+    },
+    "done": {
+      "samples": 1,
+      "median_interval_seconds": null,
+      "max_interval_seconds": 0
+    },
+    "finish": {
+      "samples": 354,
+      "median_interval_seconds": 4.764000000000124,
+      "max_interval_seconds": 10.682999999999993
+    },
+    "order+emit": {
+      "samples": 668,
+      "median_interval_seconds": 1.2060000000000173,
+      "max_interval_seconds": 7.610000000000127
+    },
+    "sample-order": {
+      "samples": 1,
+      "median_interval_seconds": null,
+      "max_interval_seconds": 0
+    },
+    "selftest-packed-bits": {
+      "samples": 1,
+      "median_interval_seconds": null,
+      "max_interval_seconds": 0
+    },
+    "selftest-repair-chunks": {
+      "samples": 1,
+      "median_interval_seconds": null,
+      "max_interval_seconds": 0
+    },
+    "selftest-seam-spool": {
+      "samples": 1,
+      "median_interval_seconds": null,
+      "max_interval_seconds": 0
+    },
+    "selftest-stream-guard": {
+      "samples": 1,
+      "median_interval_seconds": null,
+      "max_interval_seconds": 0
+    },
+    "selftest-sweep-monoid": {
+      "samples": 1,
+      "median_interval_seconds": null,
+      "max_interval_seconds": 0
+    },
+    "selftest-witness-batch": {
+      "samples": 1,
+      "median_interval_seconds": null,
+      "max_interval_seconds": 0
+    }
+  },
+  "sampler_provenance": "10 GB: per-file partition before b634e26 cadence correction. Corrected grouped cadence validated with a separate 150 MB gate. Subsequent label fixes group .sxi2.partial with container and expose four named bit spools; root totals unchanged."
+}

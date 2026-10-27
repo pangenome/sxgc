@@ -1,0 +1,116 @@
+{
+  "n": 10000017258,
+  "product_sha256": "22d0ce7493c6238a9d2e7f4e9a0decdf5841ff72a845d856bebaecd6d34bdaee",
+  "product_passed": true,
+  "observed_whole_peak": {
+    "components": {
+      "waves": 4713021440,
+      "packed_bands": 159744,
+      "column": 9557270528,
+      "pieces": 45866000384,
+      "rlebwt": 21443375104,
+      "sparse2": 0,
+      "pfck2": 0,
+      "witness_spills": 0,
+      "container": 0,
+      "bits-head": 0,
+      "bits-len": 0,
+      "bits-high": 0,
+      "bits-low": 0,
+      "isa_sample": 78127104,
+      "debug_dump": 0,
+      "other": 94208
+    },
+    "elapsed": 1386.691,
+    "phase": "order+emit",
+    "total_bytes": 81658048512
+  },
+  "component_peaks": {
+    "waves": 10351898624,
+    "packed_bands": 2349608960,
+    "column": 13758107648,
+    "pieces": 47365914624,
+    "rlebwt": 21443375104,
+    "sparse2": 33423360,
+    "pfck2": 3636379648,
+    "witness_spills": 2975350784,
+    "container": 8587182080,
+    "bits-head": 4164943872,
+    "bits-len": 941621248,
+    "bits-high": 2016411648,
+    "bits-low": 403701760,
+    "isa_sample": 78131200,
+    "debug_dump": 0,
+    "other": 6094848
+  },
+  "observed_whole_peak_over_n": 8.165790758678309,
+  "target_over_n": 3.0,
+  "space_gate_passed": false,
+  "continuous_upper_bound_attested": false,
+  "sampling_cadence_by_phase": {
+    "check": {
+      "samples": 804,
+      "median_interval_seconds": 1.150000000000091,
+      "max_interval_seconds": 1.175000000000182
+    },
+    "checker-selftest": {
+      "samples": 1,
+      "median_interval_seconds": null,
+      "max_interval_seconds": 0
+    },
+    "done": {
+      "samples": 1,
+      "median_interval_seconds": null,
+      "max_interval_seconds": 0
+    },
+    "finish": {
+      "samples": 354,
+      "median_interval_seconds": 4.764000000000124,
+      "max_interval_seconds": 10.682999999999993
+    },
+    "order+emit": {
+      "samples": 668,
+      "median_interval_seconds": 1.2060000000000173,
+      "max_interval_seconds": 7.610000000000127
+    },
+    "sample-order": {
+      "samples": 1,
+      "median_interval_seconds": null,
+      "max_interval_seconds": 0
+    },
+    "selftest-packed-bits": {
+      "samples": 1,
+      "median_interval_seconds": null,
+      "max_interval_seconds": 0
+    },
+    "selftest-repair-chunks": {
+      "samples": 1,
+      "median_interval_seconds": null,
+      "max_interval_seconds": 0
+    },
+    "selftest-seam-spool": {
+      "samples": 1,
+      "median_interval_seconds": null,
+      "max_interval_seconds": 0
+    },
+    "selftest-stream-guard": {
+      "samples": 1,
+      "median_interval_seconds": null,
+      "max_interval_seconds": 0
+    },
+    "selftest-sweep-monoid": {
+      "samples": 1,
+      "median_interval_seconds": null,
+      "max_interval_seconds": 0
+    },
+    "selftest-witness-batch": {
+      "samples": 1,
+      "median_interval_seconds": null,
+      "max_interval_seconds": 0
+    }
+  },
+  "samples": 1835,
+  "median_sample_interval_seconds": 1.15099999999984,
+  "max_sample_interval_seconds": 10.682999999999993,
+  "qualification": "Allocated-block du observations; traversal is not atomic; samples are a lower bound on continuous highwater and exclude open unlinked files. Independent component peaks are not additive."
+}
