@@ -1,0 +1,2 @@
+CROSS_RLEBWT_ABSENT arm=route-b producer=bin-band-sink runs=3474891368 meta_absent=1
+TAPE_EMIT_DONE rows=10000017258 runs=3474891368 hits=2068022 wall=2155.93 read_s=35.90 word_s=24.93 publish_s=949.72 finish_s=0.53

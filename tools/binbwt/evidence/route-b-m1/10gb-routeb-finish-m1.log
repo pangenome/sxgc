@@ -1,0 +1,4 @@
+XSA_FINISH_M1_ARM route-b one-pass (corpus-histogram codebook, no rlebwt)
+XSA_FINISH_M1_CODEBOOK arm=route-b source=corpus_byte_histogram symbols=256 observed_symbols=243 min_len=3 max_len=33 pseudo_count=1 weights_sum=10000017258
+XSA_FINISH_M1_HISTOGRAM cells=256 agreement=exact weights=corpus_byte_histogram rlebwt_absent=1 runs=3474891366
+XSA_FINISH_RLEBWT_NEVER_WRITTEN arm=route-b

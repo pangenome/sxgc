@@ -1,0 +1,322 @@
+{
+  "n": 454752,
+  "K": 8,
+  "source_manifest": "3fbd434f3dae66c961b162372579d76a1759072a791a0f4452b1f4d07afee1da",
+  "commands": [
+    {
+      "label": "finish",
+      "command": [
+        "/tmp/routeb-bundle/xsa_finish",
+        "--prefix",
+        "/tmp/legacy-tiny/product/frag",
+        "--corpus",
+        "/tmp/psi_tiny.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--output",
+        "/tmp/legacy-tiny/product/product.sxi2",
+        "--threads",
+        "96",
+        "--sample-count",
+        "64",
+        "--chi-expect",
+        "145685",
+        "--lcp-column",
+        "/tmp/psi_tiny.col",
+        "--isa-sample",
+        "/tmp/psi_tiny.isamp",
+        "--m1-replay"
+      ],
+      "pid": 3690016,
+      "returncode": 0,
+      "seconds": 4.513
+    },
+    {
+      "label": "order",
+      "command": [
+        "/tmp/scatter_fused",
+        "--corpus",
+        "/tmp/psi_tiny.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--scratch",
+        "/tmp/legacy-tiny/order/waves",
+        "--tape-bands",
+        "/tmp/legacy-tiny/order/bands",
+        "--pending-bands",
+        "8",
+        "--ram-gb",
+        "48",
+        "--par-bands",
+        "8",
+        "--threads",
+        "96",
+        "--order-sample-out",
+        "/tmp/legacy-tiny/order-sample.sxsa",
+        "--order-sample-lo",
+        "225328",
+        "--order-sample-count",
+        "4096"
+      ],
+      "pid": 3690017,
+      "returncode": 0,
+      "seconds": 4.513
+    },
+    {
+      "label": "emit",
+      "command": [
+        "/tmp/routeb-bundle/cross_lcp_merge",
+        "--binbwt",
+        "/tmp/psi_tiny.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--out-prefix",
+        "/tmp/legacy-tiny/product/frag",
+        "--threads",
+        "96",
+        "--tape-bands",
+        "/tmp/legacy-tiny/order/bands"
+      ],
+      "pid": 3690018,
+      "returncode": 0,
+      "seconds": 4.513
+    },
+    {
+      "label": "sample-order",
+      "command": [
+        "/tmp/sa_check_routeb",
+        "--corpus",
+        "/tmp/psi_tiny.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--sa",
+        "/tmp/legacy-tiny/order-sample.sxsa",
+        "--sample-first-rank",
+        "225328"
+      ],
+      "pid": 3690678,
+      "returncode": 0,
+      "seconds": 0.251
+    },
+    {
+      "label": "check",
+      "command": [
+        "/tmp/stream_vs_bwt_routeb",
+        "--corpus",
+        "/tmp/psi_tiny.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--sa",
+        "/tmp/psi_tiny.sa",
+        "--container",
+        "/tmp/legacy-tiny/product/product.sxi2"
+      ],
+      "pid": 3690698,
+      "returncode": 0,
+      "seconds": 0.251
+    },
+    {
+      "label": "check-sample",
+      "command": [
+        "/tmp/stream_vs_bwt_routeb",
+        "--corpus",
+        "/tmp/psi_tiny.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/tape10/remap.bin",
+        "--sa",
+        "/tmp/legacy-tiny/order-sample.sxsa",
+        "--sample-first-rank",
+        "225328",
+        "--container",
+        "/tmp/legacy-tiny/product/product.sxi2"
+      ],
+      "pid": 3690704,
+      "returncode": 0,
+      "seconds": 0.251
+    },
+    {
+      "label": "m1-stream",
+      "command": [
+        "/tmp/m1_stream",
+        "/tmp/legacy-tiny/product/product.sxi2"
+      ],
+      "pid": 3690708,
+      "returncode": 0,
+      "seconds": 0.251
+    },
+    {
+      "label": "selftest-stream-guard",
+      "command": [
+        "/tmp/routeb-bundle/xsa_finish",
+        "--selftest-stream-guard"
+      ],
+      "pid": 3690732,
+      "returncode": 0,
+      "seconds": 0.251
+    },
+    {
+      "label": "selftest-repair-chunks",
+      "command": [
+        "/tmp/routeb-bundle/xsa_finish",
+        "--selftest-repair-chunks"
+      ],
+      "pid": 3690764,
+      "returncode": 0,
+      "seconds": 0.251
+    },
+    {
+      "label": "selftest-sweep-monoid",
+      "command": [
+        "/tmp/routeb-bundle/xsa_finish",
+        "--selftest-sweep-monoid"
+      ],
+      "pid": 3690772,
+      "returncode": 0,
+      "seconds": 0.251
+    },
+    {
+      "label": "selftest-packed-bits",
+      "command": [
+        "/tmp/routeb-bundle/xsa_finish",
+        "--selftest-packed-bits"
+      ],
+      "pid": 3690774,
+      "returncode": 0,
+      "seconds": 0.251
+    },
+    {
+      "label": "selftest-witness-batch",
+      "command": [
+        "/tmp/routeb-bundle/xsa_finish",
+        "--selftest-witness-batch"
+      ],
+      "pid": 3690778,
+      "returncode": 0,
+      "seconds": 0.251
+    },
+    {
+      "label": "selftest-seam-spool",
+      "command": [
+        "/tmp/routeb-bundle/xsa_finish",
+        "--selftest-seam-spool",
+        "/tmp/legacy-tiny/selftest-spool"
+      ],
+      "pid": 3690780,
+      "returncode": 0,
+      "seconds": 0.251
+    },
+    {
+      "label": "checker-selftest",
+      "command": [
+        "/tmp/stream_vs_bwt_routeb",
+        "--selftest"
+      ],
+      "pid": 3690804,
+      "returncode": 0,
+      "seconds": 0.251
+    }
+  ],
+  "peak_order_allocated": 11264000,
+  "peak_all_allocated": 11751424,
+  "peak_intermediate_allocated": 11751424,
+  "scratch_sample_period_seconds": 0.25,
+  "m1_arm": "legacy-replay",
+  "scratch_scope": "order=waves+unconsumed packed bands+optional generated column; all=entire new run directory; intermediate=all minus container and explicit debug dump; read-only validation fixtures excluded",
+  "timing_qualification": "single-run observations; no paired N>=3 A/B; speed effects unverifiable",
+  "binary_sha256": {
+    "cross_lcp_merge": "3a1d51f7c2281a7aa497049c7e73f4607a20e54ea25f302c019e505a1a8d602a",
+    "xsa_finish": "5849c078f1280b76a71935de8119b6e78ab812796689479ad1601897d7aaede8"
+  },
+  "sorter_sha256": "9bd4bb90d3e2f98fb91ff3f089b12ac98f86bcc2fad242aef08a123c8ec099a9",
+  "sample_checker_sha256": "287b184e70c4bef0f8c9b765f7c94366bbf84c739780955312f982270b01789a",
+  "stream_checker_sha256": "6b5a7649ed358deeec1425acef98ee5669d53e9766c61fe5f4773af4f129b5d7",
+  "piece_window": 2,
+  "component_peaks": {
+    "other:emit.log": 4096,
+    "other:order.log": 4096,
+    "other:du.tsv": 4096,
+    "packed_bands": 110592,
+    "waves": 11214848,
+    "other:order": 4096,
+    "other:finish.log": 8192,
+    "other:results.json": 12288,
+    "pfck2": 167936,
+    "other:product": 4096,
+    "other:scratch-components.jsonl": 20480,
+    "other:.": 4096,
+    "other:order-sample.sxsa": 36864,
+    "rlebwt": 524288,
+    "sparse2": 4096,
+    "pieces": 16384,
+    "other:product/frag.runcols.consumed": 4096,
+    "other:product/frag.runexc": 1572864,
+    "container": 241664,
+    "other:sample-order.log": 4096,
+    "other:scratch-decomposition.md": 4096,
+    "other:check.log": 4096,
+    "other:check-sample.log": 4096,
+    "other:m1-stream.log": 4096,
+    "other:selftest-stream-guard.log": 4096,
+    "other:selftest-repair-chunks.log": 495616,
+    "other:selftest-sweep-monoid.log": 3657728,
+    "other:selftest-packed-bits.log": 4096,
+    "other:selftest-witness-batch.log": 4096,
+    "other:selftest-seam-spool.log": 4096,
+    "other:selftest-spool": 4096,
+    "other:checker-selftest.log": 4096
+  },
+  "peak_live_wire_bytes": 532480,
+  "peak_live_wire_over_n": 1.170923932165224,
+  "whole_peak_sample": {
+    "elapsed": 2.27,
+    "phase": "order+emit+finish",
+    "total_bytes": 11751424,
+    "components": {
+      "other:emit.log": 4096,
+      "other:order.log": 4096,
+      "other:order-sample.sxsa": 4096,
+      "other:du.tsv": 4096,
+      "packed_bands": 45056,
+      "waves": 11214848,
+      "other:order": 4096,
+      "other:finish.log": 4096,
+      "other:results.json": 4096,
+      "pfck2": 167936,
+      "other:product/frag.runcols.consumed": 4096,
+      "rlebwt": 262144,
+      "sparse2": 4096,
+      "pieces": 8192,
+      "other:product": 4096,
+      "other:scratch-components.jsonl": 8192,
+      "other:.": 4096
+    },
+    "traversal_seconds": 0.015449
+  },
+  "no_full_sa_or_sym_generated": true,
+  "sample": {
+    "first_rank": 225328,
+    "count": 4096,
+    "adjacent_pairs": 4095,
+    "global_permutation_checked": false
+  },
+  "closure": "XSA_FINISH_KASAI_CLOSURE bands=4 rank_holes=0 disorder=0 noncontiguous_runs=0 walk_fallbacks=0 max_rank_end=454752 n=454752",
+  "chi": 145685,
+  "runs": 192138,
+  "sha256": "98f1f6dc82befd1659112678bbc3debcf6c40ec417fcea86df47a8a51019c658",
+  "stream_sample": {
+    "first_rank": 225328,
+    "count": 4096,
+    "mismatches": 0,
+    "decoded_extent_rows": 454752,
+    "source": "retained sorter SA sample"
+  },
+  "m1_stream": {
+    "line": "M1_STREAM container=/tmp/legacy-tiny/product/product.sxi2 n=454752 runs=192138 bytes=172949 head_bits=985867 len_bits=379154 head_bits_per_run=5.131036 len_bits_per_run=1.973342 fingerprint=38e20e18a377208d",
+    "codebook": "M1_CODEBOOK runs=192138 stored_bits_per_run=5.131036 corpus_hist_bits_per_run=5.197114 run_entropy=5.101276 byte_entropy=4.826239 cross_entropy=5.217620 growth_bits_per_run=0.066078 growth_ratio=1.012878 max_len=19 max_len_symbol=140"
+  },
+  "peak_order_over_n": 24.76954471887974,
+  "peak_intermediate_over_n": 25.841390472169447,
+  "passed": true,
+  "passed_scope": "byte product and enabled audits; space acceptance evaluated separately",
+  "space_acceptance_passed": false
+}

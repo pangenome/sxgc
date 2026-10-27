@@ -5854,118 +5854,118 @@ int main(int argc, char** argv) {
             BitsOut& headBits = *m1Head;
             BitsOut& lenBits = *m1Len;
             uint64_t encodedRuns = m1SweepRuns;
-          if (m1Replay) {
-            std::array<uint64_t, 256> freqC{};
-            uint64_t freqTotal = 0;
-            for (unsigned c = 0; c < 256; ++c) { freqC[c] = rs.runFreq[c]; freqTotal += rs.runFreq[c]; }
-            pf_check(freqTotal == rNorm, "run frequency total");
-            struct Node { uint64_t w; int left, right, sym; };
-            std::vector<Node> tree;
-            using Q = std::pair<uint64_t, int>;
-            std::priority_queue<Q, std::vector<Q>, std::greater<Q>> q;
-            for (int c = 0; c < 256; ++c)
-                if (freqC[c]) { q.push({freqC[c], int(tree.size())}); tree.push_back({freqC[c], -1, -1, c}); }
-            pf_check(!q.empty(), "empty alphabet");
-            if (q.size() == 1) {
-                auto one = q.top(); q.pop();
-                tree.push_back({one.first, one.second, -1, -1});
-                q.push({one.first, int(tree.size() - 1)});
-            }
-            while (q.size() > 1) {
-                auto a = q.top(); q.pop();
-                auto b = q.top(); q.pop();
-                uint64_t w = a.first + b.first;
-                tree.push_back({w, a.second, b.second, -1});
-                q.push({w, int(tree.size() - 1)});
-            }
-            std::array<unsigned char, 256>& lens = m1LensOut;
-            std::function<void(int, unsigned)> visit = [&](int idx, unsigned depth) {
-                if (tree[idx].sym >= 0) { pf_check(depth && depth <= 63, "Huffman depth"); lens[tree[idx].sym] = uint8_t(depth); return; }
-                visit(tree[idx].left, depth + 1);
-                if (tree[idx].right >= 0) visit(tree[idx].right, depth + 1);
-            };
-            visit(int(q.top().second), 0);
-            std::array<uint64_t, 256> codes{};
-            std::vector<std::pair<unsigned, unsigned>> order;
-            for (unsigned c = 0; c < 256; ++c) if (lens[c]) order.push_back({lens[c], c});
-            std::sort(order.begin(), order.end());
-            uint64_t code = 0; unsigned prevLen = 0;
-            for (auto& [len, sym] : order) {
-                code <<= (len - prevLen);
-                codes[sym] = code++;
-                prevLen = len;
-            }
-            uint64_t replayRuns = 0;
-            {
-                PfRegion rw("m1-rlebwt-wait", PF_M1);
-                // Barrier: the merge publishes the rlebwt body only after
-                // every piece band is emitted (the ordered segment
-                // concatenation is the emission's last step). The sweep's
-                // final consumed band implies the walk is done, but the
-                // concat write may still be in flight. The piece lengths
-                // determine its exact word count; size is the completion sentinel.
-                double waited = 0;
-                for (;;) {
-                    struct stat st {};
-                    bool complete = ::stat((prefix + ".rlebwt").c_str(), &st) == 0 &&
-                                    uint64_t(st.st_size) == expectedRlebwtBytes;
-                    if (complete) break;
-                    if (waited > pollTimeout) pf_fail("timeout waiting for the complete rlebwt");
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                    waited += 0.1;
+            if (m1Replay) {
+                std::array<uint64_t, 256> freqC{};
+                uint64_t freqTotal = 0;
+                for (unsigned c = 0; c < 256; ++c) { freqC[c] = rs.runFreq[c]; freqTotal += rs.runFreq[c]; }
+                pf_check(freqTotal == rNorm, "run frequency total");
+                struct Node { uint64_t w; int left, right, sym; };
+                std::vector<Node> tree;
+                using Q = std::pair<uint64_t, int>;
+                std::priority_queue<Q, std::vector<Q>, std::greater<Q>> q;
+                for (int c = 0; c < 256; ++c)
+                    if (freqC[c]) { q.push({freqC[c], int(tree.size())}); tree.push_back({freqC[c], -1, -1, c}); }
+                pf_check(!q.empty(), "empty alphabet");
+                if (q.size() == 1) {
+                    auto one = q.top(); q.pop();
+                    tree.push_back({one.first, one.second, -1, -1});
+                    q.push({one.first, int(tree.size() - 1)});
                 }
-                rw.close(); rw.report(expectedRlebwtBytes, "bytes");
-            }
-            {
-                PfRegion rr("m1-replay", PF_M1);
-                RepairStream rs2;
-                rs2.N = N; rs2.n = n; rs2.terminal = rs.terminal; rs2.seam = &seam;
-                rs2.sampleChecks = false;
-                rs2.emit = [&](const NRun& v) {
-                    headBits.msb(codes[v.c], lens[v.c]);
-                    lenBits.gamma(v.len);
-                    ++replayRuns;
-                };
-                int fd = ::open((prefix + ".rlebwt").c_str(), O_RDONLY);
-                pf_check(fd >= 0, "open rlebwt for the m1 replay");
-                uint8_t buf[1 << 20];
-                uint64_t got = 0;
-                size_t pos = 0, have = 0;
-                auto nextWord = [&](uint32_t& w32) -> bool {
-                    if (pos == have) {
-                        ssize_t z = ::read(fd, buf, sizeof buf);
-                        if (z <= 0) return false;
-                        have = size_t(z); pos = 0;
-                    }
-                    w32 = uint32_t(buf[pos]) | (uint32_t(buf[pos + 1]) << 8) |
-                          (uint32_t(buf[pos + 2]) << 16) | (uint32_t(buf[pos + 3]) << 24);
-                    pos += 4;
-                    ++got;
-                    return true;
-                };
-                (void)got;
-                for (;;) {
-                    uint32_t w32;
-                    if (!nextWord(w32)) break;
-                    uint8_t c = uint8_t(w32 & 255);
-                    uint64_t len = (w32 >> 8) & 0x7fffff;
-                    while (w32 >> 31) {
-                        if (!nextWord(w32)) pf_fail("truncated rlebwt");
-                        pf_check(uint8_t(w32 & 255) == c, "RLE continuation character");
-                        len += (w32 >> 8) & 0x7fffff;
-                    }
-                    rs2.feed_raw({c, len, 0, 0});
+                while (q.size() > 1) {
+                    auto a = q.top(); q.pop();
+                    auto b = q.top(); q.pop();
+                    uint64_t w = a.first + b.first;
+                    tree.push_back({w, a.second, b.second, -1});
+                    q.push({w, int(tree.size() - 1)});
                 }
-                ::close(fd);
-                rs2.finishStream();
-                pf_check(replayRuns == rNorm, "m1 replay run count");
-                for (unsigned c = 0; c < 256; ++c)
-                    pf_check(rs2.totals[c] == rs.totals[c] && rs2.runFreq[c] == rs.runFreq[c],
-                             "m1 replay divergence on char " + std::to_string(c));
-                rr.close(); rr.report(replayRuns, "runs");
-            }
-            encodedRuns = replayRuns;
-          } else {
+                std::array<unsigned char, 256>& lens = m1LensOut;
+                std::function<void(int, unsigned)> visit = [&](int idx, unsigned depth) {
+                    if (tree[idx].sym >= 0) { pf_check(depth && depth <= 63, "Huffman depth"); lens[tree[idx].sym] = uint8_t(depth); return; }
+                    visit(tree[idx].left, depth + 1);
+                    if (tree[idx].right >= 0) visit(tree[idx].right, depth + 1);
+                };
+                visit(int(q.top().second), 0);
+                std::array<uint64_t, 256> codes{};
+                std::vector<std::pair<unsigned, unsigned>> order;
+                for (unsigned c = 0; c < 256; ++c) if (lens[c]) order.push_back({lens[c], c});
+                std::sort(order.begin(), order.end());
+                uint64_t code = 0; unsigned prevLen = 0;
+                for (auto& [len, sym] : order) {
+                    code <<= (len - prevLen);
+                    codes[sym] = code++;
+                    prevLen = len;
+                }
+                uint64_t replayRuns = 0;
+                {
+                    PfRegion rw("m1-rlebwt-wait", PF_M1);
+                    // Barrier: the merge publishes the rlebwt body only after
+                    // every piece band is emitted (the ordered segment
+                    // concatenation is the emission's last step). The sweep's
+                    // final consumed band implies the walk is done, but the
+                    // concat write may still be in flight. The piece lengths
+                    // determine its exact word count; size is the completion sentinel.
+                    double waited = 0;
+                    for (;;) {
+                        struct stat st {};
+                        bool complete = ::stat((prefix + ".rlebwt").c_str(), &st) == 0 &&
+                                        uint64_t(st.st_size) == expectedRlebwtBytes;
+                        if (complete) break;
+                        if (waited > pollTimeout) pf_fail("timeout waiting for the complete rlebwt");
+                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                        waited += 0.1;
+                    }
+                    rw.close(); rw.report(expectedRlebwtBytes, "bytes");
+                }
+                {
+                    PfRegion rr("m1-replay", PF_M1);
+                    RepairStream rs2;
+                    rs2.N = N; rs2.n = n; rs2.terminal = rs.terminal; rs2.seam = &seam;
+                    rs2.sampleChecks = false;
+                    rs2.emit = [&](const NRun& v) {
+                        headBits.msb(codes[v.c], lens[v.c]);
+                        lenBits.gamma(v.len);
+                        ++replayRuns;
+                    };
+                    int fd = ::open((prefix + ".rlebwt").c_str(), O_RDONLY);
+                    pf_check(fd >= 0, "open rlebwt for the m1 replay");
+                    uint8_t buf[1 << 20];
+                    uint64_t got = 0;
+                    size_t pos = 0, have = 0;
+                    auto nextWord = [&](uint32_t& w32) -> bool {
+                        if (pos == have) {
+                            ssize_t z = ::read(fd, buf, sizeof buf);
+                            if (z <= 0) return false;
+                            have = size_t(z); pos = 0;
+                        }
+                        w32 = uint32_t(buf[pos]) | (uint32_t(buf[pos + 1]) << 8) |
+                              (uint32_t(buf[pos + 2]) << 16) | (uint32_t(buf[pos + 3]) << 24);
+                        pos += 4;
+                        ++got;
+                        return true;
+                    };
+                    (void)got;
+                    for (;;) {
+                        uint32_t w32;
+                        if (!nextWord(w32)) break;
+                        uint8_t c = uint8_t(w32 & 255);
+                        uint64_t len = (w32 >> 8) & 0x7fffff;
+                        while (w32 >> 31) {
+                            if (!nextWord(w32)) pf_fail("truncated rlebwt");
+                            pf_check(uint8_t(w32 & 255) == c, "RLE continuation character");
+                            len += (w32 >> 8) & 0x7fffff;
+                        }
+                        rs2.feed_raw({c, len, 0, 0});
+                    }
+                    ::close(fd);
+                    rs2.finishStream();
+                    pf_check(replayRuns == rNorm, "m1 replay run count");
+                    for (unsigned c = 0; c < 256; ++c)
+                        pf_check(rs2.totals[c] == rs.totals[c] && rs2.runFreq[c] == rs.runFreq[c],
+                                 "m1 replay divergence on char " + std::to_string(c));
+                    rr.close(); rr.report(replayRuns, "runs");
+                }
+                encodedRuns = replayRuns;
+            } else {
             // ROUTE B guards, before a byte of the container is written.
             // (1) The codebook was weighted by a histogram over the SAME
             // alphabet the sweep emitted, and the C table m1 publishes is that
