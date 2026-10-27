@@ -71,6 +71,7 @@ evidence.mkdir(parents=True, exist_ok=True)
 component_samples = (evidence/'scratch-components.jsonl').open('w', buffering=1)
 result['component_peaks'] = {}
 start = time.monotonic()
+last_sample_started = start
 
 def save():
     if 'whole_peak_sample' in result:
@@ -85,9 +86,12 @@ def save():
     (root/'results.json').write_text(json.dumps(result, indent=2)+'\n')
 
 def sample(phase):
+    global last_sample_started
+    last_sample_started = time.monotonic()
     o, total, parts = snapshot(root)
     elapsed = round(time.monotonic()-start, 3)
-    record = dict(elapsed=elapsed, phase=phase, total_bytes=total, components=parts)
+    record = dict(elapsed=elapsed, phase=phase, total_bytes=total, components=parts,
+                  traversal_seconds=round(time.monotonic()-last_sample_started, 6))
     component_samples.write(json.dumps(record, sort_keys=True)+'\n')
     for key, value in parts.items():
         result['component_peaks'][key] = max(result['component_peaks'].get(key, 0), value)
@@ -126,7 +130,7 @@ def run(label, cmd, e=clean):
     item = spawn(label, cmd, e)
     while item[0].poll() is None:
         sample(label)
-        time.sleep(1)
+        time.sleep(max(0.0, last_sample_started+1-time.monotonic()))
     return finish_entry(item)
 
 try:
@@ -157,7 +161,7 @@ try:
             if item[0].poll() is not None:
                 texts[item[1]['label']] = finish_entry(item)
                 pending.remove(item)
-        if pending: time.sleep(1)
+        if pending: time.sleep(max(0.0, last_sample_started+1-time.monotonic()))
     assert 'SS_DONE' in texts['order'] and 'TAPE_EMIT_DONE' in texts['emit']
     assert not list((order/'bands').glob('*.sa')), 'unconsumed bands'
     assert not list((order/'waves').iterdir()), 'unconsumed scatter parts'

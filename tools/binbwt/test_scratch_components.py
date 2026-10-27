@@ -25,12 +25,15 @@ class ScratchComponentsTest(unittest.TestCase):
             order, total, components = snapshot(root)
             self.assertEqual(sum(components.values()), total)
             for name, category in artifacts.items():
-                self.assertEqual(components[category], (root/name).stat().st_blocks*512)
+                expected = (root/name).stat().st_blocks*512
+                if category in ('waves', 'packed_bands', 'pieces'):
+                    expected += (root/name).parent.stat().st_blocks*512
+                self.assertEqual(components[category], expected)
             self.assertGreaterEqual(order, 4*8192)
             (root/'order/waves/w0').unlink()
             _, after, parts = snapshot(root)
             self.assertEqual(sum(parts.values()), after)
-            self.assertEqual(parts.get('waves', 0), 0)
+            self.assertEqual(parts.get('waves', 0), (root/'order/waves').stat().st_blocks*512)
             self.assertLess(after, total)
 
 
