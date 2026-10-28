@@ -194,6 +194,10 @@ RSS / disc telemetry.
   set to fan in and no k-way walk; the producer sweeps the corpus itself. The
   merge path stays in the binary behind --legacy-merge for A/B, and is priced by
   the v1/fan-in plans, not by the bin plan.
+  --allow-infeasible   run even when the plan cannot prove the build fits
+                     (overrides the ABSOLUTE peak-vs-free / RAM check; prints a
+                     warning and journals the override). Nothing else is
+                     overridable: a run that hits the real limit still fails.
   --scratch-free-pct N  DEPRECATED AND IGNORED. Accepted only so old scripts do
                      not break; it prints a warning and has no effect. A build
                      tool does not impose disc quota policy: the plan reports the
@@ -344,6 +348,9 @@ struct Options {
     timeout_s: Option<u64>,
     stripes: Vec<String>,
     scratch_free_pct: u32,
+    /// Proceed even when the plan cannot prove a fit (the operator overrides
+    /// the ABSOLUTE peak-vs-free check; nothing else is overridable).
+    allow_infeasible: bool,
     remap: Option<PathBuf>,
     chunk_mb: Option<u32>,
     fanin: bool,
@@ -418,6 +425,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     // Needs-based by default: the absolute peak-vs-free check is the gate
     // (see disc_verdict / tree_ok). A percentage-of-device rule is opt-in.
     let mut scratch_free_pct = 0u32;
+    let mut allow_infeasible = false;
     let mut remap = None;
     let mut chunk_mb = None;
     let mut fanin = false;
@@ -442,6 +450,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
                 }
             }
             "--snap-1e" => snap_1e = true,
+            "--allow-infeasible" => allow_infeasible = true,
             "--memory-gb" => {
                 i += 1;
                 memory_gb = value(args.get(i), "--memory-gb")?
@@ -667,7 +676,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     }
     Ok(Options { input, scratch, snap_1e, memory_gb, threads, chunks, kway, plan_only,
                  bin_pipeline, legacy_merge, v2_flag_given, chi_expect, wit_ram_gb,
-                 finish_as_gb, bin_live_cap, bin_target_size, bin_entropy_min, phrase, timeout_s, stripes, scratch_free_pct,
+                 finish_as_gb, bin_live_cap, bin_target_size, bin_entropy_min, phrase, timeout_s, stripes, scratch_free_pct, allow_infeasible,
                  remap, chunk_mb, fanin })
 }
 
@@ -1121,10 +1130,18 @@ fn run_chain(options: Options) -> Result<(), String> {
         return Ok(());
     }
     if build_plan.alternatives.iter().any(|a| !a.starts_with("CPU lacks")) {
-        // Feasibility failed (disc or RAM): print the plan + alternatives,
-        // refuse loud. (The cx16 note is informational, not a refusal.)
+        // Feasibility failed (disc or RAM): print the plan + alternatives.
+        // The cx16 note is informational, not a refusal. The ABSOLUTE fit check
+        // is the one thing an operator may override (--allow-infeasible): the
+        // plan is an estimate, and the operator may know the run fits.
         print!("{}", build_plan.render());
-        return Err("PLAN_INFEASIBLE: see XSA_PLAN_ALTERNATIVE lines above".into());
+        if !options.allow_infeasible {
+            return Err("PLAN_INFEASIBLE: see XSA_PLAN_ALTERNATIVE lines above \
+(override with --allow-infeasible to run anyway)"
+                .into());
+        }
+        eprintln!("warning: --allow-infeasible: proceeding although the plan did not \
+prove a fit (the projected peak exceeds the reported capacity)");
     }
     let mut journal = Journal::open(&journal_path)?;
     for line in build_plan.render().lines() {
