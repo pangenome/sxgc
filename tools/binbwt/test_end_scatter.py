@@ -1,11 +1,7 @@
 #!/usr/bin/env python3
 """Repeatable producer G6 gate; all subprocesses have a 600-second deadline.
 
-The inherited fixture stores its realization byte on disk. Strip exactly that
-byte before invoking the producer, whose input contract is the original corpus.
-Its TSV labels ordinary bytes by their raw hex value (legacy fixture convention),
-not by the container's byte+1 format code. The C++ --selftest normalizes the
-carried byte through the inverse remap and recognizes END by SA position zero.
+The corpus is stored unchanged; END is identified by SA position zero.
 """
 import argparse
 import pathlib
@@ -32,7 +28,7 @@ def check(binary, root, name, text, declared=False, fixture=False, remapped=Fals
         generated = run([sys.executable, str(pathlib.Path(end_fixture.__file__)),
                          '--out', str(case), '--case', name.split('-')[0]])
         assert generated.returncode == 0, generated.stderr
-        assert (case / 'corpus.bin').read_bytes() == text + b'\xf5'
+        assert (case / 'corpus.bin').read_bytes() == text
     corpus = case / 'raw.bin'
     corpus.write_bytes(text)
     sa = sorted(range(len(text) + 1), key=lambda p: text[p:])
@@ -48,8 +44,6 @@ def check(binary, root, name, text, declared=False, fixture=False, remapped=Fals
     args = [str(binary), '--corpus', str(corpus), '--out', str(output),
             '--scratch', str(case / 'scratch'), '--threads', '2',
             '--lcp-out', str(case / 'lcp'), '--selftest', str(oracle)]
-    if declared:
-        args += ['--selftest-declared-end']
     table = bytes(range(256))
     if remapped:
         present = sorted(set(text))
@@ -83,7 +77,7 @@ def check(binary, root, name, text, declared=False, fixture=False, remapped=Fals
             k += 1
         expected_lcps.append(k)
     assert lcps == expected_lcps, (name, lcps, expected_lcps)
-    expected_mode = 'declared-code' if declared or len(set(text)) == 256 else 'free-byte'
+    expected_mode = 'virtual'
     assert f'END_SYMBOL mode={expected_mode}' in result.stderr
     assert f'TAIL_GROUP rows={min(24, len(text)+1)}' in result.stderr
     if STREAM_CHECKER:
@@ -116,7 +110,7 @@ def main():
                      '-o', str(STREAM_CHECKER)])
         assert built.returncode == 0, built.stderr
         for name in ('tiny', 'short', 'records'):
-            for declared in (False, True):
+            for declared in (False,):
                 check(binary, root, name + ('-declared' if declared else '-free'),
                       end_fixture.cases(name), declared, fixture=True)
         rng = random.Random(257)
@@ -132,7 +126,7 @@ def main():
         oracle.write_text(oracle.read_text().replace('0\t427', '0\t426', 1))
         result = run(args)
         assert result.returncode != 0 and 'G6 disagreement' in result.stderr, result.stderr
-        print(f'END_SCATTER_PASS fixtures=6 binary={len(tests)} remap=1 negative_oracle=1 lcp=exact inverse_bwt=exact')
+        print(f'END_SCATTER_PASS fixtures=3 binary={len(tests)} remap=1 negative_oracle=1 lcp=exact inverse_bwt=exact')
     return 0
 
 

@@ -76,8 +76,6 @@ static const u8* T = nullptr;
 // by preflight; comparisons exhaust the finite corpus before accessing END.
 // Byte transport cells remain eight bits; position zero identifies the END BWT row.
 static u64 N = 0, FILE_N = 0;
-static u8 SENTINEL_BYTE = 0xF5;
-static bool DECLARED_END = false;
 static u64 KEY_N = 0; // only positions with 24 real bytes may enter the key sorter
 static constexpr u8 SENTINEL_SYMBOL = 0;
 static const u8* REMAP = nullptr;   // optional: raw byte -> remapped symbol
@@ -369,7 +367,7 @@ int main(int argc, char** argv) {
     double ram_gb = 1.0;
     double scratch_cap_gb = 0.0;      // 0 = 2n (the operator's law)
     u64 threads = 32, par_bands = 1, sample_n = 4000000;
-    bool keep_rows = false, selftestDeclared = false;
+    bool keep_rows = false;
     std::string selftestOracle;
     std::string remapPath, sort_mode = "std", tapeBands, orderSample;
     u64 sampleLo = 0, sampleCount = 4096;
@@ -384,7 +382,6 @@ int main(int argc, char** argv) {
         else if (a == "--tape-bands") tapeBands = nxt();
         else if (a == "--pending-bands") pendingBands = std::strtoull(nxt().c_str(), nullptr, 10);
         else if (a == "--selftest") selftestOracle = nxt();
-        else if (a == "--selftest-declared-end") selftestDeclared = true;
         else if (a == "--corpus") corpus = nxt();
         else if (a == "--out") out = nxt();
         else if (a == "--scratch") scratch = nxt();
@@ -404,7 +401,6 @@ int main(int argc, char** argv) {
     (void)sort_mode;
     if (corpus.empty() || (out.empty() && tapeBands.empty())) die("--corpus and --out required");
 
-    if (selftestDeclared && selftestOracle.empty()) die("declared override requires --selftest");
     if (!selftestOracle.empty() && !tapeBands.empty()) die("--selftest requires --out");
     if (!tapeBands.empty() && (!pendingBands || keep_rows))
         die("tape bands require K>0 and no keep-rows");
@@ -427,41 +423,26 @@ int main(int argc, char** argv) {
         ::close(rf);
         REMAP = remapBuf.data();
     }
-    // Preflight is a format decision. The exceptional END row is identified by
-    // position, so declared mode can retain all 256 byte values unchanged.
+    // END is virtual: byte cells carry only corpus bytes. SA position zero
+    // identifies the exceptional BWT row, independently of its transport cell.
     bool used[256]{};
     for (u64 p = 0; p < FILE_N; ++p) used[T[p]] = true;
-    unsigned freeByte = 256;
-    if (!used[0xf5]) freeByte = 0xf5;
-    else for (unsigned c = 0; c < 256; ++c) if (!used[c]) { freeByte = c; break; }
-    DECLARED_END = freeByte == 256 || selftestDeclared;
-    if (selftestDeclared) std::fprintf(stderr, "SELFTEST_END_OVERRIDE declared-code=1\n");
-    if (!DECLARED_END) SENTINEL_BYTE = u8(freeByte);
+    unsigned present = 0;
+    for (unsigned c = 0; c < 256; ++c) present += used[c];
     if (REMAP) {
         bool seen[256]{};
+        int previous = -1;
         for (unsigned c = 0; c < 256; ++c) {
             if (seen[REMAP[c]]) die("remap must be a permutation");
             seen[REMAP[c]] = true;
-        }
-        if (DECLARED_END) {
-            for (unsigned c = 0; c < 256; ++c)
-                if (REMAP[c] != c) die("declared-code requires identity byte order");
-        } else {
-            for (unsigned c = 0; c < 256; ++c)
-                if (REMAP[c] == 0) { SENTINEL_BYTE = u8(c); break; }
-            if (used[SENTINEL_BYTE]) die("free-byte remap assigns END to a present byte");
-            int previous = -1;
-            for (unsigned c = 0; c < 256; ++c) if (used[c]) {
+            if (used[c]) {
                 if (int(REMAP[c]) <= previous) die("remap does not preserve byte order");
                 previous = REMAP[c];
             }
         }
     }
-    if (DECLARED_END && !tapeBands.empty())
-        die("declared-code tape consumer is not implemented; standalone SA output is supported");
-    if (DECLARED_END) std::fprintf(stderr, "END_SYMBOL mode=declared-code\n");
-    else std::fprintf(stderr, "END_SYMBOL mode=free-byte byte=0x%02x\n", SENTINEL_BYTE);
-    std::fprintf(stderr, "END_FORMAT k=257 end=0 bytes=1..256\nTAIL_GROUP rows=%" PRIu64 "\n", N - KEY_N);
+    std::fprintf(stderr, "END_SYMBOL mode=virtual position=%" PRIu64 " multiplicity=1 rank=0\n", FILE_N);
+    std::fprintf(stderr, "END_FORMAT k=%u ends_in_sentinel=1 end_code=none\nTAIL_GROUP rows=%" PRIu64 "\n", present, N - KEY_N);
     build_pairmap();
     // SYMBOL ACCESS ON THE SENTINEL-TERMINATED TEXT: the corpus bytes through the
     // product remap, and index FILE_N = the sentinel symbol 0.
@@ -1199,7 +1180,7 @@ int main(int argc, char** argv) {
         }
         if (rank != N || sa.peek() != EOF || symbols.peek() != EOF) die("selftest row coverage");
         std::printf("G6_PASS mode=%s rows=%" PRIu64 " mismatches=0\n",
-                    DECLARED_END ? "declared-code" : "free-byte", rank);
+                    "virtual", rank);
     }
     return 0;
 }
