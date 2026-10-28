@@ -31,6 +31,7 @@
 // empirically against the bin machine's own emitted SA on a 4 MB slice.
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cinttypes>
 #include <cstdio>
@@ -63,20 +64,73 @@ static double now_sec() {
 }
 static inline u64 bswap64(u64 x) { return __builtin_bswap64(x); }
 
-// One row of the intermediate: a 16-byte big-endian-padded key + the position.
-// (Big-endian packing makes the key comparison a plain integral compare; the
-// bytes past the text end are zero, which is exactly the dollar convention's
-// "shorter is smaller".)
+// One row of the intermediate: a 24-symbol big-endian key, the position, the
+// carried BWT symbol and the row's KEY PREFIX LENGTH.
+//
+// The prefix length is what makes the key exact without a pad value: `aux` is
+// prefix_len+1 for a row of the TAIL GROUP (a row whose suffix has fewer than
+// KEY_BYTES data symbols) and 0 for every other row, i.e. "the whole key". The
+// comparator masks the key at min(prefix) and then applies the END rule, so the
+// zero fill past a short suffix is NEVER read as a symbol. (Big-endian packing
+// makes a full-key comparison a plain integral compare.)
 struct Row {
-    u64 klo, khi, kq, pos;   // 24-byte key (3 big-endian words) + packed pos/sym
+    u64 klo, khi, kq, pos;   // 24-symbol key (3 big-endian words) + pos/sym/aux
 };
+static constexpr u64 POS_MASK = (1ull << 48) - 1;
 
+// ================================ THE DECLARED END SYMBOL ===================
+// FORMAT (declared, not inferred): the alphabet is k = 257 CODES. Code 0 is
+// END; codes 1..256 are the 256 byte values. THE DATA PATH IS 8-BIT: no key
+// byte, row field, comparison operand or remap entry here is wider than a byte.
+// A code is only ever computed as an unsigned integer where a bucket index or an
+// ordering decision needs one (exactly what binbwt_slice's bin_code has always
+// done: code = v+1, 0 == END).
+//
+// REALIZATION is a PREFLIGHT DECISION, made once by `xsa_finish --sentinel-remap`
+// (journaled `END_SYMBOL mode=...`), and passed to every stage as a DECLARED
+// fact (`--end-mode`), never re-derived here:
+//
+//   free-byte      some byte value never occurs in this corpus (valid UTF-8
+//                  excludes 0xC0,0xC1,0xF5..0xFF). That byte is the end-of-text
+//                  marker: the table maps it to stream symbol 0, which IS the
+//                  declared END code. Nothing is written to the corpus; the
+//                  marker is the virtual text index FILE_N.
+//   declared-code  all 256 byte values occur. The table is the IDENTITY (the
+//                  unique order-preserving 8-bit map onto the raw bytes) and END
+//                  exists only in the frame: virtual index FILE_N, declared code
+//                  0, never a stored value.
+//
+// THE TWO MODES SHARE ONE CODE SPACE. Written once:
+//
+//     code(i) = 0                              for i >= FILE_N (END)
+//             = STREAM(REMAP[corpus[i]]) + SHIFT  otherwise
+//
+// STREAM(v) is the 8-bit value on disc and SHIFT is 0 for free-byte (data
+// symbols start at 1, so END=0 is directly representable) and 1 for
+// declared-code (data codes are exactly 1..256, the k=257 declaration). Code 0
+// is therefore STRICTLY BELOW every data code in both modes, which is the whole
+// point: every suffix comparison terminates on a data symbol difference and the
+// suffix order is finite. k holds no storage anywhere.
 static const u8* T = nullptr;
-// N IS THE TEXT LENGTH AND INCLUDES THE APPENDED END-OF-TEXT BYTE: T' = corpus .
-// 0xF5, one occurrence at index FILE_N, product symbol 0. FILE_N is what is on
-// disc; the sentinel is a virtual index, never materialised.
+// N IS THE TEXT LENGTH AND INCLUDES THE DECLARED END SYMBOL: T' = corpus . END,
+// one occurrence at index FILE_N. FILE_N is what is on disc; the END is a
+// virtual index, never materialised.
 static u64 N = 0, FILE_N = 0;
-static constexpr u8 SENTINEL_BYTE = 0xF5;
+static constexpr unsigned DECLARED_K = 257;      // the declared alphabet size
+static constexpr unsigned CODE_END = 0;          // the declared END code
+static constexpr unsigned KEY_BYTES = 24;        // key width, in symbols
+static constexpr unsigned CODE_SHIFT_FREE = 0, CODE_SHIFT_DECLARED = 1;
+static u8 END_BYTE = 0xF5;                       // free-byte marker (declared)
+static bool DECLARED_CODE = false;               // the preflight decision
+static unsigned CODE_SHIFT = CODE_SHIFT_FREE;
+// The stream value carried for the END row (the row whose predecessor is END,
+// i.e. the row of position 0). free-byte: the marker byte's symbol, 0. In
+// declared-code mode there IS no 8-bit END code (k=257 needs 257 codes), so the
+// END row is POSITIONAL and its carried byte is declared as such in the header.
+static constexpr unsigned END_STREAM_DECLARED_CODE = 256u;
+static unsigned END_STREAM = 0;
+// SENTINEL_BYTE/SENTINEL_SYMBOL keep their names for the callers that predate the
+// declaration: they mean "the free-byte marker" and "its (0) symbol".
 static constexpr u8 SENTINEL_SYMBOL = 0;
 static const u8* REMAP = nullptr;   // optional: raw byte -> remapped symbol
 // Two raw bytes -> their two remapped bytes, packed big-endian. A tie comparison
@@ -93,23 +147,42 @@ static inline void build_pairmap() {
     PAIRMAP_READY = true;
 }
 static inline u64 pack_sym(u64 p, u8 sym) { return p | (u64(sym) << 48); }
-static inline u64 unpack_pos(u64 v) { return v & ((1ull << 48) - 1); }
+static inline u64 unpack_pos(u64 v) { return v & POS_MASK; }
+// `aux` = key prefix length + 1 (1..24) for a TAIL GROUP row, 0 for a row whose
+// key is the full KEY_BYTES symbols.
+static inline u64 pack_aux(u64 v, unsigned aux) { return v | (u64(aux) << 56); }
+static inline unsigned unpack_aux(u64 v) { return unsigned(v >> 56); }
+static inline unsigned row_prefix(const Row& r) {
+    const unsigned a = unpack_aux(r.pos);
+    return a ? a - 1 : KEY_BYTES;
+}
+static inline unsigned key_byte(const Row& r, unsigned i) {
+    const u64 w = i < 8 ? r.klo : (i < 16 ? r.khi : r.kq);
+    return unsigned(w >> (56 - 8 * (i & 7))) & 0xffu;
+}
 
-// The 16-byte padded key at p, big-endian packed.
+// Declared code of text index i, in the k=257 code space (0 = END).
+static inline unsigned code_at(u64 i) {
+    if (i >= FILE_N) return CODE_END;
+    return unsigned(REMAP ? REMAP[T[i]] : T[i]) + CODE_SHIFT;
+}
+
+// The 24-byte key at p, big-endian packed. SAMPLE/BOUNDS ONLY: a row's key is
+// built by key_row()/tail_row() below, which mask it at the row's own prefix
+// length. Band edges are QUANTILES, so a padded sample key costs nothing but a
+// marginally different quantile - it never decides an order.
 static inline void key_at(u64 p, u64& klo, u64& khi, u64& kq) {
-    u8 b[24];
-    // REAL BYTES ONLY. The text is T' = corpus . 0xF5 and the sentinel maps to
-    // symbol 0, so bytes past the end of the corpus ARE the sentinel: the zero
-    // padding below is not a trick any more, it is the terminator. (Remapping the
-    // padding would be WRONG under an order-preserving relabel, where raw 0x00 is
-    // a real symbol above 0.)
+    u8 b[KEY_BYTES];
+    // REAL BYTES ONLY. The declared END is the virtual index FILE_N, so nothing
+    // is read past the corpus and no byte value is invented for the key: the
+    // zero fill below is a SAMPLE PAD, and the row comparator never reads it.
     const u64 avail = p < FILE_N ? FILE_N - p : 0;
-    const u64 take = avail < 24 ? avail : 24;
+    const u64 take = avail < KEY_BYTES ? avail : KEY_BYTES;
     if (take) std::memcpy(b, T + p, take);
-    if (take < 24) std::memset(b + take, 0, 24 - take);
-    // THE KEY LIVES IN THE PRODUCT ALPHABET: every present corpus byte keeps its
-    // relative order (1..k) and the sentinel is 0, so the big-endian key compare
-    // is the suffix compare of the sentinel-terminated text.
+    if (take < KEY_BYTES) std::memset(b + take, 0, KEY_BYTES - take);
+    // THE KEY LIVES IN THE STREAM ALPHABET: every present corpus byte keeps its
+    // relative order and the four absent/marker bytes are only ever reached by
+    // the sample, so the big-endian key compare is the symbol compare.
     if (REMAP) for (u64 i = 0; i < take; ++i) b[i] = REMAP[b[i]];
     u64 lo, hi, q;
     std::memcpy(&lo, b, 8);
@@ -120,17 +193,21 @@ static inline void key_at(u64 p, u64& klo, u64& khi, u64& kq) {
     kq = bswap64(q);
 }
 
-// Full suffix comparison in dollar mode (shorter is smaller).
-// `from` is safe to pass as 24: the comparator only reaches here when the first
-// 24 key bytes are EQUAL, so comparing them again is pure waste (and it is the
-// dominant cost of the tie set).
-// The same comparison, but it also reports HOW FAR the two suffixes agree. The
-// caller is the merge sort, where that number IS the adjacent-rank LCP - the value
-// the finish otherwise re-derives later with 1.28e11 random text reads.
+// --------------------------------------------------------------------------
+// SUFFIX COMPARISON OF THE DECLARED TEXT. Two rules, and nothing else:
+//   1. compare SYMBOLS (stream values: the code map is monotone, so value order
+//      IS code order) up to the shorter suffix's DATA length;
+//   2. a suffix whose data part is a prefix of the other's is SMALLER, because
+//      its next symbol is END, declared code 0, below every data code.
+// `cap` is the number of comparable DATA symbols: min(|a|,|b|) - 1. Nothing at
+// index FILE_N (the declared END) is ever read from the corpus, so there is no
+// out-of-bounds byte and no reliance on a pad value.
+// --------------------------------------------------------------------------
 static inline int suf_cmp_lcp(u64 a, u64 b, u64 from, u64& lcp) {
-    const u64 cap = std::min(N - a, N - b);
-    lcp = from;
+    const u64 cap = std::min(N - a, N - b) - 1;   // END excluded: it is not a byte
     u64 i = from;
+    if (i > cap) i = cap;
+    lcp = i;
     if (PAIRMAP_READY) {
         while (i + 2 <= cap) {
             const uint16_t x = PAIRMAP[(unsigned(T[a + i]) << 8) | T[a + i + 1]];
@@ -142,76 +219,72 @@ static inline int suf_cmp_lcp(u64 a, u64 b, u64 from, u64& lcp) {
             }
             i += 2;
         }
-        for (; i < cap; ++i) {
-            const u8 xb = REMAP ? REMAP[T[a + i]] : T[a + i];
-            const u8 yb = REMAP ? REMAP[T[b + i]] : T[b + i];
-            if (xb != yb) { lcp = i; return xb < yb ? -1 : 1; }
-        }
-        lcp = cap;
-        if (a == b) return 0;
-        return (N - a) < (N - b) ? -1 : 1;
     }
     for (; i < cap; ++i) {
         const u8 xb = REMAP ? REMAP[T[a + i]] : T[a + i];
         const u8 yb = REMAP ? REMAP[T[b + i]] : T[b + i];
         if (xb != yb) { lcp = i; return xb < yb ? -1 : 1; }
     }
+    // END RULE. All comparable data symbols agree, so the next symbol of the
+    // shorter suffix is END (code 0) and of the longer one is a data symbol:
+    // the shorter suffix sorts FIRST. Equal lengths mean the same suffix.
     lcp = cap;
-    if (a == b) return 0;
-    return (N - a) < (N - b) ? -1 : 1;
+    return (N - a) < (N - b) ? -1 : ((N - a) > (N - b) ? 1 : 0);
 }
 
 static inline int suf_cmp_from(u64 a, u64 b, u64 from) {
-    const u64 cap = std::min(N - a, N - b);
-    if (from >= cap) {
-        if (a == b) return 0;
-        return (N - a) < (N - b) ? -1 : 1;
-    }
-    if (PAIRMAP_READY) {
-        u64 i = from;
-        while (i + 2 <= cap) {
-            const uint16_t x = PAIRMAP[(unsigned(T[a + i]) << 8) | T[a + i + 1]];
-            const uint16_t y = PAIRMAP[(unsigned(T[b + i]) << 8) | T[b + i + 1]];
-            if (x != y) return x < y ? -1 : 1;
-            i += 2;
-        }
-        for (; i < cap; ++i) {
-            const u8 xb = REMAP ? REMAP[T[a + i]] : T[a + i];
-            const u8 yb = REMAP ? REMAP[T[b + i]] : T[b + i];
-            if (xb != yb) return xb < yb ? -1 : 1;
-        }
-        if (a == b) return 0;
-        return (N - a) < (N - b) ? -1 : 1;
-    }
-    const u64 cap0 = cap;
-    if (!REMAP) {   // fast path: identity alphabet, 8 bytes at a time
-        u64 i = from;
-        while (i + 8 <= cap) {
-            u64 x, y;
-            std::memcpy(&x, T + a + i, 8);
-            std::memcpy(&y, T + b + i, 8);
-            if (x != y) {
-                u8 xs[8], ys[8];
-                std::memcpy(xs, &x, 8);
-                std::memcpy(ys, &y, 8);
-                for (int j = 0; j < 8; ++j)
-                    if (xs[j] != ys[j]) return xs[j] < ys[j] ? -1 : 1;
-            }
-            i += 8;
-        }
-        for (; i < cap; ++i)
-            if (T[a + i] != T[b + i]) return T[a + i] < T[b + i] ? -1 : 1;
-    } else {        // product alphabet: compare remapped symbols
-        for (u64 i = from; i < cap0; ++i) {
-            const u8 xb = REMAP[T[a + i]], yb = REMAP[T[b + i]];
-            if (xb != yb) return xb < yb ? -1 : 1;
-        }
-    }
-    if (a == b) return 0;
-    return (N - a) < (N - b) ? -1 : 1;
+    u64 ignored = 0;
+    return suf_cmp_lcp(a, b, from, ignored);
 }
 
+// --------------------------------------------------------------------------
+// ROW CONSTRUCTION.
+//
+// make_row() is the reference builder (used by the selftest for EVERY position,
+// and by the 150 MB scan for TAIL GROUP rows through tail_row()). A row whose
+// suffix is at least KEY_BYTES data symbols long is keyed by the KEY_BYTES
+// stream symbols that follow it; a row whose suffix is shorter is keyed by the
+// symbols that exist and carries that length, so no pad value is ever compared.
+// --------------------------------------------------------------------------
+static inline void key_words(const u8* b, u64& a1, u64& a2, u64& a3) {
+    u64 lo, hi, q;
+    std::memcpy(&lo, b, 8);
+    std::memcpy(&hi, b + 8, 8);
+    std::memcpy(&q, b + 16, 8);
+    a1 = bswap64(lo); a2 = bswap64(hi); a3 = bswap64(q);
+}
 
+// The carried BWT symbol of position p: its predecessor's stream symbol, and the
+// declared END placeholder for position 0 (the row whose predecessor is END).
+static inline u8 carried_symbol(u64 p) {
+    if (p == 0) return u8(END_STREAM);
+    return REMAP ? REMAP[T[p - 1]] : T[p - 1];
+}
+
+static Row tail_row(u64 p) {
+    if (!(p + KEY_BYTES > FILE_N && p <= FILE_N))
+        die("tail_row: position is not in the tail group");
+    const unsigned dl = unsigned(FILE_N - p);   // 0..KEY_BYTES-1 data symbols
+    u8 b[KEY_BYTES] = {0};
+    for (unsigned i = 0; i < dl; ++i) b[i] = REMAP ? REMAP[T[p + i]] : T[p + i];
+    Row r{};
+    key_words(b, r.klo, r.khi, r.kq);
+    // aux = prefix length + 1, so 0 unambiguously means "the whole key".
+    r.pos = pack_aux(pack_sym(p, carried_symbol(p)), dl + 1);
+    return r;
+}
+
+static Row make_row(u64 p) {
+    if (p + KEY_BYTES > FILE_N) return tail_row(p);
+    u8 b[KEY_BYTES];
+    // Non-tail: KEY_BYTES data symbols exist (p + KEY_BYTES <= FILE_N).
+    std::memcpy(b, T + p, KEY_BYTES);
+    if (REMAP) for (unsigned i = 0; i < KEY_BYTES; ++i) b[i] = REMAP[b[i]];
+    Row r{};
+    key_words(b, r.klo, r.khi, r.kq);
+    r.pos = pack_sym(p, carried_symbol(p));   // aux 0
+    return r;
+}
 
 // ---------------------------------------------------------------------------
 // THE POOL: threads and buffers live for the WHOLE run.
@@ -298,23 +371,44 @@ struct Pool {
 // v[] is sorted in place; out_lcp[k] = LCP(v[k-1], v[k]) (out_lcp[0] = 0).
 // Values >= 255 are recorded in `esc` as (rank, value).
 // Exact row comparison that also yields the LCP. The three key words are
-// big-endian, so an integer compare IS the byte order, and clz of the xor gives
-// the number of leading EQUAL bytes for free. Only a full 24-byte tie falls
-// through to the text.
+// big-endian, so an integer compare IS the symbol order, and clz of the xor
+// gives the number of leading EQUAL symbols for free. Only a full 24-symbol tie
+// falls through to the text.
+//
+// THE TAIL GROUP IS THE ONE PLACE THE END MEETS DATA. A row whose suffix has
+// fewer than KEY_BYTES data symbols cannot be keyed by padding: no pad value is
+// below every symbol (in declared-code mode every one of the 256 values IS a
+// symbol). Those rows carry their prefix length instead, the comparison masks
+// the key at min(prefix), and the shorter prefix sorts first - which is the END
+// rule, applied WITHOUT a pad.
 static inline int row_cmp_lcp(const Row& a, const Row& b, u64& lcp) {
-    if (a.klo != b.klo) {
-        lcp = u64(__builtin_clzll(a.klo ^ b.klo)) >> 3;
-        return a.klo < b.klo ? -1 : 1;
+    const unsigned pa = row_prefix(a), pb = row_prefix(b);
+    const unsigned lim = pa < pb ? pa : pb;
+    if (lim == KEY_BYTES) {   // both keys are full: integral compare, as before
+        if (a.klo != b.klo) {
+            lcp = u64(__builtin_clzll(a.klo ^ b.klo)) >> 3;
+            return a.klo < b.klo ? -1 : 1;
+        }
+        if (a.khi != b.khi) {
+            lcp = 8 + (u64(__builtin_clzll(a.khi ^ b.khi)) >> 3);
+            return a.khi < b.khi ? -1 : 1;
+        }
+        if (a.kq != b.kq) {
+            lcp = 16 + (u64(__builtin_clzll(a.kq ^ b.kq)) >> 3);
+            return a.kq < b.kq ? -1 : 1;
+        }
+        return suf_cmp_lcp(unpack_pos(a.pos), unpack_pos(b.pos), KEY_BYTES, lcp);
     }
-    if (a.khi != b.khi) {
-        lcp = 8 + (u64(__builtin_clzll(a.khi ^ b.khi)) >> 3);
-        return a.khi < b.khi ? -1 : 1;
+    unsigned d = 0;
+    while (d < lim) {
+        const unsigned x = key_byte(a, d), y = key_byte(b, d);
+        if (x != y) { lcp = d; return x < y ? -1 : 1; }
+        ++d;
     }
-    if (a.kq != b.kq) {
-        lcp = 16 + (u64(__builtin_clzll(a.kq ^ b.kq)) >> 3);
-        return a.kq < b.kq ? -1 : 1;
-    }
-    return suf_cmp_lcp(unpack_pos(a.pos), unpack_pos(b.pos), 24, lcp);
+    lcp = d;
+    if (pa != pb) return pa < pb ? -1 : 1;   // END (code 0) is below every code
+    die("tail group: two rows have equal finite keys (the END is unique)");
+    return 0;
 }
 
 static void merge_sort_lcp(std::vector<Row>& v, std::vector<uint8_t>& out_lcp,
@@ -371,6 +465,254 @@ static void merge_sort_lcp(std::vector<Row>& v, std::vector<uint8_t>& out_lcp,
     }
 }
 
+// ---------------------------------------------------------------------------
+// G6 - THE TAIL GROUP ORACLE.  (scatter_sort --selftest-tail)
+//
+// A hand-built fixture whose text ENDS MID-RECORD: fewer than KEY_BYTES bytes
+// follow its last record separator (0x1E, the pile fixture's separator), so the
+// final positions cannot be keyed at all and the declared END meets DATA inside
+// the key window. Band/edge code is where every bug of this week lived, so this
+// gate is a brute-force comparison, not a smoke test:
+//
+//   * the producer's OWN row construction (make_row: tail_row for the short rows,
+//     the full KEY_BYTES key for the rest) and the producer's OWN comparator
+//     (row_cmp_lcp through merge_sort_lcp, i.e. the LCP-carrying merge) produce
+//     the order;
+//   * a brute-force SA of the DECLARED text corpus . END is computed by direct
+//     suffix comparison over the k=257 code space, with no key, no band, no
+//     padding and no shared code with the producer;
+//   * EVERY rank is printed (position, key prefix length, carried symbol) and the
+//     BWT is printed symbol by symbol, in BOTH realizations.
+//
+// A corpus that ends mid-record is the adversarial case for the tail group; a
+// declared-code fixture additionally contains ALL 256 byte values, which is what
+// makes that realization legal.
+// ---------------------------------------------------------------------------
+static std::string hex_bytes(const std::vector<u8>& v, size_t from, size_t to) {
+    std::string out;
+    char b[8];
+    for (size_t i = from; i < to && i < v.size(); ++i) {
+        std::snprintf(b, sizeof b, "%02x", unsigned(v[i]));
+        if (!out.empty()) out.push_back(' ');
+        out += b;
+    }
+    return out;
+}
+
+// Brute-force suffix array of the declared text, comparing CODES: code 0 is END
+// and is below every data code. This is the oracle: O(n^2 log n), no keys.
+static std::vector<u64> brute_sa(const u8* text, u64 fileN, const u8* remap, unsigned shift) {
+    const u64 n = fileN + 1;
+    std::vector<u64> sa(n);
+    for (u64 i = 0; i < n; ++i) sa[i] = i;
+    auto code = [&](u64 i) -> unsigned {
+        if (i >= fileN) return CODE_END;
+        return unsigned(remap ? remap[text[i]] : text[i]) + shift;
+    };
+    std::sort(sa.begin(), sa.end(), [&](u64 a, u64 b) {
+        const u64 la = n - a, lb = n - b;
+        const u64 cap = std::min(la, lb) - 1;   // the END is not a byte
+        for (u64 i = 0; i < cap; ++i) {
+            const unsigned x = code(a + i), y = code(b + i);
+            if (x != y) return x < y;
+        }
+        return la < lb;    // END (code 0) first
+    });
+    return sa;
+}
+
+static bool tail_case(const char* name, const std::vector<u8>& corpus, bool declared,
+                      const u8* remap) {
+    FILE_N = corpus.size();
+    N = FILE_N + 1;
+    T = corpus.data();
+    REMAP = remap;
+    DECLARED_CODE = declared;
+    CODE_SHIFT = declared ? CODE_SHIFT_DECLARED : CODE_SHIFT_FREE;
+    END_STREAM = 0;
+    build_pairmap();
+
+    // The producer's rows, sorted by the producer's own merge sort (with LCPs).
+    std::vector<Row> rows(N);
+    for (u64 p = 0; p < N; ++p) rows[p] = make_row(p);
+    std::vector<u8> lcp;
+    std::vector<std::pair<u64, u64>> esc;
+    merge_sort_lcp(rows, lcp, esc, 0);
+
+    const std::vector<u64> truth = brute_sa(corpus.data(), FILE_N, remap, CODE_SHIFT);
+
+    std::vector<u64> got(N);
+    bool same = true;
+    size_t firstBad = SIZE_MAX;
+    u64 tailSeen = 0, endRankSeen = SIZE_MAX;
+    for (u64 r = 0; r < N; ++r) {
+        got[r] = unpack_pos(rows[r].pos);
+        if (unpack_aux(rows[r].pos)) ++tailSeen;
+        if (got[r] != truth[r] && same) { same = false; firstBad = r; }
+        if (unpack_pos(rows[r].pos) == FILE_N) endRankSeen = r;
+    }
+    const u64 tailExpect = N < KEY_BYTES ? N : KEY_BYTES;
+
+    std::printf("TAIL_CASE name=%s realization=%s n=%llu k=%u tail_rows=%llu/%llu "
+                "end_row_rank=%lld sa_match=%d\n",
+                name, declared ? "declared-code" : "free-byte",
+                (unsigned long long)N, DECLARED_K,
+                (unsigned long long)tailSeen, (unsigned long long)tailExpect,
+                (long long)(endRankSeen == SIZE_MAX ? -1 : (long long)endRankSeen),
+                int(same));
+    {
+        long long lastSep = -1;
+        for (size_t i = 0; i < corpus.size(); ++i) if (corpus[i] == 0x1E) lastSep = (long long)i;
+        std::printf("TAIL_CASE_TEXT n_bytes=%llu last_sep=%lld bytes_after_last_sep=%lld "
+                    "key_window=%u ends_mid_record=%d\n",
+                    (unsigned long long)corpus.size(), lastSep,
+                    (long long)((long long)corpus.size() - 1 - lastSep), KEY_BYTES,
+                    int(lastSep >= 0 && (long long)corpus.size() - 1 - lastSep < (long long)KEY_BYTES));
+    }
+    std::printf("TAIL_CASE_SA_EXACT");
+    for (u64 r = 0; r < N; ++r) std::printf(" %llu", (unsigned long long)got[r]);
+    std::printf("\n");
+    if (!same) {
+        std::printf("TAIL_CASE_SA_BRUTE");
+        for (u64 r = 0; r < N; ++r) std::printf(" %llu", (unsigned long long)truth[r]);
+        std::printf("\nTAIL_CASE_FIRST_DIFF rank=%zu got=%llu want=%llu\n", firstBad,
+                    (unsigned long long)got[firstBad], (unsigned long long)truth[firstBad]);
+        return false;
+    }
+    // Every rank: position, key prefix length in symbols, carried symbol (as the
+    // DECLARED code, so EOF is printed as END rather than as a byte).
+    std::printf("TAIL_CASE_RANKS rank pos key_symbols carried_code\n");
+    for (u64 r = 0; r < N; ++r) {
+        const u64 p = unpack_pos(rows[r].pos);
+        const unsigned sy = unsigned((rows[r].pos >> 48) & 0xffu);
+        const unsigned carriedCode = (p == 0) ? CODE_END
+                                              : unsigned(remap ? remap[corpus[p - 1]] : corpus[p - 1]) + CODE_SHIFT;
+        (void)sy;
+        std::printf("TAIL_CASE_RANK %llu %llu %u %u%s\n", (unsigned long long)r,
+                    (unsigned long long)p, row_prefix(rows[r]), carriedCode,
+                    (p == 0) ? " END" : "");
+    }
+    // THE BWT, symbol by symbol, against the oracle's own derivation.
+    std::printf("TAIL_CASE_BWT");
+    bool bwtOk = true;
+    for (u64 r = 0; r < N; ++r) {
+        const u64 p = truth[r];
+        const unsigned want = (p == 0) ? CODE_END
+                                       : unsigned(remap ? remap[corpus[p - 1]] : corpus[p - 1]) + CODE_SHIFT;
+        const unsigned have = unsigned((rows[r].pos >> 48) & 0xffu);
+        const unsigned haveCode = (p == 0) ? CODE_END : have + CODE_SHIFT;
+        if (haveCode != want) {
+            bwtOk = false;
+            std::printf(" [rank %llu have=%u want=%u]", (unsigned long long)r, haveCode, want);
+        } else if (want == CODE_END) std::printf(" END");
+        else std::printf(" %u", want);
+    }
+    std::printf("\n");
+    // Adjacent-rank LCP column vs a direct brute-force LCP (symbols, END excluded).
+    bool lcpOk = true;
+    for (u64 r = 1; r < N; ++r) {
+        const u64 a = truth[r - 1], b = truth[r];
+        const u64 cap = std::min(N - a, N - b) - 1;
+        u64 k = 0;
+        while (k < cap) {
+            const unsigned x = (a + k >= FILE_N) ? CODE_END : unsigned(remap ? remap[corpus[a + k]] : corpus[a + k]) + CODE_SHIFT;
+            const unsigned y = (b + k >= FILE_N) ? CODE_END : unsigned(remap ? remap[corpus[b + k]] : corpus[b + k]) + CODE_SHIFT;
+            if (x != y) break;
+            ++k;
+        }
+        u64 reported = lcp[r];
+        if (reported == 255)
+            for (auto& e : esc) if (e.first == r) { reported = e.second; break; }
+        if (reported != k) { lcpOk = false; }
+    }
+    std::printf("TAIL_CASE_BWT_MATCH=%d LCP_MATCH=%d\n", int(bwtOk), int(lcpOk));
+    return bwtOk && lcpOk;
+}
+
+static int selftest_tail() {
+    // ---- fixtures. Every one ENDS MID-RECORD: the last 0x1E is followed by
+    // fewer than KEY_BYTES bytes, so the final positions are unkeyable.
+    std::vector<std::vector<u8>> fixtures;
+    // (1) the pile shape: records separated by 0x1E, ending mid-record; the filler
+    // contains ALL 256 byte values so declared-code mode is legal for it.
+    {
+        std::vector<u8> f;
+        for (unsigned i = 0; i < 256; ++i) f.push_back(u8(i));
+        for (unsigned rep = 0; rep < 3; ++rep)
+            for (unsigned i = 0; i < 256; ++i) f.push_back(u8((i * 7 + rep) & 0xff));
+        f.push_back(0x1E);
+        const char* tail = "305,1,1,0,0,3";      // 15 bytes: < KEY_BYTES after the sep
+        for (const char* q = tail; *q; ++q) f.push_back(u8(*q));
+        fixtures.push_back(f);
+    }
+    // (2) a tail that is ALL ZERO bytes after a separator: the case where a zero
+    // pad and a real zero symbol are indistinguishable.
+    {
+        std::vector<u8> f;
+        for (unsigned i = 0; i < 40; ++i) f.push_back(u8('a' + (i % 3)));
+        f.push_back(0x1E);
+        for (unsigned i = 0; i < 9; ++i) f.push_back(0x00);
+        f.push_back(0x1E);
+        for (unsigned i = 0; i < 5; ++i) f.push_back(0x00);
+        fixtures.push_back(f);
+    }
+    // (3) periodic: every suffix shares a long prefix with its neighbour.
+    {
+        std::vector<u8> f;
+        for (unsigned i = 0; i < 60; ++i) f.push_back(u8(i % 2 ? 'a' : 'b'));
+        f.push_back(0x1E);
+        for (unsigned i = 0; i < 7; ++i) f.push_back(u8(i % 2 ? 'a' : 'b'));
+        fixtures.push_back(f);
+    }
+    // (4) tiny: shorter than the key window, so EVERY row is in the tail group.
+    {
+        std::vector<u8> f{0x1E, 'x', 0x1E, 'y', 0x00};
+        fixtures.push_back(f);
+    }
+
+    bool all = true;
+    for (size_t c = 0; c < fixtures.size(); ++c) {
+        std::vector<u8> corpus = fixtures[c];
+        u8 freeMap[256], ident[256];
+        std::array<bool, 256> present{};
+        for (u8 b : corpus) present[b] = true;
+        const u8 marker = 0xF5;
+        unsigned next = 1;
+        for (unsigned b = 0; b < 256; ++b)
+            if (b != marker && present[b]) freeMap[b] = u8(next++);
+        freeMap[marker] = 0;
+        unsigned fill = next;
+        for (unsigned b = 0; b < 256; ++b)
+            if (!present[b] && b != marker) freeMap[b] = u8(fill++);
+        for (unsigned b = 0; b < 256; ++b) ident[b] = u8(b);
+        bool everyByte = true;
+        for (unsigned b = 0; b < 256; ++b) if (!present[b]) everyByte = false;
+
+        char label[64];
+        std::snprintf(label, sizeof label, "fixture%zu", c);
+        std::printf("TAIL_FIXTURE index=%zu bytes=%zu all_256_present=%d marker_0x%02x_occurs=%d\n",
+                    c, corpus.size(), int(everyByte), unsigned(marker), int(present[marker]));
+        std::printf("TAIL_FIXTURE_BYTES %s\n", hex_bytes(corpus, 0, corpus.size()).c_str());
+        // BOTH REALIZATIONS for every fixture. free-byte requires the marker byte
+        // to be absent (a corpus that uses it cannot carry the marker); the
+        // declared-code realization is computable for ANY corpus - the k=257
+        // declaration with the identity table - it is merely FORCED when all 256
+        // byte values occur, which is what fixture 0 is for.
+        if (!present[marker])
+            all &= tail_case(label, corpus, false, freeMap);
+        else
+            std::printf("TAIL_CASE_SKIP fixture=%zu realization=free-byte "
+                        "reason=marker_byte_0x%02x_occurs\n", c, unsigned(marker));
+        all &= tail_case(label, corpus, true, ident);
+        std::fprintf(stderr, "TAIL_FIXTURE_LEGAL index=%zu free_byte_legal=%d "
+                             "declared_code_forced=%d\n", c,
+                             int(!present[marker]), int(everyByte));
+    }
+    std::printf("TAIL_SELFTEST_%s fixtures=%zu realizations_both=1 pad_free=1\n",
+                all ? "PASS" : "FAIL", fixtures.size());
+    return all ? 0 : 1;
+}
+
 int main(int argc, char** argv) {
     std::string corpus, out, scratch = "/tmp/ss_scratch", lcpOut, isaOut;
     u64 isaK = 1024;
@@ -381,6 +723,8 @@ int main(int argc, char** argv) {
     std::string remapPath, sort_mode = "std", tapeBands, orderSample;
     u64 sampleLo = 0, sampleCount = 4096;
     u64 pendingBands = 8;
+    std::string endMode;              // the preflight decision, DECLARED not inferred
+    unsigned endByte = 0xF5;
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -404,6 +748,9 @@ int main(int argc, char** argv) {
         else if (a == "--lcp-out") lcpOut = nxt();
         else if (a == "--isa-sample-out") isaOut = nxt();
         else if (a == "--isa-sample-k") isaK = std::strtoull(nxt().c_str(), nullptr, 10);
+        else if (a == "--end-mode") endMode = nxt();
+        else if (a == "--end-byte") endByte = unsigned(std::strtoul(nxt().c_str(), nullptr, 0));
+        else if (a == "--selftest-tail") return selftest_tail();
         else die("unknown arg " + a);
     }
     (void)sort_mode;
@@ -428,19 +775,69 @@ int main(int argc, char** argv) {
         if (::read(rf, remapBuf.data(), 256) != 256) die("remap short read");
         ::close(rf);
         REMAP = remapBuf.data();
-        if (REMAP[SENTINEL_BYTE] != SENTINEL_SYMBOL)
-            die("remap must map 0xf5 to the minimal symbol 0 (the sentinel)");
-        for (unsigned c = 0; c < 256; ++c)
-            if (c != SENTINEL_BYTE && REMAP[c] == SENTINEL_SYMBOL)
-                die("remap maps a text byte onto the sentinel symbol");
+        // The table's mode-specific claims are proved in the DECLARED-REALIZATION
+        // block below (free-byte: the marker maps to 0 and nothing else does;
+        // declared-code: the table is the identity).
     }
+    // ---- THE REALIZATION IS DECLARED, NEVER INFERRED. `--end-mode` is the
+    // preflight decision `xsa_finish --sentinel-remap` journaled, and every claim
+    // it makes is CHECKED against the table and the corpus here (a corpus that
+    // fits neither mode is an internal error, so it refuses).
+    if (endMode.empty()) endMode = "free-byte";
+    if (endByte > 255) die("--end-byte must be a byte value");
+    END_BYTE = u8(endByte);
+    if (endMode == "free-byte") {
+        DECLARED_CODE = false;
+        CODE_SHIFT = CODE_SHIFT_FREE;
+        if (REMAP) {
+            if (REMAP[END_BYTE] != SENTINEL_SYMBOL)
+                die("free-byte mode: the remap must map the end byte to stream symbol 0");
+            for (unsigned c = 0; c < 256; ++c)
+                if (c != END_BYTE && REMAP[c] == SENTINEL_SYMBOL)
+                    die("free-byte mode: the remap maps a text byte onto the END symbol");
+        } else {
+            // no table: the end byte must be absent from the corpus (proved by the
+            // class histogram below) - identity stream symbols, END still 0.
+        }
+        END_STREAM = SENTINEL_SYMBOL;
+    } else if (endMode == "declared-code") {
+        DECLARED_CODE = true;
+        CODE_SHIFT = CODE_SHIFT_DECLARED;
+        if (REMAP) {
+            for (unsigned c = 0; c < 256; ++c)
+                if (REMAP[c] != u8(c))
+                    die("declared-code mode: the remap must be the IDENTITY (the unique "
+                        "order-preserving 8-bit map onto the raw bytes)");
+        }
+        // END has NO 8-bit stream code here: k=257 needs 257 codes and all 256 are
+        // data. The END row is POSITIONAL (declared in the stream header).
+        END_STREAM = 0;
+    } else {
+        die("--end-mode must be free-byte or declared-code");
+    }
+    {
+        char hex[8];
+        std::snprintf(hex, sizeof hex, "0x%02x", unsigned(END_BYTE));
+        std::fprintf(stderr,
+            "END_SYMBOL mode=%s k=%u end_symbol=%u end_byte=%s code_shift=%u "
+            "tail_bytes=%u end_stream=%u end_positional=%u\n",
+            DECLARED_CODE ? "declared-code" : "free-byte", DECLARED_K, CODE_END,
+            DECLARED_CODE ? "none" : hex, CODE_SHIFT, KEY_BYTES, END_STREAM,
+            DECLARED_CODE ? 1u : 0u);
+    }
+    // The tail group: every position whose KEY_BYTES-symbol key would reach the
+    // declared END. They are sorted by the FULL comparator, never by a pad.
+    const u64 tailRows = N < KEY_BYTES ? N : KEY_BYTES;
+    std::fprintf(stderr, "TAIL_GROUP rows=%llu first_pos=%llu end_pos=%llu full_comparator=1 pad_free=1\n",
+                 (unsigned long long)tailRows,
+                 (unsigned long long)(N - tailRows),
+                 (unsigned long long)(N - 1));
     build_pairmap();
-    // SYMBOL ACCESS ON THE SENTINEL-TERMINATED TEXT: the corpus bytes through the
-    // product remap, and index FILE_N = the sentinel symbol 0.
-    auto sym_at = [](u64 p) -> unsigned {
-        if (p >= FILE_N) return SENTINEL_SYMBOL;
-        return REMAP ? REMAP[T[p]] : T[p];
-    };
+    // CLASS OF A TEXT POSITION in the k=257 code space (0 = END, 1..256 = data
+    // codes). This is the ONLY place a code (rather than a stored symbol) enters
+    // the producer: waves are key ranges in this space, and the space is
+    // order-isomorphic to the stream alphabet, so nothing downstream changes.
+    auto sym_at = [](u64 p) -> unsigned { return code_at(p); };
 
     const u64 row_bytes = sizeof(Row);
     const u64 ram_bytes = (u64)(ram_gb * 1e9);
@@ -475,14 +872,16 @@ int main(int argc, char** argv) {
         N, row_bytes, cap_bytes, double(cap_bytes) / double(N), rows_per_wave, waves,
         ram_gb, rows_per_band, par_bands, threads);
 
-    // ---- exact first-byte histogram: one parallel pass, 256 counters. This is
-    // what makes the per-wave FILTER cheap: a rejected position costs one load
-    // instead of a 24-byte key computation (16 waves x n key computations was
-    // 4.6x the whole sort at 150 MB).
-    std::vector<u64> hist(256, 0);
+    // ---- exact first-symbol histogram: one parallel pass, DECLARED_K (=257)
+    // counters. This is what makes the per-wave FILTER cheap: a rejected position
+    // costs one load instead of a 24-symbol key computation (16 waves x n key
+    // computations was 4.6x the whole sort at 150 MB). Class 0 is the END row and
+    // carries exactly one row; the code space, not a byte value, is what the
+    // histogram is over.
+    std::vector<u64> hist(DECLARED_K, 0);
     {
         const u64 nt = std::max<u64>(1, threads);
-        std::vector<std::vector<u64>> lh(nt, std::vector<u64>(256, 0));
+        std::vector<std::vector<u64>> lh(nt, std::vector<u64>(DECLARED_K, 0));
         std::vector<std::thread> ts;
         for (u64 t = 0; t < nt; ++t)
             ts.emplace_back([&, t]() {
@@ -492,7 +891,28 @@ int main(int argc, char** argv) {
             });
         for (auto& th : ts) th.join();
         for (u64 t = 0; t < nt; ++t)
-            for (int i = 0; i < 256; ++i) hist[i] += lh[t][i];
+            for (unsigned i = 0; i < DECLARED_K; ++i) hist[i] += lh[t][i];
+    }
+    {
+        u64 total = 0;
+        for (unsigned i = 0; i < DECLARED_K; ++i) total += hist[i];
+        if (total != N) die("first-symbol histogram does not cover the declared text");
+        if (hist[CODE_END] != 1) die("the declared END code must occur exactly once");
+    }
+    if (!DECLARED_CODE && !REMAP && hist[unsigned(END_BYTE)] != 0)
+        die("free-byte mode without a table: the end byte must not occur in the corpus");
+    if (!DECLARED_CODE && REMAP) {
+        // END is directly representable: no DATA code may collide with it.
+        if (hist[CODE_END] != 1 || hist[SENTINEL_SYMBOL] != 1)
+            die("free-byte mode: END must be the only row in the minimal code class");
+    }
+    if (DECLARED_CODE) {
+        // Every data code of the k=257 declaration must be reachable, and END must
+        // be the only symbol with no 8-bit code.
+        unsigned present = 0;
+        for (unsigned i = 1; i < DECLARED_K; ++i) if (hist[i]) ++present;
+        std::fprintf(stderr, "END_SYMBOL_DECLARED_CODES classes=%u data_codes_present=%u\n",
+                     DECLARED_K, present);
     }
     // ---- wave list: greedy byte ranges, each <= rows_per_wave rows. A byte whose
     // class ALONE exceeds the cap is split by its second byte (2-level wave).
@@ -501,24 +921,24 @@ int main(int argc, char** argv) {
     {
         unsigned lo = 0;
         u64 acc = 0;
-        for (unsigned c = 0; c < 256; ++c) {
+        for (unsigned c = 0; c < DECLARED_K; ++c) {
             if (hist[c] > rows_per_wave) {
                 if (lo < c) { wl.push_back({lo, c, false, 0, 0, 0}); lo = c; acc = 0; }
-                // split this byte by its second byte
-                std::vector<u64> h2(256, 0);
+                // split this class by its second symbol (also a code)
+                std::vector<u64> h2(DECLARED_K, 0);
                 for (u64 p = 0; p < N; ++p) {
                     if (sym_at(p) != c) continue;
                     h2[sym_at(p + 1)]++;
                 }
                 unsigned l2 = 0; u64 a2 = 0;
-                for (unsigned d = 0; d < 256; ++d) {
+                for (unsigned d = 0; d < DECLARED_K; ++d) {
                     if (a2 && a2 + h2[d] > rows_per_wave) {
                         wl.push_back({c, c + 1, true, c, l2, d}); l2 = d; a2 = 0;
                     }
-                    if (!tapeBands.empty() && h2[d] > rows_per_wave) die("byte-pair class exceeds wave cap");
+                    if (!tapeBands.empty() && h2[d] > rows_per_wave) die("class-pair exceeds wave cap");
                     a2 += h2[d];
                 }
-                if (l2 < 256) wl.push_back({c, c + 1, true, c, l2, 256});
+                if (l2 < DECLARED_K) wl.push_back({c, c + 1, true, c, l2, DECLARED_K});
                 lo = c + 1; acc = 0;
                 continue;
             }
@@ -527,7 +947,7 @@ int main(int argc, char** argv) {
             }
             acc += hist[c];
         }
-        if (lo < 256) wl.push_back({lo, 256, false, 0, 0, 0});
+        if (lo < DECLARED_K) wl.push_back({lo, DECLARED_K, false, 0, 0, 0});
     }
     waves = wl.size();
     std::fprintf(stderr, "SS_WAVES count=%" PRIu64 " (byte-range waves)\n", waves);
@@ -624,7 +1044,11 @@ int main(int argc, char** argv) {
         h[2] = 1;    // k (full SA)
         h[3] = N;    // count
         h[4] = N;    // rows
-        h[5] = 0;    // SA_ANCHOR_ROW_PAD: no transport frame (sentinel text)
+        // h[5]: 0 for the free-byte realization (the SA file is byte-identical to
+        // the one 4c4d086 wrote), and the DECLARATION word in declared-code mode:
+        // bit 0 set, bits 8..15 = the placeholder byte carried on the END row.
+        // There is no transport frame in either mode.
+        h[5] = DECLARED_CODE ? (1ull | (u64(END_STREAM) << 8)) : 0ull;
         if (ofd >= 0 && ::write(ofd, h, 48) != 48) die("write header");
     }
     const std::string symPath = out + ".sym";
@@ -654,7 +1078,7 @@ int main(int argc, char** argv) {
     std::mutex escMu;
     std::vector<u64> bandFirstPos, bandLastPos;
     std::vector<u8> cat(1u << 22), symcat(1u << 22);
-    u64 rows_done = 0, ties_total = 0, emitted = 0, wave_rows = 0;
+    u64 rows_done = 0, ties_total = 0, emitted = 0, wave_rows = 0, tail_total = 0;
     u64 prev_wave_last = ~0ull;   // last row position emitted by the previous wave
     const double t1 = now_sec();
 
@@ -738,9 +1162,10 @@ int main(int argc, char** argv) {
                 // one byte of run-up (the symbol byte at p-1) plus 32 bytes of
                 // look-ahead so a 16-byte key and the symbol are always in range
                 const u64 from = (base ? base - 1 : base);
-                // NEVER READ PAST THE FILE: the last text position (the sentinel)
-                // has no byte on disc, and everything after it is the sentinel
-                // value 0, so the buffer tail is zero-filled rather than read.
+                // NEVER READ PAST THE FILE: the declared END (index FILE_N) has no
+                // byte on disc, so the buffer tail is zero-filled rather than read.
+                // A zero here is a BUFFER fill, never a key: the TAIL GROUP rows are
+                // built from the corpus by tail_row() and are not keyed from buf.
                 const u64 want = std::min<u64>(chunk + 1 + 48, FILE_N > from ? FILE_N - from : 0);
                 size_t got = 0;
                 while (got < want) {
@@ -754,21 +1179,40 @@ int main(int argc, char** argv) {
                 // Per-row key building with byte-by-byte REMAP[] was the real cost:
                 // ~400 ns/row for the included rows (~43M per wave at 1 GB), which
                 // dominated the whole scan. One sequential pass over the chunk
-                // makes every key a plain big-endian load. THE PADDING IS NOT
-                // REMAPPED: past the corpus the value IS the sentinel symbol 0.
+                // makes every key a plain big-endian load.
                 if (REMAP)
                     for (u64 i = 0; i < got; ++i) buf[i] = REMAP[buf[i]];
                 const u64 off = base - from;   // index in buf of position `base`
                 for (u64 j = 0; j < chunk; ++j) {
                     const u64 p = base + j;
                     const u64 bj = off + j;
-                    const unsigned c0 = buf[bj];
+                    if (p + KEY_BYTES > FILE_N) {
+                        // ---- THE TAIL GROUP: this row's 24-symbol key would reach
+                        // the declared END, so it is NOT keyed from the buffer. It
+                        // is built by tail_row() with its own prefix length and
+                        // sorted by the FULL comparator.
+                        Row r = tail_row(p);
+                        const unsigned cls = code_at(p);
+                        if (cls < W.lo || cls >= W.hi) continue;
+                        if (W.lvl2) {
+                            const unsigned c1 = code_at(p + 1);
+                            if (c1 < W.lo2 || c1 >= W.hi2) continue;
+                        }
+                        u64 b = (u64)(std::upper_bound(bounds.begin(), bounds.end(), r.klo) - bounds.begin());
+                        if (b >= nbands) b = nbands - 1;
+                        auto& v = bufs[t][b];
+                        v.insert(v.end(), (const u8*)&r, (const u8*)&r + sizeof(Row));
+                        if (v.size() >= bufsz) flush_buf(t, b);
+                        continue;
+                    }
+                    // class code of the row's first symbol, in the k=257 code space
+                    const unsigned c0 = unsigned(buf[bj]) + CODE_SHIFT;
                     if (c0 < W.lo || c0 >= W.hi) continue;
                     if (W.lvl2) {
-                        const unsigned c1 = buf[bj + 1];   // 0 past the corpus end
+                        const unsigned c1 = unsigned(buf[bj + 1]) + CODE_SHIFT;
                         if (c1 < W.lo2 || c1 >= W.hi2) continue;
                     }
-                    // THE WHOLE 24-BYTE KEY. Leaving kq unset here was a real bug:
+                    // THE WHOLE 24-SYMBOL KEY. Leaving kq unset here was a real bug:
                     // the comparator's third word then read uninitialised memory,
                     // and it still passed sa_check once - the verifier catches order
                     // errors, not undefined values that happen to agree.
@@ -778,14 +1222,15 @@ int main(int argc, char** argv) {
                     std::memcpy(&a3, buf.data() + bj + 16, 8);
                     a1 = bswap64(a1); a2 = bswap64(a2); a3 = bswap64(a3);
                     // The carried BWT symbol. Position 0's predecessor is the
-                    // appended end-of-text byte: symbol 0, exactly as the
-                    // successor rule says (no marker, no rewrite downstream).
-                    const u8 sy = p == 0 ? SENTINEL_SYMBOL : buf[bj - 1];
+                    // declared END: the marker byte's symbol in free-byte mode, and
+                    // the positional code in declared-code mode (declared in the
+                    // stream header, never an 8-bit guess).
+                    const u8 sy = p == 0 ? u8(END_STREAM) : buf[bj - 1];
                     Row r{};
                     r.klo = a1;
                     r.khi = a2;
                     r.kq = a3;
-                    r.pos = pack_sym(p, sy);
+                    r.pos = pack_sym(p, sy);   // aux 0: the full KEY_BYTES prefix
                     u64 b = (u64)(std::upper_bound(bounds.begin(), bounds.end(), a1) - bounds.begin());
                     if (b >= nbands) b = nbands - 1;
                     auto& v = bufs[t][b];
@@ -822,6 +1267,7 @@ int main(int argc, char** argv) {
         // ---- sort this wave's bands (parallel), writing at their own offsets ----
         std::atomic<u64> next_band{0};
         std::atomic<u64> ties_w{0};
+        std::atomic<u64> tail_w{0};   // rows carrying a masked (tail-group) key
         std::vector<double> tRead(nbands, 0.0), tSort(nbands, 0.0), tWrite(nbands, 0.0);
         bandFirstPos.assign(nbands, 0);
         bandLastPos.assign(nbands, 0);
@@ -895,11 +1341,27 @@ int main(int argc, char** argv) {
                 }
                 tSort[b] = now_sec() - bs0;
                 const double bw0 = now_sec();
-                u64 ties = 0;
-                for (size_t i = 1; i < rows.size(); ++i)
-                    if (rows[i].klo == rows[i-1].klo && rows[i].khi == rows[i-1].khi &&
+                u64 ties = 0, tailHere = 0;
+                for (size_t i = 0; i < rows.size(); ++i) {
+                    if (unpack_aux(rows[i].pos)) ++tailHere;
+                    if (i && rows[i].klo == rows[i-1].klo && rows[i].khi == rows[i-1].khi &&
                         rows[i].kq == rows[i-1].kq) ++ties;
+                }
+                tail_w.fetch_add(tailHere);
                 ties_w.fetch_add(ties);
+                // THE END ROW IS EMITTED AT ITS RANK: rank 0 of the whole text is the
+                // suffix that is just the declared END, so the first row of the first
+                // band must be position N-1 with an empty key prefix. This is the
+                // certificate for the tail group's one non-negotiable member.
+                if (band_off[b] == 0 && !rows.empty()) {
+                    const u64 p0 = unpack_pos(rows.front().pos);
+                    if (p0 != N - 1 || row_prefix(rows.front()) != 0)
+                        die("the END row is not at rank 0 (declared END broken)");
+                    std::fprintf(stderr,
+                        "TAIL_GROUP_END_ROW rank=0 pos=%llu prefix_symbols=0 carried_symbol=%u "
+                        "code=%u\n",
+                        (unsigned long long)p0, unsigned((rows.front().pos >> 48) & 0xffu), CODE_END);
+                }
                 // ordered output: positions to the SA stream, symbols alongside
                 std::vector<u64> ob;
                 std::vector<u8> sb;
@@ -1041,6 +1503,7 @@ int main(int argc, char** argv) {
         }
         rows_done += 0;
         ties_total += ties_w.load();
+        tail_total += tail_w.load();
         {
             double rd = 0, so = 0, wr = 0, rdm = 0, som = 0, wrm = 0;
             for (u64 b = 0; b < nbands; ++b) {
@@ -1057,6 +1520,13 @@ int main(int argc, char** argv) {
     }
 
     if (emitted != N) die("scatter row coverage != n");
+    // THE TAIL GROUP CERTIFICATE: every position whose key would reach the END was
+    // built by tail_row() with an explicit prefix length, and there are exactly
+    // min(KEY_BYTES, N) of them (one of which is the END row itself, at rank 0 -
+    // proved where it is emitted). Nothing in the run depended on a pad value.
+    std::fprintf(stderr, "TAIL_GROUP_SEEN rows=%llu expected=%llu pad_free_keys=1\n",
+                 (unsigned long long)tail_total, (unsigned long long)tailRows);
+    if (tail_total != tailRows) die("tail group coverage mismatch");
     if (lfd >= 0) {
         // DEDUPE BY RANK, keeping the LAST value written for a rank: a band's own
         // merge can escape the rank that the seam also escapes (the block-start
