@@ -1,0 +1,14 @@
+{
+  "n": 107374181464,
+  "max_pair": [
+    101,
+    32
+  ],
+  "max_pair_rows": 2480800754,
+  "minimum_wave_cap_bytes": 83563814936,
+  "minimum_wave_cap_over_n": 0.7782486794930022,
+  "recommended_wave_cap_bytes": 96636763317,
+  "workers": 8,
+  "scan": "all positions, remapped byte pairs; final lookahead=0 as in scatter wave histogram; nonoverlapping position partitions with one lookahead byte; inputs read-only",
+  "timing": "no timing claim"
+}

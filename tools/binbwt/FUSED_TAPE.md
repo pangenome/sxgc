@@ -145,3 +145,22 @@ speedup is established. The unchanged downstream intermediates exceed 2n,
 so the measured wave/band bound is not a 2n total-product scratch claim.
 Full independent STREAM_VS_BWT comparison passes with zero mismatches.
 All six finish selftests and the checker selftest exit zero.
+
+The renewed, fully generated-column 10 GB gate passes with the corrected
+hash and K=16. Observed order scratch including its generated column and
+sampled ISA is 1.996892n; wave/band scratch alone is 1.345708n. All product
+intermediates still reach 8.571406n. These are separate scopes.
+
+The renewed 100 GB launch uses K=32 on the 1 TiB box and a 0.9n wave cap.
+An independent read-only histogram over every corpus position finds the
+largest remapped byte pair is [101,32], 2,480,800,754 rows, requiring at least
+0.778249n under the 95% wave target. Thus 0.9n retains a byte-class margin
+while reserving disk space. K admits the roughly 32 bands of one wave; input
+rows are deleted before compact output, and the next wave waits for all
+consumed markers. This is a resource choice, with no paired speed claim.
+The corrected emitter has indexed all 22,388,157 actual seam targets and
+reached TAPE_EMIT_START. A separate half-second watchdog stops the whole
+runner group if free space falls below 26,843,545,366 bytes. Redundant outputs
+from our first accepted 10 GB run were removed after the renewed column
+compared byte-for-byte; the renewed accepted outputs and all corpus/oracle
+fixtures remain available.
