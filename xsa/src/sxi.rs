@@ -241,7 +241,14 @@ impl Container {
                 need(!seen[v as usize], "remap is not a permutation");
                 seen[v as usize] = true;
             }
-            need(c.sigma[30] == 30, "remap moves separator");
+            // NO separator-identity check here. `sigma[0x1E] == 0x1E` is a legacy
+            // CHUNK-FRONTEND contract: it kept the record separator on its own
+            // symbol so that collection order coincided with byte order. The
+            // END-format (:ends_in_sentinel) contract is the opposite - present
+            // bytes must map to 1,2,3,... in increasing byte order, which
+            // necessarily moves 0x1E. The alphabet is validated where it is
+            // built (the finish asserts present -> 1..k, order preserving, and a
+            // bijection); the reader decodes, it does not re-legislate it.
         }
         let mut w=0;
         if version<3 {
