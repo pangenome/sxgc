@@ -358,7 +358,38 @@ static void pf_write_full(int fd, const void* p, uint64_t len, const std::string
     }
 }
 
+// ------------------------------------------------------- THE SENTINEL
+// The container has NO end-of-text symbol of its own, so the TEXT does:
+// exactly one 0xF5 byte is appended after the corpus and mapped to the MINIMAL
+// product symbol 0. Every present corpus byte keeps its relative order and maps
+// into 1..k, so the suffix order of the corpus is unchanged by the relabel and
+// the unique minimal symbol makes the cyclic container model exact instead of
+// something the seam machinery has to repair. 0xF5 is guaranteed absent from
+// pile text: UTF-8-invalid bytes are 0xC0, 0xC1 and 0xF5..0xFF, and 243 distinct
+// bytes are present in both the 10 GB and 100 GB corpora (211 in the 150 MB
+// fixture), so 0xF5 is never a corpus byte.
+//
+// NOTE ON 0x1E: the legacy chunk front end kept the document separator at its
+// own value (remap[0x1E] == 0x1E, enforced by xsa/src/sxi.rs on member 7). That
+// is a CHUNK-FRONTEND contract, not a property of the tape route, and it is
+// incompatible with an order-preserving relabel (only 6 present bytes sort
+// below 0x1E in the 150 MB pile fixture, so 0x1E lands on symbol 7, not 30).
+// This remap therefore does NOT special-case 0x1E; see the lane report.
+static constexpr uint8_t SENTINEL_BYTE = 0xF5;    // the appended end-of-text byte
+static constexpr uint8_t SENTINEL_SYMBOL = 0;     // its product symbol: minimal, unique
+
 // ---------------------------------------------------------------- remap
+// The table is still a 256-byte permutation (the container's member 7 and every
+// consumer read it that way), but it is now ORDER PRESERVING on the text:
+//
+//     remap[SENTINEL_BYTE] = 0
+//     present byte b of rank j (0-based, byte order)  ->  1 + j
+//     absent byte (never occurs in the text)          ->  the remaining symbols
+//
+// An absent byte therefore still has a table entry (it must: the table is 256
+// bytes wide and bijective), but the symbol it names never occurs in the text,
+// so a query for such a byte matches nothing - which is the "unmapped"
+// semantics at the only place it can be observed.
 static void load_remap_table(const std::string& path, uint8_t out[256]) {
     int fd = ::open(path.c_str(), O_RDONLY);
     pf_check(fd >= 0, std::string("open remap ") + path + ": " + std::strerror(errno));
@@ -370,6 +401,77 @@ static void load_remap_table(const std::string& path, uint8_t out[256]) {
     memcpy(sorted, buf, 256);
     std::sort(sorted, sorted + 256);
     for (unsigned i = 0; i < 256; ++i) pf_check(sorted[i] == uint8_t(i), "remap must be a bijection");
+    pf_check(out[SENTINEL_BYTE] == SENTINEL_SYMBOL,
+             "remap: the end-of-text byte 0xf5 must map to the minimal symbol 0");
+}
+
+// The table above is a claim about the CORPUS; prove it against the corpus in
+// one sequential pass and refuse on any drift. This is the fail-loud gate that
+// keeps "order preserving" from being a comment: the present bytes must map to
+// exactly 1..k in increasing byte order, and 0xF5 must not occur at all.
+static void verify_sentinel_remap(const std::string& corpusPath, const uint8_t map[256]) {
+    int fd = ::open(corpusPath.c_str(), O_RDONLY);
+    pf_check(fd >= 0, "open corpus for the remap proof");
+    std::array<uint64_t, 256> hist{};
+    std::vector<uint8_t> block(1u << 22);   // heap: 4 MiB must not live on the stack
+    for (uint64_t off = 0;;) {
+        const ssize_t z = ::pread(fd, block.data(), block.size(), off_t(off));
+        pf_check(z >= 0, "read corpus for the remap proof");
+        if (z == 0) break;
+        for (ssize_t i = 0; i < z; ++i) ++hist[block[size_t(i)]];
+        off += uint64_t(z);
+    }
+    ::close(fd);
+    uint64_t present = 0;
+    for (unsigned b = 0; b < 256; ++b) {
+        if (!hist[b]) continue;
+        pf_check(b != SENTINEL_BYTE,
+                 "corpus contains the end-of-text byte 0xf5 (it must be absent)");
+        pf_check(map[b] == uint8_t(1 + present),
+                 "remap is not order preserving on the corpus at byte " + std::to_string(b));
+        ++present;
+    }
+    pf_check(present >= 1 && present <= 254, "corpus alphabet size out of range");
+    fprintf(stderr, "SENTINEL_REMAP present=%llu order_preserving=1 sentinel_byte=0x%02x "
+                    "sentinel_symbol=%u alphabet=1..%llu unused_symbols=%llu\n",
+            (unsigned long long)present, unsigned(SENTINEL_BYTE), unsigned(SENTINEL_SYMBOL),
+            (unsigned long long)present, (unsigned long long)(255 - present));
+}
+
+// The order-preserving sentinel table for one corpus (the generator behind the
+// --remap file every stage takes). Sentinels are appended, never written to
+// disc: the corpus stays the only text.
+static void build_sentinel_remap(const std::string& corpusPath, const std::string& outPath) {
+    int fd = ::open(corpusPath.c_str(), O_RDONLY);
+    pf_check(fd >= 0, "open corpus for --sentinel-remap");
+    std::array<uint64_t, 256> hist{};
+    std::vector<uint8_t> block(1u << 22);   // heap: 4 MiB must not live on the stack
+    for (uint64_t off = 0;;) {
+        const ssize_t z = ::pread(fd, block.data(), block.size(), off_t(off));
+        pf_check(z >= 0, "read corpus for --sentinel-remap");
+        if (z == 0) break;
+        for (ssize_t i = 0; i < z; ++i) ++hist[block[size_t(i)]];
+        off += uint64_t(z);
+    }
+    ::close(fd);
+    pf_check(!hist[SENTINEL_BYTE], "corpus contains 0xf5; it cannot carry the sentinel");
+    uint8_t map[256];
+    unsigned next = 1;
+    for (unsigned b = 0; b < 256; ++b)
+        if (b != SENTINEL_BYTE && hist[b]) map[b] = uint8_t(next++);
+    pf_check(next - 1 <= 254, "corpus alphabet leaves no symbol for the sentinel");
+    map[SENTINEL_BYTE] = SENTINEL_SYMBOL;
+    unsigned fill = next;   // absent bytes: unused symbols, increasing byte order
+    for (unsigned b = 0; b < 256; ++b)
+        if (!hist[b] && b != SENTINEL_BYTE) map[b] = uint8_t(fill++);
+    pf_check(fill == 256, "sentinel remap is not a bijection");
+    int out = ::open(outPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    pf_check(out >= 0, "create " + outPath);
+    pf_write_full(out, map, 256, "sentinel remap");
+    pf_check(::close(out) == 0, "close " + outPath);
+    verify_sentinel_remap(corpusPath, map);
+    fprintf(stderr, "SENTINEL_REMAP_WRITTEN path=%s alphabet=%u sentinel_byte=0x%02x sentinel_symbol=%u\n",
+            outPath.c_str(), next - 1, unsigned(SENTINEL_BYTE), unsigned(SENTINEL_SYMBOL));
 }
 
 // ------------------------------------------------------- corpus adapter
@@ -518,11 +620,22 @@ struct CorpusText {
     }
     CorpusText(const CorpusText&) = delete;
     CorpusText& operator=(const CorpusText&) = delete;
-    uint64_t size() const { return size_; }
+    // THE TEXT IS T' = corpus . 0xF5 and n = size() includes the sentinel.
+    // `size_` stays the FILE size: the file is the only text on disc and the
+    // sentinel is a virtual index served by operator[] below (nothing is ever
+    // appended to the corpus).
+    uint64_t size() const { return size_ + 1; }
+    uint64_t fileSize() const { return size_; }
     // Bulk reads pin one of the adapter's shared windows for a whole block.
     // Workers share the four-window cap; they never allocate private mappings.
     void read_block(uint64_t off, uint8_t* dst, uint64_t len) const {
-        pf_check(off <= size_ && len <= size_ - off, "corpus block bounds");
+        pf_check(off <= size() && len <= size() - off, "corpus block bounds");
+        // The last byte of the text is the virtual sentinel (index size_).
+        if (len && off + len == size()) {
+            if (len > 1) read_block(off, dst, len - 1);
+            dst[len - 1] = remap[SENTINEL_BYTE];
+            return;
+        }
         while (len) {
             uint64_t take = cmap ? len : std::min(len, windowBytes - off % windowBytes);
             if (cmap) {
@@ -718,7 +831,9 @@ struct CorpusText {
         return out;
     }
     uint8_t operator[](uint64_t i) const {
-        if (i >= size_) pf_fail("corpus adapter bounds");
+        if (i > size_) pf_fail("corpus adapter bounds");
+        // The appended end-of-text byte: one occurrence, at index size_.
+        if (i == size_) return remap[SENTINEL_BYTE];
         if (g_pfAccessOn.load(std::memory_order_relaxed)) pf_access_charge(i);
         if (cmap) return remap[cmap[i]];
         // NO-EVICTION FAST PATH: every window is mapped and frozen, so the table
@@ -1007,7 +1122,7 @@ struct PieceSource {
         struct stat st{}; pf_check(::fstat(fd, &st) == 0 && st.st_size == 36, "terminal marker size");
         char magic[4]; uint64_t values[4];
         pf_read_full(fd, magic, 4, "terminal magic"); pf_read_full(fd, values, 32, "terminal fields"); ::close(fd);
-        pf_check(memcmp(magic, "BPT1", 4) == 0 && values[1] > 0 && values[1] <= n+10 &&
+        pf_check(memcmp(magic, "BPT1", 4) == 0 && values[1] > 0 && values[1] <= n &&
                  values[0] == (values[1]-1)/B && values[2] <= (1u<<26), "terminal dimensions");
         terminal = true; finalBand = values[0]; R = values[1];
         pf_check(progress <= int64_t(finalBand), "terminal progress moved backward");
@@ -1048,7 +1163,7 @@ struct PieceSource {
         for (uint64_t i = 0; i < fields[3]; ++i) {
             std::vector<uint64_t> cl(8); for (auto& value : cl) value = next();
             pf_check(cl[0] == completed.size() && cl[1] <= cl[2] && cl[2]/B <= band &&
-                     cl[3] < cl[4] && cl[4] <= n && cl[5] < n && cl[6] < n+10 && cl[7] < n+10,
+                     cl[3] < cl[4] && cl[4] <= n && cl[5] < n && cl[6] < n && cl[7] < n,
                      "progress class bounds");
             pf_check(completed.empty() || completed.back()[4] <= cl[3], "progress overlapping classes");
             uint64_t rows = cl[4]-cl[3], extent = cl[2]/B-cl[1]/B;
@@ -1140,7 +1255,7 @@ struct PieceSource {
         out.clear(); out.reserve(count);
         for (uint64_t i=0;i<count;++i) {
             uint64_t head=unpack(heads,i), tail=unpack(tails,i);
-            pf_check(lens[i]>0 && head<n+10 && tail<n+10,"band record bounds");
+            pf_check(lens[i]>0 && head<n && tail<n,"band record bounds");
             out.push_back({chars[i],lens[i],head,tail});
         }
         pf_check(::unlink(path.c_str())==0,"unlink consumed band piece");
@@ -1158,7 +1273,7 @@ struct PieceSource {
                 pf_read_full(start,magic,4,"stream start magic"); pf_read_full(start,fields,32,"stream start fields"); ::close(start);
                 pf_check(memcmp(magic,"BPS1",4)==0 && fields[0]>0 && fields[1]>0 && fields[1]<64 &&
                          fields[2]>0 && fields[2]<=(1u<<26) && fields[3]>0,"stream start dimensions");
-                n=fields[0]; w=fields[1]; depth=fields[2]; window=fields[3]; R=n+10; streaming=true;
+                n=fields[0]; w=fields[1]; depth=fields[2]; window=fields[3]; R=n; streaming=true;
                 return;
             }
             if (waited > pollTimeout) pf_fail("timeout waiting for the merge's runcols idx");
@@ -1519,7 +1634,7 @@ struct SeamClasses {
             SeamClass cl{};
             cl.lo = next(); cl.hi = next(); cl.first = next(); cl.before = next(); cl.after = next();
             pf_check(cl.lo < cl.hi && cl.hi <= n && cl.first < n &&
-                     cl.before < n+10 && cl.after < n+10, "seam spool class bounds");
+                     cl.before < n && cl.after < n, "seam spool class bounds");
             pf_check(classes.empty() || classes.back().hi <= cl.lo, "seam spool overlapping intervals");
             uint64_t rows = cl.hi - cl.lo;
             pf_check(rows <= limit - total, "seam spool aggregate budget");
@@ -1538,11 +1653,16 @@ struct SeamClasses {
                 classes.size(), (unsigned long long)total, (unsigned long long)depth, (unsigned long long)limit);
         rebuild(n, rawR, limit, collection_lce, symbol, anchorVerify);
     }
-    void build(const CorpusText& text, const PfWm& wm, uint64_t n, uint64_t rawR, uint64_t w1,
+    void build(const CorpusText& text, const PfWm& wm, uint64_t n, uint64_t rawR,
                const std::function<uint64_t(uint64_t, uint64_t)>& collection_lce,
                const std::function<uint8_t(uint64_t)>& symbol) {
-        const uint64_t N = n + w1, r = rawR;
+        const uint64_t N = n, r = rawR;
         const uint64_t limit = std::max<uint64_t>(1000, r / 1000);
+        // THE TERMINAL SYMBOL IS THE APPENDED SENTINEL: it occurs exactly once,
+        // at the last position of the text, so the occurrence chain is empty
+        // after step 0 and no class is ever pushed. The chain code below is kept
+        // (it is the general contract of this routine); with the sentinel in the
+        // alphabet it is inert BY DATA, not by a switch.
         const uint8_t terminal = text[n - 1];
         // ---- discovery: the occurrence chain of P_d = T[n-d..n) from the
         // corpus. occ_1 = the terminal byte's positions (one seq scan);
@@ -1581,7 +1701,7 @@ struct SeamClasses {
             pf_check(first > 0 && first < n, "seam pattern escaped the text");
             raw.push_back({0, 0, first, 0, 0, occ, {}});
             uint8_t want = text[first - 1];
-            pf_check(want != 2, "unexpected dollar during seam discovery");
+            pf_check(want != SENTINEL_SYMBOL, "unexpected sentinel inside the seam chain");
             std::vector<uint64_t> next;
             next.reserve(occ.size());
             for (uint64_t q : occ) {
@@ -1636,13 +1756,13 @@ struct SeamClasses {
         for (auto& cl : classes) total += cl.hi - cl.lo;
         if (total > limit) seam_refuse("total_class_rows", total, limit);
         // ---- flanks + class SA sets, all single WM preads.
-        // before = SA[lo-1] (v1's phi(first); the padded rows below w1 are
-        // the padding suffixes SA[i] = n+i, so lo == 0 wraps to N-1).
-        // after = SA[hi] (v1's phi-inverse walk; hi == n wraps to SA[0] = n).
+        // before = SA[lo-1]; with the sentinel the row order is cyclic-exact, so
+        // lo == 0 wraps to the last row (the sentinel suffix at position n-1).
+        // after = SA[hi], and hi == n wraps to row 0 the same way.
         for (auto& cl : classes) {
             cl.before = cl.lo ? wm.at(cl.lo - 1) : N - 1;
-            cl.after = cl.hi < n ? wm.at(cl.hi) : n;
-            pf_check(cl.before < N && cl.after < N, "seam flank outside the padded text");
+            cl.after = cl.hi < n ? wm.at(cl.hi) : N - 1;
+            pf_check(cl.before < N && cl.after < N, "seam flank outside the text");
             std::vector<uint64_t> sa(cl.hi - cl.lo);
             if (!sa.empty())
                 wm.read(cl.lo, sa.data(), sa.size());
@@ -1800,7 +1920,7 @@ static void selftest_band_progress(const std::string& directory) {
         std::filesystem::remove_all(dir);std::filesystem::create_directories(dir);
         write("start","BPS1",{65540,17,3,3});
         std::vector<uint64_t> first{0,65536,1,0,0};
-        std::vector<uint64_t> last{1,1,1,1,0,0,65535,65536,0,3,9,65549,4,9,3,0};
+        std::vector<uint64_t> last{1,1,1,1,0,0,65535,65536,0,3,9,65539,4,9,3,0};
         std::vector<uint64_t> terminal{1,65537,3,1};
         if(mode==1)first[1]=0;
         if(mode==2)last.pop_back();
@@ -1833,7 +1953,7 @@ static void selftest_band_progress(const std::string& directory) {
     std::filesystem::remove_all(dir); std::filesystem::create_directories(dir);
     write("start","BPS1",{65540,17,3,3});
     write("g-0","BPG1",{0,65536,1,0,0});
-    write("g-1","BPG1",{1,1,1,1,0,0,65535,65536,0,3,9,65549,4,9,3,0});
+    write("g-1","BPG1",{1,1,1,1,0,0,65535,65536,0,3,9,65539,4,9,3,0});
     pid_t late = ::fork(); pf_check(late >= 0,"fork backward terminal refusal");
     if (!late) {
         int quiet=::open("/dev/null",O_WRONLY); ::dup2(quiet,STDERR_FILENO); ::close(quiet);
@@ -1855,8 +1975,8 @@ static int selftest_seam_spool(const std::string& directory) {
     auto symbol = [&](uint64_t p) { return text[p]; };
     for (unsigned mode = 0; mode < 3; ++mode) {
         std::vector<SeamClass> expected;
-        if (mode) expected.push_back({0, 3, 9, n+9, 4, {9, 3, 0}, {}});
-        if (mode == 2) expected.push_back({6, 9, 8, 6, n, {8, 1, 7}, {}});
+        if (mode) expected.push_back({0, 3, 9, n-1, 4, {9, 3, 0}, {}});
+        if (mode == 2) expected.push_back({6, 9, 8, 6, n-1, {8, 1, 7}, {}});
         std::vector<uint8_t> bytes{'S','C','S','1'};
         auto put = [&](uint64_t v) { for (unsigned j = 0; j < 8; ++j) bytes.push_back(uint8_t(v >> (8*j))); };
         put(n); put(3); put(expected.size());
@@ -2024,29 +2144,26 @@ struct RepairCycles {
 
 struct RepairStream {
     RepairCycles* cycles = nullptr; // only the ordered product transducer
-    uint64_t N = 0, n = 0, w1 = 10, terminal = 0;
+    // N == n: the transport frame is gone. The merge emits exactly the n rows of
+    // the sentinel-terminated text, row 0 being the sentinel suffix itself.
+    uint64_t N = 0, n = 0;
     SeamClasses* seam = nullptr;
     std::function<void(const NRun&)> emit;
     bool sampleChecks = true;   // false for the m1 replay (samples absent)
     uint64_t rows = 0;
     bool srcHave = false;
     RawRun srcPending{};
-    bool certified = true, dollarSeen = false;
-    uint64_t zeroes = 0, beforeTerminal = 0;
+    // THE SENTINEL ROW CERTIFICATE: the minimal symbol 0 occurs exactly ONCE in
+    // the BWT, on the row of the suffix that starts at text position 0 (its
+    // predecessor is the appended sentinel at n-1). One row, no frame, no
+    // rewrite: this counter replaces zeroes/dollarSeen/beforeTerminal.
+    uint64_t sentinelRows = 0;
     uint64_t row = 0;
     size_t next = 0;
     bool have = false;
     NRun pending{};
     uint64_t rNorm = 0, nNorm = 0;
     std::array<uint64_t, 256> totals{}, runFreq{};
-    bool firstRunSeen = false;
-    void padding_check(bool ok, const char* site, uint64_t row2, uint64_t c, uint64_t len, uint64_t head, uint64_t tail) const {
-        if (ok) return;
-        fprintf(stderr, "PFP_PADDING_REFUSED site=%s row=%llu char=0x%02llx len=%llu head=%llu tail=%llu terminal=0x%02llx\n",
-                site, (unsigned long long)row2, (unsigned long long)c, (unsigned long long)len,
-                (unsigned long long)head, (unsigned long long)tail, (unsigned long long)terminal);
-        pf_fail("unsupported PFP padding boundary");
-    }
     // PER-UNIT (finish-decomposed): the sink is a template parameter on the hot
     // path. `emit` is a std::function, i.e. an indirect call that cannot inline
     // the run's bookkeeping into the transducer; the band loop passes its sink
@@ -2081,23 +2198,6 @@ struct RepairStream {
     }
     void append(const NRun& v) { append(v, emit); }
     void emitOne() { emitOne(emit); }
-    RawRun trim_padding(const RawRun& in, uint64_t row2) const {
-        RawRun v = in;
-        if (row2 >= w1) return v;
-        if (sampleChecks)
-            padding_check(row2 == 0 ? (v.c == terminal && v.len == 1 && v.head == n && v.tail == n) : v.c == 2,
-                          "prefix", row2, v.c, v.len, v.head, v.tail);
-        else if (row2 == 0)
-            padding_check(v.c == terminal && v.len == 1, "prefix", row2, v.c, v.len, v.head, v.tail);
-        uint64_t take = std::min(w1 - row2, v.len);
-        v.len -= take;
-        if (v.len) {
-            if (sampleChecks)
-                padding_check(v.c == 2 && v.len == 1 && v.tail == 0, "straddle", row2, v.c, v.len + take, v.head, v.tail);
-            v.head = 0;
-        }
-        return v;
-    }
     void feed_raw(const RawRun& raw) { feed_raw(raw, emit); }
     template<class Sink> void feed_raw(const RawRun& raw, Sink& sink) {
         feed_raw(raw, sink, srcPending, srcHave);
@@ -2108,36 +2208,25 @@ struct RepairStream {
     template<class Sink> void feed_raw(const RawRun& raw, Sink& sink,
                                        RawRun& source, bool& sourceHave) {
         RepairCycles::Input cycleInput(cycles);
-        if (!firstRunSeen) {
-            firstRunSeen = true;
-            if (sampleChecks)
-                padding_check(raw.c == terminal && raw.len == 1 && raw.head == n && raw.tail == n,
-                              "terminal-row", 0, raw.c, raw.len, raw.head, raw.tail);
-        }
+        // NO FRAME: the first raw row is product row 0 like any other. Every row
+        // is checked against the transported extent, and the row extent must sum
+        // to exactly n.
         pf_check(raw.len && raw.len <= N - rows, "RLE length");
-        uint64_t rawLen = raw.len;
-        RawRun v = trim_padding(raw, rows);
-        rows += rawLen;
-        if (!v.len) return;
+        RawRun v = raw;
+        rows += raw.len;
         if (sampleChecks) pf_check(v.head < n && v.tail < n, "endpoint outside normalized text");
-        if (v.c == 2) {
+        // THE SENTINEL ROW: symbol 0 is the appended end-of-text byte and occurs
+        // exactly once, on the row whose suffix is position 0 (head == tail == 0,
+        // a length-1 run). Anything else is a corrupt frame.
+        if (v.c == SENTINEL_SYMBOL) {
+            ++sentinelRows;
             if (sampleChecks)
-                pf_check(v.len == 1 && v.head == 0 && v.tail == 0, "invalid SA-zero dollar row");
-            if (beforeTerminal)
-                fprintf(stderr, "CYCLIC_SEAM_REPAIR terminal=0x%02llx predecessors_before_zero=%llu\n",
-                        (unsigned long long)terminal, (unsigned long long)beforeTerminal);
-            certified = beforeTerminal == 0;
-            ++zeroes;
-            dollarSeen = true;
+                pf_check(v.len == 1 && v.head == 0 && v.tail == 0,
+                         "the sentinel symbol appears off the SA-zero singleton row");
         }
-        if (v.c == terminal) beforeTerminal += v.len;
-        if (v.c == 2) v.c = uint8_t(terminal);
-        // Alphabet invariant: the production remap vacates 0x01-0x04 as control
-        // markers (permuted with 0xfc-0xff), so remapped TEXT never contains
-        // them; c==2 (the SA-zero dollar row) was rewritten to the terminal
-        // above. 0x00 and 0x05 ARE legal text (real pile bytes; measured 18
-        // and 23 occurrences at 10GB). Forbid exactly the vacated range.
-        pf_check(v.c != 1 && v.c != 2 && v.c != 3 && v.c != 4, "unsupported text alphabet");
+        // Alphabet invariant: product symbols 1..k are the present corpus bytes
+        // (an order-preserving relabel) and 0 is the sentinel; no symbol outside
+        // that set can occur, because absent bytes map to unused symbols.
         RepairCycles::Scope coalesceScope(cycles, RepairCycles::COALESCE);
         if (sourceHave && source.c == v.c) { source.len += v.len; source.tail = v.tail; }
         else {
@@ -2198,10 +2287,10 @@ struct RepairStream {
         if (have) { emitOne(); have = false; }
         pf_check(rows == N, "RLE metadata/trailing rows mismatch");
         pf_check(nNorm == n, "normalized length mismatch");
-        pf_check(zeroes == 1 && dollarSeen, "invalid padded cyclic frame");
-        fprintf(stderr, "ENDPOINT_STREAM_PASS n=%llu k=1 r=%llu padding_rows=%llu cyclic_seam_certified=%d classes=%zu\n",
-                (unsigned long long)n, (unsigned long long)rNorm, (unsigned long long)w1,
-                int(certified), seam ? seam->classes.size() : 0);
+        pf_check(sentinelRows == 1, "the sentinel row is missing or duplicated");
+        fprintf(stderr, "ENDPOINT_STREAM_PASS n=%llu k=1 r=%llu sentinel_rows=%llu seam_classes=%zu\n",
+                (unsigned long long)n, (unsigned long long)rNorm,
+                (unsigned long long)sentinelRows, seam ? seam->classes.size() : 0);
     }
 };
 
@@ -3560,9 +3649,7 @@ static bool repair_state_equal(const RepairStream& a, const RepairStream& b) {
         a.have == b.have && (!a.have || (a.pending.c == b.pending.c &&
          a.pending.len == b.pending.len && a.pending.h == b.pending.h && a.pending.t == b.pending.t &&
          a.pending.ht == b.pending.ht && a.pending.tt == b.pending.tt)) &&
-        a.certified == b.certified && a.dollarSeen == b.dollarSeen &&
-        a.zeroes == b.zeroes && a.beforeTerminal == b.beforeTerminal &&
-        a.firstRunSeen == b.firstRunSeen && a.rNorm == b.rNorm &&
+        a.sentinelRows == b.sentinelRows && a.rNorm == b.rNorm &&
         a.nNorm == b.nNorm && a.totals == b.totals && a.runFreq == b.runFreq;
 }
 static std::array<double, 3> repair_chunks(RepairStream& rs, const std::vector<RawRun>& raw,
@@ -3614,21 +3701,21 @@ static int selftest_repair_chunks() {
     FinishPool pool(4);
     uint64_t cases = 0;
     for (unsigned seed = 0; seed < 128; ++seed) {
-        // Separate and straddling padding; adjacent equal raw chars; dollar
-        // rewriting into the terminal; legal 0x00/0x05 bytes. Every split is
-        // exercised, including both sides of each class and its flanks.
-        std::vector<RawRun> raw{{9,1,64,64}, {2,9,65,73}};
-        if (seed & 1) raw.back() = {2,10,65,0};
-        uint64_t n = (seed & 1) ? 1 : 0;
-        if (!(seed & 1)) ++n;
+        // NO FRAME. The stream is n rows of the sentinel-terminated text: one
+        // singleton sentinel row (symbol 0, head == tail == 0) plus ordinary
+        // text rows over the present-byte symbols. Adjacent equal symbols are
+        // included so both coalescers are exercised, and every split width is
+        // tried, including both sides of the sentinel row.
+        std::vector<RawRun> raw;
+        uint64_t n = 0;
         for (unsigned i = 0; i < 24; ++i) {
-            uint8_t alphabet[] = {0,5,9,10};
+            uint8_t alphabet[] = {5, 9, 10};
             uint64_t len = 1 + ((seed * 17 + i * 13) % 4);
-            raw.push_back({alphabet[((i / (1 + seed % 3)) + seed) % 4],len,1 + i, len == 1 ? 1 + i : 25 + i});
-            if (!(seed & 1) && i == seed % 24) raw.push_back({2,1,0,0});
+            raw.push_back({alphabet[((i / (1 + seed % 3)) + seed) % 3], len,
+                           1 + i, len == 1 ? 1 + i : 25 + i});
+            if (i == seed % 24) { raw.push_back({SENTINEL_SYMBOL, 1, 0, 0}); n += 1; }
             n += len;
         }
-        raw.front().head = raw.front().tail = n;
         SeamClasses seam;
         if (seed & 2) {
             seam.classes.push_back({2,5,1,17,19,{},{{5,1,7,7},{0,2,8,9}}});
@@ -3637,7 +3724,7 @@ static int selftest_repair_chunks() {
             seam.classes[1].runTrue = {{8,11}};
         }
         std::vector<NRun> expected;
-        RepairStream initial; initial.N=n+10; initial.n=n; initial.terminal=9; initial.seam=&seam;
+        RepairStream initial; initial.N=n; initial.n=n; initial.seam=&seam;
         initial.emit = [&](const NRun& r) { expected.push_back(r); };
         RepairStream serial=initial;
         for (const auto& r : raw) serial.feed_raw(r);
@@ -3659,7 +3746,7 @@ static int selftest_repair_chunks() {
             ++cases;
         }
     }
-    printf("CHUNKED_REPAIR_ORACLE_PASS streams=128 widths=%llu workers=4 both_coalescers=1 class_flanks=1 padding_straddle=1 dollar=1 legal_00_05=1\n", (unsigned long long)cases);
+    printf("CHUNKED_REPAIR_ORACLE_PASS streams=128 widths=%llu workers=4 both_coalescers=1 class_flanks=1 sentinel_row=1 no_frame=1\n", (unsigned long long)cases);
     return 0;
 }
 
@@ -3667,9 +3754,9 @@ static int selftest_repair_chunks() {
 // class rebuilds and piece I/O, so it cannot by itself measure this scheduler.
 static int benchmark_repair_chunks() {
     constexpr uint64_t count = 1u << 20;
-    std::vector<RawRun> raw{{9,1,count+1,count+1},{2,9,0,0},{2,1,0,0}};
-    for (uint64_t i=0; i<count; ++i) raw.push_back({uint8_t(i%2 ? 5 : 9),1,1,1});
-    RepairStream initial; initial.N=count+11; initial.n=count+1; initial.terminal=9;
+    std::vector<RawRun> raw{{SENTINEL_SYMBOL,1,0,0}};
+    for (uint64_t i=1; i<count; ++i) raw.push_back({uint8_t((i/2)%2 ? 5 : 9),1,1,1});
+    RepairStream initial; initial.N=count; initial.n=count;
     initial.emit=[](const NRun&) {};
     auto serial=initial;
     double begin=tnow();
@@ -4349,7 +4436,7 @@ int main(int argc, char** argv) {
         if (argc == 3 && std::string(argv[1]) == "--selftest-seam-spool") return selftest_seam_spool(argv[2]);
         uint64_t chiExpect = 0, sampleCount = 1024, pollTimeout = 86400, ramBudget = 1ull << 30;
         int threads = int(std::thread::hardware_concurrency());
-        std::string prefix, corpus, remap, out, bridgeDir, sampleCheck, wmPath;
+        std::string prefix, corpus, remap, out, bridgeDir, sampleCheck, wmPath, sentinelRemap;
         std::string checkClaimsDir;   // PROB-CHI: standalone checker mode
         bool debugArtifacts = false;
         std::string lcpColumnPath;    // KASAI: the prebuilt LCP column (--lcp-column)
@@ -4391,7 +4478,16 @@ int main(int argc, char** argv) {
             else if (a == "--keep-rlebwt") keepRlebwt = true;
             else if (a == "--keep-pfck") keepPfck = true;
             else if (a == "--m1-replay") m1Replay = true;
+            else if (a == "--sentinel-remap") sentinelRemap = need("--sentinel-remap");
             else pf_fail("unknown argument " + a);
+        }
+        // THE REMAP TABLE GENERATOR: one corpus -> the order-preserving sentinel
+        // map every stage takes as --remap. Nothing is written to the corpus.
+        if (!sentinelRemap.empty()) {
+            pf_check(!corpus.empty() && prefix.empty() && remap.empty() && out.empty() &&
+                     checkClaimsDir.empty(), "--sentinel-remap runs alone: --corpus C --sentinel-remap OUT");
+            build_sentinel_remap(corpus, sentinelRemap);
+            return 0;
         }
         pf_check(!checkClaimsDir.empty() ||
                  (!prefix.empty() && !corpus.empty() && !remap.empty() && !out.empty()),
@@ -4411,6 +4507,9 @@ int main(int argc, char** argv) {
             g_pfAccessOn.store(*acc && *acc != '0', std::memory_order_relaxed);
         uint8_t remapTable[256];
         load_remap_table(remap, remapTable);
+        // The table's order-preservation claim is proved against THIS corpus
+        // here, before any stage reads a byte through it.
+        verify_sentinel_remap(corpus, remapTable);
         if (!checkClaimsDir.empty()) {
             // PROB-CHI STANDALONE CHECKER: `--check-claims DIR --corpus C --remap M`.
             // No pieces, no merge, no rlebwt, no pfck, no structure - only the
@@ -4446,7 +4545,9 @@ int main(int argc, char** argv) {
             m1WeightsThread.t = std::thread([&] { *m1Weights = corpus_byte_histogram(text, 8); });
         }
         src.load_idx();
-        const uint64_t n = src.n, N = n + 10;
+        // N == n: no transport frame. The producer emits exactly the n rows of
+        // the sentinel-terminated text, the first of which is the sentinel suffix.
+        const uint64_t n = src.n, N = n;
         uint64_t R = src.R;
         pf_check(text.size() == n, "corpus size != the merge's text length (adapter: T[i]=REMAP[corpus[i]])");
 
@@ -4680,7 +4781,7 @@ int main(int argc, char** argv) {
             uint64_t expected; pf_pread_full(doneFd, &expected, 8, 0, "seam spool done");
             ::close(doneFd); pf_check(expected == seam.total, "seam spool done row count");
         } else {
-            seam.build(text, wm, n, R, 10,
+            seam.build(text, wm, n, R,
                        [&](uint64_t a, uint64_t b) { return seamLce(a, b); }, seamSymbol);
         }
         fprintf(stderr, "SEAM_PHASE build=%.3f classes=%zu rows=%llu\n",
@@ -4808,7 +4909,7 @@ int main(int argc, char** argv) {
         // Experimental checkpoint replay copies rs into workers. Attribution
         // belongs only to the serial transducer, never a shared worker counter.
         rs.cycles = repairChunkRuns ? nullptr : &repairCycles;
-        rs.N = N; rs.n = n; rs.terminal = 0; rs.seam = &seam;
+        rs.N = N; rs.n = n; rs.seam = &seam;
         // The band loop's sink. Passed DIRECTLY as the transducer's template sink
         // (hot path, inlined) and also installed as rs.emit for the final flush,
         // so both paths emit through identical code.
@@ -5017,24 +5118,14 @@ int main(int argc, char** argv) {
                     uint64_t cursor = rowCursor;
                     for (size_t i = 0; i < cnt; ++i) {
                         // Stamps are assertions, never an alternate rank supply.
-                        // Check even a straddling/padding run before skipping it.
                         pf_check(nb[i].ht == ~0ull || nb[i].ht == cursor,
                                  "KASAI STAMP: head stamp disagrees with derived cursor");
                         pf_check(nb[i].tt == ~0ull || nb[i].tt == cursor + nb[i].len - 1,
                                  "KASAI STAMP: tail stamp disagrees with derived cursor");
-                        // TRAILING PADDING RUNS live ABOVE n (the bin-walk seeds
-                        // n..n+9 plus the seam rows). A run that STRADDLES the
-                        // end is treated the same way: it never indexes the
-                        // column, and clamping its tail would fake a
-                        // non-contiguity.
-                        if (nb[i].ht == ~0ull && (cursor >= n || cursor + nb[i].len > n)) {
-                            // sentinel: outside the column's rank range, so downstream
-                            // skips this run entirely (it is padding / the seam tail)
-                            (*headRank)[i] = n;
-                            (*tailRank)[i] = n;
-                            cursor += nb[i].len;
-                            continue;
-                        }
+                        // Every run lies inside [0, n): with the sentinel there is
+                        // no frame above n and no rank outside the column.
+                        pf_check(cursor < n && cursor + nb[i].len <= n,
+                                 "KASAI STAMP: run outside the text rows");
                         const uint64_t h = cursor;
                         const uint64_t t = cursor + nb[i].len - 1;
                         if (sampIsa.map) {
@@ -5116,24 +5207,20 @@ int main(int argc, char** argv) {
                     uint64_t lo = ~uint64_t(0), hi = 0;
                     for (size_t i = 0; i < cnt; ++i) {
                         // Both ENDPOINT ranks are what the column answers need:
-                        // head and tail both lie in the contiguous stream span.
-                        // The sentinel rank (n) marks padding runs: it must not
-                        // extend the band's column slice, which lives in [0,n-1].
-                        if ((*headRank)[i] < n) lo = std::min(lo, (*headRank)[i]);
-                        if ((*tailRank)[i] < n) {
-                            lo = std::min(lo, (*tailRank)[i]);
-                            hi = std::max(hi, (*tailRank)[i]);
-                        }
-                        if ((*headRank)[i] < n) hi = std::max(hi, (*headRank)[i]);
+                        // head and tail both lie in the contiguous stream span
+                        // [0, n) - there is no frame above n any more.
+                        pf_check((*headRank)[i] < n && (*tailRank)[i] < n,
+                                 "band rank outside the text rows");
+                        lo = std::min(lo, (*headRank)[i]);
+                        lo = std::min(lo, (*tailRank)[i]);
+                        hi = std::max(hi, (*tailRank)[i]);
+                        hi = std::max(hi, (*headRank)[i]);
                         if (nb[i].len >= 2 && (*tailRank)[i] != (*headRank)[i] + nb[i].len - 1)
                             kasaiState.noncontig += 1;
                         // Seed-first stream ranks must be contiguous and increasing.
                         if (i && (*headRank)[i] <= (*headRank)[i - 1])
                             kasaiState.disorder += 1;
-                        const uint64_t prevEnd =
-                            i ? ((*tailRank)[i - 1] < n ? (*tailRank)[i - 1] + 1
-                                                        : (*headRank)[i - 1] + nb[i - 1].len)
-                              : prevEndS;
+                        const uint64_t prevEnd = i ? (*tailRank)[i - 1] + 1 : prevEndS;
                         if (prevEnd != (*headRank)[i]) {
                             kasaiState.gaps += 1;
                             if (wid == 0 && gapDump < 8) {
@@ -5151,9 +5238,7 @@ int main(int argc, char** argv) {
                     const uint64_t base = lo ? lo - 1 : 0;
                     if (kasaiOn) lcpCol.load(*band, base, hi - base + 1);
                     kasaiState.lastHeadRank = (*headRank)[0];
-                    kasaiState.lastEndRank = (*tailRank)[cnt - 1] < n
-                        ? (*tailRank)[cnt - 1] + 1
-                        : (*headRank)[cnt - 1] + nb[cnt - 1].len;
+                    kasaiState.lastEndRank = (*tailRank)[cnt - 1] + 1;
                     next->store(0);
                     staged->store(1, std::memory_order_release);
                 }
@@ -5185,10 +5270,7 @@ int main(int argc, char** argv) {
                     if (i >= cnt) break;
                     const NRun& v = nb[i];
                     const uint64_t r = (*headRank)[i];
-                    const uint64_t prevEnd =
-                        i ? ((*tailRank)[i - 1] < n ? (*tailRank)[i - 1] + 1
-                                                    : (*headRank)[i - 1] + nb[i - 1].len)
-                          : prevEndS;
+                    const uint64_t prevEnd = i ? (*tailRank)[i - 1] + 1 : prevEndS;
                     uint64_t top = 0;
                     if (gx[i]) {
                         pf_check(prevEnd == r,
@@ -5346,11 +5428,13 @@ int main(int argc, char** argv) {
             waitWall += tw;
             ++bandReads;
             if (band == 0) {
-                pf_check(!s.raws.empty() && s.raws[0].len == 1, "run zero is not the terminal padding row");
-                rs.terminal = s.raws[0].c;
-                pf_check(rs.terminal >= 6 && rs.terminal < 256, "unsupported terminal byte");
-                fprintf(stderr, "PFP_TERMINAL byte=0x%02llx source=padding-row raw_n=%llu raw_r=%llu\n",
-                        (unsigned long long)rs.terminal, (unsigned long long)N, (unsigned long long)R);
+                // NO FRAME TO INSPECT: row zero is the sentinel suffix (position
+                // n-1, predecessor symbol text[n-2]), an ordinary product row.
+                pf_check(!s.raws.empty() && s.raws[0].len >= 1 && s.raws[0].head < n,
+                         "run zero is not the sentinel row");
+                fprintf(stderr, "PFP_TERMINAL row=0 sentinel_symbol=%u predecessor=0x%02llx raw_n=%llu raw_r=%llu\n",
+                        unsigned(SENTINEL_SYMBOL), (unsigned long long)s.raws[0].c,
+                        (unsigned long long)N, (unsigned long long)R);
             }
             s.prevTail = prevTail;
             pf_check(s.nbuf.empty() && s.gidx.empty() && s.rk.empty(), "band slot not empty at feed");
@@ -5919,7 +6003,7 @@ int main(int argc, char** argv) {
                 {
                     PfRegion rr("m1-replay", PF_M1);
                     RepairStream rs2;
-                    rs2.N = N; rs2.n = n; rs2.terminal = rs.terminal; rs2.seam = &seam;
+                    rs2.N = N; rs2.n = n; rs2.seam = &seam;
                     rs2.sampleChecks = false;
                     rs2.emit = [&](const NRun& v) {
                         headBits.msb(codes[v.c], lens[v.c]);

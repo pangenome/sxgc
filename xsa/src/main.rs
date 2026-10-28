@@ -189,6 +189,9 @@ impl Anchors {
 
 struct Ri4 {
     phi: Option<sxi2::Phi>,
+    // v6 lite containers carry no phi: locate is an LF walk onto the member 11
+    // 1/1024 run-tail anchors and LF starts are derived from member 1.
+    lite: Option<sxi2::LiteAnchors>,
     lf_map: Option<sxi2::LfMap>,
     head_sa: Option<Bytes>,
     gcd_one: bool,
@@ -295,13 +298,15 @@ impl Ri4 {
         let embedded_anchors = container.as_ref().map(|sx| sx.anchors(path));
         let names = container.as_ref().and_then(|sx| sx.members.iter().find(|m| m.id == 6))
             .map(|m| (path.to_string(), m.offset, m.bytes));
-        let phi=container.as_ref().filter(|sx|sx.version>=2)
+        let phi=container.as_ref().filter(|sx|sx.version>=2&&sx.version<6)
             .map(|sx|sxi2::Phi::load(path,sx,&c));
+        let lite=container.as_ref().filter(|sx|sx.version>=6)
+            .map(|sx|sxi2::LiteAnchors::load(path,sx));
         let head_sa=container.as_ref().filter(|sx|sx.version==2)
             .map(|sx|Bytes::mapped(path,sx.member(3).offset,(8*r) as usize));
         let lf_map=container.as_ref().filter(|sx|sx.version>=3)
             .map(|sx|sxi2::LfMap::load(path,sx,&run_char,&run_len,&c));
-        Ri4 { phi, lf_map, head_sa, gcd_one, cyclic, embedded_anchors, names, n, k, r, c,
+        Ri4 { phi, lite, lf_map, head_sa, gcd_one, cyclic, embedded_anchors, names, n, k, r, c,
             run_char, run_len, sa, run_start_blk, cruns, csum:if compact {None}else{Some(csum)}, total }
     }
 
@@ -312,7 +317,8 @@ impl Ri4 {
         s
     }
     fn tail_sample(&self, run:u64)->u64 {
-        if self.lf_map.is_some() {self.n-1-self.phi.as_ref().unwrap().tail(run)}
+        if let Some(ref lite)=self.lite {self.n-1-lite.value(run)}
+        else if self.lf_map.is_some() {self.n-1-self.phi.as_ref().unwrap().tail(run)}
         else {self.sa.as_ref().unwrap().get(run)}
     }
     fn run_of(&self, i: u64) -> u64 {
@@ -417,7 +423,10 @@ impl Ri4 {
         loop {
             let r = self.run_of(pos);
             let e = self.run_start(r) + self.run_len[r as usize] as u64;
-            if pos == e - 1 {
+            // A lite container samples only the tail rows of runs 0, 1024, ...:
+            // the walk must terminate exactly on one of those rows.
+            let sampled = match self.lite { Some(ref lite) => r % lite.stride() == 0, None => true };
+            if pos == e - 1 && sampled {
                 let sample=self.tail_sample(r);
                 return if self.cyclic { (sample + self.n - steps % self.n) % self.n }
                     else { sample.wrapping_sub(steps) };
@@ -724,7 +733,7 @@ fn cmd_query(args: &[String]) {
                     writeln!(w, "TRACE\t{}\t{}\t{}\t{}\t{}", name, j, tanchor, tsample, tsteps).unwrap();
                 }
                 tsample.wrapping_sub(tsteps)
-            } else if idx.lf_map.is_some() {
+            } else if idx.lf_map.is_some() && idx.phi.is_some() {
                 let actual=if let Some(previous)=previous_phi_sa {
                     idx.phi.as_ref().unwrap().successor(previous)
                 } else {idx.n-1-idx.s_at_opt(j,anchors)};

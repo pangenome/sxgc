@@ -1,0 +1,2 @@
+SA_CHECK corpus_n=150000002 sa_entries=150000002 rows=150000002 dollar=1
+SA_CHECK_PASS entries=150000002 dollar=1

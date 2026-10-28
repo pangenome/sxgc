@@ -38,63 +38,35 @@ static void die(const char* m, int code) {
 
 static const u8* T = nullptr;
 static const u8* RMP = nullptr;   // optional raw -> remapped (the PRODUCT order)
-static u64 N = 0;
+// Domain 0..FILE_N includes the virtual END suffix at rank zero.
+static u64 N = 0, FILE_N = 0;
 static bool DOLLAR = true;
 
+// The product symbol at text index i: the corpus bytes through the remap, and the
+// appended sentinel past the end of the file.
+static inline u8 sym(u64 i) {
+    if (i >= FILE_N) die("virtual END has no byte code", 2);
+    return RMP ? RMP[T[i]] : T[i];
+}
+
 // Compare suffix(a) vs suffix(b) under the active convention. Gives -1/0/+1.
+// Per-byte on the PRODUCT SYMBOLS: with the sentinel the alphabet terminates
+// every comparison, so the finite order needs no length rule beyond the one the
+// virtual byte already implements. (The per-byte form is deliberate: a verifier
+// reads at most one page past nothing and never depends on mapping slack.)
 static inline int suf_cmp(u64 a, u64 b) {
-    const u64 cap = DOLLAR ? std::min(N - a, N - b) : N;
-    u64 i = 0;
-    // 8-byte chunks from the tape while both stay in range
-    while (i + 8 <= cap) {
-        u64 x, y;
-        if (DOLLAR) {
-            std::memcpy(&x, T + a + i, 8);
-            std::memcpy(&y, T + b + i, 8);
-        } else {
-            // cyclic: bytes may wrap; read per-byte for the tail
-            for (int j = 0; j < 8; ++j) {
-                u64 xa = a + i + j, yb = b + i + j;
-                u8 xb = T[xa < N ? xa : xa - N];
-                u8 yc = T[yb < N ? yb : yb - N];
-                if (xb != yc) return xb < yc ? -1 : 1;
-            }
-            i += 8;
-            continue;
-        }
-        if (x != y) {
-            if (RMP) {
-                u8 xs[8], ys[8];
-                std::memcpy(xs, &x, 8);
-                std::memcpy(ys, &y, 8);
-                for (int j = 0; j < 8; ++j)
-                    if (RMP[xs[j]] != RMP[ys[j]]) return RMP[xs[j]] < RMP[ys[j]] ? -1 : 1;
-            }
-            u8 xs[8], ys[8];
-            std::memcpy(xs, &x, 8);
-            std::memcpy(ys, &y, 8);
-            for (int j = 0; j < 8; ++j)
-                if (xs[j] != ys[j]) return xs[j] < ys[j] ? -1 : 1;
-        }
-        i += 8;
-    }
-    for (; i < cap; ++i) {
-        u8 xb, yc;
-        if (DOLLAR) {
-            xb = T[a + i];
-            yc = T[b + i];
-        } else {
-            u64 xa = a + i, yb = b + i;
-            xb = T[xa < N ? xa : xa - N];
-            yc = T[yb < N ? yb : yb - N];
-        }
+    if (a == b) return 0;
+    const u64 cap = DOLLAR ? std::min(FILE_N - a, FILE_N - b) : N;
+    for (u64 i = 0; i < cap; ++i) {
+        const u8 xb = DOLLAR ? sym(a + i) : sym((a + i < N) ? a + i : a + i - N);
+        const u8 yc = DOLLAR ? sym(b + i) : sym((b + i < N) ? b + i : b + i - N);
         if (xb != yc) return xb < yc ? -1 : 1;
     }
-    if (DOLLAR) {
-        if (a == b) return 0;
-        return (N - a) < (N - b) ? -1 : 1;   // shorter suffix is smaller
-    }
-    return a == b ? 0 : (a < b ? -1 : 1);
+    // END RULE: exhaustion sorts below every byte, including raw zero.
+    // Finite comparison never materializes END in the byte alphabet.
+    // Cyclic mode retains its source-position tie break.
+    if (DOLLAR) return (N - a) < (N - b) ? -1 : 1;
+    return a < b ? -1 : 1;
 }
 
 int main(int argc, char** argv) {
@@ -116,8 +88,9 @@ int main(int argc, char** argv) {
     int fd = ::open(corpus.c_str(), O_RDONLY);
     struct stat st{};
     if (fd < 0 || ::fstat(fd, &st)) die("corpus", 2);
-    N = (u64)st.st_size;
-    T = (const u8*)::mmap(nullptr, (size_t)N, PROT_READ, MAP_PRIVATE, fd, 0);
+    FILE_N = (u64)st.st_size;
+    N = FILE_N + 1;              // the appended end-of-text byte
+    T = (const u8*)::mmap(nullptr, (size_t)FILE_N, PROT_READ, MAP_PRIVATE, fd, 0);
     if (T == MAP_FAILED) die("mmap corpus", 2);
 
     std::vector<u8> rmpBuf;
@@ -128,6 +101,11 @@ int main(int argc, char** argv) {
         if (::read(rf, rmpBuf.data(), 256) != 256) die("remap short", 2);
         ::close(rf);
         RMP = rmpBuf.data();
+        bool seen[256]{};
+        for (unsigned b = 0; b < 256; ++b) {
+            if (seen[RMP[b]]) die("remap must be a bijection", 2);
+            seen[RMP[b]] = true;
+        }
     }
     int sfd = ::open(sapath.c_str(), O_RDONLY);
     struct stat ss{};
@@ -140,7 +118,7 @@ int main(int argc, char** argv) {
     const u64 rows_field = R[3];
     const u64 count = (bytes - 48) / 8;
     std::printf("SA_CHECK corpus_n=%" PRIu64 " sa_entries=%" PRIu64 " rows=%" PRIu64
-                " dollar=%d\n", N, count, rows_field, DOLLAR ? 1 : 0);
+                " dollar=%d convention=virtual-END corpus_bytes=%" PRIu64 "\n", N, count, rows_field, DOLLAR ? 1 : 0, FILE_N);
     const u64* SA = R + 6;
 
     if (sample) {
@@ -160,6 +138,7 @@ int main(int argc, char** argv) {
         std::printf("SA_CHECK_PERMUTATION_FAIL count=%" PRIu64 " n=%" PRIu64 "\n", count, N);
         return 4;
     }
+    if (DOLLAR && SA[0] != FILE_N) die("rank zero must be virtual END position n", 4);
     // permutation: a dense seen-bitmap over n
     std::vector<u64> seen((N + 63) / 64, 0);
     for (u64 r = 0; r < N; ++r) {

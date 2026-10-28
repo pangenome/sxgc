@@ -99,8 +99,14 @@ impl Container {
             "invalid n/k/r",
         );
         need(version != 2 || r <= u32::MAX as u64, "SXI2 v2 run ID width");
+        // v6 is the pile "lite" member set: the phi and escape members (8, 9)
+        // are gone, LF starts are derived from member 1 (member 10 is a
+        // zero-byte declaration), and locate runs on member 11's 1/1024 run
+        // tails. Its directory is therefore 5-7 entries, not 7-9.
+        let lite = version >= 6;
         need(
-            (if version==1 {(5..=7).contains(&count)} else {(7..=9).contains(&count)})
+            (if lite {(5..=7).contains(&count)}
+                else if version==1 {(5..=7).contains(&count)} else {(7..=9).contains(&count)})
                 && hs == 64 + 40 * count
                 && u64at(&b, 40) == length
                 && (flags <= 1 || (8..=15).contains(&flags) || (24..=31).contains(&flags))
@@ -111,7 +117,6 @@ impl Container {
         b[56..60].fill(0);
         let mut hc = crc(!0, &b);
         let mut members = Vec::new();
-        let mut end = hs as u64;
         for i in 0..count {
             let mut d = [0; 40];
             rd(&mut f, &mut d);
@@ -131,6 +136,13 @@ impl Container {
                 if i<5 {i+1} else if i<5+optional {
                     if optional==1 && m.id==7 {7} else {i+1}
                 } else {8+i-(5+optional)}
+            } else if lite {
+                // 1, 4, 5, [optional 6/7], 10, 11 - no member 8 (phi) or 9
+                // (escape sidecar): the lite container has no per-run SA map.
+                let optional=count-5;
+                if i<3 {[1,4,5][i as usize]} else if i<3+optional {
+                    if optional==1 && flags&16!=0 {7} else {6+i-3}
+                } else {10+i-(3+optional)}
             } else {
                 let optional=count-7;
                 if i<3 {[1,4,5][i as usize]} else if i<3+optional {
@@ -141,22 +153,33 @@ impl Container {
                 else if version==2 {match m.id {1=>101,5=>105,8=>108,9=>109,_=>m.id}} else {m.id};
             need(m.id==expected_id && m.codec==expected_codec && u32at(&d,36)==0,
                 "unsupported/duplicate member");
-            let aligned = end
-                .checked_add(7)
-                .unwrap_or_else(|| die("SXI: offset overflow"))
-                / 8
-                * 8;
-            need(
-                m.offset == aligned && m.offset <= length && m.bytes <= length - m.offset,
-                "overlapping/out-of-bounds member",
-            );
-            end = m.offset + m.bytes;
+            need(m.offset <= length && m.bytes <= length - m.offset,
+                "overlapping/out-of-bounds member");
             members.push(m);
         }
-        need(
-            !hc == expected && end == length,
-            "header CRC or trailing bytes",
-        );
+        need(!hc == expected, "header CRC or trailing bytes");
+        // The directory lists members in ID order, which is NOT the order the
+        // writer had to place them in: the pile lite writer (bit6/xsa_finish.cpp
+        // ContainerOut::finish) emits m5/m4/m7/m10/m11 streaming and m1 last, then
+        // sorts the directory by ID. Validate the member set as a partition of
+        // [header, file) by PHYSICAL offset instead of chaining the directory.
+        {
+            let mut spans: Vec<(u64, u64)> = members.iter().map(|m| (m.offset, m.bytes)).collect();
+            spans.sort_unstable();
+            let mut prev_end = hs as u64;
+            for &(off, bytes) in &spans {
+                let aligned = prev_end
+                    .checked_add(7)
+                    .unwrap_or_else(|| die("SXI: offset overflow"))
+                    / 8
+                    * 8;
+                need(off == aligned, "overlapping/out-of-bounds member");
+                prev_end = off
+                    .checked_add(bytes)
+                    .unwrap_or_else(|| die("SXI: offset overflow"));
+            }
+            need(prev_end == length, "header CRC or trailing bytes");
+        }
         let mut c = Self {
             version,
             n,
@@ -218,7 +241,14 @@ impl Container {
                 need(!seen[v as usize], "remap is not a permutation");
                 seen[v as usize] = true;
             }
-            need(c.sigma[30] == 30, "remap moves separator");
+            // NO separator-identity check here. `sigma[0x1E] == 0x1E` is a legacy
+            // CHUNK-FRONTEND contract: it kept the record separator on its own
+            // symbol so that collection order coincided with byte order. The
+            // END-format (:ends_in_sentinel) contract is the opposite - present
+            // bytes must map to 1,2,3,... in increasing byte order, which
+            // necessarily moves 0x1E. The alphabet is validated where it is
+            // built (the finish asserts present -> 1..k, order preserving, and a
+            // bijection); the reader decodes, it does not re-legislate it.
         }
         let mut w=0;
         if version<3 {
@@ -232,7 +262,8 @@ impl Container {
         // Validate every independent member even on the header-only sweep path.
         if version>=2 {
             let (frequencies,heads,lengths)=super::sxi2::runs(path,c.member(1),n,r);
-            super::sxi2::Phi::load(path,&c,&frequencies);
+            if lite {super::sxi2::LiteAnchors::load(path,&c);}
+            else {super::sxi2::Phi::load(path,&c,&frequencies);}
             if version>=3 {super::sxi2::LfMap::load(path,&c,&heads,&lengths,&frequencies);}
         } else {
             at(&mut f, c.member(1).offset);

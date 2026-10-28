@@ -2,21 +2,21 @@
 """G6 fixture: a corpus that ends MID-RECORD, with a brute-force oracle.
 
 The tail group (the final <= 24 positions, whose band keys cannot be padded
-below every byte) is the one place the declared END symbol can collide with
-data. Band-boundary code is where every defect this week lived, so the gate for
+below every byte) requires full suffix comparisons. END is virtual and has
+no byte realization. Band-boundary code is where every defect this week lived, so the gate for
 it is a text whose last record is shorter than a key -- not a large blob that
 happens to end on a separator.
 
 Convention under test (SPEC_CHAIN_TO_PILE.md, Phase A):
     alphabet = END(0) < every byte value; END occurs exactly once, at position n.
     SA   = suffixes of T + END, ordered as finite strings over that alphabet.
-    BWT  = T'[(SA[r] + n') mod n']  -- row r carries the character BEFORE
-           SA[r]; for SA[r] = 0 that character is END.
+    BWT row r carries text[SA[r]-1] when SA[r]>0, otherwise virtual END.
+    The TSV uses 00 for the END row, distinguished by position zero.
 
 Usage:
     end_fixture.py --out DIR [--case short|tiny|records]
 
-Writes DIR/corpus.bin (the text INCLUDING the END byte), DIR/expect.tsv
+Writes DIR/corpus.bin (the bare corpus; END is virtual), DIR/expect.tsv
 (rank, position, BWT symbol as hex) and prints a summary. Exit 1 on any
 disagreement, so it can be a gate rather than a printout.
 """
@@ -24,8 +24,7 @@ import argparse
 import os
 import sys
 
-END = 0          # the declared END code; the corpus byte that realizes it is 0xF5
-END_BYTE = 0xF5  # free-byte realization used by valid UTF-8 corpora
+END = -1         # virtual symbol strictly below every corpus byte
 
 
 def finite_sa_with_end(text: bytes):
@@ -38,7 +37,7 @@ def finite_sa_with_end(text: bytes):
 def bwt_rows(text: bytes, sa):
     t = list(text) + [END]
     n = len(t)
-    return [t[(p - 1) % n] for p in sa]
+    return [0 if p == 0 else text[p - 1] for p in sa]
 
 
 def cases(name):
@@ -62,10 +61,7 @@ def main():
     a = ap.parse_args()
 
     text = cases(a.case)
-    if bytes([END_BYTE]) in text:
-        raise SystemExit("fixture contains the realization byte 0xF5 -- pick another byte")
-    # the corpus as written on disc includes the END realization byte, once, at the end
-    corpus = text + bytes([END_BYTE])
+    corpus = text
 
     sa = finite_sa_with_end(text)
     bwt = bwt_rows(text, sa)
@@ -90,7 +86,7 @@ def main():
     assert bwt[0] == text[-1] if text else True, "row 0 must carry the character before END"
     # the row for position 0 must carry END
     r0 = sa.index(0)
-    assert bwt[r0] == END, ("row of position 0 must be END", r0, bwt[r0])
+    assert bwt[r0] == 0, ("row of position 0 must be END", r0, bwt[r0])
     assert len(set(range(n1)) ^ set(sa)) == 0 and len(sa) == n1, "SA is not a permutation"
     # strict order
     t = list(text) + [END]
