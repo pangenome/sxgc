@@ -1,0 +1,7 @@
+G6 case=tiny mode=free-byte rows=4 mismatches=0
+G6 case=tiny mode=declared-code rows=4 mismatches=0
+G6 case=short mode=free-byte rows=18 mismatches=0
+G6 case=short mode=declared-code rows=18 mismatches=0
+G6 case=records mode=free-byte rows=428 mismatches=0
+G6 case=records mode=declared-code rows=428 mismatches=0
+END_SCATTER_PASS fixtures=6 binary=70 remap=1 negative_oracle=1 lcp=exact inverse_bwt=exact
