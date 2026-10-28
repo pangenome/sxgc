@@ -37,12 +37,15 @@
   "runtime/bit6/third_party/libsais/token-libsais.c": "1eeec709186bb28c02c1d7113809d19db9e83045ebd3ce6b4654ddad4659df61",
   "runtime/bit6/third_party/libsais/token-libsais.h": "5a855c8f159abf78dafcab96dc20240b81a308f0099f6fa1f7def47450b0f3df",
   "runtime/bit6/xsa_finish.cpp": "c37ee4a9681f26a73661e1887eda0bc8af9c561100db6e5165bcb95452d83d29",
+  "runtime/tools/binbwt/sa_check.cpp": "ef8b913c968f26a053d55407396b41f7cc54995ed3800d0959a8a40b1ed2f059",
+  "runtime/tools/binbwt/scatter_sort.cpp": "a2d1a2f15a29d7fbf51e7ebfe1bea25e934ce3c6af403f78c7e8962a0b5548eb",
+  "runtime/tools/binbwt/stream_vs_bwt.cpp": "d6b975fb010622bbce2d799c27e32d1dbb4f806bc88a55912c37c06772e9836c",
   "runtime/tools/build_slim_dump.sh": "aeaba3f3e7996a95fb570069076f1c4d179ca015eec6d5267a8f090b469b8860",
   "runtime/tools/tool_manifest.py": "0712748587f804849613597124dd96a50d987a1c2274f475c54f0e40cb21f31f",
   "runtime/tools/upstream.lock.json": "bd5d345045de9c1eeff013bdb412e19a285ecf6c713323858f1eb8ea7aa02928",
   "src/build.rs": "b1a3cfcc1f999baccd1fecba8cbf12f66544414d49c41fc03c7ecf7ba60c845e",
   "src/bundle.rs": "b1c1c12282330b46f42b5cdb4f1c8811d22d1476d7091bf02e0a9d8c78da86f4",
-  "src/chain.rs": "91d57a5341ddb54c70a170aae8d920bfa0a9e67cf5d60b92ad0dbf8ad8092cf9",
+  "src/chain.rs": "feb28389ef8f6ebd81466d7b7d77da05c92f8b7a683261c587d8d44b0f841428",
   "src/forks.rs": "65a268d6c58749463ba62dc61bc19d474efcf2ce48994d643002456cc6879495",
   "src/main.rs": "2af0b37313244383d978c410e8ed38d1026f8c6218dcb20c1739d2f4ddff3abc",
   "src/plan.rs": "2b95064089f830428b3f1fa9a26ef34a3804d1fed69e47f28906303ba687bd9a",
@@ -57,5 +60,5 @@
   "vendor/pruned-paths.json": "742feccf44be4ec11c67d23d3c98d2fee77aea92a8834d994eb18d10b96dfc48",
   "vendor/rust-linux-packages.json": "4b24b5bfedd0764f8b1bee064a35d2f68676f4926048cce5fcc30e78db0640db",
   "build.rs": "8c781182490a30c279d98e1c4c3179aa8f80c8f8dae6da35ef1dd8c203c60d4b",
-  "build_tools.py": "80bdf15e59f2a40a5aaeaffb586037a16714f4486b464f6b0465a0822036bdac"
+  "build_tools.py": "d6f52e4942154bec54f9ee73605a9e699c2f555188cb76b41ddbe9bda3d577fe"
 }

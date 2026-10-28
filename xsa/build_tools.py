@@ -87,6 +87,17 @@ run('g++', '-O3', '-std=c++17', repo/'bit6/chunk_frontend.cpp', work/'token-libs
     '-o', bundle/'chunk_frontend', env=env)
 run('g++', '-O2', '-mcx16', '-std=c++17', '-pthread', repo/'bit6/cross_lcp_merge.cpp',
     '-o', bundle/'cross_lcp_merge', '-latomic', env=env)
+# THE TAPE PRODUCER (scatter_sort) and its verifiers are bundle tools, not
+# hand-built side binaries: one build produces everything a run needs, and the
+# manifest hashes them. The tape route emits key-ordered bands with --tape-bands
+# (plus --lcp-out for the adjacent-rank LCP column); cross_lcp_merge consumes the
+# stream and xsa_finish builds the container, exactly as for the bin route.
+run('g++', '-O2', '-std=c++17', '-pthread', repo/'tools/binbwt/scatter_sort.cpp',
+    '-o', bundle/'scatter_sort', '-latomic', env=env)
+run('g++', '-O2', '-std=c++17', repo/'tools/binbwt/stream_vs_bwt.cpp',
+    '-o', bundle/'stream_vs_bwt', env=env)
+run('g++', '-O2', '-std=c++17', repo/'tools/binbwt/sa_check.cpp',
+    '-o', bundle/'sa_check', env=env)
 for name in ('sxi_write', 'sxi_text_audit', 'phi_inverse_heads'):
     run('g++', '-O3', '-std=c++17', '-fopenmp', repo/f'bit6/{name}.cpp', '-o', bundle/name, env=env)
 with tarfile.open(ROOT/'vendor/agc-cargo.tar.xz') as archive:
