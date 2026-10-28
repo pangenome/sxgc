@@ -522,3 +522,49 @@ impl LfMap {
         ((raw>>shift)&((1u128<<self.width)-1)) as u64
     }
 }
+
+/// The v6 lite container's locate anchors (member 11): one raw u64 text
+/// position for the LAST row (the run "tail") of every 1024th run, runs
+/// 0, 1024, 2048, ... The lite container has no phi member, so a locate is an
+/// LF walk that terminates only when the current row IS such a tail row:
+/// LF decrements the text position by one per step, hence
+///     position(origin) = (anchor_value + steps) mod n.
+/// Landing anywhere else inside an anchored run resolves nothing: SA values
+/// are not consecutive within a run. (bit6/sxi_logs/skiplist-locate/README.md)
+pub struct LiteAnchors { stride: u64, values: Vec<u64> }
+impl LiteAnchors {
+    pub fn load(path: &str, c: &sxi::Container) -> Self {
+        let m = c.member(11);
+        need(m.count == (c.r + 1023) / 1024 && m.bytes == 16 + 8 * m.count,
+            "sparse anchor size");
+        let mut f = BufReader::new(File::open(path).unwrap());
+        f.seek(SeekFrom::Start(m.offset)).unwrap();
+        let exponent = get_u64(&mut f);
+        need(get_u64(&mut f) == m.count, "sparse anchor header");
+        need(exponent == 10, "sparse anchor stride");
+        let mut values = vec![0u64; m.count as usize];
+        let mut buf = vec![0u8; 4096 * 8];
+        let mut got = 0usize;
+        while got < values.len() {
+            let take = (values.len() - got).min(buf.len() / 8);
+            f.read_exact(&mut buf[..take * 8]).unwrap_or_else(|e| die(&e.to_string()));
+            for j in 0..take { values[got + j] = u64le(&buf[8 * j..8 * j + 8]); }
+            got += take;
+        }
+        for &v in &values { need(v < c.n, "sparse anchor range"); }
+        // Every anchor is the tail row of a distinct run, so no position repeats.
+        let mut sorted = values.clone();
+        sorted.sort_unstable();
+        need(sorted.windows(2).all(|w| w[0] != w[1]), "sparse anchor repeat");
+        Self { stride: 1u64 << exponent, values }
+    }
+    pub fn stride(&self) -> u64 { self.stride }
+    pub fn count(&self) -> u64 { self.values.len() as u64 }
+    /// Text position of the tail row of `run`; only anchored runs have one.
+    pub fn value(&self, run: u64) -> u64 {
+        need(run % self.stride == 0, "sparse anchor lookup on an unanchored run");
+        let j = (run / self.stride) as usize;
+        need(j < self.values.len(), "sparse anchor run range");
+        self.values[j]
+    }
+}
