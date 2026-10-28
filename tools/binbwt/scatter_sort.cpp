@@ -7,17 +7,17 @@
 //                [--sample N] [--scratch DIR] [--keep-rows]
 //
 // Pipeline:
-//   1. SAMPLE   jittered-stride sample of 16-byte padded keys -> sorted ->
+//   1. SAMPLE   jittered-stride sample of complete 24-byte keys -> sorted ->
 //               quantile BOUNDARIES. A sample suffices: bands only have to be
 //               balanced, and every row is routed by a key COMPARISON, so a
 //               sampling error can only unbalance a band, never misorder a row.
 //   2. SCATTER  ONE sequential pass over the tape (T threads over contiguous
-//               text ranges). Each row's 16-byte key is compared against the
+//               text ranges). Each row's 24-byte key is compared against the
 //               boundaries and the row (key, position) is appended to that
 //               band's file. Text is read exactly once and never again during
 //               sorting; the sort is pure in-memory work on fixed-width rows.
 //   3. SORT     per band, in RAM: compare keys as two big-endian u64s; only
-//               rows whose 16-byte keys are EQUAL fall through to a real
+//               rows whose 24-byte keys are EQUAL fall through to a real
 //               suffix comparison. On web text that tie set is ~1% (and 97% of
 //               that is uniform-byte runs) - see tools/binbwt/kgram_survey.
 //   4. EMIT     bands are key ranges, so emitting them in boundary order IS
@@ -72,9 +72,9 @@ struct Row {
 };
 
 static const u8* T = nullptr;
-// N IS THE TEXT LENGTH AND INCLUDES THE APPENDED END-OF-TEXT BYTE: T' = corpus .
-// 0xF5, one occurrence at index FILE_N, product symbol 0. FILE_N is what is on
-// disc; the sentinel is a virtual index, never materialised.
+// N includes one structural END suffix at FILE_N. Its realization is chosen
+// by preflight; comparisons exhaust the finite corpus before accessing END.
+// Byte transport cells remain eight bits; position zero identifies the END BWT row.
 static u64 N = 0, FILE_N = 0;
 static u8 SENTINEL_BYTE = 0xF5;
 static bool DECLARED_END = false;
@@ -457,6 +457,8 @@ int main(int argc, char** argv) {
             }
         }
     }
+    if (DECLARED_END && !tapeBands.empty())
+        die("declared-code tape consumer is not implemented; standalone SA output is supported");
     if (DECLARED_END) std::fprintf(stderr, "END_SYMBOL mode=declared-code\n");
     else std::fprintf(stderr, "END_SYMBOL mode=free-byte byte=0x%02x\n", SENTINEL_BYTE);
     std::fprintf(stderr, "END_FORMAT k=257 end=0 bytes=1..256\nTAIL_GROUP rows=%" PRIu64 "\n", N - KEY_N);
@@ -762,11 +764,10 @@ int main(int argc, char** argv) {
             for (u64 base = lo; base < hi;) {
                 const u64 chunk = std::min<u64>(CH, hi - base);
                 // one byte of run-up (the symbol byte at p-1) plus 32 bytes of
-                // look-ahead so a 16-byte key and the symbol are always in range
+                // look-ahead so a 24-byte key and the symbol are always in range
                 const u64 from = (base ? base - 1 : base);
-                // NEVER READ PAST THE FILE: the last text position (the sentinel)
-                // has no byte on disc, and everything after it is the sentinel
-                // value 0, so the buffer tail is zero-filled rather than read.
+                // Read real bytes only. Tail positions are handled separately
+                // and cannot inspect the unfilled part of this buffer.
                 const u64 want = std::min<u64>(chunk + 1 + 48, FILE_N > from ? FILE_N - from : 0);
                 size_t got = 0;
                 while (got < want) {
@@ -778,8 +779,7 @@ int main(int argc, char** argv) {
                 // Per-row key building with byte-by-byte REMAP[] was the real cost:
                 // ~400 ns/row for the included rows (~43M per wave at 1 GB), which
                 // dominated the whole scan. One sequential pass over the chunk
-                // makes every key a plain big-endian load. THE PADDING IS NOT
-                // REMAPPED: past the corpus the value IS the sentinel symbol 0.
+                // makes every complete key a plain big-endian load.
                 if (REMAP)
                     for (u64 i = 0; i < got; ++i) buf[i] = REMAP[buf[i]];
                 const u64 off = base - from;   // index in buf of position `base`

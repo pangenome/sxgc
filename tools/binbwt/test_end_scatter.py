@@ -17,6 +17,8 @@ import tempfile
 
 import end_fixture
 
+STREAM_CHECKER = None
+
 
 def run(argv, **kwargs):
     return subprocess.run(argv, timeout=600, stdin=subprocess.DEVNULL,
@@ -84,12 +86,19 @@ def check(binary, root, name, text, declared=False, fixture=False, remapped=Fals
     expected_mode = 'declared-code' if declared or len(set(text)) == 256 else 'free-byte'
     assert f'END_SYMBOL mode={expected_mode}' in result.stderr
     assert f'TAIL_GROUP rows={min(24, len(text)+1)}' in result.stderr
+    if STREAM_CHECKER:
+        checker_args = [str(STREAM_CHECKER), str(corpus), str(output)]
+        if remapped:
+            checker_args.append(str(case / 'remap'))
+        checked = run(checker_args)
+        assert checked.returncode == 0, checked.stdout + checked.stderr
     if fixture:
         print(f'G6 case={name.split("-")[0]} mode={expected_mode} rows={len(sa)} mismatches=0')
     return args, oracle
 
 
 def main():
+    global STREAM_CHECKER
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=pathlib.Path)
     a = parser.parse_args()
@@ -101,6 +110,11 @@ def main():
                          str(pathlib.Path(__file__).with_name('scatter_sort.cpp')),
                          '-o', str(binary)])
             assert built.returncode == 0, built.stderr
+        STREAM_CHECKER = root / 'end_stream_check'
+        built = run(['g++', '-O2', '-std=c++17',
+                     str(pathlib.Path(__file__).with_name('end_stream_check.cpp')),
+                     '-o', str(STREAM_CHECKER)])
+        assert built.returncode == 0, built.stderr
         for name in ('tiny', 'short', 'records'):
             for declared in (False, True):
                 check(binary, root, name + ('-declared' if declared else '-free'),
@@ -118,7 +132,7 @@ def main():
         oracle.write_text(oracle.read_text().replace('0\t427', '0\t426', 1))
         result = run(args)
         assert result.returncode != 0 and 'G6 disagreement' in result.stderr, result.stderr
-        print(f'END_SCATTER_PASS fixtures=6 binary={len(tests)} remap=1 negative_oracle=1 lcp=exact')
+        print(f'END_SCATTER_PASS fixtures=6 binary={len(tests)} remap=1 negative_oracle=1 lcp=exact inverse_bwt=exact')
     return 0
 
 

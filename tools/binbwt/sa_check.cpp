@@ -59,15 +59,15 @@ static inline u8 sym(u64 i) {
 // reads at most one page past nothing and never depends on mapping slack.)
 static inline int suf_cmp(u64 a, u64 b) {
     if (a == b) return 0;
-    const u64 cap = DOLLAR ? std::min(N - a, N - b) : N;
+    const u64 cap = DOLLAR ? std::min(FILE_N - a, FILE_N - b) : N;
     for (u64 i = 0; i < cap; ++i) {
         const u8 xb = DOLLAR ? sym(a + i) : sym((a + i < N) ? a + i : a + i - N);
         const u8 yc = DOLLAR ? sym(b + i) : sym((b + i < N) ? b + i : b + i - N);
         if (xb != yc) return xb < yc ? -1 : 1;
     }
-    // DOLLAR: unreachable with a unique minimal sentinel (a proper prefix pair
-    // cannot exist); kept as the length rule it would be. cyclic: ascending
-    // source position breaks identical rotations.
+    // END RULE: exhaustion sorts below every byte, including raw zero.
+    // Finite comparison never materializes END in the byte alphabet.
+    // Cyclic mode retains its source-position tie break.
     if (DOLLAR) return (N - a) < (N - b) ? -1 : 1;
     return a < b ? -1 : 1;
 }

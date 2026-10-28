@@ -1,0 +1,2 @@
+STREAM_BWT_SA rows=150000002 mismatches=0 runs=57279194 END_rank=41329454
+PRODUCER_DECODE bytes=150000001 mismatches=0
