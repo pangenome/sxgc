@@ -48,3 +48,30 @@ baselines, a 10 GB re-bank, and a re-run of the 100 GB rung — to save **~0.3 %
 ```
 
 The sweep is **96 %** of the finish, and the finish dominates the wall. That is the key, not the seam.
+
+## Addendum: pool park (stop the idle workers spinning) — refuted for wall, kept as an energy knob
+
+Phase 1 runs on worker 0; the other P-1 workers spun in `std::this_thread::yield()`, which returns
+immediately on an idle machine (measured `cpu/wall = 86x` on advance-witness at 10 GB — 95 cores at
+100%). Added `XSA_POOL_PARK` (adaptive: 64 yields then 200 µs sleeps). 150 MB, 16 threads, interleaved
+A/B on the same binary, container byte-identical (`5778d943…`):
+
+| | advance wall | advance cpu |
+|---|---|---|
+| park off | 4.944 s / 5.010 s | 77.2 / 78.3 CPU-s |
+| park on  | 4.940 s / 5.054 s | 60.3 / 64.0 CPU-s |
+
+−22 % energy, **zero wall change**. The spin does not slow the serial transducer; keep it (default off).
+
+## Where the finish actually spends its 2196 s at 10 GB
+
+```
+piece-wait      516.4 s  (cpu 0.5x)   waiting for the producer — fusion imbalance
+readband         86.4 s  (cpu 79x)    truly parallel
+repair-feed     821.5 s  (cpu 26x)    serial transducer + spinners
+advance-witness 694.1 s  (cpu 86x)    serial rank cursor + spinners (all 96 cores 100% busy)
+serial_fold    1621.6 s  = 74 % of the finish
+```
+
+Next instrument: `perf record` of the finish (E1). Every optimisation so far was chosen from log
+arithmetic; the per-run 200 ns has never been attributed to a function.
