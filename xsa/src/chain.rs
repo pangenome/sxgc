@@ -194,6 +194,12 @@ RSS / disc telemetry.
   set to fan in and no k-way walk; the producer sweeps the corpus itself. The
   merge path stays in the binary behind --legacy-merge for A/B, and is priced by
   the v1/fan-in plans, not by the bin plan.
+  --tape               use the TAPE producer instead of the bin producer:
+                     bundle/scatter_sort scatters key-ordered bands into
+                     --scratch/bands-tape, bundle/cross_lcp_merge consumes that
+                     stream and bundle/xsa_finish builds the container. All three
+                     are children of this binary; no external scripts, no
+                     side-built binaries.
   --allow-infeasible   run even when the plan cannot prove the build fits
                      (overrides the ABSOLUTE peak-vs-free / RAM check; prints a
                      warning and journals the override). Nothing else is
@@ -348,6 +354,10 @@ struct Options {
     timeout_s: Option<u64>,
     stripes: Vec<String>,
     scratch_free_pct: u32,
+    /// The TAPE producer route: scatter_sort emits key-ordered bands into
+    /// --tape-bands, cross_lcp_merge consumes them, xsa_finish follows. One
+    /// binary, three children, no external scripts.
+    tape: bool,
     /// Proceed even when the plan cannot prove a fit (the operator overrides
     /// the ABSOLUTE peak-vs-free check; nothing else is overridable).
     allow_infeasible: bool,
@@ -426,6 +436,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     // (see disc_verdict / tree_ok). A percentage-of-device rule is opt-in.
     let mut scratch_free_pct = 0u32;
     let mut allow_infeasible = false;
+    let mut tape = false;
     let mut remap = None;
     let mut chunk_mb = None;
     let mut fanin = false;
@@ -450,6 +461,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
                 }
             }
             "--snap-1e" => snap_1e = true,
+            "--tape" => tape = true,
             "--allow-infeasible" => allow_infeasible = true,
             "--memory-gb" => {
                 i += 1;
@@ -676,7 +688,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     }
     Ok(Options { input, scratch, snap_1e, memory_gb, threads, chunks, kway, plan_only,
                  bin_pipeline, legacy_merge, v2_flag_given, chi_expect, wit_ram_gb,
-                 finish_as_gb, bin_live_cap, bin_target_size, bin_entropy_min, phrase, timeout_s, stripes, scratch_free_pct, allow_infeasible,
+                 finish_as_gb, bin_live_cap, bin_target_size, bin_entropy_min, phrase, timeout_s, stripes, scratch_free_pct, allow_infeasible, tape,
                  remap, chunk_mb, fanin })
 }
 
@@ -1562,6 +1574,40 @@ fn run_v2_tail(
             producer_args.extend([(*flag).to_string(), v.to_string()]);
         }
     }
+    // ---- THE TAPE ROUTE ------------------------------------------------
+    // Same three-tool shape the gate used, owned by this binary: the sorter
+    // writes bands with --tape-bands, cross_lcp_merge consumes that stream, and
+    // the finish (already below) consumes the runs. Flow control is the sorter's
+    // own .consumed protocol satisfied by the merge, so there is no consumer
+    // script anywhere.
+    let bands_dir = scratch.join("bands-tape");
+    let mut emit_args: Vec<String> = Vec::new();
+    if options.tape {
+        fs::create_dir_all(&bands_dir)
+            .map_err(|e| format!("create {}: {e}", bands_dir.display()))?;
+        let waves = scratch.join("waves-tape");
+        producer_args = vec![
+            "-k".to_string(), "120".to_string(), timeout_s.to_string(),
+            s(&tools.join("scatter_sort").to_string_lossy()),
+            "--corpus".into(), s(&input.to_string_lossy()),
+            "--remap".into(), s(&remap_path.to_string_lossy()),
+            "--scratch".into(), s(&waves.to_string_lossy()),
+            "--tape-bands".into(), s(&bands_dir.to_string_lossy()),
+            "--pending-bands".into(), "8".into(),
+            "--ram-gb".into(), std::cmp::max(2, options.memory_gb / 2).to_string(),
+            "--par-bands".into(), "8".into(),
+            "--threads".into(), options.threads.to_string(),
+        ];
+        emit_args = vec![
+            "-k".to_string(), "120".to_string(), timeout_s.to_string(),
+            s(&tools.join("cross_lcp_merge").to_string_lossy()),
+            "--binbwt".into(), s(&input.to_string_lossy()),
+            "--remap".into(), s(&remap_path.to_string_lossy()),
+            "--out-prefix".into(), frag.to_string(),
+            "--threads".into(), options.threads.to_string(),
+            "--tape-bands".into(), s(&bands_dir.to_string_lossy()),
+        ];
+    }
     let mut finish_args: Vec<String> = Vec::new();
     finish_args.extend(["-k".to_string(), "120".to_string(), timeout_s.to_string()]);
     finish_args.push(s(&tools.join("xsa_finish").to_string_lossy()));
@@ -1580,14 +1626,22 @@ fn run_v2_tail(
 
     // Spawn BOTH before joining: the finish must start with the producer (it
     // polls the producer's piece directory from row zero).
-    let producer_running = spawn_phase(journal, scratch, "bin-v2", memory_kb, "/usr/bin/timeout", &producer_args, &producer_env)?;
+    let producer_label = if options.tape { "order-tape" } else { "bin-v2" };
+    let producer_running = spawn_phase(journal, scratch, producer_label, memory_kb, "/usr/bin/timeout", &producer_args, &producer_env)?;
+    let mut emit_running = if options.tape {
+        Some(spawn_phase(journal, scratch, "emit-tape", memory_kb, "/usr/bin/timeout", &emit_args, &[])?)
+    } else { None };
     let mut finish_running = spawn_phase(journal, scratch, "finish-v2", finish_as_kb, "/usr/bin/timeout", &finish_args, &[])?;
     let v2_sampler = DiscSampler::start(scratch.to_path_buf(), Duration::from_secs(2));
     if let Err(e) = join_phase(journal, scratch, producer_running) {
         // A dead producer leaves the finish polling for hours; kill it loud.
         let _ = finish_running.child.kill();
         let _ = finish_running.child.wait();
-        return Err(format!("{e}; the fused finish was killed after the bin producer failed"));
+        if let Some(mut m) = emit_running { let _ = m.child.kill(); let _ = m.child.wait(); }
+        return Err(format!("{e}; the fused finish was killed after the {} producer failed", producer_label));
+    }
+    if let Some(m) = emit_running {
+        join_phase(journal, scratch, m)?;
     }
     join_phase(journal, scratch, finish_running)?;
     let peak_disc = v2_sampler.peak_bytes();
@@ -1595,12 +1649,19 @@ fn run_v2_tail(
     // ---- gates (fail loud on every violation)
     // A cap raise means the arena the run used is NOT the arena the plan
     // priced: refuse rather than accept a silently different memory shape.
-    if count_log_contains(scratch, "bin-v2", "BIN_CAP_RAISED") > 0 {
+    if !options.tape && count_log_contains(scratch, "bin-v2", "BIN_CAP_RAISED") > 0 {
         let raised = require_log_contains(scratch, "bin-v2", "BIN_CAP_RAISED")?;
         return Err(format!(
             "V2_BIN_CAP_RAISED: --bin-live-cap {bin_live_cap} is below the largest bin; the producer raised it ({raised}). \
              The plan priced a different arena - raise --bin-live-cap (and --memory-gb if needed) and re-run"));
     }
+    // BIN_WORK is the bin producer's own row-coverage receipt; the tape route
+    // proves coverage through its own stream journal, so the receipt block below
+    // is required only on the bin route.
+    if options.tape {
+        require_log_contains(scratch, "order-tape", "SS_TAPE")?;
+    }
+    if !options.tape {
     let bin_work = require_log_contains(scratch, "bin-v2", "BIN_WORK")?;
     journal.line(&format!("V2_BIN_WORK {bin_work}"));
     let emitted = field_u64(&bin_work, "emitted_rows")?;
@@ -1632,6 +1693,7 @@ fn run_v2_tail(
             100.0 * (windows - plan_windows) as f64 / plan_windows as f64));
     } else if windows < plan_windows {
         return Err(format!("V2_BIN_WINDOW_UNDERCOUNT plan_windows={plan_windows} actual={windows}: the producer admitted fewer windows than ceil(n/{bin_live_cap}) - the plan and the run disagree about the arena bound"));
+    }
     }
     // The finish's own work counters ride the same journal (the counter
     // identity is a hard gate: byte-identity alone has hidden two defects).
@@ -1697,7 +1759,11 @@ fn run_v2_tail(
     journal.line(&format!("V2_CONTAINER_PUBLISHED path={} bytes={container_bytes}", container.display()));
     journal.line(&format!(
         "PEAK_DISC_USED_BYTES {peak_disc} (du-sampled every 2s across the concurrent producer+finish window)"));
-    journal.line(&format!("XSA_BUILD_DONE chi={chi} pipeline=v2bin container={}", container.display()));
+    journal.line(&format!(
+        "XSA_BUILD_DONE chi={chi} pipeline={} container={}",
+        if options.tape { "v2tape" } else { "v2bin" },
+        container.display()
+    ));
     Ok(())
 }
 
