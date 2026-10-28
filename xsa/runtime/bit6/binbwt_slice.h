@@ -3816,6 +3816,11 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
     U baseRow = 0, hits = 0;
     double tRead = 0, tWord = 0, tPub = 0;
     U band = 0, bandRows = 0, bandRead = 0;
+    // END IS VIRTUAL: symbol 0 is END's cell, so EXACTLY ONE row of the BWT may
+    // carry it (the row whose suffix starts at position 0). With a corpus-derived
+    // remap no present byte owns code 0, so this count is exact - and it is the
+    // check the old remap[0xf5]==0 test was standing in for.
+    U endRows = 0;
     for (;;) {
         if (baseRow == n) {
             if (!bands) break;
@@ -3846,6 +3851,7 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
                 require((pos[i] >> 56) == 0, "tape bands: invalid packed row");
                 syms[i] = uint8_t(pos[i] >> 48);
                 pos[i] &= (U(1) << 48) - 1;
+                endRows += syms[i] == 0;
             }
         } else if (haveSyms) {
             size_t sgot = 0;
@@ -3855,6 +3861,7 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
                 require(r > 0, "tape-emit: short sym read");
                 sgot += size_t(r);
             }
+            for (U i = 0; i < want; ++i) endRows += syms[i] == 0;
         }
         tRead += now_sec() - tr;
         const double tw = now_sec();
@@ -3893,6 +3900,13 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
     for (auto& worker : wordPool) worker.join();
     ::close(fd);
     if (sfd >= 0) ::close(sfd);
+    if (haveSyms) {
+        // THE END-ROW INVARIANT, proved on the data (not on the table): END is
+        // virtual, code 0 is its cell, and END occurs once in the text.
+        std::fprintf(stderr, "TAPE_EMIT_END_ROWS rows=%llu symbol=0 expected=1\n",
+                     (unsigned long long)endRows);
+        require(endRows == 1, "tape-emit: the BWT must carry EXACTLY one symbol-0 (END) row");
+    }
     const double tEnd0 = now_sec();
     sink->finish();
     {
@@ -3957,10 +3971,12 @@ static int binbwt_main(const std::string& path, const std::string& mapPath,
     for (unsigned c = 0; c < 256; ++c)
         require(permutation[c] == c, "bin-bwt remap bijection");
     // NOT the chunk front end's remap[0x1E] == 0x1E contract (see
-    // cross_lcp_merge.cpp): the product route needs an order-preserving relabel
-    // whose minimal symbol 0 is the appended end-of-text byte.
-    require(segment.remap[SENTINEL_BYTE] == SENTINEL_SYMBOL,
-            "bin-bwt remap must map 0xf5 to the minimal symbol 0 (the sentinel)");
+    // cross_lcp_merge.cpp), and NOT a universal table either: the remap is
+    // DERIVED PER CORPUS (present byte of rank j -> 1+j) and END is VIRTUAL, so
+    // END's cell (code 0) is handed to an ABSENT byte and no byte value is
+    // sacrificed. The invariant that matters here is proved downstream, on the
+    // data this process emits: see TAPE_EMIT_END_ROWS in tape_emit (exactly one
+    // row of the BWT may carry symbol 0).
     CorpusText text;
     text.open({segment}, true);
     require(text.n, "bin-bwt empty corpus");

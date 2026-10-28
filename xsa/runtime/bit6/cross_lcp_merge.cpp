@@ -819,10 +819,14 @@ struct WmPacker {
 // a corpus window is one segment; a merged intermediate's text is its input
 // sides' segments in order - no merged text is ever copied (the progressive
 // shape's invariant: level N's output is a valid level N+1 input).
-// ------------------------------------------------------------- THE SENTINEL
-// The text this producer indexes is T' = corpus . 0xF5: exactly ONE appended
-// end-of-text byte, mapped to the minimal product symbol 0. Nothing is written
-// to the corpus; the byte is a virtual index served by CorpusText below. With it
+// ------------------------------------------------------------- THE VIRTUAL END
+// END IS VIRTUAL (SPEC_CHAIN_TO_PILE Phase A): the text this producer indexes is
+// the corpus itself (n = its byte count) plus ONE virtual index n holding END,
+// which is strictly below every byte value and occurs exactly once. Nothing is
+// written to the corpus and no byte value is sacrificed to carry END, which is
+// what makes an all-byte-values corpus expressible at all. Its product symbol is
+// 0 (SENTINEL_SYMBOL); the remap is DERIVED PER CORPUS by the builder (present
+// byte of rank j -> 1+j, code 0 handed to an ABSENT byte) and passed in. With it
 // the finite suffix order of the corpus EQUALS its cyclic rotation order, so the
 // transport frame (nine 0x02 pad rows, the SA-zero dollar marker and the
 // finish's trim/rewrite) is gone and the seam machinery is inert by data.
@@ -832,7 +836,6 @@ struct WmPacker {
 // chunk-frontend contract, and it is incompatible with the order-preserving
 // relabel this route needs (only 6 present bytes sort below 0x1E in the 150 MB
 // pile fixture, so 0x1E lands on symbol 7, not 30). See the lane report.
-static constexpr uint8_t SENTINEL_BYTE = 0xF5;
 static constexpr uint8_t SENTINEL_SYMBOL = 0;
 
 struct TextSeg {
@@ -5487,8 +5490,11 @@ static int radix_main(const std::string& path,const std::string& mapPath,const s
     std::ifstream map(mapPath,std::ios::binary);map.read((char*)segment.remap.data(),256);
     require(bool(map),"radix remap read");auto permutation=segment.remap;std::sort(permutation.begin(),permutation.end());
     for(unsigned c=0;c<256;++c)require(permutation[c]==c,"radix remap bijection");
-    require(segment.remap[SENTINEL_BYTE]==SENTINEL_SYMBOL,
-            "radix remap must map 0xf5 to the minimal symbol 0 (the sentinel)");
+    // END IS VIRTUAL and the remap is DERIVED PER CORPUS (present byte of rank j
+    // -> 1+j, code 0 handed to an ABSENT byte): there is no reserved byte value
+    // to test here. The invariant is proved on the emitted rows
+    // (TAPE_EMIT_END_ROWS: exactly one symbol-0 row) and against the corpus by
+    // the finish (verify_end_remap).
     CorpusText text;text.open({segment},true);
     const std::string hash=prefix+".radix-hs";require(!fs::exists(hash),"fresh radix hash scratch");
     build_hash_sparse(text,2*text.n,32,hash,threads);
