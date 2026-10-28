@@ -47,6 +47,8 @@
 #include <condition_variable>
 #include <functional>
 #include <memory>
+#include <fstream>
+#include <sstream>
 
 using u8 = uint8_t;
 using u32 = uint32_t;
@@ -63,10 +65,8 @@ static double now_sec() {
 }
 static inline u64 bswap64(u64 x) { return __builtin_bswap64(x); }
 
-// One row of the intermediate: a 16-byte big-endian-padded key + the position.
-// (Big-endian packing makes the key comparison a plain integral compare; the
-// bytes past the text end are zero, which is exactly the dollar convention's
-// "shorter is smaller".)
+// One keyed row carries 24 real bytes and a packed position/symbol.
+// Finite tails are held separately and never receive a padded key.
 struct Row {
     u64 klo, khi, kq, pos;   // 24-byte key (3 big-endian words) + packed pos/sym
 };
@@ -97,7 +97,7 @@ static inline void build_pairmap() {
 static inline u64 pack_sym(u64 p, u8 sym) { return p | (u64(sym) << 48); }
 static inline u64 unpack_pos(u64 v) { return v & ((1ull << 48) - 1); }
 
-// The 16-byte padded key at p, big-endian packed.
+// A complete 24-byte key, big-endian packed. Tail positions are forbidden.
 static inline void key_at(u64 p, u64& klo, u64& khi, u64& kq) {
     if (p >= KEY_N) die("tail position passed to key_at");
     u8 b[24];
@@ -369,7 +369,8 @@ int main(int argc, char** argv) {
     double ram_gb = 1.0;
     double scratch_cap_gb = 0.0;      // 0 = 2n (the operator's law)
     u64 threads = 32, par_bands = 1, sample_n = 4000000;
-    bool keep_rows = false;
+    bool keep_rows = false, selftestDeclared = false;
+    std::string selftestOracle;
     std::string remapPath, sort_mode = "std", tapeBands, orderSample;
     u64 sampleLo = 0, sampleCount = 4096;
     u64 pendingBands = 8;
@@ -382,6 +383,8 @@ int main(int argc, char** argv) {
         else if (a == "--order-sample-count") sampleCount = std::strtoull(nxt().c_str(), nullptr, 10);
         else if (a == "--tape-bands") tapeBands = nxt();
         else if (a == "--pending-bands") pendingBands = std::strtoull(nxt().c_str(), nullptr, 10);
+        else if (a == "--selftest") selftestOracle = nxt();
+        else if (a == "--selftest-declared-end") selftestDeclared = true;
         else if (a == "--corpus") corpus = nxt();
         else if (a == "--out") out = nxt();
         else if (a == "--scratch") scratch = nxt();
@@ -401,6 +404,8 @@ int main(int argc, char** argv) {
     (void)sort_mode;
     if (corpus.empty() || (out.empty() && tapeBands.empty())) die("--corpus and --out required");
 
+    if (selftestDeclared && selftestOracle.empty()) die("declared override requires --selftest");
+    if (!selftestOracle.empty() && !tapeBands.empty()) die("--selftest requires --out");
     if (!tapeBands.empty() && (!pendingBands || keep_rows))
         die("tape bands require K>0 and no keep-rows");
     int fd = ::open(corpus.c_str(), O_RDONLY);
@@ -429,7 +434,8 @@ int main(int argc, char** argv) {
     unsigned freeByte = 256;
     if (!used[0xf5]) freeByte = 0xf5;
     else for (unsigned c = 0; c < 256; ++c) if (!used[c]) { freeByte = c; break; }
-    DECLARED_END = freeByte == 256;
+    DECLARED_END = freeByte == 256 || selftestDeclared;
+    if (selftestDeclared) std::fprintf(stderr, "SELFTEST_END_OVERRIDE declared-code=1\n");
     if (!DECLARED_END) SENTINEL_BYTE = u8(freeByte);
     if (REMAP) {
         bool seen[256]{};
@@ -768,8 +774,6 @@ int main(int argc, char** argv) {
                     if (r <= 0) die("pread scan");
                     got += size_t(r);
                 }
-                if (want < buf.size())
-                    std::memset(buf.data() + want, 0, buf.size() - want);
                 // REMAP THE CHUNK ONCE, in place, instead of 24 lookups per row.
                 // Per-row key building with byte-by-byte REMAP[] was the real cost:
                 // ~400 ns/row for the included rows (~43M per wave at 1 GB), which
@@ -1170,5 +1174,32 @@ int main(int argc, char** argv) {
         "SS_DONE n=%" PRIu64 " waves=%" PRIu64 " ties=%" PRIu64
         " sample_s=%.2f waves_s=%.2f total_s=%.2f\n",
         N, waves, ties_total, t_sample, now_sec() - t1, now_sec() - t0);
+    if (!selftestOracle.empty()) {
+        std::ifstream oracle(selftestOracle), sa(out, std::ios::binary), symbols(symPath, std::ios::binary);
+        if (!oracle || !sa || !symbols) die("selftest open oracle/output");
+        sa.seekg(48);
+        u8 inverse[256];
+        for (unsigned c = 0; c < 256; ++c) inverse[REMAP ? REMAP[c] : c] = u8(c);
+        std::string line;
+        u64 rank = 0;
+        while (std::getline(oracle, line)) {
+            if (line.empty() || line[0] == '#') continue;
+            std::istringstream fields(line);
+            u64 expectedRank, expectedPos, expectedSymbol, p;
+            unsigned char carried;
+            if (!(fields >> expectedRank >> expectedPos >> std::hex >> expectedSymbol))
+                die("selftest malformed oracle");
+            if (!sa.read(reinterpret_cast<char*>(&p), 8) ||
+                !symbols.read(reinterpret_cast<char*>(&carried), 1)) die("selftest truncated output");
+            if (p == 0 && carried != SENTINEL_SYMBOL) die("selftest END carry");
+            const unsigned symbol = p == 0 ? 0 : inverse[carried];
+            if (expectedRank != rank || expectedPos != p || expectedSymbol != symbol)
+                die("G6 disagreement rank=" + std::to_string(rank) + " position=" + std::to_string(p));
+            ++rank;
+        }
+        if (rank != N || sa.peek() != EOF || symbols.peek() != EOF) die("selftest row coverage");
+        std::printf("G6_PASS mode=%s rows=%" PRIu64 " mismatches=0\n",
+                    DECLARED_END ? "declared-code" : "free-byte", rank);
+    }
     return 0;
 }
