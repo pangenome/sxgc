@@ -194,12 +194,11 @@ RSS / disc telemetry.
   set to fan in and no k-way walk; the producer sweeps the corpus itself. The
   merge path stays in the binary behind --legacy-merge for A/B, and is priced by
   the v1/fan-in plans, not by the bin plan.
-  --scratch-free-pct N  OPT-IN disc hygiene rule: require N% of the scratch
-                     filesystem to stay free. DEFAULT OFF: the gate is the
-                     ABSOLUTE fit (projected peak + headroom vs free bytes),
-                     which is what actually predicts success. A percentage of
-                     the device refuses a 4 GB build on a 14 TB drive that is
-                     90% full, which tells an operator nothing.
+  --scratch-free-pct N  DEPRECATED AND IGNORED. Accepted only so old scripts do
+                     not break; it prints a warning and has no effect. A build
+                     tool does not impose disc quota policy: the plan reports the
+                     projected peak against the free bytes (information), and the
+                     only refusal is a genuine will-not-fit.
   --stripe DIR[,DIR...]  candidate stripe directories for the disc model
                      (reader-level striping is lane item 3; the plan
                      accounts for the space now, the I/O split lands later).
@@ -583,6 +582,8 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
             "--scratch-free-pct" => {
                 i += 1;
                 scratch_free_pct = parse_u32(args.get(i), "--scratch-free-pct")?;
+                eprintln!("warning: --scratch-free-pct {} is deprecated and ignored (the plan reports peak vs free; the only refusal is a build that cannot fit)", scratch_free_pct);
+                scratch_free_pct = 0;   // no policy of any kind: the value is not carried into the plan
                 if scratch_free_pct > 100 {
                     return Err("--scratch-free-pct must be <= 100 (0 = override hygiene)".into());
                 }

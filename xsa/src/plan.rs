@@ -211,7 +211,7 @@ pub fn model(
     // drive is fit even when the blunt policy says no).
     let fits = disc_peak_mb < free_mb;
     let free_pct = 100u32.saturating_sub(survey.scratch_used_percent);
-    let hygiene_ok = free_pct >= hygiene_free_pct;
+    let hygiene_ok = true; // DEPRECATED: no percentage-of-device policy. The gate is the absolute peak-vs-free check above.
     let disc_ok = fits && (hygiene_ok || hygiene_free_pct == 0);
     let disc_verdict = if disc_ok {
         if hygiene_ok {
@@ -332,7 +332,7 @@ pub fn model_fanin(
     let peak_mb = merge_peak_mb.max(chunk_disc_mb).max(finish_peak_mb);
     let fits = peak_mb < free_mb;
     let free_pct = 100u32.saturating_sub(survey.scratch_used_percent);
-    let hygiene_ok = free_pct >= hygiene_free_pct;
+    let hygiene_ok = true; // DEPRECATED: no percentage-of-device policy. The gate is the absolute peak-vs-free check above.
     let disc_ok = fits && (hygiene_ok || hygiene_free_pct == 0);
     let disc_verdict = if disc_ok {
         if hygiene_ok {
@@ -948,7 +948,7 @@ pub fn model_v2(
     // live at that moment.
     let window_file_mb = window_file_gb * 1024.0;
     let free_pct = 100u32.saturating_sub(survey.scratch_used_percent);
-    let hygiene_ok = free_pct >= hygiene_free_pct;
+    let hygiene_ok = true; // DEPRECATED: no percentage-of-device policy. The gate is the absolute peak-vs-free check above.
     let tree_target_ok = V2_TREE_PEAK_PER_N <= V2_TREE_TARGET_PER_N;
     let disc_ok = tree_ok && tree_target_ok && (hygiene_ok || hygiene_free_pct == 0);
     let whole_box_gb = n_gb * (1.0 + V2_TREE_PEAK_PER_N);
