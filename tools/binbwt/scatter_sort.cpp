@@ -72,7 +72,12 @@ struct Row {
 };
 
 static const u8* T = nullptr;
-static u64 N = 0;
+// N IS THE TEXT LENGTH AND INCLUDES THE APPENDED END-OF-TEXT BYTE: T' = corpus .
+// 0xF5, one occurrence at index FILE_N, product symbol 0. FILE_N is what is on
+// disc; the sentinel is a virtual index, never materialised.
+static u64 N = 0, FILE_N = 0;
+static constexpr u8 SENTINEL_BYTE = 0xF5;
+static constexpr u8 SENTINEL_SYMBOL = 0;
 static const u8* REMAP = nullptr;   // optional: raw byte -> remapped symbol
 // Two raw bytes -> their two remapped bytes, packed big-endian. A tie comparison
 // then consumes 2 bytes per table lookup instead of 1.
@@ -93,16 +98,19 @@ static inline u64 unpack_pos(u64 v) { return v & ((1ull << 48) - 1); }
 // The 16-byte padded key at p, big-endian packed.
 static inline void key_at(u64 p, u64& klo, u64& khi, u64& kq) {
     u8 b[24];
-    const u64 avail = p < N ? N - p : 0;
+    // REAL BYTES ONLY. The text is T' = corpus . 0xF5 and the sentinel maps to
+    // symbol 0, so bytes past the end of the corpus ARE the sentinel: the zero
+    // padding below is not a trick any more, it is the terminator. (Remapping the
+    // padding would be WRONG under an order-preserving relabel, where raw 0x00 is
+    // a real symbol above 0.)
+    const u64 avail = p < FILE_N ? FILE_N - p : 0;
     const u64 take = avail < 24 ? avail : 24;
     if (take) std::memcpy(b, T + p, take);
     if (take < 24) std::memset(b + take, 0, 24 - take);
-    // THE KEY LIVES IN THE PRODUCT ALPHABET. remap[] is not order-preserving
-    // (remap[1]=255, remap[2]=253, ...), so building the key from raw bytes sorts
-    // in the wrong order - the bug that made the 150 MB stream differ from the
-    // bin machine's while the 4 MB slice (which happens to contain none of the
-    // remapped bytes) matched exactly.
-    if (REMAP) for (int i = 0; i < 24; ++i) b[i] = REMAP[b[i]];
+    // THE KEY LIVES IN THE PRODUCT ALPHABET: every present corpus byte keeps its
+    // relative order (1..k) and the sentinel is 0, so the big-endian key compare
+    // is the suffix compare of the sentinel-terminated text.
+    if (REMAP) for (u64 i = 0; i < take; ++i) b[i] = REMAP[b[i]];
     u64 lo, hi, q;
     std::memcpy(&lo, b, 8);
     std::memcpy(&hi, b + 8, 8);
@@ -406,11 +414,12 @@ int main(int argc, char** argv) {
     int fd = ::open(corpus.c_str(), O_RDONLY);
     struct stat st{};
     if (fd < 0 || ::fstat(fd, &st)) die("cannot open/stat corpus");
-    N = (u64)st.st_size;
-    if (!N) die("empty corpus");
-    T = (const u8*)::mmap(nullptr, (size_t)N, PROT_READ, MAP_PRIVATE, fd, 0);
+    FILE_N = (u64)st.st_size;
+    if (!FILE_N) die("empty corpus");
+    N = FILE_N + 1;                 // the appended end-of-text byte
+    T = (const u8*)::mmap(nullptr, (size_t)FILE_N, PROT_READ, MAP_PRIVATE, fd, 0);
     if (T == MAP_FAILED) die("mmap corpus");
-    ::madvise((void*)T, (size_t)N, MADV_WILLNEED);
+    ::madvise((void*)T, (size_t)FILE_N, MADV_WILLNEED);
     std::vector<u8> remapBuf;
     if (!remapPath.empty()) {
         int rf = ::open(remapPath.c_str(), O_RDONLY);
@@ -419,8 +428,19 @@ int main(int argc, char** argv) {
         if (::read(rf, remapBuf.data(), 256) != 256) die("remap short read");
         ::close(rf);
         REMAP = remapBuf.data();
+        if (REMAP[SENTINEL_BYTE] != SENTINEL_SYMBOL)
+            die("remap must map 0xf5 to the minimal symbol 0 (the sentinel)");
+        for (unsigned c = 0; c < 256; ++c)
+            if (c != SENTINEL_BYTE && REMAP[c] == SENTINEL_SYMBOL)
+                die("remap maps a text byte onto the sentinel symbol");
     }
     build_pairmap();
+    // SYMBOL ACCESS ON THE SENTINEL-TERMINATED TEXT: the corpus bytes through the
+    // product remap, and index FILE_N = the sentinel symbol 0.
+    auto sym_at = [](u64 p) -> unsigned {
+        if (p >= FILE_N) return SENTINEL_SYMBOL;
+        return REMAP ? REMAP[T[p]] : T[p];
+    };
 
     const u64 row_bytes = sizeof(Row);
     const u64 ram_bytes = (u64)(ram_gb * 1e9);
@@ -468,7 +488,7 @@ int main(int argc, char** argv) {
             ts.emplace_back([&, t]() {
                 const u64 lo = N * t / nt, hi = N * (t + 1) / nt;
                 auto& h = lh[t];
-                for (u64 p = lo; p < hi; ++p) ++h[REMAP ? REMAP[T[p]] : T[p]];
+                for (u64 p = lo; p < hi; ++p) ++h[sym_at(p)];
             });
         for (auto& th : ts) th.join();
         for (u64 t = 0; t < nt; ++t)
@@ -487,8 +507,8 @@ int main(int argc, char** argv) {
                 // split this byte by its second byte
                 std::vector<u64> h2(256, 0);
                 for (u64 p = 0; p < N; ++p) {
-                    if ((REMAP ? REMAP[T[p]] : T[p]) != c) continue;
-                    h2[p + 1 < N ? (REMAP ? REMAP[T[p + 1]] : T[p + 1]) : 0]++;
+                    if (sym_at(p) != c) continue;
+                    h2[sym_at(p + 1)]++;
                 }
                 unsigned l2 = 0; u64 a2 = 0;
                 for (unsigned d = 0; d < 256; ++d) {
@@ -604,7 +624,7 @@ int main(int argc, char** argv) {
         h[2] = 1;    // k (full SA)
         h[3] = N;    // count
         h[4] = N;    // rows
-        h[5] = 10;   // SA_ANCHOR_ROW_PAD
+        h[5] = 0;    // SA_ANCHOR_ROW_PAD: no transport frame (sentinel text)
         if (ofd >= 0 && ::write(ofd, h, 48) != 48) die("write header");
     }
     const std::string symPath = out + ".sym";
@@ -718,25 +738,24 @@ int main(int argc, char** argv) {
                 // one byte of run-up (the symbol byte at p-1) plus 32 bytes of
                 // look-ahead so a 16-byte key and the symbol are always in range
                 const u64 from = (base ? base - 1 : base);
-                const u64 want = std::min<u64>(chunk + 1 + 48, N - from);
+                // NEVER READ PAST THE FILE: the last text position (the sentinel)
+                // has no byte on disc, and everything after it is the sentinel
+                // value 0, so the buffer tail is zero-filled rather than read.
+                const u64 want = std::min<u64>(chunk + 1 + 48, FILE_N > from ? FILE_N - from : 0);
                 size_t got = 0;
                 while (got < want) {
                     ssize_t r = ::pread(fd, buf.data() + got, want - got, off_t(from + got));
                     if (r <= 0) die("pread scan");
                     got += size_t(r);
                 }
-                // ZERO-PAD PAST EOF: key_at's contract is that bytes past the end
-                // of the text are 0 (the dollar convention's "shorter is smaller").
-                // A buffer read stops at EOF, so the tail must be zeroed or the
-                // last positions get STALE bytes as their key - which is exactly
-                // what failed SA_CHECK_ORDER_FAIL at rank 1,776,069.
-                if (from + want == N && want < buf.size())
+                if (want < buf.size())
                     std::memset(buf.data() + want, 0, buf.size() - want);
                 // REMAP THE CHUNK ONCE, in place, instead of 24 lookups per row.
                 // Per-row key building with byte-by-byte REMAP[] was the real cost:
                 // ~400 ns/row for the included rows (~43M per wave at 1 GB), which
                 // dominated the whole scan. One sequential pass over the chunk
-                // makes every key a plain big-endian load.
+                // makes every key a plain big-endian load. THE PADDING IS NOT
+                // REMAPPED: past the corpus the value IS the sentinel symbol 0.
                 if (REMAP)
                     for (u64 i = 0; i < got; ++i) buf[i] = REMAP[buf[i]];
                 const u64 off = base - from;   // index in buf of position `base`
@@ -746,7 +765,7 @@ int main(int argc, char** argv) {
                     const unsigned c0 = buf[bj];
                     if (c0 < W.lo || c0 >= W.hi) continue;
                     if (W.lvl2) {
-                        const unsigned c1 = (p + 1 < N) ? buf[bj + 1] : 0;
+                        const unsigned c1 = buf[bj + 1];   // 0 past the corpus end
                         if (c1 < W.lo2 || c1 >= W.hi2) continue;
                     }
                     // THE WHOLE 24-BYTE KEY. Leaving kq unset here was a real bug:
@@ -758,11 +777,10 @@ int main(int argc, char** argv) {
                     std::memcpy(&a2, buf.data() + bj + 8, 8);
                     std::memcpy(&a3, buf.data() + bj + 16, 8);
                     a1 = bswap64(a1); a2 = bswap64(a2); a3 = bswap64(a3);
-                    u8 sy;
-                    if (p == 0) sy = 2;
-                    else {
-                        sy = buf[bj - 1];
-                    }
+                    // The carried BWT symbol. Position 0's predecessor is the
+                    // appended end-of-text byte: symbol 0, exactly as the
+                    // successor rule says (no marker, no rewrite downstream).
+                    const u8 sy = p == 0 ? SENTINEL_SYMBOL : buf[bj - 1];
                     Row r{};
                     r.klo = a1;
                     r.khi = a2;

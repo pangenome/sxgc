@@ -819,6 +819,22 @@ struct WmPacker {
 // a corpus window is one segment; a merged intermediate's text is its input
 // sides' segments in order - no merged text is ever copied (the progressive
 // shape's invariant: level N's output is a valid level N+1 input).
+// ------------------------------------------------------------- THE SENTINEL
+// The text this producer indexes is T' = corpus . 0xF5: exactly ONE appended
+// end-of-text byte, mapped to the minimal product symbol 0. Nothing is written
+// to the corpus; the byte is a virtual index served by CorpusText below. With it
+// the finite suffix order of the corpus EQUALS its cyclic rotation order, so the
+// transport frame (nine 0x02 pad rows, the SA-zero dollar marker and the
+// finish's trim/rewrite) is gone and the seam machinery is inert by data.
+//
+// 0x1E IS NOT SPECIAL-CASED HERE. The chunk front end's remap[0x1E] == 0x1E
+// contract keeps the document separator at its own value; that is a
+// chunk-frontend contract, and it is incompatible with the order-preserving
+// relabel this route needs (only 6 present bytes sort below 0x1E in the 150 MB
+// pile fixture, so 0x1E lands on symbol 7, not 30). See the lane report.
+static constexpr uint8_t SENTINEL_BYTE = 0xF5;
+static constexpr uint8_t SENTINEL_SYMBOL = 0;
+
 struct TextSeg {
     std::string path;
     U off = 0, len = 0;
@@ -1003,7 +1019,8 @@ std::atomic<U> SideText::g_gen{1};
 // absent hits. The 5-fill POOL_STATS printed during hash-build belongs to
 // that builder's temporary boundary-check hash reader, not the walk.
 struct CorpusText {
-    U n = 0;
+    // n INCLUDES the appended end-of-text byte; fileN is the bytes on disc.
+    U n = 0, fileN = 0;
     bool pool = false;
     std::vector<TextSeg> segs;
     std::vector<U> starts, fileIndex;
@@ -1078,11 +1095,14 @@ struct CorpusText {
             fileIndex.push_back(f);
         }
         require(n && n <= UINT64_MAX / 2, "virtual corpus length");
+        fileN = n;
+        n += 1;                       // the appended end-of-text byte
         if (cacheFits) {
             cached.reset(new uint8_t[n]);
             // read() remaps each segment exactly once, before publication to
             // comparator threads. It deliberately bypasses the page pools.
-            read(0, cached.get(), n);
+            read(0, cached.get(), fileN);
+            cached[fileN] = SENTINEL_SYMBOL;
             std::fprintf(stderr, "CORPUS_RAM_CACHE bytes=%llu budget_bytes=%llu immutable=1 remapped=1 doubled=0\n",
                 (unsigned long long)n,
                 (unsigned long long)(2 * SharedPages::pool_slot_count() * SharedPages::PS));
@@ -1095,6 +1115,7 @@ struct CorpusText {
     inline uint8_t at(U i) const {
         if (i >= 2 * n) fail("virtual corpus byte bounds");
         if (i >= n) i -= n;
+        if (i == fileN) return SENTINEL_SYMBOL;   // the appended end-of-text byte
         if (cached) return cached[i];
         size_t z = segment(i);
         const auto& s = segs[z];
@@ -1112,6 +1133,11 @@ struct CorpusText {
         }
         while (len) {
             U p = i >= n ? i - n : i;
+            if (p >= fileN) {                  // the virtual tail (exactly 1 byte)
+                U take = std::min(len, n - p);
+                std::memset(q, SENTINEL_SYMBOL, take);
+                q += take; i += take; len -= take; continue;
+            }
             size_t z = segment(p);
             const auto& s = segs[z];
             U take = std::min(len, s.len - (p - starts[z]));
@@ -1126,6 +1152,11 @@ struct CorpusText {
         constexpr U W = 1u << 22;
         while (len) {
             U p = i >= n ? i - n : i;
+            if (p >= fileN) {                  // the virtual tail (exactly 1 byte)
+                U take = std::min(len, n - p);
+                std::memset(q, SENTINEL_SYMBOL, take);
+                q += take; i += take; len -= take; continue;
+            }
             size_t z = segment(p);
             const auto& s = segs[z];
             U take = std::min({len, s.len - (p - starts[z]), W});
@@ -2595,7 +2626,7 @@ struct SparseSeamCapture {
         std::fprintf(stderr, "CROSS_SEAM_DISCOVERED n=%llu depth=%llu raw_classes=%zu aggregate_occurrences=%llu unique_targets=%zu limit=%llu work_limit=%llu before_walk=1 bounded=1\n",
                      (unsigned long long)n, (unsigned long long)depth, raw.size(),
                      (unsigned long long)storedOccurrences, targets.size(), (unsigned long long)limit, (unsigned long long)discoveryWorkLimit);
-        previous = n + 9; // before row 0 is the last padded suffix
+        previous = n - 1; // before row 0 is the sentinel suffix (position n-1)
     }
     void row(U index, U p) {
         require(index == nextRow++ && p < n, "sparse seam ordered row coverage");
@@ -3665,7 +3696,7 @@ struct SequentialV2 : SparseWalkSink {
     std::array<U, 256> counts{}, frequencies{};
     SequentialV2(const std::string& p, const CorpusText& t, U count, U inputRuns)
         : text(&t), n(count), window(v2_piece_window()),
-          width(std::max<unsigned>(1, 64 - __builtin_clzll(n + 9))),
+          width(std::max<unsigned>(1, 64 - __builtin_clzll(n))),
           prefix(p), dir(p + ".pieces") {
         if (rlebwt_wire_enabled()) bwt = std::make_unique<OutFile>(p + ".rlebwt");
         require(::mkdir(dir.c_str(), 0777) == 0, "create sequential pieces directory");
@@ -3683,7 +3714,10 @@ struct SequentialV2 : SparseWalkSink {
                      int(bool(bwt)), int(bool(bwt)),
                      bwt ? "legacy-four-file" : "route-b-pieces-only");
         admitBand();
-        add({t.at(n-1), 1, n, n}); add({2, 9, n+1, n+9});
+        // NO TRANSPORT FRAME. The walk itself now emits every row of the
+        // sentinel-terminated text - row 0 is the sentinel suffix (position n-1,
+        // predecessor T[n-2]), and the row whose predecessor is the sentinel is
+        // an ordinary row carrying symbol 0. Nothing is dropped downstream.
     }
     void admitBand() {
         U band = index / 65536;
@@ -3755,7 +3789,9 @@ struct SequentialV2 : SparseWalkSink {
             auto& cl = classes[active]; cl.value.after = p; cl.lastRun = index;
             active = UINT64_MAX;
         }
-        uint8_t c = p ? text->at(p-1) : uint8_t(2);
+        // The predecessor of position 0 is the appended end-of-text byte (the
+        // only symbol-0 occurrence in the BWT). No marker, no rewrite.
+        const uint8_t c = p ? text->at(p-1) : text->at(n-1);
         if (pending.len && pending.c != c) flush();
         admitBand();
         auto found = firstSizes.find(p);
@@ -3803,7 +3839,7 @@ struct SequentialV2 : SparseWalkSink {
             require(expected[i] == classes[i].value, "sequential class capture mismatch");
         flush();
         if (!piece.empty()) publishBand();
-        require(publishedClasses == classes.size() && rows == n+10 && counts[2] == 10,
+        require(publishedClasses == classes.size() && rows == n,
                 "sequential terminal coverage");
         const U limit = std::max<U>(1000, index / 1000);
         U targets = 0; for (const auto& cl : classes) targets += cl.value.occ.size();
@@ -3812,7 +3848,7 @@ struct SequentialV2 : SparseWalkSink {
             require(cl.lastRun / 65536 - cl.firstRun / 65536 < window, "class exceeds W-1 bands");
         if (bwt) {
             bwt->flush();
-            { OutFile f(prefix + ".rlebwt.meta"); f.w64(n+10); f.w64(index);
+            { OutFile f(prefix + ".rlebwt.meta"); f.w64(n); f.w64(index);
               for (U value : counts) f.w64(value); for (U value : frequencies) f.w64(value); }
             std::fprintf(stderr, "CROSS_RLEBWT_WRITTEN path=%s runs=%llu\n",
                          (prefix + ".rlebwt").c_str(), (unsigned long long)index);
@@ -4073,7 +4109,7 @@ static U emit_sparse_v2(const std::string& prefix, const std::vector<SideExt>& s
     std::error_code cleanupError;
     fs::remove(output.dir, cleanupError); // consumer removes it after its last unlink
     std::fprintf(stderr, "SPARSE_V2_EMIT runs=%llu rows=%llu shards=0 WM=absent admission=%llu walk_shards=%llu passes=1 preparation_passes=1 planning_passes=1\n",
-        (unsigned long long)output.index, (unsigned long long)(n+10),
+        (unsigned long long)output.index, (unsigned long long)n,
         (unsigned long long)producers, (unsigned long long)producers);
     return output.index;
 }
@@ -4991,8 +5027,8 @@ static std::vector<CapturedSeamClass> brute_seam_classes(const std::string& text
         require(at != sa.end(), "brute seam first missing");
         cl.lo = at - sa.begin(); cl.hi = cl.lo + occ.size();
         require(cl.hi <= n, "brute seam interval bounds");
-        cl.before = cl.lo ? sa[cl.lo - 1] : n + 9;
-        cl.after = cl.hi < n ? sa[cl.hi] : n;
+        cl.before = cl.lo ? sa[cl.lo - 1] : n - 1;
+        cl.after = cl.hi < n ? sa[cl.hi] : n - 1;
         cl.occ.assign(sa.begin() + cl.lo, sa.begin() + cl.hi);
         auto check = cl.occ; std::sort(check.begin(), check.end());
         require(check == occ, "brute seam occurrence set mismatch");
@@ -5451,7 +5487,8 @@ static int radix_main(const std::string& path,const std::string& mapPath,const s
     std::ifstream map(mapPath,std::ios::binary);map.read((char*)segment.remap.data(),256);
     require(bool(map),"radix remap read");auto permutation=segment.remap;std::sort(permutation.begin(),permutation.end());
     for(unsigned c=0;c<256;++c)require(permutation[c]==c,"radix remap bijection");
-    require(segment.remap[0x1e]==0x1e,"radix separator remap");
+    require(segment.remap[SENTINEL_BYTE]==SENTINEL_SYMBOL,
+            "radix remap must map 0xf5 to the minimal symbol 0 (the sentinel)");
     CorpusText text;text.open({segment},true);
     const std::string hash=prefix+".radix-hs";require(!fs::exists(hash),"fresh radix hash scratch");
     build_hash_sparse(text,2*text.n,32,hash,threads);

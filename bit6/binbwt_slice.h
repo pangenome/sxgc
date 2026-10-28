@@ -476,11 +476,17 @@ static inline int bin_tail_cmp(const CorpusText& t, bool dollar, U word_a, U wor
     const U a = bin_word_tail(word_a), b = bin_word_tail(word_b);
     require(a != b && a <= n && b <= n, "bin tail comparator bounds");
     ++w.comparisons;
-    // The empty suffix (dollar tail n) is minimal and needs no symbol read.
+    // The sentinel tail (position n-1's tail, n) is the appended end-of-text
+    // byte: minimal, and decided by the alphabet - symbol 0, which no other
+    // position carries - so no symbol read is needed.
     if (dollar && (a == n || b == n)) { ++w.certDecided; return a == n ? -1 : 1; }
     require(a < n && b < n, "bin tail comparator bounds");
-    // dollar: key = M[p..n).$^inf, the shorter suffix is smaller once the
-    //         common prefix covers it. cyclic: M^inf[p..], ties by position.
+    // dollar: key = M[p..n) over the SENTINEL-TERMINATED text; the unique minimal
+    //         symbol terminates every comparison. cyclic: M^inf[p..], ties by
+    //         position. (The old dollar tail carried a "shorter suffix is
+    //         smaller" rule because the end of the text was not a symbol; with
+    //         the sentinel no two suffixes can be prefix-related, so that rule is
+    //         gone - see the exhaustion case below, which is now a refusal.)
     const U cap = dollar ? std::min(n - a, n - b) : n;
     const U entry = std::min(certified, cap);
     U j = entry;
@@ -513,7 +519,11 @@ static inline int bin_tail_cmp(const CorpusText& t, bool dollar, U word_a, U wor
     }
     w.symbols += j - entry;
     ++w.certDecided;
-    if (dollar) return a > b ? -1 : 1;   // finite suffix: shorter is smaller
+    // EXHAUSTION IS IMPOSSIBLE IN THE SENTINEL CONVENTION: every suffix ends with
+    // the unique symbol 0, so one of the two bytes above must differ before the
+    // cap. A tie here means the text has no unique minimal symbol - refuse
+    // instead of inventing an order from the lengths (the cyclic-era rule).
+    require(!dollar, "bin tail comparator exhausted: the text has no unique sentinel");
     // Equal rotations: the global rule is ascending SOURCE position.
     ++w.ties;
     return bin_pos_of(a, n, false) < bin_pos_of(b, n, false) ? -1 : 1;
@@ -1171,10 +1181,11 @@ static inline void bin_window_sabotage(const std::string& path) {
 static constexpr uint32_t SA_ANCHOR_MAGIC = 0x41535853u;   // 'S','X','S','A'
 static constexpr uint32_t SA_ANCHOR_VERSION = 1;
 static constexpr uint32_t SA_ANCHOR_HEADER_BYTES = 48;
-// The container's row numbering: BinBandSink seeds 1 + 9 padding rows before the
-// first real bin (binbwt_slice.h, its constructor), so a container row is an
-// emit-pass rank + 10. Recorded in the header, never assumed.
-static constexpr uint64_t SA_ANCHOR_ROW_PAD = 10;
+// The container's row numbering offset: it was 10 while the producer seeded
+// 1 + 9 padding rows before the first bin. There is no transport frame any more
+// (the sentinel terminates the text), so a container row IS the emit-pass rank
+// and the offset is 0. Recorded in the header, never assumed.
+static constexpr uint64_t SA_ANCHOR_ROW_PAD = 0;
 struct SaAnchorWriter {
     int fd = -1;
     U k = 0, n = 0, count = 0, rows = 0, lastRank = 0;
@@ -3085,7 +3096,7 @@ struct BinBandSink {
     std::string prefix, dir;
     // ---- ordered pass state ---------------------------------------------
     U next = 0, rows = 0, index = 0, bandStart = 0, wordsDone = 0, bandWords = 0;
-    U prevLastPos = 0;                  // position of the previous row; n+9 first
+    U prevLastPos = 0;                  // position of the previous row; n-1 first
     SparseSeamCapture::Hit* boundaryHit = nullptr;   // a hit awaiting its `after`
     SparseRun pending;                  // the BWT run being extended
     // ---- RUN RANKS BY PREFIX SUM -------------------------------------------
@@ -3117,7 +3128,7 @@ struct BinBandSink {
     BinBandSink(const std::string& p, const CorpusText& t, U inputRuns, bool dlr,
                 U threadCount)
         : text(&t), n(t.n), window(v2_piece_window()),
-          width(std::max<unsigned>(1, 64 - __builtin_clzll(t.n + 9))),
+          width(std::max<unsigned>(1, 64 - __builtin_clzll(t.n))),
           dollar(dlr), prefix(p), dir(p + ".pieces") {
         require(::mkdir(dir.c_str(), 0777) == 0, "create band pieces directory");
         seam.discover(t, n, std::min<U>(1u << 26, std::max<U>(1000, inputRuns / 1000)));
@@ -3132,7 +3143,7 @@ struct BinBandSink {
         }
         require(::rename((dir + "/start.tmp").c_str(), (dir + "/start").c_str()) == 0,
                 "publish band stream start");
-        prevLastPos = n + 9;            // seam.previous: the flank before row 0
+        prevLastPos = n - 1;            // seam.previous: the sentinel suffix
         // ROUTE B (default): NO rlebwt wire. It existed for the finish's
         // two-pass m1, which needed the complete run stream; m1 now encodes
         // during its own sweep from a codebook derived from the corpus byte
@@ -3155,10 +3166,10 @@ struct BinBandSink {
         if (slotsFree > window) slotsFree = window;
         require(slotsFree >= 1 && writersUsed >= 1, "band writer pool");
         for (U i = 0; i < writersUsed; ++i) writers.emplace_back([this] { writerLoop(); });
-        // The padding rows, seeded exactly as SequentialV2 seeds them: the first
-        // pad row carries M[n-1], the next nine the padding symbol 2.
-        addRun(SparseRun{uint8_t(t.at(n - 1)), 1, n, n});
-        addRun(SparseRun{2, 9, n + 1, n + 9});
+        // NO TRANSPORT FRAME (the sentinel is the end of the text, not a row
+        // budget above it). Row 0 is the sentinel suffix, published by the walk
+        // like every other row; the row whose predecessor is the sentinel
+        // carries symbol 0, which IS its BWT character.
     }
     ~BinBandSink() {
         stop = true;
@@ -3433,7 +3444,7 @@ struct BinBandSink {
             require(expected[i] == classes[i].value, "bin-bwt class capture mismatch");
         flushRun();
         if (band.size()) closeBand();
-        require(publishedClasses == classes.size() && rows == n + 10 && counts[2] == 10,
+        require(publishedClasses == classes.size() && rows == n,
                 "bin-bwt terminal coverage");
         const U limit = std::max<U>(1000, index / 1000);
         U targetRows = 0; for (const auto& cl : classes) targetRows += cl.value.occ.size();
@@ -3452,13 +3463,13 @@ struct BinBandSink {
             require(::close(rleFd) == 0, "close band rlebwt");
             rleFd = -1;
             OutFile f(prefix + ".rlebwt.meta");
-            f.w64(n + 10); f.w64(index);
+            f.w64(n); f.w64(index);
             for (U value : counts) f.w64(value);
             for (U value : frequencies) f.w64(value);
         } else {
-            // The counts/frequencies tallies stay: counts[2] == 10 above and the
-            // run-coverage require are guards, not wire bookkeeping. Only their
-            // publication as the meta file is gone with the wire.
+            // The counts/frequencies tallies and the run-coverage require above
+            // are guards, not wire bookkeeping. Only their publication as the
+            // meta file is gone with the wire.
             std::fprintf(stderr, "CROSS_RLEBWT_ABSENT arm=route-b producer=bin-band-sink "
                                  "runs=%llu meta_absent=1\n", (unsigned long long)index);
         }
@@ -3771,8 +3782,9 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
         for (U i = lo; i < hi; ++i) {
             const U p = pos[i];
             require(p < n, "tape-emit: SA position out of range");
-            // SA-zero uses the padding symbol 2, as in the fill pass.
-            const uint8_t sym = haveSyms ? syms[i] : (p ? text.at(p - 1) : uint8_t(2));
+            // Position 0's predecessor is the appended end-of-text byte, whose
+            // product symbol is 0 - the ordinary successor rule, no marker.
+            const uint8_t sym = haveSyms ? syms[i] : (p ? text.at(p - 1) : text.at(n - 1));
             const bool hit = maybeTarget(p) && isTarget(p);
             if (hit) ++localHits;
             words[i] = bin_word(p + 1, sym, hit);
@@ -3944,7 +3956,11 @@ static int binbwt_main(const std::string& path, const std::string& mapPath,
     std::sort(permutation.begin(), permutation.end());
     for (unsigned c = 0; c < 256; ++c)
         require(permutation[c] == c, "bin-bwt remap bijection");
-    require(segment.remap[0x1e] == 0x1e, "bin-bwt separator remap");
+    // NOT the chunk front end's remap[0x1E] == 0x1E contract (see
+    // cross_lcp_merge.cpp): the product route needs an order-preserving relabel
+    // whose minimal symbol 0 is the appended end-of-text byte.
+    require(segment.remap[SENTINEL_BYTE] == SENTINEL_SYMBOL,
+            "bin-bwt remap must map 0xf5 to the minimal symbol 0 (the sentinel)");
     CorpusText text;
     text.open({segment}, true);
     require(text.n, "bin-bwt empty corpus");

@@ -38,63 +38,38 @@ static void die(const char* m, int code) {
 
 static const u8* T = nullptr;
 static const u8* RMP = nullptr;   // optional raw -> remapped (the PRODUCT order)
-static u64 N = 0;
+// N IS THE TEXT LENGTH AND INCLUDES THE APPENDED END-OF-TEXT BYTE: the text is
+// T' = corpus . 0xF5 with the single occurrence at index FILE_N. FILE_N is what
+// is on disc; the sentinel is a virtual index served by txt() below.
+static u64 N = 0, FILE_N = 0;
+static constexpr u8 SENTINEL_BYTE = 0xF5;
 static bool DOLLAR = true;
 
+// The product symbol at text index i: the corpus bytes through the remap, and the
+// appended sentinel past the end of the file.
+static inline u8 sym(u64 i) {
+    if (i >= FILE_N) return RMP ? RMP[SENTINEL_BYTE] : SENTINEL_BYTE;
+    return RMP ? RMP[T[i]] : T[i];
+}
+
 // Compare suffix(a) vs suffix(b) under the active convention. Gives -1/0/+1.
+// Per-byte on the PRODUCT SYMBOLS: with the sentinel the alphabet terminates
+// every comparison, so the finite order needs no length rule beyond the one the
+// virtual byte already implements. (The per-byte form is deliberate: a verifier
+// reads at most one page past nothing and never depends on mapping slack.)
 static inline int suf_cmp(u64 a, u64 b) {
+    if (a == b) return 0;
     const u64 cap = DOLLAR ? std::min(N - a, N - b) : N;
-    u64 i = 0;
-    // 8-byte chunks from the tape while both stay in range
-    while (i + 8 <= cap) {
-        u64 x, y;
-        if (DOLLAR) {
-            std::memcpy(&x, T + a + i, 8);
-            std::memcpy(&y, T + b + i, 8);
-        } else {
-            // cyclic: bytes may wrap; read per-byte for the tail
-            for (int j = 0; j < 8; ++j) {
-                u64 xa = a + i + j, yb = b + i + j;
-                u8 xb = T[xa < N ? xa : xa - N];
-                u8 yc = T[yb < N ? yb : yb - N];
-                if (xb != yc) return xb < yc ? -1 : 1;
-            }
-            i += 8;
-            continue;
-        }
-        if (x != y) {
-            if (RMP) {
-                u8 xs[8], ys[8];
-                std::memcpy(xs, &x, 8);
-                std::memcpy(ys, &y, 8);
-                for (int j = 0; j < 8; ++j)
-                    if (RMP[xs[j]] != RMP[ys[j]]) return RMP[xs[j]] < RMP[ys[j]] ? -1 : 1;
-            }
-            u8 xs[8], ys[8];
-            std::memcpy(xs, &x, 8);
-            std::memcpy(ys, &y, 8);
-            for (int j = 0; j < 8; ++j)
-                if (xs[j] != ys[j]) return xs[j] < ys[j] ? -1 : 1;
-        }
-        i += 8;
-    }
-    for (; i < cap; ++i) {
-        u8 xb, yc;
-        if (DOLLAR) {
-            xb = T[a + i];
-            yc = T[b + i];
-        } else {
-            u64 xa = a + i, yb = b + i;
-            xb = T[xa < N ? xa : xa - N];
-            yc = T[yb < N ? yb : yb - N];
-        }
+    for (u64 i = 0; i < cap; ++i) {
+        const u8 xb = DOLLAR ? sym(a + i) : sym((a + i < N) ? a + i : a + i - N);
+        const u8 yc = DOLLAR ? sym(b + i) : sym((b + i < N) ? b + i : b + i - N);
         if (xb != yc) return xb < yc ? -1 : 1;
     }
-    if (DOLLAR) {
-        if (a == b) return 0;
-        return (N - a) < (N - b) ? -1 : 1;   // shorter suffix is smaller
-    }
-    return a == b ? 0 : (a < b ? -1 : 1);
+    // DOLLAR: unreachable with a unique minimal sentinel (a proper prefix pair
+    // cannot exist); kept as the length rule it would be. cyclic: ascending
+    // source position breaks identical rotations.
+    if (DOLLAR) return (N - a) < (N - b) ? -1 : 1;
+    return a < b ? -1 : 1;
 }
 
 int main(int argc, char** argv) {
@@ -116,8 +91,9 @@ int main(int argc, char** argv) {
     int fd = ::open(corpus.c_str(), O_RDONLY);
     struct stat st{};
     if (fd < 0 || ::fstat(fd, &st)) die("corpus", 2);
-    N = (u64)st.st_size;
-    T = (const u8*)::mmap(nullptr, (size_t)N, PROT_READ, MAP_PRIVATE, fd, 0);
+    FILE_N = (u64)st.st_size;
+    N = FILE_N + 1;              // the appended end-of-text byte
+    T = (const u8*)::mmap(nullptr, (size_t)FILE_N, PROT_READ, MAP_PRIVATE, fd, 0);
     if (T == MAP_FAILED) die("mmap corpus", 2);
 
     std::vector<u8> rmpBuf;
@@ -128,6 +104,7 @@ int main(int argc, char** argv) {
         if (::read(rf, rmpBuf.data(), 256) != 256) die("remap short", 2);
         ::close(rf);
         RMP = rmpBuf.data();
+        if (RMP[SENTINEL_BYTE] != 0) die("remap must map 0xf5 to symbol 0", 2);
     }
     int sfd = ::open(sapath.c_str(), O_RDONLY);
     struct stat ss{};
