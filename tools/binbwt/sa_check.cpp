@@ -38,17 +38,14 @@ static void die(const char* m, int code) {
 
 static const u8* T = nullptr;
 static const u8* RMP = nullptr;   // optional raw -> remapped (the PRODUCT order)
-// N IS THE TEXT LENGTH AND INCLUDES THE APPENDED END-OF-TEXT BYTE: the text is
-// T' = corpus . 0xF5 with the single occurrence at index FILE_N. FILE_N is what
-// is on disc; the sentinel is a virtual index served by txt() below.
+// Domain 0..FILE_N includes the virtual END suffix at rank zero.
 static u64 N = 0, FILE_N = 0;
-static constexpr u8 SENTINEL_BYTE = 0xF5;
 static bool DOLLAR = true;
 
 // The product symbol at text index i: the corpus bytes through the remap, and the
 // appended sentinel past the end of the file.
 static inline u8 sym(u64 i) {
-    if (i >= FILE_N) return RMP ? RMP[SENTINEL_BYTE] : SENTINEL_BYTE;
+    if (i >= FILE_N) die("virtual END has no byte code", 2);
     return RMP ? RMP[T[i]] : T[i];
 }
 
@@ -104,7 +101,11 @@ int main(int argc, char** argv) {
         if (::read(rf, rmpBuf.data(), 256) != 256) die("remap short", 2);
         ::close(rf);
         RMP = rmpBuf.data();
-        if (RMP[SENTINEL_BYTE] != 0) die("remap must map 0xf5 to symbol 0", 2);
+        bool seen[256]{};
+        for (unsigned b = 0; b < 256; ++b) {
+            if (seen[RMP[b]]) die("remap must be a bijection", 2);
+            seen[RMP[b]] = true;
+        }
     }
     int sfd = ::open(sapath.c_str(), O_RDONLY);
     struct stat ss{};
@@ -117,7 +118,7 @@ int main(int argc, char** argv) {
     const u64 rows_field = R[3];
     const u64 count = (bytes - 48) / 8;
     std::printf("SA_CHECK corpus_n=%" PRIu64 " sa_entries=%" PRIu64 " rows=%" PRIu64
-                " dollar=%d\n", N, count, rows_field, DOLLAR ? 1 : 0);
+                " dollar=%d convention=virtual-END corpus_bytes=%" PRIu64 "\n", N, count, rows_field, DOLLAR ? 1 : 0, FILE_N);
     const u64* SA = R + 6;
 
     if (sample) {
@@ -137,6 +138,7 @@ int main(int argc, char** argv) {
         std::printf("SA_CHECK_PERMUTATION_FAIL count=%" PRIu64 " n=%" PRIu64 "\n", count, N);
         return 4;
     }
+    if (DOLLAR && SA[0] != FILE_N) die("rank zero must be virtual END position n", 4);
     // permutation: a dense seen-bitmap over n
     std::vector<u64> seen((N + 63) / 64, 0);
     for (u64 r = 0; r < N; ++r) {

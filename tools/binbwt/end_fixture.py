@@ -2,16 +2,16 @@
 """G6 fixture: a corpus that ends MID-RECORD, with a brute-force oracle.
 
 The tail group (the final <= 24 positions, whose band keys cannot be padded
-below every byte) is the one place the declared END symbol can collide with
-data. Band-boundary code is where every defect this week lived, so the gate for
+below every byte) requires full suffix comparisons. END is virtual and has
+no byte realization. Band-boundary code is where every defect this week lived, so the gate for
 it is a text whose last record is shorter than a key -- not a large blob that
 happens to end on a separator.
 
 Convention under test (SPEC_CHAIN_TO_PILE.md, Phase A):
     alphabet = END(0) < every byte value; END occurs exactly once, at position n.
     SA   = suffixes of T + END, ordered as finite strings over that alphabet.
-    BWT  = T'[(SA[r] + n') mod n']  -- row r carries the character BEFORE
-           SA[r]; for SA[r] = 0 that character is END.
+    BWT row r carries text[SA[r]-1] when SA[r]>0, otherwise virtual END.
+    The TSV uses 00 for the END row, distinguished by position zero.
 
 Usage:
     end_fixture.py --out DIR [--case short|tiny|records]

@@ -14,6 +14,7 @@ import tempfile
 import end_fixture
 
 STREAM_CHECKER = None
+SA_CHECKER = None
 
 
 def run(argv, **kwargs):
@@ -47,13 +48,12 @@ def check(binary, root, name, text, declared=False, fixture=False, remapped=Fals
     table = bytes(range(256))
     if remapped:
         present = sorted(set(text))
-        absent = sorted(set(range(256)) - set(text) - {245})
-        assert 245 not in present
+        absent = sorted(set(range(256)) - set(text))
         table_list = [0] * 256
         for i, b in enumerate(present, 1):
             table_list[b] = i
-        for i, b in enumerate(absent, 1 + len(present)):
-            table_list[b] = i
+        for b, code in zip(absent, list(range(1 + len(present), 256)) + [0]):
+            table_list[b] = code
         table = bytes(table_list)
         remap = case / 'remap'
         remap.write_bytes(table)
@@ -86,13 +86,32 @@ def check(binary, root, name, text, declared=False, fixture=False, remapped=Fals
             checker_args.append(str(case / 'remap'))
         checked = run(checker_args)
         assert checked.returncode == 0, checked.stdout + checked.stderr
+    checked = run([str(SA_CHECKER), '--corpus', str(corpus), '--sa', str(output)])
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+    assert 'SA_CHECK_PASS' in checked.stdout
+    if len(set(text)) == 256:
+        print(f'G7_PRODUCER present=256 rows={len(sa)} SA_CHECK_PASS stream_mismatches=0 inverse_bwt=exact')
+    # Mechanically compare with finite SA without END and its legacy wrapping
+    # predecessor at position zero. Insert the new rank-zero suffix; replace
+    # exactly the predecessor of position zero. No other row may change.
+    baseline = [(p, text[p-1] if p else text[-1]) for p in sa if p != len(text)]
+    virtual = [(p, -1 if p == 0 else text[p-1]) for p in sa]
+    assert virtual[0] == (len(text), text[-1])
+    assert [(p, c) for p, c in virtual[1:] if p != 0] == [(p, c) for p, c in baseline if p != 0]
+    def runs(seq):
+        return sum(i == 0 or c != seq[i-1] for i, c in enumerate(seq))
+    old = [c for _, c in baseline]
+    inserted = [text[-1]] + old
+    new = [c for _, c in virtual]
+    if fixture:
+        print(f'G2_PRODUCER case={name.split("-")[0]} other_rows_changed=0 runs_before={runs(old)} runs_after={runs(new)} insertion_delta={runs(inserted)-runs(old)} END_replacement_delta={runs(new)-runs(inserted)}')
     if fixture:
         print(f'G6 case={name.split("-")[0]} mode={expected_mode} rows={len(sa)} mismatches=0')
     return args, oracle
 
 
 def main():
-    global STREAM_CHECKER
+    global STREAM_CHECKER, SA_CHECKER
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=pathlib.Path)
     a = parser.parse_args()
@@ -108,6 +127,11 @@ def main():
         built = run(['g++', '-O2', '-std=c++17',
                      str(pathlib.Path(__file__).with_name('end_stream_check.cpp')),
                      '-o', str(STREAM_CHECKER)])
+        assert built.returncode == 0, built.stderr
+        SA_CHECKER = root / 'sa_check'
+        built = run(['g++', '-O2', '-std=c++17',
+                     str(pathlib.Path(__file__).with_name('sa_check.cpp')),
+                     '-o', str(SA_CHECKER)])
         assert built.returncode == 0, built.stderr
         for name in ('tiny', 'short', 'records'):
             for declared in (False,):

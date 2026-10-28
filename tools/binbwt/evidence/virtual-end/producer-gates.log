@@ -1,0 +1,9 @@
+G2_PRODUCER case=tiny other_rows_changed=0 runs_before=3 runs_after=4 insertion_delta=1 END_replacement_delta=0
+G6 case=tiny mode=virtual rows=4 mismatches=0
+G2_PRODUCER case=short other_rows_changed=0 runs_before=16 runs_after=17 insertion_delta=1 END_replacement_delta=0
+G6 case=short mode=virtual rows=18 mismatches=0
+G2_PRODUCER case=records other_rows_changed=0 runs_before=92 runs_after=93 insertion_delta=1 END_replacement_delta=0
+G6 case=records mode=virtual rows=428 mismatches=0
+G7_PRODUCER present=256 rows=260 SA_CHECK_PASS stream_mismatches=0 inverse_bwt=exact
+G7_PRODUCER present=256 rows=857 SA_CHECK_PASS stream_mismatches=0 inverse_bwt=exact
+END_SCATTER_PASS fixtures=3 binary=70 remap=1 negative_oracle=1 lcp=exact inverse_bwt=exact

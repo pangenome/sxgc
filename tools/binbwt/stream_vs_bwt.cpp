@@ -48,14 +48,14 @@ struct Compare{const B* text;const B* sa;const B* remap;U n,row=0,bad=0,runs=0;
  U sampleFirst=0,sampleCount=0,checked=0;
  // The product symbol at text index i (the corpus byte through the remap, or the
  // appended sentinel past the end of the file).
- B sym(U i)const{if(i>=fileN)return remap[0xF5];return remap[text[i]];}
+ B sym(U i)const{if(i>=fileN)return 0;return remap[text[i]];}
  void add(Run v){require(v.len && row<=n && v.len<=n-row,"invalid stream length");++runs;
  U end=row+v.len;
  U lo=sampleCount?std::max(row,sampleFirst):row;
  U hi=sampleCount?std::min(end,sampleFirst+sampleCount):end;
- for(U rank=lo;rank<hi;++rank){U p=le(sa+(sampleCount?rank-sampleFirst:rank)*8);require(p<n,"SA out of range");B want=sym(p?p-1:n-1);
+ for(U rank=lo;rank<hi;++rank){U p=le(sa+(sampleCount?rank-sampleFirst:rank)*8);require(p<n,"SA out of range");if(rank==0)require(p==fileN,"rank zero must be virtual END position n");B want=sym(p?p-1:n-1);
  if(v.c!=want){if(bad<8)fprintf(stderr,"MISMATCH row=%llu got=%u want=%u\n",(unsigned long long)rank,v.c,want);++bad;}++checked;}row=end;}
- bool finish(){require(row==n,"stream does not cover n rows");require(checked==(sampleCount?sampleCount:n),"comparison coverage");if(sampleCount)printf("STREAM_VS_BWT_SAMPLE first_rank=%llu sampled_rows=%llu total_rows=%llu mismatches=%llu\n",(unsigned long long)sampleFirst,(unsigned long long)checked,(unsigned long long)n,(unsigned long long)bad);printf("STREAM_VS_BWT rows=%llu runs=%llu mismatches=%llu convention=sentinel-text(0xf5),finite-SA,predecessor-of-0-is-sentinel\n",(unsigned long long)row,(unsigned long long)runs,(unsigned long long)bad);return !bad;}
+ bool finish(){require(row==n,"stream does not cover n rows");require(checked==(sampleCount?sampleCount:n),"comparison coverage");if(sampleCount)printf("STREAM_VS_BWT_SAMPLE first_rank=%llu sampled_rows=%llu total_rows=%llu mismatches=%llu\n",(unsigned long long)sampleFirst,(unsigned long long)checked,(unsigned long long)n,(unsigned long long)bad);printf("STREAM_VS_BWT rows=%llu runs=%llu mismatches=%llu convention=virtual-END,entries=corpus-bytes+1,rank0=position-n,predecessor-of-0-is-END\n",(unsigned long long)row,(unsigned long long)runs,(unsigned long long)bad);return !bad;}
 };
 // Independent scalar scan of SA-derived runs, using direct finite LCE. No
 // product Sweep or column code is included. --chi-column substitutes the
@@ -63,7 +63,7 @@ struct Compare{const B* text;const B* sa;const B* remap;U n,row=0,bad=0,runs=0;
 static U chi(const Map& t,const Map& sa,const B* remap,const std::string& colpath){
  // n includes the appended sentinel; the corpus bytes on disc are t.size-1.
  const U n=t.size+1;const U fileN=t.size;   // n includes the appended sentinel
- auto sym=[&](U i)->B{if(i>=fileN)return remap[0xF5];return remap[t.p[i]];};
+ auto sym=[&](U i)->B{if(i>=fileN)return 0;return remap[t.p[i]];};
  std::vector<U> escapes;std::unique_ptr<Map> col;
  if(!colpath.empty()){col=std::make_unique<Map>(colpath);require(col->size>=48 && le(col->p+8)==n,"column n");U e=le(col->p+24);require(col->size==48+n+16*e,"column size");escapes.resize(2*e);for(U i=0;i<2*e;++i)escapes[i]=le(col->p+48+n+8*i);}
  U ei=0;auto lcp=[&](U r){if(!r)return U(0);if(col){if(ei<escapes.size() && escapes[ei]==r){U v=escapes[ei+1];ei+=2;return v;}require(col->p[48+r]!=255,"missing column escape");return U(col->p[48+r]);}
@@ -83,19 +83,20 @@ static U chi(const Map& t,const Map& sa,const B* remap,const std::string& colpat
  printf("CHI_INDEPENDENT value=%llu lcp_source=%s\n",(unsigned long long)answer,col?"column":"brute-finite-SA");return answer;
 }
 // A TINY BRUTE-FORCE ORACLE IN THE SENTINEL CONVENTION. The text is
-// T' = corpus . 0xF5; SA is built by direct comparison over that virtual byte,
+// END is virtual; SA is built by finite comparison with exhaustion first,
 // and the BWT row of position p is the predecessor symbol. Adversarial cases are
 // included on purpose: every byte equal, periodic two-byte text, text whose bytes
 // include the remapped NUL/0x05 symbols, and lengths 1..7.
 static bool brute_selftest_case(const std::vector<B>& corpus, const B* remap){
  const U fileN=corpus.size(), n=fileN+1;
- auto cand=[&](U i)->B{return i>=fileN?remap[0xF5]:remap[corpus[i]];};
+ auto cand=[&](U i)->B{return i>=fileN?0:remap[corpus[i]];};
  std::vector<U> sa(n);for(U i=0;i<n;++i)sa[i]=i;
  std::sort(sa.begin(),sa.end(),[&](U a,U b){
-  for(U i=0;;++i){const U x=a+i,y=b+i;
-   if(x>=n||y>=n)return y>=n && x<n ? false : (x>=n && y<n ? true : a<b);
-   if(cand(x)!=cand(y))return cand(x)<cand(y);}
-  return a<b;});
+  while(a<fileN && b<fileN){
+   if(cand(a)!=cand(b))return cand(a)<cand(b);
+   ++a;++b;
+  }
+  return a==fileN && b!=fileN;});
  Compare check{corpus.data(),(const B*)sa.data(),remap,n};check.fileN=fileN;
  for(U r=0;r<n;++r)check.add({1,cand(sa[r]?sa[r]-1:n-1)});
  if(!check.finish())return false;
@@ -124,13 +125,13 @@ static int selftest(){
  caught=false;try{Compare over{t,sa,r,4};over.fileN=3;over.add({5,'a'});}catch(...){caught=true;}require(caught,"detect long stream");
  B bits[]={0x65};Bits b{bits,7};require(b.gamma()==1 && b.gamma()==2 && b.gamma()==3,"gamma decoding");
  caught=false;try{b.bit();}catch(...){caught=true;}require(caught,"bit bounds");
- // the canonical T'={a,b,a}.0xF5 stream: SA=[3,2,0,1], BWT rows a b $ a
+ // the canonical {a,b,a} plus virtual END stream: SA=[3,2,0,1], BWT rows a b $ a
  {
   Compare good{t,sa,r,4};good.fileN=3;
-  good.add({1,'a'});good.add({1,'b'});good.add({1,0xF5});good.add({1,'a'});
+  good.add({1,'a'});good.add({1,'b'});good.add({1,0});good.add({1,'a'});
   require(good.finish(),"correct stream in the sentinel convention");
   Compare sample{t,sa+8,r,4};sample.fileN=3;sample.sampleFirst=1;sample.sampleCount=2;
-  sample.add({1,'a'});sample.add({1,'b'});sample.add({1,0xF5});sample.add({1,'a'});
+  sample.add({1,'a'});sample.add({1,'b'});sample.add({1,0});sample.add({1,'a'});
   require(sample.finish() && sample.checked==2,"sample offset/coverage");
  }
  // Canonical 1-bit Huffman codes a=0,b=1; lengths 1,2 => bits 1,0,1,0.
@@ -160,8 +161,7 @@ int main(int argc,char** argv){try{
  for(U i=0;i<count;++i){const B* d=product.p+64+40*i;if(le(d,4)!=1)continue;require(!found && le(d+4,4)==101,"m1 codec");found=true;U off=le(d+8),size=le(d+16),r=le(d+24);require(off<=product.size && size<=product.size-off,"m1 bounds");M1 decoder(product.p+off,size,r);Compare check{t.p,sa.p+48,remap.p,textN};check.fileN=t.size;if(sampled){check.sampleFirst=sampleFirst;check.sampleCount=rows;}while(decoder.runs)check.add(decoder.next());decoder.finish();pass&=check.finish();}require(found,"missing m1");}
  // ---- G1: DECODE ROUND-TRIP. Reconstruct the text from the container's own BWT
  // rows and the SA (recon[SA[r] ? SA[r]-1 : n-1] = BWT[r]), invert the remap, and
- // compare against the corpus bytes on disc. The appended sentinel must land on
- // the last position and must not appear anywhere else.
+ // Compare only real positions against the corpus; END has no decoded byte.
  if(decodeCheck){
   require(!container.empty(),"--decode-check needs --container");
   Map product(container);U count=le(product.p+32,4);bool found=false;U reconBad=0,sentinelAt=0;
@@ -173,15 +173,15 @@ int main(int argc,char** argv){try{
    while(decoder.runs){Run run=decoder.next();
     for(U k=0;k<run.len;++k,++rank){const U p=le(sa.p+48+8*rank);require(p<textN,"decode SA bounds");
      const U at=p?p-1:textN-1;require(!seen[at],"decode position written twice");seen[at]=1;
-     recon[at]=inv[run.c];if(at==textN-1)++sentinelAt;}}
+     if(p==0){require(run.c==0,"END transport cell");++sentinelAt;}else recon[at]=inv[run.c];}}
    decoder.finish();rank=0;}
   require(found,"missing m1 for --decode-check");
   for(U i=0;i<t.size;++i)if(recon[i]!=t.p[i])++reconBad;
-  const U corpusF5=sentinelAt;const U tailOk=(recon[textN-1]==0xF5)?1u:0u;
-  printf("DECODE_CHECK corpus_bytes=%llu reconstructed_bytes=%llu mismatches=%llu sentinel_rows_at_last_position=%llu sentinel_byte_last=%llu\n",
+
+  printf("DECODE_CHECK corpus_bytes=%llu reconstructed_bytes=%llu mismatches=%llu virtual_END_rows=%llu\n",
          (unsigned long long)t.size,(unsigned long long)(textN-1),(unsigned long long)reconBad,
-         (unsigned long long)corpusF5,(unsigned long long)tailOk);
-  require(reconBad==0 && sentinelAt==1 && tailOk==1,"decode round-trip mismatch");
+         (unsigned long long)sentinelAt);
+  require(reconBad==0 && sentinelAt==1,"decode round-trip mismatch");
  }
  if(wantchi){U got=chi(t,sa,remap.p,col);if(expect!=UINT64_MAX)require(got==expect,"independent chi mismatch");}
  return pass?0:3;
