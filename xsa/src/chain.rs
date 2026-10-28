@@ -194,10 +194,12 @@ RSS / disc telemetry.
   set to fan in and no k-way walk; the producer sweeps the corpus itself. The
   merge path stays in the binary behind --legacy-merge for A/B, and is priced by
   the v1/fan-in plans, not by the bin plan.
-  --scratch-free-pct N  disc hygiene policy override (default 15 = the
-                     banked >=15%-free rule; 0 = a bounded run that FITS
-                     with headroom may proceed on a full drive; the
-                     override is journaled in the plan).
+  --scratch-free-pct N  OPT-IN disc hygiene rule: require N% of the scratch
+                     filesystem to stay free. DEFAULT OFF: the gate is the
+                     ABSOLUTE fit (projected peak + headroom vs free bytes),
+                     which is what actually predicts success. A percentage of
+                     the device refuses a 4 GB build on a 14 TB drive that is
+                     90% full, which tells an operator nothing.
   --stripe DIR[,DIR...]  candidate stripe directories for the disc model
                      (reader-level striping is lane item 3; the plan
                      accounts for the space now, the I/O split lands later).
@@ -414,7 +416,9 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     let mut phrase = PhraseOptions::default();
     let mut timeout_s = None;
     let mut stripes: Vec<String> = Vec::new();
-    let mut scratch_free_pct = 15u32;
+    // Needs-based by default: the absolute peak-vs-free check is the gate
+    // (see disc_verdict / tree_ok). A percentage-of-device rule is opt-in.
+    let mut scratch_free_pct = 0u32;
     let mut remap = None;
     let mut chunk_mb = None;
     let mut fanin = false;
@@ -1625,7 +1629,22 @@ fn run_v2_tail(
         .ok_or_else(|| format!("XSA_FINISH_DONE without a chi constant: {done}"))?;
     require_log_contains(scratch, "finish-v2", "ENDPOINT_STREAM_PASS")?;
     require_log_contains(scratch, "finish-v2", "SXI2_PASS")?;
-    require_log_contains(scratch, "finish-v2", "XSA_FINISH_RLEBWT_DELETED")?;
+    // The rlebwt wire is one of two arms, and the finish must declare exactly one:
+    //   route A (legacy): the wire is written and deleted at publish -> RLEBWT_DELETED
+    //   route B (one-pass m1): the wire is never formed           -> RLEBWT_NEVER_WRITTEN
+    // Requiring only route A made this front door reject every route-B run.
+    let rle_arms = ["XSA_FINISH_RLEBWT_DELETED", "XSA_FINISH_RLEBWT_NEVER_WRITTEN"]
+        .iter()
+        .filter(|marker| require_log_contains(scratch, "finish-v2", marker).is_ok())
+        .count();
+    if rle_arms != 1 {
+        return Err(format!(
+            "finish-v2 must declare exactly one rlebwt arm (found {rle_arms}): \
+             expected XSA_FINISH_RLEBWT_DELETED (route A) or \
+             XSA_FINISH_RLEBWT_NEVER_WRITTEN (route B)"
+        )
+        .into());
+    }
     if finish_log.lines().any(|l| l.contains("XSA_FINISH_PIECES_DIR_NONEMPTY")) {
         return Err("finish-v2 left pieces behind (XSA_FINISH_PIECES_DIR_NONEMPTY)".into());
     }
