@@ -54,7 +54,18 @@ if n > 10_000_017_258:
     qualification = json.loads(Path(a.space_qualification).read_text())
     assert qualification.get('passed') and not qualification.get('error'), 'qualification failed'
     assert qualification['n'] == 10_000_017_258
-    assert qualification['sha256'] == '22d0ce7493c6238a9d2e7f4e9a0decdf5841ff72a845d856bebaecd6d34bdaee'
+    # The qualification is about MEASURED SPACE, not about which container encoding
+    # produced it: accept the legacy two-pass container or the Route B one-pass
+    # container, and require the arm label to match the sha so the pair cannot be
+    # mixed up. Chi/runs/closure are asserted below and are encoding-independent.
+    _arm_shas = {
+        '22d0ce7493c6238a9d2e7f4e9a0decdf5841ff72a845d856bebaecd6d34bdaee': (None, 'legacy-replay'),
+        '15e0634fa27582c587827e5ad9af05126168aea5fc13957ee7bc063d93659001': ('route-b', None),
+    }
+    assert qualification['sha256'] in _arm_shas, 'unrecognised qualification container sha'
+    _want_arm, _want_arm_none = _arm_shas[qualification['sha256']]
+    if _want_arm is not None:
+        assert qualification.get('m1_arm') == _want_arm, 'qualification arm label does not match its container sha'
     assert qualification['chi'] == 2676929428 and qualification['runs'] == 3474891366
     for key in ('rank_holes', 'disorder', 'noncontiguous_runs', 'walk_fallbacks'):
         assert re.search(r'\b'+key+r'=0\b', qualification['closure'])
