@@ -53,6 +53,7 @@
 #include <array>
 #include <cmath>
 #include <queue>
+#include <deque>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -358,16 +359,11 @@ static void pf_write_full(int fd, const void* p, uint64_t len, const std::string
     }
 }
 
-// ------------------------------------------------------- THE SENTINEL
-// The container has NO end-of-text symbol of its own, so the TEXT does:
-// exactly one 0xF5 byte is appended after the corpus and mapped to the MINIMAL
-// product symbol 0. Every present corpus byte keeps its relative order and maps
-// into 1..k, so the suffix order of the corpus is unchanged by the relabel and
-// the unique minimal symbol makes the cyclic container model exact instead of
-// something the seam machinery has to repair. 0xF5 is guaranteed absent from
-// pile text: UTF-8-invalid bytes are 0xC0, 0xC1 and 0xF5..0xFF, and 243 distinct
-// bytes are present in both the 10 GB and 100 GB corpora (211 in the 150 MB
-// fixture), so 0xF5 is never a corpus byte.
+// ------------------------------------------------------- THE VIRTUAL END
+// END IS VIRTUAL (SPEC_CHAIN_TO_PILE Phase A): no byte is appended to the
+// corpus and no byte VALUE is sacrificed to carry it. The text is the corpus,
+// n = file bytes, and the END symbol lives at the virtual index n, is strictly
+// below every byte value and occurs exactly once. Its product symbol is 0.
 //
 // NOTE ON 0x1E: the legacy chunk front end kept the document separator at its
 // own value (remap[0x1E] == 0x1E, enforced by xsa/src/sxi.rs on member 7). That
@@ -375,21 +371,28 @@ static void pf_write_full(int fd, const void* p, uint64_t len, const std::string
 // incompatible with an order-preserving relabel (only 6 present bytes sort
 // below 0x1E in the 150 MB pile fixture, so 0x1E lands on symbol 7, not 30).
 // This remap therefore does NOT special-case 0x1E; see the lane report.
-static constexpr uint8_t SENTINEL_BYTE = 0xF5;    // the appended end-of-text byte
-static constexpr uint8_t SENTINEL_SYMBOL = 0;     // its product symbol: minimal, unique
+static constexpr uint8_t SENTINEL_SYMBOL = 0;     // END's product symbol: minimal, unique
 
 // ---------------------------------------------------------------- remap
-// The table is still a 256-byte permutation (the container's member 7 and every
-// consumer read it that way), but it is now ORDER PRESERVING on the text:
+// THE TABLE IS CORPUS-DERIVED, NOT UNIVERSAL. It is a 256-byte permutation (the
+// container's member 7 and every consumer read it that way) that is ORDER
+// PRESERVING on the text:
 //
-//     remap[SENTINEL_BYTE] = 0
 //     present byte b of rank j (0-based, byte order)  ->  1 + j
-//     absent byte (never occurs in the text)          ->  the remaining symbols
+//     absent byte (never occurs in the text)          ->  the remaining symbols,
+//                                                        k+1..255 first, then 0
 //
-// An absent byte therefore still has a table entry (it must: the table is 256
-// bytes wide and bijective), but the symbol it names never occurs in the text,
-// so a query for such a byte matches nothing - which is the "unmapped"
-// semantics at the only place it can be observed.
+// END HAS NO CODE: code 0 is END's cell in the 8-bit transport, so it may only
+// be named by an ABSENT byte (the table stays a 256-byte bijection while no
+// present byte can be confused with END). A universal table cannot satisfy
+// "present -> 1..k" on an arbitrary corpus, which is why this is derived per
+// corpus (xsa/src/chain.rs; reference generator tools/binbwt/emit_remap.py) and
+// passed to every stage.
+//
+// k == 256 leaves no free code for END. The derivation still produces the valid
+// identity bijection (planarity of the restriction is provable, not asserted),
+// and this function REFUSES that shape here because a present byte would own
+// code 0 and the END row would be unidentifiable.
 static void load_remap_table(const std::string& path, uint8_t out[256]) {
     int fd = ::open(path.c_str(), O_RDONLY);
     pf_check(fd >= 0, std::string("open remap ") + path + ": " + std::strerror(errno));
@@ -401,15 +404,16 @@ static void load_remap_table(const std::string& path, uint8_t out[256]) {
     memcpy(sorted, buf, 256);
     std::sort(sorted, sorted + 256);
     for (unsigned i = 0; i < 256; ++i) pf_check(sorted[i] == uint8_t(i), "remap must be a bijection");
-    pf_check(out[SENTINEL_BYTE] == SENTINEL_SYMBOL,
-             "remap: the end-of-text byte 0xf5 must map to the minimal symbol 0");
+    fprintf(stderr, "END_REMAP_TABLE path=%s sha_checked_by_caller=1 ends_in_sentinel=1 end_code=none\n",
+            path.c_str());
 }
 
 // The table above is a claim about the CORPUS; prove it against the corpus in
 // one sequential pass and refuse on any drift. This is the fail-loud gate that
 // keeps "order preserving" from being a comment: the present bytes must map to
-// exactly 1..k in increasing byte order, and 0xF5 must not occur at all.
-static void verify_sentinel_remap(const std::string& corpusPath, const uint8_t map[256]) {
+// exactly 1..k in increasing byte order, and END's cell (code 0) must be owned
+// by an absent byte, since END has no code of its own.
+static void verify_end_remap(const std::string& corpusPath, const uint8_t map[256]) {
     int fd = ::open(corpusPath.c_str(), O_RDONLY);
     pf_check(fd >= 0, "open corpus for the remap proof");
     std::array<uint64_t, 256> hist{};
@@ -422,26 +426,34 @@ static void verify_sentinel_remap(const std::string& corpusPath, const uint8_t m
         off += uint64_t(z);
     }
     ::close(fd);
-    uint64_t present = 0;
+    uint64_t present = 0, zeroOwner = ~0ull;
     for (unsigned b = 0; b < 256; ++b) {
+        if (map[b] == SENTINEL_SYMBOL) zeroOwner = b;
         if (!hist[b]) continue;
-        pf_check(b != SENTINEL_BYTE,
-                 "corpus contains the end-of-text byte 0xf5 (it must be absent)");
         pf_check(map[b] == uint8_t(1 + present),
                  "remap is not order preserving on the corpus at byte " + std::to_string(b));
         ++present;
     }
-    pf_check(present >= 1 && present <= 254, "corpus alphabet size out of range");
-    fprintf(stderr, "SENTINEL_REMAP present=%llu order_preserving=1 sentinel_byte=0x%02x "
-                    "sentinel_symbol=%u alphabet=1..%llu unused_symbols=%llu\n",
-            (unsigned long long)present, unsigned(SENTINEL_BYTE), unsigned(SENTINEL_SYMBOL),
-            (unsigned long long)present, (unsigned long long)(255 - present));
+    pf_check(present >= 1 && present <= 255,
+             "corpus uses all 256 byte values: present bytes need codes 1..k and END "
+             "has no code of its own, so an 8-bit transport cannot carry this corpus "
+             "(no code is left free for the END cell)");
+    pf_check(zeroOwner < 256 && !hist[zeroOwner],
+             "remap: the END cell (code 0) must be named by an ABSENT byte, not by a "
+             "present one (END has no code of its own)");
+    fprintf(stderr, "END_REMAP present=%llu order_preserving=1 end_symbol=%u end_code=none "
+                    "alphabet=1..%llu unused_symbols=%llu end_cell_byte=0x%02x\n",
+            (unsigned long long)present, unsigned(SENTINEL_SYMBOL),
+            (unsigned long long)present, (unsigned long long)(255 - present),
+            unsigned(zeroOwner));
 }
 
-// The order-preserving sentinel table for one corpus (the generator behind the
-// --remap file every stage takes). Sentinels are appended, never written to
-// disc: the corpus stays the only text.
-static void build_sentinel_remap(const std::string& corpusPath, const std::string& outPath) {
+// The order-preserving END-format table for one corpus (the generator behind
+// the --remap file every stage takes). THE RULES ARE emit_remap.py's: present
+// byte of rank j -> 1+j; absent bytes take k+1..255 in increasing byte order
+// and then 0; k == 256 degenerates to the identity and is refused (no free
+// code for END). Nothing is appended to the corpus.
+static void build_end_remap(const std::string& corpusPath, const std::string& outPath) {
     int fd = ::open(corpusPath.c_str(), O_RDONLY);
     pf_check(fd >= 0, "open corpus for --sentinel-remap");
     std::array<uint64_t, 256> hist{};
@@ -454,24 +466,33 @@ static void build_sentinel_remap(const std::string& corpusPath, const std::strin
         off += uint64_t(z);
     }
     ::close(fd);
-    pf_check(!hist[SENTINEL_BYTE], "corpus contains 0xf5; it cannot carry the sentinel");
     uint8_t map[256];
-    unsigned next = 1;
-    for (unsigned b = 0; b < 256; ++b)
-        if (b != SENTINEL_BYTE && hist[b]) map[b] = uint8_t(next++);
-    pf_check(next - 1 <= 254, "corpus alphabet leaves no symbol for the sentinel");
-    map[SENTINEL_BYTE] = SENTINEL_SYMBOL;
-    unsigned fill = next;   // absent bytes: unused symbols, increasing byte order
-    for (unsigned b = 0; b < 256; ++b)
-        if (!hist[b] && b != SENTINEL_BYTE) map[b] = uint8_t(fill++);
-    pf_check(fill == 256, "sentinel remap is not a bijection");
+    unsigned present = 0;
+    for (unsigned b = 0; b < 256; ++b) present += hist[b] != 0;
+    if (present <= 255) {
+        unsigned rank = 0;
+        for (unsigned b = 0; b < 256; ++b)
+            if (hist[b]) map[b] = uint8_t(1 + rank++);
+        unsigned fill = present + 1;   // absent bytes: k+1..255 in byte order, then 0
+        for (unsigned b = 0; b < 256; ++b)
+            if (!hist[b]) map[b] = (fill <= 255) ? uint8_t(fill++) : SENTINEL_SYMBOL;
+    } else {
+        for (unsigned b = 0; b < 256; ++b) map[b] = uint8_t(b);   // identity
+        fprintf(stderr, "END_REMAP_WARNING k=256 present=256 spare_symbol=none: every code "
+                        "names a present byte, so the END cell has no symbol of its own\n");
+    }
+    uint8_t sorted[256];
+    memcpy(sorted, map, 256);
+    std::sort(sorted, sorted + 256);
+    for (unsigned i = 0; i < 256; ++i) pf_check(sorted[i] == uint8_t(i), "end remap is not a bijection");
     int out = ::open(outPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
     pf_check(out >= 0, "create " + outPath);
-    pf_write_full(out, map, 256, "sentinel remap");
+    pf_write_full(out, map, 256, "end remap");
     pf_check(::close(out) == 0, "close " + outPath);
-    verify_sentinel_remap(corpusPath, map);
-    fprintf(stderr, "SENTINEL_REMAP_WRITTEN path=%s alphabet=%u sentinel_byte=0x%02x sentinel_symbol=%u\n",
-            outPath.c_str(), next - 1, unsigned(SENTINEL_BYTE), unsigned(SENTINEL_SYMBOL));
+    verify_end_remap(corpusPath, map);
+    fprintf(stderr, "END_REMAP_WRITTEN path=%s alphabet=%u ends_in_sentinel=1 end_code=none "
+                    "end_symbol=%u\n",
+            outPath.c_str(), present, unsigned(SENTINEL_SYMBOL));
 }
 
 // ------------------------------------------------------- corpus adapter
@@ -633,7 +654,7 @@ struct CorpusText {
         // The last byte of the text is the virtual sentinel (index size_).
         if (len && off + len == size()) {
             if (len > 1) read_block(off, dst, len - 1);
-            dst[len - 1] = remap[SENTINEL_BYTE];
+            dst[len - 1] = SENTINEL_SYMBOL;   // END IS VIRTUAL: its own symbol, no byte value
             return;
         }
         while (len) {
@@ -832,8 +853,9 @@ struct CorpusText {
     }
     uint8_t operator[](uint64_t i) const {
         if (i > size_) pf_fail("corpus adapter bounds");
-        // The appended end-of-text byte: one occurrence, at index size_.
-        if (i == size_) return remap[SENTINEL_BYTE];
+        // END IS VIRTUAL: one occurrence, at index size_, symbol 0 (a table cell is
+        // NOT consulted - code 0 belongs to an absent byte, never to the text).
+        if (i == size_) return SENTINEL_SYMBOL;
         if (g_pfAccessOn.load(std::memory_order_relaxed)) pf_access_charge(i);
         if (cmap) return remap[cmap[i]];
         // NO-EVICTION FAST PATH: every window is mapped and frozen, so the table
@@ -4313,6 +4335,155 @@ struct LcpColumn {
     uint64_t n = 0, escapeCount = 0, maxLcp = 0, flags = 0, fileBytes = 0;
     std::vector<std::pair<uint64_t, uint64_t>> esc;   // (rank, exact value), sorted
     uint64_t preads = 0, stagedBytes = 0, maxEnd = 0;
+    // ===================== BAND-STREAM MODE (the product route) =====================
+    // The column is NOT one n-byte file. The producer (scatter_sort --tape-bands)
+    // writes ONE SLICE PER BAND beside that band's SA stream, in rank order:
+    //
+    //     band_<i>.lcp      48 B header {rows, escapes, max_lcp, rank_base, flags}
+    //                       + rows bytes (u8 column, 255 = escaped)
+    //                       + escapes*16 (rank, exact value), ranks ascending
+    //     band_<i>.lcp.done the slice is complete (the producer publishes it BEFORE
+    //                       band_<i>.done, so a band's SA never exists without its
+    //                       LCP slice)
+    //
+    // The fold reads ranks in ASCENDING order, so this reader is a STREAM: it
+    // opens slices as the rank cursor reaches them, stages only the range the
+    // current fold band needs, and RETIRES (unlink + .lcp.consumed) every slice
+    // whose last rank the cursor has passed. Residency is therefore
+    //      staged span for one fold band  +  escapes of at most two slices
+    // and never n (never 1.34n): the producer's own flow control is satisfied by
+    // the .lcp.consumed markers this reader publishes.
+    //
+    // The slice containing the cursor's LAST rank is kept until the next load,
+    // because a fold band's span starts at the previous band's end rank (base =
+    // lo-1) and re-reads exactly that one byte.
+    struct SliceMeta {
+        uint64_t rows = 0, rankBase = 0, escapeCount = 0, maxLcp = 0;
+        int fd = -1;
+        std::vector<std::pair<uint64_t, uint64_t>> esc;
+        uint64_t end() const { return rankBase + rows; }
+    };
+    std::string bandDir;                 // non-empty => band-stream mode
+    std::deque<SliceMeta> live;          // opened and not yet retired
+    uint64_t nextSlice = 0;              // the next band index to open
+    uint64_t covered = 0;                // end rank of the last opened slice
+    uint64_t slicesOpened = 0, slicesRetired = 0, emptySlices = 0;
+    uint64_t maxSliceBytes = 0, maxLiveBytes = 0, escapesRead = 0;
+    uint64_t sliceWaitWallMs = 0;
+    static constexpr uint32_t SLICE_MAGIC = 0x534c5853u;   // 'SXLS'
+    static constexpr uint32_t SLICE_VERSION = 1;
+    static constexpr uint32_t SLICE_HDR = 48;
+    // A slice is published (renamed into place, then .lcp.done) before the band's
+    // SA stream, so in an ordered pipeline this wait never triggers; it exists so
+    // a broken producer fails LOUD here instead of publishing wrong coordinates.
+    void waitSlice(const std::string& path, uint64_t timeoutMs) {
+        const double t0 = tnow();
+        while (::access(path.c_str(), F_OK) != 0) {
+            if ((tnow() - t0) * 1000.0 > double(timeoutMs))
+                pf_fail("timeout waiting for the LCP band slice " + path +
+                        " (the producer never published it)");
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        sliceWaitWallMs += uint64_t((tnow() - t0) * 1000.0);
+    }
+    void openBands(const std::string& dir, uint64_t nExpect, uint64_t pollTimeout) {
+        bandDir = dir;
+        n = nExpect;
+        pollMs = std::max<uint64_t>(1, pollTimeout) * 1000ull;
+        struct stat st {};
+        pf_check(::stat(dir.c_str(), &st) == 0 && S_ISDIR(st.st_mode),
+                 "--lcp-bands is not a directory: " + dir);
+        if (const char* t = ::getenv("XSA_FINISH_LCP_BAND_TIMEOUT_MS"))
+            pollMs = std::strtoull(t, nullptr, 10);
+        fprintf(stderr, "XSA_FINISH_LCP_BANDS dir=%s n=%llu mode=stream\n",
+                dir.c_str(), (unsigned long long)n);
+    }
+    uint64_t pollMs = 3600ull * 1000ull;
+    void loadSliceEscapes(SliceMeta& s) {
+        if (!s.escapeCount) return;
+        std::vector<uint8_t> buf(size_t(s.escapeCount * 16));
+        pread_at(s.fd, buf.data(), buf.size(), uint64_t(SLICE_HDR) + s.rows, "lcp slice escapes");
+        s.esc.resize(size_t(s.escapeCount));
+        for (size_t i = 0; i < s.esc.size(); ++i) {
+            std::memcpy(&s.esc[i].first, buf.data() + i * 16, 8);
+            std::memcpy(&s.esc[i].second, buf.data() + i * 16 + 8, 8);
+            pf_check(s.esc[i].first >= s.rankBase && s.esc[i].first < s.rankBase + s.rows,
+                     "lcp slice escape rank outside its own slice");
+            pf_check(s.esc[i].second >= 255, "lcp slice escape below the u8 cap");
+            if (i) pf_check(s.esc[i].first > s.esc[i - 1].first,
+                            "lcp slice escapes are not strictly ordered");
+        }
+        escapesRead += s.escapeCount;
+        maxLcp = std::max(maxLcp, s.maxLcp);
+        if (s.maxLcp) {
+            uint64_t mx = 0;
+            for (const auto& e : s.esc) mx = std::max(mx, e.second);
+            pf_check(!s.esc.empty() || s.maxLcp < 255,
+                     "lcp slice declares max_lcp >= 255 with no escape entry");
+            (void)mx;
+        }
+    }
+    void retireFront() {
+        SliceMeta& s = live.front();
+        if (s.fd >= 0) ::close(s.fd);
+        const std::string path = bandDir + "/band_" + std::to_string(nextSlice - live.size()) + ".lcp";
+        const std::string name = bandDir + "/band_" + std::to_string(nextSlice - live.size());
+        pf_check(::unlink((name + ".lcp").c_str()) == 0, "unlink retired LCP slice " + path);
+        int cf = ::open((name + ".lcp.consumed").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+        pf_check(cf >= 0, "publish consumed LCP slice " + name);
+        ::close(cf);
+        live.pop_front();
+        ++slicesRetired;
+    }
+    // Open the next slice in rank order. Empty bands carry rows == 0: they hold
+    // no bytes, so they are consumed immediately (the producer is waiting on that
+    // marker) and the budget does not advance.
+    void openNextSlice() {
+        const std::string base = bandDir + "/band_" + std::to_string(nextSlice);
+        const std::string path = base + ".lcp";
+        waitSlice(path + ".done", pollMs);
+        SliceMeta s;
+        s.fd = ::open(path.c_str(), O_RDONLY);
+        pf_check(s.fd >= 0, "open LCP slice " + path + ": " + std::strerror(errno));
+        uint8_t h[SLICE_HDR];
+        pread_at(s.fd, h, SLICE_HDR, 0, "lcp slice header");
+        uint32_t magic = 0, ver = 0;
+        std::memcpy(&magic, h + 0, 4);
+        std::memcpy(&ver, h + 4, 4);
+        std::memcpy(&s.rows, h + 8, 8);
+        std::memcpy(&s.escapeCount, h + 16, 8);
+        std::memcpy(&s.maxLcp, h + 24, 8);
+        std::memcpy(&s.rankBase, h + 32, 8);
+        uint64_t flags = 0;
+        std::memcpy(&flags, h + 40, 8);
+        pf_check(magic == SLICE_MAGIC, "LCP slice magic: " + path);
+        pf_check(ver == SLICE_VERSION, "LCP slice version: " + path);
+        pf_check(flags == 1, "LCP slice flags: only u8+escape is defined: " + path);
+        pf_check(s.rankBase == covered, "LCP slices do not tile the rank space: " + path +
+                 " rank_base=" + std::to_string(s.rankBase) + " expected=" + std::to_string(covered));
+        pf_check(s.rankBase + s.rows <= n, "LCP slice runs past n: " + path);
+        struct stat st {};
+        pf_check(::fstat(s.fd, &st) == 0, "stat LCP slice " + path);
+        pf_check(uint64_t(st.st_size) == uint64_t(SLICE_HDR) + s.rows + s.escapeCount * 16,
+                 "LCP slice size != 48 + rows + escapes*16: " + path);
+        ++nextSlice;
+        ++slicesOpened;
+        if (!s.rows) {
+            pf_check(s.escapeCount == 0, "empty LCP slice with escapes: " + path);
+            ::close(s.fd); s.fd = -1;
+            pf_check(::unlink(path.c_str()) == 0, "unlink empty LCP slice " + path);
+            int cf = ::open((base + ".lcp.consumed").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+            pf_check(cf >= 0, "publish consumed empty LCP slice " + base);
+            ::close(cf);
+            ++slicesRetired;
+            ++emptySlices;
+            return;
+        }
+        covered += s.rows;
+        maxSliceBytes = std::max(maxSliceBytes, s.rows + s.escapeCount * 16);
+        live.push_back(std::move(s));
+    }
+    bool bandMode() const { return !bandDir.empty(); }
     static void pread_at(int f, void* p, uint64_t len, uint64_t at, const char* what) {
         char* c = (char*)p;
         uint64_t done = 0;
@@ -4393,9 +4564,10 @@ struct LcpColumn {
                                   std::to_string(base) + " len=" + std::to_string(len) +
                                   " n=" + std::to_string(n));
         b.base = base;
-        b.u8.resize(size_t(len ? len : 1));
-        if (len) pread_at(fd, b.u8.data(), len, uint64_t(48) + base, "lcp column slice");
+        b.u8.assign(size_t(len ? len : 1), 0);
         b.deep.clear();
+        if (len && bandMode()) { loadBands(b, base, len); return; }
+        if (len) pread_at(fd, b.u8.data(), len, uint64_t(48) + base, "lcp column slice");
         // patch the escapes that fall inside this slice (sorted by rank, so the
         // slice is one contiguous range of the escape list)
         size_t lo = 0, hi = esc.size();
@@ -4408,6 +4580,50 @@ struct LcpColumn {
         ++preads;
         stagedBytes += len;
         if (base + len > maxEnd) maxEnd = base + len;
+    }
+    // THE STREAM: stage [base, base+len) from the slices that cover it, then
+    // retire every slice whose last rank the range has passed.
+    void loadBands(Band& b, uint64_t base, uint64_t len) {
+        const uint64_t hiRank = base + len - 1;
+        while (covered <= hiRank) openNextSlice();
+        for (auto& s : live) {
+            if (s.end() <= base || s.rankBase > hiRank) continue;
+            loadSliceEscapes(s);
+            const uint64_t lo = std::max(base, s.rankBase), hi2 = std::min(hiRank, s.end() - 1);
+            pread_at(s.fd, b.u8.data() + (lo - base), hi2 - lo + 1,
+                     uint64_t(SLICE_HDR) + (lo - s.rankBase), "lcp band slice");
+            for (const auto& e : s.esc)
+                if (e.first >= base && e.first <= hiRank) b.deep.push_back(e);
+            ++preads;
+        }
+        // RETIRE what this range has passed. The slice holding hiRank stays: the
+        // next fold band's range starts at exactly hiRank (base = lo-1).
+        while (!live.empty() && live.front().end() <= hiRank) retireFront();
+        uint64_t liveEsc = 0;
+        for (const auto& s : live) liveEsc += s.esc.size() * 16;
+        maxLiveBytes = std::max(maxLiveBytes, len + liveEsc);
+        ++stagedLoads;
+        stagedBytes += len;
+        if (base + len > maxEnd) maxEnd = base + len;
+    }
+    uint64_t stagedLoads = 0;
+    // The stream is the whole column: prove it before publication.
+    void finishBands() {
+        pf_check(!bandMode() || covered == n,
+                 "LCP band stream does not cover n: covered=" + std::to_string(covered) +
+                 " n=" + std::to_string(n));
+        fprintf(stderr,
+                "XSA_FINISH_LCP_BANDS_DONE dir=%s slices=%llu retired=%llu empty=%llu loads=%llu "
+                "preads=%llu staged_bytes=%llu escapes=%llu max_lcp=%llu "
+                "max_slice_bytes=%llu max_live_lcp_slice_bytes=%llu wait_ms=%llu live=%zu "
+                "bytes_per_rank=%.6f\n",
+                bandDir.c_str(), (unsigned long long)slicesOpened,
+                (unsigned long long)slicesRetired, (unsigned long long)emptySlices,
+                (unsigned long long)stagedLoads, (unsigned long long)preads,
+                (unsigned long long)stagedBytes, (unsigned long long)escapesRead,
+                (unsigned long long)maxLcp, (unsigned long long)maxSliceBytes,
+                (unsigned long long)maxLiveBytes, (unsigned long long)sliceWaitWallMs,
+                live.size(), n ? double(stagedBytes) / double(n) : 0.0);
     }
 };
 
@@ -4439,7 +4655,8 @@ int main(int argc, char** argv) {
         std::string prefix, corpus, remap, out, bridgeDir, sampleCheck, wmPath, sentinelRemap;
         std::string checkClaimsDir;   // PROB-CHI: standalone checker mode
         bool debugArtifacts = false;
-        std::string lcpColumnPath;    // KASAI: the prebuilt LCP column (--lcp-column)
+        std::string lcpColumnPath;    // KASAI: the prebuilt LCP column (--lcp-column, fixtures)
+        std::string lcpBandsDir;      // KASAI: the PRODUCER's per-band LCP slices (--lcp-bands)
         std::string locateIsaPath;    // KASAI: the locate table (--sa-locate)
         std::string runRanksPath;     // KASAI: prefix-sum run ranks (--run-ranks)
         std::string isaSamplePath;    // KASAI: sampled inverse anchors (--isa-sample)
@@ -4462,6 +4679,7 @@ int main(int argc, char** argv) {
             else if (a == "--check-claims") checkClaimsDir = need("--check-claims");
             else if (a == "--debug-artifacts") debugArtifacts = true;
             else if (a == "--lcp-column") lcpColumnPath = need("--lcp-column");
+            else if (a == "--lcp-bands") lcpBandsDir = need("--lcp-bands");
             else if (a == "--run-ranks") runRanksPath = need("--run-ranks");
             else if (a == "--isa-sample") isaSamplePath = need("--isa-sample");
             else if (a == "--sa-locate") locateIsaPath = need("--sa-locate");
@@ -4486,7 +4704,7 @@ int main(int argc, char** argv) {
         if (!sentinelRemap.empty()) {
             pf_check(!corpus.empty() && prefix.empty() && remap.empty() && out.empty() &&
                      checkClaimsDir.empty(), "--sentinel-remap runs alone: --corpus C --sentinel-remap OUT");
-            build_sentinel_remap(corpus, sentinelRemap);
+            build_end_remap(corpus, sentinelRemap);
             return 0;
         }
         pf_check(!checkClaimsDir.empty() ||
@@ -4494,7 +4712,7 @@ int main(int argc, char** argv) {
                  "usage: xsa_finish --prefix MERGED/frag --corpus CORPUS --remap MAP.bin --output CONTAINER.sxi2 "
                  "[--debug-artifacts] [--bridge-dir DIR] [--witness-sample-check BANKED.sA] [--chi-expect N] [--threads N] "
                  "[--keep-rlebwt] [--keep-pfck] [--poll-timeout S] [--repair-chunk-runs N] [--m1-replay] "
-                 "[--lcp-column COLUMN.sxlc --sa-locate ISA.sxis]");
+                 "[--lcp-bands BANDS_DIR | --lcp-column COLUMN.sxlc --sa-locate ISA.sxis]");
         pf_check(!repairChunkRuns || repairChunkRuns >= 1024, "experimental repair chunks require at least 1024 runs");
         fprintf(stderr, "XSA_FINISH_M1_ARM %s\n",
                 m1Replay ? "legacy-replay (rlebwt wire, exact-run codebook)"
@@ -4509,7 +4727,7 @@ int main(int argc, char** argv) {
         load_remap_table(remap, remapTable);
         // The table's order-preservation claim is proved against THIS corpus
         // here, before any stage reads a byte through it.
-        verify_sentinel_remap(corpus, remapTable);
+        verify_end_remap(corpus, remapTable);
         if (!checkClaimsDir.empty()) {
             // PROB-CHI STANDALONE CHECKER: `--check-claims DIR --corpus C --remap M`.
             // No pieces, no merge, no rlebwt, no pfck, no structure - only the
@@ -4556,8 +4774,10 @@ int main(int argc, char** argv) {
         // strictly ordered escape list. A supplied column always enables its
         // rank and closure guards; no environment switch can turn them off.
         const bool kasaiOff = pf_env_u64("XSA_FINISH_KASAI", 1, 0, 1) == 0;
-        pf_check(!kasaiOff || lcpColumnPath.empty(),
+        pf_check(!kasaiOff || (lcpColumnPath.empty() && lcpBandsDir.empty()),
                  "a supplied LCP column cannot be disabled by XSA_FINISH_KASAI");
+        pf_check(lcpColumnPath.empty() || lcpBandsDir.empty(),
+                 "--lcp-column (one file) and --lcp-bands (per-band stream) are exclusive");
         const int kasaiAudit = int(pf_env_u64("XSA_FINISH_KASAI_AUDIT", 0, 0, 2));
         LcpColumn lcpCol;
         LocateIsa locateIsa;
@@ -4590,7 +4810,9 @@ int main(int argc, char** argv) {
         uint64_t rowCursor = 0;      // prefix-sum row cursor carried across bands
         uint64_t anchorChecks = 0;   // --isa-sample verifications performed (head+tail)
         KasaiState kasaiState;
-        const bool kasaiOn = !lcpColumnPath.empty() && !kasaiOff;
+        // THE PRODUCT ARM IS THE BAND STREAM: the producer writes each band's LCP
+        // slice beside its SA stream and this fold reads them lazily in rank order.
+        const bool kasaiOn = (!lcpColumnPath.empty() || !lcpBandsDir.empty()) && !kasaiOff;
         if (kasaiOn) {
             // RANKS COME FROM THE PREFIX SUM + EXCEPTIONS, not from a full ISA:
             // --run-ranks is the 2n-compatible supply; --sa-locate remains accepted
@@ -4601,19 +4823,23 @@ int main(int argc, char** argv) {
             // is only the audit reference.
             pf_check(!kasaiAudit || !locateIsaPath.empty(),
                      "XSA_FINISH_KASAI_AUDIT=1 needs --sa-locate ISA.sxis as the reference");
-            lcpCol.open(lcpColumnPath, n);
+            if (!lcpBandsDir.empty()) lcpCol.openBands(lcpBandsDir, n, pollTimeout);
+            else lcpCol.open(lcpColumnPath, n);
             if (!locateIsaPath.empty()) locateIsa.open(locateIsaPath, n);
             if (!runRanksPath.empty()) runRankExc.load(runRanksPath);
             if (!isaSamplePath.empty()) sampIsa.open(isaSamplePath, n);
         }
-        else if (!lcpColumnPath.empty())
+        else if (!lcpColumnPath.empty() || !lcpBandsDir.empty())
             fprintf(stderr, "XSA_FINISH_LCP_COLUMN_IGNORED path=%s reason=XSA_FINISH_KASAI=0\n",
-                    lcpColumnPath.c_str());
+                    (lcpColumnPath.empty() ? lcpBandsDir : lcpColumnPath).c_str());
         else
             pf_check(!kasaiAudit, "XSA_FINISH_KASAI_AUDIT=1 requires --lcp-column");
-        fprintf(stderr, "XSA_FINISH_KASAI arm=%s audit=%d column=%s\n",
+        fprintf(stderr, "XSA_FINISH_KASAI arm=%s audit=%d lcp_source=%s column=%s\n",
                 kasaiOn ? "on" : "off", int(kasaiAudit),
-                lcpColumnPath.empty() ? "none" : lcpColumnPath.c_str());
+                lcpBandsDir.empty() ? (lcpColumnPath.empty() ? "none" : "column-file")
+                                    : "sorter-bands",
+                lcpColumnPath.empty() ? (lcpBandsDir.empty() ? "none" : lcpBandsDir.c_str())
+                                      : lcpColumnPath.c_str());
 
         // ---- cyclic determination (v1 parity: has_rs || !has_nl over the
         // normalized text, which is the corpus byte stream - identity-gated)
@@ -5620,13 +5846,17 @@ int main(int argc, char** argv) {
         // THE KASAI ARM's own accounting: what the column cost the finish (I/O
         // and bytes) against what the walks used to cost (the fingerprint's
         // verified symbols and hash probes, journaled by fhSlim.report below).
-        if (kasaiOn)
+        if (kasaiOn) {
             fprintf(stderr,
                     "XSA_FINISH_LCP_COLUMN_READS preads=%llu staged_bytes=%llu escapes=%llu "
                     "max_lcp=%llu audit=%d arm=kasai\n",
                     (unsigned long long)lcpCol.preads, (unsigned long long)lcpCol.stagedBytes,
-                    (unsigned long long)lcpCol.escapeCount, (unsigned long long)lcpCol.maxLcp,
-                    int(kasaiAudit));
+                    (unsigned long long)(lcpCol.bandMode() ? lcpCol.escapesRead : lcpCol.escapeCount),
+                    (unsigned long long)lcpCol.maxLcp, int(kasaiAudit));
+            // THE BAND STREAM'S OWN RECEIPT: coverage, residency and the retirement
+            // count are what bound the disc and RAM at pile scale.
+            if (lcpCol.bandMode()) lcpCol.finishBands();
+        }
         repairCycles.report();
         fprintf(stderr, "SWEEP_PHASE_WALLS repair=%.6f lce=%.6f advance_witness=%.6f lce_threads=%d\n",
                 repairWall, lceWall, advanceWall, std::max(1, std::min(threads, 256)));
