@@ -90,6 +90,11 @@ def check(binary, root, name, text, declared=False, fixture=False, remapped=Fals
     assert checked.returncode == 0, checked.stdout + checked.stderr
     assert 'SA_CHECK_PASS' in checked.stdout
     if len(set(text)) == 256:
+        tape_args = args[:]
+        i = tape_args.index('--selftest')
+        del tape_args[i:i+2]
+        refused = run(tape_args + ['--tape-bands', str(case / 'tape'), '--pending-bands', '1'])
+        assert refused.returncode != 0 and 'virtual END consumer required' in refused.stderr
         print(f'G7_PRODUCER present=256 rows={len(sa)} SA_CHECK_PASS stream_mismatches=0 inverse_bwt=exact')
     # Mechanically compare with finite SA without END and its legacy wrapping
     # predecessor at position zero. Insert the new rank-zero suffix; replace

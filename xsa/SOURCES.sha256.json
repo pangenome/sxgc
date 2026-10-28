@@ -38,7 +38,7 @@
   "runtime/bit6/third_party/libsais/token-libsais.h": "5a855c8f159abf78dafcab96dc20240b81a308f0099f6fa1f7def47450b0f3df",
   "runtime/bit6/xsa_finish.cpp": "a2da3ef75a81dd77c5a5a1c80189cf7a7b6af51b6bdfa2daa4e6b82d5e3bf59b",
   "runtime/tools/binbwt/sa_check.cpp": "4cfa9c17dce3da7fd1aa3ded937906e2ed957f0b40d60245c41e24558552b34c",
-  "runtime/tools/binbwt/scatter_sort.cpp": "0e2bf2a510eea18cb55cbd35c258a4ee80bf3340e92629408e609a3760bd5682",
+  "runtime/tools/binbwt/scatter_sort.cpp": "d6f9efefe03d29a787e3122e43ec068a86f6fae1e6dbc580c7d8614b4e8a0f7b",
   "runtime/tools/binbwt/stream_vs_bwt.cpp": "ccb234eaca444846a2c47d36a7db55948047c280f5b816f0b8e00b7247935aa7",
   "runtime/tools/build_slim_dump.sh": "aeaba3f3e7996a95fb570069076f1c4d179ca015eec6d5267a8f090b469b8860",
   "runtime/tools/tool_manifest.py": "0712748587f804849613597124dd96a50d987a1c2274f475c54f0e40cb21f31f",

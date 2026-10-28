@@ -16,6 +16,9 @@ It does not validate chi.
 
 Remaining blockers:
 - bit6/xsa_finish.cpp still reserves code zero and requires 0xf5 absent.
+- The producer refuses tape output when data maps to cell zero, rather than
+  allowing the inherited finisher to confuse data with END. This refusal is
+  covered by negative tests on both all-256-byte corpora.
 - Container serialization still represents END as an ordinary byte code. The
   requested alphabet k and ends_in_sentinel flag are not implemented.
 - stable/emit_remap.py remains unchanged. Its 256-byte bijection cannot encode
@@ -26,3 +29,7 @@ Remaining blockers:
 
 No Rust source or xsa/build_tools.py was edited. Packaged native sources were
 refreshed with tools/package_xsa_sources.py.
+
+Validation: test_end_scatter.py PASS; stream_vs_bwt --selftest PASS;
+git diff --check PASS. Release build passed before the final tape safety guard;
+the final producer source was compiled and exercised by the Python gate.

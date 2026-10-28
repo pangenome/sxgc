@@ -441,6 +441,12 @@ int main(int argc, char** argv) {
             }
         }
     }
+    // The inherited finisher still interprets cell zero as END. Refuse an
+    // ambiguous tape until that consumer supports the structural END row.
+    if (!tapeBands.empty())
+        for (unsigned c = 0; c < 256; ++c)
+            if (used[c] && (REMAP ? REMAP[c] : c) == 0)
+                die("tape consumer reserves cell zero; virtual END consumer required");
     std::fprintf(stderr, "END_SYMBOL mode=virtual position=%" PRIu64 " multiplicity=1 rank=0\n", FILE_N);
     std::fprintf(stderr, "END_FORMAT k=%u ends_in_sentinel=1 end_code=none\nTAIL_GROUP rows=%" PRIu64 "\n", present, N - KEY_N);
     build_pairmap();
