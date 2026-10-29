@@ -217,6 +217,7 @@ impl Container {
             need(c.member(6).count == c.member(6).bytes, "names size");
         }
         let mut buf = vec![0; 1 << 20];
+        let t_crc = std::time::Instant::now();
         for m in &c.members {
             at(&mut f, m.offset);
             let mut left = m.bytes;
@@ -229,6 +230,7 @@ impl Container {
             }
             need(!v == m.checksum, "member CRC mismatch");
         }
+        super::trace_since("sxi.member-crc", t_crc);
         let remapped = c.members.iter().any(|m|m.id==7);
         need(remapped == (flags & 16 != 0), "remap flag/member mismatch");
         if remapped {
@@ -261,10 +263,18 @@ impl Container {
         }
         // Validate every independent member even on the header-only sweep path.
         if version>=2 {
+            let t_runs=std::time::Instant::now();
             let (frequencies,heads,lengths)=super::sxi2::runs(path,c.member(1),n,r);
+            super::trace_since("sxi.runs-decode",t_runs);
+            let t_phi=std::time::Instant::now();
             if lite {super::sxi2::LiteAnchors::load(path,&c);}
             else {super::sxi2::Phi::load(path,&c,&frequencies);}
-            if version>=3 {super::sxi2::LfMap::load(path,&c,&heads,&lengths,&frequencies);}
+            super::trace_since("sxi.phi-or-anchors",t_phi);
+            if version>=3 {
+                let t_lf=std::time::Instant::now();
+                super::sxi2::LfMap::load(path,&c,&heads,&lengths,&frequencies);
+                super::trace_since("sxi.lf-starts",t_lf);
+            }
         } else {
             at(&mut f, c.member(1).offset);
             let mut cb = [0; 2048];rd(&mut f,&mut cb);
@@ -296,8 +306,12 @@ impl Container {
             need(flags & 8 == 0 || records.len() as u64 == k, "record count mismatch");
             c.k = records.len() as u64;
         }
+        let t_anc=std::time::Instant::now();
         c.anchors(path);
+        super::trace_since("sxi.anchors",t_anc);
+        let t_chi=std::time::Instant::now();
         c.write_chi(path, &mut std::io::sink());
+        super::trace_since("sxi.chi-decode",t_chi);
         Some(c)
     }
     pub fn anchors(&self, path: &str) -> super::Anchors {

@@ -27,6 +27,26 @@ fn die(msg: &str) -> ! {
     exit(1);
 }
 
+/// Wall-clock stage journal, enabled with XSA_TRACE=1. Startup stages of the
+/// legacy readers are individually expensive, so every open path reports its
+/// own cost; a query that spends minutes before the first answer must say
+/// where the minutes went.
+pub fn trace_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("XSA_TRACE").is_ok_and(|v| v != "0"))
+}
+pub fn trace_ms(what: &str, ms: f64) {
+    if trace_on() {
+        eprintln!("TRACE stage={} ms={:.1}", what, ms);
+    }
+}
+/// Record the elapsed time of a stage measured from `t0`.
+pub fn trace_since(what: &str, t0: std::time::Instant) {
+    if trace_on() {
+        trace_ms(what, t0.elapsed().as_secs_f64() * 1e3);
+    }
+}
+
 /// Parsed .ri4 header (v4): n, k, R. Layout (little-endian):
 ///   u32 magic 0x52585349 ("ISXR"), u32 version, u64 n, u64 k, u64 R, ...
 #[derive(Debug, Clone, Copy)]
@@ -241,6 +261,7 @@ impl Ri4 {
         let k = u64::from_le_bytes(b[16..24].try_into().unwrap());
         let r = u64::from_le_bytes(b[24..32].try_into().unwrap());
         let _ = k;
+        let t_runs = std::time::Instant::now();
         let (c, run_char, run_len) = if let Some(ref sx)=container {
             if sx.version>=2 {
                 sxi2::runs(path,sx.member(1),n,r)
@@ -249,6 +270,7 @@ impl Ri4 {
                 read_raw_runs(&mut f,r)
             }
         } else { read_raw_runs(&mut f,r) };
+        trace_since("ri4.runs-decode", t_runs);
         // sdsl int_vector header: u64 size-in-bits, u8 width, then words
         let sa=if !container.as_ref().is_some_and(|sx|sx.version>=3) {
             if let Some(ref sx) = container { f.seek(SeekFrom::Start(sx.member(2).offset)).unwrap(); }
@@ -267,12 +289,15 @@ impl Ri4 {
         } else {None};
 
         let mut run_start_blk = Vec::with_capacity((r / BLK + 2) as usize);
+        let t_blk = std::time::Instant::now();
         let mut acc = 0u64;
         for x in 0..r {
             if x % BLK == 0 { run_start_blk.push(acc); }
             acc += run_len[x as usize] as u64;
         }
         run_start_blk.push(acc);
+        trace_since("ri4.run-start-blocks", t_blk);
+        let t_cruns = std::time::Instant::now();
         let mut cruns: Vec<Vec<u64>> = vec![Vec::new(); 256];
         let compact=container.as_ref().is_some_and(|sx|sx.version>=3);
         let mut csum: Vec<Vec<u64>> = vec![Vec::new(); 256];
@@ -284,6 +309,7 @@ impl Ri4 {
             acc256[c] += run_len[x] as u64;
         }
         let total = acc256.clone();
+        trace_since("ri4.cruns-by-symbol", t_cruns);
         let cyclic = total[0x1e] > 0 || total[0x0a] == 0;
         let gcd_one={
             let mut gcd=0u64;
@@ -296,6 +322,7 @@ impl Ri4 {
         if !compact {for c in 0..256 { csum[c].push(total[c]); }}
         let _ = k;   // stored
         let embedded_anchors = container.as_ref().map(|sx| sx.anchors(path));
+        let t_lf = std::time::Instant::now();
         let names = container.as_ref().and_then(|sx| sx.members.iter().find(|m| m.id == 6))
             .map(|m| (path.to_string(), m.offset, m.bytes));
         let phi=container.as_ref().filter(|sx|sx.version>=2&&sx.version<6)
@@ -306,6 +333,7 @@ impl Ri4 {
             .map(|sx|Bytes::mapped(path,sx.member(3).offset,(8*r) as usize));
         let lf_map=container.as_ref().filter(|sx|sx.version>=3)
             .map(|sx|sxi2::LfMap::load(path,sx,&run_char,&run_len,&c));
+        trace_since("ri4.lf-starts", t_lf);
         Ri4 { phi, lite, lf_map, head_sa, gcd_one, cyclic, embedded_anchors, names, n, k, r, c,
             run_char, run_len, sa, run_start_blk, cruns, csum:if compact {None}else{Some(csum)}, total }
     }

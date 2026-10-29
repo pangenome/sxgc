@@ -217,8 +217,11 @@ impl Engine {
     ) -> Result<(), String> {
         self.validate(seq)?;
         for (seq, strand) in self.orientations(seq) {
+            let t_search = std::time::Instant::now();
             let (l, r, toehold) = self.interval_toehold(&seq);
+            let ns_search = t_search.elapsed().as_nanos() as u64;
             let mut locate_cache=toehold.map(|sa|(l,sa));
+            let t_locate = std::time::Instant::now();
             if let Some(limit) = sample {
                 // Floyd's O(sample) selection: never allocate the full interval.
                 let k = (limit as u64).min(r.saturating_sub(l));
@@ -250,6 +253,15 @@ impl Engine {
                         line(out, &v)?;
                     }
                 }
+            }
+            if super::trace_on() {
+                eprintln!(
+                    "TRACE_PATTERN len={} occ={} search_us={:.3} locate_us={:.3}",
+                    seq.len(),
+                    r.saturating_sub(l),
+                    ns_search as f64 / 1e3,
+                    t_locate.elapsed().as_secs_f64() * 1e6
+                );
             }
         }
         Ok(())
