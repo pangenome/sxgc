@@ -49,6 +49,28 @@ use std::time::Instant;
 const BS: u64 = 64;
 /// Level-2 sample stride (runs per level-2 entry), a multiple of BS.
 const L2: u64 = 65536;
+/// Raw pointer wrapper for the parallel directory fill: each thread writes a
+/// disjoint, pre-computed range of `dir`, so the aliasing is provably absent
+/// (same pattern the container's own build uses for disjoint sinks).
+#[derive(Clone, Copy)]
+struct SendPtr(*mut u64);
+unsafe impl Send for SendPtr {}
+unsafe impl Sync for SendPtr {}
+impl SendPtr {
+    #[inline(always)]
+    unsafe fn add(self, i: usize) -> *mut u64 {
+        self.0.add(i)
+    }
+}
+
+/// Text-position stride of the direct run directory: entry `k` names the run
+/// holding text position `k*DP` and that run's start.
+const DP: u64 = 64;
+/// Runs per rank block: one 256-symbol cumulative row every RANK_BLK runs.
+/// This is what makes `rank(ch, i)` for `ch != heads[run]` O(1) instead of a
+/// walk back to the previous run of `ch`, which on a rare byte is unbounded
+/// (measured: 1.47 s for one 24-mer on the 10 GB pile before this).
+const RANK_BLK: u64 = 4096;
 /// Secondary Huffman table width.
 const HTABLE_BITS: u32 = 12;
 /// Gamma fast-window width (bits peeked per length code).
@@ -467,12 +489,21 @@ pub struct Index {
     pub total: [u64; 256],
     heads: Vec<u8>,
     rlen: Vec<u32>,
-    /// Count of `heads[i]` in runs strictly before run `i`.
-    seen: Seen,
+    /// Derived LF start of run `i`: `C[heads[i]] + (occurrences of heads[i] in
+    /// runs before i)`. This is exactly what the zero-byte m10 member declares
+    /// ("derived"), materialised once as a flat array so that an LF step is a
+    /// single load instead of a load plus a symbol lookup.
+    lfstart: Vec<u64>,
     /// run_start(j * BS) for j in 0..=R/BS
     blk: Vec<u64>,
     /// run_start(j * L2)
     blk2: Vec<u64>,
+    /// `RANK_BLK*256` cumulative per-symbol counts: `rbase[b*256 + ch]` is the
+    /// number of `ch` in every run before `b*RANK_BLK`.
+    rbase: Vec<u64>,
+    /// Direct run directory, two words per entry: `dir[2k]` = start position of
+    /// the run holding text position `k*DP`, `dir[2k+1]` = that run's index.
+    dir: Vec<u64>,
     anchors: Vec<u64>,
     stride: u64,
     pub build_ms: f64,
@@ -482,25 +513,6 @@ pub struct Index {
     pub stages: Vec<(&'static str, f64)>,
 }
 
-/// Per-run cumulative own-symbol counts. u32 covers every container whose
-/// most frequent symbol occurs < 2^32 times, which is all of them up to
-/// n ~ 4e9 per symbol; the u64 form exists so a 1e10-byte pile with a
-/// dominant symbol (e.g. one byte > 43% of the corpus) still answers exactly
-/// instead of refusing.
-enum Seen {
-    U32(Vec<u32>),
-    U64(Vec<u64>),
-}
-
-impl Seen {
-    #[inline(always)]
-    fn get(&self, i: usize) -> u64 {
-        match self {
-            Seen::U32(v) => v[i] as u64,
-            Seen::U64(v) => v[i],
-        }
-    }
-}
 
 /// Decode member 1 (codec 101) into run symbols and run lengths.
 fn decode_runs(
@@ -635,13 +647,10 @@ impl Index {
         let (heads, rlen, c, total) = decode_runs(&reader, threads)?;
         let t_decode = t0.elapsed();
         let decode_bytes = reader.member(1).bytes;
-        // seen[i] = occurrences of heads[i] in runs strictly before run i.
-        // u32 is enough unless one symbol occurs more than 2^32 times
-        // (n > 2^32 with a skewed alphabet); then the u64 form is used.
-        let wide = total.iter().any(|&t| t > u32::MAX as u64);
-        let chunks = threads.clamp(1, 4096);
-        let chunk = (r as usize + chunks - 1) / chunks;
-        let chunks = (r as usize + chunk - 1) / chunk;
+        // lfstart[i] = C[heads[i]] + (occurrences of heads[i] before run i).
+        // Rank blocks are exactly RANK_BLK runs wide: one 256-symbol row each.
+        let chunk = RANK_BLK as usize;
+        let chunks = ((r as usize + chunk - 1) / chunk).max(1);
         let counts: Vec<Box<[u64; 256]>> = (0..chunks)
             .into_par_iter()
             .map(|ci| {
@@ -654,52 +663,58 @@ impl Index {
                 cnt
             })
             .collect();
-        let mut base: Vec<Box<[u64; 256]>> = Vec::with_capacity(chunks);
-        let mut acc = [0u64; 256];
-        for cnt in &counts {
-            let mut b = Box::new([0u64; 256]);
-            for k in 0..256 {
-                b[k] = acc[k];
-                acc[k] += cnt[k];
+        let mut rbase: Vec<u64> = Vec::with_capacity(chunks * 256);
+        {
+            // Flattened: rbase[b*256 + ch] = count of ch before run b*RANK_BLK.
+            let mut acc = [0u64; 256];
+            for (ci, cnt) in counts.iter().enumerate() {
+                for k in 0..256 {
+                    rbase.push(acc[k]);
+                    acc[k] += cnt[k];
+                }
+                let _ = ci;
             }
-            base.push(b);
-        }
-        for ch in 0..256 {
-            if acc[ch] != total[ch] {
-                return Err(format!("run-length per-symbol total mismatch at {ch}"));
+            for ch in 0..256 {
+                if acc[ch] != total[ch] {
+                    return Err(format!("run-length per-symbol total mismatch at {ch}"));
+                }
             }
         }
-        let seen = if wide {
-            let mut v = vec![0u64; r as usize];
-            v.par_chunks_mut(chunk)
+        let mut lfstart = vec![0u64; r as usize];
+        lfstart
+            .par_chunks_mut(chunk)
+            .enumerate()
+            .for_each(|(ci, out)| {
+                let mut run: [u64; 256] = rbase[ci * 256..ci * 256 + 256]
+                    .try_into()
+                    .expect("rank block row");
+                let lo = ci * chunk;
+                for (j, s) in out.iter_mut().enumerate() {
+                    let ch = heads[lo + j] as usize;
+                    *s = c[ch] + run[ch];
+                    run[ch] += rlen[lo + j] as u64;
+                }
+            });
+        {
+            // Invariant: run i's LF start must lie inside its own symbol's
+            // C-block, because that is the coordinate space every rank and
+            // every LF step addresses.
+            let ok = lfstart
+                .par_chunks(chunk)
                 .enumerate()
-                .for_each(|(ci, out)| {
-                    let mut run = base[ci].clone();
+                .all(|(ci, out)| {
                     let lo = ci * chunk;
-                    for (j, s) in out.iter_mut().enumerate() {
+                    let _ = ci;
+                    out.iter().enumerate().all(|(j, &v)| {
                         let ch = heads[lo + j] as usize;
-                        *s = run[ch];
-                        run[ch] += rlen[lo + j] as u64;
-                    }
+                        v >= c[ch] && v < c[ch] + total[ch]
+                    })
                 });
-            Seen::U64(v)
-        } else {
-            let mut v = vec![0u32; r as usize];
-            v.par_chunks_mut(chunk)
-                .enumerate()
-                .for_each(|(ci, out)| {
-                    let mut run = base[ci].clone();
-                    let lo = ci * chunk;
-                    for (j, s) in out.iter_mut().enumerate() {
-                        let ch = heads[lo + j] as usize;
-                        *s = run[ch] as u32;
-                        run[ch] += rlen[lo + j] as u64;
-                    }
-                });
-            Seen::U32(v)
-        };
+            if !ok {
+                return Err("derived LF start outside its symbol's C block".into());
+            }
+        }
         drop(counts);
-        drop(base);
         let t_rank = t0.elapsed();
 
         // Run-start samples.
@@ -743,6 +758,52 @@ impl Index {
             });
         let t_blk = t0.elapsed();
 
+        // Direct run directory in TEXT space: one entry per DP text positions.
+        // 1MB-ish granularity in run space is not enough because a locate step
+        // needs run_of() on an arbitrary row inside a dependent chain, where a
+        // binary search over a cold 8 KB window costs ~10 misses. One entry
+        // lookup plus a short forward scan of the (contiguous) run lengths
+        // costs ~1.
+        let ndir = (reader.n / DP + 1) as usize;
+        let mut dir: Vec<u64> = vec![0; 2 * ndir];
+        {
+            let per = (ndir + threads.max(1) - 1) / threads.max(1);
+            let dptr = SendPtr(dir.as_mut_ptr());
+            (0..((ndir + per - 1) / per))
+                .into_par_iter()
+                .for_each(|ci| {
+                    let lo = ci * per;
+                    let hi = ((ci + 1) * per).min(ndir);
+                    if lo >= hi {
+                        return;
+                    }
+                    // locate the run holding lo*DP from the 64-run samples
+                    let p0 = lo as u64 * DP;
+                    let j = blk2.partition_point(|&s| s <= p0) - 1;
+                    let mut k = (j as u64 * (L2 / BS)) as usize;
+                    let kend = ((k + (L2 / BS) as usize).min(blk.len())).max(k + 1);
+                    k += blk[k..kend].partition_point(|&s| s <= p0) - 1;
+                    let mut run = k as u64 * BS;
+                    let mut s0 = blk[k];
+                    while run + 1 < r && s0 + rlen[run as usize] as u64 <= p0 {
+                        s0 += rlen[run as usize] as u64;
+                        run += 1;
+                    }
+                    for e in lo..hi {
+                        let p = e as u64 * DP;
+                        while run + 1 < r && s0 + rlen[run as usize] as u64 <= p {
+                            s0 += rlen[run as usize] as u64;
+                            run += 1;
+                        }
+                        unsafe {
+                            *dptr.add(2 * e) = s0;
+                            *dptr.add(2 * e + 1) = run;
+                        }
+                    }
+                });
+        }
+        let t_dir = t0.elapsed();
+
         // m11: tail SA of every 1024th run.
         let m = reader.member(11);
         let a = reader.slice(m.offset, m.bytes);
@@ -771,7 +832,8 @@ impl Index {
             ("m1-runs", (t_decode - t_open).as_secs_f64() * 1e3),
             ("rank-dir", (t_rank - t_decode).as_secs_f64() * 1e3),
             ("run-starts", (t_blk - t_rank).as_secs_f64() * 1e3),
-            ("m11-anchors", (t_end - t_blk).as_secs_f64() * 1e3),
+            ("run-dir", (t_dir - t_blk).as_secs_f64() * 1e3),
+            ("m11-anchors", (t_end - t_dir).as_secs_f64() * 1e3),
         ];
         let build_ms = t_end.as_secs_f64() * 1e3;
         if crate::trace_on() {
@@ -786,9 +848,11 @@ impl Index {
             total,
             heads,
             rlen,
-            seen,
+            lfstart,
             blk,
             blk2,
+            rbase,
+            dir,
             anchors,
             stride,
             build_ms,
@@ -810,17 +874,15 @@ impl Index {
     /// Text position of run `run`'s first row (LF start).
     #[inline(always)]
     fn start(&self, run: u64) -> u64 {
-        self.c[self.heads[run as usize] as usize] + self.seen.get(run as usize)
+        self.lfstart[run as usize]
     }
-    /// `(run, run_start)` of the run holding row `i`.
+    /// `(run, run_start)` of the run holding row `i` - one directory lookup
+    /// plus a forward scan bounded by DP text positions.
     #[inline]
     fn run_of(&self, i: u64) -> (u64, u64) {
-        let j = self.blk2.partition_point(|&s| s <= i) - 1;
-        let l1_lo = j as u64 * (L2 / BS);
-        let l1_hi = (l1_lo + L2 / BS).min(self.blk.len() as u64);
-        let k = l1_lo as usize + self.blk[l1_lo as usize..l1_hi as usize].partition_point(|&s| s <= i) - 1;
-        let mut run = k as u64 * BS;
-        let mut s = self.blk[k];
+        let e = 2 * (i / DP) as usize;
+        let mut s = self.dir[e];
+        let mut run = self.dir[e + 1];
         while run + 1 < self.reader.r && s + self.rlen[run as usize] as u64 <= i {
             s += self.rlen[run as usize] as u64;
             run += 1;
@@ -837,18 +899,22 @@ impl Index {
             return self.total[ch as usize];
         }
         let (run, s) = self.run_of(i);
-        if self.heads[run as usize] == ch {
-            return self.seen.get(run as usize) + (i - s);
+        let h = self.heads[run as usize];
+        if h == ch {
+            return (self.lfstart[run as usize] - self.c[ch as usize]) + (i - s);
         }
-        // Walk back to the nearest run of `ch`: ~|alphabet| steps, contiguous.
-        let mut p = run;
-        while p > 0 {
-            p -= 1;
-            if self.heads[p as usize] == ch {
-                return self.seen.get(p as usize) + self.rlen[p as usize] as u64;
+        // Other symbols: one cumulative row every RANK_BLK runs, then a scan of
+        // at most RANK_BLK run heads (4 KB, sequential) for the `ch` runs in
+        // between. A backward scan to the previous `ch` run instead would be
+        // unbounded on a rare byte.
+        let block = (run / RANK_BLK) as usize;
+        let mut cnt = self.rbase[block * 256 + ch as usize];
+        for p in (block as u64 * RANK_BLK) as usize..run as usize {
+            if self.heads[p] == ch {
+                cnt += self.rlen[p] as u64;
             }
         }
-        0
+        cnt
     }
     /// One backward-search step.
     #[inline]
@@ -882,6 +948,13 @@ impl Index {
     /// fixture patterns (mean 2650 steps, max 24437), see
     /// tools/binbwt/gate_qlite_150m.sh.
     pub fn locate(&self, row: u64) -> u64 {
+        self.locate_steps(row).0
+    }
+    /// `(position, LF steps walked)`. The step count is the whole cost of a
+    /// locate and the only number that explains it: the walk terminates on the
+    /// tail row of the next anchored run, so it is exactly the distance from
+    /// this row's SA down to the nearest m11 anchor.
+    pub fn locate_steps(&self, row: u64) -> (u64, u64) {
         let mut pos = row;
         let mut steps = 0u64;
         loop {
@@ -889,7 +962,7 @@ impl Index {
             let end = s + self.rlen[run as usize] as u64;
             if pos == end - 1 && run % self.stride == 0 {
                 let anchor = self.anchors[(run / self.stride) as usize];
-                return (anchor + steps) % self.reader.n;
+                return ((anchor + steps) % self.reader.n, steps);
             }
             pos = self.start(run) + (pos - s);
             steps += 1;
@@ -989,6 +1062,9 @@ struct Hit {
     search_us: f64,
     /// mean over occurrences
     locate_us: f64,
+    /// total LF steps over all occurrences, and the worst single walk
+    steps: u64,
+    max_steps: u64,
 }
 
 fn read_patterns(path: &str, fasta: bool) -> Vec<Vec<u8>> {
@@ -1117,8 +1193,13 @@ pub fn command(args: &[String]) {
             let search_us = ts.elapsed().as_secs_f64() * 1e6;
             let tl = Instant::now();
             let mut positions = Vec::with_capacity((r - l).min(1 << 20) as usize);
+            let mut steps = 0u64;
+            let mut max_steps = 0u64;
             for row in l..r {
-                positions.push(index.locate(row));
+                let (p, st) = index.locate_steps(row);
+                positions.push(p);
+                steps += st;
+                max_steps = max_steps.max(st);
             }
             let locate_us = if r > l {
                 tl.elapsed().as_secs_f64() * 1e6 / (r - l) as f64
@@ -1129,6 +1210,8 @@ pub fn command(args: &[String]) {
                 positions,
                 search_us,
                 locate_us,
+                steps,
+                max_steps,
             }
         })
         .collect();
@@ -1166,20 +1249,27 @@ pub fn command(args: &[String]) {
     // high-count pattern is dominated by materialising tens of millions of
     // positions and says nothing about the search kernel).
     let (mut worst_us, mut low_sum_us, mut nlow_us, mut high) = (0.0f64, 0.0f64, 0u64, 0u64);
+    let (mut low_steps, mut low_max_steps, mut low_occ) = (0u64, 0u64, 0u64);
     for (pid, hit) in results.iter().enumerate() {
         let us = hit.search_us + hit.locate_us * hit.positions.len() as f64;
         if crate::trace_on() {
             eprintln!(
-                "TRACE_PATTERN id={} len={} occ={} search_us={:.1} locate_us={:.1} total_us={:.1}",
+                "TRACE_PATTERN id={} len={} occ={} search_us={:.1} locate_us={:.1} \
+                 steps={} max_steps={} total_us={:.1}",
                 pid,
                 patterns[pid].len(),
                 hit.positions.len(),
                 hit.search_us,
                 hit.locate_us,
+                hit.steps,
+                hit.max_steps,
                 us
             );
         }
         if hit.positions.len() <= 3 {
+            low_steps += hit.steps;
+            low_max_steps = low_max_steps.max(hit.max_steps);
+            low_occ += hit.positions.len() as u64;
             low_sum_us += us;
             nlow_us += 1;
             if us > worst_us {
@@ -1191,7 +1281,9 @@ pub fn command(args: &[String]) {
     }
     eprintln!(
         "QUERY_DONE patterns={} occurrences={} absent={} query_ms={:.1} first_answer_ms={:.1} \
-         low_count_patterns={} low_count_mean_us={:.1} low_count_max_us={:.1} high_count_patterns={}",
+         low_count_patterns={} low_count_mean_us={:.1} low_count_max_us={:.1} \
+         low_count_lf_steps={} low_count_mean_steps={:.0} low_count_max_steps={} \
+         high_count_patterns={}",
         patterns.len(),
         nocc,
         nabs,
@@ -1200,6 +1292,9 @@ pub fn command(args: &[String]) {
         nlow_us,
         if nlow_us > 0 { low_sum_us / nlow_us as f64 } else { f64::NAN },
         worst_us,
+        low_steps,
+        if low_occ > 0 { low_steps as f64 / low_occ as f64 } else { f64::NAN },
+        low_max_steps,
         high
     );
 }
