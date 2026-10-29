@@ -4631,6 +4631,21 @@ struct LcpColumn {
                 (unsigned long long)maxLcp, (unsigned long long)maxSliceBytes,
                 (unsigned long long)maxLiveBytes, (unsigned long long)sliceWaitWallMs,
                 live.size(), n ? double(stagedBytes) / double(n) : 0.0);
+        // THE CONSUMER SIDE OF THE SAME CLAIM. The producer journals LCP_SLICE
+        // (bytes of slice published and not yet retired, i.e. the DISC footprint);
+        // this is what the fold ever held at once (one band's staged span plus the
+        // escapes of the live slices) - bytes and as a fraction of n. Neither is
+        // ever a resident column: the fold deletes each slice as its cursor passes.
+        fprintf(stderr,
+                "LCP_SLICE_CONSUMER max_live_bytes=%llu slices=%llu retired=%llu "
+                "peak_over_n=%.6f staged_bytes=%llu bytes_per_rank=%.6f escapes=%llu "
+                "max_slice_bytes=%llu empty_slices=%llu wait_ms=%llu\n",
+                (unsigned long long)maxLiveBytes, (unsigned long long)slicesOpened,
+                (unsigned long long)slicesRetired,
+                n ? double(maxLiveBytes) / double(n) : 0.0,
+                (unsigned long long)stagedBytes, n ? double(stagedBytes) / double(n) : 0.0,
+                (unsigned long long)escapesRead, (unsigned long long)maxSliceBytes,
+                (unsigned long long)emptySlices, (unsigned long long)sliceWaitWallMs);
     }
 };
 
