@@ -1419,6 +1419,17 @@ fn main() {
                  `xsa query <container> --patterns <file>`; this path is ~1e6x slower per\n  \
                  pattern and materialises ~70 GB of derived arrays on a 10 GB index."
             );
+            // A v6 lite container is refused here BY NAME as well: query-legacy
+            // must not become a back door to the phi-era open path for the one
+            // published format, whose readers would take minutes on a pile.
+            if args.windows(2).any(|a| matches!(a[0].as_str(), "--sxi" | "--ri4") && {
+                let mut h = [0;8]; File::open(&a[1]).and_then(|mut f| f.read_exact(&mut h)).is_ok()
+                    && &h[..4] == b"SXI2" && u32::from_le_bytes(h[4..8].try_into().unwrap()) >= 6
+            }) {
+                die("query-legacy: this is an SXI2 v6 lite container; use\n  \
+                     xsa query <container> --patterns <file>\n  \
+                     the phi-era reader cannot open it (no member 8) and is not a fallback")
+            }
             if args.windows(2).any(|a| matches!(a[0].as_str(), "--sxi" | "--ri4") && {
                 let mut magic = [0;4]; File::open(&a[1]).and_then(|mut f| f.read_exact(&mut magic)).is_ok()
                     && (&magic == b"SXI1" || &magic == b"SXI2")
