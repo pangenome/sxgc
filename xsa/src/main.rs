@@ -10,6 +10,7 @@
 
 mod sxi;
 mod sxi2;
+mod qlite;
 mod witness;
 mod build;
 mod chain;
@@ -1384,12 +1385,15 @@ fn usage() -> ! {
     eprintln!("  xsa serve --sxi FILE [-j N] [--bind 127.0.0.1:7331]");
     eprintln!("  xsa sxi-info <f.sxi> [--chi-out sorted.sA]");
     eprintln!("  --sxi is an alias for --ri4; format is detected by magic");
-    eprintln!("  xsa stats --ri4 <f.ri4> [--chi <f.sA>]   header + law check");
+    eprintln!("  xsa stats <container> [--chi <f.sA>]     header + law check");
     eprintln!("  xsa stats --rlbwt <prefix> [--chi ...]   from rlbwt pair");
     eprintln!("  xsa tags --chi <f.sA> --sidecar <names.tsv> [--revlines]");
     eprintln!("           [--output tags.tsv]                  first-appearance attribution");
-    eprintln!("  xsa query --ri4 <f.ri4> --patterns <p.fa> [--output occs.txt]");
-    eprintln!("  xsa query --ri4 <f.ri4> --patterns <p.fa> --ms [--ms-out lens.bin] [--plain]");
+    eprintln!("  xsa query <container> --patterns <file> [-j N] [--output tsv|jsonl] [--counts]");
+    eprintln!("           raw-byte patterns, newline delimited (--patterns-fasta for FASTA);");
+    eprintln!("           tsv: pattern_id<TAB>offset per occurrence; --counts: pattern_id<TAB>count");
+    eprintln!("           -j defaults to all cores; the container identifies its own format");
+    eprintln!("  xsa query-legacy ...   DEPRECATED phi-era reader (archived harnesses only)");
     eprintln!("           --ms: matching-statistics length vector per read (binary)");
     eprintln!();
     eprintln!("artifacts: .sxi (SXI1: rlbwt + runs + head/tail samples + anchors + delta-chi)");
@@ -1404,11 +1408,26 @@ fn main() {
         Some("sxi-info") => sxi::command(&args[1..]),
         Some("stats") => cmd_stats(&args[1..]),
         Some("tags") => cmd_tags(&args[1..]),
-        Some("query") if args.windows(2).any(|a| matches!(a[0].as_str(), "--sxi" | "--ri4") && {
-            let mut magic = [0;4]; File::open(&a[1]).and_then(|mut f| f.read_exact(&mut magic)).is_ok()
-                && (&magic == b"SXI1" || &magic == b"SXI2")
-        }) => product::command("query", &args[1..]),
-        Some("query") => cmd_query(&args[1..]),
+        Some("query") => qlite::command(&args[1..]),
+        // The phi-era reader is retired from the query path: nothing reaches it
+        // by default, and it exists only so archived fixture harnesses can still
+        // reproduce banked numbers. It costs minutes to open a 10 GB container
+        // and ~1 s per pattern (tools/binbwt/RESULTS_QUERY_PROFILE.md).
+        Some("query-legacy") => {
+            eprintln!(
+                "xsa: query-legacy is deprecated: SXI2 v6 lite containers are answered by\n  \
+                 `xsa query <container> --patterns <file>`; this path is ~1e6x slower per\n  \
+                 pattern and materialises ~70 GB of derived arrays on a 10 GB index."
+            );
+            if args.windows(2).any(|a| matches!(a[0].as_str(), "--sxi" | "--ri4") && {
+                let mut magic = [0;4]; File::open(&a[1]).and_then(|mut f| f.read_exact(&mut magic)).is_ok()
+                    && (&magic == b"SXI1" || &magic == b"SXI2")
+            }) {
+                product::command("query", &args[1..])
+            } else {
+                cmd_query(&args[1..])
+            }
+        }
         Some("mems") => product::command("mems", &args[1..]),
         Some("forks") => forks::command(&args[1..]),
         Some("witness-build") => product::witness_build(&args[1..]),

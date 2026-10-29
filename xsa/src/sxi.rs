@@ -22,6 +22,8 @@ fn u64at(b: &[u8], o: usize) -> u64 {
     u64::from_le_bytes(b[o..o + 8].try_into().unwrap())
 }
 pub(crate) fn header_run_count(b: &[u8]) -> u64 { u64at(b, 24) }
+/// IEEE CRC32 of a byte slice (the container's member/header checksum).
+pub fn crc32_of(b: &[u8]) -> u32 { !crc(!0, b) }
 fn crc(mut v: u32, b: &[u8]) -> u32 {
     static TABLE: std::sync::OnceLock<[u32; 256]> = std::sync::OnceLock::new();
     let table = TABLE.get_or_init(|| {
