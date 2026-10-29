@@ -4359,6 +4359,12 @@ struct LcpColumn {
     // lo-1) and re-reads exactly that one byte.
     struct SliceMeta {
         uint64_t rows = 0, rankBase = 0, escapeCount = 0, maxLcp = 0;
+        // ITS OWN BAND INDEX. Deriving the name as nextSlice-live.size() silently
+        // renames the front every time an EMPTY band goes by (an empty slice is
+        // unlinked and never enters `live`), which tried to unlink a slice that had
+        // already been removed - measured at 4 MB: FATAL unlink retired LCP slice
+        // band_59.lcp while the cursor was at 60.
+        uint64_t index = 0;
         int fd = -1;
         std::vector<std::pair<uint64_t, uint64_t>> esc;
         uint64_t end() const { return rankBase + rows; }
@@ -4426,8 +4432,8 @@ struct LcpColumn {
     void retireFront() {
         SliceMeta& s = live.front();
         if (s.fd >= 0) ::close(s.fd);
-        const std::string path = bandDir + "/band_" + std::to_string(nextSlice - live.size()) + ".lcp";
-        const std::string name = bandDir + "/band_" + std::to_string(nextSlice - live.size());
+        const std::string path = bandDir + "/band_" + std::to_string(s.index) + ".lcp";
+        const std::string name = bandDir + "/band_" + std::to_string(s.index);
         pf_check(::unlink((name + ".lcp").c_str()) == 0, "unlink retired LCP slice " + path);
         int cf = ::open((name + ".lcp.consumed").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
         pf_check(cf >= 0, "publish consumed LCP slice " + name);
@@ -4443,6 +4449,7 @@ struct LcpColumn {
         const std::string path = base + ".lcp";
         waitSlice(path + ".done", pollMs);
         SliceMeta s;
+        s.index = nextSlice;
         s.fd = ::open(path.c_str(), O_RDONLY);
         pf_check(s.fd >= 0, "open LCP slice " + path + ": " + std::strerror(errno));
         uint8_t h[SLICE_HDR];
