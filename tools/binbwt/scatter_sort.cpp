@@ -55,6 +55,7 @@
 #include <unistd.h>
 #include <mutex>
 #include <condition_variable>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <fstream>
@@ -640,6 +641,76 @@ int main(int argc, char** argv) {
         if (f < 0) die("create tape marker " + path);
         ::close(f);
     };
+    // ============ THE TWO CONSUMERS, AND WHY THEIR WINDOWS DIFFER ============
+    // band_<i>.sa has ONE consumer: cross_lcp_merge's tape emit absorbs the band,
+    // unlinks it and stamps band_<i>.consumed - a per-band handshake at the
+    // sorter's own pace, so K=pending_bands bounds it.
+    // band_<i>.lcp has a DIFFERENT consumer: xsa_finish's rank-cursor fold. That
+    // fold stages ONE PIECE BAND AT A TIME and a piece band is 65536 RUNS, so the
+    // fold cannot retire its FIRST slice until at least 65536 ROWS of slice exist
+    // on disc. Holding the slice to the same K-band window made that structurally
+    // impossible whenever K x rows_per_band < 65536 (4 MB: 8 x 7421 = 59,368):
+    // the sorter blocked on band_0.lcp.consumed while the finish waited for a
+    // piece of a band the sorter had not published. That is the measured deadlock
+    // (150 MB: PHASE order-tape rc=124 at 25:00; here: all three tools asleep).
+    // The slice's credit is therefore in ROWS, never below one fold band, and
+    // still bounded by the bands in flight (never n, never a 1.34n column).
+    const u64 lcpCreditRows = [&] {
+        const char* e = ::getenv("SS_LCP_CREDIT_ROWS");
+        const u64 want = (e && *e) ? std::strtoull(e, nullptr, 10) : u64(2) << 16;   // 2 fold bands
+        const u64 floorRows = std::max<u64>(u64(65536), rows_per_band);
+        if (want < floorRows)
+            die("SS_LCP_CREDIT_ROWS below one fold band (65536 runs) would deadlock the fold");
+        return want;
+    }();
+    const u64 lcpWindow = lcpOn
+        ? std::max<u64>(pendingBands, (lcpCreditRows + rows_per_band - 1) / rows_per_band + 1)
+        : pendingBands;
+    // A producer waiting on a consumer that EXITED must fail loud and name the
+    // wait, not sit inside the phase's own timeout: the 150 MB run burned 25:00
+    // (rc=124) on a marker whose writer had been dead since 0.12 s.
+    const double bandWaitDeadlineS = [] {
+        const char* e = ::getenv("SS_BAND_WAIT_TIMEOUT_S");
+        if (!e || !*e) return 3600.0;
+        const double v = std::strtod(e, nullptr);
+        if (!(v > 0)) die("SS_BAND_WAIT_TIMEOUT_S must be positive");
+        return v;
+    }();
+    std::mutex lcpLiveMu;
+    std::deque<u64> lcpLive;                       // bytes of each PUBLISHED slice not yet retired
+    u64 lcpPublished = 0, lcpLiveBytes = 0, lcpPeakLiveBytes = 0, lcpPeakLiveSlices = 0;
+    // Retirement is in RANK ORDER (the finish unlinks slice j only after it folded
+    // it), so once band_<back>.lcp.consumed exists every slice <= back is gone:
+    // that makes the live figure below exact at the sampling instant, and between
+    // two waits live only grows - so the max over waits IS the peak.
+    auto retireUpTo = [&](u64 back) {
+        std::lock_guard<std::mutex> lk(lcpLiveMu);
+        while (lcpPublished - u64(lcpLive.size()) <= back && !lcpLive.empty()) {
+            lcpLiveBytes -= lcpLive.front();
+            lcpLive.pop_front();
+        }
+        lcpPeakLiveBytes = std::max(lcpPeakLiveBytes, lcpLiveBytes);
+        lcpPeakLiveSlices = std::max<u64>(lcpPeakLiveSlices, u64(lcpLive.size()));
+    };
+    auto waitMarker = [&](const std::string& path, const char* what) {
+        const double t0 = now_sec();
+        while (::access(path.c_str(), F_OK) != 0) {
+            const double waitedS = now_sec() - t0;
+            if (waitedS > bandWaitDeadlineS)
+                die(std::string("no consumer progress on ") + what + " " + path + " for " +
+                    std::to_string(int(waitedS)) + " s (SS_BAND_WAIT_TIMEOUT_S=" +
+                    std::to_string(int(bandWaitDeadlineS)) +
+                    "); the consumer is dead or stalled - refusing to hang in the phase timeout");
+            ::usleep(10000);
+        }
+    };
+    auto waitBandConsumed = [&](u64 back) {
+        waitMarker(bandPath(back, ".consumed"), "band");
+    };
+    auto waitSliceConsumed = [&](u64 back) {
+        waitMarker(bandPath(back, ".lcp.consumed"), "LCP slice");
+        retireUpTo(back);
+    };
     if (!tapeBands.empty()) {
         struct stat ts{};
         if (::stat(tapeBands.c_str(), &ts) != 0 || !S_ISDIR(ts.st_mode)) die("tape directory must exist and be fresh");
@@ -651,6 +722,12 @@ int main(int argc, char** argv) {
         ::close(mf);
         marker(tapeBands + "/ready");
         std::fprintf(stderr, "SS_TAPE K=%llu packed_row_bytes=8 wave_cap=%llu\n", (unsigned long long)pendingBands, (unsigned long long)cap_bytes);
+        std::fprintf(stderr,
+                     "SS_TAPE_CREDIT sa_window=%llu lcp_window=%llu lcp_credit_rows=%llu "
+                     "rows_per_band=%llu wait_timeout_s=%.0f\n",
+                     (unsigned long long)pendingBands, (unsigned long long)lcpWindow,
+                     (unsigned long long)lcpCreditRows, (unsigned long long)rows_per_band,
+                     bandWaitDeadlineS);
     }
     int ofd = tapeBands.empty() ? ::open(out.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666) : -1;
     if (tapeBands.empty() && ofd < 0) die("create out");
@@ -912,14 +989,12 @@ int main(int argc, char** argv) {
                 const u64 tapeBand = globalBand + b;
                 if (!tapeBands.empty() && tapeBand >= pendingBands) {
                     const u64 back = tapeBand - pendingBands;
-                    while (::access(bandPath(back, ".consumed").c_str(), F_OK) != 0)
-                        ::usleep(10000);
-                    // K bounds the LCP stream too: the fold deletes each slice it
-                    // has folded and publishes .lcp.consumed, so at most K slices
-                    // are ever live on disc (and one per band in RAM).
-                    if (lcpOn)
-                        while (::access(bandPath(back, ".lcp.consumed").c_str(), F_OK) != 0)
-                            ::usleep(10000);
+                    waitBandConsumed(back);
+                    // The slice's credit is the ROWS window (>= one 65536-run fold
+                    // band), not the SA's K: the fold must be able to PUBLISH a whole
+                    // piece band before it retires anything (see SS_TAPE_CREDIT).
+                    if (lcpOn && tapeBand >= lcpWindow)
+                        waitSliceConsumed(tapeBand - lcpWindow);
                 }
                 rows.clear();
                 const double br0 = now_sec();
@@ -1099,6 +1174,16 @@ int main(int argc, char** argv) {
                             lcpEscapes += bandEsc.size();
                             if (sliceBytes > lcpMaxSliceBytes) lcpMaxSliceBytes = sliceBytes;
                         }
+                        {
+                            // live = published - retired; the peak is sampled at every
+                            // credit wait (see retireUpTo). Exact bytes, not a ratio.
+                            std::lock_guard<std::mutex> lk(lcpLiveMu);
+                            ++lcpPublished;
+                            lcpLive.push_back(sliceBytes);
+                            lcpLiveBytes += sliceBytes;
+                            lcpPeakLiveBytes = std::max(lcpPeakLiveBytes, lcpLiveBytes);
+                            lcpPeakLiveSlices = std::max<u64>(lcpPeakLiveSlices, u64(lcpLive.size()));
+                        }
                     }
                     bandFirstPos[b] = rows.empty() ? ~0ull : unpack_pos(rows.front().pos);
                     bandLastPos[b] = rows.empty() ? ~0ull : unpack_pos(rows.back().pos);
@@ -1196,9 +1281,8 @@ int main(int argc, char** argv) {
         if (!tapeBands.empty()) {
             // Drain before scattering another wave: no cross-wave disk overlap.
             for (u64 b = 0; b < nbands; ++b) {
-                while (::access(bandPath(globalBand + b, ".consumed").c_str(), F_OK) != 0) ::usleep(10000);
-                if (lcpOn)
-                    while (::access(bandPath(globalBand + b, ".lcp.consumed").c_str(), F_OK) != 0) ::usleep(10000);
+                waitBandConsumed(globalBand + b);
+                if (lcpOn) waitSliceConsumed(globalBand + b);
             }
             globalBand += nbands;
         }
@@ -1294,6 +1378,20 @@ int main(int argc, char** argv) {
             " slice_bytes_per_row=%.6f K=%" PRIu64 "\n",
             lcpSlices, lcpRows, lcpEscapes, lcpSliceBytes, lcpMaxSliceBytes,
             double(lcpSliceBytes) / double(N), pendingBands);
+        // THE LCP SLICE FOOTPRINT, in the units the residency law is stated in.
+        // live = published-but-not-yet-retired SLICE bytes on disc (the finish
+        // unlinks each slice as its rank cursor passes it), sampled at every
+        // credit wait - the peak is exact because between two waits live only
+        // grows. This is the number that may never approach n: one K-band window
+        // of slices, never a resident 1.34n column.
+        std::fprintf(stderr,
+            "LCP_SLICE max_live_bytes=%" PRIu64 " slices=%" PRIu64 " peak_over_n=%.6f"
+            " live_slices_peak=%" PRIu64 " slice_bytes_total=%" PRIu64 " rows=%" PRIu64
+            " escapes=%" PRIu64 " lcp_window=%" PRIu64 " credit_rows=%" PRIu64
+            " max_slice_bytes=%" PRIu64 "\n",
+            lcpPeakLiveBytes, lcpSlices, double(lcpPeakLiveBytes) / double(N),
+            lcpPeakLiveSlices, lcpSliceBytes, lcpRows, lcpEscapes, lcpWindow,
+            lcpCreditRows, lcpMaxSliceBytes);
     }
     std::fprintf(stderr,
         "SS_DONE n=%" PRIu64 " waves=%" PRIu64 " ties=%" PRIu64
