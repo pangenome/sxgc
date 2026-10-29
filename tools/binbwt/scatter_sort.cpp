@@ -655,21 +655,33 @@ int main(int argc, char** argv) {
     // of a band the sorter had not published. The credit below is MEASURED from
     // the run structure this producer already emits, never assumed.
     std::atomic<u64> lcpRowsSeen{0}, lcpRunsSeen{0};
-    auto lcpWindowNow = [&]() -> u64 {
+    auto lcpFoldRows = [&]() -> u64 {                 // ROWS spanned by one 65536-RUN piece band
         const u64 seenRows = lcpRowsSeen.load(std::memory_order_relaxed);
         const u64 seenRuns = std::max<u64>(1, lcpRunsSeen.load(std::memory_order_relaxed));
         const double rowsPerRun = seenRows ? double(seenRows) / double(seenRuns) : 1.0;
-        const u64 foldRows = u64(2.0 * 65536.0 * rowsPerRun) + 1;      // two piece bands
-        const u64 need = (foldRows + rows_per_band - 1) / rows_per_band + 1;
-        return std::max<u64>(pendingBands, need);
+        return u64(65536.0 * rowsPerRun) + 1;
     };
-    const u64 lcpCreditRows = [&] {
+    // THE CREDIT IS A ROW BUDGET OF UNCONSUMED SLICE, and it is set from the
+    // measured fold-band span. Measured at the 4 MB fixture (rows_per_run 2.48,
+    // band 7421 rows): 400,000 rows stalls the ring, 672,000 completes - i.e. the
+    // required slack is several fold bands, not one, because the emit absorbs rows
+    // into ITS current piece band before the finish can fold and retire. The rule
+    // below is 8 fold bands; if that is ever too small the wait GROWS it (doubling,
+    // journaled) instead of hanging - the ring always breaks, and LCP_SLICE still
+    // reports what was actually live.
+    std::atomic<u64> lcpCreditRows{0};
+    lcpCreditRows.store([&] {
         const char* e = ::getenv("SS_LCP_CREDIT_ROWS");
         const u64 want = (e && *e) ? std::strtoull(e, nullptr, 10) : 0;
         if (want && want < std::max<u64>(u64(65536), rows_per_band))
             die("SS_LCP_CREDIT_ROWS below one fold band (65536 runs) would deadlock the fold");
-        return want;
-    }();
+        return want ? want : 8 * lcpFoldRows();
+    }());
+    auto lcpWindowNow = [&]() -> u64 {
+        const u64 rows = lcpCreditRows.load(std::memory_order_relaxed);
+        const u64 need = (rows + rows_per_band - 1) / rows_per_band + 1;
+        return std::max<u64>(pendingBands, need);
+    };
     // A producer waiting on a consumer that EXITED must fail loud and name the
     // wait, not sit inside the phase's own timeout: the 150 MB run burned 25:00
     // (rc=124) on a marker whose writer had been dead since 0.12 s.
@@ -723,9 +735,44 @@ int main(int argc, char** argv) {
     auto waitBandConsumed = [&](u64 back) {
         waitMarker(bandPath(back, ".consumed"), "band.consumed", "emit-tape(cross_lcp_merge)");
     };
-    auto waitSliceConsumed = [&](u64 back) {
-        waitMarker(bandPath(back, ".lcp.consumed"), "slice.lcp.consumed", "finish(xsa_finish fold)");
-        retireUpTo(back);
+    // The slice credit, with GROWTH instead of a hang: if the fold has not retired
+    // the slice this band needs for SS_LCP_GROW_S (default 30 s), the credit
+    // doubles and the wait re-targets a later slice. Every growth is journaled.
+    const double lcpGrowS = [] {
+        const char* e = ::getenv("SS_LCP_GROW_S");
+        if (!e || !*e) return 30.0;
+        const double v = std::strtod(e, nullptr);
+        if (!(v > 0)) die("SS_LCP_GROW_S must be positive");
+        return v;
+    }();
+    auto waitSliceCredit = [&](u64 tapeBand) {
+        const double t0 = now_sec();
+        for (;;) {
+            const u64 lw = lcpWindowNow();
+            if (tapeBand < lw) return;                       // inside the credit: go
+            const u64 back = tapeBand - lw;
+            if (::access(bandPath(back, ".lcp.consumed").c_str(), F_OK) == 0) {
+                retireUpTo(back);
+                return;
+            }
+            const double waitedS = now_sec() - t0;
+            if (waitedS > lcpGrowS) {
+                const u64 was = lcpCreditRows.load();
+                if (was < N) {
+                    lcpCreditRows.store(std::min<u64>(N, was * 2 + 1));
+                    std::fprintf(stderr,
+                        "SS_LCP_CREDIT_GROW rows=%llu -> %llu window=%llu waited_s=%.1f "
+                        "blocked_on=band_%llu.lcp.consumed writer=finish(xsa_finish fold)\n",
+                        (unsigned long long)was, (unsigned long long)lcpCreditRows.load(),
+                        (unsigned long long)lcpWindowNow(), waitedS, (unsigned long long)back);
+                }
+            }
+            if (waitedS > bandWaitDeadlineS)
+                die("no consumer progress on slice.lcp.consumed band_" + std::to_string(back) +
+                    " for " + std::to_string(int(waitedS)) + " s (finish); credit_rows=" +
+                    std::to_string(lcpCreditRows.load()) + " of n=" + std::to_string(N));
+            ::usleep(10000);
+        }
     };
     if (!tapeBands.empty()) {
         struct stat ts{};
@@ -739,11 +786,11 @@ int main(int argc, char** argv) {
         marker(tapeBands + "/ready");
         std::fprintf(stderr, "SS_TAPE K=%llu packed_row_bytes=8 wave_cap=%llu\n", (unsigned long long)pendingBands, (unsigned long long)cap_bytes);
         std::fprintf(stderr,
-                     "SS_TAPE_CREDIT sa_window=%llu lcp_window0=%llu credit_rows_override=%llu "
-                     "rows_per_band=%llu wait_timeout_s=%.0f\n",
+                     "SS_TAPE_CREDIT sa_window=%llu lcp_window0=%llu lcp_credit_rows0=%llu "
+                     "rows_per_band=%llu wait_timeout_s=%.0f grow_s=%.0f\n",
                      (unsigned long long)pendingBands, (unsigned long long)lcpWindowNow(),
-                     (unsigned long long)lcpCreditRows, (unsigned long long)rows_per_band,
-                     bandWaitDeadlineS);
+                     (unsigned long long)lcpCreditRows.load(), (unsigned long long)rows_per_band,
+                     bandWaitDeadlineS, lcpGrowS);
     }
     int ofd = tapeBands.empty() ? ::open(out.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666) : -1;
     if (tapeBands.empty() && ofd < 0) die("create out");
@@ -1009,13 +1056,7 @@ int main(int argc, char** argv) {
                     // The slice's credit is the ROWS window (>= one 65536-run fold
                     // band), not the SA's K: the fold must be able to PUBLISH a whole
                     // piece band before it retires anything (see SS_TAPE_CREDIT).
-                    if (lcpOn) {
-                        const u64 lw = std::max<u64>(pendingBands,
-                            lcpCreditRows
-                                ? (lcpCreditRows + rows_per_band - 1) / rows_per_band + 1
-                                : lcpWindowNow());
-                        if (tapeBand >= lw) waitSliceConsumed(tapeBand - lw);
-                    }
+                    if (lcpOn) waitSliceCredit(tapeBand);
                 }
                 rows.clear();
                 const double br0 = now_sec();
