@@ -4845,11 +4845,20 @@ int main(int argc, char** argv) {
         // normalized text, which is the corpus byte stream - identity-gated)
         bool hasRS = false, hasNL = false;
         {
+            // THE SCAN IS OVER THE CORPUS BYTES, NOT THE ROW COUNT. n counts the
+            // virtual END row (size() = fileSize()+1), and END's symbol is the
+            // sentinel 0 - never 0x1e and never 0x0a - so it cannot change this
+            // answer. Reading n bytes from the FILE was an EOF read: pread
+            // returned 0 and this check aborted the finish 0.12 s in (both
+            // routes, 4 MB fixture), which the tape route then saw as a producer
+            // waiting forever on its LCP flow-control markers.
+            pf_check(text.fileSize() + 1 == n, "cyclic scan: row count is not file bytes + the virtual END");
             constexpr uint64_t RB = 1 << 22;
+            const uint64_t scanBytes = text.fileSize();
             std::vector<uint8_t> b(RB);
             uint64_t off = 0;
-            while (off < n && !hasRS) {
-                uint64_t want = std::min<uint64_t>(RB, n - off), done = 0;
+            while (off < scanBytes && !hasRS) {
+                uint64_t want = std::min<uint64_t>(RB, scanBytes - off), done = 0;
                 while (done < want) {
                     ssize_t z = ::pread(text.fd, b.data() + done, want - done, off + done);
                     pf_check(z > 0, "cyclic scan read");
