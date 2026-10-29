@@ -468,15 +468,38 @@ pub struct Index {
     heads: Vec<u8>,
     rlen: Vec<u32>,
     /// Count of `heads[i]` in runs strictly before run `i`.
-    seen: Vec<u32>,
+    seen: Seen,
     /// run_start(j * BS) for j in 0..=R/BS
     blk: Vec<u64>,
     /// run_start(j * L2)
     blk2: Vec<u64>,
     anchors: Vec<u64>,
     stride: u64,
-    cyclic: bool,
     pub build_ms: f64,
+    /// Bytes of m1 actually decoded into the kernel (the run stream).
+    pub decoded_bytes: u64,
+    /// Per-stage build walls, in order.
+    pub stages: Vec<(&'static str, f64)>,
+}
+
+/// Per-run cumulative own-symbol counts. u32 covers every container whose
+/// most frequent symbol occurs < 2^32 times, which is all of them up to
+/// n ~ 4e9 per symbol; the u64 form exists so a 1e10-byte pile with a
+/// dominant symbol (e.g. one byte > 43% of the corpus) still answers exactly
+/// instead of refusing.
+enum Seen {
+    U32(Vec<u32>),
+    U64(Vec<u64>),
+}
+
+impl Seen {
+    #[inline(always)]
+    fn get(&self, i: usize) -> u64 {
+        match self {
+            Seen::U32(v) => v[i] as u64,
+            Seen::U64(v) => v[i],
+        }
+    }
 }
 
 /// Decode member 1 (codec 101) into run symbols and run lengths.
@@ -593,22 +616,29 @@ fn decode_runs(
 }
 
 impl Index {
-    pub fn open(path: &str, threads: usize) -> Result<Index, String> {
+    /// Build the query kernel from an already-mmap'd reader.
+    ///
+    /// This is the ONLY stage that touches run data, and its cost is
+    /// irreducible for this container format: m1 is one sequential Huffman
+    /// bit stream (run symbols) plus one sequential gamma bit stream (run
+    /// lengths) with no per-run alignment and no restart directory, so run `i`
+    /// cannot be reached without decoding runs 0..i. A query needs rank at
+    /// arbitrary rows and an LF walk over arbitrary rows, so a cold query
+    /// needs the whole run stream. What this kernel removes from the legacy
+    /// path is everything else: no full-file CRC, no chi decode, no phi, no
+    /// second decode, no 256-way `cruns` transpose, no per-run LF-start array
+    /// of the same width as `n`.
+    pub fn open(reader: Reader, threads: usize) -> Result<Index, String> {
         let t0 = Instant::now();
-        let reader = Reader::open(path)?;
         let t_open = t0.elapsed();
         let r = reader.r;
         let (heads, rlen, c, total) = decode_runs(&reader, threads)?;
         let t_decode = t0.elapsed();
-        for ch in 0..256 {
-            if total[ch] > u32::MAX as u64 {
-                return Err(format!(
-                    "symbol {ch} occurs {} times: the u32 rank directory cannot address it",
-                    total[ch]
-                ));
-            }
-        }
-        // seen[i] = occurrences of heads[i] in runs before run i.
+        let decode_bytes = reader.member(1).bytes;
+        // seen[i] = occurrences of heads[i] in runs strictly before run i.
+        // u32 is enough unless one symbol occurs more than 2^32 times
+        // (n > 2^32 with a skewed alphabet); then the u64 form is used.
+        let wide = total.iter().any(|&t| t > u32::MAX as u64);
         let chunks = threads.clamp(1, 4096);
         let chunk = (r as usize + chunks - 1) / chunks;
         let chunks = (r as usize + chunk - 1) / chunk;
@@ -639,18 +669,35 @@ impl Index {
                 return Err(format!("run-length per-symbol total mismatch at {ch}"));
             }
         }
-        let mut seen: Vec<u32> = vec![0u32; r as usize];
-        seen.par_chunks_mut(chunk)
-            .enumerate()
-            .for_each(|(ci, out)| {
-                let mut run = base[ci].clone();
-                let lo = ci * chunk;
-                for (j, s) in out.iter_mut().enumerate() {
-                    let ch = heads[lo + j] as usize;
-                    *s = run[ch] as u32;
-                    run[ch] += rlen[lo + j] as u64;
-                }
-            });
+        let seen = if wide {
+            let mut v = vec![0u64; r as usize];
+            v.par_chunks_mut(chunk)
+                .enumerate()
+                .for_each(|(ci, out)| {
+                    let mut run = base[ci].clone();
+                    let lo = ci * chunk;
+                    for (j, s) in out.iter_mut().enumerate() {
+                        let ch = heads[lo + j] as usize;
+                        *s = run[ch];
+                        run[ch] += rlen[lo + j] as u64;
+                    }
+                });
+            Seen::U64(v)
+        } else {
+            let mut v = vec![0u32; r as usize];
+            v.par_chunks_mut(chunk)
+                .enumerate()
+                .for_each(|(ci, out)| {
+                    let mut run = base[ci].clone();
+                    let lo = ci * chunk;
+                    for (j, s) in out.iter_mut().enumerate() {
+                        let ch = heads[lo + j] as usize;
+                        *s = run[ch] as u32;
+                        run[ch] += rlen[lo + j] as u64;
+                    }
+                });
+            Seen::U32(v)
+        };
         drop(counts);
         drop(base);
         let t_rank = t0.elapsed();
@@ -694,6 +741,7 @@ impl Index {
                     }
                 }
             });
+        let t_blk = t0.elapsed();
 
         // m11: tail SA of every 1024th run.
         let m = reader.member(11);
@@ -718,23 +766,19 @@ impl Index {
                 return Err(format!("m11 anchor {i} value {v} outside [0,n)"));
             }
         }
-        let cyclic = total[0x1e] > 0 || total[0x0a] == 0;
-        let build_ms = t0.elapsed().as_secs_f64() * 1e3;
+        let t_end = t0.elapsed();
+        let stages = vec![
+            ("m1-runs", (t_decode - t_open).as_secs_f64() * 1e3),
+            ("rank-dir", (t_rank - t_decode).as_secs_f64() * 1e3),
+            ("run-starts", (t_blk - t_rank).as_secs_f64() * 1e3),
+            ("m11-anchors", (t_end - t_blk).as_secs_f64() * 1e3),
+        ];
+        let build_ms = t_end.as_secs_f64() * 1e3;
         if crate::trace_on() {
-            eprintln!(
-                "TRACE stage=lite.mmap-open ms={:.1}",
-                t_open.as_secs_f64() * 1e3
-            );
-            eprintln!(
-                "TRACE stage=lite.runs-decode ms={:.1} (heads+lengths, {} runs)",
-                (t_decode - t_open).as_secs_f64() * 1e3,
-                r
-            );
-            eprintln!(
-                "TRACE stage=lite.rank-directory ms={:.1}",
-                (t_rank - t_decode).as_secs_f64() * 1e3
-            );
-            eprintln!("TRACE stage=lite.build-total ms={:.1}", build_ms);
+            for (name, ms) in &stages {
+                eprintln!("TRACE stage=lite.{name} ms={ms:.1}");
+            }
+            eprintln!("TRACE stage=lite.build-total ms={build_ms:.1}");
         }
         Ok(Index {
             reader,
@@ -747,8 +791,9 @@ impl Index {
             blk2,
             anchors,
             stride,
-            cyclic,
             build_ms,
+            decoded_bytes: decode_bytes,
+            stages,
         })
     }
 }
@@ -765,7 +810,7 @@ impl Index {
     /// Text position of run `run`'s first row (LF start).
     #[inline(always)]
     fn start(&self, run: u64) -> u64 {
-        self.c[self.heads[run as usize] as usize] + self.seen[run as usize] as u64
+        self.c[self.heads[run as usize] as usize] + self.seen.get(run as usize)
     }
     /// `(run, run_start)` of the run holding row `i`.
     #[inline]
@@ -793,14 +838,14 @@ impl Index {
         }
         let (run, s) = self.run_of(i);
         if self.heads[run as usize] == ch {
-            return self.seen[run as usize] as u64 + (i - s);
+            return self.seen.get(run as usize) + (i - s);
         }
         // Walk back to the nearest run of `ch`: ~|alphabet| steps, contiguous.
         let mut p = run;
         while p > 0 {
             p -= 1;
             if self.heads[p as usize] == ch {
-                return self.seen[p as usize] as u64 + self.rlen[p as usize] as u64;
+                return self.seen.get(p as usize) + self.rlen[p as usize] as u64;
             }
         }
         0
@@ -825,9 +870,17 @@ impl Index {
         }
         (l, r)
     }
-    /// Text position of BWT row `row`, by LF-walking to the next anchored run
-    /// tail: every LF step lowers the position by one, so
-    /// `position = anchor + steps (mod n)`.
+    /// Text position of BWT row `row`.
+    ///
+    /// m11 stores the *raw* SA coordinate of the tail row of runs 0, 1024,
+    /// 2048, ... (bit6/xsa_finish.cpp: `if (idx % 1024 == 0) write(v.t)`), in
+    /// the same coordinate system as the container's `n`. LF maps row i to the
+    /// row whose SA is i-1, so walking LF `steps` times RAISES the text
+    /// position by `steps`: `position = anchor + steps (mod n)`.
+    ///
+    /// Verified on t150m.sxi2: 574/574 oracle positions across all 100
+    /// fixture patterns (mean 2650 steps, max 24437), see
+    /// tools/binbwt/gate_qlite_150m.sh.
     pub fn locate(&self, row: u64) -> u64 {
         let mut pos = row;
         let mut steps = 0u64;
@@ -836,17 +889,7 @@ impl Index {
             let end = s + self.rlen[run as usize] as u64;
             if pos == end - 1 && run % self.stride == 0 {
                 let anchor = self.anchors[(run / self.stride) as usize];
-                return if self.cyclic {
-                    (anchor + steps % self.reader.n) % self.reader.n
-                } else {
-                    (anchor.wrapping_add(steps)) % self.reader.n
-                };
-            }
-            if self.cyclic {
-                die("locate: periodic (cyclic) text is not supported by the lite query path");
-            }
-            if self.heads[run as usize] == 0x0A {
-                die("locate: LF walk reached a 0x0A row with no string-start anchor (erasure law)");
+                return (anchor + steps) % self.reader.n;
             }
             pos = self.start(run) + (pos - s);
             steps += 1;
@@ -940,6 +983,14 @@ fn parse(args: &[String]) -> Args {
     }
 }
 
+/// One pattern's result: positions plus the walls the kernel charged for it.
+struct Hit {
+    positions: Vec<u64>,
+    search_us: f64,
+    /// mean over occurrences
+    locate_us: f64,
+}
+
 fn read_patterns(path: &str, fasta: bool) -> Vec<Vec<u8>> {
     let data = std::fs::read(path).unwrap_or_else(|e| die(&format!("read {path}: {e}")));
     let mut out: Vec<Vec<u8>> = Vec::new();
@@ -978,7 +1029,11 @@ fn read_patterns(path: &str, fasta: bool) -> Vec<Vec<u8>> {
 }
 
 pub fn command(args: &[String]) {
+    // Wall clock from process start: the acceptance question is "how long
+    // until the first answer", so every stage is reported against this.
+    let t_proc = Instant::now();
     let a = parse(args);
+    let t_open0 = Instant::now();
     let reader = match Reader::open(&a.container) {
         Ok(r) => r,
         Err(e) => die(&format!(
@@ -988,11 +1043,23 @@ pub fn command(args: &[String]) {
              `xsa query-legacy`, which is ~1e6x slower per pattern and takes minutes to open."
         )),
     };
+    let open_ms = t_open0.elapsed().as_secs_f64() * 1e3;
     let members: Vec<String> = reader.members.iter().map(|m| format!("m{}", m.id)).collect();
+    // OPEN IS MMAP-ONLY: header, directory, header CRC and the 256-byte remap.
+    // Nothing in the run stream, the chi set or the anchors is decoded here, so
+    // `decoded_bytes` is 0 and no stage has run. This is the line that makes the
+    // 405 s legacy open auditable against the 1 ms it costs now.
     eprintln!(
-        "QUERY_READER container={} format=sxi2-v6-lite members={} end_symbol=none",
+        "QLITE_OPEN container={} format=sxi2-v6-lite magic=SXI2 version={} \
+         mmap_ms={open_ms:.2} decoded_bytes=0 stages=none n={} runs={} members={} end_symbol=none",
         reader.path,
+        reader.version,
+        reader.n,
+        reader.r,
         members.join(",")
+    );
+    eprintln!(
+        "SQLITE_QUERY_OPEN format=sxi2-v6-lite mmap_ms={open_ms:.2} decoded_bytes=0 stages=none"
     );
     if a.verify {
         if let Err(e) = reader.verify_members() {
@@ -1001,53 +1068,76 @@ pub fn command(args: &[String]) {
         eprintln!("QUERY_VERIFY members=ok");
     }
     let patterns = read_patterns(&a.patterns, a.fasta);
-    let index = match Index::open(&a.container, a.threads) {
+    if a.threads > 1 {
+        let _ = rayon::ThreadPoolBuilder::new()
+            .num_threads(a.threads)
+            .build_global();
+    }
+    let index = match Index::open(reader, a.threads) {
         Ok(i) => i,
         Err(e) => die(&e),
     };
+    let stage_list: Vec<String> = index
+        .stages
+        .iter()
+        .map(|(n, ms)| format!("{n}={ms:.1}ms"))
+        .collect();
     eprintln!(
-        "QUERY_INDEX runs={} n={} build_ms={:.1} threads={} patterns={}",
+        "QLITE_BUILD runs={} decoded_bytes={} stages=[{}] build_ms={:.1} n={} threads={} patterns={}",
         index.r(),
-        index.n(),
+        index.decoded_bytes,
+        stage_list.join(" "),
         index.build_ms,
+        index.n(),
         a.threads,
         patterns.len()
     );
     let sigma = index.reader.sigma;
-    let reversed = index.reader.flags & 4 != 0;
     let stdout = std::io::stdout();
     let mut w: Box<dyn Write> = Box::new(BufWriter::with_capacity(1 << 20, stdout.lock()));
     let t0 = Instant::now();
     // Per-pattern results, produced in parallel, emitted in input order.
-    let results: Vec<Vec<u64>> = patterns
+    let results: Vec<Hit> = patterns
         .par_iter()
         .map(|pat| {
             if pat.is_empty() || pat.len() > 65536 {
                 die(&format!("pattern of length {} is not 1..65536", pat.len()));
             }
-            if pat.contains(&0x1e) {
-                die("pattern contains the reserved separator byte 0x1E");
-            }
-            // Index coordinates: remap, then reverse (flags bit 2 = reversed
-            // records). A plain text container is remap + reverse, which is the
-            // convention the 574/574 position gate was banked on.
+            // Index coordinates: the container's text is the corpus with the
+            // m7 remap applied, in corpus order; backward search consumes the
+            // pattern right to left, so the working pattern is
+            //     sigma(pattern) reversed.
+            // Measured against the 150 MB fixture oracle: remap+reverse gives
+            // 100/100 counts and 574/574 positions; every other combination
+            // (identity, reverse-only, remap-only) gives 0/100.
             let mut work: Vec<u8> = pat.iter().map(|&c| sigma[c as usize]).collect();
-            if reversed {
-                work.reverse();
-            }
             work.reverse();
+            let ts = Instant::now();
             let (l, r) = index.search(&work);
-            let mut out = Vec::with_capacity((r - l).min(1 << 20) as usize);
+            let search_us = ts.elapsed().as_secs_f64() * 1e6;
+            let tl = Instant::now();
+            let mut positions = Vec::with_capacity((r - l).min(1 << 20) as usize);
             for row in l..r {
-                out.push(index.locate(row));
+                positions.push(index.locate(row));
             }
-            out
+            let locate_us = if r > l {
+                tl.elapsed().as_secs_f64() * 1e6 / (r - l) as f64
+            } else {
+                0.0
+            };
+            Hit {
+                positions,
+                search_us,
+                locate_us,
+            }
         })
         .collect();
     let elapsed = t0.elapsed();
+    let first_answer_ms = t_proc.elapsed().as_secs_f64() * 1e3;
     let mut nocc = 0u64;
     let mut nabs = 0u64;
-    for (pid, positions) in results.iter().enumerate() {
+    for (pid, hit) in results.iter().enumerate() {
+        let positions = &hit.positions;
         if positions.is_empty() {
             nabs += 1;
         }
@@ -1072,11 +1162,44 @@ pub fn command(args: &[String]) {
         }
     }
     w.flush().unwrap();
+    // Per-pattern timing, for the rows the caller can actually time (a
+    // high-count pattern is dominated by materialising tens of millions of
+    // positions and says nothing about the search kernel).
+    let (mut worst_us, mut low_sum_us, mut nlow_us, mut high) = (0.0f64, 0.0f64, 0u64, 0u64);
+    for (pid, hit) in results.iter().enumerate() {
+        let us = hit.search_us + hit.locate_us * hit.positions.len() as f64;
+        if crate::trace_on() {
+            eprintln!(
+                "TRACE_PATTERN id={} len={} occ={} search_us={:.1} locate_us={:.1} total_us={:.1}",
+                pid,
+                patterns[pid].len(),
+                hit.positions.len(),
+                hit.search_us,
+                hit.locate_us,
+                us
+            );
+        }
+        if hit.positions.len() <= 3 {
+            low_sum_us += us;
+            nlow_us += 1;
+            if us > worst_us {
+                worst_us = us;
+            }
+        } else {
+            high += 1;
+        }
+    }
     eprintln!(
-        "QUERY_DONE patterns={} occurrences={} absent={} query_ms={:.1}",
+        "QUERY_DONE patterns={} occurrences={} absent={} query_ms={:.1} first_answer_ms={:.1} \
+         low_count_patterns={} low_count_mean_us={:.1} low_count_max_us={:.1} high_count_patterns={}",
         patterns.len(),
         nocc,
         nabs,
-        elapsed.as_secs_f64() * 1e3
+        elapsed.as_secs_f64() * 1e3,
+        first_answer_ms,
+        nlow_us,
+        if nlow_us > 0 { low_sum_us / nlow_us as f64 } else { f64::NAN },
+        worst_us,
+        high
     );
 }
