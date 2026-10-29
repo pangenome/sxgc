@@ -4359,6 +4359,12 @@ struct LcpColumn {
     // lo-1) and re-reads exactly that one byte.
     struct SliceMeta {
         uint64_t rows = 0, rankBase = 0, escapeCount = 0, maxLcp = 0;
+        // ITS OWN BAND INDEX. Deriving the name as nextSlice-live.size() silently
+        // renames the front every time an EMPTY band goes by (an empty slice is
+        // unlinked and never enters `live`), which tried to unlink a slice that had
+        // already been removed - measured at 4 MB: FATAL unlink retired LCP slice
+        // band_59.lcp while the cursor was at 60.
+        uint64_t index = 0;
         int fd = -1;
         std::vector<std::pair<uint64_t, uint64_t>> esc;
         uint64_t end() const { return rankBase + rows; }
@@ -4426,8 +4432,8 @@ struct LcpColumn {
     void retireFront() {
         SliceMeta& s = live.front();
         if (s.fd >= 0) ::close(s.fd);
-        const std::string path = bandDir + "/band_" + std::to_string(nextSlice - live.size()) + ".lcp";
-        const std::string name = bandDir + "/band_" + std::to_string(nextSlice - live.size());
+        const std::string path = bandDir + "/band_" + std::to_string(s.index) + ".lcp";
+        const std::string name = bandDir + "/band_" + std::to_string(s.index);
         pf_check(::unlink((name + ".lcp").c_str()) == 0, "unlink retired LCP slice " + path);
         int cf = ::open((name + ".lcp.consumed").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
         pf_check(cf >= 0, "publish consumed LCP slice " + name);
@@ -4443,6 +4449,7 @@ struct LcpColumn {
         const std::string path = base + ".lcp";
         waitSlice(path + ".done", pollMs);
         SliceMeta s;
+        s.index = nextSlice;
         s.fd = ::open(path.c_str(), O_RDONLY);
         pf_check(s.fd >= 0, "open LCP slice " + path + ": " + std::strerror(errno));
         uint8_t h[SLICE_HDR];
@@ -4624,6 +4631,21 @@ struct LcpColumn {
                 (unsigned long long)maxLcp, (unsigned long long)maxSliceBytes,
                 (unsigned long long)maxLiveBytes, (unsigned long long)sliceWaitWallMs,
                 live.size(), n ? double(stagedBytes) / double(n) : 0.0);
+        // THE CONSUMER SIDE OF THE SAME CLAIM. The producer journals LCP_SLICE
+        // (bytes of slice published and not yet retired, i.e. the DISC footprint);
+        // this is what the fold ever held at once (one band's staged span plus the
+        // escapes of the live slices) - bytes and as a fraction of n. Neither is
+        // ever a resident column: the fold deletes each slice as its cursor passes.
+        fprintf(stderr,
+                "LCP_SLICE_CONSUMER max_live_bytes=%llu slices=%llu retired=%llu "
+                "peak_over_n=%.6f staged_bytes=%llu bytes_per_rank=%.6f escapes=%llu "
+                "max_slice_bytes=%llu empty_slices=%llu wait_ms=%llu\n",
+                (unsigned long long)maxLiveBytes, (unsigned long long)slicesOpened,
+                (unsigned long long)slicesRetired,
+                n ? double(maxLiveBytes) / double(n) : 0.0,
+                (unsigned long long)stagedBytes, n ? double(stagedBytes) / double(n) : 0.0,
+                (unsigned long long)escapesRead, (unsigned long long)maxSliceBytes,
+                (unsigned long long)emptySlices, (unsigned long long)sliceWaitWallMs);
     }
 };
 
@@ -4845,11 +4867,20 @@ int main(int argc, char** argv) {
         // normalized text, which is the corpus byte stream - identity-gated)
         bool hasRS = false, hasNL = false;
         {
+            // THE SCAN IS OVER THE CORPUS BYTES, NOT THE ROW COUNT. n counts the
+            // virtual END row (size() = fileSize()+1), and END's symbol is the
+            // sentinel 0 - never 0x1e and never 0x0a - so it cannot change this
+            // answer. Reading n bytes from the FILE was an EOF read: pread
+            // returned 0 and this check aborted the finish 0.12 s in (both
+            // routes, 4 MB fixture), which the tape route then saw as a producer
+            // waiting forever on its LCP flow-control markers.
+            pf_check(text.fileSize() + 1 == n, "cyclic scan: row count is not file bytes + the virtual END");
             constexpr uint64_t RB = 1 << 22;
+            const uint64_t scanBytes = text.fileSize();
             std::vector<uint8_t> b(RB);
             uint64_t off = 0;
-            while (off < n && !hasRS) {
-                uint64_t want = std::min<uint64_t>(RB, n - off), done = 0;
+            while (off < scanBytes && !hasRS) {
+                uint64_t want = std::min<uint64_t>(RB, scanBytes - off), done = 0;
                 while (done < want) {
                     ssize_t z = ::pread(text.fd, b.data() + done, want - done, off + done);
                     pf_check(z > 0, "cyclic scan read");
