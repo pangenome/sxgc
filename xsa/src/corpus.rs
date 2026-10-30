@@ -318,30 +318,14 @@ struct Emitter {
 }
 
 impl Emitter {
+    /// `out` has already been claimed by `run` (created, and verified free of an
+    /// existing pass). A refused pass must never leave something that looks like a
+    /// corpus: the sidecars are written under `.partial` names and only renamed
+    /// into place once rule 1 has passed and every file is fsynced.
     fn new(out: &Path, sep_mode: bool, max_bytes: Option<u64>) -> Emitter {
-        ck!(std::fs::create_dir_all(out), format!("mkdir {}", out.display()));
         let corpus_path = out.join("corpus.bin.partial");
         let seps_path = out.join("seps.bin.partial");
         let titles_path = out.join("titles.bin.partial");
-        // A refused pass must never leave something that looks like a corpus:
-        // the sidecars are written under `.partial` names and only renamed into
-        // place once rule 1 has passed and every file is fsynced.
-        for p in [
-            &corpus_path,
-            &seps_path,
-            &titles_path,
-            &out.join("corpus.bin"),
-            &out.join("seps.bin"),
-            &out.join("titles.bin"),
-            &out.join("MANIFEST.json"),
-        ] {
-            if p.exists() {
-                die(&format!(
-                    "corpus: {} already exists; refusing to mix a new pass into an old directory",
-                    p.display()
-                ));
-            }
-        }
         Emitter {
             out: out.to_path_buf(),
             corpus: Some(Sink::new(&corpus_path)),
@@ -1127,8 +1111,23 @@ fn spawn_decompressor(dump: &str) -> (Child, String) {
 }
 
 fn run(dump: &str, out: &str, max_bytes: Option<u64>, sep_mode: bool, t0: Instant) {
-    // 1. Hash and size the compressed dump before touching the output directory:
-    //    MANIFEST identifies the input, and an unreadable path fails early.
+    // 0. Claim the output directory first: a mis-typed --out must fail in
+    //    milliseconds, not after hashing a 90 GB dump.
+    let dst = Path::new(out);
+    ck!(std::fs::create_dir_all(dst), format!("mkdir {}", dst.display()));
+    for name in ["corpus.bin", "seps.bin", "titles.bin", "MANIFEST.json"] {
+        for p in [dst.join(name), dst.join(format!("{}.partial", name))] {
+            if p.exists() {
+                die(&format!(
+                    "corpus: {} already exists; refusing to mix a new pass into an old directory",
+                    p.display()
+                ));
+            }
+        }
+    }
+
+    // 1. Hash and size the compressed dump: MANIFEST identifies the input, and an
+    //    unreadable path fails before a single page is parsed.
     let (dump_sha, dump_bytes) = if dump == "-" {
         (None, None)
     } else {
@@ -1163,7 +1162,7 @@ fn run(dump: &str, out: &str, max_bytes: Option<u64>, sep_mode: bool, t0: Instan
         Some(s) => s,
         None => die("corpus: decompressor produced no stdout pipe"),
     };
-    let emitter = Emitter::new(Path::new(out), sep_mode, max_bytes);
+    let emitter = Emitter::new(dst, sep_mode, max_bytes);
     let mut parser = Parser::new(Stream::new(stdout, child), emitter);
     let step = parser.run();
     crate::trace_since("corpus_parse", t1);

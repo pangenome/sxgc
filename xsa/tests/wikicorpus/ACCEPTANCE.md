@@ -4,7 +4,7 @@ Tool: `xsa corpus --wikipedia <dump.xml.bz2|-> --out <dir> [--max-bytes 90G] [--
 Source: `xsa/src/corpus.rs` (new module) + dispatch in `xsa/src/main.rs`; the sidecar
 layouts are documented in the module header and echoed into every MANIFEST.json.
 Build: `cargo build --release --manifest-path xsa/Cargo.toml`.
-binary: xsa sha256=6f3b80735da34e38664f39ec33c9fe04b072be576b5309bf355502861dd42cce
+binary: xsa sha256=cc352a52e5189f8e80b02f6c4a8e08c343daffc38035a21d79594b0f0f36d0d8
 
 Fixture (committed): `xsa/tests/wikicorpus/fixture.xml` — 2304 bytes of hand-written
 MediaWiki-shaped XML with 5 pages: a real `<siteinfo>` block plus namespaces table, an
@@ -28,9 +28,9 @@ xsa: note: nothing was published; the incomplete sidecars keep their .partial na
 exit=1
 $ ls w1
   total 0
-  -rw-rw-r-- 1 erikg erikg 0 Oct 30 13:25 corpus.bin.partial
-  -rw-rw-r-- 1 erikg erikg 0 Oct 30 13:25 seps.bin.partial
-  -rw-rw-r-- 1 erikg erikg 0 Oct 30 13:25 titles.bin.partial
+  -rw-rw-r-- 1 erikg erikg 0 Oct 30 13:32 corpus.bin.partial
+  -rw-rw-r-- 1 erikg erikg 0 Oct 30 13:32 seps.bin.partial
+  -rw-rw-r-- 1 erikg erikg 0 Oct 30 13:32 titles.bin.partial
 
 ```
 
@@ -120,8 +120,9 @@ xsa corpus: manifest /mnt/nvme2n1/erikg/wikicorpus/xsa/target/wc-accept/g/w4-90G
   cmp w5a/titles.bin w5b/titles.bin: identical
   cmp w5c/titles.bin w5d/titles.bin: identical
   MANIFEST.json identical apart from finished_at
+$ second pass into a directory that already holds one (now refused before the dump is hashed)
 xsa: error: corpus: /mnt/nvme2n1/erikg/wikicorpus/xsa/target/wc-accept/g/w5a/corpus.bin already exists; refusing to mix a new pass into an old directory
-  re-run into a finished dir: exit=1
+  exit=1
   W5 PASS
 ```
 
@@ -130,8 +131,6 @@ xsa: error: corpus: /mnt/nvme2n1/erikg/wikicorpus/xsa/target/wc-accept/g/w5a/cor
 ### X1 truncated bz2 (multistream cut at 900 of 1185 bytes)
 
 ```
-  bzip2: Success
-  	Input file = /mnt/nvme2n1/erikg/wikicorpus/xsa/target/wc-accept/g/extra/trunc.bz2, output file = (stdout)
   xsa: error: corpus: decompressor failed (exit status: 2): truncated or invalid bzip2 stream; refusing to emit a short corpus
   exit=1
 
@@ -140,7 +139,6 @@ xsa: error: corpus: /mnt/nvme2n1/erikg/wikicorpus/xsa/target/wc-accept/g/w5a/cor
 ### X2 corrupt bz2 (one byte at offset 400 zeroed)
 
 ```
-  	Input file = /mnt/nvme2n1/erikg/wikicorpus/xsa/target/wc-accept/g/extra/corrupt.bz2, output file = (stdout)
   xsa: error: corpus: decompressor failed (exit status: 2): truncated or invalid bzip2 stream; refusing to emit a short corpus
   exit=1
 
@@ -230,8 +228,6 @@ exit=1
 ### X13 CDATA inside <text>: bytes are content, copied verbatim (no guessing)
 
 ```
-xsa corpus: docs=1 corpus_bytes=19 separators=1 separator=0x1e seps.bin=60 titles.bin=28 sha256(corpus.bin)=9c15f37d5c662147193da901c47b297fd95568d3a29d485cdd8b908d7334b85c
-xsa corpus: manifest /mnt/nvme2n1/erikg/wikicorpus/xsa/target/wc-accept/g/extra/x13/MANIFEST.json
 exit=0
   corpus.bin=b'CD\n<![CDATA[raw]]>\x1e'
 
@@ -265,79 +261,74 @@ exit=0
 ### X16 journal: overhead vs raw bzip2 -dc (4.2 MB poorly-compressible dump; nothing else running on the box)
 
 ```
-  xml=4246918 bytes  bz2=2910061 bytes
-  bzip2 -dc alone   run1 WALL=0.21 s
-  bzip2 -dc alone   run2 WALL=0.22 s
-  bzip2 -dc alone   run3 WALL=0.18 s
-xsa corpus: docs=4000 corpus_bytes=3860000 separators=4000 separator=0x1e seps.bin=16552 titles.bin=76020 sha256(corpus.bin)=cc541403e80653bd695f4a069847a2a66f108667cab61985117e930e08014e59
-xsa corpus: manifest /mnt/nvme2n1/erikg/wikicorpus/xsa/target/wc-accept/g/scale2/out/MANIFEST.json
-  xsa corpus       run1 WALL=0.22 s MAX_RSS=4096 KB
-xsa corpus: docs=4000 corpus_bytes=3860000 separators=4000 separator=0x1e seps.bin=16552 titles.bin=76020 sha256(corpus.bin)=cc541403e80653bd695f4a069847a2a66f108667cab61985117e930e08014e59
-xsa corpus: manifest /mnt/nvme2n1/erikg/wikicorpus/xsa/target/wc-accept/g/scale2/out/MANIFEST.json
-  xsa corpus       run2 WALL=0.22 s MAX_RSS=4096 KB
-xsa corpus: docs=4000 corpus_bytes=3860000 separators=4000 separator=0x1e seps.bin=16552 titles.bin=76020 sha256(corpus.bin)=cc541403e80653bd695f4a069847a2a66f108667cab61985117e930e08014e59
-xsa corpus: manifest /mnt/nvme2n1/erikg/wikicorpus/xsa/target/wc-accept/g/scale2/out/MANIFEST.json
-  xsa corpus       run3 WALL=0.20 s MAX_RSS=2048 KB
-  xsa corpus       WALL=0.22 s MAX_RSS=4096 KB (2.9 MB bz2 -> 4.2 MB XML -> 4.0 MB corpus)
+  xml=4246918 bytes  bz2=2909112 bytes
+  bzip2 -dc alone   run1 WALL=0.18 s
+  bzip2 -dc alone   run2 WALL=0.18 s
+  bzip2 -dc alone   run3 WALL=0.20 s
+  xsa corpus       run1 WALL=0.20 s MAX_RSS=4096 KB
+  xsa corpus       run2 WALL=0.20 s MAX_RSS=4096 KB
+  xsa corpus       run3 WALL=0.21 s MAX_RSS=4096 KB
   corpus.bin=3860000 seps.bin=16552 titles.bin=76020
 ```
 ## Journal
 
-Box: this worktree (`/mnt/nvme2n1/erikg/wikicorpus`), nothing else of mine running
-during the timed runs; the numbers below say what else shared the box.
+Box: this worktree (`/mnt/nvme2n1/erikg/wikicorpus`); nothing of mine else running during
+the timed runs, and the numbers say what shared the CPU.
 
 - Build: `cargo build --release --manifest-path xsa/Cargo.toml` — first build 4m47s
-  (includes the crate's bundled native stage compile: htslib/agc/pfp++/rpfbwt and the
-  bundled C++ tools), afterwards ~2 s incremental. Build script requires
-  `xsa/SOURCES.sha256.json` to match every shipped source, so it is regenerated with
-  `tools/package_xsa_sources.py` on each source edit.
-- X16 overhead (4,246,918 B XML, 2,910,061 B bz2 — base64 bodies, poorly compressible):
-  `bzip2 -dc > /dev/null` alone 0.18-0.22 s; `xsa corpus` end-to-end 0.20-0.22 s,
-  max RSS 2-4 MB. Parse + emit is inside the timing noise of the decoder: the tool is
-  decompression-bound, as intended (single pass, no second read of the stream).
-  Counters for that run: docs=4000, corpus_bytes=3,860,000, separators=4000,
-  seps.bin=16,552 B, titles.bin=76,020 B, sha256(corpus.bin)=cc541403e80653bd... .
-- X15 anchors: 200 docs, corpus 23,025 B, seps.bin 880 B (= 48 + 4*200 + 8*4),
-  anchors [0, 7337, 14728, 22173]; rank_1E(pos) from anchors+deltas matched a brute
-  bisect on 11 probes.
-- Fixture gates (W1-W5): 0.00-0.01 s wall each, ~2 MB max RSS (as measured by
-  /usr/bin/time -f on the 268 B corpus; process startup dominates).
-- Unit tests: `cargo test --release --manifest-path xsa/Cargo.toml corpus::` -> 3 passed.
+  (it compiles the crate's bundled native stages: htslib/agc/pfp++/rpfbwt plus the
+  bundled C++ tools), then ~2 s incremental. The build script verifies every shipped
+  source against `xsa/SOURCES.sha256.json`, so it is regenerated with
+  `tools/package_xsa_sources.py` on each source edit (the script also refreshes the
+  packaged mirrors; here only the digest file changed).
+- X16 overhead (4,246,918 B XML, 2,909,112 B bz2 — base64 bodies, poorly compressible):
+  `bzip2 -dc > /dev/null` alone 0.18-0.20 s; `xsa corpus` end-to-end 0.20-0.21 s,
+  max RSS 4 MB. Parse + emit sits inside the decoder's timing noise: the tool is
+  decompression-bound, as a single pass over a bz2 dump should be. Counters for that
+  run: docs=4000, corpus_bytes=3,860,000, separators=4000, seps.bin=16,552 B,
+  titles.bin=76,020 B.
+- X15 anchors: 200 docs, corpus 23,025 B, seps.bin 880 B (= 48 header + 4*200 deltas +
+  8*4 anchors), anchors [0, 7337, 14728, 22173]; rank_1E(pos) from anchors+deltas
+  matched a brute bisect on 11 probes.
+- Fixture gates (W1-W5): each run is ~0.01 s wall and ~2 MB RSS (startup dominates a
+  268 B corpus).
 
-Exact counters, fixture: doc_count=5, corpus_bytes=268 (0x1e mode) / 263 (none mode),
+Exact fixture counters: doc_count=5, corpus_bytes=268 (0x1e mode) / 263 (none mode),
 separator_count=5 (0x1e) / 0 (none), seps.bin=76 B (48 header + 5*4 deltas + 1*8
-anchor), titles.bin=134 B (20 header + 86 payload + 5*4 offsets + 5*2 lengths),
-dump_sha256 recorded over the *compressed* dump.
+anchor), titles.bin=134 B (20 header + 86 B payload + 5*4 offsets + 5*2 lengths),
+dump_sha256 taken over the *compressed* dump.
 
 ## Known limits and residual risks
 
 1. `--separator none` leaves stray 0x1E bytes in corpus.bin as content: rank documents
    from seps.bin, never by counting 0x1E. MANIFEST reports `content_separator_bytes`.
-2. Per-document scratch memory: one body is buffered in RAM (hard cap 512 MiB/doc, the
-   pass aborts rather than reserving more), and the titles offset/length columns are
+2. Per-document scratch memory: one body is buffered in RAM (hard cap 512 MiB/doc; the
+   pass aborts rather than reserving more) and the titles offset/length columns are
    held in RAM until the payload is complete (6 B/doc: ~270 MB at 45e6 docs). seps.bin
    deltas stream straight to the file, so they add nothing. Budget ~0.3-0.5 GB RSS at
-   90 GB corpus scale; this has not been measured at that scale here.
+   90 GB corpus scale — not measured at that scale here.
 3. No XML entity decoding and no wikitext conversion: titles and bodies are the bytes
-   between the tags, so `&amp;` stays `&amp;` in-band (MANIFEST `xml_entities`).
-   No namespace filtering: every `<page>` is indexed, `Category:`/`Wikipedia:` titles
+   between the tags, so `&amp;` stays `&amp;` in-band (MANIFEST `xml_entities`). No
+   namespace filtering: every `<page>` is indexed, `Category:`/`Wikipedia:` titles
    included (MANIFEST `namespace_filter`).
-4. A title containing a newline or 0x1E is refused (it cannot be carried in-band), as
-   is a title longer than 65535 B (u16 length column) or a document larger than a u32
+4. A title containing a newline or 0x1E is refused (it cannot be carried in-band), as is
+   a title longer than 65535 B (u16 length column) or a document longer than a u32
    delta (4 GiB).
 5. Multiple `<revision>` elements in one page: the last (newest) one is indexed; the
-   count of such pages is recorded as `pages_with_multiple_revisions`.
-6. `<text>` content is taken as PCDATA by scanning raw to `</text>` (dumps never nest
-   elements there): a literal `</text>` would end the body, and CDATA inside `<text>`
-   is kept verbatim (X13). CDATA outside an element and DOCTYPE internal subsets are
-   refused/unhandled; MediaWiki dumps contain neither.
-7. pbzip2 is preferred and falls back to bzip2 when absent from PATH (it is absent on
-   this box, so every gate above ran the bzip2 path). Both handle multistream bz2.
+   number of such pages is recorded as `pages_with_multiple_revisions`.
+6. `<text>` is treated as PCDATA by scanning raw to `</text>` (dumps never nest
+   elements there), so a literal `</text>` ends the body and CDATA inside `<text>` is
+   kept verbatim (X13). CDATA outside an element is refused and a DOCTYPE internal
+   subset is not supported; MediaWiki dumps contain neither.
+7. pbzip2 is preferred and falls back to bzip2 when it is not on PATH (it is absent on
+   this box, so every gate above exercised the bzip2 path). Both handle multistream bz2.
 8. `--max-bytes` stops without validating the remainder of the stream, by design: the
    MANIFEST records `cut_at_document_boundary` and `cut_corpus_bytes`, and rule 1 is
    enforced over the emitted prefix only.
-9. Determinism was verified at fixture scale (W5); the pass is single-threaded with no
-   hash iteration, but a 90 GB run was not executed here.
+9. Determinism is verified at fixture scale (W5); the pass is single-threaded and does
+   no hash iteration, but a 90 GB run was not executed here.
 10. MANIFEST.json presence is the completion marker (`*.partial` names otherwise); it is
     written after the sidecars are renamed and fsynced, so a crash between the rename and
     the manifest leaves complete sidecars with no manifest.
+11. The output directory is claimed in step 0, before the dump is hashed, so a mis-typed
+    `--out` fails immediately instead of after minutes of hashing a 90 GB dump.
