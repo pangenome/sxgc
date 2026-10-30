@@ -40,7 +40,35 @@
 
 /// m1 block width: independently decodable blocks of this many runs.
 /// MUST match the writer (bit6/xsa_finish.cpp: static constexpr uint64_t M1_BLOCK_RUNS).
+/// This is the ONE compile-time expectation the reader keeps, and only because
+/// the block decode buffers are fixed-size arrays `[_; M1_BLOCK_RUNS]`: the m1
+/// header still declares the width and `Index::open` refuses a container whose
+/// declaration differs (see the `block_runs != M1_BLOCK_RUNS` check).
 pub const M1_BLOCK_RUNS: u64 = 64;
+
+// ---------------------------------------------------------------------------
+// Reader-only tuning. None of these has any format meaning: the container
+// declares the block width, the level-2 strides and the member sizes, and every
+// one of those declarations is read from its header and validated by closure
+// (e.g. m13's level-2 array must exactly fill the span between its header and
+// its entry area). What is left over is purely "how much does this process
+// spend on itself", so it lives here as a constant.
+// ---------------------------------------------------------------------------
+
+/// Reader-only: direct-mapped m1 block cache entries per pattern thread.
+/// 4096 x ~0.34 KB = ~1.4 MB of working set; the container says nothing about it.
+const BLOCK_CACHE: usize = 4096;
+/// Reader-only: how many blocks the open-time fail-loud audit samples. Shapes
+/// the audit's cost (~2 decodes each), never how a run is addressed.
+const M1_AUDIT_BLOCKS: u64 = 1024;
+/// Reader-only: bytes charged per decoded block in `decoded_bytes` (a sizing
+/// estimate for the accounting line; the true block is ~190 B + rounding and is
+/// declared nowhere, so this must not be used for anything but the estimate).
+const BLOCK_BYTES_EST: u64 = 192;
+/// Reader-only fail-loud backstop on the run-space scan in `cum_before`: the
+/// writer's sampling rule bounds that scan by its PF_RUNDIR_GAP (256 runs), so
+/// this is 16x slack, not a decode parameter.
+const M1_SCAN_GUARD: u64 = 4096;
 
 use crate::{die, sxi};
 use memmap2::Mmap;
@@ -50,32 +78,6 @@ use std::io::{BufWriter, Write};
 use std::sync::Arc;
 use std::time::Instant;
 
-/// Run-start sample stride (runs per level-1 entry).
-const BS: u64 = 64;
-/// Level-2 sample stride (runs per level-2 entry), a multiple of BS.
-const L2: u64 = 65536;
-/// Raw pointer wrapper for the parallel directory fill: each thread writes a
-/// disjoint, pre-computed range of `dir`, so the aliasing is provably absent
-/// (same pattern the container's own build uses for disjoint sinks).
-#[derive(Clone, Copy)]
-struct SendPtr(*mut u64);
-unsafe impl Send for SendPtr {}
-unsafe impl Sync for SendPtr {}
-impl SendPtr {
-    #[inline(always)]
-    unsafe fn add(self, i: usize) -> *mut u64 {
-        self.0.add(i)
-    }
-}
-
-/// Text-position stride of the direct run directory: entry `k` names the run
-/// holding text position `k*DP` and that run's start.
-const DP: u64 = 64;
-/// Runs per rank block: one 256-symbol cumulative row every RANK_BLK runs.
-/// This is what makes `rank(ch, i)` for `ch != heads[run]` O(1) instead of a
-/// walk back to the previous run of `ch`, which on a rare byte is unbounded
-/// (measured: 1.47 s for one 24-mer on the 10 GB pile before this).
-const RANK_BLK: u64 = 4096;
 /// Secondary Huffman table width.
 const HTABLE_BITS: u32 = 12;
 /// Gamma fast-window width (bits peeked per length code).
@@ -497,6 +499,11 @@ pub struct Index {
     /// m1 v2 (codec 102): the block directory and the payload.
     dir_off: u64,
     payload_off: u64,
+    /// One past the last payload byte (end of the m1 member), for the block
+    /// read bound: a directory entry is only trusted as far as this.
+    payload_end: u64,
+    /// The canonical Huffman codebook over run heads (m1 codec 102 header).
+    huff: Huff,
     nblocks: u64,
     /// m12: run-start samples (row of every `rs_stride`-th run).
     rs: RunStarts,
@@ -659,6 +666,9 @@ impl Index {
         let m1dir_off = m1.offset + 2336;
         let m1payload_off = m1.offset + payload_off;
         let m1payload_len = m1.bytes - payload_off;
+        // taken here: `reader` is moved into the index below, so the m1 borrow
+        // must not survive past this point.
+        let m1_end = m1.offset + m1.bytes;
 
         // ---- m12
         let m = reader.member(12);
@@ -677,10 +687,11 @@ impl Index {
         if u64_at(a, 16) != r || u64_at(a, 24) != n {
             return Err("m12 declares a different (n, R)".into());
         }
-        if rs.stride != M1_BLOCK_RUNS || rs.l2stride % rs.stride != 0 {
+        if rs.stride != block_runs || rs.l2stride == 0 || rs.l2stride % rs.stride != 0 {
             return Err(format!(
-                "m12 stride {} / level-2 stride {} not usable by this reader (needs {} | multiple)",
-                rs.stride, rs.l2stride, M1_BLOCK_RUNS
+                "m12 stride {} / level-2 stride {} is not usable: m1 declares a block width of\n  \
+                 {block_runs} runs, and the level-2 stride must be a positive multiple of it",
+                rs.stride, rs.l2stride
             ));
         }
         if rs.l1_cnt != (r + rs.stride - 1) / rs.stride
@@ -699,6 +710,17 @@ impl Index {
         if nsym != 256 || u64_at(a, 40) != n || u64_at(a, 48) != r {
             return Err("m13 declares a different (nsym, n, R)".into());
         }
+        // m13 header word 3 is the level-2 stride of the per-symbol directory
+        // (bit6/xsa_finish.cpp: container.num(PF_RUNDIR_L2)). It is the
+        // container's number, not ours: read it, then prove it closes on the
+        // member's own size below. Only its intrinsic validity is asserted here.
+        let rd_l2 = u64_at(a, 24);
+        if rd_l2 == 0 || rd_l2 % M1_BLOCK_RUNS != 0 {
+            return Err(format!(
+                "m13 declares level-2 stride {rd_l2}; a usable stride is a positive multiple of the\n  \
+                 block width {M1_BLOCK_RUNS}"
+            ));
+        }
         let mut counts = Vec::with_capacity(256);
         let mut offs = Vec::with_capacity(257);
         for i in 0..256 {
@@ -716,7 +738,7 @@ impl Index {
             let mut l2 = 0u64;
             for ci in 0..256 {
                 l2offs.push(l2);
-                l2 += (counts[ci] + RUNDIR_L2 - 1) / RUNDIR_L2;
+                l2 += (counts[ci] + rd_l2 - 1) / rd_l2;
             }
             l2offs.push(l2);
         }
@@ -730,7 +752,7 @@ impl Index {
         let rd = RunDir {
             ent_off,
             l2_off,
-            l2: RUNDIR_L2,
+            l2: rd_l2,
             counts,
             offs,
             l2offs,
@@ -772,11 +794,17 @@ impl Index {
         // walk is a dependent chain so they cannot overlap.
         let mut prefetched = 0u64;
         for m in reader.members.iter().filter(|m| [1u32, 12, 13].contains(&m.id)) {
-            let s = &reader.map[m.offset as usize..(m.offset + m.bytes) as usize];
-            if let Err(e) = s.advise(memmap2::Advice::WillNeed) {
+            if let Err(e) = reader.map.advise_range(
+                memmap2::Advice::WillNeed,
+                m.offset as usize,
+                m.bytes as usize,
+            ) {
                 return Err(format!("madvise(WILLNEED) on m{}: {e}", m.id));
             }
             prefetched += m.bytes;
+        }
+        if prefetched == 0 {
+            return Err("no hot members were prefetched".into());
         }
         let t_prefetch = t0.elapsed();
 
@@ -786,6 +814,8 @@ impl Index {
             total,
             dir_off: m1dir_off,
             payload_off: m1payload_off,
+            payload_end: m1_end,
+            huff,
             nblocks,
             rs,
             rd,
@@ -796,7 +826,7 @@ impl Index {
             stages: Vec::new(),
             audit_blocks: 0,
             block_runs,
-            rundir_stride: rd_l2_declared(&rd),
+            rundir_stride: rd_l2,
         };
         if idx.payload_off + m1payload_len != idx.reader.member(1).offset + idx.reader.member(1).bytes {
             return Err("m1 payload area does not reach the end of its member".into());
@@ -809,51 +839,49 @@ impl Index {
         // them (adjacent blocks must sum to the difference of their samples), and
         // the LAST window must close exactly on n.
         let audit = {
-            let mut cx = idx.ctx();
-            let mut bad = 0u64;
-            let mut checked = 0u64;
-            let step = (nblocks / M1_AUDIT_BLOCKS).max(1);
-            let mut b = 0u64;
-            while b + 1 < nblocks {
-                let (n0, s0) = cx.block_runs_sum(b)?;
-                let (n1, _s1) = cx.block_runs_sum(b + 1)?;
-                let (want0, _) = (idx.l1(b), idx.l1(b + 1));
-                let _ = (n0, want0);
-                let s1 = idx.l1(b + 1);
-                let s0 = idx.l1(b);
-                if s1 - s0 != n1 {
-                    bad += 1;
+            let (checked, misses) = {
+                let mut cx = idx.ctx();
+                let mut bad = 0u64;
+                let mut checked = 0u64;
+                let step = (nblocks / M1_AUDIT_BLOCKS).max(1);
+                let mut b = 0u64;
+                while b + 1 < nblocks {
+                    // block b occupies rows [l1(b), l1(b+1)), so its run lengths
+                    // must sum to exactly that span. Decoded, not assumed.
+                    let sum = cx.block_sum(b)?;
+                    let (s0, s1) = (idx.l1(b), idx.l1(b + 1));
+                    if s1 - s0 != sum {
+                        bad += 1;
+                    }
+                    checked += 1;
+                    b += step;
                 }
-                checked += 1;
-                b += step;
-            }
-            // the tail: the last block must end on n
-            let last = nblocks - 1;
-            let (sum, start) = cx.block_runs_sum(last)?;
-            let (_, _) = (sum, start);
-            let tail_runs = r - last * M1_BLOCK_RUNS;
-            let last_sum = cx.block_sum(last)?;
-            if idx.l1(last) + last_sum != n {
-                return Err(format!(
-                    "m1 block audit: the last window starts at {} and sums to {}, but n={n}",
-                    idx.l1(last),
-                    last_sum
-                ));
-            }
-            let _ = tail_runs;
-            if bad != 0 {
-                return Err(format!(
-                    "m1 block audit: {bad} of {checked} sampled block pairs disagree with m12 run starts"
-                ));
-            }
-            idx.decoded_bytes = cx.misses * (BLOCK_BYTES_EST as u64);
-            idx.audit_blocks = checked + 1;
-            (checked + 1, cx.misses)
+                // the tail: the last window must close exactly on n
+                let last = nblocks - 1;
+                let last_sum = cx.block_sum(last)?;
+                if idx.l1(last) + last_sum != n {
+                    return Err(format!(
+                        "m1 block audit: the last window starts at {} and sums to {}, but n={n}",
+                        idx.l1(last),
+                        last_sum
+                    ));
+                }
+                if bad != 0 {
+                    return Err(format!(
+                        "m1 block audit: {bad} of {checked} sampled blocks do not sum to their m12\n  \
+                         run-start span"
+                    ));
+                }
+                (checked + 1, cx.misses)
+            };
+            (checked, misses)
         };
         let t_audit = t0.elapsed();
         let (n_audit, dec) = audit;
+        idx.decoded_bytes = dec * BLOCK_BYTES_EST;
+        idx.audit_blocks = n_audit;
         let stages = vec![
-            ("m11-anchors", (t_anchors - t0).as_secs_f64() * 1e3),
+            ("m11-anchors", t_anchors.as_secs_f64() * 1e3),
             ("prefetch", (t_prefetch - t_anchors).as_secs_f64() * 1e3),
             ("block-audit", (t_audit - t_prefetch).as_secs_f64() * 1e3),
         ];
@@ -922,10 +950,6 @@ impl Index {
     }
 }
 
-fn rd_l2_declared(rd: &RunDir) -> u64 {
-    0u64.max(rd.l2)
-}
-
 // ------------------------------------------------------------ the query thread
 
 impl<'a> Ctx<'a> {
@@ -951,8 +975,11 @@ impl<'a> Ctx<'a> {
         let lbytes = (lbits as u64 + 7) / 8;
         let start = idx.payload_off + off;
         let end = start + hbytes + lbytes;
-        if end > idx.payload_off + idx.reader.member(1).bytes - idx.reader.member(1).offset {
-            die(&format!("m1 block {b} runs past the payload area"));
+        if end > idx.payload_end {
+            die(&format!(
+                "m1 block {b} runs past the payload area ({end} > {})",
+                idx.payload_end
+            ));
         }
         let p = &idx.reader.map.as_ref()[start as usize..end as usize];
         let first = b * M1_BLOCK_RUNS;
@@ -980,11 +1007,8 @@ impl<'a> Ctx<'a> {
     fn hits(&self) -> u64 {
         self.hits
     }
-    /// Sum of the run lengths in block `b`, and the row at which it starts.
-    fn block_runs_sum(&mut self, b: u64) -> Result<(u64, u64), String> {
-        let s = self.idx.l1(b);
-        Ok((self.block_sum(b)?, s))
-    }
+    /// Sum of the run lengths in block `b`: one decode, and the caller checks it
+    /// against the m12 run-start span it must equal. Fail-loud, not advisory.
     fn block_sum(&mut self, b: u64) -> Result<u64, String> {
         let first = b * M1_BLOCK_RUNS;
         let want = ((first + M1_BLOCK_RUNS).min(self.idx.reader.r) - first) as usize;
@@ -1416,14 +1440,20 @@ pub fn command(args: &[String]) {
         .map(|(n, ms)| format!("{n}={ms:.1}ms"))
         .collect();
     eprintln!(
-        "QLITE_BUILD runs={} decoded_bytes={} stages=[{}] build_ms={:.1} n={} threads={} patterns={}",
+        "QLITE_BUILD runs={} decoded_bytes={} stages=[{}] build_ms={:.1} n={} threads={} patterns={} \
+         m1_block_runs={} m1_blocks={} rundir_l2={} rundir_occ_stride={} rundir_gap={}",
         index.r(),
         index.decoded_bytes,
         stage_list.join(" "),
         index.build_ms,
         index.n(),
         a.threads,
-        patterns.len()
+        patterns.len(),
+        index.block_runs,
+        index.nblocks,
+        index.rundir_stride,
+        index.rd.occ_stride,
+        index.rd.run_gap
     );
     let sigma = index.reader.sigma;
     let stdout = std::io::stdout();
@@ -1445,15 +1475,18 @@ pub fn command(args: &[String]) {
             // (identity, reverse-only, remap-only) gives 0/100.
             let mut work: Vec<u8> = pat.iter().map(|&c| sigma[c as usize]).collect();
             work.reverse();
+            // One block cache per pattern: the working set of a single rank/locate
+            // walk, so two patterns sharing a rayon thread never evict each other.
+            let mut cx = index.ctx();
             let ts = Instant::now();
-            let (l, r) = index.search(&work);
+            let (l, r) = cx.search(&work);
             let search_us = ts.elapsed().as_secs_f64() * 1e6;
             let tl = Instant::now();
             let mut positions = Vec::with_capacity((r - l).min(1 << 20) as usize);
             let mut steps = 0u64;
             let mut max_steps = 0u64;
             for row in l..r {
-                let (p, st) = index.locate_steps(row);
+                let (p, st) = cx.locate_steps(row);
                 positions.push(p);
                 steps += st;
                 max_steps = max_steps.max(st);
