@@ -805,10 +805,19 @@ pub fn tape_band_plan(
 ) -> TapeBandPlan {
     let envelope = tape_envelope_bytes(memory_gb);
     let bytes_per_row = tape_bytes_per_row(lcp_slices);
+    // PARALLELISM P = bands LIVE at once = the thread count. The band sort is
+    // single-threaded, so P is what keeps the pool busy, and rows_per_band =
+    // arena/(bpr x P) is memory-legal for any P. What the first 100 GB attempt got
+    // wrong was the UNIT (185,721,167 rows, derived from the corpus) at P=96, i.e.
+    // 96 x 185 M x 41 B = 728 GB - not P itself. The second attempt got the unit
+    // right and died of DESCRIPTORS (nbands x nparts part files held open at once
+    // in the scatter), fixed in the producer, not here. K (--pending-bands) is the
+    // tape handshake WINDOW: it bounds outstanding band FILES and never sizes the
+    // arena, so it appears in this plan nowhere.
     let bands_in_flight = threads.max(1);
     let sample_bytes = (TAPE_SAMPLE_SLOTS.min(n) + 2) * 8;
     let ctl = TAPE_CTL_BYTES.min(envelope / 64).max(1 << 20);
-    let fixed = bands_in_flight * (TAPE_SCAN_CHUNK + 4096) + bands_in_flight * 256 * 8
+    let fixed = threads.max(1) * (TAPE_SCAN_CHUNK + 4096) + threads.max(1) * 256 * 8
         + sample_bytes + ctl;
     let stage = (envelope / TAPE_STAGE_DIVISOR).clamp(TAPE_STAGE_MIN, TAPE_STAGE_MAX);
     let avail = envelope.saturating_sub(fixed.saturating_add(stage));
@@ -1425,6 +1434,12 @@ mod tests {
         // The unit the 100 GB run must use is ~38x smaller than the one it used.
         assert!(b.rows_per_band * 30 < 185_721_167,
                 "the work unit must be far below the corpus-derived 185,721,167 (got {})", b.rows_per_band);
+        // PARALLELISM P is the thread count, and the unit is arena/(bpr x P): fewer
+        // threads mean bigger bands (same memory) and fewer bands live at once.
+        assert_eq!(a.bands_in_flight, 96);
+        let fewer_threads = tape_band_plan(n10, 16, 96, true, 2 * n10);
+        assert_eq!(fewer_threads.bands_in_flight, 16);
+        assert!(fewer_threads.rows_per_band > a.rows_per_band);
         // HALF the envelope, half the unit: rows_per_band is a function of --memory-gb.
         let half = tape_band_plan(n10, 96, 48, true, 2 * n10);
         assert!(half.rows_per_band < a.rows_per_band);

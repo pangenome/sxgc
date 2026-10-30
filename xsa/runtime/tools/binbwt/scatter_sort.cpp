@@ -54,6 +54,8 @@
 #include <sys/stat.h>
 #include <sys/resource.h>
 #include <unistd.h>
+#include <dirent.h>
+#include <atomic>
 #include <mutex>
 #include <condition_variable>
 #include <deque>
@@ -69,6 +71,29 @@ using u64 = uint64_t;
 static void die(const std::string& m) {
     std::fprintf(stderr, "scatter_sort: %s\n", m.c_str());
     std::exit(2);
+}
+
+// ---------------------------------------------------------------------------
+// LIVE DESCRIPTORS. The scatter holds band-part files and every band worker
+// holds the bands it reads; when the count exceeds the limit the failure is a
+// std::system_error out of a worker (rc=134), not a bad_alloc - the second
+// 100 GB attempt died exactly there. /proc/self/fd is the only honest source
+// (a hand counter drifts the moment an open fails), and it is one opendir.
+// ---------------------------------------------------------------------------
+static std::atomic<u64> FD_PEAK{0};
+static u64 liveFdCount() {
+    DIR* d = ::opendir("/proc/self/fd");
+    if (!d) return 0;
+    u64 n = 0;
+    while (struct dirent* e = ::readdir(d))
+        if (e->d_name[0] != '.') ++n;
+    ::closedir(d);
+    return n;                        // the opendir's own fd is counted, by one
+}
+static u64 noteFdPeak() {
+    const u64 n = liveFdCount();
+    if (n > FD_PEAK.load(std::memory_order_relaxed)) FD_PEAK.store(n);
+    return n;
 }
 static double now_sec() {
     struct timespec ts;
@@ -666,6 +691,54 @@ int main(int argc, char** argv) {
     if (!selftestOracle.empty() && !tapeBands.empty()) die("--selftest requires --out");
     if (!tapeBands.empty() && (!pendingBands || keep_rows))
         die("tape bands require K>0 and no keep-rows");
+    // ================= THE DESCRIPTOR ENVELOPE ==============================
+    // The second 100 GB attempt died with
+    //     terminate called after throwing an instance of 'std::system_error'  (rc=134)
+    // while the budget law itself was right (rows_per_band 659,875 came from the
+    // envelope): the run was out of DESCRIPTORS, because it held
+    // nbands x nparts band-part files open at once (4x K bands x --threads
+    // parts) AND K was the thread count. Both halves are fixed here and in the
+    // band workers / the scatter (one open part file per scan thread, closed the
+    // moment the thread moves to another band).
+    //
+    // This is the third leg: raise RLIMIT_NOFILE to what the run needs, bounded by
+    // the HARD limit and a sane maximum, and journal the three numbers - a soft
+    // limit that cannot hold the projection is a CONFIGURATION error, loud here,
+    // never a std::system_error out of a worker thread later.
+    u64 fd_soft = 0, fd_hard = 0, fd_wanted = 0;
+    {
+        struct rlimit rl{};
+        if (::getrlimit(RLIMIT_NOFILE, &rl) != 0) die("getrlimit(RLIMIT_NOFILE)");
+        const u64 soft0 = (u64)rl.rlim_cur, hard = (u64)rl.rlim_max;
+        // One descriptor per pool thread (the scan's part file), one per band a
+        // worker is reading or publishing, and the long-lived ones (corpus, remap,
+        // out, sym, manifest, guides). The wave's band count is at most
+        // SS_OVERSUBSCRIBE x K, which is what the second term prices.
+        fd_wanted = SS_OVERSUBSCRIBE * std::max<u64>(1, pendingBands) + 2 * std::max<u64>(1, threads) + 64;
+        const u64 sane_max = 1u << 20;
+        const u64 ceiling = std::min<u64>(hard, sane_max);
+        const u64 want = std::min<u64>(std::max<u64>(soft0, fd_wanted), ceiling);
+        if (want > soft0) {
+            struct rlimit nr = rl;
+            nr.rlim_cur = (rlim_t)want;
+            if (::setrlimit(RLIMIT_NOFILE, &nr) != 0 && fd_wanted > soft0)
+                die("RLIMIT_NOFILE: this run projects " + std::to_string(fd_wanted) +
+                    " descriptors, the soft limit is " + std::to_string(soft0) +
+                    " and raising it to " + std::to_string(want) + " failed (hard " +
+                    std::to_string(hard) + ")");
+        }
+        struct rlimit got{};
+        if (::getrlimit(RLIMIT_NOFILE, &got) != 0) die("getrlimit(RLIMIT_NOFILE) after raise");
+        fd_soft = (u64)got.rlim_cur;
+        fd_hard = (u64)got.rlim_max;
+        std::fprintf(stderr,
+            "SS_TAPE_FDS soft=%" PRIu64 " hard=%" PRIu64 " wanted=%" PRIu64
+            " soft0=%" PRIu64 " fd_ceiling=%" PRIu64 " rule=raise to wanted, bounded by "
+            "min(hard,%" PRIu64 ") bands_per_wave_max=%" PRIu64 " threads=%" PRIu64 "\n",
+            fd_soft, fd_hard, fd_wanted, soft0, std::min<u64>(hard, u64(1) << 20), u64(1) << 20,
+            SS_OVERSUBSCRIBE * std::max<u64>(1, pendingBands), std::max<u64>(1, threads));
+        noteFdPeak();
+    }
     int fd = ::open(corpus.c_str(), O_RDONLY);
     struct stat st{};
     if (fd < 0 || ::fstat(fd, &st)) die("cannot open/stat corpus");
@@ -771,8 +844,25 @@ int main(int argc, char** argv) {
     const bool plan_lcp = lcpOn;
     const u64 envelope_bytes = budget_bytes ? budget_bytes : (u64)(ram_gb * 1e9);
     if (!envelope_bytes) die("--budget-bytes (or --ram-gb) must be positive");
+    // THE PARALLELISM P, AND WHY IT IS THE THREAD COUNT.
+    // Two numbers were confused and they are NOT the same thing:
+    //   P = bands LIVE at once (parallelism). The band sort is single-threaded, so
+    //       P is what keeps the pool busy: P band arenas are admitted at a time and
+    //       each is sorted by one worker.
+    //   K = the band WINDOW of the tape handshake (--pending-bands: one band per
+    //       slot, consumed before the next is published). K bounds how many band
+    //       FILES are outstanding, never how many hold rows in RAM.
+    // The first 100 GB attempt did not die of P=96: it priced rows_per_band=185M
+    // (from the CORPUS) WITH P=96, i.e. 96 x 185M x 41 B = 728 GB. The budget law
+    // below is the fix - rows_per_band = arena/(bpr x P) - and it is memory-legal
+    // for ANY P, so P stays the thread count. The second attempt died of
+    // DESCRIPTORS (nbands x nparts part files held open at once), which is fixed in
+    // the scatter and with RLIMIT_NOFILE, independently of P.
+    // --par-bands stays as the explicit override it always was.
     const u64 k_in_flight = par_bands ? par_bands
                                       : std::max<u64>(1, threads);
+    const char* k_source = par_bands ? "operator --par-bands"
+                                     : "thread count (P = --threads; K=--pending-bands is the tape window)";
     TapeBudget budget = tape_budget_plan(envelope_bytes, std::max<u64>(1, threads), k_in_flight,
                                          plan_lcp, sample_n, N, cap_bytes, row_bytes);
     // THE PLAN IS PRE-FLIGHTED AGAINST THE PROCESS'S OWN ADDRESS SPACE: a reserve
@@ -857,7 +947,13 @@ int main(int argc, char** argv) {
         " waves=%" PRIu64 " rows_per_wave=%" PRIu64 " arena_bytes=%" PRIu64
         " arena_planned_rows=%" PRIu64 " cap_rows=%" PRIu64 " fixed_bytes=%" PRIu64
         " stage_bytes=%" PRIu64
-        " source=%s (rows_per_band is derived from the envelope; n is in NO numerator)\n",
+        " source=%s k_source=%s fd_soft=%" PRIu64 " fd_hard=%" PRIu64
+        " parallel_bands=%" PRIu64 " live_rows=%" PRIu64 " budget_rows=%" PRIu64
+        " ratio=%.4f\n"
+        " (rows_per_band = arena/(bpr x parallel_bands): the work unit is derived from the envelope, n is"
+        " in NO numerator; parallel_bands is the count of bands LIVE at once - the tape window K"
+        " (--pending-bands) bounds band FILES, never live arenas; live_rows = parallel_bands x"
+        " rows_per_band, budget_rows = envelope/bpr, ratio = live_rows x bpr / envelope)\n",
         (memory_gb > 0 ? memory_gb : ram_gb), envelope_bytes, budget.bytes_per_row,
         row_bytes, plan_lcp ? row_bytes : 0, plan_lcp ? 16u : 0u, plan_lcp ? 1u : 0u, 9u,
         double(SS_SAFETY_PCT) / 100.0,
@@ -866,7 +962,11 @@ int main(int argc, char** argv) {
         rows_per_band == budget.rows_per_band_budget ? "budget" : "scratch-window",
         budget.bands_per_wave, waves, rows_per_wave,
         budget.arena, budget.arena_planned, budget.cap_rows, budget.fixed, budget.stage,
-        budget_bytes ? "operator --budget-bytes" : "legacy --ram-gb");
+        budget_bytes ? "operator --budget-bytes" : "legacy --ram-gb", k_source, fd_soft, fd_hard,
+        budget.bands_in_flight, budget.bands_in_flight * budget.rows_per_band,
+        envelope_bytes / std::max<u64>(1, budget.bytes_per_row),
+        double(budget.bands_in_flight) * double(budget.rows_per_band) * double(budget.bytes_per_row)
+            / double(envelope_bytes));
 
     // ---- exact first-byte histogram: one parallel pass, 256 counters. This is
     // what makes the per-wave FILTER cheap: a rejected position costs one load
@@ -1271,7 +1371,16 @@ int main(int argc, char** argv) {
 
         // ---- scatter this wave only ----
         const u64 nparts = std::max<u64>(1, threads);
-        std::vector<std::vector<int>> fds(nbands, std::vector<int>(nparts, -1));
+        // ONE OPEN PART FILE PER SCAN THREAD, NOT ONE PER (BAND, PART).
+        // The scan is sequential in key order, so a thread appends to a few bands
+        // in a row and the descriptor it no longer needs goes back IMMEDIATELY: no
+        // descriptor is held for a band this thread has left. The 100 GB run held
+        // nbands x nparts of them (4 x K bands x --threads parts, K = the thread
+        // count) and died with std::system_error (rc=134). `made` records the parts
+        // that already exist so the O_TRUNC happens exactly once per part.
+        std::vector<std::vector<u8>> made(nparts, std::vector<u8>(nbands, 0));
+        std::vector<int> curFd(nparts, -1);
+        std::vector<u64> curBand(nparts, ~0ull);
         u64 bufsz = 1u << 20;
         // THE STAGING IS PRICED (budget.stage), so the scatter may not outgrow the
         // number the planner paid for: the cap is the model's, not a constant.
@@ -1282,17 +1391,21 @@ int main(int argc, char** argv) {
         auto flush_buf = [&](u64 t, u64 b) {
             auto& v = bufs[t][b];
             if (v.empty()) return;
-            if (fds[b][t] < 0) {
+            if (curFd[t] < 0 || curBand[t] != b) {
+                if (curFd[t] >= 0) { if (::close(curFd[t])) die("close band part"); curFd[t] = -1; }
                 char name[512];
                 std::snprintf(name, sizeof name, "%s/w%" PRIu64 ".b%05" PRIu64 ".p%05" PRIu64,
                               scratch.c_str(), w, b, t);
-                int f = ::open(name, O_WRONLY | O_CREAT | O_TRUNC, 0666);
-                if (f < 0) die("create band part");
-                fds[b][t] = f;
+                const int f = ::open(name, O_WRONLY | O_CREAT | (made[t][b] ? O_APPEND : O_TRUNC), 0666);
+                if (f < 0) die(std::string("create band part ") + name);
+                curFd[t] = f;
+                curBand[t] = b;
+                made[t][b] = 1;
+                noteFdPeak();
             }
             size_t off = 0;
             while (off < v.size()) {
-                ssize_t wr = ::write(fds[b][t], v.data() + off, v.size() - off);
+                ssize_t wr = ::write(curFd[t], v.data() + off, v.size() - off);
                 if (wr <= 0) die("write band part");
                 off += size_t(wr);
             }
@@ -1366,8 +1479,8 @@ int main(int argc, char** argv) {
                 base += chunk;
             }
             for (u64 b = 0; b < nbands; ++b) flush_buf(t, b);
-            for (u64 b = 0; b < nbands; ++b)
-                if (fds[b][t] >= 0) { ::close(fds[b][t]); fds[b][t] = -1; }
+            if (curFd[t] >= 0) { if (::close(curFd[t])) die("close band part"); curFd[t] = -1; }
+            noteFdPeak();
         };
         pool->run([&](unsigned t) { worker(t); });
         const double tScan = now_sec() - tw;
@@ -1501,6 +1614,9 @@ int main(int argc, char** argv) {
                             ::close(f);
                         }
                         tRead[b] = now_sec() - br0;
+                        // every part descriptor of this band is closed by now: the
+                        // band's files are consumed, so nothing is held for it.
+                        noteFdPeak();
                         const double bs0 = now_sec();
                         bandLcp.clear();
                         bandEsc.clear();
@@ -1885,9 +2001,10 @@ int main(int argc, char** argv) {
             std::fprintf(stderr,
                 "SS_WAVE w=%" PRIu64 "/%" PRIu64 " bands=%" PRIu64 " wall=%.2f"
                 " scan=%.2f | band_sum read=%.2f sort=%.2f write=%.2f"
-                " | band_max read=%.2f sort=%.2f write=%.2f\n",
+                " | band_max read=%.2f sort=%.2f write=%.2f | fd_live=%" PRIu64
+                " fd_peak=%" PRIu64 "\n",
                 w + 1, waves, nbands, now_sec() - tw, tScan,
-                rd, so, wr, rdm, som, wrm);
+                rd, so, wr, rdm, som, wrm, noteFdPeak(), FD_PEAK.load());
         }
     }
 
@@ -1966,6 +2083,18 @@ int main(int argc, char** argv) {
     const double total_ratio = double(hwm_kb) * 1024.0 / double(envelope_bytes);
     const u64 arena_peak_rows = gate.peak;
     const u64 arena_peak_bytes = arena_peak_rows * budget.bytes_per_row;
+    noteFdPeak();
+    const u64 fd_peak = FD_PEAK.load();   // the PEAK, not the count at exit
+    std::fprintf(stderr,
+        "SS_TAPE_FD_PEAK live_fds_peak=%" PRIu64 " fd_soft=%" PRIu64 " fd_hard=%" PRIu64
+        " fd_wanted=%" PRIu64 " bands_in_flight=%" PRIu64 " threads=%" PRIu64
+        " (peak of /proc/self/fd: one open part file per scan thread, one band at a"
+        " time per worker, no descriptor held for a band already read)\n",
+        fd_peak, fd_soft, fd_hard, fd_wanted, budget.bands_in_flight, threads);
+    if (fd_peak > fd_soft)
+        die("TAPE_FD_OVER_LIMIT: the run reached " + std::to_string(fd_peak) +
+            " live descriptors against a soft limit of " + std::to_string(fd_soft) +
+            " (hard " + std::to_string(fd_hard) + ") - raise RLIMIT_NOFILE or --par-bands");
     std::fprintf(stderr,
         "SS_TAPE_PEAK peak_rss_kb=%" PRIu64 " budget_ratio=%.4f budget_bytes=%" PRIu64
         " peak_anon_kb=%" PRIu64 " peak_file_kb=%" PRIu64 " peak_total_kb=%" PRIu64
@@ -1993,6 +2122,29 @@ int main(int argc, char** argv) {
             std::to_string(arena_peak_bytes) + " B against an envelope of " +
             std::to_string(envelope_bytes) + " B (cap_rows=" + std::to_string(budget.cap_rows) +
             ", rows_per_band=" + std::to_string(rows_per_band) + ")");
+    }
+    // THE PLAN'S OWN RATIO, ASSERTED EXACTLY (not a monotonic proxy):
+    //     live_rows x bpr / envelope  <=  0.90,  live_rows = parallel_bands x rows_per_band
+    // This is the memory law the supervisor's mandate names: P live bands of
+    // rows_per_band rows at bytes_per_row each, inside the envelope. It is checked
+    // BEFORE the RSS receipt is trusted, so a plan that prices more than the
+    // envelope can never be reported as a pass.
+    {
+        const u64 live_rows = budget.bands_in_flight * budget.rows_per_band;
+        const double plan_ratio = double(live_rows) * double(budget.bytes_per_row) / double(envelope_bytes);
+        const u64 budget_rows_whole = envelope_bytes / std::max<u64>(1, budget.bytes_per_row);
+        std::fprintf(stderr,
+            "SS_TAPE_PARALLEL parallel_bands=%" PRIu64 " rows_per_band=%" PRIu64
+            " live_rows=%" PRIu64 " budget_rows=%" PRIu64 " ratio=%.4f bound=%.2f\n",
+            budget.bands_in_flight, rows_per_band, live_rows, budget_rows_whole, plan_ratio,
+            double(SS_BUDGET_RATIO_MAX) / 100.0);
+        if (plan_ratio > double(SS_BUDGET_RATIO_MAX) / 100.0)
+            die("TAPE_PLAN_RATIO: parallel_bands=" + std::to_string(budget.bands_in_flight) +
+                " x rows_per_band=" + std::to_string(rows_per_band) + " x " +
+                std::to_string(budget.bytes_per_row) + " B = " +
+                std::to_string(live_rows * budget.bytes_per_row) + " B of " +
+                std::to_string(envelope_bytes) + " B (ratio " + std::to_string(plan_ratio) +
+                " > 0.90) - the plan prices more than the envelope it was given");
     }
     std::fprintf(stderr,
         "SS_DONE n=%" PRIu64 " waves=%" PRIu64 " ties=%" PRIu64

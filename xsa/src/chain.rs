@@ -1293,11 +1293,10 @@ fn run_chain(options: Options) -> Result<(), String> {
                 build_plan.ram_verdict = tape_plan.verdict();
                 if !tape_plan.feasible() {
                     build_plan.alternatives.push(format!(
-                        "raise --memory-gb (the band arena is half of it) or lower --threads \
-                         (bands_in_flight is the thread count): rows_per_band={} < floor={} at \
-                         --memory-gb {} - {}",
+                        "raise --memory-gb (the band arena is half of it): rows_per_band={} < \
+                         floor={} at --memory-gb {} and K={} bands in flight - {}",
                         tape_plan.rows_per_band, tape_plan.floor_rows, options.memory_gb,
-                        tape_plan.verdict()));
+                        tape_plan.bands_in_flight, tape_plan.verdict()));
                 }
             }
         }
@@ -1784,6 +1783,10 @@ fn run_v2_tail(
     // work / 2365 s vs 3.1e8 / 2072 s).
     let lce_verify = std::env::var("XSA_LCE_VERIFY").map(|v| v == "1").unwrap_or(false);
     let lcp_source = if lce_verify { "lce-verify" } else { "sorter-bands" };
+    // THE TAPE WINDOW K, NOT THE PARALLELISM. K bounds how many band FILES are
+    // outstanding (one band per slot, consumed before the next is published); it
+    // never sizes the band arena. The in-flight band count that the budget law
+    // divides by is P = --threads (see plan::tape_band_plan).
     let tape_k: u64 = 8;
     // THE PLAN THE PRODUCER WILL EXECUTE, recomputed here with the same function
     // the plan block used: the gate after the run compares it against the
@@ -1793,8 +1796,15 @@ fn run_v2_tail(
         n.saturating_add(1), options.threads as u64, options.memory_gb, !lce_verify, 2 * n.saturating_add(2),
     );
     let tape_envelope = tape_plan.envelope_bytes;
+    // TWO NUMBERS, NAMED. P = bands LIVE at once = --threads: the arena divisor
+    // (rows_per_band = arena/(bpr x P)), journaled as parallel_bands=P. K is the
+    // tape handshake WINDOW (--pending-bands): it bounds outstanding band FILES
+    // and never sizes the arena. Confusing the two is what priced the first 100 GB
+    // attempt at 96 x 185 M x 41 B = 728 GB.
     journal.line(&format!(
-        "TAPE_ROUTE route=tape source={} lcp_source={} pending_bands={tape_k}          lcp_column=none (per-band slices band_<i>.lcp; one slice per band in flight)",
+        "TAPE_ROUTE route=tape source={} lcp_source={} pending_bands_k={tape_k} \
+         parallel_bands_p=threads lcp_column=none (per-band slices band_<i>.lcp; \
+         one slice per band in flight)",
         if options.tape { "explicit" } else { "implicit" }, lcp_source));
     if lce_verify {
         journal.line("TAPE_AB_ARM XSA_LCE_VERIFY=1: INTERNAL A/B (the old LCE path: the finish \
