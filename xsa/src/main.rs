@@ -18,6 +18,7 @@ mod bundle;
 mod plan;
 mod product;
 mod forks;
+mod corpus;
 
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
@@ -1444,6 +1445,7 @@ fn main() {
         }
         Some("mems") => product::command("mems", &args[1..]),
         Some("forks") => forks::command(&args[1..]),
+        Some("corpus") => corpus::command(&args[1..]),
         Some("witness-build") => product::witness_build(&args[1..]),
         Some("serve") => product::command("serve", &args[1..]),
         Some("build-anchors") => cmd_build_anchors(&args[1..]),

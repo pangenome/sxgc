@@ -1,0 +1,77 @@
+<mediawiki xmlns="http://www.mediawiki.org/xml/export-0.11/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mediawiki.org/xml/export-0.11/ http://www.mediawiki.org/xml/export-0.11.xsd" version="0.11" xml:lang="en">
+  <siteinfo>
+    <sitename>Wikipedia</sitename>
+    <dbname>testwiki</dbname>
+    <base>https://en.wikipedia.org/wiki/Main_Page</base>
+    <generator>MediaWiki 1.44.0-wmf.8</generator>
+    <case>first-letter</case>
+    <namespaces>
+      <namespace key="-2" case="first-letter">Media</namespace>
+      <namespace key="0" case="first-letter" />
+      <namespace key="4" case="first-letter">Wikipedia</namespace>
+      <namespace key="14" case="first-letter">Category</namespace>
+    </namespaces>
+  </siteinfo>
+  <page>
+    <title>Anarchism</title>
+    <ns>0</ns>
+    <id>12</id>
+    <revision>
+      <id>1234</id>
+      <parentid>1233</parentid>
+      <timestamp>2025-01-01T00:00:00Z</timestamp>
+      <contributor>
+        <username>Someone</username>
+        <id>99</id>
+      </contributor>
+      <comment>fix &amp; tidy</comment>
+      <model>wikitext</model>
+      <format>text/x-wiki</format>
+      <text bytes="58" xml:space="preserve">'''Anarchism''' is a political philosophy. &lt;ref&gt;x&lt;/ref&gt;</text>
+      <sha1>aaa</sha1>
+    </revision>
+  </page>
+  <page>
+    <title>Béla Bartók</title>
+    <ns>0</ns>
+    <id>13</id>
+    <revision>
+      <id>2001</id>
+      <contributor>
+        <ip>203.0.113.9</ip>
+      </contributor>
+      <comment>naïve – 日本語</comment>
+      <text bytes="34" xml:space="preserve">composer, pianist, ethnomusicologist</text>
+    </revision>
+  </page>
+  <page>
+    <title>Category:Living people</title>
+    <ns>14</ns>
+    <id>14</id>
+    <revision>
+      <id>3001</id>
+      <text bytes="10" xml:space="preserve">alphabeta</text>
+    </revision>
+  </page>
+  <page>
+    <title>Deleted text page</title>
+    <ns>0</ns>
+    <id>15</id>
+    <revision>
+      <id>4001</id>
+      <text deleted="deleted" />
+    </revision>
+  </page>
+  <page>
+    <title>Tab	and trailing spaces</title>
+    <ns>0</ns>
+    <id>16</id>
+    <revision>
+      <id>5001</id>
+      <text bytes="63" xml:space="preserve">line one
+line two  
+	indented with a tab
+and "quotes" &amp; a 50% sign </text>
+    </revision>
+  </page>
+</mediawiki>
