@@ -33,8 +33,14 @@ untested-20261022) was never shown guilty; it is being re-proven by scale gates 
 1. rc=137 = ENV-KILL (memory weather), classified before any theory. Code guilt requires a
    non-137 fault with a real signature.
 2. No merge without a 10 GB real-config gate. Oracles + 1 GB banks do not substitute.
-3. Every source-touching commit refreshes xsa/SOURCES.sha256.json (the breach let bundles
-   verify against stale manifests).
+3. ~~Every source-touching commit refreshes xsa/SOURCES.sha256.json~~ **REPEALED
+   2026-10-30** (operator verdict): the source digest file was a hand-maintained
+   duplicate of what git already records, and it refused the build on every merge
+   that touched a covered file (four times in one night). It is deleted. Provenance
+   is git's: every `xsa build` journals `XSA_SOURCE git_commit=<sha> git_dirty=<0|1>
+   branch=<name>` as the first line of `xsa-build.log`. Editing a covered source now
+   needs no regeneration step. `MANIFEST.sha256` (the INSTALLED bundle's file list)
+   is a different artifact and is untouched.
 4. The entry can orphan its finish-v2 child (68-year poll timeout) when a phase dies:
    reap orphans after every failed gate.
 

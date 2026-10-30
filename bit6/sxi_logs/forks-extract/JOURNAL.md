@@ -57,7 +57,8 @@ coordinate questions empirically:
   per-thread arenas; JSONL emission in text order (virtual end last).
 
 `SOURCES.sha256.json` refreshed via `tools/package_xsa_sources.py` (the
-build gate rejects modified sources otherwise). Side effect: the packager
+build gate rejects modified sources otherwise). *(SUPERSEDED 2026-10-30: digest file
+deleted; no build gate, provenance is git. The packager still re-syncs sources.)* Side effect: the packager
 re-synced 4 runtime snapshot files (`runtime/bit6/pfp_ds_vendor/pfp/dictionary.hpp`,
 `seam_repair.hpp`, `sxi_pipeline.py`, new `sa_workspace.hpp`) that were
 stale against the repo's own committed `bit6/` sources; no upstream source
