@@ -20,18 +20,31 @@
 //! | m11 | locate anchors: the tail SA of every 1024th run |
 //! | m4, m7 | record anchors (empty here) and the byte permutation |
 //!
-//! Cost model: one sequential pass over m1 builds a random-access rank/locate
-//! kernel in three streaming arrays with no scatter —
+//! MEMORY LAW: this reader's footprint must be INDEPENDENT of n. It holds
 //!
-//!   heads[i]  run symbol                              (1 B/run)
-//!   rlen[i]   run length                              (4 B/run)
-//!   seen[i]   count of heads[i] in runs before i       (4 B/run)
+//!   * the mmap'd container (page cache, not this process's heap; bounded below), and
+//!   * ONE fixed-size cache of decoded m1 blocks — `CACHE_BYTES`, a compile-time
+//!     constant, never a flag.
 //!
-//! `seen` is the whole point: `start[run] = C[ch] + seen[run]` is the LF start
-//! that a lite container no longer stores, and `rank(ch, i)` needs no
-//! predecessor search over per-symbol run lists (`cruns`) at all. After that a
-//! pattern costs O(k) rank steps plus one LF walk per occurrence, i.e. µs, and
-//! startup is mmap + one streaming build.
+//! That is the whole of it. Nothing per-run is materialised: an earlier revision
+//! of this module decoded the entire run stream at open into
+//! `heads: u8/run`, `len|seen: u64/run`, which is 511 MB of HEAP at 150 MB of
+//! text, ~28 GB at 10 GB and ~3.7 TB at 1.3 TB — it violated the project's
+//! memory law and has been deleted. Everything an answer needs is already IN the
+//! container and is LOCATED, not rebuilt:
+//!
+//! | need | located from |
+//! |---|---|
+//! | run heads / run lengths | one decoded m1 block (`block_runs` runs wide) |
+//! | row -> run | m12 run-start samples (bisect: one 8 B cell per block) |
+//! | rows of `c` before run k | m13 sampled run directory + a scan bounded by the directory's own `run_gap` |
+//! | SA of an anchored run | m11 (read straight out of the mapping) |
+//! | C table | m1 header (256 u64) |
+//!
+//! The cost of that law is real and is measured, not hidden: a rank step used to
+//! be 0.49 us with the run columns in RAM and is now a handful of cached block
+//! decodes (see `QLITE_MEM` and `QUERY_DONE` in the journal). Bounded memory is
+//! the requirement; the µs figure is reported honestly next to it.
 //!
 //! There is no `--ri4`/`--sxi`/`--mode`: the container tells us what it is, and
 //! anything that is not a v6 lite container is refused by name (see
@@ -74,21 +87,39 @@ pub const M1_BLOCK_RUNS_MAX: u64 = 1 << 16;
 // spend on itself", so it lives here as a constant.
 // ---------------------------------------------------------------------------
 
-/// Reader-only: direct-mapped m1 block cache entries per pattern thread.
-/// 4096 x ~0.34 KB = ~1.4 MB of working set; the container says nothing about it.
-const BLOCK_CACHE: usize = 4096;
+/// THE CACHE BUDGET. A compile-time constant and the reader's only heap of any
+/// size: the decoded-block arena. 64 MB holds 52,428 decoded 256-run blocks
+/// (1.28 KB each) or 13,107 decoded 1024-run blocks (5.12 KB each), whatever n
+/// is. It is split into `CACHE_SHARDS` independently locked LRU caches so a
+/// block decode (2-9 us) does not serialise the pattern threads.
+const CACHE_BYTES: usize = 64 << 20;
+/// Reader-only: shards of the block cache. Each shard owns CACHE_BYTES/shards of
+/// the arena and its own LRU list, so concurrent decodes do not contend.
+const CACHE_SHARDS: usize = 64;
 /// Reader-only: how many blocks the open-time fail-loud audit samples. Shapes
-/// the audit's cost (~2 decodes each), never how a run is addressed.
+/// the audit's cost (~1 decode each), never how a run is addressed.
 const M1_AUDIT_BLOCKS: u64 = 1024;
-/// Reader-only: bytes charged per decoded block in `decoded_bytes` (a sizing
-/// estimate for the accounting line; the true block is ~190 B + rounding and is
-/// declared nowhere, so this must not be used for anything but the estimate).
-const BLOCK_BYTES_EST: u64 = 192;
-/// Reader-only: the row granularity of the row -> run directory (one entry, 12 B,
-/// per ROW_DIR rows). 256 rows is ~98 runs at the 150 MB fixture's 2.62 rows/run,
-/// so the scan it saves is short and its 7 MB stays L3-friendly; it never changes
-/// an answer, only how many loads the scan needs.
-const ROW_DIR: u64 = 256;
+/// Reader-only: cap on how many pages of the CONTAINER MAPPING may be resident
+/// at once. A read-only file mapping puts page-cache pages in this process's
+/// RSS as they are touched, and a random walk over a 7 GB container touches
+/// essentially all of it: without this cap RSS would grow with the container
+/// even though nothing is decoded. When the estimate of touched pages passes the
+/// cap the reader drops the mapping's PTEs (`MADV_DONTNEED`); the pages come
+/// back from page cache on the next touch, so this costs a minor fault, not I/O.
+/// 128 MB + CACHE_BYTES is the whole reader budget at every n.
+const MAPPED_BYTES: u64 = 128 << 20;
+/// Reader-only: blocks of m1 payload covered by one `posix_fadvise(WILLNEED)`
+/// along the LF walk. Batched (one syscall per this many block decodes).
+const PREFETCH_BLOCKS: u64 = 16;
+/// Reader-only RSS cap: the fixed decoded-block cache, plus the mapping's
+/// resident budget, plus room for the binary, the thread stacks and the page
+/// tables. The reader SAMPLES its own RSS (`/proc/self/statm`) every
+/// `RSS_CHECK_EVERY` block lookups and drops the container mapping's PTEs when it
+/// is over this. That is a governor on a MEASURED number, not on an estimate, so
+/// the process's peak RSS is bounded at ~this value whatever n is.
+const RSS_CAP_BYTES: u64 = (CACHE_BYTES as u64) + MAPPED_BYTES + (64 << 20);
+/// Reader-only: block lookups between RSS samples. One read of a 100-byte file.
+const RSS_CHECK_EVERY: u64 = 1 << 16;
 /// Reader-only slack on the run-space scan bound in `cum_before`. The bound
 /// itself comes from the m13 header (`rs.run_gap`, the writer's sampling rule);
 /// this is the tiny allowance for the inclusive/exclusive edge of that rule.
@@ -348,7 +379,12 @@ impl Gamma {
 // ------------------------------------------------------- container (mmap only)
 
 /// A v6 lite container opened for reading: header + directory + mmap. No
-/// member is decoded, no member CRC is verified (see `--verify`).
+/// member is decoded at open, no member CRC is verified (see `--verify`).
+///
+/// The mapping is the container itself, so any byte the reader touches becomes a
+/// resident page of this process. `drop_pages` is how the reader keeps that
+/// bounded (see `MAPPED_BYTES`); `fadvise` is how it asks page cache for the
+/// next blocks along a walk without mapping them.
 pub struct Reader {
     pub path: String,
     pub n: u64,
@@ -358,6 +394,9 @@ pub struct Reader {
     pub members: Vec<sxi::Member>,
     pub sigma: [u8; 256],
     map: Arc<Mmap>,
+    /// Kept (not just for the mmap) so the reader can `posix_fadvise` a range of
+    /// the payload asynchronously instead of mapping it.
+    file: Arc<File>,
 }
 
 /// What the file is, for the refusal message.
@@ -495,6 +534,7 @@ impl Reader {
             members,
             sigma,
             map: Arc::new(map),
+            file: Arc::new(f),
         })
     }
     pub fn member(&self, id: u32) -> &sxi::Member {
@@ -505,6 +545,48 @@ impl Reader {
     }
     fn slice(&self, off: u64, len: u64) -> &[u8] {
         &self.map[off as usize..(off + len) as usize]
+    }
+    /// Ask page cache for `[off, off+len)` without mapping it. Best effort: a
+    /// kernel that refuses an advisory read-ahead must not fail a query, so the
+    /// refusal is journaled, not fatal. Never touches this process's RSS.
+    fn fadvise(&self, off: u64, len: u64) -> bool {
+        if len == 0 {
+            return false;
+        }
+        // POSIX_FADV_WILLNEED
+        const WILLNEED: i32 = 3;
+        let rc = unsafe {
+            posix_fadvise(
+                std::os::unix::io::AsRawFd::as_raw_fd(&*self.file),
+                off as i64,
+                len as i64,
+                WILLNEED,
+            )
+        };
+        rc == 0
+    }
+    /// This process's resident set in bytes, from `/proc/self/statm` (field 2 is
+    /// resident pages). `None` if the kernel will not say.
+    fn resident_bytes(&self) -> Option<u64> {
+        let s = std::fs::read_to_string("/proc/self/statm").ok()?;
+        let mut it = s.split_whitespace();
+        let _size = it.next()?;
+        let resident: u64 = it.next()?.parse().ok()?;
+        Some(resident * 4096)
+    }
+    /// Drop this process's PTEs for the whole mapping. The bytes are a read-only
+    /// file mapping, so they come back unchanged from page cache on the next
+    /// touch: the only thing this changes is RSS, which is exactly the point.
+    fn drop_pages(&self) -> bool {
+        // SAFETY: `DontNeed` on a MAP_PRIVATE, PROT_READ text mapping only zaps
+        // the page table entries; every subsequent read re-populates the page
+        // from the same file bytes, so no value the reader has observed through
+        // the mapping can change. The reader never holds a `&mut` into the map
+        // (it is read-only by construction) and every `&[u8]` into it is used
+        // and dropped within one step, so this cannot invalidate a live borrow's
+        // contents.
+        let rc = unsafe { self.map.unchecked_advise(memmap2::UncheckedAdvice::DontNeed) };
+        rc.is_ok()
     }
     /// Verify every member CRC. Reads the whole file; opt-in only.
     pub fn verify_members(&self) -> Result<(), String> {
@@ -543,47 +625,32 @@ pub struct Index {
     rs: RunStarts,
     /// m13: per-symbol sampled run directory.
     rd: RunDir,
-    anchors: Vec<u64>,
+    /// m11 anchor area inside the mapping: `u64_at(map, anchors_off + 16 + 8*(run/stripe))`.
+    /// Read straight out of the mapping - there is no anchor column in RAM.
+    anchors_off: u64,
     stripe: u64,
-    /// THE RUN COLUMNS, decoded once at open from the m1 block stream and held in
-    /// RAM: `heads[run]`, `lens[run]` (both from the container, byte-exact) and
-    /// `seen[run]` (derived: how many runs of `heads[run]` precede `run`).
-    ///
-    /// Why this exists, measured (RESULTS_QUERY_HOTPATH.md): a warm 256-run m1
-    /// block decode is 2.33 us (9.1 ns/run, XSA_M1_AUDIT_FULL=1 over all 223,747
-    /// blocks) and one LF step used to pay for 2.04 of them plus ~525 per-run
-    /// `run()` probes. Page faults were NOT the cost: the same query on tmpfs (all
-    /// pages resident) is 114.8 ms against 115.0 ms on NVMe, with 0 major faults.
-    /// A rank step must therefore not decode at all, which is exactly what these
-    /// columns buy: 9 B/run, one streaming decode at open, no container change
-    /// (the format, `chi` and the positions are untouched).
-    ///
-    /// SCALING - READ THIS BEFORE SHIPPING THIS SHAPE. 9 B/run is 3.44 n at this
-    /// fixture (runs/byte = 0.382) and it is HEAP: 515 MB at 150 MB of text,
-    /// ~19 GB at 10 GB, ~210 GB at 90 GB. It is a measured stepping stone: it
-    /// establishes the achievable rank cost (0.49 us per LF step, see
-    /// tools/binbwt/RESULTS_QUERY_HOTPATH.md) and the exactness baseline, and
-    /// `materialise` refuses in words when MemAvailable cannot hold it. The
-    /// container-side shapes are priced in section 6 of that journal: heads +
-    /// byte-lengths as container members is 1.111 n and mmap-lazy, but leaves no
-    /// per-run rank value, and a measured 2.035 us/step (m13 plus a 1024-run
-    /// scan) does not meet the 1 us target. Row-anchored m11 (stride 256 rows,
-    /// +0.031 n, ~10x fewer steps) is the lever that makes the paged shape pay.
-    heads: Vec<u8>,
-    runs: Runs,
-    /// ROW -> RUN DIRECTORY: `dir_run[j]`/`dir_row[j]` are the run containing row
-    /// `j*ROW_DIR` and that run's start row, so `run_of` is ONE load plus a short
-    /// scan instead of a bisect chain. Measured (rdtsc, pattern 6 of p10): the
-    /// m12 bisect alone was 1458 of 1509 cycles per LF step -- ~6 DEPENDENT cache
-    /// misses in a 1.79 MB window array -- while this lookup is one dependent miss
-    /// in 7 MB. Cost: n/ROW_DIR * 12 B = 0.047n at 150 MB.
-    /// `dir[j] = (start row of that run, run)`, in ONE 16 B record so the lookup
-    /// is one cache line and one TLB entry (two separate columns cost two
-    /// dependent misses; measured 411-1358 cycles per step with them apart).
-    dir: Vec<[u64; 2]>,
-    pub build_ms: f64,
-    /// Bytes of per-run columns this process materialised at open. Reported so the
-    /// open's memory cost is auditable against the container's 0.71n.
+    /// THE DECODED-BLOCK CACHE: `CACHE_SHARDS` independently locked LRU caches
+    /// over a fixed `CACHE_BYTES` arena. This is the reader's ONLY per-run state,
+    /// and it does not grow with n: a run is reached by decoding the one m1 block
+    /// that holds it, which either costs a cache hit or one ~2.3 us decode.
+    cache: Vec<std::sync::Mutex<Shard>>,
+    cache_slots: u64,
+    hits: std::sync::atomic::AtomicU64,
+    misses: std::sync::atomic::AtomicU64,
+    decodes: std::sync::atomic::AtomicU64,
+    /// Random touches of the container mapping, counted so the RSS governor
+    /// samples this process's resident set once every `RSS_CHECK_EVERY` of them
+    /// and drops the mapping's PTEs when it is over `RSS_CAP_BYTES`.
+    /// `drop_epochs` is journaled.
+    mapped_touch: std::sync::atomic::AtomicU64,
+    drop_epochs: std::sync::atomic::AtomicU64,
+    prefetch_calls: std::sync::atomic::AtomicU64,
+    /// Wall spent inside block decodes, for the journal: it is what the bounded
+    /// reader pays instead of a per-run column read.
+    decode_ns: std::sync::atomic::AtomicU64,
+    build_ms: f64,
+    /// Bytes of per-run columns this process materialised at open. It is ZERO and
+    /// must stay zero: it is the audit line for the memory law.
     pub decoded_bytes: u64,
     /// Per-stage build walls, in order.
     pub stages: Vec<(&'static str, f64)>,
@@ -591,10 +658,7 @@ pub struct Index {
     pub audit_blocks: u64,
     pub block_runs: u64,
     pub rundir_stride: u64,
-    /// Threads the open-time decode ran on, journaled (`-j` does not bound it:
-    /// the open is a bulk step, the query is what `-j` parallelises).
-    pub open_threads: usize,
-    /// Whether the run columns got MADV_HUGEPAGE, journaled.
+    /// Whether the block-cache arena got MADV_HUGEPAGE, journaled.
     pub thp: bool,
 }
 
@@ -625,58 +689,120 @@ struct RunDir {
     run_gap: u64,
 }
 
-/// THE RUN COLUMNS, in the layout the hot path wants.
+/// ONE SHARD OF THE DECODED-BLOCK CACHE.
 ///
-/// `W8` is the normal one: one u64 per run, `len | seen << 32`, where `seen` is
-/// the number of ROWS of `heads[run]` before this run (exactly what an LF step's
-/// rank needs). Length and rank in the same word means an LF step's window scan
-/// and its rank read touch ONE column, not two independent random streams -- the
-/// first measurement of the split layout was 0.80 us/step, and every random
-/// stream a step opens costs a TLB entry and a cache line.
-///
-/// `Split` is the fallback for a container where some symbol occurs more than
-/// 2^32-1 times (n > 4.29e9 with a skewed alphabet): the rank then needs its own
-/// u64 column. Same answers, one extra stream, chosen from the container's own
-/// totals and journaled (`seen_width`).
-enum Runs {
-    W8(Vec<u64>),
-    Split { len: Vec<u32>, seen: Vec<u64> },
+/// A decoded block is `block_runs` head bytes plus `block_runs` u32 lengths, and
+/// that pair is all any rank/locate step ever needs from the m1 stream. The
+/// shard owns its slice of the fixed arena and an LRU list over its slots; the
+/// whole of it (lookup, decode, evict) happens under this shard's mutex, so no
+/// slot can be read while it is being refilled and no refcounts are needed. The
+/// closures handed to `Index::with_block` therefore must NOT call `with_block`
+/// again (that would self-deadlock on the same shard); they only walk the two
+/// slices they are given.
+struct Shard {
+    heads: Vec<u8>,
+    lens: Vec<u32>,
+    /// block id -> LOCAL slot index
+    idx: std::collections::HashMap<u64, u32>,
+    /// LOCAL slot -> block id (the reverse map, so LRU eviction is one lookup)
+    slot_block: Vec<u64>,
+    /// intrusive LRU over local slots, `NIL` terminated
+    next: Vec<u32>,
+    prev: Vec<u32>,
+    head: u32,
+    tail: u32,
+    /// the next never-used local slot, or NIL once every slot has been used once
+    free: u32,
 }
 
-impl Runs {
-    #[inline(always)]
-    fn len(&self, run: u64) -> u64 {
-        match self {
-            Runs::W8(w) => (unsafe { *w.get_unchecked(run as usize) }) & 0xffff_ffff,
-            Runs::Split { len, .. } => u64::from(unsafe { *len.get_unchecked(run as usize) }),
+const NIL: u32 = u32::MAX;
+
+impl Shard {
+    fn new(slots: usize, br: usize) -> Shard {
+        Shard {
+            heads: vec![0u8; slots * br],
+            lens: vec![0u32; slots * br],
+            idx: std::collections::HashMap::with_capacity(slots * 2),
+            slot_block: vec![u64::MAX; slots],
+            next: vec![NIL; slots],
+            prev: vec![NIL; slots],
+            head: NIL,
+            tail: NIL,
+            free: 0,
         }
     }
-    #[inline(always)]
-    fn seen(&self, run: u64) -> u64 {
-        match self {
-            Runs::W8(w) => (unsafe { *w.get_unchecked(run as usize) }) >> 32,
-            Runs::Split { seen, .. } => unsafe { *seen.get_unchecked(run as usize) },
+    fn slots(&self) -> usize {
+        self.next.len()
+    }
+    /// unlink a local slot from the LRU list
+    #[inline]
+    fn unlink(&mut self, s: u32) {
+        let (p, n) = (self.prev[s as usize], self.next[s as usize]);
+        if p != NIL {
+            self.next[p as usize] = n;
+        } else {
+            self.head = n;
+        }
+        if n != NIL {
+            self.prev[n as usize] = p;
+        } else {
+            self.tail = p;
+        }
+        self.prev[s as usize] = NIL;
+        self.next[s as usize] = NIL;
+    }
+    /// link a local slot as the most-recently used
+    #[inline]
+    fn push_front(&mut self, s: u32) {
+        self.prev[s as usize] = NIL;
+        self.next[s as usize] = self.head;
+        if self.head != NIL {
+            self.prev[self.head as usize] = s;
+        }
+        self.head = s;
+        if self.tail == NIL {
+            self.tail = s;
         }
     }
-    fn name(&self) -> &'static str {
-        match self {
-            Runs::W8(_) => "interleaved-len-seen-u32",
-            Runs::Split { .. } => "split-len-u32-seen-u64",
+    /// `(local slot, hit)`. A miss has already evicted the LRU victim (or taken a
+    /// never-used slot) and removed its block id from the map, so the caller may
+    /// decode into the returned slot and then call `install`.
+    #[inline]
+    fn acquire(&mut self, block: u64) -> (u32, bool) {
+        if let Some(&s) = self.idx.get(&block) {
+            self.unlink(s);
+            self.push_front(s);
+            return (s, true);
         }
+        let s = if self.free != NIL {
+            let s = self.free;
+            self.free = if (s as usize + 1) < self.slots() { s + 1 } else { NIL };
+            s
+        } else {
+            let v = self.tail;
+            debug_assert!(v != NIL, "LRU shard has no victim and no free slot");
+            self.unlink(v);
+            // forget the evicted block id
+            let old = self.slot_block[v as usize];
+            debug_assert!(old != u64::MAX, "LRU victim slot holds no block");
+            self.idx.remove(&old);
+            v
+        };
+        (s, false)
     }
-    fn bytes(&self) -> u64 {
-        match self {
-            Runs::W8(w) => 8 * w.len() as u64,
-            Runs::Split { len, seen } => 4 * len.len() as u64 + 8 * seen.len() as u64,
-        }
+    #[inline]
+    fn install(&mut self, block: u64, s: u32) {
+        self.idx.insert(block, s);
+        self.slot_block[s as usize] = block;
+        self.push_front(s);
     }
 }
 
 /// The window scan of `run_of`: walk forward over run lengths from `start_run`
 /// (whose start row is `s`) until the run containing `row` is found. Four runs at
 /// a time, because the one-at-a-time form is a loop-carried `s += l` dependency
-/// chain; generic over the length accessor so the interleaved and split layouts
-/// both monomorphise into the same straight-line code.
+/// chain; generic over the length accessor so a block-resident `lens` slice and
+/// the unit test's `u64` slice monomorphise into the same straight-line code.
 #[inline(always)]
 fn scan_window<F: Fn(usize) -> u64>(
     lens_at: F,
@@ -711,20 +837,21 @@ fn scan_window<F: Fn(usize) -> u64>(
     (start_run + i as u64, s)
 }
 
-/// Per-query-thread working set. It used to be a 4096-entry direct-mapped cache
-/// of decoded m1 blocks; now every run column lives in RAM (built once at open),
-/// so this is only the diagnostic counter block: one `Ctx` per pattern, so two
-/// patterns on one rayon thread never mix their counters.
+/// Per-query-thread working set: ONE cursor pair plus diagnostic counters. All
+/// the data a step needs lives in the shared decoded-block cache, so a `Ctx` is
+/// two counters and nothing else — one per pattern, so two patterns on one rayon
+/// thread never mix their counts.
 pub struct Ctx<'a> {
     idx: &'a Index,
     /// Diagnostic counters, printed under XSA_TRACE. They answer "what does one
     /// rank/LF step actually pay for": `scan_of` runs walked in `run_of`'s
     /// forward scan, `scan_cum` runs walked in `cum_before`'s sample-to-run scan,
-    /// `steps` LF steps, `ranks` rank() calls.
+    /// `steps` LF steps, `ranks` rank() calls, `blocks` block-cache lookups.
     scan_of: u64,
     scan_cum: u64,
     steps: u64,
     ranks: u64,
+    blocks: u64,
 }
 
 fn u64_at(d: &[u8], o: usize) -> u64 {
@@ -932,28 +1059,32 @@ impl Index {
                 m.count
             ));
         }
-        let anchors: Vec<u64> = (0..m.count as usize)
-            .map(|i| u64_at(a, 16 + 8 * i))
-            .collect();
-        for (i, &v) in anchors.iter().enumerate() {
+        // The anchors stay IN THE MAPPING: `anchors_off` is where they begin and a
+        // locate reads the one 8 B cell it needs. Auditing all of them would page
+        // in 0.003 n for nothing, so a bounded, evenly spaced sample is checked
+        // (fail loud on a value outside [0,n), which is the only way an anchor can
+        // be wrong without changing the container's shape).
+        let anchors_off = m.offset;
+        let n_anchor_check = m.count.min(M1_AUDIT_BLOCKS).max(1);
+        for t in 0..n_anchor_check {
+            let i = (t * m.count / n_anchor_check) as usize;
+            let v = u64_at(a, 16 + 8 * i);
             if v >= n {
                 return Err(format!("m11 anchor {i} value {v} outside [0,n)"));
             }
         }
         let t_anchors = t0.elapsed();
 
-        // ---- page the three hot members in, asynchronously. A locate walks the
-        // run-start array and the per-symbol directory at 2000+ essentially random
-        // positions; without this every one of those is a minor fault, and the
-        // walk is a dependent chain so they cannot overlap.
+        // ---- page the hot members in, asynchronously, WITHOUT mapping their
+        // pages into this process. A locate walks the run-start array and the
+        // per-symbol directory at thousands of essentially random positions;
+        // `posix_fadvise(WILLNEED)` puts those bytes in page cache, which is not
+        // RSS and is reclaimable, where `madvise(WILLNEED)` on the mapping would
+        // fault every one of them into this process.
         let mut prefetched = 0u64;
         for m in reader.members.iter().filter(|m| [1u32, 12, 13].contains(&m.id)) {
-            if let Err(e) = reader.map.advise_range(
-                memmap2::Advice::WillNeed,
-                m.offset as usize,
-                m.bytes as usize,
-            ) {
-                return Err(format!("madvise(WILLNEED) on m{}: {e}", m.id));
+            if !reader.fadvise(m.offset, m.bytes) {
+                return Err(format!("posix_fadvise(WILLNEED) on m{} was refused", m.id));
             }
             prefetched += m.bytes;
         }
@@ -961,6 +1092,24 @@ impl Index {
             return Err("no hot members were prefetched".into());
         }
         let t_prefetch = t0.elapsed();
+
+        // ---- the fixed block cache. Slot width is the container's declared block
+        // width, so the arena holds `CACHE_BYTES / (5 * block_runs)` decoded blocks
+        // whatever n is. Shards are capped by the slot count so a narrow cache still
+        // gets one slot per shard.
+        let br = block_runs as usize;
+        let per_slot = br + 4 * br;
+        let want_slots = (CACHE_BYTES / per_slot).max(1);
+        let nshard = CACHE_SHARDS.min(want_slots).max(1);
+        let per_shard = (want_slots / nshard).max(1);
+        let mut cache = Vec::with_capacity(nshard);
+        let mut thp = true;
+        for _ in 0..nshard {
+            let mut sh = Shard::new(per_shard, br);
+            thp = thp && advise_huge(&mut sh.heads) && advise_huge(&mut sh.lens);
+            cache.push(std::sync::Mutex::new(sh));
+        }
+        let cache_slots = (nshard * per_shard) as u64;
 
         let mut idx = Index {
             reader,
@@ -974,19 +1123,24 @@ impl Index {
             nblocks,
             rs,
             rd,
-            anchors,
+            anchors_off,
             stripe,
-            heads: Vec::new(),
-            runs: Runs::W8(Vec::new()),
-            dir: Vec::new(),
+            cache,
+            cache_slots,
+            hits: std::sync::atomic::AtomicU64::new(0),
+            misses: std::sync::atomic::AtomicU64::new(0),
+            decodes: std::sync::atomic::AtomicU64::new(0),
+            mapped_touch: std::sync::atomic::AtomicU64::new(0),
+            drop_epochs: std::sync::atomic::AtomicU64::new(0),
+            prefetch_calls: std::sync::atomic::AtomicU64::new(0),
+            decode_ns: std::sync::atomic::AtomicU64::new(0),
             build_ms: 0.0,
             decoded_bytes: 0,
             stages: Vec::new(),
             audit_blocks: 0,
             block_runs,
             rundir_stride: rd_l2,
-            open_threads: 0,
-            thp: false,
+            thp,
         };
         if idx.payload_off + m1payload_len
             != idx.reader.member(1).offset + idx.reader.member(1).bytes
@@ -994,28 +1148,22 @@ impl Index {
             return Err("m1 payload area does not reach the end of its member".into());
         }
 
-        // ---- THE OPEN-TIME DECODE, AND THE AUDIT THAT COMES FREE WITH IT.
+        // ---- THE OPEN-TIME AUDIT, now BOUNDED.
         //
-        // The run stream is decoded exactly once, block by block, into three
-        // per-run columns. That is what makes a rank step decode-free; the
-        // previous reader decoded ~2 blocks PER LF STEP out of the mmap and was
-        // measured at 8.5-10 us/step (RESULTS_QUERY_HOTPATH.md, and the reason is
-        // a warm 2.33 us/256-run block decode, NOT page faults: the same query on
-        // tmpfs is 114.8 ms against 115.0 ms on NVMe, 0 major faults).
-        //
-        // The audit gets STRONGER for free: every block's run lengths must sum to
-        // exactly the m12 run-start span that brackets it, and the last block must
-        // close exactly on n. The old reader checked 1024 sampled blocks; this
-        // checks all 223,747 of them because the decode is happening anyway.
+        // A sampled block's run lengths must sum to exactly the m12 run-start span
+        // that brackets it, and the last block must close exactly on n. The
+        // previous revision decoded every block because it was decoding them all
+        // anyway; a bounded reader decodes M1_AUDIT_BLOCKS of them (evenly spaced,
+        // plus the last) and refuses in words when the stream and the directory
+        // disagree. It costs ~2 ms at 150 MB and ~10 ms at 10 GB, independent of n.
         let t_mat0 = t0.elapsed();
-        idx.materialise()?;
+        idx.audit_sample()?;
         let t_mat = t0.elapsed();
-        let n_audit = idx.nblocks;
-        let dec = idx.decoded_bytes;
+        let n_audit = idx.audit_blocks;
         let stages = vec![
             ("m11-anchors", t_anchors.as_secs_f64() * 1e3),
             ("prefetch", (t_prefetch - t_anchors).as_secs_f64() * 1e3),
-            ("run-columns", (t_mat - t_mat0).as_secs_f64() * 1e3),
+            ("block-cache", (t_mat - t_mat0).as_secs_f64() * 1e3),
         ];
         let build_ms = t_mat.as_secs_f64() * 1e3;
         idx.stages = stages;
@@ -1026,237 +1174,200 @@ impl Index {
             }
             eprintln!(
                 "TRACE stage=lite.build-total ms={build_ms:.1} audit_blocks={n_audit} \
-                 run_column_bytes={dec} open_threads={} layout={} thp={}",
-                idx.open_threads,
-                idx.runs.name(),
+                 decoded_bytes={} cache_slots={} cache_shards={} thp={}",
+                idx.decoded_bytes,
+                cache_slots,
+                nshard,
                 idx.thp
             );
         }
         Ok(idx)
     }
 
-    /// Decode every m1 block once and build the three per-run columns:
-    /// `heads`, `lens` (both byte-exact from the container) and `seen`
-    /// (`seen[run]` = how many runs of `heads[run]` precede `run`).
-    ///
-    /// Parallel over a partition of the BLOCK RANGE into contiguous windows of
-    /// `blocks_per_chunk` blocks. Window `ci` writes only `heads`/`lens` rows
-    /// `[ci*run_per_chunk, min(r, (ci+1)*run_per_chunk))` -- `par_chunks_mut` on
-    /// both columns, zipped, so the disjointness is the type system's problem and
-    /// not a comment's. `seen` is then filled by a chunked prefix sum: phase 1
-    /// counts symbols per window (a scan of the just-decoded `heads`, no second
-    /// decode), a sequential pass makes those counts an exclusive prefix, phase 2
-    /// fills `seen` inside each window. Only `windows x 256` additions are
-    /// sequential; both phases are otherwise parallel.
-    fn materialise(&mut self) -> Result<(), String> {
-        let r = self.reader.r;
-        let br = self.block_runs;
+    /// The open-time, BOUNDED audit: decode `M1_AUDIT_BLOCKS` evenly spaced blocks
+    /// (plus the last one) through the same `with_block` path the query uses, and
+    /// check each block's run lengths against the m12 span that brackets it. This
+    /// is a shape check on the container, not an answer: chi and every position
+    /// are checked against the oracle by the acceptance gate.
+    fn audit_sample(&mut self) -> Result<(), String> {
         let nblocks = self.nblocks;
+        let r = self.reader.r;
         let n = self.reader.n;
-        let threads = rayon::current_num_threads().max(1);
-        self.open_threads = threads;
-        // FAIL LOUD RATHER THAN GET KILLED: the columns are ~9 B/run plus 16 B per
-        // 256 rows, and a container big enough to overrun RAM must say so in words
-        // instead of taking an OOM kill in the middle of a parallel decode.
-        let projected = 9 * r + 16 * ((r + 255) / 256);
-        if let Some(avail) = mem_available() {
-            if projected > avail {
+        let br = self.block_runs;
+        let mut checked = 0u64;
+        let mut last_sum = 0u64;
+        let take = nblocks.min(M1_AUDIT_BLOCKS).max(1);
+        for t in 0..take {
+            let b = (t * nblocks / take).min(nblocks - 1);
+            let (s0, s1) = (self.l1(b), if b + 1 < nblocks { self.l1(b + 1) } else { n });
+            let sum = self.with_block(b, |_, lens| lens.iter().map(|&l| u64::from(l)).sum::<u64>());
+            if sum != s1 - s0 {
                 return Err(format!(
-                    "{}: this reader materialises the run stream at open ({} bytes of run \
-                     columns for {} runs) and only {avail} bytes of RAM are available; \
-                     free memory, or query a container this box can hold at 9 B/run",
-                    self.reader.path, projected, r
+                    "m1 block audit: block {b} of {nblocks} decodes to {sum} rows, but the m12\n  \
+                     span it occupies is [{s0},{s1}) = {} rows",
+                    s1 - s0
                 ));
             }
+            checked += 1;
         }
-        // One window per thread, rounded UP to whole blocks, at least one block.
-        let blocks_per_chunk = ((nblocks + threads as u64 - 1) / threads as u64).max(1);
-        let nchunks = ((nblocks + blocks_per_chunk - 1) / blocks_per_chunk) as usize;
-        let runs_per_chunk = blocks_per_chunk * br;
-        let mut heads = vec![0u8; r as usize];
-        let mut words = vec![0u64; r as usize];
-        self.thp = advise_huge(&mut heads) && advise_huge(&mut words);
-
-        // ---- phase 0: decode + complete audit + per-window symbol counts.
-        // per window: ([runs per symbol], [rows per symbol]). The row totals must
-        // equal the m1 C table exactly (that is the container's own definition of
-        // a symbol's count); the run counts are `seen`'s prefix bases.
-        let per_chunk: Vec<Result<([u64; 256], [u64; 256]), String>> = {
-            let idx: &Index = self;
-            heads
-                .par_chunks_mut(runs_per_chunk as usize)
-                .zip(words.par_chunks_mut(runs_per_chunk as usize))
-                .enumerate()
-                .map(|(ci, (hc, lc))| -> Result<([u64; 256], [u64; 256]), String> {
-                    let b0 = ci as u64 * blocks_per_chunk;
-                    let b1 = (b0 + blocks_per_chunk).min(nblocks);
-                    if b1 <= b0 {
-                        return Err(format!("run-column window {ci} owns no block"));
-                    }
-                    let mut acc = [0u64; 256];
-                    let mut rows = [0u64; 256];
-                    let mut ltmp = vec![0u32; br as usize];
-                    for b in b0..b1 {
-                        let first = b * br;
-                        let lo = (first - ci as u64 * runs_per_chunk) as usize;
-                        let want = ((first + br).min(r) - first) as usize;
-                        let (off, hbits, lbits) = idx.dir(b);
-                        let hbytes = (hbits as u64 + 7) / 8;
-                        let start = idx.payload_off + off;
-                        let end = start + hbytes + (lbits as u64 + 7) / 8;
-                        if end > idx.payload_end {
-                            return Err(format!(
-                                "m1 block {b} runs past the payload area ({end} > {})",
-                                idx.payload_end
-                            ));
-                        }
-                        let p = &idx.reader.map.as_ref()[start as usize..end as usize];
-                        let got = decode_block(
-                            &idx.huff,
-                            &idx.gamma,
-                            &p[..hbytes as usize],
-                            hbits as u64,
-                            &p[hbytes as usize..],
-                            lbits as u64,
-                            want,
-                            &mut hc[lo..lo + want],
-                            &mut ltmp[..want],
-                            b,
-                        );
-                        debug_assert_eq!(got, want);
-                        // low half of the interleaved word: the run length. The
-                        // high half (the rank) needs the window prefix, so it is
-                        // written in the fill phase below.
-                        for i in 0..want {
-                            lc[lo + i] = u64::from(ltmp[i]);
-                        }
-                        // the m12 bracketing span, and the audit that the decode
-                        // agrees with it run for run.
-                        let (s0, s1) = (idx.l1(b), if b + 1 < nblocks { idx.l1(b + 1) } else { n });
-                        let mut sum = 0u64;
-                        for i in lo..lo + want {
-                            let l = lc[i] & 0xffff_ffff;
-                            sum += l;
-                            rows[hc[i] as usize] += l;
-                            acc[hc[i] as usize] += 1;
-                        }
-                        if s1 - s0 != sum {
-                            return Err(format!(
-                                "m1 block audit: block {b} run lengths sum to {sum}, but the m12\n  \
-                                 span it occupies is [{s0},{s1}) = {}",
-                                s1 - s0
-                            ));
-                        }
-                    }
-                    Ok((acc, rows))
-                })
-                .collect()
-        };
-        // `base[ci]` is how many ROWS of each symbol precede window `ci`: `seen` is
-        // a ROW cumulative count (what rank returns), not a run count.
-        let mut base: Vec<[u64; 256]> = Vec::with_capacity(nchunks);
-        let mut acc = [0u64; 256];
-        let mut rows = [0u64; 256];
-        for c in per_chunk {
-            let (cr, cw) = c?;
-            base.push(rows);
-            for s in 0..256 {
-                acc[s] += cr[s];
-                rows[s] += cw[s];
-            }
-        }
-        if let Some(bad) = (0..256).find(|&s| rows[s] != self.total[s]) {
+        // the last block must close exactly on n (it is not necessarily one of the
+        // evenly spaced samples, so it is decoded explicitly)
+        let last = nblocks - 1;
+        last_sum = self.with_block(last, |_, lens| lens.iter().map(|&l| u64::from(l)).sum::<u64>());
+        if self.l1(last) + last_sum != n {
             return Err(format!(
-                "run columns disagree with the m1 C table: the decoded run lengths give symbol \
-                 {bad} {} rows and the C table says {}",
-                rows[bad], self.total[bad]
+                "m1 audit: the last block ({last}) ends at {} but the header says n={n}",
+                self.l1(last) + last_sum
             ));
         }
-        if acc.iter().sum::<u64>() != r {
-            return Err(format!(
-                "run columns: the windows counted {} runs, the header says {r}",
-                acc.iter().sum::<u64>()
-            ));
+        if br == 0 || r == 0 {
+            return Err("m1 audit: empty run stream".into());
         }
-
-        // ---- phase 1: fill the rank half, width chosen from the container's own
-        // totals (a u32 rank covers every container whose biggest symbol count
-        // fits, which is the normal case and journals as `seen_width=`).
-        let wide = rows.iter().any(|&t| t > u64::from(u32::MAX));
-        let runs = if !wide {
-            words
-                .par_chunks_mut(runs_per_chunk as usize)
-                .zip(heads.par_chunks(runs_per_chunk as usize))
-                .enumerate()
-                .for_each(|(ci, (wc, hc))| {
-                    let mut a = base[ci];
-                    for i in 0..wc.len() {
-                        let h = hc[i] as usize;
-                        debug_assert!(a[h] <= u64::from(u32::MAX));
-                        wc[i] |= a[h] << 32;
-                        a[h] += wc[i] & 0xffff_ffff;
-                    }
-                });
-            Runs::W8(words)
-        } else {
-            // rare: keep the two columns apart so the rank can be a u64
-            let len: Vec<u32> = words.iter().map(|&w| w as u32).collect();
-            let mut seen = vec![0u64; r as usize];
-            seen.par_chunks_mut(runs_per_chunk as usize)
-                .zip(heads.par_chunks(runs_per_chunk as usize))
-                .zip(len.par_chunks(runs_per_chunk as usize))
-                .enumerate()
-                .for_each(|(ci, ((sc, hc), lc))| {
-                    let mut a = base[ci];
-                    for i in 0..sc.len() {
-                        let h = hc[i] as usize;
-                        sc[i] = a[h];
-                        a[h] += u64::from(lc[i]);
-                    }
-                });
-            Runs::Split { len, seen }
-        };
-        // ---- phase 2: the row -> run directory (see the `dir` field's doc comment).
-        let ndir = ((n + ROW_DIR - 1) / ROW_DIR) as usize;
-        let mut dirv = vec![[0u64; 2]; ndir];
-        {
-            let idx: &Index = self;
-            let runs_ref = &runs;
-            let per = ((ndir + threads - 1) / threads).max(1);
-            dirv.par_chunks_mut(per)
-                .enumerate()
-                .try_for_each(|(ci, dc)| -> Result<(), String> {
-                    let j0 = (ci * per) as u64;
-                    let row0 = j0 * ROW_DIR;
-                    // the run containing the chunk's first row: the same bisect the
-                    // query used to do on EVERY step, now done once per 256 rows.
-                    let (mut run, mut s) = bisect_run_of(idx, runs_ref, row0);
-                    for (k, d) in dc.iter_mut().enumerate() {
-                        let row = (j0 + k as u64) * ROW_DIR;
-                        if row < s {
-                            return Err(format!("row directory: row {row} precedes run {run}"));
-                        }
-                        while s + runs_ref.len(run) <= row {
-                            s += runs_ref.len(run);
-                            run += 1;
-                            if run >= r {
-                                return Err(format!(
-                                    "row directory: rows ran out at run {run} of {r} looking \
-                                     for row {row}"
-                                ));
-                            }
-                        }
-                        *d = [s, run];
-                    }
-                    Ok(())
-                })?;
-        }
-        self.decoded_bytes = heads.len() as u64 + runs.bytes() + 16 * dirv.len() as u64;
-        self.audit_blocks = nblocks;
-        self.heads = heads;
-        self.runs = runs;
-        self.dir = dirv;
+        self.audit_blocks = checked;
         Ok(())
+    }
+
+    // ---------------------------------------------- the decoded-block cache
+
+    /// Run `f` over the decoded `(heads, lens)` of m1 block `b`, in the shared
+    /// fixed-size cache. A hit is a hash lookup; a miss decodes the block out of
+    /// the mapping into its LRU slot and evicts the least recently used one. The
+    /// closure runs holding that shard's lock and MUST NOT call `with_block`.
+    #[inline]
+    fn with_block<R>(&self, b: u64, f: impl FnOnce(&[u8], &[u32]) -> R) -> R {
+        debug_assert!(b < self.nblocks, "block {b} of {}", self.nblocks);
+        let nsh = self.cache.len() as u64;
+        let h = b.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32;
+        let shard = (h % nsh) as usize;
+        // one decoded block is one payload page touched (the payload is ~246 B/block
+        // at the 150 MB fixture and ~1 KB/block at 10 GB); the counter is what bounds
+        // the mapping's RSS, see MAPPED_BYTES.
+        self.touch_mapped(1);
+        let br = self.block_runs as usize;
+        let first = b * self.block_runs;
+        let want = (self.reader.r - first).min(self.block_runs) as usize;
+        let mut g = self.cache[shard]
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (slot, hit) = g.acquire(b);
+        let lo = slot as usize * br;
+        if !hit {
+            self.misses
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            {
+                let t = Instant::now();
+                let sh = &mut *g;
+                self.decode_into(b, &mut sh.heads[lo..lo + want], &mut sh.lens[lo..lo + want]);
+                self.decode_ns.fetch_add(
+                    t.elapsed().as_nanos() as u64,
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+            }
+            g.install(b, slot);
+            self.decodes
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            // ask page cache for the next blocks along the walk (batched)
+            self.prefetch_blocks(b);
+        } else {
+            self.hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        f(&g.heads[lo..lo + want], &g.lens[lo..lo + want])
+    }
+
+    /// Decode block `b` of the m1 payload into caller-provided buffers.
+    fn decode_into(&self, b: u64, heads: &mut [u8], lens: &mut [u32]) {
+        let want = heads.len();
+        debug_assert_eq!(lens.len(), want);
+        let (off, hbits, lbits) = self.dir(b);
+        let hbytes = (hbits as u64 + 7) / 8;
+        let start = self.payload_off + off;
+        let end = start + hbytes + (lbits as u64 + 7) / 8;
+        if end > self.payload_end {
+            die(&format!(
+                "m1 block {b} runs past the payload area ({end} > {})",
+                self.payload_end
+            ));
+        }
+        let p = self.reader.slice(start, end - start);
+        let got = decode_block(
+            &self.huff,
+            &self.gamma,
+            &p[..hbytes as usize],
+            hbits as u64,
+            &p[hbytes as usize..],
+            lbits as u64,
+            want,
+            heads,
+            lens,
+            b,
+        );
+        debug_assert_eq!(got, want);
+    }
+
+    /// Ask page cache for the payload of blocks `[b, b+PREFETCH_BLOCKS)` without
+    /// mapping them. Batched: one syscall per `PREFETCH_BLOCKS` decodes, because a
+    /// syscall here costs more than the read it advises.
+    fn prefetch_blocks(&self, b: u64) {
+        let n = std::sync::atomic::Ordering::Relaxed;
+        let k = self.decodes.load(n);
+        if k % PREFETCH_BLOCKS != 0 {
+            return;
+        }
+        let b1 = (b + PREFETCH_BLOCKS).min(self.nblocks);
+        let (o0, _, _) = self.dir(b);
+        let (o1, _, _) = self.dir(b1 - 1);
+        // the payload of block j starts at payload_off + dir(j).0 and the last
+        // block's payload runs to the end of the member; covering [o0, o1 + a
+        // block) is enough (WILLNEED clamps at EOF).
+        let len = (o1 + 4096).saturating_sub(o0);
+        if self.reader.fadvise(self.payload_off + o0, len) {
+            self.prefetch_calls.fetch_add(1, n);
+        }
+    }
+
+    /// Bound this process's resident set. Every block lookup bumps a counter; one
+    /// lookup in `RSS_CHECK_EVERY` reads the process's own RSS out of
+    /// `/proc/self/statm` and, when it is over `RSS_CAP_BYTES`, drops the
+    /// container mapping's page table entries (they come back unchanged from page
+    /// cache on the next touch). Without this a random walk over a 7 GB container
+    /// would grow this process's RSS with the container even though nothing is
+    /// decoded - which is the whole defect this reader exists to fix.
+    #[inline]
+    fn touch_mapped(&self, pages: u64) {
+        use std::sync::atomic::Ordering::Relaxed;
+        let t = self.mapped_touch.fetch_add(pages, Relaxed) + pages;
+        if t % RSS_CHECK_EVERY != 0 {
+            return;
+        }
+        let resident = match self.reader.resident_bytes() {
+            Some(b) => b,
+            None => die("cannot read /proc/self/statm for the RSS governor"),
+        };
+        if resident <= RSS_CAP_BYTES {
+            return;
+        }
+        self.drop_epochs.fetch_add(1, Relaxed);
+        if !self.reader.drop_pages() {
+            die("madvise(MADV_DONTNEED) failed: the RSS governor cannot bound the mapping");
+        }
+    }
+
+    #[inline]
+    pub fn cache_stats(&self) -> (u64, u64, u64, u64) {
+        use std::sync::atomic::Ordering::Relaxed;
+        (
+            self.hits.load(Relaxed),
+            self.misses.load(Relaxed),
+            self.decodes.load(Relaxed),
+            self.drop_epochs.load(Relaxed),
+        )
+    }
+
+    /// Bytes this reader has allocated for per-run data. It is 0 by construction
+    /// and the journal prints it: that is the memory law's audit line.
+    #[inline]
+    pub fn cache_bytes(&self) -> u64 {
+        self.cache_slots * self.block_runs * 5
     }
 
     #[inline]
@@ -1276,6 +1387,7 @@ impl Index {
             scan_cum: 0,
             steps: 0,
             ranks: 0,
+            blocks: 0,
         }
     }
 
@@ -1313,20 +1425,6 @@ impl Index {
 }
 
 
-/// `MemAvailable` from /proc/meminfo, if this kernel reports it. Used only to
-/// refuse an allocation that cannot fit, in words, before the allocator is asked
-/// for hundreds of megabytes per column.
-fn mem_available() -> Option<u64> {
-    let s = std::fs::read_to_string("/proc/meminfo").ok()?;
-    for line in s.lines() {
-        if let Some(rest) = line.strip_prefix("MemAvailable:") {
-            let kb: u64 = rest.trim().trim_end_matches(" kB").trim().parse().ok()?;
-            return Some(kb * 1024);
-        }
-    }
-    None
-}
-
 // ------------------------------------------------------------ huge pages
 //
 // The run columns are the query's random-access working set (hundreds of MB at
@@ -1341,6 +1439,7 @@ const MADV_HUGEPAGE: i32 = 14;
 #[cfg(target_os = "linux")]
 extern "C" {
     fn madvise(addr: *mut core::ffi::c_void, len: usize, advice: i32) -> i32;
+    fn posix_fadvise(fd: i32, off: i64, len: i64, advice: i32) -> i32;
 }
 
 /// Ask for huge pages over a whole allocation. Returns false if the kernel said
@@ -1380,14 +1479,12 @@ fn advise_huge<T>(v: &mut [T]) -> bool {
 
 // ------------------------------------------------------------ the query thread
 
-/// The m12 two-level bisect: `(run, start row)` of the run containing `row`.
-///
-/// This is what `run_of` used to do on every step. It is now used ONCE PER 256
-/// ROWS, to build the row -> run directory, because as a per-step primitive it is
-/// a chain of ~6 dependent cache misses in the 1.79 MB window array and measured
-/// 1458 cycles of the 1509 a step cost (rdtsc, pattern 6 of the p10 fixture).
+/// The m12 two-level bisect: `(block, block start row)` of the block holding
+/// `row`. m12 stores the row of every `stride`-th run and a level-2 sample of
+/// those every `l2stride` runs, so this is a bisect in a cache-resident level-2
+/// array followed by a bisect in one level-1 window — no per-run state at all.
 #[inline]
-fn bisect_run_of(idx: &Index, runs: &Runs, row: u64) -> (u64, u64) {
+fn bisect_block_of(idx: &Index, row: u64) -> (u64, u64) {
     let mut lo = 0u64;
     let mut hi = idx.rs.l2_cnt;
     if hi > 1 {
@@ -1415,88 +1512,61 @@ fn bisect_run_of(idx: &Index, runs: &Runs, row: u64) -> (u64, u64) {
             }
         }
     }
-    let run = a * idx.rs.stride;
-    let s = idx.l1(a);
-    let avail = (idx.reader.r - run) as usize;
-    scan_window(|i| runs.len(run + i as u64), run, s, row, avail, idx.reader.r)
+    (a, idx.l1(a))
 }
 
 impl<'a> Ctx<'a> {
-    /// `(head, length)` of run `run`. Two array reads: the run columns are the
-    /// whole point of the open-time decode.
-    #[inline(always)]
-    fn run(&self, run: u64) -> (u8, u32) {
-        debug_assert!(run < self.idx.reader.r);
-        (
-            unsafe { *self.idx.heads.get_unchecked(run as usize) },
-            self.idx.runs.len(run) as u32,
-        )
+    fn diag(&self) -> (u64, u64, u64, u64, u64) {
+        (self.scan_of, self.scan_cum, self.steps, self.ranks, self.blocks)
     }
-    /// `cum_before` for a run's OWN symbol, which is the only rank an LF step
-    /// needs (`h = heads[run]`): one column read, no bisect, no scan.
-    #[inline(always)]
-    fn seen(&self, run: u64) -> u64 {
-        self.idx.runs.seen(run)
-    }
-    fn diag(&self) -> (u64, u64, u64, u64) {
-        (self.scan_of, self.scan_cum, self.steps, self.ranks)
-    }
-    /// `(run, run start row)` of the run holding row `row`.
+
+    /// `(run, run start row, head, length)` of the run holding row `row`.
     ///
-    /// Two bisects (a cache-resident level-2 array, then one level-1 window) plus
-    /// a forward scan of at most `block_runs` runs over the RAM `lens` column -
-    /// so a lookup never decodes anything.
-    fn run_of(&mut self, row: u64) -> (u64, u64) {
+    /// ONE m12 bisect plus ONE decoded block: m12's level-1 cell already names the
+    /// block that contains `row`, so the only per-run data this needs is that
+    /// block's `lens`, walked by the 4-wide `scan_window`. Nothing is materialised
+    /// and nothing is looked up per run.
+    #[inline]
+    fn row_run(&mut self, row: u64) -> (u64, u64, u8, u32) {
         let idx = self.idx;
         debug_assert!(row < idx.reader.n);
-        // ONE load: the row -> run directory entry for this 256-row block.
-        let j = (row / ROW_DIR) as usize;
-        let d = unsafe { *idx.dir.get_unchecked(j) };
-        let (s, run0) = (d[0], d[1]);
-        let run = run0;
-        let run_next = match unsafe { idx.dir.get(j + 1) } {
-            Some(v) => v[1],
-            None => idx.reader.r,
-        };
-        let avail = (run_next.min(idx.reader.r) - run) as usize;
-        let (run, s) = match &idx.runs {
-            Runs::W8(w) => {
-                let base = w.as_ptr();
-                let start = run as usize;
-                scan_window(
-                    |i| unsafe { *base.add(start + i) } & 0xffff_ffff,
-                    run,
-                    s,
-                    row,
-                    avail,
-                    idx.reader.r,
-                )
-            }
-            Runs::Split { len, .. } => {
-                let base = len.as_ptr();
-                let start = run as usize;
-                scan_window(
-                    |i| u64::from(unsafe { *base.add(start + i) }),
-                    run,
-                    s,
-                    row,
-                    avail,
-                    idx.reader.r,
-                )
-            }
-        };
-        self.scan_of += run - run0;
-        (run, s)
+        let (blk, s0) = bisect_block_of(idx, row);
+        let br = idx.block_runs;
+        let base = blk * br;
+        let r = idx.reader.r;
+        let avail = (r - base).min(br) as usize;
+        self.touch_dir();
+        let (rel, s, h, l) = idx.with_block(blk, |heads, lens| {
+            let (rel, s) = scan_window(|i| u64::from(lens[i]), base, s0, row, avail, r);
+            let i = (rel - base) as usize;
+            (rel, s, heads[i], lens[i])
+        });
+        self.scan_of += rel - base;
+        (rel, s, h, l)
     }
+
+    /// `(head, length)` of run `run`.
+    #[inline]
+    fn run(&mut self, run: u64) -> (u8, u32) {
+        let idx = self.idx;
+        debug_assert!(run < idx.reader.r);
+        let br = idx.block_runs;
+        let blk = run / br;
+        let i = (run % br) as usize;
+        self.blocks += 1;
+        idx.with_block(blk, |heads, lens| (heads[i], lens[i]))
+    }
+
     /// Occurrences of `ch` in the BWT before run `k` (i.e. rows of `ch` in runs
     /// `[0,k)`), for an ARBITRARY `ch`.
     ///
-    /// Sampling every `occ_stride`-th occurrence of `ch` plus a `run_gap`-run cap
-    /// means the scan from the sample to `k` is at most `run_gap` runs, and the
-    /// `stride == 1` fast path (the next sample IS the next run of `ch`, which is
-    /// what every rare symbol gets) needs no scan at all. This is the SEARCH path
-    /// (a pattern character, not a run's own symbol); the LF walk uses the
-    /// `seen` column instead and pays no bisect at all.
+    /// Two sources, both IN the container: a bisect of m13's per-symbol sampled
+    /// directory (a level-2 array, then one window of `l2` entries), then a scan of
+    /// runs `[r0, k)` over the decoded blocks that hold them. The scan is BOUNDED
+    /// by the directory's own declarations — `run_gap` runs, or one occurrence
+    /// stride — so it touches at most one block at the 1024-run block width and a
+    /// handful at 256. `stride == 1` (what every rare symbol gets) needs no scan at
+    /// all, and `k > r0 + run_gap` needs none either.
     fn cum_before(&mut self, ch: u8, k: u64) -> u64 {
         let ci = ch as usize;
         let m = self.idx.rd.counts[ci];
@@ -1531,6 +1601,7 @@ impl<'a> Ctx<'a> {
                 }
             }
         }
+        self.touch_dir();
         let (c0, r0, stride) = idx.entry(ci, a);
         if k <= r0 {
             return c0;
@@ -1561,17 +1632,26 @@ impl<'a> Ctx<'a> {
                 c0 + u64::from(stride)
             };
         }
+        let br = idx.block_runs;
+        let r = idx.reader.r;
         let mut acc = c0;
         let mut run = r0;
-        let heads = &idx.heads;
-        let runs = &idx.runs;
         while run < k {
-            self.scan_cum += 1;
-            let h = unsafe { *heads.get_unchecked(run as usize) };
-            if h == ch {
-                acc += runs.len(run);
-            }
-            run += 1;
+            let blk = run / br;
+            let base = blk * br;
+            let avail = (r - base).min(br);
+            let i0 = (run - base) as usize;
+            let i1 = ((k.min(base + avail)) - base) as usize;
+            self.blocks += 1;
+            idx.with_block(blk, |heads, lens| {
+                for i in i0..i1 {
+                    if heads[i] == ch {
+                        acc += u64::from(lens[i]);
+                    }
+                }
+            });
+            self.scan_cum += (i1 - i0) as u64;
+            run = base + i1 as u64;
         }
         if run - r0 > gap + M1_SCAN_SLACK {
             die(&format!(
@@ -1593,11 +1673,10 @@ impl<'a> Ctx<'a> {
         if i >= self.idx.reader.n {
             return self.idx.total[ch as usize];
         }
-        let (run, s) = self.run_of(i);
-        if self.run(run).0 == ch {
-            // the row's own run carries `ch`: cum_before(ch, run) + (i - s) is
-            // exactly `seen[run]` + (i - s) because ch IS the run's head.
-            self.seen(run) + (i - s)
+        let (run, s, h, _) = self.row_run(i);
+        if h == ch {
+            // the row's own run carries `ch`: cum_before(ch, run) + (i - s)
+            self.cum_before(ch, run) + (i - s)
         } else {
             self.cum_before(ch, run)
         }
@@ -1623,21 +1702,26 @@ impl<'a> Ctx<'a> {
     /// ... (bit6/xsa_finish.cpp: `if (idx % 1024 == 0) write(v.t)`), in the same
     /// coordinate system as the container's `n`. LF maps row i to the row whose
     /// SA is i-1, so walking LF `steps` times RAISES the text position by
-    /// `steps`: `position = anchor + steps (mod n)`.
+    /// `steps`: `position = anchor + steps (mod n)`. The anchor is read straight
+    /// out of the mapping (m11 is 0.003 n and never enters the heap).
     pub fn locate_steps(&mut self, row: u64) -> (u64, u64) {
         let n = self.idx.reader.n;
         let stripe = self.idx.stripe;
         let mut pos = row;
         let mut steps = 0u64;
         loop {
-            let (run, s) = self.run_of(pos);
-            let (h, l) = self.run(run);
+            let (run, s, h, l) = self.row_run(pos);
             let end = s + u64::from(l);
             if pos == end - 1 && run % stripe == 0 {
-                let anchor = self.idx.anchors[(run / stripe) as usize];
+                let i = run / stripe;
+                let anchor = u64_at(
+                    self.idx.reader.map.as_ref(),
+                    (self.idx.anchors_off + 16 + 8 * i) as usize,
+                );
+                self.touch_dir();
                 return ((anchor + steps) % n, steps);
             }
-            let lf = self.idx.c[h as usize] + self.seen(run);
+            let lf = self.idx.c[h as usize] + self.cum_before(h, run);
             pos = lf + (pos - s);
             steps += 1;
             self.steps += 1;
@@ -1646,8 +1730,15 @@ impl<'a> Ctx<'a> {
             }
         }
     }
+    #[allow(dead_code)]
     pub fn locate(&mut self, row: u64) -> u64 {
         self.locate_steps(row).0
+    }
+    /// Count one random touch of the container MAPPING (an m12/m13/anchor cell),
+    /// so the mapping's resident set stays bounded. See `MAPPED_BYTES`.
+    #[inline]
+    fn touch_dir(&self) {
+        self.idx.touch_mapped(1);
     }
 }
 
@@ -1831,8 +1922,8 @@ struct Hit {
     steps: u64,
     max_steps: u64,
     /// Trace-only work counters for this pattern: (run_of scan runs, cum_before
-    /// scan runs, LF steps, rank calls).
-    diag: (u64, u64, u64, u64),
+    /// scan runs, LF steps, rank calls, block-cache lookups).
+    diag: (u64, u64, u64, u64, u64),
 }
 
 /// The two pattern-file contracts.
@@ -2011,17 +2102,19 @@ pub fn command(args: &[String]) {
     let members: Vec<String> = reader.members.iter().map(|m| format!("m{}", m.id)).collect();
     // OPEN IS MMAP-ONLY: header, directory, header CRC and the 256-byte remap.
     // Nothing in the run stream, the chi set or the anchors is decoded here, so
-    // `decoded_bytes` is 0 and no stage has run. This is the line that makes the
-    // 405 s legacy open auditable against the 1 ms it costs now.
+    // `decoded_bytes` is 0 and no stage has run. `heap_budget` is the reader's
+    // fixed decoded-block cache (`CACHE_BYTES`), the ONLY per-run memory this
+    // process will ever allocate, whatever n is.
     eprintln!(
         "QLITE_OPEN container={} format=sxi2-v6-lite magic=SXI2 version={} \
          mmap_ms={open_ms:.2} decoded_bytes=0 stages=none n={} runs={} members={} end_symbol=none \
-         orientation=none alphabet=none",
+         orientation=none alphabet=none heap_budget={}",
         reader.path,
         reader.version,
         reader.n,
         reader.r,
-        members.join(",")
+        members.join(","),
+        CACHE_BYTES
     );
     eprintln!(
         "SQLITE_QUERY_OPEN format=sxi2-v6-lite mmap_ms={open_ms:.2} decoded_bytes=0 stages=none"
@@ -2050,7 +2143,8 @@ pub fn command(args: &[String]) {
         .collect();
     eprintln!(
         "QLITE_BUILD runs={} decoded_bytes={} stages=[{}] build_ms={:.1} n={} threads={} patterns={} \
-         m1_block_runs={} m1_blocks={} rundir_l2={} rundir_occ_stride={} rundir_gap={}",
+         m1_block_runs={} m1_blocks={} rundir_l2={} rundir_occ_stride={} rundir_gap={} \
+         cache_bytes={} cache_slots={} audit_blocks={} thp={}",
         index.r(),
         index.decoded_bytes,
         stage_list.join(" "),
@@ -2062,7 +2156,11 @@ pub fn command(args: &[String]) {
         index.nblocks,
         index.rundir_stride,
         index.rd.occ_stride,
-        index.rd.run_gap
+        index.rd.run_gap,
+        index.cache_bytes(),
+        index.cache_slots,
+        index.audit_blocks,
+        index.thp
     );
     let sigma = index.reader.sigma;
     let stdout = std::io::stdout();
@@ -2107,14 +2205,14 @@ pub fn command(args: &[String]) {
             } else {
                 0.0
             };
-            let (d_of, d_cum, d_steps, d_ranks) = cx.diag();
+            let (d_of, d_cum, d_steps, d_ranks, d_blocks) = cx.diag();
             Hit {
                 positions,
                 search_us,
                 locate_us,
                 steps,
                 max_steps,
-                diag: (d_of, d_cum, d_steps, d_ranks),
+                diag: (d_of, d_cum, d_steps, d_ranks, d_blocks),
             }
         })
         .collect();
@@ -2177,7 +2275,7 @@ pub fn command(args: &[String]) {
             eprintln!(
                 "TRACE_PATTERN id={} len={} occ={} search_us={:.1} locate_us={:.1} \
                  steps={} max_steps={} total_us={:.1} lf_us_per_step={:.3} scan_of={} scan_cum={} \
-                 diag_steps={} ranks={}",
+                 diag_steps={} ranks={} blocks={}",
                 pid,
                 patterns[pid].len(),
                 hit.positions.len(),
@@ -2197,7 +2295,8 @@ pub fn command(args: &[String]) {
                 hit.diag.0,
                 hit.diag.1,
                 hit.diag.2,
-                hit.diag.3
+                hit.diag.3,
+                hit.diag.4
             );
         }
         if hit.positions.len() <= 3 {
@@ -2231,6 +2330,58 @@ pub fn command(args: &[String]) {
         low_max_steps,
         high
     );
+    // THE MEMORY LINE. `peak_rss_kb` is this process's VmHWM: it must be flat in
+    // n (bounded by CACHE_BYTES + MAPPED_BYTES + the binary), and
+    // `cache_hits`/`cache_misses`/`blocks_decoded` say what the bounded reader
+    // paid for that: a rank step no longer reads a run column, it decodes blocks.
+    // `drop_epochs` is how many times the container mapping's PTEs were dropped to
+    // keep its resident set inside MAPPED_BYTES; `decoded_bytes=0` is the law.
+    let (hits, misses, decodes, epochs) = index.cache_stats();
+    eprintln!(
+        "QLITE_MEM peak_rss_kb={} cache_hits={} cache_misses={} blocks_decoded={} \
+         cache_bytes={} cache_slots={} decoded_bytes=0 heap_budget={} mapped_budget={} \
+         drop_epochs={} prefetch_calls={} decode_ms={} rss_cap_bytes={} n={} runs={}",
+        peak_rss_kb(),
+        hits,
+        misses,
+        decodes,
+        index.cache_bytes(),
+        index.cache_slots,
+        CACHE_BYTES,
+        MAPPED_BYTES,
+        epochs,
+        index
+            .prefetch_calls
+            .load(std::sync::atomic::Ordering::Relaxed),
+        index
+            .decode_ns
+            .load(std::sync::atomic::Ordering::Relaxed) as f64
+            / 1e6,
+        RSS_CAP_BYTES,
+        index.n(),
+        index.r()
+    );
+}
+
+/// This process's peak resident set, in kB (`VmHWM`). Reported so the memory law
+/// is a printed number and not a claim: at 150 MB and at 10 GB it must be the
+/// same to within the cache budget.
+fn peak_rss_kb() -> u64 {
+    let s = match std::fs::read_to_string("/proc/self/status") {
+        Ok(s) => s,
+        Err(e) => die(&format!("read /proc/self/status: {e}")),
+    };
+    for line in s.lines() {
+        if let Some(rest) = line.strip_prefix("VmHWM:") {
+            return rest
+                .trim()
+                .trim_end_matches(" kB")
+                .trim()
+                .parse()
+                .unwrap_or_else(|e| die(&format!("VmHWM {:?}: {e}", rest.trim())));
+        }
+    }
+    die("/proc/self/status has no VmHWM line")
 }
 
 #[cfg(test)]
