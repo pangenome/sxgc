@@ -36,7 +36,7 @@
   "runtime/bit6/third_party/libsais/libsais.h": "6f1dd253ece20508c27d87958abfd80541443812b4a1292e0a67879edd873446",
   "runtime/bit6/third_party/libsais/token-libsais.c": "1eeec709186bb28c02c1d7113809d19db9e83045ebd3ce6b4654ddad4659df61",
   "runtime/bit6/third_party/libsais/token-libsais.h": "5a855c8f159abf78dafcab96dc20240b81a308f0099f6fa1f7def47450b0f3df",
-  "runtime/bit6/xsa_finish.cpp": "322ac0694d07457d6527d35f8191a9f0a17366b1f0c7c1dea81f9f9a0fe95466",
+  "runtime/bit6/xsa_finish.cpp": "3ad291c34f2b5cd983d18651b3c5943c4fde0b37a05bd3302a857dad4e8190d3",
   "runtime/tools/binbwt/sa_check.cpp": "4cfa9c17dce3da7fd1aa3ded937906e2ed957f0b40d60245c41e24558552b34c",
   "runtime/tools/binbwt/scatter_sort.cpp": "d6f9efefe03d29a787e3122e43ec068a86f6fae1e6dbc580c7d8614b4e8a0f7b",
   "runtime/tools/binbwt/stream_vs_bwt.cpp": "ccb234eaca444846a2c47d36a7db55948047c280f5b816f0b8e00b7247935aa7",

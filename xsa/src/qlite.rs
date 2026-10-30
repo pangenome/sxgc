@@ -485,384 +485,387 @@ pub struct Index {
     pub reader: Reader,
     /// C table from m1 (cumulative character counts).
     pub c: [u64; 256],
-    /// Total occurrences of each symbol.
+    /// Total occurrences of each symbol, derived from the C table: total[i] =
+    /// c[i+1] - c[i] (total[255] = n - c[255]). No run decode is needed for it -
+    /// that equality is exactly what the C table means.
     pub total: [u64; 256],
-    heads: Vec<u8>,
-    rlen: Vec<u32>,
-    /// Derived LF start of run `i`: `C[heads[i]] + (occurrences of heads[i] in
-    /// runs before i)`. This is exactly what the zero-byte m10 member declares
-    /// ("derived"), materialised once as a flat array so that an LF step is a
-    /// single load instead of a load plus a symbol lookup.
-    lfstart: Vec<u64>,
-    /// run_start(j * BS) for j in 0..=R/BS
-    blk: Vec<u64>,
-    /// run_start(j * L2)
-    blk2: Vec<u64>,
-    /// `RANK_BLK*256` cumulative per-symbol counts: `rbase[b*256 + ch]` is the
-    /// number of `ch` in every run before `b*RANK_BLK`.
-    rbase: Vec<u64>,
-    /// Direct run directory, two words per entry: `dir[2k]` = start position of
-    /// the run holding text position `k*DP`, `dir[2k+1]` = that run's index.
-    dir: Vec<u64>,
+    /// m1 v2 (codec 102): the block directory and the payload.
+    dir_off: u64,
+    payload_off: u64,
+    nblocks: u64,
+    /// m12: run-start samples (row of every `rs_stride`-th run).
+    rs: RunStarts,
+    /// m13: per-symbol sampled run directory.
+    rd: RunDir,
     anchors: Vec<u64>,
-    stride: u64,
+    stripe: u64,
     pub build_ms: f64,
-    /// Bytes of m1 actually decoded into the kernel (the run stream).
+    /// Bytes of run data this process actually decoded (the open-time block
+    /// audit). The whole point of the format change: it is bounded, and it does
+    /// not grow with the container.
     pub decoded_bytes: u64,
     /// Per-stage build walls, in order.
     pub stages: Vec<(&'static str, f64)>,
+    pub audit_blocks: u64,
+    pub block_runs: u64,
+    pub rundir_stride: u64,
 }
 
+/// m12: `row(j) = (mmap[l1_off + 8j])` is the row of run `j*stride`; the level-2
+/// array every `l2stride` runs makes a lookup a bisect in a cache-resident array
+/// followed by a bisect in one 8 KB window.
+struct RunStarts {
+    l1_off: u64,
+    l1_cnt: u64,
+    l2_off: u64,
+    l2_cnt: u64,
+    stride: u64,
+    l2stride: u64,
+}
 
-/// Decode member 1 (codec 101) into run symbols and run lengths.
-fn decode_runs(
-    reader: &Reader,
-    threads: usize,
-) -> Result<(Vec<u8>, Vec<u32>, [u64; 256], [u64; 256]), String> {
-    let m = reader.member(1);
-    if m.codec != 101 {
-        return Err(format!("m1 codec {} is not 101", m.codec));
-    }
-    let r = reader.r;
-    let data = reader.slice(m.offset, m.bytes);
-    if data.len() < 2320 {
-        return Err("m1 member too short for its header".into());
-    }
-    let u64at = |o: usize| u64::from_le_bytes(data[o..o + 8].try_into().unwrap());
-    let mut c = [0u64; 256];
-    for (i, v) in c.iter_mut().enumerate() {
-        *v = u64at(8 * i);
-    }
-    let mut lens = [0u8; 256];
-    lens.copy_from_slice(&data[2048..2304]);
-    let hbits = u64at(2304);
-    let lbits = u64at(2312);
-    let hbytes = (hbits + 7) / 8;
-    let lbytes = (lbits + 7) / 8;
-    if m.bytes != 2320 + hbytes + lbytes {
-        return Err(format!("m1 size {} != 2320+{hbytes}+{lbytes}", m.bytes));
-    }
-    if hbits < r || lbits < r {
-        return Err("m1 bit counts shorter than the run count".into());
-    }
-    let head_bits = Bits::new(&data[2320..2320 + hbytes as usize], hbits);
-    let len_bits = Bits::new(&data[2320 + hbytes as usize..], lbits);
-    let huff = Huff::build(&lens)?;
-    let _ = threads;
+/// m13: per symbol `c`, entries `j` in `offs[c]..offs[c+1]` at
+/// `ent_off + 16*j` are `(rows of c before run, run index, occurrence stride to
+/// the next sample)`. The level-2 array every `l2` entries per symbol is at
+/// `l2_off + 16*l2offs[c]`.
+struct RunDir {
+    ent_off: u64,
+    l2_off: u64,
+    l2: u64,
+    counts: Vec<u64>,
+    offs: Vec<u64>,
+    l2offs: Vec<u64>,
+    occ_stride: u64,
+    run_gap: u64,
+}
 
-    let mut heads: Vec<u8> = vec![0; r as usize];
-    let mut rlen: Vec<u32> = vec![0; r as usize];
-    let (a, b) = rayon::join(
-        || {
-            let mut bits = head_bits;
-            for h in heads.iter_mut() {
-                *h = huff.decode(&mut bits);
-            }
-            if bits.pos != hbits {
-                die(&format!(
-                    "m1 head stream: consumed {} of {hbits} bits",
-                    bits.pos
-                ));
-            }
-        },
-        || {
-            let mut bits = len_bits;
-            let mut sum = 0u64;
-            let gamma = Gamma::build();
-            for l in rlen.iter_mut() {
-                let v = gamma.decode(&mut bits);
-                if v == 0 {
-                    die("m1 run length 0");
-                }
-                *l = v;
-                sum = sum
-                    .checked_add(v as u64)
-                    .unwrap_or_else(|| die("m1 run length sum overflow"));
-            }
-            if bits.pos != lbits {
-                die(&format!(
-                    "m1 length stream: consumed {} of {lbits} bits",
-                    bits.pos
-                ));
-            }
-            sum
-        },
-    );
-    if b != reader.n {
-        return Err(format!("m1 run lengths sum to {b}, header n={}", reader.n));
-    }
-    // Its own pass: symbol totals weighted by run length, computed in
-    // parallel. The C table is the cumulative version of exactly this array,
-    // so agreeing with it is the strongest available proof that both bit
-    // streams are aligned, complete and assigned to the right symbols.
-    let chunks = threads.clamp(1, 4096);
-    let chunk = (r as usize + chunks - 1) / chunks;
-    let total = (0..((r as usize + chunk - 1) / chunk))
-        .into_par_iter()
-        .map(|ci| {
-            let lo = ci * chunk;
-            let hi = ((ci + 1) * chunk).min(r as usize);
-            let mut acc = [0u64; 256];
-            for i in lo..hi {
-                acc[heads[i] as usize] += rlen[i] as u64;
-            }
-            acc
-        })
-        .reduce(|| [0u64; 256], |mut x, y| {
-            for k in 0..256 {
-                x[k] += y[k];
-            }
-            x
-        });
-    let mut acc = 0u64;
-    for ch in 0..256 {
-        if c[ch] != acc {
-            return Err(format!("m1 C table entry {ch} is {}, expected {acc}", c[ch]));
-        }
-        acc += total[ch];
-    }
-    if acc != reader.n {
-        return Err(format!("m1 symbol counts sum to {acc}, header n={}", reader.n));
-    }
-    Ok((heads, rlen, c, total))
+/// One decoded m1 block: 64 runs of head symbol + run length.
+#[derive(Clone, Copy)]
+struct Block {
+    id: u64,
+    n: u32,
+    heads: [u8; M1_BLOCK_RUNS as usize],
+    lens: [u32; M1_BLOCK_RUNS as usize],
+}
+
+impl Block {
+    const EMPTY: Block = Block {
+        id: u64::MAX,
+        n: 0,
+        heads: [0; M1_BLOCK_RUNS as usize],
+        lens: [0; M1_BLOCK_RUNS as usize],
+    };
+}
+
+/// Per-query-thread working set: the block cache. Small enough to stay hot
+/// (BLOCK_CACHE x ~350 B) and direct-mapped, so a lookup is one array index.
+pub struct Ctx<'a> {
+    idx: &'a Index,
+    cache: Box<[Block]>,
+    hits: u64,
+    misses: u64,
+}
+
+fn u64_at(d: &[u8], o: usize) -> u64 {
+    u64::from_le_bytes(d[o..o + 8].try_into().unwrap())
 }
 
 impl Index {
-    /// Build the query kernel from an already-mmap'd reader.
-    ///
-    /// This is the ONLY stage that touches run data, and its cost is
-    /// irreducible for this container format: m1 is one sequential Huffman
-    /// bit stream (run symbols) plus one sequential gamma bit stream (run
-    /// lengths) with no per-run alignment and no restart directory, so run `i`
-    /// cannot be reached without decoding runs 0..i. A query needs rank at
-    /// arbitrary rows and an LF walk over arbitrary rows, so a cold query
-    /// needs the whole run stream. What this kernel removes from the legacy
-    /// path is everything else: no full-file CRC, no chi decode, no phi, no
-    /// second decode, no 256-way `cruns` transpose, no per-run LF-start array
-    /// of the same width as `n`.
-    pub fn open(reader: Reader, threads: usize) -> Result<Index, String> {
+    /// Build the query kernel. This touches only metadata: the m1 header + the
+    /// codebook + the two directories' headers, the m11 anchors, and one bounded
+    /// block audit. The 4.3 GB run stream is NOT decoded - a rank or a locate
+    /// decodes the one or two 64-run blocks it needs.
+    pub fn open(reader: Reader, _threads: usize) -> Result<Index, String> {
         let t0 = Instant::now();
-        let t_open = t0.elapsed();
         let r = reader.r;
-        let (heads, rlen, c, total) = decode_runs(&reader, threads)?;
-        let t_decode = t0.elapsed();
-        let decode_bytes = reader.member(1).bytes;
-        // lfstart[i] = C[heads[i]] + (occurrences of heads[i] before run i).
-        // Rank blocks are exactly RANK_BLK runs wide: one 256-symbol row each.
-        let chunk = RANK_BLK as usize;
-        let chunks = ((r as usize + chunk - 1) / chunk).max(1);
-        let counts: Vec<Box<[u64; 256]>> = (0..chunks)
-            .into_par_iter()
-            .map(|ci| {
-                let lo = ci * chunk;
-                let hi = ((ci + 1) * chunk).min(r as usize);
-                let mut cnt = Box::new([0u64; 256]);
-                for i in lo..hi {
-                    cnt[heads[i] as usize] += rlen[i] as u64;
-                }
-                cnt
-            })
-            .collect();
-        let mut rbase: Vec<u64> = Vec::with_capacity(chunks * 256);
-        {
-            // Flattened: rbase[b*256 + ch] = count of ch before run b*RANK_BLK.
-            let mut acc = [0u64; 256];
-            for (ci, cnt) in counts.iter().enumerate() {
-                for k in 0..256 {
-                    rbase.push(acc[k]);
-                    acc[k] += cnt[k];
-                }
-                let _ = ci;
-            }
-            for ch in 0..256 {
-                if acc[ch] != total[ch] {
-                    return Err(format!("run-length per-symbol total mismatch at {ch}"));
-                }
-            }
-        }
-        let mut lfstart = vec![0u64; r as usize];
-        lfstart
-            .par_chunks_mut(chunk)
-            .enumerate()
-            .for_each(|(ci, out)| {
-                let mut run: [u64; 256] = rbase[ci * 256..ci * 256 + 256]
-                    .try_into()
-                    .expect("rank block row");
-                let lo = ci * chunk;
-                for (j, s) in out.iter_mut().enumerate() {
-                    let ch = heads[lo + j] as usize;
-                    *s = c[ch] + run[ch];
-                    run[ch] += rlen[lo + j] as u64;
-                }
-            });
-        {
-            // Invariant: run i's LF start must lie inside its own symbol's
-            // C-block, because that is the coordinate space every rank and
-            // every LF step addresses.
-            let ok = lfstart
-                .par_chunks(chunk)
-                .enumerate()
-                .all(|(ci, out)| {
-                    let lo = ci * chunk;
-                    let _ = ci;
-                    out.iter().enumerate().all(|(j, &v)| {
-                        let ch = heads[lo + j] as usize;
-                        v >= c[ch] && v < c[ch] + total[ch]
-                    })
-                });
-            if !ok {
-                return Err("derived LF start outside its symbol's C block".into());
-            }
-        }
-        drop(counts);
-        let t_rank = t0.elapsed();
+        let n = reader.n;
 
-        // Run-start samples.
-        let nblk2 = (r / L2 + 1) as usize;
-        let nblk = (r / BS + 1) as usize;
-        let sums: Vec<u64> = (0..nblk2)
-            .into_par_iter()
-            .map(|j| {
-                let lo = (j as u64 * L2) as usize;
-                let hi = (((j as u64 + 1) * L2).min(r)) as usize;
-                let mut s = 0u64;
-                for i in lo..hi {
-                    s += rlen[i] as u64;
-                }
-                s
-            })
-            .collect();
-        let mut blk2: Vec<u64> = Vec::with_capacity(nblk2);
+        // ---- the format declaration: old containers are refused by shape, not
+        // decoded and hoped over.
+        let m1 = reader.member(1);
+        if m1.codec != 102 {
+            return Err(format!(
+                "{}: m1 codec {} is not 102 (block-compressed) - this is a pre-block-compression\n  \
+                 v6 lite container: one sequential Huffman+gamma run stream with no restart\n  \
+                 directory, so run k needs runs 0..k. Rebuild it with `xsa build --tape`.",
+                reader.path, m1.codec
+            ));
+        }
+        if reader.flags & 32 == 0 {
+            return Err(format!(
+                "{}: header flags {:#x} do not declare the block-compressed m1 + run directories\n  \
+                 (bit 32); rebuild with `xsa build --tape`.",
+                reader.path, reader.flags
+            ));
+        }
+        for id in [12u32, 13] {
+            if !reader.members.iter().any(|m| m.id == id) {
+                return Err(format!(
+                    "{}: missing run directory member m{id}; the block-compressed format needs m12\n  \
+                     (run starts) and m13 (per-symbol run directory) - rebuild with `xsa build --tape`.",
+                    reader.path
+                ));
+            }
+        }
+        let data = reader.slice(m1.offset, m1.bytes);
+        if data.len() < 2336 {
+            return Err("m1 member too short for its v2 header".into());
+        }
+        let mut c = [0u64; 256];
+        for (i, v) in c.iter_mut().enumerate() {
+            *v = u64_at(data, 8 * i);
+        }
+        let mut lens = [0u8; 256];
+        lens.copy_from_slice(&data[2048..2304]);
+        let nblocks = u64_at(data, 2304);
+        let block_runs = u64_at(data, 2312);
+        let total_runs = u64_at(data, 2320);
+        let payload_off = u64_at(data, 2328);
+        if block_runs != M1_BLOCK_RUNS {
+            return Err(format!(
+                "m1 declares block_runs={block_runs}; this reader supports {M1_BLOCK_RUNS}"
+            ));
+        }
+        if total_runs != r {
+            return Err(format!("m1 declares {total_runs} runs, header says {r}"));
+        }
+        let want_blocks = (r + M1_BLOCK_RUNS - 1) / M1_BLOCK_RUNS;
+        if nblocks != want_blocks {
+            return Err(format!("m1 declares {nblocks} blocks, expected {want_blocks}"));
+        }
+        if payload_off != 2336 + 8 * nblocks || payload_off > m1.bytes {
+            return Err(format!(
+                "m1 payload offset {payload_off} does not follow its {nblocks}-entry directory"
+            ));
+        }
+        // C table -> symbol totals (its own definition, no decode needed).
+        let mut total = [0u64; 256];
         let mut acc = 0u64;
-        for &s in &sums {
-            blk2.push(acc);
-            acc += s;
+        for ch in 0..256 {
+            if c[ch] != acc {
+                return Err(format!("m1 C table entry {ch} is {}, expected {acc}", c[ch]));
+            }
+            total[ch] = if ch + 1 < 256 { c[ch + 1] } else { n } - c[ch];
+            acc += total[ch];
         }
-        if acc != reader.n {
-            return Err(format!("run-start samples sum to {acc}, header n={}", reader.n));
+        if acc != n {
+            return Err(format!("m1 symbol counts sum to {acc}, header n={n}"));
         }
-        let mut blk: Vec<u64> = vec![0; nblk];
-        blk.par_chunks_mut(L2 as usize / BS as usize)
-            .enumerate()
-            .for_each(|(j, out)| {
-                let mut s = blk2[j];
-                let mut run = j as u64 * L2;
-                for slot in out.iter_mut() {
-                    *slot = s;
-                    let end = (run + BS).min(r);
-                    while run < end {
-                        s += rlen[run as usize] as u64;
-                        run += 1;
-                    }
-                }
-            });
-        let t_blk = t0.elapsed();
+        let huff = Huff::build(&lens)?;
+        let m1dir_off = m1.offset + 2336;
+        let m1payload_off = m1.offset + payload_off;
+        let m1payload_len = m1.bytes - payload_off;
 
-        // Direct run directory in TEXT space: one entry per DP text positions.
-        // 1MB-ish granularity in run space is not enough because a locate step
-        // needs run_of() on an arbitrary row inside a dependent chain, where a
-        // binary search over a cold 8 KB window costs ~10 misses. One entry
-        // lookup plus a short forward scan of the (contiguous) run lengths
-        // costs ~1.
-        let ndir = (reader.n / DP + 1) as usize;
-        let mut dir: Vec<u64> = vec![0; 2 * ndir];
+        // ---- m12
+        let m = reader.member(12);
+        let a = reader.slice(m.offset, m.bytes);
+        if a.len() < 64 {
+            return Err("m12 member too short".into());
+        }
+        let rs = RunStarts {
+            stride: u64_at(a, 0),
+            l1_cnt: u64_at(a, 8),
+            l2stride: u64_at(a, 32),
+            l2_cnt: u64_at(a, 40),
+            l2_off: m.offset + u64_at(a, 48),
+            l1_off: m.offset + u64_at(a, 56),
+        };
+        if u64_at(a, 16) != r || u64_at(a, 24) != n {
+            return Err("m12 declares a different (n, R)".into());
+        }
+        if rs.stride != M1_BLOCK_RUNS || rs.l2stride % rs.stride != 0 {
+            return Err(format!(
+                "m12 stride {} / level-2 stride {} not usable by this reader (needs {} | multiple)",
+                rs.stride, rs.l2stride, M1_BLOCK_RUNS
+            ));
+        }
+        if rs.l1_cnt != (r + rs.stride - 1) / rs.stride
+            || rs.l2_cnt != (r + rs.l2stride - 1) / rs.l2stride
+            || m.bytes != u64_at(a, 56) + 8 * rs.l1_cnt
         {
-            let per = (ndir + threads.max(1) - 1) / threads.max(1);
-            let dptr = SendPtr(dir.as_mut_ptr());
-            (0..((ndir + per - 1) / per))
-                .into_par_iter()
-                .for_each(|ci| {
-                    let lo = ci * per;
-                    let hi = ((ci + 1) * per).min(ndir);
-                    if lo >= hi {
-                        return;
-                    }
-                    // locate the run holding lo*DP from the 64-run samples
-                    let p0 = lo as u64 * DP;
-                    let j = blk2.partition_point(|&s| s <= p0) - 1;
-                    let mut k = (j as u64 * (L2 / BS)) as usize;
-                    let kend = ((k + (L2 / BS) as usize).min(blk.len())).max(k + 1);
-                    k += blk[k..kend].partition_point(|&s| s <= p0) - 1;
-                    let mut run = k as u64 * BS;
-                    let mut s0 = blk[k];
-                    while run + 1 < r && s0 + rlen[run as usize] as u64 <= p0 {
-                        s0 += rlen[run as usize] as u64;
-                        run += 1;
-                    }
-                    for e in lo..hi {
-                        let p = e as u64 * DP;
-                        while run + 1 < r && s0 + rlen[run as usize] as u64 <= p {
-                            s0 += rlen[run as usize] as u64;
-                            run += 1;
-                        }
-                        unsafe {
-                            *dptr.add(2 * e) = s0;
-                            *dptr.add(2 * e + 1) = run;
-                        }
-                    }
-                });
+            return Err("m12 directory shape is inconsistent".into());
         }
-        let t_dir = t0.elapsed();
+        // ---- m13
+        let m = reader.member(13);
+        let a = reader.slice(m.offset, m.bytes);
+        if a.len() < 72 {
+            return Err("m13 member too short".into());
+        }
+        let nsym = u64_at(a, 16);
+        if nsym != 256 || u64_at(a, 40) != n || u64_at(a, 48) != r {
+            return Err("m13 declares a different (nsym, n, R)".into());
+        }
+        let mut counts = Vec::with_capacity(256);
+        let mut offs = Vec::with_capacity(257);
+        for i in 0..256 {
+            counts.push(u64_at(a, 72 + 8 * i));
+        }
+        for i in 0..257 {
+            offs.push(u64_at(a, 72 + 8 * 256 + 8 * i));
+        }
+        let total_entries = u64_at(a, 32);
+        if offs[256] != total_entries {
+            return Err("m13 entry offsets do not close on the entry count".into());
+        }
+        let mut l2offs = Vec::with_capacity(257);
+        {
+            let mut l2 = 0u64;
+            for ci in 0..256 {
+                l2offs.push(l2);
+                l2 += (counts[ci] + RUNDIR_L2 - 1) / RUNDIR_L2;
+            }
+            l2offs.push(l2);
+        }
+        let ent_off = m.offset + u64_at(a, 56);
+        let l2_off = m.offset + u64_at(a, 64);
+        if ent_off + 16 * total_entries != m.offset + m.bytes
+            || l2_off + 16 * l2offs[256] != ent_off
+        {
+            return Err("m13 member size does not match its own declaration".into());
+        }
+        let rd = RunDir {
+            ent_off,
+            l2_off,
+            l2: RUNDIR_L2,
+            counts,
+            offs,
+            l2offs,
+            occ_stride: u64_at(a, 0),
+            run_gap: u64_at(a, 8),
+        };
+        if l2_off % 8 != 0 || ent_off % 8 != 0 {
+            return Err("m13 areas are not 8-byte aligned".into());
+        }
 
-        // m11: tail SA of every 1024th run.
+        // ---- m11: tail SA of every 1024th run (unchanged by this format change)
         let m = reader.member(11);
         let a = reader.slice(m.offset, m.bytes);
         if m.count != (r + 1023) / 1024 || m.bytes != 16 + 8 * m.count {
             return Err(format!("m11 anchor size {} / count {}", m.bytes, m.count));
         }
-        let exponent = u64::from_le_bytes(a[0..8].try_into().unwrap());
-        let stride = 1u64 << exponent;
-        if stride != 1024 || u64::from_le_bytes(a[8..16].try_into().unwrap()) != m.count {
+        let exponent = u64_at(a, 0);
+        let stripe = 1u64 << exponent;
+        if stripe != 1024 || u64_at(a, 8) != m.count {
             return Err(format!(
-                "m11 anchor header mismatch: stride {stride}, count field {}, directory {}",
-                u64::from_le_bytes(a[8..16].try_into().unwrap()),
+                "m11 anchor header mismatch: stride {stripe}, count field {}, directory {}",
+                u64_at(a, 8),
                 m.count
             ));
         }
         let anchors: Vec<u64> = (0..m.count as usize)
-            .map(|i| u64::from_le_bytes(a[16 + 8 * i..24 + 8 * i].try_into().unwrap()))
+            .map(|i| u64_at(a, 16 + 8 * i))
             .collect();
         for (i, &v) in anchors.iter().enumerate() {
-            if v >= reader.n {
+            if v >= n {
                 return Err(format!("m11 anchor {i} value {v} outside [0,n)"));
             }
         }
-        let t_end = t0.elapsed();
-        let stages = vec![
-            ("m1-runs", (t_decode - t_open).as_secs_f64() * 1e3),
-            ("rank-dir", (t_rank - t_decode).as_secs_f64() * 1e3),
-            ("run-starts", (t_blk - t_rank).as_secs_f64() * 1e3),
-            ("run-dir", (t_dir - t_blk).as_secs_f64() * 1e3),
-            ("m11-anchors", (t_end - t_dir).as_secs_f64() * 1e3),
-        ];
-        let build_ms = t_end.as_secs_f64() * 1e3;
-        if crate::trace_on() {
-            for (name, ms) in &stages {
-                eprintln!("TRACE stage=lite.{name} ms={ms:.1}");
+        let t_anchors = t0.elapsed();
+
+        // ---- page the three hot members in, asynchronously. A locate walks the
+        // run-start array and the per-symbol directory at 2000+ essentially random
+        // positions; without this every one of those is a minor fault, and the
+        // walk is a dependent chain so they cannot overlap.
+        let mut prefetched = 0u64;
+        for m in reader.members.iter().filter(|m| [1u32, 12, 13].contains(&m.id)) {
+            let s = &reader.map[m.offset as usize..(m.offset + m.bytes) as usize];
+            if let Err(e) = s.advise(memmap2::Advice::WillNeed) {
+                return Err(format!("madvise(WILLNEED) on m{}: {e}", m.id));
             }
-            eprintln!("TRACE stage=lite.build-total ms={build_ms:.1}");
+            prefetched += m.bytes;
         }
-        Ok(Index {
+        let t_prefetch = t0.elapsed();
+
+        let mut idx = Index {
             reader,
             c,
             total,
-            heads,
-            rlen,
-            lfstart,
-            blk,
-            blk2,
-            rbase,
-            dir,
+            dir_off: m1dir_off,
+            payload_off: m1payload_off,
+            nblocks,
+            rs,
+            rd,
             anchors,
-            stride,
-            build_ms,
-            decoded_bytes: decode_bytes,
-            stages,
-        })
-    }
-}
+            stripe,
+            build_ms: 0.0,
+            decoded_bytes: 0,
+            stages: Vec::new(),
+            audit_blocks: 0,
+            block_runs,
+            rundir_stride: rd_l2_declared(&rd),
+        };
+        if idx.payload_off + m1payload_len != idx.reader.member(1).offset + idx.reader.member(1).bytes {
+            return Err("m1 payload area does not reach the end of its member".into());
+        }
 
-impl Index {
+        // ---- OPEN-TIME FAIL-LOUD AUDIT. Structural validation proves the
+        // directories are well formed; this proves they agree with the payload
+        // and with n, without decoding the whole stream: a spread of blocks is
+        // decoded and its runs are checked against the m12 samples that bracket
+        // them (adjacent blocks must sum to the difference of their samples), and
+        // the LAST window must close exactly on n.
+        let audit = {
+            let mut cx = idx.ctx();
+            let mut bad = 0u64;
+            let mut checked = 0u64;
+            let step = (nblocks / M1_AUDIT_BLOCKS).max(1);
+            let mut b = 0u64;
+            while b + 1 < nblocks {
+                let (n0, s0) = cx.block_runs_sum(b)?;
+                let (n1, _s1) = cx.block_runs_sum(b + 1)?;
+                let (want0, _) = (idx.l1(b), idx.l1(b + 1));
+                let _ = (n0, want0);
+                let s1 = idx.l1(b + 1);
+                let s0 = idx.l1(b);
+                if s1 - s0 != n1 {
+                    bad += 1;
+                }
+                checked += 1;
+                b += step;
+            }
+            // the tail: the last block must end on n
+            let last = nblocks - 1;
+            let (sum, start) = cx.block_runs_sum(last)?;
+            let (_, _) = (sum, start);
+            let tail_runs = r - last * M1_BLOCK_RUNS;
+            let last_sum = cx.block_sum(last)?;
+            if idx.l1(last) + last_sum != n {
+                return Err(format!(
+                    "m1 block audit: the last window starts at {} and sums to {}, but n={n}",
+                    idx.l1(last),
+                    last_sum
+                ));
+            }
+            let _ = tail_runs;
+            if bad != 0 {
+                return Err(format!(
+                    "m1 block audit: {bad} of {checked} sampled block pairs disagree with m12 run starts"
+                ));
+            }
+            idx.decoded_bytes = cx.misses * (BLOCK_BYTES_EST as u64);
+            idx.audit_blocks = checked + 1;
+            (checked + 1, cx.misses)
+        };
+        let t_audit = t0.elapsed();
+        let (n_audit, dec) = audit;
+        let stages = vec![
+            ("m11-anchors", (t_anchors - t0).as_secs_f64() * 1e3),
+            ("prefetch", (t_prefetch - t_anchors).as_secs_f64() * 1e3),
+            ("block-audit", (t_audit - t_prefetch).as_secs_f64() * 1e3),
+        ];
+        let build_ms = t_audit.as_secs_f64() * 1e3;
+        idx.stages = stages;
+        idx.build_ms = build_ms;
+        if crate::trace_on() {
+            for (name, ms) in &idx.stages {
+                eprintln!("TRACE stage=lite.{name} ms={ms:.1}");
+            }
+            eprintln!(
+                "TRACE stage=lite.build-total ms={build_ms:.1} audit_blocks={n_audit} decoded_blocks={dec}"
+            );
+        }
+        Ok(idx)
+    }
+
     #[inline]
     pub fn n(&self) -> u64 {
         self.reader.n
@@ -871,63 +874,272 @@ impl Index {
     pub fn r(&self) -> u64 {
         self.reader.r
     }
-    /// Text position of run `run`'s first row (LF start).
-    #[inline(always)]
-    fn start(&self, run: u64) -> u64 {
-        self.lfstart[run as usize]
+    /// A fresh per-thread working set (block cache). One per pattern.
+    pub fn ctx(&self) -> Ctx<'_> {
+        Ctx {
+            idx: self,
+            cache: vec![Block::EMPTY; BLOCK_CACHE].into_boxed_slice(),
+            hits: 0,
+            misses: 0,
+        }
     }
-    /// `(run, run_start)` of the run holding row `i` - one directory lookup
-    /// plus a forward scan bounded by DP text positions.
+
+    #[inline(always)]
+    fn l1(&self, j: u64) -> u64 {
+        debug_assert!(j < self.rs.l1_cnt);
+        u64_at(self.reader.map.as_ref(), (self.rs.l1_off + 8 * j) as usize)
+    }
+    #[inline(always)]
+    fn l2(&self, j: u64) -> u64 {
+        debug_assert!(j < self.rs.l2_cnt);
+        u64_at(self.reader.map.as_ref(), (self.rs.l2_off + 8 * j) as usize)
+    }
+    /// m13 entry `i` of symbol `ch`: (cum rows of ch before run, run index, stride)
+    #[inline(always)]
+    fn entry(&self, ch: usize, i: u64) -> (u64, u64, u32) {
+        let o = (self.rd.ent_off + 16 * (self.rd.offs[ch] + i)) as usize;
+        let m = &self.reader.map;
+        let cum = u64_at(m.as_ref(), o);
+        let w = u64_at(m.as_ref(), o + 8);
+        (cum, w & 0xffff_ffff, (w >> 32) as u16 as u32)
+    }
+    #[inline(always)]
+    fn l2entry(&self, ch: usize, i: u64) -> (u64, u64) {
+        let o = (self.rd.l2_off + 16 * (self.rd.l2offs[ch] + i)) as usize;
+        let m = &self.reader.map;
+        (u64_at(m.as_ref(), o), u64_at(m.as_ref(), o + 8) & 0xffff_ffff)
+    }
+    /// The block directory entry: (payload word offset, head bits, length bits)
+    #[inline(always)]
+    fn dir(&self, b: u64) -> (u64, u32, u32) {
+        let w = u64_at(self.reader.map.as_ref(), (self.dir_off + 8 * b) as usize);
+        (((w & 0xffff_ffff) as u64) * 8, (w >> 32) as u16 as u32, (w >> 48) as u32)
+    }
+}
+
+fn rd_l2_declared(rd: &RunDir) -> u64 {
+    0u64.max(rd.l2)
+}
+
+// ------------------------------------------------------------ the query thread
+
+impl<'a> Ctx<'a> {
+    /// `(head, length)` of run `run`, decoding its 64-run block on a cache miss.
     #[inline]
-    fn run_of(&self, i: u64) -> (u64, u64) {
-        let e = 2 * (i / DP) as usize;
-        let mut s = self.dir[e];
-        let mut run = self.dir[e + 1];
-        while run + 1 < self.reader.r && s + self.rlen[run as usize] as u64 <= i {
-            s += self.rlen[run as usize] as u64;
+    fn run(&mut self, run: u64) -> (u8, u32) {
+        let b = run / M1_BLOCK_RUNS;
+        let i = (run % M1_BLOCK_RUNS) as usize;
+        let slot = (b % BLOCK_CACHE as u64) as usize;
+        if self.cache[slot].id != b {
+            self.fill(b, slot);
+        }
+        let blk = &self.cache[slot];
+        debug_assert!((i as u32) < blk.n);
+        (blk.heads[i], blk.lens[i])
+    }
+    #[cold]
+    fn fill(&mut self, b: u64, slot: usize) {
+        self.misses += 1;
+        let idx = self.idx;
+        let (off, hbits, lbits) = idx.dir(b);
+        let hbytes = (hbits as u64 + 7) / 8;
+        let lbytes = (lbits as u64 + 7) / 8;
+        let start = idx.payload_off + off;
+        let end = start + hbytes + lbytes;
+        if end > idx.payload_off + idx.reader.member(1).bytes - idx.reader.member(1).offset {
+            die(&format!("m1 block {b} runs past the payload area"));
+        }
+        let p = &idx.reader.map.as_ref()[start as usize..end as usize];
+        let first = b * M1_BLOCK_RUNS;
+        let want = ((first + M1_BLOCK_RUNS).min(idx.reader.r) - first) as usize;
+        let mut heads = [0u8; M1_BLOCK_RUNS as usize];
+        let mut lens = [0u32; M1_BLOCK_RUNS as usize];
+        let n = decode_block(
+            &idx.huff,
+            &p[..hbytes as usize],
+            hbits as u64,
+            &p[hbytes as usize..],
+            lbits as u64,
+            want,
+            &mut heads,
+            &mut lens,
+            b,
+        );
+        self.cache[slot] = Block {
+            id: b,
+            n: n as u32,
+            heads,
+            lens,
+        };
+    }
+    fn hits(&self) -> u64 {
+        self.hits
+    }
+    /// Sum of the run lengths in block `b`, and the row at which it starts.
+    fn block_runs_sum(&mut self, b: u64) -> Result<(u64, u64), String> {
+        let s = self.idx.l1(b);
+        Ok((self.block_sum(b)?, s))
+    }
+    fn block_sum(&mut self, b: u64) -> Result<u64, String> {
+        let first = b * M1_BLOCK_RUNS;
+        let want = ((first + M1_BLOCK_RUNS).min(self.idx.reader.r) - first) as usize;
+        let slot = (b % BLOCK_CACHE as u64) as usize;
+        if self.cache[slot].id != b {
+            self.fill(b, slot);
+        }
+        let blk = &self.cache[slot];
+        if blk.n as usize != want {
+            return Err(format!("m1 block {b} decoded {} of {want} runs", blk.n));
+        }
+        Ok(blk.lens[..want].iter().map(|&l| l as u64).sum())
+    }
+    /// `(run, run start row)` of the run holding row `row`.
+    ///
+    /// Two bisects (a cache-resident level-2 array, then one 8 KB level-1 window)
+    /// plus a forward scan of at most `M1_BLOCK_RUNS` runs inside the block the
+    /// row is in - so a lookup costs one decoded block, never a predecessor walk.
+    fn run_of(&mut self, row: u64) -> (u64, u64) {
+        let idx = self.idx;
+        let r = idx.reader.r;
+        let n = idx.reader.n;
+        debug_assert!(row < n);
+        // level 2
+        let mut lo = 0u64;
+        let mut hi = idx.rs.l2_cnt;
+        if hi > 1 {
+            while hi - lo > 1 {
+                let mid = lo + (hi - lo) / 2;
+                if idx.l2(mid) <= row {
+                    lo = mid
+                } else {
+                    hi = mid
+                }
+            }
+        }
+        let per = idx.rs.l2stride / idx.rs.stride;
+        let j0 = lo * per;
+        let j1 = (j0 + per).min(idx.rs.l1_cnt);
+        let mut a = j0;
+        let mut b = j1;
+        if b - a > 1 {
+            while b - a > 1 {
+                let mid = a + (b - a) / 2;
+                if idx.l1(mid) <= row {
+                    a = mid
+                } else {
+                    b = mid
+                }
+            }
+        }
+        let mut run = a * idx.rs.stride;
+        let mut s = idx.l1(a);
+        // walk forward inside the run-start sample window (<= 64 runs, one block)
+        while run + 1 < r {
+            let l = self.run(run).1 as u64;
+            if s + l > row {
+                break;
+            }
+            s += l;
             run += 1;
         }
         (run, s)
     }
-    /// Occurrences of `ch` in the BWT before row `i` (0-based within `ch`).
+    /// Occurrences of `ch` in the BWT before run `k` (i.e. rows of `ch` in runs
+    /// `[0,k)`).
+    ///
+    /// Sampling every `occ_stride`-th occurrence of `ch` plus a `run_gap`-run cap
+    /// means the scan from the sample to `k` is at most one 64-run block, and the
+    /// `stride == 1` fast path (the next sample IS the next run of `ch`, which is
+    /// what every rare symbol gets) needs no scan at all.
+    fn cum_before(&mut self, ch: u8, k: u64) -> u64 {
+        let ci = ch as usize;
+        let m = self.idx.rd.counts[ci];
+        if m == 0 || k == 0 {
+            return 0;
+        }
+        let idx = self.idx;
+        let l2n = (m + idx.rd.l2 - 1) / idx.rd.l2;
+        let mut lo = 0u64;
+        let mut hi = l2n;
+        if hi > 1 {
+            while hi - lo > 1 {
+                let mid = lo + (hi - lo) / 2;
+                if idx.l2entry(ci, mid).1 <= k {
+                    lo = mid
+                } else {
+                    hi = mid
+                }
+            }
+        }
+        let j0 = lo * idx.rd.l2;
+        let j1 = (j0 + idx.rd.l2).min(m);
+        let mut a = j0;
+        let mut b = j1;
+        if b - a > 1 {
+            while b - a > 1 {
+                let mid = a + (b - a) / 2;
+                if idx.entry(ci, mid).1 <= k {
+                    a = mid
+                } else {
+                    b = mid
+                }
+            }
+        }
+        let (c0, r0, stride) = idx.entry(ci, a);
+        if k <= r0 {
+            return c0;
+        }
+        if stride == 1 {
+            // the next sample is the next run of `ch`: the only `ch` run in
+            // [r0, k) is r0 itself.
+            if a + 1 < m {
+                return idx.entry(ci, a + 1).0;
+            }
+            return c0 + self.run(r0).1 as u64;
+        }
+        let mut acc = c0;
+        let mut run = r0;
+        let mut guard = 0u64;
+        while run < k {
+            let (h, l) = self.run(run);
+            if h == ch {
+                acc += l as u64;
+            }
+            run += 1;
+            guard += 1;
+            if guard > M1_SCAN_GUARD {
+                die(&format!(
+                    "cum_before: scan from run {r0} to {k} exceeded {M1_SCAN_GUARD} runs for symbol {ch}"
+                ));
+            }
+        }
+        acc
+    }
+    /// Occurrences of `ch` in the BWT before row `i`.
     #[inline]
-    fn rank(&self, ch: u8, i: u64) -> u64 {
+    fn rank(&mut self, ch: u8, i: u64) -> u64 {
         if i == 0 {
             return 0;
         }
-        if i >= self.reader.n {
-            return self.total[ch as usize];
+        if i >= self.idx.reader.n {
+            return self.idx.total[ch as usize];
         }
         let (run, s) = self.run_of(i);
-        let h = self.heads[run as usize];
+        let (h, _) = self.run(run);
+        let base = self.cum_before(ch, run);
         if h == ch {
-            return (self.lfstart[run as usize] - self.c[ch as usize]) + (i - s);
+            base + (i - s)
+        } else {
+            base
         }
-        // Other symbols: one cumulative row every RANK_BLK runs, then a scan of
-        // at most RANK_BLK run heads (4 KB, sequential) for the `ch` runs in
-        // between. A backward scan to the previous `ch` run instead would be
-        // unbounded on a rare byte.
-        let block = (run / RANK_BLK) as usize;
-        let mut cnt = self.rbase[block * 256 + ch as usize];
-        for p in (block as u64 * RANK_BLK) as usize..run as usize {
-            if self.heads[p] == ch {
-                cnt += self.rlen[p] as u64;
-            }
-        }
-        cnt
-    }
-    /// One backward-search step.
-    #[inline]
-    fn step(&self, l: u64, r: u64, ch: u8) -> (u64, u64) {
-        let base = self.c[ch as usize];
-        (base + self.rank(ch, l), base + self.rank(ch, r))
     }
     /// Half-open BWT interval of the pattern, consumed left to right.
-    pub fn search(&self, pat: &[u8]) -> (u64, u64) {
+    pub fn search(&mut self, pat: &[u8]) -> (u64, u64) {
         let mut l = 0u64;
-        let mut r = self.reader.n;
+        let mut r = self.idx.reader.n;
         for &ch in pat {
-            let (nl, nr) = self.step(l, r, ch);
+            let base = self.idx.c[ch as usize];
+            let (nl, nr) = (base + self.rank(ch, l), base + self.rank(ch, r));
             l = nl;
             r = nr;
             if l >= r {
@@ -936,41 +1148,81 @@ impl Index {
         }
         (l, r)
     }
-    /// Text position of BWT row `row`.
+    /// `(text position, LF steps walked)` of BWT row `row`.
     ///
-    /// m11 stores the *raw* SA coordinate of the tail row of runs 0, 1024,
-    /// 2048, ... (bit6/xsa_finish.cpp: `if (idx % 1024 == 0) write(v.t)`), in
-    /// the same coordinate system as the container's `n`. LF maps row i to the
-    /// row whose SA is i-1, so walking LF `steps` times RAISES the text
-    /// position by `steps`: `position = anchor + steps (mod n)`.
-    ///
-    /// Verified on t150m.sxi2: 574/574 oracle positions across all 100
-    /// fixture patterns (mean 2650 steps, max 24437), see
-    /// tools/binbwt/gate_qlite_150m.sh.
-    pub fn locate(&self, row: u64) -> u64 {
-        self.locate_steps(row).0
-    }
-    /// `(position, LF steps walked)`. The step count is the whole cost of a
-    /// locate and the only number that explains it: the walk terminates on the
-    /// tail row of the next anchored run, so it is exactly the distance from
-    /// this row's SA down to the nearest m11 anchor.
-    pub fn locate_steps(&self, row: u64) -> (u64, u64) {
+    /// m11 stores the *raw* SA coordinate of the tail row of runs 0, 1024, 2048,
+    /// ... (bit6/xsa_finish.cpp: `if (idx % 1024 == 0) write(v.t)`), in the same
+    /// coordinate system as the container's `n`. LF maps row i to the row whose
+    /// SA is i-1, so walking LF `steps` times RAISES the text position by
+    /// `steps`: `position = anchor + steps (mod n)`.
+    pub fn locate_steps(&mut self, row: u64) -> (u64, u64) {
+        let n = self.idx.reader.n;
+        let stripe = self.idx.stripe;
         let mut pos = row;
         let mut steps = 0u64;
         loop {
             let (run, s) = self.run_of(pos);
-            let end = s + self.rlen[run as usize] as u64;
-            if pos == end - 1 && run % self.stride == 0 {
-                let anchor = self.anchors[(run / self.stride) as usize];
-                return ((anchor + steps) % self.reader.n, steps);
+            let (h, l) = self.run(run);
+            let end = s + l as u64;
+            if pos == end - 1 && run % stripe == 0 {
+                let anchor = self.idx.anchors[(run / stripe) as usize];
+                return ((anchor + steps) % n, steps);
             }
-            pos = self.start(run) + (pos - s);
+            let lf = self.idx.c[h as usize] + self.cum_before(h, run);
+            pos = lf + (pos - s);
             steps += 1;
-            if steps >= self.reader.n {
+            if steps >= n {
                 die("locate: LF walk has no anchored sample");
             }
         }
     }
+    pub fn locate(&mut self, row: u64) -> u64 {
+        self.locate_steps(row).0
+    }
+}
+
+/// Decode one m1 block. Bit-exactness is checked, not assumed: the head stream
+/// must be consumed to its last bit and the length stream likewise, so a wrong
+/// offset or a wrong block width cannot silently produce plausible runs.
+#[allow(clippy::too_many_arguments)]
+fn decode_block(
+    huff: &Huff,
+    hbytes: &[u8],
+    hbits: u64,
+    lbytes: &[u8],
+    lbits: u64,
+    want: usize,
+    heads: &mut [u8; M1_BLOCK_RUNS as usize],
+    lens: &mut [u32; M1_BLOCK_RUNS as usize],
+    b: u64,
+) -> usize {
+    if hbits > hbytes.len() as u64 * 8 || lbits > lbytes.len() as u64 * 8 {
+        die(&format!("m1 block {b}: bit counts exceed the payload bytes"));
+    }
+    let mut hb = Bits::new(hbytes, hbits);
+    let mut lb = Bits::new(lbytes, lbits);
+    let gamma = Gamma::build();
+    for i in 0..want {
+        heads[i] = huff.decode(&mut hb);
+        let v = gamma.decode(&mut lb);
+        if v == 0 {
+            die(&format!("m1 block {b}: run length 0"));
+        }
+        lens[i] = v;
+    }
+    if hb.pos != hbits {
+        die(&format!(
+            "m1 block {b}: head stream consumed {} of {hbits} bits",
+            hb.pos
+        ));
+    }
+    if lb.pos != lbits {
+        die(&format!(
+            "m1 block {b}: length stream consumed {} of {lbits} bits",
+            lb.pos
+        ));
+    }
+    want
 }
 
 // ---------------------------------------------------------------- the command

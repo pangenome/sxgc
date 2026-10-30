@@ -6388,7 +6388,10 @@ int main(int argc, char** argv) {
                     // entries: {cum u64, run u32, stride u16, pad u16}
                     for (unsigned c = 0; c < 256; ++c) {
                         const size_t m = m1dir.dirRun[c].size();
-                        pf_check(m > 0, "a symbol present in the BWT has no run-directory sample");
+                        // a symbol absent from the text has no entries (and needs
+                        // none: its C block is empty, so every rank of it is 0).
+                        pf_check(m > 0 || rs.totals[c] == 0,
+                                 "a symbol present in the BWT has no run-directory sample");
                         for (size_t j = 0; j < m; ++j) {
                             pf_check(m1dir.dirRun[c][j] < 0xffffffffull, "run index exceeds u32");
                             // 16-byte entry: cum u64, then run u32 | stride u16 | pad u16
