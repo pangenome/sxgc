@@ -65,10 +65,10 @@ const M1_AUDIT_BLOCKS: u64 = 1024;
 /// estimate for the accounting line; the true block is ~190 B + rounding and is
 /// declared nowhere, so this must not be used for anything but the estimate).
 const BLOCK_BYTES_EST: u64 = 192;
-/// Reader-only fail-loud backstop on the run-space scan in `cum_before`: the
-/// writer's sampling rule bounds that scan by its PF_RUNDIR_GAP (256 runs), so
-/// this is 16x slack, not a decode parameter.
-const M1_SCAN_GUARD: u64 = 4096;
+/// Reader-only slack on the run-space scan bound in `cum_before`. The bound
+/// itself comes from the m13 header (`rs.run_gap`, the writer's sampling rule);
+/// this is the tiny allowance for the inclusive/exclusive edge of that rule.
+const M1_SCAN_SLACK: u64 = 2;
 
 use crate::{die, sxi};
 use memmap2::Mmap;
@@ -161,6 +161,8 @@ struct Huff {
     sym: Vec<i32>,
     longest: u32,
     short_codes: u64,
+    /// The published per-symbol lengths, kept for the block diagnostic.
+    len: [u8; 256],
 }
 
 impl Huff {
@@ -237,6 +239,7 @@ impl Huff {
             sym,
             longest,
             short_codes,
+            len: *lens,
         })
     }
     #[inline(always)]
@@ -388,8 +391,12 @@ impl Reader {
                 map.len()
             ));
         }
-        if !(5..=7).contains(&count) || hs != 64 + 40 * count as usize {
-            return Err(format!("{path}: v6 directory must hold 5-7 members"));
+        // 8 slots is the block-compressed lite shape (m1,m4,m5,m7,m10,m11,m12,m13);
+        // anything outside 5..=8 is not a lite container.
+        if !(5..=8).contains(&count) || hs != 64 + 40 * count as usize {
+            return Err(format!(
+                "{path}: v6 directory must hold 5-8 members (found {count})"
+            ));
         }
         if n == 0 || r == 0 || r > n {
             return Err(format!("{path}: invalid n={n} R={r}"));
@@ -843,7 +850,12 @@ impl Index {
                 let mut cx = idx.ctx();
                 let mut bad = 0u64;
                 let mut checked = 0u64;
-                let step = (nblocks / M1_AUDIT_BLOCKS).max(1);
+                // Dev gate: XSA_M1_AUDIT_FULL=1 audits EVERY block (step 1) instead of
+                // M1_AUDIT_BLOCKS samples. Not on any production path; it is how the
+                // block payload is proven byte-exact over the whole run stream at 150 MB
+                // (~0.9e6 decodes, well under a second).
+                let full = std::env::var("XSA_M1_AUDIT_FULL").ok().as_deref() == Some("1");
+                let step = if full { 1 } else { (nblocks / M1_AUDIT_BLOCKS).max(1) };
                 let mut b = 0u64;
                 while b + 1 < nblocks {
                     // block b occupies rows [l1(b), l1(b+1)), so its run lengths
@@ -1126,21 +1138,41 @@ impl<'a> Ctx<'a> {
             }
             return c0 + self.run(r0).1 as u64;
         }
+        // THE SCAN IS BOUNDED BY THE HEADER'S OWN run_gap, and the reader never
+        // scans past it. The writer samples `ch` at any occurrence that is
+        // `run_gap` runs past the previous sample (bit6/xsa_finish.cpp:
+        // `k - lastSample[ch] >= PF_RUNDIR_GAP`), so every occurrence between two
+        // consecutive samples lies within `run_gap` runs of the earlier one. Past
+        // that point all of this sample interval's occurrences are already behind
+        // us and the answer is the next sample's cumulative count (or, for the
+        // last sample, its own stride = occurrences after it). Without this the
+        // scan is unbounded in principle and was measured at 4203 runs on a
+        // symbol with a 253,795-run occurrence gap.
+        let gap = idx.rd.run_gap;
+        if k > r0 + gap {
+            return if a + 1 < m {
+                idx.entry(ci, a + 1).0
+            } else {
+                c0 + u64::from(stride)
+            };
+        }
         let mut acc = c0;
         let mut run = r0;
-        let mut guard = 0u64;
         while run < k {
+            // one block decode answers up to M1_BLOCK_RUNS consecutive runs
             let (h, l) = self.run(run);
             if h == ch {
                 acc += l as u64;
             }
             run += 1;
-            guard += 1;
-            if guard > M1_SCAN_GUARD {
-                die(&format!(
-                    "cum_before: scan from run {r0} to {k} exceeded {M1_SCAN_GUARD} runs for symbol {ch}"
-                ));
-            }
+        }
+        if run - r0 > gap + M1_SCAN_SLACK {
+            die(&format!(
+                "cum_before: scanned {} runs from sample {r0} to {k} for symbol {ch}, past the\n  \
+                 m13 run_gap {gap} the directory declares - the directory's sampling is not the\n  \
+                 one this reader requires",
+                run - r0
+            ));
         }
         acc
     }
@@ -1231,17 +1263,26 @@ fn decode_block(
     let mut hb = Bits::new(hbytes, hbits);
     let mut lb = Bits::new(lbytes, lbits);
     let gamma = Gamma::build();
+    let dbg = std::env::var("M1_DBG").ok().and_then(|v| v.parse::<u64>().ok()) == Some(b);
+    let mut sum_len = 0u64;
     for i in 0..want {
         heads[i] = huff.decode(&mut hb);
+        sum_len += huff.len[heads[i] as usize] as u64;
+        if dbg {
+            eprintln!(
+                "M1_DBG block={b} i={i} sym={} code_len={} hb.pos={}",
+                heads[i], huff.len[heads[i] as usize], hb.pos
+            );
+        }
         let v = gamma.decode(&mut lb);
         if v == 0 {
             die(&format!("m1 block {b}: run length 0"));
         }
         lens[i] = v;
     }
-    if hb.pos != hbits {
+    if hb.pos != hbits || sum_len != hbits {
         die(&format!(
-            "m1 block {b}: head stream consumed {} of {hbits} bits",
+            "m1 block {b}: head stream consumed {} of {hbits} bits (code lengths sum to {sum_len})",
             hb.pos
         ));
     }

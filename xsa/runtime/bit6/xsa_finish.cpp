@@ -3064,9 +3064,18 @@ static constexpr uint64_t PF_RUNDIR_GAP = 256;
 // one level below them is what a lookup actually touches.
 static constexpr uint64_t PF_RUNSTART_L2 = 65536;   // runs per m12 level-2 cell
 static constexpr uint64_t PF_RUNDIR_L2 = 512;       // m13 entries per level-2 cell
-// Bytes a bit range occupies in the PADDED stream: both ends round up, because
-// the writer pads each block end to a byte boundary and pad() never moves bitPos.
-static inline uint64_t blkBytes(uint64_t lo, uint64_t hi) { return (hi + 7) / 8 - (lo + 7) / 8; }
+// Bytes a block's bit range occupies. A block ALWAYS starts on a byte boundary:
+// its predecessor's close called pad(), which flushes the pending partial byte
+// and leaves the next msb()/gamma() at the start of the next byte. pad() never
+// moves bitPos, so the ABSOLUTE bitPos values lag the physical stream by the pad
+// bits already spent: the difference of two ceil(bitPos/8) terms under-counts a
+// block (measured: it truncated block spans by up to 7 bits, which the query
+// reader reported as "head stream consumed 534 of 540 bits"). The count is the
+// ceiling of the block's own bit length, and nothing about lo.
+static inline uint64_t blkBytes(uint64_t lo, uint64_t hi) {
+    pf_check(hi >= lo, "m1 block bit range is not monotone");
+    return (hi - lo + 7) / 8;
+}
 // The m1 v2 codec id in the container directory (v1 = 101).
 static constexpr unsigned PF_M1_CODEC_BLOCKED = 102;
 // Container header flag bit: "m1 is block-compressed and the run directories
@@ -6259,9 +6268,8 @@ int main(int argc, char** argv) {
                         pf_check(payloadBytes % 8 == 0, "m1 block not 8-byte aligned");
                         pf_check(payloadBytes / 8 <= 0xffffffffull, "m1 payload offset exceeds u32 words");
                         dirb.put(container, (payloadBytes / 8) | (hbits << 32) | (lbits << 48));
-                        // a block's bytes are the padded stream bytes between its two
-                        // boundaries: the block end is padded to a byte, the boundary
-                        // bit position itself is not a multiple of 8.
+                        // a block's bytes are ceil(bits/8) of BOTH streams (the block
+                        // starts byte-aligned and its end is padded to a byte).
                         payloadBytes += blkBytes(m1dir.blkHead[b], m1dir.blkHead[b + 1]) +
                                         blkBytes(m1dir.blkLen[b], m1dir.blkLen[b + 1]);
                         while (payloadBytes % 8) ++payloadBytes;
@@ -6275,18 +6283,36 @@ int main(int argc, char** argv) {
                     std::vector<uint8_t> out2;
                     out2.reserve(4u << 20);
                     uint64_t at = 0;
+                    // Independent tiling witness: the per-block spans must add up to
+                    // EXACTLY the byte length of each spool. Each block starts on a byte
+                    // boundary (the previous close called pad()), so the spool holds
+                    // sum(ceil(bits_b/8)) bytes - more than ceil(total_bits/8) by the pad
+                    // bits spent between blocks - and a span that drops or double-counts
+                    // bits fails here, at build time, instead of showing up in the reader
+                    // as a bit-count mismatch.
+                    uint64_t spanH = 0, spanL = 0;
+                    // PHYSICAL byte offsets, kept as running sums. They are NOT
+                    // ceil(blkHead[b]/8): pad() flushes the pending partial byte but
+                    // never advances bitPos, so bitPos lags the physical stream by the
+                    // pad bits already spent and every offset derived from it drifts
+                    // (measured: 6 bits, which the reader reported as "block 874: code
+                    // lengths sum to 534 of 534 vs 540").
+                    uint64_t hOff = 0, lOff = 0;
                     for (uint64_t b = 0; b < nblocks; ++b) {
                         const uint64_t hbits = m1dir.blkHead[b + 1] - m1dir.blkHead[b];
                         const uint64_t lbits = m1dir.blkLen[b + 1] - m1dir.blkLen[b];
                         const size_t hbytes = size_t(blkBytes(m1dir.blkHead[b], m1dir.blkHead[b + 1]));
                         const size_t lbytes = size_t(blkBytes(m1dir.blkLen[b], m1dir.blkLen[b + 1]));
+                        spanH += hbytes; spanL += lbytes;
                         if (hbytes) {
-                            const uint8_t* q = headBits.window((m1dir.blkHead[b] + 7) / 8, hbytes);
+                            const uint8_t* q = headBits.window(hOff, hbytes);
                             out2.insert(out2.end(), q, q + hbytes);
+                            hOff += hbytes;
                         }
                         if (lbytes) {
-                            const uint8_t* q = lenBits.window((m1dir.blkLen[b] + 7) / 8, lbytes);
+                            const uint8_t* q = lenBits.window(lOff, lbytes);
                             out2.insert(out2.end(), q, q + lbytes);
+                            lOff += lbytes;
                         }
                         at += hbytes + lbytes;
                         while (at % 8) { out2.push_back(0); ++at; }
@@ -6294,6 +6320,12 @@ int main(int argc, char** argv) {
                         if (out2.size() >= (3u << 20)) { container.write(out2.data(), out2.size()); out2.clear(); }
                     }
                     if (!out2.empty()) { container.write(out2.data(), out2.size()); out2.clear(); }
+                    pf_check(spanH == headBits.bytes(),
+                             "m1 head block spans do not tile the head stream (" +
+                             std::to_string(spanH) + " vs " + std::to_string(headBits.bytes()) + ")");
+                    pf_check(spanL == lenBits.bytes(),
+                             "m1 length block spans do not tile the length stream (" +
+                             std::to_string(spanL) + " vs " + std::to_string(lenBits.bytes()) + ")");
                     pf_check(at == payloadBytes, "m1 payload size disagrees with its directory");
                 }
                 pf_check(container.ms.back().bytes == payloadOff + payloadBytes, "m1 member size");
