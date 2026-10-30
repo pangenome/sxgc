@@ -48,6 +48,13 @@
 //! permutation and the reverse is the backward-search representation — see the
 //! comment at the search call.) `--mode` is refused by name for the same reason
 //! it would be meaningless: there is no alphabet to be `dna` or `text` about.
+//!
+//! OUTPUT (two contracts, both keyed by 0-based pattern id):
+//!
+//!   `--output tsv` (default) `id<TAB>offset`, one line per occurrence.
+//!   Absent patterns contribute no line, so `wc -l` is the occurrence count.
+//!   `--output jsonl` is the old read-mapping product,
+//!   `{"pattern_id":i,"count":c,"offsets":[...]}`, one object per pattern.
 
 
 /// SANITY BOUND on the m1 block width, not the width itself. The width is
@@ -1420,6 +1427,13 @@ fn parse(args: &[String]) -> Args {
     if output != "tsv" && output != "jsonl" {
         die("query: --output must be tsv or jsonl");
     }
+    // Refused here, not in the emit loop: a run that has already built the
+    // kernel and answered 100 patterns must not discover a flag conflict.
+    if counts && output != "tsv" {
+        die(&format!(
+            "query: --counts is a tsv option; --output {output} already reports a count per id"
+        ));
+    }
     Args {
         container,
         patterns,
@@ -1714,6 +1728,20 @@ pub fn command(args: &[String]) {
             nabs += 1;
         }
         nocc += positions.len() as u64;
+        // TWO OUTPUT CONTRACTS, both keyed by the 0-based pattern id (which for a
+        // 0x1E pattern file IS the record index, so a caller can join the answer
+        // back to its own file without a header).
+        //
+        // tsv (default) is the text product: one line per occurrence,
+        // `id<TAB>offset`, nothing else -- no header, no escaping, no counts
+        // mixed in. A pattern with no occurrence contributes no line, so the
+        // line count is the occurrence count (574 for the 150 MB fixture) and
+        // the ids that do not appear are the absent patterns.
+        //
+        // jsonl is the old read-mapping product, one object per pattern:
+        // {"pattern_id":i,"count":c,"offsets":[...]}. It carries counts for
+        // every pattern, so `--counts` has nothing to add to it and is refused
+        // rather than silently ignored.
         match (a.output.as_str(), a.counts) {
             ("tsv", true) => writeln!(w, "{}\t{}", pid, positions.len()).unwrap(),
             ("tsv", false) => {
@@ -1721,7 +1749,7 @@ pub fn command(args: &[String]) {
                     writeln!(w, "{}\t{}", pid, p).unwrap();
                 }
             }
-            (_, _) => {
+            ("jsonl", false) => {
                 let list: Vec<String> = positions.iter().map(|p| p.to_string()).collect();
                 writeln!(
                     w,
@@ -1731,6 +1759,10 @@ pub fn command(args: &[String]) {
                 )
                 .unwrap();
             }
+            (other, true) => die(&format!(
+                "query: --counts is a tsv option; --output {other} already reports a count per id"
+            )),
+            (other, false) => die(&format!("query: output contract {other} is not implemented")),
         }
     }
     w.flush().unwrap();
