@@ -1390,8 +1390,11 @@ fn usage() -> ! {
     eprintln!("  xsa tags --chi <f.sA> --sidecar <names.tsv> [--revlines]");
     eprintln!("           [--output tags.tsv]                  first-appearance attribution");
     eprintln!("  xsa query <container> --patterns <file> [-j N] [--output tsv|jsonl] [--counts]");
-    eprintln!("           raw-byte patterns, newline delimited (--patterns-fasta for FASTA);");
-    eprintln!("           tsv: pattern_id<TAB>offset per occurrence; --counts: pattern_id<TAB>count");
+    eprintln!("           --patterns: the corpus contract, rec<0x1e>rec<0x1e>...rec<0x1e>, arbitrary");
+    eprintln!("           bytes, no escaping, id = 0-based record index (a file starting with '>' is");
+    eprintln!("           read as FASTA and the choice is journaled); --patterns-fasta forces FASTA;");
+    eprintln!("           one orientation only: a lite container has no alphabet, --mode is refused;");
+    eprintln!("           tsv (default): pattern_id<TAB>offset per occurrence; --counts: pattern_id<TAB>count");
     eprintln!("           -j defaults to all cores; the container identifies its own format");
     eprintln!("  xsa query-legacy ...   DEPRECATED phi-era reader (archived harnesses only)");
     eprintln!("           --ms: matching-statistics length vector per read (binary)");

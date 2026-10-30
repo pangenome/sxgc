@@ -1332,6 +1332,9 @@ fn decode_block(
 struct Args {
     container: String,
     patterns: String,
+    /// `--patterns-fasta`: force the FASTA reader. `--patterns` auto-detects
+    /// instead (a file whose first byte is `>` is FASTA, anything else is the
+    /// 0x1E record contract).
     fasta: bool,
     output: String,
     counts: bool,
@@ -1351,10 +1354,18 @@ fn parse(args: &[String]) -> Args {
     while i < args.len() {
         match args[i].as_str() {
             "--patterns" if i + 1 < args.len() => {
+                if fasta {
+                    die("query: --patterns and --patterns-fasta are exclusive: pick one\n  \
+                         --patterns auto-detects FASTA by its leading '>'");
+                }
                 patterns = Some(args[i + 1].clone());
                 i += 2;
             }
             "--patterns-fasta" if i + 1 < args.len() => {
+                if patterns.is_some() && !fasta {
+                    die("query: --patterns and --patterns-fasta are exclusive: pick one\n  \
+                         --patterns auto-detects FASTA by its leading '>'");
+                }
                 patterns = Some(args[i + 1].clone());
                 fasta = true;
                 i += 2;
@@ -1431,38 +1442,139 @@ struct Hit {
     max_steps: u64,
 }
 
-fn read_patterns(path: &str, fasta: bool) -> Vec<Vec<u8>> {
+/// The two pattern-file contracts.
+///
+/// `Records` is the corpus contract, verbatim: records separated by 0x1E,
+/// `rec \x1E rec \x1E ... rec \x1E`, ARBITRARY BYTES, no escaping, no alphabet,
+/// id = 0-based record index. That is the only thing a byte-string index can be
+/// asked about, and it is the default.
+///
+/// `Fasta` is the legacy reader, kept behind `--patterns-fasta` (and reached by
+/// auto-detect, because a `--patterns` file that starts with `>` cannot be a
+/// 0x1E record stream in any useful sense: its header line would be queried as
+/// a pattern and come back absent, which is exactly the 200-patterns/100-absent
+/// reading this CLI used to produce when a FASTA file was handed to a newline
+/// parser).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PatFormat {
+    Records,
+    Fasta,
+}
+
+impl PatFormat {
+    fn name(self) -> &'static str {
+        match self {
+            PatFormat::Records => "records-0x1e",
+            PatFormat::Fasta => "fasta",
+        }
+    }
+}
+
+/// 1..=65536 bytes per pattern: the search kernel's contract (the working copy
+/// is pattern-length local, and a pattern longer than this is not a read).
+const PAT_LEN_MAX: usize = 65536;
+
+/// Read a pattern file and say which contract was used, once, at startup.
+fn read_patterns(path: &str, force_fasta: bool) -> (Vec<Vec<u8>>, PatFormat) {
     let data = std::fs::read(path).unwrap_or_else(|e| die(&format!("read {path}: {e}")));
-    let mut out: Vec<Vec<u8>> = Vec::new();
-    if fasta {
-        let mut cur: Option<Vec<u8>> = None;
-        for line in data.split(|&b| b == b'\n') {
-            let line = line.strip_suffix(b"\r").unwrap_or(line);
-            if line.first() == Some(&b'>') {
-                if let Some(p) = cur.take() {
-                    out.push(p);
-                }
-                cur = Some(Vec::new());
-            } else if let Some(p) = cur.as_mut() {
-                p.extend_from_slice(line);
-            } else if !line.is_empty() {
-                die(&format!("{path}: FASTA sequence data before the first header"));
-            }
-        }
-        if let Some(p) = cur.take() {
-            out.push(p);
-        }
-        for (i, p) in out.iter().enumerate() {
-            if p.is_empty() {
-                die(&format!("{path}: FASTA record {i} is empty"));
-            }
-        }
+    let fmt = if force_fasta {
+        PatFormat::Fasta
+    } else if data.first() == Some(&b'>') {
+        PatFormat::Fasta
     } else {
-        for line in data.split(|&b| b == b'\n') {
-            let line = line.strip_suffix(b"\r").unwrap_or(line);
-            if !line.is_empty() {
-                out.push(line.to_vec());
+        PatFormat::Records
+    };
+    let out = match fmt {
+        PatFormat::Fasta => read_fasta(path, &data),
+        PatFormat::Records => read_records(path, &data),
+    };
+    if out.is_empty() {
+        die(&format!("{path}: {} file holds 0 patterns", fmt.name()));
+    }
+    for (i, p) in out.iter().enumerate() {
+        if p.len() > PAT_LEN_MAX {
+            die(&format!(
+                "{path}: record {i} is {} bytes, over the {PAT_LEN_MAX}-byte pattern limit",
+                p.len()
+            ));
+        }
+    }
+    eprintln!(
+        "PATTERNS_USED path={} format={} records={} bytes={} ids=0..{} separator={}",
+        path,
+        fmt.name(),
+        out.len(),
+        data.len(),
+        out.len() - 1,
+        match fmt {
+            PatFormat::Records => "0x1e",
+            PatFormat::Fasta => "newline",
+        }
+    );
+    (out, fmt)
+}
+
+/// `rec \x1E rec \x1E ... rec \x1E`: arbitrary bytes, no escaping, no alphabet.
+///
+/// The 0x1E is the separator, so the trailing 0x1E of the contract terminates
+/// the last record and does not open an empty one; a file that ends without it
+/// is accepted (the last record is terminated by EOF) and said so in the journal
+/// (`sep=no`). Any OTHER empty record -- `a\x1E\x1Eb\x1E`, or a 0x1E-terminated
+/// file with nothing in it -- is a malformed pattern file, not a zero-length
+/// pattern, so it is refused rather than searched for.
+fn read_records(path: &str, data: &[u8]) -> Vec<Vec<u8>> {
+    let (body, ends_with_sep) = match data.strip_suffix(b"\x1e") {
+        Some(b) => (b, true),
+        None => (data, false),
+    };
+    if body.is_empty() {
+        die(&format!(
+            "{path}: 0x1E record file holds no record ({} bytes{})",
+            data.len(),
+            if ends_with_sep { ", one bare separator" } else { "" }
+        ));
+    }
+    let mut out: Vec<Vec<u8>> = Vec::with_capacity(16);
+    for (i, rec) in body.split(|&b| b == 0x1e).enumerate() {
+        if rec.is_empty() {
+            die(&format!(
+                "{path}: record {i} is empty; the 0x1E contract has no empty record \
+                 (and no escaping: a bare 0x1E is always a record boundary)"
+            ));
+        }
+        out.push(rec.to_vec());
+    }
+    if !ends_with_sep {
+        eprintln!(
+            "PATTERNS_NOTE {path}: last record is not 0x1E-terminated (EOF ends it); \
+             the contract is rec\\x1E rec\\x1E ... rec\\x1E"
+        );
+    }
+    out
+}
+
+fn read_fasta(path: &str, data: &[u8]) -> Vec<Vec<u8>> {
+    let mut out: Vec<Vec<u8>> = Vec::new();
+    let mut cur: Option<Vec<u8>> = None;
+    for line in data.split(|&b| b == b'\n') {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        if line.first() == Some(&b'>') {
+            if let Some(p) = cur.take() {
+                out.push(p);
             }
+            cur = Some(Vec::new());
+        } else if let Some(p) = cur.as_mut() {
+            p.extend_from_slice(line);
+        } else if !line.is_empty() {
+            die(&format!("{path}: FASTA sequence data before the first header"));
+        }
+    }
+    if let Some(p) = cur.take() {
+        out.push(p);
+    }
+    for (i, p) in out.iter().enumerate() {
+        if p.is_empty() {
+            die(&format!("{path}: FASTA record {i} is empty"));
         }
     }
     out
@@ -1508,7 +1620,8 @@ pub fn command(args: &[String]) {
         }
         eprintln!("QUERY_VERIFY members=ok");
     }
-    let patterns = read_patterns(&a.patterns, a.fasta);
+    // Format choice is journaled once, inside read_patterns (PATTERNS_USED).
+    let (patterns, _pformat) = read_patterns(&a.patterns, a.fasta);
     if a.threads > 1 {
         let _ = rayon::ThreadPoolBuilder::new()
             .num_threads(a.threads)
@@ -1548,7 +1661,7 @@ pub fn command(args: &[String]) {
         .par_iter()
         .map(|pat| {
             if pat.is_empty() || pat.len() > 65536 {
-                die(&format!("pattern of length {} is not 1..65536", pat.len()));
+                die(&format!("pattern of length {} is not 1..={PAT_LEN_MAX}", pat.len()));
             }
             // Index coordinates: the container's text is the corpus with the
             // m7 remap applied, in corpus order; backward search consumes the
