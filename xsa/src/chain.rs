@@ -217,32 +217,12 @@ RSS / disc telemetry.
                      runs the merge selftest for the six banked sweep seeds
                      (11, 99, 20261002, 7, 5, 13; default 2000 cases each).";
 
-/// The production byte-remap: an involution that swaps the padding-range
-/// bytes 0x01->0xFF, 0x02->0xFD, 0x03->0xFE, 0x04->0xFC (and back),
-/// keeping the 0x1E document separator fixed. Literal padding-range bytes
-/// in raw pile text collide with the cyclic padding dollar and the merge
-/// refuses loudly; the banked fragment route applied exactly this map
-/// before the chunk front end.
-const PRODUCTION_REMAP: [u8; 256] = {
-    let mut map = [0u8; 256];
-    let mut i = 0;
-    while i < 256 {
-        map[i] = i as u8;
-        i += 1;
-    }
-    map[0x01] = 0xFF;
-    map[0x02] = 0xFD;
-    map[0x03] = 0xFE;
-    map[0x04] = 0xFC;
-    map[0xFC] = 0x04;
-    map[0xFD] = 0x02;
-    map[0xFE] = 0x03;
-    map[0xFF] = 0x01;
-    map
-};
-/// sha256 of the banked fragment route's frag.remap (256 bytes).
-const PRODUCTION_REMAP_SHA256: &str =
-    "b4f387767707f3095a0981148a1753f8da5885c30c19753b3b93887153e611be";
+/// THE LEGACY FIXED REMAP IS GONE. A universal table cannot be order preserving
+/// on an arbitrary corpus, and the END-format finish requires present byte of
+/// rank j -> 1+j with END's cell (code 0) left free, which depends on WHICH bytes
+/// the corpus uses. `xsa build` therefore derives the table per corpus at plan
+/// time (derive_remap below; reference generator bit6/binbwt/emit_remap.py).
+///
 /// The six banked selftest sweep seeds (bit6/sxi_logs/pool-verification).
 const SELFTEST_SEEDS: [u64; 6] = [11, 99, 20261002, 7, 5, 13];
 /// Disc preflight: refuse when the scratch filesystem is more than this
@@ -1001,7 +981,7 @@ fn bundle_tools() -> Result<PathBuf, String> {
     Ok(root)
 }
 
-fn write_remap(scratch: &Path, override_path: Option<&Path>) -> Result<PathBuf, String> {
+fn write_remap(scratch: &Path, override_path: Option<&Path>, corpus: &Path) -> Result<(PathBuf, RemapFacts), String> {
     let path = scratch.join("remap-256.bin");
     match override_path {
         Some(source) => {
@@ -1009,19 +989,130 @@ fn write_remap(scratch: &Path, override_path: Option<&Path>) -> Result<PathBuf, 
             if bytes.len() != 256 {
                 return Err(format!("remap {} must have exactly 256 bytes", source.display()));
             }
+            let mut table = [0u8; 256];
+            table.copy_from_slice(&bytes);
+            let facts = remap_facts(&table, corpus, "provided")?;
             fs::write(&path, bytes).map_err(|e| format!("write {}: {e}", path.display()))?;
+            Ok((path, facts))
         }
         None => {
-            // The embedded production map must equal the banked fragment
-            // route's frag.remap byte for byte; refuse any drift.
-            let digest = format!("{:x}", Sha256::digest(PRODUCTION_REMAP));
-            if digest != PRODUCTION_REMAP_SHA256 {
-                return Err("internal production remap drift: sha256 mismatch".into());
-            }
-            fs::write(&path, PRODUCTION_REMAP).map_err(|e| format!("write {}: {e}", path.display()))?;
+            let (table, facts) = derive_remap(corpus)?;
+            fs::write(&path, table).map_err(|e| format!("write {}: {e}", path.display()))?;
+            Ok((path, facts))
         }
     }
-    Ok(path)
+}
+
+/// What the derived table asserts about the corpus, journalled with its sha256.
+pub struct RemapFacts {
+    pub present: u32,
+    pub source: &'static str,
+}
+
+/// ONE sequential histogram pass over the corpus: one table increment per byte
+/// (memory bound, ~1-2 GB/s), nothing materialised to disc, no 256-pass rescan
+/// (which would cost 256n at pile). The total is asserted against the file size.
+fn corpus_histogram(corpus: &Path) -> Result<[u64; 256], String> {
+    use std::io::Read;
+    let mut f = fs::File::open(corpus).map_err(|e| format!("open {}: {e}", corpus.display()))?;
+    let mut hist = [0u64; 256];
+    let mut block = vec![0u8; 1 << 22];
+    let mut total = 0u64;
+    loop {
+        let z = f.read(&mut block).map_err(|e| format!("read {}: {e}", corpus.display()))?;
+        if z == 0 { break; }
+        total += z as u64;
+        for &c in &block[..z] {
+            hist[c as usize] += 1;
+        }
+    }
+    let size = fs::metadata(corpus).map_err(|e| format!("stat {}: {e}", corpus.display()))?.len();
+    if total != size {
+        return Err(format!("REMAP_REFUSED histogram total {total} != corpus bytes {size}"));
+    }
+    if total == 0 {
+        return Err("REMAP_REFUSED corpus is empty: it has no byte to rank".into());
+    }
+    Ok(hist)
+}
+
+/// THE END-FORMAT REMAP, DERIVED PER CORPUS (SPEC_CHAIN_TO_PILE Phase A).
+///
+/// END is virtual: it occurs once, at virtual index n, strictly below every byte
+/// value, and it has NO code of its own. The table is still a 256-byte bijection
+/// (the container's member 7 and every consumer read it that way):
+///
+///     present byte b of rank j (0-based, byte order) -> 1 + j
+///     absent bytes                                   -> k+1..255 in byte order,
+///                                                       then 0 (END's cell)
+///
+/// A UNIVERSAL TABLE CANNOT DO THIS: order preservation forces "present -> 1..k",
+/// which depends on WHICH bytes the corpus uses (a fixed table failed on a
+/// 428-byte fixture and on any corpus with a smaller alphabet). k == 256 leaves
+/// no free code for END; the derivation still emits the valid identity bijection
+/// (so the restriction is provable, not asserted) and the finish then refuses that
+/// shape loudly - an 8-bit transport cannot carry 256 data symbols plus END.
+fn derive_remap(corpus: &Path) -> Result<([u8; 256], RemapFacts), String> {
+    let hist = corpus_histogram(corpus)?;
+    let present: Vec<u8> = (0..256u32).filter(|&b| hist[b as usize] != 0).map(|b| b as u8).collect();
+    let k = present.len();
+    let mut table = [0u8; 256];
+    if k <= 255 {
+        for (rank, &b) in present.iter().enumerate() {
+            table[b as usize] = (1 + rank) as u8;
+        }
+        let absent: Vec<u8> = (0..256u32).filter(|&b| hist[b as usize] == 0).map(|b| b as u8).collect();
+        let mut fill = 1 + k;
+        for &b in &absent {
+            table[b as usize] = if fill <= 255 { let v = fill as u8; fill += 1; v } else { 0 };
+        }
+        if fill != 256 {
+            return Err(format!("REMAP_REFUSED wrong absent-byte fill: {fill} != 256 (present={k})"));
+        }
+    } else {
+        for b in 0..256usize { table[b] = b as u8; }
+    }
+    let facts = remap_facts(&table, corpus, "corpus")?;
+    Ok((table, facts))
+}
+
+/// Re-prove the table's two properties FROM THE TABLE AND THE HISTOGRAM (never
+/// from the loop that built it), so a provided --remap is held to the same
+/// contract as a derived one. `source` names which one this is.
+fn remap_facts(table: &[u8; 256], corpus: &Path, source: &'static str) -> Result<RemapFacts, String> {
+    let hist = corpus_histogram(corpus)?;
+    let mut seen = [false; 256];
+    for &v in table.iter() {
+        if seen[v as usize] {
+            return Err(format!("REMAP_REFUSED not a bijection: code {v} is named twice"));
+        }
+        seen[v as usize] = true;
+    }
+    let mut present = 0u32;
+    for b in 0..256usize {
+        if hist[b] == 0 { continue; }
+        if table[b] as u32 != present + 1 {
+            return Err(format!(
+                "REMAP_REFUSED table is not order preserving on THIS corpus: present byte 0x{b:02x} \
+                 (rank {present}) maps to {} not {} - the table was not derived from this corpus",
+                table[b], present + 1));
+        }
+        present += 1;
+    }
+    if present == 256 {
+        // provable, and impossible to consume: say which, never silently proceed
+        eprintln!("REMAP_WARNING corpus uses all 256 byte values: no code is free for the END \
+                   cell; the build proceeds with the identity bijection and the consumer refuses \
+                   the shape loudly (8-bit transport)");
+    } else {
+        let owner = (0..256u32).find(|&b| table[b as usize] == 0).unwrap_or(256);
+        if owner >= 256 || hist[owner as usize] != 0 {
+            return Err(format!(
+                "REMAP_REFUSED the END cell (code 0) must be named by an ABSENT byte; got byte \
+                 0x{owner:02x}"));
+        }
+    }
+    Ok(RemapFacts { present, source })
 }
 
 fn run_selftest(options: SelftestOptions) -> Result<(), String> {
@@ -1207,7 +1298,7 @@ prove a fit (the projected peak exceeds the reported capacity)");
     journal.line(&format!(
         "XSA_BUILD START input={} scratch={} memory_gb={} threads={} chunks={} kway={} remap={} pipeline={}",
         input.display(), scratch.display(), options.memory_gb, options.threads,
-        chunks_note, kway_note, if options.remap.is_some() { "provided" } else { "production" },
+        chunks_note, kway_note, if options.remap.is_some() { "provided" } else { "derived-from-corpus" },
         if options.bin_pipeline { "v2bin" } else if options.fanin { "v1-fanin" } else { "v1" }
     ));
     // THE FLAG FLIP (auto-radix): the bin pipeline is the default route, so the
@@ -1229,9 +1320,17 @@ prove a fit (the projected peak exceeds the reported capacity)");
     } else {
         journal.line(&format!("SNAP_BOUNDARY_OK n={n} (0x1e; pass --snap-1e to also journal the full sha256)"));
     }
-    let remap_path = write_remap(&scratch, options.remap.as_deref())?;
+    // THE REMAP IS DERIVED FROM *THIS* CORPUS (SPEC_CHAIN_TO_PILE Phase A). A
+    // universal table cannot be order preserving on an arbitrary alphabet, so the
+    // builder derives it here, proves the END-format contract against the corpus,
+    // journals its sha256 and hands the SAME file to every child.
+    let (remap_path, remap_facts) = write_remap(&scratch, options.remap.as_deref(), &input)?;
     let remap_sha = sha256_file(&remap_path)?;
-    journal.line(&format!("REMAP {} sha256={remap_sha}", remap_path.display()));
+    journal.line(&format!(
+        "REMAP {} sha256={remap_sha} source={} present={} order_preserving=1 bijection=1 \
+         ends_in_sentinel=1 end_code=none end_symbol=0 unused_symbols={}",
+        remap_path.display(), remap_facts.source, remap_facts.present,
+        255u32.saturating_sub(remap_facts.present)));
     // The v2 bin shape has NO chunk set, no merge work directory and no
     // finish side-stream directory: only the merged/ prefix (rlebwt + pieces)
     // exists, and the tree rules assert nothing else is left behind.
@@ -1574,12 +1673,34 @@ fn run_v2_tail(
             producer_args.extend([(*flag).to_string(), v.to_string()]);
         }
     }
-    // ---- THE TAPE ROUTE ------------------------------------------------
+    // ---- THE TAPE ROUTE (THE PRODUCT) ----------------------------------
     // Same three-tool shape the gate used, owned by this binary: the sorter
     // writes bands with --tape-bands, cross_lcp_merge consumes that stream, and
     // the finish (already below) consumes the runs. Flow control is the sorter's
     // own .consumed protocol satisfied by the merge, so there is no consumer
     // script anywhere.
+    //
+    // THE LCP COLUMN IS PART OF THE ROUTE (not a flag): every band carries its own
+    // LCP slice (band_<i>.lcp) beside its SA stream, and the finish folds those
+    // slices in rank order, deleting each one as its rank cursor passes. Residency
+    // is K bands of slice - never n, never a 1.34n column file - and the charged
+    // work is the sorter's own merge (one store per row) instead of the finish's
+    // 1.28e11 random corpus reads.
+    //
+    // XSA_LCE_VERIFY=1 is the INTERNAL A/B ARM (not a user option): the producer
+    // skips the slices and the finish walks the corpus for every endpoint, which is
+    // the measurement that proved the column 4400x cheaper (10 GB: 1.4e12 charged
+    // work / 2365 s vs 3.1e8 / 2072 s).
+    let lce_verify = std::env::var("XSA_LCE_VERIFY").map(|v| v == "1").unwrap_or(false);
+    let lcp_source = if lce_verify { "lce-verify" } else { "sorter-bands" };
+    let tape_k: u64 = 8;
+    journal.line(&format!(
+        "TAPE_ROUTE route=tape source={} lcp_source={} pending_bands={tape_k}          lcp_column=none (per-band slices band_<i>.lcp; one slice per band in flight)",
+        if options.tape { "explicit" } else { "implicit" }, lcp_source));
+    if lce_verify {
+        journal.line("TAPE_AB_ARM XSA_LCE_VERIFY=1: INTERNAL A/B (the old LCE path: the finish \
+walks the corpus for every endpoint and no LCP slice is produced). Not a user option.");
+    }
     let bands_dir = scratch.join("bands-tape");
     let mut emit_args: Vec<String> = Vec::new();
     if options.tape {
@@ -1593,11 +1714,12 @@ fn run_v2_tail(
             "--remap".into(), s(&remap_path.to_string_lossy()),
             "--scratch".into(), s(&waves.to_string_lossy()),
             "--tape-bands".into(), s(&bands_dir.to_string_lossy()),
-            "--pending-bands".into(), "8".into(),
+            "--pending-bands".into(), tape_k.to_string(),
             "--ram-gb".into(), std::cmp::max(2, options.memory_gb / 2).to_string(),
             "--par-bands".into(), "8".into(),
             "--threads".into(), options.threads.to_string(),
         ];
+        if lce_verify { producer_args.push("--no-lcp-slices".into()); }
         emit_args = vec![
             "-k".to_string(), "120".to_string(), timeout_s.to_string(),
             s(&tools.join("cross_lcp_merge").to_string_lossy()),
@@ -1622,6 +1744,10 @@ fn run_v2_tail(
     ]);
     if let Some(expected) = options.chi_expect {
         finish_args.extend(["--chi-expect".into(), expected.to_string()]);
+    }
+    if options.tape && !lce_verify {
+        // THE PRODUCT ARM: the fold reads the producer's per-band LCP slices.
+        finish_args.extend(["--lcp-bands".into(), s(&bands_dir.to_string_lossy())]);
     }
 
     // Spawn BOTH before joining: the finish must start with the producer (it
@@ -1660,6 +1786,31 @@ fn run_v2_tail(
     // is required only on the bin route.
     if options.tape {
         require_log_contains(scratch, "order-tape", "SS_TAPE")?;
+        // The route's shape is gated, not assumed: the producer must declare which
+        // LCP arm it ran, and on the product arm its slices must cover n with a
+        // BOUNDED largest slice (the 2n law: one band's slice, never a 1.34n file).
+        let arm = require_log_contains(scratch, "order-tape", "SS_LCP_ARM")?;
+        journal.line(&format!("TAPE_PRODUCER {arm}"));
+        if lce_verify {
+            if !arm.contains("lcp_source=none") {
+                return Err(format!("TAPE_AB_ARM: XSA_LCE_VERIFY=1 but the producer ran {arm}"));
+            }
+        } else {
+            let ss = require_log_contains(scratch, "order-tape", "SS_LCP_STREAM")?;
+            journal.line(&format!("TAPE_LCP_STREAM {ss}"));
+            let max_slice = field_u64(&ss, "max_live_lcp_slice_bytes")?;
+            if max_slice > n {
+                return Err(format!(
+                    "TAPE_LCP_RESIDENCY: max_live_lcp_slice_bytes={max_slice} > n={n}: a slice \
+                     must be ONE BAND's, not the whole column ({ss})"));
+            }
+            let fin = require_log_contains(scratch, "finish-v2", "XSA_FINISH_LCP_BANDS_DONE")?;
+            journal.line(&format!("V2_FINISH_LCP_BANDS {fin}"));
+            journal.line(&format!(
+                "TAPE_LCP_RESIDENCY max_live_lcp_slice_bytes={max_slice} n={n} ratio={:.6} \
+                 bound=one_band_slice (K={tape_k} slices in flight, deleted as folded)",
+                max_slice as f64 / n.max(1) as f64));
+        }
     }
     if !options.tape {
     let bin_work = require_log_contains(scratch, "bin-v2", "BIN_WORK")?;
@@ -1759,6 +1910,13 @@ fn run_v2_tail(
     journal.line(&format!("V2_CONTAINER_PUBLISHED path={} bytes={container_bytes}", container.display()));
     journal.line(&format!(
         "PEAK_DISC_USED_BYTES {peak_disc} (du-sampled every 2s across the concurrent producer+finish window)"));
+    // THE BOUNDED-INTERMEDIATE LAW, as a number: the peak of everything the build
+    // writes into scratch, in units of n. The band/container/piece shapes are
+    // bounded by construction; this line is what makes a regression visible.
+    journal.line(&format!(
+        "PEAK_INTERMEDIATE peak_bytes={peak_disc} n={n} peak_intermediate_over_n={:.4} \
+         lcp_source={lcp_source} pending_bands={tape_k}",
+        peak_disc as f64 / n.max(1) as f64));
     journal.line(&format!(
         "XSA_BUILD_DONE chi={chi} pipeline={} container={}",
         if options.tape { "v2tape" } else { "v2bin" },
@@ -1838,18 +1996,48 @@ mod tests {
         assert!(allows(99, 0) || true); // 0 short-circuits the gate entirely
     }
 
+    /// THE END-FORMAT REMAP RULES, at tiny scale and against an independent
+    /// oracle: present byte of rank j -> 1+j; a 256-byte bijection; END's cell
+    /// (code 0) owned by an ABSENT byte; the END-format rules hold for every
+    /// prefix alphabet (a universal table cannot do this - that is the point).
     #[test]
-    fn production_remap_matches_banked_framemap() {
-        let digest = format!("{:x}", Sha256::digest(PRODUCTION_REMAP));
-        assert_eq!(digest, PRODUCTION_REMAP_SHA256, "embedded remap drifted from frag.remap");
-        assert_eq!(PRODUCTION_REMAP[0x01], 0xFF);
-        assert_eq!(PRODUCTION_REMAP[0x02], 0xFD);
-        assert_eq!(PRODUCTION_REMAP[0x03], 0xFE);
-        assert_eq!(PRODUCTION_REMAP[0x04], 0xFC);
-        assert_eq!(PRODUCTION_REMAP[0x1e], 0x1e, "document separator must stay fixed");
-        let mut sorted = PRODUCTION_REMAP;
-        sorted.sort();
-        assert_eq!(sorted, core::array::from_fn(|i| i as u8), "remap must be bijective");
+    fn derived_remap_is_order_preserving_per_corpus() {
+        let dir = std::env::temp_dir().join(format!("xsa-remap-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let corpora: Vec<Vec<u8>> = vec![
+            b"acgt".to_vec(),
+            b"the quick brown fox jumps over the lazy dog".to_vec(),
+            vec![0u8, 0, 1, 1, 255],                    // a tiny alphabet at both ends
+            (0..=255u8).rev().collect(),                // present == 256
+            (0..=254u8).collect(),                      // present == 255
+        ];
+        for (i, corpus) in corpora.iter().enumerate() {
+            let path = dir.join(format!("c{i}.bin"));
+            std::fs::write(&path, corpus).unwrap();
+            let (table, facts) = derive_remap(&path).unwrap();
+            let present: Vec<u8> = {
+                let mut v: Vec<u8> = corpus.iter().copied().collect();
+                v.sort_unstable();
+                v.dedup();
+                v
+            };
+            assert_eq!(facts.present as usize, present.len());
+            let mut sorted = table;
+            sorted.sort_unstable();
+            assert_eq!(sorted, core::array::from_fn(|k| k as u8), "remap must be bijective");
+            if present.len() <= 255 {
+                for (rank, &b) in present.iter().enumerate() {
+                    assert_eq!(table[b as usize] as usize, rank + 1,
+                               "present byte 0x{b:02x} must map to 1+rank");
+                }
+                let owner = table.iter().position(|&c| c == 0).unwrap();
+                assert!(!present.contains(&(owner as u8)),
+                        "END's cell must be named by an absent byte");
+            } else {
+                assert_eq!(table, core::array::from_fn(|k| k as u8), "k=256 is the identity");
+            }
+        }
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     fn v2_args(extra: &[&str]) -> Vec<String> {
