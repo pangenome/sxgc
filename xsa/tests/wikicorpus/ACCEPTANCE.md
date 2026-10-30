@@ -117,3 +117,34 @@ xsa corpus: manifest /mnt/nvme2n1/erikg/wikicorpus/xsa/target/wc-accept/g/w4-90G
   W4 PASS
 
 ```
+
+## W5  determinism (two runs seconds apart, both separator modes)
+
+```
+  w5a exit=0
+  w5b exit=0
+  w5c --separator none exit=0
+  w5d --separator none exit=0
+  w5a/corpus.bin f1257c0d3960eee0855a0df1541152bb7bfcd63e302b992375e9a0cb58b5bbac
+  w5a/seps.bin c503f160d7b43a3a574bd91102cc58ad66e30c15360fdda418286d3665f3466d
+  w5a/titles.bin f637a27c3cefa6ddfcbe2e8e631ca82f5223456b3e2dd5964d641c8f2fb76c82
+  w5b/corpus.bin f1257c0d3960eee0855a0df1541152bb7bfcd63e302b992375e9a0cb58b5bbac
+  w5b/seps.bin c503f160d7b43a3a574bd91102cc58ad66e30c15360fdda418286d3665f3466d
+  w5b/titles.bin f637a27c3cefa6ddfcbe2e8e631ca82f5223456b3e2dd5964d641c8f2fb76c82
+  w5c/corpus.bin 8add71d7a423db26fa32ef7eec3f9379d4dd00d7ad0248197fe291f23fd78c93
+  w5c/seps.bin c7ab485abd331bfffad34d506caccfc5cecdb3e7a82f0a9b186d2be764533908
+  w5c/titles.bin f637a27c3cefa6ddfcbe2e8e631ca82f5223456b3e2dd5964d641c8f2fb76c82
+  w5d/corpus.bin 8add71d7a423db26fa32ef7eec3f9379d4dd00d7ad0248197fe291f23fd78c93
+  w5d/seps.bin c7ab485abd331bfffad34d506caccfc5cecdb3e7a82f0a9b186d2be764533908
+  w5d/titles.bin f637a27c3cefa6ddfcbe2e8e631ca82f5223456b3e2dd5964d641c8f2fb76c82
+  cmp w5a/corpus.bin w5b/corpus.bin: identical
+  cmp w5c/corpus.bin w5d/corpus.bin: identical
+  cmp w5a/seps.bin w5b/seps.bin: identical
+  cmp w5c/seps.bin w5d/seps.bin: identical
+  cmp w5a/titles.bin w5b/titles.bin: identical
+  cmp w5c/titles.bin w5d/titles.bin: identical
+  MANIFEST.json identical apart from finished_at
+xsa: error: corpus: /mnt/nvme2n1/erikg/wikicorpus/xsa/target/wc-accept/g/w5a/corpus.bin already exists; refusing to mix a new pass into an old directory
+  re-run into a finished dir: exit=1
+  W5 PASS
+```
