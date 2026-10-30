@@ -108,11 +108,12 @@ the range aligned to a page because a `Vec` starts 16 B into its mapping - worth
 | chi | 44,034,230 | **unchanged** |
 | positions/counts vs `tools/binbwt/oracle.tsv` | 574/574 | **574/574, 0 missing, 0 extra** |
 
-Cost of the design: the columns are **9 B/run** (515 MB at this fixture, 0.31 n
-of RAM; 31 GB for a 10 GB pile container with r = 3.47e9) and the open decodes
-the whole run stream once. That is the trade this fixture's acceptance criteria
-force, and it is still 100x less RAM than the pre-block design's 51 GB. The
-reader refuses, in words, when `MemAvailable` cannot hold 9 B/run.
+Cost of the design: the columns are **9 B/run = 3.44 n of RAM** here (515 MB;
+19 GB at a 10 GB pile, ~210 GB at a 90 GB text), and the open decodes the whole
+run stream once (67-82 ms at 150 MB on 32-256 threads). The reader refuses, in
+words, when `MemAvailable` cannot hold 9 B/run. **This does not scale**: it is a
+measured stepping stone that establishes the achievable rank cost (0.49 us per
+LF step) and the exactness baseline, not the final shape.
 
 ## 5. D2: the walk is long because anchors are RUN-indexed, not because of a bug
 
@@ -135,3 +136,55 @@ row-indexed anchors every 256 rows cost n/256 x 8 B = **4.7 MB = 0.031 n** here
 ~256 steps, i.e. ~0.3 ms per pattern. It is NOT implemented here (it changes what
 m11 means, and C1/C2 are already met without it); it is the next lever if a
 future criterion asks for 0.5 ms per pattern.
+
+## 6. Can the columns live in the container instead (mmap, lazy, no eager decode)?
+
+The 3.44 n RAM column is not the answer at 10 GB, let alone 90 GB. Two container
+shapes were priced and one was measured.
+
+### 6.1 The byte accounting (this fixture, runs/byte = 0.382)
+
+| column | per run | per n | note |
+|---|---|---|---|
+| heads (symbol) | 1 B | **0.382 n** | replaces m1's Huffman head stream |
+| lengths, byte + escape | ~1 B | **0.382 n** | replaces m1's gamma length stream |
+| lengths / rank, fixed u32 | 4 B | 1.527 n | |
+| **per-run rank (`seen`)** | 4 B | **1.527 n** | the one thing that makes a step ONE read |
+| sampled rank, every 32 runs (m13-shaped) | | ~0.19 n | today's m13 is 0.197 n at a 1024-run gap |
+
+m1 is 0.367 n today, so "heads + lengths in the container" is
+0.714 - 0.367 + 0.764 = **1.111 n** of container for a reader that could address
+any run with one load - inside a 1.25 n cap, and `open` stays mmap-only.
+
+### 6.2 But that shape does not reach C1, and this was MEASURED, not estimated
+
+With heads + lengths in the container there is no per-run rank value, so
+`cum_before(head[run], run)` has to go through the m13 directory plus a scan.
+Measured with exactly that substitution in `locate_steps` (and with every byte
+still in RAM, i.e. strictly OPTIMISTIC against a paged container):
+
+    lf_us_per_step = 2.035   worst single pattern = 9.310   mean per pattern = 5,353 us
+
+against C1 <= 1 us and C2 <= 2,000 us. The cost is the m13 per-symbol lookup
+(2-3 dependent random reads in the 29.5 MB entry array) plus a scan bounded only
+by the container's own 1024-run gap. A 32-run sampling cadence removes most of
+the scan but not the lookup, so a container-side rank lands at ~1.5 us/step -
+still over C1 - while costing another ~0.19 n.
+
+**Conclusion: at <= 1.25 n there is no container shape that gives a one-read
+rank.** A one-read rank costs 1.527 n by itself (2.68 n container total, or
+~1.5 n with 12-bit deltas from a 32-run sample). The economics only close if the
+walk itself gets ~10x shorter, which is section 5's row-anchored m11
+(+0.031 n, mean walk 2,321 -> ~256 steps): with anchors at every 256 ROWS, even
+the 2.0 us container-side step gives ~0.5 ms per pattern, and only C1's per-step
+clause would still be out of reach.
+
+So the next step - deliberately not started here, so nothing is left half-
+written - is a format change in this order:
+  1. m11 re-anchored by ROW (stride 256): +0.031 n, 10x fewer steps. Reader side
+     only, no new member, m11's meaning changes from runs to rows.
+  2. heads + lengths as container members replacing the m1 payload: 1.111 n,
+     `run_of` becomes one directory load plus a <=100-byte scan, still lazily
+     paged.
+  3. only if C1 must hold per step at 90 GB: a per-run rank column (deltas from a
+     32-run sample) at +~0.5 n, i.e. ~1.6 n of container.

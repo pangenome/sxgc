@@ -555,8 +555,20 @@ pub struct Index {
     /// `run()` probes. Page faults were NOT the cost: the same query on tmpfs (all
     /// pages resident) is 114.8 ms against 115.0 ms on NVMe, with 0 major faults.
     /// A rank step must therefore not decode at all, which is exactly what these
-    /// three columns buy: 9 B/run, one streaming decode at open, no container
-    /// change (the format, `chi` and the positions are untouched).
+    /// columns buy: 9 B/run, one streaming decode at open, no container change
+    /// (the format, `chi` and the positions are untouched).
+    ///
+    /// SCALING - READ THIS BEFORE SHIPPING THIS SHAPE. 9 B/run is 3.44 n at this
+    /// fixture (runs/byte = 0.382) and it is HEAP: 515 MB at 150 MB of text,
+    /// ~19 GB at 10 GB, ~210 GB at 90 GB. It is a measured stepping stone: it
+    /// establishes the achievable rank cost (0.49 us per LF step, see
+    /// tools/binbwt/RESULTS_QUERY_HOTPATH.md) and the exactness baseline, and
+    /// `materialise` refuses in words when MemAvailable cannot hold it. The
+    /// container-side shapes are priced in section 6 of that journal: heads +
+    /// byte-lengths as container members is 1.111 n and mmap-lazy, but leaves no
+    /// per-run rank value, and a measured 2.035 us/step (m13 plus a 1024-run
+    /// scan) does not meet the 1 us target. Row-anchored m11 (stride 256 rows,
+    /// +0.031 n, ~10x fewer steps) is the lever that makes the paged shape pay.
     heads: Vec<u8>,
     runs: Runs,
     /// ROW -> RUN DIRECTORY: `dir_run[j]`/`dir_row[j]` are the run containing row
@@ -2270,5 +2282,65 @@ mod pattern_contract_tests {
     fn fasta_records_are_concatenated_lines() {
         let recs = read_fasta("test.fa", b">a\nAC\r\nGT\n>b\nTT\n");
         assert_eq!(recs, vec![b"ACGT".to_vec(), b"TT".to_vec()]);
+    }
+}
+
+#[cfg(test)]
+mod window_scan_tests {
+    use super::*;
+
+    /// The naive form the 4-wide `scan_window` replaces, run exactly as the
+    /// scalar loop did: step while `run + 1 < r` and `s + len <= row`.
+    fn naive(lens: &[u64], start_run: u64, mut s: u64, row: u64, r: u64) -> (u64, u64) {
+        let mut run = start_run;
+        while run + 1 < r {
+            let l = lens[(run - start_run) as usize];
+            if s + l > row {
+                break;
+            }
+            s += l;
+            run += 1;
+        }
+        (run, s)
+    }
+
+    fn check(lens: &[u64], start_run: u64, s0: u64, r: u64) {
+        let total: u64 = s0 + lens.iter().sum::<u64>();
+        let avail = lens.len();
+        for row in s0..total.min(s0 + 4000) {
+            let want = naive(lens, start_run, s0, row, r);
+            let got = scan_window(|i| lens[i], start_run, s0, row, avail, r);
+            assert_eq!(
+                got, want,
+                "lens={:?} start_run={start_run} s0={s0} row={row} r={r}",
+                &lens[..lens.len().min(8)]
+            );
+            // and the invariant the walk relies on: the row is inside [s, s+l)
+            let (run, s) = got;
+            assert!(s <= row, "row {row} below the returned start {s}");
+            if run + 1 < r {
+                assert!(s + lens[(run - start_run) as usize] > row, "row {row} above its run");
+            }
+        }
+    }
+
+    /// The adversarial shapes: a single huge run, all-ones, mixed magnitudes, a
+    /// window that ends on the very last run of the container, and a single-run
+    /// container (where the scalar loop can never step).
+    #[test]
+    fn scan_window_matches_the_scalar_reference() {
+        check(&[1], 0, 0, 1);
+        check(&[7], 0, 0, 1);
+        check(&[1, 1], 0, 0, 2);
+        check(&[1; 9], 0, 0, 9);
+        check(&[1; 10], 3, 100, 20);
+        check(&[u32::MAX as u64], 0, 0, 1);
+        check(&[1, 1, 1, u32::MAX as u64, 1, 1, 1], 0, 5, 7);
+        check(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], 0, 0, 13);
+        // a window whose rows are hit exactly on run boundaries, which is where an
+        // off-by-one in the 4-wide step would hide
+        check(&[4; 16], 0, 0, 16);
+        check(&[3, 1, 3, 1, 3, 1, 3, 1], 0, 0, 8);
+        check(&[256; 40], 0, 1000, 40);
     }
 }
