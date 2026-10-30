@@ -2,7 +2,13 @@
 //! in-band-framed corpus plus document sidecars.
 //!
 //!     xsa corpus --wikipedia <dump.xml.bz2|-> --out <dir> \
-//!                [--max-bytes 90G] [--separator 0x1e|none]
+//!                [--separator 0x1e|none]
+//!
+//! There is no size limit: the pass always consumes the whole stream. Slicing a
+//! source to N bytes is a job for `head` (or the bz2 tool of choice), not for the
+//! indexer - a corpus that stops somewhere in the middle of a dump is a truncated
+//! input, and this tool refuses truncated input elsewhere (rule 5). `corpus_bytes`
+//! in the MANIFEST is a reported outcome, never a bound.
 //!
 //! The dump is never materialised: the compressed file is hashed in one pass,
 //! then `bzip2 -dc` (or `pbzip2 -dc`) is spawned and its stdout is parsed as a
@@ -92,7 +98,6 @@ macro_rules! ck {
 pub fn command(args: &[String]) {
     let mut dump: Option<String> = None;
     let mut out: Option<String> = None;
-    let mut max_bytes: Option<u64> = None;
     let mut sep_mode = true;
     let mut i = 0;
     while i < args.len() {
@@ -103,10 +108,6 @@ pub fn command(args: &[String]) {
             }
             "--out" if i + 1 < args.len() => {
                 out = Some(args[i + 1].clone());
-                i += 2;
-            }
-            "--max-bytes" if i + 1 < args.len() => {
-                max_bytes = Some(parse_size(&args[i + 1]));
                 i += 2;
             }
             "--separator" if i + 1 < args.len() => {
@@ -129,12 +130,12 @@ pub fn command(args: &[String]) {
     let out = out.unwrap_or_else(|| die("corpus: --out <dir> is required"));
 
     let t0 = Instant::now();
-    run(&dump, &out, max_bytes, sep_mode, t0);
+    run(&dump, &out, sep_mode, t0);
 }
 
 fn usage() -> ! {
     eprintln!(
-        "xsa corpus --wikipedia <dump.xml.bz2|-> --out <dir> [--max-bytes 90G] [--separator 0x1e|none]
+        "xsa corpus --wikipedia <dump.xml.bz2|-> --out <dir> [--separator 0x1e|none]
 
   One streaming pass over a Wikipedia XML dump (pages-articles style) into
   <dir>/corpus.bin (\"<title>\\n<body>\\x1E\" per document), seps.bin (authoritative
@@ -146,32 +147,13 @@ fn usage() -> ! {
   between <text> tags (no wikitext conversion, no entity decoding), namespace
   filtering is not attempted: every <page> is indexed.
 
-  --max-bytes N   stop at the first document boundary at or past N bytes
-                  (suffixes K/M/G/T are binary: 1G = 1024^3)
   --separator     default 0x1e frames documents in-band; none omits the byte
-                  and leaves seps.bin as the only boundary record"
+                  and leaves seps.bin as the only boundary record
+
+  The whole dump is always consumed: there is no byte budget. To index only a
+  prefix of a dump, slice the dump first (e.g. `head -c N`) - not this tool."
     );
     std::process::exit(2);
-}
-
-/// Parse "90G" / "1024" / "16M" into bytes. Suffixes are binary.
-fn parse_size(s: &str) -> u64 {
-    let t = s.trim();
-    if t.is_empty() {
-        die("corpus: --max-bytes: empty value");
-    }
-    let (num, mult) = match t.as_bytes()[t.len() - 1].to_ascii_lowercase() {
-        b'k' => (&t[..t.len() - 1], 1u64 << 10),
-        b'm' => (&t[..t.len() - 1], 1u64 << 20),
-        b'g' => (&t[..t.len() - 1], 1u64 << 30),
-        b't' => (&t[..t.len() - 1], 1u64 << 40),
-        _ => (t, 1),
-    };
-    let n: u64 = num
-        .parse()
-        .unwrap_or_else(|_| die(&format!("corpus: --max-bytes {}: integer expected", s)));
-    n.checked_mul(mult)
-        .unwrap_or_else(|| die(&format!("corpus: --max-bytes {} overflows u64", s)))
 }
 
 // ---------------------------------------------------------------------------
@@ -313,8 +295,6 @@ struct Emitter {
     content_seps: u64,
     /// Documents that contain at least one 0x1E in their content.
     docs_with_content_sep: u64,
-    max_bytes: Option<u64>,
-    cut: bool,
 }
 
 impl Emitter {
@@ -322,7 +302,7 @@ impl Emitter {
     /// existing pass). A refused pass must never leave something that looks like a
     /// corpus: the sidecars are written under `.partial` names and only renamed
     /// into place once rule 1 has passed and every file is fsynced.
-    fn new(out: &Path, sep_mode: bool, max_bytes: Option<u64>) -> Emitter {
+    fn new(out: &Path, sep_mode: bool) -> Emitter {
         let corpus_path = out.join("corpus.bin.partial");
         let seps_path = out.join("seps.bin.partial");
         let titles_path = out.join("titles.bin.partial");
@@ -341,14 +321,11 @@ impl Emitter {
             title_payload: 0,
             content_seps: 0,
             docs_with_content_sep: 0,
-            max_bytes,
-            cut: false,
         }
     }
 
-    /// Append one document. Returns true when the pass should stop because
-    /// --max-bytes has been reached at this boundary.
-    fn doc(&mut self, title: &[u8], body: &[u8]) -> bool {
+    /// Append one document.
+    fn doc(&mut self, title: &[u8], body: &[u8]) {
         if self.doc_count >= u32::MAX as u64 {
             die("corpus: more than 2^32-1 documents: the u32 delta/offset sidecars cannot address them");
         }
@@ -412,14 +389,6 @@ impl Emitter {
         }
         self.corpus_bytes = start + title.len() as u64 + 1 + body.len() as u64 + u64::from(self.sep_mode);
         self.doc_count += 1;
-
-        match self.max_bytes {
-            Some(limit) if self.corpus_bytes >= limit => {
-                self.cut = true;
-                return true;
-            }
-            _ => false,
-        }
     }
 
     /// Total number of 0x1E bytes the finished corpus.bin will carry.
@@ -511,7 +480,6 @@ impl Emitter {
             anchor_count,
             content_seps: self.content_seps,
             docs_with_content_sep: self.docs_with_content_sep,
-            cut: self.cut,
             separator_count: self.separator_count(),
         }
     }
@@ -548,7 +516,6 @@ struct Finished {
     anchor_count: u64,
     content_seps: u64,
     docs_with_content_sep: u64,
-    cut: bool,
     separator_count: u64,
 }
 
@@ -587,14 +554,6 @@ impl<R: Read> Stream<R> {
                 st
             )),
             Err(e) => die(&format!("corpus: waiting for the decompressor: {}", e)),
-        }
-    }
-
-    /// Stop reading early (--max-bytes): kill and reap the decompressor.
-    fn kill_child(&mut self) {
-        if let Some(mut c) = self.child.take() {
-            let _ = c.kill();
-            let _ = c.wait();
         }
     }
 
@@ -715,12 +674,6 @@ impl<R: Read> Stream<R> {
 // XML structure pass
 // ---------------------------------------------------------------------------
 
-enum Step {
-    Continue,
-    /// --max-bytes boundary reached: stop reading.
-    Stop,
-}
-
 struct Parser<R: Read> {
     s: Stream<R>,
     stack: Vec<Vec<u8>>,
@@ -758,14 +711,13 @@ impl<R: Read> Parser<R> {
         self.s.abs_pos()
     }
 
-    fn run(&mut self) -> Step {
+    /// Consume the whole stream. There is no early exit: every byte of the
+    /// dump is read and validated, so a truncated input is always named.
+    fn run(&mut self) {
         loop {
             match ck!(self.s.peek(), "read dump stream") {
                 None => break,
-                Some(b'<') => match self.element() {
-                    Step::Continue => {}
-                    Step::Stop => return Step::Stop,
-                },
+                Some(b'<') => self.element(),
                 Some(_) => {
                     // Character data outside any element of interest (whitespace
                     // between pages, <sitename> text, <comment> text...). Only
@@ -786,11 +738,10 @@ impl<R: Read> Parser<R> {
         if !self.saw_root {
             die("corpus: truncated or malformed XML: no <mediawiki> root element in the stream");
         }
-        Step::Stop
     }
 
     /// Consume one markup item; called with the stream positioned on '<'.
-    fn element(&mut self) -> Step {
+    fn element(&mut self) {
         let start = self.at();
         self.s.bump(); // '<'
         match ck!(self.s.peek(), "read dump stream") {
@@ -816,7 +767,6 @@ impl<R: Read> Parser<R> {
                         die(&format!("corpus: truncated XML: unterminated declaration at offset {}", start));
                     }
                 }
-                Step::Continue
             }
             Some(b'?') => {
                 self.s.bump();
@@ -824,20 +774,15 @@ impl<R: Read> Parser<R> {
                 if !ck!(self.s.scan_to(b"?>", &mut self.scratch), "read dump stream") {
                     die(&format!("corpus: truncated XML: unterminated processing instruction at offset {}", start));
                 }
-                Step::Continue
             }
             Some(b'/') => {
                 self.s.bump();
                 let name = self.tag_name();
-                if self.close_tag(&name, start) {
-                    Step::Stop
-                } else {
-                    Step::Continue
-                }
+                self.close_tag(&name, start);
             }
             Some(_) => {
                 let name = self.tag_name();
-                self.open_tag(&name, start)
+                self.open_tag(&name, start);
             }
         }
     }
@@ -899,7 +844,7 @@ impl<R: Read> Parser<R> {
         }
     }
 
-    fn open_tag(&mut self, name: &[u8], start: u64) -> Step {
+    fn open_tag(&mut self, name: &[u8], start: u64) {
         let self_closing = self.tag_tail(start);
         let top = self.stack.last().map(|v| v.as_slice());
 
@@ -910,7 +855,7 @@ impl<R: Read> Parser<R> {
                 self.has_body = true;
                 self.body.clear();
             }
-            return Step::Continue;
+            return;
         }
 
         match name {
@@ -987,7 +932,6 @@ impl<R: Read> Parser<R> {
             }
             _ => self.stack.push(name.to_vec()),
         }
-        Step::Continue
     }
 
     fn require_in_revision(&self, name: &[u8], start: u64) {
@@ -1000,9 +944,7 @@ impl<R: Read> Parser<R> {
         }
     }
 
-    /// Returns true when the pass must stop (a --max-bytes boundary was just
-    /// crossed); the caller turns that into Step::Stop.
-    fn close_tag(&mut self, name: &[u8], start: u64) -> bool {
+    fn close_tag(&mut self, name: &[u8], start: u64) {
         // Optional whitespace before '>'.
         loop {
             match ck!(self.s.peek(), "read dump stream") {
@@ -1063,7 +1005,7 @@ impl<R: Read> Parser<R> {
             // and amount to one document of scratch memory.
             let title = std::mem::take(&mut self.title);
             let body = std::mem::take(&mut self.body);
-            let stop = self.e.doc(&title, &body);
+            self.e.doc(&title, &body);
             self.title = title;
             self.body = body;
             self.title.clear();
@@ -1071,11 +1013,7 @@ impl<R: Read> Parser<R> {
             self.has_title = false;
             self.has_body = false;
             self.revisions = 0;
-            if stop {
-                return true;
-            }
         }
-        false
     }
 }
 
@@ -1110,7 +1048,7 @@ fn spawn_decompressor(dump: &str) -> (Child, String) {
     ))
 }
 
-fn run(dump: &str, out: &str, max_bytes: Option<u64>, sep_mode: bool, t0: Instant) {
+fn run(dump: &str, out: &str, sep_mode: bool, t0: Instant) {
     // 0. Claim the output directory first: a mis-typed --out must fail in
     //    milliseconds, not after hashing a 90 GB dump.
     let dst = Path::new(out);
@@ -1162,20 +1100,16 @@ fn run(dump: &str, out: &str, max_bytes: Option<u64>, sep_mode: bool, t0: Instan
         Some(s) => s,
         None => die("corpus: decompressor produced no stdout pipe"),
     };
-    let emitter = Emitter::new(dst, sep_mode, max_bytes);
+    let emitter = Emitter::new(dst, sep_mode);
     let mut parser = Parser::new(Stream::new(stdout, child), emitter);
-    let step = parser.run();
+    parser.run();
     crate::trace_since("corpus_parse", t1);
 
-    let cut = matches!(step, Step::Stop) && parser.e.cut;
     let pages = parser.pages;
     let multi_rev = parser.multi_revision_pages;
 
-    // 3. The decompressor is reaped at EOF (inside the stream) or killed here
-    //    when --max-bytes stopped the pass early.
-    if cut {
-        parser.s.kill_child();
-    }
+    // 3. The decompressor is reaped at EOF inside the stream (a non-zero exit
+    //    there is a truncated or corrupt bzip2 stream, never a short corpus).
 
     // 4. Rule 1: the framing byte must equal the document count in separator mode.
     let doc_count = parser.e.doc_count;
@@ -1217,9 +1151,6 @@ fn run(dump: &str, out: &str, max_bytes: Option<u64>, sep_mode: bool, t0: Instan
         "separator_count_meaning": "number of 0x1E bytes in corpus.bin (emitted separators + any 0x1E inside content); rule 1 requires it to equal doc_count when --separator is 0x1e",
         "content_separator_bytes": fin.content_seps,
         "documents_with_content_separator": fin.docs_with_content_sep,
-        "max_bytes": max_bytes,
-        "cut_at_document_boundary": fin.cut,
-        "cut_corpus_bytes": if fin.cut { serde_json::json!(fin.corpus_bytes) } else { serde_json::Value::Null },
         "pages_parsed": pages,
         "pages_with_multiple_revisions": multi_rev,
         "namespace_filter": "none: every <page> is indexed regardless of namespace prefix",
@@ -1244,15 +1175,6 @@ fn run(dump: &str, out: &str, max_bytes: Option<u64>, sep_mode: bool, t0: Instan
     ck!(f.write_all(body.as_bytes()), format!("write {}", mpath.display()));
     ck!(f.sync_all(), format!("fsync {}", mpath.display()));
 
-    if fin.cut {
-        eprintln!(
-            "xsa corpus: --max-bytes {} reached: cut at document boundary after doc {}: corpus_bytes={} docs={}",
-            max_bytes.unwrap(),
-            fin.doc_count,
-            fin.corpus_bytes,
-            fin.doc_count
-        );
-    }
     println!(
         "xsa corpus: docs={} corpus_bytes={} separators={} separator={} seps.bin={} titles.bin={} sha256(corpus.bin)={}",
         fin.doc_count,
@@ -1296,13 +1218,6 @@ fn iso8601_utc(secs: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn size_suffixes_are_binary() {
-        assert_eq!(parse_size("1K"), 1024);
-        assert_eq!(parse_size("90G"), 90u64 << 30);
-        assert_eq!(parse_size("0"), 0);
-    }
 
     #[test]
     fn positions_between_utc_times() {

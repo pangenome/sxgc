@@ -1397,7 +1397,7 @@ fn usage() -> ! {
     eprintln!("           one orientation only: a lite container has no alphabet, --mode is refused;");
     eprintln!("           tsv (default): pattern_id<TAB>offset per occurrence; --counts: pattern_id<TAB>count");
     eprintln!("           -j defaults to all cores; the container identifies its own format");
-    eprintln!("  xsa corpus --wikipedia <dump.xml.bz2|-> --out DIR [--max-bytes 90G] [--separator 0x1e|none]");
+    eprintln!("  xsa corpus --wikipedia <dump.xml.bz2|-> --out DIR [--separator 0x1e|none]");
     eprintln!("           one streaming pass -> corpus.bin (\"<title>\\n<body>\\x1E\" per doc), seps.bin");
     eprintln!("           (u32 start deltas + every-64th u64 anchor), titles.bin, MANIFEST.json");
     eprintln!("  xsa query-legacy ...   DEPRECATED phi-era reader (archived harnesses only)");

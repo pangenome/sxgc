@@ -1,6 +1,8 @@
 # ACCEPTANCE — `xsa corpus` (Wikipedia dump -> corpus + document sidecars)
 
-Tool: `xsa corpus --wikipedia <dump.xml.bz2|-> --out <dir> [--max-bytes 90G] [--separator 0x1e|none]`
+Tool: `xsa corpus --wikipedia <dump.xml.bz2|-> --out <dir> [--separator 0x1e|none]`
+(There is no `--max-bytes`: the option was removed — see W4. The pass always consumes the
+whole dump; slicing a source is a job for `head`, not for the indexer.)
 Source: `xsa/src/corpus.rs` (new module) + dispatch in `xsa/src/main.rs`; the sidecar
 layouts are documented in the module header and echoed into every MANIFEST.json.
 Build: `cargo build --release --manifest-path xsa/Cargo.toml`.
@@ -67,32 +69,32 @@ exit=0
 
 ```
 
-## W4 — `--max-bytes` cuts at a document boundary and reports the exact cut
+## W4 — REMOVED (`--max-bytes`)
+
+The `--max-bytes` gate that lived here was deleted together with the option itself: the
+operator's verdict is that there is no situation in which the indexer should stop early —
+slicing a source to N bytes is `head`'s job (or the bz2 tool's), and a corpus that stops in
+the middle of a dump is a truncated input, which this tool refuses everywhere else (X1/X2).
+
+What was removed (source: `xsa/src/corpus.rs`, `xsa/src/main.rs`): the flag and its usage
+text, `parse_size`, the `max_bytes`/`cut` emitter fields, the `doc()` stop signal, the
+`Step` enum and the early `kill_child` path, and the three MANIFEST keys that existed only for
+the cut (`max_bytes`, `cut_at_document_boundary`, `cut_corpus_bytes`). Everything else —
+`doc_count`, `corpus_bytes`, `separator_count`, dump sha256/bytes, sidecar hashes — is
+unchanged, and `corpus_bytes` remains a reported outcome, never a bound. Gates W1/W2/W3/W5
+were re-run after the removal: all sidecars are byte-identical to their pre-removal values
+(corpus.bin sha256 `f1257c0d…bbac` in 0x1e mode, `8add71d7…8c93` in none mode).
+
+`--max-bytes` is now an ordinary unknown argument:
 
 ```
-  full-corpus boundaries: 78 129 153 172 268
-xsa corpus: --max-bytes 78 reached: cut at document boundary after doc 1: corpus_bytes=78 docs=1
-xsa corpus: docs=1 corpus_bytes=78 separators=1 separator=0x1e seps.bin=60 titles.bin=35 sha256(corpus.bin)=ccb81e028e045b88a57b0b5c5fe5d5dd9a57451638c550797a16af9830bca136
-xsa corpus: manifest /mnt/nvme2n1/erikg/wikicorpus/xsa/target/wc-accept/g/w4-78/MANIFEST.json
-  exit=0
-xsa corpus: --max-bytes 130 reached: cut at document boundary after doc 3: corpus_bytes=153 docs=3
-xsa corpus: docs=3 corpus_bytes=153 separators=3 separator=0x1e seps.bin=68 titles.bin=82 sha256(corpus.bin)=e60b5f3dcbc8815bcda53810f4200e2c9853f4c8ce629645a7db9eccaf3505fe
-xsa corpus: manifest /mnt/nvme2n1/erikg/wikicorpus/xsa/target/wc-accept/g/w4-130/MANIFEST.json
-  exit=0
-xsa corpus: --max-bytes 268 reached: cut at document boundary after doc 5: corpus_bytes=268 docs=5
-xsa corpus: docs=5 corpus_bytes=268 separators=5 separator=0x1e seps.bin=76 titles.bin=134 sha256(corpus.bin)=f1257c0d3960eee0855a0df1541152bb7bfcd63e302b992375e9a0cb58b5bbac
-xsa corpus: manifest /mnt/nvme2n1/erikg/wikicorpus/xsa/target/wc-accept/g/w4-268/MANIFEST.json
-  exit=0
-xsa corpus: docs=5 corpus_bytes=268 separators=5 separator=0x1e seps.bin=76 titles.bin=134 sha256(corpus.bin)=f1257c0d3960eee0855a0df1541152bb7bfcd63e302b992375e9a0cb58b5bbac
-xsa corpus: manifest /mnt/nvme2n1/erikg/wikicorpus/xsa/target/wc-accept/g/w4-90G/MANIFEST.json
-  exit=0
-  max-bytes 78: cut=True docs=1 corpus_bytes=78 cut_corpus_bytes=78 (prefix of full, a boundary member, sidecars agree)
-  max-bytes 130: cut=True docs=3 corpus_bytes=153 cut_corpus_bytes=153 (prefix of full, a boundary member, sidecars agree)
-  max-bytes 268: cut=True docs=5 corpus_bytes=268 cut_corpus_bytes=268 (whole of full, a boundary member, sidecars agree)
-  max-bytes 90G (> fixture): no cut, docs=5 corpus_bytes=268
-  W4 PASS
-
+$ xsa corpus --wikipedia fixture.ms.bz2 --out w4 --max-bytes 1M
+xsa: error: corpus: unknown arg --max-bytes
+exit=1
+$ xsa corpus --help 2>&1 | grep -i max     # prints nothing, exit=1
 ```
+
+W5 keeps its number so that the references below stay valid.
 
 ## W5 — determinism: same dump -> byte-identical sidecars
 
@@ -283,10 +285,6 @@ $ W2  xsa corpus --wikipedia fixture.ms.bz2 --out final/w2a
   exit=0
 $ W3  xsa corpus --wikipedia fixture.ms.bz2 --out final/w3 --separator none
   exit=0
-$ W4  xsa corpus --wikipedia fixture.ms.bz2 --out final/w4 --max-bytes 130
-xsa corpus: --max-bytes 130 reached: cut at document boundary after doc 3: corpus_bytes=153 docs=3
-xsa corpus: docs=3 corpus_bytes=153 separators=3 separator=0x1e seps.bin=68 titles.bin=82 sha256(corpus.bin)=e60b5f3dcbc8815bcda53810f4200e2c9853f4c8ce629645a7db9eccaf3505fe
-  exit=0
 $ W5  second identical run into final/w2b
   corpus.bin  identical, sha256=f1257c0d3960eee0855a0df1541152bb7bfcd63e302b992375e9a0cb58b5bbac
   seps.bin    identical, sha256=c503f160d7b43a3a574bd91102cc58ad66e30c15360fdda418286d3665f3466d
@@ -294,6 +292,44 @@ $ W5  second identical run into final/w2b
   corpus.bin identical to the pre-refactor gate run (no byte drift from the last two edits)
   seps.bin has 0x1E count in none-mode corpus: 0
 ```
+
+## Re-check after the `--max-bytes` removal (the only change since the block above)
+
+```
+binary: xsa sha256=1002704fd39ed1143475a70a45165c9e576717ceac65d122b71d442e55734a92   (--max-bytes removed)
+build:  cargo build --release --manifest-path xsa/Cargo.toml   (clean; pre-existing warnings only)
+$ xsa corpus --help 2>&1 | grep -i max
+  (no output, exit=1)
+$ xsa corpus --wikipedia fixture.ms.bz2 --out w4rm --max-bytes 1M
+xsa: error: corpus: unknown arg --max-bytes
+  exit=1
+$ xsa corpus --wikipedia fixture.ms.bz2 --out after/0x1e
+xsa corpus: docs=5 corpus_bytes=268 separators=5 separator=0x1e seps.bin=76 titles.bin=134 sha256(corpus.bin)=f1257c0d3960eee0855a0df1541152bb7bfcd63e302b992375e9a0cb58b5bbac
+  exit=0
+$ xsa corpus --wikipedia fixture.ms.bz2 --out after/none --separator none
+xsa corpus: docs=5 corpus_bytes=263 separators=0 separator=none seps.bin=76 titles.bin=134 sha256(corpus.bin)=8add71d7a423db26fa32ef7eec3f9379d4dd00d7ad0248197fe291f23fd78c93
+  exit=0
+  before/after sidecar sha256 (cmp, both modes), all MATCH:
+    corpus.bin f1257c0d3960eee0855a0df1541152bb7bfcd63e302b992375e9a0cb58b5bbac  (0x1e, == W2)
+    seps.bin   c503f160d7b43a3a574bd91102cc58ad66e30c15360fdda418286d3665f3466d
+    titles.bin f637a27c3cefa6ddfcbe2e8e631ca82f5223456b3e2dd5964d641c8f2fb76c82
+    corpus.bin 8add71d7a423db26fa32ef7eec3f9379d4dd00d7ad0248197fe291f23fd78c93  (none)
+    seps.bin   c7ab485abd331bfffad34d506caccfc5cecdb3e7a82f0a9b186d2be764533908
+  MANIFEST.json diff vs the pre-removal run: only the three cut-only keys are gone
+    (- "cut_at_document_boundary", - "cut_corpus_bytes", - "max_bytes"); every other key agrees
+$ W5  two identical runs into fresh dirs (0x1e and none), cmp:
+  corpus.bin f1257c0d3960eee0855a0df1541152bb7bfcd63e302b992375e9a0cb58b5bbac / 8add71d7a423db26fa32ef7eec3f9379d4dd00d7ad0248197fe291f23fd78c93  identical
+  seps.bin   c503f160d7b43a3a574bd91102cc58ad66e30c15360fdda418286d3665f3466d / c7ab485abd331bfffad34d506caccfc5cecdb3e7a82f0a9b186d2be764533908  identical
+  titles.bin f637a27c3cefa6ddfcbe2e8e631ca82f5223456b3e2dd5964d641c8f2fb76c82 (both modes)  identical
+  MANIFEST.json identical apart from finished_at
+$ W1  xsa corpus --wikipedia fixture_0x1e.ms.bz2 --out s1     # rule 1 still fatal
+xsa: error: 0x1E occurs inside document content (count=6 docs=5); rerun with --separator none
+  exit=1, only *.partial files left
+$ X1  head -c 900 fixture.ms.bz2 | truncated bz2 -> refused (decompressor exit status 2), exit=1
+$ X14 xsa corpus --wikipedia - --out s3 < fixture.ms.bz2: corpus.bin == file-mode corpus.bin, exit=0
+```
+   (X2-X13/X15/X16 were not re-run: they exercise the parser and the manifest, neither of which
+   changed; the byte-identity, refusal and determinism checks above are what the removal touches.)
 
 ## Journal
 
@@ -315,7 +351,7 @@ the timed runs, and the numbers say what shared the CPU.
 - X15 anchors: 200 docs, corpus 23,025 B, seps.bin 880 B (= 48 header + 4*200 deltas +
   8*4 anchors), anchors [0, 7337, 14728, 22173]; rank_1E(pos) from anchors+deltas
   matched a brute bisect on 11 probes.
-- Fixture gates (W1-W5): each run is ~0.01 s wall and ~2 MB RSS (startup dominates a
+- Fixture gates (W1-W3, W5): each run is ~0.01 s wall and ~2 MB RSS (startup dominates a
   268 B corpus).
 
 Exact fixture counters: doc_count=5, corpus_bytes=268 (0x1e mode) / 263 (none mode),
@@ -347,9 +383,11 @@ dump_sha256 taken over the *compressed* dump.
    subset is not supported; MediaWiki dumps contain neither.
 7. pbzip2 is preferred and falls back to bzip2 when it is not on PATH (it is absent on
    this box, so every gate above exercised the bzip2 path). Both handle multistream bz2.
-8. `--max-bytes` stops without validating the remainder of the stream, by design: the
-   MANIFEST records `cut_at_document_boundary` and `cut_corpus_bytes`, and rule 1 is
-   enforced over the emitted prefix only.
+8. There is no byte budget (`--max-bytes` was removed): every pass reads and validates the
+   whole dump, so a caller who wants only a prefix must slice the dump itself (`head -c N`
+   on an uncompressed dump, or the bz2 tool of choice) and accept that the resulting corpus
+   starts at document 0. `corpus_bytes` in MANIFEST is the reported size of the corpus,
+   never an input to the pass.
 9. Determinism is verified at fixture scale (W5); the pass is single-threaded and does
    no hash iteration, but a 90 GB run was not executed here.
 10. MANIFEST.json presence is the completion marker (`*.partial` names otherwise); it is
