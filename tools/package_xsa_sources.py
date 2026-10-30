@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
-"""Refresh in-crate first-party snapshots before packaging; never run at install."""
+"""Refresh in-crate first-party snapshots before packaging; never run at install.
+
+This mirrors the sources-of-truth into `xsa/runtime/` (the copy the crate's
+build_tools.py actually compiles) and writes NO hash manifest: the sha256 list
+this script used to emit was a hand-maintained duplicate of what git already
+records, and every merge touching a covered file broke the build with a stale
+digest. Provenance is git's: `xsa build` journals `XSA_SOURCE git_commit=...`
+into its run journal, and `xsa/INSTALL.md` says so.
+"""
 from pathlib import Path
-import hashlib
 import shutil
-import json
 ROOT = Path(__file__).resolve().parents[1]
 DEST = ROOT / 'xsa/runtime'
 PATTERNS = ('bit6/*.hpp', 'bit6/binbwt_slice.h', 'bit6/phrase_radix.h',
@@ -32,8 +38,3 @@ if __name__ == '__main__':
         dst = destination(p)
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(p, dst)
-    files = sorted(p for d in (DEST, ROOT/'xsa/vendor', ROOT/'xsa/src') for p in d.rglob('*') if p.is_file())
-    files += [ROOT/'xsa/build.rs', ROOT/'xsa/build_tools.py']
-    (ROOT/'xsa/SOURCES.sha256.json').write_text(json.dumps({
-        str(p.relative_to(ROOT/'xsa')): hashlib.sha256(p.read_bytes()).hexdigest()
-        for p in files}, indent=2)+'\n')

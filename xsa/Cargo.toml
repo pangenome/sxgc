@@ -5,7 +5,7 @@ edition = "2021"
 description = "xsa - chi sa. Suffixient-array tools over r-space artifacts (.ri4, .sA, rlbwt)."
 license = "MIT"
 build = "build.rs"
-include = ["src/**", "runtime/**", "vendor/**", "build.rs", "build_tools.py", "SOURCES.sha256.json", "Cargo.toml", "Cargo.lock", "INSTALL.md"]
+include = ["src/**", "runtime/**", "vendor/**", "build.rs", "build_tools.py", "Cargo.toml", "Cargo.lock", "INSTALL.md"]
 
 [[bin]]
 name = "xsa"

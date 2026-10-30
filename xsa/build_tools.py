@@ -21,10 +21,24 @@ def run(*args, cwd=None, env=None):
     print('+', ' '.join(map(str, args)), flush=True)
     subprocess.run(list(map(str, args)), cwd=cwd, env=env, check=True)
 
-sources = json.loads((ROOT/'SOURCES.sha256.json').read_text())
-for name, expected in sources.items():
-    if digest(ROOT/name) != expected:
-        raise RuntimeError('vendored source SHA256 mismatch: '+name)
+# SOURCE PROVENANCE, NOT A HASH GATE. There is no checked-in source digest
+# file: git records the sources, and a hand-maintained duplicate of what git
+# already knows broke every merge that touched a covered file (stale digest ->
+# refused build, with a manual regeneration step in the loop). What is left is
+# ONE digest of the exact first-party source bytes this build compiles,
+# computed here on every build and recorded in the installed MANIFEST.sha256:
+# it cannot go stale because nothing is ever compared against it.
+SOURCE_TREES = ('runtime', 'vendor', 'src')
+SOURCE_FILES = ('build.rs', 'build_tools.py')
+
+def source_tree_digest():
+    files = sorted(p for d in SOURCE_TREES for p in (ROOT/d).rglob('*') if p.is_file())
+    files += [ROOT/n for n in SOURCE_FILES]
+    tree = hashlib.sha256()
+    for p in files:
+        tree.update(str(p.relative_to(ROOT)).encode()+b'\0'+digest(p).encode()+b'\n')
+    return tree.hexdigest()
+
 # No rebuild uses an old partial source/build tree.
 work = Path(tempfile.mkdtemp(prefix='stages-', dir=OUT))
 deps = work/'deps'; deps.mkdir()
@@ -121,7 +135,7 @@ for tree, label in [(deps, 'native'), (work/'agc-vendor', 'rust')]:
             shutil.copyfile(p, dest)
 files = {str(p.relative_to(bundle)): digest(p) for p in sorted(bundle.rglob('*')) if p.is_file()}
 manifest = {'format': 'xsa-install-v1', 'package': {'name': 'xsa', 'version': VERSION},
-            'source_sha256': digest(ROOT/'SOURCES.sha256.json'),
+            'source_sha256': source_tree_digest(),
             'upstreams': json.loads((ROOT/'vendor/native-provenance.json').read_text()),
             'files': files}
 (bundle/'MANIFEST.sha256').write_text(json.dumps(manifest, sort_keys=True, indent=2)+'\n')

@@ -29,7 +29,9 @@ As landed:
   terminal publication and malformed refusals.
 - xsa/src/chain.rs:1009 fixes 65536-run bands and defaults W to 1100;
   :1117 verifies exact single-pass/no-shard log fields. Native mirrors and
-  xsa/SOURCES.sha256.json are refreshed.
+  xsa/SOURCES.sha256.json are refreshed. (SUPERSEDED 2026-10-30: that digest file is
+  deleted; provenance is the `XSA_SOURCE git_commit=...` journal line. Native mirrors are
+  still refreshed by tools/package_xsa_sources.py.)
 
 Retained compatibility: SparseRunSpool and the legacy WM/shard planner and
 RCI1 reader remain for intermediate/legacy paths and the standing oracle.

@@ -338,10 +338,10 @@ the timed runs, and the numbers say what shared the CPU.
 
 - Build: `cargo build --release --manifest-path xsa/Cargo.toml` — first build 4m47s
   (it compiles the crate's bundled native stages: htslib/agc/pfp++/rpfbwt plus the
-  bundled C++ tools), then ~2 s incremental. The build script verifies every shipped
-  source against `xsa/SOURCES.sha256.json`, so it is regenerated with
-  `tools/package_xsa_sources.py` on each source edit (the script also refreshes the
-  packaged mirrors; here only the digest file changed).
+  bundled C++ tools), then ~2 s incremental. *(SUPERSEDED 2026-10-30: the build no
+  longer verifies shipped sources against `xsa/SOURCES.sha256.json` - that file is
+  gone and no regeneration step exists; `xsa build` journals `XSA_SOURCE
+  git_commit=...` instead. The timings above stand.)*
 - X16 overhead (4,246,918 B XML, 2,909,112 B bz2 — base64 bodies, poorly compressible):
   `bzip2 -dc > /dev/null` alone 0.18-0.20 s; `xsa corpus` end-to-end 0.20-0.21 s,
   max RSS 4 MB. Parse + emit sits inside the decoder's timing noise: the tool is

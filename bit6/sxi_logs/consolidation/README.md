@@ -14,7 +14,9 @@ from pushed main (003e314):
   `xsa/runtime/` alongside the (refreshed) finish sources
   (`chi_rspace_dump.cpp`, `rpfbwt_endpoints.cpp`, `slim_lce.hpp`,
   `seam_repair.hpp`, `ext_columns.hpp`), all pinned by
-  `xsa/SOURCES.sha256.json` and verified at build time.
+  `xsa/SOURCES.sha256.json` and verified at build time. *(SUPERSEDED 2026-10-30:
+  that digest file is deleted - provenance is git; `xsa build` journals `XSA_SOURCE
+  git_commit=... git_dirty=... branch=...`. The snapshot copy above still runs.)*
 * Build: `xsa/build_tools.py` compiles the chain into the verified bundle:
   `chunk_frontend` (gcc -O3 libsais token front end, the gate flags) and
   `cross_lcp_merge` (g++ -O2 -mcx16 -std=c++17 -pthread -latomic, cpuid cx16

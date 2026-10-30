@@ -6,7 +6,10 @@ fn main() {
         "xsa bundled native stages currently support Linux");
     assert_eq!(env::var("CARGO_CFG_TARGET_ARCH").unwrap(), "x86_64",
         "xsa vendored dependency closure currently supports Linux x86_64");
-    for path in ["build.rs", "build_tools.py", "runtime", "vendor", "SOURCES.sha256.json"] {
+    // No source digest file is tracked: provenance of the sources is git's
+    // (the run journal records the commit), so editing a covered source can
+    // never require a manifest regeneration step before the build.
+    for path in ["build.rs", "build_tools.py", "runtime", "vendor"] {
         println!("cargo:rerun-if-changed={path}");
     }
     println!("cargo:rerun-if-env-changed=BUILD_JOBS");

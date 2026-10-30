@@ -72,7 +72,8 @@ Quick gates (local, /tmp/mergperf — banked log: quick_gate.log):
   CROSS_SHARDS {1,3,48}: **18/18 BYTE_IDENTICAL**, e.g. tiny-alpha c=32
   wall 27.2s (S=1) -> 14.4s (S=48).
 * cargo build + cargo test: 8/8 PASS (bundle SHA-verified; runtime snapshot +
-  SOURCES.sha256.json refreshed; chain.rs journals CROSS_SHARDS).
+  SOURCES.sha256.json refreshed - SUPERSEDED 2026-10-30: that file is deleted and the
+  build no longer checks it; chain.rs journals XSA_SOURCE git identity + CROSS_SHARDS).
 
 GATE 1 (absolute): fragment scale through the consolidated binary —
 `gate1_parallel_emission_frag.sh`: byte-identity 8/8 vs the banked reference

@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Ensure distributable first-party sources cannot silently lag their originals."""
 import importlib.util
-import hashlib
-import json
 from pathlib import Path
 import unittest
 import io
@@ -15,7 +13,7 @@ class CargoSources(unittest.TestCase):
         buffer = io.BytesIO()
         files = [p for d in ('runtime', 'vendor', 'src') for p in (ROOT/'xsa'/d).rglob('*') if p.is_file()]
         files += [ROOT/'xsa'/n for n in ('Cargo.toml', 'Cargo.lock', 'build.rs',
-                  'build_tools.py', 'SOURCES.sha256.json', 'INSTALL.md')]
+                  'build_tools.py', 'INSTALL.md')]
         with tarfile.open(fileobj=buffer, mode='w:gz') as archive:
             for p in sorted(files):
                 archive.add(p, arcname='xsa-0.1.0/'+str(p.relative_to(ROOT/'xsa')))
@@ -26,11 +24,19 @@ class CargoSources(unittest.TestCase):
         for source in package.sources():
             with self.subTest(source=source):
                 self.assertEqual(source.read_bytes(), package.destination(source).read_bytes())
-    def test_vendored_source_checksums(self):
-        expected = json.loads((ROOT/'xsa/SOURCES.sha256.json').read_text())
-        actual = {str(p.relative_to(ROOT/'xsa')): hashlib.sha256(p.read_bytes()).hexdigest()
-                  for d in ('runtime', 'vendor', 'src') for p in (ROOT/'xsa'/d).rglob('*') if p.is_file()}
-        for name in ('build.rs', 'build_tools.py'):
-            actual[name] = hashlib.sha256((ROOT/'xsa'/name).read_bytes()).hexdigest()
-        self.assertEqual(actual, expected)
+    def test_no_hand_maintained_source_digest(self):
+        # Git is the source record. A checked-in digest of the sources is a
+        # duplicate of it that goes stale on every merge and breaks the build
+        # (four times on 2026-10-30 alone), and no build may require a manual
+        # regeneration step after editing a covered source.
+        self.assertFalse((ROOT/'xsa/SOURCES.sha256.json').exists(),
+                         'xsa/SOURCES.sha256.json must not exist: provenance is git')
+        for pattern in ('xsa/build.rs', 'xsa/build_tools.py', 'tools/package_xsa_sources.py'):
+            with self.subTest(file=pattern):
+                text = (ROOT/pattern).read_text()
+                self.assertNotIn('SOURCES.sha256', text)
+                self.assertNotIn('vendored source SHA256 mismatch', text)
+    def test_no_tracked_source_manifest(self):
+        # Nothing may reintroduce the file into the crate without failing here.
+        self.assertNotIn('SOURCES.sha256.json', (ROOT/'xsa/Cargo.toml').read_text())
 if __name__ == '__main__': unittest.main()
