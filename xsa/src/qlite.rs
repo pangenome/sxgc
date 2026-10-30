@@ -38,13 +38,13 @@
 //! `describe_format`).
 
 
-/// m1 block width: independently decodable blocks of this many runs.
-/// MUST match the writer (bit6/xsa_finish.cpp: static constexpr uint64_t M1_BLOCK_RUNS).
-/// This is the ONE compile-time expectation the reader keeps, and only because
-/// the block decode buffers are fixed-size arrays `[_; M1_BLOCK_RUNS]`: the m1
-/// header still declares the width and `Index::open` refuses a container whose
-/// declaration differs (see the `block_runs != M1_BLOCK_RUNS` check).
-pub const M1_BLOCK_RUNS: u64 = 64;
+/// SANITY BOUND on the m1 block width, not the width itself. The width is
+/// DECLARED by the container (m1 header word 1, `block_runs`; the writer's knob
+/// is bit6/xsa_finish.cpp M1_BLOCK_RUNS) and every address computation below
+/// uses that declared value. This bound only says how wide a block this reader
+/// is willing to decode: the block decode buffers are allocated per index, and
+/// a block wider than this is refused by name rather than trusted.
+pub const M1_BLOCK_RUNS_MAX: u64 = 1 << 16;
 
 // ---------------------------------------------------------------------------
 // Reader-only tuning. None of these has any format meaning: the container
@@ -511,6 +511,9 @@ pub struct Index {
     payload_end: u64,
     /// The canonical Huffman codebook over run heads (m1 codec 102 header).
     huff: Huff,
+    /// The gamma length decoder (built once: it is a 4096-entry table, and
+    /// rebuilding it per block cost 26 us per rank step).
+    gamma: Gamma,
     nblocks: u64,
     /// m12: run-start samples (row of every `rs_stride`-th run).
     rs: RunStarts,
@@ -557,22 +560,24 @@ struct RunDir {
     run_gap: u64,
 }
 
-/// One decoded m1 block: 64 runs of head symbol + run length.
-#[derive(Clone, Copy)]
+/// One decoded m1 block: `block_runs` runs of head symbol + run length. The
+/// width comes from the container, so the buffers are sized from it.
 struct Block {
     id: u64,
     n: u32,
-    heads: [u8; M1_BLOCK_RUNS as usize],
-    lens: [u32; M1_BLOCK_RUNS as usize],
+    heads: Vec<u8>,
+    lens: Vec<u32>,
 }
 
 impl Block {
-    const EMPTY: Block = Block {
-        id: u64::MAX,
-        n: 0,
-        heads: [0; M1_BLOCK_RUNS as usize],
-        lens: [0; M1_BLOCK_RUNS as usize],
-    };
+    fn empty(width: u64) -> Block {
+        Block {
+            id: u64::MAX,
+            n: 0,
+            heads: vec![0u8; width as usize],
+            lens: vec![0u32; width as usize],
+        }
+    }
 }
 
 /// Per-query-thread working set: the block cache. Small enough to stay hot
@@ -639,15 +644,16 @@ impl Index {
         let block_runs = u64_at(data, 2312);
         let total_runs = u64_at(data, 2320);
         let payload_off = u64_at(data, 2328);
-        if block_runs != M1_BLOCK_RUNS {
+        if block_runs == 0 || block_runs > M1_BLOCK_RUNS_MAX {
             return Err(format!(
-                "m1 declares block_runs={block_runs}; this reader supports {M1_BLOCK_RUNS}"
+                "m1 declares block_runs={block_runs}; this reader decodes blocks of 1..={M1_BLOCK_RUNS_MAX}\n  \
+                 runs (the width is the container's to declare - this is only the sanity bound)"
             ));
         }
         if total_runs != r {
             return Err(format!("m1 declares {total_runs} runs, header says {r}"));
         }
-        let want_blocks = (r + M1_BLOCK_RUNS - 1) / M1_BLOCK_RUNS;
+        let want_blocks = (r + block_runs - 1) / block_runs;
         if nblocks != want_blocks {
             return Err(format!("m1 declares {nblocks} blocks, expected {want_blocks}"));
         }
@@ -722,10 +728,10 @@ impl Index {
         // container's number, not ours: read it, then prove it closes on the
         // member's own size below. Only its intrinsic validity is asserted here.
         let rd_l2 = u64_at(a, 24);
-        if rd_l2 == 0 || rd_l2 % M1_BLOCK_RUNS != 0 {
+        if rd_l2 == 0 || rd_l2 % block_runs != 0 {
             return Err(format!(
                 "m13 declares level-2 stride {rd_l2}; a usable stride is a positive multiple of the\n  \
-                 block width {M1_BLOCK_RUNS}"
+                 block width {block_runs} this container declares for m1"
             ));
         }
         let mut counts = Vec::with_capacity(256);
@@ -823,6 +829,7 @@ impl Index {
             payload_off: m1payload_off,
             payload_end: m1_end,
             huff,
+            gamma: Gamma::build(),
             nblocks,
             rs,
             rd,
@@ -923,7 +930,10 @@ impl Index {
     pub fn ctx(&self) -> Ctx<'_> {
         Ctx {
             idx: self,
-            cache: vec![Block::EMPTY; BLOCK_CACHE].into_boxed_slice(),
+            cache: (0..BLOCK_CACHE)
+                .map(|_| Block::empty(self.block_runs))
+                .collect::<Vec<Block>>()
+                .into_boxed_slice(),
             hits: 0,
             misses: 0,
         }
@@ -968,8 +978,8 @@ impl<'a> Ctx<'a> {
     /// `(head, length)` of run `run`, decoding its 64-run block on a cache miss.
     #[inline]
     fn run(&mut self, run: u64) -> (u8, u32) {
-        let b = run / M1_BLOCK_RUNS;
-        let i = (run % M1_BLOCK_RUNS) as usize;
+        let b = run / self.idx.block_runs;
+        let i = (run % self.idx.block_runs) as usize;
         let slot = (b % BLOCK_CACHE as u64) as usize;
         if self.cache[slot].id != b {
             self.fill(b, slot);
@@ -994,12 +1004,13 @@ impl<'a> Ctx<'a> {
             ));
         }
         let p = &idx.reader.map.as_ref()[start as usize..end as usize];
-        let first = b * M1_BLOCK_RUNS;
-        let want = ((first + M1_BLOCK_RUNS).min(idx.reader.r) - first) as usize;
-        let mut heads = [0u8; M1_BLOCK_RUNS as usize];
-        let mut lens = [0u32; M1_BLOCK_RUNS as usize];
+        let first = b * idx.block_runs;
+        let want = ((first + idx.block_runs).min(idx.reader.r) - first) as usize;
+        let mut heads = vec![0u8; want];
+        let mut lens = vec![0u32; want];
         let n = decode_block(
             &idx.huff,
+            &idx.gamma,
             &p[..hbytes as usize],
             hbits as u64,
             &p[hbytes as usize..],
@@ -1022,8 +1033,8 @@ impl<'a> Ctx<'a> {
     /// Sum of the run lengths in block `b`: one decode, and the caller checks it
     /// against the m12 run-start span it must equal. Fail-loud, not advisory.
     fn block_sum(&mut self, b: u64) -> Result<u64, String> {
-        let first = b * M1_BLOCK_RUNS;
-        let want = ((first + M1_BLOCK_RUNS).min(self.idx.reader.r) - first) as usize;
+        let first = b * self.idx.block_runs;
+        let want = ((first + self.idx.block_runs).min(self.idx.reader.r) - first) as usize;
         let slot = (b % BLOCK_CACHE as u64) as usize;
         if self.cache[slot].id != b {
             self.fill(b, slot);
@@ -1037,7 +1048,7 @@ impl<'a> Ctx<'a> {
     /// `(run, run start row)` of the run holding row `row`.
     ///
     /// Two bisects (a cache-resident level-2 array, then one 8 KB level-1 window)
-    /// plus a forward scan of at most `M1_BLOCK_RUNS` runs inside the block the
+    /// plus a forward scan of at most `block_runs` runs inside the block the
     /// row is in - so a lookup costs one decoded block, never a predecessor walk.
     fn run_of(&mut self, row: u64) -> (u64, u64) {
         let idx = self.idx;
@@ -1159,7 +1170,7 @@ impl<'a> Ctx<'a> {
         let mut acc = c0;
         let mut run = r0;
         while run < k {
-            // one block decode answers up to M1_BLOCK_RUNS consecutive runs
+            // one block decode answers up to `block_runs` consecutive runs
             let (h, l) = self.run(run);
             if h == ch {
                 acc += l as u64;
@@ -1248,21 +1259,27 @@ impl<'a> Ctx<'a> {
 #[allow(clippy::too_many_arguments)]
 fn decode_block(
     huff: &Huff,
+    gamma: &Gamma,
     hbytes: &[u8],
     hbits: u64,
     lbytes: &[u8],
     lbits: u64,
     want: usize,
-    heads: &mut [u8; M1_BLOCK_RUNS as usize],
-    lens: &mut [u32; M1_BLOCK_RUNS as usize],
+    heads: &mut [u8],
+    lens: &mut [u32],
     b: u64,
 ) -> usize {
     if hbits > hbytes.len() as u64 * 8 || lbits > lbytes.len() as u64 * 8 {
         die(&format!("m1 block {b}: bit counts exceed the payload bytes"));
     }
+    if want > heads.len() || want > lens.len() {
+        die(&format!(
+            "m1 block {b}: decoded width {want} exceeds the {}-run buffers",
+            heads.len()
+        ));
+    }
     let mut hb = Bits::new(hbytes, hbits);
     let mut lb = Bits::new(lbytes, lbits);
-    let gamma = Gamma::build();
     let dbg = std::env::var("M1_DBG").ok().and_then(|v| v.parse::<u64>().ok()) == Some(b);
     let mut sum_len = 0u64;
     for i in 0..want {

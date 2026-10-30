@@ -3048,7 +3048,7 @@ struct BitsOut {
 // answers a rank step instead of up to four. Cost per block decode is
 // ~64 x (6.0 ns Huffman + 2.0 ns gamma) = 0.5 us (decode rates measured in
 // RESULTS_QUERY_QLITE.md); its block directory costs 8 B / 64 runs = 0.043n.
-static constexpr uint64_t M1_BLOCK_RUNS = 64;
+static constexpr uint64_t M1_BLOCK_RUNS = 256;
 // m12: run-start samples. Entry j is the row of run j*M1_BLOCK_RUNS, i.e. the
 // first row of that run. 8 B per 64 runs = 0.125 B/run = 434 MB at 10 GB
 // (R=3.47e9, 2.88 rows/run), i.e. 0.043n.
