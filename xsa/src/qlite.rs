@@ -37,6 +37,11 @@
 //! anything that is not a v6 lite container is refused by name (see
 //! `describe_format`).
 
+
+/// m1 block width: independently decodable blocks of this many runs.
+/// MUST match the writer (bit6/xsa_finish.cpp: static constexpr uint64_t M1_BLOCK_RUNS).
+pub const M1_BLOCK_RUNS: u64 = 64;
+
 use crate::{die, sxi};
 use memmap2::Mmap;
 use rayon::prelude::*;
