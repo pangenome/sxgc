@@ -1469,7 +1469,7 @@ struct Hit {
 /// a pattern and come back absent, which is exactly the 200-patterns/100-absent
 /// reading this CLI used to produce when a FASTA file was handed to a newline
 /// parser).
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum PatFormat {
     Records,
     Fasta,
@@ -1491,12 +1491,10 @@ const PAT_LEN_MAX: usize = 65536;
 /// Read a pattern file and say which contract was used, once, at startup.
 fn read_patterns(path: &str, force_fasta: bool) -> (Vec<Vec<u8>>, PatFormat) {
     let data = std::fs::read(path).unwrap_or_else(|e| die(&format!("read {path}: {e}")));
-    let fmt = if force_fasta {
-        PatFormat::Fasta
-    } else if data.first() == Some(&b'>') {
-        PatFormat::Fasta
+    let (fmt, why) = if force_fasta {
+        (PatFormat::Fasta, "forced-fasta")
     } else {
-        PatFormat::Records
+        detect_format(&data)
     };
     let out = match fmt {
         PatFormat::Fasta => read_fasta(path, &data),
@@ -1514,9 +1512,10 @@ fn read_patterns(path: &str, force_fasta: bool) -> (Vec<Vec<u8>>, PatFormat) {
         }
     }
     eprintln!(
-        "PATTERNS_USED path={} format={} records={} bytes={} ids=0..{} separator={}",
+        "PATTERNS_USED path={} format={} detected={} records={} bytes={} ids=0..{} separator={}",
         path,
         fmt.name(),
+        why,
         out.len(),
         data.len(),
         out.len() - 1,
@@ -1526,6 +1525,26 @@ fn read_patterns(path: &str, force_fasta: bool) -> (Vec<Vec<u8>>, PatFormat) {
         }
     );
     (out, fmt)
+}
+
+/// `--patterns` auto-detect, and why it is not just `first byte == '>'`: the
+/// record contract allows ARBITRARY bytes, so a legitimate first record may
+/// begin with '>'. A leading '>' opens a FASTA header only if that header is a
+/// LINE, i.e. only if the first newline comes before the first 0x1E. If a 0x1E
+/// arrives first the file is a record stream whose first record happens to start
+/// with '>' -- and the choice is journaled either way (`detected=`), so nobody
+/// has to guess which reader ran.
+fn detect_format(data: &[u8]) -> (PatFormat, &'static str) {
+    if data.first() != Some(&b'>') {
+        return (PatFormat::Records, "no-leading-gt");
+    }
+    let nl = data.iter().position(|&b| b == b'\n');
+    let sep = data.iter().position(|&b| b == 0x1e);
+    match (nl, sep) {
+        (Some(n), Some(s)) if s < n => (PatFormat::Records, "gt-then-0x1e-before-newline"),
+        (None, Some(_)) => (PatFormat::Records, "gt-then-0x1e-before-newline"),
+        _ => (PatFormat::Fasta, "leading-gt"),
+    }
 }
 
 /// `rec \x1E rec \x1E ... rec \x1E`: arbitrary bytes, no escaping, no alphabet.
@@ -1818,4 +1837,56 @@ pub fn command(args: &[String]) {
         low_max_steps,
         high
     );
+}
+
+#[cfg(test)]
+mod pattern_contract_tests {
+    use super::*;
+
+    // The 0x1E record contract, exercised at the scale where a wrong answer is
+    // visible: ids are record indices, bytes are arbitrary, and "empty" is an
+    // error rather than a zero-length pattern.
+
+    #[test]
+    fn records_are_record_indexed_and_keep_arbitrary_bytes() {
+        // rec0 holds a newline, a NUL and a 0x1F: none of them is special.
+        let data = b"a\nb\x00c\x1f\x1ed\x1e";
+        let recs = read_records("test.pat", data);
+        assert_eq!(recs.len(), 2);
+        assert_eq!(recs[0], b"a\nb\x00c\x1f");
+        assert_eq!(recs[1], b"d");
+    }
+
+    #[test]
+    fn trailing_separator_does_not_open_an_empty_record() {
+        let recs = read_records("test.pat", b"x\x1ey\x1e");
+        assert_eq!(recs, vec![b"x".to_vec(), b"y".to_vec()]);
+    }
+
+    #[test]
+    fn missing_final_separator_still_terminates_by_eof() {
+        let recs = read_records("test.pat", b"x\x1ey");
+        assert_eq!(recs, vec![b"x".to_vec(), b"y".to_vec()]);
+    }
+
+    #[test]
+    fn fasta_is_detected_only_when_the_header_is_a_line() {
+        assert_eq!(detect_format(b">r1\nACGT\n").0, PatFormat::Fasta);
+        assert_eq!(detect_format(b">r1\nACGT\n").1, "leading-gt");
+        // A record stream whose FIRST RECORD starts with '>' is still a record
+        // stream: the 0x1E arrives before any newline.
+        assert_eq!(detect_format(b">r1\x1eACGT\x1e").0, PatFormat::Records);
+        assert_eq!(detect_format(b">r1\x1eACGT\x1e").1, "gt-then-0x1e-before-newline");
+        assert_eq!(detect_format(b"ACGT\x1e").0, PatFormat::Records);
+        assert_eq!(detect_format(b"ACGT\x1e").1, "no-leading-gt");
+        // No newline at all, no separator: nothing to read as a header/record
+        // pair, and the FASTA reader is what says so out loud.
+        assert_eq!(detect_format(b">r1").0, PatFormat::Fasta);
+    }
+
+    #[test]
+    fn fasta_records_are_concatenated_lines() {
+        let recs = read_fasta("test.fa", b">a\nAC\r\nGT\n>b\nTT\n");
+        assert_eq!(recs, vec![b"ACGT".to_vec(), b"TT".to_vec()]);
+    }
 }
