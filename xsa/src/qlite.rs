@@ -728,11 +728,14 @@ impl Index {
         // container's number, not ours: read it, then prove it closes on the
         // member's own size below. Only its intrinsic validity is asserted here.
         let rd_l2 = u64_at(a, 24);
-        if rd_l2 == 0 || rd_l2 % block_runs != 0 {
-            return Err(format!(
-                "m13 declares level-2 stride {rd_l2}; a usable stride is a positive multiple of the\n  \
-                 block width {block_runs} this container declares for m1"
-            ));
+        // The level-2 stride is the CONTAINER's number and is independent of the
+        // block width (the writer's PF_RUNDIR_L2 counts directory entries per
+        // symbol, not runs), so nothing here demands a multiple of block_runs:
+        // what proves it is the member-size closure checked below, plus
+        // positivity. Refusing a well-formed container over a relationship the
+        // format does not require is how a reader becomes a format.
+        if rd_l2 == 0 {
+            return Err("m13 declares level-2 stride 0".into());
         }
         let mut counts = Vec::with_capacity(256);
         let mut offs = Vec::with_capacity(257);

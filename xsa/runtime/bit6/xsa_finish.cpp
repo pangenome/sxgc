@@ -3057,8 +3057,8 @@ static constexpr uint64_t PF_RUNSTART_STRIDE = M1_BLOCK_RUNS;
 // before k). Sampled at every PF_RUNDIR_OCC-th occurrence of c AND at any
 // occurrence that is PF_RUNDIR_GAP runs past the previous sample, so the scan
 // from a sample to a query run is bounded by PF_RUNDIR_GAP runs = one block.
-static constexpr uint64_t PF_RUNDIR_OCC = 64;
-static constexpr uint64_t PF_RUNDIR_GAP = 256;
+static constexpr uint64_t PF_RUNDIR_OCC = 256;
+static constexpr uint64_t PF_RUNDIR_GAP = 1024;
 // Level-2 strides of the two run directories (named, not knobs): the level-2
 // arrays are read whole at open and bisected in cache, and the level-1 window
 // one level below them is what a lookup actually touches.
