@@ -71,3 +71,22 @@ exit=0
   MANIFEST: doc_count=5 separator_count=5 corpus_bytes=268; 3 sidecar sha256 + compressed-dump sha256 agree
   W2 PASS
 ```
+
+## W3  --separator none
+
+```
+xsa corpus: docs=5 corpus_bytes=263 separators=0 separator=none seps.bin=76 titles.bin=134 sha256(corpus.bin)=8add71d7a423db26fa32ef7eec3f9379d4dd00d7ad0248197fe291f23fd78c93
+xsa corpus: manifest /mnt/nvme2n1/erikg/wikicorpus/xsa/target/wc-accept/g/w3/MANIFEST.json
+exit=0
+$ tr -dc '\036' < w3/corpus.bin | wc -c
+0
+  corpus.bin carries 0 0x1E bytes and is byte-exact; seps.bin flags=0, doc_count=5, corpus_bytes=263
+  seps.bin deltas -> every start offset [0, 77, 127, 150, 168] anchors [0] (seps.bin still 76 bytes: same layout as 0x1e mode)
+  W3 PASS
+$ xsa corpus --wikipedia fixture_0x1e.ms.bz2 --out w3b --separator none   # the escape hatch W1 names
+xsa corpus: docs=5 corpus_bytes=273 separators=1 separator=none seps.bin=76 titles.bin=134 sha256(corpus.bin)=bfba84970a64315bc522307e6d0655dcb2e06ea20989e21e6611c421c4473b93
+xsa corpus: manifest /mnt/nvme2n1/erikg/wikicorpus/xsa/target/wc-accept/g/w3b/MANIFEST.json
+exit=0
+  docs=5 content_separator_bytes=1 documents_with_content_separator=1 separator_count=1 (the byte is kept as content)
+
+```
