@@ -36,6 +36,18 @@
 //! There is no `--ri4`/`--sxi`/`--mode`: the container tells us what it is, and
 //! anything that is not a v6 lite container is refused by name (see
 //! `describe_format`).
+//!
+//! ORIENTATION: a v6 lite container has **no alphabet**. Its text is a byte
+//! string and its patterns are raw byte strings, so there is exactly ONE
+//! orientation to search (the pattern as given). There is no reverse-complement
+//! pass and no strand bookkeeping anywhere in this module: on a byte index a
+//! reverse complement is not a second orientation of the same pattern, it is a
+//! different byte string, and searching it would double every per-pattern cost
+//! while producing absent counts that mean nothing. (The one transform applied
+//! to a pattern is not an orientation: `sigma` is the container's own m7 byte
+//! permutation and the reverse is the backward-search representation — see the
+//! comment at the search call.) `--mode` is refused by name for the same reason
+//! it would be meaningless: there is no alphabet to be `dna` or `text` about.
 
 
 /// SANITY BOUND on the m1 block width, not the width itself. The width is
@@ -1370,6 +1382,16 @@ fn parse(args: &[String]) -> Args {
                 "query: --ri4/--sxi are gone; the container is positional and identifies itself\n  \
                  xsa query <container> --patterns <file> [-j N] [--output tsv|jsonl]",
             ),
+            // THE ONE ORIENTATION RULE, enforced at the front door: this reader
+            // has no alphabet (see the module doc), so a strand/mode switch has
+            // nothing to switch. Refusing it by name is cheaper than silently
+            // ignoring it and letting a caller believe half its work was done.
+            "--mode" => die(
+                "query: --mode is not accepted for a lite container: a lite container has no \
+                 alphabet; patterns are raw bytes\n  \
+                 a byte-string index has exactly one orientation, so there is no dna/text mode \
+                 and no reverse complement",
+            ),
             other if other.starts_with('-') => die(&format!("query: unknown option {other}")),
             other => {
                 if container.is_some() {
@@ -1469,7 +1491,8 @@ pub fn command(args: &[String]) {
     // 405 s legacy open auditable against the 1 ms it costs now.
     eprintln!(
         "QLITE_OPEN container={} format=sxi2-v6-lite magic=SXI2 version={} \
-         mmap_ms={open_ms:.2} decoded_bytes=0 stages=none n={} runs={} members={} end_symbol=none",
+         mmap_ms={open_ms:.2} decoded_bytes=0 stages=none n={} runs={} members={} end_symbol=none \
+         orientation=none alphabet=none",
         reader.path,
         reader.version,
         reader.n,
@@ -1531,6 +1554,8 @@ pub fn command(args: &[String]) {
             // m7 remap applied, in corpus order; backward search consumes the
             // pattern right to left, so the working pattern is
             //     sigma(pattern) reversed.
+            // One pattern in, one search out: `orientation=none`, exactly one
+            // occurrence set. No reverse complement is ever built here.
             // Measured against the 150 MB fixture oracle: remap+reverse gives
             // 100/100 counts and 574/574 positions; every other combination
             // (identity, reverse-only, remap-only) gives 0/100.
