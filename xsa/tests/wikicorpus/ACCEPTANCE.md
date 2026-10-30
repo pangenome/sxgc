@@ -270,6 +270,31 @@ exit=0
   xsa corpus       run3 WALL=0.21 s MAX_RSS=4096 KB
   corpus.bin=3860000 seps.bin=16552 titles.bin=76020
 ```
+## Final re-check (after the last cosmetic edit: `pub fn command(args: &[String])`)
+
+```
+binary: xsa sha256=2338d4e816e537184304073d0fefc91bcb99dea5b20fbe852ecfa4635ab14997   (final, 0x1E/byte-identity/determinism re-check)
+$ W1  xsa corpus --wikipedia fixture_0x1e.ms.bz2 --out final/w1
+xsa: error: 0x1E occurs inside document content (count=6 docs=5); rerun with --separator none
+xsa: note: 1 of those 6 0x1E bytes came from document content (1 document(s) affected)
+xsa: note: nothing was published; the incomplete sidecars keep their .partial names
+  exit=1
+$ W2  xsa corpus --wikipedia fixture.ms.bz2 --out final/w2a
+  exit=0
+$ W3  xsa corpus --wikipedia fixture.ms.bz2 --out final/w3 --separator none
+  exit=0
+$ W4  xsa corpus --wikipedia fixture.ms.bz2 --out final/w4 --max-bytes 130
+xsa corpus: --max-bytes 130 reached: cut at document boundary after doc 3: corpus_bytes=153 docs=3
+xsa corpus: docs=3 corpus_bytes=153 separators=3 separator=0x1e seps.bin=68 titles.bin=82 sha256(corpus.bin)=e60b5f3dcbc8815bcda53810f4200e2c9853f4c8ce629645a7db9eccaf3505fe
+  exit=0
+$ W5  second identical run into final/w2b
+  corpus.bin  identical, sha256=f1257c0d3960eee0855a0df1541152bb7bfcd63e302b992375e9a0cb58b5bbac
+  seps.bin    identical, sha256=c503f160d7b43a3a574bd91102cc58ad66e30c15360fdda418286d3665f3466d
+  titles.bin  identical, sha256=f637a27c3cefa6ddfcbe2e8e631ca82f5223456b3e2dd5964d641c8f2fb76c82
+  corpus.bin identical to the pre-refactor gate run (no byte drift from the last two edits)
+  seps.bin has 0x1E count in none-mode corpus: 0
+```
+
 ## Journal
 
 Box: this worktree (`/mnt/nvme2n1/erikg/wikicorpus`); nothing of mine else running during

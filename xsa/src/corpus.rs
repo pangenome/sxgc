@@ -89,7 +89,7 @@ macro_rules! ck {
 // CLI
 // ---------------------------------------------------------------------------
 
-pub fn command(args: &[String]) -> () {
+pub fn command(args: &[String]) {
     let mut dump: Option<String> = None;
     let mut out: Option<String> = None;
     let mut max_bytes: Option<u64> = None;
