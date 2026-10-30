@@ -2995,9 +2995,84 @@ struct BitsOut {
         if (part.bitPos & 7) lsb(part.mem[whole], unsigned(part.bitPos & 7));
     }
     size_t bytes() const { return byteCount + mem.size(); }
+    // ---- random-access slice of the spool (block-compressed m1 only)
+    // The m1 block writer copies one _contiguous_ byte range per block and the
+    // blocks are visited in stream order, so a single forward window is enough:
+    // a refill reads SPILL_WINDOW bytes from just before the requested offset.
+    // Every range is checked to be inside [0, byteCount); it is NOT checked to
+    // be monotone, so a caller bug shows up as a slow read, never as bad bytes.
+    std::vector<uint8_t> spill;
+    uint64_t spillBase = 0, spillHave = 0;
+    static constexpr size_t SPILL_WINDOW = 1u << 20;
+    const uint8_t* window(uint64_t off, size_t z) {
+        drain();
+        pf_check(fd >= 0, "spool window on a memory-only fragment");
+        pf_check(off <= byteCount && z <= byteCount - off, "spool window out of range");
+        pf_check(z <= SPILL_WINDOW, "spool window larger than the read window");
+        if (off >= spillBase && off + z <= spillBase + spillHave)
+            return spill.data() + (off - spillBase);
+        if (spill.size() != SPILL_WINDOW) spill.resize(SPILL_WINDOW);
+        uint64_t take = std::min<uint64_t>(SPILL_WINDOW, byteCount - off);
+        pf_pread_full(fd, spill.data(), take, off, "bit spool window");
+        spillBase = off; spillHave = take;
+        return spill.data();
+    }
 };
 
 // ---------------------------------------------------- ROUTE B: one-pass m1
+//
+// ---- m1 RANDOM ACCESS (the access structure, not the product) -----------
+// m1 v1 (codec 101) is TWO sequential entropy streams over the whole run
+// sequence (Huffman heads, gamma lengths) with no per-run alignment and no
+// restart directory: run k is unreachable without decoding runs 0..k, so a
+// cold query decodes 4.3 GB and pays 25.8 s / 51 GB RSS before its first
+// answer (tools/binbwt/RESULTS_QUERY_QLITE.md).
+//
+// m1 v2 (codec 102, this arm) keeps the SAME two codes and the SAME runs and
+// splits them into blocks that are independently decodable:
+//
+//   [C table 2048][lens 256][nblocks][m1_block_runs][total_runs][payload_off]
+//   [block directory: nblocks x u64 = (payload word off u32, head bits u16,
+//                                     length bits u16)]
+//   [block payloads: head bitstream, then length bitstream, both byte-aligned,
+//                    each block 8-byte aligned in the payload area]
+//
+// A block is M1_BLOCK_RUNS runs wide, 8-byte aligned and self-describing, so
+// decoding block b is one windowed read of ~200 B plus M1_BLOCK_RUNS Huffman
+// symbols and gammas - no predecessor. Nothing about the run SEQUENCE changes:
+// same symbols, same lengths, same order, only the boundaries are declared.
+//
+// The stride is 64 and not 256 because it is also the sampling stride of the
+// two new directories below: run k's block, run k's run-start sample and run
+// k's symbol-scan window are then the same 64-run window, so ONE block decode
+// answers a rank step instead of up to four. Cost per block decode is
+// ~64 x (6.0 ns Huffman + 2.0 ns gamma) = 0.5 us (decode rates measured in
+// RESULTS_QUERY_QLITE.md); its block directory costs 8 B / 64 runs = 0.043n.
+static constexpr uint64_t M1_BLOCK_RUNS = 64;
+// m12: run-start samples. Entry j is the row of run j*M1_BLOCK_RUNS, i.e. the
+// first row of that run. 8 B per 64 runs = 0.125 B/run = 434 MB at 10 GB
+// (R=3.47e9, 2.88 rows/run), i.e. 0.043n.
+static constexpr uint64_t PF_RUNSTART_STRIDE = M1_BLOCK_RUNS;
+// m13: per-symbol sampled run directory. Entry (run k, count of c in runs
+// before k). Sampled at every PF_RUNDIR_OCC-th occurrence of c AND at any
+// occurrence that is PF_RUNDIR_GAP runs past the previous sample, so the scan
+// from a sample to a query run is bounded by PF_RUNDIR_GAP runs = one block.
+static constexpr uint64_t PF_RUNDIR_OCC = 64;
+static constexpr uint64_t PF_RUNDIR_GAP = 256;
+// Level-2 strides of the two run directories (named, not knobs): the level-2
+// arrays are read whole at open and bisected in cache, and the level-1 window
+// one level below them is what a lookup actually touches.
+static constexpr uint64_t PF_RUNSTART_L2 = 65536;   // runs per m12 level-2 cell
+static constexpr uint64_t PF_RUNDIR_L2 = 512;       // m13 entries per level-2 cell
+// Bytes a bit range occupies in the PADDED stream: both ends round up, because
+// the writer pads each block end to a byte boundary and pad() never moves bitPos.
+static inline uint64_t blkBytes(uint64_t lo, uint64_t hi) { return (hi + 7) / 8 - (lo + 7) / 8; }
+// The m1 v2 codec id in the container directory (v1 = 101).
+static constexpr unsigned PF_M1_CODEC_BLOCKED = 102;
+// Container header flag bit: "m1 is block-compressed and the run directories
+// are present". The flagged set is 1|8|16|32 = 57.
+static constexpr uint64_t PF_FLAG_M1_BLOCKED = 32;
+
 // THE PROBLEM the two-pass m1 solved: its head stream is a Huffman code over
 // the NORMALIZED RUN SYMBOLS, and the codebook was built from run frequencies
 // that are only complete at the end of the sweep. So the sweep could not
@@ -3239,6 +3314,17 @@ struct ContainerOut {
         pf_check(::unlink(temp.c_str()) == 0, "unlink container partial");
         done = true;
         fprintf(stderr, "SXI2_PASS bytes=%llu lite=1 members=%zu\n", (unsigned long long)length, ms.size());
+    }
+};
+
+// Batched little-endian counters: the m1 block directory and the two run
+// directories are ~1e8 values, and one pwrite per value would be ~1e8 syscalls.
+struct NumBuf {
+    std::vector<uint64_t> b;
+    NumBuf() { b.reserve(4096); }
+    void put(ContainerOut& c, uint64_t v) { b.push_back(v); if (b.size() == 4096) flush(c); }
+    void flush(ContainerOut& c) {
+        if (!b.empty()) { c.write(b.data(), b.size() * 8); b.clear(); }
     }
 };
 
@@ -4885,6 +4971,26 @@ int main(int argc, char** argv) {
         M1Code m1Code{};
         std::array<unsigned char, 256> m1LensOut{};
         uint64_t m1SweepRuns = 0;
+        // ---- m1 v2 access structure, accumulated in stream order during the
+        // sweep (the runs are already going past; a second pass would be the
+        // 25 s decode this change exists to delete).
+        //   m1BlkHead/m1BlkLen  bitPos of each block boundary, nblocks+1 entries
+        //   m1RunStart          row of run j*PF_RUNSTART_STRIDE
+        //   m1DirRun/m1DirCum   per-symbol sampled (run index, count before it)
+        struct M1DirState {
+            std::vector<uint64_t> blkHead, blkLen;
+            std::vector<uint64_t> runStart;
+            std::vector<uint64_t> dirRun[256], dirCum[256];
+            std::vector<uint16_t> dirStride[256];
+            uint64_t row = 0;                 // rows emitted so far (= run-start of the next run)
+            uint64_t occ[256] = {0};          // runs of c emitted so far
+            uint64_t cum[256] = {0};          // rows of c emitted so far
+            uint64_t lastSample[256] = {0};   // run index of the last sample of c
+            uint64_t lastSampleOcc[256] = {0};// occurrence index of the last sample of c
+            void begin() { blkHead.clear(); blkLen.clear(); blkHead.push_back(0); blkLen.push_back(0); }
+        };
+        M1DirState m1dir;
+        if (!m1Replay) m1dir.begin();
         if (!m1Replay) {
             m1WeightsThread.join();
             m1Code = canonical_huffman_m1(*m1Weights);
@@ -4931,8 +5037,34 @@ int main(int argc, char** argv) {
             // length keeps the existing gamma code, which is stateless and needs
             // no codebook at all. Nothing is staged: no rlebwt, no replay.
             if (m1Head) {
+                const uint64_t k = m1SweepRuns;
+                if (k && k % M1_BLOCK_RUNS == 0) {
+                    // Close the block: pad both streams so block k/M1_BLOCK_RUNS
+                    // starts on a byte boundary. pad() is a no-op on an aligned
+                    // stream, so the byte length of a stream is ALWAYS
+                    // ceil(bitPos/8) at a block boundary.
+                    m1Head->pad();
+                    m1Len->pad();
+                    m1dir.blkHead.push_back(m1Head->bitPos);
+                    m1dir.blkLen.push_back(m1Len->bitPos);
+                }
                 m1Head->msb(m1Code.codes[v.c], unsigned(m1Code.lens[v.c]));
                 m1Len->gamma(v.len);
+                if (k % PF_RUNSTART_STRIDE == 0) m1dir.runStart.push_back(m1dir.row);
+                const unsigned ch = unsigned(v.c);
+                if (m1dir.occ[ch] % PF_RUNDIR_OCC == 0 || k - m1dir.lastSample[ch] >= PF_RUNDIR_GAP) {
+                    // close the previous sample's occurrence stride
+                    if (!m1dir.dirStride[ch].empty())
+                        m1dir.dirStride[ch].back() = uint16_t(m1dir.occ[ch] - m1dir.lastSampleOcc[ch]);
+                    m1dir.dirRun[ch].push_back(k);
+                    m1dir.dirCum[ch].push_back(m1dir.cum[ch]);
+                    m1dir.dirStride[ch].push_back(0);
+                    m1dir.lastSample[ch] = k;
+                    m1dir.lastSampleOcc[ch] = m1dir.occ[ch];
+                }
+                m1dir.row += v.len;
+                m1dir.cum[ch] += v.len;
+                ++m1dir.occ[ch];
                 ++m1SweepRuns;
             }
             // XSA_FINISH_DUMP_STREAM (dev only): the emitted run stream, one
@@ -5751,7 +5883,9 @@ int main(int argc, char** argv) {
         }
 
         // ---- m5 EF over the sorted bucket stream
-        ContainerOut container(out, 6);
+        // 8 members in the blocked arm (m1 v2 + m12 + m13), 6 in the frozen
+        // --m1-replay arm (m1 codec 101, no run directories).
+        ContainerOut container(out, m1Replay ? 6 : 8);
         {
             PfRegion r("m5-ef", PF_M5);
             unsigned l = chi ? unsigned(std::max(0, int(std::log2(double(n + 1) / double(chi))))) : 0;
@@ -6073,22 +6207,212 @@ int main(int argc, char** argv) {
             pf_check(encodedRuns == rNorm, "m1 encoded run count");
             headBits.pad();
             lenBits.pad();
-            container.begin(1, 101, rNorm);
-            // C table = prefix sums of the normalized byte totals (the ri4 C)
-            uint64_t acc = 0;
-            for (unsigned c = 0; c < 256; ++c) { uint64_t v = acc; acc += rs.totals[c]; container.num(v); }
-            container.write(m1LensOut.data(), 256);
-            container.num(headBits.bitPos);
-            container.num(lenBits.bitPos);
-            headBits.copyTo(container);
-            lenBits.copyTo(container);
+            if (m1Replay) {
+                // LEGACY (frozen): one sequential stream pair, codec 101. This is
+                // the arm the banked container SHAs were produced by; it must stay
+                // byte-identical, so it gains nothing and loses nothing here.
+                container.begin(1, 101, rNorm);
+                // C table = prefix sums of the normalized byte totals (the ri4 C)
+                uint64_t acc = 0;
+                for (unsigned c = 0; c < 256; ++c) { uint64_t v = acc; acc += rs.totals[c]; container.num(v); }
+                container.write(m1LensOut.data(), 256);
+                container.num(headBits.bitPos);
+                container.num(lenBits.bitPos);
+                headBits.copyTo(container);
+                lenBits.copyTo(container);
+            } else {
+                // ---- m1 v2 (codec 102): the same runs, the same two codes, cut
+                // into M1_BLOCK_RUNS-run blocks that are each independently
+                // decodable, plus the two run directories that let the query
+                // kernel reach run k without decoding a single predecessor.
+                const uint64_t nblocks = (rNorm + M1_BLOCK_RUNS - 1) / M1_BLOCK_RUNS;
+                pf_check(m1dir.blkHead.size() == nblocks && m1dir.blkLen.size() == nblocks,
+                         "m1 block boundary count");
+                m1dir.blkHead.push_back(headBits.bitPos);
+                m1dir.blkLen.push_back(lenBits.bitPos);
+                pf_check(m1dir.runStart.size() == (rNorm + PF_RUNSTART_STRIDE - 1) / PF_RUNSTART_STRIDE,
+                         "run-start sample count");
+                pf_check(m1dir.row == n, "run-start samples do not close on n");
+                const uint64_t dirBytes = 8 * nblocks;
+                const uint64_t payloadOff = 2336 + dirBytes;
+                pf_check(payloadOff % 8 == 0, "m1 payload must start 8-byte aligned");
+                // pass 0: the block directory, derived from the bit boundaries
+                // alone (no spool read): (payload word offset u32, head bits u16,
+                // length bits u16).
+                container.begin(1, PF_M1_CODEC_BLOCKED, rNorm);
+                uint64_t acc = 0;
+                for (unsigned c = 0; c < 256; ++c) { uint64_t v = acc; acc += rs.totals[c]; container.num(v); }
+                container.write(m1LensOut.data(), 256);
+                container.num(nblocks);
+                container.num(M1_BLOCK_RUNS);
+                container.num(rNorm);
+                container.num(payloadOff);
+                uint64_t payloadBytes = 0;
+                {
+                    NumBuf dirb;
+                    for (uint64_t b = 0; b < nblocks; ++b) {
+                        const uint64_t hbits = m1dir.blkHead[b + 1] - m1dir.blkHead[b];
+                        const uint64_t lbits = m1dir.blkLen[b + 1] - m1dir.blkLen[b];
+                        pf_check(m1dir.blkHead[b + 1] >= m1dir.blkHead[b] &&
+                                 m1dir.blkLen[b + 1] >= m1dir.blkLen[b], "m1 block bit range");
+                        pf_check(hbits <= 0xffff && lbits <= 0xffff, "m1 block bit count overflows u16");
+                        pf_check(payloadBytes % 8 == 0, "m1 block not 8-byte aligned");
+                        pf_check(payloadBytes / 8 <= 0xffffffffull, "m1 payload offset exceeds u32 words");
+                        dirb.put(container, (payloadBytes / 8) | (hbits << 32) | (lbits << 48));
+                        // a block's bytes are the padded stream bytes between its two
+                        // boundaries: the block end is padded to a byte, the boundary
+                        // bit position itself is not a multiple of 8.
+                        payloadBytes += blkBytes(m1dir.blkHead[b], m1dir.blkHead[b + 1]) +
+                                        blkBytes(m1dir.blkLen[b], m1dir.blkLen[b + 1]);
+                        while (payloadBytes % 8) ++payloadBytes;
+                    }
+                    dirb.flush(container);
+                }
+                // pass 1: the payload. Both spools are walked forward in block
+                // order (one windowed read each), so this is a single sequential
+                // pass over the two entropy streams.
+                {
+                    std::vector<uint8_t> out2;
+                    out2.reserve(4u << 20);
+                    uint64_t at = 0;
+                    for (uint64_t b = 0; b < nblocks; ++b) {
+                        const uint64_t hbits = m1dir.blkHead[b + 1] - m1dir.blkHead[b];
+                        const uint64_t lbits = m1dir.blkLen[b + 1] - m1dir.blkLen[b];
+                        const size_t hbytes = size_t(blkBytes(m1dir.blkHead[b], m1dir.blkHead[b + 1]));
+                        const size_t lbytes = size_t(blkBytes(m1dir.blkLen[b], m1dir.blkLen[b + 1]));
+                        if (hbytes) {
+                            const uint8_t* q = headBits.window((m1dir.blkHead[b] + 7) / 8, hbytes);
+                            out2.insert(out2.end(), q, q + hbytes);
+                        }
+                        if (lbytes) {
+                            const uint8_t* q = lenBits.window((m1dir.blkLen[b] + 7) / 8, lbytes);
+                            out2.insert(out2.end(), q, q + lbytes);
+                        }
+                        at += hbytes + lbytes;
+                        while (at % 8) { out2.push_back(0); ++at; }
+                        pf_check(at <= payloadBytes, "m1 payload overflow");
+                        if (out2.size() >= (3u << 20)) { container.write(out2.data(), out2.size()); out2.clear(); }
+                    }
+                    if (!out2.empty()) { container.write(out2.data(), out2.size()); out2.clear(); }
+                    pf_check(at == payloadBytes, "m1 payload size disagrees with its directory");
+                }
+                pf_check(container.ms.back().bytes == payloadOff + payloadBytes, "m1 member size");
+                fprintf(stderr, "XSA_FINISH_M1_BLOCKS codec=%u runs=%llu block_runs=%llu blocks=%llu "
+                        "dir_bytes=%llu payload_bytes=%llu m1_bytes=%llu\n",
+                        PF_M1_CODEC_BLOCKED, (unsigned long long)rNorm,
+                        (unsigned long long)M1_BLOCK_RUNS, (unsigned long long)nblocks,
+                        (unsigned long long)dirBytes, (unsigned long long)payloadBytes,
+                        (unsigned long long)(payloadOff + payloadBytes));
+
+                // ---- m12: run-start samples. Entry j is the row of run
+                // j*PF_RUNSTART_STRIDE (the run's first row), plus a level-2 index
+                // every PF_RUNSTART_L2 runs so a lookup is a 16-entry bisect in a
+                // cache-resident array followed by a ~16-entry bisect in one window.
+                {
+                    const uint64_t cnt = m1dir.runStart.size();
+                    const uint64_t l2stride = PF_RUNSTART_L2;
+                    const uint64_t l2cnt = (rNorm + l2stride - 1) / l2stride;
+                    const uint64_t l2off = 64, l1off = l2off + 8 * l2cnt;
+                    container.begin(12, 112, cnt);
+                    container.num(PF_RUNSTART_STRIDE);
+                    container.num(cnt);
+                    container.num(rNorm);
+                    container.num(n);
+                    container.num(l2stride);
+                    container.num(l2cnt);
+                    container.num(l2off);
+                    container.num(l1off);
+                    NumBuf b12;
+                    for (uint64_t j = 0; j < l2cnt; ++j) {
+                        const uint64_t k = j * l2stride;
+                        pf_check(k % PF_RUNSTART_STRIDE == 0 && k / PF_RUNSTART_STRIDE < cnt,
+                                 "run-start level-2 index is not on a level-1 sample");
+                        b12.put(container, m1dir.runStart[k / PF_RUNSTART_STRIDE]);
+                    }
+                    for (uint64_t v : m1dir.runStart) b12.put(container, v);
+                    b12.flush(container);
+                    fprintf(stderr, "XSA_FINISH_M12_RUNSTARTS stride=%llu samples=%llu l2_stride=%llu "
+                            "l2_entries=%llu bytes=%llu\n",
+                            (unsigned long long)PF_RUNSTART_STRIDE, (unsigned long long)cnt,
+                            (unsigned long long)l2stride, (unsigned long long)l2cnt,
+                            (unsigned long long)(l1off + 8 * cnt));
+                }
+
+                // ---- m13: per-symbol sampled run directory. For each symbol c,
+                // entries (run k, rows of c before k) at every PF_RUNDIR_OCC-th
+                // occurrence of c and at any occurrence PF_RUNDIR_GAP runs past the
+                // previous sample, so the run-space scan from a sample to the query
+                // run is bounded by PF_RUNDIR_GAP runs. `stride` is the occurrence
+                // distance to the next sample: stride 1 means the next sample IS the
+                // next run of c, which lets a rank inside that span skip the scan
+                // entirely - the fast path that keeps a rare symbol O(log m).
+                {
+                    uint64_t total = 0, l2total = 0;
+                    for (unsigned c = 0; c < 256; ++c) {
+                        pf_check(m1dir.dirRun[c].size() == m1dir.dirCum[c].size() &&
+                                 m1dir.dirRun[c].size() == m1dir.dirStride[c].size(),
+                                 "run directory shape");
+                        if (!m1dir.dirRun[c].empty()) m1dir.dirStride[c].back() =
+                            uint16_t(m1dir.occ[c] - m1dir.lastSampleOcc[c]);
+                        total += m1dir.dirRun[c].size();
+                        l2total += (m1dir.dirRun[c].size() + PF_RUNDIR_L2 - 1) / PF_RUNDIR_L2;
+                    }
+                    const uint64_t countsOff = 72, offsOff = countsOff + 8 * 256;
+                    const uint64_t l2off = offsOff + 8 * 257, entoff = l2off + 16 * l2total;
+                    container.begin(13, 113, total);
+                    container.num(PF_RUNDIR_OCC);
+                    container.num(PF_RUNDIR_GAP);
+                    container.num(256);
+                    container.num(PF_RUNDIR_L2);
+                    container.num(total);
+                    container.num(n);
+                    container.num(rNorm);
+                    container.num(entoff);
+                    container.num(l2off);
+                    NumBuf b13;
+                    for (unsigned c = 0; c < 256; ++c) b13.put(container, m1dir.dirRun[c].size());
+                    uint64_t off = 0;
+                    for (unsigned c = 0; c < 256; ++c) { b13.put(container, off); off += m1dir.dirRun[c].size(); }
+                    pf_check(off == total, "run directory offsets");
+                    b13.put(container, total);
+                    b13.flush(container);
+                    // level-2 index: every PF_RUNDIR_L2-th entry of each symbol
+                    for (unsigned c = 0; c < 256; ++c) {
+                        const size_t m = m1dir.dirRun[c].size();
+                        for (size_t j = 0; j < m; j += PF_RUNDIR_L2) {
+                            b13.put(container, m1dir.dirCum[c][j]);
+                            b13.put(container, m1dir.dirRun[c][j]);       // u32 run index + u32 pad
+                        }
+                    }
+                    b13.flush(container);
+                    // entries: {cum u64, run u32, stride u16, pad u16}
+                    for (unsigned c = 0; c < 256; ++c) {
+                        const size_t m = m1dir.dirRun[c].size();
+                        pf_check(m > 0, "a symbol present in the BWT has no run-directory sample");
+                        for (size_t j = 0; j < m; ++j) {
+                            pf_check(m1dir.dirRun[c][j] < 0xffffffffull, "run index exceeds u32");
+                            // 16-byte entry: cum u64, then run u32 | stride u16 | pad u16
+                            b13.put(container, m1dir.dirCum[c][j]);
+                            b13.put(container, (m1dir.dirRun[c][j] & 0xffffffffull) |
+                                               (uint64_t(m1dir.dirStride[c][j]) << 32));
+                        }
+                    }
+                    b13.flush(container);
+                    pf_check(container.ms.back().bytes == entoff + 16 * total, "m13 member size");
+                    fprintf(stderr, "XSA_FINISH_M13_RUNDIR occ_stride=%llu gap=%llu entries=%llu "
+                            "l2_stride=%llu l2_entries=%llu bytes=%llu\n",
+                            (unsigned long long)PF_RUNDIR_OCC, (unsigned long long)PF_RUNDIR_GAP,
+                            (unsigned long long)total, (unsigned long long)PF_RUNDIR_L2,
+                            (unsigned long long)l2total, (unsigned long long)(entoff + 16 * total));
+                }
+            }
             rM1.close(); rM1.report(rNorm, "runs");
         }
         phase("m1-runs", last);
         if (pf_cache_journal_on()) pf_cache_journal(text, "m1-runs", 1024);
 
         // ---- publish the lite container (flags: complete | text | remapped)
-        container.finish(n, 1, rNorm, 1 | 8 | 16);
+        container.finish(n, 1, rNorm, 1 | 8 | 16 | (m1Replay ? 0 : PF_FLAG_M1_BLOCKED));
         phase("publish", last);
 
         // ---- cleanup: scratch only. rlebwt (+meta) go after the container.
