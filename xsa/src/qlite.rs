@@ -84,6 +84,11 @@ const M1_AUDIT_BLOCKS: u64 = 1024;
 /// estimate for the accounting line; the true block is ~190 B + rounding and is
 /// declared nowhere, so this must not be used for anything but the estimate).
 const BLOCK_BYTES_EST: u64 = 192;
+/// Reader-only: the row granularity of the row -> run directory (one entry, 12 B,
+/// per ROW_DIR rows). 256 rows is ~98 runs at the 150 MB fixture's 2.62 rows/run,
+/// so the scan it saves is short and its 7 MB stays L3-friendly; it never changes
+/// an answer, only how many loads the scan needs.
+const ROW_DIR: u64 = 256;
 /// Reader-only slack on the run-space scan bound in `cum_before`. The bound
 /// itself comes from the m13 header (`rs.run_gap`, the writer's sampling rule);
 /// this is the tiny allowance for the inclusive/exclusive edge of that rule.
@@ -553,8 +558,17 @@ pub struct Index {
     /// three columns buy: 9 B/run, one streaming decode at open, no container
     /// change (the format, `chi` and the positions are untouched).
     heads: Vec<u8>,
-    lens: Vec<u32>,
-    seen: SeenCol,
+    runs: Runs,
+    /// ROW -> RUN DIRECTORY: `dir_run[j]`/`dir_row[j]` are the run containing row
+    /// `j*ROW_DIR` and that run's start row, so `run_of` is ONE load plus a short
+    /// scan instead of a bisect chain. Measured (rdtsc, pattern 6 of p10): the
+    /// m12 bisect alone was 1458 of 1509 cycles per LF step -- ~6 DEPENDENT cache
+    /// misses in a 1.79 MB window array -- while this lookup is one dependent miss
+    /// in 7 MB. Cost: n/ROW_DIR * 12 B = 0.047n at 150 MB.
+    /// `dir[j] = (start row of that run, run)`, in ONE 16 B record so the lookup
+    /// is one cache line and one TLB entry (two separate columns cost two
+    /// dependent misses; measured 411-1358 cycles per step with them apart).
+    dir: Vec<[u64; 2]>,
     pub build_ms: f64,
     /// Bytes of per-run columns this process materialised at open. Reported so the
     /// open's memory cost is auditable against the container's 0.71n.
@@ -568,6 +582,8 @@ pub struct Index {
     /// Threads the open-time decode ran on, journaled (`-j` does not bound it:
     /// the open is a bulk step, the query is what `-j` parallelises).
     pub open_threads: usize,
+    /// Whether the run columns got MADV_HUGEPAGE, journaled.
+    pub thp: bool,
 }
 
 /// m12: `row(j) = (mmap[l1_off + 8j])` is the row of run `j*stride`; the level-2
@@ -597,40 +613,90 @@ struct RunDir {
     run_gap: u64,
 }
 
-/// The per-run column "count of `heads[run]` in runs `[0,run)`" -- i.e. the
-/// sample-free rank answer for a run's OWN symbol, which is the only rank an LF
-/// step needs.
+/// THE RUN COLUMNS, in the layout the hot path wants.
 ///
-/// Width is chosen per container: a u32 is enough while every symbol occurs at
-/// most 2^32-1 times (true for every container whose n fits in 32 bits, and for
-/// most beyond), and a u64 costs 4 bytes more per run. The accessor is inline
-/// and branch-predictable, so this costs one predicted branch per step and never
-/// a silent truncation.
-enum SeenCol {
-    U32(Vec<u32>),
-    U64(Vec<u64>),
+/// `W8` is the normal one: one u64 per run, `len | seen << 32`, where `seen` is
+/// the number of ROWS of `heads[run]` before this run (exactly what an LF step's
+/// rank needs). Length and rank in the same word means an LF step's window scan
+/// and its rank read touch ONE column, not two independent random streams -- the
+/// first measurement of the split layout was 0.80 us/step, and every random
+/// stream a step opens costs a TLB entry and a cache line.
+///
+/// `Split` is the fallback for a container where some symbol occurs more than
+/// 2^32-1 times (n > 4.29e9 with a skewed alphabet): the rank then needs its own
+/// u64 column. Same answers, one extra stream, chosen from the container's own
+/// totals and journaled (`seen_width`).
+enum Runs {
+    W8(Vec<u64>),
+    Split { len: Vec<u32>, seen: Vec<u64> },
 }
 
-impl SeenCol {
+impl Runs {
     #[inline(always)]
-    fn get(&self, run: u64) -> u64 {
+    fn len(&self, run: u64) -> u64 {
         match self {
-            SeenCol::U32(v) => u64::from(unsafe { *v.get_unchecked(run as usize) }),
-            SeenCol::U64(v) => unsafe { *v.get_unchecked(run as usize) },
+            Runs::W8(w) => (unsafe { *w.get_unchecked(run as usize) }) & 0xffff_ffff,
+            Runs::Split { len, .. } => u64::from(unsafe { *len.get_unchecked(run as usize) }),
+        }
+    }
+    #[inline(always)]
+    fn seen(&self, run: u64) -> u64 {
+        match self {
+            Runs::W8(w) => (unsafe { *w.get_unchecked(run as usize) }) >> 32,
+            Runs::Split { seen, .. } => unsafe { *seen.get_unchecked(run as usize) },
         }
     }
     fn name(&self) -> &'static str {
         match self {
-            SeenCol::U32(_) => "u32",
-            SeenCol::U64(_) => "u64",
+            Runs::W8(_) => "interleaved-len-seen-u32",
+            Runs::Split { .. } => "split-len-u32-seen-u64",
         }
     }
     fn bytes(&self) -> u64 {
         match self {
-            SeenCol::U32(v) => 4 * v.len() as u64,
-            SeenCol::U64(v) => 8 * v.len() as u64,
+            Runs::W8(w) => 8 * w.len() as u64,
+            Runs::Split { len, seen } => 4 * len.len() as u64 + 8 * seen.len() as u64,
         }
     }
+}
+
+/// The window scan of `run_of`: walk forward over run lengths from `start_run`
+/// (whose start row is `s`) until the run containing `row` is found. Four runs at
+/// a time, because the one-at-a-time form is a loop-carried `s += l` dependency
+/// chain; generic over the length accessor so the interleaved and split layouts
+/// both monomorphise into the same straight-line code.
+#[inline(always)]
+fn scan_window<F: Fn(usize) -> u64>(
+    lens_at: F,
+    start_run: u64,
+    mut s: u64,
+    row: u64,
+    avail: usize,
+    r: u64,
+) -> (u64, u64) {
+    let mut i = 0usize;
+    while i + 4 < avail {
+        let t = lens_at(i) + lens_at(i + 1) + lens_at(i + 2) + lens_at(i + 3);
+        if s + t > row {
+            break;
+        }
+        s += t;
+        i += 4;
+    }
+    while i < avail {
+        // the last run is never stepped past, exactly like the scalar loop this
+        // replaces (`while run + 1 < r`)
+        if start_run as usize + i + 1 >= r as usize {
+            break;
+        }
+        let l = lens_at(i);
+        if s + l > row {
+            break;
+        }
+        s += l;
+        i += 1;
+    }
+    (start_run + i as u64, s)
 }
 
 /// Per-query-thread working set. It used to be a 4096-entry direct-mapped cache
@@ -899,8 +965,8 @@ impl Index {
             anchors,
             stripe,
             heads: Vec::new(),
-            lens: Vec::new(),
-            seen: SeenCol::U32(Vec::new()),
+            runs: Runs::W8(Vec::new()),
+            dir: Vec::new(),
             build_ms: 0.0,
             decoded_bytes: 0,
             stages: Vec::new(),
@@ -908,6 +974,7 @@ impl Index {
             block_runs,
             rundir_stride: rd_l2,
             open_threads: 0,
+            thp: false,
         };
         if idx.payload_off + m1payload_len
             != idx.reader.member(1).offset + idx.reader.member(1).bytes
@@ -947,9 +1014,10 @@ impl Index {
             }
             eprintln!(
                 "TRACE stage=lite.build-total ms={build_ms:.1} audit_blocks={n_audit} \
-                 run_column_bytes={dec} open_threads={} seen_width={}",
+                 run_column_bytes={dec} open_threads={} layout={} thp={}",
                 idx.open_threads,
-                idx.seen.name()
+                idx.runs.name(),
+                idx.thp
             );
         }
         Ok(idx)
@@ -975,12 +1043,27 @@ impl Index {
         let n = self.reader.n;
         let threads = rayon::current_num_threads().max(1);
         self.open_threads = threads;
+        // FAIL LOUD RATHER THAN GET KILLED: the columns are ~9 B/run plus 16 B per
+        // 256 rows, and a container big enough to overrun RAM must say so in words
+        // instead of taking an OOM kill in the middle of a parallel decode.
+        let projected = 9 * r + 16 * ((r + 255) / 256);
+        if let Some(avail) = mem_available() {
+            if projected > avail {
+                return Err(format!(
+                    "{}: this reader materialises the run stream at open ({} bytes of run \
+                     columns for {} runs) and only {avail} bytes of RAM are available; \
+                     free memory, or query a container this box can hold at 9 B/run",
+                    self.reader.path, projected, r
+                ));
+            }
+        }
         // One window per thread, rounded UP to whole blocks, at least one block.
         let blocks_per_chunk = ((nblocks + threads as u64 - 1) / threads as u64).max(1);
         let nchunks = ((nblocks + blocks_per_chunk - 1) / blocks_per_chunk) as usize;
         let runs_per_chunk = blocks_per_chunk * br;
         let mut heads = vec![0u8; r as usize];
-        let mut lens = vec![0u32; r as usize];
+        let mut words = vec![0u64; r as usize];
+        self.thp = advise_huge(&mut heads) && advise_huge(&mut words);
 
         // ---- phase 0: decode + complete audit + per-window symbol counts.
         // per window: ([runs per symbol], [rows per symbol]). The row totals must
@@ -990,7 +1073,7 @@ impl Index {
             let idx: &Index = self;
             heads
                 .par_chunks_mut(runs_per_chunk as usize)
-                .zip(lens.par_chunks_mut(runs_per_chunk as usize))
+                .zip(words.par_chunks_mut(runs_per_chunk as usize))
                 .enumerate()
                 .map(|(ci, (hc, lc))| -> Result<([u64; 256], [u64; 256]), String> {
                     let b0 = ci as u64 * blocks_per_chunk;
@@ -1000,6 +1083,7 @@ impl Index {
                     }
                     let mut acc = [0u64; 256];
                     let mut rows = [0u64; 256];
+                    let mut ltmp = vec![0u32; br as usize];
                     for b in b0..b1 {
                         let first = b * br;
                         let lo = (first - ci as u64 * runs_per_chunk) as usize;
@@ -1024,16 +1108,22 @@ impl Index {
                             lbits as u64,
                             want,
                             &mut hc[lo..lo + want],
-                            &mut lc[lo..lo + want],
+                            &mut ltmp[..want],
                             b,
                         );
                         debug_assert_eq!(got, want);
+                        // low half of the interleaved word: the run length. The
+                        // high half (the rank) needs the window prefix, so it is
+                        // written in the fill phase below.
+                        for i in 0..want {
+                            lc[lo + i] = u64::from(ltmp[i]);
+                        }
                         // the m12 bracketing span, and the audit that the decode
                         // agrees with it run for run.
                         let (s0, s1) = (idx.l1(b), if b + 1 < nblocks { idx.l1(b + 1) } else { n });
                         let mut sum = 0u64;
                         for i in lo..lo + want {
-                            let l = u64::from(lc[i]);
+                            let l = lc[i] & 0xffff_ffff;
                             sum += l;
                             rows[hc[i] as usize] += l;
                             acc[hc[i] as usize] += 1;
@@ -1077,13 +1167,32 @@ impl Index {
             ));
         }
 
-        // ---- phase 1: seen, width chosen from the container's own totals.
+        // ---- phase 1: fill the rank half, width chosen from the container's own
+        // totals (a u32 rank covers every container whose biggest symbol count
+        // fits, which is the normal case and journals as `seen_width=`).
         let wide = rows.iter().any(|&t| t > u64::from(u32::MAX));
-        let seen = if wide {
-            let mut v = vec![0u64; r as usize];
-            v.par_chunks_mut(runs_per_chunk as usize)
+        let runs = if !wide {
+            words
+                .par_chunks_mut(runs_per_chunk as usize)
                 .zip(heads.par_chunks(runs_per_chunk as usize))
-                .zip(lens.par_chunks(runs_per_chunk as usize))
+                .enumerate()
+                .for_each(|(ci, (wc, hc))| {
+                    let mut a = base[ci];
+                    for i in 0..wc.len() {
+                        let h = hc[i] as usize;
+                        debug_assert!(a[h] <= u64::from(u32::MAX));
+                        wc[i] |= a[h] << 32;
+                        a[h] += wc[i] & 0xffff_ffff;
+                    }
+                });
+            Runs::W8(words)
+        } else {
+            // rare: keep the two columns apart so the rank can be a u64
+            let len: Vec<u32> = words.iter().map(|&w| w as u32).collect();
+            let mut seen = vec![0u64; r as usize];
+            seen.par_chunks_mut(runs_per_chunk as usize)
+                .zip(heads.par_chunks(runs_per_chunk as usize))
+                .zip(len.par_chunks(runs_per_chunk as usize))
                 .enumerate()
                 .for_each(|(ci, ((sc, hc), lc))| {
                     let mut a = base[ci];
@@ -1093,29 +1202,48 @@ impl Index {
                         a[h] += u64::from(lc[i]);
                     }
                 });
-            SeenCol::U64(v)
-        } else {
-            let mut v = vec![0u32; r as usize];
-            v.par_chunks_mut(runs_per_chunk as usize)
-                .zip(heads.par_chunks(runs_per_chunk as usize))
-                .zip(lens.par_chunks(runs_per_chunk as usize))
-                .enumerate()
-                .for_each(|(ci, ((sc, hc), lc))| {
-                    let mut a = base[ci];
-                    for i in 0..sc.len() {
-                        let h = hc[i] as usize;
-                        debug_assert!(a[h] <= u64::from(u32::MAX));
-                        sc[i] = a[h] as u32;
-                        a[h] += u64::from(lc[i]);
-                    }
-                });
-            SeenCol::U32(v)
+            Runs::Split { len, seen }
         };
-        self.decoded_bytes = heads.len() as u64 + 4 * lens.len() as u64 + seen.bytes();
+        // ---- phase 2: the row -> run directory (see the `dir` field's doc comment).
+        let ndir = ((n + ROW_DIR - 1) / ROW_DIR) as usize;
+        let mut dirv = vec![[0u64; 2]; ndir];
+        {
+            let idx: &Index = self;
+            let runs_ref = &runs;
+            let per = ((ndir + threads - 1) / threads).max(1);
+            dirv.par_chunks_mut(per)
+                .enumerate()
+                .try_for_each(|(ci, dc)| -> Result<(), String> {
+                    let j0 = (ci * per) as u64;
+                    let row0 = j0 * ROW_DIR;
+                    // the run containing the chunk's first row: the same bisect the
+                    // query used to do on EVERY step, now done once per 256 rows.
+                    let (mut run, mut s) = bisect_run_of(idx, runs_ref, row0);
+                    for (k, d) in dc.iter_mut().enumerate() {
+                        let row = (j0 + k as u64) * ROW_DIR;
+                        if row < s {
+                            return Err(format!("row directory: row {row} precedes run {run}"));
+                        }
+                        while s + runs_ref.len(run) <= row {
+                            s += runs_ref.len(run);
+                            run += 1;
+                            if run >= r {
+                                return Err(format!(
+                                    "row directory: rows ran out at run {run} of {r} looking \
+                                     for row {row}"
+                                ));
+                            }
+                        }
+                        *d = [s, run];
+                    }
+                    Ok(())
+                })?;
+        }
+        self.decoded_bytes = heads.len() as u64 + runs.bytes() + 16 * dirv.len() as u64;
         self.audit_blocks = nblocks;
         self.heads = heads;
-        self.lens = lens;
-        self.seen = seen;
+        self.runs = runs;
+        self.dir = dirv;
         Ok(())
     }
 
@@ -1172,7 +1300,114 @@ impl Index {
     }
 }
 
+
+/// `MemAvailable` from /proc/meminfo, if this kernel reports it. Used only to
+/// refuse an allocation that cannot fit, in words, before the allocator is asked
+/// for hundreds of megabytes per column.
+fn mem_available() -> Option<u64> {
+    let s = std::fs::read_to_string("/proc/meminfo").ok()?;
+    for line in s.lines() {
+        if let Some(rest) = line.strip_prefix("MemAvailable:") {
+            let kb: u64 = rest.trim().trim_end_matches(" kB").trim().parse().ok()?;
+            return Some(kb * 1024);
+        }
+    }
+    None
+}
+
+// ------------------------------------------------------------ huge pages
+//
+// The run columns are the query's random-access working set (hundreds of MB at
+// 150 MB of text), and a random 4 KB page per LF step is a TLB miss on every
+// step of a dependent chain. THP is in `madvise` mode on this box
+// (/sys/kernel/mm/transparent_hugepage/enabled), so it has to be asked for: one
+// advice call per column turns 114k small entries into 229 huge ones. Failure is
+// NOT fatal (a kernel without THP must still run the query), it is journaled.
+#[cfg(target_os = "linux")]
+const MADV_HUGEPAGE: i32 = 14;
+
+#[cfg(target_os = "linux")]
+extern "C" {
+    fn madvise(addr: *mut core::ffi::c_void, len: usize, advice: i32) -> i32;
+}
+
+/// Ask for huge pages over a whole allocation. Returns false if the kernel said
+/// no, so the caller can journal it; never an error (see above).
+fn advise_huge<T>(v: &mut [T]) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        let bytes = std::mem::size_of_val(v);
+        if bytes == 0 {
+            return false;
+        }
+        // madvise(2) demands a page-aligned range, and a `Vec` from the allocator
+        // starts 16 bytes into its mapping, so advise the page-aligned interior
+        // (all but the first and last partial page -- 99.9% of a column this big).
+        let lo = v.as_mut_ptr() as usize;
+        let start = (lo + 4095) & !4095usize;
+        let end = (lo + bytes) & !4095usize;
+        if end <= start {
+            return false;
+        }
+        // SAFETY: `v` is a live slice, so [start, end) is inside it and mapped.
+        let rc = unsafe {
+            madvise(
+                start as *mut core::ffi::c_void,
+                end - start,
+                MADV_HUGEPAGE,
+            )
+        };
+        rc == 0
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = v;
+        false
+    }
+}
+
 // ------------------------------------------------------------ the query thread
+
+/// The m12 two-level bisect: `(run, start row)` of the run containing `row`.
+///
+/// This is what `run_of` used to do on every step. It is now used ONCE PER 256
+/// ROWS, to build the row -> run directory, because as a per-step primitive it is
+/// a chain of ~6 dependent cache misses in the 1.79 MB window array and measured
+/// 1458 cycles of the 1509 a step cost (rdtsc, pattern 6 of the p10 fixture).
+#[inline]
+fn bisect_run_of(idx: &Index, runs: &Runs, row: u64) -> (u64, u64) {
+    let mut lo = 0u64;
+    let mut hi = idx.rs.l2_cnt;
+    if hi > 1 {
+        while hi - lo > 1 {
+            let mid = lo + (hi - lo) / 2;
+            if idx.l2(mid) <= row {
+                lo = mid
+            } else {
+                hi = mid
+            }
+        }
+    }
+    let per = idx.rs.l2stride / idx.rs.stride;
+    let j0 = lo * per;
+    let j1 = (j0 + per).min(idx.rs.l1_cnt);
+    let mut a = j0;
+    let mut b = j1;
+    if b - a > 1 {
+        while b - a > 1 {
+            let mid = a + (b - a) / 2;
+            if idx.l1(mid) <= row {
+                a = mid
+            } else {
+                b = mid
+            }
+        }
+    }
+    let run = a * idx.rs.stride;
+    let s = idx.l1(a);
+    let avail = (idx.reader.r - run) as usize;
+    scan_window(|i| runs.len(run + i as u64), run, s, row, avail, idx.reader.r)
+}
 
 impl<'a> Ctx<'a> {
     /// `(head, length)` of run `run`. Two array reads: the run columns are the
@@ -1182,14 +1417,14 @@ impl<'a> Ctx<'a> {
         debug_assert!(run < self.idx.reader.r);
         (
             unsafe { *self.idx.heads.get_unchecked(run as usize) },
-            unsafe { *self.idx.lens.get_unchecked(run as usize) },
+            self.idx.runs.len(run) as u32,
         )
     }
     /// `cum_before` for a run's OWN symbol, which is the only rank an LF step
     /// needs (`h = heads[run]`): one column read, no bisect, no scan.
     #[inline(always)]
     fn seen(&self, run: u64) -> u64 {
-        self.idx.seen.get(run)
+        self.idx.runs.seen(run)
     }
     fn diag(&self) -> (u64, u64, u64, u64) {
         (self.scan_of, self.scan_cum, self.steps, self.ranks)
@@ -1201,51 +1436,44 @@ impl<'a> Ctx<'a> {
     /// so a lookup never decodes anything.
     fn run_of(&mut self, row: u64) -> (u64, u64) {
         let idx = self.idx;
-        let r = idx.reader.r;
-        let n = idx.reader.n;
-        debug_assert!(row < n);
-        // level 2
-        let mut lo = 0u64;
-        let mut hi = idx.rs.l2_cnt;
-        if hi > 1 {
-            while hi - lo > 1 {
-                let mid = lo + (hi - lo) / 2;
-                if idx.l2(mid) <= row {
-                    lo = mid
-                } else {
-                    hi = mid
-                }
+        debug_assert!(row < idx.reader.n);
+        // ONE load: the row -> run directory entry for this 256-row block.
+        let j = (row / ROW_DIR) as usize;
+        let d = unsafe { *idx.dir.get_unchecked(j) };
+        let (s, run0) = (d[0], d[1]);
+        let run = run0;
+        let run_next = match unsafe { idx.dir.get(j + 1) } {
+            Some(v) => v[1],
+            None => idx.reader.r,
+        };
+        let avail = (run_next.min(idx.reader.r) - run) as usize;
+        let (run, s) = match &idx.runs {
+            Runs::W8(w) => {
+                let base = w.as_ptr();
+                let start = run as usize;
+                scan_window(
+                    |i| unsafe { *base.add(start + i) } & 0xffff_ffff,
+                    run,
+                    s,
+                    row,
+                    avail,
+                    idx.reader.r,
+                )
             }
-        }
-        let per = idx.rs.l2stride / idx.rs.stride;
-        let j0 = lo * per;
-        let j1 = (j0 + per).min(idx.rs.l1_cnt);
-        let mut a = j0;
-        let mut b = j1;
-        if b - a > 1 {
-            while b - a > 1 {
-                let mid = a + (b - a) / 2;
-                if idx.l1(mid) <= row {
-                    a = mid
-                } else {
-                    b = mid
-                }
+            Runs::Split { len, .. } => {
+                let base = len.as_ptr();
+                let start = run as usize;
+                scan_window(
+                    |i| u64::from(unsafe { *base.add(start + i) }),
+                    run,
+                    s,
+                    row,
+                    avail,
+                    idx.reader.r,
+                )
             }
-        }
-        let mut run = a * idx.rs.stride;
-        let mut s = idx.l1(a);
-        // walk forward inside the run-start sample window (<= block_runs runs, and
-        // `lens` is a flat u32 column, so this is a prefetched sequential scan)
-        let lens = &idx.lens;
-        while run + 1 < r {
-            let l = u64::from(unsafe { *lens.get_unchecked(run as usize) });
-            self.scan_of += 1;
-            if s + l > row {
-                break;
-            }
-            s += l;
-            run += 1;
-        }
+        };
+        self.scan_of += run - run0;
         (run, s)
     }
     /// Occurrences of `ch` in the BWT before run `k` (i.e. rows of `ch` in runs
@@ -1324,12 +1552,12 @@ impl<'a> Ctx<'a> {
         let mut acc = c0;
         let mut run = r0;
         let heads = &idx.heads;
-        let lens = &idx.lens;
+        let runs = &idx.runs;
         while run < k {
             self.scan_cum += 1;
             let h = unsafe { *heads.get_unchecked(run as usize) };
             if h == ch {
-                acc += u64::from(unsafe { *lens.get_unchecked(run as usize) });
+                acc += runs.len(run);
             }
             run += 1;
         }
@@ -1936,7 +2164,7 @@ pub fn command(args: &[String]) {
         if crate::trace_on() {
             eprintln!(
                 "TRACE_PATTERN id={} len={} occ={} search_us={:.1} locate_us={:.1} \
-                 steps={} max_steps={} total_us={:.1} us_per_step={:.3} scan_of={} scan_cum={} \
+                 steps={} max_steps={} total_us={:.1} lf_us_per_step={:.3} scan_of={} scan_cum={} \
                  diag_steps={} ranks={}",
                 pid,
                 patterns[pid].len(),
@@ -1946,7 +2174,14 @@ pub fn command(args: &[String]) {
                 hit.steps,
                 hit.max_steps,
                 us,
-                us / hit.steps.max(1) as f64,
+                // THE per-LF-step figure (acceptance C1): the locate wall over the
+                // sample points it walked, NOT over the pattern's total (which
+                // also carries the search and the output materialisation).
+                if hit.steps > 0 {
+                    hit.locate_us * hit.positions.len() as f64 / hit.steps as f64
+                } else {
+                    0.0
+                },
                 hit.diag.0,
                 hit.diag.1,
                 hit.diag.2,
