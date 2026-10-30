@@ -52,6 +52,7 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/resource.h>
 #include <unistd.h>
 #include <mutex>
 #include <condition_variable>
@@ -372,18 +373,263 @@ static void merge_sort_lcp(std::vector<Row>& v, std::vector<uint8_t>& out_lcp,
     }
 }
 
+// ===========================================================================
+// THE BAND BUDGET (see the call site in main for the reasoning). n appears in no
+// numerator: the envelope gives the work unit, and the band count and the wave
+// count are OUTPUTS.
+// ===========================================================================
+static constexpr u64 SS_SAFETY_PCT = 85;          // of the arena left after fixed + stage
+static constexpr u64 SS_SCAN_CHUNK = 4u << 20;    // one windowed read buffer per thread
+static constexpr u64 SS_CTL_BYTES = 64u << 20;    // paths, per-band bookkeeping, allocator overhead
+static constexpr u64 SS_STAGE_MIN = 64u << 20;    // the scatter's append staging: a fixed fraction
+static constexpr u64 SS_STAGE_MAX = 2u << 30;     // of the envelope, clamped (the same numbers the
+static constexpr u64 SS_STAGE_DIVISOR = 24;       // scatter below allocates with)
+static constexpr u64 SS_OVERSUBSCRIBE = 4;        // bands per worker per wave (work stealing needs >1)
+static constexpr u64 SS_ROWS_FLOOR = 65536;       // one fold band: below this the budget is broken
+static constexpr u64 SS_BUDGET_RATIO_MAX = 90;    // the exit assertion: owned RSS <= 90% of the envelope
+
+struct TapeBudget {
+    u64 envelope = 0;        // the arena envelope this process may commit
+    u64 bytes_per_row = 0;   // the sort's own footprint of ONE row, term by term
+    u64 bands_in_flight = 0; // K: band arenas that can hold rows at the same time
+    u64 fixed = 0;           // read windows + the sorted sample + histograms + control
+    u64 stage = 0;           // the scatter's append staging
+    u64 arena = 0;           // what the band columns may use
+    u64 cap_rows = 0;        // rows admitted across all bands at once (= arena / bpr)
+    u64 rows_per_band = 0;   // THE WORK UNIT: the envelope's, capped by the window
+    u64 rows_per_band_budget = 0; // the envelope's own unit (arena / (bpr x K))
+    u64 rows_per_band_wave = 0;   // what the scratch window allows (>= budget -> budget binds)
+    u64 arena_planned = 0;   // K bands of the unit: the rows the gate admits at most
+    u64 rows_per_wave = 0;   // an OUTPUT
+    u64 bands_per_wave = 0;  // an OUTPUT
+    u64 waves = 0;           // an OUTPUT (n / rows_per_wave)
+};
+
+static TapeBudget tape_budget_plan(u64 envelope, u64 threads, u64 k_in_flight, bool lcp_on,
+                                   u64 sample_slots, u64 n, u64 disc_cap_bytes, u64 row_bytes,
+                                   u64 override_rows_per_band = 0) {
+    TapeBudget b;
+    b.envelope = envelope;
+    // EVERYTHING the sorter holds per row. The wire row is 32 B and the sort alone
+    // is 81 B; the arena has to carry both plus the write staging.
+    b.bytes_per_row = lcp_on ? (2 * row_bytes + 2 * 8 + 1 + 8 + 1) : (row_bytes + 8 + 1);
+    b.bands_in_flight = std::max<u64>(1, k_in_flight);
+    // The sample array can never be longer than the corpus, and the control
+    // reserve is a function of the envelope (a 50 MB envelope cannot carry a
+    // 64 MiB control term - that would price a process nobody runs).
+    const u64 sample_bytes = (std::min<u64>(sample_slots, n) + 2) * 8;
+    const u64 ctl = std::max<u64>(1u << 20, std::min<u64>(SS_CTL_BYTES, envelope / 64));
+    b.fixed = threads * (SS_SCAN_CHUNK + 4096) + threads * 256 * 8 + sample_bytes + ctl;
+    b.stage = envelope / SS_STAGE_DIVISOR;
+    if (b.stage < SS_STAGE_MIN) b.stage = SS_STAGE_MIN;
+    if (b.stage > SS_STAGE_MAX) b.stage = SS_STAGE_MAX;
+    const u64 overhead = b.fixed + b.stage;
+    const u64 avail = envelope > overhead ? envelope - overhead : 0;
+    b.arena = avail / 100 * SS_SAFETY_PCT;
+    const u64 denom = std::max<u64>(1, b.bytes_per_row * b.bands_in_flight);
+    // THE BUDGET UNIT: the arena divided by what can be in flight. This is the
+    // number the 100 GB run got wrong (it derived it from 2n instead).
+    const u64 budget_rows = std::max<u64>(1, b.arena / denom);
+    // THE SCRATCH WINDOW (2n by law) is the other side of the same coin: a wave
+    // must fit on disc. It decides how MANY budget-sized bands a wave can hold
+    // (work stealing wants more than one, so up to SS_OVERSUBSCRIBE per worker) -
+    // never how big a band may be. When the window cannot even hold one
+    // budget-sized band, the band shrinks to the window (a tiny corpus cannot use
+    // a big envelope) and the plan says so.
+    const u64 disc_rows = std::max<u64>(1, (disc_cap_bytes - disc_cap_bytes / 20) / row_bytes);
+    u64 nbands_target = disc_rows / budget_rows;
+    if (nbands_target < 1) nbands_target = 1;
+    if (nbands_target > SS_OVERSUBSCRIBE * b.bands_in_flight)
+        nbands_target = SS_OVERSUBSCRIBE * b.bands_in_flight;
+    b.rows_per_band = std::max<u64>(1, std::min(budget_rows, disc_rows / nbands_target));
+    b.rows_per_band_budget = budget_rows;
+    b.rows_per_band_wave = b.rows_per_band < budget_rows ? b.rows_per_band : budget_rows;
+    if (override_rows_per_band) b.rows_per_band = std::min(b.rows_per_band, override_rows_per_band);
+    b.cap_rows = std::max<u64>(b.rows_per_band, b.arena / std::max<u64>(1, b.bytes_per_row));
+    // THE ARENA AS PLANNED: K bands of the unit (what the gate admits at most).
+    b.arena_planned = std::min(b.bands_in_flight, std::max<u64>(1, nbands_target)) * b.rows_per_band;
+    b.rows_per_wave = std::max<u64>(1, std::min(disc_rows,
+        nbands_target * b.rows_per_band));
+    b.bands_per_wave = std::max<u64>(1, (b.rows_per_wave + b.rows_per_band - 1) / b.rows_per_band);
+    b.waves = std::max<u64>(1, (n + b.rows_per_wave - 1) / b.rows_per_wave);
+    return b;
+}
+
+// ---------------------------------------------------------------------------
+// THE ROW GATE: rows admitted into band arenas at once. This is what makes the
+// arena bound hold when the DATA makes one band fatter than the quantile cut
+// promised: a worker blocks until its band fits, so an oversize band costs
+// concurrency, never budget. A band larger than the whole cap is admitted alone
+// (nothing else is live) - the one case where the arena is a band's, not the
+// plan's - and `peak` makes that visible.
+// ---------------------------------------------------------------------------
+struct RowGate {
+    std::mutex mu;
+    std::condition_variable cv;
+    u64 cap, live = 0, peak = 0, waits = 0;
+    explicit RowGate(u64 c) : cap(std::max<u64>(1, c)) {}
+    void admit(u64 rows) {
+        std::unique_lock<std::mutex> lk(mu);
+        if (!(live == 0 || live + rows <= cap)) ++waits;
+        cv.wait(lk, [&] { return live == 0 || live + rows <= cap; });
+        live += rows;
+        if (live > peak) peak = live;
+    }
+    void release(u64 rows) {
+        {
+            std::lock_guard<std::mutex> lk(mu);
+            live -= rows;
+        }
+        cv.notify_all();
+    }
+    void shrink_to(u64 new_cap) {
+        {
+            std::lock_guard<std::mutex> lk(mu);
+            cap = std::max<u64>(SS_ROWS_FLOOR, new_cap);
+        }
+        cv.notify_all();
+    }
+    u64 cap_now() {
+        std::lock_guard<std::mutex> lk(mu);
+        return cap;
+    }
+    u64 wait_count() {
+        std::lock_guard<std::mutex> lk(mu);
+        return waits;
+    }
+};
+
+// ---------------------------------------------------------------------------
+// THE RSS RECEIPT. ru_maxrss is the peak of EVERYTHING the process has mapped,
+// which includes the corpus mapping - clean, reclaimable page cache that can
+// never OOM the build but DOES scale with n. The budget assertion is therefore
+// stated on the OWNED (anon) bytes, sampled from /proc/self/smaps_rollup, and the
+// mapped figure is reported beside it so nothing is hidden.
+// ---------------------------------------------------------------------------
+struct RssMonitor {
+    std::thread th;
+    std::atomic<bool> stop{false};
+    std::atomic<u64> peak_anon{0}, peak_file{0}, peak_total{0};
+    // /proc/self/status carries the split natively (VmRSS / RssAnon / RssFile)
+    // and costs a fraction of smaps_rollup's page-table walk on a 100 GB mapping.
+    static bool sample(u64& anon, u64& file, u64& total) {
+        FILE* f = std::fopen("/proc/self/status", "r");
+        if (!f) return false;
+        char line[256];
+        anon = file = total = 0;
+        bool any = false;
+        while (std::fgets(line, sizeof line, f)) {
+            unsigned long long kb = 0;
+            if (std::sscanf(line, "VmRSS: %llu kB", &kb) == 1) { total = kb; any = true; }
+            else if (std::sscanf(line, "RssAnon: %llu kB", &kb) == 1) anon = kb;
+            else if (std::sscanf(line, "RssFile: %llu kB", &kb) == 1) file = kb;
+        }
+        std::fclose(f);
+        return any;
+    }
+    void start() {
+        th = std::thread([this] {
+            while (!stop.load(std::memory_order_relaxed)) {
+                u64 a = 0, f = 0, t = 0;
+                if (sample(a, f, t)) {
+                    if (a > peak_anon.load()) peak_anon.store(a);
+                    if (f > peak_file.load()) peak_file.store(f);
+                    if (t > peak_total.load()) peak_total.store(t);
+                }
+                for (int i = 0; i < 5 && !stop.load(std::memory_order_relaxed); ++i) ::usleep(100000);
+            }
+        });
+    }
+    void finish() {
+        if (!th.joinable()) return;
+        stop.store(true);
+        th.join();
+        u64 a = 0, f = 0, t = 0;   // one last sample: the receipt must include the tail
+        if (sample(a, f, t)) {
+            if (a > peak_anon.load()) peak_anon.store(a);
+            if (f > peak_file.load()) peak_file.store(f);
+            if (t > peak_total.load()) peak_total.store(t);
+        }
+    }
+};
+
+// Drop whatever the random tie walks left resident in the corpus mapping. The
+// bytes stay in PAGE CACHE (this is MAP_PRIVATE on a clean file: nothing can be
+// lost, no writeback happens), so a re-touch is a minor fault, not a read - but
+// the pages leave the process's RSS, which is the number the budget is stated in.
+static void madv_release(const u8* base, u64 bytes) {
+    if (!base || !bytes) return;
+    const u64 page = 4096;
+    const u64 lo = (u64)(uintptr_t)base;
+    if (bytes < page) return;
+    const u64 span = bytes / page * page;
+    (void)lo;
+    ::madvise((void*)base, (size_t)span, MADV_DONTNEED);
+}
+
+// Read text bytes through a WINDOW: buffered sequential pread into a reused
+// buffer, remapped once in place, so the pages live in PAGE CACHE and not in this
+// process's RSS (a mapped sequential walk faults a page every 4 KB: measured
+// 19 ns/position against 6.89 GB/s for buffered sequential reads).
+static void read_window(int fd, u64 from, u64 want, std::vector<u8>& buf) {
+    if (buf.size() < want) buf.resize(size_t(want));
+    size_t got = 0;
+    while (got < want) {
+        ssize_t r = ::pread(fd, buf.data() + got, size_t(want) - got, off_t(from + got));
+        if (r <= 0) die("pread text window");
+        got += size_t(r);
+    }
+    if (REMAP) for (u64 i = 0; i < want; ++i) buf[i] = REMAP[buf[i]];
+}
+
+// Free a vector WITHOUT asking the allocator for anything (shrink_to_fit may
+// reallocate; swap with an empty vector only releases). Used on the shrink path,
+// where the process is already out of memory.
+template <class V>
+static void bswap_release(V& v) {
+    V().swap(v);
+}
+
+// THE LOW-MEMORY BAND ARM (33 B/row: the rows themselves + the u8 column).
+// In-place comparison sort, then the adjacent LCP by DIRECT comparison of the
+// two neighbours - no ping-pong buffer, no u64 LCP arrays. It produces exactly
+// the slice merge_sort_lcp produces (out_lcp[k] = LCP(v[k-1], v[k]), escapes for
+// values >= 255), which the byte-identity gates check: the same run forced onto
+// this arm must publish the same container. This is the arm a band falls back to
+// when its planned arena cannot be allocated - a slower answer, never an abort.
+static void sort_band_inplace(std::vector<Row>& v, std::vector<uint8_t>& out_lcp,
+                              std::vector<std::pair<u64, u64>>& esc, u64 rank_base) {
+    std::sort(v.begin(), v.end(), [](const Row& a, const Row& b) {
+        if (a.klo != b.klo) return a.klo < b.klo;
+        if (a.khi != b.khi) return a.khi < b.khi;
+        if (a.kq != b.kq) return a.kq < b.kq;
+        return suf_cmp_from(unpack_pos(a.pos), unpack_pos(b.pos), 24) < 0;
+    });
+    out_lcp.assign(v.size(), 0);
+    esc.clear();
+    for (size_t k = 1; k < v.size(); ++k) {
+        u64 lcp = 0;
+        suf_cmp_lcp(unpack_pos(v[k - 1].pos), unpack_pos(v[k].pos), 0, lcp);
+        if (lcp >= 255) { esc.emplace_back(rank_base + k, lcp); out_lcp[k] = 255; }
+        else out_lcp[k] = uint8_t(lcp);
+    }
+}
+
 int main(int argc, char** argv) {
     std::string corpus, out, scratch = "/tmp/ss_scratch", lcpOut, isaOut;
     u64 isaK = 1024;
     double ram_gb = 1.0;
     double scratch_cap_gb = 0.0;      // 0 = 2n (the operator's law)
-    u64 threads = 32, par_bands = 1, sample_n = 4000000;
+    u64 threads = 32, par_bands = 0, sample_n = 4000000;
     bool keep_rows = false;
     std::string selftestOracle;
     std::string remapPath, sort_mode = "std", tapeBands, orderSample;
     bool noLcpSlices = false;   // A/B arm: the finish walks text (XSA_LCE_VERIFY=1)
+    bool force_inplace = false; // A/B arm: the low-memory (in-place + LCE) band sort
     u64 sampleLo = 0, sampleCount = 4096;
     u64 pendingBands = 8;
+    u64 budget_bytes = 0;       // THE ARENA ENVELOPE: the only input that sizes work
+    double memory_gb = 0.0;     // the phase's --memory-gb, journaled (not used to size)
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -398,6 +644,8 @@ int main(int argc, char** argv) {
         else if (a == "--out") out = nxt();
         else if (a == "--scratch") scratch = nxt();
         else if (a == "--ram-gb") ram_gb = std::atof(nxt().c_str());
+        else if (a == "--budget-bytes") budget_bytes = std::strtoull(nxt().c_str(), nullptr, 10);
+        else if (a == "--memory-gb") memory_gb = std::atof(nxt().c_str());
         else if (a == "--scratch-cap-gb") scratch_cap_gb = std::atof(nxt().c_str());
         else if (a == "--threads") threads = std::strtoull(nxt().c_str(), nullptr, 10);
         else if (a == "--par-bands") par_bands = std::strtoull(nxt().c_str(), nullptr, 10);
@@ -407,6 +655,7 @@ int main(int argc, char** argv) {
         else if (a == "--remap") remapPath = nxt();
         else if (a == "--lcp-out") lcpOut = nxt();
         else if (a == "--no-lcp-slices") noLcpSlices = true;
+        else if (a == "--force-inplace-sort") force_inplace = true;
         else if (a == "--isa-sample-out") isaOut = nxt();
         else if (a == "--isa-sample-k") isaK = std::strtoull(nxt().c_str(), nullptr, 10);
         else die("unknown arg " + a);
@@ -426,7 +675,11 @@ int main(int argc, char** argv) {
     KEY_N = FILE_N >= 24 ? FILE_N - 23 : 0;
     T = (const u8*)::mmap(nullptr, (size_t)FILE_N, PROT_READ, MAP_PRIVATE, fd, 0);
     if (T == MAP_FAILED) die("mmap corpus");
-    ::madvise((void*)T, (size_t)FILE_N, MADV_WILLNEED);
+    // NO MADV_WILLNEED: it pulls the WHOLE corpus into this process's RSS before a
+    // single row is sorted, which is precisely the n-scaling term the budget
+    // forbids. Every full-corpus pass below reads through a WINDOW (pread into a
+    // reused buffer) and the mapping is only touched by the RANDOM tie walks of
+    // the sort, which are followed by madv_release().
     std::vector<u8> remapBuf;
     if (!remapPath.empty()) {
         int rf = ::open(remapPath.c_str(), O_RDONLY);
@@ -480,45 +733,140 @@ int main(int argc, char** argv) {
     };
 
     const u64 row_bytes = sizeof(Row);            // the WIRE row (band part files)
-    // THE IN-RAM FOOTPRINT OF ONE SORTED ROW. The LCP-carrying merge sorts with a
-    // ping-pong buffer and carries two u64 LCP arrays, and the band holds its u8
-    // column as well: 2*32 + 16 + 1 = 81 bytes per row, not the 32 the wire row
-    // suggests. Sizing bands from the wire row alone would make the LCP arm use
-    // 2.5x the arena the plan priced - the exact way the 2n law gets broken.
-    const u64 sort_row_bytes = lcpOn ? (2 * row_bytes + 16 + 1) : row_bytes;
-    const u64 ram_bytes = (u64)(ram_gb * 1e9);
-    if (par_bands < 1) par_bands = 1;
-    u64 rows_per_band = std::max<u64>(1, ram_bytes / (sort_row_bytes * par_bands));
-    // THE CAP CAN BE THE BINDING CONSTRAINT: with a 2n scratch cap a wave is often
-    // SMALLER than one RAM-sized band, which left each wave with a single band and
-    // therefore a single-threaded sort - 20 waves of serial sorting, measured at
-    // 370 s for a 1 GB corpus against 40 s unwaved. Bands exist to bound RAM, so
-    // size them from whichever budget is smaller: RAM/par or the wave/par.
     // THE SCRATCH LAW: default cap is 2n bytes.
     const u64 cap_bytes = scratch_cap_gb > 0.0 ? (u64)(scratch_cap_gb * 1e9) : 2 * N;
     if (!tapeBands.empty() && (cap_bytes > 2 * N || N >= (1ull << 48)))
         die("tape bands require wave cap <= 2n and n < 2^48");
-    // Waves are filled greedily by byte class, so a wave can overshoot the target
-    // by one class (measured 2.06n against a 2.0n cap). Fill to 95% of the cap and
-    // the overshoot stays inside the law instead of breaking it.
-    u64 rows_per_wave = std::max<u64>(1, (cap_bytes - cap_bytes / 20) / row_bytes);
-    // BANDS MUST OUTNUMBER WORKERS. With bands == par_bands the work-stealing
-    // queue is a 1:1 map: each worker gets exactly one band and the wall is set by
-    // the fattest one (measured: 2.43 s of sort summed in a 1.14 s wave = ~2 cores
-    // busy of 8). Oversubscribe 4x so stealing can balance the fat bands.
-    if (rows_per_wave / (4 * par_bands) < rows_per_band)
-        rows_per_band = std::max<u64>(1, rows_per_wave / (4 * par_bands));
-    u64 waves = (N + rows_per_wave - 1) / rows_per_wave;
-    if (waves < 1) waves = 1;
+    // ===================== THE BAND BUDGET ==================================
+    // THE WORK UNIT COMES FROM THE ENVELOPE, NEVER FROM THE DATA.
+    //
+    // The 100 GB run died on
+    //     SS_TAPE_CREDIT sa_window=8 rows_per_band=185,721,167
+    // with a bad_alloc inside the unwind (rc=134). 185,721,167 was not a memory
+    // figure: it was rows_per_wave/(4*par_bands) = 0.95 x 2n / 32 / 32, i.e. the
+    // band size was DERIVED FROM THE CORPUS. It grew 10x when the corpus grew
+    // 10x while --memory-gb stayed 96, the arena it asked for (rows x 32 B x the
+    // 32 bands a wave carried) outgrew the envelope, and the sorter ABORTED
+    // instead of shrinking the unit.
+    //
+    // The rule that replaces it, and the one thing this section implements:
+    //     rows_per_band = (envelope - fixed - stage) x SAFETY / (bpr x K)
+    // n appears in NO numerator. Everything else is an OUTPUT of the plan:
+    //     bands_per_wave = ceil(rows_per_wave / rows_per_band)
+    //     waves          = ceil(n / rows_per_wave)
+    // so a bigger corpus buys MORE BANDS AND MORE WAVES, never a bigger arena.
+    //
+    // bytes_per_row is what the sorter actually holds per row, term by term:
+    //   rows 32 | ping-pong 32 | lcp_a 8 | lcp_b 8 | slice column 1 | ob 8 | sb 1
+    // LCP arm = 90 B/row; the wire row is 32 and the sort alone is 81. Pricing
+    // either of those two numbers is exactly how the model ran 2.8x short.
+    //
+    // THE ENVELOPE is the arena this process may commit, given by the front door
+    // (--budget-bytes; --ram-gb is the legacy decimal-GB spelling). fixed and
+    // stage are the terms that are NOT the band arena and MUST be paid first:
+    //   fixed = one windowed read buffer per thread + the sorted sample array
+    //           (8 B x --sample) + the per-thread byte histograms + control
+    //   stage = the scatter's per-(thread,band) append buffers, a fixed FRACTION
+    //           of the envelope (the same fraction the scatter allocates)
+    const bool plan_lcp = lcpOn;
+    const u64 envelope_bytes = budget_bytes ? budget_bytes : (u64)(ram_gb * 1e9);
+    if (!envelope_bytes) die("--budget-bytes (or --ram-gb) must be positive");
+    const u64 k_in_flight = par_bands ? par_bands
+                                      : std::max<u64>(1, threads);
+    TapeBudget budget = tape_budget_plan(envelope_bytes, std::max<u64>(1, threads), k_in_flight,
+                                         plan_lcp, sample_n, N, cap_bytes, row_bytes);
+    // THE PLAN IS PRE-FLIGHTED AGAINST THE PROCESS'S OWN ADDRESS SPACE: a reserve
+    // of the whole arena (never touched, so it costs nothing) fails HERE, at plan
+    // time, if RLIMIT_AS cannot hold it - and then the unit SHRINKS instead of the
+    // run dying with a bad_alloc in a worker thread. Bounded, journaled halvings;
+    // only a unit below the floor is a real configuration error.
+    const u64 floor_rows = std::min<u64>(SS_ROWS_FLOOR, std::max<u64>(1, N));
+    for (unsigned attempt = 0;; ++attempt) {
+        if (budget.rows_per_band < floor_rows) {
+            std::fprintf(stderr,
+                "SS_TAPE_CONFIG per_band_rows=%" PRIu64 " < floor=%" PRIu64
+                " budget_bytes=%" PRIu64 " bytes_per_row=%" PRIu64 " bands_in_flight=%" PRIu64
+                " attempt=%u\n",
+                budget.rows_per_band, floor_rows, envelope_bytes, budget.bytes_per_row,
+                budget.bands_in_flight, attempt);
+            die("TAPE_BUDGET_TOO_SMALL: the arena envelope cannot hold one band of " +
+                std::to_string(floor_rows) + " rows at " + std::to_string(budget.bytes_per_row) +
+                " B/row x K=" + std::to_string(budget.bands_in_flight) + " in flight. This is a "
+                "CONFIGURATION error, not a data-dependent shrink: raise --memory-gb, lower "
+                "--threads (K is the in-flight band count), or shard the corpus");
+        }
+        const u64 arena_bytes = budget.bands_in_flight * budget.rows_per_band * budget.bytes_per_row;
+        void* probe = ::mmap(nullptr, (size_t)arena_bytes, PROT_READ | PROT_WRITE,
+                             MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+        if (probe != MAP_FAILED) { ::munmap(probe, (size_t)arena_bytes); break; }
+        if (attempt >= 24) die("SS_TAPE_SHRINK exhausted after 24 halvings: the arena cannot be reserved");
+        std::fprintf(stderr,
+            "SS_TAPE_SHRINK why=arena-reserve-failed rows_per_band=%" PRIu64 " -> %" PRIu64
+            " arena_bytes=%" PRIu64 " budget_bytes=%" PRIu64 " attempt=%u (halving the work unit; "
+            "the band plan is recomputed, nothing has been written)\n",
+            budget.rows_per_band, std::max<u64>(1, budget.rows_per_band / 2), arena_bytes,
+            envelope_bytes, attempt);
+        budget = tape_budget_plan(envelope_bytes, std::max<u64>(1, threads), k_in_flight,
+                                  plan_lcp, sample_n, N, cap_bytes, row_bytes,
+                                  /*override_rows_per_band=*/std::max<u64>(1, budget.rows_per_band / 2));
+    }
+    const u64 sort_row_bytes = budget.bytes_per_row;
+    // THE LIVE WORK UNIT. A band that cannot be allocated at the planned unit
+    // HALVES it for every later wave (the wave's band plan is recomputed from this
+    // number at the top of each wave), which is the "halve per_band_rows, recompute
+    // the band plan, retry" rule - applied where it is legal: a wave already
+    // scattered cannot be re-cut (its rank offsets are fixed), so the wave in
+    // flight finishes on the low-memory arm below and the NEXT one is planned
+    // smaller. Bounded by SS_ROWS_FLOOR, and journaled on every step.
+    u64 rows_per_band = budget.rows_per_band;
+    std::mutex shrink_mu;
+    std::atomic<bool> prefer_inplace{force_inplace};
+    const u64 rows_per_wave = budget.rows_per_wave;
+    u64 waves = budget.waves;
+    // THE ROW GATE: the rows admitted into band arenas at once. Admission
+    // control - not the band count - is what keeps the arena inside the plan when
+    // the DATA makes a band fatter than the quantile cut promised: a worker waits
+    // until its band fits, and a band larger than the whole cap still goes alone
+    // (nothing else is live), which is the only case where the arena is the
+    // band's and not the plan's.
+    RowGate gate(budget.cap_rows);
+    // THE TEXT RESIDENCY: the corpus mapping is the only per-process footprint
+    // that can scale with n. Its pages are CLEAN page cache (the kernel reclaims
+    // them under pressure, so they can never OOM this process), but a peak-RSS
+    // receipt that is supposed to be a function of the budget must not silently
+    // carry them. Every full-corpus pass therefore reads through a WINDOW
+    // (pread into a reused buffer) and drops the mapping afterwards; the RSS
+    // receipt reports the anon (owned) and file (mapped, reclaimable) peaks
+    // separately, and the BUDGET ASSERTION is on the owned arena.
+    RssMonitor rss;
+    rss.start();
 
     std::fprintf(stderr,
         "SS_START n=%" PRIu64 " row_bytes=%zu sort_row_bytes=%" PRIu64 " cap_bytes=%" PRIu64
         " (%.2fn) rows_per_wave=%" PRIu64 " waves=%" PRIu64 " ram_gb=%.2f rows_per_band=%" PRIu64
         " par_bands=%" PRIu64 " threads=%" PRIu64 " in_band_arena_bytes=%" PRIu64 " (%.3fn)\n",
         N, row_bytes, sort_row_bytes, cap_bytes, double(cap_bytes) / double(N), rows_per_wave,
-        waves, ram_gb, rows_per_band, par_bands, threads,
-        rows_per_band * par_bands * sort_row_bytes,
-        double(rows_per_band * par_bands * sort_row_bytes) / double(N));
+        waves, ram_gb, rows_per_band, budget.bands_in_flight, threads,
+        budget.bands_in_flight * rows_per_band * sort_row_bytes,
+        double(budget.bands_in_flight * rows_per_band * sort_row_bytes) / double(N));
+    std::fprintf(stderr,
+        "SS_TAPE_BUDGET memory_gb=%.2f budget_bytes=%" PRIu64 " bytes_per_row=%" PRIu64
+        " bpr_terms=rows:%zu+pingpong:%zu+lcp:%u+slice:%u+stage:%u safety=%.2f"
+        " bands_in_flight=%" PRIu64 " rows_per_band=%" PRIu64 " rows_per_band_budget=%" PRIu64
+        " rows_per_band_window=%" PRIu64 " binding=%s bands=%" PRIu64
+        " waves=%" PRIu64 " rows_per_wave=%" PRIu64 " arena_bytes=%" PRIu64
+        " arena_planned_rows=%" PRIu64 " cap_rows=%" PRIu64 " fixed_bytes=%" PRIu64
+        " stage_bytes=%" PRIu64
+        " source=%s (rows_per_band is derived from the envelope; n is in NO numerator)\n",
+        (memory_gb > 0 ? memory_gb : ram_gb), envelope_bytes, budget.bytes_per_row,
+        row_bytes, plan_lcp ? row_bytes : 0, plan_lcp ? 16u : 0u, plan_lcp ? 1u : 0u, 9u,
+        double(SS_SAFETY_PCT) / 100.0,
+        budget.bands_in_flight, rows_per_band, budget.rows_per_band_budget,
+        budget.rows_per_band_wave,
+        rows_per_band == budget.rows_per_band_budget ? "budget" : "scratch-window",
+        budget.bands_per_wave, waves, rows_per_wave,
+        budget.arena, budget.arena_planned, budget.cap_rows, budget.fixed, budget.stage,
+        budget_bytes ? "operator --budget-bytes" : "legacy --ram-gb");
 
     // ---- exact first-byte histogram: one parallel pass, 256 counters. This is
     // what makes the per-wave FILTER cheap: a rejected position costs one load
@@ -533,12 +881,26 @@ int main(int argc, char** argv) {
             ts.emplace_back([&, t]() {
                 const u64 lo = N * t / nt, hi = N * (t + 1) / nt;
                 auto& h = lh[t];
-                for (u64 p = lo; p < hi; ++p) ++h[sym_at(p)];
+                std::vector<u8> buf(SS_SCAN_CHUNK + 64);
+                for (u64 p = lo; p < hi;) {
+                    const u64 chunk = std::min<u64>(SS_SCAN_CHUNK, hi - p);
+                    const u64 real = std::min<u64>(chunk, FILE_N > p ? FILE_N - p : 0);
+                    if (real) {
+                        read_window(fd, p, real, buf);   // remapped in place
+                        for (u64 i = 0; i < real; ++i) ++h[buf[i]];
+                    }
+                    // the virtual END suffix (position FILE_N) counts as symbol 0
+                    if (chunk > real) ++h[SENTINEL_SYMBOL];
+                    p += chunk;
+                }
             });
         for (auto& th : ts) th.join();
         for (u64 t = 0; t < nt; ++t)
             for (int i = 0; i < 256; ++i) hist[i] += lh[t][i];
     }
+    // Whatever this pass faulted in leaves the process's RSS: the receipt is a
+    // function of the budget, not of n (see RssMonitor).
+    madv_release(T, FILE_N);
     // ---- wave list: greedy byte ranges, each <= rows_per_wave rows. A byte whose
     // class ALONE exceeds the cap is split by its second byte (2-level wave).
     struct Wave { unsigned lo, hi; bool lvl2; unsigned b; unsigned lo2, hi2; };
@@ -549,21 +911,43 @@ int main(int argc, char** argv) {
         for (unsigned c = 0; c < 256; ++c) {
             if (hist[c] > rows_per_wave) {
                 if (lo < c) { wl.push_back({lo, c, false, 0, 0, 0}); lo = c; acc = 0; }
-                // split this byte by its second byte
+                // split this byte by its second byte: a WINDOWED pass (the first
+                // version walked the mapping twice, which cost 19 ns/position and
+                // left the whole corpus resident)
                 std::vector<u64> h2(256, 0);
-                for (u64 p = 0; p < N; ++p) {
-                    if (sym_at(p) != c) continue;
-                    h2[sym_at(p + 1)]++;
+                {
+                    const u64 nt = std::max<u64>(1, threads);
+                    std::vector<std::vector<u64>> l2(nt, std::vector<u64>(256, 0));
+                    std::vector<std::thread> ts2;
+                    for (u64 t = 0; t < nt; ++t)
+                        ts2.emplace_back([&, t]() {
+                            const u64 xlo = N * t / nt, xhi = std::min<u64>(FILE_N, N * (t + 1) / nt);
+                            auto& h = l2[t];
+                            std::vector<u8> buf(SS_SCAN_CHUNK + 64);
+                            for (u64 p = xlo; p < xhi;) {
+                                const u64 chunk = std::min<u64>(SS_SCAN_CHUNK, xhi - p);
+                                // one byte of lookahead for the second symbol (0 past the
+                                // corpus end, exactly as sym_at(p+1) reports it)
+                                const u64 want = std::min<u64>(chunk + 1, FILE_N - p);
+                                read_window(fd, p, want, buf);
+                                for (u64 i = 0; i < chunk; ++i)
+                                    if (buf[i] == c) ++h[i + 1 < want ? buf[i + 1] : SENTINEL_SYMBOL];
+                                p += chunk;
+                            }
+                        });
+                    for (auto& th : ts2) th.join();
+                    for (u64 t = 0; t < nt; ++t)
+                        for (int i = 0; i < 256; ++i) h2[i] += l2[t][i];
                 }
-                unsigned l2 = 0; u64 a2 = 0;
+                unsigned l2lo = 0; u64 a2 = 0;
                 for (unsigned d = 0; d < 256; ++d) {
                     if (a2 && a2 + h2[d] > rows_per_wave) {
-                        wl.push_back({c, c + 1, true, c, l2, d}); l2 = d; a2 = 0;
+                        wl.push_back({c, c + 1, true, c, l2lo, d}); l2lo = d; a2 = 0;
                     }
                     if (!tapeBands.empty() && h2[d] > rows_per_wave) die("byte-pair class exceeds wave cap");
                     a2 += h2[d];
                 }
-                if (l2 < 256) wl.push_back({c, c + 1, true, c, l2, 256});
+                if (l2lo < 256) wl.push_back({c, c + 1, true, c, l2lo, 256});
                 lo = c + 1; acc = 0;
                 continue;
             }
@@ -592,6 +976,7 @@ int main(int argc, char** argv) {
         sk.push_back(a);
     }
     std::sort(sk.begin(), sk.end());
+    madv_release(T, FILE_N);   // the jittered sample walk touched n/stride pages
     const double t_sample = now_sec() - t0;
     std::fprintf(stderr, "SS_SAMPLE samples=%zu stride=%" PRIu64 " wall=%.2f\n",
                  sk.size(), stride, t_sample);
@@ -888,7 +1273,9 @@ int main(int argc, char** argv) {
         const u64 nparts = std::max<u64>(1, threads);
         std::vector<std::vector<int>> fds(nbands, std::vector<int>(nparts, -1));
         u64 bufsz = 1u << 20;
-        while (nbands * nparts * bufsz > (1ull << 31) && bufsz > (1u << 12)) bufsz >>= 1;
+        // THE STAGING IS PRICED (budget.stage), so the scatter may not outgrow the
+        // number the planner paid for: the cap is the model's, not a constant.
+        while (nbands * nparts * bufsz > budget.stage && bufsz > (1u << 12)) bufsz >>= 1;
         std::vector<std::vector<std::vector<u8>>> bufs(nparts, std::vector<std::vector<u8>>(nbands));
         for (u64 t = 0; t < nparts; ++t)
             for (u64 b = 0; b < nbands; ++b) bufs[t][b].reserve(bufsz);
@@ -1044,11 +1431,27 @@ int main(int argc, char** argv) {
         std::vector<double> tRead(nbands, 0.0), tSort(nbands, 0.0), tWrite(nbands, 0.0);
         bandFirstPos.assign(nbands, 0);
         bandLastPos.assign(nbands, 0);
+        // CLAIM ORDER == ADMISSION ORDER. A band computes its seam against EARLIER
+        // bands, so a worker that holds arena must never wait on a band that is
+        // still waiting for arena: admission therefore follows the claim, and the
+        // live set is always a PREFIX of the claimed bands, which is what makes the
+        // gate deadlock-free (the head of the prefix always finishes).
+        std::mutex claim_mu;
         auto band_worker = [&]() {
             std::vector<Row> rows;
+            std::vector<u64> ob;
+            std::vector<u8> sb;
+            std::vector<u8> bandLcp;
+            std::vector<std::pair<u64, u64>> bandEsc;
             for (;;) {
-                const u64 b = next_band.fetch_add(1);
-                if (b >= nbands) return;
+                u64 b = 0;
+                {
+                    std::lock_guard<std::mutex> lk(claim_mu);
+                    b = next_band.fetch_add(1);
+                    if (b >= nbands) return;
+                    gate.admit(band_rows[b]);   // the arena this band will hold
+                }
+                const u64 admitted = band_rows[b];
                 const u64 tapeBand = globalBand + b;
                 if (!tapeBands.empty() && tapeBand >= pendingBands) {
                     const u64 back = tapeBand - pendingBands;
@@ -1058,117 +1461,177 @@ int main(int argc, char** argv) {
                     // piece band before it retires anything (see SS_TAPE_CREDIT).
                     if (lcpOn) waitSliceCredit(tapeBand);
                 }
-                rows.clear();
-                const double br0 = now_sec();
-                for (u64 t = 0; t < nparts; ++t) {
-                    char name[512];
-                    std::snprintf(name, sizeof name, "%s/w%" PRIu64 ".b%05" PRIu64 ".p%05" PRIu64,
-                                  scratch.c_str(), w, b, t);
-                    int f = ::open(name, O_RDONLY);
-                    if (f < 0) continue;
-                    struct stat fs{};
-                    ::fstat(f, &fs);
-                    const u64 bytes = (u64)fs.st_size;
-                    if (bytes) {
-                        const size_t at = rows.size();
-                        rows.resize(at + bytes / sizeof(Row));
-                        size_t off = 0;
-                        while (off < bytes) {
-                            ssize_t r = ::read(f, ((u8*)rows.data()) + at * sizeof(Row) + off, bytes - off);
-                            if (r <= 0) die("read band part");
-                            off += size_t(r);
+                // ---- THE BAND BODY: EVERYTHING THAT ALLOCATES, AND THE SHRINK ----
+                // A std::bad_alloc inside a worker is std::terminate (rc=134, the
+                // exact 100 GB signature: "terminate called recursively"), so the
+                // allocation path is inside a try and the answer is a SMALLER ARM,
+                // not a dead process:
+                //   arm 0  the planned merge-with-LCP   (2 rows + 2 u64 LCP arrays = 90 B/row)
+                //   arm 1  in-place sort + LCP by direct adjacent comparison (33 B/row)
+                // Arm 1 needs no extra arena at all, so it cannot fail the way arm 0
+                // did, and it produces the SAME slice (the adjacent LCP it computes
+                // is the one the merge propagates - verified by byte-identity, see
+                // SS_TAPE_ARM in the selftest gate). A failure also halves the work
+                // unit for every LATER wave, journaled.
+                bool have_rows = false;
+                for (unsigned attempt = 0; !have_rows; ++attempt) {
+                    const bool inplace = attempt > 0 || prefer_inplace.load();
+                    try {
+                        rows.clear();
+                        const double br0 = now_sec();
+                        for (u64 t = 0; t < nparts; ++t) {
+                            char name[512];
+                            std::snprintf(name, sizeof name, "%s/w%" PRIu64 ".b%05" PRIu64 ".p%05" PRIu64,
+                                          scratch.c_str(), w, b, t);
+                            int f = ::open(name, O_RDONLY);
+                            if (f < 0) continue;
+                            struct stat fs{};
+                            ::fstat(f, &fs);
+                            const u64 bytes = (u64)fs.st_size;
+                            if (bytes) {
+                                const size_t at = rows.size();
+                                rows.resize(at + bytes / sizeof(Row));
+                                size_t off = 0;
+                                while (off < bytes) {
+                                    ssize_t r = ::read(f, ((u8*)rows.data()) + at * sizeof(Row) + off, bytes - off);
+                                    if (r <= 0) die("read band part");
+                                    off += size_t(r);
+                                }
+                            }
+                            ::close(f);
                         }
-                    }
-                    ::close(f);
-                    if (!keep_rows) ::unlink(name);
-                }
-                tRead[b] = now_sec() - br0;
-                const double bs0 = now_sec();
-                std::vector<u8> bandLcp;
-                std::vector<std::pair<u64,u64>> bandEsc;
-                if (lcpOn) {
-                    merge_sort_lcp(rows, bandLcp, bandEsc, band_off[b]);
-                } else {
-                    // product path: the plain comparison sort. The merge-with-LCP
-                    // is opt-in until its propagation is verified exact.
-                    std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
-                        if (a.klo != b.klo) return a.klo < b.klo;
-                        if (a.khi != b.khi) return a.khi < b.khi;
-                        if (a.kq != b.kq) return a.kq < b.kq;
-                        return suf_cmp_from(unpack_pos(a.pos), unpack_pos(b.pos), 24) < 0;
-                    });
-                }
-                // Insert the <=24 separately sorted finite suffixes. Only this
-                // cold path uses a full comparison against keyed rows.
-                // LCP values of unaffected adjacent rows remain unchanged.
-                if (!tailBands[b].empty()) {
-                    std::vector<u64> lcps(rows.size(), 0);
-                    if (lcpOn) {
-                        for (size_t i = 0; i < rows.size(); ++i) lcps[i] = bandLcp[i];
-                        for (const auto& e : bandEsc) lcps[e.first - band_off[b]] = e.second;
-                    }
-                    for (const Row& tail : tailBands[b]) {
-                        auto it = std::lower_bound(rows.begin(), rows.end(), tail,
-                            [](const Row& a, const Row& t) {
-                                return suf_cmp_from(unpack_pos(a.pos), unpack_pos(t.pos), 0) < 0;
-                            });
-                        const size_t i = size_t(it - rows.begin());
-                        rows.insert(it, tail);
+                        tRead[b] = now_sec() - br0;
+                        const double bs0 = now_sec();
+                        bandLcp.clear();
+                        bandEsc.clear();
                         if (lcpOn) {
-                            u64 lcp = 0;
-                            if (i) suf_cmp_lcp(unpack_pos(rows[i-1].pos), unpack_pos(tail.pos), 0, lcp);
-                            lcps.insert(lcps.begin() + i, lcp);
-                            if (i + 1 < rows.size()) {
-                                suf_cmp_lcp(unpack_pos(tail.pos), unpack_pos(rows[i+1].pos), 0, lcp);
-                                lcps[i+1] = lcp;
+                            if (inplace) sort_band_inplace(rows, bandLcp, bandEsc, band_off[b]);
+                            else merge_sort_lcp(rows, bandLcp, bandEsc, band_off[b]);
+                        } else {
+                            // product path: the plain comparison sort. The merge-with-LCP
+                            // is opt-in until its propagation is verified exact.
+                            std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
+                                if (a.klo != b.klo) return a.klo < b.klo;
+                                if (a.khi != b.khi) return a.khi < b.khi;
+                                if (a.kq != b.kq) return a.kq < b.kq;
+                                return suf_cmp_from(unpack_pos(a.pos), unpack_pos(b.pos), 24) < 0;
+                            });
+                        }
+                        // Insert the <=24 separately sorted finite suffixes. Only this
+                        // cold path uses a full comparison against keyed rows.
+                        // LCP values of unaffected adjacent rows remain unchanged.
+                        if (!tailBands[b].empty()) {
+                            std::vector<u64> lcps(rows.size(), 0);
+                            if (lcpOn) {
+                                for (size_t i = 0; i < rows.size(); ++i) lcps[i] = bandLcp[i];
+                                for (const auto& e : bandEsc) lcps[e.first - band_off[b]] = e.second;
+                            }
+                            for (const Row& tail : tailBands[b]) {
+                                auto it = std::lower_bound(rows.begin(), rows.end(), tail,
+                                    [](const Row& a, const Row& t) {
+                                        return suf_cmp_from(unpack_pos(a.pos), unpack_pos(t.pos), 0) < 0;
+                                    });
+                                const size_t i = size_t(it - rows.begin());
+                                rows.insert(it, tail);
+                                if (lcpOn) {
+                                    u64 lcp = 0;
+                                    if (i) suf_cmp_lcp(unpack_pos(rows[i-1].pos), unpack_pos(tail.pos), 0, lcp);
+                                    lcps.insert(lcps.begin() + i, lcp);
+                                    if (i + 1 < rows.size()) {
+                                        suf_cmp_lcp(unpack_pos(tail.pos), unpack_pos(rows[i+1].pos), 0, lcp);
+                                        lcps[i+1] = lcp;
+                                    }
+                                }
+                            }
+                            if (lcpOn) {
+                                bandLcp.resize(rows.size()); bandEsc.clear();
+                                for (size_t i = 0; i < lcps.size(); ++i) {
+                                    bandLcp[i] = u8(std::min<u64>(lcps[i], 255));
+                                    if (lcps[i] >= 255) bandEsc.emplace_back(band_off[b] + i, lcps[i]);
+                                }
                             }
                         }
-                    }
-                    if (lcpOn) {
-                        bandLcp.resize(rows.size()); bandEsc.clear();
-                        for (size_t i = 0; i < lcps.size(); ++i) {
-                            bandLcp[i] = u8(std::min<u64>(lcps[i], 255));
-                            if (lcps[i] >= 255) bandEsc.emplace_back(band_off[b] + i, lcps[i]);
+                        if (lcpOn) {
+                            // ---- THE SEAM --------------------------------------------------
+                            // Byte 0 of a band is the LCP with the PREVIOUS row in rank
+                            // order, i.e. the last row of the previous non-empty band - a
+                            // pair that belongs to neither band's own merge. It is computed
+                            // HERE, before the slice is published, because a post-wave patch
+                            // would race the consumer that already holds the band.
+                            //
+                            // The wait is on an EARLIER band (claimed earlier by the ordered
+                            // work queue), so the dependency graph is acyclic: with W workers
+                            // band b only ever waits for bands < b, and every band's worker
+                            // finishes without waiting on a band >= b.
+                            if (!rows.empty()) {
+                                const u64 firstPos = unpack_pos(rows.front().pos);
+                                u64 prevLast = ~0ull;
+                                for (u64 j = b; j-- > 0;) {
+                                    u64 v = 0;
+                                    for (;;) {
+                                        v = bandPub[j].load(std::memory_order_acquire);
+                                        if (v) break;
+                                        ::usleep(50);
+                                    }
+                                    if (v > 1) { prevLast = v - 2; break; }
+                                }
+                                if (prevLast == ~0ull) prevLast = prevWaveLastLocal;
+                                if (prevLast != ~0ull) {
+                                    u64 cross = 0;
+                                    suf_cmp_lcp(prevLast, firstPos, 0, cross);
+                                    // the band's own block-start value is replaced, never
+                                    // duplicated: the escape list must stay rank-strict.
+                                    for (size_t e = bandEsc.size(); e-- > 0;)
+                                        if (bandEsc[e].first == band_off[b]) bandEsc.erase(bandEsc.begin() + e);
+                                    bandLcp[0] = u8(std::min<u64>(cross, 255));
+                                    if (cross >= 255) bandEsc.emplace_back(band_off[b], cross);
+                                }
+                            }
+                            std::sort(bandEsc.begin(), bandEsc.end());
+                        }
+                        // THE WRITE STAGING IS ALLOCATED HERE, BEFORE ANYTHING IS
+                        // PUBLISHED: the publish path below is then allocation-free, so
+                        // a refusal can never leave a half-published band on disc.
+                        ob.resize(rows.size());
+                        sb.resize(rows.size());
+                        have_rows = true;
+                        if (inplace && (attempt > 0 || (force_inplace && b < 4)))
+                            std::fprintf(stderr,
+                                "SS_TAPE_ARM arm=inplace band=%" PRIu64 " rows=%zu attempt=%u "
+                                "bytes_per_row=%" PRIu64 " (33 B/row: in-place sort + adjacent LCP by "
+                                "direct comparison)\n",
+                                b, rows.size(), attempt, u64(row_bytes + 1 + 8 + 1));
+                    } catch (const std::bad_alloc&) {
+                        // keep the work unit for the NEXT wave smaller, and redo THIS
+                        // band on the low-memory arm (arm 1 needs no second row array)
+                        bswap_release(rows); bswap_release(ob); bswap_release(sb);
+                        bswap_release(bandLcp); bswap_release(bandEsc);
+                        {
+                            std::lock_guard<std::mutex> lk(shrink_mu);
+                            const u64 was = rows_per_band;
+                            rows_per_band = std::max<u64>(floor_rows, was / 2);
+                            prefer_inplace.store(true);
+                            std::fprintf(stderr,
+                                "SS_TAPE_SHRINK why=band-alloc-failed band=%" PRIu64 " rows=%" PRIu64
+                                " attempt=%u rows_per_band=%" PRIu64 " -> %" PRIu64
+                                " bytes_per_row=%" PRIu64 " (this band retries on the in-place arm; "
+                                "every LATER wave is planned at the smaller unit)\n",
+                                b, band_rows[b], attempt, was, rows_per_band, budget.bytes_per_row);
+                            if (rows_per_band <= floor_rows && attempt >= 1) {
+                                std::fprintf(stderr, "SS_TAPE_CONFIG rows_per_band at the floor=%" PRIu64 "\n",
+                                             floor_rows);
+                                die("TAPE_BAND_ALLOC_FAILED band=" + std::to_string(b) +
+                                    " rows=" + std::to_string(band_rows[b]) +
+                                    ": the band could not be allocated even on the in-place arm " +
+                                    "(32 B/row) after shrinking per_band_rows to the " +
+                                    std::to_string(floor_rows) + " floor. This is a "
+                                    "CONFIGURATION error: raise --memory-gb or shard the corpus");
+                            }
                         }
                     }
                 }
+                const double bs0 = now_sec();
                 if (lcpOn) {
-                    // ---- THE SEAM --------------------------------------------------
-                    // Byte 0 of a band is the LCP with the PREVIOUS row in rank
-                    // order, i.e. the last row of the previous non-empty band - a
-                    // pair that belongs to neither band's own merge. It is computed
-                    // HERE, before the slice is published, because a post-wave patch
-                    // would race the consumer that already holds the band.
-                    //
-                    // The wait is on an EARLIER band (claimed earlier by the ordered
-                    // work queue), so the dependency graph is acyclic: with W workers
-                    // band b only ever waits for bands < b, and every band's worker
-                    // finishes without waiting on a band >= b.
-                    if (!rows.empty()) {
-                        const u64 firstPos = unpack_pos(rows.front().pos);
-                        u64 prevLast = ~0ull;
-                        for (u64 j = b; j-- > 0;) {
-                            u64 v = 0;
-                            for (;;) {
-                                v = bandPub[j].load(std::memory_order_acquire);
-                                if (v) break;
-                                ::usleep(50);
-                            }
-                            if (v > 1) { prevLast = v - 2; break; }
-                        }
-                        if (prevLast == ~0ull) prevLast = prevWaveLastLocal;
-                        if (prevLast != ~0ull) {
-                            u64 cross = 0;
-                            suf_cmp_lcp(prevLast, firstPos, 0, cross);
-                            // the band's own block-start value is replaced, never
-                            // duplicated: the escape list must stay rank-strict.
-                            for (size_t e = bandEsc.size(); e-- > 0;)
-                                if (bandEsc[e].first == band_off[b]) bandEsc.erase(bandEsc.begin() + e);
-                            bandLcp[0] = u8(std::min<u64>(cross, 255));
-                            if (cross >= 255) bandEsc.emplace_back(band_off[b], cross);
-                        }
-                    }
-                    std::sort(bandEsc.begin(), bandEsc.end());
                     if (tapeBands.empty()) {
                         // the one-file arm: the band's LCP stream lands at its own
                         // offset (rank order is band order).
@@ -1261,15 +1724,13 @@ int main(int argc, char** argv) {
                     if (rows[i].klo == rows[i-1].klo && rows[i].khi == rows[i-1].khi &&
                         rows[i].kq == rows[i-1].kq) ++ties;
                 ties_w.fetch_add(ties);
-                // ordered output: positions to the SA stream, symbols alongside
-                std::vector<u64> ob;
-                std::vector<u8> sb;
-                ob.reserve(rows.size());
-                sb.reserve(rows.size());
+                // ordered output: positions to the SA stream, symbols alongside.
+                // ob/sb were SIZED inside the band body (before any publish), so this
+                // fill only stores: the publish path cannot allocate.
                 for (size_t ri = 0; ri < rows.size(); ++ri) {
                     const u64 pp = unpack_pos(rows[ri].pos);
-                    ob.push_back(pp);
-                    sb.push_back((u8)(rows[ri].pos >> 48));
+                    ob[ri] = pp;
+                    sb[ri] = (u8)(rows[ri].pos >> 48);
                     if (ifd >= 0 && pp % isaK == 0) {
                         const u64 rk = band_off[b] + (u64)ri;   // this row's global rank
                         if (::pwrite(ifd, &rk, 8, off_t(32 + (pp / isaK) * 8)) != 8)
@@ -1326,8 +1787,23 @@ int main(int argc, char** argv) {
                     }
                 }
                 tWrite[b] = now_sec() - bw0;
-                rows.clear();
-                rows.shrink_to_fit();
+                // The band is on disc and published: only NOW may its scatter parts
+                // go (a retry after a failed allocation re-reads them).
+                if (!keep_rows) {
+                    for (u64 t = 0; t < nparts; ++t) {
+                        char name[512];
+                        std::snprintf(name, sizeof name, "%s/w%" PRIu64 ".b%05" PRIu64 ".p%05" PRIu64,
+                                      scratch.c_str(), w, b, t);
+                        ::unlink(name);
+                    }
+                }
+                bswap_release(rows);
+                bswap_release(bandLcp);
+                bswap_release(bandEsc);
+                bswap_release(ob);
+                bswap_release(sb);
+                gate.release(admitted);   // the arena this band held goes back
+                (void)bs0;
             }
         };
         if (!tapeBands.empty()) {
@@ -1469,6 +1945,54 @@ int main(int argc, char** argv) {
             lcpPeakLiveSlices, lcpSliceBytes, lcpRows, lcpEscapes,
             lcpRowsSeen.load() ? double(lcpRowsSeen.load()) / double(std::max<u64>(1, lcpRunsSeen.load())) : 0.0,
             lcpWindowNow(), lcpMaxSliceBytes);
+    }
+    // ===================== THE BUDGET, PAID =================================
+    // The receipt, and the two assertions that keep the model from rotting.
+    //   budget_ratio = peak OWNED (anon) RSS / the envelope. It must stay under
+    //   SS_BUDGET_RATIO_MAX (0.90); if it does not, the sizer priced a different
+    //   process than the one that ran and the build FAILS LOUD instead of printing
+    //   a comfortable story.
+    //   peak_file_kb is the corpus MAPPING: clean, reclaimable page cache that can
+    //   never OOM this process and is not part of the sorter's footprint - reported
+    //   beside the anon figure so nothing is hidden, never mixed into the ratio.
+    rss.finish();
+    const u64 peak_anon_kb = rss.peak_anon.load();
+    const u64 peak_file_kb = rss.peak_file.load();
+    const u64 peak_total_kb = rss.peak_total.load();
+    struct rusage ru{};
+    ::getrusage(RUSAGE_SELF, &ru);
+    const u64 hwm_kb = (u64)ru.ru_maxrss;
+    const double anon_ratio = double(peak_anon_kb) * 1024.0 / double(envelope_bytes);
+    const double total_ratio = double(hwm_kb) * 1024.0 / double(envelope_bytes);
+    const u64 arena_peak_rows = gate.peak;
+    const u64 arena_peak_bytes = arena_peak_rows * budget.bytes_per_row;
+    std::fprintf(stderr,
+        "SS_TAPE_PEAK peak_rss_kb=%" PRIu64 " budget_ratio=%.4f budget_bytes=%" PRIu64
+        " peak_anon_kb=%" PRIu64 " peak_file_kb=%" PRIu64 " peak_total_kb=%" PRIu64
+        " total_ratio=%.4f arena_peak_rows=%" PRIu64 " arena_peak_bytes=%" PRIu64
+        " arena_model_bytes=%" PRIu64 " cap_rows=%" PRIu64 " rows_per_band=%" PRIu64
+        " arena_planned_bytes=%" PRIu64 " bands_in_flight=%" PRIu64 " waves_actual=%" PRIu64
+        " gate_waits=%" PRIu64
+        " memory_gb=%.2f (budget_ratio = peak OWNED RSS / envelope, asserted <= %.2f; "
+        "peak_file_kb is the CLEAN reclaimable corpus mapping, reported, never counted)\n",
+        hwm_kb, anon_ratio, envelope_bytes, peak_anon_kb, peak_file_kb, peak_total_kb,
+        total_ratio, arena_peak_rows, arena_peak_bytes, budget.arena, budget.cap_rows,
+        rows_per_band, budget.arena_planned * budget.bytes_per_row, budget.bands_in_flight, waves,
+        gate.wait_count(),
+        memory_gb > 0 ? memory_gb : ram_gb, double(SS_BUDGET_RATIO_MAX) / 100.0);
+    if (anon_ratio > double(SS_BUDGET_RATIO_MAX) / 100.0) {
+        std::fprintf(stderr,
+            "SS_TAPE_BUDGET_VIOLATION owned_rss=%" PRIu64 " kB = %.4f of the %.3f GiB envelope \n",
+            peak_anon_kb, anon_ratio, double(envelope_bytes) / double(1u << 30));
+        die("TAPE_BUDGET_VIOLATION: the sorter's OWNED peak RSS exceeded the model "
+            "(SS_BUDGET_RATIO_MAX). The band plan no longer prices what the run holds - "
+            "fix bytes_per_row or bands_in_flight, do not widen the envelope");
+    }
+    if (arena_peak_bytes > envelope_bytes) {
+        die("TAPE_ARENA_OVER_BUDGET: the admitted band arenas peaked at " +
+            std::to_string(arena_peak_bytes) + " B against an envelope of " +
+            std::to_string(envelope_bytes) + " B (cap_rows=" + std::to_string(budget.cap_rows) +
+            ", rows_per_band=" + std::to_string(rows_per_band) + ")");
     }
     std::fprintf(stderr,
         "SS_DONE n=%" PRIu64 " waves=%" PRIu64 " ties=%" PRIu64
