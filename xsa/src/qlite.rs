@@ -540,16 +540,34 @@ pub struct Index {
     rd: RunDir,
     anchors: Vec<u64>,
     stripe: u64,
+    /// THE RUN COLUMNS, decoded once at open from the m1 block stream and held in
+    /// RAM: `heads[run]`, `lens[run]` (both from the container, byte-exact) and
+    /// `seen[run]` (derived: how many runs of `heads[run]` precede `run`).
+    ///
+    /// Why this exists, measured (RESULTS_QUERY_HOTPATH.md): a warm 256-run m1
+    /// block decode is 2.33 us (9.1 ns/run, XSA_M1_AUDIT_FULL=1 over all 223,747
+    /// blocks) and one LF step used to pay for 2.04 of them plus ~525 per-run
+    /// `run()` probes. Page faults were NOT the cost: the same query on tmpfs (all
+    /// pages resident) is 114.8 ms against 115.0 ms on NVMe, with 0 major faults.
+    /// A rank step must therefore not decode at all, which is exactly what these
+    /// three columns buy: 9 B/run, one streaming decode at open, no container
+    /// change (the format, `chi` and the positions are untouched).
+    heads: Vec<u8>,
+    lens: Vec<u32>,
+    seen: SeenCol,
     pub build_ms: f64,
-    /// Bytes of run data this process actually decoded (the open-time block
-    /// audit). The whole point of the format change: it is bounded, and it does
-    /// not grow with the container.
+    /// Bytes of per-run columns this process materialised at open. Reported so the
+    /// open's memory cost is auditable against the container's 0.71n.
     pub decoded_bytes: u64,
     /// Per-stage build walls, in order.
     pub stages: Vec<(&'static str, f64)>,
+    /// Blocks the open-time audit checked run-length sums against m12 for.
     pub audit_blocks: u64,
     pub block_runs: u64,
     pub rundir_stride: u64,
+    /// Threads the open-time decode ran on, journaled (`-j` does not bound it:
+    /// the open is a bulk step, the query is what `-j` parallelises).
+    pub open_threads: usize,
 }
 
 /// m12: `row(j) = (mmap[l1_off + 8j])` is the row of run `j*stride`; the level-2
@@ -579,33 +597,56 @@ struct RunDir {
     run_gap: u64,
 }
 
-/// One decoded m1 block: `block_runs` runs of head symbol + run length. The
-/// width comes from the container, so the buffers are sized from it.
-struct Block {
-    id: u64,
-    n: u32,
-    heads: Vec<u8>,
-    lens: Vec<u32>,
+/// The per-run column "count of `heads[run]` in runs `[0,run)`" -- i.e. the
+/// sample-free rank answer for a run's OWN symbol, which is the only rank an LF
+/// step needs.
+///
+/// Width is chosen per container: a u32 is enough while every symbol occurs at
+/// most 2^32-1 times (true for every container whose n fits in 32 bits, and for
+/// most beyond), and a u64 costs 4 bytes more per run. The accessor is inline
+/// and branch-predictable, so this costs one predicted branch per step and never
+/// a silent truncation.
+enum SeenCol {
+    U32(Vec<u32>),
+    U64(Vec<u64>),
 }
 
-impl Block {
-    fn empty(width: u64) -> Block {
-        Block {
-            id: u64::MAX,
-            n: 0,
-            heads: vec![0u8; width as usize],
-            lens: vec![0u32; width as usize],
+impl SeenCol {
+    #[inline(always)]
+    fn get(&self, run: u64) -> u64 {
+        match self {
+            SeenCol::U32(v) => u64::from(unsafe { *v.get_unchecked(run as usize) }),
+            SeenCol::U64(v) => unsafe { *v.get_unchecked(run as usize) },
+        }
+    }
+    fn name(&self) -> &'static str {
+        match self {
+            SeenCol::U32(_) => "u32",
+            SeenCol::U64(_) => "u64",
+        }
+    }
+    fn bytes(&self) -> u64 {
+        match self {
+            SeenCol::U32(v) => 4 * v.len() as u64,
+            SeenCol::U64(v) => 8 * v.len() as u64,
         }
     }
 }
 
-/// Per-query-thread working set: the block cache. Small enough to stay hot
-/// (BLOCK_CACHE x ~350 B) and direct-mapped, so a lookup is one array index.
+/// Per-query-thread working set. It used to be a 4096-entry direct-mapped cache
+/// of decoded m1 blocks; now every run column lives in RAM (built once at open),
+/// so this is only the diagnostic counter block: one `Ctx` per pattern, so two
+/// patterns on one rayon thread never mix their counters.
 pub struct Ctx<'a> {
     idx: &'a Index,
-    cache: Box<[Block]>,
-    hits: u64,
-    misses: u64,
+    /// Diagnostic counters, printed under XSA_TRACE. They answer "what does one
+    /// rank/LF step actually pay for": `scan_of` runs walked in `run_of`'s
+    /// forward scan, `scan_cum` runs walked in `cum_before`'s sample-to-run scan,
+    /// `steps` LF steps, `ranks` rank() calls.
+    scan_of: u64,
+    scan_cum: u64,
+    steps: u64,
+    ranks: u64,
 }
 
 fn u64_at(d: &[u8], o: usize) -> u64 {
@@ -857,76 +898,47 @@ impl Index {
             rd,
             anchors,
             stripe,
+            heads: Vec::new(),
+            lens: Vec::new(),
+            seen: SeenCol::U32(Vec::new()),
             build_ms: 0.0,
             decoded_bytes: 0,
             stages: Vec::new(),
             audit_blocks: 0,
             block_runs,
             rundir_stride: rd_l2,
+            open_threads: 0,
         };
-        if idx.payload_off + m1payload_len != idx.reader.member(1).offset + idx.reader.member(1).bytes {
+        if idx.payload_off + m1payload_len
+            != idx.reader.member(1).offset + idx.reader.member(1).bytes
+        {
             return Err("m1 payload area does not reach the end of its member".into());
         }
 
-        // ---- OPEN-TIME FAIL-LOUD AUDIT. Structural validation proves the
-        // directories are well formed; this proves they agree with the payload
-        // and with n, without decoding the whole stream: a spread of blocks is
-        // decoded and its runs are checked against the m12 samples that bracket
-        // them (adjacent blocks must sum to the difference of their samples), and
-        // the LAST window must close exactly on n.
-        let audit = {
-            let (checked, misses) = {
-                let mut cx = idx.ctx();
-                let mut bad = 0u64;
-                let mut checked = 0u64;
-                // Dev gate: XSA_M1_AUDIT_FULL=1 audits EVERY block (step 1) instead of
-                // M1_AUDIT_BLOCKS samples. Not on any production path; it is how the
-                // block payload is proven byte-exact over the whole run stream at 150 MB
-                // (~0.9e6 decodes, well under a second).
-                let full = std::env::var("XSA_M1_AUDIT_FULL").ok().as_deref() == Some("1");
-                let step = if full { 1 } else { (nblocks / M1_AUDIT_BLOCKS).max(1) };
-                let mut b = 0u64;
-                while b + 1 < nblocks {
-                    // block b occupies rows [l1(b), l1(b+1)), so its run lengths
-                    // must sum to exactly that span. Decoded, not assumed.
-                    let sum = cx.block_sum(b)?;
-                    let (s0, s1) = (idx.l1(b), idx.l1(b + 1));
-                    if s1 - s0 != sum {
-                        bad += 1;
-                    }
-                    checked += 1;
-                    b += step;
-                }
-                // the tail: the last window must close exactly on n
-                let last = nblocks - 1;
-                let last_sum = cx.block_sum(last)?;
-                if idx.l1(last) + last_sum != n {
-                    return Err(format!(
-                        "m1 block audit: the last window starts at {} and sums to {}, but n={n}",
-                        idx.l1(last),
-                        last_sum
-                    ));
-                }
-                if bad != 0 {
-                    return Err(format!(
-                        "m1 block audit: {bad} of {checked} sampled blocks do not sum to their m12\n  \
-                         run-start span"
-                    ));
-                }
-                (checked + 1, cx.misses)
-            };
-            (checked, misses)
-        };
-        let t_audit = t0.elapsed();
-        let (n_audit, dec) = audit;
-        idx.decoded_bytes = dec * BLOCK_BYTES_EST;
-        idx.audit_blocks = n_audit;
+        // ---- THE OPEN-TIME DECODE, AND THE AUDIT THAT COMES FREE WITH IT.
+        //
+        // The run stream is decoded exactly once, block by block, into three
+        // per-run columns. That is what makes a rank step decode-free; the
+        // previous reader decoded ~2 blocks PER LF STEP out of the mmap and was
+        // measured at 8.5-10 us/step (RESULTS_QUERY_HOTPATH.md, and the reason is
+        // a warm 2.33 us/256-run block decode, NOT page faults: the same query on
+        // tmpfs is 114.8 ms against 115.0 ms on NVMe, 0 major faults).
+        //
+        // The audit gets STRONGER for free: every block's run lengths must sum to
+        // exactly the m12 run-start span that brackets it, and the last block must
+        // close exactly on n. The old reader checked 1024 sampled blocks; this
+        // checks all 223,747 of them because the decode is happening anyway.
+        let t_mat0 = t0.elapsed();
+        idx.materialise()?;
+        let t_mat = t0.elapsed();
+        let n_audit = idx.nblocks;
+        let dec = idx.decoded_bytes;
         let stages = vec![
             ("m11-anchors", t_anchors.as_secs_f64() * 1e3),
             ("prefetch", (t_prefetch - t_anchors).as_secs_f64() * 1e3),
-            ("block-audit", (t_audit - t_prefetch).as_secs_f64() * 1e3),
+            ("run-columns", (t_mat - t_mat0).as_secs_f64() * 1e3),
         ];
-        let build_ms = t_audit.as_secs_f64() * 1e3;
+        let build_ms = t_mat.as_secs_f64() * 1e3;
         idx.stages = stages;
         idx.build_ms = build_ms;
         if crate::trace_on() {
@@ -934,10 +946,177 @@ impl Index {
                 eprintln!("TRACE stage=lite.{name} ms={ms:.1}");
             }
             eprintln!(
-                "TRACE stage=lite.build-total ms={build_ms:.1} audit_blocks={n_audit} decoded_blocks={dec}"
+                "TRACE stage=lite.build-total ms={build_ms:.1} audit_blocks={n_audit} \
+                 run_column_bytes={dec} open_threads={} seen_width={}",
+                idx.open_threads,
+                idx.seen.name()
             );
         }
         Ok(idx)
+    }
+
+    /// Decode every m1 block once and build the three per-run columns:
+    /// `heads`, `lens` (both byte-exact from the container) and `seen`
+    /// (`seen[run]` = how many runs of `heads[run]` precede `run`).
+    ///
+    /// Parallel over a partition of the BLOCK RANGE into contiguous windows of
+    /// `blocks_per_chunk` blocks. Window `ci` writes only `heads`/`lens` rows
+    /// `[ci*run_per_chunk, min(r, (ci+1)*run_per_chunk))` -- `par_chunks_mut` on
+    /// both columns, zipped, so the disjointness is the type system's problem and
+    /// not a comment's. `seen` is then filled by a chunked prefix sum: phase 1
+    /// counts symbols per window (a scan of the just-decoded `heads`, no second
+    /// decode), a sequential pass makes those counts an exclusive prefix, phase 2
+    /// fills `seen` inside each window. Only `windows x 256` additions are
+    /// sequential; both phases are otherwise parallel.
+    fn materialise(&mut self) -> Result<(), String> {
+        let r = self.reader.r;
+        let br = self.block_runs;
+        let nblocks = self.nblocks;
+        let n = self.reader.n;
+        let threads = rayon::current_num_threads().max(1);
+        self.open_threads = threads;
+        // One window per thread, rounded UP to whole blocks, at least one block.
+        let blocks_per_chunk = ((nblocks + threads as u64 - 1) / threads as u64).max(1);
+        let nchunks = ((nblocks + blocks_per_chunk - 1) / blocks_per_chunk) as usize;
+        let runs_per_chunk = blocks_per_chunk * br;
+        let mut heads = vec![0u8; r as usize];
+        let mut lens = vec![0u32; r as usize];
+
+        // ---- phase 0: decode + complete audit + per-window symbol counts.
+        // per window: ([runs per symbol], [rows per symbol]). The row totals must
+        // equal the m1 C table exactly (that is the container's own definition of
+        // a symbol's count); the run counts are `seen`'s prefix bases.
+        let per_chunk: Vec<Result<([u64; 256], [u64; 256]), String>> = {
+            let idx: &Index = self;
+            heads
+                .par_chunks_mut(runs_per_chunk as usize)
+                .zip(lens.par_chunks_mut(runs_per_chunk as usize))
+                .enumerate()
+                .map(|(ci, (hc, lc))| -> Result<([u64; 256], [u64; 256]), String> {
+                    let b0 = ci as u64 * blocks_per_chunk;
+                    let b1 = (b0 + blocks_per_chunk).min(nblocks);
+                    if b1 <= b0 {
+                        return Err(format!("run-column window {ci} owns no block"));
+                    }
+                    let mut acc = [0u64; 256];
+                    let mut rows = [0u64; 256];
+                    for b in b0..b1 {
+                        let first = b * br;
+                        let lo = (first - ci as u64 * runs_per_chunk) as usize;
+                        let want = ((first + br).min(r) - first) as usize;
+                        let (off, hbits, lbits) = idx.dir(b);
+                        let hbytes = (hbits as u64 + 7) / 8;
+                        let start = idx.payload_off + off;
+                        let end = start + hbytes + (lbits as u64 + 7) / 8;
+                        if end > idx.payload_end {
+                            return Err(format!(
+                                "m1 block {b} runs past the payload area ({end} > {})",
+                                idx.payload_end
+                            ));
+                        }
+                        let p = &idx.reader.map.as_ref()[start as usize..end as usize];
+                        let got = decode_block(
+                            &idx.huff,
+                            &idx.gamma,
+                            &p[..hbytes as usize],
+                            hbits as u64,
+                            &p[hbytes as usize..],
+                            lbits as u64,
+                            want,
+                            &mut hc[lo..lo + want],
+                            &mut lc[lo..lo + want],
+                            b,
+                        );
+                        debug_assert_eq!(got, want);
+                        // the m12 bracketing span, and the audit that the decode
+                        // agrees with it run for run.
+                        let (s0, s1) = (idx.l1(b), if b + 1 < nblocks { idx.l1(b + 1) } else { n });
+                        let mut sum = 0u64;
+                        for i in lo..lo + want {
+                            let l = u64::from(lc[i]);
+                            sum += l;
+                            rows[hc[i] as usize] += l;
+                            acc[hc[i] as usize] += 1;
+                        }
+                        if s1 - s0 != sum {
+                            return Err(format!(
+                                "m1 block audit: block {b} run lengths sum to {sum}, but the m12\n  \
+                                 span it occupies is [{s0},{s1}) = {}",
+                                s1 - s0
+                            ));
+                        }
+                    }
+                    Ok((acc, rows))
+                })
+                .collect()
+        };
+        // `base[ci]` is how many ROWS of each symbol precede window `ci`: `seen` is
+        // a ROW cumulative count (what rank returns), not a run count.
+        let mut base: Vec<[u64; 256]> = Vec::with_capacity(nchunks);
+        let mut acc = [0u64; 256];
+        let mut rows = [0u64; 256];
+        for c in per_chunk {
+            let (cr, cw) = c?;
+            base.push(rows);
+            for s in 0..256 {
+                acc[s] += cr[s];
+                rows[s] += cw[s];
+            }
+        }
+        if let Some(bad) = (0..256).find(|&s| rows[s] != self.total[s]) {
+            return Err(format!(
+                "run columns disagree with the m1 C table: the decoded run lengths give symbol \
+                 {bad} {} rows and the C table says {}",
+                rows[bad], self.total[bad]
+            ));
+        }
+        if acc.iter().sum::<u64>() != r {
+            return Err(format!(
+                "run columns: the windows counted {} runs, the header says {r}",
+                acc.iter().sum::<u64>()
+            ));
+        }
+
+        // ---- phase 1: seen, width chosen from the container's own totals.
+        let wide = rows.iter().any(|&t| t > u64::from(u32::MAX));
+        let seen = if wide {
+            let mut v = vec![0u64; r as usize];
+            v.par_chunks_mut(runs_per_chunk as usize)
+                .zip(heads.par_chunks(runs_per_chunk as usize))
+                .zip(lens.par_chunks(runs_per_chunk as usize))
+                .enumerate()
+                .for_each(|(ci, ((sc, hc), lc))| {
+                    let mut a = base[ci];
+                    for i in 0..sc.len() {
+                        let h = hc[i] as usize;
+                        sc[i] = a[h];
+                        a[h] += u64::from(lc[i]);
+                    }
+                });
+            SeenCol::U64(v)
+        } else {
+            let mut v = vec![0u32; r as usize];
+            v.par_chunks_mut(runs_per_chunk as usize)
+                .zip(heads.par_chunks(runs_per_chunk as usize))
+                .zip(lens.par_chunks(runs_per_chunk as usize))
+                .enumerate()
+                .for_each(|(ci, ((sc, hc), lc))| {
+                    let mut a = base[ci];
+                    for i in 0..sc.len() {
+                        let h = hc[i] as usize;
+                        debug_assert!(a[h] <= u64::from(u32::MAX));
+                        sc[i] = a[h] as u32;
+                        a[h] += u64::from(lc[i]);
+                    }
+                });
+            SeenCol::U32(v)
+        };
+        self.decoded_bytes = heads.len() as u64 + 4 * lens.len() as u64 + seen.bytes();
+        self.audit_blocks = nblocks;
+        self.heads = heads;
+        self.lens = lens;
+        self.seen = seen;
+        Ok(())
     }
 
     #[inline]
@@ -948,16 +1127,15 @@ impl Index {
     pub fn r(&self) -> u64 {
         self.reader.r
     }
-    /// A fresh per-thread working set (block cache). One per pattern.
+    /// A fresh per-pattern working set. The run columns are shared (read-only),
+    /// so this is just this pattern's counters.
     pub fn ctx(&self) -> Ctx<'_> {
         Ctx {
             idx: self,
-            cache: (0..BLOCK_CACHE)
-                .map(|_| Block::empty(self.block_runs))
-                .collect::<Vec<Block>>()
-                .into_boxed_slice(),
-            hits: 0,
-            misses: 0,
+            scan_of: 0,
+            scan_cum: 0,
+            steps: 0,
+            ranks: 0,
         }
     }
 
@@ -997,81 +1175,30 @@ impl Index {
 // ------------------------------------------------------------ the query thread
 
 impl<'a> Ctx<'a> {
-    /// `(head, length)` of run `run`, decoding its 64-run block on a cache miss.
-    #[inline]
-    fn run(&mut self, run: u64) -> (u8, u32) {
-        let b = run / self.idx.block_runs;
-        let i = (run % self.idx.block_runs) as usize;
-        let slot = (b % BLOCK_CACHE as u64) as usize;
-        if self.cache[slot].id != b {
-            self.fill(b, slot);
-        }
-        let blk = &self.cache[slot];
-        debug_assert!((i as u32) < blk.n);
-        (blk.heads[i], blk.lens[i])
+    /// `(head, length)` of run `run`. Two array reads: the run columns are the
+    /// whole point of the open-time decode.
+    #[inline(always)]
+    fn run(&self, run: u64) -> (u8, u32) {
+        debug_assert!(run < self.idx.reader.r);
+        (
+            unsafe { *self.idx.heads.get_unchecked(run as usize) },
+            unsafe { *self.idx.lens.get_unchecked(run as usize) },
+        )
     }
-    #[cold]
-    fn fill(&mut self, b: u64, slot: usize) {
-        self.misses += 1;
-        let idx = self.idx;
-        let (off, hbits, lbits) = idx.dir(b);
-        let hbytes = (hbits as u64 + 7) / 8;
-        let lbytes = (lbits as u64 + 7) / 8;
-        let start = idx.payload_off + off;
-        let end = start + hbytes + lbytes;
-        if end > idx.payload_end {
-            die(&format!(
-                "m1 block {b} runs past the payload area ({end} > {})",
-                idx.payload_end
-            ));
-        }
-        let p = &idx.reader.map.as_ref()[start as usize..end as usize];
-        let first = b * idx.block_runs;
-        let want = ((first + idx.block_runs).min(idx.reader.r) - first) as usize;
-        let mut heads = vec![0u8; want];
-        let mut lens = vec![0u32; want];
-        let n = decode_block(
-            &idx.huff,
-            &idx.gamma,
-            &p[..hbytes as usize],
-            hbits as u64,
-            &p[hbytes as usize..],
-            lbits as u64,
-            want,
-            &mut heads,
-            &mut lens,
-            b,
-        );
-        self.cache[slot] = Block {
-            id: b,
-            n: n as u32,
-            heads,
-            lens,
-        };
+    /// `cum_before` for a run's OWN symbol, which is the only rank an LF step
+    /// needs (`h = heads[run]`): one column read, no bisect, no scan.
+    #[inline(always)]
+    fn seen(&self, run: u64) -> u64 {
+        self.idx.seen.get(run)
     }
-    fn hits(&self) -> u64 {
-        self.hits
-    }
-    /// Sum of the run lengths in block `b`: one decode, and the caller checks it
-    /// against the m12 run-start span it must equal. Fail-loud, not advisory.
-    fn block_sum(&mut self, b: u64) -> Result<u64, String> {
-        let first = b * self.idx.block_runs;
-        let want = ((first + self.idx.block_runs).min(self.idx.reader.r) - first) as usize;
-        let slot = (b % BLOCK_CACHE as u64) as usize;
-        if self.cache[slot].id != b {
-            self.fill(b, slot);
-        }
-        let blk = &self.cache[slot];
-        if blk.n as usize != want {
-            return Err(format!("m1 block {b} decoded {} of {want} runs", blk.n));
-        }
-        Ok(blk.lens[..want].iter().map(|&l| l as u64).sum())
+    fn diag(&self) -> (u64, u64, u64, u64) {
+        (self.scan_of, self.scan_cum, self.steps, self.ranks)
     }
     /// `(run, run start row)` of the run holding row `row`.
     ///
-    /// Two bisects (a cache-resident level-2 array, then one 8 KB level-1 window)
-    /// plus a forward scan of at most `block_runs` runs inside the block the
-    /// row is in - so a lookup costs one decoded block, never a predecessor walk.
+    /// Two bisects (a cache-resident level-2 array, then one level-1 window) plus
+    /// a forward scan of at most `block_runs` runs over the RAM `lens` column -
+    /// so a lookup never decodes anything.
     fn run_of(&mut self, row: u64) -> (u64, u64) {
         let idx = self.idx;
         let r = idx.reader.r;
@@ -1107,9 +1234,12 @@ impl<'a> Ctx<'a> {
         }
         let mut run = a * idx.rs.stride;
         let mut s = idx.l1(a);
-        // walk forward inside the run-start sample window (<= 64 runs, one block)
+        // walk forward inside the run-start sample window (<= block_runs runs, and
+        // `lens` is a flat u32 column, so this is a prefetched sequential scan)
+        let lens = &idx.lens;
         while run + 1 < r {
-            let l = self.run(run).1 as u64;
+            let l = u64::from(unsafe { *lens.get_unchecked(run as usize) });
+            self.scan_of += 1;
             if s + l > row {
                 break;
             }
@@ -1119,12 +1249,14 @@ impl<'a> Ctx<'a> {
         (run, s)
     }
     /// Occurrences of `ch` in the BWT before run `k` (i.e. rows of `ch` in runs
-    /// `[0,k)`).
+    /// `[0,k)`), for an ARBITRARY `ch`.
     ///
     /// Sampling every `occ_stride`-th occurrence of `ch` plus a `run_gap`-run cap
-    /// means the scan from the sample to `k` is at most one 64-run block, and the
+    /// means the scan from the sample to `k` is at most `run_gap` runs, and the
     /// `stride == 1` fast path (the next sample IS the next run of `ch`, which is
-    /// what every rare symbol gets) needs no scan at all.
+    /// what every rare symbol gets) needs no scan at all. This is the SEARCH path
+    /// (a pattern character, not a run's own symbol); the LF walk uses the
+    /// `seen` column instead and pays no bisect at all.
     fn cum_before(&mut self, ch: u8, k: u64) -> u64 {
         let ci = ch as usize;
         let m = self.idx.rd.counts[ci];
@@ -1169,7 +1301,7 @@ impl<'a> Ctx<'a> {
             if a + 1 < m {
                 return idx.entry(ci, a + 1).0;
             }
-            return c0 + self.run(r0).1 as u64;
+            return c0 + u64::from(self.run(r0).1);
         }
         // THE SCAN IS BOUNDED BY THE HEADER'S OWN run_gap, and the reader never
         // scans past it. The writer samples `ch` at any occurrence that is
@@ -1191,11 +1323,13 @@ impl<'a> Ctx<'a> {
         }
         let mut acc = c0;
         let mut run = r0;
+        let heads = &idx.heads;
+        let lens = &idx.lens;
         while run < k {
-            // one block decode answers up to `block_runs` consecutive runs
-            let (h, l) = self.run(run);
+            self.scan_cum += 1;
+            let h = unsafe { *heads.get_unchecked(run as usize) };
             if h == ch {
-                acc += l as u64;
+                acc += u64::from(unsafe { *lens.get_unchecked(run as usize) });
             }
             run += 1;
         }
@@ -1212,6 +1346,7 @@ impl<'a> Ctx<'a> {
     /// Occurrences of `ch` in the BWT before row `i`.
     #[inline]
     fn rank(&mut self, ch: u8, i: u64) -> u64 {
+        self.ranks += 1;
         if i == 0 {
             return 0;
         }
@@ -1219,15 +1354,15 @@ impl<'a> Ctx<'a> {
             return self.idx.total[ch as usize];
         }
         let (run, s) = self.run_of(i);
-        let (h, _) = self.run(run);
-        let base = self.cum_before(ch, run);
-        if h == ch {
-            base + (i - s)
+        if self.run(run).0 == ch {
+            // the row's own run carries `ch`: cum_before(ch, run) + (i - s) is
+            // exactly `seen[run]` + (i - s) because ch IS the run's head.
+            self.seen(run) + (i - s)
         } else {
-            base
+            self.cum_before(ch, run)
         }
     }
-    /// Half-open BWT interval of the pattern, consumed left to right.
+    /// Half-open BWT interval of the pattern, consumed right to left.
     pub fn search(&mut self, pat: &[u8]) -> (u64, u64) {
         let mut l = 0u64;
         let mut r = self.idx.reader.n;
@@ -1257,14 +1392,15 @@ impl<'a> Ctx<'a> {
         loop {
             let (run, s) = self.run_of(pos);
             let (h, l) = self.run(run);
-            let end = s + l as u64;
+            let end = s + u64::from(l);
             if pos == end - 1 && run % stripe == 0 {
                 let anchor = self.idx.anchors[(run / stripe) as usize];
                 return ((anchor + steps) % n, steps);
             }
-            let lf = self.idx.c[h as usize] + self.cum_before(h, run);
+            let lf = self.idx.c[h as usize] + self.seen(run);
             pos = lf + (pos - s);
             steps += 1;
+            self.steps += 1;
             if steps >= n {
                 die("locate: LF walk has no anchored sample");
             }
@@ -1454,6 +1590,9 @@ struct Hit {
     /// total LF steps over all occurrences, and the worst single walk
     steps: u64,
     max_steps: u64,
+    /// Trace-only work counters for this pattern: (run_of scan runs, cum_before
+    /// scan runs, LF steps, rank calls).
+    diag: (u64, u64, u64, u64),
 }
 
 /// The two pattern-file contracts.
@@ -1728,12 +1867,14 @@ pub fn command(args: &[String]) {
             } else {
                 0.0
             };
+            let (d_of, d_cum, d_steps, d_ranks) = cx.diag();
             Hit {
                 positions,
                 search_us,
                 locate_us,
                 steps,
                 max_steps,
+                diag: (d_of, d_cum, d_steps, d_ranks),
             }
         })
         .collect();
@@ -1795,7 +1936,8 @@ pub fn command(args: &[String]) {
         if crate::trace_on() {
             eprintln!(
                 "TRACE_PATTERN id={} len={} occ={} search_us={:.1} locate_us={:.1} \
-                 steps={} max_steps={} total_us={:.1}",
+                 steps={} max_steps={} total_us={:.1} us_per_step={:.3} scan_of={} scan_cum={} \
+                 diag_steps={} ranks={}",
                 pid,
                 patterns[pid].len(),
                 hit.positions.len(),
@@ -1803,7 +1945,12 @@ pub fn command(args: &[String]) {
                 hit.locate_us,
                 hit.steps,
                 hit.max_steps,
-                us
+                us,
+                us / hit.steps.max(1) as f64,
+                hit.diag.0,
+                hit.diag.1,
+                hit.diag.2,
+                hit.diag.3
             );
         }
         if hit.positions.len() <= 3 {
