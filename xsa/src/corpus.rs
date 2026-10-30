@@ -574,6 +574,9 @@ struct Finished {
 
 struct Stream<R: Read> {
     r: R,
+    /// The decompressor is reaped the moment its stdout ends: a truncated or
+    /// corrupt bzip2 stream must be named as the cause, not as "truncated XML".
+    child: Option<Child>,
     buf: Vec<u8>,
     pos: usize,
     end: usize,
@@ -582,8 +585,33 @@ struct Stream<R: Read> {
 }
 
 impl<R: Read> Stream<R> {
-    fn new(r: R) -> Stream<R> {
-        Stream { r, buf: vec![0u8; READ_BUF], pos: 0, end: 0, base_abs: 0, eof: false }
+    fn new(r: R, child: Child) -> Stream<R> {
+        Stream { r, child: Some(child), buf: vec![0u8; READ_BUF], pos: 0, end: 0, base_abs: 0, eof: false }
+    }
+
+    /// At EOF: a non-zero decompressor exit means the dump itself never decoded,
+    /// so nothing after this point (including any XML error) is worth reporting.
+    fn reap_at_eof(&mut self) {
+        let mut child = match self.child.take() {
+            Some(c) => c,
+            None => return,
+        };
+        match child.wait() {
+            Ok(st) if st.success() => {}
+            Ok(st) => die(&format!(
+                "corpus: decompressor failed ({}): truncated or invalid bzip2 stream; refusing to emit a short corpus",
+                st
+            )),
+            Err(e) => die(&format!("corpus: waiting for the decompressor: {}", e)),
+        }
+    }
+
+    /// Stop reading early (--max-bytes): kill and reap the decompressor.
+    fn kill_child(&mut self) {
+        if let Some(mut c) = self.child.take() {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
     }
 
     fn abs_pos(&self) -> u64 {
@@ -605,7 +633,10 @@ impl<R: Read> Stream<R> {
                 self.pos = 0;
             }
             match self.r.read(&mut self.buf[self.end..]) {
-                Ok(0) => self.eof = true,
+                Ok(0) => {
+                    self.eof = true;
+                    self.reap_at_eof();
+                }
                 Ok(k) => self.end += k,
                 Err(e) if e.kind() == ErrorKind::Interrupted => {}
                 Err(e) => return Err(e),
@@ -814,8 +845,11 @@ impl<R: Read> Parser<R> {
             Some(b'/') => {
                 self.s.bump();
                 let name = self.tag_name();
-                self.close_tag(&name, start);
-                Step::Continue
+                if self.close_tag(&name, start) {
+                    Step::Stop
+                } else {
+                    Step::Continue
+                }
             }
             Some(_) => {
                 let name = self.tag_name();
@@ -982,7 +1016,9 @@ impl<R: Read> Parser<R> {
         }
     }
 
-    fn close_tag(&mut self, name: &[u8], start: u64) {
+    /// Returns true when the pass must stop (a --max-bytes boundary was just
+    /// crossed); the caller turns that into Step::Stop.
+    fn close_tag(&mut self, name: &[u8], start: u64) -> bool {
         // Optional whitespace before '>'.
         loop {
             match ck!(self.s.peek(), "read dump stream") {
@@ -1052,9 +1088,10 @@ impl<R: Read> Parser<R> {
             self.has_body = false;
             self.revisions = 0;
             if stop {
-                return;
+                return true;
             }
         }
+        false
     }
 }
 
@@ -1127,7 +1164,7 @@ fn run(dump: &str, out: &str, max_bytes: Option<u64>, sep_mode: bool, t0: Instan
         None => die("corpus: decompressor produced no stdout pipe"),
     };
     let emitter = Emitter::new(Path::new(out), sep_mode, max_bytes);
-    let mut parser = Parser::new(Stream::new(stdout), emitter);
+    let mut parser = Parser::new(Stream::new(stdout, child), emitter);
     let step = parser.run();
     crate::trace_since("corpus_parse", t1);
 
@@ -1135,20 +1172,10 @@ fn run(dump: &str, out: &str, max_bytes: Option<u64>, sep_mode: bool, t0: Instan
     let pages = parser.pages;
     let multi_rev = parser.multi_revision_pages;
 
-    // 3. Reap the decompressor. A non-zero exit is a truncated or corrupt bz2
-    //    stream: the XML we just consumed is not the dump.
+    // 3. The decompressor is reaped at EOF (inside the stream) or killed here
+    //    when --max-bytes stopped the pass early.
     if cut {
-        let _ = child.kill();
-        let _ = child.wait();
-    } else {
-        match child.wait() {
-            Ok(st) if st.success() => {}
-            Ok(st) => die(&format!(
-                "corpus: decompressor failed ({}): truncated or invalid bzip2 stream; refusing to emit a short corpus",
-                st
-            )),
-            Err(e) => die(&format!("corpus: waiting for the decompressor: {}", e)),
-        }
+        parser.s.kill_child();
     }
 
     // 4. Rule 1: the framing byte must equal the document count in separator mode.
@@ -1163,6 +1190,10 @@ fn run(dump: &str, out: &str, max_bytes: Option<u64>, sep_mode: bool, t0: Instan
              xsa: note: nothing was published; the incomplete sidecars keep their .partial names",
             sep_count, doc_count, content_seps, sep_count, docs_hit
         ));
+    }
+
+    if doc_count == 0 {
+        die("corpus: the dump yielded 0 documents; refusing to emit an empty corpus");
     }
 
     // 5. Close the sidecars and write the manifest last (its presence means the
@@ -1184,6 +1215,7 @@ fn run(dump: &str, out: &str, max_bytes: Option<u64>, sep_mode: bool, t0: Instan
         "doc_count": fin.doc_count,
         "corpus_bytes": fin.corpus_bytes,
         "separator_count": fin.separator_count,
+        "separator_count_meaning": "number of 0x1E bytes in corpus.bin (emitted separators + any 0x1E inside content); rule 1 requires it to equal doc_count when --separator is 0x1e",
         "content_separator_bytes": fin.content_seps,
         "documents_with_content_separator": fin.docs_with_content_sep,
         "max_bytes": max_bytes,
