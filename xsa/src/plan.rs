@@ -461,6 +461,9 @@ impl Plan {
             if let Some(note) = &v.bin_phrase_note {
                 s.push_str(&format!("XSA_PLAN_V2_PHRASE {note}\n"));
             }
+            if let Some(note) = &v.tape_note {
+                s.push_str(&format!("XSA_PLAN_TAPE {note}\n"));
+            }
             let need_gb = self.phases.iter().map(|p| p.disc_peak_mb).fold(0.0, f64::max) / 1024.0;
             s.push_str(&format!(
                 "XSA_PLAN_V2_HOSTING all-phase scratch peak {:.1} GiB = {:.3}n on one host; free {:.1} GiB: {} (corpus itself excluded; add {:.1} GiB if co-hosted)\n",
@@ -662,6 +665,190 @@ pub fn bin_derive_live_cap(
     BinCapTerms { limit: mem_bytes, usable, cache, stage, group,
                   cap, disc_cap: disc_cap, bound_by }
 }
+// ---------------------------------------------------------------- THE TAPE ROUTE
+// `xsa build --tape` runs the band sorter (tools/binbwt/scatter_sort.cpp) instead
+// of the bin producer. Its memory shape is ONE thing: `bands_in_flight` band
+// arenas, each `rows_per_band` rows of a fixed per-row footprint. The 100 GB run
+// died because that unit was derived from the CORPUS (rows_per_wave/(4*par_bands)
+// = 0.95*2n/32/32 -> 185,721,167 rows at 100 GB against 18.5 M at 10 GB) while
+// --memory-gb stayed 96, and the sorter then aborted inside a worker thread's
+// unwind. THE MODEL BELOW IS THE ONE THE PRODUCER RUNS, term for term: the
+// producer journals it as SS_TAPE_BUDGET and the front door REFUSES the run when
+// the two disagree (TAPE_PLAN_DISAGREE), so the plan's FEASIBLE verdict cannot be
+// about a different process than the one that ran.
+
+/// Safety on the arena left after the fixed and staging terms: the sorter aims
+/// for this fraction of what it may commit, and the exit assertion allows the
+/// receipt up to TAPE_BUDGET_RATIO_MAX of the whole envelope.
+pub const TAPE_SAFETY_PCT: u64 = 85;
+pub const TAPE_BUDGET_RATIO_MAX: u64 = 90;
+/// One windowed read buffer per thread during the full-corpus passes.
+pub const TAPE_SCAN_CHUNK: u64 = 4 << 20;
+/// Paths, per-band bookkeeping, allocator overhead (the producer's SS_CTL_BYTES).
+pub const TAPE_CTL_BYTES: u64 = 64 << 20;
+/// The scatter's per-(thread,band) append staging: a fixed fraction of the
+/// envelope, clamped. The producer allocates exactly this cap (budget.stage).
+pub const TAPE_STAGE_MIN: u64 = 64 << 20;
+pub const TAPE_STAGE_MAX: u64 = 2 << 30;
+pub const TAPE_STAGE_DIVISOR: u64 = 24;
+/// Bands per worker per wave: work stealing needs more bands than workers or the
+/// wall is set by the fattest band. It only ever SHRINKS the wave.
+pub const TAPE_OVERSUBSCRIBE: u64 = 4;
+/// One fold band (65536 BWT runs) worth of rows: below this the envelope cannot
+/// hold a band at all and the producer refuses as a CONFIGURATION error.
+pub const TAPE_ROWS_FLOOR: u64 = 65536;
+/// The producer's `--sample` default: the sorted key sample it keeps in RAM.
+pub const TAPE_SAMPLE_SLOTS: u64 = 4_000_000;
+/// The packed wire row (`struct Row`), and the two per-row footprints the sort
+/// actually holds. Pricing the wire row alone is how the model ran 2.8x short.
+pub const TAPE_WIRE_ROW_BYTES: u64 = 32;
+
+/// What ONE row costs the sorter while its band is being sorted: the rows
+/// (32) + the merge's ping-pong buffer (32) + the two full u64 LCP arrays (16)
+/// + the band's u8 slice column (1) + the ordered write staging (8 + 1) = 90.
+/// Without the LCP slices (XSA_LCE_VERIFY=1, the A/B arm) the merge carries no
+/// LCP arrays and no column: 32 + 9 = 41.
+pub fn tape_bytes_per_row(lcp_slices: bool) -> u64 {
+    if lcp_slices { 2 * TAPE_WIRE_ROW_BYTES + 2 * 8 + 1 + 8 + 1 } else { TAPE_WIRE_ROW_BYTES + 8 + 1 }
+}
+
+/// The arena envelope the sorter may commit: HALF of --memory-gb, because the
+/// producer, the tape emitter and the finish run CONCURRENTLY under the same cap.
+/// This is the only input that sizes the work unit.
+pub fn tape_envelope_bytes(memory_gb: u64) -> u64 {
+    (memory_gb.max(2) / 2) * (1u64 << 30)
+}
+
+/// THE BAND PLAN, as the producer computes it (the same integer arithmetic).
+#[derive(Debug, Clone, Copy)]
+pub struct TapeBandPlan {
+    pub envelope_bytes: u64,
+    pub memory_gb: u64,
+    pub bytes_per_row: u64,
+    pub bands_in_flight: u64,
+    pub fixed_bytes: u64,
+    pub stage_bytes: u64,
+    pub arena_bytes: u64,
+    pub cap_rows: u64,
+    pub rows_per_band: u64,
+    pub rows_per_band_budget: u64,
+    pub arena_planned_rows: u64,
+    pub rows_per_wave: u64,
+    pub bands_per_wave: u64,
+    pub waves: u64,
+    pub n_rows: u64,
+    pub floor_rows: u64,
+}
+
+impl TapeBandPlan {
+    /// The receipt's own assertion, in the plan: the arena the run may admit,
+    /// plus the terms it must pay beside it, inside the ratio the producer checks
+    /// at exit. FEASIBLE here means "the producer's own SS_TAPE_PEAK assertion
+    /// holds by construction", not "it looked small".
+    pub fn peak_bytes(&self) -> u64 {
+        self.arena_bytes.saturating_add(self.fixed_bytes).saturating_add(self.stage_bytes)
+    }
+    pub fn peak_ratio_pct(&self) -> u64 {
+        self.peak_bytes().saturating_mul(100) / self.envelope_bytes.max(1)
+    }
+    pub fn feasible(&self) -> bool {
+        self.rows_per_band >= self.floor_rows && self.peak_ratio_pct() <= TAPE_BUDGET_RATIO_MAX
+    }
+    pub fn note(&self) -> String {
+        format!(
+            "envelope_gb={:.2} memory_gb={} bytes_per_row={} bands_in_flight={} \
+             rows_per_band={} rows_per_band_budget={} binding={} bands={} waves={} rows_per_wave={} arena_gb={:.2} \
+             fixed_gb={:.2} stage_gb={:.2} peak_gb={:.2} peak_ratio_pct={} bound={} \
+             arena_planned_gb={:.2} headroom_pct={} rule=rows_per_band=(envelope-fixed-stage)x{}%/(bytes_per_row x bands_in_flight) \
+             n_is_in_no_numerator=1 n={}",
+            self.envelope_bytes as f64 / (1u64 << 30) as f64,
+            self.memory_gb, self.bytes_per_row, self.bands_in_flight,
+            self.rows_per_band, self.rows_per_band_budget,
+            if self.rows_per_band == self.rows_per_band_budget { "budget" } else { "scratch-window" },
+            self.bands_per_wave, self.waves, self.rows_per_wave,
+            self.arena_bytes as f64 / (1u64 << 30) as f64,
+            self.fixed_bytes as f64 / (1u64 << 30) as f64,
+            self.stage_bytes as f64 / (1u64 << 30) as f64,
+            self.peak_bytes() as f64 / (1u64 << 30) as f64,
+            self.peak_ratio_pct(), TAPE_BUDGET_RATIO_MAX,
+            self.arena_planned_rows as f64 * self.bytes_per_row as f64 / (1u64 << 30) as f64,
+            TAPE_SAFETY_PCT, TAPE_SAFETY_PCT,
+            self.n_rows,
+        )
+    }
+    pub fn verdict(&self) -> String {
+        format!(
+            "{}: the band arena is {:.1} GiB = {} bands in flight x {} rows x {} B/row \
+             + {:.1} GiB fixed + {:.1} GiB staging = {:.2} GiB, {}% of the {:.2} GiB envelope \
+             (--memory-gb {}, the bound is {}%); {} bands per wave, {} waves; the producer \
+             asserts the same ratio at exit (SS_TAPE_PEAK) and the front door refuses the run \
+             if the two plans disagree",
+            if self.feasible() { "FEASIBLE" } else { "INFEASIBLE" },
+            self.arena_bytes as f64 / (1u64 << 30) as f64,
+            self.bands_in_flight, self.rows_per_band, self.bytes_per_row,
+            self.fixed_bytes as f64 / (1u64 << 30) as f64,
+            self.stage_bytes as f64 / (1u64 << 30) as f64,
+            self.peak_bytes() as f64 / (1u64 << 30) as f64,
+            self.peak_ratio_pct(), self.envelope_bytes as f64 / (1u64 << 30) as f64,
+            self.memory_gb, TAPE_BUDGET_RATIO_MAX,
+            self.bands_per_wave, self.waves,
+        )
+    }
+}
+
+/// THE BAND PLAN, term for term as the producer computes it. `n` is the number
+/// of SA ROWS (corpus bytes + the structural END), `disc_cap_bytes` the scratch
+/// window the producer holds a wave to (2n by law). Neither appears in the
+/// numerator of the arena: they only decide how MANY bands and waves there are.
+pub fn tape_band_plan(
+    n: u64, threads: u64, memory_gb: u64, lcp_slices: bool, disc_cap_bytes: u64,
+) -> TapeBandPlan {
+    let envelope = tape_envelope_bytes(memory_gb);
+    let bytes_per_row = tape_bytes_per_row(lcp_slices);
+    let bands_in_flight = threads.max(1);
+    let sample_bytes = (TAPE_SAMPLE_SLOTS.min(n) + 2) * 8;
+    let ctl = TAPE_CTL_BYTES.min(envelope / 64).max(1 << 20);
+    let fixed = bands_in_flight * (TAPE_SCAN_CHUNK + 4096) + bands_in_flight * 256 * 8
+        + sample_bytes + ctl;
+    let stage = (envelope / TAPE_STAGE_DIVISOR).clamp(TAPE_STAGE_MIN, TAPE_STAGE_MAX);
+    let avail = envelope.saturating_sub(fixed.saturating_add(stage));
+    let arena = avail / 100 * TAPE_SAFETY_PCT;
+    // THE BUDGET UNIT: the arena divided by what can be in flight.
+    let budget_rows = (arena / (bytes_per_row * bands_in_flight)).max(1);
+    // THE SCRATCH WINDOW (2n by law) decides how MANY budget-sized bands a wave
+    // holds (work stealing wants more than one: up to TAPE_OVERSUBSCRIBE per
+    // worker) - never how big a band may be. Below one budget-sized band the band
+    // shrinks to the window (a tiny corpus cannot use a big envelope).
+    let disc_rows = ((disc_cap_bytes - disc_cap_bytes / 20) / TAPE_WIRE_ROW_BYTES).max(1);
+    let mut nbands_target = disc_rows / budget_rows;
+    if nbands_target < 1 { nbands_target = 1; }
+    nbands_target = nbands_target.min(TAPE_OVERSUBSCRIBE * bands_in_flight);
+    let rows_per_band = budget_rows.min(disc_rows / nbands_target).max(1);
+    let cap_rows = rows_per_band.max(arena / bytes_per_row.max(1));
+    let arena_planned = bands_in_flight.min(nbands_target.max(1)).saturating_mul(rows_per_band);
+    let rows_per_wave = disc_rows.min(nbands_target.saturating_mul(rows_per_band)).max(1);
+    let bands_per_wave = ((rows_per_wave + rows_per_band - 1) / rows_per_band).max(1);
+    let waves = ((n + rows_per_wave - 1) / rows_per_wave).max(1);
+    TapeBandPlan {
+        envelope_bytes: envelope,
+        memory_gb,
+        bytes_per_row,
+        bands_in_flight,
+        fixed_bytes: fixed,
+        stage_bytes: stage,
+        arena_bytes: arena,
+        cap_rows,
+        rows_per_band,
+        rows_per_band_budget: budget_rows,
+        arena_planned_rows: arena_planned,
+        rows_per_wave,
+        bands_per_wave,
+        waves,
+        n_rows: n,
+        floor_rows: TAPE_ROWS_FLOOR.min(n.max(1)),
+    }
+}
+
 /// Does an EXPLICIT cap fit the phase budget? `None` = it does, `Some(largest)`
 /// = it does not and `largest` is the most this phase could hold.
 pub fn bin_cap_over_budget(
@@ -819,6 +1006,11 @@ pub struct V2PerTerms {
     /// dictionary. The plan must never claim the arm is free: the parse is a
     /// real producer-side cost and it is priced here from the measured rate.
     pub bin_phrase_note: Option<String>,
+    /// `--tape`: Some(note) only on the tape route, where the RAM term is the
+    /// band arena (and not the bin build group). The plan is what the producer
+    /// executes, so the note carries the exact numbers the front door compares
+    /// against the run's own SS_TAPE_BUDGET.
+    pub tape_note: Option<String>,
 }
 
 /// The bin plan. `live_cap` is the operator's `--bin-live-cap` (None = let the
@@ -1119,6 +1311,7 @@ the same cap and owns its witness stream + pfck grid",
         bin_cap_note: cap_note,
         ram_split_note,
         bin_phrase_note: None,
+        tape_note: None,
     };
     Plan { survey, chunks: 1, kway: 1, threads, cap_gb, phases, chunk_bytes_mb: mb,
            pos_mode: "none (no position column in the bin shape)".to_string(),
@@ -1207,6 +1400,50 @@ mod tests {
         let fixed = bin_corpus_cache_bytes(n, mem_bytes)
             + threads * (BIN_FILL_STAGE_BYTES_PER_THREAD + BIN_LEAF_STAGE_BYTES_PER_THREAD);
         usable.saturating_sub(fixed) / BIN_GROUP_SLOT_BYTES
+    }
+
+    #[test]
+    fn the_tape_band_unit_follows_the_envelope_and_never_the_corpus() {
+        // THE 100 GB DEFECT, as a unit test. The old sizer took the band size from
+        // rows_per_wave/(4*par_bands) = 0.95*2n/32/32, so it was 9,277,343 rows at
+        // 10 GB and 185,721,167 at 100 GB with --memory-gb frozen at 96: the arena
+        // it implied (rows x 81 B x 32 bands in a wave) outgrew the envelope by 10x
+        // and the sorter aborted inside a worker's unwind (rc=134).
+        let n10 = 10_000_017_259u64;
+        let n100 = 107_374_181_464u64;
+        let a = tape_band_plan(n10, 96, 96, true, 2 * n10);
+        let b = tape_band_plan(n100, 96, 96, true, 2 * n100);
+        // 10x the corpus, the SAME envelope: the same work unit, and the growth goes
+        // into the band count and the wave count instead.
+        assert_eq!(a.rows_per_band, b.rows_per_band,
+                   "rows_per_band must not depend on n: {} vs {}", a.rows_per_band, b.rows_per_band);
+        assert_eq!(a.rows_per_band, a.rows_per_band_budget, "the envelope binds at 10 GB");
+        assert_eq!(b.rows_per_band, b.rows_per_band_budget, "the envelope binds at 100 GB");
+        assert!(b.waves > a.waves, "a bigger corpus buys more waves ({} vs {})", b.waves, a.waves);
+        assert!(a.peak_ratio_pct() <= TAPE_BUDGET_RATIO_MAX);
+        assert!(b.peak_ratio_pct() <= TAPE_BUDGET_RATIO_MAX);
+        // The unit the 100 GB run must use is ~38x smaller than the one it used.
+        assert!(b.rows_per_band * 30 < 185_721_167,
+                "the work unit must be far below the corpus-derived 185,721,167 (got {})", b.rows_per_band);
+        // HALF the envelope, half the unit: rows_per_band is a function of --memory-gb.
+        let half = tape_band_plan(n10, 96, 48, true, 2 * n10);
+        assert!(half.rows_per_band < a.rows_per_band);
+        let ratio = half.rows_per_band as f64 * 2.0 / a.rows_per_band as f64;
+        assert!((ratio - 1.0).abs() < 0.06, "halving --memory-gb must halve the unit (ratio {ratio:.3})");
+        // The A/B arm (no LCP slices) carries no ping-pong buffer and no column.
+        assert_eq!(tape_bytes_per_row(false), 41);
+        assert_eq!(tape_bytes_per_row(true), 90);
+        let no_lcp = tape_band_plan(n10, 96, 96, false, 2 * n10);
+        assert!(no_lcp.rows_per_band > a.rows_per_band);
+        // A tiny corpus cannot use a big envelope: the unit shrinks to the window,
+        // and the plan SAYS so instead of pretending the arena is the envelope.
+        let tiny = tape_band_plan(150_000_002, 32, 24, true, 300_000_004);
+        assert!(tiny.rows_per_band <= tiny.rows_per_band_budget);
+        assert_eq!(tiny.rows_per_band, 3_575_462, "the 150 MB fixture's measured unit");
+        assert!(tiny.peak_ratio_pct() <= TAPE_BUDGET_RATIO_MAX);
+        // An envelope too small for one fold band is refused, not run.
+        let broken = tape_band_plan(n10, 96, 2, true, 2 * n10);
+        assert!(!broken.feasible(), "a 1 GiB envelope with 96 bands in flight is not feasible");
     }
 
     #[test]

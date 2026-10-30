@@ -1275,6 +1275,31 @@ fn run_chain(options: Options) -> Result<(), String> {
             }
             v2.bin_phrase_note = super::plan::bin_phrase_note(corpus_bytes, options.phrase.enabled);
             v2.transient_note.push_str(&format!("; witness spill reserve {:.1} GiB (0.3x overflow, EXTRAPOLATED)", spill_gb));
+            // ---- THE TAPE ROUTE'S RAM TERM ------------------------------------
+            // --tape runs the BAND SORTER, not the bin producer: its RAM is K band
+            // arenas of rows_per_band rows (see plan::tape_band_plan). The plan must
+            // price THAT process - the 100 GB run was refused nothing while the
+            // sorter sized its bands from the corpus and died with rc=134 - so the
+            // band plan replaces the bin build group in the RAM verdict, and the
+            // same numbers are handed to the producer.
+            if options.tape {
+                let lcp_slices = std::env::var("XSA_LCE_VERIFY").map(|v| v != "1").unwrap_or(true);
+                let n_rows = corpus_bytes.saturating_add(1);       // + the structural END
+                let tape_plan = super::plan::tape_band_plan(
+                    n_rows, options.threads as u64, options.memory_gb, lcp_slices,
+                    2 * n_rows,                                     // the 2n scratch window
+                );
+                v2.tape_note = Some(tape_plan.note());
+                build_plan.ram_verdict = tape_plan.verdict();
+                if !tape_plan.feasible() {
+                    build_plan.alternatives.push(format!(
+                        "raise --memory-gb (the band arena is half of it) or lower --threads \
+                         (bands_in_flight is the thread count): rows_per_band={} < floor={} at \
+                         --memory-gb {} - {}",
+                        tape_plan.rows_per_band, tape_plan.floor_rows, options.memory_gb,
+                        tape_plan.verdict()));
+                }
+            }
         }
         let peak_mb = build_plan.phases.iter().map(|p| p.disc_peak_mb).fold(0.0, f64::max);
         let fits = peak_mb * 1048576.0 <= build_plan.survey.scratch_free_bytes as f64;
@@ -1760,6 +1785,14 @@ fn run_v2_tail(
     let lce_verify = std::env::var("XSA_LCE_VERIFY").map(|v| v == "1").unwrap_or(false);
     let lcp_source = if lce_verify { "lce-verify" } else { "sorter-bands" };
     let tape_k: u64 = 8;
+    // THE PLAN THE PRODUCER WILL EXECUTE, recomputed here with the same function
+    // the plan block used: the gate after the run compares it against the
+    // producer's own SS_TAPE_BUDGET, so a drift between plan and run is a refusal
+    // (TAPE_PLAN_DISAGREE), not a footnote.
+    let tape_plan = super::plan::tape_band_plan(
+        n.saturating_add(1), options.threads as u64, options.memory_gb, !lce_verify, 2 * n.saturating_add(2),
+    );
+    let tape_envelope = tape_plan.envelope_bytes;
     journal.line(&format!(
         "TAPE_ROUTE route=tape source={} lcp_source={} pending_bands={tape_k}          lcp_column=none (per-band slices band_<i>.lcp; one slice per band in flight)",
         if options.tape { "explicit" } else { "implicit" }, lcp_source));
@@ -1781,8 +1814,14 @@ walks the corpus for every endpoint and no LCP slice is produced). Not a user op
             "--scratch".into(), s(&waves.to_string_lossy()),
             "--tape-bands".into(), s(&bands_dir.to_string_lossy()),
             "--pending-bands".into(), tape_k.to_string(),
-            "--ram-gb".into(), std::cmp::max(2, options.memory_gb / 2).to_string(),
-            "--par-bands".into(), "8".into(),
+            // THE ENVELOPE, IN BYTES, FROM THE PLAN: the sorter's band unit is a
+            // function of this number alone (plan::tape_band_plan computes the same
+            // arithmetic, and the gate below compares the two). --ram-gb/--par-bands
+            // are GONE from this call: a decimal-GB float and a hardcoded 8 in
+            // flight (while the pool runs --threads workers) is how the 100 GB run
+            // came to price 8 bands while it was holding up to 96.
+            "--budget-bytes".into(), tape_envelope.to_string(),
+            "--memory-gb".into(), options.memory_gb.to_string(),
             "--threads".into(), options.threads.to_string(),
         ];
         if lce_verify { producer_args.push("--no-lcp-slices".into()); }
@@ -1852,6 +1891,47 @@ walks the corpus for every endpoint and no LCP slice is produced). Not a user op
     // is required only on the bin route.
     if options.tape {
         require_log_contains(scratch, "order-tape", "SS_TAPE")?;
+        // ---- THE PLAN AND THE RUN MUST BE THE SAME PROCESS ------------------
+        // The producer journals the band plan it executed (SS_TAPE_BUDGET). Every
+        // number that shapes an allocation is compared with the plan's, and the run
+        // is REFUSED on any difference: a plan that prices a different band unit
+        // than the sorter used is worse than no plan at all.
+        let budget_line = require_log_contains(scratch, "order-tape", "SS_TAPE_BUDGET")?;
+        journal.line(&format!("TAPE_PRODUCER_BUDGET {budget_line}"));
+        for (key, planned) in [
+            ("bytes_per_row", tape_plan.bytes_per_row),
+            ("bands_in_flight", tape_plan.bands_in_flight),
+            ("rows_per_band", tape_plan.rows_per_band),
+            ("rows_per_band_budget", tape_plan.rows_per_band_budget),
+            ("arena_planned_rows", tape_plan.arena_planned_rows),
+            ("budget_bytes", tape_plan.envelope_bytes),
+            ("arena_bytes", tape_plan.arena_bytes),
+            ("waves", tape_plan.waves),
+            ("bands", tape_plan.bands_per_wave),
+        ] {
+            let ran = field_u64(&budget_line, key)?;
+            if ran != planned {
+                return Err(format!(
+                    "TAPE_PLAN_DISAGREE {key}: the plan priced {planned}, the sorter ran {ran} \
+                     ({budget_line}). The band plan is ONE derivation - fix \
+                     plan::tape_band_plan / the producer together, never one of the two"));
+            }
+        }
+        let peak_line = require_log_contains(scratch, "order-tape", "SS_TAPE_PEAK")?;
+        journal.line(&format!("TAPE_PRODUCER_PEAK {peak_line}"));
+        let ratio = field(&peak_line, "budget_ratio").and_then(|v| v.parse::<f64>().ok())
+            .ok_or_else(|| format!("SS_TAPE_PEAK without budget_ratio: {peak_line}"))?;
+        if ratio > super::plan::TAPE_BUDGET_RATIO_MAX as f64 / 100.0 {
+            return Err(format!(
+                "TAPE_BUDGET_RATIO: the sorter's owned peak RSS is {ratio:.4} of its envelope, \
+                 over the {:.2} bound ({peak_line})",
+                super::plan::TAPE_BUDGET_RATIO_MAX as f64 / 100.0));
+        }
+        journal.line(&format!(
+            "TAPE_BUDGET_OK rows_per_band={} bytes_per_row={} bands_in_flight={} \
+             plan=run=1 budget_ratio={ratio:.4} bound={:.2}",
+            tape_plan.rows_per_band, tape_plan.bytes_per_row, tape_plan.bands_in_flight,
+            super::plan::TAPE_BUDGET_RATIO_MAX as f64 / 100.0));
         // The route's shape is gated, not assumed: the producer must declare which
         // LCP arm it ran, and on the product arm its slices must cover n with a
         // BOUNDED largest slice (the 2n law: one band's slice, never a 1.34n file).
