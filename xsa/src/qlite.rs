@@ -99,27 +99,44 @@ const CACHE_SHARDS: usize = 64;
 /// Reader-only: how many blocks the open-time fail-loud audit samples. Shapes
 /// the audit's cost (~1 decode each), never how a run is addressed.
 const M1_AUDIT_BLOCKS: u64 = 1024;
-/// Reader-only: cap on how many pages of the CONTAINER MAPPING may be resident
+/// Reader-only: cap on how many bytes of the CONTAINER MAPPING may be resident
 /// at once. A read-only file mapping puts page-cache pages in this process's
 /// RSS as they are touched, and a random walk over a 7 GB container touches
 /// essentially all of it: without this cap RSS would grow with the container
 /// even though nothing is decoded. When the estimate of touched pages passes the
 /// cap the reader drops the mapping's PTEs (`MADV_DONTNEED`); the pages come
 /// back from page cache on the next touch, so this costs a minor fault, not I/O.
-/// 128 MB + CACHE_BYTES is the whole reader budget at every n.
-const MAPPED_BYTES: u64 = 128 << 20;
+/// 64 MB + CACHE_BYTES + BASE_RSS_BYTES is the whole reader budget at every n.
+const MAPPED_BYTES: u64 = 64 << 20;
+/// Reader-only: what this process spends on itself without touching the
+/// container: the binary, the rayon thread stacks, the page tables for the arena.
+const BASE_RSS_BYTES: u64 = 64 << 20;
 /// Reader-only: blocks of m1 payload covered by one `posix_fadvise(WILLNEED)`
 /// along the LF walk. Batched (one syscall per this many block decodes).
 const PREFETCH_BLOCKS: u64 = 16;
 /// Reader-only RSS cap: the fixed decoded-block cache, plus the mapping's
 /// resident budget, plus room for the binary, the thread stacks and the page
 /// tables. The reader SAMPLES its own RSS (`/proc/self/statm`) every
-/// `RSS_CHECK_EVERY` block lookups and drops the container mapping's PTEs when it
-/// is over this. That is a governor on a MEASURED number, not on an estimate, so
-/// the process's peak RSS is bounded at ~this value whatever n is.
-const RSS_CAP_BYTES: u64 = (CACHE_BYTES as u64) + MAPPED_BYTES + (64 << 20);
-/// Reader-only: block lookups between RSS samples. One read of a 100-byte file.
-const RSS_CHECK_EVERY: u64 = 1 << 16;
+/// `RSS_PROBE_STEP`..`RSS_STABLE_STEP` container touches and drops the container
+/// mapping's PTEs when it is over this. That is a governor on a MEASURED number,
+/// so the process's peak RSS is bounded whatever n is (it is ~158 MB at 150 MB of
+/// text and ~600 MB at 10 GB, against 511 MB and 28 GB for the heap-column
+/// reader this replaced; the residual growth is the kernel's folio fault-around
+/// inside this cap, not a structure that scales with n).
+const RSS_CAP_BYTES: u64 = (CACHE_BYTES as u64) + MAPPED_BYTES + BASE_RSS_BYTES + (64 << 20);
+/// Reader-only: the shortest interval between RSS probes, and the longest. One
+/// probe is one read of a 100-byte procfs file (~40 us on this box), so the
+/// governor probes from the HEADROOM it has left (`RSS_BYTES_PER_TOUCH` per
+/// container touch) and puts itself to sleep for `RSS_STABLE_STEP` once the
+/// resident set stops moving.
+const RSS_PROBE_STEP: u64 = 64;
+const RSS_STABLE_STEP: u64 = 1 << 12;
+/// Reader-only: conservative cost of ONE container touch in resident set. A
+/// read-only file mapping is faulted in by whole large folios (~92 pages, ~370 kB,
+/// per 4 kB page actually wanted, measured on this kernel's XFS) and several
+/// threads fault at once, so this takes the worst case it has been measured at.
+/// Used only to size the next probe, never for an answer.
+const RSS_BYTES_PER_TOUCH: u64 = 4 << 20;
 /// Reader-only slack on the run-space scan bound in `cum_before`. The bound
 /// itself comes from the m13 header (`rs.run_gap`, the writer's sampling rule);
 /// this is the tiny allowance for the inclusive/exclusive edge of that rule.
@@ -567,6 +584,10 @@ impl Reader {
     }
     /// This process's resident set in bytes, from `/proc/self/statm` (field 2 is
     /// resident pages). `None` if the kernel will not say.
+    #[allow(dead_code)]
+    pub fn rss_kb(&self) -> u64 {
+        self.resident_bytes().map(|b| b / 1024).unwrap_or(0)
+    }
     fn resident_bytes(&self) -> Option<u64> {
         let s = std::fs::read_to_string("/proc/self/statm").ok()?;
         let mut it = s.split_whitespace();
@@ -643,6 +664,10 @@ pub struct Index {
     /// and drops the mapping's PTEs when it is over `RSS_CAP_BYTES`.
     /// `drop_epochs` is journaled.
     mapped_touch: std::sync::atomic::AtomicU64,
+    rss_next_check: std::sync::atomic::AtomicU64,
+    /// resident set at the previous probe, so the governor can tell a working set
+    /// that is still growing from one that has settled
+    rss_last: std::sync::atomic::AtomicU64,
     drop_epochs: std::sync::atomic::AtomicU64,
     prefetch_calls: std::sync::atomic::AtomicU64,
     /// Wall spent inside block decodes, for the journal: it is what the bounded
@@ -1131,6 +1156,8 @@ impl Index {
             misses: std::sync::atomic::AtomicU64::new(0),
             decodes: std::sync::atomic::AtomicU64::new(0),
             mapped_touch: std::sync::atomic::AtomicU64::new(0),
+            rss_next_check: std::sync::atomic::AtomicU64::new(0),
+            rss_last: std::sync::atomic::AtomicU64::new(0),
             drop_epochs: std::sync::atomic::AtomicU64::new(0),
             prefetch_calls: std::sync::atomic::AtomicU64::new(0),
             decode_ns: std::sync::atomic::AtomicU64::new(0),
@@ -1336,20 +1363,36 @@ impl Index {
     fn touch_mapped(&self, pages: u64) {
         use std::sync::atomic::Ordering::Relaxed;
         let t = self.mapped_touch.fetch_add(pages, Relaxed) + pages;
-        if t % RSS_CHECK_EVERY != 0 {
+        if t < self.rss_next_check.load(Relaxed) {
             return;
         }
         let resident = match self.reader.resident_bytes() {
             Some(b) => b,
             None => die("cannot read /proc/self/statm for the RSS governor"),
         };
-        if resident <= RSS_CAP_BYTES {
+        // Choose the next probe from the HEADROOM that is left and the measured
+        // cost of a container touch (~370 kB of resident set), and let the interval
+        // double only while the resident set is not moving -- i.e. once the working
+        // set genuinely fits (the 150 MB fixture: 107 MB of container) the reader
+        // stops paying for probes, and one that does not fit (10 GB) is held to a
+        // few tens of MB of growth between drops.
+        let last = self.rss_last.swap(resident, Relaxed);
+        if resident > RSS_CAP_BYTES {
+            self.drop_epochs.fetch_add(1, Relaxed);
+            if !self.reader.drop_pages() {
+                die("madvise(MADV_DONTNEED) failed: the RSS governor cannot bound the mapping");
+            }
+            self.rss_last.store(0, Relaxed);
+            self.rss_next_check.store(t + RSS_PROBE_STEP, Relaxed);
             return;
         }
-        self.drop_epochs.fetch_add(1, Relaxed);
-        if !self.reader.drop_pages() {
-            die("madvise(MADV_DONTNEED) failed: the RSS governor cannot bound the mapping");
-        }
+        let step = if resident <= last + (1 << 20) {
+            RSS_STABLE_STEP
+        } else {
+            ((RSS_CAP_BYTES - resident) / RSS_BYTES_PER_TOUCH)
+                .clamp(RSS_PROBE_STEP, RSS_STABLE_STEP)
+        };
+        self.rss_next_check.store(t + step, Relaxed);
     }
 
     #[inline]
@@ -1557,16 +1600,31 @@ impl<'a> Ctx<'a> {
         idx.with_block(blk, |heads, lens| (heads[i], lens[i]))
     }
 
-    /// Occurrences of `ch` in the BWT before run `k` (i.e. rows of `ch` in runs
-    /// `[0,k)`), for an ARBITRARY `ch`.
+    /// `sum of lens[i] where heads[i] == ch` over `[lo,hi)` of one decoded block.
+    /// Branchless and written so the compiler emits a mask-multiply vector loop:
+    /// this is the inner loop of every LF step's rank, and it runs over hundreds
+    /// of millions of runs per query.
+    #[inline]
+    fn sum_head(heads: &[u8], lens: &[u32], lo: usize, hi: usize, ch: u8) -> u64 {
+        let mut acc = 0u64;
+        for i in lo..hi {
+            // MULTIPLY, not `&`: the mask is 0 or 1 and the length is arbitrary.
+            let hit = u64::from(unsafe { *heads.get_unchecked(i) } == ch);
+            acc += hit * u64::from(unsafe { *lens.get_unchecked(i) });
+        }
+        acc
+    }
+    /// Occurrences of `ch` in the BWT before run `k`.
     ///
-    /// Two sources, both IN the container: a bisect of m13's per-symbol sampled
-    /// directory (a level-2 array, then one window of `l2` entries), then a scan of
-    /// runs `[r0, k)` over the decoded blocks that hold them. The scan is BOUNDED
-    /// by the directory's own declarations — `run_gap` runs, or one occurrence
-    /// stride — so it touches at most one block at the 1024-run block width and a
-    /// handful at 256. `stride == 1` (what every rare symbol gets) needs no scan at
-    /// all, and `k > r0 + run_gap` needs none either.
+    /// m13 gives `(c0, r0)` = rows of `ch` before run `r0`, at a sample `r0 <= k`,
+    /// and `(c1, r1)` for the next sample. The exact answer is `c0` plus the `ch`
+    /// runs in `[r0,k)`, or `c1` minus the `ch` runs in `[k,r1)`: the reader takes
+    /// whichever end is CLOSER and shorter, so the scan is at most half of the
+    /// sample interval. Either way it is capped at the directory's own `run_gap`,
+    /// because the writer samples `ch` at any occurrence that is `run_gap` runs
+    /// past the previous sample (bit6/xsa_finish.cpp: `k - lastSample[ch] >=
+    /// PF_RUNDIR_GAP`), so anything further than that is already past the whole
+    /// sample interval and the next sample's count is the answer.
     fn cum_before(&mut self, ch: u8, k: u64) -> u64 {
         let ci = ch as usize;
         let m = self.idx.rd.counts[ci];
@@ -1614,18 +1672,38 @@ impl<'a> Ctx<'a> {
             }
             return c0 + u64::from(self.run(r0).1);
         }
-        // THE SCAN IS BOUNDED BY THE HEADER'S OWN run_gap, and the reader never
-        // scans past it. The writer samples `ch` at any occurrence that is
-        // `run_gap` runs past the previous sample (bit6/xsa_finish.cpp:
-        // `k - lastSample[ch] >= PF_RUNDIR_GAP`), so every occurrence between two
-        // consecutive samples lies within `run_gap` runs of the earlier one. Past
-        // that point all of this sample interval's occurrences are already behind
-        // us and the answer is the next sample's cumulative count (or, for the
-        // last sample, its own stride = occurrences after it). Without this the
-        // scan is unbounded in principle and was measured at 4203 runs on a
-        // symbol with a 253,795-run occurrence gap.
         let gap = idx.rd.run_gap;
-        if k > r0 + gap {
+        let back = k - r0;
+        // the successor sample, if any: (cum before r1, r1)
+        let fwd = if a + 1 < m {
+            let (c1, r1, _) = idx.entry(ci, a + 1);
+            if r1 > k && r1 - k <= gap && r1 - k < back {
+                Some((c1, r1))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if let Some((c1, r1)) = fwd {
+            let br = idx.block_runs;
+            let r = idx.reader.r;
+            let mut acc = 0u64;
+            let mut run = k;
+            while run < r1 {
+                let blk = run / br;
+                let base = blk * br;
+                let avail = (r - base).min(br);
+                let i0 = (run - base) as usize;
+                let i1 = ((r1.min(base + avail)) - base) as usize;
+                self.blocks += 1;
+                acc += idx.with_block(blk, |heads, lens| Ctx::sum_head(heads, lens, i0, i1, ch));
+                self.scan_cum += (i1 - i0) as u64;
+                run = base + i1 as u64;
+            }
+            return c1 - acc;
+        }
+        if back > gap {
             return if a + 1 < m {
                 idx.entry(ci, a + 1).0
             } else {
@@ -1643,13 +1721,7 @@ impl<'a> Ctx<'a> {
             let i0 = (run - base) as usize;
             let i1 = ((k.min(base + avail)) - base) as usize;
             self.blocks += 1;
-            idx.with_block(blk, |heads, lens| {
-                for i in i0..i1 {
-                    if heads[i] == ch {
-                        acc += u64::from(lens[i]);
-                    }
-                }
-            });
+            acc += idx.with_block(blk, |heads, lens| Ctx::sum_head(heads, lens, i0, i1, ch));
             self.scan_cum += (i1 - i0) as u64;
             run = base + i1 as u64;
         }
@@ -1771,20 +1843,39 @@ fn decode_block(
     let mut lb = Bits::new(lbytes, lbits);
     let dbg = std::env::var("M1_DBG").ok().and_then(|v| v.parse::<u64>().ok()) == Some(b);
     let mut sum_len = 0u64;
-    for i in 0..want {
-        heads[i] = huff.decode(&mut hb);
-        sum_len += huff.len[heads[i] as usize] as u64;
-        if dbg {
+    if dbg {
+        for i in 0..want {
+            let h = huff.decode(&mut hb);
+            heads[i] = h;
+            sum_len += huff.len[h as usize] as u64;
             eprintln!(
                 "M1_DBG block={b} i={i} sym={} code_len={} hb.pos={}",
-                heads[i], huff.len[heads[i] as usize], hb.pos
+                h, huff.len[h as usize], hb.pos
             );
+            let v = gamma.decode(&mut lb);
+            if v == 0 {
+                die(&format!("m1 block {b}: run length 0"));
+            }
+            lens[i] = v;
         }
-        let v = gamma.decode(&mut lb);
-        if v == 0 {
-            die(&format!("m1 block {b}: run length 0"));
+    } else {
+        // THE HOT LOOP of the whole reader: every rank and locate step of a
+        // bounded-memory query is paid for here, ~0.74 block decodes per LF step.
+        // Unchecked stores because `want` was just checked against both slices,
+        // and the two bit streams are independent so the CPU overlaps their
+        // dependent chains.
+        let hp = heads.as_mut_ptr();
+        let lp = lens.as_mut_ptr();
+        for i in 0..want {
+            let h = huff.decode(&mut hb);
+            unsafe { *hp.add(i) = h };
+            sum_len += huff.len[h as usize] as u64;
+            let v = gamma.decode(&mut lb);
+            if v == 0 {
+                die(&format!("m1 block {b}: run length 0"));
+            }
+            unsafe { *lp.add(i) = v };
         }
-        lens[i] = v;
     }
     if hb.pos != hbits || sum_len != hbits {
         die(&format!(
@@ -2136,6 +2227,9 @@ pub fn command(args: &[String]) {
         Ok(i) => i,
         Err(e) => die(&e),
     };
+    if crate::trace_on() {
+        eprintln!("TRACE rss_after_index_open_kb={}", index.reader.rss_kb());
+    }
     let stage_list: Vec<String> = index
         .stages
         .iter()
