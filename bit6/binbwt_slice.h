@@ -3083,6 +3083,7 @@ struct BinBandSink {
     };
     struct BandJob {
         U band = 0, firstRun = 0, words = 0, rlebwtOff = 0;
+        U sourceBand = UINT64_MAX, sourceFirstRun = 0, sourceEndRun = 0;
         std::vector<BandRun> runs;
         std::vector<char> gmark;
     };
@@ -3096,6 +3097,7 @@ struct BinBandSink {
     std::string prefix, dir;
     // ---- ordered pass state ---------------------------------------------
     U next = 0, rows = 0, index = 0, bandStart = 0, wordsDone = 0, bandWords = 0;
+    U sourceBand = UINT64_MAX, sourceFirstRun = 0;
     U prevLastPos = 0;                  // position of the previous row; n-1 first
     SparseSeamCapture::Hit* boundaryHit = nullptr;   // a hit awaiting its `after`
     SparseRun pending;                  // the BWT run being extended
@@ -3187,7 +3189,7 @@ struct BinBandSink {
     // capture-target flag are all already in the word (bin_word), so this pass
     // never reads the corpus at random and never hashes a row.
     void publishBin(unsigned bin, const U* words, U m, U baseRow) {
-        (void)bin;
+        if (sourceBand != bin) { sourceBand = bin; sourceFirstRun = index; }
         require(baseRow == next, "bin-bwt sink row coverage");
         const double t0 = now_sec();
         const double trow0 = t0;
@@ -3330,6 +3332,7 @@ struct BinBandSink {
         publishedClasses = complete;
         BandJob job;
         job.band = bandNo; job.firstRun = bandStart;
+        job.sourceBand = sourceBand; job.sourceFirstRun = sourceFirstRun; job.sourceEndRun = index;
         job.words = bandWords; job.rlebwtOff = wordsDone;
         job.runs.swap(band.runs);
         bandBaseRank = next;      // the next row index starts the next band
@@ -3383,7 +3386,7 @@ struct BinBandSink {
             }
             v2_write_piece(dir, job.band, 0, job.firstRun, jchars.data(),
                            jlens.data(), jheads.data(), jtails.data(), rc,
-                           width);
+                           width, job.sourceBand, job.sourceFirstRun, job.sourceEndRun);
             if (rleFd >= 0) {   // route B: no wire, so no word stream to build
                 std::vector<uint32_t> w32;
                 w32.reserve(rc + 16);

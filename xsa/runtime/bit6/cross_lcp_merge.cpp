@@ -93,6 +93,7 @@
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <map>
+#include <set>
 #include <unistd.h>
 
 namespace fs = std::filesystem;
@@ -3612,13 +3613,22 @@ static void v2_flow_wait(const std::string& prefix, U band, U window) {
 // caller owns flow control (v2_flow_wait) so that it can also own its own
 // writer-slot credit before committing to a band. Returns the packed-carry
 // word count (0 for an empty column).
+static std::set<std::string> piecesAtStartup;
 static U v2_write_piece(const std::string& dir, U band, U shard, U firstRun,
                         const uint8_t* chars, const uint32_t* lens,
-                        const U* heads, const U* tails, U rc, unsigned w) {
+                        const U* heads, const U* tails, U rc, unsigned w,
+                        U sourceBand = UINT64_MAX, U sourceFirstRun = 0, U sourceEndRun = 0) {
     if (!rc) return 0;
     std::string tmp = dir + "/t-" + std::to_string(band) + "-" + std::to_string(shard);
     std::string fin = dir + "/p-" + std::to_string(band) + "-" + std::to_string(shard);
-    require(!fs::exists(fin), "piece exists; refusing to clobber");
+    if (fs::exists(fin)) {
+        std::fprintf(stderr, "CROSS_PIECE_COLLISION path=%s existed_at_start=%d piece_runs=[%llu,%llu) source_band=%llu source_band_runs=[%llu,%llu) pid=%d\n",
+            fin.c_str(), int(piecesAtStartup.count(fin)),
+            (unsigned long long)firstRun, (unsigned long long)(firstRun + rc),
+            (unsigned long long)sourceBand, (unsigned long long)sourceFirstRun,
+            (unsigned long long)sourceEndRun, int(::getpid()));
+        require(false, "piece exists; refusing to clobber");
+    }
     int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
     require(fd >= 0, "create piece tmp");
     auto wfull = [&](const void* d, U len) {
@@ -5813,6 +5823,15 @@ int main_impl(int argc, char** argv) {
 }
 
 int main(int argc, char** argv) {
-    try { return main_impl(argc, argv); }
+    try {
+        for (int i = 1; i + 1 < argc; ++i) {
+            if (std::string(argv[i]) != "--out-prefix") continue;
+            const std::string dir = std::string(argv[i + 1]) + ".pieces";
+            if (fs::is_directory(dir))
+                for (const auto& entry : fs::directory_iterator(dir))
+                    piecesAtStartup.insert(entry.path().string());
+        }
+        return main_impl(argc, argv);
+    }
     catch (const std::exception& e) { std::fprintf(stderr, "CROSS_LCP_FATAL %s\n", e.what()); return 2; }
 }
