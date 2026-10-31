@@ -1,0 +1,711 @@
+{
+  "base": "76feb73",
+  "implementation_commit": "1114344",
+  "raw_evidence_root": "/mnt/nvme2n1/erikg/piece-publish",
+  "environment": {
+    "XSA_TAPE_WAIT_S": "180",
+    "XSA_LCE_VERIFY": "1",
+    "CROSS_V2_PIECES": "1",
+    "CROSS_V2_PIECE_WINDOW": "1100",
+    "CROSS_POOL_SLOTS": "33554432"
+  },
+  "gates": {
+    "g1-8mb": {
+      "reason": "complete",
+      "seconds": 5.012071968987584,
+      "returncodes": [
+        0,
+        0,
+        0
+      ],
+      "max_observed_wait_s": 0.02,
+      "max_completed_wait_s": 0.02,
+      "top5_sort": [
+        {
+          "band": 10,
+          "rows": 379263,
+          "read_s": 0.028719,
+          "sort_s": 0.055878,
+          "write_s": 0.005388
+        },
+        {
+          "band": 26,
+          "rows": 381521,
+          "read_s": 0.018532,
+          "sort_s": 0.046525,
+          "write_s": 0.003431
+        },
+        {
+          "band": 30,
+          "rows": 380327,
+          "read_s": 0.015287,
+          "sort_s": 0.045754,
+          "write_s": 0.004479
+        },
+        {
+          "band": 14,
+          "rows": 380534,
+          "read_s": 0.012754,
+          "sort_s": 0.045655,
+          "write_s": 0.003182
+        },
+        {
+          "band": 22,
+          "rows": 380068,
+          "read_s": 0.021921,
+          "sort_s": 0.045554,
+          "write_s": 0.002852
+        }
+      ],
+      "published_bands": 35,
+      "consumed_bands": 35,
+      "splits": [],
+      "finish_done": [
+        "XSA_FINISH_DONE chi=6544643 n=8000002 r=7966303 container=/mnt/nvme2n1/erikg/piece-publish/g1-8mb/product.sxi2"
+      ],
+      "incomplete_waits": false,
+      "depth_histogram": {
+        "24": 35,
+        "48": 0,
+        "72": 0,
+        "96": 0,
+        "120": 0,
+        "144": 0,
+        "168": 0,
+        "192": 0
+      },
+      "order_analytic_leaves": 0,
+      "tape_leaf_at_cap": 0,
+      "sort_median_s": 0.013745,
+      "sort_p99_s": 0.055878,
+      "sort_p99_median_ratio": 4.065332848308476,
+      "max_estimated_band_rows": 380000,
+      "max_completed_band_rows": 381521,
+      "row_bound_violations": 0,
+      "product_sha256": "2beb35a0d37a6ff6453b108c4d0a99e8eff4af91cf2875643ae6af86c9539f57",
+      "commands": [
+        [
+          "/mnt/nvme2n1/erikg/recursive-planner/bin/scatter_sort.release",
+          "--corpus",
+          "/mnt/nvme2n1/erikg/piece-publish/input8/corpus",
+          "--remap",
+          "/mnt/nvme2n1/erikg/piece-publish/input8/remap",
+          "--scratch",
+          "/mnt/nvme2n1/erikg/piece-publish/g1-8mb/waves",
+          "--tape-bands",
+          "/mnt/nvme2n1/erikg/piece-publish/g1-8mb/bands",
+          "--pending-bands",
+          "8",
+          "--budget-bytes",
+          "51539607552",
+          "--memory-gb",
+          "96",
+          "--threads",
+          "8",
+          "--no-lcp-slices"
+        ],
+        [
+          "/mnt/nvme2n1/erikg/piece-publish/bin/merge",
+          "--binbwt",
+          "/mnt/nvme2n1/erikg/piece-publish/input8/corpus",
+          "--remap",
+          "/mnt/nvme2n1/erikg/piece-publish/input8/remap",
+          "--out-prefix",
+          "/mnt/nvme2n1/erikg/piece-publish/g1-8mb/frag",
+          "--threads",
+          "8",
+          "--tape-bands",
+          "/mnt/nvme2n1/erikg/piece-publish/g1-8mb/bands"
+        ],
+        [
+          "/home/erikg/.cache/xsa/740bd49b53f63f8e978625026bd3b62201053132b9191cb521e8de64c55dda72/xsa_finish",
+          "--prefix",
+          "/mnt/nvme2n1/erikg/piece-publish/g1-8mb/frag",
+          "--corpus",
+          "/mnt/nvme2n1/erikg/piece-publish/input8/corpus",
+          "--remap",
+          "/mnt/nvme2n1/erikg/piece-publish/input8/remap",
+          "--output",
+          "/mnt/nvme2n1/erikg/piece-publish/g1-8mb/product.sxi2",
+          "--threads",
+          "8",
+          "--poll-timeout",
+          "240",
+          "--wit-ram-budget",
+          "51539607552",
+          "--chi-expect",
+          "6544643"
+        ]
+      ],
+      "cross_lcp_fatal_count": 0
+    },
+    "g1-150mb": {
+      "reason": "complete",
+      "seconds": 57.84758698195219,
+      "returncodes": [
+        0,
+        0,
+        0
+      ],
+      "max_observed_wait_s": 0.061,
+      "max_completed_wait_s": 0.061,
+      "top5_sort": [
+        {
+          "band": 1,
+          "rows": 7133175,
+          "read_s": 0.641911,
+          "sort_s": 6.760354,
+          "write_s": 0.088954
+        },
+        {
+          "band": 9,
+          "rows": 7117615,
+          "read_s": 0.452269,
+          "sort_s": 3.642391,
+          "write_s": 0.045761
+        },
+        {
+          "band": 8,
+          "rows": 1360421,
+          "read_s": 0.059886,
+          "sort_s": 3.228119,
+          "write_s": 0.020667
+        },
+        {
+          "band": 26,
+          "rows": 7136333,
+          "read_s": 0.330303,
+          "sort_s": 2.660058,
+          "write_s": 0.042582
+        },
+        {
+          "band": 3,
+          "rows": 7117056,
+          "read_s": 0.430601,
+          "sort_s": 2.470582,
+          "write_s": 0.042478
+        }
+      ],
+      "published_bands": 37,
+      "consumed_bands": 37,
+      "splits": [],
+      "finish_done": [
+        "XSA_FINISH_DONE chi=44034230 n=150000002 r=57279194 container=/mnt/nvme2n1/erikg/piece-publish/g1-150mb/product.sxi2"
+      ],
+      "incomplete_waits": false,
+      "depth_histogram": {
+        "24": 37,
+        "48": 0,
+        "72": 0,
+        "96": 0,
+        "120": 0,
+        "144": 0,
+        "168": 0,
+        "192": 0
+      },
+      "order_analytic_leaves": 0,
+      "tape_leaf_at_cap": 0,
+      "sort_median_s": 0.935366,
+      "sort_p99_s": 6.760354,
+      "sort_p99_median_ratio": 7.227495974837657,
+      "max_estimated_band_rows": 7124979,
+      "max_completed_band_rows": 7144248,
+      "row_bound_violations": 0,
+      "product_sha256": "9ba2b1a11b02397e8b8a3992bb3366e933a35d1929b0849898178ecc7f31a756",
+      "commands": [
+        [
+          "/mnt/nvme2n1/erikg/recursive-planner/bin/scatter_sort.release",
+          "--corpus",
+          "/dev/shm/t150m.txt",
+          "--remap",
+          "/mnt/nvme2n1/erikg/wip-lce150/remap-256.bin",
+          "--scratch",
+          "/mnt/nvme2n1/erikg/piece-publish/g1-150mb/waves",
+          "--tape-bands",
+          "/mnt/nvme2n1/erikg/piece-publish/g1-150mb/bands",
+          "--pending-bands",
+          "8",
+          "--budget-bytes",
+          "51539607552",
+          "--memory-gb",
+          "96",
+          "--threads",
+          "16",
+          "--no-lcp-slices"
+        ],
+        [
+          "/mnt/nvme2n1/erikg/piece-publish/bin/merge",
+          "--binbwt",
+          "/dev/shm/t150m.txt",
+          "--remap",
+          "/mnt/nvme2n1/erikg/wip-lce150/remap-256.bin",
+          "--out-prefix",
+          "/mnt/nvme2n1/erikg/piece-publish/g1-150mb/frag",
+          "--threads",
+          "16",
+          "--tape-bands",
+          "/mnt/nvme2n1/erikg/piece-publish/g1-150mb/bands"
+        ],
+        [
+          "/home/erikg/.cache/xsa/740bd49b53f63f8e978625026bd3b62201053132b9191cb521e8de64c55dda72/xsa_finish",
+          "--prefix",
+          "/mnt/nvme2n1/erikg/piece-publish/g1-150mb/frag",
+          "--corpus",
+          "/dev/shm/t150m.txt",
+          "--remap",
+          "/mnt/nvme2n1/erikg/wip-lce150/remap-256.bin",
+          "--output",
+          "/mnt/nvme2n1/erikg/piece-publish/g1-150mb/product.sxi2",
+          "--threads",
+          "16",
+          "--poll-timeout",
+          "360",
+          "--wit-ram-budget",
+          "51539607552",
+          "--chi-expect",
+          "44034230"
+        ]
+      ],
+      "cross_lcp_fatal_count": 0
+    },
+    "packaged-150mb": {
+      "reason": "complete",
+      "seconds": 51.435378808062524,
+      "returncodes": [
+        0,
+        0,
+        0
+      ],
+      "max_observed_wait_s": 0.03,
+      "max_completed_wait_s": 0.03,
+      "top5_sort": [
+        {
+          "band": 1,
+          "rows": 7133175,
+          "read_s": 0.443936,
+          "sort_s": 4.260011,
+          "write_s": 0.095008
+        },
+        {
+          "band": 9,
+          "rows": 7117615,
+          "read_s": 0.47638,
+          "sort_s": 3.430071,
+          "write_s": 0.052757
+        },
+        {
+          "band": 8,
+          "rows": 1360421,
+          "read_s": 0.058623,
+          "sort_s": 3.15718,
+          "write_s": 0.011127
+        },
+        {
+          "band": 26,
+          "rows": 7136333,
+          "read_s": 0.347076,
+          "sort_s": 2.893472,
+          "write_s": 0.057627
+        },
+        {
+          "band": 3,
+          "rows": 7117056,
+          "read_s": 0.466369,
+          "sort_s": 2.275607,
+          "write_s": 0.050049
+        }
+      ],
+      "published_bands": 37,
+      "consumed_bands": 37,
+      "splits": [],
+      "finish_done": [
+        "XSA_FINISH_DONE chi=44034230 n=150000002 r=57279194 container=/mnt/nvme2n1/erikg/piece-publish/packaged-150mb/product.sxi2"
+      ],
+      "incomplete_waits": false,
+      "depth_histogram": {
+        "24": 37,
+        "48": 0,
+        "72": 0,
+        "96": 0,
+        "120": 0,
+        "144": 0,
+        "168": 0,
+        "192": 0
+      },
+      "order_analytic_leaves": 0,
+      "tape_leaf_at_cap": 0,
+      "sort_median_s": 0.595821,
+      "sort_p99_s": 4.260011,
+      "sort_p99_median_ratio": 7.149816807396853,
+      "max_estimated_band_rows": 7124979,
+      "max_completed_band_rows": 7144248,
+      "row_bound_violations": 0,
+      "product_sha256": "9ba2b1a11b02397e8b8a3992bb3366e933a35d1929b0849898178ecc7f31a756",
+      "commands": [
+        [
+          "/home/erikg/sxgc/xsa/target/debug/build/xsa-4b95271c3d5109a7/out/stages-1sk7cefj/bundle/scatter_sort",
+          "--corpus",
+          "/dev/shm/t150m.txt",
+          "--remap",
+          "/mnt/nvme2n1/erikg/wip-lce150/remap-256.bin",
+          "--scratch",
+          "/mnt/nvme2n1/erikg/piece-publish/packaged-150mb/waves",
+          "--tape-bands",
+          "/mnt/nvme2n1/erikg/piece-publish/packaged-150mb/bands",
+          "--pending-bands",
+          "8",
+          "--budget-bytes",
+          "51539607552",
+          "--memory-gb",
+          "96",
+          "--threads",
+          "16",
+          "--no-lcp-slices"
+        ],
+        [
+          "/home/erikg/sxgc/xsa/target/debug/build/xsa-4b95271c3d5109a7/out/stages-1sk7cefj/bundle/cross_lcp_merge",
+          "--binbwt",
+          "/dev/shm/t150m.txt",
+          "--remap",
+          "/mnt/nvme2n1/erikg/wip-lce150/remap-256.bin",
+          "--out-prefix",
+          "/mnt/nvme2n1/erikg/piece-publish/packaged-150mb/frag",
+          "--threads",
+          "16",
+          "--tape-bands",
+          "/mnt/nvme2n1/erikg/piece-publish/packaged-150mb/bands"
+        ],
+        [
+          "/home/erikg/sxgc/xsa/target/debug/build/xsa-4b95271c3d5109a7/out/stages-1sk7cefj/bundle/xsa_finish",
+          "--prefix",
+          "/mnt/nvme2n1/erikg/piece-publish/packaged-150mb/frag",
+          "--corpus",
+          "/dev/shm/t150m.txt",
+          "--remap",
+          "/mnt/nvme2n1/erikg/wip-lce150/remap-256.bin",
+          "--output",
+          "/mnt/nvme2n1/erikg/piece-publish/packaged-150mb/product.sxi2",
+          "--threads",
+          "16",
+          "--poll-timeout",
+          "360",
+          "--wit-ram-budget",
+          "51539607552",
+          "--chi-expect",
+          "44034230"
+        ]
+      ],
+      "cross_lcp_fatal_count": 0
+    },
+    "g2-10gb": {
+      "reason": "complete",
+      "seconds": 1602.6988706262782,
+      "returncodes": [
+        0,
+        0,
+        0
+      ],
+      "max_observed_wait_s": 82.427,
+      "max_completed_wait_s": 82.427,
+      "top5_sort": [
+        {
+          "band": 262,
+          "rows": 5760468,
+          "read_s": 0.493555,
+          "sort_s": 118.755998,
+          "write_s": 0.081972
+        },
+        {
+          "band": 24,
+          "rows": 8441764,
+          "read_s": 0.762666,
+          "sort_s": 88.899444,
+          "write_s": 0.047589
+        },
+        {
+          "band": 378,
+          "rows": 8587759,
+          "read_s": 1.21043,
+          "sort_s": 24.517797,
+          "write_s": 0.050206
+        },
+        {
+          "band": 31,
+          "rows": 8818011,
+          "read_s": 0.937078,
+          "sort_s": 16.818097,
+          "write_s": 0.126088
+        },
+        {
+          "band": 32,
+          "rows": 8286814,
+          "read_s": 0.878419,
+          "sort_s": 15.396084,
+          "write_s": 0.282774
+        }
+      ],
+      "published_bands": 1211,
+      "consumed_bands": 1211,
+      "splits": [],
+      "finish_done": [
+        "XSA_FINISH_DONE chi=2676929445 n=10000017259 r=3474889847 container=/mnt/nvme2n1/erikg/piece-publish/g2-10gb/product.sxi2"
+      ],
+      "incomplete_waits": false,
+      "depth_histogram": {
+        "24": 1190,
+        "48": 6,
+        "72": 4,
+        "96": 2,
+        "120": 2,
+        "144": 2,
+        "168": 2,
+        "192": 3
+      },
+      "order_analytic_leaves": 0,
+      "tape_leaf_at_cap": 0,
+      "sort_median_s": 3.694377,
+      "sort_p99_s": 10.153869,
+      "sort_p99_median_ratio": 2.7484658441734564,
+      "max_estimated_band_rows": 8445000,
+      "max_completed_band_rows": 8975987,
+      "row_bound_violations": 0,
+      "product_sha256": "97dbf45dc6ad42aaf124a566061a818d0a7f1bc72cc91368b883546d71f899bf",
+      "commands": [
+        [
+          "/mnt/nvme2n1/erikg/recursive-planner/bin/scatter_sort.release",
+          "--corpus",
+          "/mnt/nvme2n1/erikg/extcols-scratch/real10b-ref/pile-10b-snap.txt",
+          "--remap",
+          "/mnt/nvme2n1/erikg/phase-as-v2/remap-256.bin",
+          "--scratch",
+          "/mnt/nvme2n1/erikg/piece-publish/g2-10gb/waves",
+          "--tape-bands",
+          "/mnt/nvme2n1/erikg/piece-publish/g2-10gb/bands",
+          "--pending-bands",
+          "32",
+          "--budget-bytes",
+          "51539607552",
+          "--memory-gb",
+          "96",
+          "--threads",
+          "96",
+          "--no-lcp-slices"
+        ],
+        [
+          "/mnt/nvme2n1/erikg/piece-publish/bin/merge",
+          "--binbwt",
+          "/mnt/nvme2n1/erikg/extcols-scratch/real10b-ref/pile-10b-snap.txt",
+          "--remap",
+          "/mnt/nvme2n1/erikg/phase-as-v2/remap-256.bin",
+          "--out-prefix",
+          "/mnt/nvme2n1/erikg/piece-publish/g2-10gb/frag",
+          "--threads",
+          "96",
+          "--tape-bands",
+          "/mnt/nvme2n1/erikg/piece-publish/g2-10gb/bands"
+        ],
+        [
+          "/home/erikg/.cache/xsa/740bd49b53f63f8e978625026bd3b62201053132b9191cb521e8de64c55dda72/xsa_finish",
+          "--prefix",
+          "/mnt/nvme2n1/erikg/piece-publish/g2-10gb/frag",
+          "--corpus",
+          "/mnt/nvme2n1/erikg/extcols-scratch/real10b-ref/pile-10b-snap.txt",
+          "--remap",
+          "/mnt/nvme2n1/erikg/phase-as-v2/remap-256.bin",
+          "--output",
+          "/mnt/nvme2n1/erikg/piece-publish/g2-10gb/product.sxi2",
+          "--threads",
+          "96",
+          "--poll-timeout",
+          "1960",
+          "--wit-ram-budget",
+          "51539607552",
+          "--chi-expect",
+          "2676929445"
+        ]
+      ],
+      "cross_lcp_fatal_count": 0
+    },
+    "repro100": {
+      "reason": "requested-band-reached",
+      "seconds": 1537.271469980944,
+      "returncodes": [
+        -15,
+        -15,
+        -15
+      ],
+      "max_observed_wait_s": 324.004845,
+      "max_completed_wait_s": 324.004845,
+      "top5_sort": [
+        {
+          "band": 45,
+          "rows": 8384125,
+          "read_s": 0.56528,
+          "sort_s": 359.611907,
+          "write_s": 0.070922
+        },
+        {
+          "band": 28,
+          "rows": 8559010,
+          "read_s": 0.384204,
+          "sort_s": 52.6372,
+          "write_s": 0.099643
+        },
+        {
+          "band": 154,
+          "rows": 9513410,
+          "read_s": 0.463862,
+          "sort_s": 43.692931,
+          "write_s": 0.117751
+        },
+        {
+          "band": 78,
+          "rows": 8240782,
+          "read_s": 0.441072,
+          "sort_s": 40.471477,
+          "write_s": 0.045462
+        },
+        {
+          "band": 44,
+          "rows": 5949921,
+          "read_s": 0.450618,
+          "sort_s": 35.82204,
+          "write_s": 0.032287
+        }
+      ],
+      "published_bands": 415,
+      "consumed_bands": 408,
+      "splits": [],
+      "finish_done": [],
+      "incomplete_waits": true,
+      "depth_histogram": {
+        "24": 614,
+        "48": 2,
+        "72": 0,
+        "96": 0,
+        "120": 0,
+        "144": 0,
+        "168": 0,
+        "192": 0
+      },
+      "order_analytic_leaves": 0,
+      "tape_leaf_at_cap": 0,
+      "sort_median_s": 9.021127,
+      "sort_p99_s": 35.82204,
+      "sort_p99_median_ratio": 3.9709051873452177,
+      "max_estimated_band_rows": 8432751,
+      "max_completed_band_rows": 9686482,
+      "row_bound_violations": 0,
+      "commands": [
+        [
+          "/mnt/nvme2n1/erikg/recursive-planner/bin/scatter_sort.release",
+          "--corpus",
+          "/mnt/nvme2n1/erikg/wiki/corpus.bin",
+          "--remap",
+          "/mnt/nvme2n1/erikg/wbuild/remap-256.bin",
+          "--scratch",
+          "/mnt/nvme2n1/erikg/piece-publish/repro100/waves",
+          "--tape-bands",
+          "/mnt/nvme2n1/erikg/piece-publish/repro100/bands",
+          "--pending-bands",
+          "8",
+          "--budget-bytes",
+          "51539607552",
+          "--memory-gb",
+          "96",
+          "--threads",
+          "96",
+          "--no-lcp-slices"
+        ],
+        [
+          "/mnt/nvme2n1/erikg/piece-publish/bin/merge",
+          "--binbwt",
+          "/mnt/nvme2n1/erikg/wiki/corpus.bin",
+          "--remap",
+          "/mnt/nvme2n1/erikg/wbuild/remap-256.bin",
+          "--out-prefix",
+          "/mnt/nvme2n1/erikg/piece-publish/repro100/frag",
+          "--threads",
+          "96",
+          "--tape-bands",
+          "/mnt/nvme2n1/erikg/piece-publish/repro100/bands"
+        ],
+        [
+          "/home/erikg/.cache/xsa/740bd49b53f63f8e978625026bd3b62201053132b9191cb521e8de64c55dda72/xsa_finish",
+          "--prefix",
+          "/mnt/nvme2n1/erikg/piece-publish/repro100/frag",
+          "--corpus",
+          "/mnt/nvme2n1/erikg/wiki/corpus.bin",
+          "--remap",
+          "/mnt/nvme2n1/erikg/wbuild/remap-256.bin",
+          "--output",
+          "/mnt/nvme2n1/erikg/piece-publish/repro100/product.sxi2",
+          "--threads",
+          "96",
+          "--poll-timeout",
+          "1860",
+          "--wit-ram-budget",
+          "51539607552"
+        ]
+      ],
+      "cross_lcp_fatal_count": 0
+    }
+  },
+  "g3_processing_stop": {
+    "runner_pid": 3262533,
+    "native_pids": [
+      3262536,
+      3262537,
+      3262538
+    ],
+    "condition": "merge processed band 401 (state band >= 402)",
+    "native_stages_paused": false,
+    "reason": "processed-band-401",
+    "state": "pid=3262537 phase=publish band=402 processed_rows=0 copied_rows=7829794 total_rows=7829794 inflight=402 window_first=400 window_bands=8 copied_window_rows=64725504 row_capacity=268435456 piece_next=15817 piece_consumed=15748\n",
+    "monitor_seconds": 776.0557548250072
+  },
+  "binary_and_source_digests": {
+    "bit6/cross_lcp_merge.cpp": "5bf75085439f7ef3acd3b009b82cfd5697997aeb3272b2cde8734d248f1df58e",
+    "bit6/binbwt_slice.h": "6df9ce94065d17b1b20bfd698f7e548df924bad706bf761150c3f8965a7b6136",
+    "xsa/runtime/tools/binbwt/scatter_sort.cpp": "9626e2066851aa0f65a77cbdefb20732565b058e9cecf70d8a0c26b3b4278e83",
+    "/mnt/nvme2n1/erikg/piece-publish/bin/merge": "cd392181f6e5bed8f498185795647a2d6d9c0e22766619cfcd59133c2f2ab978",
+    "/mnt/nvme2n1/erikg/recursive-planner/bin/scatter_sort.release": "f4d01c5ddff124bcc591e66a11b79302e6b7dec841151ff4353ccd5b198049ef",
+    "/home/erikg/.cache/xsa/740bd49b53f63f8e978625026bd3b62201053132b9191cb521e8de64c55dda72/xsa_finish": "f4f9b5cb73fa6341867212c8ca021af5c15a989f5ea46c2a7e19c2bc4449627b"
+  },
+  "collision_regression": "CROSS_PIECE_COLLISION path=/mnt/nvme2n1/erikg/piece-publish/collision-sorted/frag.pieces/p-0-0 existed_at_start=0 piece_runs=[0,65536) source_band=0 source_band_runs=[0,65536) pid=3310024\nPASS replaced scratch reproduces piece collision with an ordered input stream\n",
+  "failed_run_cleanup": [
+    {
+      "pgid": 2758118,
+      "command": "/usr/bin/time -v -o /mnt/nvme2n1/erikg/wbuild/emit-tape.time /usr/bin/timeout --foreground -k 120 68000 /home/erikg/.cache/xsa/e48f12c0447af92d14733897cc8fe84d476356dc8bca4c598b1f991f88f70560/cross_lcp_merge --binbwt /mnt/nvme2n1/erikg/wiki/corpus.bin --remap /mnt/nvme2n1/erikg/wbuild/remap-256.bin --out-prefix /mnt/nvme2n1/erikg/wbuild/merged/frag --threads 96 --tape-bands /mnt/nvme2n1/erikg/wbuild/bands-tape "
+    },
+    {
+      "pgid": 2758119,
+      "command": "/usr/bin/time -v -o /mnt/nvme2n1/erikg/wbuild/finish-v2.time /usr/bin/timeout --foreground -k 120 68000 /home/erikg/.cache/xsa/e48f12c0447af92d14733897cc8fe84d476356dc8bca4c598b1f991f88f70560/xsa_finish --prefix /mnt/nvme2n1/erikg/wbuild/merged/frag --corpus /mnt/nvme2n1/erikg/wiki/corpus.bin --remap /mnt/nvme2n1/erikg/wbuild/remap-256.bin --output /mnt/nvme2n1/erikg/wbuild/corpus.sxi2 --threads 96 --poll-timeout 68000 --wit-ram-budget 51539607552 "
+    },
+    {
+      "pgid": 3084619,
+      "command": "/usr/bin/time -v -o /mnt/nvme2n1/erikg/wbuild/order-tape.time /usr/bin/timeout --foreground -k 120 68000 /home/erikg/.cache/xsa/740bd49b53f63f8e978625026bd3b62201053132b9191cb521e8de64c55dda72/scatter_sort --corpus /mnt/nvme2n1/erikg/wiki/corpus.bin --remap /mnt/nvme2n1/erikg/wbuild/remap-256.bin --scratch /mnt/nvme2n1/erikg/wbuild/waves-tape --tape-bands /mnt/nvme2n1/erikg/wbuild/bands-tape --pending-bands 8 --budget-bytes 51539607552 --memory-gb 96 --threads 96 --no-lcp-slices "
+    },
+    {
+      "pgid": 3084621,
+      "command": "/usr/bin/time -v -o /mnt/nvme2n1/erikg/wbuild/finish-v2.time /usr/bin/timeout --foreground -k 120 68000 /home/erikg/.cache/xsa/740bd49b53f63f8e978625026bd3b62201053132b9191cb521e8de64c55dda72/xsa_finish --prefix /mnt/nvme2n1/erikg/wbuild/merged/frag --corpus /mnt/nvme2n1/erikg/wiki/corpus.bin --remap /mnt/nvme2n1/erikg/wbuild/remap-256.bin --output /mnt/nvme2n1/erikg/wbuild/corpus.sxi2 --threads 96 --poll-timeout 68000 --wit-ram-budget 51539607552 "
+    }
+  ],
+  "tests": {
+    "chain_relevant": "19 passed, 0 failed",
+    "baseline_failure": "derived_remap_is_order_preserving_per_corpus fails identically on 76feb73",
+    "native_regressions": [
+      "collision with exact suffix-ordered input",
+      "test_tape_reorder.py",
+      "test_tape_release.py",
+      "test_tape_any_credit.py",
+      "test_tape_progress_model.py (12 cases)"
+    ]
+  },
+  "risks": [
+    "100 GB was intentionally stopped after processing band 401; no full 100 GB product was produced.",
+    "The 100 GB band 45 sort took 359.611907 seconds; maximum completed credit wait was 324.004845 seconds. No seconds-only latency guarantee is claimed.",
+    "The original colliding writer cannot be identified retrospectively. Overlapping generations were observed and reproduce the fatal in a controlled regression.",
+    "The legacy LCP-slice route remains outside this no-slice qualification; native standalone stages require exclusive paths."
+  ]
+}

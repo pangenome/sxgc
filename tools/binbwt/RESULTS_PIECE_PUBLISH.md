@@ -22,7 +22,7 @@ finishes a second ordered stream into that path, and releases the old merge.
 It reproduces the fatal without reordered input:
 
 ```
-CROSS_PIECE_COLLISION path=/mnt/nvme2n1/erikg/piece-publish/collision/frag.pieces/p-0-0 existed_at_start=0 piece_runs=[0,65536) source_band=0 source_band_runs=[0,65536) pid=3271656
+CROSS_PIECE_COLLISION path=/mnt/nvme2n1/erikg/piece-publish/collision-sorted/frag.pieces/p-0-0 existed_at_start=0 piece_runs=[0,65536) source_band=0 source_band_runs=[0,65536) pid=3310024
 ```
 
 The production driver now holds an inherited advisory lock outside the scratch
@@ -56,9 +56,37 @@ recorded in `failed-run-cleanup.json`.
   multi-chunk release, any-credit admission, and all twelve abstract progress
   model configurations pass. The model is not a whole-pipeline certification.
 
-Large-gate results will be recorded after their runs finish. The initial fresh
-100 GB observation passes the reported collision region without a fatal but
-waits for band 45, with later bands copied and released. A one-second CPU sample
-records 100 worker ticks; `SS_DIAGNOSTIC_BAND band=45 phase=sort done=0 consumed=0`
-identifies active local sorting, matching the previously documented planner
-latency issue. This is not evidence of passing the band-400 gate.
+## Large gates and stop evidence
+
+G2 passes: all three stages exit 0, chi **2,676,929,445**, n=10,000,017,259,
+r=3,474,889,847. Elapsed pipeline time: 1602.699 seconds.
+Product SHA-256: `97dbf45dc6ad42aaf124a566061a818d0a7f1bc72cc91368b883546d71f899bf`.
+There is no `CROSS_LCP_FATAL` in the gate logs.
+
+G3 reaches the requested processing boundary: the merge completes band 401 and
+enters band 402 (`phase=publish`, `window_first=400`). It has copied/released
+408 bands and the sorter has published 415. No collision or permanent stall is
+observed. The owner then terminates and reaps all three native stages with
+SIGTERM (return codes -15); elapsed time is 1537.271 seconds.
+The original Python runner's read-acknowledgement stop was deferred by pausing
+only that monitor. A replacement monitor checked native liveness and the
+stronger processing boundary, then resumed the runner for cleanup. No native
+stage was paused. `g3_processing_stop` records the exact final state.
+
+This is not a seconds-only latency pass: band 45 took **359.612 seconds** to
+sort and caused a **324.005-second** credit wait. A one-second CPU sample showed
+100 worker ticks; it subsequently completed without intervention and the run
+advanced beyond band 401. The existing bounded admission/processing window
+cannot hide an arbitrarily slow local sort forever. No capacity was grown.
+
+The independently rebuilt packaged 150 MB gate also completes with all stages
+zero and is byte-identical to its baseline. The 100 GB gate is intentionally a
+prefix progress check, not a completed 100 GB product. The legacy LCP-slice
+route is not qualified by these no-slice runs.
+
+Machine-readable results, exact stage commands, binary/source digests, collision
+diagnostic, and cleanup provenance are in
+`evidence/piece-publish/summary.json`. The original writer's identity remains
+unproven; the observed overlapping generations and controlled collision establish
+the failure mode addressed by the ownership guard. The unrelated baseline remap
+test failure remains unchanged.

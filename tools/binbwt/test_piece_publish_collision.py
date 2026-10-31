@@ -6,7 +6,6 @@ from pathlib import Path
 import random
 import struct
 import subprocess
-import tempfile
 import time
 
 p = argparse.ArgumentParser(description=__doc__)
@@ -19,7 +18,11 @@ data = random.Random(123).randbytes(200000).translate(bytes(3+i%247 for i in ran
 (root/'corpus').write_bytes(data)
 (root/'remap').write_bytes(bytes(range(256)))
 n = len(data)+1
-payload = b''.join(struct.pack('<Q', i | (0 if i == 0 else data[i-1]) << 48) for i in range(n))
+# Unique 24-byte prefixes establish exact suffix order for this fixture;
+# the virtual END suffix has the empty key and precedes every data symbol.
+positions = sorted(range(n), key=lambda i: data[i:i+24])
+assert all(data[x:x+24] != data[y:y+24] for x, y in zip(positions, positions[1:]))
+payload = b''.join(struct.pack('<Q', i | (0 if i == 0 else data[i-1]) << 48) for i in positions)
 env = dict(os.environ, CROSS_V2_PIECES='1', CROSS_V2_PIECE_WINDOW='100000')
 procs = []
 logs = []

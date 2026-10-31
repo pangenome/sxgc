@@ -2182,7 +2182,14 @@ mod tests {
         assert!(lock_scratch(&dir).is_err());
         let mut journal = Journal::open(&dir.join("journal")).unwrap();
         let mut stage = spawn_phase(&mut journal, &dir, "owner", SELFTEST_MEMORY_KB,
-            "/usr/bin/timeout", &["5".into(), "sleep".into(), "1".into()], &[]).unwrap();
+            "/usr/bin/timeout", &["5".into(), "bash".into(), "-c".into(),
+                "touch ready; exec sleep 1".into()], &[]).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !dir.join("ready").exists() {
+            assert!(stage.child.try_wait().unwrap().is_none());
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(10));
+        }
         drop(owner);
         fs::remove_dir_all(&dir).unwrap();
         fs::create_dir_all(&dir).unwrap();
