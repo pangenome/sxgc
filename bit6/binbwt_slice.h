@@ -3816,6 +3816,23 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
     U baseRow = 0, hits = 0;
     double tRead = 0, tWord = 0, tPub = 0;
     U band = 0, bandRows = 0, bandRead = 0;
+    std::vector<U> bandPayload;
+    bool bandLoaded = false;
+    auto tapeState = [&](const char* phase) {
+        if (!bands) return;
+        const std::string tmp = dir + "/merge.state.tmp";
+        {
+            std::ofstream state(tmp);
+            state << "pid=" << ::getpid() << " phase=" << phase << " band=" << band
+                  << " processed_rows=" << bandRead << " copied_rows=" << (bandLoaded ? bandRows : 0)
+                  << " total_rows=" << bandRows
+                  << " inflight=" << (bandLoaded || fd >= 0 ? std::to_string(band) : "none")
+                  << " piece_next=" << sink->own.bands
+                  << " piece_consumed=" << v2_consumed_band(prefix) << "\n";
+            require(state.good(), "tape state write");
+        }
+        require(::rename(tmp.c_str(), (dir + "/merge.state").c_str()) == 0, "tape state publish");
+    };
     // END IS VIRTUAL: symbol 0 is END's cell, so EXACTLY ONE row of the BWT may
     // carry it (the row whose suffix starts at position 0). With a corpus-derived
     // remap no present byte owns code 0, so this count is exact - and it is the
@@ -3829,17 +3846,45 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
             require(count >= band, "tape bands: invalid end count");
             if (count == band) break;
         }
-        if (bands && fd < 0) {
+        if (bands && !bandLoaded) {
+            tapeState("wait-band");
             waitFile(bandPath(band, ".done"));
             fd = ::open(bandPath(band, ".sa").c_str(), O_RDONLY);
             struct stat bs{};
             require(fd >= 0 && ::fstat(fd, &bs) == 0 && bs.st_size % 8 == 0, "tape bands: bad band");
             bandRows = U(bs.st_size) / 8; bandRead = 0;
+            int opened = ::open(bandPath(band, ".opened").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+            require(opened >= 0, "tape bands: opened marker"); ::close(opened);
+            tapeState("read");
             require(bandRows <= n - baseRow, "tape bands: too many rows");
+            // Own the complete payload before entering the downstream sink.
+            // publishBin may wait for finish credit; it must not retain the
+            // producer's disk credit, including when a band spans many chunks.
+            const double copyStart = now_sec();
+            bandPayload.resize(bandRows);
+            size_t readBytes = 0, totalBytes = size_t(bs.st_size);
+            while (readBytes < totalBytes) {
+                ssize_t r = ::read(fd, (char*)bandPayload.data() + readBytes, totalBytes - readBytes);
+                require(r > 0, "tape bands: short payload read");
+                readBytes += size_t(r);
+            }
+            ::close(fd); fd = -1;
+            bandLoaded = true;
+            tRead += now_sec() - copyStart;
+            require(::unlink(bandPath(band, ".sa").c_str()) == 0, "tape bands: unlink band");
+            int cf = ::open(bandPath(band, ".consumed").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+            require(cf >= 0, "tape bands: publish consumed"); ::close(cf);
+            std::fprintf(stderr, "TAPE_BAND_READ band=%llu rows=%llu released_before_publish=1\n",
+                (unsigned long long)band, (unsigned long long)bandRows);
+            tapeState("copied");
         }
         const U want = bands ? std::min<U>(chunk, bandRows - bandRead) : std::min<U>(chunk, n - baseRow);
         const double tr = now_sec();
         size_t got = 0, bytes = size_t(want) * 8;
+        if (bands) {
+            if (bytes) std::memcpy(pos.data(), bandPayload.data() + bandRead, bytes);
+            got = bytes;
+        }
         while (got < bytes) {
             ssize_t r = ::pread(fd, ((char*)pos.data()) + got, bytes - got,
                                 off_t((bands ? bandRead * 8 : 48 + (unsigned long long)baseRow * 8) + got));
@@ -3878,16 +3923,15 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
         for (U count : workerHits) hits += count;
         tWord += now_sec() - tw;
         const double tp = now_sec();
+        tapeState("publish");
         if (want) sink->publishBin(bands ? unsigned(band) : 0, words.data(), want, baseRow);
         tPub += now_sec() - tp;
         baseRow += want;
         if (bands) {
             bandRead += want;
             if (bandRead == bandRows) {
-                ::close(fd); fd = -1;
-                require(::unlink(bandPath(band, ".sa").c_str()) == 0, "tape bands: unlink band");
-                int cf = ::open(bandPath(band, ".consumed").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
-                require(cf >= 0, "tape bands: publish consumed"); ::close(cf);
+                bandLoaded = false;
+                std::vector<U>().swap(bandPayload);
                 ++band;
             }
         }

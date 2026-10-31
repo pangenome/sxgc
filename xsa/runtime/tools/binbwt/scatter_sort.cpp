@@ -1160,6 +1160,13 @@ int main(int argc, char** argv) {
     auto bandPath = [&](u64 b, const char* suffix) {
         return tapeBands + "/band_" + std::to_string(b) + suffix;
     };
+    auto producerState = [&](u64 band, const char* phase) {
+        if (tapeBands.empty()) return;
+        const std::string path = bandPath(band, ".producer-state");
+        { std::ofstream out(path + ".tmp"); out << phase << "\n";
+          if (!out.good()) die("write producer state " + path); }
+        if (::rename((path + ".tmp").c_str(), path.c_str())) die("publish producer state " + path);
+    };
     auto marker = [&](const std::string& path) {
         int f = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
         if (f < 0) die("create tape marker " + path);
@@ -1210,10 +1217,11 @@ int main(int argc, char** argv) {
     // wait, not sit inside the phase's own timeout: the 150 MB run burned 25:00
     // (rc=124) on a marker whose writer had been dead since 0.12 s.
     const double bandWaitDeadlineS = [] {
-        const char* e = ::getenv("SS_BAND_WAIT_TIMEOUT_S");
+        const char* e = ::getenv("XSA_TAPE_WAIT_S");
+        if (!e || !*e) e = ::getenv("SS_BAND_WAIT_TIMEOUT_S");
         if (!e || !*e) return 3600.0;
         const double v = std::strtod(e, nullptr);
-        if (!(v > 0)) die("SS_BAND_WAIT_TIMEOUT_S must be positive");
+        if (!(v > 0)) die("XSA_TAPE_WAIT_S / SS_BAND_WAIT_TIMEOUT_S must be positive");
         return v;
     }();
     std::mutex lcpLiveMu;
@@ -1246,16 +1254,29 @@ int main(int argc, char** argv) {
                     "SS_WAIT producer=scatter_sort blocks_on=%s path=%s writer=%s wall_s=%.1f\n",
                     what, path.c_str(), who, waitedS);
             }
-            if (waitedS > bandWaitDeadlineS)
+            if (waitedS > bandWaitDeadlineS) {
+                const std::string stem = path.substr(0, path.size() - std::strlen(".consumed"));
+                struct stat st{};
+                const bool exists = ::stat((stem + ".sa").c_str(), &st) == 0;
+                std::ifstream stateFile(tapeBands + "/merge.state");
+                std::string state; std::getline(stateFile, state);
+                const bool opened = ::access((stem + ".opened").c_str(), F_OK) == 0;
+                std::ifstream producerFile(stem + ".producer-state");
+                std::string producerPhase; std::getline(producerFile, producerPhase);
+                std::fprintf(stderr, "SS_TIMEOUT path=%s writer=%s band_exists=%d band_bytes=%llu merge_opened=%d producer_phase=%s merge_state={%s}\n",
+                    path.c_str(), who, int(exists), (unsigned long long)(exists ? st.st_size : 0),
+                    int(opened), producerPhase.empty() ? "unclaimed" : producerPhase.c_str(), state.empty() ? "unavailable" : state.c_str());
                 die(std::string("no consumer progress on ") + what + " " + path + " for " +
                     std::to_string(int(waitedS)) + " s, waited for by " + who +
-                    " (SS_BAND_WAIT_TIMEOUT_S=" + std::to_string(int(bandWaitDeadlineS)) +
+                    " (XSA_TAPE_WAIT_S=" + std::to_string(int(bandWaitDeadlineS)) +
                     "); that consumer is dead or stalled - refusing to hang in the phase timeout");
+            }
             ::usleep(10000);
         }
+        if (said) std::fprintf(stderr, "SS_WAIT_DONE path=%s wall_s=%.3f\n", path.c_str(), now_sec() - t0);
     };
     // .consumed      <- cross_lcp_merge's tape emit, at READ time (payload in its buffer)
-    // .lcp.consumed  <- xsa_finish's rank-cursor fold, when it retires a folded slice
+    // .lcp.consumed  <- xsa_finish, immediately after copying a slice into private memory
     auto waitBandConsumed = [&](u64 back) {
         waitMarker(bandPath(back, ".consumed"), "band.consumed", "emit-tape(cross_lcp_merge)");
     };
@@ -1598,21 +1619,23 @@ int main(int argc, char** argv) {
             for (;;) {
                 u64 b = 0;
                 {
+                    // Only the next claim waits for disk credit. Future claims
+                    // must not time out before their prerequisite is produced,
+                    // or reserve arena while blocked behind downstream work.
                     std::lock_guard<std::mutex> lk(claim_mu);
                     b = next_band.fetch_add(1);
                     if (b >= nbands) return;
-                    gate.admit(band_rows[b]);   // the arena this band will hold
+                    const u64 nextTapeBand = globalBand + b;
+                    producerState(nextTapeBand, "credit");
+                    if (!tapeBands.empty() && nextTapeBand >= pendingBands) {
+                        waitBandConsumed(nextTapeBand - pendingBands);
+                        if (lcpOn) waitSliceCredit(nextTapeBand);
+                    }
+                    gate.admit(band_rows[b]);
                 }
                 const u64 admitted = band_rows[b];
                 const u64 tapeBand = globalBand + b;
-                if (!tapeBands.empty() && tapeBand >= pendingBands) {
-                    const u64 back = tapeBand - pendingBands;
-                    waitBandConsumed(back);
-                    // The slice's credit is the ROWS window (>= one 65536-run fold
-                    // band), not the SA's K: the fold must be able to PUBLISH a whole
-                    // piece band before it retires anything (see SS_TAPE_CREDIT).
-                    if (lcpOn) waitSliceCredit(tapeBand);
-                }
+                producerState(tapeBand, "read");
                 // ---- THE BAND BODY: EVERYTHING THAT ALLOCATES, AND THE SHRINK ----
                 // A std::bad_alloc inside a worker is std::terminate (rc=134, the
                 // exact 100 GB signature: "terminate called recursively"), so the
@@ -1657,6 +1680,7 @@ int main(int argc, char** argv) {
                         // band's files are consumed, so nothing is held for it.
                         noteFdPeak();
                         const double bs0 = now_sec();
+                        producerState(tapeBand, "sort");
                         bandLcp.clear();
                         bandEsc.clear();
                         if (lcpOn) {
@@ -1786,6 +1810,7 @@ int main(int argc, char** argv) {
                     }
                 }
                 const double bs0 = now_sec();
+                        producerState(tapeBand, "sort");
                 if (lcpOn) {
                     if (tapeBands.empty()) {
                         // the one-file arm: the band's LCP stream lands at its own
@@ -1874,6 +1899,7 @@ int main(int argc, char** argv) {
                                             std::memory_order_release);
                 tSort[b] = now_sec() - bs0;
                 const double bw0 = now_sec();
+                producerState(tapeBand, "publish");
                 u64 ties = 0;
                 for (size_t i = 1; i < rows.size(); ++i)
                     if (rows[i].klo == rows[i-1].klo && rows[i].khi == rows[i-1].khi &&
@@ -1942,6 +1968,7 @@ int main(int argc, char** argv) {
                     }
                 }
                 tWrite[b] = now_sec() - bw0;
+                producerState(tapeBand, "published");
                 // The band is on disc and published: only NOW may its scatter parts
                 // go (a retry after a failed allocation re-reads them).
                 if (!keep_rows) {

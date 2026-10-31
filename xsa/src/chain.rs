@@ -23,6 +23,7 @@
 //! the same gate flags, so outputs are byte-for-byte those of the chain.
 use std::fs::{self, File};
 use std::io::{Read, Write};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -930,6 +931,26 @@ struct RunningPhase {
     child: std::process::Child,
     log_path: PathBuf,
     time_path: PathBuf,
+    armed: bool,
+}
+
+impl RunningPhase {
+    fn terminate(&mut self) {
+        if !self.armed { return; }
+        // Every wrapper and native descendant shares this private group.
+        // Child::kill alone kills /usr/bin/time and leaves the real consumer
+        // polling the same scratch path, where it can steal a later run's pieces.
+        unsafe {
+            extern "C" { fn kill(pid: i32, signal: i32) -> i32; }
+            kill(-(self.child.id() as i32), 9);
+        }
+        let _ = self.child.wait();
+        self.armed = false;
+    }
+}
+
+impl Drop for RunningPhase {
+    fn drop(&mut self) { self.terminate(); }
 }
 
 /// Spawn one phase under /usr/bin/time -v with the hard RLIMIT_AS cap and
@@ -947,7 +968,8 @@ fn spawn_phase(
     let time_path = scratch.join(format!("{tag}.time"));
     let _ = fs::remove_file(&log_path);
     let _ = fs::remove_file(&time_path);
-    let command_line = format!("{program} {}", args.join(" "));
+    let foreground = if program == "/usr/bin/timeout" { " --foreground" } else { "" };
+    let command_line = format!("{program}{foreground} {}", args.join(" "));
     let env_note = if env.is_empty() {
         String::new()
     } else {
@@ -963,7 +985,12 @@ fn spawn_phase(
             .arg("xsa-phase") // $0
             .arg(memory_kb.to_string()) // $1: RLIMIT_AS in KiB
             .arg("/usr/bin/time").arg("-v").arg("-o").arg(&time_path)
-            .arg(program).args(args)
+            .arg(program);
+        // GNU timeout otherwise creates another group, escaping our cleanup.
+        if program == "/usr/bin/timeout" { cmd.arg("--foreground"); }
+        cmd.args(args)
+            .process_group(0)
+            .stdin(Stdio::null())
             .current_dir(scratch)
             .stdout(Stdio::from(log))
             .stderr(Stdio::from(log_err));
@@ -973,7 +1000,7 @@ fn spawn_phase(
         command.env(key, value);
     }
     let child = command.spawn().map_err(|e| format!("launch {tag}: {e}"))?;
-    Ok(RunningPhase { tag: tag.to_string(), child, log_path, time_path })
+    Ok(RunningPhase { tag: tag.to_string(), child, log_path, time_path, armed: true })
 }
 
 /// Wait for a spawned phase, journal its telemetry, fail loud on error.
@@ -1000,6 +1027,7 @@ fn join_phase(
         let tail: Vec<&str> = tail.lines().rev().take(5).collect::<Vec<_>>().into_iter().rev().collect();
         return Err(format!("PHASE {tag} FAILED (rc {}); log tail:\n{}", status.code().unwrap_or(-1), tail.join("\n")));
     }
+    running.armed = false;
     Ok(())
 }
 
@@ -1876,9 +1904,8 @@ walks the corpus for every endpoint and no LCP slice is produced). Not a user op
     let v2_sampler = DiscSampler::start(scratch.to_path_buf(), Duration::from_secs(2));
     if let Err(e) = join_phase(journal, scratch, producer_running) {
         // A dead producer leaves the finish polling for hours; kill it loud.
-        let _ = finish_running.child.kill();
-        let _ = finish_running.child.wait();
-        if let Some(mut m) = emit_running { let _ = m.child.kill(); let _ = m.child.wait(); }
+        finish_running.terminate();
+        if let Some(mut m) = emit_running { m.terminate(); }
         return Err(format!("{e}; the fused finish was killed after the {} producer failed", producer_label));
     }
     if let Some(m) = emit_running {

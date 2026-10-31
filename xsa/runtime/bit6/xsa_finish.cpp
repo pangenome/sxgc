@@ -4442,14 +4442,13 @@ struct LcpColumn {
     //                       LCP slice)
     //
     // The fold reads ranks in ASCENDING order, so this reader is a STREAM: it
-    // opens slices as the rank cursor reaches them, stages only the range the
-    // current fold band needs, and RETIRES (unlink + .lcp.consumed) every slice
-    // whose last rank the cursor has passed. Residency is therefore
-    //      staged span for one fold band  +  escapes of at most two slices
+    // opens slices as the rank cursor reaches them, copies their payloads, and
+    // immediately returns disk credit (unlink + .lcp.consumed). Residency is
+    //      staged span for one fold band + overlapping private slice copies
     // and never n (never 1.34n): the producer's own flow control is satisfied by
     // the .lcp.consumed markers this reader publishes.
     //
-    // The slice containing the cursor's LAST rank is kept until the next load,
+    // The private copy containing the cursor's LAST rank stays until the next load,
     // because a fold band's span starts at the previous band's end rank (base =
     // lo-1) and re-reads exactly that one byte.
     struct SliceMeta {
@@ -4462,10 +4461,11 @@ struct LcpColumn {
         uint64_t index = 0;
         int fd = -1;
         std::vector<std::pair<uint64_t, uint64_t>> esc;
+        std::vector<uint8_t> payload;
         uint64_t end() const { return rankBase + rows; }
     };
     std::string bandDir;                 // non-empty => band-stream mode
-    std::deque<SliceMeta> live;          // opened and not yet retired
+    std::deque<SliceMeta> live;          // private copies still needed by the rank cursor
     uint64_t nextSlice = 0;              // the next band index to open
     uint64_t covered = 0;                // end rank of the last opened slice
     uint64_t slicesOpened = 0, slicesRetired = 0, emptySlices = 0;
@@ -4525,16 +4525,9 @@ struct LcpColumn {
         }
     }
     void retireFront() {
-        SliceMeta& s = live.front();
-        if (s.fd >= 0) ::close(s.fd);
-        const std::string path = bandDir + "/band_" + std::to_string(s.index) + ".lcp";
-        const std::string name = bandDir + "/band_" + std::to_string(s.index);
-        pf_check(::unlink((name + ".lcp").c_str()) == 0, "unlink retired LCP slice " + path);
-        int cf = ::open((name + ".lcp.consumed").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
-        pf_check(cf >= 0, "publish consumed LCP slice " + name);
-        ::close(cf);
+        // Disk credit was returned at copy time. Keep only the private copy
+        // needed for the one-rank overlap with the following fold.
         live.pop_front();
-        ++slicesRetired;
     }
     // Open the next slice in rank order. Empty bands carry rows == 0: they hold
     // no bytes, so they are consumed immediately (the producer is waiting on that
@@ -4581,6 +4574,14 @@ struct LcpColumn {
             ++emptySlices;
             return;
         }
+        s.payload.resize(size_t(s.rows));
+        pread_at(s.fd, s.payload.data(), s.rows, SLICE_HDR, "lcp slice payload");
+        loadSliceEscapes(s);
+        ::close(s.fd); s.fd = -1;
+        pf_check(::unlink(path.c_str()) == 0, "unlink copied LCP slice " + path);
+        int cf = ::open((base + ".lcp.consumed").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+        pf_check(cf >= 0, "publish copied LCP slice " + base); ::close(cf);
+        ++slicesRetired;
         covered += s.rows;
         maxSliceBytes = std::max(maxSliceBytes, s.rows + s.escapeCount * 16);
         live.push_back(std::move(s));
@@ -4690,20 +4691,18 @@ struct LcpColumn {
         while (covered <= hiRank) openNextSlice();
         for (auto& s : live) {
             if (s.end() <= base || s.rankBase > hiRank) continue;
-            loadSliceEscapes(s);
             const uint64_t lo = std::max(base, s.rankBase), hi2 = std::min(hiRank, s.end() - 1);
-            pread_at(s.fd, b.u8.data() + (lo - base), hi2 - lo + 1,
-                     uint64_t(SLICE_HDR) + (lo - s.rankBase), "lcp band slice");
+            std::memcpy(b.u8.data() + (lo - base), s.payload.data() + (lo - s.rankBase), hi2 - lo + 1);
             for (const auto& e : s.esc)
                 if (e.first >= base && e.first <= hiRank) b.deep.push_back(e);
             ++preads;
         }
+        uint64_t liveBytes = len;
+        for (const auto& s : live) liveBytes += s.payload.size() + s.esc.size() * 16;
+        maxLiveBytes = std::max(maxLiveBytes, liveBytes);
         // RETIRE what this range has passed. The slice holding hiRank stays: the
         // next fold band's range starts at exactly hiRank (base = lo-1).
         while (!live.empty() && live.front().end() <= hiRank) retireFront();
-        uint64_t liveEsc = 0;
-        for (const auto& s : live) liveEsc += s.esc.size() * 16;
-        maxLiveBytes = std::max(maxLiveBytes, len + liveEsc);
         ++stagedLoads;
         stagedBytes += len;
         if (base + len > maxEnd) maxEnd = base + len;
@@ -4729,8 +4728,8 @@ struct LcpColumn {
         // THE CONSUMER SIDE OF THE SAME CLAIM. The producer journals LCP_SLICE
         // (bytes of slice published and not yet retired, i.e. the DISC footprint);
         // this is what the fold ever held at once (one band's staged span plus the
-        // escapes of the live slices) - bytes and as a fraction of n. Neither is
-        // ever a resident column: the fold deletes each slice as its cursor passes.
+        // private overlapping slice copies) - bytes and as a fraction of n.
+        // Disk slices are deleted immediately after copying.
         fprintf(stderr,
                 "LCP_SLICE_CONSUMER max_live_bytes=%llu slices=%llu retired=%llu "
                 "peak_over_n=%.6f staged_bytes=%llu bytes_per_rank=%.6f escapes=%llu "
