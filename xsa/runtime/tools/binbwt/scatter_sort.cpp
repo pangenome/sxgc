@@ -7,8 +7,8 @@
 //                [--sample N] [--scratch DIR] [--keep-rows]
 //
 // Pipeline:
-//   1. SAMPLE   jittered-stride sample of complete 24-byte keys -> sorted ->
-//               quantile BOUNDARIES. A sample suffices: bands only have to be
+//   1. SAMPLE   positional stride sample -> recursive 24-byte windows ->
+//               prefix BOUNDARIES. A sample suffices: bands only have to be
 //               balanced, and every row is routed by a key COMPARISON, so a
 //               sampling error can only unbalance a band, never misorder a row.
 //   2. SCATTER  ONE sequential pass over the tape (T threads over contiguous
@@ -681,108 +681,90 @@ static void sort_band_inplace(std::vector<Row>& v, std::vector<uint8_t>& out_lcp
     }
 }
 
-// Refine equal cached keys by the next byte, using the same count/prefix/scatter
-// subdivision as the bin builder. American-flag swaps avoid a second row arena.
-// Large tie groups split proactively; elapsed time is a tuning signal only.
-static void sort_tape_keys(std::vector<Row>& rows, u64 band) {
-    const double started = now_sec();
-    const char* setting = ::getenv("SS_SORT_SPLIT_S");
-    const double threshold = setting && *setting ? std::strtod(setting, nullptr) : 1.0;
-    if (!(threshold > 0)) die("SS_SORT_SPLIT_S must be positive");
-    auto keyLess = [](const Row& a, const Row& b) {
-        if (a.klo != b.klo) return a.klo < b.klo;
-        if (a.khi != b.khi) return a.khi < b.khi;
-        return a.kq < b.kq;
-    };
-    std::sort(rows.begin(), rows.end(), keyLess);
-    struct Task { size_t lo, hi; u64 depth; };
-    std::vector<Task> stack;
-    u64 splits = 0, maxDepth = 0, largest = 0;
-    auto leaf = [&](size_t lo, size_t hi, u64 depth) {
-        std::sort(rows.begin() + lo, rows.begin() + hi, [depth](const Row& a, const Row& b) {
-            return suf_cmp_from(unpack_pos(a.pos), unpack_pos(b.pos), depth) < 0;
-        });
-    };
-    for (size_t lo = 0; lo < rows.size();) {
-        size_t hi = lo + 1;
-        while (hi < rows.size() && !keyLess(rows[lo], rows[hi])) ++hi;
-        // A byte-at-a-time walk through a long uniform run is quadratic.
-        // Scan each disjoint corpus run once in position order, then partition
-        // by its next differing byte. The cached key fields are scratch only
-        // within this equal-key group and are restored before returning.
-        const Row saved = rows[lo];
-        if (hi - lo > 1024 && saved.klo == saved.khi && saved.klo == saved.kq &&
-            saved.klo == (saved.klo & 255) * 0x0101010101010101ull) {
-            std::sort(rows.begin() + lo, rows.begin() + hi, [](const Row& a, const Row& b) {
-                return unpack_pos(a.pos) < unpack_pos(b.pos);
-            });
-            u64 runEnd = 0;
-            const unsigned symbol = saved.klo & 255;
-            for (size_t i = lo; i < hi; ++i) {
-                const u64 pos = unpack_pos(rows[i].pos);
-                if (pos >= runEnd) {
-                    runEnd = pos + 24;
-                    while (runEnd < FILE_N && unsigned(REMAP ? REMAP[T[runEnd]] : T[runEnd]) == symbol)
-                        ++runEnd;
-                }
-                rows[i].klo = runEnd - pos;
-                rows[i].khi = runEnd == FILE_N || unsigned(REMAP ? REMAP[T[runEnd]] : T[runEnd]) < symbol ? 0 : 1;
-                maxDepth = std::max(maxDepth, rows[i].klo);
-            }
-            std::sort(rows.begin() + lo, rows.begin() + hi, [](const Row& a, const Row& b) {
-                if (a.khi != b.khi) return a.khi < b.khi;
-                if (a.klo != b.klo) return a.khi == 0 ? a.klo < b.klo : a.klo > b.klo;
-                return suf_cmp_from(unpack_pos(a.pos), unpack_pos(b.pos), a.klo) < 0;
-            });
-            for (size_t i = lo; i < hi; ++i) {
-                rows[i].klo = saved.klo; rows[i].khi = saved.khi; rows[i].kq = saved.kq;
-            }
-            ++splits; largest = std::max<u64>(largest, hi - lo);
-            std::fprintf(stderr, "SS_SPLIT band=%llu rows=%zu kind=uniform-run-next-byte max_depth=%llu\n",
-                (unsigned long long)band, hi - lo, (unsigned long long)maxDepth);
-            lo = hi; continue;
-        }
-        if (hi - lo > 1) {
-            if (hi - lo > 1024 || now_sec() - started >= threshold)
-                stack.push_back({lo, hi, 24});
-            else leaf(lo, hi, 24);
-            while (!stack.empty()) {
-                const Task task = stack.back(); stack.pop_back();
-                size_t count[257] = {}, begin[257], next[257];
-                auto code = [&](const Row& row) -> unsigned {
-                    const u64 p = unpack_pos(row.pos);
-                    if (task.depth >= FILE_N - p) return 0;
-                    const u8 c = T[p + task.depth];
-                    return 1 + unsigned(REMAP ? REMAP[c] : c);
-                };
-                for (size_t i = task.lo; i < task.hi; ++i) ++count[code(rows[i])];
-                size_t offset = task.lo;
-                for (unsigned c = 0; c < 257; ++c) {
-                    begin[c] = next[c] = offset; offset += count[c];
-                }
-                for (unsigned c = 0; c < 257; ++c) {
-                    const size_t end = begin[c] + count[c];
-                    while (next[c] < end) {
-                        const unsigned target = code(rows[next[c]]);
-                        if (target == c) ++next[c];
-                        else std::swap(rows[next[c]], rows[next[target]++]);
+// A fence is a finite prefix, never padded with a corpus symbol.
+struct TapeFence { u64 pos, depth; bool after=false; };
+static int prefix_cmp(u64 a, u64 b, u64 depth) {
+    const u64 cap = std::min({depth, FILE_N-a, FILE_N-b});
+    for (u64 i=0; i<cap; ++i) {
+        unsigned x=REMAP ? REMAP[T[a+i]] : T[a+i];
+        unsigned y=REMAP ? REMAP[T[b+i]] : T[b+i];
+        if (x != y) return x < y ? -1 : 1;
+    }
+    if (cap == depth || a == b) return 0;
+    return FILE_N-a < FILE_N-b ? -1 : 1;
+}
+struct TapeLeaf { TapeFence first; u64 samples; bool analytic; };
+// Only oversized equal-prefix nodes descend. Multiplicity is retained: every
+// entry is a sampled POSITION, not a distinct key. No runtime subdivision.
+static std::vector<TapeLeaf> plan_tape(std::vector<u64> positions, u64 stride,
+                                     u64 target, u64 wave, u64 trailing) {
+    std::vector<TapeLeaf> leaves;
+    const u64 goal=std::max<u64>(1, target*4/5);
+    std::function<void(size_t,size_t,u64)> descend;
+    descend = [&](size_t lo, size_t hi, u64 depth) {
+        std::sort(positions.begin()+lo, positions.begin()+hi,
+                  [=](u64 a,u64 b){return prefix_cmp(a,b,depth)<0;});
+        size_t pending=lo;
+        auto emit = [&](size_t a,size_t b,bool analytic=false) {
+            if (a<b) leaves.push_back({{positions[a],depth},u64(b-a),analytic});
+        };
+        for (size_t a=lo; a<hi;) {
+            size_t b=a+1;
+            while (b<hi && prefix_cmp(positions[a],positions[b],depth)==0) ++b;
+            if ((b-a)*stride > goal) {
+                emit(pending,a); pending=b;
+                // Prove the whole prefix class from the CORPUS, not samples.
+                // A matching internal run disqualifies analytic termination.
+                bool analytic=true;
+                for (size_t j=a;j<b;++j) analytic &= positions[j]>=trailing;
+                if (analytic) {
+                    for (u64 p=0;p<trailing;++p) {
+                        if (prefix_cmp(p,positions[a],depth)==0) { analytic=false; break; }
                     }
                 }
-                ++splits; maxDepth = std::max(maxDepth, task.depth + 1);
-                largest = std::max<u64>(largest, task.hi - task.lo);
-                // END bucket has at most one distinct finite suffix.
-                for (unsigned c = 1; c < 257; ++c) {
-                    if (count[c] > 1024) stack.push_back({begin[c], begin[c] + count[c], task.depth + 1});
-                    else if (count[c] > 1) leaf(begin[c], begin[c] + count[c], task.depth + 1);
+                if (analytic) {
+                    emit(a,b,true);
+                    // Close this exact prefix class, including any unsampled
+                    // gap before the next sampled key in a normal empty leaf.
+                    leaves.push_back({{positions[a],depth,true},0,false});
                 }
+                else if (depth==192) {
+                    if ((b-a)*stride>target) std::fprintf(stderr,"TAPE_LEAF_AT_CAP rows=%llu wave=%llu depth=192\n",
+                        (unsigned long long)((b-a)*stride),(unsigned long long)wave);
+                    emit(a,b);
+                } else descend(a,b,depth+24);
+            } else if ((b-pending)*stride > goal) {
+                emit(pending,a); pending=a;
             }
+            a=b;
         }
-        lo = hi;
+        emit(pending,hi);
+    };
+    if (!positions.empty()) descend(0,positions.size(),24);
+    // The first range normally extends below its sampled key. An analytic
+    // range must instead start at its proved prefix, leaving unsampled lower
+    // keys (and short finite tails) in an ordinary zero-estimate range.
+    if (!leaves.empty() && leaves.front().analytic)
+        leaves.insert(leaves.begin(),{{0,24},0,false});
+    if (leaves.empty()) leaves.push_back({{0,24},0,false});
+    u64 histogram[8]={}, largest=0;
+    for (const auto& leaf:leaves) {
+        ++histogram[leaf.first.depth/24-1];
+        largest=std::max(largest,leaf.samples*stride);
     }
-    if (splits) std::fprintf(stderr,
-        "SS_SPLIT band=%llu nodes=%llu largest_rows=%llu max_depth=%llu wall_s=%.6f threshold_s=%.3f policy=next-byte-large-ties-or-elapsed\n",
-        (unsigned long long)band, (unsigned long long)splits, (unsigned long long)largest,
-        (unsigned long long)maxDepth, now_sec() - started, threshold);
+    std::fprintf(stderr,"TAPE_DEPTH_HISTOGRAM wave=%llu",(unsigned long long)wave);
+    for (unsigned i=0;i<8;++i) std::fprintf(stderr," depth%u=%llu",24*(i+1),(unsigned long long)histogram[i]);
+    std::fprintf(stderr," max_estimated_rows=%llu target=%llu plan_target=%llu\n",
+        (unsigned long long)largest,(unsigned long long)target,(unsigned long long)goal);
+    return leaves;
+}
+static void sort_tape_keys(std::vector<Row>& rows, u64) {
+    std::sort(rows.begin(),rows.end(),[](const Row& a,const Row& b) {
+        if (a.klo!=b.klo) return a.klo<b.klo;
+        if (a.khi!=b.khi) return a.khi<b.khi;
+        if (a.kq!=b.kq) return a.kq<b.kq;
+        return suf_cmp_from(unpack_pos(a.pos),unpack_pos(b.pos),24)<0;
+    });
 }
 
 int main(int argc, char** argv) {
@@ -1209,30 +1191,17 @@ int main(int argc, char** argv) {
     const u64 stride = std::max<u64>(1, N / std::max<u64>(1, sample_n));
     std::vector<u64> sk;
     sk.reserve(N / stride + 2);
-    u64 rng = 0x243f6a8885a308d3ull;
-    for (u64 p = 0; p < N; p += stride) {
-        rng = rng * 6364136223846793005ull + 1442695040888963407ull;
-        u64 q = p + (rng >> 11) % stride;
-        if (q >= KEY_N) continue;
-        u64 a, b, c;
-        key_at(q, a, b, c);
-        sk.push_back(a);
+    for (u64 p=0; p<KEY_N; p+=stride) sk.push_back(p);
+    // Direct corpus proof of the maximal single-symbol suffix. Samples cannot
+    // establish this property ("az" and "aa" agree on their first byte).
+    u64 trailing=FILE_N;
+    if (FILE_N) {
+        const unsigned last=REMAP ? REMAP[T[FILE_N-1]] : T[FILE_N-1];
+        while (trailing && unsigned(REMAP ? REMAP[T[trailing-1]] : T[trailing-1])==last) --trailing;
     }
-    std::sort(sk.begin(), sk.end());
-    madv_release(T, FILE_N);   // the jittered sample walk touched n/stride pages
     const double t_sample = now_sec() - t0;
     std::fprintf(stderr, "SS_SAMPLE samples=%zu stride=%" PRIu64 " wall=%.2f\n",
                  sk.size(), stride, t_sample);
-
-    // quantile index helper on the sampled keys
-    auto qkey = [&](double frac) -> u64 {
-        if (sk.empty()) return ~0ull;
-        double idx = frac * double(sk.size() - 1);
-        if (idx < 0) idx = 0;
-        u64 i = (u64)idx;
-        if (i >= sk.size()) i = sk.size() - 1;
-        return sk[i];
-    };
 
     std::unique_ptr<Pool> pool(new Pool((unsigned)std::max<u64>(1, threads)));
     std::string cmd = "mkdir -p '" + scratch + "'";
@@ -1541,41 +1510,21 @@ int main(int argc, char** argv) {
     for (u64 w = 0; w < waves; ++w) {
         const double tw = now_sec();
         const Wave& W = wl[w];
-        // Bands inside the wave: rows_per_band each, from the same sample.
-        // BAND EDGES MUST BE DATA QUANTILES, NOT UNIFORM IN KEY SPACE. Uniform
-        // subdivision put nearly every row of a fat wave in ONE band (spaces
-        // dominate the alphabet), which serialised the sort: measured 271 s for a
-        // single wave of the 10 GB run. The sample is already sorted, so the
-        // wave's slice of it gives exact-enough quantiles.
-        const u64 nb = (u64)std::max<double>(1.0, double(rows_per_wave) / double(rows_per_band));
-        std::vector<u64> bounds;
-        {
-            // For a TWO-LEVEL wave the population is the wave's two-byte range,
-            // not the whole first byte: quantiles taken over the wrong population
-            // produce wildly unbalanced bands (measured: one band's sort at 341 s
-            // inside a 352 s wave - the space wave).
-            u64 klo_s, khi_s;
-            if (W.lvl2) {
-                klo_s = (u64(W.lo) << 56) | (u64(W.lo2) << 48);
-                khi_s = (u64(W.hi) << 56) | (u64(W.hi2 >= 256 ? 255 : W.hi2) << 48) |
-                        ((W.hi2 >= 256) ? ~0ull : 0ull);
-                if (W.hi2 >= 256) khi_s = ~0ull;
-            } else {
-                klo_s = (u64(W.lo) << 56);
-                khi_s = (W.hi >= 256) ? ~0ull : ((u64(W.hi) << 56) - 1);
-            }
-            auto lo_it = std::lower_bound(sk.begin(), sk.end(), klo_s);
-            auto hi_it = std::upper_bound(sk.begin(), sk.end(), khi_s);
-            const u64 n_in = (u64)(hi_it - lo_it);
-            for (u64 b = 1; b < nb && n_in > 1; ++b) {
-                const u64 idx = (u64)((long double)n_in * b / nb);
-                if (idx == 0 || idx >= n_in) continue;
-                const u64 k = *(lo_it + idx);
-                if (bounds.empty() || k > bounds.back()) bounds.push_back(k);
-            }
-            if (bounds.empty() && nb > 1) bounds.push_back(khi_s);  // degenerate: one band
+        std::vector<u64> waveSample;
+        for (u64 p:sk) {
+            const unsigned c=sym_at(p);
+            if (c<W.lo || c>=W.hi) continue;
+            if (W.lvl2 && (sym_at(p+1)<W.lo2 || sym_at(p+1)>=W.hi2)) continue;
+            waveSample.push_back(p);
         }
-        const u64 nbands = bounds.size() + 1;
+        const auto plan=plan_tape(std::move(waveSample),stride,rows_per_band,w,trailing);
+        std::vector<TapeFence> bounds;
+        for (size_t i=1;i<plan.size();++i) bounds.push_back(plan[i].first);
+        const u64 nbands=plan.size();
+        auto route = [&](u64 p) -> u64 {
+            return std::upper_bound(bounds.begin(),bounds.end(),p,
+                [](u64 pos,const TapeFence& f){const int c=prefix_cmp(pos,f.pos,f.depth); return c<0 || (c==0 && f.after);})-bounds.begin();
+        };
 
         // ---- scatter this wave only ----
         const u64 nparts = std::max<u64>(1, threads);
@@ -1678,7 +1627,7 @@ int main(int argc, char** argv) {
                     r.khi = a2;
                     r.kq = a3;
                     r.pos = pack_sym(p, sy);
-                    u64 b = (u64)(std::upper_bound(bounds.begin(), bounds.end(), a1) - bounds.begin());
+                    u64 b = route(p);
                     if (b >= nbands) b = nbands - 1;
                     auto& v = bufs[t][b];
                     v.insert(v.end(), (const u8*)&r, (const u8*)&r + sizeof(Row));
@@ -1698,17 +1647,7 @@ int main(int argc, char** argv) {
             const unsigned c0 = sym_at(p);
             if (c0 < W.lo || c0 >= W.hi) continue;
             if (W.lvl2 && (sym_at(p + 1) < W.lo2 || sym_at(p + 1) >= W.hi2)) continue;
-            auto beforeFence = [&](u64 fence) {
-                for (u64 i = 0; i < 8; ++i) {
-                    if (p + i >= FILE_N) return true; // END < every byte
-                    const unsigned c = sym_at(p + i);
-                    const unsigned d = unsigned((fence >> (56 - 8 * i)) & 255);
-                    if (c != d) return c < d;
-                }
-                return false; // equal eight-byte prefix belongs above fence
-            };
-            u64 b = 0;
-            while (b < bounds.size() && !beforeFence(bounds[b])) ++b;
+            const u64 b=route(p);
             Row r{};
             r.pos = pack_sym(p, p == 0 ? SENTINEL_SYMBOL : u8(sym_at(p - 1)));
             tailBands[b].push_back(r);
@@ -1733,6 +1672,13 @@ int main(int argc, char** argv) {
         }
         {
             for (u64 b = 0; b < nbands; ++b) band_rows[b] += tailBands[b].size();
+            for (u64 b=0;b<nbands;++b) {
+                const bool ok=band_rows[b]<=rows_per_band+rows_per_band/10;
+                std::fprintf(stderr,"TAPE_ROW_BOUND wave=%llu band=%llu rows=%llu target=%llu ok=%d\n",
+                    (unsigned long long)w,(unsigned long long)b,(unsigned long long)band_rows[b],
+                    (unsigned long long)rows_per_band,int(ok));
+                if (!ok) die("planner bug: completed band exceeds target x 1.1");
+            }
             u64 acc = emitted;
             for (u64 b = 0; b < nbands; ++b) { band_off[b] = acc; acc += band_rows[b]; }
             wave_rows = acc - emitted;
@@ -1833,7 +1779,21 @@ int main(int argc, char** argv) {
                         producerState(tapeBand, "sort");
                         bandLcp.clear();
                         bandEsc.clear();
-                        if (lcpOn) {
+                        if (plan[b].analytic) {
+                            for (const Row& r:rows)
+                                if (unpack_pos(r.pos)<trailing) die("analytic candidate not proved from corpus");
+                            std::reverse(rows.begin(),rows.end());
+                            if (lcpOn) {
+                                bandLcp.assign(rows.size(),0);
+                                for (size_t i=1;i<rows.size();++i) {
+                                    const u64 lcp=FILE_N-unpack_pos(rows[i-1].pos);
+                                    bandLcp[i]=u8(std::min<u64>(255,lcp));
+                                    if (lcp>=255) bandEsc.emplace_back(band_off[b]+i,lcp);
+                                }
+                            }
+                            std::fprintf(stderr,"TAPE_LEAF band=%llu order=analytic rows=%zu\n",
+                                (unsigned long long)tapeBand,rows.size());
+                        } else if (lcpOn) {
                             if (inplace) sort_band_inplace(rows, bandLcp, bandEsc, band_off[b]);
                             else merge_sort_lcp(rows, bandLcp, bandEsc, band_off[b]);
                         } else {
