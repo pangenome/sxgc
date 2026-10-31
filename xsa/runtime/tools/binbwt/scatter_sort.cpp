@@ -43,6 +43,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cinttypes>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -71,6 +72,46 @@ using u64 = uint64_t;
 static void die(const std::string& m) {
     std::fprintf(stderr, "scatter_sort: %s\n", m.c_str());
     std::exit(2);
+}
+
+// This is an address-space probe, not the band storage (which uses vectors).
+// No explicit huge pages are requested here. Optional reservation flags must
+// never force a smaller work unit before ordinary anonymous mmap is tried.
+static bool tape_arena_reserve(u64 bytes) {
+    const int plain = MAP_PRIVATE | MAP_ANONYMOUS;
+    int flags = plain | MAP_NORESERVE;
+    for (unsigned fallback = 0; fallback != 2; ++fallback) {
+        void* probe = ::mmap(nullptr, (size_t)bytes, PROT_READ | PROT_WRITE,
+                            flags, -1, 0);
+        if (probe != MAP_FAILED) {
+            ::munmap(probe, (size_t)bytes);
+            std::fprintf(stderr, "SS_TAPE_ARENA bytes=%" PRIu64
+                         " mechanism=anon fallback=%u role=reservation-probe\n", bytes, fallback);
+            return true;
+        }
+        const int error = errno; // preserve before stdio or /proc reads
+        struct rlimit limit{};
+        ::getrlimit(RLIMIT_AS, &limit);
+        unsigned long long vm_pages = 0;
+        if (FILE* f = std::fopen("/proc/self/statm", "r")) {
+            if (std::fscanf(f, "%llu", &vm_pages) != 1) vm_pages = 0;
+            std::fclose(f);
+        }
+        std::fprintf(stderr,
+            "SS_TAPE_ARENA_FAILED bytes=%" PRIu64
+            " mechanism=anon flags=%s errno=%d strerror=%s"
+            " rlimit_as_bytes=%llu vm_bytes=%llu\n",
+            bytes, fallback ? "MAP_PRIVATE|MAP_ANONYMOUS" :
+                "MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE",
+            error, std::strerror(error), (unsigned long long)limit.rlim_cur,
+            vm_pages * (unsigned long long)::sysconf(_SC_PAGESIZE));
+        if (!fallback) {
+            std::fprintf(stderr, "SS_TAPE_ARENA_FALLBACK reason=mmap-noreserve-failed"
+                         " bytes=%" PRIu64 " errno=%d\n", bytes, error);
+            flags = plain;
+        }
+    }
+    return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -886,9 +927,7 @@ int main(int argc, char** argv) {
                 "--threads (K is the in-flight band count), or shard the corpus");
         }
         const u64 arena_bytes = budget.bands_in_flight * budget.rows_per_band * budget.bytes_per_row;
-        void* probe = ::mmap(nullptr, (size_t)arena_bytes, PROT_READ | PROT_WRITE,
-                             MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
-        if (probe != MAP_FAILED) { ::munmap(probe, (size_t)arena_bytes); break; }
+        if (tape_arena_reserve(arena_bytes)) break;
         if (attempt >= 24) die("SS_TAPE_SHRINK exhausted after 24 halvings: the arena cannot be reserved");
         std::fprintf(stderr,
             "SS_TAPE_SHRINK why=arena-reserve-failed rows_per_band=%" PRIu64 " -> %" PRIu64
