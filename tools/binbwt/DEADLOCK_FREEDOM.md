@@ -106,16 +106,26 @@ packaged sorter's existing `RowGate` and `SS_TAPE_BUDGET` continue to account fo
 its actual arena separately. A combined whole-process-budget qualification
 remains necessary; the standalone sorter uses its RAM setting for this bound.
 
-Large equal 24-byte key groups subdivide by the next byte using count/prefix
-buckets and in-place swaps. Large groups split proactively; elapsed sort time
-(`SS_SORT_SPLIT_S`, default 1 second) also triggers subdivision of later groups.
-This is an algorithm-selection heuristic, not a timeout or a latency guarantee.
-These are in-band subdivisions, not independently scheduled new band jobs.
-Uniform-byte prefixes use one scan per disjoint corpus run and next-differing-
-byte ordering, avoiding a quadratic byte-at-a-time walk. If the next byte is
-smaller than the repeated byte, shorter runs sort first; otherwise longer runs
-sort first. Equal run lengths compare their suffixes after the run. Scratch key
-fields are restored before publication. `SS_SPLIT` records these cases.
+Band boundaries now come from a positional stride sample with multiplicity.
+Within each wave the planner groups 24-byte prefixes, packs to 80% of the row
+target, and recursively extends only oversized equal-prefix nodes by 24 bytes.
+Finite suffixes compare by length when a key window reaches EOF; no padding
+symbol is used. Depth 192 is the backstop: an oversized nonanalytic leaf emits
+`TAPE_LEAF_AT_CAP`, and actual bands exceeding 110% of the target fail before
+sorting. `TAPE_DEPTH_HISTOGRAM` and `TAPE_ROW_BOUND` expose both checks.
+
+A repeated symbol is analytic only when a direct corpus check proves that its
+entire prefix class belongs to the single-symbol suffix ending at EOF. Runtime
+also checks every member against that proved region. Such rows are already in
+position order from scatter and are reversed, with `order=analytic`. Position
+descending means shorter suffixes first under this machine's finite comparator.
+Agreement among sampled bytes alone does not prove terminality. All other bands
+use the full comparator. There is no elapsed-time split heuristic or runtime
+subdivision; each wave scatters once against its planned variable-depth fences.
+
+These changes bound rows, not suffix-comparison cost. Long internal repetitions
+can still make a bounded band slow. A very large analytic leaf can also exceed
+the strict row assertion; analytic order does not waive the memory bound.
 
 Band-credit waits now emit periodic diagnostics (default 1800 seconds;
 `XSA_TAPE_WAIT_S` override), never terminate the producer or increase capacity.
