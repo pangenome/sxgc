@@ -1281,6 +1281,9 @@ struct PieceSource {
             out.push_back({chars[i],lens[i],head,tail});
         }
         pf_check(::unlink(path.c_str())==0,"unlink consumed band piece");
+        // All raw runs are private now. Return the piece credit before any
+        // repair, LCP, prefetch or verification work can wait on another stage.
+        consumed_band(band);
     }
     void load_idx() {
         std::string path = prefix + ".runcols.idx";
@@ -5855,15 +5858,6 @@ int main(int argc, char** argv) {
             repairWall += tnow() - t0;
             s.cnt = s.nbuf.size();
             if (s.cnt) prevTail = s.nbuf.back().t;
-            // Flow credit. read_stream_band already unlinked this band's piece
-            // and copied its raw runs into RAM; the transducer has consumed
-            // them; everything left for this band (LCE + advance) touches only
-            // this slot. Declaring consumption here - one stage earlier than
-            // the pre-decomposition loop - is what lets the producer publish
-            // band k+1 while this band's VERIFICATION is still running, and it
-            // keeps consumed(k) BEFORE ready(k+1) so a W=1 window cannot
-            // deadlock. The wire shape is untouched (one integer, one file).
-            if (src.streaming) src.consumed_band(band);
             return true;
         };
         // Pipeline depth 1: the ordered stages alternate with the verification

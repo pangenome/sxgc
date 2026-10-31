@@ -3731,12 +3731,21 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
     auto waitFile = [&](const std::string& path) {
         while (::access(path.c_str(), F_OK) != 0) ::usleep(10000);
     };
+    U tapeVersion = 1, tapeCapacity = 1, tapeRowCapacity = n;
     int fd = -1;
     if (bands) {
         waitFile(dir + "/ready");
         std::ifstream mf(dir + "/manifest");
         U mn = 0, version = 0; mf >> mn >> version;
-        require(mf.good() && mn == n && version == 1, "tape bands: incompatible manifest");
+        require(mf.good() && mn == n && (version == 1 || version == 2), "tape bands: incompatible manifest");
+        tapeVersion = version;
+        if (version == 2) {
+            mf >> tapeCapacity;
+            require(!mf.fail() && tapeCapacity > 0, "tape bands: invalid capacity");
+            mf >> tapeRowCapacity;
+            require(!mf.fail() && tapeRowCapacity > 0 && tapeRowCapacity <= U(SIZE_MAX / 8),
+                    "tape bands: invalid row capacity");
+        }
     } else {
     fd = ::open(saPath.c_str(), O_RDONLY);
     require(fd >= 0, "tape-emit: cannot open the SA stream");
@@ -3818,6 +3827,8 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
     U band = 0, bandRows = 0, bandRead = 0;
     std::vector<U> bandPayload;
     bool bandLoaded = false;
+    U windowFirst = 0, windowCount = 0, windowRows = 0, receivingBand = 0;
+    std::vector<std::vector<U>> reorder;
     auto tapeState = [&](const char* phase) {
         if (!bands) return;
         const std::string tmp = dir + "/merge.state.tmp";
@@ -3826,7 +3837,9 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
             state << "pid=" << ::getpid() << " phase=" << phase << " band=" << band
                   << " processed_rows=" << bandRead << " copied_rows=" << (bandLoaded ? bandRows : 0)
                   << " total_rows=" << bandRows
-                  << " inflight=" << (bandLoaded || fd >= 0 ? std::to_string(band) : "none")
+                  << " inflight=" << (fd >= 0 ? std::to_string(receivingBand) : (bandLoaded ? std::to_string(band) : "none"))
+                  << " window_first=" << windowFirst << " window_bands=" << windowCount
+                  << " copied_window_rows=" << windowRows << " row_capacity=" << tapeRowCapacity
                   << " piece_next=" << sink->own.bands
                   << " piece_consumed=" << v2_consumed_band(prefix) << "\n";
             require(state.good(), "tape state write");
@@ -3848,34 +3861,68 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
         }
         if (bands && !bandLoaded) {
             tapeState("wait-band");
-            waitFile(bandPath(band, ".done"));
-            fd = ::open(bandPath(band, ".sa").c_str(), O_RDONLY);
-            struct stat bs{};
-            require(fd >= 0 && ::fstat(fd, &bs) == 0 && bs.st_size % 8 == 0, "tape bands: bad band");
-            bandRows = U(bs.st_size) / 8; bandRead = 0;
-            int opened = ::open(bandPath(band, ".opened").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
-            require(opened >= 0, "tape bands: opened marker"); ::close(opened);
-            tapeState("read");
-            require(bandRows <= n - baseRow, "tape bands: too many rows");
-            // Own the complete payload before entering the downstream sink.
-            // publishBin may wait for finish credit; it must not retain the
-            // producer's disk credit, including when a band spans many chunks.
-            const double copyStart = now_sec();
-            bandPayload.resize(bandRows);
-            size_t readBytes = 0, totalBytes = size_t(bs.st_size);
-            while (readBytes < totalBytes) {
-                ssize_t r = ::read(fd, (char*)bandPayload.data() + readBytes, totalBytes - readBytes);
-                require(r > 0, "tape bands: short payload read");
-                readBytes += size_t(r);
+            auto readCompleted = [&](U readBand, std::vector<U>& payload) {
+                receivingBand = readBand;
+                fd = ::open(bandPath(readBand, ".sa").c_str(), O_RDONLY);
+                struct stat bs{};
+                require(fd >= 0 && ::fstat(fd, &bs) == 0 && bs.st_size % 8 == 0, "tape bands: bad band");
+                const U readRows = U(bs.st_size) / 8;
+                int opened = ::open(bandPath(readBand, ".opened").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+                require(opened >= 0, "tape bands: opened marker"); ::close(opened);
+                tapeState("read");
+                require(readRows <= n, "tape bands: too many rows");
+                // Own the complete payload before entering the downstream sink.
+                // publishBin may wait for finish credit; it must not retain the
+                // producer's disk credit, including when a band spans many chunks.
+                const double copyStart = now_sec();
+                if (tapeVersion == 2) {
+                    require(readRows <= tapeRowCapacity - windowRows, "tape bands: reorder row budget exceeded");
+                    windowRows += readRows;
+                }
+                payload.resize(readRows);
+                size_t readBytes = 0, totalBytes = size_t(bs.st_size);
+                while (readBytes < totalBytes) {
+                    ssize_t r = ::read(fd, (char*)payload.data() + readBytes, totalBytes - readBytes);
+                    require(r > 0, "tape bands: short payload read");
+                    readBytes += size_t(r);
+                }
+                ::close(fd); fd = -1;
+                tRead += now_sec() - copyStart;
+                require(::unlink(bandPath(readBand, ".sa").c_str()) == 0, "tape bands: unlink band");
+                int cf = ::open(bandPath(readBand, ".consumed").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+                require(cf >= 0, "tape bands: publish consumed"); ::close(cf);
+                std::fprintf(stderr, "TAPE_BAND_READ band=%llu rows=%llu released_before_publish=1\n",
+                    (unsigned long long)readBand, (unsigned long long)readRows);
+            };
+            if (tapeVersion == 1) {
+                waitFile(bandPath(band, ".done"));
+                readCompleted(band, bandPayload);
+            } else {
+                if (band == windowFirst + windowCount) {
+                    windowFirst = band;
+                    waitFile(dir + "/window_" + std::to_string(band));
+                    std::ifstream wf(dir + "/window_" + std::to_string(band));
+                    wf >> windowCount;
+                    require(!wf.fail() && windowCount > 0 && windowCount <= tapeCapacity,
+                            "tape bands: invalid reorder window");
+                    windowRows = 0;
+                    reorder.clear(); reorder.resize(windowCount);
+                    std::vector<bool> copied(windowCount, false);
+                    U remaining = windowCount;
+                    while (remaining) {
+                        bool progress = false;
+                        for (U i = 0; i < windowCount; ++i) {
+                            if (copied[i] || ::access(bandPath(windowFirst + i, ".done").c_str(), F_OK)) continue;
+                            readCompleted(windowFirst + i, reorder[i]);
+                            copied[i] = true; --remaining; progress = true;
+                        }
+                        if (!progress) ::usleep(10000);
+                    }
+                }
+                bandPayload.swap(reorder[band - windowFirst]);
             }
-            ::close(fd); fd = -1;
-            bandLoaded = true;
-            tRead += now_sec() - copyStart;
-            require(::unlink(bandPath(band, ".sa").c_str()) == 0, "tape bands: unlink band");
-            int cf = ::open(bandPath(band, ".consumed").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
-            require(cf >= 0, "tape bands: publish consumed"); ::close(cf);
-            std::fprintf(stderr, "TAPE_BAND_READ band=%llu rows=%llu released_before_publish=1\n",
-                (unsigned long long)band, (unsigned long long)bandRows);
+            bandRows = bandPayload.size(); bandRead = 0; bandLoaded = true;
+            require(bandRows <= n - baseRow, "tape bands: too many rows");
             tapeState("copied");
         }
         const U want = bands ? std::min<U>(chunk, bandRows - bandRead) : std::min<U>(chunk, n - baseRow);

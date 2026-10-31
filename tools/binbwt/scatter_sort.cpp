@@ -372,6 +372,110 @@ static void merge_sort_lcp(std::vector<Row>& v, std::vector<uint8_t>& out_lcp,
     }
 }
 
+// Refine equal cached keys by the next byte, using the same count/prefix/scatter
+// subdivision as the bin builder. American-flag swaps avoid a second row arena.
+// Large tie groups split proactively; elapsed time is a tuning signal only.
+static void sort_tape_keys(std::vector<Row>& rows, u64 band) {
+    const double started = now_sec();
+    const char* setting = ::getenv("SS_SORT_SPLIT_S");
+    const double threshold = setting && *setting ? std::strtod(setting, nullptr) : 1.0;
+    if (!(threshold > 0)) die("SS_SORT_SPLIT_S must be positive");
+    auto keyLess = [](const Row& a, const Row& b) {
+        if (a.klo != b.klo) return a.klo < b.klo;
+        if (a.khi != b.khi) return a.khi < b.khi;
+        return a.kq < b.kq;
+    };
+    std::sort(rows.begin(), rows.end(), keyLess);
+    struct Task { size_t lo, hi; u64 depth; };
+    std::vector<Task> stack;
+    u64 splits = 0, maxDepth = 0, largest = 0;
+    auto leaf = [&](size_t lo, size_t hi, u64 depth) {
+        std::sort(rows.begin() + lo, rows.begin() + hi, [depth](const Row& a, const Row& b) {
+            return suf_cmp_from(unpack_pos(a.pos), unpack_pos(b.pos), depth) < 0;
+        });
+    };
+    for (size_t lo = 0; lo < rows.size();) {
+        size_t hi = lo + 1;
+        while (hi < rows.size() && !keyLess(rows[lo], rows[hi])) ++hi;
+        // A byte-at-a-time walk through a long uniform run is quadratic.
+        // Scan each disjoint corpus run once in position order, then partition
+        // by its next differing byte. The cached key fields are scratch only
+        // within this equal-key group and are restored before returning.
+        const Row saved = rows[lo];
+        if (hi - lo > 1024 && saved.klo == saved.khi && saved.klo == saved.kq &&
+            saved.klo == (saved.klo & 255) * 0x0101010101010101ull) {
+            std::sort(rows.begin() + lo, rows.begin() + hi, [](const Row& a, const Row& b) {
+                return unpack_pos(a.pos) < unpack_pos(b.pos);
+            });
+            u64 runEnd = 0;
+            const unsigned symbol = saved.klo & 255;
+            for (size_t i = lo; i < hi; ++i) {
+                const u64 pos = unpack_pos(rows[i].pos);
+                if (pos >= runEnd) {
+                    runEnd = pos + 24;
+                    while (runEnd < FILE_N && unsigned(REMAP ? REMAP[T[runEnd]] : T[runEnd]) == symbol)
+                        ++runEnd;
+                }
+                rows[i].klo = runEnd - pos;
+                rows[i].khi = runEnd == FILE_N || unsigned(REMAP ? REMAP[T[runEnd]] : T[runEnd]) < symbol ? 0 : 1;
+                maxDepth = std::max(maxDepth, rows[i].klo);
+            }
+            std::sort(rows.begin() + lo, rows.begin() + hi, [](const Row& a, const Row& b) {
+                if (a.khi != b.khi) return a.khi < b.khi;
+                if (a.klo != b.klo) return a.khi == 0 ? a.klo < b.klo : a.klo > b.klo;
+                return suf_cmp_from(unpack_pos(a.pos), unpack_pos(b.pos), a.klo) < 0;
+            });
+            for (size_t i = lo; i < hi; ++i) {
+                rows[i].klo = saved.klo; rows[i].khi = saved.khi; rows[i].kq = saved.kq;
+            }
+            ++splits; largest = std::max<u64>(largest, hi - lo);
+            std::fprintf(stderr, "SS_SPLIT band=%llu rows=%zu kind=uniform-run-next-byte max_depth=%llu\n",
+                (unsigned long long)band, hi - lo, (unsigned long long)maxDepth);
+            lo = hi; continue;
+        }
+        if (hi - lo > 1) {
+            if (hi - lo > 1024 || now_sec() - started >= threshold)
+                stack.push_back({lo, hi, 24});
+            else leaf(lo, hi, 24);
+            while (!stack.empty()) {
+                const Task task = stack.back(); stack.pop_back();
+                size_t count[257] = {}, begin[257], next[257];
+                auto code = [&](const Row& row) -> unsigned {
+                    const u64 p = unpack_pos(row.pos);
+                    if (task.depth >= FILE_N - p) return 0;
+                    const u8 c = T[p + task.depth];
+                    return 1 + unsigned(REMAP ? REMAP[c] : c);
+                };
+                for (size_t i = task.lo; i < task.hi; ++i) ++count[code(rows[i])];
+                size_t offset = task.lo;
+                for (unsigned c = 0; c < 257; ++c) {
+                    begin[c] = next[c] = offset; offset += count[c];
+                }
+                for (unsigned c = 0; c < 257; ++c) {
+                    const size_t end = begin[c] + count[c];
+                    while (next[c] < end) {
+                        const unsigned target = code(rows[next[c]]);
+                        if (target == c) ++next[c];
+                        else std::swap(rows[next[c]], rows[next[target]++]);
+                    }
+                }
+                ++splits; maxDepth = std::max(maxDepth, task.depth + 1);
+                largest = std::max<u64>(largest, task.hi - task.lo);
+                // END bucket has at most one distinct finite suffix.
+                for (unsigned c = 1; c < 257; ++c) {
+                    if (count[c] > 1024) stack.push_back({begin[c], begin[c] + count[c], task.depth + 1});
+                    else if (count[c] > 1) leaf(begin[c], begin[c] + count[c], task.depth + 1);
+                }
+            }
+        }
+        lo = hi;
+    }
+    if (splits) std::fprintf(stderr,
+        "SS_SPLIT band=%llu nodes=%llu largest_rows=%llu max_depth=%llu wall_s=%.6f threshold_s=%.3f policy=next-byte-large-ties-or-elapsed\n",
+        (unsigned long long)band, (unsigned long long)splits, (unsigned long long)largest,
+        (unsigned long long)maxDepth, now_sec() - started, threshold);
+}
+
 int main(int argc, char** argv) {
     std::string corpus, out, scratch = "/tmp/ss_scratch", lcpOut, isaOut;
     u64 isaK = 1024;
@@ -643,6 +747,7 @@ int main(int argc, char** argv) {
           if (!out.good()) die("write producer state " + path); }
         if (::rename((path + ".tmp").c_str(), path.c_str())) die("publish producer state " + path);
     };
+    const u64 reorderRowCapacity = std::max<u64>(1, ram_bytes / 8);
     auto marker = [&](const std::string& path) {
         int f = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
         if (f < 0) die("create tape marker " + path);
@@ -689,13 +794,14 @@ int main(int argc, char** argv) {
         const u64 need = (rows + rows_per_band - 1) / rows_per_band + 1;
         return std::max<u64>(pendingBands, need);
     };
-    // A producer waiting on a consumer that EXITED must fail loud and name the
-    // wait, not sit inside the phase's own timeout: the 150 MB run burned 25:00
-    // (rc=124) on a marker whose writer had been dead since 0.12 s.
+    // Band waits diagnose ownership periodically. Diagnostics neither return
+    // credits nor terminate the producer; external process ownership handles
+    // failed peers. The legacy slice-credit arm below is not covered by this
+    // protocol's progress argument (see DEADLOCK_FREEDOM.md).
     const double bandWaitDeadlineS = [] {
         const char* e = ::getenv("XSA_TAPE_WAIT_S");
         if (!e || !*e) e = ::getenv("SS_BAND_WAIT_TIMEOUT_S");
-        if (!e || !*e) return 3600.0;
+        if (!e || !*e) return 1800.0;
         const double v = std::strtod(e, nullptr);
         if (!(v > 0)) die("XSA_TAPE_WAIT_S / SS_BAND_WAIT_TIMEOUT_S must be positive");
         return v;
@@ -716,12 +822,12 @@ int main(int argc, char** argv) {
         lcpPeakLiveBytes = std::max(lcpPeakLiveBytes, lcpLiveBytes);
         lcpPeakLiveSlices = std::max<u64>(lcpPeakLiveSlices, u64(lcpLive.size()));
     };
-    // ONE LINE PER ENGAGED WAIT (the ring names itself): what this producer waits
-    // for, and WHO is supposed to create it. Printed once per wait entry, after a
-    // 2 s grace so a healthy handshake stays silent.
+    // Name an engaged wait after two seconds; report every completed duration
+    // and periodically dump state without changing scheduling or capacity.
     auto waitMarker = [&](const std::string& path, const char* what, const char* who) {
         const double t0 = now_sec();
         bool said = false;
+        double nextDiagnostic = bandWaitDeadlineS;
         while (::access(path.c_str(), F_OK) != 0) {
             const double waitedS = now_sec() - t0;
             if (!said && waitedS > 2.0) {
@@ -730,7 +836,8 @@ int main(int argc, char** argv) {
                     "SS_WAIT producer=scatter_sort blocks_on=%s path=%s writer=%s wall_s=%.1f\n",
                     what, path.c_str(), who, waitedS);
             }
-            if (waitedS > bandWaitDeadlineS) {
+            if (waitedS > nextDiagnostic) {
+                nextDiagnostic += bandWaitDeadlineS;
                 const std::string stem = path.substr(0, path.size() - std::strlen(".consumed"));
                 struct stat st{};
                 const bool exists = ::stat((stem + ".sa").c_str(), &st) == 0;
@@ -739,22 +846,63 @@ int main(int argc, char** argv) {
                 const bool opened = ::access((stem + ".opened").c_str(), F_OK) == 0;
                 std::ifstream producerFile(stem + ".producer-state");
                 std::string producerPhase; std::getline(producerFile, producerPhase);
-                std::fprintf(stderr, "SS_TIMEOUT path=%s writer=%s band_exists=%d band_bytes=%llu merge_opened=%d producer_phase=%s merge_state={%s}\n",
+                std::fprintf(stderr, "SS_DIAGNOSTIC path=%s writer=%s band_exists=%d band_bytes=%llu merge_opened=%d producer_phase=%s merge_state={%s}\n",
                     path.c_str(), who, int(exists), (unsigned long long)(exists ? st.st_size : 0),
                     int(opened), producerPhase.empty() ? "unclaimed" : producerPhase.c_str(), state.empty() ? "unavailable" : state.c_str());
-                die(std::string("no consumer progress on ") + what + " " + path + " for " +
-                    std::to_string(int(waitedS)) + " s, waited for by " + who +
-                    " (XSA_TAPE_WAIT_S=" + std::to_string(int(bandWaitDeadlineS)) +
-                    "); that consumer is dead or stalled - refusing to hang in the phase timeout");
+
             }
             ::usleep(10000);
         }
-        if (said) std::fprintf(stderr, "SS_WAIT_DONE path=%s wall_s=%.3f\n", path.c_str(), now_sec() - t0);
+        std::fprintf(stderr, "SS_WAIT_DONE path=%s wall_s=%.3f\n", path.c_str(), now_sec() - t0);
     };
     // .consumed      <- cross_lcp_merge's tape emit, at READ time (payload in its buffer)
     // .lcp.consumed  <- xsa_finish, immediately after copying a slice into private memory
     auto waitBandConsumed = [&](u64 back) {
         waitMarker(bandPath(back, ".consumed"), "band.consumed", "emit-tape(cross_lcp_merge)");
+    };
+    // Reservation covers sorting plus publication. Return ANY read credit;
+    // serial band-index credits would idle all workers behind one slow sort.
+    // Called only while claim_mu is held; workers never need that mutex to
+    // finish sorting, publish, or release their arena.
+    std::deque<u64> bandReservations;
+    auto reserveBand = [&](u64 band) {
+        const double started = now_sec();
+        double diagnostic = bandWaitDeadlineS;
+        bool waiting = false;
+        while (bandReservations.size() >= pendingBands) {
+            for (auto it = bandReservations.begin(); it != bandReservations.end();) {
+                if (::access(bandPath(*it, ".consumed").c_str(), F_OK) == 0)
+                    it = bandReservations.erase(it);
+                else ++it;
+            }
+            if (bandReservations.size() < pendingBands) break;
+            const double elapsed = now_sec() - started;
+            if (!waiting && elapsed >= 2) {
+                waiting = true;
+                std::fprintf(stderr, "SS_WAIT producer=scatter_sort blocks_on=band.queue band=%llu reservations=%zu wall_s=%.3f\n",
+                    (unsigned long long)band, bandReservations.size(), elapsed);
+            }
+            if (elapsed >= diagnostic) {
+                diagnostic += bandWaitDeadlineS;
+                std::fprintf(stderr, "SS_DIAGNOSTIC queue=band capacity=%llu reservations=%zu next=%llu wall_s=%.3f\n",
+                    (unsigned long long)pendingBands, bandReservations.size(), (unsigned long long)band, elapsed);
+                for (u64 held : bandReservations) {
+                    std::ifstream pf(bandPath(held, ".producer-state"));
+                    std::string phase; std::getline(pf, phase);
+                    std::fprintf(stderr, "SS_DIAGNOSTIC_BAND band=%llu phase=%s done=%d consumed=%d\n",
+                        (unsigned long long)held, phase.c_str(),
+                        int(::access(bandPath(held, ".done").c_str(), F_OK) == 0),
+                        int(::access(bandPath(held, ".consumed").c_str(), F_OK) == 0));
+                }
+                std::ifstream mf(tapeBands + "/merge.state");
+                std::string state; std::getline(mf, state);
+                std::fprintf(stderr, "SS_DIAGNOSTIC_MERGE state={%s}\n", state.c_str());
+            }
+            ::usleep(10000);
+        }
+        std::fprintf(stderr, "SS_WAIT_DONE queue=band band=%llu wall_s=%.6f\n",
+            (unsigned long long)band, now_sec() - started);
+        bandReservations.push_back(band);
     };
     // The slice credit, with GROWTH instead of a hang: if the fold has not retired
     // the slice this band needs for SS_LCP_GROW_S (default 30 s), the credit
@@ -801,7 +949,7 @@ int main(int argc, char** argv) {
         if (::access((tapeBands + "/manifest").c_str(), F_OK) == 0) die("stale tape manifest");
         int mf = ::open((tapeBands + "/manifest").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
         if (mf < 0) die("create tape manifest");
-        std::string meta = std::to_string(N) + " 1\n";
+        std::string meta = std::to_string(N) + (lcpOn ? " 1\n" : " 2 " + std::to_string(pendingBands) + " " + std::to_string(reorderRowCapacity) + "\n");
         if (::write(mf, meta.data(), meta.size()) != (ssize_t)meta.size()) die("write tape manifest");
         ::close(mf);
         marker(tapeBands + "/ready");
@@ -1079,7 +1227,9 @@ int main(int argc, char** argv) {
                     if (b >= nbands) return;
                     const u64 nextTapeBand = globalBand + b;
                     producerState(nextTapeBand, "credit");
-                    if (!tapeBands.empty() && nextTapeBand >= pendingBands) {
+                    if (!tapeBands.empty() && !lcpOn) {
+                        reserveBand(nextTapeBand);
+                    } else if (!tapeBands.empty() && nextTapeBand >= pendingBands) {
                         waitBandConsumed(nextTapeBand - pendingBands);
                         if (lcpOn) waitSliceCredit(nextTapeBand);
                     }
@@ -1120,12 +1270,7 @@ int main(int argc, char** argv) {
                 } else {
                     // product path: the plain comparison sort. The merge-with-LCP
                     // is opt-in until its propagation is verified exact.
-                    std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
-                        if (a.klo != b.klo) return a.klo < b.klo;
-                        if (a.khi != b.khi) return a.khi < b.khi;
-                        if (a.kq != b.kq) return a.kq < b.kq;
-                        return suf_cmp_from(unpack_pos(a.pos), unpack_pos(b.pos), 24) < 0;
-                    });
+                    sort_tape_keys(rows, tapeBand);
                 }
                 // Insert the <=24 separately sorted finite suffixes. Only this
                 // cold path uses a full comparison against keyed rows.
@@ -1356,6 +1501,8 @@ int main(int argc, char** argv) {
                     }
                 }
                 tWrite[b] = now_sec() - bw0;
+                std::fprintf(stderr, "SS_BAND band=%llu rows=%zu read_s=%.6f sort_s=%.6f write_s=%.6f\n",
+                    (unsigned long long)tapeBand, rows.size(), tRead[b], tSort[b], tWrite[b]);
                 producerState(tapeBand, "published");
                 rows.clear();
                 rows.shrink_to_fit();
@@ -1369,6 +1516,28 @@ int main(int argc, char** argv) {
                 if (::write(ef, count.data(), count.size()) != (ssize_t)count.size()) die("write tape end");
                 ::close(ef);
                 marker(tapeBands + "/end.ready");
+            }
+        }
+        if (!tapeBands.empty() && !lcpOn) {
+            const u64 rowLimit = reorderRowCapacity;
+            for (u64 first = 0; first < nbands;) {
+                u64 count = 0, rows = 0;
+                while (first + count < nbands && count < pendingBands) {
+                    const u64 next = band_rows[first + count];
+                    if (next > rowLimit) die("band exceeds bounded reorder row budget; reduce work unit");
+                    if (next > rowLimit - rows) break;
+                    rows += next; ++count;
+                }
+                const std::string path = tapeBands + "/window_" + std::to_string(globalBand + first);
+                { std::ofstream f(path + ".tmp");
+                  f << count << "\n";
+                  if (!f.good()) die("write tape window"); }
+                if (::rename((path + ".tmp").c_str(), path.c_str())) die("publish tape window");
+                std::fprintf(stderr, "SS_REORDER_WINDOW first=%llu bands=%llu rows=%llu row_limit=%llu bytes=%llu ratio=%.6f\n",
+                    (unsigned long long)(globalBand + first), (unsigned long long)count,
+                    (unsigned long long)rows, (unsigned long long)rowLimit,
+                    (unsigned long long)(rows * 8), double(rows) / double(rowLimit));
+                first += count;
             }
         }
         pool->run([&](unsigned) { band_worker(); });

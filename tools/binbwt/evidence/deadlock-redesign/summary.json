@@ -1,0 +1,556 @@
+{
+  "base_commit": "82a1e449a87646c98482853da98b57695e20216a",
+  "full_deadlock_freedom_certified": false,
+  "merge_eligible": false,
+  "runs": {
+    "reviewed-8mb": {
+      "evidence_directory": "/mnt/nvme2n1/erikg/tape-redesign/reviewed-8mb",
+      "commands": [
+        [
+          "/mnt/nvme2n1/erikg/tape-redesign/bin/scatter_sort.reviewed",
+          "--corpus",
+          "/mnt/nvme2n1/erikg/tape-deadlock-fix/smoke2/corpus",
+          "--remap",
+          "/mnt/nvme2n1/erikg/tape-deadlock-fix/smoke2/remap",
+          "--scratch",
+          "/mnt/nvme2n1/erikg/tape-redesign/reviewed-8mb/waves",
+          "--tape-bands",
+          "/mnt/nvme2n1/erikg/tape-redesign/reviewed-8mb/bands",
+          "--pending-bands",
+          "8",
+          "--budget-bytes",
+          "51539607552",
+          "--memory-gb",
+          "96",
+          "--threads",
+          "8",
+          "--no-lcp-slices"
+        ],
+        [
+          "/mnt/nvme2n1/erikg/tape-redesign/bin/cross_lcp_merge.reviewed",
+          "--binbwt",
+          "/mnt/nvme2n1/erikg/tape-deadlock-fix/smoke2/corpus",
+          "--remap",
+          "/mnt/nvme2n1/erikg/tape-deadlock-fix/smoke2/remap",
+          "--out-prefix",
+          "/mnt/nvme2n1/erikg/tape-redesign/reviewed-8mb/frag",
+          "--threads",
+          "8",
+          "--tape-bands",
+          "/mnt/nvme2n1/erikg/tape-redesign/reviewed-8mb/bands"
+        ],
+        [
+          "/mnt/nvme2n1/erikg/tape-redesign/bin/xsa_finish",
+          "--prefix",
+          "/mnt/nvme2n1/erikg/tape-redesign/reviewed-8mb/frag",
+          "--corpus",
+          "/mnt/nvme2n1/erikg/tape-deadlock-fix/smoke2/corpus",
+          "--remap",
+          "/mnt/nvme2n1/erikg/tape-deadlock-fix/smoke2/remap",
+          "--output",
+          "/mnt/nvme2n1/erikg/tape-redesign/reviewed-8mb/product.sxi2",
+          "--threads",
+          "8",
+          "--poll-timeout",
+          "360",
+          "--wit-ram-budget",
+          "51539607552",
+          "--chi-expect",
+          "6544643"
+        ]
+      ],
+      "returncodes": [
+        0,
+        0,
+        0
+      ],
+      "harness_reason": "complete",
+      "operator_supervision": {},
+      "seconds": 4.2154910010285676,
+      "product_complete": true,
+      "chi": 6544643,
+      "consumed_bands": 18,
+      "contiguous_consumed_bands": 18,
+      "highest_consumed_band": 17,
+      "max_completed_wait_s": 0.024,
+      "completed_wait_count": 36,
+      "completed_band_count": 18,
+      "top5_sort": [
+        {
+          "band": 15,
+          "rows": 468361,
+          "read_s": 0.026196,
+          "sort_s": 0.069498,
+          "write_s": 0.005
+        },
+        {
+          "band": 13,
+          "rows": 468330,
+          "read_s": 0.029809,
+          "sort_s": 0.055006,
+          "write_s": 0.003162
+        },
+        {
+          "band": 12,
+          "rows": 468614,
+          "read_s": 0.004677,
+          "sort_s": 0.053132,
+          "write_s": 0.002563
+        },
+        {
+          "band": 14,
+          "rows": 468949,
+          "read_s": 0.023751,
+          "sort_s": 0.049058,
+          "write_s": 0.003134
+        },
+        {
+          "band": 10,
+          "rows": 468926,
+          "read_s": 0.025076,
+          "sort_s": 0.048753,
+          "write_s": 0.00287
+        }
+      ],
+      "sort_seconds_distribution": {
+        "p50": 0.0434,
+        "p95": 0.069498,
+        "p100": 0.069498
+      },
+      "split_band_count": 0,
+      "split_scope": "in-band groups, not independently scheduled smaller band jobs",
+      "max_reorder_payload_bytes": 3764512,
+      "max_reorder_ratio": 0.001753,
+      "terminal_error_lines": [],
+      "product_sha256": "2beb35a0d37a6ff6453b108c4d0a99e8eff4af91cf2875643ae6af86c9539f57"
+    },
+    "reviewed-150mb": {
+      "evidence_directory": "/mnt/nvme2n1/erikg/tape-redesign/reviewed-150mb",
+      "commands": [
+        [
+          "/mnt/nvme2n1/erikg/tape-redesign/bin/scatter_sort.reviewed",
+          "--corpus",
+          "/dev/shm/t150m.txt",
+          "--remap",
+          "/mnt/nvme2n1/erikg/wip-lce150/remap-256.bin",
+          "--scratch",
+          "/mnt/nvme2n1/erikg/tape-redesign/reviewed-150mb/waves",
+          "--tape-bands",
+          "/mnt/nvme2n1/erikg/tape-redesign/reviewed-150mb/bands",
+          "--pending-bands",
+          "8",
+          "--budget-bytes",
+          "51539607552",
+          "--memory-gb",
+          "96",
+          "--threads",
+          "8",
+          "--no-lcp-slices"
+        ],
+        [
+          "/mnt/nvme2n1/erikg/tape-redesign/bin/cross_lcp_merge.reviewed",
+          "--binbwt",
+          "/dev/shm/t150m.txt",
+          "--remap",
+          "/mnt/nvme2n1/erikg/wip-lce150/remap-256.bin",
+          "--out-prefix",
+          "/mnt/nvme2n1/erikg/tape-redesign/reviewed-150mb/frag",
+          "--threads",
+          "8",
+          "--tape-bands",
+          "/mnt/nvme2n1/erikg/tape-redesign/reviewed-150mb/bands"
+        ],
+        [
+          "/mnt/nvme2n1/erikg/tape-redesign/bin/xsa_finish",
+          "--prefix",
+          "/mnt/nvme2n1/erikg/tape-redesign/reviewed-150mb/frag",
+          "--corpus",
+          "/dev/shm/t150m.txt",
+          "--remap",
+          "/mnt/nvme2n1/erikg/wip-lce150/remap-256.bin",
+          "--output",
+          "/mnt/nvme2n1/erikg/tape-redesign/reviewed-150mb/product.sxi2",
+          "--threads",
+          "8",
+          "--poll-timeout",
+          "360",
+          "--wit-ram-budget",
+          "51539607552",
+          "--chi-expect",
+          "44034230"
+        ]
+      ],
+      "returncodes": [
+        0,
+        0,
+        0
+      ],
+      "harness_reason": "complete",
+      "operator_supervision": {},
+      "seconds": 64.8849155176431,
+      "product_complete": true,
+      "chi": 44034230,
+      "consumed_bands": 23,
+      "contiguous_consumed_bands": 23,
+      "highest_consumed_band": 22,
+      "max_completed_wait_s": 0.04,
+      "completed_wait_count": 46,
+      "completed_band_count": 23,
+      "top5_sort": [
+        {
+          "band": 4,
+          "rows": 8485336,
+          "read_s": 0.664641,
+          "sort_s": 5.84941,
+          "write_s": 0.053234
+        },
+        {
+          "band": 1,
+          "rows": 8296869,
+          "read_s": 0.603212,
+          "sort_s": 5.198064,
+          "write_s": 0.105749
+        },
+        {
+          "band": 5,
+          "rows": 8763629,
+          "read_s": 0.594584,
+          "sort_s": 4.439379,
+          "write_s": 0.051036
+        },
+        {
+          "band": 15,
+          "rows": 7675056,
+          "read_s": 0.477915,
+          "sort_s": 3.30331,
+          "write_s": 0.106811
+        },
+        {
+          "band": 11,
+          "rows": 8697082,
+          "read_s": 0.516259,
+          "sort_s": 3.069999,
+          "write_s": 0.07492
+        }
+      ],
+      "sort_seconds_distribution": {
+        "p50": 1.678938,
+        "p95": 5.198064,
+        "p100": 5.84941
+      },
+      "split_band_count": 22,
+      "split_scope": "in-band groups, not independently scheduled smaller band jobs",
+      "max_reorder_payload_bytes": 71167904,
+      "max_reorder_ratio": 0.03314,
+      "terminal_error_lines": [],
+      "product_sha256": "9ba2b1a11b02397e8b8a3992bb3366e933a35d1929b0849898178ecc7f31a756"
+    },
+    "bounded-10gb": {
+      "evidence_directory": "/mnt/nvme2n1/erikg/tape-redesign/bounded-10gb",
+      "commands": [
+        [
+          "/mnt/nvme2n1/erikg/tape-redesign/bin/scatter_sort.bounded",
+          "--corpus",
+          "/mnt/nvme2n1/erikg/extcols-scratch/real10b-ref/pile-10b-snap.txt",
+          "--remap",
+          "/mnt/nvme2n1/erikg/phase-as-v2/remap-256.bin",
+          "--scratch",
+          "/mnt/nvme2n1/erikg/tape-redesign/bounded-10gb/waves",
+          "--tape-bands",
+          "/mnt/nvme2n1/erikg/tape-redesign/bounded-10gb/bands",
+          "--pending-bands",
+          "8",
+          "--budget-bytes",
+          "51539607552",
+          "--memory-gb",
+          "96",
+          "--threads",
+          "96",
+          "--no-lcp-slices"
+        ],
+        [
+          "/mnt/nvme2n1/erikg/tape-redesign/bin/cross_lcp_merge.final",
+          "--binbwt",
+          "/mnt/nvme2n1/erikg/extcols-scratch/real10b-ref/pile-10b-snap.txt",
+          "--remap",
+          "/mnt/nvme2n1/erikg/phase-as-v2/remap-256.bin",
+          "--out-prefix",
+          "/mnt/nvme2n1/erikg/tape-redesign/bounded-10gb/frag",
+          "--threads",
+          "96",
+          "--tape-bands",
+          "/mnt/nvme2n1/erikg/tape-redesign/bounded-10gb/bands"
+        ],
+        [
+          "/mnt/nvme2n1/erikg/tape-redesign/bin/xsa_finish",
+          "--prefix",
+          "/mnt/nvme2n1/erikg/tape-redesign/bounded-10gb/frag",
+          "--corpus",
+          "/mnt/nvme2n1/erikg/extcols-scratch/real10b-ref/pile-10b-snap.txt",
+          "--remap",
+          "/mnt/nvme2n1/erikg/phase-as-v2/remap-256.bin",
+          "--output",
+          "/mnt/nvme2n1/erikg/tape-redesign/bounded-10gb/product.sxi2",
+          "--threads",
+          "96",
+          "--poll-timeout",
+          "1260",
+          "--wit-ram-budget",
+          "51539607552",
+          "--chi-expect",
+          "2676929445"
+        ]
+      ],
+      "returncodes": [
+        0,
+        0,
+        0
+      ],
+      "harness_reason": "deadline",
+      "operator_supervision": {
+        "driver_pid": 2663281,
+        "stage_pids": [
+          2663283,
+          2663284,
+          2663286
+        ],
+        "started_utc": "2026-10-31T13:13:28.365704+00:00",
+        "hard_cutoff_utc": "2026-10-31T13:20:00Z",
+        "purpose": "extend experiment, without changing pipeline credits or XSA_TAPE_WAIT_S=180",
+        "reason": "all-stages-exited",
+        "states": [
+          {
+            "pid": 2663283,
+            "state": "Z",
+            "exit_code": 0
+          },
+          {
+            "pid": 2663284,
+            "state": "Z",
+            "exit_code": 0
+          },
+          {
+            "pid": 2663286,
+            "state": "Z",
+            "exit_code": 0
+          }
+        ],
+        "ended_utc": "2026-10-31T13:17:50.186948+00:00"
+      },
+      "seconds": 1679.3860239377245,
+      "product_complete": true,
+      "chi": 2676929445,
+      "consumed_bands": 1282,
+      "contiguous_consumed_bands": 1282,
+      "highest_consumed_band": 1281,
+      "max_completed_wait_s": 116.02856,
+      "completed_wait_count": 2564,
+      "completed_band_count": 1282,
+      "top5_sort": [
+        {
+          "band": 55,
+          "rows": 143604756,
+          "read_s": 8.124308,
+          "sort_s": 126.026467,
+          "write_s": 0.82904
+        },
+        {
+          "band": 163,
+          "rows": 155965733,
+          "read_s": 9.427432,
+          "sort_s": 67.213253,
+          "write_s": 1.022333
+        },
+        {
+          "band": 165,
+          "rows": 156030312,
+          "read_s": 10.933447,
+          "sort_s": 66.114355,
+          "write_s": 0.840146
+        },
+        {
+          "band": 164,
+          "rows": 156636202,
+          "read_s": 10.221103,
+          "sort_s": 63.757742,
+          "write_s": 0.834274
+        },
+        {
+          "band": 554,
+          "rows": 94028687,
+          "read_s": 7.189221,
+          "sort_s": 44.51143,
+          "write_s": 0.715235
+        }
+      ],
+      "sort_seconds_distribution": {
+        "p50": 3.451314,
+        "p95": 7.968874,
+        "p100": 126.026467
+      },
+      "split_band_count": 979,
+      "split_scope": "in-band groups, not independently scheduled smaller band jobs",
+      "max_reorder_payload_bytes": 2136654960,
+      "max_reorder_ratio": 0.994957,
+      "terminal_error_lines": [],
+      "product_sha256": "97dbf45dc6ad42aaf124a566061a818d0a7f1bc72cc91368b883546d71f899bf"
+    },
+    "bounded-100gb": {
+      "evidence_directory": "/mnt/nvme2n1/erikg/tape-redesign/bounded-100gb",
+      "commands": [
+        [
+          "/mnt/nvme2n1/erikg/tape-redesign/bin/scatter_sort.bounded",
+          "--corpus",
+          "/mnt/nvme2n1/erikg/wiki/corpus.bin",
+          "--remap",
+          "/mnt/nvme2n1/erikg/wbuild-before-phase-as-bf7cf09/remap-256.bin",
+          "--scratch",
+          "/mnt/nvme2n1/erikg/tape-redesign/bounded-100gb/waves",
+          "--tape-bands",
+          "/mnt/nvme2n1/erikg/tape-redesign/bounded-100gb/bands",
+          "--pending-bands",
+          "8",
+          "--budget-bytes",
+          "51539607552",
+          "--memory-gb",
+          "96",
+          "--threads",
+          "96",
+          "--no-lcp-slices"
+        ],
+        [
+          "/mnt/nvme2n1/erikg/tape-redesign/bin/cross_lcp_merge.final",
+          "--binbwt",
+          "/mnt/nvme2n1/erikg/wiki/corpus.bin",
+          "--remap",
+          "/mnt/nvme2n1/erikg/wbuild-before-phase-as-bf7cf09/remap-256.bin",
+          "--out-prefix",
+          "/mnt/nvme2n1/erikg/tape-redesign/bounded-100gb/frag",
+          "--threads",
+          "96",
+          "--tape-bands",
+          "/mnt/nvme2n1/erikg/tape-redesign/bounded-100gb/bands"
+        ],
+        [
+          "/mnt/nvme2n1/erikg/tape-redesign/bin/xsa_finish",
+          "--prefix",
+          "/mnt/nvme2n1/erikg/tape-redesign/bounded-100gb/frag",
+          "--corpus",
+          "/mnt/nvme2n1/erikg/wiki/corpus.bin",
+          "--remap",
+          "/mnt/nvme2n1/erikg/wbuild-before-phase-as-bf7cf09/remap-256.bin",
+          "--output",
+          "/mnt/nvme2n1/erikg/tape-redesign/bounded-100gb/product.sxi2",
+          "--threads",
+          "96",
+          "--poll-timeout",
+          "1260",
+          "--wit-ram-budget",
+          "51539607552"
+        ]
+      ],
+      "returncodes": [
+        2,
+        -15,
+        -15
+      ],
+      "harness_reason": "deadline",
+      "operator_supervision": {
+        "driver_pid": 2663282,
+        "stage_pids": [
+          2663285,
+          2663287,
+          2663288
+        ],
+        "started_utc": "2026-10-31T13:09:38.628011+00:00",
+        "hard_cutoff_utc": "2026-10-31T13:16:00Z",
+        "purpose": "extend experiment, without changing pipeline credits or XSA_TAPE_WAIT_S=180",
+        "reason": "stage-failure",
+        "states": [
+          {
+            "pid": 2663285,
+            "state": "Z",
+            "exit_code": 512
+          },
+          {
+            "pid": 2663287,
+            "state": "S",
+            "exit_code": 0
+          },
+          {
+            "pid": 2663288,
+            "state": "S",
+            "exit_code": 0
+          }
+        ],
+        "ended_utc": "2026-10-31T13:10:42.252463+00:00"
+      },
+      "seconds": 1257.8914185459726,
+      "product_complete": false,
+      "chi": null,
+      "consumed_bands": 353,
+      "contiguous_consumed_bands": 353,
+      "highest_consumed_band": 352,
+      "max_completed_wait_s": 294.621662,
+      "completed_wait_count": 706,
+      "completed_band_count": 353,
+      "top5_sort": [
+        {
+          "band": 112,
+          "rows": 3489180,
+          "read_s": 0.215109,
+          "sort_s": 322.069976,
+          "write_s": 0.045127
+        },
+        {
+          "band": 150,
+          "rows": 50025789,
+          "read_s": 3.014035,
+          "sort_s": 35.580794,
+          "write_s": 0.275739
+        },
+        {
+          "band": 254,
+          "rows": 11974892,
+          "read_s": 0.726117,
+          "sort_s": 27.838272,
+          "write_s": 0.167381
+        },
+        {
+          "band": 111,
+          "rows": 3004502,
+          "read_s": 0.131321,
+          "sort_s": 23.547671,
+          "write_s": 0.045376
+        },
+        {
+          "band": 69,
+          "rows": 7681099,
+          "read_s": 0.594621,
+          "sort_s": 22.3002,
+          "write_s": 0.111066
+        }
+      ],
+      "sort_seconds_distribution": {
+        "p50": 2.098953,
+        "p95": 11.367675,
+        "p100": 322.069976
+      },
+      "split_band_count": 351,
+      "split_scope": "in-band groups, not independently scheduled smaller band jobs",
+      "max_reorder_payload_bytes": 598164328,
+      "max_reorder_ratio": 0.278542,
+      "terminal_error_lines": [
+        "scatter_sort: band exceeds bounded reorder row budget; reduce work unit"
+      ]
+    }
+  },
+  "p3_rejected_band": {
+    "band": 356,
+    "rows": 339607712,
+    "packed_bytes": 2716861696,
+    "row_capacity": 268435456,
+    "byte_capacity": 2147483648
+  },
+  "manual_notes": "P1 exact cmp passed against pre-change artifacts. P2/P3 harness deadlines were extended by a separate owner that paused only the Python monitor; native stages and XSA_TAPE_WAIT_S=180 were unchanged. The raw harness may say deadline even when all stages subsequently exited normally; exit codes, DONE records and supervision records are retained. Full task acceptance remains unmet."
+}
