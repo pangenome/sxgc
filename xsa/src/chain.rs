@@ -953,7 +953,7 @@ fn spawn_phase(
     } else {
         format!(" env={}", env.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(" "))
     };
-    journal.line(&format!("PHASE {tag} START {command_line}{env_note}"));
+    journal.line(&format!("PHASE {tag} START {command_line}{env_note} rlimit_as_kb={memory_kb}"));
     let log = File::options().create(true).append(true).open(&log_path)
         .map_err(|e| format!("create {}: {e}", log_path.display()))?;
     let log_err = log.try_clone().map_err(|e| format!("clone {tag} log handle: {e}"))?;
@@ -1868,7 +1868,7 @@ walks the corpus for every endpoint and no LCP slice is produced). Not a user op
     // Spawn BOTH before joining: the finish must start with the producer (it
     // polls the producer's piece directory from row zero).
     let producer_label = if options.tape { "order-tape" } else { "bin-v2" };
-    let producer_running = spawn_phase(journal, scratch, producer_label, memory_kb, "/usr/bin/timeout", &producer_args, &producer_env)?;
+    let producer_running = spawn_phase(journal, scratch, producer_label, if options.tape { memory_kb.max((3 * n + 1023) / 1024) } else { memory_kb }, "/usr/bin/timeout", &producer_args, &producer_env)?;
     let mut emit_running = if options.tape {
         Some(spawn_phase(journal, scratch, "emit-tape", memory_kb, "/usr/bin/timeout", &emit_args, &[])?)
     } else { None };
