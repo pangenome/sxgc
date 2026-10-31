@@ -62,7 +62,7 @@ finally:
     timings=[dict(band=int(b),rows=int(n),read_s=float(r),sort_s=float(s),write_s=float(w))
              for b,n,r,s,w in re.findall(r'SS_BAND band=(\d+) rows=(\d+) read_s=([\d.]+) sort_s=([\d.]+) write_s=([\d.]+)',order)]
     result=dict(reason=reason,seconds=time.monotonic()-start,returncodes=[proc.returncode for proc in ps],
-        max_observed_wait_s=max(map(float,re.findall(r'SS_WAIT(?:_DONE)? .*wall_s=([\d.]+)',order)),default=0),
+        max_observed_wait_s=max(map(float,re.findall(r'(?:SS_WAIT(?:_DONE)?|SS_DIAGNOSTIC) .*wall_s=([\d.]+)',order)),default=0),
         max_completed_wait_s=max(waits,default=0),top5_sort=sorted(timings,key=lambda x:x['sort_s'],reverse=True)[:5],
         published_bands=len(timings),consumed_bands=len(list((root/'bands').glob('band_*.consumed'))),
         splits=[line for line in order.splitlines() if 'SS_SPLIT' in line],

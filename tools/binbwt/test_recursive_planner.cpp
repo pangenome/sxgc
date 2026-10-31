@@ -32,7 +32,7 @@ static void check(const std::string& text, u64 target, u64 stride,
     for(size_t b=0;b<plan.size();++b) {
         auto leaf=plan[b];
         deep |= leaf.first.depth>24; analytic |= leaf.analytic;
-        cap |= leaf.first.depth==192 && leaf.samples*stride>target*4/5;
+        cap |= leaf.first.depth==192 && leaf.samples*stride>target;
         if(leaf.analytic) {
             for(u64 p:bands[b]) assert(p>=trailing);
             std::reverse(bands[b].begin(),bands[b].end());
@@ -55,6 +55,8 @@ int main() {
     check(text,700,3,true,false,false);
     // Corpus-proved single symbol to EOF, position DESCENDING, finite tails.
     check(std::string(1800,'a'),2000,1,false,true,false);
+    // Position 1 is unsampled and sorts below the first analytic sample.
+    check(std::string("z\1")+std::string(1800,'a'),2000,2,false,true,false);
     // Internal runs must never be mistaken for the trailing run.
     check(std::string(1000,'a')+"z"+std::string(1000,'a'),1200,1,true,false,true);
     check(std::string(400,'a')+"z"+std::string(400,'a')+"b",300,1,true,false,true);

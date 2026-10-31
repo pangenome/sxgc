@@ -432,6 +432,11 @@ static std::vector<TapeLeaf> plan_tape(std::vector<u64> positions, u64 stride,
         emit(pending,hi);
     };
     if (!positions.empty()) descend(0,positions.size(),24);
+    // The first range normally extends below its sampled key. An analytic
+    // range must instead start at its proved prefix, leaving unsampled lower
+    // keys (and short finite tails) in an ordinary zero-estimate range.
+    if (!leaves.empty() && leaves.front().analytic)
+        leaves.insert(leaves.begin(),{{0,24},0,false});
     if (leaves.empty()) leaves.push_back({{0,24},0,false});
     u64 histogram[8]={}, largest=0;
     for (const auto& leaf:leaves) {
