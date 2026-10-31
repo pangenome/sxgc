@@ -24,6 +24,7 @@
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::os::unix::process::CommandExt;
+use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -920,6 +921,33 @@ impl Journal {
     }
 }
 
+/// The lock inode must survive scratch cleanup. Keep this file, and inherit
+/// its open description in every stage: an orphan still owns the scratch tree
+/// after the driver exits. Never unlink the lock to "recover" a running build.
+fn lock_scratch(scratch: &Path) -> Result<File, String> {
+    // Outside the tree: deleting/recreating scratch must not replace the inode
+    // while an orphan still owns it. Canonicalize scratch before calling us.
+    let name = scratch.file_name().ok_or("scratch must not be filesystem root")?;
+    let path = scratch.with_file_name(format!(".{}.xsa-build.lock", name.to_string_lossy()));
+    let file = File::options().read(true).write(true).create(true).open(&path)
+        .map_err(|e| format!("open {}: {e}", path.display()))?;
+    unsafe {
+        extern "C" {
+            fn flock(fd: i32, operation: i32) -> i32;
+            fn fcntl(fd: i32, command: i32, ...) -> i32;
+        }
+        if flock(file.as_raw_fd(), 2 | 4) != 0 { // LOCK_EX | LOCK_NB
+            return Err(format!("scratch is owned by a live build or stage: {} ({})",
+                path.display(), std::io::Error::last_os_error()));
+        }
+        // F_SETFD=2, clear FD_CLOEXEC so all native descendants retain ownership.
+        if fcntl(file.as_raw_fd(), 2, 0) != 0 {
+            return Err(format!("inherit scratch lock: {}", std::io::Error::last_os_error()));
+        }
+    }
+    Ok(file)
+}
+
 /// Run one phase under /usr/bin/time -v with the hard RLIMIT_AS cap, exactly
 /// as the reference gates do: stdout/stderr land in `log_path`, wall/peak-RSS
 /// telemetry in `time_path`, both under the scratch tree and journaled.
@@ -1028,6 +1056,28 @@ fn join_phase(
         return Err(format!("PHASE {tag} FAILED (rc {}); log tail:\n{}", status.code().unwrap_or(-1), tail.join("\n")));
     }
     running.armed = false;
+    Ok(())
+}
+
+/// Observe every stage while the pipeline is live. Waiting for the sorter
+/// first hides a dead merge behind the sorter's next credit wait indefinitely.
+/// Dropping the remaining phases on any error kills their private groups.
+fn join_pipeline(journal: &mut Journal, scratch: &Path,
+                 phases: Vec<RunningPhase>) -> Result<(), String> {
+    let mut pending: Vec<Option<RunningPhase>> = phases.into_iter().map(Some).collect();
+    while pending.iter().any(Option::is_some) {
+        for slot in &mut pending {
+            let exited = match slot.as_mut() {
+                Some(phase) => phase.child.try_wait()
+                    .map_err(|e| format!("poll {}: {e}", phase.tag))?.is_some(),
+                None => false,
+            };
+            if exited { join_phase(journal, scratch, slot.take().unwrap())?; }
+        }
+        if pending.iter().any(Option::is_some) {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
     Ok(())
 }
 
@@ -1250,6 +1300,7 @@ fn run_chain(options: Options) -> Result<(), String> {
     let scratch = &options.scratch;
     fs::create_dir_all(scratch).map_err(|e| format!("create {}: {e}", scratch.display()))?;
     let scratch = fs::canonicalize(scratch).map_err(|e| format!("resolve {}: {e}", options.scratch.display()))?;
+    let _scratch_owner = lock_scratch(&scratch)?;
     let journal_path = scratch.join("xsa-build.log");
     if journal_path.exists() {
         return Err(format!(
@@ -1897,21 +1948,14 @@ walks the corpus for every endpoint and no LCP slice is produced). Not a user op
     // polls the producer's piece directory from row zero).
     let producer_label = if options.tape { "order-tape" } else { "bin-v2" };
     let producer_running = spawn_phase(journal, scratch, producer_label, if options.tape { memory_kb.max((3 * n + 1023) / 1024) } else { memory_kb }, "/usr/bin/timeout", &producer_args, &producer_env)?;
-    let mut emit_running = if options.tape {
+    let emit_running = if options.tape {
         Some(spawn_phase(journal, scratch, "emit-tape", memory_kb, "/usr/bin/timeout", &emit_args, &[])?)
     } else { None };
-    let mut finish_running = spawn_phase(journal, scratch, "finish-v2", finish_as_kb, "/usr/bin/timeout", &finish_args, &[])?;
+    let finish_running = spawn_phase(journal, scratch, "finish-v2", finish_as_kb, "/usr/bin/timeout", &finish_args, &[])?;
     let v2_sampler = DiscSampler::start(scratch.to_path_buf(), Duration::from_secs(2));
-    if let Err(e) = join_phase(journal, scratch, producer_running) {
-        // A dead producer leaves the finish polling for hours; kill it loud.
-        finish_running.terminate();
-        if let Some(mut m) = emit_running { m.terminate(); }
-        return Err(format!("{e}; the fused finish was killed after the {} producer failed", producer_label));
-    }
-    if let Some(m) = emit_running {
-        join_phase(journal, scratch, m)?;
-    }
-    join_phase(journal, scratch, finish_running)?;
+    let mut phases = vec![producer_running, finish_running];
+    if let Some(emit) = emit_running { phases.push(emit); }
+    join_pipeline(journal, scratch, phases)?;
     let peak_disc = v2_sampler.peak_bytes();
 
     // ---- gates (fail loud on every violation)
@@ -2126,6 +2170,71 @@ pub fn command(args: &[String]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    static PROCESS_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn scratch_lock_survives_driver_handle_until_stage_exits() {
+        let _serial = PROCESS_TEST_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir().join(format!("xsa-owner-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let owner = lock_scratch(&dir).unwrap();
+        assert!(lock_scratch(&dir).is_err());
+        let mut journal = Journal::open(&dir.join("journal")).unwrap();
+        let mut stage = spawn_phase(&mut journal, &dir, "owner", SELFTEST_MEMORY_KB,
+            "/usr/bin/timeout", &["5".into(), "bash".into(), "-c".into(),
+                "touch ready; exec sleep 1".into()], &[]).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !dir.join("ready").exists() {
+            assert!(stage.child.try_wait().unwrap().is_none());
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        drop(owner);
+        fs::remove_dir_all(&dir).unwrap();
+        fs::create_dir_all(&dir).unwrap();
+        assert!(lock_scratch(&dir).is_err(), "orphan stage must retain ownership after scratch reset");
+        assert!(stage.child.wait().unwrap().success());
+        stage.armed = false;
+        assert!(lock_scratch(&dir).is_ok());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn pipeline_detects_each_failed_stage_and_kills_waiting_peers() {
+        let _serial = PROCESS_TEST_LOCK.lock().unwrap();
+        for failed in 0..3 {
+            let dir = std::env::temp_dir().join(format!("xsa-peer-{}-{failed}", std::process::id()));
+            fs::create_dir_all(&dir).unwrap();
+            let mut journal = Journal::open(&dir.join("journal")).unwrap();
+            let mut phases = Vec::new();
+            let mut peer_groups = Vec::new();
+            for i in 0..3 {
+                let script = if i == failed { "sleep 0.2; exit 7" } else { "exec sleep 60" };
+                let phase = spawn_phase(&mut journal, &dir, &format!("stage-{i}"),
+                    SELFTEST_MEMORY_KB, "bash", &["-c".into(), script.into()], &[]).unwrap();
+                if i != failed { peer_groups.push(phase.child.id()); }
+                phases.push(phase);
+            }
+            let start = std::time::Instant::now();
+            let error = join_pipeline(&mut journal, &dir, phases).unwrap_err();
+            assert!(error.contains(&format!("stage-{failed} FAILED (rc 7)")), "{error}");
+            assert!(start.elapsed() < Duration::from_secs(10));
+            for group in peer_groups {
+                // Wrappers are reaped by RunningPhase::drop; descendants may
+                // briefly be zombies awaiting init, but none may still run.
+                for entry in fs::read_dir("/proc").unwrap().flatten() {
+                    let Ok(stat) = fs::read_to_string(entry.path().join("stat")) else { continue; };
+                    let Some((_, fields)) = stat.rsplit_once(") ") else { continue; };
+                    let fields: Vec<_> = fields.split_whitespace().collect();
+                    if fields.get(2).and_then(|p| p.parse::<u32>().ok()) == Some(group) {
+                        assert_eq!(fields[0], "Z", "live descendant after failed pipeline: {stat}");
+                    }
+                }
+            }
+            fs::remove_dir_all(dir).unwrap();
+        }
+    }
 
     fn tmpfile(bytes: &[u8]) -> PathBuf {
         let dir = tempfile::tempdir().unwrap();

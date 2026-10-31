@@ -26,7 +26,10 @@ Ownership invariants:
    job can sort and write without acquiring another credit. It releases its
    arena after writing; it never holds an arena while waiting to claim a new
    job. Publication does not require the claim mutex.
-2. The merge reads any available completion in its admitted key window. It
+2. Sorter bands and output pieces are different partitions. A piece can span
+   multiple bands and a band can span multiple pieces. Band credit must never
+   depend on closing or publishing a piece. The merge reads any available
+   completion in its admitted key window. It
    copies the complete envelope into reserved private storage, deletes the
    input, and returns its credit **before** entering downstream publication.
 3. The finish copies a complete piece and returns its credit immediately after
@@ -36,11 +39,41 @@ Ownership invariants:
    cannot require a future, credit-blocked piece or a future sorter LCP slice.
 5. Reorder storage is reserved for the complete admitted window, including the
    earliest missing key. A later completion cannot take that reservation.
-   Only the final output is ordered by key range; completion reception is not.
+   Completion reception may be out of order. Processing into the run sink is
+   strictly in key order: `reorder[band - windowFirst]` is processed exactly
+   once before advancing `band`. Piece writer completion may be out of order,
+   but each immutable job owns a unique run interval and piece pathname.
 6. End-of-stream and failure notification do not require a data-queue credit.
    Finite local work and eventual scheduling/I/O completion are assumptions of
    progress. A crashed process or permanently failed disk is outside deadlock
    freedom and must produce a separate failure result.
+
+## Run ownership and failure propagation
+
+One live pipeline generation owns each canonical scratch path. `xsa build`
+acquires an exclusive nonblocking advisory lock on the sibling
+`.<scratch-name>.xsa-build.lock` before opening the journal or starting stages.
+The lock descriptor is inherited by all stages and wrappers, so killing the
+driver does not permit a replacement run to reuse their paths. Keeping the
+lock outside the scratch tree also covers deletion/recreation of that tree.
+Never unlink the lock file while a stage is alive. These guarantees apply to
+launches through `xsa build`; standalone native stage invocations must use fresh,
+exclusive paths. Older binaries without this lock must be stopped before reuse.
+
+The owner polls every live stage, rather than joining the sorter before observing
+the merge and finish. Any nonzero exit drops the remaining stage handles, kills
+their private process groups, and reaps their wrappers. A merge failure therefore
+cannot leave the sorter waiting indefinitely for a credit that will never arrive.
+Failure handling is separate from the finite-work progress argument below.
+
+The October 31 piece collision was observed with an older merge and two finish
+processes sharing the failed run's paths; the old merge still held its deleted
+log open. A controlled scratch-replacement regression reproduces the collision
+with an ordered input stream. The existing reorder algorithm is retained.
+`CROSS_PIECE_COLLISION` reports the path, whether it existed at process entry,
+the attempted piece run interval, source band, and that source band's run
+interval through the attempted publication. This last interval is a prefix:
+future runs in the same source band may not have been processed yet.
 
 ## Bounded-buffer argument
 
