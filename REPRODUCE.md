@@ -453,11 +453,14 @@ build was **NOT RE-RUN** for this guide).
 | 150 MB `t150m.txt` | 150,000,001 | 57,279,194 | **44,034,230** | **103,727,312 B** (0.6915 n) | **83,343,688 B** (0.5556 n) |
 | 10 GB `pile-10b-snap.txt` | 10,000,017,259 | 3,474,889,847 | **2,676,929,445** | **6,178,186,696 B** (0.6179 n) | **4,883,953,184 B** (0.4884 n) |
 
-Sources: 150 MB both columns and 10 GB "chi absent" = `tools/binbwt/optional_chi_results.json`
-(`N1[1].container_before_bytes/after_bytes`, `N2.container_bytes` — the 10 GB run
-prints `XSA_BUILD_DONE chi=0 n=10000017259 r=3474889847`); 10 GB "chi present"
-container = `tools/binbwt/RESULTS_QLITE_BLOCKM1.md` and
-`tools/binbwt/RESULTS_DEADLOCK_REDESIGN.md` (`CONTAINER 6,178,186,696 B = 0.62 n`).
+Sources: the 150 MB row is **re-measured here** (my `--with-chi` build produced
+exactly `103,727,312` and the default build exactly `83,343,688`, which also
+settles that the JSON's `container_before_bytes`/`container_after_bytes` mean
+with-chi/without-chi); 10 GB "chi absent" = `tools/binbwt/optional_chi_results.json`
+N2 (`n=10000017259 runs=3474889847 chi=0 container_bytes=4883953184`); 10 GB
+"chi present" container = `tools/binbwt/RESULTS_QLITE_BLOCKM1.md` and
+`tools/binbwt/RESULTS_DEADLOCK_REDESIGN.md` (`CONTAINER 6,178,186,696 B = 0.62 n`,
+with `r=3,474,889,847` and chi `2,676,929,445`).
 
 Two honest footnotes:
 
