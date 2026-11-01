@@ -238,3 +238,9 @@ they fail at open when m5 is absent.
 The claims checker consumes LCE claims and source text, **not chi**; it checks
 inputs to the sweep. Witness sample checks and bridge exports require chi and
 are refused with `--no-chi`. An absent chi is not an empty, complete chi set.
+
+The v6 m13 (codec 113) entries retain their existing u32 sampled run ID.
+Publication requires each sampled run ID to be below `0xffffffff`
+(`xsa_finish.cpp`: `run index exceeds u32`). Chi omission does not widen this
+field; full publication of a larger-run-count container remains a separate
+format limit, beyond the partial 100 GB construction-progress gate.

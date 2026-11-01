@@ -1,0 +1,201 @@
+{
+  "base_commit": "60644ccfadc0987bac16f2298d0654e09958f770",
+  "implementation_commit": "235e169",
+  "evidence_root": "/mnt/nvme2n1/erikg/chi-optional",
+  "policy": {
+    "tape_chi_default": false,
+    "enable_switch": "--with-chi",
+    "missing_member": "m5",
+    "absence_flag": 64,
+    "chi_complete_bit_cleared": true,
+    "production_lcp_planning_unchanged": true
+  },
+  "N1": [
+    {
+      "fixture_mb": 8,
+      "patterns_exact": 100,
+      "positions_exact": 24,
+      "container_before_bytes": 5763688,
+      "container_after_bytes": 4650776,
+      "all_non_chi_members_byte_identical": true,
+      "chi_absent_and_bad_flags_refused": true,
+      "log": "/mnt/nvme2n1/erikg/chi-optional/production-8-verify.log"
+    },
+    {
+      "fixture_mb": 150,
+      "patterns_exact": 100,
+      "positions_exact": 574,
+      "container_before_bytes": 103727312,
+      "container_after_bytes": 83343688,
+      "all_non_chi_members_byte_identical": true,
+      "chi_absent_and_bad_flags_refused": true,
+      "log": "/mnt/nvme2n1/erikg/chi-optional/production-150-verify.log"
+    }
+  ],
+  "N2": {
+    "reason": "complete",
+    "returncodes": [
+      0,
+      0,
+      0
+    ],
+    "wall": 1066.7138799740933,
+    "band_percent": 99.94342077966165,
+    "chi_present": false,
+    "container_bytes": 4883953184,
+    "status": "passed",
+    "n": 10000017259,
+    "runs": 3474889847,
+    "chi": 0,
+    "patterns_exact": 20,
+    "positions_exact": 20,
+    "finish_peak_rss_kb": 11781604,
+    "finish_peak_rss_over_n": 1.2064341674152705,
+    "finish_wall": "17:46.37",
+    "query_log": "/mnt/nvme2n1/erikg/chi-optional/gate-10-query.log",
+    "commands": [
+      [
+        "/mnt/nvme2n1/erikg/chi-optional/bin-final/scatter_sort",
+        "--corpus",
+        "/mnt/nvme2n1/erikg/extcols-scratch/real10b-ref/pile-10b-snap.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/chi-optional/gate-10/remap",
+        "--scratch",
+        "/mnt/nvme2n1/erikg/chi-optional/gate-10/waves",
+        "--tape-bands",
+        "/mnt/nvme2n1/erikg/chi-optional/gate-10/bands",
+        "--pending-bands",
+        "32",
+        "--budget-bytes",
+        "51539607552",
+        "--memory-gb",
+        "96",
+        "--threads",
+        "96",
+        "--no-lcp-slices"
+      ],
+      [
+        "/mnt/nvme2n1/erikg/chi-optional/bin-final/cross_lcp_merge",
+        "--binbwt",
+        "/mnt/nvme2n1/erikg/extcols-scratch/real10b-ref/pile-10b-snap.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/chi-optional/gate-10/remap",
+        "--out-prefix",
+        "/mnt/nvme2n1/erikg/chi-optional/gate-10/frag",
+        "--threads",
+        "96",
+        "--tape-bands",
+        "/mnt/nvme2n1/erikg/chi-optional/gate-10/bands"
+      ],
+      [
+        "/mnt/nvme2n1/erikg/chi-optional/bin-final/xsa_finish",
+        "--prefix",
+        "/mnt/nvme2n1/erikg/chi-optional/gate-10/frag",
+        "--corpus",
+        "/mnt/nvme2n1/erikg/extcols-scratch/real10b-ref/pile-10b-snap.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/chi-optional/gate-10/remap",
+        "--output",
+        "/mnt/nvme2n1/erikg/chi-optional/gate-10/product.sxi2",
+        "--threads",
+        "96",
+        "--poll-timeout",
+        "3660",
+        "--no-chi"
+      ]
+    ],
+    "finish_proc_VmHWM_kb": 11996240
+  },
+  "N3": {
+    "source_rows_emitted_lower_bound": 7640874798,
+    "source_percent_emitted_lower_bound": 7.63370411872372,
+    "merge_state": "pid=221229 phase=publish band=912 processed_rows=0 copied_rows=8441606 total_rows=8441606 inflight=912 window_first=898 window_bands=32 copied_window_rows=267926118 row_capacity=268435456 piece_next=45403 piece_consumed=44303",
+    "epoch": 1793507083.5387714,
+    "finish_progress": {
+      "band": 44225,
+      "bands": 1527313,
+      "runs": 2898395134,
+      "chi": 0,
+      "band_percent": 2.8956081693798192,
+      "wall": 1818.9516779975966
+    },
+    "finish_peak_rss_kb": 100024448,
+    "status": "progress-passed",
+    "complete": false,
+    "corpus": "/mnt/nvme2n1/erikg/wiki/corpus.bin",
+    "n": 100093934467,
+    "commands": [
+      [
+        "/mnt/nvme2n1/erikg/chi-optional/bin-final/scatter_sort",
+        "--corpus",
+        "/mnt/nvme2n1/erikg/wiki/corpus.bin",
+        "--remap",
+        "/mnt/nvme2n1/erikg/chi-optional/gate-100/remap",
+        "--scratch",
+        "/mnt/nvme2n1/erikg/chi-optional/gate-100/waves",
+        "--tape-bands",
+        "/mnt/nvme2n1/erikg/chi-optional/gate-100/bands",
+        "--pending-bands",
+        "32",
+        "--budget-bytes",
+        "51539607552",
+        "--memory-gb",
+        "96",
+        "--threads",
+        "96",
+        "--no-lcp-slices"
+      ],
+      [
+        "/mnt/nvme2n1/erikg/chi-optional/bin-final/cross_lcp_merge",
+        "--binbwt",
+        "/mnt/nvme2n1/erikg/wiki/corpus.bin",
+        "--remap",
+        "/mnt/nvme2n1/erikg/chi-optional/gate-100/remap",
+        "--out-prefix",
+        "/mnt/nvme2n1/erikg/chi-optional/gate-100/frag",
+        "--threads",
+        "96",
+        "--tape-bands",
+        "/mnt/nvme2n1/erikg/chi-optional/gate-100/bands"
+      ],
+      [
+        "/mnt/nvme2n1/erikg/chi-optional/bin-final/xsa_finish",
+        "--prefix",
+        "/mnt/nvme2n1/erikg/chi-optional/gate-100/frag",
+        "--corpus",
+        "/mnt/nvme2n1/erikg/wiki/corpus.bin",
+        "--remap",
+        "/mnt/nvme2n1/erikg/chi-optional/gate-100/remap",
+        "--output",
+        "/mnt/nvme2n1/erikg/chi-optional/gate-100/product.sxi2",
+        "--threads",
+        "96",
+        "--poll-timeout",
+        "7260",
+        "--no-chi"
+      ]
+    ],
+    "run_directory": "/mnt/nvme2n1/erikg/chi-optional/gate-100",
+    "driver_pid": 221218,
+    "finish_pid": 221230,
+    "finish_peak_rss_over_n": 1.02328912633331
+  },
+  "tests": {
+    "production_unit_tests_passed": 38,
+    "baseline_test_failure": "chain::tests::derived_remap_is_order_preserving_per_corpus",
+    "baseline_failure_reproduced_at": "60644cc",
+    "baseline_log": "/mnt/nvme2n1/erikg/chi-optional/baseline-remap-test.log",
+    "passing_tests_log": "/mnt/nvme2n1/erikg/chi-optional/production-tests.log"
+  },
+  "native_stage_sha256": {
+    "xsa_finish": "50652ab52ab7a32f10e52e70fbdedf9702730238a3df60bffc4cda8ab0f72321",
+    "scatter_sort": "dd0226e1056959a0380744d6eeebc75972b72d3196a612f8656c69eb966d2033",
+    "cross_lcp_merge": "b40996044f158af82134e915edbd51c7bfd1581c5a4a195c372f311af4205260"
+  },
+  "residual_risks": [
+    "100 GB publication has not completed; this is a construction-progress gate.",
+    "Existing m13 codec 113 requires sampled run IDs below 0xffffffff; chi omission does not widen that field.",
+    "The full-alphabet remap unit test fails identically on baseline 60644cc."
+  ],
+  "manual_notes": "The 8 MB fixture is the first 8,000,000 bytes of the 150 MB fixture plus separator; all 100 oracle patterns were independently rescanned and the oracle positions clipped to this prefix. Large gates use native stages with --no-chi and --no-lcp-slices, 96 threads and K=32. Production-default LCP planning remains unchanged and is covered by packaged 8 MB and 150 MB gates. The 100 GB progress counts rows already published by the emitter: sum of complete preceding bands plus processed_rows only when copied_rows is nonzero; the raw atomic merge.state snapshot is retained. The primary 100 GB run is left alive below the allowed 20% stopping point."
+}
