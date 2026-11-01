@@ -1154,6 +1154,7 @@ fn run(dump: &str, out: &str, sep_mode: bool, t0: Instant) {
         "pages_parsed": pages,
         "pages_with_multiple_revisions": multi_rev,
         "namespace_filter": "none: every <page> is indexed regardless of namespace prefix",
+        "entity_unescape": "none",
         "xml_entities": "not decoded: title and <text> bytes are copied verbatim from the XML",
         "sidecars": {
             "corpus.bin": { "bytes": fin.corpus_bytes, "sha256": fin.corpus_sha },

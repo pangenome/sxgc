@@ -34,191 +34,27 @@ use std::time::Duration;
 use sha2::{Digest, Sha256};
 
 pub const USAGE: &str = "usage:
-  xsa build --input <corpus> --scratch <dir> [--snap-1e] [--memory-gb N] [--threads N]
-                    [--remap <256-byte-map>] [--bin-live-cap SLOTS]
-                    [--bin-target-size ROWS] [--bin-entropy-min [BITS]] [--chi-expect N] [--wit-ram-gb N]
-                    [--phrase-radix [--phrase-KNOB N ...]]
-                    [--timeout S] [--legacy-merge [--chunks N] [--kway N]]
+  xsa build --tape --input <raw-file> --scratch <fresh-dir> --timeout S
+            [--threads N] [--memory-gb N] [--plan-only]
+            [--with-chi|--no-chi] [--chi-expect N] [--snap-1e]
 
-ONE ENTRY. `xsa build` runs the BIN pipeline by default (auto-radix): the
-multi-pass reader (count sweep -> prefix-sum scatter), the bounded rolling
-window FILES, the target-size recursive bins (each bin subdivides by its next
-byte until every leaf is <= the target, so tree depth is an OUTPUT of the data)
-and the ordered stitch straight into the unchanged band/piece protocol, which
-the decomposed fused finish consumes concurrently. There is no chunk phase, no
-merge walk and no position column on this route.
+  --tape             bounded tape producer, ordered merge and container finish.
+  --input PATH       raw bytes, unchanged; END is virtual, no terminal required.
+  --scratch DIR      fresh directory for intermediates, container and journal.
+  --threads N        sort parallelism / bands in flight (default 48).
+  --memory-gb N      phase address-space cap in GiB (default 24).
+  --timeout S        wall cap per phase.
+  --plan-only        print resource plan without running construction.
+  --with-chi         construct m5 chi (enabled by default).
+  --no-chi           omit optional m5 chi.
+  --chi-expect N     assert chi count; requires --with-chi.
+  --snap-1e          require a final 0x1E document boundary and journal SHA256;
+                     never trims, extends or otherwise transforms the input.
+  --remap PATH       validated corpus-derived 256-byte bijective remap override.
+  --finish-as-gb N   finish phase address-space cap (default --memory-gb).
+  --wit-ram-gb N     finish witness RAM budget (default --memory-gb / 2).
+  --allow-infeasible run despite an infeasible resource plan (journaled).";
 
-  --legacy-merge     the PRE-BIN route (chunk front end -> k-way merge tree ->
-                     adopt finish) for A/B only. It is the only route that takes
-                     --chunks/--chunk-mb/--kway/--fanin, and it is not the
-                     document. Kept because the banked byte-identity fixtures
-                     were built with it, and a claim about the new route needs
-                     the old one beside it.
-
-  --input PATH       corpus file: ONE cyclic 0x1E-terminated byte string
-                     (s1 0x1E s2 0x1E ... sk 0x1E); mid-document input fails
-                     loud before any phase runs (the demonstrated refusal).
-  --scratch DIR      all intermediate and final artifacts are written here:
-                     chunks/ merged/ mwork/ finish/ and xsa-build.log.
-                     The scratch filesystem must hold >= 15% free (df gate).
-  --snap-1e          additionally verify and journal the input snap
-                     (SNAP_OK n=<size> sha256=<...>); the boundary check
-                     itself always runs. Snapping is never done silently:
-                     a raw prefix must be extended forward to the next 0x1E
-                     in the source corpus before it is passed here.
-  --memory-gb N      hard RLIMIT_AS cap (GiB) applied to every phase
-                     (default 24; a lower inherited hard limit always wins).
-  --threads N        merge/finish thread count (default 48, gate discipline).
-  --chunks N         chunk count (default 32, the 10 GB gate value; outputs
-                     are chunk-count invariant - the exact merge certifies
-                     trees of 5 and 16 chunks byte-identical to the bank).
-  --chunk-mb N       fixed chunk size (MiB): the chunk count is derived by
-                     arithmetic (ceil(corpus_bytes / N MiB); document-aligned
-                     boundaries land near, not at, the target). The pile
-                     driver's sizing knob; mutually exclusive with --chunks.
-  --fanin            the fan-in shape: fixed chunks (--chunk-mb) + repeated
-                     k-way fan-in (--kway K) until one artifact remains.
-                     Levels are arithmetic; every level runs the same
-                     certified k-way merge and its output is a valid next
-                     level input (zero re-derivation); consumed inputs are
-                     reclaimed as the build advances (CROSS_DELETE_CONSUMED)
-                     so the peak disc is ~ one level's live set + one group's
-                     merge transient, not the whole input history. The plan
-                     prints levels, per-level side sizes, peak disc and wall.
-  --kway N           merge arity (default 2 = the certified pairwise tree).
-                     N = chunk count is the FLAT one-level shape: ONE k-way
-                     merge straight from the chunks (primary shape; every
-                     arity byte-reproduces the same canonical artifact).
-                     N < chunk count with --fanin is the progressive shape.
-  --remap PATH       256-byte bijective byte map applied by the chunk front
-                     end. Default: the embedded production map (the banked
-                     fragment route's frag.remap, sha256 b4f38776...).
-
-Pool knobs pass through to the merge unchanged (default: fixed concurrent
-pool ON): CROSS_NO_POOL=1, CROSS_ASYNC_FILL=1, CROSS_HASH_K=K, CROSS_PIPELINE=1,
-CROSS_SHARDS=S (parallel emission: the order/run-boundary shard count for the
-merge walks; default --threads, 1 = the serial walk). The chunk front end
-writes per-chunk corpus references (chunk-i.ref) so the merge never
-copies chunk text (referenced mode; CHUNK_NO_REF=1 restores the legacy
-artifact set, CROSS_NO_REF=1 makes the merge ignore refs).
-
-Outputs (byte-identical to the reference chain on the same corpus):
-  merged/frag.rlebwt .rlebwt.meta .ssa .ssa_t .pftext .pfck
-  finish/frag.ri4 .head_sa .agg .sA
-The uniform journal (xsa-build.log) reports chi and per-phase wall / peak
-RSS / disc telemetry.
-
-  xsa build --plan-only           print the surveyed+modeled build plan
-  --v2-pipeline          ACCEPTED AND IGNORED (auto-radix). It used to select
-                     the bin pipeline; the bin pipeline is now the DEFAULT, so
-                     the flag selects nothing and the journal records that it was
-                     seen and ignored. `--legacy-merge` is what selects the old
-                     route now.
-  THE DEFAULT ROUTE (the bin pipeline, no flag needed): bin-bwt sweeps the
-                     corpus (count sweep -> prefix-sum scatter), groups every
-                     position into the bin of its first remapped byte (256
-                     byte-bins) and SUBDIVIDES each bin by its next byte until
-                     every leaf is <= the target size, so the tree's depth is an
-                     OUTPUT of the data and the largest serial stretch is one
-                     leaf sort; it stitches the bins in byte order straight into
-                     the unchanged band/piece protocol. The decomposed fused
-                     finish (xsa_finish) consumes those pieces CONCURRENTLY
-                     (flow-controlled through the piece window) and publishes
-                     the lite container, then deletes the rlebwt. There is NO
-                     chunk phase and NO merge walk on this route.
-                     With --plan-only it prints the plan and exits (the same
-                     plan the build journals first).
-  --legacy-merge         the PRE-BIN route: chunk front end (libsais) -> k-way
-                     merge tree -> adopt finish. A/B only; the only route that
-                     accepts --chunks/--chunk-mb/--kway/--fanin.
-  --bin-entropy-min [B] arm the entropy rule: a radix level is taken iff the
-                     next-byte histogram's entropy exceeds B bits (default B = 1.5,
-                     the measured bracket's middle). Absent = OFF (byte-identical default).
-  --bin-target-size N  the leaf bound of the recursion, in ROWS (default: 0 =
-                     AUTOMATIC). Bins subdivide until a node holds <= N rows; the
-                     subtree's depth is whatever the text demands. It is priced
-                     from the measured leaf-sort rate and the bucketing cost, and
-                     the value the run used is journaled (BIN_WORK target=...).
-  --bin-live-cap N     the position-arena bound, in SLOTS (one slot
-                     per admitted position; the arena pair is 16 B/slot of
-                     anonymous RAM, never a file). The corpus is processed in
-                     ceil(n/cap) windows, each admitting a contiguous range of
-                     bins that fits the bound. 0 = unbounded (one window, an
-                     arena of 16n bytes - refused unless --memory-gb allows it).
-                     Default: picked from --memory-gb (85% of the cap / 16 B per
-                     slot, never above n) and journaled. A single bin larger
-                     than the cap makes the producer raise it (BIN_CAP_RAISED),
-                     which the front door treats as a MISCONFIGURATION and
-                     fails loud (the plan priced a different arena).
-  --phrase-radix       ARM THE PHRASE DICTIONARY (tools/binbwt/PHRASE_RADIX_DESIGN.md).
-                     DEFAULT OFF, and off is the product: with the flag absent no
-                     producer argument is added, no parse runs and no line of
-                     the mechanism executes - the product stays byte-identical.
-                     ON, the producer parses the corpus before the bins start
-                     (a winnowed repeat sample -> a small direct-mapped
-                     dictionary of phrase blocks) and, at a node that is both
-                     DEEP (>= --phrase-probe-depth certified bytes) and HEAVY
-                     (>= --phrase-skip-min-rows rows), may certify a whole
-                     phrase at that depth and skip s byte levels at once. The
-                     parse is NOT free: measured 27 s per GiB of corpus, plus
-                     the winnow's whole sample array in RAM (8 B x 0.0834 n ~
-                     0.67n), and the plan prints both (XSA_PLAN_V2_PHRASE).
-                     CAVEAT, measured: at 100 MB, 1 GB and 10 GB the skip fires
-                     ZERO times (PHRASE_WORK skips=0) - every tree node's rows
-                     already differ at their own depth (no_progress_levels=0), so
-                     a node-level phrase certificate cannot apply. The arm costs
-                     the parse and buys nothing on those corpora; see the
-                     RESULTS note. Knobs: --phrase-min-len, --phrase-min-freq,
-                     --phrase-max-len, --phrase-seed, --phrase-window,
-                     --phrase-block-max, --phrase-pool-max, --phrase-table-bits,
-                     --phrase-reps, --phrase-skip-min-rows, --phrase-skip-min-len,
-                     --phrase-probe-depth, --phrase-probe-stride.
-  --timeout SECONDS    hard wall cap on every phase (timeout -k 120, i.e.
-                     TERM then KILL after 120s) - REQUIRED for --v2-pipeline
-                     execution (caps on every run). Standing policy is a huge
-                     value: no phase may be killed by the cap.
-  --with-chi          Construct m5 chi (default: enabled); --no-chi disables it.
-  --chi-expect N       v2 only: the banked chi constant; the finish asserts
-                     chi == N in-process and the front door re-checks the
-                     journal line (byte-identity + chi are the only arbiter).
-  --wit-ram-gb N       v2 only: the fused finish's witness RAM budget in GiB
-                     (default: --memory-gb / 2; overflow spills as sorted
-                     varint-delta disc runs without changing the product).
-  --finish-as-gb N     v2 only: the finish phase's own RLIMIT_AS in GiB
-                     (default: --memory-gb). The finish maps corpus windows to
-                     pin the corpus for the lock-free byte path; mapped windows
-                     charge ADDRESS SPACE, not RSS - the pages are page-cache
-                     backed and reclaimable - so the finish can pin a corpus far
-                     larger than the build's envelope. The pin budget is
-                     corpus-sized and hard-bounded by this cap / 3.
-
-  INERT UNDER THE BIN PIPELINE (the default; refused loud, never silently
-  ignored): --chunks, --chunk-mb, --kway, --fanin - the bin shape has no chunk
-  set to fan in and no k-way walk; the producer sweeps the corpus itself. The
-  merge path stays in the binary behind --legacy-merge for A/B, and is priced by
-  the v1/fan-in plans, not by the bin plan.
-  --tape               use the TAPE producer instead of the bin producer:
-                     bundle/scatter_sort scatters key-ordered bands into
-                     --scratch/bands-tape, bundle/cross_lcp_merge consumes that
-                     stream and bundle/xsa_finish builds the container. All three
-                     are children of this binary; no external scripts, no
-                     side-built binaries.
-  --allow-infeasible   run even when the plan cannot prove the build fits
-                     (overrides the ABSOLUTE peak-vs-free / RAM check; prints a
-                     warning and journals the override). Nothing else is
-                     overridable: a run that hits the real limit still fails.
-  --scratch-free-pct N  DEPRECATED AND IGNORED. Accepted only so old scripts do
-                     not break; it prints a warning and has no effect. A build
-                     tool does not impose disc quota policy: the plan reports the
-                     projected peak against the free bytes (information), and the
-                     only refusal is a genuine will-not-fit.
-  --stripe DIR[,DIR...]  candidate stripe directories for the disc model
-                     (reader-level striping is lane item 3; the plan
-                     accounts for the space now, the I/O split lands later).
-
-  xsa build --selftest [CASES] [--threads N] [--scratch DIR]
-                     runs the merge selftest for the six banked sweep seeds
-                     (11, 99, 20261002, 7, 5, 13; default 2000 cases each).";
 
 /// THE LEGACY FIXED REMAP IS GONE. A universal table cannot be order preserving
 /// on an arbitrary corpus, and the END-format finish requires present byte of
@@ -1151,8 +987,10 @@ fn write_remap(scratch: &Path, override_path: Option<&Path>, corpus: &Path) -> R
 }
 
 /// What the derived table asserts about the corpus, journalled with its sha256.
+#[derive(Debug)]
 pub struct RemapFacts {
     pub present: u32,
+    pub present_bytes_hex: String,
     pub source: &'static str,
 }
 
@@ -1196,9 +1034,8 @@ fn corpus_histogram(corpus: &Path) -> Result<[u64; 256], String> {
 /// A UNIVERSAL TABLE CANNOT DO THIS: order preservation forces "present -> 1..k",
 /// which depends on WHICH bytes the corpus uses (a fixed table failed on a
 /// 428-byte fixture and on any corpus with a smaller alphabet). k == 256 leaves
-/// no free code for END; the derivation still emits the valid identity bijection
-/// (so the restriction is provable, not asserted) and the finish then refuses that
-/// shape loudly - an 8-bit transport cannot carry 256 data symbols plus END.
+/// no free code for END; the candidate identity bijection fails validation below.
+/// An 8-bit transport cannot carry 256 data symbols plus END.
 fn derive_remap(corpus: &Path) -> Result<([u8; 256], RemapFacts), String> {
     let hist = corpus_histogram(corpus)?;
     let present: Vec<u8> = (0..256u32).filter(|&b| hist[b as usize] != 0).map(|b| b as u8).collect();
@@ -1259,7 +1096,9 @@ fn remap_facts(table: &[u8; 256], corpus: &Path, source: &'static str) -> Result
                  0x{owner:02x}"));
         }
     }
-    Ok(RemapFacts { present, source })
+    let present_bytes_hex = (0..256usize).filter(|&b| hist[b] != 0)
+        .map(|b| format!("{b:02x}")).collect::<String>();
+    Ok(RemapFacts { present, source, present_bytes_hex })
 }
 
 fn run_selftest(options: SelftestOptions) -> Result<(), String> {
@@ -1490,10 +1329,16 @@ prove a fit (the projected peak exceeds the reported capacity)");
         });
     }
     // Snap preflight: the demonstrated refusal fires before any phase runs.
-    let n = check_snap_boundary(&input)?;
+    let n = if options.tape && !options.snap_1e {
+        let n = fs::metadata(&input).map_err(|e| format!("stat input: {e}"))?.len();
+        if n == 0 { return Err("empty input".into()); }
+        n
+    } else { check_snap_boundary(&input)? };
     if options.snap_1e {
         let digest = sha256_file(&input)?;
         journal.line(&format!("SNAP_OK n={n} sha256={digest}"));
+    } else if options.tape {
+        journal.line(&format!("RAW_BYTES n={n} terminal=virtual-END transformation=none"));
     } else {
         journal.line(&format!("SNAP_BOUNDARY_OK n={n} (0x1e; pass --snap-1e to also journal the full sha256)"));
     }
@@ -1505,9 +1350,12 @@ prove a fit (the projected peak exceeds the reported capacity)");
     let remap_sha = sha256_file(&remap_path)?;
     journal.line(&format!(
         "REMAP {} sha256={remap_sha} source={} present={} order_preserving=1 bijection=1 \
-         ends_in_sentinel=1 end_code=none end_symbol=0 unused_symbols={}",
+         end_code=none end_symbol=0 unused_symbols={}",
         remap_path.display(), remap_facts.source, remap_facts.present,
         255u32.saturating_sub(remap_facts.present)));
+    journal.line(&format!(
+        "CORPUS_PRESENT_BYTES count={} hex={} container_source=m7+m1 rule=nonzero-symbol-with-positive-count end_symbol=0",
+        remap_facts.present, remap_facts.present_bytes_hex));
     // The v2 bin shape has NO chunk set, no merge work directory and no
     // finish side-stream directory: only the merged/ prefix (rlebwt + pieces)
     // exists, and the tree rules assert nothing else is left behind.
@@ -2320,28 +2168,33 @@ mod tests {
         for (i, corpus) in corpora.iter().enumerate() {
             let path = dir.join(format!("c{i}.bin"));
             std::fs::write(&path, corpus).unwrap();
-            let (table, facts) = derive_remap(&path).unwrap();
             let present: Vec<u8> = {
                 let mut v: Vec<u8> = corpus.iter().copied().collect();
                 v.sort_unstable();
                 v.dedup();
                 v
             };
+            // The 8-bit container cannot encode 256 data symbols plus END.
+            // The existing validator refuses this shape, rather than allowing
+            // a present byte to alias END. Keep that refusal in the oracle.
+            if present.len() == 256 {
+                assert!(derive_remap(&path).unwrap_err().contains("REMAP_REFUSED"));
+                continue;
+            }
+            let (table, facts) = derive_remap(&path).unwrap();
+            assert_eq!(facts.present_bytes_hex,
+                present.iter().map(|b| format!("{b:02x}")).collect::<String>());
             assert_eq!(facts.present as usize, present.len());
             let mut sorted = table;
             sorted.sort_unstable();
             assert_eq!(sorted, core::array::from_fn(|k| k as u8), "remap must be bijective");
-            if present.len() <= 255 {
-                for (rank, &b) in present.iter().enumerate() {
-                    assert_eq!(table[b as usize] as usize, rank + 1,
-                               "present byte 0x{b:02x} must map to 1+rank");
-                }
-                let owner = table.iter().position(|&c| c == 0).unwrap();
-                assert!(!present.contains(&(owner as u8)),
-                        "END's cell must be named by an absent byte");
-            } else {
-                assert_eq!(table, core::array::from_fn(|k| k as u8), "k=256 is the identity");
+            for (rank, &b) in present.iter().enumerate() {
+                assert_eq!(table[b as usize] as usize, rank + 1,
+                           "present byte 0x{b:02x} must map to 1+rank");
             }
+            let owner = table.iter().position(|&c| c == 0).unwrap();
+            assert!(!present.contains(&(owner as u8)),
+                    "END's cell must be named by an absent byte");
         }
         std::fs::remove_dir_all(&dir).ok();
     }

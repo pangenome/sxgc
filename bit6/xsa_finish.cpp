@@ -2321,8 +2321,8 @@ struct RepairStream {
 // ------------------------------------------------------------- sweep state
 // Verbatim port of the production scan-rs state machine (xsa chi-rspace,
 // bit6/teralcp_chi.cpp): no walks, no SA, no text access in the sweep
-// itself. Cyclic corpora only (the pile class); newline-class corpora are
-// refused and use the v1 chain.
+// itself. The v2 corpus has one unique virtual END; content bytes do not
+// determine terminal or collection semantics.
 template<class Sink = std::function<void(uint64_t)>>
 struct SweepImpl {
     bool cyclic = true;
@@ -4803,39 +4803,12 @@ int main(int argc, char** argv) {
                 lcpColumnPath.empty() ? (lcpBandsDir.empty() ? "none" : lcpBandsDir.c_str())
                                       : lcpColumnPath.c_str());
 
-        // ---- cyclic determination (v1 parity: has_rs || !has_nl over the
-        // normalized text, which is the corpus byte stream - identity-gated)
-        bool hasRS = false, hasNL = false;
-        {
-            // THE SCAN IS OVER THE CORPUS BYTES, NOT THE ROW COUNT. n counts the
-            // virtual END row (size() = fileSize()+1), and END's symbol is the
-            // sentinel 0 - never 0x1e and never 0x0a - so it cannot change this
-            // answer. Reading n bytes from the FILE was an EOF read: pread
-            // returned 0 and this check aborted the finish 0.12 s in (both
-            // routes, 4 MB fixture), which the tape route then saw as a producer
-            // waiting forever on its LCP flow-control markers.
-            pf_check(text.fileSize() + 1 == n, "cyclic scan: row count is not file bytes + the virtual END");
-            constexpr uint64_t RB = 1 << 22;
-            const uint64_t scanBytes = text.fileSize();
-            std::vector<uint8_t> b(RB);
-            uint64_t off = 0;
-            while (off < scanBytes && !hasRS) {
-                uint64_t want = std::min<uint64_t>(RB, scanBytes - off), done = 0;
-                while (done < want) {
-                    ssize_t z = ::pread(text.fd, b.data() + done, want - done, off + done);
-                    pf_check(z > 0, "cyclic scan read");
-                    done += uint64_t(z);
-                }
-                for (uint64_t i = 0; i < want; ++i) {
-                    if (b[i] == 0x1e) { hasRS = true; break; }
-                    if (b[i] == 0x0a) hasNL = true;
-                }
-                off += want;
-            }
-        }
-        bool cyclic = hasRS || !hasNL;
-        pf_check(cyclic, "newline-class corpora (no 0x1E, newlines present) use the v1 chain; the v2 finish refuses");
-        fprintf(stderr, "XSA_FINISH_CYCLIC=1 has_rs=%d has_nl=%d k=1\n", int(hasRS), int(hasNL));
+        // The v2 text has a unique virtual END, independent of content bytes.
+        // Newlines and record separators are ordinary bytes: the old v1
+        // content heuristic must not classify raw text as a collection.
+        pf_check(text.fileSize() + 1 == n,
+                 "END row count is not file bytes + the virtual END");
+        fprintf(stderr, "XSA_FINISH_CYCLIC=1 terminal=virtual-END content_classification=none k=1\n");
 
         // Default v2 protocol: bounded captured seam classes. Explicit
         // --wm retains legacy scratch compatibility outside the v2 route.
