@@ -1855,9 +1855,9 @@ struct SeamClasses {
                     });
                 for (auto& th : gp) th.join();
             }
-            std::vector<uint32_t> idx(msz);
-            for (size_t i = 0; i < msz; ++i) idx[i] = uint32_t(i);
-            std::sort(idx.begin(), idx.end(), [&](uint32_t ia, uint32_t ib) {
+            std::vector<uint64_t> idx(msz);
+            for (size_t i = 0; i < msz; ++i) idx[i] = uint64_t(i);
+            std::sort(idx.begin(), idx.end(), [&](uint64_t ia, uint64_t ib) {
                 const int kc = std::memcmp(key.data() + size_t(ia) * K, key.data() + size_t(ib) * K, K);
                 if (kc != 0) return kc < 0;
                 // TIE at depth K: only now is a text walk needed.
@@ -2893,12 +2893,12 @@ struct BitsOut {
 // cold query decodes 4.3 GB and pays 25.8 s / 51 GB RSS before its first
 // answer (tools/binbwt/RESULTS_QUERY_QLITE.md).
 //
-// m1 v2 (codec 102, this arm) keeps the SAME two codes and the SAME runs and
+// m1 v3 (codec 114, this arm) keeps the SAME two codes and the SAME runs and
 // splits them into blocks that are independently decodable:
 //
 //   [C table 2048][lens 256][nblocks][m1_block_runs][total_runs][payload_off]
-//   [block directory: nblocks x u64 = (payload word off u32, head bits u16,
-//                                     length bits u16)]
+//   [block directory: nblocks x 16 bytes = (payload byte off u64, head bits u32,
+//                                     length bits u32)]
 //   [block payloads: head bitstream, then length bitstream, both byte-aligned,
 //                    each block 8-byte aligned in the payload area]
 //
@@ -2941,8 +2941,8 @@ static inline uint64_t blkBytes(uint64_t lo, uint64_t hi) {
     pf_check(hi >= lo, "m1 block bit range is not monotone");
     return (hi - lo + 7) / 8;
 }
-// The m1 v2 codec id in the container directory (v1 = 101).
-static constexpr unsigned PF_M1_CODEC_BLOCKED = 102;
+// The full-width m1 codec id (legacy stream=101, packed blocks=102).
+static constexpr unsigned PF_M1_CODEC_BLOCKED = 114;
 // Container header flag bit: "m1 is block-compressed and the run directories
 // are present". The flagged set is 1|8|16|32 = 57.
 static constexpr uint64_t PF_FLAG_M1_BLOCKED = 32;
@@ -4614,7 +4614,7 @@ int main(int argc, char** argv) {
         std::string prefix, corpus, remap, out, bridgeDir, sampleCheck, wmPath, sentinelRemap;
         std::string checkClaimsDir;   // PROB-CHI: standalone checker mode
         bool debugArtifacts = false;
-        bool buildChi = true; // legacy routes retain chi; tape driver explicitly disables it
+        bool buildChi = true; // chi enabled by default on all routes
         std::string lcpColumnPath;    // KASAI: the prebuilt LCP column (--lcp-column, fixtures)
         std::string lcpBandsDir;      // KASAI: the PRODUCER's per-band LCP slices (--lcp-bands)
         std::string locateIsaPath;    // KASAI: the locate table (--sa-locate)
@@ -6252,7 +6252,7 @@ int main(int argc, char** argv) {
                 headBits.copyTo(container);
                 lenBits.copyTo(container);
             } else {
-                // ---- m1 v2 (codec 102): the same runs, the same two codes, cut
+                // ---- m1 v3 (codec 114): the same runs, the same two codes, cut
                 // into M1_BLOCK_RUNS-run blocks that are each independently
                 // decodable, plus the two run directories that let the query
                 // kernel reach run k without decoding a single predecessor.
@@ -6264,12 +6264,12 @@ int main(int argc, char** argv) {
                 pf_check(m1dir.runStart.size() == (rNorm + PF_RUNSTART_STRIDE - 1) / PF_RUNSTART_STRIDE,
                          "run-start sample count");
                 pf_check(m1dir.row == n, "run-start samples do not close on n");
-                const uint64_t dirBytes = 8 * nblocks;
+                const uint64_t dirBytes = 16 * nblocks;
                 const uint64_t payloadOff = 2336 + dirBytes;
                 pf_check(payloadOff % 8 == 0, "m1 payload must start 8-byte aligned");
                 // pass 0: the block directory, derived from the bit boundaries
-                // alone (no spool read): (payload word offset u32, head bits u16,
-                // length bits u16).
+                // alone (no spool read): (payload byte offset u64, head bits u32,
+                // length bits u32).
                 container.begin(1, PF_M1_CODEC_BLOCKED, rNorm);
                 uint64_t acc = 0;
                 for (unsigned c = 0; c < 256; ++c) { uint64_t v = acc; acc += rs.totals[c]; container.num(v); }
@@ -6288,8 +6288,8 @@ int main(int argc, char** argv) {
                                  m1dir.blkLen[b + 1] >= m1dir.blkLen[b], "m1 block bit range");
                         pf_check(hbits <= 0xffff && lbits <= 0xffff, "m1 block bit count overflows u16");
                         pf_check(payloadBytes % 8 == 0, "m1 block not 8-byte aligned");
-                        pf_check(payloadBytes / 8 <= 0xffffffffull, "m1 payload offset exceeds u32 words");
-                        dirb.put(container, (payloadBytes / 8) | (hbits << 32) | (lbits << 48));
+                        dirb.put(container, payloadBytes); // full-width byte offset
+                        dirb.put(container, hbits | (lbits << 32));
                         // a block's bytes are ceil(bits/8) of BOTH streams (the block
                         // starts byte-aligned and its end is padded to a byte).
                         payloadBytes += blkBytes(m1dir.blkHead[b], m1dir.blkHead[b + 1]) +
@@ -6413,7 +6413,7 @@ int main(int argc, char** argv) {
                     }
                     const uint64_t countsOff = 72, offsOff = countsOff + 8 * 256;
                     const uint64_t l2off = offsOff + 8 * 257, entoff = l2off + 16 * l2total;
-                    container.begin(13, 113, total);
+                    container.begin(13, 115, total);
                     container.num(PF_RUNDIR_OCC);
                     container.num(PF_RUNDIR_GAP);
                     container.num(256);
@@ -6435,11 +6435,11 @@ int main(int argc, char** argv) {
                         const size_t m = m1dir.dirRun[c].size();
                         for (size_t j = 0; j < m; j += PF_RUNDIR_L2) {
                             b13.put(container, m1dir.dirCum[c][j]);
-                            b13.put(container, m1dir.dirRun[c][j]);       // u32 run index + u32 pad
+                            b13.put(container, m1dir.dirRun[c][j]);       // full-width run index
                         }
                     }
                     b13.flush(container);
-                    // entries: {cum u64, run u32, stride u16, pad u16}
+                    // codec 115 entries: {cum u64, run u64, stride u64}
                     for (unsigned c = 0; c < 256; ++c) {
                         const size_t m = m1dir.dirRun[c].size();
                         // a symbol absent from the text has no entries (and needs
@@ -6447,20 +6447,18 @@ int main(int argc, char** argv) {
                         pf_check(m > 0 || rs.totals[c] == 0,
                                  "a symbol present in the BWT has no run-directory sample");
                         for (size_t j = 0; j < m; ++j) {
-                            pf_check(m1dir.dirRun[c][j] < 0xffffffffull, "run index exceeds u32");
-                            // 16-byte entry: cum u64, then run u32 | stride u16 | pad u16
                             b13.put(container, m1dir.dirCum[c][j]);
-                            b13.put(container, (m1dir.dirRun[c][j] & 0xffffffffull) |
-                                               (uint64_t(m1dir.dirStride[c][j]) << 32));
+                            b13.put(container, m1dir.dirRun[c][j]);
+                            b13.put(container, m1dir.dirStride[c][j]);
                         }
                     }
                     b13.flush(container);
-                    pf_check(container.ms.back().bytes == entoff + 16 * total, "m13 member size");
+                    pf_check(container.ms.back().bytes == entoff + 24 * total, "m13 member size");
                     fprintf(stderr, "XSA_FINISH_M13_RUNDIR occ_stride=%llu gap=%llu entries=%llu "
                             "l2_stride=%llu l2_entries=%llu bytes=%llu\n",
                             (unsigned long long)PF_RUNDIR_OCC, (unsigned long long)PF_RUNDIR_GAP,
                             (unsigned long long)total, (unsigned long long)PF_RUNDIR_L2,
-                            (unsigned long long)l2total, (unsigned long long)(entoff + 16 * total));
+                            (unsigned long long)l2total, (unsigned long long)(entoff + 24 * total));
                 }
             }
             rM1.close(); rM1.report(rNorm, "runs");
@@ -6515,6 +6513,9 @@ int main(int argc, char** argv) {
         }
         fprintf(stderr, "XSA_FINISH_DONE chi=%llu n=%llu r=%llu container=%s\n",
                 (unsigned long long)chi, (unsigned long long)n, (unsigned long long)rNorm, out.c_str());
+        struct rusage finishUsage {};
+        pf_check(::getrusage(RUSAGE_SELF, &finishUsage) == 0, "finish getrusage");
+        fprintf(stderr, "XSA_FINISH_PEAK_RSS kib=%llu\n", (unsigned long long)finishUsage.ru_maxrss);
         pf_prof_dump("finish");
         return 0;
     } catch (const std::exception& e) {

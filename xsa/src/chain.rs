@@ -177,7 +177,7 @@ RSS / disc telemetry.
                      TERM then KILL after 120s) - REQUIRED for --v2-pipeline
                      execution (caps on every run). Standing policy is a huge
                      value: no phase may be killed by the cap.
-  --with-chi          Construct optional m5 chi on the tape route (default: absent).
+  --with-chi          Construct m5 chi (default: enabled); --no-chi disables it.
   --chi-expect N       v2 only: the banked chi constant; the finish asserts
                      chi == N in-process and the front door re-checks the
                      journal line (byte-identity + chi are the only arbiter).
@@ -407,7 +407,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     let mut plan_only = false;
     let mut legacy_merge = false;
     let mut v2_flag_given = false;
-    let mut with_chi = false;
+    let mut with_chi = true;
     let mut chi_expect = None;
     let mut wit_ram_gb = None;
     let mut finish_as_gb = None;
@@ -492,6 +492,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
             "--v2-pipeline" => v2_flag_given = true,
             "--legacy-merge" => legacy_merge = true,
             "--with-chi" => with_chi = true,
+            "--no-chi" => with_chi = false,
             "--chi-expect" => {
                 i += 1;
                 let v = value(args.get(i), "--chi-expect")?
@@ -2088,7 +2089,10 @@ walks the corpus for every endpoint and no LCP slice is produced). Not a user op
     let finish_log = fs::read_to_string(scratch.join("finish-v2.log"))
         .map_err(|e| format!("read finish-v2 log: {e}"))?;
     for line in finish_log.lines() {
-        if line.starts_with("SLIM_FP ") || line.starts_with("SLIM_SEEDS ") || line.starts_with("XSA_FINISH_PFCK ") {
+        if ["SLIM_FP ", "SLIM_SEEDS ", "XSA_FINISH_PFCK ",
+            "XSA_FINISH_CHI_BITMAP ", "XSA_FINISH_CHI_PUBLISHED ", "XSA_FINISH_PEAK_RSS ",
+            "XSA_FINISH_M1_BLOCKS ", "XSA_FINISH_M12_RUNSTARTS ", "XSA_FINISH_M13_RUNDIR "]
+            .iter().any(|prefix| line.starts_with(prefix)) {
             journal.line(&format!("V2_FINISH_COUNTER {line}"));
         }
     }
@@ -2505,13 +2509,14 @@ mod tests {
     }
 
     #[test]
-    fn tape_chi_requires_explicit_opt_in() {
+    fn tape_chi_defaults_on_with_explicit_opt_out() {
         let default = parse_chain(&v2_args(&["--tape"])).unwrap();
-        assert!(!default.with_chi);
+        assert!(default.with_chi);
+        assert!(!parse_chain(&v2_args(&["--tape", "--no-chi"])).unwrap().with_chi);
         let enabled = parse_chain(&v2_args(&["--tape", "--with-chi", "--chi-expect", "42"])).unwrap();
         assert!(enabled.with_chi);
         assert_eq!(enabled.chi_expect, Some(42));
-        let error = parse_chain(&v2_args(&["--tape", "--chi-expect", "42"])).unwrap_err();
+        let error = parse_chain(&v2_args(&["--tape", "--no-chi", "--chi-expect", "42"])).unwrap_err();
         assert!(error.contains("requires --with-chi"), "{error}");
         // Existing non-tape builds retain their chi expectation contract.
         assert!(parse_chain(&v2_args(&["--chi-expect", "42"])).is_ok());

@@ -1,0 +1,110 @@
+{
+  "base": "83cb20f",
+  "evidence_root": "/mnt/nvme2n1/erikg/wc-u64",
+  "measurements": [
+    {
+      "fixture": "g8",
+      "chi": 6544643,
+      "bitmap_bytes": 1000001,
+      "published_chi_bytes": 1818105,
+      "bits_per_entry": "2.222404",
+      "finish_peak_rss_kib": 79272,
+      "m1_bytes": 9074776,
+      "m12_bytes": 63280,
+      "m13_bytes": 37514840
+    },
+    {
+      "fixture": "g150",
+      "chi": 44034230,
+      "bitmap_bytes": 18750001,
+      "published_chi_bytes": 20383582,
+      "bits_per_entry": "3.703225",
+      "finish_peak_rss_kib": 276484,
+      "m1_bytes": 53392304,
+      "m12_bytes": 454560,
+      "m13_bytes": 44212472
+    },
+    {
+      "fixture": "g10",
+      "chi": 2676929445,
+      "bitmap_bytes": 1250002158,
+      "published_chi_bytes": 1294233465,
+      "bits_per_entry": "3.867815",
+      "finish_peak_rss_kib": 13486528,
+      "m1_bytes": 3254873328,
+      "m12_bytes": 27571832,
+      "m13_bytes": 2400697096
+    }
+  ],
+  "g2": {
+    "result": {
+      "reason": "complete",
+      "returncodes": [
+        0,
+        0,
+        0
+      ],
+      "wall": 1560.9251778479666,
+      "band_percent": 99.94342077966165,
+      "chi_present": true,
+      "container_bytes": 7004523984
+    },
+    "chi": {
+      "baseline_m5_byte_identical": true,
+      "bits_per_entry": 3.867814947210908,
+      "bytes": 1294233465,
+      "crc32": 4048223797,
+      "entries": 2676929445,
+      "n": 10000017259,
+      "sha256": "f9dee338665f64a21d12fe0c46f6ec62f2bd98cc7fcf764fe06365b1dab83f1e",
+      "status": "PASS"
+    },
+    "journal": [
+      "XSA_FINISH_CHI_BITMAP bytes=1250002158 mmap=1 peak_rss_kb=13486528 entries=2676929445 duplicates=0",
+      "XSA_FINISH_CHI_PUBLISHED entries=2676929445 bytes=1294233465 bits_per_entry=3.867815",
+      "XSA_FINISH_M1_BLOCKS codec=114 runs=3474889847 block_runs=1024 blocks=3393448 dir_bytes=54295168 payload_bytes=3200575824 m1_bytes=3254873328",
+      "XSA_FINISH_M12_RUNSTARTS stride=1024 samples=3393448 l2_stride=65536 l2_entries=53023 bytes=27571832",
+      "XSA_FINISH_M13_RUNDIR occ_stride=256 gap=1024 entries=99898713 l2_stride=512 l2_entries=195238 bytes=2400697096",
+      "XSA_FINISH_CHI_BITMAP bytes=1250002158 mmap=1 peak_rss_kb=13486528 entries=2676929445 duplicates=0",
+      "XSA_FINISH_DONE chi=2676929445 n=10000017259 r=3474889847 container=/mnt/nvme2n1/erikg/wc-u64/g10/product.sxi2",
+      "XSA_FINISH_PEAK_RSS kib=13486528"
+    ],
+    "finish_peak_rss_kib": 13486528,
+    "no_chi_peak_rss_kib": 11781604,
+    "rss_ratio": 1.1447106862529075,
+    "g3_pass": true
+  },
+  "queries": {
+    "random8": {
+      "status": "PASS",
+      "patterns": 100,
+      "counts_exact": 100,
+      "positions_exact": 100,
+      "total_positions": 0,
+      "rescan": true,
+      "prefix_bytes": null
+    },
+    "prefix8": {
+      "status": "PASS",
+      "patterns": 100,
+      "counts_exact": 100,
+      "positions_exact": 100,
+      "total_positions": 24,
+      "rescan": false,
+      "prefix_bytes": 8000000
+    },
+    "text150": {
+      "status": "PASS",
+      "patterns": 100,
+      "counts_exact": 100,
+      "positions_exact": 100,
+      "total_positions": 574,
+      "rescan": false,
+      "prefix_bytes": null
+    }
+  },
+  "query10": "== gate: qlite 10 GB correctness (20 low-count patterns, -j 32)\nQLITE_OPEN container=/mnt/nvme2n1/erikg/wc-u64/g10/product.sxi2 format=sxi2-v6-lite magic=SXI2 version=6 mmap_ms=0.06 decoded_bytes=0 stages=none n=10000017259 runs=3474889847 members=m1,m4,m5,m7,m10,m11,m12,m13 end_symbol=none orientation=none alphabet=none\nQLITE_BUILD runs=3474889847 decoded_bytes=45798569099 stages=[m11-anchors=21.9ms prefetch=0.0ms run-columns=15871.0ms] build_ms=15893.1 n=10000017259 threads=32 patterns=20 m1_block_runs=1024 m1_blocks=3393448 rundir_l2=512 rundir_occ_stride=256 rundir_gap=1024\nQUERY_DONE patterns=20 occurrences=20 absent=0 query_ms=6.8 first_answer_ms=15903.2 low_count_patterns=20 low_count_mean_us=2219.6 low_count_max_us=6550.5 low_count_lf_steps=47364 low_count_mean_steps=2368 low_count_max_steps=6307 high_count_patterns=0\nWALL 18.74 s  RSS 47821696 kB\nCOUNTS 20/20 exact\nPOSITIONS 20/20 exact\nGATE Q5 PASS\n",
+  "tests": "ok. 40 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 2.19s",
+  "baseline_test_excluded": "chain::tests::derived_remap_is_order_preserving_per_corpus",
+  "launch_status": "Required after commit, push and merge; see external launch100.json for launch attestation"
+}

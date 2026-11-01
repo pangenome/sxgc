@@ -1,3 +1,5 @@
+static_assert(sizeof(U) == sizeof(uint64_t) && U(-1) > U(0),
+              "binbwt run, position and rank indices require unsigned 64-bit U");
 // ------------------------------------------------- bin-bwt v1 (operator shape)
 // ONE BIN PER BYTE. Sweep the corpus once, group every position into the bin of
 // its first remapped byte, order each bin by its TAIL (the suffix at p+1), then

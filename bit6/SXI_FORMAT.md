@@ -210,7 +210,7 @@ This is an unresolved proposal, not a new supported encoding.
 
 ## Optional chi on the tape route
 
-`xsa build --tape` omits chi by default; `--with-chi` explicitly restores its
+`xsa build --tape` constructs chi by default; `--no-chi` explicitly disables
 construction (`xsa_finish --no-chi` / `--with-chi` are the stage switches).
 No sweep advances, witness values or EF streams are built when disabled.
 Tape planning and LCP slice production retain their existing defaults. Finish
@@ -239,11 +239,30 @@ The claims checker consumes LCE claims and source text, **not chi**; it checks
 inputs to the sweep. Witness sample checks and bridge exports require chi and
 are refused with `--no-chi`. An absent chi is not an empty, complete chi set.
 
-The v6 m13 (codec 113) entries retain their existing u32 sampled run ID.
-Publication requires each sampled run ID to be below `0xffffffff`
-(`xsa_finish.cpp`: `run index exceeds u32`). Chi omission does not widen this
-field; full publication of a larger-run-count container remains a separate
-format limit, beyond the partial 100 GB construction-progress gate.
+### Full-width run directories (v6)
+
+New tape builds enable chi by default; `--no-chi` retains the A/B arm.
+The bitmap construction below is unchanged.
+
+New m1 codec **114** replaces codec 102's packed directory with 16-byte
+entries: `payload_byte_offset u64, head_bits u32, length_bits u32`.
+The 2336-byte header and block payload encoding are unchanged; `payload_off`
+is now `2336 + 16*nblocks`. Payload offsets no longer stop at 32 GiB.
+
+New m13 codec **115** retains its 72-byte header, per-symbol counts/offsets,
+and level-2 directory of `(cumulative_rows u64, run_index u64)` pairs.
+Main entries are now 24 bytes: `(cumulative_rows u64, run_index u64, stride u64)`.
+The member ends at `entry_offset + 24*entry_count`. No run ID is masked or
+narrowed at either level. m12 already stores every row and index as u64;
+its codec 112 and layout are unchanged. The query reader accepts old 102/113
+and new 114/115 independently, selected by codec, and validates their sizes.
+Old readers reject new m1 codec 114 instead of silently misinterpreting it.
+
+Materialized query ranks are always u64; run lengths retain the producer's
+checked u32 wire bound. The run columns require 13 bytes/run, plus 16 bytes
+per 256 text rows. The pre-allocation memory check includes both terms.
+`XSA_FINISH_CHI_BITMAP`, `XSA_FINISH_CHI_PUBLISHED`, `XSA_FINISH_PEAK_RSS`,
+and the m1/m12/m13 size lines are copied into the top-level build journal.
 
 ### Mmap chi construction (v6 finish)
 

@@ -531,13 +531,14 @@ pub struct Index {
     /// c[i+1] - c[i] (total[255] = n - c[255]). No run decode is needed for it -
     /// that equality is exactly what the C table means.
     pub total: [u64; 256],
-    /// m1 v2 (codec 102): the block directory and the payload.
+    /// m1 blocked (codecs 102/114): the block directory and the payload.
     dir_off: u64,
+    dir_entry_bytes: u64,
     payload_off: u64,
     /// One past the last payload byte (end of the m1 member), for the block
     /// read bound: a directory entry is only trusted as far as this.
     payload_end: u64,
-    /// The canonical Huffman codebook over run heads (m1 codec 102 header).
+    /// The canonical Huffman codebook over run heads (m1 codecs 102/114).
     huff: Huff,
     /// The gamma length decoder (built once: it is a 4096-entry table, and
     /// rebuilding it per block cost 26 us per rank step).
@@ -549,30 +550,10 @@ pub struct Index {
     rd: RunDir,
     anchors: Vec<u64>,
     stripe: u64,
-    /// THE RUN COLUMNS, decoded once at open from the m1 block stream and held in
-    /// RAM: `heads[run]`, `lens[run]` (both from the container, byte-exact) and
-    /// `seen[run]` (derived: how many runs of `heads[run]` precede `run`).
-    ///
-    /// Why this exists, measured (RESULTS_QUERY_HOTPATH.md): a warm 256-run m1
-    /// block decode is 2.33 us (9.1 ns/run, XSA_M1_AUDIT_FULL=1 over all 223,747
-    /// blocks) and one LF step used to pay for 2.04 of them plus ~525 per-run
-    /// `run()` probes. Page faults were NOT the cost: the same query on tmpfs (all
-    /// pages resident) is 114.8 ms against 115.0 ms on NVMe, with 0 major faults.
-    /// A rank step must therefore not decode at all, which is exactly what these
-    /// columns buy: 9 B/run, one streaming decode at open, no container change
-    /// (the format, `chi` and the positions are untouched).
-    ///
-    /// SCALING - READ THIS BEFORE SHIPPING THIS SHAPE. 9 B/run is 3.44 n at this
-    /// fixture (runs/byte = 0.382) and it is HEAP: 515 MB at 150 MB of text,
-    /// ~19 GB at 10 GB, ~210 GB at 90 GB. It is a measured stepping stone: it
-    /// establishes the achievable rank cost (0.49 us per LF step, see
-    /// tools/binbwt/RESULTS_QUERY_HOTPATH.md) and the exactness baseline, and
-    /// `materialise` refuses in words when MemAvailable cannot hold it. The
-    /// container-side shapes are priced in section 6 of that journal: heads +
-    /// byte-lengths as container members is 1.111 n and mmap-lazy, but leaves no
-    /// per-run rank value, and a measured 2.035 us/step (m13 plus a 1024-run
-    /// scan) does not meet the 1 us target. Row-anchored m11 (stride 256 rows,
-    /// +0.031 n, ~10x fewer steps) is the lever that makes the paged shape pay.
+    /// Run columns decoded once at open: u8 heads, bounded u32 lengths and
+    /// full-width u64 cumulative row ranks. They require 13 bytes/run plus
+    /// the row-to-run directory below. `materialise` checks MemAvailable
+    /// before allocating; construction's memory budget is not a query budget.
     heads: Vec<u8>,
     runs: Runs,
     /// ROW -> RUN DIRECTORY: `dir_run[j]`/`dir_row[j]` are the run containing row
@@ -615,10 +596,11 @@ struct RunStarts {
 }
 
 /// m13: per symbol `c`, entries `j` in `offs[c]..offs[c+1]` at
-/// `ent_off + 16*j` are `(rows of c before run, run index, occurrence stride to
+/// `ent_off + entry_bytes*j` are `(rows of c before run, run index, occurrence stride to
 /// the next sample)`. The level-2 array every `l2` entries per symbol is at
 /// `l2_off + 16*l2offs[c]`.
 struct RunDir {
+    entry_bytes: u64,
     ent_off: u64,
     l2_off: u64,
     l2: u64,
@@ -629,51 +611,22 @@ struct RunDir {
     run_gap: u64,
 }
 
-/// THE RUN COLUMNS, in the layout the hot path wants.
-///
-/// `W8` is the normal one: one u64 per run, `len | seen << 32`, where `seen` is
-/// the number of ROWS of `heads[run]` before this run (exactly what an LF step's
-/// rank needs). Length and rank in the same word means an LF step's window scan
-/// and its rank read touch ONE column, not two independent random streams -- the
-/// first measurement of the split layout was 0.80 us/step, and every random
-/// stream a step opens costs a TLB entry and a cache line.
-///
-/// `Split` is the fallback for a container where some symbol occurs more than
-/// 2^32-1 times (n > 4.29e9 with a skewed alphabet): the rank then needs its own
-/// u64 column. Same answers, one extra stream, chosen from the container's own
-/// totals and journaled (`seen_width`).
-enum Runs {
-    W8(Vec<u64>),
-    Split { len: Vec<u32>, seen: Vec<u64> },
+/// Run lengths retain their bounded wire width; cumulative row ranks are always u64.
+struct Runs {
+    len: Vec<u32>, // bounded on-wire run lengths, never an index or rank
+    seen: Vec<u64>,
 }
-
 impl Runs {
     #[inline(always)]
     fn len(&self, run: u64) -> u64 {
-        match self {
-            Runs::W8(w) => (unsafe { *w.get_unchecked(run as usize) }) & 0xffff_ffff,
-            Runs::Split { len, .. } => u64::from(unsafe { *len.get_unchecked(run as usize) }),
-        }
+        u64::from(unsafe { *self.len.get_unchecked(run as usize) })
     }
     #[inline(always)]
     fn seen(&self, run: u64) -> u64 {
-        match self {
-            Runs::W8(w) => (unsafe { *w.get_unchecked(run as usize) }) >> 32,
-            Runs::Split { seen, .. } => unsafe { *seen.get_unchecked(run as usize) },
-        }
+        unsafe { *self.seen.get_unchecked(run as usize) }
     }
-    fn name(&self) -> &'static str {
-        match self {
-            Runs::W8(_) => "interleaved-len-seen-u32",
-            Runs::Split { .. } => "split-len-u32-seen-u64",
-        }
-    }
-    fn bytes(&self) -> u64 {
-        match self {
-            Runs::W8(w) => 8 * w.len() as u64,
-            Runs::Split { len, seen } => 4 * len.len() as u64 + 8 * seen.len() as u64,
-        }
-    }
+    fn name(&self) -> &'static str { "split-len-u32-seen-u64" }
+    fn bytes(&self) -> u64 { 4 * self.len.len() as u64 + 8 * self.seen.len() as u64 }
 }
 
 /// The window scan of `run_of`: walk forward over run lengths from `start_run`
@@ -735,6 +688,26 @@ fn u64_at(d: &[u8], o: usize) -> u64 {
     u64::from_le_bytes(d[o..o + 8].try_into().unwrap())
 }
 
+fn decode_l2_entry(m: &[u8], o: usize) -> (u64, u64) {
+    (u64_at(m, o), u64_at(m, o + 8))
+}
+
+fn decode_run_entry(m: &[u8], o: usize, bytes: u64) -> (u64, u64, u64) {
+    let cum = u64_at(m, o);
+    let run = u64_at(m, o + 8);
+    if bytes == 24 { (cum, run, u64_at(m, o + 16)) }
+    else { (cum, run & 0xffff_ffff, (run >> 32) & 0xffff) }
+}
+fn decode_block_entry(m: &[u8], o: usize, bytes: u64) -> (u64, u32, u32) {
+    let w = u64_at(m, o);
+    if bytes == 16 {
+        let bits = u64_at(m, o + 8);
+        (w, bits as u32, (bits >> 32) as u32)
+    } else {
+        ((w & 0xffff_ffff) * 8, (w >> 32) as u16 as u32, (w >> 48) as u32)
+    }
+}
+
 impl Index {
     /// Build the query kernel. This touches only metadata: the m1 header + the
     /// codebook + the two directories' headers, the m11 anchors, and one bounded
@@ -748,9 +721,9 @@ impl Index {
         // ---- the format declaration: old containers are refused by shape, not
         // decoded and hoped over.
         let m1 = reader.member(1);
-        if m1.codec != 102 {
+        if ![102, 114].contains(&m1.codec) {
             return Err(format!(
-                "{}: m1 codec {} is not 102 (block-compressed) - this is a pre-block-compression\n  \
+                "{}: m1 codec {} is not 102/114 (block-compressed) - this is a pre-block-compression\n  \
                  v6 lite container: one sequential Huffman+gamma run stream with no restart\n  \
                  directory, so run k needs runs 0..k. Rebuild it with `xsa build --tape`.",
                 reader.path, m1.codec
@@ -799,7 +772,8 @@ impl Index {
         if nblocks != want_blocks {
             return Err(format!("m1 declares {nblocks} blocks, expected {want_blocks}"));
         }
-        if payload_off != 2336 + 8 * nblocks || payload_off > m1.bytes {
+        let dir_entry_bytes = if m1.codec == 114 { 16 } else { 8 };
+        if payload_off != 2336 + dir_entry_bytes * nblocks || payload_off > m1.bytes {
             return Err(format!(
                 "m1 payload offset {payload_off} does not follow its {nblocks}-entry directory"
             ));
@@ -857,6 +831,7 @@ impl Index {
         }
         // ---- m13
         let m = reader.member(13);
+        let entry_bytes = match m.codec { 113 => 16, 115 => 24, _ => return Err("unsupported m13 codec".into()) };
         let a = reader.slice(m.offset, m.bytes);
         if a.len() < 72 {
             return Err("m13 member too short".into());
@@ -902,12 +877,13 @@ impl Index {
         }
         let ent_off = m.offset + u64_at(a, 56);
         let l2_off = m.offset + u64_at(a, 64);
-        if ent_off + 16 * total_entries != m.offset + m.bytes
+        if ent_off + entry_bytes * total_entries != m.offset + m.bytes
             || l2_off + 16 * l2offs[256] != ent_off
         {
             return Err("m13 member size does not match its own declaration".into());
         }
         let rd = RunDir {
+            entry_bytes,
             ent_off,
             l2_off,
             l2: rd_l2,
@@ -971,6 +947,7 @@ impl Index {
             c,
             total,
             dir_off: m1dir_off,
+            dir_entry_bytes,
             payload_off: m1payload_off,
             payload_end: m1_end,
             huff,
@@ -981,7 +958,7 @@ impl Index {
             anchors,
             stripe,
             heads: Vec::new(),
-            runs: Runs::W8(Vec::new()),
+            runs: Runs { len: Vec::new(), seen: Vec::new() },
             dir: Vec::new(),
             build_ms: 0.0,
             decoded_bytes: 0,
@@ -1059,16 +1036,16 @@ impl Index {
         let n = self.reader.n;
         let threads = rayon::current_num_threads().max(1);
         self.open_threads = threads;
-        // FAIL LOUD RATHER THAN GET KILLED: the columns are ~9 B/run plus 16 B per
+        // FAIL LOUD RATHER THAN GET KILLED: the columns are 13 B/run plus 16 B per
         // 256 rows, and a container big enough to overrun RAM must say so in words
         // instead of taking an OOM kill in the middle of a parallel decode.
-        let projected = 9 * r + 16 * ((r + 255) / 256);
+        let projected = 13 * r + 16 * ((n + ROW_DIR - 1) / ROW_DIR);
         if let Some(avail) = mem_available() {
             if projected > avail {
                 return Err(format!(
                     "{}: this reader materialises the run stream at open ({} bytes of run \
                      columns for {} runs) and only {avail} bytes of RAM are available; \
-                     free memory, or query a container this box can hold at 9 B/run",
+                     free memory, or query a container this box can hold at 13 B/run plus row directory",
                     self.reader.path, projected, r
                 ));
             }
@@ -1078,7 +1055,7 @@ impl Index {
         let nchunks = ((nblocks + blocks_per_chunk - 1) / blocks_per_chunk) as usize;
         let runs_per_chunk = blocks_per_chunk * br;
         let mut heads = vec![0u8; r as usize];
-        let mut words = vec![0u64; r as usize];
+        let mut words = vec![0u32; r as usize];
         self.thp = advise_huge(&mut heads) && advise_huge(&mut words);
 
         // ---- phase 0: decode + complete audit + per-window symbol counts.
@@ -1128,18 +1105,16 @@ impl Index {
                             b,
                         );
                         debug_assert_eq!(got, want);
-                        // low half of the interleaved word: the run length. The
-                        // high half (the rank) needs the window prefix, so it is
-                        // written in the fill phase below.
+                        // Run lengths; full-width ranks follow after the window prefix.
                         for i in 0..want {
-                            lc[lo + i] = u64::from(ltmp[i]);
+                            lc[lo + i] = ltmp[i];
                         }
                         // the m12 bracketing span, and the audit that the decode
                         // agrees with it run for run.
                         let (s0, s1) = (idx.l1(b), if b + 1 < nblocks { idx.l1(b + 1) } else { n });
                         let mut sum = 0u64;
                         for i in lo..lo + want {
-                            let l = lc[i] & 0xffff_ffff;
+                            let l = u64::from(lc[i]);
                             sum += l;
                             rows[hc[i] as usize] += l;
                             acc[hc[i] as usize] += 1;
@@ -1183,28 +1158,9 @@ impl Index {
             ));
         }
 
-        // ---- phase 1: fill the rank half, width chosen from the container's own
-        // totals (a u32 rank covers every container whose biggest symbol count
-        // fits, which is the normal case and journals as `seen_width=`).
-        let wide = rows.iter().any(|&t| t > u64::from(u32::MAX));
-        let runs = if !wide {
-            words
-                .par_chunks_mut(runs_per_chunk as usize)
-                .zip(heads.par_chunks(runs_per_chunk as usize))
-                .enumerate()
-                .for_each(|(ci, (wc, hc))| {
-                    let mut a = base[ci];
-                    for i in 0..wc.len() {
-                        let h = hc[i] as usize;
-                        debug_assert!(a[h] <= u64::from(u32::MAX));
-                        wc[i] |= a[h] << 32;
-                        a[h] += wc[i] & 0xffff_ffff;
-                    }
-                });
-            Runs::W8(words)
-        } else {
-            // rare: keep the two columns apart so the rank can be a u64
-            let len: Vec<u32> = words.iter().map(|&w| w as u32).collect();
+        // ---- phase 1: every cumulative row rank is a full u64.
+        let runs = {
+            let len = words;
             let mut seen = vec![0u64; r as usize];
             seen.par_chunks_mut(runs_per_chunk as usize)
                 .zip(heads.par_chunks(runs_per_chunk as usize))
@@ -1218,7 +1174,7 @@ impl Index {
                         a[h] += u64::from(lc[i]);
                     }
                 });
-            Runs::Split { len, seen }
+            Runs { len, seen }
         };
         // ---- phase 2: the row -> run directory (see the `dir` field's doc comment).
         let ndir = ((n + ROW_DIR - 1) / ROW_DIR) as usize;
@@ -1295,24 +1251,23 @@ impl Index {
     }
     /// m13 entry `i` of symbol `ch`: (cum rows of ch before run, run index, stride)
     #[inline(always)]
-    fn entry(&self, ch: usize, i: u64) -> (u64, u64, u32) {
-        let o = (self.rd.ent_off + 16 * (self.rd.offs[ch] + i)) as usize;
+    fn entry(&self, ch: usize, i: u64) -> (u64, u64, u64) {
+        let o = (self.rd.ent_off + self.rd.entry_bytes * (self.rd.offs[ch] + i)) as usize;
         let m = &self.reader.map;
-        let cum = u64_at(m.as_ref(), o);
-        let w = u64_at(m.as_ref(), o + 8);
-        (cum, w & 0xffff_ffff, (w >> 32) as u16 as u32)
+        decode_run_entry(m.as_ref(), o, self.rd.entry_bytes)
     }
     #[inline(always)]
     fn l2entry(&self, ch: usize, i: u64) -> (u64, u64) {
         let o = (self.rd.l2_off + 16 * (self.rd.l2offs[ch] + i)) as usize;
         let m = &self.reader.map;
-        (u64_at(m.as_ref(), o), u64_at(m.as_ref(), o + 8) & 0xffff_ffff)
+        decode_l2_entry(m.as_ref(), o)
     }
-    /// The block directory entry: (payload word offset, head bits, length bits)
+    /// The block directory entry: (payload byte offset, head bits, length bits)
     #[inline(always)]
     fn dir(&self, b: u64) -> (u64, u32, u32) {
-        let w = u64_at(self.reader.map.as_ref(), (self.dir_off + 8 * b) as usize);
-        (((w & 0xffff_ffff) as u64) * 8, (w >> 32) as u16 as u32, (w >> 48) as u32)
+        let o = (self.dir_off + self.dir_entry_bytes * b) as usize;
+        let m = self.reader.map.as_ref();
+        decode_block_entry(m, o, self.dir_entry_bytes)
     }
 }
 
@@ -1463,32 +1418,12 @@ impl<'a> Ctx<'a> {
             None => idx.reader.r,
         };
         let avail = (run_next.min(idx.reader.r) - run) as usize;
-        let (run, s) = match &idx.runs {
-            Runs::W8(w) => {
-                let base = w.as_ptr();
-                let start = run as usize;
-                scan_window(
-                    |i| unsafe { *base.add(start + i) } & 0xffff_ffff,
-                    run,
-                    s,
-                    row,
-                    avail,
-                    idx.reader.r,
-                )
-            }
-            Runs::Split { len, .. } => {
-                let base = len.as_ptr();
-                let start = run as usize;
-                scan_window(
-                    |i| u64::from(unsafe { *base.add(start + i) }),
-                    run,
-                    s,
-                    row,
-                    avail,
-                    idx.reader.r,
-                )
-            }
-        };
+        let base = idx.runs.len.as_ptr();
+        let start = run as usize;
+        let (run, s) = scan_window(
+            |i| u64::from(unsafe { *base.add(start + i) }),
+            run, s, row, avail, idx.reader.r,
+        );
         self.scan_of += run - run0;
         (run, s)
     }
@@ -2346,5 +2281,30 @@ mod window_scan_tests {
         check(&[4; 16], 0, 0, 16);
         check(&[3, 1, 3, 1, 3, 1, 3, 1], 0, 0, 8);
         check(&[256; 40], 0, 1000, 40);
+    }
+}
+
+#[cfg(test)]
+mod wide_directory_tests {
+    use super::*;
+    fn words(v: &[u64]) -> Vec<u8> { v.iter().flat_map(|w| w.to_le_bytes()).collect() }
+    #[test]
+    fn run_directory_above_u32_and_old_codec() {
+        for run in [u32::MAX as u64, 1u64 << 32, 19_973_766_926, 1u64 << 48] {
+            let rank = run + 900;
+            assert_eq!(decode_l2_entry(&words(&[rank, run]), 0), (rank, run));
+            assert_eq!(scan_window(|_| 1, run, rank, rank + 2, 4, run + 4), (run + 2, rank + 2));
+            assert_eq!(decode_run_entry(&words(&[rank, run, 32]), 0, 24), (rank, run, 32));
+        }
+        assert_eq!(decode_run_entry(&words(&[55, 7 | (32u64 << 32)]), 0, 16), (55, 7, 32));
+        let runs = Runs { len: vec![1], seen: vec![19_973_766_927] };
+        assert_eq!(runs.seen(0), 19_973_766_927);
+    }
+    #[test]
+    fn block_offsets_above_old_32_gib_limit() {
+        for offset in [(1u64 << 35) - 8, 1u64 << 35, 1u64 << 48] {
+            assert_eq!(decode_block_entry(&words(&[offset, 1024 | (2048u64 << 32)]), 0, 16), (offset, 1024, 2048));
+        }
+        assert_eq!(decode_block_entry(&words(&[7 | (1024u64 << 32) | (2048u64 << 48)]), 0, 8), (56, 1024, 2048));
     }
 }
