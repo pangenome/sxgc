@@ -196,3 +196,14 @@ reader still builds symbol-run lists for rank predecessor queries. Phi domain
 predecessor remains binary search. This is a working space reduction, but the
 packed interval and LF members exceed the desired 5–12 bits per run and are
 not the final Nishimoto–Tabei encoding.
+
+### Rank-concat proposal: unresolved membership
+
+Member 5 remains the position-valued Elias–Fano payload described above. It must
+not be relabelled as first-occurrence ranks without a format and reader change.
+The production sweep's bounded per-symbol active state does not guarantee bounded
+reordering storage: active candidates can be replaced by later input, while later
+witnesses have already been determined. The executable regression and measured
+synthetic lower bound are in
+[`CHI_BOUNDED_DEFERRAL.md`](../tools/binbwt/CHI_BOUNDED_DEFERRAL.md).
+This is an unresolved proposal, not a new supported encoding.
