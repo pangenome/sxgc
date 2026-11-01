@@ -481,7 +481,11 @@ impl Reader {
                 sigma[i] = v;
             }
         }
-        for id in [1u32, 5, 10, 11] {
+        let chi_present = members.iter().any(|m| m.id == 5);
+        if (flags & 64 != 0) != !chi_present || (!chi_present && flags & 1 != 0) {
+            return Err(format!("{path}: chi flag/member mismatch: missing member m5 (chi) must be declared by flag 64 with chi-complete cleared"));
+        }
+        for id in [1u32, 10, 11] {
             if !members.iter().any(|m| m.id == id) {
                 return Err(format!("{path}: v6 lite container is missing member {id}"));
             }

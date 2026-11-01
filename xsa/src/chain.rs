@@ -177,6 +177,7 @@ RSS / disc telemetry.
                      TERM then KILL after 120s) - REQUIRED for --v2-pipeline
                      execution (caps on every run). Standing policy is a huge
                      value: no phase may be killed by the cap.
+  --with-chi          Construct optional m5 chi on the tape route (default: absent).
   --chi-expect N       v2 only: the banked chi constant; the finish asserts
                      chi == N in-process and the front door re-checks the
                      journal line (byte-identity + chi are the only arbiter).
@@ -313,6 +314,7 @@ struct Options {
     /// a log can never pretend the flag still selects a route.
     v2_flag_given: bool,
     chi_expect: Option<u64>,
+    with_chi: bool,
     wit_ram_gb: Option<u64>,
     /// `--finish-as-gb N`: the finish phase's own RLIMIT_AS in GiB. Mapped
     /// corpus windows charge address space, not RSS, so the finish can pin a
@@ -405,6 +407,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     let mut plan_only = false;
     let mut legacy_merge = false;
     let mut v2_flag_given = false;
+    let mut with_chi = false;
     let mut chi_expect = None;
     let mut wit_ram_gb = None;
     let mut finish_as_gb = None;
@@ -488,6 +491,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
             // pre-bin chunk+merge route is behind --legacy-merge.
             "--v2-pipeline" => v2_flag_given = true,
             "--legacy-merge" => legacy_merge = true,
+            "--with-chi" => with_chi = true,
             "--chi-expect" => {
                 i += 1;
                 let v = value(args.get(i), "--chi-expect")?
@@ -642,6 +646,9 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     if fanin && chunk_mb.is_none() {
         return Err("--fanin requires --chunk-mb N (the fixed chunk size)".into());
     }
+    if tape && !with_chi && chi_expect.is_some() {
+        return Err("--chi-expect requires --with-chi on the tape route (missing member m5)".into());
+    }
     if legacy_merge {
         if chi_expect.is_some() {
             return Err("--chi-expect is a bin-pipeline flag (drop --legacy-merge)".into());
@@ -669,7 +676,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
         return Err("bin-pipeline execution requires --timeout SECONDS (caps on every run: timeout -k 120 + the ulimit)".into());
     }
     Ok(Options { input, scratch, snap_1e, memory_gb, threads, chunks, kway, plan_only,
-                 bin_pipeline, legacy_merge, v2_flag_given, chi_expect, wit_ram_gb,
+                 bin_pipeline, legacy_merge, v2_flag_given, chi_expect, with_chi, wit_ram_gb,
                  finish_as_gb, bin_live_cap, bin_target_size, bin_entropy_min, phrase, timeout_s, stripes, scratch_free_pct, allow_infeasible, tape,
                  remap, chunk_mb, fanin })
 }
@@ -1882,8 +1889,7 @@ fn run_v2_tail(
     // attempt at 96 x 185 M x 41 B = 728 GB.
     journal.line(&format!(
         "TAPE_ROUTE route=tape source={} lcp_source={} pending_bands_k={tape_k} \
-         parallel_bands_p=threads lcp_column=none (per-band slices band_<i>.lcp; \
-         one slice per band in flight)",
+         parallel_bands_p=threads lcp_column=none (slices only for lcp_source=sorter-bands)",
         if options.tape { "explicit" } else { "implicit" }, lcp_source));
     if lce_verify {
         journal.line("TAPE_AB_ARM XSA_LCE_VERIFY=1: INTERNAL A/B (the old LCE path: the finish \
@@ -1936,6 +1942,10 @@ walks the corpus for every endpoint and no LCP slice is produced). Not a user op
         "--poll-timeout".into(), timeout_s.to_string(),
         "--wit-ram-budget".into(), wit_ram_bytes.to_string(),
     ]);
+    if options.tape {
+        finish_args.push(if options.with_chi { "--with-chi" } else { "--no-chi" }.into());
+    }
+    journal.line(&format!("CHI_POLICY present={} member=m5", !options.tape || options.with_chi));
     if let Some(expected) = options.chi_expect {
         finish_args.extend(["--chi-expect".into(), expected.to_string()]);
     }
@@ -2492,6 +2502,19 @@ mod tests {
         let err2 = parse_chain(&v2_args(&["--memory-gb", "8", "--finish-as-gb", "12",
                                         "--wit-ram-gb", "16"])).unwrap_err();
         assert!(err2.contains("exceeds the finish's effective AS cap 12 GiB"), "{err2}");
+    }
+
+    #[test]
+    fn tape_chi_requires_explicit_opt_in() {
+        let default = parse_chain(&v2_args(&["--tape"])).unwrap();
+        assert!(!default.with_chi);
+        let enabled = parse_chain(&v2_args(&["--tape", "--with-chi", "--chi-expect", "42"])).unwrap();
+        assert!(enabled.with_chi);
+        assert_eq!(enabled.chi_expect, Some(42));
+        let error = parse_chain(&v2_args(&["--tape", "--chi-expect", "42"])).unwrap_err();
+        assert!(error.contains("requires --with-chi"), "{error}");
+        // Existing non-tape builds retain their chi expectation contract.
+        assert!(parse_chain(&v2_args(&["--chi-expect", "42"])).is_ok());
     }
 
     #[test]

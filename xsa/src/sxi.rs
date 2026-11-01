@@ -76,7 +76,7 @@ impl Container {
         self.members
             .iter()
             .find(|m| m.id == id)
-            .unwrap_or_else(|| die("SXI: missing member"))
+            .unwrap_or_else(|| die(&format!("SXI: missing member m{id}")))
     }
     pub fn open(path: &str) -> Option<Self> {
         let mut f =
@@ -96,6 +96,7 @@ impl Container {
         let count = u32at(&b, 32);
         let hs = u32at(&b, 36);
         let flags = u64at(&b, 48);
+        need(flags & 64 == 0, "missing member m5 (chi): this full validator/export reader requires chi; use the qlite query reader");
         need(
             n > 0 && n < u64::MAX && r > 0 && r <= n && k <= n && r <= (u64::MAX - 2048) / 8,
             "invalid n/k/r",

@@ -207,3 +207,34 @@ witnesses have already been determined. The executable regression and measured
 synthetic lower bound are in
 [`CHI_BOUNDED_DEFERRAL.md`](../tools/binbwt/CHI_BOUNDED_DEFERRAL.md).
 This is an unresolved proposal, not a new supported encoding.
+
+## Optional chi on the tape route
+
+`xsa build --tape` omits chi by default; `--with-chi` explicitly restores its
+construction (`xsa_finish --no-chi` / `--with-chi` are the stage switches).
+No sweep advances, witness values or EF streams are built when disabled.
+Tape planning and LCP slice production retain their existing defaults. Finish
+skips the unused LCP/LCE answers after consuming any supplied slices. Rank
+tiling, endpoint ranges, singleton equality, closure and sampled anchor checks
+remain active before this skip. The explicit stage-level `--no-lcp-slices`
+producer arm can also pair with `xsa_finish --no-chi`.
+The directory omits member 5 entirely, flag 64 declares chi absent, and bit 0
+(chi complete) is cleared. `CHI_POLICY present=... member=m5` is journalled.
+All other members and their construction are unchanged.
+
+Chi is consumed by the m5 Elias–Fano encoder to store the sorted suffixient
+witness positions; the full Rust `sxi::Container` validator decodes it for
+range/order validation and `sxi-info --chi-out` exports it. The Rust full
+reader refuses chi-absent containers at open with an error naming missing
+member m5 (chi). The legacy C++ SXI1 conversion/validation reader also
+requires chi for its own format, but does not accept SXI2 v6 in either arm. The qlite
+reader does not use it: exact count and locate use m1, m10, m11 and the blocked
+run directories m12/m13. Qlite checks the chi absence flag against the directory.
+The legacy `product::Engine` (MEMs/serve) also reads the chi count for metadata;
+`witness::build` decodes chi to map its positions onto BWT run edges for the
+`--first --witness-index` query arm, while `forks::load_chi` uses the set for
+fork witness extraction. These paths all open through `sxi::Container`, so
+they fail at open when m5 is absent.
+The claims checker consumes LCE claims and source text, **not chi**; it checks
+inputs to the sweep. Witness sample checks and bridge exports require chi and
+are refused with `--no-chi`. An absent chi is not an empty, complete chi set.

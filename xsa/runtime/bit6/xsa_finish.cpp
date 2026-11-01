@@ -4774,6 +4774,7 @@ int main(int argc, char** argv) {
         std::string prefix, corpus, remap, out, bridgeDir, sampleCheck, wmPath, sentinelRemap;
         std::string checkClaimsDir;   // PROB-CHI: standalone checker mode
         bool debugArtifacts = false;
+        bool buildChi = true; // legacy routes retain chi; tape driver explicitly disables it
         std::string lcpColumnPath;    // KASAI: the prebuilt LCP column (--lcp-column, fixtures)
         std::string lcpBandsDir;      // KASAI: the PRODUCER's per-band LCP slices (--lcp-bands)
         std::string locateIsaPath;    // KASAI: the locate table (--sa-locate)
@@ -4807,6 +4808,8 @@ int main(int argc, char** argv) {
             else if (a == "--witness-sample-check") sampleCheck = need("--witness-sample-check");
             else if (a == "--wm") wmPath = need("--wm");
             else if (a == "--repair-chunk-runs") repairChunkRuns = strtoull(need("--repair-chunk-runs").c_str(), nullptr, 10);
+            else if (a == "--with-chi") buildChi = true;
+            else if (a == "--no-chi") buildChi = false;
             else if (a == "--chi-expect") chiExpect = strtoull(need("--chi-expect").c_str(), nullptr, 10);
             else if (a == "--sample-count") sampleCount = strtoull(need("--sample-count").c_str(), nullptr, 10);
             else if (a == "--poll-timeout") pollTimeout = strtoull(need("--poll-timeout").c_str(), nullptr, 10);
@@ -5208,6 +5211,8 @@ int main(int argc, char** argv) {
             }
         };
 
+        pf_check(buildChi || (!chiExpect && sampleCheck.empty() && !bridge), "missing member m5 (chi): --chi-expect, witness check and bridge require --with-chi");
+        fprintf(stderr, "CHI_POLICY present=%d member=m5 construction=%s\n", int(buildChi), buildChi ? "enabled" : "disabled");
         SweepImpl<WitnessBatch> sweep(n, WitnessBatch{&buckets, bridge ? bSAFd : -1});
         LceWrap slimLce{&fhSlim, {}, n, true};
         // finish-decomposed: one band's buffered fold output (the runs the
@@ -5643,6 +5648,16 @@ int main(int argc, char** argv) {
                     staged->store(1, std::memory_order_release);
                 }
                 while (!staged->load(std::memory_order_acquire)) std::this_thread::yield();
+                if (!buildChi) {
+                    // Rank tiling and anchor checks above remain mandatory. LCP
+                    // answers below have only one consumer: the absent chi sweep.
+                    for (size_t i = size_t(wid); i < cnt; i += size_t(P)) {
+                        pf_check(nb[i].h < n && nb[i].t < n, "position resolution failed");
+                        pf_check(nb[i].len != 1 || nb[i].h == nb[i].t,
+                                 "head-SA value/range or singleton mismatch");
+                    }
+                    return;
+                }
                 if (!kasaiOn) {
                     slim_set_thread_shard(unsigned(t));
                     for (;;) {
@@ -5764,7 +5779,7 @@ int main(int argc, char** argv) {
                         const uint64_t answers[2]{s.topLcp[i], s.interior[i]};
                         pf_write_full(answersDumpFd, answers, sizeof answers, "answers dump top+inter");
                     }
-                    sweep.advance(s.nbuf[i], s.topLcp[i], s.interior[i]);
+                    if (buildChi) sweep.advance(s.nbuf[i], s.topLcp[i], s.interior[i]);
                 }
                 advanceWall += tnow() - ta;
                 r.close(); advAcc.add(r);
@@ -6003,8 +6018,7 @@ int main(int argc, char** argv) {
         {
             PfRegion r("advance-finish", PF_ADVANCE);
             double ta = tnow();
-            sweep.finish();
-            sweep.emitWitness.flush();
+            if (buildChi) { sweep.finish(); sweep.emitWitness.flush(); }
             advanceWall += tnow() - ta;
             r.close(); advAcc.add(r);
         }
@@ -6148,8 +6162,8 @@ int main(int argc, char** argv) {
         // ---- m5 EF over the sorted bucket stream
         // 8 members in the blocked arm (m1 v2 + m12 + m13), 6 in the frozen
         // --m1-replay arm (m1 codec 101, no run directories).
-        ContainerOut container(out, m1Replay ? 6 : 8);
-        {
+        ContainerOut container(out, (m1Replay ? 6 : 8) - (buildChi ? 0 : 1));
+        if (buildChi) {
             PfRegion r("m5-ef", PF_M5);
             unsigned l = chi ? unsigned(std::max(0, int(std::log2(double(n + 1) / double(chi))))) : 0;
             if (l > 63) l = 63;
@@ -6701,7 +6715,7 @@ int main(int argc, char** argv) {
         if (pf_cache_journal_on()) pf_cache_journal(text, "m1-runs", 1024);
 
         // ---- publish the lite container (flags: complete | text | remapped)
-        container.finish(n, 1, rNorm, 1 | 8 | 16 | (m1Replay ? 0 : PF_FLAG_M1_BLOCKED));
+        container.finish(n, 1, rNorm, (buildChi ? 1 : 64) | 8 | 16 | (m1Replay ? 0 : PF_FLAG_M1_BLOCKED));
         phase("publish", last);
 
         // ---- cleanup: scratch only. rlebwt (+meta) go after the container.
