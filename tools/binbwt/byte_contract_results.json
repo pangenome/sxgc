@@ -1,0 +1,92 @@
+{
+  "base_commit": "24f48f0",
+  "implementation_commit": "c2dd551601bbf4a872cb90bfde043d44da49323b",
+  "evidence_root": "/mnt/nvme2n1/erikg/byte-fixes-evidence",
+  "H1": {
+    "status": "PASS",
+    "oracle_gate": "QUERY_ABSENT_SYMBOL patterns=135; 0xff occurrences=0 (counts/jsonl/positions)\n{\"status\": \"PASS\", \"patterns\": 100, \"counts_exact\": 100, \"positions_exact\": 100, \"total_positions\": 574, \"rescan\": false, \"prefix_bytes\": null}\n",
+    "raw_contract": "xsa: error: build: LEGACY_TEXT_REFUSED: --text is retired; use xsa build --tape --input <file> --scratch <dir> (virtual END)\nLEGACY_REFUSAL_SECONDS 0.001721\nXML_FIDELITY entity_unescape=none source_bytes=verbatim\nQUERY_ABSENT_SYMBOL patterns=4\nRAW_BYTE_GATE PASS 0xff occurrences=0 present_pattern_exact=1 input_bytes_unchanged=1200000\nPRESENT_BOUNDARY_BYTES PASS 0x00=1 0xff=1 absent_0xfe=0\n"
+  },
+  "H2": {
+    "status": "PASS",
+    "query150": {
+      "status": "PASS",
+      "patterns": 100,
+      "counts_exact": 100,
+      "positions_exact": 100,
+      "total_positions": 574,
+      "rescan": false,
+      "prefix_bytes": null
+    },
+    "query10": "== gate: qlite 10 GB correctness (20 low-count patterns, -j 32)\nQLITE_OPEN container=/mnt/nvme2n1/erikg/wc-u64/g10/product.sxi2 format=sxi2-v6-lite magic=SXI2 version=6 mmap_ms=0.05 decoded_bytes=0 stages=none n=10000017259 runs=3474889847 members=m1,m4,m5,m7,m10,m11,m12,m13 end_symbol=none orientation=none alphabet=none\nQLITE_BUILD runs=3474889847 decoded_bytes=45798569099 stages=[m11-anchors=22.2ms prefetch=0.0ms run-columns=17766.2ms] build_ms=17788.5 n=10000017259 threads=32 patterns=20 m1_block_runs=1024 m1_blocks=3393448 rundir_l2=512 rundir_occ_stride=256 rundir_gap=1024\nQUERY_DONE patterns=20 occurrences=20 absent=0 query_ms=6.0 first_answer_ms=17797.6 low_count_patterns=20 low_count_mean_us=2441.4 low_count_max_us=5768.8 low_count_lf_steps=47364 low_count_mean_steps=2368 low_count_max_steps=6307 high_count_patterns=0\nWALL 21.53 s  RSS 47868000 kB\nCOUNTS 20/20 exact\nPOSITIONS 20/20 exact\nGATE Q5 PASS\n"
+  },
+  "H3": {
+    "status": "PASS",
+    "builds": [
+      {
+        "fixture": "8 MB",
+        "chi": 6544643,
+        "container_bytes": 48533920,
+        "sha256": "7c5a79a7e7314db74884f7b873e4e4cbdbdd264a6fe65fe99be8a9162b2e35f7",
+        "byte_identical": true,
+        "command": [
+          "/home/erikg/sxgc-byte-fixes/xsa/target/release/xsa",
+          "build",
+          "--tape",
+          "--input",
+          "/mnt/nvme2n1/erikg/chi-bitmap/deterministic-8.corpus",
+          "--scratch",
+          "/mnt/nvme2n1/erikg/byte-fixes-evidence/final8",
+          "--threads",
+          "8",
+          "--memory-gb",
+          "16",
+          "--timeout",
+          "600",
+          "--with-chi",
+          "--chi-expect",
+          "6544643"
+        ]
+      },
+      {
+        "fixture": "150 MB",
+        "chi": 44034230,
+        "container_bytes": 118891088,
+        "sha256": "f6abd41da6e3c3797abae2e288596a6042337a894869f573fecf51c53f624b3e",
+        "byte_identical": true,
+        "command": [
+          "/home/erikg/sxgc-byte-fixes/xsa/target/release/xsa",
+          "build",
+          "--tape",
+          "--input",
+          "/dev/shm/t150m.txt",
+          "--scratch",
+          "/mnt/nvme2n1/erikg/byte-fixes-evidence/final150",
+          "--threads",
+          "8",
+          "--memory-gb",
+          "16",
+          "--timeout",
+          "600",
+          "--with-chi",
+          "--chi-expect",
+          "44034230"
+        ]
+      }
+    ],
+    "comparison": "cmp against wc-u64/g8 and wc-u64/g150 product.sxi2; entire files identical"
+  },
+  "H4": {
+    "status": "PASS",
+    "seconds": 0.001721,
+    "diagnostic": "xsa: error: build: LEGACY_TEXT_REFUSED: --text is retired; use xsa build --tape --input <file> --scratch <dir> (virtual END)",
+    "text_absent_from_build_help": true
+  },
+  "rust_tests": "41 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out",
+  "binary_sha256": "37b5636114c32b9fcc5c05fd78a2fb5bc030ae06da9b599115575819fab87f13",
+  "manual_notes": "Own worktree from fetched origin/pile-week-v1. Original build tree and wc-u64-100gb scratch unmodified. Final construction journals bind c2dd551 with git_dirty=0. Raw newline input exposed two obsolete content guards, removed for virtual-END tape input; --snap-1e still explicitly enforces framing. XML entities remain literal. Native finish source and runtime snapshot edited identically without running the unrelated-source packager. Initial Rust run exposed a stale 256-symbol success expectation; the test now asserts the existing refusal.",
+  "residual_risks": [
+    "Existing 8-bit transport supports at most 255 distinct corpus bytes; all-256-byte corpora remain refused.",
+    "Existing tape minimum input size remains approximately 1.1 MB."
+  ]
+}
