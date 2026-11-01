@@ -11,7 +11,7 @@ a reconstruction. Box: 2×AMD EPYC 7713 (256 threads), 1007 GiB RAM,
 ## 1. WHAT THIS IS
 
 1. `xsa` is a streaming builder for a **succinct full-text index over arbitrary
-   bytes**: it consumes one cyclic `0x1E`-terminated byte string and publishes one
+   bytes**: the tape route consumes raw bytes with a virtual END and publishes one
    self-contained container (`.sxi2`) that answers exact substring queries.
 2. Three commands, in order: **`xsa corpus`** (dump → corpus bytes + document
    sidecars), **`xsa build`** (corpus → container), **`xsa query`** (container +
@@ -263,14 +263,29 @@ XSA_BUILD_DONE chi=0 pipeline=v2tape container=/dev/shm/repro-verify/s150/t150m.
 ```
 
 **Output ends with `XSA_BUILD_DONE chi=<n>`** — that line is the success
-certificate. `chi=0` means *chi was not constructed* (see the opt-in note below),
+certificate. `chi=0` means *chi was not constructed* (see the chi policy below),
 not "chi is zero".
+
+### Byte-exact corpora
+
+For LM or any byte-level work, feed the raw file directly to
+`xsa build --tape --input raw.bin --scratch fresh-dir --timeout 3600` and skip XML entirely.
+The tape route preserves every input byte and adds only a virtual END; no XML
+wrapping, terminal byte, or entity expansion is needed. `--snap-1e` explicitly
+opts into the document-boundary check for framed Wikipedia prefixes.
+
+The XML corpus path copies title and text source bytes verbatim and performs
+**no entity expansion**: `&amp;` remains the five bytes `&amp;`, not `&`.
+The current 8-bit transport supports at most 255 distinct corpus bytes; a file
+containing all 256 byte values is refused because END needs a separate symbol.
+
+The XML MANIFEST declares `entity_unescape=none`. It also adds title/newline/document
+framing, so use the raw tape route for byte-exact indexing of an existing file.
 
 ### The flags that matter
 
-- `--input` — the corpus, ONE cyclic `0x1E`-terminated byte string. The last byte
-  **must** be `0x1E` or the run refuses before any phase starts (`SNAP_REFUSED`,
-  §9). `s1 0x1E s2 0x1E … sk 0x1E`.
+- `--input` — raw corpus bytes; END is virtual. Add `--snap-1e` only when
+  requiring a final `0x1E` document boundary.
 - `--scratch` — every intermediate and final artifact plus `xsa-build.log`. It must
   be fresh (§9) and hold ~2.3 n.
 - `--threads` — sort parallelism **and** the number of bands live at once
@@ -312,14 +327,15 @@ XSA_FINISH_PROGRESS band=833/2289 runs=54657022 chi_so_far=0 repair_wall=50.7 lc
   built this container. This run: `git_commit=6dd06ef6e141a03522c5929d1e411cca468c7c01
   git_dirty=0 branch=reproduce-guide`.
 
-### chi is OPT-IN
+### chi policy
 
-Chi (the minimal suffixient set, member m5) is **not** constructed by default on
-the tape route: the journal says `CHI_POLICY present=false member=m5` and the
-finish is launched with `--no-chi`. Exact matching does not read m5, so queries
+The recorded runs below used an older opt-in chi default. Current builds enable
+chi (the minimal suffixient set, member m5) by default; pass `--no-chi` to omit it.
+Then the journal says `CHI_POLICY present=false member=m5` and the finish receives
+`--no-chi`. Exact matching does not read m5, so queries
 work either way; container size drops from 0.69 n to 0.56 n at 150 MB.
 
-Enable it with one flag:
+Request it explicitly with one flag:
 
 ```sh
 xsa build --tape --input /dev/shm/t150m.txt --scratch /dev/shm/repro-verify/s150chi \
@@ -331,7 +347,7 @@ V2_CONTAINER_PUBLISHED path=/dev/shm/repro-verify/s150chi/t150m.sxi2 bytes=10372
 XSA_BUILD_DONE chi=44034230 pipeline=v2tape container=/dev/shm/repro-verify/s150chi/t150m.sxi2
 ```
 
-`--chi-expect N` (the in-process assert) is refused without `--with-chi`:
+`--chi-expect N` (the in-process assert) is refused with `--no-chi`:
 `--chi-expect requires --with-chi on the tape route (missing member m5)`.
 
 ---
@@ -395,9 +411,16 @@ no line):
 ### Output contract
 
 `id<TAB>offset`, one line per occurrence, **no header**, absent patterns produce no
-line. `n=150000002` in `QLITE_OPEN` is `corpus_bytes + 1`: the container indexes a
-virtual END row, so **offsets are corpus offsets** (0..n−1) and never exceed the
-corpus.
+line. A pattern containing any byte absent from the corpus produces zero
+occurrences, including bytes whose remap slot names virtual END. The present set
+is recoverable from container members m7 (byte remap) and m1 (symbol counts):
+`present[b] = sigma[b] != 0 && count[sigma[b]] > 0`. Builds journal it as
+`CORPUS_PRESENT_BYTES count=... hex=...`; queries journal rejected pattern counts
+as `QUERY_ABSENT_SYMBOL patterns=...`.
+
+`n=150000002` in `QLITE_OPEN` is `corpus_bytes + 1`: the container indexes a
+virtual END row. Nonempty byte patterns return only **corpus offsets**
+(0..corpus_bytes−1), never the virtual END position.
 
 **Offsets within one id are NOT sorted.** Record 18 above is emitted
 `133202325` then `133201198`: occurrences come out in suffix-array **rank** order.
@@ -499,7 +522,7 @@ document: the tool refuses loudly and early, and each refusal names the knob.
 
 | message (verbatim) | means | change |
 |---|---|---|
-| `SNAP_REFUSED mid-document input <path>: last byte is 0x20, want 0x1e (document boundary); snap the prefix forward to the next 0x1e in the source corpus and retry - the chain never trims or extends silently` ✔ | the corpus does not end on a document boundary | extend/snap the input to the next `0x1E` |
+| `SNAP_REFUSED mid-document input <path>: last byte is 0x20, want 0x1e (document boundary); snap the prefix forward to the next 0x1e in the source corpus and retry - the chain never trims or extends silently` ✔ | `--snap-1e` requested but input does not end on a document boundary | omit `--snap-1e` for raw tape input, or choose an aligned prefix |
 | `PLAN_INFEASIBLE: see XSA_PLAN_ALTERNATIVE lines above (override with --allow-infeasible to run anyway)` ✔ | the plan could not prove the run fits RAM or scratch; the preceding `XSA_PLAN_ALTERNATIVE` lines say which | raise `--memory-gb`, lower `--threads`, free scratch; `--allow-infeasible` only if you know better |
 | `XSA_PLAN_RAM INFEASIBLE: … rows_per_band=59 < floor=1004 …` ✔ | band arena ÷ (bytes_per_row × threads) fell below the 65,536-row floor | **see the minimum-corpus note below** |
 | `scratch already used: <dir>/xsa-build.log exists; move the previous run away (never overwrite)` ✔ | the scratch dir holds an earlier run (a *refused* run leaves its log too) | new scratch dir |
@@ -528,8 +551,8 @@ size=1104000 rows_per_band=65550 XSA_PLAN_RAM FEASIBLE
 
 So: a 1 KB "hello world" corpus cannot be indexed by `--tape` no matter how much
 `--memory-gb` you give it. Use the 150 MB fixture (or ≥ ~1.1 MB) to exercise the
-pipeline; use `xsa build --text <f> -o out.sxi` (the legacy text front end) if you
-genuinely need a tiny index.
+pipeline. The legacy `--text` entry is retired and refuses immediately with a
+pointer to `xsa build --tape --input`; tiny tape inputs remain unsupported.
 
 ### `xsa query`
 
@@ -601,9 +624,7 @@ genuinely need a tiny index.
   `disc_preflight` returns immediately at 0, so the `DF_GATE_FAIL …` message and the
   "scratch hygiene policy" alternative are currently unreachable. The only disc
   refusal is a genuine will-not-fit (`XSA_PLAN_DISC INFEASIBLE` → `PLAN_INFEASIBLE`).
-- **`xsa query` does not sort positions within a pattern** (§7) and
-  `xsa --help` (top level) is stale relative to `xsa build --help`, which prints the
-  legacy build text *and* the tape-route text back to back.
+- **`xsa query` does not sort positions within a pattern** (§7).
 
 ---
 

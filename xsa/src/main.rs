@@ -1376,9 +1376,7 @@ fn usage() -> ! {
     eprintln!("xsa — chi sa. suffixient-array tools over r-space artifacts");
     eprintln!();
     eprintln!("usage:");
-    eprintln!("  xsa build --agc <archive.agc> -o <out.sxi> [--verbose]");
-    eprintln!("  xsa build --fasta <refs.fa> -o <out.sxi> [--verbose]");
-    eprintln!("  xsa build --text <file.txt> -o <out.sxi> [--verbose]");
+    eprintln!("  xsa build --tape --input <file> --scratch <dir> [--threads N] [--memory-gb N]");
     eprintln!("  xsa mems --sxi FILE --reads FA|FQ|GZ [-j N] [--min-len 20] [--mode auto|dna|text]");
     eprintln!("  xsa forks --jsonl FILE [--n N] [-o OUT.jsonl] [-j J]  chi fork matrix (STRING x (WITNESS,CLASS) presence)");
     eprintln!("  xsa witness-build --sxi FILE --output FILE.wit");

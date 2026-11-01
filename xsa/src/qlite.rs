@@ -2004,6 +2004,15 @@ pub fn command(args: &[String]) {
         index.rd.run_gap
     );
     let sigma = index.reader.sigma;
+    // m7 maps corpus bytes to m1 symbols. Symbol 0 belongs exclusively to
+    // virtual END; its inverse byte is absent even though total[0] is one.
+    let present: [bool; 256] = std::array::from_fn(|b| {
+        let symbol = sigma[b] as usize;
+        symbol != 0 && index.total[symbol] != 0
+    });
+    let absent_symbols = patterns.iter()
+        .filter(|pat| pat.iter().any(|&b| !present[b as usize])).count();
+    eprintln!("QUERY_ABSENT_SYMBOL patterns={absent_symbols}");
     let stdout = std::io::stdout();
     let mut w: Box<dyn Write> = Box::new(BufWriter::with_capacity(1 << 20, stdout.lock()));
     let t0 = Instant::now();
@@ -2013,6 +2022,10 @@ pub fn command(args: &[String]) {
         .map(|pat| {
             if pat.is_empty() || pat.len() > 65536 {
                 die(&format!("pattern of length {} is not 1..={PAT_LEN_MAX}", pat.len()));
+            }
+            if pat.iter().any(|&b| !present[b as usize]) {
+                return Hit { positions: Vec::new(), search_us: 0.0, locate_us: 0.0,
+                    steps: 0, max_steps: 0, diag: (0, 0, 0, 0) };
             }
             // Index coordinates: the container's text is the corpus with the
             // m7 remap applied, in corpus order; backward search consumes the

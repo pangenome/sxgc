@@ -10,6 +10,7 @@ from collections import defaultdict
 from pathlib import Path
 import subprocess
 import json
+import tempfile
 p = argparse.ArgumentParser()
 p.add_argument('--xsa', type=Path, required=True)
 p.add_argument('--container', type=Path, required=True)
@@ -53,6 +54,31 @@ for line in result.stdout.decode().splitlines():
     actual[i].append(pos)
 for i in range(100):
     assert sorted(actual[i]) == expected[i], (i, actual[i], expected[i])
+# Regression: the highest absent byte can own remap code zero (virtual END).
+# Check all absent bytes, both alone and embedded in otherwise present bytes.
+import mmap
+with a.corpus.open('rb') as source, mmap.mmap(source.fileno(), 0, access=mmap.ACCESS_READ) as data:
+    absent = [b for b in range(256) if data.find(bytes([b])) < 0]
+    assert 255 in absent, 'this gate requires a corpus without 0xff'
+    anchor = data[:1]
+    probes = [p for b in absent if b != 0x1e
+              for p in (bytes([b]), anchor + bytes([b]), bytes([b]) + anchor)]
+with tempfile.TemporaryDirectory() as tmp:
+    path = Path(tmp) / 'absent.bin'
+    path.write_bytes(b'\x1e'.join(probes) + b'\x1e')
+    for output in (['--counts'], ['--output', 'jsonl'], []):
+        check = subprocess.run([str(a.xsa.resolve()), 'query', str(a.container),
+            '--patterns', str(path), '-j', '4', *output], capture_output=True, check=True)
+        assert f'QUERY_ABSENT_SYMBOL patterns={len(probes)}'.encode() in check.stderr
+        if output == ['--counts']:
+            assert check.stdout.decode().splitlines() == [f'{i}\t0' for i in range(len(probes))]
+        elif output:
+            rows = [json.loads(line) for line in check.stdout.splitlines()]
+            assert len(rows) == len(probes)
+            assert all(row['count'] == 0 and row['offsets'] == [] for row in rows)
+        else:
+            assert check.stdout == b''
+print(f'QUERY_ABSENT_SYMBOL patterns={len(probes)}; 0xff occurrences=0 (counts/jsonl/positions)')
 summary = dict(status='PASS', patterns=100, counts_exact=100, positions_exact=100,
                total_positions=sum(map(len, expected.values())), rescan=a.rescan,
                prefix_bytes=a.prefix_bytes)

@@ -1,36 +1,6 @@
 //! Timed, fail-closed source pipeline with endpoint samples from the vendored tap.
 use std::path::PathBuf;
 
-const USAGE: &str = "usage:
-  xsa build --input <corpus> --scratch <dir> [--snap-1e] [--memory-gb N] [--threads N] [--chunks N] [--remap <256-byte-map>]
-      the consolidated external construction chain: chunk -> merge tree ->
-      adopt finish -> chi sweep, one cargo-built command (see --help below);
-      outputs byte-identical to the reference chain on the same corpus.
-  xsa build --selftest [CASES] [--threads N]
-      the merge selftest for the six banked sweep seeds.
-  xsa build --text <collection.txt> -o <out.sxi> [--threads N] [--address-space-gb N] [--scratch DIR] [--expect-chi N] [--verify-text-sample N] [--mode auto|dna|text] [--verbose]
-  xsa build --agc <archive.agc> -o <out.sxi> [same options]
-  xsa build --fasta <records.fa> -o <out.sxi> [same options]
-  xsa build --fastq <reads.fq> -o <out.sxi> [same options]
-
-Corpus contract: T = s1 0x1E s2 0x1E ... sk 0x1E, ONE cyclic byte string.
-0x1E (ASCII record separator) is reserved; never include it in sequence content.
---text passes raw bytes AS-IS, without a content scan; the caller owns this contract.
-FASTA (wrapped lines allowed) and FASTQ (four-line records) extract sequences
-verbatim in input order, with 0x1E between records and terminally.
-Supply already oriented sequences; embedded 0x1E fails during input preparation.
-Record identifiers populate the SXI names member. Malformed records fail closed.
-AGC uses a seekable archive-backed FUSE ghost file (revlines, upper, sep 1e).
---fifo selects the sequential streaming fallback.
---materialize retains the legacy AGC text-file path.
---manifest PATH selects a tool manifest; --allow-drift is DEBUG ONLY and journals hash mismatches.
-Stages: PFP (w1=10,p1=100; w2=5,p2=11), endpoint-tap rpfbwt,
-slim streaming aggregates, streamed chi sweep/gate, checked SXI publication.
-Scratch must share the source filesystem. Timings and peak RSS are logged.
---address-space-gb optionally caps child virtual memory in decimal GB (no self-imposed ceiling by default; a lower inherited hard limit always applies).
-Legacy newline-terminated multi-string inputs require --expect-heads RAW --expect-ri4 FILE byte gates
-because linear PFP ordering is not established as BCR collection ordering.";
-
 #[derive(Debug)]
 struct Options {
     kind: String,
@@ -49,7 +19,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
     while i < args.len() {
         let flag = &args[i];
         match flag.as_str() {
-            "--agc" | "--fasta" | "--fastq" | "--text" | "-o" | "--output" => {
+            "--agc" | "--fasta" | "--fastq" | "-o" | "--output" => {
                 i += 1;
                 let value = args.get(i).filter(|s| !s.is_empty() && !s.starts_with('-'))
                     .ok_or_else(|| format!("{flag} requires a path"))?;
@@ -58,7 +28,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
                         return Err("specify the output only once".into());
                     }
                 } else if source.replace((flag[2..].to_string(), PathBuf::from(value))).is_some() {
-                    return Err("choose exactly one of --agc, --fasta, --fastq, --text".into());
+                    return Err("choose exactly one of --agc, --fasta, --fastq".into());
                 }
             }
             "--manifest" | "--mode" | "--verify-text-sample" | "--threads" | "--address-space-gb" | "--scratch" | "--log-dir" | "--expect-chi" | "--expect-heads" | "--expect-ri4" => {
@@ -73,7 +43,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         }
         i += 1;
     }
-    let (kind, input) = source.ok_or("need one of --agc, --fasta, --fastq, --text")?;
+    let (kind, input) = source.ok_or("need one of --agc, --fasta, --fastq")?;
     let output = output.ok_or("need -o <out.sxi>")?;
     Ok(Options { kind, input, output, verbose, extra })
 }
@@ -127,12 +97,14 @@ fn run(args: &[String]) -> Result<(), String> {
 }
 
 pub fn command(args: &[String]) {
+    if args.iter().any(|a| a == "--text") {
+        super::die("build: LEGACY_TEXT_REFUSED: --text is retired; use xsa build --tape --input <file> --scratch <dir> (virtual END)");
+    }
     if args.iter().any(|a| matches!(a.as_str(), "--input" | "--selftest")) {
         super::chain::command(args); // the consolidated construction chain route
         return;
     }
     if args.len() == 1 && matches!(args[0].as_str(), "--help" | "-h") {
-        println!("{USAGE}");
         println!("{}", super::chain::USAGE);
         return;
     }

@@ -14,8 +14,8 @@ set -u
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 XSA=${XSA:-$ROOT/xsa/target/release/xsa}
 C=${C:-/mnt/nvme2n1/erikg/r10g-m96/pile-10b-snap.sxi2}
-ORACLE=${ORACLE:-/tmp/g10/oracle.tsv}
-PATS=${PATS:-/tmp/g10/pats.fa}
+ORACLE=${ORACLE:-$ROOT/tools/binbwt/tests/fixtures/query10-oracle.tsv}
+PATS=${PATS:-$ROOT/tools/binbwt/tests/fixtures/query10-pats.fa}
 J=${J:-32}
 N=${N:-20}
 TMP=$(mktemp -d)
