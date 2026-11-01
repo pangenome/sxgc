@@ -17,10 +17,9 @@
 // over the piece head/tail columns (heads/tails increase with the run
 // index - rows are in SA order - so the pieces ARE the sorted seed
 // columns). The slim's per-band topLCP/interiorMin hand off to the sweep
-// IN PROCESS (no agg file ever exists). Witnesses go to VALUE-RANGE
-// buckets (RAM until the budget, then sorted delta-varint runs); the m5
-// EF is encoded bucket-by-bucket in value order with prefix ordinals, so
-// the witness set never exists as a dense file. m1 is Huffman-encoded
+// IN PROCESS (no agg file ever exists). Witness positions set bits in an
+// mmap-backed scratch file (one bit per corpus byte). Ascending set bits
+// stream directly into the existing m5 Elias-Fano sparse bitvector. m1 is Huffman-encoded
 // from a final rlebwt re-scan (the repair replayed sample-free - the
 // normalized chars/lens are a deterministic function of the raw runs and
 // the class table). rlebwt is deleted after the container publishes
@@ -2613,287 +2612,128 @@ static int selftest_sweep_monoid() {
     return 0;
 }
 
-// ----------------------------------------------------------- witness buckets
-// VALUE-RANGE buckets: the sweep appends each witness to its bucket's RAM
-// buffer; when the global RAM budget is exceeded the largest bucket is
-// sorted and appended to its disc file as a delta-varint run. The EF pass
-// walks buckets in value order (ranges are disjoint), merging each
-// bucket's compressed runs with a bounded 64-way heap.
-struct WitBuckets {
-    uint64_t P = 0, n = 0, reciprocal = 0;
-    std::string prefix;
-    uint64_t ramBudget = 1ull << 30;
-    std::vector<std::vector<uint64_t>> buf;
-    std::vector<int> fds;
-    struct Run { uint64_t offset, bytes; uint32_t count; };
-    std::vector<std::vector<Run>> runs;
-    uint64_t totalRam = 0, totalValues = 0, spilled = 0;
-    // CACHE HYGIENE (operator): every witness spool chunk is scratch whose bytes
-    // are dead the moment they have been merged into the visit order. Released
-    // page by page (DONTNEED) at the one place that knows the chunk is finished,
-    // so a spilled witness stream never squats on the corpus's page cache.
-    std::atomic<uint64_t> cacheReleasedBytes{0}, cacheReleaseCalls{0};
-    void releaseChunk(int fd, const std::string& path) {
-        if (fd < 0 || !pf_hygiene_on()) return;
-        struct stat st {};
-        if (fstat(fd, &st) == 0 && st.st_size > 0) {
-            if (::posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED) == 0) {
-                cacheReleasedBytes += uint64_t(st.st_size);
-                ++cacheReleaseCalls;
+// ------------------------------------------------------ witness position bitmap
+// The sweep retains its interval-lifetime selection rule. Membership is keyed
+// by text position, not suffix rank. Ascending set bits feed the existing m5
+// Elias-Fano codec without an O(chi) vector or external comparison sort.
+struct WitnessBitmap {
+    uint64_t n, bytes, totalValues = 0, duplicates = 0;
+    std::string path;
+    int fd = -1;
+    uint8_t* bits = nullptr;
+    WitnessBitmap(uint64_t size, const std::string& prefix, bool enabled = true)
+        : n(size), bytes(enabled ? size / 8 + (size % 8 != 0) : 0),
+          path(prefix + ".chi-bitmap") {
+        if (!bytes) return;
+        pf_check(bytes <= uint64_t(INT64_MAX) && bytes <= SIZE_MAX, "chi bitmap size overflow");
+        fd = ::open(path.c_str(), O_RDWR | O_CREAT | O_EXCL, 0600);
+        pf_check(fd >= 0, "create chi bitmap");
+        pf_check(::ftruncate(fd, off_t(bytes)) == 0, "size chi bitmap");
+        void* map = ::mmap(nullptr, size_t(bytes), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+        pf_check(map != MAP_FAILED, "mmap chi bitmap");
+        bits = static_cast<uint8_t*>(map);
+        pf_check(::madvise(bits, size_t(bytes), MADV_RANDOM) == 0, "advise chi bitmap random");
+    }
+    WitnessBitmap(const WitnessBitmap&) = delete;
+    WitnessBitmap& operator=(const WitnessBitmap&) = delete;
+    ~WitnessBitmap() { cleanup(); }
+    bool add(uint64_t v) {
+        pf_check(bits && v < n, "witness out of bitmap range");
+        const uint8_t mask = uint8_t(1u << (v & 7));
+        if (bits[v >> 3] & mask) { ++duplicates; return false; }
+        bits[v >> 3] |= mask;
+        ++totalValues;
+        return true;
+    }
+    template<class Fn> void for_each_sorted(Fn fn) {
+        if (!bytes) return;
+        pf_check(::madvise(bits, size_t(bytes), MADV_SEQUENTIAL) == 0, "advise chi bitmap sequential");
+        uint64_t count = 0, prev = 0;
+        for (uint64_t byte = 0; byte < bytes; ++byte) {
+            unsigned word = bits[byte];
+            while (word) {
+                const uint64_t v = byte * 8 + unsigned(__builtin_ctz(word));
+                pf_check(v < n && (!count || v > prev), "chi positions not strictly increasing");
+                fn(v); prev = v; ++count;
+                word &= word - 1;
             }
         }
-        (void)path;
+        pf_check(count == totalValues, "chi bitmap popcount mismatch");
     }
-    WitBuckets(uint64_t nNorm, uint64_t runs, const std::string& pfx, uint64_t budget)
-        : n(nNorm), prefix(pfx), ramBudget(budget) {
-        P = 4096;
-        while (P < 65536 && P * 262144 < runs) P *= 2;
-        pf_check(n > 0 && n <= ~uint64_t(0) / P, "witness bucket numerator overflow");
-        reciprocal = n == 1 ? 0 : uint64_t((__uint128_t(1) << 64) / n);
-        buf.resize(P);
-        this->runs.resize(P);
-        fds.assign(P, -1);
-    }
-    uint64_t bucketOf(uint64_t v) const {
-        const uint64_t x = v * P;
-        if (n == 1) return x;
-        uint64_t q = uint64_t((__uint128_t(x) * reciprocal) >> 64);
-        return q + uint64_t(x - q * n >= n);
-    }
-    void addBatch(const uint64_t* values, size_t count) {
-        for (size_t j = 0; j < count; ++j) {
-            const uint64_t v = values[j];
-            pf_check(v < n, "witness out of range");
-            const uint64_t b = bucketOf(v);
-            auto& bucket = buf[b];
-            const size_t oldCapacity = bucket.capacity();
-            bucket.push_back(v);
-            totalRam += 8 * (bucket.capacity() - oldCapacity);
-            ++totalValues;
-            while (totalRam > ramBudget) spillLargest();
-        }
-    }
-    static void putVarint(std::vector<uint8_t>& out, uint64_t v) {
-        do {
-            uint8_t b = v & 127;
-            v >>= 7;
-            if (v) b |= 128;
-            out.push_back(b);
-        } while (v);
-    }
-    void spillLargest() {
-        uint64_t best = 0;
-        for (uint64_t b = 1; b < P; ++b) if (buf[b].size() > buf[best].size()) best = b;
-        spillBucket(best);
-    }
-    void spillBucket(uint64_t best, bool account = true) {
-        if (buf[best].empty()) return;
-        std::vector<uint64_t>& v = buf[best];
-        std::sort(v.begin(), v.end());
-        std::vector<uint8_t> out;
-        out.reserve(v.size() + 16);
-        pf_check(v.size() <= UINT32_MAX, "witness spill run count overflow");
-        uint32_t cnt = uint32_t(v.size());
-        out.insert(out.end(), (const char*)&cnt, (const char*)&cnt + 4);
-        putVarint(out, v[0]);
-        for (size_t i = 1; i < v.size(); ++i) putVarint(out, v[i] - v[i - 1]);
-        if (fds[best] < 0) {
-            std::string name = prefix + ".wit-" + std::to_string(best);
-            fds[best] = ::open(name.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_APPEND, 0666);
-            pf_check(fds[best] >= 0, "open witness bucket");
-        }
-        off_t end = lseek(fds[best], 0, SEEK_END);
-        pf_check(end >= 0, "seek witness bucket");
-        uint64_t offset = uint64_t(end);
-        runs[best].push_back({offset + 4, out.size() - 4, cnt});
-        pf_write_full(fds[best], out.data(), out.size(), "witness bucket");
-        if (account) { totalRam -= 8 * v.capacity(); ++spilled; }
-        std::vector<uint64_t>().swap(v);
-    }
-    template<class Pool> void presort_parallel(Pool& pool) {
-        uint64_t retained = 0;
-        for (const auto& v : buf) retained += 8 * v.capacity();
-        pf_check(retained == totalRam, "witness RAM accounting before presort");
-        std::atomic<uint64_t> next{0}, count{0};
-        pool.run([&](int) {
-            for (;;) {
-                const uint64_t b = next.fetch_add(1, std::memory_order_relaxed);
-                if (b >= P) break;
-                if (!buf[b].empty()) {
-                    spillBucket(b, false);
-                    count.fetch_add(1, std::memory_order_relaxed);
-                }
-            }
-        });
-        totalRam = 0; spilled += count.load();
-    }
-    template <typename Visit>
-    void for_each_sorted(Visit&& visit, uint64_t beginBucket = 0, uint64_t endBucket = ~0ull) {
-        struct Cursor {
-            Run run; uint64_t pos = 0, value = 0;
-            uint32_t left; std::array<uint8_t, 4096> data;
-            size_t at = 0, have = 0;
-            uint8_t byte(int fd) {
-                if (at == have) {
-                    have = size_t(std::min<uint64_t>(data.size(), run.bytes - pos));
-                    pf_check(have != 0, "witness varint truncated");
-                    pf_pread_full(fd, data.data(), have, run.offset + pos, "witness run");
-                    pos += have; at = 0;
-                }
-                return data[at++];
-            }
-            void advance(int fd) {
-                uint64_t delta = 0; unsigned shift = 0;
-                for (;;) {
-                    uint8_t x = byte(fd);
-                    pf_check(shift < 64 && (shift != 63 || (x & 127) <= 1), "witness varint overflow");
-                    delta |= uint64_t(x & 127) << shift;
-                    if (!(x & 128)) break;
-                    shift += 7;
-                }
-                pf_check(delta <= INF - value, "witness delta overflow");
-                value += delta; --left;
-            }
-        };
-        using Item = std::pair<uint64_t, size_t>;
-        auto merge = [&](int fd, const std::vector<Run>& input, size_t begin, size_t end, auto emit) {
-            std::vector<Cursor> cursors;
-            cursors.reserve(end - begin);
-            std::priority_queue<Item, std::vector<Item>, std::greater<Item>> heap;
-            for (size_t i = begin; i < end; ++i) {
-                auto run = input[i];
-                pf_check(run.count != 0, "empty witness run");
-                cursors.push_back(Cursor{run, 0, 0, run.count, {}});
-                cursors.back().advance(fd);
-                heap.push({cursors.back().value, cursors.size() - 1});
-            }
-            while (!heap.empty()) {
-                auto [value, index] = heap.top(); heap.pop();
-                emit(value);
-                auto& c = cursors[index];
-                if (c.left) { c.advance(fd); heap.push({c.value, index}); }
-            }
-        };
-        constexpr size_t FANIN = 64;
-        for (uint64_t b = beginBucket; b < std::min(P, endBucket); ++b) {
-            if (runs[b].empty()) continue;
-            std::string name = prefix + ".wit-" + std::to_string(b);
-            int fd = ::open(name.c_str(), O_RDONLY);
-            pf_check(fd >= 0, "open witness merge");
-            // Reduce oversized heaps in bounded passes, retaining delta-varint scratch.
-            while (runs[b].size() > FANIN) {
-                std::string nextName = name + ".merge";
-                int out = ::open(nextName.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0600);
-                pf_check(out >= 0, "create witness merge pass");
-                std::vector<Run> next;
-                uint64_t offset = 0;
-                for (size_t begin = 0; begin < runs[b].size(); begin += FANIN) {
-                    size_t end = std::min(runs[b].size(), begin + FANIN);
-                    uint64_t count = 0;
-                    for (size_t j = begin; j < end; ++j) count += runs[b][j].count;
-                    pf_check(count <= UINT32_MAX, "witness merged run count overflow");
-                    uint32_t cnt = uint32_t(count);
-                    pf_write_full(out, &cnt, 4, "witness merge count");
-                    uint64_t bytes = 0, prev = 0;
-                    std::vector<uint8_t> encoded;
-                    encoded.reserve(65536);
-                    auto flush = [&] {
-                        pf_write_full(out, encoded.data(), encoded.size(), "witness merge pass");
-                        bytes += encoded.size(); encoded.clear();
-                    };
-                    merge(fd, runs[b], begin, end, [&](uint64_t value) {
-                        pf_check(value >= prev, "witness merge order");
-                        putVarint(encoded, value - prev); prev = value;
-                        if (encoded.size() >= 65536) flush();
-                    });
-                    flush();
-                    next.push_back({offset + 4, bytes, cnt}); offset += 4 + bytes;
-                }
-                pf_check(::close(out) == 0, "close witness merge pass");
-                releaseChunk(fd, name);
-                ::close(fd); ::close(fds[b]);
-                pf_check(::unlink(name.c_str()) == 0, "delete consumed witness pass");
-                pf_check(::rename(nextName.c_str(), name.c_str()) == 0, "replace witness pass");
-                fds[b] = ::open(name.c_str(), O_WRONLY);
-                pf_check(fds[b] >= 0, "reopen witness scratch accounting");
-                fd = ::open(name.c_str(), O_RDONLY);
-                pf_check(fd >= 0, "reopen witness merge pass");
-                runs[b] = std::move(next);
-            }
-            merge(fd, runs[b], 0, runs[b].size(), visit);
-            releaseChunk(fd, name);
-            ::close(fd);
-            // This bucket's values will never be visited again.
-            ::close(fds[b]); fds[b] = -1;
-            pf_check(::unlink(name.c_str()) == 0, "delete consumed witness bucket");
-            std::vector<Run>().swap(runs[b]);
-        }
-    }
-    uint64_t discBytes() const {
-        uint64_t t = 0;
-        for (uint64_t b = 0; b < P; ++b)
-            if (fds[b] >= 0) {
-                struct stat st {};
-                if (fstat(fds[b], &st) == 0) t += uint64_t(st.st_size);
-            }
-        return t;
+    void journal() const {
+        struct rusage ru {};
+        pf_check(::getrusage(RUSAGE_SELF, &ru) == 0, "chi getrusage");
+        fprintf(stderr, "XSA_FINISH_CHI_BITMAP bytes=%llu mmap=1 peak_rss_kb=%llu entries=%llu duplicates=%llu\n",
+                (unsigned long long)bytes, (unsigned long long)ru.ru_maxrss,
+                (unsigned long long)totalValues, (unsigned long long)duplicates);
     }
     void cleanup() {
-        for (uint64_t b = 0; b < P; ++b)
-            if (fds[b] >= 0) {
-                ::close(fds[b]);
-                fds[b] = -1;
-                pf_check(::unlink((prefix + ".wit-" + std::to_string(b)).c_str()) == 0, "unlink witness bucket");
-            }
+        if (bits) { ::munmap(bits, size_t(bytes)); bits = nullptr; }
+        if (fd >= 0) { ::close(fd); fd = -1; ::unlink(path.c_str()); }
     }
 };
 
 struct WitnessBatch {
-    WitBuckets* buckets;
+    WitnessBitmap* bitmap;
     int bridgeFd;
     std::array<uint64_t, 4096> values{};
     size_t count = 0;
     void flush() {
-        if (!count) return;
-        buckets->addBatch(values.data(), count);
-        if (bridgeFd >= 0) pf_write_full(bridgeFd, values.data(), count * 8, "bridge sA");
+        if (bridgeFd >= 0 && count) pf_write_full(bridgeFd, values.data(), count * 8, "bridge sA");
         count = 0;
     }
     void operator()(uint64_t value) {
+        if (!bitmap->add(value)) return; // first occurrence owns this position
+        if (bridgeFd < 0) return;
         values[count++] = value;
         if (count == values.size()) flush();
     }
 };
 
 static int selftest_witness_batch() {
-    uint64_t cases = 0, seed = 1;
-    for (uint64_t n : {1ull, 2ull, 3ull, 17ull, 65535ull, 150000001ull,
-                       10000017258ull, 1300000000000ull, (~0ull / 65536)}) {
-        for (uint64_t runs : {0ull, 3474891366ull, 1300000000000ull}) {
-            WitBuckets buckets(n, runs, "/unused-witness-selftest", 1ull << 20);
-            for (unsigned j = 0; j < 100000; ++j) {
-                seed = seed * 6364136223846793005ull + 1;
-                const uint64_t v = j < 2 ? (j ? n - 1 : 0) : seed % n;
-                pf_check(buckets.bucketOf(v) == v * buckets.P / n,
-                         "witness reciprocal quotient mismatch");
-                ++cases;
-            }
-            WitnessBatch sink{&buckets, -1};
-            for (unsigned j = 0; j < 5003; ++j) sink(uint64_t(j) % n);
+    char dir[] = "/tmp/xsa-chi-bitmap-XXXXXX";
+    pf_check(::mkdtemp(dir) != nullptr, "bitmap selftest directory");
+    const std::string prefix = std::string(dir) + "/test";
+    for (uint64_t n : {1ull, 2ull, 7ull, 8ull, 9ull, 17ull, 65535ull, 100003ull}) {
+        {
+            WitnessBitmap bitmap(n, prefix);
+            WitnessBatch sink{&bitmap, -1};
+            for (uint64_t i = n; i > 0; --i) { sink(i - 1); sink(i - 1); }
             sink.flush();
-            pf_check(!sink.count && buckets.totalValues == 5003 && !buckets.spilled,
-                     "witness batch count or flush mismatch");
-            uint64_t count = 0;
-            for (uint64_t b = 0; b < buckets.P; ++b)
-                for (uint64_t v : buckets.buf[b]) {
-                    pf_check(v < n && v * buckets.P / n == b, "witness batch bucket mismatch");
-                    ++count;
-                }
-            pf_check(count == 5003, "witness batch lost values");
+            uint64_t expected = 0;
+            bitmap.for_each_sorted([&](uint64_t v) { pf_check(v == expected++, "bitmap selftest order"); });
+            pf_check(expected == n && bitmap.totalValues == n && bitmap.duplicates == n,
+                     "bitmap selftest uniqueness");
+            pf_check(bitmap.bytes == (n + 7) / 8, "bitmap selftest size");
         }
+        pf_check(::access((prefix + ".chi-bitmap").c_str(), F_OK) != 0, "bitmap selftest cleanup");
     }
-    printf("WITNESS_BATCH_SELFTEST_PASS quotients=%llu partial=1 full=1 buckets=1\n",
-           (unsigned long long)cases);
+    {
+        WitnessBitmap bitmap(100003, prefix);
+        const std::vector<uint64_t> expected{0, 7, 8, 31, 99999, 100002};
+        const std::string bridge = std::string(dir) + "/bridge";
+        int fd = ::open(bridge.c_str(), O_RDWR | O_CREAT | O_EXCL, 0600);
+        pf_check(fd >= 0, "selftest bridge open");
+        WitnessBatch sink{&bitmap, fd};
+        for (auto it = expected.rbegin(); it != expected.rend(); ++it) { sink(*it); sink(*it); }
+        sink.flush();
+        size_t at = 0;
+        bitmap.for_each_sorted([&](uint64_t v) { pf_check(v == expected.at(at++), "sparse bitmap order"); });
+        pf_check(at == expected.size(), "sparse bitmap count");
+        std::vector<uint64_t> actual(at);
+        pf_pread_full(fd, actual.data(), at * 8, 0, "selftest bridge read");
+        pf_check(std::equal(actual.begin(), actual.end(), expected.rbegin()), "bridge first occurrence order");
+        struct stat st {};
+        pf_check(::fstat(fd, &st) == 0 && uint64_t(st.st_size) == at * 8, "bridge duplicate suppression");
+        ::close(fd); ::unlink(bridge.c_str());
+    }
+    {
+        WitnessBitmap empty(9, prefix);
+        empty.for_each_sorted([](uint64_t) { pf_fail("empty bitmap emitted a witness"); });
+    }
+    { WitnessBitmap disabled(100, prefix, false); pf_check(disabled.fd < 0, "disabled chi allocated"); }
+    pf_check(::rmdir(dir) == 0, "bitmap selftest directory cleanup");
+    printf("WITNESS_BATCH_SELFTEST_PASS bitmap=1 duplicates=1 order=1 boundaries=1 cleanup=1 disabled=1\n");
     return 0;
 }
 
@@ -5166,7 +5006,7 @@ int main(int argc, char** argv) {
         if (pf_cache_journal_on()) pf_cache_journal(text, "seam-classes", 1024);
 
         // ---- scratch writers
-        WitBuckets buckets(n, R, prefix, ramBudget);
+        WitnessBitmap bitmap(n, prefix, buildChi);
         std::string sparsePath = prefix + ".sparse2";
         pf_check(::access(sparsePath.c_str(), F_OK) != 0, "sparse scratch exists");
         int sparseFd = ::open(sparsePath.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
@@ -5213,7 +5053,7 @@ int main(int argc, char** argv) {
 
         pf_check(buildChi || (!chiExpect && sampleCheck.empty() && !bridge), "missing member m5 (chi): --chi-expect, witness check and bridge require --with-chi");
         fprintf(stderr, "CHI_POLICY present=%d member=m5 construction=%s\n", int(buildChi), buildChi ? "enabled" : "disabled");
-        SweepImpl<WitnessBatch> sweep(n, WitnessBatch{&buckets, bridge ? bSAFd : -1});
+        SweepImpl<WitnessBatch> sweep(n, WitnessBatch{&bitmap, bridge ? bSAFd : -1});
         LceWrap slimLce{&fhSlim, {}, n, true};
         // finish-decomposed: one band's buffered fold output (the runs the
         // repair transducer emitted for that band, their global run indices,
@@ -5927,7 +5767,7 @@ int main(int argc, char** argv) {
                 fprintf(stderr, "XSA_FINISH_PROGRESS band=%llu/%llu runs=%llu chi_so_far=%llu repair_wall=%.1f lce_wall=%.1f lce_wait=%.1f advance_wall=%.1f wit_spills=%llu\n",
                         (unsigned long long)(band + 1), (unsigned long long)nbands,
                         (unsigned long long)rs.rNorm, (unsigned long long)sweep.chi,
-                        repairWall, lceWall, lceWaitWall, advanceWall, (unsigned long long)buckets.spilled);
+                        repairWall, lceWall, lceWaitWall, advanceWall, (unsigned long long)0);
             if (cold.every && (band + 1) % cold.every == 0) cold.drop();
             if (pf_cache_journal_on() && (band & 63) == 0) {
                 char label[64];
@@ -6123,10 +5963,10 @@ int main(int argc, char** argv) {
         fprintf(stderr, "xsa chi-rspace: chi = %llu (N=%llu, R=%llu) stream-agg=1 fused=1 corpus_lce=1\n",
                 (unsigned long long)chi, (unsigned long long)n, (unsigned long long)rNorm);
         if (chiExpect) pf_check(chi == chiExpect, "chi mismatch: got " + std::to_string(chi) + " want " + std::to_string(chiExpect));
-        fprintf(stderr, "SLIM_SEEDS queries=%llu lce_wall=%.1f repair_wall=%.1f wit_ram_values=%llu wit_spills=%llu wit_disc_bytes=%llu\n",
+        fprintf(stderr, "SLIM_SEEDS queries=%llu lce_wall=%.1f repair_wall=%.1f wit_values=%llu wit_spills=%llu wit_bitmap_bytes=%llu\n",
                 (unsigned long long)slimLce.seedQueries.read(), lceWall, repairWall,
-                (unsigned long long)buckets.totalValues, (unsigned long long)buckets.spilled,
-                (unsigned long long)buckets.discBytes());
+                (unsigned long long)bitmap.totalValues, (unsigned long long)0,
+                (unsigned long long)bitmap.bytes);
 
         // ---- the PFCK's work is done: delete it before the container pass
         fhSlimOwner.reset();
@@ -6159,7 +5999,7 @@ int main(int argc, char** argv) {
             wantSamples.erase(std::unique(wantSamples.begin(), wantSamples.end()), wantSamples.end());
         }
 
-        // ---- m5 EF over the sorted bucket stream
+        // ---- m5 EF over ascending bitmap positions
         // 8 members in the blocked arm (m1 v2 + m12 + m13), 6 in the frozen
         // --m1-replay arm (m1 codec 101, no run directories).
         ContainerOut container(out, (m1Replay ? 6 : 8) - (buildChi ? 0 : 1));
@@ -6171,115 +6011,25 @@ int main(int argc, char** argv) {
             BitsOut low(prefix + ".bits-low"), high(prefix + ".bits-high");
             uint64_t i = 0, hpos = 0, prev = ~0ull;
             size_t sidx = 0;
-            // finish-decomposed (m5): the witness set is already VALUE-RANGE
-            // bucketed in RAM under the budget. When nothing spilled, sorting
-            // each bucket in parallel and walking the buckets in range order is
-            // the IDENTICAL sorted stream, and the old path's spill-all +
-            // pread/varint merge (1.4 GB written and re-read at 1 GB, ~17 s)
-            // buys nothing. Strictly-increasing is asserted row by row either
-            // way, so a bucketing or order mistake is refused, not written.
-            const bool resident = buckets.spilled == 0;
-            {
-                PfRegion rp(resident ? "m5-sort" : "m5-presort", PF_M5);
-                if (resident) {
-                    std::atomic<uint64_t> nextBucket{0};
-                    pool.run([&](int) {
-                        for (;;) {
-                            uint64_t b = nextBucket.fetch_add(1);
-                            if (b >= buckets.P) break;
-                            std::sort(buckets.buf[b].begin(), buckets.buf[b].end());
-                        }
-                    });
-                } else {
-                    buckets.presort_parallel(pool);
-                }
-                rp.close(); rp.report(buckets.totalValues, "witnesses");
-            }
-            {
-                PfRegion re("m5-encode", PF_M5);
-                // Bucket value ranges are disjoint. Counts give each bucket
-                // its exact global EF ordinal, and range boundaries give its
-                // high-stream bit interval, without decoding any value twice.
-                std::vector<uint64_t> ordinal(buckets.P + 1, 0);
-                for (uint64_t b = 0; b < buckets.P; ++b) {
-                    uint64_t count = resident ? buckets.buf[b].size() : 0;
-                    if (!resident) for (const auto& run : buckets.runs[b]) count += run.count;
-                    ordinal[b + 1] = ordinal[b] + count;
-                }
-                pf_check(ordinal.back() == chi, "EF bucket count");
-                auto lower = [&](uint64_t b) {
-                    return uint64_t((__uint128_t(b) * n + buckets.P - 1) / buckets.P);
-                };
-                auto highStart = [&](uint64_t b) {
-                    return !chi ? 0 : b == buckets.P ? highbits : (lower(b) >> l) + ordinal[b];
-                };
-                struct Fragment {
-                    BitsOut low, high;
-                    uint64_t count = 0, first = ~0ull, last = ~0ull;
-                    size_t samples = 0;
-                };
-                const uint64_t slots = std::max(1, poolThreads);
-                for (uint64_t base = 0; base < buckets.P; base += slots) {
-                    const uint64_t count = std::min(slots, buckets.P - base);
-                    std::vector<Fragment> fragments(count);
-                    std::atomic<uint64_t> next{0};
-                    pool.run([&](int) {
-                        for (;;) {
-                            const uint64_t slot = next.fetch_add(1, std::memory_order_relaxed);
-                            if (slot >= count) break;
-                            const uint64_t b = base + slot;
-                            auto& f = fragments[slot];
-                            const uint64_t valueLo = lower(b), valueHi = lower(b + 1);
-                            uint64_t cursor = highStart(b);
-                            const uint64_t stop = highStart(b + 1);
-                            auto sample = std::lower_bound(wantSamples.begin(), wantSamples.end(), lower(b));
-                            const auto sampleEnd = std::lower_bound(sample, wantSamples.end(), lower(b + 1));
-                            auto encode = [&](uint64_t v) {
-                                pf_check(v >= valueLo && v < valueHi, "EF witness bucket range");
-                                pf_check(f.last == ~0ull || v > f.last, "witnesses not strictly increasing");
-                                if (!f.count) f.first = v;
-                                f.last = v;
-                                f.low.lsb(v, l);
-                                const uint64_t mark = (v >> l) + ordinal[b] + f.count;
-                                pf_check(mark >= cursor && mark < stop, "EF bucket high extent");
-                                f.high.putzeros(mark - cursor); f.high.bit(1);
-                                cursor = mark + 1; ++f.count;
-                                if (sample != sampleEnd && *sample < v)
-                                    pf_fail("sampled banked witness missing from the v2 stream: " + std::to_string(*sample));
-                                if (sample != sampleEnd && *sample == v) { ++sample; ++f.samples; }
-                            };
-                            if (resident) {
-                                for (uint64_t v : buckets.buf[b]) encode(v);
-                                std::vector<uint64_t>().swap(buckets.buf[b]);
-                            } else {
-                                buckets.for_each_sorted(encode, b, b + 1);
-                            }
-                            pf_check(f.count == ordinal[b + 1] - ordinal[b], "EF bucket replay count");
-                            pf_check(sample == sampleEnd, "witness sample check incomplete");
-                            f.high.putzeros(stop - cursor);
-                            f.low.pad(); f.high.pad();
-                        }
-                    });
-                    // Ordered concatenation preserves the global monotonicity
-                    // guard as well as every unaligned bucket boundary.
-                    for (auto& f : fragments) {
-                        if (f.count) {
-                            pf_check(prev == ~0ull || f.first > prev, "witnesses not strictly increasing");
-                            prev = f.last;
-                        }
-                        low.appendPacked(f.low); high.appendPacked(f.high);
-                        i += f.count; sidx += f.samples;
-                    }
-                }
-                hpos = high.bitPos;
-                re.close(); re.report(i, "witnesses");
-            }
-            fprintf(stderr, "XSA_FINISH_WITNESS_PATH resident=%d buckets=%llu spilled=%llu values=%llu "
-                    "cache_release_calls=%llu cache_released_bytes=%llu\n",
-                    int(resident), (unsigned long long)buckets.P,
-                    (unsigned long long)buckets.spilled, (unsigned long long)buckets.totalValues,
-                    (unsigned long long)buckets.cacheReleaseCalls.load(),
-                    (unsigned long long)buckets.cacheReleasedBytes.load());
+            // A sequential bitmap scan is the sorted, duplicate-free position
+            // stream required by codec 105. Only the two bounded BitsOut buffers
+            // are resident; EF payloads are streamed to scratch files.
+            pf_check(bitmap.totalValues == chi && bitmap.duplicates == 0,
+                     "sweep emitted duplicate positions or chi count differs");
+            bitmap.for_each_sorted([&](uint64_t v) {
+                pf_check(prev == ~0ull || v > prev, "witnesses not strictly increasing");
+                prev = v;
+                low.lsb(v, l);
+                const uint64_t mark = (v >> l) + i;
+                pf_check(mark >= hpos && mark < highbits, "EF high extent");
+                high.putzeros(mark - hpos); high.bit(1);
+                hpos = mark + 1; ++i;
+                if (sidx < wantSamples.size() && wantSamples[sidx] < v)
+                    pf_fail("sampled banked witness missing: " + std::to_string(wantSamples[sidx]));
+                if (sidx < wantSamples.size() && wantSamples[sidx] == v) ++sidx;
+            });
+            bitmap.journal();
+            bitmap.cleanup();
             if (highbits > hpos) { high.putzeros(highbits - hpos); hpos = highbits; }
             pf_check(i == chi, "EF count");
             pf_check(low.bitPos == lowbits && high.bitPos == highbits, "EF dimensions");
@@ -6290,6 +6040,10 @@ int main(int argc, char** argv) {
             container.num(l); container.num(lowbits); container.num(highbits);
             low.copyTo(container);
             high.copyTo(container);
+            const uint64_t publishedBytes = 24 + low.bytes() + high.bytes();
+            fprintf(stderr, "XSA_FINISH_CHI_PUBLISHED entries=%llu bytes=%llu bits_per_entry=%.6f\n",
+                    (unsigned long long)chi, (unsigned long long)publishedBytes,
+                    chi ? 8.0 * double(publishedBytes) / double(chi) : 0.0);
             r.close(); r.report(i, "witnesses");
         }
         if (!wantSamples.empty())
@@ -6719,7 +6473,8 @@ int main(int argc, char** argv) {
         phase("publish", last);
 
         // ---- cleanup: scratch only. rlebwt (+meta) go after the container.
-        buckets.cleanup();
+        if (buildChi) bitmap.journal();
+        bitmap.cleanup();
         pf_check(::unlink(sparsePath.c_str()) == 0, "unlink sparse scratch");
         {
             std::string sent = prefix + ".runcols.consumed";

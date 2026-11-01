@@ -244,3 +244,33 @@ Publication requires each sampled run ID to be below `0xffffffff`
 (`xsa_finish.cpp`: `run index exceeds u32`). Chi omission does not widen this
 field; full publication of a larger-run-count container remains a separate
 format limit, beyond the partial 100 GB construction-progress gate.
+
+### Mmap chi construction (v6 finish)
+
+With chi enabled, `xsa_finish` keeps one membership bit per normalized corpus
+position in `<prefix>.chi-bitmap`: exactly `ceil(n/8)` bytes, file-backed with
+`MAP_SHARED` and `MADV_RANDOM`. The unchanged interval sweep selects witnesses;
+test-and-set retains their first emission. The existing uniqueness invariant is
+checked before publication (sweep count = bitmap popcount, no duplicate attempts).
+After the sweep, an ascending scan emits codec 105 Elias–Fano directly through
+two bounded spool buffers. The bitmap is unmapped and unlinked after this scan;
+normal exception cleanup also removes it. Chi-disabled builds allocate no bitmap.
+
+No m5 format or reader change is needed: the published set is already a sparse
+bitvector, with `24 + ceil(chi*l/8) + ceil(((n>>l)+chi+1)/8)` bytes for nonempty
+chi. The bitmap replaces the former vectors, value buckets and external merges,
+not the published encoding. `XSA_FINISH_CHI_BITMAP` reports file bytes and the
+process peak RSS at encoding and after publication; `XSA_FINISH_CHI_PUBLISHED`
+reports payload bytes (including its 24-byte header) and bits per entry.
+File-backed pages can become resident: mmap does not guarantee a small RSS.
+Chi working storage is O(n/8) file-backed pages plus bounded buffers, while other
+finish components also contribute to the reported process peak.
+
+Published positions are asserted strictly increasing and unique. Sweep emissions
+are **not** suffix-rank monotone: the existing banana regression emits ranks
+3,2,0. A rank-order assertion on those emissions is therefore invalid; retaining
+the established representatives requires preserving the interval sweep. See
+`tools/binbwt/tests/chi_deferral_test.py`. `--selftest-witness-batch` exercises the
+bitmap, duplicates, sparse/dense sets, first-occurrence bridge order, partial-byte
+boundaries and cleanup; `tools/binbwt/tests/chi_bitmap_gate.py` compares complete
+m5 bytes and CRCs with a retained baseline.
