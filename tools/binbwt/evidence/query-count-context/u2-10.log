@@ -1,0 +1,8 @@
+== gate: qlite 10 GB correctness (20 low-count patterns, -j 32)
+QLITE_OPEN container=/mnt/nvme2n1/erikg/wf-finish-as-evidence/10control/pile-10b-snap.sxi2 format=sxi2-v6-lite magic=SXI2 version=6 mmap_ms=0.46 decoded_bytes=0 stages=none n=10000017259 runs=3474889847 members=m1,m4,m7,m10,m11,m12,m13 end_symbol=none orientation=none alphabet=none
+QLITE_BUILD runs=3474889847 decoded_bytes=45798569099 stages=[m11-anchors=27.7ms prefetch=0.2ms run-columns=18903.5ms] build_ms=18931.4 n=10000017259 threads=32 patterns=20 m1_block_runs=1024 m1_blocks=3393448 rundir_l2=512 rundir_occ_stride=256 rundir_gap=1024
+QUERY_DONE patterns=20 occurrences=20 absent=0 query_ms=19.5 first_answer_ms=18953.8 low_count_patterns=20 low_count_mean_us=15586.2 low_count_max_us=19263.3 low_count_lf_steps=47364 low_count_mean_steps=2368 low_count_max_steps=6307 high_count_patterns=0
+WALL 21.39 s  RSS 47882896 kB
+COUNTS 20/20 exact
+POSITIONS 20/20 exact
+GATE Q5 PASS

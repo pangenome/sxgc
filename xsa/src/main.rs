@@ -1388,7 +1388,7 @@ fn usage() -> ! {
     eprintln!("  xsa stats --rlbwt <prefix> [--chi ...]   from rlbwt pair");
     eprintln!("  xsa tags --chi <f.sA> --sidecar <names.tsv> [--revlines]");
     eprintln!("           [--output tags.tsv]                  first-appearance attribution");
-    eprintln!("  xsa query <container> <pattern> [<pattern> ...] [-j N] [--output tsv|jsonl] [--all | --count | --limit N] [--docs DIR]");
+    eprintln!("  xsa query <container> <pattern> [<pattern> ...] [-j N] [--output tsv|jsonl] [--all | --count | --limit N] [--docs DIR] [--context N]");
     eprintln!("           --patterns: the corpus contract, rec<0x1e>rec<0x1e>...rec<0x1e>, arbitrary");
     eprintln!("           bytes, no escaping, id = 0-based record index; --patterns-fasta reads FASTA;");
     eprintln!("           one orientation only: a lite container has no alphabet, --mode is refused;");
