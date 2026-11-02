@@ -1489,7 +1489,7 @@ impl<'a> Ctx<'a> {
         // consecutive samples lies within `run_gap` runs of the earlier one. Past
         // that point all of this sample interval's occurrences are already behind
         // us and the answer is the next sample's cumulative count (or, for the
-        // last sample, its own stride = occurrences after it). Without this the
+        // last sample, the symbol total in rows). Without this the
         // scan is unbounded in principle and was measured at 4203 runs on a
         // symbol with a 253,795-run occurrence gap.
         let gap = idx.rd.run_gap;
@@ -1497,7 +1497,7 @@ impl<'a> Ctx<'a> {
             return if a + 1 < m {
                 idx.entry(ci, a + 1).0
             } else {
-                c0 + u64::from(stride)
+                idx.total[ci]
             };
         }
         let mut acc = c0;
@@ -1550,8 +1550,9 @@ impl<'a> Ctx<'a> {
             let (nl, nr) = (base + self.rank(ch, l), base + self.rank(ch, r));
             l = nl;
             r = nr;
-            if l >= r {
-                return (l, r);
+            assert!(l <= r, "QUERY_INTERVAL_INVERTED l={l} r={r} pattern_len={}", pat.len());
+            if l == r {
+                return (l, l);
             }
         }
         (l, r)
@@ -1652,6 +1653,7 @@ fn decode_block(
 /// Mapped corpus metadata. Anchors bound each lookup to at most 63 deltas;
 /// no corpus-sized decoded start array is allocated.
 struct Documents {
+    dir: std::path::PathBuf,
     seps: Mmap,
     titles: Mmap,
     count: usize,
@@ -1702,7 +1704,7 @@ impl Documents {
         if payload.checked_add(20 + count * 6) != Some(titles.len() as u64) {
             return Err("invalid titles.bin payload/offset/length tables".into());
         }
-        let docs = Self { seps, titles, count: count as usize, bytes,
+        let docs = Self { dir: dir.to_path_buf(), seps, titles, count: count as usize, bytes,
             anchors: anchors as usize, payload: payload as usize };
         let mut start = u64_at(&docs.seps, 40);
         let mut title_end = 0;
@@ -1752,6 +1754,36 @@ impl Documents {
         }
         let (off, len) = self.title_range(doc);
         Ok((doc, pos-start, &self.titles[20+off..20+off+len]))
+    }
+    fn context_corpus(&self) -> Result<Mmap, String> {
+        let file = File::open(self.dir.join("corpus.bin")).map_err(|e| format!("context corpus.bin: {e}"))?;
+        let corpus = unsafe { Mmap::map(&file) }.map_err(|e| format!("context mmap: {e}"))?;
+        if corpus.len() as u64 != self.bytes { return Err("context corpus.bin length mismatch".into()); }
+        Ok(corpus)
+    }
+    fn snippet(&self, corpus: &[u8], pos: u64, window: u64) -> Result<(u64, u64, String, bool), String> {
+        let (doc, offset, _) = self.lookup(pos)?;
+        let start = pos-offset;
+        let next = if doc+1 < self.count { start+self.delta(doc+1) } else { self.bytes };
+        // Records end with 0x1E; the separator is not document content.
+        let end = if corpus[(next-1) as usize] == 0x1e { next-1 } else { next };
+        if pos >= end { return Err(format!("QUERY_CONTEXT_SEPARATOR_HIT pos={pos}")); }
+        let lo = pos.saturating_sub(window).max(start);
+        let hi = pos.saturating_add(window).min(end);
+        let bytes = &corpus[lo as usize..hi as usize];
+        assert!(!bytes.contains(&0x1e), "QUERY_CONTEXT_SEPARATOR pos={pos} start={lo} end={hi}");
+        let mut escaped = String::new();
+        for &b in bytes {
+            match b {
+                b'\n' => escaped.push_str("\\n"),
+                b'\r' => escaped.push_str("\\r"),
+                b'\t' => escaped.push_str("\\t"),
+                b'\\' => escaped.push_str("\\\\"),
+                0x20..=0x7e => escaped.push(b as char),
+                _ => { use std::fmt::Write; write!(&mut escaped, "\\x{b:02x}").unwrap(); }
+            }
+        }
+        Ok((lo, hi, escaped, lo != pos.saturating_sub(window) || hi != pos.saturating_add(window)))
     }
     fn emit(&self, w: &mut dyn Write, pid: usize, pos: u64) -> Result<(), String> {
         let (doc, offset, title) = self.lookup(pos)?;
@@ -1834,6 +1866,7 @@ struct Args {
     counts: bool,
     count: bool,
     limit: Option<u64>,
+    context: Option<u64>,
     threads: usize,
     verify: bool,
 }
@@ -1851,6 +1884,7 @@ fn parse(raw: &[std::ffi::OsString]) -> Args {
     let mut counts = false;
     let mut count = false;
     let mut limit = None;
+    let mut context = None;
     let mut threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
     let mut verify = false;
     let mut i = 0;
@@ -1865,6 +1899,12 @@ fn parse(raw: &[std::ffi::OsString]) -> Args {
             "--" => { literal = true; i += 1; }
             "--all" => { i += 1; }
             "--count" => { count = true; i += 1; }
+            "--context" => {
+                let value = args.get(i+1).unwrap_or_else(|| die("query: --context requires a nonnegative integer"));
+                if value.is_empty() || !value.bytes().all(|b| b.is_ascii_digit()) { die("query: --context requires a nonnegative integer"); }
+                context = Some(value.parse::<u64>().unwrap_or_else(|_| die("query: --context outside u64 range")));
+                i += 2;
+            }
             "--limit" => {
                 let value = args.get(i + 1).unwrap_or_else(|| die("query: --limit requires a nonnegative integer"));
                 if value.is_empty() || !value.bytes().all(|b| b.is_ascii_digit()) {
@@ -1938,6 +1978,7 @@ fn parse(raw: &[std::ffi::OsString]) -> Args {
             }
         }
     }
+    if context.is_some() && (count || counts) { die("query: --context requires hit output"); }
     if count && limit.is_some() { die("query: --count and --limit cannot be combined"); }
     if count && (counts || output != "tsv") {
         die("query: --count emits pattern_id<TAB>pattern<TAB>occurrences TSV; cannot combine with --counts or --output jsonl");
@@ -1977,6 +2018,7 @@ fn parse(raw: &[std::ffi::OsString]) -> Args {
         counts,
         count,
         limit,
+        context,
         threads,
         verify,
     }
@@ -2129,6 +2171,10 @@ fn read_fasta(path: &str, data: &[u8]) -> Vec<Vec<u8>> {
     out
 }
 
+fn assert_count(count: u64, n: u64, pattern_len: usize) {
+    assert!(count <= n, "QUERY_COUNT_IMPOSSIBLE count={count} pattern_len={pattern_len}");
+}
+
 pub fn command(args: &[std::ffi::OsString]) {
     // Wall clock from process start: the acceptance question is "how long
     // until the first answer", so every stage is reported against this.
@@ -2145,6 +2191,8 @@ pub fn command(args: &[std::ffi::OsString]) {
         )),
     };
     let docs = if a.count { None } else { discover_documents(&a.container, a.docs.as_deref(), reader.n) };
+    let corpus = a.context.map(|_| docs.as_ref().unwrap_or_else(|| die("query: --context requires matching document sidecars and corpus.bin (--docs DIR)"))
+        .context_corpus().unwrap_or_else(|e| die(&e)));
     let open_ms = t_open0.elapsed().as_secs_f64() * 1e3;
     let members: Vec<String> = reader.members.iter().map(|m| format!("m{}", m.id)).collect();
     // OPEN IS MMAP-ONLY: header, directory, header CRC and the 256-byte remap.
@@ -2249,7 +2297,9 @@ pub fn command(args: &[std::ffi::OsString]) {
             let (l, r) = cx.search(&work);
             let search_us = ts.elapsed().as_secs_f64() * 1e6;
             let tl = Instant::now();
-            let located = if a.count { 0 } else { (r - l).min(a.limit.unwrap_or(u64::MAX)) };
+            let occurrences = r.checked_sub(l).expect("QUERY_INTERVAL_INVERTED");
+            assert_count(occurrences, index.n(), pat.len());
+            let located = if a.count { 0 } else { a.limit.map_or(occurrences, |limit| occurrences.min(limit)) };
             let mut positions = Vec::with_capacity(located.min(1 << 20) as usize);
             let mut steps = 0u64;
             let mut max_steps = 0u64;
@@ -2266,7 +2316,7 @@ pub fn command(args: &[std::ffi::OsString]) {
             };
             let (d_of, d_cum, d_steps, d_ranks) = cx.diag();
             Hit {
-                occurrences: r - l,
+                occurrences,
                 positions,
                 search_us,
                 locate_us,
@@ -2280,7 +2330,9 @@ pub fn command(args: &[std::ffi::OsString]) {
     let first_answer_ms = t_proc.elapsed().as_secs_f64() * 1e3;
     let mut nocc = 0u64;
     let mut nabs = 0u64;
+    let mut clamped_hits = 0u64;
     for (pid, hit) in results.iter().enumerate() {
+        assert_count(hit.occurrences, index.n(), patterns[pid].len());
         let positions = &hit.positions;
         if hit.occurrences == 0 {
             nabs += 1;
@@ -2320,13 +2372,30 @@ pub fn command(args: &[std::ffi::OsString]) {
             ("tsv", false) => {
                 for p in positions {
                     if let Some(docs) = &docs {
-                        docs.emit(&mut w, pid, *p).unwrap_or_else(|e| die(&e));
+                        if let Some(window) = a.context {
+                            let (_, _, snippet, clamped) = docs.snippet(corpus.as_ref().unwrap(), *p, window).unwrap_or_else(|e| die(&e));
+                            clamped_hits += u64::from(clamped);
+                            let mut row = Vec::new();
+                            docs.emit(&mut row, pid, *p).unwrap_or_else(|e| die(&e));
+                            row.pop();
+                            w.write_all(&row).unwrap();
+                            writeln!(w, "\t{snippet}").unwrap();
+                        } else { docs.emit(&mut w, pid, *p).unwrap_or_else(|e| die(&e)); }
                     } else {
                         writeln!(w, "{}\t{}", pid, p).unwrap();
                     }
                 }
             }
             ("jsonl", false) => {
+                if let Some(window) = a.context {
+                    let contexts: Vec<_> = positions.iter().map(|&pos| {
+                        let (start, end, snippet, clamped) = docs.as_ref().unwrap().snippet(corpus.as_ref().unwrap(), pos, window).unwrap_or_else(|e| die(&e));
+                        clamped_hits += u64::from(clamped);
+                        serde_json::json!({"start":start,"end":end,"snippet":snippet})
+                    }).collect();
+                    writeln!(w, "{}", serde_json::json!({"pattern_id":pid,"count":positions.len(),"offsets":positions,"contexts":contexts})).unwrap();
+                    continue;
+                }
                 let list: Vec<String> = positions.iter().map(|p| p.to_string()).collect();
                 writeln!(
                     w,
@@ -2343,12 +2412,15 @@ pub fn command(args: &[std::ffi::OsString]) {
         }
     }
     w.flush().unwrap();
+    if let Some(window) = a.context { eprintln!("QUERY_CONTEXT window={window} clamped_hits={clamped_hits}"); }
     // Per-pattern timing, for the rows the caller can actually time (a
     // high-count pattern is dominated by materialising tens of millions of
     // positions and says nothing about the search kernel).
     let (mut worst_us, mut low_sum_us, mut nlow_us, mut high) = (0.0f64, 0.0f64, 0u64, 0u64);
     let (mut low_steps, mut low_max_steps, mut low_occ) = (0u64, 0u64, 0u64);
+    let mut clamped_hits = 0u64;
     for (pid, hit) in results.iter().enumerate() {
+        assert_count(hit.occurrences, index.n(), patterns[pid].len());
         let us = hit.search_us + hit.locate_us * hit.positions.len() as f64;
         if crate::trace_on() {
             eprintln!(
@@ -2560,6 +2632,34 @@ mod document_tests {
         std::fs::write(dir.path().join("MANIFEST.json"), br#"{"doc_count":130,"corpus_bytes":1300}"#).unwrap();
         dir
     }
+    #[test]
+    fn context_clamps_and_escapes_at_document_edges() {
+        let dir = fixture();
+        let docs = Documents::open(dir.path().to_str().unwrap(), 1301).unwrap();
+        let corpus = b"ab\n\t\\\xffghi\x1e".repeat(130);
+        for pos in [0, 8, 630, 638, 640, 648, 1290, 1298] {
+            let start = pos / 10 * 10;
+            let (lo, hi, text, clamped) = docs.snippet(&corpus, pos, u64::MAX).unwrap();
+            assert_eq!((lo, hi), (start, start+9));
+            assert_eq!(text, "ab\\n\\t\\\\\\xffghi");
+            assert!(clamped);
+            assert_eq!(docs.snippet(&corpus, pos, 0).unwrap(), (pos, pos, String::new(), false));
+        }
+        assert!(docs.snippet(&corpus, 9, 120).is_err());
+    }
+    #[test]
+    #[should_panic(expected = "QUERY_CONTEXT_SEPARATOR")]
+    fn context_rejects_interior_separator() {
+        let dir = fixture();
+        let docs = Documents::open(dir.path().to_str().unwrap(), 1301).unwrap();
+        let mut corpus = vec![b'a'; 1300];
+        corpus[2] = 0x1e;
+        docs.snippet(&corpus, 1, 120).unwrap();
+    }
+    #[test]
+    #[should_panic(expected = "QUERY_COUNT_IMPOSSIBLE count=18446744073709551615 pattern_len=500")]
+    fn impossible_count_injection_fires() { assert_count(u64::MAX, 100_093_934_467, 500); }
+
     #[test]
     fn documents_anchor_boundaries_separator_and_raw_title() {
         let dir = fixture();

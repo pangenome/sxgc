@@ -1,0 +1,6 @@
+U1 repro counts=0,0; absent_batch=102/102 zero; max_count=0 <= n=100093934467
+U3 spot-check pos=189241582 snippet='[[List of cat registries]]\\n* [[List of individual cats]]\\n* [[Selective breeding]]\\n* [[Wildcat]] \\xe2\\x80\\x93 the ancestor of the domestic cat\\n\\n== Explanatory notes ==\\n{{Notelist}}\\n\\n== References ==\\n{{Reflist}}\\n\\n{{Cat nav}}\\n{{Breed}}\\n{{Authority cont'
+U3 spot-check pos=32220885239 snippet=' many generations.{{sfn|Hohmann|Bartussek|B\\xc3\\xb6er|2001|p=182}}{{sfn|Bartussek|2004|p=24}} Raccoons usually do not prey on domestic cats and dogs, but isolated cases of killings have been reported.&lt;ref&gt;{{cite web|url=http://www.seattlepi'
+U3 spot-check pos=19912751225 snippet='Domestic cats\\n#REDIRECT [[Cat]]\\n\\n{{Redr|\\n {{R from long name}}\\n {{R from plural|of=domestic cat}}\\n}}'
+U3 --context 120 domestic cat: 2493/2493 snippets inside document; no 0x1E; starts <=120 bytes before hit; corpus spot-checks=3/3
+QUERY_CONTEXT window=120 clamped_hits=86

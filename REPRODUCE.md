@@ -731,3 +731,37 @@ tail -c 1 /dev/shm/t150m.txt | xxd                  # 1e
 ./oracle /dev/shm/t150m.txt patterns.bin > oracle.tsv
 diff <(sort -n -k1,1 -k2,2 oracle.tsv) <(sort -n -k1,1 -k2,2 q.out)
 ```
+
+### Document-bounded query context
+
+`xsa query CONTAINER 'domestic cat' --docs /path/to/corpus-directory --context 120`
+appends a snippet column to each normal TSV hit. Without `--context`, output is
+unchanged. The directory must contain matching `seps.bin`, `titles.bin`, and
+`corpus.bin`; normal sidecar discovery also works. Context is the half-open byte
+window `[max(doc_start, pos-N), min(doc_content_end, pos+N))`, excluding the trailing
+0x1E document delimiter. A hit on a delimiter is refused. Newlines, carriage
+returns, tabs, and backslashes are escaped as `\n`, `\r`, `\t`, and `\\`; other
+non-ASCII/nonprintable bytes use `\xHH`, so snippets are losslessly byte-decodable.
+`--output jsonl --context N` adds a `contexts` array aligned with `offsets`, with
+`start`, `end`, and the same escaped `snippet` string. JSON escaping is an outer
+layer. `--limit K` works with context; count-only modes cannot request snippets.
+The journal prints `QUERY_CONTEXT window=N clamped_hits=K`.
+
+Count results are checked against the index length before emission. An impossible
+result fails with `QUERY_COUNT_IMPOSSIBLE count=... pattern_len=...`. The final
+m13 sample's run stride is not a byte count: rank beyond that sample's bounded
+scan uses the total number of rows for the symbol.
+
+Run the committed large-corpus count/context regression:
+
+```sh
+python3 tools/binbwt/tests/query_count_context_gate.py /path/to/xsa \
+  /mnt/nvme2n1/erikg/wf-finish-as-100gb-20261102T044713Z/corpus.sxi2 \
+  /mnt/nvme2n1/erikg/wiki
+cargo test --release --manifest-path xsa/Cargo.toml qlite -- --nocapture
+```
+
+The gate includes the downstream binary reproducer, deterministic random and long
+absent patterns, absent corpus bytes, document bounds for every context, and three
+reported corpus-byte spot checks. The unit tests deliberately inject UINT64_MAX
+and an interior separator to demonstrate the fail-loud assertions.

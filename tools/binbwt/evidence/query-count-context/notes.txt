@@ -1,0 +1,14 @@
+2026-11-02: validation from isolated fix/query-count-context worktree, base 139926a.
+Release binary: /home/erikg/sxgc-docs-target/release/xsa
+Build: CARGO_TARGET_DIR=/home/erikg/sxgc-docs-target cargo build --release --manifest-path xsa/Cargo.toml
+Units: CARGO_TARGET_DIR=/home/erikg/sxgc-docs-target cargo test --release --manifest-path xsa/Cargo.toml qlite -- --nocapture
+U1/U3: python3 tools/binbwt/tests/query_count_context_gate.py /home/erikg/sxgc-docs-target/release/xsa /mnt/nvme2n1/erikg/wf-finish-as-100gb-20261102T044713Z/corpus.sxi2 /mnt/nvme2n1/erikg/wiki
+U2: XSA=/home/erikg/sxgc-docs-target/release/xsa C=/dev/shm/repro-verify/s150/t150m.sxi2 bash tools/binbwt/gate_qlite_150m.sh
+U2: XSA=/home/erikg/sxgc-docs-target/release/xsa C=/mnt/nvme2n1/erikg/wf-finish-as-evidence/10control/pile-10b-snap.sxi2 bash tools/binbwt/gate_qlite_10g.sh
+Additional direct --count comparison: all 100 150 MB oracle patterns; lowest 20 10 GB oracle rows with count <=3, sorted by count/id. Both exact.
+The old default 150 MB fixture is codec 101, rejected by the existing reader. Current codec-102/114 fixtures were explicitly selected above.
+Before fix: original /home/erikg/sxgc/xsa/target/release/xsa returned 18446744073709551615 for BOTH repro patterns.
+Repro SHA256: 6417e09a933dbf4ab15b623c3753875a9a6bcfc9cfa217f19af35d9d4dad090e
+Root cause: last m13 sample stride counts runs, not rows; beyond the bounded scan, use the symbol row total, not c0+stride.
+Manual review: default output untouched; context excludes record delimiter, uses saturating window arithmetic, asserts no interior delimiter, and byte-escapes the snippet. All 2493 snippets compared byte-for-byte with corpus; 3 printed samples also checked for the exact hit bytes.
+Residual limitations: context requires matching document sidecars and corpus.bin; byte escapes need decoding after JSON decoding. These are documented interface requirements. No known blockers.

@@ -1,0 +1,19 @@
+QUERY_COUNT_IMPOSSIBLE count=18446744073709551615 pattern_len=500
+QUERY_CONTEXT_SEPARATOR pos=1 start=0 end=10
+test qlite::document_tests::context_clamps_and_escapes_at_document_edges ... ok
+test qlite::document_tests::impossible_count_injection_fires - should panic ... ok
+test qlite::document_tests::context_rejects_interior_separator - should panic ... ok
+test qlite::pattern_contract_tests::trailing_separator_does_not_open_an_empty_record ... ok
+test qlite::pattern_contract_tests::missing_final_separator_still_terminates_by_eof ... ok
+test qlite::query_interface_tests::binary_records_starting_with_fasta_marker_stay_records ... ok
+test qlite::query_interface_tests::journal_paths_support_spaces_and_legacy_builds ... ok
+test qlite::pattern_contract_tests::records_are_record_indexed_and_keep_arbitrary_bytes ... ok
+test qlite::wide_directory_tests::run_directory_above_u32_and_old_codec ... ok
+test qlite::document_tests::documents_anchor_boundaries_separator_and_raw_title ... ok
+test qlite::query_interface_tests::positional_bytes_are_verbatim ... ok
+test qlite::pattern_contract_tests::fasta_records_are_concatenated_lines ... ok
+test qlite::window_scan_tests::scan_window_matches_the_scalar_reference ... ok
+test qlite::wide_directory_tests::block_offsets_above_old_32_gib_limit ... ok
+test qlite::document_tests::discovery_enforces_recorded_count_and_allows_sidecars_without_manifest ... ok
+test qlite::document_tests::documents_refuse_mismatched_and_corrupt_metadata ... ok
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 35 filtered out; finished in 0.00s
