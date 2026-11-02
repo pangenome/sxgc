@@ -69,7 +69,7 @@ if grep -vE '^\s*(//|$)' "$ROOT/xsa/src/qlite.rs" | grep -Eq 'product::|cmd_quer
 else
     ck ok "qlite.rs has no reference to product::/cmd_query/sxi::Container"
 fi
-grep -q 'Some("query") => qlite::command' "$ROOT/xsa/src/main.rs" \
+grep -A1 -F 'if raw.first().is_some_and(|a| a == "query")' "$ROOT/xsa/src/main.rs" | grep -Fq 'qlite::command(&raw[1..]);' \
     && ck ok "'query' dispatches to qlite::command only" || ck fail "query dispatch"
 
 # 4c. query-legacy is not a back door for the published format
