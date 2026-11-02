@@ -765,6 +765,49 @@ impl Journal {
     }
 }
 
+/// Retain diagnostic scratch on every error after the journal is opened,
+/// including early returns before the first phase starts.
+struct ScratchOutcome {
+    scratch: PathBuf,
+    journal: Journal,
+    success: bool,
+}
+impl Drop for ScratchOutcome {
+    fn drop(&mut self) {
+        if !self.success {
+            self.journal.line(&format!("SCRATCH_RETAINED bands_bytes={} reason=failure",
+                tree_bytes(&self.scratch.join("bands-tape"))));
+        }
+    }
+}
+
+fn clean_v2_scratch(scratch: &Path, container: &Path, journal: &mut Journal) -> Result<(), String> {
+    let bands = tree_bytes(&scratch.join("bands-tape"));
+    let waves = tree_bytes(&scratch.join("waves-tape"));
+    // Only remove paths owned by this build. In particular, never unlink the
+    // sibling lock inode, caller files, the published container or provenance.
+    for name in ["bands-tape", "waves-tape", "merged", "remap-256.bin"] {
+        let path = scratch.join(name);
+        let meta = match fs::symlink_metadata(&path) {
+            Ok(meta) => meta,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(format!("inspect scratch {}: {e}", path.display())),
+        };
+        let result = if meta.is_dir() { fs::remove_dir_all(&path) } else { fs::remove_file(&path) };
+        result.map_err(|e| format!("clean scratch {}: {e}", path.display()))?;
+    }
+    for suffix in [".partial", ".part"] {
+        let path = PathBuf::from(format!("{}{suffix}", container.display()));
+        match fs::remove_file(&path) {
+            Ok(()) => {},
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
+            Err(e) => return Err(format!("clean scratch {}: {e}", path.display())),
+        }
+    }
+    journal.line(&format!("SCRATCH_CLEANED bands_bytes={bands} waves_bytes={waves}"));
+    Ok(())
+}
+
 /// The lock inode must survive scratch cleanup. Keep this file, and inherit
 /// its open description in every stage: an orphan still owns the scratch tree
 /// after the driver exits. Never unlink the lock to "recover" a running build.
@@ -1258,6 +1301,11 @@ fn run_chain(options: Options) -> Result<(), String> {
 prove a fit (the projected peak exceeds the reported capacity)");
     }
     let mut journal = Journal::open(&journal_path)?;
+    let mut outcome = ScratchOutcome {
+        scratch: scratch.clone(),
+        journal: Journal { file: journal.file.try_clone().map_err(|e| e.to_string())? },
+        success: false,
+    };
     // SOURCE PROVENANCE, FIRST LINE: which tree produced the stages this run
     // executes. Git is the record (there is no checked-in digest of the
     // sources - see source_identity_line); the plan block follows as the first
@@ -1432,8 +1480,10 @@ prove a fit (the projected peak exceeds the reported capacity)");
         } else {
             journal.line("V2_PHRASE armed=0 (--phrase-radix absent: no parse, no dictionary, byte radix only)");
         }
-        return run_v2_tail(&mut journal, &options, &scratch, &tools, &input, &remap_path,
-                           n, memory_kb, finish_as_kb, &frag, bin_live_cap, plan_windows);
+        run_v2_tail(&mut journal, &options, &scratch, &tools, &input, &remap_path,
+                    n, memory_kb, finish_as_kb, &frag, bin_live_cap, plan_windows)?;
+        outcome.success = true;
+        return Ok(());
     }
 
     // 1. chunk front end (libsais, document-aligned cyclic BWT chunks).
@@ -1511,6 +1561,7 @@ prove a fit (the projected peak exceeds the reported capacity)");
     let peak_disc = tree_bytes(&scratch);
     journal.line(&format!("PEAK_DISC_USED_BYTES {peak_disc} (scratch tree after finish)"));
     journal.line(&format!("XSA_BUILD_DONE {chi}"));
+    outcome.success = true;
     Ok(())
 }
 
@@ -2014,6 +2065,7 @@ walks the corpus for every endpoint and no LCP slice is produced). Not a user op
         "PEAK_INTERMEDIATE peak_bytes={peak_disc} n={n} peak_intermediate_over_n={:.4} \
          lcp_source={lcp_source} pending_bands={tape_k}",
         peak_disc as f64 / n.max(1) as f64));
+    clean_v2_scratch(scratch, &container, journal)?;
     journal.line(&format!(
         "XSA_BUILD_DONE chi={chi} pipeline={} container={}",
         if options.tape { "v2tape" } else { "v2bin" },
@@ -2040,6 +2092,39 @@ pub fn command(args: &[String]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scratch_success_cleans_owned_files_and_failure_retains() {
+        for success in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let root = dir.path();
+            for name in ["bands-tape", "waves-tape", "merged"] {
+                fs::create_dir(root.join(name)).unwrap();
+                fs::write(root.join(name).join("left.part"), b"piece").unwrap();
+            }
+            for name in ["remap-256.bin", "corpus.sxi2.partial", "corpus.sxi2", "finish-v2.log", "finish-v2.time", "caller.txt"] {
+                fs::write(root.join(name), b"keep").unwrap();
+            }
+            let mut journal = Journal::open(&root.join("xsa-build.log")).unwrap();
+            {
+                let mut guard = ScratchOutcome { scratch: root.to_path_buf(),
+                    journal: Journal { file: journal.file.try_clone().unwrap() }, success: false };
+                if success {
+                    clean_v2_scratch(root, &root.join("corpus.sxi2"), &mut journal).unwrap();
+                    guard.success = true;
+                }
+            }
+            for name in ["bands-tape", "waves-tape", "merged", "remap-256.bin", "corpus.sxi2.partial"] {
+                assert_eq!(root.join(name).exists(), !success);
+            }
+            for name in ["corpus.sxi2", "finish-v2.log", "finish-v2.time", "caller.txt"] {
+                assert!(root.join(name).exists());
+            }
+            let log = fs::read_to_string(root.join("xsa-build.log")).unwrap();
+            assert_eq!(log, if success { "SCRATCH_CLEANED bands_bytes=5 waves_bytes=5\n" }
+                else { "SCRATCH_RETAINED bands_bytes=5 reason=failure\n" });
+        }
+    }
 
     static PROCESS_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
