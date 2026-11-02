@@ -2633,6 +2633,7 @@ struct WitnessBitmap {
         pf_check(map != MAP_FAILED, "mmap chi bitmap");
         bits = static_cast<uint8_t*>(map);
         pf_check(::madvise(bits, size_t(bytes), MADV_RANDOM) == 0, "advise chi bitmap random");
+        journal(); // Record the mapping immediately, even if the sweep later fails.
     }
     WitnessBitmap(const WitnessBitmap&) = delete;
     WitnessBitmap& operator=(const WitnessBitmap&) = delete;
@@ -5970,6 +5971,17 @@ int main(int argc, char** argv) {
             ::close(fd);
             std::sort(wantSamples.begin(), wantSamples.end());
             wantSamples.erase(std::unique(wantSamples.begin(), wantSamples.end()), wantSamples.end());
+        }
+
+        // Record the observed process high-water RSS before publishing m5.
+        // This is process RSS, not an estimate of chi-owned allocations.
+        if (buildChi) {
+            bitmap.journal();
+            struct rusage ru {};
+            pf_check(::getrusage(RUSAGE_SELF, &ru) == 0, "chi pre-publish getrusage");
+            fprintf(stderr, "XSA_FINISH_CHI_PEAK peak_bytes=%llu scope=process_rss stage=before_publish\n",
+                    (unsigned long long)ru.ru_maxrss * 1024);
+            fflush(stderr);
         }
 
         // ---- m5 EF over ascending bitmap positions

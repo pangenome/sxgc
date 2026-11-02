@@ -1573,6 +1573,11 @@ fn journal_bundle_provenance(journal: &mut Journal, tools: &Path, names: &[&str]
     Ok(())
 }
 
+// Corpus/bitmap mappings consume virtual address space even when reclaimable.
+fn finish_v2_as_kb(memory_kb: u64, requested_kb: u64, n: u64) -> u64 {
+    requested_kb.max(memory_kb).max((3 * n + 1023) / 1024)
+}
+
 /// The v2 front door: THE BIN SHAPE. bin-bwt (one sweep -> 256 byte-bins ->
 /// parallel per-bin construction -> ordered stitch into the unchanged
 /// band/piece protocol) is the producer; the decomposed fused finish
@@ -1604,7 +1609,7 @@ fn run_v2_tail(
     let timeout_s = options.timeout_s
         .ok_or("--v2-pipeline execution requires --timeout SECONDS")?;
     journal.line(&format!(
-        "V2_TIMEOUT seconds={timeout_s} (timeout -k 120 on every phase; ulimit -v {memory_kb} KiB; standing policy = huge, no phase may die on the cap)"));
+        "V2_TIMEOUT seconds={timeout_s} (timeout -k 120 on every phase; base ulimit -v {memory_kb} KiB; actual per-phase caps in PHASE START; standing policy = huge, no phase may die on the cap)"));
 
     // ---- the producer: bin-bwt, the plan's resolved arena bound
     journal.line(&format!(
@@ -1810,6 +1815,9 @@ walks the corpus for every endpoint and no LCP slice is produced). Not a user op
     let emit_running = if options.tape {
         Some(spawn_phase(journal, scratch, "emit-tape", memory_kb, "/usr/bin/timeout", &emit_args, &[])?)
     } else { None };
+    // RLIMIT_AS includes corpus and chi mappings, not only resident memory.
+    // Use the producer's 3n floor, retaining any larger explicit finish cap.
+    let finish_as_kb = finish_v2_as_kb(memory_kb, finish_as_kb, n);
     let finish_running = spawn_phase(journal, scratch, "finish-v2", finish_as_kb, "/usr/bin/timeout", &finish_args, &[])?;
     let v2_sampler = DiscSampler::start(scratch.to_path_buf(), Duration::from_secs(2));
     let mut phases = vec![producer_running, finish_running];
@@ -1938,7 +1946,7 @@ walks the corpus for every endpoint and no LCP slice is produced). Not a user op
         .map_err(|e| format!("read finish-v2 log: {e}"))?;
     for line in finish_log.lines() {
         if ["SLIM_FP ", "SLIM_SEEDS ", "XSA_FINISH_PFCK ",
-            "XSA_FINISH_CHI_BITMAP ", "XSA_FINISH_CHI_PUBLISHED ", "XSA_FINISH_PEAK_RSS ",
+            "XSA_FINISH_CHI_BITMAP ", "XSA_FINISH_CHI_PEAK ", "XSA_FINISH_CHI_PUBLISHED ", "XSA_FINISH_PEAK_RSS ",
             "XSA_FINISH_M1_BLOCKS ", "XSA_FINISH_M12_RUNSTARTS ", "XSA_FINISH_M13_RUNDIR "]
             .iter().any(|prefix| line.starts_with(prefix)) {
             journal.line(&format!("V2_FINISH_COUNTER {line}"));
@@ -2373,6 +2381,15 @@ mod tests {
         assert!(error.contains("requires --with-chi"), "{error}");
         // Existing non-tape builds retain their chi expectation contract.
         assert!(parse_chain(&v2_args(&["--chi-expect", "42"])).is_ok());
+    }
+
+    #[test]
+    fn finish_v2_address_space_floor() {
+        let memory_kb = 96 * 1048576;
+        assert_eq!(finish_v2_as_kb(memory_kb, memory_kb, 100_000_000_000), 292_968_750);
+        assert_eq!(finish_v2_as_kb(memory_kb, memory_kb, 10_000_017_259), memory_kb);
+        assert_eq!(finish_v2_as_kb(memory_kb, 400_000_000, 100_000_000_000), 400_000_000);
+        assert_eq!(finish_v2_as_kb(1, 1, 342), 2);
     }
 
     #[test]

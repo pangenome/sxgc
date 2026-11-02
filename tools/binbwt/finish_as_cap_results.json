@@ -1,0 +1,125 @@
+{
+  "base": "8be5206c24f05cb05e813be4b28c3b3a87e47274",
+  "evidence_root": "/mnt/nvme2n1/erikg/wf-finish-as-evidence",
+  "measurements": [
+    {
+      "tag": "150chi",
+      "chi": 44034230,
+      "finish_peak_rss_kib": 269776,
+      "finish_rlimit_as_kb": 16777216
+    },
+    {
+      "tag": "10chi",
+      "chi": 2676929445,
+      "finish_peak_rss_kib": 13449700,
+      "finish_rlimit_as_kb": 100663296
+    },
+    {
+      "tag": "10control",
+      "chi": 0,
+      "finish_peak_rss_kib": 12336688,
+      "finish_rlimit_as_kb": 100663296
+    }
+  ],
+  "chi_rss_delta_kib": 1113012,
+  "chi_rss_ratio": 1.090219676464218,
+  "tests": "42 passed; 0 failed",
+  "queries": {
+    "150chi": "== gate: qlite 150 MB correctness (C=/mnt/nvme2n1/erikg/wf-finish-as-evidence/150chi/t150m.sxi2, -j 16)\nQLITE_OPEN container=/mnt/nvme2n1/erikg/wf-finish-as-evidence/150chi/t150m.sxi2 format=sxi2-v6-lite magic=SXI2 version=6 mmap_ms=0.05 decoded_bytes=0 stages=none n=150000002 runs=57279194 members=m1,m4,m5,m7,m10,m11,m12,m13 end_symbol=none orientation=none alphabet=none\nQLITE_BUILD runs=57279194 decoded_bytes=754004530 stages=[m11-anchors=0.4ms prefetch=0.0ms run-columns=78.2ms] build_ms=78.6 n=150000002 threads=16 patterns=100 m1_block_runs=1024 m1_blocks=55937 rundir_l2=512 rundir_occ_stride=256 rundir_gap=1024\nQUERY_DONE patterns=100 occurrences=574 absent=0 query_ms=389.6 first_answer_ms=469.7 low_count_patterns=93 low_count_mean_us=1325.3 low_count_max_us=6757.8 low_count_lf_steps=288547 low_count_mean_steps=2774 low_count_max_steps=10981 high_count_patterns=7\nCOUNTS 100/100 exact\nPOSITIONS 574/574 exact\nGATE Q1 PASS\n",
+    "10chi": "== gate: qlite 10 GB correctness (20 low-count patterns, -j 32)\nQLITE_OPEN container=/mnt/nvme2n1/erikg/wf-finish-as-evidence/10chi/pile-10b-snap.sxi2 format=sxi2-v6-lite magic=SXI2 version=6 mmap_ms=0.07 decoded_bytes=0 stages=none n=10000017259 runs=3474889847 members=m1,m4,m5,m7,m10,m11,m12,m13 end_symbol=none orientation=none alphabet=none\nQLITE_BUILD runs=3474889847 decoded_bytes=45798569099 stages=[m11-anchors=22.8ms prefetch=0.0ms run-columns=20115.9ms] build_ms=20138.7 n=10000017259 threads=32 patterns=20 m1_block_runs=1024 m1_blocks=3393448 rundir_l2=512 rundir_occ_stride=256 rundir_gap=1024\nQUERY_DONE patterns=20 occurrences=20 absent=0 query_ms=5.5 first_answer_ms=20147.1 low_count_patterns=20 low_count_mean_us=2113.8 low_count_max_us=5211.1 low_count_lf_steps=47364 low_count_mean_steps=2368 low_count_max_steps=6307 high_count_patterns=0\nWALL 23.17 s  RSS 47899200 kB\nCOUNTS 20/20 exact\nPOSITIONS 20/20 exact\nGATE Q5 PASS\n"
+  },
+  "chi_identity": {
+    "150chi": {
+      "baseline_m5_byte_identical": true,
+      "bits_per_entry": 3.7032248775554835,
+      "bytes": 20383582,
+      "crc32": 2282445882,
+      "entries": 44034230,
+      "n": 150000002,
+      "sha256": "71393a8b96c0d669a9c7cdf51b1db26de913f2b21865eb14367c13d5e02e73b1",
+      "status": "PASS"
+    },
+    "10chi": {
+      "baseline_m5_byte_identical": true,
+      "bits_per_entry": 3.867814947210908,
+      "bytes": 1294233465,
+      "crc32": 4048223797,
+      "entries": 2676929445,
+      "n": 10000017259,
+      "sha256": "f9dee338665f64a21d12fe0c46f6ec62f2bd98cc7fcf764fe06365b1dab83f1e",
+      "status": "PASS"
+    }
+  },
+  "commands": [
+    {
+      "tag": "10chi",
+      "pid": 2984492,
+      "command": [
+        "/home/erikg/sxgc-finish-as/xsa/target/release/xsa",
+        "build",
+        "--input",
+        "/mnt/nvme2n1/erikg/extcols-scratch/real10b-ref/pile-10b-snap.txt",
+        "--scratch",
+        "/mnt/nvme2n1/erikg/wf-finish-as-evidence/10chi",
+        "--tape",
+        "--with-chi",
+        "--threads",
+        "32",
+        "--memory-gb",
+        "96",
+        "--timeout",
+        "3000",
+        "--chi-expect",
+        "2676929445"
+      ]
+    },
+    {
+      "tag": "10control",
+      "pid": 2984493,
+      "command": [
+        "/home/erikg/sxgc-finish-as/xsa/target/release/xsa",
+        "build",
+        "--input",
+        "/mnt/nvme2n1/erikg/extcols-scratch/real10b-ref/pile-10b-snap.txt",
+        "--scratch",
+        "/mnt/nvme2n1/erikg/wf-finish-as-evidence/10control",
+        "--tape",
+        "--no-chi",
+        "--threads",
+        "32",
+        "--memory-gb",
+        "96",
+        "--timeout",
+        "3000"
+      ]
+    }
+  ],
+  "diagnostics": {
+    "150chi": [
+      "XSA_FINISH_CHI_BITMAP bytes=18750001 mmap=1 peak_rss_kb=171696 entries=0 duplicates=0",
+      "XSA_FINISH_CHI_BITMAP bytes=18750001 mmap=1 peak_rss_kb=269776 entries=44034230 duplicates=0",
+      "XSA_FINISH_CHI_PEAK peak_bytes=276250624 scope=process_rss stage=before_publish",
+      "XSA_FINISH_CHI_BITMAP bytes=18750001 mmap=1 peak_rss_kb=269776 entries=44034230 duplicates=0",
+      "XSA_FINISH_CHI_PUBLISHED entries=44034230 bytes=20383582 bits_per_entry=3.703225",
+      "XSA_FINISH_CHI_BITMAP bytes=18750001 mmap=1 peak_rss_kb=269776 entries=44034230 duplicates=0",
+      "XSA_FINISH_PEAK_RSS kib=269776"
+    ],
+    "10chi": [
+      "XSA_FINISH_CHI_BITMAP bytes=1250002158 mmap=1 peak_rss_kb=9778164 entries=0 duplicates=0",
+      "XSA_FINISH_CHI_BITMAP bytes=1250002158 mmap=1 peak_rss_kb=13449700 entries=2676929445 duplicates=0",
+      "XSA_FINISH_CHI_PEAK peak_bytes=13772492800 scope=process_rss stage=before_publish",
+      "XSA_FINISH_CHI_BITMAP bytes=1250002158 mmap=1 peak_rss_kb=13449700 entries=2676929445 duplicates=0",
+      "XSA_FINISH_CHI_PUBLISHED entries=2676929445 bytes=1294233465 bits_per_entry=3.867815",
+      "XSA_FINISH_CHI_BITMAP bytes=1250002158 mmap=1 peak_rss_kb=13449700 entries=2676929445 duplicates=0",
+      "XSA_FINISH_PEAK_RSS kib=13449700"
+    ],
+    "10control": [
+      "XSA_FINISH_PEAK_RSS kib=12336688"
+    ]
+  },
+  "residual_risks": [
+    "100 GB completion is not a gate; launch and 120-second observation only.",
+    "10 GB at 96 threads hit pre-existing producer assertion: rows=8231294 target=4809757. Both 10 GB acceptance builds passed at 32 threads.",
+    "Source-package tests fail identically on unchanged mainline: scatter_sort source mirror mismatch and compressed registry payload over budget."
+  ]
+}

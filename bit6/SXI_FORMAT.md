@@ -261,7 +261,7 @@ Old readers reject new m1 codec 114 instead of silently misinterpreting it.
 Materialized query ranks are always u64; run lengths retain the producer's
 checked u32 wire bound. The run columns require 13 bytes/run, plus 16 bytes
 per 256 text rows. The pre-allocation memory check includes both terms.
-`XSA_FINISH_CHI_BITMAP`, `XSA_FINISH_CHI_PUBLISHED`, `XSA_FINISH_PEAK_RSS`,
+`XSA_FINISH_CHI_BITMAP`, `XSA_FINISH_CHI_PEAK`, `XSA_FINISH_CHI_PUBLISHED`, `XSA_FINISH_PEAK_RSS`,
 and the m1/m12/m13 size lines are copied into the top-level build journal.
 
 ### Mmap chi construction (v6 finish)
@@ -279,7 +279,14 @@ No m5 format or reader change is needed: the published set is already a sparse
 bitvector, with `24 + ceil(chi*l/8) + ceil(((n>>l)+chi+1)/8)` bytes for nonempty
 chi. The bitmap replaces the former vectors, value buckets and external merges,
 not the published encoding. `XSA_FINISH_CHI_BITMAP` reports file bytes and the
-process peak RSS at encoding and after publication; `XSA_FINISH_CHI_PUBLISHED`
+process peak RSS immediately after mapping, before encoding, and after publication.
+`XSA_FINISH_CHI_PEAK peak_bytes=... scope=process_rss stage=before_publish`
+records the observed process high-water RSS before assembling m5; it is not
+a chi-only allocation estimate. The finish-v2 address-space cap is at least
+`max(memory_gb * 1048576, ceil(3*n/1024))` KiB (or a larger explicit
+`--finish-as-gb`), because mapped pages count toward RLIMIT_AS even when not
+resident. Each PHASE START records the actual `rlimit_as_kb`.
+`XSA_FINISH_CHI_PUBLISHED`
 reports payload bytes (including its 24-byte header) and bits per entry.
 File-backed pages can become resident: mmap does not guarantee a small RSS.
 Chi working storage is O(n/8) file-backed pages plus bounded buffers, while other
