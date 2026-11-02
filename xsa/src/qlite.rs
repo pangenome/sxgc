@@ -1832,6 +1832,8 @@ struct Args {
     fasta: bool,
     output: String,
     counts: bool,
+    count: bool,
+    limit: Option<u64>,
     threads: usize,
     verify: bool,
 }
@@ -1847,6 +1849,8 @@ fn parse(raw: &[std::ffi::OsString]) -> Args {
     let mut fasta = false;
     let mut output = "tsv".to_string();
     let mut counts = false;
+    let mut count = false;
+    let mut limit = None;
     let mut threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
     let mut verify = false;
     let mut i = 0;
@@ -1860,6 +1864,15 @@ fn parse(raw: &[std::ffi::OsString]) -> Args {
         match args[i].as_str() {
             "--" => { literal = true; i += 1; }
             "--all" => { i += 1; }
+            "--count" => { count = true; i += 1; }
+            "--limit" => {
+                let value = args.get(i + 1).unwrap_or_else(|| die("query: --limit requires a nonnegative integer"));
+                if value.is_empty() || !value.bytes().all(|b| b.is_ascii_digit()) {
+                    die("query: --limit requires a nonnegative integer");
+                }
+                limit = Some(value.parse::<u64>().unwrap_or_else(|_| die("query: --limit is outside u64 range")));
+                i += 2;
+            }
             "--docs" if i + 1 < args.len() => {
                 docs = Some(args[i + 1].clone());
                 i += 2;
@@ -1925,6 +1938,10 @@ fn parse(raw: &[std::ffi::OsString]) -> Args {
             }
         }
     }
+    if count && limit.is_some() { die("query: --count and --limit cannot be combined"); }
+    if count && (counts || output != "tsv") {
+        die("query: --count emits pattern_id<TAB>pattern<TAB>occurrences TSV; cannot combine with --counts or --output jsonl");
+    }
     let container = container.unwrap_or_else(|| {
         die("query: need a container path\n  xsa query <container> --patterns <file> [-j N]")
     });
@@ -1958,6 +1975,8 @@ fn parse(raw: &[std::ffi::OsString]) -> Args {
         fasta,
         output,
         counts,
+        count,
+        limit,
         threads,
         verify,
     }
@@ -1965,6 +1984,7 @@ fn parse(raw: &[std::ffi::OsString]) -> Args {
 
 /// One pattern's result: positions plus the walls the kernel charged for it.
 struct Hit {
+    occurrences: u64,
     positions: Vec<u64>,
     search_us: f64,
     /// mean over occurrences
@@ -2124,7 +2144,7 @@ pub fn command(args: &[std::ffi::OsString]) {
              `xsa query-legacy`, which is ~1e6x slower per pattern and takes minutes to open."
         )),
     };
-    let docs = discover_documents(&a.container, a.docs.as_deref(), reader.n);
+    let docs = if a.count { None } else { discover_documents(&a.container, a.docs.as_deref(), reader.n) };
     let open_ms = t_open0.elapsed().as_secs_f64() * 1e3;
     let members: Vec<String> = reader.members.iter().map(|m| format!("m{}", m.id)).collect();
     // OPEN IS MMAP-ONLY: header, directory, header CRC and the 256-byte remap.
@@ -2208,7 +2228,7 @@ pub fn command(args: &[std::ffi::OsString]) {
                 die(&format!("pattern of length {} is not 1..={PAT_LEN_MAX}", pat.len()));
             }
             if pat.iter().any(|&b| !present[b as usize]) {
-                return Hit { positions: Vec::new(), search_us: 0.0, locate_us: 0.0,
+                return Hit { occurrences: 0, positions: Vec::new(), search_us: 0.0, locate_us: 0.0,
                     steps: 0, max_steps: 0, diag: (0, 0, 0, 0) };
             }
             // Index coordinates: the container's text is the corpus with the
@@ -2229,22 +2249,24 @@ pub fn command(args: &[std::ffi::OsString]) {
             let (l, r) = cx.search(&work);
             let search_us = ts.elapsed().as_secs_f64() * 1e6;
             let tl = Instant::now();
-            let mut positions = Vec::with_capacity((r - l).min(1 << 20) as usize);
+            let located = if a.count { 0 } else { (r - l).min(a.limit.unwrap_or(u64::MAX)) };
+            let mut positions = Vec::with_capacity(located.min(1 << 20) as usize);
             let mut steps = 0u64;
             let mut max_steps = 0u64;
-            for row in l..r {
+            for row in l..l + located {
                 let (p, st) = cx.locate_steps(row);
                 positions.push(p);
                 steps += st;
                 max_steps = max_steps.max(st);
             }
-            let locate_us = if r > l {
-                tl.elapsed().as_secs_f64() * 1e6 / (r - l) as f64
+            let locate_us = if located > 0 {
+                tl.elapsed().as_secs_f64() * 1e6 / located as f64
             } else {
                 0.0
             };
             let (d_of, d_cum, d_steps, d_ranks) = cx.diag();
             Hit {
+                occurrences: r - l,
                 positions,
                 search_us,
                 locate_us,
@@ -2260,10 +2282,25 @@ pub fn command(args: &[std::ffi::OsString]) {
     let mut nabs = 0u64;
     for (pid, hit) in results.iter().enumerate() {
         let positions = &hit.positions;
-        if positions.is_empty() {
+        if hit.occurrences == 0 {
             nabs += 1;
         }
-        nocc += positions.len() as u64;
+        nocc += hit.occurrences;
+        if a.count {
+            write!(w, "{pid}\t").unwrap();
+            // Escape only TSV delimiters and backslashes; retain arbitrary bytes.
+            for &b in &patterns[pid] {
+                match b {
+                    b'\t' => w.write_all(b"\\t"),
+                    b'\n' => w.write_all(b"\\n"),
+                    b'\r' => w.write_all(b"\\r"),
+                    b'\\' => w.write_all(b"\\\\"),
+                    _ => w.write_all(&[b]),
+                }.unwrap();
+            }
+            writeln!(w, "\t{}", hit.occurrences).unwrap();
+            continue;
+        }
         // TWO OUTPUT CONTRACTS, both keyed by the 0-based pattern id (which for a
         // 0x1E pattern file IS the record index, so a caller can join the answer
         // back to its own file without a header).
@@ -2320,7 +2357,7 @@ pub fn command(args: &[std::ffi::OsString]) {
                  diag_steps={} ranks={}",
                 pid,
                 patterns[pid].len(),
-                hit.positions.len(),
+                hit.occurrences,
                 hit.search_us,
                 hit.locate_us,
                 hit.steps,
@@ -2340,7 +2377,7 @@ pub fn command(args: &[std::ffi::OsString]) {
                 hit.diag.3
             );
         }
-        if hit.positions.len() <= 3 {
+        if hit.occurrences <= 3 {
             low_steps += hit.steps;
             low_max_steps = low_max_steps.max(hit.max_steps);
             low_occ += hit.positions.len() as u64;
@@ -2353,6 +2390,10 @@ pub fn command(args: &[std::ffi::OsString]) {
             high += 1;
         }
     }
+    eprintln!("QUERY_LOCATE mode={} positions_located={} lf_steps={}",
+        if a.count { "count" } else if a.limit.is_some() { "limit" } else { "all" },
+        results.iter().map(|h| h.positions.len() as u64).sum::<u64>(),
+        results.iter().map(|h| h.steps).sum::<u64>());
     eprintln!(
         "QUERY_DONE patterns={} occurrences={} absent={} query_ms={:.1} first_answer_ms={:.1} \
          low_count_patterns={} low_count_mean_us={:.1} low_count_max_us={:.1} \

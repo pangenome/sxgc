@@ -368,8 +368,58 @@ xsa query corpus.sxi2 "domestic cat" "feral cat" -j 32
 For binary patterns or bulk queries, use `--patterns patterns.bin` with 0x1E-separated
 records. Use `--patterns-fasta patterns.fa` explicitly for FASTA. Mixing file and
 positional patterns is refused because pattern ids would be ambiguous. `--all`
-emits every hit (currently also the default); `--output jsonl` preserves the machine
+emits every hit (also the default); `--output jsonl` preserves the machine
 format, one object per pattern with `pattern_id`, `count`, and `offsets`.
+
+Use `--count` for interval widths only: one
+`pattern_id<TAB>pattern<TAB>occurrences` row per pattern, including absent patterns
+(count zero). No positions are located and no LF locate walks run; sidecars are
+not loaded. Pattern tabs, newlines, carriage returns and backslashes are escaped
+as `\t`, `\n`, `\r`, `\\`; other bytes are preserved. This mode always emits
+TSV and refuses `--output jsonl` and the older `--counts` flag (which retains its
+existing locate-and-count behavior). Startup still opens the rank index; the
+batch search time and whole-process wall time are distinct measurements.
+
+Use `--limit N` to locate at most N occurrences **per pattern** (`N=0` is allowed).
+The walk visits the first N rows of each interval in suffix-array **rank order**,
+not text-position order. Results are deterministic: no RNG, no seed, reproducible.
+This can give dispersed examples for exploring **which documents contain this**,
+but does not enumerate all occurrences or all matching documents. Suffix ranks
+are lexicographic: following context, repeated text and duplicate documents can
+bias the first N rows. Thus it is not a statistically unbiased sample, and spread
+in one measured query does not guarantee representative document coverage for
+other patterns. For exhaustive occurrence results omit both flags or use `--all`.
+`--all` remains an accepted no-op synonym for the default; an explicit limit still
+caps output. With `--limit`, JSONL `count` describes the returned offsets; the
+journal's `occurrences` describes the complete interval. `--count` and `--limit`
+together are refused before the container is opened.
+
+`QUERY_LOCATE mode=count|limit|all positions_located=N lf_steps=N` journals actual
+locate work. `QUERY_DONE occurrences=N` reports total interval widths, including
+when output is limited. Neither journal appears on stdout.
+
+```sh
+xsa query corpus.sxi2 the cat --count
+xsa query corpus.sxi2 the --limit 16 --docs /path/to/corpus-sidecars
+```
+
+Validated 2026-11-02 (`tools/binbwt/gate_query_count_limit.py`; full journals and
+T2 output in `tools/binbwt/query_count_limit_results.json`):
+
+- 150 MB: 100/100 counts exact, 574/574 default positions exact; default output
+  byte-identical to the pre-change binary. Three warmed runs: median process wall
+  **0.279079 s count vs 0.685596 s full locate (2.457×)**. Median query-kernel
+  time is **0.6 ms vs 475.3 ms** (startup excluded).
+- 100 GB: 20 count patterns, including `the` (**436,092,525** occurrences),
+  **12.5 ms batch search**, **109.043147 s process wall**; journal confirms
+  `positions_located=0 lf_steps=0`. Index initialization dominates process time;
+  this is not a millisecond whole-process CLI invocation.
+- `the --limit 16`: exactly **16 rows across 13 distinct documents**,
+  **130.483590 s process wall** (39.6 ms search + locate); all 16 offsets checked
+  directly against corpus bytes. This demonstrates dispersion, not unbiasedness.
+- Limit 16 on a one-hit pattern is byte-identical to unlimited output; all 100
+  limit outputs match the corresponding full-output prefixes. Modern 10 GB
+  oracle: 20/20 counts and positions exact.
 
 Default TSV discovers document sidecars in this order: `--docs DIR`, next to the
 container, then the corpus directory recorded in its adjacent `xsa-build.log`.
