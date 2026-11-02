@@ -355,10 +355,40 @@ XSA_BUILD_DONE chi=44034230 pipeline=v2tape container=/dev/shm/repro-verify/s150
 ## 7. QUERY
 
 ```sh
-xsa query <container> --patterns <file> -j N
+xsa query <container> <pattern> [<pattern> ...] [-j N]
 ```
 
-Real invocation and output (`-j 4`, 21 patterns on the 150 MB container):
+Each positional argument is one verbatim byte pattern (quote spaces in the shell;
+use `--` before patterns beginning with `-`). Pattern ids start at zero. For example:
+
+```sh
+xsa query corpus.sxi2 "domestic cat" "feral cat" -j 32
+```
+
+For binary patterns or bulk queries, use `--patterns patterns.bin` with 0x1E-separated
+records. Use `--patterns-fasta patterns.fa` explicitly for FASTA. Mixing file and
+positional patterns is refused because pattern ids would be ambiguous. `--all`
+emits every hit (currently also the default); `--output jsonl` preserves the machine
+format, one object per pattern with `pattern_id`, `count`, and `offsets`.
+
+Default TSV discovers document sidecars in this order: `--docs DIR`, next to the
+container, then the corpus directory recorded in its adjacent `xsa-build.log`.
+New builds journal `CONTAINER_CORPUS_SIDECARS` with a JSON-quoted absolute directory,
+sidecar filenames, doc count (zero if unavailable), and corpus byte count. Historical journals use their
+absolute `XSA_BUILD START input=` path. Keep the journal beside a moved container,
+or move its sidecars beside it, or supply `--docs`. Candidates must agree with the
+container byte count and the sidecars' counts (and manifest, when present); a recorded doc count is also
+checked when available. Invalid candidates warn and discovery continues.
+
+With matching sidecars, rows are `pattern_id<TAB>doc_id<TAB>offset_in_doc<TAB>title<TAB>global_offset`.
+Titles escape backslashes as `\\` and newlines as `\n`. Without matching sidecars,
+a warning accompanies the original `pattern_id<TAB>global_offset` rows.
+`QUERY_DOCS source=docs|sibling|recorded|none docs=N corpus_bytes=N` records the choice
+on stderr. Historical containers do not carry an independent document count; their
+sidecars' counts are checked against one another and their manifest when present. Matching counts
+and sizes are metadata checks, not a cryptographic corpus identity check.
+
+Archived bulk invocation and output (`-j 4`, 21 patterns on the 150 MB container):
 
 ```sh
 xsa query /dev/shm/repro-verify/s150/t150m.sxi2 --patterns patterns.bin -j 4
@@ -443,11 +473,9 @@ rec \x1E rec \x1E … rec \x1E        (one terminal separator terminates; it doe
 - a record may not be empty (`record 1 is empty; the 0x1E contract has no empty
   record …`) and may not exceed **65,536 bytes** (`record 0 is 70000 bytes, over the
   65536-byte pattern limit`);
-- `--patterns-fasta <file>` forces FASTA (one sequence per record, newlines
-  dropped), and `--patterns` **auto-detects** it when the file starts with `>`
-  (`PATTERNS_USED … format=fasta detected=leading-gt`). For DNA, use
-  `--patterns-fasta` (or a `>`-leading file) and note there is **one orientation
-  only** — no reverse complement is ever searched.
+- `--patterns-fasta <file>` reads FASTA (one sequence per record, newlines
+  dropped). `--patterns` always reads raw 0x1E records, including a leading `>`.
+  There is **one orientation only** — no reverse complement is ever searched.
 - **`--ri4` no longer exists** (nor `--sxi`): the container is positional and
   identifies itself. `--ri4` is refused by name, and so is `--mode` (a lite
   container has no alphabet).
@@ -565,7 +593,7 @@ pointer to `xsa build --tape --input`; tiny tape inputs remain unsupported.
 | `<path>: 0x1E record file holds no record (0 bytes)` ✔ | empty pattern file | — |
 | `<path>: record <i> is <k> bytes, over the 65536-byte pattern limit` ✔ | a 70,000-byte "pattern" | split it (a pattern is a read, not an assembly) |
 | `query: --counts is a tsv option; --output jsonl already reports a count per id` ✔ | flag conflict, refused before any work | pick one |
-| `query: unknown option <x>` / `query: unexpected positional argument <x>` | extra arg | container is positional, at most one |
+| `query: unknown option <x>` | unrecognized option | use positional patterns or one pattern file; use `--` for leading hyphens |
 | `<path>: <e> … supported: SXI2 v6 lite …` | a legacy/`.ri4` container | rebuild it with `xsa build`; `query-legacy` is deprecated and ~1e6× slower per pattern |
 
 ### Native-stage refusals you can still see through `xsa build`
