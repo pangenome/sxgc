@@ -1,0 +1,77 @@
+{
+  "base": "b873e2587d6f4d472b9a477d5a9630d78dbe80b1",
+  "evidence_root": "/mnt/nvme2n1/erikg/wf-docs-cleanup-evidence",
+  "tested_source_sha256": {
+    "xsa/src/chain.rs": "1471c285187e3aabef6d9e7f360a9e154c4e1c272ec52c925d9e016707def70d",
+    "xsa/src/main.rs": "47b77fe05ab1535c703987788ce654f242e0d1b8f5be3d8926402163962c4c5e",
+    "xsa/src/qlite.rs": "e62910f03d1c3a09c68dad8cb4d3a3054f93783c83cdf9d6ebc4529226e7f295",
+    "tools/binbwt/gate_docs_cleanup.sh": "d3b25e1a319a3f5b77458e3be69b6042fc1e9a8920fc487986107e17c7c85dc1",
+    "tools/binbwt/gate_query_docs.py": "ecf7580427bf62a785df4f298d422a05b9c34c2b765abfddf405d37f788a1774"
+  },
+  "unit_tests": "45 passed; 0 failed",
+  "J1": "100 patterns, 574/574 positions, document IDs, local offsets and raw escaped titles identical to independent Python full-delta decode",
+  "J2": {
+    "occurrences": 2493,
+    "top5_verbatim": "DOCS_ORACLE patterns=1 hits=2493 positions_and_titles=identical\ndoc_id\toccurrences\ttitle\n4065\t69\tCat\n18166250\t38\tDomestication of the cat\n534236\t24\tFeral cat\n15089946\t22\tCat predation on wildlife\n353303\t20\tCat coat genetics\n",
+    "journal": [
+      "QUERY_DOCS seps=/mnt/nvme2n1/erikg/wiki/seps.bin titles=/mnt/nvme2n1/erikg/wiki/titles.bin docs=25932219 corpus_bytes=100093934466",
+      "QUERY_DONE patterns=1 occurrences=2493 absent=0 query_ms=8408.3 first_answer_ms=91023.0 low_count_patterns=0 low_count_mean_us=NaN low_count_max_us=0.0 low_count_lf_steps=0 low_count_mean_steps=NaN low_count_max_steps=0 high_count_patterns=1"
+    ],
+    "wall_seconds": 107.92,
+    "peak_rss_kib": 279938676
+  },
+  "J3": "100/100 oracle counts, 574/574 positions; no-docs TSV byte-identical to pre-change binary; CLI gate Q6 PASS",
+  "J4a": {
+    "files": [
+      "emit-tape.log",
+      "emit-tape.time",
+      "finish-v2.log",
+      "finish-v2.time",
+      "order-tape.log",
+      "order-tape.time",
+      "t150m.sxi2",
+      "xsa-build.log"
+    ],
+    "journal": [
+      "SCRATCH_CLEANED bands_bytes=884 waves_bytes=0"
+    ]
+  },
+  "J4b": {
+    "injection": "--chi-expect 1 (actual chi=44034230), finish-v2 rc=2",
+    "journal": [
+      "SCRATCH_RETAINED bands_bytes=884 reason=failure"
+    ],
+    "retained": [
+      "bands-tape",
+      "waves-tape",
+      "merged",
+      "remap-256.bin"
+    ]
+  },
+  "negative_checks": [
+    "container length mismatch",
+    "MANIFEST doc_count mismatch",
+    "corrupt anchor",
+    "truncated titles",
+    "--docs with --counts or JSONL refused"
+  ],
+  "protected_files": "100 GB container and four corpus files size/mtime unchanged; read-only use only",
+  "commands": [
+    "CARGO_TARGET_DIR=/home/erikg/sxgc-docs-target BUILD_JOBS=16 cargo test --manifest-path xsa/Cargo.toml --bin xsa",
+    "CARGO_TARGET_DIR=/home/erikg/sxgc/xsa/target cargo build --release --manifest-path xsa/Cargo.toml",
+    "XSA=/home/erikg/sxgc/xsa/target/release/xsa OUT=/mnt/nvme2n1/erikg/wf-docs-cleanup-evidence/gates bash tools/binbwt/gate_docs_cleanup.sh",
+    "/home/erikg/sxgc/xsa/target/release/xsa query /mnt/nvme2n1/erikg/wf-finish-as-100gb-20261102T044713Z/corpus.sxi2 --patterns /tmp/p_cat.bin --docs /mnt/nvme2n1/erikg/wiki -j 32",
+    "python3 tools/binbwt/gate_query_docs.py top /mnt/nvme2n1/erikg/wiki /mnt/nvme2n1/erikg/wf-docs-cleanup-evidence/cat.tsv",
+    "cmp /mnt/nvme2n1/erikg/wf-docs-cleanup-evidence/baseline.tsv /mnt/nvme2n1/erikg/wf-docs-cleanup-evidence/gates/plain.tsv",
+    "XSA=/home/erikg/sxgc/xsa/target/release/xsa C=/mnt/nvme2n1/erikg/wf-docs-cleanup-evidence/gates/success/t150m.sxi2 bash tools/binbwt/gate_qlite_cli.sh"
+  ],
+  "notes": [
+    "150 MB sidecars generated from the existing unchanged 0x1E corpus; fixture titles are record first lines (up to 65535 bytes).",
+    "SXI2 n includes virtual END: seps.corpus_bytes + 1 must equal n. Doc counts must agree across seps, titles and MANIFEST.",
+    "Actual XTIT v1 layout includes a u16 length table after offsets; the reader validates and uses it."
+  ],
+  "residual_risks": [
+    "Existing SXI2 has no corpus digest or document count: size/count consistency cannot cryptographically distinguish equal-size corpus substitutions.",
+    "A SIGKILL of the driver itself cannot execute a failure journal; child-phase failures are detected and journaled."
+  ]
+}

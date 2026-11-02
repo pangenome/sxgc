@@ -1649,10 +1649,131 @@ fn decode_block(
     want
 }
 
+/// Mapped corpus metadata. Anchors bound each lookup to at most 63 deltas;
+/// no corpus-sized decoded start array is allocated.
+struct Documents {
+    seps: Mmap,
+    titles: Mmap,
+    count: usize,
+    bytes: u64,
+    anchors: usize,
+    payload: usize,
+}
+
+impl Documents {
+    fn open(dir: &str, n: u64) -> Result<Self, String> {
+        let dir = std::path::Path::new(dir);
+        let map = |name: &str| -> Result<Mmap, String> {
+            let path = dir.join(name);
+            let file = File::open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            unsafe { Mmap::map(&file) }.map_err(|e| format!("{}: {e}", path.display()))
+        };
+        let seps = map("seps.bin")?;
+        let titles = map("titles.bin")?;
+        let manifest: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(dir.join("MANIFEST.json")).map_err(|e| format!("MANIFEST.json: {e}"))?
+        ).map_err(|e| format!("MANIFEST.json: {e}"))?;
+        let u32at = |b: &[u8], o| u32::from_le_bytes(b[o..o+4].try_into().unwrap()) as usize;
+        if seps.len() < 48 || &seps[..4] != b"XSEP" || u32at(&seps, 4) != 1
+            || u32at(&seps, 12) != 64 || u32at(&seps, 8) & !1 != 0 {
+            return Err("invalid seps.bin header (expected XSEP v1, stride 64)".into());
+        }
+        if titles.len() < 20 || &titles[..4] != b"XTIT" || u32at(&titles, 4) != 1 {
+            return Err("invalid titles.bin header (expected XTIT v1)".into());
+        }
+        let count = u64_at(&seps, 16);
+        let bytes = u64_at(&seps, 24);
+        let anchors = count.div_ceil(64);
+        // SXI2 n includes the structural virtual END, which is not a corpus byte.
+        if bytes.checked_add(1) != Some(n) || manifest["corpus_bytes"].as_u64() != Some(bytes)
+            || manifest["doc_count"].as_u64() != Some(count)
+            || u32at(&titles, 8) as u64 != count {
+            return Err(format!("corpus metadata mismatch: container n={n} (includes virtual END), seps corpus_bytes={bytes} docs={count}, titles docs={}, MANIFEST corpus_bytes={} doc_count={}",
+                u32at(&titles, 8), manifest["corpus_bytes"], manifest["doc_count"]));
+        }
+        if count == 0 || count > u32::MAX as u64 || u64_at(&seps, 32) != anchors
+            || 48 + count * 4 + anchors * 8 != seps.len() as u64 {
+            return Err("invalid seps.bin counts or file length".into());
+        }
+        let payload = u64_at(&titles, 12);
+        if payload.checked_add(20 + count * 6) != Some(titles.len() as u64) {
+            return Err("invalid titles.bin payload/offset/length tables".into());
+        }
+        let docs = Self { seps, titles, count: count as usize, bytes,
+            anchors: anchors as usize, payload: payload as usize };
+        let mut start = u64_at(&docs.seps, 40);
+        let mut title_end = 0;
+        for i in 0..docs.count {
+            let delta = docs.delta(i);
+            start = start.checked_add(delta).ok_or("seps.bin start overflow")?;
+            if start >= bytes || (i == 0 && start != 0) || (i > 0 && delta == 0)
+                || (i % 64 == 0 && docs.anchor(i / 64) != start) {
+                return Err(format!("invalid seps.bin start/anchor at document {i}"));
+            }
+            let (off, len) = docs.title_range(i);
+            if off != title_end || off.checked_add(len).is_none_or(|end| end > docs.payload) {
+                return Err(format!("invalid titles.bin range at document {i}"));
+            }
+            title_end = off + len;
+        }
+        if title_end != docs.payload { return Err("titles.bin unreferenced payload".into()); }
+        eprintln!("QUERY_DOCS seps={} titles={} docs={count} corpus_bytes={bytes}",
+            dir.join("seps.bin").display(), dir.join("titles.bin").display());
+        Ok(docs)
+    }
+    fn delta(&self, i: usize) -> u64 {
+        u32::from_le_bytes(self.seps[48+i*4..52+i*4].try_into().unwrap()) as u64
+    }
+    fn anchor(&self, i: usize) -> u64 { u64_at(&self.seps, 48+self.count*4+i*8) }
+    fn title_range(&self, i: usize) -> (usize, usize) {
+        let off = 20+self.payload+i*4;
+        let len = 20+self.payload+self.count*4+i*2;
+        (u32::from_le_bytes(self.titles[off..off+4].try_into().unwrap()) as usize,
+         u16::from_le_bytes(self.titles[len..len+2].try_into().unwrap()) as usize)
+    }
+    fn lookup(&self, pos: u64) -> Result<(usize, u64, &[u8]), String> {
+        if pos >= self.bytes { return Err(format!("document lookup outside corpus: {pos}")); }
+        let (mut lo, mut hi) = (0, self.anchors);
+        while lo < hi {
+            let mid = lo + (hi-lo)/2;
+            if self.anchor(mid) <= pos { lo = mid+1; } else { hi = mid; }
+        }
+        let block = lo-1;
+        let mut doc = block*64;
+        let mut start = self.anchor(block);
+        let end = (doc+64).min(self.count);
+        while doc+1 < end {
+            let next = start+self.delta(doc+1);
+            if next > pos { break; }
+            start = next;
+            doc += 1;
+        }
+        let (off, len) = self.title_range(doc);
+        Ok((doc, pos-start, &self.titles[20+off..20+off+len]))
+    }
+    fn emit(&self, w: &mut dyn Write, pid: usize, pos: u64) -> Result<(), String> {
+        let (doc, offset, title) = self.lookup(pos)?;
+        let emit = || -> std::io::Result<()> {
+            write!(w, "{pid}\t{doc}\t{offset}\t")?;
+            for &b in title {
+                match b {
+                    b'\n' => w.write_all(b"\\n")?,
+                    b'\\' => w.write_all(b"\\\\")?,
+                    _ => w.write_all(&[b])?,
+                }
+            }
+            writeln!(w, "\t{pos}")
+        };
+        let mut emit = emit;
+        emit().map_err(|e| format!("write document hit: {e}"))
+    }
+}
+
 // ---------------------------------------------------------------- the command
 
 struct Args {
     container: String,
+    docs: Option<String>,
     patterns: String,
     /// `--patterns-fasta`: force the FASTA reader. `--patterns` auto-detects
     /// instead (a file whose first byte is `>` is FASTA, anything else is the
@@ -1667,6 +1788,7 @@ struct Args {
 fn parse(args: &[String]) -> Args {
     let mut container: Option<String> = None;
     let mut patterns: Option<String> = None;
+    let mut docs = None;
     let mut fasta = false;
     let mut output = "tsv".to_string();
     let mut counts = false;
@@ -1675,6 +1797,10 @@ fn parse(args: &[String]) -> Args {
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
+            "--docs" if i + 1 < args.len() => {
+                docs = Some(args[i + 1].clone());
+                i += 2;
+            }
             "--patterns" if i + 1 < args.len() => {
                 if fasta {
                     die("query: --patterns and --patterns-fasta are exclusive: pick one\n  \
@@ -1749,7 +1875,11 @@ fn parse(args: &[String]) -> Args {
             "query: --counts is a tsv option; --output {output} already reports a count per id"
         ));
     }
+    if docs.is_some() && (counts || output != "tsv") {
+        die("query: --docs requires per-hit TSV output (incompatible with --counts/--output jsonl)");
+    }
     Args {
+        docs,
         container,
         patterns,
         fasta,
@@ -1946,6 +2076,8 @@ pub fn command(args: &[String]) {
              `xsa query-legacy`, which is ~1e6x slower per pattern and takes minutes to open."
         )),
     };
+    let docs = a.docs.as_ref().map(|dir| Documents::open(dir, reader.n)
+        .unwrap_or_else(|e| die(&format!("query --docs: {e}"))));
     let open_ms = t_open0.elapsed().as_secs_f64() * 1e3;
     let members: Vec<String> = reader.members.iter().map(|m| format!("m{}", m.id)).collect();
     // OPEN IS MMAP-ONLY: header, directory, header CRC and the 256-byte remap.
@@ -2098,7 +2230,11 @@ pub fn command(args: &[String]) {
             ("tsv", true) => writeln!(w, "{}\t{}", pid, positions.len()).unwrap(),
             ("tsv", false) => {
                 for p in positions {
-                    writeln!(w, "{}\t{}", pid, p).unwrap();
+                    if let Some(docs) = &docs {
+                        docs.emit(&mut w, pid, *p).unwrap_or_else(|e| die(&e));
+                    } else {
+                        writeln!(w, "{}\t{}", pid, p).unwrap();
+                    }
                 }
             }
             ("jsonl", false) => {
@@ -2319,5 +2455,65 @@ mod wide_directory_tests {
             assert_eq!(decode_block_entry(&words(&[offset, 1024 | (2048u64 << 32)]), 0, 16), (offset, 1024, 2048));
         }
         assert_eq!(decode_block_entry(&words(&[7 | (1024u64 << 32) | (2048u64 << 48)]), 0, 8), (56, 1024, 2048));
+    }
+}
+
+#[cfg(test)]
+mod document_tests {
+    use super::*;
+
+    fn fixture() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let mut seps = b"XSEP".to_vec();
+        for v in [1u32, 1, 64] { seps.extend(v.to_le_bytes()); }
+        for v in [130u64, 1300, 3, 0] { seps.extend(v.to_le_bytes()); }
+        for i in 0..130 { seps.extend((if i == 0 { 0u32 } else { 10 }).to_le_bytes()); }
+        for v in [0u64, 640, 1280] { seps.extend(v.to_le_bytes()); }
+        let title = b"a\n\\\xff";
+        let mut titles = b"XTIT".to_vec();
+        titles.extend(1u32.to_le_bytes());
+        titles.extend(130u32.to_le_bytes());
+        titles.extend((130 * title.len() as u64).to_le_bytes());
+        for _ in 0..130 { titles.extend(title); }
+        for i in 0..130 { titles.extend((i * title.len() as u32).to_le_bytes()); }
+        for _ in 0..130 { titles.extend((title.len() as u16).to_le_bytes()); }
+        std::fs::write(dir.path().join("seps.bin"), seps).unwrap();
+        std::fs::write(dir.path().join("titles.bin"), titles).unwrap();
+        std::fs::write(dir.path().join("MANIFEST.json"), br#"{"doc_count":130,"corpus_bytes":1300}"#).unwrap();
+        dir
+    }
+    #[test]
+    fn documents_anchor_boundaries_separator_and_raw_title() {
+        let dir = fixture();
+        let docs = Documents::open(dir.path().to_str().unwrap(), 1301).unwrap();
+        for pos in 0..1300 {
+            let (doc, offset, title) = docs.lookup(pos).unwrap();
+            assert_eq!((doc, offset), ((pos / 10) as usize, pos % 10));
+            assert_eq!(title, b"a\n\\\xff");
+        }
+        assert!(docs.lookup(1300).is_err());
+        let mut output = Vec::new();
+        docs.emit(&mut output, 2, 649).unwrap();
+        assert_eq!(output, b"2\t64\t9\ta\\n\\\\\xff\t649\n");
+    }
+    #[test]
+    fn documents_refuse_mismatched_and_corrupt_metadata() {
+        let dir = fixture();
+        let path = dir.path().to_str().unwrap();
+        assert!(Documents::open(path, 1300).is_err());
+        std::fs::write(dir.path().join("MANIFEST.json"), br#"{"doc_count":129,"corpus_bytes":1300}"#).unwrap();
+        assert!(Documents::open(path, 1301).is_err());
+        std::fs::write(dir.path().join("MANIFEST.json"), br#"{"doc_count":130,"corpus_bytes":1300}"#).unwrap();
+        let file = dir.path().join("seps.bin");
+        let mut data = std::fs::read(&file).unwrap();
+        data[48 + 130 * 4 + 8] ^= 1;
+        std::fs::write(file, data).unwrap();
+        assert!(Documents::open(path, 1301).is_err());
+        let dir = fixture();
+        let file = dir.path().join("titles.bin");
+        let mut data = std::fs::read(&file).unwrap();
+        data.pop();
+        std::fs::write(file, data).unwrap();
+        assert!(Documents::open(dir.path().to_str().unwrap(), 1301).is_err());
     }
 }

@@ -1388,12 +1388,14 @@ fn usage() -> ! {
     eprintln!("  xsa stats --rlbwt <prefix> [--chi ...]   from rlbwt pair");
     eprintln!("  xsa tags --chi <f.sA> --sidecar <names.tsv> [--revlines]");
     eprintln!("           [--output tags.tsv]                  first-appearance attribution");
-    eprintln!("  xsa query <container> --patterns <file> [-j N] [--output tsv|jsonl] [--counts]");
+    eprintln!("  xsa query <container> --patterns <file> [-j N] [--output tsv|jsonl] [--counts] [--docs DIR]");
     eprintln!("           --patterns: the corpus contract, rec<0x1e>rec<0x1e>...rec<0x1e>, arbitrary");
     eprintln!("           bytes, no escaping, id = 0-based record index (a file starting with '>' is");
     eprintln!("           read as FASTA and the choice is journaled); --patterns-fasta forces FASTA;");
     eprintln!("           one orientation only: a lite container has no alphabet, --mode is refused;");
     eprintln!("           tsv (default): pattern_id<TAB>offset per occurrence; --counts: pattern_id<TAB>count");
+    eprintln!("           --docs DIR: TSV pattern_id, doc_id (0-based), offset_in_doc, title, global_offset");
+    eprintln!("           sidecars and MANIFEST must match; title newlines/backslashes are escaped");
     eprintln!("           -j defaults to all cores; the container identifies its own format");
     eprintln!("  xsa corpus --wikipedia <dump.xml.bz2|-> --out DIR [--separator 0x1e|none]");
     eprintln!("           one streaming pass -> corpus.bin (\"<title>\\n<body>\\x1E\" per doc), seps.bin");
