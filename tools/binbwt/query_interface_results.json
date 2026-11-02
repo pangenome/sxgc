@@ -1,0 +1,30 @@
+{
+  "base_commit": "e89651fa94fb3966231fd14e6da2c355eb24d1b2",
+  "binary": "/home/erikg/sxgc-docs-target/release/xsa",
+  "evidence_directory": "/tmp/query-interface-evidence",
+  "unit_tests": "48 passed, 0 failed",
+  "S1": "150000001-byte corpus: 31128 positional/file hits match independent byte-search oracle; mixed input and empty patterns rejected",
+  "build_provenance": "CONTAINER_CORPUS_SIDECARS dir=\"/tmp/query-interface-evidence/build-input\" seps=seps.bin titles=titles.bin docs=25454 corpus_bytes=150000001",
+  "build_discovery": "source=recorded; 31125 foo/bar rows independently verified, including title and local offset",
+  "S2_command": "/home/erikg/sxgc-docs-target/release/xsa query /mnt/nvme2n1/erikg/wf-finish-as-100gb-20261102T044713Z/corpus.sxi2 \"domestic cat\" \"feral cat\" -j 32",
+  "S2_verbatim": "$ xsa query /mnt/nvme2n1/erikg/wf-finish-as-100gb-20261102T044713Z/corpus.sxi2 \"domestic cat\" \"feral cat\" -j 32\nQUERY_DOCS source=recorded docs=25932219 corpus_bytes=100093934466\npattern_id\tpattern\toccurrences\n0\tdomestic cat\t2493\n1\tferal cat\t1994\nTop 3 documents for \"domestic cat\":\ndoc_id\toccurrences\ttitle\n4065\t69\tCat\n18166250\t38\tDomestication of the cat\n534236\t24\tFeral cat\nS2 PASS: independently verified all 4487 document ids, local offsets, titles, and corpus slices\n",
+  "S2_validation": "All 4487 hits independently checked against delta-decoded document starts, title tables and raw corpus byte slices",
+  "S3": "Different-corpus sidecars warn and fall back to plain offsets or valid recorded sidecars; recorded doc_count mismatch also covered by unit test",
+  "S4": "Old oracle passes: 100/100 counts, 574/574 positions; no-sidecar TSV and JSONL contracts verified",
+  "protected_artifacts": "Container and Wikipedia sidecars read-only; before/after size and mtime unchanged",
+  "fixture_note": "Initial banked 150 MB fixture used unsupported codec 101. Rebuilt via current xsa build --tape; all gates use the rebuilt container.",
+  "residual_risks": [
+    "Discovery uses retained adjacent xsa-build.log; moving a container alone loses recorded-path discovery.",
+    "Metadata equality is not a cryptographic identity check. Historical journals lack independent doc_count; sidecar counts and any manifest are checked against one another."
+  ],
+  "commands": [
+    "CARGO_TARGET_DIR=/home/erikg/sxgc-docs-target cargo build --release --manifest-path xsa/Cargo.toml",
+    "CARGO_TARGET_DIR=/home/erikg/sxgc-docs-target cargo test --manifest-path xsa/Cargo.toml",
+    "/home/erikg/sxgc-docs-target/release/xsa build --input /tmp/query-interface-evidence/build-input/corpus.bin --scratch /tmp/query-interface-evidence/build150 --tape --threads 16 --memory-gb 16 --timeout 900 --chi-expect 44034230",
+    "python3 tools/binbwt/gate_query_interface.py --xsa /home/erikg/sxgc-docs-target/release/xsa --container /tmp/query-interface-evidence/build150/t150m.sxi2 --corpus /dev/shm/t150m.txt --out /tmp/query-interface-evidence/interface-current",
+    "XSA=/home/erikg/sxgc-docs-target/release/xsa C=/tmp/query-interface-evidence/interface-current/plain/c.sxi2 bash tools/binbwt/gate_qlite_150m.sh",
+    "python3 /tmp/query-interface-evidence/check-s2.py",
+    "bash -n tools/binbwt/gate_docs_cleanup.sh",
+    "git diff --check"
+  ]
+}

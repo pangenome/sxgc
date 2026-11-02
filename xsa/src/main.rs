@@ -1388,14 +1388,13 @@ fn usage() -> ! {
     eprintln!("  xsa stats --rlbwt <prefix> [--chi ...]   from rlbwt pair");
     eprintln!("  xsa tags --chi <f.sA> --sidecar <names.tsv> [--revlines]");
     eprintln!("           [--output tags.tsv]                  first-appearance attribution");
-    eprintln!("  xsa query <container> --patterns <file> [-j N] [--output tsv|jsonl] [--counts] [--docs DIR]");
+    eprintln!("  xsa query <container> <pattern> [<pattern> ...] [-j N] [--output tsv|jsonl] [--all] [--docs DIR]");
     eprintln!("           --patterns: the corpus contract, rec<0x1e>rec<0x1e>...rec<0x1e>, arbitrary");
-    eprintln!("           bytes, no escaping, id = 0-based record index (a file starting with '>' is");
-    eprintln!("           read as FASTA and the choice is journaled); --patterns-fasta forces FASTA;");
+    eprintln!("           bytes, no escaping, id = 0-based record index; --patterns-fasta reads FASTA;");
     eprintln!("           one orientation only: a lite container has no alphabet, --mode is refused;");
-    eprintln!("           tsv (default): pattern_id<TAB>offset per occurrence; --counts: pattern_id<TAB>count");
-    eprintln!("           --docs DIR: TSV pattern_id, doc_id (0-based), offset_in_doc, title, global_offset");
-    eprintln!("           sidecars and MANIFEST must match; title newlines/backslashes are escaped");
+    eprintln!("           tsv (default): document rows when sidecars match; otherwise pattern_id<TAB>offset");
+    eprintln!("           --patterns FILE (0x1E records), --patterns-fasta FILE; --docs DIR overrides discovery\n           TSV pattern_id, doc_id (0-based), offset_in_doc, title, global_offset");
+    eprintln!("           sidecars and any MANIFEST must match; title newlines/backslashes are escaped");
     eprintln!("           -j defaults to all cores; the container identifies its own format");
     eprintln!("  xsa corpus --wikipedia <dump.xml.bz2|-> --out DIR [--separator 0x1e|none]");
     eprintln!("           one streaming pass -> corpus.bin (\"<title>\\n<body>\\x1E\" per doc), seps.bin");
@@ -1409,13 +1408,18 @@ fn usage() -> ! {
 }
 
 fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let raw: Vec<_> = std::env::args_os().skip(1).collect();
+    if raw.first().is_some_and(|a| a == "query") {
+        qlite::command(&raw[1..]);
+        return;
+    }
+    let args: Vec<String> = raw.into_iter().map(|a| a.into_string().unwrap_or_else(|_| die("arguments must be UTF-8"))).collect();
     match args.first().map(|s| s.as_str()) {
         Some("build") => build::command(&args[1..]),
         Some("sxi-info") => sxi::command(&args[1..]),
         Some("stats") => cmd_stats(&args[1..]),
         Some("tags") => cmd_tags(&args[1..]),
-        Some("query") => qlite::command(&args[1..]),
+
         // The phi-era reader is retired from the query path: nothing reaches it
         // by default, and it exists only so archived fixture harnesses can still
         // reproduce banked numbers. It costs minutes to open a 10 GB container

@@ -1365,6 +1365,18 @@ prove a fit (the projected peak exceeds the reported capacity)");
         chunks_note, kway_note, if options.remap.is_some() { "provided" } else { "derived-from-corpus" },
         if options.bin_pipeline { "v2bin" } else if options.fanin { "v1-fanin" } else { "v1" }
     ));
+    let corpus_dir = options.input.parent().filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new(".")).canonicalize()
+        .map_err(|e| format!("resolve input directory: {e}"))?;
+    let mut header = [0u8; 48];
+    let docs = File::open(corpus_dir.join("seps.bin"))
+        .and_then(|mut file| file.read_exact(&mut header)).ok()
+        .filter(|_| &header[..4] == b"XSEP"
+            && u32::from_le_bytes(header[4..8].try_into().unwrap()) == 1
+            && u64::from_le_bytes(header[24..32].try_into().unwrap()) == corpus_bytes)
+        .map(|_| u64::from_le_bytes(header[16..24].try_into().unwrap())).unwrap_or(0);
+    journal.line(&format!("CONTAINER_CORPUS_SIDECARS dir={} seps=seps.bin titles=titles.bin docs={docs} corpus_bytes={corpus_bytes}",
+        serde_json::to_string(&corpus_dir.to_string_lossy()).unwrap()));
     // THE FLAG FLIP (auto-radix): the bin pipeline is the default route, so the
     // flag that used to select it is no longer a route selector. It is ACCEPTED
     // AND IGNORED - journalled here, in the plan's own log, so no run can be

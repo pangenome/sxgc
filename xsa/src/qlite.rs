@@ -1670,9 +1670,11 @@ impl Documents {
         };
         let seps = map("seps.bin")?;
         let titles = map("titles.bin")?;
-        let manifest: serde_json::Value = serde_json::from_slice(
-            &std::fs::read(dir.join("MANIFEST.json")).map_err(|e| format!("MANIFEST.json: {e}"))?
-        ).map_err(|e| format!("MANIFEST.json: {e}"))?;
+        let manifest: Option<serde_json::Value> = match std::fs::read(dir.join("MANIFEST.json")) {
+            Ok(data) => Some(serde_json::from_slice(&data).map_err(|e| format!("MANIFEST.json: {e}"))?),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(format!("MANIFEST.json: {e}")),
+        };
         let u32at = |b: &[u8], o| u32::from_le_bytes(b[o..o+4].try_into().unwrap()) as usize;
         if seps.len() < 48 || &seps[..4] != b"XSEP" || u32at(&seps, 4) != 1
             || u32at(&seps, 12) != 64 || u32at(&seps, 8) & !1 != 0 {
@@ -1685,11 +1687,12 @@ impl Documents {
         let bytes = u64_at(&seps, 24);
         let anchors = count.div_ceil(64);
         // SXI2 n includes the structural virtual END, which is not a corpus byte.
-        if bytes.checked_add(1) != Some(n) || manifest["corpus_bytes"].as_u64() != Some(bytes)
-            || manifest["doc_count"].as_u64() != Some(count)
+        if bytes.checked_add(1) != Some(n)
+            || manifest.as_ref().is_some_and(|m| m["corpus_bytes"].as_u64() != Some(bytes)
+                || m["doc_count"].as_u64() != Some(count))
             || u32at(&titles, 8) as u64 != count {
-            return Err(format!("corpus metadata mismatch: container n={n} (includes virtual END), seps corpus_bytes={bytes} docs={count}, titles docs={}, MANIFEST corpus_bytes={} doc_count={}",
-                u32at(&titles, 8), manifest["corpus_bytes"], manifest["doc_count"]));
+            return Err(format!("corpus metadata mismatch: container n={n} (includes virtual END), seps corpus_bytes={bytes} docs={count}, titles docs={}, MANIFEST={manifest:?}",
+                u32at(&titles, 8)));
         }
         if count == 0 || count > u32::MAX as u64 || u64_at(&seps, 32) != anchors
             || 48 + count * 4 + anchors * 8 != seps.len() as u64 {
@@ -1717,8 +1720,7 @@ impl Documents {
             title_end = off + len;
         }
         if title_end != docs.payload { return Err("titles.bin unreferenced payload".into()); }
-        eprintln!("QUERY_DOCS seps={} titles={} docs={count} corpus_bytes={bytes}",
-            dir.join("seps.bin").display(), dir.join("titles.bin").display());
+
         Ok(docs)
     }
     fn delta(&self, i: usize) -> u64 {
@@ -1769,15 +1771,64 @@ impl Documents {
     }
 }
 
+/// The journal is retained beside the container. Older builds already recorded
+/// their input path; use that provenance without modifying historical containers.
+fn recorded_corpus(journal: &str) -> Option<(String, Option<u64>)> {
+    for line in journal.lines() {
+        if let Some(rest) = line.strip_prefix("CONTAINER_CORPUS_SIDECARS dir=") {
+            let (dir, fields) = rest.split_once(" seps=seps.bin titles=titles.bin docs=")?;
+            let (count, _) = fields.split_once(" corpus_bytes=")?;
+            let dir = serde_json::from_str::<String>(dir).unwrap_or_else(|_| dir.to_string());
+            return Some((dir, count.parse().ok()));
+        }
+    }
+    journal.lines().find_map(|line| {
+        let rest = line.strip_prefix("XSA_BUILD START input=")?;
+        let (input, _) = rest.split_once(" scratch=")?;
+        let parent = std::path::Path::new(input).parent()?;
+        if !parent.is_absolute() { return None; }
+        Some((parent.to_string_lossy().into_owned(), None))
+    })
+}
+
+fn discover_documents(container: &str, explicit: Option<&str>, n: u64) -> Option<Documents> {
+    let parent = std::path::Path::new(container).parent().unwrap_or(std::path::Path::new("."));
+    let journal = std::fs::read_to_string(parent.join("xsa-build.log")).unwrap_or_default();
+    let recorded = recorded_corpus(&journal);
+    let expected_count = recorded.as_ref().and_then(|(_, count)| *count).filter(|&count| count > 0);
+    let mut candidates = Vec::new();
+    if let Some(dir) = explicit { candidates.push(("docs", dir.to_string())); }
+    candidates.push(("sibling", parent.to_string_lossy().into_owned()));
+    if let Some((dir, _)) = recorded { candidates.push(("recorded", dir)); }
+    for (source, dir) in candidates {
+        let path = std::path::Path::new(&dir);
+        if source != "docs" && !path.join("seps.bin").exists() && !path.join("titles.bin").exists() { continue; }
+        let result = Documents::open(&dir, n).and_then(|docs| {
+            if expected_count.is_some_and(|count| count != docs.count as u64) {
+                Err(format!("corpus metadata mismatch: recorded docs={expected_count:?}, candidate docs={}", docs.count))
+            } else { Ok(docs) }
+        });
+        match result {
+            Ok(docs) => {
+                eprintln!("QUERY_DOCS source={source} docs={} corpus_bytes={}", docs.count, docs.bytes);
+                return Some(docs);
+            }
+            Err(e) => eprintln!("query: warning: skipping {source} sidecars in {dir}: {e}"),
+        }
+    }
+    eprintln!("query: warning: no matching document sidecars; emitting plain offsets");
+    eprintln!("QUERY_DOCS source=none docs=0 corpus_bytes={}", n.saturating_sub(1));
+    None
+}
+
 // ---------------------------------------------------------------- the command
 
 struct Args {
     container: String,
     docs: Option<String>,
-    patterns: String,
-    /// `--patterns-fasta`: force the FASTA reader. `--patterns` auto-detects
-    /// instead (a file whose first byte is `>` is FASTA, anything else is the
-    /// 0x1E record contract).
+    patterns: Option<String>,
+    positional: Vec<Vec<u8>>,
+    /// FASTA is explicit; --patterns always uses 0x1E records.
     fasta: bool,
     output: String,
     counts: bool,
@@ -1785,7 +1836,11 @@ struct Args {
     verify: bool,
 }
 
-fn parse(args: &[String]) -> Args {
+fn parse(raw: &[std::ffi::OsString]) -> Args {
+    use std::os::unix::ffi::OsStrExt;
+    let args: Vec<_> = raw.iter().map(|a| a.to_string_lossy().into_owned()).collect();
+    let mut positional = Vec::new();
+    let mut literal = false;
     let mut container: Option<String> = None;
     let mut patterns: Option<String> = None;
     let mut docs = None;
@@ -1796,7 +1851,15 @@ fn parse(args: &[String]) -> Args {
     let mut verify = false;
     let mut i = 0;
     while i < args.len() {
+        if literal {
+            if container.is_none() { container = Some(args[i].clone()); }
+            else { positional.push(raw[i].as_bytes().to_vec()); }
+            i += 1;
+            continue;
+        }
         match args[i].as_str() {
+            "--" => { literal = true; i += 1; }
+            "--all" => { i += 1; }
             "--docs" if i + 1 < args.len() => {
                 docs = Some(args[i + 1].clone());
                 i += 2;
@@ -1804,7 +1867,7 @@ fn parse(args: &[String]) -> Args {
             "--patterns" if i + 1 < args.len() => {
                 if fasta {
                     die("query: --patterns and --patterns-fasta are exclusive: pick one\n  \
-                         --patterns auto-detects FASTA by its leading '>'");
+                         --patterns reads 0x1E records; --patterns-fasta reads FASTA");
                 }
                 patterns = Some(args[i + 1].clone());
                 i += 2;
@@ -1812,7 +1875,7 @@ fn parse(args: &[String]) -> Args {
             "--patterns-fasta" if i + 1 < args.len() => {
                 if patterns.is_some() && !fasta {
                     die("query: --patterns and --patterns-fasta are exclusive: pick one\n  \
-                         --patterns auto-detects FASTA by its leading '>'");
+                         --patterns reads 0x1E records; --patterns-fasta reads FASTA");
                 }
                 patterns = Some(args[i + 1].clone());
                 fasta = true;
@@ -1854,9 +1917,10 @@ fn parse(args: &[String]) -> Args {
             other if other.starts_with('-') => die(&format!("query: unknown option {other}")),
             other => {
                 if container.is_some() {
-                    die(&format!("query: unexpected positional argument {other}"));
+                    positional.push(raw[i].as_bytes().to_vec());
+                } else {
+                    container = Some(other.to_string());
                 }
-                container = Some(other.to_string());
                 i += 1;
             }
         }
@@ -1864,7 +1928,17 @@ fn parse(args: &[String]) -> Args {
     let container = container.unwrap_or_else(|| {
         die("query: need a container path\n  xsa query <container> --patterns <file> [-j N]")
     });
-    let patterns = patterns.unwrap_or_else(|| die("query: need --patterns <file>"));
+    if patterns.is_some() && !positional.is_empty() {
+        die("query: positional patterns and --patterns/--patterns-fasta cannot be combined (ambiguous pattern id numbering)");
+    }
+    if patterns.is_none() && positional.is_empty() {
+        die("query: need <pattern> [<pattern> ...] or --patterns <file>");
+    }
+    for p in &positional {
+        if p.is_empty() || p.len() > PAT_LEN_MAX {
+            die("query: positional patterns must contain 1..=65536 bytes");
+        }
+    }
     if output != "tsv" && output != "jsonl" {
         die("query: --output must be tsv or jsonl");
     }
@@ -1875,13 +1949,12 @@ fn parse(args: &[String]) -> Args {
             "query: --counts is a tsv option; --output {output} already reports a count per id"
         ));
     }
-    if docs.is_some() && (counts || output != "tsv") {
-        die("query: --docs requires per-hit TSV output (incompatible with --counts/--output jsonl)");
-    }
+
     Args {
         docs,
         container,
         patterns,
+        positional,
         fasta,
         output,
         counts,
@@ -1911,12 +1984,7 @@ struct Hit {
 /// id = 0-based record index. That is the only thing a byte-string index can be
 /// asked about, and it is the default.
 ///
-/// `Fasta` is the legacy reader, kept behind `--patterns-fasta` (and reached by
-/// auto-detect, because a `--patterns` file that starts with `>` cannot be a
-/// 0x1E record stream in any useful sense: its header line would be queried as
-/// a pattern and come back absent, which is exactly the 200-patterns/100-absent
-/// reading this CLI used to produce when a FASTA file was handed to a newline
-/// parser).
+/// `Fasta` is available explicitly through `--patterns-fasta`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum PatFormat {
     Records,
@@ -1942,7 +2010,7 @@ fn read_patterns(path: &str, force_fasta: bool) -> (Vec<Vec<u8>>, PatFormat) {
     let (fmt, why) = if force_fasta {
         (PatFormat::Fasta, "forced-fasta")
     } else {
-        detect_format(&data)
+        (PatFormat::Records, "records")
     };
     let out = match fmt {
         PatFormat::Fasta => read_fasta(path, &data),
@@ -1973,26 +2041,6 @@ fn read_patterns(path: &str, force_fasta: bool) -> (Vec<Vec<u8>>, PatFormat) {
         }
     );
     (out, fmt)
-}
-
-/// `--patterns` auto-detect, and why it is not just `first byte == '>'`: the
-/// record contract allows ARBITRARY bytes, so a legitimate first record may
-/// begin with '>'. A leading '>' opens a FASTA header only if that header is a
-/// LINE, i.e. only if the first newline comes before the first 0x1E. If a 0x1E
-/// arrives first the file is a record stream whose first record happens to start
-/// with '>' -- and the choice is journaled either way (`detected=`), so nobody
-/// has to guess which reader ran.
-fn detect_format(data: &[u8]) -> (PatFormat, &'static str) {
-    if data.first() != Some(&b'>') {
-        return (PatFormat::Records, "no-leading-gt");
-    }
-    let nl = data.iter().position(|&b| b == b'\n');
-    let sep = data.iter().position(|&b| b == 0x1e);
-    match (nl, sep) {
-        (Some(n), Some(s)) if s < n => (PatFormat::Records, "gt-then-0x1e-before-newline"),
-        (None, Some(_)) => (PatFormat::Records, "gt-then-0x1e-before-newline"),
-        _ => (PatFormat::Fasta, "leading-gt"),
-    }
 }
 
 /// `rec \x1E rec \x1E ... rec \x1E`: arbitrary bytes, no escaping, no alphabet.
@@ -2061,7 +2109,7 @@ fn read_fasta(path: &str, data: &[u8]) -> Vec<Vec<u8>> {
     out
 }
 
-pub fn command(args: &[String]) {
+pub fn command(args: &[std::ffi::OsString]) {
     // Wall clock from process start: the acceptance question is "how long
     // until the first answer", so every stage is reported against this.
     let t_proc = Instant::now();
@@ -2076,8 +2124,7 @@ pub fn command(args: &[String]) {
              `xsa query-legacy`, which is ~1e6x slower per pattern and takes minutes to open."
         )),
     };
-    let docs = a.docs.as_ref().map(|dir| Documents::open(dir, reader.n)
-        .unwrap_or_else(|e| die(&format!("query --docs: {e}"))));
+    let docs = discover_documents(&a.container, a.docs.as_deref(), reader.n);
     let open_ms = t_open0.elapsed().as_secs_f64() * 1e3;
     let members: Vec<String> = reader.members.iter().map(|m| format!("m{}", m.id)).collect();
     // OPEN IS MMAP-ONLY: header, directory, header CRC and the 256-byte remap.
@@ -2104,7 +2151,12 @@ pub fn command(args: &[String]) {
         eprintln!("QUERY_VERIFY members=ok");
     }
     // Format choice is journaled once, inside read_patterns (PATTERNS_USED).
-    let (patterns, _pformat) = read_patterns(&a.patterns, a.fasta);
+    let patterns = if let Some(path) = &a.patterns {
+        read_patterns(path, a.fasta).0
+    } else {
+        eprintln!("PATTERNS_USED format=positional count={}", a.positional.len());
+        a.positional
+    };
     if a.threads > 1 {
         let _ = rayon::ThreadPoolBuilder::new()
             .num_threads(a.threads)
@@ -2352,21 +2404,6 @@ mod pattern_contract_tests {
     }
 
     #[test]
-    fn fasta_is_detected_only_when_the_header_is_a_line() {
-        assert_eq!(detect_format(b">r1\nACGT\n").0, PatFormat::Fasta);
-        assert_eq!(detect_format(b">r1\nACGT\n").1, "leading-gt");
-        // A record stream whose FIRST RECORD starts with '>' is still a record
-        // stream: the 0x1E arrives before any newline.
-        assert_eq!(detect_format(b">r1\x1eACGT\x1e").0, PatFormat::Records);
-        assert_eq!(detect_format(b">r1\x1eACGT\x1e").1, "gt-then-0x1e-before-newline");
-        assert_eq!(detect_format(b"ACGT\x1e").0, PatFormat::Records);
-        assert_eq!(detect_format(b"ACGT\x1e").1, "no-leading-gt");
-        // No newline at all, no separator: nothing to read as a header/record
-        // pair, and the FASTA reader is what says so out loud.
-        assert_eq!(detect_format(b">r1").0, PatFormat::Fasta);
-    }
-
-    #[test]
     fn fasta_records_are_concatenated_lines() {
         let recs = read_fasta("test.fa", b">a\nAC\r\nGT\n>b\nTT\n");
         assert_eq!(recs, vec![b"ACGT".to_vec(), b"TT".to_vec()]);
@@ -2497,6 +2534,20 @@ mod document_tests {
         assert_eq!(output, b"2\t64\t9\ta\\n\\\\\xff\t649\n");
     }
     #[test]
+    fn discovery_enforces_recorded_count_and_allows_sidecars_without_manifest() {
+        let dir = fixture();
+        let container = dir.path().join("c.sxi2");
+        let journal = dir.path().join("xsa-build.log");
+        let record = |count| format!("CONTAINER_CORPUS_SIDECARS dir={} seps=seps.bin titles=titles.bin docs={count} corpus_bytes=1300\n",
+            serde_json::to_string(&dir.path().to_string_lossy()).unwrap());
+        std::fs::write(&journal, record(129)).unwrap();
+        assert!(discover_documents(container.to_str().unwrap(), None, 1301).is_none());
+        std::fs::write(&journal, record(130)).unwrap();
+        std::fs::remove_file(dir.path().join("MANIFEST.json")).unwrap();
+        assert_eq!(discover_documents(container.to_str().unwrap(), None, 1301).unwrap().count, 130);
+    }
+
+    #[test]
     fn documents_refuse_mismatched_and_corrupt_metadata() {
         let dir = fixture();
         let path = dir.path().to_str().unwrap();
@@ -2515,5 +2566,36 @@ mod document_tests {
         data.pop();
         std::fs::write(file, data).unwrap();
         assert!(Documents::open(dir.path().to_str().unwrap(), 1301).is_err());
+    }
+}
+
+#[cfg(test)]
+mod query_interface_tests {
+    use super::*;
+    use std::os::unix::ffi::OsStringExt;
+
+    #[test]
+    fn positional_bytes_are_verbatim() {
+        let a = parse(&["c.sxi2".into(), "a\\n b".into(), "-j".into(), "2".into(),
+            "--all".into(), "--".into(), "--literal".into(),
+            std::ffi::OsString::from_vec(vec![0xff, 0x1e])]);
+        assert_eq!(a.positional, vec![b"a\\n b".to_vec(), b"--literal".to_vec(), vec![0xff, 0x1e]]);
+        assert_eq!(a.threads, 2);
+    }
+
+    #[test]
+    fn journal_paths_support_spaces_and_legacy_builds() {
+        assert_eq!(recorded_corpus(r#"CONTAINER_CORPUS_SIDECARS dir="/tmp/a b" seps=seps.bin titles=titles.bin docs=13 corpus_bytes=42"#),
+            Some(("/tmp/a b".into(), Some(13))));
+        assert_eq!(recorded_corpus("XSA_BUILD START input=/tmp/a b/corpus.bin scratch=/tmp/build memory_gb=16"),
+            Some(("/tmp/a b".into(), None)));
+    }
+
+    #[test]
+    fn binary_records_starting_with_fasta_marker_stay_records() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), b">literal\nbytes\x1eother\x1e").unwrap();
+        assert_eq!(read_patterns(file.path().to_str().unwrap(), false).0,
+            vec![b">literal\nbytes".to_vec(), b"other".to_vec()]);
     }
 }

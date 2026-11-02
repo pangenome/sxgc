@@ -20,7 +20,7 @@ bash "$ROOT/tools/binbwt/gate_qlite_150m.sh" >"$OUT/oracle.log" 2>&1
 "$XSA" query "$C" --patterns-fasta "$ROOT/tools/binbwt/pats.fa" -j 16 --docs "$DOCS" \
     >"$OUT/docs.tsv" 2>"$OUT/docs.log"
 python3 "$ROOT/tools/binbwt/gate_query_docs.py" check "$DOCS" "$OUT/plain.tsv" "$OUT/docs.tsv" | tee "$OUT/docs-oracle.log"
-# Mismatched corpus metadata must fail before building the query kernel.
+# Mismatched corpus metadata warns and falls back to plain offsets.
 mkdir "$OUT/wrong-docs"
 cp "$DOCS"/{seps.bin,titles.bin,MANIFEST.json} "$OUT/wrong-docs/"
 python3 - "$OUT/wrong-docs/MANIFEST.json" <<'PYNEG'
@@ -30,20 +30,22 @@ manifest = json.loads(path.read_text())
 manifest['doc_count'] += 1
 path.write_text(json.dumps(manifest))
 PYNEG
-if "$XSA" query "$C" --patterns-fasta "$ROOT/tools/binbwt/pats.fa" --docs "$OUT/wrong-docs" \
-    >"$OUT/mismatch.tsv" 2>"$OUT/mismatch.log"; then
-    echo 'FAIL: mismatched document metadata accepted'; exit 1
-fi
+"$XSA" query "$C" --patterns-fasta "$ROOT/tools/binbwt/pats.fa" --docs "$OUT/wrong-docs" \
+    >"$OUT/mismatch.tsv" 2>"$OUT/mismatch.log"
 grep -q 'corpus metadata mismatch' "$OUT/mismatch.log"
-test ! -s "$OUT/mismatch.tsv"
-for mode in '--counts' '--output jsonl'; do
-    # Intentional word splitting for these two fixed option vectors.
-    if "$XSA" query "$C" --patterns-fasta "$ROOT/tools/binbwt/pats.fa" --docs "$DOCS" $mode \
-        >"$OUT/mode.tsv" 2>"$OUT/mode.log"; then
-        echo "FAIL: --docs accepted $mode"; exit 1
-    fi
-    grep -q 'requires per-hit TSV' "$OUT/mode.log"
-done
+cmp "$OUT/plain.tsv" "$OUT/mismatch.tsv"
+"$XSA" query "$C" --patterns-fasta "$ROOT/tools/binbwt/pats.fa" --docs "$DOCS" --output jsonl \
+    >"$OUT/mode.jsonl" 2>"$OUT/mode.log"
+python3 - "$OUT/plain.tsv" "$OUT/mode.jsonl" <<'PYJSON'
+import json, pathlib, sys
+expected = sorted(tuple(map(int, row.split())) for row in pathlib.Path(sys.argv[1]).read_text().splitlines())
+actual = []
+for line in pathlib.Path(sys.argv[2]).read_text().splitlines():
+    row = json.loads(line)
+    assert row['count'] == len(row['offsets'])
+    actual.extend((row['pattern_id'], pos) for pos in row['offsets'])
+assert sorted(actual) == expected
+PYJSON
 # Force a native finish failure: the known chi is 44034230, not 1.
 if "$XSA" build --input "$CORPUS" --scratch "$OUT/failure" --tape \
     --threads 16 --memory-gb 16 --timeout 900 --chi-expect 1 >"$OUT/failure.log" 2>&1; then
