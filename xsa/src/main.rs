@@ -1385,6 +1385,9 @@ fn usage() -> ! {
     eprintln!("           [--stride S] [--docs DIR] [--limit N] [--jsonl] [--nearest]   adaptive exact-match seeding:");
     eprintln!("           per window the seed LENGTH is solved so multiplicity lands on the target fan-out;");
     eprintln!("           --max-mult M [--min-mult m] is the alternative multiplicity-band mode");
+    eprintln!("  xsa fanout <container> <text-file|-> [--max-seeds 256] [--min-len 12] [--max-len 64] [--region-gap 2000] [--top 15] [--docs DIR] [--jsonl]");
+    eprintln!("           rarity-weighted fan-out: weight(seed)=ln(D/mult), score(doc)=sum over the");
+    eprintln!("           DISTINCT seeds shared; hits are also clustered into regions and scored");
     eprintln!("  xsa mems --sxi FILE --reads FA|FQ|GZ [-j N] [--min-len 20] [--mode auto|dna|text]  SUPERSEDED for v6 containers by `xsa mem`");
     eprintln!("  xsa forks --jsonl FILE [--n N] [-o OUT.jsonl] [-j J]  chi fork matrix (STRING x (WITNESS,CLASS) presence)");
     eprintln!("  xsa witness-build --sxi FILE --output FILE.wit");
@@ -1433,6 +1436,10 @@ fn main() {
     }
     if raw.first().is_some_and(|a| a == "seeds") {
         qlite::seeds_command(&raw[1..]);
+        return;
+    }
+    if raw.first().is_some_and(|a| a == "fanout") {
+        qlite::fanout_command(&raw[1..]);
         return;
     }
     if raw.first().is_some_and(|a| a == "query") {

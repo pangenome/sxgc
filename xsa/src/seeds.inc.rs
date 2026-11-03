@@ -597,6 +597,176 @@ fn seed_sample(l: u64, r: u64, limit: u64) -> (Vec<u64>, bool) {
     let rows = (0..take).map(|j| l + j * step).collect();
     (rows, take < width)
 }
+/// Everything the continuous walk needs to know. `--target-mult` and the band
+/// both collapse to (target, cap); the rest is placement. Shared by `xsa seeds`
+/// (which ranks occurrences) and `xsa fanout` (which weights them by rarity),
+/// so both commands run the SAME scan - a rarity ranking over a forked copy of
+/// the solver would be evidence about the copy, not about the kernel.
+struct ScanOpts {
+    min_len: usize,
+    max_len: usize,
+    target: u64,
+    cap: Option<u64>,
+    nearest: bool,
+    stride: usize,
+    skip_markup: bool,
+    /// Capacity hint for the accepted set (`--max-seeds`); the cap itself is
+    /// applied by the caller, never here.
+    reserve: usize,
+}
+
+/// Result of one whole-document walk. Every window is accounted for in `stats`
+/// (asserted by the caller), and the coverage figures are the union of the bytes
+/// the windows actually READ.
+struct ScanOut {
+    seeds: Vec<Seed>,
+    stats: SeedStats,
+    markup: Markup,
+    first_window: usize,
+    last_window: usize,
+    coverage_pct: f64,
+    nearest_below: u64,
+    width: usize,
+    scan_ms: f64,
+}
+
+fn scan_text(cx: &mut Ctx<'_>, sigma: &[u8; 256], text: &[u8], o: &ScanOpts) -> ScanOut {
+    let (min_len, max_len, target, cap, nearest, step, skip_markup) =
+        (o.min_len, o.max_len, o.target, o.cap, o.nearest, o.stride, o.skip_markup);
+    let planned = text.len().div_ceil(step);
+    let mut cache = vec![None; max_len.max(1) + 1];
+    let mut stats = SeedStats::default();
+    let mut seeds: Vec<Seed> = Vec::with_capacity(o.reserve.min(4096));
+    let mut seen: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
+    let mut nearest_below = 0u64;
+    // The far end of the longest accepted interval so far: with window starts
+    // non-decreasing, an earlier interval can only contain a later one if its far
+    // end reaches past the later one's, so one running maximum replaces a walk
+    // over every accepted seed (which a per-byte scan could not afford).
+    let mut max_end = 0u64;
+    let width = max_len.min(text.len());
+    let mut markup = Markup::scan(text, skip_markup);
+    eprintln!(
+        "SEEDS_MARKUP enabled={skip_markup} ranges={} bytes_skipped={} frac={:.6}",
+        markup.ranges.len(),
+        markup.bytes,
+        markup.bytes as f64 / text.len() as f64,
+    );
+    let scan = Instant::now();
+    let mut first_window = usize::MAX;
+    let mut last_window = 0usize;
+    let mut covered = 0u64;
+    let mut cov_start = 0usize;
+    let mut cov_end = 0usize;
+    let mut i = 0usize;
+    while i < text.len() {
+        stats.windows += 1;
+        if stats.windows % 10_000 == 0 {
+            // A continuous scan of a whole article is minutes, not milliseconds:
+            // say where it is so a long run is visible rather than silent.
+            eprintln!(
+                "SEEDS_PROGRESS windows={} of={planned} offset={i} of_text_bytes={} \
+                 accepted_windows={} markup_skipped={} elapsed_ms={:.0}",
+                stats.windows,
+                text.len(),
+                stats.windows_with_seed,
+                stats.windows_skipped_markup,
+                scan.elapsed().as_secs_f64() * 1e3,
+            );
+        }
+        // `--skip-markup`: a window that OVERLAPS scaffolding is not started.
+        // The bytes are then never read, so nothing from inside a template,
+        // comment, ref, gallery, math block or wikitable can become a seed.
+        let end = (i + width).min(text.len());
+        if skip_markup && markup.overlaps(i, end) {
+            stats.windows_skipped_markup += 1;
+            i += step;
+            continue;
+        }
+        // Union of the bytes actually READ: window starts are non-decreasing, so
+        // one open run [cov_start, cov_end) is enough. This is what `coverage_pct`
+        // reports - the fraction of the document the scan really looked at, which
+        // is 100.0 only when every byte was inside some window.
+        if cov_end < i {
+            covered += (cov_end - cov_start) as u64;
+            cov_start = i;
+        }
+        cov_end = cov_end.max(end);
+        first_window = first_window.min(i);
+        last_window = i;
+        // The longest-occurring-prefix bisection answers NoMatch on its own, so
+        // no `present` pre-filter is needed here.
+        let mut chosen_lo = false;
+        let w = seed_window(
+            cx,
+            sigma,
+            &mut cache,
+            text,
+            i,
+            max_len,
+            min_len,
+            target,
+            cap,
+            nearest,
+            &mut stats,
+            &mut chosen_lo,
+        );
+        match w {
+            Window::NoMatch => stats.no_match += 1,
+            Window::TooShort => stats.too_short += 1,
+            Window::TooRare => stats.too_rare += 1,
+            Window::TooCommon => stats.too_common += 1,
+            Window::Seed { len, mult, gave_up, gave_up_mult } => {
+                let offset = i as u64;
+                let (l, r) = cache[len as usize].unwrap();
+                assert!(r - l == mult, "SEEDS_CACHE_MULT_MISMATCH offset={offset} len={len}");
+                if chosen_lo {
+                    // --nearest took the seed BELOW the target: said once per
+                    // seed, so a below-target multiplicity can never look like a
+                    // solver bug in the output.
+                    nearest_below += 1;
+                }
+                match seed_suppressed(max_end, &seen, text, offset, len as u64) {
+                    Some("contained") => stats.suppressed_contained += 1,
+                    Some(_) => stats.suppressed_dedup += 1,
+                    None => {
+                        stats.windows_with_seed += 1;
+                        max_end = max_end.max(offset + len as u64);
+                        seen.insert(text[offset as usize..offset as usize + len as usize].to_vec());
+                        seeds.push(Seed { offset, len, mult, l, r, gave_up, gave_up_mult });
+                    }
+                }
+            }
+        }
+        // Clear the per-window cache: lengths are absolute (window-relative), so
+        // a stale entry would be a wrong answer, not a slow one.
+        for c in cache.iter_mut() {
+            *c = None;
+        }
+        i += step;
+    }
+    let scan_ms = scan.elapsed().as_secs_f64() * 1e3;
+    // Coverage is auditable, not asserted by prose: `coverage_pct` is the fraction
+    // of the document that some examined window actually READ (union, not
+    // density - a stride smaller than --max-len reads every byte), and the first
+    // and last window starts say where the scan ran.
+    covered += (cov_end - cov_start) as u64;
+    let coverage_pct = (100.0 * covered as f64 / text.len() as f64).min(100.0);
+    if first_window == usize::MAX {
+        first_window = 0;
+    }
+    ScanOut {
+        seeds,
+        stats,
+        markup,
+        first_window,
+        last_window,
+        coverage_pct,
+        nearest_below,
+        width,
+        scan_ms,
+    }
+}
 
 pub fn seeds_command(raw: &[std::ffi::OsString]) {
     let args: Vec<_> = raw.iter().map(|a| a.to_string_lossy().into_owned()).collect();
@@ -777,126 +947,27 @@ pub fn seeds_command(raw: &[std::ffi::OsString]) {
     }
 
     let mut cx = index.ctx();
-    let mut cache = vec![None; max_len.max(1) + 1];
-    let mut stats = SeedStats::default();
-    let mut seeds: Vec<Seed> = Vec::with_capacity(max_seeds.min(4096));
-    let mut seen: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
-    let mut nearest_below = 0u64;
-    // The far end of the longest accepted interval so far: with window starts
-    // non-decreasing, an earlier interval can only contain a later one if its far
-    // end reaches past the later one's, so one running maximum replaces a walk
-    // over every accepted seed (which a per-byte scan could not afford).
-    let mut max_end = 0u64;
-    let width = max_len.min(text.len());
-    let mut markup = Markup::scan(text, skip_markup);
-    eprintln!(
-        "SEEDS_MARKUP enabled={skip_markup} ranges={} bytes_skipped={} frac={:.6}",
-        markup.ranges.len(),
-        markup.bytes,
-        markup.bytes as f64 / text.len() as f64,
-    );
-    let scan = Instant::now();
-    let mut first_window = usize::MAX;
-    let mut last_window = 0usize;
-    let mut covered = 0u64;
-    let mut cov_start = 0usize;
-    let mut cov_end = 0usize;
-    let mut i = 0usize;
-    while i < text.len() {
-        stats.windows += 1;
-        if stats.windows % 10_000 == 0 {
-            // A continuous scan of a whole article is minutes, not milliseconds:
-            // say where it is so a long run is visible rather than silent.
-            eprintln!(
-                "SEEDS_PROGRESS windows={} of={planned} offset={i} of_text_bytes={} \
-                 accepted_windows={} markup_skipped={} elapsed_ms={:.0}",
-                stats.windows,
-                text.len(),
-                stats.windows_with_seed,
-                stats.windows_skipped_markup,
-                scan.elapsed().as_secs_f64() * 1e3,
-            );
-        }
-        // `--skip-markup`: a window that OVERLAPS scaffolding is not started.
-        // The bytes are then never read, so nothing from inside a template,
-        // comment, ref, gallery, math block or wikitable can become a seed.
-        let end = (i + width).min(text.len());
-        if skip_markup && markup.overlaps(i, end) {
-            stats.windows_skipped_markup += 1;
-            i += step;
-            continue;
-        }
-        // Union of the bytes actually READ: window starts are non-decreasing, so
-        // one open run [cov_start, cov_end) is enough. This is what `coverage_pct`
-        // reports - the fraction of the document the scan really looked at, which
-        // is 100.0 only when every byte was inside some window.
-        if cov_end < i {
-            covered += (cov_end - cov_start) as u64;
-            cov_start = i;
-        }
-        cov_end = cov_end.max(end);
-        first_window = first_window.min(i);
-        last_window = i;
-        // The longest-occurring-prefix bisection answers NoMatch on its own, so
-        // no `present` pre-filter is needed here.
-        let mut chosen_lo = false;
-        let w = seed_window(
-            &mut cx,
-            &sigma,
-            &mut cache,
-            text,
-            i,
-            max_len,
-            min_len,
-            target,
-            cap,
-            nearest,
-            &mut stats,
-            &mut chosen_lo,
-        );
-        match w {
-            Window::NoMatch => stats.no_match += 1,
-            Window::TooShort => stats.too_short += 1,
-            Window::TooRare => stats.too_rare += 1,
-            Window::TooCommon => stats.too_common += 1,
-            Window::Seed { len, mult, gave_up, gave_up_mult } => {
-                let offset = i as u64;
-                let (l, r) = cache[len as usize].unwrap();
-                assert!(r - l == mult, "SEEDS_CACHE_MULT_MISMATCH offset={offset} len={len}");
-                if chosen_lo {
-                    // --nearest took the seed BELOW the target: said once per
-                    // seed, so a below-target multiplicity can never look like a
-                    // solver bug in the output.
-                    nearest_below += 1;
-                }
-                match seed_suppressed(max_end, &seen, text, offset, len as u64) {
-                    Some("contained") => stats.suppressed_contained += 1,
-                    Some(_) => stats.suppressed_dedup += 1,
-                    None => {
-                        stats.windows_with_seed += 1;
-                        max_end = max_end.max(offset + len as u64);
-                        seen.insert(text[offset as usize..offset as usize + len as usize].to_vec());
-                        seeds.push(Seed {
-                            offset,
-                            len,
-                            mult,
-                            l,
-                            r,
-                            gave_up,
-                            gave_up_mult,
-                        });
-                    }
-                }
-            }
-        }
-        // Clear the per-window cache: lengths are absolute (window-relative), so
-        // a stale entry would be a wrong answer, not a slow one.
-        for c in cache.iter_mut() {
-            *c = None;
-        }
-        i += step;
-    }
-    let scan_ms = scan.elapsed().as_secs_f64() * 1e3;
+    let o = ScanOpts {
+        min_len,
+        max_len,
+        target,
+        cap,
+        nearest,
+        stride: step,
+        skip_markup,
+        reserve: max_seeds,
+    };
+    let ScanOut {
+        mut seeds,
+        mut stats,
+        markup,
+        first_window,
+        last_window,
+        coverage_pct,
+        nearest_below,
+        width,
+        scan_ms,
+    } = scan_text(&mut cx, &sigma, text, &o);
 
     // ---- OUTPUT SELECTION. The scan above is complete whatever `--max-seeds`
     // says; the cap is applied HERE, to the accepted set, and by walking it at
@@ -1005,15 +1076,6 @@ pub fn seeds_command(raw: &[std::ffi::OsString]) {
             + stats.windows_skipped_markup,
         "SEEDS_WINDOW_ACCOUNTING windows do not add up"
     );
-    // Coverage is auditable, not asserted by prose: `coverage_pct` is the fraction
-    // of the document that some examined window actually READ (union, not
-    // density - a stride smaller than --max-len reads every byte), and the first
-    // and last window starts say where the scan ran.
-    covered += (cov_end - cov_start) as u64;
-    let coverage_pct = (100.0 * covered as f64 / text.len() as f64).min(100.0);
-    if first_window == usize::MAX {
-        first_window = 0;
-    }
     // Density: windows * width / text. Above 100% means the windows OVERLAP
     // (a continuous scan with --max-len 64 reads each byte 64 times).
     let examined_pct = (100.0 * (stats.windows as f64) * (width as f64) / text.len() as f64)
