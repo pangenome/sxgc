@@ -793,3 +793,53 @@ for).
 Gates: `tools/binbwt/tests/mem_gate.py` (X1 independent mmap brute force via
 `tools/binbwt/tests/mem_oracle.c`, X2 edge cases, X3 document spot checks) and
 `tools/binbwt/tests/mem_bench.py` (X4 throughput of `--serve -j 32`).
+
+### Adaptive exact-match seeding: `xsa seeds`
+
+```sh
+xsa seeds corpus.sxi2 article.txt                     # seed an article (target fan-out 50)
+xsa seeds corpus.sxi2 article.txt --target-mult 500   # looser neighbourhood
+xsa seeds corpus.sxi2 - --target-mult 50 --jsonl      # a fragment on stdin
+xsa seeds corpus.sxi2 article.txt --max-mult 200 --min-mult 2   # multiplicity-band mode
+xsa seeds corpus.sxi2 article.txt --docs DIR --limit 32 --jsonl
+```
+
+A **seed** is an exact substring of the *text you pass in* (not of the corpus: the
+text is normally an article or a fragment of the pile) that is at the same time
+**specific** (long) and **recurring** (multiplicity inside a band). No embeddings,
+no tokenizer, no vectors: the only primitive is the FM-index interval, so seeds
+are cheap, exact and deterministic. `xsa seeds` reuses the same SXI2 v6 lite
+kernel as `xsa branches` and `xsa mem` and reads no member they did not need.
+
+`--target-mult T` (default 50) is the driving parameter: the seed LENGTH is
+solved for, because multiplicity is **non-increasing in length** (a longer match
+can only lose occurrences). Per window start:
+
+1. the longest occurring prefix of `text[i..i+--max-len]` is found by bisection
+   on prefix occurrence (`--min-len` default 12, `--max-len` default 64);
+2. the length is bisected for the longest seed with multiplicity `>= T` - the
+   closest approach to the target from above - and the seed one byte longer is
+   reported as the length the solve **gave up** at;
+3. `--nearest` may instead emit that one-byte-shorter seed when it is closer to
+   `T` in log space, and says so (`SEEDS_NEAREST`).
+
+A window is accounted for by name: `no_match` (not one byte of it occurs),
+`too_short` (longest occurring prefix below `--min-len`), `too_rare` (even at
+`--min-len` the multiplicity is below `T`) or `too_common` (the longest occurring
+prefix is already above the ceiling, so every admissible length is more frequent
+still). `--max-mult M --min-mult m` is the alternative band mode: solve for
+`m`, refuse anything above `M`.
+
+Seeds are emitted in text order, `--stride S` (default `max-len/2`) apart,
+deduplicated by content, and suppressed when wholly contained in an
+already-emitted seed. `--max-seeds K` (default 64) stops the walk. Each seed
+carries up to `--limit` sample positions located exactly as `xsa query` locates
+them (`doc_id`, `offset_in_doc`, `title` when sidecars resolve), evenly spaced
+across the interval. `SEEDS_STATS` journals windows, outcomes, mean length, the
+multiplicity histogram, probe counts and scan/locate time. Empty text is refused;
+`0x1E` is an ordinary byte, as everywhere else.
+
+Gates: `tools/binbwt/tests/seeds_gate.py` with the independent occurrence oracle
+`tools/binbwt/tests/seeds_oracle.c` (one mmap pass per pattern, `memmem`,
+overlapping occurrences, no index code) - it re-counts every emitted seed, the
+one-byte-longer seed, and the whole multiplicity ladder at each emitted offset.

@@ -278,3 +278,137 @@ for 200, i.e. cold pages, not steady state). This is a **shared-host** wall: a
 second operator's `xsa branches` serve job (~275 GB RSS) was running on the box.
 The 100 GB container and `/mnt/nvme2n1/erikg/wiki/corpus.bin` were used; evidence
 in [the evidence directory](tools/binbwt/evidence/mem/results.json).
+
+# Seeds: adaptive exact-match seeding
+
+```
+xsa seeds corpus.sxi2 article.txt --target-mult 50 [--max-len 64] [--min-len 12]
+         [--max-seeds 64] [--stride 32] [--docs DIR] [--limit 8] [--jsonl] [--nearest]
+xsa seeds corpus.sxi2 article.txt --max-mult 200 --min-mult 2      (band mode)
+xsa seeds corpus.sxi2 - --target-mult 500                          (text on stdin)
+```
+
+`xsa seeds` answers a different question from `mem`: not "where does this query
+occur" but **"which substrings of this text are specific enough to pin, and
+recurring enough to be a neighbourhood"**. The text is an article or a fragment
+that is NOT the corpus. There is no embedding, no tokenizer and no vector - the
+only primitive is the FM-index interval, over the same v6 lite kernel (members
+m1,m4,m11, no member `branches` and `mem` did not already need). Nothing is
+materialized to disc: the text is read through a windowed mmap (or one bounded
+buffer for stdin), no text is ever written anywhere, and there is no per-suffix
+position column.
+
+## The one monotonicity
+
+For a fixed text offset `i`, `mult(i, m)` = corpus occurrences of `text[i..i+m)`
+is **non-increasing in `m`**: every occurrence of a longer prefix contains an
+occurrence of the shorter one. Two consequences drive the whole command.
+
+**Shortening raises multiplicity.** A shortening loop guarded by `mult > M`
+cannot satisfy its own guard: it diverges, and it would reject every window it
+touched. What a band `[min_mult, M]` asks for is the LONGEST seed whose
+multiplicity has risen to `min_mult` without passing `M` - shorten while
+`mult < target`, then refuse the window if what you reached is above the cap.
+The one-byte-longer seed is the length the solve **gave up** at, and it is
+reported per seed (`gave_up_len`, `gave_up_mult`).
+
+**The length is solved for, not searched.** `--target-mult T` is the driving
+parameter and `T` brackets the length, so a bisection over
+`[--min-len, longest occurring prefix]` costs `O(log L)` interval descents per
+window, each descent one rank step per byte. Linear shortening would be
+`O(L^2)`. Every probe is re-checked against the monotonicity the bisection
+assumes (`SEEDS_MULT_NOT_MONOTONE`) - a contradiction is a reader bug, not a
+text property, and aborts.
+
+## Per window
+
+`--stride S` (default `max(1, max_len/2)`) is the window step.
+
+1. **Longest occurring prefix.** Bisect `m` in `[0, min(max_len, remaining))` for
+   the largest prefix that occurs (occurrence is downward closed). Length 0 is
+   `no_match`.
+2. **Solve the length.** Bisect `m` in `[min_len, L0]` for the longest seed with
+   `mult >= T`, keeping the one-byte-longer seed as the give-up point.
+   `--nearest` may emit the give-up seed instead when it is closer to `T` in log
+   space, and prints `SEEDS_NEAREST chose=below`.
+3. **Accept or refuse, by name.** `no_match` (not one byte occurs), `too_short`
+   (`L0 < --min-len`), `too_rare` (even at `--min-len` the multiplicity is below
+   `T`: the window is more unique than the target), `too_common` (the longest
+   occurring prefix is already above the ceiling, so *every* admissible length is
+   more frequent still - the window cannot be pinned). The ceiling is `T` itself
+   in target mode and `--max-mult` in band mode. An overshoot produced by
+   SHORTENING is not `too_common`: with the ladder `12:336, 13:51, 14:38` and
+   `T = 50` the answer is 13 at multiplicity 51.
+
+`--max-mult M --min-mult m` is the alternative band mode (solves for `m`, refuses
+above `M`); `--target-mult` and the band are exclusive and refused together.
+Which mode ran is journaled.
+
+## Output
+
+Seeds are emitted in text order and stop at `--max-seeds K` (default 64). An
+already-emitted seed suppresses a later one that is wholly **contained** in it,
+and identical seed content is deduplicated (`suppressed_contained`,
+`suppressed_dedup`).
+
+TSV columns:
+
+```
+seed_id  text_offset  length  occurrences  seed  gave_up_len  gave_up_mult  taken  truncated  positions  titles
+```
+
+`gave_up_len` is 0 when the emitted length is already the window's longest
+occurring prefix. `seed` and the titles escape tabs, newlines, CRs and
+backslashes only. `occurrences` is the interval width (exact overlapping count),
+`taken` sample positions are located as `xsa query` locates them, and they are
+**evenly spaced across the interval** (adjacent suffix-array rows usually share a
+document, so the first rows would report one title). With sidecars each position
+renders as `doc_id:offset:pos` and `titles` holds them joined by `|`; without
+them the raw corpus offsets are emitted and `SEEDS_NOTE docs=none` says so.
+`--jsonl` emits one object per seed with `seed_id`, `text_offset`, `length`,
+`occurrences`, `seed`, `taken`, `truncated`, `positions`, `mode`, `target_mult`,
+`gave_up_len`, `gave_up_mult`, and a `docs` array (`doc_id`, `offset`, `title`,
+`pos`).
+
+`SEEDS_STATS` journals, exactly:
+
+```
+SEEDS_STATS windows= tried= accepted= mean_len= mult_histogram= shorten_steps= extend_steps=
+            scan_ms= locate_ms= mode= target_mult= cap= min_len= max_len= stride=
+            no_match= too_short= too_rare= too_common= suppressed_dedup=
+            suppressed_contained= nearest_below= positions= ranks= lf_steps=
+```
+
+`windows` is every window start examined and
+`windows == no_match+too_short+too_rare+too_common+windows_with_seed+suppressed_*`
+is asserted before the line is printed; `tried` counts windows that reached the
+multiplicity solve; `mult_histogram` is `mult:count` over accepted seeds;
+`shorten_steps` and `extend_steps` count interval descents (the shortening and
+the extension bisections). `--limit 0` locates nothing.
+
+## Guards
+
+`--max-len < --min-len` is refused by name (no length would be admissible),
+`--min-len 0` (a zero-length seed occurs everywhere), `--max-seeds 0`,
+`--target-mult 0`, `--target-mult` together with a band, and a half band. Empty
+text (a file or stdin) is refused rather than answering zero seeds. A text with
+no matches answers zero seeds cleanly (`no_match` counted, exit 0). `0x1E` is an
+ordinary byte, exactly as in every other query path.
+
+## Reproducible gates
+
+```sh
+gcc -O2 -o seeds_oracle tools/binbwt/tests/seeds_oracle.c
+python3 tools/binbwt/tests/seeds_gate.py XSA CONTAINER CORPUS --out DIR [--docs DIR]
+```
+
+`seeds_oracle.c` is an independent occurrence counter: one mmap pass per pattern,
+glibc `memmem`, **overlapping** occurrences (what an interval width means), no
+index code and no shared implementation. `seeds_gate.py` builds a 1200-byte
+corpus slice as the seed text and checks, against that oracle:
+
+| gate | what it asserts |
+| --- | --- |
+| S1 | every emitted seed's true multiplicity equals `occurrences` and reaches the target; the one-byte-longer seed equals `gave_up_mult` and is BELOW the target; multiplicity is non-increasing over a full 12..32 length ladder at each emitted offset; the reported length is the longest length still reaching the target; no seed is contained in another and no content repeats; the window counters add up; band mode keeps `min_mult <= occurrences <= max_mult`; a window far above the target is counted `too_common` and emits nothing |
+| S3 | `--max-len` below `--min-len`, empty text, a zero target, both multiplicity modes at once and a half band are all refused by name; bytes absent from the corpus yield zero seeds and exit 0; a slice spanning a `0x1E` document separator still seeds and the oracle agrees |
+| S4 | the same input twice gives byte-identical output and identical counters |
