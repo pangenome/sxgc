@@ -1,0 +1,2 @@
+XSA_FINISH_CORPUS path=/tmp/finish-bulk-read-6emNAF bytes=134217728 remap_identity=0 read_only=1 rotation=0 derivation=T[i]=REMAP[corpus[i]] mmap=1
+FATAL xsa_finish: bulk scan installed corpus-sized resident mappings

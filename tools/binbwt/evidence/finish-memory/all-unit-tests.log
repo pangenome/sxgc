@@ -1,0 +1,102 @@
+
+running 64 tests
+PHASE owner START /usr/bin/timeout --foreground 5 bash -c touch ready; exec sleep 1 rlimit_as_kb=25165824
+SCRATCH_RETAINED bands_bytes=5 reason=failure
+SCRATCH_CLEANED bands_bytes=5 waves_bytes=5
+
+thread 'qlite::document_tests::context_rejects_interior_separator' (360186) panicked at src/qlite.rs:1774:9:
+QUERY_CONTEXT_SEPARATOR pos=1 start=0 end=10
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'qlite::document_tests::impossible_count_injection_fires' (360190) panicked at src/qlite.rs:2175:5:
+QUERY_COUNT_IMPOSSIBLE count=18446744073709551615 pattern_len=500
+query: warning: skipping sibling sidecars in /tmp/.tmp35JtyC: corpus metadata mismatch: recorded docs=Some(129), candidate docs=130
+query: warning: skipping recorded sidecars in /tmp/.tmp35JtyC: corpus metadata mismatch: recorded docs=Some(129), candidate docs=130
+query: warning: no matching document sidecars; emitting plain offsets
+QUERY_DOCS source=none docs=0 corpus_bytes=1300
+QUERY_DOCS source=sibling docs=130 corpus_bytes=1300
+PATTERNS_NOTE test.pat: last record is not 0x1E-terminated (EOF ends it); the contract is rec\x1E rec\x1E ... rec\x1E
+PATTERNS_USED path=/tmp/.tmpu6YR4G format=records-0x1e detected=records records=2 bytes=21 ids=0..1 separator=0x1e
+
+thread 'qlite::seeds_tests::monotonicity_check_rejects_an_inverted_probe' (360208) panicked at src/seeds.inc.rs:351:9:
+SEEDS_MULT_NOT_MONOTONE len 10 has mult 1 but the longer len 20 has mult 4
+  (multiplicity must be non-increasing in length; target=2)
+test chain::tests::a_phrase_knob_without_phrase_radix_is_refused ... ok
+test chain::tests::bin_pipeline_execution_still_requires_a_timeout ... ok
+test chain::tests::bin_live_cap_is_a_bin_pipeline_flag_and_is_carried ... ok
+test chain::tests::bin_target_size_is_carried_and_refused_on_the_legacy_route ... ok
+test chain::tests::disc_preflight_reads_the_disc_not_a_constant ... ok
+test chain::tests::disc_preflight_refuses_under_15_percent_free ... ok
+test chain::tests::finish_as_gb_parses_and_defaults ... ok
+test chain::tests::finish_v2_address_space_floor ... ok
+test chain::tests::legacy_merge_is_the_only_route_that_takes_the_chunk_knobs ... ok
+test chain::tests::phrase_knobs_are_validated_with_the_producers_own_constraints ... ok
+test chain::tests::phrase_radix_is_off_by_default_and_carried_when_asked ... ok
+test chain::tests::phrase_radix_is_refused_on_the_legacy_route ... ok
+test chain::tests::snap_aligned_input_passes ... ok
+test chain::tests::tape_chi_defaults_on_with_explicit_opt_out ... ok
+test chain::tests::the_bin_pipeline_is_the_default_and_v2_pipeline_is_ignored ... ok
+test chain::tests::snap_refusal_mid_document_input_fails_loud ... ok
+test chain::tests::time_report_parse ... ok
+test chain::tests::scratch_success_cleans_owned_files_and_failure_retains ... ok
+test chain::tests::v2_refuses_the_inert_chunk_knobs_loudly ... ok
+test chain::tests::wit_ram_over_the_memory_cap_is_refused ... ok
+test corpus::tests::byte_counting ... ok
+test corpus::tests::positions_between_utc_times ... ok
+test plan::tests::an_explicit_cap_over_the_budget_reports_the_largest_that_fits ... ok
+test plan::tests::bin_window_arithmetic_matches_the_measured_points ... ok
+test plan::tests::build_term_interpolates_and_clamps_on_the_measured_curve ... ok
+test plan::tests::the_auto_live_cap_fits_the_phase_budget_with_headroom ... ok
+test plan::tests::the_phrase_plan_line_is_absent_when_the_arm_is_off_and_priced_when_on ... ok
+test plan::tests::the_pool_sizing_and_the_cache_term_agree ... ok
+test plan::tests::the_tape_band_unit_follows_the_envelope_and_never_the_corpus ... ok
+test chain::tests::derived_remap_is_order_preserving_per_corpus ... ok
+test qlite::branch_protocol_tests::response_layout_is_little_endian_and_packed ... ok
+test qlite::branch_protocol_tests::arbitrary_bytes_and_truncation ... ok
+test qlite::document_tests::impossible_count_injection_fires - should panic ... ok
+test qlite::fanout_tests::one_rare_seed_outranks_three_ubiquitous_ones ... ok
+test qlite::document_tests::context_rejects_interior_separator - should panic ... ok
+test qlite::fanout_tests::regions_cluster_by_gap ... ok
+test qlite::fanout_tests::weight_is_log_of_d_over_mult ... ok
+test qlite::document_tests::context_clamps_and_escapes_at_document_edges ... ok
+test qlite::document_tests::documents_anchor_boundaries_separator_and_raw_title ... ok
+test qlite::mem_protocol_tests::ranking_is_longest_then_earliest ... ok
+test qlite::mem_protocol_tests::request_frames_reject_empty_and_truncated ... ok
+test qlite::mem_protocol_tests::response_layout_is_little_endian_and_packed ... ok
+test qlite::pattern_contract_tests::fasta_records_are_concatenated_lines ... ok
+test qlite::document_tests::discovery_enforces_recorded_count_and_allows_sidecars_without_manifest ... ok
+test qlite::pattern_contract_tests::records_are_record_indexed_and_keep_arbitrary_bytes ... ok
+test qlite::pattern_contract_tests::trailing_separator_does_not_open_an_empty_record ... ok
+test qlite::pattern_contract_tests::missing_final_separator_still_terminates_by_eof ... ok
+test qlite::query_interface_tests::journal_paths_support_spaces_and_legacy_builds ... ok
+test qlite::query_interface_tests::binary_records_starting_with_fasta_marker_stay_records ... ok
+test qlite::seeds_tests::markup_cursor_only_advances_and_answers_overlap ... ok
+test qlite::seeds_tests::markup_scanner_ignores_near_misses ... ok
+test qlite::document_tests::documents_refuse_mismatched_and_corrupt_metadata ... ok
+test qlite::query_interface_tests::positional_bytes_are_verbatim ... ok
+test qlite::seeds_tests::markup_scanner_marks_each_construct_and_nests_correctly ... ok
+test qlite::seeds_tests::monotonicity_check_rejects_an_inverted_probe ... ok
+test qlite::seeds_tests::sample_rows_are_evenly_spaced_and_bounded ... ok
+test qlite::wide_directory_tests::block_offsets_above_old_32_gib_limit ... ok
+test qlite::wide_directory_tests::run_directory_above_u32_and_old_codec ... ok
+test qlite::window_scan_tests::scan_window_matches_the_scalar_reference ... ok
+test run_width_tests::cxx_writer_header_round_trip ... ok
+test sxi2::run_width_tests::compact_phi_run_id_above_u32 ... ok
+test run_width_tests::high_run_id_query_predecessor ... ok
+test chain::tests::scratch_lock_survives_driver_handle_until_stage_exits ... ok
+PHASE stage-0 START bash -c sleep 0.2; exit 7 rlimit_as_kb=25165824
+PHASE stage-1 START bash -c exec sleep 60 rlimit_as_kb=25165824
+PHASE stage-2 START bash -c exec sleep 60 rlimit_as_kb=25165824
+PHASE stage-0 END rc=7 wall=0:00.21 peak_rss_kb=2048 disc_scratch_bytes=1037
+PHASE stage-0 START bash -c exec sleep 60 rlimit_as_kb=25165824
+PHASE stage-1 START bash -c sleep 0.2; exit 7 rlimit_as_kb=25165824
+PHASE stage-2 START bash -c exec sleep 60 rlimit_as_kb=25165824
+PHASE stage-1 END rc=7 wall=0:00.20 peak_rss_kb=2048 disc_scratch_bytes=1037
+PHASE stage-0 START bash -c exec sleep 60 rlimit_as_kb=25165824
+PHASE stage-1 START bash -c exec sleep 60 rlimit_as_kb=25165824
+PHASE stage-2 START bash -c sleep 0.2; exit 7 rlimit_as_kb=25165824
+PHASE stage-2 END rc=7 wall=0:00.20 peak_rss_kb=2048 disc_scratch_bytes=1037
+test chain::tests::pipeline_detects_each_failed_stage_and_kills_waiting_peers ... ok
+
+test result: ok. 64 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.31s
+

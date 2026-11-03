@@ -1,0 +1,22 @@
+XSA_FINISH_RSS_AT stage=start rss_kb=5760 anon_kb=1940
+XSA_FINISH_PFCK path=/mnt/nvme2n1/erikg/finish-memory-evidence/fixed8/frag.pfck2 n=8000002 tau=22 count=363637 bytes=2909136 wall=0.009 workers=8 segments=32 worker_bytes=1572864 source=corpus_adapter fixed_grid=1
+XSA_FINISH_RSS_AT stage=readiness-pfck rss_kb=23664 anon_kb=19460
+XSA_FINISH_RSS_AT stage=repair-state rss_kb=35272 anon_kb=19548
+XSA_FINISH_CHI_BITMAP bytes=1000001 mmap=1 peak_rss_kb=16296 entries=0 duplicates=0
+XSA_FINISH_RSS_AT stage=chi-bitmap-allocated rss_kb=35272 anon_kb=19548
+XSA_FINISH_RSS_AT stage=band-arrays-allocated rss_kb=35300 anon_kb=19576
+XSA_FINISH_RSS_AT stage=run-stream-first-band-decoded rss_kb=38856 anon_kb=23164
+XSA_FINISH_RSS_AT stage=first-band-repaired rss_kb=54808 anon_kb=38072
+XSA_FINISH_RSS_AT stage=sweep-progress rss_kb=54808 anon_kb=38072
+XSA_FINISH_KASAI_CLOSURE bands=123 rank_holes=0 disorder=0 noncontiguous_runs=0 walk_fallbacks=0 max_rank_end=8000002 n=8000002
+XSA_FINISH_RSS_AT stage=chi-bitmap-populated rss_kb=93292 anon_kb=76556
+SLIM_SEEDS queries=0 lce_wall=3.5 repair_wall=2.7 wit_values=6544643 wit_spills=0 wit_bitmap_bytes=1000001
+XSA_FINISH_CHI_BITMAP bytes=1000001 mmap=1 peak_rss_kb=69544 entries=6544643 duplicates=0
+XSA_FINISH_CHI_PEAK peak_bytes=71213056 scope=process_rss stage=before_publish
+XSA_FINISH_CHI_BITMAP bytes=1000001 mmap=1 peak_rss_kb=69544 entries=6544643 duplicates=0
+XSA_FINISH_CHI_PUBLISHED entries=6544643 bytes=1818105 bits_per_entry=2.222404
+XSA_FINISH_RSS_AT stage=published-chi rss_kb=88920 anon_kb=78604
+XSA_FINISH_CHI_BITMAP bytes=1000001 mmap=1 peak_rss_kb=70824 entries=6544643 duplicates=0
+XSA_FINISH_DONE chi=6544643 n=8000002 r=7966303 container=/mnt/nvme2n1/erikg/finish-memory-evidence/fixed8/product.sxi2
+XSA_FINISH_PEAK_RSS kib=70824
+XSA_FINISH_RSS_AT stage=peak_sampled_100ms rss_kb=93084 anon_kb=76348

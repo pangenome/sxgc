@@ -1,0 +1,81 @@
+[
+  {
+    "label": "order-tape",
+    "pid": 296938,
+    "command": [
+      "/usr/bin/timeout",
+      "--foreground",
+      "-k",
+      "120",
+      "68000",
+      "/home/erikg/.cache/xsa/ec3d307bf5536f92fa53412cf5cc0ff8f54f5ae4d36ec8a3bb6a4226096bee09/scatter_sort",
+      "--corpus",
+      "/mnt/nvme2n1/erikg/wiki/corpus.bin",
+      "--remap",
+      "/mnt/nvme2n1/erikg/finish-memory-evidence/fixed100/remap-256.bin",
+      "--scratch",
+      "/mnt/nvme2n1/erikg/finish-memory-evidence/fixed100/waves-tape",
+      "--tape-bands",
+      "/mnt/nvme2n1/erikg/finish-memory-evidence/fixed100/bands-tape",
+      "--pending-bands",
+      "8",
+      "--budget-bytes",
+      "51539607552",
+      "--memory-gb",
+      "96",
+      "--threads",
+      "96"
+    ]
+  },
+  {
+    "label": "emit-tape",
+    "pid": 296940,
+    "command": [
+      "/usr/bin/timeout",
+      "--foreground",
+      "-k",
+      "120",
+      "68000",
+      "/home/erikg/.cache/xsa/ec3d307bf5536f92fa53412cf5cc0ff8f54f5ae4d36ec8a3bb6a4226096bee09/cross_lcp_merge",
+      "--binbwt",
+      "/mnt/nvme2n1/erikg/wiki/corpus.bin",
+      "--remap",
+      "/mnt/nvme2n1/erikg/finish-memory-evidence/fixed100/remap-256.bin",
+      "--out-prefix",
+      "/mnt/nvme2n1/erikg/finish-memory-evidence/fixed100/merged/frag",
+      "--threads",
+      "96",
+      "--tape-bands",
+      "/mnt/nvme2n1/erikg/finish-memory-evidence/fixed100/bands-tape"
+    ]
+  },
+  {
+    "label": "finish-v2",
+    "pid": 296942,
+    "command": [
+      "/usr/bin/timeout",
+      "--foreground",
+      "-k",
+      "120",
+      "68000",
+      "/mnt/nvme2n1/erikg/finish-memory-evidence/finish-fixed",
+      "--prefix",
+      "/mnt/nvme2n1/erikg/finish-memory-evidence/fixed100/merged/frag",
+      "--corpus",
+      "/mnt/nvme2n1/erikg/wiki/corpus.bin",
+      "--remap",
+      "/mnt/nvme2n1/erikg/finish-memory-evidence/fixed100/remap-256.bin",
+      "--output",
+      "/mnt/nvme2n1/erikg/finish-memory-evidence/fixed100/corpus.sxi2",
+      "--threads",
+      "96",
+      "--poll-timeout",
+      "68000",
+      "--wit-ram-budget",
+      "51539607552",
+      "--with-chi",
+      "--lcp-bands",
+      "/mnt/nvme2n1/erikg/finish-memory-evidence/fixed100/bands-tape"
+    ]
+  }
+]

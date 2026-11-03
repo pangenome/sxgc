@@ -358,6 +358,45 @@ static void pf_write_full(int fd, const void* p, uint64_t len, const std::string
     }
 }
 
+// Linux process residency: file-backed pages must not be counted as heap.
+struct FinishRss {
+    uint64_t rss = 0, anon = 0;
+    static FinishRss read() {
+        FinishRss r;
+        FILE* f = std::fopen("/proc/self/status", "r");
+        if (!f) return r;
+        char line[256]; unsigned long long value;
+        while (std::fgets(line, sizeof line, f)) {
+            if (std::sscanf(line, "VmRSS: %llu kB", &value) == 1) r.rss = value;
+            if (std::sscanf(line, "RssAnon: %llu kB", &value) == 1) r.anon = value;
+        }
+        std::fclose(f); return r;
+    }
+    void journal(const char* stage) const {
+        std::fprintf(stderr, "XSA_FINISH_RSS_AT stage=%s rss_kb=%llu anon_kb=%llu\n",
+                     stage, (unsigned long long)rss, (unsigned long long)anon);
+    }
+};
+static void finish_rss_at(const char* stage) { FinishRss::read().journal(stage); }
+struct FinishRssSampler {
+    std::atomic<bool> stop{false};
+    FinishRss peak;
+    std::thread worker;
+    FinishRssSampler() : worker([this] {
+        while (!stop.load()) {
+            const auto now = FinishRss::read();
+            if (now.rss > peak.rss) peak = now;
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+    }) {}
+    ~FinishRssSampler() {
+        stop.store(true); worker.join();
+        const auto now = FinishRss::read();
+        if (now.rss > peak.rss) peak = now;
+        peak.journal("peak_sampled_100ms");
+    }
+};
+
 // ------------------------------------------------------- THE VIRTUAL END
 // END IS VIRTUAL (SPEC_CHAIN_TO_PILE Phase A): no byte is appended to the
 // corpus and no byte VALUE is sacrificed to carry it. The text is the corpus,
@@ -646,41 +685,18 @@ struct CorpusText {
     // appended to the corpus).
     uint64_t size() const { return size_ + 1; }
     uint64_t fileSize() const { return size_; }
-    // Bulk reads pin one of the adapter's shared windows for a whole block.
-    // Workers share the four-window cap; they never allocate private mappings.
+    // PFCK and histogram scans already own bounded worker buffers. Reading
+    // through the random-access mappings faults the entire corpus into process
+    // RSS (97.9 million KiB at 100 GB), even though no heap allocation grows.
+    // pread uses the same page cache without installing corpus-wide PTEs.
     void read_block(uint64_t off, uint8_t* dst, uint64_t len) const {
         pf_check(off <= size() && len <= size() - off, "corpus block bounds");
-        // The last byte of the text is the virtual sentinel (index size_).
-        if (len && off + len == size()) {
-            if (len > 1) read_block(off, dst, len - 1);
-            dst[len - 1] = SENTINEL_SYMBOL;   // END IS VIRTUAL: its own symbol, no byte value
-            return;
+        const uint64_t bytes = off < size_ ? std::min(len, size_ - off) : 0;
+        if (bytes) {
+            pf_pread_full(fd, dst, bytes, off, "corpus bulk block");
+            for (uint64_t i = 0; i < bytes; ++i) dst[i] = remap[dst[i]];
         }
-        while (len) {
-            uint64_t take = cmap ? len : std::min(len, windowBytes - off % windowBytes);
-            if (cmap) {
-                for (uint64_t i = 0; i < take; ++i) dst[i] = remap[cmap[off + i]];
-            } else {
-                // Populate via the normal adapter miss/fallback machinery, then
-                // retry if another worker evicted the window before we pinned it.
-                (void)(*this)[off];
-                std::shared_lock<std::shared_mutex> lock(windowMutex);
-                const Window* hit = nullptr;
-                for (const auto& w : windows)
-                    if (w.p && w.base == off / windowBytes * windowBytes) hit = &w;
-                if (hit) {
-                    const uint8_t* src = (const uint8_t*)hit->p + off - hit->base;
-                    for (uint64_t i = 0; i < take; ++i) dst[i] = remap[src[i]];
-                } else {
-                    lock.unlock();
-                    // A bounded block fallback avoids cache thrashing when the
-                    // worker count exceeds the number of resident windows.
-                    pf_pread_full(fd, dst, take, off, "corpus block fallback");
-                    for (uint64_t i = 0; i < take; ++i) dst[i] = remap[dst[i]];
-                }
-            }
-            off += take; dst += take; len -= take;
-        }
+        if (bytes < len) dst[bytes] = SENTINEL_SYMBOL;
     }
     // ---------------------------------------------- PART 2: THE PREFETCH
     // The verification of a band is a pure function of that band's buffered runs
@@ -4682,6 +4698,8 @@ int main(int argc, char** argv) {
                          : "route-b one-pass (corpus-histogram codebook, no rlebwt)");
         pf_check(m1Replay || !keepRlebwt,
                  "--keep-rlebwt asks for the rlebwt wire, which route B never writes; pass --m1-replay");
+        FinishRssSampler rssSampler;
+        finish_rss_at("start");
         double last = tnow();
         pf_prof_start();
         if (const char* acc = getenv("XSA_FINISH_ACCESS"))
@@ -4724,6 +4742,12 @@ int main(int argc, char** argv) {
         if (!m1Replay) {
             m1Weights = std::make_unique<std::array<uint64_t, 256>>();
             m1WeightsThread.t = std::thread([&] { *m1Weights = corpus_byte_histogram(text, 8); });
+        }
+        if (std::getenv("XSA_FINISH_RSS_READINESS_ONLY")) {
+            readiness.join(); m1WeightsThread.join();
+            finish_rss_at("readiness-pfck-histogram-probe");
+            if (!keepPfck) pf_check(::unlink(pfckPath.c_str()) == 0, "unlink probe pfck");
+            return 0;
         }
         src.load_idx();
         // N == n: no transport frame. The producer emits exactly the n rows of
@@ -4861,6 +4885,7 @@ int main(int argc, char** argv) {
         readiness.join();
         fprintf(stderr, "XSA_FINISH_PFCK_WAIT wall=%.3f overlapped=1\n", tnow() - joinStart);
         phase("readiness-pfck", last);
+        finish_rss_at("readiness-pfck");
         if (pf_cache_journal_on()) pf_cache_journal(text, "readiness-pfck", 1024);
         uint64_t ckptCount = n / tau + 1;
         int pfckFd = ::open(pfckPath.c_str(), O_RDONLY);
@@ -4977,10 +5002,12 @@ int main(int argc, char** argv) {
                              wmFile.c_str());
         }
         phase("seam-classes", last);
+        finish_rss_at("repair-state");
         if (pf_cache_journal_on()) pf_cache_journal(text, "seam-classes", 1024);
 
         // ---- scratch writers
         WitnessBitmap bitmap(n, prefix, buildChi);
+        finish_rss_at("chi-bitmap-allocated");
         std::string sparsePath = prefix + ".sparse2";
         pf_check(::access(sparsePath.c_str(), F_OK) != 0, "sparse scratch exists");
         int sparseFd = ::open(sparsePath.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
@@ -5047,6 +5074,7 @@ int main(int argc, char** argv) {
             explicit BandSlot(size_t reserve) { nbuf.reserve(reserve); gidx.reserve(reserve); rk.reserve(reserve); }
         };
         BandSlot slots[2]{BandSlot(1 << 17), BandSlot(1 << 17)};
+        finish_rss_at("band-arrays-allocated");
         BandSlot* feedTarget = &slots[0];
         uint64_t prevTail = 0;
         // ROUTE B: the m1 head/length streams and the codebook they encode with,
@@ -5643,6 +5671,7 @@ int main(int argc, char** argv) {
                 PfRegion r("readband", PF_READBAND);
                 const uint64_t readStart = __rdtsc();
                 src.read_band(band, s.raws);
+                if (band == 0) finish_rss_at("run-stream-first-band-decoded");
                 repairCycles.readTicks += __rdtsc() - readStart;
                 r.close(); readAcc.add(r); readWall += r.wall;
             }
@@ -5737,6 +5766,12 @@ int main(int argc, char** argv) {
                 awaitLce();
             }
             finishAdvance(slots[cur]);
+            if (band == 0) finish_rss_at("first-band-repaired");
+            if ((band & 4095) == 0) finish_rss_at("sweep-progress");
+            static bool rssMarker = false;
+            if (!rssMarker && sweep.chi > 3000000000ull) {
+                rssMarker = true; finish_rss_at("chi_so_far_gt_3e9");
+            }
             if ((band & 63) == 0)
                 fprintf(stderr, "XSA_FINISH_PROGRESS band=%llu/%llu runs=%llu chi_so_far=%llu repair_wall=%.1f lce_wall=%.1f lce_wait=%.1f advance_wall=%.1f wit_spills=%llu\n",
                         (unsigned long long)(band + 1), (unsigned long long)nbands,
@@ -5932,6 +5967,7 @@ int main(int argc, char** argv) {
                      ::close(bIntFd) == 0, "close bridge temps");
         }
         phase("sweep", last);
+        finish_rss_at("chi-bitmap-populated");
         if (pf_cache_journal_on()) pf_cache_journal(text, "sweep", 1024);
         const uint64_t chi = sweep.chi, rNorm = rs.rNorm;
         fprintf(stderr, "xsa chi-rspace: chi = %llu (N=%llu, R=%llu) stream-agg=1 fused=1 corpus_lce=1\n",
@@ -6034,6 +6070,7 @@ int main(int argc, char** argv) {
         if (!wantSamples.empty())
             fprintf(stderr, "WITNESS_SAMPLE_CHECK samples=%zu passed=1\n", wantSamples.size());
         phase("m5-ef", last);
+        finish_rss_at("published-chi");
         if (pf_cache_journal_on()) pf_cache_journal(text, "m5-ef", 1024);
 
         // ---- small members: m4 anchors (none), m7 remap, m10 LF (derived)

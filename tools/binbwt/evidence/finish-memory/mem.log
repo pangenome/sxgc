@@ -1,0 +1,25 @@
+[X1] oracle pass over /dev/shm/t150m.txt
+mem_oracle: corpus_bytes=150000001 queries=20 anchors=500 filter_hits=216477 verified_alignments=215857 minlen=8
+[X1] q0  sampled@56115434 all=OK(1) best=OK
+[X1] q1  mutated@86696944 all=OK(2) best=OK
+[X1] q2  split2@99539485+133888724 all=OK(2) best=OK
+[X1] q3  brandnew       all=OK(0) best=OK
+[X1] q4  repeat:b'gxxt' all=OK(0) best=OK
+[X1] q5  absent-binary  all=OK(0) best=OK
+[X1] q6  brandnew       all=OK(0) best=OK
+[X1] q7  repeat:b'gx'   all=OK(0) best=OK
+[X1] q8  split2@17036505+44583260 all=OK(2) best=OK
+[X1] q9  sampled@98646096 all=OK(1) best=OK
+[X1] q10 split2@111032822+64581198 all=OK(3) best=OK
+[X1] q11 brandnew       all=OK(0) best=OK
+[X1] q12 absent-binary  all=OK(0) best=OK
+[X1] q13 brandnew       all=OK(0) best=OK
+[X1] q14 split2@53605748+96170431 all=OK(4) best=OK
+[X1] q15 mutated@70428830 all=OK(2) best=OK
+[X1] q16 absent-binary  all=OK(0) best=OK
+[X1] q17 brandnew       all=OK(0) best=OK
+[X1] q18 split2@77643032+103879126 all=OK(3) best=OK
+[X1] q19 sampled@92812025 all=OK(1) best=OK
+[X2] {"empty_query_refused": true, "absent_best_len_0": true, "present_in_full": true, "min_len_above_all": true, "query_4kb_full_match": true, "query_4kb_seconds": 7.846}
+[gate] wrote /mnt/nvme2n1/erikg/finish-memory-evidence/mem/mem_gate_150m.json
+[X1] VERDICT all-mems 20/20, longest 20/20

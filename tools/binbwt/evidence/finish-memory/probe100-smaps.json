@@ -1,0 +1,57 @@
+{
+  "rss_kb": 97938208,
+  "mappings": [
+    [
+      "/mnt/nvme2n1/erikg/wiki/corpus.bin",
+      97747984
+    ],
+    [
+      "[anonymous]",
+      184712
+    ],
+    [
+      "/usr/lib/x86_64-linux-gnu/libc.so.6",
+      1620
+    ],
+    [
+      "/usr/lib/x86_64-linux-gnu/libstdc++.so.6.0.33",
+      1516
+    ],
+    [
+      "[stack]",
+      1228
+    ],
+    [
+      "/mnt/nvme2n1/erikg/finish-memory-evidence/finish-baseline",
+      476
+    ],
+    [
+      "/usr/lib/x86_64-linux-gnu/libm.so.6",
+      320
+    ],
+    [
+      "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+      232
+    ],
+    [
+      "/usr/lib/x86_64-linux-gnu/libgcc_s.so.1",
+      104
+    ],
+    [
+      "[heap]",
+      12
+    ],
+    [
+      "[vdso]",
+      4
+    ],
+    [
+      "[vvar]",
+      0
+    ],
+    [
+      "[vsyscall]",
+      0
+    ]
+  ]
+}

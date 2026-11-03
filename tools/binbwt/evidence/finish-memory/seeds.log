@@ -1,0 +1,19 @@
+S1 mechanism: target-mult 50, text 1200 bytes of corpus + synthetic lines
+  seeds=4 stats={'windows': '40', 'tried': '40', 'accepted': '4', 'mean_len': '14.25', 'mult_histogram': '51:1,97:1,104:1,402:1', 'no_match': '0', 'too_short': '2', 'too_rare': '34', 'too_common': '0'}
+  length ladder (true counts) at the first 4 emitted offsets:
+    offset 0: 12:336 13:51 14:38 15:38 16:4 17:1 18:1 19:1 20:1 21:1 22:1 23:1 24:1 25:1 26:1 27:1 28:1 29:1 30:1 31:1 32:1
+    offset 32: 12:5597 13:402 14:5 15:3 16:1 17:1 18:1 19:1 20:1 21:1 22:1 23:1 24:1 25:1 26:1 27:1 28:1 29:1 30:1 31:1 32:1
+    offset 192: 12:146 13:104 14:104 15:104 16:5 17:2 18:2 19:1 20:1 21:1 22:1 23:1 24:1 25:1 26:1 27:1 28:1 29:1 30:1 31:1 32:1
+    offset 672: 12:167 13:99 14:98 15:98 16:97 17:8 18:3 19:2 20:1 21:1 22:1 23:1 24:1 25:1 26:1 27:1 28:1 29:1 30:1 31:1 32:1
+S2p placement: continuous scan of the whole text, K applied at the output
+  windows=1252 coverage_pct=100.0000 examined_pct=100.0000 first_window=0 last_window=1251 text_bytes=1252 accepted_windows=30 capped_dropped=27 stride=1
+S2m --skip-markup: windows overlapping scaffolding are refused by name
+  windows=1438 markup_skipped=679 markup_bytes_skipped=238 expected_bytes=238 markup_frac=0.165508 seeds=10
+  unterminated: windows=642 skipped=405 markup_bytes_skipped=342 of 342
+  band 50..80: seeds=1 too_common=3 too_rare=34
+  too_common case: windows=16 too_common=15 too_rare=0 no_match=0 emitted_lines=0
+S3 guards
+  absent text: windows=64 no_match=48 too_rare=0
+  sentinel slice: 64 bytes, 1 0x1E bytes, 3 seeds
+S4 determinism
+RESULT PASS out=/mnt/nvme2n1/erikg/finish-memory-evidence/seeds

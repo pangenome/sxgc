@@ -1,0 +1,34 @@
+XSA_FINISH_RSS_AT stage=start rss_kb=5812 anon_kb=1940
+XSA_FINISH_PFCK path=/mnt/nvme2n1/erikg/finish-memory-evidence/fixed10/merged/frag.pfck2 n=10000017259 tau=22 count=454546240 bytes=3636369960 wall=1.991 workers=32 segments=128 worker_bytes=1572864 source=corpus_adapter fixed_grid=1
+XSA_FINISH_RSS_AT stage=readiness-pfck rss_kb=65016 anon_kb=60824
+XSA_FINISH_RSS_AT stage=repair-state rss_kb=114256 anon_kb=60912
+XSA_FINISH_CHI_BITMAP bytes=1250002158 mmap=1 peak_rss_kb=56864 entries=0 duplicates=0
+XSA_FINISH_RSS_AT stage=chi-bitmap-allocated rss_kb=114256 anon_kb=60912
+XSA_FINISH_RSS_AT stage=band-arrays-allocated rss_kb=114284 anon_kb=60940
+XSA_FINISH_RSS_AT stage=run-stream-first-band-decoded rss_kb=124356 anon_kb=71044
+XSA_FINISH_RSS_AT stage=first-band-repaired rss_kb=171152 anon_kb=116844
+XSA_FINISH_RSS_AT stage=sweep-progress rss_kb=171152 anon_kb=116844
+XSA_FINISH_RSS_AT stage=sweep-progress rss_kb=1953036 anon_kb=679264
+XSA_FINISH_RSS_AT stage=sweep-progress rss_kb=2199372 anon_kb=925588
+XSA_FINISH_RSS_AT stage=sweep-progress rss_kb=2429688 anon_kb=1155896
+XSA_FINISH_RSS_AT stage=sweep-progress rss_kb=2673516 anon_kb=1406372
+XSA_FINISH_RSS_AT stage=sweep-progress rss_kb=2941408 anon_kb=1684044
+XSA_FINISH_RSS_AT stage=sweep-progress rss_kb=3172144 anon_kb=1914912
+XSA_FINISH_RSS_AT stage=sweep-progress rss_kb=3245440 anon_kb=2022548
+XSA_FINISH_RSS_AT stage=sweep-progress rss_kb=3453092 anon_kb=2229792
+XSA_FINISH_RSS_AT stage=sweep-progress rss_kb=3728508 anon_kb=2506072
+XSA_FINISH_RSS_AT stage=sweep-progress rss_kb=3821820 anon_kb=2598828
+XSA_FINISH_RSS_AT stage=sweep-progress rss_kb=3952384 anon_kb=2729136
+XSA_FINISH_RSS_AT stage=sweep-progress rss_kb=4170532 anon_kb=2947192
+XSA_FINISH_KASAI_CLOSURE bands=53024 rank_holes=0 disorder=0 noncontiguous_runs=0 walk_fallbacks=0 max_rank_end=10000017259 n=10000017259
+XSA_FINISH_RSS_AT stage=chi-bitmap-populated rss_kb=4311840 anon_kb=3087772
+SLIM_SEEDS queries=0 lce_wall=1629.1 repair_wall=942.4 wit_values=2676929445 wit_spills=0 wit_bitmap_bytes=1250002158
+XSA_FINISH_CHI_BITMAP bytes=1250002158 mmap=1 peak_rss_kb=4180964 entries=2676929445 duplicates=0
+XSA_FINISH_CHI_PEAK peak_bytes=4281307136 scope=process_rss stage=before_publish
+XSA_FINISH_CHI_BITMAP bytes=1250002158 mmap=1 peak_rss_kb=4180964 entries=2676929445 duplicates=0
+XSA_FINISH_CHI_PUBLISHED entries=2676929445 bytes=1294233465 bits_per_entry=3.867815
+XSA_FINISH_RSS_AT stage=published-chi rss_kb=3093032 anon_kb=3088792
+XSA_FINISH_CHI_BITMAP bytes=1250002158 mmap=1 peak_rss_kb=4180964 entries=2676929445 duplicates=0
+XSA_FINISH_DONE chi=2676929445 n=10000017259 r=3474889847 container=/mnt/nvme2n1/erikg/finish-memory-evidence/fixed10/pile-10b-snap.sxi2
+XSA_FINISH_PEAK_RSS kib=4180964
+XSA_FINISH_RSS_AT stage=peak_sampled_100ms rss_kb=4356012 anon_kb=3132008

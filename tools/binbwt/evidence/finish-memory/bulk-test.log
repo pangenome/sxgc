@@ -1,0 +1,2 @@
+XSA_FINISH_CORPUS path=/tmp/finish-bulk-read-cxwtvb bytes=134217728 remap_identity=0 read_only=1 rotation=0 derivation=T[i]=REMAP[corpus[i]] mmap=1
+FINISH_BULK_READ_PASS bytes=134217728 rss_before_kb=5368 rss_after_kb=5496

@@ -1,0 +1,83 @@
+[
+  {
+    "label": "order-tape",
+    "pid": 296723,
+    "command": [
+      "/usr/bin/timeout",
+      "--foreground",
+      "-k",
+      "120",
+      "3000",
+      "/home/erikg/.cache/xsa/ec3d307bf5536f92fa53412cf5cc0ff8f54f5ae4d36ec8a3bb6a4226096bee09/scatter_sort",
+      "--corpus",
+      "/dev/shm/t150m.txt",
+      "--remap",
+      "/mnt/nvme2n1/erikg/finish-memory-evidence/fixed150/remap-256.bin",
+      "--scratch",
+      "/mnt/nvme2n1/erikg/finish-memory-evidence/fixed150/waves-tape",
+      "--tape-bands",
+      "/mnt/nvme2n1/erikg/finish-memory-evidence/fixed150/bands-tape",
+      "--pending-bands",
+      "8",
+      "--budget-bytes",
+      "8589934592",
+      "--memory-gb",
+      "16",
+      "--threads",
+      "8"
+    ]
+  },
+  {
+    "label": "emit-tape",
+    "pid": 296724,
+    "command": [
+      "/usr/bin/timeout",
+      "--foreground",
+      "-k",
+      "120",
+      "3000",
+      "/home/erikg/.cache/xsa/ec3d307bf5536f92fa53412cf5cc0ff8f54f5ae4d36ec8a3bb6a4226096bee09/cross_lcp_merge",
+      "--binbwt",
+      "/dev/shm/t150m.txt",
+      "--remap",
+      "/mnt/nvme2n1/erikg/finish-memory-evidence/fixed150/remap-256.bin",
+      "--out-prefix",
+      "/mnt/nvme2n1/erikg/finish-memory-evidence/fixed150/merged/frag",
+      "--threads",
+      "8",
+      "--tape-bands",
+      "/mnt/nvme2n1/erikg/finish-memory-evidence/fixed150/bands-tape"
+    ]
+  },
+  {
+    "label": "finish-v2",
+    "pid": 296726,
+    "command": [
+      "/usr/bin/timeout",
+      "--foreground",
+      "-k",
+      "120",
+      "3000",
+      "/mnt/nvme2n1/erikg/finish-memory-evidence/finish-fixed",
+      "--prefix",
+      "/mnt/nvme2n1/erikg/finish-memory-evidence/fixed150/merged/frag",
+      "--corpus",
+      "/dev/shm/t150m.txt",
+      "--remap",
+      "/mnt/nvme2n1/erikg/finish-memory-evidence/fixed150/remap-256.bin",
+      "--output",
+      "/mnt/nvme2n1/erikg/finish-memory-evidence/fixed150/t150m.sxi2",
+      "--threads",
+      "8",
+      "--poll-timeout",
+      "3000",
+      "--wit-ram-budget",
+      "8589934592",
+      "--with-chi",
+      "--chi-expect",
+      "44034230",
+      "--lcp-bands",
+      "/mnt/nvme2n1/erikg/finish-memory-evidence/fixed150/bands-tape"
+    ]
+  }
+]

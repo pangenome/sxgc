@@ -1,0 +1,15 @@
+oracle 0/107
+oracle 10/107
+oracle 20/107
+oracle 30/107
+oracle 40/107
+oracle 50/107
+oracle 60/107
+oracle 70/107
+oracle 80/107
+oracle 90/107
+oracle 100/107
+W1 100/100 exact next-byte distributions, eof, width; top-k closure 100/100
+W3 7/7 edge cases passed
+FILE 12/12 JSONL results exact
+W4 100/100 counts and positions unchanged

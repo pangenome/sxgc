@@ -300,3 +300,83 @@ the established representatives requires preserving the interval sweep. See
 bitmap, duplicates, sparse/dense sets, first-occurrence bridge order, partial-byte
 boundaries and cleanup; `tools/binbwt/tests/chi_bitmap_gate.py` compares complete
 m5 bytes and CRCs with a retained baseline.
+
+### Finish RSS attribution (2026-11-03)
+
+The unexplained 100 GB finish peak is **resident corpus mappings populated by
+bulk readiness scans**, not a decoded run column or a chi-owned allocation.
+The archived 100 GB run already reports `peak_rss_kb=97067008` when the chi
+bitmap contains zero entries. Its actual container is
+`/mnt/nvme2n1/erikg/wf-finish-as-100gb-20261102T044713Z/corpus.sxi2`.
+
+Instrumented mainline (`abf2415`) reports `VmRSS` and `RssAnon` separately from
+`/proc/self/status` at readiness, repair-state construction, band-array
+allocation, first run-band decode, first repaired band, populated chi bitmap,
+and published chi. A 100 ms sampler records the largest sampled RSS with the
+anonymous RSS from that same sample. This sampled value is not an exact
+high-water mark; the existing `getrusage` high-water receipt remains separate.
+`XSA_FINISH_RSS_READINESS_ONLY=1` is a diagnostic that joins PFCK and histogram
+construction and exits without consuming the run stream or publishing a
+container. It removes its PFCK scratch unless `--keep-pfck` is requested.
+
+At 10 GB, readiness measured 9,830,604 KiB RSS and 60,824 KiB anonymous RSS.
+An independent `/proc/PID/smaps` snapshot attributed 9,765,644 KiB specifically
+to the corpus mapping. At 100 GB, the readiness-only confirmation measured
+97,911,280 KiB RSS and 159,148 KiB anonymous RSS. Its peak smaps snapshot
+attributed 97,747,984 of 97,938,208 KiB to `wiki/corpus.bin`. This confirms the
+approximately one-byte-resident-per-corpus-byte term. PFCK's 36.4 GB file size
+at 100 GB is not a 36.4 GB heap allocation; its construction uses bounded
+worker buffers. The finish decodes run **bands**, unlike the query reader's
+whole-column decode.
+
+`CorpusText::read_block` now reads directly into those existing worker buffers
+with `pread`, then applies the same byte remap and virtual-END rule. Both
+PFCK and corpus-histogram scans use this method. Random-access corpus reads
+retain their existing adapter. No chi algorithm, codec, directory sampling,
+or publication arithmetic changes. In particular, published m5 is streamed
+through bounded output buffers; its on-disk byte count must not be charged as
+resident heap.
+
+This removes the dominant startup term but **does not establish flat total
+finish RSS**. The chi bitmap remains `ceil(n/8)` file-backed bytes, and the
+m1/m12/m13 directory vectors accumulate sampled run metadata in anonymous
+memory. Those are distinct remaining scaling terms. Neither a flat-RSS claim
+nor a chi rewrite is justified by the startup measurement alone.
+
+The 128 MiB bulk-read regression compares all remapped bytes, checks virtual
+END and zero-length boundaries, and limits RSS growth to 16 MiB. The previous
+mapped implementation fails that residency check; the new implementation
+measured 5,368 to 5,496 KiB. Full 8 MB and 150 MB containers compare byte for
+byte to their baselines, with chi counts 6,544,643 and 44,034,230. Detailed
+receipts and the reproducible baseline instrumentation patch are under
+`tools/binbwt/evidence/finish-memory/`; unabridged live-run evidence is under
+`/mnt/nvme2n1/erikg/finish-memory-evidence/`.
+
+The complete 10 GB baseline attribution is recorded verbatim in
+[`evidence/finish-memory/G1.md`](../tools/binbwt/evidence/finish-memory/G1.md).
+Its kernel high-water RSS was 12,151,760 KiB; the 100 ms status sampler reached
+12,362,120 KiB with 1,388,540 KiB anonymous at that sample. Later file-backed
+reclamation explains the decrease at publication; stage deltas are not a sum
+of independent persistent allocations.
+
+After the fix, the 150 MB / 10 GB kernel peaks are 131,068 / 4,180,964 KiB;
+the status-sampled peaks are 177,084 / 4,356,012 KiB. **G2's flatness target is
+not met.** At 10 GB the populated-bitmap stage is 4,311,840 KiB RSS with
+3,087,772 KiB anonymous, separating anonymous allocations (including the
+accumulated directory vectors) from the approximately 1.25 GB bitmap. Full 10 GB chi is
+2,676,929,445; m5 and the entire container are byte-identical to the baseline,
+and the query gate passes all 20 positions. The 150 MB query gate passes
+100/100 counts and 574/574 positions. Branches, MEM, seeds, the 150 MB count
+regression, all 64 Rust unit tests (including three fanout tests), and the
+packaged 8 MB end-to-end build pass.
+
+The stashes were inspected without applying or dropping them. `stash@{0}`
+contains an untracked row-code experiment note; `stash@{1}` contains chi
+residency pacing and marker instrumentation. The pacing was not adopted:
+it cannot address a high-water mark already reached with zero bitmap entries,
+and its claimed resident-window bound is not established by the algorithm.
+
+The archived 100 GB container directory records m5 as 8,972,091,731 bytes and
+m13 as 12,938,616,320 bytes. These are published file sizes, not measurements
+of resident allocations. In particular the approximately 9 GB m5 payload is
+streamed to the container rather than held in a chi-sized output vector.

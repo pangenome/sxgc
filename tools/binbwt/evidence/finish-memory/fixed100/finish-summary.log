@@ -1,0 +1,12 @@
+XSA_FINISH_RSS_AT stage=start rss_kb=5796 anon_kb=1936
+XSA_FINISH_PFCK path=/mnt/nvme2n1/erikg/finish-memory-evidence/fixed100/merged/frag.pfck2 n=100093934467 tau=22 count=4549724294 bytes=36397794392 wall=22.507 workers=96 segments=384 worker_bytes=1572864 source=corpus_adapter fixed_grid=1
+XSA_FINISH_RSS_AT stage=readiness-pfck rss_kb=163660 anon_kb=159416
+XSA_FINISH_RSS_AT stage=repair-state rss_kb=212900 anon_kb=159504
+XSA_FINISH_CHI_BITMAP bytes=12511741809 mmap=1 peak_rss_kb=111232 entries=0 duplicates=0
+XSA_FINISH_RSS_AT stage=chi-bitmap-allocated rss_kb=212900 anon_kb=159504
+XSA_FINISH_RSS_AT stage=band-arrays-allocated rss_kb=212928 anon_kb=159532
+XSA_FINISH_RSS_AT stage=run-stream-first-band-decoded rss_kb=239968 anon_kb=186604
+XSA_FINISH_RSS_AT stage=first-band-repaired rss_kb=317308 anon_kb=245072
+XSA_FINISH_RSS_AT stage=sweep-progress rss_kb=317308 anon_kb=245072
+XSA_FINISH_RSS_AT stage=sweep-progress rss_kb=13220788 anon_kb=1193064
+XSA_FINISH_RSS_AT stage=sweep-progress rss_kb=14099564 anon_kb=2066196

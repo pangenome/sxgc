@@ -1,0 +1,507 @@
+{
+  "evidence_root": "/mnt/nvme2n1/erikg/finish-memory-evidence",
+  "base_commit": "abf2415dfee435133e2589617b8ff4f507a0ac39",
+  "runs": {
+    "baseline10": {
+      "stages": [
+        {
+          "stage": "start",
+          "rss_kb": 5816,
+          "anon_kb": 1936
+        },
+        {
+          "stage": "readiness-pfck",
+          "rss_kb": 9830604,
+          "anon_kb": 60824
+        },
+        {
+          "stage": "repair-state",
+          "rss_kb": 9863524,
+          "anon_kb": 60912
+        },
+        {
+          "stage": "chi-bitmap-allocated",
+          "rss_kb": 9863524,
+          "anon_kb": 60912
+        },
+        {
+          "stage": "band-arrays-allocated",
+          "rss_kb": 9863552,
+          "anon_kb": 60940
+        },
+        {
+          "stage": "run-stream-first-band-decoded",
+          "rss_kb": 9873624,
+          "anon_kb": 71044
+        },
+        {
+          "stage": "first-band-repaired",
+          "rss_kb": 9920452,
+          "anon_kb": 116876
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 9920452,
+          "anon_kb": 116876
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 11441076,
+          "anon_kb": 418036
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 11724272,
+          "anon_kb": 701220
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 12006056,
+          "anon_kb": 982976
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 12274080,
+          "anon_kb": 1250968
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 3303752,
+          "anon_kb": 1598748
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 3528980,
+          "anon_kb": 1823632
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 3658724,
+          "anon_kb": 1956968
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 3859104,
+          "anon_kb": 2156664
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 4098204,
+          "anon_kb": 2395472
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 4210212,
+          "anon_kb": 2508616
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 4276780,
+          "anon_kb": 2574468
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 4460132,
+          "anon_kb": 2757608
+        },
+        {
+          "stage": "chi-bitmap-populated",
+          "rss_kb": 4671516,
+          "anon_kb": 2968228
+        },
+        {
+          "stage": "published-chi",
+          "rss_kb": 3452804,
+          "anon_kb": 2969248
+        },
+        {
+          "stage": "peak_sampled_100ms",
+          "rss_kb": 12362120,
+          "anon_kb": 1388540
+        }
+      ],
+      "kernel_peak_rss_kib": 12151760,
+      "completed": true,
+      "chi": 2676929445,
+      "n": 10000017259,
+      "runs": 3474889847
+    },
+    "fixed8": {
+      "stages": [
+        {
+          "stage": "start",
+          "rss_kb": 5760,
+          "anon_kb": 1940
+        },
+        {
+          "stage": "readiness-pfck",
+          "rss_kb": 23664,
+          "anon_kb": 19460
+        },
+        {
+          "stage": "repair-state",
+          "rss_kb": 35272,
+          "anon_kb": 19548
+        },
+        {
+          "stage": "chi-bitmap-allocated",
+          "rss_kb": 35272,
+          "anon_kb": 19548
+        },
+        {
+          "stage": "band-arrays-allocated",
+          "rss_kb": 35300,
+          "anon_kb": 19576
+        },
+        {
+          "stage": "run-stream-first-band-decoded",
+          "rss_kb": 38856,
+          "anon_kb": 23164
+        },
+        {
+          "stage": "first-band-repaired",
+          "rss_kb": 54808,
+          "anon_kb": 38072
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 54808,
+          "anon_kb": 38072
+        },
+        {
+          "stage": "chi-bitmap-populated",
+          "rss_kb": 93292,
+          "anon_kb": 76556
+        },
+        {
+          "stage": "published-chi",
+          "rss_kb": 88920,
+          "anon_kb": 78604
+        },
+        {
+          "stage": "peak_sampled_100ms",
+          "rss_kb": 93084,
+          "anon_kb": 76348
+        }
+      ],
+      "kernel_peak_rss_kib": 70824,
+      "completed": true,
+      "chi": 6544643,
+      "n": 8000002,
+      "runs": 7966303
+    },
+    "packaged8": {
+      "stages": [
+        {
+          "stage": "start",
+          "rss_kb": 5760,
+          "anon_kb": 1936
+        },
+        {
+          "stage": "readiness-pfck",
+          "rss_kb": 21552,
+          "anon_kb": 17408
+        },
+        {
+          "stage": "repair-state",
+          "rss_kb": 33160,
+          "anon_kb": 17496
+        },
+        {
+          "stage": "chi-bitmap-allocated",
+          "rss_kb": 33160,
+          "anon_kb": 17496
+        },
+        {
+          "stage": "band-arrays-allocated",
+          "rss_kb": 33188,
+          "anon_kb": 17524
+        },
+        {
+          "stage": "run-stream-first-band-decoded",
+          "rss_kb": 36744,
+          "anon_kb": 21112
+        },
+        {
+          "stage": "first-band-repaired",
+          "rss_kb": 52696,
+          "anon_kb": 36020
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 52696,
+          "anon_kb": 36020
+        },
+        {
+          "stage": "chi-bitmap-populated",
+          "rss_kb": 90900,
+          "anon_kb": 74224
+        },
+        {
+          "stage": "published-chi",
+          "rss_kb": 86528,
+          "anon_kb": 76272
+        },
+        {
+          "stage": "peak_sampled_100ms",
+          "rss_kb": 90696,
+          "anon_kb": 74020
+        }
+      ],
+      "kernel_peak_rss_kib": 61320,
+      "completed": true,
+      "chi": 6544643,
+      "n": 8000002,
+      "runs": 7966303
+    },
+    "fixed150": {
+      "stages": [
+        {
+          "stage": "start",
+          "rss_kb": 5788,
+          "anon_kb": 1936
+        },
+        {
+          "stage": "readiness-pfck",
+          "rss_kb": 28020,
+          "anon_kb": 23848
+        },
+        {
+          "stage": "repair-state",
+          "rss_kb": 77324,
+          "anon_kb": 23936
+        },
+        {
+          "stage": "chi-bitmap-allocated",
+          "rss_kb": 77324,
+          "anon_kb": 23936
+        },
+        {
+          "stage": "band-arrays-allocated",
+          "rss_kb": 77352,
+          "anon_kb": 23964
+        },
+        {
+          "stage": "run-stream-first-band-decoded",
+          "rss_kb": 80988,
+          "anon_kb": 27632
+        },
+        {
+          "stage": "first-band-repaired",
+          "rss_kb": 101092,
+          "anon_kb": 43272
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 101092,
+          "anon_kb": 43272
+        },
+        {
+          "stage": "chi-bitmap-populated",
+          "rss_kb": 171152,
+          "anon_kb": 99424
+        },
+        {
+          "stage": "published-chi",
+          "rss_kb": 122888,
+          "anon_kb": 102044
+        },
+        {
+          "stage": "peak_sampled_100ms",
+          "rss_kb": 177084,
+          "anon_kb": 105356
+        }
+      ],
+      "kernel_peak_rss_kib": 131068,
+      "completed": true,
+      "chi": 44034230,
+      "n": 150000002,
+      "runs": 57279194
+    },
+    "fixed10": {
+      "stages": [
+        {
+          "stage": "start",
+          "rss_kb": 5812,
+          "anon_kb": 1940
+        },
+        {
+          "stage": "readiness-pfck",
+          "rss_kb": 65016,
+          "anon_kb": 60824
+        },
+        {
+          "stage": "repair-state",
+          "rss_kb": 114256,
+          "anon_kb": 60912
+        },
+        {
+          "stage": "chi-bitmap-allocated",
+          "rss_kb": 114256,
+          "anon_kb": 60912
+        },
+        {
+          "stage": "band-arrays-allocated",
+          "rss_kb": 114284,
+          "anon_kb": 60940
+        },
+        {
+          "stage": "run-stream-first-band-decoded",
+          "rss_kb": 124356,
+          "anon_kb": 71044
+        },
+        {
+          "stage": "first-band-repaired",
+          "rss_kb": 171152,
+          "anon_kb": 116844
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 171152,
+          "anon_kb": 116844
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 1953036,
+          "anon_kb": 679264
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 2199372,
+          "anon_kb": 925588
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 2429688,
+          "anon_kb": 1155896
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 2673516,
+          "anon_kb": 1406372
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 2941408,
+          "anon_kb": 1684044
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 3172144,
+          "anon_kb": 1914912
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 3245440,
+          "anon_kb": 2022548
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 3453092,
+          "anon_kb": 2229792
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 3728508,
+          "anon_kb": 2506072
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 3821820,
+          "anon_kb": 2598828
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 3952384,
+          "anon_kb": 2729136
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 4170532,
+          "anon_kb": 2947192
+        },
+        {
+          "stage": "chi-bitmap-populated",
+          "rss_kb": 4311840,
+          "anon_kb": 3087772
+        },
+        {
+          "stage": "published-chi",
+          "rss_kb": 3093032,
+          "anon_kb": 3088792
+        },
+        {
+          "stage": "peak_sampled_100ms",
+          "rss_kb": 4356012,
+          "anon_kb": 3132008
+        }
+      ],
+      "kernel_peak_rss_kib": 4180964,
+      "completed": true,
+      "chi": 2676929445,
+      "n": 10000017259,
+      "runs": 3474889847
+    },
+    "fixed100": {
+      "stages": [
+        {
+          "stage": "start",
+          "rss_kb": 5796,
+          "anon_kb": 1936
+        },
+        {
+          "stage": "readiness-pfck",
+          "rss_kb": 163660,
+          "anon_kb": 159416
+        },
+        {
+          "stage": "repair-state",
+          "rss_kb": 212900,
+          "anon_kb": 159504
+        },
+        {
+          "stage": "chi-bitmap-allocated",
+          "rss_kb": 212900,
+          "anon_kb": 159504
+        },
+        {
+          "stage": "band-arrays-allocated",
+          "rss_kb": 212928,
+          "anon_kb": 159532
+        },
+        {
+          "stage": "run-stream-first-band-decoded",
+          "rss_kb": 239968,
+          "anon_kb": 186604
+        },
+        {
+          "stage": "first-band-repaired",
+          "rss_kb": 317308,
+          "anon_kb": 245072
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 317308,
+          "anon_kb": 245072
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 13220788,
+          "anon_kb": 1193064
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 14099564,
+          "anon_kb": 2066196
+        }
+      ],
+      "kernel_peak_rss_kib": null,
+      "completed": false
+    }
+  },
+  "finish_source_sha256": "0a1913efccfbcc986deae1916b370a71b81da462f3a5111a60c4e440c1c4039c",
+  "binaries": {
+    "finish-baseline": "f0b28fc10f6b67db79c99fef23d356dce1efa3024364bcbcb648ba5070063168",
+    "finish-fixed": "eefcd302bf88923eb615f83eed7d7b6cbbfb0dc7eb5bda343a59633992e9d71b"
+  }
+}

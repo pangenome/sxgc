@@ -1,0 +1,7 @@
+== gate: qlite 150 MB correctness (C=/mnt/nvme2n1/erikg/finish-memory-evidence/fixed150/t150m.sxi2, -j 16)
+QLITE_OPEN container=/mnt/nvme2n1/erikg/finish-memory-evidence/fixed150/t150m.sxi2 format=sxi2-v6-lite magic=SXI2 version=6 mmap_ms=1.17 decoded_bytes=0 stages=none n=150000002 runs=57279194 members=m1,m4,m5,m7,m10,m11,m12,m13 end_symbol=none orientation=none alphabet=none
+QLITE_BUILD runs=57279194 decoded_bytes=754004530 stages=[m11-anchors=0.8ms prefetch=0.0ms run-columns=260.3ms] build_ms=261.2 n=150000002 threads=16 patterns=100 m1_block_runs=1024 m1_blocks=55937 rundir_l2=512 rundir_occ_stride=256 rundir_gap=1024
+QUERY_DONE patterns=100 occurrences=574 absent=0 query_ms=1351.6 first_answer_ms=1617.7 low_count_patterns=93 low_count_mean_us=4197.3 low_count_max_us=28684.8 low_count_lf_steps=288547 low_count_mean_steps=2774 low_count_max_steps=10981 high_count_patterns=7
+COUNTS 100/100 exact
+POSITIONS 574/574 exact
+GATE Q1 PASS
