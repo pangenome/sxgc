@@ -1381,6 +1381,10 @@ fn usage() -> ! {
     eprintln!("           maximal exact matches of <query>: interval widths + bounded positions;");
     eprintln!("           default is the single longest MEM, --all-mems reports every one;");
     eprintln!("           xsa mem <container> --serve -j N is the framed (u32 len + bytes) mode;");
+    eprintln!("  xsa seeds <container> <text-file|-> [--target-mult T] [--max-len 64] [--min-len 12] [--max-seeds K]");
+    eprintln!("           [--stride S] [--docs DIR] [--limit N] [--jsonl] [--nearest]   adaptive exact-match seeding:");
+    eprintln!("           per window the seed LENGTH is solved so multiplicity lands on the target fan-out;");
+    eprintln!("           --max-mult M [--min-mult m] is the alternative multiplicity-band mode");
     eprintln!("  xsa mems --sxi FILE --reads FA|FQ|GZ [-j N] [--min-len 20] [--mode auto|dna|text]  SUPERSEDED for v6 containers by `xsa mem`");
     eprintln!("  xsa forks --jsonl FILE [--n N] [-o OUT.jsonl] [-j J]  chi fork matrix (STRING x (WITNESS,CLASS) presence)");
     eprintln!("  xsa witness-build --sxi FILE --output FILE.wit");
@@ -1425,6 +1429,10 @@ fn main() {
     }
     if raw.first().is_some_and(|a| a == "mem") {
         qlite::mem_command(&raw[1..]);
+        return;
+    }
+    if raw.first().is_some_and(|a| a == "seeds") {
+        qlite::seeds_command(&raw[1..]);
         return;
     }
     if raw.first().is_some_and(|a| a == "query") {
