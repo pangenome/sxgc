@@ -140,3 +140,141 @@ materializes about 266 GB of index columns for this corpus.
 
 Raw gate logs, independent oracles, exact container/corpus paths, binary hash,
 and benchmark results are in [the evidence directory](tools/binbwt/evidence/branches/results.json).
+
+# Maximal exact matches
+
+```
+xsa mem corpus.sxi2 "domestic cat" [-k N] [--min-len 8] [--docs DIR] [--limit 8] [--jsonl] [--all-mems]
+xsa mem corpus.sxi2 --serve -j 32
+```
+
+`xsa mem` answers maximal exact matches (MEMs) of a byte query from the same
+SXI2 v6 lite kernel, using no container member that `branches` did not already
+need. It **supersedes the legacy `xsa mems` for v6 lite containers**:
+`mems` routes through the phi-era reader and refuses these containers by name
+("SXI: invalid header").
+
+A match `query[a..b)` (half-open) is **maximal** when it occurs and cannot be
+extended *within the query*:
+
+```
+left : a == 0    OR  interval(query[a-1..b)) is empty
+right: b == qlen OR  interval(query[a..b+1))  is empty
+```
+
+The query boundary is not an extension point, so it is vacuously maximal (this
+is the standard MEM definition). The alternative reading - "no occurrence of the
+match is followed by any present byte" - is not a match set: since
+`sum over present c of width(P||c) = width(P) - eof`, it would admit only
+matches at the corpus end.
+
+**Cost.** Backward search prepends, so an interval extends to the LEFT in one
+rank step (the FM-index move). Extending right means re-searching a longer
+prefix, so matches are built by fixing the END `b` and walking the start `a`
+downward: for a fixed end the starts with a non-empty interval are a contiguous
+range, and the whole scan is `O(qlen * L_max)` rank steps with `O(1)` work per
+step (`L_max` = longest match). A 32-byte query costs a few hundred rank steps,
+and no corpus byte is read: counts are interval widths.
+
+**Non-maximal candidates are not silently dropped.** For each end `b` the
+candidate is `(amin[b], b)`, the only start at that end which is left-maximal.
+Its right-maximality is decided by RE-SEARCHING `query[a..b+1)` from an empty
+interval, and cross-checked against the independent `amin[b+1]` route; the two
+must agree (`MEM_AMIN_DISAGREES`). Left-maximality is asserted with one more
+rank step (`MEM_NOT_LEFT_MAXIMAL`). Every emitted width is checked against the
+text (`QUERY_COUNT_IMPOSSIBLE` reuse).
+
+## File mode
+
+Default: the SINGLE longest MEM, `query_start<TAB>query_len<TAB>occurrences<TAB>
+taken<TAB>truncated`, then up to `--limit` positions (comma-separated, in
+suffix-array rank order; `--limit 0` locates nothing). With document sidecars
+each position renders as `doc_id:offset:pos`, and a final column carries the
+titles joined by `|` (tabs, newlines, CRs and backslashes escaped). `--jsonl`
+emits one object per MEM with `query_start`, `query_len`, `occurrences`,
+`taken`, `truncated`, `positions`, and a `docs` array
+(`doc_id`, `offset`, `title`, `pos`) when sidecars resolve. Positions come from
+the same locate walk `xsa query` uses, and a match wider than `--limit` reports
+`occurrences` for the full width with `truncated=true`.
+
+`--all-mems` reports every MEM, ranked by descending `query_len` then ascending
+`query_start`; `-k N` keeps the first N (`0` = all). `--min-len N` (default 8)
+drops shorter matches. Empty queries are refused by name; a query that does not
+occur reports no rows (`best_len` 0 in framed mode) rather than a fake match.
+
+## Streaming protocol
+
+`--serve -j N` uses the same framing conventions as `xsa branches` (N workers in
+one process, binary stdin/stdout, diagnostics on stderr, responses flushed
+immediately, one queue per worker, ordered output, at most 4N outstanding
+requests). Each request answers with the SINGLE longest MEM of that query.
+
+| Request field | Bytes |
+| --- | ---: |
+| Query byte length | 4 |
+| Query bytes | length |
+
+| Response field | Bytes |
+| --- | ---: |
+| Payload byte length (16) | 4 |
+| best_len | 4 |
+| query_start | 4 |
+| occurrences | 8 |
+
+All integers are unsigned little endian, no padding, no byte echo. `best_len`
+0 means "no MEM of at least `--min-len` bytes"; `query_start` is then 0.
+Zero-length request frames are REFUSED (nonzero exit, stderr diagnostic): an
+empty query has no maximal exact match to report. Requests above 16 MiB are
+refused before allocation; EOF between frames closes the stream normally.
+
+## Reproducible gates
+
+```sh
+gcc -O2 -o /tmp/mem_oracle tools/binbwt/tests/mem_oracle.c
+python3 tools/binbwt/tests/mem_gate.py XSA CONTAINER CORPUS --out DIR --scale 150m --docs DIR
+python3 tools/binbwt/tests/mem_bench.py XSA CONTAINER CORPUS --out DIR -j 32
+```
+
+`mem_gate.py` X1 recomputes every MEM independently with
+`tools/binbwt/tests/mem_oracle.c` - one mmap pass over corpus bytes, an 8-byte
+anchor filter, exact byte verification and extension, no index code and no shared
+implementation - and requires exact agreement on `(query_start, query_len,
+occurrences)` for the full MEM set and for the longest match. The query mix is
+sampled substrings, one-byte mutations (two MEMs bounded by a mismatch),
+two-window splits, brand-new strings, repeated bases and a full-corpus-absent
+binary string. X2 covers the refused empty query, an absent query, a query present
+in full, `--min-len` above every match, and a 4 KB query. X3 spot-checks
+`doc_id`/`offset`/`title` against corpus bytes.
+
+`mem_bench.py` X4 measures `--serve -j 32` on 10,000 short queries after a
+warmup, checks frame order with absent-marker queries that must return
+`best_len` 0, and checks `best_len <= query_len` and `occurrences <= n` on every
+reply.
+
+## Measured gates for `xsa mem` (2026-11-04)
+
+X1 brute force via `mem_oracle.c` (one mmap pass over corpus bytes; independent
+of the index): **150 MB: 20/20 full MEM sets and 20/20 longest matches exact**;
+**100 GB: 5/5 longest-match triples exact** - `(0,32,1)`, `(0,16,412)`,
+`(0,16,2)`, `(0,0,0)`, `(0,0,0)`. X2: **5/5** (empty query refused, absent query
+no rows, query present in full, `--min-len 4096` above every match, 4 KB query
+matched in full; the 4 KB scan takes 6.3 s, the documented quadratic term).
+X3: **3/3** document spot checks at 100 GB (doc_id/offset/title resolved, corpus
+bytes at each position equal the match, title prefix present at document start).
+
+X4: 100 GB container, `--serve -j 32`, 9,800 timed 32-byte queries after 200
+warmup queries (sampled windows, 16 of them replaced by absent markers that must
+return `best_len` 0, i.e. request order is verified):
+
+| Workers | Queries/s | µs/query (wall) | µs/query (kernel) | Input IPC µs | Output IPC µs |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 32 | **23,397** | **42.7** | 988 | 41.6 | 1.1 |
+
+The kernel per query is ~1 ms because a 32-byte query costs a few hundred rank
+steps and each step is a block decode plus a random access in ~266 GB of
+materialised columns; 32 workers overlap about 23 of them at a time. The first
+200 queries are excluded because they fault the freshly built columns in (95.2 s
+for 200, i.e. cold pages, not steady state). This is a **shared-host** wall: a
+second operator's `xsa branches` serve job (~275 GB RSS) was running on the box.
+The 100 GB container and `/mnt/nvme2n1/erikg/wiki/corpus.bin` were used; evidence
+in [the evidence directory](tools/binbwt/evidence/mem/results.json).

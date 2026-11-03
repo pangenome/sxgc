@@ -1377,7 +1377,11 @@ fn usage() -> ! {
     eprintln!();
     eprintln!("usage:");
     eprintln!("  xsa build --tape --input <file> --scratch <dir> [--threads N] [--memory-gb N]");
-    eprintln!("  xsa mems --sxi FILE --reads FA|FQ|GZ [-j N] [--min-len 20] [--mode auto|dna|text]");
+    eprintln!("  xsa mem <container> <query> [-k N] [--min-len N] [--docs DIR] [--limit N] [--jsonl] [--all-mems]");
+    eprintln!("           maximal exact matches of <query>: interval widths + bounded positions;");
+    eprintln!("           default is the single longest MEM, --all-mems reports every one;");
+    eprintln!("           xsa mem <container> --serve -j N is the framed (u32 len + bytes) mode;");
+    eprintln!("  xsa mems --sxi FILE --reads FA|FQ|GZ [-j N] [--min-len 20] [--mode auto|dna|text]  SUPERSEDED for v6 containers by `xsa mem`");
     eprintln!("  xsa forks --jsonl FILE [--n N] [-o OUT.jsonl] [-j J]  chi fork matrix (STRING x (WITNESS,CLASS) presence)");
     eprintln!("  xsa witness-build --sxi FILE --output FILE.wit");
     eprintln!("  xsa mems --first --sxi FILE --witness-index FILE.wit --reads FA|FQ|GZ");
@@ -1417,6 +1421,10 @@ fn main() {
     let raw: Vec<_> = std::env::args_os().skip(1).collect();
     if raw.first().is_some_and(|a| a == "branches") {
         qlite::branches_command(&raw[1..]);
+        return;
+    }
+    if raw.first().is_some_and(|a| a == "mem") {
+        qlite::mem_command(&raw[1..]);
         return;
     }
     if raw.first().is_some_and(|a| a == "query") {
