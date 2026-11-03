@@ -412,3 +412,77 @@ corpus slice as the seed text and checks, against that oracle:
 | S1 | every emitted seed's true multiplicity equals `occurrences` and reaches the target; the one-byte-longer seed equals `gave_up_mult` and is BELOW the target; multiplicity is non-increasing over a full 12..32 length ladder at each emitted offset; the reported length is the longest length still reaching the target; no seed is contained in another and no content repeats; the window counters add up; band mode keeps `min_mult <= occurrences <= max_mult`; a window far above the target is counted `too_common` and emits nothing |
 | S3 | `--max-len` below `--min-len`, empty text, a zero target, both multiplicity modes at once and a half band are all refused by name; bytes absent from the corpus yield zero seeds and exit 0; a slice spanning a `0x1E` document separator still seeds and the oracle agrees |
 | S4 | the same input twice gives byte-identical output and identical counters |
+
+## Measured gates for `xsa seeds` (2026-11-03)
+
+S1/S3/S4 on the 150 MB fixture container `/mnt/nvme2n1/erikg/bw256/t150m.sxi2`
+(corpus `/dev/shm/t150m.txt`) with the 150 MB corpus bytes as the independent
+oracle: **PASS**. The ladder printed by the gate is the mechanism, verbatim -
+offset 0 of a 1200-byte corpus slice with `--target-mult 50`:
+
+```
+offset 0:   12:336 13:51 14:38 15:38 16:4 17:1 ... 32:1
+offset 32:  12:5597 13:402 14:5 15:3 16:1 17:1 ... 32:1
+offset 192: 12:146 13:104 14:104 15:104 16:5 17:2 18:2 19:1 ... 32:1
+offset 672: 12:167 13:99 14:98 15:98 16:97 17:8 18:3 19:2 20:1 ... 32:1
+```
+
+Multiplicity is non-increasing in length everywhere (asserted at every probe the
+binary search makes), the emitted seed is the LONGEST length still reaching the
+target (13 at 51 for offset 0, 13 at 402, 15 at 104, 16 at 97), and the
+one-byte-longer seed is the reported give-up point (14 at 38, 14 at 5, 16 at 5,
+17 at 8) - all four re-counted independently by `seeds_oracle.c`. Band mode
+`50..80` kept every seed inside the band (1 seed; 3 windows counted
+`too_common`). A window far above the target (`--max-len 12`, `--target-mult 2`
+over a run of `A`) counted 15 `too_common` and emitted nothing. Guards: 6/6
+refusals by name, absent bytes gave 2 `no_match` and exit 0, a 64-byte slice
+spanning a `0x1E` document separator seeded 3 times with the oracle agreeing and
+at least one seed spanning the separator. Determinism: two runs byte-identical,
+counters identical.
+
+Existing gates unchanged on the same 150 MB container (no shared code path was
+touched: one new `include!`, one dispatch arm, two usage lines):
+`branches_gate.py` W1 100/100 + top-k closure 100/100, W3 7/7, FILE 12/12,
+W4 100/100 counts and positions; `mem_gate.py` X1 all-mems **20/20**, longest
+**20/20**, X2 5/5; `cargo test --release` **58 passed, 0 failed** (56 before, plus
+2 for `seeds`).
+
+S2, the semantic-neighbourhood evidence. 100 GB container
+`/mnt/nvme2n1/erikg/wf-finish-as-100gb-20261102T044713Z/corpus.sxi2`, sidecars
+`/mnt/nvme2n1/erikg/wiki`, text = document 4065 of the corpus (the **Cat**
+article, 177,348 bytes, extracted by reading `seps.bin` anchors+deltas directly),
+`--max-len 64 --docs DIR --limit 32`. **Every wall below is a shared-host wall: a
+second operator's `xsa branches --serve -j 128` on the SAME container was running
+(277 GB RSS, load average 140) throughout.** Peak RSS of `xsa seeds` 279.9 GB (the
+index columns), index load dominates the wall; `scan_ms`/`locate_ms` are the
+product times.
+
+| run | windows | accepted | mean_len | scan_ms | locate_ms | wall s |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `--target-mult 50` | 62 | 40 (22 `too_rare`) | 18.70 | 42.5 | 6562.9 | 128.35 |
+| `--target-mult 500` | 85 | 40 (44 `too_rare`, 1 contained) | 17.75 | 53.4 | 4038.1 | 91.36 |
+| `--max-mult 200 --min-mult 2` | 46 | 40 (4 `too_rare`, 2 contained) | 32.05 | 42.8 | 914.9 | 97.09 |
+| `--target-mult 10 --min-len 16` | 98 | 40 (57 `too_rare`, 1 `too_common`) | 24.90 | 64.8 | 4728.3 | 96.81 |
+
+`locate_ms` is large at `--limit 32` because a seed with multiplicity 4774 walks
+32 LF paths spread over the whole interval; interval widths and the solve itself
+cost tens of milliseconds for a 177 KB text. The seeds, their lengths and their
+multiplicities, and the distinct titles their sample positions land in, are in
+[the evidence directory](tools/binbwt/evidence/seeds/results.json).
+
+What the titles say (the point of the exercise): with `--target-mult 50` the 1280
+sampled positions land in **1232 distinct documents** - exact matching with tuned
+specificity really does spread over the pile - but the article's first 3 KB are
+MediaWiki template/citation syntax (`{{pp-semi-indef|small=yes}}`,
+`American English|date=October 2024}}`, `s://archive.org/details/i`), so the
+top-hit titles are Wikipedia noticeboards, and `--target-mult 500` is worse in
+exactly that way (higher fan-out pins shorter, more generic strings). The
+content-bearing runs are the interesting ones: `--target-mult 10 --min-len 16`
+over 1391 positions in **1289 distinct documents** returns
+*List of mammals of Missouri*, *Wild goat*, *Fisher (animal)*, *Indian giant
+squirrel*, *Elk*, *Hippobosca*, *List of Tabanus species*, *Stratiomys*,
+*Gymnosoma*, *Simia*, *Melanophora roralis* - species articles sharing the
+taxobox and the taxonomy vocabulary. Which is the honest reading of the
+hypothesis: the neighbourhood is real and exact-match reproducible, and what it
+is a neighbourhood OF is decided by the shared surface form (template + taxobox +
+`Carnivora` vocabulary), not by anything semantic beyond it.

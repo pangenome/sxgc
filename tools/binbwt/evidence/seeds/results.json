@@ -1,0 +1,1999 @@
+{
+ "binary_sha256": "8804760b6b183286f9c0e86fcacf99ff60845d16443425acf2b9a4c2766d716e",
+ "base_commit": "e398ea861253522c2dda490a5d308924baa59a66",
+ "container": "/mnt/nvme2n1/erikg/wf-finish-as-100gb-20261102T044713Z/corpus.sxi2",
+ "corpus": "/mnt/nvme2n1/erikg/wiki/corpus.bin",
+ "docs": "/mnt/nvme2n1/erikg/wiki",
+ "text": "doc 4065 of /mnt/nvme2n1/erikg/wiki/seps.bin ('Cat'), 177348 bytes, extracted with tools/binbwt/tests/docdump.c equivalent (seps.bin anchors+deltas direct read)",
+ "host": "shared: a second operator's `xsa branches --serve -j 128 -k 256` on the SAME container (277 GB RSS, load average 140) was running for every measurement below",
+ "peak_rss_gb": 279.9,
+ "S1_S3_S4_150MB": {
+  "container": "/mnt/nvme2n1/erikg/bw256/t150m.sxi2",
+  "corpus": "/dev/shm/t150m.txt",
+  "result": "PASS (S1 mechanism, S3 guards, S4 determinism)",
+  "gate": "tools/binbwt/tests/seeds_gate.py"
+ },
+ "S5_regressions_150MB": {
+  "branches": "W1 100/100 exact next-byte distributions, top-k closure 100/100; W3 7/7; FILE 12/12 JSONL; W4 100/100 counts and positions unchanged",
+  "mem": "X1 all-mems 20/20, longest 20/20 vs mem_oracle.c; X2 5/5 (4 KB query 6.5 s)",
+  "cargo_test": "58 passed, 0 failed (56 before + 2 new seeds unit tests)"
+ },
+ "S2": {
+  "target_mult_50": {
+   "wall_s": 128.35,
+   "stats": {
+    "windows": "62",
+    "tried": "62",
+    "accepted": "40",
+    "mean_len": "18.70",
+    "mult_histogram": "50:1,52:1,54:1,55:2,61:1,66:1,67:1,68:1,84:2,85:1,91:1,106:2,109:1,116:2,119:1,123:1,170:1,176:2,181:1,200:1,204:1,235:1,244:1,281:1,320:1,352:1,395:1,484:1,578:1,711:1,1088:1,1263:1,1572:1,4774:1,6138:1",
+    "shorten_steps": "356",
+    "extend_steps": "434",
+    "scan_ms": "42.462",
+    "locate_ms": "6562.914",
+    "mode": "target",
+    "target_mult": "50",
+    "cap": "none",
+    "min_len": "12",
+    "max_len": "64",
+    "stride": "32",
+    "no_match": "0",
+    "too_short": "0",
+    "too_rare": "22",
+    "too_common": "0",
+    "suppressed_dedup": "0",
+    "suppressed_contained": "0",
+    "nearest_below": "0",
+    "positions": "1280",
+    "ranks": "60166",
+    "lf_steps": "6682127"
+   },
+   "seeds": [
+    {
+     "seed_id": 0,
+     "text_offset": 0,
+     "length": 24,
+     "occurrences": 176,
+     "seed": "Cat\n{{Short description|",
+     "gave_up_len": 25,
+     "gave_up_mult": 13
+    },
+    {
+     "seed_id": 1,
+     "text_offset": 32,
+     "length": 13,
+     "occurrences": 395,
+     "seed": "mesticated ca",
+     "gave_up_len": 14,
+     "gave_up_mult": 29
+    },
+    {
+     "seed_id": 2,
+     "text_offset": 64,
+     "length": 17,
+     "occurrences": 85,
+     "seed": "{{About|the speci",
+     "gave_up_len": 18,
+     "gave_up_mult": 46
+    },
+    {
+     "seed_id": 3,
+     "text_offset": 128,
+     "length": 14,
+     "occurrences": 170,
+     "seed": "e|other uses|C",
+     "gave_up_len": 15,
+     "gave_up_mult": 36
+    },
+    {
+     "seed_id": 4,
+     "text_offset": 160,
+     "length": 17,
+     "occurrences": 55,
+     "seed": ")}}\n{{Redirect|Ca",
+     "gave_up_len": 18,
+     "gave_up_mult": 4
+    },
+    {
+     "seed_id": 5,
+     "text_offset": 192,
+     "length": 20,
+     "occurrences": 281,
+     "seed": "ats (disambiguation)",
+     "gave_up_len": 21,
+     "gave_up_mult": 31
+    },
+    {
+     "seed_id": 6,
+     "text_offset": 224,
+     "length": 17,
+     "occurrences": 204,
+     "seed": "ticle}}\n{{pp-move",
+     "gave_up_len": 18,
+     "gave_up_mult": 48
+    },
+    {
+     "seed_id": 7,
+     "text_offset": 256,
+     "length": 54,
+     "occurrences": 176,
+     "seed": "pp-semi-indef|small=yes}}\n{{Use American English|date=",
+     "gave_up_len": 55,
+     "gave_up_mult": 9
+    },
+    {
+     "seed_id": 8,
+     "text_offset": 288,
+     "length": 58,
+     "occurrences": 1088,
+     "seed": "American English|date=October 2024}}\n{{Use dmy dates|date=",
+     "gave_up_len": 59,
+     "gave_up_mult": 4
+    },
+    {
+     "seed_id": 9,
+     "text_offset": 320,
+     "length": 38,
+     "occurrences": 181,
+     "seed": "24}}\n{{Use dmy dates|date=April 2026}}",
+     "gave_up_len": 39,
+     "gave_up_mult": 2
+    },
+    {
+     "seed_id": 10,
+     "text_offset": 352,
+     "length": 22,
+     "occurrences": 116,
+     "seed": "2026}}&lt;!-- Per MOS:",
+     "gave_up_len": 23,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 11,
+     "text_offset": 416,
+     "length": 13,
+     "occurrences": 68,
+     "seed": "nform to one ",
+     "gave_up_len": 14,
+     "gave_up_mult": 37
+    },
+    {
+     "seed_id": 12,
+     "text_offset": 448,
+     "length": 14,
+     "occurrences": 711,
+     "seed": " English and d",
+     "gave_up_len": 15,
+     "gave_up_mult": 33
+    },
+    {
+     "seed_id": 13,
+     "text_offset": 480,
+     "length": 14,
+     "occurrences": 235,
+     "seed": "lly the ones w",
+     "gave_up_len": 15,
+     "gave_up_mult": 43
+    },
+    {
+     "seed_id": 14,
+     "text_offset": 512,
+     "length": 17,
+     "occurrences": 91,
+     "seed": "reated when the t",
+     "gave_up_len": 18,
+     "gave_up_mult": 18
+    },
+    {
+     "seed_id": 15,
+     "text_offset": 544,
+     "length": 17,
+     "occurrences": 320,
+     "seed": "ong national ties",
+     "gave_up_len": 18,
+     "gave_up_mult": 12
+    },
+    {
+     "seed_id": 16,
+     "text_offset": 576,
+     "length": 17,
+     "occurrences": 4774,
+     "seed": "was created with ",
+     "gave_up_len": 18,
+     "gave_up_mult": 33
+    },
+    {
+     "seed_id": 17,
+     "text_offset": 672,
+     "length": 22,
+     "occurrences": 66,
+     "seed": "ontinue to be written ",
+     "gave_up_len": 23,
+     "gave_up_mult": 6
+    },
+    {
+     "seed_id": 18,
+     "text_offset": 704,
+     "length": 17,
+     "occurrences": 106,
+     "seed": "If there is a com",
+     "gave_up_len": 18,
+     "gave_up_mult": 43
+    },
+    {
+     "seed_id": 19,
+     "text_offset": 736,
+     "length": 13,
+     "occurrences": 6138,
+     "seed": "to change it ",
+     "gave_up_len": 14,
+     "gave_up_mult": 42
+    },
+    {
+     "seed_id": 20,
+     "text_offset": 768,
+     "length": 23,
+     "occurrences": 578,
+     "seed": " the talk page. --&gt;\n",
+     "gave_up_len": 24,
+     "gave_up_mult": 40
+    },
+    {
+     "seed_id": 21,
+     "text_offset": 800,
+     "length": 15,
+     "occurrences": 1572,
+     "seed": "box\n| name = Ca",
+     "gave_up_len": 16,
+     "gave_up_mult": 43
+    },
+    {
+     "seed_id": 22,
+     "text_offset": 832,
+     "length": 29,
+     "occurrences": 123,
+     "seed": "as been extensive discussion ",
+     "gave_up_len": 30,
+     "gave_up_mult": 44
+    },
+    {
+     "seed_id": 23,
+     "text_offset": 864,
+     "length": 17,
+     "occurrences": 352,
+     "seed": "ut the choice of ",
+     "gave_up_len": 18,
+     "gave_up_mult": 14
+    },
+    {
+     "seed_id": 24,
+     "text_offset": 928,
+     "length": 19,
+     "occurrences": 116,
+     "seed": "age with something ",
+     "gave_up_len": 20,
+     "gave_up_mult": 12
+    },
+    {
+     "seed_id": 25,
+     "text_offset": 992,
+     "length": 14,
+     "occurrences": 109,
+     "seed": " ENCYCLOPEDIC ",
+     "gave_up_len": 15,
+     "gave_up_mult": 6
+    },
+    {
+     "seed_id": 26,
+     "text_offset": 1024,
+     "length": 14,
+     "occurrences": 50,
+     "seed": "to this choice",
+     "gave_up_len": 15,
+     "gave_up_mult": 14
+    },
+    {
+     "seed_id": 27,
+     "text_offset": 1056,
+     "length": 14,
+     "occurrences": 84,
+     "seed": " and [[Talk:Ca",
+     "gave_up_len": 15,
+     "gave_up_mult": 13
+    },
+    {
+     "seed_id": 28,
+     "text_offset": 1088,
+     "length": 14,
+     "occurrences": 200,
+     "seed": " if in doubt, ",
+     "gave_up_len": 15,
+     "gave_up_mult": 2
+    },
+    {
+     "seed_id": 29,
+     "text_offset": 1248,
+     "length": 14,
+     "occurrences": 106,
+     "seed": "e\n |perrow = 2",
+     "gave_up_len": 15,
+     "gave_up_mult": 4
+    },
+    {
+     "seed_id": 30,
+     "text_offset": 1312,
+     "length": 13,
+     "occurrences": 484,
+     "seed": "t.jpg\n |image",
+     "gave_up_len": 14,
+     "gave_up_mult": 6
+    },
+    {
+     "seed_id": 31,
+     "text_offset": 1408,
+     "length": 13,
+     "occurrences": 52,
+     "seed": "jpg\n |image5 ",
+     "gave_up_len": 14,
+     "gave_up_mult": 18
+    },
+    {
+     "seed_id": 32,
+     "text_offset": 1472,
+     "length": 12,
+     "occurrences": 84,
+     "seed": "sitting on f",
+     "gave_up_len": 13,
+     "gave_up_mult": 13
+    },
+    {
+     "seed_id": 33,
+     "text_offset": 1536,
+     "length": 15,
+     "occurrences": 54,
+     "seed": "oter = Various ",
+     "gave_up_len": 16,
+     "gave_up_mult": 3
+    },
+    {
+     "seed_id": 34,
+     "text_offset": 1568,
+     "length": 12,
+     "occurrences": 244,
+     "seed": "lt1 = White ",
+     "gave_up_len": 13,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 35,
+     "text_offset": 1632,
+     "length": 13,
+     "occurrences": 61,
+     "seed": "tting with it",
+     "gave_up_len": 14,
+     "gave_up_mult": 46
+    },
+    {
+     "seed_id": 36,
+     "text_offset": 1696,
+     "length": 14,
+     "occurrences": 1263,
+     "seed": "ing down with ",
+     "gave_up_len": 15,
+     "gave_up_mult": 16
+    },
+    {
+     "seed_id": 37,
+     "text_offset": 1760,
+     "length": 17,
+     "occurrences": 55,
+     "seed": " relaxed position",
+     "gave_up_len": 18,
+     "gave_up_mult": 16
+    },
+    {
+     "seed_id": 38,
+     "text_offset": 1824,
+     "length": 15,
+     "occurrences": 67,
+     "seed": " and a curved s",
+     "gave_up_len": 16,
+     "gave_up_mult": 19
+    },
+    {
+     "seed_id": 39,
+     "text_offset": 1952,
+     "length": 13,
+     "occurrences": 119,
+     "seed": "and white cat",
+     "gave_up_len": 14,
+     "gave_up_mult": 45
+    }
+   ],
+   "titles_top20": [
+    {
+     "title": "Cat",
+     "positions": 12,
+     "seeds": 12
+    },
+    {
+     "title": "Wikipedia:Templates for deletion/Log/2006 May 13",
+     "positions": 12,
+     "seeds": 1
+    },
+    {
+     "title": "Metal: A Headbanger's Journey",
+     "positions": 8,
+     "seeds": 1
+    },
+    {
+     "title": "List of Berklee College of Music alumni",
+     "positions": 3,
+     "seeds": 1
+    },
+    {
+     "title": "Wikipedia:Redirects for discussion/Log/2020 July 22",
+     "positions": 2,
+     "seeds": 1
+    },
+    {
+     "title": "Wikipedia:Help desk/Archive 58",
+     "positions": 2,
+     "seeds": 2
+    },
+    {
+     "title": "Wikipedia:Administrators' noticeboard/IncidentArchive786",
+     "positions": 2,
+     "seeds": 1
+    },
+    {
+     "title": "Wikipedia:Village pump (policy)/Archive 71",
+     "positions": 2,
+     "seeds": 1
+    },
+    {
+     "title": "Wikipedia:Administrators' noticeboard/IncidentArchive708",
+     "positions": 2,
+     "seeds": 2
+    },
+    {
+     "title": "Andrew Weil",
+     "positions": 2,
+     "seeds": 1
+    },
+    {
+     "title": "Bardic name",
+     "positions": 2,
+     "seeds": 1
+    },
+    {
+     "title": "The Great Gatsby (1949 film)",
+     "positions": 2,
+     "seeds": 1
+    },
+    {
+     "title": "The Smart Set",
+     "positions": 2,
+     "seeds": 1
+    },
+    {
+     "title": "Hafren",
+     "positions": 2,
+     "seeds": 1
+    },
+    {
+     "title": "Gareth Edwards (rugby union)",
+     "positions": 2,
+     "seeds": 1
+    },
+    {
+     "title": "Shroud of Turin",
+     "positions": 2,
+     "seeds": 1
+    },
+    {
+     "title": "Violin",
+     "positions": 2,
+     "seeds": 1
+    },
+    {
+     "title": "Lens (vertebrate anatomy)",
+     "positions": 2,
+     "seeds": 1
+    },
+    {
+     "title": "Accommodation (vertebrate eye)",
+     "positions": 2,
+     "seeds": 1
+    },
+    {
+     "title": "List of fictional cats in animation",
+     "positions": 2,
+     "seeds": 1
+    }
+   ]
+  },
+  "target_mult_500": {
+   "wall_s": 91.36,
+   "stats": {
+    "windows": "85",
+    "tried": "84",
+    "accepted": "40",
+    "mean_len": "17.75",
+    "mult_histogram": "504:1,523:1,532:1,546:1,578:1,590:1,626:1,688:1,710:1,711:1,717:1,757:1,831:1,849:1,876:1,885:1,1025:1,1032:1,1049:1,1088:1,1142:1,1205:1,1263:1,1324:1,1572:1,1619:1,1633:1,1839:1,1947:1,2352:1,3449:1,3828:1,4009:1,4389:1,4774:1,5160:1,6138:1,6402:1,22602:1,76970:1",
+    "shorten_steps": "398",
+    "extend_steps": "595",
+    "scan_ms": "53.375",
+    "locate_ms": "4038.109",
+    "mode": "target",
+    "target_mult": "500",
+    "cap": "none",
+    "min_len": "12",
+    "max_len": "64",
+    "stride": "32",
+    "no_match": "0",
+    "too_short": "0",
+    "too_rare": "44",
+    "too_common": "0",
+    "suppressed_dedup": "0",
+    "suppressed_contained": "1",
+    "nearest_below": "0",
+    "positions": "1280",
+    "ranks": "78212",
+    "lf_steps": "6472258"
+   },
+   "seeds": [
+    {
+     "seed_id": 0,
+     "text_offset": 32,
+     "length": 12,
+     "occurrences": 757,
+     "seed": "mesticated c",
+     "gave_up_len": 13,
+     "gave_up_mult": 395
+    },
+    {
+     "seed_id": 1,
+     "text_offset": 64,
+     "length": 13,
+     "occurrences": 4389,
+     "seed": "{{About|the s",
+     "gave_up_len": 14,
+     "gave_up_mult": 277
+    },
+    {
+     "seed_id": 2,
+     "text_offset": 128,
+     "length": 13,
+     "occurrences": 2352,
+     "seed": "e|other uses|",
+     "gave_up_len": 14,
+     "gave_up_mult": 170
+    },
+    {
+     "seed_id": 3,
+     "text_offset": 160,
+     "length": 15,
+     "occurrences": 4009,
+     "seed": ")}}\n{{Redirect|",
+     "gave_up_len": 16,
+     "gave_up_mult": 279
+    },
+    {
+     "seed_id": 4,
+     "text_offset": 224,
+     "length": 13,
+     "occurrences": 688,
+     "seed": "ticle}}\n{{pp-",
+     "gave_up_len": 14,
+     "gave_up_mult": 204
+    },
+    {
+     "seed_id": 5,
+     "text_offset": 256,
+     "length": 32,
+     "occurrences": 876,
+     "seed": "pp-semi-indef|small=yes}}\n{{Use ",
+     "gave_up_len": 33,
+     "gave_up_mult": 186
+    },
+    {
+     "seed_id": 6,
+     "text_offset": 288,
+     "length": 58,
+     "occurrences": 1088,
+     "seed": "American English|date=October 2024}}\n{{Use dmy dates|date=",
+     "gave_up_len": 59,
+     "gave_up_mult": 4
+    },
+    {
+     "seed_id": 7,
+     "text_offset": 320,
+     "length": 35,
+     "occurrences": 5160,
+     "seed": "24}}\n{{Use dmy dates|date=April 202",
+     "gave_up_len": 36,
+     "gave_up_mult": 182
+    },
+    {
+     "seed_id": 8,
+     "text_offset": 352,
+     "length": 14,
+     "occurrences": 1205,
+     "seed": "2026}}&lt;!-- ",
+     "gave_up_len": 15,
+     "gave_up_mult": 161
+    },
+    {
+     "seed_id": 9,
+     "text_offset": 448,
+     "length": 14,
+     "occurrences": 711,
+     "seed": " English and d",
+     "gave_up_len": 15,
+     "gave_up_mult": 33
+    },
+    {
+     "seed_id": 10,
+     "text_offset": 480,
+     "length": 13,
+     "occurrences": 1032,
+     "seed": "lly the ones ",
+     "gave_up_len": 14,
+     "gave_up_mult": 235
+    },
+    {
+     "seed_id": 11,
+     "text_offset": 512,
+     "length": 16,
+     "occurrences": 1633,
+     "seed": "reated when the ",
+     "gave_up_len": 17,
+     "gave_up_mult": 91
+    },
+    {
+     "seed_id": 12,
+     "text_offset": 544,
+     "length": 14,
+     "occurrences": 626,
+     "seed": "ong national t",
+     "gave_up_len": 15,
+     "gave_up_mult": 354
+    },
+    {
+     "seed_id": 13,
+     "text_offset": 576,
+     "length": 17,
+     "occurrences": 4774,
+     "seed": "was created with ",
+     "gave_up_len": 18,
+     "gave_up_mult": 33
+    },
+    {
+     "seed_id": 14,
+     "text_offset": 672,
+     "length": 14,
+     "occurrences": 22602,
+     "seed": "ontinue to be ",
+     "gave_up_len": 15,
+     "gave_up_mult": 454
+    },
+    {
+     "seed_id": 15,
+     "text_offset": 704,
+     "length": 16,
+     "occurrences": 1049,
+     "seed": "If there is a co",
+     "gave_up_len": 17,
+     "gave_up_mult": 106
+    },
+    {
+     "seed_id": 16,
+     "text_offset": 736,
+     "length": 13,
+     "occurrences": 6138,
+     "seed": "to change it ",
+     "gave_up_len": 14,
+     "gave_up_mult": 42
+    },
+    {
+     "seed_id": 17,
+     "text_offset": 768,
+     "length": 23,
+     "occurrences": 578,
+     "seed": " the talk page. --&gt;\n",
+     "gave_up_len": 24,
+     "gave_up_mult": 40
+    },
+    {
+     "seed_id": 18,
+     "text_offset": 800,
+     "length": 15,
+     "occurrences": 1572,
+     "seed": "box\n| name = Ca",
+     "gave_up_len": 16,
+     "gave_up_mult": 43
+    },
+    {
+     "seed_id": 19,
+     "text_offset": 832,
+     "length": 18,
+     "occurrences": 532,
+     "seed": "as been extensive ",
+     "gave_up_len": 19,
+     "gave_up_mult": 169
+    },
+    {
+     "seed_id": 20,
+     "text_offset": 864,
+     "length": 14,
+     "occurrences": 590,
+     "seed": "ut the choice ",
+     "gave_up_len": 15,
+     "gave_up_mult": 353
+    },
+    {
+     "seed_id": 21,
+     "text_offset": 928,
+     "length": 13,
+     "occurrences": 1142,
+     "seed": "age with some",
+     "gave_up_len": 14,
+     "gave_up_mult": 121
+    },
+    {
+     "seed_id": 22,
+     "text_offset": 992,
+     "length": 12,
+     "occurrences": 1839,
+     "seed": " ENCYCLOPEDI",
+     "gave_up_len": 13,
+     "gave_up_mult": 131
+    },
+    {
+     "seed_id": 23,
+     "text_offset": 1056,
+     "length": 12,
+     "occurrences": 6402,
+     "seed": " and [[Talk:",
+     "gave_up_len": 13,
+     "gave_up_mult": 458
+    },
+    {
+     "seed_id": 24,
+     "text_offset": 1696,
+     "length": 14,
+     "occurrences": 1263,
+     "seed": "ing down with ",
+     "gave_up_len": 15,
+     "gave_up_mult": 16
+    },
+    {
+     "seed_id": 25,
+     "text_offset": 1824,
+     "length": 14,
+     "occurrences": 710,
+     "seed": " and a curved ",
+     "gave_up_len": 15,
+     "gave_up_mult": 67
+    },
+    {
+     "seed_id": 26,
+     "text_offset": 1952,
+     "length": 12,
+     "occurrences": 546,
+     "seed": "and white ca",
+     "gave_up_len": 13,
+     "gave_up_mult": 119
+    },
+    {
+     "seed_id": 27,
+     "text_offset": 2048,
+     "length": 18,
+     "occurrences": 1324,
+     "seed": "ef name=&quot;Linn",
+     "gave_up_len": 19,
+     "gave_up_mult": 384
+    },
+    {
+     "seed_id": 28,
+     "text_offset": 2080,
+     "length": 14,
+     "occurrences": 523,
+     "seed": "/&gt;\n| author",
+     "gave_up_len": 15,
+     "gave_up_mult": 322
+    },
+    {
+     "seed_id": 29,
+     "text_offset": 2112,
+     "length": 60,
+     "occurrences": 831,
+     "seed": "eus|Linnaeus]], [[10th edition of Systema Naturae|1758]]&lt;",
+     "gave_up_len": 61,
+     "gave_up_mult": 126
+    },
+    {
+     "seed_id": 30,
+     "text_offset": 2176,
+     "length": 14,
+     "occurrences": 849,
+     "seed": "name=&quot;MSW",
+     "gave_up_len": 15,
+     "gave_up_mult": 477
+    },
+    {
+     "seed_id": 31,
+     "text_offset": 2208,
+     "length": 15,
+     "occurrences": 1025,
+     "seed": "ynonyms = *''Ca",
+     "gave_up_len": 16,
+     "gave_up_mult": 168
+    },
+    {
+     "seed_id": 32,
+     "text_offset": 2240,
+     "length": 13,
+     "occurrences": 885,
+     "seed": "{{small|[[Joh",
+     "gave_up_len": 14,
+     "gave_up_mult": 319
+    },
+    {
+     "seed_id": 33,
+     "text_offset": 2304,
+     "length": 14,
+     "occurrences": 3449,
+     "seed": "lt;ref name=Er",
+     "gave_up_len": 15,
+     "gave_up_mult": 3
+    },
+    {
+     "seed_id": 34,
+     "text_offset": 2336,
+     "length": 12,
+     "occurrences": 1619,
+     "seed": "ook |last=Er",
+     "gave_up_len": 13,
+     "gave_up_mult": 4
+    },
+    {
+     "seed_id": 35,
+     "text_offset": 2432,
+     "length": 19,
+     "occurrences": 1947,
+     "seed": ", genera, species, ",
+     "gave_up_len": 20,
+     "gave_up_mult": 53
+    },
+    {
+     "seed_id": 36,
+     "text_offset": 2560,
+     "length": 12,
+     "occurrences": 504,
+     "seed": "ges=520\u201352",
+     "gave_up_len": 13,
+     "gave_up_mult": 133
+    },
+    {
+     "seed_id": 37,
+     "text_offset": 2592,
+     "length": 13,
+     "occurrences": 717,
+     "seed": "us domesticus",
+     "gave_up_len": 14,
+     "gave_up_mult": 43
+    },
+    {
+     "seed_id": 38,
+     "text_offset": 2624,
+     "length": 25,
+     "occurrences": 76970,
+     "seed": "s://archive.org/details/i",
+     "gave_up_len": 26,
+     "gave_up_mult": 147
+    },
+    {
+     "seed_id": 39,
+     "text_offset": 2688,
+     "length": 12,
+     "occurrences": 3828,
+     "seed": "ef&gt;\n* ''F",
+     "gave_up_len": 13,
+     "gave_up_mult": 38
+    }
+   ],
+   "titles_top20": [
+    {
+     "title": "List of stamp clubs and philatelic societies in the United States",
+     "positions": 9,
+     "seeds": 1
+    },
+    {
+     "title": "List of mammals of Thailand",
+     "positions": 4,
+     "seeds": 1
+    },
+    {
+     "title": "List of Berklee College of Music alumni",
+     "positions": 3,
+     "seeds": 1
+    },
+    {
+     "title": "Wikipedia:Teahouse/Questions/Archive 1083",
+     "positions": 3,
+     "seeds": 2
+    },
+    {
+     "title": "Extreme Fighting Championship",
+     "positions": 3,
+     "seeds": 1
+    },
+    {
+     "title": "Wild ancestor",
+     "positions": 2,
+     "seeds": 1
+    },
+    {
+     "title": "Catholic Church in the Thirteen Colonies",
+     "positions": 2,
+     "seeds": 1
+    },
+    {
+     "title": "List of people on the postage stamps of the United States",
+     "positions": 2,
+     "seeds": 1
+    },
+    {
+     "title": "List of ant genera",
+     "positions": 2,
+     "seeds": 2
+    },
+    {
+     "title": "Dorididae",
+     "positions": 2,
+     "seeds": 1
+    },
+    {
+     "title": "List of marine molluscs of Venezuela",
+     "positions": 2,
+     "seeds": 1
+    },
+    {
+     "title": "Reindeer",
+     "positions": 2,
+     "seeds": 1
+    },
+    {
+     "title": "Cat",
+     "positions": 2,
+     "seeds": 2
+    },
+    {
+     "title": "List of Slovenian domestic animal breeds",
+     "positions": 2,
+     "seeds": 1
+    },
+    {
+     "title": "Wikipedia:Manual of Style/Organisms",
+     "positions": 1,
+     "seeds": 1
+    },
+    {
+     "title": "History of Protestantism in the United States",
+     "positions": 1,
+     "seeds": 1
+    },
+    {
+     "title": "Dino (The Flintstones)",
+     "positions": 1,
+     "seeds": 1
+    },
+    {
+     "title": "Eliseo Roberto Col\u00f3n Zayas",
+     "positions": 1,
+     "seeds": 1
+    },
+    {
+     "title": "Evolution of the domesticated cat",
+     "positions": 1,
+     "seeds": 1
+    },
+    {
+     "title": "Streptococcus canis",
+     "positions": 1,
+     "seeds": 1
+    }
+   ]
+  },
+  "band_2_200": {
+   "wall_s": 97.09,
+   "stats": {
+    "windows": "46",
+    "tried": "44",
+    "accepted": "40",
+    "mean_len": "32.05",
+    "mult_histogram": "2:20,3:4,4:3,5:2,7:2,8:1,9:2,10:1,30:1,37:1,40:1,43:1,116:1",
+    "shorten_steps": "282",
+    "extend_steps": "322",
+    "scan_ms": "42.790",
+    "locate_ms": "914.914",
+    "mode": "band",
+    "target_mult": "2",
+    "cap": "200",
+    "min_len": "12",
+    "max_len": "64",
+    "stride": "32",
+    "no_match": "0",
+    "too_short": "0",
+    "too_rare": "4",
+    "too_common": "0",
+    "suppressed_dedup": "0",
+    "suppressed_contained": "2",
+    "nearest_below": "0",
+    "positions": "282",
+    "ranks": "47382",
+    "lf_steps": "1250348"
+   },
+   "seeds": [
+    {
+     "seed_id": 0,
+     "text_offset": 0,
+     "length": 30,
+     "occurrences": 2,
+     "seed": "Cat\n{{Short description|Small ",
+     "gave_up_len": 31,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 1,
+     "text_offset": 32,
+     "length": 29,
+     "occurrences": 3,
+     "seed": "mesticated carnivorous mammal",
+     "gave_up_len": 30,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 2,
+     "text_offset": 64,
+     "length": 29,
+     "occurrences": 2,
+     "seed": "{{About|the species commonly ",
+     "gave_up_len": 30,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 3,
+     "text_offset": 128,
+     "length": 16,
+     "occurrences": 7,
+     "seed": "e|other uses|Cat",
+     "gave_up_len": 17,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 4,
+     "text_offset": 160,
+     "length": 18,
+     "occurrences": 4,
+     "seed": ")}}\n{{Redirect|Cat",
+     "gave_up_len": 19,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 5,
+     "text_offset": 192,
+     "length": 25,
+     "occurrences": 30,
+     "seed": "ats (disambiguation)}}\n{{",
+     "gave_up_len": 26,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 6,
+     "text_offset": 224,
+     "length": 45,
+     "occurrences": 2,
+     "seed": "ticle}}\n{{pp-move|small=yes}}\n{{pp-semi-indef",
+     "gave_up_len": 46,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 7,
+     "text_offset": 256,
+     "length": 64,
+     "occurrences": 9,
+     "seed": "pp-semi-indef|small=yes}}\n{{Use American English|date=October 20",
+     "gave_up_len": null,
+     "gave_up_mult": null
+    },
+    {
+     "seed_id": 8,
+     "text_offset": 288,
+     "length": 64,
+     "occurrences": 2,
+     "seed": "American English|date=October 2024}}\n{{Use dmy dates|date=April ",
+     "gave_up_len": null,
+     "gave_up_mult": null
+    },
+    {
+     "seed_id": 9,
+     "text_offset": 320,
+     "length": 46,
+     "occurrences": 2,
+     "seed": "24}}\n{{Use dmy dates|date=April 2026}}&lt;!-- ",
+     "gave_up_len": 47,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 10,
+     "text_offset": 352,
+     "length": 22,
+     "occurrences": 116,
+     "seed": "2026}}&lt;!-- Per MOS:",
+     "gave_up_len": 23,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 11,
+     "text_offset": 384,
+     "length": 14,
+     "occurrences": 2,
+     "seed": " MOS:DATEVAR, ",
+     "gave_up_len": 15,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 12,
+     "text_offset": 416,
+     "length": 14,
+     "occurrences": 37,
+     "seed": "nform to one o",
+     "gave_up_len": 15,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 13,
+     "text_offset": 448,
+     "length": 26,
+     "occurrences": 2,
+     "seed": " English and date format, ",
+     "gave_up_len": 27,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 14,
+     "text_offset": 480,
+     "length": 18,
+     "occurrences": 40,
+     "seed": "lly the ones with ",
+     "gave_up_len": 19,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 15,
+     "text_offset": 512,
+     "length": 22,
+     "occurrences": 4,
+     "seed": "reated when the topic ",
+     "gave_up_len": 23,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 16,
+     "text_offset": 544,
+     "length": 19,
+     "occurrences": 9,
+     "seed": "ong national ties. ",
+     "gave_up_len": 20,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 17,
+     "text_offset": 576,
+     "length": 26,
+     "occurrences": 3,
+     "seed": "was created with American ",
+     "gave_up_len": 27,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 18,
+     "text_offset": 608,
+     "length": 24,
+     "occurrences": 2,
+     "seed": "h, using international d",
+     "gave_up_len": 25,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 19,
+     "text_offset": 672,
+     "length": 27,
+     "occurrences": 2,
+     "seed": "ontinue to be written that ",
+     "gave_up_len": 28,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 20,
+     "text_offset": 704,
+     "length": 35,
+     "occurrences": 8,
+     "seed": "If there is a compelling reason to ",
+     "gave_up_len": 36,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 21,
+     "text_offset": 736,
+     "length": 17,
+     "occurrences": 3,
+     "seed": "to change it prop",
+     "gave_up_len": 18,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 22,
+     "text_offset": 768,
+     "length": 26,
+     "occurrences": 4,
+     "seed": " the talk page. --&gt;\n{{S",
+     "gave_up_len": 27,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 23,
+     "text_offset": 800,
+     "length": 16,
+     "occurrences": 43,
+     "seed": "box\n| name = Cat",
+     "gave_up_len": 17,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 24,
+     "text_offset": 832,
+     "length": 64,
+     "occurrences": 2,
+     "seed": "as been extensive discussion about the choice of image in this i",
+     "gave_up_len": null,
+     "gave_up_mult": null
+    },
+    {
+     "seed_id": 25,
+     "text_offset": 864,
+     "length": 64,
+     "occurrences": 2,
+     "seed": "ut the choice of image in this infobox. Before replacing this im",
+     "gave_up_len": null,
+     "gave_up_mult": null
+    },
+    {
+     "seed_id": 26,
+     "text_offset": 896,
+     "length": 64,
+     "occurrences": 2,
+     "seed": "nfobox. Before replacing this image with something else, conside",
+     "gave_up_len": null,
+     "gave_up_mult": null
+    },
+    {
+     "seed_id": 27,
+     "text_offset": 928,
+     "length": 64,
+     "occurrences": 2,
+     "seed": "age with something else, consider if it actually improves on the",
+     "gave_up_len": null,
+     "gave_up_mult": null
+    },
+    {
+     "seed_id": 28,
+     "text_offset": 960,
+     "length": 55,
+     "occurrences": 2,
+     "seed": "r if it actually improves on the ENCYCLOPEDIC CRITERIA ",
+     "gave_up_len": 56,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 29,
+     "text_offset": 1024,
+     "length": 64,
+     "occurrences": 2,
+     "seed": "to this choice. See [[Talk:Cat]] and [[Talk:Cat/Lead photo]] and",
+     "gave_up_len": null,
+     "gave_up_mult": null
+    },
+    {
+     "seed_id": 30,
+     "text_offset": 1056,
+     "length": 63,
+     "occurrences": 2,
+     "seed": " and [[Talk:Cat/Lead photo]] and if in doubt, DISCUSS IT FIRST!",
+     "gave_up_len": 64,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 31,
+     "text_offset": 1120,
+     "length": 39,
+     "occurrences": 3,
+     "seed": "--&gt;\n| fossil_range = {{fossil range|",
+     "gave_up_len": 40,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 32,
+     "text_offset": 1184,
+     "length": 20,
+     "occurrences": 2,
+     "seed": "olocene]] to present",
+     "gave_up_len": 21,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 33,
+     "text_offset": 1216,
+     "length": 17,
+     "occurrences": 2,
+     "seed": "s ago)\n| image = ",
+     "gave_up_len": 18,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 34,
+     "text_offset": 1248,
+     "length": 18,
+     "occurrences": 2,
+     "seed": "e\n |perrow = 2/2/2",
+     "gave_up_len": 19,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 35,
+     "text_offset": 1280,
+     "length": 18,
+     "occurrences": 5,
+     "seed": " = 275\n |image1 = ",
+     "gave_up_len": 19,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 36,
+     "text_offset": 1312,
+     "length": 17,
+     "occurrences": 5,
+     "seed": "t.jpg\n |image2 = ",
+     "gave_up_len": 18,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 37,
+     "text_offset": 1376,
+     "length": 12,
+     "occurrences": 7,
+     "seed": "mage4 = Feli",
+     "gave_up_len": 13,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 38,
+     "text_offset": 1408,
+     "length": 16,
+     "occurrences": 2,
+     "seed": "jpg\n |image5 = G",
+     "gave_up_len": 17,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 39,
+     "text_offset": 1440,
+     "length": 15,
+     "occurrences": 10,
+     "seed": "jpg\n |image6 = ",
+     "gave_up_len": 16,
+     "gave_up_mult": 1
+    }
+   ],
+   "titles_top20": [
+    {
+     "title": "Cat",
+     "positions": 38,
+     "seeds": 38
+    },
+    {
+     "title": "Wikipedia:Administrators' noticeboard/IncidentArchive708",
+     "positions": 7,
+     "seeds": 7
+    },
+    {
+     "title": "Wikipedia:Administrators' noticeboard/IncidentArchive750",
+     "positions": 3,
+     "seeds": 1
+    },
+    {
+     "title": "SDI (engine)",
+     "positions": 2,
+     "seeds": 1
+    },
+    {
+     "title": "POSIX",
+     "positions": 2,
+     "seeds": 1
+    },
+    {
+     "title": "Comparison of integrated development environments",
+     "positions": 2,
+     "seeds": 1
+    },
+    {
+     "title": "Nafplio",
+     "positions": 2,
+     "seeds": 2
+    },
+    {
+     "title": "Hobie Cat",
+     "positions": 1,
+     "seeds": 1
+    },
+    {
+     "title": "Kitty",
+     "positions": 1,
+     "seeds": 1
+    },
+    {
+     "title": "Wikipedia:Peer review/Semiotics/archive1",
+     "positions": 1,
+     "seeds": 1
+    },
+    {
+     "title": "Gardnerella vaginalis",
+     "positions": 1,
+     "seeds": 1
+    },
+    {
+     "title": "Cat's Cradle (venue)",
+     "positions": 1,
+     "seeds": 1
+    },
+    {
+     "title": "Cat's Cradle",
+     "positions": 1,
+     "seeds": 1
+    },
+    {
+     "title": "Kataklysm",
+     "positions": 1,
+     "seeds": 1
+    },
+    {
+     "title": "Catch (baseball)",
+     "positions": 1,
+     "seeds": 1
+    },
+    {
+     "title": "Catching Fire",
+     "positions": 1,
+     "seeds": 1
+    },
+    {
+     "title": "Category:Bradford",
+     "positions": 1,
+     "seeds": 1
+    },
+    {
+     "title": "Catering",
+     "positions": 1,
+     "seeds": 1
+    },
+    {
+     "title": "Catharine R. Williams",
+     "positions": 1,
+     "seeds": 1
+    },
+    {
+     "title": "Pat Kenny",
+     "positions": 1,
+     "seeds": 1
+    }
+   ]
+  },
+  "target_mult_10_min_len_16": {
+   "wall_s": 96.81,
+   "stats": {
+    "windows": "98",
+    "tried": "98",
+    "accepted": "40",
+    "mean_len": "24.90",
+    "mult_histogram": "11:3,12:2,13:2,14:2,15:1,16:2,17:2,18:1,19:1,22:1,30:1,32:1,33:3,38:1,39:1,40:1,43:1,45:2,46:1,52:1,55:1,64:1,66:1,73:1,116:1,147:1,168:1,176:1,181:1,1088:1",
+    "shorten_steps": "417",
+    "extend_steps": "686",
+    "scan_ms": "64.795",
+    "locate_ms": "4728.283",
+    "mode": "target",
+    "target_mult": "10",
+    "cap": "none",
+    "min_len": "16",
+    "max_len": "64",
+    "stride": "32",
+    "no_match": "0",
+    "too_short": "0",
+    "too_rare": "57",
+    "too_common": "1",
+    "suppressed_dedup": "0",
+    "suppressed_contained": "0",
+    "nearest_below": "0",
+    "positions": "1391",
+    "ranks": "91462",
+    "lf_steps": "7534282"
+   },
+   "seeds": [
+    {
+     "seed_id": 0,
+     "text_offset": 0,
+     "length": 25,
+     "occurrences": 13,
+     "seed": "Cat\n{{Short description|S",
+     "gave_up_len": 26,
+     "gave_up_mult": 2
+    },
+    {
+     "seed_id": 1,
+     "text_offset": 64,
+     "length": 20,
+     "occurrences": 38,
+     "seed": "{{About|the species ",
+     "gave_up_len": 21,
+     "gave_up_mult": 3
+    },
+    {
+     "seed_id": 2,
+     "text_offset": 160,
+     "length": 17,
+     "occurrences": 55,
+     "seed": ")}}\n{{Redirect|Ca",
+     "gave_up_len": 18,
+     "gave_up_mult": 4
+    },
+    {
+     "seed_id": 3,
+     "text_offset": 192,
+     "length": 25,
+     "occurrences": 30,
+     "seed": "ats (disambiguation)}}\n{{",
+     "gave_up_len": 26,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 4,
+     "text_offset": 224,
+     "length": 32,
+     "occurrences": 46,
+     "seed": "ticle}}\n{{pp-move|small=yes}}\n{{",
+     "gave_up_len": 33,
+     "gave_up_mult": 7
+    },
+    {
+     "seed_id": 5,
+     "text_offset": 256,
+     "length": 54,
+     "occurrences": 176,
+     "seed": "pp-semi-indef|small=yes}}\n{{Use American English|date=",
+     "gave_up_len": 55,
+     "gave_up_mult": 9
+    },
+    {
+     "seed_id": 6,
+     "text_offset": 288,
+     "length": 58,
+     "occurrences": 1088,
+     "seed": "American English|date=October 2024}}\n{{Use dmy dates|date=",
+     "gave_up_len": 59,
+     "gave_up_mult": 4
+    },
+    {
+     "seed_id": 7,
+     "text_offset": 320,
+     "length": 38,
+     "occurrences": 181,
+     "seed": "24}}\n{{Use dmy dates|date=April 2026}}",
+     "gave_up_len": 39,
+     "gave_up_mult": 2
+    },
+    {
+     "seed_id": 8,
+     "text_offset": 352,
+     "length": 22,
+     "occurrences": 116,
+     "seed": "2026}}&lt;!-- Per MOS:",
+     "gave_up_len": 23,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 9,
+     "text_offset": 448,
+     "length": 24,
+     "occurrences": 11,
+     "seed": " English and date format",
+     "gave_up_len": 25,
+     "gave_up_mult": 2
+    },
+    {
+     "seed_id": 10,
+     "text_offset": 480,
+     "length": 18,
+     "occurrences": 40,
+     "seed": "lly the ones with ",
+     "gave_up_len": 19,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 11,
+     "text_offset": 512,
+     "length": 18,
+     "occurrences": 18,
+     "seed": "reated when the to",
+     "gave_up_len": 19,
+     "gave_up_mult": 7
+    },
+    {
+     "seed_id": 12,
+     "text_offset": 544,
+     "length": 18,
+     "occurrences": 12,
+     "seed": "ong national ties.",
+     "gave_up_len": 19,
+     "gave_up_mult": 9
+    },
+    {
+     "seed_id": 13,
+     "text_offset": 576,
+     "length": 18,
+     "occurrences": 33,
+     "seed": "was created with A",
+     "gave_up_len": 19,
+     "gave_up_mult": 3
+    },
+    {
+     "seed_id": 14,
+     "text_offset": 672,
+     "length": 22,
+     "occurrences": 66,
+     "seed": "ontinue to be written ",
+     "gave_up_len": 23,
+     "gave_up_mult": 6
+    },
+    {
+     "seed_id": 15,
+     "text_offset": 704,
+     "length": 32,
+     "occurrences": 12,
+     "seed": "If there is a compelling reason ",
+     "gave_up_len": 33,
+     "gave_up_mult": 9
+    },
+    {
+     "seed_id": 16,
+     "text_offset": 768,
+     "length": 25,
+     "occurrences": 33,
+     "seed": " the talk page. --&gt;\n{{",
+     "gave_up_len": 26,
+     "gave_up_mult": 4
+    },
+    {
+     "seed_id": 17,
+     "text_offset": 800,
+     "length": 16,
+     "occurrences": 43,
+     "seed": "box\n| name = Cat",
+     "gave_up_len": 17,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 18,
+     "text_offset": 832,
+     "length": 39,
+     "occurrences": 11,
+     "seed": "as been extensive discussion about the ",
+     "gave_up_len": 40,
+     "gave_up_mult": 4
+    },
+    {
+     "seed_id": 19,
+     "text_offset": 864,
+     "length": 18,
+     "occurrences": 14,
+     "seed": "ut the choice of i",
+     "gave_up_len": 19,
+     "gave_up_mult": 8
+    },
+    {
+     "seed_id": 20,
+     "text_offset": 928,
+     "length": 23,
+     "occurrences": 11,
+     "seed": "age with something else",
+     "gave_up_len": 24,
+     "gave_up_mult": 4
+    },
+    {
+     "seed_id": 21,
+     "text_offset": 960,
+     "length": 17,
+     "occurrences": 45,
+     "seed": "r if it actually ",
+     "gave_up_len": 18,
+     "gave_up_mult": 7
+    },
+    {
+     "seed_id": 22,
+     "text_offset": 1760,
+     "length": 18,
+     "occurrences": 16,
+     "seed": " relaxed position.",
+     "gave_up_len": 19,
+     "gave_up_mult": 4
+    },
+    {
+     "seed_id": 23,
+     "text_offset": 1824,
+     "length": 16,
+     "occurrences": 19,
+     "seed": " and a curved st",
+     "gave_up_len": 17,
+     "gave_up_mult": 3
+    },
+    {
+     "seed_id": 24,
+     "text_offset": 2016,
+     "length": 22,
+     "occurrences": 17,
+     "seed": "s = Felis\n| species = ",
+     "gave_up_len": 23,
+     "gave_up_mult": 3
+    },
+    {
+     "seed_id": 25,
+     "text_offset": 2048,
+     "length": 38,
+     "occurrences": 33,
+     "seed": "ef name=&quot;Linnaeus1758&quot;/&gt;\n",
+     "gave_up_len": 39,
+     "gave_up_mult": 3
+    },
+    {
+     "seed_id": 26,
+     "text_offset": 2080,
+     "length": 22,
+     "occurrences": 73,
+     "seed": "/&gt;\n| authority = [[",
+     "gave_up_len": 23,
+     "gave_up_mult": 6
+    },
+    {
+     "seed_id": 27,
+     "text_offset": 2144,
+     "length": 43,
+     "occurrences": 45,
+     "seed": "f Systema Naturae|1758]]&lt;ref name=&quot;",
+     "gave_up_len": 44,
+     "gave_up_mult": 1
+    },
+    {
+     "seed_id": 28,
+     "text_offset": 2208,
+     "length": 16,
+     "occurrences": 168,
+     "seed": "ynonyms = *''Cat",
+     "gave_up_len": 17,
+     "gave_up_mult": 2
+    },
+    {
+     "seed_id": 29,
+     "text_offset": 2240,
+     "length": 27,
+     "occurrences": 22,
+     "seed": "{{small|[[Johann Christian ",
+     "gave_up_len": 28,
+     "gave_up_mult": 5
+    },
+    {
+     "seed_id": 30,
+     "text_offset": 2272,
+     "length": 29,
+     "occurrences": 64,
+     "seed": "arp Erxleben|Erxleben]], 1777",
+     "gave_up_len": 30,
+     "gave_up_mult": 4
+    },
+    {
+     "seed_id": 31,
+     "text_offset": 2432,
+     "length": 29,
+     "occurrences": 52,
+     "seed": ", genera, species, varietates",
+     "gave_up_len": 30,
+     "gave_up_mult": 6
+    },
+    {
+     "seed_id": 32,
+     "text_offset": 2528,
+     "length": 20,
+     "occurrences": 13,
+     "seed": "=Lipsiae |publisher=",
+     "gave_up_len": 21,
+     "gave_up_mult": 3
+    },
+    {
+     "seed_id": 33,
+     "text_offset": 2624,
+     "length": 26,
+     "occurrences": 147,
+     "seed": "s://archive.org/details/io",
+     "gave_up_len": 27,
+     "gave_up_mult": 4
+    },
+    {
+     "seed_id": 34,
+     "text_offset": 2784,
+     "length": 16,
+     "occurrences": 17,
+     "seed": "small|Fischer, 1",
+     "gave_up_len": 17,
+     "gave_up_mult": 9
+    },
+    {
+     "seed_id": 35,
+     "text_offset": 2848,
+     "length": 18,
+     "occurrences": 32,
+     "seed": " also called '''do",
+     "gave_up_len": 19,
+     "gave_up_mult": 5
+    },
+    {
+     "seed_id": 36,
+     "text_offset": 2912,
+     "length": 16,
+     "occurrences": 16,
+     "seed": "domesticated [[C",
+     "gave_up_len": 17,
+     "gave_up_mult": 6
+    },
+    {
+     "seed_id": 37,
+     "text_offset": 3040,
+     "length": 19,
+     "occurrences": 39,
+     "seed": "der]] [[Carnivora]]",
+     "gave_up_len": 20,
+     "gave_up_mult": 4
+    },
+    {
+     "seed_id": 38,
+     "text_offset": 3072,
+     "length": 22,
+     "occurrences": 14,
+     "seed": "ially referred to as c",
+     "gave_up_len": 23,
+     "gave_up_mult": 6
+    },
+    {
+     "seed_id": 39,
+     "text_offset": 3104,
+     "length": 20,
+     "occurrences": 15,
+     "seed": "obligate carnivore]]",
+     "gave_up_len": 21,
+     "gave_up_mult": 7
+    }
+   ],
+   "titles_top20": [
+    {
+     "title": "Cat",
+     "positions": 36,
+     "seeds": 36
+    },
+    {
+     "title": "List of mammals of Missouri",
+     "positions": 8,
+     "seeds": 2
+    },
+    {
+     "title": "Hippobosca",
+     "positions": 5,
+     "seeds": 2
+    },
+    {
+     "title": "Portal:Mathematics",
+     "positions": 4,
+     "seeds": 1
+    },
+    {
+     "title": "Wikipedia:Administrators' noticeboard/IncidentArchive708",
+     "positions": 4,
+     "seeds": 4
+    },
+    {
+     "title": "List of Tabanus species",
+     "positions": 4,
+     "seeds": 1
+    },
+    {
+     "title": "Wild goat",
+     "positions": 4,
+     "seeds": 4
+    },
+    {
+     "title": "Wikipedia:Administrators' noticeboard/IncidentArchive750",
+     "positions": 3,
+     "seeds": 1
+    },
+    {
+     "title": "Stratiomys",
+     "positions": 3,
+     "seeds": 3
+    },
+    {
+     "title": "List of marine molluscs of Venezuela",
+     "positions": 3,
+     "seeds": 1
+    },
+    {
+     "title": "Fisher (animal)",
+     "positions": 3,
+     "seeds": 2
+    },
+    {
+     "title": "Simia",
+     "positions": 3,
+     "seeds": 1
+    },
+    {
+     "title": "Indian giant squirrel",
+     "positions": 3,
+     "seeds": 2
+    },
+    {
+     "title": "Elk",
+     "positions": 2,
+     "seeds": 2
+    },
+    {
+     "title": "Lawrence Oates",
+     "positions": 2,
+     "seeds": 2
+    },
+    {
+     "title": "Wikipedia:Administrators' noticeboard/IncidentArchive962",
+     "positions": 2,
+     "seeds": 1
+    },
+    {
+     "title": "Wikipedia:Biographies of living persons/Noticeboard/Archive276",
+     "positions": 2,
+     "seeds": 2
+    },
+    {
+     "title": "Sestina",
+     "positions": 2,
+     "seeds": 1
+    },
+    {
+     "title": "Joan of Arc",
+     "positions": 2,
+     "seeds": 1
+    },
+    {
+     "title": "Comparison of integrated development environments",
+     "positions": 2,
+     "seeds": 1
+    }
+   ]
+  }
+ }
+}
