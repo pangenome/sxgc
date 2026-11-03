@@ -41,7 +41,6 @@
 // empirically against the bin machine's own emitted SA on a 4 MB slice.
 
 #include <algorithm>
-#include <array>
 #include <atomic>
 #include <cinttypes>
 #include <cerrno>
@@ -150,41 +149,6 @@ struct Row {
     u64 klo, khi, kq, pos;   // 24-byte key (3 big-endian words) + packed pos/sym
 };
 
-// ---------------------------------------------------------------------------
-// THE BAND PART WIRE FORMAT: STRIP THE SHARED BAND PREFIX.
-//
-// A band is a KEY RANGE: every row appended to it lies in
-// [lower boundary, upper boundary), and the boundaries are the quantile cut
-// points. Therefore every byte the two boundary KEYS agree on is a byte EVERY
-// row of that band carries - by construction, not by measurement. Storing it
-// once per band instead of once per row is the whole scratch saving.
-//
-//   part file = 48-byte header + rows * ((24 - prefix_len) + 8)
-//     header: magic, version, prefix_len p (0..24), row_bytes (24-p)+8,
-//             rows (reserved: derived from the file size), prefix[p]
-//     row   : key[p..24) - the RESIDUAL, in corpus/remapped byte order - and
-//             the 8-byte little-endian packed position/symbol
-//
-// THE FILE IS SELF-CONTAINED. The band sort rebuilds the full 24-byte key from
-// header prefix + residual with one memcpy; it never reads the corpus. (Dropping
-// the key and recomputing it from the corpus was explicitly considered and
-// refused: the band sort may not touch the pile.)
-//
-// The prefix is a LOWER BOUND on the band's true common prefix: it comes from
-// the two fences, and the real min/max of the band's rows could agree further.
-// A deeper fence (depth > 24, i.e. a 24-byte tie class that had to be split)
-// yields p = 24 and rows of pure position. p is journaled per wave (SS_ROWCODE)
-// so the saving is auditable rather than asserted.
-static constexpr u32 ROWCODE_MAGIC = 0x57525853u;   // 'SXRW'
-static constexpr u32 ROWCODE_VER = 1u;
-struct RowPartHdr {
-    u32 magic, ver, plen, row_bytes;
-    u64 rows;          // reserved: 0 on the wire, rows are derived from the size
-    u8  prefix[24];
-};
-static_assert(sizeof(RowPartHdr) == 48, "band part header must be 48 bytes");
-static inline u64 rowcode_width(u32 plen) { return u64(24 - plen) + 8; }
-
 static const u8* T = nullptr;
 // N includes one structural END suffix at FILE_N. Its realization is chosen
 // by preflight; comparisons exhaust the finite corpus before accessing END.
@@ -222,16 +186,6 @@ static inline void key_at(u64 p, u64& klo, u64& khi, u64& kq) {
     klo = bswap64(lo);
     khi = bswap64(hi);
     kq = bswap64(q);
-}
-
-// The 24 key bytes of a position, remapped, in CORPUS byte order - the form the
-// band part wire keeps as the residual. Returns false when the position has no
-// full 24-byte key (a finite tail; those never enter a band file).
-static inline bool key_bytes_at(u64 p, u8 out[24]) {
-    if (p >= KEY_N) return false;
-    std::memcpy(out, T + p, 24);
-    if (REMAP) for (u64 i = 0; i < 24; ++i) out[i] = REMAP[out[i]];
-    return true;
 }
 
 // Full suffix comparison in dollar mode (shorter is smaller).
@@ -1550,11 +1504,6 @@ int main(int argc, char** argv) {
     std::vector<u64> bandFirstPos, bandLastPos;
     std::vector<u8> cat(1u << 22), symcat(1u << 22);
     u64 rows_done = 0, ties_total = 0, emitted = 0, wave_rows = 0;
-    // THE ROW-CODE RECEIPT: prefix lengths weighted by ROWS (the number that sets
-    // the saving) and by BANDS, kept across waves for the exit line.
-    u64 rowcode_pfx_rows[25] = {0};
-    u64 rowcode_bytes_total = 0, rowcode_peak_wave_bytes = 0, rowcode_rows_total = 0;
-    u64 rowcode_headers_total = 0;
     u64 prev_wave_last = ~0ull;   // last row position emitted by the previous wave
     const double t1 = now_sec();
 
@@ -1576,41 +1525,6 @@ int main(int argc, char** argv) {
             return std::upper_bound(bounds.begin(),bounds.end(),p,
                 [](u64 pos,const TapeFence& f){const int c=prefix_cmp(pos,f.pos,f.depth); return c<0 || (c==0 && f.after);})-bounds.begin();
         };
-
-        // ---- THE BAND PREFIX (the scratch shrink) ---------------------------
-        // Band b holds exactly the positions that route to b, i.e. the key range
-        // [bounds[b-1], bounds[b]). Two facts make a prefix safe:
-        //   * both fences are keys the band's rows are compared against, so the
-        //     bytes the two fence KEYS agree on are shared by every row in the band
-        //     (if a row differed inside them it would sort on the wrong side of the
-        //     upper fence, since the fences agree there);
-        //   * the wave filter already restricted every row to the wave's byte
-        //     class, so when the wave is ONE class its leading 1-2 bytes are a
-        //     prefix of every row - this is what gives the wave's first and last
-        //     band (each missing a fence) a prefix at all.
-        // The result is a LOWER BOUND on the band's true common prefix, which is
-        // always correct and is what the wire format stores.
-        struct BandPfx { u32 len; u8 b[24]; };
-        std::vector<BandPfx> bandPfx(nbands ? nbands : 1);
-        {
-            u32 wavePlen = 0; u8 wavePfx[24] = {0};
-            if (W.lvl2 && W.hi2 == W.lo2 + 1) { wavePlen = 2; wavePfx[0] = u8(W.lo); wavePfx[1] = u8(W.lo2); }
-            else if (W.hi == W.lo + 1)        { wavePlen = 1; wavePfx[0] = u8(W.lo); }
-            for (u64 b = 0; b < nbands; ++b) {
-                BandPfx f{};
-                f.len = wavePlen;
-                std::memcpy(f.b, wavePfx, wavePlen);
-                if (b >= 1 && b + 1 < nbands) {
-                    u8 k1[24], k2[24];
-                    if (key_bytes_at(bounds[b - 1].pos, k1) && key_bytes_at(bounds[b].pos, k2)) {
-                        u32 l = 0;
-                        while (l < 24 && k1[l] == k2[l]) ++l;
-                        if (l > f.len) { f.len = l; std::memcpy(f.b, k1, l); }
-                    }
-                }
-                bandPfx[b] = f;
-            }
-        }
 
         // ---- scatter this wave only ----
         const u64 nparts = std::max<u64>(1, threads);
@@ -1641,23 +1555,6 @@ int main(int argc, char** argv) {
                               scratch.c_str(), w, b, t);
                 const int f = ::open(name, O_WRONLY | O_CREAT | (made[t][b] ? O_APPEND : O_TRUNC), 0666);
                 if (f < 0) die(std::string("create band part ") + name);
-                // THE PREFIX HEADER GOES DOWN FIRST, before any row: the row width
-                // depends on it, so a reader can never decode a part without it.
-                if (!made[t][b]) {
-                    RowPartHdr h{};
-                    h.magic = ROWCODE_MAGIC;
-                    h.ver = ROWCODE_VER;
-                    h.plen = bandPfx[b].len;
-                    h.row_bytes = u32(rowcode_width(h.plen));
-                    h.rows = 0;   // derived from the file size; see the reader
-                    std::memcpy(h.prefix, bandPfx[b].b, h.plen);
-                    size_t hoff = 0;
-                    while (hoff < sizeof h) {
-                        ssize_t hr = ::write(f, ((const u8*)&h) + hoff, sizeof h - hoff);
-                        if (hr <= 0) die("write band header");
-                        hoff += size_t(hr);
-                    }
-                }
                 curFd[t] = f;
                 curBand[t] = b;
                 made[t][b] = 1;
@@ -1712,25 +1609,28 @@ int main(int argc, char** argv) {
                         const unsigned c1 = buf[bj + 1];   // 0 past the corpus end
                         if (c1 < W.lo2 || c1 >= W.hi2) continue;
                     }
-                    // THE WIRE ROW IS THE RESIDUAL, NOT THE KEY.
-                    // The band's shared prefix is already in the part file header,
-                    // so the row stores only key[plen..24) - copied straight out of
-                    // the (already remapped) scan chunk, no byteswap - plus the
-                    // packed position/symbol. This is the same key the in-memory
-                    // Row carries: the decoder rebuilds it byte for byte.
-                    const u64 b = std::min<u64>(route(p), nbands - 1);
-                    const u32 pl = bandPfx[b].len;
-                    const u64 res = 24 - pl;
+                    // THE WHOLE 24-BYTE KEY. Leaving kq unset here was a real bug:
+                    // the comparator's third word then read uninitialised memory,
+                    // and it still passed sa_check once - the verifier catches order
+                    // errors, not undefined values that happen to agree.
+                    u64 a1, a2, a3;
+                    std::memcpy(&a1, buf.data() + bj, 8);
+                    std::memcpy(&a2, buf.data() + bj + 8, 8);
+                    std::memcpy(&a3, buf.data() + bj + 16, 8);
+                    a1 = bswap64(a1); a2 = bswap64(a2); a3 = bswap64(a3);
                     // The carried BWT symbol. Position 0's predecessor is the
                     // appended end-of-text byte: symbol 0, exactly as the
                     // successor rule says (no marker, no rewrite downstream).
                     const u8 sy = p == 0 ? SENTINEL_SYMBOL : buf[bj - 1];
-                    u8 rec[24 + 8];
-                    std::memcpy(rec, buf.data() + bj + pl, res);
-                    const u64 pk = pack_sym(p, sy);
-                    std::memcpy(rec + res, &pk, 8);
+                    Row r{};
+                    r.klo = a1;
+                    r.khi = a2;
+                    r.kq = a3;
+                    r.pos = pack_sym(p, sy);
+                    u64 b = route(p);
+                    if (b >= nbands) b = nbands - 1;
                     auto& v = bufs[t][b];
-                    v.insert(v.end(), rec, rec + res + 8);
+                    v.insert(v.end(), (const u8*)&r, (const u8*)&r + sizeof(Row));
                     if (v.size() >= bufsz) flush_buf(t, b);
                 }
                 base += chunk;
@@ -1757,43 +1657,18 @@ int main(int argc, char** argv) {
                 return suf_cmp_from(unpack_pos(a.pos), unpack_pos(b.pos), 0) < 0;
             });
 
-        // band row counts are known BEFORE sorting (each part file's header gives
-        // the row width and the file size gives the row count), so every band's
-        // offset in the global streams is computable up front and each band can
-        // write DIRECTLY there. No append copy, no serial tail.
+        // band row counts are known BEFORE sorting (file sizes / row bytes), so
+        // every band's offset in the global streams is computable up front and
+        // each band can write DIRECTLY there. No append copy, no serial tail.
         std::vector<u64> band_rows(nbands, 0), band_off(nbands, 0);
-        u64 wave_row_bytes = 0;                       // exact bytes of this wave on disc
-        std::vector<u64> pfx_rows(25, 0);             // rows per prefix length (histogram)
-        u64 pfx_bytes = 0;                            // residual+pos bytes, without headers
         for (u64 b = 0; b < nbands; ++b) {
             for (u64 t = 0; t < nparts; ++t) {
                 char name[512];
                 std::snprintf(name, sizeof name, "%s/w%" PRIu64 ".b%05" PRIu64 ".p%05" PRIu64,
                               scratch.c_str(), w, b, t);
-                const int f = ::open(name, O_RDONLY);
-                if (f < 0) continue;
                 struct stat bs{};
-                if (::fstat(f, &bs) != 0) die(std::string("stat band part ") + name);
-                RowPartHdr h{};
-                if (::pread(f, &h, sizeof h, 0) != (ssize_t)sizeof h)
-                    die(std::string("short band part header ") + name);
-                ::close(f);
-                if (h.magic != ROWCODE_MAGIC || h.ver != ROWCODE_VER)
-                    die(std::string("bad band part header ") + name);
-                if (h.plen != bandPfx[b].len)
-                    die(std::string("band part prefix length disagrees with the fence prefix ") + name);
-                if (u64(h.row_bytes) != rowcode_width(h.plen))
-                    die(std::string("band part row width disagrees with its prefix length ") + name);
-                const u64 size = u64(bs.st_size);
-                if (size < sizeof(RowPartHdr)) die(std::string("band part shorter than its header ") + name);
-                const u64 payload = size - sizeof(RowPartHdr);
-                if (payload % h.row_bytes)
-                    die(std::string("band part is not a whole number of rows ") + name);
-                band_rows[b] += payload / h.row_bytes;
-                wave_row_bytes += size;
-                pfx_bytes += payload;
+                if (::stat(name, &bs) == 0) band_rows[b] += u64(bs.st_size) / row_bytes;
             }
-            pfx_rows[bandPfx[b].len] += band_rows[b];
         }
         {
             for (u64 b = 0; b < nbands; ++b) band_rows[b] += tailBands[b].size();
@@ -1807,40 +1682,6 @@ int main(int argc, char** argv) {
             u64 acc = emitted;
             for (u64 b = 0; b < nbands; ++b) { band_off[b] = acc; acc += band_rows[b]; }
             wave_rows = acc - emitted;
-        }
-        // THE ROW-CODE JOURNAL: the prefix histogram and the resulting mean row,
-        // per wave, so the scratch saving is a number rather than a claim. The
-        // histogram is ROWS per prefix length p (rows:p, ...).
-        {
-            std::string hist;
-            char one[64];
-            u64 hdr_bytes = 0;
-            for (u32 p = 0; p <= 24; ++p) {
-                if (!pfx_rows[p]) continue;
-                std::snprintf(one, sizeof one, "%s%u:%llu", hist.empty() ? "" : ",", p,
-                              (unsigned long long)pfx_rows[p]);
-                hist += one;
-            }
-            for (u64 b = 0; b < nbands; ++b)
-                for (u64 t = 0; t < nparts; ++t) hdr_bytes += sizeof(RowPartHdr);
-            const u64 nrows = wave_rows;
-            const double residual = nrows ? double(pfx_bytes) / double(nrows) - 8.0 : 0.0;
-            const double bpr = nrows ? double(pfx_bytes) / double(nrows) : 0.0;
-            std::fprintf(stderr,
-                "SS_ROWCODE wave=%llu bands=%llu prefix_hist=%s"
-                " mean_residual=%.3f bytes_per_row=%.3f full_key_row_bytes=%llu"
-                " rows=%llu wave_row_bytes=%llu header_bytes=%llu"
-                " scratch_ratio=%.4f\n",
-                (unsigned long long)w, (unsigned long long)nbands, hist.c_str(), residual, bpr,
-                (unsigned long long)row_bytes,
-                (unsigned long long)nrows, (unsigned long long)wave_row_bytes,
-                (unsigned long long)hdr_bytes,
-                N ? double(wave_row_bytes) / double(N) : 0.0);
-            for (u32 p = 0; p <= 24; ++p) rowcode_pfx_rows[p] += pfx_rows[p];
-            rowcode_bytes_total += wave_row_bytes;
-            rowcode_headers_total += hdr_bytes;
-            rowcode_rows_total += nrows;
-            rowcode_peak_wave_bytes = std::max(rowcode_peak_wave_bytes, wave_row_bytes);
         }
         // ---- sort this wave's bands (parallel), writing at their own offsets ----
         std::atomic<u64> next_band{0};
@@ -1916,62 +1757,16 @@ int main(int argc, char** argv) {
                             int f = ::open(name, O_RDONLY);
                             if (f < 0) continue;
                             struct stat fs{};
-                            if (::fstat(f, &fs) != 0) die(std::string("stat band part ") + name);
+                            ::fstat(f, &fs);
                             const u64 bytes = (u64)fs.st_size;
                             if (bytes) {
-                                // ---- DECODE THE RESIDUAL ROWS ---------------------
-                                // header prefix + residual == the full 24-byte key,
-                                // rebuilt in memory exactly as key_at builds it from
-                                // the corpus. Nothing here touches the corpus: the
-                                // part file is self-contained by construction.
-                                if (bytes < sizeof(RowPartHdr))
-                                    die(std::string("band part shorter than its header ") + name);
-                                RowPartHdr h{};
-                                if (::pread(f, &h, sizeof h, 0) != (ssize_t)sizeof h)
-                                    die(std::string("short band part header ") + name);
-                                if (h.magic != ROWCODE_MAGIC || h.ver != ROWCODE_VER)
-                                    die(std::string("bad band part header ") + name);
-                                if (h.plen != bandPfx[b].len)
-                                    die(std::string("band part prefix length disagrees with the fence prefix ") + name);
-                                if (u64(h.row_bytes) != rowcode_width(h.plen))
-                                    die(std::string("band part row width disagrees with its prefix length ") + name);
-                                const u64 payload = bytes - sizeof(RowPartHdr);
-                                if (payload % h.row_bytes)
-                                    die(std::string("band part is not a whole number of rows ") + name);
-                                const u64 cnt = payload / h.row_bytes;
-                                const u32 pl = h.plen, res = 24 - pl;
                                 const size_t at = rows.size();
-                                rows.resize(at + cnt);
-                                u8 k[24];                       // prefix is constant per part
-                                std::memcpy(k, h.prefix, pl);
-                                Row* dst = rows.data() + at;
-                                std::vector<u8> raw(1u << 18);
-                                const u64 chunk_rows = (raw.size() / h.row_bytes) ?
-                                    std::max<u64>(1, raw.size() / h.row_bytes) : 1;
-                                u64 done = 0;
-                                while (done < cnt) {
-                                    const u64 nr = std::min<u64>(chunk_rows, cnt - done);
-                                    const u64 want = nr * h.row_bytes;
-                                    size_t off = 0;
-                                    const off_t base = off_t(sizeof(RowPartHdr) + done * h.row_bytes);
-                                    while (off < want) {
-                                        ssize_t r = ::pread(f, raw.data() + off, want - off, base + off_t(off));
-                                        if (r <= 0) die(std::string("read band part ") + name);
-                                        off += size_t(r);
-                                    }
-                                    const u8* q = raw.data();
-                                    for (u64 i = 0; i < nr; ++i, q += h.row_bytes, ++dst) {
-                                        std::memcpy(k + pl, q, res);
-                                        u64 a1, a2, a3;
-                                        std::memcpy(&a1, k, 8);
-                                        std::memcpy(&a2, k + 8, 8);
-                                        std::memcpy(&a3, k + 16, 8);
-                                        dst->klo = bswap64(a1);
-                                        dst->khi = bswap64(a2);
-                                        dst->kq = bswap64(a3);
-                                        std::memcpy(&dst->pos, q + res, 8);
-                                    }
-                                    done += nr;
+                                rows.resize(at + bytes / sizeof(Row));
+                                size_t off = 0;
+                                while (off < bytes) {
+                                    ssize_t r = ::read(f, ((u8*)rows.data()) + at * sizeof(Row) + off, bytes - off);
+                                    if (r <= 0) die("read band part");
+                                    off += size_t(r);
                                 }
                             }
                             ::close(f);
@@ -2546,35 +2341,6 @@ int main(int argc, char** argv) {
                 std::to_string(live_rows * budget.bytes_per_row) + " B of " +
                 std::to_string(envelope_bytes) + " B (ratio " + std::to_string(plan_ratio) +
                 " > 0.90) - the plan prices more than the envelope it was given");
-    }
-    // THE ROW-CODE RECEIPT AT EXIT: the per-wave prefix histogram folded over the
-    // whole run, the resulting mean row, and this producer's own peak band-row
-    // material in units of n. The container-scale peak is PEAK_INTERMEDIATE, which
-    // du-samples the tree; this line is the term that line is made of, broken down.
-    {
-        std::string hist;
-        char one[64];
-        for (u32 p = 0; p <= 24; ++p) {
-            if (!rowcode_pfx_rows[p]) continue;
-            std::snprintf(one, sizeof one, "%s%u:%llu", hist.empty() ? "" : ",", p,
-                          (unsigned long long)rowcode_pfx_rows[p]);
-            hist += one;
-        }
-        const u64 payload = rowcode_bytes_total - rowcode_headers_total;
-        const double bpr = rowcode_rows_total ? double(payload) / double(rowcode_rows_total) : 0.0;
-        std::fprintf(stderr,
-            "SS_ROWCODE_EXIT waves=%llu prefix_hist=%s mean_residual=%.3f"
-            " bytes_per_row=%.3f full_key_row_bytes=%llu rows=%llu"
-            " row_bytes_total=%llu header_bytes=%llu"
-            " peak_wave_row_bytes=%llu n=%llu scratch_ratio=%.4f"
-            " saving_vs_full_key=%.4f\n",
-            (unsigned long long)waves, hist.c_str(), bpr - 8.0, bpr,
-            (unsigned long long)row_bytes,
-            (unsigned long long)rowcode_rows_total, (unsigned long long)rowcode_bytes_total,
-            (unsigned long long)rowcode_headers_total,
-            (unsigned long long)rowcode_peak_wave_bytes, (unsigned long long)N,
-            N ? double(rowcode_peak_wave_bytes) / double(N) : 0.0,
-            row_bytes ? 1.0 - bpr / double(row_bytes) : 0.0);
     }
     std::fprintf(stderr,
         "SS_DONE n=%" PRIu64 " waves=%" PRIu64 " ties=%" PRIu64
