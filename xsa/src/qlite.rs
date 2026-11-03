@@ -2744,3 +2744,4 @@ mod query_interface_tests {
 include!("branches.inc.rs");
 include!("mem.inc.rs");
 include!("seeds.inc.rs");
+include!("fanout.inc.rs");

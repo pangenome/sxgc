@@ -279,6 +279,189 @@ second operator's `xsa branches` serve job (~275 GB RSS) was running on the box.
 The 100 GB container and `/mnt/nvme2n1/erikg/wiki/corpus.bin` were used; evidence
 in [the evidence directory](tools/binbwt/evidence/mem/results.json).
 
+# Fan-out: rarity-weighted document ranking
+
+```
+xsa fanout <container> <text-file|-> [--max-seeds 256] [--min-len 12] [--max-len 64]
+           [--region-gap 2000] [--top 15] [--docs DIR] [--jsonl]
+           [--max-rows 64] [--max-locate-budget 65536] [--keep-source] [--include-markup]
+```
+
+`xsa seeds` answers *which substrings of this text are specific and recurring*.
+`xsa fanout` answers *which documents of the corpus share them*, and it ranks them
+by **rarity**, not by count. Counting shared seeds is the defect this command
+exists to fix: on the Cat article (document 4065) the top documents by shared-seed
+COUNT were the topically correct ones ('Cultural depictions of cats', 'Cat
+behavior') but they TIED with pure noise (Cottbus, Bautzen), because a seed that
+500 documents share counted exactly as much as a seed that 3 documents share. A
+count is a sum of ones; the fan-out of a distinctive seed is a sum of rarities.
+
+## The weighting formula
+
+```
+D                = documents in the corpus            (from the seps.bin sidecars)
+mult(seed)       = occurrences of the seed            (the BWT interval width)
+weight(seed)     = ln( D / mult(seed) )               (floored at 0 if mult > D)
+score(doc)       = SUM of weight(seed) over the DISTINCT seeds doc shares with the text
+```
+
+`mult` is the multiplicity the index already computes - no extra structure, no
+document-frequency column. It is an occurrence count, not a document count, so
+`D/mult` is a *lower* bound on inverse document frequency; for the seeds this
+command emits (12 bytes and up, longest shared prefix) an occurrence is a
+document in practice, and the binary measures it instead of asserting it:
+`seed_docs_sum`/`seed_docs_max` in `FANOUT_STATS` are the located-hit counts per
+seed (with `rows_located`, `seeds_truncated`).
+
+The floor at 0 is the only departure from `ln(D/mult)`: a seed occurring more
+often than the corpus has documents is not rare at all, and `weight_floor_clamped`
+counts those seeds. It cannot happen for a seed whose occurrences are in distinct
+documents.
+
+## Regions
+
+A document that shares ONE section of the text reports all of its evidence inside
+that section, and a document score hides that. Hits are therefore clustered per
+document: hits within `--region-gap` bytes (default 2000) of each other are one
+region, and a region is scored exactly like a document - a sum of weights over the
+DISTINCT seeds with a hit inside it. Both tables are printed. Region scores sum to
+*at least* the document score: a seed with hits in two regions is one distinct seed
+at document level and one in each region.
+
+## Seed selection (untargeted, on purpose)
+
+`xsa seeds` solves the seed LENGTH for a multiplicity target; that is how you get
+a report about multiplicities. For scoring, the whole multiplicity range is
+admissible and the WEIGHT ranks it, so `fanout` needs no target: at every window
+it takes the **longest prefix reaching multiplicity 2** - the most specific string
+at that offset that is shared at all - up to `--max-len`. The only floor is
+sharing: a seed occurring once cannot be shared with another document, so
+target 2 is the minimal nonzero sharing target. (`target = 1` was measured first:
+on the Cat article it accepted 48,480 seeds and every one had multiplicity 1, so
+the command refused by name - there was no fan-out to rank.)
+
+`--skip-markup` is **ON by default** here (citation and template fragments are
+known noise; `--include-markup` exposes them). Among the accepted shared seeds,
+`--max-seeds K` (default 256) are picked at even index spacing, so the sample
+covers the document rather than its head; `capped_dropped` says how many were not
+picked, and `rows_truncated_seeds` how many seeds occur more than `--max-rows`
+times (their rows are sampled evenly, so their document count is a lower bound).
+
+The source document itself is found by comparison, not by guessing: the rarest
+selected seed's hits give candidate document starts, and the text is compared
+against `corpus.bin` at that start. A prefix match means "this document IS the
+text", it is excluded from both tables (`FANOUT_SOURCE`, `excluded_hits`), and
+`--keep-source` keeps it. Without `corpus.bin` the source is reported as
+`unknown` and nothing is excluded.
+
+The locate budget is checked BEFORE the walk (`--max-locate-budget`, default
+65536 rows): a scoring pass that silently stopped early would be a wrong ranking,
+not a slow one, so the command refuses by name instead.
+
+## Output
+
+TSV by default: a `#fanout` counter line, `#documents` (`rank, doc_id, score,
+distinct_seeds, hits, doc_bytes, title, top_seeds`), then `#regions` (`rank,
+doc_id, region_start, region_end, region_bytes, score, distinct_seeds, hits,
+title, top_seeds`). `top_seeds` is the three highest-weight contributing seeds as
+`s<id>@<weight>/m<multiplicity>:<escaped seed>`. `--jsonl` emits one `summary`
+object and then `kind: document` / `kind: region` rows.
+
+## Measured: the Cat article on the 100 GB container (2026-11-03)
+
+Container `/mnt/nvme2n1/erikg/wf-finish-as-100gb-20261102T044713Z/corpus.sxi2`
+(D = 25,932,219 documents, 100,093,934,466 corpus bytes), sidecars
+`/mnt/nvme2n1/erikg/wiki`, text = document 4065, the **Cat** article,
+177,347 bytes, extracted from `seps.bin` anchors+deltas. Default flags except
+`--top 15`. **Every wall is a shared-host wall: load average 50-72 on a 256-core,
+1007 GB box with other operators' jobs resident; peak RSS 269 GiB (the index
+columns), wall 0:49.03, scan_ms 14,686.7, locate_ms 4,196.6.** The run found the
+source document itself (`FANOUT_SOURCE doc=4065 matched_bytes=177347`), excluded
+its 258 hits, located 921 rows of 256 selected seeds (11,757 shared seeds were
+accepted, 11,501 dropped by even spacing), ranked 602 documents and found 614
+regions.
+
+Top 15 documents by weighted score (verbatim from
+[cat_q1.tsv](tools/binbwt/evidence/fanout/cat_q1.tsv); `seeds` = distinct seeds,
+`hits` = raw hits, `doc_bytes` = document length, last column = top contributing
+seed):
+
+| # | title | score | seeds | hits | doc_bytes | top seed |
+| ---: | --- | ---: | ---: | ---: | ---: | --- |
+| 1 | Cultural depictions of cats | 311.18 | 19 | 19 | 40587 | s229@16.3778/m2:nt at the domestic cats in Egypt, because he had only  |
+| 2 | Wikipedia:Village pump (technical)/Archive 2 | 114.64 | 7 | 7 | 528299 | s67@16.3778/m2:sion and can see at one sixth the light level required  |
+| 3 | Human interaction with cats | 94.12 | 6 | 6 | 40630 | s216@16.3778/m2:zation]] is a form of [[anthropomorphism]] in which ca |
+| 4 | Cat intelligence | 77.74 | 5 | 5 | 46148 | s126@16.3778/m2:ing their brains to reorganize based on experiences. T |
+| 5 | Cat food | 65.51 | 4 | 4 | 124333 | s60@16.3778/m2:nthesise enough vitamin D; inability to synthesise [[ni |
+| 6 | Cat anatomy | 65.51 | 4 | 4 | 51546 | s37@16.3778/m2: spinal mobility and flexibility\|s38@16.3778/m2: them t |
+| 7 | Cat senses | 49.13 | 3 | 3 | 23324 | s88@16.3778/m2:d in [[tuna]].&lt;ref name=&quot;McGrane Gibbs Hernango |
+| 8 | Cat predation on wildlife | 44.98 | 3 | 6 | 70470 | s205@16.3778/m2:5573630708).jpg\|thumb\|Cats kill billions of wild birds |
+| 9 | Cat genetics | 32.76 | 2 | 2 | 8789 | s179@16.3778/m2:out 250 heritable [[genetic disorder]]s have been iden |
+| 10 | African wildcat | 28.20 | 2 | 3 | 36191 | s100@15.9724/m3:or of the domestic cat \|s162@12.2268/m127:Domestic cat |
+| 11 | Zebrafish | 16.38 | 1 | 1 | 125810 | s21@16.3778/m2:vailable at the [[National Center for Biotechnology Inf |
+| 12 | Wok | 16.38 | 1 | 1 | 39120 | s195@16.3778/m2: odors).&lt;ref name=&quot; |
+| 13 | Kitten | 16.38 | 1 | 1 | 31515 | s170@16.3778/m2:\xe0\xb4\x9a\xe0\xb5\x8d\xe0\xb4\x9a\xe0\xb4\x95\xe0\x |
+| 14 | Wavelength-division multiplexing | 16.38 | 1 | 1 | 49659 | s50@16.3778/m2:pacing&quot; [ |
+| 15 | Adolescence | 16.38 | 1 | 1 | 213721 | s160@16.3778/m2:ts often develop pro |
+
+Top 15 regions by weighted score (same run, `[start,end)` in document bytes):
+
+| # | title | region | region_bytes | score | seeds | hits |
+| ---: | --- | --- | ---: | ---: | ---: | ---: |
+| 1 | Cultural depictions of cats | 7975–14478 | 6503 | 311.18 | 19 | 19 |
+| 2 | Wikipedia:Village pump (technical)/Archive 2 | 184664–186231 | 1567 | 114.64 | 7 | 7 |
+| 3 | Human interaction with cats | 37248–39090 | 1842 | 94.12 | 6 | 6 |
+| 4 | Cat intelligence | 1696–4159 | 2463 | 77.74 | 5 | 5 |
+| 5 | Cat food | 13855–14044 | 189 | 65.51 | 4 | 4 |
+| 6 | Cat anatomy | 20761–23112 | 2351 | 49.13 | 3 | 3 |
+| 7 | Cat senses | 20445–21211 | 766 | 49.13 | 3 | 3 |
+| 8 | Cat genetics | 1304–1898 | 594 | 32.76 | 2 | 2 |
+| 9 | Cat predation on wildlife | 96–142 | 46 | 32.76 | 2 | 2 |
+| 10 | Zebrafish | 52475–52476 | 1 | 16.38 | 1 | 1 |
+| 11 | Wok | 9583–9584 | 1 | 16.38 | 1 | 1 |
+| 12 | Kitten | 21344–21345 | 1 | 16.38 | 1 | 1 |
+| 13 | Wavelength-division multiplexing | 18400–18401 | 1 | 16.38 | 1 | 1 |
+| 14 | Adolescence | 136376–136377 | 1 | 16.38 | 1 | 1 |
+| 15 | Mount Healthy Heights, Ohio | 6211–6212 | 1 | 16.38 | 1 | 1 |
+
+Reading it honestly: **11 of the top 15 documents are plausibly cat-related**
+(9 explicitly cat-titled: Cultural depictions of cats, Human interaction with
+cats, Cat intelligence, Cat food, Cat anatomy, Cat senses, Cat predation on
+wildlife, Cat genetics, plus Kitten; and African wildcat, the domestic cat's
+wild ancestor). One more, *Wikipedia:Village pump (technical)/Archive 227*, is a
+noticeboard archive that quotes the Cat article - it shares 7 real article
+sentences, so the match is correct as evidence and wrong as a topic. The
+remaining **4 are noise** (Zebrafish, Wok, Wavelength-division multiplexing,
+Adolescence), and they are noise of a specific kind: each sits at exactly
+ln(D/2) = 16.3778 with **one** seed and **one** hit - a single 12-byte-or-longer
+string appearing twice in 100 GB (`odors).&lt;ref name=&quot;`,
+`pacing&quot; [`, `ts often develop pro`, ...). That is the floor of the ranking,
+not a failure of the weighting: there is no way to score a document lower than
+one shared screenshot-caption fragment. In the REGION table the same floor is
+visible as 1-byte regions, and **the top 9 regions are all cat documents**, with
+the 'Cultural depictions of cats' evidence confined to 6,503 bytes of a
+40,587-byte article.
+
+The four documents the seeds-era measurement expected and did NOT reach the top
+15 - *Cat behavior*, *Feline*, *Domestication of the cat*, *Felidae* - are
+absent, and the reason is visible in the table: this ranking rewards documents
+that share MANY distinct article sentences, and those four share one or two
+passages with the Cat article while *Cultural depictions of cats* shares 19. A
+count-based ranking would have called that a tie.
+
+## Gates for `xsa fanout`
+
+| id | gate |
+| --- | --- |
+| Q1 | the Cat article at default flags ranks its own topical neighbourhood above unrelated documents - the tables above, with distinct-seed counts and top contributing seeds, and the plausible-share counted rather than asserted |
+| Q2 | the weight is `ln(D/mult)` (checked against the formula, monotone in both arguments, floored at 0 for `mult > D`) and a document sharing ONE rare seed outranks a document sharing THREE ubiquitous ones, while the COUNT comparison favours the latter; the score does not depend on summation order (`cargo test`, module `fanout_tests`) |
+| Q3 | REGIONS: a 2,000-byte section of the 177,348-byte Cat article (offsets 90000..92000, markup-skipped) scores 3,383.345 in ONE region `[90000,91997)` - 1,997 bytes, 1.1% of the document, 209 distinct seeds - and the document's own row is the sum over its regions, not a claim about the whole file; the document was NOT detected as the source (the text is a section, not the document), so it is ranked and the split is visible ([cat_region_q3.jsonl](tools/binbwt/evidence/fanout/cat_region_q3.jsonl)) |
+| Q4 | `xsa seeds` unchanged by the scan extraction that `fanout` reuses: `seeds_gate.py` **PASS** (S1 mechanism with the 12..32 ladder, S2p placement, S2m markup, S3 guards, S4 determinism) on the 150 MB fixture; `branches_gate.py` W1 100/100 + top-k closure 100/100, W3 7/7, FILE 12/12, W4 100/100; `mem_gate.py` X1 all-mems 20/20, longest 20/20, X2 5/5; `cargo test --release` 64 passed, 0 failed |
+| Q5 | committed, pushed, merged; this section documents the formula and the measured table |
+
+The scan itself is NOT forked: `seeds_command` and `fanout_command` both call the
+same `scan_text` (`xsa/src/seeds.inc.rs`), which is why Q4 is run at all.
+
 # Seeds: adaptive exact-match seeding
 
 ```
