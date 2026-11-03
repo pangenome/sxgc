@@ -1,0 +1,2 @@
+BRANCH_READY navigation=anchor+LF corpus_bytes=100093934466 workers=32
+BRANCH_STATS contexts=101000 contexts_per_s=552.879 search_us_per_context=424.870 gather_us_per_context=10196.409 output_ipc_us_per_context=2.190 input_ipc_us_per_context=3.689 lf_steps=3206223177

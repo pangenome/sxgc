@@ -1,0 +1,17 @@
+{
+  "jobs": 1,
+  "contexts": 100000,
+  "seconds": 955.4376128418371,
+  "contexts_per_s": 104.66408131302444,
+  "mix": "90% sampled 48 bytes, 10% common English; seed 20261103",
+  "warmup": 1000,
+  "profile_including_1000_warmup_requests": {
+    "contexts": 101000.0,
+    "contexts_per_s": 104.668,
+    "search_us_per_context": 321.562,
+    "gather_us_per_context": 9224.533,
+    "output_ipc_us_per_context": 7.965,
+    "input_ipc_us_per_context": 1.601,
+    "lf_steps": 3206223177.0
+  }
+}

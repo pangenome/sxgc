@@ -2740,3 +2740,5 @@ mod query_interface_tests {
             vec![b">literal\nbytes".to_vec(), b"other".to_vec()]);
     }
 }
+
+include!("branches.inc.rs");
