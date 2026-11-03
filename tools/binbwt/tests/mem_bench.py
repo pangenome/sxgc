@@ -57,44 +57,53 @@ def main():
         qs[i] = b"\xff" * a.query_len
     cmd = [a.xsa, "mem", a.container, "--serve", "-j", str(a.j), "--min-len",
            str(a.min_len)]
+    # stderr goes to a FILE, not a pipe: the index open journals more than a
+    # pipe buffer holds, and a client that only reads stderr at the end would
+    # deadlock the server on its own diagnostics.
+    errf = open(os.path.join(a.out, "mem_bench.stderr.log"), "w+b")
     p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                         stderr=subprocess.PIPE)
+                         stderr=errf)
+    # Pipelining MUST interleave: the request body is larger than a pipe buffer
+    # and so is the reply stream, so "write everything, then read everything"
+    # deadlocks both sides in pipe_write (observed). Chunks of 64 requests keep
+    # at most one chunk in flight on each side while still keeping the workers
+    # saturated (the server admits 4*jobs outstanding requests).
+    CHUNK = 64
+
+    def pump(chunk):
+        body = b"".join(struct.pack("<I", len(q)) + q for q in chunk)
+        p.stdin.write(body)
+        p.stdin.flush()
+        out_replies = []
+        while len(out_replies) < len(chunk):
+            hdr = p.stdout.read(4)
+            if len(hdr) < 4:
+                die("short read: %d/%d replies" % (len(out_replies), len(chunk)))
+            ln = struct.unpack("<I", hdr)[0]
+            b = p.stdout.read(ln)
+            if len(b) != ln:
+                die("short payload")
+            if ln != 16:
+                die("payload %d != 16" % ln)
+            out_replies.append(struct.unpack("<IIQ", b))
+        return out_replies
+
     warm = qs[:a.warmup]
-    body = b"".join(struct.pack("<I", len(q)) + q for q in warm)
     t_warm = time.time()
-    p.stdin.write(body)
-    p.stdin.flush()
-    got = 0
-    warm_out = []
-    while got < len(warm):
-        hdr = p.stdout.read(4)
-        if len(hdr) < 4:
-            die("short read during warmup")
-        ln = struct.unpack("<I", hdr)[0]
-        warm_out.append(p.stdout.read(ln))
-        got += 1
+    for i in range(0, len(warm), CHUNK):
+        pump(warm[i:i + CHUNK])
     warm_s = time.time() - t_warm
     timed = qs[a.warmup:]
-    body = b"".join(struct.pack("<I", len(q)) + q for q in timed)
     t0 = time.time()
-    p.stdin.write(body)
-    p.stdin.flush()
     replies = []
-    while len(replies) < len(timed):
-        hdr = p.stdout.read(4)
-        if len(hdr) < 4:
-            die("short read: %d/%d replies" % (len(replies), len(timed)))
-        ln = struct.unpack("<I", hdr)[0]
-        b = p.stdout.read(ln)
-        if len(b) != ln:
-            die("short payload")
-        if ln != 16:
-            die("payload %d != 16" % ln)
-        replies.append(struct.unpack("<IIQ", b))
+    for i in range(0, len(timed), CHUNK):
+        replies.extend(pump(timed[i:i + CHUNK]))
     secs = time.time() - t0
     p.stdin.close()
-    err = p.stderr.read().decode()
     p.wait()
+    errf.seek(0)
+    err = errf.read().decode()
+    errf.close()
     if p.returncode != 0:
         die("serve exited %d: %s" % (p.returncode, err[-2000:]))
     sys.stderr.write(err)

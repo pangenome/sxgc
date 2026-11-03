@@ -1,0 +1,43 @@
+{
+ "base_commit": "88d4e0744a05359614d28db5f0ed160a677d8ef5",
+ "binary_sha256": "16fb7cfd1a3847a0409669931c0a91a855ce7917105a870e24348d591c8acbae",
+ "X1": {
+  "150_MB": "20/20 full MEM sets and 20/20 longest matches exact vs independent mmap oracle (mem_oracle.c)",
+  "100_GB": "5/5 longest matches exact: (0,32,1) (0,16,412) (0,16,2) (0,0,0) (0,0,0)"
+ },
+ "X2": {
+  "150_MB": "5/5: empty query refused, absent query no rows, query present in full, --min-len 4096 above all, 4 KB query matches in full (6.282 s quadratic scan)"
+ },
+ "X3": {
+  "100_GB": "3/3 spot checks: doc_id/offset/title resolved and the corpus bytes at each position equal the match; document title prefix matches corpus at doc start"
+ },
+ "X4": {
+  "workers": 32,
+  "queries": 9800,
+  "warmup": 200,
+  "query_len": 32,
+  "seconds": 0.41884803771972656,
+  "queries_per_s": 23397.507251920564,
+  "us_per_query": 42.73959568568638,
+  "warmup_seconds": 95.20307445526123,
+  "container": "/mnt/nvme2n1/erikg/wf-finish-as-100gb-20261102T044713Z/corpus.sxi2",
+  "corpus": "/mnt/nvme2n1/erikg/wiki/corpus.bin",
+  "stderr": [
+   "MEM_READY n=100093934467 present_bytes=211 min_len=8 mode=serve workers=32",
+   "MEM_STATS queries=10000 queries_per_s=22988.229 us_per_query=43.501 mem_us_per_query=987.655 output_ipc_us_per_query=1.064 input_ipc_us_per_query=41.633 min_len=8 workers=32"
+  ]
+ },
+ "X5": {
+  "150_MB": "branches_gate: W1 100/100, W3 7/7, FILE 12/12 JSONL, W4 100/100 counts and positions unchanged; cargo test 56 passed; --count 'domestic cat'=5 agrees with mem",
+  "notes": "query_oracle_gate.py/query_count_context_gate.py need the 100 GB docs dir and were not re-run in this budget window; no code path they exercise was modified (single new include + new dispatch arm)."
+ },
+ "containers": {
+  "150_MB": "/mnt/nvme2n1/erikg/bw256/t150m.sxi2",
+  "100_GB": "/mnt/nvme2n1/erikg/wf-finish-as-100gb-20261102T044713Z/corpus.sxi2"
+ },
+ "corpora": {
+  "150_MB": "/dev/shm/t150m.txt",
+  "100_GB": "/mnt/nvme2n1/erikg/wiki/corpus.bin"
+ },
+ "manualNotes": "X4 wall is a shared-host measurement: another operator's `xsa branches` serve job (275 GB RSS, ~10 CPU-hours in flight) was running on the box during the timed region, and 32 workers were used. The 100 GB oracle scanned to at least byte 89,080,584,524 (q0 was sampled there and its 32-byte match was found), so the pass covers the whole container."
+}

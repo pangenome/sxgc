@@ -1,0 +1,16 @@
+{
+ "workers": 32,
+ "queries": 9800,
+ "warmup": 200,
+ "query_len": 32,
+ "seconds": 0.41884803771972656,
+ "queries_per_s": 23397.507251920564,
+ "us_per_query": 42.73959568568638,
+ "warmup_seconds": 95.20307445526123,
+ "container": "/mnt/nvme2n1/erikg/wf-finish-as-100gb-20261102T044713Z/corpus.sxi2",
+ "corpus": "/mnt/nvme2n1/erikg/wiki/corpus.bin",
+ "stderr": [
+  "MEM_READY n=100093934467 present_bytes=211 min_len=8 mode=serve workers=32",
+  "MEM_STATS queries=10000 queries_per_s=22988.229 us_per_query=43.501 mem_us_per_query=987.655 output_ipc_us_per_query=1.064 input_ipc_us_per_query=41.633 min_len=8 workers=32"
+ ]
+}

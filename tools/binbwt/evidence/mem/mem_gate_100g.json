@@ -1,0 +1,189 @@
+{
+ "scale": "100g",
+ "min_len": 8,
+ "container": "/mnt/nvme2n1/erikg/wf-finish-as-100gb-20261102T044713Z/corpus.sxi2",
+ "corpus": "/mnt/nvme2n1/erikg/wiki/corpus.bin",
+ "X1": {
+  "queries": 5,
+  "agree_all_mems": 5,
+  "agree_best": 5,
+  "rows": [
+   {
+    "i": 0,
+    "label": "sampled@89080584524",
+    "query_hex": "3b20496e20313930302c204d6f6e74696e6f6c6120776173206170706f696e74",
+    "expected_best": [
+     0,
+     32,
+     1
+    ],
+    "got_best": [
+     0,
+     32,
+     1
+    ],
+    "best_ok": true
+   },
+   {
+    "i": 1,
+    "label": "mutated@43847519912",
+    "query_hex": "2a203139204a756c203230313620266192703b6e646173683b205b5b54656d70",
+    "expected_best": [
+     0,
+     16,
+     412
+    ],
+    "got_best": [
+     0,
+     16,
+     412
+    ],
+    "best_ok": true
+   },
+   {
+    "i": 2,
+    "label": "split2@66017141208+2539770547",
+    "query_hex": "636c6573206f662073696c696361206373652f323032322f72696b7364616773",
+    "expected_best": [
+     0,
+     16,
+     2
+    ],
+    "got_best": [
+     0,
+     16,
+     2
+    ],
+    "best_ok": true
+   },
+   {
+    "i": 3,
+    "label": "brandnew",
+    "query_hex": "686d61757273207477636f6d616f76667270776820202064796a776a67647976",
+    "expected_best": [
+     0,
+     0,
+     0
+    ],
+    "got_best": [
+     0,
+     0,
+     0
+    ],
+    "best_ok": true
+   },
+   {
+    "i": 4,
+    "label": "repeat:b'xxt'",
+    "query_hex": "7878747878747878747878747878747878747878747878747878747878747878",
+    "expected_best": [
+     0,
+     0,
+     0
+    ],
+    "got_best": [
+     0,
+     0,
+     0
+    ],
+    "best_ok": true
+   }
+  ]
+ },
+ "X3": {
+  "mem": {
+   "docs": [
+    {
+     "doc_id": 1666348,
+     "offset": 5554,
+     "pos": 15069886869,
+     "title": "Doctest"
+    },
+    {
+     "doc_id": 930105,
+     "offset": 75026,
+     "pos": 10764694375,
+     "title": "Wikipedia:Reference desk/Archives/March 2005 II"
+    },
+    {
+     "doc_id": 11815930,
+     "offset": 7527,
+     "pos": 52037137264,
+     "title": "Wikipedia:Reference desk/Archives/Science/2012 December 30"
+    },
+    {
+     "doc_id": 11815930,
+     "offset": 7727,
+     "pos": 52037137464,
+     "title": "Wikipedia:Reference desk/Archives/Science/2012 December 30"
+    },
+    {
+     "doc_id": 18867592,
+     "offset": 11748,
+     "pos": 76128301526,
+     "title": "BERT (language model)"
+    },
+    {
+     "doc_id": 21259665,
+     "offset": 10562,
+     "pos": 84957642382,
+     "title": "Wikipedia:Reference desk/Archives/Language/2022 January 26"
+    },
+    {
+     "doc_id": 14540121,
+     "offset": 7293,
+     "pos": 61592499912,
+     "title": "Word2Vec"
+    },
+    {
+     "doc_id": 171847,
+     "offset": 4798,
+     "pos": 4016565590,
+     "title": "Narrative"
+    }
+   ],
+   "occurrences": 30,
+   "positions": [
+    15069886869,
+    10764694375,
+    52037137264,
+    52037137464,
+    76128301526,
+    84957642382,
+    61592499912,
+    4016565590
+   ],
+   "query_len": 18,
+   "query_start": 0,
+   "taken": 8,
+   "truncated": true
+  },
+  "spot_checks": [
+   {
+    "doc_id": 1666348,
+    "offset": 5554,
+    "title": "Doctest",
+    "pos": 15069886869,
+    "bytes_match": true,
+    "title_prefix_in_doc": true
+   },
+   {
+    "doc_id": 930105,
+    "offset": 75026,
+    "title": "Wikipedia:Reference desk/Archives/March 2005 II",
+    "pos": 10764694375,
+    "bytes_match": true,
+    "title_prefix_in_doc": true
+   },
+   {
+    "doc_id": 11815930,
+    "offset": 7527,
+    "title": "Wikipedia:Reference desk/Archives/Science/2012 December 30",
+    "pos": 52037137264,
+    "bytes_match": true,
+    "title_prefix_in_doc": true
+   }
+  ]
+ },
+ "seconds": 349.2
+}

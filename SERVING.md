@@ -250,3 +250,31 @@ in full, `--min-len` above every match, and a 4 KB query. X3 spot-checks
 warmup, checks frame order with absent-marker queries that must return
 `best_len` 0, and checks `best_len <= query_len` and `occurrences <= n` on every
 reply.
+
+## Measured gates for `xsa mem` (2026-11-04)
+
+X1 brute force via `mem_oracle.c` (one mmap pass over corpus bytes; independent
+of the index): **150 MB: 20/20 full MEM sets and 20/20 longest matches exact**;
+**100 GB: 5/5 longest-match triples exact** - `(0,32,1)`, `(0,16,412)`,
+`(0,16,2)`, `(0,0,0)`, `(0,0,0)`. X2: **5/5** (empty query refused, absent query
+no rows, query present in full, `--min-len 4096` above every match, 4 KB query
+matched in full; the 4 KB scan takes 6.3 s, the documented quadratic term).
+X3: **3/3** document spot checks at 100 GB (doc_id/offset/title resolved, corpus
+bytes at each position equal the match, title prefix present at document start).
+
+X4: 100 GB container, `--serve -j 32`, 9,800 timed 32-byte queries after 200
+warmup queries (sampled windows, 16 of them replaced by absent markers that must
+return `best_len` 0, i.e. request order is verified):
+
+| Workers | Queries/s | µs/query (wall) | µs/query (kernel) | Input IPC µs | Output IPC µs |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 32 | **23,397** | **42.7** | 988 | 41.6 | 1.1 |
+
+The kernel per query is ~1 ms because a 32-byte query costs a few hundred rank
+steps and each step is a block decode plus a random access in ~266 GB of
+materialised columns; 32 workers overlap about 23 of them at a time. The first
+200 queries are excluded because they fault the freshly built columns in (95.2 s
+for 200, i.e. cold pages, not steady state). This is a **shared-host** wall: a
+second operator's `xsa branches` serve job (~275 GB RSS) was running on the box.
+The 100 GB container and `/mnt/nvme2n1/erikg/wiki/corpus.bin` were used; evidence
+in [the evidence directory](tools/binbwt/evidence/mem/results.json).
