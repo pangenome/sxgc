@@ -1,0 +1,1250 @@
+{
+ "what": "xsa seeds covers the WHOLE document instead of its lead: continuous scan, coverage_pct, output-level --max-seeds. Measured gates P1/P2/P3.",
+ "date": "2026-11-03",
+ "container": "/mnt/nvme2n1/erikg/wf-finish-as-100gb-20261102T044713Z/corpus.sxi2",
+ "docs_sidecars": "/mnt/nvme2n1/erikg/wiki",
+ "text": "document 4065 ('Cat') of /mnt/nvme2n1/erikg/wiki/seps.bin, 177347 bytes, extracted by reading the anchors+deltas directly (body only: the 0x1E framing byte of the next document is not part of it)",
+ "host_note": "shared 1007 GB host: another operator's `xsa branches --serve -j 128` on the SAME container held 277 GB RSS with load average 82 for every wall below; peak RSS of each xsa seeds run is the index columns (~271 GiB) and every wall is dominated by opening the index, not by the scan",
+ "previous_defect": {
+  "command": "--target-mult 50 --max-len 64 --max-seeds 40 --stride 32",
+  "windows": 62,
+  "bytes_examined": 1984,
+  "coverage_pct": 1.1188,
+  "note": "front-to-back walk that stopped at K: 1.1% of the document, all of it the lead, where Wikipedia keeps infobox/redirect/date templates"
+ },
+ "gates": {
+  "P1_target_mult_50": {
+   "stats": {
+    "windows": "177347",
+    "coverage_pct": "100.0000",
+    "examined_pct": "100.0000",
+    "first_window": "0",
+    "last_window": "177346",
+    "text_bytes": "177347",
+    "accepted_windows": "30132",
+    "capped_dropped": "30092",
+    "windows_skipped_markup": "0",
+    "markup_skipped_pct": "0.0000",
+    "markup_bytes_skipped": "0",
+    "markup_frac": "0.000000",
+    "tried": "89654",
+    "accepted": "40",
+    "mean_len": "20.40",
+    "mult_histogram": "51:1,52:1,53:1,57:2,60:1,61:2,63:1,67:1,68:1,69:1,70:1,71:1,73:2,74:1,76:1,89:2,104:1,126:1,127:1,141:1,146:1,163:1,168:1,172:1,176:1,183:1,212:1,220:1,277:1,337:1,344:1,362:1,516:1,674:1,884:1,1051:1",
+    "shorten_steps": "1017923",
+    "extend_steps": "1241309",
+    "scan_ms": "33476.035",
+    "locate_ms": "5654.330",
+    "mode": "target",
+    "target_mult": "50",
+    "cap": "none",
+    "min_len": "12",
+    "max_len": "64",
+    "stride": "1",
+    "no_match": "0",
+    "too_short": "11",
+    "too_rare": "58188",
+    "too_common": "1323",
+    "suppressed_dedup": "2068",
+    "suppressed_contained": "85625",
+    "nearest_below": "0",
+    "positions": "1280",
+    "ranks": "174488926",
+    "lf_steps": "5754595"
+   },
+   "wall": {
+    "wall": "2:21.63",
+    "max_rss_kb": 283967352
+   },
+   "seeds": [
+    {
+     "seed_id": 0,
+     "text_offset": 0,
+     "length": 24,
+     "occurrences": 176,
+     "seed": "Cat\n{{Short description|"
+    },
+    {
+     "seed_id": 1,
+     "text_offset": 4273,
+     "length": 20,
+     "occurrences": 52,
+     "seed": " for companionship a"
+    },
+    {
+     "seed_id": 2,
+     "text_offset": 9075,
+     "length": 51,
+     "occurrences": 61,
+     "seed": "ry |publisher=Oxford University Press |access-date="
+    },
+    {
+     "seed_id": 3,
+     "text_offset": 14887,
+     "length": 15,
+     "occurrences": 674,
+     "seed": "ved the name ''"
+    },
+    {
+     "seed_id": 4,
+     "text_offset": 19716,
+     "length": 21,
+     "occurrences": 51,
+     "seed": "}}.&lt;ref name=Johns"
+    },
+    {
+     "seed_id": 5,
+     "text_offset": 24125,
+     "length": 20,
+     "occurrences": 57,
+     "seed": "specific expressions"
+    },
+    {
+     "seed_id": 6,
+     "text_offset": 29222,
+     "length": 24,
+     "occurrences": 183,
+     "seed": "2007&gt;{{Cite journal |"
+    },
+    {
+     "seed_id": 7,
+     "text_offset": 33640,
+     "length": 17,
+     "occurrences": 104,
+     "seed": "or, and they are "
+    },
+    {
+     "seed_id": 8,
+     "text_offset": 37400,
+     "length": 18,
+     "occurrences": 53,
+     "seed": "Science |year=1999"
+    },
+    {
+     "seed_id": 9,
+     "text_offset": 42000,
+     "length": 24,
+     "occurrences": 516,
+     "seed": ". |date=2003 |publisher="
+    },
+    {
+     "seed_id": 10,
+     "text_offset": 46270,
+     "length": 13,
+     "occurrences": 69,
+     "seed": "al]] to the o"
+    },
+    {
+     "seed_id": 11,
+     "text_offset": 50454,
+     "length": 27,
+     "occurrences": 884,
+     "seed": " |archive-date=10 April 200"
+    },
+    {
+     "seed_id": 12,
+     "text_offset": 54834,
+     "length": 12,
+     "occurrences": 73,
+     "seed": "ks |first3=D"
+    },
+    {
+     "seed_id": 13,
+     "text_offset": 59276,
+     "length": 63,
+     "occurrences": 212,
+     "seed": "19 July 2023 |archive-url=https://web.archive.org/web/202307191"
+    },
+    {
+     "seed_id": 14,
+     "text_offset": 63774,
+     "length": 31,
+     "occurrences": 163,
+     "seed": "ch&quot;&gt;{{cite web |title=D"
+    },
+    {
+     "seed_id": 15,
+     "text_offset": 67997,
+     "length": 14,
+     "occurrences": 1051,
+     "seed": "er protective "
+    },
+    {
+     "seed_id": 16,
+     "text_offset": 72121,
+     "length": 19,
+     "occurrences": 73,
+     "seed": "o-Hern\u00e1ndez |first"
+    },
+    {
+     "seed_id": 17,
+     "text_offset": 76119,
+     "length": 16,
+     "occurrences": 68,
+     "seed": "y to humans and "
+    },
+    {
+     "seed_id": 18,
+     "text_offset": 80581,
+     "length": 20,
+     "occurrences": 61,
+     "seed": "\u2013205 |doi=10.2307/"
+    },
+    {
+     "seed_id": 19,
+     "text_offset": 84582,
+     "length": 16,
+     "occurrences": 67,
+     "seed": "iology |year=197"
+    },
+    {
+     "seed_id": 20,
+     "text_offset": 89005,
+     "length": 17,
+     "occurrences": 337,
+     "seed": " the human brain,"
+    },
+    {
+     "seed_id": 21,
+     "text_offset": 92859,
+     "length": 13,
+     "occurrences": 127,
+     "seed": "e with launch"
+    },
+    {
+     "seed_id": 22,
+     "text_offset": 97112,
+     "length": 15,
+     "occurrences": 344,
+     "seed": "2 |pages=39\u20134"
+    },
+    {
+     "seed_id": 23,
+     "text_offset": 101594,
+     "length": 18,
+     "occurrences": 57,
+     "seed": "ehaviour |date=200"
+    },
+    {
+     "seed_id": 24,
+     "text_offset": 105811,
+     "length": 16,
+     "occurrences": 74,
+     "seed": "threat display]]"
+    },
+    {
+     "seed_id": 25,
+     "text_offset": 109663,
+     "length": 13,
+     "occurrences": 141,
+     "seed": "y fights and "
+    },
+    {
+     "seed_id": 26,
+     "text_offset": 114005,
+     "length": 13,
+     "occurrences": 220,
+     "seed": "]] thoroughly"
+    },
+    {
+     "seed_id": 27,
+     "text_offset": 118185,
+     "length": 35,
+     "occurrences": 277,
+     "seed": ".&lt;ref&gt;{{Cite journal |title=E"
+    },
+    {
+     "seed_id": 28,
+     "text_offset": 122299,
+     "length": 14,
+     "occurrences": 63,
+     "seed": " of adequate n"
+    },
+    {
+     "seed_id": 29,
+     "text_offset": 126444,
+     "length": 14,
+     "occurrences": 70,
+     "seed": "]] of mammals "
+    },
+    {
+     "seed_id": 30,
+     "text_offset": 130797,
+     "length": 12,
+     "occurrences": 362,
+     "seed": "izing proper"
+    },
+    {
+     "seed_id": 31,
+     "text_offset": 134725,
+     "length": 15,
+     "occurrences": 76,
+     "seed": " |hdl=10019.1/1"
+    },
+    {
+     "seed_id": 32,
+     "text_offset": 139469,
+     "length": 26,
+     "occurrences": 71,
+     "seed": " in urban and rural areas."
+    },
+    {
+     "seed_id": 33,
+     "text_offset": 143826,
+     "length": 16,
+     "occurrences": 89,
+     "seed": "ation of short-t"
+    },
+    {
+     "seed_id": 34,
+     "text_offset": 148531,
+     "length": 20,
+     "occurrences": 146,
+     "seed": "\u201396 }}&lt;/ref&gt;"
+    },
+    {
+     "seed_id": 35,
+     "text_offset": 153408,
+     "length": 19,
+     "occurrences": 126,
+     "seed": "za/ |archive-date=1"
+    },
+    {
+     "seed_id": 36,
+     "text_offset": 158254,
+     "length": 24,
+     "occurrences": 60,
+     "seed": " |work=How Stuff Works |"
+    },
+    {
+     "seed_id": 37,
+     "text_offset": 162533,
+     "length": 14,
+     "occurrences": 168,
+     "seed": " a household c"
+    },
+    {
+     "seed_id": 38,
+     "text_offset": 166935,
+     "length": 23,
+     "occurrences": 89,
+     "seed": "]], the goddess of love"
+    },
+    {
+     "seed_id": 39,
+     "text_offset": 171280,
+     "length": 14,
+     "occurrences": 172,
+     "seed": " |work=Social "
+    }
+   ],
+   "positions": 1280,
+   "distinct_documents": 1234,
+   "distinct_titles": 1234,
+   "titles_top20": [
+    {
+     "hits": 9,
+     "title": "Cat"
+    },
+    {
+     "hits": 5,
+     "title": "Muscle car"
+    },
+    {
+     "hits": 4,
+     "title": "2023\u201324 Kerala Blasters FC season"
+    },
+    {
+     "hits": 4,
+     "title": "2023 Indonesian used train import controversy"
+    },
+    {
+     "hits": 4,
+     "title": "Hudson Italia"
+    },
+    {
+     "hits": 3,
+     "title": "Sole Front for Women's Rights"
+    },
+    {
+     "hits": 3,
+     "title": "Sperm precedence"
+    },
+    {
+     "hits": 3,
+     "title": "Gaza genocide"
+    },
+    {
+     "hits": 3,
+     "title": "American Motors Corporation"
+    },
+    {
+     "hits": 2,
+     "title": "Blossom and Frankie"
+    },
+    {
+     "hits": 2,
+     "title": "Treaty of Ripon"
+    },
+    {
+     "hits": 2,
+     "title": "Broad-tailed paradise whydah"
+    },
+    {
+     "hits": 2,
+     "title": "Orange-winged pytilia"
+    },
+    {
+     "hits": 2,
+     "title": "Pantherinae"
+    },
+    {
+     "hits": 2,
+     "title": "Coma Berenices (dwarf galaxy)"
+    },
+    {
+     "hits": 2,
+     "title": "David L. Banks"
+    },
+    {
+     "hits": 2,
+     "title": "Thornlie\u2013Cockburn line"
+    },
+    {
+     "hits": 2,
+     "title": "Kilusang Bagong Lipunan"
+    },
+    {
+     "hits": 2,
+     "title": "Scaly-breasted munia"
+    },
+    {
+     "hits": 2,
+     "title": "Stabilimentum"
+    }
+   ]
+  },
+  "P2_target_mult_500": {
+   "stats": {
+    "windows": "177347",
+    "coverage_pct": "100.0000",
+    "examined_pct": "100.0000",
+    "first_window": "0",
+    "last_window": "177346",
+    "text_bytes": "177347",
+    "accepted_windows": "22599",
+    "capped_dropped": "22559",
+    "windows_skipped_markup": "0",
+    "markup_skipped_pct": "0.0000",
+    "markup_bytes_skipped": "0",
+    "markup_frac": "0.000000",
+    "tried": "113627",
+    "accepted": "40",
+    "mean_len": "18.35",
+    "mult_histogram": "503:2,522:1,525:1,536:1,542:1,603:1,608:1,644:1,679:1,689:1,718:1,734:1,800:1,834:1,869:1,873:1,899:1,921:1,922:1,940:1,974:1,979:1,992:1,1018:1,1106:1,1165:1,1213:1,1413:1,1570:1,1871:1,1901:1,2405:1,2410:1,2746:1,2897:1,3065:1,4302:1,5734:1,9932:1",
+    "shorten_steps": "839845",
+    "extend_steps": "1241309",
+    "scan_ms": "31936.457",
+    "locate_ms": "5863.356",
+    "mode": "target",
+    "target_mult": "500",
+    "cap": "none",
+    "min_len": "12",
+    "max_len": "64",
+    "stride": "1",
+    "no_match": "0",
+    "too_short": "11",
+    "too_rare": "90587",
+    "too_common": "430",
+    "suppressed_dedup": "3064",
+    "suppressed_contained": "60656",
+    "nearest_below": "0",
+    "positions": "1280",
+    "ranks": "164771442",
+    "lf_steps": "6205881"
+   },
+   "wall": {
+    "wall": "2:08.75",
+    "max_rss_kb": 283940052
+   },
+   "seeds": [
+    {
+     "seed_id": 0,
+     "text_offset": 1,
+     "length": 24,
+     "occurrences": 2405,
+     "seed": "at\n{{Short description|S"
+    },
+    {
+     "seed_id": 1,
+     "text_offset": 4471,
+     "length": 12,
+     "occurrences": 4302,
+     "seed": "on domestic "
+    },
+    {
+     "seed_id": 2,
+     "text_offset": 8623,
+     "length": 27,
+     "occurrences": 608,
+     "seed": "&gt;&lt;ref name=&quot;Gram"
+    },
+    {
+     "seed_id": 3,
+     "text_offset": 14099,
+     "length": 14,
+     "occurrences": 542,
+     "seed": "=1904 |volume="
+    },
+    {
+     "seed_id": 4,
+     "text_offset": 18752,
+     "length": 13,
+     "occurrences": 899,
+     "seed": "s.png|thumb|S"
+    },
+    {
+     "seed_id": 5,
+     "text_offset": 23079,
+     "length": 13,
+     "occurrences": 536,
+     "seed": "en used for v"
+    },
+    {
+     "seed_id": 6,
+     "text_offset": 28761,
+     "length": 18,
+     "occurrences": 922,
+     "seed": "35}}&lt;/ref&gt; S"
+    },
+    {
+     "seed_id": 7,
+     "text_offset": 33539,
+     "length": 17,
+     "occurrences": 603,
+     "seed": "er2017&quot;/&gt;"
+    },
+    {
+     "seed_id": 8,
+     "text_offset": 37406,
+     "length": 14,
+     "occurrences": 2746,
+     "seed": "e |year=1999 |"
+    },
+    {
+     "seed_id": 9,
+     "text_offset": 42143,
+     "length": 12,
+     "occurrences": 940,
+     "seed": "canine teeth"
+    },
+    {
+     "seed_id": 10,
+     "text_offset": 46512,
+     "length": 13,
+     "occurrences": 3065,
+     "seed": " device used "
+    },
+    {
+     "seed_id": 11,
+     "text_offset": 50792,
+     "length": 13,
+     "occurrences": 718,
+     "seed": "l |title=Fall"
+    },
+    {
+     "seed_id": 12,
+     "text_offset": 55511,
+     "length": 14,
+     "occurrences": 834,
+     "seed": "5 |year=2006 |"
+    },
+    {
+     "seed_id": 13,
+     "text_offset": 59869,
+     "length": 24,
+     "occurrences": 503,
+     "seed": "oices.&lt;ref&gt;{{Cite "
+    },
+    {
+     "seed_id": 14,
+     "text_offset": 64181,
+     "length": 13,
+     "occurrences": 921,
+     "seed": "aste receptor"
+    },
+    {
+     "seed_id": 15,
+     "text_offset": 68617,
+     "length": 31,
+     "occurrences": 992,
+     "seed": "doi-access=free}}&lt;/ref&gt; D"
+    },
+    {
+     "seed_id": 16,
+     "text_offset": 72460,
+     "length": 15,
+     "occurrences": 1018,
+     "seed": "at ranges from "
+    },
+    {
+     "seed_id": 17,
+     "text_offset": 76459,
+     "length": 13,
+     "occurrences": 525,
+     "seed": "|first1=D. S."
+    },
+    {
+     "seed_id": 18,
+     "text_offset": 80910,
+     "length": 12,
+     "occurrences": 2410,
+     "seed": "eeting, and "
+    },
+    {
+     "seed_id": 19,
+     "text_offset": 84904,
+     "length": 20,
+     "occurrences": 734,
+     "seed": "8 |doi=10.1111/j.146"
+    },
+    {
+     "seed_id": 20,
+     "text_offset": 89276,
+     "length": 13,
+     "occurrences": 1570,
+     "seed": " 250 million "
+    },
+    {
+     "seed_id": 21,
+     "text_offset": 93117,
+     "length": 14,
+     "occurrences": 1413,
+     "seed": " |pages=45\u20136"
+    },
+    {
+     "seed_id": 22,
+     "text_offset": 97698,
+     "length": 25,
+     "occurrences": 2897,
+     "seed": ".pdf |journal=Journal of "
+    },
+    {
+     "seed_id": 23,
+     "text_offset": 102061,
+     "length": 12,
+     "occurrences": 1165,
+     "seed": "ss |first1=S"
+    },
+    {
+     "seed_id": 24,
+     "text_offset": 106120,
+     "length": 18,
+     "occurrences": 1213,
+     "seed": "reatment |journal="
+    },
+    {
+     "seed_id": 25,
+     "text_offset": 110046,
+     "length": 26,
+     "occurrences": 679,
+     "seed": " due to the influence of t"
+    },
+    {
+     "seed_id": 26,
+     "text_offset": 114266,
+     "length": 16,
+     "occurrences": 974,
+     "seed": "ed by a single m"
+    },
+    {
+     "seed_id": 27,
+     "text_offset": 118719,
+     "length": 18,
+     "occurrences": 5734,
+     "seed": " was performed at "
+    },
+    {
+     "seed_id": 28,
+     "text_offset": 122947,
+     "length": 14,
+     "occurrences": 873,
+     "seed": " | issn=0002-9"
+    },
+    {
+     "seed_id": 29,
+     "text_offset": 127519,
+     "length": 35,
+     "occurrences": 869,
+     "seed": "73 |url-status=live }}&lt;/ref&gt; "
+    },
+    {
+     "seed_id": 30,
+     "text_offset": 131920,
+     "length": 12,
+     "occurrences": 503,
+     "seed": "nd some auth"
+    },
+    {
+     "seed_id": 31,
+     "text_offset": 136134,
+     "length": 29,
+     "occurrences": 1106,
+     "seed": "6 December 2019 |archive-url="
+    },
+    {
+     "seed_id": 32,
+     "text_offset": 140732,
+     "length": 12,
+     "occurrences": 9932,
+     "seed": "]] and [[For"
+    },
+    {
+     "seed_id": 33,
+     "text_offset": 144834,
+     "length": 28,
+     "occurrences": 689,
+     "seed": "publisher=CSIRO Publishing |"
+    },
+    {
+     "seed_id": 34,
+     "text_offset": 149418,
+     "length": 16,
+     "occurrences": 1871,
+     "seed": "ther industries "
+    },
+    {
+     "seed_id": 35,
+     "text_offset": 153537,
+     "length": 23,
+     "occurrences": 644,
+     "seed": " the global population "
+    },
+    {
+     "seed_id": 36,
+     "text_offset": 158087,
+     "length": 29,
+     "occurrences": 1901,
+     "seed": " standard.&lt;ref name=&quot;"
+    },
+    {
+     "seed_id": 37,
+     "text_offset": 162278,
+     "length": 14,
+     "occurrences": 522,
+     "seed": "\nIn [[ancient "
+    },
+    {
+     "seed_id": 38,
+     "text_offset": 166697,
+     "length": 16,
+     "occurrences": 800,
+     "seed": " Magazine |year="
+    },
+    {
+     "seed_id": 39,
+     "text_offset": 171135,
+     "length": 32,
+     "occurrences": 979,
+     "seed": "e).&lt;ref&gt;{{cite web |title="
+    }
+   ],
+   "positions": 1280,
+   "distinct_documents": 1262,
+   "distinct_titles": 1262,
+   "titles_top20": [
+    {
+     "hits": 5,
+     "title": "Taste receptor"
+    },
+    {
+     "hits": 3,
+     "title": "Grammy Award for Record of the Year"
+    },
+    {
+     "hits": 2,
+     "title": "Grammy Award for Album of the Year"
+    },
+    {
+     "hits": 2,
+     "title": "Ren\u00e9 K\u00fcss"
+    },
+    {
+     "hits": 2,
+     "title": "Pat O'Connor (wrestler)"
+    },
+    {
+     "hits": 2,
+     "title": "Greater Gotham"
+    },
+    {
+     "hits": 2,
+     "title": "TAS2R14"
+    },
+    {
+     "hits": 2,
+     "title": "TAS2R8"
+    },
+    {
+     "hits": 2,
+     "title": "TAS2R45"
+    },
+    {
+     "hits": 2,
+     "title": "Gustducin"
+    },
+    {
+     "hits": 2,
+     "title": "Calcium chloride"
+    },
+    {
+     "hits": 2,
+     "title": "Mallee whipbird"
+    },
+    {
+     "hits": 2,
+     "title": "Industry of the South Humber Bank"
+    },
+    {
+     "hits": 2,
+     "title": "World population"
+    },
+    {
+     "hits": 1,
+     "title": "Navicat"
+    },
+    {
+     "hits": 1,
+     "title": "Dancer with Flat Hat"
+    },
+    {
+     "hits": 1,
+     "title": "Kadakkarapally Boat"
+    },
+    {
+     "hits": 1,
+     "title": "Beachcat"
+    },
+    {
+     "hits": 1,
+     "title": "Koreasat"
+    },
+    {
+     "hits": 1,
+     "title": "Teldat"
+    }
+   ]
+  },
+  "P3_target_mult_50_skip_markup": {
+   "stats": {
+    "windows": "177347",
+    "coverage_pct": "37.3466",
+    "examined_pct": "100.0000",
+    "first_window": "358",
+    "last_window": "177346",
+    "text_bytes": "177347",
+    "accepted_windows": "10287",
+    "capped_dropped": "10247",
+    "windows_skipped_markup": "126171",
+    "markup_skipped_pct": "71.1436",
+    "markup_bytes_skipped": "107899",
+    "markup_frac": "0.608406",
+    "tried": "29337",
+    "accepted": "40",
+    "mean_len": "16.70",
+    "mult_histogram": "50:3,51:1,53:2,58:1,59:1,60:1,65:2,66:1,69:1,73:1,76:1,77:3,82:1,83:1,86:1,91:1,93:1,98:1,100:1,140:1,141:1,154:1,162:1,178:1,183:1,205:1,239:1,279:1,293:1,326:1,367:1,372:1,460:1,716:1",
+    "shorten_steps": "283709",
+    "extend_steps": "358112",
+    "scan_ms": "20227.560",
+    "locate_ms": "8954.989",
+    "mode": "target",
+    "target_mult": "50",
+    "cap": "none",
+    "min_len": "12",
+    "max_len": "64",
+    "stride": "1",
+    "no_match": "0",
+    "too_short": "11",
+    "too_rare": "19036",
+    "too_common": "3",
+    "suppressed_dedup": "387",
+    "suppressed_contained": "21452",
+    "nearest_below": "0",
+    "positions": "1280",
+    "ranks": "48831852",
+    "lf_steps": "5544736"
+   },
+   "wall": {
+    "wall": "2:14.06",
+    "max_rss_kb": 282234564
+   },
+   "seeds": [
+    {
+     "seed_id": 0,
+     "text_offset": 358,
+     "length": 16,
+     "occurrences": 716,
+     "seed": "&lt;!-- Per MOS:"
+    },
+    {
+     "seed_id": 1,
+     "text_offset": 3620,
+     "length": 13,
+     "occurrences": 65,
+     "seed": "unting]], [[c"
+    },
+    {
+     "seed_id": 2,
+     "text_offset": 4820,
+     "length": 16,
+     "occurrences": 326,
+     "seed": " of the global f"
+    },
+    {
+     "seed_id": 3,
+     "text_offset": 14928,
+     "length": 14,
+     "occurrences": 58,
+     "seed": " for the [[wil"
+    },
+    {
+     "seed_id": 4,
+     "text_offset": 23081,
+     "length": 38,
+     "occurrences": 73,
+     "seed": " used for various purposes, including "
+    },
+    {
+     "seed_id": 5,
+     "text_offset": 32537,
+     "length": 17,
+     "occurrences": 82,
+     "seed": "ound settlements "
+    },
+    {
+     "seed_id": 6,
+     "text_offset": 35924,
+     "length": 17,
+     "occurrences": 50,
+     "seed": "ions, which show "
+    },
+    {
+     "seed_id": 7,
+     "text_offset": 41146,
+     "length": 15,
+     "occurrences": 76,
+     "seed": "ace into which "
+    },
+    {
+     "seed_id": 8,
+     "text_offset": 43935,
+     "length": 12,
+     "occurrences": 60,
+     "seed": "ble and retr"
+    },
+    {
+     "seed_id": 9,
+     "text_offset": 47589,
+     "length": 15,
+     "occurrences": 51,
+     "seed": "gs together on "
+    },
+    {
+     "seed_id": 10,
+     "text_offset": 52374,
+     "length": 14,
+     "occurrences": 279,
+     "seed": "e analysis]] o"
+    },
+    {
+     "seed_id": 11,
+     "text_offset": 54225,
+     "length": 21,
+     "occurrences": 154,
+     "seed": "|thumb|upright=0.7|A "
+    },
+    {
+     "seed_id": 12,
+     "text_offset": 58739,
+     "length": 13,
+     "occurrences": 93,
+     "seed": "ears, the [[P"
+    },
+    {
+     "seed_id": 13,
+     "text_offset": 63716,
+     "length": 14,
+     "occurrences": 53,
+     "seed": "o more than 9,"
+    },
+    {
+     "seed_id": 14,
+     "text_offset": 67349,
+     "length": 14,
+     "occurrences": 50,
+     "seed": "re possibly to"
+    },
+    {
+     "seed_id": 15,
+     "text_offset": 70317,
+     "length": 17,
+     "occurrences": 77,
+     "seed": "lt;/ref&gt;\n\nCats"
+    },
+    {
+     "seed_id": 16,
+     "text_offset": 75003,
+     "length": 19,
+     "occurrences": 66,
+     "seed": "e territories are n"
+    },
+    {
+     "seed_id": 17,
+     "text_offset": 78217,
+     "length": 14,
+     "occurrences": 141,
+     "seed": "gression]] is "
+    },
+    {
+     "seed_id": 18,
+     "text_offset": 81926,
+     "length": 19,
+     "occurrences": 83,
+     "seed": ".&lt;ref name=Crowe"
+    },
+    {
+     "seed_id": 19,
+     "text_offset": 85094,
+     "length": 14,
+     "occurrences": 69,
+     "seed": "al movements; "
+    },
+    {
+     "seed_id": 20,
+     "text_offset": 90001,
+     "length": 17,
+     "occurrences": 293,
+     "seed": " for a decade or "
+    },
+    {
+     "seed_id": 21,
+     "text_offset": 93777,
+     "length": 26,
+     "occurrences": 372,
+     "seed": "&lt;/ref&gt; Owing to the "
+    },
+    {
+     "seed_id": 22,
+     "text_offset": 96808,
+     "length": 13,
+     "occurrences": 162,
+     "seed": "d foods that "
+    },
+    {
+     "seed_id": 23,
+     "text_offset": 103294,
+     "length": 21,
+     "occurrences": 77,
+     "seed": " North America, the p"
+    },
+    {
+     "seed_id": 24,
+     "text_offset": 106830,
+     "length": 17,
+     "occurrences": 65,
+     "seed": "ting in domestic "
+    },
+    {
+     "seed_id": 25,
+     "text_offset": 109006,
+     "length": 12,
+     "occurrences": 460,
+     "seed": " rights may "
+    },
+    {
+     "seed_id": 26,
+     "text_offset": 112979,
+     "length": 17,
+     "occurrences": 239,
+     "seed": "e. At first, the "
+    },
+    {
+     "seed_id": 27,
+     "text_offset": 116376,
+     "length": 20,
+     "occurrences": 59,
+     "seed": "Based on a study of "
+    },
+    {
+     "seed_id": 28,
+     "text_offset": 121851,
+     "length": 14,
+     "occurrences": 100,
+     "seed": " confers some "
+    },
+    {
+     "seed_id": 29,
+     "text_offset": 128589,
+     "length": 15,
+     "occurrences": 53,
+     "seed": "Tooth pathology"
+    },
+    {
+     "seed_id": 30,
+     "text_offset": 130876,
+     "length": 13,
+     "occurrences": 91,
+     "seed": "sh and clean "
+    },
+    {
+     "seed_id": 31,
+     "text_offset": 133286,
+     "length": 12,
+     "occurrences": 178,
+     "seed": "ction; and a"
+    },
+    {
+     "seed_id": 32,
+     "text_offset": 137475,
+     "length": 25,
+     "occurrences": 98,
+     "seed": " protected natural areas "
+    },
+    {
+     "seed_id": 33,
+     "text_offset": 142131,
+     "length": 16,
+     "occurrences": 367,
+     "seed": " to extinction. "
+    },
+    {
+     "seed_id": 34,
+     "text_offset": 150655,
+     "length": 24,
+     "occurrences": 205,
+     "seed": " in the European Union ("
+    },
+    {
+     "seed_id": 35,
+     "text_offset": 158533,
+     "length": 23,
+     "occurrences": 77,
+     "seed": " to participate in a ca"
+    },
+    {
+     "seed_id": 36,
+     "text_offset": 162584,
+     "length": 12,
+     "occurrences": 50,
+     "seed": "d shaved the"
+    },
+    {
+     "seed_id": 37,
+     "text_offset": 165096,
+     "length": 13,
+     "occurrences": 86,
+     "seed": " were more pl"
+    },
+    {
+     "seed_id": 38,
+     "text_offset": 167475,
+     "length": 12,
+     "occurrences": 140,
+     "seed": " neither cat"
+    },
+    {
+     "seed_id": 39,
+     "text_offset": 171660,
+     "length": 14,
+     "occurrences": 183,
+     "seed": " to have nine "
+    }
+   ],
+   "positions": 1280,
+   "distinct_documents": 1229,
+   "distinct_titles": 1229,
+   "titles_top20": [
+    {
+     "hits": 21,
+     "title": "Cat"
+    },
+    {
+     "hits": 5,
+     "title": "Glossary of climbing terms"
+    },
+    {
+     "hits": 4,
+     "title": "Tooth pathology"
+    },
+    {
+     "hits": 3,
+     "title": "Cat behavior"
+    },
+    {
+     "hits": 3,
+     "title": "Wikipedia:Categories for discussion/Log/2024 January 24"
+    },
+    {
+     "hits": 3,
+     "title": "Wikipedia:Dispute resolution noticeboard/Archive 65"
+    },
+    {
+     "hits": 3,
+     "title": "Moorov v HM Advocate"
+    },
+    {
+     "hits": 3,
+     "title": "Primo Villanueva"
+    },
+    {
+     "hits": 3,
+     "title": "List of protected areas of Peru"
+    },
+    {
+     "hits": 2,
+     "title": "East Patagonia, Tierra del Fuego and Strait of Magellan dispute"
+    },
+    {
+     "hits": 2,
+     "title": "Golden Horde"
+    },
+    {
+     "hits": 2,
+     "title": "Jack Antonoff"
+    },
+    {
+     "hits": 2,
+     "title": "Eugen Haile"
+    },
+    {
+     "hits": 2,
+     "title": "Kangaroo"
+    },
+    {
+     "hits": 2,
+     "title": "Cats in ancient Egypt"
+    },
+    {
+     "hits": 2,
+     "title": "John Catsimatidis"
+    },
+    {
+     "hits": 2,
+     "title": "Francolin"
+    },
+    {
+     "hits": 2,
+     "title": "Cleveland CycleWerks"
+    },
+    {
+     "hits": 2,
+     "title": "Blackamoores"
+    },
+    {
+     "hits": 2,
+     "title": "Wikipedia:WikiProject Medicine/Lists of pages/Low-importance medicine articles"
+    }
+   ]
+  }
+ }
+}

@@ -59,6 +59,26 @@
 // occurring prefix the multiplicity is above the target/cap: the window cannot
 // be pinned at this length).
 //
+// WHERE THE WINDOWS ARE, and why. The scan is CONTINUOUS by default: one window
+// per byte of the text, `windows == text bytes`, `coverage_pct == 100`. An
+// earlier revision walked a fixed stride from offset 0 and stopped the moment it
+// had `--max-seeds` accepted seeds, so on a 177 KB article it examined 62 windows
+// of 32 bytes - 1.1% of the document, all of it the lead section, where Wikipedia
+// keeps its infobox/redirect/date templates. Seeds such as `{{About|the speci`
+// were the honest output of that scan. A front-to-back walk that stops at K can
+// only ever answer with the head of the document, so:
+//
+//   * the scan covers the WHOLE text (every position; `--stride S` is an opt-in
+//     sampler for the old behaviour and is journaled as such),
+//   * `--max-seeds K` is an OUTPUT cap, applied after the scan by walking the
+//     accepted seeds at even index spacing, so the emitted set still covers the
+//     document instead of being the first K found,
+//   * identical content is deduplicated and an accepted seed contained in an
+//     earlier one is dropped (continuous starts make both routine),
+//   * `--skip-markup` (OFF by default) refuses windows overlapping Wikipedia
+//     scaffolding, which recurs a few hundred times by construction and would
+//     otherwise win the multiplicity target on its own.
+//
 // Nothing here is materialized to disc: the text is read through a windowed
 // mmap (or one bounded buffer for stdin) and never written anywhere; there is no
 // per-suffix position column, and the seed's sample positions come from the
@@ -101,6 +121,9 @@ struct SeedStats {
     too_rare: u64,
     too_common: u64,
     windows_with_seed: u64,
+    /// Windows refused because they OVERLAP a markup range (`--skip-markup`).
+    windows_skipped_markup: u64,
+    /// Seeds actually emitted (after the `--max-seeds` output selection).
     accepted: u64,
     suppressed_dedup: u64,
     suppressed_contained: u64,
@@ -335,19 +358,21 @@ fn check_monotone(probes: &[(usize, u64)], target: u64) {
 
 /// Containment suppression and content dedup, in one place. Seeds arrive in
 /// increasing text offset, so a new seed can only be contained in an EARLIER one
-/// (an earlier start cannot be contained in a later interval).
+/// (an earlier start cannot be contained in a later interval), and the test
+/// collapses to `end <= max_end` where `max_end` is the running maximum of the
+/// accepted intervals' far ends. That keeps a CONTINUOUS scan (one window per
+/// byte) linear: without it, every window would walk every earlier seed, and a
+/// contiguous run of identical text would emit the same seed at every offset.
 fn seed_suppressed(
-    emitted: &[(u64, u64)],
+    max_end: u64,
     seen: &std::collections::HashSet<Vec<u8>>,
     text: &[u8],
     offset: u64,
     len: u64,
 ) -> Option<&'static str> {
     let end = offset + len;
-    for &(a, b) in emitted {
-        if a <= offset && end <= b {
-            return Some("contained");
-        }
+    if end <= max_end {
+        return Some("contained");
     }
     if seen.contains(&text[offset as usize..end as usize]) {
         return Some("dedup");
@@ -369,6 +394,193 @@ fn seed_write_escaped(w: &mut dyn Write, bytes: &[u8]) -> std::io::Result<()> {
         }?;
     }
     Ok(())
+}
+
+/// `hay[from..]` searched for `needle`, byte-exact. Linear, and only ever called
+/// on the (comparatively rare) construct boundaries, never per window.
+fn find_seq(hay: &[u8], needle: &[u8], from: usize) -> Option<usize> {
+    if needle.is_empty() || hay.len() < needle.len() {
+        return None;
+    }
+    let last = hay.len() - needle.len();
+    let mut i = from;
+    while i <= last {
+        if &hay[i..i + needle.len()] == needle {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
+
+/// `find_seq` with ASCII case folding, for closing tags (`</REF>` exists).
+fn find_seq_ci(hay: &[u8], needle_lower: &[u8], from: usize) -> Option<usize> {
+    if needle_lower.is_empty() || hay.len() < needle_lower.len() {
+        return None;
+    }
+    let last = hay.len() - needle_lower.len();
+    let mut i = from;
+    while i <= last {
+        if hay[i..i + needle_lower.len()]
+            .iter()
+            .zip(needle_lower)
+            .all(|(a, b)| a.to_ascii_lowercase() == *b)
+        {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
+
+fn starts_seq(hay: &[u8], i: usize, s: &[u8]) -> bool {
+    hay.len() >= i + s.len() && &hay[i..i + s.len()] == s
+}
+
+fn starts_seq_ci(hay: &[u8], i: usize, s_lower: &[u8]) -> bool {
+    hay.len() >= i + s_lower.len()
+        && hay[i..i + s_lower.len()]
+            .iter()
+            .zip(s_lower)
+            .all(|(a, b)| a.to_ascii_lowercase() == *b)
+}
+
+/// A tag name must end at a delimiter, so `<reference>` is not `<ref>`.
+fn tag_delim(c: Option<&u8>) -> bool {
+    match c {
+        None => true,
+        Some(b) => matches!(b, b' ' | b'\t' | b'\n' | b'\r' | b'>' | b'/'),
+    }
+}
+
+/// Opt-in markup ranges (`--skip-markup`).
+///
+/// Wikipedia scaffolding lives in a handful of constructs: `{{template}}`
+/// (nested braces, including `{{{param|default}}}`), `<!-- comment -->`,
+/// `<ref>...</ref>`, `<gallery>...</gallery>`, `<math>...</math>` and wikitables
+/// `{| ... |}` (nested). They recur a few hundred times BY CONSTRUCTION, so a
+/// scan that reads them spends its multiplicity budget on scaffolding rather
+/// than prose. This scanner marks those byte ranges in one left-to-right pass; a
+/// window that OVERLAPS a range is not started.
+///
+/// Deliberately simple, and the simplifications are stated rather than hidden:
+/// ranges are contiguous, so nesting INSIDE a skipped range is swallowed by
+/// jumping to the end of the construct; and an UNTERMINATED opener (a truncated
+/// article) marks markup to the end of the text - which is what the text says.
+fn markup_ranges(text: &[u8]) -> Vec<(usize, usize)> {
+    let n = text.len();
+    let mut out: Vec<(usize, usize)> = Vec::new();
+    // Balanced two-byte opener/closer pairs (braces, tables).
+    const PAIRS: [(&[u8], &[u8]); 2] = [(b"{{", b"}}"), (b"{|", b"|}")];
+    // Tag constructs: `<name ...>` .. `</name>`, or a self-closing `<name ... />`.
+    const TAGS: [(&[u8], &[u8]); 3] =
+        [(b"<ref", b"</ref>"), (b"<gallery", b"</gallery>"), (b"<math", b"</math>")];
+    let mut i = 0usize;
+    while i < n {
+        let mut jumped = false;
+        for (open, close) in PAIRS {
+            if !starts_seq(text, i, open) {
+                continue;
+            }
+            let mut depth = 0usize;
+            let mut j = i;
+            let mut end = loop {
+                if j + 1 >= n {
+                    break n;
+                }
+                if text[j] == open[0] && text[j + 1] == open[1] {
+                    depth += 1;
+                    j += 2;
+                    continue;
+                }
+                if text[j] == close[0] && text[j + 1] == close[1] {
+                    depth -= 1;
+                    j += 2;
+                    if depth == 0 {
+                        break j;
+                    }
+                    continue;
+                }
+                j += 1;
+            };
+            // `{{{param|default}}}` pairs as `{` + `{{...}}` + `}`: the pair count
+            // closes after two of the three closing braces, so swallow the rest of
+            // the brace run rather than leaving a stray `}` outside the range.
+            if open == b"{{" {
+                while end < n && text[end] == b'}' {
+                    end += 1;
+                }
+            }
+            out.push((i, end));
+            i = end;
+            jumped = true;
+            break;
+        }
+        if jumped {
+            continue;
+        }
+        if starts_seq(text, i, b"<!--") {
+            let end = find_seq(text, b"-->", i + 4).map(|e| e + 3).unwrap_or(n);
+            out.push((i, end));
+            i = end;
+            continue;
+        }
+        for (open, close) in TAGS {
+            if !starts_seq_ci(text, i, open) || !tag_delim(text.get(i + open.len())) {
+                continue;
+            }
+            let Some(gt) = find_seq(text, b">", i + open.len()) else {
+                // An opener with no `>` at all: the tag runs off the text.
+                out.push((i, n));
+                i = n;
+                jumped = true;
+                break;
+            };
+            let self_closing = gt > 0 && text[gt - 1] == b'/';
+            let end = if self_closing {
+                gt + 1
+            } else {
+                match find_seq_ci(text, close, gt + 1) {
+                    Some(c) => find_seq(text, b">", c).map(|g| g + 1).unwrap_or(n),
+                    None => n,
+                }
+            };
+            out.push((i, end));
+            i = end;
+            jumped = true;
+            break;
+        }
+        if jumped {
+            continue;
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Markup ranges plus the amortized cursor a monotone window walk needs: window
+/// starts only ever move forward, so the next overlapping range is found by
+/// advancing one index, not by searching.
+struct Markup {
+    ranges: Vec<(usize, usize)>,
+    bytes: u64,
+    cursor: usize,
+}
+
+impl Markup {
+    fn scan(text: &[u8], enabled: bool) -> Markup {
+        let ranges = if enabled { markup_ranges(text) } else { Vec::new() };
+        let bytes = ranges.iter().map(|(a, b)| (b - a) as u64).sum();
+        Markup { ranges, bytes, cursor: 0 }
+    }
+    /// Does `[start, end)` intersect a markup range? Ranges are sorted and
+    /// disjoint and `start` is non-decreasing across calls.
+    fn overlaps(&mut self, start: usize, end: usize) -> bool {
+        while self.cursor < self.ranges.len() && self.ranges[self.cursor].1 <= start {
+            self.cursor += 1;
+        }
+        self.cursor < self.ranges.len() && self.ranges[self.cursor].0 < end
+    }
 }
 
 /// Evenly spaced sample rows across [l,r): when the seed is more frequent than
@@ -393,6 +605,7 @@ pub fn seeds_command(raw: &[std::ffi::OsString]) {
     let mut docs: Option<String> = None;
     let mut json = false;
     let mut nearest = false;
+    let mut skip_markup = false;
     let mut max_len = 64usize;
     let mut min_len = 12usize;
     let mut max_seeds = 64usize;
@@ -406,6 +619,7 @@ pub fn seeds_command(raw: &[std::ffi::OsString]) {
         match args[i].as_str() {
             "--jsonl" => json = true,
             "--nearest" => nearest = true,
+            "--skip-markup" => skip_markup = true,
             "--max-len" | "--min-len" | "--max-seeds" | "--stride" | "--limit" | "--docs"
             | "--target-mult" | "--max-mult" | "--min-mult" => {
                 let flag = args[i].clone();
@@ -479,10 +693,16 @@ pub fn seeds_command(raw: &[std::ffi::OsString]) {
         }
         (t, None)
     };
-    let stride = stride.unwrap_or_else(|| (max_len / 2).max(1));
-    if stride == 0 {
-        die("seeds: --stride must be positive");
-    }
+    // ---- WINDOW PLACEMENT. The default is EVERY position: a continuous scan of
+    // the whole document, so no section can be starved by where the walk happens
+    // to stop. `--stride S` is the optional override that samples every S-th
+    // position instead (the pre-fix behaviour); it never changes the OUTPUT
+    // selection, and the scan is complete either way.
+    let step = match stride {
+        Some(0) => die("seeds: --stride must be positive"),
+        Some(s) => s,
+        None => 1,
+    };
 
     // ---- text: a windowed mmap for a path, one bounded buffer for stdin. Never
     // written anywhere; the text is read only at the window positions.
@@ -539,14 +759,15 @@ pub fn seeds_command(raw: &[std::ffi::OsString]) {
         let s = sigma[b] as usize;
         s != 0 && index.total[s] != 0
     });
+    let planned = text.len().div_ceil(step);
     eprintln!(
-        "SEEDS_READY n={n} present_bytes={} text_bytes={} mode={} target_mult={target} \
-         cap={} min_len={min_len} max_len={max_len} stride={stride} max_seeds={max_seeds} \
-         nearest={nearest}",
+        "SEEDS_READY n={n} present_bytes={} text_bytes={planned_windows} windows={planned} \
+         mode={} target_mult={target} cap={} min_len={min_len} max_len={max_len} stride={step} \
+         max_seeds={max_seeds} skip_markup={skip_markup} nearest={nearest}",
         present.iter().filter(|p| **p).count(),
-        text.len(),
         if band { "band" } else { "target" },
         cap.map(|c| c.to_string()).unwrap_or_else(|| "none".into()),
+        planned_windows = text.len(),
     );
     // Identity is NOT required: a seed text is normally a FRAGMENT of the
     // corpus. Equal length is only worth a note, because that is usually the
@@ -559,13 +780,63 @@ pub fn seeds_command(raw: &[std::ffi::OsString]) {
     let mut cache = vec![None; max_len.max(1) + 1];
     let mut stats = SeedStats::default();
     let mut seeds: Vec<Seed> = Vec::with_capacity(max_seeds.min(4096));
-    let mut emitted: Vec<(u64, u64)> = Vec::with_capacity(max_seeds.min(4096));
     let mut seen: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
     let mut nearest_below = 0u64;
+    // The far end of the longest accepted interval so far: with window starts
+    // non-decreasing, an earlier interval can only contain a later one if its far
+    // end reaches past the later one's, so one running maximum replaces a walk
+    // over every accepted seed (which a per-byte scan could not afford).
+    let mut max_end = 0u64;
+    let width = max_len.min(text.len());
+    let mut markup = Markup::scan(text, skip_markup);
+    eprintln!(
+        "SEEDS_MARKUP enabled={skip_markup} ranges={} bytes_skipped={} frac={:.6}",
+        markup.ranges.len(),
+        markup.bytes,
+        markup.bytes as f64 / text.len() as f64,
+    );
     let scan = Instant::now();
+    let mut first_window = usize::MAX;
+    let mut last_window = 0usize;
+    let mut covered = 0u64;
+    let mut cov_start = 0usize;
+    let mut cov_end = 0usize;
     let mut i = 0usize;
-    while i < text.len() && stats.accepted < max_seeds as u64 {
+    while i < text.len() {
         stats.windows += 1;
+        if stats.windows % 10_000 == 0 {
+            // A continuous scan of a whole article is minutes, not milliseconds:
+            // say where it is so a long run is visible rather than silent.
+            eprintln!(
+                "SEEDS_PROGRESS windows={} of={planned} offset={i} of_text_bytes={} \
+                 accepted_windows={} markup_skipped={} elapsed_ms={:.0}",
+                stats.windows,
+                text.len(),
+                stats.windows_with_seed,
+                stats.windows_skipped_markup,
+                scan.elapsed().as_secs_f64() * 1e3,
+            );
+        }
+        // `--skip-markup`: a window that OVERLAPS scaffolding is not started.
+        // The bytes are then never read, so nothing from inside a template,
+        // comment, ref, gallery, math block or wikitable can become a seed.
+        let end = (i + width).min(text.len());
+        if skip_markup && markup.overlaps(i, end) {
+            stats.windows_skipped_markup += 1;
+            i += step;
+            continue;
+        }
+        // Union of the bytes actually READ: window starts are non-decreasing, so
+        // one open run [cov_start, cov_end) is enough. This is what `coverage_pct`
+        // reports - the fraction of the document the scan really looked at, which
+        // is 100.0 only when every byte was inside some window.
+        if cov_end < i {
+            covered += (cov_end - cov_start) as u64;
+            cov_start = i;
+        }
+        cov_end = cov_end.max(end);
+        first_window = first_window.min(i);
+        last_window = i;
         // The longest-occurring-prefix bisection answers NoMatch on its own, so
         // no `present` pre-filter is needed here.
         let mut chosen_lo = false;
@@ -598,15 +869,12 @@ pub fn seeds_command(raw: &[std::ffi::OsString]) {
                     // solver bug in the output.
                     nearest_below += 1;
                 }
-                match seed_suppressed(&emitted, &seen, text, offset, len as u64) {
+                match seed_suppressed(max_end, &seen, text, offset, len as u64) {
                     Some("contained") => stats.suppressed_contained += 1,
                     Some(_) => stats.suppressed_dedup += 1,
                     None => {
                         stats.windows_with_seed += 1;
-                        stats.accepted += 1;
-                        stats.lens.push(len);
-                        stats.mults.push(mult);
-                        emitted.push((offset, offset + len as u64));
+                        max_end = max_end.max(offset + len as u64);
                         seen.insert(text[offset as usize..offset as usize + len as usize].to_vec());
                         seeds.push(Seed {
                             offset,
@@ -626,9 +894,26 @@ pub fn seeds_command(raw: &[std::ffi::OsString]) {
         for c in cache.iter_mut() {
             *c = None;
         }
-        i += stride;
+        i += step;
     }
     let scan_ms = scan.elapsed().as_secs_f64() * 1e3;
+
+    // ---- OUTPUT SELECTION. The scan above is complete whatever `--max-seeds`
+    // says; the cap is applied HERE, to the accepted set, and by walking it at
+    // even index spacing so the emitted seeds still cover the document instead of
+    // being the first K that happened to be found.
+    let accepted_windows = seeds.len();
+    let mut capped_dropped = 0u64;
+    if accepted_windows > max_seeds {
+        let take = max_seeds;
+        let step_idx = accepted_windows / take;
+        let picked: Vec<Seed> = (0..take).map(|j| seeds[j * step_idx]).collect();
+        capped_dropped = (accepted_windows - take) as u64;
+        seeds = picked;
+    }
+    stats.accepted = seeds.len() as u64;
+    stats.lens = seeds.iter().map(|s| s.len).collect();
+    stats.mults = seeds.iter().map(|s| s.mult).collect();
 
     // ---- output + evidence positions.
     let stdout = std::io::stdout();
@@ -716,9 +1001,32 @@ pub fn seeds_command(raw: &[std::ffi::OsString]) {
         stats.no_match + stats.too_short + stats.too_rare + stats.too_common
             + stats.windows_with_seed
             + stats.suppressed_dedup
-            + stats.suppressed_contained,
+            + stats.suppressed_contained
+            + stats.windows_skipped_markup,
         "SEEDS_WINDOW_ACCOUNTING windows do not add up"
     );
+    // Coverage is auditable, not asserted by prose: `coverage_pct` is the fraction
+    // of the document that some examined window actually READ (union, not
+    // density - a stride smaller than --max-len reads every byte), and the first
+    // and last window starts say where the scan ran.
+    covered += (cov_end - cov_start) as u64;
+    let coverage_pct = (100.0 * covered as f64 / text.len() as f64).min(100.0);
+    if first_window == usize::MAX {
+        first_window = 0;
+    }
+    // Density: windows * width / text. Above 100% means the windows OVERLAP
+    // (a continuous scan with --max-len 64 reads each byte 64 times).
+    let examined_pct = (100.0 * (stats.windows as f64) * (width as f64) / text.len() as f64)
+        .min(100.0);
+    let skipped_pct =
+        100.0 * stats.windows_skipped_markup as f64 / stats.windows.max(1) as f64;
+    if stats.windows_skipped_markup == stats.windows {
+        eprintln!(
+            "SEEDS_NOTE every one of {} windows overlapped markup: the text is scaffolding \
+             (or an unterminated construct runs to its end), so a zero-seed answer is expected",
+            stats.windows
+        );
+    }
     let mean_len = if stats.lens.is_empty() {
         0.0
     } else {
@@ -734,12 +1042,21 @@ pub fn seeds_command(raw: &[std::ffi::OsString]) {
         .collect::<Vec<_>>()
         .join(",");
     eprintln!(
-        "SEEDS_STATS windows={} tried={} accepted={} mean_len={mean_len:.2} \
-         mult_histogram={} shorten_steps={} extend_steps={} scan_ms={scan_ms:.3} \
-         locate_ms={locate_ms:.3} mode={} target_mult={target} cap={} min_len={min_len} \
-         max_len={max_len} stride={stride} no_match={} too_short={} too_rare={} too_common={} \
-         suppressed_dedup={} suppressed_contained={} nearest_below={nearest_below} positions={located} ranks={} lf_steps={}",
+        "SEEDS_STATS windows={} coverage_pct={coverage_pct:.4} examined_pct={examined_pct:.4} \
+         first_window={first_window} last_window={last_window} text_bytes={} \
+         accepted_windows={accepted_windows} capped_dropped={capped_dropped} \
+         windows_skipped_markup={} markup_skipped_pct={skipped_pct:.4} \
+         markup_bytes_skipped={} markup_frac={:.6} tried={} accepted={} \
+         mean_len={mean_len:.2} mult_histogram={} shorten_steps={} extend_steps={} \
+         scan_ms={scan_ms:.3} locate_ms={locate_ms:.3} mode={} target_mult={target} cap={} \
+         min_len={min_len} max_len={max_len} stride={step} no_match={} too_short={} \
+         too_rare={} too_common={} suppressed_dedup={} suppressed_contained={} \
+         nearest_below={nearest_below} positions={located} ranks={} lf_steps={}",
         stats.windows,
+        text.len(),
+        stats.windows_skipped_markup,
+        markup.bytes,
+        markup.bytes as f64 / text.len().max(1) as f64,
         stats.no_match + stats.too_short + stats.too_rare + stats.too_common
             + stats.windows_with_seed,
         stats.accepted,
@@ -761,12 +1078,17 @@ pub fn seeds_command(raw: &[std::ffi::OsString]) {
 
 const SEEDS_USAGE: &str = "usage:\n  \
     xsa seeds <container> <text-file|-> [--target-mult T] [--max-len L] [--min-len m] \
-    [--max-seeds K] [--stride S] [--docs DIR] [--limit N] [--jsonl] [--nearest]\n  \
+    [--max-seeds K] [--stride S] [--skip-markup] [--docs DIR] [--limit N] [--jsonl] \
+    [--nearest]\n  \
     xsa seeds <container> <text-file|-> --max-mult M [--min-mult m] ...   (band mode)\n  \
-  Emits exact substrings of the text that are SPECIFIC and RECURRING: for each window \
-  start the seed LENGTH is solved so the multiplicity lands on --target-mult (default 50).\n  \
-  --max-len default 64, --min-len default 12, --stride default max-len/2, --max-seeds \
-  default 64, --limit default 8 sample positions.";
+  Emits exact substrings of the text that are SPECIFIC and RECURRING: at every window \
+  position the seed LENGTH is solved so the multiplicity lands on --target-mult (default 50).\n  \
+  The default is a CONTINUOUS scan of the whole text (one window per byte, \
+  windows=<text bytes>); --stride S samples every S-th position instead. --max-seeds K \
+  (default 64) selects K of the accepted seeds after the scan, evenly spaced across the \
+  document. --max-len default 64, --min-len default 12, --limit default 8 sample \
+  positions. --skip-markup drops windows overlapping {{template}}, <!--comment-->, \
+  <ref>, <gallery>, <math> or {| ... |} scaffolding (OFF by default).";
 
 #[cfg(test)]
 mod seeds_tests {
@@ -789,5 +1111,90 @@ mod seeds_tests {
         check_monotone(&[(10, 5), (20, 2), (30, 1)], 2);
         let r = std::panic::catch_unwind(|| check_monotone(&[(10, 1), (20, 4)], 2));
         assert!(r.is_err(), "an increasing multiplicity must abort");
+    }
+
+    /// Build a text from (bytes, is_markup) pieces and compare the scanner's
+    /// ranges against the table. No scanner code is reused: the expectation is
+    /// the table itself, including the two cases a naive scanner gets wrong -
+    /// nested `{{ }}` and `}}` / `{{` / `|}` INSIDE a comment.
+    fn markup_table(parts: &[(&[u8], bool)]) -> (Vec<u8>, Vec<(usize, usize)>) {
+        let (mut text, mut want, mut off) = (Vec::new(), Vec::new(), 0usize);
+        for (bytes, is_markup) in parts {
+            if *is_markup {
+                want.push((off, off + bytes.len()));
+            }
+            text.extend_from_slice(bytes);
+            off += bytes.len();
+        }
+        (text, want)
+    }
+
+    #[test]
+    fn markup_scanner_marks_each_construct_and_nests_correctly() {
+        let (text, want) = markup_table(&[
+            (b"prose ", false),
+            (b"{{Infobox|nested={{flag|US}}|x=y}}", true),
+            (b" and ", false),
+            (b"<!-- a }} {{ |} comment -->", true),
+            (b" then ", false),
+            (b"{| class=wikitable\n|-\n| a || b\n|}", true),
+            (b" then ", false),
+            (b"<ref name=x>citation</ref>", true),
+            (b" then ", false),
+            (b"<ref name=y />", true),
+            (b" then ", false),
+            (b"<gallery>\nFile:A.jpg\n</gallery>", true),
+            (b" then ", false),
+            (b"<math>x^2</math>", true),
+            (b" then ", false),
+            (b"{{{param|default}}}", true),
+            (b" end", false),
+        ]);
+        assert_eq!(markup_ranges(&text), want);
+    }
+
+    #[test]
+    fn markup_scanner_ignores_near_misses() {
+        // `<reference>` is not `<ref>`, text braces are not templates, and a
+        // construct that is not opened is not skipped.
+        for text in [
+            &b"a <reference>x</reference> b"[..],
+            &b"a }} b { c |" [..],
+            &b"a > b | } c"[..],
+            &b"plain prose only"[..],
+        ] {
+            assert!(markup_ranges(text).is_empty(), "{:?}", String::from_utf8_lossy(text));
+        }
+        // An UNTERMINATED opener marks markup to the end of the text: that is
+        // what a truncated article says.
+        let text = b"prose {{unclosed and it runs off the end";
+        assert_eq!(markup_ranges(text), vec![(6, text.len())]);
+        // A tag with no `>` at all runs off the text too.
+        let text = b"prose <ref name=q and no close";
+        assert_eq!(markup_ranges(text), vec![(6, text.len())]);
+    }
+
+    #[test]
+    fn markup_cursor_only_advances_and_answers_overlap() {
+        let (text, _) = markup_table(&[
+            (b"prose ", false),
+            (b"{{a}}", true),
+            (b" prose prose prose ", false),
+            (b"{{b}}", true),
+            (b" prose", false),
+        ]);
+        let mut m = Markup::scan(&text, true);
+        assert_eq!(m.ranges, vec![(6, 11), (30, 35)]);
+        assert_eq!(m.bytes, 10);
+        // window starts are non-decreasing, as in the scan loop
+        assert!(!m.overlaps(0, 6)); // ends exactly where the first block starts
+        assert!(m.overlaps(5, 7)); // overlaps the first block
+        assert!(!m.overlaps(11, 20)); // starts exactly at the block's end
+        assert!(m.overlaps(30, 40)); // the second block
+        assert!(!m.overlaps(35, 40));
+        // disabled: nothing is marked, so nothing is ever skipped
+        let mut off = Markup::scan(&text, false);
+        assert_eq!((off.bytes, off.ranges.len()), (0, 0));
+        assert!(!off.overlaps(5, 7));
     }
 }

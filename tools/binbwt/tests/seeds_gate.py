@@ -183,8 +183,125 @@ def main():
     check(int(st1["accepted"]) == len(s1), f"S1 accepted {st1['accepted']} != {len(s1)} emitted")
     tot = sum(int(st1[k]) for k in ("no_match", "too_short", "too_rare", "too_common"))
     check(int(st1["windows"]) == tot + len(s1) + int(st1["suppressed_dedup"])
-          + int(st1["suppressed_contained"]),
+          + int(st1["suppressed_contained"]) + int(st1["windows_skipped_markup"]),
           f"S1 window counters do not add up: {st1}")
+    check(int(st1["accepted_windows"]) >= len(s1),
+          f"S1 accepted_windows {st1['accepted_windows']} < emitted {len(s1)}")
+
+    # -------------------------------------------------------- placement (S2p)
+    # The scan must cover the WHOLE text whatever --max-seeds says: the cap is an
+    # output selection, not a reason to stop walking. A lead-only scan is the
+    # defect this gate exists for.
+    print("S2p placement: continuous scan of the whole text, K applied at the output")
+    with open(mixed, "rb") as f:
+        ntext = f.read()
+    rp = sh([args.xsa, "seeds", args.container, mixed, "--target-mult", str(T), "--max-len", "64",
+             "--min-len", "12", "--max-seeds", "3", "--jsonl", "--limit", "0"])
+    check(rp.returncode == 0, f"placement run failed: {rp.stderr.decode()[:300]}")
+    stp = stats_of(rp.stderr.decode())
+    print(f"  windows={stp['windows']} coverage_pct={stp['coverage_pct']} "
+          f"examined_pct={stp['examined_pct']} first_window={stp['first_window']} "
+          f"last_window={stp['last_window']} text_bytes={stp['text_bytes']} "
+          f"accepted_windows={stp['accepted_windows']} capped_dropped={stp['capped_dropped']} "
+          f"stride={stp['stride']}")
+    check(int(stp["windows"]) == len(ntext),
+          f"S2p windows {stp['windows']} != text bytes {len(ntext)}")
+    check(abs(float(stp["coverage_pct"]) - 100.0) < 1e-9,
+          f"S2p coverage_pct {stp['coverage_pct']} is not 100")
+    check(int(stp["first_window"]) == 0, f"S2p first_window {stp['first_window']} is not 0")
+    check(int(stp["last_window"]) == len(ntext) - 1,
+          f"S2p last_window {stp['last_window']} is not the last byte {len(ntext) - 1}")
+    rows = [json.loads(l) for l in rp.stdout.splitlines() if l.strip()]
+    check(len(rows) <= 3, f"S2p emitted {len(rows)} rows for --max-seeds 3")
+    check(int(stp["accepted_windows"]) >= len(rows),
+          f"S2p accepted_windows {stp['accepted_windows']} < emitted {len(rows)}")
+    if len(rows) > 1:
+        # the emitted set must be spread over the document, not the first K found
+        span = max(r["text_offset"] for r in rows) - min(r["text_offset"] for r in rows)
+        check(span > len(ntext) // 3,
+              f"S2p the {len(rows)} emitted seeds span only {span} of {len(ntext)} bytes")
+    # --stride is the opt-in sampler: it must still be journaled, and it must not
+    # pretend to full coverage.
+    rs = sh([args.xsa, "seeds", args.container, mixed, "--target-mult", str(T),
+             "--max-len", "64", "--min-len", "12", "--max-seeds", "5", "--stride", "32",
+             "--jsonl", "--limit", "0"])
+    check(rs.returncode == 0, f"stride run failed: {rs.stderr.decode()[:300]}")
+    sts = stats_of(rs.stderr.decode())
+    check(int(sts["stride"]) == 32, f"S2p --stride 32 journaled as {sts['stride']}")
+    check(int(sts["windows"]) == -(-len(ntext) // 32),
+          f"S2p stride windows {sts['windows']} != {(-(-len(ntext) // 32))}")
+
+    # ------------------------------------------------------------- S2m markup
+    print("S2m --skip-markup: windows overlapping scaffolding are refused by name")
+    UNCLOSED = b"{{unclosed template that runs off the end "
+    # (bytes, is_markup): prose from the corpus slice, scaffolding from hand -
+    # including the two cases a naive scanner gets wrong, NESTED {{ }} and }} / {{
+    # / |} INSIDE a comment.
+    parts = [
+        (slice_[:200], False),
+        (b"{{Infobox|name=Cat|nested={{flag|US}}|image=Coat.jpg}}", True),
+        (slice_[200:400], False),
+        (b"<!-- a comment with }} and {{ and |} inside -->", True),
+        (slice_[400:600], False),
+        (b"{| class=\"wikitable\"\n|-\n| a || b\n|}", True),
+        (slice_[600:800], False),
+        (b"<ref name=\"x\">citation text</ref>", True),
+        (slice_[800:900], False),
+        (b"<ref name=\"y\" />", True),
+        (slice_[900:1000], False),
+        (b"<gallery>\nFile:A.jpg\n</gallery>", True),
+        (slice_[1000:1100], False),
+        (b"<math>x^2 + y^2</math>", True),
+        (slice_[1100:1200], False),
+    ]
+    mtext, blocks, moff = b"", [], 0
+    for part, is_markup in parts:
+        if is_markup:
+            blocks.append((moff, moff + len(part)))
+        mtext += part
+        moff += len(part)
+    mfile = os.path.join(out, "text_markup.bin")
+    with open(mfile, "wb") as f:
+        f.write(mtext)
+    expected = sum(b - a for a, b in blocks)
+    rm = sh([args.xsa, "seeds", args.container, mfile, "--target-mult", str(T), "--max-len", "64",
+             "--min-len", "12", "--max-seeds", "10", "--skip-markup", "--jsonl", "--limit", "2"])
+    check(rm.returncode == 0, f"--skip-markup run failed: {rm.stderr.decode()[:300]}")
+    stm = stats_of(rm.stderr.decode())
+    print(f"  windows={stm['windows']} markup_skipped={stm['windows_skipped_markup']} "
+          f"markup_bytes_skipped={stm['markup_bytes_skipped']} expected_bytes={expected} "
+          f"markup_frac={stm['markup_frac']} seeds={len(rm.stdout.splitlines())}")
+    check(int(stm["markup_bytes_skipped"]) == expected,
+          f"S2m markup bytes {stm['markup_bytes_skipped']} != the {expected} bytes in the fixture")
+    check(int(stm["windows_skipped_markup"]) > 0, "S2m no window was skipped as markup")
+    check(int(stm["windows"]) == len(mtext), f"S2m windows {stm['windows']} != {len(mtext)}")
+    ms = [json.loads(l) for l in rm.stdout.splitlines() if l.strip()]
+    for s in ms:
+        a, b = s["text_offset"], s["text_offset"] + s["length"]
+        for c, d in blocks:
+            check(not (a < d and c < b),
+                  f"S2m seed at {a}..{b} overlaps markup [{c},{d})")
+    check(len(ms) > 0, "S2m --skip-markup emitted no seed from the prose")
+    # ... and it is OFF by default, which is what the flag has to prove
+    rn = sh([args.xsa, "seeds", args.container, mfile, "--target-mult", str(T), "--max-len", "64",
+             "--min-len", "12", "--max-seeds", "10", "--jsonl", "--limit", "2"])
+    stn = stats_of(rn.stderr.decode())
+    check(int(stn["markup_bytes_skipped"]) == 0 and int(stn["windows_skipped_markup"]) == 0,
+          f"S2m markup skipping is on by default: {stn['markup_bytes_skipped']} bytes, "
+          f"{stn['windows_skipped_markup']} windows")
+    check(int(stn["windows"]) == len(mtext), f"S2m default windows {stn['windows']} != {len(mtext)}")
+    # an UNTERMINATED construct marks markup to the end of the text (a truncated
+    # article is still scaffolding from that point on)
+    tail = os.path.join(out, "text_unterminated.bin")
+    with open(tail, "wb") as f:
+        f.write(slice_[:300] + UNCLOSED + slice_[300:600])
+    rt = sh([args.xsa, "seeds", args.container, tail, "--target-mult", str(T), "--max-len", "64",
+             "--min-len", "12", "--max-seeds", "5", "--skip-markup", "--jsonl", "--limit", "0"])
+    stt = stats_of(rt.stderr.decode())
+    print(f"  unterminated: windows={stt['windows']} skipped={stt['windows_skipped_markup']} "
+          f"markup_bytes_skipped={stt['markup_bytes_skipped']} of {len(UNCLOSED) + 300}")
+    check(int(stt["markup_bytes_skipped"]) == len(UNCLOSED) + 300,
+          f"S2m an unterminated {{ }} must run to the end: {stt['markup_bytes_skipped']} skipped")
 
     # band mode: the cap is respected and the band is the solve target
     jb = os.path.join(out, "s1_band.jsonl")

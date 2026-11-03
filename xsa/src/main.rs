@@ -1381,7 +1381,7 @@ fn usage() -> ! {
     eprintln!("           maximal exact matches of <query>: interval widths + bounded positions;");
     eprintln!("           default is the single longest MEM, --all-mems reports every one;");
     eprintln!("           xsa mem <container> --serve -j N is the framed (u32 len + bytes) mode;");
-    eprintln!("  xsa seeds <container> <text-file|-> [--target-mult T] [--max-len 64] [--min-len 12] [--max-seeds K]");
+    eprintln!("  xsa seeds <container> <text-file|-> [--target-mult T] [--max-len 64] [--min-len 12] [--max-seeds K] [--stride S] [--skip-markup] [--docs DIR] [--limit N]");
     eprintln!("           [--stride S] [--docs DIR] [--limit N] [--jsonl] [--nearest]   adaptive exact-match seeding:");
     eprintln!("           per window the seed LENGTH is solved so multiplicity lands on the target fan-out;");
     eprintln!("           --max-mult M [--min-mult m] is the alternative multiplicity-band mode");

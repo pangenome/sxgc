@@ -283,7 +283,8 @@ in [the evidence directory](tools/binbwt/evidence/mem/results.json).
 
 ```
 xsa seeds corpus.sxi2 article.txt --target-mult 50 [--max-len 64] [--min-len 12]
-         [--max-seeds 64] [--stride 32] [--docs DIR] [--limit 8] [--jsonl] [--nearest]
+         [--max-seeds 64] [--docs DIR] [--limit 8] [--jsonl] [--nearest]
+         [--stride S] [--skip-markup]
 xsa seeds corpus.sxi2 article.txt --max-mult 200 --min-mult 2      (band mode)
 xsa seeds corpus.sxi2 - --target-mult 500                          (text on stdin)
 ```
@@ -320,9 +321,65 @@ window, each descent one rank step per byte. Linear shortening would be
 assumes (`SEEDS_MULT_NOT_MONOTONE`) - a contradiction is a reader bug, not a
 text property, and aborts.
 
-## Per window
+## Where the windows are: the whole document
 
-`--stride S` (default `max(1, max_len/2)`) is the window step.
+The default is a **continuous scan**: one window per byte, from offset 0 to
+`len-1`, so `windows == text_bytes` and `coverage_pct == 100.0000`. It is not a
+sample of the document and it does not stop early.
+
+This is not a detail. An earlier revision walked a fixed stride (default
+`max_len/2 = 32`) from offset 0 and stopped the moment it held `--max-seeds`
+accepted seeds, so on the 177 KB Cat article it examined 62 windows - 1,984 bytes,
+**1.1% of the document**, all of it the lead section. Wikipedia keeps its
+infobox, redirect, date-style and maintenance templates in that lead, so the
+seeds that scan returned were scaffolding: `{{About|the speci`,
+`pp-semi-indef|small=yes}}`, `American English|date=October 2024`. A
+front-to-back walk that stops at K can only ever answer with the head of the
+document, so the placement and the cap were separated:
+
+* **the scan is complete whatever `K` says.** `windows` is every window start in
+  the text; the whole document is read before any selection happens.
+* **`--max-seeds K` is an OUTPUT cap.** After the scan, the accepted seeds are
+  walked at even index spacing and `K` are emitted, so the emitted set still
+  covers the document instead of being the first `K` that happened to be found.
+  `accepted_windows` says how many seeds the scan accepted, `capped_dropped` how
+  many the cap dropped.
+* **`--stride S`** is the opt-in sampler for the old behaviour: every `S`-th
+  position, journaled as `stride=S`. It changes placement only - the scan still
+  completes and `K` still applies at the output.
+* **`--skip-markup`** (OFF by default) refuses windows that OVERLAP Wikipedia
+  scaffolding. See below.
+
+Coverage is reported, not asserted by prose:
+
+| field | meaning |
+| --- | --- |
+| `windows` | window starts examined (`== text_bytes` for the continuous scan) |
+| `coverage_pct` | 100 x (union of the byte ranges the windows READ) / `text_bytes`; 100.0000 only when every byte was inside some window |
+| `examined_pct` | 100 x `windows * min(max_len, text)` / `text_bytes`, capped at 100. Above 100 before the cap means the windows OVERLAP (a continuous scan with `--max-len 64` reads every byte 64 times); with `--stride 32` it drops to a few percent, which is exactly the defect above |
+| `first_window`, `last_window` | the first and last window start actually examined |
+| `text_bytes` | the size of the text |
+
+## `--skip-markup`: scaffolding is not prose
+
+`--skip-markup` marks the byte ranges of the Wikimedia constructs that recur a
+few hundred times **by construction** - `{{template}}` (nested, including
+`{{{param|default}}}`), `<!-- comment -->`, `<ref>...</ref>` (and self-closing
+`<ref ... />`), `<gallery>...</gallery>`, `<math>...</math>` and wikitables
+`{| ... |}` (nested) - in one left-to-right pass, and does not START a window
+that overlaps them. Scaffolding recurs by design, so left in the text it wins the
+multiplicity target on its own; prose does not.
+
+The scanner is deliberately simple and its simplifications are stated rather than
+hidden: ranges are contiguous, so nesting inside a skipped range is swallowed by
+jumping to the end of the construct, and an UNTERMINATED opener (a truncated
+article) marks markup to the end of the text - which is what the text says. It is
+OFF by default: the default reads every position, and `SEEDS_MARKUP
+enabled=false ranges=0 bytes_skipped=0` says so. The journal reports
+`windows_skipped_markup`, `markup_skipped_pct`, `markup_bytes_skipped` and
+`markup_frac` either way.
+
+## Per window
 
 1. **Longest occurring prefix.** Bisect `m` in `[0, min(max_len, remaining))` for
    the largest prefix that occurs (occurrence is downward closed). Length 0 is
@@ -346,10 +403,15 @@ Which mode ran is journaled.
 
 ## Output
 
-Seeds are emitted in text order and stop at `--max-seeds K` (default 64). An
-already-emitted seed suppresses a later one that is wholly **contained** in it,
-and identical seed content is deduplicated (`suppressed_contained`,
-`suppressed_dedup`).
+Seeds are emitted in text order, selected from the accepted set at even index
+spacing up to `--max-seeds K` (default 64). An already-accepted seed suppresses a
+later one that is wholly **contained** in it, and identical seed content is
+deduplicated (`suppressed_contained`, `suppressed_dedup`) - a continuous scan
+produces the same seed at neighbouring offsets, so both are routine rather than
+exotic. Containment is tested against the running maximum far end of the accepted
+intervals, not against every accepted seed: with non-decreasing window starts an
+earlier interval contains a later one exactly when its far end reaches past it,
+which keeps a per-byte scan linear.
 
 TSV columns:
 
@@ -373,15 +435,21 @@ them the raw corpus offsets are emitted and `SEEDS_NOTE docs=none` says so.
 `SEEDS_STATS` journals, exactly:
 
 ```
-SEEDS_STATS windows= tried= accepted= mean_len= mult_histogram= shorten_steps= extend_steps=
-            scan_ms= locate_ms= mode= target_mult= cap= min_len= max_len= stride=
-            no_match= too_short= too_rare= too_common= suppressed_dedup=
-            suppressed_contained= nearest_below= positions= ranks= lf_steps=
+SEEDS_STATS windows= coverage_pct= examined_pct= first_window= last_window= text_bytes=
+            accepted_windows= capped_dropped= windows_skipped_markup= markup_skipped_pct=
+            markup_bytes_skipped= markup_frac= tried= accepted= mean_len= mult_histogram=
+            shorten_steps= extend_steps= scan_ms= locate_ms= mode= target_mult= cap=
+            min_len= max_len= stride= no_match= too_short= too_rare= too_common=
+            suppressed_dedup= suppressed_contained= nearest_below= positions= ranks= lf_steps=
 ```
 
 `windows` is every window start examined and
-`windows == no_match+too_short+too_rare+too_common+windows_with_seed+suppressed_*`
-is asserted before the line is printed; `tried` counts windows that reached the
+`windows == no_match+too_short+too_rare+too_common+windows_with_seed+suppressed_*+windows_skipped_markup`
+is asserted before the line is printed; `accepted` is the number of ROWS emitted
+(after the `--max-seeds` selection) and `accepted_windows` the number of windows
+that produced one; a scan long enough to matter journals `SEEDS_PROGRESS
+windows= of= offset= accepted_windows= markup_skipped= elapsed_ms=` every 10,000
+windows, so a minutes-long run is visible rather than silent; `tried` counts windows that reached the
 multiplicity solve; `mult_histogram` is `mult:count` over accepted seeds;
 `shorten_steps` and `extend_steps` count interval descents (the shortening and
 the extension bisections). `--limit 0` locates nothing.
@@ -390,7 +458,8 @@ the extension bisections). `--limit 0` locates nothing.
 
 `--max-len < --min-len` is refused by name (no length would be admissible),
 `--min-len 0` (a zero-length seed occurs everywhere), `--max-seeds 0`,
-`--target-mult 0`, `--target-mult` together with a band, and a half band. Empty
+`--stride 0`, `--target-mult 0`, `--target-mult` together with a band, and a half
+band. Empty
 text (a file or stdin) is refused rather than answering zero seeds. A text with
 no matches answers zero seeds cleanly (`no_match` counted, exit 0). `0x1E` is an
 ordinary byte, exactly as in every other query path.
@@ -411,6 +480,8 @@ corpus slice as the seed text and checks, against that oracle:
 | --- | --- |
 | S1 | every emitted seed's true multiplicity equals `occurrences` and reaches the target; the one-byte-longer seed equals `gave_up_mult` and is BELOW the target; multiplicity is non-increasing over a full 12..32 length ladder at each emitted offset; the reported length is the longest length still reaching the target; no seed is contained in another and no content repeats; the window counters add up; band mode keeps `min_mult <= occurrences <= max_mult`; a window far above the target is counted `too_common` and emits nothing |
 | S3 | `--max-len` below `--min-len`, empty text, a zero target, both multiplicity modes at once and a half band are all refused by name; bytes absent from the corpus yield zero seeds and exit 0; a slice spanning a `0x1E` document separator still seeds and the oracle agrees |
+| S2p | PLACEMENT - the default scan is continuous: `windows == text bytes`, `coverage_pct == 100`, `first_window == 0`, `last_window == text bytes - 1`, and `--max-seeds 3` still scans the whole text and emits at most 3 seeds spread over it; `--stride 32` is journaled as the opt-in sampler with `windows == ceil(text/32)` |
+| S2m | `--skip-markup` - the skipped byte count equals a hand-built fixture to the byte (nested `{{ }}`, `}}`/`{{`/`|}` inside a comment, `{| ... |}`, `<ref>..</ref>`, self-closing `<ref/>`, `<gallery>`, `<math>`), every emitted seed is disjoint from every marked range, an unterminated `{{` runs to the end of the text, and the SAME run without the flag skips nothing (the flag is off by default) |
 | S4 | the same input twice gives byte-identical output and identical counters |
 
 ## Measured gates for `xsa seeds` (2026-11-03)
@@ -486,3 +557,145 @@ taxobox and the taxonomy vocabulary. Which is the honest reading of the
 hypothesis: the neighbourhood is real and exact-match reproducible, and what it
 is a neighbourhood OF is decided by the shared surface form (template + taxobox +
 `Carnivora` vocabulary), not by anything semantic beyond it.
+
+## Coverage fix: the whole document, not its lead (2026-11-03, second pass)
+
+The S2 numbers above were measured on a scan that examined **62 windows of 32
+bytes - 1.1% of a 177 KB article** - because the walk started at offset 0 and
+stopped the moment it held `--max-seeds`. Everything it found came from the lead,
+where Wikipedia keeps its infobox/redirect/date templates, so the seeds were
+scaffolding (`{{About|the speci`, `pp-semi-indef|small=yes`,
+`American English|date=October 2024`) and the top-hit titles were noticeboards.
+That is a placement defect, not a property of the kernel: the same text scanned to
+the end answers with the whole article.
+
+The scan is now continuous (`windows == text_bytes`, `coverage_pct == 100`) and
+`--max-seeds` is an output selection. Measured on the 100 GB container
+`/mnt/nvme2n1/erikg/wf-finish-as-100gb-20261102T044713Z/corpus.sxi2`, sidecars
+`/mnt/nvme2n1/erikg/wiki`, text = document 4065 (the **Cat** article, 177,347
+bytes; the body only - the 0x1E framing byte of the next document is not part of
+it), `--max-len 64 --max-seeds 40 --limit 32 --docs DIR`.
+
+**Every wall is a shared-host wall: a second operator's `xsa branches --serve
+-j 128` on the SAME container held 277 GB RSS with load average 82 throughout.
+Peak RSS of each `xsa seeds` run is ~271 GiB (the index columns); the wall is
+dominated by opening the index, not by the scan - `scan_ms` is the product time.**
+
+| run | windows | coverage_pct | accepted_windows | emitted | mean_len | scan_ms | locate_ms | wall | peak RSS |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `--target-mult 50` | 177347 | 100.0000 | 30132 | 40 | 20.40 | 33476.0 | 5654.3 | 2:21.63 | 270.8 GiB |
+| `--target-mult 500` | 177347 | 100.0000 | 22599 | 40 | 18.35 | 31936.5 | 5863.4 | 2:08.75 | 270.7 GiB |
+| `--target-mult 50 --skip-markup` | 177347 | 37.3466 | 10287 | 40 | 16.70 | 20227.6 | 8955.0 | 2:14.06 | 269.1 GiB |
+
+`--target-mult 50` (P1). The 40 seeds span offset 0 to 171280 - the whole article,
+not its first 2 KB - and their 1280 sample positions land in **1234 distinct
+documents**. Titles ranked by hit count (top 20):
+
+| hits | title |
+| ---: | --- |
+| 9 | Cat |
+| 5 | Muscle car |
+| 4 | 2023–24 Kerala Blasters FC season |
+| 4 | 2023 Indonesian used train import controversy |
+| 4 | Hudson Italia |
+| 3 | Sole Front for Women's Rights |
+| 3 | Sperm precedence |
+| 3 | Gaza genocide |
+| 3 | American Motors Corporation |
+| 2 | Blossom and Frankie |
+| 2 | Treaty of Ripon |
+| 2 | Broad-tailed paradise whydah |
+| 2 | Orange-winged pytilia |
+| 2 | Pantherinae |
+| 2 | Coma Berenices (dwarf galaxy) |
+| 2 | David L. Banks |
+| 2 | Thornlie–Cockburn line |
+| 2 | Kilusang Bagong Lipunan |
+| 2 | Scaly-breasted munia |
+| 2 | Stabilimentum |
+
+`--target-mult 500` (P2), same scan, 10x the fan-out: **1262 distinct documents**
+of 1280 positions, i.e. nearly every sample position lands in its own document -
+higher fan-out pins shorter, more generic strings.
+
+| hits | title |
+| ---: | --- |
+| 5 | Taste receptor |
+| 3 | Grammy Award for Record of the Year |
+| 2 | Grammy Award for Album of the Year |
+| 2 | René Küss |
+| 2 | Pat O'Connor (wrestler) |
+| 2 | Greater Gotham |
+| 2 | TAS2R14 |
+| 2 | TAS2R8 |
+| 2 | TAS2R45 |
+| 2 | Gustducin |
+| 2 | Calcium chloride |
+| 2 | Mallee whipbird |
+| 2 | Industry of the South Humber Bank |
+| 2 | World population |
+| 1 | Navicat |
+| 1 | Dancer with Flat Hat |
+| 1 | Kadakkarapally Boat |
+| 1 | Beachcat |
+| 1 | Koreasat |
+| 1 | Teldat |
+
+`--target-mult 50 --skip-markup` (P3, the filter as a knob): the scanner marks
+**107,899 of the 177,347 bytes (60.8%)** as scaffolding and 126,171 of the 177,347
+windows (71.1%) are refused, so `coverage_pct` honestly drops to 37.3 - the prose
+that remains. **1229 distinct documents**, and the neighbourhood becomes the
+article's own subject matter:
+
+| hits | title |
+| ---: | --- |
+| 21 | Cat |
+| 5 | Glossary of climbing terms |
+| 4 | Tooth pathology |
+| 3 | Cat behavior |
+| 3 | Wikipedia:Categories for discussion/Log/2024 January 24 |
+| 3 | Wikipedia:Dispute resolution noticeboard/Archive 65 |
+| 3 | Moorov v HM Advocate |
+| 3 | Primo Villanueva |
+| 3 | List of protected areas of Peru |
+| 2 | East Patagonia, Tierra del Fuego and Strait of Magellan dispute |
+| 2 | Golden Horde |
+| 2 | Jack Antonoff |
+| 2 | Eugen Haile |
+| 2 | Kangaroo |
+| 2 | Cats in ancient Egypt |
+| 2 | John Catsimatidis |
+| 2 | Francolin |
+| 2 | Cleveland CycleWerks |
+| 2 | Blackamoores |
+| 2 | Wikipedia:WikiProject Medicine/Lists of pages/Low-importance medicine articles |
+
+So the filter is what moves the answer: with the markings skipped the same
+continuous scan returns *Cat behavior*, *Cats in ancient Egypt*, *Kangaroo*,
+*Francolin*, *Pantherinae* - the article's own subject - instead of citation
+column syntax; without it, the reference-dense body of a Wikipedia article still
+supplies most of the recurring strings, which is the honest reading of a
+surface-form hypothesis.
+
+Consistency check on the mechanism: `--stride 32` still journals `stride=32` and
+`windows = ceil(text_bytes/32)`; `--skip-markup` off journals
+`markup_bytes_skipped=0`, `windows_skipped_markup=0`; the window counters still
+add up exactly (`SEEDS_WINDOW_ACCOUNTING`, asserted before the journal line) now
+including `windows_skipped_markup`.
+
+Other gates on the 150 MB fixture `/mnt/nvme2n1/erikg/bw256/t150m.sxi2` (corpus
+`/dev/shm/t150m.txt`): `seeds_gate.py` **PASS** (S1 mechanism with the 12..32
+ladder reproduced verbatim, S2p placement - `windows == text bytes`,
+`coverage_pct == 100`, `first_window == 0`, `last_window == text-1`, `--max-seeds 3`
+still scanning the whole text, `--stride 32` journaled as a sampler, S2m markup -
+exact skipped-byte count against a hand-built fixture including nested `{{ }}`,
+`}}`/`{{`/`|}` inside a comment, self-closing `<ref/>`, an unterminated `{{`
+running to the end, and the same run with the flag off skipping nothing, S3
+guards, S4 determinism); `branches_gate.py` W1 100/100 + top-k closure 100/100,
+W3 7/7, FILE 12/12, W4 100/100; `mem_gate.py` X1 all-mems 20/20 longest 20/20,
+X2 5/5; `query_oracle_gate.py` counts 100/100 and positions 100/100 (574
+positions); `cargo test --release` **61 passed, 0 failed** (58 before, plus 3 for
+the markup scanner: the construct table, the near-misses, and the cursor).
+
+The seeds, offsets, lengths, multiplicities and title lists above are in
+[the coverage-fix evidence file](tools/binbwt/evidence/seeds/coverage_fix.json).
