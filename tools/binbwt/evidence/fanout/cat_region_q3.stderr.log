@@ -1,0 +1,5 @@
+QUERY_DOCS source=docs docs=25932219 corpus_bytes=100093934466
+SEEDS_MARKUP enabled=true ranges=5 bytes_skipped=967 frac=0.483500
+FANOUT_SOURCE search=corpus.bin tested=8 doc=none matched_bytes=0 text_bytes=2000
+FANOUT_STATS docs=25932219 text_bytes=2000 windows=2000 coverage_pct=50.3000 accepted_windows=209 unshared_seeds=0 shared_accepted=209 seeds_selected=209 capped_dropped=0 seed_mult_min=2 seed_mult_max=80 rows_located=670 rows_truncated_seeds=1 documents_ranked=297 regions_found=318 excluded_source=docNone excluded_hits=0 weight_floor_clamped=0 seed_docs_sum=670 seed_docs_max=64 scan_ms=201.107 locate_ms=1510.269 ranks=705240 lf_steps=4290035
+FANOUT_NOTE 1 seeds occur more than --max-rows 64 times: their rows were SAMPLED evenly across the interval, so a widely shared seed's document count is a lower bound
