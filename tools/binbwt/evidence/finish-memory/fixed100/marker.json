@@ -1,0 +1,22 @@
+{
+  "chi_so_far": 3000425823,
+  "status": {
+    "VmHWM": 18550652,
+    "VmRSS": 18550652,
+    "RssAnon": 6337984,
+    "RssFile": 12212668,
+    "RssShmem": 0,
+    "pid": 296943,
+    "time": 1793738168.6116464
+  },
+  "peak": {
+    "VmHWM": 18550652,
+    "VmRSS": 18550652,
+    "RssAnon": 6337984,
+    "RssFile": 12212668,
+    "RssShmem": 0,
+    "pid": 296943,
+    "time": 1793738168.6100976
+  },
+  "termination": "measurement stopped after chi > 3e9; no completed container"
+}

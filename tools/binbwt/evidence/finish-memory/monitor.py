@@ -15,6 +15,12 @@ while pathlib.Path(f'/proc/{pid}').exists():
   (root/'smaps-latest.json').write_text(json.dumps(sorted(d.items(),key=lambda x:-x[1]),indent=2))
  chis=re.findall(r'chi_so_far=(\d+)',(root/'finish-v2.log').read_text()) if stop_marker else []
  if chis and int(chis[-1])>3000000000:
+  # Sample again AFTER observing the qualifying progress receipt.
+  status=pathlib.Path(f'/proc/{pid}/status').read_text()
+  vals={k:int(v) for k,v in re.findall(r'^(VmRSS|VmHWM|RssAnon|RssFile|RssShmem):\s+(\d+)',status,re.M)}
+  vals['pid']=pid;vals['time']=time.time()
+  if vals['VmRSS']>peak.get('VmRSS',0):
+   peak=vals;(root/'external-peak.json').write_text(json.dumps(peak,indent=2))
   (root/'marker.json').write_text(json.dumps(dict(chi_so_far=int(chis[-1]),status=vals,peak=peak,termination='measurement stopped after chi > 3e9; no completed container'),indent=2))
   for c in commands:
    try:os.kill(c['pid'],signal.SIGTERM)

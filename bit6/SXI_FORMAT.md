@@ -380,3 +380,27 @@ The archived 100 GB container directory records m5 as 8,972,091,731 bytes and
 m13 as 12,938,616,320 bytes. These are published file sizes, not measurements
 of resident allocations. In particular the approximately 9 GB m5 payload is
 streamed to the container rather than held in a chi-sized output vector.
+
+G3 was measured past the requested marker: band 57,601 emitted
+3,000,425,823 chi entries (the same progress count as the archived run).
+The finish's native marker receipt is:
+
+```text
+XSA_FINISH_RSS_AT stage=chi_so_far_gt_3e9 rss_kb=18550288 anon_kb=6337620
+```
+
+An external status read **after** observing the qualifying progress line
+recorded `VmRSS=VmHWM=18550652`, `RssAnon=6337984`, and `RssFile=12212668`,
+all in KiB. This is about 17.69 GiB through the marker, not a full-run peak
+for a newly published 100 GB container. The monitor then stopped the three
+measurement stages; the existing reference container was not changed.
+The last nearby smaps snapshot attributes 12,199,276 KiB to the chi bitmap
+and only 10,156 KiB to the corpus mapping. **RSS still tracks input size**:
+the original corpus-residency term is removed, but the remaining bitmap is
+linear in n and the sampled run-directory vectors also grow.
+
+The shared machine reclaimed pages during the run. A separate read-only
+helper, with a fixed 16 MiB buffer, periodically warmed the bitmap scratch
+until the marker. This qualification is retained with G3; no elapsed-time
+performance comparison or flat-memory claim is made. The interrupted 100 GB
+measurement's owned scratch was removed after preserving its receipts.

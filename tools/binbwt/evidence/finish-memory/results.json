@@ -493,10 +493,98 @@
           "stage": "sweep-progress",
           "rss_kb": 14099564,
           "anon_kb": 2066196
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 15561444,
+          "anon_kb": 3402560
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 15995208,
+          "anon_kb": 3824696
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 16253236,
+          "anon_kb": 4064148
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 16537020,
+          "anon_kb": 4339896
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 16761240,
+          "anon_kb": 4559904
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 17050368,
+          "anon_kb": 4847600
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 17293304,
+          "anon_kb": 5090256
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 17495592,
+          "anon_kb": 5289748
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 17886640,
+          "anon_kb": 5679648
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 18014052,
+          "anon_kb": 5806772
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 18177692,
+          "anon_kb": 5970208
+        },
+        {
+          "stage": "sweep-progress",
+          "rss_kb": 18529692,
+          "anon_kb": 6317024
+        },
+        {
+          "stage": "chi_so_far_gt_3e9",
+          "rss_kb": 18550288,
+          "anon_kb": 6337620
         }
       ],
       "kernel_peak_rss_kib": null,
-      "completed": false
+      "completed": false,
+      "marker": {
+        "chi_so_far": 3000425823,
+        "status": {
+          "VmHWM": 18550652,
+          "VmRSS": 18550652,
+          "RssAnon": 6337984,
+          "RssFile": 12212668,
+          "RssShmem": 0,
+          "pid": 296943,
+          "time": 1793738168.6116464
+        },
+        "peak": {
+          "VmHWM": 18550652,
+          "VmRSS": 18550652,
+          "RssAnon": 6337984,
+          "RssFile": 12212668,
+          "RssShmem": 0,
+          "pid": 296943,
+          "time": 1793738168.6100976
+        },
+        "termination": "measurement stopped after chi > 3e9; no completed container"
+      },
+      "marker_high_water_rss_kib": 18550652
     }
   },
   "finish_source_sha256": "0a1913efccfbcc986deae1916b370a71b81da462f3a5111a60c4e440c1c4039c",

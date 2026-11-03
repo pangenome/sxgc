@@ -1,0 +1,17 @@
+{
+  "removed": [
+    {
+      "directory": "merged",
+      "allocated_kib_before": 51239064
+    },
+    {
+      "directory": "bands-tape",
+      "allocated_kib_before": 29240
+    },
+    {
+      "directory": "waves-tape",
+      "allocated_kib_before": 10795936
+    }
+  ],
+  "reference_container_untouched": "/mnt/nvme2n1/erikg/wf-finish-as-100gb-20261102T044713Z/corpus.sxi2"
+}
