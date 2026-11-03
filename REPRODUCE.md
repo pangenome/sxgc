@@ -765,3 +765,31 @@ The gate includes the downstream binary reproducer, deterministic random and lon
 absent patterns, absent corpus bytes, document bounds for every context, and three
 reported corpus-byte spot checks. The unit tests deliberately inject UINT64_MAX
 and an interior separator to demonstrate the fail-loud assertions.
+
+### Maximal exact matches: `xsa mem`
+
+```sh
+xsa mem corpus.sxi2 "domestic cat"              # longest MEM of the query
+xsa mem corpus.sxi2 "cat sat" --all-mems        # every maximal match
+xsa mem corpus.sxi2 "cat sat" --docs DIR --limit 8 --jsonl
+xsa mem corpus.sxi2 --serve -j 32               # framed; see SERVING.md
+```
+
+A maximal exact match (MEM) is a substring `query[a..b)` that occurs in the corpus
+and cannot be extended by the query's own neighbouring byte on either side (the
+query boundary is not an extension point). `xsa mem` reports `query_start`,
+`query_len`, `occurrences` (the interval width, i.e. exact overlapping occurrence
+count) and up to `--limit` positions located exactly as `xsa query` locates them
+(`doc_id`, `offset`, `title` when sidecars resolve). Default `--min-len 8`;
+default output is the single longest MEM, `--all-mems` reports every one, `-k N`
+caps that list. Empty queries are refused. Framed `--serve` mode answers the
+longest MEM only, with the frame layout documented in SERVING.md.
+
+`xsa mem` **supersedes `xsa mems` for SXI2 v6 lite containers**: `mems` goes
+through the phi-era reader and fails on them with `SXI: invalid header`. Use
+`xsa mem` (or `xsa mems` only for the archived legacy artifacts it was written
+for).
+
+Gates: `tools/binbwt/tests/mem_gate.py` (X1 independent mmap brute force via
+`tools/binbwt/tests/mem_oracle.c`, X2 edge cases, X3 document spot checks) and
+`tools/binbwt/tests/mem_bench.py` (X4 throughput of `--serve -j 32`).
