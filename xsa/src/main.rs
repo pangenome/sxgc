@@ -1388,6 +1388,7 @@ fn usage() -> ! {
     eprintln!("  xsa stats --rlbwt <prefix> [--chi ...]   from rlbwt pair");
     eprintln!("  xsa tags --chi <f.sA> --sidecar <names.tsv> [--revlines]");
     eprintln!("           [--output tags.tsv]                  first-appearance attribution");
+    eprintln!("  xsa branches <container> (--contexts FILE [--jsonl] | --serve [-j N]) [-k N] [--docs DIR | --corpus FILE]");
     eprintln!("  xsa query <container> <pattern> [<pattern> ...] [-j N] [--output tsv|jsonl] [--all | --count | --limit N] [--docs DIR] [--context N]");
     eprintln!("           --patterns: the corpus contract, rec<0x1e>rec<0x1e>...rec<0x1e>, arbitrary");
     eprintln!("           bytes, no escaping, id = 0-based record index; --patterns-fasta reads FASTA;");
@@ -1414,6 +1415,10 @@ fn usage() -> ! {
 
 fn main() {
     let raw: Vec<_> = std::env::args_os().skip(1).collect();
+    if raw.first().is_some_and(|a| a == "branches") {
+        qlite::branches_command(&raw[1..]);
+        return;
+    }
     if raw.first().is_some_and(|a| a == "query") {
         qlite::command(&raw[1..]);
         return;

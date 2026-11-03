@@ -1,0 +1,75 @@
+{
+  "base_commit": "a94c2ceea9976696ad7e147cce4db720b223cef0",
+  "binary_sha256": "6bde989cb09c3cf6aa9b0593e724234747015aa87c7f09ede575836dd0cb28d6",
+  "W1": {
+    "150_MB": "100/100 exact next-byte distributions, eof, width; top-k closure 100/100",
+    "10_GB": "100/100 exact next-byte distributions, eof, width; top-k closure 100/100"
+  },
+  "W3": {
+    "150_MB": "7/7 edges; ordered full/top-8, unordered top-0",
+    "10_GB": "7/7 edges; ordered full/top-8, unordered top-0"
+  },
+  "file_mode": {
+    "150_MB": "12/12 JSONL exact",
+    "10_GB": "12/12 JSONL exact"
+  },
+  "W4": {
+    "150_MB": "100/100 existing counts and positions unchanged",
+    "10_GB": "20/20 existing counts and positions unchanged; unchanged gate_qlite_10g.sh PASS; --count also exact"
+  },
+  "W2": [
+    {
+      "jobs": 1,
+      "contexts": 100000,
+      "seconds": 955.4376128418371,
+      "contexts_per_s": 104.66408131302444,
+      "mix": "90% sampled 48 bytes, 10% common English; seed 20261103",
+      "warmup": 1000,
+      "profile_including_1000_warmup_requests": {
+        "contexts": 101000.0,
+        "contexts_per_s": 104.668,
+        "search_us_per_context": 321.562,
+        "gather_us_per_context": 9224.533,
+        "output_ipc_us_per_context": 7.965,
+        "input_ipc_us_per_context": 1.601,
+        "lf_steps": 3206223177.0
+      }
+    },
+    {
+      "jobs": 32,
+      "contexts": 100000,
+      "seconds": 180.55880060093477,
+      "contexts_per_s": 553.8361999923602,
+      "mix": "90% sampled 48 bytes, 10% common English; seed 20261103",
+      "warmup": 1000,
+      "profile_including_1000_warmup_requests": {
+        "contexts": 101000.0,
+        "contexts_per_s": 552.879,
+        "search_us_per_context": 424.87,
+        "gather_us_per_context": 10196.409,
+        "output_ipc_us_per_context": 2.19,
+        "input_ipc_us_per_context": 3.689,
+        "lf_steps": 3206223177.0
+      }
+    }
+  ],
+  "throughput_target_met": false,
+  "containers": {
+    "150_MB": "/mnt/nvme2n1/erikg/bw256/t150m.sxi2",
+    "10_GB": "/mnt/nvme2n1/erikg/wf-finish-as-evidence/10control/pile-10b-snap.sxi2",
+    "100_GB": "/mnt/nvme2n1/erikg/wf-finish-as-100gb-20261102T044713Z/corpus.sxi2"
+  },
+  "corpora": {
+    "150_MB": "/dev/shm/t150m.txt",
+    "10_GB": "/mnt/nvme2n1/erikg/extcols-scratch/real10b-ref/pile-10b-snap.txt",
+    "100_GB": "/mnt/nvme2n1/erikg/wiki/corpus.bin"
+  },
+  "tests": "cargo test --release ... qlite:: : 18 passed, 0 failed",
+  "manualNotes": "W1 expected results were computed independently in Python from corpus bytes, with mmap.find for overlapping context occurrences and a one-pass numpy histogram for the empty context. The 10 GB oracle was reused after replacing a rejected legacy codec-101 container with the codec-114 build of the same corpus (build journal verified). W2 rates time exactly 100000 requests after 1000 warmup requests; profiles include all 101000. Startup is excluded. Runs are sequential on the shared host. No supervisor-contact tool was exposed in this session.",
+  "residualRisks": [
+    "32-worker throughput 553.836/s misses the 20000/s target.",
+    "No stored move/psi: intervals <=64 rows use sparse-anchor LF locate plus corpus byte reads; wider intervals use exact right-extension searches. No constant-time O(width) gather claim.",
+    "Requires the matching original corpus; explicit --corpus checks length, not content identity.",
+    "The existing reader materializes about 265914840963 bytes of index columns for the 100 GB corpus; this is not a memory-bounded serving redesign."
+  ]
+}

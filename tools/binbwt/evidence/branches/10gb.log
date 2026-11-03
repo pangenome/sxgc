@@ -1,0 +1,4 @@
+W1 100/100 exact next-byte distributions, eof, width; top-k closure 100/100
+W3 7/7 edge cases passed
+FILE 12/12 JSONL results exact
+W4 20/20 counts and positions unchanged
