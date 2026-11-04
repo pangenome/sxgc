@@ -1139,7 +1139,20 @@ int main(int argc, char** argv) {
                 std::fprintf(stderr,"TAPE_ROW_BOUND wave=%llu band=%llu rows=%llu target=%llu ok=%d\n",
                     (unsigned long long)w,(unsigned long long)b,(unsigned long long)band_rows[b],
                     (unsigned long long)rows_per_band,int(ok));
-                if (!ok) die("planner bug: completed band exceeds target x 1.1");
+                // A rows_per_band TARGET is not an invariant: when many rows share
+                // the same 24-byte key prefix there is no finer boundary to cut at, so a
+                // completed band can legitimately exceed it. Only a band that cannot be
+                // sorted inside the arena is fatal.
+                if (!ok) std::fprintf(stderr,
+                    "TAPE_ROW_OVER_TARGET band=%llu rows=%llu target=%llu ratio=%.3f\n",
+                    (unsigned long long)b,(unsigned long long)band_rows[b],
+                    (unsigned long long)rows_per_band,
+                    rows_per_band? double(band_rows[b])/double(rows_per_band):0.0);
+                {
+                    const u64 need = band_rows[b] * (u64)sort_row_bytes;
+                    if (need > (u64)ram_bytes - (u64)ram_bytes/10)
+                        die("TAPE_ROW_OVER_MEMORY: a completed band cannot be sorted inside the arena");
+                }
             }
             u64 acc = emitted;
             for (u64 b = 0; b < nbands; ++b) { band_off[b] = acc; acc += band_rows[b]; }
