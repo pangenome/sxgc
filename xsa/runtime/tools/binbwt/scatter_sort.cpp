@@ -451,6 +451,16 @@ static constexpr u64 SS_STAGE_MIN = 64u << 20;    // the scatter's append stagin
 static constexpr u64 SS_STAGE_MAX = 2u << 30;     // of the envelope, clamped (the same numbers the
 static constexpr u64 SS_STAGE_DIVISOR = 24;       // scatter below allocates with)
 static constexpr u64 SS_OVERSUBSCRIBE = 4;        // bands per worker per wave (work stealing needs >1)
+// THE WAVE DEScent. A wave class is a key PREFIX (plus an optional position slice
+// for a point mass). Depth is an OUTPUT of the census, exactly as it is for the
+// band plan: a class is split by the next byte for as long as its row count
+// exceeds the wave goal. The cap below is the WAVE PREDICATE's width (a wave's
+// membership test compares at most this many bytes of the corpus), NOT the rule;
+// 16 is already far beyond anything a real corpus produces (a 16-byte prefix
+// occurring more than a wave's rows would be 1.8e9 copies of one 16-gram at the
+// Pile's 1e11) - the point-mass branch exists for the corpora that defeat it.
+static constexpr u64 SS_WAVE_DEPTH_MAX = 16;
+static constexpr u64 SS_WAVE_TARGET_PCT = 80;     // plan to target x 0.8 (the band planner's rule)
 static constexpr u64 SS_ROWS_FLOOR = 65536;       // one fold band: below this the budget is broken
 static constexpr u64 SS_BUDGET_RATIO_MAX = 90;    // the exit assertion: owned RSS <= 90% of the envelope
 
@@ -1126,67 +1136,10 @@ int main(int argc, char** argv) {
     // Whatever this pass faulted in leaves the process's RSS: the receipt is a
     // function of the budget, not of n (see RssMonitor).
     madv_release(T, FILE_N);
-    // ---- wave list: greedy byte ranges, each <= rows_per_wave rows. A byte whose
-    // class ALONE exceeds the cap is split by its second byte (2-level wave).
-    struct Wave { unsigned lo, hi; bool lvl2; unsigned b; unsigned lo2, hi2; };
-    std::vector<Wave> wl;
-    {
-        unsigned lo = 0;
-        u64 acc = 0;
-        for (unsigned c = 0; c < 256; ++c) {
-            if (hist[c] > rows_per_wave) {
-                if (lo < c) { wl.push_back({lo, c, false, 0, 0, 0}); lo = c; acc = 0; }
-                // split this byte by its second byte: a WINDOWED pass (the first
-                // version walked the mapping twice, which cost 19 ns/position and
-                // left the whole corpus resident)
-                std::vector<u64> h2(256, 0);
-                {
-                    const u64 nt = std::max<u64>(1, threads);
-                    std::vector<std::vector<u64>> l2(nt, std::vector<u64>(256, 0));
-                    std::vector<std::thread> ts2;
-                    for (u64 t = 0; t < nt; ++t)
-                        ts2.emplace_back([&, t]() {
-                            const u64 xlo = N * t / nt, xhi = std::min<u64>(FILE_N, N * (t + 1) / nt);
-                            auto& h = l2[t];
-                            std::vector<u8> buf(SS_SCAN_CHUNK + 64);
-                            for (u64 p = xlo; p < xhi;) {
-                                const u64 chunk = std::min<u64>(SS_SCAN_CHUNK, xhi - p);
-                                // one byte of lookahead for the second symbol (0 past the
-                                // corpus end, exactly as sym_at(p+1) reports it)
-                                const u64 want = std::min<u64>(chunk + 1, FILE_N - p);
-                                read_window(fd, p, want, buf);
-                                for (u64 i = 0; i < chunk; ++i)
-                                    if (buf[i] == c) ++h[i + 1 < want ? buf[i + 1] : SENTINEL_SYMBOL];
-                                p += chunk;
-                            }
-                        });
-                    for (auto& th : ts2) th.join();
-                    for (u64 t = 0; t < nt; ++t)
-                        for (int i = 0; i < 256; ++i) h2[i] += l2[t][i];
-                }
-                unsigned l2lo = 0; u64 a2 = 0;
-                for (unsigned d = 0; d < 256; ++d) {
-                    if (a2 && a2 + h2[d] > rows_per_wave) {
-                        wl.push_back({c, c + 1, true, c, l2lo, d}); l2lo = d; a2 = 0;
-                    }
-                    if (!tapeBands.empty() && h2[d] > rows_per_wave) die("byte-pair class exceeds wave cap");
-                    a2 += h2[d];
-                }
-                if (l2lo < 256) wl.push_back({c, c + 1, true, c, l2lo, 256});
-                lo = c + 1; acc = 0;
-                continue;
-            }
-            if (acc && acc + hist[c] > rows_per_wave) {
-                wl.push_back({lo, c, false, 0, 0, 0}); lo = c; acc = 0;
-            }
-            acc += hist[c];
-        }
-        if (lo < 256) wl.push_back({lo, 256, false, 0, 0, 0});
-    }
-    waves = wl.size();
-    std::fprintf(stderr, "SS_WAVES count=%" PRIu64 " (byte-range waves)\n", waves);
-
-    // ---------------- SAMPLE once: band edges inside each wave ----------------
+    // ================= THE SAMPLE (band edges AND the wave descent) ============
+    // One positional stride sample serves BOTH layers: the band plan's fences and
+    // the wave descent's class census. It is built here, before the wave list,
+    // because the wave layer now needs it.
     const double t0 = now_sec();
     const u64 stride = std::max<u64>(1, N / std::max<u64>(1, sample_n));
     std::vector<u64> sk;
@@ -1202,6 +1155,196 @@ int main(int argc, char** argv) {
     const double t_sample = now_sec() - t0;
     std::fprintf(stderr, "SS_SAMPLE samples=%zu stride=%" PRIu64 " wall=%.2f\n",
                  sk.size(), stride, t_sample);
+
+    // ================= THE WAVE LIST: A RECURSIVE PREFIX DESCENT ================
+    // THE BAND PLANNER'S RULE, APPLIED TO WAVE ASSIGNMENT. The first version of this
+    // layer classed positions by FIRST BYTE and then, for one over-cap byte, by
+    // BYTE PAIR, and then gave up:
+    //     scatter_sort: byte-pair class exceeds wave cap
+    // which is enough for encyclopedic text and dies on the Pile, where one byte
+    // class (space) holds more rows than a wave may carry AND so does the biggest
+    // pair inside it. Depth is an OUTPUT of the census here, exactly as it is in
+    // plan_tape: a class is split by the NEXT byte for as long as its row count
+    // exceeds the wave goal (rows_per_wave x 0.8), and only a class that no key byte
+    // can split is handled as a point mass.
+    //
+    // A class is a PREFIX, and its byte at offset k is sym_at(p+k) - the corpus
+    // symbol, or SENTINEL_SYMBOL past the end of the text. That keeps the predicate
+    // TOTAL: every position of 0..n-1 (the virtual END included, at symbol 0)
+    // matches exactly one wave, so the wave list is an exact PARTITION in ascending
+    // key order and concatenating the waves' outputs is suffix order.
+    //
+    // COST: the descent reads NO corpus bytes it does not already have - it walks
+    // the one positional sample (256-counter censuses over <= 4M positions, sorted
+    // subranges, O(sample x depth) sym_at calls). The per-wave SCAN still passes
+    // over the corpus once, which is the only pass this layer ever costs.
+    struct Wave {
+        u64 depth;                                  // key-prefix length D (>= 1)
+        unsigned char pre[SS_WAVE_DEPTH_MAX];       // pre[0..depth-2]: the PARENT prefix
+        unsigned bLo, bHi;                          // byte at offset depth-1 is in [bLo,bHi)
+        u64 posLo, posHi;                           // point-mass slice; the whole range otherwise
+        bool sliced;
+    };
+    std::vector<Wave> wl;
+    u64 pointMassSplits = 0, maxClassRows = 0;
+    std::vector<u64> depthHist(SS_WAVE_DEPTH_MAX + 1, 0);
+    const u64 waveGoal = std::max<u64>(1, rows_per_wave * SS_WAVE_TARGET_PCT / 100);
+    {
+        std::vector<u64> wp = sk;            // the descent's working sample
+        auto emitWave = [&](const std::vector<u8>& pre, unsigned b0, unsigned b1, u64 rows) {
+            Wave W{};
+            W.depth = u64(pre.size()) + 1;
+            for (size_t i = 0; i < pre.size(); ++i) W.pre[i] = pre[i];
+            W.bLo = b0; W.bHi = b1; W.posLo = 0; W.posHi = N; W.sliced = false;
+            wl.push_back(W);
+            maxClassRows = std::max(maxClassRows, rows);
+            ++depthHist[W.depth];
+            std::fprintf(stderr, "SS_WAVE_PLAN wave=%zu depth=%" PRIu64 " bytes=[%u,%u)\n",
+                         wl.size() - 1, W.depth, b0, b1);
+        };
+        // ---- THE POINT-MASS BRANCH (spec item 2), and why it is ORDER-SAFE ----
+        // A class that is still over the goal at SS_WAVE_DEPTH_MAX and whose rows all
+        // share the full key prefix has no key byte left to split on. The only
+        // discriminator left is POSITION, and a position slice is only a valid wave if
+        // position order IS key order inside the class - otherwise two sorted runs
+        // would be concatenated out of order and the container's BWT would be wrong
+        // with no gate to catch it. That property is PROVED here from the corpus, not
+        // assumed: the class must be exactly the maximal single-symbol tail run, where
+        // suffix p is a suffix of suffix p+k, so ascending key order is DESCENDING
+        // position and contiguous position slices may be emitted highest-first.
+        // Anything else fails loud (raise the wave budget, or make the key prefix
+        // wider - never publish an unproved order).
+        auto emitPointMass = [&](const std::vector<u8>& pre, unsigned c, u64 depth, u64 rows) {
+            auto match_off = [&](u64 p, u64 k) -> unsigned {
+                if (p + k >= FILE_N) return SENTINEL_SYMBOL;
+                return REMAP ? REMAP[T[p + k]] : T[p + k];
+            };
+            auto in_class = [&](u64 p) -> bool {
+                for (size_t i = 0; i < pre.size(); ++i) if (match_off(p, i) != pre[i]) return false;
+                return match_off(p, depth - 1) == c;
+            };
+            // The class is the rows of the tail run that still have `depth` bytes of
+            // corpus left: a position within depth-1 bytes of the end has a SENTINEL at
+            // some offset below depth and is a different (tiny) class, already emitted as
+            // its own sibling above.
+            const u64 runLo0 = trailing;
+            const u64 runHi0 = FILE_N > depth - 1 ? FILE_N - (depth - 1) : 0;
+            const u64 runRows = runHi0 > runLo0 ? runHi0 - runLo0 : 0;
+            // PROOF BY CORPUS, one journaled pass: every position of 0..n-1 is in this
+            // class IFF it lies in that slice of the tail run. (The sample estimate is
+            // only a hint here - it cannot even see the last 23 positions.)
+            const double tpm = now_sec();
+            const u64 nt = std::max<u64>(1, threads);
+            std::atomic<u64> bad{0};
+            std::vector<std::thread> ts3;
+            for (u64 t = 0; t < nt; ++t)
+                ts3.emplace_back([&, t]() {
+                    const u64 lo2 = N * t / nt, hi2 = N * (t + 1) / nt;
+                    for (u64 p = lo2; p < hi2; ++p)
+                        if (in_class(p) != (p >= runLo0 && p < runHi0)) { bad.fetch_add(1); return; }
+                });
+            for (auto& th : ts3) th.join();
+            const bool exactlyRun = bad.load() == 0;
+            std::fprintf(stderr,
+                "SS_WAVE_POINT_MASS_PROOF depth=%" PRIu64 " class_rows_sampled=%" PRIu64
+                " tail_slice_rows=%" PRIu64 " mismatches=%" PRIu64 " wall=%.2f"
+                " (one corpus pass, the only one this branch ever costs)\n",
+                depth, rows, runRows, bad.load(), now_sec() - tpm);
+            if (!exactlyRun) {
+                std::fprintf(stderr,
+                    "SS_WAVE_POINT_MASS depth=%" PRIu64 " class_rows=%" PRIu64
+                    " wave_goal=%" PRIu64 " trailing_run_rows=%" PRIu64 " provable=0\n",
+                    depth, rows, waveGoal, runRows);
+                die("SS_WAVE_POINT_MASS: a key-prefix class of " + std::to_string(rows) +
+                    " rows at depth " + std::to_string(depth) + " exceeds the wave goal " +
+                    std::to_string(waveGoal) + " and is NOT the single-symbol tail run, so no"
+                    " key byte splits it and no position slice of it would order correctly."
+                    " Raise --memory-gb (bigger wave) - do not publish an unproved order");
+            }
+            // the run, as slices of <= waveGoal rows, HIGHEST position first
+            const u64 nslices = (runRows + waveGoal - 1) / waveGoal;
+            std::fprintf(stderr,
+                "SS_WAVE_POINT_MASS depth=%" PRIu64 " class_rows=%" PRIu64 " wave_goal=%" PRIu64
+                " trailing_run_rows=%" PRIu64 " provable=1 slices=%" PRIu64
+                " rule=tail-run: ascending key order is DESCENDING position\n",
+                depth, rows, waveGoal, runRows, nslices);
+            for (u64 i = 0; i < nslices; ++i) {                 // i = 0 is the TOP slice
+                const u64 hi2 = runLo0 + runRows - i * waveGoal;
+                const u64 lo2 = hi2 - std::min<u64>(waveGoal, hi2 - runLo0);
+                Wave W{};
+                W.depth = depth;
+                for (size_t k = 0; k < pre.size(); ++k) W.pre[k] = pre[k];
+                W.bLo = c; W.bHi = c + 1;
+                W.posLo = lo2; W.posHi = hi2; W.sliced = true;
+                wl.push_back(W);
+                maxClassRows = std::max(maxClassRows, hi2 - lo2);
+                ++depthHist[W.depth];
+                ++pointMassSplits;
+                std::fprintf(stderr, "SS_WAVE_PLAN wave=%zu depth=%" PRIu64
+                             " bytes=[%u,%u) slice=[%" PRIu64 ",%" PRIu64 ")\n",
+                             wl.size() - 1, W.depth, c, c + 1, lo2, hi2);
+            }
+        };
+        // ---- the descent itself: children in ASCENDING byte order, so the wave
+        // list comes out in ascending key order. `exact` is true only at the root,
+        // where the one parallel pass above counted every first symbol exactly;
+        // below it the census is the sample scaled by the stride (the band plan's
+        // own estimator, with the same x 0.8 target).
+        std::function<void(size_t,size_t,std::vector<u8>&,bool)> descend;
+        descend = [&](size_t lo, size_t hi, std::vector<u8>& pre, bool exact) {
+            // The children of THIS node are distinguished by the symbol at offset
+            // pre.size(): all positions in [lo,hi) already share the pre.size()
+            // bytes of `pre`, so the next byte is the split byte. (Grouping on
+            // pre.size()+1 here was a real bug: the root then split on the SECOND
+            // byte while the exact histogram counted the first, and the wave list
+            // was neither a partition nor in key order.)
+            const u64 off = u64(pre.size());
+            std::sort(wp.begin() + lo, wp.begin() + hi, [&](u64 a, u64 b) {
+                const unsigned x = sym_at(a + off), y = sym_at(b + off);
+                return x != y ? x < y : a < b;
+            });
+            bool runOpen = true;      // the run of NOT-over-budget siblings below c
+            unsigned runLo = 0;       // starts at 0: absent bytes are covered, never dropped
+            u64 runRows = 0;
+            size_t a = lo;
+            while (a < hi) {
+                const unsigned c = sym_at(wp[a] + off);
+                size_t b = a + 1;
+                while (b < hi && sym_at(wp[b] + off) == c) ++b;
+                const u64 rows = exact ? hist[c] : u64(b - a) * stride;
+                if (rows > waveGoal) {
+                    // The run STOPS AT c, not after the last sampled sibling: a byte with
+                    // no sampled position still owns rows, and a range that skipped it
+                    // would drop them ("scatter row coverage != n" - the first version
+                    // of this recursion did exactly that).
+                    if (runOpen && runLo < c) emitWave(pre, runLo, c, runRows);
+                    runOpen = false; runRows = 0;
+                    if (off + 1 < SS_WAVE_DEPTH_MAX) {
+                        pre.push_back(u8(c));
+                        descend(a, b, pre, false);
+                        pre.pop_back();
+                    } else {
+                        emitPointMass(pre, c, off + 1, rows);
+                    }
+                    runOpen = true; runLo = c + 1;
+                } else {
+                    if (runOpen && runRows + rows > waveGoal) {
+                        if (runLo < c) emitWave(pre, runLo, c, runRows);   // never above the goal
+                        runLo = c; runRows = 0;
+                    }
+                    runOpen = true;
+                    runRows += rows;
+                }
+                a = b;
+            }
+            if (runOpen && runLo < 256) emitWave(pre, runLo, 256, runRows);
+        };
+        std::vector<u8> rootPre;
+        if (!wp.empty()) descend(0, wp.size(), rootPre, true);
+        else emitWave(rootPre, 0, 256, 0);
+    }
+    waves = wl.size();
+    std::fprintf(stderr, "SS_WAVES count=%" PRIu64 " (recursive prefix-class waves)\n", waves);
 
     std::unique_ptr<Pool> pool(new Pool((unsigned)std::max<u64>(1, threads)));
     std::string cmd = "mkdir -p '" + scratch + "'";
@@ -1510,13 +1653,16 @@ int main(int argc, char** argv) {
     for (u64 w = 0; w < waves; ++w) {
         const double tw = now_sec();
         const Wave& W = wl[w];
+        // the SAME predicate the scan uses, over the sample: a wave is a prefix class
+        // (plus, for a point mass, its position slice)
+        auto wave_match = [&](u64 p) -> bool {
+            for (u64 i = 0; i + 1 < W.depth; ++i) if (sym_at(p + i) != W.pre[i]) return false;
+            const unsigned cE = sym_at(p + W.depth - 1);
+            if (cE < W.bLo || cE >= W.bHi) return false;
+            return !W.sliced || (p >= W.posLo && p < W.posHi);
+        };
         std::vector<u64> waveSample;
-        for (u64 p:sk) {
-            const unsigned c=sym_at(p);
-            if (c<W.lo || c>=W.hi) continue;
-            if (W.lvl2 && (sym_at(p+1)<W.lo2 || sym_at(p+1)>=W.hi2)) continue;
-            waveSample.push_back(p);
-        }
+        for (u64 p:sk) if (wave_match(p)) waveSample.push_back(p);
         const auto plan=plan_tape(std::move(waveSample),stride,rows_per_band,w,trailing);
         std::vector<TapeFence> bounds;
         for (size_t i=1;i<plan.size();++i) bounds.push_back(plan[i].first);
@@ -1603,11 +1749,19 @@ int main(int argc, char** argv) {
                     const u64 p = base + j;
                     if (p >= KEY_N) continue; // finite tails never receive a key
                     const u64 bj = off + j;
-                    const unsigned c0 = buf[bj];
-                    if (c0 < W.lo || c0 >= W.hi) continue;
-                    if (W.lvl2) {
-                        const unsigned c1 = buf[bj + 1];   // 0 past the corpus end
-                        if (c1 < W.lo2 || c1 >= W.hi2) continue;
+                    // THE WAVE PREDICATE, on the already-remapped window: the parent
+                    // prefix (depth-1 bytes), then the byte at depth-1 in [bLo,bHi),
+                    // then the point-mass slice. p < KEY_N leaves 24 real bytes, so a
+                    // depth <= SS_WAVE_DEPTH_MAX never reads past the corpus end.
+                    {
+                        const u8* q = buf.data() + bj;
+                        bool miss = false;
+                        for (u64 i = 0; i + 1 < W.depth; ++i)
+                            if (q[i] != W.pre[i]) { miss = true; break; }
+                        if (miss) continue;
+                        const unsigned cE = q[W.depth - 1];
+                        if (cE < W.bLo || cE >= W.bHi) continue;
+                        if (W.sliced && (p < W.posLo || p >= W.posHi)) continue;
                     }
                     // THE WHOLE 24-BYTE KEY. Leaving kq unset here was a real bug:
                     // the comparator's third word then read uninitialised memory,
@@ -1644,9 +1798,7 @@ int main(int argc, char** argv) {
 
         std::vector<std::vector<Row>> tailBands(nbands);
         for (u64 p = KEY_N; p < N; ++p) {
-            const unsigned c0 = sym_at(p);
-            if (c0 < W.lo || c0 >= W.hi) continue;
-            if (W.lvl2 && (sym_at(p + 1) < W.lo2 || sym_at(p + 1) >= W.hi2)) continue;
+            if (!wave_match(p)) continue;   // the finite tails use the same predicate
             const u64 b=route(p);
             Row r{};
             r.pos = pack_sym(p, p == 0 ? SENTINEL_SYMBOL : u8(sym_at(p - 1)));
@@ -2208,9 +2360,10 @@ int main(int argc, char** argv) {
                 "SS_WAVE w=%" PRIu64 "/%" PRIu64 " bands=%" PRIu64 " wall=%.2f"
                 " scan=%.2f | band_sum read=%.2f sort=%.2f write=%.2f"
                 " | band_max read=%.2f sort=%.2f write=%.2f | fd_live=%" PRIu64
-                " fd_peak=%" PRIu64 "\n",
+                " fd_peak=%" PRIu64 " depth=%" PRIu64 " sliced=%d\n",
                 w + 1, waves, nbands, now_sec() - tw, tScan,
-                rd, so, wr, rdm, som, wrm, noteFdPeak(), FD_PEAK.load());
+                rd, so, wr, rdm, som, wrm, noteFdPeak(), FD_PEAK.load(),
+                W.depth, int(W.sliced));
         }
     }
 
@@ -2351,6 +2504,24 @@ int main(int argc, char** argv) {
                 std::to_string(live_rows * budget.bytes_per_row) + " B of " +
                 std::to_string(envelope_bytes) + " B (ratio " + std::to_string(plan_ratio) +
                 " > 0.90) - the plan prices more than the envelope it was given");
+    }
+    {
+        // THE WAVE RECURSION'S RECEIPT: how deep the census had to go before every
+        // class fit a wave, the largest class it accepted, the budget it planned
+        // against, and how many classes had to be sliced by position instead.
+        std::string histStr;
+        for (u64 d = 1; d < depthHist.size(); ++d) {
+            if (!depthHist[d]) continue;
+            if (!histStr.empty()) histStr += ",";
+            histStr += std::to_string(d) + ":" + std::to_string(depthHist[d]);
+        }
+        std::fprintf(stderr,
+            "SS_WAVE_DEPTH depth_hist=%s max_class_rows=%" PRIu64 " wave_budget_rows=%" PRIu64
+            " point_mass_splits=%" PRIu64 " wave_goal_rows=%" PRIu64 " depth_max=%" PRIu64
+            " samples=%zu stride=%" PRIu64 " corpus_passes=0 (the descent censuses the"
+            " positional sample; each wave's own scan is the layer's only pass)\n",
+            histStr.c_str(), maxClassRows, rows_per_wave, pointMassSplits, waveGoal,
+            SS_WAVE_DEPTH_MAX, sk.size(), stride);
     }
     std::fprintf(stderr,
         "SS_DONE n=%" PRIu64 " waves=%" PRIu64 " ties=%" PRIu64
