@@ -790,8 +790,16 @@ int main(int argc, char** argv) {
     bool force_inplace = false; // A/B arm: the low-memory (in-place + LCE) band sort
     u64 sampleLo = 0, sampleCount = 4096;
     u64 pendingBands = 8;
+    u64 resumeBand = 0;
     u64 budget_bytes = 0;       // THE ARENA ENVELOPE: the only input that sizes work
     double memory_gb = 0.0;     // the phase's --memory-gb, journaled (not used to size)
+    // INCREMENTAL RESUME (pile-week-v1): the first global band this run must
+    // produce. Bands below it are already published (and retained) by the
+    // interrupted attempt and their pieces are durable, so recomputing them is
+    // work thrown away. 0 = a fresh build. The wave ledger below makes the skip
+    // exact: every number the skipped waves carried forward (global band index,
+    // rows emitted, the last row position of the previous wave's last band) is
+    // read back from it, never recomputed from the corpus.
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -818,6 +826,7 @@ int main(int argc, char** argv) {
         else if (a == "--lcp-out") lcpOut = nxt();
         else if (a == "--no-lcp-slices") noLcpSlices = true;
         else if (a == "--force-inplace-sort") force_inplace = true;
+        else if (a == "--resume-band") resumeBand = std::strtoull(nxt().c_str(), nullptr, 10);
         else if (a == "--isa-sample-out") isaOut = nxt();
         else if (a == "--isa-sample-k") isaK = std::strtoull(nxt().c_str(), nullptr, 10);
         else die("unknown arg " + a);
@@ -1428,7 +1437,11 @@ int main(int argc, char** argv) {
     auto lcpWindowNow = [&]() -> u64 {
         const u64 rows = lcpCreditRows.load(std::memory_order_relaxed);
         const u64 need = (rows + rows_per_band - 1) / rows_per_band + 1;
-        return std::max<u64>(pendingBands, need);
+        // THE WINDOW IS A WINDOW, NOT AN ABSOLUTE BAND INDEX: a resumed producer
+        // starts at band `resumeBand`, whose own K-band credit window begins
+        // there. Without the offset the first resumed band would wait for a
+        // window that only a timeout could open.
+        return resumeBand + std::max<u64>(pendingBands, need);
     };
     // Band waits diagnose ownership periodically. Diagnostics neither return
     // credits nor terminate the producer; external process ownership handles
@@ -1582,12 +1595,24 @@ int main(int argc, char** argv) {
     if (!tapeBands.empty()) {
         struct stat ts{};
         if (::stat(tapeBands.c_str(), &ts) != 0 || !S_ISDIR(ts.st_mode)) die("tape directory must exist and be fresh");
-        if (::access((tapeBands + "/manifest").c_str(), F_OK) == 0) die("stale tape manifest");
-        int mf = ::open((tapeBands + "/manifest").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
-        if (mf < 0) die("create tape manifest");
+        const bool manifestExists = ::access((tapeBands + "/manifest").c_str(), F_OK) == 0;
+        if (manifestExists && !resumeBand) die("stale tape manifest");
         std::string meta = std::to_string(N) + (lcpOn ? " 1\n" : " 2 " + std::to_string(pendingBands) + " " + std::to_string(reorderRowCapacity) + "\n");
-        if (::write(mf, meta.data(), meta.size()) != (ssize_t)meta.size()) die("write tape manifest");
-        ::close(mf);
+        if (manifestExists) {
+            // INCREMENTAL RESUME: the tape this run continues must describe the
+            // SAME corpus and the SAME band shape, or the retained bands are not
+            // this corpus's rows at all.
+            std::ifstream old(tapeBands + "/manifest");
+            std::string text((std::istreambuf_iterator<char>(old)), std::istreambuf_iterator<char>());
+            if (text != meta)
+                die("tape manifest mismatch on resume: stored=" + text + " this run=" + meta +
+                    " (the retained bands are not this build's; use --no-resume)");
+        } else {
+            int mf = ::open((tapeBands + "/manifest").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+            if (mf < 0) die("create tape manifest");
+            if (::write(mf, meta.data(), meta.size()) != (ssize_t)meta.size()) die("write tape manifest");
+            ::close(mf);
+        }
         marker(tapeBands + "/ready");
         std::fprintf(stderr, "SS_TAPE K=%llu packed_row_bytes=8 wave_cap=%llu\n", (unsigned long long)pendingBands, (unsigned long long)cap_bytes);
         std::fprintf(stderr,
@@ -1648,9 +1673,100 @@ int main(int argc, char** argv) {
     std::vector<u8> cat(1u << 22), symcat(1u << 22);
     u64 rows_done = 0, ties_total = 0, emitted = 0, wave_rows = 0;
     u64 prev_wave_last = ~0ull;   // last row position emitted by the previous wave
+    // ---- THE WAVE LEDGER (incremental resume, pile-week-v1) -------------
+    // Bands below `resumeBand` are already published and retained; recomputing
+    // them is the work a restart must NOT repeat. But a wave's successor needs
+    // four numbers that are otherwise DERIVED from the corpus and from every
+    // row emitted so far: the global band index, the rows emitted (the global
+    // rank base of this wave's first band), and the last row position of the
+    // previous wave's last band (the seam this wave's first LCP slice is cut
+    // against). Each wave appends those to a fsynced, append-only ledger
+    // BEFORE it does any work, so a resumed run reads them back instead of
+    // recomputing them. A torn tail simply yields an older wave.
+    struct WaveLedger { u64 w, base, emitted, prevLast; };
+    auto ledgerPath = [&] { return tapeBands + "/producer.waves"; };
+    auto ledgerAppend = [&](u64 w, u64 base, u64 emit, u64 prevLast) {
+        if (tapeBands.empty()) return;
+        const std::string line = "WAVE w=" + std::to_string(w) + " base=" + std::to_string(base) +
+                                 " emitted=" + std::to_string(emit) +
+                                 " prev_last=" + std::to_string(prevLast) + "\n";
+        int fd = ::open(ledgerPath().c_str(), O_WRONLY | O_CREAT | O_APPEND, 0666);
+        if (fd < 0) die("open producer wave ledger");
+        size_t off = 0;
+        while (off < line.size()) {
+            ssize_t z = ::write(fd, line.data() + off, line.size() - off);
+            if (z <= 0) die("write producer wave ledger");
+            off += size_t(z);
+        }
+        if (::fsync(fd)) die("fsync producer wave ledger");
+        ::close(fd);
+    };
+    auto ledgerRead = [&] {
+        std::vector<WaveLedger> out;
+        std::ifstream f(ledgerPath());
+        std::string line;
+        while (std::getline(f, line)) {
+            if (line.rfind("WAVE ", 0) != 0) continue;
+            WaveLedger e{};
+            bool haveW = false, haveB = false, haveE = false, haveP = false;
+            std::istringstream is(line.substr(5));
+            std::string tok;
+            while (is >> tok) {
+                const size_t eq = tok.find('=');
+                if (eq == std::string::npos) continue;
+                const std::string k = tok.substr(0, eq), v = tok.substr(eq + 1);
+                try {
+                    if (k == "w") { e.w = std::stoull(v); haveW = true; }
+                    else if (k == "base") { e.base = std::stoull(v); haveB = true; }
+                    else if (k == "emitted") { e.emitted = std::stoull(v); haveE = true; }
+                    else if (k == "prev_last") { e.prevLast = std::stoull(v); haveP = true; }
+                } catch (...) { haveW = false; break; }
+            }
+            if (haveW && haveB && haveE && haveP) out.push_back(e);
+        }
+        return out;
+    };
+    // A resumed wave's scatter parts were written by a process that is gone:
+    // band_rows comes from stat()ing them, so a stale part would inflate a
+    // band's row count (and a stale part of a band this run must PRODUCE would
+    // be appended to). Remove this wave's parts before the scan.
+    auto clearWaveParts = [&](u64 w) {
+        DIR* d = ::opendir(scratch.c_str());
+        if (!d) die("open scatter scratch for resume cleanup");
+        const std::string prefix = "w" + std::to_string(w) + ".b";
+        std::vector<std::string> doomed;
+        while (struct dirent* e = ::readdir(d))
+            if (std::strncmp(e->d_name, prefix.c_str(), prefix.size()) == 0)
+                doomed.push_back(scratch + "/" + e->d_name);
+        ::closedir(d);
+        for (const auto& p : doomed)
+            if (::unlink(p.c_str()) && errno != ENOENT) die("unlink stale scatter part " + p);
+        std::fprintf(stderr, "SS_RESUME_WAVE_PARTS_REMOVED wave=%llu files=%zu\n",
+                     (unsigned long long)w, doomed.size());
+    };
+    u64 wStart = 0, resumeWave = 0;
+    u64 wavesSkippedCompletely = 0, bandsSkipped = 0, rowsSkipped = 0;
+    if (resumeBand) {
+        if (tapeBands.empty()) die("--resume-band needs --tape-bands");
+        const auto ledger = ledgerRead();
+        const WaveLedger* pick = nullptr;
+        for (const auto& e : ledger) if (e.base <= resumeBand) pick = &e;
+        if (!pick)
+            die("--resume-band " + std::to_string(resumeBand) +
+                " has no wave in the producer ledger: the retained band stream cannot be continued");
+        wStart = pick->w; resumeWave = pick->w;
+        globalBand = pick->base; emitted = pick->emitted; prev_wave_last = pick->prevLast;
+        rowsSkipped = pick->emitted;   // every row of every wholly skipped wave
+        std::fprintf(stderr,
+            "SS_RESUME resume_band=%llu wave=%llu wave_base=%llu rows_before_wave=%llu "
+            "prev_wave_last=%llu ledger_entries=%zu\n",
+            (unsigned long long)resumeBand, (unsigned long long)pick->w,
+            (unsigned long long)pick->base, (unsigned long long)pick->emitted,
+            (unsigned long long)pick->prevLast, ledger.size());
+    }
     const double t1 = now_sec();
 
-    for (u64 w = 0; w < waves; ++w) {
+    for (u64 w = wStart; w < waves; ++w) {
         if (!tapeBands.empty() && ::access((tapeBands + "/../stop.requested").c_str(), F_OK) == 0) {
             marker(tapeBands + "/producer.interrupted");
             ::_exit(75);
@@ -1672,6 +1788,22 @@ int main(int argc, char** argv) {
         std::vector<TapeFence> bounds;
         for (size_t i=1;i<plan.size();++i) bounds.push_back(plan[i].first);
         const u64 nbands=plan.size();
+        // A wave whose every band is already published and durable costs NOTHING:
+        // no corpus scan, no scatter, no sort. This is the whole point of the
+        // resume - the corpus-wide scan each wave pays is the expensive term.
+        if (resumeBand && globalBand + nbands <= resumeBand) {
+            std::fprintf(stderr, "SS_RESUME_SKIP_WAVE wave=%llu bands=[%llu,%llu) reason=below_durable_frontier\n",
+                         (unsigned long long)w, (unsigned long long)globalBand,
+                         (unsigned long long)(globalBand + nbands));
+            globalBand += nbands;
+            ++wavesSkippedCompletely;
+            bandsSkipped += nbands;
+            continue;
+        }
+        // The resumed wave's carried state is ledgered (IMMUTABLE across attempts)
+        // and its stale scatter parts are dropped before anything stats them.
+        if (resumeBand && w == resumeWave) clearWaveParts(w);
+        ledgerAppend(w, globalBand, emitted, prev_wave_last);
         auto route = [&](u64 p) -> u64 {
             return std::upper_bound(bounds.begin(),bounds.end(),p,
                 [](u64 pos,const TapeFence& f){const int c=prefix_cmp(pos,f.pos,f.depth); return c<0 || (c==0 && f.after);})-bounds.begin();
@@ -1853,6 +1985,7 @@ int main(int argc, char** argv) {
         // ---- sort this wave's bands (parallel), writing at their own offsets ----
         std::atomic<u64> next_band{0};
         std::atomic<u64> ties_w{0};
+        std::atomic<u64> skippedBandsHere{0}, skippedRowsHere{0};
         // Published AFTER a band is sorted: 0 = not published, 1 = empty band,
         // else last-row position + 2. This is what a band needs to compute its own
         // seam without a post-wave patch racing the consumer.
@@ -1863,8 +1996,11 @@ int main(int argc, char** argv) {
         }
         const u64 prevWaveLastLocal = prev_wave_last;
         std::vector<double> tRead(nbands, 0.0), tSort(nbands, 0.0), tWrite(nbands, 0.0);
-        bandFirstPos.assign(nbands, 0);
-        bandLastPos.assign(nbands, 0);
+        // ~0 = "this band produced nothing in THIS run": a resumed run leaves the
+        // bands below the frontier untouched, and they must not vote on the seam
+        // the next wave carries forward.
+        bandFirstPos.assign(nbands, ~0ull);
+        bandLastPos.assign(nbands, ~0ull);
         // CLAIM ORDER == ADMISSION ORDER. A band computes its seam against EARLIER
         // bands, so a worker that holds arena must never wait on a band that is
         // still waiting for arena: admission therefore follows the claim, and the
@@ -1887,10 +2023,24 @@ int main(int argc, char** argv) {
                     b = next_band.fetch_add(1);
                     if (b >= nbands) return;
                     const u64 nextTapeBand = globalBand + b;
+                    // BELOW THE DURABLE FRONTIER: published and retained by the
+                    // interrupted attempt, and no credit is owed for it (its
+                    // .consumed marker was stamped when the emit read it).
+                    if (resumeBand && nextTapeBand < resumeBand) {
+                        skippedRowsHere.fetch_add(band_rows[b]);
+                        skippedBandsHere.fetch_add(1);
+                        for (u64 t = 0; t < nparts; ++t) {
+                            char name[512];
+                            std::snprintf(name, sizeof name, "%s/w%" PRIu64 ".b%05" PRIu64 ".p%05" PRIu64,
+                                          scratch.c_str(), w, b, t);
+                            ::unlink(name);
+                        }
+                        continue;
+                    }
                     producerState(nextTapeBand, "credit");
                     if (!tapeBands.empty() && !lcpOn) {
                         reserveBand(nextTapeBand);
-                    } else if (!tapeBands.empty() && nextTapeBand >= pendingBands) {
+                    } else if (!tapeBands.empty() && nextTapeBand >= resumeBand + pendingBands) {
                         waitBandConsumed(nextTapeBand - pendingBands);
                         if (lcpOn) waitSliceCredit(nextTapeBand);
                     }
@@ -2302,6 +2452,12 @@ int main(int argc, char** argv) {
         // its last non-empty band: the next wave's first band seams against it
         // (wave seams were not written at all in an earlier version, and 4 of the
         // 22 seams at 150 MB then had a true LCP of 1).
+        bandsSkipped += skippedBandsHere.load();
+        rowsSkipped += skippedRowsHere.load();
+        if (skippedBandsHere.load() || skippedRowsHere.load())
+            std::fprintf(stderr, "SS_RESUME_SKIP_BANDS wave=%llu bands_skipped=%llu rows_skipped=%llu\n",
+                         (unsigned long long)w, (unsigned long long)skippedBandsHere.load(),
+                         (unsigned long long)skippedRowsHere.load());
         if (lcpOn)
             for (u64 b = 0; b < nbands; ++b)
                 if (bandLastPos[b] != ~0ull) prev_wave_last = bandLastPos[b];
@@ -2314,7 +2470,8 @@ int main(int argc, char** argv) {
             // wait cycle with all three tools asleep. The slice stream is bounded by
             // lcpWindowNow() instead, which is measured in rows and is what LCP_SLICE
             // reports.
-            for (u64 b = 0; b < nbands; ++b) waitBandConsumed(globalBand + b);
+            for (u64 b = 0; b < nbands; ++b)
+                if (globalBand + b >= resumeBand) waitBandConsumed(globalBand + b);
             globalBand += nbands;
         }
         emitted += wave_rows;
@@ -2403,8 +2560,20 @@ int main(int argc, char** argv) {
     if (!tapeBands.empty()) marker(tapeBands + "/producer.done");
     if (lcpOn && !tapeBands.empty()) {
         // THE RESIDENCY RECEIPT: the largest slice this producer ever held is one
-        // band's, and rows must sum to n. Both are gates, not telemetry.
-        if (lcpRows != N) die("lcp slices do not cover n");
+        // band's, and rows must sum to n. Both are gates, not telemetry. A
+        // resumed run's n is covered by THIS run's slices plus the retained ones
+        // below the frontier, whose rows it did not recompute.
+        lcpRows += rowsSkipped;
+        if (lcpRows != N)
+            die("lcp slices do not cover n: this run " + std::to_string(lcpRows - rowsSkipped) +
+                " + retained " + std::to_string(rowsSkipped) + " != n " + std::to_string(N));
+        if (resumeBand)
+            std::fprintf(stderr,
+                "SS_RESUME_SUMMARY from_band=%llu bands_skipped=%llu waves_skipped=%llu "
+                "rows_skipped=%llu bands_total=%llu rows_total=%llu\n",
+                (unsigned long long)resumeBand, (unsigned long long)bandsSkipped,
+                (unsigned long long)wavesSkippedCompletely, (unsigned long long)rowsSkipped,
+                (unsigned long long)globalBand, (unsigned long long)N);
         std::fprintf(stderr,
             "SS_LCP_STREAM mode=sorter-bands slices=%" PRIu64 " rows=%" PRIu64
             " escapes=%" PRIu64 " bytes=%" PRIu64 " max_live_lcp_slice_bytes=%" PRIu64
