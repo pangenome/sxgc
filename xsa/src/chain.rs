@@ -1200,6 +1200,7 @@ fn run_selftest(options: SelftestOptions) -> Result<(), String> {
 const SELFTEST_MEMORY_KB: u64 = 24 * 1048576;
 
 fn run_chain(options: Options) -> Result<(), String> {
+    let build_started = std::time::Instant::now();
     if options.tape && !options.plan_only { recovery::install()?; }
     let tools = bundle_tools()?;
     // Absolute paths everywhere: phases run with cwd inside the scratch tree.
@@ -1213,7 +1214,16 @@ fn run_chain(options: Options) -> Result<(), String> {
     let scratch = fs::canonicalize(scratch).map_err(|e| format!("resolve {}: {e}", options.scratch.display()))?;
     let _scratch_owner = lock_scratch(&scratch)?;
     let journal_path = scratch.join("xsa-build.log");
-    if options.tape && !options.plan_only && recovery::prepare(&options, &input, &scratch, &tools)? { return Ok(()); }
+    // THE FILESYSTEM IS THE JOURNAL: prepare() verifies the plan and ADOPTS the
+    // spool set that is present instead of clearing the tree.
+    let mut resume = false;
+    let mut plan_id = String::new();
+    if options.tape && !options.plan_only {
+        let (done, resuming, id) = recovery::prepare(&options, &input, &scratch, &tools)?;
+        if done { return Ok(()); }
+        resume = resuming;
+        plan_id = id;
+    }
     if options.tape && recovery::signal() != 0 {
         recovery::interrupted(&scratch)?; return Err("BUILD_INTERRUPTED".into());
     }
@@ -1518,7 +1528,8 @@ prove a fit (the projected peak exceeds the reported capacity)");
             journal.line("V2_PHRASE armed=0 (--phrase-radix absent: no parse, no dictionary, byte radix only)");
         }
         run_v2_tail(&mut journal, &options, &scratch, &tools, &input, &remap_path,
-                    n, memory_kb, finish_as_kb, &frag, bin_live_cap, plan_windows)?;
+                    n, memory_kb, finish_as_kb, &frag, bin_live_cap, plan_windows,
+                    &plan_id, resume, build_started)?;
         outcome.success = true;
         return Ok(());
     }
@@ -1689,6 +1700,9 @@ fn run_v2_tail(
     frag: &str,
     bin_live_cap: u64,
     plan_windows: u64,
+    plan_id: &str,
+    resume: bool,
+    build_started: std::time::Instant,
 ) -> Result<(), String> {
     let s = |path: &str| path.to_string();
     // NO TIMEOUTS, NO WATCHDOGS. Phases are spawned directly and run until they
@@ -1858,6 +1872,9 @@ walks the corpus for every endpoint and no LCP slice is produced). Not a user op
             "--budget-bytes".into(), tape_envelope.to_string(),
             "--memory-gb".into(), options.memory_gb.to_string(),
             "--threads".into(), options.threads.to_string(),
+            // THE PLAN IDENTITY: every band spool this producer publishes carries
+            // it, and a restart adopts one only if it matches.
+            "--plan-id".into(), plan_id.to_string(),
         ];
         if lce_verify { producer_args.push("--no-lcp-slices".into()); }
         emit_args = vec![
@@ -1867,7 +1884,21 @@ walks the corpus for every endpoint and no LCP slice is produced). Not a user op
             "--out-prefix".into(), frag.to_string(),
             "--threads".into(), options.threads.to_string(),
             "--tape-bands".into(), s(&bands_dir.to_string_lossy()),
+            "--plan-id".into(), plan_id.to_string(),
         ];
+        if resume {
+            emit_args.push("--resume".into());
+        }
+    }
+    // THE CENSUS, BEFORE ANY PHASE RUNS: what the filesystem says the previous
+    // attempt left behind. `spools_missing` is the plan's expectation minus what
+    // is present (the sorter's own verified skip set decides `recomputed`).
+    if options.tape {
+        let c = recovery::census(&scratch)?;
+        journal.line(&format!(
+            "RESUME_STATE spools_present={} lcp_present={} spools_missing={} recomputed={} pieces_present={} resume={}",
+            c.bands_present, c.lcp_present, c.bands_present.saturating_sub(c.bands_pending),
+            c.bands_pending, c.pieces_present, resume));
     }
     let mut finish_args: Vec<String> = Vec::new();
     finish_args.push(s(&tools.join("xsa_finish").to_string_lossy()));
@@ -2108,6 +2139,45 @@ walks the corpus for every endpoint and no LCP slice is produced). Not a user op
         if recovery::signal() != 0 {
             recovery::interrupted(scratch)?;
             return Err("BUILD_INTERRUPTED".into());
+        }
+        // THE RECEIPTS, from the stages' own counters (never inferred here).
+        // `rows_skipped` is the number of corpus rows a restart did NOT scatter
+        // and did NOT sort; the piece counts are the merge's own adoption count.
+        let sort_line = require_log_contains(scratch, "order-tape", "SS_RESUME_SORT").ok();
+        let merge_line = require_log_contains(scratch, "emit-tape", "CROSS_RESUME_TOTAL").ok();
+        let mut bpresent = 0u64;
+        let mut btotal = 0u64;
+        let mut brecomp = 0u64;
+        let mut rows_skipped = 0u64;
+        let mut ppresent = 0u64;
+        let mut ptotal = 0u64;
+        let mut precomp = 0u64;
+        if let Some(line) = &sort_line {
+            bpresent = field_u64(line, "bands_present").unwrap_or(0);
+            btotal = field_u64(line, "bands_total").unwrap_or(0);
+            brecomp = field_u64(line, "bands_recomputed").unwrap_or(0);
+            rows_skipped = field_u64(line, "rows_skipped").unwrap_or(0);
+        }
+        if let Some(line) = &merge_line {
+            ppresent = field_u64(line, "pieces_present").unwrap_or(0);
+            ptotal = field_u64(line, "pieces_total").unwrap_or(0);
+            precomp = field_u64(line, "pieces_recomputed").unwrap_or(0);
+        }
+        journal.line(&format!(
+            "RESUME_STATE spools_present={} spools_missing={} recomputed={}              bands_present={} bands_total={} bands_recomputed={}              pieces_present={} pieces_total={} pieces_recomputed={} resume={}",
+            bpresent + ppresent, brecomp + precomp, brecomp + precomp,
+            bpresent, btotal, brecomp, ppresent, ptotal, precomp, resume));
+    let wall = build_started.elapsed().as_secs_f64();
+        let full = std::env::var("XSA_FULL_BUILD_WALL_S")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok());
+        match full {
+            Some(f) if f > 0.0 => journal.line(&format!(
+                "WORK_AVOIDED rows_skipped={}/{} wall_resume={:.3} wall_full={:.3} ratio={:.4}",
+                rows_skipped, n, wall, f, wall / f)),
+            _ => journal.line(&format!(
+                "WORK_AVOIDED rows_skipped={}/{} wall_resume={:.3} wall_full=unset ratio=unset                  (set XSA_FULL_BUILD_WALL_S to the uninterrupted build's wall to price the ratio)",
+                rows_skipped, n, wall)),
         }
         recovery::done(scratch, &container)?;
     }

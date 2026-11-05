@@ -25,6 +25,7 @@
 // the class table). rlebwt is deleted after the container publishes
 // (unless --keep-rlebwt).
 #include "sxi_format.hpp"
+#include "spool.h"   // THE SPOOL LAYER (slice/state spool headers)
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -1219,7 +1220,8 @@ struct PieceSource {
             capturedRows += rows; classExtents.emplace(cl[0], extent); completed.push_back(std::move(cl));
         }
         pf_check(offset == uint64_t(st.st_size), "progress trailing data"); ::close(fd);
-        pf_check(::unlink(path.c_str()) == 0, "unlink consumed progress");
+        // RETAINED: the progress record is the merge's own restart record (it
+        // rebuilds its seam classes from it). Never deleted by the consumer.
         bandCounts.emplace(band, fields[1]); progress = int64_t(band);
         if (band) pf_check(bandCounts.at(band-1) == B, "partial band before EOF");
         read_terminal();
@@ -1295,7 +1297,8 @@ struct PieceSource {
             pf_check(lens[i]>0 && head<n && tail<n,"band record bounds");
             out.push_back({chars[i],lens[i],head,tail});
         }
-        pf_check(::unlink(path.c_str())==0,"unlink consumed band piece");
+        // RETAINED: the piece is the merge's durable progress record and the
+        // finish's input; a restart re-reads this exact file.
         // All raw runs are private now. Return the piece credit before any
         // repair, LCP, prefetch or verification work can wait on another stage.
         consumed_band(band);
@@ -4331,9 +4334,13 @@ struct LcpColumn {
     uint64_t slicesOpened = 0, slicesRetired = 0, emptySlices = 0;
     uint64_t maxSliceBytes = 0, maxLiveBytes = 0, escapesRead = 0;
     uint64_t sliceWaitWallMs = 0;
-    static constexpr uint32_t SLICE_MAGIC = 0x534c5853u;   // 'SXLS'
-    static constexpr uint32_t SLICE_VERSION = 1;
-    static constexpr uint32_t SLICE_HDR = 48;
+    // THE SLICE IS A SPOOL (bit6/spool.h): a 176-byte header carrying the plan
+    // identity, the band index, the row/escape counts, the rank base, the text
+    // endpoints and the payload SHA-256. The slice is NOT deleted when it is
+    // copied: a restart re-runs this stage and needs it again, so it is retained
+    // until the container publishes (deletion is a commit, and nothing has
+    // committed until then).
+    static constexpr uint64_t SLICE_HDR = spool::HDR;
     // A slice is published (renamed into place, then .lcp.done) before the band's
     // SA stream, so in an ordered pipeline this wait never triggers; it exists so
     // a broken producer fails LOUD here instead of publishing wrong coordinates.
@@ -4400,36 +4407,37 @@ struct LcpColumn {
         s.index = nextSlice;
         s.fd = ::open(path.c_str(), O_RDONLY);
         pf_check(s.fd >= 0, "open LCP slice " + path + ": " + std::strerror(errno));
-        uint8_t h[SLICE_HDR];
-        pread_at(s.fd, h, SLICE_HDR, 0, "lcp slice header");
-        uint32_t magic = 0, ver = 0;
-        std::memcpy(&magic, h + 0, 4);
-        std::memcpy(&ver, h + 4, 4);
-        std::memcpy(&s.rows, h + 8, 8);
-        std::memcpy(&s.escapeCount, h + 16, 8);
-        std::memcpy(&s.maxLcp, h + 24, 8);
-        std::memcpy(&s.rankBase, h + 32, 8);
-        uint64_t flags = 0;
-        std::memcpy(&flags, h + 40, 8);
-        pf_check(magic == SLICE_MAGIC, "LCP slice magic: " + path);
-        pf_check(ver == SLICE_VERSION, "LCP slice version: " + path);
-        pf_check(flags == 1, "LCP slice flags: only u8+escape is defined: " + path);
+        spool::Hdr h;
+        {
+            char raw[SLICE_HDR];
+            pread_at(s.fd, raw, SLICE_HDR, 0, "lcp slice header");
+            std::memcpy(&h, raw, SLICE_HDR);
+        }
+        s.rows = h.rows;
+        s.escapeCount = h.aux;
+        s.maxLcp = h.aux2;
+        s.rankBase = h.rank_base;
+        pf_check(std::memcmp(h.magic, spool::MAGIC_BAND_LCP, 8) == 0 && h.version == 1 &&
+                 h.index == s.index && h.payload_off == SLICE_HDR,
+                 "LCP slice spool header (magic/version/index): " + path);
         pf_check(s.rankBase == covered, "LCP slices do not tile the rank space: " + path +
                  " rank_base=" + std::to_string(s.rankBase) + " expected=" + std::to_string(covered));
         pf_check(s.rankBase + s.rows <= n, "LCP slice runs past n: " + path);
         struct stat st {};
         pf_check(::fstat(s.fd, &st) == 0, "stat LCP slice " + path);
-        pf_check(uint64_t(st.st_size) == uint64_t(SLICE_HDR) + s.rows + s.escapeCount * 16,
-                 "LCP slice size != 48 + rows + escapes*16: " + path);
+        pf_check(uint64_t(st.st_size) == h.payload_off + h.payload_bytes &&
+                 h.payload_bytes == s.rows + s.escapeCount * 16,
+                 "LCP slice size != header + rows + escapes*16: " + path);
         ++nextSlice;
         ++slicesOpened;
         if (!s.rows) {
             pf_check(s.escapeCount == 0, "empty LCP slice with escapes: " + path);
             ::close(s.fd); s.fd = -1;
-            pf_check(::unlink(path.c_str()) == 0, "unlink empty LCP slice " + path);
+            // RETAINED (see SLICE_HDR above): the slice is the record that the
+            // rank range it covers has been produced, and a restart needs it.
             int cf = ::open((base + ".lcp.consumed").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
-            pf_check(cf >= 0, "publish consumed empty LCP slice " + base);
-            ::close(cf);
+            pf_check(cf >= 0 || errno == EEXIST, "publish consumed empty LCP slice " + base);
+            if (cf >= 0) ::close(cf);
             ++slicesRetired;
             ++emptySlices;
             return;
@@ -4438,9 +4446,9 @@ struct LcpColumn {
         pread_at(s.fd, s.payload.data(), s.rows, SLICE_HDR, "lcp slice payload");
         loadSliceEscapes(s);
         ::close(s.fd); s.fd = -1;
-        pf_check(::unlink(path.c_str()) == 0, "unlink copied LCP slice " + path);
         int cf = ::open((base + ".lcp.consumed").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
-        pf_check(cf >= 0, "publish copied LCP slice " + base); ::close(cf);
+        pf_check(cf >= 0 || errno == EEXIST, "publish copied LCP slice " + base);
+        if (cf >= 0) ::close(cf);
         ++slicesRetired;
         covered += s.rows;
         maxSliceBytes = std::max(maxSliceBytes, s.rows + s.escapeCount * 16);

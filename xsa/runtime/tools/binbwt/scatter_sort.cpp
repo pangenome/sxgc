@@ -65,6 +65,8 @@
 #include <fstream>
 #include <sstream>
 
+#include "../../bit6/spool.h"
+
 using u8 = uint8_t;
 using u32 = uint32_t;
 using u64 = uint64_t;
@@ -792,6 +794,12 @@ int main(int argc, char** argv) {
     u64 pendingBands = 8;
     u64 budget_bytes = 0;       // THE ARENA ENVELOPE: the only input that sizes work
     double memory_gb = 0.0;     // the phase's --memory-gb, journaled (not used to size)
+    // THE SPOOL LAYER (see bit6/spool.h). `planId` is the build's plan identity:
+    // every band spool this run publishes carries it, so a spool produced by a
+    // different corpus/knobs/binaries can never be adopted on restart.
+    std::string planIdHex;
+    u8 planId[32] = {0};
+    bool planIdSet = false;
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -800,6 +808,7 @@ int main(int argc, char** argv) {
         else if (a == "--order-sample-lo") sampleLo = std::strtoull(nxt().c_str(), nullptr, 10);
         else if (a == "--order-sample-count") sampleCount = std::strtoull(nxt().c_str(), nullptr, 10);
         else if (a == "--tape-bands") tapeBands = nxt();
+        else if (a == "--plan-id") planIdHex = nxt();
         else if (a == "--pending-bands") pendingBands = std::strtoull(nxt().c_str(), nullptr, 10);
         else if (a == "--selftest") selftestOracle = nxt();
         else if (a == "--corpus") corpus = nxt();
@@ -824,6 +833,12 @@ int main(int argc, char** argv) {
     }
     (void)sort_mode;
     if (corpus.empty() || (out.empty() && tapeBands.empty())) die("--corpus and --out required");
+    if (!tapeBands.empty()) {
+        if (!spool::parse_plan(planIdHex, planId))
+            die("tape bands require --plan-id <64 hex chars>: a band spool must carry the "
+                "plan that produced it (see RESUME.md)");
+        planIdSet = true;
+    }
 
     if (!selftestOracle.empty() && !tapeBands.empty()) die("--selftest requires --out");
     if (!tapeBands.empty() && (!pendingBands || keep_rows))
@@ -1384,9 +1399,15 @@ int main(int argc, char** argv) {
         if (::rename((path + ".tmp").c_str(), path.c_str())) die("publish producer state " + path);
     };
     const u64 reorderRowCapacity = std::max<u64>(1, budget.stage / 8);
+    // A marker is a POSITIONAL ZERO-BYTE TOMBSTONE: "this stage position is
+    // reached". Creating it twice is the same fact twice, so EEXIST is success -
+    // that is what lets a restart adopt a directory that a killed run left behind.
     auto marker = [&](const std::string& path) {
         int f = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
-        if (f < 0) die("create tape marker " + path);
+        if (f < 0) {
+            if (errno == EEXIST) return;
+            die("create tape marker " + path);
+        }
         ::close(f);
     };
     // ============ THE TWO CONSUMERS, AND WHY THEIR WINDOWS DIFFER ============
@@ -1403,6 +1424,11 @@ int main(int argc, char** argv) {
     // of a band the sorter had not published. The credit below is MEASURED from
     // the run structure this producer already emits, never assumed.
     std::atomic<u64> lcpRowsSeen{0}, lcpRunsSeen{0};
+    // RESUME COUNTERS (exact): bands whose spool was present and verified, and
+    // the rows they hold. These are the rows this run did NOT scatter and did
+    // NOT sort - the WORK_AVOIDED receipt the driver reports.
+    std::atomic<u64> skippedBands{0}, skippedRows{0};
+    std::atomic<u64> skippedWaves{0};
     auto lcpFoldRows = [&]() -> u64 {                 // ROWS spanned by one 65536-RUN piece band
         const u64 seenRows = lcpRowsSeen.load(std::memory_order_relaxed);
         const u64 seenRuns = std::max<u64>(1, lcpRunsSeen.load(std::memory_order_relaxed));
@@ -1581,13 +1607,33 @@ int main(int argc, char** argv) {
     };
     if (!tapeBands.empty()) {
         struct stat ts{};
-        if (::stat(tapeBands.c_str(), &ts) != 0 || !S_ISDIR(ts.st_mode)) die("tape directory must exist and be fresh");
-        if (::access((tapeBands + "/manifest").c_str(), F_OK) == 0) die("stale tape manifest");
-        int mf = ::open((tapeBands + "/manifest").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
-        if (mf < 0) die("create tape manifest");
-        std::string meta = std::to_string(N) + (lcpOn ? " 1\n" : " 2 " + std::to_string(pendingBands) + " " + std::to_string(reorderRowCapacity) + "\n");
-        if (::write(mf, meta.data(), meta.size()) != (ssize_t)meta.size()) die("write tape manifest");
-        ::close(mf);
+        if (::stat(tapeBands.c_str(), &ts) != 0 || !S_ISDIR(ts.st_mode))
+            die("tape directory must exist (and must be empty or the interrupted plan's)");
+        // THE MANIFEST IS THE WAVE PROTOCOL'S OWN IDENTITY, so a restart may only
+        // adopt an existing one. It carries the plan identity: a manifest from a
+        // different corpus/knobs refuses here rather than producing a band stream
+        // whose spools no consumer can verify.
+        const std::string manifestPath = tapeBands + "/manifest";
+        const std::string meta = std::to_string(N) +
+            (lcpOn ? " 1 " : " 2 " + std::to_string(pendingBands) + " " + std::to_string(reorderRowCapacity) + " ") +
+            planIdHex + "\n";
+        if (::access(manifestPath.c_str(), F_OK) == 0) {
+            std::ifstream in(manifestPath);
+            std::string line;
+            std::getline(in, line);
+            if (line != meta)
+                die("tape manifest does not match this plan (present=\"" + line +
+                    "\" this=\"" + meta.substr(0, meta.size() - 1) +
+                    "\"): refusing to resume into a foreign band stream");
+            std::fprintf(stderr, "SS_RESUME_MANIFEST adopted=%s\n", manifestPath.c_str());
+        } else {
+            int mf = ::open(manifestPath.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+            if (mf < 0) die("create tape manifest");
+            if (::write(mf, meta.data(), meta.size()) != (ssize_t)meta.size()) die("write tape manifest");
+            if (::fsync(mf) != 0) die("sync tape manifest");
+            ::close(mf);
+            spool::sync_dir(tapeBands);
+        }
         marker(tapeBands + "/ready");
         std::fprintf(stderr, "SS_TAPE K=%llu packed_row_bytes=8 wave_cap=%llu\n", (unsigned long long)pendingBands, (unsigned long long)cap_bytes);
         std::fprintf(stderr,
@@ -1676,6 +1722,39 @@ int main(int argc, char** argv) {
             return std::upper_bound(bounds.begin(),bounds.end(),p,
                 [](u64 pos,const TapeFence& f){const int c=prefix_cmp(pos,f.pos,f.depth); return c<0 || (c==0 && f.after);})-bounds.begin();
         };
+        // ---- RESUME READS THE FILESYSTEM -------------------------------------
+        // A band of THIS wave is already DONE iff
+        //   its LCP slice is present and verifies against this plan, AND
+        //   its SA spool is present and verifies, OR the merge's positional
+        //   tombstone band_<i>.consumed exists (the SA was incorporated into
+        //   durable pieces and deleted: deletion IS the commit record).
+        // Done bands are not scattered, not sorted and not published: their rows
+        // are dropped in the scan below, their header row counts keep every later
+        // band's rank base aligned, and their header last position carries the
+        // wave seam the next wave's first band needs.
+        std::vector<u8> skipBand(nbands, 0);
+        std::vector<u64> skipRows(nbands, 0);
+        std::vector<u64> skipLast(nbands, ~0ull);
+        u64 waveSkippedBands = 0, waveSkippedRows = 0;
+        if (!tapeBands.empty()) {
+            for (u64 b = 0; b < nbands; ++b) {
+                const u64 tb = globalBand + b;
+                spool::Hdr lh;
+                if (!spool::verify(bandPath(tb, ".lcp"), spool::MAGIC_BAND_LCP, tb, planId, &lh)) continue;
+                spool::Hdr sh;
+                const bool haveSa = spool::verify(bandPath(tb, ".sa"), spool::MAGIC_BAND_SA, tb, planId, &sh);
+                const bool consumed = ::access(bandPath(tb, ".consumed").c_str(), F_OK) == 0;
+                if (!haveSa && !consumed) continue;   // a torn publish: recompute it
+                skipBand[b] = 1;
+                skipRows[b] = lh.rows;
+                skipLast[b] = lh.last_pos;
+                ++waveSkippedBands; waveSkippedRows += lh.rows;
+            }
+            if (waveSkippedBands) skippedWaves.fetch_add(1, std::memory_order_relaxed);
+            if (waveSkippedBands && (ifd >= 0 || sampleFd >= 0))
+                die("resume with --isa-sample-out/--order-sample-out is not supported: "
+                    "the skipped bands' anchors would never be written");
+        }
 
         // ---- scatter this wave only ----
         const u64 nparts = std::max<u64>(1, threads);
@@ -1788,6 +1867,7 @@ int main(int argc, char** argv) {
                     r.pos = pack_sym(p, sy);
                     u64 b = route(p);
                     if (b >= nbands) b = nbands - 1;
+                    if (skipBand[b]) continue;      // already on disc: never re-scattered
                     auto& v = bufs[t][b];
                     v.insert(v.end(), (const u8*)&r, (const u8*)&r + sizeof(Row));
                     if (v.size() >= bufsz) flush_buf(t, b);
@@ -1805,6 +1885,7 @@ int main(int argc, char** argv) {
         for (u64 p = KEY_N; p < N; ++p) {
             if (!wave_match(p)) continue;   // the finite tails use the same predicate
             const u64 b=route(p);
+            if (skipBand[b]) continue;          // already on disc: never re-scattered
             Row r{};
             r.pos = pack_sym(p, p == 0 ? SENTINEL_SYMBOL : u8(sym_at(p - 1)));
             tailBands[b].push_back(r);
@@ -1819,6 +1900,7 @@ int main(int argc, char** argv) {
         // each band can write DIRECTLY there. No append copy, no serial tail.
         std::vector<u64> band_rows(nbands, 0), band_off(nbands, 0);
         for (u64 b = 0; b < nbands; ++b) {
+            if (skipBand[b]) { band_rows[b] = skipRows[b]; continue; }
             for (u64 t = 0; t < nparts; ++t) {
                 char name[512];
                 std::snprintf(name, sizeof name, "%s/w%" PRIu64 ".b%05" PRIu64 ".p%05" PRIu64,
@@ -1888,7 +1970,16 @@ int main(int argc, char** argv) {
                     if (b >= nbands) return;
                     const u64 nextTapeBand = globalBand + b;
                     producerState(nextTapeBand, "credit");
-                    if (!tapeBands.empty() && !lcpOn) {
+                    if (skipBand[b]) {
+                        // Nothing is produced for this band, so it needs no disk
+                        // credit. Its seam position is published HERE, before any
+                        // arena wait, so a later band's seam never spins on a band
+                        // that is blocked behind the arena gate.
+                        bandLastPos[b] = skipLast[b];
+                        if (lcpOn)
+                            bandPub[b].store(skipLast[b] == ~0ull ? 1ull : (skipLast[b] + 2),
+                                             std::memory_order_release);
+                    } else if (!tapeBands.empty() && !lcpOn) {
                         reserveBand(nextTapeBand);
                     } else if (!tapeBands.empty() && nextTapeBand >= pendingBands) {
                         waitBandConsumed(nextTapeBand - pendingBands);
@@ -1898,6 +1989,14 @@ int main(int argc, char** argv) {
                 }
                 const u64 admitted = band_rows[b];
                 const u64 tapeBand = globalBand + b;
+                if (skipBand[b]) {
+                    // THE RESUME PATH: verified on disc, nothing to recompute.
+                    producerState(tapeBand, "published");
+                    skippedBands.fetch_add(1, std::memory_order_relaxed);
+                    skippedRows.fetch_add(skipRows[b], std::memory_order_relaxed);
+                    gate.release(admitted);
+                    continue;
+                }
                 producerState(tapeBand, "read");
                 // ---- THE BAND BODY: EVERYTHING THAT ALLOCATES, AND THE SHRINK ----
                 // A std::bad_alloc inside a worker is std::terminate (rc=134, the
@@ -2084,6 +2183,13 @@ int main(int argc, char** argv) {
                 }
                 const double bs0 = now_sec();
                         producerState(tapeBand, "sort");
+                // The band's text-position endpoints, computed ONCE here: they go
+                // into both spool headers (a restart that skips this band reads them
+                // back to carry the wave seam without the rows) and into bandPub.
+                const u64 firstP = rows.empty() ? ~0ull : unpack_pos(rows.front().pos);
+                const u64 lastP = rows.empty() ? ~0ull : unpack_pos(rows.back().pos);
+                bandFirstPos[b] = firstP;
+                bandLastPos[b] = lastP;
                 if (lcpOn) {
                     if (tapeBands.empty()) {
                         // the one-file arm: the band's LCP stream lands at its own
@@ -2101,30 +2207,43 @@ int main(int argc, char** argv) {
                             for (auto& e : bandEsc) gEsc.push_back(e);
                         }
                     } else {
-                        // ---- THE SLICE -------------------------------------------------
-                        // band_<i>.lcp: 48-byte header {rows, escapes, max_lcp,
-                        // rank_base, flags} + rows bytes + escapes*16. Published by
-                        // rename, then .lcp.done, and it is consumed (deleted) by the
-                        // fold that reads it -> .lcp.consumed, which is this
-                        // producer's flow control for the NEXT K bands.
+                        // ---- THE SLICE: A SELF-DESCRIBING SPOOL -----------------------
+                        // band_<i>.lcp is a spool (bit6/spool.h): 176-byte header
+                        // {plan identity, band index, rows, escapes, max_lcp,
+                        // rank_base, first/last text position, payload SHA-256} +
+                        // rows bytes + escapes*16. Published atomically by
+                        // `<name>.part` -> fdatasync -> hash -> rename -> fsync(dir),
+                        // then .lcp.done. The fold that reads it unlinks it only when
+                        // the state that consumed it is durable.
                         u64 maxL = 0;
                         for (u64 i = 0; i < bandLcp.size(); ++i) maxL = std::max<u64>(maxL, bandLcp[i]);
                         for (const auto& e : bandEsc) maxL = std::max(maxL, e.second);
-                        const std::string tmp = bandPath(tapeBand, ".lcp.tmp");
+                        const std::string tmp = bandPath(tapeBand, ".lcp.part");
                         const std::string dst = bandPath(tapeBand, ".lcp");
-                        int lf = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+                        int lf = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
                         if (lf < 0) die("create lcp slice " + tmp);
-                        u8 h[48];
-                        std::memset(h, 0, sizeof h);
-                        const uint32_t magic = 0x534C5853u, ver = 1;   // 'SXLS', v1
-                        std::memcpy(h + 0, &magic, 4);
-                        std::memcpy(h + 4, &ver, 4);
-                        const u64 rowsN = bandLcp.size(), escN = bandEsc.size(), flags = 1;
-                        std::memcpy(h + 8, &rowsN, 8);
-                        std::memcpy(h + 16, &escN, 8);
-                        std::memcpy(h + 24, &maxL, 8);
-                        std::memcpy(h + 32, &band_off[b], 8);
-                        std::memcpy(h + 40, &flags, 8);
+                        spool::Hdr h{};
+                        std::memcpy(h.magic, spool::MAGIC_BAND_LCP, 8);
+                        h.index = tapeBand;
+                        h.rows = u64(bandLcp.size());
+                        h.first_pos = firstP;
+                        h.last_pos = lastP;
+                        h.rank_base = band_off[b];
+                        h.payload_off = spool::HDR;
+                        h.payload_bytes = u64(bandLcp.size()) + u64(bandEsc.size()) * 16;
+                        h.aux = u64(bandEsc.size());   // escape count
+                        h.aux2 = maxL;                 // max_lcp
+                        std::memcpy(h.plan, planId, 32);
+                        {
+                            durable_piece::Sha256 ctx;
+                            if (!bandLcp.empty()) ctx.update(bandLcp.data(), bandLcp.size());
+                            for (const auto& e : bandEsc) {
+                                const u64 pair[2] = {e.first, e.second};
+                                ctx.update(pair, 16);
+                            }
+                            if (!spool::parse_plan(ctx.finish(), h.sha)) die("lcp slice sha");
+                        }
+                        spool::write_hdr_full(lf, h);
                         auto wf = [&](const void* p, size_t n2) {
                             const char* c = (const char*)p;
                             size_t gone = 0;
@@ -2134,14 +2253,12 @@ int main(int argc, char** argv) {
                                 gone += size_t(wr);
                             }
                         };
-                        wf(h, 48);
                         if (!bandLcp.empty()) wf(bandLcp.data(), bandLcp.size());
                         for (const auto& e : bandEsc) {
                             const u64 pair[2] = {e.first, e.second};
                             wf(pair, 16);
                         }
-                        if (::close(lf)) die("close lcp slice");
-                        if (::rename(tmp.c_str(), dst.c_str()) != 0) die("publish lcp slice");
+                        spool::publish_part(lf, tmp, dst, tapeBands, h.sha);
                         marker(dst + ".done");
                         const u64 sliceBytes = bandLcp.size() + bandEsc.size() * 16;
                         {
@@ -2163,12 +2280,10 @@ int main(int argc, char** argv) {
                             lcpPeakLiveSlices = std::max<u64>(lcpPeakLiveSlices, u64(lcpLive.size()));
                         }
                     }
-                    bandFirstPos[b] = rows.empty() ? ~0ull : unpack_pos(rows.front().pos);
-                    bandLastPos[b] = rows.empty() ? ~0ull : unpack_pos(rows.back().pos);
                 }
                 // PUBLISH the band's last row for the next band's seam. 1 = empty
                 // band, else lastPos + 2 (0 stays "not published").
-                if (lcpOn) bandPub[b].store(rows.empty() ? 1ull : (unpack_pos(rows.back().pos) + 2),
+                if (lcpOn) bandPub[b].store(rows.empty() ? 1ull : (lastP + 2),
                                             std::memory_order_release);
                 tSort[b] += now_sec() - bs0;
                 const double bw0 = now_sec();
@@ -2211,15 +2326,39 @@ int main(int argc, char** argv) {
                 if (!tapeBands.empty()) {
                     // Compact wire: low 48 bits position, next 8 bits carried symbol.
                     for (size_t i = 0; i < ob.size(); ++i) ob[i] |= u64(sb[i]) << 48;
-                    int bf = ::open(bandPath(tapeBand, ".sa").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
-                    if (bf < 0) die("create tape band");
+                    // THE BAND SPOOL (bit6/spool.h). Its header carries the plan
+                    // identity, the band index, the row count and the payload hash, so
+                    // a restart verifies it FROM ITSELF and skips the scatter+sort for
+                    // this band. The slice (.lcp) is published BEFORE this file: a
+                    // band's LCP slice therefore always exists when its SA does, which
+                    // is what makes ".lcp present" the band's durable progress record.
+                    const std::string tmp = bandPath(tapeBand, ".sa.part");
+                    const std::string dst = bandPath(tapeBand, ".sa");
+                    int bf = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+                    if (bf < 0) die("create tape band " + tmp);
+                    spool::Hdr h{};
+                    std::memcpy(h.magic, spool::MAGIC_BAND_SA, 8);
+                    h.index = tapeBand;
+                    h.rows = u64(ob.size());
+                    h.first_pos = firstP;
+                    h.last_pos = lastP;
+                    h.rank_base = band_off[b];
+                    h.payload_off = spool::HDR;
+                    h.payload_bytes = u64(ob.size()) * 8;
+                    std::memcpy(h.plan, planId, 32);
+                    {
+                        durable_piece::Sha256 ctx;
+                        if (!ob.empty()) ctx.update(ob.data(), ob.size() * 8);
+                        if (!spool::parse_plan(ctx.finish(), h.sha)) die("band spool sha");
+                    }
+                    spool::write_hdr_full(bf, h);
                     size_t off = 0, bytes = ob.size() * 8;
                     while (off < bytes) {
                         ssize_t wr = ::write(bf, (const char*)ob.data() + off, bytes - off);
                         if (wr <= 0) die("write tape band");
                         off += size_t(wr);
                     }
-                    if (::close(bf)) die("close tape band");
+                    spool::publish_part(bf, tmp, dst, tapeBands, h.sha);
                     marker(bandPath(tapeBand, ".done"));
                 } else {
                 // direct write at this band's offset in the global streams
@@ -2265,7 +2404,7 @@ int main(int argc, char** argv) {
         };
         if (!tapeBands.empty()) {
             if (w + 1 == waves) {
-                int ef = ::open((tapeBands + "/end").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+                int ef = ::open((tapeBands + "/end").c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
                 if (ef < 0) die("create tape end");
                 std::string count = std::to_string(globalBand + nbands) + "\n";
                 if (::write(ef, count.data(), count.size()) != (ssize_t)count.size()) die("write tape end");
@@ -2314,7 +2453,8 @@ int main(int argc, char** argv) {
             // wait cycle with all three tools asleep. The slice stream is bounded by
             // lcpWindowNow() instead, which is measured in rows and is what LCP_SLICE
             // reports.
-            for (u64 b = 0; b < nbands; ++b) waitBandConsumed(globalBand + b);
+            for (u64 b = 0; b < nbands; ++b)
+                if (!skipBand[b]) waitBandConsumed(globalBand + b);
             globalBand += nbands;
         }
         emitted += wave_rows;
@@ -2401,10 +2541,22 @@ int main(int argc, char** argv) {
     if (ofd >= 0) { ::fsync(ofd); ::close(ofd); }
     if (sfd >= 0) { ::fsync(sfd); ::close(sfd); }
     if (!tapeBands.empty()) marker(tapeBands + "/producer.done");
+    if (!tapeBands.empty())
+        std::fprintf(stderr, "SS_RESUME_SORT bands_present=%" PRIu64 " bands_total=%" PRIu64
+                             " bands_recomputed=%" PRIu64 " rows_skipped=%" PRIu64
+                             " n=%" PRIu64 " waves_skipped=%" PRIu64 "\n",
+                     skippedBands.load(), globalBand,
+                     globalBand >= skippedBands.load() ? globalBand - skippedBands.load() : 0,
+                     skippedRows.load(), N, skippedWaves.load());
     if (lcpOn && !tapeBands.empty()) {
         // THE RESIDENCY RECEIPT: the largest slice this producer ever held is one
         // band's, and rows must sum to n. Both are gates, not telemetry.
-        if (lcpRows != N) die("lcp slices do not cover n");
+        // A resumed build writes slices only for the bands it recomputed; the rows
+        // those slices cover plus the rows of the VERIFIED retained spools must
+        // still be exactly n. A shortfall is a lost band, not a footnote.
+        if (lcpRows + skippedRows.load() != N)
+            die("lcp slices do not cover n: written=" + std::to_string(lcpRows) +
+                " retained=" + std::to_string(skippedRows.load()) + " n=" + std::to_string(N));
         std::fprintf(stderr,
             "SS_LCP_STREAM mode=sorter-bands slices=%" PRIu64 " rows=%" PRIu64
             " escapes=%" PRIu64 " bytes=%" PRIu64 " max_live_lcp_slice_bytes=%" PRIu64

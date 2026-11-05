@@ -5664,6 +5664,15 @@ int main_impl(int argc, char** argv) {
         }
         const std::string capFlag = flag("--bin-live-cap");        const bool binLiveCapGiven = !capFlag.empty();
         const U binLiveCap = binLiveCapGiven ? std::stoull(capFlag) : 0;
+        // THE SPOOL LAYER: the plan identity every band spool is checked against,
+        // and the resume switch (adopt the piece stream already on disc).
+        {
+            const std::string planHex = flag("--plan-id");
+            require(spool::parse_plan(planHex, spool::g_plan),
+                    "the tape route requires --plan-id <64 hex chars>: every spool must "
+                    "carry the plan that produced it (see RESUME.md)");
+            spool::g_resume = has("--resume");
+        }
         const std::string tapeEmit = flag("--tape-bands").empty() ? flag("--tape-emit") : "bands:" + flag("--tape-bands");
         require(flag("--tape-bands").empty() || flag("--tape-emit").empty(), "choose one tape input");
         const U tapeEmitChunk = flag("--tape-emit-chunk").empty()

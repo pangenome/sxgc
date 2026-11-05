@@ -1,3 +1,5 @@
+#include "spool.h"   // THE SPOOL LAYER: self-describing spools, atomic publication
+#include <dirent.h>
 static_assert(sizeof(U) == sizeof(uint64_t) && U(-1) > U(0),
               "binbwt run, position and rank indices require unsigned 64-bit U");
 // ------------------------------------------------- bin-bwt v1 (operator shape)
@@ -3088,6 +3090,14 @@ struct BinBandSink {
         U sourceBand = UINT64_MAX, sourceFirstRun = 0, sourceEndRun = 0;
         std::vector<BandRun> runs;
         std::vector<char> gmark;
+        // THE STATE SPOOL (`s-<band>`): everything about this band boundary that
+        // the pieces themselves do NOT carry - the still-open seam class and the
+        // run-rank exceptions accumulated inside this band. Written in closeBand,
+        // i.e. synchronously with the rows that produced it, and published with
+        // the piece. Without it a restart could rebuild every closed class from
+        // the progress records but not the open one.
+        std::vector<U> state;
+        U rowsEnd = 0;                  // global row index one past this band's last row
     };
     // ---- fixed shape -----------------------------------------------------
     const CorpusText* text = nullptr;
@@ -3113,6 +3123,7 @@ struct BinBandSink {
     U pendHeadRank = 0;                 // row index where the pending run opened
     U bandBaseRank = 0, bandCumLen = 0; // band's first row index / run-length prefix
     U excRuns = 0;
+    U excMark = 0;                      // runExc entries already published in a state spool
     std::vector<U> runExc;              // flat triples (run, head rank, tail rank)
     std::array<U, 256> counts{}, frequencies{};
     std::vector<Class> classes;
@@ -3134,7 +3145,8 @@ struct BinBandSink {
         : text(&t), n(t.n), window(v2_piece_window()),
           width(std::max<unsigned>(1, 64 - __builtin_clzll(t.n))),
           dollar(dlr), prefix(p), dir(p + ".pieces") {
-        require(::mkdir(dir.c_str(), 0777) == 0, "create band pieces directory");
+        if (::mkdir(dir.c_str(), 0777) != 0 && errno != EEXIST)
+            require(false, "create band pieces directory");
         seam.discover(t, n, std::min<U>(1u << 26, std::max<U>(1000, inputRuns / 1000)));
         for (const auto& cl : seam.raw) firstSizes.emplace(cl.first, cl.hi);
         targets.reserve(seam.targets.size());
@@ -3336,6 +3348,12 @@ struct BinBandSink {
         job.band = bandNo; job.firstRun = bandStart;
         job.sourceBand = sourceBand; job.sourceFirstRun = sourceFirstRun; job.sourceEndRun = index;
         job.words = bandWords; job.rlebwtOff = wordsDone;
+        job.rowsEnd = next;
+        // THE BOUNDARY STATE IS CAPTURED HERE, synchronously with the rows that
+        // produced it: the writer thread must never look at `classes`/`runExc`,
+        // which belong to this thread and keep moving.
+        job.state = statePayload(active, excMark);
+        excMark = runExc.size();
         job.runs.swap(band.runs);
         bandBaseRank = next;      // the next row index starts the next band
         bandCumLen = 0;
@@ -3413,6 +3431,37 @@ struct BinBandSink {
             xput(fd, job.gmark.data(), job.gmark.size(), 0, "band progress write");
             require(::close(fd) == 0, "close band progress");
             require(::rename(tmp.c_str(), fin.c_str()) == 0, "publish band progress");
+            // THE STATE SPOOL: the open class + this band's run-rank exceptions.
+            // Published atomically like every other spool; a restart rebuilds the
+            // piece stream's boundary state from it (and from the pieces).
+            {
+                const std::string st = dir + "/s-" + std::to_string(job.band);
+                const std::string stmp = st + ".part";
+                int sfd = ::open(stmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+                require(sfd >= 0, "create band state spool");
+                spool::Hdr h{};
+                std::memcpy(h.magic, "SXSPT001", 8);
+                h.index = job.band;
+                h.rows = job.rowsEnd;
+                h.runs = job.sourceEndRun;
+                h.payload_off = spool::HDR;
+                h.payload_bytes = uint64_t(job.state.size()) * 8;
+                std::memcpy(h.plan, spool::g_plan, 32);
+                {
+                    durable_piece::Sha256 ctx;
+                    if (!job.state.empty()) ctx.update(job.state.data(), job.state.size() * 8);
+                    require(spool::parse_plan(ctx.finish(), h.sha), "band state spool sha");
+                }
+                spool::write_hdr_full(sfd, h);
+                size_t off = 0, bytes = job.state.size() * 8;
+                while (off < bytes) {
+                    ssize_t z = ::write(sfd, (const char*)job.state.data() + off, bytes - off);
+                    require(z > 0, "write band state spool");
+                    off += size_t(z);
+                }
+                spool::publish_part(sfd, stmp, st, dir, h.sha);
+            }
+            markDurable(job.band, job.rowsEnd);
             {
                 std::lock_guard<std::mutex> lk(mu);
                 tWrite += now_sec() - t0;
@@ -3421,6 +3470,244 @@ struct BinBandSink {
             cvSlot.notify_one();
         }
     }
+    // ---- THE DURABLE PREFIX OF THE PIECE STREAM ---------------------------
+    // Deleting a band spool is a COMMIT: it may happen only once the state that
+    // consumed it is durable. Writers publish pieces out of order, so the record
+    // that authorises a deletion is the longest CONTIGUOUS prefix of published
+    // piece bands, not "my writer finished".
+    std::mutex dpMu;
+    std::map<U, U> dpEnd;               // published band -> its rowsEnd
+    U dpBandNo = 0, dpRows = 0;
+    void markDurable(U band, U rowsEnd) {
+        std::lock_guard<std::mutex> lk(dpMu);
+        dpEnd[band] = rowsEnd;
+        for (;;) {
+            auto it = dpEnd.find(dpBandNo);
+            if (it == dpEnd.end()) break;
+            dpRows = it->second;
+            dpEnd.erase(it);
+            ++dpBandNo;
+        }
+    }
+    U durableRows() {
+        std::lock_guard<std::mutex> lk(dpMu);
+        return dpRows;
+    }
+    U durableBand() {
+        std::lock_guard<std::mutex> lk(dpMu);
+        return dpBandNo;
+    }
+    // Serialize this boundary's out-of-piece state. Layout (little endian u64):
+    //   openClassId, firstRun, lo, hi, first, before, occCount, occ[occCount],
+    //   excCount, (pos, headRank, tailRank)[excCount]
+    std::vector<U> statePayload(U openId, U excFrom) {
+        std::vector<U> v;
+        if (openId == UINT64_MAX) {
+            v.push_back(UINT64_MAX); v.push_back(0); v.push_back(0);
+            v.push_back(0); v.push_back(0); v.push_back(0); v.push_back(0);
+        } else {
+            const Class& cl = classes[openId];
+            v.push_back(openId); v.push_back(cl.firstRun);
+            v.push_back(cl.value.lo); v.push_back(cl.value.hi);
+            v.push_back(cl.value.first); v.push_back(cl.value.before);
+            v.push_back(cl.value.occ.size());
+            for (U p : cl.value.occ) v.push_back(p);
+        }
+        const U excN = (runExc.size() - excFrom) / 3;
+        v.push_back(excN);
+        for (size_t i = excFrom; i < runExc.size(); ++i) v.push_back(runExc[i]);
+        return v;
+    }
+    // ===================== RESTART READS THE FILESYSTEM =====================
+    // Rebuild this sink's boundary state from the piece stream that is already
+    // on disc, and return the ROW FRONTIER (a multiple of the run-band size).
+    // Everything below the frontier is derived, never re-read from the corpus:
+    //
+    //   runs / rows / run counts / run frequencies / previous row position /
+    //       the final row of the last run   <- the piece files (`p-<band>-0`)
+    //   every CLOSED seam class             <- the progress records (`g-<band>`)
+    //   the still-open seam class and the   <- the state spool (`s-<band>`)
+    //       run-rank exceptions
+    //
+    // Pieces above the frontier are stale (published by the killed run but not
+    // covered by a durable successor state) and are DELETED: their spools were
+    // never incorporated, so removing them cannot lose work.
+    U resumeFromPieces() {
+        U F = 0;
+        auto exists = [&](U b, const char* prefix, const char* suffix) {
+            struct stat st{};
+            return ::stat((dir + "/" + prefix + std::to_string(b) + suffix).c_str(), &st) == 0;
+        };
+        for (;;) {
+            if (!exists(F, "p-", "-0") || !exists(F, "g-", "") || !exists(F, "s-", "")) break;
+            ++F;
+        }
+        // Stale tail: everything at or above the frontier.
+        U dropped = 0;
+        for (U b = F;; ++b) {
+            bool any = false;
+            for (const char* part : {"p-", "g-", "s-"}) {
+                const std::string path = dir + "/" + part + std::to_string(b) +
+                                         (part[0] == 'p' ? "-0" : "");
+                if (::unlink(path.c_str()) == 0) any = true;
+            }
+            if (!any) break;
+            ++dropped;
+        }
+        if (dropped) std::fprintf(stderr, "CROSS_RESUME_STALE bands=%llu\n",
+                                  (unsigned long long)dropped);
+        // ---- 1. the run side, from the pieces ------------------------------
+        U rowsSoFar = 0, runsSoFar = 0, lastPos = n - 1;
+        for (U b = 0; b < F; ++b) {
+            const std::string path = dir + "/p-" + std::to_string(b) + "-0";
+            int fd = ::open(path.c_str(), O_RDONLY);
+            require(fd >= 0, ("resume: open piece " + path).c_str());
+            char hdr[44];
+            require(::read(fd, hdr, 44) == 44, "resume: piece header");
+            uint32_t magic = 0, shard = 0, w = 0;
+            U pband = 0, first = 0, rc = 0, zero = 0;
+            std::memcpy(&magic, hdr, 4); std::memcpy(&pband, hdr + 4, 8);
+            std::memcpy(&shard, hdr + 12, 4); std::memcpy(&first, hdr + 16, 8);
+            std::memcpy(&rc, hdr + 24, 8); std::memcpy(&w, hdr + 32, 4);
+            std::memcpy(&zero, hdr + 36, 8);
+            require(magic == 0x31435250 && pband == b && shard == 0 && first == b * 65536 &&
+                    w == width && zero == 0 && rc > 0, ("resume: piece dimensions " + path).c_str());
+            const U words = (U(w) * rc + 63) / 64;
+            struct stat st{};
+            require(::fstat(fd, &st) == 0 && U(st.st_size) == 44 + 5 * rc + 16 * words,
+                    ("resume: piece size " + path).c_str());
+            std::vector<uint8_t> chars(size_t(rc), 0);
+            std::vector<uint32_t> lens(size_t(rc), 0);
+            std::vector<U> tails(size_t(words), 0);
+            require(::pread(fd, chars.data(), rc, 44) == ssize_t(rc), "resume: piece chars");
+            require(::pread(fd, lens.data(), 4 * rc, off_t(44 + rc)) == ssize_t(4 * rc), "resume: piece lens");
+            require(::pread(fd, tails.data(), 8 * words, off_t(44 + 5 * rc + 8 * words)) ==
+                    ssize_t(8 * words), "resume: piece tails");
+            ::close(fd);
+            for (U i = 0; i < rc; ++i) {
+                require(lens[i] > 0, "resume: zero run length");
+                counts[chars[i]] += lens[i];
+                ++frequencies[chars[i]];
+            }
+            rowsSoFar = first * 0 + rowsSoFar;   // rows are NOT band*B: they are run lengths
+            for (U i = 0; i < rc; ++i) rowsSoFar += lens[i];
+            runsSoFar += rc;
+            const U bit = U(w) * (rc - 1), wi = bit / 64, shift = bit % 64;
+            U tail = tails[size_t(wi)] >> shift;
+            if (shift + w > 64) tail |= tails[size_t(wi + 1)] << (64 - shift);
+            lastPos = tail & ((w == 64) ? ~U(0) : ((U(1) << w) - 1));
+            require(lastPos < n, "resume: tail position out of range");
+        }
+        require(rowsSoFar == F * 0 + rowsSoFar, "resume: row accounting");
+        next = rowsSoFar; rows = rowsSoFar;
+        index = runsSoFar;
+        bandStart = index;                       // == F * 65536 when every band is full
+        bandBaseRank = next; bandCumLen = 0;
+        prevLastPos = lastPos;
+        pending = SparseRun{};
+        sourceBand = UINT64_MAX;                 // re-established by the next publishBin
+        // ---- 2. the closed seam classes, from the progress records ---------
+        for (U b = 0; b < F; ++b) {
+            const std::string path = dir + "/g-" + std::to_string(b);
+            int fd = ::open(path.c_str(), O_RDONLY);
+            require(fd >= 0, ("resume: open progress " + path).c_str());
+            struct stat st{};
+            require(::fstat(fd, &st) == 0 && U(st.st_size) >= 36, "resume: progress size");
+            std::vector<char> buf(size_t(st.st_size));
+            require(::pread(fd, buf.data(), buf.size(), 0) == ssize_t(buf.size()), "resume: progress read");
+            ::close(fd);
+            uint64_t fields[4];
+            std::memcpy(fields, buf.data() + 4, 32);
+            require(std::memcmp(buf.data(), "BPG1", 4) == 0 && fields[0] == b &&
+                    fields[1] > 0 && fields[1] <= 65536, "resume: progress dimensions");
+            size_t at = 36;
+            auto take = [&]() {
+                require(at + 8 <= buf.size(), "resume: truncated progress");
+                U v = 0; std::memcpy(&v, buf.data() + at, 8); at += 8; return v;
+            };
+            if (fields[2]) {   // open-class references: nothing to rebuild here
+                for (U i = 0; i < fields[2]; ++i) (void)take();
+            }
+            for (U i = 0; i < fields[3]; ++i) {
+                const U id = take();
+                Class cl;
+                cl.firstRun = take(); cl.lastRun = take();
+                cl.value.lo = take(); cl.value.hi = take();
+                cl.value.first = take(); cl.value.before = take(); cl.value.after = take();
+                require(id == classes.size() && cl.lastRun != UINT64_MAX,
+                        "resume: closed class out of order");
+                const U occN = cl.value.hi - cl.value.lo;
+                for (U j = 0; j < occN; ++j) cl.value.occ.push_back(take());
+                require(at == buf.size(), "resume: progress trailing data");
+                classes.push_back(std::move(cl));
+            }
+            require(at == buf.size(), "resume: progress trailing data");
+        }
+        publishedClasses = classes.size();
+        active = UINT64_MAX;
+        // ---- 3. the open class + exceptions, from the last state spool -----
+        if (F) {
+            const std::string path = dir + "/s-" + std::to_string(F - 1);
+            int fd = ::open(path.c_str(), O_RDONLY);
+            require(fd >= 0, ("resume: open state spool " + path).c_str());
+            spool::Hdr h;
+            require(spool::read_hdr(fd, h) && std::memcmp(h.magic, "SXSPT001", 8) == 0 &&
+                    h.index == F - 1 && h.rows == next && h.runs == index &&
+                    std::memcmp(h.plan, spool::g_plan, 32) == 0, ("resume: state spool header " + path).c_str());
+            std::vector<U> v(size_t(h.payload_bytes / 8));
+            require(::pread(fd, v.data(), h.payload_bytes, off_t(spool::HDR)) ==
+                    ssize_t(h.payload_bytes), "resume: state spool payload");
+            ::close(fd);
+            size_t at = 0;
+            auto take = [&]() { require(at < v.size(), "resume: state spool short"); return v[at++]; };
+            const U openId = take();
+            Class open;
+            open.firstRun = take();
+            open.value.lo = take(); open.value.hi = take();
+            open.value.first = take(); open.value.before = take();
+            const U occN = take();
+            for (U i = 0; i < occN; ++i) open.value.occ.push_back(take());
+            if (openId != UINT64_MAX) {
+                require(openId == classes.size(), "resume: open class id");
+                open.value.after = n;
+                classes.push_back(std::move(open));
+                active = classes.size() - 1;
+            }
+            const U excN = take();
+            for (U i = 0; i < 3 * excN; ++i) runExc.push_back(take());
+            excRuns += excN;
+            excMark = runExc.size();
+            require(at == v.size(), "resume: state spool trailing data");
+        }
+        // ---- 4. the capture map, for the rows the frontier already passed ---
+        for (const Class& cl : classes) {
+            for (U i = 0; i < cl.value.occ.size(); ++i) {
+                auto it = seam.targets.find(cl.value.occ[i]);
+                require(it != seam.targets.end(), "resume: class occurrence is not a target");
+                it->second.row = cl.value.lo + i;
+                if (i + 1 == cl.value.occ.size()) it->second.after = cl.value.after;
+            }
+            auto head = seam.targets.find(cl.value.first);
+            require(head != seam.targets.end(), "resume: class first position is not a target");
+            head->second.before = cl.value.before;
+        }
+        seam.nextRow = next;
+        seam.previous = prevLastPos;
+        seam.previousHit = nullptr;
+        {
+            auto hit = seam.targets.find(prevLastPos);
+            if (hit != seam.targets.end() && hit->second.after == n) seam.previousHit = &hit->second;
+        }
+        boundaryHit = seam.previousHit;
+        std::fprintf(stderr,
+            "CROSS_RESUME adopted_pieces=%llu rows=%llu runs=%llu classes=%zu open=%d "
+            "runexc=%llu first_run=%llu\n",
+            (unsigned long long)F, (unsigned long long)next, (unsigned long long)index,
+            classes.size(), int(active != UINT64_MAX), (unsigned long long)excRuns,
+            (unsigned long long)bandStart);
+        return next;
+    }
+
     void interrupt() {
         flushRun();
         if (band.size()) closeBand();
@@ -3741,13 +4028,21 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
     const bool bands = saPath.compare(0, 6, "bands:") == 0;
     const std::string dir = bands ? saPath.substr(6) : std::string();
     auto bandPath = [&](U b, const char* suffix) { return dir + "/band_" + std::to_string(b) + suffix; };
+    // A WAIT IS ALSO A PUMP: while this consumer waits for the producer it must
+    // keep CLOSING THE COLUMN - releasing every band spool whose pieces are
+    // durable. Without this the two stages deadlock: the producer waits for the
+    // credit that this consumer's release creates while the consumer waits for
+    // the producer (measured: SS_WAIT blocks_on=band.consumed with the pieces
+    // already published).
+    std::function<void()> pump = [] {};
     auto waitFile = [&](const std::string& path) {
         while (::access(path.c_str(), F_OK) != 0) {
             if (::access((dir + "/producer.interrupted").c_str(), F_OK) == 0) {
                 sink->interrupt();
                 ::_exit(75);
             }
-            ::usleep(10000);
+            pump();
+            ::usleep(2000);
         }
     };
     U tapeVersion = 1, tapeCapacity = 1, tapeRowCapacity = n;
@@ -3764,6 +4059,14 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
             mf >> tapeRowCapacity;
             require(!mf.fail() && tapeRowCapacity > 0 && tapeRowCapacity <= U(SIZE_MAX / 8),
                     "tape bands: invalid row capacity");
+        }
+        // THE PLAN IDENTITY the producer wrote: a band stream from a different
+        // corpus/knobs/binaries is refused here, before a single row is read.
+        {
+            std::string planTok;
+            mf >> planTok;
+            require(!mf.fail() && planTok == spool::hex(spool::g_plan, 32),
+                    "tape bands: manifest plan identity");
         }
     } else {
     fd = ::open(saPath.c_str(), O_RDONLY);
@@ -3844,6 +4147,55 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
     U baseRow = 0, hits = 0;
     double tRead = 0, tWord = 0, tPub = 0;
     U band = 0, bandRows = 0, bandRead = 0;
+    U bandFirstOff = 0;                 // rows of `band` already incorporated (resume)
+    U resumeRows = 0, resumePieces = 0, resumeRuns = 0;   // the adopted frontier
+    // ===================== RESTART READS THE FILESYSTEM =====================
+    // The pieces this prefix already holds are the record of how far the merge
+    // got: the sink rebuilds its boundary state from them (and from the progress
+    // and state spools beside them) and the walk resumes at the row frontier.
+    // The band spools below that frontier are re-read only from the band that
+    // CONTAINS the frontier: every band fully incorporated below it is gone.
+    if (bands && spool::g_resume) {
+        require(tapeVersion == 1, "resume with the reorder-window tape protocol is unsupported");
+        baseRow = sink->resumeFromPieces();
+        if (baseRow) {
+            std::vector<std::pair<U, U>> extents;   // (rank_base, rows) per band index
+            DIR* d = ::opendir(dir.c_str());
+            require(d != nullptr, "resume: open tape dir");
+            std::map<U, std::pair<U, U>> byIndex;
+            while (struct dirent* e = ::readdir(d)) {
+                const std::string name(e->d_name);
+                if (name.size() < 12 || name.compare(0, 5, "band_") != 0) continue;
+                if (name.compare(name.size() - 3, 3, ".sa") != 0) continue;
+                const U idx = U(std::strtoull(name.c_str() + 5, nullptr, 10));
+                spool::Hdr h;
+                if (spool::peek(bandPath(idx, ".sa"), spool::MAGIC_BAND_SA, idx,
+                                spool::g_plan, &h))
+                    byIndex[idx] = {h.rank_base, h.rows};
+            }
+            ::closedir(d);
+            bool found = false;
+            for (const auto& entry : byIndex) {
+                const U lo = entry.second.first, rows = entry.second.second;
+                if (baseRow >= lo && baseRow < lo + rows) {
+                    band = entry.first;
+                    bandFirstOff = baseRow - lo;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found && baseRow < n)
+                require(false, ("resume: no band spool covers the merge's row frontier " +
+                               std::to_string(baseRow) + " (a consumed band was not retained)").c_str());
+            if (!found) band = byIndex.size();   // the merge is COMPLETE: nothing to walk
+            resumeRows = baseRow;
+            resumePieces = sink->durableBand();
+            resumeRuns = sink->index;
+            std::fprintf(stderr, "CROSS_RESUME_BAND dir=%s row=%llu band=%llu offset=%llu bands_on_disc=%zu\n",
+                         dir.c_str(), (unsigned long long)baseRow, (unsigned long long)band,
+                         (unsigned long long)bandFirstOff, byIndex.size());
+        }
+    }
     std::vector<U> bandPayload;
     bool bandLoaded = false;
     U windowFirst = 0, windowCount = 0, windowRows = 0, receivingBand = 0;
@@ -3870,6 +4222,29 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
     // remap no present byte owns code 0, so this count is exact - and it is the
     // check the old remap[0xf5]==0 test was standing in for.
     U endRows = 0;
+    // THE COMMIT RECORD IS THE DELETION OF THE SPOOL. A band spool may be
+    // unlinked only once the pieces that incorporate its rows are durable; the
+    // sink's contiguous durable row prefix is that certificate.
+    struct Release { U endRow, band; };
+    std::deque<Release> releasing;
+    auto releaseConsumed = [&]() {
+        if (!bands) return;
+        const U durable = sink->durableRows();
+        while (!releasing.empty() && durable >= releasing.front().endRow) {
+            const U rb = releasing.front().band;
+            const std::string tomb = bandPath(rb, ".consumed");
+            int cf = ::open(tomb.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+            if (cf >= 0) ::close(cf);
+            else require(errno == EEXIST, "tape bands: publish consumed");
+            spool::test_kill("pre-unlink");
+            // Absence now means INCORPORATED: the tombstone and the removal are
+            // the same fact, and the tombstone disambiguates "never produced".
+            require(::unlink(bandPath(rb, ".sa").c_str()) == 0, "tape bands: unlink band");
+            releasing.pop_front();
+        }
+    };
+    pump = releaseConsumed;
+    if (bands && spool::g_resume && baseRow >= n) endRows = 1;   // row 0 (the END row) is below the frontier
     for (;;) {
         if (baseRow == n) {
             if (!bands) break;
@@ -3884,10 +4259,22 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
                 receivingBand = readBand;
                 fd = ::open(bandPath(readBand, ".sa").c_str(), O_RDONLY);
                 struct stat bs{};
-                require(fd >= 0 && ::fstat(fd, &bs) == 0 && bs.st_size % 8 == 0, "tape bands: bad band");
-                const U readRows = U(bs.st_size) / 8;
+                require(fd >= 0 && ::fstat(fd, &bs) == 0, "tape bands: bad band");
+                // THE SPOOL HEADER IS THE BAND'S OWN PROVENANCE: plan identity,
+                // plan position, row count and the payload hash. A band from
+                // another plan is refused here, never quietly consumed.
+                spool::Hdr bh;
+                require(spool::read_hdr(fd, bh) &&
+                        std::memcmp(bh.magic, spool::MAGIC_BAND_SA, 8) == 0 && bh.version == 1 &&
+                        bh.index == readBand && bh.payload_off == spool::HDR &&
+                        std::memcmp(bh.plan, spool::g_plan, 32) == 0 &&
+                        U(bs.st_size) == bh.payload_off + bh.payload_bytes,
+                        ("tape bands: band spool header " + bandPath(readBand, ".sa")).c_str());
+                const U readRows = U(bh.rows);
+                require(bh.payload_bytes == readRows * 8, "tape bands: band spool row count");
                 int opened = ::open(bandPath(readBand, ".opened").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
-                require(opened >= 0, "tape bands: opened marker"); ::close(opened);
+                require(opened >= 0 || errno == EEXIST, "tape bands: opened marker");
+                if (opened >= 0) ::close(opened);
                 tapeState("read");
                 require(readRows <= n, "tape bands: too many rows");
                 // Own the complete payload before entering the downstream sink.
@@ -3899,19 +4286,33 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
                     windowRows += readRows;
                 }
                 payload.resize(readRows);
-                size_t readBytes = 0, totalBytes = size_t(bs.st_size);
+                size_t readBytes = 0, totalBytes = size_t(bh.payload_bytes);
                 while (readBytes < totalBytes) {
-                    ssize_t r = ::read(fd, (char*)payload.data() + readBytes, totalBytes - readBytes);
+                    ssize_t r = ::pread(fd, (char*)payload.data() + readBytes, totalBytes - readBytes,
+                                        off_t(bh.payload_off + readBytes));
                     require(r > 0, "tape bands: short payload read");
                     readBytes += size_t(r);
                 }
+                // VERIFY THE SPOOL AGAINST ITSELF: the hash in the header must be
+                // the hash of the bytes just taken (they are already in hand, so
+                // this costs one pass over data the merge reads anyway).
+                {
+                    durable_piece::Sha256 ctx;
+                    if (totalBytes) ctx.update(payload.data(), totalBytes);
+                    uint8_t got[32];
+                    require(spool::parse_plan(ctx.finish(), got) &&
+                            std::memcmp(got, bh.sha, 32) == 0,
+                            ("tape bands: band spool payload hash " + bandPath(readBand, ".sa")).c_str());
+                }
                 ::close(fd); fd = -1;
                 tRead += now_sec() - copyStart;
-                require(::unlink(bandPath(readBand, ".sa").c_str()) == 0, "tape bands: unlink band");
-                int cf = ::open(bandPath(readBand, ".consumed").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
-                require(cf >= 0, "tape bands: publish consumed"); ::close(cf);
-                std::fprintf(stderr, "TAPE_BAND_READ band=%llu rows=%llu released_before_publish=1\n",
-                    (unsigned long long)readBand, (unsigned long long)readRows);
+                // NOTHING IS DELETED HERE: the band spool is released only when
+                // the pieces that incorporate it are durable (releaseConsumed).
+                require(bh.rank_base + readRows <= n, "tape bands: band spool extent");
+                releasing.push_back(Release{bh.rank_base + readRows, readBand});
+                std::fprintf(stderr, "TAPE_BAND_READ band=%llu rows=%llu rank_base=%llu released_before_publish=0\n",
+                    (unsigned long long)readBand, (unsigned long long)readRows,
+                    (unsigned long long)bh.rank_base);
             };
             if (tapeVersion == 1) {
                 waitFile(bandPath(band, ".done"));
@@ -3935,16 +4336,17 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
                             readCompleted(windowFirst + i, reorder[i]);
                             copied[i] = true; --remaining; progress = true;
                         }
-                        if (!progress) ::usleep(10000);
+                        if (!progress) { pump(); ::usleep(10000); }
                     }
                 }
                 bandPayload.swap(reorder[band - windowFirst]);
             }
-            bandRows = bandPayload.size(); bandRead = 0; bandLoaded = true;
-            require(bandRows <= n - baseRow, "tape bands: too many rows");
+            bandRows = bandPayload.size(); bandRead = bandFirstOff; bandLoaded = true;
+            require(bandRows <= n - baseRow + bandRead, "tape bands: too many rows");
             tapeState("copied");
         }
         const U want = bands ? std::min<U>(chunk, bandRows - bandRead) : std::min<U>(chunk, n - baseRow);
+        require(!bands || bandRead <= bandRows, "tape bands: band cursor");
         const double tr = now_sec();
         size_t got = 0, bytes = size_t(want) * 8;
         if (bands) {
@@ -3992,6 +4394,7 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
         tapeState("publish");
         if (want) sink->publishBin(bands ? unsigned(band) : 0, words.data(), want, baseRow);
         tPub += now_sec() - tp;
+        releaseConsumed();
         baseRow += want;
         if (bands) {
             bandRead += want;
@@ -3999,6 +4402,7 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
                 bandLoaded = false;
                 std::vector<U>().swap(bandPayload);
                 ++band;
+                bandFirstOff = 0;
             }
         }
     }
@@ -4018,6 +4422,15 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
         require(endRows == 1, "tape-emit: the BWT must carry EXACTLY one symbol-0 (END) row");
     }
     const double tEnd0 = now_sec();
+    if (bands)
+        std::fprintf(stderr, "CROSS_RESUME_TOTAL pieces_present=%llu pieces_total=%llu "
+                             "pieces_recomputed=%llu rows_resumed=%llu rows_total=%llu "
+                             "runs_resumed=%llu\n",
+                     (unsigned long long)resumePieces,
+                     (unsigned long long)(resumePieces + sink->own.bands),
+                     (unsigned long long)sink->own.bands,
+                     (unsigned long long)resumeRows, (unsigned long long)n,
+                     (unsigned long long)resumeRuns);
     sink->finish();
     {
         const U nExc = sink->writeRunExc(prefix + ".runexc");
@@ -4025,6 +4438,8 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
                      (prefix + ".runexc").c_str(), (unsigned long long)nExc);
     }
     const double tEnd = now_sec() - tEnd0;
+    // THE PIECES DIR IS RETAINED: it is the record of this stage's progress (a
+    // restart reads it back). The driver removes it once the container published.
     std::error_code ec;
     fs::remove(sink->dir, ec);
     std::fprintf(stderr,

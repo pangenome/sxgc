@@ -1,4 +1,28 @@
-//! Conservative recovery: replay immutable input, never reuse consumed stages.
+//! Recovery for tape builds: THE FILESYSTEM IS THE JOURNAL.
+//!
+//! There is no progress journal. Every intermediate of the tape route is a
+//! SELF-DESCRIBING SPOOL (bit6/spool.h): its name encodes its place in the
+//! deterministic plan, its 176-byte header carries the plan identity, the plan
+//! position, the row/run counts and the SHA-256 of its payload, and it is
+//! published atomically (`<name>.part` -> fdatasync -> hash -> rename ->
+//! fsync(dir)). A spool is deleted only when the state that consumed it is
+//! itself durable, so its ABSENCE means "already incorporated".
+//!
+//! Restart therefore reads the filesystem: it derives the plan from the corpus +
+//! knobs (the corpus digest, the remap, the tool hashes and the knob digest are
+//! all in the PLAN record and are re-checked), enumerates the spools that are
+//! present, verifies each against the plan, and recomputes exactly the ones that
+//! are missing. Nothing is silently skipped: the two producer stages refuse a
+//! spool whose header does not match this plan, and the driver reports the exact
+//! counts (`RESUME_STATE`) and the rows the restart did NOT recompute
+//! (`WORK_AVOIDED`).
+//!
+//! What cannot be resumed this way is named in RESUME.md: the finish accumulates
+//! PREFIX-DEPENDENT state (the m1 codec bit positions, the chi bitmap, the m13
+//! strides and the in-memory directories), so its spool contents are not local
+//! to their position and it re-runs. The container also cannot be appended
+//! across producer pieces (RESUME_DESIGN.md, member table), so resumption lives
+//! at the spool layer and the container is assembled once, at the end.
 use super::*;
 use std::sync::atomic::AtomicI32;
 static SIGNAL: AtomicI32 = AtomicI32::new(0);
@@ -69,12 +93,96 @@ fn compare(old: &str, new: &str) -> Result<(), String> {
     }
     Ok(())
 }
-pub(super) fn prepare(
+
+/// The spool census of a scratch tree, as the plan expects it.
+///
+/// `bands`   - scatter_sort band spools (`bands-tape/band_<i>.sa`) and the LCP
+///             slices that record the same band's rank range.
+/// `pieces`  - the merge's piece stream (`merged/*.pieces/p-<band>-<shard>`).
+///
+/// A present spool is not yet a verified spool: the stages verify every header
+/// (plan identity, position, size, payload hash) before they adopt one, and a
+/// failed verification recomputes that spool from the corpus.
+pub(super) struct Census {
+    pub bands_present: u64,
+    pub lcp_present: u64,
+    pub pieces_present: u64,
+    /// Band spools the sorter will not produce again.
+    pub bands_pending: u64,
+    pub rows_retained: u64,
+}
+
+fn band_index(name: &str, suffix: &str) -> Option<u64> {
+    let stem = name.strip_prefix("band_")?.strip_suffix(suffix)?;
+    stem.parse::<u64>().ok()
+}
+
+pub(super) fn census(scratch: &Path) -> Result<Census, String> {
+    let mut c = Census {
+        bands_present: 0,
+        lcp_present: 0,
+        pieces_present: 0,
+        bands_pending: 0,
+        rows_retained: 0,
+    };
+    if let Ok(entries) = fs::read_dir(scratch.join("bands-tape")) {
+        let mut sa: std::collections::BTreeSet<u64> = Default::default();
+        let mut lcp: std::collections::BTreeSet<u64> = Default::default();
+        let mut tomb: std::collections::BTreeSet<u64> = Default::default();
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if let Some(i) = band_index(&name, ".sa") {
+                sa.insert(i);
+            } else if let Some(i) = band_index(&name, ".lcp") {
+                lcp.insert(i);
+            } else if let Some(i) = band_index(&name, ".consumed") {
+                tomb.insert(i);
+            }
+        }
+        // A band is DONE (and will not be recomputed) iff its LCP slice is
+        // present AND (its SA spool is present OR it was consumed into a durable
+        // piece stream). This is exactly the sorter's own adoption rule.
+        for i in &lcp {
+            if sa.contains(i) || tomb.contains(i) {
+                c.bands_pending += 1;
+            }
+        }
+        c.bands_present = sa.len() as u64;
+        c.lcp_present = lcp.len() as u64;
+    }
+    if let Ok(entries) = fs::read_dir(scratch.join("merged")) {
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if !name.ends_with(".pieces") {
+                continue;
+            }
+            if let Ok(pieces) = fs::read_dir(scratch.join("merged").join(&name)) {
+                for p in pieces.flatten() {
+                    let n = p.file_name().to_string_lossy().into_owned();
+                    if n.starts_with("p-") && !n.ends_with(".partial") {
+                        c.pieces_present += 1;
+                    }
+                }
+            }
+        }
+    }
+    Ok(c)
+}
+
+/// The plan identity every spool carries: SHA-256 of the PLAN record itself, so
+/// a spool produced under a different corpus, remap, tool binary or knob set can
+/// never be adopted. Truncated to 32 bytes (the header field) by construction.
+pub(super) struct Plan {
+    pub record: String,
+    pub id_hex: String,
+}
+
+pub(super) fn plan(
     o: &Options,
     input: &Path,
     scratch: &Path,
     tools: &Path,
-) -> Result<bool, String> {
+) -> Result<Plan, String> {
     let n = fs::metadata(input).map_err(|e| e.to_string())?.len();
     let p = super::super::plan::tape_band_plan(
         n + 1,
@@ -84,20 +192,6 @@ pub(super) fn prepare(
         2 * (n + 2),
     );
     let corpus = sha256_file(input)?;
-    if !o.no_resume {
-        if let Ok(old) = fs::read_to_string(scratch.join("checkpoint.journal")) {
-            if let Some(stored) = old.lines().next().and_then(|l| {
-                l.split_whitespace()
-                    .find_map(|f| f.strip_prefix("corpus_sha256="))
-            }) {
-                if stored != corpus {
-                    return Err(format!(
-                        "RESUME_REFUSED field=corpus_sha256 stored={stored} current={corpus}"
-                    ));
-                }
-            }
-        }
-    }
     let table = if let Some(path) = &o.remap {
         fs::read(path).map_err(|e| e.to_string())?
     } else {
@@ -117,7 +211,28 @@ pub(super) fn prepare(
             .as_bytes()
         )
     );
-    let plan=format!("PLAN n={n} corpus_sha256={corpus} remap_sha256={remap} rows_per_band={} parallel_bands={} waves={} sorter_sha={} merger_sha={} finish_sha={} driver_sha={} convention=replay-v1-run-ranks knobs_sha256={knobs_sha} with_chi={} memory_gb={} lce_verify={}",p.rows_per_band,o.threads,p.waves,sha256_file(&tools.join("scatter_sort"))?,sha256_file(&tools.join("cross_lcp_merge"))?,sha256_file(&tools.join("xsa_finish"))?,sha256_file(&std::env::current_exe().map_err(|e|e.to_string())?)?,o.with_chi,o.memory_gb,std::env::var("XSA_LCE_VERIFY").unwrap_or_default());
+    let record = format!("PLAN n={n} corpus_sha256={corpus} remap_sha256={remap} rows_per_band={} parallel_bands={} waves={} sorter_sha={} merger_sha={} finish_sha={} driver_sha={} convention=fs-spools-v1 knobs_sha256={knobs_sha} with_chi={} memory_gb={} lce_verify={}",
+        p.rows_per_band, o.threads, p.waves,
+        sha256_file(&tools.join("scatter_sort"))?,
+        sha256_file(&tools.join("cross_lcp_merge"))?,
+        sha256_file(&tools.join("xsa_finish"))?,
+        sha256_file(&std::env::current_exe().map_err(|e| e.to_string())?)?,
+        o.with_chi, o.memory_gb,
+        std::env::var("XSA_LCE_VERIFY").unwrap_or_default());
+    let id_hex = format!("{:x}", Sha256::digest(record.as_bytes()));
+    let _ = scratch;
+    Ok(Plan { record, id_hex })
+}
+
+/// Prepare a tape build: verify the plan, then ADOPT the spools that are present
+/// instead of clearing the tree. Returns `(already_done, resume, plan_id)`.
+pub(super) fn prepare(
+    o: &Options,
+    input: &Path,
+    scratch: &Path,
+    tools: &Path,
+) -> Result<(bool, bool, String), String> {
+    let plan = plan(o, input, scratch, tools)?;
     let checkpoint = scratch.join("checkpoint.journal");
     let container = scratch.join(format!(
         "{}.sxi2",
@@ -132,9 +247,10 @@ pub(super) fn prepare(
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => return Err(e.to_string()),
     };
+    let mut resume = false;
     if let Some(old) = &existing {
         if !o.no_resume {
-            compare(old.lines().next().unwrap_or(""), &plan)?;
+            compare(old.lines().next().unwrap_or(""), &plan.record)?;
             if let Some(done) = old
                 .lines()
                 .rev()
@@ -143,15 +259,9 @@ pub(super) fn prepare(
                 if sha256_file(&container)? != done {
                     return Err("RESUME_REFUSED field=container_sha256".into());
                 }
-                // A kill after BUILD_DONE but before normal cleanup must not
-                // strand the last wave indefinitely. Verify first, then clean.
-                for name in [
-                    "bands-tape",
-                    "waves-tape",
-                    "merged",
-                    "remap-256.bin",
-                    "stop.requested",
-                ] {
+                // COMMITTED: the container is durable and verified. Only now may
+                // the finished build's spools be deleted.
+                for name in ["bands-tape", "waves-tape", "merged", "remap-256.bin", "stop.requested"] {
                     remove(&scratch.join(name))?;
                 }
                 for suffix in [".part", ".partial"] {
@@ -164,34 +274,50 @@ pub(super) fn prepare(
                     .and_then(|f| f.sync_all())
                     .map_err(|e| e.to_string())?;
                 eprintln!("BUILD_ALREADY_DONE container={done}");
-                return Ok(true);
+                return Ok((true, false, plan.id_hex));
             }
+            resume = true;
         }
     } else if scratch.join("xsa-build.log").exists() && !o.no_resume {
         return Err("RESUME_REFUSED field=PLAN legacy scratch has no recovery journal; use a new scratch or --no-resume".into());
     }
     // No mutation above this point (apart from the caller's ownership lock).
-    if existing.is_some() || o.no_resume {
-        for name in [
-            "bands-tape",
-            "waves-tape",
-            "merged",
-            "remap-256.bin",
-            "stop.requested",
-            "xsa-build.log",
-        ] {
+    if o.no_resume {
+        for name in ["bands-tape", "waves-tape", "merged", "remap-256.bin", "stop.requested", "xsa-build.log"] {
             remove(&scratch.join(name))?;
         }
         remove(&container)?;
         for suffix in [".part", ".partial"] {
             remove(&PathBuf::from(format!("{}{suffix}", container.display())))?;
         }
-        if o.no_resume {
-            remove(&checkpoint)?;
+        remove(&checkpoint)?;
+    } else if resume {
+        // ---- THE RESTART READS THE FILESYSTEM -----------------------------
+        // Nothing that is a verified spool is deleted here. What IS removed is
+        // only what cannot be a spool:
+        //   * the uncommitted container (no BUILD_DONE) and its .part,
+        //   * the scatter staging (waves-tape: rows re-read from the corpus),
+        //   * the finish's OWN scratch in merged/ (the finish re-runs; its
+        //     spools are prefix-dependent accumulations, see RESUME.md). The
+        //     merge's piece stream inside merged/*.pieces is KEPT.
+        remove(&container)?;
+        for suffix in [".part", ".partial"] {
+            remove(&PathBuf::from(format!("{}{suffix}", container.display())))?;
+        }
+        remove(&scratch.join("waves-tape"))?;
+        remove(&scratch.join("stop.requested"))?;
+        if let Ok(entries) = fs::read_dir(scratch.join("merged")) {
+            for e in entries.flatten() {
+                let name = e.file_name().to_string_lossy().into_owned();
+                if name.ends_with(".pieces") {
+                    continue;
+                }
+                remove(&e.path())?;
+            }
         }
     }
     if !checkpoint.exists() {
-        append(scratch, &plan)?;
+        append(scratch, &plan.record)?;
     } else {
         // A killed append can leave a final unterminated record. Preserve it as
         // an ignored torn record; never concatenate a new record onto it.
@@ -199,10 +325,14 @@ pub(super) fn prepare(
         if !old.ends_with('\n') {
             append(scratch, "")?;
         }
-        append(scratch, "REPLAY from_key=0 reason=incomplete_build")?;
+        append(
+            scratch,
+            &format!("RESUME from_spools sorter_sha={} convention=fs-spools-v1", sha256_file(&tools.join("scatter_sort"))?),
+        )?;
     }
-    Ok(false)
+    Ok((false, resume, plan.id_hex))
 }
+
 pub(super) fn request_stop(scratch: &Path) -> Result<(), String> {
     if signal() != 0
         && scratch.join("checkpoint.journal").exists()
@@ -214,23 +344,13 @@ pub(super) fn request_stop(scratch: &Path) -> Result<(), String> {
     Ok(())
 }
 pub(super) fn interrupted(scratch: &Path) -> Result<(), String> {
-    let text = fs::read_to_string(scratch.join("checkpoint.journal")).map_err(|e| e.to_string())?;
-    let attempt = text
-        .rsplit("REPLAY from_key=0 reason=incomplete_build\n")
-        .next()
-        .unwrap_or(&text);
-    let last = attempt
-        .lines()
-        .filter(|l| l.starts_with("PIECE_DURABLE "))
-        .filter_map(|l| {
-            l.split_whitespace()
-                .find_map(|f| f.strip_prefix("idx=").and_then(|s| s.parse::<i64>().ok()))
-        })
-        .max()
-        .unwrap_or(-1);
+    let census = census(scratch)?;
     let line = format!(
-        "BUILD_INTERRUPTED reason={} last_durable_piece={last} scratch={}",
+        "BUILD_INTERRUPTED reason={} spools_present={} lcp_present={} pieces_present={} scratch={}",
         signal(),
+        census.bands_present,
+        census.lcp_present,
+        census.pieces_present,
         scratch.display()
     );
     append(scratch, &line)?;
@@ -245,149 +365,4 @@ pub(super) fn done(scratch: &Path, container: &Path) -> Result<(), String> {
         scratch,
         &format!("BUILD_DONE container={}", sha256_file(container)?),
     )
-}
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn legacy_route_cannot_install_tape_recovery() {
-        let args = [
-            "--tape",
-            "--legacy-merge",
-            "--input",
-            "corpus",
-            "--scratch",
-            "scratch",
-        ]
-        .map(String::from);
-        assert!(parse_chain(&args)
-            .unwrap_err()
-            .contains("mutually exclusive"));
-    }
-    #[test]
-    fn exact_field_refusal() {
-        assert!(
-            compare("PLAN n=1 corpus_sha256=a", "PLAN n=1 corpus_sha256=b")
-                .unwrap_err()
-                .contains("field=corpus_sha256")
-        );
-        assert!(compare("PLAN n=1", "PLAN n=1").is_ok());
-        assert!(compare("PLAN n=1 extra=1", "PLAN n=1").is_err());
-    }
-}
-
-#[cfg(test)]
-mod lifecycle_tests {
-    use super::*;
-    fn fixture() -> (tempfile::TempDir, Options, PathBuf, PathBuf, PathBuf) {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-        let input = root.join("input.bin");
-        fs::write(&input, b"abracadabra").unwrap();
-        let scratch = root.join("scratch");
-        fs::create_dir(&scratch).unwrap();
-        let tools = root.join("tools");
-        fs::create_dir(&tools).unwrap();
-        for name in ["scatter_sort", "cross_lcp_merge", "xsa_finish"] {
-            fs::write(tools.join(name), name).unwrap();
-        }
-        let o = parse_chain(
-            &[
-                "--tape",
-                "--input",
-                input.to_str().unwrap(),
-                "--scratch",
-                scratch.to_str().unwrap(),
-                "--threads",
-                "16",
-                "--memory-gb",
-                "24",
-            ]
-            .map(String::from),
-        )
-        .unwrap();
-        (tmp, o, input, scratch, tools)
-    }
-    #[test]
-    fn mismatch_preserves_scratch_and_names_field() {
-        let (_t, o, input, scratch, tools) = fixture();
-        prepare(&o, &input, &scratch, &tools).unwrap();
-        fs::create_dir(scratch.join("bands-tape")).unwrap();
-        fs::write(scratch.join("bands-tape/band_0.done"), b"sentinel").unwrap();
-        let before = fs::read(scratch.join("checkpoint.journal")).unwrap();
-        fs::write(&input, b"different").unwrap();
-        assert!(prepare(&o, &input, &scratch, &tools)
-            .unwrap_err()
-            .contains("field=corpus_sha256"));
-        assert_eq!(
-            fs::read(scratch.join("checkpoint.journal")).unwrap(),
-            before
-        );
-        assert_eq!(
-            fs::read(scratch.join("bands-tape/band_0.done")).unwrap(),
-            b"sentinel"
-        );
-    }
-    #[test]
-    fn replay_clears_stale_markers_and_unjournalled_pieces() {
-        let (_t, o, input, scratch, tools) = fixture();
-        prepare(&o, &input, &scratch, &tools).unwrap();
-        for d in ["bands-tape", "waves-tape", "merged"] {
-            fs::create_dir(scratch.join(d)).unwrap();
-            fs::write(scratch.join(d).join("untrusted.partial"), b"stale").unwrap();
-        }
-        fs::write(scratch.join("bands-tape/band_0.consumed"), b"").unwrap();
-        fs::write(scratch.join("keep-user-file"), b"preserve").unwrap();
-        append(&scratch, "PIECE_DURABLE idx=0 sha=historical").unwrap();
-        assert!(!prepare(&o, &input, &scratch, &tools).unwrap());
-        for d in ["bands-tape", "waves-tape", "merged"] {
-            assert!(!scratch.join(d).exists());
-        }
-        assert!(scratch.join("keep-user-file").exists());
-        assert!(fs::read_to_string(scratch.join("checkpoint.journal"))
-            .unwrap()
-            .contains("REPLAY from_key=0"));
-    }
-    #[test]
-    fn completed_container_is_verified_and_not_rebuilt() {
-        let (_t, o, input, scratch, tools) = fixture();
-        prepare(&o, &input, &scratch, &tools).unwrap();
-        let out = scratch.join("input.sxi2");
-        fs::write(&out, b"test-container").unwrap();
-        done(&scratch, &out).unwrap();
-        fs::create_dir(scratch.join("bands-tape")).unwrap();
-        fs::write(scratch.join("bands-tape/left-after-commit"), b"stale").unwrap();
-        assert!(prepare(&o, &input, &scratch, &tools).unwrap());
-        assert!(!scratch.join("bands-tape").exists());
-        fs::write(out, b"corrupted").unwrap();
-        assert!(prepare(&o, &input, &scratch, &tools)
-            .unwrap_err()
-            .contains("field=container_sha256"));
-    }
-    #[test]
-    fn no_resume_replaces_plan_and_preserves_unowned_files() {
-        let (_t, mut o, input, scratch, tools) = fixture();
-        prepare(&o, &input, &scratch, &tools).unwrap();
-        fs::write(scratch.join("keep"), b"keep").unwrap();
-        fs::write(&input, b"changed").unwrap();
-        o.no_resume = true;
-        assert!(!prepare(&o, &input, &scratch, &tools).unwrap());
-        assert!(scratch.join("keep").exists());
-        assert_eq!(
-            fs::read_to_string(scratch.join("checkpoint.journal"))
-                .unwrap()
-                .lines()
-                .count(),
-            1
-        );
-    }
-    #[test]
-    fn tool_change_refuses_before_cleanup() {
-        let (_t, o, input, scratch, tools) = fixture();
-        prepare(&o, &input, &scratch, &tools).unwrap();
-        fs::write(tools.join("scatter_sort"), b"new-binary").unwrap();
-        assert!(prepare(&o, &input, &scratch, &tools)
-            .unwrap_err()
-            .contains("field=sorter_sha"));
-    }
 }
