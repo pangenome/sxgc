@@ -286,8 +286,9 @@ framing, so use the raw tape route for byte-exact indexing of an existing file.
 
 - `--input` — raw corpus bytes; END is virtual. Add `--snap-1e` only when
   requiring a final `0x1E` document boundary.
-- `--scratch` — every intermediate and final artifact plus `xsa-build.log`. It must
-  be fresh (§9) and hold ~2.3 n.
+- `--scratch` — intermediates, container, `xsa-build.log`, and `checkpoint.journal`.
+  Start with a fresh directory, or reuse a matching tape checkpoint for verified
+  replay ([RESUME.md](RESUME.md)). Budget ~2.3 n plus the checkpoint journal.
 - `--threads` — sort parallelism **and** the number of bands live at once
   (`bands_in_flight = threads`). Raising it shrinks `rows_per_band` for a fixed
   `--memory-gb`, so it is a memory knob as much as a speed knob.
@@ -620,7 +621,9 @@ document: the tool refuses loudly and early, and each refusal names the knob.
 | `SNAP_REFUSED mid-document input <path>: last byte is 0x20, want 0x1e (document boundary); snap the prefix forward to the next 0x1e in the source corpus and retry - the chain never trims or extends silently` ✔ | `--snap-1e` requested but input does not end on a document boundary | omit `--snap-1e` for raw tape input, or choose an aligned prefix |
 | `PLAN_INFEASIBLE: see XSA_PLAN_ALTERNATIVE lines above (override with --allow-infeasible to run anyway)` ✔ | the plan could not prove the run fits RAM or scratch; the preceding `XSA_PLAN_ALTERNATIVE` lines say which | raise `--memory-gb`, lower `--threads`, free scratch; `--allow-infeasible` only if you know better |
 | `XSA_PLAN_RAM INFEASIBLE: … rows_per_band=59 < floor=1004 …` ✔ | band arena ÷ (bytes_per_row × threads) fell below the 65,536-row floor | **see the minimum-corpus note below** |
-| `scratch already used: <dir>/xsa-build.log exists; move the previous run away (never overwrite)` ✔ | the scratch dir holds an earlier run (a *refused* run leaves its log too) | new scratch dir |
+| `scratch already used: <dir>/xsa-build.log exists; move the previous run away (never overwrite)` | legacy routes still require fresh scratch | new scratch dir |
+| `RESUME_REFUSED field=<field> ...` | tape recovery identity differs, or a legacy scratch has no recovery PLAN | restore the original input/binary/options, or explicitly use `--no-resume` |
+| `BUILD_INTERRUPTED reason=<sig> last_durable_piece=<i> scratch=<dir>` | graceful tape interruption, exit 75 | repeat the same command to replay verified input |
 | `scratch is owned by a live build or stage: <dir> (<pid>)` | an inherited advisory lock says a live process owns it — this is the guard that stops two builds colliding in one scratch (the `CROSS_PIECE_COLLISION` class of bug) | never recreate/unlink the lock; use another scratch |
 | `--chi-expect requires --with-chi on the tape route (missing member m5)` | an assert you cannot satisfy without the member | add `--with-chi`, or drop `--chi-expect` |
 | `V2_CHI_MISMATCH chi=<got> expected=<want>` | the in-process assert failed: the container's chi is not the banked constant | do not ignore; the build is not byte-reproducing |
@@ -860,3 +863,17 @@ Gates: `tools/binbwt/tests/seeds_gate.py` with the independent occurrence oracle
 `tools/binbwt/tests/seeds_oracle.c` (one mmap pass per pattern, `memmem`,
 overlapping occurrences, no index code) - it re-counts every emitted seed, the
 one-byte-longer seed, and the whole multiplicity ladder at each emitted offset.
+
+### Restart after interruption
+
+Tape builds now keep `scratch/checkpoint.journal`. Reissue the same command to
+verify the corpus, remap, options, and binary hashes and replay an incomplete
+build from input. A completed container is hash-verified and reused.
+`--no-resume` explicitly starts clean. A mismatched plan refuses without changing
+build-owned scratch files. SIGTERM/SIGINT/SIGHUP drain the current admitted wave
+and merger piece, journal `BUILD_INTERRUPTED`, and exit 75. No timeout is added.
+
+This is conservative **replay**, not incremental suffix-key resume: completed
+computation is repeated and ordinary band deletion remains bounded. Read
+[RESUME.md](RESUME.md) for journal semantics, signal limitations, measured gates,
+and the reasons for this design deviation.

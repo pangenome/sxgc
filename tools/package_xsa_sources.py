@@ -12,7 +12,7 @@ from pathlib import Path
 import shutil
 ROOT = Path(__file__).resolve().parents[1]
 DEST = ROOT / 'xsa/runtime'
-PATTERNS = ('bit6/*.hpp', 'bit6/binbwt_slice.h', 'bit6/phrase_radix.h',
+PATTERNS = ('bit6/*.hpp', 'bit6/binbwt_slice.h', 'bit6/durable_piece.h', 'bit6/phrase_radix.h',
             'bit6/pfp_ds_vendor/**/*.hpp',
             'bit6/chi_rspace_dump.cpp', 'bit6/rpfbwt_endpoints.cpp',
             'bit6/chunk_frontend.cpp', 'bit6/cross_lcp_merge.cpp',

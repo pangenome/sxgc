@@ -1,0 +1,74 @@
+{
+  "base_revision": "729004c19db7dc6c9ddf7e5b0415b158bfe1c0c0",
+  "mode": "verified-full-replay; NOT incremental suffix-key resume",
+  "gated_binary_sha256": "82e16671013f5ede916a4720db5d2ab3b6fc72b32b2b50974d637f1916df5aaf",
+  "evidence_root": "/mnt/nvme2n1/erikg/restart-safe-gates-20261105",
+  "G1": {
+    "status": "passed",
+    "corpus_bytes": 150000001,
+    "chi": 44034230,
+    "mainline_sha256": "f6abd41da6e3c3797abae2e288596a6042337a894869f573fecf51c53f624b3e",
+    "new_sha256": "f6abd41da6e3c3797abae2e288596a6042337a894869f573fecf51c53f624b3e",
+    "byte_identical": true
+  },
+  "G2": {
+    "status": "passed",
+    "corpus_bytes": 1000000005,
+    "interrupted_after_at_least_pieces": 1500,
+    "front_door_signal": 9,
+    "killed_children": 6,
+    "uninterrupted_sha256": "f5d1c4d323a73cdb9e45ea2997941fe4a5897fd8c299f13fccd92e797203c1c9",
+    "resumed_sha256": "f5d1c4d323a73cdb9e45ea2997941fe4a5897fd8c299f13fccd92e797203c1c9",
+    "mainline_sha256": "f5d1c4d323a73cdb9e45ea2997941fe4a5897fd8c299f13fccd92e797203c1c9",
+    "byte_identical": true,
+    "injected_unjournalled_piece_and_partial": true
+  },
+  "G3": {
+    "status": "passed",
+    "exit_code": 75,
+    "journal_record": "BUILD_INTERRUPTED reason=15 last_durable_piece=1665 scratch=/mnt/nvme2n1/erikg/restart-safe-gates-20261105/verified/term",
+    "uninterrupted_sha256": "f5d1c4d323a73cdb9e45ea2997941fe4a5897fd8c299f13fccd92e797203c1c9",
+    "resumed_sha256": "f5d1c4d323a73cdb9e45ea2997941fe4a5897fd8c299f13fccd92e797203c1c9",
+    "byte_identical": true
+  },
+  "G4": {
+    "status": "passed",
+    "refusal": "xsa: error: build: RESUME_REFUSED field=corpus_sha256 stored=e953c671ea2dbf2c775baa56a68af12021c6db856127dcd2350fb500b513b2ac current=0fab7746f480a025c55fc399fddcad2871d5277a7ede8e88cba1c08c97307dc8",
+    "all_scratch_file_hashes_unchanged": true
+  },
+  "G5": {
+    "status": "running"
+  },
+  "other_signals": {
+    "SIGINT": {
+      "exit_code": 75,
+      "record": "BUILD_INTERRUPTED reason=2 last_durable_piece=91 scratch=/mnt/nvme2n1/erikg/restart-safe-gates-20261105/signals/SIGINT"
+    },
+    "SIGHUP": {
+      "exit_code": 75,
+      "record": "BUILD_INTERRUPTED reason=1 last_durable_piece=91 scratch=/mnt/nvme2n1/erikg/restart-safe-gates-20261105/signals/SIGHUP"
+    }
+  },
+  "tests": {
+    "chain_tests_passed": 30,
+    "publication_tests_passed": 5,
+    "sha256_boundary_cases": 16
+  },
+  "scratch_peaks_bytes": {
+    "base150": 301774821,
+    "verified150": 301902991,
+    "base1g": 2278742475,
+    "verified/uninterrupted": 2330940928,
+    "verified/kill": 2356199574,
+    "verified/term": 2230461394
+  },
+  "retention_metric": "logical scratch bytes, including container; existing 2-second sampler; maximum of three completed 1 GB runs compared with mainline baseline",
+  "retention_line": "RESUME_RETENTION peak_bytes=2356199574 vs_baseline=2278742475 overhead=1.033991",
+  "deviations": [
+    "Incomplete builds replay from key zero; no incremental suffix-key continuation.",
+    "SA/LCP payloads retain baseline delete-after-read behavior; no delayed payload retention or durable-piece reuse.",
+    "Signals drain the admitted wave and merger piece, then terminate the incomplete finisher; no fold-state checkpoint.",
+    "Piece lo_key/hi_key are hexadecimal run ranks, identified by convention=replay-v1-run-ranks.",
+    "PLAN waves is the resource-plan estimate, not the recursive sorter actual wave count."
+  ]
+}

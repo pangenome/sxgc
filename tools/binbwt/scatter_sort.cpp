@@ -985,6 +985,11 @@ int main(int argc, char** argv) {
     const double t1 = now_sec();
 
     for (u64 w = 0; w < waves; ++w) {
+        if (!tapeBands.empty() && ::access((tapeBands + "/../stop.requested").c_str(), F_OK) == 0) {
+            marker(tapeBands + "/producer.interrupted");
+            ::_exit(75);
+        }
+
         const double tw = now_sec();
         const Wave& W = wl[w];
         std::vector<u64> waveSample;

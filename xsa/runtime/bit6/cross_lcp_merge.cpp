@@ -1,3 +1,4 @@
+#include "durable_piece.h"
 // Exact pairwise rleBWT merge of SXCR cyclic-BWT chunks (bit6/chunk_frontend.cpp
 // chunk format), emitting either a merged SXCR chunk (cyclic, composable) or the
 // final four files (rlebwt/meta/ssa/ssa_t) byte-identical to bit6/chunk_bcr_merge.cpp
@@ -3619,7 +3620,7 @@ static U v2_write_piece(const std::string& dir, U band, U shard, U firstRun,
                         const U* heads, const U* tails, U rc, unsigned w,
                         U sourceBand = UINT64_MAX, U sourceFirstRun = 0, U sourceEndRun = 0) {
     if (!rc) return 0;
-    std::string tmp = dir + "/t-" + std::to_string(band) + "-" + std::to_string(shard);
+    std::string tmp = dir + "/p-" + std::to_string(band) + "-" + std::to_string(shard) + ".partial";
     std::string fin = dir + "/p-" + std::to_string(band) + "-" + std::to_string(shard);
     if (fs::exists(fin)) {
         std::fprintf(stderr, "CROSS_PIECE_COLLISION path=%s existed_at_start=%d piece_runs=[%llu,%llu) source_band=%llu source_band_runs=[%llu,%llu) pid=%d\n",
@@ -3660,8 +3661,8 @@ static U v2_write_piece(const std::string& dir, U band, U shard, U firstRun,
     wfull(out.data(), 8 * words);
     pack(tails);
     wfull(out.data(), 8 * words);
-    require(::close(fd) == 0, "close piece tmp");
-    require(::rename(tmp.c_str(), fin.c_str()) == 0, "publish piece");
+    U rowCount = 0; for (U i = 0; i < rc; ++i) rowCount += lens[i];
+    durable_piece::publish(fd, tmp, fin, dir, band, shard, firstRun, rc, rowCount);
     return words;
 }
 struct V2Piece {

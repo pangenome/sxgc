@@ -3421,6 +3421,14 @@ struct BinBandSink {
             cvSlot.notify_one();
         }
     }
+    void interrupt() {
+        flushRun();
+        if (band.size()) closeBand();
+        { std::lock_guard<std::mutex> lk(mu); stop = true; }
+        cvJob.notify_all();
+        for (auto& th : writers) th.join();
+        writers.clear();
+    }
     // ---- terminal, exactly SequentialV2::endShard's validations ---------
     // The run-rank exception list: u32 magic 'SXRE', u32 version, u64 count, then
     // count triples (run index, true head rank, true tail rank).
@@ -3734,7 +3742,13 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
     const std::string dir = bands ? saPath.substr(6) : std::string();
     auto bandPath = [&](U b, const char* suffix) { return dir + "/band_" + std::to_string(b) + suffix; };
     auto waitFile = [&](const std::string& path) {
-        while (::access(path.c_str(), F_OK) != 0) ::usleep(10000);
+        while (::access(path.c_str(), F_OK) != 0) {
+            if (::access((dir + "/producer.interrupted").c_str(), F_OK) == 0) {
+                sink->interrupt();
+                ::_exit(75);
+            }
+            ::usleep(10000);
+        }
     };
     U tapeVersion = 1, tapeCapacity = 1, tapeRowCapacity = n;
     int fd = -1;

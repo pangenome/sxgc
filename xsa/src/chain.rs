@@ -32,15 +32,19 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use sha2::{Digest, Sha256};
+#[path = "recovery.rs"]
+mod recovery;
 
 pub const USAGE: &str = "usage:
-  xsa build --tape --input <raw-file> --scratch <fresh-dir>
+  xsa build --tape --input <raw-file> --scratch <dir>
             [--threads N] [--memory-gb N] [--plan-only]
             [--with-chi|--no-chi] [--chi-expect N] [--snap-1e]
 
   --tape             bounded tape producer, ordered merge and container finish.
   --input PATH       raw bytes, unchanged; END is virtual, no terminal required.
-  --scratch DIR      fresh directory for intermediates, container and journal.
+  --scratch DIR      intermediates, container and durable recovery journal.
+  --no-resume        discard this build's intermediates and begin a new plan.
+                     Otherwise incomplete tape builds replay verified input.
   --threads N        sort parallelism / bands in flight (default 48).
   --memory-gb N      phase address-space cap in GiB (default 24).
                      NO TIME OUTS, NO WATCHDOGS: every phase is spawned directly
@@ -184,6 +188,7 @@ struct Options {
     /// --tape-bands, cross_lcp_merge consumes them, xsa_finish follows. One
     /// binary, three children, no external scripts.
     tape: bool,
+    no_resume: bool,
     /// Proceed even when the plan cannot prove a fit (the operator overrides
     /// the ABSOLUTE peak-vs-free check; nothing else is overridable).
     allow_infeasible: bool,
@@ -263,6 +268,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     let mut scratch_free_pct = 0u32;
     let mut allow_infeasible = false;
     let mut tape = false;
+    let mut no_resume = false;
     let mut remap = None;
     let mut chunk_mb = None;
     let mut fanin = false;
@@ -288,6 +294,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
             }
             "--snap-1e" => snap_1e = true,
             "--tape" => tape = true,
+            "--no-resume" => no_resume = true,
             "--allow-infeasible" => allow_infeasible = true,
             "--memory-gb" => {
                 i += 1;
@@ -477,6 +484,8 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     if fanin && chunk_mb.is_none() {
         return Err("--fanin requires --chunk-mb N (the fixed chunk size)".into());
     }
+    if tape && legacy_merge { return Err("--tape and --legacy-merge are mutually exclusive".into()); }
+    if no_resume && !tape { return Err("--no-resume requires --tape".into()); }
     if tape && !with_chi && chi_expect.is_some() {
         return Err("--chi-expect requires --with-chi on the tape route (missing member m5)".into());
     }
@@ -505,7 +514,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     }
     Ok(Options { input, scratch, snap_1e, memory_gb, threads, chunks, kway, plan_only,
                  bin_pipeline, legacy_merge, v2_flag_given, chi_expect, with_chi, wit_ram_gb,
-                 finish_as_gb, bin_live_cap, bin_target_size, bin_entropy_min, phrase, stripes, scratch_free_pct, allow_infeasible, tape,
+                 finish_as_gb, bin_live_cap, bin_target_size, bin_entropy_min, phrase, stripes, scratch_free_pct, allow_infeasible, tape, no_resume,
                  remap, chunk_mb, fanin })
 }
 
@@ -907,6 +916,9 @@ fn spawn_phase(
     for (key, value) in env {
         command.env(key, value);
     }
+    if scratch.join("checkpoint.journal").exists() {
+        command.env("XSA_CHECKPOINT_JOURNAL", scratch.join("checkpoint.journal"));
+    }
     let child = command.spawn().map_err(|e| format!("launch {tag}: {e}"))?;
     Ok(RunningPhase { tag: tag.to_string(), child, log_path, time_path, armed: true })
 }
@@ -946,17 +958,32 @@ fn join_pipeline(journal: &mut Journal, scratch: &Path,
                  phases: Vec<RunningPhase>) -> Result<(), String> {
     let mut pending: Vec<Option<RunningPhase>> = phases.into_iter().map(Some).collect();
     while pending.iter().any(Option::is_some) {
+        recovery::request_stop(scratch)?;
         for slot in &mut pending {
             let exited = match slot.as_mut() {
                 Some(phase) => phase.child.try_wait()
                     .map_err(|e| format!("poll {}: {e}", phase.tag))?.is_some(),
                 None => false,
             };
-            if exited { join_phase(journal, scratch, slot.take().unwrap())?; }
+            if exited {
+                let mut phase = slot.take().unwrap();
+                let status = phase.child.wait().map_err(|e| e.to_string())?;
+                if status.code() == Some(75) && recovery::signal() != 0 {
+                    phase.armed = false;
+                    if phase.tag == "emit-tape" {
+                        recovery::interrupted(scratch)?;
+                        return Err("BUILD_INTERRUPTED".into());
+                    }
+                } else { join_phase(journal, scratch, phase)?; }
+            }
         }
         if pending.iter().any(Option::is_some) {
             std::thread::sleep(Duration::from_millis(100));
         }
+    }
+    if recovery::signal() != 0 && scratch.join("checkpoint.journal").exists() {
+        recovery::interrupted(scratch)?;
+        return Err("BUILD_INTERRUPTED".into());
     }
     Ok(())
 }
@@ -1173,6 +1200,7 @@ fn run_selftest(options: SelftestOptions) -> Result<(), String> {
 const SELFTEST_MEMORY_KB: u64 = 24 * 1048576;
 
 fn run_chain(options: Options) -> Result<(), String> {
+    if options.tape && !options.plan_only { recovery::install()?; }
     let tools = bundle_tools()?;
     // Absolute paths everywhere: phases run with cwd inside the scratch tree.
     let input = fs::canonicalize(&options.input)
@@ -1185,6 +1213,10 @@ fn run_chain(options: Options) -> Result<(), String> {
     let scratch = fs::canonicalize(scratch).map_err(|e| format!("resolve {}: {e}", options.scratch.display()))?;
     let _scratch_owner = lock_scratch(&scratch)?;
     let journal_path = scratch.join("xsa-build.log");
+    if options.tape && !options.plan_only && recovery::prepare(&options, &input, &scratch, &tools)? { return Ok(()); }
+    if options.tape && recovery::signal() != 0 {
+        recovery::interrupted(&scratch)?; return Err("BUILD_INTERRUPTED".into());
+    }
     if journal_path.exists() {
         return Err(format!(
             "scratch already used: {} exists; move the previous run away (never overwrite)",
@@ -2072,6 +2104,13 @@ walks the corpus for every endpoint and no LCP slice is produced). Not a user op
         "PEAK_INTERMEDIATE peak_bytes={peak_disc} n={n} peak_intermediate_over_n={:.4} \
          lcp_source={lcp_source} pending_bands={tape_k}",
         peak_disc as f64 / n.max(1) as f64));
+    if options.tape {
+        if recovery::signal() != 0 {
+            recovery::interrupted(scratch)?;
+            return Err("BUILD_INTERRUPTED".into());
+        }
+        recovery::done(scratch, &container)?;
+    }
     clean_v2_scratch(scratch, &container, journal)?;
     journal.line(&format!(
         "XSA_BUILD_DONE chi={chi} pipeline={} container={}",
@@ -2092,6 +2131,7 @@ pub fn command(args: &[String]) {
         parse_chain(args).and_then(run_chain)
     };
     if let Err(e) = result {
+        if e == "BUILD_INTERRUPTED" { std::process::exit(75); }
         super::die(&format!("build: {e}"));
     }
 }
