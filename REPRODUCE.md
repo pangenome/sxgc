@@ -241,7 +241,7 @@ Wikipedia dump, always fix/`--separator 0x1e` instead.
 
 ```sh
 xsa build --tape --input <dir>/corpus.bin --scratch <dir> \
-          --threads N --memory-gb N --timeout N
+          --threads N --memory-gb N
 ```
 
 Real invocation (150 MB corpus, `/dev/shm/t150m.txt`, n = 150,000,001, scratch on
@@ -250,7 +250,7 @@ exit 0**):
 
 ```sh
 xsa build --tape --input /dev/shm/t150m.txt --scratch /dev/shm/repro-verify/s150 \
-          --threads 16 --memory-gb 24 --timeout 3600
+          --threads 16 --memory-gb 24
 ```
 
 Tail of stdout:
@@ -269,7 +269,7 @@ not "chi is zero".
 ### Byte-exact corpora
 
 For LM or any byte-level work, feed the raw file directly to
-`xsa build --tape --input raw.bin --scratch fresh-dir --timeout 3600` and skip XML entirely.
+`xsa build --tape --input raw.bin --scratch fresh-dir` and skip XML entirely.
 The tape route preserves every input byte and adds only a virtual END; no XML
 wrapping, terminal byte, or entity expansion is needed. `--snap-1e` explicitly
 opts into the document-boundary check for framed Wikipedia prefixes.
@@ -294,8 +294,22 @@ framing, so use the raw tape route for byte-exact indexing of an existing file.
 - `--memory-gb` — the hard `RLIMIT_AS` for every phase, and the number the band
   arena is derived from (arena = `memory_gb/2` GiB, 85 % usable). The plan is
   journaled and the front door **refuses the run** if the plan cannot prove a fit.
-- `--timeout` — wall cap per phase (`timeout -k 120`). Standing policy is a large
-  value: no phase should be killed by the cap.
+- **There is no `--timeout` and no `--stall-seconds`.** Both are rejected as
+  unknown options. A wall-clock cap killed a HEALTHY 100 GB run at 61/102 waves
+  after 9.4 h (rc=124) because someone set a work budget, and the progress
+  watchdog that replaced it was the same class of error: it killed on a heuristic.
+  Neither exists any more - the machinery, not just the default, is gone.
+
+> **No timeouts, no watchdogs: an expensive run ends when it exits, fails, or a
+> human stops it.** Every phase is spawned directly: no `timeout` wrapper, no
+> monitor process, no stall detection, no kill path. A phase may legitimately sit
+> at zero CPU and zero I/O for a long time while it waits on its sibling
+> (`lce_wait`), stages a monster band, or waits for a `.consumed`/`.done` handoff,
+> so guessing is not allowed. The only signals the driver sends are the cleanup
+> `SIGKILL` to a phase's private group when that phase has ALREADY failed (a
+> nonzero exit, an OS error) or when the operator interrupts the driver. Watch the
+> journal (`SS_BAND`, `XSA_FINISH_PROGRESS`); if a phase is genuinely wedged, stop
+> it yourself, with the evidence in front of you.
 
 Sanity-check the plan before spending hours: add `--plan-only` (prints and exits,
 0.1 s).
@@ -323,6 +337,9 @@ XSA_FINISH_PROGRESS band=833/2289 runs=54657022 chi_so_far=0 repair_wall=50.7 lc
 - `XSA_FINISH_PROGRESS` — the finish's band cursor (`band=i/total`), run count so
   far, and its own wall breakdown; it must advance, and `lce_wait`/credit waits are
   the fusion's stall time.
+- `V2_TIMEOUT none ...` — the policy, journaled per run: no wrapper on any
+  phase and no supervisor process. `FINISH_POLL_TIMEOUT` is the finish's own
+  patience for the producer's next piece (~31 years), never a cap on the run.
 - `XSA_SOURCE git_commit=… git_dirty=… branch=…` is the **first** line: which tree
   built this container. This run: `git_commit=6dd06ef6e141a03522c5929d1e411cca468c7c01
   git_dirty=0 branch=reproduce-guide`.
@@ -339,7 +356,7 @@ Request it explicitly with one flag:
 
 ```sh
 xsa build --tape --input /dev/shm/t150m.txt --scratch /dev/shm/repro-verify/s150chi \
-          --threads 16 --memory-gb 24 --timeout 3600 --with-chi
+          --threads 16 --memory-gb 24 --with-chi
 ```
 
 ```
@@ -616,7 +633,7 @@ document: the tool refuses loudly and early, and each refusal names the knob.
 | `BUNDLE_TOOL_MISMATCH <name>: <path> sha256=<a> expected=<b>` | the extracted stage cache is corrupt or stale | `rm -rf ~/.cache/xsa/<manifest-sha256>` and re-run |
 | `--bin-live-cap is a bin-pipeline flag` / `<knob> needs --phrase-radix` / `CROSS_V2_PRODUCERS=<v> is INERT under the bin shape (…)` | a knob belongs to a different route | drop it, or select that route |
 | `--chunks is INERT under the bin pipeline (the default; the producer sweeps the corpus itself, there is no chunk phase); drop the flag, or pass --legacy-merge for the chunk+merge route` ✔ | same: `--chunks/--chunk-mb/--kway/--fanin` are legacy-merge only | drop them |
-| `unknown option <x>` | the tape route accepts `--input --scratch --tape --threads --memory-gb --timeout --plan-only --with-chi --chi-expect --finish-as-gb --wit-ram-gb --snap-1e --remap --stripe --allow-infeasible` (plus the `--bin-*` and `--phrase-*` arms, which are ignored/tuned per route) | — |
+| `unknown option <x>` | the tape route accepts `--input --scratch --tape --threads --memory-gb --plan-only --with-chi --chi-expect --finish-as-gb --wit-ram-gb --snap-1e --remap --stripe --allow-infeasible` (plus the `--bin-*` and `--phrase-*` arms, which are ignored/tuned per route) | — |
 
 **The tape route has a minimum corpus size (~1.1 MB).** The band size is bounded by
 the declared 2 n scratch window: `rows_per_band ≈ 0.0594 n`, which must reach the
@@ -686,8 +703,8 @@ pointer to `xsa build --tape --input`; tiny tape inputs remain unsupported.
   the ~3 h I predicted. That is a 6× miss, recorded here rather than quietly
   revised."). The longest completed run at that scale is a partial progress gate
   (44225/1527313 finish bands, 1819 s, peak finish RSS 100 GB, `n=100093934467`;
-  `optional_chi_results.json` N3). Budget a day, not an hour, and use `--timeout`
-  generously: the standing policy is that no phase is ever killed by the cap.
+  `optional_chi_results.json` N3). Budget a day, not an hour: there is no cap and
+  nothing kills a phase, so plan the wall you actually need.
 - **The crate compiles a snapshot that is not always the repo's copy.**
   `xsa/runtime/tools/binbwt/scatter_sort.cpp` (130,934 B, contains the
   `SS_TAPE_BUDGET` law) and repo `tools/binbwt/scatter_sort.cpp` (87,303 B, no
@@ -722,9 +739,9 @@ tail -c 1 /dev/shm/t150m.txt | xxd                  # 1e
 
 # 3. build (chi absent), then with chi
 ./xsa build --tape --input /dev/shm/t150m.txt --scratch /dev/shm/…/s150 \
-            --threads 16 --memory-gb 24 --timeout 3600
+            --threads 16 --memory-gb 24
 ./xsa build --tape --input /dev/shm/t150m.txt --scratch /dev/shm/…/s150chi \
-            --threads 16 --memory-gb 24 --timeout 3600 --with-chi
+            --threads 16 --memory-gb 24 --with-chi
 
 # 4. query + brute-force oracle
 ./xsa query /dev/shm/…/s150/t150m.sxi2 --patterns patterns.bin -j 4 > q.out

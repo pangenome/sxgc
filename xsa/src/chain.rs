@@ -29,12 +29,12 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 
 pub const USAGE: &str = "usage:
-  xsa build --tape --input <raw-file> --scratch <fresh-dir> --timeout S
+  xsa build --tape --input <raw-file> --scratch <fresh-dir>
             [--threads N] [--memory-gb N] [--plan-only]
             [--with-chi|--no-chi] [--chi-expect N] [--snap-1e]
 
@@ -43,11 +43,9 @@ pub const USAGE: &str = "usage:
   --scratch DIR      fresh directory for intermediates, container and journal.
   --threads N        sort parallelism / bands in flight (default 48).
   --memory-gb N      phase address-space cap in GiB (default 24).
-  --timeout S       0 = NO CEILING (no `timeout` wrapper on any phase); S>0 = a
-                    deliberate hard cap for bounded experiments (timeout -k 120).
-  --stall-seconds N the progress watchdog: kill the run when a phase makes NO
-                    forward progress (no CPU, no I/O, no band) for N seconds
-                    (default 900; 0 disables the watchdog).
+                     NO TIME OUTS, NO WATCHDOGS: every phase is spawned directly
+                     (no `timeout` wrapper, no supervisor, no kill path). An
+                     expensive run ends when it exits, fails, or a human stops it.
   --plan-only        print resource plan without running construction.
   --with-chi         construct m5 chi (enabled by default).
   --no-chi           omit optional m5 chi.
@@ -74,6 +72,11 @@ const DISC_MAX_USED_PERCENT: u32 = 85;
 /// ulimit wrapper: cap phase address space, then exec the real command.
 /// A lower inherited hard limit always wins and is journaled, never raised.
 const PHASE_WRAPPER: &str = "ulimit -v \"$1\" 2>/dev/null || ulimit -v \"$(ulimit -H -v)\" 2>/dev/null || true; shift; printf 'PHASE_CAP_KB=%s\\n' \"$(ulimit -v)\" >&2; exec \"$@\"";
+
+/// The finish's own patience for the producer's next piece, in seconds (about 31
+/// years). It is NOT a cap on the run: there is no cap. It exists only so the
+/// finish's poll loop has a number, and it must never expire on a live producer.
+const FINISH_POLL_TIMEOUT_S: u64 = 1_000_000_000;
 
 /// The producer's dictionary knobs (bit6/cross_lcp_merge.cpp). Kept in one
 /// table so the parser, the usage text and the validation cannot drift apart.
@@ -175,11 +178,6 @@ struct Options {
     /// --phrase-radix and its dictionary knobs. DEFAULT OFF; when off nothing is
     /// added to the producer command line and the product path is bit-identical.
     phrase: PhraseOptions,
-    /// `--timeout`: `Some(0)` = NO CEILING (no `timeout` wrapper at all),
-    /// `Some(n)` = a deliberate hard cap, `None` = the caller never said (refused).
-    timeout_s: Option<u64>,
-    /// `--stall-seconds`: the progress watchdog's window (0 = watchdog off).
-    stall_s: u64,
     stripes: Vec<String>,
     scratch_free_pct: u32,
     /// The TAPE producer route: scatter_sort emits key-ordered bands into
@@ -259,8 +257,6 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     let mut bin_target_size = None;
     let mut bin_entropy_min = None;
     let mut phrase = PhraseOptions::default();
-    let mut timeout_s = None;
-    let mut stall_s = DEFAULT_STALL_SECONDS;
     let mut stripes: Vec<String> = Vec::new();
     // Needs-based by default: the absolute peak-vs-free check is the gate
     // (see disc_verdict / tree_ok). A percentage-of-device rule is opt-in.
@@ -421,33 +417,6 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
                 let name = PHRASE_KNOBS[PHRASE_KNOBS.iter().position(|k| *k == f).unwrap()];
                 phrase.knobs.push((name, v));
             }
-            "--timeout" => {
-                i += 1;
-                let v = value(args.get(i), "--timeout")?
-                    .parse::<u64>()
-                    .map_err(|_| "--timeout: integer expected (0 = NO CEILING, S>0 = a hard cap)".to_string())?;
-                // 0 IS LEGAL and means NO CEILING: the phase runs with no
-                // `timeout` wrapper at all. A wall clock is the wrong instrument
-                // (it killed a HEALTHY 100 GB run at 61/102 waves, rc=124); the
-                // instrument that replaces it is the progress watchdog.
-                if timeout_s.replace(v).is_some() {
-                    return Err("specify --timeout only once".into());
-                }
-            }
-            "--stall-seconds" => {
-                i += 1;
-                let v = value(args.get(i), "--stall-seconds")?
-                    .parse::<u64>()
-                    .map_err(|_| "--stall-seconds: integer expected (0 = no watchdog)".to_string())?;
-                if v == 0 {
-                    eprintln!("warning: --stall-seconds 0 DISABLES the progress watchdog: a wedged \
-phase will then hang the run instead of failing it");
-                }
-                if stall_s != DEFAULT_STALL_SECONDS && stall_s != v {
-                    return Err("specify --stall-seconds only once".into());
-                }
-                stall_s = v;
-            }
             "--scratch-free-pct" => {
                 i += 1;
                 scratch_free_pct = parse_u32(args.get(i), "--scratch-free-pct")?;
@@ -534,14 +503,9 @@ phase will then hang the run instead of failing it");
     if phrase.enabled {
         validate_phrase(&phrase)?;
     }
-    if bin_pipeline && !plan_only && timeout_s.is_none() {
-        return Err("bin-pipeline execution requires --timeout SECONDS: pass 0 for NO CEILING \
-(no wall clock at all - the progress watchdog is then the only instrument), or a positive value \
-for a deliberate hard cap (timeout -k 120 on every phase)".into());
-    }
     Ok(Options { input, scratch, snap_1e, memory_gb, threads, chunks, kway, plan_only,
                  bin_pipeline, legacy_merge, v2_flag_given, chi_expect, with_chi, wit_ram_gb,
-                 finish_as_gb, bin_live_cap, bin_target_size, bin_entropy_min, phrase, timeout_s, stall_s, stripes, scratch_free_pct, allow_infeasible, tape,
+                 finish_as_gb, bin_live_cap, bin_target_size, bin_entropy_min, phrase, stripes, scratch_free_pct, allow_infeasible, tape,
                  remap, chunk_mb, fanin })
 }
 
@@ -873,8 +837,6 @@ struct RunningPhase {
     child: std::process::Child,
     log_path: PathBuf,
     time_path: PathBuf,
-    /// The progress watchdog's window for this phase (0 = watchdog off).
-    stall_s: u64,
     armed: bool,
 }
 
@@ -897,243 +859,19 @@ impl Drop for RunningPhase {
     fn drop(&mut self) { self.terminate(); }
 }
 
-/// The progress watchdog's default window. A phase that has made NO forward
-/// progress at all for fifteen minutes is WEDGED, not slow: a single band sort
-/// on a monster class takes minutes, but its CPU ticks and its byte counters
-/// keep moving the whole time. This is the instrument that replaces a wall clock.
-pub const DEFAULT_STALL_SECONDS: u64 = 900;
-/// The watchdog's longest sampling period (never more than a tenth of the
-/// window, so a wedge is caught INSIDE the window rather than a window late).
-const WATCHDOG_SAMPLE_MS: u64 = 5_000;
-
-/// One phase's forward progress as the KERNEL reports it: CPU seconds burnt by
-/// every process in the phase's private process group, and the bytes that group
-/// read and wrote (`/proc/<pid>/stat`, `/proc/<pid>/io`). Nothing here is a wall
-/// clock: a slow phase moves these, a wedged one cannot.
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
-struct Progress {
-    cpu_ticks: u64,
-    rchar: u64,
-    wchar: u64,
-    read_bytes: u64,
-    write_bytes: u64,
-}
-
-impl Progress {
-    fn cpu_s(&self) -> f64 {
-        // USER_HZ is 100 on Linux/x86_64 (sysconf(_SC_CLK_TCK)); the journal says
-        // `cpu_s` in seconds and the raw ticks are not carried anywhere else.
-        self.cpu_ticks as f64 / 100.0
-    }
-}
-
-/// Sum the progress of every live process in one phase's process group: the
-/// bash wrapper, /usr/bin/time, GNU timeout, the tool and all of its threads.
-/// The caller's own group never matches, so this measures the phase alone.
-fn group_progress(pgid: i32) -> Progress {
-    let mut p = Progress::default();
-    let entries = match fs::read_dir("/proc") {
-        Ok(entries) => entries,
-        Err(_) => return p,
-    };
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let Some(name) = name.to_str() else { continue };
-        if name.is_empty() || !name.bytes().all(|b| b.is_ascii_digit()) { continue; }
-        let Ok(stat) = fs::read_to_string(entry.path().join("stat")) else { continue };
-        let Some((_, rest)) = stat.rsplit_once(") ") else { continue };
-        let fields: Vec<&str> = rest.split_whitespace().collect();
-        // After the last ')' : 0=state 1=ppid 2=pgrp ... 11=utime 12=stime.
-        if fields.get(2).and_then(|v| v.parse::<i32>().ok()) != Some(pgid) { continue; }
-        p.cpu_ticks += fields.get(11).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
-        p.cpu_ticks += fields.get(12).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
-        let Ok(io) = fs::read_to_string(entry.path().join("io")) else { continue };
-        for line in io.lines() {
-            let Some((key, value)) = line.split_once(':') else { continue };
-            let Ok(v) = value.trim().parse::<u64>() else { continue };
-            match key {
-                "rchar" => p.rchar += v,
-                "wchar" => p.wchar += v,
-                "read_bytes" => p.read_bytes += v,
-                "write_bytes" => p.write_bytes += v,
-                _ => {}
-            }
-        }
-    }
-    p
-}
-
-/// The last `bytes` bytes of a phase log as text. Phase logs reach hundreds of
-/// MB on a pile (one SS_BAND line per band), so the watchdog reads only the tail.
-fn log_tail(path: &Path, bytes: u64) -> String {
-    use std::io::Read;
-    let mut file = match File::open(path) { Ok(f) => f, Err(_) => return String::new() };
-    let len = match file.metadata() { Ok(m) => m.len(), Err(_) => return String::new() };
-    let start = len.saturating_sub(bytes);
-    if start > 0 {
-        use std::io::Seek;
-        if file.seek(std::io::SeekFrom::Start(start)).is_err() { return String::new(); }
-    }
-    let mut buf = Vec::new();
-    if file.read_to_end(&mut buf).is_err() { return String::new(); }
-    let text = String::from_utf8_lossy(&buf).into_owned();
-    // A tail starts mid-line: drop the partial first line.
-    match text.find('\n') { Some(i) => text[i + 1..].to_string(), None => text }
-}
-
-/// The last `band=<i>` the phase itself journaled (the sorter's per-band
-/// heartbeat, or the finish's `XSA_FINISH_PROGRESS band=i/total` cursor).
-fn log_last_band(tail: &str) -> Option<String> {
-    tail.lines().rev().find_map(|line| {
-        line.split_whitespace()
-            .find_map(|tok| tok.strip_prefix("band=").map(|_| tok.to_string()))
-    })
-}
-
-/// What the phase says it is WAITING on, when the tape protocol names it: the
-/// `.consumed` credit file, a `.done` marker or a `gate_wait`. Only the log tail
-/// is searched, so this is evidence, not a claim.
-fn log_waiting_on(tail: &str) -> Option<String> {
-    let line = tail.lines().rev().find(|line| {
-        [".consumed", ".done", "gate_wait", "waiting for"]
-            .iter().any(|needle| line.contains(needle))
-    })?;
-    let line = line.trim();
-    Some(if line.len() > 240 { format!("{}...", &line[..240]) } else { line.to_string() })
-}
-
-/// THE PROGRESS WATCHDOG. Per running phase it samples forward progress: bytes
-/// read, bytes of scratch written, CPU seconds, and the phase's own last band
-/// index. If NONE of them moves for `stall_s` seconds the process is wedged -
-/// by definition it makes no progress - and the run is killed with the state
-/// dump naming the phase, its counters, what it is blocked on and its log tail.
-/// `stall_s == 0` disables the watchdog (the operator asked for it).
-struct Watchdog {
-    stall_s: u64,
-    watched: Vec<Watched>,
-}
-
-struct Watched {
-    tag: String,
-    pgid: i32,
-    progress: Progress,
-    band: Option<String>,
-    since_progress: Instant,
-    /// The phase's own log tail: what it last said it was waiting on.
-    waiting: Option<String>,
-}
-
-impl Watchdog {
-    fn new(stall_s: u64) -> Watchdog {
-        Watchdog { stall_s, watched: Vec::new() }
-    }
-
-    fn watch(&mut self, tag: &str, pgid: i32) {
-        if self.stall_s == 0 { return; }
-        self.watched.push(Watched {
-            tag: tag.to_string(),
-            pgid,
-            progress: group_progress(pgid),
-            band: None,
-            since_progress: Instant::now(),
-            waiting: None,
-        });
-    }
-
-    fn forget(&mut self, tag: &str) {
-        self.watched.retain(|w| w.tag != tag);
-    }
-
-    /// How often to sample: a tenth of the window, never slower than 5 s, never
-    /// faster than 250 ms.
-    fn period(&self) -> Duration {
-        if self.stall_s == 0 { return Duration::from_millis(WATCHDOG_SAMPLE_MS); }
-        let tenth = self.stall_s.saturating_mul(1000) / 10;
-        Duration::from_millis(tenth.clamp(250, WATCHDOG_SAMPLE_MS))
-    }
-
-    fn log_path(scratch: &Path, tag: &str) -> PathBuf {
-        scratch.join(format!("{tag}.log"))
-    }
-
-    /// Sample every watched phase, journal `PHASE_WATCHDOG` for each, and fail
-    /// with the full state dump when a phase has been frozen for the window.
-    ///
-    /// A phase that is BLOCKED ON A LIVE PEER is not wedged: the tape protocol
-    /// makes the finish wait for the sorter's bands (and the sorter wait on the
-    /// consumer's `.consumed` credit), so a frozen phase that NAMES such a wait
-    /// while another phase is still moving is `state=progress blocked_on_peer=1`.
-    /// A real wedge has no such excuse: nothing it waits on is moving.
-    fn sample(&mut self, journal: &mut Journal, scratch: &Path) -> Result<(), String> {
-        for w in &mut self.watched {
-            let progress = group_progress(w.pgid);
-            let tail = log_tail(&Self::log_path(scratch, &w.tag), 1 << 13);
-            let band = log_last_band(&tail);
-            w.waiting = log_waiting_on(&tail);
-            if progress != w.progress || band != w.band {
-                w.progress = progress;
-                w.band = band;
-                w.since_progress = Instant::now();
-            }
-        }
-        for w in &self.watched {
-            let stalled_s = w.since_progress.elapsed().as_secs();
-            let peer_live = self.watched.iter().any(|o| o.tag != w.tag
-                && o.since_progress.elapsed().as_secs() < self.stall_s);
-            let blocked_on_peer = w.waiting.is_some() && peer_live;
-            let state = if stalled_s < self.stall_s || blocked_on_peer { "progress" } else { "stalled" };
-            journal.line(&format!(
-                "PHASE_WATCHDOG tag={} state={} stall_seconds={} cpu_s={:.2} wchar={} read_bytes={} \
-rchar={} write_bytes={} band={} blocked_on_peer={} window_s={}",
-                w.tag, state, stalled_s, w.progress.cpu_s(), w.progress.wchar, w.progress.read_bytes,
-                w.progress.rchar, w.progress.write_bytes,
-                w.band.clone().unwrap_or_else(|| "-".to_string()),
-                u8::from(blocked_on_peer), self.stall_s));
-            if state == "stalled" {
-                return Err(Self::wedge_dump(w, scratch, stalled_s));
-            }
-        }
-        Ok(())
-    }
-
-    /// The dump that makes a wedge diagnosable from the journal alone: the
-    /// phase, its last progress counters, the files the tape protocol has it
-    /// blocked on, and the tail of its own log.
-    fn wedge_dump(w: &Watched, scratch: &Path, stalled_s: u64) -> String {
-        let tail = log_tail(&Self::log_path(scratch, &w.tag), 1 << 14);
-        let lines: Vec<&str> = tail.lines().rev().take(8).collect::<Vec<_>>().into_iter().rev().collect();
-        format!(
-            "PHASE {} WEDGED (progress watchdog): ZERO forward progress for {}s - no CPU, no I/O, \
-no band advance - so the process is wedged, not slow. The run was killed.\n  \
-state: tag={} pgid={} stall_seconds={} cpu_s={:.2} wchar={} read_bytes={} rchar={} write_bytes={} last_band={}\n  \
-waiting on: {}\n  log tail ({}):\n{}",
-            w.tag, stalled_s,
-            w.tag, w.pgid, stalled_s, w.progress.cpu_s(), w.progress.wchar, w.progress.read_bytes,
-            w.progress.rchar, w.progress.write_bytes,
-            w.band.clone().unwrap_or_else(|| "-".to_string()),
-            log_waiting_on(&tail).unwrap_or_else(|| "not named in the log tail (see counters above)".to_string()),
-            Self::log_path(scratch, &w.tag).display(),
-            lines.join("\n"))
-    }
-}
-
 /// Spawn one phase under /usr/bin/time -v with the hard RLIMIT_AS cap and
 /// optional per-phase environment overrides (journaled in PHASE START).
 ///
-/// THE WALL CLOCK POLICY LIVES HERE, IN ONE PLACE. `timeout_s == Some(0)` (and a
-/// route that carries no cap at all) runs the tool with NO `timeout` wrapper: a
-/// wall clock is the wrong instrument, and the run that proved it was HEALTHY
-/// when a work budget killed it at 61/102 waves (rc=124 after 9.4 h). A nonzero
-/// value stays a deliberate hard cap for bounded experiments. `PHASE_TIMEOUT` is
-/// journaled for EVERY phase so the policy can never be invisible again.
+/// THERE IS NO TIMEOUT WRAPPER AND NO SUPERVISOR. Every phase is spawned
+/// directly and runs until it exits, fails, or a human stops it: a wall clock
+/// killed a HEALTHY 100 GB run at 61/102 waves after 9.4 h (rc=124) because
+/// someone set a work budget, and a stall heuristic is the same class of error.
 fn spawn_phase(
     journal: &mut Journal,
     scratch: &Path,
     tag: &str,
     memory_kb: u64,
-    timeout_s: Option<u64>,
-    stall_s: u64,
-    tool: &str,
+    program: &str,
     args: &[String],
     env: &[(String, String)],
 ) -> Result<RunningPhase, String> {
@@ -1141,26 +879,12 @@ fn spawn_phase(
     let time_path = scratch.join(format!("{tag}.time"));
     let _ = fs::remove_file(&log_path);
     let _ = fs::remove_file(&time_path);
-    let (program, argv, seconds, cap_note) = match timeout_s {
-        Some(n) if n > 0 => {
-            let mut argv = vec!["-k".to_string(), "120".to_string(), n.to_string()];
-            argv.extend_from_slice(args);
-            ("/usr/bin/timeout".to_string(), argv, n.to_string(),
-             "hard cap: GNU timeout -k 120 (a deliberate bounded experiment)".to_string())
-        }
-        _ => (tool.to_string(), args.to_vec(), "none".to_string(),
-              "NO CEILING: no timeout wrapper; the progress watchdog is the only instrument".to_string()),
-    };
-    let foreground = if program == "/usr/bin/timeout" { " --foreground" } else { "" };
-    let command_line = format!("{program}{foreground} {}", argv.join(" "));
+    let command_line = format!("{program} {}", args.join(" "));
     let env_note = if env.is_empty() {
         String::new()
     } else {
         format!(" env={}", env.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(" "))
     };
-    // Printed BEFORE the phase runs, on every route, so a work budget is never
-    // invisible again.
-    journal.line(&format!("PHASE_TIMEOUT tag={tag} seconds={seconds} ({cap_note})"));
     journal.line(&format!("PHASE {tag} START {command_line}{env_note} rlimit_as_kb={memory_kb}"));
     let log = File::options().create(true).append(true).open(&log_path)
         .map_err(|e| format!("create {}: {e}", log_path.display()))?;
@@ -1171,10 +895,8 @@ fn spawn_phase(
             .arg("xsa-phase") // $0
             .arg(memory_kb.to_string()) // $1: RLIMIT_AS in KiB
             .arg("/usr/bin/time").arg("-v").arg("-o").arg(&time_path)
-            .arg(&program);
-        // GNU timeout otherwise creates another group, escaping our cleanup.
-        if program == "/usr/bin/timeout" { cmd.arg("--foreground"); }
-        cmd.args(&argv)
+            .arg(program);
+        cmd.args(args)
             .process_group(0)
             .stdin(Stdio::null())
             .current_dir(scratch)
@@ -1186,34 +908,17 @@ fn spawn_phase(
         command.env(key, value);
     }
     let child = command.spawn().map_err(|e| format!("launch {tag}: {e}"))?;
-    Ok(RunningPhase { tag: tag.to_string(), child, log_path, time_path, stall_s, armed: true })
+    Ok(RunningPhase { tag: tag.to_string(), child, log_path, time_path, armed: true })
 }
 
 /// Wait for a spawned phase, journal its telemetry, fail loud on error.
-/// The wait is a POLL, so the progress watchdog can look at the phase while it
-/// runs: a wedged phase fails the build here instead of hanging it forever.
 fn join_phase(
     journal: &mut Journal,
     scratch: &Path,
-    running: RunningPhase,
+    mut running: RunningPhase,
 ) -> Result<(), String> {
-    let mut running = running;
     let tag = running.tag.clone();
-    let mut watchdog = Watchdog::new(running.stall_s);
-    watchdog.watch(&tag, running.child.id() as i32);
-    let mut next_sample = Instant::now() + watchdog.period();
-    let status = loop {
-        if let Some(status) = running.child.try_wait().map_err(|e| format!("wait {tag}: {e}"))? {
-            break status;
-        }
-        let now = Instant::now();
-        if now >= next_sample {
-            // On Err `running` is dropped here, which SIGKILLs the phase's group.
-            watchdog.sample(journal, scratch)?;
-            next_sample = now + watchdog.period();
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    };
+    let status = running.child.wait().map_err(|e| format!("wait {tag}: {e}"))?;
     let (wall, peak_rss_kb) = fs::read_to_string(&running.time_path)
         .map(|text| parse_time_report(&text))
         .unwrap_or((None, None));
@@ -1236,18 +941,9 @@ fn join_phase(
 
 /// Observe every stage while the pipeline is live. Waiting for the sorter
 /// first hides a dead merge behind the sorter's next credit wait indefinitely.
-/// Every live phase is sampled by the progress watchdog, so a wedged phase (one
-/// that is neither burning CPU nor moving bytes for the whole window) kills the
-/// run with a state dump; a merely slow one keeps its counters moving and runs.
 /// Dropping the remaining phases on any error kills their private groups.
 fn join_pipeline(journal: &mut Journal, scratch: &Path,
                  phases: Vec<RunningPhase>) -> Result<(), String> {
-    let stall_s = phases.first().map(|p| p.stall_s).unwrap_or(0);
-    let mut watchdog = Watchdog::new(stall_s);
-    for phase in &phases {
-        watchdog.watch(&phase.tag, phase.child.id() as i32);
-    }
-    let mut next_sample = Instant::now() + watchdog.period();
     let mut pending: Vec<Option<RunningPhase>> = phases.into_iter().map(Some).collect();
     while pending.iter().any(Option::is_some) {
         for slot in &mut pending {
@@ -1256,18 +952,9 @@ fn join_pipeline(journal: &mut Journal, scratch: &Path,
                     .map_err(|e| format!("poll {}: {e}", phase.tag))?.is_some(),
                 None => false,
             };
-            if exited {
-                let phase = slot.take().unwrap();
-                watchdog.forget(&phase.tag);
-                join_phase(journal, scratch, phase)?;
-            }
+            if exited { join_phase(journal, scratch, slot.take().unwrap())?; }
         }
         if pending.iter().any(Option::is_some) {
-            let now = Instant::now();
-            if now >= next_sample {
-                watchdog.sample(journal, scratch)?;
-                next_sample = now + watchdog.period();
-            }
             std::thread::sleep(Duration::from_millis(100));
         }
     }
@@ -1279,12 +966,10 @@ fn run_phase(
     scratch: &Path,
     tag: &str,
     memory_kb: u64,
-    timeout_s: Option<u64>,
-    stall_s: u64,
     program: &str,
     args: &[String],
 ) -> Result<(), String> {
-    let running = spawn_phase(journal, scratch, tag, memory_kb, timeout_s, stall_s, program, args, &[])?;
+    let running = spawn_phase(journal, scratch, tag, memory_kb, program, args, &[])?;
     join_phase(journal, scratch, running)
 }
 
@@ -1475,7 +1160,7 @@ fn run_selftest(options: SelftestOptions) -> Result<(), String> {
             "--seed".to_string(), seed.to_string(),
             "--threads".to_string(), options.threads.to_string(),
         ];
-        run_phase(&mut journal, &hold, &tag, SELFTEST_MEMORY_KB, None, 0, merge.to_str().unwrap(), &args)?;
+        run_phase(&mut journal, &hold, &tag, SELFTEST_MEMORY_KB, merge.to_str().unwrap(), &args)?;
         let pass = require_log_contains(&hold, &tag, "SELFTEST_PASS")?;
         journal.line(&format!("SEED {seed} {pass}"));
     }
@@ -1816,7 +1501,7 @@ prove a fit (the projected peak exceeds the reported capacity)");
         chunk_env.push(("CHUNK_WORKERS".to_string(), w.to_string_lossy().to_string()));
     }
     {
-        let running = spawn_phase(&mut journal, &scratch, "chunk", memory_kb, None, options.stall_s, tools.join("chunk_frontend").to_str().unwrap(), &[
+        let running = spawn_phase(&mut journal, &scratch, "chunk", memory_kb, tools.join("chunk_frontend").to_str().unwrap(), &[
             s(&input.to_string_lossy()), chunks.to_string(),
             s(&scratch.join("chunks").to_string_lossy()), s(&remap_path.to_string_lossy()),
         ], &chunk_env)?;
@@ -1828,7 +1513,7 @@ prove a fit (the projected peak exceeds the reported capacity)");
     // Sample peak disc through the merge: with delete-as-you-go the fan-in
     // peak is mid-merge, not at a phase boundary.
     let merge_sampler = DiscSampler::start(scratch.clone(), Duration::from_secs(2));
-    run_phase(&mut journal, &scratch, "merge", memory_kb, None, options.stall_s, tools.join("cross_lcp_merge").to_str().unwrap(), &[
+    run_phase(&mut journal, &scratch, "merge", memory_kb, tools.join("cross_lcp_merge").to_str().unwrap(), &[
         "--tree".into(), s(&scratch.join("chunks").to_string_lossy()), chunks.to_string(),
         n.to_string(), frag.clone(),
         "--threads".into(), options.threads.to_string(),
@@ -1844,14 +1529,14 @@ prove a fit (the projected peak exceeds the reported capacity)");
     journal.line(&require_log_contains(&scratch, "merge", "CROSS_PF_EMIT")?);
 
     // 3. external adopt finish: endpoints + slim consume the pf side streams.
-    run_phase(&mut journal, &scratch, "endpoints", memory_kb, None, options.stall_s, tools.join("rpfbwt_endpoints").to_str().unwrap(), &[
+    run_phase(&mut journal, &scratch, "endpoints", memory_kb, tools.join("rpfbwt_endpoints").to_str().unwrap(), &[
         frag.clone(), s(&finish.join("frag.ri4").to_string_lossy()),
         s(&finish.join("frag.head_sa").to_string_lossy()),
         "--pf-text".into(), format!("{frag}.pftext"),
         "--pf-checkpoints".into(), format!("{frag}.pfck"),
     ])?;
     journal.line(&require_log_contains(&scratch, "endpoints", "ENDPOINT_PASS")?);
-    run_phase(&mut journal, &scratch, "slim", memory_kb, None, options.stall_s, tools.join("slim_dump").to_str().unwrap(), &[
+    run_phase(&mut journal, &scratch, "slim", memory_kb, tools.join("slim_dump").to_str().unwrap(), &[
         "--slim".into(), "--resolve-ri4".into(),
         "--ri4".into(), s(&finish.join("frag.ri4").to_string_lossy()),
         "--head-sa".into(), s(&finish.join("frag.head_sa").to_string_lossy()),
@@ -1871,7 +1556,7 @@ prove a fit (the projected peak exceeds the reported capacity)");
         std::env::args().next().map(PathBuf::from).filter(|p| p.is_file())
             .ok_or_else(|| "sweep launcher: this binary was replaced during the run; re-invoke by path".to_string())?
     } else { xsa };
-    run_phase(&mut journal, &scratch, "sweep", memory_kb, None, options.stall_s, xsa.to_str().unwrap(), &[
+    run_phase(&mut journal, &scratch, "sweep", memory_kb, xsa.to_str().unwrap(), &[
         "chi-rspace".into(), "--stream-agg".into(),
         "--ri4".into(), s(&finish.join("frag.ri4").to_string_lossy()),
         "--agg".into(), s(&finish.join("frag.agg").to_string_lossy()),
@@ -1974,21 +1659,13 @@ fn run_v2_tail(
     plan_windows: u64,
 ) -> Result<(), String> {
     let s = |path: &str| path.to_string();
-    // THE WALL CLOCK IS OPT-IN. `--timeout 0` = NO CEILING: no `timeout`
-    // wrapper is put on any phase (spawn_phase journals PHASE_TIMEOUT per
-    // phase). A wall cap killed a HEALTHY 100 GB run at 61/102 waves after
-    // 9.4 h because someone set a work budget; the progress watchdog is the
-    // instrument that replaces it, and it kills only a WEDGED phase.
-    let timeout_s = options.timeout_s
-        .ok_or("--v2-pipeline execution requires --timeout SECONDS (0 = NO CEILING)")?;
-    let timeout_note = if timeout_s == 0 {
-        "none (NO CEILING: no timeout wrapper on any phase; the progress watchdog is the only instrument)".to_string()
-    } else {
-        format!("{timeout_s} (deliberate hard cap: GNU timeout -k 120 on every phase)")
-    };
+    // NO TIMEOUTS, NO WATCHDOGS. Phases are spawned directly and run until they
+    // exit or fail. The caps that used to live here (a GNU coreutils timeout
+    // wrapper on every phase, then a stall watchdog that killed on a heuristic)
+    // both destroyed expensive work on a guess; neither exists any more.
     journal.line(&format!(
-        "V2_TIMEOUT seconds={timeout_note} base ulimit -v {memory_kb} KiB stall_seconds={} (PHASE_TIMEOUT per phase; PHASE_WATCHDOG samples forward progress)",
-        options.stall_s));
+        "V2_TIMEOUT none (NO TIMEOUT and NO WATCHDOG: no `timeout` wrapper on any phase and no \
+supervisor process; base ulimit -v {memory_kb} KiB. A run ends when it exits, fails, or a human stops it)"));
 
     // ---- the producer: bin-bwt, the plan's resolved arena bound
     journal.line(&format!(
@@ -2046,11 +1723,8 @@ fn run_v2_tail(
         journal.line(&format!("V2_CHI_EXPECT {expected} (the banked constant; the finish asserts chi in-process)"));
     }
 
-    // NO `timeout` arguments here: spawn_phase owns the wall-clock policy
-    // (and journals PHASE_TIMEOUT) so 0 can never leak into an argv. Each phase
-    // names its tool separately from its arguments for the same reason.
-    let mut producer_tool = s(&tools.join("cross_lcp_merge").to_string_lossy());
     let mut producer_args: Vec<String> = Vec::new();
+    producer_args.push(s(&tools.join("cross_lcp_merge").to_string_lossy()));
     producer_args.extend([
         "--binbwt".into(), s(&input.to_string_lossy()),
         "--remap".into(), s(&remap_path.to_string_lossy()),
@@ -2131,14 +1805,13 @@ fn run_v2_tail(
 walks the corpus for every endpoint and no LCP slice is produced). Not a user option.");
     }
     let bands_dir = scratch.join("bands-tape");
-    let emit_tool = s(&tools.join("cross_lcp_merge").to_string_lossy());
     let mut emit_args: Vec<String> = Vec::new();
     if options.tape {
         fs::create_dir_all(&bands_dir)
             .map_err(|e| format!("create {}: {e}", bands_dir.display()))?;
         let waves = scratch.join("waves-tape");
-        producer_tool = s(&tools.join("scatter_sort").to_string_lossy());
         producer_args = vec![
+            s(&tools.join("scatter_sort").to_string_lossy()),
             "--corpus".into(), s(&input.to_string_lossy()),
             "--remap".into(), s(&remap_path.to_string_lossy()),
             "--scratch".into(), s(&waves.to_string_lossy()),
@@ -2156,6 +1829,7 @@ walks the corpus for every endpoint and no LCP slice is produced). Not a user op
         ];
         if lce_verify { producer_args.push("--no-lcp-slices".into()); }
         emit_args = vec![
+            s(&tools.join("cross_lcp_merge").to_string_lossy()),
             "--binbwt".into(), s(&input.to_string_lossy()),
             "--remap".into(), s(&remap_path.to_string_lossy()),
             "--out-prefix".into(), frag.to_string(),
@@ -2164,22 +1838,21 @@ walks the corpus for every endpoint and no LCP slice is produced). Not a user op
         ];
     }
     let mut finish_args: Vec<String> = Vec::new();
-    // `--poll-timeout` is the FINISH's own window wait in seconds; it must not
-    // become the ceiling the operator just removed, so 0 becomes effectively
-    // infinite (1e9 s) and the journal names the substitution.
-    let poll_timeout = if timeout_s == 0 { 1_000_000_000u64 } else { timeout_s };
-    journal.line(&format!(
-        "FINISH_POLL_TIMEOUT seconds={poll_timeout} rule=--timeout-0-means-no-ceiling (the finish never gives up on a live producer)"));
-    let finish_tool = s(&tools.join("xsa_finish").to_string_lossy());
+    finish_args.push(s(&tools.join("xsa_finish").to_string_lossy()));
     finish_args.extend([
         "--prefix".into(), frag.to_string(),
         "--corpus".into(), s(&input.to_string_lossy()),
         "--remap".into(), s(&remap_path.to_string_lossy()),
         "--output".into(), s(&container.to_string_lossy()),
         "--threads".into(), options.threads.to_string(),
-        "--poll-timeout".into(), poll_timeout.to_string(),
+        // The finish's own window wait for the producer's pieces. It is NOT a
+        // ceiling on the run (there is none): it is the finish's patience, and it
+        // must never expire on a live producer.
+        "--poll-timeout".into(), FINISH_POLL_TIMEOUT_S.to_string(),
         "--wit-ram-budget".into(), wit_ram_bytes.to_string(),
     ]);
+    journal.line(&format!(
+        "FINISH_POLL_TIMEOUT seconds={FINISH_POLL_TIMEOUT_S} (the finish never gives up on a live producer)"));
     if options.tape {
         finish_args.push(if options.with_chi { "--with-chi" } else { "--no-chi" }.into());
     }
@@ -2195,18 +1868,15 @@ walks the corpus for every endpoint and no LCP slice is produced). Not a user op
     // Spawn BOTH before joining: the finish must start with the producer (it
     // polls the producer's piece directory from row zero).
     let producer_label = if options.tape { "order-tape" } else { "bin-v2" };
-    // `--timeout 0` reaches spawn_phase as Some(0) = NO CEILING, which is what
-    // makes PHASE_TIMEOUT tag=<t> seconds=none true rather than decorative.
-    let timer = options.timeout_s;
-    let stall = options.stall_s;
-    let producer_running = spawn_phase(journal, scratch, producer_label, if options.tape { memory_kb.max((3 * n + 1023) / 1024) } else { memory_kb }, timer, stall, &producer_tool, &producer_args, &producer_env)?;
+    // [0] is the tool itself (there is no `timeout` wrapper in front of it).
+    let producer_running = spawn_phase(journal, scratch, producer_label, if options.tape { memory_kb.max((3 * n + 1023) / 1024) } else { memory_kb }, &producer_args[0], &producer_args[1..], &producer_env)?;
     let emit_running = if options.tape {
-        Some(spawn_phase(journal, scratch, "emit-tape", memory_kb, timer, stall, &emit_tool, &emit_args, &[])?)
+        Some(spawn_phase(journal, scratch, "emit-tape", memory_kb, &emit_args[0], &emit_args[1..], &[])?)
     } else { None };
     // RLIMIT_AS includes corpus and chi mappings, not only resident memory.
     // Use the producer's 3n floor, retaining any larger explicit finish cap.
     let finish_as_kb = finish_v2_as_kb(memory_kb, finish_as_kb, n);
-    let finish_running = spawn_phase(journal, scratch, "finish-v2", finish_as_kb, timer, stall, &finish_tool, &finish_args, &[])?;
+    let finish_running = spawn_phase(journal, scratch, "finish-v2", finish_as_kb, &finish_args[0], &finish_args[1..], &[])?;
     let v2_sampler = DiscSampler::start(scratch.to_path_buf(), Duration::from_secs(2));
     let mut phases = vec![producer_running, finish_running];
     if let Some(emit) = emit_running { phases.push(emit); }
@@ -2474,7 +2144,7 @@ mod tests {
         assert!(lock_scratch(&dir).is_err());
         let mut journal = Journal::open(&dir.join("journal")).unwrap();
         let mut stage = spawn_phase(&mut journal, &dir, "owner", SELFTEST_MEMORY_KB,
-            Some(5), 0, "bash", &["-c".into(),
+            "bash", &["-c".into(),
                 "touch ready; exec sleep 1".into()], &[]).unwrap();
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while !dir.join("ready").exists() {
@@ -2492,53 +2162,6 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
-    /// THE WATCHDOG CATCHES A WEDGE. The phase prints its band heartbeat, then
-    /// SIGSTOPs its own process group: zero CPU, zero I/O, no band advance. With
-    /// a 2 s window the run must be killed and the dump must name the phase.
-    #[test]
-    fn watchdog_kills_a_wedged_phase_and_names_it() {
-        let _serial = PROCESS_TEST_LOCK.lock().unwrap();
-        let dir = std::env::temp_dir().join(format!("xsa-wedge-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
-        let mut journal = Journal::open(&dir.join("journal")).unwrap();
-        let phase = spawn_phase(&mut journal, &dir, "wedge", SELFTEST_MEMORY_KB,
-            None, 2, "bash", &["-c".into(),
-                "for i in 0 1 2; do echo \"SS_BAND band=$i rows=1 sort_s=1\"; done; kill -STOP 0".into()],
-            &[]).unwrap();
-        let start = std::time::Instant::now();
-        let error = join_phase(&mut journal, &dir, phase).unwrap_err();
-        let elapsed = start.elapsed();
-        assert!(error.contains("PHASE wedge WEDGED"), "{error}");
-        assert!(error.contains("last_band=band=2"), "{error}");
-        assert!(elapsed >= Duration::from_secs(2), "fired early: {elapsed:?}");
-        assert!(elapsed < Duration::from_secs(30), "fired late: {elapsed:?}");
-        let log = fs::read_to_string(dir.join("journal")).unwrap();
-        assert!(log.contains("PHASE_WATCHDOG tag=wedge state=stalled"), "{log}");
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    /// THE WATCHDOG DOES NOT KILL A SLOW PHASE. A phase that burns CPU for
-    /// several windows is slow, not wedged: its CPU ticks keep moving, so it
-    /// survives a 1 s window for 4 s of work.
-    #[test]
-    fn watchdog_does_not_kill_a_slow_phase_that_keeps_burning_cpu() {
-        let _serial = PROCESS_TEST_LOCK.lock().unwrap();
-        let dir = std::env::temp_dir().join(format!("xsa-slow-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
-        let mut journal = Journal::open(&dir.join("journal")).unwrap();
-        let phase = spawn_phase(&mut journal, &dir, "slow", SELFTEST_MEMORY_KB,
-            None, 1, "bash", &["-c".into(),
-                "end=$(( $(date +%s) + 4 )); while [ $(date +%s) -lt $end ]; do :; done".into()],
-            &[]).unwrap();
-        let start = std::time::Instant::now();
-        join_phase(&mut journal, &dir, phase).expect("a CPU-burning phase must not be called wedged");
-        assert!(start.elapsed() >= Duration::from_secs(3), "test did not run long enough");
-        let log = fs::read_to_string(dir.join("journal")).unwrap();
-        assert!(!log.contains("state=stalled"), "{log}");
-        assert!(log.contains("PHASE_WATCHDOG tag=slow state=progress"), "{log}");
-        fs::remove_dir_all(dir).unwrap();
-    }
-
     #[test]
     fn pipeline_detects_each_failed_stage_and_kills_waiting_peers() {
         let _serial = PROCESS_TEST_LOCK.lock().unwrap();
@@ -2551,7 +2174,7 @@ mod tests {
             for i in 0..3 {
                 let script = if i == failed { "sleep 0.2; exit 7" } else { "exec sleep 60" };
                 let phase = spawn_phase(&mut journal, &dir, &format!("stage-{i}"),
-                    SELFTEST_MEMORY_KB, None, 0, "bash", &["-c".into(), script.into()], &[]).unwrap();
+                    SELFTEST_MEMORY_KB, "bash", &["-c".into(), script.into()], &[]).unwrap();
                 if i != failed { peer_groups.push(phase.child.id()); }
                 phases.push(phase);
             }
@@ -2678,7 +2301,7 @@ mod tests {
 
     fn v2_args(extra: &[&str]) -> Vec<String> {
         let mut args: Vec<String> = ["--input", "/tmp/corpus", "--scratch", "/tmp/scratch",
-                                    "--v2-pipeline", "--timeout", "3600"]
+                                    "--v2-pipeline"]
             .iter().map(|s| s.to_string()).collect();
         args.extend(extra.iter().map(|s| s.to_string()));
         args
@@ -2692,7 +2315,7 @@ mod tests {
         assert_eq!(default.bin_live_cap, None, "absent = the plan picks from --memory-gb");
         // On the LEGACY route the flag does not exist (it is a bin-pipeline knob).
         let err = parse_chain(&["--input", "/tmp/c", "--scratch", "/tmp/s", "--legacy-merge",
-                                "--timeout", "3600", "--bin-live-cap", "7"]
+                                "--bin-live-cap", "7"]
                               .iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap_err();
         assert!(err.contains("--bin-live-cap is a bin-pipeline flag"), "{err}");
     }
@@ -2727,7 +2350,7 @@ mod tests {
     fn phrase_radix_is_refused_on_the_legacy_route() {
         let legacy = |extra: &[&str]| {
             let mut args: Vec<String> = ["--input", "/tmp/c", "--scratch", "/tmp/s",
-                                        "--legacy-merge", "--timeout", "3600"]
+                                        "--legacy-merge"]
                 .iter().map(|s| s.to_string()).collect();
             args.extend(extra.iter().map(|s| s.to_string()));
             args
@@ -2766,7 +2389,7 @@ mod tests {
         let err = parse_chain(&v2_args(&["--bin-target-size", "1"])).unwrap_err();
         assert!(err.contains("--bin-target-size must be >= 2"), "{err}");
         let err = parse_chain(&["--input", "/tmp/c", "--scratch", "/tmp/s", "--legacy-merge",
-                                "--timeout", "3600", "--bin-target-size", "1048576"]
+                                "--bin-target-size", "1048576"]
                               .iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap_err();
         assert!(err.contains("--bin-target-size is a bin-pipeline flag"), "{err}");
     }
@@ -2776,7 +2399,7 @@ mod tests {
         // THE FLAG FLIP: no route flag at all selects the bin pipeline, and
         // --v2-pipeline is accepted (not an unknown option) and journalled as
         // ignored rather than silently ignored.
-        let plain: Vec<String> = ["--input", "/tmp/c", "--scratch", "/tmp/s", "--timeout", "3600"]
+        let plain: Vec<String> = ["--input", "/tmp/c", "--scratch", "/tmp/s"]
             .iter().map(|s| s.to_string()).collect();
         let options = parse_chain(&plain).unwrap();
         assert!(options.bin_pipeline && !options.legacy_merge);
@@ -2792,7 +2415,7 @@ mod tests {
         assert_eq!(with_flag.bin_target_size, options.bin_target_size);
         // --legacy-merge is the ONLY way back to the chunk+merge route.
         let legacy = parse_chain(&["--input", "/tmp/c", "--scratch", "/tmp/s",
-                                   "--legacy-merge", "--timeout", "3600"]
+                                   "--legacy-merge"]
                                  .iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap();
         assert!(legacy.legacy_merge && !legacy.bin_pipeline);
     }
@@ -2800,7 +2423,7 @@ mod tests {
     #[test]
     fn legacy_merge_is_the_only_route_that_takes_the_chunk_knobs() {
         let legacy = parse_chain(&["--input", "/tmp/c", "--scratch", "/tmp/s", "--legacy-merge",
-                                   "--chunks", "32", "--kway", "4", "--timeout", "3600"]
+                                   "--chunks", "32", "--kway", "4"]
                                  .iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap();
         assert!(legacy.legacy_merge);
         assert_eq!(legacy.chunks, 32);
@@ -2872,14 +2495,21 @@ mod tests {
                                       "--finish-as-gb", "32"])).is_err());
     }
 
+    /// THERE IS NO TIMEOUT AND NO WATCHDOG. Both flags are gone from the CLI:
+    /// they are rejected as unknown options, not accepted and ignored, so they
+    /// cannot silently linger in a script and pretend to cap or supervise a run.
     #[test]
-    fn bin_pipeline_execution_still_requires_a_timeout() {
-        // The DEFAULT route is the bin pipeline, so the cap requirement belongs to
-        // the plain invocation, not to a flag.
-        let args: Vec<String> = ["--input", "/tmp/corpus", "--scratch", "/tmp/scratch"]
+    fn timeout_and_stall_flags_are_rejected_as_unknown() {
+        let plain: Vec<String> = ["--input", "/tmp/corpus", "--scratch", "/tmp/scratch"]
             .iter().map(|s| s.to_string()).collect();
-        let err = parse_chain(&args).unwrap_err();
-        assert!(err.contains("requires --timeout"), "{err}");
+        assert!(parse_chain(&plain).is_ok(), "a plain build needs no --timeout: {plain:?}");
+        for flag in ["--timeout", "--stall-seconds"] {
+            let mut args = plain.clone();
+            args.push(flag.into());
+            args.push("3600".into());
+            let err = parse_chain(&args).unwrap_err();
+            assert!(err.contains("unknown option"), "{flag} must be rejected: {err}");
+        }
     }
 
     #[test]
