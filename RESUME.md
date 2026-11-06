@@ -50,19 +50,68 @@ Spool roles:
 `recomputed=<n>` is the number of plan spools **this attempt must re-derive**.
 It is never inferred from a wall clock or a skip flag.
 
+### `WORK_AVOIDED`: ONE definition, ONE emitter per phase
+
 `WORK_AVOIDED` prices the same decision in each expensive phase's own unit
-(corpus bytes, corpus rows, m1 runs), and its summary carries `(T-P)/T`:
+(corpus bytes, corpus rows, m1 runs). **The definition is stated once, here, and
+both emitters print it with identical field order and units**
+(`print_work_avoided` in `xsa/src/recovery.rs`, `workAvoided` in
+`xsa/runtime/bit6/xsa_finish.cpp`):
 
 ```text
-WORK_AVOIDED phase=<tag> done=<n> total=<n> ratio=<r> basis=<plan|recorded|unknown>
-WORK_AVOIDED_SUMMARY score=<mean of (T-P)/T> ... per_phase=remap=.. sort=.. emit=.. finish=..
+WORK_AVOIDED phase=<tag> performed=<n> total=<n> avoided=<n> avoided_frac=<f> basis=<how total was derived>
 ```
 
-`done` is work this attempt did NOT have to redo, `total` is what a clean build
-performs, and `basis` says where `total` came from. The finish's run count is an
-OUTPUT of the data, so before any committing run has recorded it the line reports
-`basis=unknown(no recorded run)` and `ratio=0` - an unknown total is never guessed
-and never scored as avoided work.
+- `total` - the work a CLEAN build of that phase performs, in the phase's unit.
+- `performed` - the work THIS attempt performed, in that same unit.
+- `avoided` - `total - performed`: the work this attempt did NOT have to redo.
+- `avoided_frac` - `avoided / total`: **`0.000000` means the attempt did all of
+  the phase's work, `1.000000` means it did none.** It is reported as
+  `0.000000` when `total` is unknown.
+- `basis` - how `total` was derived: `plan=<quantity>` (corpus bytes, corpus
+  rows), `recorded=m1_runs` (the committed run's `SPOOL_INVENTORY`),
+  `stage=finish_advance_counters` (the finish stage's own counters) or
+  `unknown(<reason>)`.
+
+There is **no bare `ratio` field in this line**, here or in the native finish.
+Two lanes once printed `WORK_AVOIDED ... ratio=<r>` on exactly that field name
+with OPPOSITE meanings - performed/total in the native finish, avoided/total in
+the driver - so a gate reading `ratio<1.0` passed a full replay on one side and
+failed a no-work resume on the other. One name, one meaning, and a quantity a
+gate can be written against.
+
+**Who emits which line.** The driver prices `remap`, `sort` and `emit` from the
+plan. It prices `finish` too, and prefers the finish stage's OWN advance
+counters, `FINISH_ADVANCE_COUNTERS adv_total=<n> adv_performed=<n>
+adv_restored=<n> adv_restored_raw_runs=<n> adv_restored_bands=<n>`: they are the
+only measurement of PARTIAL advance work (runs restored from a durable finish
+checkpoint were not re-folded). Without them it falls back to the recorded
+`m1_runs` total with `performed` of `0` (the stage did not run) or all of it (it
+ran and replayed). The finish stage emits `WORK_AVOIDED phase=finish` itself only
+when it is the accounting root - a standalone run with `XSA_WORK_ROOT` unset;
+`xsa build` sets `XSA_WORK_ROOT=driver` in that stage's environment, so no phase
+is ever reported twice in one build, and never with two different numbers.
+
+One summary line, at BUILD END, over the phases whose `total` is known (`> 0`):
+
+```text
+WORK_AVOIDED_SUMMARY performed=<sum> total=<sum> avoided_frac=<f> phases=<k> basis=sum_over_phases_with_total_gt_0 unknown_total=<m> per_phase=remap=.. sort=.. emit=.. finish=..
+```
+
+`avoided_frac` there is the aggregate `avoided/total` **in those phases' own
+units**, i.e. how much of the priced work this attempt skipped overall (not a
+weighted score with the per-phase numbers hidden - `per_phase=` prints every
+phase, and `phases=`/`unknown_total=` say how many were scored). The finish's
+run count is an OUTPUT of the data, so before any committing run has recorded it
+the line reports `basis=unknown(no-recorded-runs)` and `avoided_frac=0.000000`:
+an unknown total is never guessed and never scored as avoided work.
+
+The lines are emitted at build end, never as a prediction: an attempt that
+adopts a committed container ends in `prepare`, and a replay attempt prints them
+after its pipeline, where the receipts exist. `performed` for `sort`/`emit` is
+stated in PLAN units (`n+1` rows, the virtual END included) on purpose: comparing
+the sorter's own `SS_DONE n` with the plan's `n+1` would report one phantom
+avoided row, which is the same class of defect as the old shared `ratio`.
 
 `SPOOL_INVENTORY` is one bounded journal record per commit carrying the counts
 (`bands=`, `pieces=`) and the clean-build work totals (`work_bytes=`,
@@ -220,75 +269,103 @@ interruptions of a large build repeat potentially many hours of computation.
 Do not describe this implementation as the requested incremental checkpoint
 scheme or infer incremental correctness from its byte-equality gates.
 
-### Measured gates (2026-11-06): driver-side resume state
+### Measured gates: driver-side resume state
 
-Base revision: `803bfd2` (pile-week-v1 `finish: checkpoint entropy spools and chi
-bases at quiescent bands` + this lane). Corpus: 20,000,000 bytes, the head of
-`/dev/shm/t150m.txt`. 16 threads, 24 GiB, chi enabled. The box was running other
-lanes' work throughout (load average 52-64), so every wall carries the box load
-it measured under: **counters are exact, walls are contended**. Binary under
-test: `xsa` sha256
-`8d95ca6ab2945b482bf8f500161bf791206815963d44fad7600ac363087d1454`
-(`cargo build --release`, 29 pre-existing warnings, 0 errors).
+Base revision: pile-week-v1 `3b6adf1` + this lane's `WORK_AVOIDED` field fix.
+Corpus: 20,000,000 bytes, the head of `/dev/shm/t150m.txt`. 16 threads, 24 GiB,
+chi enabled. The box was running other lanes' work throughout (load average
+46-62 for the 20 MB sequence, 43-128 for the 150 MB gate), so every wall carries
+the box load it measured under: **counters are exact, walls are contended**.
+Binary under test: `/home/erikg/worktrees/sxgc/wa-units/xsa/target/release/xsa`,
+`cargo build --release` (28 warnings, 0 errors). Every line below is the output of
+this tree: the numbers the earlier `ratio` receipts carried are unchanged, their
+names are not (`ratio` was a bare name with two meanings; `avoided_frac` is the
+one definition above).
 
-- **(a) clean build:** **12.26 s** (load 52.82).
+- **(a) clean build:** **10.18 s** (load 55.97).
   `RESUME_STATE spools_present=0 spools_missing=0 recomputed=0 pieces_present=0 resume=false`
+  `WORK_AVOIDED phase=remap performed=20000000 total=20000000 avoided=0 avoided_frac=0.000000 basis=plan=corpus_bytes`
+  `WORK_AVOIDED phase=sort performed=20000001 total=20000001 avoided=0 avoided_frac=0.000000 basis=plan=corpus_rows_plus_end`
+  `WORK_AVOIDED phase=emit performed=20000001 total=20000001 avoided=0 avoided_frac=0.000000 basis=plan=corpus_rows_plus_end`
+  `WORK_AVOIDED phase=finish performed=7930753 total=7930753 avoided=0 avoided_frac=0.000000 basis=recorded=m1_runs`
+  `WORK_AVOIDED_SUMMARY performed=67930755 total=67930755 avoided_frac=0.000000 phases=4 basis=sum_over_phases_with_total_gt_0 unknown_total=0 per_phase=remap=0.000000 sort=0.000000 emit=0.000000 finish=0.000000`
   Container `de8cc0313563566ec8c5d44d65c9c1de589773a80708633043216a0ef5a4bfa0`.
-- **(b) restart, same scratch, no `--no-resume`:** **0.18 s** (load 59.32).
+- **(b) restart, same scratch, no `--no-resume`:** **0.18 s** (load 55.97).
   `RESUME_STATE spools_present=2 spools_missing=0 recomputed=0 pieces_present=0 resume=true`
-  `WORK_AVOIDED phase=remap done=20000000 total=20000000 ratio=1.000000 basis=plan=corpus_bytes`
-  `WORK_AVOIDED phase=sort  done=20000001 total=20000001 ratio=1.000000 basis=plan=corpus_rows+END`
-  `WORK_AVOIDED phase=emit  done=20000001 total=20000001 ratio=1.000000 basis=plan=corpus_rows+END`
-  `WORK_AVOIDED phase=finish done=7930753 total=7930753 ratio=1.000000 basis=recorded=m1_runs`
-  `WORK_AVOIDED_SUMMARY score=1.000000 ... per_phase=remap=1.000000 sort=1.000000 emit=1.000000 finish=1.000000`
-  Same container SHA-256.
-- **(c) delete ONE spool (`remap-256.bin`), restart:** **0.16 s** (load 59.32).
+  every phase `avoided_frac=1.000000`
+  (`WORK_AVOIDED phase=finish performed=0 total=7930753 avoided=7930753 avoided_frac=1.000000 basis=recorded=m1_runs`),
+  `WORK_AVOIDED_SUMMARY performed=0 total=67930755 avoided_frac=1.000000 phases=4 basis=sum_over_phases_with_total_gt_0 unknown_total=0 per_phase=remap=1.000000 sort=1.000000 emit=1.000000 finish=1.000000`,
+  same container SHA-256.
+- **(c) delete ONE spool (`remap-256.bin`), restart:** **0.16 s** (load 55.97).
   `RESUME_STATE spools_present=1 spools_missing=1 recomputed=1 pieces_present=0 resume=true`
-  `WORK_AVOIDED phase=remap done=0 total=20000000 ratio=0.000000` (the one phase
-  that recomputed), the other three `ratio=1.000000`,
-  `WORK_AVOIDED_SUMMARY score=0.750000`,
+  `WORK_AVOIDED phase=remap performed=20000000 total=20000000 avoided=0 avoided_frac=0.000000 basis=plan=corpus_bytes`
+  (the one phase that recomputed), the other three `avoided_frac=1.000000`,
+  `WORK_AVOIDED_SUMMARY performed=20000000 total=67930755 avoided_frac=0.705583 phases=4 ...`,
   `RESUME_SPOOL_REPUBLISHED path=.../remap-256.bin sha256=f73af42fb5b7a1a946c9199919cdbcafaca31f6e904a56d31b530ec662580f11 role=input recomputed=1`
   - the republished spool is bit-identical to the deleted one, exactly one spool
-  was recomputed, and the container SHA-256 is unchanged
-  (`de8cc031...` before and after).
+  was recomputed, and the container SHA-256 is unchanged (`de8cc031...`).
 - **(d) `XSA_KILL_AT=after_fsync_before_unlink`, then restart:** the killed run is
-  12.18 s (load 59.32). State left by the kill: the journal ends
+  10.4 s and exits 137. State left by the kill: the journal ends
   `SPOOL_INVENTORY scheme=1 remap_sha256=f73af42f... bands=31 pieces=122 work_bytes=20000000 work_rows=20000001 work_runs=7930753`
   then `BUILD_DONE container=de8cc031...`, and `bands-tape/`, `waves-tape/`,
   `merged/`, `remap-256.bin` and the container are all still on disk. Restart
-  **0.16 s** (load 62.52):
-  `RESUME_STATE spools_present=2 spools_missing=0 recomputed=0 pieces_present=0 resume=true`
-  `WORK_AVOIDED_SUMMARY score=1.000000` - state self-consistent, no silent loss,
-  same container SHA-256.
+  **0.17 s** (load 55.97):
+  `RESUME_STATE spools_present=2 spools_missing=0 recomputed=0 pieces_present=0 resume=true`,
+  `WORK_AVOIDED_SUMMARY performed=0 total=67930755 avoided_frac=1.000000 phases=4 ...` -
+  state self-consistent, no silent loss, same container SHA-256.
 - **(e) `XSA_KILL_AT=after_rename` (published, uncommitted), then restart:** the
-  killed run is 9.37 s. Restart **0.19 s** (load 62.52):
+  killed run is 10.39 s. Restart **0.20 s** (load 61.89):
   `RESUME_ADOPT_CONTAINER path=.../c20m.sxi2 bytes=16585320 sha256=de8cc031... validation=sxi2-header-crc+member-bounds+length`,
-  `RESUME_STATE ... resume=true`, `WORK_AVOIDED_SUMMARY score=1.000000`.
-- **(f) `XSA_KILL_AT=mid_band`, then restart:** killed at 2.57 s with **8 piece
-  spools** on disk. Restart **12.19 s** (load 63.74):
-  `RESUME_STATE spools_present=9 spools_missing=1 recomputed=1 pieces_present=8 resume=true`
+  `RESUME_STATE ... resume=true`, `WORK_AVOIDED_SUMMARY ... avoided_frac=1.000000 phases=4 ...`.
+- **(f) `XSA_KILL_AT=mid_band`, then restart:** killed at 2.36 s with piece spools
+  on disk. Restart **10.20 s** (load 60.30):
+  `RESUME_STATE spools_present=4 spools_missing=1 recomputed=1 pieces_present=3 resume=true`
   `RESUME_INVENTORY_ABSENT reason=no_committed_SPOOL_INVENTORY required_known=0 ...`
-  `WORK_AVOIDED_SUMMARY score=0.250000` (only `remap` avoided; sort/emit/finish
-  fully replayed). Same container SHA-256. **This is the honest limit** - the
-  native changes that would remove it are listed below.
-- **(g) `--no-resume`:** **12.24 s** (load 52.13), `resume=false`, full clean
-  rebuild, same container SHA-256.
+  `WORK_AVOIDED phase=remap ... avoided_frac=1.000000`, `sort`/`emit`/`finish`
+  `avoided_frac=0.000000`,
+  `WORK_AVOIDED_SUMMARY performed=47930755 total=67930755 avoided_frac=0.294417 phases=4 ...`
+  (only `remap` avoided; the pipeline replayed). Same container SHA-256. **This is
+  the honest limit** - the native changes that would remove it are listed above.
+- **(g) `--no-resume`:** **12.20 s** (load 48.62), `resume=false`, full clean
+  rebuild, `avoided_frac=0.000000` on every phase, same container SHA-256.
 - **(h) corrupted published container:** one payload byte flipped at offset
   8,000,000 of an adoptable container (state built by the `after_rename` kill).
-  The restart REFUSES and exits 1:
-  `xsa: error: build: CONTAINER_INVALID .../c20m.sxi2 member 1 payload CRC f9ab7f6a != stored 7a55b3fb (a published container that fails its own format is CORRUPTION: refusing rather than silently rebuilding)`
-- **150 MB byte-identity gate:** `/dev/shm/t150m.txt`, clean **70.52 s** (load
-  72.58), chi **44,034,230**, container
-  `f6abd41da6e3c3797abae2e288596a6042337a894869f573fecf51c53f624b3e`, `cmp`
-  identical to mainline's `base150` container byte for byte. Same-scratch
-  restart **0.53 s**:
-  `RESUME_STATE spools_present=2 spools_missing=0 recomputed=0 pieces_present=0 resume=true`
-  `WORK_AVOIDED phase=finish done=57279194 total=57279194 ratio=1.000000 basis=recorded=m1_runs`,
-  `WORK_AVOIDED_SUMMARY score=1.000000`.
+  The restart REFUSES, exits 1 and leaves the file untouched:
+  `xsa: error: build: CONTAINER_INVALID .../c20m.sxi2 member 1 payload CRC 8b0f1065 != stored 7a55b3fb (a published container that fails its own format is CORRUPTION: refusing rather than silently rebuilding)`
+- **150 MB byte-identity gate:** `/dev/shm/t150m.txt`, clean **70.48 s** (load
+  46.14), chi **44,034,230**, container
+  `f6abd41da6e3c3797abae2e288596a6042337a894869f573fecf51c53f624b3e` (unchanged
+  from mainline). Same-scratch restart, no work: **0.48 s** (load 56.64), every
+  phase `avoided_frac=1.000000`,
+  `WORK_AVOIDED_SUMMARY performed=0 total=507279199 avoided_frac=1.000000 phases=4 ...`,
+  `BUILD_ALREADY_DONE container=f6abd41d...`, same container SHA-256.
+- **150 MB killed mid-sweep, then restarted:** the finish dies at its first
+  durable checkpoint (`XSA_FINISH_SPOOL=1` + `XSA_KILL_AT=after_fsync_before_unlink`),
+  rc **86** after **45.79 s** (load 56.64) with 633 durable pieces and the
+  finish's `base-1`/`delta-1` on disk (`SPOOL_STATE blocks_present=0
+  blocks_missing=0 resumed_from=none` - that attempt wrote the first checkpoint).
+  Restart **73.80 s** (load 64.18):
+  `RESUME_STATE spools_present=634 spools_missing=1 recomputed=1 pieces_present=633 resume=true`
+  `RESUME_INVENTORY_ABSENT reason=no_committed_SPOOL_INVENTORY required_known=0 ...`
+  `V2_TREE_RULE spool_arm=1 retained=frag.pfck2,frag.finish-spool (...)`
+  `WORK_AVOIDED phase=remap performed=0 total=150000001 avoided=150000001 avoided_frac=1.000000 basis=plan=corpus_bytes`
+  `WORK_AVOIDED phase=sort performed=150000002 total=150000002 avoided=0 avoided_frac=0.000000 basis=plan=corpus_rows_plus_end`
+  `WORK_AVOIDED phase=emit performed=150000002 total=150000002 avoided=0 avoided_frac=0.000000 basis=plan=corpus_rows_plus_end`
+  `WORK_AVOIDED phase=finish performed=57279194 total=57279194 avoided=0 avoided_frac=0.000000 basis=stage=finish_advance_counters`
+  `WORK_AVOIDED_SUMMARY performed=357279198 total=507279199 avoided_frac=0.295695 phases=4 basis=sum_over_phases_with_total_gt_0 unknown_total=0 per_phase=remap=1.000000 sort=0.000000 emit=0.000000 finish=0.000000`
+  - the container is byte-identical to the clean run
+  (`f6abd41da6e3c3797abae2e288596a6042337a894869f573fecf51c53f624b3e`, chi
+  44,034,230) and the avoided work is CLEARLY above 0 and below 1: the plan spool
+  was reused, the pipeline (finish included) was replayed. Not a full replay, not
+  a no-op. The finish line is priced from the stage's own
+  `FINISH_ADVANCE_COUNTERS` (`adv_total=57279194 adv_performed=57279194
+  adv_restored=0`), which is the only place PARTIAL advance work can be seen: it
+  reports 0 avoided precisely because the driver's replay discards the working
+  tree (`merged/`), which is this implementation's honest limit.
 
-The 20 MB numbers above come from an uninterrupted sequence
-`a -> b -> c -> a' -> d -> d' -> e -> e' -> f -> f' -> h -> h' -> g` in one script
-(`run_gate.sh`), one binary, one corpus.
+The 20 MB numbers above come from one uninterrupted sequence
+`a -> b -> c -> d -> d' -> e -> e' -> f -> f' -> g -> h1 -> h2` in one script, one
+binary, one corpus.
 
 ## Validation and retention cost
 

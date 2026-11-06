@@ -36,7 +36,7 @@ The snapshot saves both repair coalescers, seam classes and ordered source curso
 
 `XSA_KILL_AT=after_fsync_before_unlink` exits with status 86 after the new base and referring state have both been published and directory-synced, and before deleting the compacted delta or previous base. An interrupted compaction can leave an orphan base/delta; only the generation referenced by the verified state is authoritative. The fault hook is not a timer. `--poll-timeout 0` disables native finish polling deadlines; spool mode also disables them. The gate uses `XSA_TAPE_WAIT_S=inf` for the unchanged sorter's legacy slice-credit wait and installs no subprocess timeout.
 
-`WORK_AVOIDED phase=finish done=... total=... ratio=...` reports **sweep work executed in this invocation divided by total normalized runs**. Ratio 1 is full replay; ratio 0 after EOF means no sweep. The restored prefix is not fed through repair, LCE or sweep. The original document's stricter all-phase/end-to-end elapsed-time gate is not claimed by this native-only gate.
+`WORK_AVOIDED phase=finish performed=... total=... avoided=... avoided_frac=... basis=...` reports **sweep work in THIS invocation**, in the line's one definition (stated once, in [RESUME.md](RESUME.md#work_avoided-one-definition-one-emitter-per-phase)): `performed` is the advances this invocation executed, `total` the run's normalized-run total, `avoided = total - performed` and `avoided_frac = avoided/total` - **0 is a full replay, 1 is no sweep at all**. The restored prefix is not fed through repair, LCE or sweep. The retired field name `ratio` on this line meant performed/total, while the driver's `ratio` on the same `WORK_AVOIDED` line meant avoided/total: that is why the field is gone and both emitters now print the fields above, in this order, with these meanings. This native-only gate does not claim the original document's stricter all-phase/end-to-end elapsed-time gate.
 
 ### Validation and remaining limits
 
@@ -51,37 +51,53 @@ python3 xsa/runtime/bit6/finish_spool_gate.py /tmp/lane-b-native-final /mnt/nvme
 
 Each gate directory must be new. Each command builds a clean reference, injects the requested exit during sweep, resumes the native finish, compares the whole-container SHA, deletes one entropy block, and requires exactly one block re-encode and identical reassembly. It retains command logs and dependencies for inspection. The stage directory contains native stages compiled from this worktree; no timeout wrapper is used.
 
-The 150 MB gate passed: chi 44,034,230 and clean/resumed/repaired SHA-256 `f6abd41da6e3c3797abae2e288596a6042337a894869f573fecf51c53f624b3e`, equal to the existing uninterrupted L150 container. Its resume performed 19,530,460 of 57,279,194 sweep advances (ratio 0.340969532), with 36,863 entropy blocks already present. Removing block 31,488 re-encoded exactly that block and performed zero sweep advances. The 1 GB gate also passed: chi 283,296,727 and clean/resumed/repaired SHA-256 `f5d1c4d323a73cdb9e45ea2997941fe4a5897fd8c299f13fccd92e797203c1c9`. It executed 116,378,094 of 368,036,332 sweep advances after restart (ratio 0.316213601), with 245,759 entropy blocks already present. Removing block 225,593 re-encoded exactly that block and performed zero sweep advances.
+The 150 MB gate passed: chi 44,034,230 and clean/resumed/repaired SHA-256 `f6abd41da6e3c3797abae2e288596a6042337a894869f573fecf51c53f624b3e`, equal to the existing uninterrupted L150 container. Its resume performed 19,530,460 of 57,279,194 sweep advances (`avoided_frac` 0.659031), with 36,863 entropy blocks already present. Removing block 31,488 re-encoded exactly that block and performed zero sweep advances. The 1 GB gate also passed: chi 283,296,727 and clean/resumed/repaired SHA-256 `f5d1c4d323a73cdb9e45ea2997941fe4a5897fd8c299f13fccd92e797203c1c9`. It executed 116,378,094 of 368,036,332 sweep advances after restart (`avoided_frac` 0.683787), with 245,759 entropy blocks already present. Removing block 225,593 re-encoded exactly that block and performed zero sweep advances. (Those two ratios are the retired field's numbers restated under the one definition, `avoided_frac = 1 - ratio`; both receipts were re-measured in the new field names at 150 MB - see the verbatim block below - and the 1 GB gate was not re-run on this tree.)
 
 A 4 MB no-chi EOF/short-final-block case also passed clean/kill/resume/single-block-repair, with SHA-256 `9380704848d3e05269dcd804cc67f46e7c1cbd501190fb19e6e11bee82bae3d9`. `SPOOL_GATE_CHI=0` selects this extra gate mode. An initial 65 KB fixture was rejected by the unchanged sorter's minimum band-size configuration; the harness now propagates peer failure instead of leaving the finish waiting. The meaningful no-chi validation uses the supported 4 MB input.
 
 ### Verbatim required gate receipts
 
-150 MB (150,000,001 corpus bytes plus virtual END)
+150 MB (150,000,001 corpus bytes plus virtual END), re-measured on this tree in
+the one field set. Box load average 38-55 while these ran (other lanes' work), so
+the counters are exact and nothing here rests on a wall. Same chi 44,034,230 and
+the same clean/resumed/repaired container SHA-256 as the earlier receipt - the
+numbers did not move, only their names did (`ratio` 0.340969532 was
+performed/total, so the same measurement is `avoided_frac` 0.659030).
 
 ```text
+(a) clean_sha256=f6abd41da6e3c3797abae2e288596a6042337a894869f573fecf51c53f624b3e
 (b) clean_sha256=f6abd41da6e3c3797abae2e288596a6042337a894869f573fecf51c53f624b3e resumed_sha256=f6abd41da6e3c3797abae2e288596a6042337a894869f573fecf51c53f624b3e byte_identical=1
 (c) SPOOL_STATE blocks_present=36863 blocks_missing=0 resumed_from=36863
-WORK_AVOIDED phase=finish done=19530460 total=57279194 ratio=0.340969532
+WORK_AVOIDED phase=finish performed=19530460 total=57279194 avoided=37748734 avoided_frac=0.659030 basis=finish_advance_counters
 (d) deleted=piece-492-block-31488-keys-66499813-66500984.entropy
 SPOOL_RECOMPUTE block=31488 piece=492 runs=1024
 SPOOL_STATE blocks_present=55936 blocks_missing=1 resumed_from=55936
-WORK_AVOIDED phase=finish done=0 total=57279194 ratio=0.000000000
+WORK_AVOIDED phase=finish performed=0 total=57279194 avoided=57279194 avoided_frac=1.000000 basis=finish_advance_counters
 (d) repaired_sha256=f6abd41da6e3c3797abae2e288596a6042337a894869f573fecf51c53f624b3e byte_identical=1 recomputed_blocks=1
 ```
 
-1 GB (1,000,000,005 corpus bytes plus virtual END)
+The 20 MB case of the same gate restores at EOF, so it performs zero advances and
+reports `avoided_frac=1.000000`; the gate's bound is `avoided_frac > .1` (the
+retired `performed/total < .9`, translated), which both cases satisfy.
+
+1 GB (1,000,000,005 corpus bytes plus virtual END) - **not re-run on this tree**;
+these are the earlier receipts restated under the one definition
+(`avoided_frac = 1 - ratio`, `avoided = total - performed`), not new measurements:
 
 ```text
 (b) clean_sha256=f5d1c4d323a73cdb9e45ea2997941fe4a5897fd8c299f13fccd92e797203c1c9 resumed_sha256=f5d1c4d323a73cdb9e45ea2997941fe4a5897fd8c299f13fccd92e797203c1c9 byte_identical=1
 (c) SPOOL_STATE blocks_present=245759 blocks_missing=0 resumed_from=245759
-WORK_AVOIDED phase=finish done=116378094 total=368036332 ratio=0.316213601
+WORK_AVOIDED phase=finish performed=116378094 total=368036332 avoided=251658238 avoided_frac=0.683787 basis=finish_advance_counters
 (d) deleted=piece-3524-block-225593-keys-500327452-500329324.entropy
 SPOOL_RECOMPUTE block=225593 piece=3524 runs=1024
 SPOOL_STATE blocks_present=359410 blocks_missing=1 resumed_from=359410
-WORK_AVOIDED phase=finish done=0 total=368036332 ratio=0.000000000
+WORK_AVOIDED phase=finish performed=0 total=368036332 avoided=368036332 avoided_frac=1.000000 basis=finish_advance_counters
 (d) repaired_sha256=f5d1c4d323a73cdb9e45ea2997941fe4a5897fd8c299f13fccd92e797203c1c9 byte_identical=1 recomputed_blocks=1
 ```
+
+Under the driver (`xsa build`) the finish runs with `XSA_WORK_ROOT=driver`: it logs
+`FINISH_ADVANCE_COUNTERS` only, and the driver prints the `WORK_AVOIDED
+phase=finish` line from those counters, so the phase is never reported twice.
 
 Remaining limits: this does not implement Lane A's driver/producer restart. The 64-band checkpoint spacing permits redo of the uncommitted tail. Retaining raw/LCP inputs, 16-byte source pairs per normalized run, embedded stream prefixes, full directory snapshots, full-base compaction, and pending in-memory chi deltas cost substantially more scratch, memory and checkpoint I/O than the original streaming finish. The 150 MB/1 GB gates do not certify 100 GB resource bounds. Garbage/retained dependencies require explicit cleanup after a durable build completion; this implementation prefers retention over unsafe early deletion. The completed P100c scratch was not modified or signalled.
 
