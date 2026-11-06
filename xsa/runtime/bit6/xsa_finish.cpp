@@ -25,6 +25,7 @@
 // the class table). rlebwt is deleted after the container publishes
 // (unless --keep-rlebwt).
 #include "sxi_format.hpp"
+#include "finish_spool.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -1040,7 +1041,8 @@ static void build_pfck(const CorpusText& corpus, uint64_t n, uint64_t tau,
                        int threads, uint64_t ramBudget, const std::string& out) {
     double t0 = tnow();
     uint64_t count = n / tau + 1;
-    int fd = ::open(out.c_str(), O_RDWR | O_CREAT | O_EXCL, 0666);
+    std::string tmp=finish_spool::enabled()?out+".part":out;
+    int fd = ::open(tmp.c_str(), O_RDWR | O_CREAT | (finish_spool::enabled()?O_TRUNC:O_EXCL), 0666);
     pf_check(fd >= 0, "create pfck (refusing to clobber)");
     auto wfull = [&](const void* d, uint64_t len, uint64_t off) {
         const char* q = (const char*)d;
@@ -1124,7 +1126,12 @@ static void build_pfck(const CorpusText& corpus, uint64_t n, uint64_t tau,
     if (n % tau == 0) { uint64_t zero = 0; wfull(&zero, 8, 40 + 8 * (n / tau)); }
     struct stat st {};
     pf_check(fstat(fd, &st) == 0 && uint64_t(st.st_size) == 40 + 8 * count, "pfck size");
+    if(finish_spool::enabled())pf_check(::fdatasync(fd)==0,"sync pfck");
     pf_check(::close(fd) == 0, "close pfck");
+    if(finish_spool::enabled()){
+        pf_check(::rename(tmp.c_str(),out.c_str())==0,"publish pfck");
+        finish_spool::syncdir(std::filesystem::path(out).parent_path().string());
+    }
     fprintf(stderr, "XSA_FINISH_PFCK path=%s n=%llu tau=%llu count=%llu bytes=%llu wall=%.3f workers=%d segments=%llu worker_bytes=%llu source=corpus_adapter fixed_grid=1\n",
             out.c_str(), (unsigned long long)n, (unsigned long long)tau, (unsigned long long)count,
             (unsigned long long)(40 + 8 * count), tnow() - t0, workers,
@@ -1179,7 +1186,7 @@ struct PieceSource {
         while (fd < 0) {
             read_terminal();
             if (terminal && band > finalBand) return;
-            if (waited > pollTimeout) pf_fail("timeout waiting for band progress " + path);
+            if (!finish_spool::enabled() && pollTimeout != 0 && waited > pollTimeout) pf_fail("timeout waiting for band progress " + path);
             std::this_thread::sleep_for(std::chrono::milliseconds(20)); waited += .02;
             fd = ::open(path.c_str(), O_RDONLY);
         }
@@ -1219,7 +1226,7 @@ struct PieceSource {
             capturedRows += rows; classExtents.emplace(cl[0], extent); completed.push_back(std::move(cl));
         }
         pf_check(offset == uint64_t(st.st_size), "progress trailing data"); ::close(fd);
-        pf_check(::unlink(path.c_str()) == 0, "unlink consumed progress");
+        if (!finish_spool::enabled()) pf_check(::unlink(path.c_str()) == 0, "unlink consumed progress");
         bandCounts.emplace(band, fields[1]); progress = int64_t(band);
         if (band) pf_check(bandCounts.at(band-1) == B, "partial band before EOF");
         read_terminal();
@@ -1251,7 +1258,7 @@ struct PieceSource {
         if (bandCounts.at(band) < B) {
             double waited = 0;
             while (!read_terminal()) {
-                if (waited > pollTimeout) pf_fail("timeout waiting for terminal assertion");
+                if (!finish_spool::enabled() && pollTimeout != 0 && waited > pollTimeout) pf_fail("timeout waiting for terminal assertion");
                 std::this_thread::sleep_for(std::chrono::milliseconds(20)); waited += .02;
             }
             pf_check(band == finalBand, "partial band is not final");
@@ -1295,7 +1302,7 @@ struct PieceSource {
             pf_check(lens[i]>0 && head<n && tail<n,"band record bounds");
             out.push_back({chars[i],lens[i],head,tail});
         }
-        pf_check(::unlink(path.c_str())==0,"unlink consumed band piece");
+        if (!finish_spool::enabled()) pf_check(::unlink(path.c_str())==0,"unlink consumed band piece");
         // All raw runs are private now. Return the piece credit before any
         // repair, LCP, prefetch or verification work can wait on another stage.
         consumed_band(band);
@@ -1316,7 +1323,7 @@ struct PieceSource {
                 n=fields[0]; w=fields[1]; depth=fields[2]; window=fields[3]; R=n; streaming=true;
                 return;
             }
-            if (waited > pollTimeout) pf_fail("timeout waiting for the merge's runcols idx");
+            if (!finish_spool::enabled() && pollTimeout != 0 && waited > pollTimeout) pf_fail("timeout waiting for the merge's runcols idx");
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             waited += 0.1;
             fd = ::open(path.c_str(), O_RDONLY);
@@ -1420,7 +1427,7 @@ struct PieceSource {
             double waited = 0;
             int fd = ::open(name.c_str(), O_RDONLY);
             while (fd < 0) {
-                if (waited > pollTimeout) pf_fail("timeout waiting for piece " + name);
+                if (!finish_spool::enabled() && pollTimeout != 0 && waited > pollTimeout) pf_fail("timeout waiting for piece " + name);
                 std::this_thread::sleep_for(std::chrono::milliseconds(20));
                 waited += 0.02;
                 fd = ::open(name.c_str(), O_RDONLY);
@@ -1449,7 +1456,7 @@ struct PieceSource {
                 std::lock_guard<std::mutex> lk(mu);
                 views.erase({band, shard});
             }
-            pf_check(::unlink(name.c_str()) == 0, "unlink piece " + name);
+            if (!finish_spool::enabled()) pf_check(::unlink(name.c_str()) == 0, "unlink piece " + name);
             auto unpack = [&](const std::vector<uint64_t>& buf, uint64_t i) {
                 uint64_t b = uint64_t(w) * i, wi = b >> 6, o = b & 63;
                 uint64_t v = (buf[wi] >> o);
@@ -1483,7 +1490,7 @@ struct PieceSource {
                 double waited = 0;
                 int fd = ::open(name.c_str(), O_RDONLY);
                 while (fd < 0) {
-                    if (waited > pollTimeout) pf_fail("timeout waiting for piece " + name);
+                    if (!finish_spool::enabled() && pollTimeout != 0 && waited > pollTimeout) pf_fail("timeout waiting for piece " + name);
                     std::this_thread::sleep_for(std::chrono::milliseconds(20));
                     waited += 0.02;
                     fd = ::open(name.c_str(), O_RDONLY);
@@ -2637,12 +2644,13 @@ struct WitnessBitmap {
     std::string path;
     int fd = -1;
     uint8_t* bits = nullptr;
+    std::vector<uint64_t> delta;
     WitnessBitmap(uint64_t size, const std::string& prefix, bool enabled = true)
         : n(size), bytes(enabled ? size / 8 + (size % 8 != 0) : 0),
           path(prefix + ".chi-bitmap") {
         if (!bytes) return;
         pf_check(bytes <= uint64_t(INT64_MAX) && bytes <= SIZE_MAX, "chi bitmap size overflow");
-        fd = ::open(path.c_str(), O_RDWR | O_CREAT | O_EXCL, 0600);
+        fd = ::open(path.c_str(), O_RDWR | O_CREAT | (finish_spool::enabled() ? O_TRUNC : O_EXCL), 0600);
         pf_check(fd >= 0, "create chi bitmap");
         pf_check(::ftruncate(fd, off_t(bytes)) == 0, "size chi bitmap");
         void* map = ::mmap(nullptr, size_t(bytes), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
@@ -2660,6 +2668,7 @@ struct WitnessBitmap {
         if (bits[v >> 3] & mask) { ++duplicates; return false; }
         bits[v >> 3] |= mask;
         ++totalValues;
+        if (finish_spool::enabled()) delta.push_back(v);
         return true;
     }
     template<class Fn> void for_each_sorted(Fn fn) {
@@ -2771,7 +2780,7 @@ struct BitsOut {
     uint64_t byteCount = 0;
     BitsOut() = default; // bounded, memory-only encoded worker fragment
     explicit BitsOut(const std::string& path_) : path(path_) {
-        fd = ::open(path.c_str(), O_RDWR | O_CREAT | O_EXCL, 0600);
+        fd = ::open(path.c_str(), O_RDWR | O_CREAT | (finish_spool::enabled() ? O_TRUNC : O_EXCL), 0600);
         pf_check(fd >= 0, "create bit spool");
         mem.reserve(1 << 20);
     }
@@ -3151,8 +3160,8 @@ struct ContainerOut {
     std::vector<sxi::Member> ms;
     bool done = false;
     ContainerOut(const std::string& p, unsigned count_) : path(p), temp(p + ".partial"), count(count_) {
-        pf_check(::access(path.c_str(), F_OK) != 0, "output exists; refusing to clobber");
-        fd = ::open(temp.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+        pf_check(finish_spool::enabled() || ::access(path.c_str(), F_OK) != 0, "output exists; refusing to clobber");
+        fd = ::open(temp.c_str(), O_WRONLY | O_CREAT | (finish_spool::enabled() ? O_TRUNC : O_EXCL), 0666);
         pf_check(fd >= 0, "create container partial");
         std::vector<char> z(64 + 40 * count, 0);
         pf_write_full(fd, z.data(), z.size(), "container header reserve");
@@ -3201,7 +3210,18 @@ struct ContainerOut {
         pf_check(fsync(fd) == 0, "fsync container");
         pf_check(::close(fd) == 0, "close container");
         fd = -1;
-        pf_check(::link(temp.c_str(), path.c_str()) == 0, "publish container (exists?)");
+        int linked=::link(temp.c_str(),path.c_str());
+        if(linked!=0 && finish_spool::enabled() && errno==EEXIST){
+            int old=::open(path.c_str(),O_RDONLY), fresh=::open(temp.c_str(),O_RDONLY);
+            pf_check(old>=0&&fresh>=0,"open existing container for verification");
+            struct stat st{};pf_check(::fstat(old,&st)==0&&uint64_t(st.st_size)==length,"existing container length mismatch");
+            std::array<uint8_t,1<<20> x,y;
+            for(uint64_t pos=0;pos<length;){size_t z=std::min<uint64_t>(x.size(),length-pos);
+                pf_pread_full(old,x.data(),z,pos,"existing container");pf_pread_full(fresh,y.data(),z,pos,"rebuilt container");
+                pf_check(memcmp(x.data(),y.data(),z)==0,"existing container differs from rebuilt spools");pos+=z;}
+            ::close(old);::close(fresh);
+        }else pf_check(linked==0,"publish container (exists?)");
+        finish_spool::syncdir(std::filesystem::path(path).parent_path().empty()?".":std::filesystem::path(path).parent_path().string());
         pf_check(::unlink(temp.c_str()) == 0, "unlink container partial");
         done = true;
         fprintf(stderr, "SXI2_PASS bytes=%llu lite=1 members=%zu\n", (unsigned long long)length, ms.size());
@@ -4340,7 +4360,7 @@ struct LcpColumn {
     void waitSlice(const std::string& path, uint64_t timeoutMs) {
         const double t0 = tnow();
         while (::access(path.c_str(), F_OK) != 0) {
-            if ((tnow() - t0) * 1000.0 > double(timeoutMs))
+            if (!finish_spool::enabled() && timeoutMs != 0 && (tnow() - t0) * 1000.0 > double(timeoutMs))
                 pf_fail("timeout waiting for the LCP band slice " + path +
                         " (the producer never published it)");
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
@@ -4350,7 +4370,7 @@ struct LcpColumn {
     void openBands(const std::string& dir, uint64_t nExpect, uint64_t pollTimeout) {
         bandDir = dir;
         n = nExpect;
-        pollMs = std::max<uint64_t>(1, pollTimeout) * 1000ull;
+        pollMs = pollTimeout * 1000ull; // zero explicitly disables polling deadlines
         struct stat st {};
         pf_check(::stat(dir.c_str(), &st) == 0 && S_ISDIR(st.st_mode),
                  "--lcp-bands is not a directory: " + dir);
@@ -4426,8 +4446,8 @@ struct LcpColumn {
         if (!s.rows) {
             pf_check(s.escapeCount == 0, "empty LCP slice with escapes: " + path);
             ::close(s.fd); s.fd = -1;
-            pf_check(::unlink(path.c_str()) == 0, "unlink empty LCP slice " + path);
-            int cf = ::open((base + ".lcp.consumed").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+            if (!finish_spool::enabled()) pf_check(::unlink(path.c_str()) == 0, "unlink empty LCP slice " + path);
+            int cf = ::open((base + ".lcp.consumed").c_str(), O_WRONLY | O_CREAT | (finish_spool::enabled() ? O_TRUNC : O_EXCL), 0666);
             pf_check(cf >= 0, "publish consumed empty LCP slice " + base);
             ::close(cf);
             ++slicesRetired;
@@ -4438,8 +4458,8 @@ struct LcpColumn {
         pread_at(s.fd, s.payload.data(), s.rows, SLICE_HDR, "lcp slice payload");
         loadSliceEscapes(s);
         ::close(s.fd); s.fd = -1;
-        pf_check(::unlink(path.c_str()) == 0, "unlink copied LCP slice " + path);
-        int cf = ::open((base + ".lcp.consumed").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+        if (!finish_spool::enabled()) pf_check(::unlink(path.c_str()) == 0, "unlink copied LCP slice " + path);
+        int cf = ::open((base + ".lcp.consumed").c_str(), O_WRONLY | O_CREAT | (finish_spool::enabled() ? O_TRUNC : O_EXCL), 0666);
         pf_check(cf >= 0, "publish copied LCP slice " + base); ::close(cf);
         ++slicesRetired;
         covered += s.rows;
@@ -4720,6 +4740,14 @@ int main(int argc, char** argv) {
                     checkClaimsDir.c_str(), corpus.c_str(), (unsigned long long)text.size(), threads);
             return 0;
         }
+        const bool spoolMode = finish_spool::enabled();
+        pf_check(!spoolMode || (!m1Replay && !repairChunkRuns && !debugArtifacts && sampleCheck.empty() && isaSamplePath.empty() &&
+                              pf_env_u64("XSA_FINISH_LCE_TRUST",0,0,3)==0),
+                 "spool checkpoints currently require the standard route-B product path");
+        const std::string spoolDir = prefix + ".finish-spool";
+        std::unique_ptr<finish_spool::Lock> spoolLock;
+        std::string spoolIdentity;
+        if(spoolMode)spoolLock=std::make_unique<finish_spool::Lock>(spoolDir);
         PieceSource src;
         src.prefix = prefix;
         src.pollTimeout = pollTimeout;
@@ -4728,7 +4756,8 @@ int main(int argc, char** argv) {
         std::string pfckPath = prefix + ".pfck2";
         // Start before either publication poll: only corpus + remap are needed.
         std::thread readiness([&] {
-            build_pfck(text, text.size(), tau, threads, ramBudget, pfckPath);
+            if (!finish_spool::enabled() || ::access(pfckPath.c_str(), F_OK) != 0)
+                build_pfck(text, text.size(), tau, threads, ramBudget, pfckPath);
         });
         // ROUTE B: the m1 codebook weights, computed while the producer
         // publishes its wire. The corpus is the only input (a permutation
@@ -4856,7 +4885,7 @@ int main(int argc, char** argv) {
                     wmFile = candidate; break;
                 }
                 if (wmFd >= 0) break;
-                if (waited > pollTimeout) pf_fail("timeout waiting for the merge's seam spool + .done");
+                if (!finish_spool::enabled() && pollTimeout != 0 && waited > pollTimeout) pf_fail("timeout waiting for the merge's seam spool + .done");
                 std::this_thread::sleep_for(std::chrono::milliseconds(100)); waited += 0.1;
             }
         } else if (!src.streaming) {
@@ -4874,7 +4903,7 @@ int main(int argc, char** argv) {
                         wmFd = ::open(wmPath.c_str(), O_RDONLY); wmFile = wmPath; break;
                     }
                 }
-                if (waited > pollTimeout) pf_fail("timeout waiting for the merge's WM scratch");
+                if (!finish_spool::enabled() && pollTimeout != 0 && waited > pollTimeout) pf_fail("timeout waiting for the merge's WM scratch");
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 waited += 0.1;
             }
@@ -4987,7 +5016,7 @@ int main(int argc, char** argv) {
         // Last-consumer deletion: merge.active keeps the directory alive
         // during sparse replay. Both sides best-effort-remove the empty dir,
         // so either exit ordering removes it after the final unlink.
-        if (!wmFile.empty()) {
+        if (!wmFile.empty() && !finish_spool::enabled()) {
             int removed = ::unlink(wmFile.c_str());
             if (useSpool) pf_check(removed == 0, "unlink consumed seam spool");
             removed = ::unlink((wmFile + ".done").c_str());
@@ -5005,12 +5034,25 @@ int main(int argc, char** argv) {
         finish_rss_at("repair-state");
         if (pf_cache_journal_on()) pf_cache_journal(text, "seam-classes", 1024);
 
+        if (spoolMode) {
+            durable_piece::Sha256 identity;
+            const char schema[] = "finish-state-v1-1024";
+            identity.update(schema, sizeof schema); identity.update(remapTable, 256);
+            for (const std::string& path : {corpus, std::string("/proc/self/exe")}) {
+                int f = ::open(path.c_str(), O_RDONLY); pf_check(f >= 0, "open spool identity input");
+                std::array<char, 1<<20> b;
+                for (;;) { ssize_t z=::read(f,b.data(),b.size()); if(z<0&&errno==EINTR)continue;
+                    pf_check(z>=0,"read spool identity");if(!z)break;identity.update(b.data(),z); }
+                ::close(f);
+            }
+            spoolIdentity = identity.finish();
+        }
         // ---- scratch writers
         WitnessBitmap bitmap(n, prefix, buildChi);
         finish_rss_at("chi-bitmap-allocated");
         std::string sparsePath = prefix + ".sparse2";
-        pf_check(::access(sparsePath.c_str(), F_OK) != 0, "sparse scratch exists");
-        int sparseFd = ::open(sparsePath.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+        pf_check(finish_spool::enabled() || ::access(sparsePath.c_str(), F_OK) != 0, "sparse scratch exists");
+        int sparseFd = ::open(sparsePath.c_str(), O_RDWR | O_CREAT | (finish_spool::enabled() ? O_TRUNC : O_EXCL), 0666);
         pf_check(sparseFd >= 0, "create sparse scratch");
         // Dev-only offline-analysis dumps (see bandSink / finishAdvance).
         int streamDumpFd = -1, answersDumpFd = -1;
@@ -5135,6 +5177,43 @@ int main(int argc, char** argv) {
         // (hot path, inlined) and also installed as rs.emit for the final flush,
         // so both paths emit through identical code.
         uint64_t certifiedRows = 0;
+        uint64_t spoolPiece=0, spoolBlockLo=0, spoolHeadOff=0, spoolLenOff=0;
+        std::vector<uint64_t> spoolRuns;
+        std::map<uint64_t,std::string> entropyPaths;
+        auto entropyPayload = [&](std::vector<uint64_t>& runs) {
+            pf_check(runs.size()%2==0 && runs.size()<=2*M1_BLOCK_RUNS,"spool codec record count");
+            BitsOut h, l;
+            for(size_t i=0;i<runs.size();i+=2){
+                pf_check(runs[i]<256 && runs[i+1]>0,"spool codec input");
+                h.msb(m1Code.codes[runs[i]],m1Code.lens[runs[i]]);l.gamma(runs[i+1]);
+            }
+            h.pad();l.pad();finish_spool::Archive a;
+            a.scalar(h.bitPos);a.scalar(l.bitPos);
+            uint64_t nh=h.mem.size(),nl=l.mem.size();a.scalar(nh);a.bytes(h.mem.data(),nh);a.scalar(nl);a.bytes(l.mem.data(),nl);
+            return a.data;
+        };
+        auto publishCodecBlock = [&]() {
+            if(!spoolMode || spoolRuns.empty())return;
+            finish_spool::Meta meta{spoolPiece,(m1SweepRuns-1)/M1_BLOCK_RUNS,spoolBlockLo,m1dir.row,
+                                    m1dir.row-spoolBlockLo,spoolRuns.size()/2};
+            std::string name=spoolDir+"/piece-"+std::to_string(meta.piece)+"-block-"+std::to_string(meta.block)+
+                "-keys-"+std::to_string(meta.lo)+"-"+std::to_string(meta.hi);
+            finish_spool::Archive a; a.bytes(spoolIdentity.data(),64);a.vector(spoolRuns);
+            finish_spool::publish(name+".runs",a.data,meta);
+            std::vector<uint8_t> existing;
+            m1Head->pad();m1Len->pad();
+            uint64_t hb=m1Head->bitPos-m1dir.blkHead.back(),lb=m1Len->bitPos-m1dir.blkLen.back();
+            uint64_t nh=(hb+7)/8,nl=(lb+7)/8;
+            if(!finish_spool::load(name+".entropy",existing)){
+                finish_spool::Archive encoded;encoded.scalar(hb);encoded.scalar(lb);encoded.scalar(nh);
+                const uint8_t* head=m1Head->window(spoolHeadOff,nh);encoded.bytes(const_cast<uint8_t*>(head),nh);
+                encoded.scalar(nl);const uint8_t* len=m1Len->window(spoolLenOff,nl);encoded.bytes(const_cast<uint8_t*>(len),nl);
+                finish_spool::publish(name+".entropy",encoded.data,meta);
+            }
+            spoolHeadOff+=nh;spoolLenOff+=nl;
+            entropyPaths[meta.block]=name+".entropy";
+            spoolRuns.clear();spoolBlockLo=m1dir.row;
+        };
         auto bandSink = [&](const NRun& v) {
             RepairCycles::Scope outputScope(rs.cycles, RepairCycles::OUTPUT);
             {
@@ -5160,9 +5239,11 @@ int main(int argc, char** argv) {
                     // ceil(bitPos/8) at a block boundary.
                     m1Head->pad();
                     m1Len->pad();
+                    publishCodecBlock();
                     m1dir.blkHead.push_back(m1Head->bitPos);
                     m1dir.blkLen.push_back(m1Len->bitPos);
                 }
+                if(spoolMode){spoolRuns.push_back(v.c);spoolRuns.push_back(v.len);}
                 m1Head->msb(m1Code.codes[v.c], unsigned(m1Code.lens[v.c]));
                 m1Len->gamma(v.len);
                 if (k % PF_RUNSTART_STRIDE == 0) m1dir.runStart.push_back(m1dir.row);
@@ -5721,8 +5802,139 @@ int main(int argc, char** argv) {
         // Pipeline depth 1: the ordered stages alternate with the verification
         // of the previous band. `pipelined` is off only for the experimental
         // exact-checkpoint planner, which reuses the same pool internally.
-        const bool pipelined = !repairChunkRuns;
+        const bool pipelined = !repairChunkRuns && !spoolMode;
         uint64_t band = 0;
+        uint64_t restoredAdvances=0, restoredRawRuns=0, restoredBands=0, spoolGeneration=0;
+        bool spoolEof=false;
+        auto state = [&](finish_spool::Archive& a) {
+            std::string identity=spoolIdentity;a.bytes(identity.data(),64);
+            pf_check(identity==spoolIdentity,"finish checkpoint identity mismatch");
+            uint64_t policy=(buildChi?1:0)|(kasaiOn?2:0),savedPolicy=policy,savedTau=tau;
+            a.scalar(savedPolicy);a.scalar(savedTau);
+            pf_check(savedPolicy==policy&&savedTau==tau,"finish checkpoint policy mismatch");
+            a.scalar(spoolGeneration);a.scalar(band);a.scalar(spoolEof);
+            a.scalar(R);a.scalar(nbands);a.scalar(prevTail);a.scalar(certifiedRows);
+            a.scalar(rawRunsFed);a.scalar(bandReads);a.scalar(advRuns);a.scalar(expectedRlebwtBytes);
+            a.scalar(streamFnv);a.scalar(streamH);a.scalar(streamT);a.scalar(streamLen);a.scalar(streamRuns);
+            a.scalar(lcpCol.maxEnd);a.scalar(lcpCol.nextSlice);a.scalar(lcpCol.covered);
+            a.scalar(lcpCol.slicesOpened);a.scalar(lcpCol.slicesRetired);a.scalar(lcpCol.emptySlices);
+            a.scalar(lcpCol.escapesRead);a.scalar(lcpCol.maxLcp);
+            uint64_t liveCount=lcpCol.live.size();a.scalar(liveCount);
+            if(a.reading){pf_check(liveCount<=(a.data.size()-a.at)/8,"LCP live count");lcpCol.live.clear();lcpCol.live.resize(liveCount);}
+            for(auto& c:lcpCol.live){
+                a.scalar(c.rankBase);a.scalar(c.rows);a.scalar(c.escapeCount);a.scalar(c.maxLcp);a.scalar(c.index);
+                uint64_t len=c.payload.size();a.scalar(len);
+                if(a.reading){pf_check(len<=a.data.size()-a.at,"LCP live payload size");c.payload.resize(len);}
+                a.bytes(c.payload.data(),len);
+                len=c.esc.size();a.scalar(len);
+                if(a.reading){pf_check(len<=(a.data.size()-a.at)/16,"LCP live escapes size");c.esc.resize(len);}
+                for(auto& e:c.esc){a.scalar(e.first);a.scalar(e.second);}
+            }
+            a.scalar(rowCursor);a.scalar(anchorChecks);a.scalar(kasaiState.bands);
+            a.scalar(kasaiState.lastHeadRank);a.scalar(kasaiState.lastEndRank);
+            a.scalar(kasaiState.gaps);a.scalar(kasaiState.disorder);a.scalar(kasaiState.noncontig);
+            // Failed closure checkpoints are never published.
+            pf_check(kasaiState.fallback.load()==0,"checkpoint walk fallback");
+            a.scalar(src.terminal);a.scalar(src.progress);a.scalar(src.consumed);
+            a.scalar(src.finalBand);a.scalar(src.capturedRows);a.scalar(src.delivered);a.scalar(src.R);
+            a.map(src.bandRefs);a.map(src.bandCounts);a.map(src.classExtents);
+            uint64_t count=src.completed.size();a.scalar(count);
+            if(a.reading){pf_check(count<=(a.data.size()-a.at)/8,"completed state size");src.completed.resize(count);}
+            for(auto& c:src.completed)a.vector(c);
+            a.scalar(seam.depth);a.scalar(seam.total);a.scalar(seam.maxSeamLce);
+            count=seam.classes.size();a.scalar(count);
+            if(a.reading){pf_check(count<=(a.data.size()-a.at)/8,"seam state size");seam.classes.resize(count);}
+            auto raw = [&](RawRun& v){a.scalar(v.c);a.scalar(v.len);a.scalar(v.head);a.scalar(v.tail);};
+            auto normal = [&](NRun& v){a.scalar(v.c);a.scalar(v.len);a.scalar(v.h);a.scalar(v.t);a.scalar(v.rk);a.scalar(v.ht);a.scalar(v.tt);};
+            for(auto& c:seam.classes){
+                a.scalar(c.lo);a.scalar(c.hi);a.scalar(c.first);a.scalar(c.before);a.scalar(c.after);a.vector(c.occ);
+                count=c.runs.size();a.scalar(count);if(a.reading){pf_check(count<=(a.data.size()-a.at)/32,"seam runs size");c.runs.resize(count);}
+                for(auto& r:c.runs)raw(r);
+                count=c.runTrue.size();a.scalar(count);if(a.reading){pf_check(count<=(a.data.size()-a.at)/16,"seam ranks size");c.runTrue.resize(count);}
+                for(auto& r:c.runTrue){a.scalar(r.first);a.scalar(r.second);}
+            }
+            a.scalar(rs.rows);a.scalar(rs.srcHave);raw(rs.srcPending);a.scalar(rs.sentinelRows);
+            a.scalar(rs.row);a.scalar(rs.next);a.scalar(rs.have);normal(rs.pending);
+            a.scalar(rs.rNorm);a.scalar(rs.nNorm);a.array(rs.totals);a.array(rs.runFreq);
+            a.scalar(sweep.chi);a.array(sweep.rr_len);a.array(sweep.rr_pos);a.array(sweep.rr_act);
+            a.scalar(sweep.previous_interior);a.scalar(sweep.m);a.scalar(sweep.p);a.scalar(sweep.p_sa_last);a.scalar(sweep.first);
+            a.scalar(sweep.statAdvance);a.scalar(sweep.statCharChange);a.scalar(sweep.statScanWords);a.scalar(sweep.statFired);
+            a.scalar(sweep.statActSeen);a.scalar(sweep.statEmit);a.scalar(sweep.statMaxAct);
+            if(a.reading)sweep.heapInit();
+            a.scalar(bitmap.totalValues);a.scalar(bitmap.duplicates);
+            a.scalar(m1SweepRuns);a.scalar(spoolPiece);a.scalar(spoolBlockLo);a.scalar(spoolHeadOff);a.scalar(spoolLenOff);a.vector(spoolRuns);
+            a.vector(m1dir.blkHead);a.vector(m1dir.blkLen);a.vector(m1dir.runStart);
+            a.scalar(m1dir.row);a.array(m1dir.occ);a.array(m1dir.cum);a.array(m1dir.lastSample);a.array(m1dir.lastSampleOcc);
+            for(unsigned c=0;c<256;++c){a.vector(m1dir.dirRun[c]);a.vector(m1dir.dirCum[c]);a.vector(m1dir.dirStride[c]);}
+            for(BitsOut* b:{m1Head.get(),m1Len.get()}){
+                if(!a.reading)b->drain();
+                a.scalar(b->bitPos);a.scalar(b->nbits);
+                uint64_t acc=uint64_t(b->acc);a.scalar(acc);if(a.reading)b->acc=acc;
+                a.scalar(b->byteCount);finish_spool::file(a,b->fd,b->byteCount);
+                if(a.reading){b->mem.clear();b->spill.clear();b->spillHave=0;b->spillBase=0;}
+            }
+            uint64_t sparseBytes=((rs.rNorm+1023)/1024)*8;
+            finish_spool::file(a,sparseFd,sparseBytes);
+            a.end();
+        };
+        auto checkpoint = [&](bool eof) {
+            if(!spoolMode)return;
+            pf_check(!lcePending,"checkpoint with verification in flight");
+            sweep.emitWitness.flush();
+            pf_check(bitmap.totalValues==sweep.chi && bitmap.duplicates==0,"checkpoint chi population");
+            uint64_t oldGeneration=spoolGeneration; ++spoolGeneration;spoolEof=eof;
+            finish_spool::Archive d;d.vector(bitmap.delta);
+            finish_spool::publish(spoolDir+"/delta-"+std::to_string(spoolGeneration),d.data);
+            // Compact into a NEW immutable base. The mmap is only a volatile overlay.
+            std::vector<uint8_t> base;
+            if(bitmap.bytes)base.assign(bitmap.bits,bitmap.bits+bitmap.bytes);
+            finish_spool::publish(spoolDir+"/base-"+std::to_string(spoolGeneration),base);
+            finish_spool::Archive a;state(a);
+            finish_spool::publish(spoolDir+"/state",a.data);
+            finish_spool::journal("FINISH_CHECKPOINT next_band="+std::to_string(band)+
+                " runs="+std::to_string(advRuns)+" generation="+std::to_string(spoolGeneration)+
+                " eof="+std::to_string(eof)+" state="+spoolDir+"/state");
+            // Deletion is commit: base AND referring state are durable first.
+            finish_spool::before_unlink();
+            pf_check(::unlink((spoolDir+"/delta-"+std::to_string(spoolGeneration)).c_str())==0,"unlink compacted chi delta");
+            if(oldGeneration)pf_check(::unlink((spoolDir+"/base-"+std::to_string(oldGeneration)).c_str())==0,"unlink old chi base");
+            finish_spool::syncdir(spoolDir);bitmap.delta.clear();
+            fprintf(stderr,"FINISH_CHECKPOINT band=%llu runs=%llu eof=%d generation=%llu\n",
+                (unsigned long long)band,(unsigned long long)advRuns,int(eof),(unsigned long long)spoolGeneration);
+        };
+        if(spoolMode){
+            uint64_t present=0,missing=0;
+            for(const auto& entry:std::filesystem::directory_iterator(spoolDir)){
+                if(entry.path().extension()!=".runs")continue;
+                std::vector<uint8_t> payload;finish_spool::Meta meta;
+                finish_spool::load(entry.path().string(),payload,&meta);
+                finish_spool::Archive a(std::move(payload));std::string id(64,' ');a.bytes(id.data(),64);
+                pf_check(id==spoolIdentity,"foreign entropy input spool");
+                std::vector<uint64_t> runs;a.vector(runs);a.end();
+                std::string path=std::filesystem::path(entry.path()).replace_extension(".entropy").string();
+                std::vector<uint8_t> encoded;
+                pf_check(meta.runs==runs.size()/2 && !runs.empty() && runs.size()%2==0 && meta.hi>meta.lo,
+                         "codec source spool dimensions");
+                uint64_t rows=0;for(size_t i=1;i<runs.size();i+=2){pf_check(runs[i]<=n-rows,"codec source row sum");rows+=runs[i];}
+                pf_check(rows==meta.rows && rows==meta.hi-meta.lo,"codec source row extent");
+                pf_check(entropyPaths.emplace(meta.block,path).second,"duplicate codec block spool");
+                if(finish_spool::load(path,encoded)){++present;}
+                else {++missing;finish_spool::publish(path,entropyPayload(runs),meta);
+                    fprintf(stderr,"SPOOL_RECOMPUTE block=%llu piece=%llu runs=%llu\n",
+                        (unsigned long long)meta.block,(unsigned long long)meta.piece,(unsigned long long)meta.runs);}
+            }
+            std::vector<uint8_t> saved;
+            if(finish_spool::load(spoolDir+"/state",saved)){
+                finish_spool::Archive a(std::move(saved));state(a);
+                std::vector<uint8_t> base;pf_check(finish_spool::load(spoolDir+"/base-"+std::to_string(spoolGeneration),base),"missing committed chi base");
+                pf_check(base.size()==bitmap.bytes,"chi base dimensions");
+                if(bitmap.bytes)memcpy(bitmap.bits,base.data(),bitmap.bytes);
+                bitmap.delta.clear();restoredAdvances=advRuns;restoredRawRuns=rawRunsFed;restoredBands=bandReads;
+                fprintf(stderr,"SPOOL_STATE blocks_present=%llu blocks_missing=%llu resumed_from=%llu\n",
+                    (unsigned long long)present,(unsigned long long)missing,(unsigned long long)(m1SweepRuns/M1_BLOCK_RUNS));
+            }else fprintf(stderr,"SPOOL_STATE blocks_present=%llu blocks_missing=%llu resumed_from=none\n",
+                (unsigned long long)present,(unsigned long long)missing);
+        }
         int cur = 0;
         // PART C: the cold-corpus arm starts here - the text is dropped from the
         // page cache AFTER every setup read (pfck, fingerprints, seam classes)
@@ -5733,7 +5945,8 @@ int main(int argc, char** argv) {
             // The cold claim, measured: residency sampled right after the drop.
             if (pf_cache_journal_on()) pf_cache_journal(text, "cold-start", 64);
         }
-        bool active = feed(band, slots[cur]);
+        spoolPiece=band;
+        bool active = !spoolEof && feed(band, slots[cur]);
         if (active && slots[cur].cnt) dispatchLce(slots[cur]);
         while (active) {
             int nxt = cur ^ 1;
@@ -5758,14 +5971,23 @@ int main(int argc, char** argv) {
                     // verification is 13 ms/band, so leaving the pool idle
                     // through the advance was the largest remaining hole).
                     if (more && slots[nxt].cnt) dispatchLce(slots[nxt]);
-                } else {
+                } else if (!spoolMode) {
                     awaitLce();
                     more = feed(band + 1, slots[nxt]);
+                } else {
+                    awaitLce();
                 }
             } else {
                 awaitLce();
             }
             finishAdvance(slots[cur]);
+            if(spoolMode){
+                // Save the NEXT band cursor at a quiescent barrier.
+                if(rawRunsFed>=n/4 && ((band+1)%64==0)) {++band;checkpoint(false);--band;}
+                spoolPiece=band+1;
+                if(wantNext)more=feed(band+1,slots[nxt]);
+                if(more&&slots[nxt].cnt)dispatchLce(slots[nxt]);
+            }
             if (band == 0) finish_rss_at("first-band-repaired");
             if ((band & 4095) == 0) finish_rss_at("sweep-progress");
             static bool rssMarker = false;
@@ -5799,7 +6021,7 @@ int main(int argc, char** argv) {
         // back for char-merge parity) must advance the sweep exactly like
         // the band runs: the state machine needs ALL rNorm runs (v1 feeds
         // every run; the production sweep's last events live here).
-        rs.finishStream();
+        if(!spoolEof) rs.finishStream();
         // The final flush's coalesced tail runs continue the LAST band's slot:
         // it is empty and its prevTail is that band's last emitted tail, so the
         // same query coordinates apply. Verification + advance run here, after
@@ -5867,7 +6089,11 @@ int main(int argc, char** argv) {
         {
             PfRegion r("advance-finish", PF_ADVANCE);
             double ta = tnow();
-            if (buildChi) { sweep.finish(); sweep.emitWitness.flush(); }
+            if (buildChi && !spoolEof) { sweep.finish(); sweep.emitWitness.flush(); }
+            if(spoolMode && !spoolEof){publishCodecBlock();checkpoint(true);}
+            if(spoolMode)fprintf(stderr,"WORK_AVOIDED phase=finish done=%llu total=%llu ratio=%.9f\n",
+                (unsigned long long)(advRuns-restoredAdvances),(unsigned long long)advRuns,
+                advRuns?double(advRuns-restoredAdvances)/double(advRuns):0.0);
             advanceWall += tnow() - ta;
             r.close(); advAcc.add(r);
         }
@@ -5889,11 +6115,11 @@ int main(int argc, char** argv) {
         fprintf(stderr, "SWEEP_PHASE_WALLS repair=%.6f lce=%.6f advance_witness=%.6f lce_threads=%d\n",
                 repairWall, lceWall, advanceWall, std::max(1, std::min(threads, 256)));
         // v3 anatomy: repairWall = pieceWait + bandRead + feed + residual.
-        waitAcc.report("bands", bandReads);
-        readAcc.report("raw_runs", rawRunsFed);
-        feedAcc.report("raw_runs", rawRunsFed);
-        lceAcc.report("runs", advRuns);
-        advAcc.report("runs", advRuns);
+        waitAcc.report("bands", bandReads-restoredBands);
+        readAcc.report("raw_runs", rawRunsFed-restoredRawRuns);
+        feedAcc.report("raw_runs", rawRunsFed-restoredRawRuns);
+        lceAcc.report("runs", advRuns-restoredAdvances);
+        advAcc.report("runs", advRuns-restoredAdvances);
         fprintf(stderr, "XSA_FINISH_REGION lce-span wall=%.3f waited=%.3f overlapped=%.3f units=%llu runs_ns=%.2f\n",
                 lceWall, lceWaitWall, std::max(0.0, lceWall - lceWaitWall),
                 (unsigned long long)advRuns, advRuns ? 1e9 * lceWall / double(advRuns) : 0.0);
@@ -5982,7 +6208,7 @@ int main(int argc, char** argv) {
         fhSlimOwner.reset();
         fhSeamOwner.reset();
         pf_check(::close(pfckFd) == 0, "close pfck fd");
-        if (!keepPfck) {
+        if (!keepPfck && !finish_spool::enabled()) {
             pf_check(::unlink(pfckPath.c_str()) == 0, "unlink pfck scratch");
         }
 
@@ -6181,7 +6407,7 @@ int main(int argc, char** argv) {
                         bool complete = ::stat((prefix + ".rlebwt").c_str(), &st) == 0 &&
                                         uint64_t(st.st_size) == expectedRlebwtBytes;
                         if (complete) break;
-                        if (waited > pollTimeout) pf_fail("timeout waiting for the complete rlebwt");
+                        if (!finish_spool::enabled() && pollTimeout != 0 && waited > pollTimeout) pf_fail("timeout waiting for the complete rlebwt");
                         std::this_thread::sleep_for(std::chrono::milliseconds(100));
                         waited += 0.1;
                     }
@@ -6348,6 +6574,21 @@ int main(int argc, char** argv) {
                         const size_t hbytes = size_t(blkBytes(m1dir.blkHead[b], m1dir.blkHead[b + 1]));
                         const size_t lbytes = size_t(blkBytes(m1dir.blkLen[b], m1dir.blkLen[b + 1]));
                         spanH += hbytes; spanL += lbytes;
+                        if(spoolMode){
+                            auto found=entropyPaths.find(b);pf_check(found!=entropyPaths.end(),"missing entropy block index");
+                            std::vector<uint8_t> payload;finish_spool::Meta meta;
+                            pf_check(finish_spool::load(found->second,payload,&meta),"missing assembly entropy block");
+                            pf_check(meta.block==b&&meta.runs==std::min<uint64_t>(M1_BLOCK_RUNS,rNorm-b*M1_BLOCK_RUNS),"entropy block assembly index");
+                            pf_check(meta.lo==m1dir.runStart[b]&&meta.hi==(b+1<nblocks?m1dir.runStart[b+1]:n)&&meta.rows==meta.hi-meta.lo,
+                                     "entropy block assembly rank range");
+                            finish_spool::Archive a(std::move(payload));uint64_t hb=0,lb=0,z=0;
+                            a.scalar(hb);a.scalar(lb);pf_check(hb==hbits&&lb==lbits,"entropy block bit lengths");
+                            a.scalar(z);pf_check(z==hbytes&&z<=a.data.size()-a.at,"entropy head bytes");
+                            out2.insert(out2.end(),a.data.begin()+a.at,a.data.begin()+a.at+z);a.at+=z;
+                            a.scalar(z);pf_check(z==lbytes&&z<=a.data.size()-a.at,"entropy length bytes");
+                            out2.insert(out2.end(),a.data.begin()+a.at,a.data.begin()+a.at+z);a.at+=z;a.end();
+                            hOff+=hbytes;lOff+=lbytes;
+                        }else {
                         if (hbytes) {
                             const uint8_t* q = headBits.window(hOff, hbytes);
                             out2.insert(out2.end(), q, q + hbytes);
@@ -6357,6 +6598,7 @@ int main(int argc, char** argv) {
                             const uint8_t* q = lenBits.window(lOff, lbytes);
                             out2.insert(out2.end(), q, q + lbytes);
                             lOff += lbytes;
+                        }
                         }
                         at += hbytes + lbytes;
                         while (at % 8) { out2.push_back(0); ++at; }
@@ -6496,7 +6738,7 @@ int main(int argc, char** argv) {
         if (buildChi) bitmap.journal();
         bitmap.cleanup();
         pf_check(::unlink(sparsePath.c_str()) == 0, "unlink sparse scratch");
-        {
+        if (!spoolMode) {
             std::string sent = prefix + ".runcols.consumed";
             ::unlink(sent.c_str());
             ::unlink((prefix + ".runcols.idx").c_str());
