@@ -1599,8 +1599,12 @@ prove a fit (the projected peak exceeds the reported capacity)");
         } else {
             journal.line("V2_PHRASE armed=0 (--phrase-radix absent: no parse, no dictionary, byte radix only)");
         }
+        // The remap's own provenance ("corpus" = this attempt derived it) is what
+        // the build-end accounting prices phase=remap from, so the tail is handed
+        // the fact rather than re-deriving it from a log.
         run_v2_tail(&mut journal, &options, &scratch, &tools, &input, &remap_path,
-                    n, memory_kb, finish_as_kb, &frag, bin_live_cap, plan_windows)?;
+                    n, memory_kb, finish_as_kb, &frag, bin_live_cap, plan_windows,
+                    remap_facts.source)?;
         outcome.success = true;
         return Ok(());
     }
@@ -1771,6 +1775,7 @@ fn run_v2_tail(
     frag: &str,
     bin_live_cap: u64,
     plan_windows: u64,
+    remap_source: &str,
 ) -> Result<(), String> {
     let s = |path: &str| path.to_string();
     // NO TIMEOUTS, NO WATCHDOGS. Phases are spawned directly and run until they
@@ -1990,7 +1995,8 @@ walks the corpus for every endpoint and no LCP slice is produced). Not a user op
     // RLIMIT_AS includes corpus and chi mappings, not only resident memory.
     // Use the producer's 3n floor, retaining any larger explicit finish cap.
     let finish_as_kb = finish_v2_as_kb(memory_kb, finish_as_kb, n);
-    let finish_running = spawn_phase(journal, scratch, "finish-v2", finish_as_kb, &finish_args[0], &finish_args[1..], &[])?;
+    let finish_running = spawn_phase(journal, scratch, "finish-v2", finish_as_kb, &finish_args[0], &finish_args[1..],
+        &[("XSA_WORK_ROOT".to_string(), "driver".to_string())])?;
     let v2_sampler = DiscSampler::start(scratch.to_path_buf(), Duration::from_secs(2));
     let mut phases = vec![producer_running, finish_running];
     if let Some(emit) = emit_running { phases.push(emit); }
@@ -2164,9 +2170,24 @@ walks the corpus for every endpoint and no LCP slice is produced). Not a user op
     }
     // THE LAW + the tree rules: no agg/ssa_t/head_sa/pftext/pfck file ever
     // exists; rlebwt (+meta) is deleted post-publish; no chunk set exists at
-    // all on this route.
-    let forbidden = ["frag.agg", "frag.head_sa", "frag.ssa", "frag.ssa_t", "frag.pftext",
-                     "frag.pfck", "frag.pfck2", "frag.rlebwt", "frag.rlebwt.meta"];
+    // all on this route. ONE exception, named and gated: the finish's spool arm
+    // (XSA_FINISH_SPOOL=1, its restart test hook) KEEPS `frag.pfck2` and
+    // `frag.finish-spool/` on purpose - they ARE its restart state, published
+    // atomically and reused by a resume (RESUME_DESIGN.md) - so demanding their
+    // absence refused every spool-arm build AFTER it had published a
+    // byte-identical container, and no accounting of that run could ever be
+    // read. Every other banned name stays banned, arm or not, and the exemption
+    // is journaled so no log can be read as if the law had been silently
+    // relaxed.
+    let spool_arm = std::env::var("XSA_FINISH_SPOOL").as_deref() == Ok("1");
+    if spool_arm {
+        journal.line("V2_TREE_RULE spool_arm=1 retained=frag.pfck2,frag.finish-spool \
+(restart state of the finish's spool arm; every other banned artifact is still refused)");
+    }
+    let banned = ["frag.agg", "frag.head_sa", "frag.ssa", "frag.ssa_t", "frag.pftext",
+                  "frag.pfck", "frag.pfck2", "frag.rlebwt", "frag.rlebwt.meta"];
+    let forbidden: Vec<&str> = banned.iter().copied()
+        .filter(|name| !(spool_arm && *name == "frag.pfck2")).collect();
     let found = find_files_named(scratch, &forbidden);
     if !found.is_empty() {
         let listing = found.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ");
@@ -2211,6 +2232,13 @@ walks the corpus for every endpoint and no LCP slice is produced). Not a user op
         // The commit: the container is fsynced, then journalled. The spools may
         // only be unlinked AFTER this (deletion is the commit record).
         recovery::done(scratch, &container)?;
+        // THE BUILD-END ACCOUNTING: one `WORK_AVOIDED` line per phase and one
+        // summary, priced from THIS run's receipts - the finish stage's own
+        // advance counters and the recorded plan inventory - not from a
+        // prediction made before the work happened. Printed ahead of the
+        // ordering hook below so a build that really finished always reports
+        // what it avoided.
+        recovery::report_work_avoided(scratch, n, remap_source, true)?;
         if recovery::kill_wanted("after_fsync_before_unlink") {
             recovery::die_hard("after_fsync_before_unlink");
         }
