@@ -1,8 +1,11 @@
 # Restarting tape builds
 
-This implementation uses **verified replay from the beginning**, not incremental
-recovery from a suffix-key boundary. Reissue the identical build command against
-the same scratch directory after an interruption:
+This implementation **derives the plan, enumerates the spools the filesystem
+already proves, and adopts them**; only what the filesystem cannot prove is
+recomputed, and inside the producer/emit/finish window that still means verified
+replay from the beginning (not incremental recovery from a suffix-key boundary).
+Reissue the identical build command against the same scratch directory after an
+interruption:
 
 ```sh
 xsa build --tape --input corpus.bin --scratch scratch --threads 16 --memory-gb 24 --with-chi
@@ -219,56 +222,73 @@ scheme or infer incremental correctness from its byte-equality gates.
 
 ### Measured gates (2026-11-06): driver-side resume state
 
-Base revision: `ee2561c95f148acd239081d585ec19c20d971e6c`. Corpus: 20,000,000
-bytes, the head of `/dev/shm/t150m.txt`. 16 threads, 24 GiB, chi enabled. The
-box was running other lanes' work throughout (load average 50-70), so every wall
-is labelled with what else was on it: counters are exact, walls are contended.
-Binary under test: `xsa` sha256
-`078e1afd54fa9ed5347d271cbbbbe024c3890a22b24844d5640eba00e4317c2f`
-(`cargo clean` + `cargo build --release`, 29 pre-existing warnings, 0 errors).
+Base revision: `803bfd2` (pile-week-v1 `finish: checkpoint entropy spools and chi
+bases at quiescent bands` + this lane). Corpus: 20,000,000 bytes, the head of
+`/dev/shm/t150m.txt`. 16 threads, 24 GiB, chi enabled. The box was running other
+lanes' work throughout (load average 52-64), so every wall carries the box load
+it measured under: **counters are exact, walls are contended**. Binary under
+test: `xsa` sha256
+`8d95ca6ab2945b482bf8f500161bf791206815963d44fad7600ac363087d1454`
+(`cargo build --release`, 29 pre-existing warnings, 0 errors).
 
-- **(a) clean build:** 10.27 s.
+- **(a) clean build:** **12.26 s** (load 52.82).
   `RESUME_STATE spools_present=0 spools_missing=0 recomputed=0 pieces_present=0 resume=false`
   Container `de8cc0313563566ec8c5d44d65c9c1de589773a80708633043216a0ef5a4bfa0`.
-- **(b) restart, same scratch, no `--no-resume`:** **0.17 s**.
+- **(b) restart, same scratch, no `--no-resume`:** **0.18 s** (load 59.32).
   `RESUME_STATE spools_present=2 spools_missing=0 recomputed=0 pieces_present=0 resume=true`
-  `WORK_AVOIDED_SUMMARY score=1.000000` (all four phases `ratio=1.000000`).
+  `WORK_AVOIDED phase=remap done=20000000 total=20000000 ratio=1.000000 basis=plan=corpus_bytes`
+  `WORK_AVOIDED phase=sort  done=20000001 total=20000001 ratio=1.000000 basis=plan=corpus_rows+END`
+  `WORK_AVOIDED phase=emit  done=20000001 total=20000001 ratio=1.000000 basis=plan=corpus_rows+END`
+  `WORK_AVOIDED phase=finish done=7930753 total=7930753 ratio=1.000000 basis=recorded=m1_runs`
+  `WORK_AVOIDED_SUMMARY score=1.000000 ... per_phase=remap=1.000000 sort=1.000000 emit=1.000000 finish=1.000000`
   Same container SHA-256.
-- **(c) delete ONE spool (`remap-256.bin`), restart:** **0.17 s**.
+- **(c) delete ONE spool (`remap-256.bin`), restart:** **0.16 s** (load 59.32).
   `RESUME_STATE spools_present=1 spools_missing=1 recomputed=1 pieces_present=0 resume=true`
-  `RESUME_SPOOL_REPUBLISHED ... sha256=f73af42f... role=input recomputed=1`
-  - the republished spool is bit-identical
-  (`f73af42fb5b7a1a946c9199919cdbcafaca31f6e904a56d31b530ec662580f11`), exactly
-  one spool was recomputed, and the container SHA-256 is unchanged.
-- **(d) `XSA_KILL_AT=after_fsync_before_unlink`, then restart:** restart **0.17 s**.
-  State left by the kill: the journal ends
+  `WORK_AVOIDED phase=remap done=0 total=20000000 ratio=0.000000` (the one phase
+  that recomputed), the other three `ratio=1.000000`,
+  `WORK_AVOIDED_SUMMARY score=0.750000`,
+  `RESUME_SPOOL_REPUBLISHED path=.../remap-256.bin sha256=f73af42fb5b7a1a946c9199919cdbcafaca31f6e904a56d31b530ec662580f11 role=input recomputed=1`
+  - the republished spool is bit-identical to the deleted one, exactly one spool
+  was recomputed, and the container SHA-256 is unchanged
+  (`de8cc031...` before and after).
+- **(d) `XSA_KILL_AT=after_fsync_before_unlink`, then restart:** the killed run is
+  12.18 s (load 59.32). State left by the kill: the journal ends
   `SPOOL_INVENTORY scheme=1 remap_sha256=f73af42f... bands=31 pieces=122 work_bytes=20000000 work_rows=20000001 work_runs=7930753`
-  then `BUILD_DONE container=de8cc031...`; `bands-tape/`, `waves-tape/`,
-  `merged/`, `remap-256.bin` and the container are all still on disk. Restart:
+  then `BUILD_DONE container=de8cc031...`, and `bands-tape/`, `waves-tape/`,
+  `merged/`, `remap-256.bin` and the container are all still on disk. Restart
+  **0.16 s** (load 62.52):
   `RESUME_STATE spools_present=2 spools_missing=0 recomputed=0 pieces_present=0 resume=true`
-  `WORK_AVOIDED_SUMMARY score=1.000000` - self-consistent, no silent loss, same SHA.
-- **(e) `XSA_KILL_AT=after_rename` (published, uncommitted), then restart:** restart
-  **0.20 s**.
-  `RESUME_ADOPT_CONTAINER ... validation=sxi2-header-crc+member-bounds+length`,
+  `WORK_AVOIDED_SUMMARY score=1.000000` - state self-consistent, no silent loss,
+  same container SHA-256.
+- **(e) `XSA_KILL_AT=after_rename` (published, uncommitted), then restart:** the
+  killed run is 9.37 s. Restart **0.19 s** (load 62.52):
+  `RESUME_ADOPT_CONTAINER path=.../c20m.sxi2 bytes=16585320 sha256=de8cc031... validation=sxi2-header-crc+member-bounds+length`,
   `RESUME_STATE ... resume=true`, `WORK_AVOIDED_SUMMARY score=1.000000`.
-- **(f) `XSA_KILL_AT=mid_band`, then restart:** killed at 2.77 s with 4 piece
-  spools (and 4 band markers) on disk. Restart **12.23 s**:
-  `RESUME_STATE spools_present=5 spools_missing=1 recomputed=1 pieces_present=4 resume=true`
-  `RESUME_INVENTORY_ABSENT reason=no_committed_SPOOL_INVENTORY`,
+- **(f) `XSA_KILL_AT=mid_band`, then restart:** killed at 2.57 s with **8 piece
+  spools** on disk. Restart **12.19 s** (load 63.74):
+  `RESUME_STATE spools_present=9 spools_missing=1 recomputed=1 pieces_present=8 resume=true`
+  `RESUME_INVENTORY_ABSENT reason=no_committed_SPOOL_INVENTORY required_known=0 ...`
   `WORK_AVOIDED_SUMMARY score=0.250000` (only `remap` avoided; sort/emit/finish
   fully replayed). Same container SHA-256. **This is the honest limit** - the
   native changes that would remove it are listed below.
-- **(g) `--no-resume`:** **12.21 s**, `resume=false`, full clean rebuild, same SHA.
+- **(g) `--no-resume`:** **12.24 s** (load 52.13), `resume=false`, full clean
+  rebuild, same container SHA-256.
 - **(h) corrupted published container:** one payload byte flipped at offset
-  8,000,000 of an adoptable container. The restart REFUSES:
-  `CONTAINER_INVALID ... member 1 payload CRC f9ab7f6a != stored 7a55b3fb
-  (a published container that fails its own format is CORRUPTION: refusing rather
-  than silently rebuilding)`, exit 1.
-- **150 MB byte-identity gate:** `/dev/shm/t150m.txt`, clean **70.48 s**, chi
-  **44,034,230**, container
+  8,000,000 of an adoptable container (state built by the `after_rename` kill).
+  The restart REFUSES and exits 1:
+  `xsa: error: build: CONTAINER_INVALID .../c20m.sxi2 member 1 payload CRC f9ab7f6a != stored 7a55b3fb (a published container that fails its own format is CORRUPTION: refusing rather than silently rebuilding)`
+- **150 MB byte-identity gate:** `/dev/shm/t150m.txt`, clean **70.52 s** (load
+  72.58), chi **44,034,230**, container
   `f6abd41da6e3c3797abae2e288596a6042337a894869f573fecf51c53f624b3e`, `cmp`
-  identical to mainline's `base150`. Same-scratch restart **0.49 s** with
-  `work_runs=57279194` credited and `WORK_AVOIDED_SUMMARY score=1.000000`.
+  identical to mainline's `base150` container byte for byte. Same-scratch
+  restart **0.53 s**:
+  `RESUME_STATE spools_present=2 spools_missing=0 recomputed=0 pieces_present=0 resume=true`
+  `WORK_AVOIDED phase=finish done=57279194 total=57279194 ratio=1.000000 basis=recorded=m1_runs`,
+  `WORK_AVOIDED_SUMMARY score=1.000000`.
+
+The 20 MB numbers above come from an uninterrupted sequence
+`a -> b -> c -> a' -> d -> d' -> e -> e' -> f -> f' -> h -> h' -> g` in one script
+(`run_gate.sh`), one binary, one corpus.
 
 ## Validation and retention cost
 
