@@ -786,7 +786,10 @@ fn clean_v2_scratch(scratch: &Path, container: &Path, journal: &mut Journal) -> 
     let waves = tree_bytes(&scratch.join("waves-tape"));
     // Only remove paths owned by this build. In particular, never unlink the
     // sibling lock inode, caller files, the published container or provenance.
-    for name in ["bands-tape", "waves-tape", "merged", "remap-256.bin"] {
+    // `remap-256.bin` is the PLAN'S OWN SPOOL (256 B, sha-pinned in PLAN): it is
+    // retained so the resume state machine has a real, checkable input spool at
+    // rest, and so a restart can prove the plan without re-deriving it.
+    for name in ["bands-tape", "waves-tape", "merged"] {
         let path = scratch.join(name);
         let meta = match fs::symlink_metadata(&path) {
             Ok(meta) => meta,
@@ -957,6 +960,13 @@ fn join_phase(
 fn join_pipeline(journal: &mut Journal, scratch: &Path,
                  phases: Vec<RunningPhase>) -> Result<(), String> {
     let mut pending: Vec<Option<RunningPhase>> = phases.into_iter().map(Some).collect();
+    // XSA_KILL_AT: STATE-triggered ordering hooks (`mid_band`, `after_rename`).
+    // They fire on an observable ordering state, never on a clock: with the
+    // pipeline live, `mid_band` waits for the sorter's FIRST published band and
+    // `after_rename` for the container's name to appear (the finish links it
+    // only after fsync, so its appearance IS the publication instant).
+    let band_mid = recovery::kill_wanted("mid_band");
+    let mut kill_point: Option<&'static str> = None;
     while pending.iter().any(Option::is_some) {
         recovery::request_stop(scratch)?;
         for slot in &mut pending {
@@ -978,6 +988,21 @@ fn join_pipeline(journal: &mut Journal, scratch: &Path,
             }
         }
         if pending.iter().any(Option::is_some) {
+            // `mid_band`: a SPOOL IS ON DISK whose consumer has not incorporated
+            // it. The sorter's bands are consumed within milliseconds, so the
+            // observable mid-run spool with a real lifetime is a PIECE; the band
+            // case is kept for corpora where several bands are outstanding.
+            if band_mid && (count_pieces_on_disk(scratch) >= 2 || count_unconsumed_bands(scratch) >= 1) {
+                kill_point = Some("mid_band");
+            }
+            if let Some(point) = kill_point {
+                // Kill the phase groups first (their Drop would do it, but this
+                // process is about to stop running Drop), then die hard.
+                for slot in pending.iter_mut() {
+                    if let Some(mut phase) = slot.take() { phase.terminate(); }
+                }
+                recovery::die_hard(point);
+            }
             std::thread::sleep(Duration::from_millis(100));
         }
     }
@@ -1011,6 +1036,33 @@ fn require_log_contains(scratch: &Path, tag: &str, needle: &str) -> Result<Strin
 fn count_log_contains(scratch: &Path, tag: &str, needle: &str) -> usize {
     fs::read_to_string(scratch.join(format!("{tag}.log")))
         .map(|t| t.lines().filter(|l| l.contains(needle)).count())
+        .unwrap_or(0)
+}
+
+/// Band spools PUBLISHED but not yet incorporated: `band_<i>.sa` with its
+/// `.done` marker and no `.consumed` sentinel. This - and nothing else - is the
+/// exact state "a spool exists on disk whose consumer's output is not durable
+/// yet", i.e. the `mid_band` ordering point.
+fn count_pieces_on_disk(scratch: &Path) -> usize {
+    fs::read_dir(scratch.join("merged").join("frag.pieces"))
+        .map(|entries| entries.flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with("p-"))
+            .count())
+        .unwrap_or(0)
+}
+
+fn count_unconsumed_bands(scratch: &Path) -> usize {
+    let dir = scratch.join("bands-tape");
+    fs::read_dir(&dir)
+        .map(|entries| entries.flatten()
+            .filter(|e| {
+                let name = e.file_name().to_string_lossy().to_string();
+                name.starts_with("band_") && name.ends_with(".sa") && {
+                    let stem = &name[..name.len() - 3];
+                    dir.join(format!("{stem}.done")).exists() && !dir.join(format!("{stem}.consumed")).exists()
+                }
+            })
+            .count())
         .unwrap_or(0)
 }
 
@@ -1050,7 +1102,7 @@ fn write_remap(scratch: &Path, override_path: Option<&Path>, corpus: &Path) -> R
 }
 
 /// What the derived table asserts about the corpus, journalled with its sha256.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RemapFacts {
     pub present: u32,
     pub present_bytes_hex: String,
@@ -1101,6 +1153,14 @@ fn corpus_histogram(corpus: &Path) -> Result<[u64; 256], String> {
 /// An 8-bit transport cannot carry 256 data symbols plus END.
 fn derive_remap(corpus: &Path) -> Result<([u8; 256], RemapFacts), String> {
     let hist = corpus_histogram(corpus)?;
+    let table = table_from_hist(&hist)?;
+    let facts = remap_facts_from_hist(&table, &hist, "corpus")?;
+    Ok((table, facts))
+}
+
+/// The table itself, from the histogram alone: ONE corpus pass feeds both the
+/// derivation and its validation (there is no second read to prove it).
+fn table_from_hist(hist: &[u64; 256]) -> Result<[u8; 256], String> {
     let present: Vec<u8> = (0..256u32).filter(|&b| hist[b as usize] != 0).map(|b| b as u8).collect();
     let k = present.len();
     let mut table = [0u8; 256];
@@ -1119,8 +1179,7 @@ fn derive_remap(corpus: &Path) -> Result<([u8; 256], RemapFacts), String> {
     } else {
         for b in 0..256usize { table[b] = b as u8; }
     }
-    let facts = remap_facts(&table, corpus, "corpus")?;
-    Ok((table, facts))
+    Ok(table)
 }
 
 /// Re-prove the table's two properties FROM THE TABLE AND THE HISTOGRAM (never
@@ -1128,6 +1187,12 @@ fn derive_remap(corpus: &Path) -> Result<([u8; 256], RemapFacts), String> {
 /// contract as a derived one. `source` names which one this is.
 fn remap_facts(table: &[u8; 256], corpus: &Path, source: &'static str) -> Result<RemapFacts, String> {
     let hist = corpus_histogram(corpus)?;
+    remap_facts_from_hist(table, &hist, source)
+}
+
+/// The same proof, from a histogram the caller already paid for.
+fn remap_facts_from_hist(table: &[u8; 256], hist: &[u64; 256], source: &'static str) -> Result<RemapFacts, String> {
+    let hist = *hist;
     let mut seen = [false; 256];
     for &v in table.iter() {
         if seen[v as usize] {
@@ -1213,7 +1278,12 @@ fn run_chain(options: Options) -> Result<(), String> {
     let scratch = fs::canonicalize(scratch).map_err(|e| format!("resolve {}: {e}", options.scratch.display()))?;
     let _scratch_owner = lock_scratch(&scratch)?;
     let journal_path = scratch.join("xsa-build.log");
-    if options.tape && !options.plan_only && recovery::prepare(&options, &input, &scratch, &tools)? { return Ok(()); }
+    let mut prepared: Option<recovery::Prepared> = None;
+    if options.tape && !options.plan_only {
+        let p = recovery::prepare(&options, &input, &scratch, &tools)?;
+        if p.complete { return Ok(()); }
+        prepared = Some(p);
+    }
     if options.tape && recovery::signal() != 0 {
         recovery::interrupted(&scratch)?; return Err("BUILD_INTERRUPTED".into());
     }
@@ -1431,7 +1501,19 @@ prove a fit (the projected peak exceeds the reported capacity)");
     // universal table cannot be order preserving on an arbitrary alphabet, so the
     // builder derives it here, proves the END-format contract against the corpus,
     // journals its sha256 and hands the SAME file to every child.
-    let (remap_path, remap_facts) = write_remap(&scratch, options.remap.as_deref(), &input)?;
+    // The plan spool: `prepare` already resolved, proved and PUBLISHED the
+    // remap table (name-encoded, fsynced, renamed into place). Re-deriving it
+    // here would be a second corpus pass for a byte-identical 256-byte table.
+    let (remap_path, remap_facts) = match &prepared {
+        Some(p) => {
+            let path = scratch.join("remap-256.bin");
+            if !path.exists() {
+                return Err(format!("RESUME_INVARIANT the plan spool {} is missing after prepare", path.display()));
+            }
+            (path, p.remap.clone())
+        }
+        None => write_remap(&scratch, options.remap.as_deref(), &input)?,
+    };
     let remap_sha = sha256_file(&remap_path)?;
     journal.line(&format!(
         "REMAP {} sha256={remap_sha} source={} present={} order_preserving=1 bijection=1 \
@@ -1913,6 +1995,14 @@ walks the corpus for every endpoint and no LCP slice is produced). Not a user op
     let mut phases = vec![producer_running, finish_running];
     if let Some(emit) = emit_running { phases.push(emit); }
     join_pipeline(journal, scratch, phases)?;
+    // XSA_KILL_AT=after_rename: EVERY phase has exited with rc=0, so the finish
+    // has linked the container into its final name (it links only after fsync)
+    // and the driver has journalled no commit. This is the published-but-
+    // uncommitted ordering point, and it is reached DETERMINISTICALLY: no poll,
+    // no race. Dropping here must cost a restart nothing but a validation.
+    if recovery::kill_wanted("after_rename") {
+        recovery::die_hard("after_rename");
+    }
     let peak_disc = v2_sampler.peak_bytes();
 
     // ---- gates (fail loud on every violation)
@@ -2109,7 +2199,21 @@ walks the corpus for every endpoint and no LCP slice is produced). Not a user op
             recovery::interrupted(scratch)?;
             return Err("BUILD_INTERRUPTED".into());
         }
+        // THE PLAN'S SPOOL INVENTORY, recorded once, bounded: the counts and the
+        // clean-build work totals every later attempt prices itself against.
+        let emit_done = require_log_contains(scratch, "emit-tape", "TAPE_EMIT_DONE")?;
+        let sort_done = require_log_contains(scratch, "order-tape", "SS_DONE ")?;
+        journal.line(&format!(
+            "XSA_SPOOL_INVENTORY_EMIT rows={} runs={} corpus_bytes={n} sort_rows={} scheme={}",
+            field_u64(&emit_done, "rows")?, field_u64(&emit_done, "runs")?,
+            field_u64(&sort_done, "n")?, recovery::SPOOL_SCHEME));
+        recovery::record_inventory(scratch, &sha256_file(remap_path)?)?;
+        // The commit: the container is fsynced, then journalled. The spools may
+        // only be unlinked AFTER this (deletion is the commit record).
         recovery::done(scratch, &container)?;
+        if recovery::kill_wanted("after_fsync_before_unlink") {
+            recovery::die_hard("after_fsync_before_unlink");
+        }
     }
     clean_v2_scratch(scratch, &container, journal)?;
     journal.line(&format!(
@@ -2161,10 +2265,13 @@ mod tests {
                     guard.success = true;
                 }
             }
-            for name in ["bands-tape", "waves-tape", "merged", "remap-256.bin", "corpus.sxi2.partial"] {
+            for name in ["bands-tape", "waves-tape", "merged", "corpus.sxi2.partial"] {
                 assert_eq!(root.join(name).exists(), !success);
             }
-            for name in ["corpus.sxi2", "finish-v2.log", "finish-v2.time", "caller.txt"] {
+            // `remap-256.bin` is the PLAN'S OWN SPOOL (sha-pinned in PLAN), not a
+            // transient: it survives cleanup on BOTH paths so a later attempt can
+            // prove the plan and reuse the table without re-deriving it.
+            for name in ["corpus.sxi2", "remap-256.bin", "finish-v2.log", "finish-v2.time", "caller.txt"] {
                 assert!(root.join(name).exists());
             }
             let log = fs::read_to_string(root.join("xsa-build.log")).unwrap();
