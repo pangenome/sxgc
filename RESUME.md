@@ -9,17 +9,105 @@ xsa build --tape --input corpus.bin --scratch scratch --threads 16 --memory-gb 2
 ```
 
 A completed build verifies its container SHA-256 and returns successfully without
-rebuilding. An incomplete build verifies its plan, clears build-owned working
-files, and regenerates them from the unchanged corpus. Stale `.done`, `.opened`,
-`.consumed`, LCP markers, and pieces can never certify work in the new attempt.
-The persistent sibling scratch lock still prevents restart while any surviving
-stage owns the directory. After SIGKILL, stop the remaining stages belonging to
-that build before restarting; do not delete the lock inode.
+rebuilding. An incomplete build verifies its plan, enumerates the spools the
+scratch holds, and regenerates the ones that are missing from the unchanged
+corpus. Stale `.done`, `.opened`, `.consumed`, LCP markers, and pieces can never
+certify work in the new attempt. The persistent sibling scratch lock still
+prevents restart while any surviving stage owns the directory. After SIGKILL,
+stop the remaining stages belonging to that build before restarting; do not
+delete the lock inode.
 
 `--no-resume` explicitly discards this build's previous checkpoint, intermediates,
 and container and starts a new plan. Unrelated files in scratch are preserved.
 A scratch directory from an older version without `checkpoint.journal` is refused
 unless `--no-resume` is given. The option is supported only with `--tape`.
+
+## The filesystem is the journal (driver-side resume state)
+
+The driver models the tape route's intermediates as **spools**: a file's NAME
+encodes its place in the deterministic plan (corpus + all knobs + tool hashes +
+`spool_scheme`), its publication is `.part` -> fdatasync -> rename -> directory
+fsync, and its **deletion is the commit record** - a spool may be unlinked only
+once its consumer's output is durable, so its absence means "already
+incorporated". Every attempt prints, once, exactly what the scratch says:
+
+```text
+RESUME_STATE spools_present=<n> spools_missing=<n> recomputed=<n> pieces_present=<n> resume=<true|false>
+```
+
+Spool roles:
+
+| role | on disk | producer | consumer | absence means |
+|---|---|---|---|---|
+| `remap` | `remap-256.bin` (256 B, sha-pinned in `PLAN` as `remap_sha256`) | the driver, from one corpus pass | every stage | **MISSING** - it is an input, never "incorporated" |
+| `band` | `bands-tape/band_<i>.sa` + `.done` | `scatter_sort` | `cross_lcp_merge --tape-bands` (`.consumed`) | incorporated, once the finish's container is durable |
+| `piece` | `merged/frag.pieces/p-<band>-<shard>` | `cross_lcp_merge` | `xsa_finish` | incorporated, once the finish's container is durable |
+| `container` | `<stem>.sxi2` | `xsa_finish` (fsync, then `link`) | the operator | nothing is built yet |
+
+`recomputed=<n>` is the number of plan spools **this attempt must re-derive**.
+It is never inferred from a wall clock or a skip flag.
+
+`WORK_AVOIDED` prices the same decision in each expensive phase's own unit
+(corpus bytes, corpus rows, m1 runs), and its summary carries `(T-P)/T`:
+
+```text
+WORK_AVOIDED phase=<tag> done=<n> total=<n> ratio=<r> basis=<plan|recorded|unknown>
+WORK_AVOIDED_SUMMARY score=<mean of (T-P)/T> ... per_phase=remap=.. sort=.. emit=.. finish=..
+```
+
+`done` is work this attempt did NOT have to redo, `total` is what a clean build
+performs, and `basis` says where `total` came from. The finish's run count is an
+OUTPUT of the data, so before any committing run has recorded it the line reports
+`basis=unknown(no recorded run)` and `ratio=0` - an unknown total is never guessed
+and never scored as avoided work.
+
+`SPOOL_INVENTORY` is one bounded journal record per commit carrying the counts
+(`bands=`, `pieces=`) and the clean-build work totals (`work_bytes=`,
+`work_rows=`, `work_runs=`). The counts come from the run's own receipts - one
+`SS_BAND` line per band, one `PIECE_DURABLE` record per piece - because by commit
+time every spool has been consumed and unlinked and the tree itself reports zero.
+
+`RESUME_ADOPT_CONTAINER`: a container that exists under its final name is
+complete, because `xsa_finish` `link()`s it only after `fsync`. The driver
+validates it (magic, version, `n`, member-directory bounds, header CRC, and
+**every member payload CRC** with the format's own polynomial) and adopts it,
+journalling `BUILD_DONE`, instead of rebuilding the pipeline. A published
+container that fails its own format is **corruption** and is refused -
+`CONTAINER_INVALID` - never silently rebuilt.
+
+`RESUME_INVENTORY_ABSENT` is printed when a restart finds no committing run in
+the journal: the plan's band/piece COUNTS are only recorded at commit, so
+`spools_missing` then counts the container plus whatever the tree shows, and the
+driver says so instead of presenting a half-known inventory as complete.
+
+### Test hook: `XSA_KILL_AT`
+
+`XSA_KILL_AT=<point>` makes a SIGKILL-equivalent exit (no unwinding, no `Drop`,
+no journal record) at a named ORDERING point, so the publication sequence is
+exercised deterministically instead of by racing a signal:
+
+- `after_rename` - every phase has exited 0, so the finish has linked the
+  container into its final name, and the driver has journalled no commit. Reached
+  without a poll.
+- `after_fsync_before_unlink` - the container is fsynced and `BUILD_DONE` is
+  journalled; no spool has been unlinked yet. Reached without a poll.
+- `mid_band` - a spool exists on disk whose consumer has not incorporated it
+  (pieces are the ones with a measurable lifetime; bands are consumed within
+  milliseconds).
+
+`XSA_KILL_AT` is a test hook, not a build knob: it is **excluded from
+`knobs_sha256`**, so a killed run and its restart share one plan.
+
+### One corpus pass, not five
+
+`prepare` used to read the whole corpus five times (sha256, then two histogram
+passes to derive the remap, then two more to re-derive it for the spool).
+`corpus_identity` yields the sha256, the byte histogram and the length in ONE
+sequential pass; the remap table and its proof are functions of that histogram;
+`prepare` publishes the table as a real spool (`.part` -> fdatasync -> rename ->
+directory fsync) and the chain reuses it. A resume that reuses the spool pays the
+identity pass only. This is why `remap-256.bin` now survives scratch cleanup with
+the container: it is the plan's own spool, not a transient.
 
 ## Journal and publication
 
@@ -27,17 +115,21 @@ unless `--no-resume` is given. The option is supported only with `--tape`.
 is fsynced. Its initial creation and completed-container publication also sync
 the scratch directory. Record types:
 
-- `PLAN n=... corpus_sha256=... remap_sha256=... rows_per_band=... parallel_bands=... waves=... sorter_sha=... merger_sha=... finish_sha=... driver_sha=... convention=replay-v1-run-ranks knobs_sha256=... with_chi=... memory_gb=... lce_verify=...`
+- `PLAN n=... corpus_sha256=... remap_sha256=... rows_per_band=... parallel_bands=... waves=... sorter_sha=... merger_sha=... finish_sha=... driver_sha=... convention=replay-v1-run-ranks spool_scheme=1 knobs_sha256=... with_chi=... memory_gb=... lce_verify=...`
 - `PIECE_DURABLE idx=... shard=... lo_key=... hi_key=... rows=... bytes=... sha=...`
+- `SPOOL_INVENTORY scheme=1 remap_sha256=... bands=... pieces=... work_bytes=... work_rows=... work_runs=...`
 - `REPLAY from_key=0 reason=incomplete_build`
 - `BUILD_INTERRUPTED reason=... last_durable_piece=... scratch=...`
+- `RESUME_ADOPT_CONTAINER path=... bytes=... sha256=... validation=...` (a published, unjournalled container accepted by format validation; followed by `BUILD_DONE`)
 - `BUILD_DONE container=...`
 
 The PLAN's `waves` is the resource planner's wave count; the recursive sorter may
 split those waves further. `knobs_sha256` binds the inherited `CROSS_*`, `SS_*`,
 and `XSA_*` environment and witness/finish/snap/chi options. Every explicitly
 stored mismatched field is named in `RESUME_REFUSED field=...`. A knob mismatch
-is named `knobs_sha256`. No build-owned scratch file changes on refusal.
+is named `knobs_sha256`. `XSA_KILL_AT` is the one `XSA_*` name excluded from it
+(it is a test hook, not a build knob). No build-owned scratch file changes on
+refusal.
 
 All piece writers share one publication function: write `p-<band>-<shard>.partial`,
 `fdatasync`, close, hash the exact bytes, rename, fsync the containing directory,
@@ -87,14 +179,96 @@ all state. It avoids retaining a corpus-sized SA or LCP column and keeps the
 existing bounded deletion protocol.
 
 Consequently it deliberately deviates from key-boundary resume and delayed
-payload deletion: **all computation is replayed**, SA/LCP payloads keep their
-existing delete-after-read lifecycle, and no pieces are retained for reuse.
+payload deletion: **the pipeline's computation is still replayed from zero after
+an interruption inside the producer/emit/finish window**, SA/LCP payloads keep
+their existing delete-after-read lifecycle, and no pieces are retained for reuse.
+The driver-side state machine above makes that boundary explicit and measurable
+(`RESUME_STATE`, `WORK_AVOIDED`) instead of implicit, and it removes the replay
+entirely in the two cases where the filesystem already proves the answer: a
+committed container (b, d) and a published-but-uncommitted one (e).
+
+**The native changes that would remove the (f) replay.** Not made here - the
+native stages are owned by another lane - but named exactly:
+
+1. `scatter_sort --tape-bands` refuses a pre-existing `bands-tape/manifest`
+   (`O_EXCL`) and any pre-existing `band_<i>.producer-state` marker, so published
+   band spools cannot be handed back to it. It needs a resume argument: "bands
+   `[frontier, N)` are already published and contiguous; verify their `.done`
+   markers and headers, keep them, start at the frontier". Band identity is
+   deterministic (band `i` is rows `[i*rows_per_band, ...)` of the same corpus and
+   the same plan), so that is a validation, not a re-derivation.
+2. `cross_lcp_merge --tape-bands` unlinks each band at read time. It needs to hold
+   a band until its pieces are durable, and to skip pieces already present in
+   `merged/frag.pieces/` (their headers carry band, shard, `firstRun` and run
+   count, so presence is verifiable).
+3. `xsa_finish` unlinks each piece as it folds it. It needs the delayed-deletion
+   protocol from the resume design - delete piece `p` only after the container
+   prefix covering it is durable - plus the per-phase op counters that
+   `WORK_AVOIDED` currently has to read out of the phase logs.
+
+With those three, a restart would count the surviving spools as present, price
+`WORK_AVOIDED` per phase from the native counters, and re-derive only the missing
+spools - which is exactly the state `RESUME_STATE` already reports.
+
 Graceful shutdown drains a whole admitted wave instead of a single band and
 does not preserve the current finisher fold. These tradeoffs provide a safe
 restart operation, but **do not deliver incremental resume**. Repeated
 interruptions of a large build repeat potentially many hours of computation.
 Do not describe this implementation as the requested incremental checkpoint
 scheme or infer incremental correctness from its byte-equality gates.
+
+### Measured gates (2026-11-06): driver-side resume state
+
+Base revision: `ee2561c95f148acd239081d585ec19c20d971e6c`. Corpus: 20,000,000
+bytes, the head of `/dev/shm/t150m.txt`. 16 threads, 24 GiB, chi enabled. The
+box was running other lanes' work throughout (load average 50-70), so every wall
+is labelled with what else was on it: counters are exact, walls are contended.
+Binary under test: `xsa` sha256
+`078e1afd54fa9ed5347d271cbbbbe024c3890a22b24844d5640eba00e4317c2f`
+(`cargo clean` + `cargo build --release`, 29 pre-existing warnings, 0 errors).
+
+- **(a) clean build:** 10.27 s.
+  `RESUME_STATE spools_present=0 spools_missing=0 recomputed=0 pieces_present=0 resume=false`
+  Container `de8cc0313563566ec8c5d44d65c9c1de589773a80708633043216a0ef5a4bfa0`.
+- **(b) restart, same scratch, no `--no-resume`:** **0.17 s**.
+  `RESUME_STATE spools_present=2 spools_missing=0 recomputed=0 pieces_present=0 resume=true`
+  `WORK_AVOIDED_SUMMARY score=1.000000` (all four phases `ratio=1.000000`).
+  Same container SHA-256.
+- **(c) delete ONE spool (`remap-256.bin`), restart:** **0.17 s**.
+  `RESUME_STATE spools_present=1 spools_missing=1 recomputed=1 pieces_present=0 resume=true`
+  `RESUME_SPOOL_REPUBLISHED ... sha256=f73af42f... role=input recomputed=1`
+  - the republished spool is bit-identical
+  (`f73af42fb5b7a1a946c9199919cdbcafaca31f6e904a56d31b530ec662580f11`), exactly
+  one spool was recomputed, and the container SHA-256 is unchanged.
+- **(d) `XSA_KILL_AT=after_fsync_before_unlink`, then restart:** restart **0.17 s**.
+  State left by the kill: the journal ends
+  `SPOOL_INVENTORY scheme=1 remap_sha256=f73af42f... bands=31 pieces=122 work_bytes=20000000 work_rows=20000001 work_runs=7930753`
+  then `BUILD_DONE container=de8cc031...`; `bands-tape/`, `waves-tape/`,
+  `merged/`, `remap-256.bin` and the container are all still on disk. Restart:
+  `RESUME_STATE spools_present=2 spools_missing=0 recomputed=0 pieces_present=0 resume=true`
+  `WORK_AVOIDED_SUMMARY score=1.000000` - self-consistent, no silent loss, same SHA.
+- **(e) `XSA_KILL_AT=after_rename` (published, uncommitted), then restart:** restart
+  **0.20 s**.
+  `RESUME_ADOPT_CONTAINER ... validation=sxi2-header-crc+member-bounds+length`,
+  `RESUME_STATE ... resume=true`, `WORK_AVOIDED_SUMMARY score=1.000000`.
+- **(f) `XSA_KILL_AT=mid_band`, then restart:** killed at 2.77 s with 4 piece
+  spools (and 4 band markers) on disk. Restart **12.23 s**:
+  `RESUME_STATE spools_present=5 spools_missing=1 recomputed=1 pieces_present=4 resume=true`
+  `RESUME_INVENTORY_ABSENT reason=no_committed_SPOOL_INVENTORY`,
+  `WORK_AVOIDED_SUMMARY score=0.250000` (only `remap` avoided; sort/emit/finish
+  fully replayed). Same container SHA-256. **This is the honest limit** - the
+  native changes that would remove it are listed below.
+- **(g) `--no-resume`:** **12.21 s**, `resume=false`, full clean rebuild, same SHA.
+- **(h) corrupted published container:** one payload byte flipped at offset
+  8,000,000 of an adoptable container. The restart REFUSES:
+  `CONTAINER_INVALID ... member 1 payload CRC f9ab7f6a != stored 7a55b3fb
+  (a published container that fails its own format is CORRUPTION: refusing rather
+  than silently rebuilding)`, exit 1.
+- **150 MB byte-identity gate:** `/dev/shm/t150m.txt`, clean **70.48 s**, chi
+  **44,034,230**, container
+  `f6abd41da6e3c3797abae2e288596a6042337a894869f573fecf51c53f624b3e`, `cmp`
+  identical to mainline's `base150`. Same-scratch restart **0.49 s** with
+  `work_runs=57279194` credited and `WORK_AVOIDED_SUMMARY score=1.000000`.
 
 ## Validation and retention cost
 
