@@ -197,28 +197,142 @@ pieces_present={pieces} resume={}",
     );
 }
 
-/// Per-phase work accounting. `done` is work this attempt did NOT have to redo,
-/// `total` is what a clean build performs, `ratio` is done/total, and the
-/// summary's score is (T-P)/T with P the work recomputed after the restart.
-/// `basis` names where `total` came from - the plan (a quantity the plan fixes:
-/// corpus bytes, rows) or the recorded SPOOL_INVENTORY of a committed run (the
-/// finish's run count, which is an OUTPUT of the data and is never guessed).
-/// An unknown total reports ratio 0: no evidence of avoided work is invented.
-fn print_work_avoided(phase: &str, total: u64, recomputed: u64, basis: &str) -> f64 {
-    let recomputed = recomputed.min(total);
-    let done = total - recomputed;
-    let ratio = if total == 0 { 0.0 } else { done as f64 / total as f64 };
-    println!("WORK_AVOIDED phase={phase} done={done} total={total} ratio={ratio:.6} basis={basis}");
-    ratio
+/// A phase's work, in the phase's OWN unit. `performed` is what THIS attempt
+/// did, `total` what a clean build does; `avoided = total - performed`.
+struct WorkPhase {
+    tag: &'static str,
+    performed: u64,
+    total: u64,
 }
 
-fn print_work_summary(scored: &[(&str, f64)]) {
-    let mean = if scored.is_empty() { 0.0 } else { scored.iter().map(|(_, r)| r).sum::<f64>() / scored.len() as f64 };
-    let per = scored.iter().map(|(p, r)| format!("{p}={r:.6}")).collect::<Vec<_>>().join(" ");
+impl WorkPhase {
+    fn avoided_frac(&self) -> f64 {
+        if self.total == 0 { 0.0 } else { (self.total - self.performed) as f64 / self.total as f64 }
+    }
+}
+
+/// THE LINE, DEFINED ONCE, FOR BOTH SIDES OF THE PIPELINE (this function and
+/// `workAvoided` in xsa/runtime/bit6/xsa_finish.cpp, which prints the identical
+/// field order and units). A phase's clean build performs `total` units of its
+/// own work; THIS attempt performed `performed` of them; so `avoided = total -
+/// performed` units were not redone, and `avoided_frac = avoided / total` is 0
+/// when the attempt did all of the phase's work and 1 when it did none. `basis`
+/// names how `total` was derived: the plan (a quantity the plan fixes: corpus
+/// bytes, rows), the recorded SPOOL_INVENTORY of a committed run (the finish's
+/// run count, which is an OUTPUT of the data and is never guessed), or the
+/// finish stage's own advance counters (the only place PARTIAL work is
+/// measurable).
+///
+/// There is deliberately NO bare `ratio` field. This very field name once meant
+/// performed/total in the native finish and avoided/total here, so a gate
+/// reading `ratio<1.0` passed a full replay on one side and failed a no-work
+/// resume on the other. One name, one meaning, one emitter per phase.
+fn print_work_avoided(tag: &'static str, total: u64, performed: u64, basis: &str) -> WorkPhase {
+    let performed = performed.min(total);
+    let avoided = total - performed;
+    let frac = if total == 0 { 0.0 } else { avoided as f64 / total as f64 };
     println!(
-        "WORK_AVOIDED_SUMMARY score={mean:.6} score_rule=(T-P)/T per phase, mean over the plan's \
-expensive phases; P = work recomputed after the restart per_phase={per}"
+        "WORK_AVOIDED phase={tag} performed={performed} total={total} avoided={avoided} \
+avoided_frac={frac:.6} basis={basis}"
     );
+    WorkPhase { tag, performed, total }
+}
+
+/// ONE summary line, at build end, over the phases whose total is KNOWN (> 0):
+/// `avoided_frac` is the aggregate avoided/total in those phases' own units, and
+/// `unknown_total` counts the phases an attempt could not price at all (they stay
+/// in the per-phase listing, unscored, instead of inventing avoided work).
+fn print_work_summary(phases: &[WorkPhase]) {
+    let scored: Vec<&WorkPhase> = phases.iter().filter(|p| p.total > 0).collect();
+    let performed: u64 = scored.iter().map(|p| p.performed).sum();
+    let total: u64 = scored.iter().map(|p| p.total).sum();
+    let frac = if total == 0 { 0.0 } else { (total - performed) as f64 / total as f64 };
+    let per = phases.iter().map(|p| format!("{}={:.6}", p.tag, p.avoided_frac()))
+        .collect::<Vec<_>>().join(" ");
+    println!(
+        "WORK_AVOIDED_SUMMARY performed={performed} total={total} avoided_frac={frac:.6} \
+phases={} basis=sum_over_phases_with_total_gt_0 unknown_total={} per_phase={per}",
+        scored.len(),
+        phases.len() - scored.len()
+    );
+}
+
+/// The finish stage's own advance counters, when this attempt ran the finish and
+/// it was in spool mode: `(adv_total, adv_performed)`. Only the finish can price
+/// the runs it RESTORED from its durable checkpoint instead of re-folding them,
+/// so these are what turn phase=finish from a coarse replanned/not-replanned
+/// statement into a measured partial one. A malformed line is a refusal, never a
+/// quietly recomputed guess.
+fn finish_advance_counters(scratch: &Path) -> Result<Option<(u64, u64)>, String> {
+    let text = match fs::read_to_string(scratch.join("finish-v2.log")) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("read finish-v2 log: {e}")),
+    };
+    let Some(line) = text.lines().rev().find(|l| l.starts_with("FINISH_ADVANCE_COUNTERS ")) else {
+        return Ok(None);
+    };
+    let num = |k: &str| -> Result<u64, String> {
+        super::field(line, k).and_then(|v| v.parse::<u64>().ok())
+            .ok_or_else(|| format!("FINISH_ADVANCE_COUNTERS without an integer {k}= field: {line}"))
+    };
+    let (total, performed) = (num("adv_total")?, num("adv_performed")?);
+    if performed > total {
+        return Err(format!(
+            "FINISH_ADVANCE_COUNTERS adv_performed={performed} > adv_total={total}: \
+             the finish advanced more runs than the run total ({line})"));
+    }
+    Ok(Some((total, performed)))
+}
+
+/// The m1 run total a committed run recorded (`SPOOL_INVENTORY work_runs`), else
+/// the phase logs of the attempt on disk. 0 means UNKNOWN: an unknown total is
+/// never guessed and never scored as avoided work.
+fn recorded_runs(scratch: &Path) -> u64 {
+    let existing = fs::read_to_string(scratch.join("checkpoint.journal")).ok();
+    Inventory::read(existing.as_deref(), scratch).work.runs
+}
+
+/// THE BUILD-END ACCOUNTING. One line per phase, then one summary: printed once,
+/// at the end of an attempt (a completed or adopted container, or the end of a
+/// pipeline run), never as a prediction before the work happens.
+///
+/// The phase set is fixed by WHO CAN MEASURE IT:
+///   remap  - corpus bytes; performed is 0 from a reused plan spool.
+///   sort   - corpus rows (the virtual END included), planned units.
+///   emit   - corpus rows (the virtual END included), planned units.
+///   finish - m1 runs: from the stage's OWN counters when it ran (exact, so a
+///            restored checkpoint shows up as genuinely avoided work), else from
+///            the recorded total with `performed` = 0 or all of it.
+/// `performed` for sort/emit is stated in PLAN units on purpose: comparing the
+/// sorter's own `SS_DONE n` with the plan's n+1 would report one phantom avoided
+/// row, which is the same class of defect as the old shared `ratio`.
+pub(super) fn report_work_avoided(
+    scratch: &Path,
+    n: u64,
+    remap_source: &str,
+    pipeline_ran: bool,
+) -> Result<(), String> {
+    let replay = |total: u64| if pipeline_ran { total } else { 0 };
+    let mut phases: Vec<WorkPhase> = Vec::new();
+    phases.push(print_work_avoided(
+        "remap", n, if remap_source == "corpus" { n } else { 0 }, "plan=corpus_bytes"));
+    phases.push(print_work_avoided(
+        "sort", n + 1, replay(n + 1), "plan=corpus_rows_plus_end"));
+    phases.push(print_work_avoided(
+        "emit", n + 1, replay(n + 1), "plan=corpus_rows_plus_end"));
+    match if pipeline_ran { finish_advance_counters(scratch)? } else { None } {
+        Some((total, performed)) => phases.push(print_work_avoided(
+            "finish", total, performed, "stage=finish_advance_counters")),
+        None => {
+            let runs = recorded_runs(scratch);
+            phases.push(print_work_avoided(
+                "finish", runs, replay(runs),
+                if runs == 0 { "unknown(no-recorded-runs)" } else { "recorded=m1_runs" }));
+        }
+    }
+    print_work_summary(&phases);
+    Ok(())
 }
 
 /// The publication of a spool: `.part` -> fdatasync -> rename -> directory
@@ -634,30 +748,17 @@ pub(super) fn prepare(
         println!("RESUME_INVENTORY_ABSENT reason=no_committed_SPOOL_INVENTORY required_known=0 rule=bands+pieces counted from disk only; the container is the one spool always required");
     }
 
-    // ---- WORK AVOIDED, per expensive phase, in that phase's own unit.
-    let rerun_pipeline = !(reuse_commit.is_some() || adopted);
-    // The replay path re-derives everything the plan still owes; a resumed or
-    // committed attempt owes no pipeline work at all.
-    let pipeline_redo = |total: u64| if rerun_pipeline { total } else { 0 };
-    let mut scored: Vec<(&str, f64)> = Vec::new();
-    // phase=remap is the derivation's own unit: corpus bytes. Reusing the
-    // published spool does not read the corpus for it at all.
-    let remap_derived = remap_source == "corpus";
-    scored.push(("remap", print_work_avoided(
-        "remap", n, if remap_derived { n } else { 0 }, "plan=corpus_bytes")));
-    scored.push(("sort", print_work_avoided(
-        "sort", n + 1, pipeline_redo(n + 1), "plan=corpus_rows+END")));
-    scored.push(("emit", print_work_avoided(
-        "emit", n + 1, pipeline_redo(n + 1), "plan=corpus_rows+END")));
-    let runs_total = inv.work.runs;
-    scored.push(("finish", print_work_avoided(
-        "finish", runs_total, pipeline_redo(runs_total),
-        if runs_total == 0 { "unknown(no recorded run)" } else { "recorded=m1_runs" })));
-    print_work_summary(&scored);
+    // ---- WORK AVOIDED. Printed at BUILD END only: when the container is
+    // already complete (committed or adopted) the build ends here, so this is
+    // the end; otherwise nothing has run yet and the accounting belongs to the
+    // pipeline's end (chain::run_chain calls this same function there).
+    let done_path = reuse_commit.is_some() || adopted;
+    if done_path {
+        report_work_avoided(scratch, n, remap_source, false)?;
+    }
 
     // ---- NO MUTATION ABOVE THIS POINT (apart from the caller's ownership lock).
     // `--no-resume` never reaches this: it falls through to the clean rebuild.
-    let done_path = reuse_commit.is_some() || adopted;
     if done_path {
         // Commit path: the container is durable and verified. Publish the plan
         // spool if it is the one thing missing, then reclaim the consumed spools.

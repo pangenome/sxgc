@@ -37,6 +37,9 @@ def case(name, interrupt):
                CROSS_POOL_SLOTS="2097152", XSA_TAPE_WAIT_S="inf", XSA_CHECKPOINT_JOURNAL=str(journal))
     env.pop("XSA_KILL_AT", None)
     env.pop("XSA_FINISH_SPOOL", None)
+    # The standalone finish owns the work accounting here (no driver in this
+    # gate), so an inherited root marker must not silence its WORK_AVOIDED line.
+    env.pop("XSA_WORK_ROOT", None)
     def start(cmd, log, child_env):
         with (dest / log).open("wb") as f:
             return subprocess.Popen(list(map(str, cmd)), stdout=f,
@@ -91,9 +94,22 @@ assert actual == expected, (expected, actual)
 print(f"(b) clean_sha256={expected} resumed_sha256={actual} byte_identical=1", flush=True)
 text = (resumed / "finish-resume.log").read_text()
 state = re.search(r"SPOOL_STATE blocks_present=(\d+) blocks_missing=(\d+) resumed_from=(\S+)", text)
-work = re.search(r"WORK_AVOIDED phase=finish done=(\d+) total=(\d+) ratio=([\d.]+)", text)
+# ONE definition of the line, shared with the driver's emitter: performed is the
+# work THIS attempt did, total what a clean build does, avoided = total -
+# performed, avoided_frac = avoided/total (0 = did everything, 1 = did nothing).
+# A resumed finish must land strictly between the two: it avoided the advances
+# its durable checkpoint restored AND performed the rest of the fold.
+work = re.search(r"WORK_AVOIDED phase=finish performed=(\d+) total=(\d+) avoided=(\d+) "
+                 r"avoided_frac=([\d.]+) basis=(\S+)", text)
 assert state and int(state[1]) > 0 and state[3] != "none", state
-assert work and float(work[3]) < .9, work
+assert work, "no WORK_AVOIDED phase=finish line in the resumed finish log"
+performed, total, avoided, frac = int(work[1]), int(work[2]), int(work[3]), float(work[4])
+assert total > 0 and avoided == total - performed, work[0]
+# The bound the line has always been gated on, translated to the one definition:
+# the resume must NOT have performed nearly all of the work (the retired
+# performed/total `ratio` had to be < .9, i.e. avoided_frac > .1). A resume that
+# restores at EOF performs zero advances and reports 1.000000.
+assert frac > .1, work[0]
 print("(c) " + state[0], flush=True)
 print(work[0], flush=True)
 spools = resumed / "merged/frag.finish-spool"

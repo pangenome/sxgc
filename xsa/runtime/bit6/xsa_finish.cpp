@@ -102,6 +102,48 @@ static void pf_check(bool ok, const std::string& msg) {
     if (!ok) pf_fail(msg);
 }
 
+// ------------------------------------------------ WORK AVOIDED, ONE DEFINITION
+// THE LINE, DEFINED ONCE, FOR BOTH SIDES OF THE PIPELINE (this file and
+// xsa/src/recovery.rs). A phase's clean build performs `total` units of its own
+// work; THIS attempt performed `performed` of them; so `avoided = total -
+// performed` units were not redone, and `avoided_frac = avoided / total` is
+// 0.000000 when the attempt did all of the phase's work and 1.000000 when it
+// did none. `basis` names how `total` was derived.
+//
+// There is deliberately NO bare `ratio` field here or in the driver. The two
+// lanes once printed `WORK_AVOIDED ... ratio=<r>` on this very field name with
+// OPPOSITE meanings - performed/total in the native finish, avoided/total in the
+// driver - so a gate reading `ratio<1.0` passed a full replay on one side and
+// failed a no-work resume on the other. That is the ambiguity that once let
+// replay-from-zero look like success; one name, one meaning, one emitter.
+static void workAvoided(const char* phase, unsigned long long total,
+                        unsigned long long performed, const char* basis) {
+    if (performed > total) performed = total;
+    const unsigned long long avoided = total - performed;
+    fprintf(stderr,
+            "WORK_AVOIDED phase=%s performed=%llu total=%llu avoided=%llu avoided_frac=%.6f basis=%s\n",
+            phase, performed, total, avoided,
+            total ? double(avoided) / double(total) : 0.0, basis);
+}
+// WHO OWNS THE ACCOUNTING OF A SHARED PHASE. The driver sets XSA_WORK_ROOT=driver
+// in this stage's environment: it then prices phase=finish from the raw counters
+// below, and this stage must not print a SECOND line for the same phase with a
+// different number. With the variable unset (or `phase`) the finish is run as
+// the accounting root - the standalone gate does exactly that - and emits the
+// line itself. Anything else is a refusal, never a silent default.
+static bool workRootDriver() {
+    static const bool driver = [] {
+        const char* p = getenv("XSA_WORK_ROOT");
+        if (!p || !*p) return false;
+        const std::string v(p);
+        if (v == "driver") return true;
+        if (v == "phase") return false;
+        pf_fail("XSA_WORK_ROOT must be driver|phase");
+        return false;
+    }();
+    return driver;
+}
+
 // ------------------------------------------------ phase attribution + sampler
 // The finish is one serial thread plus one LCE pool; the question this run
 // exists to answer is WHERE that serial thread's nanoseconds go. Two
@@ -6091,9 +6133,21 @@ int main(int argc, char** argv) {
             double ta = tnow();
             if (buildChi && !spoolEof) { sweep.finish(); sweep.emitWitness.flush(); }
             if(spoolMode && !spoolEof){publishCodecBlock();checkpoint(true);}
-            if(spoolMode)fprintf(stderr,"WORK_AVOIDED phase=finish done=%llu total=%llu ratio=%.9f\n",
-                (unsigned long long)(advRuns-restoredAdvances),(unsigned long long)advRuns,
-                advRuns?double(advRuns-restoredAdvances)/double(advRuns):0.0);
+            if(spoolMode){
+                // THE PHASE'S RAW COUNTERS. What this attempt advanced, what it
+                // restored from its own durable checkpoint, and the run total both
+                // are measured against; the driver prices phase=finish from these.
+                fprintf(stderr,"FINISH_ADVANCE_COUNTERS adv_total=%llu adv_performed=%llu adv_restored=%llu "
+                    "adv_restored_raw_runs=%llu adv_restored_bands=%llu basis=finish_spool_state\n",
+                    (unsigned long long)advRuns,(unsigned long long)(advRuns-restoredAdvances),
+                    (unsigned long long)restoredAdvances,(unsigned long long)restoredRawRuns,
+                    (unsigned long long)restoredBands);
+                // Standalone run (accounting root): this stage owns phase=finish
+                // and emits the one WORK_AVOIDED line for it. Under the driver the
+                // driver reports the phase and this branch stays silent.
+                if(!workRootDriver())
+                    workAvoided("finish",advRuns,advRuns-restoredAdvances,"finish_advance_counters");
+            }
             advanceWall += tnow() - ta;
             r.close(); advAcc.add(r);
         }
