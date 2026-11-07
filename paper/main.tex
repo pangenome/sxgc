@@ -24,7 +24,11 @@ is adaptation: prefix depth and work-unit size follow the corpus distribution an
 envelope. Sampling supplies estimates, not worst-case capacity guarantees; position slicing
 requires an order proof, and the implementation has finite prefix limits. The Pile evaluation
 validates this design on a skewed corpus and reports resource costs, negative results, and
-recovery limitations. It does not establish a full-Pile deployment or a new asymptotic bound.
+recovery limitations; a full-Pile deployment remains untested.
+The local sorting comparison count is $O(n\log B)$ with $B$ bounded by the memory
+budget, so for fixed memory $O(n)$, conditional on actual bands meeting that
+memory-derived row bound; planning, repeated scans and suffix-symbol inspection are
+additional costs.
 \end{abstract}
 
 \section{Contribution and scope}
@@ -157,25 +161,81 @@ suffix LCP, including the carried boundary pair, and preceding-byte BWT emission
 the corresponding global columns. Chi correctness additionally depends on the cited suffixient
 sweep and its interval-closing rules; it does not follow from the partition lemma alone.
 
-\paragraph{Work and I/O.}
-Let $m=|S|$, $d$ be the maximum inspected planning depth, $B$ the band count, $n_i$ actual
-band sizes, $P$ the number of full corpus scans, and $C$ total corpus-symbol inspections
-made by suffix comparison and adjacent-LCP computation, and $H$ the work of evaluating
-wave predicates and locating band fences during scatter. A conservative comparison-sort
-bound for planning and construction is
+\paragraph{Resource-parameterised work.}
+Let $B\geq 2$ bound the actual rows per band and let $K$ be the band count.
+When admission enforces the memory-derived target $R$, take $B=\max(2,R)$.
+Then $\sum_i n_i\log(n_i+1)=O(N\log B)$: $O(n\log B)$ with $B$ bounded by the memory
+budget, so for fixed memory $O(n)$. The comparison-sort logarithm applies to
+$B$, never to $n$; its constant-size factor is set by the resource envelope.
+This is not a new asymptotic bound for suffix sorting in general. Adversarial
+strings and underestimated populations can produce large bands in the current
+implementation. The architectural claim is that the target bound's parameters
+come from the resource envelope rather than from $n$, conditional on successful
+refinement and admission, not that sampling proves a hard bound.
+
+To state total cost rather than just comparison count, let $m=|S|$, $d$ be the
+maximum inspected planning depth, $P$ the number of full corpus scans, $C$ the
+corpus-symbol inspections for suffix comparisons and adjacent LCP, and $H$ the
+work of wave predicates and band-fence searches. A conservative bound is
 \[
- O(md\log(m+1)+Pn+H+B+\sum_{i=1}^{B}n_i\log(n_i+1)+C).
+ O(md\log(m+1)+Pn+H+K+n\log B+C),
+ \qquad H=O(Pnd+Nd\log(K+1)).
 \]
-Here $H=O(Pnd+Nd\log(B+1))$ is a conservative bound for prefix predicates and
-binary-searched prefix fences. This counts byte-radix descent conservatively and excludes
-final-container encoding costs.
-If all bands meet $R$, the comparison-count term is $O(N\log(R+1))$; comparison cost is
-not constant. Long common prefixes can make $C$ large, so this is not a linear-time claim.
-With disk block size $L$ and total scatter/transport bytes $V$, sequential transfer volume
-is $O(Pn+V)$, or $O(Pn/L+V/L+B)$ block transfers allowing partial band blocks.
-Random corpus accesses incur additional cache misses, at most $O(C+H)$ block transfers in
-this conservative model. There is a corpus scan per wave, plus preparation and any explicit
-point-mass proof scans: the ordered-stream pass is not a one-read input algorithm.
+Final-container encoding adds its own work. Thus the construction's local sorting
+component is linear in $n$ at fixed memory, but total elapsed work is linear only
+if these other terms are linear too. In particular, repeated full scans cannot
+be absorbed into a constant when the number of waves grows with $n$.
+
+\paragraph{Depth, passes, and I/O.}
+Depth is determined by how much key prefix the corpus distribution requires to
+separate a class under the row target; it is a separate parameter from input
+length, not a prescribed $\log n$ recursion. It need not remain constant as a
+corpus grows. Each position is scattered once per wave it belongs to (exactly
+one in a disjoint completed plan); each band is sorted once and its output is
+streamed once. The implementation nevertheless scans the entire corpus for each
+wave, plus preparation and explicit point-mass proofs. If $V_s$ is total scatter
+payload bytes and $V_o$ total sorted-band payload bytes, writing and reading each
+payload gives sequential volume $O(Pn+V_s+V_o)$, plus final-output bytes.
+For disk blocks of $L$ bytes this is $O((Pn+V_s+V_o)/L+K)$ transfers allowing
+partial band blocks. Corpus probes add cache misses, conservatively at most
+$O(C+H)$ further transfers.
+
+\paragraph{Cache coherence and its boundary.}
+The bulk data path streams the corpus forward, appends band payloads through a
+bounded number of sequential output streams, sorts each admitted band in RAM,
+and emits in key order. Its ordering state is bucket-local: no global pointer
+chasing, tree walk, or random access over an $n$-row suffix-order structure is
+required. This locality is a first-class systems advantage of choosing bands
+from the cache and memory envelope. The text need not be wholly resident and
+has no additional materialised copy; the existing corpus is file-backed.
+This does not mean every text access is sequential: full suffix comparisons and
+LCP computation can probe distant mapped corpus pages, whose residency and
+misses remain real costs. In comparison-based suffix sorting a comparison may
+walk a long common prefix, so its effective cost is an LCP-length scan, not a
+unit-cost compare; banding confines row workspace but does not eliminate this
+cost. Usual monolithic RAM forms of SA-IS, DC3 and prefix doubling maintain
+whole-text arrays occupying multiples of $n$ bytes~\cite{sais,dc3,sa}.
+At the measured $n=\qnum{input}{10^{11}}$ bytes, such workspace can exceed a fixed
+machine budget even when the input fits on disk. This is a capacity argument,
+not a measured failure of those competing implementations.
+
+\paragraph{Point masses and the Pile evidence.}
+Long common prefixes still make sorting within a band expensive. A point mass
+at the inspected prefix therefore calls for deeper refinement, not simply a
+larger band; if deeper keys cannot split it, a proved analytic case or an
+explicit failure is required. The Pile case at $\qnum{input}{10^{11}}$ bytes
+illustrates the pressure: the source records that the space class and its
+largest byte pair exceed wave capacity, requiring deeper waves than the shallow
+encyclopedic-text rule. The diagnostic recording this shape is
+\texttt{SS\_WAVE\_DEPTH depth\_hist=...}, emitted in
+\texttt{xsa/runtime/tools/binbwt/scatter\_sort.cpp}.
+\ev{xsa/runtime/tools/binbwt/scatter_sort.cpp}{wave-list rationale at lines
+1160--1171 and depth diagnostic at lines 2524--2527}
+The headline receipt quantifies the completed build as
+$\qnum{waves}{102}$ waves; it does not provide a numeric depth histogram.
+\ev{tools/binbwt/RESULTS_PILE_100GB.md}{opening build receipt}
+We therefore attribute the whitespace-depth explanation to the source and do
+not turn the diagnostic format into an invented measured depth.
 
 \paragraph{Memory model and its boundary.}
 For actual admitted rows $a_i$, owned sorting memory is $F+G+b\sum_i a_i$; admission aims
