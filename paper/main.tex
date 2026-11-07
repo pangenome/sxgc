@@ -8,33 +8,32 @@
 \newcommand{\qnum}[2]{#2}
 \newcommand{\ev}[2]{\footnote{\href{https://github.com/pangenome/sxgc/blob/c46a85217b9b269c91179cbebc396f96453181af/#1}{\nolinkurl{#1}}, #2.}}
 \newcommand{\old}[3]{\footnote{\href{https://github.com/pangenome/sxgc/blob/#1/#2}{\nolinkurl{#2}}, commit \texttt{#1}, #3.}}
-\title{Building and Querying a Large Byte Index:\\Measured Scale, Memory, and Recovery Costs}
+\title{A Distribution-Adaptive Radix Plan for Suffix Sorting\\and Fused Byte-Index Construction}
 \author{sxgc project}
 \date{}
 \begin{document}
 \maketitle
 \begin{abstract}
-Suffix indexing, substring frequencies, and rarity weighting are established ideas; our contribution
-is measured scale and cost. On the first $\qnum{input}{10^{11}}$ bytes of the Pile, a
-bounded-resource tape pipeline builds a $\qnum{container}{63{,}163{,}489{,}696}$-byte index in
-\qnum{wall}{12:35:10}, with observed peak scratch $\qnum{scratchratio}{0.789}n$. Construction
-consumes the ordered stream in a single streaming pass without materialising a full suffix array or
-an additional text copy; this is not a claim of one physical read of the input. The index contains
-$\qnum{chi}{24{,}185{,}339{,}204}$ suffixient witnesses. A rebuilt reader locates $\qnum{limit}{5}$
-occurrences in $\qnum{querywall}{0.52}$ s at $\qnum{rss}{547}$ MiB RSS against the approximately
-$\qnum{containershort}{63}$ GB container, without materialising its run columns. Independent byte
-scanning confirms occurrence counts and resolves an overlapping-match discrepancy with grep. We
-report failed optimisations, separate native spool recovery from driver replay, and distinguish
-these measurements from an untested full-Pile deployment.
+Suffix-array construction here is a radix plan over the distribution of the string, not a
+monolithic algorithm. A positional stride sample estimates prefix populations; quantile fences
+and a memory-derived row budget determine bands, while a recursive census determines wave split
+depth. The radix suffix sort scatters positions into ordered key ranges, sorts full suffixes
+locally, and emits BWT runs, LCP, and suffixient witnesses through one ordered-stream pipeline,
+without a materialised global suffix array or an additional text copy. The algorithmic property
+is adaptation: prefix depth and work-unit size follow the corpus distribution and resource
+envelope. Sampling supplies estimates, not worst-case capacity guarantees; position slicing
+requires an order proof, and the implementation has finite prefix limits. The Pile evaluation
+validates this design on a skewed corpus and reports resource costs, negative results, and
+recovery limitations. It does not establish a full-Pile deployment or a new asymptotic bound.
 \end{abstract}
 
 \section{Contribution and scope}
-The useful question is what it costs to retain exact corpus evidence at a scale where a materialised
-suffix array and per-run query columns become impractical. The contribution here is an implemented
-construction and reader, with measured resource use and explicit correctness receipts. We claim no
-conceptual novelty for suffix indexing, substring statistics, or IDF applied to n-grams. Suffix
-arrays, the FM-index and run-length BWT indexing already supply the underlying search operations;
-related work is discussed below.
+The contribution is the combination of a radix sampling plan and a bounded radix suffix sort.
+The plan turns the corpus's prefix distribution into ordered work units; sorting and fused
+emission consume those units without a global suffix-order structure. The measured numbers
+validate this decomposition rather than define its contribution. Prefix bucketing, suffix
+indexing, substring statistics, and IDF applied to n-grams are established ideas. We claim neither
+priority for them nor an improved asymptotic suffix-sorting bound.
 
 Let $n$ denote input bytes, excluding virtual END. The container's row count includes END, so it is
 $n+1$. Decimal GB and TB describe byte sizes; MiB describes binary resident memory. We distinguish
@@ -51,7 +50,148 @@ studies are pinned to their own revisions. \texttt{paper/NUMBERS.md} maps every 
 to its source and reproduction command, and explicitly excludes unverified requested figures. These
 are historical measurements, not benchmarks rerun for this manuscript.
 
-\section{Method}
+\section{Algorithm: plan, radix sort, and fuse}
+\label{sec:algorithm}
+\subsection{Sampling plan and memory-derived work units}
+Write $N=n+1$ for the suffix positions including virtual END. For stride $s$, sample positions
+$S=\{0,s,2s,\ldots\}$ in the eligible corpus region. For a prefix class $C$, the census estimates
+its population by $\widehat n_C=s\,|S\cap C|$; short tails and END are handled explicitly.
+The first-symbol histogram is exact; deeper wave histograms reuse the sample. Sort sampled
+prefixes and accumulate their estimated mass in key order. Boundaries at target cumulative
+masses are empirical quantiles, rounded to prefix-class boundaries. An oversized class is
+refined by its next byte instead of forcing it into a fixed-depth bucket. Thus split depth is
+an output of the census, not a corpus-specific tuning parameter.
+
+Let $E$ be the sorter's memory envelope, $F$ its fixed reserve (sample, scan windows,
+histograms and control), $G$ its scatter staging, and $\alpha$ a safety fraction. The row arena
+is $A=\alpha\max(0,E-F-G)$. If a sorting arm owns $b$ bytes per row and admits $k$ bands
+concurrently, the memory-derived target is $R=\lfloor A/(kb)\rfloor$ rows per band.
+Here $b$ includes resident row records, permutation/sort workspace, LCP columns and write
+staging, not merely the disk record width. The scratch window can shrink $R$ further.
+A wave cap $W$ limits staged rows; packing budget-sized bands under this cap determines the
+wave count, with $\lceil N/W\rceil$ only an ideal lower bound, not an equality when classes
+cannot be packed tightly. Safety slack in both quantile targets reduces estimation risk.
+\ev{xsa/runtime/tools/binbwt/scatter_sort.cpp}{\texttt{tape\_budget\_plan},
+\texttt{plan\_tape}, and recursive wave descent}
+
+There are two planning levels: wave predicates descend byte by byte, and within-wave band
+fences refine prefix windows. Both use population rather than a fixed chosen split depth.
+The implementation nevertheless caps predicate width and band-prefix width; arbitrary-depth
+recursion is the planning principle, not an unlimited-depth implementation guarantee.
+
+\subsection{Recursion, point masses, and local sorting}
+A point mass in the inspected prefix is not necessarily a point mass in full suffix order.
+Splitting such a class by position and independently sorting each slice does \emph{not} in
+general permit concatenation: equal-prefix suffixes in different slices can interleave.
+The implemented fallback therefore proves from the corpus that the entire class is exactly
+a maximal single-symbol tail run. In that class, the shorter suffix precedes the longer one
+under minimal virtual END, so descending position order is suffix order. Contiguous position
+slices can then be emitted highest-first. An unproved class at the prefix-width limit fails
+explicitly; it is not silently published. This is the necessary qualification to the claim
+that a point mass needs no different sorting algorithm.
+\ev{xsa/runtime/tools/binbwt/scatter_sort.cpp}{\texttt{emitPointMass} and
+\texttt{SS\_WAVE\_POINT\_MASS\_PROOF}}
+
+For each wave, scan the corpus and scatter positions by the wave predicate and band fences.
+Sort each admitted band using full suffix comparisons, resolving equal stored prefixes against
+the corpus. Publish completed bands in key order, retaining the preceding suffix across band
+boundaries for LCP. The emitter coalesces BWT runs and passes LCP and endpoints to the chi sweep.
+This is one consumption of the ordered stream, with boundary state and finish work; it does
+not require a second global suffix structure. Neither a global suffix-array file nor an
+additional text copy is materialised. The transport's ``merger'' schedules already ordered
+ranges; it does not compare overlapping suffix-array fragments to establish their order.
+
+\begin{figure}[ht]
+\small
+\begin{verbatim}
+PLAN(T, envelope, scratch_cap):
+  reserve sample, scan, control, and staging memory
+  derive band target R and wave cap W from remaining arena
+  S <- positional stride sample; count first symbols exactly
+  REFINE(class, target):
+    census next-symbol children; pack in key order to target
+    recurse on any child whose estimated mass exceeds target
+    at wave width limit: use proved tail slices, or fail
+  waves <- REFINE(all suffixes, W)
+  for each wave: derive band fences, refining ties toward R
+  return ordered waves and bands
+SORT_AND_EMIT(T, plan):
+  for wave in key order:
+    scan T; scatter every matching position to its unique band
+    admit bands by actual row count; sort full suffixes locally
+    for band in key order, for suffix p in sorted band:
+      emit preceding byte into BWT run stream
+      emit LCP(previous suffix, p); retain boundary state
+      advance chi sweep with LCP and run/endpoint information
+    release consumed bands and credits
+  close runs and chi intervals; assemble container
+\end{verbatim}
+\caption{Planning and ordered emission. Estimates guide partitioning; actual admission and
+point-mass proofs are separate obligations. Prefix-width failures are explicit.}
+\label{alg:radix}
+\end{figure}
+
+\subsection{Theory: estimation, correctness, work, and memory}
+\label{sec:theory}
+\paragraph{What the sample guarantees.}
+The estimator above is a systematic positional estimator. Uniformly choosing independent
+positions would also uniformly sample suffix identities, since each position identifies a
+suffix. The actual fixed-stride sample is not that experiment: it is neither independent
+random suffix selection nor uniform sampling of lexicographic ranks. Periodicity aligned
+with the stride can miss an entire frequent prefix class. Randomising only the starting
+offset would not make the observations independent. Consequently no Hoeffding or Chernoff
+capacity guarantee is asserted for this implementation. Headroom is heuristic, and even an
+unbiased estimator would not alone certify sample-selected quantile boundaries.
+Actual scatter counts and admission accounting remain necessary; an underestimated class
+can exceed its target. No deterministic bound of $R$ on every band follows from this census.
+
+\paragraph{Local correctness.}
+Assume the plan partitions all suffix positions into disjoint, exhaustive intervals in full
+suffix order. Prefix fences, ordered by their distinguishing byte with END ordered minimally,
+satisfy this invariant; the proved tail slices satisfy it by the position-order argument above.
+For bands $B_i$ before $B_j$, every suffix in $B_i$ precedes every suffix in $B_j$.
+Sorting full suffixes inside each band and concatenating therefore gives exactly suffix order.
+This proof needs no global ranks, prefix doubling, or comparison merge. It does require the
+interval invariant: local sorts alone cannot repair arbitrary position partitions. Adjacent
+suffix LCP, including the carried boundary pair, and preceding-byte BWT emission then equal
+the corresponding global columns. Chi correctness additionally depends on the cited suffixient
+sweep and its interval-closing rules; it does not follow from the partition lemma alone.
+
+\paragraph{Work and I/O.}
+Let $m=|S|$, $d$ be the maximum inspected planning depth, $B$ the band count, $n_i$ actual
+band sizes, $P$ the number of full corpus scans, and $C$ total corpus-symbol inspections
+made by suffix comparison and adjacent-LCP computation, and $H$ the work of evaluating
+wave predicates and locating band fences during scatter. A conservative comparison-sort
+bound for planning and construction is
+\[
+ O(md\log(m+1)+Pn+H+B+\sum_{i=1}^{B}n_i\log(n_i+1)+C).
+\]
+Here $H=O(Pnd+Nd\log(B+1))$ is a conservative bound for prefix predicates and
+binary-searched prefix fences. This counts byte-radix descent conservatively and excludes
+final-container encoding costs.
+If all bands meet $R$, the comparison-count term is $O(N\log(R+1))$; comparison cost is
+not constant. Long common prefixes can make $C$ large, so this is not a linear-time claim.
+With disk block size $L$ and total scatter/transport bytes $V$, sequential transfer volume
+is $O(Pn+V)$, or $O(Pn/L+V/L+B)$ block transfers allowing partial band blocks.
+Random corpus accesses incur additional cache misses, at most $O(C+H)$ block transfers in
+this conservative model. There is a corpus scan per wave, plus preparation and any explicit
+point-mass proof scans: the ordered-stream pass is not a one-read input algorithm.
+
+\paragraph{Memory model and its boundary.}
+For actual admitted rows $a_i$, owned sorting memory is $F+G+b\sum_i a_i$; admission aims
+to keep $b\sum_i a_i\leq A$. At fixed envelope, concurrency and sample cap, this arena term
+has no $n$ multiplier. It explains how sorting-owned anonymous memory can remain bounded
+as the corpus grows, rather than asserting constant whole-build peak anonymous memory or RSS.
+The current row gate admits a band larger than the entire cap alone and reports its peak;
+therefore a badly underestimated or width-limited band can violate the nominal arena bound.
+A universal bound would require exact refinement or an external spill fallback before that
+admission. File-backed corpus pages, plan metadata, directories and witness storage are
+separate terms. Peak RSS is consequently not proved independent of $n$.
+\ev{xsa/runtime/tools/binbwt/scatter_sort.cpp}{\texttt{RowGate}, arena accounting,
+and oversize-band admission}
+
+\section{Fused construction and supporting implementation}
+
 \paragraph{Scatter, fused merge, finish.}
 The sorter scatters suffix positions into bounded waves, sorts admitted bands and publishes
 consumable band files. The merger consumes these files, preserves key order and emits run pieces.
@@ -121,7 +261,20 @@ replay them and finish.\ev{RESUME_DESIGN.md}{``Implemented finish protocol'', ``
 ``Cannot be appended finding''}\ev{RESUME.md}{``Journal and publication'' and ``Measured gates:
 driver-side resume state''}
 
-\section{Measured results}
+\section{Evaluation: evidence for the adaptive plan}
+The diagnostic case is the Pile's whitespace skew: its dominant whitespace pair exceeds a
+wave's capacity at the headline input size, whereas the earlier shallow rule sufficed for
+encyclopedic text. The recursive implementation reuses the same census rule at greater depth
+and exposes the resulting distribution through \texttt{SS\_WAVE\_DEPTH depth\_hist=...}.
+This contrast is documented in source; no numeric depth histogram is claimed here without a
+run receipt. It supports distribution-driven refinement, not an unrestricted point-mass or
+worst-case capacity theorem. The historical build below validates the pipeline at scale;
+it is not a fresh measurement of every current planner safeguard. In particular, the budget
+planner's comments identify the historical corpus-derived band sizing as a defect corrected
+by the memory-envelope formulation.
+\ev{xsa/runtime/tools/binbwt/scatter_sort.cpp}{wave-descent rationale,
+\texttt{SS\_WAVE\_DEPTH}, and \texttt{tape\_budget\_plan} comments}
+
 \begin{table}[ht]
 \centering
 \begin{tabular}{lr}
@@ -152,7 +305,7 @@ algorithms. Scratch is an observed highwater, not a worst-case bound. The smalle
 ratios in older documents cannot be substituted for this receipt.
 
 \paragraph{Search certificate.}
-The command \texttt{query --limit \qnum{limit}{5}} for \verb| function | returns in $\qnum{querywall}{0.52}$ s with $\qnum{rss}{547}$ MiB RSS. Counts after the cache rewrite remain $\qnum{thecount}{704{,}942{,}163}$ for \verb|the |, $\qnum{harper}{55}$ for \verb|Harper Reed|, and $\qnum{functioncount}{4{,}785{,}152}$ for \verb| function |. The certificate uses independent corpus scanning, byte rereads and set comparisons. It verifies $\qnum{sample}{200{,}000}$ located positions for the latter pattern with no bad or duplicate offsets, but does not enumerate the complete answer through the index.\ev{tools/binbwt/RESULTS_PILE_100GB.md}{Search certificate, sections 1--2, ``Positions at scale''}
+Against the approximately $\qnum{containershort}{63}$ GB container, the command \texttt{query --limit \qnum{limit}{5}} for \verb| function | returns in $\qnum{querywall}{0.52}$ s with $\qnum{rss}{547}$ MiB RSS. Counts after the cache rewrite remain $\qnum{thecount}{704{,}942{,}163}$ for \verb|the |, $\qnum{harper}{55}$ for \verb|Harper Reed|, and $\qnum{functioncount}{4{,}785{,}152}$ for \verb| function |. The certificate uses independent corpus scanning, byte rereads and set comparisons. It verifies $\qnum{sample}{200{,}000}$ located positions for the latter pattern with no bad or duplicate offsets, but does not enumerate the complete answer through the index.\ev{tools/binbwt/RESULTS_PILE_100GB.md}{Search certificate, sections 1--2, ``Positions at scale''}
 
 \paragraph{Recovery and the smaller rungs.}
 The killed-and-restarted driver run reports \texttt{avoided\_frac=\qnum{avoided}{0.295695}} and
@@ -189,7 +342,7 @@ invocation in this evidence set; it is excluded. Cold loading is outside warm th
 serving cold-start cost must be measured separately for the bounded
 reader.\ev{SERVING.md}{``Reproducible gates'' and ``Measured gates''}
 
-\section{Negative results and oracle failures}
+\subsection{Negative results and oracle failures}
 \paragraph{A unique byte is not a minimal sentinel.}
 Appending \texttt{\qnum{sentinel}{0xF5}} removed seam classes and preserved the chi count but
 changed suffix order at rank $\qnum{rank}{5615}$. Agreement on a scalar statistic did not certify
@@ -222,7 +375,26 @@ deadlock.\ev{REPRODUCE.md}{build flags, ``There is no --timeout and no --stall-s
 \paragraph{Grep was the wrong occurrence oracle.}
 \texttt{grep -o} counts non-overlapping matches. The pattern \verb| function | shares its trailing space with the next occurrence, so grep omitted $\qnum{missed}{192}$ real offsets. Independent scanning and index context queries recover the same missing set, with \texttt{VERIFY n=\qnum{missed}{192} ok=\qnum{missed}{192} bad=\qnum{bad}{0}}. An oracle must match the operation's overlap semantics. The absence of overlapping offsets in grep output cannot establish their absence in the corpus.\ev{tools/binbwt/RESULTS_PILE_100GB.md}{Search certificate, ``The 192-offset discrepancy''}
 
-\section{Related work}
+\section{Algorithmic comparison and prior art}
+SA-IS reduces to LMS substrings and induces the remaining order; DC3 recursively ranks a
+difference-cover sample and merges the remaining suffixes~\cite{sais,dc3}. Their usual RAM
+forms coordinate whole-text suffix-order arrays, with linear work and linear space. This
+contrasts with independent key intervals here, but does not imply that induced sorting or DC3
+cannot be adapted to external memory. Prefix doubling instead repeatedly sorts pairs of
+ranks for growing prefix lengths and updates ranks across the text~\cite{sa}; our local
+comparisons resolve suffixes without those global rank rounds.
+
+External and distributed suffix construction already use partitioning, sorting and merging;
+prefix bucketing itself is not the contribution. External induced sorting and distributed
+prefix-doubling/DC variants also show why ``external'' is not a single competing algorithm
+\cite{bingmann}. eGSA, for example, builds local enhanced suffix arrays and merges them,
+including BWT and LCP information~\cite{egsa}. LCP co-construction therefore is also prior art.
+The distinction claimed here is the concrete combination of sampled-census adaptive prefix
+depth, work units derived from a memory envelope, and fused BWT/chi/LCP ordered-stream
+consumption without a persisted global suffix array. Ordered prefix intervals remove the
+comparison merge required for overlapping local arrays. These are architectural differences,
+not a priority claim for each ingredient or an asymptotic improvement over those algorithms.
+
 Manber and Myers' suffix arrays provide lexicographic access to suffixes~\cite{sa}. Ferragina and
 Manzini's FM-index supplies compressed backward search~\cite{fm}; RLBWT and the r-index exploit BWT
 runs for compressed search and locating~\cite{rindex}. This implementation uses that lineage and
@@ -272,6 +444,14 @@ Reissue the identical build command with the same scratch directory to test reco
 provenance. No large build or query experiment was rerun for this paper.
 
 \begin{thebibliography}{9}
+\bibitem{sais} G. Nong, S. Zhang and W. H. Chan. \emph{Linear Suffix Array Construction
+by Almost Pure Induced-Sorting}. \href{https://scholars.hkbu.edu.hk/en/publications/linear-suffix-array-construction-by-almost-pure-induced-sorting/}{Primary publication record}.
+\bibitem{dc3} J. K\"arkk\"ainen, P. Sanders and S. Burkhardt. \emph{Linear Work Suffix Array
+Construction}. \url{https://www.cs.helsinki.fi/u/tpkarkka/publications/jacm05-revised.pdf}.
+\bibitem{bingmann} T. Bingmann. \emph{Scalable String and Suffix Sorting: Algorithms,
+Techniques, and Tools}. \url{https://ae.iti.kit.edu/english/3544.php}.
+\bibitem{egsa} F. A. Louza et al. \emph{Generalized enhanced suffix array construction in
+external memory}. \url{https://pmc.ncbi.nlm.nih.gov/articles/PMC5719966/}.
 \bibitem{sa} U. Manber and G. Myers. \emph{Suffix Arrays: A New Method for On-Line String Searches}.
 SIAM Journal on Computing. \url{https://doi.org/10.1137/0222058}.
 \bibitem{fm} P. Ferragina and G. Manzini. \emph{Opportunistic Data Structures with Applications}.

@@ -1,80 +1,64 @@
-# Paper gates
+# Radix-plan revision gates
 
-Baseline: `c46a85217b9b269c91179cbebc396f96453181af`.
-Review branch: `paper/writeup`. No mainline merge.
+Baseline pulled with `git pull --ff-only`: 380451dd4fc213ff56d4dcb6f6cdbcfca38152f1,
+already up to date. Review branch: `paper/writeup`; no merge requested or performed.
 
-## P1 — PDF
+## Q1 — PDF
 
-Run from the repository root (pdflatex supplied by an isolated TinyTeX install):
-
-```sh
-pdflatex -interaction=nonstopmode -halt-on-error -output-directory=/tmp/paper-texlive paper/main.tex
-pdflatex -interaction=nonstopmode -halt-on-error -output-directory=/tmp/paper-texlive paper/main.tex
+```
+export PATH=/tmp/paper-texlive/.TinyTeX/bin/x86_64-linux:$PATH
+latexmk -pdf -interaction=nonstopmode -halt-on-error -outdir=/tmp/sxgc-paper-build paper/main.tex
 ```
 
-Final result: **5 pages**, 401892 bytes. No undefined references/citations,
-LaTeX/package warnings, overfull boxes or underfull boxes in the final log.
-Engine: pdfTeX 1.40.29 / TeX Live 2026. Initial compilation exposed a missing
-bitmap font and a small overfull box; using Latin Modern and rephrasing the
-long compound resolved both. Final two passes succeeded.
+Passed: 8 pages. Final log has no undefined references/citations, warnings,
+overfull boxes or underfull boxes. PyMuPDF independently opened all pages.
+The initial shell lacked latexmk on PATH; the existing isolated TinyTeX install
+provided it. `paper/main.pdf` is the refreshed ignored build artifact.
 
-The generated PDF is `paper/main.pdf` in the review worktree (ignored build
-artifact, not committed). PyMuPDF independently opened all five pages and
-extracted their text. The first page was visually inspected. No large corpus
-build, benchmark or recovery experiment was rerun.
+## Q2 — algorithm and theory
 
-## P2 — numbers
+- Algorithm: main.tex lines 53–192, PDF pages 1–3.
+- Pseudocode: main.tex lines 104–132, PDF page 3.
+- Theory subsection: main.tex lines 134–192, PDF pages 2–3.
+- Includes systematic-sample estimator and limitations, local-order proof,
+  explicit CPU/I/O bounds, and arena accounting with oversize-admission caveat.
 
-```sh
-python3 paper/audit_numbers.py
-```
+## Q3 — numeric provenance
 
-```text
-P2 PASS: 48 sourced claim IDs, 60 occurrences; 2 documented CLI parameters; 50 ledger quantities total; 0 missing or inconsistent values.
-P2 scope: structural conventions and non-empirical identifiers are listed separately; source truth and command limitations require manual review.
-```
+`python3 paper/audit_numbers.py` passed:
+48 sourced claim IDs, 52 occurrences; 2 documented CLI parameters;
+50 ledger quantities total; 0 missing or inconsistent values.
+NUMBERS.md is unchanged. Formula constants are mathematical definitions,
+not added empirical claims. No corpus benchmark was rerun.
 
-Manual review checked the committed source sections and separated measured
-values from the unavailable original command wrappers. NUMBERS.md explicitly
-labels those command gaps; a reproduction recipe is not presented as a
-recovered historical invocation. Source citations in the manuscript are pinned.
+## Q4 — thesis and emphasis
 
-## P3 — novelty wording
+The abstract opens verbatim: “Suffix-array construction here is a radix plan
+over the distribution of the string, not a monolithic algorithm.”
+The abstract has no benchmark numbers. Evaluation retains exact sourced numbers,
+negative results and the untested-full-Pile sentence. Algorithmic comparisons
+cover SA-IS, DC3, prefix doubling, external and distributed construction.
+Primary publications were consulted for the added bibliography entries.
 
-```sh
-rg -ni '\b(novel|new|first)\b' paper/main.tex
-```
+## Q5 — publication
 
-```text
-18:is measured scale and cost. On the first $\qnum{input}{10^{11}}$ bytes of the Pile, a
-237:fanout example is evidence of an implemented application, not a claim of a new ranking principle. We
-248:remain serving costs; the requested cold-first-answer time is unverified in the committed evidence
-275:\bibitem{sa} U. Manber and G. Myers. \emph{Suffix Arrays: A New Method for On-Line String Searches}.
-```
+Revision is intended only for `paper/writeup`; commit and push receipts are
+reported in the task result. `git diff --check` passed before commit.
 
-These refer respectively to an input prefix, a disclaimed ranking claim, an
-excluded measurement, and the cited Manber–Myers title. The introduction also
-explicitly disclaims conceptual novelty. The prior draft's lower-bound and
-priority claims were removed.
+## Manual notes and residual risks
 
-## Manual findings and residual risks
-
-- No blockers found in the rewritten manuscript or numeric crosswalk.
-- The requested one-read corpus claim is contradicted by per-wave source scans;
-  the paper states the narrower ordered-stream consumption claim and the
-  existing input-file requirement.
-- The 7.9% rowcode figure is row-byte savings in a partial Wikipedia probe,
-  not completed-run total scratch. The paper uses the correct scope and the
-  paired 3.48% scratch result.
-- The 22,768 contexts/s figure exists in commit messages, but has no matching
-  committed result-file/invocation receipt in this evidence set. The 145 s
-  cold-start claim was not found. Both are excluded as UNVERIFIED.
-- Whole-driver restart replays sort/emit/finish in the cited kill/restart gate.
-  The mixed-unit work summary is not an elapsed-time or finish-reuse fraction.
-- There is no full-Pile search certificate. The common-pattern certificate is
-  sampled for locations, not an exhaustive index enumeration.
-- Historical benchmark wrappers/settings are incomplete for several receipts.
-  The paper attests committed reports, not independent fresh replication.
-- The inherited bibliography had incorrect given names for the suffixient-set
-  paper. The inline bibliography uses the authors on the primary arXiv record.
-- Supervisor-contact tooling was not exposed; no decision was needed.
+- Source inspection contradicts an unconditional position-slice claim: full
+  suffix comparisons within slices cannot order interleaving slices. The
+  implemented fallback proves a single-symbol tail class and otherwise fails.
+- Sampling is systematic, not iid. No probabilistic hard band-size bound is
+  claimed; current oversize admission can exceed the arena target.
+- Prefix widths are finite. Adaptation is not an unlimited-depth guarantee.
+- The Pile/enwiki depth contrast is attributed to source rationale. A numeric
+  depth histogram receipt was not available and none is invented.
+- Historical build measurements do not freshly validate the revised envelope
+  planner. The paper distinguishes them and retains prior receipt limitations.
+- Full-Pile search, whole-build constant RSS, one-read input construction,
+  and complete pipeline deadlock freedom remain unproved.
+- Supervisor-contact tooling was not exposed. Work proceeded under the explicit
+  instruction not to stop; no unsupported claims were introduced to resolve
+  the mathematical discrepancies.
