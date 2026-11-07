@@ -41,6 +41,8 @@ pub const USAGE: &str = "usage:
             [--with-chi|--no-chi] [--chi-expect N] [--snap-1e]
 
   --tape             bounded tape producer, ordered merge and container finish.
+  --bin              the bin shape (the DEFAULT; the flag makes the choice explicit,
+                     and the fit check prices the shape that is asked for).
   --input PATH       raw bytes, unchanged; END is virtual, no terminal required.
   --scratch DIR      intermediates, container and durable recovery journal.
   --no-resume        discard this build's intermediates and begin a new plan.
@@ -51,6 +53,11 @@ pub const USAGE: &str = "usage:
                      (no `timeout` wrapper, no supervisor, no kill path). An
                      expensive run ends when it exits, fails, or a human stops it.
   --plan-only        print resource plan without running construction.
+  --skip-fit-check   run despite the ABSOLUTE peak-vs-free scratch check (journaled as
+                     DISC_CHECK_SKIPPED basis=operator peak=<n> free=<m>). It skips that
+                     check and NOTHING else: the RAM term, the band law and every
+                     receipt still refuse the run.
+  --allow-infeasible silent alias of --skip-fit-check (old journals still parse).
   --with-chi         construct m5 chi (enabled by default).
   --no-chi           omit optional m5 chi.
   --chi-expect N     assert chi count; requires --with-chi.
@@ -58,8 +65,7 @@ pub const USAGE: &str = "usage:
                      never trims, extends or otherwise transforms the input.
   --remap PATH       validated corpus-derived 256-byte bijective remap override.
   --finish-as-gb N   finish phase address-space cap (default --memory-gb).
-  --wit-ram-gb N     finish witness RAM budget (default --memory-gb / 2).
-  --allow-infeasible run despite an infeasible resource plan (journaled).";
+  --wit-ram-gb N     finish witness RAM budget (default --memory-gb / 2).";
 
 
 /// THE LEGACY FIXED REMAP IS GONE. A universal table cannot be order preserving
@@ -189,9 +195,12 @@ struct Options {
     /// binary, three children, no external scripts.
     tape: bool,
     no_resume: bool,
-    /// Proceed even when the plan cannot prove a fit (the operator overrides
-    /// the ABSOLUTE peak-vs-free check; nothing else is overridable).
-    allow_infeasible: bool,
+    /// OVERRIDE THE ABSOLUTE PEAK-VS-FREE CHECK ONLY (--skip-fit-check, with
+    /// --allow-infeasible kept as a silent alias so old journals and commands
+    /// still parse). Nothing else is overridable: the RAM term, the band law and
+    /// every receipt keep their teeth, and the fact that the check was skipped is
+    /// journaled as DISC_CHECK_SKIPPED basis=operator peak=<n> free=<m>.
+    skip_fit_check: bool,
     remap: Option<PathBuf>,
     chunk_mb: Option<u32>,
     fanin: bool,
@@ -266,8 +275,10 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     // Needs-based by default: the absolute peak-vs-free check is the gate
     // (see disc_verdict / tree_ok). A percentage-of-device rule is opt-in.
     let mut scratch_free_pct = 0u32;
-    let mut allow_infeasible = false;
+    // THE OVERRIDE OF THE ABSOLUTE PEAK-VS-FREE CHECK, and of nothing else.
+    let mut skip_fit_check = false;
     let mut tape = false;
+    let mut bin_shape_given = false;
     let mut no_resume = false;
     let mut remap = None;
     let mut chunk_mb = None;
@@ -295,7 +306,12 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
             "--snap-1e" => snap_1e = true,
             "--tape" => tape = true,
             "--no-resume" => no_resume = true,
-            "--allow-infeasible" => allow_infeasible = true,
+            "--skip-fit-check" => skip_fit_check = true,
+            // SILENT ALIAS: the pre-rename spelling. It must keep parsing (old
+            // journals and scripts carry it) and must do exactly the same thing -
+            // override the absolute peak-vs-free check and nothing else.
+            "--allow-infeasible" => skip_fit_check = true,
+            "--bin" => bin_shape_given = true,
             "--memory-gb" => {
                 i += 1;
                 memory_gb = value(args.get(i), "--memory-gb")?
@@ -485,6 +501,14 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
         return Err("--fanin requires --chunk-mb N (the fixed chunk size)".into());
     }
     if tape && legacy_merge { return Err("--tape and --legacy-merge are mutually exclusive".into()); }
+    if tape && bin_shape_given {
+        return Err("--tape and --bin are mutually exclusive: they are two shapes (a band sorter vs the \
+                    bin producer), and the fit check prices exactly one of them. Pass one".into());
+    }
+    if bin_shape_given && legacy_merge {
+        return Err("--bin and --legacy-merge are mutually exclusive (--bin is the bin shape, which is also \
+                    the default; --legacy-merge is the chunk+merge route)".into());
+    }
     if no_resume && !tape { return Err("--no-resume requires --tape".into()); }
     if tape && !with_chi && chi_expect.is_some() {
         return Err("--chi-expect requires --with-chi on the tape route (missing member m5)".into());
@@ -514,7 +538,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     }
     Ok(Options { input, scratch, snap_1e, memory_gb, threads, chunks, kway, plan_only,
                  bin_pipeline, legacy_merge, v2_flag_given, chi_expect, with_chi, wit_ram_gb,
-                 finish_as_gb, bin_live_cap, bin_target_size, bin_entropy_min, phrase, stripes, scratch_free_pct, allow_infeasible, tape, no_resume,
+                 finish_as_gb, bin_live_cap, bin_target_size, bin_entropy_min, phrase, stripes, scratch_free_pct, skip_fit_check, tape, no_resume,
                  remap, chunk_mb, fanin })
 }
 
@@ -1347,6 +1371,11 @@ fn run_chain(options: Options) -> Result<(), String> {
             // band plan replaces the bin build group in the RAM verdict, and the
             // same numbers are handed to the producer.
             if options.tape {
+                // THE BIN SHAPE'S OWN ADVICE IS NOT THIS RUN'S. A tape plan whose
+                // alternatives say "--bin-live-cap" is pricing a process that will
+                // not run; the CPU note is the only shape-independent one kept.
+                // (The bin shape's NUMBER follows later, explicitly labelled.)
+                build_plan.alternatives.retain(|a| a.starts_with("CPU lacks"));
                 let lcp_slices = std::env::var("XSA_LCE_VERIFY").map(|v| v != "1").unwrap_or(true);
                 let n_rows = corpus_bytes.saturating_add(1);       // + the structural END
                 let tape_plan = super::plan::tape_band_plan(
@@ -1355,45 +1384,113 @@ fn run_chain(options: Options) -> Result<(), String> {
                 );
                 v2.tape_note = Some(tape_plan.note());
                 build_plan.ram_verdict = tape_plan.verdict();
+                build_plan.ram_ok = tape_plan.feasible();
                 if !tape_plan.feasible() {
+                    // The refusal sentence itself is the XSA_PLAN_RAM line; the
+                    // alternative carries the KNOB, not a second copy of it.
                     build_plan.alternatives.push(format!(
-                        "raise --memory-gb (the band arena is half of it): rows_per_band={} < \
-                         floor={} at --memory-gb {} and K={} bands in flight - {}",
+                        "raise --memory-gb (the band arena is HALF of it): rows_per_band={} vs \
+                         floor={} at --memory-gb {} with {} bands in flight (P = --threads); the \
+                         arithmetic and the shortfall are on the XSA_PLAN_RAM line above",
                         tape_plan.rows_per_band, tape_plan.floor_rows, options.memory_gb,
-                        tape_plan.bands_in_flight, tape_plan.verdict()));
+                        tape_plan.bands_in_flight));
                 }
             }
         }
-        let peak_mb = build_plan.phases.iter().map(|p| p.disc_peak_mb).fold(0.0, f64::max);
-        let fits = peak_mb * 1048576.0 <= build_plan.survey.scratch_free_bytes as f64;
-        build_plan.disc_verdict = format!("{}: ALL-PHASE peak {:.1} GiB vs {:.1} GiB free (bin shape: rolling window FILES + rlebwt + piece window + container; the build's RAM is one group, never the window)",
-            if fits { "FEASIBLE" } else { "INFEASIBLE" }, peak_mb / 1024.0,
-            build_plan.survey.scratch_free_bytes as f64 / 1073741824.0);
-        if !fits {
-            build_plan.alternatives.push("free scratch for the all-phase bin-shape peak".into());
-        }
-        if 100u32.saturating_sub(build_plan.survey.scratch_used_percent) < options.scratch_free_pct {
-            build_plan.alternatives.push("scratch hygiene policy: pass --scratch-free-pct to override".into());
-            build_plan.disc_verdict.push_str("; INFEASIBLE under scratch hygiene policy");
+        // ---- THE FIT CHECK PRICES THE SHAPE THE RUN WILL EXECUTE ------------
+        // --tape runs the band sorter: its scratch peak is the MEASURED 0.789n
+        // band window x TAPE_DISC_FACTOR (see plan::tape_disc_model), not the bin
+        // shape's rlebwt + rolling window + container tree. Gating the tape route
+        // on the bin shape's number is how a run that fits was refused - and the
+        // bin shape's number may still be PRINTED, but only as an explicitly
+        // labelled alternative, never as this run's gating number.
+        let free_bytes = build_plan.survey.scratch_free_bytes;
+        let bin_peak_mb = build_plan.phases.iter().map(|p| p.disc_peak_mb).fold(0.0, f64::max);
+        let bin_peak_bytes = (bin_peak_mb * 1048576.0) as u64;
+        if options.tape {
+            build_plan.shape = super::plan::Shape::Tape;
+            build_plan.disc_model = super::plan::tape_disc_model(corpus_bytes, free_bytes);
+            let (fits, verdict) = super::plan::tape_disc_verdict(corpus_bytes, free_bytes);
+            build_plan.disc_verdict = verdict;
+            build_plan.disc_ok = fits;
+            build_plan.disc_peak_bytes = super::plan::tape_scratch_peak_bytes(corpus_bytes);
+            // THE OTHER SHAPE is rendered by plan::Plan::render() itself (labelled
+            // `XSA_PLAN_ALTERNATIVE shape=bin`), so no call site can print it
+            // unlabelled or forget it.
+            if !fits {
+                build_plan.alternatives.push(
+                    "free or add scratch space for the tape shape's 1.00n peak (it is a measured \
+                     n-multiple: --threads does not shrink it), or pass --skip-fit-check to run \
+                     anyway".into());
+            }
+        } else {
+            build_plan.shape = super::plan::Shape::Bin;
+            build_plan.disc_model = super::plan::bin_disc_model(
+                corpus_bytes, bin_peak_bytes, free_bytes,
+                build_plan.v2.as_ref().map(|v| v.bin_live_cap).unwrap_or(0),
+                build_plan.v2.as_ref().map(|v| v.bin_windows).unwrap_or(1),
+                build_plan.v2.as_ref().map(|v| v.bin_window_file_gb).unwrap_or(0.0));
+            // THE MISSION BOUND IS NOT A CAPACITY CHECK: the bin shape's output
+            // side must stay inside 2.5n as a property of the MODEL. --skip-fit-check
+            // buys free space, never a model that is over target, so this refuses
+            // before the peak-vs-free check is even consulted.
+            if super::plan::V2_TREE_PEAK_PER_N > super::plan::V2_TREE_TARGET_PER_N {
+                return Err(format!(
+                    "V2_TREE_PEAK {}n is OVER the {}n mission bound: the plan's own output-side                      model is out of bounds, which no flag overrides",
+                    super::plan::V2_TREE_PEAK_PER_N, super::plan::V2_TREE_TARGET_PER_N));
+            }
+            let (fits, verdict) = super::plan::bin_disc_verdict(corpus_bytes, bin_peak_bytes, free_bytes);
+            build_plan.disc_verdict = verdict;
+            build_plan.disc_ok = fits;
+            build_plan.disc_peak_bytes = bin_peak_bytes;
+            if !fits {
+                build_plan.alternatives.push("free scratch for the all-phase bin-shape peak".into());
+            }
+            if 100u32.saturating_sub(build_plan.survey.scratch_used_percent) < options.scratch_free_pct {
+                build_plan.alternatives.push("scratch hygiene policy: pass --scratch-free-pct to override".into());
+                build_plan.disc_verdict.push_str("; INFEASIBLE under scratch hygiene policy");
+            }
         }
     }
+    // THE OVERRIDE APPLIES TO THE ONE CHECK, ON EVERY SHAPE (the legacy routes
+    // price their own peak; the flag means the same thing there).
+    build_plan.fit_check_skipped = options.skip_fit_check;
     if options.plan_only {
+        // --plan-only PORTS the plan; it never starts a phase and never refuses
+        // (the refusal is the real run's, below). The verdicts are printed either
+        // way, so a preflight cannot look like a pass when it is not.
         print!("{}", build_plan.render());
         return Ok(());
     }
-    if build_plan.alternatives.iter().any(|a| !a.starts_with("CPU lacks")) {
-        // Feasibility failed (disc or RAM): print the plan + alternatives.
-        // The cx16 note is informational, not a refusal. The ABSOLUTE fit check
-        // is the one thing an operator may override (--allow-infeasible): the
-        // plan is an estimate, and the operator may know the run fits.
+    if !build_plan.disc_ok || !build_plan.ram_ok {
+        // A REFUSAL, WITH ITS OWN NUMBERS. The plan (model line + verdict +
+        // alternatives) is printed first; the error repeats the gating verdict so
+        // the operator never has to guess which check failed or which flag is the
+        // override. The ABSOLUTE peak-vs-free check is the one an operator may
+        // override (--skip-fit-check); the RAM term has no override by design.
         print!("{}", build_plan.render());
-        if !options.allow_infeasible {
-            return Err("PLAN_INFEASIBLE: see XSA_PLAN_ALTERNATIVE lines above \
-(override with --allow-infeasible to run anyway)"
-                .into());
+        let mut why: Vec<String> = Vec::new();
+        if !build_plan.disc_ok {
+            why.push(format!("XSA_PLAN_DISC {}", build_plan.disc_verdict));
         }
-        eprintln!("warning: --allow-infeasible: proceeding although the plan did not \
-prove a fit (the projected peak exceeds the reported capacity)");
+        if !build_plan.ram_ok {
+            why.push(format!("XSA_PLAN_RAM {}", build_plan.ram_verdict));
+        }
+        if !build_plan.disc_ok && !options.skip_fit_check {
+            return Err(format!(
+                "PLAN_INFEASIBLE: {}\nThe XSA_PLAN_ALTERNATIVE lines above name the knobs; \
+                 --skip-fit-check overrides ONLY the absolute peak-vs-free check (it does NOT \
+                 touch the RAM term)", why.join(" | ")));
+        }
+        if !build_plan.ram_ok {
+            return Err(format!(
+                "PLAN_INFEASIBLE (RAM - no flag overrides this): {}\nThe RAM/band term is a \
+                 function of --memory-gb and --threads; --skip-fit-check does not touch it",
+                why.join(" | ")));
+        }
+        eprintln!("warning: --skip-fit-check: proceeding although the plan did not prove a fit \
+                   (peak={} B vs free={} B; the override is journaled as DISC_CHECK_SKIPPED)",
+                  build_plan.disc_peak_bytes, build_plan.survey.scratch_free_bytes);
     }
     let mut journal = Journal::open(&journal_path)?;
     let mut outcome = ScratchOutcome {
@@ -2480,6 +2577,35 @@ mod tests {
             .iter().map(|s| s.to_string()).collect();
         args.extend(extra.iter().map(|s| s.to_string()));
         args
+    }
+
+    #[test]
+    fn skip_fit_check_is_the_flag_and_allow_infeasible_is_a_silent_alias() {
+        // BOTH spellings parse and mean the SAME thing: the pre-rename flag is
+        // kept so old journals, scripts and gate commands still run.
+        let skip = parse_chain(&v2_args(&["--skip-fit-check"])).unwrap();
+        assert!(skip.skip_fit_check);
+        let alias = parse_chain(&v2_args(&["--allow-infeasible"])).unwrap();
+        assert!(alias.skip_fit_check, "--allow-infeasible must alias --skip-fit-check");
+        // Absent means the check is ENFORCED (the default is unchanged).
+        assert!(!parse_chain(&v2_args(&[])).unwrap().skip_fit_check);
+        // The alias takes no value and cannot be doubled into a different meaning.
+        assert!(parse_chain(&v2_args(&["--skip-fit-check", "--allow-infeasible"])).is_ok());
+    }
+
+    #[test]
+    fn the_shape_is_chosen_explicitly_and_only_one_shape_is_priced() {
+        // --bin is the default shape, and asking for it is legal and inert.
+        assert!(parse_chain(&v2_args(&["--bin"])).is_ok());
+        assert!(!parse_chain(&v2_args(&["--bin"])).unwrap().tape);
+        assert!(parse_chain(&v2_args(&["--tape"])).unwrap().tape);
+        // Two shapes are two processes: refuse rather than silently pick one.
+        let err = parse_chain(&v2_args(&["--tape", "--bin"])).unwrap_err();
+        assert!(err.contains("--tape and --bin are mutually exclusive"), "{err}");
+        let err = parse_chain(&["--input", "/tmp/c", "--scratch", "/tmp/s", "--legacy-merge",
+                                "--bin"]
+                              .iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap_err();
+        assert!(err.contains("--bin and --legacy-merge are mutually exclusive"), "{err}");
     }
 
     #[test]

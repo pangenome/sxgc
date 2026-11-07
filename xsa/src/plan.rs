@@ -149,6 +149,114 @@ pub struct FaninPlan {
     pub total_merge_wall_s: f64,
 }
 
+/// THE SHAPE a plan is about. The fit check MUST price the shape the operator
+/// asked for: `--tape` runs the band sorter, whose scratch peak is the measured
+/// 0.789n envelope (x the 1.00 safety factor), NOT the bin shape's
+/// rlebwt + rolling window + container tree. Pricing the wrong shape is how a
+/// 1.00n run came to be refused against a 2.642n number that described a
+/// different process than the one that was going to run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Shape {
+    Bin,
+    Tape,
+    ChunkMerge,
+    Fanin,
+}
+
+impl Shape {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Shape::Bin => "bin",
+            Shape::Tape => "tape",
+            Shape::ChunkMerge => "chunk-merge",
+            Shape::Fanin => "fan-in",
+        }
+    }
+}
+
+pub fn gib(bytes: u64) -> f64 {
+    bytes as f64 / (1u64 << 30) as f64
+}
+
+/// A size in the unit that FITS it: MiB under a GiB, GiB above. A refusal about a
+/// 5 MiB tmpfs must not be rounded to "0.0 GiB" - the whole point is the exact
+/// shortfall - and the bytes are printed beside it either way.
+pub fn hsz(bytes: u64) -> String {
+    if bytes < (1u64 << 30) {
+        format!("{:.1} MiB", bytes as f64 / (1024.0 * 1024.0))
+    } else {
+        format!("{:.1} GiB", gib(bytes))
+    }
+}
+
+/// THE BIN SHAPE'S FIT CHECK, in the terms the bin route actually runs: the
+/// ALL-PHASE peak is the largest `disc_peak` of the phase rows (the rolling window
+/// FILES + rlebwt + piece window + the fused finish's tree and witness spill) -
+/// i.e. exactly the number the front door gates on. ONE function for the plan's
+/// model line, the verdict and `chain.rs`'s post-spill recomputation, so those
+/// three can never price three different peaks.
+pub fn bin_disc_model(
+    n_bytes: u64, peak_bytes: u64, free_bytes: u64, cap: u64, windows: u64,
+    window_file_gb: f64,
+) -> String {
+    let n_gb = n_bytes as f64 / (1u64 << 30) as f64;
+    format!(
+        "shape=bin factor=1.00 base=all_phase_peak(phase_rows) measured_basis=terms-at-1GB-G2 \
+         (rlebwt {:.3}n, window credit x cap x {} B = {:.2} GiB, piece window, container {:.3}n, \
+         witness spill EXTRAPOLATED at 0.3x overflow) \
+         covers=rolling-window-files+rlebwt+piece-window+container+witness-spill \
+         cap={cap} windows={windows} n_bytes={n_bytes} peak_bytes={peak_bytes} peak_gb={:.1} \
+         peak_n={:.3} free_gb={:.1}",
+        V2_RLEBWT_PER_N, BIN_WINDOW_SLOT_BYTES, window_file_gb, V2_CONTAINER_PER_N,
+        gib(peak_bytes), gib(peak_bytes) / n_gb.max(1e-9), gib(free_bytes),
+    )
+}
+
+/// The bin shape's absolute check: the all-phase peak vs the free scratch.
+/// Returns `(fits, verdict)`; a refusal is the shared actionable sentence.
+pub fn bin_disc_verdict(n_bytes: u64, peak_bytes: u64, free_bytes: u64) -> (bool, String) {
+    let n_gb = (n_bytes as f64 / (1u64 << 30) as f64).max(1e-9);
+    if peak_bytes <= free_bytes {
+        (true, format!(
+            "FEASIBLE shape=bin: ALL-PHASE peak {:.1} GiB ({peak_bytes} B) = {:.3}n fits \
+             {:.1} GiB free ({free_bytes} B); headroom {:.1} GiB",
+            gib(peak_bytes), gib(peak_bytes) / n_gb, gib(free_bytes), gib(free_bytes - peak_bytes)))
+    } else {
+        (false, refusal(
+            Shape::Bin,
+            "the bin shape's ALL-PHASE scratch peak (rolling window FILES + rlebwt + piece window \
+             + container + witness spill)",
+            peak_bytes, free_bytes, "free scratch", Some("--skip-fit-check"),
+            "free scratch space, or plan the shape that has the measured envelope (--tape, whose \
+             peak is the measured 0.789n band window rather than this tree)"))
+    }
+}
+
+/// THE ONE ACTIONABLE REFUSAL. Every `XSA_PLAN_DISC` / `XSA_PLAN_RAM` refusal is
+/// this sentence, so no operator is ever left guessing: the SHAPE, the peak and
+/// the limit in the SAME unit (and in bytes), the SHORTFALL, the exact flag that
+/// overrides the check (or the plain statement that nothing does), and the knob
+/// that actually fixes it. `override_flag` is Some only for the ABSOLUTE
+/// peak-vs-free check - the one check `--skip-fit-check` may skip.
+pub fn refusal(
+    shape: Shape, what: &str, peak_bytes: u64, limit_bytes: u64, limit_name: &str,
+    override_flag: Option<&str>, fix: &str,
+) -> String {
+    let over = peak_bytes.saturating_sub(limit_bytes);
+    let pct = if limit_bytes > 0 { 100.0 * over as f64 / limit_bytes as f64 } else { f64::INFINITY };
+    let over_text = match override_flag {
+        Some(flag) => format!(
+            "override {flag} to run anyway (that flag skips ONLY this absolute peak-vs-free \
+             check; the RAM term, the band law and every receipt keep their teeth)"),
+        None => "override=none: no flag skips this term, --skip-fit-check does NOT touch it".to_string(),
+    };
+    format!(
+        "INFEASIBLE shape={}: {what}: peak {} ({peak_bytes} B) vs {limit_name} {} \
+         ({limit_bytes} B) -> SHORT {} ({pct:.1}% over); {over_text}; fix: {fix}",
+        shape.as_str(), hsz(peak_bytes), hsz(limit_bytes), hsz(over),
+    )
+}
+
 pub struct Plan {
     pub survey: Survey,
     pub chunks: u32,
@@ -158,9 +266,27 @@ pub struct Plan {
     pub phases: Vec<PhaseRow>,
     pub chunk_bytes_mb: f64,
     pub pos_mode: String,
+    /// WHICH SHAPE this plan prices (`--tape` vs the bin default vs the legacy
+    /// merge routes). Everything gating is priced in this shape and no other.
+    pub shape: Shape,
+    /// The fit check's own basis, printed BEFORE the verdict (`XSA_PLAN_DISC_MODEL`)
+    /// so the number can never be read without the model that produced it.
+    pub disc_model: String,
     pub disc_verdict: String,
     pub ram_verdict: String,
     pub alternatives: Vec<String>,
+    /// THE ABSOLUTE CHECKS, AS OUTCOMES. The front door refuses on these booleans
+    /// (never on prose): `disc_ok` is the peak-vs-free check - the ONLY one
+    /// `--skip-fit-check` may skip - and `ram_ok` is the RAM/band term, which no
+    /// flag may skip.
+    pub disc_ok: bool,
+    pub ram_ok: bool,
+    /// The gating scratch peak in BYTES, in the same unit as the free space, so
+    /// the override is journaled with numbers rather than an adjective.
+    pub disc_peak_bytes: u64,
+    /// `--skip-fit-check` / `--allow-infeasible`: the operator overrode the
+    /// absolute peak-vs-free check. Nothing else is skipped.
+    pub fit_check_skipped: bool,
     pub fanin: Option<FaninPlan>,
     /// The v2 pipeline per-term table (model_v2 only).
     pub v2: Option<V2PerTerms>,
@@ -210,28 +336,38 @@ pub fn model(
     // --scratch-free-pct - a bounded run with many-x headroom on a full
     // drive is fit even when the blunt policy says no).
     let fits = disc_peak_mb < free_mb;
+    let peak_bytes = (disc_peak_mb * 1048576.0) as u64;
+    let free_bytes = survey.scratch_free_bytes;
     let free_pct = 100u32.saturating_sub(survey.scratch_used_percent);
     let hygiene_ok = true; // DEPRECATED: no percentage-of-device policy. The gate is the absolute peak-vs-free check above.
     let disc_ok = fits && (hygiene_ok || hygiene_free_pct == 0);
+    let disc_model = format!(
+        "shape={} factor=1.00 base=all_phase_peak(phase_rows) pos_mode={} terms=chunk_set({}: crle+pos) + merge_scratch({}x) + outputs(1.4x) peak_bytes={peak_bytes} peak_gb={:.1} free_gb={:.1}",
+        Shape::ChunkMerge.as_str(), pos_mode, chunk_artifacts_per_corpus_mb(&pos_mode),
+        MERGE_SCRATCH_PER_CORPUS_MB, gib(peak_bytes), gib(free_bytes));
     let disc_verdict = if disc_ok {
         if hygiene_ok {
-            format!("FEASIBLE: peak ~{:.0} GB fits {:.0} GB free ({}% used)", disc_peak_mb / 1024.0, free_mb / 1024.0, survey.scratch_used_percent)
+            format!("FEASIBLE shape={}: peak ~{:.0} GB fits {:.0} GB free ({}% used)", Shape::ChunkMerge.as_str(), disc_peak_mb / 1024.0, free_mb / 1024.0, survey.scratch_used_percent)
         } else {
-            format!("FEASIBLE with hygiene override: peak ~{:.0} GB fits {:.0} GB free ({}% used; policy >= {}% free overridden by the operator)",
-                     disc_peak_mb / 1024.0, free_mb / 1024.0, survey.scratch_used_percent, hygiene_free_pct)
+            format!("FEASIBLE with hygiene override shape={}: peak ~{:.0} GB fits {:.0} GB free ({}% used; policy >= {}% free overridden by the operator)",
+                     Shape::ChunkMerge.as_str(), disc_peak_mb / 1024.0, free_mb / 1024.0, survey.scratch_used_percent, hygiene_free_pct)
         }
     } else if !fits {
-        format!("INFEASIBLE: peak ~{:.0} GB vs {:.0} GB free ({}% used)", disc_peak_mb / 1024.0, free_mb / 1024.0, survey.scratch_used_percent)
+        refusal(Shape::ChunkMerge, "the chunk+merge shape's all-phase scratch peak",
+                peak_bytes, free_bytes, "free scratch", Some("--skip-fit-check"),
+                "free or add scratch space, or raise --chunks (a smaller chunk cuts the 8x pos column)")
     } else {
-        format!("INFEASIBLE (hygiene): peak ~{:.0} GB fits {:.0} GB free but only {}% free < the {}% policy; pass --scratch-free-pct to override",
-                 disc_peak_mb / 1024.0, free_mb / 1024.0, free_pct, hygiene_free_pct)
+        format!("INFEASIBLE (hygiene) shape={}: peak ~{:.0} GB fits {:.0} GB free but only {}% free < the {}% policy; pass --scratch-free-pct to override",
+                 Shape::ChunkMerge.as_str(), disc_peak_mb / 1024.0, free_mb / 1024.0, free_pct, hygiene_free_pct)
     };
     let chunk_ram_ok = chunk_ram_gb < cap_gb as f64 * 0.8;
     let merge_ram_ok = MERGE_RSS_GB < cap_gb as f64;
+    let ram_ok = chunk_ram_ok && merge_ram_ok;
     let ram_verdict = format!(
-        "{}: chunk front end ~{:.1} GB ({}x chunk bytes) vs cap {} GiB; merge ~{:.1} GB (bounded, memory-aware side parallelism)",
-        if chunk_ram_ok && merge_ram_ok { "FEASIBLE" } else { "INFEASIBLE" },
+        "{} shape={}: chunk front end ~{:.1} GB ({}x chunk bytes) vs cap {} GiB; merge ~{:.1} GB (bounded, memory-aware side parallelism){}",
+        if ram_ok { "FEASIBLE" } else { "INFEASIBLE" }, Shape::ChunkMerge.as_str(),
         chunk_ram_gb, CHUNK_BUILD_RAM_PER_CHUNK_MB as u32, cap_gb, MERGE_RSS_GB,
+        if chunk_ram_ok { String::new() } else { format!(" -> SHORT {:.1} GiB of the {:.1} GiB usable cap (80% of --memory-gb {}); override=none: no flag skips the RAM term, --skip-fit-check does NOT touch it; fix: raise --chunks (smaller chunks) or raise --memory-gb", chunk_ram_gb - cap_gb as f64 * 0.8, cap_gb as f64 * 0.8, cap_gb) },
     );
     let mut alternatives = Vec::new();
     if !disc_ok {
@@ -248,7 +384,10 @@ pub fn model(
     if !survey.cx16 {
         alternatives.push("CPU lacks cmpxchg16b: the merge's page pool requires it (CROSS_NO_POOL=1 runs without the pool, slower)".to_string());
     }
-    Plan { survey, chunks, kway, threads, cap_gb, phases, chunk_bytes_mb, pos_mode: pos_mode.to_string(), disc_verdict, ram_verdict, alternatives, fanin: None, v2: None }
+    Plan { survey, chunks, kway, threads, cap_gb, phases, chunk_bytes_mb, pos_mode: pos_mode.to_string(),
+           shape: Shape::ChunkMerge, disc_model, disc_verdict, ram_verdict, alternatives,
+           disc_ok, ram_ok, disc_peak_bytes: peak_bytes, fit_check_skipped: false,
+           fanin: None, v2: None }
 }
 
 fn hms(s: f64) -> String {
@@ -331,24 +470,35 @@ pub fn model_fanin(
 
     let peak_mb = merge_peak_mb.max(chunk_disc_mb).max(finish_peak_mb);
     let fits = peak_mb < free_mb;
+    let peak_bytes = (peak_mb * 1048576.0) as u64;
+    let free_bytes = survey.scratch_free_bytes;
     let free_pct = 100u32.saturating_sub(survey.scratch_used_percent);
     let hygiene_ok = true; // DEPRECATED: no percentage-of-device policy. The gate is the absolute peak-vs-free check above.
     let disc_ok = fits && (hygiene_ok || hygiene_free_pct == 0);
+    let disc_model = format!(
+        "shape={} factor=1.00 base=all_phase_peak(phase_rows) pos_mode={} terms=level_side({}x) + one_group_scratch + finish_artifacts({}x) peak_bytes={peak_bytes} peak_gb={:.1} free_gb={:.1}",
+        Shape::Fanin.as_str(), pos_mode, chunk_artifacts_per_corpus_mb(&pos_mode),
+        FINISH_ARTIFACTS_PER_CORPUS_MB, gib(peak_bytes), gib(free_bytes));
     let disc_verdict = if disc_ok {
         if hygiene_ok {
-            format!("FEASIBLE (fan-in): peak ~{:.0} GB fits {:.0} GB free ({}% used)", peak_mb / 1024.0, free_mb / 1024.0, survey.scratch_used_percent)
+            format!("FEASIBLE shape={}: peak ~{:.0} GB fits {:.0} GB free ({}% used)", Shape::Fanin.as_str(), peak_mb / 1024.0, free_mb / 1024.0, survey.scratch_used_percent)
         } else {
-            format!("FEASIBLE with hygiene override (fan-in): peak ~{:.0} GB fits {:.0} GB free ({}% used)", peak_mb / 1024.0, free_mb / 1024.0, survey.scratch_used_percent)
+            format!("FEASIBLE with hygiene override shape={}: peak ~{:.0} GB fits {:.0} GB free ({}% used)", Shape::Fanin.as_str(), peak_mb / 1024.0, free_mb / 1024.0, survey.scratch_used_percent)
         }
     } else if !fits {
-        format!("INFEASIBLE (fan-in): peak ~{:.0} GB vs {:.0} GB free ({}% used)", peak_mb / 1024.0, free_mb / 1024.0, survey.scratch_used_percent)
+        refusal(Shape::Fanin, "the fan-in shape's all-phase scratch peak",
+                peak_bytes, free_bytes, "free scratch", Some("--skip-fit-check"),
+                "raise --kway (fewer levels), raise --chunk-mb, or free scratch space")
     } else {
-        format!("INFEASIBLE (fan-in hygiene): peak ~{:.0} GB fits {:.0} GB free but only {}% free < the {}% policy", peak_mb / 1024.0, free_mb / 1024.0, free_pct, hygiene_free_pct)
+        format!("INFEASIBLE (hygiene) shape={}: peak ~{:.0} GB fits {:.0} GB free but only {}% free < the {}% policy", Shape::Fanin.as_str(), peak_mb / 1024.0, free_mb / 1024.0, free_pct, hygiene_free_pct)
     };
     let chunk_ram_ok = chunk_ram_gb < cap_gb as f64 * 0.8;
+    let ram_ok = chunk_ram_ok;
     let ram_verdict = format!(
-        "{}: chunk front end ~{:.1} GB ({}x chunk bytes) vs cap {} GiB; merge ~{:.1} GB (bounded)",
-        if chunk_ram_ok { "FEASIBLE" } else { "INFEASIBLE" }, chunk_ram_gb, CHUNK_BUILD_RAM_PER_CHUNK_MB as u32, cap_gb, MERGE_RSS_GB,
+        "{} shape={}: chunk front end ~{:.1} GB ({}x chunk bytes) vs cap {} GiB; merge ~{:.1} GB (bounded){}",
+        if ram_ok { "FEASIBLE" } else { "INFEASIBLE" }, Shape::Fanin.as_str(),
+        chunk_ram_gb, CHUNK_BUILD_RAM_PER_CHUNK_MB as u32, cap_gb, MERGE_RSS_GB,
+        if ram_ok { String::new() } else { format!(" -> SHORT {:.1} GiB of the {:.1} GiB usable cap (80% of --memory-gb {}); override=none: no flag skips the RAM term, --skip-fit-check does NOT touch it; fix: lower --chunk-mb or raise --memory-gb", chunk_ram_gb - cap_gb as f64 * 0.8, cap_gb as f64 * 0.8, cap_gb) },
     );
     let mut alternatives = Vec::new();
     if !disc_ok {
@@ -358,119 +508,190 @@ pub fn model_fanin(
         alternatives.push(format!("lower --chunk-mb (smaller chunks cut the front end's ~{}x-chunk-bytes RAM linearly)", CHUNK_BUILD_RAM_PER_CHUNK_MB as u32));
     }
     let fanin = FaninPlan { chunk_bytes_mb, levels, peak_disc_mb: peak_mb, total_merge_wall_s };
-    Plan { survey, chunks, kway, threads, cap_gb, phases, chunk_bytes_mb, pos_mode: pos_mode.to_string(), disc_verdict, ram_verdict, alternatives, fanin: Some(fanin), v2: None }
+    Plan { survey, chunks, kway, threads, cap_gb, phases, chunk_bytes_mb, pos_mode: pos_mode.to_string(),
+           shape: Shape::Fanin, disc_model, disc_verdict, ram_verdict, alternatives,
+           disc_ok, ram_ok, disc_peak_bytes: peak_bytes, fit_check_skipped: false,
+           fanin: Some(fanin), v2: None }
 }
 
 impl Plan {
+    /// THE OVERRIDE, JOURNALED WITH NUMBERS. `--skip-fit-check` (alias
+    /// `--allow-infeasible`) skips ONLY the absolute peak-vs-free check, so the
+    /// line that records it must carry both sides of the comparison and the
+    /// shortfall the operator accepted - never an adjective. It is printed in the
+    /// plan block, which the run journals verbatim, and on `--plan-only` stdout.
+    pub fn skip_line(&self) -> String {
+        let free = self.survey.scratch_free_bytes;
+        let short = self.disc_peak_bytes.saturating_sub(free);
+        format!(
+            "DISC_CHECK_SKIPPED basis=operator shape={} peak={} peak_gb={:.2} free={} free_gb={:.2} \
+             short_gb={:.2} short={} override=--skip-fit-check note=only the absolute peak-vs-free \
+             check is skipped; the RAM term, the band law and every receipt still refuse this run",
+            self.shape.as_str(), self.disc_peak_bytes, gib(self.disc_peak_bytes),
+            free, gib(free), gib(short), hsz(short),
+        )
+    }
+
     pub fn render(&self) -> String {
         let mut s = String::new();
         let total: f64 = self.phases.iter().map(|p| p.wall_s).sum();
+        // THE HEADER NAMES THE SHAPE THE RUN WILL EXECUTE. Pricing (and printing)
+        // the bin shape for a `--tape` run is the defect this line closes: the
+        // label, the gating number and the process must be the same shape.
+        let pipeline = match self.shape {
+            Shape::Tape => " pipeline=v2tape (tape shape: band sorter -> ordered band merge -> \
+                            decomposed fused finish; the RAM term is the band arena, the scratch \
+                            peak is the measured 0.789n envelope x 1.00)",
+            Shape::Bin => " pipeline=v2bin (bin shape: one sweep -> 256 byte-bins -> ordered stitch \
+                           -> decomposed fused finish; no chunk phase, no merge walk)",
+            Shape::ChunkMerge | Shape::Fanin => "",
+        };
         s.push_str(&format!(
-            "XSA_PLAN v={}{} corpus_bytes={} chunks={} kway={} threads={} cap_gb={} cores={} cx16={} mem_available_gb={:.0}\n",
-            CONSTANTS_VERSION, if self.v2.is_some() { " pipeline=v2bin (bin shape: one sweep -> 256 byte-bins -> ordered stitch -> decomposed fused finish; no chunk phase, no merge walk)" } else { "" }, self.survey.corpus_bytes, self.chunks, self.kway, self.threads,
+            "XSA_PLAN v={}{pipeline} corpus_bytes={} chunks={} kway={} threads={} cap_gb={} cores={} cx16={} mem_available_gb={:.0}\n",
+            CONSTANTS_VERSION, self.survey.corpus_bytes, self.chunks, self.kway, self.threads,
             self.cap_gb, self.survey.cores, self.survey.cx16,
             self.survey.mem_available_bytes as f64 / (1024.0 * 1024.0 * 1024.0),
         ));
         for d in &self.survey.stripe_dirs {
             s.push_str(&format!("XSA_PLAN_STRIPE dir={} free_gb={:.0} used_pct={}\n", d.0, d.1 as f64 / (1024.0 * 1024.0 * 1024.0), d.2));
         }
-        s.push_str("XSA_PLAN_PHASES name wall disc_peak_gb rss_gb\n");
-        for p in &self.phases {
-            s.push_str(&format!(
-                "XSA_PLAN_PHASE name={} wall={} wall_s={:.0} disc_peak_gb={:.1} rss_gb={:.2}\n",
-                p.name, hms(p.wall_s), p.wall_s, p.disc_peak_mb / 1024.0, p.rss_gb,
-            ));
-        }
-        if self.v2.is_some() {
-            // The bin producer and the fused finish run CONCURRENTLY, so the
-            // sum above is a term sum, not a wall: the end-to-end figure is
-            // the max, and it is reported as its own line. There is no chunk
-            // set on this route, so no chunk-size figure is printed.
-            s.push_str(&format!("XSA_PLAN_TOTAL wall={} wall_s={:.0} (TERM SUM)\n", hms(total), total));
-            s.push_str("XSA_PLAN_TOTAL_NOTE the sum above is the TERM SUM; the bin producer and the fused finish overlap, so the wall is max(producer, finish) = XSA_PLAN_V2_BIN_END e2e\n");
-        } else {
-            s.push_str(&format!("XSA_PLAN_TOTAL wall={} wall_s={:.0} chunk_bytes_mb={:.0}\n", hms(total), total, self.chunk_bytes_mb));
-        }
-        // The fan-in shape: levels, per-level side sizes, peak disc
-        // (delete-as-you-go) and the merge wall, all from arithmetic.
-        if let Some(f) = &self.fanin {
-            s.push_str(&format!(
-                "XSA_FANIN levels={} chunk_bytes_mb={:.1} peak_disc_gb={:.1} merge_wall_s={:.0} merge_wall={}\n",
-                f.levels.len(), f.chunk_bytes_mb, f.peak_disc_mb / 1024.0, f.total_merge_wall_s, hms(f.total_merge_wall_s),
-            ));
-            s.push_str("XSA_FANIN_LEVELS level in out groups level_side_gb group_scratch_gb wall_s\n");
-            for l in &f.levels {
-                s.push_str(&format!(
-                    "XSA_FANIN_LEVEL level={} in={} out={} groups={} level_side_gb={:.1} group_scratch_gb={:.1} wall_s={:.0} wall={}\n",
-                    l.level, l.in_count, l.out_count, l.groups, l.level_side_gb, l.group_scratch_gb, l.wall_s, hms(l.wall_s),
-                ));
-            }
-        }
-        // The pos-mode pick with its arithmetic: dense = 8n pos disc /
-        // fast walk; compact = 3.6n / 2.3x slower walk. Dense whenever
-        // its peak fits free with 10% headroom, else compact. The bin shape
-        // has NO position column of any kind, so the exchange rate does not
-        // apply to it and the line is not printed there.
         let mb = self.survey.corpus_bytes as f64 / (1024.0 * 1024.0);
         let free_gb = self.survey.scratch_free_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
-        if self.v2.is_none() {
-            let dense_gb = (mb * chunk_artifacts_per_corpus_mb("dense")) / 1024.0;
-            let compact_gb = (mb * chunk_artifacts_per_corpus_mb("compact")) / 1024.0;
-            s.push_str(&format!(
-                "XSA_POS_MODE mode={} chunk_set_gb_dense={:.1} chunk_set_gb_compact={:.1} free_gb={:.1} rule=dense-if-10pct-headroom-else-compact (walk s/MB dense={:.3} compact={:.3})\n",
-                self.pos_mode, dense_gb, compact_gb, free_gb, MERGE_WALK_DENSE_S_PER_MB, MERGE_WALK_COMPACT_S_PER_MB,
-            ));
-        }
-        if let Some(v) = &self.v2 {
-            s.push_str(&format!(
-                "XSA_PLAN_V2_TERMS pipeline=v2bin corpus_gb={:.1} rlebwt_gb={:.1} pfck2_scratch_gb={:.1} pieces_window_gb={:.1} container_gb={:.1} tree_peak_gb={:.1} whole_box_gb={:.1}\n",
-                v.corpus_gb, v.rlebwt_gb, v.pfck_gb, v.pieces_window_gb, v.container_gb, v.tree_peak_gb, v.whole_box_gb,
-            ));
-            s.push_str(&format!("XSA_PLAN_V2_TREE tree_peak={:.3}n bound={:.1}n measured_at=1GB-G2 (output side; the bin producer's own addition is the rolling window files, priced above); whole_box(corpus+tree)={:.3}n; position column disc=0.000n (transient rolling window files only)\n", V2_TREE_PEAK_PER_N, V2_TREE_TARGET_PER_N, 1.0 + V2_TREE_PEAK_PER_N));
-            s.push_str(&format!("XSA_PLAN_V2_WITNESS {}\n", v.witness_note));
-            s.push_str(&format!("XSA_PLAN_V2_TRANSIENT {}\n", v.transient_note));
-            s.push_str(&format!("XSA_PLAN_V2_CAP {}\n", v.bin_cap_note));
-            s.push_str(&format!("XSA_PLAN_V2_RAMSPLIT {}\n", v.ram_split_note));
-            s.push_str(&format!(
-                "XSA_PLAN_V2_BIN live_cap_slots={} windows={} window_file_gb={:.1} ram_group_gb={:.1} count_s={:.0} fill_s={:.0} build_s={:.0} stitch_s={:.0} producer_s={:.0} finish_s={:.0}\n",
-                v.bin_live_cap, v.bin_windows, v.bin_window_file_gb, v.bin_ram_group_gb,
-                v.bin_count_s, v.bin_fill_s, v.bin_build_s, v.bin_stitch_s, v.bin_producer_s, v.bin_finish_s,
-            ));
-            // THE TARGET-SIZE TREE: the leaf bound is the only shape knob, and the
-            // depth below it is an output of the byte census. Both are printed so
-            // the plan cannot be read as if a depth cap decided the leaves.
-            s.push_str(&format!(
-                "XSA_PLAN_V2_TARGET rows={} leaves={} levels_per_row={:.2} largest_leaf_rows<={} rule=subdivide-while-rows>target (depth is an OUTPUT of the census; the depth cap is a fail-loud backstop, not the rule)\n",
-                v.bin_target_rows, v.bin_leaves, v.bin_levels_mean, v.bin_target_rows,
-            ));
-            // THE POSITION STORE, stated once: the window is a FILE, the RAM is
-            // one group. This is the disc-windows amendment to D2 (the rolling
-            // amendment): positions materialize transiently in bounded rolling
-            // window files, never as a persistent per-suffix column.
-            s.push_str(&format!(
-                "XSA_PLAN_V2_POSITION_STORE window_file_gb={:.2} = credit({}) x cap({}) x {} B ON DISC (one rolling file per live window, unlinked when built); ram_group_gb={:.2} = {} B/slot x the group being sorted in place; position_io_gb={:.1} = 16 x n / (8+8) B a position written once and read once; position_io_s={:.0} at the 5.238 GB/s device floor (overlapped by the fill and the build, so not on the critical path); persistent_position_column=0 full_SA=0\n",
-                v.bin_window_file_gb, BIN_WINDOW_CREDIT, v.bin_live_cap, BIN_WINDOW_SLOT_BYTES,
-                v.bin_ram_group_gb, BIN_GROUP_SLOT_BYTES,
-                16.0 * v.corpus_gb, BIN_WINDOW_IO_NS_PER_BYTE * v.corpus_gb,
-            ));
-            s.push_str(&format!(
-                "XSA_PLAN_V2_BIN_END e2e_s={:.0} e2e={} producer={} finish={} rule=max(producer,finish) (concurrent, flow-controlled through the piece window)\n",
-                v.bin_e2e_s, hms(v.bin_e2e_s), hms(v.bin_producer_s), hms(v.bin_finish_s),
-            ));
-            s.push_str(&format!("XSA_PLAN_V2_BIN_NOTE {}\n", v.bin_note));
-            if let Some(note) = &v.bin_phrase_note {
-                s.push_str(&format!("XSA_PLAN_V2_PHRASE {note}\n"));
-            }
-            if let Some(note) = &v.tape_note {
+        if self.shape == Shape::Tape {
+            // THE TAPE PLAN FIRST: the band envelope is this route's RAM term and
+            // the only thing that sizes its work unit.
+            if let Some(note) = self.v2.as_ref().and_then(|v| v.tape_note.as_ref()) {
                 s.push_str(&format!("XSA_PLAN_TAPE {note}\n"));
             }
-            let need_gb = self.phases.iter().map(|p| p.disc_peak_mb).fold(0.0, f64::max) / 1024.0;
-            s.push_str(&format!(
-                "XSA_PLAN_V2_HOSTING all-phase scratch peak {:.1} GiB = {:.3}n on one host; free {:.1} GiB: {} (corpus itself excluded; add {:.1} GiB if co-hosted)\n",
-                need_gb, need_gb / v.corpus_gb, free_gb,
-                if need_gb <= free_gb { "FITS" } else { "DOES NOT FIT" }, v.corpus_gb));
+            // No per-phase disc table: the tape route's disc shape is ONE measured
+            // number (the concurrent band window), not a row per phase, and printing
+            // the bin shape's rows here is exactly how the wrong peak got gated.
+            s.push_str("XSA_PLAN_TAPE_SHAPE phase_table=none wall_model=none note=this route's scratch \
+                          peak is the measured band window (XSA_PLAN_DISC_MODEL below), not a per-phase \
+                          sum; the bin shape's per-term table is printed by `--bin --plan-only` and \
+                          appears here only as a labelled alternative\n");
+            // THE OTHER SHAPE, LABELLED - emitted by render() itself so no call
+            // site can forget it: the bin shape's gating peak is still visible (it
+            // is the alternative an operator may switch to), but it can never be
+            // read as THIS run's number.
+            let bin_peak_bytes = (self.phases.iter().map(|p| p.disc_peak_mb).fold(0.0, f64::max)
+                * 1048576.0) as u64;
+            let free_bytes = self.survey.scratch_free_bytes;
+            let (bin_fits, _) = bin_disc_verdict(self.survey.corpus_bytes, bin_peak_bytes, free_bytes);
+            let bin_line = format!(
+                "shape=bin all_phase_peak_gb={:.1} = {:.3}n free_gb={:.1} verdict={} note=this is \
+                 the BIN shape's peak, NOT this run's gating number (--tape runs the band sorter, \
+                 priced by XSA_PLAN_DISC_MODEL above); `--bin --plan-only` prints its whole per-term \
+                 table",
+                gib(bin_peak_bytes),
+                gib(bin_peak_bytes) / gib(self.survey.corpus_bytes).max(1e-9),
+                gib(free_bytes),
+                if bin_fits { "FITS" } else { "DOES NOT FIT" });
+            s.push_str(&format!("XSA_PLAN_ALTERNATIVE {bin_line}\n"));
+        } else {
+            s.push_str("XSA_PLAN_PHASES name wall disc_peak_gb rss_gb\n");
+            for p in &self.phases {
+                s.push_str(&format!(
+                    "XSA_PLAN_PHASE name={} wall={} wall_s={:.0} disc_peak_gb={:.1} rss_gb={:.2}\n",
+                    p.name, hms(p.wall_s), p.wall_s, p.disc_peak_mb / 1024.0, p.rss_gb,
+                ));
+            }
+            if self.v2.is_some() {
+                // The bin producer and the fused finish run CONCURRENTLY, so the
+                // sum above is a term sum, not a wall: the end-to-end figure is
+                // the max, and it is reported as its own line. There is no chunk
+                // set on this route, so no chunk-size figure is printed.
+                s.push_str(&format!("XSA_PLAN_TOTAL wall={} wall_s={:.0} (TERM SUM)\n", hms(total), total));
+                s.push_str("XSA_PLAN_TOTAL_NOTE the sum above is the TERM SUM; the bin producer and the fused finish overlap, so the wall is max(producer, finish) = XSA_PLAN_V2_BIN_END e2e\n");
+            } else {
+                s.push_str(&format!("XSA_PLAN_TOTAL wall={} wall_s={:.0} chunk_bytes_mb={:.0}\n", hms(total), total, self.chunk_bytes_mb));
+            }
+            // The fan-in shape: levels, per-level side sizes, peak disc
+            // (delete-as-you-go) and the merge wall, all from arithmetic.
+            if let Some(f) = &self.fanin {
+                s.push_str(&format!(
+                    "XSA_FANIN levels={} chunk_bytes_mb={:.1} peak_disc_gb={:.1} merge_wall_s={:.0} merge_wall={}\n",
+                    f.levels.len(), f.chunk_bytes_mb, f.peak_disc_mb / 1024.0, f.total_merge_wall_s, hms(f.total_merge_wall_s),
+                ));
+                s.push_str("XSA_FANIN_LEVELS level in out groups level_side_gb group_scratch_gb wall_s\n");
+                for l in &f.levels {
+                    s.push_str(&format!(
+                        "XSA_FANIN_LEVEL level={} in={} out={} groups={} level_side_gb={:.1} group_scratch_gb={:.1} wall_s={:.0} wall={}\n",
+                        l.level, l.in_count, l.out_count, l.groups, l.level_side_gb, l.group_scratch_gb, l.wall_s, hms(l.wall_s),
+                    ));
+                }
+            }
+            // The pos-mode pick with its arithmetic: dense = 8n pos disc /
+            // fast walk; compact = 3.6n / 2.3x slower walk. Dense whenever
+            // its peak fits free with 10% headroom, else compact. The bin shape
+            // has NO position column of any kind, so the exchange rate does not
+            // apply to it and the line is not printed there.
+            if self.v2.is_none() {
+                let dense_gb = (mb * chunk_artifacts_per_corpus_mb("dense")) / 1024.0;
+                let compact_gb = (mb * chunk_artifacts_per_corpus_mb("compact")) / 1024.0;
+                s.push_str(&format!(
+                    "XSA_POS_MODE mode={} chunk_set_gb_dense={:.1} chunk_set_gb_compact={:.1} free_gb={:.1} rule=dense-if-10pct-headroom-else-compact (walk s/MB dense={:.3} compact={:.3})\n",
+                    self.pos_mode, dense_gb, compact_gb, free_gb, MERGE_WALK_DENSE_S_PER_MB, MERGE_WALK_COMPACT_S_PER_MB,
+                ));
+            }
+            if let Some(v) = &self.v2 {
+                s.push_str(&format!(
+                    "XSA_PLAN_V2_TERMS pipeline=v2bin corpus_gb={:.1} rlebwt_gb={:.1} pfck2_scratch_gb={:.1} pieces_window_gb={:.1} container_gb={:.1} tree_peak_gb={:.1} whole_box_gb={:.1}\n",
+                    v.corpus_gb, v.rlebwt_gb, v.pfck_gb, v.pieces_window_gb, v.container_gb, v.tree_peak_gb, v.whole_box_gb,
+                ));
+                s.push_str(&format!("XSA_PLAN_V2_TREE tree_peak={:.3}n bound={:.1}n measured_at=1GB-G2 (output side; the bin producer's own addition is the rolling window files, priced above); whole_box(corpus+tree)={:.3}n; position column disc=0.000n (transient rolling window files only)\n", V2_TREE_PEAK_PER_N, V2_TREE_TARGET_PER_N, 1.0 + V2_TREE_PEAK_PER_N));
+                s.push_str(&format!("XSA_PLAN_V2_WITNESS {}\n", v.witness_note));
+                s.push_str(&format!("XSA_PLAN_V2_TRANSIENT {}\n", v.transient_note));
+                s.push_str(&format!("XSA_PLAN_V2_CAP {}\n", v.bin_cap_note));
+                s.push_str(&format!("XSA_PLAN_V2_RAMSPLIT {}\n", v.ram_split_note));
+                s.push_str(&format!(
+                    "XSA_PLAN_V2_BIN live_cap_slots={} windows={} window_file_gb={:.1} ram_group_gb={:.1} count_s={:.0} fill_s={:.0} build_s={:.0} stitch_s={:.0} producer_s={:.0} finish_s={:.0}\n",
+                    v.bin_live_cap, v.bin_windows, v.bin_window_file_gb, v.bin_ram_group_gb,
+                    v.bin_count_s, v.bin_fill_s, v.bin_build_s, v.bin_stitch_s, v.bin_producer_s, v.bin_finish_s,
+                ));
+                // THE TARGET-SIZE TREE: the leaf bound is the only shape knob, and the
+                // depth below it is an output of the byte census. Both are printed so
+                // the plan cannot be read as if a depth cap decided the leaves.
+                s.push_str(&format!(
+                    "XSA_PLAN_V2_TARGET rows={} leaves={} levels_per_row={:.2} largest_leaf_rows<={} rule=subdivide-while-rows>target (depth is an OUTPUT of the census; the depth cap is a fail-loud backstop, not the rule)\n",
+                    v.bin_target_rows, v.bin_leaves, v.bin_levels_mean, v.bin_target_rows,
+                ));
+                // THE POSITION STORE, stated once: the window is a FILE, the RAM is
+                // one group. This is the disc-windows amendment to D2 (the rolling
+                // amendment): positions materialize transiently in bounded rolling
+                // window files, never as a persistent per-suffix column.
+                s.push_str(&format!(
+                    "XSA_PLAN_V2_POSITION_STORE window_file_gb={:.2} = credit({}) x cap({}) x {} B ON DISC (one rolling file per live window, unlinked when built); ram_group_gb={:.2} = {} B/slot x the group being sorted in place; position_io_gb={:.1} = 16 x n / (8+8) B a position written once and read once; position_io_s={:.0} at the 5.238 GB/s device floor (overlapped by the fill and the build, so not on the critical path); persistent_position_column=0 full_SA=0\n",
+                    v.bin_window_file_gb, BIN_WINDOW_CREDIT, v.bin_live_cap, BIN_WINDOW_SLOT_BYTES,
+                    v.bin_ram_group_gb, BIN_GROUP_SLOT_BYTES,
+                    16.0 * v.corpus_gb, BIN_WINDOW_IO_NS_PER_BYTE * v.corpus_gb,
+                ));
+                s.push_str(&format!(
+                    "XSA_PLAN_V2_BIN_END e2e_s={:.0} e2e={} producer={} finish={} rule=max(producer,finish) (concurrent, flow-controlled through the piece window)\n",
+                    v.bin_e2e_s, hms(v.bin_e2e_s), hms(v.bin_producer_s), hms(v.bin_finish_s),
+                ));
+                s.push_str(&format!("XSA_PLAN_V2_BIN_NOTE {}\n", v.bin_note));
+                if let Some(note) = &v.bin_phrase_note {
+                    s.push_str(&format!("XSA_PLAN_V2_PHRASE {note}\n"));
+                }
+                if let Some(note) = &v.tape_note {
+                    s.push_str(&format!("XSA_PLAN_TAPE {note}\n"));
+                }
+                let need_gb = self.phases.iter().map(|p| p.disc_peak_mb).fold(0.0, f64::max) / 1024.0;
+                s.push_str(&format!(
+                    "XSA_PLAN_V2_HOSTING all-phase scratch peak {:.1} GiB = {:.3}n on one host; free {:.1} GiB: {} (corpus itself excluded; add {:.1} GiB if co-hosted)\n",
+                    need_gb, need_gb / v.corpus_gb, free_gb,
+                    if need_gb <= free_gb { "FITS" } else { "DOES NOT FIT" }, v.corpus_gb));
+            }
         }
+        // THE MODEL, THEN THE VERDICT: the number can never be read without the
+        // basis that produced it (shape, factor, measured basis, what it covers).
+        s.push_str(&format!("XSA_PLAN_DISC_MODEL {}\n", self.disc_model));
         s.push_str(&format!("XSA_PLAN_DISC {}\n", self.disc_verdict));
+        if self.fit_check_skipped {
+            s.push_str(&self.skip_line());
+            s.push('\n');
+        }
         s.push_str(&format!("XSA_PLAN_RAM {}\n", self.ram_verdict));
         for a in &self.alternatives {
             s.push_str(&format!("XSA_PLAN_ALTERNATIVE {}\n", a));
@@ -676,6 +897,79 @@ pub fn bin_derive_live_cap(
 // producer journals it as SS_TAPE_BUDGET and the front door REFUSES the run when
 // the two disagree (TAPE_PLAN_DISAGREE), so the plan's FEASIBLE verdict cannot be
 // about a different process than the one that ran.
+//
+// THE TAPE ROUTE'S SCRATCH PEAK IS ALSO A MEASUREMENT, NOT A RE-DERIVATION. The
+// bin shape's tree (rlebwt + rolling window files + piece window + container) is
+// NOT this route's disc shape: the band sorter publishes one band at a time into
+// a bounded pending-band window, the ordered merge consumes and unlinks each band,
+// and the finish publishes the container. Measured on the Pile's first 100 GB
+// (tools/binbwt/RESULTS_PILE_100GB.md: peak scratch 78,880,730,679 B at
+// n=100,000,000,001 = 0.789n), the concurrent band window is the whole peak. THE
+// FIT CHECK THEREFORE USES 0.789n x TAPE_DISC_FACTOR - pricing the tape route at
+// the bin shape's 2.642n is how a run that fits came to be refused.
+/// The safety factor on the measured 0.789n: 1.00 = the measured envelope, no
+/// extrapolation. It covers the band WINDOW (bands in flight), the container
+/// being published, and the journal - the container is INSIDE the scratch peak.
+/// It does not shrink with --threads (a measured n-multiple), so a box that
+/// cannot hold n of scratch cannot run the tape route at any thread count.
+pub const TAPE_DISC_FACTOR: f64 = 1.00;
+/// The measured basis, exactly as banked.
+pub const TAPE_DISC_MEASURED_PER_N: f64 = 0.789;
+pub const TAPE_DISC_MEASURED_N_BYTES: u64 = 100_093_934_467;
+pub const TAPE_DISC_MEASURED_PEAK_BYTES: u64 = 78_880_730_679;
+
+/// The tape shape's scratch peak in bytes: the measured n-multiple, scaled by the
+/// one factor the operator can read on the XSA_PLAN_DISC_MODEL line.
+pub fn tape_scratch_peak_bytes(n_bytes: u64) -> u64 {
+    (TAPE_DISC_FACTOR * n_bytes as f64) as u64
+}
+
+/// The tape shape's model line, printed BEFORE the verdict. The factor, its
+/// measured basis, what it covers and the resulting peak are in ONE line so the
+/// number can never be quoted without them.
+pub fn tape_disc_model(n_bytes: u64, free_bytes: u64) -> String {
+    let peak = tape_scratch_peak_bytes(n_bytes);
+    let n_gb = (n_bytes as f64 / (1u64 << 30) as f64).max(1e-9);
+    format!(
+        "shape=tape factor={:.2} measured_basis={:.3}n@pile-head-100GB base=peak_scratch_measured \
+covers=band-window+container+journal container_inside_scratch_peak=1 measured_n_bytes={} \
+measured_peak_scratch_bytes={} measured_ratio={:.3} measured_ratio_arithmetic={}/{}={:.3} \
+(the same peak is {:.3} of the 100000000001-byte pile-head-100 gate corpus, where it was \
+78880730679 B) n_bytes={n_bytes} peak_bytes={peak} peak_gb={:.1} peak_n={:.3} free_gb={:.1} \
+rule=peak=TAPE_DISC_FACTOR x n (the measured band-window envelope; the container is itself \
+inside the scratch peak, and the journal is the term the factor carries beside it)",
+        TAPE_DISC_FACTOR, TAPE_DISC_MEASURED_PER_N, TAPE_DISC_MEASURED_N_BYTES,
+        TAPE_DISC_MEASURED_PEAK_BYTES,
+        TAPE_DISC_MEASURED_PEAK_BYTES as f64 / TAPE_DISC_MEASURED_N_BYTES as f64,
+        TAPE_DISC_MEASURED_PEAK_BYTES, TAPE_DISC_MEASURED_N_BYTES,
+        TAPE_DISC_MEASURED_PEAK_BYTES as f64 / TAPE_DISC_MEASURED_N_BYTES as f64,
+        TAPE_DISC_MEASURED_PEAK_BYTES as f64 / 100_000_000_001.0,
+        gib(peak), gib(peak) / n_gb, gib(free_bytes),
+    )
+}
+
+
+/// The tape shape's absolute check: the measured peak vs the free scratch.
+/// Returns `(fits, verdict)`. The refusal is the shared actionable sentence (shape,
+/// peak vs free in the same unit, the shortfall, the exact override flag).
+pub fn tape_disc_verdict(n_bytes: u64, free_bytes: u64) -> (bool, String) {
+    let peak = tape_scratch_peak_bytes(n_bytes);
+    let n_gb = (n_bytes as f64 / (1u64 << 30) as f64).max(1e-9);
+    if peak <= free_bytes {
+        (true, format!(
+            "FEASIBLE shape=tape: peak {:.1} GiB ({peak} B) = {:.3}n fits {:.1} GiB free \
+             ({free_bytes} B); headroom {:.1} GiB",
+            gib(peak), gib(peak) / n_gb, gib(free_bytes), gib(free_bytes - peak)))
+    } else {
+        (false, refusal(
+            Shape::Tape,
+            "the tape route's measured scratch peak (band window + container + journal)",
+            peak, free_bytes, "free scratch", Some("--skip-fit-check"),
+            "free scratch space or point --scratch at a device that holds 1.00n (the tape \
+             peak is a measured n-multiple: --threads and --memory-gb do not shrink it; \
+             --bin prices the other shape)"))
+    }
+}
 
 /// Safety on the arena left after the fixed and staging terms: the sorter aims
 /// for this fraction of what it may commit, and the exit assertion allows the
@@ -777,13 +1071,19 @@ impl TapeBandPlan {
         )
     }
     pub fn verdict(&self) -> String {
+        // FEASIBLE prints the whole arena arithmetic (that is what the operator
+        // wants to read); INFEASIBLE prints the ACTIONABLE refusal and nothing
+        // else, because a refusal that buries its shortfall in prose is how an
+        // operator ends up guessing which knob to turn.
+        if !self.feasible() {
+            return self.refusal();
+        }
         format!(
-            "{}: the band arena is {:.1} GiB = {} bands in flight x {} rows x {} B/row \
-             + {:.1} GiB fixed + {:.1} GiB staging = {:.2} GiB, {}% of the {:.2} GiB envelope \
-             (--memory-gb {}, the bound is {}%); {} bands per wave, {} waves; the producer \
-             asserts the same ratio at exit (SS_TAPE_PEAK) and the front door refuses the run \
-             if the two plans disagree",
-            if self.feasible() { "FEASIBLE" } else { "INFEASIBLE" },
+            "FEASIBLE shape=tape: the band arena is {:.1} GiB = {} bands in flight x {} rows x {} \
+             B/row + {:.1} GiB fixed + {:.1} GiB staging = {:.2} GiB, {}% of the {:.2} GiB envelope \
+             (--memory-gb {}, the bound is {}%); {} bands per wave, {} waves; the producer asserts \
+             the same ratio at exit (SS_TAPE_PEAK) and the front door refuses the run if the two \
+             plans disagree",
             self.arena_bytes as f64 / (1u64 << 30) as f64,
             self.bands_in_flight, self.rows_per_band, self.bytes_per_row,
             self.fixed_bytes as f64 / (1u64 << 30) as f64,
@@ -794,7 +1094,63 @@ impl TapeBandPlan {
             self.bands_per_wave, self.waves,
         )
     }
+
+    /// THE RAM REFUSAL, actionable and SELF-CONTAINED: which way the band plan
+    /// misses (the arena's peak over the 90% ratio bound and/or `rows_per_band`
+    /// under the 65,536-row floor), the peak and the limit in the SAME unit, the
+    /// shortfall, and the plain fact that no flag skips the RAM term
+    /// (--skip-fit-check does NOT touch it), then the knob that fixes it.
+    pub fn refusal(&self) -> String {
+        let limit = self.envelope_bytes * TAPE_BUDGET_RATIO_MAX / 100;
+        let peak = self.peak_bytes();
+        let over = peak.saturating_sub(limit);
+        let pct = 100.0 * over as f64 / limit.max(1) as f64;
+        let n_gb = (self.n_rows as f64 / (1u64 << 30) as f64).max(1e-9);
+        let peak_n = gib(peak) / n_gb;
+        let need = hsz(peak.saturating_mul(100) / TAPE_BUDGET_RATIO_MAX);
+        let short_rows = self.floor_rows.saturating_sub(self.rows_per_band);
+        let floor_note = if self.rows_per_band < self.floor_rows {
+            format!(
+                "; the band unit itself is UNDER the fold floor (the arena cannot hold {} bands in \
+                 flight of {} rows x {} B/row)",
+                self.bands_in_flight, self.floor_rows, self.bytes_per_row)
+        } else {
+            String::new()
+        };
+        format!(
+            "INFEASIBLE shape=tape RAM: the band arena is {arena} = {bands} bands in flight x \
+             {rows_per_band} rows x {bpr} B/row + {fixed} fixed + {stage} staging = peak \
+             {peak_sz} ({peak} B) = {peak_n:.3}n vs the {limit_sz} usable envelope ({ratio}% of \
+             --memory-gb {mem} = {limit} B) -> SHORT {over_sz} ({pct:.1}% over){floor_note}; \
+             rows_per_band={rows_per_band} floor={floor} (short {short_rows} rows); override=none: \
+             no flag skips the RAM term, --skip-fit-check does NOT touch it; fix: raise --memory-gb \
+             until the usable envelope covers {need}; {bands_per_wave} bands per wave, \
+             {waves} waves",
+            arena = hsz(self.arena_bytes),
+            bands = self.bands_in_flight,
+            rows_per_band = self.rows_per_band,
+            bpr = self.bytes_per_row,
+            fixed = hsz(self.fixed_bytes),
+            stage = hsz(self.stage_bytes),
+            peak_sz = hsz(peak),
+            peak = peak,
+            peak_n = peak_n,
+            limit_sz = hsz(limit),
+            ratio = TAPE_BUDGET_RATIO_MAX,
+            mem = self.memory_gb,
+            limit = limit,
+            over_sz = hsz(over),
+            pct = pct,
+            floor_note = floor_note,
+            floor = self.floor_rows,
+            short_rows = short_rows,
+            need = need,
+            bands_per_wave = self.bands_per_wave,
+            waves = self.waves,
+        )
+    }
 }
+
 
 /// THE BAND PLAN, term for term as the producer computes it. `n` is the number
 /// of SA ROWS (corpus bytes + the structural END), `disc_cap_bytes` the scratch
@@ -1143,6 +1499,11 @@ pub fn model_v2(
                    rss_gb: 8.0 * V2_CHI_PER_N * n_gb },
     ];
     // ---- verdicts
+    // THE GATING NUMBER FOR THIS SHAPE: the largest disc_peak of the phase rows
+    // (the all-phase peak). It is what the front door prices and refuses on.
+    let all_phase_mb = phases.iter().map(|p| p.disc_peak_mb).fold(0.0, f64::max);
+    let peak_bytes = (all_phase_mb * 1048576.0) as u64;
+    let free_bytes = survey.scratch_free_bytes;
     let tree_ok = tree_peak_mb < free_mb;
     // The window files are IN the tree (scratch tree, bounded, unlinked as
     // built): the all-phase disc peak has to carry them next to whatever else is
@@ -1153,21 +1514,24 @@ pub fn model_v2(
     let tree_target_ok = V2_TREE_PEAK_PER_N <= V2_TREE_TARGET_PER_N;
     let disc_ok = tree_ok && tree_target_ok && (hygiene_ok || hygiene_free_pct == 0);
     let whole_box_gb = n_gb * (1.0 + V2_TREE_PEAK_PER_N);
+    let disc_model = bin_disc_model(n, peak_bytes, free_bytes, cap, windows, window_file_gb);
     let disc_verdict = if disc_ok {
         if hygiene_ok {
-            format!("FEASIBLE (v2 bin shape): scratch-tree peak ~{:.0} GB ({:.3}n, bound {:.1}n) fits {:.0} GB free; whole-box (corpus + tree) ~{:.0} GB = {:.3}n; position arena 0 B of disc (anonymous RAM)",
-                tree_peak_mb / 1024.0, V2_TREE_PEAK_PER_N, V2_TREE_TARGET_PER_N, free_mb / 1024.0, whole_box_gb, 1.0 + V2_TREE_PEAK_PER_N)
+            format!("FEASIBLE shape={}: ALL-PHASE peak {:.1} GiB = {:.3}n fits {:.1} GiB free; scratch-tree peak {:.3}n (bound {:.1}n); whole-box (corpus + tree) ~{:.0} GB = {:.3}n; position arena 0 B of disc (anonymous RAM)",
+                Shape::Bin.as_str(), gib(peak_bytes), gib(peak_bytes) / n_gb, gib(free_bytes), V2_TREE_PEAK_PER_N, V2_TREE_TARGET_PER_N, whole_box_gb, 1.0 + V2_TREE_PEAK_PER_N)
         } else {
-            format!("FEASIBLE with hygiene override (v2 bin shape): scratch-tree peak ~{:.0} GB ({:.3}n, bound {:.1}n) fits {:.0} GB free ({}% used; policy >= {}% free overridden by the operator); whole-box (corpus + tree) ~{:.0} GB = {:.3}n",
-                tree_peak_mb / 1024.0, V2_TREE_PEAK_PER_N, V2_TREE_TARGET_PER_N, free_mb / 1024.0, survey.scratch_used_percent, hygiene_free_pct, whole_box_gb, 1.0 + V2_TREE_PEAK_PER_N)
+            format!("FEASIBLE with hygiene override shape={}: ALL-PHASE peak {:.1} GiB = {:.3}n fits {:.1} GiB free ({}% used; policy >= {}% free overridden by the operator); whole-box (corpus + tree) ~{:.0} GB = {:.3}n",
+                Shape::Bin.as_str(), gib(peak_bytes), gib(peak_bytes) / n_gb, gib(free_bytes), survey.scratch_used_percent, hygiene_free_pct, whole_box_gb, 1.0 + V2_TREE_PEAK_PER_N)
         }
     } else if !tree_ok {
-        format!("INFEASIBLE (v2 bin shape): scratch-tree peak ~{:.0} GB vs {:.0} GB free", tree_peak_mb / 1024.0, free_mb / 1024.0)
+        refusal(Shape::Bin, "the bin shape's ALL-PHASE scratch peak (rolling window FILES + rlebwt + piece window + container + witness spill)",
+                peak_bytes, free_bytes, "free scratch", Some("--skip-fit-check"),
+                "free scratch space, lower --bin-live-cap (smaller rolling window files) or raise --threads' headroom; the peak is priced at the bin shape's own terms")
     } else if !tree_target_ok {
-        format!("INFEASIBLE (v2 bin shape): scratch-tree peak {:.3}n exceeds the {:.1}n mission bound", V2_TREE_PEAK_PER_N, V2_TREE_TARGET_PER_N)
+        format!("INFEASIBLE shape={}: scratch-tree peak {:.3}n exceeds the {:.1}n mission bound (not a free-space check: the model itself is over the target) override=none; fix: the model, not a flag", Shape::Bin.as_str(), V2_TREE_PEAK_PER_N, V2_TREE_TARGET_PER_N)
     } else {
-        format!("INFEASIBLE (hygiene): scratch-tree peak ~{:.0} GB fits {:.0} GB free but only {}% free < the {}% policy; pass --scratch-free-pct to override",
-            tree_peak_mb / 1024.0, free_mb / 1024.0, free_pct, hygiene_free_pct)
+        format!("INFEASIBLE (hygiene) shape={}: ALL-PHASE peak {:.1} GiB fits {:.1} GiB free but only {}% free < the {}% policy; pass --scratch-free-pct to override",
+            Shape::Bin.as_str(), gib(peak_bytes), gib(free_bytes), free_pct, hygiene_free_pct)
     };
     // The RAM term is ONE BUILD GROUP (arena + scratch pair of the bin being
     // sorted in place): 16 B x the group's slots. The window itself is a FILE,
@@ -1190,16 +1554,19 @@ pub fn model_v2(
     let finish_bytes = (8.0 * V2_CHI_PER_N * n as f64) as u64;
     let finish_ok = finish_bytes <= mem_bytes * BIN_PHASE_HEADROOM_PCT / 100;
     let witness_ram_gb = 8.0 * V2_CHI_PER_N * n_gb;
+    let ram_ok = arena_ok;
     let ram_verdict = format!(
-        "{}: RAM term = ONE BUILD GROUP ~{:.1} GiB ({} B/slot x {} group slots - the bin being sorted in place, W={} windows, {}) + the corpus cache {:.1} GiB + the fill staging {:.1} GiB = {:.1} GiB against the usable {}% of --memory-gb {} GiB ({}); the position WINDOW is {:.1} GiB of FILE ({} credit x {} slots x {} B), 0 B of address space (buffered pwrite, no mapping); fused finish witness stream ~{:.0} GB {} the same cap (--wit-ram-gb, default half the cap; the overflow spills as sorted varint-delta disc runs, so an over-cap witness stream costs disc, not feasibility) + its own pfck2 grid",
-        if arena_ok { "FEASIBLE" } else { "INFEASIBLE" },
+        "{} shape={}: RAM term = ONE BUILD GROUP ~{:.1} GiB ({} B/slot x {} group slots - the bin being sorted in place, W={} windows, {}) + the corpus cache {:.1} GiB + the fill staging {:.1} GiB = {:.1} GiB against the usable {}% of --memory-gb {} GiB = {:.1} GiB ({}); the position WINDOW is {:.1} GiB of FILE ({} credit x {} slots x {} B), 0 B of address space (buffered pwrite, no mapping); fused finish witness stream ~{:.0} GB {} the same cap (--wit-ram-gb, default half the cap; the overflow spills as sorted varint-delta disc runs, so an over-cap witness stream costs disc, not feasibility) + its own pfck2 grid{}",
+        if arena_ok { "FEASIBLE" } else { "INFEASIBLE" }, Shape::Bin.as_str(),
         ram_group_gb, BIN_GROUP_SLOT_BYTES, cap, windows, cap_source,
         cache_bytes as f64 / (1u64 << 30) as f64, stage_bytes as f64 / (1u64 << 30) as f64,
         arena_bytes as f64 / (1u64 << 30) as f64, BIN_PHASE_HEADROOM_PCT, cap_gb,
+        (mem_bytes * BIN_PHASE_HEADROOM_PCT / 100) as f64 / (1u64 << 30) as f64,
         if arena_ok { "fits" } else { "DOES NOT FIT - lower --bin-live-cap or raise --memory-gb" },
         window_file_gb,
         BIN_WINDOW_CREDIT, cap, BIN_WINDOW_SLOT_BYTES, witness_ram_gb,
         if finish_ok { "fits" } else { "does not fit (it spills)" },
+        if arena_ok { String::new() } else { format!(" -> SHORT {:.1} GiB over that usable cap; override=none: no flag skips the RAM term, --skip-fit-check does NOT touch it; fix: lower --bin-live-cap or raise --memory-gb", gib(arena_bytes) - (mem_bytes * BIN_PHASE_HEADROOM_PCT / 100) as f64 / (1u64 << 30) as f64) },
     );
     let mut alternatives = Vec::new();
     if explicit_over_budget.is_some() {
@@ -1211,9 +1578,10 @@ pub fn model_v2(
     if !arena_ok {
         alternatives.push(format!("lower --bin-live-cap (a build group is {} B/slot: {} slots fit {}% of --memory-gb {cap_gb} once the corpus cache ({} B) and the fill staging ({} B) are paid) or raise --memory-gb; a bin larger than the group raises the cap and the front door fails loud, so SHARDING is the other lever", BIN_GROUP_SLOT_BYTES, (mem_bytes * BIN_PHASE_HEADROOM_PCT / 100).saturating_sub(cache_bytes + stage_bytes) / BIN_GROUP_SLOT_BYTES, BIN_PHASE_HEADROOM_PCT, cache_bytes, stage_bytes));
     }
-    if !disc_ok {
-        alternatives.push("free or add scratch space (the bin shape's tree is rlebwt 1.546n + the bounded piece window + the container 0.468n, with rlebwt deleted at publish)".to_string());
-    }
+    // NOTE: no disc alternative is pushed here. The verdict (XSA_PLAN_DISC) names
+    // the fix in its own terms, and a `--tape` plan must never print bin-shape
+    // advice as if it priced THIS run: the front door labels the other shape's
+    // number `shape=bin` and nothing else.
     if !survey.cx16 {
         alternatives.push("CPU lacks cmpxchg16b: the shared page pool requires it (CROSS_NO_POOL=1 runs without the pool, 77x slower on the placing pass)".to_string());
     }
@@ -1324,12 +1692,138 @@ the same cap and owns its witness stream + pfck grid",
     };
     Plan { survey, chunks: 1, kway: 1, threads, cap_gb, phases, chunk_bytes_mb: mb,
            pos_mode: "none (no position column in the bin shape)".to_string(),
-           disc_verdict, ram_verdict, alternatives, fanin: None, v2: Some(v2) }
+           shape: Shape::Bin, disc_model, disc_verdict, ram_verdict, alternatives,
+           disc_ok, ram_ok, disc_peak_bytes: peak_bytes,
+           fit_check_skipped: false,
+           fanin: None, v2: Some(v2) }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ------------------------------------------------------- THE FIT CHECK
+    fn survey_for(n: u64, free: u64) -> Survey {
+        Survey {
+            corpus_bytes: n,
+            scratch_free_bytes: free,
+            scratch_used_percent: 93,
+            mem_available_bytes: 820 << 30,
+            cores: 96,
+            cx16: true,
+            stripe_dirs: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn the_tape_fit_check_prices_the_measured_tape_envelope() {
+        let n = 1_307_910_802_540u64;                    // the pile
+        // factor 1.00 over the measured 0.789n: peak == n, by construction.
+        assert_eq!(tape_scratch_peak_bytes(n), n);
+        let model = tape_disc_model(n, 995 << 30);
+        // The exact literals the gate greps for.
+        assert!(model.contains("shape=tape factor=1.00 measured_basis=0.789n@pile-head-100GB"),
+                "{model}");
+        assert!(model.contains("base=peak_scratch_measured"), "{model}");
+        // What the factor covers, in the same line: window + container + journal,
+        // and the container is INSIDE the scratch peak (not an addition).
+        assert!(model.contains("covers=band-window+container+journal"), "{model}");
+        assert!(model.contains("container_inside_scratch_peak=1"), "{model}");
+        // The measured basis is stated with its own bytes, honestly.
+        assert!(model.contains("measured_peak_scratch_bytes=78880730679"), "{model}");
+        assert!(model.contains("measured_ratio_arithmetic=78880730679/100093934467"),
+                "{model}");
+        // FITS when free covers 1.00n, REFUSES when it does not - and the refusal
+        // is actionable: shape, peak vs free in the same unit, shortfall, flag.
+        let (fits, ok) = tape_disc_verdict(n, 1400 << 30);
+        assert!(fits, "{ok}");
+        assert!(ok.contains("FEASIBLE shape=tape"), "{ok}");
+        let (fits, no) = tape_disc_verdict(n, 995 << 30);
+        assert!(!fits, "{no}");
+        assert!(no.starts_with("INFEASIBLE shape=tape:"), "{no}");
+        assert!(no.contains("SHORT"), "{no}");
+        assert!(no.contains("override --skip-fit-check"), "{no}");
+    }
+
+    #[test]
+    fn the_two_shapes_are_priced_separately_and_the_bin_number_never_gates_the_tape_run() {
+        let n = 1_307_910_802_540u64;
+        let free = 1400u64 << 30;      // more than 1.00n, less than the bin's 2.642n
+        // The tape shape fits this box...
+        let (tape_fits, tape) = tape_disc_verdict(n, free);
+        assert!(tape_fits, "{tape}");
+        // ...and the bin shape, priced on its own terms, does not. Two shapes,
+        // two numbers: the defect was gating the first on the second.
+        let bin_peak = (n as f64 * 2.642) as u64;
+        let (bin_fits, bin) = bin_disc_verdict(n, bin_peak, free);
+        assert!(!bin_fits, "{bin}");
+        assert!(bin.starts_with("INFEASIBLE shape=bin:"), "{bin}");
+        assert!(bin.contains("--skip-fit-check"), "{bin}");
+        // Both refusals name the OTHER shape as a way out, so neither leaves the
+        // operator guessing.
+        assert!(bin.contains("--tape"), "{bin}");
+    }
+
+    #[test]
+    fn every_refusal_names_shape_peak_free_shortfall_and_override() {
+        let n = 4_194_304u64;
+        let free = 5u64 << 20;
+        let (fits, bin) = bin_disc_verdict(n, 140_702_137, free);
+        assert!(!fits);
+        for needle in ["shape=bin", "peak 134.2 MiB", "free scratch 5.0 MiB", "SHORT 129.2 MiB",
+                       "override --skip-fit-check"] {
+            assert!(bin.contains(needle), "missing {needle:?} in {bin}");
+        }
+        // A sub-GiB scratch must not be rounded to "0.0 GiB" in its own refusal.
+        assert!(!bin.contains(" 0.0 GiB"), "{bin}");
+    }
+
+    #[test]
+    fn no_flag_skips_the_ram_term_and_the_tape_refusal_says_so() {
+        // 256 bands in flight inside a 1 GiB envelope cannot hold the 65,536-row
+        // fold floor: the band plan itself is infeasible, which no flag skips.
+        let plan = tape_band_plan(1_307_910_802_541, 256, 2, true, 2 * 1_307_910_802_541);
+        assert!(!plan.feasible());
+        let v = plan.verdict();
+        assert!(v.starts_with("INFEASIBLE shape=tape RAM:"), "{v}");
+        assert!(v.contains("override=none"), "{v}");
+        assert!(v.contains("--skip-fit-check does NOT touch it"), "{v}");
+        assert!(v.contains("rows_per_band=1 floor=65536"), "{v}");
+        assert!(v.contains("SHORT"), "{v}");
+        assert!(v.contains("raise --memory-gb"), "{v}");
+    }
+
+    #[test]
+    fn the_skip_line_carries_the_numbers_and_the_plan_journals_it() {
+        let n = 1_307_910_802_540u64;
+        let free = 995u64 << 30;
+        let mut plan = model_v2(survey_for(n, free), 1, 1, 96, 96, 0, None, None);
+        // Price the tape shape the way the front door does, then override.
+        plan.shape = Shape::Tape;
+        plan.disc_model = tape_disc_model(n, free);
+        let (fits, verdict) = tape_disc_verdict(n, free);
+        plan.disc_ok = fits;
+        plan.disc_verdict = verdict;
+        plan.disc_peak_bytes = tape_scratch_peak_bytes(n);
+        plan.fit_check_skipped = true;
+        let text = plan.render();
+        let line = text.lines().find(|l| l.starts_with("DISC_CHECK_SKIPPED"))
+            .unwrap_or_else(|| panic!("no DISC_CHECK_SKIPPED line in:\n{text}"));
+        assert!(line.contains("basis=operator"), "{line}");
+        assert!(line.contains(&format!("peak={}", n)), "{line}");
+        assert!(line.contains(&format!("free={free}")), "{line}");
+        // The run journals the plan block line by line, so the line above IS the
+        // journal entry; and the plan that accompanies it is the TAPE shape first,
+        // with the bin shape only as a labelled alternative.
+        assert!(text.contains("pipeline=v2tape"), "{text}");
+        assert!(text.contains("XSA_PLAN_DISC_MODEL shape=tape factor=1.00"), "{text}");
+        assert!(text.contains("XSA_PLAN_ALTERNATIVE shape=bin"), "{text}");
+        assert!(!text.contains("XSA_PLAN_PHASE "), "no bin phase rows on a tape plan:\n{text}");
+        assert!(!text.contains("XSA_PLAN_V2_TERMS"), "no bin per-term block on a tape plan");
+        // Without the override the same plan does not claim a skipped check.
+        plan.fit_check_skipped = false;
+        assert!(!plan.render().contains("DISC_CHECK_SKIPPED"));
+    }
 
     #[test]
     fn the_phrase_plan_line_is_absent_when_the_arm_is_off_and_priced_when_on() {
