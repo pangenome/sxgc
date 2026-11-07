@@ -1,1047 +1,291 @@
-\documentclass[11pt]{article}
-\usepackage[margin=1.1in]{geometry}
-\usepackage{amsmath,amssymb,amsthm}
-\usepackage{booktabs}
-\usepackage{graphicx}
-\usepackage{enumitem}
-\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
-\usepackage{xcolor}
-
-% ---- Notation ----
-\newcommand{\X}{\chi}
-\newcommand{\sep}{\ensuremath{\mathtt{0x1E}}}
-\newcommand{\rparam}{r}
-\newcommand{\Order}{\mathcal{O}}
-\newcommand{\Bits}{$\mathrm{bits}$}
-\newcommand{\TODO}[1]{\textbf{\textcolor{red}{[TODO: #1]}}}
-\newcommand{\hprcchi}{$2{,}250{,}211{,}129$}
-
-% ---- Formalization pointers ----
-% Every formal statement carries a clickable pointer into the Lean sources at
-% the commit-pinned repository version. The hash pins the exact version whose
-% line numbers the links resolve to; it is updated at release time.
-\newcommand{\sxgchash}{101403519196e5129ce113eae57123227219f59e}
-\newcommand{\leanpoint}[3]{%
-  \par\nopagebreak\vspace{0.2em}%
-  \hfill{\footnotesize$\langle$\,%
-    \href{https://github.com/pangenome/sxgc/blob/\sxgchash/lean/#1\#L#2}%
-    {\textsf{formal:} \texttt{#3} \textsf{\,·\,} \texttt{#1:#2}}%
-  \,$\rangle$}\nopagebreak\vspace{0.2em}}
-\newcommand{\repofile}[2]{%
-  \href{https://github.com/pangenome/sxgc/blob/\sxgchash/#1}{\texttt{#2}}}
-
-% Theorem environments
-\newtheorem{theorem}{Theorem}[section]
-\newtheorem{lemma}[theorem]{Lemma}
-\newtheorem{corollary}[theorem]{Corollary}
-\newtheorem{definition}[theorem]{Definition}
-\newtheorem{remark}[theorem]{Remark}
-\newtheorem{conjecture}[theorem]{Conjecture}
-
-% Alternate title (kept per lane record): "Indexing Novelty, Not Bulk:
-% The Suffixient Array at Pangenome Scale, with a First Space Lower Bound
-% for Pattern Matching"
-\title{$\chi$ Marks the Fork:\\
-Suffixient Arrays and a Space Lower Bound for Locating Patterns}
-
-\author{%
-  E.~Gaffney\thanks{Correspondence: the sxgc ledger, \texttt{github.com/pangenome/sxgc}.}%
-}
-\date{September 2026}
-
+\documentclass[10pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,booktabs}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\setlength{\emergencystretch}{1em}
+\usepackage[colorlinks=true,urlcolor=blue,citecolor=blue]{hyperref}
+\newcommand{\qnum}[2]{#2}
+\newcommand{\ev}[2]{\footnote{\href{https://github.com/pangenome/sxgc/blob/c46a85217b9b269c91179cbebc396f96453181af/#1}{\nolinkurl{#1}}, #2.}}
+\newcommand{\old}[3]{\footnote{\href{https://github.com/pangenome/sxgc/blob/#1/#2}{\nolinkurl{#2}}, commit \texttt{#1}, #3.}}
+\title{Building and Querying a Large Byte Index:\\Measured Scale, Memory, and Recovery Costs}
+\author{sxgc project}
+\date{}
 \begin{document}
 \maketitle
-
 \begin{abstract}
-\textbf{Motivation.} Almost every byte of a corpus is \emph{forced}:
-given its left context, only one continuation occurs. The freedom lives in a
-sparse skeleton of \emph{forks}---positions where the future is genuinely
-open---and at pangenome scale that skeleton is tiny: measured across this
-paper's corpora, the minimum suffixient set $S$ (a set of positions witnessing
-every right-extension context of the text) has $\X/n$ at $2.6\%$ (yeast),
-$5.4\%$ (30\,Gbp human), and $0.16\%$ (466-haplotype HPRC, $1.40$\,Tbp).
-The suffixient array \cite{measure-paper} measures this skeleton: $\X(T)$
-upper bounds the string attractor measure $\gamma$ and is at most twice the
-run count of the BWT of the reversed text. But $\X$ was a \emph{one-sided}
-story: it said how small an index \emph{can} be, never how small any index
-\emph{must} be---no space lower bound proportional to any repetitiveness
-measure existed for any pattern-matching operation class (verified survey,
-\S\ref{sec:related}). Three questions were open when this work began: \emph{can
-$\X$ be constructed} without reading the text more than once and without any
-operation superlinear in $n$; \emph{is $\X$ necessary}; and \emph{does the
-theory build an index} at terabase scale.
-\textbf{Results.} We give a machine-checked (Lean 4) development in which
-$\X(T)$ equals the number of inclusion-maximal coverage classes of the text's
-requirements, a one-pass scan over the text's suffix-array stream emits a
-minimum suffixient set (the construction capstone, whose coverage side---the
-scan provably emits a suffixient set---is discharged outright, and whose
-remaining obligation, that no smaller suffixient set exists, is named and
-tracked), the
-parse-space LCE machinery the scan consumes is proven deterministic and
-explicitly bounded, and the head-sample extraction used at scale is proven as
-an inverse permutation on BWT rows. We then make $\X$ two-sided. \emph{Bridge}:
-any system---index, language model, anything---that correctly answers
-\emph{continuation} queries (``what can follow $w$'', answered with corpus
-positions) must consult at least $\X(T)$ \emph{distinct} positions
-(kernel-checked; this form strictly subsumes the locate-one bridge, since
-locate-one answers are correct continuation answers). \emph{Floor}: on a
-constructed witness-perturbation family, every fixed-decoder index answering
-locate-one satisfies $s+1 \ge \X\log_2(n/\X)/3$---to our knowledge the first
-space lower bound for any pattern-matching operation class parametrized by a
-repetitiveness measure, stated with its honest scope (family-specific,
-fixed-decoder). We describe a system that constructs the index as one command
-from a compressed pangenome archive, never materializes the text on any disk,
-and publishes only after an in-flight audit of sampled witnesses against the
-archive. At yeast scale the index is born from scratch in 26 minutes; at
-30\,Gbp human scale, $\X = 1{,}627{,}067{,}257$ with peak 134\,GB; at the full
-466-haplotype HPRC collection (1.40\,Tbp) the headline number is \hprcchi,
-reproduced by a second independent from-zero construction whose container
-is byte-identical.
-Every claim in this paper is traceable to a machine-checked proof or a logged
-measurement; we state the open hypotheses and unproven attributions exactly
-where they remain.
-\textbf{Availability.} Proofs, logs, and the tool at
-\texttt{github.com/pangenome/sxgc}.
+Suffix indexing, substring frequencies, and rarity weighting are established ideas; our contribution
+is measured scale and cost. On the first $\qnum{input}{10^{11}}$ bytes of the Pile, a
+bounded-resource tape pipeline builds a $\qnum{container}{63{,}163{,}489{,}696}$-byte index in
+\qnum{wall}{12:35:10}, with observed peak scratch $\qnum{scratchratio}{0.789}n$. Construction
+consumes the ordered stream in a single streaming pass without materialising a full suffix array or
+an additional text copy; this is not a claim of one physical read of the input. The index contains
+$\qnum{chi}{24{,}185{,}339{,}204}$ suffixient witnesses. A rebuilt reader locates $\qnum{limit}{5}$
+occurrences in $\qnum{querywall}{0.52}$ s at $\qnum{rss}{547}$ MiB RSS against the approximately
+$\qnum{containershort}{63}$ GB container, without materialising its run columns. Independent byte
+scanning confirms occurrence counts and resolves an overlapping-match discrepancy with grep. We
+report failed optimisations, separate native spool recovery from driver replay, and distinguish
+these measurements from an untested full-Pile deployment.
 \end{abstract}
 
-\section{Introduction}\label{sec:intro}
+\section{Contribution and scope}
+The useful question is what it costs to retain exact corpus evidence at a scale where a materialised
+suffix array and per-run query columns become impractical. The contribution here is an implemented
+construction and reader, with measured resource use and explicit correctness receipts. We claim no
+conceptual novelty for suffix indexing, substring statistics, or IDF applied to n-grams. Suffix
+arrays, the FM-index and run-length BWT indexing already supply the underlying search operations;
+related work is discussed below.
 
-\paragraph{Most bytes are forced.} Measure any real corpus: for the vast
-majority of positions, the byte that follows is the only one that ever does.
-Across this paper's corpora the \emph{minimum suffixient set}---the smallest
-position set witnessing every place where the future is genuinely open---has
-$\X/n$ at $2.6\%$ for yeast, $5.4\%$ for a 30\,Gbp human pangenome, and
-$0.16\%$ for the 466-haplotype HPRC collection
-($1.40$\,Tbp; \S\ref{sec:results}). The farther a collection duplicates
-itself, the smaller the skeleton: a pangenome is $99.84\%$ inevitability.
-Whatever an exact-search index---or any reader of the corpus---must retain is
-therefore a function of this sparse forking structure, not of the bulk.
+Let $n$ denote input bytes, excluding virtual END. The container's row count includes END, so it is
+$n+1$. Decimal GB and TB describe byte sizes; MiB describes binary resident memory. We distinguish
+input storage, scratch, final container, and process RSS. The Pile experiment used an existing raw
+input file. It did not demonstrate a build from an unseekable input pipe: the sorter uses corpus
+access and wave scans. ``Single streaming pass'' describes consumption of the ordered construction
+stream, not total corpus I/O. The identity/histogram preparation itself uses a single sequential
+pass.\ev{RESUME.md}{``One corpus pass, not
+five''}\ev{xsa/runtime/tools/binbwt/scatter_sort.cpp}{comments at lines 1179--1180 and 2526--2527,
+per-wave corpus scans}
 
-\paragraph{The thesis.} Suppose a corpus is mostly redundant---as every
-versioned corpus is. Then whatever an exact-search index must store is a
-function of the corpus's \emph{novelty}, not its bulk. This paper is about
-making that sentence a theorem-backed engineering statement: a measure
-$\X(T)$ that quantifies novelty, a construction that builds an index of size
-$O(\X\log n)$ at a cost that follows $\X$ rather than $n$, a lower-bound
-program that has produced its first theorem saying that position-answering
-indexes \emph{cannot} be asymptotically smaller, a bridge theorem extending
-that necessity from indexes to \emph{any} continuation-answering system
-(\S\ref{sec:contbridge}), and a system that does all of it from a 3\,GB
-compressed archive of 1.40 terabases without ever writing the text to disk.
+The evidence is pinned to the repository revision linked in each footnote. Separately committed
+studies are pinned to their own revisions. \texttt{paper/NUMBERS.md} maps every quantitative claim
+to its source and reproduction command, and explicitly excludes unverified requested figures. These
+are historical measurements, not benchmarks rerun for this manuscript.
 
-\paragraph{The object.} A \emph{suffixient set} for a text $T$ of length $n$
-is a set $S\subseteq[1..n]$ of positions such that for every
-\emph{requirement}---a pair $(w,c)$ where $w$ is right-maximal and $wc$ occurs
-in $T$---some $x\in S$ has $wc$ as a suffix of the prefix of $T$ ending at
-$x$. The smallest such set has cardinality $\X(T)$, introduced by
-Fujimaru, Navarro, Romana and Urbina~\cite{measure-paper}, who proved
-$\gamma \le \X \le 2\overline r$ (where $\overline r$ is the run count of the
-BWT of the reversed text), showed that a suffixient set doubles as a string
-attractor and hence supports $O(\X\log(n/\X))$-space text storage, and gave
-calculation methods. What was \emph{not} known: whether $\X$ is the minimum
-\emph{size of a certain kind of index} (they prove minimality among suffixient
-sets, not among indexes), whether $\X$ is computable at scale under the
-one-pass discipline realistic constructions obey, and whether any space lower
-bound proportional to \emph{any} repetitiveness measure holds for any
-pattern-matching class (a verified literature survey we summarize in
-\S\ref{sec:related} found none: every published $r$- or $\X$-index is an upper
-bound whose ``optimality'' is time-only).
+\section{Method}
+\paragraph{Scatter, fused merge, finish.}
+The sorter scatters suffix positions into bounded waves, sorts admitted bands and publishes
+consumable band files. The merger consumes these files, preserves key order and emits run pieces.
+Finish repairs boundary conventions, consumes LCP and endpoint information, sweeps witnesses, and
+assembles the container. Producer and finish overlap. A full suffix array is never an intermediate
+product: ordered positions exist only in bounded transport bands. A completed band replaces larger
+scatter records, and consumption releases storage and
+credits.\ev{tools/binbwt/FUSED_TAPE.md}{``Bounded producer/emitter tape''}
 
-\paragraph{The program.} We run a three-legged program in which no leg trusts
-the others: a \emph{formal} leg (Lean 4) that proves the definitions,
-characterization, construction, bounds, and now a first lower bound; an
-\emph{empirical} leg in which brute-force differentials on small texts are
-ground truth and every large-scale claim is gated by byte-exact comparison
-against an independently built oracle; and a \emph{systems} leg that
-implements the construction as a one-command pipeline and records, per
-stage, wall time and peak memory from the machine. The discipline that binds
-them is stated plainly: statements are locked and measurement-owned; proofs
-are kernel-checked with a fixed axiom base; every numeric claim in this paper
-cites the artifact that produced it (Appendix~\ref{app:facts}).
+Memory limits determine admitted sorting work and staging capacity. They do not imply constant
+whole-build RSS independent of corpus size: mapped corpus pages, directories, and witness storage
+also contribute. The progress argument requires admitted jobs to finish without another credit,
+reserved reorder space for the missing earliest key, and inputs that can be read without waiting on
+a future credit-blocked item. The legacy LCP-slice path still has a sorter-to-finish dependency. The
+committed design explicitly does not certify the complete pipeline
+deadlock-free.\ev{tools/binbwt/DEADLOCK_FREEDOM.md}{``Status'', ``Required architecture'', and
+``Bounded-buffer argument''}
 
-\paragraph{Contributions.}
-\begin{enumerate}[leftmargin=*]
-\item \textbf{Characterization} (\S\ref{sec:formal}): $\X(T)$ equals the number
-of inclusion-maximal coverage classes of $T$'s requirements
-(Theorem~\ref{thm:maxclasses}, machine-checked), which turns the brute-force
-minimum into a structural count and is the engine behind the scan.
-\item \textbf{Construction} (\S\ref{sec:construction}): a one-pass scan over
-the text's suffix-array stream (BWT char, LCP, SA) emits a minimum suffixient
-set; the scan is proven nodup for all well-formed bounded streams
-(Theorem~\ref{thm:nodup}); the parse-space LCE machinery the scan consumes at
-scale is proven deterministic (two-sided equality with ground truth) and
-explicitly bounded (Theorems~\ref{thm:bounds}--\ref{thm:totalwork}). The
-end-to-end statement---the parse-built witness list has exactly $\X(T)$
-elements---is proven \emph{conditional on named stream hypotheses}
-(Theorem~\ref{thm:capstone}). The coverage side is closed outright: run-edge
-domination---every run-edge position is dominated by an emitted one---is
-proven unconditionally (\texttt{runEdgeDominate\_true}), so the scan provably
-emits a suffixient set; the remaining obligation is count-side, the
-tie-breaking bound $|S|\le\X(T)$ (\S\ref{sec:construction}).
-\item \textbf{Position extraction} (\S\ref{sec:phi}): the head samples used
-to resolve scan positions at scale are the values of an inverse permutation
-$\varphi^{-1}$ on BWT rows (Theorem~\ref{thm:headfromtail}), which replaces
-the classical LF-step walk---measured at 2{,}156 steps per head on our
-corpora---by a lookup.
-\item \textbf{Cyclic frames} (\S\ref{sec:seam}): the padded cyclic BWT the
-upstream front end produces and the canonical cyclic order of the corpus text
-agree \emph{outside seam classes}; class repair is the identity there and a
-bounded in-class reordering. The identity half is machine-checked
-(Theorem~\ref{thm:seam}); the repair is implemented with an explicit refusal
-policy for adversarial corpora.
-\item \textbf{A first space lower bound} (\S\ref{sec:floor}): every
-fixed-decoder index answering locate-one queries over the
-witness-perturbation family of texts satisfies
-\[
-s + 1 \;\ge\; \X(T)\cdot \log_2\!\big(n/\X(T)\big)\,/\,3 ,
-\]
-machine-checked (Theorem~\ref{thm:floor}). To our knowledge this is the first
-space lower bound proportional to a repetitiveness measure for any
-pattern-matching operation class (survey in \S\ref{sec:related}).
-\item \textbf{The continuation bridge} (\S\ref{sec:contbridge}): the same
-necessity, extended from indexes to \emph{any} system that answers
-continuation queries. Any oracle that, for every requirement $(w,c)$ of $T$,
-answers with a genuine corpus position where $wc$ is covered must \emph{consult}
-at least $\X(T)$ \emph{distinct} positions over the course of answering
-(kernel-checked, Theorem~\ref{thm:contdistinct}); the demand is strictly
-weaker than locate-one, so the new bridge subsumes the old
-(Theorem~\ref{thm:locimpcont}). This is the form the language-model
-framing of \S\ref{sec:lm} consumes.
-\item \textbf{System and measurements} (\S\ref{sec:system},
-\S\ref{sec:results}): a one-command pipeline that parses directly from the
-compressed archive (no text file is ever written), repairs the frame, extracts
-samples by $\varphi^{-1}$, computes aggregates in parse space, sweeps the
-witnesses, audits 10{,}000 of them in flight against the archive, and
-publishes a single container file holding the run-length BWT, both SA-sample
-sets, names, and $\delta$-compressed $\X$ ($\approx 13\%$ of raw). Measured
-end-to-end at yeast (26 minutes, 8.8\,GB peak) and at 30\,Gbp human scale
-($\X=1{,}627{,}067{,}257$, 134\,GB peak); the 466-haplotype HPRC run
-is \hprcchi.
-\end{enumerate}
+\paragraph{Virtual END and LCP in the sorter.}
+END is an ordering convention outside the raw byte sequence, not an appended byte chosen because it
+happens to be absent. All input bytes remain searchable, and nonempty patterns return corpus offsets
+rather than the END position. LCP is produced with sorted bands and consumed as slices by finish; it
+need not be reconstructed from a materialised global suffix array. Cross-band state survives band
+boundaries. Older finite/cyclic conventions and their checks must not be silently mixed with
+virtual-END banks.\ev{REPRODUCE.md}{raw tape input and byte-query
+semantics}\ev{tools/binbwt/FUSED_TAPE.md}{optional LCP column and generated-column gates}
 
-\section{The Formal Model}\label{sec:formal}
+\paragraph{What chi stores.}
+Following the suffixient-set formulation of Fujimaru et al.~\cite{suffixient}, a suffixient set
+selects text positions witnessing occurring right extensions of right-maximal contexts; $\chi$
+denotes its cardinality. The sweep maintains active candidates and LCP minima, replacing candidates
+until their intervals close. Its bounded active state does not bound the number of witnesses emitted
+over the corpus. Member m5 stores a sorted unique position set, not a context-to-rank dictionary.
+The bitmap implementation marks witness coordinates in a file-backed bitmap, then scans positions in
+order to emit Elias--Fano. This removes a chi-sized heap vector; it does not make bitmap residency
+free. Exact count/locate in the lite reader does not consult
+m5.\old{222ace4044cdaaf9e3ad8710d954afc5493c12bb}{tools/binbwt/CHI_STUDY.md}{sections ``Structure'',
+``Reader inventory'', and ``Why the key universe is not
+bounded''}\ev{tools/binbwt/CHI_BITMAP_RESULTS.md}{implementation and completed
+measurements}\ev{bit6/SXI_FORMAT.md}{chi set, mmap chi construction, and optional chi}
 
-\paragraph{Formalization.} Every definition and theorem in this paper is
-formalized in Lean~4. The complete development---including a transparent
-ledger of the statements that remain open---is available at
-\texttt{github.com/pangenome/sxgc}, directory \texttt{lean/}, with
-kernel-checked proofs on the axiom base
-$\{$\texttt{propext}, \texttt{Classical.choice}, \texttt{Quot.sound}$\}$
-(the continuation-bridge file depends on fewer still). Each formal
-statement below carries a clickable pointer of the form
-$\langle$\textsf{formal:} \emph{name} \textsf{·} \emph{file:line}$\rangle$
-linking into the repository at a pinned commit
-({\small\texttt{\sxgchash}}): the hash fixes the exact version whose line
-numbers the links resolve to, so a reader can jump from any theorem in
-this PDF directly to the machine-checked statement and its proof.
-Appendix~\ref{app:facts} pairs every claim in this paper, formal or
-numeric, with its exact formal statement and the artifact that warrants
-it.
+\paragraph{Bounded decoded-block reader.}
+Member m1 is a block-compressed run stream. Sparse row and per-symbol directories navigate to a
+block; rank and LF operations decode that block into a bounded cache. The payload is read with
+\texttt{pread}; directory mappings use random-access advice and windowed residency drops. This
+replaces the old open-time expansion into run heads, lengths and cumulative ranks. The reported
+cache arena is $\qnum{arena}{66{,}846{,}720}$ bytes, described in the receipt as approximately
+$\qnum{arenashort}{64}$ MB. The approximately $\qnum{rsscap}{550}$ MiB query memory envelope exists
+because the reader was rebuilt around this arena and a directory residency policy; it is not an
+intrinsic property of compressed indexing or a universal RSS guarantee. The audit field
+\texttt{decoded\_bytes=\qnum{decoded}{0}} means no full run-stream materialisation, not that no
+blocks were decoded.\ev{tools/binbwt/RESULTS_PILE_100GB.md}{Search certificate, section 1}
 
-\paragraph{Setup.} Fix a finite alphabet $\Sigma=\{1,\dots,\sigma\}$; a
-\emph{text} is $T=T[1..n]$ over $\Sigma$, with the symbol $0$ reserved as
-a terminal sentinel and never occurring in $T$. Positions are $1$-based;
-$T[1..x]$ is the prefix of length $x$.
+\paragraph{Restart safety.}
+Durable publication writes and syncs data, atomically publishes it, and syncs its directory before
+accepting a receipt. Recovery verifies identity and dependencies. The spool layer follows the
+delete-is-commit discipline: discard an input only after durable state and output cover its future
+use. The implemented native finish retains raw pieces and LCP dependencies, and publishes immutable
+chi bases before deleting older generations. This is a conservative implementation of that
+discipline, not eager incremental reclamation.
 
-\begin{definition}[Requirements and suffixient sets]\label{def:req}
-Word $w$ \emph{occurs at} position $x$ of $T$ if
-$T[x-|w|+1\,..\,x]=w$. A word $w$ occurring in $T$ is \emph{right-maximal}
-in $T$ if it is a suffix of $T$ or has at least two distinct one-symbol
-right extensions occurring in $T$; the empty word is right-maximal by
-convention. A \emph{requirement} is a pair $(w,c)$ with $w$ right-maximal
-and $wc$ occurring in $T$. Position $x$ \emph{covers} $(w,c)$ if $wc$ is a
-suffix of $T[1..x]$. A set $S\subseteq[1..n]$ is \emph{suffixient} for
-$T$ if every requirement of $T$ is covered by some $x\in S$, and $\X(T)$
-is the minimum cardinality of a suffixient set.
-\end{definition}
-\leanpoint{Sxgc.lean}{67}{requirements, suffixient}
+The container cannot be appended during the sweep. Member counts, directories, offsets and checksums
+depend on completed output; the final container is assembled after the sweep. Native recovery
+therefore restores spool and machine state and assembles once at EOF. Native finish recovery and
+whole-driver recovery are distinct: the native gate keeps sorter and emitter alive; the driver can
+replay them and finish.\ev{RESUME_DESIGN.md}{``Implemented finish protocol'', ``What differs'', and
+``Cannot be appended finding''}\ev{RESUME.md}{``Journal and publication'' and ``Measured gates:
+driver-side resume state''}
 
-\begin{definition}[Coverage classes]\label{def:classes}
-The \emph{coverage set} of position $x$ is
-\[
-C_T(x)\;=\;\{\,(w,c) : (w,c)\text{ is a requirement of }T\text{ and }wc
-\text{ is a suffix of } T[1..x]\,\},
-\]
-the set of requirements $x$ covers. Write $x\preceq y$ when
-$C_T(x)\subseteq C_T(y)$, and say $x$ is \emph{dominated by} $y$.
-Position $x$ is \emph{maximal} when $C_T(x)\neq\emptyset$ and no position
-strictly dominates it: $x\preceq y$ implies $y\preceq x$ for every
-position $y$. Two maximal positions are \emph{coverage-equivalent} when
-$C_T(x)=C_T(y)$. The \emph{maximal coverage classes} of $T$ are the
-equivalence classes of maximal positions under coverage equivalence---
-equivalently, the distinct inclusion-maximal coverage sets realized by
-positions of $T$.
-\end{definition}
-\leanpoint{Sxgc.lean}{777}{covSet, ScopeLe, IsMax, maxClassCount}
-
-\begin{theorem}[Characterization of $\X$]\label{thm:maxclasses}
-For every text $T$ over $\Sigma$, $\X(T)$ equals the number of maximal
-coverage classes of $T$.
-\end{theorem}
-\leanpoint{Sxgc.lean}{1863}{chi\_eq\_maxClasses}
-
-The proof's two halves are informative: ($\le$) the earliest representative of
-each maximal class is suffixient; ($\ge$) each maximal class has a
-\emph{private} requirement---one no other class's position can cover---which
-forces one position per class into any suffixient set. The private-requirement
-property is exactly the algebraic seed the lower bound of
-\S\ref{sec:floor} harvests.
-
-\begin{theorem}[Minimality transfer]\label{thm:chiLe}
-If $S\subseteq[1..n]$ is suffixient for $T$ then $\X(T)\le|S|$.
-\end{theorem}
-\leanpoint{Sxgc.lean}{889}{chi\_le\_of\_suffixient}
-
-\paragraph{The one-pass scan.} The reference construction is a single left-to-right
-pass over the \emph{triple stream} of $T$: for each suffix-array row $k$ of
-$T^{R}0$ (the reverse of $T$, terminated by the sentinel), the triple
-$(\mathrm{BWT}[k],\ \mathrm{LCP}[k],\ \mathrm{SA}[k])$. The scan maintains an
-\emph{armed candidate} (a tentative witness) and emits it at run boundaries;
-the emitted positions form the suffixient set. The reference scan is a
-functional mirror of the deployed scanner, verified against it by exhaustive
-differential testing on the full battery of test corpora.
-
-\begin{theorem}[The scan emits run edges]
-Every position emitted by the scan is the position of a run-edge row of
-the triple stream.
-\end{theorem}
-\leanpoint{Sxgc.lean}{5848}{scan\_emits\_run\_edges}
-
-\begin{theorem}[No duplicates, for all bounded streams]\label{thm:nodup}
-Let $ts$ be any finite triple stream---not necessarily one arising from a
-text---whose SA values are pairwise distinct and less than $N$, and whose
-LCP values are all at most the fixed bound $M$ of the scan. Then the scan
-of $ts$ emits no position twice.
-\end{theorem}
-\leanpoint{SxgcNodup.lean}{623}{scan\_nodup}
-
-This theorem was the construction's no-inflation pillar: for months it was
-carried as a named empirical hypothesis---$1.47$ million bounded test
-streams, zero violations---before being proven. The proof threads ten
-invariants through the scan and invokes the bound exactly once, to block
-re-arming a just-emitted position at run-length-one boundaries: the precise
-point where unbounded streams duplicate. The proof replaces the warrant.
-
-\paragraph{Dynamics under append.} Two machine-checked facts delimit any
-incremental or chunk-merged construction. First, \emph{witness revival}:
-appending text can resurrect a dominated position into a required
-witness---on the banked counterexample ($A=[1,2,2,\sep]$, $B=[1,\sep]$) a
-position dominated in $A$ is maximal in $A{+}{+}B$, and $\X$ strictly grows
-($\chi(A)=3$, $\chi(A{+}{+}B)=5$), with the new witnesses not confined to
-the appended chunk. Second, \emph{$\X$-count demotion}: $\X$ is not monotone
-under append. Appending can erase a terminal-context requirement---a context
-right-maximal only as a suffix of the old text---and demote an old maximal
-class with no compensating creation, so the count can \emph{decrease}
-(\texttt{chi\_append\_decreases}); even the single-document append unit of
-the merge world violates it
-(\texttt{chi\_single\_symbol\_document\_decreases}), so no prune-based
-incremental $\X$ maintenance is sound. The demotion mechanism is independent
-of revival, and both are machine-checked. The positive survivor is the
-delimiter case: when the old text ends in a symbol unique to it, $\X$ is
-monotone under append (\texttt{chi\_append\_unique\_last}).
-\leanpoint{SxgcRevival.lean}{104}{isMax\_J\_two}
-\leanpoint{SxgcRevival.lean}{171}{chi\_strictly\_grows}
-\leanpoint{SxgcChiMono.lean}{33}{chi\_append\_decreases}
-\leanpoint{SxgcChiMono.lean}{236}{chi\_single\_symbol\_document\_decreases}
-\leanpoint{SxgcUniDelim.lean}{151}{chi\_append\_unique\_last}
-
-\section{The Construction Capstone and Its Ledger}\label{sec:construction}
-
-The construction at scale replaces the text with a prefix-free parse
-$(\mathrm{parse},\mathrm{dict})$ and reconstructs the triple stream's LCP
-column by two-level fingerprint LCE over the parse. The capstone ties it
-together:
-
-\begin{theorem}[Construction capstone, conditional]\label{thm:capstone}
-Let $T$ be a text over $\Sigma$ and let $P$ be a well-formed parse of
-$T^{R}0$. Let $S$ be the list of positions emitted by the scan of the
-parse-based triple stream of $T$ and $P$. Suppose:
-\begin{enumerate}[label=(\roman*),leftmargin=*]
-\item $S$ is duplicate-free;
-\item every $x\in S$ is maximal;
-\item no two distinct $x,y\in S$ are coverage-equivalent;
-\item $S$ is suffixient for $T$.
-\end{enumerate}
-Then $|S| = \X(T)$.
-\end{theorem}
-\leanpoint{SxgcBuild.lean}{1242}{parseChi\_eq}
-
-The four stream hypotheses are named and tracked; their status as of this
-writing:
-
-\begin{itemize}[leftmargin=*]
-\item[(i)] \emph{Discharged}: the parse-based stream provably equals the
-text's own triple stream, whose SA values are pairwise distinct, so
-Theorem~\ref{thm:nodup} applies.
-\leanpoint{SxgcBuild.lean}{1224}{parseTriplesOf\_eq, parseScan\_eq}
-\item[(ii),(iii)] \emph{Reduced to the count side}: these are the two
-conditions that make the emitted list minimal---every emitted position is
-maximal, and no two emitted positions are coverage-equivalent. They are the
-capstone's remaining open obligations: the proven reduction
-\texttt{minimality\_lower\_of\_scan\_classes} turns them, together with
-no-duplicates, into the count bound $|S|\le\X(T)$ (the Lemma~34
-tie-breaking), which requires the LCP-maxima characterization of the
-emission rule. Its statement-level differentials report zero counterexamples
-over 729 exhaustive and 320 random, binary, and repetitive battery texts.
-\item[(iv)] \emph{Discharged outright}: every requirement is covered by some
-emitted position. The class-hit statement---every maximal coverage class
-contains an emitted position---is the conjunction of the run-edge hit
-property (proven outright, since every emitted position is a run-edge
-position by the theorem above) and the run-edge domination property, every
-run-edge position dominated by an emitted one, which is now also proven
-outright (\texttt{runEdgeDominate\_true}). The assembly run-edge hit $\to$
-class-hit $\to$ covering closes the coverage side unconditionally: the scan
-provably emits a suffixient set (\texttt{covering\_given\_stream}, until
-recently the development's largest open sorry).
-\end{itemize}
-\leanpoint{Sxgc.lean}{6007}{maxHit\_of\_runEdge, runEdgeHit\_of\_maxHit}
-\leanpoint{SxgcRunEdge.lean}{60}{runEdgeHit\_true}
-\leanpoint{SxgcRunEdge.lean}{240}{runEdgeDominate\_true}
-\leanpoint{Sxgc.lean}{5929}{covering\_given\_stream\_of\_maxHit}
-\leanpoint{Sxgc.lean}{7554}{covering\_given\_stream}
-\leanpoint{Sxgc.lean}{1955}{minimality\_lower\_of\_scan\_classes}
-
-\textbf{The honest ledger.} With run-edge domination proven, the capstone's
-single remaining obligation is the count side: $|S|\le\X(T)$, the statement
-that no suffixient set of positions is smaller than the emitted one. It is
-blocked on the LCP-maxima characterization of the scan's emission rule; it
-is not proven, and we do not claim it.
-
-\begin{theorem}[Determinism of the parse-space LCE]
-For a well-formed parse of $T$ and positions $i,j$: given any step budget
-of at least $n-i$, the two-level fingerprint LCE with direct verification
-returns the true longest-common-prefix length of $T[i..]$ and $T[j..]$.
-No probability appears anywhere: the equality is the oracle's
-certificate, not a hash-collision argument.
-\end{theorem}
-\leanpoint{SxgcBuild.lean}{1257}{VerifiedLCE\_determinism}
-
-\begin{theorem}[Explicit per-query bounds]\label{thm:bounds}
-Each text LCE costs at most
-$8\,(1+\tau+\ell)$ elementary steps, where $\tau$ is the fingerprint
-sampling period and $\ell$ the number of verified symbols.
-\end{theorem}
-\leanpoint{SxgcBounds.lean}{195}{textLCESteps\_bound}
-
-\begin{theorem}[Total work]\label{thm:totalwork}
-For any query batch, the scan's total step count is at most
-\[
-16\Big(\,\mathrm{count} + \mathrm{dictSize}
-+ |qs|\cdot\tau + \textstyle\sum_q \ell_q\Big),
-\]
-and for the construction's own queries at most
-$16\,(\mathrm{count}+\mathrm{dict}+n\,\tau+\sum_q \ell_q)$.
-\end{theorem}
-\leanpoint{SxgcBounds.lean}{229}{totalWork\_bound}
-\leanpoint{SxgcBounds.lean}{254}{parseTriplesLCEWork\_bound}
-
-We deliberately make no claim that the verification lengths $\ell_q$ are
-$O(\tau)$; they are measured (15.33 phrases per seed on average, 22{,}262
-maximum, on 30\,Gbp human data; \S\ref{sec:results}), and the sums remain
-explicit in the theorem.
-
-\section{Position Extraction by Inverse Permutation}\label{sec:phi}
-
-At scale the scan needs, for each run head, a text position; the classical
-route is an LF walk from the nearest sampled tail---measured at 2{,}156 steps
-per head on our corpora, an $\Omega(n)$ aggregate cost the construction cannot
-pay. The alternative is algebraic. Let $U$ be the indexed text (here
-$U=T^{R}0$) and write $\mathrm{pos}(a)$ for the text position of
-suffix-array row $a$. Let $\varphi$ be the suffix-order predecessor map
-on positions: $\varphi(p)$ is the position whose suffix immediately
-precedes the suffix at $p$ in suffix order, and $\varphi^{-1}$ its
-inverse. Then:
-
-\begin{theorem}[Heads by inverse permutation]\label{thm:headfromtail}
-For every row $a$ with $0<a<|U|$: 
-$\;\mathrm{pos}(a) = \varphi^{-1}\big(\mathrm{pos}(a-1)\big)$. In deployment
-the samples sit at run boundaries; the sample contract is the instance in
-which row $a-1$ ends a run and row $a$ begins the next: the head sample of
-run $a$ equals $\varphi^{-1}$ applied to the tail sample of run $a-1$.
-\end{theorem}
-\leanpoint{SxgcPhi.lean}{68}{headFromTail}
-\leanpoint{SxgcPhi.lean}{85}{runHeadFromTail}
-\leanpoint{SxgcPhi.lean}{91}{phiInv\_phi}
-
-With $\varphi^{-1}$ realized as a lookup over the sorted images of the sample
-intervals, every head costs one binary search: on 30\,Gbp human data, all
-$1.86\times10^9$ head positions were extracted in 751\,s at 64.8\,GB, versus
-a projected 38-hour walk---a $165\times$ replacement, with the extracted
-heads byte-identical to the walk baseline on the full corpus.
-
-\paragraph{Criterion C.} The correctness of the deployed $\varphi$ formula
-rests on a hybrid safety test, \emph{Criterion C}: for each run, either the
-corpus's byte-frequency gcd is one, or the run's cyclic SA domain is a
-singleton. Both halves that do not need a cyclic rotation model are
-machine-checked: gcd one rules out proper powers
-(\texttt{gcdOne\_not\_isPower})---periodicity being exactly the condition
-under which the order-preserving LF/$\varphi$ interval map gains
-equal-rotation ties---and on a singleton domain the affine formula is exact
-(\texttt{criterion\_singleton\_branch}). The $g{=}1$ half additionally rests
-on two bridges. Bridge (a) is proven: a text with byte-frequency gcd one is
-primitive, and all of its cyclic rotations are pairwise distinct
-(\texttt{byteFreqGcd\_one\_rot\_injective})---the classical
-Lyndon--Sch\"utzenberger route, formalized from scratch. Bridge (b)---order
-preservation of the LF/$\varphi$ interval map for a tie-free suffix order---
-remains statement-locked.
-\leanpoint{SxgcPhi.lean}{570}{byteFreqGcd\_one\_rot\_injective}
-\leanpoint{SxgcPhi.lean}{296}{gcdOne\_not\_isPower, criterion\_singleton\_branch}
-
-\section{Cyclic Frames and Seam Classes}\label{sec:seam}
-
-A compressed archive does not define a single text; it defines a family
-(the contigs) plus a convention. We adopt the \emph{canonical cyclic frame}:
-the corpus is the byte string $T = s_1 \sep s_2 \sep \dots \sep s_k \sep$
-($\sep$ a reserved separator byte, absent from the content; for DNA
-corpora it also orders below all content bytes), and
-the index is its suffix structure. The upstream front end, however, produces
-the BWT of the \emph{padded} string $T' = T\$^{w}$ under a cyclic
-convention. The two frames agree almost everywhere:
-
-\begin{definition}[Seam position]
-Row $i$ is a \emph{seam} position if its finite suffix is prefix-comparable
-with some other row's suffix.
-\end{definition}
-\leanpoint{SxgcSeam.lean}{137}{seamPos}
-
-\begin{theorem}[Identity outside classes]\label{thm:seam}
-For two non-seam rows, finite suffix order and cyclic rotation order agree.
-Moreover a non-seam row's order against \emph{every} row is stable, so
-in-class reordering can never displace a row across a non-seam row.
-\end{theorem}
-\leanpoint{SxgcSeam.lean}{117}{rot\_agree}
-\leanpoint{SxgcSeam.lean}{144}{identity\_outside\_classes}
-\leanpoint{SxgcSeam.lean}{157}{agreement\_with\_nonseam}
-
-The repair therefore: strip the padding block (whose structure the front
-end certifies), re-sort each seam class by cyclic comparison, splice, and
-coalesce. The repair is $r$-space and \emph{fails loudly} rather than pay
-$\Theta(n)$ on adversarial (fully periodic) corpora where the class structure
-degenerates---our policy is refusal, not a forbidden fallback. Measured:
-7 seam classes and 13{,}503 candidate rows at yeast235 ($3.34$\,Gbp,
-9{,}901 contigs); 7 classes and 1{,}161 rows at 30\,Gbp human scale. The
-in-class reordering lemma itself remains statement-locked with byte-level
-warrant (repair output equals a brute-force cyclic oracle on the full
-corpora).
-
-\section{The First Space Lower Bound}\label{sec:floor}
-
-No space lower bound proportional to any repetitiveness measure---not $r$,
-not $z$, not $\delta$, not $\X$---was previously known for any
-pattern-matching operation class (\S\ref{sec:related}). We work in the
-following index model. An \emph{oracle} is a function $f$ from words to
-positions or ``no answer.'' An oracle \emph{answers locate-one} correctly
-on $T$ if for every word $w$ occurring in $T$ it returns a genuine
-position $x\in[1..n]$ at which $w$ ends. An \emph{index} is a bit
-string $D$; its \emph{size} $\mathrm{space}(D)$ is its length in bits; a
-\emph{decoder} is a function $\mathrm{dec}$ from indexes to oracles, and
-an index \emph{realizes} the oracle $\mathrm{dec}(D)$ it decodes to.
-
-\begin{theorem}[Bridge]\label{thm:bridge}
-Let $f$ be any oracle that answers locate-one correctly on $T$. The set
-of positions that $f$ returns on $T$'s requirement words is suffixient
-for $T$, and consequently $\X(T) \le |E(f,T)|$, where $E(f,T)$ is the
-list of positions $f$ returns on the requirement words (duplicates
-allowed).
-\end{theorem}
-\leanpoint{LowerBound.lean}{145}{emitted\_suffixient}
-\leanpoint{LowerBound.lean}{158}{chi\_le\_of\_oracle}
-
-That is: \emph{any} index, however encoded, that answers ``where can this
-continue'' emits at least $\X$ positions. What the bridge does not give is
-that those positions must be \emph{stored}: a decoder could emit computed
-values. The missing ingredient is a family whose members' correct answers are
-pairwise incompatible, so no single decoder can serve two members; then a
-counting argument forces one distinct index per member.
-
-\subsection{The Continuation Bridge}\label{sec:contbridge}
-
-The locate-one demand---answer \emph{every} occurring word with an
-occurrence---is stronger than the position-answering world of language
-models needs. A \emph{continuation oracle} need only answer the forks
-themselves:
-
-\begin{definition}[Continuation oracle]\label{def:contcont}
-$f$ is a \emph{correct continuation oracle} for $T$ if for every
-requirement $(w,c)$ of $T$, $f$ returns on the continued word $wc$ a
-genuine position $x\in[1..n]$ at which $wc$ ends. Nothing is demanded of
-$f$ on any other word.
-\end{definition}
-\leanpoint{LM.lean}{59}{CorrectContinuation}
-
-\begin{theorem}[Locate-one subsumption]\label{thm:locimpcont}
-Every oracle that answers locate-one correctly on $T$ is a correct
-continuation oracle on $T$.
-\end{theorem}
-\leanpoint{LM.lean}{66}{correctLocateOne\_imp\_cont}
-
-Since requirement words occur, a correct locate-one oracle answers each fork
-query with an occurrence of the continued word---which is exactly a covering
-position. The continuation oracle is therefore the strictly weaker demand,
-and every result below covers the locate-one case while standing on its own.
-The continuation-bridge file is also the cleanest in the development: its
-axiom base is smaller than the standard three.
-
-\begin{theorem}[Continuation bridge]\label{thm:contbridge}
-If $f$ is a correct continuation oracle on $T$ then the positions $f$
-returns on $T$'s requirement words form a suffixient set, and
-consequently $\X(T) \le |E(f,T)|$ (duplicates allowed).
-\end{theorem}
-\leanpoint{LM.lean}{92}{emitted\_suffixient\_of\_cont}
-\leanpoint{LM.lean}{104}{chi\_le\_of\_cont\_oracle}
-
-\begin{theorem}[Distinct consultation]\label{thm:contdistinct}
-If $f$ is a correct continuation oracle on $T$ then across all fork
-queries, $f$ must \emph{consult} at least $\X(T)$ \emph{distinct}
-positions: $\X(T) \le |\mathrm{dedup}(E(f,T))|$, the number of distinct
-positions in $E(f,T)$.
-\end{theorem}
-\leanpoint{LM.lean}{154}{chi\_le\_of\_cont\_oracle\_distinct}
-
-The distinct form is the honest statement of ``must retain'': an oracle that
-re-emits one position $\X$ times has not consulted $\X$ positions. It
-holds because removing duplicates preserves suffixience while never
-growing the list, so the deduplicated emitted set is itself a suffixient
-set of genuine text positions.
-\leanpoint{LM.lean}{118}{suffixient\_dedup, dedup\_length\_le}
-
-\begin{theorem}[Fixed-decoder index form]\label{thm:realizedcont}
-For any decoder $\mathrm{dec}$ and index $D$: if the decoded oracle
-$\mathrm{dec}(D)$ is a correct continuation oracle on $T$, then it
-consults at least $\X(T)$ distinct positions on $T$'s forks.
-\end{theorem}
-\leanpoint{LM.lean}{166}{chi\_le\_of\_realized\_cont}
-
-This is ``any continuation-answering system must consult $\ge\X$
-distinct positions'' in its precise, kernel-checked form. The
-bridge-to-counting structure is now identical to the locate-one case
-(Theorem~\ref{thm:bridge} $\to$ Theorem~\ref{thm:pigeon} $\to$
-Theorem~\ref{thm:floor}); the continuation-counting analog of
-Theorem~\ref{thm:floor}---replacing the locate-one demand with the
-continuation demand in the family floor---is a mechanical
-follow-on, since the incompatibility machinery of the witness-perturbation
-family needs only that correct answers cover the requirements, which
-continuation answers do by definition. We do not claim it as proven here.
-
-\begin{theorem}[Pigeonhole]\label{thm:pigeon}
-Fix a decoder $\mathrm{dec}$ and $s\ge0$. Let $F$ be a duplicate-free
-family of texts, each served by some index of at most $s$ bits through
-$\mathrm{dec}$ by a correct locate-one oracle, and no two members of $F$
-admitting a common correct answer function. Then
-$|F| \le 2^{s+1}-1$.
-\end{theorem}
-\leanpoint{LowerBound.lean}{313}{family\_counting}
-
-\paragraph{The witness-perturbation family.} Fix $k\ge1$ and $L\ge1$.
-Block $i$ ($1\le i\le k$) lives on its own private two-letter alphabet
-$\{\rho_i,\mu_i\}$ with $\rho_i=2i+2$, $\mu_i=2i+3$ (all $2k$ letters
-distinct, and disjoint from the sentinel-free alphabet convention by
-construction): given an offset $0\le p_i\le L$, block $i$ is the
-length-$(L{+}1)$ word
-\[
-B_i(p_i) \;=\; \rho_i^{\,p_i}\;\mu_i\;\rho_i^{\,L-p_i},
-\]
-and the family member at offset vector $p=(p_1,\dots,p_k)$ is the
-concatenation $T(p)=B_1(p_1)B_2(p_2)\cdots B_k(p_k)$, of length
-$n=k(L+1)$. The \emph{half grid} is the set of offset vectors with
-$2p_i\le L$ for all $i$, of size $\lfloor L/2\rfloor+1$ per block. Three
-facts, all machine-checked, drive the counting: on the half grid
-$2k \le \X(T(p)) \le 3k-1$; members with distinct offset vectors admit
-no common correct answer function; and the half grid injects into texts.
-\leanpoint{LowerBound.lean}{688}{famText}
-\leanpoint{LowerBound.lean}{1921}{chi\_fam\_bounds}
-\leanpoint{LowerBound.lean}{2016}{fam\_forced\_incompat}
-\leanpoint{LowerBound.lean}{2347}{famText\_inj\_grid}
-
-\begin{theorem}[Family floor]\label{thm:floor}
-Fix $k\ge1$, $L\ge1$, a decoder $\mathrm{dec}$, and $s\ge0$. Suppose
-that for every half-grid offset vector $p$ there is an index $D$ with
-$\mathrm{space}(D)\le s$ such that $\mathrm{dec}(D)$ answers locate-one
-correctly on $T(p)$. Then for every half-grid $p^{0}$, writing
-$\X_0=\X(T(p^{0}))$ and $n=k(L+1)$,
-\[
-s + 1 \;\ge\; \left\lfloor \frac{\X_0\cdot\big\lfloor \log_2(n/\X_0)\big\rfloor}{3} \right\rfloor .
-\]
-(Both divisions are integer division; $\log_2$ is the integer logarithm,
-as in the formal statement.)
-\end{theorem}
-\leanpoint{LowerBound.lean}{2525}{fam\_floor\_chi}
-\leanpoint{LowerBound.lean}{2511}{fam\_floor}
-\leanpoint{LowerBound.lean}{2457}{fam\_floor\_half\_grid}
-
-Combining the family bound $\X_0\in[2k,\,3k-1]$ with $n=k(L+1)$, the
-right-hand side is $\Omega\big(\X\log(n/\X)\big)$ at the natural tier.
-
-\paragraph{What this does and does not establish.} It is the first space
-lower bound parametrized by a repetitiveness measure for a pattern-matching
-class (locate-one), and its rate is the natural tier
-$\X\log(n/\X)$. It is \emph{family-specific}: the incompatibility
-machinery is proven for the constructed family, and the general rung---every
-text, or a measure-theoretic statement---remains open, as does the placement
-of $\X$ against $\delta\log n$ that governs the general statement's final
-form (\S\ref{sec:open}). The index model is fixed-decoder with bit-space
-measurement; removing the fixed-decoder restriction is open. Since the
-continuation bridge (\S\ref{sec:contbridge}) has the same shape as the
-locate-one bridge, the continuation-counting analog of
-Theorem~\ref{thm:floor}---the same bound for indexes answering
-continuation queries only---is a mechanical follow-on; we record it as such,
-not as proven. One skeleton statement of the original proof plan was
-found \emph{refutable as locked} (a one-bit decoder serves the member
-$k{=}1$, $L{=}2$, $s{=}1$); the intended content is instead proven in its
-place, and Theorem~\ref{thm:floor} does not depend on the refuted
-statement. We record this because statement-lock discipline requires the
-counterexample to be visible, not buried.
-
-\section{The System}\label{sec:system}
-
-The deployed tool (\texttt{xsa build}) is one command:
-archive or FASTA/FASTQ/raw text in; a single container (\texttt{.sxi}) out,
-holding the run-length BWT with its character counts, both packed SA-sample
-sets (run tails and run heads), the anchors, the corpus names, and
-$\delta$-compressed $\X$. Publication is fail-closed: multi-string corpora
-require either byte-equal endpoint gates against an independently built
-control or an in-flight audit that verifies sampled witnesses directly
-against the source archive; corrupted sources and drifted tool binaries are
-rejected before any scratch is touched (a 75-artifact hash manifest pins
-every executable).
-
-\paragraph{No materialization.} The pipeline never writes the text to disk.
-The parse stage reads the compressed archive directly: we contributed an
-AGC reader mode to the prefix-free parser (patch against
-\texttt{marco-oliva/pfp}, PR materials prepared), which serves the canonical
-extraction---uppercase reversed contigs in archive order, separated and
-terminated by the reserved separator byte---from in-process archive queries
-with thread-parallel prefetch. Measured steady reader throughput is
-$440$--$535$\,MB/s at 16--96 threads on HPRC windows (73--87\% of the
-file-based control), and the full-corpus parse projects to $6.65$\,h.
-Downstream stages consume only parse-space and $r$-space artifacts; the
-audit fetches its 10{,}000 witness ranges from the archive.
-
-\paragraph{Stage inventory.} Parse (native archive read) $\to$ L2 parse
-$\to$ prefix-free BWT front end with an additive endpoint tap (a 27-line
-vendored patch emitting the run-tail SA samples the merge loop already
-computes; the head samples are untouched, byte-identical to upstream) $\to$
-endpoint normalization and seam repair (with refusal policy) $\to$ parse-space
-aggregate computation (two-level fingerprint LCE, O(1) resolve from head
-samples, streamed aggregate sweep) $\to$ container write and validation.
-
-\section{Results}\label{sec:results}
-
-\begin{table}[t]
-\centering\small
-\caption{Corpora and headline measurements. Every row is a from-zero
-build; the 466-haplotype value was reproduced by a second independent
-from-zero construction with a byte-identical container
-(\S\ref{sec:results}). Sources: Appendix~\ref{app:facts}.}
-\begin{tabular}{lrrrr}
+\section{Measured results}
+\begin{table}[ht]
+\centering
+\begin{tabular}{lr}
 \toprule
-Corpus & $n$ (bp) & strings & $\rparam$ (runs) & $\X$ \\
-\midrule
-yeast (single string) & $3.34\times10^9$ & 1 & $100{,}904{,}881$ & $85{,}404{,}240$ \\
-yeast235 (from AGC) & $3.34\times10^9$ & 9{,}901 & $100{,}905{,}045$ & $85{,}404{,}336$ \\
-k10 human subset & $3.02\times10^{10}$ & 865 & $1{,}859{,}825{,}862$ & $1{,}627{,}067{,}257$ \\
-HPRC 466 & $1.40\times10^{12}$ & 38{,}790 & $2{,}739{,}737{,}289$ & \hprcchi \\
+Pile input bytes & $\qnum{input}{10^{11}}$ \\
+Witnesses $\chi$ & $\qnum{chi}{24{,}185{,}339{,}204}$ \\
+$\chi/n$ (Pile; enwiki comparator) & $\qnum{density}{0.242}$; $\qnum{wikidensity}{0.156}$ \\
+Relative witness-density increase & $\qnum{densitydelta}{55}\%$ \\
+Container bytes & $\qnum{container}{63{,}163{,}489{,}696}$ \\
+Container / input & $\qnum{containerratio}{0.632}$ \\
+Wall (hours:minutes:seconds) & \qnum{wall}{12:35:10} \\
+Observed peak scratch bytes & $\qnum{scratch}{78{,}880{,}730{,}679}$ \\
+Observed peak scratch / input & $\qnum{scratchratio}{0.789}$ \\
+Waves & $\qnum{waves}{102}$ \\
+Ties & $\qnum{ties}{32{,}442{,}986{,}338}$ \\
+Order-tape peak RSS (GB) & $\qnum{orderrss}{108.7}$ \\
+Finish peak RSS (GB) & $\qnum{finishrss}{32.2}$ \\
 \bottomrule
 \end{tabular}
+\caption{Headline build receipt. $n$ is raw input bytes. Phase RSS peaks are separate observations,
+not a simultaneous process-tree total.}
+\label{tab:build}
 \end{table}
+All values in Table~\ref{tab:build} come from the headline receipt and its ``What this corrects''
+section.\ev{tools/binbwt/RESULTS_PILE_100GB.md}{opening build receipt and ``What this corrects''}
+The witness-density comparison measures corpus character; it is not a controlled comparison of
+algorithms. Scratch is an observed highwater, not a worst-case bound. The smaller-rung scratch
+ratios in older documents cannot be substituted for this receipt.
 
-\paragraph{Yeast, born from scratch.} The single-string yeast corpus indexes
-from zero in 26 minutes at 8.8\,GB peak: parse 79\,s, front end 624\,s,
-endpoints 25\,s, aggregates 833\,s at 3.7\,GB, sweep 15\,s at 6\,MB, write
-and validate 32\,s. The container is 1.80\,GB with $\X=85{,}404{,}240$
-embedded ($\delta$-ratio $0.1299$); the fresh tails and run table are
-byte-identical to the independently built pilot artifacts, and the fresh
-heads byte-identical to the $\varphi^{-1}$ extractor's output against the
-walk baseline. $\X/\rparam = 0.846$.
+\paragraph{Search certificate.}
+The command \texttt{query --limit \qnum{limit}{5}} for \verb| function | returns in $\qnum{querywall}{0.52}$ s with $\qnum{rss}{547}$ MiB RSS. Counts after the cache rewrite remain $\qnum{thecount}{704{,}942{,}163}$ for \verb|the |, $\qnum{harper}{55}$ for \verb|Harper Reed|, and $\qnum{functioncount}{4{,}785{,}152}$ for \verb| function |. The certificate uses independent corpus scanning, byte rereads and set comparisons. It verifies $\qnum{sample}{200{,}000}$ located positions for the latter pattern with no bad or duplicate offsets, but does not enumerate the complete answer through the index.\ev{tools/binbwt/RESULTS_PILE_100GB.md}{Search certificate, sections 1--2, ``Positions at scale''}
 
-\paragraph{Three builds, one answer.} The 9{,}901-contig yeast235 corpus was
-published three times from three independent toolsets (the original
-seam-repair toolchain, the native-archive toolchain, and a fresh-checkout
-sealed build under the distribution manifest): all three agree on all five
-core container members and on $\X = 85{,}404{,}336$.
+\paragraph{Recovery and the smaller rungs.}
+The killed-and-restarted driver run reports \texttt{avoided\_frac=\qnum{avoided}{0.295695}} and
+produces a byte-identical container. This summary combines phase-specific work units; it is not
+elapsed-time savings or the fraction of suffix sorting avoided. Remap was reused, while sort, emit
+and finish replayed.\ev{RESUME.md}{``150 MB killed mid-sweep, then restarted''} The earlier
+$\qnum{ten}{10}$ GB re-bank reports fused finish wall \qnum{tenwall}{31:12} and byte identity with
+its bank. Its convention-specific chi value is not interchangeable with subsequent virtual-END
+banks.\ev{RESULTS_10G_REBANK.md}{``The run''}
 
-\paragraph{The boundary-delta identity, measured.} The single-string and
-separated forms of the same yeast content differ by $+96$ in $\X$
-($85{,}404{,}336$ vs $85{,}404{,}240$, $k = 9{,}901$ separators): the
-separator-adjacent witnesses are the entire difference, a first measured
-instance of the boundary-delta identity. At 30\,Gbp human scale the
-canonical-frame $\X = 1{,}627{,}067{,}257$ differs from the historical
-BCR-frame value $1{,}627{,}063{,}183$ by $+4{,}074$
-($\approx 4.7$ per string, $k=865$). We record honestly that the
-\emph{same-frame witness attribution} of this delta is not proven; the
-statement-level theorem (separator insertion perturbs $\X$ by $O(k)$ terms)
-is stated and locked with its obstruction documented, and both measured
-deltas are consistent with it.
+The separate archive-based HPRC rung covers $\qnum{haps}{466}$ haplotypes with
+$\qnum{hprcn}{1{,}403{,}221{,}068{,}491}$ indexed symbols and $\qnum{hprcchi}{2{,}250{,}211{,}129}$
+witnesses; independent from-zero builds yielded byte-identical containers. This is evidence for a
+repetitive genomic workload and an archive route, not a full-Pile tape or search
+certificate.\ev{RESEARCH.md}{``THE 466 FROM-ZERO MILESTONE IS DONE'', lines 2460--2469} Earlier HPRC
+handoffs expose incompatible corpus joins and parse identities; those are not substitute
+oracles.\ev{bit6/H466_LANE_HANDOFF.md}{``Step 1 verdict'' and ``Pairing trap''}
 
-\paragraph{k10 from zero, twice.} The 30\,Gbp corpus was built twice
-independently (control and gated); the complete publications are
-byte-identical. Per-stage medians: parse 827\,s (9.7\,GB), L2 parse 54\,s,
-front end 7{,}910--8{,}211\,s (111\,GB), endpoints 1{,}556--1{,}731\,s
-(125\,GB), aggregates 8{,}829--10{,}155\,s (66\,GB), sweep 201--213\,s,
-write 416--490\,s, validate 129--138\,s; peak 134\,GB at 16 threads. The
-seam repair touched 7 classes / 1{,}161 rows at $1.86\times10^9$ runs.
+\paragraph{Query applications and serving.}
+The query interface exposes maximal exact matches (\texttt{mem}), exact seeds with a target
+multiplicity (\texttt{seeds}), rarity-weighted document/region ranking (\texttt{fanout}), and exact
+next-byte frequencies (\texttt{branches}). Rarity based on occurrence multiplicity is not
+automatically document-frequency IDF. The recorded Cat-article fanout ranks \emph{Cultural
+depictions of cats} highest, while also retrieving markup-related pages; this is an inspectable
+example, not a relevance benchmark. Its historical materialising reader consumed
+$\qnum{catrss}{269}$ GiB at peak and took $\qnum{catwall}{49.03}$ s. Those results must not be
+combined with the bounded reader's memory receipt.\ev{SERVING.md}{``Measured: the Cat article on the
+100 GB container'', and mem/seeds/fanout sections}
 
-\paragraph{HPRC 466, from zero, twice.} The full 466-haplotype HPRC
-collection---$n=1{,}403{,}221{,}068{,}491$ ($1.40$\,Tbp) over $38{,}790$
-strings, $\rparam=2{,}739{,}737{,}289$ runs---is constructed from zero by
-one knob-free command,
-\verb|xsa build --agc HPRC_r2_assemblies_0.6.1.agc --threads 48 --verify-text-sample 10000|,
-in $27.15$\,h wall, with the
-$10{,}000$-witness in-flight audit passing in-build. The result:
-$\X=\hprcchi$, so $\X/n=0.1604\%$ and $\X/\rparam=0.8214$; the container
-is $52{,}175{,}300{,}288$ bytes, sha256
-\texttt{2aca539e3747414e447372b9554f14613335162fd07c00c03599a1948198a8fb}.
-The number is unqualified: an independent full construction---a second
-$1.4$\,Tbp build from zero---reproduced it with a byte-identical container,
-same hash, same size. To our knowledge this is the largest suffixient-set
-construction to date, and it is byte-reproducible.
+The committed serving table reports $\qnum{ctx}{553.836}$ contexts/s with $\qnum{workers}{32}$
+workers, excluding loading and warmup. Later commit messages report a faster branch implementation,
+but the requested faster figure lacks a matching committed file receipt and exact measured
+invocation in this evidence set; it is excluded. Cold loading is outside warm throughput, and
+serving cold-start cost must be measured separately for the bounded
+reader.\ev{SERVING.md}{``Reproducible gates'' and ``Measured gates''}
 
-\paragraph{Five constructions, one answer.} On the web-text fragment
-(pile-frag; $n=1{,}082{,}130{,}213$ bytes, $\rparam=397{,}723{,}010$), five
-independent constructions produce the identical number $\X=306{,}164{,}765$
-and byte-identical core artifacts (the four output files of every merged
-route match the monolithic reference byte for byte): the monolithic PFP
-front end, a regenerated PFP reference, a small-scale BCR differential, a
-serial batch-merge of 16 document-aligned chunks, and a parallel merge tree
-over the same chunks. The honest price, at fragment scale: monolithic PFP
-builds in $4{,}789$\,s while chunking plus batch-BCR merge takes
-$20{,}868$\,s---the monolith wins, as predicted; the merged routes buy
-bounded-memory construction, not speed. The parallel tree at 16 chunks is
-nearly serial ($19{,}597$\,s vs $20{,}599$\,s serial, $1.05\times$)
-because the top level dominates: the final pairwise merge alone runs
-$16{,}063$\,s of the $19{,}597$\,s. The tree is a scaling answer, not a
-16-chunk speedup.
+\section{Negative results and oracle failures}
+\paragraph{A unique byte is not a minimal sentinel.}
+Appending \texttt{\qnum{sentinel}{0xF5}} removed seam classes and preserved the chi count but
+changed suffix order at rank $\qnum{rank}{5615}$. Agreement on a scalar statistic did not certify
+the order. The older convention required a minimal sentinel, and seam machinery could not be removed
+by choosing an absent high byte. Virtual END is an explicit convention change, not a
+reinterpretation of this failed experiment.\ev{RESULTS_SENTINEL_NEGATIVE.md}{``Experiments'' and
+``What this proves''}
 
-\begin{table}[t]
-\centering\small
-\caption{Measured archive-reader throughput (steady state, identical
-checksums against the file-based control in every row). Source:
-\repofile{bit6/sxi_logs/pfp-agc/THROUGHPUT.md}{sxi\_logs/pfp-agc/THROUGHPUT.md}.}
-\begin{tabular}{lrrrr}
-\toprule
-Corpus & $j$ & AGC MB/s & file MB/s & ratio \\
-\midrule
-yeast235 & 16 & 470.7 & 647.0 & 72.7\% \\
-yeast235 & 48 & 509.0 & 625.6 & 81.4\% \\
-yeast235 & 96 & 534.8 & 615.7 & 86.9\% \\
-HPRC windows & 16 & 509.1 & 692.7 & 73.5\% \\
-HPRC windows & 48 & 464.3 & 666.8 & 69.6\% \\
-HPRC windows & 96 & 437.6 & 730.1 & 59.9\% \\
-\bottomrule
-\end{tabular}
-\end{table}
+\paragraph{Row coding traded space for time.}
+The rowcode study strips a shared band prefix from on-disk rows. A partial large-corpus probe
+reduced row bytes by $\qnum{rowcut}{7.9}\%$; the measured smaller-rung sorter wall increased
+$\qnum{rowwall}{15.9}\%$. These are different scopes: the former is row encoding in an incomplete
+probe, not whole-build peak scratch. The paired $\qnum{ten}{10}$ GB runs reduced sampled total
+scratch by $\qnum{scratchcut}{3.48}\%$. The runs overlapped on a shared host, so the wall comparison
+is observational. The report's large probe path is Wikipedia, despite its ``pile''
+label.\old{e2f1a59b5a0f593c3aeb1c1f8a22d7fb48d82a5e}{tools/binbwt/RESULTS_ROWCODE.md}{T2--T4}
 
-\paragraph{Cost per run, honestly decomposed.} At yeast scale the container
-stores $17.9$ bytes per BWT run as built: $\approx5.0$ for the run-length
-BWT and counts, $\approx4.0$ for packed tails, $\approx8.0$ for heads
-(stored raw rather than packed---identified, not yet reclaimed),
-$\approx0.88$ for the $\delta$-coded witnesses. The representation floor
-for a locate-capable run-length index is $\approx12.7$\,B/run (two log-$n$
-sample words plus the run table). What the \emph{proven} theorem
-underwrites is different and smaller: Theorem~\ref{thm:floor} implies
-$O(\X\log(n/\X))$ \Bits\ of decision-structure storage is
-\emph{unavoidable}---at yeast, $\approx18.8$\,MB with the proven constant
-($0.19$\,B/run; $0.56$\,B/run at the natural tier without the constant
-$1/3$)---which underwrites about $4\%$ of the engineering floor. The
-witness member as built ($88.7$\,MB $=0.88$\,B/run) sits within
-$1.6\times$ of the natural tier. The honest reading: the samples and run
-table are representation cost (known, packable); the witnesses are
-decision-structure cost (provably irreducible below
-$\X\log(n/\X)$ bits, up to the constant we have proven).
+\paragraph{The chi rewrite that measurements retired.}
+The chi-on/off A/B attributes approximately $\qnum{chiram}{0.11}n$ RAM and $\qnum{chidisk}{0.13}n$
+published disk to chi. Earlier larger memory estimates were sampler artefacts; the measured delta
+retired a planned run-stream chi rewrite. This does not make total finish memory equal to chi's
+incremental cost.\ev{tools/binbwt/RESULTS_MEMORY_AB.md}{phase table and verdict}
 
-\paragraph{Container format v5.} The implicit-exception $\varphi$ encoding
-(singleton-run tails are implicit; $\varphi$ is stored only at
-non-singleton edges, ranked by a bitmap) ships as container format
-version 5 at all three scales, with every gate green at each (native,
-bounded, and HTTP byte-parity; $\X$ exact), measured against the
-immediately prior container generation in every case. Pile-frag:
-$2{,}606{,}290{,}008$ bytes ($2.61$\,GB), $0.502\times$ the prior form, at
-$\varphi=42.25$\,bits/run (from $63.36$)---and warm HTTP locate is
-\emph{faster} than the prior form ($0.325$ vs $0.362$\,ms: the exception
-path short-circuits the common case). Yeast: $0.924$\,GB ($0.653\times$,
-$\varphi=59.19$\,bits/run), warm $440$ vs $382$\,ms ($+15\%$). k10:
-$20.22$\,GB ($0.713\times$, $\varphi=71.96$\,bits/run), warm $4.61$ vs
-$3.47$\,ms ($+33\%$). The honest trade: $29$--$50\%$ smaller; warm latency
-improves where singleton runs dominate (web text) and regresses modestly
-where they do not (DNA).
+\paragraph{A watchdog was not a progress proof.}
+A time cap killed a healthy large run, and its replacement progress watchdog also killed on a
+heuristic. Both mechanisms were deleted. Failure propagation, ownership and credit invariants
+address correctness; elapsed time without visible activity does not prove
+deadlock.\ev{REPRODUCE.md}{build flags, ``There is no --timeout and no --stall-seconds''}
 
-\paragraph{The association floor, honestly.} The $\varphi$ association
-stands at $42.25$\,bits/run on the web-text fragment, and we record that
-the preflight's $25$--$30$\,bits/run projection was wrong: it assumed a
-compressible run permutation, which is refuted below. The honest floor
-under the current coding scheme is therefore approximately $42$\,bits/run
-on this corpus; the remaining levers (exception-value coding, adaptive
-models) are unmeasured and speculative.
+\paragraph{Grep was the wrong occurrence oracle.}
+\texttt{grep -o} counts non-overlapping matches. The pattern \verb| function | shares its trailing space with the next occurrence, so grep omitted $\qnum{missed}{192}$ real offsets. Independent scanning and index context queries recover the same missing set, with \texttt{VERIFY n=\qnum{missed}{192} ok=\qnum{missed}{192} bad=\qnum{bad}{0}}. An oracle must match the operation's overlap semantics. The absence of overlapping offsets in grep output cannot establish their absence in the corpus.\ev{tools/binbwt/RESULTS_PILE_100GB.md}{Search certificate, ``The 192-offset discrepancy''}
 
-\paragraph{Witness-anchored locate.} \verb|mems --first| answers
-find-one-position queries from a $\chi$-edge bitmap (a $2$-bit/run sidecar:
-$25.2$\,MB at yeast, $99.4$\,MB at pile-frag, $\approx 2\%$ of the
-artifact) plus stored-$\varphi$ recovery; neither route enumerates
-occurrences or walks LF. Gates: $1000/1000$ correct decisions on both
-corpora, and every returned position is text-verified as a true occurrence
-($872/872$ yeast, $778/778$ pile-frag). Speed: yeast first-position
-$0.513$\,ms against $5.671$\,ms full locate ($11\times$); pile-frag
-$0.369$ vs $0.410$\,ms (its full locate is already near the warm floor).
-The honest limitation, caught before banking: $\chi$ members are
-end-positioned (requirement ends) while occurrence starts depend on $|P|$,
-so ``the pattern's BWT interval contains a witness row'' is false in
-general---the static bitmap misses $390/870$ (yeast) and $425/778$
-(pile-frag) occurring probes---and the toehold fallback covers every miss
-with no enumeration. Find-one-position is witness-anchored for the
-end-positioned requirement; the start mapping needs $|P|$.
+\section{Related work}
+Manber and Myers' suffix arrays provide lexicographic access to suffixes~\cite{sa}. Ferragina and
+Manzini's FM-index supplies compressed backward search~\cite{fm}; RLBWT and the r-index exploit BWT
+runs for compressed search and locating~\cite{rindex}. This implementation uses that lineage and
+makes no claim to originate it or improve its asymptotic bounds.
 
-\paragraph{Negative results, banked.} Three refutations are recorded
-because each killed a design lane. (1) \emph{Stable interleave merges are
-impossible}: the cyclic BWT of $A{+}{+}B$ is not a stable interleave of the
-BWTs of $A$ and $B$, even at byte/run granularity ($7$ of $20$ synthetic
-separator-aligned pairs obstruct), because rotations of $A$ continue into
-$B$ under the cyclic frame---interleaving points depend on cross-LCPs,
-not on either input's internal order, so a correct merge must recompute
-cross-boundary structure. (2) \emph{Witness-restricted run structures
-break backward search}: witness-free runs are $18.4$--$25.6\%$ of
-$\rparam$ (yeast $20.6\%$, pile-frag $25.6\%$, k10 $18.4\%$), and a
-modeled index that retains only the $\chi$-anchored skeleton fails
-routing on $99$--$100\%$ of real MEM queries ($1001$ per corpus), which hit
-backward-search steps inside witness-free intervals where the skeleton
-cannot supply rank; repairing the routing with packed LF starts pushes the
-pile projection to $5.861$\,TB against the $5.378$\,TB baseline---the fix
-costs more than the win. The run-length BWT's witness-free runs are
-load-bearing: $\X$ rides the artifact, it does not drive it. (3) \emph{The
-run permutation is incompressible}: exact gamma-Golomb accounting puts
-it at flat-code cost on real corpora (yeast $28.16$, pile-frag $30.35$
-bits), and the earlier $12.29$-bit delta-entropy
-estimate was a sampling artifact (unique-sample entropy
-$\approx\log_2 5000$); the claim that the permutation compresses more than
-$2\times$ is retracted.
+Yamamoto and Church (\qnum{ycdate}{2001}) explicitly compute term and document frequencies for all
+substrings using suffix arrays~\cite{yc}. Thus an implicit inventory of all n-grams and their
+frequencies is prior art. Lodhi et al.\ (\qnum{lodhidate}{2002}) develop string kernels over
+character subsequences, including comparison with contiguous features~\cite{lodhi}; using
+corpus-derived string features is likewise established. IDF is an established term-specificity
+weighting, and applying it to n-grams does not create a distinct indexing concept~\cite{idf,yc}. Our
+fanout example is evidence of an implemented application, not a claim of a new ranking principle. We
+do not provide a matched hardware comparison with these systems and therefore make no
+state-of-the-art speed claim.
 
-\section{The Fork Skeleton and the Reader}\label{sec:lm}
+\section{Limitations and reproduction}
+There is no append-into-container operation. Native finish recovery does not establish incremental
+whole-driver recovery. There is no search certificate at the true $\qnum{fullpile}{1.31}$ TB Pile
+scale. The Pile count and sampled-location certificate does not exhaustively validate all returned
+rows for its common pattern. Resource caps on sorting arenas and decoded blocks are not
+corpus-independent bounds on total build memory. The observed $\qnum{rsscap}{550}$ MiB query
+envelope depends on the rebuilt reader and its residency controls. Cold-start and long LF walks
+remain serving costs; the requested cold-first-answer time is unverified in the committed evidence
+and is not reported as a measurement.\ev{tools/binbwt/RESULTS_PILE_100GB.md}{``Pile projection'' and
+Search certificate limitations}
 
-The continuation bridge has a reader-facing reading that deserves its own
-statement, because it is the reason we believe $\X$ measures something about
-\emph{corpora} rather than only about indexes.
+\texttt{REPRODUCE.md} documents installation, raw-byte input, flags and query gates. The following
+commands reproduce the interfaces; the historical headline build receipt does not record its
+complete original invocation, so this build command is an explicit reproduction recipe, not a
+recovered benchmark command. Use a dedicated scratch directory and a memory budget appropriate to
+the host. The input file must already be the desired Pile prefix.
+\begin{verbatim}
+cd xsa && cargo build --release
+cd ..
+xsa/target/release/xsa build --tape --input "$CORPUS" \
+  --scratch "$SCRATCH" --threads 16 --memory-gb 24 --with-chi
+xsa/target/release/xsa query "$CONTAINER" --limit 5 " function "
+xsa/target/release/xsa query "$CONTAINER" --count "the " "Harper Reed" " function "
+PATH="$PWD/xsa/target/release:$PATH" \
+  tools/binbwt/pile_search_certificate.sh \
+  "$CONTAINER" "$CORPUS" " function " 200000
+\end{verbatim}
+The certificate script performs corpus scanning and byte verification in addition to index queries.
+Reissue the identical build command with the same scratch directory to test recovery; consult
+\texttt{RESUME.md} for fault hooks and \texttt{RESUME\_DESIGN.md} for native-only gates.
+\texttt{NUMBERS.md} separates original commands, reconstruction recipes, and unavailable command
+provenance. No large build or query experiment was rerun for this paper.
 
-\paragraph{The decision structure of a corpus.} Combine the two bridge forms
-with the forced/fork split. Every position of $T$ is either \emph{forced}---a
-unique continuation, bookkeeping, compressible without loss of
-answerability---or part of a \emph{fork}: a right-maximal context with $\ge 2$
-continuations, witnessed by some requirement. Theorem~\ref{thm:contdistinct}
-says any system that answers continuation queries \emph{with positions} must
-consult $\ge\X$ distinct fork-adjacent positions; it may discard
-\emph{everything else}. The corpus's decision structure is thus precisely
-$\X$-shaped: $n - \X$ bytes of inevitability plus a sparse skeleton of
-genuine choices, and the theorem prices the skeleton at
-$\Omega(\X\log(n/\X))$ bits (Theorem~\ref{thm:floor}, family-specific form).
-At 466-haplotype scale the skeleton is $0.16\%$ of the corpus: a system that
-has retained the forks has retained what cannot be compressed away, and a
-system that has not, cannot answer.
-
-\paragraph{The memorization-externalization thesis, now warranted.} A
-language model trained on a corpus is, among other things, a system that
-answers continuation queries. The design thesis this project's companion
-specification pursues---\emph{memorize nothing, externalize the rulebook into
-the index, spend network capacity on the policy of choosing among forks}---now
-has its formal warrant: by Theorem~\ref{thm:contdistinct}, the
-index-retained positions are not an optimization but a \emph{necessity} for
-any position-consulting continuation system; and by the forced/fork split, a
-model may offload the $n - \X$ inevitable bytes entirely. The bridge is
-direct evidence for the position-consulting regime; whether an implicit
-(weight-space) continuation system must obey the same bound is a
-statement-lock candidate we do \emph{not} claim. The fork-conditioned
-architecture (hard-masked next-byte prediction at the forks, free passage at
-forced positions, witness pointers as episodic memory) is specified and
-compute-audited in the companion document; its evaluation is future work.
-
-\section{Related Work}\label{sec:related}
-
-Our survey (verified against fetched sources; the full annotated map with
-arXiv links is \repofile{lean/LOWER_BOUND_PLAN.md}{LOWER\_BOUND\_PLAN.md})
-found:
-
-\textbf{No space lower bounds for pattern matching.} The r-index
-\cite{r-index} achieves $O(r)$ words with optimal-time count/locate---where
-``optimal'' is time-optimal \emph{within} that space; no $\Omega(r)$ space
-bound for count or locate exists in anything we found. MONI
-\cite{moni} finds MEMs in $O(r)$ space; the measure paper
-\cite{measure-paper} proves $\gamma \le \X \le 2\overline r$ and that
-suffixient sets are attractors (giving $O(\X\log(n/\X))$-space text
-storage), and proves minimality \emph{among suffixient sets}; the
-bridge-and-counting construction of \S\ref{sec:floor} is, as far as the
-survey found, the first lower bound transferring that minimality to answer
-functions of arbitrary (fixed-decoder) indexes.
-
-\textbf{Attractors and the collapse program.} String attractors
-\cite{attractors} lower-bound every dictionary-compression measure and
-carry a time-space access tradeoff; since $\gamma\le\X$, attractor floors
-transfer only up to the $\X$-vs-$\gamma$ gap (on de Bruijn-like families
-$\X$ can exceed $\gamma$ asymptotically, which is exactly where our
-witness-perturbation counting must do its own work). The suffix-array
-collapse theorem \cite{collapse} gives full SA functionality in
-$\delta$-space, and SODA 2026 equivalences \cite{soda26} map the tradeoff
-landscape; whether pattern matching (not just SA access) collapses to
-$\delta$-space is open and governs our general rung (\S\ref{sec:open}).
-
-\textbf{MEMs in compressed space.} Navarro computes MEMs on repetitive
-collections in $O(\delta\log n)$ words \cite{navarro-mems}; this is the
-upper bound that links any $\X$-floor to the open
-$\X$-vs-$\delta\log n$ placement: if $\X = O(\delta\log n)$ always, the
-natural-tier floor is consistent; if not, an $\Omega(\X)$ floor for MEMs is
-refuted and the floor delimits precisely which operations it governs.
-
-\textbf{Construction tools.} Prefix-free parsing \cite{pfp}; the r-index
-BWT construction and its front end (r-pfbwt); the AGC archive format
-\cite{agc} whose native range queries our parser now consumes; ropebwt3
-\cite{ropebwt3}, whose MEM output format our query layer emits byte-compatibly
-(verified against the reference implementation built from source on 23
-fixtures).
-
-\section{Open Problems}\label{sec:open}
-\begin{enumerate}[leftmargin=*]
-\item \textbf{The minimality lower bound.} Run-edge domination---the
-capstone's last coverage-side hypothesis---is now proven
-(\texttt{runEdgeDominate\_true}), so the scan provably emits a suffixient
-set. What remains is the count side: $|S|\le\X$, the Lemma~34 tie-breaking
-(emitted positions maximal, pairwise coverage-distinct), which requires
-the LCP-maxima characterization of the emission rule. Zero measured
-counterexamples.
-\item \textbf{The general floor.} Theorem~\ref{thm:floor} is
-family-specific; the general rung requires either a measure-theoretic
-incompatibility construction or the negative resolution via
-$\X$-vs-$\delta\log n$. The continuation-counting analog (same bound for
-continuation-only indexes; the bridge shapes are identical, \S\ref{sec:contbridge})
-is the nearest mechanical step.
-\item \textbf{The implicit form.} Whether a weight-space (non-position-consulting)
-continuation system---e.g.\ a trained language model without retrieval---must
-obey the $\Omega(\X)$ bound is not claimed; a statement-lock candidate is
-recorded in the companion specification, unproven.
-\item \textbf{Minimality of $\X$ itself} among repetitiveness measures for
-this operation class, and the exact constant of
-Theorem~\ref{thm:floor} (currently $1/3$).
-\item \textbf{The seam reordering lemma} (in-class spliced output equals
-cyclic order): statement-locked, byte-warranted, unproven.
-\item \textbf{The boundary-delta identity}: $\X$ of the $k$-fold
-separator insertion differs from $\X$ of the base text by $O(k)$;
-obstruction documented (position-shift/coverage coupling in the class
-characterization).
-\end{enumerate}
-
-\section*{Acknowledgments}
-The corrections ledger of this project---twelve entries at the time of
-writing, every one caught before it reached a claim---is the real
-acknowledgments section; the method is the coauthor.
-
-\bibliographystyle{plain}
-\bibliography{refs}
-
-\appendix
-\section{Claim-to-Artifact Map}\label{app:facts}
-Every numeric and formal claim above, with its machine source, is listed
-in \repofile{paper/FACTS.md}{paper/FACTS.md} in the repository: for each
-formal statement it pairs the exact mathematical form printed here with
-the exact Lean statement (verbatim) and its file and line; for each
-measurement it names the log artifact and the recorded value. The Lean
-sources are in \repofile{lean/}{lean/}; the measurement records in
-\repofile{bit6/sxi_logs/}{bit6/sxi\_logs/} and the running ledger in
-\repofile{RESEARCH.md}{RESEARCH.md}. All links are commit-pinned
-(\small\texttt{\sxgchash}).
-
+\begin{thebibliography}{9}
+\bibitem{sa} U. Manber and G. Myers. \emph{Suffix Arrays: A New Method for On-Line String Searches}.
+SIAM Journal on Computing. \url{https://doi.org/10.1137/0222058}.
+\bibitem{fm} P. Ferragina and G. Manzini. \emph{Opportunistic Data Structures with Applications}.
+\url{https://people.unipmn.it/manzini/papers/focs00.html}.
+\bibitem{rindex} T. Gagie, G. Navarro and N. Prezza. \emph{Fully-Functional Suffix Trees and Optimal
+Text Searching in BWT-runs Bounded Space}. \url{https://arxiv.org/abs/1809.02792}.
+\bibitem{yc} M. Yamamoto and K. W. Church. \emph{Using Suffix Arrays to Compute Term Frequency and
+Document Frequency for All Substrings in a Corpus}. Computational Linguistics.
+\url{https://aclanthology.org/J01-1001/}.
+\bibitem{lodhi} H. Lodhi, C. Saunders, J. Shawe-Taylor, N. Cristianini and C. Watkins. \emph{Text
+Classification using String Kernels}. JMLR. \url{https://jmlr.org/papers/v2/lodhi02a.html}.
+\bibitem{suffixient} H. Fujimaru, G. Navarro, G. Romana and C. Urbina. \emph{Smallest Suffixient
+Sets: Effectiveness, Resilience, and Calculation}. \url{https://arxiv.org/abs/2506.05638}.
+\bibitem{idf} S. Robertson. \emph{Understanding Inverse Document Frequency: On Theoretical Arguments
+for IDF}. \url{https://www.staff.city.ac.uk/~sbrp622/idfpapers/Robertson_idf_JDoc.pdf}.
+\end{thebibliography}
 \end{document}
