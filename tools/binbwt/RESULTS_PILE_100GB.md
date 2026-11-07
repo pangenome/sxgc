@@ -221,6 +221,12 @@ so no overlapping matches exist". Offsets 9 apart is precisely what `grep -o`
   `posset verify corpus " function " <those 50k>` ->
   **50,000/50,000 carry the exact bytes, 0 bad**, 50,000 unique, and
   `posset diff <50k> <scan set>` -> **0 outside the scanner's set**.
+- `xsa verify <pile> --corpus <corpus> --limit 200000 -j 200 " function "`
+  (the largest run in this certificate): **200,000 located positions in 3,043.60 s
+  at load 55-80, RSS 419924 kB, `VERIFY_TOTAL patterns=1 positions=200000 bad=0
+  duplicates=0`**, 200,000 unique, and all 200,000 are members of the scanner's
+  4,785,152-offset set (`posset diff` -> `a_not_b=0`). 4.2% of the answer, byte
+  verified and set verified.
 - `xsa verify <pile> --corpus <corpus> --limit 5000 -j 48 "the "`:
   `VERIFY id=0 len=4 occurrences=704942163 located=5000 unique=5000 bad=0 dup=0`,
   `VERIFY_TOTAL patterns=1 positions=5000 bad=0 duplicates=0`,
@@ -237,11 +243,16 @@ so no overlapping matches exist". Offsets 9 apart is precisely what `grep -o`
   (`positions_located=5743`, WALL 251 s, RSS 448 MiB). So the index knows every
   region of this file, not just the 192-offset neighbourhood.
 - The full 4,785,152-position enumeration (`--all`) was **not** run end to end:
-  it is ~1.6e10 LF steps and measured at 149-573 s per 20,000 positions on 200
-  threads, i.e. 10-38 h. Residual risk and why it is small: counts agree exactly
-  (total and 256/256 classes), 50,000 sampled rows byte-verify with no duplicate,
-  and the 192 rows grep dropped were located exactly. What is *not* proven row by
-  row is that no bogus row hides among the unsampled 99%.
+  the 200,000-position run above moved at 15.2 ms/position (9.5e8 LF steps,
+  1.0e9 block decodes), so the whole answer is ~1.6e10 LF steps and 10-20 h at
+  200 threads. Residual risk, stated plainly: what is proven is the count (total
+  and 256/256 preceding-byte classes against an independent enumeration), the
+  byte-exactness of 200,000 sampled rows with no duplicate, the reverse
+  direction (997/997 random truth offsets located exactly), and the 192 rows grep
+  dropped. What is *not* proven row by row is that no bogus row hides among the
+  unsampled 96% - it would have to be a set of the same size, differing from the
+  byte-level truth in fewer than 1 row in 24, and the class decomposition makes
+  that implausible but not impossible.
 
 ## 3. `xsa verify`: the byte certificate as a verb
 
