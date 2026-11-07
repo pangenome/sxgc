@@ -214,14 +214,22 @@ int main(int argc, char **argv) {
             if ((off_t)hi > sz) hi = (uint64_t)sz;
             size_t l = (size_t)(hi - lo);
             pread_exact(fd, lo, buf, l);
+            int usable = 1;
             for (size_t k = 0; k < l; k++) {
                 if (buf[k] == 0x1e || buf[k] == 0) {
-                    fprintf(stderr, "posset: window at %llu contains byte 0x%02x; "
-                                    "cannot be passed as a pattern\n",
-                            (unsigned long long)v[i], buf[k]);
-                    return 1;
+                    usable = 0;
+                    break;
                 }
             }
+            if (!usable) {
+                // A window carrying a record separator or a NUL cannot travel as a
+                // pattern. It is SKIPPED, and one KEEP/SKIP line per input offset
+                // goes to stderr in input order, so a caller can line the emitted
+                // windows up with its own offsets without guessing.
+                fprintf(stderr, "SKIP %llu\n", (unsigned long long)v[i]);
+                continue;
+            }
+            fprintf(stderr, "KEEP %llu\n", (unsigned long long)v[i]);
             if (fwrite(buf, 1, l, o) != l) die("fwrite");
             fputc('\0', o);  // NUL-terminated: a window may contain a newline
         }

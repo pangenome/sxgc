@@ -81,13 +81,36 @@ xsa query <pile> --count " function "    -> 0   function       4785152  WALL 0.0
 All three unchanged, which is the point: the rewrite changed the memory model,
 not an answer.
 
-### What the bounded reader pays, measured
+### What the bounded reader pays, measured (A/B against the base reader)
 
-| | 150 MB `L150/t150m.sxi2` | 10 GB `g10/pile-10b-snap.sxi2` | 100 GB pile |
-| --- | ---: | ---: | ---: |
-| open (`QLITE_BUILD`) | 15 ms | 17 ms | 28 ms |
-| query, oracle gate | 5.4 s (100 patterns, 574 positions) | 0.18 s (20 patterns) | 0.07 s (`--count`) |
-| peak RSS | 113 MB | 439 MB | 547 MiB (`--limit 5`) |
+Same binaries, same fixtures, one box, load average 65-78 throughout (another
+user's 24-thread FastGA and R jobs). `BASE` is `d526d99` built in
+`/tmp/bc-base-target`.
+
+| | BASE 150 MB | HERE 150 MB | BASE 10 GB | HERE 10 GB | HERE pile |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| open (`QLITE_BUILD`) | 105 ms | 15 ms | **61,092 ms** | 17 ms | 28 ms |
+| run columns materialised | 754 MB | **0** | **45.8 GB** | **0** | **0** |
+| query wall (whole gate) | 362 ms | 5,362 ms | 7.9 ms | 178 ms | 0.5 ms (`--count`) |
+| end-to-end gate wall | 0.66 s | 5.4 s | 65.75 s | 0.23 s | 0.52 s (`--limit 5`) |
+| peak RSS | 747 MiB | 110 MiB | **45.7 GiB** | 429 MiB | 547 MiB |
+
+The trade is explicit and it goes both ways: at 150 MB the materialising reader
+answers 15x sooner (it pays 105 ms once instead of ~2 us per block decode), and
+at 10 GB it is already 285x SLOWER end to end (61 s of open against 17 ms) while
+holding 45.7 GiB. The bounded reader's cost does not depend on n; the
+materialising reader's does, and on this container it does not fit at all:
+
+```
+BASE on the pile, address space capped so it cannot allocate 414 GB:
+  memory allocation of 125526390776 bytes failed      (the second run column alone)
+  note: run with `RUST_BACKTRACE=1` ...  signal 6
+```
+
+i.e. `heads` (31.4 GB) + `lengths` (125.5 GB) + `seen` (251 GB) + the row
+directory. The refusal the operator saw is the same arm with the memory check
+tripping first (`qlite.rs:1046`, "this reader materialises the run stream at
+open (414,210,770,038 bytes ...)").
 
 Four measurements drove the final shape, each of them a real defect first:
 
@@ -193,10 +216,26 @@ so no overlapping matches exist". Offsets 9 apart is precisely what `grep -o`
 
 ### Positions at scale
 
-- `xsa verify <pile> --corpus <corpus> --limit 50000 -j 200 " function "`:
-  **50,000/50,000 located positions carry the exact bytes**, 50,000 unique, and
-  **all 50,000 are members of the scanner's 4,785,152-offset set** (0 outside).
-  Wall 1,048 s at load 65-77.
+- `xsa query <pile> --limit 50000 -j 200 " function "`: 50,000 located positions
+  in 1,048 s at load 65-77, then
+  `posset verify corpus " function " <those 50k>` ->
+  **50,000/50,000 carry the exact bytes, 0 bad**, 50,000 unique, and
+  `posset diff <50k> <scan set>` -> **0 outside the scanner's set**.
+- `xsa verify <pile> --corpus <corpus> --limit 5000 -j 48 "the "`:
+  `VERIFY id=0 len=4 occurrences=704942163 located=5000 unique=5000 bad=0 dup=0`,
+  `VERIFY_TOTAL patterns=1 positions=5000 bad=0 duplicates=0`,
+  WALL 206.33 s RSS 549356 kB.
+- `xsa verify <pile> --corpus <corpus> --limit 5000 -j 64 " the "` (the
+  spaced variant): `located=5000 unique=5000 bad=0`, WALL 223.96 s RSS 554736 kB.
+- `Harper Reed` (55) and `Erik Garrison` (10): xsa's COMPLETE position sets
+  (`--all`) are identical, offset for offset, to the independent scanner's.
+- **The other direction - truth -> index.** 1000 offsets drawn uniformly from the
+  scanner's 4,785,152-offset set (seed 20261106), a 42-byte window at each, and
+  `xsa query --all -- <windows>`: 997 windows were representable as patterns (3
+  contain the record separator or a NUL) and **997/997 window starts were
+  located at exactly the offset they were taken from**
+  (`positions_located=5743`, WALL 251 s, RSS 448 MiB). So the index knows every
+  region of this file, not just the 192-offset neighbourhood.
 - The full 4,785,152-position enumeration (`--all`) was **not** run end to end:
   it is ~1.6e10 LF steps and measured at 149-573 s per 20,000 positions on 200
   threads, i.e. 10-38 h. Residual risk and why it is small: counts agree exactly
