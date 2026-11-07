@@ -2,7 +2,8 @@
 # Q5 gate: the v6-lite query reader on the 10 GB pile container, low-count rows
 # only (>=10 patterns with oracle count <= 3, counts AND positions exact).
 #
-# Container: /mnt/nvme2n1/erikg/r10g-m96/pile-10b-snap.sxi2
+# Container: /mnt/nvme2n1/erikg/g10/pile-10b-snap.sxi2 (the r10g-m96 4.5 GB fixture is
+#            gone; this is the same 10 GB text with the block-compressed m1..m13)
 #            (n=10000017259, R=3474889847, 4.5 GB, v6 lite m1,m4,m5,m7,m10,m11)
 # Oracle:    /tmp/g10/oracle.tsv (idx<TAB>true_count<TAB>pos,pos,...)
 #            /tmp/g10/pats.fa   (FASTA, same idx order)
@@ -13,7 +14,7 @@
 set -u
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 XSA=${XSA:-$ROOT/xsa/target/release/xsa}
-C=${C:-/mnt/nvme2n1/erikg/r10g-m96/pile-10b-snap.sxi2}
+C=${C:-/mnt/nvme2n1/erikg/g10/pile-10b-snap.sxi2}
 ORACLE=${ORACLE:-$ROOT/tools/binbwt/tests/fixtures/query10-oracle.tsv}
 PATS=${PATS:-$ROOT/tools/binbwt/tests/fixtures/query10-pats.fa}
 J=${J:-32}

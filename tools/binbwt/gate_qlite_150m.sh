@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Q1 gate: the v6-lite query reader against the 150 MB fixture oracle.
 #
-# Container: /mnt/nvme2n1/erikg/wip-lce150/t150m.sxi2  (n=150000002, R=57279194)
+# Container: /mnt/nvme2n1/erikg/L150/t150m.sxi2 (n=150000002, R=57279194)
+#            (the older wip-lce150 fixture is pre-block-compression m1 codec 101 and is
+#             refused by name; L150 is the block-compressed fixture with the same text)
 # Oracle:    tools/binbwt/oracle.tsv  (100 patterns, idx<TAB>count<TAB>pos,pos,...)
 #            independently re-verified against the corpus (/dev/shm/t150m.txt):
 #            574/574 positions land on the pattern and all 100 counts agree.
@@ -12,7 +14,7 @@
 set -u
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 XSA=${XSA:-$ROOT/xsa/target/release/xsa}
-C=${C:-/mnt/nvme2n1/erikg/wip-lce150/t150m.sxi2}
+C=${C:-/mnt/nvme2n1/erikg/L150/t150m.sxi2}
 PATS=$ROOT/tools/binbwt/pats.fa
 ORACLE=$ROOT/tools/binbwt/oracle.tsv
 J=${J:-16}
