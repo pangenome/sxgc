@@ -168,6 +168,17 @@ finish argument, no env knob, no format byte changed.
   `chain::tests::skip_fit_check_is_the_flag_and_allow_infeasible_is_a_silent_alias`,
   `chain::tests::the_shape_is_chosen_explicitly_and_only_one_shape_is_priced`).
 
+### Two notes on replicating these transcripts
+
+- `free_gb=` / `mem_available_gb=` are LIVE survey values (`df` on the scratch
+  device, `/proc/meminfo`): other jobs move them, so a re-run of F1-F4 differs
+  only in those figures and in the shortfall that follows from them (995.3-995.7
+  GiB free was seen during this session). Every structural field — shape, peak,
+  n-multiple, model line, shortfall arithmetic, override text — is identical.
+- F5 was run TWICE, the second time on the final tree of this branch: chi
+  44,034,230 and container sha256 `f6abd41d…53f624b3e` both times, so the last
+  two commits (plan-print only) changed no product byte.
+
 ## Residual risks
 
 - The tape peak is a MEASURED n-multiple on one corpus family (the Pile at
