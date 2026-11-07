@@ -35,6 +35,12 @@ brute force on Pile data". This is that, and it corrects two things at once: the
 reader could not locate on this container at all, and the count it *could* report
 was being compared against a tool that undercounts.
 
+Container under test: `/mnt/nvme2n1/erikg/P100c/pile-head100.sxi2`,
+63,163,489,696 B, sha256 `6e410974...dc5f85e0`, n=100,000,000,001,
+runs=31,381,597,694, members m1,m4,m5,m7,m10,m11,m12,m13 (m1 codec 114, m13
+codec 115: 27.7 GiB payload + 19.3 GiB of per-symbol run directory + 11.4 GiB of
+chi this reader never touches).
+
 Branch `fix/query-block-cache`, base `pile-week-v1` `d526d99`. Evidence root:
 `/mnt/nvme2n1/erikg/blockcache-adjudication-20261106` (all journals, the scanner's
 offset arrays, the grep transcript, the 192 missed contexts).
@@ -83,8 +89,9 @@ not an answer.
 
 ### What the bounded reader pays, measured (A/B against the base reader)
 
-Same binaries, same fixtures, one box, load average 65-78 throughout (another
-user's 24-thread FastGA and R jobs). `BASE` is `d526d99` built in
+Same fixtures, one box, load average 47-78 during these runs (another user's
+24-thread FastGA and R jobs are on the box all day; every wall below is labelled
+with the load that was measured beside it). `BASE` is `d526d99` built in
 `/tmp/bc-base-target`.
 
 | | BASE 150 MB | HERE 150 MB | BASE 10 GB | HERE 10 GB | HERE pile |
