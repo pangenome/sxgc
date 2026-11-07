@@ -36,7 +36,7 @@ Measured on the box above; the numbers that matter are cores, RAM and scratch.
 | cores | any; 16 is fine, 96+ is what the large rungs used | `--threads` is both the sort parallelism and the number of **bands in flight**, so it divides the RAM arena (see below). |
 | RAM | **must exceed `--memory-gb`**, with room for a second process | `--memory-gb` is a hard `RLIMIT_AS` applied to *every* phase. The producer (band sorter) and the finish run **concurrently**, each under that same cap, so a box with exactly `--memory-gb` of RAM will OOM. Keep 2× headroom. |
 | RAM sizing rule | `--memory-gb` sets the **band arena** = half of it (`plan::tape_envelope_bytes` = `memory_gb/2` GiB); `rows_per_band = 0.85 × (envelope − fixed − staging) / (bytes_per_row × threads)` with `bytes_per_row = 90` (LCP slices on, the default) or `41` (`XSA_LCE_VERIFY=1`, the A/B arm). | The band size is **derived from `--memory-gb` and `--threads`, never from the corpus**. That is what makes the 100 GB rung possible at 96 GB. |
-| scratch disk | **~2.3 n** while building (measured: `peak_intermediate_over_n=2.1913` at 150 MB, `2.4576` at 10 GB), then **~0.62 n** for the container | The 2 n is the tape's declared scratch window (`--budget-bytes`, 2×n rows) plus pieces; it is freed as bands are consumed. |
+| scratch disk | the fit check prices the tape route at **1.00 n** (the measured `0.789 n` envelope at the Pile's first 100 GB x `factor=1.00`); observed: **2.19 n** at 150 MB and **2.46 n** at 10 GB (fixed overheads dominate at small n), then **~0.62 n** for the container | The declared window is 2 n of rows (`--budget-bytes`) plus pieces, freed as bands are consumed; the measured peak at 100 GB is `0.789 n` (`tools/binbwt/RESULTS_PILE_100GB.md`). The plan never gates on the other shape's tree, and `XSA_PLAN_DISC_MODEL` prints which model produced the number. |
 | OS | native Linux x86_64, POSIX shell | `xsa/build.rs` refuses anything else: *"xsa bundled native stages currently require a native Linux build"* / *"…support Linux"* / *"…supports Linux x86_64"*. |
 | rust | `cargo` + `rustc` (used: 1.97.1) | builds the driver and, through `build_tools.py`, the bundled native stages. |
 | C/C++ | `g++` ≥ 10 (used: 13.3.0), `make`, `cmake`, `patch` | the bundled `xsa_finish` / `cross_lcp_merge` / `scatter_sort` / vendored pfp++ & AGC. |
@@ -284,6 +284,30 @@ framing, so use the raw tape route for byte-exact indexing of an existing file.
 
 ### The flags that matter
 
+- `--tape` / `--bin` — **which SHAPE the run is**, and therefore which shape the
+  fit check prices. `--tape` is the band sorter (the product route); `--bin` is
+  the bin producer, which is also the default. Passing both is refused: two
+  shapes, one price. The plan's first line says which one it planned
+  (`pipeline=v2tape` / `pipeline=v2bin`), and `XSA_PLAN_DISC_MODEL` states the
+  basis of the number that gates the run:
+
+  ```
+  XSA_PLAN_DISC_MODEL shape=tape factor=1.00 measured_basis=0.789n@pile-head-100GB base=peak_scratch_measured covers=band-window+container+journal container_inside_scratch_peak=1 ...
+  XSA_PLAN_DISC_MODEL shape=bin factor=1.00 base=all_phase_peak(phase_rows) measured_basis=terms-at-1GB-G2 ...
+  ```
+
+  The tape shape's scratch peak is the **measured** envelope — 0.789 n on the
+  Pile's first 100 GB (`tools/binbwt/RESULTS_PILE_100GB.md`: 78,880,730,679 B at
+  n = 100,000,000,001) — carried at `factor=1.00`, i.e. `peak = 1.00 n`. The
+  factor covers the band window, the container being published and the journal
+  (the container is *inside* the scratch peak, not an addition to it), and it
+  does **not** shrink with `--threads`: a box that cannot hold `1.00 n` of
+  scratch cannot run the tape route at any thread count. The bin shape is priced
+  separately (its tree: rlebwt 1.546 n + the bounded piece window + the container,
+  plus the extrapolated witness spill); the two numbers are NOT interchangeable,
+  and a plan never gates one shape on the other's figure. The other shape's
+  number is still printed, but only as an explicitly labelled
+  `XSA_PLAN_ALTERNATIVE shape=bin ...` / `shape=tape ...`.
 - `--input` — raw corpus bytes; END is virtual. Add `--snap-1e` only when
   requiring a final `0x1E` document boundary.
 - `--scratch` — intermediates, container, `xsa-build.log`, and `checkpoint.journal`.
@@ -295,6 +319,22 @@ framing, so use the raw tape route for byte-exact indexing of an existing file.
 - `--memory-gb` — the hard `RLIMIT_AS` for every phase, and the number the band
   arena is derived from (arena = `memory_gb/2` GiB, 85 % usable). The plan is
   journaled and the front door **refuses the run** if the plan cannot prove a fit.
+- `--skip-fit-check` — run despite the **absolute peak-vs-free** scratch check,
+  and nothing else. It is journaled with numbers, not an adjective:
+
+  ```
+  DISC_CHECK_SKIPPED basis=operator shape=tape peak=1307910802540 peak_gb=1218.09 free=1068785217536 free_gb=995.38 short_gb=222.70 short=222.7 GiB override=--skip-fit-check note=only the absolute peak-vs-free check is skipped; the RAM term, the band law and every receipt still refuse this run
+  ```
+
+  It does **not** touch the RAM term (`XSA_PLAN_RAM`: the band arena, the
+  `rows_per_band >= 65,536` fold floor, the finish's witness cap), the band law
+  (`TAPE_PLAN_DISAGREE`) or any receipt, and it cannot buy the bin shape's 2.5 n
+  output-side mission bound. `--allow-infeasible` is a **silent alias** kept so
+  old journals, scripts and gate commands still parse and mean the same thing.
+- `--plan-only` — survey, model and print, then exit 0. It never starts a phase
+  and never refuses: the refusal belongs to the real run, and the verdicts
+  (`XSA_PLAN_DISC`, `XSA_PLAN_RAM`) are printed either way, so a preflight cannot
+  look like a pass when it is not.
 - **There is no `--timeout` and no `--stall-seconds`.** Both are rejected as
   unknown options. A wall-clock cap killed a HEALTHY 100 GB run at 61/102 waves
   after 9.4 h (rc=124) because someone set a work budget, and the progress
@@ -619,7 +659,12 @@ document: the tool refuses loudly and early, and each refusal names the knob.
 | message (verbatim) | means | change |
 |---|---|---|
 | `SNAP_REFUSED mid-document input <path>: last byte is 0x20, want 0x1e (document boundary); snap the prefix forward to the next 0x1e in the source corpus and retry - the chain never trims or extends silently` ✔ | `--snap-1e` requested but input does not end on a document boundary | omit `--snap-1e` for raw tape input, or choose an aligned prefix |
-| `PLAN_INFEASIBLE: see XSA_PLAN_ALTERNATIVE lines above (override with --allow-infeasible to run anyway)` ✔ | the plan could not prove the run fits RAM or scratch; the preceding `XSA_PLAN_ALTERNATIVE` lines say which | raise `--memory-gb`, lower `--threads`, free scratch; `--allow-infeasible` only if you know better |
+| `PLAN_INFEASIBLE: <the XSA_PLAN_DISC / XSA_PLAN_RAM verdict, verbatim>` then `The XSA_PLAN_ALTERNATIVE lines above name the knobs; --skip-fit-check overrides ONLY the absolute peak-vs-free check (it does NOT touch the RAM term)` ✔ | the plan could not prove the run fits scratch or RAM. The verdict names the **shape**, the peak vs the limit **in the same unit and in bytes**, the **shortfall**, the exact override flag and the knob that fixes it - every refusal is one self-contained sentence | read the shortfall: free scratch space, raise `--memory-gb` (the band arena is half of it), lower `--threads`, or plan the other shape (`--bin` / `--tape`); `--skip-fit-check` only if you know the box fits |
+| `XSA_PLAN_DISC INFEASIBLE shape=tape: the tape route's measured scratch peak (band window + container + journal): peak 1218.1 GiB (1307910802540 B) vs free scratch 995.4 GiB (1068784988160 B) -> SHORT 222.7 GiB (22.4% over); override --skip-fit-check to run anyway ...` ✔ | the tape route's scratch peak (`1.00 n`, from the measured `0.789 n`) does not fit this scratch device. This is a *measured* n-multiple: `--threads`/`--memory-gb` do not shrink it | free scratch, point `--scratch` at a bigger device, or `--skip-fit-check` if the device really has room |
+| `XSA_PLAN_DISC INFEASIBLE shape=bin: the bin shape's ALL-PHASE scratch peak (rolling window FILES + rlebwt + piece window + container + witness spill): peak 134.2 MiB (140702137 B) vs free scratch 5.0 MiB (5242880 B) -> SHORT 129.2 MiB (2583.7% over); ...` ✔ | the BIN shape's tree does not fit (this one is a 5 MiB tmpfs and a 4 MiB corpus); sub-GiB limits print in MiB so the shortfall is not rounded to `0.0 GiB` | same knobs, or `--tape`, whose peak is the measured `0.789 n` window rather than the tree |
+| `XSA_PLAN_RAM INFEASIBLE shape=tape RAM: the band arena is ... rows_per_band=1 floor=65536 (short 65535 rows); override=none: no flag skips the RAM term, --skip-fit-check does NOT touch it; fix: raise --memory-gb until the usable envelope covers 1.2 GiB` ✔ | the band arena cannot hold 65,536 rows per band, or its peak is over 90 % of the envelope. `--memory-gb` (and `--threads`, which divides the arena) is the only lever | raise `--memory-gb`, or lower `--threads`; **no flag overrides this** |
+| `DISC_CHECK_SKIPPED basis=operator shape=tape peak=... free=... short_gb=... override=--skip-fit-check ...` | `--skip-fit-check` (or its alias `--allow-infeasible`) was used: the absolute peak-vs-free check was skipped, with both sides of the comparison journaled | nothing to do - the run continues; if `short_gb` is large, the run may still die on a full device |
+| `--tape and --bin are mutually exclusive: they are two shapes (a band sorter vs the bin producer), and the fit check prices exactly one of them. Pass one` ✔ | both shapes asked for in one command | pass exactly one (`--bin` is the default, so usually just drop `--bin`) |
 | `XSA_PLAN_RAM INFEASIBLE: … rows_per_band=59 < floor=1004 …` ✔ | band arena ÷ (bytes_per_row × threads) fell below the 65,536-row floor | **see the minimum-corpus note below** |
 | `scratch already used: <dir>/xsa-build.log exists; move the previous run away (never overwrite)` | legacy routes still require fresh scratch | new scratch dir |
 | `RESUME_REFUSED field=<field> ...` | tape recovery identity differs, or a legacy scratch has no recovery PLAN | restore the original input/binary/options, or explicitly use `--no-resume` |
@@ -636,7 +681,7 @@ document: the tool refuses loudly and early, and each refusal names the knob.
 | `BUNDLE_TOOL_MISMATCH <name>: <path> sha256=<a> expected=<b>` | the extracted stage cache is corrupt or stale | `rm -rf ~/.cache/xsa/<manifest-sha256>` and re-run |
 | `--bin-live-cap is a bin-pipeline flag` / `<knob> needs --phrase-radix` / `CROSS_V2_PRODUCERS=<v> is INERT under the bin shape (…)` | a knob belongs to a different route | drop it, or select that route |
 | `--chunks is INERT under the bin pipeline (the default; the producer sweeps the corpus itself, there is no chunk phase); drop the flag, or pass --legacy-merge for the chunk+merge route` ✔ | same: `--chunks/--chunk-mb/--kway/--fanin` are legacy-merge only | drop them |
-| `unknown option <x>` | the tape route accepts `--input --scratch --tape --threads --memory-gb --plan-only --with-chi --chi-expect --finish-as-gb --wit-ram-gb --snap-1e --remap --stripe --allow-infeasible` (plus the `--bin-*` and `--phrase-*` arms, which are ignored/tuned per route) | — |
+| `unknown option <x>` | the tape route accepts `--input --scratch --tape --bin --threads --memory-gb --plan-only --skip-fit-check --with-chi --chi-expect --finish-as-gb --wit-ram-gb --snap-1e --remap --stripe` (`--allow-infeasible` is the alias of `--skip-fit-check`; the `--bin-*` and `--phrase-*` arms are ignored/tuned per route) | — |
 
 **The tape route has a minimum corpus size (~1.1 MB).** The band size is bounded by
 the declared 2 n scratch window: `rows_per_band ≈ 0.0594 n`, which must reach the

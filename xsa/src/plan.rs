@@ -347,18 +347,18 @@ pub fn model(
         MERGE_SCRATCH_PER_CORPUS_MB, gib(peak_bytes), gib(free_bytes));
     let disc_verdict = if disc_ok {
         if hygiene_ok {
-            format!("FEASIBLE shape={}: peak ~{:.0} GB fits {:.0} GB free ({}% used)", Shape::ChunkMerge.as_str(), disc_peak_mb / 1024.0, free_mb / 1024.0, survey.scratch_used_percent)
+            format!("FEASIBLE shape={}: peak ~{} fits {} free ({}% used)", Shape::ChunkMerge.as_str(), hsz(peak_bytes), hsz(free_bytes), survey.scratch_used_percent)
         } else {
-            format!("FEASIBLE with hygiene override shape={}: peak ~{:.0} GB fits {:.0} GB free ({}% used; policy >= {}% free overridden by the operator)",
-                     Shape::ChunkMerge.as_str(), disc_peak_mb / 1024.0, free_mb / 1024.0, survey.scratch_used_percent, hygiene_free_pct)
+            format!("FEASIBLE with hygiene override shape={}: peak ~{} fits {} free ({}% used; policy >= {}% free overridden by the operator)",
+                     Shape::ChunkMerge.as_str(), hsz(peak_bytes), hsz(free_bytes), survey.scratch_used_percent, hygiene_free_pct)
         }
     } else if !fits {
         refusal(Shape::ChunkMerge, "the chunk+merge shape's all-phase scratch peak",
                 peak_bytes, free_bytes, "free scratch", Some("--skip-fit-check"),
                 "free or add scratch space, or raise --chunks (a smaller chunk cuts the 8x pos column)")
     } else {
-        format!("INFEASIBLE (hygiene) shape={}: peak ~{:.0} GB fits {:.0} GB free but only {}% free < the {}% policy; pass --scratch-free-pct to override",
-                 Shape::ChunkMerge.as_str(), disc_peak_mb / 1024.0, free_mb / 1024.0, free_pct, hygiene_free_pct)
+        format!("INFEASIBLE (hygiene) shape={}: peak ~{} fits {} free but only {}% free < the {}% policy; pass --scratch-free-pct to override",
+                 Shape::ChunkMerge.as_str(), hsz(peak_bytes), hsz(free_bytes), free_pct, hygiene_free_pct)
     };
     let chunk_ram_ok = chunk_ram_gb < cap_gb as f64 * 0.8;
     let merge_ram_ok = MERGE_RSS_GB < cap_gb as f64;
@@ -481,16 +481,16 @@ pub fn model_fanin(
         FINISH_ARTIFACTS_PER_CORPUS_MB, gib(peak_bytes), gib(free_bytes));
     let disc_verdict = if disc_ok {
         if hygiene_ok {
-            format!("FEASIBLE shape={}: peak ~{:.0} GB fits {:.0} GB free ({}% used)", Shape::Fanin.as_str(), peak_mb / 1024.0, free_mb / 1024.0, survey.scratch_used_percent)
+            format!("FEASIBLE shape={}: peak ~{} fits {} free ({}% used)", Shape::Fanin.as_str(), hsz(peak_bytes), hsz(free_bytes), survey.scratch_used_percent)
         } else {
-            format!("FEASIBLE with hygiene override shape={}: peak ~{:.0} GB fits {:.0} GB free ({}% used)", Shape::Fanin.as_str(), peak_mb / 1024.0, free_mb / 1024.0, survey.scratch_used_percent)
+            format!("FEASIBLE with hygiene override shape={}: peak ~{} fits {} free ({}% used)", Shape::Fanin.as_str(), hsz(peak_bytes), hsz(free_bytes), survey.scratch_used_percent)
         }
     } else if !fits {
         refusal(Shape::Fanin, "the fan-in shape's all-phase scratch peak",
                 peak_bytes, free_bytes, "free scratch", Some("--skip-fit-check"),
                 "raise --kway (fewer levels), raise --chunk-mb, or free scratch space")
     } else {
-        format!("INFEASIBLE (hygiene) shape={}: peak ~{:.0} GB fits {:.0} GB free but only {}% free < the {}% policy", Shape::Fanin.as_str(), peak_mb / 1024.0, free_mb / 1024.0, free_pct, hygiene_free_pct)
+        format!("INFEASIBLE (hygiene) shape={}: peak ~{} fits {} free but only {}% free < the {}% policy", Shape::Fanin.as_str(), hsz(peak_bytes), hsz(free_bytes), free_pct, hygiene_free_pct)
     };
     let chunk_ram_ok = chunk_ram_gb < cap_gb as f64 * 0.8;
     let ram_ok = chunk_ram_ok;
@@ -557,6 +557,26 @@ impl Plan {
         }
         let mb = self.survey.corpus_bytes as f64 / (1024.0 * 1024.0);
         let free_gb = self.survey.scratch_free_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+        // THE OTHER SHAPE, LABELLED: emitted by render() itself, with the
+        // alternatives, so no call site can forget it AND it can never be read as
+        // this run's gating number (which has already been printed above it).
+        let mut other_shape_alt: Option<String> = None;
+        if self.shape == Shape::Tape {
+            let bin_peak_bytes = (self.phases.iter().map(|p| p.disc_peak_mb).fold(0.0, f64::max)
+                * 1048576.0) as u64;
+            let free_bytes = self.survey.scratch_free_bytes;
+            let (bin_fits, _) =
+                bin_disc_verdict(self.survey.corpus_bytes, bin_peak_bytes, free_bytes);
+            other_shape_alt = Some(format!(
+                "shape=bin all_phase_peak_gb={:.1} = {:.3}n free_gb={:.1} verdict={} note=this is \
+                 the BIN shape's peak, NOT this run's gating number (--tape runs the band sorter, \
+                 priced by XSA_PLAN_DISC_MODEL above); `--bin --plan-only` prints its whole per-term \
+                 table",
+                gib(bin_peak_bytes),
+                gib(bin_peak_bytes) / gib(self.survey.corpus_bytes).max(1e-9),
+                gib(free_bytes),
+                if bin_fits { "FITS" } else { "DOES NOT FIT" }));
+        }
         if self.shape == Shape::Tape {
             // THE TAPE PLAN FIRST: the band envelope is this route's RAM term and
             // the only thing that sizes its work unit.
@@ -570,24 +590,6 @@ impl Plan {
                           peak is the measured band window (XSA_PLAN_DISC_MODEL below), not a per-phase \
                           sum; the bin shape's per-term table is printed by `--bin --plan-only` and \
                           appears here only as a labelled alternative\n");
-            // THE OTHER SHAPE, LABELLED - emitted by render() itself so no call
-            // site can forget it: the bin shape's gating peak is still visible (it
-            // is the alternative an operator may switch to), but it can never be
-            // read as THIS run's number.
-            let bin_peak_bytes = (self.phases.iter().map(|p| p.disc_peak_mb).fold(0.0, f64::max)
-                * 1048576.0) as u64;
-            let free_bytes = self.survey.scratch_free_bytes;
-            let (bin_fits, _) = bin_disc_verdict(self.survey.corpus_bytes, bin_peak_bytes, free_bytes);
-            let bin_line = format!(
-                "shape=bin all_phase_peak_gb={:.1} = {:.3}n free_gb={:.1} verdict={} note=this is \
-                 the BIN shape's peak, NOT this run's gating number (--tape runs the band sorter, \
-                 priced by XSA_PLAN_DISC_MODEL above); `--bin --plan-only` prints its whole per-term \
-                 table",
-                gib(bin_peak_bytes),
-                gib(bin_peak_bytes) / gib(self.survey.corpus_bytes).max(1e-9),
-                gib(free_bytes),
-                if bin_fits { "FITS" } else { "DOES NOT FIT" });
-            s.push_str(&format!("XSA_PLAN_ALTERNATIVE {bin_line}\n"));
         } else {
             s.push_str("XSA_PLAN_PHASES name wall disc_peak_gb rss_gb\n");
             for p in &self.phases {
@@ -693,6 +695,9 @@ impl Plan {
             s.push('\n');
         }
         s.push_str(&format!("XSA_PLAN_RAM {}\n", self.ram_verdict));
+        if let Some(alt) = &other_shape_alt {
+            s.push_str(&format!("XSA_PLAN_ALTERNATIVE {alt}\n"));
+        }
         for a in &self.alternatives {
             s.push_str(&format!("XSA_PLAN_ALTERNATIVE {}\n", a));
         }
