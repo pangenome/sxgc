@@ -2262,6 +2262,9 @@ struct Args {
     context: Option<u64>,
     threads: usize,
     verify: bool,
+    /// `xsa verify --corpus FILE`: the exact bytes every located position must
+    /// carry. `None` for a plain query.
+    corpus: Option<String>,
 }
 
 fn parse(raw: &[std::ffi::OsString]) -> Args {
@@ -2272,6 +2275,7 @@ fn parse(raw: &[std::ffi::OsString]) -> Args {
     let mut container: Option<String> = None;
     let mut patterns: Option<String> = None;
     let mut docs = None;
+    let mut corpus = None;
     let mut fasta = false;
     let mut output = "tsv".to_string();
     let mut counts = false;
@@ -2304,6 +2308,10 @@ fn parse(raw: &[std::ffi::OsString]) -> Args {
                     die("query: --limit requires a nonnegative integer");
                 }
                 limit = Some(value.parse::<u64>().unwrap_or_else(|_| die("query: --limit is outside u64 range")));
+                i += 2;
+            }
+            "--corpus" if i + 1 < args.len() => {
+                corpus = Some(args[i + 1].clone());
                 i += 2;
             }
             "--docs" if i + 1 < args.len() => {
@@ -2403,6 +2411,7 @@ fn parse(raw: &[std::ffi::OsString]) -> Args {
 
     Args {
         docs,
+        corpus,
         container,
         patterns,
         positional,
@@ -2567,15 +2576,104 @@ fn read_fasta(path: &str, data: &[u8]) -> Vec<Vec<u8>> {
     out
 }
 
+/// THE BYTE CERTIFICATE (`xsa verify`): every located position must carry the
+/// pattern's exact bytes in the corpus the container was built from, and no
+/// position may repeat.
+///
+/// Why this is a separate verb and not a debug flag: a count is an interval
+/// width, and an interval width can be right while the rows inside it are not
+/// the occurrences - or while one occurrence is counted twice. This reads the
+/// corpus back at each offset, so the answer is checked against the only text
+/// there is. It is bounded I/O (pattern_len bytes per position) and it never
+/// materialises the corpus: `read_exact_at` into one small buffer.
+fn verify_positions(corpus: &str, n: u64, patterns: &[Vec<u8>], results: &[Hit]) {
+    let f = File::open(corpus).unwrap_or_else(|e| die(&format!("verify: open {corpus}: {e}")));
+    let bytes = std::fs::metadata(corpus)
+        .unwrap_or_else(|e| die(&format!("verify: stat {corpus}: {e}")))
+        .len();
+    if bytes + 1 != n {
+        die(&format!(
+            "verify: {corpus} is {bytes} bytes but the container's text is n-1 = {} bytes\n  \
+             (n={n}); this is not the corpus that container was built from",
+            n - 1
+        ));
+    }
+    let (mut tot_pos, mut tot_bad, mut tot_dup) = (0u64, 0u64, 0u64);
+    for (pid, hit) in results.iter().enumerate() {
+        let pat = &patterns[pid];
+        let mut buf = vec![0u8; pat.len()];
+        let mut bad = 0u64;
+        for &p in &hit.positions {
+            if p + pat.len() as u64 > bytes {
+                bad += 1;
+                if bad <= 5 {
+                    eprintln!("VERIFY_BAD id={pid} offset={p} reason=past-corpus-end");
+                }
+                continue;
+            }
+            if let Err(e) = std::os::unix::fs::FileExt::read_exact_at(&f, &mut buf, p) {
+                die(&format!("verify: read {corpus} at {p}: {e}"));
+            }
+            if buf != *pat {
+                bad += 1;
+                if bad <= 5 {
+                    eprintln!(
+                        "VERIFY_BAD id={pid} offset={p} bytes={:?} pattern={:?}",
+                        String::from_utf8_lossy(&buf),
+                        String::from_utf8_lossy(pat)
+                    );
+                }
+            }
+        }
+        // a repeated position would mean one occurrence counted twice: sort a copy
+        let mut sorted = hit.positions.clone();
+        sorted.sort_unstable();
+        let dup = sorted.windows(2).filter(|w| w[0] == w[1]).count() as u64;
+        eprintln!(
+            "VERIFY id={pid} len={} occurrences={} located={} unique={} bad={bad} dup={dup}",
+            pat.len(),
+            hit.occurrences,
+            hit.positions.len(),
+            hit.positions.len() as u64 - dup
+        );
+        tot_pos += hit.positions.len() as u64;
+        tot_bad += bad;
+        tot_dup += dup;
+    }
+    eprintln!(
+        "VERIFY_TOTAL patterns={} positions={tot_pos} bad={tot_bad} duplicates={tot_dup} \
+         corpus_bytes={bytes} corpus={corpus}",
+        results.len()
+    );
+    if tot_bad != 0 || tot_dup != 0 {
+        die(&format!(
+            "verify: {tot_bad} located position(s) do not carry the pattern and {tot_dup} \
+             duplicate position(s): the index does not answer from this corpus"
+        ));
+    }
+}
+
 fn assert_count(count: u64, n: u64, pattern_len: usize) {
     assert!(count <= n, "QUERY_COUNT_IMPOSSIBLE count={count} pattern_len={pattern_len}");
 }
 
-pub fn command(args: &[std::ffi::OsString]) {
+/// `xsa query`: answer counts and positions. `xsa verify`: the same, plus the
+/// byte certificate - every located position is read back out of the corpus and
+/// compared with the pattern (see `verify_positions`).
+pub fn command(args: &[std::ffi::OsString], byte_certificate: bool) {
     // Wall clock from process start: the acceptance question is "how long
     // until the first answer", so every stage is reported against this.
     let t_proc = Instant::now();
     let a = parse(args);
+    if byte_certificate && a.corpus.is_none() {
+        die(
+            "verify: --corpus FILE is required: the certificate is that every located offset\n  \
+             carries the pattern's exact bytes in the corpus the container was built from",
+        );
+    }
+    if !byte_certificate && a.corpus.is_some() {
+        die("query: --corpus belongs to `xsa verify` (use `xsa verify <container> --corpus FILE ...`)");
+    }
     let t_open0 = Instant::now();
     let reader = match Reader::open(&a.container) {
         Ok(r) => r,
@@ -2876,6 +2974,9 @@ pub fn command(args: &[std::ffi::OsString]) {
         } else {
             high += 1;
         }
+    }
+    if let Some(corpus) = &a.corpus {
+        verify_positions(corpus, index.n(), &patterns, &results);
     }
     eprintln!("QUERY_LOCATE mode={} positions_located={} lf_steps={}",
         if a.count { "count" } else if a.limit.is_some() { "limit" } else { "all" },

@@ -1443,7 +1443,13 @@ fn main() {
         return;
     }
     if raw.first().is_some_and(|a| a == "query") {
-        qlite::command(&raw[1..]);
+        qlite::command(&raw[1..], false);
+        return;
+    }
+    if raw.first().is_some_and(|a| a == "verify") {
+        // `xsa verify`: the byte certificate over query positions - every located
+        // offset is read back out of the corpus and compared with the pattern.
+        qlite::command(&raw[1..], true);
         return;
     }
     let args: Vec<String> = raw.into_iter().map(|a| a.into_string().unwrap_or_else(|_| die("arguments must be UTF-8"))).collect();
