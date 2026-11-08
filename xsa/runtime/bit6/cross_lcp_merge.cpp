@@ -2586,6 +2586,11 @@ struct SparseSeamCapture {
     Hit* previousHit = nullptr;
     std::vector<CapturedSeamClass> raw;
     std::unordered_map<U, Hit> targets;
+    // THE CENSUS ITSELF. No production sink calls this any more: both of them
+    // take seam_pass_skip() instead (see EMIT_SEAM_PASS below), because the text
+    // this tool opens has one unique END symbol and the chain therefore stops at
+    // depth 1. It survives as the ORACLE's reference walk (selftest_sparse_walk),
+    // which is where a text whose terminal byte really does recur is exercised.
     void discover(const CorpusText& text, U count, U cap) {
         n = count; limit = cap; depth = nextRow = 0; previousHit = nullptr;
         raw.clear(); targets.clear();
@@ -2690,6 +2695,75 @@ struct SparseSeamCapture {
         return result;
     }
 };
+
+// ------------------------------------------------- THE SEAM PASS: NOT RUN
+// SparseSeamCapture::discover walks the occurrence chain of the TERMINAL suffix:
+// occ_1 = every position whose symbol is the terminal byte (ONE sequential scan
+// of the whole corpus), occ_{d+1} = { p : p+1 in occ_d and T[p] == T[n-d-1] },
+// one class per depth. It was written for the v1 CYCLIC construction, which
+// repaired the seam between independently built chunks: there the terminal byte
+// recurred, and the banked v1 fixtures really did carry classes (4 at 100 MB, 30
+// at 1 GB - xsa_finish.cpp's SeamClasses::build recomputes the same chain).
+//
+// THE TEXT THIS TOOL OPENS CANNOT PRODUCE A CLASS. CorpusText::open appends ONE
+// virtual END byte at position fileN (n = fileN + 1) and at(fileN) returns
+// SENTINEL_SYMBOL (0); the per-corpus remap is a bijection from present bytes
+// onto codes 1..255, so code 0 belongs to an ABSENT byte and the appended END is
+// the text's only 0. The terminal byte is therefore position n-1, occ_1 has
+// exactly one member, and the loop body never runs: depth is 1, raw_classes 0,
+// aggregate_occurrences 0, unique_targets 0. That is the route's CONVENTION, not
+// a property of the corpora measured (the driver journals REMAP end_symbol=0
+// unused_symbols=12; the finish journals END_REMAP ends_in_sentinel=1), and the
+// emit CERTIFIES it on the data it writes: if the END symbol occurred k>1 times
+// the BWT would carry k symbol-0 rows and `TAPE_EMIT_END_ROWS ... expected=1`
+// refuses the run.
+//
+// So it is not run. What it cost, measured: a full corpus scan (n bytes; 18 min
+// of the Pile attempt's 18:11 wall before the phase had read a band) to compute
+// an empty answer, and the authority to grow the occurrence set to
+// work_limit = max(1e8, 16n) entries - 21 TB at the Pile, the number in the
+// `CROSS_SEAM_DISCOVERED ... work_limit=20926572840656` line. The receipt is one
+// line per sink, EMIT_SEAM_PASS none reason=vestigial_under_v2tape, and it names
+// the budget that is no longer spent as well as the scan that is no longer read.
+static void seam_pass_skip(SparseSeamCapture& seam, U n, const char* who, U inputRuns) {
+    // The limit discovery WOULD have been given (min(2^26, max(1000, runs/1000))),
+    // journalled so the retired budget stays visible in the record.
+    const U wouldBeLimit = std::min<U>(1u << 26, std::max<U>(1000, inputRuns / 1000));
+    seam.n = n;                     // the walk's own text length (finish() checks it)
+    seam.depth = 1;                 // the chain's first step is also its last
+    seam.previous = n - 1;          // before row 0 is the sentinel suffix
+    seam.limit = wouldBeLimit;
+    std::fprintf(stderr,
+        "EMIT_SEAM_PASS none reason=vestigial_under_v2tape sink=%s n=%llu depth=1 "
+        "raw_classes=0 aggregate_occurrences=0 unique_targets=0 "
+        "limit_not_used=%llu work_limit_not_used=%llu scan_bytes_avoided=%llu "
+        "basis=end_symbol_unique(end_symbol=0) certified_by=TAPE_EMIT_END_ROWS(rows==1)\n",
+        who, (unsigned long long)n, (unsigned long long)wouldBeLimit,
+        (unsigned long long)(n > UINT64_MAX / 16 ? UINT64_MAX
+                                                 : std::max<U>(100000000, 16 * n)),
+        (unsigned long long)n);
+}
+
+// THE SELECTOR both sinks use. Default: seam_pass_skip (no census, zero bytes).
+// XSA_SEAM_CENSUS=1: the INTERNAL A/B ARM that runs the real occurrence chain,
+// with the allocation it actually needs - the occurrence set is bounded by the
+// discovery limit (<= 2^26 entries = 512 MB) and by the discovery work budget,
+// never by n, and the empty answer allocates nothing beyond it. Both arms are
+// byte-identical on this route's text (measured on the 4 MB/150 MB gates), which
+// is the point of keeping the arm: it is proof, not a knob.
+static void seam_pass_select(SparseSeamCapture& seam, const CorpusText& text, U n,
+                             const char* who, U inputRuns) {
+    if (!::getenv("XSA_SEAM_CENSUS")) { seam_pass_skip(seam, n, who, inputRuns); return; }
+    const U limit = std::min<U>(1u << 26, std::max<U>(1000, inputRuns / 1000));
+    seam.discover(text, n, limit);
+    const U boundBytes = std::max<U>(seam.raw.size(), seam.targets.size()) * sizeof(U);
+    std::fprintf(stderr,
+        "SEAM_ALLOC sink=%s arm=env classes=%zu bytes<=%llu basis=census limit=%llu "
+        "depth=%llu unique_targets=%zu note=the occurrence set is bounded by the census "
+        "limit, never by n\n",
+        who, seam.raw.size(), (unsigned long long)boundBytes, (unsigned long long)limit,
+        (unsigned long long)seam.depth, seam.targets.size());
+}
 // Scratch records are char + length + two run samples, never one position
 // per row. Consumer stitches a continued boundary run using head from the
 // left shard and tail from the right; global run bases follow that stitch.
@@ -3714,7 +3788,8 @@ struct SequentialV2 : SparseWalkSink {
           prefix(p), dir(p + ".pieces") {
         if (rlebwt_wire_enabled()) bwt = std::make_unique<OutFile>(p + ".rlebwt");
         require(::mkdir(dir.c_str(), 0777) == 0, "create sequential pieces directory");
-        seam.discover(t, n, std::min<U>(1u << 26, std::max<U>(1000, inputRuns / 1000)));
+        // THE SEAM PASS: NOT BY DEFAULT - see seam_pass_select below.
+        seam_pass_select(seam, t, n, "SequentialV2", inputRuns);
         for (const auto& cl : seam.raw) {
             firstSizes.emplace(cl.first, cl.hi);
         }
@@ -5664,6 +5739,16 @@ int main_impl(int argc, char** argv) {
         }
         const std::string capFlag = flag("--bin-live-cap");        const bool binLiveCapGiven = !capFlag.empty();
         const U binLiveCap = binLiveCapGiven ? std::stoull(capFlag) : 0;
+        // ---- THE TAPE-EMIT INPUT (the `emit-tape` phase of the tape route) ----
+        // `--tape-bands DIR` hands this process the sorter's rank-ordered band
+        // slices instead of an SA stream; `--tape-emit SA` is the older,
+        // single-stream form of the same job. Either way the job is ONE ORDERED
+        // CONCATENATION of already-ordered rows into the emission sink - NOT a
+        // cross-LCP merge: the LCP column arrives as the sorter's own band
+        // slices (--lcp-bands on the finish side) and no seam walk runs here
+        // (EMIT_SEAM_PASS none). The phase is the driver's `emit-tape`; the
+        // binary keeps the name cross_lcp_merge because it also serves the
+        // legacy four-file merge, which is where the name is true.
         const std::string tapeEmit = flag("--tape-bands").empty() ? flag("--tape-emit") : "bands:" + flag("--tape-bands");
         require(flag("--tape-bands").empty() || flag("--tape-emit").empty(), "choose one tape input");
         const U tapeEmitChunk = flag("--tape-emit-chunk").empty()

@@ -3135,7 +3135,13 @@ struct BinBandSink {
           width(std::max<unsigned>(1, 64 - __builtin_clzll(t.n))),
           dollar(dlr), prefix(p), dir(p + ".pieces") {
         require(::mkdir(dir.c_str(), 0777) == 0, "create band pieces directory");
-        seam.discover(t, n, std::min<U>(1u << 26, std::max<U>(1000, inputRuns / 1000)));
+        // THE SEAM PASS: NOT RUN BY DEFAULT. seam_pass_skip() carries the proof
+        // that the terminal suffix's occurrence chain cannot produce a class on
+        // this text; XSA_SEAM_CENSUS=1 is the INTERNAL A/B ARM (never a user
+        // option, never required for correctness) that runs the real chain, so
+        // the two arms can be diffed byte for byte on any corpus and the
+        // mechanism keeps an exercised, reachable path.
+        seam_pass_select(seam, t, n, "BinBandSink", inputRuns);
         for (const auto& cl : seam.raw) firstSizes.emplace(cl.first, cl.hi);
         targets.reserve(seam.targets.size());
         for (const auto& entry : seam.targets) targets.push_back(entry.first);
@@ -3684,59 +3690,54 @@ static void bin_phrase_journal_work(const BinWork& w, const PhraseDict* pd) {
 
 // ---- producer entry point: the parallel sink publishes the concatenated bins
 // ============================ THE TAPE-EMIT PATH ==========================
-// Emit the product's band stream from an EXTERNAL SA stream (the tape machine's
-// `scatter_sort` output) instead of from the bin tree. Everything downstream -
-// the sink, the band pieces, the .rlebwt extents, the progress records, the
-// padding rows, the seam classes - is the EXISTING emission code, untouched:
-// this only replaces "where the rank-ordered rows come from".
+// THIS IS THE `emit-tape` PHASE, AND ITS WHOLE JOB IS ONE ORDERED CONCATENATION.
+// It takes the band slices the sorter (`scatter_sort --tape-bands`) publishes in
+// rank order - band_<b>.sa carries the next rows-per-band POSITIONS, band_<b>.sym
+// the BWT byte of each - and hands them, band by band, to the EXISTING emission
+// sink, which cuts them into the pieces the finish folds in rank order.
 //
-// Per row the sink needs a packed word: (tail = pos+1, sym = the preceding byte,
-// hit = a sparse seam target). tail and sym are both cheap; `hit` is a
-// membership test against the sink's own (small, ascending) target list, and the
-// preceding byte is a single read at pos-1. At pile scale both want to move into
-// scatter_sort's sequential pass (which already stands on every position); this
-// driver takes the simple correct form first and MEASURES it, so the cost of the
-// simple form is known rather than assumed.
+// IT IS NOT A CROSS-LCP MERGE. The LCP column is produced by the sorter and
+// delivered as its own band slices (`lcp_source=sorter-bands`); the rows arrive
+// already in exact rank order, so nothing here compares two suffixes, repairs a
+// seam or captures a class - see EMIT_SEAM_PASS (cross_lcp_merge.cpp) for the
+// receipt and the proof. The tool's NAME is history: the same binary still
+// serves the legacy four-file merge, whose file is called cross_lcp_merge.cpp.
+//
+// Per row the sink needs one packed word: (tail = pos+1, sym = the preceding
+// byte, hit = "a seam capture target"). This route has NO targets - the seam
+// pass does not run - so `hit` is 0 on every row and the word is (tail, sym).
+// `sym` comes from the sorter's .sym stream, computed during the sorter's own
+// sequential scatter pass; a stream without one falls back to a per-row corpus
+// read through the LOCKED windowed adapter, which is why the sorter writes it.
 static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
                       U threads, const std::string& saPath, U chunk) {
     const U n = text.n;
     std::unique_ptr<BinBandSink> sink(new BinBandSink(prefix, text, n, dollar, threads));
-    // Sparse membership over the seam targets: a few thousand positions. A tiny
-    // open-addressed table (power-of-two, linear probe) keeps the per-row test at
-    // one probe instead of a 12-deep binary search; this header deliberately does
-    // not include <unordered_set>, and at pile scale the per-row test is 1.3e12
-    // of them.
-    std::vector<U> tgt(sink->joinTargets().begin(), sink->joinTargets().end());
-    U tcap = 16;
-    unsigned tbits = 4;
-    while (tcap < tgt.size() * 4 + 16) { tcap <<= 1; ++tbits; }
-    std::vector<U> tslot(tcap, 0);          // 0 = empty (a target is never position 0 plus 1)
-    // Use every index bit of the actual table. A fixed 24-bit hash collapses
-    // a >2^24-target table into one full linear-probe cluster at 100 GB.
-    auto thash = [tbits](U x) { return (x * 0x9e3779b97f4a7c15ull) >> (64 - tbits); };
-    for (U t : tgt) {
-        U i = thash(t + 1) & (tcap - 1);
-        while (tslot[i]) i = (i + 1) & (tcap - 1);
-        tslot[i] = t + 1;
-    }
-    std::vector<uint64_t> tblock((n >> 6) + 2, 0);
-    for (U t : tgt) tblock[t >> 6] |= (1ull << (t & 63));
-    auto maybeTarget = [&](U p) {
-        return tgt.empty() ? false : ((tblock[p >> 6] >> (p & 63)) & 1ull) != 0;
-    };
-    auto isTarget = [&](U p) {
-        if (tgt.empty()) return false;
-        U i = thash(p + 1) & (tcap - 1);
-        for (;;) {
-            const U v = tslot[i];
-            if (!v) return false;
-            if (v == p + 1) return true;
-            i = (i + 1) & (tcap - 1);
-        }
-    };
-    std::fprintf(stderr, "TAPE_EMIT_START n=%llu targets=%zu chunk=%llu prefix=%s\n",
-                 (unsigned long long)n, tgt.size(), (unsigned long long)chunk,
-                 prefix.c_str());
+    // NO TARGET TABLE AND NO TARGET BITMAP, BECAUSE THERE IS NO TARGET. The table
+    // and the (n>>6)+2-word filter bitmap existed to test each of the n rows
+    // against the seam capture set. That set is empty BY CONSTRUCTION on this
+    // route - the producer refuses to run unless no present corpus byte owns code
+    // 0 (`die("tape consumer reserves cell zero; virtual END consumer required")`,
+    // scatter_sort.cpp), so the appended END is the text's only 0 and the terminal
+    // suffix's occurrence chain stops at its first step (EMIT_SEAM_PASS in
+    // cross_lcp_merge.cpp). The bitmap alone was n/8 bytes: 1.25 GB at 10 GB,
+    // 12.5 GB at 100 GB (that emit's whole peak RSS), and 152 GiB at the Pile,
+    // where it was the std::bad_alloc that killed `emit-tape` after 18 minutes,
+    // before it had read a single band.
+    //
+    // THE ALLOCATION IS A FUNCTION OF THE CENSUS, NOT OF n: with no target, this
+    // is zero bytes, and a target appearing anyway is a REFUSAL, not a silently
+    // dropped class (the finish's repair stream reads its class table from this
+    // stream, so dropping one would be a wrong product, not a slow one).
+    require(sink->joinTargets().empty(),
+            "tape-emit: the sink holds a seam capture target; the tape producer reserves "
+            "code 0 for the virtual END, so this route cannot carry seam classes - refusing "
+            "rather than emitting a stream without them");
+    std::fprintf(stderr, "SEAM_ALLOC classes=0 bytes=0 basis=census "
+                         "short_circuit=unique_targets_zero\n");
+    std::fprintf(stderr, "TAPE_EMIT_START n=%llu job=band-concat seam_pass=none "
+                         "chunk=%llu prefix=%s\n",
+                 (unsigned long long)n, (unsigned long long)chunk, prefix.c_str());
     const double t0 = now_sec();
     const bool bands = saPath.compare(0, 6, "bands:") == 0;
     const std::string dir = bands ? saPath.substr(6) : std::string();
@@ -3802,9 +3803,7 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
     // Reuse the word workers for every chunk. Inputs stay immutable during
     // a job, and the completion barrier precedes ordered publication.
     const U wordWorkers = std::max<U>(1, std::min<U>(threads, (chunk + 65535) / 65536));
-    std::vector<U> workerHits(wordWorkers, 0);
     auto buildWords = [&](U worker, U want) {
-        U localHits = 0;
         const U lo = want * worker / wordWorkers;
         const U hi = want * (worker + 1) / wordWorkers;
         for (U i = lo; i < hi; ++i) {
@@ -3813,11 +3812,9 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
             // Position 0's predecessor is the appended end-of-text byte, whose
             // product symbol is 0 - the ordinary successor rule, no marker.
             const uint8_t sym = haveSyms ? syms[i] : (p ? text.at(p - 1) : text.at(n - 1));
-            const bool hit = maybeTarget(p) && isTarget(p);
-            if (hit) ++localHits;
-            words[i] = bin_word(p + 1, sym, hit);
+            // hit = 0 for every row: this route carries no seam targets.
+            words[i] = bin_word(p + 1, sym, false);
         }
-        workerHits[worker] = localHits;
     };
     std::mutex wordMutex;
     std::condition_variable wordWork, wordDone;
@@ -3841,7 +3838,7 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
             }
         });
     }
-    U baseRow = 0, hits = 0;
+    U baseRow = 0;
     double tRead = 0, tWord = 0, tPub = 0;
     U band = 0, bandRows = 0, bandRead = 0;
     std::vector<U> bandPayload;
@@ -3873,10 +3870,31 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
     for (;;) {
         if (baseRow == n) {
             if (!bands) break;
-            waitFile(dir + "/end.ready");
-            std::ifstream ef(dir + "/end"); U count = 0; ef >> count;
-            require(count >= band, "tape bands: invalid end count");
-            if (count == band) break;
+            // ---- THE TERMINAL DRAIN COMES FIRST ----------------------------
+            // Every row is out, so nothing below can add a row - but a band the
+            // producer has ALREADY PUBLISHED is still a band it is WAITING on,
+            // even when that band holds NO ROWS. A wave that closes a byte range
+            // without adding a row publishes an EMPTY band (band_<i>.sa of 0
+            // bytes, band_<i>.done, band_<i>.lcp of rows=0), and the producer's
+            // wave drain waits for band_<i>.consumed before its next wave - and
+            // therefore before it publishes /end. So blocking on /end.ready the
+            // instant baseRow == n is a DEADLOCK whenever the last published band
+            // is empty: measured at 4 MB DNA (n=4,000,001), `emit-tape` spun on
+            // bands-tape/end.ready while `order-tape` spun on band_40.consumed,
+            // both alive, for hours - on the MAINLINE binary too (this is not a
+            // regression; it is the handshake's silence about empty bands).
+            // So: answer what is published (the row-budget check below refuses
+            // any band that is NOT empty here), and ask for /end only when
+            // nothing is outstanding.
+            if (::access(bandPath(band, ".done").c_str(), F_OK) != 0) {
+                if (::access((dir + "/end.ready").c_str(), F_OK) == 0) {
+                    std::ifstream ef(dir + "/end"); U count = 0; ef >> count;
+                    require(!ef.fail() && count >= band, "tape bands: invalid end count");
+                    if (count == band) break;
+                }
+                ::usleep(10000);
+                continue;
+            }
         }
         if (bands && !bandLoaded) {
             tapeState("wait-band");
@@ -3912,6 +3930,12 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
                 require(cf >= 0, "tape bands: publish consumed"); ::close(cf);
                 std::fprintf(stderr, "TAPE_BAND_READ band=%llu rows=%llu released_before_publish=1\n",
                     (unsigned long long)readBand, (unsigned long long)readRows);
+                // AN EMPTY BAND IS ACKED, NOT IGNORED. Its producer is blocked on
+                // this exact marker (see the terminal drain above); the ack is the
+                // only thing that lets its wave advance.
+                if (!readRows)
+                    std::fprintf(stderr, "BAND_EMPTY_ACK band=%llu bytes=0 consumed=1 rows_before=%llu\n",
+                                 (unsigned long long)readBand, (unsigned long long)baseRow);
             };
             if (tapeVersion == 1) {
                 waitFile(bandPath(band, ".done"));
@@ -3986,7 +4010,6 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
             std::unique_lock<std::mutex> lock(wordMutex);
             wordDone.wait(lock, [&] { return wordRemaining == 0; });
         }
-        for (U count : workerHits) hits += count;
         tWord += now_sec() - tw;
         const double tp = now_sec();
         tapeState("publish");
@@ -4032,10 +4055,10 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
         sink->own.tSlotWait, sink->own.tFlowWait, sink->own.tStitch,
         (unsigned long long)sink->writersUsed);
     std::fprintf(stderr,
-        "TAPE_EMIT_DONE rows=%llu runs=%llu hits=%llu wall=%.2f read_s=%.2f word_s=%.2f "
+        "TAPE_EMIT_DONE rows=%llu runs=%llu seam_pass=none wall=%.2f read_s=%.2f word_s=%.2f "
         "publish_s=%.2f finish_s=%.2f\n",
         (unsigned long long)n, (unsigned long long)sink->runs(),
-        (unsigned long long)hits, now_sec() - t0, tRead, tWord, tPub, tEnd);
+        now_sec() - t0, tRead, tWord, tPub, tEnd);
 }
 
 static int binbwt_main(const std::string& path, const std::string& mapPath,

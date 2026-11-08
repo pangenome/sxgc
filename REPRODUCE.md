@@ -385,6 +385,98 @@ XSA_FINISH_PROGRESS band=833/2289 runs=54657022 chi_so_far=0 repair_wall=50.7 lc
   built this container. This run: `git_commit=6dd06ef6e141a03522c5929d1e411cca468c7c01
   git_dirty=0 branch=reproduce-guide`.
 
+### What the `emit-tape` phase actually does (and what it no longer does)
+
+`xsa build --tape` spawns three processes: `order-tape` (the band sorter,
+`scatter_sort`), `emit-tape`, and `finish-v2`. The middle one states its job in
+the journal, once per run:
+
+```
+EMIT_TAPE phase=emit-tape job=band-concat order=rank tool=cross_lcp_merge cross_lcp=0 seam_pass=none lcp_source=sorter-bands (concatenate the sorter's rank-ordered band slices into the merged stream; the LCP column arrives as band slices and is folded by the finish)
+```
+
+**`emit-tape` concatenates.** The sorter publishes, band by band, the next
+`rows_per_band` rows of the suffix array in exact rank order (`band_<b>.sa`),
+each row's BWT byte (`band_<b>.sym`) and the band's LCP slice (`band_<b>.lcp`).
+`emit-tape` reads those bands in band order, re-cuts them into the run pieces the
+finish folds, and releases each band as its piece is published (the `.consumed`
+handshake, which is the route's only flow control). It does **not** compute an
+LCP column, does not compare two suffixes, and does not repair a seam: the order
+it streams *is* the order a BWT needs, and the LCP column is the sorter's own
+(`lcp_source=sorter-bands`).
+
+The binary keeps the name `cross_lcp_merge` because it also serves the legacy
+four-file merge, where cross-LCP work is real. On this route it also journals
+
+```
+EMIT_SEAM_PASS none reason=vestigial_under_v2tape sink=BinBandSink n=1307910802541 depth=1 raw_classes=0 aggregate_occurrences=0 unique_targets=0 limit_not_used=67108864 work_limit_not_used=20926572840656 scan_bytes_avoided=1307910802541 basis=end_symbol_unique(end_symbol=0) certified_by=TAPE_EMIT_END_ROWS(rows==1)
+```
+
+— i.e. the seam census of the terminal suffix is **gone from this path**. That
+census walked the occurrence chain `occ_1` = every position holding the terminal
+byte, `occ_{d+1}` = the members of `occ_d` whose predecessor matches (one class
+per depth). The appended END byte is virtual and its symbol — code 0, handed to
+an *absent* byte by the per-corpus remap — occurs exactly once, so `occ_1` has
+one member and the chain never takes a second step. The census could therefore
+only ever print `raw_classes=0 aggregate_occurrences=0 unique_targets=0`, which
+is exactly what the 100 GB build recorded
+(`CROSS_SEAM_DISCOVERED n=100000000001 depth=1 raw_classes=0
+aggregate_occurrences=0 unique_targets=0 limit=67108864
+work_limit=1600000000016`), with `hits=0` on all 1e11 rows and `count=0` repair
+exceptions. It cost a full corpus scan (18 min of the Pile attempt's 18:11 wall)
+plus a `(n>>6)+2`-word target bitmap — n/8 bytes: 12.5 GB at 100 GB (that run's
+whole peak RSS was 13,136,084 KiB), 152 GiB at the Pile, where it was the
+`std::bad_alloc` that killed the phase — to learn nothing.
+
+The assumption is not taken on trust, and it is not this phase's assumption to
+make. The producer REFUSES to run a corpus where it could fail:
+`scatter_sort` dies with `tape consumer reserves cell zero; virtual END consumer
+required` if any *present* corpus byte maps to code 0, so the appended END is the
+text's only 0 on every accepted run. `emit-tape` then certifies the same fact on
+the data it writes: `TAPE_EMIT_END_ROWS rows=<n> symbol=0 expected=1` refuses a
+stream whose BWT carries more than one END row. The machinery itself is intact
+and reachable: `XSA_SEAM_CENSUS=1` is the INTERNAL A/B arm (never a user option,
+never needed for correctness) that runs the real occurrence chain and journals
+its own allocation, sized from the census and never from n:
+
+```
+SEAM_ALLOC sink=BinBandSink arm=env classes=0 bytes<=0 basis=census limit=<2^26 cap> depth=1 unique_targets=0 note=the occurrence set is bounded by the census limit, never by n
+```
+
+The default arm journals the same decision with zero work:
+
+```
+SEAM_ALLOC classes=0 bytes=0 basis=census short_circuit=unique_targets_zero
+```
+
+**No allocation in the emit phase is a multiple of n.** `tape_emit` allocates
+only its chunk buffers (`--tape-emit-chunk`, 4 Mi words + 4 Mi bytes), and the
+sink's bands are bounded by the band window. The n-proportional allocations that
+remain in `cross_lcp_merge.cpp` are all on the *legacy* arms, which the product
+route never spawns: `write_pos_sxp4`'s `stream.reserve(n*4+64)` (the v1 SXP4
+order column), the SXCR text reconstruction's `bwt(n)`+`lf(n)` (9 n, the v1
+pairwise/k-way pair path) and `anchors.resize(n)` in the cyclic repair; the
+`--selftest` oracles' `v.reserve(n)` are oracle-only. If you touch any of them,
+price it against the phase's `RLIMIT_AS`, not against n.
+
+### An EMPTY band is acked, never ignored
+
+The sorter can publish a band with **no rows** (a wave that closes a byte range
+without adding a row: `band_<b>.sa` of 0 bytes, `band_<b>.done`, an LCP slice with
+`rows=0`). `emit-tape` is what answers it, and the sorter's wave drain waits for
+`band_<b>.consumed` before its next wave — and therefore before it publishes
+`end.ready`. The phase therefore drains any PUBLISHED band before it asks for the
+end marker, and journals the empty case:
+
+```
+BAND_EMPTY_ACK band=40 bytes=0 consumed=1 rows_before=4000001
+```
+
+Without that ordering the two sides deadlock with the row budget exhausted: the
+emit waits for `end.ready`, the sorter waits for the empty band's `.consumed`,
+both alive, forever. It was measured at 4 MB (`n=4,000,001`, DNA) and it is not
+new — the mainline binary does it too.
+
 ### chi policy
 
 The recorded runs below used an older opt-in chi default. Current builds enable

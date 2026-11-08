@@ -1975,11 +1975,20 @@ supervisor process; base ulimit -v {memory_kb} KiB. A run ends when it exits, fa
         }
     }
     // ---- THE TAPE ROUTE (THE PRODUCT) ----------------------------------
-    // Same three-tool shape the gate used, owned by this binary: the sorter
-    // writes bands with --tape-bands, cross_lcp_merge consumes that stream, and
-    // the finish (already below) consumes the runs. Flow control is the sorter's
-    // own .consumed protocol satisfied by the merge, so there is no consumer
-    // script anywhere.
+    // Three tools, owned by this binary: the sorter writes rank-ordered band
+    // slices with --tape-bands, the `emit-tape` phase CONCATENATES them in key
+    // order into the merged stream (cross_lcp_merge --binbwt --tape-bands: an
+    // order-preserving concatenation of already-sorted rows, NOT a cross-LCP
+    // merge and NOT a seam walk - the phase journals TAPE_EMIT_START
+    // job=band-concat and EMIT_SEAM_PASS none, and cross_lcp_merge.cpp's
+    // seam_pass_skip has the proof), and the finish (already below) consumes the
+    // runs. Flow control is the sorter's own .consumed protocol satisfied by the
+    // concatenator, so there is no consumer script anywhere.
+    //
+    // The name of that binary is history: it also serves the legacy four-file
+    // merge, where cross-LCP work really happens. On THIS route no LCP is
+    // computed and no suffix comparison is made by it - the rows arrive in exact
+    // rank order.
     //
     // THE LCP COLUMN IS PART OF THE ROUTE (not a flag): every band carries its own
     // LCP slice (band_<i>.lcp) beside its SA stream, and the finish folds those
@@ -2019,6 +2028,20 @@ supervisor process; base ulimit -v {memory_kb} KiB. A run ends when it exits, fa
     if lce_verify {
         journal.line("TAPE_AB_ARM XSA_LCE_VERIFY=1: INTERNAL A/B (the old LCE path: the finish \
 walks the corpus for every endpoint and no LCP slice is produced). Not a user option.");
+    }
+    if options.tape {
+        // WHAT `emit-tape` IS, SAID ONCE, IN THE JOURNAL. The phase's tool keeps
+        // the name cross_lcp_merge; its job on this route is the concatenation of
+        // the sorter's rank-ordered band slices into the merged stream. It
+        // computes no LCP, merges no cross-seam and runs no seam census (see
+        // EMIT_SEAM_PASS in cross_lcp_merge.cpp: the terminal byte is unique, so
+        // the census could only ever return zero, and it used to cost a full
+        // corpus scan plus an n/8-byte target bitmap to say so).
+        journal.line(&format!(
+            "EMIT_TAPE phase=emit-tape job=band-concat order=rank tool=cross_lcp_merge \
+             cross_lcp=0 seam_pass=none lcp_source={lcp_source} \
+             (concatenate the sorter's rank-ordered band slices into the merged stream; \
+              the LCP column arrives as band slices and is folded by the finish)"));
     }
     let bands_dir = scratch.join("bands-tape");
     let mut emit_args: Vec<String> = Vec::new();
