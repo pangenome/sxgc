@@ -3135,13 +3135,13 @@ struct BinBandSink {
           width(std::max<unsigned>(1, 64 - __builtin_clzll(t.n))),
           dollar(dlr), prefix(p), dir(p + ".pieces") {
         require(::mkdir(dir.c_str(), 0777) == 0, "create band pieces directory");
-        // THE SEAM PASS: NOT RUN BY DEFAULT. seam_pass_skip() carries the proof
-        // that the terminal suffix's occurrence chain cannot produce a class on
-        // this text; XSA_SEAM_CENSUS=1 is the INTERNAL A/B ARM (never a user
-        // option, never required for correctness) that runs the real chain, so
-        // the two arms can be diffed byte for byte on any corpus and the
-        // mechanism keeps an exercised, reachable path.
-        seam_pass_select(seam, t, n, "BinBandSink", inputRuns);
+        // THE SEAM PASS IS CONVENTION-GUARDED, NOT ASSUMED: see
+        // seam_pass_select. On the finite/seed-first convention it is skipped with
+        // zero bytes (the appended END symbol is unique, so no class can exist); on
+        // a cyclic/wrap convention it RUNS the real chain. XSA_SEAM_CENSUS=1 is the
+        // INTERNAL A/B arm that runs the chain on any convention, so the skip can be
+        // proved byte-identical on any corpus.
+        seam_pass_select(seam, t, n, "BinBandSink", inputRuns, dollar);
         for (const auto& cl : seam.raw) firstSizes.emplace(cl.first, cl.hi);
         targets.reserve(seam.targets.size());
         for (const auto& entry : seam.targets) targets.push_back(entry.first);
@@ -4195,7 +4195,7 @@ static int binbwt_main(const std::string& path, const std::string& mapPath,
     std::unique_ptr<BinBandSink> parallel;
     std::unique_ptr<SequentialV2> serial;
     if (serialSink) {
-        serial.reset(new SequentialV2(prefix, text, text.n, text.n));
+        serial.reset(new SequentialV2(prefix, text, text.n, text.n, dollar));
         serial->beginShard(0, 0, text.n);
         sinkDir = serial->dir;
     } else {

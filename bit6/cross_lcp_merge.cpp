@@ -2744,25 +2744,40 @@ static void seam_pass_skip(SparseSeamCapture& seam, U n, const char* who, U inpu
         (unsigned long long)n);
 }
 
-// THE SELECTOR both sinks use. Default: seam_pass_skip (no census, zero bytes).
-// XSA_SEAM_CENSUS=1: the INTERNAL A/B ARM that runs the real occurrence chain,
-// with the allocation it actually needs - the occurrence set is bounded by the
-// discovery limit (<= 2^26 entries = 512 MB) and by the discovery work budget,
-// never by n, and the empty answer allocates nothing beyond it. Both arms are
-// byte-identical on this route's text (measured on the 4 MB/150 MB gates), which
-// is the point of keeping the arm: it is proof, not a knob.
+// THE SELECTOR both sinks use, and it is CONVENTION-GUARDED: the zero-byte skip is
+// only sound while the route's convention guarantees that seam classes cannot
+// exist. That convention is the finite/seed-first projection (dollar = true): the
+// text ends in ONE appended END symbol whose code 0 belongs to an absent byte, so
+// the terminal-suffix occurrence chain stops at its first step.
+//   * convention=finite-seed-first, seams_possible=0  -> verdict=skip (zero bytes)
+//   * convention=cyclic,            seams_possible=1  -> verdict=census (the real
+//     chain runs, with its own bounded allocation: a wrap construction has no
+//     unique terminal symbol, so classes COULD exist there and work must not be
+//     silently dropped)
+//   * XSA_SEAM_CENSUS=1                               -> verdict=census (the A/B arm)
+// The verdict is journaled on every run: SEAM_SKIP convention=<name>
+// seams_possible=<0|1> verdict=<skip|census>. Both arms are byte-identical on this
+// route's text (4 MB, 150 MB and 10 GB gates), which is what makes the arm proof
+// rather than a knob.
 static void seam_pass_select(SparseSeamCapture& seam, const CorpusText& text, U n,
-                             const char* who, U inputRuns) {
-    if (!::getenv("XSA_SEAM_CENSUS")) { seam_pass_skip(seam, n, who, inputRuns); return; }
+                             const char* who, U inputRuns, bool dollar) {
+    const bool envArm = ::getenv("XSA_SEAM_CENSUS") != nullptr;
+    const bool seamsPossible = !dollar;          // cyclic/wrap: no unique terminal byte
+    const char* convention = dollar ? "finite-seed-first(ends_in_sentinel=1)"
+                                    : "cyclic(wrap,no-unique-terminal)";
+    const bool census = seamsPossible || envArm;
+    std::fprintf(stderr, "SEAM_SKIP convention=%s seams_possible=%d verdict=%s sink=%s\n",
+                 convention, int(seamsPossible), census ? "census" : "skip", who);
+    if (!census) { seam_pass_skip(seam, n, who, inputRuns); return; }
     const U limit = std::min<U>(1u << 26, std::max<U>(1000, inputRuns / 1000));
     seam.discover(text, n, limit);
     const U boundBytes = std::max<U>(seam.raw.size(), seam.targets.size()) * sizeof(U);
     std::fprintf(stderr,
-        "SEAM_ALLOC sink=%s arm=env classes=%zu bytes<=%llu basis=census limit=%llu "
+        "SEAM_ALLOC sink=%s arm=%s classes=%zu bytes<=%llu basis=census limit=%llu "
         "depth=%llu unique_targets=%zu note=the occurrence set is bounded by the census "
-        "limit, never by n\n",
-        who, seam.raw.size(), (unsigned long long)boundBytes, (unsigned long long)limit,
-        (unsigned long long)seam.depth, seam.targets.size());
+        "limit (<= 2^26 entries), never by n\n",
+        who, envArm ? "env" : "convention", seam.raw.size(), (unsigned long long)boundBytes,
+        (unsigned long long)limit, (unsigned long long)seam.depth, seam.targets.size());
 }
 // Scratch records are char + length + two run samples, never one position
 // per row. Consumer stitches a continued boundary run using head from the
@@ -3782,14 +3797,14 @@ struct SequentialV2 : SparseWalkSink {
     V2Piece piece;
     SparseRun pending;
     std::array<U, 256> counts{}, frequencies{};
-    SequentialV2(const std::string& p, const CorpusText& t, U count, U inputRuns)
+    SequentialV2(const std::string& p, const CorpusText& t, U count, U inputRuns, bool dollar)
         : text(&t), n(count), window(v2_piece_window()),
           width(std::max<unsigned>(1, 64 - __builtin_clzll(n))),
           prefix(p), dir(p + ".pieces") {
         if (rlebwt_wire_enabled()) bwt = std::make_unique<OutFile>(p + ".rlebwt");
         require(::mkdir(dir.c_str(), 0777) == 0, "create sequential pieces directory");
         // THE SEAM PASS: NOT BY DEFAULT - see seam_pass_select below.
-        seam_pass_select(seam, t, n, "SequentialV2", inputRuns);
+        seam_pass_select(seam, t, n, "SequentialV2", inputRuns, dollar);
         for (const auto& cl : seam.raw) {
             firstSizes.emplace(cl.first, cl.hi);
         }
@@ -4183,7 +4198,7 @@ static U emit_sparse_v2(const std::string& prefix, const std::vector<SideExt>& s
                         const PairScratch& sc, U hashK, bool pre) {
     U n = 0, inputRuns = 0; for (const auto& side : sides) { n += side.n; inputRuns += side.runs; }
     CorpusText corpus; open_merge_text(sides, corpus, false);
-    SequentialV2 output(prefix, corpus, n, inputRuns);
+    SequentialV2 output(prefix, corpus, n, inputRuns, true);   // the merge arms are finite/seed-first
     const U producers = v2_producers(n);
     std::fprintf(stderr, "CROSS_PRODUCER_RESOURCES P=%llu decoded_front_bytes_max=%llu segment_buffer_bytes=%llu spool_bytes_bound=%llu\n",
         (unsigned long long)producers, (unsigned long long)(producers*sides.size()*4096*8),
@@ -5587,7 +5602,7 @@ static int radix_main(const std::string& path,const std::string& mapPath,const s
     HashSparse hp;hp.open_ro(hash,32,2*text.n/32+1);
     require(::unlink(hash.c_str())==0,"unlink open radix hash scratch");
     Budget budget;Keys keys;keys.init(&text,&hp,text.n,true,&budget);
-    SequentialV2 output(prefix,text,text.n,text.n);
+    SequentialV2 output(prefix,text,text.n,text.n,true);   // radix arm: finite/seed-first
     output.beginShard(0,0,text.n);RadixWork work;
     radix_order(text,keys,N,cap,work,[&](U row,U p){output.row(row,p);});
     output.endShard();std::error_code ec;fs::remove(output.dir,ec);
