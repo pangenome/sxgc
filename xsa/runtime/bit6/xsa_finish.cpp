@@ -6350,7 +6350,11 @@ int main(int argc, char** argv) {
             if (pf_cache_journal_on()) pf_cache_journal(text, "cold-start", 64);
         }
         spoolPiece=band;
-        src.deferConsume = containerStream;
+        // Deferred (fsync-gated) piece deletion is the PRODUCT rule. Under the
+        // resume protocol the raw pieces are a RESTART DEPENDENCY (RESUME_RETENTION),
+        // so they are retained and the finish's own checkpoint is what bounds the
+        // window; deleting them would make an unrecoverable gap for a replay.
+        src.deferConsume = containerStream && !spoolMode;
         bool active = !spoolEof && feed(band, slots[cur]);
         if (active && slots[cur].cnt) dispatchLce(slots[cur]);
         while (active) {

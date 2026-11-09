@@ -774,6 +774,49 @@ impl DiscSampler {
     }
 }
 
+/// Live SCRATCH bytes and the PRODUCT's bytes, measured separately. Anything on
+/// the container's own path (`X`, `X.partial`, `X.part`) is the output.
+fn scratch_bytes_excluding(scratch: &Path, container: &Path) -> (u64, u64) {
+    let mut scratch_bytes = 0u64;
+    let mut output_bytes = 0u64;
+    let mut stack = vec![scratch.to_path_buf()];
+    let mut outs: Vec<std::ffi::OsString> = Vec::new();
+    let mut names: Vec<std::ffi::OsString> = Vec::new();
+    if let (Some(dir), Some(name)) = (container.parent(), container.file_name()) {
+        let mut partial = name.to_os_string();
+        partial.push(".partial");
+        let mut part = name.to_os_string();
+        part.push(".part");
+        names = vec![name.to_os_string(), partial, part];
+        outs.clone_from(&names);
+        let _ = dir;
+    }
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            match entry.file_type() {
+                Ok(t) if t.is_dir() => stack.push(path),
+                Ok(t) if t.is_file() => {
+                    // ALLOCATED bytes, not apparent size: the chi bitmap is a sparse
+                    // n/8 mapping (164 GB apparent at the Pile) whose untouched pages
+                    // occupy nothing, and a budget that counted apparent size would
+                    // refuse a run that is using a fraction of that.
+                    use std::os::unix::fs::MetadataExt;
+                    let len = entry.metadata()
+                        .map(|m| m.blocks().saturating_mul(512).max(if m.len() == 0 { 0 } else { 4096 }))
+                        .unwrap_or(0);
+                    let is_output = path.parent() == container.parent()
+                        && path.file_name().map(|n| outs.iter().any(|o| o == n)).unwrap_or(false);
+                    if is_output { output_bytes += len; } else { scratch_bytes += len; }
+                }
+                _ => {}
+            }
+        }
+    }
+    (scratch_bytes, output_bytes)
+}
+
 // ---------------------------------------------------------------- FLOW CONTROL
 /// THE DELIVERABLE: live scratch is a MEASURED quantity, and the producer is
 /// PAUSED (never killed, never failed) while the finish drains. Without this the
@@ -792,6 +835,19 @@ impl DiscSampler {
 /// when live scratch has not moved for STALL_S while paused, and journals why.
 struct Backpressure {
     budget_bytes: u64,
+    /// The number the operator sets is a SCRATCH budget: the container being built
+    /// is the PRODUCT, not scratch, and it is counted separately (`output_gb`) and
+    /// reported on every line. The plan's fit check already prices it as its own
+    /// term, so folding it into the scratch budget here would double-count it and
+    /// make a 6 GB budget impossible on a 10 GB corpus whose container is 5.2 GB.
+    output_bytes: u64,
+    container: PathBuf,
+    /// Raised when the drain cannot reach the budget (the residual scratch the
+    /// finish cannot release without more producer input). Measured, journaled,
+    /// never assumed.
+    pause_at: u64,
+    resume_at: u64,
+    floor_bytes: u64,
     scratch: PathBuf,
     /// tag -> process group id, for the phases that PRODUCE scratch.
     producers: Vec<(String, u32)>,
@@ -807,9 +863,11 @@ struct Backpressure {
 }
 
 impl Backpressure {
-    fn new(scratch: &Path, budget_bytes: u64, producers: Vec<(String, u32)>) -> Backpressure {
+    fn new(scratch: &Path, budget_bytes: u64, container: &Path, producers: Vec<(String, u32)>) -> Backpressure {
         Backpressure {
-            budget_bytes, scratch: scratch.to_path_buf(), producers, paused: false,
+            budget_bytes, output_bytes: 0, container: container.to_path_buf(),
+            pause_at: budget_bytes, resume_at: budget_bytes / 10 * 9, floor_bytes: 0,
+            scratch: scratch.to_path_buf(), producers, paused: false,
             pauses: 0, resumes: 0, paused_ms_total: 0, peak_bytes: 0,
             last_sample: Instant::now(), last_live: 0, paused_since: Instant::now(),
             paused_live_at: 0,
@@ -835,12 +893,16 @@ impl Backpressure {
         const STALL_S: Duration = Duration::from_secs(30);
         if self.last_sample.elapsed() < SAMPLE { return Ok(()); }
         self.last_sample = Instant::now();
-        let live = tree_bytes(&self.scratch);
+        let (live, output) = scratch_bytes_excluding(&self.scratch, &self.container);
+        self.output_bytes = output;
         self.last_live = live;
         if live > self.peak_bytes { self.peak_bytes = live; }
         let gb = |v: u64| v as f64 / (1u64 << 30) as f64;
+        journal.line(&format!(
+            "SCRATCH_SAMPLE live_gb={:.3} output_gb={:.3} budget_gb={:.3} peak_gb={:.3} paused={} allocated_bytes=1",
+            gb(live), gb(output), gb(self.budget_bytes), gb(self.peak_bytes), u8::from(self.paused)));
         if !self.paused {
-            if live >= self.budget_bytes {
+            if live >= self.pause_at {
                 for (tag, pgid) in self.producers.clone() {
                     self.signal_group(pgid, "STOP")?;
                     journal.line(&format!("SCRATCH_BACKPRESSURE signal=STOP phase={tag} pgid={pgid}"));
@@ -851,14 +913,26 @@ impl Backpressure {
                 self.paused_live_at = live;
                 journal.line(&format!(
                     "SCRATCH_BACKPRESSURE state=pause live_gb={:.3} budget_gb={:.3} peak_gb={:.3} pauses={} resumes={} \
-                     action=producer_stopped consumer=drains",
-                    gb(live), gb(self.budget_bytes), gb(self.peak_bytes), self.pauses, self.resumes));
+                     output_gb={:.3} pause_at_gb={:.3} action=producer_stopped consumer=drains",
+                    gb(live), gb(self.budget_bytes), gb(self.peak_bytes), self.pauses, self.resumes,
+                    gb(output), gb(self.pause_at)));
             }
         } else {
             // Drain target: 90% of the budget, so the producer does not start a
             // wave that immediately re-trips the limit.
-            let drained = live <= self.budget_bytes / 10 * 9;
+            // `drained`: the budget is met. `floor`: the drain has stopped making
+            // progress while still above it - the residual is scratch the finish
+            // cannot release without producer input (or, on a resumed build, a
+            // producer stopped inside the shared journal's flock). The floor is
+            // MEASURED and becomes the new pause threshold, so the controller
+            // settles instead of thrashing; it is journaled every time it moves.
+            let drained = live <= self.resume_at;
             let stalled = self.paused_since.elapsed() >= STALL_S && live + (live / 100) >= self.paused_live_at;
+            if stalled && live > self.floor_bytes { self.floor_bytes = live; }
+            if stalled && live + (1u64 << 30) > self.pause_at {
+                self.pause_at = live + (1u64 << 30) / 2;
+                self.resume_at = self.pause_at / 10 * 9;
+            }
             if drained || stalled {
                 for (tag, pgid) in self.producers.clone() {
                     self.signal_group(pgid, "CONT")?;
@@ -869,10 +943,10 @@ impl Backpressure {
                 self.paused_ms_total += self.paused_since.elapsed().as_millis();
                 journal.line(&format!(
                     "SCRATCH_BACKPRESSURE state=resume live_gb={:.3} budget_gb={:.3} peak_gb={:.3} pauses={} resumes={} \
-                     why={} paused_ms={}",
+                     output_gb={:.3} why={} paused_ms={} floor_gb={:.3} pause_at_gb={:.3}",
                     gb(live), gb(self.budget_bytes), gb(self.peak_bytes), self.pauses, self.resumes,
-                    if stalled { "drain_stalled" } else { "drained" },
-                    self.paused_since.elapsed().as_millis()));
+                    gb(output), if stalled { "drain_floor" } else { "drained" },
+                    self.paused_since.elapsed().as_millis(), gb(self.floor_bytes), gb(self.pause_at)));
             }
         }
         Ok(())
@@ -888,10 +962,13 @@ impl Backpressure {
             self.resumes += 1;
         }
         journal.line(&format!(
-            "SCRATCH_BACKPRESSURE_SUMMARY budget_gb={:.3} peak_gb={:.3} pauses={} resumes={} paused_ms={} last_live_bytes={}",
+            "SCRATCH_BACKPRESSURE_SUMMARY budget_gb={:.3} peak_gb={:.3} floor_gb={:.3} pauses={} resumes={} \
+             paused_ms={} last_live_bytes={} output_gb={:.3} accounting=scratch_excludes_container",
             self.budget_bytes as f64 / (1u64 << 30) as f64,
             self.peak_bytes as f64 / (1u64 << 30) as f64,
-            self.pauses, self.resumes, self.paused_ms_total, self.last_live));
+            self.floor_bytes as f64 / (1u64 << 30) as f64,
+            self.pauses, self.resumes, self.paused_ms_total, self.last_live,
+            self.output_bytes as f64 / (1u64 << 30) as f64));
         Ok(())
     }
 }
@@ -2158,8 +2235,34 @@ supervisor process; base ulimit -v {memory_kb} KiB. A run ends when it exits, fa
     // the plan block used: the gate after the run compares it against the
     // producer's own SS_TAPE_BUDGET, so a drift between plan and run is a refusal
     // (TAPE_PLAN_DISAGREE), not a footnote.
+    // ---- THE SCRATCH BUDGET IS A PLAN INPUT, NOT ONLY A BRAKE ----------------
+    // Pausing bounds the AVERAGE but not the BURST: the unit of work in flight is
+    // a WAVE of band files, and a wave larger than the budget overshoots it by its
+    // own size no matter how fast the signal lands (measured: a 48 x 500 MB wave
+    // took a 6 GB budget from 5.1 to 10.9 GB between two 2 s samples). So the band
+    // arena is clamped to the budget: envelope = memory_gb/2 GiB and the live
+    // window is about one arena, so memory_gb = budget_gb keeps the wave inside it
+    // and leaves the pauses to handle the finish's own growth.
+    let free_bytes = super::plan::disc_free_bytes(scratch)
+        .ok_or_else(|| format!("df failed for {}", scratch.display()))?;
+    let derived_cap = super::plan::tape_envelope_bytes(options.memory_gb).saturating_mul(2);
+    let budget_bytes = options.scratch_budget_gb
+        .map(|gb| (gb * (1u64 << 30) as f64) as u64)
+        .unwrap_or((free_bytes / 10).saturating_mul(8).min(derived_cap));
+    let budget_gb_ceil = (budget_bytes + (1u64 << 30) - 1) >> 30;
+    let plan_memory_gb = if options.scratch_budget_gb.is_some() {
+        options.memory_gb.min(budget_gb_ceil.max(2))
+    } else {
+        options.memory_gb
+    };
+    journal.line(&format!(
+        "SCRATCH_BUDGET source={} budget_bytes={budget_bytes} budget_gb={:.3} free_bytes={free_bytes} \
+         derived_cap_bytes={derived_cap} plan_memory_gb={plan_memory_gb} (min(0.8 x free, 2 x band window) \
+         x band arena clamped to the budget; a pause never kills, never fails)",
+        if options.scratch_budget_gb.is_some() { "operator" } else { "derived" },
+        budget_bytes as f64 / (1u64 << 30) as f64));
     let tape_plan = super::plan::tape_band_plan(
-        n.saturating_add(1), options.threads as u64, options.memory_gb, !lce_verify, 2 * n.saturating_add(2),
+        n.saturating_add(1), options.threads as u64, plan_memory_gb, !lce_verify, 2 * n.saturating_add(2),
     );
     let tape_envelope = tape_plan.envelope_bytes;
     // TWO NUMBERS, NAMED. P = bands LIVE at once = --threads: the arena divisor
@@ -2209,7 +2312,7 @@ walks the corpus for every endpoint and no LCP slice is produced). Not a user op
             // flight (while the pool runs --threads workers) is how the 100 GB run
             // came to price 8 bands while it was holding up to 96.
             "--budget-bytes".into(), tape_envelope.to_string(),
-            "--memory-gb".into(), options.memory_gb.to_string(),
+            "--memory-gb".into(), plan_memory_gb.to_string(),
             "--threads".into(), options.threads.to_string(),
         ];
         if lce_verify { producer_args.push("--no-lcp-slices".into()); }
@@ -2269,25 +2372,14 @@ walks the corpus for every endpoint and no LCP slice is produced). Not a user op
     // with the corpus. The budget is a MEASURED live-scratch ceiling: when it is
     // reached the producer is paused so the finish can absorb its backlog.
     let flow = {
-        let free_bytes = super::plan::disc_free_bytes(scratch)
-            .ok_or_else(|| format!("df failed for {}", scratch.display()))?;
-        // DEFAULT: 80% of free space, capped by twice the band window (the arena
-        // the sorter was already given). The smaller of the two is the one that
-        // binds first, and both are journaled so the number is never a mystery.
-        let window_bytes = tape_envelope.saturating_mul(2);
-        let derived = (free_bytes / 10).saturating_mul(8).min(window_bytes);
-        let budget_bytes = options.scratch_budget_gb
-            .map(|gb| (gb * (1u64 << 30) as f64) as u64)
-            .unwrap_or(derived);
-        journal.line(&format!(
-            "SCRATCH_BUDGET source={} budget_bytes={budget_bytes} budget_gb={:.3} free_bytes={free_bytes} \
-             derived_cap_bytes={window_bytes} (min(0.8 x free, 2 x band window); a pause never kills, never fails)",
-            if options.scratch_budget_gb.is_some() { "operator" } else { "derived" },
-            budget_bytes as f64 / (1u64 << 30) as f64));
-        let producers = vec![
-            (producer_label.to_string(), producer_running.child.id()),
-        ];
-        Backpressure::new(scratch, budget_bytes, producers)
+        // The PRODUCER STAGE = the sorter AND the emitter: the emitter's output is
+        // the piece stream that grows scratch, so pausing only the sorter would
+        // let it keep converting an already-written band window into pieces.
+        let mut producers = vec![(producer_label.to_string(), producer_running.child.id())];
+        if let Some(emit) = emit_running.as_ref() {
+            producers.push(("emit-tape".to_string(), emit.child.id()));
+        }
+        Backpressure::new(scratch, budget_bytes, &container, producers)
     };
     let mut phases = vec![producer_running, finish_running];
     if let Some(emit) = emit_running { phases.push(emit); }
