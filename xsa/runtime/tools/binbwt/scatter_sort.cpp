@@ -447,10 +447,26 @@ static void merge_sort_lcp(std::vector<Row>& v, std::vector<uint8_t>& out_lcp,
 static constexpr u64 SS_SAFETY_PCT = 85;          // of the arena left after fixed + stage
 static constexpr u64 SS_SCAN_CHUNK = 4u << 20;    // one windowed read buffer per thread
 static constexpr u64 SS_CTL_BYTES = 64u << 20;    // paths, per-band bookkeeping, allocator overhead
-static constexpr u64 SS_STAGE_MIN = 64u << 20;    // the scatter's append staging: a fixed fraction
-static constexpr u64 SS_STAGE_MAX = 2u << 30;     // of the envelope, clamped (the same numbers the
-static constexpr u64 SS_STAGE_DIVISOR = 24;       // scatter below allocates with)
+// THE STAGING IS PROPORTIONAL: a percentage of the envelope with a small floor,
+// never a 64 MiB..2 GiB clamp. The clamp is what made an honest small disk
+// budget impossible (a 1 GiB envelope paid 64 MiB of staging, 6.25% of itself,
+// plus 0.4 GiB of per-thread scan buffers, and the band unit fell under the
+// 65,536-row fold floor: a 2 GB DISK budget refused for a RAM reason).
+static constexpr u64 SS_STAGE_PCT = 5;           // % of the envelope
+static constexpr u64 SS_STAGE_FLOOR = 32u << 20; // the smallest staging that is staging
 static constexpr u64 SS_OVERSUBSCRIBE = 4;        // bands per worker per wave (work stealing needs >1)
+// THE DISK FOOTPRINT OF ONE ROW IN A LIVE BAND FILE: the wire row (32) + the
+// band's LCP slice (8) + its u8 column (1). MEASURED: the 100 GB run's peak live
+// scratch (78,880,730,679 B) is exactly bands_per_wave x rows_per_band x 41.
+static constexpr u64 SS_DISK_ROW_BYTES = 32 + 8 + 1;
+// THE BUDGET SPLIT. Measured on the 10 GB / 6 GiB gate: peak 7.199 GiB =
+// 4.5 GiB of band files + 2.7 GiB of emitted pieces (the 1100-piece window x
+// 65,536 rows x 41 B). The two terms ADD; nothing else in scratch is n-sized.
+static constexpr u64 SS_BAND_SHARE_PCT = 60;
+static constexpr u64 SS_PIECE_SHARE_PCT = 40;
+static constexpr u64 SS_PIECE_ROWS = 65536;
+static constexpr u64 SS_PIECE_WINDOW_MAX = 1100;
+static constexpr u64 SS_PIECE_WINDOW_MIN = 64;
 // THE WAVE DEScent. A wave class is a key PREFIX (plus an optional position slice
 // for a point mass). Depth is an OUTPUT of the census, exactly as it is for the
 // band plan: a class is split by the next byte for as long as its row count
@@ -466,26 +482,32 @@ static constexpr u64 SS_BUDGET_RATIO_MAX = 90;    // the exit assertion: owned R
 
 struct TapeBudget {
     u64 envelope = 0;        // the arena envelope this process may commit
+    u64 scratch_budget = 0;  // THE DISK BUDGET the work unit is sized from
     u64 bytes_per_row = 0;   // the sort's own footprint of ONE row, term by term
     u64 bands_in_flight = 0; // K: band arenas that can hold rows at the same time
     u64 fixed = 0;           // read windows + the sorted sample + histograms + control
     u64 stage = 0;           // the scatter's append staging
     u64 arena = 0;           // what the band columns may use
     u64 cap_rows = 0;        // rows admitted across all bands at once (= arena / bpr)
-    u64 rows_per_band = 0;   // THE WORK UNIT: the envelope's, capped by the window
-    u64 rows_per_band_budget = 0; // the envelope's own unit (arena / (bpr x K))
+    u64 rows_per_band = 0;   // THE WORK UNIT: the budget's band share, capped by the window
+    u64 rows_per_band_budget = 0; // the budget's own unit (band share / (disk bpr x oversub x P))
     u64 rows_per_band_wave = 0;   // what the scratch window allows (>= budget -> budget binds)
     u64 arena_planned = 0;   // K bands of the unit: the rows the gate admits at most
+    u64 arena_needed = 0;    // rows_per_band x bpr x P: what the unit needs of the arena
     u64 rows_per_wave = 0;   // an OUTPUT
     u64 bands_per_wave = 0;  // an OUTPUT
     u64 waves = 0;           // an OUTPUT (n / rows_per_wave)
+    u64 band_window = 0;     // bands_per_wave x rows_per_band x 41 B (the disk term)
+    u64 piece_window = 0;    // pieces in flight (the other disk term)
+    u64 piece_window_bytes = 0;
 };
 
 static TapeBudget tape_budget_plan(u64 envelope, u64 threads, u64 k_in_flight, bool lcp_on,
                                    u64 sample_slots, u64 n, u64 disc_cap_bytes, u64 row_bytes,
-                                   u64 override_rows_per_band = 0) {
+                                   u64 scratch_budget, u64 override_rows_per_band = 0) {
     TapeBudget b;
     b.envelope = envelope;
+    b.scratch_budget = scratch_budget;
     // EVERYTHING the sorter holds per row. The wire row is 32 B and the sort alone
     // is 81 B; the arena has to carry both plus the write staging.
     b.bytes_per_row = lcp_on ? (2 * row_bytes + 2 * 8 + 1 + 8 + 1) : (row_bytes + 8 + 1);
@@ -496,38 +518,38 @@ static TapeBudget tape_budget_plan(u64 envelope, u64 threads, u64 k_in_flight, b
     const u64 sample_bytes = (std::min<u64>(sample_slots, n) + 2) * 8;
     const u64 ctl = std::max<u64>(1u << 20, std::min<u64>(SS_CTL_BYTES, envelope / 64));
     b.fixed = threads * (SS_SCAN_CHUNK + 4096) + threads * 256 * 8 + sample_bytes + ctl;
-    b.stage = envelope / SS_STAGE_DIVISOR;
-    if (b.stage < SS_STAGE_MIN) b.stage = SS_STAGE_MIN;
-    if (b.stage > SS_STAGE_MAX) b.stage = SS_STAGE_MAX;
+    b.stage = std::max<u64>(SS_STAGE_FLOOR, envelope / 100 * SS_STAGE_PCT);
+    if (b.stage > envelope / 4) b.stage = std::max<u64>(1, envelope / 4);
     const u64 overhead = b.fixed + b.stage;
     const u64 avail = envelope > overhead ? envelope - overhead : 0;
     b.arena = avail / 100 * SS_SAFETY_PCT;
-    const u64 denom = std::max<u64>(1, b.bytes_per_row * b.bands_in_flight);
-    // THE BUDGET UNIT: the arena divided by what can be in flight. This is the
-    // number the 100 GB run got wrong (it derived it from 2n instead).
-    const u64 budget_rows = std::max<u64>(1, b.arena / denom);
-    // THE SCRATCH WINDOW (2n by law) is the other side of the same coin: a wave
-    // must fit on disc. It decides how MANY budget-sized bands a wave can hold
-    // (work stealing wants more than one, so up to SS_OVERSUBSCRIBE per worker) -
-    // never how big a band may be. When the window cannot even hold one
-    // budget-sized band, the band shrinks to the window (a tiny corpus cannot use
-    // a big envelope) and the plan says so.
+    // THE LAW, ON THE DISK SIDE. Scratch holds the band files being sorted
+    // (bands_per_wave x rows x 41 B) and the pieces already emitted
+    // (piece_window x 65,536 x 41 B); the two ADD to the measured peak, so the
+    // WORK UNIT comes from the DISK budget, not from the envelope. The RAM
+    // statement of the same law is rows x 90 B x bands_in_flight <= arena; the
+    // disk side is 1.8x stricter (4 bands per worker per wave x 41 B).
+    const u64 wave_bands_target = SS_OVERSUBSCRIBE * b.bands_in_flight;
+    const u64 band_bytes = scratch_budget / 100 * SS_BAND_SHARE_PCT;
+    const u64 budget_rows = std::max<u64>(1, band_bytes / (SS_DISK_ROW_BYTES * wave_bands_target));
     const u64 disc_rows = std::max<u64>(1, (disc_cap_bytes - disc_cap_bytes / 20) / row_bytes);
-    u64 nbands_target = disc_rows / budget_rows;
-    if (nbands_target < 1) nbands_target = 1;
-    if (nbands_target > SS_OVERSUBSCRIBE * b.bands_in_flight)
-        nbands_target = SS_OVERSUBSCRIBE * b.bands_in_flight;
-    b.rows_per_band = std::max<u64>(1, std::min(budget_rows, disc_rows / nbands_target));
+    const u64 window_rows = std::max<u64>(1, disc_rows / wave_bands_target);
+    b.rows_per_band = std::max<u64>(1, std::min(budget_rows, window_rows));
     b.rows_per_band_budget = budget_rows;
-    b.rows_per_band_wave = b.rows_per_band < budget_rows ? b.rows_per_band : budget_rows;
+    b.rows_per_band_wave = window_rows;
     if (override_rows_per_band) b.rows_per_band = std::min(b.rows_per_band, override_rows_per_band);
+    b.arena_needed = b.rows_per_band * b.bytes_per_row * b.bands_in_flight;
     b.cap_rows = std::max<u64>(b.rows_per_band, b.arena / std::max<u64>(1, b.bytes_per_row));
     // THE ARENA AS PLANNED: K bands of the unit (what the gate admits at most).
-    b.arena_planned = std::min(b.bands_in_flight, std::max<u64>(1, nbands_target)) * b.rows_per_band;
-    b.rows_per_wave = std::max<u64>(1, std::min(disc_rows,
-        nbands_target * b.rows_per_band));
+    const u64 nbands_target = std::max<u64>(1, std::min(disc_rows / b.rows_per_band, wave_bands_target));
+    b.arena_planned = std::min(b.bands_in_flight, nbands_target) * b.rows_per_band;
+    b.rows_per_wave = std::max<u64>(1, std::min(disc_rows, nbands_target * b.rows_per_band));
     b.bands_per_wave = std::max<u64>(1, (b.rows_per_wave + b.rows_per_band - 1) / b.rows_per_band);
     b.waves = std::max<u64>(1, (n + b.rows_per_wave - 1) / b.rows_per_wave);
+    b.band_window = b.bands_per_wave * b.rows_per_band * SS_DISK_ROW_BYTES;
+    b.piece_window = std::min(SS_PIECE_WINDOW_MAX, std::max(SS_PIECE_WINDOW_MIN,
+        (scratch_budget / 100 * SS_PIECE_SHARE_PCT) / (SS_PIECE_ROWS * SS_DISK_ROW_BYTES)));
+    b.piece_window_bytes = b.piece_window * SS_PIECE_ROWS * SS_DISK_ROW_BYTES;
     return b;
 }
 
@@ -790,7 +812,8 @@ int main(int argc, char** argv) {
     bool force_inplace = false; // A/B arm: the low-memory (in-place + LCE) band sort
     u64 sampleLo = 0, sampleCount = 4096;
     u64 pendingBands = 8;
-    u64 budget_bytes = 0;       // THE ARENA ENVELOPE: the only input that sizes work
+    u64 budget_bytes = 0;       // THE ARENA ENVELOPE: what the process may commit
+    u64 scratch_budget_bytes = 0; // THE DISK BUDGET the work unit is sized from
     double memory_gb = 0.0;     // the phase's --memory-gb, journaled (not used to size)
 
     for (int i = 1; i < argc; ++i) {
@@ -807,6 +830,7 @@ int main(int argc, char** argv) {
         else if (a == "--scratch") scratch = nxt();
         else if (a == "--ram-gb") ram_gb = std::atof(nxt().c_str());
         else if (a == "--budget-bytes") budget_bytes = std::strtoull(nxt().c_str(), nullptr, 10);
+        else if (a == "--scratch-budget-bytes") scratch_budget_bytes = std::strtoull(nxt().c_str(), nullptr, 10);
         else if (a == "--memory-gb") memory_gb = std::atof(nxt().c_str());
         else if (a == "--scratch-cap-gb") scratch_cap_gb = std::atof(nxt().c_str());
         else if (a == "--threads") threads = std::strtoull(nxt().c_str(), nullptr, 10);
@@ -1001,7 +1025,8 @@ int main(int argc, char** argv) {
     const char* k_source = par_bands ? "operator --par-bands"
                                      : "thread count (P = --threads; K=--pending-bands is the tape window)";
     TapeBudget budget = tape_budget_plan(envelope_bytes, std::max<u64>(1, threads), k_in_flight,
-                                         plan_lcp, sample_n, N, cap_bytes, row_bytes);
+                                         plan_lcp, sample_n, N, cap_bytes, row_bytes,
+                                         scratch_budget_bytes);
     // THE PLAN IS PRE-FLIGHTED AGAINST THE PROCESS'S OWN ADDRESS SPACE: a reserve
     // of the whole arena (never touched, so it costs nothing) fails HERE, at plan
     // time, if RLIMIT_AS cannot hold it - and then the unit SHRINKS instead of the
@@ -1016,11 +1041,13 @@ int main(int argc, char** argv) {
                 " attempt=%u\n",
                 budget.rows_per_band, floor_rows, envelope_bytes, budget.bytes_per_row,
                 budget.bands_in_flight, attempt);
-            die("TAPE_BUDGET_TOO_SMALL: the arena envelope cannot hold one band of " +
-                std::to_string(floor_rows) + " rows at " + std::to_string(budget.bytes_per_row) +
-                " B/row x K=" + std::to_string(budget.bands_in_flight) + " in flight. This is a "
-                "CONFIGURATION error, not a data-dependent shrink: raise --memory-gb, lower "
-                "--threads (K is the in-flight band count), or shard the corpus");
+            die("TAPE_BUDGET_TOO_SMALL: the scratch budget cannot hold one band of " +
+                std::to_string(floor_rows) + " rows at " + std::to_string(SS_DISK_ROW_BYTES) +
+                " B/disk-row x " + std::to_string(SS_OVERSUBSCRIBE) + " x K=" +
+                std::to_string(budget.bands_in_flight) + " in flight. This is a CONFIGURATION "
+                "error, not a data-dependent shrink: raise --scratch-budget-gb (the unit is a "
+                "percentage of it), lower --threads (K is the in-flight band count), or shard "
+                "the corpus");
         }
         const u64 arena_bytes = budget.bands_in_flight * budget.rows_per_band * budget.bytes_per_row;
         if (tape_arena_reserve(arena_bytes)) break;
@@ -1033,6 +1060,7 @@ int main(int argc, char** argv) {
             envelope_bytes, attempt);
         budget = tape_budget_plan(envelope_bytes, std::max<u64>(1, threads), k_in_flight,
                                   plan_lcp, sample_n, N, cap_bytes, row_bytes,
+                                  scratch_budget_bytes,
                                   /*override_rows_per_band=*/std::max<u64>(1, budget.rows_per_band / 2));
     }
     const u64 sort_row_bytes = budget.bytes_per_row;
@@ -1075,28 +1103,37 @@ int main(int argc, char** argv) {
         budget.bands_in_flight * rows_per_band * sort_row_bytes,
         double(budget.bands_in_flight * rows_per_band * sort_row_bytes) / double(N));
     std::fprintf(stderr,
-        "SS_TAPE_BUDGET memory_gb=%.2f budget_bytes=%" PRIu64 " bytes_per_row=%" PRIu64
+        "SS_TAPE_BUDGET memory_gb=%.2f budget_bytes=%" PRIu64 " scratch_budget_bytes=%" PRIu64
+        " bytes_per_row=%" PRIu64
         " bpr_terms=rows:%zu+pingpong:%zu+lcp:%u+slice:%u+stage:%u safety=%.2f"
+        " disk_row_bytes=%" PRIu64 " band_share_pct=%" PRIu64 " piece_share_pct=%" PRIu64
         " bands_in_flight=%" PRIu64 " rows_per_band=%" PRIu64 " rows_per_band_budget=%" PRIu64
         " rows_per_band_window=%" PRIu64 " binding=%s bands=%" PRIu64
         " waves=%" PRIu64 " rows_per_wave=%" PRIu64 " arena_bytes=%" PRIu64
-        " arena_planned_rows=%" PRIu64 " cap_rows=%" PRIu64 " fixed_bytes=%" PRIu64
+        " arena_planned_rows=%" PRIu64 " arena_needed_bytes=%" PRIu64
+        " band_window_bytes=%" PRIu64 " piece_window=%" PRIu64 " piece_window_bytes=%" PRIu64
+        " cap_rows=%" PRIu64 " fixed_bytes=%" PRIu64
         " stage_bytes=%" PRIu64
         " source=%s k_source=%s fd_soft=%" PRIu64 " fd_hard=%" PRIu64
         " parallel_bands=%" PRIu64 " live_rows=%" PRIu64 " budget_rows=%" PRIu64
         " ratio=%.4f\n"
-        " (rows_per_band = arena/(bpr x parallel_bands): the work unit is derived from the envelope, n is"
-        " in NO numerator; parallel_bands is the count of bands LIVE at once - the tape window K"
-        " (--pending-bands) bounds band FILES, never live arenas; live_rows = parallel_bands x"
-        " rows_per_band, budget_rows = envelope/bpr, ratio = live_rows x bpr / envelope)\n",
-        (memory_gb > 0 ? memory_gb : ram_gb), envelope_bytes, budget.bytes_per_row,
+        " (rows_per_band = min(band_share_pct * scratch_budget/(disk_row_bytes x oversub x parallel_bands),"
+        " (2n window)/oversub): the work unit is derived from the DISK BUDGET, n is in NO numerator;"
+        " parallel_bands is the count of bands LIVE at once - the tape window K (--pending-bands)"
+        " bounds band FILES, never live arenas; band_window + piece_window are the two in-flight"
+        " DISK terms and they add to the measured peak)\n",
+        (memory_gb > 0 ? memory_gb : ram_gb), envelope_bytes, scratch_budget_bytes,
+        budget.bytes_per_row,
         row_bytes, plan_lcp ? row_bytes : 0, plan_lcp ? 16u : 0u, plan_lcp ? 1u : 0u, 9u,
         double(SS_SAFETY_PCT) / 100.0,
+        SS_DISK_ROW_BYTES, SS_BAND_SHARE_PCT, SS_PIECE_SHARE_PCT,
         budget.bands_in_flight, rows_per_band, budget.rows_per_band_budget,
         budget.rows_per_band_wave,
         rows_per_band == budget.rows_per_band_budget ? "budget" : "scratch-window",
         budget.bands_per_wave, waves, rows_per_wave,
-        budget.arena, budget.arena_planned, budget.cap_rows, budget.fixed, budget.stage,
+        budget.arena, budget.arena_planned, budget.arena_needed,
+        budget.band_window, budget.piece_window, budget.piece_window_bytes,
+        budget.cap_rows, budget.fixed, budget.stage,
         budget_bytes ? "operator --budget-bytes" : "legacy --ram-gb", k_source, fd_soft, fd_hard,
         budget.bands_in_flight, budget.bands_in_flight * budget.rows_per_band,
         envelope_bytes / std::max<u64>(1, budget.bytes_per_row),

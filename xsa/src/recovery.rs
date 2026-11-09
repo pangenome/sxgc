@@ -565,6 +565,14 @@ pub(super) fn prepare(
         o.memory_gb,
         std::env::var("XSA_LCE_VERIFY").as_deref() != Ok("1"),
         2 * (n + 2),
+        // THE SAME DISK BUDGET THE RUN WILL USE (plan::scratch_budget): the resume
+        // preflight records rows_per_band in the checkpoint, so a preflight priced
+        // from a different budget would refuse a run it just wrote the plan for.
+        super::super::plan::scratch_budget(
+            o.scratch_budget_gb, o.memory_gb,
+            super::super::plan::disc_free_bytes(scratch)
+                .ok_or_else(|| format!("df failed for {}", scratch.display()))?,
+        ).bytes,
     );
     let checkpoint = scratch.join("checkpoint.journal");
     let container = scratch.join(format!(

@@ -1601,22 +1601,30 @@ fn run_chain(options: Options) -> Result<(), String> {
                 build_plan.alternatives.retain(|a| a.starts_with("CPU lacks"));
                 let lcp_slices = std::env::var("XSA_LCE_VERIFY").map(|v| v != "1").unwrap_or(true);
                 let n_rows = corpus_bytes.saturating_add(1);       // + the structural END
+                // THE SAME BUDGET THE RUN WILL USE (plan::scratch_budget): the plan
+                // block cannot price a wave the run will not build.
+                let sb = super::plan::scratch_budget(
+                    options.scratch_budget_gb, options.memory_gb,
+                    build_plan.survey.scratch_free_bytes);
                 let tape_plan = super::plan::tape_band_plan(
                     n_rows, options.threads as u64, options.memory_gb, lcp_slices,
                     2 * n_rows,                                     // the 2n scratch window
+                    sb.bytes,                                       // the DISK budget
                 );
                 v2.tape_note = Some(tape_plan.note());
                 build_plan.ram_verdict = tape_plan.verdict();
                 build_plan.ram_ok = tape_plan.feasible();
                 if !tape_plan.feasible() {
                     // The refusal sentence itself is the XSA_PLAN_RAM line; the
-                    // alternative carries the KNOB, not a second copy of it.
+                    // alternative carries the KNOBS, not a second copy of them.
                     build_plan.alternatives.push(format!(
-                        "raise --memory-gb (the band arena is HALF of it): rows_per_band={} vs \
-                         floor={} at --memory-gb {} with {} bands in flight (P = --threads); the \
+                        "--memory-gb {} must hold the unit the {} GiB scratch budget implies \
+                         (rows_per_band={}, floor={}, {} bands in flight = P = --threads); this plan \
+                         needs --memory-gb {}, or lower --threads, or raise --scratch-budget-gb; the \
                          arithmetic and the shortfall are on the XSA_PLAN_RAM line above",
-                        tape_plan.rows_per_band, tape_plan.floor_rows, options.memory_gb,
-                        tape_plan.bands_in_flight));
+                        options.memory_gb, tape_plan.scratch_budget_bytes >> 30,
+                        tape_plan.rows_per_band, tape_plan.floor_rows, tape_plan.bands_in_flight,
+                        tape_plan.needed_memory_gb()));
                 }
             }
         }
@@ -1631,12 +1639,23 @@ fn run_chain(options: Options) -> Result<(), String> {
         let bin_peak_mb = build_plan.phases.iter().map(|p| p.disc_peak_mb).fold(0.0, f64::max);
         let bin_peak_bytes = (bin_peak_mb * 1048576.0) as u64;
         if options.tape {
+            // A BUDGETED RUN IS PRICED AT ITS CAP: with --scratch-budget-gb the
+            // wave IS a percentage of the budget, so 1.00n is not this run's peak
+            // (it is the uncapped envelope's). Refusing a 100 GB run with a 30 GB
+            // cap for 79 GB of scratch it will never take is the same class of
+            // error as pricing the bin shape.
+            let budget = super::plan::scratch_budget(
+                options.scratch_budget_gb, options.memory_gb, free_bytes);
             build_plan.shape = super::plan::Shape::Tape;
-            build_plan.disc_model = super::plan::tape_disc_model(corpus_bytes, free_bytes);
-            let (fits, verdict) = super::plan::tape_disc_verdict(corpus_bytes, free_bytes);
+            build_plan.disc_model = super::plan::tape_disc_model(
+                corpus_bytes, free_bytes,
+                options.scratch_budget_gb.map(|_| budget.bytes));
+            let (fits, verdict) = super::plan::tape_disc_verdict(
+                corpus_bytes, free_bytes, options.scratch_budget_gb.map(|_| budget.bytes));
             build_plan.disc_verdict = verdict;
             build_plan.disc_ok = fits;
-            build_plan.disc_peak_bytes = super::plan::tape_scratch_peak_bytes(corpus_bytes);
+            build_plan.disc_peak_bytes = super::plan::tape_scratch_peak_bytes(
+                corpus_bytes, options.scratch_budget_gb.map(|_| budget.bytes));
             // THE OTHER SHAPE is rendered by plan::Plan::render() itself (labelled
             // `XSA_PLAN_ALTERNATIVE shape=bin`), so no call site can print it
             // unlabelled or forget it.
@@ -2116,6 +2135,72 @@ supervisor process; base ulimit -v {memory_kb} KiB. A run ends when it exits, fa
         ("CROSS_V2_PIECES".to_string(), "1".to_string()),
         ("CROSS_V2_PIECE_WINDOW".to_string(), v2_window.clone()),
     ];
+    // ---- THE PLAN, COMPUTED ONCE, BEFORE ANY PHASE IS BUILT --------------
+    // XSA_LCE_VERIFY=1 is the INTERNAL A/B ARM (not a user option): the producer
+    // skips the slices and the finish walks the corpus for every endpoint, which
+    // is the measurement that proved the column 4400x cheaper (10 GB: 1.4e12
+    // charged work / 2365 s vs 3.1e8 / 2072 s).
+    let lce_verify = std::env::var("XSA_LCE_VERIFY").map(|v| v == "1").unwrap_or(false);
+    let lcp_source = if lce_verify { "lce-verify" } else { "sorter-bands" };
+    // ---- THE SCRATCH BUDGET IS A PLAN INPUT, NOT ONLY A BRAKE --------------
+    // Pausing bounds the AVERAGE but not the BURST: the unit of work in flight is
+    // a WAVE of band files PLUS the pieces the emitter has already produced, and
+    // a wave larger than the budget overshoots it by its own size no matter how
+    // fast the signal lands (measured: a 48 x 500 MB wave took a 6 GB budget from
+    // 5.1 to 10.9 GB between two 2 s samples). So the budget SIZES the work unit
+    // (plan::tape_band_plan): the band window is 60% of it and the piece window
+    // 40%, and --memory-gb only has to HOLD the unit.
+    //
+    // The old coupling was inside out: plan_memory_gb = min(--memory-gb, budget)
+    // made the ENVELOPE a function of the DISK budget, so --scratch-budget-gb 2
+    // set --memory-gb 2, the plan priced a 1 GiB envelope, and a 2 GB DISK budget
+    // was refused by a RAM-shaped sentence nobody could act on.
+    let free_bytes = super::plan::disc_free_bytes(scratch)
+        .ok_or_else(|| format!("df failed for {}", scratch.display()))?;
+    let sb = super::plan::scratch_budget(options.scratch_budget_gb, options.memory_gb, free_bytes);
+    let budget_bytes = sb.bytes;
+    let budget_gb_ceil = (budget_bytes + (1u64 << 30) - 1) >> 30;
+    let plan_memory_gb = options.memory_gb;
+    journal.line(&format!(
+        "SCRATCH_BUDGET source={} budget_bytes={budget_bytes} budget_gb={:.3} free_bytes={free_bytes} \
+         derived_cap_bytes={} plan_memory_gb={plan_memory_gb} (min(0.8 x free, 2 x band window) when \
+         derived; the budget SIZES the wave ({}% band window + {}% piece window) and --memory-gb only \
+         has to HOLD the unit; a pause never kills, never fails)",
+        sb.source, budget_bytes as f64 / (1u64 << 30) as f64, sb.derived_cap,
+        super::plan::TAPE_BAND_SHARE_PCT, super::plan::TAPE_PIECE_SHARE_PCT));
+    let tape_plan = super::plan::tape_band_plan(
+        n.saturating_add(1), options.threads as u64, plan_memory_gb, !lce_verify,
+        2 * n.saturating_add(2), budget_bytes,
+    );
+    journal.line(&format!(
+        "SCRATCH_BUDGET_PLAN budget_gb_ceil={budget_gb_ceil} source={} band_window_bytes={} \
+         piece_window={} piece_window_bytes={} arena_needed_bytes={} ram_ok={} needed_memory_gb={} \
+         (the plan block printed the same numbers on XSA_PLAN_RAM; the producer journals them on \
+         SS_TAPE_BUDGET and the front door refuses any disagreement)",
+        sb.source, tape_plan.band_window_bytes, tape_plan.piece_window, tape_plan.piece_window_bytes,
+        tape_plan.arena_needed_bytes, u8::from(tape_plan.ram_ok()), tape_plan.needed_memory_gb()));
+    // ---- THE PIECE WINDOW IS AN IN-FLIGHT DISK TERM, SO THE BUDGET SIZES IT ---
+    // Measured on the 10 GB / 6 GiB gate: the peak live scratch (7.199 GiB) was
+    // 4.5 GiB of band files + 2.7 GiB of pieces, i.e. exactly the 1100-piece
+    // window x 65,536 rows x 41 B. A 2 GB budget cannot carry a 2.7 GiB piece
+    // window, so the window comes from the same plan the band unit does.
+    // The window changes WHEN a piece is produced, never what it contains: the
+    // C1 byte-identity gate re-proves that on a real 10 GB build.
+    if options.tape {
+        let w = tape_plan.piece_window;
+        for e in producer_env.iter_mut() {
+            if e.0 == "CROSS_V2_PIECE_WINDOW" { e.1 = w.to_string(); }
+        }
+        journal.line(&format!(
+            "V2_PIECE_WINDOW pieces={w} rows_per_piece={} bytes_per_piece={} window_bytes={} \
+             source=plan (the piece window is the SECOND in-flight disk term: it is sized from \
+             the same scratch budget that sizes the band window, capped at the measured default \
+             {}; it changes when a piece is produced, never its bytes)",
+            super::plan::TAPE_PIECE_ROWS,
+            super::plan::TAPE_PIECE_ROWS * super::plan::TAPE_DISK_ROW_BYTES,
+            w * super::plan::TAPE_PIECE_ROWS * super::plan::TAPE_DISK_ROW_BYTES,
+            super::plan::TAPE_PIECE_WINDOW_MAX));
+    }
     // The page pool (pile-week-v1) is what makes the placing pass affordable:
     // it RAM-caches the immutable corpus text the LCEs read (the same run
     // without it measured 77x slower). Size it to cover the corpus text
@@ -2224,46 +2309,15 @@ supervisor process; base ulimit -v {memory_kb} KiB. A run ends when it exits, fa
     // skips the slices and the finish walks the corpus for every endpoint, which is
     // the measurement that proved the column 4400x cheaper (10 GB: 1.4e12 charged
     // work / 2365 s vs 3.1e8 / 2072 s).
-    let lce_verify = std::env::var("XSA_LCE_VERIFY").map(|v| v == "1").unwrap_or(false);
-    let lcp_source = if lce_verify { "lce-verify" } else { "sorter-bands" };
     // THE TAPE WINDOW K, NOT THE PARALLELISM. K bounds how many band FILES are
     // outstanding (one band per slot, consumed before the next is published); it
     // never sizes the band arena. The in-flight band count that the budget law
     // divides by is P = --threads (see plan::tape_band_plan).
     let tape_k: u64 = 8;
-    // THE PLAN THE PRODUCER WILL EXECUTE, recomputed here with the same function
-    // the plan block used: the gate after the run compares it against the
-    // producer's own SS_TAPE_BUDGET, so a drift between plan and run is a refusal
+    // THE PLAN THE RUN EXECUTES (computed once, above, before any phase was
+    // built): the gate after the run compares it against the producer's own
+    // SS_TAPE_BUDGET, so a drift between plan and run is a refusal
     // (TAPE_PLAN_DISAGREE), not a footnote.
-    // ---- THE SCRATCH BUDGET IS A PLAN INPUT, NOT ONLY A BRAKE ----------------
-    // Pausing bounds the AVERAGE but not the BURST: the unit of work in flight is
-    // a WAVE of band files, and a wave larger than the budget overshoots it by its
-    // own size no matter how fast the signal lands (measured: a 48 x 500 MB wave
-    // took a 6 GB budget from 5.1 to 10.9 GB between two 2 s samples). So the band
-    // arena is clamped to the budget: envelope = memory_gb/2 GiB and the live
-    // window is about one arena, so memory_gb = budget_gb keeps the wave inside it
-    // and leaves the pauses to handle the finish's own growth.
-    let free_bytes = super::plan::disc_free_bytes(scratch)
-        .ok_or_else(|| format!("df failed for {}", scratch.display()))?;
-    let derived_cap = super::plan::tape_envelope_bytes(options.memory_gb).saturating_mul(2);
-    let budget_bytes = options.scratch_budget_gb
-        .map(|gb| (gb * (1u64 << 30) as f64) as u64)
-        .unwrap_or((free_bytes / 10).saturating_mul(8).min(derived_cap));
-    let budget_gb_ceil = (budget_bytes + (1u64 << 30) - 1) >> 30;
-    let plan_memory_gb = if options.scratch_budget_gb.is_some() {
-        options.memory_gb.min(budget_gb_ceil.max(2))
-    } else {
-        options.memory_gb
-    };
-    journal.line(&format!(
-        "SCRATCH_BUDGET source={} budget_bytes={budget_bytes} budget_gb={:.3} free_bytes={free_bytes} \
-         derived_cap_bytes={derived_cap} plan_memory_gb={plan_memory_gb} (min(0.8 x free, 2 x band window) \
-         x band arena clamped to the budget; a pause never kills, never fails)",
-        if options.scratch_budget_gb.is_some() { "operator" } else { "derived" },
-        budget_bytes as f64 / (1u64 << 30) as f64));
-    let tape_plan = super::plan::tape_band_plan(
-        n.saturating_add(1), options.threads as u64, plan_memory_gb, !lce_verify, 2 * n.saturating_add(2),
-    );
     let tape_envelope = tape_plan.envelope_bytes;
     // TWO NUMBERS, NAMED. P = bands LIVE at once = --threads: the arena divisor
     // (rows_per_band = arena/(bpr x P)), journaled as parallel_bands=P. K is the
@@ -2312,6 +2366,11 @@ walks the corpus for every endpoint and no LCP slice is produced). Not a user op
             // flight (while the pool runs --threads workers) is how the 100 GB run
             // came to price 8 bands while it was holding up to 96.
             "--budget-bytes".into(), tape_envelope.to_string(),
+            // THE DISK BUDGET: the number the WORK UNIT is derived from. It is not
+            // a brake the producer may ignore - the band size, the wave and the
+            // piece window are all percentages of it, and SS_TAPE_BUDGET echoes it
+            // so a plan/run drift is a refusal.
+            "--scratch-budget-bytes".into(), budget_bytes.to_string(),
             "--memory-gb".into(), plan_memory_gb.to_string(),
             "--threads".into(), options.threads.to_string(),
         ];
@@ -2421,7 +2480,11 @@ walks the corpus for every endpoint and no LCP slice is produced). Not a user op
             ("rows_per_band", tape_plan.rows_per_band),
             ("rows_per_band_budget", tape_plan.rows_per_band_budget),
             ("arena_planned_rows", tape_plan.arena_planned_rows),
+            ("arena_needed_bytes", tape_plan.arena_needed_bytes),
             ("budget_bytes", tape_plan.envelope_bytes),
+            ("scratch_budget_bytes", tape_plan.scratch_budget_bytes),
+            ("band_window_bytes", tape_plan.band_window_bytes),
+            ("piece_window", tape_plan.piece_window),
             ("arena_bytes", tape_plan.arena_bytes),
             ("waves", tape_plan.waves),
             ("bands", tape_plan.bands_per_wave),
@@ -2449,6 +2512,19 @@ walks the corpus for every endpoint and no LCP slice is produced). Not a user op
              plan=run=1 budget_ratio={ratio:.4} bound={:.2}",
             tape_plan.rows_per_band, tape_plan.bytes_per_row, tape_plan.bands_in_flight,
             super::plan::TAPE_BUDGET_RATIO_MAX as f64 / 100.0));
+        // ---- THE SCRATCH MODEL IS CHECKED AGAINST THE MEASURED PEAK -----------
+        // The plan says the peak live scratch is band_window + piece_window; the
+        // 2 s sampler measured it. Both numbers are journalled so a cap that is
+        // honoured can be READ, not inferred (the sampler's blind spot between
+        // samples is stated, not hidden).
+        journal.line(&format!(
+            "SCRATCH_MODEL_CHECK predicted_bytes={} band_window_bytes={} piece_window_bytes={} \
+             measured_peak_bytes={peak_disc} budget_bytes={budget_bytes} overshoot_pct={:.1} \
+             note=peak is sampled every 2s (allocated bytes, container excluded); the between-sample \
+             peak is not observed",
+            tape_plan.band_window_bytes + tape_plan.piece_window_bytes,
+            tape_plan.band_window_bytes, tape_plan.piece_window_bytes,
+            if budget_bytes > 0 { 100.0 * peak_disc as f64 / budget_bytes as f64 - 100.0 } else { 0.0 }));
         // The route's shape is gated, not assumed: the producer must declare which
         // LCP arm it ran, and on the product arm its slices must cover n with a
         // BOUNDED largest slice (the 2n law: one band's slice, never a 1.34n file).
