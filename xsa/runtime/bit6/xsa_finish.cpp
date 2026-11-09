@@ -1183,9 +1183,19 @@ static void build_pfck(const CorpusText& corpus, uint64_t n, uint64_t tau,
 // ------------------------------------------------------------ piece source
 struct RawRun { uint8_t c; uint64_t len, head, tail; };
 
+// A piece whose bytes are already in the container prefix but whose durability
+// has not been witnessed yet. `frontier` is the emitted-run count at which every
+// run of the piece has been appended (UINT64_MAX until the band has been fed).
+struct DeferredPiece { std::string path; uint64_t band; uint64_t frontier; };
+
 struct PieceSource {
     std::string prefix, dir;
     bool streaming = false, terminal = false;
+    // CONTAINER STREAMING: a piece may only be unlinked after the container
+    // bytes covering it are fsynced (RESUME_RETENTION / PIECE_ABSORBED), so the
+    // consumer defers the unlink to the finish's append frontier.
+    bool deferConsume = false;
+    std::vector<DeferredPiece> pendingPieces;
     int64_t progress = -1, consumed = -1;
     uint64_t window = 0, depth = 0, finalBand = 0, capturedRows = 0;
     std::map<uint64_t, std::vector<uint64_t>> bandRefs;
@@ -1344,7 +1354,8 @@ struct PieceSource {
             pf_check(lens[i]>0 && head<n && tail<n,"band record bounds");
             out.push_back({chars[i],lens[i],head,tail});
         }
-        if (!finish_spool::enabled()) pf_check(::unlink(path.c_str())==0,"unlink consumed band piece");
+        if (deferConsume) { std::lock_guard<std::mutex> lk(mu); pendingPieces.push_back({path, band, ~0ull}); }
+        else if (!finish_spool::enabled()) pf_check(::unlink(path.c_str())==0,"unlink consumed band piece");
         // All raw runs are private now. Return the piece credit before any
         // repair, LCP, prefetch or verification work can wait on another stage.
         consumed_band(band);
@@ -3011,6 +3022,30 @@ static inline uint64_t blkBytes(uint64_t lo, uint64_t hi) {
 }
 // The full-width m1 codec id (legacy stream=101, packed blocks=102).
 static constexpr unsigned PF_M1_CODEC_BLOCKED = 114;
+// THE INCREMENTAL (STREAMING) CONTAINER, version 7, m1 codec 116.
+//
+// WHY THIS EXISTS. In the v6 layout the 64-byte header and the 40-byte member
+// directory are a PREFIX whose size is known but whose CONTENT is not, and m1's
+// own per-block directory sits in front of m1's payload. m1's size grows with
+// every codec block the sweep produces, so the payload can only be written after
+// the sweep has ended: at Pile scale that means the entire encoded run stream
+// (~0.277 n) must be staged in scratch before a single container byte exists.
+//
+// Version 7 writes members in STREAM ORDER and moves both directories to the
+// TAIL:
+//   [0,64)                      fixed header (length/flags/CRC patched once at close)
+//   [64, ...)                   member bytes, appended in stream order
+//   [dirOff, dirOff+40*count)   the member directory, dirOff = length-40*count
+// and m1 codec 116 is
+//   [0,2048) C table  [2048,2304) code lengths  [2304,2336) block_runs/payloadOff
+//   [2336, ...) payload, one self-describing block pair at a time, 8-byte aligned
+//   [tail 16*nblocks) the per-block directory
+// The payload BYTES are identical to codec 114's (same block encoding, same
+// padding, same relative offsets); only the directory position changes and the
+// two close-time fields (nblocks, rNorm) are left zero, because the reader takes
+// nblocks from count/block_runs and rNorm from the member count.
+static constexpr unsigned PF_M1_CODEC_STREAM = 116;
+static constexpr uint64_t PF_CONTAINER_V7 = 7;
 // Container header flag bit: "m1 is block-compressed and the run directories
 // are present". The flagged set is 1|8|16|32 = 57.
 static constexpr uint64_t PF_FLAG_M1_BLOCKED = 32;
@@ -3201,22 +3236,78 @@ struct ContainerOut {
     unsigned count = 0;
     std::vector<sxi::Member> ms;
     bool done = false;
-    ContainerOut(const std::string& p, unsigned count_) : path(p), temp(p + ".partial"), count(count_) {
+    // ---- STREAMING LAYOUT (container version 7, see PF_M1_CODEC_STREAM) ----
+    // `streaming` selects the tail-directory layout: the header reserve is a
+    // FIXED 64 bytes and one member (m1) is appended in place as its blocks are
+    // produced. `extent` is the first free byte after the last member and
+    // `streamIdx` is the member being appended to.
+    bool streaming = false;
+    uint64_t extent = 0;
+    int64_t streamIdx = -1;
+    uint64_t streamPayload = 0;   // payload bytes appended (m1: from 2336)
+    uint64_t syncEvery = 1ull << 30;
+    uint64_t unsynced = 0;
+    uint64_t lastSyncBytes = 0;
+    uint64_t headerBytes() const { return streaming ? 64 : 64 + 40 * uint64_t(count); }
+    ContainerOut(const std::string& p, unsigned count_, bool streaming_ = false)
+        : path(p), temp(p + ".partial"), count(count_), streaming(streaming_) {
         pf_check(finish_spool::enabled() || ::access(path.c_str(), F_OK) != 0, "output exists; refusing to clobber");
-        fd = ::open(temp.c_str(), O_WRONLY | O_CREAT | (finish_spool::enabled() ? O_TRUNC : O_EXCL), 0666);
+        // O_RDWR when streaming: CONTAINER_FINAL hashes the durable bytes back.
+        fd = ::open(temp.c_str(), (streaming ? O_RDWR : O_WRONLY) | O_CREAT |
+                    (finish_spool::enabled() ? O_TRUNC : O_EXCL), 0666);
         pf_check(fd >= 0, "create container partial");
-        std::vector<char> z(64 + 40 * count, 0);
+        std::vector<char> z(headerBytes(), 0);
         pf_write_full(fd, z.data(), z.size(), "container header reserve");
+        extent = headerBytes();
     }
     ~ContainerOut() { if (!done && fd >= 0) { ::close(fd); ::unlink(temp.c_str()); } }
+    // Begin the streaming member: it owns [headerBytes(), ...) and every later
+    // member lands after whatever it produced.
+    uint64_t beginStream(unsigned id, unsigned codec, uint64_t cnt) {
+        pf_check(streaming && ms.empty(), "beginStream needs the streaming layout and an empty member set");
+        ms.push_back({id, codec, extent, 0, cnt, ~0u});
+        streamIdx = 0;
+        extent = ms.back().offset;
+        fprintf(stderr, "CONTAINER_STREAM mode=incremental member=m%u id=%u codec=%u off=%llu count=%llu\n",
+                id, id, codec, (unsigned long long)ms.back().offset, (unsigned long long)cnt);
+        return ms.back().offset;
+    }
+    // Append to the streaming member at its own tail. Sequential by
+    // construction: off = member.offset + member.bytes.
+    void append(const void* p, size_t z) {
+        pf_check(streamIdx >= 0, "container append without a streaming member");
+        auto& m = ms.at(size_t(streamIdx));
+        pf_pwrite_full_or_seek(fd, (const unsigned char*)p, z, m.offset + m.bytes);
+        m.bytes += z; m.checksum = crc(m.checksum, (const unsigned char*)p, z);
+        extent = std::max(extent, m.offset + m.bytes);
+        unsynced += z;
+    }
+    uint64_t streamBytes() const { return streamIdx < 0 ? 0 : ms.at(size_t(streamIdx)).bytes; }
+    // Durability of the appended bytes. m1 is appended block by block; calling
+    // fsync per block would be 1e7 syncs at Pile scale, so the caller syncs on a
+    // byte threshold and every piece release is gated on it.
+    void syncNow(const char* why) {
+        pf_check(::fsync(fd) == 0, "fsync streaming container");
+        lastSyncBytes = streamBytes();
+        fprintf(stderr, "CONTAINER_SYNC why=%s member=m%u member_bytes=%llu unsynced_bytes=%llu\n",
+                why, ms.at(size_t(streamIdx)).id, (unsigned long long)lastSyncBytes,
+                (unsigned long long)unsynced);
+        unsynced = 0;
+    }
+    bool wantsSync() const { return unsynced >= syncEvery; }
     // begin a member at the next 8-aligned offset after the header reserve
     void begin(unsigned id, unsigned codec, uint64_t cnt) {
-        uint64_t here = 64 + 40 * count;
+        uint64_t here = headerBytes();
         for (auto& m : ms) here = std::max(here, m.offset + m.bytes);
+        here = std::max(here, extent);
         here = (here + 7) / 8 * 8;
         ms.push_back({id, codec, here, 0, cnt, ~0u});
+        extent = here;
         fprintf(stderr, "PILE_CONTAINER_BEGIN id=%u codec=%u count=%llu offset=%llu\n",
                 id, codec, (unsigned long long)cnt, (unsigned long long)here);
+        if (streaming)
+            fprintf(stderr, "CONTAINER_STREAM mode=incremental member=m%u id=%u codec=%u off=%llu count=%llu\n",
+                    id, id, codec, (unsigned long long)here, (unsigned long long)cnt);
     }
     void write(const void* p, size_t z) {
         auto& m = ms.back();
@@ -3232,11 +3323,19 @@ struct ContainerOut {
     }
     void finish(uint64_t n, uint64_t k, uint64_t r, uint64_t flags) {
         std::sort(ms.begin(), ms.end(), [](const sxi::Member& a, const sxi::Member& b) { return a.id < b.id; });
-        uint64_t length = 0;
-        for (auto& m : ms) length = std::max(length, m.offset + m.bytes);
+        uint64_t membersEnd = 0;
+        for (auto& m : ms) membersEnd = std::max(membersEnd, m.offset + m.bytes);
+        // v7: the member directory is a TRAILING section, so `length` is the
+        // file size and the directory starts at length-40*count - no prefix
+        // slot is ever reserved and no member offset is ever guessed.
+        uint64_t dirOff = 0, length = membersEnd;
+        if (streaming) {
+            dirOff = (membersEnd + 7) / 8 * 8;
+            length = dirOff + 40 * uint64_t(ms.size());
+        }
         std::vector<unsigned char> h(64 + 40 * ms.size());
         memcpy(h.data(), "SXI2", 4);
-        put(h.data() + 4, 6, 4); put(h.data() + 8, n); put(h.data() + 16, k);
+        put(h.data() + 4, streaming ? PF_CONTAINER_V7 : 6, 4); put(h.data() + 8, n); put(h.data() + 16, k);
         put(h.data() + 24, r); put(h.data() + 32, ms.size(), 4); put(h.data() + 36, h.size(), 4);
         put(h.data() + 40, length); put(h.data() + 48, flags);
         for (size_t i = 0; i < ms.size(); ++i) {
@@ -3248,8 +3347,36 @@ struct ContainerOut {
                     m.id, m.codec, (unsigned long long)m.count, (unsigned long long)m.bytes);
         }
         put(h.data() + 56, ~crc(~0u, h.data(), h.size()), 4);
-        pf_pwrite_full_or_seek(fd, h.data(), h.size(), 0);
+        if (streaming) {
+            // membersEnd .. dirOff is zero padding so the trailing directory
+            // starts 8-aligned; its bytes are the SAME 40-byte entries the CRC
+            // above was computed over, so a reader validates them in place.
+            if (dirOff > membersEnd) {
+                std::vector<char> pad(size_t(dirOff - membersEnd), 0);
+                pf_pwrite_full_or_seek(fd, (const unsigned char*)pad.data(), pad.size(), membersEnd);
+            }
+            pf_pwrite_full_or_seek(fd, h.data() + 64, 40 * ms.size(), dirOff);
+            // ONLY the fixed 64-byte header goes to offset 0: the directory is a
+            // trailing section, so the bytes after the header belong to member 1.
+            pf_pwrite_full_or_seek(fd, h.data(), 64, 0);
+        } else {
+            pf_pwrite_full_or_seek(fd, h.data(), h.size(), 0);
+        }
         pf_check(fsync(fd) == 0, "fsync container");
+        if (streaming) {
+            // CONTAINER_FINAL: the published object's size and digest, measured
+            // on the bytes that are now durable. Sequential read-back; this is
+            // the only pass over the finished object.
+            durable_piece::Sha256 sha;
+            std::array<uint8_t, 1 << 20> buf{};
+            for (uint64_t pos = 0; pos < length;) {
+                size_t z = size_t(std::min<uint64_t>(buf.size(), length - pos));
+                pf_pread_full(fd, buf.data(), z, pos, "container hash read-back");
+                sha.update(buf.data(), z); pos += z;
+            }
+            fprintf(stderr, "CONTAINER_FINAL bytes=%llu sha256=%s members=%zu\n",
+                    (unsigned long long)length, sha.finish().c_str(), ms.size());
+        }
         pf_check(::close(fd) == 0, "close container");
         fd = -1;
         int linked=::link(temp.c_str(),path.c_str());
@@ -4706,6 +4833,8 @@ int main(int argc, char** argv) {
         // (rlebwt + replay) arm for A/B decode only; it is the frozen legacy
         // path and must stay byte-identical to the banked container SHAs.
         bool m1Replay = pf_env_str("XSA_FINISH_M1_REPLAY") == "1";
+        bool containerStreamFlag = false;   // --container-stream (SXI2 v7, tail directories)
+        bool containerLegacy = false;       // --container-legacy (frozen v6 layout)
         for (int i = 1; i < argc; ++i) {
             std::string a = argv[i];
             auto need = [&](const char* what) -> std::string {
@@ -4737,6 +4866,8 @@ int main(int argc, char** argv) {
             else if (a == "--keep-rlebwt") keepRlebwt = true;
             else if (a == "--keep-pfck") keepPfck = true;
             else if (a == "--m1-replay") m1Replay = true;
+            else if (a == "--container-stream") containerStreamFlag = true;
+            else if (a == "--container-legacy") containerLegacy = true;
             else if (a == "--sentinel-remap") sentinelRemap = need("--sentinel-remap");
             else pf_fail("unknown argument " + a);
         }
@@ -4783,6 +4914,21 @@ int main(int argc, char** argv) {
             return 0;
         }
         const bool spoolMode = finish_spool::enabled();
+        // ---- CONTAINER STREAMING (SXI2 version 7) -------------------------------
+        // Build the container AS THE SWEEP PROGRESSES: member bytes are appended
+        // in stream order into <output>.partial, the per-block and per-member
+        // directories are TRAILING sections, and the 64-byte header is patched
+        // once at close. v6 stays the default until the owner accepts the product
+        // change; this arm is opt-in and its reader is `xsa query`.
+        // DEFAULT ON (owner-authorised product change): the incremental layout is
+        // the default from SXI2 v7; --container-legacy (or XSA_CONTAINER_STREAM=0)
+        // selects the v6 layout for A/B comparison and for the frozen old SHAs.
+        const bool containerLegacyFlag = containerLegacy || pf_env_str("XSA_CONTAINER_STREAM") == "0";
+        const bool containerStream = !m1Replay && !containerLegacyFlag;
+        if (containerStream)
+            fprintf(stderr, "CONTAINER_STREAM mode=declare version=%llu member_order=stream "
+                    "trailing_directory=1 m1_codec=%u header_bytes=64\n",
+                    (unsigned long long)PF_CONTAINER_V7, PF_M1_CODEC_STREAM);
         pf_check(!spoolMode || (!m1Replay && !repairChunkRuns && !debugArtifacts && sampleCheck.empty() && isaSamplePath.empty() &&
                               pf_env_u64("XSA_FINISH_LCE_TRUST",0,0,3)==0),
                  "spool checkpoints currently require the standard route-B product path");
@@ -5170,6 +5316,13 @@ int main(int argc, char** argv) {
         M1Code m1Code{};
         std::array<unsigned char, 256> m1LensOut{};
         uint64_t m1SweepRuns = 0;
+        // ---- CONTAINER STREAMING state (empty unless --container-stream) --------
+        std::unique_ptr<ContainerOut> streamOwner;
+        ContainerOut* streamOut = nullptr;
+        uint64_t m1StreamHeadBits = 0, m1StreamLenBits = 0, m1StreamPayload = 0;
+        // Runs whose bytes sit in CLOSED (appended) codec blocks. A piece may only
+        // be unlinked while every one of its runs is below this count.
+        uint64_t m1StreamClosedRuns = 0;
         // ---- m1 v2 access structure, accumulated in stream order during the
         // sweep (the runs are already going past; a second pass would be the
         // 25 s decode this change exists to delete).
@@ -5205,8 +5358,45 @@ int main(int argc, char** argv) {
                     "weights_sum=%llu\n",
                     (unsigned long long)symbols, (unsigned long long)minLen,
                     (unsigned long long)maxLen, (unsigned long long)n);
-            m1Head = std::make_unique<BitsOut>(prefix + ".bits-head");
-            m1Len = std::make_unique<BitsOut>(prefix + ".bits-len");
+            if (containerStream) {
+                // THE CONTAINER EXISTS BEFORE THE FIRST RUN IS SWEPT. Everything
+                // in m1's fixed head is known here: the C table is the corpus byte
+                // histogram (asserted equal to the emitted symbol totals before
+                // publication), the code lengths are the canonical codebook, and
+                // payload_off is the constant 2336. nblocks and rNorm are derived
+                // by the reader (count/block_runs and the member count), so the
+                // head is written ONCE and never patched - the member CRC it is
+                // part of stays valid.
+                streamOwner = std::make_unique<ContainerOut>(
+                    out, (m1Replay ? 6u : 8u) - (buildChi ? 0u : 1u), true);
+                streamOut = streamOwner.get();
+                const uint64_t off = streamOut->beginStream(1, PF_M1_CODEC_STREAM, 0);
+                pf_check(off == 64, "streaming m1 does not start at the header end");
+                std::vector<uint8_t> head(2336, 0);
+                uint64_t acc = 0;
+                for (unsigned c = 0; c < 256; ++c) {
+                    put(head.data() + 8 * c, acc, 8);
+                    acc += (*m1Weights)[c];
+                }
+                pf_check(acc == n, "streaming m1 C table does not close on n");
+                memcpy(head.data() + 2048, m1LensOut.data(), 256);
+                put(head.data() + 2304, 0, 8);                 // nblocks: derived
+                put(head.data() + 2312, M1_BLOCK_RUNS, 8);
+                put(head.data() + 2320, 0, 8);                 // rNorm: = member count
+                put(head.data() + 2328, 2336, 8);              // payload offset (constant)
+                streamOut->append(head.data(), head.size());
+                fprintf(stderr, "XSA_FINISH_M1_STREAM_HEAD bytes=2336 payload_off=2336 "
+                        "block_runs=%llu nblocks=derived rnorm=member_count\n",
+                        (unsigned long long)M1_BLOCK_RUNS);
+                // Per-block, memory-only encoders: a block is appended to the
+                // container the moment it closes, so no n-proportional bit spool
+                // (v6's 0.277 n term) is ever created.
+                m1Head = std::make_unique<BitsOut>();
+                m1Len = std::make_unique<BitsOut>();
+            } else {
+                m1Head = std::make_unique<BitsOut>(prefix + ".bits-head");
+                m1Len = std::make_unique<BitsOut>(prefix + ".bits-len");
+            }
         }
         RepairCycles repairCycles;
         repairCycles.enabled = pf_env_u64("XSA_FINISH_REPAIR_CYCLES", 1, 0, 1) && !repairChunkRuns;
@@ -5256,6 +5446,68 @@ int main(int argc, char** argv) {
             entropyPaths[meta.block]=name+".entropy";
             spoolRuns.clear();spoolBlockLo=m1dir.row;
         };
+        // Runs whose container bytes are durable: every run below this count sits
+        // in a CLOSED codec block that has been appended to the container.
+        auto appendedRuns = [&]() -> uint64_t { return m1StreamClosedRuns; };
+        // PIECE ABSORPTION. A tape piece may be unlinked only after the container
+        // bytes covering it are fsynced (RESUME_RETENTION). Pieces are batched
+        // (64 pieces or 256 MiB) so one fsync covers many, and every release is
+        // journalled with the offset it became durable at.
+        auto releasePieces = [&](bool force) {
+            if (!containerStream || src.pendingPieces.empty()) return;
+            const uint64_t frontier = appendedRuns();
+            uint64_t covered = 0;
+            for (auto& p : src.pendingPieces)
+                if (p.frontier != ~0ull && p.frontier <= frontier) ++covered;
+            if (!covered) return;
+            if (!force && covered < 64) return;
+            if (streamOut->unsynced) streamOut->syncNow("piece-release");
+            std::vector<DeferredPiece> keep;
+            keep.reserve(src.pendingPieces.size());
+            for (auto& p : src.pendingPieces) {
+                if (p.frontier == ~0ull || p.frontier > frontier) { keep.push_back(p); continue; }
+                struct stat st {};
+                const uint64_t pieceBytes = ::stat(p.path.c_str(), &st) == 0 ? uint64_t(st.st_size) : 0;
+                pf_check(::unlink(p.path.c_str()) == 0, "unlink absorbed piece " + p.path);
+                fprintf(stderr, "PIECE_ABSORBED idx=%llu container_off=%llu bytes=%llu\n",
+                        (unsigned long long)p.band, (unsigned long long)streamOut->streamBytes(),
+                        (unsigned long long)pieceBytes);
+            }
+            src.pendingPieces.swap(keep);
+        };
+        // Arm a band's pieces: its last run has been emitted, so the frontier they
+        // become releasable at is the current emitted-run count.
+        auto armPieces = [&](uint64_t band) {
+            if (!containerStream) return;
+            for (auto& p : src.pendingPieces) if (p.band == band && p.frontier == ~0ull) p.frontier = m1SweepRuns;
+        };
+        // Close the open codec block INTO THE CONTAINER. The bytes appended here are
+        // exactly the bytes v6's assembly pass would have copied out of its bit
+        // spool: the head bytes, the length bytes, then zero padding to 8.
+        auto closeStreamBlock = [&]() {
+            const uint64_t hb = m1Head->bitPos, lb = m1Len->bitPos;
+            const size_t nh = m1Head->mem.size(), nl = m1Len->mem.size();
+            pf_check(nh == (hb + 7) / 8 && nl == (lb + 7) / 8, "streaming block byte count");
+            streamOut->append(m1Head->mem.data(), nh);
+            if (nl) streamOut->append(m1Len->mem.data(), nl);
+            size_t pad = size_t((8 - ((nh + nl) % 8)) % 8);
+            if (pad) { static const uint8_t zero[8] = {0}; streamOut->append(zero, pad); }
+            m1StreamPayload += nh + nl + pad;
+            m1StreamClosedRuns = m1SweepRuns;
+            m1StreamHeadBits += hb; m1StreamLenBits += lb;
+            m1dir.blkHead.push_back(m1StreamHeadBits);
+            m1dir.blkLen.push_back(m1StreamLenBits);
+            m1Head->mem.clear(); m1Head->bitPos = 0; m1Head->acc = 0; m1Head->nbits = 0;
+            m1Len->mem.clear(); m1Len->bitPos = 0; m1Len->acc = 0; m1Len->nbits = 0;
+            const uint64_t blocks = m1StreamHeadBits ? m1dir.blkHead.size() - 1 : 0;
+            if ((blocks & 255) == 0 || streamOut->wantsSync())
+                fprintf(stderr, "CONTAINER_STREAM mode=incremental member=m1 off=%llu blocks=%llu "
+                        "payload_bytes=%llu head_bits=%llu len_bits=%llu\n",
+                        (unsigned long long)streamOut->streamBytes(), (unsigned long long)blocks,
+                        (unsigned long long)m1StreamPayload, (unsigned long long)m1StreamHeadBits,
+                        (unsigned long long)m1StreamLenBits);
+            if (streamOut->wantsSync()) releasePieces(false);
+        };
         auto bandSink = [&](const NRun& v) {
             RepairCycles::Scope outputScope(rs.cycles, RepairCycles::OUTPUT);
             {
@@ -5281,11 +5533,15 @@ int main(int argc, char** argv) {
                     // ceil(bitPos/8) at a block boundary.
                     m1Head->pad();
                     m1Len->pad();
-                    publishCodecBlock();
-                    m1dir.blkHead.push_back(m1Head->bitPos);
-                    m1dir.blkLen.push_back(m1Len->bitPos);
+                    if (containerStream) {
+                        closeStreamBlock();
+                    } else {
+                        publishCodecBlock();
+                        m1dir.blkHead.push_back(m1Head->bitPos);
+                        m1dir.blkLen.push_back(m1Len->bitPos);
+                    }
                 }
-                if(spoolMode){spoolRuns.push_back(v.c);spoolRuns.push_back(v.len);}
+                if(spoolMode && !containerStream){spoolRuns.push_back(v.c);spoolRuns.push_back(v.len);}
                 m1Head->msb(m1Code.codes[v.c], unsigned(m1Code.lens[v.c]));
                 m1Len->gamma(v.len);
                 if (k % PF_RUNSTART_STRIDE == 0) m1dir.runStart.push_back(m1dir.row);
@@ -5908,7 +6164,12 @@ int main(int argc, char** argv) {
             a.vector(m1dir.blkHead);a.vector(m1dir.blkLen);a.vector(m1dir.runStart);
             a.scalar(m1dir.row);a.array(m1dir.occ);a.array(m1dir.cum);a.array(m1dir.lastSample);a.array(m1dir.lastSampleOcc);
             for(unsigned c=0;c<256;++c){a.vector(m1dir.dirRun[c]);a.vector(m1dir.dirCum[c]);a.vector(m1dir.dirStride[c]);}
-            for(BitsOut* b:{m1Head.get(),m1Len.get()}){
+            if(containerStream){
+                // The m1 bytes are IN THE CONTAINER PREFIX, verified by digest on
+                // reopen (see RESUME_MODE container_off=). Only the frontier is
+                // state, and it is derived from the block arithmetic, not trusted.
+                a.scalar(m1StreamHeadBits);a.scalar(m1StreamLenBits);a.scalar(m1StreamPayload);
+            } else for(BitsOut* b:{m1Head.get(),m1Len.get()}){
                 if(!a.reading)b->drain();
                 a.scalar(b->bitPos);a.scalar(b->nbits);
                 uint64_t acc=uint64_t(b->acc);a.scalar(acc);if(a.reading)b->acc=acc;
@@ -5988,6 +6249,7 @@ int main(int argc, char** argv) {
             if (pf_cache_journal_on()) pf_cache_journal(text, "cold-start", 64);
         }
         spoolPiece=band;
+        src.deferConsume = containerStream;
         bool active = !spoolEof && feed(band, slots[cur]);
         if (active && slots[cur].cnt) dispatchLce(slots[cur]);
         while (active) {
@@ -6023,6 +6285,7 @@ int main(int argc, char** argv) {
                 awaitLce();
             }
             finishAdvance(slots[cur]);
+            if(containerStream){armPieces(band);releasePieces(false);}
             if(spoolMode){
                 // Save the NEXT band cursor at a quiescent barrier.
                 if(rawRunsFed>=n/4 && ((band+1)%64==0)) {++band;checkpoint(false);--band;}
@@ -6303,7 +6566,79 @@ int main(int argc, char** argv) {
         // ---- m5 EF over ascending bitmap positions
         // 8 members in the blocked arm (m1 v2 + m12 + m13), 6 in the frozen
         // --m1-replay arm (m1 codec 101, no run directories).
-        ContainerOut container(out, (m1Replay ? 6 : 8) - (buildChi ? 0 : 1));
+        // In streaming mode the container already exists (opened before the sweep,
+        // m1 payload appended in stream order). Its remaining members are appended
+        // after it; nothing is rewritten.
+        std::unique_ptr<ContainerOut> ownedContainer;
+        if (containerStream) {
+            pf_check(streamOut != nullptr, "streaming container was never opened");
+            if (streamOut->unsynced) streamOut->syncNow("pre-close");
+            // The sweep is over: every run has been emitted, so every piece still
+            // pending is covered up to the last CLOSED block. The final short
+            // block is appended with m1's directory and releases the rest.
+            for (auto& p : src.pendingPieces) if (p.frontier == ~0ull) p.frontier = m1SweepRuns;
+            releasePieces(true);
+        } else {
+            ownedContainer = std::make_unique<ContainerOut>(out, (m1Replay ? 6 : 8) - (buildChi ? 0 : 1));
+        }
+        ContainerOut& container = containerStream ? *streamOut : *ownedContainer;
+        // ---- M1 FINALIZATION, BEFORE ANY OTHER MEMBER IS PLACED ---------------
+        // The trailing block directory belongs to m1, so it must be appended while
+        // m1 is still the last member: the next member's offset is m1's END, and
+        // v7 places members by appending, not by reserving a prefix.
+        auto finalizeStreamM1 = [&]() {
+            if (!containerStream) return;
+                // The final SHORT block (rNorm % M1_BLOCK_RUNS) is still open: it
+                // is appended like every other block, so the payload is complete
+                // before the directory that indexes it.
+                if (m1SweepRuns % M1_BLOCK_RUNS) { m1Head->pad(); m1Len->pad(); closeStreamBlock(); }
+                // THE PAYLOAD IS ALREADY IN THE CONTAINER. What is left is the
+                // per-block directory, which goes at the END of the member (this
+                // is the relocation that makes the payload appendable: v6 puts it
+                // in front, so its 16*nblocks bytes must be known before the first
+                // payload byte can be placed).
+                pf_check(streamOut != nullptr && m1dir.blkHead.size() >= 1, "m1 streaming state");
+                const uint64_t nblocks = (rNorm + M1_BLOCK_RUNS - 1) / M1_BLOCK_RUNS;
+                pf_check(m1dir.blkHead.size() == nblocks + 1 && m1dir.blkLen.size() == nblocks + 1,
+                         "m1 streaming block boundary count");
+                // tiling witness: the block spans must add up to exactly the bytes
+                // appended, block by block, in the same arithmetic the reader uses.
+                std::vector<uint8_t> dir;
+                dir.reserve(size_t(16 * nblocks));
+                uint64_t payloadBytes = 0;
+                for (uint64_t b = 0; b < nblocks; ++b) {
+                    const uint64_t hbits = m1dir.blkHead[b + 1] - m1dir.blkHead[b];
+                    const uint64_t lbits = m1dir.blkLen[b + 1] - m1dir.blkLen[b];
+                    pf_check(hbits <= 0xffff && lbits <= 0xffff, "m1 block bit count overflows u16");
+                    pf_check(payloadBytes % 8 == 0, "m1 streaming block not 8-byte aligned");
+                    uint8_t e[16];
+                    put(e, payloadBytes, 8);
+                    put(e + 8, hbits | (lbits << 32), 8);
+                    dir.insert(dir.end(), e, e + 16);
+                    payloadBytes += blkBytes(m1dir.blkHead[b], m1dir.blkHead[b + 1]) +
+                                    blkBytes(m1dir.blkLen[b], m1dir.blkLen[b + 1]);
+                    while (payloadBytes % 8) ++payloadBytes;
+                }
+                pf_check(payloadBytes == m1StreamPayload,
+                         "m1 streaming payload size disagrees with its block arithmetic (" +
+                         std::to_string(payloadBytes) + " vs " + std::to_string(m1StreamPayload) + ")");
+                container.append(dir.data(), dir.size());
+                container.ms[0].count = rNorm;
+                pf_check(container.ms[0].bytes == 2336 + payloadBytes + 16 * nblocks, "m1 streaming member size");
+                fprintf(stderr, "XSA_FINISH_M1_STREAM codec=%u runs=%llu block_runs=%llu blocks=%llu "
+                        "dir_bytes=%llu payload_bytes=%llu m1_bytes=%llu trailing_directory=1\n",
+                        PF_M1_CODEC_STREAM, (unsigned long long)rNorm,
+                        (unsigned long long)M1_BLOCK_RUNS, (unsigned long long)nblocks,
+                        (unsigned long long)(16 * nblocks), (unsigned long long)payloadBytes,
+                        (unsigned long long)container.ms[0].bytes);
+                m1dir.blkHead.clear(); m1dir.blkLen.clear();
+                // m1's payload AND its directory are now in the container: every
+                // piece still pending is fully covered, so the last of them goes.
+
+            releasePieces(true);
+            pf_check(src.pendingPieces.empty(), "pieces still pending absorption at m1 close");
+        };
+        finalizeStreamM1();
         if (buildChi) {
             PfRegion r("m5-ef", PF_M5);
             unsigned l = chi ? unsigned(std::max(0, int(std::log2(double(n + 1) / double(chi))))) : 0;
@@ -6540,7 +6875,12 @@ int main(int argc, char** argv) {
             pf_check(encodedRuns == rNorm, "m1 encoded run count");
             headBits.pad();
             lenBits.pad();
-            if (m1Replay) {
+            if (containerStream) {
+                // m1 (codec 116) is COMPLETE IN THE CONTAINER: the payload was
+                // appended block by block during the sweep and the trailing block
+                // directory was appended above. No byte of m1 is serialized here,
+                // which is the whole point of the v7 layout.
+            } else if (m1Replay) {
                 // LEGACY (frozen): one sequential stream pair, codec 101. This is
                 // the arm the banked container SHAs were produced by; it must stay
                 // byte-identical, so it gains nothing and loses nothing here.
@@ -6675,7 +7015,10 @@ int main(int argc, char** argv) {
                         (unsigned long long)M1_BLOCK_RUNS, (unsigned long long)nblocks,
                         (unsigned long long)dirBytes, (unsigned long long)payloadBytes,
                         (unsigned long long)(payloadOff + payloadBytes));
-
+            }
+            // m12/m13 are stream-order directories either way: they are written
+            // from the in-RAM sample state after m1 closes, never appended early.
+            if (!m1Replay) {
                 // ---- m12: run-start samples. Entry j is the row of run
                 // j*PF_RUNSTART_STRIDE (the run's first row), plus a level-2 index
                 // every PF_RUNSTART_L2 runs so a lookup is a 16-entry bisect in a

@@ -413,6 +413,7 @@ pub fn describe_format(path: &str) -> String {
     let version = u32::from_le_bytes(map[4..8].try_into().unwrap());
     match magic {
         b"SXI2" if version == 6 => format!("{path}: SXI2 v6 lite container"),
+        b"SXI2" if version == 7 => format!("{path}: SXI2 v7 lite container (incremental layout)"),
         b"SXI2" => format!("{path}: SXI2 v{version} (phi-era container)"),
         b"SXI1" => format!("{path}: SXI1 v{version} container"),
         b"ISXR" => format!("{path}: .ri4 v{version} flat index"),
@@ -435,7 +436,11 @@ impl Reader {
             return Err(format!("{} is not a queryable index", describe_format(path)));
         }
         let version = u32::from_le_bytes(h[4..8].try_into().unwrap());
-        if version != 6 {
+        // v7 is the INCREMENTAL layout: the member directory is a trailing
+        // section at length-40*count and m1's per-block directory follows its
+        // payload. v6 stays readable: same members, directory at 64.
+        let tail_dir = version >= 7;
+        if !(6..=7).contains(&version) {
             return Err(format!("{} is not a queryable index", describe_format(path)));
         }
         let u32at = |o: usize| u32::from_le_bytes(h[o..o + 4].try_into().unwrap());
@@ -464,14 +469,21 @@ impl Reader {
         // Header+directory CRC: 64 + 40*members bytes. Cheap, and the only
         // checksum that can be verified without reading the whole file.
         let expected = u32at(56);
-        let mut head = map[..hs].to_vec();
+        // v7: the 40-byte entries live at the tail; the CRC covers the 64-byte
+        // header followed by those entries, in that order.
+        let dir_off = if tail_dir { length as usize - 40 * count as usize } else { 64 };
+        if tail_dir && (dir_off < 64 || dir_off % 8 != 0) {
+            return Err(format!("{path}: v7 directory offset {dir_off} is not valid"));
+        }
+        let mut head = map[..64].to_vec();
+        head.extend_from_slice(&map[dir_off..dir_off + 40 * count as usize]);
         head[56..60].fill(0);
         if sxi::crc32_of(&head) != expected {
             return Err(format!("{path}: header CRC mismatch"));
         }
         let mut members = Vec::with_capacity(count as usize);
         for i in 0..count as usize {
-            let d = &map[64 + 40 * i..64 + 40 * (i + 1)];
+            let d = &map[dir_off + 40 * i..dir_off + 40 * (i + 1)];
             let m = sxi::Member {
                 id: u32::from_le_bytes(d[0..4].try_into().unwrap()),
                 codec: u32::from_le_bytes(d[4..8].try_into().unwrap()),
@@ -490,7 +502,8 @@ impl Reader {
         {
             let mut spans: Vec<(u64, u64)> = members.iter().map(|m| (m.offset, m.bytes)).collect();
             spans.sort_unstable();
-            let mut prev = hs as u64;
+            // v7 reserves only the fixed 64-byte header; the directory is trailing.
+            let mut prev = if tail_dir { 64 } else { hs as u64 };
             for (off, bytes) in spans {
                 let aligned = (prev + 7) / 8 * 8;
                 if off != aligned {
@@ -498,8 +511,9 @@ impl Reader {
                 }
                 prev = off + bytes;
             }
-            if prev != length {
-                return Err(format!("{path}: members do not reach end of file"));
+            let members_end = if tail_dir { dir_off as u64 } else { length };
+            if prev != members_end {
+                return Err(format!("{path}: members do not reach end of the member region"));
             }
         }
         let mut sigma = std::array::from_fn(|i| i as u8);
@@ -950,9 +964,12 @@ impl Index {
         // ---- the format declaration: old containers are refused by shape, not
         // decoded and hoped over.
         let m1 = reader.member(1);
-        if ![102, 114].contains(&m1.codec) {
+        // captured here: `reader` is moved into the index below, so the m1 borrow
+        // must not survive past this point.
+        let (m1_codec, m1_off, m1_bytes) = (m1.codec, m1.offset, m1.bytes);
+        if ![102, 114, 116].contains(&m1.codec) {
             return Err(format!(
-                "{}: m1 codec {} is not 102/114 (block-compressed) - this is a pre-block-compression\n  \
+                "{}: m1 codec {} is not 102/114/116 (block-compressed) - this is a pre-block-compression\n  \
                  v6 lite container: one sequential Huffman+gamma run stream with no restart\n  \
                  directory, so run k needs runs 0..k. Rebuild it with `xsa build --tape`.",
                 reader.path, m1.codec
@@ -984,9 +1001,18 @@ impl Index {
         }
         let mut lens = [0u8; 256];
         lens.copy_from_slice(&data[2048..2304]);
-        let nblocks = u64_at(data, 2304);
+        // codec 116 (v7) leaves the nblocks/rNorm head slots zero ON PURPOSE: the
+        // head is written before the sweep and is never patched, so it cannot lie
+        // about a frontier it did not know. Both are derived: nblocks from the
+        // member count, rNorm from the member count itself.
+        let (nblocks, total_runs) = if m1.codec == 116 {
+            let block_runs = u64_at(data, 2312);
+            if block_runs == 0 { return Err("m1 codec 116 declares block_runs=0".into()); }
+            ((m1.count + block_runs - 1) / block_runs, m1.count)
+        } else {
+            (u64_at(data, 2304), u64_at(data, 2320))
+        };
         let block_runs = u64_at(data, 2312);
-        let total_runs = u64_at(data, 2320);
         let payload_off = u64_at(data, 2328);
         if block_runs == 0 || block_runs > M1_BLOCK_RUNS_MAX {
             return Err(format!(
@@ -1001,8 +1027,18 @@ impl Index {
         if nblocks != want_blocks {
             return Err(format!("m1 declares {nblocks} blocks, expected {want_blocks}"));
         }
-        let dir_entry_bytes = if m1.codec == 114 { 16 } else { 8 };
-        if payload_off != 2336 + dir_entry_bytes * nblocks || payload_off > m1.bytes {
+        // codec 116 (container v7) puts the per-block directory AFTER the payload
+        // so the payload can be appended in stream order; its fixed head is 2336
+        // bytes and its nblocks is derived (the head's nblocks/rNorm slots are
+        // zero on purpose - they are never patched, so the member CRC stays valid).
+        let dir_entry_bytes = if m1.codec == 114 || m1.codec == 116 { 16 } else { 8 };
+        if m1.codec == 116 && (payload_off != 2336 || m1.bytes < 2336 + dir_entry_bytes * nblocks) {
+            return Err(format!(
+                "m1 codec 116 payload offset {payload_off} / bytes {} do not fit a trailing {nblocks}-entry directory",
+                m1.bytes
+            ));
+        }
+        if m1.codec != 116 && (payload_off != 2336 + dir_entry_bytes * nblocks || payload_off > m1.bytes) {
             return Err(format!(
                 "m1 payload offset {payload_off} does not follow its {nblocks}-entry directory"
             ));
@@ -1021,9 +1057,14 @@ impl Index {
             return Err(format!("m1 symbol counts sum to {acc}, header n={n}"));
         }
         let huff = Huff::build(&lens)?;
-        let m1dir_off = m1.offset + 2336;
+        // v7: directory at the member's tail, payload immediately after the head.
+        let (m1dir_off, m1payload_len) = if m1.codec == 116 {
+            (m1.offset + m1.bytes - dir_entry_bytes * nblocks,
+             m1.bytes - 2336 - dir_entry_bytes * nblocks)
+        } else {
+            (m1.offset + 2336, m1.bytes - payload_off)
+        };
         let m1payload_off = m1.offset + payload_off;
-        let m1payload_len = m1.bytes - payload_off;
         // taken here: `reader` is moved into the index below, so the m1 borrow
         // must not survive past this point.
         let m1_end = m1.offset + m1.bytes;
@@ -1238,9 +1279,14 @@ impl Index {
             rundir_stride: rd_l2,
             thp,
         };
-        if idx.payload_off + m1payload_len
-            != idx.reader.member(1).offset + idx.reader.member(1).bytes
-        {
+        // v6: the payload is the member's tail. v7 (codec 116): the per-block
+        // directory is the tail, so the payload ends where the directory starts.
+        let payload_expect_end = if m1_codec == 116 {
+            m1_off + m1_bytes - dir_entry_bytes * nblocks
+        } else {
+            m1_off + m1_bytes
+        };
+        if idx.payload_off + m1payload_len != payload_expect_end {
             return Err("m1 payload area does not reach the end of its member".into());
         }
         // ---- the governor's budget for THIS container

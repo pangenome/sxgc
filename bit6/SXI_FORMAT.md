@@ -404,3 +404,70 @@ helper, with a fixed 16 MiB buffer, periodically warmed the bitmap scratch
 until the marker. This qualification is retained with G3; no elapsed-time
 performance comparison or flat-memory claim is made. The interrupted 100 GB
 measurement's owned scratch was removed after preserving its receipts.
+
+## SXI2 version 7: the incremental (streaming) container
+
+Version 7 is **the product default from 2026-11-09** (owner-authorised). It exists
+because v6 cannot be built as the sweep progresses: its 64-byte header plus the
+40-byte member directory are a PREFIX whose contents (length, offsets, CRCs) are
+only known at close, and m1's own 16-byte-per-block directory sits in FRONT of m1's
+payload. Both force the whole encoded run stream to be staged in scratch before a
+single container byte can be placed — at Pile scale that term is ~0.277 n.
+
+v7 keeps every member codec, every payload byte and every semantic (n, k, r,
+flags, chi, EF, run directories) unchanged. Only the two directory positions and
+one m1 head field set change.
+
+### Container layout
+
+| region | v6 | v7 |
+|---|---|---|
+| header | 64 bytes | 64 bytes (identical fields) |
+| member directory | bytes [64, 64+40\*count) | **trailing**: [length-40\*count, length) |
+| member bytes | after the directory | from byte 64, **in stream order** |
+
+Header field `hs` (offset 36) still declares `64 + 40*count`; the physical
+directory offset is derived as `length - 40*count` (offset 40 carries the exact
+file length). Header CRC still covers the 64-byte header (CRC field zeroed)
+followed by the 40-byte directory entries, in that order. Members still tile the
+member region, 8-byte aligned; in v7 the member region ends where the trailing
+directory starts.
+
+Member write order in v7 is m1 first (it is appended during the sweep), then m5,
+m4, m7, m10, m11, m12, m13. The directory is sorted by member ID in both versions.
+A v7 reader must not assume a physical order; the partition check is by offset.
+
+### m1 codec 116
+
+| bytes | content |
+|---|---|
+| [0,2048) | 256 u64 C table (prefix sums of the corpus byte histogram) |
+| [2048,2304) | 256 u8 canonical Huffman code lengths |
+| [2304,2312) | nblocks = **0** (derived by the reader) |
+| [2312,2320) | block_runs (1024) |
+| [2320,2328) | rNorm = **0** (derived: the member's count) |
+| [2328,2336) | payload_off = **2336** (constant in v7) |
+| [2336, 2336+P) | payload: one block pair per 1024 runs, each pair 8-byte aligned |
+| [2336+P, 2336+P+16\*nblocks) | per-block directory: (payload byte offset u64, head_bits u32, length_bits u32) |
+
+The payload BYTES and the block directory BYTES are identical to codec 114's
+(measured: 7,217,520 payload bytes and 123,920 directory bytes byte-for-byte equal
+at the 20 MB fixture); only the directory position changes. The head is written
+BEFORE the sweep and never patched, which is why nblocks/rNorm are left zero: a
+patched member would need its CRC recomputed over the whole member. The reader
+derives `nblocks = ceil(count/block_runs)` and `rNorm = count`.
+
+### Reader compatibility
+
+`xsa query` opens v6 (codec 102/114/116) and v7. `sxi::Container` (the full
+validator/exporter) opens v1..v7. Old readers reject v7 rather than misreading it.
+The v6 layout remains reachable for A/B with `XSA_CONTAINER_STREAM=0` (or
+`xsa_finish --container-legacy`).
+
+### Durability and deletion (finish side)
+
+* `CONTAINER_STREAM mode=incremental member=<m> off=<n>` once per member.
+* `CONTAINER_STREAM mode=incremental member=m1 off=<off> blocks=<n> payload_bytes=<n>` every 256 blocks.
+* `CONTAINER_SYNC why=<reason> member=m1 member_bytes=<n> unsynced_bytes=<n>` per fsync.
+* `PIECE_ABSORBED idx=<band> container_off=<n> bytes=<n>` after the covering bytes are fsynced; the piece is unlinked *after* the fsync.
+* `CONTAINER_FINAL bytes=<n> sha256=<hex>` over the durable published object.

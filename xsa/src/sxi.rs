@@ -89,7 +89,11 @@ impl Container {
         }
         rd(&mut f, &mut b[4..]);
         let version = u32at(&b,4);
-        need((&b[..4]==b"SXI1" && version==1) || (&b[..4]==b"SXI2" && (2..=6).contains(&version)), "unsupported version");
+        need((&b[..4]==b"SXI1" && version==1) || (&b[..4]==b"SXI2" && (2..=7).contains(&version)), "unsupported version");
+        // v7 = the INCREMENTAL (streaming) layout: member bytes are appended in
+        // stream order and the member directory is a TRAILING section at
+        // length-40*count. Everything else about the container is v6's.
+        let tail_dir = version >= 7;
         let n = u64at(&b, 8);
         let k = u64at(&b, 16);
         let r = header_run_count(&b);
@@ -120,6 +124,15 @@ impl Container {
         b[56..60].fill(0);
         let mut hc = crc(!0, &b);
         let mut members = Vec::new();
+        if tail_dir {
+            // The 40-byte entries live at the END of the file; the 64-byte header
+            // keeps declaring header+directory bytes (hs) for compatibility, but
+            // the physical position is derived from the length the header carries.
+            let dir_off = u64at(&b, 40).checked_sub(40 * count as u64)
+                .unwrap_or_else(|| die("SXI: v7 directory offset underflow"));
+            need(dir_off >= 64 && dir_off % 8 == 0, "v7 directory offset");
+            at(&mut f, dir_off);
+        }
         for i in 0..count {
             let mut d = [0; 40];
             rd(&mut f, &mut d);
@@ -152,7 +165,8 @@ impl Container {
                     if optional==1 && flags&16!=0 {7} else {6+i-3}
                 } else {8+i-(3+optional)}
             };
-            let expected_codec=if version>=3 {match m.id {1=>101,5=>105,8=>if version==5 {119} else if version==6 {if m.codec==119 {119} else {120}} else {118},9=>109,10=>110,11=>111,_=>m.id}}
+            let expected_codec=if version>=7 {match m.id {1=>116,5=>105,10=>110,11=>111,_=>m.id}}
+                else if version>=3 {match m.id {1=>101,5=>105,8=>if version==5 {119} else if version==6 {if m.codec==119 {119} else {120}} else {118},9=>109,10=>110,11=>111,_=>m.id}}
                 else if version==2 {match m.id {1=>101,5=>105,8=>108,9=>109,_=>m.id}} else {m.id};
             need(m.id==expected_id && m.codec==expected_codec && u32at(&d,36)==0,
                 "unsupported/duplicate member");
@@ -181,7 +195,9 @@ impl Container {
                     .checked_add(bytes)
                     .unwrap_or_else(|| die("SXI: offset overflow"));
             }
-            need(prev_end == length, "header CRC or trailing bytes");
+            // v7: the member region ends where the trailing directory starts.
+            let members_end = if tail_dir { length - 40 * count as u64 } else { length };
+            need(prev_end == members_end, "header CRC or trailing bytes");
         }
         let mut c = Self {
             version,
