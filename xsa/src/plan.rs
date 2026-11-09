@@ -84,6 +84,13 @@ pub struct Survey {
     pub stripe_dirs: Vec<(String, u64, u32)>, // (dir, free bytes, used %)
 }
 
+/// Free bytes on the filesystem holding `path` (df's AVAIL, the same number the
+/// fit check uses). One definition, so the plan and the flow controller can
+/// never disagree about how much room there is.
+pub fn disc_free_bytes(path: &Path) -> Option<u64> {
+    disc_bytes_and_percent(path).map(|(free, _)| free)
+}
+
 fn disc_bytes_and_percent(path: &Path) -> Option<(u64, u32)> {
     let out = std::process::Command::new("df")
         .arg("-B1").arg("--output=avail,pcent").arg(path)

@@ -29,7 +29,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
 #[path = "recovery.rs"]
@@ -190,6 +190,12 @@ struct Options {
     phrase: PhraseOptions,
     stripes: Vec<String>,
     scratch_free_pct: u32,
+    /// `--scratch-budget-gb N`: THE FLOW-CONTROL BUDGET. The driver measures live
+    /// scratch and, when the next wave/piece would exceed it, PAUSES the producer
+    /// (SIGSTOP on its process group) while the finish drains. Pausing is the
+    /// mechanism: nothing is killed and no work is dropped. Absent = derived
+    /// (min(0.8 x free, 2 x the band window)).
+    scratch_budget_gb: Option<f64>,
     /// The TAPE producer route: scatter_sort emits key-ordered bands into
     /// --tape-bands, cross_lcp_merge consumes them, xsa_finish follows. One
     /// binary, three children, no external scripts.
@@ -275,6 +281,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     // Needs-based by default: the absolute peak-vs-free check is the gate
     // (see disc_verdict / tree_ok). A percentage-of-device rule is opt-in.
     let mut scratch_free_pct = 0u32;
+    let mut scratch_budget_gb: Option<f64> = None;
     // THE OVERRIDE OF THE ABSOLUTE PEAK-VS-FREE CHECK, and of nothing else.
     let mut skip_fit_check = false;
     let mut tape = false;
@@ -302,6 +309,15 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
                 if scratch.replace(path).is_some() {
                     return Err("specify --scratch only once".into());
                 }
+            }
+            "--scratch-budget-gb" => {
+                i += 1;
+                // Decimal GB, so a small fixture can exercise the flow control
+                // (a 20 MB corpus never reaches an integer-GB budget).
+                let v = value(args.get(i), "--scratch-budget-gb")?
+                    .parse::<f64>().map_err(|_| "--scratch-budget-gb: number expected".to_string())?;
+                if !(v > 0.0) || !v.is_finite() { return Err("--scratch-budget-gb must be positive".into()); }
+                scratch_budget_gb = Some(v);
             }
             "--snap-1e" => snap_1e = true,
             "--tape" => tape = true,
@@ -538,7 +554,8 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     }
     Ok(Options { input, scratch, snap_1e, memory_gb, threads, chunks, kway, plan_only,
                  bin_pipeline, legacy_merge, v2_flag_given, chi_expect, with_chi, wit_ram_gb,
-                 finish_as_gb, bin_live_cap, bin_target_size, bin_entropy_min, phrase, stripes, scratch_free_pct, skip_fit_check, tape, no_resume,
+                 finish_as_gb, bin_live_cap, bin_target_size, bin_entropy_min, phrase, stripes, scratch_free_pct,
+                 scratch_budget_gb, skip_fit_check, tape, no_resume,
                  remap, chunk_mb, fanin })
 }
 
@@ -754,6 +771,128 @@ impl DiscSampler {
             let _ = h.join();
         }
         self.peak.load(Ordering::Relaxed)
+    }
+}
+
+// ---------------------------------------------------------------- FLOW CONTROL
+/// THE DELIVERABLE: live scratch is a MEASURED quantity, and the producer is
+/// PAUSED (never killed, never failed) while the finish drains. Without this the
+/// only lever on peak scratch is the band window, and the finish's inputs grow
+/// with the corpus.
+///
+/// Mechanism: SIGSTOP/SIGCONT on the producer's PROCESS GROUP (spawn_phase puts
+/// every phase in its own group). A stopped group executes no instructions, so
+/// this is a real pause: no busy loop, no dropped work, no state to reconstruct.
+/// The finish is never stopped - it is the drain. Visibility is the 2 s sampling
+/// interval, well inside the 5 s requirement.
+///
+/// The one way a pause could stall instead of draining is a producer stopped
+/// while holding a lock the finish needs (the shared checkpoint journal's flock,
+/// which exists only on a resumed build). The controller therefore also resumes
+/// when live scratch has not moved for STALL_S while paused, and journals why.
+struct Backpressure {
+    budget_bytes: u64,
+    scratch: PathBuf,
+    /// tag -> process group id, for the phases that PRODUCE scratch.
+    producers: Vec<(String, u32)>,
+    paused: bool,
+    pauses: u64,
+    resumes: u64,
+    paused_ms_total: u128,
+    peak_bytes: u64,
+    last_sample: Instant,
+    last_live: u64,
+    paused_since: Instant,
+    paused_live_at: u64,
+}
+
+impl Backpressure {
+    fn new(scratch: &Path, budget_bytes: u64, producers: Vec<(String, u32)>) -> Backpressure {
+        Backpressure {
+            budget_bytes, scratch: scratch.to_path_buf(), producers, paused: false,
+            pauses: 0, resumes: 0, paused_ms_total: 0, peak_bytes: 0,
+            last_sample: Instant::now(), last_live: 0, paused_since: Instant::now(),
+            paused_live_at: 0,
+        }
+    }
+    /// SIGSTOP/SIGCONT a whole process group. `kill` is used with the group id
+    /// negated; a group that has already exited answers ESRCH, which is not an
+    /// error for this purpose (the exit path reports it).
+    fn signal_group(&self, pgid: u32, sig: &str) -> Result<(), String> {
+        let out = Command::new("kill").arg(format!("-{sig}")).arg(format!("-{pgid}"))
+            .output().map_err(|e| format!("spawn kill: {e}"))?;
+        if !out.status.success() {
+            let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            if err.contains("No such process") { return Ok(()); }
+            return Err(format!("kill -{sig} -{pgid}: {err}"));
+        }
+        Ok(())
+    }
+    /// Called from the pipeline's wait loop. Returns nothing; journals every
+    /// transition with the measured live and budget.
+    fn observe(&mut self, journal: &mut Journal) -> Result<(), String> {
+        const SAMPLE: Duration = Duration::from_secs(2);
+        const STALL_S: Duration = Duration::from_secs(30);
+        if self.last_sample.elapsed() < SAMPLE { return Ok(()); }
+        self.last_sample = Instant::now();
+        let live = tree_bytes(&self.scratch);
+        self.last_live = live;
+        if live > self.peak_bytes { self.peak_bytes = live; }
+        let gb = |v: u64| v as f64 / (1u64 << 30) as f64;
+        if !self.paused {
+            if live >= self.budget_bytes {
+                for (tag, pgid) in self.producers.clone() {
+                    self.signal_group(pgid, "STOP")?;
+                    journal.line(&format!("SCRATCH_BACKPRESSURE signal=STOP phase={tag} pgid={pgid}"));
+                }
+                self.paused = true;
+                self.pauses += 1;
+                self.paused_since = Instant::now();
+                self.paused_live_at = live;
+                journal.line(&format!(
+                    "SCRATCH_BACKPRESSURE state=pause live_gb={:.3} budget_gb={:.3} peak_gb={:.3} pauses={} resumes={} \
+                     action=producer_stopped consumer=drains",
+                    gb(live), gb(self.budget_bytes), gb(self.peak_bytes), self.pauses, self.resumes));
+            }
+        } else {
+            // Drain target: 90% of the budget, so the producer does not start a
+            // wave that immediately re-trips the limit.
+            let drained = live <= self.budget_bytes / 10 * 9;
+            let stalled = self.paused_since.elapsed() >= STALL_S && live + (live / 100) >= self.paused_live_at;
+            if drained || stalled {
+                for (tag, pgid) in self.producers.clone() {
+                    self.signal_group(pgid, "CONT")?;
+                    journal.line(&format!("SCRATCH_BACKPRESSURE signal=CONT phase={tag} pgid={pgid}"));
+                }
+                self.paused = false;
+                self.resumes += 1;
+                self.paused_ms_total += self.paused_since.elapsed().as_millis();
+                journal.line(&format!(
+                    "SCRATCH_BACKPRESSURE state=resume live_gb={:.3} budget_gb={:.3} peak_gb={:.3} pauses={} resumes={} \
+                     why={} paused_ms={}",
+                    gb(live), gb(self.budget_bytes), gb(self.peak_bytes), self.pauses, self.resumes,
+                    if stalled { "drain_stalled" } else { "drained" },
+                    self.paused_since.elapsed().as_millis()));
+            }
+        }
+        Ok(())
+    }
+    fn finish(mut self, journal: &mut Journal) -> Result<(), String> {
+        if self.paused {
+            for (tag, pgid) in self.producers.clone() {
+                self.signal_group(pgid, "CONT")?;
+                journal.line(&format!("SCRATCH_BACKPRESSURE signal=CONT phase={tag} pgid={pgid}"));
+            }
+            self.paused_ms_total += self.paused_since.elapsed().as_millis();
+            self.paused = false;
+            self.resumes += 1;
+        }
+        journal.line(&format!(
+            "SCRATCH_BACKPRESSURE_SUMMARY budget_gb={:.3} peak_gb={:.3} pauses={} resumes={} paused_ms={} last_live_bytes={}",
+            self.budget_bytes as f64 / (1u64 << 30) as f64,
+            self.peak_bytes as f64 / (1u64 << 30) as f64,
+            self.pauses, self.resumes, self.paused_ms_total, self.last_live));
+        Ok(())
     }
 }
 
@@ -983,6 +1122,11 @@ fn join_phase(
 /// Dropping the remaining phases on any error kills their private groups.
 fn join_pipeline(journal: &mut Journal, scratch: &Path,
                  phases: Vec<RunningPhase>) -> Result<(), String> {
+    join_pipeline_flow(journal, scratch, phases, None)
+}
+
+fn join_pipeline_flow(journal: &mut Journal, scratch: &Path,
+                      phases: Vec<RunningPhase>, mut flow: Option<Backpressure>) -> Result<(), String> {
     let mut pending: Vec<Option<RunningPhase>> = phases.into_iter().map(Some).collect();
     // XSA_KILL_AT: STATE-triggered ordering hooks (`mid_band`, `after_rename`).
     // They fire on an observable ordering state, never on a clock: with the
@@ -1012,6 +1156,7 @@ fn join_pipeline(journal: &mut Journal, scratch: &Path,
             }
         }
         if pending.iter().any(Option::is_some) {
+            if let Some(f) = flow.as_mut() { f.observe(journal)?; }
             // `mid_band`: a SPOOL IS ON DISK whose consumer has not incorporated
             // it. The sorter's bands are consumed within milliseconds, so the
             // observable mid-run spool with a real lifetime is a PIECE; the band
@@ -1030,6 +1175,7 @@ fn join_pipeline(journal: &mut Journal, scratch: &Path,
             std::thread::sleep(Duration::from_millis(100));
         }
     }
+    if let Some(f) = flow.take() { f.finish(journal)?; }
     if recovery::signal() != 0 && scratch.join("checkpoint.journal").exists() {
         recovery::interrupted(scratch)?;
         return Err("BUILD_INTERRUPTED".into());
@@ -2118,9 +2264,34 @@ walks the corpus for every endpoint and no LCP slice is produced). Not a user op
     let finish_running = spawn_phase(journal, scratch, "finish-v2", finish_as_kb, &finish_args[0], &finish_args[1..],
         &[("XSA_WORK_ROOT".to_string(), "driver".to_string())])?;
     let v2_sampler = DiscSampler::start(scratch.to_path_buf(), Duration::from_secs(2));
+    // ---- THE SCRATCH BUDGET (flow control) ---------------------------------
+    // The finish's inputs and the producer's windows are the two terms that grow
+    // with the corpus. The budget is a MEASURED live-scratch ceiling: when it is
+    // reached the producer is paused so the finish can absorb its backlog.
+    let flow = {
+        let free_bytes = super::plan::disc_free_bytes(scratch)
+            .ok_or_else(|| format!("df failed for {}", scratch.display()))?;
+        // DEFAULT: 80% of free space, capped by twice the band window (the arena
+        // the sorter was already given). The smaller of the two is the one that
+        // binds first, and both are journaled so the number is never a mystery.
+        let window_bytes = tape_envelope.saturating_mul(2);
+        let derived = (free_bytes / 10).saturating_mul(8).min(window_bytes);
+        let budget_bytes = options.scratch_budget_gb
+            .map(|gb| (gb * (1u64 << 30) as f64) as u64)
+            .unwrap_or(derived);
+        journal.line(&format!(
+            "SCRATCH_BUDGET source={} budget_bytes={budget_bytes} budget_gb={:.3} free_bytes={free_bytes} \
+             derived_cap_bytes={window_bytes} (min(0.8 x free, 2 x band window); a pause never kills, never fails)",
+            if options.scratch_budget_gb.is_some() { "operator" } else { "derived" },
+            budget_bytes as f64 / (1u64 << 30) as f64));
+        let producers = vec![
+            (producer_label.to_string(), producer_running.child.id()),
+        ];
+        Backpressure::new(scratch, budget_bytes, producers)
+    };
     let mut phases = vec![producer_running, finish_running];
     if let Some(emit) = emit_running { phases.push(emit); }
-    join_pipeline(journal, scratch, phases)?;
+    join_pipeline_flow(journal, scratch, phases, Some(flow))?;
     // XSA_KILL_AT=after_rename: EVERY phase has exited with rc=0, so the finish
     // has linked the container into its final name (it links only after fsync)
     // and the driver has journalled no commit. This is the published-but-
