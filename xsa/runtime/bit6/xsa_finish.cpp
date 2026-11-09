@@ -3248,7 +3248,58 @@ struct ContainerOut {
     uint64_t syncEvery = 1ull << 30;
     uint64_t unsynced = 0;
     uint64_t lastSyncBytes = 0;
+    // Running SHA-256 of the streaming member's bytes IN FILE ORDER, so a
+    // checkpoint can name the durable prefix by digest and a restart can verify
+    // it instead of trusting a length.
+    durable_piece::Sha256 memberSha;
+    bool resume = false;
+    std::string m1ShaHex() const { durable_piece::Sha256 t = memberSha; return t.finish(); }
     uint64_t headerBytes() const { return streaming ? 64 : 64 + 40 * uint64_t(count); }
+    // RESUME: reopen the retained .partial for append instead of creating it.
+    // Nothing is written here; the caller verifies the durable prefix and then
+    // calls resumeFrontier(), which truncates the uncommitted tail.
+    ContainerOut(const std::string& p, unsigned count_, bool streaming_, bool resume_)
+        : path(p), temp(p + ".partial"), count(count_), streaming(streaming_), resume(resume_) {
+        pf_check(streaming_ && resume_, "resume needs the streaming layout");
+        fd = ::open(temp.c_str(), O_RDWR);
+        pf_check(fd >= 0, "reopen retained container partial for append");
+        struct stat st {};
+        pf_check(::fstat(fd, &st) == 0 && uint64_t(st.st_size) >= 64, "stat retained container partial");
+        ms.push_back({1, PF_M1_CODEC_STREAM, 64, uint64_t(st.st_size) - 64, 0, ~0u});
+        streamIdx = 0;
+        extent = uint64_t(st.st_size);
+    }
+    // Restore the append frontier: hash and CRC the durable member prefix in ONE
+    // sequential pass, refuse a digest that does not match the checkpoint, then
+    // discard whatever a killed run appended after that frontier.
+    void resumeFrontier(uint64_t payloadBytes, const std::string& expectSha) {
+        pf_check(resume, "resumeFrontier on a fresh container");
+        const uint64_t end = 2336 + payloadBytes;
+        struct stat st {};
+        pf_check(::fstat(fd, &st) == 0, "stat retained container partial");
+        const uint64_t before = uint64_t(st.st_size);
+        pf_check(before >= 64 + end, "retained container prefix is shorter than its checkpoint frontier");
+        durable_piece::Sha256 sha;
+        std::vector<uint8_t> buf(1 << 20);
+        uint32_t crcState = ~0u;
+        for (uint64_t pos = 0; pos < end;) {
+            size_t z = size_t(std::min<uint64_t>(buf.size(), end - pos));
+            pf_pread_full(fd, buf.data(), z, 64 + pos, "resume prefix verify");
+            sha.update(buf.data(), z);
+            crcState = crc(crcState, buf.data(), z);
+            pos += z;
+        }
+        const std::string got = sha.finish();
+        pf_check(got == expectSha,
+                 "retained container prefix digest does not match its checkpoint (" + got + " vs " + expectSha + ")");
+        memberSha = sha;
+        ms[0].bytes = end; ms[0].checksum = crcState; extent = 64 + end;
+        if (before > 64 + end) pf_check(::ftruncate(fd, off_t(64 + end)) == 0, "truncate uncommitted container tail");
+        fprintf(stderr, "RESUME_MODE container_off=%llu container_bytes=%llu prefix_sha256=%s "
+                "file_bytes_before=%llu truncated_bytes=%llu\n",
+                (unsigned long long)(64 + end), (unsigned long long)before, got.c_str(),
+                (unsigned long long)before, (unsigned long long)(before - (64 + end)));
+    }
     ContainerOut(const std::string& p, unsigned count_, bool streaming_ = false)
         : path(p), temp(p + ".partial"), count(count_), streaming(streaming_) {
         pf_check(finish_spool::enabled() || ::access(path.c_str(), F_OK) != 0, "output exists; refusing to clobber");
@@ -3279,6 +3330,7 @@ struct ContainerOut {
         auto& m = ms.at(size_t(streamIdx));
         pf_pwrite_full_or_seek(fd, (const unsigned char*)p, z, m.offset + m.bytes);
         m.bytes += z; m.checksum = crc(m.checksum, (const unsigned char*)p, z);
+        if (streaming && int64_t(ms.size()) > streamIdx) memberSha.update(p, z);
         extent = std::max(extent, m.offset + m.bytes);
         unsynced += z;
     }
@@ -4933,6 +4985,10 @@ int main(int argc, char** argv) {
                               pf_env_u64("XSA_FINISH_LCE_TRUST",0,0,3)==0),
                  "spool checkpoints currently require the standard route-B product path");
         const std::string spoolDir = prefix + ".finish-spool";
+        // A streaming build is RESUMING when its native finish checkpoint exists:
+        // the retained container prefix is then verified, never rebuilt.
+        const bool containerResume = containerStream && spoolMode &&
+            ::access((spoolDir + "/state").c_str(), F_OK) == 0;
         std::unique_ptr<finish_spool::Lock> spoolLock;
         std::string spoolIdentity;
         if(spoolMode)spoolLock=std::make_unique<finish_spool::Lock>(spoolDir);
@@ -5323,6 +5379,7 @@ int main(int argc, char** argv) {
         // Runs whose bytes sit in CLOSED (appended) codec blocks. A piece may only
         // be unlinked while every one of its runs is below this count.
         uint64_t m1StreamClosedRuns = 0;
+        std::string m1ResumeSha;   // checkpoint digest of the durable container prefix
         // ---- m1 v2 access structure, accumulated in stream order during the
         // sweep (the runs are already going past; a second pass would be the
         // 25 s decode this change exists to delete).
@@ -5358,7 +5415,20 @@ int main(int argc, char** argv) {
                     "weights_sum=%llu\n",
                     (unsigned long long)symbols, (unsigned long long)minLen,
                     (unsigned long long)maxLen, (unsigned long long)n);
-            if (containerStream) {
+            if (containerStream && containerResume) {
+                // RESUME AT A CONTAINER OFFSET. The retained .partial is reopened
+                // for append; its durable prefix is verified by digest and any
+                // bytes a killed run appended past the last checkpoint frontier
+                // are truncated after the sweep state has been restored.
+                streamOwner = std::make_unique<ContainerOut>(
+                    out, (m1Replay ? 6u : 8u) - (buildChi ? 0u : 1u), true, true);
+                streamOut = streamOwner.get();
+                m1Head = std::make_unique<BitsOut>();
+                m1Len = std::make_unique<BitsOut>();
+                fprintf(stderr, "RESUME_MODE pending container=%s retained_bytes=%llu "
+                        "verify=sha256_over_durable_prefix truncate=uncommitted_tail\n",
+                        (out + ".partial").c_str(), (unsigned long long)streamOut->streamBytes());
+            } else if (containerStream) {
                 // THE CONTAINER EXISTS BEFORE THE FIRST RUN IS SWEPT. Everything
                 // in m1's fixed head is known here: the C table is the corpus byte
                 // histogram (asserted equal to the emitted symbol totals before
@@ -6169,6 +6239,24 @@ int main(int argc, char** argv) {
                 // reopen (see RESUME_MODE container_off=). Only the frontier is
                 // state, and it is derived from the block arithmetic, not trusted.
                 a.scalar(m1StreamHeadBits);a.scalar(m1StreamLenBits);a.scalar(m1StreamPayload);
+                a.scalar(m1StreamClosedRuns);
+                // The DIGEST of the durable member prefix [0, 2336+payload).
+                uint8_t hex[64] = {0};
+                if(!a.reading){const std::string h=streamOut->m1ShaHex();std::memcpy(hex,h.data(),64);}
+                a.bytes(hex,64);
+                if(a.reading)m1ResumeSha.assign((const char*)hex,64);
+                // The OPEN codec block's bits. A checkpoint may fall inside a
+                // 1024-run block and that block's encoded bits exist nowhere else:
+                // they are bounded by one block, so they ride the checkpoint
+                // instead of a spool.
+                for(BitsOut* b:{m1Head.get(),m1Len.get()}){
+                    uint64_t bitPos=b->bitPos,nmem=b->mem.size(),nbits=b->nbits;
+                    uint64_t accl=uint64_t(b->acc),acch=uint64_t(b->acc>>64);
+                    a.scalar(bitPos);a.scalar(nmem);a.scalar(nbits);a.scalar(accl);a.scalar(acch);
+                    if(a.reading)b->mem.resize(nmem);
+                    a.bytes(b->mem.data(),nmem);
+                    if(a.reading){b->bitPos=bitPos;b->nbits=unsigned(nbits);b->acc=(__uint128_t(acch)<<64)|accl;}
+                }
             } else for(BitsOut* b:{m1Head.get(),m1Len.get()}){
                 if(!a.reading)b->drain();
                 a.scalar(b->bitPos);a.scalar(b->nbits);
@@ -6232,6 +6320,19 @@ int main(int argc, char** argv) {
                 std::vector<uint8_t> base;pf_check(finish_spool::load(spoolDir+"/base-"+std::to_string(spoolGeneration),base),"missing committed chi base");
                 pf_check(base.size()==bitmap.bytes,"chi base dimensions");
                 if(bitmap.bytes)memcpy(bitmap.bits,base.data(),bitmap.bytes);
+                if(containerStream){
+                    // VERIFY THE RETAINED PREFIX, THEN TRUNCATE THE UNCOMMITTED TAIL.
+                    pf_check(containerResume, "a streaming checkpoint exists but no retained container partial does");
+                    pf_check(m1ResumeSha.size()==64, "checkpoint carries no container prefix digest");
+                    streamOut->resumeFrontier(m1StreamPayload,m1ResumeSha);
+                    m1StreamClosedRuns=(m1dir.blkHead.size()?m1dir.blkHead.size()-1:0)*M1_BLOCK_RUNS;
+                    fprintf(stderr,"RESUME_MODE container_off=%llu payload_bytes=%llu closed_blocks=%llu "
+                            "closed_runs=%llu pending_block_runs=%llu work_avoided_basis=finish_advance_counters\n",
+                            (unsigned long long)streamOut->streamBytes(),(unsigned long long)m1StreamPayload,
+                            (unsigned long long)(m1dir.blkHead.size()?m1dir.blkHead.size()-1:0),
+                            (unsigned long long)m1StreamClosedRuns,
+                            (unsigned long long)(m1SweepRuns-m1StreamClosedRuns));
+                }
                 bitmap.delta.clear();restoredAdvances=advRuns;restoredRawRuns=rawRunsFed;restoredBands=bandReads;
                 fprintf(stderr,"SPOOL_STATE blocks_present=%llu blocks_missing=%llu resumed_from=%llu\n",
                     (unsigned long long)present,(unsigned long long)missing,(unsigned long long)(m1SweepRuns/M1_BLOCK_RUNS));
@@ -6410,6 +6511,15 @@ int main(int argc, char** argv) {
                 // driver reports the phase and this branch stays silent.
                 if(!workRootDriver())
                     workAvoided("finish",advRuns,advRuns-restoredAdvances,"finish_advance_counters");
+                if(containerResume)
+                    fprintf(stderr,"WORK_AVOIDED_SUMMARY phase=finish container_off=%llu performed=%llu "
+                            "total=%llu avoided=%llu avoided_frac=%.6f basis=finish_advance_counters "
+                            "restored_runs=%llu restored_bands=%llu\n",
+                            (unsigned long long)streamOut->streamBytes(),
+                            (unsigned long long)(advRuns-restoredAdvances),(unsigned long long)advRuns,
+                            (unsigned long long)restoredAdvances,
+                            advRuns?double(restoredAdvances)/double(advRuns):0.0,
+                            (unsigned long long)restoredAdvances,(unsigned long long)restoredBands);
             }
             advanceWall += tnow() - ta;
             r.close(); advAcc.add(r);
