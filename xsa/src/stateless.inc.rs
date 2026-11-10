@@ -123,7 +123,7 @@ pub fn stateless_bench_command(args: &[std::ffi::OsString]) {
                 let result = (checksum, a.decodes, a.bytes(), a.decode_ns);
                 done.wait();
                 release.wait();
-                result
+                (result.0, result.1, result.2, result.3, stateless_worker_stack_rss())
             }));
         }
         rendezvous.wait();
@@ -136,6 +136,8 @@ pub fn stateless_bench_command(args: &[std::ffi::OsString]) {
     let checksum = results.iter().fold(0u64, |sum, r| sum.wrapping_add(r.0));
     let decodes: u64 = results.iter().map(|r| r.1).sum();
     let decode_ns: u64 = results.iter().map(|r| r.3).sum();
+    let max_stack = results.iter().map(|r| r.4).max().unwrap();
+    eprintln!("STATELESS_WORKER_RSS arena_peak_bytes={} stack_peak_max_bytes={max_stack} stack_plus_arena_peak_max_bytes={} heap_pair_capacity_bytes=4096 context_heap_bytes={left}", results[0].2, max_stack + results[0].2 as u64);
     let status = std::fs::read_to_string("/proc/self/status").unwrap();
     let hwm = status.lines().find(|s| s.starts_with("VmHWM:")).unwrap();
     println!("STATELESS_BENCH threads={jobs} positions={positions} left={left} seconds={seconds:.6} positions_per_s={:.3} checksum={checksum} decodes={decodes} decode_seconds_sum={:.6} worker_arena_bytes={} {hwm}", positions as f64 / seconds, decode_ns as f64 / 1e9, results[0].2);
@@ -186,4 +188,30 @@ mod stateless_tests {
         assert_ne!(compat.cache_stats(), before);
         assert_eq!(idx.cache_stats(), (0,0,0,0));
     }
+}
+
+/// Benchmark-only attribution: each fresh pthread stack has its own guarded VMA.
+/// No stack pages have been retired yet, so its resident set retains the peak
+/// touched by this worker. Runs after the timed query, before thread exit.
+fn stateless_worker_stack_rss() -> u64 {
+    use std::io::BufRead;
+    let marker = 0u8;
+    let address = &marker as *const u8 as usize;
+    let file = File::open("/proc/self/smaps").unwrap();
+    let mut found = false;
+    for line in std::io::BufReader::new(file).lines() {
+        let line = line.unwrap();
+        if !found {
+            if let Some(range) = line.split_whitespace().next() {
+                if let Some((lo, hi)) = range.split_once('-') {
+                    if let (Ok(lo), Ok(hi)) = (usize::from_str_radix(lo, 16), usize::from_str_radix(hi, 16)) {
+                        found = lo <= address && address < hi;
+                    }
+                }
+            }
+        } else if line.starts_with("Rss:") {
+            return line.split_whitespace().nth(1).unwrap().parse::<u64>().unwrap() * 1024;
+        }
+    }
+    panic!("worker stack mapping absent from smaps");
 }

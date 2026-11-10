@@ -3,7 +3,8 @@
 The new path is `Index::open_stateless(Reader)` plus a caller-owned
 `RefCell<WorkerArena>`. `stateless_count(index, arena, query)` accepts original
 bytes. `stateless_histogram(index, arena, query, corpus_tail)` returns 256
-next-byte counts and structural END separately. Empty histograms follow consult's
+next-byte counts and structural END separately. The tail must contain the last
+`min(1024, text_bytes)` bytes of the exact indexed text for correct EOF answers. Empty histograms follow consult's
 empty-context convention. `Index::worker_ctx(arena)` also exposes the existing
 rank/search navigation to layers that need several operations per query.
 
@@ -121,3 +122,45 @@ files are 12,459 bytes. `cargo test --release -- --include-ignored` passes all
 85 tests, including the explicit 100GB count/histogram/retirement test. That test
 compares full histogram counts against compatibility navigation and verifies
 private pages read as zero after retirement and that shared cache stats stay zero.
+
+
+## Q3 — resident memory
+
+At 96 workers, the follow-up run (same 4096 positions, 8-byte contexts) reports:
+
+```
+STATELESS_MEMORY workers=96 anonymous_before_bytes=299008 anonymous_live_bytes=3121152 incremental_anonymous_per_worker_bytes=29397 query_wall_seconds=1.788914
+STATELESS_WORKER_RSS arena_peak_bytes=8192 stack_peak_max_bytes=12288 stack_plus_arena_peak_max_bytes=20480 heap_pair_capacity_bytes=4096 context_heap_bytes=8
+VmHWM: 7886564 kB
+```
+
+Peak decoded arena RSS is **8 KiB per worker**; the largest resident worker stack
+is **12 KiB**, giving **20 KiB peak stack+arena per worker**. Stack residence is
+read from that fresh thread's guarded VMA after queries, before thread exit or
+retirement; anonymous pages were not swapped (time reports zero swaps). The
+worker also has a bounded 4096-byte pairs allocation and 8-byte transient context
+allocation in this benchmark (1024-byte context in the target workload). Those
+heap pages and allocator overhead do not have exclusive per-thread RSS accounting;
+the aggregate live anonymous increment averages **29,397 bytes/worker**. This is
+an average, not a fabricated per-thread VmHWM. The benchmark-only smaps scan runs
+after the timed query and introduces its own small transient IO buffer.
+
+Total process peak at 96 workers is **7,886,564 KiB = 8,075,841,536 bytes =
+7.521 GiB** by `/proc/self/status` VmHWM. GNU time separately reports 7,769,572
+KiB ru_maxrss; these kernel accounting interfaces differ, so the larger VmHWM is
+used here, consistently with consult's prior gates. Raw output is Q3-96.log.
+The Q1 96-worker run was 7,885,872 KiB before stack diagnostics were added.
+
+Total is bounded by the finite immutable mapping, fixed metadata, and bounded
+private storage per worker, independent of positions already answered. It is
+**not an 8-GiB service cap**: the container alone can eventually occupy about
+58.8 GiB when fully resident. Consult adds a bounded 64-MiB corpus window;
+the scaling harness maps the full corpus but only touches selected windows.
+Retirement drops private scratch pages; kernel residency/reclaim of shared input
+pages is left to the OS. Do not infer the total's asymptotic bound from this small
+set's 7.521-GiB observed peak.
+
+The Q3 diagnostic change only adds post-query stack attribution; the timed core
+is unchanged. Its repeated 96-worker rate is 2289.657 positions/s, within 0.7% of
+Q1. After this change all 85 release tests, including the external-container
+test, pass again.
