@@ -108,6 +108,12 @@ Design consequence for the operations: `relax` thresholds belong around support 
 5. 10 GB and 100 GB indexes both rebuilt with the layer present, byte-identical answers for existing
    queries, and `origin/main` equal to local.
 
+- **`0x1E` is NOT unique in the Pile.** Scanning `pile.txt` for the separator overcounts documents:
+  in the first 100 GB it finds 16,126,745 boundaries against 16,119,766 records, i.e. **6,979 internal
+  `0x1E` bytes inside document texts** (0.043 %). Document offsets must come from the shard record
+  boundaries, and any check on a byte-range scan must use the identity
+  `separators == records + internal_0x1e`, never a raw equality. The convention "0x1E is conventionally
+  absent" holds for enwiki, not for arbitrary web text.
 ## Known traps (each one has already cost time)
 
 - Two chi values are only comparable **on the same corpus**. Comparing across corpora produced a
