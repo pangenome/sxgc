@@ -1400,6 +1400,12 @@ fn usage() -> ! {
     eprintln!("  xsa tags --chi <f.sA> --sidecar <names.tsv> [--revlines]");
     eprintln!("           [--output tags.tsv]                  first-appearance attribution");
     eprintln!("  xsa branches <container> (--contexts FILE [--jsonl] | --serve [-j N]) [-k N] [--docs DIR | --corpus FILE]");
+    eprintln!("  xsa consult --container <sxi2> --windows <jsonl|bin> --output <file> [--corpus FILE] [--rss-gb 8]");
+    eprintln!("           [-j N] [--resume] [--left 1024] [--chunk-rows N] [--bin|--jsonl] [--no-verify-prefix]");
+    eprintln!("           BOUNDED-MEMORY streaming extraction (cache-build): one query per position, the");
+    eprintln!("           next-byte branch histogram after the last <=1024 bytes, appended to an fsync'd,");
+    eprintln!("           journaled, resumable row file. Windows are (doc, base, start, len, left); see");
+    eprintln!("           CONSULT.md for the row layout, the journal and the memory law.");
     eprintln!("  xsa query <container> <pattern> [<pattern> ...] [-j N] [--output tsv|jsonl] [--all | --count | --limit N] [--docs DIR] [--context N]");
     eprintln!("           --patterns: the corpus contract, rec<0x1e>rec<0x1e>...rec<0x1e>, arbitrary");
     eprintln!("           bytes, no escaping, id = 0-based record index; --patterns-fasta reads FASTA;");
@@ -1428,6 +1434,10 @@ fn main() {
     let raw: Vec<_> = std::env::args_os().skip(1).collect();
     if raw.first().is_some_and(|a| a == "branches") {
         qlite::branches_command(&raw[1..]);
+        return;
+    }
+    if raw.first().is_some_and(|a| a == "consult") {
+        qlite::consult_command(&raw[1..]);
         return;
     }
     if raw.first().is_some_and(|a| a == "mem") {

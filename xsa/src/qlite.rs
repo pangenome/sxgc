@@ -749,6 +749,11 @@ struct RunDir {
 /// closures handed to `Index::with_block` therefore must NOT call `with_block`
 /// again (that would self-deadlock on the same shard); they only walk the two
 /// slices they are given.
+// PADDED TO A CACHE LINE. Every lookup updates `hits`/`mapped_touch` under this
+// shard's lock, so two shards inside one cache line make every worker thread
+// fight over it: with a 64 MB arena the shards numbered 64 and a query thread
+// per core, that false sharing is measured as most of the parallel loss.
+#[repr(align(128))]
 struct Shard {
     heads: Vec<u8>,
     lens: Vec<u32>,
@@ -956,7 +961,22 @@ impl Index {
     /// a locate decodes the one or two blocks it needs, through a fixed-size
     /// cache. `decoded_bytes` is therefore 0 at every scale, which is the line the
     /// memory law is audited against.
-    pub fn open(reader: Reader, _threads: usize) -> Result<Index, String> {
+    pub fn open(reader: Reader, threads: usize) -> Result<Index, String> {
+        Index::open_with_cache(reader, threads, CACHE_BYTES)
+    }
+
+    /// Same kernel with an EXPLICIT decoded-block arena. `CACHE_BYTES` is the
+    /// default (64 MB, the size every existing path uses); `xsa consult` sizes
+    /// the arena from its `--rss-gb` budget instead, because a cache-build walks
+    /// a much denser set of BWT rows than a one-off query and the arena is the
+    /// one knob that trades RSS for random block decodes. Nothing else changes:
+    /// the arena is still FIXED for the life of the process, and `decoded_bytes`
+    /// is still 0 - this is a budget split, not a materialisation.
+    pub fn open_with_cache(
+        reader: Reader,
+        _threads: usize,
+        cache_bytes: usize,
+    ) -> Result<Index, String> {
         let t0 = Instant::now();
         let r = reader.r;
         let n = reader.n;
@@ -1237,8 +1257,12 @@ impl Index {
         // still gets one slot per shard.
         let br = block_runs as usize;
         let per_slot = br + 4 * br;
-        let want_slots = (CACHE_BYTES / per_slot).max(1);
-        let nshard = CACHE_SHARDS.min(want_slots).max(1);
+        let want_slots = (cache_bytes / per_slot).max(1);
+        // A LARGER ARENA GETS MORE SHARDS: the shard count is what the worker
+        // threads contend on, so it grows with the arena the caller paid for
+        // (the default 64 MB arena keeps exactly the historical 64).
+        let shard_target = if cache_bytes > CACHE_BYTES { 512 } else { CACHE_SHARDS };
+        let nshard = shard_target.min(want_slots).max(1);
         let per_shard = (want_slots / nshard).max(1);
         let mut cache = Vec::with_capacity(nshard);
         let mut thp = true;
@@ -1309,7 +1333,7 @@ impl Index {
             + 2336
             + dir_entry_bytes * nblocks;
         idx.rss_cap =
-            (CACHE_BYTES as u64) + BASE_RSS_BYTES + RSS_SLACK_BYTES + dir_bytes.min(DIR_RSS_CAP);
+            (cache_bytes as u64) + BASE_RSS_BYTES + RSS_SLACK_BYTES + dir_bytes.min(DIR_RSS_CAP);
 
         // ---- THE OPEN-TIME AUDIT, and it is BOUNDED.
         //
@@ -1579,6 +1603,19 @@ impl Index {
             self.drop_ns.load(std::sync::atomic::Ordering::Relaxed),
             pf,
         )
+    }
+
+    /// Set this process's RSS budget in bytes: the resident set the governor
+    /// bleeds the container mapping back to (see `governor_probe`). `xsa
+    /// consult` is the only caller - it is a BUDGET knob, not a switch: the
+    /// decoded-block arena and every per-run structure stay fixed whatever it
+    /// says, and the value is journaled.
+    pub fn set_rss_cap(&mut self, bytes: u64) {
+        self.rss_cap = bytes;
+    }
+    /// The RSS cap the governor is currently enforcing, for the journal.
+    pub fn rss_cap(&self) -> u64 {
+        self.rss_cap
     }
 
     /// Bytes this reader has allocated for per-run data: the FIXED block-cache
@@ -3336,3 +3373,4 @@ include!("branches.inc.rs");
 include!("mem.inc.rs");
 include!("seeds.inc.rs");
 include!("fanout.inc.rs");
+include!("consult.inc.rs");
