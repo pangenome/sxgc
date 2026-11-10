@@ -3050,6 +3050,50 @@ static constexpr uint64_t PF_CONTAINER_V7 = 7;
 // are present". The flagged set is 1|8|16|32 = 57.
 static constexpr uint64_t PF_FLAG_M1_BLOCKED = 32;
 
+// ===================== THE LCP OVER RUNS (member m14, codec 117) ==============
+// WHY. The suffix tree IS the LCP-interval tree: a node is a distinct context,
+// its children are contiguous in SA order, and a node's children are delimited by
+// the ranks where LCP drops below the node's depth. So the column that makes the
+// tree navigable is LCP itself - and until now the finish CONSUMED it (the
+// producer's band slices -> `topLcp`/`interior`) and then threw it away, which is
+// why nothing in the container can be navigated as a tree (m7 is a 256-byte
+// permutation, m11 holds 30.6 M sampled run-tail SA values; see
+// CHI_TRANSITIONS.md and VIRTUAL_TREE.md).
+//
+// WHAT IS PERSISTED, EXACTLY. One value per BWT RUN, in run (stream) order:
+//
+//     lcpRuns[i] = LCP[r_i] = lce(SA[r_i - 1], SA[r_i]),   r_i = sum(len[0..i-1])
+//
+// i.e. the LEFT-neighbour LCP at run i's HEAD row, which is exactly what the fold
+// already computes per run as `topLcp[i]` (the producer's slice at rank r_i, or
+// the LCE walk on the XSA_LCE_VERIFY arm). lcpRuns[0] = 0 is the array's
+// conventional sentinel (row 0 has no left neighbour). r-space is the point: R is
+// ~3x smaller than n at the Pile (31,381,597,694 vs 100,093,934,467) and it is
+// the space m1/m12/m13 are already organised in.
+//
+// NOT PERSISTED, AND SAYING SO: the LCP values of the rows INSIDE a run. A run's
+// interior rows carry their own drops (an all-equal text is one run whose interior
+// is the whole tree), so this member alone delimits children at RUN granularity.
+// The finish computes that interior minimum (`interior[i]`) for chi; it is not
+// part of m14.
+//
+// ENCODING: blocks of PF_LCP_BLOCK_RUNS runs, each block independently decodable,
+// one 16-byte directory entry per block in a TRAILING section (the v7 rule: a
+// directory the writer cannot know before the bytes exists cannot be a prefix).
+// A block is encoded with the cheaper of two exact schemes - see encodeLcpBlock -
+// and the values are u64 in BOTH schemes, so nothing is ever truncated: an LCP of
+// n-1 survives a fixture as readily as a Pile LCP of 30. Random access =
+// dir[i/block] (one pread) + one bit-slice (or one byte) at a computed offset +
+// a binary search in that block's small escape list. Never a linear scan.
+static constexpr uint64_t PF_CONTAINER_V8 = 8;
+static constexpr unsigned PF_LCP_CODEC = 117;
+static constexpr uint64_t PF_LCP_BLOCK_RUNS = 1024;
+static constexpr uint64_t PF_LCP_HEAD = 40;      // fixed head, never patched
+static constexpr unsigned PF_LCP_ENC_VERSION = 1;
+// Container header flag bit 7: "member m14 (LCP over runs) is present".
+// Version 8 sets it; version 7 (--no-lcp-runs) must not.
+static constexpr uint64_t PF_FLAG_LCP_RUNS = 128;
+
 // THE PROBLEM the two-pass m1 solved: its head stream is a Huffman code over
 // the NORMALIZED RUN SYMBOLS, and the codebook was built from run frequencies
 // that are only complete at the end of the sweep. So the sweep could not
@@ -3230,6 +3274,356 @@ static void pf_pwrite_full_or_seek(int fd, const unsigned char* p, size_t z, uin
         p += w; off += uint64_t(w); z -= size_t(w);
     }
 }
+// ===================== m14: the block codec (writer side) ====================
+// One block = PF_LCP_BLOCK_RUNS consecutive runs' LCP values. Two exact schemes,
+// the cheaper one wins PER BLOCK (mode is inside the block, so the reader never
+// needs the writer's reasons):
+//
+//   mode 0  every value is zero                     -> 1 byte
+//   mode 1  u8 array, value < 255 inline, 255 = escape
+//   mode 2  w-bit packed array (1 <= w <= 32), 0 inline means escape
+//   then    esc_count u32, then esc_count * {u16 index, u64 value} (10 B each,
+//           sorted by index, so a lookup BINARY SEARCHES them)
+//   then    zero padding to an 8-byte multiple
+//
+// Both schemes carry escapes as full u64, so the codec is lossless for every LCP
+// in [0, n-1] - a fixture whose whole text is one run (LCP ~ n) and a Pile run
+// with LCP 3 are the same format. Mode 2 exists because the LCP array is skewed:
+// a block of 1024 runs whose values are almost all <= 3 but contains one 300 must
+// not pay 9 bits for all 1024 (mode 2 with w=4 and one escape is 4x cheaper).
+static inline unsigned lcpBits(uint64_t v) { return v ? 64u - unsigned(__builtin_clzll(v)) : 0u; }
+
+
+// Encode one block into `o`; returns the block's byte length INCLUDING the
+// 8-byte padding, and appends the bytes to `o` and the escape count to `escOut`.
+static size_t encodeLcpBlock(const uint64_t* v, size_t n, std::vector<uint8_t>& o, uint64_t& escOut,
+                             uint8_t* modeOut, unsigned* widthOut) {
+    pf_check(n > 0 && n <= PF_LCP_BLOCK_RUNS, "LCP block size");
+    const size_t start = o.size();
+    uint32_t hist[65] = {0};
+    unsigned maxb = 0;
+    size_t n255 = 0;
+    for (size_t i = 0; i < n; ++i) {
+        const unsigned b = lcpBits(v[i]);
+        ++hist[b];
+        if (b > maxb) maxb = b;
+        if (v[i] == 255) ++n255;
+    }
+    if (maxb == 0) {
+        o.push_back(0);
+        while ((o.size() - start) % 8) o.push_back(0);
+        escOut = 0; *modeOut = 0; *widthOut = 0;
+        return o.size() - start;
+    }
+    // CHOOSE THE CHEAPER SCHEME, from the width histogram alone (one pass over the
+    // block, not one per candidate): escapes cost a fixed 10 bytes each.
+    static const unsigned widths[] = {1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 16, 20, 24, 32};
+    size_t escA = n255;
+    for (unsigned b = 9; b <= 64; ++b) escA += hist[b];
+    size_t bestBytes = 1 + n + 4 + 10 * escA;   // mode 1
+    unsigned bestMode = 1, bestW = 0;
+    for (unsigned w : widths) {
+        size_t above = 0;
+        for (unsigned b = w + 1; b <= 64; ++b) above += hist[b];
+        const size_t bytes = 1 + 1 + (n * size_t(w) + 7) / 8 + 4 + 10 * above;
+        if (bytes < bestBytes) { bestBytes = bytes; bestMode = 2; bestW = w; }
+    }
+    // THE MARKER IS THE ALL-ONES FIELD, and a GENUINE all-ones value escapes too:
+    // an inline 0 cannot mark an escape because 0 is the most common LCP in the
+    // array (the mode-2 selftest caught exactly that).
+    const uint64_t limit = bestMode == 2 ? ((uint64_t(1) << bestW) - 1) : 255;
+    uint64_t esc = 0;
+    for (size_t i = 0; i < n; ++i) if (v[i] >= limit) ++esc;
+    o.push_back(uint8_t(bestMode));
+    if (bestMode == 1) {
+        for (size_t i = 0; i < n; ++i) o.push_back(v[i] >= limit ? uint8_t(255) : uint8_t(v[i]));
+    } else {
+        o.push_back(uint8_t(bestW));
+        const size_t at = o.size(), packed = (n * size_t(bestW) + 7) / 8;
+        o.resize(at + packed, 0);
+        uint8_t* p = o.data() + at;
+        uint64_t acc = 0; unsigned have = 0; size_t oi = 0;
+        for (size_t i = 0; i < n; ++i) {
+            acc |= (v[i] >= limit ? limit : v[i]) << have;
+            have += bestW;
+            while (have >= 8) { p[oi++] = uint8_t(acc); acc >>= 8; have -= 8; }
+        }
+        if (have) p[oi++] = uint8_t(acc);
+        pf_check(oi == packed, "LCP packed block length");
+    }
+    {
+        uint8_t e[4];
+        put(e, esc, 4);
+        o.insert(o.end(), e, e + 4);
+    }
+    for (size_t i = 0; i < n; ++i) {
+        if (v[i] < limit) continue;
+        uint8_t e[10];
+        put(e, uint16_t(i), 2);
+        put(e + 2, v[i], 8);
+        o.insert(o.end(), e, e + 10);
+    }
+    while ((o.size() - start) % 8) o.push_back(0);
+    escOut = esc; *modeOut = uint8_t(bestMode); *widthOut = bestW;
+    return o.size() - start;
+}
+
+// Decode value #j of ONE block - the reader's random-access rule, verbatim, so the
+// writer's selftest exercises exactly the rule a container reader uses: one bit
+// slice (mode 2) or one byte (mode 1), then a binary search in the block's escape
+// list. Never a scan over the block, never a walk over preceding blocks.
+static uint64_t decodeLcpBlockValue(const uint8_t* b, size_t n, size_t j) {
+    pf_check(j < n, "LCP block index");
+    const uint8_t mode = b[0];
+    if (mode == 0) return 0;
+    uint64_t inlineVal = 0;
+    bool escaped = false;
+    size_t escAt = 0;
+    if (mode == 1) {
+        inlineVal = b[1 + j];
+        escaped = inlineVal == 255;
+        escAt = 1 + n;
+    } else if (mode == 2) {
+        const unsigned w = b[1];
+        pf_check(w >= 1 && w <= 32, "LCP block width");
+        const uint64_t bit = uint64_t(j) * w;
+        const uint8_t* p = b + 2 + size_t(bit / 8);
+        const unsigned sh = unsigned(bit % 8);
+        uint64_t acc = 0;
+        for (unsigned i = 0; i < 5; ++i) acc |= uint64_t(p[i]) << (8 * i);
+        inlineVal = (acc >> sh) & ((uint64_t(1) << w) - 1);
+        escaped = inlineVal == ((uint64_t(1) << w) - 1);   // all-ones field = escape
+        escAt = 2 + (n * size_t(w) + 7) / 8;
+    } else {
+        pf_fail("LCP block mode");
+    }
+    if (!escaped) return inlineVal;
+    const uint8_t* e = b + escAt;
+    const uint64_t count = sxi::get(e, 4);
+    pf_check(count <= n, "LCP block escape count");
+    const uint8_t* list = e + 4;
+    size_t lo = 0, hi = size_t(count);
+    while (lo < hi) {
+        const size_t mid = (lo + hi) / 2;
+        const uint64_t idx = sxi::get(list + 10 * mid, 2);
+        if (idx == j) return sxi::get(list + 10 * mid + 2, 8);
+        if (idx < j) lo = mid + 1; else hi = mid;
+    }
+    pf_fail("LCP block escape list has no entry for an escaped value");
+}
+
+// The run-LCP writer: values arrive in RUN ORDER from the serial fold, blocks are
+// encoded and appended to a payload spool, and the 16-byte-per-block directory is
+// accumulated in RAM (16 B per 1024 runs - the same shape m1's own block
+// directory already carries).
+struct LcpRunsWriter {
+    int fd = -1;
+    std::string spoolPath;
+    std::vector<uint64_t> blk;
+    std::vector<uint8_t> dir;    // per CLOSED block: off u64, span u32, esc u32
+    std::vector<uint8_t> out;
+    uint64_t payloadBytes = 0;   // bytes of CLOSED blocks (the next block's offset)
+    uint64_t count = 0;          // values accepted
+    uint64_t blocks = 0;
+    uint64_t escapes = 0;
+    uint64_t maxValue = 0;
+    uint64_t u8Blocks = 0, packBlocks = 0, zeroBlocks = 0;
+    uint64_t packedBits = 0;     // bits spent on inline fields
+    durable_piece::Sha256 sha;   // running digest of the payload bytes
+    bool on = false;
+
+    void open(const std::string& path, bool resume) {
+        spoolPath = path;
+        // A FRESH build must not find a stale spool (unless the spool mode owns it);
+        // a RESUMING build keeps every byte the checkpoint's frontier covers - the
+        // prefix digest is verified before a byte is appended (resumeFrontier).
+        const int extra = resume ? 0 : (finish_spool::enabled() ? O_TRUNC : O_EXCL);
+        if (!resume && !finish_spool::enabled())
+            pf_check(::access(spoolPath.c_str(), F_OK) != 0, "LCP runs scratch exists");
+        fd = ::open(spoolPath.c_str(), O_RDWR | O_CREAT | extra, 0666);
+        pf_check(fd >= 0, "create LCP runs scratch");
+        blk.reserve(PF_LCP_BLOCK_RUNS);
+        dir.reserve(1 << 12);
+        out.reserve(1 << 22);
+        on = true;
+    }
+    inline void push(uint64_t v) {
+        if (v > maxValue) maxValue = v;
+        blk.push_back(v);
+        ++count;
+        if (blk.size() == PF_LCP_BLOCK_RUNS) flushBlock();
+    }
+    void flushBlock() {
+        pf_check(on, "LCP runs write before open");
+        const size_t start = out.size();
+        uint64_t esc = 0;
+        uint8_t mode = 0;
+        unsigned w = 0;
+        const size_t span = encodeLcpBlock(blk.data(), blk.size(), out, esc, &mode, &w);
+        pf_check(span % 8 == 0, "LCP block not 8-byte aligned");
+        if (mode == 0) ++zeroBlocks; else if (mode == 1) ++u8Blocks; else { ++packBlocks; packedBits += uint64_t(w) * blk.size(); }
+        escapes += esc;
+        uint8_t d[16];
+        put(d, payloadBytes, 8);
+        put(d + 8, uint32_t(span), 4);
+        put(d + 12, uint32_t(esc > 0xffffffffu ? 0xffffffffu : esc), 4);
+        dir.insert(dir.end(), d, d + 16);
+        payloadBytes += span;
+        ++blocks;
+        blk.clear();
+        if (out.size() >= (4u << 20)) flushOut();
+        (void)start;
+    }
+    void flushOut() {
+        if (out.empty()) return;
+        pf_write_full(fd, out.data(), out.size(), "LCP runs payload");
+        sha.update(out.data(), out.size());
+        out.clear();
+    }
+    // close the OPEN block (the last, short one) and make the spool durable.
+    void finish() {
+        if (blk.size()) flushBlock();
+        flushOut();
+        pf_check(::fsync(fd) == 0, "fsync LCP runs scratch");
+    }
+    void syncSpool() { pf_check(::fsync(fd) == 0, "fsync LCP runs scratch (checkpoint)"); }
+    // the fixed 40-byte member head (nothing here is only known at close).
+    void head(uint8_t* h, uint64_t n) const {
+        memset(h, 0, PF_LCP_HEAD);
+        put(h, PF_LCP_BLOCK_RUNS, 8);
+        put(h + 8, n, 8);
+        put(h + 16, PF_LCP_HEAD, 8);      // payload offset (constant)
+        put(h + 24, 0, 8);                // count: derived (= the member count)
+        put(h + 32, PF_LCP_ENC_VERSION, 4);
+        put(h + 36, PF_LCP_CODEC, 4);
+    }
+    uint64_t memberBytes() const { return PF_LCP_HEAD + payloadBytes + 16 * blocks; }
+    std::string shaHex() const { durable_piece::Sha256 t = sha; return t.finish(); }
+    // Empty the spool (a fresh build; or a checkpoint that no longer exists).
+    void truncateSpool() {
+        pf_check(::ftruncate(fd, 0) == 0, "truncate LCP runs scratch");
+        pf_check(::lseek(fd, 0, SEEK_SET) == 0, "seek LCP runs scratch");
+        blk.clear(); dir.clear(); out.clear();
+        payloadBytes = 0; count = 0; blocks = 0; escapes = 0; maxValue = 0;
+        u8Blocks = packBlocks = zeroBlocks = packedBits = 0;
+        sha = durable_piece::Sha256();
+    }
+    // RESUME: the spool is append-only in units of CLOSED blocks, so the durable
+    // prefix IS the checkpoint's frontier. Verify it by digest (never trust a
+    // length), then discard whatever a killed run appended past it.
+    void resumeFrontier(uint64_t bytes, const std::string& expectSha, uint64_t expectBlocks) {
+        struct stat st {};
+        pf_check(::fstat(fd, &st) == 0, "stat LCP runs scratch");
+        const uint64_t before = uint64_t(st.st_size);
+        pf_check(before >= bytes, "retained LCP runs scratch is shorter than its checkpoint frontier");
+        durable_piece::Sha256 s;
+        std::vector<uint8_t> buf(1 << 20);
+        for (uint64_t pos = 0; pos < bytes;) {
+            size_t z = size_t(std::min<uint64_t>(buf.size(), bytes - pos));
+            pf_pread_full(fd, buf.data(), z, pos, "LCP runs prefix verify");
+            s.update(buf.data(), z);
+            pos += z;
+        }
+        const std::string got = s.finish();
+        pf_check(got == expectSha,
+                 "retained LCP runs scratch digest does not match its checkpoint (" + got + " vs " + expectSha + ")");
+        sha = s;
+        pf_check(::ftruncate(fd, off_t(bytes)) == 0, "truncate uncommitted LCP runs tail");
+        pf_check(::lseek(fd, off_t(bytes), SEEK_SET) == 0, "seek LCP runs frontier");
+        pf_check(payloadBytes == bytes && blocks == expectBlocks,
+                 "restored LCP runs state disagrees with the durable spool frontier");
+        fprintf(stderr, "RESUME_MODE lcp_runs_bytes=%llu blocks=%llu file_bytes_before=%llu truncated_bytes=%llu\n",
+                (unsigned long long)bytes, (unsigned long long)blocks, (unsigned long long)before,
+                (unsigned long long)(before - bytes));
+    }
+};
+
+// Round-trip oracle for the m14 block codec: every value of every block must come
+// back EXACTLY through the random-access rule. Adversarial by construction - all
+// zeros, one huge outlier, the 254/255 mode boundary, u32/u64 boundaries, a whole
+// text that is one run, and pseudo-random mixes - because a wrong LCP is worse
+// than no LCP.
+static int selftest_lcp_runs() {
+    uint64_t cases = 0, values = 0;
+    std::vector<std::vector<uint64_t>> suite;
+    for (size_t n : {size_t(1), size_t(2), size_t(3), size_t(17), size_t(255), size_t(256),
+                     size_t(1023), size_t(PF_LCP_BLOCK_RUNS)}) {
+        std::vector<uint64_t> z(n, 0);
+        suite.push_back(z);
+        std::vector<uint64_t> ones(n, 1);
+        suite.push_back(ones);
+        std::vector<uint64_t> bite(n, 0);
+        bite[n / 2] = 1000000;                     // one outlier: escapes must fire
+        suite.push_back(bite);
+        std::vector<uint64_t> edge(n);
+        for (size_t i = 0; i < n; ++i) {
+            static const uint64_t v[] = {0, 1, 254, 255, 256, 65535, 65536, 0xffffffffull,
+                                         0x100000000ull, 18446744073709551615ull, 3, 4095, 4096};
+            edge[i] = v[i % (sizeof(v) / sizeof(v[0]))];
+        }
+        suite.push_back(edge);
+        std::vector<uint64_t> ramp(n);
+        for (size_t i = 0; i < n; ++i) ramp[i] = i;
+        suite.push_back(ramp);
+        std::vector<uint64_t> rnd(n);
+        uint64_t st = 0x9e3779b97f4a7c15ull ^ (n * 131);
+        for (size_t i = 0; i < n; ++i) {
+            st ^= st << 13; st ^= st >> 7; st ^= st << 17;
+            rnd[i] = (st >> (i % 61)) & ((uint64_t(1) << (i % 41 + 1)) - 1);
+        }
+        suite.push_back(rnd);
+        std::vector<uint64_t> skew(n);             // the real shape: tiny values, rare deep ones
+        for (size_t i = 0; i < n; ++i) skew[i] = (i % 97 == 0) ? (uint64_t(300) + i) : (i % 4);
+        suite.push_back(skew);
+    }
+    for (const auto& v : suite) {
+        std::vector<uint8_t> o;
+        uint64_t esc = 0;
+        uint8_t mode = 0;
+        unsigned w = 0;
+        const size_t span = encodeLcpBlock(v.data(), v.size(), o, esc, &mode, &w);
+        pf_check(span % 8 == 0 && o.size() == span, "LCP block span is not the encoded bytes");
+        for (size_t j = 0; j < v.size(); ++j) {
+            const uint64_t back = decodeLcpBlockValue(o.data(), v.size(), j);
+            if (back != v[j]) {
+                fprintf(stderr, "LCP_RUNS_SELFTEST_FAIL n=%zu j=%zu mode=%u w=%u want=%llu got=%llu\n",
+                        v.size(), j, mode, w, (unsigned long long)v[j], (unsigned long long)back);
+                return 1;
+            }
+            ++values;
+        }
+        ++cases;
+    }
+    // multi-block: a block boundary must not leak state either way
+    {
+        LcpRunsWriter wtr;
+        std::vector<uint64_t> all;
+        for (size_t i = 0; i < PF_LCP_BLOCK_RUNS * 2 + 7; ++i) all.push_back((i * 2654435761ull) % 9);
+        std::vector<uint8_t> blk;
+        uint64_t esc = 0;
+        uint8_t mode = 0;
+        unsigned wd = 0;
+        size_t at = 0;
+        std::vector<std::pair<size_t, size_t>> spans;
+        while (at < all.size()) {
+            const size_t take = std::min<size_t>(PF_LCP_BLOCK_RUNS, all.size() - at);
+            const size_t sp = encodeLcpBlock(all.data() + at, take, blk, esc, &mode, &wd);
+            const size_t start = blk.size() - sp;
+            for (size_t j = 0; j < take; ++j)
+                pf_check(decodeLcpBlockValue(blk.data() + start, take, j) == all[at + j],
+                         "LCP multi-block round trip");
+            at += take;
+            ++cases;
+        }
+        values += all.size();
+        (void)wtr;
+    }
+    
+    printf("LCP_RUNS_SELFTEST_PASS blocks=%llu values=%llu exact=1 modes=zero|u8+escape|packed+escape\n",
+           (unsigned long long)cases, (unsigned long long)values);
+    return 0;
+}
+
 struct ContainerOut {
     std::string path, temp;
     int fd = -1;
@@ -3242,6 +3636,7 @@ struct ContainerOut {
     // produced. `extent` is the first free byte after the last member and
     // `streamIdx` is the member being appended to.
     bool streaming = false;
+    uint64_t writeVersion = 0;   // 0 = the layout's default (v7 streaming, v6 prefix)
     uint64_t extent = 0;
     int64_t streamIdx = -1;
     uint64_t streamPayload = 0;   // payload bytes appended (m1: from 2336)
@@ -3387,7 +3782,7 @@ struct ContainerOut {
         }
         std::vector<unsigned char> h(64 + 40 * ms.size());
         memcpy(h.data(), "SXI2", 4);
-        put(h.data() + 4, streaming ? PF_CONTAINER_V7 : 6, 4); put(h.data() + 8, n); put(h.data() + 16, k);
+        put(h.data() + 4, writeVersion ? writeVersion : (streaming ? PF_CONTAINER_V7 : 6), 4); put(h.data() + 8, n); put(h.data() + 16, k);
         put(h.data() + 24, r); put(h.data() + 32, ms.size(), 4); put(h.data() + 36, h.size(), 4);
         put(h.data() + 40, length); put(h.data() + 48, flags);
         for (size_t i = 0; i < ms.size(); ++i) {
@@ -4862,6 +5257,7 @@ int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string(argv[1]) == "--benchmark-repair-chunks") return benchmark_repair_chunks();
         if (argc == 2 && std::string(argv[1]) == "--selftest-packed-bits") return selftest_packed_bits();
+        if (argc == 2 && std::string(argv[1]) == "--selftest-lcp-runs") return selftest_lcp_runs();
         if (argc == 2 && std::string(argv[1]) == "--selftest-witness-batch") return selftest_witness_batch();
         if (argc == 2 && std::string(argv[1]) == "--selftest-stream-guard") return selftest_stream_guard();
         if (argc == 2 && std::string(argv[1]) == "--selftest-repair-chunks") return selftest_repair_chunks();
@@ -4887,6 +5283,11 @@ int main(int argc, char** argv) {
         bool m1Replay = pf_env_str("XSA_FINISH_M1_REPLAY") == "1";
         bool containerStreamFlag = false;   // --container-stream (SXI2 v7, tail directories)
         bool containerLegacy = false;       // --container-legacy (frozen v6 layout)
+        // THE LCP-OVER-RUNS MEMBER (m14, codec 117). On by default on the streaming
+        // product arm; --no-lcp-runs (or XSA_LCP_RUNS=0) omits it and writes version 7
+        // byte-for-byte, which is how the member's ADDITIVITY is proved: every other
+        // member of the two containers must be identical.
+        bool lcpRunsWanted = pf_env_str("XSA_LCP_RUNS") != "0";
         for (int i = 1; i < argc; ++i) {
             std::string a = argv[i];
             auto need = [&](const char* what) -> std::string {
@@ -4918,6 +5319,8 @@ int main(int argc, char** argv) {
             else if (a == "--keep-rlebwt") keepRlebwt = true;
             else if (a == "--keep-pfck") keepPfck = true;
             else if (a == "--m1-replay") m1Replay = true;
+            else if (a == "--no-lcp-runs") lcpRunsWanted = false;
+            else if (a == "--lcp-runs") lcpRunsWanted = true;
             else if (a == "--container-stream") containerStreamFlag = true;
             else if (a == "--container-legacy") containerLegacy = true;
             else if (a == "--sentinel-remap") sentinelRemap = need("--sentinel-remap");
@@ -5298,6 +5701,28 @@ int main(int argc, char** argv) {
         pf_check(finish_spool::enabled() || ::access(sparsePath.c_str(), F_OK) != 0, "sparse scratch exists");
         int sparseFd = ::open(sparsePath.c_str(), O_RDWR | O_CREAT | (finish_spool::enabled() ? O_TRUNC : O_EXCL), 0666);
         pf_check(sparseFd >= 0, "create sparse scratch");
+        // ---- THE LCP-OVER-RUNS PAYLOAD SPOOL (member m14) --------------------
+        // The encoded blocks are produced by the ordered fold (one value per run)
+        // and are placed in the container after the sweep, when m1 has closed: v7
+        // appends, and only ONE member can be appended at a time, so m14's bytes
+        // are staged through this spool exactly as m5's two Elias-Fano streams and
+        // m11's tails already are. Nothing about the corpus is re-read to build it:
+        // the values ARE the fold's `topLcp`, which the producer's band slices
+        // already delivered. On a spool resume the retained prefix is verified by
+        // digest and truncated to the checkpoint's frontier (see state()).
+        const bool lcpRunsOn = lcpRunsWanted && containerStream;
+        LcpRunsWriter lcpRuns;
+        if (lcpRunsOn) {
+            lcpRuns.open(prefix + ".lcpruns", containerResume);
+            if (!containerResume) lcpRuns.truncateSpool();
+            fprintf(stderr, "LCP_RUNS_ARMS member=m14 codec=%u block_runs=%llu payload_off=%llu "
+                    "encoding=block-width-or-u8+escape exact_u64=1 random_access=block-directory\n",
+                    PF_LCP_CODEC, (unsigned long long)PF_LCP_BLOCK_RUNS, (unsigned long long)PF_LCP_HEAD);
+        } else {
+            fprintf(stderr, "LCP_RUNS member=absent reason=%s\n",
+                    !lcpRunsWanted ? "disabled-by-flag"
+                                   : "container-layout=prefix-v6-or-m1-replay-frozen-arm");
+        }
         // Dev-only offline-analysis dumps (see bandSink / finishAdvance).
         int streamDumpFd = -1, answersDumpFd = -1;
         const std::string streamDumpPath = pf_env_str("XSA_FINISH_DUMP_STREAM");
@@ -5380,6 +5805,7 @@ int main(int argc, char** argv) {
         // be unlinked while every one of its runs is below this count.
         uint64_t m1StreamClosedRuns = 0;
         std::string m1ResumeSha;   // checkpoint digest of the durable container prefix
+        std::string lcpResumeSha;  // checkpoint digest of the durable LCP-runs spool prefix
         // ---- m1 v2 access structure, accumulated in stream order during the
         // sweep (the runs are already going past; a second pass would be the
         // 25 s decode this change exists to delete).
@@ -5940,12 +6366,43 @@ int main(int argc, char** argv) {
                 }
                 while (!staged->load(std::memory_order_acquire)) std::this_thread::yield();
                 if (!buildChi) {
-                    // Rank tiling and anchor checks above remain mandatory. LCP
-                    // answers below have only one consumer: the absent chi sweep.
+                    // Rank tiling and anchor checks above remain mandatory. The
+                    // chi-only `interior` answer is not computed when chi is
+                    // absent, but `topLcp` IS: it is now a PRODUCT value (member
+                    // m14, the LCP over runs), not only an input to the chi sweep.
                     for (size_t i = size_t(wid); i < cnt; i += size_t(P)) {
                         pf_check(nb[i].h < n && nb[i].t < n, "position resolution failed");
                         pf_check(nb[i].len != 1 || nb[i].h == nb[i].t,
                                  "head-SA value/range or singleton mismatch");
+                    }
+                    if (!kasaiOn) {
+                        slim_set_thread_shard(unsigned(t));
+                        for (;;) {
+                            size_t i = next->fetch_add(1);
+                            if (i >= cnt) break;
+                            const NRun& v = nb[i];
+                            uint64_t first = v.h, tail = v.t;
+                            pf_check(first < n, "position resolution failed");
+                            if (v.len == 1) pf_check(first == tail, "head-SA value/range or singleton mismatch");
+                            pf_check(tail < n, "position resolution failed");
+                            uint64_t prev = gx[i] == 0 ? 0 : (i ? nb[i - 1].t : prevTailS);
+                            pf_check(prev < n, "previous position resolution failed");
+                            s.topLcp[i] = gx[i] ? slimLce(prev, first) : 0;
+                        }
+                        slimLce.flush_thread();
+                        return;
+                    }
+                    for (;;) {
+                        const size_t i = next->fetch_add(1);
+                        if (i >= cnt) break;
+                        const uint64_t r = (*headRank)[i];
+                        uint64_t top = 0;
+                        if (gx[i]) {
+                            pf_check(i ? (*tailRank)[i - 1] + 1 == r : prevEndS == r,
+                                     "KASAI CLOSURE: nonadjacent top query (refusing publication)");
+                            top = band->at(r);
+                        }
+                        s.topLcp[i] = top;
                     }
                     return;
                 }
@@ -6071,11 +6528,18 @@ int main(int argc, char** argv) {
                         pf_write_full(answersDumpFd, answers, sizeof answers, "answers dump top+inter");
                     }
                     if (buildChi) sweep.advance(s.nbuf[i], s.topLcp[i], s.interior[i]);
+                    // THE LCP OVER RUNS (member m14): the value this fold already
+                    // holds for run `advRuns + i`, appended in RUN ORDER. This is
+                    // the whole construction - no corpus pass, no second structure:
+                    // the producer's band slice (or the A/B arm's LCE walk) has
+                    // already produced it, and until now it was discarded here.
+                    if (lcpRunsOn) lcpRuns.push(s.topLcp[i]);
                 }
                 advanceWall += tnow() - ta;
                 r.close(); advAcc.add(r);
             }
             advRuns += s.cnt;
+            if (lcpRunsOn) pf_check(lcpRuns.count == advRuns, "LCP runs count != folded runs");
             // prevTail belongs to the FEED stage (it is the last tail emitted by
             // the most recently fed band, i.e. the neighbour for the next
             // band's first query). It must NOT be written here: with the
@@ -6266,6 +6730,26 @@ int main(int argc, char** argv) {
             }
             uint64_t sparseBytes=((rs.rNorm+1023)/1024)*8;
             finish_spool::file(a,sparseFd,sparseBytes);
+            if(lcpRunsOn){
+                // THE LCP OVER RUNS. The spool is append-only in CLOSED blocks, so
+                // its durable prefix is exactly the checkpoint frontier: the length
+                // and the digest of that prefix ride the checkpoint, the block
+                // directory (16 B per 1024 runs) rides it too, and the OPEN block's
+                // values (<= 1024 u64) exist nowhere else, exactly like m1's open
+                // codec block.
+                a.scalar(lcpRuns.payloadBytes);a.scalar(lcpRuns.count);a.scalar(lcpRuns.blocks);
+                a.scalar(lcpRuns.escapes);a.scalar(lcpRuns.maxValue);
+                a.scalar(lcpRuns.u8Blocks);a.scalar(lcpRuns.packBlocks);a.scalar(lcpRuns.zeroBlocks);
+                a.scalar(lcpRuns.packedBits);
+                a.vector(lcpRuns.blk);
+                uint64_t dlen=lcpRuns.dir.size();a.scalar(dlen);
+                if(a.reading){pf_check(dlen<=(a.data.size()-a.at),"lcp runs directory size");lcpRuns.dir.resize(dlen);}
+                a.bytes(lcpRuns.dir.data(),dlen);
+                uint8_t lhex[64]={0};
+                if(!a.reading){const std::string h=lcpRuns.shaHex();std::memcpy(lhex,h.data(),64);}
+                a.bytes(lhex,64);
+                if(a.reading)lcpResumeSha.assign((const char*)lhex,64);
+            }
             a.end();
         };
         auto checkpoint = [&](bool eof) {
@@ -6273,6 +6757,12 @@ int main(int argc, char** argv) {
             pf_check(!lcePending,"checkpoint with verification in flight");
             sweep.emitWitness.flush();
             pf_check(bitmap.totalValues==sweep.chi && bitmap.duplicates==0,"checkpoint chi population");
+            // The LCP-runs spool is a REFERENCED durable input of the checkpoint: its
+            // closed blocks must be on the device before the state that names their
+            // frontier and digest is published, exactly as the chi base and the
+            // entropy spools already must be. The OPEN block rides the state.
+            if(lcpRunsOn){lcpRuns.flushOut();lcpRuns.syncSpool();
+                pf_check(lcpRuns.count==advRuns,"LCP runs checkpoint frontier != folded runs");}
             uint64_t oldGeneration=spoolGeneration; ++spoolGeneration;spoolEof=eof;
             finish_spool::Archive d;d.vector(bitmap.delta);
             finish_spool::publish(spoolDir+"/delta-"+std::to_string(spoolGeneration),d.data);
@@ -6334,10 +6824,17 @@ int main(int argc, char** argv) {
                             (unsigned long long)(m1SweepRuns-m1StreamClosedRuns));
                 }
                 bitmap.delta.clear();restoredAdvances=advRuns;restoredRawRuns=rawRunsFed;restoredBands=bandReads;
+                if(lcpRunsOn){
+                    pf_check(lcpResumeSha.size()==64,"checkpoint carries no LCP runs digest");
+                    lcpRuns.resumeFrontier(lcpRuns.payloadBytes,lcpResumeSha,lcpRuns.blocks);
+                }
                 fprintf(stderr,"SPOOL_STATE blocks_present=%llu blocks_missing=%llu resumed_from=%llu\n",
                     (unsigned long long)present,(unsigned long long)missing,(unsigned long long)(m1SweepRuns/M1_BLOCK_RUNS));
-            }else fprintf(stderr,"SPOOL_STATE blocks_present=%llu blocks_missing=%llu resumed_from=none\n",
+            }else{
+                if(lcpRunsOn) lcpRuns.truncateSpool();
+                fprintf(stderr,"SPOOL_STATE blocks_present=%llu blocks_missing=%llu resumed_from=none\n",
                 (unsigned long long)present,(unsigned long long)missing);
+            }
         }
         int cur = 0;
         // PART C: the cold-corpus arm starts here - the text is dropped from the
@@ -6830,6 +7327,72 @@ int main(int argc, char** argv) {
             ::close(fd);
         }
 
+        // ---- m14: THE LCP OVER RUNS (the suffix tree's child delimiters) ------
+        // One u64 value per run, in run order, encoded in blocks of
+        // PF_LCP_BLOCK_RUNS with a 16-byte directory entry per block in a TRAILING
+        // section (the v7 rule). Nothing is re-derived from the corpus here: the
+        // spool already holds the fold's own `topLcp` values, block-encoded.
+        if (lcpRunsOn) {
+            PfRegion r14("m14-lcp-runs", PF_M1);
+            lcpRuns.finish();   // close the short final block and fsync the spool
+            pf_check(lcpRuns.count == rNorm,
+                     "LCP over runs: " + std::to_string(lcpRuns.count) + " values for " +
+                         std::to_string(rNorm) + " runs (refusing publication)");
+            const uint64_t nblocks = lcpRuns.blocks;
+            pf_check(nblocks == (rNorm + PF_LCP_BLOCK_RUNS - 1) / PF_LCP_BLOCK_RUNS,
+                     "LCP over runs: block count disagrees with the run count");
+            pf_check(lcpRuns.dir.size() == 16 * nblocks, "LCP over runs: directory size");
+            // tiling witness: the directory's spans must add up to EXACTLY the payload
+            // bytes the spool holds - a dropped or double-counted block fails here, at
+            // build time, instead of appearing to a reader as a wrong LCP.
+            {
+                uint64_t at = 0;
+                for (uint64_t b = 0; b < nblocks; ++b) {
+                    const uint8_t* d = lcpRuns.dir.data() + 16 * b;
+                    const uint64_t off = sxi::get(d, 8);
+                    const uint64_t span = sxi::get(d + 8, 4);
+                    pf_check(off == at && span % 8 == 0 && span >= 1, "LCP over runs: block span tiling");
+                    at += span;
+                }
+                pf_check(at == lcpRuns.payloadBytes, "LCP over runs: spans do not tile the payload");
+            }
+            container.begin(14, PF_LCP_CODEC, rNorm);
+            {
+                uint8_t head[PF_LCP_HEAD];
+                lcpRuns.head(head, n);
+                container.write(head, PF_LCP_HEAD);
+            }
+            {
+                std::vector<uint8_t> buf(4u << 20);
+                for (uint64_t pos = 0; pos < lcpRuns.payloadBytes;) {
+                    const size_t z = size_t(std::min<uint64_t>(buf.size(), lcpRuns.payloadBytes - pos));
+                    pf_pread_full(lcpRuns.fd, buf.data(), z, pos, "LCP runs payload");
+                    container.write(buf.data(), z);
+                    pos += z;
+                }
+            }
+            container.write(lcpRuns.dir.data(), lcpRuns.dir.size());
+            pf_check(container.ms.back().bytes == lcpRuns.memberBytes(), "LCP over runs: member size");
+            fprintf(stderr,
+                    "LCP_RUNS runs=%llu bytes=%llu ratio_vs_u32=%.6f encoding=block-width-or-u8+escape "
+                    "block=%llu\n",
+                    (unsigned long long)rNorm, (unsigned long long)lcpRuns.memberBytes(),
+                    rNorm ? double(lcpRuns.memberBytes()) / double(4 * rNorm) : 0.0,
+                    (unsigned long long)PF_LCP_BLOCK_RUNS);
+            fprintf(stderr,
+                    "LCP_RUNS_ENCODING member=m14 codec=%u blocks=%llu payload_bytes=%llu dir_bytes=%llu "
+                    "escapes=%llu max_lcp=%llu zero_blocks=%llu u8_blocks=%llu packed_blocks=%llu "
+                    "packed_bits_per_run=%.4f bits_per_run=%.4f n=%llu\n",
+                    PF_LCP_CODEC, (unsigned long long)nblocks, (unsigned long long)lcpRuns.payloadBytes,
+                    (unsigned long long)lcpRuns.dir.size(), (unsigned long long)lcpRuns.escapes,
+                    (unsigned long long)lcpRuns.maxValue, (unsigned long long)lcpRuns.zeroBlocks,
+                    (unsigned long long)lcpRuns.u8Blocks, (unsigned long long)lcpRuns.packBlocks,
+                    rNorm ? double(lcpRuns.packedBits) / double(rNorm) : 0.0,
+                    rNorm ? 8.0 * double(lcpRuns.memberBytes()) / double(rNorm) : 0.0,
+                    (unsigned long long)n);
+            r14.close(); r14.report(rNorm, "runs");
+        }
+
         // ---- m1 runs.
         // The head stream is a Huffman code over the NORMALIZED RUN SYMBOLS; the
         // length stream is gamma-coded (stateless, no codebook at all). Only the
@@ -7242,13 +7805,22 @@ int main(int argc, char** argv) {
         if (pf_cache_journal_on()) pf_cache_journal(text, "m1-runs", 1024);
 
         // ---- publish the lite container (flags: complete | text | remapped)
-        container.finish(n, 1, rNorm, (buildChi ? 1 : 64) | 8 | 16 | (m1Replay ? 0 : PF_FLAG_M1_BLOCKED));
+        // v8 = v7's incremental layout + member m14 (the LCP over runs); flag bit 7
+        // declares m14 so a reader never has to guess whether the tree delimiters
+        // are there.
+        if (lcpRunsOn) container.writeVersion = PF_CONTAINER_V8;
+        container.finish(n, 1, rNorm, (buildChi ? 1 : 64) | 8 | 16 | (m1Replay ? 0 : PF_FLAG_M1_BLOCKED) |
+                                         (lcpRunsOn ? PF_FLAG_LCP_RUNS : 0));
         phase("publish", last);
 
         // ---- cleanup: scratch only. rlebwt (+meta) go after the container.
         if (buildChi) bitmap.journal();
         bitmap.cleanup();
         pf_check(::unlink(sparsePath.c_str()) == 0, "unlink sparse scratch");
+        if (lcpRunsOn) {
+            pf_check(::close(lcpRuns.fd) == 0, "close LCP runs scratch");
+            pf_check(::unlink((prefix + ".lcpruns").c_str()) == 0, "unlink LCP runs scratch");
+        }
         if (!spoolMode) {
             std::string sent = prefix + ".runcols.consumed";
             ::unlink(sent.c_str());
