@@ -69,6 +69,17 @@ pub const USAGE: &str = "usage:
                      pre-m14 container, which is how additivity is proved. The
                      container's own header (version 8 + flag bit 7 + member m14)
                      declares which arm ran, so readers never need the flag.
+  --trie-depth N     m20 (the context trie) depth, 1..=64 (default 8). The trie is
+                     built IN-BUILD from the sorter's band stream (the tape route
+                     only): the bands concatenate in rank order into the suffix
+                     array, so the builder rides along with construction instead of
+                     replaying it through an LF cycle.
+  --trie-min-support K
+                     occurrence threshold for a materialised context node
+                     (default 1000: 0.0348 n at 10 GB, 59.5 % of random 8-byte
+                     contexts answered; 100 is 0.165 n and ~77 %).
+  --no-trie          omit m20: the container is byte-identical to a build without
+                     the feature (SXI2 v7, 8 members, same sha256).
   --chi-expect N     assert chi count; requires --with-chi.
   --snap-1e          require a final 0x1E document boundary and journal SHA256;
                      never trims, extends or otherwise transforms the input.
@@ -200,6 +211,29 @@ struct Options {
     /// container's own header (version 8 + flag bit 7 + member m14) declares which
     /// arm ran, so readers never need the flag.
     with_lcp_runs: bool,
+    /// **m20 (the context trie)**: built IN-BUILD from the sorter's band stream
+    /// while the container is constructed. ON by default; `--no-trie` is the
+    /// product-unchanged arm (byte-identical container) and the equivalence proof.
+    ///
+    /// WHY IN-BUILD. The post-hoc route (`xsa ctx-build`) reconstructs the suffix
+    /// array out of the finished container: one LF cycle over all n rows plus a
+    /// 5 B/row column of transient RAM (47 GB at 10 GB, ~5 TB at the Pile) and a
+    /// single-threaded sweep (1,192 s + 3,448 s at 10 GB). Inside the tape build
+    /// the ordered stream already exists - the sorter's band slices, concatenated
+    /// in band order, ARE the suffix array - so the builder rides along with it
+    /// (`xsa ctx-tap`) instead of replaying it. Measured defaults: depth 8 /
+    /// min_support 1000 is 0.0348 n at 10 GB and answers 59.5 % of random 8-byte
+    /// contexts; `--trie-min-support 100` is 0.165 n and answers ~77 %.
+    trie: bool,
+    trie_depth: usize,
+    trie_min_support: u64,
+    /// store the document summary only for nodes with at least this many
+    /// occurrences (below it `project` answers from seek + the document map).
+    /// 1000 is `ctx-build`'s default, so the two routes produce the same member.
+    trie_docs_min_support: u64,
+    /// the operator ASKED for the trie (a flag was given), so a route that cannot
+    /// build it must refuse instead of quietly producing a container without m20.
+    trie_asked: bool,
     wit_ram_gb: Option<u64>,
     /// `--finish-as-gb N`: the finish phase's own RLIMIT_AS in GiB. Mapped
     /// corpus windows charge address space, not RSS, so the finish can pin a
@@ -303,6 +337,11 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     let mut v2_flag_given = false;
     let mut with_chi = true;
     let mut with_lcp_runs = false;
+    let mut trie = true;
+    let mut trie_depth = 8usize;
+    let mut trie_min_support = 1_000u64;
+    let mut trie_docs_min_support = 1_000u64;
+    let mut trie_asked = false;
     let mut chi_expect = None;
     let mut wit_ram_gb = None;
     let mut finish_as_gb = None;
@@ -411,6 +450,30 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
             // byte-identical arm, which is how the member's additivity is proved.
             "--with-lcp-runs" => with_lcp_runs = true,
             "--no-lcp-runs" => with_lcp_runs = false,
+            // m20: the context trie, built in-build from the band stream.
+            "--trie" | "--with-trie" => { trie = true; trie_asked = true; }
+            "--no-trie" => { trie = false; trie_asked = true; }
+            "--trie-depth" => {
+                i += 1;
+                trie_depth = value(args.get(i), "--trie-depth")?
+                    .parse().map_err(|_| "--trie-depth: integer expected".to_string())?;
+                if !(1..=64).contains(&trie_depth) { return Err("--trie-depth must be 1..=64".into()); }
+                trie = true;
+                trie_asked = true;
+            }
+            "--trie-min-support" => {
+                i += 1;
+                trie_min_support = value(args.get(i), "--trie-min-support")?
+                    .parse().map_err(|_| "--trie-min-support: integer expected".to_string())?;
+                if trie_min_support < 1 { return Err("--trie-min-support must be >= 1".into()); }
+                trie = true;
+                trie_asked = true;
+            }
+            "--trie-docs-min-support" => {
+                i += 1;
+                trie_docs_min_support = value(args.get(i), "--trie-docs-min-support")?
+                    .parse().map_err(|_| "--trie-docs-min-support: integer expected".to_string())?;
+            }
             "--chi-expect" => {
                 i += 1;
                 let v = value(args.get(i), "--chi-expect")?
@@ -594,6 +657,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
                  bin_pipeline, legacy_merge, v2_flag_given, chi_expect, with_chi, with_lcp_runs, wit_ram_gb,
                  finish_as_gb, bin_live_cap, bin_target_size, bin_entropy_min, phrase, stripes, scratch_free_pct,
                  scratch_budget_gb, skip_fit_check, tape, no_resume,
+                 trie, trie_depth, trie_min_support, trie_docs_min_support, trie_asked,
                  remap, chunk_mb, fanin })
 }
 
@@ -1263,7 +1327,7 @@ fn join_pipeline_flow(journal: &mut Journal, scratch: &Path,
                 let status = phase.child.wait().map_err(|e| e.to_string())?;
                 if status.code() == Some(75) && recovery::signal() != 0 {
                     phase.armed = false;
-                    if phase.tag == "emit-tape" {
+                    if phase.tag == "emit-tape" || phase.tag == "ctx-tap" {
                         recovery::interrupted(scratch)?;
                         return Err("BUILD_INTERRUPTED".into());
                     }
@@ -2477,11 +2541,40 @@ headline=LCP-over-runs",
 
     // Spawn BOTH before joining: the finish must start with the producer (it
     // polls the producer's piece directory from row zero).
+    // ---- THE TRIE ARM, DECIDED BEFORE ANY PHASE IS SPAWNED -----------------
+    // m20 is built from the tape producer's band stream (scatter_sort --tape-bands),
+    // so only the tape route can build it in-build. On the bin route the member is
+    // NOT available: an operator who ASKED for it is refused (never silently
+    // ignored), and a default run journals that the member is absent and why.
+    let trie_on = options.tape && options.trie;
+    let trie_payload = scratch.join("trie-m20.bin");
+    if !options.tape && options.trie && options.trie_asked {
+        return Err("CONTEXT_TRIE_ROUTE: m20 is built IN-BUILD from the tape producer's \
+             rank-ordered band stream, so it needs --tape (the product route). Pass --tape, \
+             or --no-trie to build the container without the context trie".into());
+    }
+    journal.line(&format!(
+        "CONTEXT_TRIE_POLICY present={} route={} depth={} min_support={} docs_min_support={} \
+         source={} (m20 is built from the sorter's band slices while the container is built: \
+         the band stream IS the suffix array in rank order, so the builder rides along instead of \
+         replaying it - no LF cycle, no 5 B/row SA column)",
+        trie_on,
+        if options.tape { "tape" } else { "bin" },
+        options.trie_depth, options.trie_min_support, options.trie_docs_min_support,
+        if trie_on { "in-build" } else { "absent" }));
+    let trie_t0 = Instant::now();
     let producer_label = if options.tape { "order-tape" } else { "bin-v2" };
     // [0] is the tool itself (there is no `timeout` wrapper in front of it).
     let producer_running = spawn_phase(journal, scratch, producer_label, if options.tape { memory_kb.max((3 * n + 1023) / 1024) } else { memory_kb }, &producer_args[0], &producer_args[1..], &producer_env)?;
     let emit_running = if options.tape {
-        Some(spawn_phase(journal, scratch, "emit-tape", memory_kb, &emit_args[0], &emit_args[1..], &[])?)
+        // TRIE_TAP=1 tells the emitter that the band slices are NOT its to delete:
+        // the in-build trie reads the same rank-ordered stream (see ctx::tap).
+        let emit_env: Vec<(String, String)> = if trie_on {
+            vec![("TRIE_TAP".to_string(), "1".to_string())]
+        } else {
+            Vec::new()
+        };
+        Some(spawn_phase(journal, scratch, "emit-tape", memory_kb, &emit_args[0], &emit_args[1..], &emit_env)?)
     } else { None };
     // RLIMIT_AS includes corpus and chi mappings, not only resident memory.
     // Use the producer's 3n floor, retaining any larger explicit finish cap.
@@ -2505,7 +2598,87 @@ headline=LCP-over-runs",
     };
     let mut phases = vec![producer_running, finish_running];
     if let Some(emit) = emit_running { phases.push(emit); }
+    // ---- THE CONTEXT TRIE, BUILT IN-BUILD (a fourth phase, a CONSUMER) ------
+    // It reads the sorter's band stream in rank order (the only place where the
+    // ordered suffix stream exists inside the build), feeds ctx::Builder, and
+    // writes the m20 payload. It is NOT a backpressure producer: it consumes
+    // scratch (it unlinks each band slice as it finishes it) and must never be
+    // paused, or the sorter would stall with nothing able to free the space.
+    let trie_running = if trie_on {
+        let exe = std::env::current_exe().map_err(|e| format!("ctx-tap: current_exe: {e}"))?;
+        let tap_args = vec![
+            "ctx-tap".into(),
+            "--bands".into(), s(&bands_dir.to_string_lossy()),
+            "--corpus".into(), s(&input.to_string_lossy()),
+            "--out".into(), s(&trie_payload.to_string_lossy()),
+            // n rows = the corpus length + 1 (the virtual-END row): the same
+            // arithmetic the container header carries, asserted again inside the tap.
+            "--n".into(), (n + 1).to_string(),
+            "--depth".into(), options.trie_depth.to_string(),
+            "--min-support".into(), options.trie_min_support.to_string(),
+            "--docs-min-support".into(), options.trie_docs_min_support.to_string(),
+            "--threads".into(), options.threads.to_string(),
+        ];
+        let exe_s = s(&exe.to_string_lossy());
+        Some(spawn_phase(journal, scratch, "ctx-tap", finish_as_kb, &exe_s, &tap_args, &[])?)
+    } else { None };
+    if let Some(tap) = trie_running { phases.push(tap); }
     join_pipeline_flow(journal, scratch, phases, Some(flow))?;
+    // ---- APPEND m20, IN PLACE -------------------------------------------------
+    // The finish streamed the container and the tap built the member beside it; the
+    // join is an in-place directory rewrite (no container byte is copied). The
+    // member is byte-identical to what `xsa ctx-build` writes from the same
+    // container and corpus - the equivalence gate compares the two - apart from the
+    // provenance field that says WHICH ordered stream produced it.
+    if trie_on {
+        let t_app = Instant::now();
+        let bytes_before = fs::metadata(&container).map(|m| m.len()).unwrap_or(0);
+        let payload = fs::read(&trie_payload)
+            .map_err(|e| format!("trie join: read {}: {e}", trie_payload.display()))?;
+        let member_bytes = super::ctx::append_m20(&container.to_string_lossy(), &payload, n);
+        journal.line(&format!(
+            "CONTEXT_TRIE_JOIN member=m20 codec={} bytes={member_bytes} container_bytes={} -> {} \
+             append_s={:.1} (directory rewritten in place: no container byte copied)",
+            super::ctx::TRIE_CODEC, bytes_before,
+            fs::metadata(&container).map(|m| m.len()).unwrap_or(0),
+            t_app.elapsed().as_secs_f64()));
+        let td = require_log_contains(scratch, "ctx-tap", "CONTEXT_TRIE_DEPTH")?;
+        journal.line(&td);
+        journal.line(&format!("CONTEXT_TRIE_BUILD_WALL total_s={:.1}", trie_t0.elapsed().as_secs_f64()));
+        for tag in ["CONTEXT_TRIE_COLUMNS", "CONTEXT_TRIE_TAP", "CONTEXT_TRIE_BUDGET"] {
+            let line = require_log_contains(scratch, "ctx-tap", tag)?;
+            journal.line(&line);
+        }
+        // THE MEMBER MUST BE READABLE FROM THE PUBLISHED CONTAINER, and its ratio
+        // must hold the budget. Both are checked on the container, not on the tap's
+        // own claim: a payload that lands wrong is a wrong product, not a wash.
+        let reader = super::qlite::Reader::open(&container.to_string_lossy())
+            .map_err(|e| format!("trie join: reopen container: {e}"))?;
+        let m = reader.member_bytes(super::ctx::TRIE_CODEC)
+            .ok_or("trie join: the published container has no m20 after the append")?;
+        let trie = super::ctx::Trie::load(m);
+        let ratio = m.len() as f64 / n.max(1) as f64;
+        journal.line(&format!(
+            "CONTEXT_TRIE_PUBLISHED member=m20 nodes={} edges={} bytes={} ratio_vs_n={ratio:.6} \
+             depth={} min_support={} source={} container={}",
+            trie.nodes, trie.edges, m.len(), trie.depth, trie.min_support, trie.source,
+            container.display()));
+        // THE RATIO IS A PROPERTY OF THE CORPUS AND THE THRESHOLD, NOT A CONSTANT:
+        // 0.0621 n at 150 MB and 0.0348 n at 10 GB for the same depth/threshold,
+        // because node count is bounded by n/min_support and grows far slower than
+        // n. The design target is <= 0.05; 0.30 is the alarm (a member that big
+        // would mean the store shape changed, not that the corpus is different).
+        if ratio > 0.30 {
+            return Err(format!(
+                "CONTEXT_TRIE_BUDGET: m20 is {ratio:.6} n, over the 0.30 alarm bound \
+                 (depth={} min_support={}): this is a store-shape regression, not a corpus effect",
+                trie.depth, trie.min_support));
+        }
+        let _ = fs::remove_file(&trie_payload);
+    } else if options.tape {
+        journal.line("CONTEXT_TRIE_POLICY present=false reason=--no-trie (the product container is \
+byte-identical to a build without this feature)");
+    }
     // XSA_KILL_AT=after_rename: EVERY phase has exited with rc=0, so the finish
     // has linked the container into its final name (it links only after fsync)
     // and the driver has journalled no commit. This is the published-but-

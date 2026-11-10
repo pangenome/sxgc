@@ -1333,7 +1333,17 @@ fn count_1e(w: u64) -> u32 {
 }
 
 pub fn doc_ranks(text: &[u8]) -> Vec<u32> {
-    let blocks = text.len() / DOC_STRIDE + 1;
+    doc_ranks_stride(text, DOC_STRIDE)
+}
+
+/// The same table at any stride. The value at block b is the number of 0x1E bytes
+/// before byte b*stride, so `doc_of_stride` is EXACT for every stride; the stride
+/// only trades RAM (4 B per stride) against the bounded tail scan (stride/8 words)
+/// that every row pays. The post-hoc sweep uses DOC_STRIDE=256 to keep the table
+/// at n/64; the in-build tap reads a random position per row anyway, so it spends
+/// more table and less tail.
+pub fn doc_ranks_stride(text: &[u8], stride: usize) -> Vec<u32> {
+    let blocks = text.len() / stride + 1;
     let mut out = Vec::with_capacity(blocks);
     let mut acc = 0u32;
     let mut at = 0usize;
@@ -1343,7 +1353,7 @@ pub fn doc_ranks(text: &[u8]) -> Vec<u32> {
         w.copy_from_slice(&text[at..at + 8]);
         acc += count_1e(u64::from_le_bytes(w));
         at += 8;
-        if at % DOC_STRIDE == 0 {
+        if at % stride == 0 {
             out.push(acc);
         }
     }
@@ -1352,7 +1362,7 @@ pub fn doc_ranks(text: &[u8]) -> Vec<u32> {
             acc += 1;
         }
         at += 1;
-        if at % DOC_STRIDE == 0 {
+        if at % stride == 0 {
             out.push(acc);
         }
     }
@@ -1372,10 +1382,15 @@ pub fn doc_ranks(text: &[u8]) -> Vec<u32> {
 /// here would be the whole cost of the pass).
 #[inline]
 fn doc_of(rank: &[u32], text: &[u8], pos: u64) -> u32 {
+    doc_of_stride(rank, text, pos, DOC_STRIDE)
+}
+
+#[inline]
+fn doc_of_stride(rank: &[u32], text: &[u8], pos: u64, stride: usize) -> u32 {
     let p = pos as usize;
-    let b = p / DOC_STRIDE;
+    let b = p / stride;
     let mut d = rank[b];
-    let mut i = b * DOC_STRIDE;
+    let mut i = b * stride;
     while i + 8 <= p {
         let mut w = [0u8; 8];
         w.copy_from_slice(&text[i..i + 8]);
@@ -1529,6 +1544,359 @@ pub fn sweep(
     }
     let (payload, cols) = b.finish(n, corpus_len);
     (payload, reads, cols)
+}
+
+// ---------------------------------------------------------------- the band tap
+//
+// WHY THIS EXISTS. The post-hoc path (`ctx-build`) reconstructs the suffix array
+// out of the container - one LF cycle, 5 B of transient RAM per row, n LF steps
+// (47 GB and 1,192 s at 10 GB) - and then sweeps it. Inside `xsa build` the
+// ordered stream ALREADY EXISTS: the sorter's band slices, concatenated in band
+// order, ARE the suffix array, and each row carries its position. This tap reads
+// that stream instead of replaying it: no LF cycle, no u40 column, no cache.
+//
+// THE ORDERED STREAM, NAMED. `scatter_sort --tape-bands` publishes band_<i>.sa,
+// 8 B per row: low 48 bits the suffix position, top 8 bits the carried BWT
+// symbol. Band indices ascend in rank order, so concat(band_0 .. band_k) is
+// SA[0..row]. Its normal consumer is `emit-tape` (cross_lcp_merge), which unlinks
+// each band as it absorbs it. Under TRIE_TAP=1 the emitter does NOT unlink and
+// does not stamp `.consumed`; it leaves the slice and its already-existing
+// `.opened` marker. This tap then walks the bands in ASCENDING INDEX (subject to
+// the emitter having opened them, so no slice is removed out from under it) and
+// for each one: read, feed, unlink, stamp `.consumed`. Unlink-while-open is safe:
+// the emitter read the payload into its own buffer before it stamped `.opened`,
+// and an open descriptor keeps the inode alive.
+//
+// WHY NOT FEED THE SORTER DIRECTLY. The builder is a SEQUENTIAL stack machine
+// (row i's state depends on row i-1), and the sorter's bands are produced by P
+// workers in arbitrary order. The band stream is the first place where the rows
+// are both in rank order and out of the sorters' hands, so it is where the feed
+// goes. What the tap does NOT do is reconstruct anything: the alternative it
+// replaces is a full LF cycle plus a 5 B/row column in RAM.
+
+/// Where the ordered stream came from, as the member records it (see `Builder`).
+pub const SOURCE_IN_BUILD: u8 = 3;
+
+pub struct TapArgs {
+    /// the sorter's --tape-bands directory
+    pub bands: String,
+    /// the raw corpus: the only copy of the text, read through mmap
+    pub corpus: String,
+    /// where the m20 payload is written
+    pub out: String,
+    pub depth: usize,
+    pub min_support: u64,
+    pub docs_min_support: u64,
+    pub threads: usize,
+    /// n = corpus_len + 1 (the container's row count, END row included)
+    pub n: u64,
+}
+
+/// Rows per prefetch chunk: the corpus reads are random, so they are issued by a
+/// worker pool and consumed in order by the single-threaded builder.
+const TAP_CHUNK: usize = 1 << 16;
+
+fn exists(p: &str) -> bool {
+    std::path::Path::new(p).exists()
+}
+
+/// Wait until the emitter has opened band `band`. `false` = there is no such
+/// band and none will appear (the sorter published its final band count).
+fn tap_wait_opened(dir: &str, band: u64) -> bool {
+    let p = format!("{dir}/band_{band}.opened");
+    let interrupted = format!("{dir}/producer.interrupted");
+    loop {
+        if exists(&p) {
+            return true;
+        }
+        if exists(&interrupted) {
+            eprintln!("TRIE_TAP_INTERRUPTED band={band} (the producer signalled an interruption)");
+            std::process::exit(75);
+        }
+        if exists(&format!("{dir}/end.ready")) {
+            if let Ok(s) = std::fs::read_to_string(format!("{dir}/end")) {
+                if let Ok(count) = s.trim().parse::<u64>() {
+                    if band >= count {
+                        return false;
+                    }
+                }
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+}
+
+/// Feed one band's positions (in rank order) to the builder: the corpus reads are
+/// issued by `threads` workers per chunk, the builder consumes the chunk in order.
+/// Returns (rows fed, rows whose prefix was read).
+#[allow(clippy::too_many_arguments)]
+fn tap_feed_band(
+    b: &mut Builder,
+    rows: &[u64],
+    text: &[u8],
+    ranks: &[u32],
+    corpus_len: u64,
+    depth: usize,
+    docs: bool,
+    threads: usize,
+    doc_stride: usize,
+    pfx: &mut Vec<u8>,
+    docs_buf: &mut Vec<u32>,
+    ms: &mut Vec<u8>,
+) -> (u64, u64) {
+    let w = depth + 1;
+    let mut fed = 0u64;
+    let mut reads = 0u64;
+    for chunk in rows.chunks(TAP_CHUNK) {
+        let c = chunk.len();
+        pfx.clear();
+        pfx.resize(c * w, 0);
+        docs_buf.clear();
+        docs_buf.resize(c, 0);
+        ms.clear();
+        ms.resize(c, 0);
+        // THE PREFIX READ, IN PARALLEL. One bounded random read per row from the
+        // corpus mmap - the same read the post-hoc sweep makes, and the reason
+        // the sweep cannot be merely multi-threaded (the STATE is sequential,
+        // the reads are not).
+        let nthreads = threads.clamp(1, 64).min(c.max(1));
+        let step = (c + nthreads - 1) / nthreads.max(1);
+        let mut rest_rows: &[u64] = chunk;
+        let mut rest_pfx: &mut [u8] = pfx.as_mut_slice();
+        let mut rest_docs: &mut [u32] = docs_buf.as_mut_slice();
+        let mut rest_ms: &mut [u8] = ms.as_mut_slice();
+        std::thread::scope(|sc| {
+            let mut hs = Vec::new();
+            while !rest_rows.is_empty() {
+                let take = rest_rows.len().min(step);
+                let (rows_p, rows_rest) = rest_rows.split_at(take);
+                let (pfx_p, pfx_rest) = rest_pfx.split_at_mut(take * w);
+                let (d_p, d_rest) = rest_docs.split_at_mut(take);
+                let (m_p, m_rest) = rest_ms.split_at_mut(take);
+                hs.push(sc.spawn(move || {
+                    for (j, &pos) in rows_p.iter().enumerate() {
+                        need(pos <= corpus_len, "TRIE_TAP_POSITION suffix position above the corpus");
+                        let rem = corpus_len - pos;
+                        let m = (rem.min(w as u64)) as usize;
+                        m_p[j] = m as u8;
+                        if m > 0 {
+                            let p = pos as usize;
+                            pfx_p[j * w..j * w + m].copy_from_slice(&text[p..p + m]);
+                            if docs && !ranks.is_empty() {
+                                d_p[j] = doc_of_stride(ranks, text, pos, doc_stride);
+                            }
+                        }
+                    }
+                }));
+                rest_rows = rows_rest;
+                rest_pfx = pfx_rest;
+                rest_docs = d_rest;
+                rest_ms = m_rest;
+            }
+            for h in hs {
+                h.join().expect("TRIE_TAP worker panicked");
+            }
+        });
+        // THE FEED, IN ORDER. This is the only sequential part, and the reason
+        // the member is cheap: O(1) amortised per row, state O(depth).
+        for j in 0..c {
+            let pos = chunk[j];
+            let rem = corpus_len - pos;
+            let m = ms[j] as usize;
+            if m > 0 {
+                reads += 1;
+            }
+            b.feed(&pfx[j * w..j * w + m], rem, docs_buf[j]);
+        }
+        fed += c as u64;
+    }
+    (fed, reads)
+}
+
+/// The whole tap: the band stream -> one m20 payload.
+pub fn tap(a: &TapArgs) {
+    let t_all = std::time::Instant::now();
+    let tfile = std::fs::File::open(&a.corpus)
+        .unwrap_or_else(|e| die(&format!("ctx-tap: open {}: {e}", a.corpus)));
+    let flen = tfile.metadata().unwrap().len();
+    need(flen + 1 == a.n,
+        &format!("ctx-tap: corpus {} is {flen} bytes but n={} was declared: a lite container's n is the corpus length + 1 (one END row)", a.corpus, a.n));
+    let text = unsafe { Mmap::map(&tfile) }.unwrap_or_else(|e| die(&format!("ctx-tap: mmap {}: {e}", a.corpus)));
+    let corpus_len = flen;
+    // the document summary needs the 0x1E span id per row: one u32 per DOC_STRIDE
+    // bytes of the ORIGINAL corpus (never the remap)
+    let t_doc = std::time::Instant::now();
+    // The tail scan is paid PER ROW, so the tap buys a finer table than the
+    // post-hoc sweep does (the value is exact at any stride; only RAM moves).
+    let doc_stride = if a.n <= (1 << 31) { 32 } else if a.n <= (1 << 33) { 64 } else { 256 };
+    let ranks = doc_ranks_stride(&text, doc_stride);
+    let doc_wall = t_doc.elapsed().as_secs_f64();
+    let mut b = Builder::new(a.depth, a.min_support, a.docs_min_support);
+    b.set_source(SOURCE_IN_BUILD, 0);
+    let mut pfx: Vec<u8> = Vec::new();
+    let mut docs_buf: Vec<u32> = Vec::new();
+    let mut ms: Vec<u8> = Vec::new();
+    let mut band = 0u64;
+    let mut fed = 0u64;
+    let mut reads = 0u64;
+    let mut band_bytes = 0u64;
+    let t_feed = std::time::Instant::now();
+    let mut wait_s = 0f64;
+    let mut bandread_s = 0f64;
+    let mut work_s = 0f64;
+    loop {
+        let tw = std::time::Instant::now();
+        let more = tap_wait_opened(&a.bands, band);
+        wait_s += tw.elapsed().as_secs_f64();
+        if !more { break; }
+        let path = format!("{}/band_{band}.sa", a.bands);
+        let tr = std::time::Instant::now();
+        let bytes = std::fs::read(&path).unwrap_or_else(|e| die(&format!("ctx-tap: read {path}: {e}")));
+        need(bytes.len() % 8 == 0, &format!("ctx-tap: {path} is {} bytes, not a multiple of 8", bytes.len()));
+        band_bytes += bytes.len() as u64;
+        let rows: Vec<u64> = bytes
+            .chunks_exact(8)
+            .map(|c| {
+                let w = u64::from_le_bytes(c.try_into().unwrap());
+                need(w >> 56 == 0, "ctx-tap: invalid packed band row (top byte must be zero)");
+                w & ((1u64 << 48) - 1)
+            })
+            .collect();
+        bandread_s += tr.elapsed().as_secs_f64();
+        let tf = std::time::Instant::now();
+        let (f, r) = tap_feed_band(&mut b, &rows, &text, &ranks, corpus_len, a.depth, true, a.threads, doc_stride, &mut pfx, &mut docs_buf, &mut ms);
+        work_s += tf.elapsed().as_secs_f64();
+        fed += f;
+        reads += r;
+        eprintln!("TRIE_TAP_BAND band={band} rows={f} total_rows={fed}");
+        std::fs::remove_file(&path).unwrap_or_else(|e| die(&format!("ctx-tap: unlink {path}: {e}")));
+        std::fs::write(format!("{}/band_{band}.consumed", a.bands), b"trie-tap\n")
+            .unwrap_or_else(|e| die(&format!("ctx-tap: stamp consumed band {band}: {e}")));
+        band += 1;
+    }
+    let feed_wall = t_feed.elapsed().as_secs_f64();
+    need(band > 0, "ctx-tap: the band stream was empty");
+    need(fed == a.n,
+        &format!("TRIE_TAP_COVERAGE rows_fed={fed} != n={}: the band stream is not the whole suffix array", a.n));
+    let (payload, cols) = b.finish(a.n, corpus_len);
+    let tmp = format!("{}.partial", a.out);
+    std::fs::write(&tmp, &payload).unwrap_or_else(|e| die(&format!("ctx-tap: write {tmp}: {e}")));
+    std::fs::rename(&tmp, &a.out).unwrap_or_else(|e| die(&format!("ctx-tap: rename {tmp}: {e}")));
+    let trie = Trie::load(&payload);
+    let ratio = payload.len() as f64 / a.n as f64;
+    let build_s = t_all.elapsed().as_secs_f64();
+    eprintln!(
+        "CONTEXT_TRIE_DEPTH depth={} min_support={} nodes={} edges={} bytes={} ratio_vs_n={:.6} source=in-build build_s={build_s:.1}",
+        trie.depth, trie.min_support, trie.nodes, trie.edges, payload.len(), ratio
+    );
+    eprintln!(
+        "CONTEXT_TRIE_COLUMNS node_fixed={} node_edge_delta={} node_count={} edge_code={} edge_child={} \
+         edge_count={} doc_ndocs={} doc_top={} doc_first={} doc_ids={} head={HEAD}",
+        cols[0], cols[1], cols[2], cols[3], cols[4], cols[5], cols[6], cols[7], cols[8], cols[9]
+    );
+    eprintln!(
+        "CONTEXT_TRIE_TAP bands={band} rows={fed} n={} band_bytes={band_bytes} prefix_reads={reads} \
+         wall={feed_wall:.1}s work_s={work_s:.1}s band_read_s={bandread_s:.1}s wait_s={wait_s:.1}s \
+         doc_wall={doc_wall:.1}s doc_stride={doc_stride} doc_table_bytes={} rss_gb={:.3} threads={} source=in-build \
+         note=\"work_s is the tap's OWN work (prefix reads + feed); the rest is waiting for the sorter; \
+         the ordered stream is the sorter's band slices (8 B/row, already written); no LF cycle, no SA column\"",
+        a.n, ranks.len() * 4, peak_rss_gb(), a.threads
+    );
+    eprintln!("CONTEXT_TRIE_BUDGET ratio_vs_n={ratio:.6} target<=0.05 pass={}", u8::from(ratio <= 0.05));
+}
+
+/// This process's peak RSS in GiB (VmHWM), the honest number for a phase.
+pub fn peak_rss_gb() -> f64 {
+    let s = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+    for line in s.lines() {
+        if let Some(v) = line.strip_prefix("VmHWM:") {
+            if let Some(kb) = v.split_whitespace().next() {
+                return kb.parse::<u64>().unwrap_or(0) as f64 / (1u64 << 20) as f64;
+            }
+        }
+    }
+    0.0
+}
+
+/// THE TAP'S OWN ORACLE (the pyramid's bottom rung, no container, no sorter).
+///
+/// For adversarial tiny texts: take the brute-force suffix order, write it as the
+/// sorter writes it (8 B rows, split into bands of awkward sizes, in rank order),
+/// run the tap over those bands, and require the payload to be BYTE-IDENTICAL to
+/// the payload the post-hoc `sweep` produces from the same order. The sweep path is
+/// itself gated against a brute-force trie by `ctx-selftest`, so equality here
+/// closes the loop: the band stream is a faithful stand-in for the suffix array.
+pub fn tap_selftest() {
+    let texts: Vec<Vec<u8>> = vec![
+        b"a".to_vec(),
+        b"aaaaaa".to_vec(),
+        b"mississippi".to_vec(),
+        b"\x1eabc\x1edef\x1eabc\x1e".to_vec(),
+        b"the quick brown fox jumps over the lazy dog the quick brown".to_vec(),
+        b"\x00\x00\x00\x00\x01\x00\x01\x01".to_vec(),
+    ];
+    let mut cases = 0u64;
+    for t in &texts {
+        for &(depth, k) in &[(8usize, 1u64), (4, 2), (16, 1), (8, 1000)] {
+            let n = t.len() as u64 + 1;
+            let order = suffix_order(t);
+            let dir = std::env::temp_dir().join(format!("xsa-tap-{}-{cases}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            let corpus = dir.join("corpus.bin");
+            std::fs::write(&corpus, t).unwrap();
+            // the sorter's band slices: 8 B per row, low 48 = position, top 8 = sym
+            let bands = dir.join("bands");
+            std::fs::create_dir_all(&bands).unwrap();
+            let mut at = 0usize;
+            let mut b = 0u64;
+            let mut sizes = [1usize, 3, 7, 100, 5].iter().cycle();
+            while at < order.len() {
+                let take = (*sizes.next().unwrap()).min(order.len() - at);
+                let mut bytes = Vec::with_capacity(take * 8);
+                for &p in &order[at..at + take] {
+                    let sym = if p > 0 { t[p as usize - 1] } else { 0u8 };
+                    let w = (p & ((1u64 << 48) - 1)) | ((sym as u64) << 48);
+                    bytes.extend_from_slice(&w.to_le_bytes());
+                }
+                std::fs::write(bands.join(format!("band_{b}.sa")), &bytes).unwrap();
+                std::fs::write(bands.join(format!("band_{b}.opened")), b"\n").unwrap();
+                at += take;
+                b += 1;
+            }
+            std::fs::write(bands.join("end"), format!("{b}\n")).unwrap();
+            std::fs::write(bands.join("end.ready"), b"\n").unwrap();
+            let out = dir.join("m20.bin");
+            tap(&TapArgs {
+                bands: bands.to_string_lossy().to_string(),
+                corpus: corpus.to_string_lossy().to_string(),
+                out: out.to_string_lossy().to_string(),
+                depth,
+                min_support: k,
+                docs_min_support: 1,
+                threads: 2,
+                n,
+            });
+            // the post-hoc sweep over the SAME order, same parameters, same source
+            let mut sa = vec![0u8; order.len() * SA_ITEM];
+            for (i, &p) in order.iter().enumerate() {
+                sa_put(&mut sa, i as u64, p);
+            }
+            let ranks = doc_ranks(t);
+            let (want, _, _) = sweep(&sa, t, &ranks, t.len() as u64, n, n, depth, k, true, 1,
+                (SOURCE_IN_BUILD, 0));
+            let got = std::fs::read(&out).unwrap();
+            need(got == want,
+                &format!("TAP_SELFTEST: the band stream and the suffix array built DIFFERENT members (text len {}, depth {depth}, k {k}, {} vs {} bytes)",
+                    t.len(), got.len(), want.len()));
+            let trie = Trie::load(&got);
+            eprintln!("TAP_SELFTEST text_len={} depth={depth} min_support={k} bands={b} nodes={} edges={} bytes={} identity=1",
+                t.len(), trie.nodes, trie.edges, got.len());
+            let _ = std::fs::remove_dir_all(&dir);
+            cases += 1;
+        }
+    }
+    println!("TAP_SELFTEST_DONE cases={cases} note=\"band stream == suffix array, member bytes identical\"");
 }
 
 pub fn build(a: &BuildArgs) {
@@ -1714,6 +2082,104 @@ fn write_container(inp: &str, out: &str, payload: &[u8], n: u64, reader: &qlite:
     (length, member_off)
 }
 
+/// Append the m20 payload to a container that is ALREADY WRITTEN, IN PLACE.
+///
+/// The finish phase streams the container; the trie is built concurrently by a
+/// separate phase (see `tap`). The cheap join is therefore an in-place append:
+/// drop the trailing member directory, write m20 at the end of the last member,
+/// write the directory back with one more entry, and patch the header (count,
+/// directory offset, length, FLAG_TRIE, version 9). No container byte is copied.
+///
+/// This is the same member and the same directory a `ctx-build` produces; only
+/// the route to the payload differs, which the member itself records (source).
+pub fn append_m20(path: &str, payload: &[u8], n: u64) -> u64 {
+    use std::os::unix::fs::FileExt;
+    let reader = qlite::Reader::open(path).unwrap_or_else(|e| die(&format!("trie append: {e}")));
+    need(reader.member_bytes(TRIE_CODEC).is_none(),
+        &format!("trie append: {path} already carries m20"));
+    let count = reader.members.len();
+    let length = std::fs::metadata(path).unwrap().len();
+    let dir_start = length - 40 * count as u64;
+    let mut last = 0u64;
+    for m in &reader.members {
+        last = last.max(m.offset + m.bytes);
+    }
+    let at = (last + 7) / 8 * 8;
+    need(dir_start >= at, &format!("trie append: {path} has no room for m20 (dir at {dir_start}, members end at {at})"));
+    // the old directory, verbatim
+    let mut dir: Vec<u8> = Vec::with_capacity(40 * (count + 1));
+    dir.extend_from_slice(&reader.map()[dir_start as usize..]);
+    // the new entry: id, codec, offset, bytes, count, crc (40 B, sorted by id)
+    let mut entry = [0u8; 40];
+    put(&mut entry[0..], TRIE_CODEC as u64, 4);
+    put(&mut entry[4..], TRIE_CODEC as u64, 4);
+    put(&mut entry[8..], at, 8);
+    put(&mut entry[16..], payload.len() as u64, 8);
+    put(&mut entry[24..], n, 8);
+    put(&mut entry[32..], sxi::crc32_of(payload) as u64, 4);
+    // keep the directory sorted by member id (it is how every reader binary-searches)
+    let mut entries: Vec<[u8; 40]> = dir.chunks_exact(40).map(|c| c.try_into().unwrap()).collect();
+    entries.push(entry);
+    entries.sort_unstable_by_key(|e| u32::from_le_bytes(e[0..4].try_into().unwrap()));
+    dir.clear();
+    for e in &entries {
+        dir.extend_from_slice(e);
+    }
+    let f = std::fs::OpenOptions::new().read(true).write(true).open(path)
+        .unwrap_or_else(|e| die(&format!("trie append: open {path}: {e}")));
+    f.set_len(at).unwrap_or_else(|e| die(&format!("trie append: truncate {path}: {e}")));
+    f.write_all_at(payload, at).unwrap_or_else(|e| die(&format!("trie append: write m20: {e}")));
+    let new_len = at + payload.len() as u64 + dir.len() as u64;
+    f.write_all_at(&dir, at + payload.len() as u64)
+        .unwrap_or_else(|e| die(&format!("trie append: write directory: {e}")));
+    // patch the header
+    let old = reader.map()[..64].to_vec();
+    let mut h = [0u8; 64];
+    h.copy_from_slice(&old);
+    put(&mut h[4..], 9, 4);
+    put(&mut h[32..], entries.len() as u64, 4);
+    put(&mut h[36..], (64 + 40 * entries.len()) as u64, 4);
+    put(&mut h[40..], new_len, 8);
+    let old_flags = u64::from_le_bytes(old[48..56].try_into().unwrap());
+    put(&mut h[48..], old_flags | FLAG_TRIE, 8);
+    h[56..60].fill(0);
+    let mut hc = h.to_vec();
+    hc.extend_from_slice(&dir);
+    let crc = sxi::crc32_of(&hc);
+    put(&mut h[56..], crc as u64, 4);
+    f.write_all_at(&h, 0).unwrap_or_else(|e| die(&format!("trie append: patch header: {e}")));
+    f.sync_all().unwrap();
+    drop(f);
+    drop(reader);
+    payload.len() as u64
+}
+
+/// The m20 member of a container, for a gate that compares two routes' bytes.
+///
+/// `sha256_noprov` is the digest with the 16 provenance bytes (the ordered-stream
+/// source and its memory figure, head offsets 152..168) ZEROED. That field is the
+/// member saying HOW it was built, so two routes that agree on every byte of the
+/// tree will still differ there by design; comparing the masked digest proves the
+/// tree itself is identical, and the gate separately proves that the ONLY
+/// differing bytes are those 16.
+pub fn trie_member_report(path: &str, out: Option<&str>) {
+    use sha2::{Digest, Sha256};
+    let reader = open_reader(path);
+    let m = reader.member_bytes(TRIE_CODEC).unwrap_or_else(|| die(&format!("{path}: no m20 member")));
+    let full = format!("{:x}", Sha256::digest(m));
+    let mut masked = m.to_vec();
+    let (po, pl) = (152usize, 16usize);
+    let source = get(&m[po..], 8);
+    let source_mem = get(&m[po + 8..], 8);
+    masked[po..po + pl].fill(0);
+    let np = format!("{:x}", Sha256::digest(&masked));
+    if let Some(o) = out {
+        std::fs::write(o, m).unwrap_or_else(|e| die(&format!("write {o}: {e}")));
+    }
+    println!("TRIE_MEMBER path={path} bytes={} sha256={full} sha256_noprov={np} prov_offset={po} prov_len={pl} source={source} source_mem={source_mem}",
+        m.len());
+}
+
 // ----------------------------------------------------------------- the commands
 
 fn parse_context(s: &str) -> Vec<u8> {
@@ -1878,7 +2344,61 @@ pub fn command(cmd: &str, args: &[String]) {
         }
         "ctx-curve" => curve(args),
         "ctx-verify" => verify(args),
+        "ctx-tap" => {
+            let mut a = TapArgs {
+                bands: String::new(),
+                corpus: String::new(),
+                out: String::new(),
+                depth: 8,
+                min_support: 1_000,
+                docs_min_support: 1000,
+                threads: 8,
+                n: 0,
+            };
+            let mut i = 0;
+            while i < args.len() {
+                let f = args[i].as_str();
+                let mut val = |what: &str| -> String {
+                    i += 1;
+                    args.get(i).cloned().unwrap_or_else(|| die(&format!("{what} needs a value")))
+                };
+                match f {
+                    "--bands" => a.bands = val("--bands"),
+                    "--corpus" => a.corpus = val("--corpus"),
+                    "-o" | "--out" => a.out = val("--out"),
+                    "--depth" => a.depth = val("--depth").parse().unwrap_or_else(|_| die("--depth: integer")),
+                    "--min-support" => a.min_support = val("--min-support").parse().unwrap_or_else(|_| die("--min-support: integer")),
+                    "--docs-min-support" => a.docs_min_support = val("--docs-min-support").parse().unwrap_or_else(|_| die("--docs-min-support: integer")),
+                    "--threads" => a.threads = val("--threads").parse().unwrap_or_else(|_| die("--threads: integer")),
+                    "--n" => a.n = val("--n").parse().unwrap_or_else(|_| die("--n: integer")),
+                    other => die(&format!("ctx-tap: unknown option {other}")),
+                }
+                i += 1;
+            }
+            need(!a.bands.is_empty() && !a.corpus.is_empty() && !a.out.is_empty() && a.n > 0,
+                "usage: xsa ctx-tap --bands <dir> --corpus <file> --out <payload> --n <rows> \
+                 [--depth D] [--min-support K] [--docs-min-support M] [--threads N]");
+            tap(&a);
+        }
+        "trie-member" => {
+            let mut container: Option<String> = None;
+            let mut out: Option<String> = None;
+            let mut i = 0;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "-o" | "--out" => {
+                        i += 1;
+                        out = Some(args.get(i).cloned().unwrap_or_else(|| die("--out needs a path")));
+                    }
+                    _ => container = Some(args[i].clone()),
+                }
+                i += 1;
+            }
+            let c = container.unwrap_or_else(|| die("usage: xsa trie-member <container> [-o <raw m20>]"));
+            trie_member_report(&c, out.as_deref());
+        }
         "ctx-selftest" => selftest(),
+        "ctx-tap-selftest" => tap_selftest(),
         other => die(&format!("ctx: unknown command {other}")),
     }
 }

@@ -1492,7 +1492,8 @@ fn main() {
         Some("build") => build::command(&args[1..]),
         Some("sxi-info") => sxi::command(&args[1..]),
         Some("ctx-build") | Some("branch-of") | Some("trie-stat") | Some("trie-info")
-        | Some("ctx-verify") | Some("ctx-selftest") | Some("ctx-curve") | Some("relax") | Some("relax-stat") | Some("trie-bench") => ctx::command(&args[0], &args[1..]),
+        | Some("ctx-verify") | Some("ctx-selftest") | Some("ctx-curve") | Some("relax") | Some("relax-stat") | Some("trie-bench")
+        | Some("ctx-tap") | Some("trie-member") | Some("ctx-tap-selftest") => ctx::command(&args[0], &args[1..]),
         Some("stats") => cmd_stats(&args[1..]),
         Some("tags") => cmd_tags(&args[1..]),
 
