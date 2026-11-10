@@ -443,11 +443,12 @@ impl Reader {
         // section at length-40*count and m1's per-block directory follows its
         // payload. v6 stays readable: same members, directory at 64.
         let tail_dir = version >= 7;
-        // v8 = v7's incremental layout + member m14 (the LCP over runs). The
-        // LAYOUT is v7's verbatim (trailing member directory, m1 codec 116); the
-        // version only says "there is one more member, and flag bit 7 declares
-        // it", so a reader that does not need m14 needs nothing else.
-        if !(6..=8).contains(&version) {
+        // v8 = v7's incremental layout + member m14 (the LCP over runs);
+        // v9 = v8 + member m20 (the context trie). The LAYOUT is v7's verbatim
+        // (trailing member directory, m1 codec 116) for all three: the version says
+        // only "there are more members, and the flags declare them", so a reader
+        // that needs neither m14 nor m20 needs nothing else.
+        if !(6..=9).contains(&version) {
             return Err(format!("{} is not a queryable index", describe_format(path)));
         }
         let u32at = |o: usize| u32::from_le_bytes(h[o..o + 4].try_into().unwrap());
@@ -463,8 +464,8 @@ impl Reader {
                 map.len()
             ));
         }
-        // 9 slots is the block-compressed lite shape with m14
-        // (m1,m4,m5,m7,m10,m11,m12,m13,m14); anything outside 5..=9 is not a lite
+        // 9 slots is the block-compressed lite shape with m14 or m20
+        // (m1,m4,m5,m7,m10,m11,m12,m13,+14|20); anything outside 5..=9 is not a lite
         // container. v6 and v7 containers hold 5..=8 and stay readable.
         if !(5..=9).contains(&count) || hs != 64 + 40 * count as usize {
             return Err(format!(
@@ -3410,3 +3411,53 @@ include!("fanout.inc.rs");
 include!("consult.inc.rs");
 
 include!("stateless.inc.rs");
+
+// ------------------------------------------- the ordered-sweep LF accessor
+//
+// One LF step, exposed for the CONTEXT_TRIE builder (`xsa/src/ctx.rs`). The
+// builder needs the SUFFIX ARRAY (row -> text position) once, and the cheapest
+// exact way to obtain it from a v6/v7 lite container is the LF cycle: LF maps
+// row i to the row whose position is i-1, so ONE cycle from any row visits every
+// row exactly once and yields SA[row] for all of them at one LF step per row.
+// That is the "minimal extra pass" the trie costs when it is built outside the
+// construction chain; inside the chain the sorter already holds the positions,
+// so the pass is free there.
+impl<'a> Ctx<'a> {
+    /// `(LF(row), BWT[row])`: the row of `SA[row] - 1` and the byte that precedes
+    /// the suffix. One `row_run` + one `cum_before`, i.e. exactly the work a
+    /// `locate` step already pays.
+    #[inline]
+    pub fn lf_step(&mut self, row: u64) -> (u64, u8) {
+        let (run, s, h, _) = self.row_run(row);
+        let lf = self.idx.c[h as usize] + self.cum_before(h, run);
+        (lf + (row - s), h)
+    }
+    /// `SA[row]`: the text position of BWT row `row` (an LF walk to the nearest
+    /// m11 anchor).
+    pub fn sa_of(&mut self, row: u64) -> u64 { self.locate(row) }
+}
+
+impl Reader {
+    /// The raw bytes of member `id`, straight out of the mapping.
+    pub fn member_bytes(&self, id: u32) -> Option<&[u8]> {
+        let m = self.members.iter().find(|m| m.id == id)?;
+        Some(&self.map[m.offset as usize..(m.offset + m.bytes) as usize])
+    }
+    /// The open container's mapping (read-only).
+    pub fn map(&self) -> &[u8] { &self.map }
+}
+
+impl Index {
+    /// Decode block `b` of m1 into the caller's columns. This is the ONE decode
+    /// entry point the context-trie builder uses to materialise every run ONCE
+    /// (`ctx.rs` DenseRuns): a per-step block decode is 8 us, which is why an
+    /// LF walk over a 100 GB container is not affordable one block at a time.
+    pub fn decode_block_into(&self, arena: &mut WorkerArena, b: u64, heads: &mut [u8], lens: &mut [u32]) {
+        arena.with_block(self, b, |h, l| {
+            heads.copy_from_slice(h);
+            lens.copy_from_slice(l);
+        });
+    }
+    pub fn runs_per_block(&self) -> u64 { self.block_runs }
+    pub fn block_count(&self) -> u64 { self.nblocks }
+}
