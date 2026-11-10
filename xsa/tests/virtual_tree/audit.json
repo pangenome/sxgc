@@ -1,0 +1,78 @@
+{
+  "path": "/mnt/nvme2n1/erikg/P100c/pile-head100.sxi2",
+  "version": 6,
+  "n": 100000000001,
+  "runs": 31381597694,
+  "bytes": 63163489696,
+  "directory_crc_valid": true,
+  "members": [
+    {
+      "id": 1,
+      "codec": 114,
+      "offset": 12439671640,
+      "bytes": 29738280736,
+      "count": 31381597694
+    },
+    {
+      "id": 4,
+      "codec": 4,
+      "offset": 12194502616,
+      "bytes": 12,
+      "count": 0
+    },
+    {
+      "id": 5,
+      "codec": 105,
+      "offset": 384,
+      "bytes": 12194502226,
+      "count": 24185339204
+    },
+    {
+      "id": 7,
+      "codec": 7,
+      "offset": 12194502632,
+      "bytes": 256,
+      "count": 256
+    },
+    {
+      "id": 10,
+      "codec": 110,
+      "offset": 12194502888,
+      "bytes": 0,
+      "count": 31381597694
+    },
+    {
+      "id": 11,
+      "codec": 111,
+      "offset": 12194502888,
+      "bytes": 245168752,
+      "count": 30646092
+    },
+    {
+      "id": 12,
+      "codec": 112,
+      "offset": 42177952376,
+      "bytes": 248999568,
+      "count": 30646092
+    },
+    {
+      "id": 13,
+      "codec": 115,
+      "offset": 42426951944,
+      "bytes": 20736537752,
+      "count": 862898581
+    }
+  ],
+  "m7_is_256_byte_permutation": true,
+  "m7_sha256": "0ce35ac950b471c0da0e9a7773a6d82871d53d5de5a496bb9ffda6078b896780",
+  "corpus_path": "/mnt/nvme2n1/erikg/pile-head100.txt",
+  "corpus_exists": false,
+  "persisted_full_sa": false,
+  "persisted_lcp": false,
+  "measurement_status": "blocked: no persisted LCP or full SA; source corpus missing",
+  "reference_algorithm_checks": {
+    "synthetic_contexts_exact": 100,
+    "boundary_checks": 2,
+    "real_100GB_contexts_checked": 0
+  }
+}
