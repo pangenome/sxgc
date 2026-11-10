@@ -3424,3 +3424,18 @@ impl Reader {
     /// The open container's mapping (read-only).
     pub fn map(&self) -> &[u8] { &self.map }
 }
+
+impl Index {
+    /// Decode block `b` of m1 into the caller's columns. This is the ONE decode
+    /// entry point the context-trie builder uses to materialise every run ONCE
+    /// (`ctx.rs` DenseRuns): a per-step block decode is 8 us, which is why an
+    /// LF walk over a 100 GB container is not affordable one block at a time.
+    pub fn decode_block_into(&self, arena: &mut WorkerArena, b: u64, heads: &mut [u8], lens: &mut [u32]) {
+        arena.with_block(self, b, |h, l| {
+            heads.copy_from_slice(h);
+            lens.copy_from_slice(l);
+        });
+    }
+    pub fn runs_per_block(&self) -> u64 { self.block_runs }
+    pub fn block_count(&self) -> u64 { self.nblocks }
+}

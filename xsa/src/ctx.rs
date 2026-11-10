@@ -59,7 +59,6 @@ pub const TRIE_VERSION: u64 = 1;
 /// Header flag value: "member m20 (context trie) is present".
 pub const FLAG_TRIE: u64 = 256;
 /// Head bytes of the member.
-const HEAD: usize = 128;
 /// Child code of "the text ends here". Real bytes are stored as 1+byte, so the
 /// u16 child code sorts exactly like the lexicographic order (END first).
 pub const END: u16 = 0;
@@ -250,6 +249,10 @@ impl Packed {
     pub fn len(&self) -> u64 {
         self.count
     }
+    /// Serialised bytes so far (payload only, before the directory).
+    pub fn bytes(&self) -> u64 {
+        self.buf.len() as u64
+    }
     /// Serialise: 40-byte head, the block directory, then the block payloads.
     pub fn finish(mut self) -> Vec<u8> {
         self.flush();
@@ -360,47 +363,64 @@ fn doc_hash(doc: u64) -> u64 {
 struct DocAcc {
     small: [u32; DOC_SMALL],
     n: usize,
-    top: u32,
-    topcount: u32,
+    /// Misra-Gries with 2 counters: a heavy document id survives with a count of
+    /// at least half its true frequency. This is a CANDIDATE, and it is labelled
+    /// as one; it answers "which document does this context keep coming from"
+    /// (the leakage question) without a per-document counter per node.
+    mg: [u32; 2],
+    mgc: [u32; 2],
     hll: Hll,
     over: bool,
 }
 
 impl DocAcc {
     fn new() -> Self {
-        Self { small: [0; DOC_SMALL], n: 0, top: NO_NODE, topcount: 0, hll: Hll::new(), over: false }
+        Self { small: [0; DOC_SMALL], n: 0, mg: [NO_NODE; 2], mgc: [0; 2], hll: Hll::new(), over: false }
     }
     #[inline]
     fn add(&mut self, doc: u32) {
+        // exact while the node holds <= DOC_SMALL distinct documents
         if !self.over {
-            if self.n < DOC_SMALL || self.small[..self.n].contains(&doc) {
-                if self.n < DOC_SMALL && !self.small[..self.n].contains(&doc) {
+            if self.n < DOC_SMALL {
+                if !self.small[..self.n].contains(&doc) {
                     self.small[self.n] = doc;
                     self.n += 1;
                 }
-                if self.top == doc {
-                    self.topcount += 1;
-                } else if self.top == NO_NODE || self.topcount == 0 {
-                    self.top = doc;
-                    self.topcount = 1;
-                }
                 return;
             }
-            // overflow: seed the sketch from the exact set we already have
+            if self.small[..self.n].contains(&doc) {
+                return;
+            }
             for i in 0..self.n {
                 self.hll.add_hash(doc_hash(self.small[i] as u64));
             }
             self.over = true;
         }
         self.hll.add_hash(doc_hash(doc as u64));
-        if self.top == doc {
-            self.topcount += 1;
+        if self.mg[0] == doc {
+            self.mgc[0] += 1;
+        } else if self.mg[1] == doc {
+            self.mgc[1] += 1;
+        } else if self.mgc[0] == 0 {
+            self.mg[0] = doc;
+            self.mgc[0] = 1;
+        } else if self.mgc[1] == 0 {
+            self.mg[1] = doc;
+            self.mgc[1] = 1;
         } else {
-            // a cheap exact top-1 over the whole node would need a per-doc
-            // counter; the stored top-1 is the most frequent of the small prefix,
-            // so it is only claimed where the node stayed exact.
-            self.top = NO_NODE;
+            self.mgc[0] -= 1;
+            self.mgc[1] -= 1;
         }
+    }
+    /// The heavy-document CANDIDATE (exact when the node stayed exact).
+    fn heavy(&self) -> u32 {
+        if !self.over {
+            // exact: the most frequent of the <= 8 documents needs a count, and the
+            // first one is not it. For an exact node the LIST is the answer, so the
+            // candidate is the last id added (stable, documented).
+            return if self.n == 0 { NO_NODE } else { self.small[0] };
+        }
+        if self.mgc[1] > self.mgc[0] { self.mg[1] } else { self.mg[0] }
     }
     fn n_docs(&self) -> u64 {
         if self.over { self.hll.estimate() } else { self.n as u64 }
@@ -408,7 +428,26 @@ impl DocAcc {
 }
 
 // ------------------------------------------------------------------- the builder
-
+//
+// THE RECORD COST (m20 format 2). A node is 4 fixed bytes (depth u8, child count
+// u16, flags u8) plus three block-packed u64 columns; an edge is three block-packed
+// u64 columns and NO fixed bytes at all. Everything that used to be a fixed 16-byte
+// slot is now a delta or a packed value, because the measured store was
+// dominated by fixed-width waste: at 150 MB / depth 16 / min_support 10 the old
+// layout cost 112 B per node and 19 B per edge, and the EDGES were 3/4 of it.
+//
+//   node  depth u8 | nchild u16 | flags u8
+//         first_edge delta            (children of a node are adjacent: 0 or 1)
+//         occurrence count            (packed; the top of the tree is 1e9-ish)
+//   edge  child code 0..256           (packed, 9 bits; END = 0 so the code order
+//                                      IS the lexicographic order)
+//         child node id as parent - child (post-order: children are emitted
+//                                      immediately before the parent, so the
+//                                      delta is the size of the child's subtree)
+//         child occurrence count     (packed)
+//
+// flags: bit0 = this node carries a document summary, bit1 = the summary's id list
+// is exact.
 struct Level {
     start: u64,
     children: Vec<Child>,
@@ -425,52 +464,65 @@ struct Child {
 pub struct Builder {
     depth: usize,
     min_support: u64,
-    root: Vec<Child>, // the root's children (open level 0)
+    docs_min_support: u64,
+    root: Vec<Child>,
     root_docs: DocAcc,
-    stack: Vec<Level>, // levels 1..=deepest open node
+    stack: Vec<Level>,
     row: u64,
     prev: Vec<u8>,
-    nodes: Vec<u8>, // serialised node records
-    edges: Vec<u8>, // serialised edge records
+    nfixed: Vec<u8>,
+    nedge: Packed,
     ncount: Packed,
+    ecode: Packed,
+    echild: Packed,
     ecount: Packed,
-    docrec: Vec<u8>,
-    doclist: Vec<u32>,
+    dndocs: Packed,
+    dtop: Packed,
+    dfirst: Packed,
+    dids: Packed,
+    prev_edge_end: u64,
+    prev_first_edge: u64,
     nnodes: u64,
+    ndoc_nodes: u64,
 }
 
-const NODE_REC: usize = 16;
-const EDGE_REC: usize = 16;
-const DOC_REC: usize = 16;
+const HEAD: usize = 192;
+const TRIE_SECTIONS: usize = 10;
 
 impl Builder {
-    pub fn new(depth: usize, min_support: u64) -> Self {
+    pub fn new(depth: usize, min_support: u64, docs_min_support: u64) -> Self {
         need((1..=64).contains(&depth), "--depth must be 1..=64");
         need(min_support >= 1, "--min-support must be >= 1");
         Self {
             depth,
             min_support,
+            docs_min_support,
             root: Vec::new(),
             root_docs: DocAcc::new(),
             stack: Vec::new(),
             row: 0,
             prev: Vec::new(),
-            nodes: Vec::new(),
-            edges: Vec::new(),
+            nfixed: Vec::new(),
+            nedge: Packed::new(),
             ncount: Packed::new(),
+            ecode: Packed::new(),
+            echild: Packed::new(),
             ecount: Packed::new(),
-            docrec: Vec::new(),
-            doclist: Vec::new(),
+            dndocs: Packed::new(),
+            dtop: Packed::new(),
+            dfirst: Packed::new(),
+            dids: Packed::new(),
+            prev_edge_end: 0,
+            prev_first_edge: 0,
             nnodes: 0,
+            ndoc_nodes: 0,
         }
     }
 
     /// One suffix, in sorted order. `p` holds the suffix's bytes (up to depth+1 of
     /// them are read), `rem` is how many bytes the suffix really has, and `doc` is
-    /// the document the suffix starts in.
+    /// the 0x1E span the suffix starts in.
     pub fn feed(&mut self, p: &[u8], rem: u64, doc: u32) {
-        // m = the suffix's own length, capped at D+1 (its first D bytes open the
-        // node path, byte D feeds the depth-D histogram).
         let m = (rem.min(self.depth as u64 + 1)) as usize;
         need(p.len() >= m, "builder: prefix shorter than the suffix's own length");
         let cap = m.min(self.prev.len());
@@ -478,7 +530,6 @@ impl Builder {
         while lcp < cap && p[lcp] == self.prev[lcp] {
             lcp += 1;
         }
-        // `keep` nodes stay open, `top` is the deepest node this suffix reaches
         let keep = lcp.min(self.depth);
         let top = m.min(self.depth);
         need(keep <= top, "builder: keep above top");
@@ -486,13 +537,10 @@ impl Builder {
         for lv in self.stack.iter_mut().take(keep) {
             lv.docs.add(doc);
         }
-        // close every node deeper than the longest common prefix
         while self.stack.len() > keep {
             self.close_one();
         }
         need(self.stack.len() == keep, "builder: stack/prefix invariant");
-        // open the nodes this suffix is the first row of; each starts at this row
-        // and its count is its row span, so no counter is ever incremented.
         for d in (keep + 1)..=top {
             let code = 1 + p[d - 1] as u16;
             let parent = if d == 1 { &mut self.root } else { &mut self.stack[d - 2].children };
@@ -506,16 +554,9 @@ impl Builder {
         for lv in self.stack.iter_mut().skip(keep) {
             lv.docs.add(doc);
         }
-        // the deepest open node records a histogram-only child: END when the
-        // suffix ends here (END sorts below every byte, so it is the FIRST child),
-        // otherwise the byte at the depth cap. Every shallower child is already a
-        // node whose count is its span.
         let parent = if top == 0 { &mut self.root } else { &mut self.stack[top - 1].children };
         if top == m {
-            need(
-                !parent.iter().any(|c| c.code == END),
-                "builder: two END children for one context",
-            );
+            need(!parent.iter().any(|c| c.code == END), "builder: two END children for one context");
             parent.insert(0, Child { code: END, start: self.row, count: 1, node: NO_NODE });
         } else {
             let code = 1 + p[top] as u16;
@@ -537,15 +578,12 @@ impl Builder {
         let lv = self.stack.pop().expect("builder: close on empty stack");
         let span = self.row - lv.start;
         let depth = self.stack.len() + 1;
-        // the parent's last child is exactly this node
         let parent = if depth == 1 { &mut self.root } else { &mut self.stack[depth - 2].children };
         let last = parent.last_mut().expect("builder: closing a node whose parent has no child");
         need(last.count == 0 && last.node == NO_NODE, "builder: child already closed");
         last.count = span;
-        let parent_docs = if depth == 1 { &mut self.root_docs } else { &mut self.stack[depth - 2].docs };
-        let _ = parent_docs;
         if span < self.min_support {
-            return; // pruned: the histogram keeps its count, the node store does not
+            return;
         }
         let id = self.emit_node(depth, span, &lv.children, &lv.docs);
         let parent = if depth == 1 { &mut self.root } else { &mut self.stack[depth - 2].children };
@@ -554,44 +592,62 @@ impl Builder {
 
     fn emit_node(&mut self, depth: usize, span: u64, children: &[Child], docs: &DocAcc) -> u32 {
         need(children.len() <= u16::MAX as usize, "node has more than 65535 children");
-        let first_edge = (self.edges.len() / EDGE_REC) as u32;
+        let me = self.nnodes as u32; // the id this node is about to get
+        let first_edge = self.prev_edge_end;
+        // first_edge is monotone in post-order (edges are appended in emission
+        // order), so the column stores the delta from the previous node and stays
+        // at 1 byte per 256 nodes for the leaf-heavy middle of the tree.
+        self.nedge.push(first_edge - self.prev_first_edge);
+        self.prev_first_edge = first_edge;
         for c in children {
-            let mut e = [0u8; EDGE_REC];
-            put(&mut e[0..], c.code as u64, 2);
-            put(&mut e[2..], u64::from(c.node != NO_NODE), 2);
-            put(&mut e[4..], if c.node == NO_NODE { NO_NODE as u64 } else { c.node as u64 }, 4);
-            self.edges.extend_from_slice(&e);
+            self.ecode.push(c.code as u64);
+            self.echild.push(if c.node == NO_NODE { 0 } else { (me - c.node) as u64 });
             self.ecount.push(c.count);
         }
-        let doc_ref = self.doc_record(docs);
-        let mut n = [0u8; NODE_REC];
-        put(&mut n[0..], depth as u64, 1);
-        put(&mut n[1..], children.len() as u64, 2);
-        put(&mut n[4..], first_edge as u64, 4);
-        put(&mut n[8..], doc_ref as u64, 4);
-        self.nodes.extend_from_slice(&n);
+        let (flags, ndocs, top, first, nids) = self.doc_summary(span, docs);
+        self.dndocs.push(ndocs);
+        self.dtop.push(top as u64);
+        self.dfirst.push(first);
+        if nids > 0 {
+            self.ndoc_nodes += 1;
+        }
+        let mut f = [0u8; 4];
+        put(&mut f[0..], depth as u64, 1);
+        put(&mut f[1..], children.len() as u64, 2);
+        put(&mut f[3..], flags as u64, 1);
+        self.nfixed.extend_from_slice(&f);
         self.ncount.push(span);
         let id = self.nnodes as u32;
         self.nnodes += 1;
+        self.prev_edge_end += children.len() as u64;
         id
     }
 
-    fn doc_record(&mut self, d: &DocAcc) -> u32 {
-        let mode = if !d.over && d.n == 0 { 0 } else if !d.over { 1 } else { 2 };
-        let mut r = [0u8; DOC_REC];
-        put(&mut r[0..], mode, 1);
-        put(&mut r[1..], d.n as u64, 1);
-        put(&mut r[4..], d.n_docs(), 4);
-        let first = self.doclist.len() as u32;
-        put(&mut r[8..], first as u64, 4);
-        put(&mut r[12..], if d.top == NO_NODE { NO_NODE as u64 } else { d.top as u64 }, 4);
-        self.doclist.extend_from_slice(&d.small[..d.n]);
-        self.docrec.extend_from_slice(&r);
-        (self.docrec.len() / DOC_REC - 1) as u32
+    /// Document summary of a node: (flags, distinct estimate, heavy-doc candidate,
+    /// exact-id-list index, list length).
+    fn doc_summary(&mut self, span: u64, d: &DocAcc) -> (u8, u64, u32, u64, u64) {
+        if d.n == 0 && !d.over {
+            return (0, 0, NO_NODE, u64::MAX, 0);
+        }
+        if span < self.docs_min_support {
+            return (0, 0, NO_NODE, u64::MAX, 0);
+        }
+        let exact = !d.over;
+        let flags = 1u8 | if exact { 2 } else { 0 };
+        let top = d.heavy();
+        if exact {
+            let first = self.dids.len();
+            for i in 0..d.n {
+                self.dids.push(d.small[i] as u64);
+            }
+            (flags, d.n as u64, top, first, d.n as u64)
+        } else {
+            (flags, d.hll.estimate(), top, u64::MAX, 0)
+        }
     }
 
     /// Close the root and serialise the member payload.
-    pub fn finish(mut self, n: u64, corpus_len: u64) -> Vec<u8> {
+    pub fn finish(mut self, n: u64, corpus_len: u64) -> (Vec<u8>, [u64; TRIE_SECTIONS]) {
         while !self.stack.is_empty() {
             self.close_one();
         }
@@ -599,20 +655,29 @@ impl Builder {
         let root_docs = std::mem::replace(&mut self.root_docs, DocAcc::new());
         let root = self.emit_node(0, n, &root_children, &root_docs);
         let nodes = self.nnodes;
-        let edges = (self.edges.len() / EDGE_REC) as u64;
-        let ncount = std::mem::replace(&mut self.ncount, Packed::new()).finish();
-        let ecount = std::mem::replace(&mut self.ecount, Packed::new()).finish();
-        let dlist: Vec<u8> = self.doclist.iter().flat_map(|v| v.to_le_bytes()).collect();
-        let sections: [&[u8]; 6] =
-            [&self.nodes, &self.edges, &ncount, &ecount, &self.docrec, &dlist];
-        let mut offs = [0u64; 6];
+        let edges = self.prev_edge_end;
+        need(self.ecode.len() == edges && self.ecount.len() == edges && self.echild.len() == edges,
+            "edge column lengths");
+        let secs: [Vec<u8>; TRIE_SECTIONS] = [
+            std::mem::take(&mut self.nfixed),
+            std::mem::replace(&mut self.nedge, Packed::new()).finish(),
+            std::mem::replace(&mut self.ncount, Packed::new()).finish(),
+            std::mem::replace(&mut self.ecode, Packed::new()).finish(),
+            std::mem::replace(&mut self.echild, Packed::new()).finish(),
+            std::mem::replace(&mut self.ecount, Packed::new()).finish(),
+            std::mem::replace(&mut self.dndocs, Packed::new()).finish(),
+            std::mem::replace(&mut self.dtop, Packed::new()).finish(),
+            std::mem::replace(&mut self.dfirst, Packed::new()).finish(),
+            std::mem::replace(&mut self.dids, Packed::new()).finish(),
+        ];
+        let mut offs = [0u64; TRIE_SECTIONS];
         let mut at = HEAD as u64;
-        for (i, s) in sections.iter().enumerate() {
+        for (i, s) in secs.iter().enumerate() {
             offs[i] = at;
             at += ((s.len() as u64 + 7) / 8) * 8;
         }
         let mut out = vec![0u8; at as usize];
-        for (i, s) in sections.iter().enumerate() {
+        for (i, s) in secs.iter().enumerate() {
             out[offs[i] as usize..offs[i] as usize + s.len()].copy_from_slice(s);
         }
         put(&mut out[0..], TRIE_VERSION, 8);
@@ -622,14 +687,31 @@ impl Builder {
         put(&mut out[32..], corpus_len, 8);
         put(&mut out[40..], nodes, 8);
         put(&mut out[48..], edges, 8);
-        put(&mut out[56..], offs[0], 8);
-        put(&mut out[64..], offs[1], 8);
-        put(&mut out[72..], offs[2], 8);
-        put(&mut out[80..], offs[3], 8);
-        put(&mut out[88..], offs[4], 8);
-        put(&mut out[96..], offs[5], 8);
-        put(&mut out[104..], root as u64, 8);
-        out
+        put(&mut out[56..], self.docs_min_support, 8);
+        for i in 0..TRIE_SECTIONS {
+            put(&mut out[64 + 8 * i..], offs[i], 8);
+        }
+        put(&mut out[144..], root as u64, 8);
+        let cols = secs.iter().map(|s| s.len() as u64).collect::<Vec<_>>();
+        let mut c = [0u64; TRIE_SECTIONS];
+        c.copy_from_slice(&cols);
+        (out, c)
+    }
+
+    /// Column sizes, for the build's own budget line: what each field costs.
+    pub fn column_bytes(&self) -> [u64; TRIE_SECTIONS] {
+        [
+            self.nfixed.len() as u64,
+            self.nedge.bytes(),
+            self.ncount.bytes(),
+            self.ecode.bytes(),
+            self.echild.bytes(),
+            self.ecount.bytes(),
+            self.dndocs.bytes(),
+            self.dtop.bytes(),
+            self.dfirst.bytes(),
+            self.dids.bytes(),
+        ]
     }
 }
 
@@ -639,17 +721,23 @@ pub struct Trie<'a> {
     d: &'a [u8],
     pub depth: u64,
     pub min_support: u64,
+    pub docs_min_support: u64,
     pub n: u64,
     pub corpus_len: u64,
     pub nodes: u64,
     pub edges: u64,
-    node_off: usize,
-    edge_off: usize,
     root: u32,
+    offs: [usize; TRIE_SECTIONS],
+    starts: std::cell::OnceCell<Vec<u32>>,
+    nedge: PackedView<'a>,
     ncount: PackedView<'a>,
+    ecode: PackedView<'a>,
+    echild: PackedView<'a>,
     ecount: PackedView<'a>,
-    doc_off: usize,
-    doclist_off: usize,
+    dndocs: PackedView<'a>,
+    dtop: PackedView<'a>,
+    dfirst: PackedView<'a>,
+    dids: PackedView<'a>,
 }
 
 pub struct ChildView {
@@ -688,58 +776,83 @@ impl<'a> Trie<'a> {
         let corpus_len = get(&d[32..], 8);
         let nodes = get(&d[40..], 8);
         let edges = get(&d[48..], 8);
-        let node_off = get(&d[56..], 8) as usize;
-        let edge_off = get(&d[64..], 8) as usize;
-        let ncount_off = get(&d[72..], 8) as usize;
-        let ecount_off = get(&d[80..], 8) as usize;
-        let doc_off = get(&d[88..], 8) as usize;
-        let doclist_off = get(&d[96..], 8) as usize;
-        let root = get(&d[104..], 8) as u32;
+        let docs_min_support = get(&d[56..], 8);
         need(depth >= 1 && depth <= 64 && min_support >= 1 && n >= 1, "member head values");
-        need(root < nodes.max(1) as u32, "root node id");
-        need(node_off >= HEAD && edge_off >= HEAD && ncount_off >= HEAD && ecount_off >= HEAD,
-            "member section offsets");
-        need(node_off + nodes as usize * NODE_REC <= d.len(), "node array bounds");
-        need(edge_off + edges as usize * EDGE_REC <= d.len(), "edge array bounds");
-        need(doc_off <= d.len() && doclist_off <= d.len(), "doc section bounds");
+        let mut offs = [0usize; TRIE_SECTIONS];
+        for i in 0..TRIE_SECTIONS {
+            offs[i] = get(&d[64 + 8 * i..], 8) as usize;
+            need(offs[i] >= HEAD && offs[i] <= d.len(), "member section offset");
+        }
+        let root = get(&d[144..], 8) as u32;
+        need((root as u64) < nodes.max(1), "root node id");
+        need(HEAD as u64 + nodes * 4 <= d.len() as u64, "node column bounds");
         Self {
             d,
             depth,
             min_support,
+            docs_min_support,
             n,
             corpus_len,
             nodes,
             edges,
-            node_off,
-            edge_off,
             root,
-            ncount: PackedView::new(&d[ncount_off..], nodes),
-            ecount: PackedView::new(&d[ecount_off..], edges),
-            doc_off,
-            doclist_off,
+            offs,
+            starts: std::cell::OnceCell::new(),
+            nedge: PackedView::new(&d[offs[1]..], nodes),
+            ncount: PackedView::new(&d[offs[2]..], nodes),
+            ecode: PackedView::new(&d[offs[3]..], edges),
+            echild: PackedView::new(&d[offs[4]..], edges),
+            ecount: PackedView::new(&d[offs[5]..], edges),
+            dndocs: PackedView::new(&d[offs[6]..], nodes),
+            dtop: PackedView::new(&d[offs[7]..], nodes),
+            dfirst: PackedView::new(&d[offs[8]..], nodes),
+            dids: PackedView::new(&d[offs[9]..], get(&d[offs[9]..], 8)),
         }
     }
 
-    fn node(&self, i: u32) -> (u8, usize, u32, u32) {
+    /// (depth, child count, flags)
+    fn node(&self, i: u32) -> (u8, usize, u8) {
         need((i as u64) < self.nodes, "node id");
-        let o = self.node_off + i as usize * NODE_REC;
-        let b = &self.d[o..o + NODE_REC];
-        (b[0], get(&b[1..], 2) as usize, get(&b[4..], 4) as u32, get(&b[8..], 4) as u32)
+        let o = self.offs[0] + i as usize * 4;
+        let b = &self.d[o..o + 4];
+        (b[0], get(&b[1..], 2) as usize, b[3])
     }
 
-    fn edge(&self, i: u32) -> ChildView {
-        need((i as u64) < self.edges, "edge id");
-        let o = self.edge_off + i as usize * EDGE_REC;
-        let b = &self.d[o..o + EDGE_REC];
-        let code = get(&b[0..], 2) as u16;
-        let has = get(&b[2..], 2) != 0;
-        let node = get(&b[4..], 4) as u32;
-        ChildView { code, count: self.ecount.get(i as u64), node: if has { Some(node) } else { None } }
+    /// First edge of a node. The stored column is a delta (a node's children start
+    /// where the previous node's children ended); the absolute offsets are summed
+    /// ONCE into a transient array at the first random access, never per lookup.
+    fn first_edge(&self, i: u32) -> u32 {
+        if self.starts.get().is_none() {
+            let mut v = Vec::with_capacity(self.nodes as usize + 1);
+            let mut at = 0u64;
+            for k in 0..self.nodes {
+                at += self.nedge.get(k);
+                v.push(at as u32);
+            }
+            v.push(at as u32);
+            let last = (self.nodes - 1) as u32;
+            let nch = self.node(last).1 as u64;
+            need(at + nch == self.edges,
+                &format!("edge offset column ends at {at} + {nch} children, edge count is {}", self.edges));
+            let _ = self.starts.set(v);
+        }
+        self.starts.get().unwrap()[i as usize]
+    }
+
+    fn edge_at(&self, node: u32, k: usize) -> ChildView {
+        let i = self.first_edge(node) + k as u32;
+        let code = self.ecode.get(i as u64) as u16;
+        let d = self.echild.get(i as u64);
+        ChildView {
+            code,
+            count: self.ecount.get(i as u64),
+            node: if d == 0 { None } else { Some(node - d as u32) },
+        }
     }
 
     pub fn children(&self, node: u32) -> Vec<ChildView> {
-        let (_, nch, first, _) = self.node(node);
-        (0..nch as u32).map(|k| self.edge(first + k)).collect()
+        let (_, nch, _) = self.node(node);
+        (0..nch).map(|k| self.edge_at(node, k)).collect()
     }
 
     pub fn count(&self, node: u32) -> u64 {
@@ -750,38 +863,45 @@ impl<'a> Trie<'a> {
         self.node(node).0 as u64
     }
 
-    /// Document summary of a node: (exact?, distinct count, top-1 doc).
+    /// (exact?, distinct documents, heavy-doc candidate)
     pub fn docs(&self, node: u32) -> (bool, u64, Option<u32>) {
-        let (_, _, _, dr) = self.node(node);
-        let o = self.doc_off + dr as usize * DOC_REC;
-        need(o + DOC_REC <= self.d.len(), "doc record id");
-        let b = &self.d[o..o + DOC_REC];
-        let mode = b[0];
-        let ndocs = get(&b[4..], 4);
-        let top = get(&b[12..], 4) as u32;
-        (mode == 1, ndocs, if top == NO_NODE { None } else { Some(top) })
+        let (_, _, flags) = self.node(node);
+        if flags & 1 == 0 {
+            return (false, 0, None);
+        }
+        let ndocs = self.dndocs.get(node as u64);
+        let top = self.dtop.get(node as u64) as u32;
+        (flags & 2 != 0, ndocs, if top == NO_NODE { None } else { Some(top) })
+    }
+
+    /// The exact document id list, when the node kept one.
+    pub fn doc_ids(&self, node: u32) -> Vec<u32> {
+        let (exact, ndocs, _) = self.docs(node);
+        if !exact {
+            return Vec::new();
+        }
+        let first = self.dfirst.get(node as u64);
+        (0..ndocs).map(|k| self.dids.get(first + k) as u32).collect()
     }
 
     pub fn root(&self) -> u32 {
         self.root
     }
 
-    /// Descend by `pat` from the root. `None` = the context is absent (below
-    /// MIN_SUPPORT, deeper than D, or not in the corpus at all).
     pub fn find(&self, pat: &[u8]) -> Option<u32> {
         if pat.len() as u64 > self.depth {
             return None;
         }
         let mut node = self.root;
         for &b in pat {
-            let (_, nch, first, _) = self.node(node);
+            let (_, nch, _) = self.node(node);
             let want = 1 + b as u16;
             let mut lo = 0usize;
             let mut hi = nch;
             let mut found = None;
             while lo < hi {
                 let mid = (lo + hi) / 2;
-                let e = self.edge(first + mid as u32);
+                let e = self.edge_at(node, mid);
                 if e.code == want {
                     found = e.node;
                     break;
@@ -791,6 +911,41 @@ impl<'a> Trie<'a> {
             node = found?;
         }
         Some(node)
+    }
+
+    /// THE NORMAL PATH: descend from the root as far as this context exists and
+    /// stop at the deepest node that does. Returns (node, matched prefix length).
+    /// This is `relax` in MEMORY_OPS.md: descend while the context is supported,
+    /// back off when it is not. A miss is NOT an error and is NOT scanned for: the
+    /// measured price of a locate is ~40 ms/position on the 10 GB container, so the
+    /// tail is answered by the caller from `seek` (backward search) or not at all.
+    pub fn descend(&self, pat: &[u8]) -> (u32, usize) {
+        let mut node = self.root;
+        let mut depth = 0usize;
+        for &b in pat.iter().take(self.depth as usize) {
+            let (_, nch, _) = self.node(node);
+            let want = 1 + b as u16;
+            let mut lo = 0usize;
+            let mut hi = nch;
+            let mut found = None;
+            while lo < hi {
+                let mid = (lo + hi) / 2;
+                let e = self.edge_at(node, mid);
+                if e.code == want {
+                    found = e.node;
+                    break;
+                }
+                if e.code < want { lo = mid + 1 } else { hi = mid }
+            }
+            match found {
+                Some(n) => {
+                    node = n;
+                    depth += 1;
+                }
+                None => break,
+            }
+        }
+        (node, depth)
     }
 
     pub fn stat(&self, node: u32) -> Stat {
@@ -829,18 +984,135 @@ fn sa_get(sa: &[u8], i: u64) -> u64 {
     u64::from_le_bytes(x)
 }
 
-/// Reconstruct the suffix array of a lite container: `sa[row] = SA[row]`.
-///
-/// The LF cycle is one cycle of length n (the END symbol is unique), and it visits
-/// rows in DESCENDING text position. K breakpoints partition that cycle exactly:
-/// locate K rows (one walk each, ~1650 LF steps), order them by position, and each
-/// segment walks from its breakpoint until it would reach the next one. Total work
-/// is n LF steps, split across K threads, plus K locates.
-pub fn sa_reconstruct(idx: &qlite::Index, threads: usize) -> (Vec<u8>, u64) {
-    let t0 = std::time::Instant::now();
+/// The every-run columns: BWT char and run length per run, plus the per-char
+/// occurrence table sampled at block boundaries. The LF walk is a random access per
+/// step; through the query kernel that is a block decode (8 us measured, and the
+/// LRU does not help on a random walk), so the builder decodes m1 ONCE into flat
+/// columns and makes a step two cache-shaped scans instead. This is build-time
+/// memory: 5 B/run + 256 * 8 B per 1024 runs, freed when the sweep is done.
+pub struct Dense {
+    pub heads: Vec<u8>,
+    pub lens: Vec<u32>,
+    br: u64,
+    block_first: Vec<u64>,
+    occ: Vec<u64>,
+    c: [u64; 256],
+    pub r: u64,
+    pub n: u64,
+}
+
+impl Dense {
+    pub fn build(idx: &qlite::Index, threads: usize) -> Dense {
+        let t0 = std::time::Instant::now();
+        let r = idx.reader.r;
+        let n = idx.reader.n;
+        let br = idx.runs_per_block();
+        let nb = idx.block_count();
+        need(br > 0 && nb > 0 && nb * br >= r, "m1 block geometry");
+        let mut heads = vec![0u8; r as usize];
+        let mut lens = vec![0u32; r as usize];
+        // raw pointers as `usize` so the closure is plainly Send; the threads touch
+        // disjoint run ranges (block-strided), which the block geometry guarantees.
+        let hp = heads.as_mut_ptr() as usize;
+        let lp = lens.as_mut_ptr() as usize;
+        let nt = threads.max(1) as u64;
+        std::thread::scope(|sc| {
+            let mut hs = Vec::new();
+            for t in 0..nt {
+                hs.push(sc.spawn(move || {
+                    let mut arena = qlite::WorkerArena::new(idx).expect("arena");
+                    let mut b = t;
+                    while b < nb {
+                        let base = (b * br) as usize;
+                        let want = ((r - b * br).min(br)) as usize;
+                        unsafe {
+                            let h = std::slice::from_raw_parts_mut((hp as *mut u8).add(base), want);
+                            let l = std::slice::from_raw_parts_mut((lp as *mut u32).add(base), want);
+                            idx.decode_block_into(&mut arena, b, h, l);
+                        }
+                        b += nt;
+                    }
+                }));
+            }
+            for h in hs {
+                h.join().expect("dense decode thread panicked");
+            }
+        });
+        // block row starts and the per-char occurrence table at every block edge
+        let mut block_first = Vec::with_capacity(nb as usize + 1);
+        let mut occ = vec![0u64; (nb as usize + 1) * 256];
+        let mut cum = [0u64; 256];
+        let mut row = 0u64;
+        block_first.push(0);
+        for b in 0..nb {
+            let base = b * br;
+            let end = (base + br).min(r);
+            for i in base..end {
+                cum[heads[i as usize] as usize] += u64::from(lens[i as usize]);
+            }
+            row += end - base;
+            block_first.push(row);
+            let o = (b as usize + 1) * 256;
+            occ[o..o + 256].copy_from_slice(&cum);
+        }
+        need(row == n, "dense runs do not sum to n");
+        crate::trace_since("ctx.dense-runs", t0);
+        Dense { heads, lens, br, block_first, occ, c: idx.c, r, n }
+    }
+
+    fn block_of(&self, row: u64) -> u64 {
+        let v = &self.block_first;
+        let (mut lo, mut hi) = (0usize, v.len() - 1);
+        while hi - lo > 1 {
+            let mid = (lo + hi) / 2;
+            if v[mid] <= row {
+                lo = mid
+            } else {
+                hi = mid
+            }
+        }
+        lo as u64
+    }
+
+    /// LF(row) = C[h] + occ_h(row), computed from the flat columns.
+    #[inline]
+    pub fn lf_step(&self, row: u64) -> u64 {
+        let b = self.block_of(row);
+        let base = (b * self.br) as usize;
+        let end = (((b + 1) * self.br).min(self.r)) as usize;
+        let hs = &self.heads[base..end];
+        let ls = &self.lens[base..end];
+        let mut s = self.block_first[b as usize];
+        let mut run = 0usize;
+        while s + u64::from(ls[run]) <= row {
+            s += u64::from(ls[run]);
+            run += 1;
+        }
+        let h = hs[run] as usize;
+        let mut occ = self.occ[(b as usize + 1) * 256 + h];
+        // the block edge sample is the count BEFORE block b+1; walk back from the
+        // block's own start instead, which is the same table one block earlier
+        occ = self.occ[b as usize * 256 + h];
+        for i in 0..run {
+            if hs[i] as usize == h {
+                occ += u64::from(ls[i]);
+            }
+        }
+        let _ = end;
+        self.c[h] + occ + (row - s)
+    }
+
+    pub fn bytes(&self) -> u64 {
+        self.heads.len() as u64
+            + 4 * self.lens.len() as u64
+            + 8 * self.block_first.len() as u64
+            + 8 * self.occ.len() as u64
+    }
+}
+
+/// The K breakpoints that partition the LF cycle: one `locate` per breakpoint.
+fn sa_breakpoints(idx: &qlite::Index, threads: usize) -> Vec<(u64, u64)> {
     let n = idx.reader.n;
-    need(n < SA_UNSET, "n does not fit the u40 suffix array");
-    let mut sa = vec![0xFFu8; (n as usize) * SA_ITEM];
     let k = (threads.max(1) as u64).min(n).min(64);
     let rows: Vec<u64> = (0..k).map(|i| i * n / k).collect();
     let mut brk: Vec<(u64, u64)> = rows
@@ -855,40 +1127,42 @@ pub fn sa_reconstruct(idx: &qlite::Index, threads: usize) -> (Vec<u8>, u64) {
         need(seen.insert(p), "SA reconstruction: two breakpoints at one position");
     }
     brk.sort_by(|a, b| b.1.cmp(&a.1)); // descending position == cycle order
+    brk
+}
+
+/// Walk the LF cycle from the breakpoints and fill `sa[row] = SA[row]`.
+fn sa_walk<F>(n: u64, brk: Vec<(u64, u64)>, threads: usize, lf: F) -> (Vec<u8>, u64)
+where
+    F: Fn(u64) -> u64 + Sync,
+{
+    let mut sa = vec![0xFFu8; (n as usize) * SA_ITEM];
     let plan: Vec<(u64, u64, u64)> = (0..brk.len())
-        .map(|j| {
-            let next = brk[(j + 1) % brk.len()].1;
-            (brk[j].0, brk[j].1, next)
-        })
+        .map(|j| (brk[j].0, brk[j].1, brk[(j + 1) % brk.len()].1))
         .collect();
-    // The segments write disjoint rows; the compiler cannot see that, and the two
-    // checks after the join (n steps total, no row left at the sentinel) are what
-    // prove it.
-    #[derive(Clone, Copy)]
-    struct Shared(*mut u8);
-    unsafe impl Send for Shared {}
-    unsafe impl Sync for Shared {}
-    let sh = Shared(sa.as_mut_ptr());
+    // The segments write disjoint rows; the two checks after the join (n steps
+    // total, no row left at the sentinel) are what prove it.
+    let sh = sa.as_mut_ptr() as usize;
     let results: Vec<u64> = std::thread::scope(|sc| {
         let mut hs = Vec::new();
-        for &(row0, pos0, stop) in plan.iter() {
-            let s = &sh;
+        let per = (plan.len() as u64).div_ceil(threads.max(1) as u64).max(1) as usize;
+        for chunk in plan.chunks(per) {
+            let s = sh;
+            let lf = &lf;
             hs.push(sc.spawn(move || {
-                let mut ctx = idx.ctx();
-                let p = s.0;
-                let mut row = row0;
-                let mut pos = pos0;
                 let mut steps = 0u64;
-                while pos != stop {
-                    unsafe {
-                        let o = (row as usize) * SA_ITEM;
-                        std::ptr::copy_nonoverlapping(pos.to_le_bytes().as_ptr(), p.add(o), 5);
+                for &(row0, pos0, stop) in chunk {
+                    let mut row = row0;
+                    let mut pos = pos0;
+                    while pos != stop {
+                        unsafe {
+                            let o = (row as usize) * SA_ITEM;
+                            std::ptr::copy_nonoverlapping(pos.to_le_bytes().as_ptr(), (s as *mut u8).add(o), 5);
+                        }
+                        row = lf(row);
+                        pos = if pos == 0 { n - 1 } else { pos - 1 };
+                        steps += 1;
+                        need(steps <= n, "SA reconstruction: cycle did not reach its breakpoint");
                     }
-                    let (nr, _) = ctx.lf_step(row);
-                    row = nr;
-                    pos = if pos == 0 { n - 1 } else { pos - 1 };
-                    steps += 1;
-                    need(steps <= n, "SA reconstruction: cycle did not reach its breakpoint");
                 }
                 steps
             }));
@@ -904,8 +1178,67 @@ pub fn sa_reconstruct(idx: &qlite::Index, threads: usize) -> (Vec<u8>, u64) {
         }
     }
     need(unset == 0, &format!("SA reconstruction left {unset} of {n} rows unset"));
-    crate::trace_since("ctx.sa-reconstruct", t0);
     (sa, steps_total)
+}
+
+/// Reconstruct the suffix array through the query kernel (one block decode per
+/// step - correct, and only affordable at fixture scale).
+pub fn sa_reconstruct(idx: &qlite::Index, threads: usize) -> (Vec<u8>, u64) {
+    let t0 = std::time::Instant::now();
+    let n = idx.reader.n;
+    need(n < SA_UNSET, "n does not fit the u40 suffix array");
+    let brk = sa_breakpoints(idx, threads);
+    let slots = std::sync::Arc::new(std::sync::Mutex::new(
+        (0..64).map(|_| idx.ctx()).collect::<Vec<_>>(),
+    ));
+    let _ = &slots;
+    // one Ctx per thread, made inside the walk: the kernel's Ctx borrows the index
+    let sa = {
+        // The dense accessor is not used here, so re-run the walk with a per-thread
+        // kernel context.
+        let mut out = vec![0xFFu8; (n as usize) * SA_ITEM];
+        let plan: Vec<(u64, u64, u64)> = (0..brk.len())
+            .map(|j| (brk[j].0, brk[j].1, brk[(j + 1) % brk.len()].1))
+            .collect();
+        let sh = out.as_mut_ptr() as usize;
+        std::thread::scope(|sc| {
+            let mut hs = Vec::new();
+            for &(row0, pos0, stop) in plan.iter() {
+                let s = sh;
+                hs.push(sc.spawn(move || {
+                    let mut cx = idx.ctx();
+                    let mut row = row0;
+                    let mut pos = pos0;
+                    let mut steps = 0u64;
+                    while pos != stop {
+                        unsafe {
+                            let o = (row as usize) * SA_ITEM;
+                            std::ptr::copy_nonoverlapping(pos.to_le_bytes().as_ptr(), (s as *mut u8).add(o), 5);
+                        }
+                        let (nr, _) = cx.lf_step(row);
+                        row = nr;
+                        pos = if pos == 0 { n - 1 } else { pos - 1 };
+                        steps += 1;
+                        need(steps <= n, "SA reconstruction: cycle did not reach its breakpoint");
+                    }
+                    steps
+                }));
+            }
+            for h in hs {
+                h.join().expect("SA reconstruction thread panicked");
+            }
+        });
+        out
+    };
+    let mut unset = 0u64;
+    for i in 0..n {
+        if sa_get(&sa, i) >= n {
+            unset += 1;
+        }
+    }
+    need(unset == 0, &format!("SA reconstruction left {unset} of {n} rows unset"));
+    crate::trace_since("ctx.sa-reconstruct", t0);
+    (sa, n)
 }
 
 // ------------------------------------------------------------------ doc ranks
@@ -913,8 +1246,9 @@ pub fn sa_reconstruct(idx: &qlite::Index, threads: usize) -> (Vec<u8>, u64) {
 /// Documents are runs of bytes delimited by 0x1E, counted on the ORIGINAL corpus
 /// bytes (the container's remap is order preserving, so the SA order is the same
 /// order, but the remap may move 0x1E - so 0x1E is counted on the corpus, never on
-/// the remapped text). One u32 every `DOC_STRIDE` bytes.
-const DOC_STRIDE: usize = 4096;
+/// the remapped text). One u32 every `DOC_STRIDE` bytes; the sweep pays a bounded
+/// SWAR tail scan per row, so the stride is what the pass costs (256 B = 32 words).
+const DOC_STRIDE: usize = 256;
 
 fn count_1e(w: u64) -> u32 {
     // SWAR: bytes equal to 0x1E
@@ -952,16 +1286,27 @@ pub fn doc_ranks(text: &[u8]) -> Vec<u32> {
     out
 }
 
-/// The document id of a text position: the number of 0x1E bytes before it. The
-/// last byte of a document (the 0x1E itself) belongs to that document, so the
-/// rank is taken at `pos + 1`.
+/// The document id of a text position: the number of 0x1E bytes before it, i.e.
+/// the 0x1E span index. This is NOT the shard record count: MEMORY_OPS.md measures
+/// 6,979 internal 0x1E bytes in the first 100 GB of the Pile, so a span split is
+/// 0.043 % finer than a document. Stated, never hidden.
+///
+/// The reference block is DOC_STRIDE bytes, so the tail scan is bounded by that;
+/// it counts 8 bytes at a time (the sweep does this once per row, so a byte loop
+/// here would be the whole cost of the pass).
 #[inline]
 fn doc_of(rank: &[u32], text: &[u8], pos: u64) -> u32 {
-    let b = (pos as usize) / DOC_STRIDE;
+    let p = pos as usize;
+    let b = p / DOC_STRIDE;
     let mut d = rank[b];
-    let start = b * DOC_STRIDE;
-    let mut i = start;
-    while i < pos as usize {
+    let mut i = b * DOC_STRIDE;
+    while i + 8 <= p {
+        let mut w = [0u8; 8];
+        w.copy_from_slice(&text[i..i + 8]);
+        d += count_1e(u64::from_le_bytes(w));
+        i += 8;
+    }
+    while i < p {
         if text[i] == 0x1e {
             d += 1;
         }
@@ -982,13 +1327,132 @@ pub struct BuildArgs {
     pub docs: bool,
     /// stop after this many rows (a fixture-scale check of the pass itself)
     pub limit_rows: Option<u64>,
+    /// decoded m1 block arena (MB): the LF walk is random over runs, so the arena
+    /// IS the speed of the reconstruction. 0 = the query default (64 MB).
+    pub cache_mb: u64,
+    /// keep the reconstructed suffix array here and reuse it (the walk is the cost)
+    pub sa_cache: String,
+    /// store the document summary only for nodes with at least this many
+    /// occurrences (below it `project` answers from seek + the document map)
+    pub docs_min_support: u64,
+    /// decode every run once before the LF walk (build-time memory, 5 B/run)
+    pub dense: bool,
+}
+
+/// `XSA_CTX_SA_PROBE=<steps>`: time a single-threaded LF walk and report its
+/// rate, so the price of the ordered stream is measured, not guessed.
+fn sa_probe(idx: &qlite::Index, steps: u64, stateless: bool) {
+    let n = idx.reader.n;
+    let mut row = 0u64;
+    let (mut pos, mut got) = (0u64, 0u64);
+    let t0 = std::time::Instant::now();
+    if stateless {
+        let arena = std::cell::RefCell::new(qlite::WorkerArena::new(idx).expect("arena"));
+        let mut cx = idx.worker_ctx(&arena);
+        pos = cx.sa_of(row);
+        for _ in 0..steps {
+            let (nr, _) = cx.lf_step(row);
+            row = nr;
+            pos = if pos == 0 { n - 1 } else { pos - 1 };
+            got += 1;
+        }
+        let w = t0.elapsed().as_secs_f64();
+        eprintln!("SA_PROBE stateless steps={got} wall={w:.3}s ns_per_step={:.1} decodes={}",
+            w * 1e9 / got as f64, arena.borrow().decodes);
+    } else {
+        let mut cx = idx.ctx();
+        pos = cx.sa_of(row);
+        for _ in 0..steps {
+            let (nr, _) = cx.lf_step(row);
+            row = nr;
+            pos = if pos == 0 { n - 1 } else { pos - 1 };
+            got += 1;
+        }
+        let w = t0.elapsed().as_secs_f64();
+        eprintln!("SA_PROBE shared steps={got} wall={w:.3}s ns_per_step={:.1}", w * 1e9 / got as f64);
+    }
+}
+
+/// The ordered stream: the suffix array, from the cache if it is there.
+pub fn load_or_build_sa(idx: &qlite::Index, threads: usize, cache: &str, dense_on: bool) -> (Vec<u8>, u64) {
+    let n = idx.reader.n;
+    if !cache.is_empty() {
+        if let Ok(f) = std::fs::File::open(cache) {
+            let len = f.metadata().unwrap().len();
+            need(len == n * SA_ITEM as u64,
+                &format!("SA cache {cache} is {len} bytes, expected n*5 = {}", n * SA_ITEM as u64));
+            let map = unsafe { Mmap::map(&f) }.unwrap_or_else(|e| die(&format!("mmap {cache}: {e}")));
+            eprintln!("SA_CACHE_REUSED path={cache} rows={n}");
+            return (map.to_vec(), 0);
+        }
+    }
+    let t0 = std::time::Instant::now();
+    let (sa, steps) = if dense_on && idx.reader.r > 2_000_000 {
+        // build-time dense columns: one decode pass, then two cache-shaped scans
+        // per LF step instead of a block decode per step
+        let dense = Dense::build(idx, threads);
+        eprintln!("DENSE_RUNS runs={} bytes={} wall={:.1}s",
+            dense.r, dense.bytes(), t0.elapsed().as_secs_f64());
+        let brk = sa_breakpoints(idx, threads);
+        let t1 = std::time::Instant::now();
+        let (sa, steps) = sa_walk(n, brk, threads, |row| dense.lf_step(row));
+        eprintln!("SA_WALK rows={n} steps={steps} wall={:.1}s dense=1", t1.elapsed().as_secs_f64());
+        (sa, steps)
+    } else {
+        sa_reconstruct(idx, threads)
+    };
+    if !cache.is_empty() {
+        let tmp = format!("{cache}.partial");
+        std::fs::write(&tmp, &sa).unwrap_or_else(|e| die(&format!("write {tmp}: {e}")));
+        std::fs::rename(&tmp, cache).unwrap_or_else(|e| die(&format!("rename {tmp}: {e}")));
+        eprintln!("SA_CACHE_WRITTEN path={cache} rows={n} bytes={}", sa.len());
+    }
+    (sa, steps)
+}
+
+/// One ordered sweep -> one member payload.
+pub fn sweep(
+    sa: &[u8],
+    text: &[u8],
+    ranks: &[u32],
+    corpus_len: u64,
+    n: u64,
+    rows: u64,
+    depth: usize,
+    min_support: u64,
+    docs: bool,
+    docs_min_support: u64,
+) -> (Vec<u8>, u64, [u64; TRIE_SECTIONS]) {
+    let mut b = Builder::new(depth, min_support, docs_min_support);
+    let dmax = depth as u64 + 1;
+    let mut buf = [0u8; 128];
+    let mut reads = 0u64;
+    for row in 0..rows {
+        let pos = sa_get(sa, row);
+        need(pos <= corpus_len, "suffix array position");
+        let rem = corpus_len - pos;
+        let m = rem.min(dmax) as usize;
+        if m > 0 {
+            let p = pos as usize;
+            buf[..m].copy_from_slice(&text[p..p + m]);
+            reads += 1;
+        }
+        let doc = if docs && m > 0 && !ranks.is_empty() { doc_of(ranks, text, pos) } else { 0 };
+        b.feed(&buf, rem, doc);
+    }
+    let (payload, cols) = b.finish(n, corpus_len);
+    (payload, reads, cols)
 }
 
 pub fn build(a: &BuildArgs) {
     let t_all = std::time::Instant::now();
     let reader = qlite::Reader::open(&a.sxi).unwrap_or_else(|e| die(&format!("ctx-build: {e}")));
-    let idx = qlite::Index::open(reader, a.threads)
-        .unwrap_or_else(|e| die(&format!("ctx-build: {e}")));
+    let idx = if a.cache_mb > 0 {
+        qlite::Index::open_with_cache(reader, a.threads, (a.cache_mb << 20) as usize)
+    } else {
+        qlite::Index::open(reader, a.threads)
+    }
+    .unwrap_or_else(|e| die(&format!("ctx-build: {e}")));
     let n = idx.reader.n;
     let tfile = std::fs::File::open(&a.text).unwrap_or_else(|e| die(&format!("open {}: {e}", a.text)));
     let flen = tfile.metadata().unwrap().len();
@@ -998,9 +1462,16 @@ pub fn build(a: &BuildArgs) {
     let corpus_len = flen;
     let rows = a.limit_rows.unwrap_or(n).min(n);
 
-    // 1. the ordered stream: the suffix array, from one parallel LF cycle.
+    if let Ok(v) = std::env::var("XSA_CTX_SA_PROBE") {
+        let steps: u64 = v.parse().unwrap_or_else(|_| die("XSA_CTX_SA_PROBE: integer"));
+        sa_probe(&idx, steps, std::env::var("XSA_CTX_SA_STATELESS").is_ok());
+        return;
+    }
+    // 1. the ordered stream: the suffix array, from one parallel LF cycle (or from
+    //    the cache a previous run wrote - the walk is the expensive part, the sweep
+    //    is cheap, and the curve needs many sweeps of one stream).
     let t_sa = std::time::Instant::now();
-    let (sa, sa_steps) = sa_reconstruct(&idx, a.threads);
+    let (sa, sa_steps) = load_or_build_sa(&idx, a.threads, &a.sa_cache, a.dense);
     let sa_wall = t_sa.elapsed().as_secs_f64();
 
     // 2. document ranks (original bytes)
@@ -1010,38 +1481,27 @@ pub fn build(a: &BuildArgs) {
 
     // 3. the sweep
     let t_sweep = std::time::Instant::now();
-    let mut b = Builder::new(a.depth, a.min_support);
-    let dmax = a.depth as u64 + 1;
-    let mut buf = [0u8; 128];
-    let mut reads = 0u64;
-    for row in 0..rows {
-        let pos = sa_get(&sa, row);
-        need(pos < n, "suffix array position");
-        let rem = if pos >= corpus_len { 0 } else { corpus_len - pos };
-        let m = rem.min(dmax) as usize;
-        if m > 0 {
-            let p = pos as usize;
-            buf[..m].copy_from_slice(&text[p..p + m]);
-            reads += 1;
-        }
-        let doc = if a.docs && a.min_support < u64::MAX {
-            if m > 0 { doc_of(&ranks, &text, pos) } else { 0 }
-        } else {
-            0
-        };
-        b.feed(&buf, rem, doc);
-    }
-    let payload = b.finish(n, corpus_len);
+    let (payload, reads, cols) = sweep(&sa, &text, &ranks, corpus_len, n, rows, a.depth, a.min_support, a.docs, a.docs_min_support);
     let sweep_wall = t_sweep.elapsed().as_secs_f64();
 
     // 4. write the container: the old members, then m20, then a v9 directory.
     let (bytes, member_off) = write_container(&a.sxi, &a.out, &payload, n, &idx.reader);
-    let ratio = bytes as f64 / n as f64;
+    // the BUDGET is the member, not the container: m20 on top of an existing index
+    let ratio = member_off as f64 / n as f64;
     let trie = Trie::load(&payload);
     eprintln!(
         "CONTEXT_TRIE depth={} min_support={} nodes={} edges={} bytes={} ratio_vs_n={:.6} docs_summary=exact<=8+hll13pct",
         trie.depth, trie.min_support, trie.nodes, trie.edges, member_off, ratio
     );
+    let bn = member_off as f64 / trie.nodes.max(1) as f64;
+    let be = member_off as f64 / trie.edges.max(1) as f64;
+    eprintln!(
+        "CONTEXT_TRIE_COLUMNS node_fixed={} node_edge_delta={} node_count={} edge_code={} edge_child={} \
+         edge_count={} doc_ndocs={} doc_top={} doc_first={} doc_ids={} head={HEAD} bytes_per_node={bn:.1} bytes_per_edge={be:.1}",
+        cols[0], cols[1], cols[2], cols[3], cols[4], cols[5], cols[6], cols[7], cols[8], cols[9]
+    );
+    let pass = ratio <= 0.05;
+    eprintln!("CONTEXT_TRIE_BUDGET ratio_vs_n={ratio:.6} target<=0.05 pass={}", u8::from(pass));
     eprintln!(
         "CONTEXT_TRIE_BUILD rows={rows} sa_steps={sa_steps} sa_wall={sa_wall:.1}s doc_wall={doc_wall:.1}s \
          sweep_wall={sweep_wall:.1}s prefix_reads={reads} total_wall={:.1}s threads={} container_out={bytes} member_off={member_off}",
@@ -1218,11 +1678,15 @@ pub fn command(cmd: &str, args: &[String]) {
                 sxi: String::new(),
                 text: String::new(),
                 out: String::new(),
-                depth: 16,
-                min_support: 10_000,
+                depth: 8,
+                min_support: 1_000,
                 threads: 16,
                 docs: true,
                 limit_rows: None,
+                cache_mb: 0,
+                sa_cache: String::new(),
+                docs_min_support: 1000,
+                dense: true,
             };
             let mut i = 0;
             while i < args.len() {
@@ -1240,10 +1704,17 @@ pub fn command(cmd: &str, args: &[String]) {
                         a.min_support = val("--min-support").parse().unwrap_or_else(|_| die("--min-support: integer"))
                     }
                     "--threads" => a.threads = val("--threads").parse().unwrap_or_else(|_| die("--threads: integer")),
+                    "--cache-mb" => a.cache_mb = val("--cache-mb").parse().unwrap_or_else(|_| die("--cache-mb: integer")),
+                    "--sa-cache" => a.sa_cache = val("--sa-cache"),
+                    "--docs-min-support" => {
+                        a.docs_min_support = val("--docs-min-support").parse().unwrap_or_else(|_| die("--docs-min-support: integer"))
+                    }
                     "--rows" => {
                         a.limit_rows = Some(val("--rows").parse().unwrap_or_else(|_| die("--rows: integer")))
                     }
                     "--no-docs" => a.docs = false,
+                    "--dense" => a.dense = true,
+                    "--no-dense" => a.dense = false,
                     other => die(&format!("ctx-build: unknown option {other}")),
                 }
                 i += 1;
@@ -1285,6 +1756,21 @@ pub fn command(cmd: &str, args: &[String]) {
                 }
             }
         }
+        "relax" => {
+            need(args.len() == 2, "usage: xsa relax <container> <context>   (descend as far as the trie supports it)");
+            let reader = open_reader(&args[0]);
+            let pat = parse_context(&args[1]);
+            let trie = load_trie(&reader);
+            let (node, reached) = trie.descend(&pat);
+            let st = trie.stat(node);
+            println!("reached_depth={reached} asked={} count={} documents={} children={}",
+                pat.len(), st.count, st.ndocs, st.children.len());
+            for c in &st.children {
+                println!("child {} count={} node={}", c.label(), c.count,
+                    c.node.map_or("-".to_string(), |n| n.to_string()));
+            }
+        }
+        "relax-stat" => relax_stat(args),
         "trie-info" => {
             need(args.len() == 1, "usage: xsa trie-info <container>");
             let reader = open_reader(&args[0]);
@@ -1294,6 +1780,7 @@ pub fn command(cmd: &str, args: &[String]) {
                 trie.depth, trie.min_support, trie.nodes, trie.edges, m.len(),
                 m.len() as f64 / trie.n as f64, trie.n);
         }
+        "ctx-curve" => curve(args),
         "ctx-verify" => verify(args),
         "ctx-selftest" => selftest(),
         other => die(&format!("ctx: unknown command {other}")),
@@ -1314,6 +1801,7 @@ fn verify(args: &[String]) {
     let mut samples = 50usize;
     let mut seed = 20261110u64;
     let mut given: Vec<String> = Vec::new();
+    let mut sample_nodes = 0usize;
     let mut i = 0;
     while i < args.len() {
         let f = args[i].as_str();
@@ -1327,6 +1815,7 @@ fn verify(args: &[String]) {
             "--samples" => samples = val("--samples").parse().unwrap_or_else(|_| die("--samples: integer")),
             "--seed" => seed = val("--seed").parse().unwrap_or_else(|_| die("--seed: integer")),
             "--context" => given.push(val("--context")),
+            "--sample-nodes" => sample_nodes = val("--sample-nodes").parse().unwrap_or_else(|_| die("--sample-nodes")),
             other => die(&format!("ctx-verify: unknown option {other}")),
         }
         i += 1;
@@ -1344,12 +1833,13 @@ fn verify(args: &[String]) {
     let d = trie.depth as usize;
     let mut st = seed | 1;
     let mut ctxs: Vec<(usize, Vec<u8>)> = Vec::new();
-    for g in given {
+    let have_given = !given.is_empty();
+    for g in given.clone() {
         let c = parse_context(&g);
         let p = find_once(&corpus, &c).unwrap_or_else(|| die(&format!("--context not present in the corpus")));
         ctxs.push((p, c));
     }
-    while ctxs.len() < samples {
+    while ctxs.len() < samples && !have_given && sample_nodes == 0 {
         st ^= st << 13;
         st ^= st >> 7;
         st ^= st << 17;
@@ -1359,6 +1849,43 @@ fn verify(args: &[String]) {
             continue;
         }
         ctxs.push((p, c));
+    }
+    // contexts that the TRIE ITSELF claims to have: sampled from the node store by
+    // reconstructing each node's path from the parent links. These are the ones
+    // whose child histograms can actually disagree - a random 16-byte context is
+    // usually below support, which tests the absence flag, not the counts.
+    if sample_nodes > 0 {
+        let nodes = trie.nodes as usize;
+        let mut parent = vec![u32::MAX; nodes];
+        let mut pbyte = vec![0u16; nodes];
+        for n in 0..nodes as u32 {
+            let (_, nch, _) = trie.node(n);
+            let first = trie.first_edge(n);
+            for k in 0..nch as u32 {
+                if let Some(ch) = trie.edge_at(n, k as usize).node {
+                    parent[ch as usize] = n;
+                    pbyte[ch as usize] = trie.edge_at(n, k as usize).code;
+                }
+                let _ = first;
+            }
+        }
+        let mut cand: Vec<u32> = (0..nodes as u32).filter(|&n| trie.node_depth(n) >= 2).collect();
+        need(!cand.is_empty(), "no node with depth >= 2 to sample");
+        let stride = (cand.len() / sample_nodes).max(1);
+        cand.sort_unstable();
+        for n in cand.iter().step_by(stride).take(sample_nodes) {
+            let mut path = Vec::new();
+            let mut cur = *n;
+            while cur != trie.root() {
+                let par = parent[cur as usize];
+                need(par != u32::MAX, "node without a parent");
+                path.push((pbyte[cur as usize] - 1) as u8);
+                cur = par;
+            }
+            path.reverse();
+            need(!path.is_empty(), "empty node path");
+            ctxs.push((0usize, path));
+        }
     }
     let ctxs: Vec<Vec<u8>> = ctxs.into_iter().map(|(_, c)| c).collect();
 
@@ -1454,6 +1981,132 @@ fn verify(args: &[String]) {
     if mism > 0 {
         die(&format!("CONTEXT_TRIE: {mism} of {} contexts disagree with the brute-force histogram", ctxs.len()));
     }
+}
+
+/// THE PARAMETER CURVE: how big is the top of the tree, really, as a function of
+/// depth D and minimum support K. One ordered stream, one sweep per cell, exact
+/// serialised bytes per cell (the payload the writer would emit, not an estimate).
+fn curve(args: &[String]) {
+    let mut sxi = String::new();
+    let mut text = String::new();
+    let mut cache = String::new();
+    let mut depths: Vec<usize> = vec![4, 8, 16];
+    let mut supports: Vec<u64> = vec![10, 100, 1000, 10000];
+    let mut docs = true;
+    let mut docs_min_support = 1000u64;
+    let mut threads = 24usize;
+    let mut cache_mb = 0u64;
+    let mut dense = true;
+    let mut i = 0;
+    while i < args.len() {
+        let f = args[i].as_str();
+        let mut val = |what: &str| -> String {
+            i += 1;
+            match args.get(i) { Some(v) => v.clone(), None => die(&format!("{what} needs a value")) }
+        };
+        match f {
+            "--sxi" => sxi = val("--sxi"),
+            "--text" => text = val("--text"),
+            "--sa-cache" => cache = val("--sa-cache"),
+            "--depths" => depths = val("--depths").split(',').map(|x| x.parse().unwrap_or_else(|_| die("--depths"))).collect(),
+            "--supports" => supports = val("--supports").split(',').map(|x| x.parse().unwrap_or_else(|_| die("--supports"))).collect(),
+            "--threads" => threads = val("--threads").parse().unwrap_or_else(|_| die("--threads")),
+            "--cache-mb" => cache_mb = val("--cache-mb").parse().unwrap_or_else(|_| die("--cache-mb")),
+            "--no-docs" => docs = false,
+            "--no-dense" => dense = false,
+            "--docs-min-support" => docs_min_support = val("--docs-min-support").parse().unwrap_or_else(|_| die("--docs-min-support")),
+            other => die(&format!("ctx-curve: unknown option {other}")),
+        }
+        i += 1;
+    }
+    let reader = qlite::Reader::open(&sxi).unwrap_or_else(|e| die(&format!("ctx-curve: {e}")));
+    let idx = if cache_mb > 0 {
+        qlite::Index::open_with_cache(reader, threads, (cache_mb << 20) as usize)
+    } else {
+        qlite::Index::open(reader, threads)
+    }
+    .unwrap_or_else(|e| die(&format!("ctx-curve: {e}")));
+    let n = idx.reader.n;
+    let tfile = std::fs::File::open(&text).unwrap_or_else(|e| die(&format!("open {text}: {e}")));
+    let flen = tfile.metadata().unwrap().len();
+    need(flen + 1 == n, "corpus length + 1 != n");
+    let corpus = unsafe { Mmap::map(&tfile) }.unwrap_or_else(|e| die(&format!("mmap {text}: {e}")));
+    let ranks = if docs { doc_ranks(&corpus) } else { Vec::new() };
+    let (sa, _) = load_or_build_sa(&idx, threads, &cache, dense);
+    println!("CONTEXT_TRIE_CURVE n={n} corpus_bytes={flen} docs_summary={}", if docs { "exact<=8+hll13pct" } else { "none" });
+    for &d in &depths {
+        for &k in &supports {
+            let t0 = std::time::Instant::now();
+            let (payload, _, cols) = sweep(&sa, &corpus, &ranks, flen, n, n, d, k, docs, docs_min_support);
+            let trie = Trie::load(&payload);
+            let ratio = payload.len() as f64 / n as f64;
+            let per_node = payload.len() as f64 / trie.nodes.max(1) as f64;
+            println!(
+                "CONTEXT_TRIE_CELL depth={d} min_support={k} nodes={} edges={} bytes={} ratio_vs_n={ratio:.6} bytes_per_node={per_node:.1} sweep_wall={:.1}s",
+                trie.nodes, trie.edges, payload.len(), t0.elapsed().as_secs_f64()
+            );
+        }
+    }
+}
+
+/// THE DESIGN JUSTIFICATION: over N random positions, how deep does the descent
+/// actually get, and how much support does the answer carry. The context of a
+/// position is the `--ctx-len` bytes that precede it (the CONTEXT_DEPTH.md
+/// orientation: Q = corpus[p-L:p], excluding corpus[p]).
+fn relax_stat(args: &[String]) {
+    let mut sxi = String::new();
+    let mut text = String::new();
+    let mut samples = 1000usize;
+    let mut ctx_len = 16usize;
+    let mut seed = 20261110u64;
+    let mut i = 0;
+    while i < args.len() {
+        let f = args[i].as_str();
+        let mut val = |what: &str| -> String {
+            i += 1;
+            match args.get(i) { Some(v) => v.clone(), None => die(&format!("{what} needs a value")) }
+        };
+        match f {
+            "--sxi" => sxi = val("--sxi"),
+            "--text" => text = val("--text"),
+            "--samples" => samples = val("--samples").parse().unwrap_or_else(|_| die("--samples")),
+            "--ctx-len" => ctx_len = val("--ctx-len").parse().unwrap_or_else(|_| die("--ctx-len")),
+            "--seed" => seed = val("--seed").parse().unwrap_or_else(|_| die("--seed")),
+            other => die(&format!("relax-stat: unknown option {other}")),
+        }
+        i += 1;
+    }
+    let reader = open_reader(&sxi);
+    let trie = load_trie(&reader);
+    let tf = std::fs::File::open(&text).unwrap_or_else(|e| die(&format!("open {text}: {e}")));
+    let corpus = unsafe { Mmap::map(&tf) }.unwrap_or_else(|e| die(&format!("mmap {text}: {e}")));
+    let clen = corpus.len();
+    let mut hist = vec![0u64; trie.depth as usize + 1];
+    let mut counts: Vec<u64> = Vec::new();
+    let mut st = seed | 1;
+    let mut us = Vec::new();
+    for _ in 0..samples {
+        st ^= st << 13;
+        st ^= st >> 7;
+        st ^= st << 17;
+        let p = ctx_len + (st % (clen as u64 - ctx_len as u64 - 1)) as usize;
+        let ctx = &corpus[p - ctx_len..p];
+        let t0 = std::time::Instant::now();
+        let (node, reached) = trie.descend(ctx);
+        us.push(t0.elapsed().as_nanos() as f64 / 1000.0);
+        hist[reached] += 1;
+        counts.push(trie.count(node));
+    }
+    counts.sort_unstable();
+    us.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let pct = |v: &Vec<f64>, q: f64| v[((v.len() as f64 - 1.0) * q) as usize];
+    print!("RELAX_STAT samples={samples} ctx_len={ctx_len} depth={} reached_hist=", trie.depth);
+    for (d, &c) in hist.iter().enumerate() {
+        print!("{d}:{c}{}", if d + 1 < hist.len() { " " } else { "\n" });
+    }
+    println!("RELAX_SUPPORT median_count={} p10_count={} us_p50={:.2} us_p99={:.2} us_max={:.2}",
+        counts[counts.len() / 2], counts[counts.len() / 10],
+        pct(&us, 0.50), pct(&us, 0.99), us[us.len() - 1]);
 }
 
 fn hex(v: &[u8]) -> String {
@@ -1583,7 +2236,7 @@ pub fn selftest() {
         for &depth in &[1usize, 2, 3, 5, 8, 32] {
             for &k in &[1u64, 2, 3, 1000] {
                 let order = suffix_order(t);
-                let mut b = Builder::new(depth, k);
+                let mut b = Builder::new(depth, k, 0);
                 let mut buf = vec![0u8; depth + 1];
                 for &p in &order {
                     let p = p as usize;
@@ -1592,14 +2245,22 @@ pub fn selftest() {
                     buf[..m].copy_from_slice(&t[p..p + m]);
                     b.feed(&buf, rem, 0);
                 }
-                let payload = b.finish(t.len() as u64 + 1, t.len() as u64);
+                let (payload, _) = b.finish(t.len() as u64 + 1, t.len() as u64);
                 let trie = Trie::load(&payload);
                 need(trie.count(trie.root()) == t.len() as u64 + 1, "root count must be n");
                 let want = reference(t, depth, k);
                 for (c, (count, hist)) in want.iter() {
-                    let node = trie.find(c).unwrap_or_else(|| {
-                        die(&format!("selftest: context {:?} (len {}) missing from the trie (len={} depth={depth} k={k})", c, c.len(), t.len()))
-                    });
+                    let node = match trie.find(c) {
+                        Some(n) => n,
+                        None => {
+                            let r = trie.root();
+                            let st = trie.stat(r);
+                            let kids: Vec<String> = st.children.iter()
+                                .map(|x| format!("{}({},{:?})", x.label(), x.count, x.node)).collect();
+                            die(&format!("selftest: context {:?} (len {}) missing; root count={} kids={:?} nodes={} t={:?} d={depth} k={k}",
+                                c, c.len(), st.count, kids, trie.nodes, String::from_utf8_lossy(t)));
+                        }
+                    };
                     let st = trie.stat(node);
                     let got: Vec<(u16, u64)> = st.children.iter().map(|x| (x.code, x.count)).collect();
                     need(st.count == *count && &got == hist,
