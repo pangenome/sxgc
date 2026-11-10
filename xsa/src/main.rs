@@ -19,6 +19,7 @@ mod plan;
 mod product;
 mod forks;
 mod corpus;
+mod pilemap;
 
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
@@ -1423,6 +1424,12 @@ fn usage() -> ! {
     eprintln!("  xsa corpus --wikipedia <dump.xml.bz2|-> --out DIR [--separator 0x1e|none]");
     eprintln!("           one streaming pass -> corpus.bin (\"<title>\\n<body>\\x1E\" per doc), seps.bin");
     eprintln!("           (u32 start deltas + every-64th u64 anchor), titles.bin, MANIFEST.json");
+    eprintln!("  xsa corpus --pile-map --out DIR [--pile FILE] [--shards DIR] [--limit-bytes N]");
+    eprintln!("           document map for pile.txt: seps.bin (XSEP v1), titles.bin (the");
+    eprintln!("           pile_set_name column) and meta.bin (offset, length, shard, record, set");
+    eprintln!("           name, internal 0x1E); every document is checked against the pile bytes");
+    eprintln!("  xsa corpus --pile-verify --map DIR [--samples N]");
+    eprintln!("           re-extract sampled documents from their shard records and compare");
     eprintln!("  xsa query-legacy ...   DEPRECATED phi-era reader (archived harnesses only)");
     eprintln!("           --ms: matching-statistics length vector per read (binary)");
     eprintln!();
