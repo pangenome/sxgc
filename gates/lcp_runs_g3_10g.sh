@@ -43,6 +43,17 @@ grep -E "^LCP_OPEN|^LCP_AUDIT|^LCP_ACCESS" "$D/lcp_probe.log"
 [ $rc = 0 ] || { echo "FAIL: xsa lcp exited $rc"; fail=1; }
 grep -q "tiling=exact escape_lists=sorted" "$D/lcp_probe.log" || { echo "FAIL: m14 audit"; fail=1; }
 
+# ---- THE m14-ON ARM AT SCALE: 50+ stored values against brute force.
+timeout 3600 "$X" lcp-verify "$C" --corpus "$CORPUS" --sample 50 --deep 50 \
+    --deep-windows 64 --seed 11 >"$D/verify.log" 2>&1
+rc=$?
+grep -E "^LCP_VERIFY_DEEP |^LCP_VERIFY n=|^LCP_MISMATCH" "$D/verify.log"
+[ $rc = 0 ] || { echo "FAIL: lcp-verify exited $rc"; tail -3 "$D/verify.log"; fail=1; }
+VN=$(grep -oE "^LCP_VERIFY n=[0-9]+" "$D/verify.log" | tr -dc 0-9)
+VM=$(grep -oE "mismatches=[0-9]+" "$D/verify.log" | tr -dc 0-9)
+[ "${VN:-0}" -ge 50 ] || { echo "FAIL: only ${VN:-0} runs verified"; fail=1; }
+[ "${VM:-1}" = 0 ] || { echo "FAIL: $VM mismatches"; fail=1; }
+
 timeout 900 "$X" query "$C" --limit 3 " function " >"$D/query.out" 2>"$D/query.log"
 grep -E "QLITE_OPEN|QUERY_DONE" "$D/query.log"
 grep -q "version=8" "$D/query.log" || { echo "FAIL: reader did not open v8"; fail=1; }

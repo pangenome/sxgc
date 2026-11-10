@@ -79,6 +79,46 @@ building the same corpus with `--no-lcp-runs` (or `XSA_LCP_RUNS=0`) yields v7 wi
 all 8 other members byte-identical (measured at 150 MB, sha per member). A container
 without m14 is refused **by name** by `xsa lcp`, never answered around.
 
+## What m14 uniquely enables (and what it does NOT)
+
+m14 is **opt-in**: `xsa build --tape --with-lcp-runs`. The default arm writes the
+v7 layout with no m14, and `xsa lcp` refuses such a container **by name**.
+
+The operations design (MEMORY_OPS.md) answers contexts from two backends: a
+support-bounded context **trie** (a lookup, no scan) for WIDE contexts, and
+`seek` + SA **locate-and-scan** (cost O(width)) for NARROW ones. m14 buys the third
+thing: **LCP-interval topology** — a node's depth, its children's delimiters, MEM
+and interior enumeration — i.e. the middle of that split, plus the ability to walk
+a node's interval when you deliberately want every occurrence in order.
+
+How thick is that middle band? Measured on the 10 GB Pile slice: 1000 byte-weighted
+contexts per depth (the CONTEXT_DEPTH.md shape, seed 20261110), each context's
+occurrence count taken from the container's own `xsa query --count`:
+
+| depth | median width | w==1 | 2..999 | 1e3..1e5 | 1e5..1e6 | >=1e6 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 8  | 2,815 | 4.3 % | 36.1 % | 45.7 % | 11.3 % | 2.5 % |
+| 16 | 3     | 39.9 % | 53.8 % | 5.1 % | 0.0 % | 1.1 % |
+| 24 | 1     | 73.8 % | 24.6 % | 0.9 % | 0.1 % | 0.5 % |
+| 32 | 1     | 85.7 % | 13.6 % | 0.4 % | 0.0 % | 0.2 % |
+
+At the depths where the information actually lives (16..32 bytes) the middle band
+is **0.4..5.1 %** of contexts, the wide tail (>=1e6) is 0.2..1.1 % and the narrow
+bulk is handled by locate-and-scan. A support-bounded trie at depth 8 / support
+1000 covers 59.6 % of positions directly for 0.062 n. So m14 is a **quarter of `n`
+spent on a thin band**: a deliberate, opt-in purchase, not a default tax.
+
+When to turn it on: (a) you want node depths/child counts from the artifact rather
+than from a fresh sweep; (b) you want MEM/interior enumeration with exact interval
+bounds; (c) you know your workload sits in 1e3..1e6-occurrence contexts at shallow
+depth (the depth-8 row above is the one place that band is thick).
+
+**What it does not give you, stated plainly:** children at the TOP of the tree
+cannot be enumerated by scanning, because those intervals are billions of rows
+wide; they must be materialised (the trie lane builds them from the ordered sweep).
+And the member is run-granular, so a child boundary that falls strictly INSIDE a run
+is not in it. At the top of the tree that is exactly why the trie exists.
+
 ## Depth: what the member costs, and what a depth-limited form would save
 
 The member stores LCP at FULL depth (exact u64). The tree operations we want are
@@ -110,9 +150,12 @@ deleting the ability to tell a depth-64 node from a deeper one. **Keep it exact.
 
 | corpus | container | runs | m14 bytes | ratio vs u32 | bits/run | wall |
 |---|---|---|---|---|---|---|
-| 150 MB `t150m.txt` | 159,336,688 B v8 | 57,279,194 | 40,445,560 | 0.176528 | 5.65 | see `gates/lcp_runs_g1_150m.sh` |
-| 10 GB `pf-10gb.txt` | 9,560,930,192 B v8 | 3,474,883,891 | 2,556,383,072 | 0.183919 | 5.89 | finish 29:24, total 29:44 |
-| 100 GB `pile-head100.txt` | `gates/lcp_runs_g4_100g.sh` | | | | | |
+| arm | container | runs | m14 bytes | ratio vs u32 | bits/run | wall |
+|---|---|---|---|---|---|---|
+| 150 MB, **default (no m14)** | 118,891,088 B v7 | 57,279,194 | 0 | - | - | 97 s |
+| 150 MB, `--with-lcp-runs` | 159,336,688 B v8 | 57,279,194 | 40,445,560 | 0.176528 | 5.65 | 92 s |
+| 10 GB, `--with-lcp-runs` | 9,560,930,192 B v8 | 3,474,883,891 | 2,556,383,072 | 0.183919 | 5.89 | finish 29:24, total 29:44 |
+| 100 GB, **default (no m14)** | see `gates/lcp_runs_g4_100g.sh` | 31,381,597,694 (projected) | 0 | - | - | |
 
 Gates: `gates/lcp_runs_g1_150m.sh` (build + oracle + additivity),
 `gates/lcp_runs_g2_verify.sh` (the 124-value correctness gate),
