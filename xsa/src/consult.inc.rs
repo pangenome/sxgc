@@ -483,12 +483,15 @@ impl ConsultCorpus {
             None => false,
         };
         if !inside {
-            if let Some((moff, mlen, map)) = self.cur.take() {
-                // bleed the retired window off before dropping it
+            if let Some((_moff, mlen, map)) = self.cur.take() {
+                // Bleed the retired window off before dropping it. The advice
+                // range is INSIDE THIS MAPPING (offset 0 = the file offset the
+                // mapping started at), never the file offset: advising a file
+                // offset here is an out-of-range madvise and aborts the process.
                 let _ = unsafe {
                     map.unchecked_advise_range(
                         memmap2::UncheckedAdvice::DontNeed,
-                        moff as usize,
+                        0,
                         mlen as usize,
                     )
                 };
@@ -693,6 +696,10 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
     let mut binary = false;
     let mut verify_prefix = true;
     let mut strict = std::env::var("XSA_CONSULT_STRICT").ok().as_deref() == Some("1");
+    // THE SEPARATOR CUT (their verified spine rule): a 0x1E inside the spine cuts
+    // the context at that separator, so a consultation context never spans two
+    // documents (c14_branch_serve.select: `s.rsplit(b'\x1e', 1)[-1][-1024:]`).
+    let mut sep_cut = true;
     let mut i = 0usize;
     while i < args.len() {
         let a = args[i].as_str();
@@ -745,6 +752,8 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
             "--bin" | "--binary" => binary = true,
             "--jsonl" => binary = false,
             "--no-verify-prefix" => verify_prefix = false,
+            "--no-sep-cut" => sep_cut = false,
+            "--sep-cut" => sep_cut = true,
             "--strict" => strict = true,
             other => {
                 if other.starts_with('-') {
@@ -935,11 +944,11 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
     // arena (anonymous, fixed, never dropped) and the resident set of the
     // container mapping (page-cache backed, droppable by the governor). A
     // cache-build walks a dense set of BWT rows, so the arena earns its share;
-    // it is a quarter of the budget by default and can be pinned with
+    // it is an EIGHTH of the budget by default and can be pinned with
     // --cache-gb. Whatever it is, it is FIXED at open: `decoded_bytes` stays 0.
     let arena_bytes = match cache_gb {
         Some(g) => (g * (1u64 << 30) as f64) as usize,
-        None => (cap_bytes / 4) as usize,
+        None => (cap_bytes / 8) as usize,
     }
     .clamp(4 << 20, 64usize << 30);
     let mut index =
@@ -947,13 +956,36 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
     index.set_rss_cap(cap_bytes);
     let cand = Candidates::of(&index);
     let mut corpus = ConsultCorpus::open(&corpus_path);
-    let corpus_len = corpus.len;
+    // THE TEXT IS THE CONTAINER'S TEXT, NOT THE FILE'S LENGTH. A container built
+    // over a PREFIX of a bigger file (the pile's head-100 GB container is the
+    // first 100e9 bytes of a 1.3 TB pile.txt) declares its text length as n-1 -
+    // one virtual END is appended - so positions are bounded by that, and the EOF
+    // test is taken against ITS last byte, never against whatever else the corpus
+    // file happens to contain after it.
+    if index_n < 2 {
+        die(&format!("consult: container declares n={index_n}, so its text is empty"));
+    }
+    let text_len = index_n - 1;
+    if corpus.len < text_len {
+        die(&format!(
+            "consult: corpus {} is {} bytes but the container's text is {text_len} bytes; the \
+             context bytes of a position are corpus bytes, so the corpus must contain them all",
+            corpus_path, corpus.len
+        ));
+    }
+    if corpus.len > text_len {
+        eprintln!(
+            "CONSULT_NOTE corpus_longer_than_text corpus_bytes={} container_text_bytes={text_len} \
+             (only the container's text is addressable)",
+            corpus.len
+        );
+    }
     // The structural END can only ever follow a context that IS a suffix of the
-    // text, so the EOF flag is decided by a comparison against the last
-    // CTX_MAX bytes. Read once: it is a fixed 1 KB, not a per-position read.
-    let mut corpus_tail = vec![0u8; (corpus_len.min(u64::from(CTX_MAX))) as usize];
+    // text, so the EOF flag is decided by a comparison against the text's last
+    // CTX_MAX bytes. Read once: a fixed 1 KB, not a per-position read.
+    let mut corpus_tail = vec![0u8; (text_len.min(u64::from(CTX_MAX))) as usize];
     if !corpus_tail.is_empty() {
-        corpus.read_into(corpus_len - corpus_tail.len() as u64, &mut corpus_tail);
+        corpus.read_into(text_len - corpus_tail.len() as u64, &mut corpus_tail);
     }
 
     let mut src = WindowSource::open(&windows_path, binary);
@@ -965,15 +997,16 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
     if start.seq == 0 {
         journal.line(&format!(
             "CONSULT_OPEN container={} container_bytes={} index_n={} index_r={} corpus={} \
-             corpus_bytes={} output={} format=rows version={} jobs={} rss_cap_bytes={} cap_gb={} \
+             corpus_bytes={} text_bytes={} output={} format=rows version={} jobs={} rss_cap_bytes={} cap_gb={} \
              chunk_rows={} left_default={} windows={} windows_bytes={} windows_format={} \
-             batch_positions={} arena_bytes={} cache_bytes={} index_rss_cap_bytes={}",
+             batch_positions={} arena_bytes={} cache_bytes={} index_rss_cap_bytes={} sep_cut={}",
             container,
             std::fs::metadata(&container).map(|m| m.len()).unwrap_or(0),
             index_n,
             index_r,
             corpus_path,
-            corpus_len,
+            corpus.len,
+            text_len,
             output,
             CONSULT_VERSION,
             jobs,
@@ -988,6 +1021,7 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
             arena_bytes,
             index.cache_bytes(),
             index.rss_cap(),
+            u8::from(sep_cut),
         ));
     }
     eprintln!(
@@ -1221,6 +1255,7 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
         let mut throttled_ms = 0u64;
         let mut last_rss = Instant::now() - std::time::Duration::from_secs(10);
         let mut bytes_read = 0u64;
+        let mut sep_empty = 0u64;
         loop {
             let mut batch = ConsultBatch {
                 seq0,
@@ -1237,11 +1272,11 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
                     match src.next() {
                         Some(w) => {
                             let after = src.cursor();
-                            if w.base > corpus_len {
+                            if w.base > text_len {
                                 die(&format!(
-                                    "consult: window doc={} base={} is past the end of the corpus \
-                                     ({} bytes)",
-                                    w.doc, w.base, corpus_len
+                                    "consult: window doc={} base={} is past the end of the \
+                                     container's text ({text_len} bytes)",
+                                    w.doc, w.base
                                 ));
                             }
                             if w.len == 0 {
@@ -1258,11 +1293,11 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
                 let (w, k, after) = cur.unwrap();
                 let docpos = w.start.saturating_add(k);
                 let off = w.base.saturating_add(docpos);
-                if off >= corpus_len {
+                if off >= text_len {
                     die(&format!(
-                        "consult: window doc={} base={} start={} len={} names position {} past the \
-                         end of the corpus ({} bytes)",
-                        w.doc, w.base, w.start, w.len, off, corpus_len
+                        "consult: window doc={} base={} start={} len={} names position {off} at or \
+                         past the end of the container's text ({text_len} bytes)",
+                        w.doc, w.base, w.start, w.len
                     ));
                 }
                 // LEFT CONTEXT: the last min(left, 1024) bytes BEFORE the
@@ -1275,7 +1310,7 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
                 };
                 let avail = off - w.base;
                 let want = avail.min(u64::from(left));
-                let ctx_len = want as usize;
+                let mut ctx_len = want as usize;
                 let ctx_off = batch.bytes.len() as u32;
                 if ctx_len > 0 {
                     let at = batch.bytes.len();
@@ -1283,10 +1318,25 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
                     corpus.read_into(off - want, &mut batch.bytes[at..]);
                     bytes_read += ctx_len as u64;
                 }
+                // THE SEPARATOR CUT: the spine stops at the last 0x1E, so a
+                // context never spans a document boundary. A position right after
+                // a separator therefore has an EMPTY context (and an empty
+                // histogram), which is exactly what their selector produces.
+                let mut keep_off = ctx_off;
+                if sep_cut && ctx_len > 0 {
+                    let at = ctx_off as usize;
+                    if let Some(p) = batch.bytes[at..at + ctx_len].iter().rposition(|&b| b == 0x1e) {
+                        ctx_len -= p + 1;
+                        keep_off = ctx_off + (p as u32) + 1;
+                        if ctx_len == 0 {
+                            sep_empty += 1;
+                        }
+                    }
+                }
                 batch.items.push(ConsultItem {
                     doc: w.doc,
                     off,
-                    ctx_off,
+                    ctx_off: keep_off,
                     ctx_len: ctx_len as u16,
                     truncated: avail > want,
                     win_end: k + 1 == u64::from(w.len),
@@ -1396,10 +1446,10 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
             .unwrap_or_else(|_| die("consult: the writer panicked"));
         totals = (w.0, w.1, w.2, w.3, w.4, w.5, w.6, w.7);
         // the producer's receipts ride out through these
-        println!(
+        eprintln!(
             "CONSULT_PRODUCER corpus_bytes_read={} backpressure_events={} throttled_ms={} \
-             windows_after_producer={}",
-            bytes_read, bp_lines, throttled_ms, windows_done
+             windows_after_producer={} sep_empty_contexts={} sep_cut={}",
+            bytes_read, bp_lines, throttled_ms, windows_done, sep_empty, u8::from(sep_cut)
         );
     });
 
