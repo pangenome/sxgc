@@ -1,0 +1,2 @@
+MEM_READY n=100000000001 present_bytes=243 min_len=1 mode=serve workers=1
+MEM_STATS queries=1000 queries_per_s=6.877 us_per_query=145404.277 mem_us_per_query=4263.673 output_ipc_us_per_query=7.051 input_ipc_us_per_query=145398.411 min_len=1 workers=1

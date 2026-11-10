@@ -1,0 +1,16 @@
+{
+  "date_utc": "2026-11-10T16:16:16.928884+00:00",
+  "base_commit": "7f0d567d96ef02bbfc44b8341f54bc6e059ae4db",
+  "platform": "Linux-6.8.0-139-generic-x86_64-with-glibc2.39",
+  "host": "lambda01",
+  "executable": "/home/erikg/sxgc/xsa/target/release/xsa",
+  "executable_sha256": "9dc13f72dc33978e3b6baaaf980a7fee53bfc9619c83034a5c50d563c6c5d19f",
+  "container": "/mnt/nvme2n1/erikg/P100c/pile-head100.sxi2",
+  "container_bytes": 63163489696,
+  "indexed_text_bytes": 100000000000,
+  "corpus_prefix_source": "/mnt/nvme2n1/erikg/pile.txt",
+  "seed": 20261110,
+  "samples": 1000,
+  "workers": 1,
+  "contact_supervisor": "No matching contact_supervisor, supervisor, or intercom tool exposed; no supervisor decision claimed."
+}
