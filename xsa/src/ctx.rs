@@ -484,6 +484,13 @@ pub struct Builder {
     prev_first_edge: u64,
     nnodes: u64,
     ndoc_nodes: u64,
+    /// HOW THE ORDERED STREAM WAS OBTAINED: 0 = reconstructed from the container by
+    /// the LF cycle (the post-hoc path: 5 B per POSITION of transient RAM), 1 = fed
+    /// by the construction chain, where the producer already holds (row, SA, text)
+    /// and the stream is free. A container must say which one produced it.
+    source: u8,
+    /// transient bytes the stream cost (the u40 array plus the dense run columns)
+    source_mem: u64,
 }
 
 const HEAD: usize = 192;
@@ -516,7 +523,15 @@ impl Builder {
             prev_first_edge: 0,
             nnodes: 0,
             ndoc_nodes: 0,
+            source: 0,
+            source_mem: 0,
         }
+    }
+
+    /// Declare where the ordered stream came from (journaled in the member).
+    pub fn set_source(&mut self, mode: u8, mem: u64) {
+        self.source = mode;
+        self.source_mem = mem;
     }
 
     /// One suffix, in sorted order. `p` holds the suffix's bytes (up to depth+1 of
@@ -692,6 +707,8 @@ impl Builder {
             put(&mut out[64 + 8 * i..], offs[i], 8);
         }
         put(&mut out[144..], root as u64, 8);
+        put(&mut out[152..], self.source as u64, 8);
+        put(&mut out[160..], self.source_mem, 8);
         let cols = secs.iter().map(|s| s.len() as u64).collect::<Vec<_>>();
         let mut c = [0u64; TRIE_SECTIONS];
         c.copy_from_slice(&cols);
@@ -726,6 +743,8 @@ pub struct Trie<'a> {
     pub corpus_len: u64,
     pub nodes: u64,
     pub edges: u64,
+    pub source: u64,
+    pub source_mem: u64,
     root: u32,
     offs: [usize; TRIE_SECTIONS],
     starts: std::cell::OnceCell<Vec<u32>>,
@@ -795,6 +814,8 @@ impl<'a> Trie<'a> {
             corpus_len,
             nodes,
             edges,
+            source: get(&d[152..], 8),
+            source_mem: get(&d[160..], 8),
             root,
             offs,
             starts: std::cell::OnceCell::new(),
@@ -1047,10 +1068,14 @@ impl Dense {
         for b in 0..nb {
             let base = b * br;
             let end = (base + br).min(r);
+            let mut len_sum = 0u64;
             for i in base..end {
-                cum[heads[i as usize] as usize] += u64::from(lens[i as usize]);
+                let l = u64::from(lens[i as usize]);
+                cum[heads[i as usize] as usize] += l;
+                len_sum += l;
             }
-            row += end - base;
+            // a block's row span is the SUM OF ITS RUN LENGTHS, not its run count
+            row += len_sum;
             block_first.push(row);
             let o = (b as usize + 1) * 256;
             occ[o..o + 256].copy_from_slice(&cum);
@@ -1110,12 +1135,21 @@ impl Dense {
     }
 }
 
-/// The K breakpoints that partition the LF cycle: one `locate` per breakpoint.
+/// The K breakpoints that partition the LF cycle.
+///
+/// THE ARCS MUST BE BALANCED, and "rows i*n/K" does NOT balance them: the cycle
+/// order is by position, and K rows chosen evenly in ROW order land at arbitrary
+/// positions, so one thread can be handed 90 % of the cycle while the rest idle
+/// (measured: 4 of 32 threads still walking after 20 minutes at 10 GB). The fix is
+/// to locate 4*K candidate rows, order them by position (which IS cycle order) and
+/// keep the candidate closest to each ideal grid point j*n/K, so every arc is
+/// within a factor of ~2 of n/K.
 fn sa_breakpoints(idx: &qlite::Index, threads: usize) -> Vec<(u64, u64)> {
     let n = idx.reader.n;
     let k = (threads.max(1) as u64).min(n).min(64);
-    let rows: Vec<u64> = (0..k).map(|i| i * n / k).collect();
-    let mut brk: Vec<(u64, u64)> = rows
+    let cand = (4 * k).min(n);
+    let rows: Vec<u64> = (0..cand).map(|i| i * n / cand).collect();
+    let mut all: Vec<(u64, u64)> = rows
         .iter()
         .map(|&r| {
             let mut ctx = idx.ctx();
@@ -1123,10 +1157,37 @@ fn sa_breakpoints(idx: &qlite::Index, threads: usize) -> Vec<(u64, u64)> {
         })
         .collect();
     let mut seen = std::collections::HashSet::new();
-    for &(_, p) in brk.iter() {
-        need(seen.insert(p), "SA reconstruction: two breakpoints at one position");
+    for &(_, p) in all.iter() {
+        need(seen.insert(p), "SA reconstruction: two candidate breakpoints at one position");
     }
-    brk.sort_by(|a, b| b.1.cmp(&a.1)); // descending position == cycle order
+    // cycle order = descending position
+    all.sort_by(|a, b| b.1.cmp(&a.1));
+    // keep the candidate closest to each ideal cycle position j*n/k
+    let mut brk: Vec<(u64, u64)> = Vec::with_capacity(k as usize);
+    let mut used = vec![false; all.len()];
+    for j in 0..k {
+        // ideal cycle index j*n/k == position n-1 - j*n/k (mod n)
+        let want = (n - 1 + n - (j * n / k) % n) % n;
+        let mut best = usize::MAX;
+        let mut best_d = u64::MAX;
+        for (i, &(_, p)) in all.iter().enumerate() {
+            if used[i] {
+                continue;
+            }
+            let d = if p > want { p - want } else { want - p };
+            let d = d.min(n - d);
+            if d < best_d {
+                best_d = d;
+                best = i;
+            }
+        }
+        need(best != usize::MAX, "SA reconstruction: no candidate for a breakpoint");
+        used[best] = true;
+        brk.push(all[best]);
+    }
+    brk.sort_by(|a, b| b.1.cmp(&a.1));
+    brk.dedup_by_key(|x| x.1);
+    need(brk.len() >= 2, "SA reconstruction: fewer than two distinct breakpoints");
     brk
 }
 
@@ -1374,7 +1435,12 @@ fn sa_probe(idx: &qlite::Index, steps: u64, stateless: bool) {
 }
 
 /// The ordered stream: the suffix array, from the cache if it is there.
-pub fn load_or_build_sa(idx: &qlite::Index, threads: usize, cache: &str, dense_on: bool) -> (Vec<u8>, u64) {
+pub fn load_or_build_sa(
+    idx: &qlite::Index,
+    threads: usize,
+    cache: &str,
+    dense_on: bool,
+) -> (Vec<u8>, u64, u8, u64) {
     let n = idx.reader.n;
     if !cache.is_empty() {
         if let Ok(f) = std::fs::File::open(cache) {
@@ -1383,14 +1449,18 @@ pub fn load_or_build_sa(idx: &qlite::Index, threads: usize, cache: &str, dense_o
                 &format!("SA cache {cache} is {len} bytes, expected n*5 = {}", n * SA_ITEM as u64));
             let map = unsafe { Mmap::map(&f) }.unwrap_or_else(|e| die(&format!("mmap {cache}: {e}")));
             eprintln!("SA_CACHE_REUSED path={cache} rows={n}");
-            return (map.to_vec(), 0);
+            return (map.to_vec(), 0, 2, 0);
         }
     }
     let t0 = std::time::Instant::now();
+    let mut mode = 0u8;
+    let mut dense_mem = 0u64;
     let (sa, steps) = if dense_on && idx.reader.r > 2_000_000 {
+        mode = 1;
         // build-time dense columns: one decode pass, then two cache-shaped scans
         // per LF step instead of a block decode per step
         let dense = Dense::build(idx, threads);
+        dense_mem = dense.bytes();
         eprintln!("DENSE_RUNS runs={} bytes={} wall={:.1}s",
             dense.r, dense.bytes(), t0.elapsed().as_secs_f64());
         let brk = sa_breakpoints(idx, threads);
@@ -1407,7 +1477,7 @@ pub fn load_or_build_sa(idx: &qlite::Index, threads: usize, cache: &str, dense_o
         std::fs::rename(&tmp, cache).unwrap_or_else(|e| die(&format!("rename {tmp}: {e}")));
         eprintln!("SA_CACHE_WRITTEN path={cache} rows={n} bytes={}", sa.len());
     }
-    (sa, steps)
+    (sa, steps, mode, dense_mem)
 }
 
 /// One ordered sweep -> one member payload.
@@ -1422,8 +1492,10 @@ pub fn sweep(
     min_support: u64,
     docs: bool,
     docs_min_support: u64,
+    source: (u8, u64),
 ) -> (Vec<u8>, u64, [u64; TRIE_SECTIONS]) {
     let mut b = Builder::new(depth, min_support, docs_min_support);
+    b.set_source(source.0, source.1);
     let dmax = depth as u64 + 1;
     let mut buf = [0u8; 128];
     let mut reads = 0u64;
@@ -1471,7 +1543,7 @@ pub fn build(a: &BuildArgs) {
     //    the cache a previous run wrote - the walk is the expensive part, the sweep
     //    is cheap, and the curve needs many sweeps of one stream).
     let t_sa = std::time::Instant::now();
-    let (sa, sa_steps) = load_or_build_sa(&idx, a.threads, &a.sa_cache, a.dense);
+    let (sa, sa_steps, sa_mode, dense_mem) = load_or_build_sa(&idx, a.threads, &a.sa_cache, a.dense);
     let sa_wall = t_sa.elapsed().as_secs_f64();
 
     // 2. document ranks (original bytes)
@@ -1481,7 +1553,8 @@ pub fn build(a: &BuildArgs) {
 
     // 3. the sweep
     let t_sweep = std::time::Instant::now();
-    let (payload, reads, cols) = sweep(&sa, &text, &ranks, corpus_len, n, rows, a.depth, a.min_support, a.docs, a.docs_min_support);
+    let stream_mem = sa.len() as u64 + dense_mem;
+    let (payload, reads, cols) = sweep(&sa, &text, &ranks, corpus_len, n, rows, a.depth, a.min_support, a.docs, a.docs_min_support, (sa_mode, stream_mem));
     let sweep_wall = t_sweep.elapsed().as_secs_f64();
 
     // 4. write the container: the old members, then m20, then a v9 directory.
@@ -1499,6 +1572,11 @@ pub fn build(a: &BuildArgs) {
         "CONTEXT_TRIE_COLUMNS node_fixed={} node_edge_delta={} node_count={} edge_code={} edge_child={} \
          edge_count={} doc_ndocs={} doc_top={} doc_first={} doc_ids={} head={HEAD} bytes_per_node={bn:.1} bytes_per_edge={be:.1}",
         cols[0], cols[1], cols[2], cols[3], cols[4], cols[5], cols[6], cols[7], cols[8], cols[9]
+    );
+    eprintln!(
+        "CONTEXT_TRIE_SOURCE mode={} rows={} n={} sa_bytes={} dense_bytes={} stream_mem_gb={:.1} note=\"0=kernel-lf 1=dense-lf 2=sa-cache 3=in-build\"",
+        match sa_mode { 0 => "kernel-lf", 1 => "dense-lf", 2 => "sa-cache-reuse", _ => "in-build" },
+        sa_steps, n, sa.len(), dense_mem, stream_mem as f64 / (1u64 << 30) as f64
     );
     let pass = ratio <= 0.05;
     eprintln!("CONTEXT_TRIE_BUDGET ratio_vs_n={ratio:.6} target<=0.05 pass={}", u8::from(pass));
@@ -1771,6 +1849,7 @@ pub fn command(cmd: &str, args: &[String]) {
             }
         }
         "relax-stat" => relax_stat(args),
+        "trie-bench" => trie_bench(args),
         "trie-info" => {
             need(args.len() == 1, "usage: xsa trie-info <container>");
             let reader = open_reader(&args[0]);
@@ -2032,12 +2111,12 @@ fn curve(args: &[String]) {
     need(flen + 1 == n, "corpus length + 1 != n");
     let corpus = unsafe { Mmap::map(&tfile) }.unwrap_or_else(|e| die(&format!("mmap {text}: {e}")));
     let ranks = if docs { doc_ranks(&corpus) } else { Vec::new() };
-    let (sa, _) = load_or_build_sa(&idx, threads, &cache, dense);
+    let (sa, _, _, _) = load_or_build_sa(&idx, threads, &cache, dense);
     println!("CONTEXT_TRIE_CURVE n={n} corpus_bytes={flen} docs_summary={}", if docs { "exact<=8+hll13pct" } else { "none" });
     for &d in &depths {
         for &k in &supports {
             let t0 = std::time::Instant::now();
-            let (payload, _, cols) = sweep(&sa, &corpus, &ranks, flen, n, n, d, k, docs, docs_min_support);
+            let (payload, _, cols) = sweep(&sa, &corpus, &ranks, flen, n, n, d, k, docs, docs_min_support, (0, sa.len() as u64));
             let trie = Trie::load(&payload);
             let ratio = payload.len() as f64 / n as f64;
             let per_node = payload.len() as f64 / trie.nodes.max(1) as f64;
@@ -2107,6 +2186,71 @@ fn relax_stat(args: &[String]) {
     println!("RELAX_SUPPORT median_count={} p10_count={} us_p50={:.2} us_p99={:.2} us_max={:.2}",
         counts[counts.len() / 2], counts[counts.len() / 10],
         pct(&us, 0.50), pct(&us, 0.99), us[us.len() - 1]);
+}
+
+/// THE LATENCY GATE: 1,000 random contexts, time the two operations the consumer
+/// calls. The trie is a member of the container, reached through the mmap: NO corpus
+/// byte and no run is touched by a lookup (only the sampling of the contexts reads
+/// the text, and that is outside the timed region).
+fn trie_bench(args: &[String]) {
+    let mut sxi = String::new();
+    let mut text = String::new();
+    let mut samples = 1000usize;
+    let mut ctx_len = 16usize;
+    let mut seed = 20261110u64;
+    let mut i = 0;
+    while i < args.len() {
+        let f = args[i].as_str();
+        let mut val = |what: &str| -> String {
+            i += 1;
+            match args.get(i) { Some(v) => v.clone(), None => die(&format!("{what} needs a value")) }
+        };
+        match f {
+            "--sxi" => sxi = val("--sxi"),
+            "--text" => text = val("--text"),
+            "--samples" => samples = val("--samples").parse().unwrap_or_else(|_| die("--samples")),
+            "--ctx-len" => ctx_len = val("--ctx-len").parse().unwrap_or_else(|_| die("--ctx-len")),
+            "--seed" => seed = val("--seed").parse().unwrap_or_else(|_| die("--seed")),
+            other => die(&format!("trie-bench: unknown option {other}")),
+        }
+        i += 1;
+    }
+    let reader = open_reader(&sxi);
+    let trie = load_trie(&reader);
+    let tf = std::fs::File::open(&text).unwrap_or_else(|e| die(&format!("open {text}: {e}")));
+    let corpus = unsafe { Mmap::map(&tf) }.unwrap_or_else(|e| die(&format!("mmap {text}: {e}")));
+    let clen = corpus.len();
+    let mut st = seed | 1;
+    let mut ctxs: Vec<&[u8]> = Vec::with_capacity(samples);
+    for _ in 0..samples {
+        st ^= st << 13;
+        st ^= st >> 7;
+        st ^= st << 17;
+        let p = ctx_len + (st % (clen as u64 - ctx_len as u64 - 1)) as usize;
+        ctxs.push(&corpus[p - ctx_len..p]);
+    }
+    let mut tb = Vec::with_capacity(samples);
+    let mut ts = Vec::with_capacity(samples);
+    let mut found = 0usize;
+    for c in ctxs.iter() {
+        let t0 = std::time::Instant::now();
+        let (node, reached) = trie.descend(c);
+        tb.push(t0.elapsed().as_nanos() as f64 / 1000.0);
+        let t1 = std::time::Instant::now();
+        let _ = trie.stat(node);
+        ts.push(t1.elapsed().as_nanos() as f64 / 1000.0);
+        if reached == ctx_len {
+            found += 1;
+        }
+    }
+    for v in [&mut tb, &mut ts] {
+        v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    }
+    let pct = |v: &Vec<f64>, q: f64| v[((v.len() as f64 - 1.0) * q) as usize];
+    println!("TRIE_BENCH samples={} ctx_len={} depth={} exact_depth_reached={}               branch_of_us_p50={:.2} p90={:.2} p99={:.2} max={:.2}               trie_stat_us_p50={:.2} p99={:.2} max={:.2}",
+        samples, ctx_len, trie.depth, found,
+        pct(&tb, 0.50), pct(&tb, 0.90), pct(&tb, 0.99), tb[tb.len() - 1],
+        pct(&ts, 0.50), pct(&ts, 0.99), ts[ts.len() - 1]);
 }
 
 fn hex(v: &[u8]) -> String {
