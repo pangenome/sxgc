@@ -318,10 +318,12 @@ impl<'a> LcpRuns<'a> {
                     }
                     prev = Some(idx);
                 }
-                // the escape field must not be reachable for an inline value: a
-                // decoded all-ones field IS an escape, so a mode-1/2 block always
-                // has at least one entry in its escape list.
-                need(count > 0, &format!("block {b}: mode {mode} with zero escapes cannot exist (an all-ones field is an escape)"))?;
+                // NOT a violation: a block can choose the packed scheme with NO
+                // escapes at all (e.g. 1024 values of 0..2 at width 2 escape only a
+                // value EQUAL to all-ones, which need not occur). The decoder treats
+                // an all-ones field as an escape, and the writer emits an escape for
+                // exactly those values, so zero escapes simply means no all-ones
+                // field exists to look up.
             }
             at += u64::from(e.span);
         }
@@ -358,6 +360,11 @@ impl Corpus {
     #[inline]
     pub fn at(&self, p: u64) -> Option<u8> {
         if p < self.filesize { Some(self.map[p as usize]) } else { None }
+    }
+    /// `len` raw corpus bytes from position `p` (the deep probe's pattern source).
+    pub fn window(&self, p: u64, len: u64) -> Vec<u8> {
+        assert!(p + len <= self.filesize, "corpus window past the end of the text");
+        self.map[p as usize..(p + len) as usize].to_vec()
     }
     /// THE BRUTE-FORCE LCP of the suffixes at text positions `p` and `q`: compare
     /// bytes until they differ or one suffix reaches the virtual sentinel (which
@@ -544,6 +551,12 @@ pub fn verify_command(args: &[String]) {
     let mut corpus_path: Option<String> = None;
     let mut sample = 50u64;
     let mut deep = 50u64;
+    let mut deep_windows = 24u64;
+    // Cycle the window length: a long window proves a DEEP floor but repeats
+    // rarely, a short one repeats often (the median repeating context in 100 GB of
+    // Pile is 18 bytes) and gives a big interval to walk into. Both halves matter:
+    // the floor is the claim, the interval is what lets a run HEAD sit inside it.
+    let mut deep_win_len = 32u64;
     let mut seed = 1u64;
     let mut i = 0;
     while i < args.len() {
@@ -557,6 +570,8 @@ pub fn verify_command(args: &[String]) {
             }
             "--sample" => sample = u64_arg(args, &mut i, "--sample"),
             "--deep" => deep = u64_arg(args, &mut i, "--deep"),
+            "--deep-windows" => deep_windows = u64_arg(args, &mut i, "--deep-windows"),
+            "--deep-window-len" => deep_win_len = u64_arg(args, &mut i, "--deep-window-len"),
             "--seed" => seed = u64_arg(args, &mut i, "--seed"),
             other if other.starts_with("--") => die(&format!("lcp-verify: unknown flag {other}")),
             other => {
@@ -617,7 +632,7 @@ pub fn verify_command(args: &[String]) {
     // real text they are the deep contexts, i.e. exactly the nodes a tree walk
     // descends through.
     let mut st = seed ^ 0xa5a5_a5a5_a5a5_a5a5;
-    let probe = sample.saturating_mul(200).max(2000);
+    let probe = sample.saturating_mul(2000).max(20000);
     let mut cx = index.ctx();
     let mut seen: std::collections::BTreeMap<u64, (u64, u64)> = std::collections::BTreeMap::new(); // run -> (head row, stored)
     for _ in 0..probe {
@@ -634,15 +649,35 @@ pub fn verify_command(args: &[String]) {
     }
     let mut by_value: Vec<(u64, u64, u64)> = seen.iter().map(|(&run, &(s, v))| (v, run, s)).collect();
     by_value.sort_unstable();
-    // the deepest `deep` runs, plus a uniform tail of the rest (so small values
-    // are covered too), de-duplicated.
+    // THE SELECTION IS PART OF THE GATE. Three disjoint picks, because a uniform
+    // sample of runs is dominated by LCP 0..3 and would only ever test the cheapest
+    // fields:
+    //  (a) THE DEPTH BOUNDARIES. The tree operations we want are shallow - median
+    //      repeating context is 18 bytes and entropy is 0 by depth 32
+    //      (CONTEXT_DEPTH.md) - so the values that decide whether a shallow walk is
+    //      right are the ones AT the boundary: the largest value below each of
+    //      1/8/16/32/64/256/64K and the smallest at or above it. A value that
+    //      crosses from an inline field to an escape list is exactly where an
+    //      off-by-one lives.
+    //  (b) THE DEEPEST VALUES (the escapes: mode 2 with a wide field, or mode 1's
+    //      255 marker).
+    //  (c) A UNIFORM TAIL (the zeros and the tiny values, i.e. the runs a
+    //      breadth-first walk of the top of the tree visits).
     let mut chosen: Vec<(u64, u64, u64)> = Vec::new();
+    for thresh in [0u64, 1, 2, 8, 16, 31, 32, 33, 63, 64, 65, 255, 256, 1023, 1024, 65535] {
+        if let Some(x) = by_value.iter().rev().find(|x| x.0 >= thresh) {
+            chosen.push(*x);
+        }
+        if let Some(x) = by_value.iter().rev().find(|x| x.0 < thresh) {
+            chosen.push(*x);
+        }
+    }
     for x in by_value.iter().rev().take(deep as usize) {
         chosen.push(*x);
     }
     let stride = (by_value.len() / (sample as usize).max(1)).max(1);
     let mut k = 0usize;
-    while k < by_value.len() && chosen.len() < deep as usize + sample as usize {
+    while k < by_value.len() && chosen.len() < deep as usize + sample as usize + 40 {
         chosen.push(by_value[k]);
         k += stride;
     }
@@ -687,6 +722,99 @@ pub fn verify_command(args: &[String]) {
             u8::from(truth == stored)
         );
     }
+    // ---- 4. THE DEEP PROBE: HEAD ROWS THAT ARE GUARANTEED TO CARRY LCP >= win.
+    // A uniform row sample cannot reach the deep values (at the 150 MB fixture the
+    // deepest stored LCP is 69,631 and ONE run owns it), and the deep values are
+    // exactly the ones that leave a block as a full u64 escape - the least
+    // exercised, most failure-prone part of the codec. So the probe is built from
+    // the corpus instead of from luck: take a `win`-byte window, get its SA
+    // interval from the container's own backward search, and use a run that STARTS
+    // strictly inside that interval. Any two adjacent rows of a win-byte pattern
+    // share win bytes, so a head row s with l < s < r has LCP[s] >= win by
+    // construction - and the member's answer for that run is asserted to respect it.
+    let sigma = index.reader.sigma;
+    let win_summary = deep_win_len.max(2);
+    let mut deep_checked = 0u64;
+    let mut deep_min_seen = u64::MAX;
+    let mut deep_rows_seen = 0u64;
+    let len_ladder: [u64; 5] = [16, 20, 24, deep_win_len.max(2), 48];
+    for round in 0..deep_windows {
+        let win = if deep_win_len == 32 { len_ladder[round as usize % len_ladder.len()] } else { deep_win_len.max(2) };
+        if corpus.filesize <= win + 1 {
+            break;
+        }
+        let p = splitmix64(&mut st) % (corpus.filesize - win - 1);
+        let pat: Vec<u8> = corpus.window(p, win);
+        let mut work: Vec<u8> = pat.iter().map(|&c| sigma[c as usize]).collect();
+        work.reverse();
+        let (l, r) = cx.search(&work);
+        if r <= l + 1 {
+            continue; // a unique window has no interior row
+        }
+        eprintln!(
+            "LCP_VERIFY_DEEP_WINDOW pos={p} interval_lo={l} interval_hi={r} depth_floor={win} rows={}",
+            r - l
+        );
+        // the first run that BEGINS strictly inside the interval (bounded scan), and
+        // the run holding the interval's last row (its head may be before l, in
+        // which case no floor claim is made about it - only the exact comparison).
+        let mut picked: Vec<(u64, u64, bool)> = Vec::new(); // (run, head row, floor applies)
+        let scan_end = (l + 1 + 8192).min(r);
+        let mut row = l + 1;
+        while row < scan_end {
+            let (run, s, len) = cx.run_at(row);
+            if run > 0 && s > l && s < r {
+                picked.push((run, s, true));
+                break;
+            }
+            row = if len > 0 { row.max(s + len) } else { row + 1 };
+        }
+        {
+            let row = r - 1;
+            let (run, s, _len) = cx.run_at(row);
+            if run > 0 && picked.iter().all(|x| x.0 != run) {
+                picked.push((run, s, s > l && s < r));
+            }
+        }
+        for (run, s, floor) in picked {
+            let stored = m14.lcp(run).unwrap_or_else(|e| die(&e));
+            let (p_prev, st1) = cx.locate_steps(s - 1);
+            let (p_head, st2) = cx.locate_steps(s);
+            lf_steps += st1 + st2;
+            let truth = corpus.lce(p_prev, p_head);
+            hist.push(stored);
+            if floor && stored < win {
+                die(&format!(
+                    "lcp-verify: run {run} starts at head row {s} INSIDE a {win}-byte pattern \
+                     interval ({l},{r}) but the member says lcp={stored} < {win}: every interior \
+                     row of that interval shares the pattern by construction"
+                ));
+            }
+            if truth == stored {
+                exact += 1;
+            } else {
+                mismatches += 1;
+                eprintln!(
+                    "LCP_MISMATCH run={run} head_row={s} stored={stored} true={truth} \
+                     sa_prev={p_prev} sa_head={p_head} probe=deep-interval interval={l}:{r}"
+                );
+            }
+            eprintln!(
+                "LCP_CHECK run={run} head_row={s} stored={stored} true={truth} sa_prev={p_prev} \
+                 sa_head={p_head} probe=deep-interval floor_applies={} ok={}",
+                u8::from(floor),
+                u8::from(truth == stored)
+            );
+            deep_min_seen = deep_min_seen.min(stored);
+            deep_checked += 1;
+            deep_rows_seen += 1;
+        }
+    }
+    eprintln!(
+        "LCP_VERIFY_DEEP windows={deep_windows} checked={deep_checked} min_stored_lcp={} \
+         floor_ladder=16,20,24,{win_summary},48 rows_used={deep_rows_seen}",
+        if deep_checked == 0 { 0 } else { deep_min_seen }
+    );
     hist.sort_unstable();
     if mismatches != 0 {
         die(&format!("lcp-verify: {mismatches} of {} sampled runs answer a WRONG LCP", chosen_runs.len()));
@@ -695,7 +823,7 @@ pub fn verify_command(args: &[String]) {
         "LCP_VERIFY n={} exact={exact} mismatches={mismatches} oracle=brute-force-lce-from-corpus \
          positions=locate(m11-anchor+LF-walk) lf_steps={lf_steps} lcp_min={} lcp_max={} lcp_median={} \
          blocks_probed={} member_bytes={}",
-        chosen_runs.len(),
+        chosen_runs.len() as u64 + deep_checked,
         hist.first().copied().unwrap_or(0),
         hist.last().copied().unwrap_or(0),
         hist.get(hist.len() / 2).copied().unwrap_or(0),
