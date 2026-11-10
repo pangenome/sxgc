@@ -2833,6 +2833,11 @@ fn batch(op: &str, args: &[String]) {
         rss_kb / (1024.0 * 1024.0),
         m.len() as f64 / (1u64 << 30) as f64,
         trie.source_mem as f64 / (1u64 << 30) as f64);
+    // ONE LINE PER SETTING so the coverage/size/latency tradeoff can be quoted:
+    // answered is the trie's coverage on this sample, ratio_vs_n is what it costs.
+    println!("COVERAGE depth={} ms={} answered={answered} below_support={below} p50_us={:.2} p99_us={:.2} ratio_vs_n={:.6}",
+        trie.depth, trie.min_support, pct(&us, 0.50), pct(&us, 0.99),
+        m.len() as f64 / trie.n as f64);
     let h: Vec<String> = hist.iter().enumerate().map(|(d, &c)| format!("{d}:{c}")).collect();
     println!("BATCH_DEPTH reached_depth_hist={} mean_depth={:.3} asked_depth={} trie_depth={} warm_ms={warm_ms:.1}",
         h.join(","), depth_sum / ctxs.len() as f64, ctxs[0].len(), trie.depth);

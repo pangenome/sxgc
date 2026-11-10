@@ -240,6 +240,95 @@ inside one point). The mean reached depth is 6.94-7.01 of 8. Timings above were
 taken while another 32-thread build was running on the same box; a quiet-box run of
 the same operation measured 3.84 us p50 (operator, 150 MB container).
 
+### The whitespace point mass
+
+The parent lane's 100 GB measurement (16 spaces = 762,642,500 occurrences) has its
+10 GB analogue, and it is worth seeing in the trie directly:
+
+```
+$ xsa branch-of g10-d8.sxi2 "$(printf '        ')"
+present count=126951032 depth=8 children=153
+$ xsa trie-stat g10-d8.sxi2 "$(printf '        ')"
+present count=126951032 depth=8 documents=3 docs_exact=1 top_doc=0 children=153
+```
+
+1.27 % of the 10 GB corpus sits on ONE depth-8 context, that context has 153
+distinct children (all the bytes that follow a run of spaces), and **all 126 M
+occurrences come from 3 of the 16 M documents** (the top one is span 0). Two
+consequences, both structural rather than accidental:
+
+- The node store is not distorted by this (one node, 153 edges), and the sweep's
+  cost is per ROW, not per occurrence, so the point mass does not slow the build.
+- The COUNT is not a document measure: a high support here means "one gigantic
+  document", so `project`/`select` must weight by document frequency and the
+  document map is load-bearing, not decorative. This is exactly the case MEMORY_OPS.md's
+  `project` operation exists for.
+- No top-k truncation is applied anywhere (k = all children), so the whitespace
+  histogram is exact; if top-k is ever added it must keep an exact remainder total
+  or the mass for "more spaces" becomes a lie.
+
+### Why the 100 GB trie is NOT in this commit
+
+The post-hoc path does not scale, and the numbers say where:
+
+| component | 10 GB (measured) | 100 GB (projected) | Pile (projected) |
+|---|---|---|---|
+| u40 suffix array (5 B per POSITION, ignoring text) | 50.0 GB | 500 GB | 5 TB |
+| dense run columns (7 B per RUN) | 24.4 GB | 220 GB | 2.2 TB |
+| peak RSS of the build | 69 GB (measured) | ~720 GB | ~7 TB |
+| LF walk (9.1 M steps/s at 32 threads) | 1100 s | 3.0 h | 30 h |
+| sweep (one sequential pass, ~345 ns/row) | 3448 s | 9.6 h | 96 h |
+
+So at 100 GB the reconstruction alone needs ~720 GB of RAM and ~13 h, and at the
+Pile it is off the table entirely. **The primary path must be the construction
+chain, not the LF cycle.** Where it goes, exactly:
+
+- `xsa build`'s band producer (`cross_lcp_merge`) merges sorted suffix slices and
+  therefore holds, per emitted row, the suffix position and the text. That is
+  precisely the builder's input, and it costs one 32-byte text read per row that
+  the merge is already making. A per-shard builder plus a K-way merge of the
+  partial tries (a trie merges by summing counts and unioning children; the arcs a
+  shard boundary cuts are already counted by the spans) removes the sequential
+  sweep from the critical path: ~0.2 us/row spread over the shards.
+- The finish's own serial fold (`xsa_finish.cpp`, the `sweep.advance(s.nbuf[i], ...)`
+  stage) is NOT the place: it sees one RUN at a time (BWT char, length, head SA,
+  tail SA), and the rows INSIDE a run have no SA value there, so it cannot read a
+  suffix's first 32 bytes. That is the precise break in the one-ordered-pass plan.
+- The container writer is `ContainerOut` in the same file (v7 streaming layout,
+  trailing directory), which already appends members in stream order; m20 is one
+  more section.
+
+That work is not in this commit. No 100 GB trie number is claimed anywhere.
+
+### The coverage/size dial, measured (10 GB, depth 8, 1,000 random 8-byte contexts)
+
+Two full builds of the same corpus, same ordered stream, one flag apart:
+
+```
+COVERAGE depth=8 ms=1000 answered=610 below_support=392 p50_us=4.38 p99_us=9.12 ratio_vs_n=0.034773
+COVERAGE depth=8 ms=100 answered=788 below_support=214 p50_us=4.53 p99_us=8.68 ratio_vs_n=0.165384
+```
+
+| min_support | nodes | edges | member | ratio_vs_n | answered | p50 | p99 |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1000 | 3,594,261 | 88,185,516 | 347,726,720 B | 0.0348 | 60.9 % | 4.38 us | 9.12 us |
+| 100 | 22,391,593 | 301,440,463 | 1,653,844,984 B | 0.1654 | 78.6 % | 4.53 us | 8.68 us |
+
+**4.75x the bytes buys 17.7 points of coverage at the same latency** (the child
+lists get no longer in any way that shows up: a binary search over 200 children is
+one more comparison than over 20). That is a genuine trade, not a free lunch:
+
+- `--min-support 1000` is the default because it is the only cell that meets the
+  0.05-of-n budget (0.0348), and 61 % coverage is what the operation is worth at
+  that size.
+- `--min-support 100` is the coverage option: 79 % of random 8-byte contexts are
+  answered exactly, at 0.165 of n - 16.5 GB on a 63 GB container at 100 GB scale.
+  It FAILS the 0.05 budget and says so (`CONTEXT_TRIE_BUDGET ... pass=0`).
+
+Note how the ratio moved with corpus size at a FIXED setting: 0.062 at 150 MB ->
+0.0348 at 10 GB for min_support 1000, because node count is bounded by n/K and grows
+more slowly than n. The 150 MB number is therefore an upper bound, not a projection.
+
 ## Residual risks
 
 - The 100 GB gate is **not** met in this session: the dense columns for the Pile are
