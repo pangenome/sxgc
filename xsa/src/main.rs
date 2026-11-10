@@ -1400,6 +1400,7 @@ fn usage() -> ! {
     eprintln!("  xsa tags --chi <f.sA> --sidecar <names.tsv> [--revlines]");
     eprintln!("           [--output tags.tsv]                  first-appearance attribution");
     eprintln!("  xsa branches <container> (--contexts FILE [--jsonl] | --serve [-j N]) [-k N] [--docs DIR | --corpus FILE]");
+    eprintln!("  xsa stateless-bench CONTAINER CORPUS THREADS POSITIONS [LEFT]");
     eprintln!("  xsa consult --container <sxi2> --windows <jsonl|bin> --output <file> [--corpus FILE] [--rss-gb 8]");
     eprintln!("           [-j N] [--resume] [--left 1024] [--chunk-rows N] [--bin|--jsonl] [--no-verify-prefix]");
     eprintln!("           BOUNDED-MEMORY streaming extraction (cache-build): one query per position, the");
@@ -1434,6 +1435,10 @@ fn main() {
     let raw: Vec<_> = std::env::args_os().skip(1).collect();
     if raw.first().is_some_and(|a| a == "branches") {
         qlite::branches_command(&raw[1..]);
+        return;
+    }
+    if raw.first().is_some_and(|a| a == "stateless-bench") {
+        qlite::stateless_bench_command(&raw[1..]);
         return;
     }
     if raw.first().is_some_and(|a| a == "consult") {

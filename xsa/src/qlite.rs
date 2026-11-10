@@ -919,6 +919,7 @@ fn scan_window<F: Fn(usize) -> u64>(
 /// counters and nothing else - one per pattern, so two patterns on one rayon
 /// thread never mix their counts.
 pub struct Ctx<'a> {
+    arena: Option<&'a std::cell::RefCell<WorkerArena>>,
     idx: &'a Index,
     /// Diagnostic counters, printed under XSA_TRACE. They answer "what does one
     /// rank/LF step actually pay for": `scan_of` runs walked in `row_run`'s
@@ -1262,8 +1263,8 @@ impl Index {
         // threads contend on, so it grows with the arena the caller paid for
         // (the default 64 MB arena keeps exactly the historical 64).
         let shard_target = if cache_bytes > CACHE_BYTES { 512 } else { CACHE_SHARDS };
-        let nshard = shard_target.min(want_slots).max(1);
-        let per_shard = (want_slots / nshard).max(1);
+        let nshard = if cache_bytes == 0 { 0 } else { shard_target.min(want_slots).max(1) };
+        let per_shard = (want_slots / nshard.max(1)).max(1);
         let mut cache = Vec::with_capacity(nshard);
         let mut thp = true;
         for _ in 0..nshard {
@@ -1381,11 +1382,13 @@ impl Index {
         let n = self.reader.n;
         let br = self.block_runs;
         let mut checked = 0u64;
+        let scratch = std::cell::RefCell::new(WorkerArena::new(self)?);
+        let cx = self.worker_ctx(&scratch);
         let take = nblocks.min(M1_AUDIT_BLOCKS).max(1);
         for t in 0..take {
             let b = (t * nblocks / take).min(nblocks - 1);
             let (s0, s1) = (self.l1(b), if b + 1 < nblocks { self.l1(b + 1) } else { n });
-            let sum = self.with_block(b, |_, lens| lens.iter().map(|&l| u64::from(l)).sum::<u64>());
+            let sum = cx.with_block(b, |_, lens| lens.iter().map(|&l| u64::from(l)).sum::<u64>());
             if sum != s1 - s0 {
                 return Err(format!(
                     "m1 block audit: block {b} of {nblocks} decodes to {sum} rows, but the m12\n  \
@@ -1399,7 +1402,7 @@ impl Index {
         // evenly spaced samples, so it is decoded explicitly)
         let last = nblocks - 1;
         let last_sum =
-            self.with_block(last, |_, lens| lens.iter().map(|&l| u64::from(l)).sum::<u64>());
+            cx.with_block(last, |_, lens| lens.iter().map(|&l| u64::from(l)).sum::<u64>());
         if self.l1(last) + last_sum != n {
             return Err(format!(
                 "m1 audit: the last block ({last}) ends at {} but the header says n={n}",
@@ -1639,6 +1642,7 @@ impl Index {
     pub fn ctx(&self) -> Ctx<'_> {
         Ctx {
             idx: self,
+            arena: None,
             scan_of: 0,
             scan_cum: 0,
             steps: 0,
@@ -1769,6 +1773,15 @@ fn bisect_block_of(idx: &Index, row: u64) -> (u64, u64) {
 }
 
 impl<'a> Ctx<'a> {
+    #[inline]
+    fn with_block<R>(&self, b: u64, f: impl FnOnce(&[u8], &[u32]) -> R) -> R {
+        if let Some(arena) = self.arena {
+            arena.borrow_mut().with_block(self.idx, b, f)
+        } else {
+            self.idx.with_block(b, f)
+        }
+    }
+
     /// `(head, length)` of run `run`: decode (or hit) the one block that holds it.
     /// Two reads out of that block's slices - and NOTHING per run in RAM.
     #[inline(always)]
@@ -1778,7 +1791,7 @@ impl<'a> Ctx<'a> {
         let br = idx.block_runs;
         let blk = run / br;
         let i = (run % br) as usize;
-        idx.with_block(blk, |heads, lens| (heads[i], lens[i]))
+        self.with_block(blk, |heads, lens| (heads[i], lens[i]))
     }
     /// `sum of lens[i] where heads[i] == ch` over `[lo,hi)` of one decoded block.
     /// Branchless and written so the compiler emits a mask-multiply vector loop:
@@ -1816,7 +1829,7 @@ impl<'a> Ctx<'a> {
         let base = blk * br;
         let r = idx.reader.r;
         let avail = (r - base).min(br) as usize;
-        let (rel, s, h, l) = idx.with_block(blk, |heads, lens| {
+        let (rel, s, h, l) = self.with_block(blk, |heads, lens| {
             let (rel, s) = scan_window(|i| u64::from(lens[i]), base, s0, row, avail, r);
             let i = (rel - base) as usize;
             (rel, s, heads[i], lens[i])
@@ -1910,7 +1923,7 @@ impl<'a> Ctx<'a> {
                 let i0 = (run - base) as usize;
                 let i1 = ((r1.min(base + avail)) - base) as usize;
                 self.blocks += 1;
-                acc += idx.with_block(blk, |heads, lens| Ctx::sum_head(heads, lens, i0, i1, ch));
+                acc += self.with_block(blk, |heads, lens| Ctx::sum_head(heads, lens, i0, i1, ch));
                 self.scan_cum += (i1 - i0) as u64;
                 run = base + i1 as u64;
             }
@@ -1932,7 +1945,7 @@ impl<'a> Ctx<'a> {
             let i0 = (run - base) as usize;
             let i1 = ((k.min(base + avail)) - base) as usize;
             self.blocks += 1;
-            acc += idx.with_block(blk, |heads, lens| Ctx::sum_head(heads, lens, i0, i1, ch));
+            acc += self.with_block(blk, |heads, lens| Ctx::sum_head(heads, lens, i0, i1, ch));
             self.scan_cum += (i1 - i0) as u64;
             run = base + i1 as u64;
         }
@@ -3374,3 +3387,5 @@ include!("mem.inc.rs");
 include!("seeds.inc.rs");
 include!("fanout.inc.rs");
 include!("consult.inc.rs");
+
+include!("stateless.inc.rs");
