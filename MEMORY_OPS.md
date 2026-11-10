@@ -48,6 +48,46 @@ are addressable.
 | child edges (explicit, for wide nodes only) | **not started** | children are contiguous in SA order, so narrow nodes can be enumerated by scanning LCP |
 | stateless query core | **have** | read-only mmap, per-worker arenas, no shared cache; scaling measured (58 % at 96 threads) |
 
+## The settled architecture (measured, 2026-11-10)
+
+Every element below is now backed by a number, and the numbers chose the design rather than the reverse.
+
+```
+context depth     descend while support allows; back off when it does not
+                  coverage at support >=1000:  depth 8 -> 59.6% of positions (median count 2,815)
+                                               depth 16 ->  6.2% (median count 3)
+                                               depth 24 ->  1.5% (median count 1)
+                  entropy of next byte: 3.89 bits at depth 1, 1.29 at 8, 0.50 at 16
+                  => the useful, well-supported context is ~8 bytes, not 1024
+
+context trie      depth 8, min_support 1000: 0.062 n   (depth 16 / MS 10000: 0.011 n)
+(m20)             exact child counts, top-k branches, no location needed
+                  at 100 GB: 1-7 GB.  At the Pile: 13-91 GB.
+
+below support     context not in the trie -> empty histogram + explicit below-support flag.
+                  NOT answered by locate-and-scan: a locate costs ~40 ms
+                  (--limit 1000 = 41.8 s on the 10 GB container), ~6000x the per-position budget.
+
+m14 LCP over runs optional, default OFF. Costs 0.27 n on every container; buys MEM/interior
+                  enumeration and deliberate full-occurrence scans, neither of which the
+                  operations layer needs at training rates.
+
+reversed index    not required for the trie's job. Still the general fallback if exact histograms
+                  for RARE contexts are ever needed (+0.63 n, one build).
+
+locate-and-scan   dead for per-position work; fine for one-off queries ("where does this appear")
+```
+
+The corresponding operation behaviour:
+
+```
+branch-of(ctx)    trie node -> children with counts; below support -> flagged empty
+extend(ctx, b)    branch-of(ctx + b), same rule
+relax(ctx, k)     the NORMAL path: descend as deep as support allows, stop at the deepest node
+project(ctx, D)   seek + document-map lookup on located positions (one-off, not per-position)
+matches(doc)      xsa mem
+```
+
 ## What the data says about depth (CONTEXT_DEPTH.md, 1,000 sampled positions, 100 GB Pile)
 
 The single most design-relevant measurement so far:
