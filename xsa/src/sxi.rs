@@ -24,6 +24,10 @@ fn u64at(b: &[u8], o: usize) -> u64 {
 pub(crate) fn header_run_count(b: &[u8]) -> u64 { u64at(b, 24) }
 /// IEEE CRC32 of a byte slice (the container's member/header checksum).
 pub fn crc32_of(b: &[u8]) -> u32 { !crc(!0, b) }
+/// One CRC32 step, so a writer that streams a member can checksum it while it
+/// copies it (the v9 context-trie container appender). Start at `!0`, fold every
+/// chunk, publish `!v`.
+pub fn crc_step(v: u32, b: &[u8]) -> u32 { crc(v, b) }
 fn crc(mut v: u32, b: &[u8]) -> u32 {
     static TABLE: std::sync::OnceLock<[u32; 256]> = std::sync::OnceLock::new();
     let table = TABLE.get_or_init(|| {

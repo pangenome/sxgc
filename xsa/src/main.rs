@@ -11,6 +11,7 @@
 mod sxi;
 mod sxi2;
 mod qlite;
+mod ctx;
 mod witness;
 mod build;
 mod chain;
@@ -1471,6 +1472,8 @@ fn main() {
     match args.first().map(|s| s.as_str()) {
         Some("build") => build::command(&args[1..]),
         Some("sxi-info") => sxi::command(&args[1..]),
+        Some("ctx-build") | Some("branch-of") | Some("trie-stat") | Some("trie-info")
+        | Some("ctx-verify") | Some("ctx-selftest") => ctx::command(&args[0], &args[1..]),
         Some("stats") => cmd_stats(&args[1..]),
         Some("tags") => cmd_tags(&args[1..]),
 

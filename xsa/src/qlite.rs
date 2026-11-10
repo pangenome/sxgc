@@ -440,7 +440,7 @@ impl Reader {
         // section at length-40*count and m1's per-block directory follows its
         // payload. v6 stays readable: same members, directory at 64.
         let tail_dir = version >= 7;
-        if !(6..=7).contains(&version) {
+        if !(6..=9).contains(&version) {
             return Err(format!("{} is not a queryable index", describe_format(path)));
         }
         let u32at = |o: usize| u32::from_le_bytes(h[o..o + 4].try_into().unwrap());
@@ -458,7 +458,7 @@ impl Reader {
         }
         // 8 slots is the block-compressed lite shape (m1,m4,m5,m7,m10,m11,m12,m13);
         // anything outside 5..=8 is not a lite container.
-        if !(5..=8).contains(&count) || hs != 64 + 40 * count as usize {
+        if !(5..=9).contains(&count) || hs != 64 + 40 * count as usize {
             return Err(format!(
                 "{path}: v6 directory must hold 5-8 members (found {count})"
             ));
@@ -3389,3 +3389,38 @@ include!("fanout.inc.rs");
 include!("consult.inc.rs");
 
 include!("stateless.inc.rs");
+
+// ------------------------------------------- the ordered-sweep LF accessor
+//
+// One LF step, exposed for the CONTEXT_TRIE builder (`xsa/src/ctx.rs`). The
+// builder needs the SUFFIX ARRAY (row -> text position) once, and the cheapest
+// exact way to obtain it from a v6/v7 lite container is the LF cycle: LF maps
+// row i to the row whose position is i-1, so ONE cycle from any row visits every
+// row exactly once and yields SA[row] for all of them at one LF step per row.
+// That is the "minimal extra pass" the trie costs when it is built outside the
+// construction chain; inside the chain the sorter already holds the positions,
+// so the pass is free there.
+impl<'a> Ctx<'a> {
+    /// `(LF(row), BWT[row])`: the row of `SA[row] - 1` and the byte that precedes
+    /// the suffix. One `row_run` + one `cum_before`, i.e. exactly the work a
+    /// `locate` step already pays.
+    #[inline]
+    pub fn lf_step(&mut self, row: u64) -> (u64, u8) {
+        let (run, s, h, _) = self.row_run(row);
+        let lf = self.idx.c[h as usize] + self.cum_before(h, run);
+        (lf + (row - s), h)
+    }
+    /// `SA[row]`: the text position of BWT row `row` (an LF walk to the nearest
+    /// m11 anchor).
+    pub fn sa_of(&mut self, row: u64) -> u64 { self.locate(row) }
+}
+
+impl Reader {
+    /// The raw bytes of member `id`, straight out of the mapping.
+    pub fn member_bytes(&self, id: u32) -> Option<&[u8]> {
+        let m = self.members.iter().find(|m| m.id == id)?;
+        Some(&self.map[m.offset as usize..(m.offset + m.bytes) as usize])
+    }
+    /// The open container's mapping (read-only).
+    pub fn map(&self) -> &[u8] { &self.map }
+}
