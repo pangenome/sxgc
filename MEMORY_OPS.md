@@ -94,6 +94,27 @@ Design consequence for the operations: `relax` thresholds belong around support 
   theory. **Our claim is not novelty of continuations** — it is the operation set, the exact-match
   memory shaping, and the cost at this scale.
 
+## The operation layer against the m20 API (measured reality, not intent)
+
+`xsa/src/ctx.rs` materialises the top of the tree as member m20 and exposes `find(context) -> node`,
+`children(node)` (the exact next-byte histogram, END included; pruned children keep their counts),
+`count(node)`, `node_depth(node)` and `docs(node)`. The node store is 0.1-0.5 % of n because the depth
+that carries information is 16-32 bytes, not 1024.
+
+| operation | status over m20 | note |
+|---|---|---|
+| `extend(ctx, b)` | available | `find(ctx+b)`, or `children(ctx)` for the whole distribution |
+| `branch-of(ctx)` | available | histogram is EXACT even for children too rare to materialise |
+| `relax(ctx, k)` | available | no parent pointer is stored, but descending shorter prefixes costs <=32 finds |
+| `select(cands, w)` | available | weight = count x 1/df; df exact for narrow nodes, HLL (~13 % SE) for wide ones |
+| `project(ctx, docset)` | **not available** | m20 carries an exact document list only while a node has <=8 distinct documents; wider nodes carry exact top-1 plus an estimate |
+| `matches(doc)` | available separately | `xsa mem` against the container |
+| `read(node)` | available once a node is addressable | |
+
+`project` is the one real gap. Cheapest exact route: `seek` + document-map lookup on the located
+positions, reusing seps.bin/meta.bin. Alternatives are a document -> nodes inverted index, or exact
+document lists for wide nodes (expensive).
+
 ## Gates — no victory without all of these
 
 1. `LCP_RUNS` member present at 150 MB, 10 GB and the 100 GB Pile head, with **50/50 sampled values
