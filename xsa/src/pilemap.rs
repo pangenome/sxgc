@@ -56,9 +56,11 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufWriter, ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use memmap2::MmapOptions;
 use sha2::{Digest, Sha256};
@@ -85,6 +87,28 @@ pub struct BuildArgs {
     pub limit: Option<u64>,
     pub jobs: usize,
     pub pile_sha256: bool,
+}
+
+/// Live state of the shard pass: how much each worker has decoded, and the pid
+/// of its decompressor. The driver polls this once a second, so a stalled
+/// decompressor is reported in the log instead of inferred from /proc.
+struct Progress {
+    bytes: AtomicU64,
+    per_shard: Mutex<Vec<ShardProgress>>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct ShardProgress {
+    records: u64,
+    bytes: u64,
+    pid: u32,
+    done: bool,
+}
+
+impl Progress {
+    fn new(n: usize) -> Progress {
+        Progress { bytes: AtomicU64::new(0), per_shard: Mutex::new(vec![ShardProgress::default(); n]) }
+    }
 }
 
 fn ck<T>(r: std::io::Result<T>, what: &str) -> T {
@@ -129,12 +153,16 @@ struct ShardRows {
     blank_lines: u64,
 }
 
-fn scan_shard(path: &Path, budget: u64) -> ShardRows {
+fn scan_shard(path: &Path, budget: u64, idx: usize, prog: &Progress) -> ShardRows {
     let mut cmd = Command::new("zstd");
     cmd.arg("-dc").arg(path).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::inherit());
     let mut child = cmd.spawn().unwrap_or_else(|e| {
         die(&format!("pile-map: cannot run `zstd -dc {}` (a zstd on PATH is required): {}", path.display(), e))
     });
+    {
+        let mut st = prog.per_shard.lock().unwrap();
+        st[idx].pid = child.id();
+    }
     let mut out = child.stdout.take().expect("piped stdout");
     let mut rows = ShardRows::default();
     let mut intern: HashMap<Vec<u8>, u32> = HashMap::new();
@@ -142,6 +170,7 @@ fn scan_shard(path: &Path, budget: u64) -> ShardRows {
     let mut line: Vec<u8> = Vec::with_capacity(1 << 16);
     let mut scanned = 0usize; // bytes of `line` already searched for '\n'
     let mut record = 0u64;
+    let mut stopped_early = false;
     'read: loop {
         let n = match out.read(&mut buf) {
             Ok(0) => break,
@@ -149,6 +178,7 @@ fn scan_shard(path: &Path, budget: u64) -> ShardRows {
             Err(e) if e.kind() == ErrorKind::Interrupted => continue,
             Err(e) => die(&format!("pile-map: read {}: {}", path.display(), e)),
         };
+        prog.bytes.fetch_add(n as u64, Ordering::Relaxed);
         line.extend_from_slice(&buf[..n]);
         let mut start = 0usize;
         while let Some(rel) = line[scanned..].iter().position(|&b| b == b'\n') {
@@ -163,26 +193,49 @@ fn scan_shard(path: &Path, budget: u64) -> ShardRows {
             line.drain(..start);
         }
         scanned = line.len();
+        {
+            let mut st = prog.per_shard.lock().unwrap();
+            st[idx].records = record;
+            st[idx].bytes = rows.bytes;
+        }
         if budget != NO_BUDGET && rows.bytes >= budget {
             // Everything past the --limit-bytes boundary would be discarded by
-            // the merge; stop decoding and keep what is already exact.
+            // the merge; stop decoding and keep what is already exact. The
+            // leftover buffer is a PARTIAL record and must not be parsed.
+            stopped_early = true;
             break 'read;
         }
     }
-    if !line.is_empty() {
+    if !stopped_early && !line.is_empty() {
         let tail = std::mem::take(&mut line);
         record_line(&tail, path, record, &mut rows, &mut intern);
+    }
+    // The reader must CLOSE ITS PIPE before waiting: an open pipe keeps the
+    // decompressor writing into a full pipe buffer and wait() never returns.
+    drop(out);
+    if stopped_early {
+        // We closed the pipe on purpose. zstd dies of SIGPIPE (or is killed
+        // here); either way this shard contributed exactly the records already
+        // collected, and the merge only reads up to the byte budget.
+        let _ = child.kill();
     }
     // A failed decompression must be named as such: a short stream would
     // silently shrink the map and the pile verification would blame the wrong
     // file.
     let st = ck(child.wait(), "wait for zstd");
-    if !st.success() {
+    if !st.success() && !(stopped_early && st.code().is_none()) {
         die(&format!(
             "pile-map: `zstd -dc {}` failed ({}): the shard stream did not decode; refusing to emit a map from a truncated shard",
             path.display(),
             st
         ));
+    }
+    {
+        let mut st = prog.per_shard.lock().unwrap();
+        st[idx].records = record;
+        st[idx].bytes = rows.bytes;
+        st[idx].done = true;
+        st[idx].pid = 0;
     }
     rows
 }
@@ -445,7 +498,7 @@ fn extract_record(path: &Path, want: u64) -> Vec<u8> {
     }
     drop(out);
     let st = ck(child.wait(), "wait for zstd");
-    if !st.success() {
+    if !st.success() && found.is_none() {
         die(&format!("pile-map: `zstd -dc {}` failed ({})", path.display(), st));
     }
     found.unwrap_or_else(|| die(&format!("pile-map: {} ended before record {} it was expected to hold", path.display(), want)))
@@ -1052,14 +1105,22 @@ pub fn build(a: &BuildArgs) {
     }
 
     // ---- pass A: decode shards in order, launching a bounded window so a
-    // ---- --limit-bytes run never decodes shards it cannot use.
+    // ---- --limit-bytes run never decodes shards it cannot use. One reader
+    // ---- thread per decompressor, never N writers into one reader; and every
+    // ---- child is killed or fully drained before any wait().
     let results: Arc<Mutex<Vec<Option<ShardRows>>>> = Arc::new(Mutex::new((0..shards.len()).map(|_| None).collect()));
+    let prog = Arc::new(Progress::new(shards.len()));
     let jobs = a.jobs.max(1);
+    let (tx, rx) = mpsc::channel::<usize>();
+    let mut handles: Vec<std::thread::JoinHandle<()>> = Vec::new();
     let mut started = 0usize;
     let mut finished = 0usize;
-    let mut inflight: Vec<std::thread::JoinHandle<()>> = Vec::new();
+    let mut last_bytes = 0u64;
+    let mut last_moved = Instant::now();
+    let mut last_print = Instant::now();
+    let n_shards = shards.len();
     loop {
-        let contig_bytes = {
+        let (contig, contig_bytes, all_done) = {
             let res = results.lock().unwrap();
             let mut b = 0u64;
             let mut contig = 0usize;
@@ -1072,52 +1133,102 @@ pub fn build(a: &BuildArgs) {
                     None => break,
                 }
             }
-            while started < shards.len() && started < contig + jobs && b < covered_cap {
+            let all = res.iter().all(|r| r.is_some());
+            while started < n_shards && started < contig + jobs && b < covered_cap {
                 let path = shards[started].clone();
                 let idx = started;
                 // Only the bytes up to the budget are needed; stopping early
                 // keeps a 10 GB slice from decoding a 44 GB shard.
                 let budget = covered_cap.saturating_sub(b).saturating_add(READ_BUF as u64);
                 let res = Arc::clone(&results);
-                inflight.push(std::thread::spawn(move || {
-                    let rows = scan_shard(&path, budget);
+                let prog = Arc::clone(&prog);
+                let tx = tx.clone();
+                handles.push(std::thread::spawn(move || {
+                    let rows = scan_shard(&path, budget, idx, &prog);
                     res.lock().unwrap()[idx] = Some(rows);
+                    let _ = tx.send(idx);
                 }));
                 started += 1;
             }
-            b
+            (contig, b, all)
         };
-        {
-            let res = results.lock().unwrap();
-            let all_done = res.iter().all(|r| r.is_some());
-            drop(res);
-            if all_done || (started == shards.len() && finished == started) || (started == finished && contig_bytes >= covered_cap) {
-                break;
-            }
-        }
-        if inflight.is_empty() {
+        if all_done || (started == n_shards && finished == started) || (started == finished && contig_bytes >= covered_cap) {
             break;
         }
-        // Join the earliest launched worker: a slow shard can never hide a
-        // later shard's completion from the launch window.
-        let h = inflight.remove(0);
-        h.join().unwrap_or_else(|_| die("pile-map: a shard worker panicked"));
-        finished += 1;
+        let _ = contig;
+        match rx.recv_timeout(Duration::from_secs(1)) {
+            Ok(_) => finished += 1,
+            Err(RecvTimeoutError::Timeout) => {
+                let now = prog.bytes.load(Ordering::Relaxed);
+                if now != last_bytes {
+                    last_bytes = now;
+                    last_moved = Instant::now();
+                } else if last_moved.elapsed() > Duration::from_secs(120) {
+                    // A hang must be a failure with a message, never silence.
+                    let st = prog.per_shard.lock().unwrap().clone();
+                    for (i, s) in st.iter().enumerate() {
+                        if s.pid != 0 {
+                            let _ = Command::new("kill").arg("-9").arg(s.pid.to_string()).status();
+                            eprintln!(
+                                "PILE_MAP_STALL shard={}/{} records={} bytes={} pid={}",
+                                i, n_shards, s.records, s.bytes, s.pid
+                            );
+                        }
+                    }
+                    die(&format!(
+                        "pile-map: no decompressor made progress for 120 s ({} of {} shards launched, {} finished); killed the children and stopped. Nothing was published",
+                        started, n_shards, finished
+                    ));
+                }
+                if last_print.elapsed() > Duration::from_secs(30) {
+                    last_print = Instant::now();
+                    let st = prog.per_shard.lock().unwrap().clone();
+                    let (mut recs, mut bytes) = (0u64, 0u64);
+                    let mut live = 0usize;
+                    for s in st.iter() {
+                        recs += s.records;
+                        bytes += s.bytes;
+                        if s.pid != 0 {
+                            live += 1;
+                        }
+                    }
+                    let el = t0.elapsed().as_secs_f64().max(1e-9);
+                    println!(
+                        "PILE_MAP_PROGRESS shard={}/{} records={} bytes={} mb_per_s={:.1} live={}",
+                        finished, n_shards, recs, bytes, bytes as f64 / el / 1e6, live
+                    );
+                }
+            }
+            Err(RecvTimeoutError::Disconnected) => break,
+        }
     }
-    for h in inflight.drain(..) {
+    for h in handles.drain(..) {
         h.join().unwrap_or_else(|_| die("pile-map: a shard worker panicked"));
-        finished += 1;
     }
     let results = Arc::try_unwrap(results)
         .unwrap_or_else(|_| die("pile-map: shard workers outlived the pass"))
         .into_inner()
         .unwrap();
     let mut rows: Vec<ShardRows> = Vec::new();
+    let mut _launched = 0usize;
     for (i, r) in results.into_iter().enumerate() {
+        if i >= started {
+            // Not launched: --limit-bytes was already covered by earlier
+            // shards, so this one contributes nothing to the map.
+            break;
+        }
         match r {
-            Some(r) => rows.push(r),
+            Some(r) => {
+                if r.bytes > 0 {
+                    _launched += 1;
+                }
+                rows.push(r)
+            }
             None => die(&format!("pile-map: shard {} ({}) never ran", i, shard_names[i])),
         }
+    }
+    if rows.is_empty() {
+        die("pile-map: no shard was decoded");
     }
     let blank: u64 = rows.iter().map(|r| r.blank_lines).sum();
     if blank > 0 {
@@ -1132,6 +1243,9 @@ pub fn build(a: &BuildArgs) {
     if doc_count == 0 {
         die("pile-map: the shards yielded 0 documents");
     }
+    // Shards that actually appear in the map (the launch window may have
+    // started one or two more than the byte budget needed).
+    let shards_used = m.shard[m.shard.len() - 1] as usize + 1;
     let complete = doc_count - u64::from(m.partial_tail);
     if m.partial_tail {
         let last = doc_count as usize - 1;
@@ -1162,10 +1276,23 @@ pub fn build(a: &BuildArgs) {
             detail
         ));
     }
-    if m.corpus_bytes != covered_cap {
+    if m.corpus_bytes > covered_cap {
         die(&format!(
-            "pile-map: the shards account for {} bytes but the covered range is {}",
+            "pile-map: the shards account for {} bytes, more than the {} byte range asked for",
             m.corpus_bytes, covered_cap
+        ));
+    }
+    // With --limit-bytes the shard stream may end first (a head cut of the
+    // whole corpus): the map then covers what the shards hold and SAYS how much
+    // of the requested range is uncovered. Without a limit the map must cover
+    // the file exactly, or the shards are truncated and we refuse.
+    let limit_trailing = covered_cap - m.corpus_bytes;
+    if a.limit.is_none() && limit_trailing != 0 {
+        die(&format!(
+            "pile-map: the shards account for {} bytes but {} holds {}: the shard stream is short; refusing to publish a map that silently ends early",
+            m.corpus_bytes,
+            pile.display(),
+            pile_bytes
         ));
     }
     // The cut tail's internal count is only knowable from the pile bytes.
@@ -1273,7 +1400,9 @@ pub fn build(a: &BuildArgs) {
         "pile_sha256_note": "sha256 of pile[0, corpus_bytes); pass --pile-sha256 to record it. corpus_bytes == pile_bytes_on_disk for a map over the whole file",
         "corpus_bytes": m.corpus_bytes,
         "limit_bytes": a.limit,
+        "limit_trailing_bytes": if a.limit.is_some() { Some(limit_trailing) } else { None },
         "trailing_bytes_uncovered": pile_bytes - m.corpus_bytes,
+        "shards_used": shards_used,
         "doc_count": doc_count,
         "documents_owning_separator": complete,
         "partial_tail": m.partial_tail,
@@ -1344,9 +1473,22 @@ pub fn build(a: &BuildArgs) {
         titles_bytes,
         meta_bytes
     );
+    if a.limit.is_some() {
+        let lasti = doc_count as usize - 1;
+        println!(
+            "PILE_MAP_LIMIT limit_bytes={} covered_bytes={} trailing_bytes={} shards_used={} last_shard={} last_record={} partial_tail={}",
+            covered_cap,
+            m.corpus_bytes,
+            limit_trailing,
+            shards_used,
+            m.shard_names[m.shard[lasti] as usize],
+            m.rec[lasti],
+            u64::from(m.partial_tail)
+        );
+    }
     println!(
         "DOCCOUNT range_bytes={} records={} internal_0x1e={} separators={} identity_ok={} entries={} partial_tail={}",
-        covered_cap,
+        m.corpus_bytes,
         complete,
         total_internal,
         v.seps,
