@@ -48,6 +48,38 @@ are addressable.
 | child edges (explicit, for wide nodes only) | **not started** | children are contiguous in SA order, so narrow nodes can be enumerated by scanning LCP |
 | stateless query core | **have** | read-only mmap, per-worker arenas, no shared cache; scaling measured (58 % at 96 threads) |
 
+## What the data says about depth (CONTEXT_DEPTH.md, 1,000 sampled positions, 100 GB Pile)
+
+The single most design-relevant measurement so far:
+
+```
+support at depth K        p50     p90     p99
+K=2  (one repeat)         18 B    38 B   2082 B
+K=10                      16 B    28 B    314 B
+K=100                     12 B    22 B     96 B
+
+at exactly 1024 bytes, positions with >=2 occurrences elsewhere: 1.4 %  (7.5 % counting the source)
+
+repeating contexts:  depth 1  H=3.89 bits  top1=0.23   |   depth 8   H=1.29  top1=0.72
+                     depth 16 H=0.50       top1=0.93   |   depth 32  H=0     top1=1.00
+```
+
+Three consequences, none of them optional:
+
+1. The useful context length is ~8-16 bytes, not 1024. A 1024-byte window is a hundred times deeper
+   than any signal in the data, which is why it is a cache artefact rather than a design choice.
+2. Past ~32 bytes a repeating context is deterministic, i.e. it is boilerplate or duplicated text, and
+   in the rare case where a long context does occur twice, answering from it returns the source
+   document's own continuation - leakage, not information. Source-document exclusion must happen
+   before any maximality or support test.
+3. Cost is linear in depth and the information is not: `xsa branches` costs 472 us at depth 1 and
+   51 ms at depth 1024. Going shallow is therefore both correct and ~60x cheaper, which is what makes
+   the 150k positions/s target plausible at all.
+
+Design consequence for the operations: `relax` thresholds belong around support 10-100 at depth
+10-16; `extend` rarely needs to go past ~32 bytes; and document-level matching (`matches`, `project`,
+`select`) carries the semantics, not context depth.
+
 ## What we measured, and what it says
 
 - Build: 100 GB Pile in 12 h 35 m, container 0.632 n, scratch 0.789 n unbounded; with a scratch cap a
