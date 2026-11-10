@@ -3429,6 +3429,17 @@ struct LcpRunsWriter {
     uint64_t maxValue = 0;
     uint64_t u8Blocks = 0, packBlocks = 0, zeroBlocks = 0;
     uint64_t packedBits = 0;     // bits spent on inline fields
+    // DEPTH ACCOUNTING. The member stores the LCP at FULL depth (u64, exact), but
+    // the question the tree operations actually ask is shallow: the median context
+    // that repeats anywhere in 100 GB of Pile is 18 bytes, entropy is 0 by depth
+    // 32 (CONTEXT_DEPTH.md), and a node deeper than that delimits unique suffixes.
+    // So the writer counts where the depth goes, which is what makes "how much
+    // would a depth-limited member save" a MEASUREMENT instead of a guess: a value
+    // above 64 that had to leave its block as a full u64 escape costs 10 bytes,
+    // and `deepEscapeBytes` is exactly those bytes.
+    uint64_t depthBuckets[8] = {0};   // 0 | 1-8 | 9-16 | 17-32 | 33-64 | 65-255 | 256-64K | 64K+
+    uint64_t deepEscapeRuns = 0;      // escapes whose value exceeds 64
+    uint64_t deepEscapeBytes = 0;     // 10 B each
     durable_piece::Sha256 sha;   // running digest of the payload bytes
     bool on = false;
 
@@ -3449,9 +3460,20 @@ struct LcpRunsWriter {
     }
     inline void push(uint64_t v) {
         if (v > maxValue) maxValue = v;
+        ++depthBuckets[depthBucketOf(v)];
         blk.push_back(v);
         ++count;
         if (blk.size() == PF_LCP_BLOCK_RUNS) flushBlock();
+    }
+    static unsigned depthBucketOf(uint64_t v) {
+        if (v == 0) return 0;
+        if (v <= 8) return 1;
+        if (v <= 16) return 2;
+        if (v <= 32) return 3;
+        if (v <= 64) return 4;
+        if (v <= 255) return 5;
+        if (v <= 65535) return 6;
+        return 7;
     }
     void flushBlock() {
         pf_check(on, "LCP runs write before open");
@@ -3461,6 +3483,13 @@ struct LcpRunsWriter {
         unsigned w = 0;
         const size_t span = encodeLcpBlock(blk.data(), blk.size(), out, esc, &mode, &w);
         pf_check(span % 8 == 0, "LCP block not 8-byte aligned");
+        // The escape list is written for every value >= the block's limit; a value
+        // above 64 is by definition in it: charge its 10 bytes to DEPTH.
+        for (uint64_t v : blk)
+            if (v > 64 && v >= (mode == 2 ? ((uint64_t(1) << w) - 1) : 255)) {
+                ++deepEscapeRuns;
+                deepEscapeBytes += 10;
+            }
         if (mode == 0) ++zeroBlocks; else if (mode == 1) ++u8Blocks; else { ++packBlocks; packedBits += uint64_t(w) * blk.size(); }
         escapes += esc;
         uint8_t d[16];
@@ -3506,6 +3535,8 @@ struct LcpRunsWriter {
         blk.clear(); dir.clear(); out.clear();
         payloadBytes = 0; count = 0; blocks = 0; escapes = 0; maxValue = 0;
         u8Blocks = packBlocks = zeroBlocks = packedBits = 0;
+        for (auto& b : depthBuckets) b = 0;
+        deepEscapeRuns = deepEscapeBytes = 0;
         sha = durable_piece::Sha256();
     }
     // RESUME: the spool is append-only in units of CLOSED blocks, so the durable
@@ -3545,6 +3576,30 @@ struct LcpRunsWriter {
 // than no LCP.
 static int selftest_lcp_runs() {
     uint64_t cases = 0, values = 0;
+    // THE CROSS-IMPLEMENTATION DUMP. The Rust accessor (xsa/src/lcpruns.rs) is a
+    // SECOND decoder of these bytes, and a decoder that shares a writer's
+    // misunderstanding is no oracle at all. With LCP_BLOCK_DUMP=<path> this
+    // selftest writes the C++ encoder's exact bytes for every adversarial case
+    // together with the values they mean, so the Rust side can be proved against
+    // the WRITER, not against itself:
+    //   "LCPBLK01" | u64 records | per record: u64 n, u64 span, span bytes, n*u64
+    FILE* dump = nullptr;
+    if (const char* dp = std::getenv("LCP_BLOCK_DUMP")) {
+        pf_check(*dp, "LCP_BLOCK_DUMP must not be empty");
+        dump = std::fopen(dp, "wb");
+        pf_check(dump != nullptr, "create LCP_BLOCK_DUMP");
+        pf_check(std::fwrite("LCPBLK01", 1, 8, dump) == 8, "write LCP_BLOCK_DUMP magic");
+        const uint64_t zero = 0;
+        pf_check(std::fwrite(&zero, 8, 1, dump) == 1, "write LCP_BLOCK_DUMP count");
+    }
+    auto emit = [&](const uint8_t* bytes, size_t span, const uint64_t* want, size_t n) {
+        if (!dump) return;
+        const uint64_t n64 = n, sp64 = span;
+        pf_check(std::fwrite(&n64, 8, 1, dump) == 1, "write LCP_BLOCK_DUMP n");
+        pf_check(std::fwrite(&sp64, 8, 1, dump) == 1, "write LCP_BLOCK_DUMP span");
+        pf_check(std::fwrite(bytes, 1, span, dump) == span, "write LCP_BLOCK_DUMP bytes");
+        pf_check(std::fwrite(want, 8, n, dump) == n, "write LCP_BLOCK_DUMP values");
+    };
     std::vector<std::vector<uint64_t>> suite;
     for (size_t n : {size_t(1), size_t(2), size_t(3), size_t(17), size_t(255), size_t(256),
                      size_t(1023), size_t(PF_LCP_BLOCK_RUNS)}) {
@@ -3583,6 +3638,7 @@ static int selftest_lcp_runs() {
         unsigned w = 0;
         const size_t span = encodeLcpBlock(v.data(), v.size(), o, esc, &mode, &w);
         pf_check(span % 8 == 0 && o.size() == span, "LCP block span is not the encoded bytes");
+        emit(o.data(), span, v.data(), v.size());
         for (size_t j = 0; j < v.size(); ++j) {
             const uint64_t back = decodeLcpBlockValue(o.data(), v.size(), j);
             if (back != v[j]) {
@@ -3609,6 +3665,7 @@ static int selftest_lcp_runs() {
             const size_t take = std::min<size_t>(PF_LCP_BLOCK_RUNS, all.size() - at);
             const size_t sp = encodeLcpBlock(all.data() + at, take, blk, esc, &mode, &wd);
             const size_t start = blk.size() - sp;
+            emit(blk.data() + start, sp, all.data() + at, take);
             for (size_t j = 0; j < take; ++j)
                 pf_check(decodeLcpBlockValue(blk.data() + start, take, j) == all[at + j],
                          "LCP multi-block round trip");
@@ -3619,6 +3676,18 @@ static int selftest_lcp_runs() {
         (void)wtr;
     }
     
+    if (dump) {
+        // Patch the record count that the magic reserved: the reader refuses a
+        // truncated dump by count, so a half-written file can never be read as a
+        // shorter suite.
+        const uint64_t records = cases;
+        pf_check(std::fseek(dump, 8, SEEK_SET) == 0, "seek LCP_BLOCK_DUMP count");
+        pf_check(std::fwrite(&records, 8, 1, dump) == 1, "patch LCP_BLOCK_DUMP count");
+        pf_check(std::fclose(dump) == 0, "close LCP_BLOCK_DUMP");
+        fprintf(stderr, "LCP_RUNS_SELFTEST_DUMP path=%s records=%llu (the C++ encoder's exact "
+                        "bytes + the values they mean, for the Rust decoder)\n",
+                std::getenv("LCP_BLOCK_DUMP"), (unsigned long long)records);
+    }
     printf("LCP_RUNS_SELFTEST_PASS blocks=%llu values=%llu exact=1 modes=zero|u8+escape|packed+escape\n",
            (unsigned long long)cases, (unsigned long long)values);
     return 0;
@@ -5847,7 +5916,7 @@ int main(int argc, char** argv) {
                 // bytes a killed run appended past the last checkpoint frontier
                 // are truncated after the sweep state has been restored.
                 streamOwner = std::make_unique<ContainerOut>(
-                    out, (m1Replay ? 6u : 8u) - (buildChi ? 0u : 1u), true, true);
+                    out, (m1Replay ? 6u : 8u) - (buildChi ? 0u : 1u) + (lcpRunsOn ? 1u : 0u), true, true);
                 streamOut = streamOwner.get();
                 m1Head = std::make_unique<BitsOut>();
                 m1Len = std::make_unique<BitsOut>();
@@ -5864,7 +5933,7 @@ int main(int argc, char** argv) {
                 // head is written ONCE and never patched - the member CRC it is
                 // part of stays valid.
                 streamOwner = std::make_unique<ContainerOut>(
-                    out, (m1Replay ? 6u : 8u) - (buildChi ? 0u : 1u), true);
+                    out, (m1Replay ? 6u : 8u) - (buildChi ? 0u : 1u) + (lcpRunsOn ? 1u : 0u), true);
                 streamOut = streamOwner.get();
                 const uint64_t off = streamOut->beginStream(1, PF_M1_CODEC_STREAM, 0);
                 pf_check(off == 64, "streaming m1 does not start at the header end");
@@ -7390,6 +7459,25 @@ int main(int argc, char** argv) {
                     rNorm ? double(lcpRuns.packedBits) / double(rNorm) : 0.0,
                     rNorm ? 8.0 * double(lcpRuns.memberBytes()) / double(rNorm) : 0.0,
                     (unsigned long long)n);
+            // WHERE THE DEPTH GOES. `bytes_if_clamped_at_64` is an ESTIMATE (an
+            // upper bound on the saving): it removes the 10-byte escapes that carry
+            // values above 64 and charges nothing for the clamping in their place.
+            // The shallow buckets are the ones the tree operations consume; the
+            // deep ones delimit unique suffixes (CONTEXT_DEPTH.md).
+            fprintf(stderr,
+                    "LCP_RUNS_DEPTH runs=%llu b0=%llu b1_8=%llu b9_16=%llu b17_32=%llu b33_64=%llu "
+                    "b65_255=%llu b256_64k=%llu b64k_up=%llu deep_runs_gt64=%llu deep_escape_bytes=%llu "
+                    "escape_bytes_total=%llu bytes_if_clamped_at_64=%llu frac_le64=%.6f\n",
+                    (unsigned long long)rNorm,
+                    (unsigned long long)lcpRuns.depthBuckets[0], (unsigned long long)lcpRuns.depthBuckets[1],
+                    (unsigned long long)lcpRuns.depthBuckets[2], (unsigned long long)lcpRuns.depthBuckets[3],
+                    (unsigned long long)lcpRuns.depthBuckets[4], (unsigned long long)lcpRuns.depthBuckets[5],
+                    (unsigned long long)lcpRuns.depthBuckets[6], (unsigned long long)lcpRuns.depthBuckets[7],
+                    (unsigned long long)lcpRuns.deepEscapeRuns,
+                    (unsigned long long)lcpRuns.deepEscapeBytes,
+                    (unsigned long long)(10 * lcpRuns.escapes),
+                    (unsigned long long)(lcpRuns.memberBytes() - lcpRuns.deepEscapeBytes),
+                    rNorm ? double(rNorm - lcpRuns.deepEscapeRuns) / double(rNorm) : 0.0);
             r14.close(); r14.report(rNorm, "runs");
         }
 

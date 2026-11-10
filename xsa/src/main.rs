@@ -11,6 +11,7 @@
 mod sxi;
 mod sxi2;
 mod qlite;
+mod lcpruns;
 mod witness;
 mod build;
 mod chain;
@@ -1419,9 +1420,16 @@ fn usage() -> ! {
     eprintln!("           rank order is lexicographic, not a statistically unbiased document sample");
     eprintln!("           --count and --limit are exclusive; default/--all emits every hit");
     eprintln!("           -j defaults to all cores; the container identifies its own format");
-    eprintln!("  xsa corpus --wikipedia <dump.xml.bz2|-> --out DIR [--separator 0x1e|none]");
-    eprintln!("           one streaming pass -> corpus.bin (\"<title>\\n<body>\\x1E\" per doc), seps.bin");
+    eprintln!("  xsa corpus --wikipedia <dump.xml.bz2|-> --out DIR [--separator 0x1e|none]");    eprintln!("           one streaming pass -> corpus.bin (\"<title>\\n<body>\\x1E\" per doc), seps.bin");
     eprintln!("           (u32 start deltas + every-64th u64 anchor), titles.bin, MANIFEST.json");
+    eprintln!("  xsa lcp <container> [--run I | --runs A:B | --sample N --seed S | --all] [--audit]");
+    eprintln!("           member m14: the LCP over runs. One value per BWT run, in run order,");
+    eprintln!("           lcpRuns[i] = lce(SA[r_i-1], SA[r_i]) at run i's HEAD row; random access is one");
+    eprintln!("           16-byte directory entry + one bit slice + one escape-list binary search.");
+    eprintln!("           --audit: tile the directory over the payload and check every escape list.");
+    eprintln!("  xsa lcp-verify <container> --corpus FILE [--sample N] [--deep K] [--seed S]");
+    eprintln!("           THE CORRECTNESS GATE: every sampled run's STORED LCP against a brute-force");
+    eprintln!("           lce over the corpus (positions from locate: m11 anchor + LF walk).");
     eprintln!("  xsa query-legacy ...   DEPRECATED phi-era reader (archived harnesses only)");
     eprintln!("           --ms: matching-statistics length vector per read (binary)");
     eprintln!();
@@ -1454,6 +1462,17 @@ fn main() {
     }
     if raw.first().is_some_and(|a| a == "query") {
         qlite::command(&raw[1..], false);
+        return;
+    }
+    if raw.first().is_some_and(|a| a == "lcp") {
+        // `xsa lcp`: the m14 accessor - "what is the LCP of run i" (SXI2 v8).
+        lcpruns::command(&raw[1..].iter().map(|a| a.to_string_lossy().into_owned()).collect::<Vec<_>>());
+        return;
+    }
+    if raw.first().is_some_and(|a| a == "lcp-verify") {
+        // `xsa lcp-verify`: the correctness gate - every sampled run's STORED LCP
+        // against a brute-force LCE over the corpus.
+        lcpruns::verify_command(&raw[1..].iter().map(|a| a.to_string_lossy().into_owned()).collect::<Vec<_>>());
         return;
     }
     if raw.first().is_some_and(|a| a == "verify") {
