@@ -155,7 +155,8 @@ deleting the ability to tell a depth-64 node from a deeper one. **Keep it exact.
 | 150 MB, **default (no m14)** | 118,891,088 B v7 | 57,279,194 | 0 | - | - | 97 s |
 | 150 MB, `--with-lcp-runs` | 159,336,688 B v8 | 57,279,194 | 40,445,560 | 0.176528 | 5.65 | 92 s |
 | 10 GB, `--with-lcp-runs` | 9,560,930,192 B v8 | 3,474,883,891 | 2,556,383,072 | 0.183919 | 5.89 | finish 29:24, total 29:44 |
-| 100 GB, **default (no m14)** | see `gates/lcp_runs_g4_100g.sh` | 31,381,597,694 (projected) | 0 | - | - | |
+| 10 GB, **default (no m14)**, `--scratch-budget-gb 3` | 7,004,547,080 B v7 (0.700 n) | 3,474,883,891 | 0 | - | - | finish 34:17, total 34:47 |
+| 100 GB, **default (no m14)** | 63,163,489,696 B v7 (0.632 n), banked P100c | 31,381,597,694 | 0 | - | - | 12:35:10 (banked, uncapped) |
 
 Gates: `gates/lcp_runs_g1_150m.sh` (build + oracle + additivity),
 `gates/lcp_runs_g2_verify.sh` (the 124-value correctness gate),
