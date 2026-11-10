@@ -693,6 +693,7 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
     let mut left_default: u32 = CTX_MAX;
     let mut chunk_rows: u64 = 1 << 16;
     let mut cache_gb: Option<f64> = None;
+    let mut stateless = false;
     let mut binary = false;
     let mut verify_prefix = true;
     let mut strict = std::env::var("XSA_CONSULT_STRICT").ok().as_deref() == Some("1");
@@ -748,6 +749,7 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
                     die(&format!("consult: --chunk-rows '{v}' is not a count"))
                 });
             }
+            "--stateless" => stateless = true,
             "--resume" => resume = true,
             "--bin" | "--binary" => binary = true,
             "--jsonl" => binary = false,
@@ -946,14 +948,17 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
     // cache-build walks a dense set of BWT rows, so the arena earns its share;
     // it is an EIGHTH of the budget by default and can be pinned with
     // --cache-gb. Whatever it is, it is FIXED at open: `decoded_bytes` stays 0.
-    let arena_bytes = match cache_gb {
+    let arena_bytes = if stateless { 0 } else { match cache_gb {
         Some(g) => (g * (1u64 << 30) as f64) as usize,
         None => (cap_bytes / 8) as usize,
     }
-    .clamp(4 << 20, 64usize << 30);
+    .clamp(4 << 20, 64usize << 30) };
     let mut index =
         Index::open_with_cache(reader, jobs, arena_bytes).unwrap_or_else(|e| die(&e));
     index.set_rss_cap(cap_bytes);
+    if stateless {
+        eprintln!("CONSULT_STATELESS shared_cache=0 rss_law=immutable_file_mapping_plus_bounded_workers rss_gb_is_not_a_mapping_cap");
+    }
     let cand = Candidates::of(&index);
     let mut corpus = ConsultCorpus::open(&corpus_path);
     // THE TEXT IS THE CONTAINER'S TEXT, NOT THE FILE'S LENGTH. A container built
@@ -1198,7 +1203,8 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
         for rx in req_rx {
             let tx = res_tx.clone();
             worker_handles.push(scope.spawn(move || {
-                let mut cx = idx_ref.ctx();
+                let arena = std::cell::RefCell::new(WorkerArena::new(idx_ref).unwrap());
+                let mut cx = if stateless { idx_ref.worker_ctx(&arena) } else { idx_ref.ctx() };
                 let mut pairs: Vec<(u8, u64)> = Vec::with_capacity(256);
                 let mut out = Vec::with_capacity(BATCH_POSITIONS * 8 * 16);
                 while let Ok(batch) = rx.recv() {
@@ -1409,7 +1415,7 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
             // ---- RSS throttle: while the process is AT its budget the producer
             // waits, which gives the governor time to bleed the mapping. This is
             // "pause input", not "buffer more input".
-            if last_rss.elapsed().as_secs_f64() >= 0.25 {
+            if !stateless && last_rss.elapsed().as_secs_f64() >= 0.25 {
                 last_rss = Instant::now();
                 if let Some(rss) = consult_resident_bytes() {
                     if rss > cap_bytes {

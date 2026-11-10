@@ -129,3 +129,41 @@ where we push document bytes and receive per-position branch histograms
 (windowed, resumable by byte offset). Our reader adapts once; parity receipts
 (the 17-context brute-force oracle + full row parity) stay our acceptance gate.
 Continuations are then literally "keep pushing bytes" — no re-search of anything.
+
+---
+
+## Requirement (operator directive): never materialize the text
+
+The 1.4 TB `h466_rl.txt` was a materialization of the HPRC release-2 assembly set and has
+been deleted. The source of record is the compressed archive —
+`/moosefs/laurap/hprc/HPRC_r2_assemblies_0.6.1.agc` (copy under
+`garrisonlab-s3-aws/tracepoints/`) via `/home/erikg/agc/bin/agc` — and **the pipeline must
+read from it, not from an expanded copy**. All derived structures built from that text were
+retained (SA 18 GB, LCP index 82.5 GB, RL-BWT 16.4 GB, pfp parse 62.1 GB, χ run info
+27.7 GB, …), because they are the expensive artifacts and remain valid without the text.
+
+Consequence for the API we are asking for: the streaming interface should accept
+**document/assembly bytes decompressed on the fly from the archive** (AGC block decompression
+is cheap and random-access by sample), so that habitat- and corpus-scale indexing never
+requires a 1.4 TB staging copy. This composes exactly with the ladder design above: bytes
+flow in, per-position features flow out, nothing is materialized in between.
+
+---
+
+## The path we build is the deployment path (operator, 2026-11-10)
+
+This is no longer framed as an offline extraction convenience. **The dynamic consult
+path is the mode we deploy**, so it is also the mode our consulted arms train in.
+Train/serve identity is the requirement — see `LIVE_CONSULT_IDENTITY.md`.
+
+That imposes four things on the interface, beyond raw speed:
+
+- **Determinism:** identical (document, offset, spine) → byte-identical rows, across
+  restarts and across concurrent arms; no cache-warming or ordering dependence.
+- **Parity:** the 17-context brute-force oracle and full compact-row parity against
+  the retired extraction's semantics, as an acceptance gate (we run these).
+- **Per-arm replay receipts:** counts, rate, error rate, stream/spine hashes, so any
+  arm's consultation is exactly re-executable.
+- **Fail-closed behaviour:** on error, rate shortfall or hash mismatch the consumer
+  stops rather than continuing on suspect features; the consult process itself may
+  restart independently of training.

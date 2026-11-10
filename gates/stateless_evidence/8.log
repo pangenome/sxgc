@@ -1,0 +1,5 @@
+STATELESS_BENCH threads=8 positions=4096 left=8 seconds=14.845541 positions_per_s=275.908 checksum=241315550719 decodes=8950584 decode_seconds_sum=108.770246 worker_arena_bytes=8192 VmHWM:	 7884800 kB
+STATELESS_COUNT query="the " count=704942163
+STATELESS_COUNT query="Harper Reed" count=55
+STATELESS_COUNT query=" function " count=4785152
+STATELESS_MEMORY workers=8 anonymous_before_bytes=290816 anonymous_live_bytes=520192 incremental_anonymous_per_worker_bytes=28672 query_wall_seconds=14.845541

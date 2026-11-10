@@ -1,0 +1,29 @@
+STATELESS_COUNT query="the " count=704942163
+STATELESS_COUNT query="Harper Reed" count=55
+STATELESS_COUNT query=" function " count=4785152
+STATELESS_MEMORY workers=96 anonymous_before_bytes=299008 anonymous_live_bytes=3121152 incremental_anonymous_per_worker_bytes=29397 query_wall_seconds=1.788914
+STATELESS_WORKER_RSS arena_peak_bytes=8192 stack_peak_max_bytes=12288 stack_plus_arena_peak_max_bytes=20480 heap_pair_capacity_bytes=4096 context_heap_bytes=8
+STATELESS_BENCH threads=96 positions=4096 left=8 seconds=1.788914 positions_per_s=2289.657 checksum=241315550719 decodes=8950584 decode_seconds_sum=149.513833 worker_arena_bytes=8192 VmHWM:	 7886564 kB
+	Command being timed: "/home/erikg/sxgc/xsa/target/release/xsa stateless-bench /mnt/nvme2n1/erikg/P100c/pile-head100.sxi2 /mnt/nvme2n1/erikg/pile.txt 96 4096 8"
+	User time (seconds): 155.61
+	System time (seconds): 4.09
+	Percent of CPU this job got: 3599%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:04.43
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 7769572
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 141970
+	Voluntary context switches: 4153
+	Involuntary context switches: 266
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 8
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

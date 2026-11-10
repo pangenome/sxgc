@@ -1,0 +1,2 @@
+BRANCH_READY navigation=backward-search-ranks candidates=243 gather_ab=0 workers=1
+BRANCH_STATS contexts=19249 contexts_per_s=132.439 search_us_per_context=7096.240 gather_us_per_context=1.584 output_ipc_us_per_context=9.437 input_ipc_us_per_context=7546.178 lf_steps=0 rank_steps=52775858 rank_steps_per_context=2741.7
