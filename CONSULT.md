@@ -290,11 +290,16 @@ A4_RESUME_IDENTICAL to_uninterrupted_run=1 positions=1001472 sha256=679984ed4748
 The killed run had appended 27,555,240 bytes but committed 21,278,172, so
 `--resume` discarded a real **6,277,068-byte torn tail**, verified the committed
 prefix's sha256 (`prefix_verified=1`), and finished with the uninterrupted run's
-exact bytes, byte for byte, at the same row count. (The harness sets
-`--chunk-rows 200000` on the run it kills so the kill cannot land on a commit
-boundary; an earlier run without that setting happened to be killed exactly at a
-commit and reported `truncated_bytes=0` - also identical, but it does not exercise
-the truncation.)
+exact bytes, byte for byte, at the same row count.
+
+Provenance of that block, stated exactly: the `A4_KILL ... / CONSULT_RESUME ...`
+lines above are the `--chunk-rows 200000` invocation of the harness's A4 step (the
+setting the committed harness uses, so the kill cannot land on a commit
+boundary). The full-harness run at commit `80d2951`, made before that setting was
+added, was killed exactly ON a commit boundary -
+`A4_KILL file_bytes=28013586 last_commit_output_bytes=28013586 commits=8`,
+`A4_RESUME ... truncated_bytes=0` - and was also byte-identical to the
+uninterrupted run; it simply never exercised the truncation branch.
 
 Every launch in the harness is `setsid timeout --kill-after=10 N`, and every step
 asserts that no `xsa consult` process of ours survived it (`NO_SURVIVORS`).
