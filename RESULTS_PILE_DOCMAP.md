@@ -121,3 +121,51 @@ known component, queried back through the container:
 French novel → Books3, court opinion → FreeLaw, `<description>` XML → Github:
 the labels match the text, and the doc ids are the documents the patterns came
 from.
+
+### D3 END OF STREAM
+
+Full file: the last document ends exactly at the file's end, nothing uncovered.
+
+    DOCEND last_doc=210607727 last_offset=1307910801940 last_length=599 covered_end=1307910802540 corpus_bytes=1307910802540 file_bytes=1307910802540 uncovered=0
+
+100 GB head slice: the last complete document ends at 99,999,999,398 and the
+remaining 602 bytes are a head-cut tail document (`partial_tail=1`,
+`last_length=602`) that owns no separator. The map covers all 100,000,000,000
+bytes; it says so in `PILE_MAP_LIMIT` and in `MANIFEST.json`
+(`partial_tail`, `corpus_bytes`, `limit_trailing_bytes`).
+
+### D5 FULL FILE MAP
+
+    xsa corpus --pile-map --pile /mnt/nvme2n1/erikg/pile.txt \
+        --shards .../pile/train --out /mnt/nvme2n1/erikg/pilemap_full --jobs 30
+
+    SEP_INTERNAL records=210607728 internal_0x1e=78715 ratio=0.000373752 bytes=1307910802540
+    PILEMAP docs=210607728 corpus_bytes=1307910802540 covered=1307910802540 partial_tail=0 shards=30 seps.bin=868756928 titles.bin=3626765255 meta.bin=7160663742
+    DOCCOUNT range_bytes=1307910802540 records=210607728 internal_0x1e=78715 separators=210686443 identity_ok=1 entries=210607728 partial_tail=0
+    DOCHASH docs_compared=210607728 mismatches=0 separators=210686443 content_digest=ed0f93f1fbdd379a2c8c8cc255bc0adc6bee67c414ca707148423026de0c72d5
+    DOCEND last_doc=210607727 last_offset=1307910801940 last_length=599 covered_end=1307910802540 corpus_bytes=1307910802540 file_bytes=1307910802540 uncovered=0
+
+| measure | value |
+| --- | --- |
+| wall | 12:00.73 (`time -v`, whole pass incl. verification of all 1.31 TB) |
+| peak RSS | 56,013,532 kB = 53.4 GiB |
+| seps.bin | 868,756,928 B (4.12 B/document) |
+| meta.bin | 7,160,663,742 B (34 B/document) |
+| titles.bin | 3,626,765,255 B (17.2 B/document) |
+| documents | 210,607,728 |
+| separators (0x1E) | 210,686,443 = 210,607,728 framing + 78,715 internal |
+| stage split | shards 556 s, pile verification 538 s, sidecars 242 s |
+| peak disc | ~12 GB of sidecars, no scratch files, no position column |
+
+The box was NOT idle during this run: other lanes' jobs were live (an `xsa
+ctx-build` at ~60 GB RSS and two `emender` python experiment workers at ~100 %
+CPU), so 12:00 is a contended measurement, not a quiet-box one.
+
+Full-file sampled re-extraction from all 30 shards:
+
+    DOCVERIFY n=400 exact=400 mismatches=0 internal_sampled=200 internal_exact=200
+
+The internal 0x1E census over the whole Pile (sum 78,715): FreeLaw 67,288,
+PhilPapers 8,891, Ubuntu IRC 2,462, StackExchange 44, Gutenberg (PG-19) 7,
+Github 6 — court documents and philosophy PDFs, i.e. text extracted from
+PDF/HTML with stray control bytes, not Wikipedia and not code.
