@@ -459,6 +459,102 @@ pairwise/k-way pair path) and `anchors.resize(n)` in the cyclic repair; the
 `--selftest` oracles' `v.reserve(n)` are oracle-only. If you touch any of them,
 price it against the phase's `RLIMIT_AS`, not against n.
 
+### m14, the LCP over runs: OPT-IN (`--with-lcp-runs`), and what it buys
+
+The suffix tree *is* the LCP-interval tree: a node's children are delimited by the
+ranks where LCP drops below the node's depth. The finish computes that column for
+the chi sweep and used to throw it away. `--with-lcp-runs` persists it as member
+**m14** (codec 117, SXI2 **v8**), one exact u64 per BWT **run**, in run order, at
+the run's head row: `lcpRuns[i] = lce(SA[r_i-1], SA[r_i])`.
+
+```sh
+xsa build --tape --input CORPUS --scratch DIR --threads 24 --memory-gb 24           --with-lcp-runs                      # v8 container WITH m14
+xsa build --tape --input CORPUS --scratch DIR --threads 24 --memory-gb 24
+                                               # DEFAULT: v7, no m14, byte-identical
+```
+
+**DEFAULT OFF, and why.** m14 costs a measured **0.27 n at 150 MB, 0.256 n at
+10 GB, 5.89 bits/run** (~354 GB on a full-Pile container). What it uniquely buys is
+the MIDDLE band of the two-backend rule (MEMORY_OPS.md): contexts too wide to answer
+by `seek`+locate-and-scan and not materialised in the top-of-tree trie, plus node
+depths, child delimiters, MEM/interior enumeration. Measured on the 10 GB Pile slice
+(1000 byte-weighted contexts per depth, seed 20261110, widths from the container's
+own `--count`):
+
+| depth | median width | w==1 | 2..999 | 1e3..1e5 | 1e5..1e6 | >=1e6 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 8  | 2,815 | 4.3 % | 36.1 % | 45.7 % | 11.3 % | 2.5 % |
+| 16 | 3     | 39.9 % | 53.8 % | 5.1 % | 0.0 % | 1.1 % |
+| 24 | 1     | 73.8 % | 24.6 % | 0.9 % | 0.1 % | 0.5 % |
+| 32 | 1     | 85.7 % | 13.6 % | 0.4 % | 0.0 % | 0.2 % |
+
+At information depths (16..32 B) that band is 0.4..5.1 % of contexts, so m14 is a
+quarter of `n` spent on a thin band: opt in when you need topology from the
+artifact. The plan line says which arm ran (`lcp_runs=absent|present(codec=117)
+member=m14 lcp_runs_version=7|8`), and so does the container's own header (v8 +
+flag bit 7 + member m14), so a reader never needs the flag.
+
+**Default-off is byte-identical to v7**: the 150 MB container built with no flag is
+sha256 `60b56ffa3502d466b80f0dc8fae2ee960ffc4ec41ec6c2c8d535cc80478689d2`, and every
+one of its 8 members is byte-identical (id, codec, bytes, count, crc, sha) to the
+`--with-lcp-runs` container's members; only the offsets of m12/m13 move, because m14
+sits between m11 and m12.
+
+Reading it back:
+
+```sh
+xsa lcp <container> --run I | --runs A:B | --sample N --seed S | --all [--audit]
+xsa lcp-verify <container> --corpus CORPUS [--sample 50] [--deep 50]
+```
+
+`xsa lcp` answers one run from one 16-byte directory entry + one bit slice + one
+escape-list binary search; `--audit` walks the trailing directory (it must tile the
+payload exactly) and every block's escape list (which must be sorted). `lcp-verify`
+compares stored values against a brute-force LCE over the corpus and exits non-zero
+on any mismatch; a container without m14 is refused **by name**, never answered
+around. Measured: 124/124 exact at 150 MB, 140/140 exact at 10 GB.
+
+### A POINT-MASS class BORROWS one arena - and may exceed the scratch budget
+
+A wave sorts a class of suffixes by a 24-byte key, and a class that no key byte
+splits and that is not the single-symbol tail run has exactly one order-safe shape:
+**one wave carrying the whole class** (its rows route to one band, the row gate
+admits that band alone, and the band is sorted against the corpus with `suf_cmp`
+when the keys tie). Under a tight `--scratch-budget-gb` the wave goal collapses and
+such a class no longer fits the plan, so the sorter either borrows or refuses:
+
+```
+SS_WAVE_BORROW class_rows=54973083 bytes_per_row=90 arena_gb=4.608 disk_gb=2.099   mem_cap_gb=29.802 wave_goal=7124992 path=borrow-one-wave   reason=point_mass_no_key_byte_splits_it_no_position_slice_is_sound
+```
+
+- The borrow is capped by **`--memory-gb`** (the operator's RAM promise), not by the
+  band plan; `SS_WAVE_BORROW_TOTAL` reports what was admitted and refuses if OWNED
+  RSS passes `--memory-gb`.
+- **A capped build may therefore exceed its scratch budget by up to one point-mass
+  class** (its band file is `class_rows x 41 B`). That is stated in the journal line
+  itself and it is not hidden.
+- If the class does not fit `--memory-gb`, the sorter REFUSES by name: a chunked
+  sort + order-preserving merge inside one class is the only remaining shape and it
+  is not implemented. Never publish an unproved order.
+
+On the Pile's first 100 GB the class is **16+ SPACES**: 763,350,000 rows (the
+sorter's sample; an independent corpus census puts it at 762,642,500), i.e. the
+Pile's indentation - 41,229,268 space runs of >= 16 B, max 15,992 B, 1.38 % of the
+bytes - not a duplicated document and not one monster filler run.
+
+**The fixture that proves the borrow changes no product byte** (150 MB, 4.5 minutes
+per arm; the 40 MB version is refused earlier by the 65536-row fold floor, so it
+never reaches this path):
+
+```sh
+# build the indentation corpus (see gates/lcp_runs_borrow_fixture.sh for the generator)
+gates/lcp_runs_borrow_fixture.sh
+# -> SS_WAVE_POINT_MASS_CLASS prefix_text='                '   (16 SPACES, corpus bytes)
+# -> SS_WAVE_BORROW ... path=borrow-one-wave
+# -> tight_sha256 == free_sha256 == e859d53bc56979053206f3ced6b554585dd045f5d63ae5bab817fd0237927cad
+# -> GATE BORROW PASS
+```
+
 ### An EMPTY band is acked, never ignored
 
 The sorter can publish a band with **no rows** (a wave that closes a byte range
@@ -773,7 +869,7 @@ document: the tool refuses loudly and early, and each refusal names the knob.
 | `BUNDLE_TOOL_MISMATCH <name>: <path> sha256=<a> expected=<b>` | the extracted stage cache is corrupt or stale | `rm -rf ~/.cache/xsa/<manifest-sha256>` and re-run |
 | `--bin-live-cap is a bin-pipeline flag` / `<knob> needs --phrase-radix` / `CROSS_V2_PRODUCERS=<v> is INERT under the bin shape (…)` | a knob belongs to a different route | drop it, or select that route |
 | `--chunks is INERT under the bin pipeline (the default; the producer sweeps the corpus itself, there is no chunk phase); drop the flag, or pass --legacy-merge for the chunk+merge route` ✔ | same: `--chunks/--chunk-mb/--kway/--fanin` are legacy-merge only | drop them |
-| `unknown option <x>` | the tape route accepts `--input --scratch --tape --bin --threads --memory-gb --plan-only --skip-fit-check --with-chi --chi-expect --finish-as-gb --wit-ram-gb --snap-1e --remap --stripe` (`--allow-infeasible` is the alias of `--skip-fit-check`; the `--bin-*` and `--phrase-*` arms are ignored/tuned per route) | — |
+| `unknown option <x>` | the tape route accepts `--input --scratch --tape --bin --threads --memory-gb --plan-only --skip-fit-check --with-chi --chi-expect --finish-as-gb --wit-ram-gb --snap-1e --remap --stripe` (`--with-lcp-runs`, `--no-lcp-runs`, `--scratch-budget-gb`, `--finish-as-gb`; `--allow-infeasible` is the alias of `--skip-fit-check`; the `--bin-*` and `--phrase-*` arms are ignored/tuned per route) | — |
 
 **The tape route has a minimum corpus size (~1.1 MB).** The band size is bounded by
 the declared 2 n scratch window: `rows_per_band ≈ 0.0594 n`, which must reach the
