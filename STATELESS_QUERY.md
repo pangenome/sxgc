@@ -43,7 +43,54 @@ mapping residency separately from private scratch.
 
 ## Measurement
 
-Pending measured gate results.
+Q1 scaling table (verbatim):
+
+| Threads | Wall seconds | Positions/s | Wall scaling | Efficiency/thread |
+|---:|---:|---:|---:|---:|
+| 1 | 99.162097 | 41.306 | 1.000x | 100.00% |
+| 8 | 14.845541 | 275.908 | 6.680x | 83.49% |
+| 24 | 5.277033 | 776.194 | 18.791x | 78.30% |
+| 48 | 2.674794 | 1531.333 | 37.073x | 77.23% |
+| 96 | 1.777656 | 2304.158 | 55.783x | 58.11% |
+
+Limiting resource: repeated scalar Huffman/gamma block decoding. At one worker,
+92.887 of 99.162 query seconds are inside `decode_block`; at 96 workers its
+summed wall is 146.636 seconds versus 152.803 process user CPU seconds. Every run
+performs exactly 8,950,584 block decodes and has checksum 241315550719. The
+high absolute cost is explicit: about 2,185 full block decodes per position.
+There are no shared cache hits to amortize this cost.
+
+Scaling bends above 48 workers: doubling to 96 yields only 1.504x more
+throughput. The measured maximum is **2304.158 positions/s, 55.783x serial,
+58.11% per-thread efficiency**. Near-linear scaling to 96 was **not achieved**.
+The decoder consumes the work; why its per-decode time rises at 96 cannot be
+uniquely attributed to frequency, SMT placement, cache/memory latency or NUMA
+without hardware counters. `perf stat -e cycles,instructions true` was denied
+(`perf_event_paranoid=4`); no claim of measured bandwidth or TLB saturation is
+made. This hardware attribution remains an explicit Q1 limitation. There are
+zero major faults at 8–96 workers, and the mapped core issues no read/prefetch
+syscalls during queries, so disk page faults and read syscall rate are not the
+observed throughput ceiling. Pure scalar decoding remains expensive even after
+shared-cache contention is removed; a future LCP/tree layer must reduce rank work.
+
+Method: 4096 fixed positions, one complete next-byte histogram each, raw rolling
+8-byte contexts, spread over sixteen corpus windows. This is the permitted
+cheaper spine, not a claimed 1024-byte throughput result. All thread counts
+answer exactly the same logical positions. Walls include worker creation and
+first-touch faults but exclude index open, correctness spot checks, the RSS
+snapshot, and thread teardown. Raw logs and CPU/fault rusage are committed under
+`gates/stateless_evidence/`. Full process walls including open are in scaling.json.
+Single trial per level, sequential 1/8/24/48/96, no affinity, warmed kernel page
+cache after the first trial. Host: dual EPYC 7713, 128 physical cores/256 logical
+CPUs, acpi-cpufreq schedutil, foreign load roughly 14–18. Short 96-worker wall and
+host load limit precision. Reproduce with:
+
+```sh
+python3 gates/stateless_scaling.py xsa/target/release/xsa \
+  /mnt/nvme2n1/erikg/P100c/pile-head100.sxi2 \
+  /mnt/nvme2n1/erikg/pile.txt /tmp/stateless-scaling 4096 8
+```
+
 
 ## Tree-layer guidance
 
