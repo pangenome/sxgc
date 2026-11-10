@@ -108,7 +108,9 @@ Nothing is compressed and nothing is buffered on the side.
 `ROW = <HBBH`, `PAIR = <BQ`): `context_bytes = ctxlen`, `eof = eof`,
 `censored = (ctxlen > 0)`, `pairs = [(byte,count)]` exactly as above,
 `context_count = width`, `support_size = width - eof`, `distinct_branches` and
-`entropy` computed from the pairs as their reader already does. Their
+`entropy` computed from the pairs as their reader already does. A next byte of
+`0x1E` (decimal 30) is emitted like any other byte, exactly as their chain
+records it and their `features()` excludes it from the probabilities. Their
 `write_window` geometry (`start % 2048 == 0`, `1 <= len <= 2048`) is satisfied by
 the T2048 window sets we benchmark with.
 
@@ -248,57 +250,97 @@ identical (A4). (c) `--rss-gb 2` vs `8` vs `16`: identical, on the 51,200-positi
 set (`rss2 = rss8 = rss16`) and on the full 1M set (`rss8 = rss16`). Output is
 also invariant to `-j` (4/8/16/32/64/96) and to `--cache-gb`.
 
-### A3 — bounded: `--rss-gb 8`, peak RSS 7.99 GB, 5,109.6 positions/s
+### A3 — bounded: peak RSS 8.00 GB at `--rss-gb 8`
+
+Three full runs of the same 1M-position window set, all `--rss-gb 8`, all the same
+bytes, on a box whose foreign load moved between them (`load average` 50 -> 99;
+four FastGA/FastGCD jobs at ~15 cores each plus GPU training jobs):
 
 ```
-A3_BOUNDED positions=1001472 positions_per_s=5109.619 peak_rss_gb=7.994 cap_gb=8 jobs=96
+A3_BOUNDED positions=1001472 positions_per_s=4956.978 peak_rss_gb=8.000 cap_gb=8 jobs=96    (load ~57)
+A3_BOUNDED positions=1001472 positions_per_s=5109.619 peak_rss_gb=7.994 cap_gb=8 jobs=96    (load ~40)
+CONSULT_STATS positions=1001472 positions_per_s=5640.997 peak_rss_gb=7.993 cap_gb=8 jobs=96  (load ~24)
+CONSULT_STATS positions=1001472 positions_per_s=5920.775 peak_rss_gb=14.122 cap_gb=16 jobs=96 (load ~50)
 ```
 
-Peak RSS is `VmHWM` from `/proc/self/status` (the kernel's number), also journaled
-per second as `CONSULT_RSS`. The window set is their cache geometry: 489 T2048
-windows at 2048-aligned offsets, spine = last ≤1024 bytes cut at the last `0x1E`,
-mean `ctxlen` 709.3 / median 855 of 1024.
+**Honest verdict on the 5,000/s bar: it is met on average and not by a margin.**
+At the 8 GB cap the rate spans 4,957-5,641 positions/s (mean 5,236) - the bar is
+inside the spread, and the box was never quiet. At the 16 GB cap that the
+contract allows (8-16 GB) it is 5,921 positions/s, because the RSS governor stops
+bleeding page tables (`drop_epochs` 641 -> 0). Peak RSS is `VmHWM` from
+`/proc/self/status`, and it is journaled every second as `CONSULT_RSS
+rss_gb=… cap_gb=…`: with `--rss-gb 8` the process rides **at** its budget (8.00
+GB), which is the budget working, not a hope.
 
-### A4 — crash and resume
+The window set is their cache geometry: 489 T2048 windows at 2048-aligned
+offsets, spine = last ≤1024 bytes cut at the last `0x1E`, mean `ctxlen` 709.3 /
+median 855 of 1024.
+
+### A4 — crash and resume, with a real torn tail
 
 ```
 A4_KILL exit=124 (124 = the harness's SIGTERM, the crash this gate needs)
-NO_SURVIVORS work=/tmp/consult-fix/g234
-A4_KILL file_bytes=27555240 last_commit_output_bytes=24419012 commits=7
-A4_RESUME positions=1001472 sha256=679984ed474889fbb324c85a6e441c49db7a5686eb17cbd1004d8e3d7a58d56d truncated_bytes=3136228
+NO_SURVIVORS work=/tmp/consult-fix/gfinal
+A4_KILL file_bytes=27555240 last_commit_output_bytes=21278172 commits=2
+CONSULT_RESUME from_seq=2 windows_done=196 positions_done=401408 output_bytes=21278172 truncated_bytes=6277068 prefix_verified=1
+A4_RESUME positions=1001472 sha256=679984ed474889fbb324c85a6e441c49db7a5686eb17cbd1004d8e3d7a58d56d
 A4_RESUME_IDENTICAL to_uninterrupted_run=1 positions=1001472 sha256=679984ed474889fbb324c85a6e441c49db7a5686eb17cbd1004d8e3d7a58d56d
 ```
 
-The killed run had appended 27,555,240 bytes but committed 24,419,012, so
-`--resume` discarded a real 3,136,228-byte torn tail, verified the committed
-prefix's sha256, and finished with the uninterrupted run's exact bytes and row
-count. Every launch in the harness is `setsid timeout --kill-after=10 N` and every
-step asserts no `xsa consult` process of ours survived (`NO_SURVIVORS`).
+The killed run had appended 27,555,240 bytes but committed 21,278,172, so
+`--resume` discarded a real **6,277,068-byte torn tail**, verified the committed
+prefix's sha256 (`prefix_verified=1`), and finished with the uninterrupted run's
+exact bytes, byte for byte, at the same row count. (The harness sets
+`--chunk-rows 200000` on the run it kills so the kill cannot land on a commit
+boundary; an earlier run without that setting happened to be killed exactly at a
+commit and reported `truncated_bytes=0` - also identical, but it does not exercise
+the truncation.)
+
+Every launch in the harness is `setsid timeout --kill-after=10 N`, and every step
+asserts that no `xsa consult` process of ours survived it (`NO_SURVIVORS`).
+
+### Reproducing the gates
+
+```sh
+cargo build --release --manifest-path xsa/Cargo.toml
+python3 gates/consult_a1.py /mnt/nvme2n1/erikg/pile.txt \
+        /mnt/nvme2n1/erikg/P100c/pile-head100.sxi2 xsa/target/release/xsa /tmp/a1
+bash gates/consult_a234.sh xsa/target/release/xsa \
+        /mnt/nvme2n1/erikg/P100c/pile-head100.sxi2 /mnt/nvme2n1/erikg/pile.txt /tmp/a234 96
+```
+
+`consult_a1.py` compiles `consult_oracle.c` itself. Both drivers were run from a
+clean worktree at commit `80d2951`; the binary's sha256 was
+`a7c289c61955d57061bfb8ea31e2513d836b95cc6e037813a70affa8c8b97c65`.
 
 ## 7. Throughput, and what it is measured on
 
-All numbers below are one process on this box with **foreign load**: four
-FastGA/FastGCD jobs at ~15 cores each plus GPU training jobs, `load average 40-96`
-throughout (it rose from 24 to 96 while the gates ran, which is why repeated runs
-of the same command vary by ~10%). Source: `CONSULT_STATS`/`CONSULT_DONE` in the
-journal. Walls include container open (`Index::open`) and the corpus window map.
+One process, this box, with **foreign load throughout** (four FastGA/FastGCD jobs
+at ~15 cores each plus GPU training jobs; `load average` 24 -> 99 while the gates
+ran, which is why repeats of the same command vary by ~15%). Source: the
+`CONSULT_STATS` / `CONSULT_DONE` journal records. Walls include container open
+(`Index::open`) and the corpus window map.
 
 | window set | spine | positions | `-j` | positions/s | peak RSS | sha256 (short) |
 |---|---|---|---|---|---|---|
-| T2048 x 489 (their geometry) | ≤1024, cut at `0x1E`, mean 709 | 1,001,472 | 96 | **5,109.6** | 7.99 GB | `679984ed…` |
-| T2048 x 489 | same | 1,001,472 | 96 | 5,641.0 | 7.99 GB | `679984ed…` |
+| T2048 x 489 (their geometry) | ≤1024, cut at `0x1E`, mean 709 | 1,001,472 | 96 | **5,641.0** | 7.99 GB | `679984ed…` |
+| T2048 x 489 | same | 1,001,472 | 96 | **5,109.6** | 7.99 GB | `679984ed…` |
+| T2048 x 489 | same | 1,001,472 | 96 | 4,957.0 | 8.00 GB | `679984ed…` |
+| T2048 x 489, `--rss-gb 16` | same | 1,001,472 | 96 | **5,920.8** | 14.12 GB | `679984ed…` |
+| T2048 x 489, resume from 401,408 | same | 599,064 | 96 | 8,539.3 | 7.99 GB | `679984ed…` |
 | T2048 x 7,849 | same | 200,704 | 16 | 2,284.0 | 7.99 GB | `16b7a268…` |
-| T2048 x 489, `--rss-gb 16` | same | 1,001,472 | 96 | — | 11.36 GB | `679984ed…` |
 | T1024 x 16, `--no-sep-cut` | 1024 for every position | 16,384 | 96 | **4,956.9** | 5.63 GB | `8bcd491d…` |
 | T1024 x 16, `--no-sep-cut` | 1024 for every position | 16,384 | 64 | 4,533.5 | 5.63 GB | `8bcd491d…` |
 
 For scale: the emender's receipt (`receipts/c14_cache_scale/benchmark_summary.json`,
 1,034,056 positions, `jobs=128`) is **6,088.7 positions/s** with a peak RSS of
 **295 GB**, at a mean `context_bytes` of **14.9** and **6.9M native queries**
-(≈6.7 per position). This path answers the same 1M-position geometry at 5,109.6
-positions/s with **one** query per position, mean spine 709 bytes (≈48x the rank
-work per position), in **7.99 GB**. The per-position cost is therefore ~240x
-lower; the wall is bounded by the query kernel, not by the stream.
+(≈6.7 per position). This path answers the same 1M-position geometry at
+~5.1-5.6k positions/s with **one** query per position and a mean spine of **709**
+bytes (≈48x the rank work per position: `xsa branches` reports
+`rank_steps_per_context=4225` for a 1024-byte spine, so ~62 by proportion at
+15 bytes) in **7.99 GB**. Per position that is ~240x less wall and
+~37x less memory.
 
 Where the throughput came from (measured, `-j 32`, 1024-byte spines, pile):
 
@@ -310,10 +352,17 @@ Where the throughput came from (measured, `-j 32`, 1024-byte spines, pile):
 | + a 1 GiB arena instead of 64 MiB (fewer random block decodes) | 4,177 (`-j 64`) |
 
 Remaining headroom, and why it is not taken here: the kernel's parallel
-efficiency is ~25% (`-j 64` gives ~4.2x of one core's rate), it is
-memory-latency bound (`rank` walks the container's 5.9 GB of directories at
-random), and the box was running foreign 60+ core workloads. Closing that gap is
-deliverable B's ladder, not this stream's.
+efficiency is ~25-30% (`-j 96` gives ~7x of one core's rate) and it is memory
+latency / page-walk bound - `rank` walks the container's 5.9 GB of directories at
+random, which no amount of streaming can fix. Closing that gap is deliverable B's
+maintained-ladder work, not this stream's.
+
+The RSS governor's own cost is visible and measurable: at `--rss-gb 8` the mapping
+is pinned at the budget and `drop_epochs` runs in the hundreds (641 on a 1M run),
+each bleeding a 1 GiB window of page-table entries; at `--rss-gb 16`
+`drop_epochs` is 0 and the same workload is 13% faster. The smaller arena
+experiment (`--cache-gb 0.5`) is *slower* (4,651/s, 121M block decodes) - the
+arena earns its share of the budget.
 
 ## 8. Differences from the emender python chain, and what to adapt
 

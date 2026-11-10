@@ -44,18 +44,6 @@ run() { # tag windows rss_gb out extra...
   [ $rc -eq 0 ] || fail "run $tag exited $rc"
 }
 
-# run_until_kill SECONDS windows rss_gb out: SIGTERM at SECONDS, exit code kept
-run_until_kill() {
-  local secs=$1 win=$2 rss=$3 out=$4
-  rm -f "$out" "$out.journal"
-  setsid timeout --kill-after=10 "$secs" \
-    "$XSA" consult --container "$CONTAINER" --corpus "$CORPUS" \
-    --windows "$win" --output "$out" --rss-gb "$rss" -j "$JOBS"
-  local rc=$?
-  no_survivors
-  echo "A4_KILL exit=$rc (124 = the harness's SIGTERM, the crash this gate needs)"
-}
-
 python3 "$HERE/consult_windows.py" "$WORK/w1m.jsonl" --positions 1000000 --len 2048 \
   --offset 3000000512 | tee "$WORK/windows.log"
 python3 "$HERE/consult_windows.py" "$WORK/w50k.jsonl" --positions 50000 --len 2048 \
@@ -102,8 +90,18 @@ echo "=== A4: kill mid-run, then --resume"
 OUT="$WORK/a4.rows"
 rm -f "$OUT" "$OUT.journal"
 # SIGTERM at 95 s: the run stops wherever it is, with whatever it had already
-# appended - and only the committed prefix is durable, which is the point
-run_until_kill 95 "$WORK/w1m.jsonl" 8 "$OUT" | tee "$WORK/a4kill.log"
+# appended - and only the committed prefix is durable, which is the point.
+# --chunk-rows 200000 (a commit every ~40 s at this rate) makes sure the kill
+# leaves a REAL torn tail rather than landing on a commit boundary, so the
+# truncation path is exercised rather than assumed.
+KILL_CHUNK=200000
+setsid timeout --kill-after=10 95 \
+  "$XSA" consult --container "$CONTAINER" --corpus "$CORPUS" \
+  --windows "$WORK/w1m.jsonl" --output "$OUT" --rss-gb 8 -j "$JOBS" \
+  --chunk-rows "$KILL_CHUNK"
+rc=$?
+no_survivors
+echo "A4_KILL exit=$rc (124 = the harness's SIGTERM, the crash this gate needs)"
 APPENDED=$(stat -c %s "$OUT")
 COMMITS=$(grep -c '^CONSULT_COMMIT ' "$OUT.journal")
 LASTLEN=$(field "$OUT.journal" output_bytes)
