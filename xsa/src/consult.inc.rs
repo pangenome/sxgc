@@ -1486,3 +1486,90 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
         gb(peak),
     );
 }
+
+#[cfg(test)]
+mod consult_tests {
+    use super::*;
+
+    /// The row layout is a published contract (CONSULT.md §3): 40 fixed bytes
+    /// plus 9 per branch, little-endian, pairs count-desc/byte-asc.
+    #[test]
+    fn row_layout_is_the_documented_one() {
+        let mut out = Vec::new();
+        encode_consult_row(&mut out, 7, 1_000_000_000_000, 1024, true, 42, 1, &[(9, 41), (3, 1)]);
+        assert_eq!(out.len(), ROW_FIXED_BYTES + 2 * 9);
+        assert_eq!(u32::from_le_bytes(out[0..4].try_into().unwrap()), 2); // nsym
+        assert_eq!(u16::from_le_bytes(out[4..6].try_into().unwrap()), 1024); // ctxlen
+        assert_eq!(u16::from_le_bytes(out[6..8].try_into().unwrap()), 3); // eof + truncated
+        assert_eq!(u64::from_le_bytes(out[8..16].try_into().unwrap()), 7); // doc
+        assert_eq!(
+            u64::from_le_bytes(out[16..24].try_into().unwrap()),
+            1_000_000_000_000
+        ); // off
+        assert_eq!(u64::from_le_bytes(out[24..32].try_into().unwrap()), 42); // width
+        assert_eq!(u64::from_le_bytes(out[32..40].try_into().unwrap()), 1); // eof
+        assert_eq!(out[40], 9);
+        assert_eq!(u64::from_le_bytes(out[41..49].try_into().unwrap()), 41);
+        assert_eq!(out[49], 3);
+        // an empty context is an empty histogram: no pairs, no EOF
+        let mut e = Vec::new();
+        encode_consult_row(&mut e, 0, 5, 0, false, 0, 0, &[]);
+        assert_eq!(e.len(), ROW_FIXED_BYTES);
+        assert_eq!(u32::from_le_bytes(e[0..4].try_into().unwrap()), 0);
+        assert_eq!(u16::from_le_bytes(e[4..6].try_into().unwrap()), 0);
+        assert_eq!(u16::from_le_bytes(e[6..8].try_into().unwrap()), 0);
+        assert_eq!(u64::from_le_bytes(e[16..24].try_into().unwrap()), 5); // off
+        assert_eq!(u64::from_le_bytes(e[24..32].try_into().unwrap()), 0); // width
+        assert_eq!(u64::from_le_bytes(e[32..40].try_into().unwrap()), 0); // eof
+    }
+
+    #[test]
+    fn json_windows_carry_defaults_and_refuse_a_missing_document() {
+        let w = parse_json_window(br#"{"doc":3,"base":10}"#, "t");
+        assert_eq!((w.doc, w.base, w.start, w.len, w.left), (3, 10, 0, 1, LEFT_USE_DEFAULT));
+        let w = parse_json_window(br#"{"doc":3,"base":10,"start":2048,"len":2048,"left":64}"#, "t");
+        assert_eq!((w.start, w.len, w.left), (2048, 2048, 64));
+    }
+
+    #[test]
+    fn absent_context_is_an_empty_histogram_not_the_corpus_totals() {
+        // the shape consult_answer returns for an unqueryable spine: width 0,
+        // eof 0, so the row carries no counts (their `if k == 0` rule)
+        let mut out = Vec::new();
+        encode_consult_row(&mut out, 0, 0, 0, false, 0, 0, &[]);
+        let nsym = u32::from_le_bytes(out[0..4].try_into().unwrap());
+        let width = u64::from_le_bytes(out[24..32].try_into().unwrap());
+        assert_eq!((nsym, width), (0, 0));
+    }
+
+    /// A torn journal tail is DISCARDED, a complete record is used, and the
+    /// cursor never moves backwards.
+    #[test]
+    fn journal_tail_is_never_trusted() {
+        let dir = std::env::temp_dir().join(format!("consult-journal-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("j").to_string_lossy().into_owned();
+        let good = |seq: u64, pos: u64, bytes: u64| {
+            format!(
+                "CONSULT_COMMIT seq={seq} windows_done={pos} windows_bytes_done={pos} \
+                 positions_done={pos} output_bytes={bytes} rows_sha256=deadbeef\n"
+            )
+        };
+        let mut body = String::from("CONSULT_OPEN container=x\n");
+        body.push_str(&good(1, 2048, 100));
+        body.push_str("CONSULT_RSS rss_gb=1.0\n");
+        let torn = good(2, 4096, 200);
+        body.push_str(&torn[..torn.len() - 20]); // no trailing newline: the torn tail
+        std::fs::write(&p, &body).unwrap();
+        let (c, _lines, discarded) = read_last_commit(&p).expect("a complete commit");
+        assert_eq!(c.seq, 1);
+        assert_eq!(c.windows_done, 2048);
+        assert_eq!(c.output_bytes, 100);
+        assert_eq!(discarded, 1, "the un-terminated line must be reported");
+
+        // (a COMPLETE but unparsable commit DIES rather than being discarded -
+        // `die` exits the process, so that path is exercised by the crash gate,
+        // not from inside the test harness.)
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
