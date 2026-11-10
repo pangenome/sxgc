@@ -77,6 +77,39 @@ Consequences, none optional:
 - Any future claim about consult rates must state the locate cost explicitly; the earlier 2.3k positions/s
   and 4.9k positions/s figures were dominated by depth and by location, not by the index.
 
+## The monster key class is whitespace, and it is 0.76 % of the corpus
+
+The 100 GB Pile build under a 30 GB scratch cap refuses in the sorter with:
+
+```
+SS_WAVE_POINT_MASS_PROOF depth=16 class_rows_sampled=763,350,000 tail_slice_rows=0 mismatches=96
+SS_WAVE_POINT_MASS        class_rows=763,350,000 wave_goal=377,119,027 provable=0
+```
+
+Measured directly on `/mnt/nvme2n1/erikg/pile-head100.txt` (first 100 GB, exact counts):
+
+```
+'                '  16 spaces        762,642,500      <- the class
+'----------------'                   206,413,738
+'================'                    32,490,771
+'****************'                    12,364,953
+'0000000000000000'                     2,262,669
+```
+
+So the class is **sixteen consecutive spaces**: code indentation, padding and whitespace runs. Indentation
+continues past sixteen bytes far more often than random text repeats, which is why the class has no
+splitting byte at the depth cap, why it is not a single-symbol tail run (position slicing would corrupt the
+BWT: `mismatches=96`), and why it must be sorted as one unit or in chunked runs.
+
+At 90 B/row the class is 68.7 GB: too large for a wave derived from a 30 GB scratch budget, comfortably
+inside a 96 GB memory budget. So the correct handling is to borrow memory for that single wave (journal
+`SS_WAVE_BORROW`), with chunk+merge inside the class as the fallback when even --memory-gb cannot hold it.
+
+Two consequences worth carrying elsewhere:
+- any build under a scratch cap must state that a point-mass wave may exceed the cap by up to one class;
+- the Pile's single largest suffix class is whitespace, so whitespace is the natural stress case for the
+  sorter, not a synthetic one (we had been using 'ab'*N, which is a period-2 artefact no real corpus has).
+
 ## Why this counts as progress
 
 Each of the three studies this week ended by killing a plausible design cheaply: witnesses are not context
