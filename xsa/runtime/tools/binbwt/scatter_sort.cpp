@@ -50,6 +50,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <map>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -1224,6 +1225,15 @@ int main(int argc, char** argv) {
     };
     std::vector<Wave> wl;
     u64 pointMassSplits = 0, maxClassRows = 0;
+    // THE BORROW (option 2): a point-mass class the DISK budget cannot hold as one
+    // wave may still be ONE WAVE if its rows fit the operator's RAM promise. It is
+    // not free and it is not silent: one such wave means one band arena of the
+    // class's size (the row gate admits it alone), and one band FILE of
+    // class_rows x 41 B on disk - which is how a point mass can exceed the scratch
+    // budget by up to one class. Every borrow is journaled, and the two budget
+    // assertions below carry an EXPLICIT exemption for exactly these bands.
+    u64 borrowWaves = 0, borrowMaxRows = 0, borrowRows = 0;
+    const u64 memCapBytes = (u64)((memory_gb > 0 ? memory_gb : ram_gb) * 1e9);
     std::vector<u64> depthHist(SS_WAVE_DEPTH_MAX + 1, 0);
     const u64 waveGoal = std::max<u64>(1, rows_per_wave * SS_WAVE_TARGET_PCT / 100);
     {
@@ -1288,15 +1298,125 @@ int main(int argc, char** argv) {
                 " (one corpus pass, the only one this branch ever costs)\n",
                 depth, rows, runRows, bad.load(), now_sec() - tpm);
             if (!exactlyRun) {
+                // WHAT THIS CLASS ACTUALLY IS, and whether a DEEPER KEY would split it.
+                // Without this the refusal is a number with no content; with it the next
+                // lane knows whether the answer is "use the key's remaining bytes" or
+                // "this needs a chunked sort+merge". The split table is measured on the
+                // SAME positional sample the descent used (scaled by `stride`), so it
+                // costs nothing and it is a census of the class's own shape.
+                {
+                    // The symbols above are REMAPPED codes: print the CORPUS bytes too, or
+                    // the diagnostic lies (space is symbol 33 here, and printing 33 as a
+                    // character reads as '!'). The inverse table is built once, here.
+                    std::string hex, esc;
+                    auto corpus_byte = [&](unsigned sym) -> unsigned {
+                        if (!REMAP) return sym;
+                        for (unsigned b = 0; b < 256; ++b) if (REMAP[b] == sym) return b;
+                        return sym;
+                    };
+                    for (size_t i = 0; i < pre.size() && i < 24; ++i)
+                        hex += " " + std::to_string(unsigned(pre[i]));
+                    hex += " " + std::to_string(c);
+                    esc += "'";
+                    for (size_t i = 0; i < pre.size() && i < 24; ++i) {
+                        const unsigned b = corpus_byte(pre[i]);
+                        esc += (b >= 32 && b < 127) ? char(b) : '.';
+                    }
+                    {
+                        const unsigned cb = corpus_byte(c);
+                        esc += (cb >= 32 && cb < 127) ? char(cb) : '.';
+                    }
+                    esc += "'";
+                    std::fprintf(stderr,
+                        "SS_WAVE_POINT_MASS_CLASS depth=%" PRIu64 " rows=%" PRIu64
+                        " prefix_symbols=%s prefix_text=%s\n",
+                        depth, rows, hex.c_str(), esc.c_str());
+                    std::vector<u64> inClass;
+                    for (u64 p2 : wp) {
+                        bool hit = true;
+                        for (size_t i = 0; i < pre.size() && hit; ++i)
+                            if (sym_at(p2 + i) != pre[i]) hit = false;
+                        if (hit && sym_at(p2 + depth - 1) == c) inClass.push_back(p2);
+                    }
+                    if (!inClass.empty()) {
+                        // ONE MEMBER, 64 CORPUS BYTES, escaped: the content of the class.
+                        const u64 p2 = inClass[inClass.size() / 2];
+                        std::string w64;
+                        for (u64 k = 0; k < 64; ++k) {
+                            const unsigned b = corpus_byte(sym_at(p2 + k));
+                            if (b == 32) w64 += ' ';
+                            else if (b >= 33 && b < 127) w64 += char(b);
+                            else { char tmp[8]; std::snprintf(tmp, sizeof tmp, "\\x%02x", b); w64 += tmp; }
+                        }
+                        std::fprintf(stderr,
+                            "SS_WAVE_POINT_MASS_MEMBER position=%" PRIu64 " text64='%s'\n",
+                            p2, w64.c_str());
+                    }
+                    for (u64 extra = 1; extra <= 12 && !inClass.empty(); ++extra) {
+                        std::map<unsigned, u64> h2;
+                        for (u64 p2 : inClass) h2[sym_at(p2 + depth + extra - 1)]++;
+                        u64 big = 0;
+                        unsigned bigC = 0;
+                        for (auto& kv : h2) if (kv.second > big) { big = kv.second; bigC = kv.first; }
+                        std::fprintf(stderr,
+                            "SS_WAVE_POINT_MASS_SPLIT depth=%" PRIu64 " largest_child_rows=%" PRIu64
+                            " largest_child_symbol=%u children=%zu sampled_in_class=%zu\n",
+                            depth + extra, (unsigned long long)(big * stride), bigC, h2.size(),
+                            inClass.size());
+                        if (h2.size() == 1) break;
+                    }
+                }
                 std::fprintf(stderr,
                     "SS_WAVE_POINT_MASS depth=%" PRIu64 " class_rows=%" PRIu64
                     " wave_goal=%" PRIu64 " trailing_run_rows=%" PRIu64 " provable=0\n",
                     depth, rows, waveGoal, runRows);
+                // ---- OPTION 2: BORROW AN ARENA FOR THIS ONE CLASS -------------
+                // The class cannot be split by a key byte and cannot be sliced by
+                // position (that would publish an unproved order), so the ONLY
+                // order-safe shape is ONE wave carrying the whole class: every row
+                // routes to one band, the row gate admits that band alone, and the
+                // band is sorted against the corpus with suf_cmp when the 24-byte
+                // keys tie. That is correct by construction - what it costs is RAM
+                // (class_rows x bytes_per_row) and one band file on disk.
+                //
+                // The cap is the OPERATOR'S RAM PROMISE (--memory-gb), not the band
+                // plan: the plan was derived from the DISK budget, and a point mass
+                // is exactly the case where the disk budget cannot shape the work.
+                // If the class does not fit even there, refuse: chunk+merge inside
+                // one class is the only remaining option and it is NOT implemented.
+                const u64 needBytes = rows * budget.bytes_per_row;
+                const u64 diskBytes = rows * SS_DISK_ROW_BYTES;
+                if (needBytes <= memCapBytes) {
+                    ++borrowWaves;
+                    borrowRows += rows;
+                    borrowMaxRows = std::max(borrowMaxRows, rows);
+                    std::fprintf(stderr,
+                        "SS_WAVE_BORROW class_rows=%" PRIu64 " bytes_per_row=%" PRIu64
+                        " arena_gb=%.3f disk_gb=%.3f mem_cap_gb=%.3f wave_goal=%" PRIu64
+                        " path=borrow-one-wave reason=point_mass_no_key_byte_splits_it_no_position_slice_is_sound"
+                        " order_proof=one-band-sorted-with-suf_cmp-tiebreak"
+                        " note=a point mass may exceed the scratch budget by up to one class\n",
+                        rows, budget.bytes_per_row,
+                        double(needBytes) / double(1u << 30), double(diskBytes) / double(1u << 30),
+                        double(memCapBytes) / double(1u << 30), waveGoal);
+                    emitWave(pre, c, c + 1, rows);
+                    return;
+                }
+                std::fprintf(stderr,
+                    "SS_WAVE_BORROW class_rows=%" PRIu64 " bytes_per_row=%" PRIu64
+                    " arena_gb=%.3f disk_gb=%.3f mem_cap_gb=%.3f path=refuse\n",
+                    rows, budget.bytes_per_row, double(needBytes) / double(1u << 30),
+                    double(diskBytes) / double(1u << 30), double(memCapBytes) / double(1u << 30));
                 die("SS_WAVE_POINT_MASS: a key-prefix class of " + std::to_string(rows) +
                     " rows at depth " + std::to_string(depth) + " exceeds the wave goal " +
-                    std::to_string(waveGoal) + " and is NOT the single-symbol tail run, so no"
-                    " key byte splits it and no position slice of it would order correctly."
-                    " Raise --memory-gb (bigger wave) - do not publish an unproved order");
+                    std::to_string(waveGoal) + " and is NOT the single-symbol tail run, and it"
+                    " does not fit one borrowed arena (" + std::to_string(needBytes) +
+                    " B at " + std::to_string(budget.bytes_per_row) + " B/row) inside --memory-gb (" +
+                    std::to_string(memCapBytes) + " B). No key byte splits it and no position"
+                    " slice of it would order correctly, so the only remaining shape is a"
+                    " chunked sort + order-preserving merge INSIDE the class, which this build"
+                    " does not implement. Raise --memory-gb, or implement SS_WAVE_CHUNKMERGE"
+                    " - do not publish an unproved order");
             }
             // the run, as slices of <= waveGoal rows, HIGHEST position first
             const u64 nslices = (runRows + waveGoal - 1) / waveGoal;
@@ -2481,6 +2601,12 @@ int main(int argc, char** argv) {
     ::getrusage(RUSAGE_SELF, &ru);
     const u64 hwm_kb = (u64)ru.ru_maxrss;
     const double anon_ratio = double(peak_anon_kb) * 1024.0 / double(envelope_bytes);
+    // A BORROWED BAND IS THE ONE DOCUMENTED EXCEPTION to the envelope: the arena the
+    // model prices is K bands of rows_per_band, and a point mass is one band of
+    // borrowMaxRows. The exemption is bounded by that measurement (not by hope):
+    // the admitted arena may exceed the envelope only up to the largest borrowed
+    // class, and only if the borrow fits --memory-gb (checked at plan time).
+    const u64 borrowAllowBytes = borrowMaxRows * budget.bytes_per_row;
     const double total_ratio = double(hwm_kb) * 1024.0 / double(envelope_bytes);
     const u64 arena_peak_rows = gate.peak;
     const u64 arena_peak_bytes = arena_peak_rows * budget.bytes_per_row;
@@ -2510,7 +2636,10 @@ int main(int argc, char** argv) {
         rows_per_band, budget.arena_planned * budget.bytes_per_row, budget.bands_in_flight, waves,
         gate.wait_count(),
         memory_gb > 0 ? memory_gb : ram_gb, double(SS_BUDGET_RATIO_MAX) / 100.0);
-    if (anon_ratio > double(SS_BUDGET_RATIO_MAX) / 100.0) {
+    // The borrow exemption, twice over: the peak must fit --memory-gb (the promise
+    // the operator actually made) and the excess over the envelope must be
+    // attributable to a borrowed class. Anything else is still a violation.
+    if (anon_ratio > double(SS_BUDGET_RATIO_MAX) / 100.0 + double(borrowAllowBytes) / double(envelope_bytes)) {
         std::fprintf(stderr,
             "SS_TAPE_BUDGET_VIOLATION owned_rss=%" PRIu64 " kB = %.4f of the %.3f GiB envelope \n",
             peak_anon_kb, anon_ratio, double(envelope_bytes) / double(1u << 30));
@@ -2518,7 +2647,24 @@ int main(int argc, char** argv) {
             "(SS_BUDGET_RATIO_MAX). The band plan no longer prices what the run holds - "
             "fix bytes_per_row or bands_in_flight, do not widen the envelope");
     }
-    if (arena_peak_bytes > envelope_bytes) {
+    if (borrowWaves) {
+        // THE BORROW'S RECEIPT: what was admitted outside the envelope, and the
+        // memory-promise check that bounds it. A borrowed band's arena is real RSS.
+        std::fprintf(stderr,
+            "SS_WAVE_BORROW_TOTAL waves=%" PRIu64 " rows=%" PRIu64 " max_class_rows=%" PRIu64
+            " max_arena_gb=%.3f mem_cap_gb=%.3f envelope_gb=%.3f envelope_exceeded_gb=%.3f"
+            " peak_anon_gb=%.3f rule=a_point_mass_may_exceed_the_envelope_and_the_scratch_budget_by_up_to_one_class\n",
+            borrowWaves, borrowRows, borrowMaxRows,
+            double(borrowAllowBytes) / double(1u << 30), double(memCapBytes) / double(1u << 30),
+            double(envelope_bytes) / double(1u << 30),
+            double(borrowAllowBytes) / double(1u << 30),
+            double(peak_anon_kb) * 1024.0 / double(1u << 30));
+        if (peak_anon_kb * 1024ull > memCapBytes)
+            die("SS_WAVE_BORROW_OVER_CAP: a borrowed wave pushed OWNED RSS to " +
+                std::to_string(peak_anon_kb * 1024ull) + " B, past the operator's --memory-gb (" +
+                std::to_string(memCapBytes) + " B)");
+    }
+    if (arena_peak_bytes > envelope_bytes + borrowAllowBytes) {
         die("TAPE_ARENA_OVER_BUDGET: the admitted band arenas peaked at " +
             std::to_string(arena_peak_bytes) + " B against an envelope of " +
             std::to_string(envelope_bytes) + " B (cap_rows=" + std::to_string(budget.cap_rows) +
