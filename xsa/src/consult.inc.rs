@@ -1077,7 +1077,6 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
             let mut seq = start_seq;
             let mut order = std::collections::BTreeMap::new();
             let mut next_seq0 = start_positions;
-            let mut at_boundary = false;
             let mut max_rss = 0u64;
             let mut last_rss_ts = Instant::now() - std::time::Duration::from_secs(10);
             let mut commits = 0u64;
@@ -1093,9 +1092,41 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
                         positions_done = d.seq0 + d.rows;
                     }
                     next_seq0 = d.seq0 + d.rows;
-                    at_boundary = d.ends_window;
+                    let at_boundary = d.ends_window;
                     windows_pending = d.windows_after;
                     windows_bytes_pending = d.windows_bytes_after;
+                    // A CHUNK IS COMMITTED HERE, INSIDE THE DRAIN, at the exact
+                    // batch that ENDS a window: the byte cursor and the
+                    // whole-window cursor therefore describe the same prefix.
+                    // (Checking this after the drain instead made the commit
+                    // depend on how many batches one wakeup happened to drain,
+                    // which is a scheduling detail - a cache build must not have
+                    // its commit cadence decided by the scheduler.)
+                    if at_boundary && pending_rows >= chunk_rows {
+                        out.flush()
+                            .unwrap_or_else(|e| die(&format!("consult: flush rows: {e}")));
+                        out.get_ref().sync_data().unwrap_or_else(|e| {
+                            die(&format!("consult: fdatasync {output_for_threads}: {e}"))
+                        });
+                        output_bytes += pending_bytes;
+                        let digest = format!("{:x}", hasher.clone().finalize());
+                        seq += 1;
+                        commits += 1;
+                        windows_done_local = windows_pending;
+                        windows_bytes_done = windows_bytes_pending;
+                        j.line(&format!(
+                            "CONSULT_COMMIT seq={} windows_done={} windows_bytes_done={} \
+                             positions_done={} output_bytes={} rows_sha256={}",
+                            seq,
+                            windows_done_local,
+                            windows_bytes_done,
+                            positions_done,
+                            output_bytes,
+                            digest
+                        ));
+                        pending_rows = 0;
+                        pending_bytes = 0;
+                    }
                     let _ = permit_tx.send(());
                 }
                 let now = Instant::now();
@@ -1115,33 +1146,6 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
                             backpressure_ref.load(std::sync::atomic::Ordering::Relaxed)
                         ));
                     }
-                }
-                // A chunk is committed only at a WINDOW BOUNDARY, so the resume
-                // cursor is a whole-window cursor and never splits a window.
-                if pending_rows >= chunk_rows && at_boundary {
-                    out.flush()
-                        .unwrap_or_else(|e| die(&format!("consult: flush rows: {e}")));
-                    out.get_ref()
-                        .sync_data()
-                        .unwrap_or_else(|e| die(&format!("consult: fdatasync {output_for_threads}: {e}")));
-                    output_bytes += pending_bytes;
-                    let digest = format!("{:x}", hasher.clone().finalize());
-                    seq += 1;
-                    commits += 1;
-                    windows_done_local = windows_pending;
-                    windows_bytes_done = windows_bytes_pending;
-                    j.line(&format!(
-                        "CONSULT_COMMIT seq={} windows_done={} windows_bytes_done={} \
-                         positions_done={} output_bytes={} rows_sha256={}",
-                        seq,
-                        windows_done_local,
-                        windows_bytes_done,
-                        positions_done,
-                        output_bytes,
-                        digest
-                    ));
-                    pending_rows = 0;
-                    pending_bytes = 0;
                 }
             }
             if !order.is_empty() {
