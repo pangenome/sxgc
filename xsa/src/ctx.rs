@@ -55,7 +55,11 @@ use memmap2::Mmap;
 use crate::{die, qlite, sxi};
 
 pub const TRIE_CODEC: u32 = 20;
-pub const TRIE_VERSION: u64 = 1;
+/// Member format version. 1 = the first draft (fixed 16-byte node and edge slots,
+/// 128-byte head, no stream source); 2 = packed columns, 192-byte head, stream
+/// source journaled. A reader must REFUSE an unknown version BY NUMBER, never by
+/// an offset that happens not to be in range.
+pub const TRIE_VERSION: u64 = 2;
 /// Header flag value: "member m20 (context trie) is present".
 pub const FLAG_TRIE: u64 = 256;
 /// Head bytes of the member.
@@ -787,8 +791,12 @@ pub struct Stat {
 
 impl<'a> Trie<'a> {
     pub fn load(d: &'a [u8]) -> Self {
-        need(d.len() >= HEAD, "member shorter than its head");
-        need(get(&d[0..], 8) == TRIE_VERSION, "unsupported member format version");
+        need(d.len() >= 8, "member shorter than its version field");
+        let ver = get(&d[0..], 8);
+        let hint = if ver == 1 { " (version 1 is the first draft: rebuild the trie)" } else { "" };
+        need(ver == TRIE_VERSION,
+            &format!("m20 member format version {ver} is not supported: this build reads version {TRIE_VERSION}{hint}"));
+        need(d.len() >= HEAD, &format!("m20 member is {} bytes, shorter than its {HEAD}-byte head", d.len()));
         let depth = get(&d[8..], 8);
         let min_support = get(&d[16..], 8);
         let n = get(&d[24..], 8);
