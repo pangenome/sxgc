@@ -164,3 +164,24 @@ The Q3 diagnostic change only adds post-query stack attribution; the timed core
 is unchanged. Its repeated 96-worker rate is 2289.657 positions/s, within 0.7% of
 Q1. After this change all 85 release tests, including the external-container
 test, pass again.
+
+## Q4 — delivery receipt
+
+Gate commits were pushed directly to origin/main without force, fetched back,
+and compared with local HEAD after each gate; local main was fast-forwarded:
+
+- Q2: `eecff24ff08b2cb4d14320373b30878b2927da3a`
+- Q1: `5b4fa22b451455fdec31c71af9cd0d9be3149ee6`
+- Q3: `1fc94e76a1790cbd468d23ac175fa7c4ed4a0072`
+
+Before this receipt commit, `git status --porcelain=v1` was empty in the isolated
+`/home/erikg/sxgc-stateless` worktree, `git diff --check` passed, and HEAD and
+origin/main both equalled the Q3 SHA. The receipt commit is also pushed and the
+final equality/clean-state check is reported in the task result.
+
+The original `/home/erikg/sxgc` main worktree had a pre-existing modification to
+`NOTE_FROM_EMENDER_EXTRACTION_PERFORMANCE.md` at task start. It remains preserved;
+that worktree is not claimed clean. No staged changes remain in either worktree.
+Q1's 96-worker near-linear target and unique hardware attribution remain unmet;
+the measured decoder ceiling and limitations above are the result, not a promise
+that a shared-nothing design alone eliminates scalar decode cost.
