@@ -96,6 +96,15 @@ macro_rules! ck {
 // ---------------------------------------------------------------------------
 
 pub fn command(args: &[String]) {
+    // The Pile path is its own pass with its own sidecars; it shares only the
+    // subcommand and the `--out` contract, so it is dispatched before the
+    // Wikipedia argument grammar is applied.
+    if args.iter().any(|a| a == "--pile-map") {
+        return pile_command(args);
+    }
+    if args.iter().any(|a| a == "--pile-verify") {
+        return pile_verify_command(args);
+    }
     let mut dump: Option<String> = None;
     let mut out: Option<String> = None;
     let mut sep_mode = true;
@@ -133,6 +142,130 @@ pub fn command(args: &[String]) {
     run(&dump, &out, sep_mode, t0);
 }
 
+const PILE_DEFAULT: &str = "/mnt/nvme2n1/erikg/pile.txt";
+const SHARDS_DEFAULT: &str = "/mnt/nvme2n1/erikg/pile/EleutherAI_ThePile_v1/pile/train";
+
+fn pile_command(args: &[String]) -> ! {
+    let mut pile: Option<String> = None;
+    let mut shards: Option<String> = None;
+    let mut out: Option<String> = None;
+    let mut limit: Option<u64> = None;
+    let mut jobs = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).min(32);
+    let mut pile_sha256 = false;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--pile-map" => i += 1,
+            "--pile" if i + 1 < args.len() => {
+                pile = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--shards" if i + 1 < args.len() => {
+                shards = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--out" if i + 1 < args.len() => {
+                out = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--limit-bytes" if i + 1 < args.len() => {
+                limit = Some(args[i + 1].parse::<u64>().unwrap_or_else(|_| die("corpus: --limit-bytes expects a byte count")));
+                i += 2;
+            }
+            "--jobs" | "-j" if i + 1 < args.len() => {
+                jobs = args[i + 1].parse::<usize>().unwrap_or_else(|_| die("corpus: --jobs expects an integer")).max(1);
+                i += 2;
+            }
+            "--pile-sha256" => {
+                pile_sha256 = true;
+                i += 1;
+            }
+            "-h" | "--help" => pile_usage(),
+            other => die(&format!("corpus --pile-map: unknown arg {}", other)),
+        }
+    }
+    let out = out.unwrap_or_else(|| die("corpus --pile-map: --out <dir> is required"));
+    let a = crate::pilemap::BuildArgs {
+        pile: pile.unwrap_or_else(|| PILE_DEFAULT.to_string()),
+        shards: shards.unwrap_or_else(|| SHARDS_DEFAULT.to_string()),
+        out,
+        limit,
+        jobs,
+        pile_sha256,
+    };
+    crate::pilemap::build(&a);
+    std::process::exit(0);
+}
+
+fn pile_verify_command(args: &[String]) -> ! {
+    let mut map: Option<String> = None;
+    let mut pile: Option<String> = None;
+    let mut shards: Option<String> = None;
+    let mut samples = 100usize;
+    let mut jobs = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).min(32);
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--pile-verify" => i += 1,
+            "--map" if i + 1 < args.len() => {
+                map = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--pile" if i + 1 < args.len() => {
+                pile = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--shards" if i + 1 < args.len() => {
+                shards = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--samples" if i + 1 < args.len() => {
+                samples = args[i + 1].parse::<usize>().unwrap_or_else(|_| die("corpus --pile-verify: --samples expects an integer")).max(1);
+                i += 2;
+            }
+            "--jobs" | "-j" if i + 1 < args.len() => {
+                jobs = args[i + 1].parse::<usize>().unwrap_or_else(|_| die("corpus --pile-verify: --jobs expects an integer")).max(1);
+                i += 2;
+            }
+            "-h" | "--help" => pile_usage(),
+            other => die(&format!("corpus --pile-verify: unknown arg {}", other)),
+        }
+    }
+    let a = crate::pilemap::VerifyArgs {
+        map: map.unwrap_or_else(|| die("corpus --pile-verify: --map <dir> is required")),
+        pile: pile.unwrap_or_else(|| PILE_DEFAULT.to_string()),
+        shards,
+        samples,
+        jobs,
+    };
+    crate::pilemap::verify(&a);
+    std::process::exit(0);
+}
+
+fn pile_usage() -> ! {
+    eprintln!(
+        "xsa corpus --pile-map --out <dir> [--pile FILE] [--shards DIR] [--limit-bytes N]\n\
+         \x20                            [--jobs J] [--pile-sha256]\n\
+         \x20   Document map for the concatenated Pile stream (pile.txt). Offsets come from the\n\
+         \x20   shard record boundaries (shards 00..29 in filename order, records in file order,\n\
+         \x20   each record's text followed by one 0x1E); pile.txt is then read once and every\n\
+         \x20   document is checked byte for byte. Writes seps.bin (XSEP v1), titles.bin\n\
+         \x20   (XTIT v1, the pile_set_name column) and meta.bin (XPM1 v1: offset, length,\n\
+         \x20   shard, record, pile_set_name, internal 0x1E) plus MANIFEST.json.\n\
+         \x20   `xsa query <container> --docs <dir>` reads them unchanged.\n\n\
+         \x20   --limit-bytes   map only the first N bytes (a head slice); the cutting document\n\
+         \x20                   keeps its identity and is flagged partial_tail\n\
+         \x20   --jobs          shards decoded / verification windows in parallel (default: cores)\n\
+         \x20   --pile-sha256   also record sha256(pile[0,corpus_bytes)) in MANIFEST.json\n\n\
+         xsa corpus --pile-verify --map <dir> [--pile FILE] [--shards DIR] [--samples N]\n\
+         \x20   Re-extract N (default 100) sampled documents from their shard records and\n\
+         \x20   compare the bytes with pile.txt at the map's offsets. Documents whose text\n\
+         \x20   contains a literal 0x1E are always included: those are the ones a 0x1E scan\n\
+         \x20   would split."
+    );
+    std::process::exit(2);
+}
+
 fn usage() -> ! {
     eprintln!(
         "xsa corpus --wikipedia <dump.xml.bz2|-> --out <dir> [--separator 0x1e|none]
@@ -151,7 +284,14 @@ fn usage() -> ! {
                   and leaves seps.bin as the only boundary record
 
   The whole dump is always consumed: there is no byte budget. To index only a
-  prefix of a dump, slice the dump first (e.g. `head -c N`) - not this tool."
+  prefix of a dump, slice the dump first (e.g. `head -c N`) - not this tool.
+
+  Pile stream (pile.txt): `xsa corpus --pile-map --out DIR [--pile FILE]
+  [--shards DIR] [--limit-bytes N]` builds the document map for the concatenated
+  Pile (seps.bin, titles.bin = pile_set_name, meta.bin = offset/length/shard/
+  record/set name/internal 0x1E), and `xsa corpus --pile-verify --map DIR
+  [--samples N]` re-extracts sampled documents from their shards and compares
+  bytes. Add --help to either for the details."
     );
     std::process::exit(2);
 }
@@ -485,16 +625,22 @@ impl Emitter {
     }
 }
 
+/// Count occurrences of `b` exactly. The naive word trick
+/// `(x - 0x01..) & !x & 0x80..` is only a *presence* test: borrow propagation
+/// from a matching byte into a following 0x01 byte sets that byte's high bit
+/// too, so `count_ones` over-counts. Measured on 80 GB of the Pile: 12892533
+/// instead of 12892529, i.e. four invented separators, which is exactly the
+/// kind of error that would corrupt a document count. This form is exact per
+/// byte: `(v & 0x7f) + 0x7f` never carries out of its byte, and its high bit
+/// (or v's own) is set for every non-zero v.
 fn count_byte(hay: &[u8], b: u8) -> u64 {
+    const LO: u64 = 0x7f7f_7f7f_7f7f_7f7f;
+    let pat = u64::from_le_bytes([b; 8]);
     let mut n = 0u64;
     let mut i = 0;
-    // 8 bytes at a time over the common case, byte-wise tail.
     while i + 8 <= hay.len() {
-        let w = u64::from_le_bytes(hay[i..i + 8].try_into().unwrap());
-        let pat = u64::from_le_bytes([b; 8]);
-        let x = w ^ pat;
-        // has_zero_byte
-        let m = x.wrapping_sub(0x0101010101010101) & !x & 0x8080808080808080;
+        let x = u64::from_le_bytes(hay[i..i + 8].try_into().unwrap()) ^ pat;
+        let m = !((((x & LO).wrapping_add(LO)) | x) | LO);
         n += m.count_ones() as u64;
         i += 8;
     }
@@ -1224,6 +1370,23 @@ mod tests {
     fn positions_between_utc_times() {
         assert_eq!(iso8601_utc(0), "1970-01-01T00:00:00Z");
         assert_eq!(iso8601_utc(1_700_000_000), "2023-11-14T22:13:20Z");
+    }
+
+    #[test]
+    fn byte_counting_is_exact_not_a_presence_test() {
+        // The classic (x - 0x01..) & !x & 0x80.. trick counts a 0x01 byte that
+        // follows a match as a match too (borrow propagation), which invents
+        // separators. Every adjacent pair is checked against a naive count.
+        for a in 0u16..=255 {
+            for b in 0u16..=255 {
+                let v = [a as u8, b as u8];
+                assert_eq!(count_byte(&v, SEP), v.iter().filter(|&&x| x == SEP).count() as u64, "pair {:?}", v);
+            }
+        }
+        let mut v = vec![SEP, SEP + 1, 0x00, SEP, 0xff, SEP + 1, SEP];
+        v.extend(std::iter::repeat(0x01).take(16));
+        v.push(SEP);
+        assert_eq!(count_byte(&v, SEP), 4);
     }
 
     #[test]
