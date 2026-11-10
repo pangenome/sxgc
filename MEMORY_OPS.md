@@ -139,7 +139,26 @@ ascend in rank order, so `concat(band_0 .. band_k) == SA[0..row]`. The new phase
   `CONTEXT_TRIE_PUBLISHED` from the container rather than from the tap's claim.
 
 Flags: `--trie-depth 8` and `--trie-min-support 1000` are the defaults; `--trie-min-support 100` is
-0.165 n and answers ~77 % of random 8-byte contexts; `--no-trie` writes the v7 container unchanged.
+0.165 n at 10 GB (0.3728 n at 150 MB) and answers ~77 % of random 8-byte contexts; `--no-trie` writes
+the v7 container unchanged.
+
+### Coverage and latency, measured on the in-build 10 GB container
+
+`xsa branch-of <container> --batch ctx8.bin` with 1,000 random 8-byte contexts from the corpus
+(xorshift64, seed 20261110), one container open, **no corpus read** (the batch file is the only input):
+
+```
+BATCH_BENCH op=branch-of n=1000 p50_us=4.70 p90_us=7.12 p99_us=10.26 max_us=14.99 \
+  answered=588 below_support=412 corpus_touched=0 rss_gb=0.341 member_gb=0.324 build_stream_gb=0.00
+COVERAGE depth=8 ms=1000 answered=588 below_support=412 p50_us=4.70 p99_us=10.26 ratio_vs_n=0.034773
+BATCH_DEPTH reached_depth_hist=0:0,1:1,2:6,3:35,4:58,5:85,6:97,7:130,8:588 mean_depth=6.971 \
+  asked_depth=8 trie_depth=8 warm_ms=4.4
+```
+
+The SAME batch against the post-hoc container: `answered=588 below_support=412 p50_us=4.96 p99_us=10.66`,
+same per-context results, and `build_stream_gb=69.25` where the in-build member reads **0.00** — the
+in-build route has no suffix-array column to charge. The two containers answer identically, which is the
+functional half of the equivalence gate (the byte half is below).
 
 ### Why the feed must ride along (the ordered stream, named)
 

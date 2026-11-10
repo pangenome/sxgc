@@ -1971,6 +1971,12 @@ pub fn build(a: &BuildArgs) {
     let text = unsafe { Mmap::map(&tfile) }.unwrap_or_else(|e| die(&format!("mmap {}: {e}", a.text)));
     let corpus_len = flen;
     let rows = a.limit_rows.unwrap_or(n).min(n);
+    // A container that ALREADY carries m20 must be refused BY NAME: write_container
+    // copies every old member verbatim and then appends m20, so the output would
+    // carry two members with the same id and every reader would silently pick one.
+    need(idx.reader.member_bytes(TRIE_CODEC).is_none(),
+        &format!("ctx-build: {} already carries m20 (the context trie). Build from the container WITHOUT it \
+                  (the --no-trie arm), or read the existing member with `xsa trie-info`", a.sxi));
 
     if let Ok(v) = std::env::var("XSA_CTX_SA_PROBE") {
         let steps: u64 = v.parse().unwrap_or_else(|_| die("XSA_CTX_SA_PROBE: integer"));

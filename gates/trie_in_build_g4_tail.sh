@@ -31,8 +31,11 @@ W=$D/g4/ms100
 rm -rf "$W"; mkdir -p "$W"
 "$X" build --tape --input "$CORPUS150" --scratch "$W/s" --threads 24 --memory-gb 24 \
    --trie-min-support 100 > "$W/build.log" 2>&1 || bad "ms100 build"
+"$X" build --tape --input "$CORPUS150" --scratch "$W/ref" --threads 24 --memory-gb 24 \
+   --no-trie > "$W/refbuild.log" 2>&1 || bad "ms100 no-trie build"
 grep -E "CONTEXT_TRIE_(DEPTH|PUBLISHED|TAP)" "$W/build.log" | cut -c1-300
-"$X" ctx-build --sxi "$W/s/t150m.sxi2" --text "$CORPUS150" --out "$W/ref.sxi2" \
+"$X" ctx-build --sxi "$W/ref/t150m.sxi2" --text "$CORPUS150" --out "$W/ref.sxi2" \
+   --depth 8 --min-support 100 \
    > "$W/ref.log" 2>&1 || bad "ms100 ctx-build"
 "$X" trie-member "$W/s/t150m.sxi2" -o "$W/a.bin"
 "$X" trie-member "$W/ref.sxi2" -o "$W/b.bin"
@@ -50,7 +53,7 @@ R=$D/g4/posthoc10
 rm -rf "$R"; mkdir -p "$R"
 echo "G4_POSTHOC10_START $(date -u +%H:%M:%S) (ctx-build with --sa-cache: the LF walk is skipped, the sweep runs)"
 /usr/bin/time -f "G4_POSTHOC10_WALL %e s RSS %M kB" \
-  "$X" ctx-build --sxi "$D/g10/trie/pf-10gb.sxi2" --text "$CORPUS10" --out "$R/ref.sxi2" \
+  "$X" ctx-build --sxi "$D/g10/notrie/pf-10gb.sxi2" --text "$CORPUS10" --out "$R/ref.sxi2" \
      --sa-cache "$SA10" --depth 8 --min-support 1000 --threads 32 > "$R/ref.log" 2>&1
 rc=$?
 grep -E "^G4_POSTHOC10_WALL|CONTEXT_TRIE depth|CONTEXT_TRIE_BUILD|SA_CACHE|CONTEXT_TRIE_SOURCE" "$R/ref.log"
