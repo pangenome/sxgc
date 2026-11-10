@@ -136,6 +136,37 @@ Reading:
 - Latency was previously unmeasurable through the CLI: per-invocation cost is ~50 ms of process start and
   container open, so the batch mode (journal `BATCH_BENCH`) is the only valid instrument for this target.
 
+## 10 GB: coverage matches the prediction, and one core meets the consumer's target
+
+```
+CONTEXT_TRIE depth=8 min_support=1000 nodes=3,594,261 edges=88,185,516
+             bytes=347,726,720 ratio_vs_n=0.034773 n=10,000,000,001
+branch-of, 1,000 random 8-byte contexts (independent generator, batch mode):
+  p50 6.74 us  p90 9.68  p99 12.97  max 18.94
+  answered 595 (59.5%)  below_support 405  corpus_touched=0
+  depth reached: 8:595 7:120 6:102 5:71 4:70 3:31 2:11   mean 6.96
+```
+
+Three results worth keeping:
+
+1. **Coverage is predictable from a cheap sample**: 59.6% of 8-byte contexts have >=1000 occurrences
+   in the width sample, and 59.5% of random contexts are answered by the trie built at min_support
+   1000. The dial can therefore be set from a sample instead of by building.
+2. **The trie gets relatively cheaper as the corpus grows**: 0.0348 n at 10 GB versus 0.062 n at
+   150 MB, because node count is bounded by n / min_support. At 100 GB the projection is 2-3 GB.
+3. **6.74 us p50 is ~148,000 branch-of queries per second on ONE core**, i.e. the consumer's
+   150,000 positions/s per-node target is met single-threaded, for 59.5% of positions, with a flagged
+   empty answer (not a wrong one) for the rest. Parallelism is then a multiplier rather than a rescue.
+
+Coverage/size policy, from the width sample at depth 8 (10 GB corpus):
+
+```
+support >=2      95.7%      support >=100    76.7%      support >=10000  37.6%
+support >=10     88.5%      support >=1000   59.6%      support >=100000 13.8%
+```
+with measured size ratios of 0.0348 n at MS=1000 and roughly 0.15 n at MS=100 (to be measured at
+this scale). MS=100 buys ~17 points of coverage for ~4x the bytes; MS=1000 is the compact default.
+
 ## Why this counts as progress
 
 Each of the three studies this week ended by killing a plausible design cheaply: witnesses are not context
