@@ -60,6 +60,15 @@ pub const USAGE: &str = "usage:
   --allow-infeasible silent alias of --skip-fit-check (old journals still parse).
   --with-chi         construct m5 chi (enabled by default).
   --no-chi           omit optional m5 chi.
+  --with-lcp-runs    write m14, the LCP over runs (codec 117; SXI2 v8). OPT-IN:
+                     it costs a measured 0.256 n (5.89 bits/run) and buys the
+                     MIDDLE band of the two-backend rule - contexts too wide to
+                     locate-and-scan and not in the top-of-tree trie - which is
+                     0.4..5.1 % of contexts at information depths (16..32 B).
+  --no-lcp-runs      omit m14 (the DEFAULT): the v7 layout, byte-identical to the
+                     pre-m14 container, which is how additivity is proved. The
+                     container's own header (version 8 + flag bit 7 + member m14)
+                     declares which arm ran, so readers never need the flag.
   --chi-expect N     assert chi count; requires --with-chi.
   --snap-1e          require a final 0x1E document boundary and journal SHA256;
                      never trims, extends or otherwise transforms the input.
@@ -168,6 +177,29 @@ struct Options {
     v2_flag_given: bool,
     chi_expect: Option<u64>,
     with_chi: bool,
+    /// **m14 (the LCP over runs)**: `--with-lcp-runs` writes SXI2 v8 with it,
+    /// `--no-lcp-runs` (the DEFAULT) writes the v7 layout without it.
+    ///
+    /// WHY OFF BY DEFAULT. It is a product choice with a measured price: the member
+    /// is 0.27 n at 150 MB and 0.256 n at 10 GB (5.89 bits/run), i.e. ~354 GB on a
+    /// full-Pile container. What it uniquely buys is the MIDDLE band of the
+    /// two-backend rule in MEMORY_OPS.md - contexts too wide to answer by
+    /// locate-and-scan (cost O(width)) and not materialised in the top-of-tree
+    /// trie - plus LCP-interval topology and MEM enumeration. Measured on the 10 GB
+    /// Pile slice (1000 byte-weighted contexts per depth, seed 20261110):
+    ///
+    ///   depth   width==1     1..999    1e3..1e6     >=1e6
+    ///     8      4.3 %       36.1 %     57.1 %       2.5 %
+    ///    16     39.9 %       53.8 %      5.1 %       1.1 %
+    ///    24     73.8 %       24.6 %      1.0 %       0.5 %
+    ///    32     85.7 %       13.6 %      0.4 %       0.2 %
+    ///
+    /// At the depths where the information actually is (16..32 bytes, per
+    /// CONTEXT_DEPTH.md) the middle band is 0.4..5.1 % of contexts, so the member
+    /// is a quarter of `n` bought for a thin band: OPT-IN, not a silent tax. The
+    /// container's own header (version 8 + flag bit 7 + member m14) declares which
+    /// arm ran, so readers never need the flag.
+    with_lcp_runs: bool,
     wit_ram_gb: Option<u64>,
     /// `--finish-as-gb N`: the finish phase's own RLIMIT_AS in GiB. Mapped
     /// corpus windows charge address space, not RSS, so the finish can pin a
@@ -270,6 +302,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     let mut legacy_merge = false;
     let mut v2_flag_given = false;
     let mut with_chi = true;
+    let mut with_lcp_runs = false;
     let mut chi_expect = None;
     let mut wit_ram_gb = None;
     let mut finish_as_gb = None;
@@ -373,6 +406,11 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
             "--legacy-merge" => legacy_merge = true,
             "--with-chi" => with_chi = true,
             "--no-chi" => with_chi = false,
+            // m14: the LCP over runs. DEFAULT OFF (a measured 0.256 n for a thin
+            // middle band - see the field's doc); --no-lcp-runs is also the v7
+            // byte-identical arm, which is how the member's additivity is proved.
+            "--with-lcp-runs" => with_lcp_runs = true,
+            "--no-lcp-runs" => with_lcp_runs = false,
             "--chi-expect" => {
                 i += 1;
                 let v = value(args.get(i), "--chi-expect")?
@@ -553,7 +591,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
         validate_phrase(&phrase)?;
     }
     Ok(Options { input, scratch, snap_1e, memory_gb, threads, chunks, kway, plan_only,
-                 bin_pipeline, legacy_merge, v2_flag_given, chi_expect, with_chi, wit_ram_gb,
+                 bin_pipeline, legacy_merge, v2_flag_given, chi_expect, with_chi, with_lcp_runs, wit_ram_gb,
                  finish_as_gb, bin_live_cap, bin_target_size, bin_entropy_min, phrase, stripes, scratch_free_pct,
                  scratch_budget_gb, skip_fit_check, tape, no_resume,
                  remap, chunk_mb, fanin })
@@ -1611,7 +1649,15 @@ fn run_chain(options: Options) -> Result<(), String> {
                     2 * n_rows,                                     // the 2n scratch window
                     sb.bytes,                                       // the DISK budget
                 );
-                v2.tape_note = Some(tape_plan.note());
+                // THE m14 DECISION RIDES THE PLAN LINE ITSELF, so a container's
+                // provenance answers "does this thing have the LCP column" from the
+                // plan, not from a comment in a review: present(codec=117) or absent.
+                v2.tape_note = Some(format!(
+                    "{} lcp_runs={} member=m14 lcp_runs_version={} lcp_runs_price=measured(0.27n@150MB,0.256n@10GB,5.89bits/run)",
+                    tape_plan.note(),
+                    if options.with_lcp_runs { "present(codec=117)" } else { "absent" },
+                    if options.with_lcp_runs { 8 } else { 7 }));
+
                 build_plan.ram_verdict = tape_plan.verdict();
                 build_plan.ram_ok = tape_plan.feasible();
                 if !tape_plan.feasible() {
@@ -2404,6 +2450,23 @@ walks the corpus for every endpoint and no LCP slice is produced). Not a user op
         finish_args.push(if options.with_chi { "--with-chi" } else { "--no-chi" }.into());
     }
     journal.line(&format!("CHI_POLICY present={} member=m5", !options.tape || options.with_chi));
+    // THE m14 CHOICE, journalled where a container's provenance is read: the plan
+    // line says which arm produced this container, and the container says the same
+    // thing in its own header (version 8 + flag bit 7 + member m14), so no reader
+    // has to trust the log.
+    if options.tape {
+        finish_args.push(if options.with_lcp_runs { "--lcp-runs" } else { "--no-lcp-runs" }.into());
+        journal.line(&format!(
+            "LCP_RUNS_POLICY present={} member=m14 codec=117 container_version={} default=off \
+flag=--with-lcp-runs price=measured(0.27n@150MB,0.256n@10GB,5.89 bits/run; ~354GB at the \
+full Pile) buys=middle-band(top-of-tree-trie handles wide, locate-and-scan handles narrow) \
+headline=LCP-over-runs",
+            options.with_lcp_runs,
+            if options.with_lcp_runs { 8 } else { 7 }
+        ));
+    } else {
+        journal.line("LCP_RUNS_POLICY present=false member=m14 reason=not-the-tape-arm");
+    }
     if let Some(expected) = options.chi_expect {
         finish_args.extend(["--chi-expect".into(), expected.to_string()]);
     }
@@ -3129,6 +3192,11 @@ mod tests {
         let default = parse_chain(&v2_args(&["--tape"])).unwrap();
         assert!(default.with_chi);
         assert!(!parse_chain(&v2_args(&["--tape", "--no-chi"])).unwrap().with_chi);
+        // m14 (the LCP over runs): DEFAULT OFF (a measured 0.256 n for a thin
+        // middle band); --with-lcp-runs opts in and --no-lcp-runs is explicit.
+        assert!(!parse_chain(&v2_args(&["--tape"])).unwrap().with_lcp_runs);
+        assert!(!parse_chain(&v2_args(&["--tape", "--no-lcp-runs"])).unwrap().with_lcp_runs);
+        assert!(parse_chain(&v2_args(&["--tape", "--with-lcp-runs"])).unwrap().with_lcp_runs);
         let enabled = parse_chain(&v2_args(&["--tape", "--with-chi", "--chi-expect", "42"])).unwrap();
         assert!(enabled.with_chi);
         assert_eq!(enabled.chi_expect, Some(42));

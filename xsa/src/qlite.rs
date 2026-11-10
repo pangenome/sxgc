@@ -414,6 +414,9 @@ pub fn describe_format(path: &str) -> String {
     match magic {
         b"SXI2" if version == 6 => format!("{path}: SXI2 v6 lite container"),
         b"SXI2" if version == 7 => format!("{path}: SXI2 v7 lite container (incremental layout)"),
+        b"SXI2" if version == 8 => {
+            format!("{path}: SXI2 v8 lite container (incremental layout + m14 LCP over runs)")
+        }
         b"SXI2" => format!("{path}: SXI2 v{version} (phi-era container)"),
         b"SXI1" => format!("{path}: SXI1 v{version} container"),
         b"ISXR" => format!("{path}: .ri4 v{version} flat index"),
@@ -440,6 +443,11 @@ impl Reader {
         // section at length-40*count and m1's per-block directory follows its
         // payload. v6 stays readable: same members, directory at 64.
         let tail_dir = version >= 7;
+        // v8 = v7's incremental layout + member m14 (the LCP over runs);
+        // v9 = v8 + member m20 (the context trie). The LAYOUT is v7's verbatim
+        // (trailing member directory, m1 codec 116) for all three: the version says
+        // only "there are more members, and the flags declare them", so a reader
+        // that needs neither m14 nor m20 needs nothing else.
         if !(6..=9).contains(&version) {
             return Err(format!("{} is not a queryable index", describe_format(path)));
         }
@@ -456,8 +464,9 @@ impl Reader {
                 map.len()
             ));
         }
-        // 8 slots is the block-compressed lite shape (m1,m4,m5,m7,m10,m11,m12,m13);
-        // anything outside 5..=8 is not a lite container.
+        // 9 slots is the block-compressed lite shape with m14 or m20
+        // (m1,m4,m5,m7,m10,m11,m12,m13,+14|20); anything outside 5..=9 is not a lite
+        // container. v6 and v7 containers hold 5..=8 and stay readable.
         if !(5..=9).contains(&count) || hs != 64 + 40 * count as usize {
             return Err(format!(
                 "{path}: v6 directory must hold 5-8 members (found {count})"
@@ -560,6 +569,11 @@ impl Reader {
     }
     fn slice(&self, off: u64, len: u64) -> &[u8] {
         &self.map[off as usize..(off + len) as usize]
+    }
+    /// The whole mapping, for the sibling member accessors (m14: the LCP over
+    /// runs). Read-only, and no copy: a member is parsed in place.
+    pub(crate) fn map_bytes(&self) -> &[u8] {
+        &self.map
     }
     /// Read exactly `buf.len()` bytes at `off` from the FILE (not the mapping).
     /// Used for m1 block payloads so that random block reads never create page
@@ -1837,6 +1851,14 @@ impl<'a> Ctx<'a> {
         self.scan_of += rel - base;
         self.blocks += 1;
         (rel, s, h, l)
+    }
+    /// The run holding row `row`, as `(run, run start row, run length)`. The same
+    /// single m12 bisect + decoded block `row_run` pays for; the BWT symbol is
+    /// deliberately not returned (a caller that needs only the run's geometry must
+    /// not be able to build a second, divergent notion of a run).
+    pub(crate) fn run_at(&mut self, row: u64) -> (u64, u64, u64) {
+        let (run, s, _h, l) = self.row_run(row);
+        (run, s, u64::from(l))
     }
     /// Occurrences of `ch` in the BWT before run `k`, for an ARBITRARY `ch`.
     ///
