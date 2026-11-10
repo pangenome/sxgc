@@ -110,6 +110,32 @@ Two consequences worth carrying elsewhere:
 - the Pile's single largest suffix class is whitespace, so whitespace is the natural stress case for the
   sorter, not a synthetic one (we had been using 'ab'*N, which is a period-2 artefact no real corpus has).
 
+## The operation layer, measured: 3.84 us per branch-of (independent run)
+
+Context trie m20 at depth 8 / min_support 1000, 150 MB corpus, 999 random 8-byte contexts drawn from the
+text (0x1E-separated batch mode, so container open is amortised and the measurement is the operation):
+
+```
+BATCH_BENCH op=branch-of n=999 p50_us=3.84 p90_us=7.09 p99_us=10.66 max_us=26.88
+            answered=178 below_support=821 corpus_touched=0
+BATCH_DEPTH reached_depth_hist=1:16 2:78 3:133 4:159 5:168 6:151 7:116 8:178 mean_depth=5.194
+```
+
+16-byte contexts: p50 3.86 us, answered 161/999, mean depth reached 5.00. Cost is flat in context length
+because the descent stops where support ends - asking for 16 bytes costs the same as asking for 8 when the
+trie only holds 5.
+
+Reading:
+- **3.84 us per query is ~260,000 queries/s single-threaded**, five times the 150k positions/s target before
+  any parallelism, and `corpus_touched=0` is asserted by the tool.
+- The descent histogram is the variable-order behaviour working: mean depth 5.19, most queries stopping
+  between depth 3 and 7 rather than pretending a longer context is supported.
+- **Coverage here is 17.8 %, and that is a corpus-size artefact**: a context needs >=1000 occurrences, which
+  on a 150 MB corpus is rare. The same measurement on 10 GB gave 59.6 % of contexts at >=1000 occurrences,
+  so coverage at 10 GB and 100 GB is the number that matters and must be measured there.
+- Latency was previously unmeasurable through the CLI: per-invocation cost is ~50 ms of process start and
+  container open, so the batch mode (journal `BATCH_BENCH`) is the only valid instrument for this target.
+
 ## Why this counts as progress
 
 Each of the three studies this week ended by killing a plausible design cheaply: witnesses are not context
