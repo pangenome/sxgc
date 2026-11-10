@@ -1590,6 +1590,13 @@ pub struct TapArgs {
     pub threads: usize,
     /// n = corpus_len + 1 (the container's row count, END row included)
     pub n: u64,
+    /// MEASUREMENT ONLY: a u40 suffix array (the post-hoc `--sa-cache` format) to
+    /// feed from instead of the band stream. It exercises exactly the same
+    /// per-row path (prefix read + builder) without a sorter, so the feed's own
+    /// cost can be priced and optimised without a 55-minute build.
+    pub sa: String,
+    /// MEASUREMENT ONLY: stop after this many rows (0 = all).
+    pub rows: u64,
 }
 
 /// Rows per prefetch chunk: the corpus reads are random, so they are issued by a
@@ -1728,7 +1735,18 @@ pub fn tap(a: &TapArgs) {
     let t_doc = std::time::Instant::now();
     // The tail scan is paid PER ROW, so the tap buys a finer table than the
     // post-hoc sweep does (the value is exact at any stride; only RAM moves).
-    let doc_stride = if a.n <= (1 << 31) { 32 } else if a.n <= (1 << 33) { 64 } else { 256 };
+    // The tail scan is paid PER ROW and it is a SECOND random access (the prefix
+    // read is the first), so the tap buys a finer table than the post-hoc sweep
+    // does: the value is exact at any stride, only RAM and the scanned window move.
+    // 4 B per `stride` bytes of corpus: 32 B stride below 2^31 rows (n/8 bytes),
+    // 64 B below 2^36, 256 B (the post-hoc figure) above.
+    let doc_stride = if a.n <= (1 << 31) {
+        32
+    } else if a.n <= (1 << 36) {
+        64
+    } else {
+        256
+    };
     let ranks = doc_ranks_stride(&text, doc_stride);
     let doc_wall = t_doc.elapsed().as_secs_f64();
     let mut b = Builder::new(a.depth, a.min_support, a.docs_min_support);
@@ -1736,6 +1754,41 @@ pub fn tap(a: &TapArgs) {
     let mut pfx: Vec<u8> = Vec::new();
     let mut docs_buf: Vec<u32> = Vec::new();
     let mut ms: Vec<u8> = Vec::new();
+    if !a.sa.is_empty() {
+        // THE MEASUREMENT ARM: the same rows, from a u40 suffix array instead of
+        // the band stream. Same prefix reads, same builder, same member - so the
+        // per-row cost can be attributed without a build around it.
+        let f = std::fs::File::open(&a.sa).unwrap_or_else(|e| die(&format!("ctx-tap: open {}: {e}", a.sa)));
+        let sa = unsafe { Mmap::map(&f) }.unwrap_or_else(|e| die(&format!("ctx-tap: mmap {}: {e}", a.sa)));
+        let rows = if a.rows == 0 { a.n } else { a.rows.min(a.n) };
+        need(sa.len() as u64 >= rows * SA_ITEM as u64, "ctx-tap: the SA file is shorter than --rows");
+        let mut pfx: Vec<u8> = Vec::new();
+        let mut docs_buf: Vec<u32> = Vec::new();
+        let mut ms: Vec<u8> = Vec::new();
+        let t0 = std::time::Instant::now();
+        let mut row = 0u64;
+        let mut reads = 0u64;
+        while row < rows {
+            let c = (rows - row).min(TAP_CHUNK as u64) as usize;
+            let pos: Vec<u64> = (0..c).map(|j| sa_get(&sa, row + j as u64)).collect();
+            let (f2, r) = tap_feed_band(&mut b, &pos, &text, &ranks, corpus_len, a.depth, true, a.threads, doc_stride, &mut pfx, &mut docs_buf, &mut ms);
+            need(f2 == c as u64, "ctx-tap: short feed");
+            reads += r;
+            row += c as u64;
+        }
+        let w = t0.elapsed().as_secs_f64();
+        eprintln!("TRIE_TAP_SA_ROWS rows={row} n={} wall={w:.1}s ns_per_row={:.1} prefix_reads={reads} threads={} doc_stride={doc_stride}",
+            a.n, w * 1e9 / row.max(1) as f64, a.threads);
+        if a.rows != 0 && a.rows < a.n {
+            return;
+        }
+        let (payload, _cols) = b.finish(a.n, corpus_len);
+        let tmp = format!("{}.partial", a.out);
+        std::fs::write(&tmp, &payload).unwrap_or_else(|e| die(&format!("ctx-tap: write {tmp}: {e}")));
+        std::fs::rename(&tmp, &a.out).unwrap_or_else(|e| die(&format!("ctx-tap: rename {tmp}: {e}")));
+        eprintln!("CONTEXT_TRIE_TAP_SA out={} bytes={}", a.out, payload.len());
+        return;
+    }
     let mut band = 0u64;
     let mut fed = 0u64;
     let mut reads = 0u64;
@@ -1876,6 +1929,8 @@ pub fn tap_selftest() {
                 docs_min_support: 1,
                 threads: 2,
                 n,
+                sa: String::new(),
+                rows: 0,
             });
             // the post-hoc sweep over the SAME order, same parameters, same source
             let mut sa = vec![0u8; order.len() * SA_ITEM];
@@ -2354,6 +2409,8 @@ pub fn command(cmd: &str, args: &[String]) {
                 docs_min_support: 1000,
                 threads: 8,
                 n: 0,
+                sa: String::new(),
+                rows: 0,
             };
             let mut i = 0;
             while i < args.len() {
@@ -2371,11 +2428,13 @@ pub fn command(cmd: &str, args: &[String]) {
                     "--docs-min-support" => a.docs_min_support = val("--docs-min-support").parse().unwrap_or_else(|_| die("--docs-min-support: integer")),
                     "--threads" => a.threads = val("--threads").parse().unwrap_or_else(|_| die("--threads: integer")),
                     "--n" => a.n = val("--n").parse().unwrap_or_else(|_| die("--n: integer")),
+                    "--sa" => a.sa = val("--sa"),
+                    "--rows" => a.rows = val("--rows").parse().unwrap_or_else(|_| die("--rows: integer")),
                     other => die(&format!("ctx-tap: unknown option {other}")),
                 }
                 i += 1;
             }
-            need(!a.bands.is_empty() && !a.corpus.is_empty() && !a.out.is_empty() && a.n > 0,
+            need((!a.bands.is_empty() || !a.sa.is_empty()) && !a.corpus.is_empty() && !a.out.is_empty() && a.n > 0,
                 "usage: xsa ctx-tap --bands <dir> --corpus <file> --out <payload> --n <rows> \
                  [--depth D] [--min-support K] [--docs-min-support M] [--threads N]");
             tap(&a);

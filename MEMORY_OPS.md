@@ -115,6 +115,69 @@ that carries information is 16-32 bytes, not 1024.
 positions, reusing seps.bin/meta.bin. Alternatives are a document -> nodes inverted index, or exact
 document lists for wide nodes (expensive).
 
+## m20 is built IN-BUILD, from the sorter's band stream (measured 2026-11-10)
+
+The trie used to be a POST-HOC pass: reconstruct the suffix array out of the finished container (one
+LF cycle per row plus a 5 B/row column) and sweep it. That path is a scaling trap and it measured as
+one at 10 GB: **1,192 s** to rebuild the ordered stream (47 GB of transient RAM, 69.2 GB with the
+dense run columns) and **3,448 s** to sweep it single-threaded — 4,696 s and ~5 TB of RAM at the Pile
+paid to decorate a build that already exists.
+
+Inside `xsa build --tape` the ordered stream is already there. `scatter_sort --tape-bands` publishes
+`band_<i>.sa` (8 B/row: position in the low 48 bits, carried BWT symbol in the top 8) and band indices
+ascend in rank order, so `concat(band_0 .. band_k) == SA[0..row]`. The new phase `xsa ctx-tap` feeds
+`ctx::Builder` from exactly that stream, concurrently with the sorter, the emitter and the finish:
+
+- it waits for the emitter's `.opened` marker on band i (so no slice is removed out from under the
+  emitter), reads the slice, **feeds the builder**, unlinks the slice and stamps `.consumed` — the
+  marker the sorter's band window waits on. Under `TRIE_TAP=1` the emitter keeps the band files;
+  with the variable unset nothing about it changes and the product is byte-identical;
+- the per-row prefix read (D+1 bytes at a random corpus position) is issued by a worker pool and
+  consumed in order by the single-threaded builder: the READS are parallel, the STATE is not;
+- the member is joined to the finished container **in place** (the trailing directory is rewritten,
+  no container byte is copied, 2.5 s at 10 GB), and the driver re-opens the result and journals
+  `CONTEXT_TRIE_PUBLISHED` from the container rather than from the tap's claim.
+
+Flags: `--trie-depth 8` and `--trie-min-support 1000` are the defaults; `--trie-min-support 100` is
+0.165 n and answers ~77 % of random 8-byte contexts; `--no-trie` writes the v7 container unchanged.
+
+### Why the feed must ride along (the ordered stream, named)
+
+The builder is a sequential stack machine (row i's state depends on row i-1), and the sorter's bands
+are produced by P parallel workers in arbitrary order, so the only place the rows are both in rank
+order and out of the workers' hands is the band stream. What the tap does NOT do is reconstruct
+anything: no LF cycle, no u40 column, no suffix-array cache, no text on disc. The band bytes it reads
+are the bytes the emitter reads anyway (8 B/row).
+
+### What it costs (10 GB, `pf-10gb.txt`, n = 10,000,000,001, threads 48, 24 GiB)
+
+| | --no-trie | trie (default) |
+|---|---|---|
+| build wall | see RESULTS notes | see RESULTS notes |
+| sorter / emit / tap / finish walls | — | 32:05.5 / 32:04.7 / 32:06.4 / 33:50.4 |
+| tap's OWN work (prefix reads + feed) | — | **943.3 s = 94 ns/row**; it waited 942.7 s for the sorter |
+| sorter's waits on band credit | — | 4 x 2 s diagnostics in 1,925 s |
+| m20 | absent | 347,726,720 B = 0.034773 n (nodes 3,594,261, edges 88,185,516) |
+| peak RSS (process) | — | 13.7 GiB (sorter); the tap peaks at 10.0 GiB = the corpus mapping |
+
+The tap is **not** on the critical path: it worked 46 % of the wall and waited 54 % of it for the
+sorter, and the sorter's own log records no sustained band-credit wait. The 10 GB trie therefore costs
+the build a small fraction of its wall, where the post-hoc route cost 4,696 s of separate work and
+47-69 GB of transient RAM.
+
+### Equivalence: the in-build member IS the post-hoc member
+
+The member records which ordered stream produced it (head offsets 152..168: `source` and its memory
+figure), so two routes that agree on every byte of the tree still differ in those 16 bytes BY DESIGN.
+`xsa trie-member <container>` prints both digests: `sha256` and `sha256_noprov` (provenance zeroed).
+
+- 150 MB (`/dev/shm/t150m.txt`): `sha256_noprov = f3d6a380...b77440` for BOTH the in-build member and
+  `xsa ctx-build`'s post-hoc member from the same container; 5 differing bytes of 9,317,928, all
+  inside the provenance field.
+- 10 GB: the in-build member is byte-identical to the banked post-hoc member except its provenance
+  field and the member-FORMAT version byte (the banked container was built one commit before the
+  format went to v2): 7 differing bytes of 347,726,720, every one of them outside the tree.
+
 ## Gates — no victory without all of these
 
 1. `LCP_RUNS` member present at 150 MB, 10 GB and the 100 GB Pile head, with **50/50 sampled values

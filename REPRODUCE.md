@@ -459,6 +459,64 @@ pairwise/k-way pair path) and `anchors.resize(n)` in the cyclic repair; the
 `--selftest` oracles' `v.reserve(n)` are oracle-only. If you touch any of them,
 price it against the phase's `RLIMIT_AS`, not against n.
 
+### m20, the context trie: built IN-BUILD, on by default (`--no-trie` opts out)
+
+`xsa build` writes member **m20** (codec 20, SXI2 **v9**) — the top of the suffix
+tree materialised: for every context of length 1..D whose occurrence count is
+>= K, its exact next-byte histogram (END included), its occurrence count, its
+child nodes and a document summary. It answers `branch-of`/`trie-stat`/`relax`
+in O(depth) with binary searches inside child lists, and it is what makes the
+MEMORY_OPS.md operation set (`extend`, `relax`, `select`) answerable without an
+LCP column and without scanning a wide node's interval.
+
+```sh
+xsa build --tape --input CORPUS --scratch DIR --threads 48 --memory-gb 24
+        # DEFAULT: v9 container WITH m20, --trie-depth 8 --trie-min-support 1000
+xsa build --tape --input CORPUS --scratch DIR --threads 48 --memory-gb 24 --no-trie
+        # v7 container, 8 members, byte-identical to a build without this feature
+xsa build --tape --input CORPUS --scratch DIR --trie-min-support 100
+        # the wide arm: 0.165 n at 10 GB, ~77 % of random 8-byte contexts answered
+```
+
+**How it is built: from the sorter's band stream, during construction.** The
+band slices `scatter_sort --tape-bands` publishes ARE the suffix array in rank
+order (8 B/row: position + carried symbol), so a fourth phase, `xsa ctx-tap`,
+reads exactly that stream, feeds `ctx::Builder`, and hands the member to the
+driver, which joins it to the finished container in place. There is **no LF
+cycle, no 5 B/row suffix-array column, no suffix-array cache and no text on
+disc**. The old post-hoc route (`xsa ctx-build --sxi <in.sxi2> --text CORPUS`,
+still available and still the reference implementation) measured **1,192 s to
+reconstruct + 3,448 s to sweep** at 10 GB; the in-build tap's own work is
+**943 s of a 1,925 s build, overlapped** (it waits 943 s of that wall for the
+sorter and the sorter never blocks on it).
+
+Journalled, one line each:
+
+```
+CONTEXT_TRIE_POLICY present=true route=tape depth=8 min_support=1000 docs_min_support=1000 source=in-build ...
+CONTEXT_TRIE_DEPTH depth=8 min_support=1000 nodes=3594261 edges=88185516 bytes=347726720 ratio_vs_n=0.034773 source=in-build build_s=1926.0
+CONTEXT_TRIE_TAP bands=6409 rows=10000000001 n=10000000001 band_bytes=80000000008 prefix_reads=10000000000 wall=1920.3s work_s=943.3s band_read_s=32.4s wait_s=942.7s doc_wall=4.5s doc_stride=256 ...
+CONTEXT_TRIE_JOIN member=m20 codec=20 bytes=347726720 container_bytes=7004547080 -> 7352273840 append_s=2.5
+CONTEXT_TRIE_PUBLISHED member=m20 nodes=3594261 edges=88185516 bytes=347726720 ratio_vs_n=0.034773 depth=8 min_support=1000 source=3 ...
+```
+
+Reading it back (no corpus, no scan):
+
+```sh
+xsa trie-info   <container>                      # depth, min_support, nodes, edges, bytes, ratio
+xsa trie-member <container> [-o m20.bin]         # sha256 and sha256_noprov (provenance zeroed)
+xsa branch-of   <container> "the cat sat"        # exact next-byte histogram, END included
+xsa branch-of   <container> --batch ctx8.bin     # 1000 contexts of 0x1E-separated bytes: p50/p99, coverage
+xsa trie-stat   <container> <context>            # count, document estimate, top document, children
+xsa relax       <container> <long context>       # descend as far as the trie supports it
+```
+
+**The equivalence that matters**: the in-build member and `ctx-build`'s
+post-hoc member from the same container are byte-identical apart from the 16-byte
+provenance field that records WHICH ordered stream produced it (and, at 10 GB,
+the format version byte of a container built one commit before format v2) —
+`sha256_noprov` is equal, and every differing byte is inside that field.
+
 ### m14, the LCP over runs: OPT-IN (`--with-lcp-runs`), and what it buys
 
 The suffix tree *is* the LCP-interval tree: a node's children are delimited by the
