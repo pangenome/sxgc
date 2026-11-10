@@ -149,21 +149,43 @@ order and out of the workers' hands is the band stream. What the tap does NOT do
 anything: no LF cycle, no u40 column, no suffix-array cache, no text on disc. The band bytes it reads
 are the bytes the emitter reads anyway (8 B/row).
 
-### What it costs (10 GB, `pf-10gb.txt`, n = 10,000,000,001, threads 48, 24 GiB)
+### What it costs (10 GB, `pf-10gb.txt`, n = 10,000,000,001, threads 48, --memory-gb 24)
 
-| | --no-trie | trie (default) |
-|---|---|---|
-| build wall | see RESULTS notes | see RESULTS notes |
-| sorter / emit / tap / finish walls | — | 32:05.5 / 32:04.7 / 32:06.4 / 33:50.4 |
-| tap's OWN work (prefix reads + feed) | — | **943.3 s = 94 ns/row**; it waited 942.7 s for the sorter |
-| sorter's waits on band credit | — | 4 x 2 s diagnostics in 1,925 s |
-| m20 | absent | 347,726,720 B = 0.034773 n (nodes 3,594,261, edges 88,185,516) |
-| peak RSS (process) | — | 13.7 GiB (sorter); the tap peaks at 10.0 GiB = the corpus mapping |
+Two runs back to back on the same corpus, same flags, only `--no-trie` between them (box load average
+8-17 during both, other jobs present; the arms ran sequentially, never concurrently):
 
-The tap is **not** on the critical path: it worked 46 % of the wall and waited 54 % of it for the
-sorter, and the sorter's own log records no sustained band-credit wait. The 10 GB trie therefore costs
-the build a small fraction of its wall, where the post-hoc route cost 4,696 s of separate work and
-47-69 GB of transient RAM.
+| | `--no-trie` | trie (default) | delta |
+|---|---|---|---|
+| build wall (`/usr/bin/time`) | **2,032.07 s** (33:52) | **2,055.03 s** (34:15) | **+22.96 s = +1.13 %** |
+| sorter wall (phase) | 31:50.78 | 32:05.49 | +14.7 s |
+| sorter's own `SS_DONE total_s` | 1,902.93 s | 1,918.36 s | +15.4 s (+0.8 %) |
+| emit-tape / finish-v2 wall | 31:49.8 / 33:35.0 | 32:04.7 / 33:50.4 | +15 s |
+| ctx-tap wall | — | **32:06.4**, of which **work 943.3 s** (94 ns/row) and **wait 942.7 s** | — |
+| sorter blocked on band credit | (n/a) | 4 diagnostic events (>=2 s each) in 1,925 s | ~0 |
+| peak RSS (`VmHWM`) | 14,464,064 kB (13.79 GiB) | 14,320,316 kB (13.66 GiB) | **none added** (the two are within 0.9 % of each other and the trie arm is the LOWER one) |
+| ctx-tap peak RSS | — | 10.0 GiB (= the read-only corpus mapping) | — |
+| container | 7,004,547,080 B, v7, 8 members | 7,352,273,840 B, v9, 9 members | +347,726,720 B = m20 |
+| container sha256 | `573d29135c2dbe49e784c75cb6613e5199263474bd65e1612bdc6c79b953513d` | `c242131e9d8efdb05f9b2b91f4f7c1df9c8f35d74713b8e82db58c9ac80bf4e6` | +m20 (and v9) |
+| chi (both arms) | 2,676,925,006 | 2,676,925,006 | **unchanged** |
+| member cost | — | 347,726,720 B = **0.034773 n** (nodes 3,594,261, edges 88,185,516) | — |
+
+The wave-by-wave walls are the cleanest evidence, because the trie cannot influence them and they are
+identical between the arms (waves 1..6, seconds):
+
+```
+--no-trie  24.79  122.66  61.41  90.89  95.26  85.26
+trie       25.52  124.57  61.45  93.41  94.54  85.20
+```
+
+So the tap is **not** on the critical path: it did its 943 s of work inside a 1,925 s sorter wall and
+spent the other 943 s waiting for the sorter to publish bands; the sorter's own log records only four
+2-second band-credit stalls in the whole run. The trie costs the build **1.1 %** of its wall, where the
+post-hoc route costs 4,696 s of separate work (1,192 s of LF reconstruction + 3,448 s of single-threaded
+sweep) and 47-69 GB of transient RAM — and at the Pile those become five days and ~5 TB.
+
+The feed's intrinsic floor is the single-threaded `Builder::feed` at ~94-108 ns/row (measured both in
+the pipeline and standalone; the random prefix reads are parallel and cost ~8 ns/row once spread over
+48 threads). That floor is 15-18 minutes at 10 GB, all of it overlapped.
 
 ### Equivalence: the in-build member IS the post-hoc member
 
@@ -174,9 +196,14 @@ figure), so two routes that agree on every byte of the tree still differ in thos
 - 150 MB (`/dev/shm/t150m.txt`): `sha256_noprov = f3d6a380...b77440` for BOTH the in-build member and
   `xsa ctx-build`'s post-hoc member from the same container; 5 differing bytes of 9,317,928, all
   inside the provenance field.
-- 10 GB: the in-build member is byte-identical to the banked post-hoc member except its provenance
-  field and the member-FORMAT version byte (the banked container was built one commit before the
-  format went to v2): 7 differing bytes of 347,726,720, every one of them outside the tree.
+- 10 GB against the banked post-hoc member (`ctx-trie/g10-d8.sxi2`, 347,726,720 B, 3,594,261 nodes,
+  88,185,516 edges): **7 differing bytes** of 347,726,720 - the 16-byte provenance field, and the
+  member-format version byte, because that container was banked one commit before the format went to
+  v2. `trie-info` on the two members prints the same depth/min_support/nodes/edges/bytes/ratio.
+  A same-code post-hoc reference for the same container is rebuilt by `gates/trie_in_build_g4_tail.sh`
+  (`ctx-build --sa-cache`), so the 10 GB gate does not rest on that older container.
+- the ANSWERS are the same, not merely the bytes: `branch-of --batch` on 1,000 random 8-byte contexts
+  returns **588 answered / 412 below support on BOTH containers**, with the same per-context results.
 
 ## Gates — no victory without all of these
 
