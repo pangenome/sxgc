@@ -82,6 +82,15 @@ echo "A2_CAP rss2=$C2 rss8=$C8 rss16=$C16"
 [ "$C2" = "$C16" ] && [ "$C2" = "$C8" ] || fail "A2(c): the RSS cap changed the bytes"
 echo "A2_RSS_CAP_PARITY identical=1 sha256=$C2 caps_gb=2,8,16"
 
+echo "=== A2d: the binary window batch and the JSONL window stream agree"
+python3 "$HERE/consult_windows.py" "$WORK/w50k.bin" --positions 50000 --len 2048 \
+  --offset 3000000512 | tee -a "$WORK/windows.log"
+run fmt "$WORK/w50k.bin" 8 "$WORK/fmt.rows" --bin
+SF=$(sha "$WORK/fmt.rows")
+echo "A2_WINDOW_FORMAT jsonl=$C8 bin=$SF"
+[ "$C8" = "$SF" ] || fail "A2: the binary and JSONL window forms differ"
+echo "A2_WINDOW_FORMAT_IDENTICAL jsonl_and_bin=1 sha256=$SF"
+
 echo "=== A2c: --rss-gb 16 on the FULL 1M set (same bytes as --rss-gb 8?)"
 run big "$WORK/w1m.jsonl" 16 "$WORK/big.rows"
 SB=$(sha "$WORK/big.rows")
@@ -115,6 +124,6 @@ echo "A4_RESUME positions=$R4 sha256=$S4 $TRUNC"
 echo "A4_RESUME_IDENTICAL to_uninterrupted_run=1 positions=$R4 sha256=$S4"
 
 echo "=== A2/A3/A4 SUMMARY"
-echo "A2_DETERMINISM two_runs=1 kill_resume=1 rss_cap_2v8v16=1 sha256=$S1"
+echo "A2_DETERMINISM two_runs=1 kill_resume=1 rss_cap_2v8v16=1 window_format=1 sha256=$S1"
 echo "A3_BOUNDED positions=$ROWS positions_per_s=$PPS peak_rss_gb=$PEAK cap_gb=8 jobs=$JOBS"
 echo "A4_CRASH_RESUME positions=$R4 sha256=$S4"

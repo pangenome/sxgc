@@ -37,7 +37,8 @@ def main():
         wins.append((doc, base, 0, args.len, args.left))
     if args.out.endswith('.bin'):
         with open(args.out, 'wb') as f:
-            f.write(b'XSWIN001' + struct.pack('<QQQII', 0, 0, 0, 0, 0))
+            # the header RECORD is 32 bytes: the magic plus 24 zero bytes
+            f.write(b'XSWIN001' + b'\x00' * 24)
             for w in wins:
                 f.write(struct.pack('<QQQII', *w))
     else:

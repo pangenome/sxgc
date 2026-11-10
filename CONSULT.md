@@ -239,6 +239,10 @@ A2_FULL_1M rss8=679984ed474889fbb324c85a6e441c49db7a5686eb17cbd1004d8e3d7a58d56d
 A2_DETERMINISM two_runs=1 kill_resume=1 rss_cap_2v8v16=1 sha256=679984ed474889fbb324c85a6e441c49db7a5686eb17cbd1004d8e3d7a58d56d
 ```
 
+The two window forms agree too — the same 51,200-position set given as JSONL and
+as the binary batch (`--bin`) produces the same file
+(`A2_WINDOW_FORMAT jsonl=789b949e… bin=789b949e…`).
+
 (a) two runs of the same 1M-position window set: identical. (b) kill+resume:
 identical (A4). (c) `--rss-gb 2` vs `8` vs `16`: identical, on the 51,200-position
 set (`rss2 = rss8 = rss16`) and on the full 1M set (`rss8 = rss16`). Output is
