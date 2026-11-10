@@ -111,6 +111,29 @@ that carries information is 16-32 bytes, not 1024.
 | `matches(doc)` | available separately | `xsa mem` against the container |
 | `read(node)` | available once a node is addressable | |
 
+### The two-backend rule (what the trie's 13.5x failure actually suggests)
+
+A context's width decides which backend answers it, and the two are complementary:
+
+```
+WIDE context (occurs >= min_support times, e.g. thousands)
+    interval enumeration is hopeless - locating every row costs O(width)
+    -> the trie answers: children with exact counts, one lookup
+
+NARROW context (rare; occurs a handful of times)
+    locating every row is cheap - width is small
+    -> `seek` + locate answers: positions, then read the following byte of each
+```
+
+So `branch-of(ctx)` = trie if `count(ctx) >= min_support`, else locate-and-scan (cost O(width),
+which is exactly why it is cheap on the narrow case). `extend(ctx, b)` = `branch-of(ctx+b)` by the same
+rule. `relax(ctx, k)` ascends prefixes until the width crosses the threshold, at which point the trie
+takes over. `project(ctx, docset)` resolves the located positions through the document map.
+
+This needs no per-node document lists, no deep LCP, and no second corpus: it is one decision rule over
+what we already have. It also explains why the trie must be SUPPORT-BOUNDED rather than depth-bounded -
+its job is only the wide cases, which are few in number and rich in information.
+
 `project` is the one real gap. Cheapest exact route: `seek` + document-map lookup on the located
 positions, reusing seps.bin/meta.bin. Alternatives are a document -> nodes inverted index, or exact
 document lists for wide nodes (expensive).
