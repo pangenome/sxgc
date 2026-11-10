@@ -200,6 +200,46 @@ links) and compares the child list and every count against a brute-force scan of
 the corpus. The first line samples 50 random 16-byte contexts from the corpus, 41 of
 which are below support and therefore must be absent - which is what it checks.
 
+### 10 GB (`/mnt/nvme2n1/erikg/pf-10gb.txt`, n = 10,000,000,001, chi 2,676,925,006)
+
+Post-hoc build on the existing 10 GB container (`cs-gates/g3/pf-10gb.sxi2`),
+depth 8 / min_support 1000, 32 threads:
+
+```
+DENSE_RUNS runs=3474883891 bytes=24351338263 wall=13.5s
+SA_WALK rows=10000000001 steps=10000000001 wall=1100.3s dense=1
+SA_CACHE_WRITTEN path=/mnt/nvme2n1/erikg/ctx-trie/pf10gb.sa5 rows=10000000001 bytes=50000000005
+CONTEXT_TRIE depth=8 min_support=1000 nodes=3594261 edges=88185516 bytes=347726720 ratio_vs_n=0.034773 docs_summary=exact<=8+hll13pct
+CONTEXT_TRIE_COLUMNS node_fixed=14377044 node_edge_delta=3482768 node_count=8403424 edge_code=96001552 edge_child=49728312 edge_count=148197352 doc_ndocs=1935928 doc_top=470288 doc_first=10700032 doc_ids=14429824 head=192 bytes_per_node=96.7 bytes_per_edge=3.9
+CONTEXT_TRIE_SOURCE mode=dense-lf rows=10000000001 n=10000000001 sa_bytes=50000000005 dense_bytes=24351338263 stream_mem_gb=69.2
+CONTEXT_TRIE_BUDGET ratio_vs_n=0.034773 target<=0.05 pass=1
+CONTEXT_TRIE_BUILD rows=10000000001 sa_steps=10000000001 sa_wall=1192.7s doc_wall=3.9s sweep_wall=3448.1s total_wall=4696.2s threads=32 container_out=7352273840 member_off=347726720
+TRIE_VERIFY n=50 exact=50 mismatches=0 below_min_support=19
+TRIE_VERIFY n=50 exact=50 mismatches=0 below_min_support=0
+```
+
+The ratio is BETTER at 10 GB than at 150 MB (0.0348 against 0.0621): node count is
+bounded by n / min_support, so it grows much more slowly than n. Wall 78 min
+(1.2 min dense decode, 18 min LF walk, 57 min sweep); peak RSS 69 GB, which is the
+5 B/position suffix array (50 GB) plus the dense run columns (24 GB).
+
+Coverage and latency, 1,000 random contexts, one container open, no corpus read
+(`branch-of --batch`):
+
+```
+BATCH_BENCH op=branch-of n=1002 p50_us=4.60 p90_us=6.90 p99_us=9.54 max_us=14.56 answered=610 below_support=392 corpus_touched=0
+BATCH_DEPTH reached_depth_hist=0:2,1:0,2:11,3:32,4:61,5:92,6:99,7:98,8:607 mean_depth=6.944 asked_depth=8 trie_depth=8
+BATCH_BENCH op=branch-of n=1005 p50_us=9.81 p90_us=14.35 p99_us=21.40 max_us=36.20 answered=615 below_support=390 corpus_touched=0
+BATCH_DEPTH reached_depth_hist=0:0,1:2,2:8,3:29,4:64,5:72,6:93,7:127,8:610 mean_depth=7.013 asked_depth=16 trie_depth=8
+```
+
+**Coverage is 60.9 % of 8-byte contexts and 61.2 % of 16-byte contexts** (an
+independent 1,000-context run by the operator measured 59.5 %, and the width-sample
+prediction from the count distribution was 59.6 %: three independent methods agree
+inside one point). The mean reached depth is 6.94-7.01 of 8. Timings above were
+taken while another 32-thread build was running on the same box; a quiet-box run of
+the same operation measured 3.84 us p50 (operator, 150 MB container).
+
 ## Residual risks
 
 - The 100 GB gate is **not** met in this session: the dense columns for the Pile are

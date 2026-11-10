@@ -793,9 +793,9 @@ impl<'a> Trie<'a> {
     pub fn load(d: &'a [u8]) -> Self {
         need(d.len() >= 8, "member shorter than its version field");
         let ver = get(&d[0..], 8);
-        let hint = if ver == 1 { " (version 1 is the first draft: rebuild the trie)" } else { "" };
-        need(ver == TRIE_VERSION,
-            &format!("m20 member format version {ver} is not supported: this build reads version {TRIE_VERSION}{hint}"));
+        let hint = if ver == 1 { " (version 1 is the first-draft layout)" } else { "" };
+        need(ver >= 1 && ver <= TRIE_VERSION,
+            &format!("m20 member format version {ver} is not supported: this build reads 1..={TRIE_VERSION}{hint}"));
         need(d.len() >= HEAD, &format!("m20 member is {} bytes, shorter than its {HEAD}-byte head", d.len()));
         let depth = get(&d[8..], 8);
         let min_support = get(&d[16..], 8);
@@ -808,7 +808,14 @@ impl<'a> Trie<'a> {
         let mut offs = [0usize; TRIE_SECTIONS];
         for i in 0..TRIE_SECTIONS {
             offs[i] = get(&d[64 + 8 * i..], 8) as usize;
-            need(offs[i] >= HEAD && offs[i] <= d.len(), "member section offset");
+            // THE LAYOUT DISCRIMINATOR: version 1's first draft had a 128-byte head
+            // and fixed 16-byte node/edge slots, so its first section offset is 128.
+            // A 192-byte head is the packed layout. Refusing on the offset alone
+            // (as an older reader did) says nothing; this says which layout it is.
+            need(offs[i] >= HEAD && offs[i] <= d.len(),
+                &format!("m20 member section {i} offset {} is outside [{HEAD},{}]: this member has the \
+                         128-byte first-draft head, which this build does not read (member version {ver})",
+                    offs[i], d.len()));
         }
         let root = get(&d[144..], 8) as u32;
         need((root as u64) < nodes.max(1), "root node id");
@@ -2284,9 +2291,27 @@ fn batch(op: &str, args: &[String]) {
     }
     us.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let pct = |v: &Vec<f64>, q: f64| v[((v.len() as f64 - 1.0) * q) as usize];
+    // TWO DIFFERENT MEMORY NUMBERS, and neither is a guess:
+    //   rss_gb    = THIS process's peak resident set (VmHWM), i.e. what the run cost;
+    //   stream_gb = what the MEMBER RECORDS its ordered stream cost when it was built
+    //               (the u40 suffix array plus the dense run columns: a build-time
+    //               figure carried in the container, NOT this process's RSS).
+    // They were conflated in one `mem_gb` field that read 69.25 for a 348 MB process.
+    let rss_kb = std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|t| {
+            t.lines()
+                .find(|l| l.starts_with("VmHWM:"))
+                .and_then(|l| l.split_whitespace().nth(1).map(|v| v.parse::<f64>().ok()))
+                .flatten()
+        })
+        .unwrap_or(0.0);
     println!("BATCH_BENCH op={op} n={} p50_us={:.2} p90_us={:.2} p99_us={:.2} max_us={:.2} \
-              answered={answered} below_support={below} corpus_touched=0 mem_gb={:.2}",
+              answered={answered} below_support={below} corpus_touched=0 \
+              rss_gb={:.3} member_gb={:.3} build_stream_gb={:.2}",
         ctxs.len(), pct(&us, 0.50), pct(&us, 0.90), pct(&us, 0.99), us[us.len() - 1],
+        rss_kb / (1024.0 * 1024.0),
+        m.len() as f64 / (1u64 << 30) as f64,
         trie.source_mem as f64 / (1u64 << 30) as f64);
     let h: Vec<String> = hist.iter().enumerate().map(|(d, &c)| format!("{d}:{c}")).collect();
     println!("BATCH_DEPTH reached_depth_hist={} mean_depth={:.3} asked_depth={} trie_depth={} warm_ms={warm_ms:.1}",
