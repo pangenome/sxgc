@@ -618,16 +618,22 @@ impl Emitter {
     }
 }
 
+/// Count occurrences of `b` exactly. The naive word trick
+/// `(x - 0x01..) & !x & 0x80..` is only a *presence* test: borrow propagation
+/// from a matching byte into a following 0x01 byte sets that byte's high bit
+/// too, so `count_ones` over-counts. Measured on 80 GB of the Pile: 12892533
+/// instead of 12892529, i.e. four invented separators, which is exactly the
+/// kind of error that would corrupt a document count. This form is exact per
+/// byte: `(v & 0x7f) + 0x7f` never carries out of its byte, and its high bit
+/// (or v's own) is set for every non-zero v.
 fn count_byte(hay: &[u8], b: u8) -> u64 {
+    const LO: u64 = 0x7f7f_7f7f_7f7f_7f7f;
+    let pat = u64::from_le_bytes([b; 8]);
     let mut n = 0u64;
     let mut i = 0;
-    // 8 bytes at a time over the common case, byte-wise tail.
     while i + 8 <= hay.len() {
-        let w = u64::from_le_bytes(hay[i..i + 8].try_into().unwrap());
-        let pat = u64::from_le_bytes([b; 8]);
-        let x = w ^ pat;
-        // has_zero_byte
-        let m = x.wrapping_sub(0x0101010101010101) & !x & 0x8080808080808080;
+        let x = u64::from_le_bytes(hay[i..i + 8].try_into().unwrap()) ^ pat;
+        let m = !((((x & LO).wrapping_add(LO)) | x) | LO);
         n += m.count_ones() as u64;
         i += 8;
     }
@@ -1357,6 +1363,23 @@ mod tests {
     fn positions_between_utc_times() {
         assert_eq!(iso8601_utc(0), "1970-01-01T00:00:00Z");
         assert_eq!(iso8601_utc(1_700_000_000), "2023-11-14T22:13:20Z");
+    }
+
+    #[test]
+    fn byte_counting_is_exact_not_a_presence_test() {
+        // The classic (x - 0x01..) & !x & 0x80.. trick counts a 0x01 byte that
+        // follows a match as a match too (borrow propagation), which invents
+        // separators. Every adjacent pair is checked against a naive count.
+        for a in 0u16..=255 {
+            for b in 0u16..=255 {
+                let v = [a as u8, b as u8];
+                assert_eq!(count_byte(&v, SEP), v.iter().filter(|&&x| x == SEP).count() as u64, "pair {:?}", v);
+            }
+        }
+        let mut v = vec![SEP, SEP + 1, 0x00, SEP, 0xff, SEP + 1, SEP];
+        v.extend(std::iter::repeat(0x01).take(16));
+        v.push(SEP);
+        assert_eq!(count_byte(&v, SEP), 4);
     }
 
     #[test]

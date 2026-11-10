@@ -115,14 +115,22 @@ fn ck<T>(r: std::io::Result<T>, what: &str) -> T {
     r.unwrap_or_else(|e| die(&format!("pile-map: {}: {}", what, e)))
 }
 
+/// Count occurrences of `b` exactly. The naive word trick
+/// `(x - 0x01..) & !x & 0x80..` is only a *presence* test: borrow propagation
+/// from a matching byte into a following 0x01 byte sets that byte's high bit
+/// too, so `count_ones` over-counts. Measured on 80 GB of the Pile: 12892533
+/// instead of 12892529, i.e. four invented separators, which is exactly the
+/// kind of error that would corrupt a document count. This form is exact per
+/// byte: `(v & 0x7f) + 0x7f` never carries out of its byte, and its high bit
+/// (or v's own) is set for every non-zero v.
 fn count_byte(hay: &[u8], b: u8) -> u64 {
+    const LO: u64 = 0x7f7f_7f7f_7f7f_7f7f;
+    let pat = u64::from_le_bytes([b; 8]);
     let mut n = 0u64;
     let mut i = 0;
-    let pat = u64::from_le_bytes([b; 8]);
     while i + 8 <= hay.len() {
-        let w = u64::from_le_bytes(hay[i..i + 8].try_into().unwrap());
-        let x = w ^ pat;
-        let m = x.wrapping_sub(0x0101010101010101) & !x & 0x8080808080808080;
+        let x = u64::from_le_bytes(hay[i..i + 8].try_into().unwrap()) ^ pat;
+        let m = !((((x & LO).wrapping_add(LO)) | x) | LO);
         n += m.count_ones() as u64;
         i += 8;
     }
@@ -509,6 +517,11 @@ fn extract_record(path: &Path, want: u64) -> Vec<u8> {
 // ---------------------------------------------------------------------------
 
 struct VerifyOut {
+    /// bytes actually scanned (must equal the covered range: windows tile it)
+    bytes: u64,
+    /// documents whose pile text carries a different 0x1E count than the map
+    internal_bad: u64,
+    internal_diag: Option<String>,
     compared: u64,
     mismatches: u64,
     /// every 0x1E byte in the covered range (articles + separators)
@@ -526,7 +539,7 @@ struct VerifyOut {
 fn verify_pile(pile: &Path, m: &DocMap, jobs: usize) -> VerifyOut {
     let n = m.off.len();
     if n == 0 {
-        return VerifyOut { compared: 0, mismatches: 0, seps: 0, framed: 0, tail_internal: 0, first_bad: None };
+        return VerifyOut { bytes: 0, internal_bad: 0, internal_diag: None, compared: 0, mismatches: 0, seps: 0, framed: 0, tail_internal: 0, first_bad: None };
     }
     let mut groups: Vec<(usize, usize)> = Vec::new();
     let mut g0 = 0usize;
@@ -552,10 +565,11 @@ fn verify_pile(pile: &Path, m: &DocMap, jobs: usize) -> VerifyOut {
                 let last = g1 == n;
                 let start = m.off[g0];
                 let end = if last { m.corpus_bytes } else { m.off[g1 - 1] + m.len[g1 - 1] + 1 };
-                let mut o = VerifyOut { compared: 0, mismatches: 0, seps: 0, framed: 0, tail_internal: 0, first_bad: None };
+                let mut o = VerifyOut { bytes: 0, internal_bad: 0, internal_diag: None, compared: 0, mismatches: 0, seps: 0, framed: 0, tail_internal: 0, first_bad: None };
                 if end <= start {
                     return o;
                 }
+                o.bytes = end - start;
                 let f = File::open(pile).unwrap_or_else(|e| die(&format!("open {}: {}", pile.display(), e)));
                 let page = 4096u64;
                 let aligned = start - start % page;
@@ -609,6 +623,21 @@ fn verify_pile(pile: &Path, m: &DocMap, jobs: usize) -> VerifyOut {
                             o.framed += 1;
                         }
                     }
+                    // The internal 0x1E count is a claim about THIS document's
+                    // bytes: check it on the pile side too, so a bookkeeping
+                    // slip cannot hide inside the global reconciliation.
+                    if !cut_tail {
+                        let seen = count_byte(&win[rel..rel + l], SEP);
+                        if seen != m.internal[i] as u64 {
+                            o.internal_bad += 1;
+                            if o.internal_diag.is_none() {
+                                o.internal_diag = Some(format!(
+                                    "doc={} shard={} record={} offset={} length={} pile_internal_0x1e={} map_internal_0x1e={}",
+                                    i, m.shard[i], m.rec[i], m.off[i], m.len[i], seen, m.internal[i]
+                                ));
+                            }
+                        }
+                    }
                     if bad.is_none() && !cut_tail {
                         let mut h = Sha256::new();
                         h.update(&win[rel..rel + l]);
@@ -641,8 +670,13 @@ fn verify_pile(pile: &Path, m: &DocMap, jobs: usize) -> VerifyOut {
             })
             .collect()
     });
-    let mut t = VerifyOut { compared: 0, mismatches: 0, seps: 0, framed: 0, tail_internal: 0, first_bad: None };
+    let mut t = VerifyOut { bytes: 0, internal_bad: 0, internal_diag: None, compared: 0, mismatches: 0, seps: 0, framed: 0, tail_internal: 0, first_bad: None };
     for o in outs {
+        t.bytes += o.bytes;
+        t.internal_bad += o.internal_bad;
+        if t.internal_diag.is_none() {
+            t.internal_diag = o.internal_diag;
+        }
         t.compared += o.compared;
         t.mismatches += o.mismatches;
         t.seps += o.seps;
@@ -1304,16 +1338,31 @@ pub fn build(a: &BuildArgs) {
     // Identity the 0x1E scan must satisfy: every 0x1E in the range is either
     // the framing byte of a document that owns it or a byte inside a text.
     let internal_in_range: u64 = m.internal.iter().map(|&x| x as u64).sum();
+    if v.bytes != m.corpus_bytes {
+        die(&format!(
+            "pile-map: the verification windows scanned {} bytes but the map covers {}: the windows do not tile the range",
+            v.bytes, m.corpus_bytes
+        ));
+    }
+    if v.internal_bad > 0 {
+        die(&format!(
+            "pile-map: {} document(s) carry a different internal 0x1E count than the map says; first: {}",
+            v.internal_bad,
+            v.internal_diag.unwrap_or_default()
+        ));
+    }
     if v.seps != complete + internal_in_range {
         die(&format!(
-            "pile-map: 0x1E reconciliation failed: pile carries {} in the range, map says {} framing + {} internal",
-            v.seps, complete, internal_in_range
+            "pile-map: 0x1E reconciliation failed: pile carries {} 0x1E in [{}, {}), map says {} framing + {} internal ({} docs, {} shard rows)",
+            v.seps, 0, m.corpus_bytes, complete, internal_in_range, doc_count, rows.len()
         ));
     }
     if v.framed != complete {
         die(&format!("pile-map: {} documents should own their framing 0x1E but {} do", complete, v.framed));
     }
-    let pile_sha = if a.pile_sha256 { Some(hash_prefix(&pile, covered_cap)) } else { None };
+    // The identity a future run can compare against `sha256sum`: the WHOLE file
+    // (a --limit-bytes map still describes a file that must be recognisable).
+    let pile_sha = if a.pile_sha256 { Some(hash_prefix(&pile, pile_bytes)) } else { None };
     if a.pile_sha256 {
         crate::trace_since("pile_map_sha256", t_ver);
     }
@@ -1396,8 +1445,8 @@ pub fn build(a: &BuildArgs) {
         "kind": "pile-document-map",
         "pile_path": pile.display().to_string(),
         "pile_bytes_on_disk": pile_bytes,
-        "pile_sha256_covered_prefix": pile_sha,
-        "pile_sha256_note": "sha256 of pile[0, corpus_bytes); pass --pile-sha256 to record it. corpus_bytes == pile_bytes_on_disk for a map over the whole file",
+        "pile_sha256_file": pile_sha,
+        "pile_sha256_note": "sha256 of the whole pile file, so a later run can prove it is the same bytes (sha256sum comparable); pass --pile-sha256 to record it. The covered range is pinned independently by content_digest_sha256",
         "corpus_bytes": m.corpus_bytes,
         "limit_bytes": a.limit,
         "limit_trailing_bytes": if a.limit.is_some() { Some(limit_trailing) } else { None },
@@ -1595,6 +1644,7 @@ pub fn verify(a: &VerifyArgs) {
                 let mut line: Vec<u8> = Vec::new();
                 let mut scanned = 0usize;
                 let mut record = 0u64;
+                let mut stopped_early = false;
                 'read: loop {
                     let k = match so.read(&mut buf) {
                         Ok(0) => break,
@@ -1634,6 +1684,9 @@ pub fn verify(a: &VerifyArgs) {
                         start = end + 1;
                         scanned = start;
                         if ti == targets.len() {
+                            // All samples found: close the pipe on purpose, the
+                            // decompressor dies of SIGPIPE and that is fine.
+                            stopped_early = true;
                             break 'read;
                         }
                     }
@@ -1644,7 +1697,7 @@ pub fn verify(a: &VerifyArgs) {
                 }
                 drop(so);
                 let st = ck(child.wait(), "wait for zstd");
-                if !st.success() {
+                if !st.success() && !(stopped_early && st.code().is_none()) {
                     die(&format!("pile-verify: zstd -dc {} failed ({})", path.display(), st));
                 }
                 if ti != targets.len() {
@@ -1695,6 +1748,18 @@ fn record_text(line: &[u8], path: &Path, record: u64) -> Vec<u8> {
 
 fn compare(pmap: &[u8], m: &DocMap, d: usize, text: &[u8]) -> Result<(), String> {
     let (off, len) = (m.off[d], m.len[d]);
+    // A document cut by --limit-bytes is only the prefix of its record that
+    // fell inside the byte range.
+    let cut = m.partial_tail && d + 1 == m.off.len() as usize;
+    if cut {
+        if text.len() as u64 >= len && pmap[off as usize..(off + len) as usize] == text[..len as usize] {
+            return Ok(());
+        }
+        return Err(format!(
+            "doc={} (cut tail) offset={} map_length={} shard_text_length={} is not the prefix of its record",
+            d, off, len, text.len()
+        ));
+    }
     if text.len() as u64 != len {
         return Err(format!(
             "doc={} shard={} record={} offset={} map_length={} shard_text_length={} first_differing_byte=n/a(length)",
