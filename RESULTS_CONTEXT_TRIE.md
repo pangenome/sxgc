@@ -54,6 +54,29 @@ a 0.63 n container.
 - No 10 GB or 100 GB trie has been built yet. No operation (`branch-of`, `relax`, `project`) has been timed
   against the 150k positions/s target.
 
+## The locate cost, measured (and why the "narrow" backend is not cheap)
+
+```
+10 GB v8 container, 16-byte context "version of the s", one CLI process per measurement
+  --count          0.075 s                     (no location)
+  --limit 100      5.05 s    ~50 ms / position
+  --limit 1000    41.82 s    ~42 ms / position
+  --limit 5000   153.15 s    ~39 ms / position (3926 found)
+```
+
+A locate walks LF from a sampled anchor at stride 1024, i.e. up to 1024 decode-touching steps, and each
+step lands on a different BWT block, so it is a cache miss per step. **Per-position location is ~40 ms**,
+which is ~6000x the 6.7 us/position budget at 150k positions/s.
+
+Consequences, none optional:
+- "the narrow case is cheap because there are few rows" is false: it is few rows at ~40 ms each.
+- Sampling k rows to estimate a histogram per position is also dead (k x 40 ms).
+- The two-backend rule reduces to ONE viable backend: a stored structure with no locate. Either the trie
+  (with TOP-K branches stored, since a 256-bin histogram is not needed and costs bytes) or a reversed
+  companion index (rank differences, no location, but O(sigma) work for a full histogram).
+- Any future claim about consult rates must state the locate cost explicitly; the earlier 2.3k positions/s
+  and 4.9k positions/s figures were dominated by depth and by location, not by the index.
+
 ## Why this counts as progress
 
 Each of the three studies this week ended by killing a plausible design cheaply: witnesses are not context
