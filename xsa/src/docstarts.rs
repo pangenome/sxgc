@@ -30,6 +30,9 @@
 //!        the varint stream
 //!   then gaps_bytes LEB128 varints: gap[0] = start[0] (must be 0), gap[i] =
 //!        start[i] - start[i-1] > 0
+//!   then 0..7 zero bytes: the member is padded to an 8-byte multiple, because
+//!        the container's trailing directory must sit at an 8-aligned offset
+//!        and the members must partition the file exactly (v7+ reader law)
 //!
 //! Size on the Pile (mean gap 5,554 B -> 2-byte varints): ~2.2 B/doc plus
 //! 12 B per 64 docs ≈ 2.4 B/doc ≈ 500 MB for 210.6 M docs over 1.31 TB

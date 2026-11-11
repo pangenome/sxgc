@@ -166,7 +166,12 @@ little-endian. Nothing is compressed and nothing is buffered on the side.
 `0x1E` (decimal 30) is emitted like any other byte, exactly as their chain
 records it and their `features()` excludes it from the probabilities. Their
 `write_window` geometry (`start % 2048 == 0`, `1 <= len <= 2048`) is satisfied by
-the T2048 window sets we benchmark with.
+the T2048 window sets we benchmark with. The v2 tail maps as: their document id
+`docid` (the CONTAINER's id, not the window's opaque `doc`), the document base
+`base`, and `depth_in_doc`; `excluded = (flags & 4) != 0`, `restricted =
+(flags & 8) != 0`, and with `excluded` set their `context_count`/`support_size`
+must be read from the EXCLUSION-adjusted `width` (it already is: the width field
+IS the adjusted number).
 
 ## 4. Journal (`<output>.journal`)
 
@@ -259,24 +264,27 @@ the container's own `n-1` bounds every position and the EOF test).
 counts what follows each occurrence — no index, no FM search, no code shared with
 the thing under test. 35 contexts (lengths 1,2,3,4,5,6,8,12,16,24,32,40,48,64,96,
 128,192,256,300,384,512,768,900,1000,1024, spread over the first 40 GB, plus
-three positions immediately after a `0x1E` and two at the end of the text) are
-answered twice by `xsa consult` — once with `--no-sep-cut` against the raw spine,
-once with the default separator cut against the oracle on the *cut* suffix — so 70
-rows and 10.6 billion individual counts are compared:
+positions right after a `0x1E` and two at the end of the text) are answered
+TWICE by `xsa consult` — once with the raw spine (cut at the document base
+only: the separator scan is gone, and the rows after a `0x1E` prove it: their
+spine INCLUDES the framing byte), and once with `--exclude-source`, whose
+width and pairs must be the raw answer minus the position's own occurrence
+(branch byte = the corpus byte AT the position, the driver subtracts it and
+compares) — so 70 rows and 10.6 billion individual counts are compared:
 
 ```
-A1_PARITY contexts=35 rows_checked=70 exact=35 mismatched=0 counts_compared=10611404039 sep_cut_rows=32 sep_empty_rows=3 result=PASS
+A1_PARITY contexts=35 rows_checked=70 exact=35 mismatched=0 counts_compared=10611404039 exclude_rows=35 result=PASS
 ```
 
 (excerpt of the per-row lines; `width` is the occurrence count of the spine, so
 this compares multi-billion-count histograms, not just branch sets)
 
 ```
-A1_ROW idx=0 len=1 cut_len=1 width=8492344394 eof=0 pairs=171 parity=exact
-A1_ROW idx=17 len=384 cut_len=384 width=1 eof=0 pairs=1 parity=exact
-A1_ROW idx=21 len=1024 cut_len=1024 width=1 eof=0 pairs=1 parity=exact
-A1_ROW idx=28 len=1024 cut_len=0 width=1 eof=0 pairs=1 parity=exact
-A1_ROW idx=33 len=1024 cut_len=39 width=1 eof=0 pairs=1 parity=exact
+A1_ROW idx=0 len=1 width=8492344394 eof=0 pairs=171 parity=exact
+A1_ROW idx=17 len=384 width=1 eof=0 pairs=1 parity=exact
+A1_ROW idx=21 len=1024 width=1 eof=0 pairs=1 parity=exact
+A1_ROW idx=30 len=1024 width=1 eof=0 pairs=1 excl_width=0 parity=exact
+A1_ROW idx=34 len=1024 width=1 eof=0 pairs=1 excl_width=0 parity=exact
 ```
 
 `--strict` additionally recomputes every row through `branch_result` (the
@@ -286,20 +294,24 @@ the earlier `branch_result`-only build produced (`1300afb8…`).
 
 ### A2 — determinism: three shas, all the same
 
-`gates/consult_a234.sh`:
+`gates/consult_a234.sh` (re-run on the structural-docs lane, 2026-11-11; the
+row shas differ from the pre-lane receipt **by design** — the spine is cut at
+the document base now, not at the last `0x1E`, and the row layout is v2 — while
+the gate's own comparisons are unchanged and all pass):
 
 ```
-A3_RUN1 positions=1001472 positions_per_s=5109.619 peak_rss_gb=7.994 sha256=679984ed474889fbb324c85a6e441c49db7a5686eb17cbd1004d8e3d7a58d56d
-A2_RUN2 sha256=679984ed474889fbb324c85a6e441c49db7a5686eb17cbd1004d8e3d7a58d56d
-A2_TWO_RUNS identical=1 sha256=679984ed474889fbb324c85a6e441c49db7a5686eb17cbd1004d8e3d7a58d56d
-A2_CAP rss2=789b949ed41eaf90da012d6dda4716990b170b5f03dc8d95b862dc34e5acb45d rss8=789b949ed41eaf90da012d6dda4716990b170b5f03dc8d95b862dc34e5acb45d rss16=789b949ed41eaf90da012d6dda4716990b170b5f03dc8d95b862dc34e5acb45d
-A2_FULL_1M rss8=679984ed474889fbb324c85a6e441c49db7a5686eb17cbd1004d8e3d7a58d56d rss16=679984ed474889fbb324c85a6e441c49db7a5686eb17cbd1004d8e3d7a58d56d
-A2_DETERMINISM two_runs=1 kill_resume=1 rss_cap_2v8v16=1 sha256=679984ed474889fbb324c85a6e441c49db7a5686eb17cbd1004d8e3d7a58d56d
+A3_RUN1 positions=1001472 positions_per_s=4556.521 peak_rss_gb=7.998 sha256=6058073fa14e0230ecf962052369348b041512b0c7e45ba32a25e29ded299bf0
+A2_RUN2 sha256=6058073fa14e0230ecf962052369348b041512b0c7e45ba32a25e29ded299bf0
+A2_TWO_RUNS identical=1 sha256=6058073fa14e0230ecf962052369348b041512b0c7e45ba32a25e29ded299bf0
+A2_CAP rss2=9695eb0175262afbae9c3a23dc3564385b690d4373d1f5309700bdebe6b3572f rss8=9695eb0175262afbae9c3a23dc3564385b690d4373d1f5309700bdebe6b3572f rss16=9695eb0175262afbae9c3a23dc3564385b690d4373d1f5309700bdebe6b3572f
+A2_WINDOW_FORMAT jsonl=9695eb0175262afbae9c3a23dc3564385b690d4373d1f5309700bdebe6b3572f bin=9695eb0175262afbae9c3a23dc3564385b690d4373d1f5309700bdebe6b3572f
+A2_FULL_1M rss8=6058073fa14e0230ecf962052369348b041512b0c7e45ba32a25e29ded299bf0 rss16=6058073fa14e0230ecf962052369348b041512b0c7e45ba32a25e29ded299bf0
+A2_DETERMINISM two_runs=1 kill_resume=1 rss_cap_2v8v16=1 window_format=1 sha256=6058073fa14e0230ecf962052369348b041512b0c7e45ba32a25e29ded299bf0
 ```
 
 The two window forms agree too — the same 51,200-position set given as JSONL and
 as the binary batch (`--bin`) produces the same file
-(`A2_WINDOW_FORMAT jsonl=789b949e… bin=789b949e…`).
+(`A2_WINDOW_FORMAT jsonl=9695eb01… bin=9695eb01…`).
 
 (a) two runs of the same 1M-position window set: identical. (b) kill+resume:
 identical (A4). (c) `--rss-gb 2` vs `8` vs `16`: identical, on the 51,200-position
@@ -308,54 +320,45 @@ also invariant to `-j` (4/8/16/32/64/96) and to `--cache-gb`.
 
 ### A3 — bounded: peak RSS 8.00 GB at `--rss-gb 8`
 
-Three full runs of the same 1M-position window set, all `--rss-gb 8`, all the same
-bytes, on a box whose foreign load moved between them (`load average` 50 -> 99;
-four FastGA/FastGCD jobs at ~15 cores each plus GPU training jobs):
+Full runs of the same 1M-position window set, all the same bytes, on a box whose
+foreign load moved between them (four FastGA/FastGCD jobs at ~15 cores each plus
+GPU training jobs):
 
 ```
-A3_BOUNDED positions=1001472 positions_per_s=4956.978 peak_rss_gb=8.000 cap_gb=8 jobs=96    (load ~57)
-A3_BOUNDED positions=1001472 positions_per_s=5109.619 peak_rss_gb=7.994 cap_gb=8 jobs=96    (load ~40)
-CONSULT_STATS positions=1001472 positions_per_s=5640.997 peak_rss_gb=7.993 cap_gb=8 jobs=96  (load ~24)
-CONSULT_STATS positions=1001472 positions_per_s=5920.775 peak_rss_gb=14.122 cap_gb=16 jobs=96 (load ~50)
+A3_BOUNDED positions=1001472 positions_per_s=4556.521 peak_rss_gb=7.998 cap_gb=8 jobs=96   (structural-docs lane, load ~60)
+A3_BOUNDED positions=1001472 positions_per_s=5096.514 peak_rss_gb=7.987 cap_gb=8 jobs=96   (structural-docs lane, run 2)
+CONSULT_STATS positions=1001472 positions_per_s=5151.090 peak_rss_gb=15.997 cap_gb=16 jobs=96 (structural-docs lane, --rss-gb 16)
+CONSULT_STATS positions=1001472 positions_per_s=5920.775 peak_rss_gb=14.122 cap_gb=16 jobs=96 (pre-lane receipt, load ~50)
 ```
 
 **Honest verdict on the 5,000/s bar: it is met on average and not by a margin.**
-At the 8 GB cap the rate spans 4,957-5,641 positions/s (mean 5,236) - the bar is
+At the 8 GB cap the lane's rates span 4,557-5,097 positions/s under heavier
+foreign load than the pre-lane runs (4,957-5,641, mean 5,236) - the bar is
 inside the spread, and the box was never quiet. At the 16 GB cap that the
-contract allows (8-16 GB) it is 5,921 positions/s, because the RSS governor stops
-bleeding page tables (`drop_epochs` 641 -> 0). Peak RSS is `VmHWM` from
-`/proc/self/status`, and it is journaled every second as `CONSULT_RSS
-rss_gb=… cap_gb=…`: with `--rss-gb 8` the process rides **at** its budget (8.00
-GB), which is the budget working, not a hope.
+contract allows (8-16 GB) it is 5,151-5,921 positions/s, because the RSS
+governor stops bleeding page tables (`drop_epochs` 641 -> 0). Peak RSS is
+`VmHWM` from `/proc/self/status`, and it is journaled every second as
+`CONSULT_RSS rss_gb=… cap_gb=…`: with `--rss-gb 8` the process rides **at** its
+budget (8.00 GB), which is the budget working, not a hope.
 
 The window set is their cache geometry: 489 T2048 windows at 2048-aligned
-offsets, spine = last ≤1024 bytes cut at the last `0x1E`, mean `ctxlen` 709.3 /
-median 855 of 1024.
+offsets, spine = last ≤1024 bytes cut at the **document base** (the lane's rule;
+the pre-lane receipt cut at the last `0x1E`), mean `ctxlen` ~709 of 1024.
 
 ### A4 — crash and resume, with a real torn tail
 
 ```
 A4_KILL exit=124 (124 = the harness's SIGTERM, the crash this gate needs)
-NO_SURVIVORS work=/tmp/consult-fix/gfinal
-A4_KILL file_bytes=27555240 last_commit_output_bytes=21278172 commits=2
-CONSULT_RESUME from_seq=2 windows_done=196 positions_done=401408 output_bytes=21278172 truncated_bytes=6277068 prefix_verified=1
-A4_RESUME positions=1001472 sha256=679984ed474889fbb324c85a6e441c49db7a5686eb17cbd1004d8e3d7a58d56d
-A4_RESUME_IDENTICAL to_uninterrupted_run=1 positions=1001472 sha256=679984ed474889fbb324c85a6e441c49db7a5686eb17cbd1004d8e3d7a58d56d
+NO_SURVIVORS work=/mnt/nvme2n1/erikg/sd-scratch/a234
+A4_KILL file_bytes=35854379 last_commit_output_bytes=30626268 commits=2
+A4_RESUME positions=1001472 sha256=6058073fa14e0230ecf962052369348b041512b0c7e45ba32a25e29ded299bf0 truncated_bytes=5228111
+A4_RESUME_IDENTICAL to_uninterrupted_run=1 positions=1001472 sha256=6058073fa14e0230ecf962052369348b041512b0c7e45ba32a25e29ded299bf0
 ```
 
-The killed run had appended 27,555,240 bytes but committed 21,278,172, so
-`--resume` discarded a real **6,277,068-byte torn tail**, verified the committed
+The killed run had appended 35,854,379 bytes but committed 30,626,268, so
+`--resume` discarded a real **5,228,111-byte torn tail**, verified the committed
 prefix's sha256 (`prefix_verified=1`), and finished with the uninterrupted run's
 exact bytes, byte for byte, at the same row count.
-
-Provenance of that block, stated exactly: the `A4_KILL ... / CONSULT_RESUME ...`
-lines above are the `--chunk-rows 200000` invocation of the harness's A4 step (the
-setting the committed harness uses, so the kill cannot land on a commit
-boundary). The full-harness run at commit `80d2951`, made before that setting was
-added, was killed exactly ON a commit boundary -
-`A4_KILL file_bytes=28013586 last_commit_output_bytes=28013586 commits=8`,
-`A4_RESUME ... truncated_bytes=0` - and was also byte-identical to the
-uninterrupted run; it simply never exercised the truncation branch.
 
 Every launch in the harness is `setsid timeout --kill-after=10 N`, and every step
 asserts that no `xsa consult` process of ours survived it (`NO_SURVIVORS`).
@@ -368,10 +371,17 @@ python3 gates/consult_a1.py /mnt/nvme2n1/erikg/pile.txt \
         /mnt/nvme2n1/erikg/P100c/pile-head100.sxi2 xsa/target/release/xsa /tmp/a1
 bash gates/consult_a234.sh xsa/target/release/xsa \
         /mnt/nvme2n1/erikg/P100c/pile-head100.sxi2 /mnt/nvme2n1/erikg/pile.txt /tmp/a234 96
+# the structural-docs gates (needs a container with member m15; the banked
+# container + `xsa docstarts embed --out` makes one):
+bash gates/structdocs_g1.sh xsa/target/release/xsa CONTAINER-M15 \
+        /mnt/nvme2n1/erikg/pilemap_full /tmp/g1 10000 100000000000
+python3 gates/structdocs_fixtures.py xsa/target/release/xsa XSA-ADADF48 /tmp/g23
 ```
 
-`consult_a1.py` compiles `consult_oracle.c` itself. Both drivers were run from a
-clean worktree at commit `80d2951`; the binary's sha256 was
+`consult_a1.py` compiles `consult_oracle.c` itself; `structdocs_g1.sh` compiles
+`docstarts_oracle.c`. The structural-docs lane's runs are receipted in
+`RESULTS_STRUCTURAL_DOCS.md` (commit and shas there); the pre-lane A1/A234
+receipt above was made at commit `80d2951` with binary sha256
 `a7c289c61955d57061bfb8ea31e2513d836b95cc6e037813a70affa8c8b97c65`.
 
 ## 7. Throughput, and what it is measured on
@@ -384,14 +394,14 @@ ran, which is why repeats of the same command vary by ~15%). Source: the
 
 | window set | spine | positions | `-j` | positions/s | peak RSS | sha256 (short) |
 |---|---|---|---|---|---|---|
-| T2048 x 489 (their geometry) | ≤1024, cut at `0x1E`, mean 709 | 1,001,472 | 96 | **5,641.0** | 7.99 GB | `679984ed…` |
-| T2048 x 489 | same | 1,001,472 | 96 | **5,109.6** | 7.99 GB | `679984ed…` |
-| T2048 x 489 | same | 1,001,472 | 96 | 4,957.0 | 8.00 GB | `679984ed…` |
-| T2048 x 489, `--rss-gb 16` | same | 1,001,472 | 96 | **5,920.8** | 14.12 GB | `679984ed…` |
-| T2048 x 489, resume from 401,408 | same | 599,064 | 96 | 8,539.3 | 7.99 GB | `679984ed…` |
-| T2048 x 7,849 | same | 200,704 | 16 | 2,284.0 | 7.99 GB | `16b7a268…` |
-| T1024 x 16, `--no-sep-cut` | 1024 for every position | 16,384 | 96 | **4,956.9** | 5.63 GB | `8bcd491d…` |
-| T1024 x 16, `--no-sep-cut` | 1024 for every position | 16,384 | 64 | 4,533.5 | 5.63 GB | `8bcd491d…` |
+| T2048 x 489 (their geometry) | ≤1024, cut at `0x1E`, mean 709 | 1,001,472 | 96 | **5,641.0** | 7.99 GB | `679984ed…` (pre-lane receipt; the lane's rule cuts at the document base and gives `6058073f…`) |
+| T2048 x 489 | same | 1,001,472 | 96 | **5,109.6** | 7.99 GB | `679984ed…` (pre-lane) |
+| T2048 x 489 | same | 1,001,472 | 96 | 4,957.0 | 8.00 GB | `679984ed…` (pre-lane) |
+| T2048 x 489, `--rss-gb 16` | same | 1,001,472 | 96 | **5,920.8** | 14.12 GB | `679984ed…` (pre-lane; the lane's run gives `6058073f…` at 5,151.0) |
+| T2048 x 489, resume from 401,408 | same | 599,064 | 96 | 8,539.3 | 7.99 GB | `679984ed…` (pre-lane) |
+| T2048 x 7,849 | same | 200,704 | 16 | 2,284.0 | 7.99 GB | `16b7a268…` (pre-lane) |
+| T1024 x 16, raw 1024-byte spines | 1024 for every position | 16,384 | 96 | **4,956.9** | 5.63 GB | `8bcd491d…` (pre-lane, when `--no-sep-cut` still existed; the lane's spine is always the raw document-base cut) |
+| T1024 x 16, raw 1024-byte spines | 1024 for every position | 16,384 | 64 | 4,533.5 | 5.63 GB | `8bcd491d…` (pre-lane) |
 
 For scale: the emender's receipt (`receipts/c14_cache_scale/benchmark_summary.json`,
 1,034,056 positions, `jobs=128`) is **6,088.7 positions/s** with a peak RSS of

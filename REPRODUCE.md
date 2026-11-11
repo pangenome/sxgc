@@ -532,6 +532,39 @@ in-build container and 588/412 at p50 4.96 us on the post-hoc one.
 `gates/trie_in_build_g4_tail.sh` (the wide arm, the coverage pair, and the
 same-code 10 GB post-hoc reference) are the scripts behind these numbers.
 
+### m15, the document starts: OPT-IN (`--docs-map DIR`), boundaries as metadata
+
+`xsa build --tape --docs-map DIR` writes member **m15** (codec 15, SXI2 **v10**)
+— the container's own document map: the monotone array of document starts with
+`rank`/`select`, encoded as delta-varint gaps plus a sampled-absolute table
+(`select(i)` = document i's start, `rank(p)` = the document containing p,
+`p − select(rank(p))` = the depth in document; one binary search plus at most
+`stride` = 64 varint decodes per lookup). On the Pile head the member is
+**0.00036 n** (36,165,080 B over the 100e9-byte text, 16,119,767 documents;
+2.25 B/gap against 8 B for a plain u64 array). **Without the flag the build is
+byte-identical** — verified: the same 150 MB input built at adadf48 and at this
+lane gives the same container sha256
+(`871c904f3a67856943a652d1bad743b826cf6892e2265852d9b4f619ff1f98d5`).
+
+The map dir is the `xsa corpus --pile-map --out DIR` sidecar (`seps.bin`, XSEP
+v1). A map that COVERS the text may be a superset: the authoritative full-pile
+map (`/mnt/nvme2n1/erikg/pilemap_full`, 210,607,728 docs over 1.31 TB) embeds
+into any head-prefix container, taking exactly the documents that START inside
+the text. Post-hoc embedding also exists — `xsa docstarts embed CONTAINER
+(--docs-map DIR | --doc-starts FILE) [--out NEW]` (in-place for SXI2 v7..=9,
+streaming copy for v6), with `verify` / `probe` / `info` instruments — and
+`xsa build --docs-map` is the in-build form.
+
+**Why:** document boundaries are metadata, never inferred from content bytes —
+at vocabulary 256 no in-band delimiter can be safe by construction, and the
+pile's 0x1E framing collides with 0x1E inside document texts (78,715 documents
+over the full pile; 6,979 internal bytes in the first 100 GB). See
+`NOTE_FROM_EMENDER_DOCUMENT_BOUNDARIES.md` and `MEMORY_OPS.md`'s THE PRINCIPLE;
+`RESULTS_STRUCTURAL_DOCS.md` holds the gates (boundary parity incl.
+internal-0x1E documents, cross-boundary exclusion, source exclusion,
+determinism) and `gates/structdocs_g1.sh` / `gates/structdocs_fixtures.py` are
+the scripts behind them.
+
 ### m14, the LCP over runs: OPT-IN (`--with-lcp-runs`), and what it buys
 
 The suffix tree *is* the LCP-interval tree: a node's children are delimited by the
