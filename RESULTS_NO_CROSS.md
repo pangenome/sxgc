@@ -190,7 +190,18 @@ independent starts-table classification says a document start lies inside
 
 ## X5 — no regression (PASS)
 
-`gates/no_cross_x5_regression.sh` (see its log for the verbatim lines):
+Verbatim:
+
+```
+X5_PLAIN 871c904f3a67856943a652d1bad743b826cf6892e2265852d9b4f619ff1f98d5  /tmp/nxc/x5gate/plain/pile150.sxi2
+X5_PLAIN_IDENTITY exact
+X5_MAP dd56e422811c55374ded1a4c703aeff0219427be86a90e55bb371f0ecec99faa  /tmp/nxc/x5gate/map/pile150.sxi2
+X5_MAP_IDENTITY exact
+X5_CARGO_TEST test result: ok. 98 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 2.14s
+X5_RESULT PASS
+```
+
+`gates/no_cross_x5_regression.sh` produced the lines above in one run.
 
 - **The separator corpus path (pile.txt) unchanged:** the plain 150 MB build
   is byte-identical to the banked adadf48-era container
