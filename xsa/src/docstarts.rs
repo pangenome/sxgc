@@ -225,22 +225,15 @@ impl DocStarts {
         for i in 0..docs {
             if i % stride == 0 {
                 if i > 0 {
+                    block += 1;
                     if pos != ds.block_off(block) {
                         bad(&format!(
                             "sample {} declares gap-stream offset {} but the stream is at {pos}",
                             block, ds.block_off(block)
                         ));
                     }
-                    block += 1;
                 } else if pos != 0 {
                     bad("sample 0 does not start its gap stream at offset 0");
-                }
-                let sample = ds.sample_start(block);
-                if start != sample {
-                    bad(&format!(
-                        "sample {} (document {}) says start {sample}, the varint stream says {start}",
-                        block, i
-                    ));
                 }
             }
             let gap = match ds.next_gap(&mut pos) {
@@ -255,6 +248,17 @@ impl DocStarts {
                 bad(&format!("document {i} has the same start as its predecessor"));
             }
             start += gap;
+            // the sample check runs AFTER this document's gap, when `start` IS
+            // sample j's absolute (sample j is document j*stride, decoded last)
+            if i % stride == 0 {
+                let sample = ds.sample_start(i / stride);
+                if start != sample {
+                    bad(&format!(
+                        "sample {} (document {}) says start {sample}, the varint stream says {start}",
+                        i / stride, i
+                    ));
+                }
+            }
             if start >= text_len {
                 bad(&format!(
                     "document {i} starts at {start}, at or past the text length {text_len}"
@@ -365,17 +369,16 @@ impl DocStarts {
         }
     }
 
-    /// Byte offset (inside the gap stream) of the first gap of sample `j`'s block.
+    /// Byte offset (RELATIVE to the gap/delta stream's first byte) of the first
+    /// gap of sample `j`'s block. `next_gap` adds the stream's base to `pos`,
+    /// so this MUST be relative too — an absolute value here would be added
+    /// twice and read past the member.
     fn block_off(&self, j: u64) -> u64 {
         match &self.kind {
-            Kind::Member {
-                block_offs_off,
-                gaps_off,
-                ..
-            } => *gaps_off as u64 + u64::from(u32_at(self.backing.bytes(), block_offs_off + 4 * j as usize)),
-            Kind::Xsep { deltas_off, .. } => {
-                *deltas_off as u64 + 4 * j * self.stride
+            Kind::Member { block_offs_off, .. } => {
+                u64::from(u32_at(self.backing.bytes(), block_offs_off + 4 * j as usize))
             }
+            Kind::Xsep { .. } => 4 * j * self.stride,
         }
     }
 
@@ -411,7 +414,7 @@ impl DocStarts {
                 }
             }
             Kind::Xsep { deltas_off, .. } => {
-                let at = deltas_off as u64 + *pos;
+                let at = *deltas_off as u64 + *pos;
                 *pos += 4;
                 Ok(u64::from(u32_at(b, at as usize)))
             }
@@ -436,8 +439,12 @@ impl DocStarts {
         let mut doc = j * self.stride;
         let mut start = self.sample_start(j);
         let mut pos = self.block_off(j);
+        // block j's stream begins with G[j*stride] (the gap that REBUILDS doc
+        // j*stride from its predecessor); the sample already IS that start, so
+        // the walk skips it and applies the gaps that walk forward from there.
+        let _ = self.next_gap(&mut pos);
         while doc + 1 < self.docs {
-            let gap = self.next_gap(&mut pos).unwrap_or_else(|| {
+            let gap = self.next_gap(&mut pos).unwrap_or_else(|_| {
                 die("DOCSTARTS: the gap stream ended inside a rank scan (validated member?)")
             });
             let next = start.checked_add(gap).unwrap_or_else(|| {
@@ -458,8 +465,11 @@ impl DocStarts {
         let j = i / self.stride;
         let mut start = self.sample_start(j);
         let mut pos = self.block_off(j);
+        // skip G[j*stride] (see rank_start): the sample is doc j*stride's start
+        // and the walk applies G[j*stride+1 ..= i]
+        let _ = self.next_gap(&mut pos);
         for _ in 0..(i % self.stride) {
-            let gap = self.next_gap(&mut pos).unwrap_or_else(|| {
+            let gap = self.next_gap(&mut pos).unwrap_or_else(|_| {
                 die("DOCSTARTS: the gap stream ended inside a select scan (validated member?)")
             });
             start = start
@@ -804,7 +814,8 @@ pub fn embed(
     }
     let text_len = reader.n - 1;
     let mut starts = StartsIter::open(source, Some(text_len));
-    let encoded = encode(&mut starts, text_len, stride, starts.docs_declared);
+    let expected_docs = starts.docs_declared;
+    let encoded = encode(&mut starts, text_len, stride, expected_docs);
     // The map's declared corpus size, for the journal's coverage line.
     let corpus_bytes = match source {
         Source::DocsMap(dir) => {
@@ -950,6 +961,7 @@ fn append_in_place(reader: &qlite::Reader, encoded: &Encoded, path: &str) {
 /// No byte of the source is modified.
 fn append_copy(reader: &qlite::Reader, encoded: &Encoded, out: &str) {
     use std::io::{BufWriter, Write};
+    use std::os::unix::fs::FileExt;
     need(
         std::fs::symlink_metadata(out).is_err(),
         &format!("DOCSTARTS: output {out} exists; refusing to overwrite"),
@@ -1206,7 +1218,13 @@ fn verify_command(args: &[String]) {
         ))
     });
     let oracle = XsepOracle::open(&map);
-    let end = range_end.unwrap_or(ds.text_len).min(ds.text_len).min(range_start + 10_000_000_000);
+    // An explicit --range-end is honoured up to the text end; the DEFAULT range
+    // is a 10 GB window from --range-start (the gate driver can then sweep the
+    // whole text with several invocations, or cover it in one with --range-end).
+    let end = match range_end {
+        Some(e) => e.min(ds.text_len),
+        None => ds.text_len.min(range_start + 10_000_000_000),
+    };
     if samples == 0 || range_start >= end {
         die(&format!(
             "DOCSTARTS verify: empty range [{range_start}, {end}) or --samples 0"
@@ -1281,7 +1299,8 @@ fn verify_command(args: &[String]) {
             if disagreements <= 10 {
                 eprintln!(
                     "DOCSTARTS_PARITY_MISMATCH pos={p} member=({doc},{start},{depth}) \
-                     oracle=({odoc},{ostart},{})"
+                     oracle=({odoc},{ostart},{})",
+                    p - ostart
                 );
             }
         }
@@ -1498,7 +1517,8 @@ mod tests {
     /// `text_len` bytes (n = text_len + 1).
     fn member_backing(bytes: Vec<u8>, text_len: u64) -> DocStarts {
         let b = Arc::new(bytes);
-        DocStarts::parse(Backing::Buf(b), 0, b.len() as u64, VERSION, text_len + 1)
+        let n = b.len() as u64;
+        DocStarts::parse(Backing::Buf(b), 0, n, VERSION, text_len + 1)
     }
 
     fn brute(ds: &DocStarts, starts: &[u64], text_len: u64) {
@@ -1531,8 +1551,9 @@ mod tests {
         let ds = member_backing(enc.bytes.clone(), text_len);
         assert_eq!((ds.docs, ds.text_len, ds.stride), (10_000, text_len, 64));
         brute(&ds, &starts, text_len);
-        // the member is smaller than the plain u64 array at these gaps
-        assert!(enc.bytes.len() as u64 * 4 < 8 * 10_000, "sampled varint must beat u64[] at mean gap ~5k");
+        // the member is far smaller than the plain u64 array at these gaps:
+        // 2-byte varints + 12 B per 64 docs ≈ 2.19 B/doc vs 8 B/doc (ratio ~0.27)
+        assert!(enc.bytes.len() as u64 * 3 < 8 * 10_000, "sampled varint must beat u64[] at mean gap ~5k");
     }
 
     #[test]
@@ -1553,34 +1574,52 @@ mod tests {
         assert_eq!(ds2.select(0), 0);
     }
 
-    #[test]
-    fn encode_refuses_a_nonzero_first_start_and_unsorted_starts() {
-        let mut it = std::iter::once(5u64);
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            encode(&mut it, 100, 64, Some(1));
-        }));
-        assert!(r.is_err(), "first start must be 0");
-        let bad = [0u64, 10, 10, 30];
-        let mut it2 = bad.iter().copied();
-        let r2 = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            encode(&mut it2, 100, 64, Some(4));
-        }));
-        assert!(r2.is_err(), "duplicate starts must be refused");
+    /// `die` exits the process, so refusal tests run their failing case in a
+    /// CHILD of this same test binary (the env var selects it) and assert on the
+    /// exit status and the stderr text. catch_unwind would pass silently because
+    /// `exit` does not unwind.
+    fn expect_die(case: &'static str, run: impl FnOnce()) {
+        if std::env::var("XSA_DOCSTARTS_DIE_CASE").as_deref() == Ok(case) {
+            run();
+            eprintln!("DIE_CASE_RETURNED case={case}");
+            std::process::exit(2); // the refusal did NOT happen: fail loud in the child too
+        }
+        let exe = std::env::current_exe().unwrap();
+        let out = std::process::Command::new(exe)
+            .arg("--exact")
+            .arg("docstarts::tests::refusals")
+            .arg("--nocapture")
+            .env("XSA_DOCSTARTS_DIE_CASE", case)
+            .output()
+            .unwrap();
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(
+            out.status.code(),
+            Some(1),
+            "case {case}: expected exit 1 (a refusal), got {:?}; stderr:\n{err}",
+            out.status
+        );
     }
 
     #[test]
-    fn member_refusal_names_the_version() {
-        // a corrupt member (text_len disagrees with n)
-        let starts = synthetic_starts(100, 3);
-        let text_len = starts.last().unwrap() + 9;
-        let mut it = starts.iter().copied();
-        let mut enc = encode(&mut it, text_len, 64, Some(100));
-        // lie about doc_count in the header: full validation must catch it
-        enc.bytes[16..24].copy_from_slice(&99u64.to_le_bytes());
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            member_backing(enc.bytes, text_len);
-        }));
-        assert!(r.is_err(), "a lying header must be refused at load");
+    fn refusals() {
+        expect_die("encode_nonzero_first", || {
+            let mut it = std::iter::once(5u64);
+            encode(&mut it, 100, 64, Some(1));
+        });
+        expect_die("encode_unsorted", || {
+            let bad = [0u64, 10, 10, 30];
+            let mut it = bad.iter().copied();
+            encode(&mut it, 100, 64, Some(4));
+        });
+        expect_die("member_lying_header", || {
+            let starts = synthetic_starts(100, 3);
+            let text_len = starts.last().unwrap() + 9;
+            let mut it = starts.iter().copied();
+            let mut enc = encode(&mut it, text_len, 64, Some(100));
+            enc.bytes[16..24].copy_from_slice(&99u64.to_le_bytes());
+            let _ = member_backing(enc.bytes, text_len);
+        });
     }
 
     #[test]
