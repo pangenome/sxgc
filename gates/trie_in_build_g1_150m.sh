@@ -99,6 +99,7 @@ b=$(awk '{for(i=1;i<=NF;i++) if($i ~ /^sha256_noprov=/){sub("sha256_noprov=","",
 say "EQUIVALENCE in_build_sha256_noprov=$a post_hoc_sha256_noprov=$b"
 if [ "$a" = "$b" ] && [ -n "$a" ]; then say "EQUIVALENCE_IDENTITY PASS"; else bad "EQUIVALENCE: the member payloads differ"; fi
 # and prove the ONLY differing bytes are the provenance field (head 152..168)
+python3 "$ROOT/gates/trie_member_cmp.py" same-code "$D/m20-inbuild.bin" "$D/m20-posthoc.bin" | sed 's/^/T1_/'
 n_diff=$(cmp -l "$D/m20-inbuild.bin" "$D/m20-posthoc.bin" 2>/dev/null | wc -l)
 out_of_field=$(cmp -l "$D/m20-inbuild.bin" "$D/m20-posthoc.bin" 2>/dev/null \
   | awk '{o=$1} o<153 || o>168 {print}' | wc -l)

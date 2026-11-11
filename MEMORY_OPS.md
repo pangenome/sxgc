@@ -235,6 +235,10 @@ figure), so two routes that agree on every byte of the tree still differ in thos
   88,185,516 edges): **7 differing bytes** of 347,726,720 - the 16-byte provenance field, and the
   member-format version byte, because that container was banked one commit before the format went to
   v2. `trie-info` on the two members prints the same depth/min_support/nodes/edges/bytes/ratio.
+- the comparison is mechanical and checked in: `gates/trie_member_cmp.py same-code|legacy A.bin B.bin`
+  zeroes ONLY the fields two routes are allowed to disagree on and prints the differing offsets
+  (`same-code`: head 152..168; `legacy`: also the format version at 0..8 for containers banked before
+  format v2), exiting non-zero if any byte outside them differs.
 - 10 GB against a SAME-CODE post-hoc reference (`ctx-build --sa-cache` from the `--no-trie` container,
   `gates/trie_in_build_g4_tail.sh`): `sha256_noprov = 61fb82c5c7a218020d894ba5e56ff3cf6e5180733
   43187c36be2172f95e36c1e` for **both**, and **6 differing bytes of 347,726,720 — all inside the

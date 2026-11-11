@@ -65,10 +65,8 @@ if [ $rc -eq 0 ]; then
   b=$(sed 's/.*sha256_noprov=\([0-9a-f]*\).*/\1/' "$R/b.txt")
   say "EQUIVALENCE_10G in_build=$a post_hoc=$b"
   [ "$a" = "$b" ] && say "EQUIVALENCE_10G_IDENTITY PASS" || bad "10 GB member payloads differ"
-  nd=$(cmp -l "$R/a.bin" "$R/b.bin" | wc -l)
-  oof=$(cmp -l "$R/a.bin" "$R/b.bin" | awk '{o=$1} o<153 || o>168' | wc -l)
-  say "EQUIVALENCE_10G_BYTES differing=$nd outside_provenance=$oof of $(stat -c%s "$R/a.bin")"
-  [ "$oof" = 0 ] && say "EQUIVALENCE_10G_SCOPE PASS" || bad "10 GB differing bytes outside provenance"
+  python3 "$ROOT/gates/trie_member_cmp.py" same-code "$R/a.bin" "$R/b.bin" | sed 's/^/G4_/'
+  [ "${PIPESTATUS[0]}" = 0 ] && say "EQUIVALENCE_10G_SCOPE PASS" || bad "10 GB differing bytes outside the provenance field"
 fi
 echo
 if [ $fail -eq 0 ]; then echo "G4_RESULT PASS"; else echo "G4_RESULT FAIL"; exit 1; fi

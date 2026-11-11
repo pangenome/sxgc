@@ -7,6 +7,13 @@
 #                `xsa ctx-build` from the SAME container (member sha with the
 #                provenance field zeroed; differing bytes must lie inside it)
 #
+# THE AUTHORITATIVE 10 GB EQUIVALENCE IS IN gates/trie_in_build_g4_tail.sh: it
+# rebuilds a SAME-CODE post-hoc reference (`ctx-build --sa-cache` from the
+# --no-trie container) and compares with only the 16-byte provenance field
+# masked. This script also compares against the BANKED post-hoc container, which
+# is OLDER than the member format, so that comparison masks the member-format
+# version byte (head 0..8) as well and labels itself LEGACY.
+#
 # usage: gates/trie_in_build_g2_10g.sh
 set -u
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -50,27 +57,24 @@ B=$D/notrie/pf-10gb.sxi2
 say "ARM_A $(sha256sum "$A")"
 say "ARM_B $(sha256sum "$B")"
 say "SIZE_A $(stat -c%s "$A") SIZE_B $(stat -c%s "$B")"
+grep -E "^PEAK_INTERMEDIATE|^XSA_BUILD_DONE" "$D/trie.log" "$D/notrie.log"
 
-# ---- T2: equivalence against the post-hoc member of the SAME container
+# ---- T2: equivalence against the BANKED post-hoc member (LEGACY: masks the
+#          member-format version byte as well as the provenance field)
 REF_CONTAINER=${REF_CONTAINER:-/mnt/nvme2n1/erikg/ctx-trie/g10-d8.sxi2}
 if [ -f "$REF_CONTAINER" ]; then
   "$X" trie-member "$A" -o "$D/m20-inbuild.bin" | tee "$D/m20-inbuild.txt"
   if "$X" trie-member "$REF_CONTAINER" -o "$D/m20-posthoc.bin" > "$D/m20-posthoc.txt" 2>"$D/m20-posthoc.err"; then
     cat "$D/m20-posthoc.txt"
-    a=$(sed 's/.*sha256_noprov=\([0-9a-f]*\).*/\1/' "$D/m20-inbuild.txt")
-    b=$(sed 's/.*sha256_noprov=\([0-9a-f]*\).*/\1/' "$D/m20-posthoc.txt")
-    say "EQUIVALENCE in_build=$a post_hoc=$b ref=$REF_CONTAINER"
-    [ "$a" = "$b" ] && say "EQUIVALENCE_IDENTITY PASS" || bad "EQUIVALENCE: member payloads differ"
-    nd=$(cmp -l "$D/m20-inbuild.bin" "$D/m20-posthoc.bin" 2>/dev/null | wc -l)
-    oof=$(cmp -l "$D/m20-inbuild.bin" "$D/m20-posthoc.bin" 2>/dev/null | awk '{o=$1} o<153 || o>168' | wc -l)
-    say "EQUIVALENCE_BYTES differing=$nd outside_provenance_field=$oof"
-    [ "$oof" = 0 ] && say "EQUIVALENCE_SCOPE PASS" || bad "EQUIVALENCE_SCOPE: bytes differ outside the provenance field"
+    python3 "$ROOT/gates/trie_member_cmp.py" legacy "$D/m20-inbuild.bin" "$D/m20-posthoc.bin" \
+      | sed 's/^/G2_/'
+    "$X" trie-info "$A" | tee "$D/info-inbuild.txt"
+    "$X" trie-info "$REF_CONTAINER" | tee "$D/info-posthoc.txt"
+    diff "$D/info-inbuild.txt" "$D/info-posthoc.txt" > /dev/null \
+      && say "TRIE_INFO_IDENTICAL PASS" || bad "TRIE_INFO differs"
   else
     bad "the reference container has no readable m20 ($REF_CONTAINER): $(cat "$D/m20-posthoc.err")"
   fi
-  "$X" trie-info "$A" | tee "$D/info-inbuild.txt"
-  "$X" trie-info "$REF_CONTAINER" | tee "$D/info-posthoc.txt"
-  diff "$D/info-inbuild.txt" "$D/info-posthoc.txt" > /dev/null && say "TRIE_INFO_IDENTICAL PASS" || bad "TRIE_INFO differs"
 else
   bad "no reference container at $REF_CONTAINER"
 fi
