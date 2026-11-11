@@ -2374,14 +2374,15 @@ impl Documents {
             let d = docs.docs2.as_ref().expect("v2");
             let off = u64_at(d, r);
             let len = u64_at(d, r + 8);
-            let shard = u32at(d, r + 16);
+            let shard = u16::from_le_bytes(d[r+16..r+18].try_into().unwrap()) as usize;
             let comp = u32at(d, r + 18);
             if start >= bytes || (i == 0 && start != 0) || (i > 0 && delta == 0)
                 || (i % 64 == 0 && docs.anchor(i / 64) != start)
                 || off != start || len == 0
                 || shard >= shard_count || comp >= name_count
                 || u32_at64(d, r + 30) != 0 {
-                return Err(format!("invalid starts/docs pair at document {i} (V2 tables must agree by construction)"));
+                return Err(format!(
+                    "invalid starts/docs pair at document {i}: start={start} delta={delta} docs(off={off} len={len} shard={shard}/{shard_count} comp={comp}/{name_count}) - the V2 tables must agree by construction"));
             }
             row_end = off + len;
         }
@@ -3673,4 +3674,137 @@ impl Index {
     }
     pub fn runs_per_block(&self) -> u64 { self.block_runs }
     pub fn block_count(&self) -> u64 { self.nblocks }
+}
+
+#[cfg(test)]
+mod documents_v2_tests {
+    use super::*;
+
+    /// Write a tiny CORPUS V2 directory BY HAND (an independent spelling of
+    /// the XCS2 v1 / XPM1 v1 layouts, so the reader is checked against a second
+    /// implementation, not against the writer it was written next to).
+    /// Documents: texts "aaaaa", "b\x1eb" (0x1E INSIDE text: legal in V2),
+    /// "cc", "ddd", "e" -> starts 0,5,8,10,13; corpus_bytes 14.
+    fn write_v2_dir(dir: &std::path::Path) -> u64 {
+        let texts: [&[u8]; 5] = [b"aaaaa", b"b\x1eb", b"cc", b"ddd", b"e"];
+        let comps: [&str; 5] = ["Pile-CC", "ArXiv", "Pile-CC", "ArXiv", "Pile-CC"];
+        let corpus_bytes: u64 = texts.iter().map(|t| t.len() as u64).sum();
+        // t.starts (XCS2 v1)
+        let mut starts: Vec<u8> = Vec::new();
+        starts.extend_from_slice(b"XCS2");
+        starts.extend_from_slice(&1u32.to_le_bytes());
+        starts.extend_from_slice(&0u32.to_le_bytes()); // flags: V2 has no separator
+        starts.extend_from_slice(&64u32.to_le_bytes());
+        starts.extend_from_slice(&5u64.to_le_bytes());
+        starts.extend_from_slice(&corpus_bytes.to_le_bytes());
+        starts.extend_from_slice(&1u64.to_le_bytes()); // anchors = ceil(5/64)
+        starts.extend_from_slice(&0u64.to_le_bytes()); // base
+        let mut cursor = 0u64; // start of the current document
+        let mut prev = 0u64;   // start of the previous document
+        for t in texts.iter() {
+            // d[0] = 0; d[k] = start[k] - start[k-1] = len(doc k-1)
+            let d: u32 = if starts.len() == 48 { 0 } else { (cursor - prev) as u32 };
+            starts.extend_from_slice(&d.to_le_bytes());
+            prev = cursor;
+            cursor += t.len() as u64;
+        }
+        assert_eq!(cursor, corpus_bytes);
+        starts.extend_from_slice(&0u64.to_le_bytes()); // anchor: start of doc 0
+        std::fs::write(dir.join("t.starts"), &starts).unwrap();
+        // t.docs (XPM1 v1 shape, corpus order)
+        let names = [b"Pile-CC".to_vec(), b"ArXiv".to_vec()];
+        let name_payload: u64 = names.iter().map(|n| n.len() as u64).sum();
+        let shard_names = [b"00.jsonl.zst".to_vec()];
+        let shard_payload: u64 = shard_names.iter().map(|n| n.len() as u64).sum();
+        let mut docs: Vec<u8> = Vec::new();
+        for n in &names { docs.extend_from_slice(n); }
+        let mut o = 0u64;
+        for n in &names { docs.extend_from_slice(&(o as u32).to_le_bytes()); o += n.len() as u64; }
+        for n in &names { docs.extend_from_slice(&(n.len() as u16).to_le_bytes()); }
+        for n in &shard_names { docs.extend_from_slice(n); }
+        let mut o = 0u64;
+        for n in &shard_names { docs.extend_from_slice(&(o as u32).to_le_bytes()); o += n.len() as u64; }
+        for n in &shard_names { docs.extend_from_slice(&(n.len() as u16).to_le_bytes()); }
+        let mut off = 0u64;
+        for (k, t) in texts.iter().enumerate() {
+            docs.extend_from_slice(&off.to_le_bytes());
+            docs.extend_from_slice(&(t.len() as u64).to_le_bytes());
+            docs.extend_from_slice(&0u16.to_le_bytes()); // shard
+            docs.extend_from_slice(&(if comps[k] == "ArXiv" { 1u32 } else { 0u32 }).to_le_bytes());
+            docs.extend_from_slice(&(k as u64).to_le_bytes()); // record
+            docs.extend_from_slice(&0u32.to_le_bytes()); // internal_0x1e reserved
+            off += t.len() as u64;
+        }
+        let mut h: Vec<u8> = Vec::new();
+        h.extend_from_slice(b"XPM1");
+        h.extend_from_slice(&1u32.to_le_bytes());
+        h.extend_from_slice(&5u64.to_le_bytes());
+        h.extend_from_slice(&corpus_bytes.to_le_bytes());
+        h.extend_from_slice(&1u64.to_le_bytes()); // shard_count
+        h.extend_from_slice(&2u64.to_le_bytes()); // name_count
+        h.extend_from_slice(&name_payload.to_le_bytes());
+        h.extend_from_slice(&shard_payload.to_le_bytes());
+        h.extend_from_slice(&34u32.to_le_bytes());
+        h.extend_from_slice(&0u64.to_le_bytes()); // partial_tail
+        assert_eq!(h.len(), 68);
+        std::fs::write(dir.join("t.docs"), [h, docs].concat()).unwrap();
+        // MANIFEST.json
+        std::fs::write(
+            dir.join("MANIFEST.json"),
+            format!("{{\"kind\":\"corpus-v2\",\"doc_count\":5,\"corpus_bytes\":{}}}\n", corpus_bytes),
+        ).unwrap();
+        // t.bin: the optional cache - raw concatenation, NO separator anywhere.
+        let mut bin: Vec<u8> = Vec::new();
+        for t in texts.iter() { bin.extend_from_slice(t); }
+        std::fs::write(dir.join("t.bin"), &bin).unwrap();
+        corpus_bytes
+    }
+
+    #[test]
+    fn v2_documents_resolve_doc_offset_and_component_title() {
+        let dir = tempfile::tempdir().unwrap();
+        let bytes = write_v2_dir(dir.path());
+        let docs = Documents::open(dir.path().to_str().unwrap(), bytes + 1).unwrap();
+        assert!(docs.v2);
+        assert_eq!(docs.count, 5);
+        // starts 0,5,8,10,13 with lens 5,3,2,3,1 -> corpus_bytes 14
+        let cases = [
+            (0u64, 0usize, 0u64, "Pile-CC"),
+            (4, 0, 4, "Pile-CC"),
+            (5, 1, 0, "ArXiv"),
+            (6, 1, 1, "ArXiv"), // INSIDE the doc that carries a literal 0x1E
+            (7, 1, 2, "ArXiv"),
+            (8, 2, 0, "Pile-CC"),
+            (13, 4, 0, "Pile-CC"),
+        ];
+        for (pos, doc, off, title) in cases {
+            let (d, o, t) = docs.lookup(pos).unwrap();
+            assert_eq!((d, o), (doc, off), "pos={pos}");
+            assert_eq!(t, title.as_bytes(), "pos={pos}");
+        }
+        assert!(docs.lookup(bytes).is_err());
+        // --context over the optional cache: the doc with the in-text 0x1E
+        // must survive a snippet window with NO separator stripping (V2 has
+        // no separator; the doc boundary is the next doc's start).
+        let corpus = docs.context_corpus().unwrap();
+        let (lo, hi, text, clipped) = docs.snippet(&corpus, 6, 10).unwrap();
+        // pos 6 is doc 1 ("b\x1eb", start 5): the window clips to the doc.
+        assert!(clipped);
+        assert_eq!((lo, hi), (5, 8));
+        assert_eq!(&corpus[lo as usize..hi as usize], b"b\x1eb");
+        assert_eq!(text, "b\\x1eb", "0x1E is escaped, never dropped or split on");
+    }
+
+    #[test]
+    fn v2_pair_disagreement_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let bytes = write_v2_dir(dir.path());
+        // Corrupt one row's offset: starts and docs must never disagree.
+        let mut d = std::fs::read(dir.path().join("t.docs")).unwrap();
+        let rows = 68 + 11 + 6 * 2 + 12 + 6; // header+blobs+tables (5 docs, 2 names, 1 shard)
+        let bad = rows + 34 * 2; // row 2
+        d[bad..bad + 8].copy_from_slice(&999u64.to_le_bytes());
+        std::fs::write(dir.path().join("t.docs"), &d).unwrap();
+        assert!(Documents::open(dir.path().to_str().unwrap(), bytes + 1).is_err());
+    }
 }

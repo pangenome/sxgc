@@ -1770,11 +1770,20 @@ pub fn verify(a: &VerifyArgs) {
         use rayon::prelude::*;
         plans.par_iter().for_each(|(si, docs)| {
             let path = shards[*si as usize].clone();
-            let mut recs: Vec<u64> = docs.iter().map(|&k| l.rec[k]).collect();
-            recs.sort_unstable();
-            recs.dedup();
+            // `docs` is sorted by record and (shard, record) is unique per
+            // corpus document, so extract_records' hits arrive in plan order:
+            // advance an INDEX, never re-search (O(1) per document).
+            let recs: Vec<u64> = docs.iter().map(|&k| l.rec[k]).collect();
+            let mut next = 0usize;
             extract_records(&path, &recs, |record, text| {
-                let k = *docs.iter().find(|&&k| l.rec[k] == record).unwrap();
+                let k = docs[next];
+                if l.rec[k] != record {
+                    die(&format!(
+                        "corpusv2: {} record {} arrived out of plan order (expected record {})",
+                        path.display(), record, l.rec[k]
+                    ));
+                }
+                next += 1;
                 if text.len() as u64 != l.len[k] {
                     mismatch.lock().unwrap().push(format!(
                         "doc={} shard={} record={} shard_text_length={} docs_length={}",

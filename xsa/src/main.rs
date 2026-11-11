@@ -1381,6 +1381,9 @@ fn usage() -> ! {
     eprintln!();
     eprintln!("usage:");
     eprintln!("  xsa build --tape --input <file> --scratch <dir> [--threads N] [--memory-gb N]");
+    eprintln!("           [--docs-map PREFIX]   the input is a CORPUS V2 cache: validate the");
+    eprintln!("           sidecar pair at PREFIX and journal CONTAINER_DOCS_V2 (query resolves");
+    eprintln!("           doc_id/offset_in_doc through the V2 tables; CORPUS_V2.md 6)");
     eprintln!("  xsa mem <container> <query> [-k N] [--min-len N] [--docs DIR] [--limit N] [--jsonl] [--all-mems]");
     eprintln!("           maximal exact matches of <query>: interval widths + bounded positions;");
     eprintln!("           default is the single longest MEM, --all-mems reports every one;");

@@ -228,16 +228,20 @@ mid-document, and `partial_tail` does not exist in V2 (the XPM1 column is
 written 0). The manifest reports both the budget and the achieved
 `corpus_bytes` (<= N).
 
-### 3.4 `xsa corpus --v2-materialize --prefix P [--shards DIR]`
+### 3.4 `xsa corpus --v2-materialize --prefix P [--shards DIR] [--jobs J]`
 
 EXPLICIT, OPTIONAL: write the `<prefix>.bin` cache (+ its `.bin.sha256`) by
 re-extracting every document from the shards in corpus order. One decompressor
-per shard, records in file order, each text seek-written to its known corpus
-start (starts are known from the tables before the first byte moves, so a
-permuted corpus assembles in place with the same single pass). Verifies by
-construction: every corpus position is written exactly once and the file size
-must equal `corpus_bytes`; the sha256 is computed by reading the file back.
-Deleting the cache never loses information — rerun this to regenerate.
+per touched shard under pilemap's lifetime rules (a bounded window of at most
+`jobs` children, one reader thread per child — never N writers into one
+reader; the pipe closes before `wait()`; a child stopped early on purpose is
+killed and its SIGPIPE/kill exit is accepted), records in file order, each
+text seek-written to its known corpus start (starts are known from the tables
+before the first byte moves, so a permuted corpus assembles in place with the
+same single pass). Verifies by construction: every corpus position is written
+exactly once and the file size must equal `corpus_bytes`; the sha256 is
+computed by reading the file back. Deleting the cache never loses information
+— rerun this to regenerate.
 
 ### 3.5 `xsa corpus --v2-reorder --from P1 --out P2 (--order FILE | --order-seed S)`
 
@@ -321,6 +325,14 @@ boundary because there was no boundary to invent.
   `CONTAINER_DOCS_V2 prefix=... starts=<name>.starts docs=N corpus_bytes=B order=source|file|seed`.
   With no `--docs-map`, the build behaves exactly as before (V1 sibling
   `seps.bin` discovery unchanged).
+* **The query side resolves doc_id/offset_in_doc through the same tables.**
+  `xsa query <container> <pattern> --docs <prefix-dir>` opens the V2 pair
+  (detected by the XCS2 magic; the journal's `CONTAINER_DOCS_V2` line is the
+  recorded fallback), asserts the starts/docs pair agreement at open, and
+  emits `doc_id`, `offset_in_doc` and the component name in the title column
+  for every hit. `--context` reads the optional `<prefix>.bin` cache; a V2
+  snippet never strips a separator (there is none) and never splits on 0x1E
+  in text.
 * **The docstarts member is REQUIRED for V2 corpora.** There is no fallback:
   a V2 corpus without its `.starts` is unindexable for document-aware work — by
   design, because the bytes contain no recoverable boundary information at
@@ -332,7 +344,7 @@ boundary because there was no boundary to invent.
 
 ## 7. Verification
 
-`xsa corpus --v2-verify --prefix P [--shards DIR] [--samples N] [--reference P1]`:
+`xsa corpus --v2-verify --prefix P [--shards DIR] [--samples N] [--reference P1] [--jobs J]`:
 
 1. Table invariants: §2.1/§2.2/§2.4 (deltas positive,
    `sum(lengths) == corpus_bytes` with the starts/docs pair agreement, rows
@@ -352,7 +364,12 @@ boundary because there was no boundary to invent.
 `xsa corpus --v2-locate --prefix P --offset O[,O...]` resolves a global offset
 through the V2 starts to `doc_id, offset_in_doc, length, shard, record` (+
 `source_doc_id` when ordered) — the query-side resolution primitive, for
-consumers not yet taught XCS2.
+consumers not yet taught XCS2. `xsa query <container> <pattern> --docs
+<prefix-dir>` (§6) is the same resolution wired into the query output: TSV
+`doc_id` and `offset_in_doc` columns come from the V2 tables, with the
+component name in the title column, and `--context` windows are cut at
+DOCUMENT boundaries read from `<prefix>.starts` — no separator byte exists to
+strip, and text containing 0x1E passes through escaped, never split.
 
 ## 8. Migration note — when to use V2, and why pile.txt is never remade
 
@@ -379,9 +396,11 @@ for the owners of the registered experiments, not this spec.)
 ```
 xsa corpus --v2-meta        --shards DIR --out PREFIX [--limit-bytes N]
                             [--order FILE | --order-seed S]
-xsa corpus --v2-materialize --prefix P [--shards DIR]
+xsa corpus --v2-materialize --prefix P [--shards DIR] [--jobs J]
 xsa corpus --v2-reorder     --from P1 --out P2 (--order FILE | --order-seed S)
 xsa corpus --v2-verify      --prefix P [--shards DIR] [--samples N] [--reference P1]
+                            [--jobs J]
 xsa corpus --v2-locate      --prefix P --offset O[,O...]
 xsa build --tape --input <name>.bin --docs-map <prefix> ...   (§6)
+xsa query <container> <pattern> --docs <prefix-dir>            (§6, §7)
 ```
