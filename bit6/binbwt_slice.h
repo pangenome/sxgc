@@ -3712,6 +3712,8 @@ static void bin_phrase_journal_work(const BinWork& w, const PhraseDict* pd) {
 static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
                       U threads, const std::string& saPath, U chunk) {
     const U n = text.n;
+    // THE BAND SLICES BELONG TO THE TRIE TAP WHEN IT IS ARMED (see readCompleted).
+    const bool trieTap = ::getenv("TRIE_TAP") != nullptr;
     std::unique_ptr<BinBandSink> sink(new BinBandSink(prefix, text, n, dollar, threads));
     // NO TARGET TABLE AND NO TARGET BITMAP, BECAUSE THERE IS NO TARGET. The table
     // and the (n>>6)+2-word filter bitmap existed to test each of the n rows
@@ -3925,11 +3927,23 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
                 }
                 ::close(fd); fd = -1;
                 tRead += now_sec() - copyStart;
-                require(::unlink(bandPath(readBand, ".sa").c_str()) == 0, "tape bands: unlink band");
-                int cf = ::open(bandPath(readBand, ".consumed").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
-                require(cf >= 0, "tape bands: publish consumed"); ::close(cf);
-                std::fprintf(stderr, "TAPE_BAND_READ band=%llu rows=%llu released_before_publish=1\n",
-                    (unsigned long long)readBand, (unsigned long long)readRows);
+                // ---- THE TRIE TAP (TRIE_TAP=1): THE BAND IS NOT THIS PHASE'S TO
+                // DELETE. The in-build context trie (xsa ctx-tap) reads the same
+                // rank-ordered band slices - they ARE the suffix array, the only
+                // ordered stream that exists inside the build - and the builder is
+                // a sequential stack machine, so exactly one reader may be
+                // ordered at a time: this tap. The emitter has the payload in RAM
+                // by now (above), so it needs neither the file nor the credit; the
+                // tap unlinks the slice and stamps `.consumed`, which is the
+                // marker the sorter's window waits on. Nothing else changes: with
+                // TRIE_TAP unset the product path is byte-for-byte the old one.
+                if (!trieTap) {
+                    require(::unlink(bandPath(readBand, ".sa").c_str()) == 0, "tape bands: unlink band");
+                    int cf = ::open(bandPath(readBand, ".consumed").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+                    require(cf >= 0, "tape bands: publish consumed"); ::close(cf);
+                }
+                std::fprintf(stderr, "TAPE_BAND_READ band=%llu rows=%llu released_before_publish=1 trie_tap=%d\n",
+                    (unsigned long long)readBand, (unsigned long long)readRows, int(trieTap));
                 // AN EMPTY BAND IS ACKED, NOT IGNORED. Its producer is blocked on
                 // this exact marker (see the terminal drain above); the ack is the
                 // only thing that lets its wave advance.

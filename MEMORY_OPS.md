@@ -206,6 +206,22 @@ The feed's intrinsic floor is the single-threaded `Builder::feed` at ~94-108 ns/
 the pipeline and standalone; the random prefix reads are parallel and cost ~8 ns/row once spread over
 48 threads). That floor is 15-18 minutes at 10 GB, all of it overlapped.
 
+### The same member, the other way, on the same day (`ctx-build` with a banked SA cache)
+
+Measured after the two arms above, on the same corpus and container, with the 50 GB post-hoc suffix
+array already on disc (`--sa-cache`, so the 1,192 s LF reconstruction is SKIPPED and this is the
+post-hoc route at its best):
+
+```
+CONTEXT_TRIE depth=8 min_support=1000 nodes=3594261 edges=88185516 bytes=347726720 ratio_vs_n=0.034773
+CONTEXT_TRIE_BUILD rows=10000000001 sa_steps=0 sa_wall=59.7s doc_wall=6.1s sweep_wall=3991.2s
+  prefix_reads=10000000000 total_wall=4084.9s threads=32
+G4_POSTHOC10_WALL 4095.26 s RSS 97831656 kB        <- 93.3 GiB peak, single-threaded sweep
+```
+
+so: **+22.96 s and +0 RSS in-build, versus 4,095 s and 93.3 GiB post-hoc** even when the 50 GB suffix
+array is already paid for. That is the whole argument for the in-build route, in two lines of journal.
+
 ### Equivalence: the in-build member IS the post-hoc member
 
 The member records which ordered stream produced it (head offsets 152..168: `source` and its memory
@@ -219,8 +235,11 @@ figure), so two routes that agree on every byte of the tree still differ in thos
   88,185,516 edges): **7 differing bytes** of 347,726,720 - the 16-byte provenance field, and the
   member-format version byte, because that container was banked one commit before the format went to
   v2. `trie-info` on the two members prints the same depth/min_support/nodes/edges/bytes/ratio.
-  A same-code post-hoc reference for the same container is rebuilt by `gates/trie_in_build_g4_tail.sh`
-  (`ctx-build --sa-cache`), so the 10 GB gate does not rest on that older container.
+- 10 GB against a SAME-CODE post-hoc reference (`ctx-build --sa-cache` from the `--no-trie` container,
+  `gates/trie_in_build_g4_tail.sh`): `sha256_noprov = 61fb82c5c7a218020d894ba5e56ff3cf6e5180733
+  43187c36be2172f95e36c1e` for **both**, and **6 differing bytes of 347,726,720 — all inside the
+  16-byte provenance field**. The two members are the same 3,594,261 nodes / 88,185,516 edges / 192
+  head bytes to the byte.
 - the ANSWERS are the same, not merely the bytes: `branch-of --batch` on 1,000 random 8-byte contexts
   returns **588 answered / 412 below support on BOTH containers**, with the same per-context results.
 

@@ -513,9 +513,24 @@ xsa relax       <container> <long context>       # descend as far as the trie su
 
 **The equivalence that matters**: the in-build member and `ctx-build`'s
 post-hoc member from the same container are byte-identical apart from the 16-byte
-provenance field that records WHICH ordered stream produced it (and, at 10 GB,
-the format version byte of a container built one commit before format v2) —
-`sha256_noprov` is equal, and every differing byte is inside that field.
+provenance field that records WHICH ordered stream produced it — `sha256_noprov`
+is equal, and every differing byte is inside that field. Measured:
+
+| corpus | in-build `sha256_noprov` | post-hoc `sha256_noprov` | differing bytes |
+|---|---|---|---|
+| 150 MB, depth 8 / ms 1000 | `f3d6a380…b77440` | same | 5 of 9,317,928 (all in the field) |
+| 150 MB, depth 8 / **ms 100** | `8641da16…3168c28f` | same | 5 of 55,925,440 (all in the field) |
+| 10 GB, depth 8 / ms 1000 | `61fb82c5…f95e36c1e` | same | 6 of 347,726,720 (all in the field) |
+
+and the answers agree too: `branch-of --batch` on 1,000 random 8-byte contexts of
+the 10 GB corpus returns 588 answered / 412 below support, at p50 4.70 us, on the
+in-build container and 588/412 at p50 4.96 us on the post-hoc one.
+
+`gates/trie_in_build_g1_150m.sh` (T1 + this gate at 150 MB),
+`gates/trie_in_build_g2_10g.sh` (the 10 GB arms with and without the trie),
+`gates/trie_in_build_g3_coverage.sh` (the batch coverage measurement) and
+`gates/trie_in_build_g4_tail.sh` (the wide arm, the coverage pair, and the
+same-code 10 GB post-hoc reference) are the scripts behind these numbers.
 
 ### m14, the LCP over runs: OPT-IN (`--with-lcp-runs`), and what it buys
 
