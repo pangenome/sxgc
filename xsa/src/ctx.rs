@@ -2568,10 +2568,14 @@ fn write_container(inp: &str, out: &str, payload: &[u8], n: u64, reader: &qlite:
     let length = off + dir.len() as u64;
     w.flush().unwrap();
     drop(w);
-    // patch the header: version, length, CRC
+    // patch the header: version, length, CRC. The version law: the output now
+    // carries m20 (v9); if the input carried m15 (v10) the output KEEPS v10 -
+    // writing 9 would strand m15 in a container whose version no longer
+    // declares it.
+    let new_version: u32 = if reader.members.iter().any(|m| m.id == 15) { 10 } else { 9 };
     let mut h2 = [0u8; 64];
     h2.copy_from_slice(&hdr);
-    h2[4..8].copy_from_slice(&9u32.to_le_bytes());
+    h2[4..8].copy_from_slice(&new_version.to_le_bytes());
     h2[40..48].copy_from_slice(&length.to_le_bytes());
     h2[56..60].fill(0);
     let mut hc = vec![0u8; 64];

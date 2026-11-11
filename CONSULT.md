@@ -130,20 +130,29 @@ note's D2). A reader that expects version 1 must refuse version 2, and vice
 versa — the tail changes every record boundary after the first:
 
 ```
-header:  "XSACONS1" (8 B) | u32 version = 2 | u32 reserved = 0
+header:  "XSACONS1" (8 B) | u32 version = 3 | u32 reserved = 0
 row:     u32 nsym          number of (byte, count) pairs, 0..=256
          u16 ctxlen        spine length actually queried, 0..=1024
          u16 flags         bit0 EOF present, bit1 spine truncated by the 1024 cap,
                            bit2 source-excluded (--exclude-source removed the
                                position's own occurrence),
                            bit3 doc-restricted (the histogram is restricted to
-                               the document containing the position)
+                               the document containing the position),
+                           bit4 boundary_exact=0: this row's histogram is the
+                               boundary-UNAWARE conflated answer (see §5.4); a
+                               consumer MUST be able to filter per row, and this
+                               bit is how
          u64 doc           the window's document id, as given
          u64 off           absolute corpus offset of the position
-         u64 width         occurrences of the spine (= sum of counts + eof; with
-                           bit2 set: occurrences OTHER than the one at this
-                           position)
-         u64 eof           0 or 1
+         u64 width         NON-CROSSING occurrences of the spine (see §5.4):
+                           every occurrence counted once, on a content branch
+                           or the END branch; with bit2 set: occurrences OTHER
+                           than the one at this position
+         u64 eof           occurrences of the spine that END a document (a
+                           document starts at off+ctxlen), plus the one
+                           structural END (the spine is a suffix of the text).
+                           v2 readers that assumed eof in {0,1} MUST be updated:
+                           on Pile text this is commonly in the thousands.
          nsym x { u8 byte | u64 count }
          u64 docid         the CONTAINER's document id from the structure
                            (member m15 / --docs), or 0xFFFF_FFFF_FFFF_FFFF when
@@ -250,6 +259,57 @@ fixed context length, counts, a total order on the pairs. Thread count, RSS cap,
 arena size, batch granularity and crash/interruption therefore cannot change a
 byte. Verified in §6 (A2): two runs, kill+resume, and three different `--rss-gb`
 caps all give the same sha256.
+
+### 5.4 The no-cross law: a match or branch count never spans a document boundary
+
+THE LAW (the owner's semantic requirement, default on): for an occurrence of
+the spine at position `pos` (length `L`), the continuation `q = pos + L` is
+
+- the **END branch** ("this context ends a document") iff `q` is a document
+  start — `select(rank(q)) == q` over the structure (member m15 or `--docs`) —
+  or `q == text_len` (the one structural END);
+- the **content byte** `corpus[q]` otherwise;
+
+and the occurrence is a **crossing match**, counted nowhere, iff a document
+start lies inside `(pos, q-1]` (`rank(pos) != rank(q-1)`). `width` counts the
+non-crossing occurrences; `eof` counts the doc-ending ones plus the structural
+END; the content pairs never include the first byte of the NEXT document. In
+`pile.txt` the byte before a document start is the framing `0x1E` and belongs
+to the document that owns it: an occurrence ending at that framing byte is the
+END branch, and an internal `0x1E` (446 in the first 10 GB) is CONTENT — the
+distinction is the whole point, and it is metadata that makes it, never bytes.
+
+**How the default answers, in layers** (all exact where they answer):
+
+1. **The boundary-aware trie** (member m20 with `boundary_aware=1`): a context
+   within the trie's depth whose node is materialised is answered from the
+   member itself — O(depth), any width, no locate. The trie enforces the law BY
+   CONSTRUCTION, so this layer has no conflated cases at all.
+2. **Exact enumeration**: every occurrence in the context's interval is located
+   (one sampled-SA LF walk each) and classified by the law (two m15
+   rank/selects per occurrence, one corpus pread per content branch). Bounded
+   by `--boundary-cap` (default 8192).
+3. **The marked fallback**: a context wider than the cap AND deeper than the
+   trie has no cheap exact algorithm (the boundary correction is a join
+   between the match set and the doc-start metadata; rank arithmetic cannot
+   see it — the proper fix is a future reversed-document-tail member at
+   roughly 1% of the corpus, priced in MEMORY_OPS.md). Such a row carries the
+   legacy conflated histogram with **flag bit 4 set** (`boundary_exact=0`) so a
+   consumer can filter per row, and every run journals
+   `BOUNDARY_INEXACT rows=<n> total=<n> ratio=<f>`. On Pile text at full spine
+   depth this arm is empty; it exists for the short-context ramp.
+
+`--cross-doc` opts the WHOLE run back into the legacy conflated answer (every
+row marked, journaled); `--boundary-strict` converts the marked fallback into a
+refusal for exactness-or-nothing consumers; `--boundary-cap N` is the cost
+knob. With NO structure at all (no m15, no `--docs`) every row is the marked
+conflated answer plus a loud note at open — the run is never silently wrong,
+and it is never fatal by default.
+
+`--doc-restrict` keeps its stricter contract (occurrences within the query
+position's own document) and now applies the same END rule: an occurrence
+whose continuation lands on the document end counts on the END branch (it
+used to be dropped), and a match spanning past the end is a crossing match.
 
 ## 6. Gates (verbatim)
 

@@ -565,6 +565,26 @@ internal-0x1E documents, cross-boundary exclusion, source exclusion,
 determinism) and `gates/structdocs_g1.sh` / `gates/structdocs_fixtures.py` are
 the scripts behind them.
 
+**m15 + m20 together make the no-cross law structural** (the owner's semantic
+requirement: a match or branch count must never span a document boundary, as
+the DEFAULT). With `--docs-map` present the in-build tap feeds the trie every
+row's `avail = next_start(pos) - pos`, so node counts are NON-CROSSING
+occurrence counts, a crossing occurrence is counted nowhere, and the END edge
+is "this context ends a document (or the text)" — the member head journals
+`boundary_aware=1` (member format v3, head offset 168). Without a map the
+member says `boundary_aware=0` and the trie's query surface (branch-of,
+trie-stat, relax) REFUSES boundary-sensitive answers rather than returning
+conflated histograms; `--cross-doc` is the explicit opt-in. The query side
+(consult rows, `xsa search`) is in §7 and CONSULT.md §5.4: exact by layering
+(trie, then enumeration up to `--boundary-cap`, default 8192), and a MARKED
+conflated fallback (`boundary_exact=0` in row flag bit 4, journaled per run as
+`BOUNDARY_INEXACT rows=.. ratio=..`) wherever exactness was unaffordable —
+never silent, never fatal by default (`--boundary-strict` for
+exactness-or-nothing). `gates/structdocs_fixtures.py` X1 arm,
+`gates/no_cross_x2_10g.sh`, `gates/no_cross_x3_consult.sh` and
+`gates/no_cross_x4_search.sh` are the gates behind it
+(`RESULTS_NO_CROSS.md`).
+
 ### m14, the LCP over runs: OPT-IN (`--with-lcp-runs`), and what it buys
 
 The suffix tree *is* the LCP-interval tree: a node's children are delimited by the

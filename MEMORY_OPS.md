@@ -24,17 +24,44 @@ Therefore:
    `rank`/`select` (delta-varint gaps + sampled absolutes, ~2.4 B/doc ≈ 0.04 % of corpus). Without
    the flag the build is byte-identical. `select(i)` is document `i`'s start; `rank(p)` is the
    document containing `p`; `p - select(rank(p))` is the depth in document — all O(log + stride).
-2. **No query path scans for a boundary.** `xsa consult` cuts a position's spine at the document
-   base (`max(0, off - base)`, explicit in the window or resolved from m15 by `doc`; REFUSED when
+2. **No query path scans for a boundary, and NO MATCH MAY CROSS A DOCUMENT BOUNDARY —
+   as the DEFAULT.** `xsa consult` cuts a position's spine at the document base
+   (`max(0, off - base)`, explicit in the window or resolved from m15 by `doc`; REFUSED when
    neither is available), never at a separator. The removed `0x1E` spine cut was boundary inference
-   from content bytes and was wrong on every document with an internal `0x1E`. `--doc-restrict`
-   makes branch counts exact per document (a match never spans a boundary); `--exclude-source`
-   removes the query position's own occurrence before any count is reported.
-3. **What still counts `0x1E`, and why it is bounded:** the m20 context trie's per-node *span*
+   from content bytes and was wrong on every document with an internal `0x1E`. The LAW, everywhere:
+   an occurrence of a context at `pos` (length L) contributes its continuation at `q = pos + L` to
+   the **END branch** iff `select(rank(q)) == q` (`q` is a document start) or `q == text_len`, and
+   its **content byte** otherwise; the occurrence is a **crossing match** (counted nowhere) iff
+   `rank(pos) != rank(q-1)`. Enforced:
+   - **the trie (m20) by construction**: every fed row is classified against its document's end —
+     node counts are non-crossing occurrence counts, a crossing occurrence is counted nowhere, the
+     END edge is "this context ends a document". The member head says `boundary_aware=1` (member
+     format v3); a trie built without a starts table says `boundary_aware=0` and `branch-of` /
+     `trie-stat` / `relax` REFUSE boundary-sensitive answers against it unless `--cross-doc`.
+   - **consult by layered exactness** (row file v3): the boundary-aware trie answers short contexts
+     at any width; exact enumeration answers the rest up to `--boundary-cap` (default 8192); past
+     that the row is the legacy conflated answer MARKED `boundary_exact=0` in flag bit 4 and
+     journaled (`BOUNDARY_INEXACT rows=.. ratio=..`) — never silent, never fatal by default
+     (`--boundary-strict` makes it a refusal). `--cross-doc` opts a whole run back into the
+     conflated answer. `--doc-restrict` keeps its stricter per-document contract with the same
+     END rule; `--exclude-source` removes the query position's own occurrence before any count.
+   - **search by exclusion**: `xsa search` (the qlite-kernel surface) locates every occurrence and
+     excludes crossing matches by default; `--cross-doc` returns them marked, and the exclusion is
+     journaled (`SEARCH_BOUNDARY ... excluded_cross_doc=N`). The legacy `xsa query`/`mems` path
+     applies the same predicate wherever m15 exists and says so loudly where it cannot.
+3. **What still counts `0x1E`, and why it is bounded:** a boundary-UNAWARE m20's per-node *span*
    summary counts `0x1E` spans (its doc map is built from the corpus bytes during the tape tap) —
-   that is a node-annotation statistic, it is documented as a span count (never a document count),
-   and it never feeds a consult row or a boundary decision. Re-pointing it at m15 is follow-up work.
-   `--snap-1e` is an input-construction aid that REFUSES a mid-document raw cut — it never infers.
+   a node-annotation statistic, documented as a span count (never a document count), never feeding
+   a consult row or a boundary decision. A boundary-AWARE m20's doc summary counts CONTAINER
+   documents (m15 ids) of non-crossing occurrences. `--snap-1e` is an input-construction aid that
+   REFUSES a mid-document raw cut — it never infers.
+4. **The one remaining engineering trade, priced:** the no-cross correction for a context WIDER
+   than the trie and with MORE occurrences than `--boundary-cap` has no cheap exact algorithm —
+   the correction is a join between the match set and the doc-start metadata, invisible to rank
+   arithmetic. Consult marks those rows (bit 4) rather than refusing; the proper fix is a future
+   reversed-document-tail member (~1 % of corpus: each document's last ≤ W bytes, a trie over the
+   reversed tails with per-node next-byte histograms, giving END counts and per-byte splits
+   directly), so the fallback is understood as a trade, not a permanent conflation.
 
 Requirement document: `NOTE_FROM_EMENDER_DOCUMENT_BOUNDARIES.md` (the emender's measured basis and
 the three deliverables D1/D2/D3, gated in `RESULTS_STRUCTURAL_DOCS.md`).

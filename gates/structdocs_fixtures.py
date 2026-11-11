@@ -59,7 +59,7 @@ def read_rows_v2(path):
     data = open(path, 'rb').read()
     assert data[:8] == b'XSACONS1', 'not an XSACONS1 row file'
     version = struct.unpack_from('<I', data, 8)[0]
-    assert version == 2, 'row file is not the v2 layout: %d' % version
+    assert version in (2, 3), 'row file is not the v2/v3 layout: %d' % version
     rows = []
     p = 16
     while p < len(data):
@@ -72,7 +72,7 @@ def read_rows_v2(path):
         docid, base, depth = struct.unpack_from('<QQQ', data, q)
         rows.append(dict(ctxlen=ctxlen, flags=flags, doc=doc, off=off,
                          width=width, eof=eof, pairs=pairs, docid=docid,
-                         base=base, depth=depth))
+                         base=base, depth=depth, version=version))
         p = q + 24
     return rows
 
@@ -97,10 +97,10 @@ def read_rows_v1(path):
 
 
 def brute(text, ctx, lo=None, hi=None, exclude_at=None):
-    """The oracle: next-byte histogram of every occurrence of `ctx` whose
-    match lies fully inside [lo, hi) with its continuation byte also inside
-    (or at the text end: structural END), optionally excluding the occurrence
-    whose end is `exclude_at`. Pure scan (memmem), no index, no shared code."""
+    """The LEGACY conflated oracle (the pre-law rule): every stream occurrence,
+    no boundary classification at all. Used for the BEFORE arm (the old binary
+    equals its own rule exactly) and for --cross-doc arms - never for the law
+    arms, which use brute_law below."""
     counts = {}
     eof = 0
     n = len(text)
@@ -115,6 +115,52 @@ def brute(text, ctx, lo=None, hi=None, exclude_at=None):
             elif at < hi:
                 counts[text[at]] = counts.get(text[at], 0) + 1
         q = text.find(ctx, q + 1, hi)
+    pairs = sorted(counts.items(), key=lambda p: (-p[1], p[0]))
+    return sum(c for _, c in pairs) + eof, eof, pairs
+
+
+def brute_law(text, starts, ctx, lo=None, hi=None, exclude_at=None):
+    """THE LAW'S ORACLE (starts-table-aware, no index, no shared code):
+    - the occurrence is a CROSSING match (counted nowhere) iff a document
+      start lies inside (q, q+len-1];
+    - the continuation at at = q+len is the END branch iff at == len(text)
+      or at is a document start; otherwise it is the content byte text[at].
+    With lo/hi the occurrences are restricted to [lo, hi) (the --doc-restrict
+    arm: at == hi is the document end and lands on END).
+    Returns (width, eof, pairs)."""
+    counts = {}
+    eof = 0
+    crossing = 0
+    n = len(text)
+    lo_r = 0 if lo is None else lo
+    hi_r = n if hi is None else hi
+
+    def is_start(p):
+        import bisect
+        i = bisect.bisect_right(starts, p) - 1
+        return i >= 0 and starts[i] == p
+
+    def base_of(p):
+        import bisect
+        return starts[bisect.bisect_right(starts, p) - 1]
+
+    q = text.find(ctx, lo_r, hi_r)
+    while q >= 0:
+        at = q + len(ctx)
+        if exclude_at is None or at != exclude_at:
+            if at == n:
+                eof += 1
+            elif lo is not None and at == hi_r:
+                eof += 1          # the restricted arm: the document ends here
+            elif lo is not None and at > hi_r:
+                pass              # unreachable: the match is fully inside
+            elif base_of(at - 1) > q:
+                crossing += 1     # a document starts inside the match: not a match
+            elif is_start(at):
+                eof += 1          # "this context ends a document"
+            else:
+                counts[text[at]] = counts.get(text[at], 0) + 1
+        q = text.find(ctx, q + 1, hi_r)
     pairs = sorted(counts.items(), key=lambda p: (-p[1], p[0]))
     return sum(c for _, c in pairs) + eof, eof, pairs
 
@@ -176,6 +222,33 @@ def make_fixtures(work):
     q = len(F) + len(G) + 7 + len(SAMEPAD) + len(pat)  # first byte after pat in H
     fixtures['g2c'] = ([F, G, H, PAD], q, [0, 1, 2])
 
+    # ---- X1: the no-cross law, adversarial ---------------------------------
+    # x1a: FOUR documents END with TAIL, TWO contain it mid-document followed
+    # by b'Q'. Under the law the histogram of TAIL is exactly END=4 (the four
+    # doc-ending occurrences), content Q=2, and NOTHING ELSE - in particular
+    # the FIRST BYTES of the documents that follow the four doc-ending
+    # occurrences must NOT appear as content.
+    TAIL = b'ENDRUN' + b'z' * 7
+    A1 = b'UNIQa1' + b'alpha' * 100 + TAIL
+    A2 = b'UNIQa2' + b'bravo' * 100 + TAIL
+    A3 = b'UNIQa3' + b'echox' * 100 + TAIL
+    B1 = b'UNIQb1' + TAIL + b'Q' + b'beta' * 300 + b'ENDb1'
+    B2 = b'UNIQb2' + b'delta' * 100 + TAIL + b'Q' + b'ENDb2'
+    # doc order chosen so the byte after each doc-ending TAIL is a DIFFERENT
+    # next-document first byte (U/G/p...): none of them may pollute the histogram
+    q = len(A1) + len(B1) + len(TAIL)      # first byte after TAIL inside B1
+    fixtures['x1a'] = ([A1, B1, A2, B2, A3, PAD], q, [1])
+
+    # x1b: INTERNAL 0x1E. CTX occurs twice mid-document, each followed by an
+    # INTERNAL 0x1E (content by the law: the separator a document OWNS is its
+    # last byte, and these are not doc ends), and once at a document END (eof).
+    # The distinction between content-0x1E and END is the whole point.
+    CTX = b'INSEP' + b'w' * 5
+    C1 = b'UNIQc1' + b'gamma' * 80 + CTX + b'\x1e' + b'internal-continues' + b'ENDc1'
+    C2 = b'UNIQc2' + b'kilo' * 80 + CTX                      # this doc ENDS with CTX
+    C3 = b'UNIQc3' + b'lima' * 80 + CTX + b'\x1e' + b'internal-tail' + b'ENDc3'
+    fixtures['x1b'] = ([C1, C2, C3, PAD], None, [0, 1, 2])
+
     for name, (docs, _q, qdocs) in fixtures.items():
         corpus = b''.join(docs) + b'\x1e'
         starts, at = [], 0
@@ -203,6 +276,8 @@ def main():
     left = 256
 
     for name, (docs, q, qdocs) in fixtures.items():
+        if name.startswith('x1'):
+            continue          # the X1 law fixtures have their own gate below
         base = os.path.join(work, name)
         corpus_path = os.path.join(base, name + '.txt')
         text = open(corpus_path, 'rb').read()
@@ -244,10 +319,10 @@ def main():
         else:
             before_w, before_eof, before_p = 0, 0, []
 
-        # ---- the brute-force answers for the new rule
-        raw_w, raw_eof, raw_p = brute(text, ctx)
-        res_w, res_eof, res_p = brute(text, ctx, lo, hi)
-        exc_w, exc_eof, exc_p = brute(text, ctx, lo, hi, exclude_at=q)
+        # ---- the brute-force answers for the NEW rule (the law, starts-aware)
+        raw_w, raw_eof, raw_p = brute_law(text, starts, ctx)
+        res_w, res_eof, res_p = brute_law(text, starts, ctx, lo, hi)
+        exc_w, exc_eof, exc_p = brute_law(text, starts, ctx, lo, hi, exclude_at=q)
 
         # ---- AFTER: the new binary, base RESOLVED from the container's m15
         wpath = os.path.join(base, 'windows-q.jsonl')
@@ -314,9 +389,16 @@ def main():
             print('G2_MISMATCH %s the old binary does not equal its own 0x1e-cut rule' % name)
 
         # whole-document windows resolve every base from the member; the last
-        # document's window runs to the text end (the map carries starts only)
+        # document's window runs to the text end (the map carries starts only).
+        # This arm checks base resolution and row GEOMETRY, not histogram
+        # exactness, and the fixture text is adversarially repetitive
+        # ('alpharun' x 2000), where a width-9 context has ~2000 occurrences:
+        # the exact enumeration that the no-cross default runs would enumerate
+        # millions of rows here. --boundary-cap 64 keeps the arm on the
+        # marked-fallback path for those; the exactness claims live in the
+        # X1 cases, whose contexts have width 3..5.
         consult(xsa, container, corpus_path, os.path.join(base, 'windows.jsonl'),
-                os.path.join(base, 'whole.rows'), [])
+                os.path.join(base, 'whole.rows'), ['--boundary-cap', '64'])
         whole = read_rows_v2(os.path.join(base, 'whole.rows'))
         want_rows = 0
         for i in qdocs:
@@ -329,6 +411,247 @@ def main():
         else:
             print('G2_WHOLEDOC %s resolved_windows=%d rows=%d result=exact' %
                   (name, len(qdocs), len(whole)))
+
+    # ============================== X1: the no-cross law, adversarial =====
+    #
+    # x1a: contexts whose occurrences END documents. The histogram must show
+    # an END branch with the EXACT count of doc-ending occurrences and NO
+    # content byte for them (the next documents' first bytes must not appear).
+    # x1b: internal 0x1E stays a CONTENT branch, never END - the distinction
+    # is the whole point. Both are checked against brute_law (memmem + the
+    # starts table, no index, no shared code), then the boundary-aware TRIE
+    # (m20, built post-hoc from the container's own m15) is checked against
+    # the same oracle, and the UNAWARE trie's query surface must REFUSE by
+    # default and answer conflated only under --cross-doc.
+    x1_failures = 0
+
+    def x1_case(name, docs, query_maker, expect_tail):
+        """Build the fixture, consult the law, and check the row against the
+        oracle. query_maker(text, starts) -> (doc_idx, off, ctx_len)."""
+        nonlocal x1_failures
+        base = os.path.join(work, name)
+        os.makedirs(base, exist_ok=True)
+        corpus = b''.join(docs) + b'\x1e'
+        starts, at = [], 0
+        for d in docs:
+            starts.append(at)
+            at += len(d)
+        corpus_path = os.path.join(base, name + '.txt')
+        open(corpus_path, 'wb').write(corpus)
+        open(os.path.join(base, name + '.starts'), 'wb').write(
+            b''.join(struct.pack('<Q', s) for s in starts))
+        doc_idx, off, ctx_len = query_maker(corpus, starts)
+        ctx = corpus[off - ctx_len:off]
+        lo = starts[doc_idx]
+        hi = starts[doc_idx + 1] if doc_idx + 1 < len(starts) else len(corpus)
+
+        built = run_build(xsa, corpus_path, os.path.join(base, 'built'))
+        container = os.path.join(base, name + '.sxi2')
+        if os.path.exists(container):
+            os.remove(container)
+        subprocess.run(['cp', built, container], check=True)
+        subprocess.run([xsa, 'docstarts', 'embed', container,
+                        '--doc-starts', os.path.join(base, name + '.starts')],
+                       check=True, capture_output=True)
+
+        wpath = os.path.join(base, 'x1-q.jsonl')
+        with open(wpath, 'w') as f:
+            f.write(json.dumps({'doc': doc_idx, 'start': off - lo,
+                                'len': 1, 'left': ctx_len}) + '\n')
+        consult(xsa, container, corpus_path, wpath,
+                os.path.join(base, 'x1-plain.rows'), ['--left', str(ctx_len)])
+        consult(xsa, container, corpus_path, wpath,
+                os.path.join(base, 'x1-excl.rows'),
+                ['--left', str(ctx_len), '--exclude-source'])
+        consult(xsa, container, corpus_path, wpath,
+                os.path.join(base, 'x1-cross.rows'),
+                ['--left', str(ctx_len), '--cross-doc'])
+        plain = read_rows_v2(os.path.join(base, 'x1-plain.rows'))[0]
+        excl = read_rows_v2(os.path.join(base, 'x1-excl.rows'))[0]
+        cross = read_rows_v2(os.path.join(base, 'x1-cross.rows'))[0]
+
+        want_w, want_eof, want_p = brute_law(corpus, starts, ctx)
+        exc_w, exc_eof, exc_p = brute_law(corpus, starts, ctx, exclude_at=off)
+        old_w, old_eof, old_p = brute(corpus, ctx)
+
+        print('X1_HISTOGRAM %s arm=LAW width=%d eof=%d pairs=%s' %
+              (name, want_w, want_eof, want_p))
+        print('X1_HISTOGRAM %s arm=CONFLATED_legacy width=%d eof=%d pairs=%s' %
+              (name, old_w, old_eof, old_p))
+
+        def x1_check(tag, row, w, eof, pairs, want_flag_exact):
+            ok = (row['width'] == w and row['eof'] == eof and row['pairs'] == pairs)
+            exact_bit = bool(row['flags'] & 16)
+            if exact_bit != (not want_flag_exact):
+                ok = False
+            if not ok:
+                x1_failures += 1
+                print('X1_MISMATCH %s %s want width=%d eof=%d pairs=%s flag_exact=%s '
+                      'got width=%d eof=%d pairs=%s flag_exact=%s'
+                      % (name, tag, w, eof, pairs, want_flag_exact,
+                         row['width'], row['eof'], row['pairs'], not exact_bit))
+            return ok
+
+        x1_check('default', plain, want_w, want_eof, want_p, True)
+        x1_check('exclude-source', excl, exc_w, exc_eof, exc_p, True)
+        # the --cross-doc row is the legacy conflated answer, MARKED inexact
+        x1_check('cross-doc', cross, old_w, old_eof, old_p, False)
+        # the doc-ending occurrences' continuations must not appear as content
+        bad_bytes = set()
+        for i, s in enumerate(starts):
+            nxt = starts[i + 1] if i + 1 < len(starts) else len(corpus)
+            tail_here = (nxt - len(expect_tail) >= s
+                         and corpus[nxt - len(expect_tail):nxt] == expect_tail)
+            if tail_here and nxt < len(corpus):
+                bad_bytes.add(corpus[nxt])
+        polluted = [b for b in bad_bytes if dict(plain['pairs']).get(b, 0) > 0]
+        if polluted:
+            x1_failures += 1
+            print('X1_MISMATCH %s next-document first bytes %r appear as content' %
+                  (name, polluted))
+        else:
+            print('X1_NO_LEAK %s doc_ending_occurrences=%d next_doc_bytes=%r '
+                  'absent_from_content=1' %
+                  (name, want_eof, sorted(bad_bytes)))
+
+        # ---- the boundary-aware TRIE (m20 built from the container's m15)
+        trie_container = os.path.join(base, name + '-trie.sxi2')
+        if os.path.exists(trie_container):
+            os.remove(trie_container)
+        r = subprocess.run([xsa, 'ctx-build', '--sxi', container,
+                            '--text', corpus_path, '--out', trie_container,
+                            '--depth', '16', '--min-support', '2',
+                            '--threads', '8'], capture_output=True, text=True)
+        if r.returncode != 0:
+            x1_failures += 1
+            print('X1_MISMATCH %s ctx-build failed: %s' % (name, r.stderr[-500:]))
+            return
+        aware_line = [ln for ln in r.stderr.splitlines() if 'CONTEXT_TRIE_BOUNDARY' in ln]
+        print('X1_TRIE_BUILD %s %s' %
+              (name, aware_line[0].split('CONTEXT_TRIE_BOUNDARY ')[1]
+               if aware_line else 'NO_BOUNDARY_LINE'))
+        if not aware_line or 'aware=1' not in aware_line[0]:
+            x1_failures += 1
+            print('X1_MISMATCH %s the trie is not boundary-aware' % name)
+        # branch-of against the oracle: children (content+END) and count
+        r = subprocess.run([xsa, 'branch-of', trie_container, 'hex:' + ctx.hex()],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            x1_failures += 1
+            print('X1_MISMATCH %s branch-of failed: %s' % (name, r.stderr[-400:]))
+            return
+        got_pairs = []
+        got_end = 0
+        got_count = 0
+        for ln in r.stdout.splitlines():
+            if ln.startswith('present '):
+                got_count = int(ln.split('count=')[1].split()[0])
+            if ln.startswith('child '):
+                if ln.startswith('child END '):
+                    got_end = int(ln.split('count=')[1].split()[0])
+                else:
+                    b = int(ln.split('child 0x')[1].split()[0], 16)
+                    got_pairs.append((b, int(ln.split('count=')[1].split()[0])))
+        got_p = sorted(got_pairs, key=lambda p: (-p[1], p[0]))
+        ok = (got_count == want_w and got_end == want_eof and got_p == want_p)
+        print('X1_TRIE_BRANCH_OF %s count=%d end=%d pairs=%s oracle=width=%d eof=%d pairs=%s %s' %
+              (name, got_count, got_end, got_p, want_w, want_eof, want_p,
+               'exact' if ok else 'MISMATCH'))
+        if not ok:
+            x1_failures += 1
+        # trie-stat: the count is the NON-CROSSING width
+        r = subprocess.run([xsa, 'trie-stat', trie_container, 'hex:' + ctx.hex()],
+                           capture_output=True, text=True)
+        if r.returncode == 0:
+            for ln in r.stdout.splitlines():
+                if ln.startswith('present '):
+                    if int(ln.split('count=')[1].split()[0]) != want_w:
+                        x1_failures += 1
+                        print('X1_MISMATCH %s trie-stat count' % name)
+        else:
+            x1_failures += 1
+            print('X1_MISMATCH %s trie-stat failed: %s' % (name, r.stderr[-300:]))
+        # ctx-verify: the trie against a CORPUS SCAN under the law
+        r = subprocess.run([xsa, 'ctx-verify', '--sxi', trie_container,
+                            '--text', corpus_path, '--samples', '200',
+                            '--seed', '7', '--sample-nodes', '200'],
+                           capture_output=True, text=True)
+        ver = [ln for ln in r.stdout.splitlines() if ln.startswith('TRIE_VERIFY ')]
+        print('X1_TRIE_VERIFY %s %s' %
+              (name, ver[0] if ver else ('FAILED: ' + r.stderr[-300:])))
+        if r.returncode != 0 or not ver or 'mismatches=0' not in ver[0]:
+            x1_failures += 1
+
+        # ---- the UNAWARE trie must REFUSE by default, answer under --cross-doc
+        plain_container = built       # the v7 build, no m15, no trie
+        unaware = os.path.join(base, name + '-unaware.sxi2')
+        if os.path.exists(unaware):
+            os.remove(unaware)
+        r = subprocess.run([xsa, 'ctx-build', '--sxi', plain_container,
+                            '--text', corpus_path, '--out', unaware,
+                            '--depth', '16', '--min-support', '2',
+                            '--threads', '8'], capture_output=True, text=True)
+        if r.returncode != 0:
+            x1_failures += 1
+            print('X1_MISMATCH %s unaware ctx-build failed: %s' % (name, r.stderr[-400:]))
+            return
+        r = subprocess.run([xsa, 'branch-of', unaware, 'hex:' + ctx.hex()],
+                           capture_output=True, text=True)
+        refused = r.returncode != 0 and 'boundary-UNAWARE' in r.stderr
+        print('X1_UNAWARE_REFUSAL %s rc=%d refused=%s' %
+              (name, r.returncode, 'yes' if refused else 'NO'))
+        if not refused:
+            x1_failures += 1
+            print('X1_MISMATCH %s branch-of on the unaware trie did not refuse: %s' %
+                  (name, (r.stderr or r.stdout)[-300:]))
+        r = subprocess.run([xsa, 'branch-of', unaware, 'hex:' + ctx.hex(), '--cross-doc'],
+                           capture_output=True, text=True)
+        got_pairs = []
+        got_end = 0
+        got_count = 0
+        for ln in r.stdout.splitlines():
+            if ln.startswith('present '):
+                got_count = int(ln.split('count=')[1].split()[0])
+            if ln.startswith('child '):
+                if ln.startswith('child END '):
+                    got_end = int(ln.split('count=')[1].split()[0])
+                else:
+                    b = int(ln.split('child 0x')[1].split()[0], 16)
+                    got_pairs.append((b, int(ln.split('count=')[1].split()[0])))
+        got_p = sorted(got_pairs, key=lambda p: (-p[1], p[0]))
+        ok = (got_count == old_w and got_end == old_eof and got_p == old_p)
+        print('X1_UNAWARE_CROSS_DOC %s count=%d end=%d pairs=%s %s' %
+              (name, got_count, got_end, got_p,
+               'parity=conflated_exact' if ok else 'parity=MISMATCH'))
+        if not ok:
+            x1_failures += 1
+
+    # x1a: the query sits right after TAIL inside B1, so its context IS TAIL
+    # (13 bytes: ENDRUN + seven z's - the length must match the fixture or the
+    # context silently becomes a PREFIX of TAIL whose continuation is TAIL's
+    # own last byte, which is exactly the trap this gate is here to catch)
+    x1a_docs = fixtures['x1a'][0]
+    TAIL = b'ENDRUN' + b'z' * 7
+    TAILLEN = len(TAIL)
+    assert TAILLEN == 13
+    def q_x1a(text, starts):
+        # doc 1 (B1) contains TAIL followed by Q; query at the Q
+        needle = TAIL + b'Q'
+        at = text.find(needle, starts[1], starts[2])
+        assert at >= 0
+        return 1, at + TAILLEN, TAILLEN
+    x1_case('x1a', x1a_docs, q_x1a, TAIL)
+
+    # x1b: the query sits ON the internal 0x1E inside C1, so its context is CTX
+    x1b_docs = fixtures['x1b'][0]
+    def q_x1b(text, starts):
+        needle = b'INSEP' + b'w' * 5 + b'\x1e'
+        at = text.find(needle, starts[0], starts[1])
+        assert at >= 0
+        return 0, at + 10, 10
+    x1_case('x1b', x1b_docs, q_x1b, b'INSEP' + b'w' * 5)
+
+    print('X1_RESULT %s' % ('PASS' if x1_failures == 0 else 'FAIL'))
 
     # ---------------------------------------------------------------- G3
     base = os.path.join(work, 'g2a')
@@ -352,10 +675,14 @@ def main():
         for i, off in positions:
             f.write(json.dumps({'doc': i, 'start': off - starts[i],
                                 'len': 1, 'left': 128}) + '\n')
+    # G3 checks the exclusion relation (width-1, one pair decremented) which the
+    # fallback rows satisfy exactly like the enumerated rows; the repetitive
+    # fixture text would make full-width enumeration cost minutes per position,
+    # so the arm runs with a small cap and both arms take the same path per row.
     consult(xsa, container, corpus_path, wpath, os.path.join(base, 'g3-off.rows'),
-            ['--left', '128'])
+            ['--left', '128', '--boundary-cap', '256'])
     consult(xsa, container, corpus_path, wpath, os.path.join(base, 'g3-on.rows'),
-            ['--left', '128', '--exclude-source'])
+            ['--left', '128', '--exclude-source', '--boundary-cap', '256'])
     off_rows = read_rows_v2(os.path.join(base, 'g3-off.rows'))
     on_rows = read_rows_v2(os.path.join(base, 'g3-on.rows'))
     both = 0
@@ -383,8 +710,11 @@ def main():
              'PASS' if failures == 0 and both == len(off_rows) and len(off_rows) >= 100
              else 'FAIL'))
 
+    total = failures + x1_failures
     print('G2_G3_RESULT %s' % ('PASS' if failures == 0 and both >= 100 else 'FAIL'))
-    sys.exit(0 if failures == 0 and both >= 100 else 1)
+    print('X1_FINAL x1_failures=%d all_failures=%d result=%s'
+          % (x1_failures, total, 'PASS' if total == 0 and both >= 100 else 'FAIL'))
+    sys.exit(0 if total == 0 and both >= 100 else 1)
 
 
 if __name__ == '__main__':

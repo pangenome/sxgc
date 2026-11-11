@@ -28,8 +28,11 @@ for ((i = 0; i < K; i++)); do
 done
 echo "G3_SAMPLE contexts=$K bytes=$(stat -c%s "$B") seed=20261110 sample=8B"
 sha256sum "$B"
-"$X" branch-of "$C" --batch "$B" | tee "$D/coverage.txt"
+# --cross-doc: the banked/container tries are boundary-UNAWARE (built before
+# the no-cross law made the default refuse conflated answers); the coverage
+# measurement is about descent depth and support, not boundary semantics
+"$X" branch-of "$C" --batch "$B" --cross-doc | tee "$D/coverage.txt"
 # the same measurement on the post-hoc container, for the side-by-side
 if [ -f "${REF_CONTAINER:-/mnt/nvme2n1/erikg/ctx-trie/g10-d8.sxi2}" ]; then
-  "$X" branch-of "${REF_CONTAINER:-/mnt/nvme2n1/erikg/ctx-trie/g10-d8.sxi2}" --batch "$B" | tee "$D/coverage-posthoc.txt"
+  "$X" branch-of "${REF_CONTAINER:-/mnt/nvme2n1/erikg/ctx-trie/g10-d8.sxi2}" --batch "$B" --cross-doc | tee "$D/coverage-posthoc.txt"
 fi

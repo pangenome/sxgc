@@ -164,35 +164,28 @@ impl Container {
                     if optional==1 && m.id==7 {7} else {i+1}
                 } else {8+i-(5+optional)}
             } else if lite {
-                // THE MODERN LITE SHAPE, in directory order:
-                //   1, 4, 5, [optional 6/7], 10, 11, 12, 13, [14], [20], [15]
-                // The m12/m13 pair is the block-compressed shape; m14/m20/m15
-                // are the v8/v9/v10 extensions, each declared by a flag bit
-                // (128/256/512). Everything after the 6/7 region is derived
-                // from the flags, so the count and the flags must agree.
+                // THE MODERN LITE SHAPE: the directory is SORTED BY ID, so the
+                // extension members follow m13 in ID order - 14 (LCP over
+                // runs), 15 (document starts), 20 (context trie) - each present
+                // iff its flag bit is set (128/512/256). The 6/7 optionality is
+                // inferred from the count exactly as before.
                 let ext = u64::from(flags & 128 != 0)
                     + u64::from(flags & 256 != 0)
                     + u64::from(flags & 512 != 0);
-                let opt67 = count as u64 - 7 - ext; // 5..7 is 2 slots, plus 10,11,12,13
-                if i < 3 {[1,4,5][i as usize]}
-                else if (i as u64) < 3 + opt67 {
-                    if opt67 == 1 && flags & 16 != 0 {7} else {6 + i - 3}
-                } else {
-                    let j = i as u64 - (3 + opt67);
-                    match j {
-                        0 => 10,
-                        1 => 11,
-                        2 => 12,
-                        3 => 13,
-                        4 if flags & 128 != 0 => 14,
-                        4 if flags & 256 != 0 => 20,
-                        4 if flags & 512 != 0 => 15,
-                        5 if flags & 256 != 0 => 20,
-                        5 if flags & 512 != 0 => 15,
-                        6 if flags & 512 != 0 => 15,
-                        _ => unreachable!("lite member order"),
-                    }
+                let opt67 = count as u64 - 7 - ext; // 10, 11, 12, 13 are 4 slots
+                let mut ids: Vec<u32> = Vec::with_capacity(count as usize);
+                ids.extend_from_slice(&[1, 4, 5]);
+                if opt67 == 1 {
+                    ids.push(if flags & 16 != 0 { 7 } else { 6 });
+                } else if opt67 == 2 {
+                    ids.extend_from_slice(&[6, 7]);
                 }
+                ids.extend_from_slice(&[10, 11, 12, 13]);
+                if flags & 128 != 0 { ids.push(14); }
+                if flags & 512 != 0 { ids.push(15); }
+                if flags & 256 != 0 { ids.push(20); }
+                need(ids.len() == count as usize, "lite member count vs flags");
+                ids[i as usize]
             } else {
                 let optional=count-7;
                 if i<3 {[1,4,5][i as usize]} else if i<3+optional {
