@@ -723,7 +723,7 @@ fn mkdir_of(prefix: &Path) -> PathBuf {
 // Readers (every invariant in CORPUS_V2.md §2 is asserted here)
 // ---------------------------------------------------------------------------
 
-fn read_starts(path: &Path) -> (u64, u64, Vec<u64>) {
+pub(crate) fn read_starts(path: &Path) -> (u64, u64, Vec<u64>) {
     // (doc_count, corpus_bytes, starts)
     let bytes = ck(std::fs::read(path), &format!("read {}", path.display()));
     let u32at = |o: usize| u32::from_le_bytes(bytes[o..o + 4].try_into().unwrap()) as u64;

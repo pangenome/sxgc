@@ -57,14 +57,181 @@ use crate::{die, qlite, sxi};
 pub const TRIE_CODEC: u32 = 20;
 /// Member format version. 1 = the first draft (fixed 16-byte node and edge slots,
 /// 128-byte head, no stream source); 2 = packed columns, 192-byte head, stream
-/// source journaled. A reader must REFUSE an unknown version BY NUMBER, never by
-/// an offset that happens not to be in range.
-pub const TRIE_VERSION: u64 = 2;
+/// source journaled; 3 = the boundary_aware head field (the no-cross law: an
+/// occurrence whose continuation position is a document start is reclassified to
+/// the END branch at BUILD time, so the member's histogram can never conflate a
+/// crossing continuation with content). A reader must REFUSE an unknown version BY
+/// NUMBER, never by an offset that happens not to be in range.
+pub const TRIE_VERSION: u64 = 3;
 /// Header flag value: "member m20 (context trie) is present".
 pub const FLAG_TRIE: u64 = 256;
 /// Head bytes of the member.
+// ------------------------------------------------------- the boundary oracle
+//
+// THE NO-CROSS LAW AT BUILD TIME (NOTE_FROM_EMENDER_DOCUMENT_BOUNDARIES.md D2,
+// the owner's semantic requirement): a match or branch count must never span a
+// document boundary, as the DEFAULT. For an occurrence of a context at position
+// `pos` with the context's last byte at `pos + len - 1`, the continuation
+// position is `q = pos + len`, and the EXACT predicate implemented here is:
+//
+//   q == corpus_len                      -> the structural END (at most one)
+//   select(rank(q)) == q (q < corpus_len) -> the END branch ("this context ends
+//                                           a document"); implemented as
+//                                           "the next document starts at q"
+//   otherwise                            -> the content byte corpus[q]
+//
+// and the occurrence itself is a CROSSING match (excluded entirely) iff
+// rank(pos) != rank(pos + len - 1), i.e. iff a document start lies inside
+// (pos, pos + len - 1]. The builder enforces both BY CONSTRUCTION: every suffix
+// fed to it is CUT AT ITS DOCUMENT'S END - `avail = next_start(pos) - pos`
+// bytes - so (a) a context deeper than the cut never enters the trie (crossing
+// occurrences vanish from every node's row span), and (b) a context exactly the
+// cut length lands on the existing END branch. Node counts therefore become
+// non-crossing occurrence counts, and the END edge count becomes the exact
+// number of occurrences that end a document. m15 makes the predicate O(1)-ish
+// per suffix (one rank/select), which is why the build can afford the law.
+
+/// A document-starts table the builder can consult, owned by the build process.
+pub enum OwnedStarts {
+    /// No structure: the member is built boundary-UNAWARE and SAYS SO
+    /// (`boundary_aware=0` in its head), and the query side refuses
+    /// boundary-sensitive answers against it.
+    None,
+    /// member m15 or an XSEP `seps.bin` sidecar (the pile-map shape).
+    Table(crate::docstarts::DocStarts),
+    /// A plain little-endian u64 starts array (the `.starts` fixtures shape) or
+    /// a decoded CORPUS V2 `XCS2` table: starts[0] == 0, strictly increasing.
+    Plain { starts: Vec<u64>, text_len: u64 },
+}
+
+impl OwnedStarts {
+    /// (container document id, bytes from `pos` to the END of pos's document).
+    /// `None` = no structure, or `pos` is the virtual END row (no bytes left).
+    /// The next document's start is capped at `text_len`: a SUPERSET map (the
+    /// 1.31 TB map over a 10 GB text) names documents that start past the text,
+    /// and the in-text cut for the last document is the text end itself.
+    pub fn avail(&self, pos: u64, text_len: u64) -> Option<(u32, u64)> {
+        match self {
+            OwnedStarts::None => None,
+            OwnedStarts::Table(ds) => {
+                if pos >= text_len {
+                    return None;
+                }
+                let (doc, _base) = ds.rank_start(pos);
+                let next = if doc + 1 < ds.docs {
+                    ds.select(doc + 1).min(text_len)
+                } else {
+                    text_len
+                };
+                Some((doc as u32, next - pos))
+            }
+            OwnedStarts::Plain { starts, text_len } => {
+                if pos >= *text_len {
+                    return None;
+                }
+                // largest start <= pos
+                let doc = starts.partition_point(|&s| s <= pos) as u64 - 1;
+                let next = starts
+                    .get(doc as usize + 1)
+                    .copied()
+                    .unwrap_or(u64::MAX)
+                    .min(*text_len);
+                Some((doc as u32, next - pos))
+            }
+        }
+    }
+
+    pub fn is_some(&self) -> bool {
+        !matches!(self, OwnedStarts::None)
+    }
+
+    /// rank_start for the oracle: the document containing `p` and its start.
+    /// `p` must be inside the text.
+    pub fn rank_start(&self, p: u64) -> (u64, u64) {
+        match self {
+            OwnedStarts::None => die("ctx: rank_start on an absent starts table"),
+            OwnedStarts::Table(ds) => ds.rank_start(p),
+            OwnedStarts::Plain { starts, .. } => {
+                let doc = starts.partition_point(|&s| s <= p) as u64 - 1;
+                (doc, starts[doc as usize])
+            }
+        }
+    }
+
+    /// THE EXACT END-BRANCH PREDICATE: is `q` a document start?
+    /// select(rank(q)) == q.
+    pub fn is_start(&self, q: u64) -> bool {
+        match self {
+            OwnedStarts::None => false,
+            OwnedStarts::Table(ds) => q < ds.text_len && ds.rank_start(q).1 == q,
+            OwnedStarts::Plain { starts, text_len } => {
+                if q >= *text_len {
+                    return false;
+                }
+                let doc = starts.partition_point(|&s| s <= q) as u64 - 1;
+                starts[doc as usize] == q
+            }
+        }
+    }
+
+    pub fn docs(&self) -> u64 {
+        match self {
+            OwnedStarts::None => 0,
+            OwnedStarts::Table(ds) => ds.docs,
+            OwnedStarts::Plain { starts, .. } => starts.len() as u64,
+        }
+    }
+
+    /// Load a starts table from a path: a DIRECTORY holding `seps.bin` (the
+    /// `xsa corpus --pile-map` sidecar), a CORPUS V2 `PREFIX.starts` (XCS2 v1),
+    /// or a raw little-endian u64 array (the `xsa docstarts embed --doc-starts`
+    /// input shape). Anything else is a hard error: boundaries are metadata and
+    /// a guess that does not exist is not a guess.
+    pub fn load(path: &str, text_len: u64) -> OwnedStarts {
+        let p = std::path::Path::new(path);
+        if p.is_dir() {
+            return OwnedStarts::Table(crate::docstarts::DocStarts::from_xsep(p, text_len));
+        }
+        let bytes = std::fs::read(p).unwrap_or_else(|e| die(&format!("ctx: read starts table {path}: {e}")));
+        if bytes.len() >= 8 {
+            if &bytes[..4] == b"XCS2" {
+                let (_docs, _corpus_bytes, starts) = crate::corpusv2::read_starts(p);
+                return OwnedStarts::validate_plain(starts, text_len, path);
+            }
+            if &bytes[..4] == b"XSEP" {
+                die(&format!(
+                    "ctx: {path} is an XSEP separators file: pass the map DIRECTORY that holds it"
+                ));
+            }
+        }
+        if bytes.len() % 8 != 0 {
+            die(&format!(
+                "ctx: starts table {path} is {} bytes, not a whole u64 array, XCS2 or a directory holding seps.bin",
+                bytes.len()
+            ));
+        }
+        let starts: Vec<u64> = bytes
+            .chunks_exact(8)
+            .map(|c| u64::from_le_bytes(c.try_into().unwrap()))
+            .collect();
+        OwnedStarts::validate_plain(starts, text_len, path)
+    }
+
+    fn validate_plain(starts: Vec<u64>, text_len: u64, path: &str) -> OwnedStarts {
+        need(!starts.is_empty(), &format!("starts table {path} is empty"));
+        need(starts[0] == 0, &format!("starts table {path} does not start at 0"));
+        for i in 1..starts.len() {
+            need(starts[i] > starts[i - 1] && starts[i] < text_len,
+                &format!("starts table {path} is not strictly increasing inside the text at entry {i}"));
+        }
+        OwnedStarts::Plain { starts, text_len }
+    }
+}
+
 /// Child code of "the text ends here". Real bytes are stored as 1+byte, so the
 /// u16 child code sorts exactly like the lexicographic order (END first).
+/// In a boundary-aware member this same code is the whole END branch: "the
+/// context ends a document (or the text)".
 pub const END: u16 = 0;
 const NO_NODE: u32 = u32::MAX;
 const DOC_SMALL: usize = 8;
@@ -453,7 +620,14 @@ impl DocAcc {
 // flags: bit0 = this node carries a document summary, bit1 = the summary's id list
 // is exact.
 struct Level {
+    /// the row that opened this level (a debug anchor; counts no longer come
+    /// from row spans - see `count`)
     start: u64,
+    /// THE NO-CROSS OCCURRENCE COUNT of this node's context: incremented by every
+    /// row whose DOCUMENT holds the whole context (avail >= depth). A row whose
+    /// context would cross its boundary stops at the shallower levels, so a
+    /// crossing occurrence is never counted anywhere.
+    count: u64,
     children: Vec<Child>,
     docs: DocAcc,
 }
@@ -495,6 +669,14 @@ pub struct Builder {
     source: u8,
     /// transient bytes the stream cost (the u40 array plus the dense run columns)
     source_mem: u64,
+    /// THE NO-CROSS LAW, JOURNALED IN THE MEMBER HEAD: 1 = every suffix fed to
+    /// this builder was CUT AT ITS DOCUMENT'S END (a starts table was present at
+    /// build time), so node counts are non-crossing occurrence counts and the
+    /// END edge is "this context ends a document (or the text)". 0 = built
+    /// without a starts table: the histogram conflates crossing continuations
+    /// with content, and the query side REFUSES boundary-sensitive answers
+    /// against such a member rather than returning them silently.
+    boundary_aware: u8,
 }
 
 const HEAD: usize = 192;
@@ -529,7 +711,15 @@ impl Builder {
             ndoc_nodes: 0,
             source: 0,
             source_mem: 0,
+            boundary_aware: 0,
         }
+    }
+
+    /// Declare that the ordered stream was boundary-cut (see `OwnedStarts`):
+    /// every suffix fed from now on must already be truncated at its document's
+    /// end. Journaled in the member head as boundary_aware=1.
+    pub fn set_boundary_aware(&mut self) {
+        self.boundary_aware = 1;
     }
 
     /// Declare where the ordered stream came from (journaled in the member).
@@ -538,12 +728,25 @@ impl Builder {
         self.source_mem = mem;
     }
 
-    /// One suffix, in sorted order. `p` holds the suffix's bytes (up to depth+1 of
-    /// them are read), `rem` is how many bytes the suffix really has, and `doc` is
-    /// the 0x1E span the suffix starts in.
-    pub fn feed(&mut self, p: &[u8], rem: u64, doc: u32) {
+    /// One suffix, in sorted order. `p` holds the suffix's FULL prefix bytes
+    /// (up to depth+1 of them are read: the stream's sorted-order contract is
+    /// untouched, so node spans stay contiguous). `rem` is the suffix's length
+    /// to the corpus end. `avail` is the no-cross oracle's answer for this row:
+    /// the bytes from the suffix's start to the END of its document
+    /// (`select(rank(pos)+1) - pos`, or the text end); `u64::MAX` = no structure
+    /// (the legacy conflated build). `doc` is the document the suffix starts in
+    /// (container doc id when boundary-aware, 0x1E span id otherwise).
+    ///
+    /// THE LAW, PER ROW: the row is a NON-CROSSING occurrence of every context
+    /// of length d <= min(top, avail) - those levels take its count, its document
+    /// and its branch - and contributes NOTHING past its boundary. The branch at
+    /// the cut depth is the END branch ("this context ends a document"), never
+    /// the next document's first byte; at the corpus end (rem <= depth) it is the
+    /// one structural END.
+    pub fn feed(&mut self, p: &[u8], rem: u64, avail: u64, doc: u32) {
         let m = (rem.min(self.depth as u64 + 1)) as usize;
         need(p.len() >= m, "builder: prefix shorter than the suffix's own length");
+        need(avail >= 1 || rem == 0, "builder: avail is zero for a real suffix");
         let cap = m.min(self.prev.len());
         let mut lcp = 0usize;
         while lcp < cap && p[lcp] == self.prev[lcp] {
@@ -552,10 +755,6 @@ impl Builder {
         let keep = lcp.min(self.depth);
         let top = m.min(self.depth);
         need(keep <= top, "builder: keep above top");
-        self.root_docs.add(doc);
-        for lv in self.stack.iter_mut().take(keep) {
-            lv.docs.add(doc);
-        }
         while self.stack.len() > keep {
             self.close_one();
         }
@@ -568,16 +767,20 @@ impl Builder {
                 "builder: children are not in ascending byte order (the suffix stream is not sorted)",
             );
             parent.push(Child { code, start: self.row, count: 0, node: NO_NODE });
-            self.stack.push(Level { start: self.row, children: Vec::new(), docs: DocAcc::new() });
+            self.stack.push(Level { start: self.row, count: 0, children: Vec::new(), docs: DocAcc::new() });
         }
-        for lv in self.stack.iter_mut().skip(keep) {
+        // THE CUT DEPTH: the deepest context of this row that lies wholly inside
+        // its document. Every level up to here is a NON-CROSSING occurrence.
+        let bd = (top as u64).min(avail) as usize;
+        for lv in self.stack.iter_mut().take(bd) {
+            lv.count += 1;
             lv.docs.add(doc);
         }
-        let parent = if top == 0 { &mut self.root } else { &mut self.stack[top - 1].children };
-        if top == m {
-            need(!parent.iter().any(|c| c.code == END), "builder: two END children for one context");
-            parent.insert(0, Child { code: END, start: self.row, count: 1, node: NO_NODE });
-        } else {
+        self.root_docs.add(doc);
+        let parent = if bd == 0 { &mut self.root } else { &mut self.stack[bd - 1].children };
+        if top < m && (top as u64) < avail {
+            // an in-document continuation: the content byte at pos+top (inside
+            // this row's document by the test above)
             let code = 1 + p[top] as u16;
             match parent.last_mut() {
                 Some(c) if c.code == code => c.count += 1,
@@ -587,6 +790,17 @@ impl Builder {
                 }
                 None => parent.push(Child { code, start: self.row, count: 1, node: NO_NODE }),
             }
+        } else {
+            // THE END BRANCH: either the suffix ends the corpus (rem <= depth:
+            // the one structural END) or the context of depth bd ends this row's
+            // DOCUMENT (the continuation byte - the next document's first byte, or
+            // the separator - is reclassified here, never counted as content).
+            // Several occurrences of one context can end documents, so an
+            // existing END child ACCUMULATES.
+            match parent.first_mut() {
+                Some(c) if c.code == END => c.count += 1,
+                _ => parent.insert(0, Child { code: END, start: self.row, count: 1, node: NO_NODE }),
+            }
         }
         self.prev.clear();
         self.prev.extend_from_slice(&p[..m]);
@@ -595,16 +809,25 @@ impl Builder {
 
     fn close_one(&mut self) {
         let lv = self.stack.pop().expect("builder: close on empty stack");
-        let span = self.row - lv.start;
         let depth = self.stack.len() + 1;
+        let count = lv.count;
         let parent = if depth == 1 { &mut self.root } else { &mut self.stack[depth - 2].children };
         let last = parent.last_mut().expect("builder: closing a node whose parent has no child");
         need(last.count == 0 && last.node == NO_NODE, "builder: child already closed");
-        last.count = span;
-        if span < self.min_support {
+        if count == 0 {
+            // EVERY occurrence of this context crossed a boundary: it is not a
+            // match anywhere in the corpus. The zero-count edge is dropped - a
+            // branch that never fired is noise the brute-force oracle does not
+            // have (and a reader must not be offered a content byte that no
+            // in-document occurrence ever took).
+            parent.pop();
             return;
         }
-        let id = self.emit_node(depth, span, &lv.children, &lv.docs);
+        last.count = count;
+        if count < self.min_support {
+            return;
+        }
+        let id = self.emit_node(depth, count, &lv.children, &lv.docs);
         let parent = if depth == 1 { &mut self.root } else { &mut self.stack[depth - 2].children };
         parent.last_mut().expect("builder: parent child vanished").node = id;
     }
@@ -713,6 +936,7 @@ impl Builder {
         put(&mut out[144..], root as u64, 8);
         put(&mut out[152..], self.source as u64, 8);
         put(&mut out[160..], self.source_mem, 8);
+        put(&mut out[168..], self.boundary_aware as u64, 8);
         let cols = secs.iter().map(|s| s.len() as u64).collect::<Vec<_>>();
         let mut c = [0u64; TRIE_SECTIONS];
         c.copy_from_slice(&cols);
@@ -749,6 +973,12 @@ pub struct Trie<'a> {
     pub edges: u64,
     pub source: u64,
     pub source_mem: u64,
+    /// 1 = every fed row was classified against its document's end: node counts are
+    /// NON-CROSSING occurrence counts and the END edge is "this context ends a
+    /// document (or the text)". 0 (also every member format < 3) = built without
+    /// a starts table; the histogram conflates crossing continuations with
+    /// content and boundary-sensitive queries against it are REFUSED.
+    pub boundary_aware: u64,
     root: u32,
     offs: [usize; TRIE_SECTIONS],
     starts: std::cell::OnceCell<Vec<u32>>,
@@ -831,6 +1061,7 @@ impl<'a> Trie<'a> {
             edges,
             source: get(&d[152..], 8),
             source_mem: get(&d[160..], 8),
+            boundary_aware: if ver >= 3 { get(&d[168..], 8) } else { 0 },
             root,
             offs,
             starts: std::cell::OnceCell::new(),
@@ -1511,10 +1742,18 @@ pub fn load_or_build_sa(
 }
 
 /// One ordered sweep -> one member payload.
+///
+/// `starts` is the boundary oracle: when present every suffix is CUT at its
+/// document's end before feeding (the no-cross law, by construction), the doc
+/// summary's ids are CONTAINER document ids, and the member records
+/// boundary_aware=1. When absent the build is the legacy conflated one and the
+/// member records boundary_aware=0.
+#[allow(clippy::too_many_arguments)]
 pub fn sweep(
     sa: &[u8],
     text: &[u8],
     ranks: &[u32],
+    starts: &OwnedStarts,
     corpus_len: u64,
     n: u64,
     rows: u64,
@@ -1526,6 +1765,10 @@ pub fn sweep(
 ) -> (Vec<u8>, u64, [u64; TRIE_SECTIONS]) {
     let mut b = Builder::new(depth, min_support, docs_min_support);
     b.set_source(source.0, source.1);
+    let aware = starts.is_some();
+    if aware {
+        b.set_boundary_aware();
+    }
     let dmax = depth as u64 + 1;
     let mut buf = [0u8; 128];
     let mut reads = 0u64;
@@ -1533,14 +1776,27 @@ pub fn sweep(
         let pos = sa_get(sa, row);
         need(pos <= corpus_len, "suffix array position");
         let rem = corpus_len - pos;
+        // the FULL prefix: the stream's sorted-order contract is untouched; the
+        // law is applied per row inside the builder (the cut is classification,
+        // never a stream edit)
         let m = rem.min(dmax) as usize;
         if m > 0 {
             let p = pos as usize;
             buf[..m].copy_from_slice(&text[p..p + m]);
             reads += 1;
         }
-        let doc = if docs && m > 0 && !ranks.is_empty() { doc_of(ranks, text, pos) } else { 0 };
-        b.feed(&buf, rem, doc);
+        let (avail, doc) = match starts.avail(pos, corpus_len) {
+            Some((doc, avail)) => (avail, doc),
+            None => (
+                u64::MAX,
+                if !aware && docs && m > 0 && !ranks.is_empty() {
+                    doc_of(ranks, text, pos)
+                } else {
+                    0
+                },
+            ),
+        };
+        b.feed(&buf, rem, avail, doc);
     }
     let (payload, cols) = b.finish(n, corpus_len);
     (payload, reads, cols)
@@ -1597,6 +1853,11 @@ pub struct TapArgs {
     pub sa: String,
     /// MEASUREMENT ONLY: stop after this many rows (0 = all).
     pub rows: u64,
+    /// THE BOUNDARY ORACLE: a document-starts table (a `--docs-map` directory
+    /// holding seps.bin, a CORPUS V2 `PREFIX.starts`, or a raw u64 `.starts`
+    /// file). Present = the trie is built boundary-aware (no-cross, by
+    /// construction). Absent = boundary_aware=0 in the member head.
+    pub doc_starts: String,
 }
 
 /// Rows per prefetch chunk: the corpus reads are random, so they are issued by a
@@ -1635,13 +1896,17 @@ fn tap_wait_opened(dir: &str, band: u64) -> bool {
 
 /// Feed one band's positions (in rank order) to the builder: the corpus reads are
 /// issued by `threads` workers per chunk, the builder consumes the chunk in order.
-/// Returns (rows fed, rows whose prefix was read).
+/// In a boundary-aware build each suffix is CUT AT ITS DOCUMENT'S END here (the
+/// `starts` oracle), so crossing contexts never enter deep nodes and a context
+/// that ends a document lands on the END branch. Returns (rows fed, rows whose
+/// prefix was read).
 #[allow(clippy::too_many_arguments)]
 fn tap_feed_band(
     b: &mut Builder,
     rows: &[u64],
     text: &[u8],
     ranks: &[u32],
+    starts: &OwnedStarts,
     corpus_len: u64,
     depth: usize,
     docs: bool,
@@ -1650,6 +1915,7 @@ fn tap_feed_band(
     pfx: &mut Vec<u8>,
     docs_buf: &mut Vec<u32>,
     ms: &mut Vec<u8>,
+    rems: &mut Vec<u64>,
 ) -> (u64, u64) {
     let w = depth + 1;
     let mut fed = 0u64;
@@ -1662,16 +1928,21 @@ fn tap_feed_band(
         docs_buf.resize(c, 0);
         ms.clear();
         ms.resize(c, 0);
+        rems.clear();
+        rems.resize(c, 0);
         // THE PREFIX READ, IN PARALLEL. One bounded random read per row from the
         // corpus mmap - the same read the post-hoc sweep makes, and the reason
         // the sweep cannot be merely multi-threaded (the STATE is sequential,
-        // the reads are not).
+        // the reads are not). In a boundary-aware build the same worker pays the
+        // rank/select that cuts the suffix at its document's end, so the oracle
+        // costs nothing on the sequential path.
         let nthreads = threads.clamp(1, 64).min(c.max(1));
         let step = (c + nthreads - 1) / nthreads.max(1);
         let mut rest_rows: &[u64] = chunk;
         let mut rest_pfx: &mut [u8] = pfx.as_mut_slice();
         let mut rest_docs: &mut [u32] = docs_buf.as_mut_slice();
         let mut rest_ms: &mut [u8] = ms.as_mut_slice();
+        let mut rest_rems: &mut [u64] = rems.as_mut_slice();
         std::thread::scope(|sc| {
             let mut hs = Vec::new();
             while !rest_rows.is_empty() {
@@ -1680,18 +1951,33 @@ fn tap_feed_band(
                 let (pfx_p, pfx_rest) = rest_pfx.split_at_mut(take * w);
                 let (d_p, d_rest) = rest_docs.split_at_mut(take);
                 let (m_p, m_rest) = rest_ms.split_at_mut(take);
+                let (r_p, r_rest) = rest_rems.split_at_mut(take);
                 hs.push(sc.spawn(move || {
                     for (j, &pos) in rows_p.iter().enumerate() {
                         need(pos <= corpus_len, "TRIE_TAP_POSITION suffix position above the corpus");
-                        let rem = corpus_len - pos;
-                        let m = (rem.min(w as u64)) as usize;
+                        let rem_full = corpus_len - pos;
+                        // avail = bytes from pos to the END of pos's document
+                        // (u64::MAX = no structure); the prefix read stays the
+                        // FULL depth+1 bytes because the law is applied per row
+                        // inside the builder, never by editing the stream
+                        let (avail, doc) = match starts.avail(pos, corpus_len) {
+                            Some((doc, avail)) => (avail, doc),
+                            None => (
+                                u64::MAX,
+                                if docs && !ranks.is_empty() {
+                                    doc_of_stride(ranks, text, pos, doc_stride)
+                                } else {
+                                    0
+                                },
+                            ),
+                        };
+                        r_p[j] = avail;
+                        let m = (rem_full.min(w as u64)) as usize;
                         m_p[j] = m as u8;
                         if m > 0 {
                             let p = pos as usize;
                             pfx_p[j * w..j * w + m].copy_from_slice(&text[p..p + m]);
-                            if docs && !ranks.is_empty() {
-                                d_p[j] = doc_of_stride(ranks, text, pos, doc_stride);
-                            }
+                            d_p[j] = doc;
                         }
                     }
                 }));
@@ -1699,6 +1985,7 @@ fn tap_feed_band(
                 rest_pfx = pfx_rest;
                 rest_docs = d_rest;
                 rest_ms = m_rest;
+                rest_rems = r_rest;
             }
             for h in hs {
                 h.join().expect("TRIE_TAP worker panicked");
@@ -1713,7 +2000,7 @@ fn tap_feed_band(
             if m > 0 {
                 reads += 1;
             }
-            b.feed(&pfx[j * w..j * w + m], rem, docs_buf[j]);
+            b.feed(&pfx[j * w..j * w + m], rem, rems[j], docs_buf[j]);
         }
         fed += c as u64;
     }
@@ -1730,16 +2017,22 @@ pub fn tap(a: &TapArgs) {
         &format!("ctx-tap: corpus {} is {flen} bytes but n={} was declared: a lite container's n is the corpus length + 1 (one END row)", a.corpus, a.n));
     let text = unsafe { Mmap::map(&tfile) }.unwrap_or_else(|e| die(&format!("ctx-tap: mmap {}: {e}", a.corpus)));
     let corpus_len = flen;
-    // the document summary needs the 0x1E span id per row: one u32 per DOC_STRIDE
-    // bytes of the ORIGINAL corpus (never the remap)
+    // THE BOUNDARY ORACLE (--doc-starts), loaded BEFORE any row is fed because it
+    // decides what the member IS: present = boundary-aware (every suffix cut at
+    // its document's end, so no crossing context ever enters a deep node and the
+    // END edge is "this context ends a document"); absent = the legacy
+    // conflated build, and the member head SAYS boundary_aware=0.
+    let starts = if a.doc_starts.is_empty() {
+        OwnedStarts::None
+    } else {
+        OwnedStarts::load(&a.doc_starts, corpus_len)
+    };
     let t_doc = std::time::Instant::now();
-    // The tail scan is paid PER ROW, so the tap buys a finer table than the
-    // post-hoc sweep does (the value is exact at any stride; only RAM moves).
-    // The tail scan is paid PER ROW and it is a SECOND random access (the prefix
-    // read is the first), so the tap buys a finer table than the post-hoc sweep
-    // does: the value is exact at any stride, only RAM and the scanned window move.
-    // 4 B per `stride` bytes of corpus: 32 B stride below 2^31 rows (n/8 bytes),
-    // 64 B below 2^36, 256 B (the post-hoc figure) above.
+    // The doc summary's ids: container document ids from the oracle when the
+    // build is boundary-aware (a real document, not a 0x1E span); the legacy
+    // per-stride 0x1E span table otherwise. 4 B per `stride` bytes of corpus:
+    // 32 B stride below 2^31 rows, 64 B below 2^36, 256 B (the post-hoc
+    // figure) above. The aware arm builds NO 0x1E table at all.
     let doc_stride = if a.n <= (1 << 31) {
         32
     } else if a.n <= (1 << 36) {
@@ -1747,13 +2040,21 @@ pub fn tap(a: &TapArgs) {
     } else {
         256
     };
-    let ranks = doc_ranks_stride(&text, doc_stride);
+    let ranks = if starts.is_some() {
+        Vec::new()
+    } else {
+        doc_ranks_stride(&text, doc_stride)
+    };
     let doc_wall = t_doc.elapsed().as_secs_f64();
     let mut b = Builder::new(a.depth, a.min_support, a.docs_min_support);
     b.set_source(SOURCE_IN_BUILD, 0);
+    if starts.is_some() {
+        b.set_boundary_aware();
+    }
     let mut pfx: Vec<u8> = Vec::new();
     let mut docs_buf: Vec<u32> = Vec::new();
     let mut ms: Vec<u8> = Vec::new();
+    let mut rems: Vec<u64> = Vec::new();
     if !a.sa.is_empty() {
         // THE MEASUREMENT ARM: the same rows, from a u40 suffix array instead of
         // the band stream. Same prefix reads, same builder, same member - so the
@@ -1771,7 +2072,7 @@ pub fn tap(a: &TapArgs) {
         while row < rows {
             let c = (rows - row).min(TAP_CHUNK as u64) as usize;
             let pos: Vec<u64> = (0..c).map(|j| sa_get(&sa, row + j as u64)).collect();
-            let (f2, r) = tap_feed_band(&mut b, &pos, &text, &ranks, corpus_len, a.depth, true, a.threads, doc_stride, &mut pfx, &mut docs_buf, &mut ms);
+            let (f2, r) = tap_feed_band(&mut b, &pos, &text, &ranks, &starts, corpus_len, a.depth, true, a.threads, doc_stride, &mut pfx, &mut docs_buf, &mut ms, &mut rems);
             need(f2 == c as u64, "ctx-tap: short feed");
             reads += r;
             row += c as u64;
@@ -1817,7 +2118,7 @@ pub fn tap(a: &TapArgs) {
             .collect();
         bandread_s += tr.elapsed().as_secs_f64();
         let tf = std::time::Instant::now();
-        let (f, r) = tap_feed_band(&mut b, &rows, &text, &ranks, corpus_len, a.depth, true, a.threads, doc_stride, &mut pfx, &mut docs_buf, &mut ms);
+        let (f, r) = tap_feed_band(&mut b, &rows, &text, &ranks, &starts, corpus_len, a.depth, true, a.threads, doc_stride, &mut pfx, &mut docs_buf, &mut ms, &mut rems);
         work_s += tf.elapsed().as_secs_f64();
         fed += f;
         reads += r;
@@ -1841,6 +2142,17 @@ pub fn tap(a: &TapArgs) {
     eprintln!(
         "CONTEXT_TRIE_DEPTH depth={} min_support={} nodes={} edges={} bytes={} ratio_vs_n={:.6} source=in-build build_s={build_s:.1}",
         trie.depth, trie.min_support, trie.nodes, trie.edges, payload.len(), ratio
+    );
+    eprintln!(
+        "CONTEXT_TRIE_BOUNDARY aware={} doc_starts={} docs_in_table={} law=no_match_may_cross_a_document_boundary \
+         note=\"aware=1: every fed row was classified against its document's end, so node counts are \
+         non-crossing occurrence counts, a crossing occurrence is counted nowhere, and the END \
+         edge is 'this context ends a document (or the text)'; aware=0: the histogram conflates \
+         crossing continuations with content and boundary-sensitive queries against it are \
+         refused\"",
+        trie.boundary_aware,
+        if a.doc_starts.is_empty() { "-" } else { &a.doc_starts },
+        starts.docs()
     );
     eprintln!(
         "CONTEXT_TRIE_COLUMNS node_fixed={} node_edge_delta={} node_count={} edge_code={} edge_child={} \
@@ -1931,6 +2243,7 @@ pub fn tap_selftest() {
                 n,
                 sa: String::new(),
                 rows: 0,
+                doc_starts: String::new(),
             });
             // the post-hoc sweep over the SAME order, same parameters, same source
             let mut sa = vec![0u8; order.len() * SA_ITEM];
@@ -1938,7 +2251,8 @@ pub fn tap_selftest() {
                 sa_put(&mut sa, i as u64, p);
             }
             let ranks = doc_ranks(t);
-            let (want, _, _) = sweep(&sa, t, &ranks, t.len() as u64, n, n, depth, k, true, 1,
+            let none = OwnedStarts::None;
+            let (want, _, _) = sweep(&sa, t, &ranks, &none, t.len() as u64, n, n, depth, k, true, 1,
                 (SOURCE_IN_BUILD, 0));
             let got = std::fs::read(&out).unwrap();
             need(got == want,
@@ -1951,7 +2265,113 @@ pub fn tap_selftest() {
             cases += 1;
         }
     }
-    println!("TAP_SELFTEST_DONE cases={cases} note=\"band stream == suffix array, member bytes identical\"");
+    // THE BOUNDARY-AWARE ARM: the same texts with METADATA starts (positions the
+    // content does not suggest), the tap reading a raw u64 `.starts` file and the
+    // sweep reading the same table in memory. The members must be byte-identical
+    // AND say boundary_aware=1, and a spot oracle checks END counts that the
+    // unaware arm could never produce (several occurrences of one context ending
+    // documents).
+    let mut cut_cases = 0u64;
+    for t in &texts {
+        let text_len = t.len() as u64;
+        let n = text_len + 1;
+        if text_len < 6 {
+            continue;
+        }
+        let starts_table: Vec<u64> = {
+            let mut s = vec![0u64, text_len / 3, (2 * text_len) / 3];
+            s.retain(|&x| x == 0 || (x > 0 && x < text_len));
+            s.dedup();
+            if s.len() != 3 {
+                continue;
+            }
+            s
+        };
+        let order = suffix_order(t);
+        for &(depth, k) in &[(8usize, 1u64), (4, 1), (5, 2)] {
+            // a FRESH band directory per case: the tap consumes (unlinks) the
+            // sorter's slices as it absorbs them, by design
+            let dir = std::env::temp_dir().join(format!("xsa-tapcut-{cut_cases}-{}-{depth}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            let corpus = dir.join("corpus.bin");
+            std::fs::write(&corpus, t).unwrap();
+            let starts_path = dir.join("doc.starts");
+            std::fs::write(&starts_path, starts_table.iter().flat_map(|&v| v.to_le_bytes()).collect::<Vec<u8>>()).unwrap();
+            let bands = dir.join("bands");
+            std::fs::create_dir_all(&bands).unwrap();
+            let mut at = 0usize;
+            let mut bno = 0u64;
+            let mut sizes = [2usize, 11, 5].iter().cycle();
+            while at < order.len() {
+                let take = (*sizes.next().unwrap()).min(order.len() - at);
+                let mut bytes = Vec::with_capacity(take * 8);
+                for &p in &order[at..at + take] {
+                    let sym = if p > 0 { t[p as usize - 1] } else { 0u8 };
+                    let w = (p & ((1u64 << 48) - 1)) | ((sym as u64) << 48);
+                    bytes.extend_from_slice(&w.to_le_bytes());
+                }
+                std::fs::write(bands.join(format!("band_{bno}.sa")), &bytes).unwrap();
+                std::fs::write(bands.join(format!("band_{bno}.opened")), b"\n").unwrap();
+                at += take;
+                bno += 1;
+            }
+            std::fs::write(bands.join("end"), format!("{bno}\n")).unwrap();
+            std::fs::write(bands.join("end.ready"), b"\n").unwrap();
+            let out = dir.join("m20.bin");
+            tap(&TapArgs {
+                bands: bands.to_string_lossy().to_string(),
+                corpus: corpus.to_string_lossy().to_string(),
+                out: out.to_string_lossy().to_string(),
+                depth,
+                min_support: k,
+                docs_min_support: 1,
+                threads: 2,
+                n,
+                sa: String::new(),
+                rows: 0,
+                doc_starts: starts_path.to_string_lossy().to_string(),
+            });
+            let mut sa = vec![0u8; order.len() * SA_ITEM];
+            for (i, &p) in order.iter().enumerate() {
+                sa_put(&mut sa, i as u64, p);
+            }
+            let oracle = OwnedStarts::Plain { starts: starts_table.clone(), text_len };
+            let (want, _, _) = sweep(&sa, t, &[], &oracle, text_len, n, n, depth, k, true, 1,
+                (SOURCE_IN_BUILD, 0));
+            let got = std::fs::read(&out).unwrap();
+            need(got == want,
+                &format!("TAP_SELFTEST(cut): the band stream and the suffix array built DIFFERENT boundary-aware members (text len {}, depth {depth}, k {k})",
+                    t.len()));
+            let trie = Trie::load(&got);
+            need(trie.boundary_aware == 1,
+                "TAP_SELFTEST(cut): the aware tap did not journal boundary_aware=1");
+            // spot oracle: at least one context must END a document on these
+            // fixtures (repeated patterns + mid-pattern starts), and its END edge
+            // must be exactly the count of doc-ending occurrences.
+            let want = reference_cut(t, &starts_table, depth, k);
+            let mut ends_checked = 0;
+            for (c, (_count, hist)) in want.iter() {
+                let Some(end_count) = hist.iter().find(|x| x.0 == END).map(|x| x.1) else {
+                    continue;
+                };
+                let node = trie.find(c).unwrap_or_else(|| die(&format!(
+                    "TAP_SELFTEST(cut): END-carrying context {:?} missing from the member", c)));
+                let st = trie.stat(node);
+                let got_end = st.children.iter().find(|x| x.code == END).map(|x| x.count)
+                    .unwrap_or_else(|| die(&format!(
+                        "TAP_SELFTEST(cut): context {:?} lost its END branch in the member", c)));
+                need(got_end == end_count,
+                    &format!("TAP_SELFTEST(cut): END count for {:?}: want {end_count} got {got_end}", c));
+                ends_checked += 1;
+            }
+            eprintln!("TAP_SELFTEST cut text_len={} depth={depth} min_support={k} bands={bno} nodes={} edges={} bytes={} identity=1 boundary_aware=1 end_branch_contexts={ends_checked}",
+                t.len(), trie.nodes, trie.edges, got.len());
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+        cut_cases += 1;
+    }
+    println!("TAP_SELFTEST_DONE cases={cases} cut_cases={cut_cases} note=\"band stream == suffix array, member bytes identical; the cut arm proves the same for the boundary-aware build\"");
 }
 
 pub fn build(a: &BuildArgs) {
@@ -1990,15 +2410,36 @@ pub fn build(a: &BuildArgs) {
     let (sa, sa_steps, sa_mode, dense_mem) = load_or_build_sa(&idx, a.threads, &a.sa_cache, a.dense);
     let sa_wall = t_sa.elapsed().as_secs_f64();
 
-    // 2. document ranks (original bytes)
+    // 2. document ranks (original bytes) — built ONLY for the boundary-unaware
+    //    arm; the aware arm takes container document ids from member m15.
     let t_doc = std::time::Instant::now();
-    let ranks = if a.docs { doc_ranks(&text) } else { Vec::new() };
+    // THE NO-CROSS LAW, POST-HOC ARM: the container's own member m15 (when present)
+    // is the boundary oracle, so a `ctx-build` over a v10 container produces the
+    // same boundary-aware member the in-build tap produced from the same map.
+    let starts = match crate::docstarts::DocStarts::from_container(&idx.reader) {
+        Some(ds) => {
+            need(ds.text_len + 1 == n,
+                "ctx-build: member m15 text_len does not match the container's n");
+            eprintln!("CONTEXT_TRIE_BOUNDARY aware=1 source=member-m15 docs={}", ds.docs);
+            OwnedStarts::Table(ds)
+        }
+        None => {
+            eprintln!(
+                "CONTEXT_TRIE_BOUNDARY aware=0 source=absent \
+                 note=\"no member m15: the trie is built boundary-unaware and boundary-sensitive \
+                 queries against it are refused; embed the starts (xsa build --docs-map DIR, or \
+                 xsa docstarts embed) and rebuild to make the no-cross law structural\""
+            );
+            OwnedStarts::None
+        }
+    };
+    let ranks = if a.docs && !starts.is_some() { doc_ranks(&text) } else { Vec::new() };
     let doc_wall = t_doc.elapsed().as_secs_f64();
 
     // 3. the sweep
     let t_sweep = std::time::Instant::now();
     let stream_mem = sa.len() as u64 + dense_mem;
-    let (payload, reads, cols) = sweep(&sa, &text, &ranks, corpus_len, n, rows, a.depth, a.min_support, a.docs, a.docs_min_support, (sa_mode, stream_mem));
+    let (payload, reads, cols) = sweep(&sa, &text, &ranks, &starts, corpus_len, n, rows, a.depth, a.min_support, a.docs, a.docs_min_support, (sa_mode, stream_mem));
     let sweep_wall = t_sweep.elapsed().as_secs_f64();
 
     // 4. write the container: the old members, then m20, then a v9 directory.
@@ -2240,8 +2681,8 @@ pub fn trie_member_report(path: &str, out: Option<&str>) {
     if let Some(o) = out {
         std::fs::write(o, m).unwrap_or_else(|e| die(&format!("write {o}: {e}")));
     }
-    println!("TRIE_MEMBER path={path} bytes={} sha256={full} sha256_noprov={np} prov_offset={po} prov_len={pl} source={source} source_mem={source_mem}",
-        m.len());
+    println!("TRIE_MEMBER path={path} bytes={} sha256={full} sha256_noprov={np} prov_offset={po} prov_len={pl} source={source} source_mem={source_mem} boundary_aware={}",
+        m.len(), get(&m[168..], 8));
 }
 
 // ----------------------------------------------------------------- the commands
@@ -2292,6 +2733,34 @@ fn load_trie<'a>(reader: &'a qlite::Reader) -> Trie<'a> {
 
 fn open_reader(path: &str) -> qlite::Reader {
     qlite::Reader::open(path).unwrap_or_else(|e| die(&format!("{e}")))
+}
+
+/// THE QUERY-SIDE OF THE NO-CROSS LAW. A boundary-UNAWARE m20 conflates
+/// cross-boundary continuations with content (an occurrence that ends a
+/// document counts the next document's first byte as a content branch), so a
+/// boundary-sensitive answer against it is REFUSED rather than returned
+/// silently; `--cross-doc` is the explicit opt-in to the conflated answer. A
+/// boundary-AWARE member cannot represent the conflated answer at all, so
+/// `--cross-doc` on one is refused too - never a silent semantic switch.
+fn trie_boundary_gate(trie: &Trie, cross_doc: bool, what: &str) {
+    if trie.boundary_aware == 0 && !cross_doc {
+        die(&format!(
+            "CONTEXT_TRIE: refusing {what}: this container's m20 is boundary-UNAWARE \
+             (boundary_aware=0: built without a document-starts table), so the answer would \
+             CONFLATE cross-boundary continuations with content - an occurrence that ends a \
+             document counts the next document's first byte as a content branch. Opt in \
+             explicitly with --cross-doc, or rebuild the trie against a starts table \
+             (`xsa build --docs-map DIR`, or `xsa ctx-build` over a container that carries \
+             member m15) so the no-cross law holds by construction."
+        ));
+    }
+    if trie.boundary_aware == 1 && cross_doc {
+        die(
+            "CONTEXT_TRIE: --cross-doc on a boundary-AWARE trie: the member cannot represent \
+             crossing continuations (they were reclassified to the END branch at build time); \
+             query it without --cross-doc",
+        );
+    }
 }
 
 pub fn command(cmd: &str, args: &[String]) {
@@ -2350,10 +2819,13 @@ pub fn command(cmd: &str, args: &[String]) {
         "branch-of" if args.iter().any(|a| a == "--batch") => batch("branch-of", args),
         "relax" if args.iter().any(|a| a == "--batch") => batch("relax", args),
         "branch-of" => {
-            need(args.len() == 2, "usage: xsa branch-of <container> <context>   (context: text with \\xHH escapes, or hex:...)");
-            let reader = open_reader(&args[0]);
-            let pat = parse_context(&args[1]);
+            let pos: Vec<&String> = args.iter().filter(|a| !a.starts_with("--")).collect();
+            let cross_doc = args.iter().any(|a| a == "--cross-doc");
+            need(pos.len() == 2, "usage: xsa branch-of <container> <context> [--cross-doc]   (context: text with \\xHH escapes, or hex:...)");
+            let reader = open_reader(pos[0]);
+            let pat = parse_context(pos[1]);
             let trie = load_trie(&reader);
+            trie_boundary_gate(&trie, cross_doc, "the branch histogram");
             match trie.find(&pat) {
                 None => println!("absent depth={} context_len={}", trie.depth, pat.len()),
                 Some(node) => {
@@ -2367,10 +2839,13 @@ pub fn command(cmd: &str, args: &[String]) {
             }
         }
         "trie-stat" => {
-            need(args.len() == 2, "usage: xsa trie-stat <container> <context>");
-            let reader = open_reader(&args[0]);
-            let pat = parse_context(&args[1]);
+            let pos: Vec<&String> = args.iter().filter(|a| !a.starts_with("--")).collect();
+            let cross_doc = args.iter().any(|a| a == "--cross-doc");
+            need(pos.len() == 2, "usage: xsa trie-stat <container> <context> [--cross-doc]");
+            let reader = open_reader(pos[0]);
+            let pat = parse_context(pos[1]);
             let trie = load_trie(&reader);
+            trie_boundary_gate(&trie, cross_doc, "the occurrence count (non-crossing vs conflated)");
             match trie.find(&pat) {
                 None => println!("absent depth={} context_len={}", trie.depth, pat.len()),
                 Some(node) => {
@@ -2382,10 +2857,13 @@ pub fn command(cmd: &str, args: &[String]) {
             }
         }
         "relax" => {
-            need(args.len() == 2, "usage: xsa relax <container> <context>   (descend as far as the trie supports it)");
-            let reader = open_reader(&args[0]);
-            let pat = parse_context(&args[1]);
+            let pos: Vec<&String> = args.iter().filter(|a| !a.starts_with("--")).collect();
+            let cross_doc = args.iter().any(|a| a == "--cross-doc");
+            need(pos.len() == 2, "usage: xsa relax <container> <context> [--cross-doc]   (descend as far as the trie supports it)");
+            let reader = open_reader(pos[0]);
+            let pat = parse_context(pos[1]);
             let trie = load_trie(&reader);
+            trie_boundary_gate(&trie, cross_doc, "the relaxed descent (counts and branches)");
             let (node, reached) = trie.descend(&pat);
             let st = trie.stat(node);
             println!("reached_depth={reached} asked={} count={} documents={} children={}",
@@ -2420,6 +2898,7 @@ pub fn command(cmd: &str, args: &[String]) {
                 n: 0,
                 sa: String::new(),
                 rows: 0,
+                doc_starts: String::new(),
             };
             let mut i = 0;
             while i < args.len() {
@@ -2437,6 +2916,7 @@ pub fn command(cmd: &str, args: &[String]) {
                     "--docs-min-support" => a.docs_min_support = val("--docs-min-support").parse().unwrap_or_else(|_| die("--docs-min-support: integer")),
                     "--threads" => a.threads = val("--threads").parse().unwrap_or_else(|_| die("--threads: integer")),
                     "--n" => a.n = val("--n").parse().unwrap_or_else(|_| die("--n: integer")),
+                    "--doc-starts" => a.doc_starts = val("--doc-starts"),
                     "--sa" => a.sa = val("--sa"),
                     "--rows" => a.rows = val("--rows").parse().unwrap_or_else(|_| die("--rows: integer")),
                     other => die(&format!("ctx-tap: unknown option {other}")),
@@ -2445,7 +2925,8 @@ pub fn command(cmd: &str, args: &[String]) {
             }
             need((!a.bands.is_empty() || !a.sa.is_empty()) && !a.corpus.is_empty() && !a.out.is_empty() && a.n > 0,
                 "usage: xsa ctx-tap --bands <dir> --corpus <file> --out <payload> --n <rows> \
-                 [--depth D] [--min-support K] [--docs-min-support M] [--threads N]");
+                 [--depth D] [--min-support K] [--docs-min-support M] [--threads N] \
+                 [--doc-starts DIR|FILE] (a starts table: boundary-aware by construction)");
             tap(&a);
         }
         "trie-member" => {
@@ -2486,6 +2967,7 @@ fn verify(args: &[String]) {
     let mut seed = 20261110u64;
     let mut given: Vec<String> = Vec::new();
     let mut sample_nodes = 0usize;
+    let mut cross_doc = false;
     let mut i = 0;
     while i < args.len() {
         let f = args[i].as_str();
@@ -2500,13 +2982,35 @@ fn verify(args: &[String]) {
             "--seed" => seed = val("--seed").parse().unwrap_or_else(|_| die("--seed: integer")),
             "--context" => given.push(val("--context")),
             "--sample-nodes" => sample_nodes = val("--sample-nodes").parse().unwrap_or_else(|_| die("--sample-nodes")),
+            "--cross-doc" => cross_doc = true,
             other => die(&format!("ctx-verify: unknown option {other}")),
         }
         i += 1;
     }
-    need(!sxi.is_empty() && !text.is_empty(), "usage: xsa ctx-verify --sxi X --text C [--samples 50] [--seed S] [--context CTX]...");
+    need(!sxi.is_empty() && !text.is_empty(), "usage: xsa ctx-verify --sxi X --text C [--samples 50] [--seed S] [--context CTX]... [--cross-doc]");
     let reader = open_reader(&sxi);
     let trie = load_trie(&reader);
+    trie_boundary_gate(&trie, cross_doc, "the exactness gate's brute histogram");
+    // THE LAW, VERIFIED WITH THE SAME ORACLE THE BUILDER USED: a boundary-aware
+    // member must be checked against a boundary-aware corpus scan (the container
+    // carries m15 by construction - an aware m20 without m15 is an inconsistent
+    // member and is refused), and an unaware member against the legacy conflated
+    // scan (only under --cross-doc, per the gate above).
+    let starts = if trie.boundary_aware == 1 {
+        match crate::docstarts::DocStarts::from_container(&reader) {
+            Some(ds) => {
+                need(ds.text_len + 1 == trie.n, "ctx-verify: member m15 text_len disagrees with n");
+                OwnedStarts::Table(ds)
+            }
+            None => die(
+                "ctx-verify: the m20 member says boundary_aware=1 but the container carries no \
+                 member m15: an aware trie without its starts table cannot be verified (or trusted)",
+            ),
+        }
+    } else {
+        OwnedStarts::None
+    };
+    let aware = trie.boundary_aware == 1;
     let tfile = std::fs::File::open(&text).unwrap_or_else(|e| die(&format!("open {text}: {e}")));
     let tlen = tfile.metadata().unwrap().len();
     need(tlen + 1 == trie.n, "corpus length + 1 != the trie's n");
@@ -2597,6 +3101,25 @@ fn verify(args: &[String]) {
                 None => h.push((sym, 1)),
             }
         };
+        // classify one verified occurrence at `p` of context `c` under the law
+        let mut classify = |p: usize, c: &[u8]| -> Option<u16> {
+            let q = p + c.len();
+            if q == clen {
+                return Some(END);
+            }
+            if aware {
+                // crossing match: rank(p) != rank(q-1) - a document starts inside
+                // (p, q-1] - the occurrence is NOT a match at all
+                if starts.rank_start(q as u64 - 1).1 > p as u64 {
+                    return None;
+                }
+                // the END branch: q is a document start
+                if starts.is_start(q as u64) {
+                    return Some(END);
+                }
+            }
+            Some(1 + corpus[q] as u16)
+        };
         let mut p = 0usize;
         while p + 4 <= clen {
             let k = u32::from_le_bytes([corpus[p], corpus[p + 1], corpus[p + 2], corpus[p + 3]]);
@@ -2604,8 +3127,9 @@ fn verify(args: &[String]) {
                 for &id in ids {
                     let c = &ctxs[id];
                     if p + c.len() <= clen && &corpus[p..p + c.len()] == &c[..] {
-                        let sym = if p + c.len() == clen { END } else { 1 + corpus[p + c.len()] as u16 };
-                        bump(id, sym);
+                        if let Some(sym) = classify(p, c) {
+                            bump(id, sym);
+                        }
                     }
                 }
             }
@@ -2616,8 +3140,9 @@ fn verify(args: &[String]) {
             let mut p = 0usize;
             while p + c.len() <= clen {
                 if &corpus[p..p + c.len()] == &c[..] {
-                    let sym = if p + c.len() == clen { END } else { 1 + corpus[p + c.len()] as u16 };
-                    bump(id, sym);
+                    if let Some(sym) = classify(p, c) {
+                        bump(id, sym);
+                    }
                 }
                 p += 1;
             }
@@ -2721,7 +3246,7 @@ fn curve(args: &[String]) {
     for &d in &depths {
         for &k in &supports {
             let t0 = std::time::Instant::now();
-            let (payload, _, cols) = sweep(&sa, &corpus, &ranks, flen, n, n, d, k, docs, docs_min_support, (0, sa.len() as u64));
+            let (payload, _, cols) = sweep(&sa, &corpus, &ranks, &OwnedStarts::None, flen, n, n, d, k, docs, docs_min_support, (0, sa.len() as u64));
             let trie = Trie::load(&payload);
             let ratio = payload.len() as f64 / n as f64;
             let per_node = payload.len() as f64 / trie.nodes.max(1) as f64;
@@ -2743,6 +3268,7 @@ fn relax_stat(args: &[String]) {
     let mut samples = 1000usize;
     let mut ctx_len = 16usize;
     let mut seed = 20261110u64;
+    let mut cross_doc = false;
     let mut i = 0;
     while i < args.len() {
         let f = args[i].as_str();
@@ -2756,12 +3282,14 @@ fn relax_stat(args: &[String]) {
             "--samples" => samples = val("--samples").parse().unwrap_or_else(|_| die("--samples")),
             "--ctx-len" => ctx_len = val("--ctx-len").parse().unwrap_or_else(|_| die("--ctx-len")),
             "--seed" => seed = val("--seed").parse().unwrap_or_else(|_| die("--seed")),
+            "--cross-doc" => cross_doc = true,
             other => die(&format!("relax-stat: unknown option {other}")),
         }
         i += 1;
     }
     let reader = open_reader(&sxi);
     let trie = load_trie(&reader);
+    trie_boundary_gate(&trie, cross_doc, "relax-stat's support statistics");
     let tf = std::fs::File::open(&text).unwrap_or_else(|e| die(&format!("open {text}: {e}")));
     let corpus = unsafe { Mmap::map(&tf) }.unwrap_or_else(|e| die(&format!("mmap {text}: {e}")));
     let clen = corpus.len();
@@ -2806,6 +3334,7 @@ fn relax_stat(args: &[String]) {
 fn batch(op: &str, args: &[String]) {
     let mut sxi = String::new();
     let mut path = String::new();
+    let mut cross_doc = false;
     let mut i = 0;
     while i < args.len() {
         let f = args[i].as_str();
@@ -2814,15 +3343,17 @@ fn batch(op: &str, args: &[String]) {
                 i += 1;
                 path = match args.get(i) { Some(v) => v.clone(), None => die("--batch needs a file") };
             }
+            "--cross-doc" => cross_doc = true,
             other if !other.starts_with("--") && sxi.is_empty() => sxi = other.to_string(),
-            other => die(&format!("{op} --batch: unknown argument {other} (it takes a container and --batch FILE; no corpus)")),
+            other => die(&format!("{op} --batch: unknown argument {other} (it takes a container, --batch FILE and optionally --cross-doc; no corpus)")),
         }
         i += 1;
     }
     need(!sxi.is_empty() && !path.is_empty(),
-        &format!("usage: xsa {op} <container> --batch <contexts.bin>"));
+        &format!("usage: xsa {op} <container> --batch <contexts.bin> [--cross-doc]"));
     let reader = open_reader(&sxi);
     let trie = load_trie(&reader);
+    trie_boundary_gate(&trie, cross_doc, "the batch answers (counts and branch histograms)");
     let data = std::fs::read(&path).unwrap_or_else(|e| die(&format!("read {path}: {e}")));
     let mut ctxs: Vec<&[u8]> = data.split(|&b| b == 0x1e).collect();
     while ctxs.last().map_or(false, |v| v.is_empty()) {
@@ -3040,6 +3571,57 @@ fn reference(t: &[u8], depth: usize, k: u64) -> std::collections::BTreeMap<Vec<u
     m
 }
 
+/// The BOUNDARY-AWARE brute-force oracle (the no-cross law, no builder code):
+/// every occurrence is classified against its document's end exactly as the
+/// builder's feed does, so the comparison checks the LAW and not just the
+/// implementation.
+/// `starts` is a strictly increasing, 0-starting table of document starts.
+fn reference_cut(
+    t: &[u8],
+    starts: &[u64],
+    depth: usize,
+    k: u64,
+) -> std::collections::BTreeMap<Vec<u8>, (u64, Vec<(u16, u64)>)> {
+    let n = t.len() as u64;
+    let mut m: std::collections::BTreeMap<Vec<u8>, (u64, Vec<(u16, u64)>)> = Default::default();
+    for d in 1..=depth {
+        for p in 0..=t.len() {
+            let p = p as u64;
+            // the document containing p: its end is the next start (or the text end)
+            let doc = starts.partition_point(|&s| s <= p) as u64 - 1;
+            let next = starts
+                .get(doc as usize + 1)
+                .copied()
+                .unwrap_or(u64::MAX)
+                .min(n);
+            let avail = next - p;
+            if d as u64 > avail {
+                continue; // the context would CROSS the boundary: not an occurrence
+            }
+            let c = t[p as usize..p as usize + d].to_vec();
+            let q = p + d as u64;
+            let sym = if q == n {
+                END
+            } else if starts.binary_search(&q).is_ok() {
+                END // q is a document start: "this context ends a document"
+            } else {
+                1 + t[q as usize] as u16
+            };
+            let e = m.entry(c).or_insert((0, Vec::new()));
+            e.0 += 1;
+            match e.1.iter_mut().find(|x| x.0 == sym) {
+                Some(x) => x.1 += 1,
+                None => e.1.push((sym, 1)),
+            }
+        }
+    }
+    m.retain(|_, v| {
+        v.1.sort_unstable();
+        v.0 >= k
+    });
+    m
+}
+
 pub fn selftest() {
     // --- the packed array codec: adversarial values, exact round trip
     let mut cases = 0u64;
@@ -3110,7 +3692,7 @@ pub fn selftest() {
                     let rem = (t.len() - p) as u64;
                     let m = (rem.min(depth as u64 + 1)) as usize;
                     buf[..m].copy_from_slice(&t[p..p + m]);
-                    b.feed(&buf, rem, 0);
+                    b.feed(&buf, rem, u64::MAX, 0);
                 }
                 let (payload, _) = b.finish(t.len() as u64 + 1, t.len() as u64);
                 let trie = Trie::load(&payload);
@@ -3146,5 +3728,83 @@ pub fn selftest() {
             }
         }
     }
-    println!("CTX_SELFTEST pack_cases={cases} pack_values={values} texts={} contexts={contexts}", texts.len());
+    // --- the builder against the BOUNDARY-AWARE brute-force oracle: the no-cross
+    // law, node by node. The starts tables are METADATA placed at bytes the
+    // content does not suggest (including inside repeated patterns, so many
+    // contexts END documents and their continuations must land on the END branch,
+    // never on the next document's first byte).
+    let mut cut_contexts = 0u64;
+    let mut cut_nodes = 0u64;
+    for t in &texts {
+        let n = t.len() as u64;
+        if n == 0 {
+            continue;
+        }
+        let mut tables: Vec<Vec<u64>> = vec![vec![0u64]];
+        for &(a, b) in &[(1u64, 2u64), (1, 3), (3, 4), (2, 5)] {
+            // 0 is the mandatory first start; the interior starts must be
+            // strictly inside the text (0 < s < n) and distinct from 0
+            let mut s = vec![0u64, (n * a).div_ceil(a + b), (n * b).div_ceil(a + b)];
+            s.retain(|&x| x == 0 || (x > 0 && x < n));
+            s.dedup();
+            if s.len() == 3 {
+                tables.push(s);
+            }
+        }
+        for table in &tables {
+            let oracle = OwnedStarts::Plain { starts: table.clone(), text_len: n };
+            for &depth in &[1usize, 2, 3, 5, 8, 32] {
+                for &k in &[1u64, 2, 3, 1000] {
+                    let order = suffix_order(t);
+                    let mut b = Builder::new(depth, k, 0);
+                    b.set_boundary_aware();
+                    let mut buf = vec![0u8; depth + 1];
+                    for &p in &order {
+                        let rem_full = n - p;
+                        // avail: bytes to the END of p's document (u64::MAX for
+                        // the virtual END row); the prefix stays FULL - the law is
+                        // classification, never a stream edit
+                        let avail = if p >= n {
+                            u64::MAX
+                        } else {
+                            let doc = table.partition_point(|&s| s <= p) as u64 - 1;
+                            table
+                                .get(doc as usize + 1)
+                                .copied()
+                                .unwrap_or(u64::MAX)
+                                .min(n)
+                                - p
+                        };
+                        let m = (rem_full.min(depth as u64 + 1)) as usize;
+                        buf[..m].copy_from_slice(&t[p as usize..p as usize + m]);
+                        let doc = if p >= n { 0 } else { table.partition_point(|&s| s <= p) - 1 };
+                        b.feed(&buf, rem_full, avail, doc as u32);
+                    }
+                    let (payload, _) = b.finish(n + 1, n);
+                    let trie = Trie::load(&payload);
+                    need(trie.boundary_aware == 1, "selftest: aware build did not journal boundary_aware");
+                    need(trie.count(trie.root()) == n + 1, "aware root count must be n");
+                    let want = reference_cut(t, table, depth, k);
+                    for (c, (count, hist)) in want.iter() {
+                        let node = trie
+                            .find(c)
+                            .unwrap_or_else(|| die(&format!(
+                                "selftest(cut): context {:?} missing (len {} t={:?} starts={:?} d={depth} k={k})",
+                                c, c.len(), String::from_utf8_lossy(t), table, )));
+                        let st = trie.stat(node);
+                        let got: Vec<(u16, u64)> = st.children.iter().map(|x| (x.code, x.count)).collect();
+                        need(st.count == *count && &got == hist,
+                            &format!(
+                                "selftest(cut): context {:?} count want={count} got={} hist want={:?} got={:?} \
+                                 (len={} depth={depth} k={k} starts={:?} t={:?})",
+                                c, st.count, hist, got, t.len(), table, String::from_utf8_lossy(t)));
+                        cut_contexts += 1;
+                    }
+                    cut_nodes += trie.nodes;
+                }
+            }
+        }
+    }
+    println!("CTX_SELFTEST pack_cases={cases} pack_values={values} texts={} contexts={} cut_contexts={} cut_nodes={}",
+        texts.len(), contexts, cut_contexts, cut_nodes);
 }

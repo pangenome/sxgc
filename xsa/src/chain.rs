@@ -2707,7 +2707,18 @@ headline=LCP-over-runs",
     // paused, or the sorter would stall with nothing able to free the space.
     let trie_running = if trie_on {
         let exe = std::env::current_exe().map_err(|e| format!("ctx-tap: current_exe: {e}"))?;
-        let tap_args = vec![
+        // THE NO-CROSS LAW, IN-BUILD: --docs-map names a starts table, so the trie
+        // is built boundary-aware (crossing occurrences counted nowhere, the END
+        // edge "this context ends a document"). The PileMap arm passes the map
+        // directory (the tap loads seps.bin); the CORPUS V2 arm passes the pair's
+        // `.starts`. Without a map the tap builds the legacy conflated member and
+        // the member head says boundary_aware=0 (query side refuses it).
+        let trie_doc_starts: Option<String> = match &options.docs_map {
+            Some(DocsMapArg::PileMap(dir)) => Some(s(&dir.to_string_lossy())),
+            Some(DocsMapArg::CorpusV2(prefix)) => Some(format!("{}.starts", prefix.display())),
+            None => None,
+        };
+        let mut tap_args = vec![
             "ctx-tap".into(),
             "--bands".into(), s(&bands_dir.to_string_lossy()),
             "--corpus".into(), s(&input.to_string_lossy()),
@@ -2720,6 +2731,15 @@ headline=LCP-over-runs",
             "--docs-min-support".into(), options.trie_docs_min_support.to_string(),
             "--threads".into(), options.threads.to_string(),
         ];
+        if let Some(path) = &trie_doc_starts {
+            tap_args.push("--doc-starts".into());
+            tap_args.push(path.clone());
+        }
+        journal.line(&format!(
+            "CONTEXT_TRIE_BOUNDARY_POLICY aware={} doc_starts={} law=no_match_may_cross_a_document_boundary",
+            u8::from(trie_doc_starts.is_some()),
+            trie_doc_starts.as_deref().unwrap_or("-"),
+        ));
         let exe_s = s(&exe.to_string_lossy());
         Some(spawn_phase(journal, scratch, "ctx-tap", finish_as_kb, &exe_s, &tap_args, &[])?)
     } else { None };
@@ -2746,7 +2766,7 @@ headline=LCP-over-runs",
         let td = require_log_contains(scratch, "ctx-tap", "CONTEXT_TRIE_DEPTH")?;
         journal.line(&td);
         journal.line(&format!("CONTEXT_TRIE_BUILD_WALL total_s={:.1}", trie_t0.elapsed().as_secs_f64()));
-        for tag in ["CONTEXT_TRIE_COLUMNS", "CONTEXT_TRIE_TAP", "CONTEXT_TRIE_BUDGET"] {
+        for tag in ["CONTEXT_TRIE_COLUMNS", "CONTEXT_TRIE_TAP", "CONTEXT_TRIE_BUDGET", "CONTEXT_TRIE_BOUNDARY"] {
             let line = require_log_contains(scratch, "ctx-tap", tag)?;
             journal.line(&line);
         }
