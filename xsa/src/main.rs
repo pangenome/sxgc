@@ -23,6 +23,7 @@ mod forks;
 mod corpus;
 mod pilemap;
 mod corpusv2;
+mod docstarts;
 
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
@@ -1381,9 +1382,13 @@ fn usage() -> ! {
     eprintln!();
     eprintln!("usage:");
     eprintln!("  xsa build --tape --input <file> --scratch <dir> [--threads N] [--memory-gb N]");
-    eprintln!("           [--docs-map PREFIX]   the input is a CORPUS V2 cache: validate the");
-    eprintln!("           sidecar pair at PREFIX and journal CONTAINER_DOCS_V2 (query resolves");
-    eprintln!("           doc_id/offset_in_doc through the V2 tables; CORPUS_V2.md 6)");
+    eprintln!("           [--docs-map X]  X is a DIR holding seps.bin: embed m15, the document");
+    eprintln!("           starts (SXI2 v10, boundaries as METADATA); X is a PREFIX holding the");
+    eprintln!("           CORPUS V2 sidecar pair: validate it and journal CONTAINER_DOCS_V2");
+    eprintln!("           (query resolves doc_id/offset_in_doc through the V2 tables; CORPUS_V2.md 6)");
+    eprintln!("  xsa docstarts embed|verify|probe|info - document starts as container member m15");
+    eprintln!("           (SXI2 v10): `embed` adds it from a map, `verify` is the rank/select parity");
+    eprintln!("           gate against seps.bin, `probe` answers rank/select for a positions file");
     eprintln!("  xsa mem <container> <query> [-k N] [--min-len N] [--docs DIR] [--limit N] [--jsonl] [--all-mems]");
     eprintln!("           maximal exact matches of <query>: interval widths + bounded positions;");
     eprintln!("           default is the single longest MEM, --all-mems reports every one;");
@@ -1503,6 +1508,7 @@ fn main() {
     match args.first().map(|s| s.as_str()) {
         Some("build") => build::command(&args[1..]),
         Some("sxi-info") => sxi::command(&args[1..]),
+        Some("docstarts") => docstarts::command(&args[1..]),
         Some("ctx-build") | Some("branch-of") | Some("trie-stat") | Some("trie-info")
         | Some("ctx-verify") | Some("ctx-selftest") | Some("ctx-curve") | Some("relax") | Some("relax-stat") | Some("trie-bench")
         | Some("ctx-tap") | Some("trie-member") | Some("ctx-tap-selftest") => ctx::command(&args[0], &args[1..]),

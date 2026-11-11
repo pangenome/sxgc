@@ -417,6 +417,14 @@ pub fn describe_format(path: &str) -> String {
         b"SXI2" if version == 8 => {
             format!("{path}: SXI2 v8 lite container (incremental layout + m14 LCP over runs)")
         }
+        b"SXI2" if version == 9 => {
+            format!("{path}: SXI2 v9 lite container (incremental layout + m20 context trie)")
+        }
+        b"SXI2" if version == 10 => {
+            format!(
+                "{path}: SXI2 v10 lite container (incremental layout + m15 document starts)"
+            )
+        }
         b"SXI2" => format!("{path}: SXI2 v{version} (phi-era container)"),
         b"SXI1" => format!("{path}: SXI1 v{version} container"),
         b"ISXR" => format!("{path}: .ri4 v{version} flat index"),
@@ -444,11 +452,12 @@ impl Reader {
         // payload. v6 stays readable: same members, directory at 64.
         let tail_dir = version >= 7;
         // v8 = v7's incremental layout + member m14 (the LCP over runs);
-        // v9 = v8 + member m20 (the context trie). The LAYOUT is v7's verbatim
-        // (trailing member directory, m1 codec 116) for all three: the version says
-        // only "there are more members, and the flags declare them", so a reader
-        // that needs neither m14 nor m20 needs nothing else.
-        if !(6..=9).contains(&version) {
+        // v9 = v8 + member m20 (the context trie); v10 = v9 + member m15 (the
+        // document starts). The LAYOUT is v7's verbatim (trailing member
+        // directory, m1 codec 116) for all four: the version says only "there
+        // are more members, and the flags declare them", so a reader that
+        // needs neither m14 nor m20 nor m15 needs nothing else.
+        if !(6..=10).contains(&version) {
             return Err(format!("{} is not a queryable index", describe_format(path)));
         }
         let u32at = |o: usize| u32::from_le_bytes(h[o..o + 4].try_into().unwrap());
@@ -464,12 +473,13 @@ impl Reader {
                 map.len()
             ));
         }
-        // 9 slots is the block-compressed lite shape with m14 or m20
-        // (m1,m4,m5,m7,m10,m11,m12,m13,+14|20); anything outside 5..=9 is not a lite
-        // container. v6 and v7 containers hold 5..=8 and stay readable.
-        if !(5..=9).contains(&count) || hs != 64 + 40 * count as usize {
+        // 10 slots is the block-compressed lite shape with m14, m20 and m15
+        // (m1,m4,m5,m7,m10,m11,m12,m13,+14|20|15); anything outside 5..=10 is not
+        // a lite container. v6..v9 containers hold 5..=9 members and stay
+        // readable.
+        if !(5..=10).contains(&count) || hs != 64 + 40 * count as usize {
             return Err(format!(
-                "{path}: v6 directory must hold 5-8 members (found {count})"
+                "{path}: v6 directory must hold 5-10 members (found {count})"
             ));
         }
         if n == 0 || r == 0 || r > n {
@@ -3659,6 +3669,9 @@ impl Reader {
     }
     /// The open container's mapping (read-only).
     pub fn map(&self) -> &[u8] { &self.map }
+    /// The mapping as an Arc, so a member parser (m15: document starts) can
+    /// hold it beyond this reader's borrow and nothing per-document is copied.
+    pub fn map_arc(&self) -> std::sync::Arc<Mmap> { self.map.clone() }
 }
 
 impl Index {

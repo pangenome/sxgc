@@ -2158,6 +2158,9 @@ pub fn append_m20(path: &str, payload: &[u8], n: u64) -> u64 {
     let reader = qlite::Reader::open(path).unwrap_or_else(|e| die(&format!("trie append: {e}")));
     need(reader.member_bytes(TRIE_CODEC).is_none(),
         &format!("trie append: {path} already carries m20"));
+    need(reader.members.iter().all(|m| m.id != 15),
+        &format!("trie append: {path} carries member m15 (document starts; SXI2 v{}); appending m20 \n             here would rewrite the version as 9 and strand m15 - build with --trie and \n             --docs-map in one `xsa build`, or embed m15 after m20",
+            reader.version));
     let count = reader.members.len();
     let length = std::fs::metadata(path).unwrap().len();
     let dir_start = length - 40 * count as u64;
