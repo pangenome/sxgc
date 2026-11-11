@@ -93,10 +93,13 @@ impl Container {
         }
         rd(&mut f, &mut b[4..]);
         let version = u32at(&b,4);
-        need((&b[..4]==b"SXI1" && version==1) || (&b[..4]==b"SXI2" && (2..=7).contains(&version)), "unsupported version");
+        need((&b[..4]==b"SXI1" && version==1) || (&b[..4]==b"SXI2" && (2..=10).contains(&version)), "unsupported version");
         // v7 = the INCREMENTAL (streaming) layout: member bytes are appended in
         // stream order and the member directory is a TRAILING section at
         // length-40*count. Everything else about the container is v6's.
+        // v8 = v7 + m14 (LCP over runs); v9 = v8 + m20 (the context trie);
+        // v10 = v9 + m15 (the document starts). The layout stays v7's; the
+        // flags declare the extra members (bits 7/8/9 = 128/256/512).
         let tail_dir = version >= 7;
         let n = u64at(&b, 8);
         let k = u64at(&b, 16);
@@ -113,14 +116,18 @@ impl Container {
         // v6 is the pile "lite" member set: the phi and escape members (8, 9)
         // are gone, LF starts are derived from member 1 (member 10 is a
         // zero-byte declaration), and locate runs on member 11's 1/1024 run
-        // tails. Its directory is therefore 5-7 entries, not 7-9.
+        // tails. The block-compressed lite shape carries m12 (the m1 block
+        // directory) and m13 (sampled locate) too, and v8+ may add m14, m20
+        // and m15: the directory holds 5..=10 entries, mirroring the qlite
+        // reader's own law.
         let lite = version >= 6;
         need(
-            (if lite {(5..=7).contains(&count)}
+            (if lite {(5..=10).contains(&count)}
                 else if version==1 {(5..=7).contains(&count)} else {(7..=9).contains(&count)})
                 && hs == 64 + 40 * count
                 && u64at(&b, 40) == length
-                && (flags <= 1 || (8..=15).contains(&flags) || (24..=31).contains(&flags))
+                && (flags & !(1 | 8 | 16 | 32 | 128 | 256 | 512) == 0
+                    || (!lite && (flags <= 1 || (8..=15).contains(&flags) || (24..=31).contains(&flags))))
                 && u32at(&b, 60) == 0,
             "invalid header",
         );
@@ -157,23 +164,47 @@ impl Container {
                     if optional==1 && m.id==7 {7} else {i+1}
                 } else {8+i-(5+optional)}
             } else if lite {
-                // 1, 4, 5, [optional 6/7], 10, 11 - no member 8 (phi) or 9
-                // (escape sidecar): the lite container has no per-run SA map.
-                let optional=count-5;
-                if i<3 {[1,4,5][i as usize]} else if i<3+optional {
-                    if optional==1 && flags&16!=0 {7} else {6+i-3}
-                } else {10+i-(3+optional)}
+                // THE MODERN LITE SHAPE, in directory order:
+                //   1, 4, 5, [optional 6/7], 10, 11, 12, 13, [14], [20], [15]
+                // The m12/m13 pair is the block-compressed shape; m14/m20/m15
+                // are the v8/v9/v10 extensions, each declared by a flag bit
+                // (128/256/512). Everything after the 6/7 region is derived
+                // from the flags, so the count and the flags must agree.
+                let ext = u64::from(flags & 128 != 0)
+                    + u64::from(flags & 256 != 0)
+                    + u64::from(flags & 512 != 0);
+                let opt67 = count as u64 - 7 - ext; // 5..7 is 2 slots, plus 10,11,12,13
+                if i < 3 {[1,4,5][i as usize]}
+                else if (i as u64) < 3 + opt67 {
+                    if opt67 == 1 && flags & 16 != 0 {7} else {6 + i - 3}
+                } else {
+                    let j = i as u64 - (3 + opt67);
+                    match j {
+                        0 => 10,
+                        1 => 11,
+                        2 => 12,
+                        3 => 13,
+                        4 if flags & 128 != 0 => 14,
+                        4 if flags & 256 != 0 => 20,
+                        4 if flags & 512 != 0 => 15,
+                        5 if flags & 256 != 0 => 20,
+                        5 if flags & 512 != 0 => 15,
+                        6 if flags & 512 != 0 => 15,
+                        _ => unreachable!("lite member order"),
+                    }
+                }
             } else {
                 let optional=count-7;
                 if i<3 {[1,4,5][i as usize]} else if i<3+optional {
                     if optional==1 && flags&16!=0 {7} else {6+i-3}
                 } else {8+i-(3+optional)}
             };
-            let expected_codec=if version>=7 {match m.id {1=>116,5=>105,10=>110,11=>111,_=>m.id}}
+            let expected_codec=if version>=7 {match m.id {1=>116,5=>105,10=>110,11=>111,12=>112,13=>115,_=>m.id}}
                 else if version>=3 {match m.id {1=>101,5=>105,8=>if version==5 {119} else if version==6 {if m.codec==119 {119} else {120}} else {118},9=>109,10=>110,11=>111,_=>m.id}}
                 else if version==2 {match m.id {1=>101,5=>105,8=>108,9=>109,_=>m.id}} else {m.id};
             need(m.id==expected_id && m.codec==expected_codec && u32at(&d,36)==0,
-                "unsupported/duplicate member");
+                &format!("unsupported/duplicate member: slot {i} has id {} codec {} (expected id {expected_id} codec {expected_codec}), version {version} count {count} flags {flags}",
+                    m.id, m.codec));
             need(m.offset <= length && m.bytes <= length - m.offset,
                 "overlapping/out-of-bounds member");
             members.push(m);
@@ -187,7 +218,10 @@ impl Container {
         {
             let mut spans: Vec<(u64, u64)> = members.iter().map(|m| (m.offset, m.bytes)).collect();
             spans.sort_unstable();
-            let mut prev_end = hs as u64;
+            // v7's trailing directory means the member region starts at the
+            // fixed 64-byte header, not at header+directory (the directory is
+            // at the END of the file).
+            let mut prev_end = if tail_dir { 64 } else { hs as u64 };
             for &(off, bytes) in &spans {
                 let aligned = prev_end
                     .checked_add(7)

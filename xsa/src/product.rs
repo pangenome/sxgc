@@ -1,5 +1,5 @@
 //! Annotated JSONL and ropebwt3-style queries over a shared immutable SXI index.
-use super::{die, ms_vector, sxi, witness, Ri4};
+use super::{die, ms_vector, qlite, sxi, witness, Ri4};
 use flate2::read::MultiGzDecoder;
 use rayon::prelude::*;
 use serde_json::{json, Value};
@@ -63,9 +63,18 @@ pub struct Engine {
     reversed: bool,
     chi: u64,
     sigma: [u8; 256],
+    /// THE NO-CROSS LAW: the container's document starts (member m15), when
+    /// present. `keep_match` classifies every emitted occurrence against it.
+    starts: Option<crate::docstarts::DocStarts>,
+    cross_doc: bool,
+    /// counters for the boundary journal line: matches excluded by the law,
+    /// and matches emitted (kept). Atomic because reads are processed on a
+    /// rayon pool that shares one &Engine.
+    cross_excluded: std::sync::atomic::AtomicU64,
+    cross_kept: std::sync::atomic::AtomicU64,
 }
 impl Engine {
-    fn open(path: &str, mode: &str, orientation: Option<bool>) -> Result<Self, String> {
+    fn open(path: &str, mode: &str, orientation: Option<bool>, cross_doc: bool) -> Result<Self, String> {
         let meta = sxi::Container::open(path).ok_or("need an SXI container")?;
         let flags = meta.flags;
         let chi = meta.member(5).count;
@@ -96,6 +105,22 @@ impl Engine {
         };
         let reversed = orientation.unwrap_or(flags & 4 != 0);
         let boundaries = records.iter().map(|r| r.start + r.len).collect();
+        // THE NO-CROSS LAW: the container's own document starts, when it
+        // carries them (member m15, SXI2 v10). Without them a match cannot be
+        // boundary-classified at all - the run then says so LOUDLY (the journal
+        // line below) rather than refusing, because the crossing-inclusive
+        // answer is the only one that exists for such a container.
+        let starts = crate::docstarts::DocStarts::from_container(
+            &qlite::Reader::open(path).map_err(|e| e.to_string())?,
+        );
+        if starts.is_none() && !cross_doc {
+            eprintln!(
+                "SEARCH_BOUNDARY_NOTE structure=absent path={path}: this container carries no \
+                 member m15, so matches CANNOT be boundary-classified and the output is the \
+                 crossing-INCLUSIVE (legacy) answer. Build with --docs-map DIR (or `xsa \
+                 docstarts embed`) for the no-cross default, or pass --cross-doc to acknowledge it",
+            );
+        }
         Ok(Self {
             idx,
             witness: None,
@@ -106,7 +131,49 @@ impl Engine {
             reversed,
             chi,
             sigma,
+            starts,
+            cross_doc,
+            cross_excluded: std::sync::atomic::AtomicU64::new(0),
+            cross_kept: std::sync::atomic::AtomicU64::new(0),
         })
+    }
+    /// THE NO-CROSS LAW, per emitted occurrence: the match [pos, pos+len)
+    /// crosses a document boundary iff rank(pos) != rank(pos+len-1), i.e. iff
+    /// the document containing the match's LAST byte starts after the match's
+    /// first byte. Crossing matches are excluded from the default output and
+    /// the exclusion is JOURNALED; `--cross-doc` opts back in; without a
+    /// structure matches cannot be classified and are all kept (loudly noted
+    /// at open).
+    fn keep_match(&self, pos: u64, len: usize) -> bool {
+        use std::sync::atomic::Ordering::Relaxed;
+        let Some(ds) = self.starts.as_ref() else {
+            self.cross_kept.fetch_add(1, Relaxed);
+            return true;
+        };
+        if self.cross_doc {
+            self.cross_kept.fetch_add(1, Relaxed);
+            return true;
+        }
+        let last = pos + len as u64 - 1;
+        let keep = last < ds.text_len && ds.rank_start(last).1 <= pos;
+        if keep {
+            self.cross_kept.fetch_add(1, Relaxed);
+        } else {
+            self.cross_excluded.fetch_add(1, Relaxed);
+        }
+        keep
+    }
+    /// The boundary journal line: what the law did to this run's output.
+    fn boundary_journal(&self) {
+        use std::sync::atomic::Ordering::Relaxed;
+        let excluded = self.cross_excluded.load(Relaxed);
+        let kept = self.cross_kept.load(Relaxed);
+        eprintln!(
+            "SEARCH_BOUNDARY mode={} structure={} excluded_cross_doc={excluded} matches_kept={kept} \
+             law=no_match_may_cross_a_document_boundary",
+            if self.cross_doc { "cross-doc" } else { "no-cross-default" },
+            if self.starts.is_some() { "member-m15" } else { "absent" },
+        );
     }
     fn annotate(&self, pos: u64, len: usize) -> Option<(usize, &Record, u64)> {
         let doc = self.boundaries.partition_point(|&end| end < pos);
@@ -237,7 +304,11 @@ impl Engine {
                     }
                 }
                 for row in chosen {
-                    if let Some(mut v) = self.hit_cached(read, l + row, seq.len(), None, strand,&mut locate_cache) {
+                    let pos = self.position_cached(l + row, &mut locate_cache);
+                    if !self.keep_match(pos, seq.len()) {
+                        continue;
+                    }
+                    if let Some(mut v) = self.hit_position(read, pos, seq.len(), None, strand) {
                         if trace {
                             v["row"] = json!(l + row);
                         }
@@ -246,7 +317,11 @@ impl Engine {
                 }
             } else {
                 for row in l..r {
-                    if let Some(mut v) = self.hit_cached(read, row, seq.len(), None, strand,&mut locate_cache) {
+                    let pos = self.position_cached(row, &mut locate_cache);
+                    if !self.keep_match(pos, seq.len()) {
+                        continue;
+                    }
+                    if let Some(mut v) = self.hit_position(read, pos, seq.len(), None, strand) {
                         if trace {
                             v["row"] = json!(row);
                         }
@@ -383,6 +458,9 @@ impl Engine {
             // Native MEM maximality is per occurrence. Aggregate only those
             // maximal occurrences, retaining a bounded deterministic prefix.
             self.visit_mems(seq, o.min, |_row, pos, len, start, strand| {
+                if !self.keep_match(pos, len) {
+                    return Ok(());
+                }
                 if self.annotate(pos, len).is_none() {
                     return Ok(());
                 }
@@ -425,11 +503,19 @@ impl Engine {
                     // Queries cannot contain the record separator, so this
                     // interval contains only within-record matches. Counts do
                     // not depend on locate or the position sampling cap.
+                    // NOTE (the no-cross law): this ropebwt3-compat COUNT is the
+                    // crossing-INCLUSIVE occurrence count by construction (it
+                    // never locates); the POSITIONS this mode emits are
+                    // boundary-filtered, so count >= positions under the default.
                     entry.count += r - l;
                     for row in l..l + (cap - entry.positions.len()).min((r - l) as usize) as u64 {
+                        let pos = self.position(row);
+                        if !self.keep_match(pos, end - start) {
+                            continue;
+                        }
                         entry
                             .positions
-                            .push(self.rope_position(row, end - start, strand)?);
+                            .push(self.rope_position_at(pos, end - start, strand)?);
                     }
                 }
                 matches.insert((start, end), entry);
@@ -470,6 +556,7 @@ impl Engine {
     fn rope_position(&self, row: u64, len: usize, strand: &str) -> Result<String, String> {
         self.rope_position_at(self.position(row),len,strand)
     }
+    #[allow(dead_code)]
     fn rope_position_at(&self, pos: u64, len: usize, strand: &str) -> Result<String, String> {
         let (_, record, offset) = self
             .annotate(pos, len)
@@ -524,7 +611,11 @@ impl Engine {
                         } else {
                             start
                         };
-                        emit(row, if phi_scan{pos}else{self.position(row)}, len, qstart, strand)?;
+                        let pos = if phi_scan { pos } else { self.position(row) };
+                        if !self.keep_match(pos, len) {
+                            continue;
+                        }
+                        emit(row, pos, len, qstart, strand)?;
                     }
                 }
             }
@@ -698,6 +789,10 @@ struct Options {
     first: bool,
     witness_index: Option<String>,
     verify_first: bool,
+    /// THE NO-CROSS LAW: crossing matches (rank(s) != rank(e-1)) are excluded
+    /// from the default output when the container carries member m15;
+    /// `--cross-doc` opts back in to the crossing-inclusive answer.
+    cross_doc: bool,
 }
 fn parse(args: &[String]) -> Result<Options, String> {
     let mut o = Options {
@@ -723,6 +818,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         first: false,
         witness_index: None,
         verify_first: false,
+        cross_doc: false,
     };
     let mut i = 0;
     while i < args.len() {
@@ -751,6 +847,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
             }
             "--first" => { o.first = true; continue; }
             "--verify-first" => { o.verify_first = true; continue; }
+            "--cross-doc" => { o.cross_doc = true; continue; }
             "--plain" => {
                 o.orientation = Some(false);
                 continue;
@@ -834,7 +931,7 @@ fn run(kind: &str, args: &[String]) -> Result<(), String> {
                 .into(),
         );
     }
-    let mut engine = Engine::open(&o.path, &o.mode, o.orientation)?;
+    let mut engine = Engine::open(&o.path, &o.mode, o.orientation, o.cross_doc)?;;
     engine.verify_first = o.verify_first;
     if let Some(path) = &o.witness_index {
         let meta = sxi::Container::open(&o.path).ok_or("witness index requires SXI2")?;
@@ -896,6 +993,10 @@ fn run(kind: &str, args: &[String]) -> Result<(), String> {
             }
         }
     }
+    // THE NO-CROSS LEDGER: what the law did to this run's output. Journaled on
+    // stderr in every mode - an exclusion of 0 with the structure present is
+    // itself the receipt.
+    engine.boundary_journal();
     out.flush().map_err(|e| e.to_string())
 }
 fn request(
@@ -1044,7 +1145,8 @@ pub fn witness_build(args: &[String]) {
     let path = path.unwrap_or_else(|| die("witness-build needs --sxi"));
     let output = output.unwrap_or_else(|| die("witness-build needs --output"));
     let meta = sxi::Container::open(path).unwrap_or_else(|| die("need SXI2"));
-    let engine = Engine::open(path, "text", None).unwrap_or_else(|e| die(&e));
+    // witness-build certifies one row per pattern; boundary mode is irrelevant here
+    let engine = Engine::open(path, "text", None, true).unwrap_or_else(|e| die(&e));
     let phi = engine.idx.phi.as_ref().unwrap_or_else(|| die("need phi"));
     witness::build(path, output, &meta, phi).unwrap_or_else(|e| die(&e));
 }

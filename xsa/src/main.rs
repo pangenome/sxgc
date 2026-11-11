@@ -1468,6 +1468,9 @@ fn main() {
     }
     if raw.first().is_some_and(|a| a == "consult") {
         qlite::consult_command(&raw[1..]);
+    }
+    if raw.first().is_some_and(|a| a == "search") {
+        qlite::search_command(&raw[1..]);
         return;
     }
     if raw.first().is_some_and(|a| a == "mem") {

@@ -3633,6 +3633,7 @@ include!("mem.inc.rs");
 include!("seeds.inc.rs");
 include!("fanout.inc.rs");
 include!("consult.inc.rs");
+include!("search.inc.rs");
 
 include!("stateless.inc.rs");
 

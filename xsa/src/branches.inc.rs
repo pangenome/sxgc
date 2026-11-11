@@ -93,10 +93,23 @@ fn extension_counts(
     cx.ranks - ranks_before
 }
 
+/// THE NO-CROSS ORACLE for the serve kernel: when present, `branch_result`
+/// answers by EXACT ENUMERATION - every occurrence is located and classified
+/// by the law (the continuation at a document start is the END branch; a
+/// crossing match is counted nowhere) - and refuses intervals past `cap`
+/// (a serve frame has no per-answer marking bit, so a conflated answer can
+/// never be returned silently; the refusal names --cross-doc).
+pub struct BranchBoundary<'a> {
+    pub ds: &'a crate::docstarts::DocStarts,
+    pub corpus: &'a std::fs::File,
+    pub cap: u64,
+}
+
 fn branch_result(
     cx: &mut Ctx<'_>,
     cand: &Candidates,
     corpus: Option<&[u8]>,
+    bnd: Option<&BranchBoundary<'_>>,
     id: u64,
     pat: &[u8],
     k: usize,
@@ -116,6 +129,77 @@ fn branch_result(
     let mut eof = 0;
     let mut lf_steps = 0;
     let mut rank_steps = 0;
+    if let Some(b) = bnd {
+        // THE NO-CROSS DEFAULT: exact enumeration under the law. A serve frame
+        // has no per-answer marking bit, so a width past the cap is REFUSED
+        // (naming --cross-doc and --boundary-cap), never silently conflated.
+        if pat.is_empty() {
+            die(
+                "branches: the EMPTY context has no boundary-aware histogram (its occurrences \
+                 are every position; the corpus totals are the conflated answer): pass --cross-doc",
+            );
+        }
+        if r > l {
+            if r - l > b.cap {
+                die(&format!(
+                    "branches: the context of {} bytes has an occurrence interval of {} rows, past \
+                     --boundary-cap {}: exact boundary-aware counting enumerates the interval (one \
+                     locate per occurrence), so the cap is the cost knob. REFUSING the conflated \
+                     answer: raise --boundary-cap, or pass --cross-doc to opt in to it",
+                    pat.len(), r - l, b.cap
+                ));
+            }
+            use std::os::unix::fs::FileExt as _;
+            let text_len = cx.idx.reader.n - 1;
+            let ctxlen = pat.len() as u64;
+            let mut buf = [0u8; 1];
+            for row in l..r {
+                let (pos, st) = cx.locate_steps(row);
+                lf_steps += st;
+                let at = pos + ctxlen;
+                if at == text_len {
+                    eof += 1; // the one structural END
+                    continue;
+                }
+                // CROSSING match: a document starts inside (pos, at-1]
+                if b.ds.rank_start(at - 1).1 > pos {
+                    continue;
+                }
+                // THE END BRANCH: at is a document start
+                if b.ds.rank_start(at).1 == at {
+                    eof += 1;
+                    continue;
+                }
+                b.corpus
+                    .read_exact_at(&mut buf, at)
+                    .unwrap_or_else(|e| die(&format!("branches: corpus read at {at}: {e}")));
+                counts[buf[0] as usize] += 1;
+            }
+            let sum: u64 = counts.iter().sum();
+            assert_eq!(sum + eof, r - l, "branches: enumeration lost occurrences");
+            let mut branches: Vec<_> = counts
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| **c > 0)
+                .map(|(b, c)| (b as u8, *c))
+                .collect();
+            branches.sort_unstable_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+            branches.truncate(k);
+            let other = r - l - eof - branches.iter().map(|b| b.1).sum::<u64>();
+            return BranchResult {
+                id,
+                l,
+                r,
+                eof,
+                other,
+                branches,
+                search_us,
+                gather_us: start.elapsed().as_secs_f64() * 1e6,
+                lf_steps,
+                rank_steps: 0,
+            };
+        }
+    }
     if pat.is_empty() {
         // Empty context occurs at all corpus boundaries, including EOF.
         for b in 0..256 {
@@ -228,12 +312,28 @@ pub fn branches_command(raw: &[std::ffi::OsString]) {
     let mut unordered = false;
     let mut jobs = 1usize;
     let mut k = 256usize;
+    // THE NO-CROSS LAW: the default answer is boundary-aware (exact enumeration
+    // against member m15, REFUSING widths past the cap - a serve frame has no
+    // marking bit); --cross-doc is the explicit opt-in to the legacy conflated
+    // answer; without a structure the default is REFUSED, never silently
+    // conflated.
+    let mut cross_doc = false;
+    let mut boundary_cap: u64 = 8192;
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
             "--serve" => serve = true,
             "--jsonl" => json = true,
             "--unordered" => unordered = true,
+            "--cross-doc" => cross_doc = true,
+            "--boundary-cap" => {
+                i += 1;
+                boundary_cap = args
+                    .get(i)
+                    .unwrap_or_else(|| die("branches: --boundary-cap needs a count"))
+                    .parse()
+                    .unwrap_or_else(|_| die("branches: --boundary-cap: integer expected"));
+            }
             "--contexts" | "--docs" | "--corpus" | "-j" | "-k" => {
                 let flag = &args[i];
                 i += 1;
@@ -256,6 +356,75 @@ pub fn branches_command(raw: &[std::ffi::OsString]) {
         die("branches: require --serve OR --contexts FILE; -j > 0; -k <= 256")
     }
     let reader = Reader::open(container).unwrap_or_else(|e| die(&e));
+    // ---- THE NO-CROSS LAW, SERVE SIDE -------------------------------------------
+    // Default: exact boundary-aware answers via member m15 (or the --docs DIR
+    // sidecar) + the corpus (content bytes are corpus bytes; the container does
+    // not store them). Refusals name --cross-doc, the explicit opt-in to the
+    // legacy conflated answer.
+    let ds_owned = if cross_doc {
+        None
+    } else {
+        crate::docstarts::DocStarts::from_container(&reader).or_else(|| {
+            docs.as_deref().map(|dir| {
+                crate::docstarts::DocStarts::from_xsep(
+                    std::path::Path::new(dir),
+                    reader.n - 1,
+                )
+            })
+        })
+    };
+    let corpus_file_bnd = if cross_doc {
+        None
+    } else if ds_owned.is_some() {
+        let path = corpus_path.clone().unwrap_or_else(|| {
+            die(&format!(
+                "branches: this container carries member m15, so the DEFAULT is the exact \
+                 boundary-aware histogram - which reads the corpus for each occurrence's content \
+                 byte. Pass --corpus FILE (the container's text), or --cross-doc to opt in to the \
+                 legacy conflated answer"
+            ));
+        });
+        let f = File::open(&path).unwrap_or_else(|e| die(&format!("branches: open {path}: {e}")));
+        let len = f.metadata().map(|m| m.len()).unwrap_or_else(|e| die(&e.to_string()));
+        if len < reader.n - 1 {
+            die(&format!(
+                "branches: corpus {path} is {len} bytes, shorter than the container's text {}",
+                reader.n - 1
+            ));
+        }
+        Some(f)
+    } else {
+        corpus_path.is_some().then(|| {
+            // no structure: a corpus alone cannot classify boundaries; opened
+            // only so the refusal below can name both fixes precisely
+            File::open(corpus_path.as_deref().unwrap()).ok()
+        }).flatten()
+    };
+    if !cross_doc && ds_owned.is_none() {
+        die(&format!(
+            "branches: this container (SXI2 v{}) carries no member m15, so a boundary-aware \
+             answer is IMPOSSIBLE here: the legacy answer CONFLATES cross-boundary continuations \
+             with content (an occurrence that ends a document counts the next document's first \
+             byte as a content branch). Refusing rather than returning it silently. Build with \
+             --docs-map DIR (or `xsa docstarts embed`) and pass --corpus FILE for the default, or \
+             pass --cross-doc to opt in to the conflated answer",
+            reader.version
+        ));
+    }
+    let bnd_owned = match (&ds_owned, &corpus_file_bnd) {
+        (Some(ds), Some(f)) => Some(BranchBoundary { ds, corpus: f, cap: boundary_cap }),
+        _ => None,
+    };
+    let bnd_ref: Option<&BranchBoundary<'_>> = bnd_owned.as_ref();
+    eprintln!(
+        "BRANCH_BOUNDARY mode={} law=no_match_may_cross_a_document_boundary docs={} cap={} \
+         note=\"default: exact enumeration, continuation-at-a-document-start is the END branch, \
+         crossing matches counted nowhere, widths past the cap REFUSED; --cross-doc: the legacy \
+         conflated answer\"",
+        if cross_doc { "cross-doc" } else { "no-cross-default" },
+        ds_owned.as_ref().map(|d| d.docs).unwrap_or(0),
+        boundary_cap
+    );
     // The query reads NO corpus bytes: branch counts are interval widths of
     // `context || c`, i.e. rank arithmetic on the container's own structures.
     // `--corpus`/`--docs` are still accepted (and only then, with
@@ -275,10 +444,11 @@ pub fn branches_command(raw: &[std::ffi::OsString]) {
         }
         Some(c)
     } else {
-        if corpus_path.is_some() || docs.is_some() {
+        if (corpus_path.is_some() || docs.is_some()) && bnd_ref.is_none() {
             eprintln!(
                 "BRANCH_NOTE corpus_argument_ignored=1 (backward-search ranks read no corpus; \
-                 pass XSA_BRANCH_GATHER=1 to run the retired anchor+LF baseline)"
+                 pass XSA_BRANCH_GATHER=1 to run the retired anchor+LF baseline, or --cross-doc \
+                 for the conflated answer this note names)"
             );
         }
         None
@@ -379,7 +549,7 @@ pub fn branches_command(raw: &[std::ffi::OsString]) {
                 scope.spawn(move || {
                     let mut cx = idx.ctx();
                     while let Ok((id, p)) = rx.recv() {
-                        tx.send(branch_result(&mut cx, cand, corpus_ref, id, &p, k))
+                        tx.send(branch_result(&mut cx, cand, corpus_ref, bnd_ref, id, &p, k))
                             .unwrap();
                     }
                 });
@@ -418,7 +588,7 @@ pub fn branches_command(raw: &[std::ffi::OsString]) {
             })
             .enumerate()
         {
-            emit(branch_result(&mut cx, &cand, corpus_ref, id as u64, p, k), &mut out);
+            emit(branch_result(&mut cx, &cand, corpus_ref, bnd_ref, id as u64, p, k), &mut out);
         }
     }
     out.flush().unwrap();

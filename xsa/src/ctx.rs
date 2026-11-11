@@ -981,7 +981,10 @@ pub struct Trie<'a> {
     pub boundary_aware: u64,
     root: u32,
     offs: [usize; TRIE_SECTIONS],
-    starts: std::cell::OnceCell<Vec<u32>>,
+    // the first-edge absolute-offset prefix sums, built once at the first random
+    // access; OnceLock (not OnceCell) because consult workers share one &Trie
+    // across threads
+    starts: std::sync::OnceLock<Vec<u32>>,
     nedge: PackedView<'a>,
     ncount: PackedView<'a>,
     ecode: PackedView<'a>,
@@ -1064,7 +1067,7 @@ impl<'a> Trie<'a> {
             boundary_aware: if ver >= 3 { get(&d[168..], 8) } else { 0 },
             root,
             offs,
-            starts: std::cell::OnceCell::new(),
+            starts: std::sync::OnceLock::new(),
             nedge: PackedView::new(&d[offs[1]..], nodes),
             ncount: PackedView::new(&d[offs[2]..], nodes),
             ecode: PackedView::new(&d[offs[3]..], edges),

@@ -44,7 +44,11 @@ use std::io::{Read as _, Seek as _};
 /// Row-layout file magic and version; the byte layout is documented in
 /// CONSULT.md and is what the training-side reader is written against.
 const CONSULT_MAGIC: &[u8; 8] = b"XSACONS1";
-const CONSULT_VERSION: u32 = 2;
+/// Row-layout file version. v3 = the no-cross law: `eof` counts every
+/// occurrence that ends a DOCUMENT as well as the one structural END (the
+/// context that is a suffix of the text), and flag bit 4 (16) marks a row whose
+/// histogram is the boundary-UNAWARE conflated answer (see CONSULT.md §5).
+const CONSULT_VERSION: u32 = 3;
 /// Binary `--windows` batch magic (the first 32-byte record is a header).
 const WIN_MAGIC: &[u8; 8] = b"XSWIN001";
 const WIN_RECORD_BYTES: usize = 32;
@@ -72,6 +76,14 @@ const DOCID_ABSENT: u64 = u64::MAX;
 /// counting enumerates the interval's occurrences (one LF walk each), so the
 /// cap is the cost knob; the default is sized for long-spine cache builds.
 const DOC_RESTRICT_CAP_DEFAULT: u64 = 1024;
+/// THE NO-CROSS DEFAULT CAP: exact boundary-aware counting ENUMERATES the
+/// occurrence interval (one locate per occurrence, then an m15 rank/select per
+/// classification), so the cap is the cost knob for contexts wider than the
+/// boundary-aware trie's depth. Beyond the cap the row falls back to the
+/// conflated rank-arithmetic answer, MARKED boundary_exact=0 in the row and
+/// journaled (--boundary-strict makes the fallback a refusal instead). 8192
+/// covers the 9..24-byte ramp contexts that exceed the old 1024 default.
+const BOUNDARY_CAP_DEFAULT: u64 = 8192;
 /// Sliding corpus mapping width. The corpus is read through a WINDOWED mmap of
 /// this size and nothing else: a 100 GB corpus never becomes this process's
 /// resident set, and a retired window is MADV_DONTNEED'd before it is dropped.
@@ -616,6 +628,137 @@ fn consult_answer(
     (sum + eof, eof)
 }
 
+/// THE NO-CROSS DEFAULT: the exact boundary-aware histogram, by enumeration.
+///
+/// Every occurrence of the context is located and classified by THE LAW:
+/// the continuation at `at = pos + ctxlen` is the END branch iff `at` is the
+/// text end or a DOCUMENT START (select(rank(at)) == at); the occurrence is a
+/// CROSSING match (counted nowhere) iff a document start lies inside
+/// (pos, at-1], i.e. rank(pos) != rank(at-1); otherwise it contributes its
+/// in-document content byte. `width` is therefore the number of NON-CROSSING
+/// occurrences. Returns (width, eof, excluded, too_wide): `too_wide` = the
+/// interval exceeded the cap and the caller must fall back (marked, never
+/// silent) or refuse (--boundary-strict).
+#[allow(clippy::too_many_arguments)]
+fn boundary_answer(
+    cx: &mut Ctx<'_>,
+    corpus_file: &File,
+    ds: &crate::docstarts::DocStarts,
+    it: &ConsultItem,
+    pat: &[u8],
+    cap: u64,
+    text_len: u64,
+    out: &mut Vec<(u8, u64)>,
+) -> (u64, u64, bool, bool) {
+    use std::os::unix::fs::FileExt;
+    out.clear();
+    let sigma = cx.idx.reader.sigma;
+    let absent = pat
+        .iter()
+        .any(|&b| sigma[b as usize] == 0 || cx.idx.total[sigma[b as usize] as usize] == 0);
+    if absent {
+        return (0, 0, false, false);
+    }
+    let work: Vec<u8> = pat.iter().rev().map(|&b| sigma[b as usize]).collect();
+    let (l, r) = cx.search(&work);
+    if r == l {
+        return (0, 0, false, false);
+    }
+    if r - l > cap {
+        return (0, 0, false, true);
+    }
+    let mut counts = [0u64; 256];
+    let mut eof = 0u64;
+    let mut excluded = false;
+    let ctxlen = pat.len() as u64;
+    let mut bytebuf = [0u8; 1];
+    for row in l..r {
+        let (pos, _) = cx.locate_steps(row);
+        let at = pos + ctxlen;
+        if at == text_len {
+            // the one structural END: the context is a suffix of the text
+            eof += 1;
+            continue;
+        }
+        // CROSSING match: a document starts inside (pos, at-1]. The start of
+        // the document containing at-1 is the largest start <= at-1; the match
+        // crosses iff that start is past pos (rank(pos) != rank(at-1)).
+        if ds.rank_start(at - 1).1 > pos {
+            continue;
+        }
+        // --exclude-source: the own occurrence leaves before any count. It can
+        // never be a crossing match (the spine is cut at the document base) and
+        // its continuation `at == off` can never be a document start (off is
+        // strictly inside its document), so it always leaves a content branch.
+        if it.excl && at == it.off {
+            excluded = true;
+            continue;
+        }
+        // THE END BRANCH: at is a document start - "this context ends a document"
+        if ds.rank_start(at).1 == at {
+            eof += 1;
+            continue;
+        }
+        corpus_file
+            .read_exact_at(&mut bytebuf, at)
+            .unwrap_or_else(|e| die(&format!("consult: corpus read at {at}: {e}")));
+        counts[bytebuf[0] as usize] += 1;
+    }
+    let mut width = eof;
+    for (b, &c) in counts.iter().enumerate() {
+        if c > 0 {
+            out.push((b as u8, c));
+            width += c;
+        }
+    }
+    out.sort_unstable_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    (width, eof, excluded, false)
+}
+
+/// The boundary-aware TRIE layer: contexts within the member's depth that the
+/// trie materialises are answered from the member directly - O(depth), any
+/// width, no locate - because the trie was built boundary-aware (the law held
+/// by construction there). Returns None when the trie cannot answer (context
+/// deeper than the trie, node below support, trie absent or unaware).
+fn trie_boundary_answer(
+    trie: &crate::ctx::Trie<'_>,
+    it: &ConsultItem,
+    pat: &[u8],
+    out: &mut Vec<(u8, u64)>,
+) -> Option<(u64, u64, bool)> {
+    if pat.len() as u64 > trie.depth {
+        return None;
+    }
+    let node = trie.find(pat)?;
+    out.clear();
+    let mut width = trie.count(node);
+    let mut eof = 0u64;
+    for ch in trie.children(node) {
+        match ch.byte() {
+            None => eof = eof.max(ch.count),
+            Some(b) => out.push((b, ch.count)),
+        }
+    }
+    // --exclude-source: the own occurrence is always an in-document CONTENT
+    // continuation (see boundary_answer), so it leaves its content branch; it
+    // can never be the trie's END edge (off is strictly inside its document).
+    let mut excluded = false;
+    if it.excl {
+        if let Some(slot) = out.iter().position(|&(b, _)| b == it.own) {
+            if out[slot].1 > 0 {
+                out[slot].1 -= 1;
+                if out[slot].1 == 0 {
+                    out.swap_remove(slot);
+                }
+                width -= 1;
+                excluded = true;
+            }
+        }
+    }
+    out.sort_unstable_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    Some((width, eof, excluded))
+}
+
 /// `--doc-restrict`: the EXACT document-restricted branch histogram.
 ///
 /// The note's D2 semantics: a match or branch count must never span a document
@@ -624,11 +767,11 @@ fn consult_answer(
 /// (the old 0x1E spine cut only made spanning UNLIKELY, and broke on documents
 /// that contain an internal 0x1E). Exactness costs enumeration: every occurrence
 /// of the context is located and kept only if the match lies fully inside the
-/// document AND its continuation byte does too (an occurrence ending at the
-/// document's last byte has no continuation inside the document and is not
-/// counted - counting the next document's first byte would be the very leakage
-/// the restriction exists to remove). Intervals wider than `cap` are REFUSED,
-/// never silently returned unrestricted.
+/// document; an occurrence whose continuation lands ON the document end now
+/// counts on the END branch (the no-cross law: the next document's first byte is
+/// not content), a match that SPANS past the end is a crossing match and is
+/// dropped. Intervals wider than `cap` are REFUSED, never silently returned
+/// unrestricted.
 fn restricted_answer(
     cx: &mut Ctx<'_>,
     corpus_file: &File,
@@ -680,7 +823,16 @@ fn restricted_answer(
             eof += 1;
             continue;
         }
-        if at >= it.doc_next {
+        if at == it.doc_next {
+            // THE LAW: the context ends this document - the continuation is the
+            // NEXT document's first byte and belongs to the END branch, never
+            // to content (the old rule dropped the occurrence entirely)
+            eof += 1;
+            continue;
+        }
+        if at > it.doc_next {
+            // the match itself spans past the document end: a CROSSING match,
+            // excluded entirely
             continue;
         }
         // --exclude-source: the query position's own occurrence leaves before
@@ -714,7 +866,7 @@ fn consult_strict_check(
     answer: (u64, u64),
     branches: &[(u8, u64)],
 ) {
-    let r = branch_result(cx, cand, None, 0, pat, 256);
+    let r = branch_result(cx, cand, None, None, 0, pat, 256);
     let width = r.r - r.l;
     let mut identical = width == answer.0 && r.eof == answer.1 && r.branches.len() == branches.len();
     if identical {
@@ -795,9 +947,12 @@ struct ConsultDone {
     rows: u64,
     ends_window: bool,
     /// per-batch row counters: rows whose width excluded the position's own
-    /// occurrence, and rows answered by document-restricted enumeration
+    /// occurrence, rows answered by document-restricted enumeration, and rows
+    /// whose histogram is the boundary-UNAWARE conflated answer (marked
+    /// boundary_exact=0 in the row; see CONSULT.md §5)
     excluded: u64,
     restricted: u64,
+    inexact: u64,
 }
 
 /// Encode one position's row (layout in CONSULT.md). Little-endian throughout.
@@ -810,12 +965,17 @@ fn encode_consult_row(
     branches: &[(u8, u64)],
     excluded: bool,
     restricted: bool,
+    boundary_exact: bool,
 ) {
     let before = out.len();
     let flags: u16 = (if eof != 0 { 1 } else { 0 })
         | (if it.truncated { 2 } else { 0 })
         | (if excluded { 4 } else { 0 })
-        | (if restricted { 8 } else { 0 });
+        | (if restricted { 8 } else { 0 })
+        // bit 4: the row's histogram is the boundary-UNAWARE conflated answer
+        // (no structure, --cross-doc, or an interval past --boundary-cap). The
+        // mark is IN THE ROW so a consumer can filter per row, never silently.
+        | (if boundary_exact { 0 } else { 16 });
     out.extend_from_slice(&(branches.len() as u32).to_le_bytes());
     out.extend_from_slice(&ctxlen.to_le_bytes());
     out.extend_from_slice(&flags.to_le_bytes());
@@ -873,6 +1033,15 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
     let mut exclude_source = false;
     let mut doc_restrict = false;
     let mut doc_restrict_cap = DOC_RESTRICT_CAP_DEFAULT;
+    // THE NO-CROSS LAW AT QUERY TIME: the default histogram is boundary-aware
+    // (exactly - trie layer or enumeration - and marked boundary_exact=0 with a
+    // per-row flag bit and a journal line wherever it could not be). `--cross-doc`
+    // opts the WHOLE run back into the conflated answer; `--boundary-cap` is the
+    // enumeration cost knob; `--boundary-strict` turns the marked fallback into
+    // a refusal for exactness-or-nothing consumers.
+    let mut cross_doc = false;
+    let mut boundary_cap = BOUNDARY_CAP_DEFAULT;
+    let mut boundary_strict = false;
     let mut i = 0usize;
     while i < args.len() {
         let a = args[i].as_str();
@@ -941,6 +1110,14 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
             "--docs" => docs_dir = Some(val!("--docs")),
             "--exclude-source" => exclude_source = true,
             "--doc-restrict" => doc_restrict = true,
+            "--cross-doc" => cross_doc = true,
+            "--boundary-cap" => {
+                let v = val!("--boundary-cap");
+                boundary_cap = v.parse().unwrap_or_else(|_| {
+                    die(&format!("consult: --boundary-cap '{v}' is not a count"))
+                });
+            }
+            "--boundary-strict" => boundary_strict = true,
             "--doc-restrict-cap" => {
                 let v = val!("--doc-restrict-cap");
                 doc_restrict_cap = v.parse().unwrap_or_else(|_| {
@@ -1264,6 +1441,44 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
     if doc_restrict_cap == 0 {
         die("consult: --doc-restrict-cap must be at least 1");
     }
+    if boundary_cap == 0 {
+        die("consult: --boundary-cap must be at least 1");
+    }
+    if cross_doc && boundary_strict {
+        die(
+            "consult: --cross-doc and --boundary-strict contradict each other: the first asks for \
+             the conflated crossing-inclusive answer, the second refuses it",
+        );
+    }
+    // THE BOUNDARY-AWARE TRIE (m20): contexts within its depth answer from the
+    // member itself - exact, any width, no locate - when the member was built
+    // boundary-aware. An UNAWARE member is not consulted for the default (its
+    // counts conflate crossing occurrences) and is named in the journal.
+    let trie_member: Option<&[u8]> = index.reader.member_bytes(crate::ctx::TRIE_CODEC);
+    let trie_owned = trie_member.map(crate::ctx::Trie::load);
+    let trie_ref = trie_owned.as_ref();
+    let trie_arm = match trie_ref {
+        Some(t) if t.boundary_aware == 1 => format!("m20-depth{}-aware", t.depth),
+        Some(_) => "m20-unaware".to_string(),
+        None => "absent".to_string(),
+    };
+    if boundary_strict && docs_ref.is_none() {
+        die(&format!(
+            "consult: --boundary-strict was asked for, but there is no document structure to be \
+             exact WITH: the container is SXI2 v{} and carries no member m15, and no --docs DIR was \
+             given. Every row would be the conflated answer. Build with --docs-map DIR (or `xsa \
+             docstarts embed`), pass --docs DIR, or drop --boundary-strict",
+            index.reader.version,
+        ));
+    }
+    if docs_ref.is_none() && !cross_doc {
+        eprintln!(
+            "CONSULT_NOTE boundary=absent: every row of this run is marked boundary_exact=0 \
+             (the conflated histogram: a match or branch count MAY cross a document boundary). \
+             Give a structure (member m15 via --docs-map at build time, or --docs DIR) for the \
+             no-cross default, or pass --cross-doc to acknowledge it",
+        );
+    }
 
     let mut src = WindowSource::open(&windows_path, binary);
     if start.windows_bytes_done > 0 {
@@ -1278,6 +1493,7 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
              chunk_rows={} left_default={} windows={} windows_bytes={} windows_format={} \
              batch_positions={} arena_bytes={} cache_bytes={} index_rss_cap_bytes={} \
              docs_source={} docs={} exclude_source={} doc_restrict={} doc_restrict_cap={} \
+             boundary_mode={} boundary_cap={} boundary_strict={} trie={} law=no_match_may_cross_a_document_boundary \
              spine_cut=document_base",
             container,
             std::fs::metadata(&container).map(|m| m.len()).unwrap_or(0),
@@ -1305,6 +1521,10 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
             u8::from(exclude_source),
             u8::from(doc_restrict),
             doc_restrict_cap,
+            if cross_doc { "cross-doc" } else { "no-cross-default" },
+            boundary_cap,
+            u8::from(boundary_strict),
+            trie_arm,
         ));
     }
     eprintln!(
@@ -1340,13 +1560,21 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
     let corpus_path_for_threads = corpus_path.as_str();
     let doc_restrict_cap_for_threads = doc_restrict_cap;
     let text_len_for_threads = text_len;
+    let boundary_cap_for_threads = boundary_cap;
+    let cross_doc_for_threads = cross_doc;
+    let boundary_strict_for_threads = boundary_strict;
+    let docs_for_threads: Option<&crate::docstarts::DocStarts> = docs_ref;
+    let trie_for_threads: Option<&crate::ctx::Trie<'_>> = match trie_ref {
+        Some(t) if t.boundary_aware == 1 => Some(t),
+        _ => None,
+    };
     let start_seq = start.seq;
     let start_positions = start.positions_done;
     let journal_for_writer = journal_path.clone();
     let journal_for_threads = journal_path.clone();
     let output_for_threads = output.clone();
 
-    let mut totals = (0u64, 0u64, 0u64, 0u64, String::new(), 0u64, 0u64, 0u64, 0u64, 0u64);
+    let mut totals = (0u64, 0u64, 0u64, 0u64, String::new(), 0u64, 0u64, 0u64, 0u64, 0u64, 0u64);
     std::thread::scope(|scope| {
         // ---- writer: owns the output file, the chunk commits and the sha ledger
         let writer = scope.spawn(move || {
@@ -1368,9 +1596,11 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
             let mut commits = 0u64;
             let mut excluded_rows = 0u64;
             let mut restricted_rows = 0u64;
+            let mut boundary_inexact_rows = 0u64;
             while let Ok(d) = res_rx.recv() {
                 excluded_rows += d.excluded;
                 restricted_rows += d.restricted;
+                boundary_inexact_rows += d.inexact;
                 order.insert(d.seq0, d);
                 while let Some(d) = order.remove(&next_seq0) {
                     if d.rows > 0 {
@@ -1482,6 +1712,7 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
                 commits,
                 excluded_rows,
                 restricted_rows,
+                boundary_inexact_rows,
             )
         });
 
@@ -1501,10 +1732,12 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
                     .unwrap_or_else(|e| die(&format!("consult: open corpus {corpus_path_for_threads}: {e}")));
                 let mut excluded_rows = 0u64;
                 let mut restricted_rows = 0u64;
+                let mut boundary_inexact_rows = 0u64;
                 while let Ok(batch) = rx.recv() {
                     out.clear();
                     let excl0 = excluded_rows;
                     let restr0 = restricted_rows;
+                    let inex0 = boundary_inexact_rows;
                     for it in &batch.items {
                         let lo = it.ctx_off as usize;
                         let ctx = &batch.bytes[lo..lo + it.ctx_len as usize];
@@ -1513,8 +1746,9 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
                             // contract says a zero-length context has no counts
                             // and no EOF, and the global corpus histogram is NOT
                             // its answer (c14_branch_serve.select: `if k else
-                            // dict(width=0, eof=0, branches=[])`).
-                            encode_consult_row(&mut out, it, 0, 0, 0, &[], false, false);
+                            // dict(width=0, eof=0, branches=[])`). A zero-length
+                            // match cannot cross anything: the row is exact.
+                            encode_consult_row(&mut out, it, 0, 0, 0, &[], false, false, true);
                             continue;
                         }
                         if it.restrict {
@@ -1534,9 +1768,70 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
                             if excluded {
                                 excluded_rows += 1;
                             }
-                            encode_consult_row(&mut out, it, it.ctx_len, width, eof, &pairs, excluded, true);
+                            encode_consult_row(&mut out, it, it.ctx_len, width, eof, &pairs, excluded, true, true);
                             continue;
                         }
+                        // THE NO-CROSS DEFAULT, in layers. `--cross-doc` is the
+                        // explicit run-wide opt-in to the legacy conflated
+                        // histogram; without it the default is exact wherever a
+                        // structure lets it be, and MARKED (boundary_exact=0)
+                        // wherever it cannot be - never silent, never fatal
+                        // (except under --boundary-strict).
+                        if !cross_doc_for_threads {
+                            if let Some(ds) = docs_for_threads {
+                                // layer 1: the boundary-aware trie answers any
+                                // width within its depth, no locate at all
+                                if let Some(trie) = trie_for_threads {
+                                    if let Some((width, eof, excluded)) =
+                                        trie_boundary_answer(trie, it, ctx, &mut pairs)
+                                    {
+                                        if excluded {
+                                            excluded_rows += 1;
+                                        }
+                                        encode_consult_row(&mut out, it, it.ctx_len, width, eof, &pairs, excluded, false, true);
+                                        continue;
+                                    }
+                                }
+                                // layer 2: exact enumeration within the cap
+                                let (width, eof, excluded, too_wide) = boundary_answer(
+                                    &mut cx,
+                                    &corpus_file,
+                                    ds,
+                                    it,
+                                    ctx,
+                                    boundary_cap_for_threads,
+                                    text_len_for_threads,
+                                    &mut pairs,
+                                );
+                                if !too_wide {
+                                    if excluded {
+                                        excluded_rows += 1;
+                                    }
+                                    encode_consult_row(&mut out, it, it.ctx_len, width, eof, &pairs, excluded, false, true);
+                                    continue;
+                                }
+                                // zone (c): wider than the cap AND deeper than the
+                                // trie. There is no cheap exact algorithm here
+                                // (the correction is a join between the match set
+                                // and the doc-start metadata; see CONSULT.md
+                                // §5), so the row falls back MARKED - or is
+                                // refused under --boundary-strict.
+                                if boundary_strict_for_threads {
+                                    die(&format!(
+                                        "consult: --boundary-strict at position {}: the context of {} \
+                                         bytes has an occurrence interval past --boundary-cap {} \
+                                         (raise --boundary-cap, query a longer context, or drop \
+                                         --boundary-strict for the marked fallback)",
+                                        it.off, ctx.len(), boundary_cap_for_threads
+                                    ));
+                                }
+                            } else if boundary_strict_for_threads {
+                                // refused at open; unreachable per-worker
+                                die("consult: --boundary-strict without a document structure");
+                            }
+                        }
+                        // THE CONFLATED FALLBACK (also the --cross-doc arm): the
+                        // legacy boundary-unaware histogram, MARKED in the row.
                         let (mut width, eof) =
                             consult_answer(&mut cx, cand_ref, ctx, &corpus_tail_ref, &mut pairs);
                         if strict {
@@ -1565,7 +1860,8 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
                                 excluded_rows += 1;
                             }
                         }
-                        encode_consult_row(&mut out, it, it.ctx_len, width, eof, &pairs, excluded, false);
+                        boundary_inexact_rows += 1;
+                        encode_consult_row(&mut out, it, it.ctx_len, width, eof, &pairs, excluded, false, false);
                     }
                     let done = ConsultDone {
                         seq0: batch.seq0,
@@ -1576,6 +1872,7 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
                         bytes: std::mem::take(&mut out),
                         excluded: excluded_rows - excl0,
                         restricted: restricted_rows - restr0,
+                        inexact: boundary_inexact_rows - inex0,
                     };
                     if tx.send(done).is_err() {
                         die("consult: writer closed before the last batch");
@@ -1872,7 +2169,7 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
         let w = writer
             .join()
             .unwrap_or_else(|_| die("consult: the writer panicked"));
-        totals = (w.0, w.1, w.2, w.3, w.4, w.5, w.6, w.7, w.8, w.9);
+        totals = (w.0, w.1, w.2, w.3, w.4, w.5, w.6, w.7, w.8, w.9, w.10);
         // the producer's receipts ride out through these
         eprintln!(
             "CONSULT_PRODUCER corpus_bytes_read={} backpressure_events={} throttled_ms={} \
@@ -1881,7 +2178,7 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
         );
     });
 
-    let (positions_done, windows_done, windows_bytes_done, output_bytes, digest, seq, writer_max_rss, commits, excluded_rows, restricted_rows) = totals;
+    let (positions_done, windows_done, windows_bytes_done, output_bytes, digest, seq, writer_max_rss, commits, excluded_rows, restricted_rows, boundary_inexact_rows) = totals;
     let seconds = started.elapsed().as_secs_f64();
     let peak = consult_peak_rss_bytes().unwrap_or(writer_max_rss).max(writer_max_rss);
     let (hits, misses, decodes, drops) = index.cache_stats();
@@ -1896,10 +2193,23 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
          block_decodes={decodes} drop_epochs={drops} decode_ns={decode_ns} drop_ns={drop_ns} \
          prefetch_calls={prefetch} corpus_remaps={} backpressure_events={backpressure_events} \
          windows_bytes_done={windows_bytes_done} excluded_rows={excluded_rows} \
-         restricted_rows={restricted_rows}",
+         restricted_rows={restricted_rows} boundary_exact_rows={} boundary_inexact_rows={boundary_inexact_rows}",
         positions_done as f64 / seconds.max(1e-9),
         gb(peak),
         corpus.remaps,
+        positions_done - boundary_inexact_rows,
+    ));
+    // THE LOUD FALLBACK LEDGER (the supervisor's contract): every run states how
+    // many rows carry the conflated answer, even when the number is zero - the
+    // mark lives in each row as well, so a consumer can never mistake a conflated
+    // histogram for an exact one.
+    j.line(&format!(
+        "BOUNDARY_INEXACT rows={boundary_inexact_rows} total={positions_done} ratio={:.9} \
+         law=no_match_may_cross_a_document_boundary \
+         note=\"rows=0 is the goal; a nonzero count means that many histograms could not be \
+         made boundary-exact (no structure, --cross-doc, or an interval past --boundary-cap) and \
+         carry the conflated counts, MARKED boundary_exact=0 in the row's flag bit 4\"",
+        boundary_inexact_rows as f64 / positions_done.max(1) as f64,
     ));
     eprintln!(
         "CONSULT_STATS positions={positions_done} windows={windows_done} \
@@ -1907,7 +2217,7 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
          rows_sha256={digest} output_bytes={output_bytes} commits={commits} cache_hits={hits} \
          cache_misses={misses} block_decodes={decodes} drop_epochs={drops} \
          backpressure_events={backpressure_events} excluded_rows={excluded_rows} \
-         restricted_rows={restricted_rows}",
+         restricted_rows={restricted_rows} boundary_inexact_rows={boundary_inexact_rows}",
         positions_done as f64 / seconds.max(1e-9),
         gb(peak),
     );
@@ -1942,11 +2252,11 @@ mod consult_tests {
     fn row_layout_is_the_documented_one() {
         let mut out = Vec::new();
         let it = item(7, 1_000_000_000_000, 999_999_999_000, 12);
-        encode_consult_row(&mut out, &it, 1024, 42, 1, &[(9, 41), (3, 1)], true, true);
+        encode_consult_row(&mut out, &it, 1024, 42, 1, &[(9, 41), (3, 1)], true, true, false);
         assert_eq!(out.len(), ROW_FIXED_BYTES + 2 * 9 + ROW_TAIL_BYTES);
         assert_eq!(u32::from_le_bytes(out[0..4].try_into().unwrap()), 2); // nsym
         assert_eq!(u16::from_le_bytes(out[4..6].try_into().unwrap()), 1024); // ctxlen
-        assert_eq!(u16::from_le_bytes(out[6..8].try_into().unwrap()), 1 | 4 | 8); // eof|excluded|restricted
+        assert_eq!(u16::from_le_bytes(out[6..8].try_into().unwrap()), 1 | 4 | 8 | 16); // eof|excluded|restricted|boundary_exact=0
         assert_eq!(u64::from_le_bytes(out[8..16].try_into().unwrap()), 7); // doc
         assert_eq!(
             u64::from_le_bytes(out[16..24].try_into().unwrap()),
@@ -1969,7 +2279,7 @@ mod consult_tests {
         assert_eq!(out[49], 3);
         // an empty context is an empty histogram: no pairs, no EOF
         let mut e = Vec::new();
-        encode_consult_row(&mut e, &item(0, 5, 2, DOCID_ABSENT), 0, 0, 0, &[], false, false);
+        encode_consult_row(&mut e, &item(0, 5, 2, DOCID_ABSENT), 0, 0, 0, &[], false, false, true);
         assert_eq!(e.len(), ROW_FIXED_BYTES + ROW_TAIL_BYTES);
         assert_eq!(u32::from_le_bytes(e[0..4].try_into().unwrap()), 0);
         assert_eq!(u16::from_le_bytes(e[4..6].try_into().unwrap()), 0);
@@ -2003,7 +2313,7 @@ mod consult_tests {
         // the shape consult_answer returns for an unqueryable spine: width 0,
         // eof 0, so the row carries no counts (their `if k == 0` rule)
         let mut out = Vec::new();
-        encode_consult_row(&mut out, &item(0, 0, 0, 0), 0, 0, 0, &[], false, false);
+        encode_consult_row(&mut out, &item(0, 0, 0, 0), 0, 0, 0, &[], false, false, true);
         let nsym = u32::from_le_bytes(out[0..4].try_into().unwrap());
         let width = u64::from_le_bytes(out[24..32].try_into().unwrap());
         assert_eq!((nsym, width), (0, 0));
