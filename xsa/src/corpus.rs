@@ -105,6 +105,13 @@ pub fn command(args: &[String]) {
     if args.iter().any(|a| a == "--pile-verify") {
         return pile_verify_command(args);
     }
+    // CORPUS V2 (CORPUS_V2.md): the separator-free format for future datasets;
+    // its own mode flags, dispatched before the Wikipedia grammar.
+    if args.iter().any(|a| {
+        a == "--v2-meta" || a == "--v2-materialize" || a == "--v2-reorder" || a == "--v2-verify" || a == "--v2-locate"
+    }) {
+        return crate::corpusv2::command(args);
+    }
     let mut dump: Option<String> = None;
     let mut out: Option<String> = None;
     let mut sep_mode = true;

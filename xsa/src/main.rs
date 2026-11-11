@@ -22,6 +22,7 @@ mod product;
 mod forks;
 mod corpus;
 mod pilemap;
+mod corpusv2;
 
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
