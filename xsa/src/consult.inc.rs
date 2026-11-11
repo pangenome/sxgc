@@ -1503,6 +1503,8 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
                 let mut restricted_rows = 0u64;
                 while let Ok(batch) = rx.recv() {
                     out.clear();
+                    let excl0 = excluded_rows;
+                    let restr0 = restricted_rows;
                     for it in &batch.items {
                         let lo = it.ctx_off as usize;
                         let ctx = &batch.bytes[lo..lo + it.ctx_len as usize];
@@ -1572,8 +1574,8 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
                         rows: batch.items.len() as u64,
                         ends_window: batch.items.last().map(|x| x.win_end).unwrap_or(false),
                         bytes: std::mem::take(&mut out),
-                        excluded: excluded_rows,
-                        restricted: restricted_rows,
+                        excluded: excluded_rows - excl0,
+                        restricted: restricted_rows - restr0,
                     };
                     if tx.send(done).is_err() {
                         die("consult: writer closed before the last batch");

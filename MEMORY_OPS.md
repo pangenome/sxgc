@@ -4,6 +4,41 @@ This page exists because the project has drifted into naming structures instead 
 *operations*. It states the goal, the smallest set of operations, what each needs, what is missing
 today, and the gates. If a sentence here cannot be checked against a measurement, it does not belong.
 
+## THE PRINCIPLE: document boundaries are metadata, never content bytes
+
+At vocabulary 256 no in-band delimiter can be safe **by construction**: arbitrary binary payload can
+contain any byte. The pile's `0x1E` framing is unique *by accident*, in one region, at current size —
+and the accident decays with corpus size. Measured on the authoritative map
+(`xsa corpus --pile-map`, `RESULTS_PILE_DOCMAP.md`, verified to the byte against the shard records):
+
+| region | documents | internal `0x1E` inside document texts |
+|---|---|---|
+| full pile (1.31 TB) | 210,607,728 | **78,715 documents contain one** |
+| first 100 GB (the spine container) | 16,119,766 | 6,979 internal bytes (0.043 %) |
+| flagship train+eval (beyond 100 GB) | 243,401 | 0 (region-local; do not rely on it) |
+
+Therefore:
+
+1. **The index is the authority for structure.** Document starts live in the container as member
+   **m15** (`xsa build --docs-map DIR`, or `xsa docstarts embed`; SXI2 v10): a monotone array with
+   `rank`/`select` (delta-varint gaps + sampled absolutes, ~2.4 B/doc ≈ 0.04 % of corpus). Without
+   the flag the build is byte-identical. `select(i)` is document `i`'s start; `rank(p)` is the
+   document containing `p`; `p - select(rank(p))` is the depth in document — all O(log + stride).
+2. **No query path scans for a boundary.** `xsa consult` cuts a position's spine at the document
+   base (`max(0, off - base)`, explicit in the window or resolved from m15 by `doc`; REFUSED when
+   neither is available), never at a separator. The removed `0x1E` spine cut was boundary inference
+   from content bytes and was wrong on every document with an internal `0x1E`. `--doc-restrict`
+   makes branch counts exact per document (a match never spans a boundary); `--exclude-source`
+   removes the query position's own occurrence before any count is reported.
+3. **What still counts `0x1E`, and why it is bounded:** the m20 context trie's per-node *span*
+   summary counts `0x1E` spans (its doc map is built from the corpus bytes during the tape tap) —
+   that is a node-annotation statistic, it is documented as a span count (never a document count),
+   and it never feeds a consult row or a boundary decision. Re-pointing it at m15 is follow-up work.
+   `--snap-1e` is an input-construction aid that REFUSES a mid-document raw cut — it never infers.
+
+Requirement document: `NOTE_FROM_EMENDER_DOCUMENT_BOUNDARIES.md` (the emender's measured basis and
+the three deliverables D1/D2/D3, gated in `RESULTS_STRUCTURAL_DOCS.md`).
+
 ## The goal, in one paragraph
 
 A corpus index that a controller can *interrogate* while it writes or remembers: given the text I am
@@ -43,7 +78,7 @@ are addressable.
 | suffix array as intervals (m1 BWT runs, m12/m13 rank directories) | **have** | rank arithmetic works; `xsa query --count` is exact on 10^11 bytes |
 | sampled SA values (m11, 30.6 M) | **have** | enough to locate, not enough for tree topology |
 | chi witness positions (m5, 24.19 G) | **have** | these are positions, NOT context nodes — a study corrected this |
-| document map (offsets → document → component) | **in flight** | deterministic from the shards; needed by `project`/`select` |
+| document map (offsets → document → component) | **have (m15)** | the shard-accounted starts, embedded as member m15 with rank/select (`xsa build --docs-map DIR`); boundaries are metadata, never a byte scan — see THE PRINCIPLE |
 | **LCP over runs** | **in flight — the gate** | without it there is no tree: children are delimited by where LCP drops |
 | child edges (explicit, for wide nodes only) | **not started** | children are contiguous in SA order, so narrow nodes can be enumerated by scanning LCP |
 | stateless query core | **have** | read-only mmap, per-worker arenas, no shared cache; scaling measured (58 % at 96 threads) |
@@ -254,8 +289,12 @@ figure), so two routes that agree on every byte of the tree still differ in thos
    while looking right.
 2. Child enumeration at run granularity equals a brute-force next-byte histogram on ≥50 real
    contexts, at 10 GB and 100 GB.
-3. Document map exact: document count equals the 0x1E count in the same byte range, and ≥100 sampled
-   documents byte-identical to their shard records.
+3. Document map exact: `rank`/`select` from member m15 agrees with the authoritative map at every
+   sampled position, INCLUDING positions inside documents that contain an internal `0x1E`
+   (`xsa docstarts verify`; zero disagreements, 10k random + all internal-`0x1E` documents).
+   The map is the shard record accounting — a document-count-equals-`0x1E`-count check is FORBIDDEN
+   (it is off by 6,979 in the first 100 GB); the byte-range identity that holds is
+   `separators == records + internal_0x1e`.
 4. `extend`, `relax`, `project` implemented over the stateless core, with a descent measured per
    position; report positions/s/core and the node-depth distribution actually observed.
 5. 10 GB and 100 GB indexes both rebuilt with the layer present, byte-identical answers for existing

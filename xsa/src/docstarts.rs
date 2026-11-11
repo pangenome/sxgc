@@ -204,9 +204,16 @@ impl DocStarts {
         let block_offs_off = samples_off + 8 * samples as usize;
         let gaps_off = block_offs_off + 4 * samples as usize;
         let want_bytes = HEADER as u64 + 12 * samples + gaps_bytes;
-        if bytes != want_bytes {
+        // the member is written PADDED to an 8-byte multiple: the container's
+        // trailing directory must sit at an 8-aligned offset and the members
+        // must partition the file exactly (v7 reader law), so the last member's
+        // payload carries <= 7 zero bytes of tail pad. The varint stream's own
+        // length stays the header's gaps_bytes; the pad is never read.
+        let padded_bytes = (want_bytes + 7) / 8 * 8;
+        if bytes != padded_bytes {
             bad(&format!(
-                "member is {bytes} bytes, layout says {want_bytes} (48 + 12*{samples} + {gaps_bytes})"
+                "member is {bytes} bytes, layout says {padded_bytes} (48 + 12*{samples} + \
+                 {gaps_bytes} varints, padded to 8)",
             ));
         }
         let ds = DocStarts {
@@ -600,7 +607,11 @@ pub fn encode(starts: &mut dyn Iterator<Item = u64>, text_len: u64, stride: u64,
         bytes.extend_from_slice(&o.to_le_bytes());
     }
     bytes.extend_from_slice(&gaps);
-    let want = HEADER as u64 + 12 * samples_count + gaps_bytes;
+    // tail pad to an 8-byte multiple (the trailing-directory alignment law)
+    while bytes.len() % 8 != 0 {
+        bytes.push(0);
+    }
+    let want = ((HEADER as u64 + 12 * samples_count + gaps_bytes) + 7) / 8 * 8;
     need(bytes.len() as u64 == want, "encoded member size mismatch");
     Encoded {
         bytes,
@@ -826,7 +837,22 @@ pub fn embed(
     }
     let text_len = reader.n - 1;
     let mut starts = StartsIter::open(source, Some(text_len));
-    let expected_docs = starts.docs_declared;
+    let expected_docs = match source {
+        // A PREFIX embed (the map covers more than the text) cannot be held to
+        // the map's own declared doc_count: the honest expectation is the
+        // documents that START inside the text, counted in an INDEPENDENT pass
+        // over the same validated deltas, so a truncated stream still dies.
+        Source::DocsMap(_) => {
+            let mut probe = StartsIter::open(source, Some(text_len));
+            let mut c = 0u64;
+            while probe.next().is_some() {
+                c += 1;
+            }
+            Some(c)
+        }
+        // a raw starts file declares nothing: the stream itself is the truth
+        Source::DocStartsFile(_) => None,
+    };
     let encoded = encode(&mut starts, text_len, stride, expected_docs);
     // The map's declared corpus size, for the journal's coverage line.
     let corpus_bytes = match source {
@@ -989,6 +1015,12 @@ fn append_copy(reader: &qlite::Reader, encoded: &Encoded, out: &str) {
         .open(&tmp)
         .unwrap_or_else(|e| die(&format!("DOCSTARTS: create {tmp}: {e}")));
     let mut w = BufWriter::with_capacity(1 << 20, wfile);
+    // RESERVE the 64-byte header: the member copy must start at file offset 64,
+    // and a fresh BufWriter writes from 0. The placeholder is overwritten by the
+    // header patch below (write_all_at at 0), but without it the first member's
+    // bytes would land in the header area and be destroyed by that patch.
+    w.write_all(&[0u8; 64])
+        .unwrap_or_else(|e| die(&format!("DOCSTARTS: reserve header: {e}")));
     let mut members: Vec<(u32, u32, u64, u64, u64, u32)> = Vec::new(); // id, codec, off, bytes, count, crc
     let mut wpos = 64u64;
     let mut off = 64u64;
@@ -1137,9 +1169,12 @@ impl XsepOracle {
         let j = i / self.stride;
         let mut start = u64_at(&self.map, self.anchors_off + 8 * j as usize);
         let mut d = j * self.stride;
+        // anchor j IS doc j*stride's start; the deltas that walk forward from
+        // it are delta[j*stride + 1 ..= i] - delta[j*stride] is the gap that
+        // REBUILT doc j*stride from its predecessor and must be skipped
         while d < i {
-            start += u32_at(&self.map, self.deltas_off + 4 * d as usize) as u64;
             d += 1;
+            start += u32_at(&self.map, self.deltas_off + 4 * d as usize) as u64;
         }
         start
     }
@@ -1257,6 +1292,7 @@ fn verify_command(args: &[String]) {
         need(&data[..4] == b"XPM1", "meta.bin is not an XPM1 file");
         let docs = u64_at(&data, 8);
         let corpus_bytes = u64_at(&data, 16);
+        let shard_names = u64_at(&data, 24);
         let names = u64_at(&data, 32);
         let name_payload = u64_at(&data, 40);
         let shard_payload = u64_at(&data, 48);
@@ -1264,15 +1300,19 @@ fn verify_command(args: &[String]) {
         let rows_off = XPM1_HEADER
             + name_payload as usize
             + 6 * names as usize
-            + shard_payload as usize;
+            + shard_payload as usize
+            + 6 * shard_names as usize;
         need(u32_at(&data, 56) as usize == XPM1_ROW, "meta.bin row size is not 34");
         need(rows_off + XPM1_ROW * docs as usize <= data.len(), "meta.bin rows do not fit");
         for d in 0..docs as usize {
             let row = rows_off + XPM1_ROW * d;
             let off = u64_at(&data, row);
             let len = u64_at(&data, row + 8);
-            let internal = u32_at(&data, row + 32);
-            if internal == 0 || off >= end {
+            let internal = u32_at(&data, row + 30); // off u64, len u64, shard u16, name u32, rec u64, internal u32 = 34
+            if off >= end {
+                break; // document starts are ascending: the rest is past the range
+            }
+            if internal == 0 {
                 continue;
             }
             // a position INSIDE the document, deliberately ambiguous to a

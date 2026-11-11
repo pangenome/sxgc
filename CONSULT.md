@@ -13,26 +13,48 @@ Requirement document: `NOTE_FROM_EMENDER_EXTRACTION_PERFORMANCE.md` (the
 ```
 xsa consult --container <sxi2> --windows <jsonl|bin> --output <file>
             [--corpus FILE] [--rss-gb 8] [-j N] [--resume] [--left 1024]
-            [--chunk-rows N] [--cache-gb G] [--bin|--jsonl] [--no-sep-cut]
-            [--strict] [--no-verify-prefix]
+            [--chunk-rows N] [--cache-gb G] [--bin|--jsonl] [--strict]
+            [--no-verify-prefix] [--docs DIR] [--exclude-source]
+            [--doc-restrict] [--doc-restrict-cap N]
 ```
+
+The removed `--sep-cut` / `--no-sep-cut` are hard errors that name the reason:
+the `0x1E` spine cut inferred document boundaries from content bytes and was
+wrong on every document that contains an internal `0x1E` (78,715 of them over
+the full pile; `NOTE_FROM_EMENDER_DOCUMENT_BOUNDARIES.md`).
 
 ---
 
 ## 1. What one position is
 
 For a position at corpus byte offset `off` inside a document whose first byte is
-`base`:
+`base` (explicit in the window, or resolved from the document structure by
+`doc` — see §2):
 
-1. `ctx = corpus[off - min(left, 1024, off - base) .. off]` — the spine, the last
-   ≤1024 bytes, never crossing the document start.
-2. the spine is cut at the **last `0x1E`** inside it (their verified rule; a
-   context never spans a document boundary). A position immediately after a
-   separator therefore has an empty spine. `--no-sep-cut` keeps the raw spine.
-3. **exactly one query**: the next-byte branch histogram of `context || c` over
+1. `ctx = corpus[max(base, off - min(left, 1024)) .. off]` — the spine, cut at
+   the **document base**, `max(0, off - base)` bytes. **Never a byte scan**: the
+   `0x1E` separator cut is REMOVED. A separator inside a document is content
+   like any other byte, and document boundaries are METADATA
+   (`NOTE_FROM_EMENDER_DOCUMENT_BOUNDARIES.md`): at vocabulary 256 no in-band
+   delimiter can be safe by construction, and the pile's own framing collides
+   with `0x1E` inside 78,715 documents.
+2. **exactly one query**: the next-byte branch histogram of `context || c` over
    the container, for every present byte `c`, plus the structural-END
    occurrence. No backoff, no second context length, no reuse cache. An empty
-   spine is an **empty histogram** (not the global corpus histogram).
+   spine (the position is the document's first byte) is an **empty histogram**
+   (not the global corpus histogram).
+3. With `--doc-restrict` (needs a document structure): the histogram is
+   **restricted to the document containing the position** — a match or branch
+   count never spans a document boundary, exactly rather than probabilistically.
+   Exactness costs enumeration: every occurrence of the context is located and
+   kept only if the match lies fully inside the document AND its continuation
+   byte does too; intervals wider than `--doc-restrict-cap` (default 1024) are
+   **refused loudly**, never silently returned unrestricted.
+4. With `--exclude-source`: the position's **own occurrence is removed before
+   anything is reported** (its branch byte is the corpus byte AT the position).
+   Reported `width` then means "occurrences other than the one at this position",
+   and the row's flag bit 2 states that the removal was applied
+   (their receipted C14 leakage: `RESULT_C14_IN_INDEX_LEAKAGE.md`).
 
 This is `branch_result`'s answer (`xsa branches --serve -k 256`) with the
 redundant full backward search removed: `consult_answer` calls the *same*
@@ -61,16 +83,29 @@ The cursor is a **whole-window** cursor: a commit never splits a window.
 
 | field | meaning |
 |---|---|
-| `doc` | opaque document id, carried into every row |
-| `base` | absolute corpus byte offset of the document's **first** byte |
+| `doc` | document id: carried into every row, and — when `base` is absent — the id the document structure resolves the base from (`select(doc)`) |
+| `base` | absolute corpus byte offset of the document's **first** byte. OPTIONAL: absent means "resolve it from the structure by `doc`". REFUSED when no structure is available (no member m15 in the container and no `--docs DIR`) — a base is never inferred from content bytes |
 | `start` | 0-based position index inside the document of the window's first position (default 0) |
-| `len` | number of consecutive positions, 1..1048576 (default 1) |
+| `len` | number of consecutive positions, 1..1048576 (default 1). A window with **neither `base` nor `len`** is the **whole document** `doc` (every position, base resolved from the structure) |
 | `left` | left-context budget in bytes, `<= 1024` (default `--left`) |
 
 Position `i` of the window is corpus offset `base + start + i`, and its spine is
-bounded below by `base`. Extra fields are ignored; a missing `doc`/`base` is a
-hard error. A last line without a trailing newline is refused (a torn window set
+bounded below by `base`. Extra fields are ignored; a missing `doc` is a hard
+error; a missing `base` is a hard error **only** when no document structure is
+available. A last line without a trailing newline is refused (a torn window set
 is never guessed at). Blank lines are skipped.
+
+**The document structure** is, in precedence order: the `--docs DIR` sidecar
+(`seps.bin`, XSEP v1 — the `xsa corpus --pile-map --out DIR` output; a map that
+COVERS the text may be a superset, so the full 1.3 TB pilemap resolves any
+head-prefix container), and the container's own member **m15** (SXI2 v10,
+`xsa build --docs-map DIR` or `xsa docstarts embed`). When both are present they
+are cross-checked (`select` at 64 random doc ids, `rank` at 64 random
+positions) and a disagreement is a hard error: two authorities that disagree
+about a boundary cannot both be obeyed. When a structure is present and a
+window states a `base` that DISAGREES with it (the position's containing
+document starts elsewhere), the run is refused — boundary parity in production,
+per position.
 
 ### Binary batch (`--bin`)
 
@@ -78,31 +113,50 @@ is never guessed at). Blank lines are skipped.
 (`XSWIN001` + 24 zero bytes), then one record per window:
 
 ```
-u64 doc | u64 base | u64 start | u32 len | u32 left        (left == 0xFFFFFFFF -> --left)
+u64 doc | u64 base | u64 start | u32 len | u32 left        (left == 0xFFFFFFFF -> --left;
+                                                             base == 0xFFFF_FFFF_FFFF_FFFF -> resolve from doc)
 ```
 
-A file whose size is not a nonzero multiple of 32 is refused.
+A file whose size is not a nonzero multiple of 32 is refused. A binary record
+always carries `len`, so the whole-document form is JSONL-only.
 
 ## 3. Rows (output)
 
 `--output` is a new file. Header, then one record per position, appended in
-window order (positions ascending, windows as given):
+window order (positions ascending, windows as given). **Version 2** (the v2
+row is the v1 row plus a 24-byte tail: `docid`, `base`, `depth_in_doc` — one
+row answers both "what continues this" and "inside which document"; the
+note's D2). A reader that expects version 1 must refuse version 2, and vice
+versa — the tail changes every record boundary after the first:
 
 ```
-header:  "XSACONS1" (8 B) | u32 version = 1 | u32 reserved = 0
+header:  "XSACONS1" (8 B) | u32 version = 2 | u32 reserved = 0
 row:     u32 nsym          number of (byte, count) pairs, 0..=256
          u16 ctxlen        spine length actually queried, 0..=1024
-         u16 flags         bit0 EOF present, bit1 spine truncated by the 1024 cap
-         u64 doc           from the window
+         u16 flags         bit0 EOF present, bit1 spine truncated by the 1024 cap,
+                           bit2 source-excluded (--exclude-source removed the
+                               position's own occurrence),
+                           bit3 doc-restricted (the histogram is restricted to
+                               the document containing the position)
+         u64 doc           the window's document id, as given
          u64 off           absolute corpus offset of the position
-         u64 width         occurrences of the spine (= sum of counts + eof)
+         u64 width         occurrences of the spine (= sum of counts + eof; with
+                           bit2 set: occurrences OTHER than the one at this
+                           position)
          u64 eof           0 or 1
          nsym x { u8 byte | u64 count }
+         u64 docid         the CONTAINER's document id from the structure
+                           (member m15 / --docs), or 0xFFFF_FFFF_FFFF_FFFF when
+                           there is no structure or the position's document is
+                           not a container document
+         u64 base          the window's effective document base (explicit or
+                           resolved from the structure)
+         u64 depth         off - base (depth in document)
 ```
 
-Record size is `40 + 9*nsym` bytes. Pairs are ordered **count descending, byte
-ascending** (the same order `xsa branches` emits). Everything is little-endian.
-Nothing is compressed and nothing is buffered on the side.
+Record size is `40 + 9*nsym + 24` bytes. Pairs are ordered **count descending,
+byte ascending** (the same order `xsa branches` emits). Everything is
+little-endian. Nothing is compressed and nothing is buffered on the side.
 
 *Reading the map to the emender's `FLAGSHIPSPARSE2` row* (`flagship_cache.py`,
 `ROW = <HBBH`, `PAIR = <BQ`): `context_bytes = ctxlen`, `eof = eof`,
@@ -121,7 +175,8 @@ Append-only, one record per line, `key=value`, fsync'd per record:
 ```
 CONSULT_OPEN      container/index_n/index_r/corpus/text_bytes/output/jobs/rss_cap_bytes/
                   cap_gb/chunk_rows/left_default/windows/windows_format/batch_positions/
-                  arena_bytes/cache_bytes/index_rss_cap_bytes/sep_cut
+                  arena_bytes/cache_bytes/index_rss_cap_bytes/docs_source/docs/exclude_source/
+                  doc_restrict/doc_restrict_cap
 CONSULT_RSS       rss_gb=… rss_bytes=… cap_gb=… positions=… reorder_batches=… pending_rows=…
                   backpressure_events=…            (about once a second)
 CONSULT_BACKPRESSURE state=pause|resume positions=… cause=worker_queue_full|rss_budget
@@ -133,7 +188,8 @@ CONSULT_RESUME    seq/journal_lines/journal_torn_tail_lines/truncated_bytes/pref
 CONSULT_DONE      positions/windows/seconds/positions_per_s/output_bytes/rows_sha256/
                   last_commit_seq/commits/peak_rss_gb/peak_rss_bytes/cap_gb/jobs/
                   cache_hits/cache_misses/block_decodes/drop_epochs/decode_ns/drop_ns/
-                  prefetch_calls/corpus_remaps/backpressure_events/windows_bytes_done
+                  prefetch_calls/corpus_remaps/backpressure_events/windows_bytes_done/
+                  excluded_rows/restricted_rows
 ```
 
 ## 5. Guarantees
@@ -378,10 +434,17 @@ arena earns its share of the budget.
    — the two agree exactly. If their window sets ever point at text the container
    does not cover, their selector would shorten the spine and we would answer
    with the (absent) full one.
-2. **The spine cut at `0x1E` is implemented, the backoff is not.** Same spines,
-   same histograms, for every position whose full spine occurs.
-3. **The row layout is ours** (§3) — a documented fixed-layout record; their
-   reader adapts once (mapping in §3) or reads our layout directly.
+2. **The spine is cut at the DOCUMENT BASE, not at `0x1E`** (D1): their
+   `c14_branch_serve.select` rule `rsplit(b'\x1e', 1)` inferred boundaries from
+   content bytes and is wrong on every document with an internal `0x1E`. Give
+   `base` per window (or let `doc` resolve it from member m15 / `--docs DIR`);
+   the backoff is still not implemented. With `--doc-restrict` the counts are
+   exact per document; with `--exclude-source` the width excludes the position's
+   own occurrence (their receipted C14 leakage).
+3. **The row layout is ours** (§3, v2) — a documented fixed-layout record with
+   the `docid`/`base`/`depth_in_doc` tail; their reader adapts once (mapping in
+   §3) or reads our layout directly. A v1 reader must refuse a v2 file (the
+   tail moves every record boundary).
 4. **Their `censored` bit** means "the backoff search was capped at the available
    context". We have no backoff, so for any nonzero `ctxlen` their reader should
    set `censored = 1`;
@@ -391,14 +454,31 @@ arena earns its share of the budget.
 
 ## 9. Residual risks and limits
 
+- **Document-restricted counting is ENUMERATIVE and capped** (§1): `--doc-restrict`
+  locates every occurrence of the context (one LF walk each) and keeps only the
+  ones whose match AND continuation byte lie inside the position's document, so
+  it is exact but costs O(width) locates per row. Intervals wider than
+  `--doc-restrict-cap` (default 1024) are REFUSED, never silently returned
+  unrestricted — raise the cap (and pay), drop the flag, or query longer
+  contexts. Long-spine cache builds (mean ctxlen 709) have width ~1 and pay
+  ~nothing; short-context workloads (C14-style, mean 14.9 B) can see six-figure
+  widths and must choose.
+- **`--doc-restrict` is opt-in**: base resolution, per-position boundary parity
+  and the docid/base/depth row fields are automatic when a structure is present,
+  but counting semantics only change when the flag is given — the refusal above
+  is the honest alternative to a silent slowdown.
+- **`--strict` skips restricted rows**: the strict cross-check is defined
+  against `branch_result` (the unrestricted rank kernel); restricted rows are
+  proved exact by the fixture gate's brute-force oracle instead.
 - **Throughput on the hardest workload is only just over the bar** (§7): a full
   1024-byte spine for every position is ~50x the rank work of their measured
   workload, and the pre-existing query kernel's parallel efficiency (~25% at
   64-96 threads on a box with foreign load) is what limits it, not this stream.
 - **Fixture containers cannot be built on this box for very small inputs** (the
-  tape route refuses below ~26000 rows, the bin route dies in `xsa_finish` with
-  "the sentinel row is missing or duplicated"), so the brute-force oracle runs
-  against the real 100 GB container (gate A1) rather than a synthetic one.
+  tape route's fold floor needs a ~36 MB corpus at `--threads 4`, ~141 MB at
+  `--threads 32`; the bin route dies in `xsa_finish` with "the sentinel row is
+  missing or duplicated"), so the adversarial fixtures carry a 48 MiB pad and the
+  100 GB brute-force oracle runs against the real container (gate A1).
 - **The absent-context path is unreachable from a window** (§1): a spine read
   from the corpus occurs at its own position, so `width >= 1` whenever the spine
   has no structural-END byte. The guard stays as a defence.
