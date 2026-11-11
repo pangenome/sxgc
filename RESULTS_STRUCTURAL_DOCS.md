@@ -206,4 +206,30 @@ A4_CRASH_RESUME positions=1001472 sha256=6058073fa14e0230ecf962052369348b041512b
 
 **cargo clean + tests:** `cargo clean` then a full `cargo build --release` then
 `cargo test --release`: **90 passed, 0 failed** (1 ignored, the pre-existing
-selftest sweep marker). See the lane's commit for the exact tree.
+selftest sweep marker).
+
+## G6 — merge to main (origin/main moved mid-lane: the --docs-map collision)
+
+While this lane ran, origin/main advanced (adadf48 → `c05bea2`, the corpus-v2
+lane's four commits) — and that lane ALSO wired a `--docs-map` flag into
+`xsa build`, with different semantics: their `--docs-map PREFIX` validates a
+CORPUS V2 sidecar pair (`PREFIX.starts` + `PREFIX.docs`) and journals
+`CONTAINER_DOCS_V2`; this lane's `--docs-map DIR` embeds m15. Both contracts
+are published, so the merge keeps BOTH behind one flag, **dispatched at parse
+time by the argument's shape** (a directory holding `seps.bin` → the m15 embed;
+a prefix holding the pair → the V2 validation; anything else → a hard error
+naming both forms — never guessed). Post-rebase verification, all with the
+final binary:
+
+```
+--docs-map /nonexistent     -> "neither a document-map directory (want DIR/seps.bin ...) nor a CORPUS V2 sidecar pair (want PREFIX.starts and PREFIX.docs ...)"
+--docs-map v2test (dummy pair) -> routed to corpusv2::docs_map_check: "./v2test.starts is not an XCS2 v1 starts table"
+150 MB, no flags            -> 871c904f3a67856943a652d1bad743b826cf6892e2265852d9b4f619ff1f98d5 (byte-identical to the adadf48 build)
+150 MB, --docs-map pilemap  -> dd56e422811c55374ded1a4c703aeff0219427be86a90e55bb371f0ecec99faa (byte-identical to the pre-rebase embed)
+G1 verify on that container -> DOCSTARTS_PARITY ... disagreements=0 ... result=PASS
+G4 window set, all flags   -> 576d7ea8b515437150a5bf0e0881f9de3c2e4622dcab1f9fa3f33c8b2114eafb (identical to the pre-rebase runs)
+cargo test on the merged tree -> 98 passed, 0 failed (90 this lane + 8 corpus-v2)
+```
+
+The lane is rebased linearly onto `c05bea2` (no merge commit; the repo's
+history is linear) and main fast-forwards to it.
