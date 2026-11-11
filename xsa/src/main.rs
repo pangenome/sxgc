@@ -21,7 +21,9 @@ mod plan;
 mod product;
 mod forks;
 mod corpus;
+mod corpusv2;
 mod pilemap;
+mod docstarts;
 
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
@@ -1439,6 +1441,9 @@ fn usage() -> ! {
     eprintln!("           pile_set_name column) and meta.bin (offset, length, shard, record, set");
     eprintln!("           name, internal 0x1E); every document is checked against the pile bytes");
     eprintln!("  xsa corpus --pile-verify --map DIR [--samples N]");
+    eprintln!("  xsa docstarts embed|verify|probe|info - document starts as container member m15");
+    eprintln!("           (SXI2 v10): `embed` adds it from a map, `verify` is the rank/select parity");
+    eprintln!("           gate against seps.bin, `probe` answers rank/select for a positions file");
     eprintln!("           re-extract sampled documents from their shard records and compare");
     eprintln!("  xsa query-legacy ...   DEPRECATED phi-era reader (archived harnesses only)");
     eprintln!("           --ms: matching-statistics length vector per read (binary)");
@@ -1538,6 +1543,7 @@ fn main() {
         Some("mems") => product::command("mems", &args[1..]),
         Some("forks") => forks::command(&args[1..]),
         Some("corpus") => corpus::command(&args[1..]),
+        Some("docstarts") => docstarts::command(&args[1..]),
         Some("witness-build") => product::witness_build(&args[1..]),
         Some("serve") => product::command("serve", &args[1..]),
         Some("build-anchors") => cmd_build_anchors(&args[1..]),
