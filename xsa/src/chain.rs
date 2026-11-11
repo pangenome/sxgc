@@ -80,6 +80,20 @@ pub const USAGE: &str = "usage:
                      contexts answered; 100 is 0.165 n and ~77 %).
   --no-trie          omit m20: the container is byte-identical to a build without
                      the feature (SXI2 v7, 8 members, same sha256).
+  --docs-map X       ONE FLAG, TWO CONTRACTS, DISPATCHED BY THE ARGUMENT'S SHAPE
+                     (never guessed; a path that is neither is a hard error):
+                     X is a DIRECTORY holding seps.bin (the `xsa corpus
+                     --pile-map --out DIR` sidecar): embed m15, the document
+                     starts, post-publish - rank/select over the monotone start
+                     array (SXI2 v10, delta-varint gaps + sampled absolutes).
+                     A map that COVERS the text may be a superset (the embed
+                     takes the documents that START inside the text). Without
+                     the flag the container is byte-identical; boundaries are
+                     METADATA, never inferred from content bytes.
+                     X is a PREFIX holding the CORPUS V2 sidecar pair
+                     (PREFIX.starts + PREFIX.docs): validate it and journal
+                     CONTAINER_DOCS_V2 (query resolves doc_id/offset_in_doc
+                     through the V2 tables; CORPUS_V2.md 6).
   --chi-expect N     assert chi count; requires --with-chi.
   --snap-1e          require a final 0x1E document boundary and journal SHA256;
                      never trims, extends or otherwise transforms the input.
@@ -231,6 +245,17 @@ struct Options {
     /// occurrences (below it `project` answers from seek + the document map).
     /// 1000 is `ctx-build`'s default, so the two routes produce the same member.
     trie_docs_min_support: u64,
+    /// **m15 (the document starts)**, one half of `--docs-map`: when the flag
+    /// names a DIRECTORY holding `seps.bin` (the `xsa corpus --pile-map --out
+    /// DIR` sidecar), the document map is embedded as container member m15
+    /// (SXI2 v10) right after the container is published. ABSENT (the default)
+    /// = the container is byte-identical to a build without the feature. A map
+    /// that COVERS the text (corpus_bytes >= text) may be a superset - the
+    /// embed takes the documents that START inside the text, which is exactly
+    /// the prefix semantics of a container built over a head of a bigger
+    /// corpus. Boundaries are metadata (see
+    /// NOTE_FROM_EMENDER_DOCUMENT_BOUNDARIES.md): never inferred from bytes.
+    /// The other half (CORPUS_V2.md 6) is documented on `DocsMapArg`.
     /// the operator ASKED for the trie (a flag was given), so a route that cannot
     /// build it must refuse instead of quietly producing a container without m20.
     trie_asked: bool,
@@ -276,12 +301,28 @@ struct Options {
     remap: Option<PathBuf>,
     chunk_mb: Option<u32>,
     fanin: bool,
-    /// `--docs-map PREFIX` (CORPUS_V2.md 6): the build input is the materialized
-    /// `.bin` cache of a CORPUS V2 corpus whose tables live at PREFIX. The sidecar
-    /// pair (`<prefix>.starts`, `<prefix>.docs`) is validated (corpus_bytes must
-    /// equal the input size) and journaled as CONTAINER_DOCS_V2, which the query
-    /// side reads back to resolve doc_id / offset_in_doc through the V2 tables.
-    docs_map: Option<PathBuf>,
+    /// `--docs-map` (see `DocsMapArg`): the flag is RESOLVED AT PARSE TIME by
+    /// the argument's shape, so a plan and a run can never disagree about which
+    /// of the two published contracts it names.
+    docs_map: Option<DocsMapArg>,
+}
+
+/// `--docs-map` names a document map for the build input, and the ARGUMENT'S
+/// SHAPE selects which of the two published contracts is meant. Neither is
+/// ever guessed: a path that is neither shape is a hard parse error.
+///
+/// - a DIRECTORY holding `seps.bin` (the `xsa corpus --pile-map --out DIR`
+///   sidecar, XSEP v1): member m15 (the document starts, SXI2 v10) is embedded
+///   post-publish - boundaries as container METADATA
+///   (NOTE_FROM_EMENDER_DOCUMENT_BOUNDARIES.md D2).
+/// - a PREFIX holding the CORPUS V2 sidecar pair (`<prefix>.starts`,
+///   `<prefix>.docs`, CORPUS_V2.md 6): the pair is validated before any phase
+///   runs and journaled as CONTAINER_DOCS_V2, which the query side reads back
+///   to resolve doc_id / offset_in_doc through the V2 tables.
+#[derive(Debug)]
+enum DocsMapArg {
+    PileMap(PathBuf),
+    CorpusV2(PathBuf),
 }
 
 #[derive(Debug)]
@@ -368,7 +409,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     let mut remap = None;
     let mut chunk_mb = None;
     let mut fanin = false;
-    let mut docs_map = None;
+    let mut docs_map: Option<DocsMapArg> = None;
     let mut chunks_given = false;
     let mut kway_given = false;
     let mut i = 0;
@@ -481,6 +522,39 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
                 trie_docs_min_support = value(args.get(i), "--trie-docs-min-support")?
                     .parse().map_err(|_| "--trie-docs-min-support: integer expected".to_string())?;
             }
+            // m15 / CORPUS V2: one flag, two published contracts, dispatched by
+            // the argument's SHAPE (never guessed - a path that is neither shape
+            // is a hard error naming both).
+            "--docs-map" => {
+                i += 1;
+                let path = PathBuf::from(value(args.get(i), "--docs-map")?);
+                let starts = {
+                    let mut s = path.as_os_str().to_os_string();
+                    s.push(".starts");
+                    PathBuf::from(s)
+                };
+                let docs = {
+                    let mut d = path.as_os_str().to_os_string();
+                    d.push(".docs");
+                    PathBuf::from(d)
+                };
+                let arg = if path.is_dir() && path.join("seps.bin").is_file() {
+                    DocsMapArg::PileMap(path)
+                } else if starts.is_file() && docs.is_file() {
+                    DocsMapArg::CorpusV2(path)
+                } else {
+                    return Err(format!(
+                        "--docs-map {}: neither a document-map directory (want DIR/seps.bin, \
+                         the `xsa corpus --pile-map --out DIR` sidecar, to embed member m15) \
+                         nor a CORPUS V2 sidecar pair (want PREFIX.starts and PREFIX.docs, to \
+                         validate and journal CONTAINER_DOCS_V2)",
+                        path.display()
+                    ));
+                };
+                if docs_map.replace(arg).is_some() {
+                    return Err("specify --docs-map only once".into());
+                }
+            }
             "--chi-expect" => {
                 i += 1;
                 let v = value(args.get(i), "--chi-expect")?
@@ -588,13 +662,6 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
                     return Err("specify --remap only once".into());
                 }
             }
-            "--docs-map" => {
-                i += 1;
-                let path = PathBuf::from(value(args.get(i), "--docs-map")?);
-                if docs_map.replace(path).is_some() {
-                    return Err("specify --docs-map only once".into());
-                }
-            }
             _ => return Err(format!("unknown option {flag}")),
         }
         i += 1;
@@ -671,8 +738,8 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
                  bin_pipeline, legacy_merge, v2_flag_given, chi_expect, with_chi, with_lcp_runs, wit_ram_gb,
                  finish_as_gb, bin_live_cap, bin_target_size, bin_entropy_min, phrase, stripes, scratch_free_pct,
                  scratch_budget_gb, skip_fit_check, tape, no_resume,
-                 trie, trie_depth, trie_min_support, trie_docs_min_support, trie_asked,
-                 remap, chunk_mb, fanin, docs_map })
+                 trie, trie_depth, trie_min_support, trie_docs_min_support, trie_asked, docs_map,
+                 remap, chunk_mb, fanin })
 }
 
 /// Last byte of a file (the snap-boundary probe).
@@ -1930,7 +1997,7 @@ fn run_chain(options: Options) -> Result<(), String> {
     // pair is validated (and dies loudly on corruption) BEFORE any phase runs;
     // the journal line is what the query side reads back to resolve
     // doc_id/offset_in_doc through the V2 tables.
-    if let Some(prefix) = &options.docs_map {
+    if let Some(DocsMapArg::CorpusV2(prefix)) = &options.docs_map {
         let (n_docs, ordered) = crate::corpusv2::docs_map_check(prefix, corpus_bytes)
             .map_err(|e| e)?;
         let starts_name = {
@@ -2718,6 +2785,41 @@ headline=LCP-over-runs",
     } else if options.tape {
         journal.line("CONTEXT_TRIE_POLICY present=false reason=--no-trie (the product container is \
 byte-identical to a build without this feature)");
+    }
+    // ---- EMBED m15 (the document starts) IF --docs-map WAS GIVEN ------------
+    // Runs AFTER the m20 join on purpose: append_m20 refuses a container that
+    // already carries m15 (appending m20 would rewrite the version as 9 and
+    // strand the member), so the order is m20 first, m15 second. Idempotent on
+    // a resumed run: a container that already carries m15 is verified against
+    // the map instead of being appended twice.
+    if let Some(DocsMapArg::PileMap(map)) = &options.docs_map {
+        let map = map.to_string_lossy().into_owned();
+        let container_s = container.to_string_lossy().into_owned();
+        let reader = super::qlite::Reader::open(&container_s)
+            .map_err(|e| format!("docstarts join: reopen container: {e}"))?;
+        if reader.members.iter().any(|m| m.id == super::docstarts::M15) {
+            let ds = super::docstarts::DocStarts::from_container(&reader)
+                .ok_or("docstarts join: m15 present but not loadable")?;
+            journal.line(&format!(
+                "DOCSTARTS_JOIN member=m15 present=true already=1 docs={} stride={} \
+ (a resumed run: the member is verified by loading it, never appended twice)",
+                ds.docs, ds.stride));
+        } else {
+            let stats = super::docstarts::embed(
+                &container_s,
+                &super::docstarts::Source::DocsMap(map.clone()),
+                super::docstarts::SAMPLE_STRIDE,
+                None,
+            );
+            journal.line(&format!(
+                "DOCSTARTS_JOIN member=m15 present=true already=0 {} \
+ (directory rewritten in place after the m20 join: no container byte copied)",
+                super::docstarts::journal_line(&stats)));
+        }
+    } else {
+        journal.line("DOCSTARTS_POLICY present=false reason=no-docs-map (the product container is \
+byte-identical to a build without this feature; document boundaries stay \
+METADATA the caller supplies - never inferred from content bytes)");
     }
     // XSA_KILL_AT=after_rename: EVERY phase has exited with rc=0, so the finish
     // has linked the container into its final name (it links only after fsync)

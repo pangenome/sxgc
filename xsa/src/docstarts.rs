@@ -122,8 +122,13 @@ pub struct DocStarts {
     kind: Kind,
     pub docs: u64,
     pub text_len: u64,
-    stride: u64,
-    samples: u64,
+    pub stride: u64,
+    pub samples: u64,
+    /// the map's own declared corpus size (the XSEP header's corpus_bytes; for
+    /// a container member this is the container's text). A superset map (a map
+    /// of a longer stream than the container's text) is legal for RESOLUTION:
+    /// starts are absolute offsets from corpus byte 0.
+    pub corpus_bytes: u64,
 }
 
 impl DocStarts {
@@ -216,6 +221,7 @@ impl DocStarts {
             text_len,
             stride,
             samples,
+            corpus_bytes: text_len,
         };
         // FULL VALIDATION, ONCE: every gap decoded, every sample cross-checked.
         // ~210 M varints at full-Pile scale, well under a second per million.
@@ -294,14 +300,19 @@ impl DocStarts {
         if docs == 0 || docs > u32::MAX as u64 {
             bad(&format!("doc_count {docs} is not 1..=u32::MAX"));
         }
-        if corpus_bytes != text_len {
+        if corpus_bytes < text_len {
             die(&format!(
-                "DOCSTARTS: seps.bin {path} covers corpus_bytes={corpus_bytes} but the \
-                 container's text is {text_len} bytes; a window set can only be resolved by a \
-                 map of THIS text - regenerate the map over this exact text \
+                "DOCSTARTS: seps.bin {path} covers corpus_bytes={corpus_bytes}, less than the \
+                 container's text {text_len} bytes; a window set can only be resolved by a \
+                 map that COVERS the text - regenerate the map over this exact text \
                  (`xsa corpus --pile-map --limit-bytes {text_len}`)"
             ));
         }
+        // a SUPERSET map is accepted: starts are absolute offsets from corpus byte
+        // 0 of the same stream, so a map of the whole pile resolves a container built
+        // over any head of it (the prefix embed took exactly the documents that START
+        // inside the text). Doc ids whose start is at or past the text are refused by
+        // the callers, never silently resolved.
         if anchors != docs.div_ceil(stride)
             || b.len() as u64 != XSEP_HEADER + 4 * docs + 8 * anchors
         {
@@ -318,6 +329,7 @@ impl DocStarts {
             text_len,
             stride,
             samples: anchors,
+            corpus_bytes,
             backing,
         };
         // Full validation, same teeth as the member: every delta decoded once.

@@ -44,7 +44,7 @@ use std::io::{Read as _, Seek as _};
 /// Row-layout file magic and version; the byte layout is documented in
 /// CONSULT.md and is what the training-side reader is written against.
 const CONSULT_MAGIC: &[u8; 8] = b"XSACONS1";
-const CONSULT_VERSION: u32 = 1;
+const CONSULT_VERSION: u32 = 2;
 /// Binary `--windows` batch magic (the first 32-byte record is a header).
 const WIN_MAGIC: &[u8; 8] = b"XSWIN001";
 const WIN_RECORD_BYTES: usize = 32;
@@ -54,6 +54,24 @@ const CTX_MAX: u32 = 1024;
 /// Fixed part of a row record: nsym u32, ctxlen u16, flags u16, doc u64,
 /// off u64, width u64, eof u64.
 const ROW_FIXED_BYTES: usize = 40;
+/// v2 tail of a row record: docid u64, base u64, depth_in_doc u64 (see
+/// CONSULT.md §3 - the reply answers "inside which document" alongside
+/// "what continues this").
+const ROW_TAIL_BYTES: usize = 24;
+/// A window whose `base` is this (JSONL: field absent; binary: the record's
+/// u64 is all-ones) resolves its base from the document structure (container
+/// member m15 or `--docs DIR`). REFUSED if no structure is available - a base
+/// is never inferred from content bytes.
+const BASE_ABSENT: u64 = u64::MAX;
+/// The row's `docid` field when the position's document is NOT a container
+/// document (no structure, or the position is beyond the container's text -
+/// the flagship case: train/eval documents live beyond the spine).
+const DOCID_ABSENT: u64 = u64::MAX;
+/// `--doc-restrict`: a context whose occurrence interval is wider than this is
+/// REFUSED rather than silently counted unrestricted. Exact document-restricted
+/// counting enumerates the interval's occurrences (one LF walk each), so the
+/// cap is the cost knob; the default is sized for long-spine cache builds.
+const DOC_RESTRICT_CAP_DEFAULT: u64 = 1024;
 /// Sliding corpus mapping width. The corpus is read through a WINDOWED mmap of
 /// this size and nothing else: a 100 GB corpus never becomes this process's
 /// resident set, and a retired window is MADV_DONTNEED'd before it is dropped.
@@ -203,6 +221,13 @@ fn read_last_commit(path: &str) -> Option<(ConsultCommit, u64, u64)> {
 /// One window of positions: `len` consecutive document-relative positions
 /// starting at `start`, inside the document whose first corpus byte is at
 /// `base`. The position's own byte is at corpus offset `base + start + i`.
+///
+/// `base` may be `BASE_ABSENT`: the window then resolves its base from the
+/// document structure by `doc` (container m15 or `--docs DIR`) - D1, the
+/// caller who knows the boundaries may also state them explicitly, and a
+/// missing base with no structure available is REFUSED, never scanned for.
+/// `whole_doc` marks a window that gave neither base nor len: it resolves to
+/// every position of the document `doc`.
 #[derive(Debug, Clone, Copy)]
 struct ConsultWindow {
     doc: u64,
@@ -210,6 +235,7 @@ struct ConsultWindow {
     start: u64,
     len: u32,
     left: u32,
+    whole_doc: bool,
 }
 
 struct WindowSource {
@@ -326,6 +352,9 @@ impl WindowSource {
                         start: u(16),
                         len: u32::from_le_bytes(r[24..28].try_into().unwrap()),
                         left: u32::from_le_bytes(r[28..32].try_into().unwrap()),
+                        // a binary record always carries len; base == all-ones
+                        // is the resolve-me sentinel
+                        whole_doc: false,
                     };
                     self.i += WIN_RECORD_BYTES;
                     return Some(w);
@@ -383,8 +412,9 @@ fn json_u64(obj: &serde_json::Map<String, serde_json::Value>, key: &str, path: &
             "consult: JSONL windows {path}: field '{key}' is not a number"
         )),
         None => die(&format!(
-            "consult: JSONL windows {path}: window is missing required field '{key}' (schema: doc, \
-             base, start, len, left)"
+            "consult: JSONL windows {path}: window is missing required field '{key}' (schema: \
+             doc, base, start, len, left; 'base' may be omitted only when a document \
+             structure can resolve it from 'doc')"
         )),
     }
 }
@@ -402,11 +432,25 @@ fn parse_json_window(line: &[u8], path: &str) -> ConsultWindow {
         ))
     });
     let doc = json_u64(obj, "doc", path);
-    let base = json_u64(obj, "base", path);
+    // "base" is the explicit document start (D1). ABSENT = resolve it from the
+    // document structure by "doc"; never from content bytes.
+    let base = match obj.get("base") {
+        None => BASE_ABSENT,
+        Some(serde_json::Value::Number(n)) => n.as_u64().unwrap_or_else(|| {
+            die(&format!(
+                "consult: JSONL windows {path}: field 'base' is not a non-negative integer"
+            ))
+        }),
+        Some(_) => die(&format!(
+            "consult: JSONL windows {path}: field 'base' must be the document's first-byte \
+             corpus offset (an integer), not a string"
+        )),
+    };
     let start = match obj.get("start") {
         None => 0,
         Some(_) => json_u64(obj, "start", path),
     };
+    let len_given = obj.get("len").is_some();
     let len = match obj.get("len") {
         None => 1u64,
         Some(_) => json_u64(obj, "len", path),
@@ -423,7 +467,9 @@ fn parse_json_window(line: &[u8], path: &str) -> ConsultWindow {
              integer), not a string"
         )),
     };
-    if len == 0 || len > (1 << 20) {
+    // a window that names neither base nor len is THE WHOLE DOCUMENT `doc`
+    let whole_doc = base == BASE_ABSENT && !len_given;
+    if !whole_doc && (len == 0 || len > (1 << 20)) {
         die(&format!(
             "consult: JSONL windows {path}: window len={len} outside 1..={}",
             1 << 20
@@ -435,6 +481,7 @@ fn parse_json_window(line: &[u8], path: &str) -> ConsultWindow {
         start,
         len: len as u32,
         left: u32::try_from(left).unwrap_or(LEFT_USE_DEFAULT),
+        whole_doc,
     }
 }
 
@@ -569,6 +616,94 @@ fn consult_answer(
     (sum + eof, eof)
 }
 
+/// `--doc-restrict`: the EXACT document-restricted branch histogram.
+///
+/// The note's D2 semantics: a match or branch count must never span a document
+/// boundary - the interval of occurrences for a context is restricted to the
+/// document containing the query position, exactly rather than probabilistically
+/// (the old 0x1E spine cut only made spanning UNLIKELY, and broke on documents
+/// that contain an internal 0x1E). Exactness costs enumeration: every occurrence
+/// of the context is located and kept only if the match lies fully inside the
+/// document AND its continuation byte does too (an occurrence ending at the
+/// document's last byte has no continuation inside the document and is not
+/// counted - counting the next document's first byte would be the very leakage
+/// the restriction exists to remove). Intervals wider than `cap` are REFUSED,
+/// never silently returned unrestricted.
+fn restricted_answer(
+    cx: &mut Ctx<'_>,
+    corpus_file: &File,
+    it: &ConsultItem,
+    pat: &[u8],
+    cap: u64,
+    text_len: u64,
+    out: &mut Vec<(u8, u64)>,
+) -> (u64, u64, bool) {
+    use std::os::unix::fs::FileExt;
+    out.clear();
+    let sigma = cx.idx.reader.sigma;
+    let absent = pat
+        .iter()
+        .any(|&b| sigma[b as usize] == 0 || cx.idx.total[sigma[b as usize] as usize] == 0);
+    if absent {
+        return (0, 0, false);
+    }
+    let work: Vec<u8> = pat.iter().rev().map(|&b| sigma[b as usize]).collect();
+    let (l, r) = cx.search(&work);
+    if r == l {
+        return (0, 0, false);
+    }
+    if r - l > cap {
+        die(&format!(
+            "consult: --doc-restrict at position {}: the context's occurrence interval is \
+             {} rows and --doc-restrict-cap is {cap}; exact document-restricted counting \
+             enumerates the interval (one LF walk per occurrence), so a wider cap costs \
+             proportionally. REFUSING to return a silently UNrestricted histogram: raise \
+             --doc-restrict-cap, drop --doc-restrict for this window set, or query a longer \
+             context",
+            it.off,
+            r - l
+        ));
+    }
+    let mut counts = [0u64; 256];
+    let mut eof = 0u64;
+    let mut excluded = false;
+    let ctxlen = pat.len() as u64;
+    let mut bytebuf = [0u8; 1];
+    for row in l..r {
+        let (q, _) = cx.locate_steps(row);
+        // fully inside the query position's document, continuation byte and all
+        if q < it.base {
+            continue;
+        }
+        let at = q + ctxlen;
+        if at == text_len {
+            eof += 1;
+            continue;
+        }
+        if at >= it.doc_next {
+            continue;
+        }
+        // --exclude-source: the query position's own occurrence leaves before
+        // any count is returned
+        if it.excl && at == it.off {
+            excluded = true;
+            continue;
+        }
+        corpus_file
+            .read_exact_at(&mut bytebuf, at)
+            .unwrap_or_else(|e| die(&format!("consult: corpus read at {at}: {e}")));
+        counts[bytebuf[0] as usize] += 1;
+    }
+    let sum: u64 = counts.iter().sum();
+    for (b, &c) in counts.iter().enumerate() {
+        if c > 0 {
+            out.push((b as u8, c));
+        }
+    }
+    out.sort_unstable_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    (sum + eof, eof, excluded)
+}
+
 /// The `branch_result` row for the same context, for `--strict`: it recomputes
 /// the answer through the full `branches --serve` path and compares
 /// (context_bytes, width, eof, every (byte,count) pair, in order).
@@ -616,12 +751,29 @@ fn consult_strict_check(
 struct ConsultItem {
     doc: u64,
     off: u64,
+    /// the window's EFFECTIVE document base (explicit or resolved) - the row's
+    /// `base` field, and the spine's hard lower bound (D1: cut by it, never a scan)
+    base: u64,
+    /// container document id from the document structure, or DOCID_ABSENT
+    /// (no structure, or the position is beyond the container's text)
+    docid: u64,
+    /// the next document's start (or text_len): the document-restricted
+    /// counting interval's upper bound
+    doc_next: u64,
+    /// the corpus byte AT the position (the own occurrence's branch byte);
+    /// valid iff `excl`
+    own: u8,
     ctx_off: u32,
     ctx_len: u16,
     /// The 1024-byte cap (or the document start) cut this context short.
     truncated: bool,
     /// This position is the last one of its window.
     win_end: bool,
+    /// --doc-restrict applies to this row (structure present, position inside
+    /// the container's text)
+    restrict: bool,
+    /// --exclude-source applies (position inside the container's text)
+    excl: bool,
 }
 
 struct ConsultBatch {
@@ -642,35 +794,50 @@ struct ConsultDone {
     bytes: Vec<u8>,
     rows: u64,
     ends_window: bool,
+    /// per-batch row counters: rows whose width excluded the position's own
+    /// occurrence, and rows answered by document-restricted enumeration
+    excluded: u64,
+    restricted: u64,
 }
 
 /// Encode one position's row (layout in CONSULT.md). Little-endian throughout.
 fn encode_consult_row(
     out: &mut Vec<u8>,
-    doc: u64,
-    off: u64,
+    it: &ConsultItem,
     ctxlen: u16,
-    truncated: bool,
     width: u64,
     eof: u64,
     branches: &[(u8, u64)],
+    excluded: bool,
+    restricted: bool,
 ) {
     let before = out.len();
-    let flags: u16 = (if eof != 0 { 1 } else { 0 }) | (if truncated { 2 } else { 0 });
+    let flags: u16 = (if eof != 0 { 1 } else { 0 })
+        | (if it.truncated { 2 } else { 0 })
+        | (if excluded { 4 } else { 0 })
+        | (if restricted { 8 } else { 0 });
     out.extend_from_slice(&(branches.len() as u32).to_le_bytes());
     out.extend_from_slice(&ctxlen.to_le_bytes());
     out.extend_from_slice(&flags.to_le_bytes());
-    out.extend_from_slice(&doc.to_le_bytes());
-    out.extend_from_slice(&off.to_le_bytes());
+    out.extend_from_slice(&it.doc.to_le_bytes());
+    out.extend_from_slice(&it.off.to_le_bytes());
     out.extend_from_slice(&width.to_le_bytes());
     out.extend_from_slice(&eof.to_le_bytes());
     for &(b, c) in branches {
         out.push(b);
         out.extend_from_slice(&c.to_le_bytes());
     }
-    // the row layout's own invariant: 40 fixed bytes plus 9 per branch, which is
-    // what the reader in CONSULT.md is written against
-    debug_assert_eq!(out.len() - before, ROW_FIXED_BYTES + 9 * branches.len());
+    // v2 tail: docid / base / depth_in_doc, so one row answers both "what
+    // continues this" and "inside which document" (the note's D2)
+    out.extend_from_slice(&it.docid.to_le_bytes());
+    out.extend_from_slice(&it.base.to_le_bytes());
+    out.extend_from_slice(&(it.off - it.base).to_le_bytes());
+    // the row layout's own invariant: 40 fixed bytes plus 9 per branch plus the
+    // 24-byte v2 tail, which is what the reader in CONSULT.md is written against
+    debug_assert_eq!(
+        out.len() - before,
+        ROW_FIXED_BYTES + 9 * branches.len() + ROW_TAIL_BYTES
+    );
 }
 
 // ---------------------------------------------------------------- the command
@@ -697,10 +864,15 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
     let mut binary = false;
     let mut verify_prefix = true;
     let mut strict = std::env::var("XSA_CONSULT_STRICT").ok().as_deref() == Some("1");
-    // THE SEPARATOR CUT (their verified spine rule): a 0x1E inside the spine cuts
-    // the context at that separator, so a consultation context never spans two
-    // documents (c14_branch_serve.select: `s.rsplit(b'\x1e', 1)[-1][-1024:]`).
-    let mut sep_cut = true;
+    // D1/D3 flags: `--docs DIR` is the document-structure sidecar (seps.bin);
+    // the container's own member m15 is used when present. `--exclude-source`
+    // removes the position's own occurrence before anything is reported.
+    // `--doc-restrict` opts a window set into EXACT document-restricted branch
+    // counting (enumerated; see restricted_answer).
+    let mut docs_dir: Option<String> = None;
+    let mut exclude_source = false;
+    let mut doc_restrict = false;
+    let mut doc_restrict_cap = DOC_RESTRICT_CAP_DEFAULT;
     let mut i = 0usize;
     while i < args.len() {
         let a = args[i].as_str();
@@ -754,8 +926,27 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
             "--bin" | "--binary" => binary = true,
             "--jsonl" => binary = false,
             "--no-verify-prefix" => verify_prefix = false,
-            "--no-sep-cut" => sep_cut = false,
-            "--sep-cut" => sep_cut = true,
+            "--sep-cut" | "--no-sep-cut" => {
+                // REMOVED (D1): a 0x1E scan is boundary INFERENCE from content
+                // bytes, and it was wrong on the 78,715 documents that contain an
+                // internal 0x1E. The spine is cut at the DOCUMENT BASE - explicit
+                // in the window or resolved from the structure - never at a byte.
+                die(&format!(
+                    "consult: '{a}' is REMOVED: the 0x1E spine cut inferred boundaries from \
+                     content bytes and broke on documents with an internal 0x1E. The spine is \
+                     now cut at the document base (window 'base', or 'doc' resolved from \
+                     member m15 / --docs DIR)"
+                ));
+            }
+            "--docs" => docs_dir = Some(val!("--docs")),
+            "--exclude-source" => exclude_source = true,
+            "--doc-restrict" => doc_restrict = true,
+            "--doc-restrict-cap" => {
+                let v = val!("--doc-restrict-cap");
+                doc_restrict_cap = v.parse().unwrap_or_else(|_| {
+                    die(&format!("consult: --doc-restrict-cap '{v}' is not a count"))
+                });
+            }
             "--strict" => strict = true,
             other => {
                 if other.starts_with('-') {
@@ -993,6 +1184,87 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
         corpus.read_into(text_len - corpus_tail.len() as u64, &mut corpus_tail);
     }
 
+    // ---------------- the document structure (D1/D2): metadata, never bytes
+    // Sources, in precedence order: the container's own member m15 (SXI2 v10,
+    // the deployment-grade arm) and the `--docs DIR` sidecar (seps.bin). Both
+    // may be present; they are then CROSS-CHECKED (select at 64 random doc ids
+    // and rank at 64 random positions) and a disagreement is a hard error -
+    // two authorities that disagree about a boundary cannot both be obeyed.
+    let docs_from_member = crate::docstarts::DocStarts::from_container(&index.reader);
+    let docs_from_sidecar = docs_dir.as_ref().map(|dir| {
+        let ds = crate::docstarts::DocStarts::from_xsep(std::path::Path::new(dir), text_len);
+        if ds.text_len != text_len {
+            die(&format!("consult: --docs {dir}: the map's text length {} is not this container's text length {text_len}", ds.text_len));
+        }
+        ds
+    });
+    if let (Some(a), Some(b)) = (&docs_from_member, &docs_from_sidecar) {
+        let n = a.docs.min(b.docs);
+        if n == 0 {
+            die("consult: document structure with zero documents");
+        }
+        let mut state = 0x9E37_79B9_7F4A_7C15u64;
+        let mut mix = |state: &mut u64| {
+            *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut z = *state;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^ (z >> 31)
+        };
+        for _ in 0..64 {
+            let d = mix(&mut state) % n;
+            let (sa, sb) = (a.select(d), b.select(d));
+            if sa != sb {
+                die(&format!(
+                    "consult: the container's member m15 and --docs {} DISAGREE: \
+                     select({d}) = {sa} vs {sb}; boundaries are metadata and two \
+                     authorities that disagree cannot both be obeyed",
+                    docs_dir.clone().unwrap()
+                ));
+            }
+            if sa >= text_len {
+                break; // past the text: the rest of the map is not this container's
+            }
+        }
+        for _ in 0..64 {
+            let p = mix(&mut state) % text_len;
+            if a.rank_start(p) != b.rank_start(p) {
+                die(&format!(
+                    "consult: the container's member m15 and --docs {} DISAGREE about the \
+                     document containing position {p}",
+                    docs_dir.clone().unwrap()
+                ));
+            }
+        }
+    }
+    let member_present = docs_from_member.is_some();
+    let sidecar_present = docs_from_sidecar.is_some();
+    let docs = docs_from_sidecar.or(docs_from_member);
+    let docs_source = match (sidecar_present, member_present) {
+        (true, true) => "sidecar+member-cross-checked",
+        (true, false) => "sidecar",
+        (false, true) => "member-m15",
+        (false, false) => "absent",
+    };
+    if let Some(ds) = docs.as_ref() {
+        eprintln!(
+            "CONSULT_NOTE docs_source={} docs={} text_bytes={} map_corpus_bytes={} \
+             (boundaries are METADATA: bases resolve from the structure, spines cut at \
+             the document base, and no content byte is ever scanned for a boundary)",
+            docs_source,
+            ds.docs,
+            ds.text_len,
+            ds.corpus_bytes,
+        );
+    }
+    let docs_ref = docs.as_ref();
+    if doc_restrict && docs_ref.is_none() {
+        die("consult: --doc-restrict needs a document structure (member m15 or --docs DIR)");
+    }
+    if doc_restrict_cap == 0 {
+        die("consult: --doc-restrict-cap must be at least 1");
+    }
+
     let mut src = WindowSource::open(&windows_path, binary);
     if start.windows_bytes_done > 0 {
         src.seek_to(start.windows_bytes_done);
@@ -1004,7 +1276,9 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
             "CONSULT_OPEN container={} container_bytes={} index_n={} index_r={} corpus={} \
              corpus_bytes={} text_bytes={} output={} format=rows version={} jobs={} rss_cap_bytes={} cap_gb={} \
              chunk_rows={} left_default={} windows={} windows_bytes={} windows_format={} \
-             batch_positions={} arena_bytes={} cache_bytes={} index_rss_cap_bytes={} sep_cut={}",
+             batch_positions={} arena_bytes={} cache_bytes={} index_rss_cap_bytes={} \
+             docs_source={} docs={} exclude_source={} doc_restrict={} doc_restrict_cap={} \
+             spine_cut=document_base",
             container,
             std::fs::metadata(&container).map(|m| m.len()).unwrap_or(0),
             index_n,
@@ -1026,7 +1300,11 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
             arena_bytes,
             index.cache_bytes(),
             index.rss_cap(),
-            u8::from(sep_cut),
+            docs_source,
+            docs.as_ref().map(|d| d.docs).unwrap_or(0),
+            u8::from(exclude_source),
+            u8::from(doc_restrict),
+            doc_restrict_cap,
         ));
     }
     eprintln!(
@@ -1059,13 +1337,16 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
     let idx_ref = &index;
     let cand_ref = &cand;
     let corpus_tail_ref = &corpus_tail[..];
+    let corpus_path_for_threads = corpus_path.as_str();
+    let doc_restrict_cap_for_threads = doc_restrict_cap;
+    let text_len_for_threads = text_len;
     let start_seq = start.seq;
     let start_positions = start.positions_done;
     let journal_for_writer = journal_path.clone();
     let journal_for_threads = journal_path.clone();
     let output_for_threads = output.clone();
 
-    let mut totals = (0u64, 0u64, 0u64, 0u64, String::new(), 0u64, 0u64, 0u64);
+    let mut totals = (0u64, 0u64, 0u64, 0u64, String::new(), 0u64, 0u64, 0u64, 0u64, 0u64);
     std::thread::scope(|scope| {
         // ---- writer: owns the output file, the chunk commits and the sha ledger
         let writer = scope.spawn(move || {
@@ -1085,7 +1366,11 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
             let mut max_rss = 0u64;
             let mut last_rss_ts = Instant::now() - std::time::Duration::from_secs(10);
             let mut commits = 0u64;
+            let mut excluded_rows = 0u64;
+            let mut restricted_rows = 0u64;
             while let Ok(d) = res_rx.recv() {
+                excluded_rows += d.excluded;
+                restricted_rows += d.restricted;
                 order.insert(d.seq0, d);
                 while let Some(d) = order.remove(&next_seq0) {
                     if d.rows > 0 {
@@ -1195,6 +1480,8 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
                 seq,
                 max_rss,
                 commits,
+                excluded_rows,
+                restricted_rows,
             )
         });
 
@@ -1207,6 +1494,13 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
                 let mut cx = if stateless { idx_ref.worker_ctx(&arena) } else { idx_ref.ctx() };
                 let mut pairs: Vec<(u8, u64)> = Vec::with_capacity(256);
                 let mut out = Vec::with_capacity(BATCH_POSITIONS * 8 * 16);
+                // --doc-restrict rows read the corpus directly (the byte after each
+                // in-document occurrence): a private pread handle, never the
+                // producer's windowed mapping
+                let corpus_file = std::fs::File::open(&corpus_path_for_threads)
+                    .unwrap_or_else(|e| die(&format!("consult: open corpus {corpus_path_for_threads}: {e}")));
+                let mut excluded_rows = 0u64;
+                let mut restricted_rows = 0u64;
                 while let Ok(batch) = rx.recv() {
                     out.clear();
                     for it in &batch.items {
@@ -1218,24 +1512,58 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
                             // and no EOF, and the global corpus histogram is NOT
                             // its answer (c14_branch_serve.select: `if k else
                             // dict(width=0, eof=0, branches=[])`).
-                            encode_consult_row(&mut out, it.doc, it.off, 0, it.truncated, 0, 0, &[]);
+                            encode_consult_row(&mut out, it, 0, 0, 0, &[], false, false);
                             continue;
                         }
-                        let answer =
+                        if it.restrict {
+                            // D2, exact: branch counts restricted to the document
+                            // containing the position (enumerated; the own
+                            // occurrence leaves first when --exclude-source)
+                            let (width, eof, excluded) = restricted_answer(
+                                &mut cx,
+                                &corpus_file,
+                                it,
+                                ctx,
+                                doc_restrict_cap_for_threads,
+                                text_len_for_threads,
+                                &mut pairs,
+                            );
+                            restricted_rows += 1;
+                            if excluded {
+                                excluded_rows += 1;
+                            }
+                            encode_consult_row(&mut out, it, it.ctx_len, width, eof, &pairs, excluded, true);
+                            continue;
+                        }
+                        let (mut width, eof) =
                             consult_answer(&mut cx, cand_ref, ctx, &corpus_tail_ref, &mut pairs);
                         if strict {
-                            consult_strict_check(&mut cx, cand_ref, ctx, answer, &pairs);
+                            consult_strict_check(&mut cx, cand_ref, ctx, (width, eof), &pairs);
                         }
-                        encode_consult_row(
-                            &mut out,
-                            it.doc,
-                            it.off,
-                            it.ctx_len,
-                            it.truncated,
-                            answer.0,
-                            answer.1,
-                            &pairs,
-                        );
+                        // D3 --exclude-source: the position's own occurrence IS in
+                        // the histogram (the corpus IS the container's text over
+                        // [0, text_len)), and it leaves BEFORE anything is
+                        // reported. Its branch byte is the corpus byte AT the
+                        // position; the row's flag bit 2 states whether the
+                        // removal actually happened.
+                        let mut excluded = false;
+                        if it.excl {
+                            if let Some(slot) = pairs.iter().position(|&(b, _)| b == it.own) {
+                                if pairs[slot].1 > 0 {
+                                    pairs[slot].1 -= 1;
+                                    if pairs[slot].1 == 0 {
+                                        pairs.swap_remove(slot);
+                                    }
+                                    width -= 1;
+                                    excluded = true;
+                                }
+                            }
+                            if excluded {
+                                pairs.sort_unstable_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+                                excluded_rows += 1;
+                            }
+                        }
+                        encode_consult_row(&mut out, it, it.ctx_len, width, eof, &pairs, excluded, false);
                     }
                     let done = ConsultDone {
                         seq0: batch.seq0,
@@ -1244,6 +1572,8 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
                         rows: batch.items.len() as u64,
                         ends_window: batch.items.last().map(|x| x.win_end).unwrap_or(false),
                         bytes: std::mem::take(&mut out),
+                        excluded: excluded_rows,
+                        restricted: restricted_rows,
                     };
                     if tx.send(done).is_err() {
                         die("consult: writer closed before the last batch");
@@ -1265,7 +1595,8 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
         let mut throttled_ms = 0u64;
         let mut last_rss = Instant::now() - std::time::Duration::from_secs(10);
         let mut bytes_read = 0u64;
-        let mut sep_empty = 0u64;
+        let mut resolved_bases = 0u64;
+        let mut whole_docs = 0u64;
         loop {
             let mut batch = ConsultBatch {
                 seq0,
@@ -1282,6 +1613,66 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
                     match src.next() {
                         Some(w) => {
                             let after = src.cursor();
+                            let mut w = w;
+                            // D1: a window without a base resolves it from the
+                            // document structure by `doc`. REFUSED when no
+                            // structure is available - a base is never inferred
+                            // from content bytes.
+                            if w.base == BASE_ABSENT {
+                                let ds = docs_ref.unwrap_or_else(|| {
+                                    die(&format!(
+                                        "consult: window doc={} has no 'base' and there is no \
+                                         document structure to resolve it from: the container is \
+                                         SXI2 v{} and carries no member m15, and no --docs DIR was \
+                                         given. Boundaries are METADATA: give 'base' in every \
+                                         window, build with --docs-map DIR (or `xsa docstarts \
+                                         embed`), or pass --docs DIR",
+                                        w.doc, index.reader.version
+                                    ))
+                                });
+                                if w.doc >= ds.docs {
+                                    die(&format!(
+                                        "consult: window doc={} cannot be resolved: the document \
+                                         structure holds {} documents",
+                                        w.doc, ds.docs
+                                    ));
+                                }
+                                w.base = ds.select(w.doc);
+                                if w.base >= text_len {
+                                    die(&format!(
+                                        "consult: window doc={} resolves to start {}, at or \
+                                         past the end of the container's text ({text_len} bytes)",
+                                        w.doc, w.base
+                                    ));
+                                }
+                                resolved_bases += 1;
+                                if w.whole_doc {
+                                    let next = if w.doc + 1 < ds.docs {
+                                        ds.select(w.doc + 1)
+                                    } else {
+                                        text_len
+                                    };
+                                    if next > text_len {
+                                        die(&format!(
+                                            "consult: window doc={} asks for the whole document \
+                                             but that document straddles the container's text \
+                                             end (start {}, next start {} > text {text_len}); \
+                                             name its in-text positions explicitly",
+                                            w.doc, w.base, next
+                                        ));
+                                    }
+                                    let len64 = next - w.base;
+                                    if len64 > u32::MAX as u64 {
+                                        die(&format!(
+                                            "consult: window doc={} is {} bytes long, past the \
+                                             u32 position count",
+                                            w.doc, len64
+                                        ));
+                                    }
+                                    w.len = len64 as u32;
+                                    whole_docs += 1;
+                                }
+                            }
                             if w.base > text_len {
                                 die(&format!(
                                     "consult: window doc={} base={} is past the end of the \
@@ -1310,9 +1701,38 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
                         w.doc, w.base, w.start, w.len
                     ));
                 }
+                // D1/D2: the container document containing this position, from
+                // the structure - and, when the window also stated a base, the
+                // parity check that the two authorities agree. A window whose
+                // base disagrees with the structure is a wrong window set, not
+                // a difference to average away.
+                let (docid, _dstart, dnext) = match docs_ref {
+                    Some(ds) => {
+                        let (docid, dstart) = ds.rank_start(off);
+                        if dstart != w.base {
+                            die(&format!(
+                                "consult: window doc={} base={} disagrees with the document \
+                                 structure: position {off} is inside container document {docid} \
+                                 (start {dstart}). Boundaries are METADATA; fix the window set \
+                                 or rebuild the structure it was made from",
+                                w.doc, w.base
+                            ));
+                        }
+                        let dnext = if docid + 1 < ds.docs {
+                            ds.select(docid + 1)
+                        } else {
+                            text_len
+                        };
+                        (docid, dstart, dnext.min(text_len))
+                    }
+                    None => (DOCID_ABSENT, w.base, text_len),
+                };
                 // LEFT CONTEXT: the last min(left, 1024) bytes BEFORE the
-                // position, clamped at the document's first byte. ONE query, one
-                // context length, no backoff.
+                // position, cut at the DOCUMENT BASE (D1: max(0, off - base)
+                // bytes, never a byte scan). ONE query, one context length, no
+                // backoff. The 0x1E scan is GONE: a separator inside a document
+                // is content (78,715 documents over the full pile contain one),
+                // and boundaries are metadata.
                 let left = if w.left == LEFT_USE_DEFAULT {
                     left_default
                 } else {
@@ -1328,28 +1748,24 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
                     corpus.read_into(off - want, &mut batch.bytes[at..]);
                     bytes_read += ctx_len as u64;
                 }
-                // THE SEPARATOR CUT: the spine stops at the last 0x1E, so a
-                // context never spans a document boundary. A position right after
-                // a separator therefore has an EMPTY context (and an empty
-                // histogram), which is exactly what their selector produces.
-                let mut keep_off = ctx_off;
-                if sep_cut && ctx_len > 0 {
-                    let at = ctx_off as usize;
-                    if let Some(p) = batch.bytes[at..at + ctx_len].iter().rposition(|&b| b == 0x1e) {
-                        ctx_len -= p + 1;
-                        keep_off = ctx_off + (p as u32) + 1;
-                        if ctx_len == 0 {
-                            sep_empty += 1;
-                        }
-                    }
-                }
+                // D3: the position's own byte - the branch byte of the
+                // occurrence --exclude-source removes. Read here, once, with the
+                // spine bytes (the position is inside the text, checked above).
+                let mut own = [0u8; 1];
+                corpus.read_into(off, &mut own);
                 batch.items.push(ConsultItem {
                     doc: w.doc,
                     off,
-                    ctx_off: keep_off,
+                    base: w.base,
+                    docid,
+                    doc_next: dnext,
+                    own: own[0],
+                    ctx_off,
                     ctx_len: ctx_len as u16,
                     truncated: avail > want,
                     win_end: k + 1 == u64::from(w.len),
+                    restrict: doc_restrict && docid != DOCID_ABSENT,
+                    excl: exclude_source,
                 });
                 if k + 1 == u64::from(w.len) {
                     windows_done += 1;
@@ -1454,16 +1870,16 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
         let w = writer
             .join()
             .unwrap_or_else(|_| die("consult: the writer panicked"));
-        totals = (w.0, w.1, w.2, w.3, w.4, w.5, w.6, w.7);
+        totals = (w.0, w.1, w.2, w.3, w.4, w.5, w.6, w.7, w.8, w.9);
         // the producer's receipts ride out through these
         eprintln!(
             "CONSULT_PRODUCER corpus_bytes_read={} backpressure_events={} throttled_ms={} \
-             windows_after_producer={} sep_empty_contexts={} sep_cut={}",
-            bytes_read, bp_lines, throttled_ms, windows_done, sep_empty, u8::from(sep_cut)
+             windows_after_producer={} resolved_bases={} whole_doc_windows={} spine_cut=document_base",
+            bytes_read, bp_lines, throttled_ms, windows_done, resolved_bases, whole_docs
         );
     });
 
-    let (positions_done, windows_done, windows_bytes_done, output_bytes, digest, seq, writer_max_rss, commits) = totals;
+    let (positions_done, windows_done, windows_bytes_done, output_bytes, digest, seq, writer_max_rss, commits, excluded_rows, restricted_rows) = totals;
     let seconds = started.elapsed().as_secs_f64();
     let peak = consult_peak_rss_bytes().unwrap_or(writer_max_rss).max(writer_max_rss);
     let (hits, misses, decodes, drops) = index.cache_stats();
@@ -1477,7 +1893,8 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
          cap_gb={rss_gb} jobs={jobs} cache_hits={hits} cache_misses={misses} \
          block_decodes={decodes} drop_epochs={drops} decode_ns={decode_ns} drop_ns={drop_ns} \
          prefetch_calls={prefetch} corpus_remaps={} backpressure_events={backpressure_events} \
-         windows_bytes_done={windows_bytes_done}",
+         windows_bytes_done={windows_bytes_done} excluded_rows={excluded_rows} \
+         restricted_rows={restricted_rows}",
         positions_done as f64 / seconds.max(1e-9),
         gb(peak),
         corpus.remaps,
@@ -1487,7 +1904,8 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
          positions_per_s={:.3} seconds={seconds:.3} peak_rss_gb={:.3} cap_gb={rss_gb} \
          rows_sha256={digest} output_bytes={output_bytes} commits={commits} cache_hits={hits} \
          cache_misses={misses} block_decodes={decodes} drop_epochs={drops} \
-         backpressure_events={backpressure_events}",
+         backpressure_events={backpressure_events} excluded_rows={excluded_rows} \
+         restricted_rows={restricted_rows}",
         positions_done as f64 / seconds.max(1e-9),
         gb(peak),
     );
@@ -1497,16 +1915,36 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
 mod consult_tests {
     use super::*;
 
+    /// A ready-made item for the layout tests.
+    fn item(doc: u64, off: u64, base: u64, docid: u64) -> ConsultItem {
+        ConsultItem {
+            doc,
+            off,
+            base,
+            docid,
+            doc_next: u64::MAX,
+            own: 0,
+            ctx_off: 0,
+            ctx_len: 0,
+            truncated: false,
+            win_end: false,
+            restrict: false,
+            excl: false,
+        }
+    }
+
     /// The row layout is a published contract (CONSULT.md §3): 40 fixed bytes
-    /// plus 9 per branch, little-endian, pairs count-desc/byte-asc.
+    /// plus 9 per branch plus the 24-byte v2 tail (docid, base, depth),
+    /// little-endian, pairs count-desc/byte-asc.
     #[test]
     fn row_layout_is_the_documented_one() {
         let mut out = Vec::new();
-        encode_consult_row(&mut out, 7, 1_000_000_000_000, 1024, true, 42, 1, &[(9, 41), (3, 1)]);
-        assert_eq!(out.len(), ROW_FIXED_BYTES + 2 * 9);
+        let it = item(7, 1_000_000_000_000, 999_999_999_000, 12);
+        encode_consult_row(&mut out, &it, 1024, 42, 1, &[(9, 41), (3, 1)], true, true);
+        assert_eq!(out.len(), ROW_FIXED_BYTES + 2 * 9 + ROW_TAIL_BYTES);
         assert_eq!(u32::from_le_bytes(out[0..4].try_into().unwrap()), 2); // nsym
         assert_eq!(u16::from_le_bytes(out[4..6].try_into().unwrap()), 1024); // ctxlen
-        assert_eq!(u16::from_le_bytes(out[6..8].try_into().unwrap()), 3); // eof + truncated
+        assert_eq!(u16::from_le_bytes(out[6..8].try_into().unwrap()), 1 | 4 | 8); // eof|excluded|restricted
         assert_eq!(u64::from_le_bytes(out[8..16].try_into().unwrap()), 7); // doc
         assert_eq!(
             u64::from_le_bytes(out[16..24].try_into().unwrap()),
@@ -1514,27 +1952,48 @@ mod consult_tests {
         ); // off
         assert_eq!(u64::from_le_bytes(out[24..32].try_into().unwrap()), 42); // width
         assert_eq!(u64::from_le_bytes(out[32..40].try_into().unwrap()), 1); // eof
+        let tail = out.len() - ROW_TAIL_BYTES;
+        assert_eq!(u64::from_le_bytes(out[tail..tail + 8].try_into().unwrap()), 12); // docid
+        assert_eq!(
+            u64::from_le_bytes(out[tail + 8..tail + 16].try_into().unwrap()),
+            999_999_999_000
+        ); // base
+        assert_eq!(
+            u64::from_le_bytes(out[tail + 16..tail + 24].try_into().unwrap()),
+            1_000
+        ); // depth
         assert_eq!(out[40], 9);
         assert_eq!(u64::from_le_bytes(out[41..49].try_into().unwrap()), 41);
         assert_eq!(out[49], 3);
         // an empty context is an empty histogram: no pairs, no EOF
         let mut e = Vec::new();
-        encode_consult_row(&mut e, 0, 5, 0, false, 0, 0, &[]);
-        assert_eq!(e.len(), ROW_FIXED_BYTES);
+        encode_consult_row(&mut e, &item(0, 5, 2, DOCID_ABSENT), 0, 0, 0, &[], false, false);
+        assert_eq!(e.len(), ROW_FIXED_BYTES + ROW_TAIL_BYTES);
         assert_eq!(u32::from_le_bytes(e[0..4].try_into().unwrap()), 0);
         assert_eq!(u16::from_le_bytes(e[4..6].try_into().unwrap()), 0);
         assert_eq!(u16::from_le_bytes(e[6..8].try_into().unwrap()), 0);
         assert_eq!(u64::from_le_bytes(e[16..24].try_into().unwrap()), 5); // off
         assert_eq!(u64::from_le_bytes(e[24..32].try_into().unwrap()), 0); // width
         assert_eq!(u64::from_le_bytes(e[32..40].try_into().unwrap()), 0); // eof
+        let t = e.len() - ROW_TAIL_BYTES;
+        assert_eq!(u64::from_le_bytes(e[t..t + 8].try_into().unwrap()), DOCID_ABSENT);
+        assert_eq!(u64::from_le_bytes(e[t + 8..t + 16].try_into().unwrap()), 2); // base
+        assert_eq!(u64::from_le_bytes(e[t + 16..t + 24].try_into().unwrap()), 3); // depth
     }
 
     #[test]
     fn json_windows_carry_defaults_and_refuse_a_missing_document() {
         let w = parse_json_window(br#"{"doc":3,"base":10}"#, "t");
-        assert_eq!((w.doc, w.base, w.start, w.len, w.left), (3, 10, 0, 1, LEFT_USE_DEFAULT));
+        assert_eq!((w.doc, w.base, w.start, w.len, w.left, w.whole_doc),
+                   (3, 10, 0, 1, LEFT_USE_DEFAULT, false));
         let w = parse_json_window(br#"{"doc":3,"base":10,"start":2048,"len":2048,"left":64}"#, "t");
-        assert_eq!((w.start, w.len, w.left), (2048, 2048, 64));
+        assert_eq!((w.start, w.len, w.left, w.whole_doc), (2048, 2048, 64, false));
+        // D1: a window with no base resolves it from the structure; with no len
+        // either, it is the whole document
+        let w = parse_json_window(br#"{"doc":9}"#, "t");
+        assert_eq!((w.doc, w.base, w.len, w.whole_doc), (9, BASE_ABSENT, 1, true));
+        let w = parse_json_window(br#"{"doc":9,"len":128}"#, "t");
+        assert_eq!((w.base, w.len, w.whole_doc), (BASE_ABSENT, 128, false));
     }
 
     #[test]
@@ -1542,7 +2001,7 @@ mod consult_tests {
         // the shape consult_answer returns for an unqueryable spine: width 0,
         // eof 0, so the row carries no counts (their `if k == 0` rule)
         let mut out = Vec::new();
-        encode_consult_row(&mut out, 0, 0, 0, false, 0, 0, &[]);
+        encode_consult_row(&mut out, &item(0, 0, 0, 0), 0, 0, 0, &[], false, false);
         let nsym = u32::from_le_bytes(out[0..4].try_into().unwrap());
         let width = u64::from_le_bytes(out[24..32].try_into().unwrap());
         assert_eq!((nsym, width), (0, 0));

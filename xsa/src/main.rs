@@ -1382,10 +1382,9 @@ fn usage() -> ! {
     eprintln!();
     eprintln!("usage:");
     eprintln!("  xsa build --tape --input <file> --scratch <dir> [--threads N] [--memory-gb N]");
-    eprintln!("           [--docs-map X]  X is a DIR holding seps.bin: embed m15, the document");
-    eprintln!("           starts (SXI2 v10, boundaries as METADATA); X is a PREFIX holding the");
-    eprintln!("           CORPUS V2 sidecar pair: validate it and journal CONTAINER_DOCS_V2");
-    eprintln!("           (query resolves doc_id/offset_in_doc through the V2 tables; CORPUS_V2.md 6)");
+    eprintln!("             [--docs-map X]  X is a DIR holding seps.bin: embed m15, the document");
+    eprintln!("              starts (SXI2 v10, boundaries as METADATA); X is a PREFIX holding");
+    eprintln!("              the CORPUS V2 sidecar pair: validate it and journal CONTAINER_DOCS_V2");
     eprintln!("  xsa docstarts embed|verify|probe|info - document starts as container member m15");
     eprintln!("           (SXI2 v10): `embed` adds it from a map, `verify` is the rank/select parity");
     eprintln!("           gate against seps.bin, `probe` answers rank/select for a positions file");
