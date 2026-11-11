@@ -1070,6 +1070,10 @@ fn append_copy(reader: &qlite::Reader, encoded: &Encoded, out: &str) {
         dir.extend_from_slice(&bytes.to_le_bytes());
         dir.extend_from_slice(&count.to_le_bytes());
         dir.extend_from_slice(&crc.to_le_bytes());
+        // THE ENTRY IS 40 BYTES: 36 of fields + 4 of pad (the trailing directory
+        // the reader walks is 40-byte entries; 36 would skew every offset after
+        // the first and misalign the directory itself)
+        dir.extend_from_slice(&[0u8; 4]);
     }
     w.write_all(&dir).unwrap_or_else(|e| die(&format!("DOCSTARTS: write directory: {e}")));
     w.flush().unwrap_or_else(|e| die(&format!("DOCSTARTS: flush: {e}")));
