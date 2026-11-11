@@ -1183,3 +1183,47 @@ This is conservative **replay**, not incremental suffix-key resume: completed
 computation is repeated and ordinary band deletion remains bounded. Read
 [RESUME.md](RESUME.md) for journal semantics, signal limitations, measured gates,
 and the reasons for this design deviation.
+
+---
+
+## 11. CORPUS V2 — the separator-free route (future corpora)
+
+`pile.txt` is never remade (section 1 of `CORPUS_V2.md`: it is the trained-on
+corpus every registered experiment's offsets point into). **Every FUTURE
+corpus** uses CORPUS V2 instead: the corpus IS the metadata
+(sources + starts + docs + order); the concatenation is an optional,
+delete-and-regenerate cache. There is no framing byte anywhere — boundaries
+live only in `<prefix>.starts` (XCS2 v1, the same delta+anchor column as XSEP
+v1), so document-level operations never read text and no in-band separator can
+ever be wrong. The specification of record is
+[CORPUS_V2.md](CORPUS_V2.md); the measured gate run over the real Pile shards
+is [RESULTS_CORPUS_V2.md](RESULTS_CORPUS_V2.md).
+
+```sh
+# 1. define the corpus: streams the shards once, writes ONLY the tables
+xsa corpus --v2-meta --shards <pile train dir> --out <dir>/<name> \
+           [--limit-bytes N] [--order FILE | --order-seed S]
+#    a 500 MB corpus cost 1.1 s and 3.3 MB of disc; NO text bytes are written
+
+# 2. OPTIONAL: materialize the .bin cache (needed only for a build, because
+#    suffix comparison does random reads and .jsonl.zst cannot serve them)
+xsa corpus --v2-materialize --prefix <dir>/<name>      # 3.8 s for 500 MB
+
+# 3. build over the cache with the V2 sidecars (--tape; END is virtual)
+xsa build --tape --input <dir>/<name>.bin --docs-map <dir>/<name> \
+          --scratch S --threads N --memory-gb N ...
+#    journals CONTAINER_DOCS_V2 ... and xsa query resolves
+#    doc_id/offset_in_doc through the V2 tables (--docs <dir>, or the
+#    journal-recorded fallback picks it up with no flag)
+
+# 4. reordering is TABLES ONLY - zero corpus bytes move (the flagship)
+xsa corpus --v2-reorder --from <p1> --out <p2> --order-seed S   # 112 ms, 500 MB
+
+# 5. verify: >=200 sampled documents re-extracted from the shards, byte-compared
+xsa corpus --v2-verify --prefix <p> [--reference <p1>]           # metadata+bytes
+xsa corpus --v2-locate --prefix <p> --offset O[,O...]            # offset -> doc
+```
+
+chi and every content-dependent number of a V2-built container DIFFER from any
+pile.txt-based container by construction (the byte streams differ at every
+former separator position); they are never compared across corpora.
