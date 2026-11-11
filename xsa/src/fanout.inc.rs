@@ -500,8 +500,8 @@ pub fn fanout_command(raw: &[std::ffi::OsString]) {
     let titles: std::collections::HashMap<usize, Vec<u8>> = {
         let mut m = std::collections::HashMap::new();
         let push = |m: &mut std::collections::HashMap<usize, Vec<u8>>, d: usize| {
-            let (o, l) = docs.title_range(d);
-            m.entry(d).or_insert_with(|| docs.titles[20 + o..20 + o + l].to_vec());
+            let title = docs.lookup_title(d).to_vec();
+            m.entry(d).or_insert(title);
         };
         for r in doc_rows.iter().take(top) {
             push(&mut m, r.doc);

@@ -131,7 +131,7 @@ use crate::{die, sxi};
 use memmap2::Mmap;
 use rayon::prelude::*;
 use std::fs::File;
-use std::io::{BufWriter, Write};
+use std::io::{BufWriter, Read, Write};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -2163,10 +2163,31 @@ fn decode_block(
 
 /// Mapped corpus metadata. Anchors bound each lookup to at most 63 deltas;
 /// no corpus-sized decoded start array is allocated.
+///
+/// Two corpus kinds share this one type (CORPUS_V2.md 2.1: the XCS2 column is
+/// byte-for-byte the XSEP delta+anchor shape, so the rank/select is shared):
+///
+///   V1: seps.bin (XSEP v1) + titles.bin (XTIT v1), corpus.bin for --context;
+///       every document ends with a framing 0x1E that is not content.
+///   V2: <name>.starts (XCS2 v1, flags 0) + <name>.docs (XPM1 v1); the title
+///       of a document is its component name, the corpus END is not a
+///       separator (snippet never strips a byte and may cut a window inside
+///       text that legitimately contains 0x1E), and --context reads the
+///       optional <name>.bin cache.
 struct Documents {
     dir: std::path::PathBuf,
     seps: Mmap,
-    titles: Mmap,
+    titles: Option<Mmap>,
+    /// V2: <name>.docs, kept mapped; the component-name blob and its
+    /// offset/length tables are read straight out of it on lookup.
+    docs2: Option<Mmap>,
+    docs2_rows: usize,
+    docs2_names: usize,
+    docs2_name_offs: usize,
+    docs2_name_lens: usize,
+    /// V2: the optional <name>.bin cache (read only by --context).
+    v2_bin: Option<std::path::PathBuf>,
+    v2: bool,
     count: usize,
     bytes: u64,
     anchors: usize,
@@ -2176,6 +2197,37 @@ struct Documents {
 impl Documents {
     fn open(dir: &str, n: u64) -> Result<Self, String> {
         let dir = std::path::Path::new(dir);
+        if !dir.join("seps.bin").exists() {
+            // A V2 corpus directory: exactly one <name>.starts (XCS2 v1).
+            let mut found: Option<std::path::PathBuf> = None;
+            let mut seen = 0usize;
+            if let Ok(rd) = std::fs::read_dir(dir) {
+                for e in rd.flatten() {
+                    let p = e.path();
+                    if p.extension().is_some_and(|x| x == "starts") {
+                        let mut head = [0u8; 4];
+                        if let Ok(mut f) = File::open(&p) {
+                            if f.read_exact(&mut head).is_ok() && &head == b"XCS2" {
+                                seen += 1;
+                                found = Some(p);
+                            }
+                        }
+                    }
+                }
+            }
+            return match (found, seen) {
+                (Some(path), 1) => Self::open_v2(dir, n, &path),
+                (Some(_), _) => Err(format!(
+                    "{}: more than one *.starts with the XCS2 magic; a directory names exactly one V2 corpus (one MANIFEST.json per directory)",
+                    dir.display()
+                )),
+                (None, _) => Err(format!("{}: no seps.bin/titles.bin (V1) and no XCS2 *.starts (V2)", dir.display())),
+            };
+        }
+        Self::open_v1(dir, n)
+    }
+
+    fn open_v1(dir: &std::path::Path, n: u64) -> Result<Self, String> {
         let map = |name: &str| -> Result<Mmap, String> {
             let path = dir.join(name);
             let file = File::open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -2215,7 +2267,9 @@ impl Documents {
         if payload.checked_add(20 + count * 6) != Some(titles.len() as u64) {
             return Err("invalid titles.bin payload/offset/length tables".into());
         }
-        let docs = Self { dir: dir.to_path_buf(), seps, titles, count: count as usize, bytes,
+        let docs = Self { dir: dir.to_path_buf(), seps, titles: Some(titles), docs2: None,
+            docs2_rows: 0, docs2_names: 0, docs2_name_offs: 0, docs2_name_lens: 0,
+            v2_bin: None, v2: false, count: count as usize, bytes,
             anchors: anchors as usize, payload: payload as usize };
         let mut start = u64_at(&docs.seps, 40);
         let mut title_end = 0;
@@ -2236,15 +2290,125 @@ impl Documents {
 
         Ok(docs)
     }
+
+    /// Open a CORPUS V2 directory (CORPUS_V2.md 2): exactly one
+    /// `<name>.starts` (XCS2 v1) + `<name>.docs` (XPM1 v1) + MANIFEST.json.
+    /// The starts/docs PAIR AGREEMENT is asserted here (offset[k] == start[k],
+    /// rows tile, sum(lengths) == corpus_bytes) - by construction the two
+    /// tables are the same data, and the query side never trusts one alone.
+    fn open_v2(dir: &std::path::Path, n: u64, starts_path: &std::path::Path) -> Result<Self, String> {
+        let map_file = |p: &std::path::Path| -> Result<Mmap, String> {
+            let file = File::open(p).map_err(|e| format!("{}: {e}", p.display()))?;
+            unsafe { Mmap::map(&file) }.map_err(|e| format!("{}: {e}", p.display()))
+        };
+        let seps = map_file(starts_path)?;
+        let docs_path = starts_path.with_extension("docs");
+        let docs2 = map_file(&docs_path)?;
+        let manifest: Option<serde_json::Value> = match std::fs::read(dir.join("MANIFEST.json")) {
+            Ok(data) => Some(serde_json::from_slice(&data).map_err(|e| format!("MANIFEST.json: {e}"))?),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(format!("MANIFEST.json: {e}")),
+        };
+        let u32at = |b: &[u8], o| u32::from_le_bytes(b[o..o+4].try_into().unwrap()) as usize;
+        if seps.len() < 48 || &seps[..4] != b"XCS2" || u32at(&seps, 4) != 1
+            || u32at(&seps, 12) != 64 || u32at(&seps, 8) != 0 {
+            return Err(format!("invalid {} header (expected XCS2 v1, stride 64, flags 0: V2 has no separator)",
+                starts_path.display()));
+        }
+        if docs2.len() < 68 || &docs2[..4] != b"XPM1" || u32at(&docs2, 4) != 1
+            || u32at(&docs2, 56) != 34 || u64_at(&docs2, 60) != 0 {
+            return Err(format!("invalid {} header (expected XPM1 v1, 34-byte rows, partial_tail 0)",
+                docs_path.display()));
+        }
+        let count = u64_at(&seps, 16);
+        let bytes = u64_at(&seps, 24);
+        let anchors = count.div_ceil(64);
+        // SXI2 n includes the structural virtual END, which is not a corpus byte.
+        if bytes.checked_add(1) != Some(n)
+            || manifest.as_ref().is_some_and(|m| m["kind"].as_str() != Some("corpus-v2")
+                || m["corpus_bytes"].as_u64() != Some(bytes)
+                || m["doc_count"].as_u64() != Some(count)) {
+            return Err(format!("corpus metadata mismatch: container n={n} (includes virtual END), starts corpus_bytes={bytes} docs={count}, MANIFEST={manifest:?}"));
+        }
+        if count == 0 || count > u32::MAX as u64 || u64_at(&seps, 32) != anchors
+            || 48 + count * 4 + anchors * 8 != seps.len() as u64 {
+            return Err("invalid starts counts or file length".into());
+        }
+        let shard_count = u64_at(&docs2, 24) as usize;
+        let name_count = u64_at(&docs2, 32) as usize;
+        let name_payload = u64_at(&docs2, 40) as usize;
+        let shard_payload = u64_at(&docs2, 48) as usize;
+        if u64_at(&docs2, 8) != count || u64_at(&docs2, 16) != bytes {
+            return Err("docs table disagrees with starts on doc_count/corpus_bytes".into());
+        }
+        let names = 68usize;
+        let name_offs = names + name_payload;
+        let name_lens = name_offs + 4 * name_count;
+        let rows = name_lens + 2 * name_count + shard_payload + 6 * shard_count;
+        if rows.checked_add(count as usize * 34) != Some(docs2.len()) {
+            return Err("invalid docs table length".into());
+        }
+        // The component-name tables must tile their blob (cheap: name_count rows).
+        let mut name_end = 0usize;
+        for j in 0..name_count {
+            let off = u32::from_le_bytes(docs2[name_offs + 4*j .. name_offs + 4*j + 4].try_into().unwrap()) as usize;
+            let len = u16::from_le_bytes(docs2[name_lens + 2*j .. name_lens + 2*j + 2].try_into().unwrap()) as usize;
+            if off != name_end || off.checked_add(len).is_none_or(|end| end > name_payload) {
+                return Err(format!("invalid component-name range at index {j}"));
+            }
+            name_end = off + len;
+        }
+        if name_end != name_payload { return Err("component-name payload not exactly covered".into()); }
+        let docs = Self { dir: dir.to_path_buf(), seps, titles: None, docs2: Some(docs2),
+            docs2_rows: rows, docs2_names: names, docs2_name_offs: name_offs,
+            docs2_name_lens: name_lens,
+            v2_bin: Some(starts_path.with_extension("bin")), v2: true,
+            count: count as usize, bytes, anchors: anchors as usize, payload: 0 };
+        let u32_at64 = |b: &[u8], o: usize| u32::from_le_bytes(b[o..o+4].try_into().unwrap()) as u64;
+        let mut start = u64_at(&docs.seps, 40);
+        let mut row_end = 0u64;
+        for i in 0..docs.count {
+            let delta = docs.delta(i);
+            start = start.checked_add(delta).ok_or("starts start overflow")?;
+            let r = docs.docs2_rows + i * 34;
+            let d = docs.docs2.as_ref().expect("v2");
+            let off = u64_at(d, r);
+            let len = u64_at(d, r + 8);
+            let shard = u32at(d, r + 16);
+            let comp = u32at(d, r + 18);
+            if start >= bytes || (i == 0 && start != 0) || (i > 0 && delta == 0)
+                || (i % 64 == 0 && docs.anchor(i / 64) != start)
+                || off != start || len == 0
+                || shard >= shard_count || comp >= name_count
+                || u32_at64(d, r + 30) != 0 {
+                return Err(format!("invalid starts/docs pair at document {i} (V2 tables must agree by construction)"));
+            }
+            row_end = off + len;
+        }
+        if row_end != bytes { return Err("docs rows do not tile to corpus_bytes".into()); }
+
+        Ok(docs)
+    }
     fn delta(&self, i: usize) -> u64 {
         u32::from_le_bytes(self.seps[48+i*4..52+i*4].try_into().unwrap()) as u64
     }
     fn anchor(&self, i: usize) -> u64 { u64_at(&self.seps, 48+self.count*4+i*8) }
     fn title_range(&self, i: usize) -> (usize, usize) {
+        let titles = self.titles.as_ref().expect("V1 only");
         let off = 20+self.payload+i*4;
         let len = 20+self.payload+self.count*4+i*2;
-        (u32::from_le_bytes(self.titles[off..off+4].try_into().unwrap()) as usize,
-         u16::from_le_bytes(self.titles[len..len+2].try_into().unwrap()) as usize)
+        (u32::from_le_bytes(titles[off..off+4].try_into().unwrap()) as usize,
+         u16::from_le_bytes(titles[len..len+2].try_into().unwrap()) as usize)
+    }
+    /// V2: the title of document i is its component name, read straight out
+    /// of the mapped <name>.docs (XPM1 row k, column pile_set_name).
+    fn v2_title(&self, i: usize) -> &[u8] {
+        let d = self.docs2.as_ref().expect("V2 only");
+        let row = self.docs2_rows + i * 34;
+        let comp = u32::from_le_bytes(d[row+18..row+22].try_into().unwrap()) as usize;
+        let off = u32::from_le_bytes(d[self.docs2_name_offs+4*comp..self.docs2_name_offs+4*comp+4].try_into().unwrap()) as usize;
+        let len = u16::from_le_bytes(d[self.docs2_name_lens+2*comp..self.docs2_name_lens+2*comp+2].try_into().unwrap()) as usize;
+        &d[self.docs2_names+off .. self.docs2_names+off+len]
     }
     fn lookup(&self, pos: u64) -> Result<(usize, u64, &[u8]), String> {
         if pos >= self.bytes { return Err(format!("document lookup outside corpus: {pos}")); }
@@ -2263,10 +2427,34 @@ impl Documents {
             start = next;
             doc += 1;
         }
-        let (off, len) = self.title_range(doc);
-        Ok((doc, pos-start, &self.titles[20+off..20+off+len]))
+        let (off, len) = if self.v2 {
+            return Ok((doc, pos-start, self.v2_title(doc)));
+        } else {
+            self.title_range(doc)
+        };
+        Ok((doc, pos-start, &self.titles.as_ref().expect("V1 only")[20+off..20+off+len]))
+    }
+    /// The title of document `d` regardless of corpus kind (V1: titles.bin;
+    /// V2: the component name out of <name>.docs).
+    fn lookup_title(&self, d: usize) -> &[u8] {
+        if self.v2 {
+            self.v2_title(d)
+        } else {
+            let (off, len) = self.title_range(d);
+            &self.titles.as_ref().expect("V1 only")[20+off..20+off+len]
+        }
     }
     fn context_corpus(&self) -> Result<Mmap, String> {
+        if self.v2 {
+            // The optional cache (CORPUS_V2.md 1): <name>.bin, never framed.
+            let path = self.v2_bin.as_ref().expect("V2 only");
+            let file = File::open(path).map_err(|e| {
+                format!("context {}: the V2 cache is absent - materialize it first: xsa corpus --v2-materialize --prefix <prefix> ({e})", path.display())
+            })?;
+            let corpus = unsafe { Mmap::map(&file) }.map_err(|e| format!("context mmap: {e}"))?;
+            if corpus.len() as u64 != self.bytes { return Err("context cache length mismatch".into()); }
+            return Ok(corpus);
+        }
         let file = File::open(self.dir.join("corpus.bin")).map_err(|e| format!("context corpus.bin: {e}"))?;
         let corpus = unsafe { Mmap::map(&file) }.map_err(|e| format!("context mmap: {e}"))?;
         if corpus.len() as u64 != self.bytes { return Err("context corpus.bin length mismatch".into()); }
@@ -2276,13 +2464,18 @@ impl Documents {
         let (doc, offset, _) = self.lookup(pos)?;
         let start = pos-offset;
         let next = if doc+1 < self.count { start+self.delta(doc+1) } else { self.bytes };
-        // Records end with 0x1E; the separator is not document content.
-        let end = if corpus[(next-1) as usize] == 0x1e { next-1 } else { next };
+        // V1: records end with 0x1E; the separator is not document content.
+        // V2: there is no separator anywhere - the document simply ends where
+        // the next one starts (and its text may contain 0x1E legitimately).
+        let end = if self.v2 { next }
+            else if corpus[(next-1) as usize] == 0x1e { next-1 } else { next };
         if pos >= end { return Err(format!("QUERY_CONTEXT_SEPARATOR_HIT pos={pos}")); }
         let lo = pos.saturating_sub(window).max(start);
         let hi = pos.saturating_add(window).min(end);
         let bytes = &corpus[lo as usize..hi as usize];
-        assert!(!bytes.contains(&0x1e), "QUERY_CONTEXT_SEPARATOR pos={pos} start={lo} end={hi}");
+        if !self.v2 {
+            assert!(!bytes.contains(&0x1e), "QUERY_CONTEXT_SEPARATOR pos={pos} start={lo} end={hi}");
+        }
         let mut escaped = String::new();
         for &b in bytes {
             match b {
@@ -2317,6 +2510,20 @@ impl Documents {
 /// The journal is retained beside the container. Older builds already recorded
 /// their input path; use that provenance without modifying historical containers.
 fn recorded_corpus(journal: &str) -> Option<(String, Option<u64>)> {
+    // V2 first (the newer line; CORPUS_V2.md 6): the build journaled the
+    // validated sidecar prefix, and the V2 corpus directory is its parent.
+    for line in journal.lines() {
+        if let Some(rest) = line.strip_prefix("CONTAINER_DOCS_V2 prefix=") {
+            let (prefix, fields) = rest.split_once(" starts=")?;
+            let (count, _) = fields.split_once(" corpus_bytes=")?;
+            let prefix = serde_json::from_str::<String>(prefix).unwrap_or_else(|_| prefix.to_string());
+            let dir = std::path::Path::new(&prefix).parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|| ".".to_string());
+            return Some((dir, count.parse().ok()));
+        }
+    }
     for line in journal.lines() {
         if let Some(rest) = line.strip_prefix("CONTAINER_CORPUS_SIDECARS dir=") {
             let (dir, fields) = rest.split_once(" seps=seps.bin titles=titles.bin docs=")?;
@@ -2345,7 +2552,13 @@ fn discover_documents(container: &str, explicit: Option<&str>, n: u64) -> Option
     if let Some((dir, _)) = recorded { candidates.push(("recorded", dir)); }
     for (source, dir) in candidates {
         let path = std::path::Path::new(&dir);
-        if source != "docs" && !path.join("seps.bin").exists() && !path.join("titles.bin").exists() { continue; }
+        // V1 candidates carry seps.bin/titles.bin; a V2 corpus directory
+        // carries its <name>.starts instead (one manifest per directory).
+        let has_v1 = path.join("seps.bin").exists() || path.join("titles.bin").exists();
+        let has_v2 = std::fs::read_dir(path)
+            .map(|rd| rd.flatten().any(|e| e.path().extension().is_some_and(|x| x == "starts")))
+            .unwrap_or(false);
+        if source != "docs" && !has_v1 && !has_v2 { continue; }
         let result = Documents::open(&dir, n).and_then(|docs| {
             if expected_count.is_some_and(|count| count != docs.count as u64) {
                 Err(format!("corpus metadata mismatch: recorded docs={expected_count:?}, candidate docs={}", docs.count))

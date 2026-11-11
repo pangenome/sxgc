@@ -770,9 +770,13 @@ fn read_starts(path: &Path) -> (u64, u64, Vec<u64>) {
         sum += d;
         start.push(cursor);
     }
-    if sum != corpus_bytes {
+    // CORPUS_V2.md 2.1: sum(deltas) == start[doc_count-1] (the deltas carry
+    // every boundary except the corpus END - the XSEP v1 column semantics this
+    // table shares). The terminal length (the LAST document) is pinned by the
+    // REQUIRED .docs table, which load_corpus asserts agreement with next.
+    if sum >= corpus_bytes {
         die(&format!(
-            "corpusv2: {}: the deltas sum to {} but the header says corpus_bytes {}",
+            "corpusv2: {}: the deltas end at {} but corpus_bytes is {}; the last document must have length >= 1 (pinned by the .docs table)",
             path.display(), sum, corpus_bytes
         ));
     }
@@ -1296,7 +1300,7 @@ pub fn meta(a: &MetaArgs) {
         "order": order_json,
         "limit_bytes": a.limit,
         "limit_rule": if a.limit.is_some() {
-            "documents admitted while they fit the budget whole; the first that does not fit ends the corpus; V2 never cuts a document (boundary_aligned by construction)"
+            serde_json::json!("documents admitted while they fit the budget whole; the first that does not fit ends the corpus; V2 never cuts a document (boundary_aligned by construction)")
         } else { serde_json::Value::Null },
         "budget_ended_at": budget_end.map(|(s, r)| serde_json::json!({"shard": s, "record": r, "meaning": "provenance of the LAST ADMITTED document; the corpus ends at a document boundary by construction"})),
         "excluded": { "empty_text_records": excluded, "rule": "an empty document is not representable (its delta would be 0); excluded records keep their record numbering for provenance" },

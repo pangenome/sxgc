@@ -104,7 +104,9 @@ the magic and flags differ, and the delta semantics are separator-free:
                                   document" — XSEP semantics; ALWAYS 0 here)
 [12..16)  u32 anchor_stride = 64
 [16..24)  u64 doc_count
-[24..32)  u64 corpus_bytes     == sum(lengths) == sum(deltas) == |.bin| if present
+[24..32)  u64 corpus_bytes     == sum(lengths) == |.bin| if present
+                              (NOT sum(deltas): the deltas end at the last
+                              document's START — see the invariant below)
 [32..40)  u64 anchor_count    == ceil(doc_count / 64)
 [40..48)  u64 base = 0        (start of document 0; always 0 today)
 then doc_count * u32 LE deltas: d[0] = start[0] - base = 0,
@@ -115,9 +117,17 @@ then anchor_count * u64 LE absolute starts of every 64th document
 
 Invariants (asserted by every reader): `d[0] == 0`; `d[i] > 0` for all `i >= 1`
 (every document has length >= 1 — a zero-length document is not representable
-and is refused at construction, see §3.2); `sum(d[i]) == corpus_bytes`;
-anchors agree with the accumulated deltas; file length is exactly
-`48 + 4*doc_count + 8*anchor_count`.
+and is refused at construction, see §3.2); **`sum(d[i]) == start[doc_count-1]`**
+(the deltas carry every document BOUNDARY; the corpus END is not a boundary
+entry — this is exactly XSEP v1's column semantics, and it is why the
+rank/select code is shared). Therefore `start[doc_count-1] < corpus_bytes`,
+and the terminal length `corpus_bytes - start[doc_count-1]` is the length of
+the LAST document. That terminal length is pinned by `.docs` (§2.2), which is
+REQUIRED in V2: every reader loads the pair and asserts the agreement
+(`offset[k] == start[k]` for all k, rows tile,
+`sum(lengths) == corpus_bytes`), so `.starts` is never trusted alone and the
+pair is self-verifying. Anchors agree with the accumulated deltas; file
+length is exactly `48 + 4*doc_count + 8*anchor_count`.
 
 `doc_id` of a corpus position `pos`: the `k` with `start[k] <= pos <
 start[k]+length[k]`, found by anchor binary search + at most 63 delta additions
@@ -324,8 +334,9 @@ boundary because there was no boundary to invent.
 
 `xsa corpus --v2-verify --prefix P [--shards DIR] [--samples N] [--reference P1]`:
 
-1. Table invariants: §2.1/§2.2/§2.4 (deltas positive, sum == corpus_bytes,
-   rows tile, anchors agree, bijection when `.order` present, file lengths).
+1. Table invariants: §2.1/§2.2/§2.4 (deltas positive,
+   `sum(lengths) == corpus_bytes` with the starts/docs pair agreement, rows
+   tile, anchors agree, bijection when `.order` present, file lengths).
 2. Cache check when `.bin` exists: `|.bin| == corpus_bytes`.
 3. Byte identity: `>= N` (default 200) sampled corpus documents are re-extracted
    from their shard records (one decompressor per touched shard, the §3.1

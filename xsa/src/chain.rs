@@ -276,6 +276,12 @@ struct Options {
     remap: Option<PathBuf>,
     chunk_mb: Option<u32>,
     fanin: bool,
+    /// `--docs-map PREFIX` (CORPUS_V2.md 6): the build input is the materialized
+    /// `.bin` cache of a CORPUS V2 corpus whose tables live at PREFIX. The sidecar
+    /// pair (`<prefix>.starts`, `<prefix>.docs`) is validated (corpus_bytes must
+    /// equal the input size) and journaled as CONTAINER_DOCS_V2, which the query
+    /// side reads back to resolve doc_id / offset_in_doc through the V2 tables.
+    docs_map: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -362,6 +368,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     let mut remap = None;
     let mut chunk_mb = None;
     let mut fanin = false;
+    let mut docs_map = None;
     let mut chunks_given = false;
     let mut kway_given = false;
     let mut i = 0;
@@ -581,6 +588,13 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
                     return Err("specify --remap only once".into());
                 }
             }
+            "--docs-map" => {
+                i += 1;
+                let path = PathBuf::from(value(args.get(i), "--docs-map")?);
+                if docs_map.replace(path).is_some() {
+                    return Err("specify --docs-map only once".into());
+                }
+            }
             _ => return Err(format!("unknown option {flag}")),
         }
         i += 1;
@@ -658,7 +672,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
                  finish_as_gb, bin_live_cap, bin_target_size, bin_entropy_min, phrase, stripes, scratch_free_pct,
                  scratch_budget_gb, skip_fit_check, tape, no_resume,
                  trie, trie_depth, trie_min_support, trie_docs_min_support, trie_asked,
-                 remap, chunk_mb, fanin })
+                 remap, chunk_mb, fanin, docs_map })
 }
 
 /// Last byte of a file (the snap-boundary probe).
@@ -1912,6 +1926,25 @@ fn run_chain(options: Options) -> Result<(), String> {
     let corpus_dir = options.input.parent().filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new(".")).canonicalize()
         .map_err(|e| format!("resolve input directory: {e}"))?;
+    // CORPUS_V2.md 6: --docs-map names the V2 sidecar pair for this input. The
+    // pair is validated (and dies loudly on corruption) BEFORE any phase runs;
+    // the journal line is what the query side reads back to resolve
+    // doc_id/offset_in_doc through the V2 tables.
+    if let Some(prefix) = &options.docs_map {
+        let (n_docs, ordered) = crate::corpusv2::docs_map_check(prefix, corpus_bytes)
+            .map_err(|e| e)?;
+        let starts_name = {
+            let name = prefix.file_name().map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "<prefix>".to_string());
+            format!("{}.starts", name)
+        };
+        journal.line(&format!(
+            "CONTAINER_DOCS_V2 prefix={} starts={} docs={n_docs} corpus_bytes={corpus_bytes} order={}",
+            serde_json::to_string(&prefix.to_string_lossy()).unwrap(),
+            starts_name,
+            if ordered { "file" } else { "source" },
+        ));
+    } else {
     let mut header = [0u8; 48];
     let docs = File::open(corpus_dir.join("seps.bin"))
         .and_then(|mut file| file.read_exact(&mut header)).ok()
@@ -1921,6 +1954,7 @@ fn run_chain(options: Options) -> Result<(), String> {
         .map(|_| u64::from_le_bytes(header[16..24].try_into().unwrap())).unwrap_or(0);
     journal.line(&format!("CONTAINER_CORPUS_SIDECARS dir={} seps=seps.bin titles=titles.bin docs={docs} corpus_bytes={corpus_bytes}",
         serde_json::to_string(&corpus_dir.to_string_lossy()).unwrap()));
+    }
     // THE FLAG FLIP (auto-radix): the bin pipeline is the default route, so the
     // flag that used to select it is no longer a route selector. It is ACCEPTED
     // AND IGNORED - journalled here, in the plan's own log, so no run can be
