@@ -15,10 +15,20 @@ position-answering system *must* consult.
 ## What you can do today
 
 ```sh
-cargo install xsa                       # complete product, all stages vendored
-xsa build -i pile.txt -s /scratch/pile  # one command: corpus in, one container out
+cargo install xsa                                # complete product, all stages vendored
+xsa build --tape -i pile.txt -s /scratch/pile \
+           --docs-map pilemap/ --trie-depth 8 --trie-min-support 1000
+                                                  # ONE command: corpus in, one container out;
+                                                  # trie + document structure embedded IN-BUILD
+xsa query  pile.sxi2 --count "the "               # instant counts, straight from mmap
+xsa consult --container pile.sxi2 --windows w.jsonl --output rows.tsv
+                                                  # bounded batch contexts (the Emender surface)
+xsa branch-of pile.sxi2 "the qu" --batch         # trie-backed continuation branches
+xsa search pile.sxi2 --pattern " function " --corpus
+                                                  # every occurrence, boundary law enforced,
+                                                  # --exclude-source to leave a document out
 xsa mems  --sxi hprc.sxi --reads r.fq.gz -j 32    # streaming MEMs: (name, offset, strand)
-xsa serve --sxi hprc.sxi                # HTTP: /query /ms /batch /stats
+xsa serve --sxi hprc.sxi                          # HTTP: /query /ms /batch /stats
 ```
 
 `xsa build` is ONE entry and one journal. It reads the corpus through the
@@ -30,6 +40,31 @@ sampled ground-truth audit against the corpus, and publishes one checksummed
 internal gate passes, and every journal binds the tool manifest, per-tool hashes
 and the output SHA, so desync is impossible to miss. `--plan-only` prints the
 surveyed, modelled build plan and exits.
+
+## Memory operations over the container
+
+The document map (**m15**: docstarts, rank/select over delta-varint gaps + sampled
+absolutes) and the context trie (**m20**: the top of the suffix tree,
+boundary-aware, built in-build from the sorter's own band stream at ~1% of
+build time) are container MEMBERS — one file answers the whole operation set,
+no sidecars:
+
+| operation | command | measured |
+|---|---|---|
+| count a pattern | `xsa query <c> --count P` | instant from mmap; 70,412,767 for `"the "` at 10 GB |
+| contexts at positions | `xsa consult` | ~5,000 positions/s, ≤8 GB RSS hard cap, deterministic shas, kill-resumable |
+| continuation branches of a context | `xsa branch-of [--batch]` | 4.7 µs/query; ~148k/s per core batched; 59.5% coverage at depth 8 / MS 1000, 0.035n bytes |
+| every occurrence, law-enforced | `xsa search` | crossings excluded by default; `--exclude-source` width-1, verified both directions |
+| streaming MEMs | `xsa mems` | 23k queries/s |
+| branch enumeration | `xsa branches` | 22k contexts/s |
+
+**THE LAW at query time: no match crosses a document boundary.** True by
+construction — the trie cuts at document ends, and search excludes any match
+where `rank(s) ≠ rank(e−1)`; `--cross-doc` is the explicit opt-in and every
+escape hatch is journaled. Boundaries come from the document map, never
+inferred from content bytes. Honest bound: `locate` (position of a single
+occurrence) is a ~40 ms LF-walk, so per-position aggregation over very common
+patterns routes through the stored structures (trie, consult) instead.
 
 ## THE MACHINE (what `xsa build` runs, and why it is shaped this way)
 
@@ -85,22 +120,27 @@ walk, and no per-suffix position column anywhere in the product path
 tree → adopt finish) for A/B; it is not the document. `--v2-pipeline` is accepted
 and ignored: the bin machine *is* the default pipeline now.
 
-### The measured pile arithmetic (1.3079 TB, 5 shards)
+### The measured pile arithmetic — tape era (1.3079 TB, N = 1,307,910,802,540)
 
-| term | measured anchor | pile |
-|---|---|---|
-| count sweep | 0.14-0.16 s per 10 GB pass, 64-way | minutes |
-| fill (scatter) | 14.8-21.1 GB/s (was 282 MB/s serial) | **~0.5 h** (was 754 h) |
-| build (bins, parallel) | 340-400 s per 10 GB at 96t | **~12.9 h** |
-| stitch + finish | 118.9 s/GB (finish own work) | **43.3 h** |
-| **end to end** | | **~57 h, finish-dominated** |
+The tape route deleted the finish term and the merge. Measured end to end on
+the **100 GB pile head** (96 threads): wall **12:35:10**, 102 waves, peak
+scratch 78.9 GB = **0.789n**, χ = 24,185,339,204, container 0.632n. The sorter
+(band production) now dominates; the finish is a streaming consumer that rides
+along and ends with the tape. The full pile is ~13.1× the head: **~7 days** at
+a 200–300 GB scratch budget, with point-mass classes (whitespace: the 16-space
+run is 0.76% of the head) handled by the one-wave borrow rule — capped,
+journalled, and proven byte-identical to the uncapped build.
 
-The launch limiter is the finish term and the per-shard arena capacity — a single
-pile-scale bin (space, 0.166n = 2.17e11 rows) is indivisible and must be sorted
-in one arena pair — not the fill (removed this week) and not the merge (retired).
-`xsa build --plan-only` renders this honestly: window-file bytes on disc, one
-build group of RAM, the target-size tree's leaves and emergent depth, and the
-finish term, with the fit verdict for the machine it is run on.
+Backpressure, not kill: `--scratch-budget-gb` pauses the producer (SIGSTOP/
+SIGCONT on the process group) when live scratch exceeds the budget; the build
+ends when it ends, fails, or a human stops it — no timeouts, no watchdogs,
+and `checkpoint.journal` + spool-presence resume make an interrupt a work-
+avoiding restart, not a rerun.
+
+`xsa build --plan-only` renders this honestly on any machine: window-file
+bytes on disc, one build group of RAM, the waves, and the fit verdict — and
+refuses with the shortfall when it does not fit (`--skip-fit-check` to
+override).
 
 ## THE LAW, and D2 with the rolling amendment
 
@@ -128,7 +168,8 @@ oracle asserts the bounds (`peak_live_slots <= 2*max(cap,n)`,
 |---|---:|---:|---|
 | yeast235 (235 strains) | 3.34 Gbp | 85,404,336 | published 3× by 3 independent toolsets, byte-identical |
 | 10-human subset | 30.2 Gbp | 1,627,067,257 | A/B double-build, byte-identical; peak RSS 134 GB |
-| HPRC v2 466 haplotypes | 1.44 Tbp | *in flight* (historical pilot-frame value: 2,249,968,075) | running |
+| HPRC v2 466 haplotypes | 1.44 Tbp | 2,282,463,145 | done, certified, banked |
+| Pile head (first 100 GB) | 100 GB | 24,185,339,204 | 12:35:10, peak scratch 0.789n |
 
 Output format: ropebwt3-compatible MEM tables (parity verified against the
 reference tool built from source), name+offset annotation via the boundary
@@ -188,6 +229,10 @@ build). `paper/FACTS.md` maps every claim to its artifact.
 - `lean/` — the formalization (Sxgc, SxgcBuild, SxgcBounds, SxgcPhi, SxgcNodup,
   SxgcRunEdge, SxgcSeam, LowerBound, LM) and the research plans
 - `docs/` — the LM-over-χ backend spec (Emender-targeted, generic design)
+- repo-root serving & ops docs: REPRODUCE.md, SERVING.md, SXI_FORMAT.md,
+  CONSULT.md, MEMORY_OPS.md, CONTEXT_TRIE.md, CORPUS_V2.md, RESUME.md,
+  HEARTBEAT.md, and the RESULTS_*.md ledger — every number in this README
+  traces to one of them
 - `RESEARCH.md` — the full working ledger: every gate, every correction
 - `paper/` — the manuscript (sources; the PDF is a build artifact)
 
