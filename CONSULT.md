@@ -556,6 +556,16 @@ bash gates/chi_g4_rate.sh xsa/target/release/xsa \
 
 ## 7. Throughput, and what it is measured on
 
+**The χ-proportional rewrite (RESULTS_CHI_CONSULT.md)** changed this section's
+regime: the no-cross default had become locate-bound at 100 GB (13.7
+positions/s, every row enumerated), and the zero-locate layer cascade brought
+the 100 GB rehearsal container back to **6,126 positions/s at `--rss-gb 8`,
+`-j 16`, coexisting with the live pile build — 447× the locate-bound baseline,
+99.08% of rows answered with zero locate** — while the banked 682,496-row
+prefix stayed byte-identical. The tables below are the PRE-rewrite receipts
+(the old conflated `consult_answer` path, whose rates the no-cross lane then
+traded away for exactness; the rewrite restores them under the law).
+
 One process, this box, with **foreign load throughout** (four FastGA/FastGCD jobs
 at ~15 cores each plus GPU training jobs; `load average` 24 -> 99 while the gates
 ran, which is why repeats of the same command vary by ~15%). Source: the
