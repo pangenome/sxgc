@@ -40,18 +40,23 @@ CFLAGS="-O2 -std=c++17 -pthread"
 fail() { echo "SUBDIV_GATE_FAIL: $*" >&2; exit 3; }
 # THE SURVIVOR CHECK IS SCOPED TO THIS GATE'S OWN RUNS: several gates (and the
 # operator's other lanes) can run the same binary name, and a check that searched
-# by name alone would fail on somebody else's work.
-RUN_TAGS=""
+# by name alone would fail on somebody else's work. The tags go through a FILE,
+# not a shell variable: run_sorter is called in $(...), i.e. in a subshell, and a
+# variable set there never reaches the parent - the first version of this check
+# therefore reported `checked=0 runs`, which is exactly the vacuous pass this
+# project treats as a bug.
+RUN_TAGFILE=$WORK/.run_tags
+: > "$RUN_TAGFILE"
 no_survivors() {
   local bad=""
-  for tag in $RUN_TAGS; do
+  for tag in $(cat "$RUN_TAGFILE"); do
     local hits
     hits=$(pgrep -af "scatter_sort" | grep -F -- "$WORK/runs/$tag/scratch" || true)
     [ -z "$hits" ] || bad="$bad
 $hits"
   done
   [ -z "$bad" ] || { echo "SUBDIV_SURVIVORS:$bad" >&2; fail "a stage process survived its timeout"; }
-  echo "SUBDIV_NO_SURVIVORS checked=$(echo $RUN_TAGS | wc -w) runs tags='$RUN_TAGS'"
+  echo "SUBDIV_NO_SURVIVORS checked=$(wc -w < "$RUN_TAGFILE") runs tags='$(tr '\n' ' ' < "$RUN_TAGFILE")'"
 }
 
 build() {
@@ -80,7 +85,7 @@ fixtures() {
 run_sorter() {
   local bin=$1 tag=$2 corpus=$3; shift 3
   local d=$WORK/runs/$tag
-  RUN_TAGS="$RUN_TAGS $tag"
+  echo "$tag" >> "$RUN_TAGFILE"
   rm -rf "$d"; mkdir -p "$d/scratch"
   echo "SUBDIV_RUN tag=$tag corpus=$corpus bytes=$(stat -c %s "$corpus") extra='$*'" >&2
   setsid timeout --kill-after=10 "${RUN_TIMEOUT:-7200}" "$bin" \
@@ -220,7 +225,7 @@ g4() {
 # --------------------------------------------------------------------------- G5
 g5() {
   echo "== G5 refusal: a class the census cannot prove still refuses, with numbers, and never suggests a merge"
-  local d=$WORK/runs/g5; rm -rf "$d"; mkdir -p "$d/scratch"
+  local d=$WORK/runs/g5; echo g5 >> "$RUN_TAGFILE"; rm -rf "$d"; mkdir -p "$d/scratch"
   set +e
   setsid timeout --kill-after=10 600 "$STAGE/scatter_sort" --corpus "$FX/refuse.txt" \
       --out "$d/out.sa" --scratch "$d/scratch" --threads 2 --par-bands 1 \
