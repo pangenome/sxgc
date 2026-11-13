@@ -135,7 +135,29 @@ G3_LAW_OK fixtures=5 rows_oracled=19 byte_parity=1 traps=2
 
 ### G4 — RATE (100 GB rehearsal, `--rss-gb 8`, cold then warm)
 
-<!-- G4_RECEIPT -->
+One clean gate invocation with the final binary, nothing else on the paths;
+the live pile build (96 threads) on the same box throughout.
+
+```
+G4_DETERMINISM two_runs_identical=1
+G4_DONE_cold  positions=6667438 seconds=1057.8 positions_per_s=6303.1
+              peak_rss_gb=7.999 commits=101
+G4_DONE_warm  positions=6667438 seconds=1080.1 positions_per_s=6173.0
+              peak_rss_gb=7.999 commits=101
+              rows_sha256=f3ed38b3... (the same sha as G2's run)
+CONSULT_SEPFRAMING checked=16119766 violations=0 verified=1 seconds=8.8
+CHI_ZEROLOCATE rows=6605827 of 6667438 (99.08%)
+G4_LAYERS width1=5962110(p50 3.0ms) trie=43372(11.6us) tforced=13702(1.5ms)
+          forced=593043(5.9ms) rawfork=36972(5.9ms) marked=14846(5.9ms) enum=0
+G4_RATE positions=6667438 seconds=1080.1 positions_per_s=6173.0
+        baseline=13.7 multiple=450.6x peak_rss_gb=7.999 cap_gb=8 jobs=16
+G4_RATE_OK positions_per_s=6173.0 multiple=450.6x baseline=13.7
+G4_RATE_GATE_OK
+```
+
+**450.6× the 13.7/s locate-bound baseline** (the ≥100× gate asserts and
+passed with 4.5× margin), at the 8 GB cap the old path was measured
+ hopeless at (8.5/s), with the live pile build coexisting on the box.
 
 ---
 
