@@ -1568,19 +1568,6 @@ fn seeds_open_index(
     index
 }
 
-/// The arena/cap split `--rss-gb`/`--cache-gb` ask for, as one journal string so a
-/// run's memory law is readable from its own line.
-fn arena_journal(index: &Index, rss_gb: Option<f64>, cache_gb: Option<f64>) -> String {
-    format!(
-        "arena_bytes={} cap_bytes={} rss_gb={} cache_gb={}",
-        index.cache_bytes(),
-        rss_gb.map(|g| ((g * (1u64 << 30) as f64) as u64).to_string())
-            .unwrap_or_else(|| "default".into()),
-        rss_gb.map(|g| format!("{g}")).unwrap_or_else(|| "none".into()),
-        cache_gb.map(|g| format!("{g}")).unwrap_or_else(|| "cap/8".into()),
-    )
-}
-
 /// The anchor table of ONE window: the same scan, the same output selection, then
 /// one locate per reported anchor row (bounded by `--anchor-max-per-seed`), then
 /// the canonical sort. Nothing about the multiplicities comes from the located
@@ -2245,5 +2232,66 @@ mod seeds_tests {
         let mut off = Markup::scan(&text, false);
         assert_eq!((off.bytes, off.ranges.len()), (0, 0));
         assert!(!off.overlaps(5, 7));
+    }
+}
+
+#[cfg(test)]
+mod seeds_anchor_tests {
+    use super::*;
+
+    /// THE TIE ORDER, checked as an order: the sort key must be total on the
+    /// fields the header promises, and it must put occurrences of one seed in
+    /// corpus order regardless of the order the walks returned them.
+    #[test]
+    fn anchor_rows_sort_by_the_documented_tie_order() {
+        let r = |q: u32, off: u64, len: u32, mult: u64| AnchorRow {
+            query_offset: q,
+            match_len: len,
+            mult,
+            corpus_off: off,
+            corpus_doc: None,
+        };
+        let mut v = vec![r(5, 90, 12, 3), r(1, 70, 12, 3), r(5, 10, 12, 3), r(1, 70, 11, 9)];
+        v.sort_unstable_by_key(anchor_key);
+        assert_eq!(
+            v.iter().map(|x| (x.query_offset, x.corpus_off, x.match_len)).collect::<Vec<_>>(),
+            vec![(1, 70, 11), (1, 70, 12), (5, 10, 12), (5, 90, 12)]
+        );
+    }
+
+    /// The serve frame is FIXED WIDTH and carries the absent-document sentinel:
+    /// a client can walk it without a schema and can never read a missing docid as
+    /// document 0.
+    #[test]
+    fn anchor_frames_are_fixed_width_and_encode_absent_docs() {
+        let wa = WindowAnchors {
+            window_id: 3,
+            text_bytes: 5,
+            rows: vec![
+                AnchorRow { query_offset: 1, match_len: 2, mult: 7, corpus_off: 9, corpus_doc: Some(4) },
+                AnchorRow { query_offset: 1, match_len: 2, mult: 7, corpus_off: 11, corpus_doc: None },
+            ],
+            windows_scanned: 1,
+            seeds: 1,
+            positions: 2,
+            lf_steps: 0,
+            ranks: 0,
+            doc_absent: 1,
+            scan_ms: 0.0,
+            locate_ms: 0.0,
+        };
+        let b = anchor_frame_payload(&wa);
+        assert_eq!(b.len(), 16 + 2 * 32);
+        assert_eq!(&b[..8], &3u64.to_le_bytes());
+        assert_eq!(u32::from_le_bytes(b[8..12].try_into().unwrap()), 2);
+        let doc0 = u64::from_le_bytes(b[16 + 24..16 + 32].try_into().unwrap());
+        let doc1 = u64::from_le_bytes(b[16 + 32 + 24..16 + 64].try_into().unwrap());
+        assert_eq!(doc0, 4);
+        assert_eq!(doc1, DOCID_ABSENT, "an absent document must be the sentinel, not 0");
+        // the same rows in TSV carry '-' for the absent field
+        let mut out: Vec<u8> = Vec::new();
+        anchors_write_tsv(&mut out, &wa).unwrap();
+        let s = String::from_utf8(out).unwrap();
+        assert_eq!(s, "3\t1\t4\t9\t2\t7\n3\t1\t-\t11\t2\t7\n");
     }
 }
