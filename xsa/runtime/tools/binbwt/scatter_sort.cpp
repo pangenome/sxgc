@@ -468,15 +468,15 @@ static constexpr u64 SS_PIECE_SHARE_PCT = 40;
 static constexpr u64 SS_PIECE_ROWS = 65536;
 static constexpr u64 SS_PIECE_WINDOW_MAX = 1100;
 static constexpr u64 SS_PIECE_WINDOW_MIN = 64;
-// THE WAVE DEScent. A wave class is a key PREFIX (plus an optional position slice
-// for a point mass). Depth is an OUTPUT of the census, exactly as it is for the
-// band plan: a class is split by the next byte for as long as its row count
-// exceeds the wave goal. The cap below is the WAVE PREDICATE's width (a wave's
-// membership test compares at most this many bytes of the corpus), NOT the rule;
-// 16 is already far beyond anything a real corpus produces (a 16-byte prefix
-// occurring more than a wave's rows would be 1.8e9 copies of one 16-gram at the
-// Pile's 1e11) - the point-mass branch exists for the corpora that defeat it.
-static constexpr u64 SS_WAVE_DEPTH_MAX = 16;
+// THE WAVE DESCENT. A wave class is a key PREFIX (plus an optional position slice
+// for a point mass). Depth is DATA: the plan descends by the next key byte for as
+// long as the class's rows exceed the goal, and the prefix path is interned in an
+// arena (offset,len) instead of a fixed array. There is NO depth cap: the old
+// `SS_WAVE_DEPTH_MAX = 16` plus `unsigned char pre[16]` is what turned the Pile's
+// space class into a "point mass" at depth 16 (WAVE_SUBDIVISION.md). The only
+// stop is a data one: a class that no key byte splits (every sampled row shares
+// the next byte) goes to the point-mass branch, which must prove its order from
+// the corpus or refuse.
 static constexpr u64 SS_WAVE_TARGET_PCT = 80;     // plan to target x 0.8 (the band planner's rule)
 static constexpr u64 SS_ROWS_FLOOR = 65536;       // one fold band: below this the budget is broken
 static constexpr u64 SS_BUDGET_RATIO_MAX = 90;    // the exit assertion: owned RSS <= 90% of the envelope
@@ -726,24 +726,34 @@ static int prefix_cmp(u64 a, u64 b, u64 depth) {
     if (cap == depth || a == b) return 0;
     return FILE_N-a < FILE_N-b ? -1 : 1;
 }
-struct TapeLeaf { TapeFence first; u64 samples; bool analytic; };
+// A leaf's second cost term (WAVE_SUBDIVISION.md §3): the 1 MiB pages its own
+// sampled positions occupy, as a fraction of the corpus. `pages` is the count,
+// `samples` the leaf's sampled rows - the plan answers both without a corpus read.
+struct TapeLeaf { TapeFence first; u64 samples; bool analytic; u64 pages = 0; };
+static u64 g_tape_fence_bytes = 0;   // corpus bytes the band plan had to read
 // Only oversized equal-prefix nodes descend. Multiplicity is retained: every
 // entry is a sampled POSITION, not a distinct key. No runtime subdivision.
+// `keycmp(a,b,depth)` compares two SAMPLED positions; the wave loop passes a
+// comparator that answers from the survey's prefix cache, so the band plan costs
+// zero corpus reads for every depth the cache covers (journaled otherwise).
 static std::vector<TapeLeaf> plan_tape(std::vector<u64> positions, u64 stride,
-                                     u64 target, u64 wave, u64 trailing) {
+                                     u64 target, u64 wave, u64 trailing,
+                                     const std::function<int(u64,u64,u64)>& keycmp,
+                                     const std::function<u32(u64)>& pageof,
+                                     u64 page_unit, u64 page_n) {
     std::vector<TapeLeaf> leaves;
     const u64 goal=std::max<u64>(1, target*4/5);
     std::function<void(size_t,size_t,u64)> descend;
     descend = [&](size_t lo, size_t hi, u64 depth) {
         std::sort(positions.begin()+lo, positions.begin()+hi,
-                  [=](u64 a,u64 b){return prefix_cmp(a,b,depth)<0;});
+                  [&](u64 a,u64 b){return keycmp(a,b,depth)<0;});
         size_t pending=lo;
         auto emit = [&](size_t a,size_t b,bool analytic=false) {
             if (a<b) leaves.push_back({{positions[a],depth},u64(b-a),analytic});
         };
         for (size_t a=lo; a<hi;) {
             size_t b=a+1;
-            while (b<hi && prefix_cmp(positions[a],positions[b],depth)==0) ++b;
+            while (b<hi && keycmp(positions[a],positions[b],depth)==0) ++b;
             if ((b-a)*stride > goal) {
                 emit(pending,a); pending=b;
                 // Prove the whole prefix class from the CORPUS, not samples.
@@ -751,9 +761,10 @@ static std::vector<TapeLeaf> plan_tape(std::vector<u64> positions, u64 stride,
                 bool analytic=true;
                 for (size_t j=a;j<b;++j) analytic &= positions[j]>=trailing;
                 if (analytic) {
-                    for (u64 p=0;p<trailing;++p) {
+                        for (u64 p=0;p<trailing;++p) {
                         if (prefix_cmp(p,positions[a],depth)==0) { analytic=false; break; }
                     }
+                    g_tape_fence_bytes += trailing;
                 }
                 if (analytic) {
                     emit(a,b,true);
@@ -781,6 +792,27 @@ static std::vector<TapeLeaf> plan_tape(std::vector<u64> positions, u64 stride,
         leaves.insert(leaves.begin(),{{0,24},0,false});
     if (leaves.empty()) leaves.push_back({{0,24},0,false});
     u64 histogram[8]={}, largest=0;
+    // THE LEAF'S PAGE FOOTPRINT. Every leaf carries a fence at the sampled
+    // position where it starts; its own positions are not stored, so the count of
+    // pages it touches is estimated from the sample DENSITY of its range - one
+    // page per (page_unit / stride) sampled rows, capped by the corpus itself.
+    // The number is an ESTIMATE and is journaled as one.
+    // EXACT FOR THE SAMPLE: the distinct 1 MiB pages the leaf's own sampled
+    // positions occupy (a lower bound on the pages the leaf's real rows touch,
+    // and the only page number the plan is allowed to answer - a census costs
+    // zero corpus reads).
+    {
+        std::vector<u32> pg;
+        size_t a = 0;
+        for (auto& leaf:leaves) {
+            const size_t b = a + size_t(leaf.samples);
+            pg.clear();
+            for (size_t i = a; i < b; ++i) pg.push_back(pageof(positions[i]));
+            std::sort(pg.begin(), pg.end());
+            leaf.pages = u64(std::unique(pg.begin(), pg.end()) - pg.begin());
+            a = b;
+        }
+    }
     for (const auto& leaf:leaves) {
         ++histogram[leaf.first.depth/24-1];
         largest=std::max(largest,leaf.samples*stride);
@@ -800,6 +832,9 @@ static void sort_tape_keys(std::vector<Row>& rows, u64) {
     });
 }
 
+#include "subdiv_survey.h"
+#include "subdiv_descent.h"
+
 int main(int argc, char** argv) {
     std::string corpus, out, scratch = "/tmp/ss_scratch", lcpOut, isaOut;
     u64 isaK = 1024;
@@ -816,6 +851,13 @@ int main(int argc, char** argv) {
     u64 budget_bytes = 0;       // THE ARENA ENVELOPE: what the process may commit
     u64 scratch_budget_bytes = 0; // THE DISK BUDGET the work unit is sized from
     double memory_gb = 0.0;     // the phase's --memory-gb, journaled (not used to size)
+    // WAVE_SUBDIVISION.md knobs. --subdiv-strategy is the DEBUG override of the
+    // plan's per-class cost decision (it can change what a descent COSTS, never
+    // what it produces: both arms compare the same bytes against the same fence
+    // prefixes). --subdiv-leaf-coverage-pct is the leaf criterion's second term.
+    std::string subdiv_strategy = "auto";
+    double leaf_coverage_pct = 5.0;
+    u64 pos_budget_bytes = 0;   // the position-column (rolling file) disk budget
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -845,9 +887,19 @@ int main(int argc, char** argv) {
         else if (a == "--force-inplace-sort") force_inplace = true;
         else if (a == "--isa-sample-out") isaOut = nxt();
         else if (a == "--isa-sample-k") isaK = std::strtoull(nxt().c_str(), nullptr, 10);
+        else if (a.rfind("--subdiv-strategy=", 0) == 0) subdiv_strategy = a.substr(18);
+        else if (a == "--subdiv-strategy") subdiv_strategy = nxt();
+        else if (a.rfind("--subdiv-position-budget-bytes=", 0) == 0) pos_budget_bytes = std::strtoull(a.substr(31).c_str(), nullptr, 10);
+        else if (a.rfind("--subdiv-leaf-coverage-pct=", 0) == 0) leaf_coverage_pct = std::atof(a.substr(27).c_str());
+        else if (a == "--subdiv-leaf-coverage-pct") leaf_coverage_pct = std::atof(nxt().c_str());
+        else if (a == "--subdiv-position-budget-bytes") pos_budget_bytes = std::strtoull(nxt().c_str(), nullptr, 10);
         else die("unknown arg " + a);
     }
     (void)sort_mode;
+    if (subdiv_strategy != "auto" && subdiv_strategy != "local" && subdiv_strategy != "global")
+        die("--subdiv-strategy must be auto|local|global (got " + subdiv_strategy + ")");
+    if (!(leaf_coverage_pct > 0.0 && leaf_coverage_pct <= 100.0))
+        die("--subdiv-leaf-coverage-pct must be in (0,100]");
     if (corpus.empty() || (out.empty() && tapeBands.empty())) die("--corpus and --out required");
 
     if (!selftestOracle.empty() && !tapeBands.empty()) die("--selftest requires --out");
@@ -1141,35 +1193,30 @@ int main(int argc, char** argv) {
         double(budget.bands_in_flight) * double(budget.rows_per_band) * double(budget.bytes_per_row)
             / double(envelope_bytes));
 
-    // ---- exact first-byte histogram: one parallel pass, 256 counters. This is
-    // what makes the per-wave FILTER cheap: a rejected position costs one load
-    // instead of a 24-byte key computation (16 waves x n key computations was
-    // 4.6x the whole sort at 150 MB).
+    // ================= THE SURVEY (WAVE_SUBDIVISION.md §1) ======================
+    // ONE pass, and it is the only global corpus scan the planning will ever make.
+    // It replaces the separate first-byte histogram pass: the exact per-chunk
+    // counts it collects SUM to that histogram, and it also collects everything
+    // the plan will ask for (prefix cache, run-length column, 1 MiB page column).
+    // Nothing it says is exact except the chunk counts; it is a SAMPLE, labelled
+    // as one, and exactness comes from the descent's own collection.
+    Survey S;
+    survey_run(S, fd, FILE_N, sample_n, std::max<u64>(1, threads));
     std::vector<u64> hist(256, 0);
+    for (u64 c = 0; c < S.chunks; ++c)
+        for (unsigned b = 0; b < 256; ++b) hist[b] += S.cbin[size_t(c) * 256 + b];
     {
-        const u64 nt = std::max<u64>(1, threads);
-        std::vector<std::vector<u64>> lh(nt, std::vector<u64>(256, 0));
-        std::vector<std::thread> ts;
-        for (u64 t = 0; t < nt; ++t)
-            ts.emplace_back([&, t]() {
-                const u64 lo = N * t / nt, hi = N * (t + 1) / nt;
-                auto& h = lh[t];
-                std::vector<u8> buf(SS_SCAN_CHUNK + 64);
-                for (u64 p = lo; p < hi;) {
-                    const u64 chunk = std::min<u64>(SS_SCAN_CHUNK, hi - p);
-                    const u64 real = std::min<u64>(chunk, FILE_N > p ? FILE_N - p : 0);
-                    if (real) {
-                        read_window(fd, p, real, buf);   // remapped in place
-                        for (u64 i = 0; i < real; ++i) ++h[buf[i]];
-                    }
-                    // the virtual END suffix (position FILE_N) counts as symbol 0
-                    if (chunk > real) ++h[SENTINEL_SYMBOL];
-                    p += chunk;
-                }
-            });
-        for (auto& th : ts) th.join();
-        for (u64 t = 0; t < nt; ++t)
-            for (int i = 0; i < 256; ++i) hist[i] += lh[t][i];
+        u64 total = 0;
+        for (unsigned b = 0; b < 256; ++b) total += hist[b];
+        // The virtual END suffix (position FILE_N) is symbol 0 and is counted here
+        // so the root census is a partition of N, not of FILE_N.
+        ++hist[SENTINEL_SYMBOL];
+        if (total + 1 != N)
+            die("SS_SURVEY_COUNT: the survey's exact chunk counts sum to " +
+                std::to_string(total + 1) + " against N=" + std::to_string(N));
+        std::fprintf(stderr,
+            "SS_SURVEY_COUNTS sum=%" PRIu64 " n=%" PRIu64 " chunks=%" PRIu64
+            " rule=exact_per_chunk_per_top_level_bin\n", total + 1, N, S.chunks);
     }
     // Whatever this pass faulted in leaves the process's RSS: the receipt is a
     // function of the budget, not of n (see RssMonitor).
@@ -1179,10 +1226,14 @@ int main(int argc, char** argv) {
     // the wave descent's class census. It is built here, before the wave list,
     // because the wave layer now needs it.
     const double t0 = now_sec();
-    const u64 stride = std::max<u64>(1, N / std::max<u64>(1, sample_n));
+    // The sample the plan works on IS the survey's sample: position i is
+    // i * stride, so every census question about a sampled position is answered
+    // from the prefix cache instead of from a fresh corpus page.
+    const u64 stride = S.stride;
     std::vector<u64> sk;
     sk.reserve(N / stride + 2);
     for (u64 p=0; p<KEY_N; p+=stride) sk.push_back(p);
+    if (sk.size() > S.samples) die("SS_SURVEY_SAMPLE: the stride sample is longer than the survey's");
     // Direct corpus proof of the maximal single-symbol suffix. Samples cannot
     // establish this property ("az" and "aa" agree on their first byte).
     u64 trailing=FILE_N;
@@ -1217,14 +1268,25 @@ int main(int argc, char** argv) {
     // subranges, O(sample x depth) sym_at calls). The per-wave SCAN still passes
     // over the corpus once, which is the only pass this layer ever costs.
     struct Wave {
-        u64 depth;                                  // key-prefix length D (>= 1)
-        unsigned char pre[SS_WAVE_DEPTH_MAX];       // pre[0..depth-2]: the PARENT prefix
-        unsigned bLo, bHi;                          // byte at offset depth-1 is in [bLo,bHi)
-        u64 posLo, posHi;                           // point-mass slice; the whole range otherwise
+        u64 depth;                    // key-prefix length D (>= 1)
+        u32 preOff, preLen;           // preArena[preOff..+preLen) = key bytes 0..D-2
+        unsigned bLo, bHi;            // byte at offset D-1 is in [bLo,bHi)
+        u64 posLo, posHi;             // point-mass slice; the whole range otherwise
         bool sliced;
+        u64 rowsEst;                  // the plan's row estimate for this class
+        double cov;                   // coverage estimate (spec §2)
+        unsigned strat;               // SS_STRAT_LOCAL / SS_STRAT_GLOBAL
+        bool leaf;
     };
     std::vector<Wave> wl;
+    // THE DIGIT PATHS. The prefix of a class is DATA, not a fixed array: the old
+    // `unsigned char pre[SS_WAVE_DEPTH_MAX]` was the implementation constant that
+    // turned the Pile's space class into a "point mass" at depth 16. Paths are
+    // interned in one arena (offset,len); nothing here is capped by a constant.
+    std::vector<u8> preArena;
     u64 pointMassSplits = 0, maxClassRows = 0;
+    u64 planCacheMisses = 0, planStalls = 0;
+    std::map<u64, u64> depthHist;
     // THE BORROW (option 2): a point-mass class the DISK budget cannot hold as one
     // wave may still be ONE WAVE if its rows fit the operator's RAM promise. It is
     // not free and it is not silent: one such wave means one band arena of the
@@ -1234,32 +1296,79 @@ int main(int argc, char** argv) {
     // assertions below carry an EXPLICIT exemption for exactly these bands.
     u64 borrowWaves = 0, borrowMaxRows = 0, borrowRows = 0;
     const u64 memCapBytes = (u64)((memory_gb > 0 ? memory_gb : ram_gb) * 1e9);
-    std::vector<u64> depthHist(SS_WAVE_DEPTH_MAX + 1, 0);
     const u64 waveGoal = std::max<u64>(1, rows_per_wave * SS_WAVE_TARGET_PCT / 100);
+    // THE LEAF CRITERION'S SECOND TERM (spec §3): coverage <= small_fraction.
+    const double leafCovCap = double(leaf_coverage_pct) / 100.0;
+    // THE PLAN, in memory, zero corpus reads for depths <= the prefix cache.
+    Plan plan;
+    plan.s = &S;
+    plan.perm.resize(S.samples);
+    for (u64 i = 0; i < S.samples; ++i) plan.perm[i] = u32(i);
+    u64 subdivLocal = 0, subdivGlobal = 0, subdivLeaves = 0;
     {
-        std::vector<u64> wp = sk;            // the descent's working sample
-        auto emitWave = [&](const std::vector<u8>& pre, unsigned b0, unsigned b1, u64 rows) {
+        auto intern = [&](const std::vector<u8>& pre) -> Wave {
             Wave W{};
+            W.preOff = u32(preArena.size());
+            W.preLen = u32(pre.size());
+            preArena.insert(preArena.end(), pre.begin(), pre.end());
             W.depth = u64(pre.size()) + 1;
-            for (size_t i = 0; i < pre.size(); ++i) W.pre[i] = pre[i];
-            W.bLo = b0; W.bHi = b1; W.posLo = 0; W.posHi = N; W.sliced = false;
+            W.bLo = 0; W.bHi = 256; W.posLo = 0; W.posHi = N; W.sliced = false;
+            W.rowsEst = 0; W.cov = 0.0; W.strat = SS_STRAT_LOCAL; W.leaf = false;
+            return W;
+        };
+        // THE STRATEGY LINE (spec §3): coverage < 0.25 -> local, else global.
+        // It is a COST decision and the two arms are byte-identical by
+        // construction (the same bytes against the same fence prefixes), so the
+        // override can never change what is produced - only what it costs.
+        double curParentCov = 0.0;
+        auto emitWave = [&](const std::vector<u8>& pre, unsigned b0, unsigned b1, u64 rows,
+                            size_t lo, size_t hi) {
+            Wave W = intern(pre);
+            W.bLo = b0; W.bHi = b1;
+            W.rowsEst = rows;
+            W.cov = plan.coverage(lo, hi);
+            W.strat = (subdiv_strategy == "local") ? unsigned(SS_STRAT_LOCAL)
+                    : (subdiv_strategy == "global") ? unsigned(SS_STRAT_GLOBAL)
+                    : (W.cov < SS_COVERAGE_LOCAL_BELOW ? unsigned(SS_STRAT_LOCAL)
+                                                       : unsigned(SS_STRAT_GLOBAL));
             wl.push_back(W);
             maxClassRows = std::max(maxClassRows, rows);
             ++depthHist[W.depth];
-            std::fprintf(stderr, "SS_WAVE_PLAN wave=%zu depth=%" PRIu64 " bytes=[%u,%u)\n",
-                         wl.size() - 1, W.depth, b0, b1);
+            if (W.strat == SS_STRAT_LOCAL) ++subdivLocal; else ++subdivGlobal;
+            // THE STALL DETECTOR (spec §3): coverage that refuses to fall as the
+            // prefix deepens. The response is the cheap pricing lever - one
+            // sequential pass for this class - never more passes per level, never
+            // a merge.
+            const bool stalled = curParentCov > 0.5 && W.cov > 0.9 * curParentCov;
+            if (stalled) {
+                ++planStalls;
+                std::fprintf(stderr,
+                    "SS_SUBDIV_COVERAGE_STALL passes=%" PRIu64 " coverage=%.4f rows=%" PRIu64
+                    " parent_coverage=%.4f class=%s lever=global-pricing\n",
+                    W.depth, W.cov, rows, curParentCov,
+                    prefix_label(preArena.data() + W.preOff, W.preLen).c_str());
+                wl.back().strat = SS_STRAT_GLOBAL;
+                if (W.strat == SS_STRAT_LOCAL) { --subdivLocal; ++subdivGlobal; }
+            }
+            std::fprintf(stderr,
+                "SS_WAVE_PLAN wave=%zu depth=%" PRIu64 " bytes=[%u,%u) rows=%" PRIu64
+                " coverage=%.4f strategy=%s leaf=0 class=%s\n",
+                wl.size() - 1, W.depth, b0, b1, rows, W.cov,
+                W.strat == SS_STRAT_LOCAL ? "local" : "global",
+                prefix_label(preArena.data() + W.preOff, W.preLen).c_str());
         };
-        // ---- THE POINT-MASS BRANCH (spec item 2), and why it is ORDER-SAFE ----
-        // A class that is still over the goal at SS_WAVE_DEPTH_MAX and whose rows all
-        // share the full key prefix has no key byte left to split on. The only
-        // discriminator left is POSITION, and a position slice is only a valid wave if
-        // position order IS key order inside the class - otherwise two sorted runs
-        // would be concatenated out of order and the container's BWT would be wrong
-        // with no gate to catch it. That property is PROVED here from the corpus, not
-        // assumed: the class must be exactly the maximal single-symbol tail run, where
-        // suffix p is a suffix of suffix p+k, so ascending key order is DESCENDING
-        // position and contiguous position slices may be emitted highest-first.
-        // Anything else fails loud (raise the wave budget, or make the key prefix
+        // ---- THE POINT-MASS BRANCH, and why it is ORDER-SAFE ----
+        // A class whose prefix is longer than the survey's prefix cache and whose
+        // rows all share that prefix has no cached key byte left to split on. The
+        // only discriminator left is POSITION, and a position slice is only a valid
+        // wave if position order IS key order inside the class - otherwise two
+        // sorted runs would be concatenated out of order and the container's BWT
+        // would be wrong with no gate to catch it. That property is PROVED here from
+        // the corpus, not assumed: the class must be exactly the maximal
+        // single-symbol tail run, where suffix p is a suffix of suffix p+k, so
+        // ascending key order is DESCENDING position and contiguous position slices
+        // may be emitted highest-first.
+        // Anything else fails loud (raise the wave budget, or make the prefix cache
         // wider - never publish an unproved order).
         auto emitPointMass = [&](const std::vector<u8>& pre, unsigned c, u64 depth, u64 rows) {
             auto match_off = [&](u64 p, u64 k) -> unsigned {
@@ -1332,7 +1441,7 @@ int main(int argc, char** argv) {
                         " prefix_symbols=%s prefix_text=%s\n",
                         depth, rows, hex.c_str(), esc.c_str());
                     std::vector<u64> inClass;
-                    for (u64 p2 : wp) {
+                    for (u64 p2 : sk) {
                         bool hit = true;
                         for (size_t i = 0; i < pre.size() && hit; ++i)
                             if (sym_at(p2 + i) != pre[i]) hit = false;
@@ -1361,7 +1470,7 @@ int main(int argc, char** argv) {
                         std::fprintf(stderr,
                             "SS_WAVE_POINT_MASS_SPLIT depth=%" PRIu64 " largest_child_rows=%" PRIu64
                             " largest_child_symbol=%u children=%zu sampled_in_class=%zu\n",
-                            depth + extra, (unsigned long long)(big * stride), bigC, h2.size(),
+                            depth + extra, u64(big * stride), bigC, h2.size(),
                             inClass.size());
                         if (h2.size() == 1) break;
                     }
@@ -1399,7 +1508,7 @@ int main(int argc, char** argv) {
                         rows, budget.bytes_per_row,
                         double(needBytes) / double(1u << 30), double(diskBytes) / double(1u << 30),
                         double(memCapBytes) / double(1u << 30), waveGoal);
-                    emitWave(pre, c, c + 1, rows);
+                    emitWave(pre, c, c + 1, rows, 0, 0);
                     return;
                 }
                 std::fprintf(stderr,
@@ -1428,80 +1537,264 @@ int main(int argc, char** argv) {
             for (u64 i = 0; i < nslices; ++i) {                 // i = 0 is the TOP slice
                 const u64 hi2 = runLo0 + runRows - i * waveGoal;
                 const u64 lo2 = hi2 - std::min<u64>(waveGoal, hi2 - runLo0);
-                Wave W{};
-                W.depth = depth;
-                for (size_t k = 0; k < pre.size(); ++k) W.pre[k] = pre[k];
+                Wave W = intern(pre);
                 W.bLo = c; W.bHi = c + 1;
                 W.posLo = lo2; W.posHi = hi2; W.sliced = true;
+                W.rowsEst = hi2 - lo2;
+                W.cov = plan.coverage(0, 0);
+                W.strat = SS_STRAT_GLOBAL;   // a slice has no position file: one sweep
                 wl.push_back(W);
                 maxClassRows = std::max(maxClassRows, hi2 - lo2);
                 ++depthHist[W.depth];
                 ++pointMassSplits;
+                ++subdivGlobal;
                 std::fprintf(stderr, "SS_WAVE_PLAN wave=%zu depth=%" PRIu64
-                             " bytes=[%u,%u) slice=[%" PRIu64 ",%" PRIu64 ")\n",
+                             " bytes=[%u,%u) slice=[%" PRIu64 ",%" PRIu64 ") strategy=global\n",
                              wl.size() - 1, W.depth, c, c + 1, lo2, hi2);
             }
         };
         // ---- the descent itself: children in ASCENDING byte order, so the wave
         // list comes out in ascending key order. `exact` is true only at the root,
-        // where the one parallel pass above counted every first symbol exactly;
+        // where the survey's chunk counts counted every first symbol exactly;
         // below it the census is the sample scaled by the stride (the band plan's
-        // own estimator, with the same x 0.8 target).
-        std::function<void(size_t,size_t,std::vector<u8>&,bool)> descend;
-        descend = [&](size_t lo, size_t hi, std::vector<u8>& pre, bool exact) {
-            // The children of THIS node are distinguished by the symbol at offset
-            // pre.size(): all positions in [lo,hi) already share the pre.size()
-            // bytes of `pre`, so the next byte is the split byte. (Grouping on
-            // pre.size()+1 here was a real bug: the root then split on the SECOND
-            // byte while the exact histogram counted the first, and the wave list
-            // was neither a partition nor in key order.)
+        // own estimator, with the same x 0.8 target), read from the PREFIX CACHE -
+        // this is what makes a census free (G9: zero corpus reads in PLAN).
+        std::function<void(size_t,size_t,std::vector<u8>&,bool,double)> descend;
+        descend = [&](size_t lo, size_t hi, std::vector<u8>& pre, bool exact, double parentCov) {
             const u64 off = u64(pre.size());
-            std::sort(wp.begin() + lo, wp.begin() + hi, [&](u64 a, u64 b) {
-                const unsigned x = sym_at(a + off), y = sym_at(b + off);
+            const bool cached = off < S.P;
+            if (!cached) {
+                ++planCacheMisses;
+                std::fprintf(stderr,
+                    "SS_PLAN_CACHE_MISS depth=%" PRIu64 " class_rows=%" PRIu64 " samples=%zu"
+                    " cache_depth=%u rule=fall_through_to_corpus_windows\n",
+                    off, u64(hi - lo) * stride, hi - lo, S.P);
+            }
+            // The children of THIS node are distinguished by the symbol at offset
+            // off, read from the cache (zero corpus reads) or, past its depth, from
+            // the corpus.
+            auto byte_at = [&](u32 i) -> unsigned {
+                if (cached) return S.sym(i, off);
+                return sym_at(S.pos(i) + off);
+            };
+            std::sort(plan.perm.begin() + lo, plan.perm.begin() + hi, [&](u32 a, u32 b) {
+                const unsigned x = byte_at(a), y = byte_at(b);
                 return x != y ? x < y : a < b;
             });
+            double curParentCov = parentCov;
             bool runOpen = true;      // the run of NOT-over-budget siblings below c
             unsigned runLo = 0;       // starts at 0: absent bytes are covered, never dropped
             u64 runRows = 0;
+            size_t runIdx = lo;       // the sample index the run started at
             size_t a = lo;
             while (a < hi) {
-                const unsigned c = sym_at(wp[a] + off);
+                const unsigned c = byte_at(plan.perm[a]);
                 size_t b = a + 1;
-                while (b < hi && sym_at(wp[b] + off) == c) ++b;
+                while (b < hi && byte_at(plan.perm[b]) == c) ++b;
                 const u64 rows = exact ? hist[c] : u64(b - a) * stride;
                 if (rows > waveGoal) {
                     // The run STOPS AT c, not after the last sampled sibling: a byte with
                     // no sampled position still owns rows, and a range that skipped it
                     // would drop them ("scatter row coverage != n" - the first version
                     // of this recursion did exactly that).
-                    if (runOpen && runLo < c) emitWave(pre, runLo, c, runRows);
+                    if (runOpen && runLo < c) emitWave(pre, runLo, c, runRows, runIdx, a);
                     runOpen = false; runRows = 0;
-                    if (off + 1 < SS_WAVE_DEPTH_MAX) {
-                        pre.push_back(u8(c));
-                        descend(a, b, pre, false);
-                        pre.pop_back();
-                    } else {
+                    // NO DEPTH CAP. The descent stops for a DATA reason, never an
+                    // implementation constant: a class whose sampled rows all share
+                    // the next byte (a single child holding every row) has no key
+                    // byte left to split on and is handled by the point-mass branch.
+                    // Past the prefix cache the digit is read from a corpus window
+                    // (journaled SS_PLAN_CACHE_MISS above) and the descent continues.
+                    if (a == lo && b == hi) {
                         emitPointMass(pre, c, off + 1, rows);
+                    } else {
+                        pre.push_back(u8(c));
+                        descend(a, b, pre, false, curParentCov);
+                        pre.pop_back();
                     }
-                    runOpen = true; runLo = c + 1;
+                    runOpen = true; runLo = c + 1; runIdx = b;
                 } else {
                     if (runOpen && runRows + rows > waveGoal) {
-                        if (runLo < c) emitWave(pre, runLo, c, runRows);   // never above the goal
-                        runLo = c; runRows = 0;
+                        if (runLo < c) emitWave(pre, runLo, c, runRows, runIdx, a);   // never above the goal
+                        runLo = c; runRows = 0; runIdx = a;
                     }
                     runOpen = true;
                     runRows += rows;
                 }
                 a = b;
             }
-            if (runOpen && runLo < 256) emitWave(pre, runLo, 256, runRows);
+            if (runOpen && runLo < 256) emitWave(pre, runLo, 256, runRows, runIdx, hi);
         };
         std::vector<u8> rootPre;
-        if (!wp.empty()) descend(0, wp.size(), rootPre, true);
-        else emitWave(rootPre, 0, 256, 0);
+        if (!plan.perm.empty()) descend(0, plan.perm.size(), rootPre, true, 0.0);
+        else emitWave(rootPre, 0, 256, 0, 0, 0);
     }
     waves = wl.size();
+    std::fprintf(stderr,
+        "SS_PLAN waves=%" PRIu64 " local=%" PRIu64 " global=%" PRIu64 " cache_depth=%u"
+        " cache_misses=%" PRIu64 " stalls=%" PRIu64 " samples=%zu stride=%" PRIu64
+        " corpus_reads=0 rule=answer_from_prefix_cache\n",
+        waves, subdivLocal, subdivGlobal, S.P, planCacheMisses, planStalls, S.samples, stride);
     std::fprintf(stderr, "SS_WAVES count=%" PRIu64 " (recursive prefix-class waves)\n", waves);
+
+    // ================= THE SCATTER PASS: the position window ====================
+    // THE POSITIONS. A local descent walks its class's positions in ascending
+    // order, so a class needs a POSITION LIST before it can be descended locally.
+    // The list comes from this pass: one sweep over the corpus that routes the
+    // positions of a WINDOW of consecutive plan waves into their rolling files.
+    //
+    // THE WINDOW IS THE DISK BUDGET, and that is the one honest cost statement in
+    // this file: 8 B of position per row, so ceil(rows_in_flight x 8 /
+    // pos_budget) sweeps are needed to seed every local class, and NOTHING else in
+    // the descent costs a global pass (G3). The budget is a knob
+    // (--subdiv-position-budget-bytes, default a fifth of the scratch budget)
+    // because it trades exactly one thing for another: disk for corpus passes.
+    const std::string posDir = scratch + "/subdiv_pos";
+    {
+        const std::string cmd = "mkdir -p '" + posDir + "'";
+        if (std::system(cmd.c_str()) != 0) die("subdiv position dir prep failed");
+    }
+    const u64 posBudget = pos_budget_bytes ? pos_budget_bytes
+                        : std::max<u64>(256ull << 20, scratch_budget_bytes / 5);
+    u64 scatterPasses = 0, scatterBytes = 0, scatterRows = 0;
+    u64 localClasses = 0, globalClasses = 0, localBytes = 0, globalBytes = 0, globalPasses = 0;
+    u64 classLocalBytes = 0, classGlobalBytes = 0;
+    {
+        const u64 windowRows = std::max<u64>(1, posBudget / sizeof(u64));
+        std::fprintf(stderr,
+            "SS_SUBDIV_POSBUDGET position_budget_bytes=%" PRIu64 " window_rows=%" PRIu64
+            " bytes_per_row=%zu local_waves=%" PRIu64 " global_waves=%" PRIu64
+            " projected_passes=%" PRIu64 " rule=ceil(local_rows*8/budget)\n",
+            posBudget, windowRows, sizeof(u64), subdivLocal, subdivGlobal,
+            u64(subdivLocal ? 1u : 0u));
+        auto scatter_window = [&](size_t wa, size_t wb) {
+            const double ts = now_sec();
+            const u64 nw = wb - wa;
+            // THE FAST FILTER: the union of the window's waves, reduced to the
+            // FIRST bytes they can match. A position whose first byte is not in
+            // the window costs one table lookup and one branch.
+            std::vector<u8> firstOk(256, 0);
+            for (size_t i = wa; i < wb; ++i) {
+                const Wave& W = wl[i];
+                if (W.depth == 1) {
+                    for (unsigned c = W.bLo; c < W.bHi; ++c) firstOk[c] = 1;
+                } else if (W.preLen) {
+                    firstOk[preArena[W.preOff]] = 1;
+                }
+            }
+            const u64 nt = std::max<u64>(1, std::min<u64>(threads, std::max<u64>(1, FILE_N / (1u << 20) + 1)));
+            u64 bufsz = 1u << 20;
+            while (nw * nt * bufsz > std::max<u64>(1u << 22, budget.stage) && bufsz > (1u << 12))
+                bufsz >>= 1;
+            std::vector<std::vector<std::vector<u64>>> pb(nt, std::vector<std::vector<u64>>(nw));
+            for (u64 t = 0; t < nt; ++t)
+                for (u64 i = 0; i < nw; ++i) pb[t][i].reserve(bufsz / sizeof(u64));
+            std::vector<std::vector<u8>> made(nt, std::vector<u8>(nw, 0));
+            std::vector<int> curFd(nt, -1);
+            std::vector<u64> curW(nt, ~0ull);
+            std::vector<std::string> err(nt);
+            std::atomic<u64> rowsOut{0};
+            auto flushp = [&](u64 t, u64 i) {
+                auto& v = pb[t][i];
+                if (v.empty()) return;
+                if (curFd[t] < 0 || curW[t] != i) {
+                    if (curFd[t] >= 0) { if (::close(curFd[t])) die("close position part"); curFd[t] = -1; }
+                    char name[512];
+                    std::snprintf(name, sizeof name, "%s/w%" PRIu64 ".p%05" PRIu64,
+                                  posDir.c_str(), u64(wa + i), t);
+                    const int f = ::open(name, O_WRONLY | O_CREAT | (made[t][i] ? O_APPEND : O_TRUNC), 0666);
+                    if (f < 0) die(std::string("create position part ") + name);
+                    curFd[t] = f; curW[t] = i; made[t][i] = 1;
+                    noteFdPeak();
+                }
+                posfile_write(curFd[t], v.data(), v.size());
+                v.clear();
+            };
+            std::vector<std::thread> ts_;
+            for (u64 t = 0; t < nt; ++t)
+                ts_.emplace_back([&, t]() {
+                    const u64 fileN = FILE_N;
+                    const u64 lo = fileN * t / nt, hi = fileN * (t + 1) / nt;
+                    u64 need = 1;
+                    for (size_t i = wa; i < wb; ++i) need = std::max<u64>(need, wl[i].depth);
+                    std::vector<u8> buf(SS_SCAN_CHUNK + need + 128);
+                    for (u64 base = lo; base < hi;) {
+                        const u64 chunk = std::min<u64>(SS_SCAN_CHUNK, hi - base);
+                        // The look-ahead a window's waves can ask for is their own
+                        // predicate depth; every wave in the window is tested on
+                        // the same buffer, so the window carries the maximum.
+                        const u64 real = std::min<u64>(chunk + need, FILE_N - base);
+                        if (real) read_window(fd, base, real, buf);   // remapped in place
+                        for (u64 j = 0; j < chunk && base + j < KEY_N; ++j) {
+                            const u64 p = base + j;
+                            if (j >= real) break;       // past the text
+                            const u8* q = buf.data() + j;
+                            if (!firstOk[q[0]]) continue;
+                            if (j + need > real) break; // the tail of this window: next window
+                            for (size_t i = wa; i < wb; ++i) {
+                                const Wave& W = wl[i];
+                                const u8* Wpre = W.preLen ? preArena.data() + W.preOff : nullptr;
+                                bool hit = true;
+                                for (u64 k = 0; k + 1 < W.depth; ++k)
+                                    if (q[k] != Wpre[k]) { hit = false; break; }
+                                if (!hit) continue;
+                                const unsigned cE = q[W.depth - 1];
+                                if (cE < W.bLo || cE >= W.bHi) continue;
+                                auto& v = pb[t][i - wa];
+                                v.push_back(p);
+                                if (v.size() >= pb[t][i - wa].capacity()) flushp(t, i - wa);
+                                break;   // a position belongs to exactly one wave
+                            }
+                        }
+                        base += chunk;
+                    }
+                    for (u64 i = 0; i < nw; ++i) flushp(t, i);
+                    if (curFd[t] >= 0) { if (::close(curFd[t])) die("close position part"); curFd[t] = -1; }
+                });
+            for (auto& th : ts_) th.join();
+            for (u64 t = 0; t < nt; ++t) if (!err[t].empty()) die(err[t]);
+            u64 bytes = 0;
+            for (u64 t = 0; t < nt; ++t) {
+                std::vector<u64> v;   // the row count of every wave's parts
+                for (u64 i = 0; i < nw; ++i) {
+                    char name[512];
+                    std::snprintf(name, sizeof name, "%s/w%" PRIu64 ".p%05" PRIu64,
+                                  posDir.c_str(), u64(wa + i), t);
+                    struct stat st{};
+                    if (::stat(name, &st) == 0) bytes += u64(st.st_size);
+                }
+            }
+            ++scatterPasses;
+            scatterBytes += FILE_N;
+            scatterRows += bytes / sizeof(u64);
+            std::fprintf(stderr,
+                "SS_SCATTER pass=%" PRIu64 " waves=[%zu,%zu) waves_n=%" PRIu64
+                " bytes_read=%" PRIu64 " positions=%" PRIu64 " position_bytes=%" PRIu64
+                " rows_est=%" PRIu64 " wall=%.2f rule=one_sweep_per_position_window\n",
+                scatterPasses, wa, wb, nw, FILE_N, bytes / sizeof(u64), bytes,
+                [&] { u64 r = 0; for (size_t i = wa; i < wb; ++i) r += wl[i].rowsEst; return r; }(),
+                now_sec() - ts);
+        };
+        size_t w0 = 0;
+        while (w0 < waves) {
+            if (wl[w0].strat != SS_STRAT_LOCAL || wl[w0].sliced) { ++w0; continue; }
+            size_t w1 = w0;
+            u64 rows = 0;
+            while (w1 < waves && wl[w1].strat == SS_STRAT_LOCAL && !wl[w1].sliced) {
+                const u64 add = std::max<u64>(1, wl[w1].rowsEst);
+                if (w1 > w0 && rows + add > windowRows) break;
+                rows += add;
+                ++w1;
+            }
+            scatter_window(w0, w1);
+            w0 = w1;
+        }
+        std::fprintf(stderr,
+            "SS_SUBDIV_SCATTER passes=%" PRIu64 " bytes_read=%" PRIu64 " positions=%" PRIu64
+            " position_budget_bytes=%" PRIu64 " window_rows=%" PRIu64
+            " rule=the_only_repeated_global_pass_and_it_is_the_position_column\n",
+            scatterPasses, scatterBytes, scatterRows, posBudget, windowRows);
+    }
 
     std::unique_ptr<Pool> pool(new Pool((unsigned)std::max<u64>(1, threads)));
     std::string cmd = "mkdir -p '" + scratch + "'";
@@ -1815,20 +2108,118 @@ int main(int argc, char** argv) {
 
         const double tw = now_sec();
         const Wave& W = wl[w];
-        // the SAME predicate the scan uses, over the sample: a wave is a prefix class
-        // (plus, for a point mass, its position slice)
-        auto wave_match = [&](u64 p) -> bool {
-            for (u64 i = 0; i + 1 < W.depth; ++i) if (sym_at(p + i) != W.pre[i]) return false;
-            const unsigned cE = sym_at(p + W.depth - 1);
+        const u8* Wpre = W.preLen ? preArena.data() + W.preOff : nullptr;
+        // THE WAVE PREDICATE, on bytes the caller already holds (`q`). One
+        // definition, three callers: the sample census (prefix cache), the global
+        // sweep (its own window) and the tail loop (the text). A wave is a prefix
+        // class, plus - for a point mass - its position slice.
+        auto wave_match_q = [&](const u8* q, u64 p) -> bool {
+            for (u64 i = 0; i + 1 < W.depth; ++i) if (q[i] != Wpre[i]) return false;
+            const unsigned cE = q[W.depth - 1];
             if (cE < W.bLo || cE >= W.bHi) return false;
             return !W.sliced || (p >= W.posLo && p < W.posHi);
         };
+        // The finite tails (KEY_N..N, including the virtual END at FILE_N) need the
+        // END symbol past the text's end: T + p would read past the mapping.
+        u8 qpad[SS_SURVEY_P + 8];
+        auto wave_match = [&](u64 p) -> bool {
+            if (p + W.depth <= FILE_N) return wave_match_q(T + p, p);
+            if (W.depth > sizeof qpad) die("wave prefix longer than the survey cache in a tail test");
+            const u64 avail = p < FILE_N ? FILE_N - p : 0;
+            for (u64 i = 0; i < avail && i < W.depth; ++i) qpad[i] = u8(REMAP ? REMAP[T[p + i]] : T[p + i]);
+            for (u64 i = avail; i < W.depth; ++i) qpad[i] = SENTINEL_SYMBOL;
+            return wave_match_q(qpad, p);
+        };
+        // THE CENSUS IS FREE: the wave's sampled positions are answered from the
+        // survey's prefix cache, never from a fresh 4 KB page per sample (the
+        // measured defect: ~4 M scattered reads per level).
         std::vector<u64> waveSample;
-        for (u64 p:sk) if (wave_match(p)) waveSample.push_back(p);
-        const auto plan=plan_tape(std::move(waveSample),stride,rows_per_band,w,trailing);
+        {
+            bool censused = false;
+            if (W.depth <= S.P) {
+                censused = true;
+                for (u64 i = 0; i < S.samples; ++i) {
+                    const u64 p = S.pos(i);
+                    if (p >= KEY_N) continue;
+                    if (wave_match_q(&S.pre[size_t(i) * S.P], p)) waveSample.push_back(p);
+                }
+            }
+            if (!censused)   // deeper than the cache: the text, journaled
+                for (u64 p : sk) if (wave_match(p)) waveSample.push_back(p);
+        }
+        // The band plan compares SAMPLED positions: from the cache when it covers
+        // the depth, from the text only if it does not.
+        auto keycmp = [&](u64 a, u64 b, u64 depth) -> int {
+            const u64 ia = a / stride, ib = b / stride;
+            if (depth <= S.P && a % stride == 0 && b % stride == 0 &&
+                ia < S.samples && ib < S.samples) {
+                const u8* pa = &S.pre[size_t(ia) * S.P];
+                const u8* pb = &S.pre[size_t(ib) * S.P];
+                const u64 cap = std::min<u64>(depth, std::min(FILE_N - a, FILE_N - b));
+                for (u64 i = 0; i < cap; ++i)
+                    if (pa[i] != pb[i]) return pa[i] < pb[i] ? -1 : 1;
+                if (cap == depth || a == b) return 0;
+                return FILE_N - a < FILE_N - b ? -1 : 1;
+            }
+            g_tape_fence_bytes += std::min<u64>(depth, 2 * 24);
+            return prefix_cmp(a, b, depth);
+        };
+        auto pageof = [&](u64 p) -> u32 {
+            const u64 i = p / stride;
+            if (p % stride == 0 && i < S.samples) return S.page[size_t(i)];
+            return u32(p / SS_SURVEY_PAGE);
+        };
+        const auto plan=plan_tape(std::move(waveSample),stride,rows_per_band,w,trailing,
+                                  keycmp, pageof, SS_SURVEY_PAGE, FILE_N);
         std::vector<TapeFence> bounds;
         for (size_t i=1;i<plan.size();++i) bounds.push_back(plan[i].first);
         const u64 nbands=plan.size();
+        // THE FENCES, RESOLVED ONCE. Routing a position against a fence needs the
+        // fence's PREFIX BYTES; reading them per position would put a corpus read
+        // back in the descent. They are resolved here, from the prefix cache when
+        // the fence position is a sample (zero corpus reads), from the text
+        // otherwise, and both strategies compare against the SAME bytes.
+        std::vector<FencePfx> fences;
+        fences.reserve(bounds.size());
+        u64 fenceCacheHits = 0;
+        u64 maxFenceDepth = 24;
+        for (const TapeFence& f : bounds) {
+            FencePfx fp;
+            fp.pos = f.pos; fp.depth = f.depth; fp.after = f.after;
+            fp.flen = f.pos >= FILE_N ? 0 : std::min<u64>(f.depth, FILE_N - f.pos);
+            fp.pfx.resize(size_t(fp.flen));
+            const u64 i = f.pos / stride;
+            if (f.pos % stride == 0 && i < S.samples && fp.flen <= S.P) {
+                std::memcpy(fp.pfx.data(), &S.pre[size_t(i) * S.P], size_t(fp.flen));
+                ++fenceCacheHits;
+            } else {
+                for (u64 k = 0; k < fp.flen; ++k) fp.pfx[size_t(k)] = u8(sym_at(f.pos + k));
+                g_tape_fence_bytes += fp.flen;
+            }
+            maxFenceDepth = std::max(maxFenceDepth, fp.flen);
+            fences.push_back(std::move(fp));
+        }
+        // ---- THE LEAF RECEIPT: rows are a proxy, pages are what the leaf sort
+        // pays. Every band here IS a leaf of the plan (rows <= rows_per_band from
+        // plan_tape's own x0.8 goal), so its expected page footprint is journaled
+        // and the second leaf term (coverage <= small_fraction) is checked against
+        // it with the number that failed, if it fails.
+        for (size_t i = 0; i < plan.size(); ++i) {
+            const double bandCov = double(plan[i].pages) * double(stride) / double(FILE_N);
+            const bool covOk = bandCov <= leafCovCap;
+            std::fprintf(stderr,
+                "SS_SUBDIV_LEAF wave=%" PRIu64 " band=%zu rows_est=%" PRIu64 " samples=%" PRIu64
+                " pages=%" PRIu64 " page_footprint_bytes=%" PRIu64 " coverage=%.4f cap=%.4f ok=%d"
+                " depth=%" PRIu64 "\n",
+                w, i, plan[i].samples * stride, plan[i].samples, plan[i].pages,
+                plan[i].pages * SS_SURVEY_PAGE, bandCov, leafCovCap, int(covOk),
+                plan[i].first.depth);
+            if (covOk) ++subdivLeaves;
+        }
+        auto route_q = [&](const u8* q, u64 p, u64 avail) -> u64 {
+            const u64 b = route_fences(q, p, avail, fences);
+            return b < nbands ? b : nbands - 1;
+        };
         auto route = [&](u64 p) -> u64 {
             return std::upper_bound(bounds.begin(),bounds.end(),p,
                 [](u64 pos,const TapeFence& f){const int c=prefix_cmp(pos,f.pos,f.depth); return c<0 || (c==0 && f.after);})-bounds.begin();
@@ -1881,18 +2272,22 @@ int main(int argc, char** argv) {
         // every 4 KB and a TLB walk), against 6.89 GB/s for buffered sequential
         // reads. The mmap stays for the RANDOM tie comparisons in suf_cmp, where
         // it is the right tool.
+        // THE LOOK-AHEAD IS THE WAVE'S OWN DEPTH, not a constant: the predicate
+        // compares up to W.depth bytes and a fence up to maxFenceDepth, so the
+        // window must carry that many bytes past the position. There is no
+        // SS_WAVE_DEPTH_MAX any more - the width is data.
+        const u64 look = std::max<u64>(24, std::max<u64>(W.depth, maxFenceDepth));
         auto worker = [&](u64 t) {
             const u64 lo = N * t / nparts, hi = N * (t + 1) / nparts;
             const u64 CH = 4u << 20;
-            std::vector<u8> buf(CH + 64);
+            std::vector<u8> buf(CH + look + 64);
             for (u64 base = lo; base < hi;) {
                 const u64 chunk = std::min<u64>(CH, hi - base);
-                // one byte of run-up (the symbol byte at p-1) plus 32 bytes of
-                // look-ahead so a 24-byte key and the symbol are always in range
+                // one byte of run-up (the symbol byte at p-1) plus the look-ahead
                 const u64 from = (base ? base - 1 : base);
                 // Read real bytes only. Tail positions are handled separately
                 // and cannot inspect the unfilled part of this buffer.
-                const u64 want = std::min<u64>(chunk + 1 + 48, FILE_N > from ? FILE_N - from : 0);
+                const u64 want = std::min<u64>(chunk + 1 + look + 1, FILE_N > from ? FILE_N - from : 0);
                 size_t got = 0;
                 while (got < want) {
                     ssize_t r = ::pread(fd, buf.data() + got, want - got, off_t(from + got));
@@ -1911,20 +2306,9 @@ int main(int argc, char** argv) {
                     const u64 p = base + j;
                     if (p >= KEY_N) continue; // finite tails never receive a key
                     const u64 bj = off + j;
-                    // THE WAVE PREDICATE, on the already-remapped window: the parent
-                    // prefix (depth-1 bytes), then the byte at depth-1 in [bLo,bHi),
-                    // then the point-mass slice. p < KEY_N leaves 24 real bytes, so a
-                    // depth <= SS_WAVE_DEPTH_MAX never reads past the corpus end.
-                    {
-                        const u8* q = buf.data() + bj;
-                        bool miss = false;
-                        for (u64 i = 0; i + 1 < W.depth; ++i)
-                            if (q[i] != W.pre[i]) { miss = true; break; }
-                        if (miss) continue;
-                        const unsigned cE = q[W.depth - 1];
-                        if (cE < W.bLo || cE >= W.bHi) continue;
-                        if (W.sliced && (p < W.posLo || p >= W.posHi)) continue;
-                    }
+                    // THE WAVE PREDICATE, on the already-remapped window (one
+                    // definition, shared with the census and the tail loop).
+                    if (!wave_match_q(buf.data() + bj, p)) continue;
                     // THE WHOLE 24-BYTE KEY. Leaving kq unset here was a real bug:
                     // the comparator's third word then read uninitialised memory,
                     // and it still passed sa_check once - the verifier catches order
@@ -1943,8 +2327,10 @@ int main(int argc, char** argv) {
                     r.khi = a2;
                     r.kq = a3;
                     r.pos = pack_sym(p, sy);
-                    u64 b = route(p);
-                    if (b >= nbands) b = nbands - 1;
+                    // ROUTE FROM THE WINDOW, against the fences' stored prefixes:
+                    // no corpus access, and the same bytes the local arm uses.
+                    const u64 b = route_q(buf.data() + bj, p,
+                                          std::min<u64>(FILE_N - p, got - bj));
                     auto& v = bufs[t][b];
                     v.insert(v.end(), (const u8*)&r, (const u8*)&r + sizeof(Row));
                     if (v.size() >= bufsz) flush_buf(t, b);
@@ -1955,8 +2341,96 @@ int main(int argc, char** argv) {
             if (curFd[t] >= 0) { if (::close(curFd[t])) die("close band part"); curFd[t] = -1; }
             noteFdPeak();
         };
-        pool->run([&](unsigned t) { worker(t); });
+        // ---- THE TWO ARMS (spec §3). They route the same bytes against the same
+        // fence prefixes into the same band part files, so the band stream is
+        // byte-identical whichever one ran (G6): the strategy is a cost decision,
+        // never a semantic one.
+        bool usedLocal = false;
+        classLocalBytes = 0;
+        classGlobalBytes = 0;
+        if (W.strat == SS_STRAT_LOCAL && !W.sliced) {
+            // The wave's position parts must ALL exist (the scatter pass wrote one
+            // per scan thread). Their absence is not a fallback: it is a bug.
+            std::vector<u64> parts(nparts, 0);
+            bool any = false;
+            for (u64 t = 0; t < nparts; ++t) {
+                char name[512];
+                std::snprintf(name, sizeof name, "%s/w%" PRIu64 ".p%05" PRIu64,
+                              posDir.c_str(), w, t);
+                struct stat st{};
+                if (::stat(name, &st) == 0) { parts[t] = u64(st.st_size) / sizeof(u64); any = true; }
+            }
+            if (any) {
+                usedLocal = true;
+                std::vector<u64> thrBytes(nparts, 0), thrRows(nparts, 0);
+                std::vector<std::string> err(nparts);
+                std::vector<std::thread> lts;
+                for (u64 t = 0; t < nparts; ++t)
+                    lts.emplace_back([&, t]() {
+                        LocalReader rd;
+                        rd.init(fd, FILE_N);
+                        PosFile pf;
+                        char name[512];
+                        std::snprintf(name, sizeof name, "%s/w%" PRIu64 ".p%05" PRIu64,
+                                      posDir.c_str(), w, t);
+                        if (!pf.open_read(name)) {   // empty part is legal: no rows
+                            thrBytes[t] = 0; return;
+                        }
+                        u64 p;
+                        while (pf.next(p)) {
+                            if (p >= KEY_N) continue;
+                            const u8* q = rd.fetch(p, 1, 1 + look);
+                            if (!q) continue;
+                            if (!wave_match_q(q, p)) { err[t] = "position file disagrees with the wave predicate"; return; }
+                            u64 a1, a2, a3;
+                            std::memcpy(&a1, q, 8);
+                            std::memcpy(&a2, q + 8, 8);
+                            std::memcpy(&a3, q + 16, 8);
+                            a1 = bswap64(a1); a2 = bswap64(a2); a3 = bswap64(a3);
+                            const u8 sy = p == 0 ? SENTINEL_SYMBOL : q[-1];
+                            Row r{};
+                            r.klo = a1; r.khi = a2; r.kq = a3;
+                            r.pos = pack_sym(p, sy);
+                            const u64 avail = std::min<u64>(FILE_N - p, rd.len - (p - rd.base));
+                            const u64 b = route_q(q, p, avail);
+                            auto& v = bufs[t][b];
+                            v.insert(v.end(), (const u8*)&r, (const u8*)&r + sizeof(Row));
+                            if (v.size() >= bufsz) flush_buf(t, b);
+                            ++thrRows[t];
+                        }
+                        for (u64 b = 0; b < nbands; ++b) flush_buf(t, b);
+                        if (curFd[t] >= 0) { if (::close(curFd[t])) die("close band part"); curFd[t] = -1; }
+                        thrBytes[t] = rd.bytes_read;
+                        pf.close_();
+                    });
+                for (auto& th : lts) th.join();
+                for (u64 t = 0; t < nparts; ++t) if (!err[t].empty()) die(err[t]);
+                for (u64 t = 0; t < nparts; ++t) { classLocalBytes += thrBytes[t]; classGlobalBytes += 0; }
+                // The parts are consumed: freeing them is what keeps the position
+                // column bounded (the next window reuses the disk).
+                for (u64 t = 0; t < nparts; ++t) {
+                    char name[512];
+                    std::snprintf(name, sizeof name, "%s/w%" PRIu64 ".p%05" PRIu64,
+                                  posDir.c_str(), w, t);
+                    ::unlink(name);
+                }
+            }
+        }
+        if (!usedLocal) {
+            pool->run([&](unsigned t) { worker(t); });
+            classGlobalBytes = FILE_N;
+            ++globalPasses;
+        }
         const double tScan = now_sec() - tw;
+        if (usedLocal) { ++localClasses; localBytes += classLocalBytes; }
+        else { ++globalClasses; globalBytes += classGlobalBytes; }
+        std::fprintf(stderr,
+            "SS_SUBDIV_STRATEGY class=%s wave=%" PRIu64 " depth=%" PRIu64 " rows=%" PRIu64
+            " coverage=%.4f strategy=%s bytes_read=%" PRIu64 " passes=%d bands=%" PRIu64
+            " rule=both_arms_route_the_same_bytes_against_the_same_fences\n",
+            prefix_label(W.preLen ? preArena.data() + W.preOff : nullptr, W.preLen).c_str(),
+            w, W.depth, W.rowsEst, W.cov, usedLocal ? "local" : "global",
+            usedLocal ? classLocalBytes : classGlobalBytes, usedLocal ? 0 : 1, nbands);
 
         std::vector<std::vector<Row>> tailBands(nbands);
         for (u64 p = KEY_N; p < N; ++p) {
@@ -2698,18 +3172,19 @@ int main(int argc, char** argv) {
         // class fit a wave, the largest class it accepted, the budget it planned
         // against, and how many classes had to be sliced by position instead.
         std::string histStr;
-        for (u64 d = 1; d < depthHist.size(); ++d) {
-            if (!depthHist[d]) continue;
+        for (const auto& kv : depthHist) {
+            if (!kv.second) continue;
             if (!histStr.empty()) histStr += ",";
-            histStr += std::to_string(d) + ":" + std::to_string(depthHist[d]);
+            histStr += std::to_string(kv.first) + ":" + std::to_string(kv.second);
         }
         std::fprintf(stderr,
             "SS_WAVE_DEPTH depth_hist=%s max_class_rows=%" PRIu64 " wave_budget_rows=%" PRIu64
-            " point_mass_splits=%" PRIu64 " wave_goal_rows=%" PRIu64 " depth_max=%" PRIu64
-            " samples=%zu stride=%" PRIu64 " corpus_passes=0 (the descent censuses the"
-            " positional sample; each wave's own scan is the layer's only pass)\n",
+            " point_mass_splits=%" PRIu64 " wave_goal_rows=%" PRIu64
+            " depth_cap=none cache_depth=%u samples=%zu stride=%" PRIu64
+            " corpus_passes=%" PRIu64 " (the descent censuses the prefix cache, not the"
+            " corpus; the only global passes are the survey and the position window)\n",
             histStr.c_str(), maxClassRows, rows_per_wave, pointMassSplits, waveGoal,
-            SS_WAVE_DEPTH_MAX, sk.size(), stride);
+            S.P, sk.size(), stride, scatterPasses);
     }
     std::fprintf(stderr,
         "SS_DONE n=%" PRIu64 " waves=%" PRIu64 " ties=%" PRIu64
