@@ -796,6 +796,7 @@ pub fn seeds_command(raw: &[std::ffi::OsString]) {
     let mut serve = false;
     let mut jobs = 0usize;
     let mut rss_gb: Option<f64> = None;
+    let mut cache_gb: Option<f64> = None;
     let mut anchors = false;
     let mut anchor_per_seed = SEEDS_ANCHOR_PER_SEED_DEFAULT;
     let mut windows_path: Option<String> = None;
@@ -822,7 +823,7 @@ pub fn seeds_command(raw: &[std::ffi::OsString]) {
                 }
             }
             "--max-len" | "--min-len" | "--max-seeds" | "--stride" | "--limit" | "--docs"
-            | "--target-mult" | "--max-mult" | "--min-mult" | "--rss-gb"
+            | "--target-mult" | "--max-mult" | "--min-mult" | "--rss-gb" | "--cache-gb"
             | "--anchor-max-per-seed" | "--windows" | "--corpus" | "--windows-out"
             | "--window-len" | "--window-stride" => {
                 let flag = args[i].clone();
@@ -857,6 +858,15 @@ pub fn seeds_command(raw: &[std::ffi::OsString]) {
                     }
                     "--anchor-max-per-seed" => {
                         anchor_per_seed = num("--anchor-max-per-seed")
+                    }
+                    "--cache-gb" => {
+                        let g: f64 = v
+                            .parse()
+                            .unwrap_or_else(|_| die(&format!("seeds: invalid --cache-gb '{v}'")));
+                        if !(g > 0.0) {
+                            die("seeds: --cache-gb must be positive");
+                        }
+                        cache_gb = Some(g);
                     }
                     "--windows" => windows_path = Some(v.clone()),
                     "--corpus" => corpus_path = Some(v.clone()),
@@ -990,6 +1000,7 @@ pub fn seeds_command(raw: &[std::ffi::OsString]) {
             corpus_path.as_deref(),
             jobs,
             rss_gb,
+            cache_gb,
         );
         return;
     }
@@ -1087,7 +1098,7 @@ pub fn seeds_command(raw: &[std::ffi::OsString]) {
                  cap; use --anchor-max-per-seed",
             );
         }
-        let index = seeds_open_index(reader, 1, rss_gb);
+        let index = seeds_open_index(reader, 1, rss_gb, cache_gb);
         let sigma = index.reader.sigma;
         let started = Instant::now();
         let rchar0 = proc_io("rchar");
@@ -1099,8 +1110,27 @@ pub fn seeds_command(raw: &[std::ffi::OsString]) {
             "window_id\tquery_offset\tcorpus_doc\tcorpus_offset\tmatch_len\tmultiplicity"
         )
         .unwrap();
+        let pool = if jobs > 1 {
+            Some(
+                rayon::ThreadPoolBuilder::new()
+                    .num_threads(jobs)
+                    .build()
+                    .unwrap_or_else(|e| die(&format!("seeds: -j {jobs}: {e}"))),
+            )
+        } else {
+            None
+        };
         let mut cx = index.ctx();
-        let wa = window_anchors(&mut cx, &sigma, ds.as_ref(), 0, text, &params);
+        let wa = window_anchors(
+            &index,
+            &mut cx,
+            &sigma,
+            ds.as_ref(),
+            0,
+            text,
+            &params,
+            pool.as_ref(),
+        );
         anchors_write_tsv(&mut w, &wa).unwrap();
         w.flush().unwrap();
         let secs = started.elapsed().as_secs_f64();
@@ -1133,7 +1163,7 @@ pub fn seeds_command(raw: &[std::ffi::OsString]) {
     if docs.is_none() && limit > 0 {
         eprintln!("SEEDS_NOTE docs=none: emitting plain corpus offsets");
     }
-    let index = seeds_open_index(reader, 1, rss_gb);
+    let index = seeds_open_index(reader, 1, rss_gb, cache_gb);
     let sigma = index.reader.sigma;
     let n = index.n();
     let present: [bool; 256] = std::array::from_fn(|b| {
@@ -1518,28 +1548,61 @@ fn proc_peak_rss() -> u64 {
 /// clamped to [4 MiB, 64 GiB], with the rest of the budget as the RSS cap the
 /// governor bleeds the container mapping back to. The arena is FIXED at open and
 /// `decoded_bytes` stays 0 - a budget split, not a materialisation.
-fn seeds_open_index(reader: Reader, jobs: usize, rss_gb: Option<f64>) -> Index {
+fn seeds_open_index(
+    reader: Reader,
+    jobs: usize,
+    rss_gb: Option<f64>,
+    cache_gb: Option<f64>,
+) -> Index {
     let Some(g) = rss_gb else {
         return Index::open(reader, jobs).unwrap_or_else(|e| die(&e));
     };
     let cap_bytes = (g * (1u64 << 30) as f64) as u64;
-    let arena_bytes = (cap_bytes / 8).clamp(4 << 20, 64u64 << 30) as usize;
+    let arena_bytes = match cache_gb {
+        Some(c) => (c * (1u64 << 30) as f64) as usize,
+        None => (cap_bytes / 8) as usize,
+    }
+    .clamp(4 << 20, 64usize << 30);
     let mut index = Index::open_with_cache(reader, jobs, arena_bytes).unwrap_or_else(|e| die(&e));
     index.set_rss_cap(cap_bytes);
     index
+}
+
+/// The arena/cap split `--rss-gb`/`--cache-gb` ask for, as one journal string so a
+/// run's memory law is readable from its own line.
+fn arena_journal(index: &Index, rss_gb: Option<f64>, cache_gb: Option<f64>) -> String {
+    format!(
+        "arena_bytes={} cap_bytes={} rss_gb={} cache_gb={}",
+        index.cache_bytes(),
+        rss_gb.map(|g| ((g * (1u64 << 30) as f64) as u64).to_string())
+            .unwrap_or_else(|| "default".into()),
+        rss_gb.map(|g| format!("{g}")).unwrap_or_else(|| "none".into()),
+        cache_gb.map(|g| format!("{g}")).unwrap_or_else(|| "cap/8".into()),
+    )
 }
 
 /// The anchor table of ONE window: the same scan, the same output selection, then
 /// one locate per reported anchor row (bounded by `--anchor-max-per-seed`), then
 /// the canonical sort. Nothing about the multiplicities comes from the located
 /// rows: `mult` is the interval width the scan already had.
+///
+/// THE LOCATE LAYER IS PARALLEL ACROSS POSITIONS. One located position is one LF
+/// walk to an m11 anchor (measured ~4,600 steps on the 100 GB heads), and a walk
+/// touches BWT blocks at random, so the walks are independent and the only thing
+/// that makes them cheap is doing many at once against the shared read-only index
+/// and its decoded-block cache - exactly what `Index::locate_range` already does
+/// for wide intervals. Positions are a function of their ROW, not of the order the
+/// walks run in, so the parallel walk is bit-identical to the serial one and the
+/// rows are sorted afterwards anyway (the documented tie order).
 fn window_anchors(
+    index: &Index,
     cx: &mut Ctx<'_>,
     sigma: &[u8; 256],
     ds: Option<&crate::docstarts::DocStarts>,
     window_id: u64,
     text: &[u8],
     p: &SeedParams,
+    pool: Option<&rayon::ThreadPool>,
 ) -> WindowAnchors {
     assert!(!text.is_empty(), "SEEDS_EMPTY_WINDOW window={window_id}");
     let o = ScanOpts {
@@ -1556,6 +1619,7 @@ fn window_anchors(
     let (steps0, ranks0) = (cx.steps, cx.ranks);
     let out = scan_text(cx, sigma, text, &o);
     let scan_ms = out.scan_ms;
+    let (scan_steps, scan_ranks) = (cx.steps - steps0, cx.ranks - ranks0);
     assert_eq!(
         out.stats.windows,
         out.stats.no_match
@@ -1577,48 +1641,81 @@ fn window_anchors(
         let step_idx = seeds.len() / take;
         seeds = (0..take).map(|j| seeds[j * step_idx]).collect();
     }
-    let mut rows: Vec<AnchorRow> = Vec::new();
-    let mut positions = 0u64;
-    let mut doc_absent = 0u64;
-    let locate = Instant::now();
+    let nseeds = seeds.len() as u64;
+    // ONE WORK UNIT PER ANCHOR ROW, not per seed. A row is one LF walk (~80 ms of
+    // block decodes on a 100 GB head), so the unit is coarse enough to amortise a
+    // thread and the set is wide enough to fill the pool; unit-per-SEED was
+    // measured 3x slower on a 4-window batch because one frequent seed (hundreds of
+    // occurrences) then landed on one thread. `seed_sample` is the documented
+    // even-SA-rank sampler; it is an OUTPUT cap on ROWS, and `mult` below stays the
+    // exact width, so a capped row set can only ever be read as a cap.
+    let mut units: Vec<(u32, u32, u64, u64)> = Vec::new(); // (qoff, len, mult, row)
     for s in &seeds {
         let want = if p.anchor_per_seed == 0 {
             s.mult
         } else {
             p.anchor_per_seed.min(s.mult)
         };
-        // `seed_sample` is the documented even-SA-rank sampler; it is an OUTPUT
-        // cap on ROWS. `mult` below stays the exact width, so a capped row set can
-        // never be read as a support threshold.
         let (sample, _truncated) = seed_sample(s.l, s.r, want);
-        let mut here: Vec<AnchorRow> = Vec::with_capacity(sample.len());
         for row in sample {
-            let pos = cx.locate(row);
-            positions += 1;
-            let doc = match ds {
-                Some(d) if pos < d.text_len => Some(d.rank(pos)),
-                Some(_) => {
-                    // A position at or past the declared text length is the
-                    // virtual END row: it has no document, and a docid is never
-                    // guessed for it.
-                    doc_absent += 1;
-                    None
-                }
-                None => {
-                    doc_absent += 1;
-                    None
-                }
-            };
-            here.push(AnchorRow {
-                query_offset: s.offset as u32,
-                match_len: s.len,
-                mult: s.mult,
+            units.push((s.offset as u32, s.len, s.mult, row));
+        }
+    }
+    let locate = Instant::now();
+    let one_row = |cx: &mut Ctx<'_>, u: &(u32, u32, u64, u64)| -> (AnchorRow, bool) {
+        let pos = cx.locate(u.3);
+        let doc = match ds {
+            Some(d) if pos < d.text_len => Some(d.rank(pos)),
+            // A position at or past the declared text length is the virtual END
+            // row: it has no document, and a docid is never guessed for it.
+            _ => None,
+        };
+        let absent = doc.is_none();
+        (
+            AnchorRow {
+                query_offset: u.0,
+                match_len: u.1,
+                mult: u.2,
                 corpus_off: pos,
                 corpus_doc: doc,
-            });
+            },
+            absent,
+        )
+    };
+    let mut positions = 0u64;
+    let mut doc_absent = 0u64;
+    let mut steps = 0u64;
+    let mut ranks = 0u64;
+    let mut rows: Vec<AnchorRow> = Vec::with_capacity(units.len());
+    if let Some(pool) = pool.filter(|_| units.len() > 1) {
+        let pieces: Vec<(AnchorRow, bool, u64, u64)> = pool.install(|| {
+            units
+                .par_iter()
+                .map(|u| {
+                    let mut c = index.ctx();
+                    let (s0, r0) = (c.steps, c.ranks);
+                    let (row, absent) = one_row(&mut c, u);
+                    (row, absent, c.steps - s0, c.ranks - r0)
+                })
+                .collect()
+        });
+        for (row, absent, st, rk) in pieces {
+            positions += 1;
+            doc_absent += u64::from(absent);
+            steps += st;
+            ranks += rk;
+            rows.push(row);
         }
-        here.sort_unstable_by_key(anchor_key);
-        rows.extend_from_slice(&here);
+    } else {
+        for u in &units {
+            let (s0, r0) = (cx.steps, cx.ranks);
+            let (row, absent) = one_row(cx, u);
+            positions += 1;
+            doc_absent += u64::from(absent);
+            steps += cx.steps - s0;
+            ranks += cx.ranks - r0;
+            rows.push(row);
+        }
     }
     rows.sort_unstable_by_key(anchor_key);
     let locate_ms = locate.elapsed().as_secs_f64() * 1e3;
@@ -1627,10 +1724,10 @@ fn window_anchors(
         text_bytes: text.len() as u64,
         rows,
         windows_scanned: out.stats.windows,
-        seeds: seeds.len() as u64,
+        seeds: nseeds,
         positions,
-        lf_steps: cx.steps - steps0,
-        ranks: cx.ranks - ranks0,
+        lf_steps: steps + scan_steps,
+        ranks: ranks + scan_ranks,
         doc_absent,
         scan_ms,
         locate_ms,
@@ -1715,25 +1812,19 @@ fn declare_windows(text_bytes: u64, len: u64, stride: u64, out: &str) -> u64 {
     id
 }
 
-/// THE PIPELINE both served forms run on: the calling thread produces windows
-/// (stdin frames or declared window records) AND writes the answers in window
-/// order, while `jobs` workers answer them against the shared read-only index and
-/// its decoded-block cache. The sink lives on the producer's thread because stdin
-/// and stdout are not `Send`; that is also what makes the output byte-identical
-/// whatever `-j` is: results are re-ordered by window id before anything is
-/// written.
-///
-/// The in-flight bound is the PERMIT count (= jobs), not a queue length: a worker
-/// can always deliver its answer (the result channel is unbounded) and the
-/// producer can never run further than `jobs` windows ahead, so the memory a
-/// served run holds is `jobs` windows of text plus `jobs` anchor tables - never
-/// the stream.
-fn seeds_pipeline<P, S>(
+/// THE SERVED LOOP both input forms run on: windows arrive in order (stdin
+/// frames, or the declared records of a window file), each is scanned and its
+/// anchor rows are located - IN PARALLEL inside the window, on the rayon pool
+/// `-j` sizes - and written before the next window is read. There is no window
+/// queue, no result re-ordering and no second thread of our own: the answer's
+/// order is the input's order by construction, and the parallelism lives where
+/// the cost is (one locate per anchor row, thousands of block decodes each).
+fn seeds_loop<P, S>(
     index: &Index,
     sigma: &[u8; 256],
     ds: Option<&crate::docstarts::DocStarts>,
-    jobs: usize,
     params: &SeedParams,
+    pool: Option<&rayon::ThreadPool>,
     mut produce: P,
     mut sink: S,
 ) -> ServeTotals
@@ -1741,123 +1832,39 @@ where
     P: FnMut() -> Option<Vec<u8>>,
     S: FnMut(&WindowAnchors) -> std::io::Result<()>,
 {
-    assert!(jobs > 0, "SEEDS_PIPELINE jobs=0");
-    let mut req_tx = Vec::with_capacity(jobs);
-    let mut req_rx = Vec::with_capacity(jobs);
-    for _ in 0..jobs {
-        let (t, r) = std::sync::mpsc::sync_channel::<(u64, Vec<u8>)>(1);
-        req_tx.push(t);
-        req_rx.push(r);
-    }
-    let (res_tx, res_rx) = std::sync::mpsc::channel::<WindowAnchors>();
     let mut totals = ServeTotals::default();
-    let mut next = 0u64;
-    let mut pending: std::collections::BTreeMap<u64, WindowAnchors> =
-        std::collections::BTreeMap::new();
-    std::thread::scope(|scope| {
-        for rx in req_rx {
-            let tx = res_tx.clone();
-            scope.spawn(move || {
-                let mut cx = index.ctx();
-                while let Ok((id, text)) = rx.recv() {
-                    // A zero-length window is refused here, by name: it has no
-                    // seed to report and a silently empty answer would be a lie.
-                    if text.is_empty() {
-                        die(
-                            "seeds: zero-length window: every window must carry at least one byte \
-                             (clients must not send empty frames)",
-                        );
-                    }
-                    if text.len() > SEEDS_WINDOW_MAX {
-                        die(&format!(
-                            "seeds: window of {} bytes exceeds the {SEEDS_WINDOW_MAX}-byte cap",
-                            text.len()
-                        ));
-                    }
-                    let wa = window_anchors(&mut cx, sigma, ds, id, &text, params);
-                    tx.send(wa).unwrap();
-                }
-            });
-        }
-        drop(res_tx);
-        let mut sent = 0u64;
-        let mut slot = 0usize;
-        while let Some(text) = produce() {
-            // BACKPRESSURE WITHOUT A SECOND CHANNEL: the in-flight bound is
-            // `jobs` windows, and the wait is a BLOCKING receive on the result
-            // channel itself. A worker can always deliver (the result channel is
-            // unbounded), so this cannot deadlock; a separate permit channel
-            // could, because the sink would wait for a permit while the result it
-            // needed sat unread.
-            while sent - next >= jobs as u64 {
-                let r = res_rx.recv().unwrap_or_else(|_| die("seeds: worker pool ended early"));
-                sink_ready(
-                    std::iter::once(r),
-                    &mut sink,
-                    &mut totals,
-                    &mut next,
-                    &mut pending,
-                );
-            }
-            req_tx[slot].send((sent, text)).unwrap();
-            slot += 1;
-            if slot == jobs {
-                slot = 0;
-            }
-            sent += 1;
-            sink_ready(
-                std::iter::from_fn(|| res_rx.try_recv().ok()),
-                &mut sink,
-                &mut totals,
-                &mut next,
-                &mut pending,
+    let mut scan_cx = index.ctx();
+    let mut window_id = 0u64;
+    while let Some(text) = produce() {
+        // A zero-length window is refused here, by name: it has no seed to report
+        // and a silently empty answer would be a lie.
+        if text.is_empty() {
+            die(
+                "seeds: zero-length window: every window must carry at least one byte (clients \
+                 must not send empty frames)",
             );
         }
-        // The producer is done: everything still in flight arrives, in whatever
-        // order the workers finish, and is written in window order.
-        drop(req_tx);
-        sink_ready(
-            std::iter::from_fn(|| res_rx.recv().ok()),
-            &mut sink,
-            &mut totals,
-            &mut next,
-            &mut pending,
-        );
-        assert!(
-            pending.is_empty(),
-            "SEEDS_SINK: {} windows were produced and never written",
-            pending.len()
-        );
-        assert_eq!(
-            sent, totals.windows,
-            "SEEDS_WINDOW_LOST: the producer sent {sent} windows, the sink wrote {}",
-            totals.windows
-        );
-        totals
-    })
-}
-
-/// Consume results from `res` - a blocking or a draining iterator, the caller
-/// decides - and write them in WINDOW order. This is the only place output
-/// order is decided, which is what makes `-j` invisible in the bytes.
-fn sink_ready<W, S>(
-    res: W,
-    sink: &mut S,
-    totals: &mut ServeTotals,
-    next: &mut u64,
-    pending: &mut std::collections::BTreeMap<u64, WindowAnchors>,
-) where
-    W: Iterator<Item = WindowAnchors>,
-    S: FnMut(&WindowAnchors) -> std::io::Result<()>,
-{
-    for r in res {
-        pending.insert(r.window_id, r);
-        while let Some(w) = pending.remove(next) {
-            sink(&w).unwrap_or_else(|e| die(&format!("seeds: write: {e}")));
-            totals.add(&w);
-            *next += 1;
+        if text.len() > SEEDS_WINDOW_MAX {
+            die(&format!(
+                "seeds: window of {} bytes exceeds the {SEEDS_WINDOW_MAX}-byte cap",
+                text.len()
+            ));
         }
+        let wa = window_anchors(
+            index,
+            &mut scan_cx,
+            sigma,
+            ds,
+            window_id,
+            &text,
+            params,
+            pool,
+        );
+        sink(&wa).unwrap_or_else(|e| die(&format!("seeds: write: {e}")));
+        totals.add(&wa);
+        window_id += 1;
     }
+    totals
 }
 
 /// `xsa seeds <container> --serve -j N` and `xsa seeds <container> --windows FILE
@@ -1874,6 +1881,7 @@ fn seeds_served(
     corpus_path: Option<&str>,
     jobs: usize,
     rss_gb: Option<f64>,
+    cache_gb: Option<f64>,
 ) {
     let started = Instant::now();
     let rchar0 = proc_io("rchar");
@@ -1887,6 +1895,24 @@ fn seeds_served(
     });
     let n = reader.n;
     let text_len = n.saturating_sub(1);
+    // The locate layer is parallel ACROSS THE POSITIONS OF A WINDOW (see
+    // window_anchors), so `-j` sizes the rayon pool the walks run on - the same
+    // knob `xsa query` has. One thread is the honest serial baseline; a pool that
+    // is already installed (a library caller, or `xsa query`) is left alone.
+    // AN EXPLICIT POOL, not the global one: `build_global` fails silently once any
+    // rayon call has initialised the default pool, which would make `-j 1` a lie
+    // and `-j 16` unmeasurable. `-j 1` (the default) means NO pool, i.e. the serial
+    // baseline the rate gate compares against.
+    let pool = if jobs > 1 {
+        Some(
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(jobs)
+                .build()
+                .unwrap_or_else(|e| die(&format!("seeds: -j {jobs}: {e}"))),
+        )
+    } else {
+        None
+    };
     // THE DOCUMENT STRUCTURE, resolved ONCE from the container's m15. No m15 =
     // the doc field is absent for every row (marked, never guessed), and that is
     // journaled rather than silently produced.
@@ -1895,7 +1921,7 @@ fn seeds_served(
         Some(d) => format!("m15:{}", d.docs),
         None => "absent".to_string(),
     };
-    let index = seeds_open_index(reader, jobs, rss_gb);
+    let index = seeds_open_index(reader, jobs, rss_gb, cache_gb);
     let sigma = index.reader.sigma;
     // THE OPEN IS THE ONLY VERIFICATION, and it has already happened: the m1 audit
     // ran in `open`, the m11 anchor header was checked, and m15 was parsed and
@@ -1927,12 +1953,12 @@ fn seeds_served(
         // refusal.
         let stdin = std::io::stdin();
         let mut input = stdin.lock();
-        seeds_pipeline(
+        seeds_loop(
             &index,
             &sigma,
             ds.as_ref(),
-            jobs,
             p,
+            pool.as_ref(),
             move || {
                 read_mem_request(&mut input)
                     .unwrap_or_else(|e| die(&format!("seeds --serve: request frame: {e}")))
@@ -1971,12 +1997,12 @@ fn seeds_served(
         )
         .unwrap();
         let ds_ref = ds.as_ref();
-        let totals = seeds_pipeline(
+        let totals = seeds_loop(
             &index,
             &sigma,
             ds_ref,
-            jobs,
             p,
+            pool.as_ref(),
             move || -> Option<Vec<u8>> {
                 let w = src.next()?;
                 // The window's byte range, resolved the way consult resolves it and
@@ -2040,16 +2066,16 @@ fn seeds_served(
     let secs = started.elapsed().as_secs_f64();
     let rchar = proc_io("rchar").saturating_sub(rchar0);
     let syscr = proc_io("syscr").saturating_sub(syscr0);
-    let (hits, misses, decodes, _drops) = index.cache_stats();
+    let (hits, misses, decodes, drops) = index.cache_stats();
     let pos_per_s = totals.positions as f64 / secs;
     eprintln!(
         "SEEDS_SERVE_STATS mode={mode} windows={windows} text_bytes={text_bytes} \
          windows_scanned={windows_scanned} seeds={seeds} rows={rows} positions={positions} \
          seconds={secs:.3} positions_per_s={pos_per_s:.1} lf_steps={lf_steps} \
          lf_steps_per_position={lps:.1} ranks={ranks} doc_absent={doc_absent} hits={hits} \
-         misses={misses} decodes={decodes} rchar={rchar} syscr={syscr} peak_rss_gb={rss:.3} \
-         cap_gb={cap:.3} arena_bytes={arena_bytes} jobs={jobs} scan_ms={scan_ms:.3} \
-         locate_ms={locate_ms:.3}",
+         misses={misses} decodes={decodes} drops={drops} rchar={rchar} syscr={syscr} \
+         peak_rss_gb={rss:.3} cap_gb={cap:.3} arena_bytes={arena_bytes} jobs={jobs} \
+         scan_ms={scan_ms:.3} locate_ms={locate_ms:.3}",
         mode = if serve { "serve" } else { "windows" },
         windows = totals.windows,
         text_bytes = totals.text_bytes,
