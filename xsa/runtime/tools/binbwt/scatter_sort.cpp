@@ -137,6 +137,13 @@ static u64 noteFdPeak() {
     if (n > FD_PEAK.load(std::memory_order_relaxed)) FD_PEAK.store(n);
     return n;
 }
+// THE PLAN'S CORPUS-READ COUNTER (G9). The plan must answer every class question
+// from the survey's prefix cache; only a depth past the cache may fall through to
+// a corpus window, and then the bytes are counted here. A zero on a fixture whose
+// cache is deep enough is a measurement, not a printout.
+static std::atomic<u64> PLAN_CORPUS_BYTES{0};
+static std::atomic<u64> PLAN_CORPUS_CALLS{0};
+
 static double now_sec() {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -858,6 +865,13 @@ int main(int argc, char** argv) {
     std::string subdiv_strategy = "auto";
     double leaf_coverage_pct = 5.0;
     u64 pos_budget_bytes = 0;   // the position-column (rolling file) disk budget
+    // --subdiv-class=<text>: run ONLY the wave whose key range contains this key.
+    // A measurement lever for the read-accounting gates (G3/G4): the same class at
+    // two corpus scales, and one class's two strategies at 100 GB, without paying
+    // for the other 300-odd waves. It is not a semantic knob - the surviving wave
+    // is the same wave the full run would have executed.
+    std::string subdiv_class;
+    bool subdiv_class_given = false;
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -891,6 +905,7 @@ int main(int argc, char** argv) {
         else if (a == "--subdiv-strategy") subdiv_strategy = nxt();
         else if (a.rfind("--subdiv-position-budget-bytes=", 0) == 0) pos_budget_bytes = std::strtoull(a.substr(31).c_str(), nullptr, 10);
         else if (a.rfind("--subdiv-leaf-coverage-pct=", 0) == 0) leaf_coverage_pct = std::atof(a.substr(27).c_str());
+        else if (a.rfind("--subdiv-class=", 0) == 0) { subdiv_class = a.substr(15); subdiv_class_given = true; }
         else if (a == "--subdiv-leaf-coverage-pct") leaf_coverage_pct = std::atof(nxt().c_str());
         else if (a == "--subdiv-position-budget-bytes") pos_budget_bytes = std::strtoull(nxt().c_str(), nullptr, 10);
         else die("unknown arg " + a);
@@ -1521,11 +1536,13 @@ int main(int argc, char** argv) {
                     std::to_string(waveGoal) + " and is NOT the single-symbol tail run, and it"
                     " does not fit one borrowed arena (" + std::to_string(needBytes) +
                     " B at " + std::to_string(budget.bytes_per_row) + " B/row) inside --memory-gb (" +
-                    std::to_string(memCapBytes) + " B). No key byte splits it and no position"
-                    " slice of it would order correctly, so the only remaining shape is a"
-                    " chunked sort + order-preserving merge INSIDE the class, which this build"
-                    " does not implement. Raise --memory-gb, or implement SS_WAVE_CHUNKMERGE"
-                    " - do not publish an unproved order");
+                    std::to_string(memCapBytes) + " B). No key byte splits it (the class's"
+                    " sampled rows all share the next byte) and no position slice of it would"
+                    " order correctly. THE LEVERS, in order: (1) raise --memory-gb so the one"
+                    " wave fits its arena, (2) raise the survey's prefix cache depth for this"
+                    " corpus - the class is only unsplittable past it, and a deeper cache is a"
+                    " wider key, not a different algorithm. NO MERGE is a path here: this build"
+                    " does not merge, and an unproved order is never published");
             }
             // the run, as slices of <= waveGoal rows, HIGHEST position first
             const u64 nslices = (runRows + waveGoal - 1) / waveGoal;
@@ -1575,6 +1592,8 @@ int main(int argc, char** argv) {
             // the corpus.
             auto byte_at = [&](u32 i) -> unsigned {
                 if (cached) return S.sym(i, off);
+                PLAN_CORPUS_CALLS.fetch_add(1, std::memory_order_relaxed);
+                PLAN_CORPUS_BYTES.fetch_add(1, std::memory_order_relaxed);
                 return sym_at(S.pos(i) + off);
             };
             std::sort(plan.perm.begin() + lo, plan.perm.begin() + hi, [&](u32 a, u32 b) {
@@ -1582,6 +1601,14 @@ int main(int argc, char** argv) {
                 return x != y ? x < y : a < b;
             });
             double curParentCov = parentCov;
+            // THE NODE'S OWN ROW COUNT, from the same census the children come from:
+            // this is what makes "does the next byte make progress?" answerable.
+            u64 nodeRows = 0;
+            for (size_t i = lo; i < hi; ++i) nodeRows += stride;
+            if (exact) {
+                nodeRows = 0;
+                for (size_t i = lo; i < hi; ++i) nodeRows += hist[byte_at(plan.perm[i])];
+            }
             bool runOpen = true;      // the run of NOT-over-budget siblings below c
             unsigned runLo = 0;       // starts at 0: absent bytes are covered, never dropped
             u64 runRows = 0;
@@ -1599,13 +1626,19 @@ int main(int argc, char** argv) {
                     // of this recursion did exactly that).
                     if (runOpen && runLo < c) emitWave(pre, runLo, c, runRows, runIdx, a);
                     runOpen = false; runRows = 0;
-                    // NO DEPTH CAP. The descent stops for a DATA reason, never an
-                    // implementation constant: a class whose sampled rows all share
-                    // the next byte (a single child holding every row) has no key
-                    // byte left to split on and is handled by the point-mass branch.
-                    // Past the prefix cache the digit is read from a corpus window
-                    // (journaled SS_PLAN_CACHE_MISS above) and the descent continues.
-                    if (a == lo && b == hi) {
+                    // NO DEPTH CAP, AND NO INFINITE DESCENT EITHER. The descent
+                    // stops for a DATA reason, never an implementation constant:
+                    //   * a class whose sampled rows ALL share the next byte has no
+                    //     key byte left to split on (single child), and
+                    //   * a class where one child holds >= 99.9% of the rows is not
+                    //     being DIVIDED by this byte at all - it is being shaved. A
+                    //     maximal run of one symbol does exactly that: every level
+                    //     peels off the one or two positions whose suffix ends, so the
+                    //     descent would walk one level per byte of the run and each
+                    //     level costs a pass. Measured before this rule: a 6 MB
+                    //     all-'Z' tail descended 1290 levels. Both cases belong to the
+                    //     point-mass branch, which proves its order or refuses.
+                    if (a == lo && b == hi || rows * 1000 > nodeRows * 999) {
                         emitPointMass(pre, c, off + 1, rows);
                     } else {
                         pre.push_back(u8(c));
@@ -1630,11 +1663,45 @@ int main(int argc, char** argv) {
         else emitWave(rootPre, 0, 256, 0, 0, 0);
     }
     waves = wl.size();
+    if (subdiv_class_given) {
+        // The class is the wave whose key range CONTAINS the requested key: the
+        // wave list is an exact partition of the key space, so exactly one wave
+        // owns any key that the corpus can produce.
+        std::vector<u8> key(subdiv_class.begin(), subdiv_class.end());
+        if (REMAP) for (auto& b : key) b = REMAP[b];
+        long long keep = -1;
+        for (size_t i = 0; i < wl.size() && keep < 0; ++i) {
+            const Wave& W = wl[i];
+            const u8* p = W.preLen ? preArena.data() + W.preOff : nullptr;
+            // keys below this wave's range end and not below the previous one's
+            bool before = false;
+            if (key.size() < W.depth) {
+                before = std::lexicographical_compare(key.begin(), key.end(), p, p + W.preLen);
+                if (!before && unsigned(key[W.preLen]) < W.bLo) before = true;
+            } else if (W.preLen) {
+                before = std::lexicographical_compare(key.begin(), key.begin() + W.preLen, p, p + W.preLen);
+            } else {
+                before = unsigned(key[0]) < W.bLo;
+            }
+            if (!before) keep = (long long)i;
+        }
+        if (keep < 0) die("--subdiv-class: no wave of the plan owns key '" + subdiv_class + "'");
+        Wave W = wl[size_t(keep)];
+        wl.assign(1, W);
+        waves = 1;
+        std::fprintf(stderr,
+            "SS_SUBDIV_CLASS_ONLY key='%s' wave_depth=%" PRIu64 " bytes=[%u,%u) rows_est=%" PRIu64
+            " coverage=%.6f strategy=%s note=emitted_stream_covers_this_class_only\n",
+            subdiv_class.c_str(), W.depth, W.bLo, W.bHi, W.rowsEst, W.cov,
+            W.strat == SS_STRAT_LOCAL ? "local" : "global");
+    }
     std::fprintf(stderr,
         "SS_PLAN waves=%" PRIu64 " local=%" PRIu64 " global=%" PRIu64 " cache_depth=%u"
         " cache_misses=%" PRIu64 " stalls=%" PRIu64 " samples=%zu stride=%" PRIu64
-        " corpus_reads=0 rule=answer_from_prefix_cache\n",
-        waves, subdivLocal, subdivGlobal, S.P, planCacheMisses, planStalls, S.samples, stride);
+        " corpus_reads=%" PRIu64 " corpus_read_calls=%" PRIu64
+        " rule=answer_from_prefix_cache\n",
+        waves, subdivLocal, subdivGlobal, S.P, planCacheMisses, planStalls, S.samples, stride,
+        PLAN_CORPUS_BYTES.load(), PLAN_CORPUS_CALLS.load());
     std::fprintf(stderr, "SS_WAVES count=%" PRIu64 " (recursive prefix-class waves)\n", waves);
 
     // ================= THE SCATTER PASS: the position window ====================
@@ -2144,8 +2211,11 @@ int main(int argc, char** argv) {
                     if (wave_match_q(&S.pre[size_t(i) * S.P], p)) waveSample.push_back(p);
                 }
             }
-            if (!censused)   // deeper than the cache: the text, journaled
+            if (!censused) {  // deeper than the cache: the text, journaled
+                PLAN_CORPUS_CALLS.fetch_add(1, std::memory_order_relaxed);
+                PLAN_CORPUS_BYTES.fetch_add(u64(sk.size()) * W.depth, std::memory_order_relaxed);
                 for (u64 p : sk) if (wave_match(p)) waveSample.push_back(p);
+            }
         }
         // The band plan compares SAMPLED positions: from the cache when it covers
         // the depth, from the text only if it does not.
@@ -2161,7 +2231,10 @@ int main(int argc, char** argv) {
                 if (cap == depth || a == b) return 0;
                 return FILE_N - a < FILE_N - b ? -1 : 1;
             }
-            g_tape_fence_bytes += std::min<u64>(depth, 2 * 24);
+            const u64 bytes = std::min<u64>(depth, 2 * 24);
+            g_tape_fence_bytes += bytes;
+            PLAN_CORPUS_CALLS.fetch_add(1, std::memory_order_relaxed);
+            PLAN_CORPUS_BYTES.fetch_add(bytes, std::memory_order_relaxed);
             return prefix_cmp(a, b, depth);
         };
         auto pageof = [&](u64 p) -> u32 {
@@ -2195,6 +2268,8 @@ int main(int argc, char** argv) {
             } else {
                 for (u64 k = 0; k < fp.flen; ++k) fp.pfx[size_t(k)] = u8(sym_at(f.pos + k));
                 g_tape_fence_bytes += fp.flen;
+                PLAN_CORPUS_CALLS.fetch_add(1, std::memory_order_relaxed);
+                PLAN_CORPUS_BYTES.fetch_add(fp.flen, std::memory_order_relaxed);
             }
             maxFenceDepth = std::max(maxFenceDepth, fp.flen);
             fences.push_back(std::move(fp));
@@ -2362,7 +2437,7 @@ int main(int argc, char** argv) {
             }
             if (any) {
                 usedLocal = true;
-                std::vector<u64> thrBytes(nparts, 0), thrRows(nparts, 0);
+                std::vector<u64> thrBytes(nparts, 0), thrRows(nparts, 0), thrPages(nparts, 0);
                 std::vector<std::string> err(nparts);
                 std::vector<std::thread> lts;
                 for (u64 t = 0; t < nparts; ++t)
@@ -2376,7 +2451,7 @@ int main(int argc, char** argv) {
                         if (!pf.open_read(name)) {   // empty part is legal: no rows
                             thrBytes[t] = 0; return;
                         }
-                        u64 p;
+                        u64 p, lastPage = ~0ull;
                         while (pf.next(p)) {
                             if (p >= KEY_N) continue;
                             const u8* q = rd.fetch(p, 1, 1 + look);
@@ -2397,6 +2472,15 @@ int main(int argc, char** argv) {
                             v.insert(v.end(), (const u8*)&r, (const u8*)&r + sizeof(Row));
                             if (v.size() >= bufsz) flush_buf(t, b);
                             ++thrRows[t];
+                            // THE CLASS'S FULL POSITION LIST is right here, ascending:
+                            // the exact row count and the exact number of 1 MiB pages
+                            // it occupies (one page change per ascending position; the
+                            // scan ranges are disjoint across threads, so the sums are
+                            // the corpus's own totals). This is G8's "exact".
+                            if (p / SS_SURVEY_PAGE != lastPage) {
+                                lastPage = p / SS_SURVEY_PAGE;
+                                ++thrPages[t];
+                            }
                         }
                         for (u64 b = 0; b < nbands; ++b) flush_buf(t, b);
                         if (curFd[t] >= 0) { if (::close(curFd[t])) die("close band part"); curFd[t] = -1; }
@@ -2405,7 +2489,22 @@ int main(int argc, char** argv) {
                     });
                 for (auto& th : lts) th.join();
                 for (u64 t = 0; t < nparts; ++t) if (!err[t].empty()) die(err[t]);
-                for (u64 t = 0; t < nparts; ++t) { classLocalBytes += thrBytes[t]; classGlobalBytes += 0; }
+                u64 exactRows = 0, exactPages = 0;
+                for (u64 t = 0; t < nparts; ++t) {
+                    classLocalBytes += thrBytes[t];
+                    exactRows += thrRows[t];
+                    exactPages += thrPages[t];
+                }
+                const double exactCov = double(exactPages) * double(stride) / double(FILE_N);
+                std::fprintf(stderr,
+                    "SS_SUBDIV_EXACT wave=%" PRIu64 " class=%s depth=%" PRIu64
+                    " rows_exact=%" PRIu64 " rows_est=%" PRIu64 " rows_err=%.4f"
+                    " pages_exact=%" PRIu64 " coverage_exact=%.6f coverage_est=%.6f"
+                    " bytes_read=%" PRIu64 " rule=exact_from_the_class_full_position_list\n",
+                    w, prefix_label(W.preLen ? preArena.data() + W.preOff : nullptr, W.preLen).c_str(),
+                    W.depth, exactRows, W.rowsEst,
+                    W.rowsEst ? double(exactRows) / double(W.rowsEst) - 1.0 : 0.0,
+                    exactPages, exactCov, W.cov, classLocalBytes);
                 // The parts are consumed: freeing them is what keeps the position
                 // column bounded (the next window reuses the disk).
                 for (u64 t = 0; t < nparts; ++t) {
@@ -3003,7 +3102,11 @@ int main(int argc, char** argv) {
         }
     }
 
-    if (emitted != N) die("scatter row coverage != n");
+    if (emitted != N && !subdiv_class_given) die("scatter row coverage != n");
+    if (emitted != N && subdiv_class_given)
+        std::fprintf(stderr,
+            "SS_SUBDIV_CLASS_ONLY_ROWS emitted=%" PRIu64 " n=%" PRIu64
+            " note=partial_by_construction (--subdiv-class)\n", emitted, N);
     if (lfd >= 0) {
         // DEDUPE BY RANK, keeping the LAST value written for a rank: a band's own
         // merge can escape the rank that the seam also escapes (the block-start

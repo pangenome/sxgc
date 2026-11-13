@@ -56,9 +56,12 @@ static inline u64 route_fences(const u8* q, u64 p, u64 avail,
     u64 b = 0;
     for (const FencePfx& f : fences) {
         const int c = fence_cmp(q, p, avail, f);
-        // upper_bound's rule, spelled out: advance while the key is at or past the
-        // fence. A fence marked `after` also owns the key EQUAL to it (the analytic
-        // close of an exact prefix class).
+        // upper_bound's rule, spelled out: `b` counts the fences the key is at or
+        // past, so a row EQUAL to a fence lands in the band that fence starts -
+        // which is the band whose first key it is. (Getting this backwards is not a
+        // boundary nicety: it splits one 24-byte key's tie group across two bands,
+        // and the band-local sort then orders each half without seeing the other.
+        // Measured: sa_check ORDER_FAIL at rank 223590 when this was flipped.)
         if (c > 0 || (c == 0 && !f.after)) ++b;
         else break;
     }

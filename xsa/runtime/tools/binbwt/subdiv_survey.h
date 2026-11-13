@@ -234,12 +234,17 @@ static void survey_run(Survey& S, int fd, u64 fileN, u64 sample_n, u64 threads) 
     for (u32 v : S.page) h.update_u32(v);
     S.sha = h.final_hex();
     S.wall = now_sec() - t0;
+    // THE LINE IS A FUNCTION OF THE CORPUS AND THE SAMPLE SIZE ONLY: no timing, no
+    // pid, no thread count. G7 compares two of these strings AND the blob sha, and
+    // a wall clock inside the line would make that comparison a coin toss. The
+    // timing is journaled on its own line.
     std::fprintf(stderr,
         "SS_SURVEY samples=%" PRIu64 " stride=%" PRIu64 " prefix_bytes=%u run_cap=%u pages=%zu"
         " chunks=%" PRIu64 " chunk_bytes=%" PRIu64 " blob_bytes=%" PRIu64
-        " sha256=%s wall=%.2f bytes_read=%" PRIu64 " rule=one_pass_all_top_level_bins\n",
+        " sha256=%s bytes_read=%" PRIu64 " rule=one_pass_all_top_level_bins\n",
         S.samples, S.stride, S.P, S.run_cap, S.page.size(), S.chunks, S.chunk_bytes,
-        S.blob_bytes, S.sha.c_str(), S.wall, S.n);
+        S.blob_bytes, S.sha.c_str(), S.n);
+    std::fprintf(stderr, "SS_SURVEY_TIME wall=%.2f threads_note=does_not_enter_the_line\n", S.wall);
 }
 
 // ---------------------------------------------------------------------------
@@ -278,7 +283,11 @@ struct Plan {
 
 double Plan::coverage(size_t lo, size_t hi) const {
     if (lo >= hi || !s->n) return 0.0;
-    std::vector<u32> pg(s->page.begin() + lo, s->page.begin() + hi);
+    // The subrange is a range of perm (sample INDICES); the page column is keyed
+    // by sample index, so the gather goes through the permutation.
+    std::vector<u32> pg;
+    pg.reserve(hi - lo);
+    for (size_t i = lo; i < hi; ++i) pg.push_back(s->page[size_t(perm[i])]);
     std::sort(pg.begin(), pg.end());
     u64 distinct = 0;
     for (size_t i = 0; i < pg.size(); ++i)
