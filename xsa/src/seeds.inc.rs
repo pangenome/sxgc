@@ -613,6 +613,11 @@ struct ScanOpts {
     /// Capacity hint for the accepted set (`--max-seeds`); the cap itself is
     /// applied by the caller, never here.
     reserve: usize,
+    /// Suppress the per-window journal chatter (`SEEDS_MARKUP`,
+    /// `SEEDS_PROGRESS`). A SERVED run answers one window after another in one
+    /// process, so a line per window is noise; the totals stay in the
+    /// `SEEDS_*_STATS` line and the per-window answer is on stdout.
+    quiet: bool,
 }
 
 /// Result of one whole-document walk. Every window is accounted for in `stats`
@@ -646,12 +651,14 @@ fn scan_text(cx: &mut Ctx<'_>, sigma: &[u8; 256], text: &[u8], o: &ScanOpts) -> 
     let mut max_end = 0u64;
     let width = max_len.min(text.len());
     let mut markup = Markup::scan(text, skip_markup);
-    eprintln!(
-        "SEEDS_MARKUP enabled={skip_markup} ranges={} bytes_skipped={} frac={:.6}",
-        markup.ranges.len(),
-        markup.bytes,
-        markup.bytes as f64 / text.len() as f64,
-    );
+    if !o.quiet {
+        eprintln!(
+            "SEEDS_MARKUP enabled={skip_markup} ranges={} bytes_skipped={} frac={:.6}",
+            markup.ranges.len(),
+            markup.bytes,
+            markup.bytes as f64 / text.len() as f64,
+        );
+    }
     let scan = Instant::now();
     let mut first_window = usize::MAX;
     let mut last_window = 0usize;
@@ -661,7 +668,7 @@ fn scan_text(cx: &mut Ctx<'_>, sigma: &[u8; 256], text: &[u8], o: &ScanOpts) -> 
     let mut i = 0usize;
     while i < text.len() {
         stats.windows += 1;
-        if stats.windows % 10_000 == 0 {
+        if !o.quiet && stats.windows % 10_000 == 0 {
             // A continuous scan of a whole article is minutes, not milliseconds:
             // say where it is so a long run is visible rather than silent.
             eprintln!(
@@ -781,17 +788,43 @@ pub fn seeds_command(raw: &[std::ffi::OsString]) {
     let mut max_seeds = 64usize;
     let mut stride: Option<usize> = None;
     let mut limit = 8u64;
+    let mut limit_given = false;
     let mut target_mult: Option<u64> = None;
     let mut max_mult: Option<u64> = None;
     let mut min_mult: Option<u64> = None;
+    // ---- the warm/batch surface (see the WARM PATH section below).
+    let mut serve = false;
+    let mut jobs = 0usize;
+    let mut rss_gb: Option<f64> = None;
+    let mut anchors = false;
+    let mut anchor_per_seed = SEEDS_ANCHOR_PER_SEED_DEFAULT;
+    let mut windows_path: Option<String> = None;
+    let mut windows_bin = false;
+    let mut corpus_path: Option<String> = None;
+    let mut windows_out: Option<String> = None;
+    let mut window_len: Option<u64> = None;
+    let mut window_stride: Option<u64> = None;
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
             "--jsonl" => json = true,
             "--nearest" => nearest = true,
             "--skip-markup" => skip_markup = true,
+            "--serve" => serve = true,
+            "--anchors" => anchors = true,
+            "--windows-bin" => windows_bin = true,
+            "-j" | "--jobs" => {
+                i += 1;
+                let v = args.get(i).unwrap_or_else(|| die("seeds: -j needs a value"));
+                jobs = v.parse().unwrap_or_else(|_| die(&format!("seeds: invalid -j '{v}'")));
+                if jobs == 0 {
+                    die("seeds: -j must be positive");
+                }
+            }
             "--max-len" | "--min-len" | "--max-seeds" | "--stride" | "--limit" | "--docs"
-            | "--target-mult" | "--max-mult" | "--min-mult" => {
+            | "--target-mult" | "--max-mult" | "--min-mult" | "--rss-gb"
+            | "--anchor-max-per-seed" | "--windows" | "--corpus" | "--windows-out"
+            | "--window-len" | "--window-stride" => {
                 let flag = args[i].clone();
                 i += 1;
                 let v = args
@@ -806,10 +839,30 @@ pub fn seeds_command(raw: &[std::ffi::OsString]) {
                     "--min-len" => min_len = num("--min-len") as usize,
                     "--max-seeds" => max_seeds = num("--max-seeds") as usize,
                     "--stride" => stride = Some(num("--stride") as usize),
-                    "--limit" => limit = num("--limit"),
+                    "--limit" => {
+                        limit = num("--limit");
+                        limit_given = true;
+                    }
                     "--target-mult" => target_mult = Some(num("--target-mult")),
                     "--max-mult" => max_mult = Some(num("--max-mult")),
-                    _ => min_mult = Some(num("--min-mult")),
+                    "--min-mult" => min_mult = Some(num("--min-mult")),
+                    "--rss-gb" => {
+                        let g: f64 = v
+                            .parse()
+                            .unwrap_or_else(|_| die(&format!("seeds: invalid --rss-gb '{v}'")));
+                        if !(g > 0.0) {
+                            die("seeds: --rss-gb must be positive");
+                        }
+                        rss_gb = Some(g);
+                    }
+                    "--anchor-max-per-seed" => {
+                        anchor_per_seed = num("--anchor-max-per-seed")
+                    }
+                    "--windows" => windows_path = Some(v.clone()),
+                    "--corpus" => corpus_path = Some(v.clone()),
+                    "--windows-out" => windows_out = Some(v.clone()),
+                    "--window-len" => window_len = Some(num("--window-len")),
+                    _ => window_stride = Some(num("--window-stride")),
                 }
             }
             other if other.starts_with('-') && other != "-" => {
@@ -824,7 +877,6 @@ pub fn seeds_command(raw: &[std::ffi::OsString]) {
         }
         i += 1;
     }
-    let Some(text_path) = text_path else { die(SEEDS_USAGE) };
     // ---- guards, refused by name (S3).
     if max_len == 0 || max_len > PAT_LEN_MAX {
         die(&format!("seeds: --max-len must be 1..={PAT_LEN_MAX}, got {max_len}"));
@@ -873,6 +925,78 @@ pub fn seeds_command(raw: &[std::ffi::OsString]) {
         Some(s) => s,
         None => 1,
     };
+    let params = SeedParams {
+        min_len,
+        max_len,
+        target,
+        cap,
+        nearest,
+        stride: step,
+        skip_markup,
+        max_seeds,
+        anchor_per_seed,
+    };
+    // ---- THE SERVED FORMS (see the WARM PATH section below). Both take the
+    // query text from somewhere else than the positional argument, so a
+    // positional text is refused rather than silently ignored.
+    if serve || windows_path.is_some() {
+        if text_path.is_some() {
+            die(if serve {
+                "seeds: --serve reads its query text from stdin frames; the positional text \
+                 argument does not apply (give one or the other)"
+            } else {
+                "seeds: --windows declares the query text; the positional text argument does \
+                 not apply (give --corpus FILE for the bytes)"
+            });
+        }
+        if serve && windows_path.is_some() {
+            die("seeds: --serve (frames on stdin) and --windows (a declared window file) are \
+                 alternative inputs; give one");
+        }
+        if windows_path.is_some() && corpus_path.is_none() {
+            die(
+                "seeds: --windows needs --corpus FILE: a window record declares (base, start, \
+                 len) over a corpus, and the query bytes are read from it",
+            );
+        }
+        if windows_path.is_none() && corpus_path.is_some() {
+            die("seeds: --corpus only applies with --windows (see --help)");
+        }
+        if windows_out.is_some() || window_len.is_some() || window_stride.is_some() {
+            die(
+                "seeds: --windows-out/--window-len/--window-stride DECLARE a window set from a \
+                 text file; they do not apply to --serve or --windows",
+            );
+        }
+        if json {
+            die(
+                "seeds: the served forms answer with the anchor TABLE (TSV for --windows, \
+                 fixed-width frames for --serve); --jsonl applies to the classic hit list",
+            );
+        }
+        if limit_given {
+            die(
+                "seeds: --limit is the SAMPLE-POSITION cap of the classic hit list, not an anchor \
+                 cap; use --anchor-max-per-seed",
+            );
+        }
+        seeds_served(
+            container,
+            docs.as_deref(),
+            &params,
+            serve,
+            windows_path.as_deref(),
+            windows_bin,
+            corpus_path.as_deref(),
+            jobs,
+            rss_gb,
+        );
+        return;
+    }
+    if windows_bin {
+        die("seeds: --windows-bin only applies with --windows");
+    }
+    let Some(text_path) = text_path else { die(SEEDS_USAGE) };
 
     // ---- text: a windowed mmap for a path, one bounded buffer for stdin. Never
     // written anywhere; the text is read only at the window positions.
@@ -911,6 +1035,30 @@ pub fn seeds_command(raw: &[std::ffi::OsString]) {
              be a silently empty result rather than a refusal",
         );
     }
+    // ---- DECLARE the window set, if asked: `--windows-out` writes the boundaries
+    // this run would use, so a later run can REPLAY them (`--windows`/--corpus)
+    // instead of re-deriving them. The declaration is the geometry, not the text.
+    if let Some(outp) = windows_out.as_deref() {
+        let len = window_len.unwrap_or_else(|| {
+            die("seeds: --windows-out needs --window-len L (and optionally --window-stride S)")
+        });
+        if len == 0 || len > SEEDS_WINDOW_MAX as u64 {
+            die(&format!("seeds: --window-len must be 1..={SEEDS_WINDOW_MAX}, got {len}"));
+        }
+        let s = window_stride.unwrap_or(len);
+        if s == 0 {
+            die("seeds: --window-stride must be positive");
+        }
+        let count = declare_windows(text.len() as u64, len, s, outp);
+        eprintln!(
+            "SEEDS_WINDOWS_DECLARED out={outp} windows={count} window_len={len} \
+             window_stride={s} text_bytes={} overlap={}",
+            text.len(),
+            if s < len { "yes" } else { "no" },
+        );
+    } else if window_len.is_some() || window_stride.is_some() {
+        die("seeds: --window-len/--window-stride only apply with --windows-out FILE");
+    }
 
     let reader = Reader::open(container).unwrap_or_else(|e| {
         die(&format!(
@@ -918,11 +1066,74 @@ pub fn seeds_command(raw: &[std::ffi::OsString]) {
              migration: a legacy container must be rebuilt with `xsa build`."
         ))
     });
+    // ---- ANCHOR MODE, one window: the whole text is window 0. Same scan, same
+    // output selection, same tie order and same pipeline as the served forms, so
+    // the three paths agree row for row.
+    if anchors {
+        if json {
+            die(
+                "seeds: --anchors emits the anchor TABLE (TSV, one row per occurrence); \
+                 --jsonl applies to the classic hit list",
+            );
+        }
+        let ds = crate::docstarts::DocStarts::from_container(&reader);
+        let docs_id = match &ds {
+            Some(d) => format!("m15:{}", d.docs),
+            None => "absent".to_string(),
+        };
+        if limit_given {
+            die(
+                "seeds: --limit is the SAMPLE-POSITION cap of the classic hit list, not an anchor \
+                 cap; use --anchor-max-per-seed",
+            );
+        }
+        let index = seeds_open_index(reader, 1, rss_gb);
+        let sigma = index.reader.sigma;
+        let started = Instant::now();
+        let rchar0 = proc_io("rchar");
+        let stdout = std::io::stdout();
+        let mut w = BufWriter::with_capacity(1 << 20, stdout.lock());
+        writeln!(w, "{}", anchors_header(&params, &docs_id)).unwrap();
+        writeln!(
+            w,
+            "window_id\tquery_offset\tcorpus_doc\tcorpus_offset\tmatch_len\tmultiplicity"
+        )
+        .unwrap();
+        let mut cx = index.ctx();
+        let wa = window_anchors(&mut cx, &sigma, ds.as_ref(), 0, text, &params);
+        anchors_write_tsv(&mut w, &wa).unwrap();
+        w.flush().unwrap();
+        let secs = started.elapsed().as_secs_f64();
+        let (hits, misses, decodes, _d) = index.cache_stats();
+        eprintln!(
+            "SEEDS_ANCHOR_STATS mode=file windows=1 text_bytes={} windows_scanned={} seeds={} \
+             rows={} positions={} seconds={secs:.3} positions_per_s={:.1} lf_steps={} ranks={} \
+             doc_absent={} hits={hits} misses={misses} decodes={decodes} rchar={} \
+             peak_rss_gb={:.3} cap_gb={:.3} arena_bytes={} docs={docs_id} scan_ms={:.3} \
+             locate_ms={:.3}",
+            wa.text_bytes,
+            wa.windows_scanned,
+            wa.seeds,
+            wa.rows.len(),
+            wa.positions,
+            wa.positions as f64 / secs,
+            wa.lf_steps,
+            wa.ranks,
+            wa.doc_absent,
+            proc_io("rchar").saturating_sub(rchar0),
+            proc_peak_rss() as f64 / (1u64 << 30) as f64,
+            rss_gb.map(|g| g).unwrap_or(0.0),
+            index.cache_bytes(),
+            wa.scan_ms,
+            wa.locate_ms,
+        );
+        return;
+    }
     let docs = discover_documents(container, docs.as_deref(), reader.n);
     if docs.is_none() && limit > 0 {
         eprintln!("SEEDS_NOTE docs=none: emitting plain corpus offsets");
     }
-    let index = Index::open(reader, 1).unwrap_or_else(|e| die(&e));
+    let index = seeds_open_index(reader, 1, rss_gb);
     let sigma = index.reader.sigma;
     let n = index.n();
     let present: [bool; 256] = std::array::from_fn(|b| {
@@ -956,6 +1167,7 @@ pub fn seeds_command(raw: &[std::ffi::OsString]) {
         stride: step,
         skip_markup,
         reserve: max_seeds,
+        quiet: false,
     };
     let ScanOut {
         mut seeds,
@@ -1135,6 +1347,724 @@ pub fn seeds_command(raw: &[std::ffi::OsString]) {
         stats.suppressed_contained,
         cx.ranks,
         cx.steps,
+    );
+}
+
+// ---------------------------------------------------------------- warm path
+//
+// `xsa seeds` was a ONE-SHOT command: every invocation paid the whole open (mmap,
+// member directory, bounded m1 audit, m11 anchors, decoded-block arena) and every
+// reported occurrence paid an LF walk to an m11 anchor. On a 100 GB container a
+// 200-byte text therefore read gigabytes of container to print a few hundred
+// bytes (NOTE_FROM_EMENDER_XSA_SEEDS_COST.md: 3.25 GB rchar, 3.3 M read(2), >5
+// min). The three already-served commands (`mem --serve`, `branches --serve`,
+// `consult`) fixed exactly this shape, and this section reuses their two devices
+// instead of inventing a third:
+//
+//   FRAMING, ONCE. `--serve` reads u32-length-prefixed window frames from stdin
+//   and writes u32-length-prefixed answer frames - `read_mem_request`'s encoding,
+//   the one `mem --serve` already speaks. The container is opened, audited, and
+//   its document structure resolved ONCE, before the first frame is read; no
+//   framing or index check happens per window.
+//
+//   DECLARED WINDOWS. `--windows FILE --corpus FILE` replays a window set that
+//   is DECLARED in the file - the XSWIN001/JSONL window stream `xsa consult`
+//   already consumes - so a boundary is never inferred from content: window k is
+//   corpus[base+start .. base+start+len) as the record says, refused by name if it
+//   leaves the corpus or the container's text.
+//
+// WHAT A WINDOW COSTS is the ANCHOR TABLE, and the layers are not the same price.
+// A seed's multiplicity is an INTERVAL WIDTH (O(1) once the scan has the
+// interval): zero locates, exact, independent of -k/--limit. A corpus_offset is
+// one LF walk to an m11 anchor - the one irreducible locate layer of this
+// command - and `--rss-gb` sizes the decoded-block arena those walks read
+// through (consult's knob, consult's split), which is why a served run's
+// container reads are a function of the QUERY SET and not of the container.
+// RESULTS_SEEDS_WARM.md is the price list.
+
+/// Default OUTPUT cap on anchor rows per seed. `0` means EVERY occurrence of the
+/// seed, which is one locate per occurrence (the expensive setting); the default
+/// samples the interval at even SA-rank spacing, exactly as `--limit` samples the
+/// classic hit list. Neither is a support threshold: see SEEDS_USAGE.
+const SEEDS_ANCHOR_PER_SEED_DEFAULT: u64 = 8;
+/// The framed window cap, the same 16 MiB `mem --serve` refuses past.
+const SEEDS_WINDOW_MAX: usize = 16 * 1024 * 1024;
+/// `#xsa-seeds-anchors` schema tag. Bump it when a column changes meaning.
+const SEEDS_ANCHOR_SCHEMA: &str = "#xsa-seeds-anchors v1";
+
+/// Every knob the scan needs, shared by the three input forms (a text file, a
+/// framed stdin window, a declared window record) so no form can drift from
+/// another: they run the SAME `scan_text` and the SAME output selection.
+#[derive(Debug, Clone, Copy)]
+struct SeedParams {
+    min_len: usize,
+    max_len: usize,
+    target: u64,
+    cap: Option<u64>,
+    nearest: bool,
+    stride: usize,
+    skip_markup: bool,
+    max_seeds: usize,
+    anchor_per_seed: u64,
+}
+
+/// One chain-ready anchor: `query[query_offset .. query_offset+match_len)` occurs
+/// at `corpus_off`. `mult` is the EXACT occurrence count (the BWT interval
+/// width), never the number of rows a cap let through. `corpus_doc` is the
+/// container's m15 document at `corpus_off`; `None` means the container carries
+/// no m15 (SXI2 < v10) and the field is absent - a docid is never guessed from a
+/// sidecar or from content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AnchorRow {
+    query_offset: u32,
+    match_len: u32,
+    mult: u64,
+    corpus_off: u64,
+    corpus_doc: Option<u64>,
+}
+
+/// THE TIE ORDER, in one place because two runs must be byte-identical: rows are
+/// ordered by (query_offset, corpus_offset, match_len, multiplicity). Seeds are
+/// already emitted in increasing query offset; the sort makes the ORDER OF
+/// OCCURRENCES canonical too, so a window's rows never depend on the order the
+/// locate walks finished in (or on -j).
+fn anchor_key(r: &AnchorRow) -> (u32, u64, u32, u64) {
+    (r.query_offset, r.corpus_off, r.match_len, r.mult)
+}
+
+/// One window's anchor table plus the accounting that has to add up.
+struct WindowAnchors {
+    window_id: u64,
+    text_bytes: u64,
+    rows: Vec<AnchorRow>,
+    windows_scanned: u64,
+    seeds: u64,
+    positions: u64,
+    lf_steps: u64,
+    ranks: u64,
+    doc_absent: u64,
+    scan_ms: f64,
+    locate_ms: f64,
+}
+
+/// Run totals, summed in window order by the sink so they are identical whatever
+/// `-j` is.
+#[derive(Default)]
+struct ServeTotals {
+    windows: u64,
+    text_bytes: u64,
+    windows_scanned: u64,
+    seeds: u64,
+    rows: u64,
+    positions: u64,
+    lf_steps: u64,
+    ranks: u64,
+    doc_absent: u64,
+    scan_ms: f64,
+    locate_ms: f64,
+}
+
+impl ServeTotals {
+    fn add(&mut self, w: &WindowAnchors) {
+        self.windows += 1;
+        self.text_bytes += w.text_bytes;
+        self.windows_scanned += w.windows_scanned;
+        self.seeds += w.seeds;
+        self.rows += w.rows.len() as u64;
+        self.positions += w.positions;
+        self.lf_steps += w.lf_steps;
+        self.ranks += w.ranks;
+        self.doc_absent += w.doc_absent;
+        self.scan_ms += w.scan_ms;
+        self.locate_ms += w.locate_ms;
+    }
+}
+
+/// The `<container>` element of `/proc/self/io` (or 0 when it is unreadable - a
+/// receipt helper, never a gate). `rchar` is the COUNT of bytes this process asked
+/// the kernel for with read-family calls; the container's block payloads are
+/// `pread` (not page faults), so rchar is exactly "container read", and the gate
+/// can require it to follow the query set instead of the container.
+fn proc_io(name: &str) -> u64 {
+    let s = std::fs::read_to_string("/proc/self/io").unwrap_or_default();
+    for line in s.lines() {
+        if let Some(v) = line.strip_prefix(name).and_then(|r| r.strip_prefix(':')) {
+            return v.trim().parse().unwrap_or(0);
+        }
+    }
+    0
+}
+
+/// Peak RSS of this process in bytes (VmHWM).
+fn proc_peak_rss() -> u64 {
+    let s = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+    for line in s.lines() {
+        if let Some(v) = line.strip_prefix("VmHWM:") {
+            let kb: u64 = v
+                .trim()
+                .trim_end_matches(" kB")
+                .trim()
+                .parse()
+                .unwrap_or(0);
+            return kb * 1024;
+        }
+    }
+    0
+}
+
+/// Open the index with the decoded-block arena the run paid for. `None` is the
+/// historical 64 MB arena (`Index::open` is exactly this call). `--rss-gb` is
+/// consult's budget split verbatim: a fixed arena of an eighth of the budget,
+/// clamped to [4 MiB, 64 GiB], with the rest of the budget as the RSS cap the
+/// governor bleeds the container mapping back to. The arena is FIXED at open and
+/// `decoded_bytes` stays 0 - a budget split, not a materialisation.
+fn seeds_open_index(reader: Reader, jobs: usize, rss_gb: Option<f64>) -> Index {
+    let Some(g) = rss_gb else {
+        return Index::open(reader, jobs).unwrap_or_else(|e| die(&e));
+    };
+    let cap_bytes = (g * (1u64 << 30) as f64) as u64;
+    let arena_bytes = (cap_bytes / 8).clamp(4 << 20, 64u64 << 30) as usize;
+    let mut index = Index::open_with_cache(reader, jobs, arena_bytes).unwrap_or_else(|e| die(&e));
+    index.set_rss_cap(cap_bytes);
+    index
+}
+
+/// The anchor table of ONE window: the same scan, the same output selection, then
+/// one locate per reported anchor row (bounded by `--anchor-max-per-seed`), then
+/// the canonical sort. Nothing about the multiplicities comes from the located
+/// rows: `mult` is the interval width the scan already had.
+fn window_anchors(
+    cx: &mut Ctx<'_>,
+    sigma: &[u8; 256],
+    ds: Option<&crate::docstarts::DocStarts>,
+    window_id: u64,
+    text: &[u8],
+    p: &SeedParams,
+) -> WindowAnchors {
+    assert!(!text.is_empty(), "SEEDS_EMPTY_WINDOW window={window_id}");
+    let o = ScanOpts {
+        min_len: p.min_len,
+        max_len: p.max_len,
+        target: p.target,
+        cap: p.cap,
+        nearest: p.nearest,
+        stride: p.stride,
+        skip_markup: p.skip_markup,
+        reserve: p.max_seeds,
+        quiet: true,
+    };
+    let (steps0, ranks0) = (cx.steps, cx.ranks);
+    let out = scan_text(cx, sigma, text, &o);
+    let scan_ms = out.scan_ms;
+    assert_eq!(
+        out.stats.windows,
+        out.stats.no_match
+            + out.stats.too_short
+            + out.stats.too_rare
+            + out.stats.too_common
+            + out.stats.windows_with_seed
+            + out.stats.suppressed_dedup
+            + out.stats.suppressed_contained
+            + out.stats.windows_skipped_markup,
+        "SEEDS_WINDOW_ACCOUNTING window={window_id}"
+    );
+    // THE SAME OUTPUT SELECTION as the classic path: `--max-seeds K` picks K of
+    // the accepted seeds at even index spacing, so the emitted set covers the
+    // window instead of being its first K accepted seeds.
+    let mut seeds = out.seeds;
+    if seeds.len() > p.max_seeds {
+        let take = p.max_seeds;
+        let step_idx = seeds.len() / take;
+        seeds = (0..take).map(|j| seeds[j * step_idx]).collect();
+    }
+    let mut rows: Vec<AnchorRow> = Vec::new();
+    let mut positions = 0u64;
+    let mut doc_absent = 0u64;
+    let locate = Instant::now();
+    for s in &seeds {
+        let want = if p.anchor_per_seed == 0 {
+            s.mult
+        } else {
+            p.anchor_per_seed.min(s.mult)
+        };
+        // `seed_sample` is the documented even-SA-rank sampler; it is an OUTPUT
+        // cap on ROWS. `mult` below stays the exact width, so a capped row set can
+        // never be read as a support threshold.
+        let (sample, _truncated) = seed_sample(s.l, s.r, want);
+        let mut here: Vec<AnchorRow> = Vec::with_capacity(sample.len());
+        for row in sample {
+            let pos = cx.locate(row);
+            positions += 1;
+            let doc = match ds {
+                Some(d) if pos < d.text_len => Some(d.rank(pos)),
+                Some(_) => {
+                    // A position at or past the declared text length is the
+                    // virtual END row: it has no document, and a docid is never
+                    // guessed for it.
+                    doc_absent += 1;
+                    None
+                }
+                None => {
+                    doc_absent += 1;
+                    None
+                }
+            };
+            here.push(AnchorRow {
+                query_offset: s.offset as u32,
+                match_len: s.len,
+                mult: s.mult,
+                corpus_off: pos,
+                corpus_doc: doc,
+            });
+        }
+        here.sort_unstable_by_key(anchor_key);
+        rows.extend_from_slice(&here);
+    }
+    rows.sort_unstable_by_key(anchor_key);
+    let locate_ms = locate.elapsed().as_secs_f64() * 1e3;
+    WindowAnchors {
+        window_id,
+        text_bytes: text.len() as u64,
+        rows,
+        windows_scanned: out.stats.windows,
+        seeds: seeds.len() as u64,
+        positions,
+        lf_steps: cx.steps - steps0,
+        ranks: cx.ranks - ranks0,
+        doc_absent,
+        scan_ms,
+        locate_ms,
+    }
+}
+
+/// One anchor frame (serve mode): window id, row count, seed count, then fixed
+/// 32-byte rows. Fixed width, no byte echo, no variable section - `mem --serve`'s
+/// shape. `corpus_doc` is the all-ones sentinel when the container has no m15,
+/// the same "absent" encoding consult's rows use.
+fn anchor_frame_payload(w: &WindowAnchors) -> Vec<u8> {
+    let mut b = Vec::with_capacity(16 + w.rows.len() * 32);
+    b.extend(w.window_id.to_le_bytes());
+    b.extend((w.rows.len() as u32).to_le_bytes());
+    b.extend((w.seeds as u32).to_le_bytes());
+    for r in &w.rows {
+        b.extend(r.query_offset.to_le_bytes());
+        b.extend(r.match_len.to_le_bytes());
+        b.extend(r.mult.to_le_bytes());
+        b.extend(r.corpus_off.to_le_bytes());
+        b.extend(r.corpus_doc.unwrap_or(DOCID_ABSENT).to_le_bytes());
+    }
+    b
+}
+
+/// The TSV header: the parameters a reader needs to interpret the rows, and
+/// NOTHING that varies between two identical runs (no path, no timing), so the
+/// determinism gate can hash the whole stream.
+fn anchors_header(p: &SeedParams, docs: &str) -> String {
+    format!(
+        "{SEEDS_ANCHOR_SCHEMA} mode={} target_mult={} cap={} min_len={} max_len={} stride={} \
+         max_seeds={} anchor_max_per_seed={} docs={docs} tie_order=query_offset,corpus_offset,\
+         match_len,multiplicity",
+        if p.cap.is_some() { "band" } else { "target" },
+        p.target,
+        p.cap.map(|c| c.to_string()).unwrap_or_else(|| "none".into()),
+        p.min_len,
+        p.max_len,
+        p.stride,
+        p.max_seeds,
+        p.anchor_per_seed,
+    )
+}
+
+/// Write one window's rows in the table's column order. `corpus_doc` is `-` when
+/// the container has no m15: marked absent, never guessed.
+fn anchors_write_tsv(w: &mut dyn Write, wa: &WindowAnchors) -> std::io::Result<()> {
+    for r in &wa.rows {
+        match r.corpus_doc {
+            Some(d) => write!(w, "{}\t{}\t{d}", wa.window_id, r.query_offset)?,
+            None => write!(w, "{}\t{}\t-", wa.window_id, r.query_offset)?,
+        }
+        writeln!(w, "\t{}\t{}\t{}", r.corpus_off, r.match_len, r.mult)?;
+    }
+    Ok(())
+}
+
+/// Declare a window set over a text file: `--windows-out FILE` with
+/// `--window-len L [--window-stride S]` writes JSONL window records (the schema
+/// consult reads: doc, base, start, len) that tile the text with the DECLARED
+/// geometry. `doc` is the window index - seeds does not interpret it (the
+/// anchor's corpus_doc comes from m15 at the located offset) - and the file is
+/// what makes replay possible: `--windows FILE --corpus TEXT` re-reads these
+/// boundaries instead of inferring new ones.
+fn declare_windows(text_bytes: u64, len: u64, stride: u64, out: &str) -> u64 {
+    assert!(len > 0 && stride > 0, "SEEDS_DECLARE zero geometry");
+    let f = File::create(out).unwrap_or_else(|e| die(&format!("seeds: create {out}: {e}")));
+    let mut w = BufWriter::with_capacity(1 << 16, f);
+    let mut off = 0u64;
+    let mut id = 0u64;
+    while off < text_bytes {
+        let n = len.min(text_bytes - off);
+        writeln!(
+            w,
+            "{{\"doc\":{id},\"base\":0,\"start\":{off},\"len\":{n}}}"
+        )
+        .unwrap();
+        id += 1;
+        off += stride;
+    }
+    w.flush().unwrap();
+    id
+}
+
+/// THE PIPELINE both served forms run on: the calling thread produces windows
+/// (stdin frames or declared window records) AND writes the answers in window
+/// order, while `jobs` workers answer them against the shared read-only index and
+/// its decoded-block cache. The sink lives on the producer's thread because stdin
+/// and stdout are not `Send`; that is also what makes the output byte-identical
+/// whatever `-j` is: results are re-ordered by window id before anything is
+/// written.
+///
+/// The in-flight bound is the PERMIT count (= jobs), not a queue length: a worker
+/// can always deliver its answer (the result channel is unbounded) and the
+/// producer can never run further than `jobs` windows ahead, so the memory a
+/// served run holds is `jobs` windows of text plus `jobs` anchor tables - never
+/// the stream.
+fn seeds_pipeline<P, S>(
+    index: &Index,
+    sigma: &[u8; 256],
+    ds: Option<&crate::docstarts::DocStarts>,
+    jobs: usize,
+    params: &SeedParams,
+    mut produce: P,
+    mut sink: S,
+) -> ServeTotals
+where
+    P: FnMut() -> Option<Vec<u8>>,
+    S: FnMut(&WindowAnchors) -> std::io::Result<()>,
+{
+    assert!(jobs > 0, "SEEDS_PIPELINE jobs=0");
+    let mut req_tx = Vec::with_capacity(jobs);
+    let mut req_rx = Vec::with_capacity(jobs);
+    for _ in 0..jobs {
+        let (t, r) = std::sync::mpsc::sync_channel::<(u64, Vec<u8>)>(1);
+        req_tx.push(t);
+        req_rx.push(r);
+    }
+    let (res_tx, res_rx) = std::sync::mpsc::channel::<WindowAnchors>();
+    let mut totals = ServeTotals::default();
+    let mut next = 0u64;
+    let mut pending: std::collections::BTreeMap<u64, WindowAnchors> =
+        std::collections::BTreeMap::new();
+    std::thread::scope(|scope| {
+        for rx in req_rx {
+            let tx = res_tx.clone();
+            scope.spawn(move || {
+                let mut cx = index.ctx();
+                while let Ok((id, text)) = rx.recv() {
+                    // A zero-length window is refused here, by name: it has no
+                    // seed to report and a silently empty answer would be a lie.
+                    if text.is_empty() {
+                        die(
+                            "seeds: zero-length window: every window must carry at least one byte \
+                             (clients must not send empty frames)",
+                        );
+                    }
+                    if text.len() > SEEDS_WINDOW_MAX {
+                        die(&format!(
+                            "seeds: window of {} bytes exceeds the {SEEDS_WINDOW_MAX}-byte cap",
+                            text.len()
+                        ));
+                    }
+                    let wa = window_anchors(&mut cx, sigma, ds, id, &text, params);
+                    tx.send(wa).unwrap();
+                }
+            });
+        }
+        drop(res_tx);
+        let mut sent = 0u64;
+        let mut slot = 0usize;
+        while let Some(text) = produce() {
+            // BACKPRESSURE WITHOUT A SECOND CHANNEL: the in-flight bound is
+            // `jobs` windows, and the wait is a BLOCKING receive on the result
+            // channel itself. A worker can always deliver (the result channel is
+            // unbounded), so this cannot deadlock; a separate permit channel
+            // could, because the sink would wait for a permit while the result it
+            // needed sat unread.
+            while sent - next >= jobs as u64 {
+                let r = res_rx.recv().unwrap_or_else(|_| die("seeds: worker pool ended early"));
+                sink_ready(
+                    std::iter::once(r),
+                    &mut sink,
+                    &mut totals,
+                    &mut next,
+                    &mut pending,
+                );
+            }
+            req_tx[slot].send((sent, text)).unwrap();
+            slot += 1;
+            if slot == jobs {
+                slot = 0;
+            }
+            sent += 1;
+            sink_ready(
+                std::iter::from_fn(|| res_rx.try_recv().ok()),
+                &mut sink,
+                &mut totals,
+                &mut next,
+                &mut pending,
+            );
+        }
+        // The producer is done: everything still in flight arrives, in whatever
+        // order the workers finish, and is written in window order.
+        drop(req_tx);
+        sink_ready(
+            std::iter::from_fn(|| res_rx.recv().ok()),
+            &mut sink,
+            &mut totals,
+            &mut next,
+            &mut pending,
+        );
+        assert!(
+            pending.is_empty(),
+            "SEEDS_SINK: {} windows were produced and never written",
+            pending.len()
+        );
+        assert_eq!(
+            sent, totals.windows,
+            "SEEDS_WINDOW_LOST: the producer sent {sent} windows, the sink wrote {}",
+            totals.windows
+        );
+        totals
+    })
+}
+
+/// Consume results from `res` - a blocking or a draining iterator, the caller
+/// decides - and write them in WINDOW order. This is the only place output
+/// order is decided, which is what makes `-j` invisible in the bytes.
+fn sink_ready<W, S>(
+    res: W,
+    sink: &mut S,
+    totals: &mut ServeTotals,
+    next: &mut u64,
+    pending: &mut std::collections::BTreeMap<u64, WindowAnchors>,
+) where
+    W: Iterator<Item = WindowAnchors>,
+    S: FnMut(&WindowAnchors) -> std::io::Result<()>,
+{
+    for r in res {
+        pending.insert(r.window_id, r);
+        while let Some(w) = pending.remove(next) {
+            sink(&w).unwrap_or_else(|e| die(&format!("seeds: write: {e}")));
+            totals.add(&w);
+            *next += 1;
+        }
+    }
+}
+
+/// `xsa seeds <container> --serve -j N` and `xsa seeds <container> --windows FILE
+/// --corpus FILE`: one process, one open, many windows. Both are the SAME
+/// computation on the same scan; they differ only in where the query bytes come
+/// from and in the answer's encoding.
+fn seeds_served(
+    container: &str,
+    docs_dir: Option<&str>,
+    p: &SeedParams,
+    serve: bool,
+    windows_path: Option<&str>,
+    windows_bin: bool,
+    corpus_path: Option<&str>,
+    jobs: usize,
+    rss_gb: Option<f64>,
+) {
+    let started = Instant::now();
+    let rchar0 = proc_io("rchar");
+    let syscr0 = proc_io("syscr");
+    let jobs = if jobs == 0 { 1 } else { jobs };
+    let reader = Reader::open(container).unwrap_or_else(|e| {
+        die(&format!(
+            "{e}\n  supported: SXI2 v6 lite (members m1,m4,m5,m7,m10,m11)\n  \
+             migration: a legacy container must be rebuilt with `xsa build`."
+        ))
+    });
+    let n = reader.n;
+    let text_len = n.saturating_sub(1);
+    // THE DOCUMENT STRUCTURE, resolved ONCE from the container's m15. No m15 =
+    // the doc field is absent for every row (marked, never guessed), and that is
+    // journaled rather than silently produced.
+    let ds = crate::docstarts::DocStarts::from_container(&reader);
+    let docs_id = match &ds {
+        Some(d) => format!("m15:{}", d.docs),
+        None => "absent".to_string(),
+    };
+    let index = seeds_open_index(reader, jobs, rss_gb);
+    let sigma = index.reader.sigma;
+    // THE OPEN IS THE ONLY VERIFICATION, and it has already happened: the m1 audit
+    // ran in `open`, the m11 anchor header was checked, and m15 was parsed and
+    // range-checked. Nothing below re-verifies the index; frames only carry bytes.
+    let arena_bytes = index.cache_bytes();
+    let cap_bytes = rss_gb.map(|g| (g * (1u64 << 30) as f64) as u64).unwrap_or(index.rss_cap());
+    eprintln!(
+        "SEEDS_SERVE_READY mode={} jobs={jobs} n={n} text_len={text_len} docs={docs_id} \
+         container_bytes={} arena_bytes={arena_bytes} cap_bytes={cap_bytes} target_mult={} \
+         cap={} min_len={} max_len={} stride={} max_seeds={} anchor_max_per_seed={} \
+         open_ms={:.3}",
+        if serve { "serve" } else { "windows" },
+        std::fs::metadata(container).map(|m| m.len()).unwrap_or(0),
+        p.target,
+        p.cap.map(|c| c.to_string()).unwrap_or_else(|| "none".into()),
+        p.min_len,
+        p.max_len,
+        p.stride,
+        p.max_seeds,
+        p.anchor_per_seed,
+        started.elapsed().as_secs_f64() * 1e3,
+    );
+
+    let stdout = std::io::stdout();
+    let mut out = BufWriter::with_capacity(1 << 20, stdout.lock());
+    let totals = if serve {
+        // ---- framed stdin: u32 length + bytes per window, u32 length + payload per
+        // answer. The same frame reader `mem --serve` uses, including its 16 MiB
+        // refusal.
+        let stdin = std::io::stdin();
+        let mut input = stdin.lock();
+        seeds_pipeline(
+            &index,
+            &sigma,
+            ds.as_ref(),
+            jobs,
+            p,
+            move || {
+                read_mem_request(&mut input)
+                    .unwrap_or_else(|e| die(&format!("seeds --serve: request frame: {e}")))
+            },
+            |w: &WindowAnchors| {
+                let b = anchor_frame_payload(w);
+                out.write_all(&(b.len() as u32).to_le_bytes())?;
+                out.write_all(&b)?;
+                out.flush()
+            },
+        )
+    } else {
+        // ---- declared windows over a corpus: the byte ranges are the file's, not
+        // an inference. Each window's text is `pread` into one bounded buffer (the
+        // cap is the frame cap) and handed to the same pipeline.
+        let wpath = windows_path.unwrap();
+        let cpath = corpus_path.unwrap();
+        let mut src = WindowSource::open(wpath, windows_bin);
+        let corpus = File::open(cpath).unwrap_or_else(|e| {
+            die(&format!("seeds: open corpus {cpath}: {e}"))
+        });
+        let corpus_len = corpus
+            .metadata()
+            .unwrap_or_else(|e| die(&format!("seeds: stat corpus {cpath}: {e}")))
+            .len();
+        eprintln!(
+            "SEEDS_WINDOWS source={wpath} format={} corpus={cpath} corpus_bytes={corpus_len} \
+             container_text_bytes={text_len}",
+            if windows_bin { "bin" } else { "jsonl" },
+        );
+        let header = anchors_header(p, &docs_id);
+        writeln!(out, "{header}").unwrap();
+        writeln!(
+            out,
+            "window_id\tquery_offset\tcorpus_doc\tcorpus_offset\tmatch_len\tmultiplicity"
+        )
+        .unwrap();
+        let ds_ref = ds.as_ref();
+        let totals = seeds_pipeline(
+            &index,
+            &sigma,
+            ds_ref,
+            jobs,
+            p,
+            move || -> Option<Vec<u8>> {
+                let w = src.next()?;
+                // The window's byte range, resolved the way consult resolves it and
+                // REFUSED when it cannot be resolved (never inferred).
+                let (base, whole_doc) = if w.base == BASE_ABSENT {
+                    match ds_ref {
+                        Some(d) => {
+                            if w.doc >= d.docs {
+                                die(&format!(
+                                    "seeds: window doc={} is past the container's {} documents \
+                                     (m15)",
+                                    w.doc, d.docs
+                                ));
+                            }
+                            (d.select(w.doc), w.whole_doc)
+                        }
+                        None => die(
+                            "seeds: a window record declares no base and this container carries \
+                             no m15, so its byte range cannot be resolved; give base+start+len in \
+                             the window record",
+                        ),
+                    }
+                } else {
+                    (w.base, false)
+                };
+                let len = if whole_doc {
+                    // the whole document: to the next start (or the text end)
+                    let d = ds_ref.unwrap();
+                    let end = if w.doc + 1 < d.docs { d.select(w.doc + 1) } else { d.text_len };
+                    end.checked_sub(base).unwrap_or_else(|| {
+                        die("seeds: whole-document window has a start past its end")
+                    })
+                } else {
+                    u64::from(w.len)
+                };
+                if len == 0 || len > SEEDS_WINDOW_MAX as u64 {
+                    die(&format!(
+                        "seeds: window len={len} outside 1..={SEEDS_WINDOW_MAX} (declared in the \
+                         window file)"
+                    ));
+                }
+                let start = base + w.start;
+                if start + len > corpus_len {
+                    die(&format!(
+                        "seeds: window [{start},{}) leaves the {corpus_len}-byte corpus {cpath}",
+                        start + len
+                    ));
+                }
+                let mut buf = vec![0u8; len as usize];
+                std::os::unix::fs::FileExt::read_exact_at(&corpus, &mut buf, start)
+                    .unwrap_or_else(|e| die(&format!("seeds: read corpus {cpath}: {e}")));
+                Some(buf)
+            },
+            |w: &WindowAnchors| {
+                anchors_write_tsv(&mut out, w)?;
+                out.flush()
+            },
+        );
+        totals
+    };
+    let secs = started.elapsed().as_secs_f64();
+    let rchar = proc_io("rchar").saturating_sub(rchar0);
+    let syscr = proc_io("syscr").saturating_sub(syscr0);
+    let (hits, misses, decodes, _drops) = index.cache_stats();
+    let pos_per_s = totals.positions as f64 / secs;
+    eprintln!(
+        "SEEDS_SERVE_STATS mode={mode} windows={windows} text_bytes={text_bytes} \
+         windows_scanned={windows_scanned} seeds={seeds} rows={rows} positions={positions} \
+         seconds={secs:.3} positions_per_s={pos_per_s:.1} lf_steps={lf_steps} \
+         lf_steps_per_position={lps:.1} ranks={ranks} doc_absent={doc_absent} hits={hits} \
+         misses={misses} decodes={decodes} rchar={rchar} syscr={syscr} peak_rss_gb={rss:.3} \
+         cap_gb={cap:.3} arena_bytes={arena_bytes} jobs={jobs} scan_ms={scan_ms:.3} \
+         locate_ms={locate_ms:.3}",
+        mode = if serve { "serve" } else { "windows" },
+        windows = totals.windows,
+        text_bytes = totals.text_bytes,
+        windows_scanned = totals.windows_scanned,
+        seeds = totals.seeds,
+        rows = totals.rows,
+        positions = totals.positions,
+        lf_steps = totals.lf_steps,
+        ranks = totals.ranks,
+        doc_absent = totals.doc_absent,
+        rss = proc_peak_rss() as f64 / (1u64 << 30) as f64,
+        cap = cap_bytes as f64 / (1u64 << 30) as f64,
+        scan_ms = totals.scan_ms,
+        locate_ms = totals.locate_ms,
+        lps = totals.lf_steps as f64 / totals.positions.max(1) as f64,
     );
 }
 

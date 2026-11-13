@@ -269,6 +269,7 @@ pub fn fanout_command(raw: &[std::ffi::OsString]) {
         stride: 1,
         skip_markup,
         reserve: max_seeds,
+        quiet: false,
     };
     let out = scan_text(&mut cx, &sigma, text, &o);
     let scan_ms = out.scan_ms;
