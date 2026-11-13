@@ -42,17 +42,34 @@ def extract(s, head):
     if s == 'Wikipedia (en)' and 2 < len(t) <= 200:
         return t
     if s == 'ArXiv':
-        for l in lines[:12]:
+        for l in lines[:30]:
             ls = l.decode('utf-8', 'replace').strip()
             if ls.startswith('title:'):
-                return ls[6:].strip().strip("'\"")
+                return ls[6:].strip().strip("'\"") or None
         return None
     if s in ('PubMed Abstracts',) and 10 < len(t) <= 300:
         return t
-    if s == 'StackExchange' and t.startswith('Q:'):
-        return t[2:].strip() or None
+    if s == 'StackExchange':
+        # title is the first non-empty line AFTER the bare "Q:" line
+        seen_q = False
+        for l in lines[:6]:
+            ls = l.decode('utf-8', 'replace').strip()
+            if not ls:
+                continue
+            if not seen_q and ls == 'Q:':
+                seen_q = True
+                continue
+            if seen_q and 3 <= len(ls) <= 240:
+                return ls
+        return None
     if s == 'HackerNews' and ' - ' in t:
         return t.rsplit(' - ', 1)[0].strip()
+    if s == 'Enron Emails':
+        for l in lines[:24]:
+            ls = l.decode('utf-8', 'replace').strip()
+            if ls.lower().startswith('subject:') and len(ls) > 9:
+                return ls[8:].strip()
+        return None
     return None
 
 random.seed(20261113)
@@ -69,7 +86,7 @@ for s, ids in sorted(by_set.items()):
     for d in sample:
         st = docstart(d)
         nxt = docstart(d + 1) if d + 1 < docs else st + 1
-        avail = min(512, max(0, nxt - 1 - st))
+        avail = min(2048, max(0, nxt - 1 - st))
         if avail <= 0:
             continue
         F.seek(st)
