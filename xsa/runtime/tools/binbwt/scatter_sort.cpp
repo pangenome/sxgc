@@ -911,6 +911,31 @@ int main(int argc, char** argv) {
         else die("unknown arg " + a);
     }
     (void)sort_mode;
+    // THE SAME THREE KNOBS FOR `xsa build`, WHICH CANNOT PASS THEM AS FLAGS YET:
+    // the product route (xsa/src/chain.rs) builds the producer's argv from a fixed
+    // list, so a knob that only exists as a CLI flag would be unreachable from the
+    // one command the pile run actually uses. The environment is how the existing
+    // A/B levers travel too (XSA_LCE_VERIFY). Flags still win, and the source of
+    // every value is journaled.
+    std::string knob_source = "default";
+    if (const char* e = ::getenv("XSA_SUBDIV_POSITION_BUDGET_BYTES")) {
+        pos_budget_bytes = std::strtoull(e, nullptr, 10);
+        knob_source = "env";
+    }
+    if (const char* e = ::getenv("XSA_SUBDIV_STRATEGY")) {
+        subdiv_strategy = e;
+        knob_source = "env";
+    }
+    if (const char* e = ::getenv("XSA_SUBDIV_LEAF_COVERAGE_PCT")) {
+        leaf_coverage_pct = std::atof(e);
+        knob_source = "env";
+    }
+    if (knob_source == "env" && (subdiv_strategy != "auto" || pos_budget_bytes || leaf_coverage_pct != 5.0))
+        knob_source = "env+flags(cli wins)";
+    std::fprintf(stderr,
+        "SS_SUBDIV_KNOBS strategy=%s position_budget_bytes=%" PRIu64
+        " leaf_coverage_pct=%.2f source=%s\n",
+        subdiv_strategy.c_str(), pos_budget_bytes, leaf_coverage_pct, knob_source.c_str());
     if (subdiv_strategy != "auto" && subdiv_strategy != "local" && subdiv_strategy != "global")
         die("--subdiv-strategy must be auto|local|global (got " + subdiv_strategy + ")");
     if (!(leaf_coverage_pct > 0.0 && leaf_coverage_pct <= 100.0))

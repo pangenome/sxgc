@@ -309,15 +309,30 @@ position window sized to the disk the operator is willing to give it — this is
 one new knob, and it trades disk for corpus passes one-for-one:
 
 ```
+XSA_SUBDIV_POSITION_BUDGET_BYTES=1000000000000 \
 xsa build --tape --input /mnt/nvme2n1/erikg/pile.txt --scratch PILE \
           --threads 96 --memory-gb 96 --scratch-budget-gb 250 \
-          --trie-depth 8 --trie-min-support 1000 --docs-map pilemap_full \
-          --subdiv-position-budget-bytes 1000000000000     # 1 TB -> ~11 scatter passes
+          --trie-depth 8 --trie-min-support 1000 --docs-map pilemap_full
 ```
 
-(`--subdiv-strategy` and `--subdiv-leaf-coverage-pct` keep their defaults; every
-value the plan and the descent used is journaled, so a relaunch is checkable
-against `SS_SURVEY`/`SS_PLAN`/`SS_SUBDIV_*` without re-deriving anything.)
+Why the environment and not a flag: `xsa build` builds the producer's argv from a
+fixed list (`xsa/src/chain.rs:2566`), so a new CLI flag would be unreachable from
+the command the pile run actually uses, and plumbing it through the plan/knobs
+digest (`xsa/src/recovery.rs` hashes the knobs) is a change this lane is not
+allowed to make blind. `scatter_sort` therefore reads the three knobs from the
+environment as well (`XSA_SUBDIV_POSITION_BUDGET_BYTES`,
+`XSA_SUBDIV_STRATEGY`, `XSA_SUBDIV_LEAF_COVERAGE_PCT`), CLI flags win over the
+environment, and `SS_SUBDIV_KNOBS ... source=env|default|env+flags(cli wins)` is
+journaled on every run so a relaunch cannot silently differ from what was
+measured. `--subdiv-strategy` and `--subdiv-leaf-coverage-pct` keep their
+defaults; every value the plan and the descent used is journaled, so a relaunch
+is checkable against `SS_SURVEY`/`SS_PLAN`/`SS_SUBDIV_*` without re-deriving
+anything.
+
+Sizing the window: 1 TB of position files ⇒ `ceil(local_rows × 8 / 1e12)` ≈ 11
+scatter passes at the pile (N = 1.307 TB); 20 GB (the floor the gate script ran
+with) ⇒ 524 passes. The disk is free to ~8 TB on the pile box, and the position
+files of one window are unlinked as soon as the window's waves are descended.
 
 ## Residual risks
 
