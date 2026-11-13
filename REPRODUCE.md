@@ -1181,6 +1181,11 @@ xsa seeds corpus.sxi2 article.txt --target-mult 500   # looser neighbourhood
 xsa seeds corpus.sxi2 - --target-mult 50 --jsonl      # a fragment on stdin
 xsa seeds corpus.sxi2 article.txt --max-mult 200 --min-mult 2   # multiplicity-band mode
 xsa seeds corpus.sxi2 article.txt --docs DIR --limit 32 --jsonl
+# ---- the warm/batch path and the chain-ready anchor table
+xsa seeds corpus.sxi2 article.txt --anchors           # anchor table, one window (TSV)
+xsa seeds corpus.sxi2 --serve -j 16 --rss-gb 8        # frames: u32 len+bytes per window
+xsa seeds corpus.sxi2 --windows wins.jsonl --corpus pile.txt -j 16 --rss-gb 8
+xsa seeds corpus.sxi2 article.txt --windows-out wins.jsonl --window-len 200
 ```
 
 A **seed** is an exact substring of the *text you pass in* (not of the corpus: the
@@ -1218,10 +1223,60 @@ across the interval. `SEEDS_STATS` journals windows, outcomes, mean length, the
 multiplicity histogram, probe counts and scan/locate time. Empty text is refused;
 `0x1E` is an ordinary byte, as everywhere else.
 
+#### The warm path and the anchor table
+
+`seeds` used to be **cold and locate-bound**: every invocation paid the whole open,
+and every reported position paid an LF walk to an m11 anchor (~4,600 steps, a
+random block decode each). On a 100 GB head that was 1.3 GB read and 27 s for a
+200-byte text. It now has the same two devices as `mem --serve`/`consult`:
+
+* **`--serve -j N`** reads u32-length-prefixed window frames from stdin and writes
+  one u32-length-prefixed ANCHOR frame per window (u64 window id, u32 rows, u32
+  seeds, then 32-byte rows of query_offset u32, match_len u32, multiplicity u64,
+  corpus_offset u64, corpus_doc u64 with all-ones = absent). The container is
+  opened, audited and its m15 resolved **once**, before the first frame; nothing
+  is re-verified per window. `-j N` sizes the thread pool the locate layer runs on
+  (`-j 1` is the serial baseline). `--rss-gb G` caps the process and sizes the
+  decoded-block arena (G/8); `--cache-gb G` pins the arena alone.
+* **`--windows FILE --corpus FILE`** replays a window set that is **DECLARED** in
+  the file - the XSWIN001 binary or JSONL stream (`doc`, `base`, `start`, `len`)
+  `xsa consult` already consumes - so a boundary is never inferred from content or
+  from a newline; a window that leaves the corpus, or whose range cannot be
+  resolved, is refused by name. `--windows-bin` selects the binary form.
+  `--windows-out FILE --window-len L [--window-stride S]` DECLARES such a set over
+  a text file so a later run can replay it. `--stride S` is unrelated: it samples
+  every S-th POSITION *inside* a window.
+* **`--anchors`** is the chain-ready table for any input form (a text file is
+  window 0):
+  `window_id, query_offset, corpus_doc, corpus_offset, match_len, multiplicity`,
+  one row per reported occurrence, with the tie order
+  `(query_offset, corpus_offset, match_len, multiplicity)` in the header and
+  enforced by one sort - two runs, and any `-j`, produce a byte-identical table.
+  `corpus_doc` is member m15's document at the located offset and `-` when the
+  container carries no m15 (a docid is never guessed).
+
+**The multiplicities are exact aggregates** - the BWT interval width - so
+`--max-seeds K`, `--limit N` and `--anchor-max-per-seed M` are **output caps, not
+support thresholds** (`--anchor-max-per-seed 0` reports every occurrence, one
+locate per occurrence).
+
+Measured on the two 100 GB heads (4 windows x 200 B, 1232 anchor rows): cold
+**6.6 / 5.3** positions per second per invocation, warm **92.9 / 86.3** at `-j 64
+--rss-gb 8` - **14.1x / 16.3x**, byte-identical at every `-j`, with the same 4.99 GB
+of container reads and 8 % of the container touched. The layer table, the read
+receipts and the residual risks are in
+[RESULTS_SEEDS_WARM.md](RESULTS_SEEDS_WARM.md).
+
 Gates: `tools/binbwt/tests/seeds_gate.py` with the independent occurrence oracle
 `tools/binbwt/tests/seeds_oracle.c` (one mmap pass per pattern, `memmem`,
 overlapping occurrences, no index code) - it re-counts every emitted seed, the
-one-byte-longer seed, and the whole multiplicity ladder at each emitted offset.
+one-byte-longer seed, and the whole multiplicity ladder at each emitted offset -
+and `tools/binbwt/tests/seeds_warm_gate.py` with
+`tools/binbwt/tests/seeds_anchor_oracle.c` (W1 the three input forms agree, W2
+every anchor row exact against the oracle including its occurrence START, W3 the
+doc field against an independent 0x1E separator scan, W4 determinism across `-j`,
+W5 reads follow the query set, W6 the declared-window round trip and six
+refusals).
 
 ### Restart after interruption
 

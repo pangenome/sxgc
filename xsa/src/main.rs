@@ -1393,9 +1393,15 @@ fn usage() -> ! {
     eprintln!("           default is the single longest MEM, --all-mems reports every one;");
     eprintln!("           xsa mem <container> --serve -j N is the framed (u32 len + bytes) mode;");
     eprintln!("  xsa seeds <container> <text-file|-> [--target-mult T] [--max-len 64] [--min-len 12] [--max-seeds K] [--stride S] [--skip-markup] [--docs DIR] [--limit N]");
-    eprintln!("           [--stride S] [--docs DIR] [--limit N] [--jsonl] [--nearest]   adaptive exact-match seeding:");
-    eprintln!("           per window the seed LENGTH is solved so multiplicity lands on the target fan-out;");
-    eprintln!("           --max-mult M [--min-mult m] is the alternative multiplicity-band mode");
+    eprintln!("           [--jsonl] [--nearest] [--anchors] [--windows-out FILE --window-len L]");
+    eprintln!("           adaptive exact-match seeding: per window the seed LENGTH is solved so");
+    eprintln!("           multiplicity lands on the target fan-out; --max-mult M [--min-mult m] is the");
+    eprintln!("           alternative multiplicity-band mode; --anchors emits the chain-ready anchor table");
+    eprintln!("  xsa seeds <container> --serve -j N [--rss-gb G] [--cache-gb G]   warm/batch path:");
+    eprintln!("           u32-length-prefixed window frames on stdin (mem --serve's encoding), the index");
+    eprintln!("           opened ONCE, one fixed-width anchor frame per window on stdout;");
+    eprintln!("           xsa seeds <container> --windows FILE --corpus FILE  declared window set");
+    eprintln!("           (XSWIN001/JSONL: doc, base, start, len) -> the anchor table as TSV");
     eprintln!("  xsa fanout <container> <text-file|-> [--max-seeds 256] [--min-len 12] [--max-len 64] [--region-gap 2000] [--top 15] [--docs DIR] [--jsonl]");
     eprintln!("           rarity-weighted fan-out: weight(seed)=ln(D/mult), score(doc)=sum over the");
     eprintln!("           DISTINCT seeds shared; hits are also clustered into regions and scored");

@@ -470,7 +470,29 @@ xsa seeds corpus.sxi2 article.txt --target-mult 50 [--max-len 64] [--min-len 12]
          [--stride S] [--skip-markup]
 xsa seeds corpus.sxi2 article.txt --max-mult 200 --min-mult 2      (band mode)
 xsa seeds corpus.sxi2 - --target-mult 500                          (text on stdin)
+xsa seeds corpus.sxi2 article.txt --anchors                        (anchor table)
+xsa seeds corpus.sxi2 --serve -j 16 --rss-gb 8                     (warm, framed)
+xsa seeds corpus.sxi2 --windows wins.jsonl --corpus pile.txt -j 16 (warm, declared)
 ```
+
+**`seeds` is served too.** One process, one open, many windows: `--serve` takes
+u32-length-prefixed window frames on stdin (the `mem --serve` encoding) and answers
+one fixed-width ANCHOR frame per window, and `--windows FILE --corpus FILE` reads a
+DECLARED window stream (the XSWIN001/JSONL form `consult` uses: `doc`, `base`,
+`start`, `len`) and writes the anchor table as TSV. `--anchors` gives the same
+table for a single text file. The anchor table is
+
+```
+window_id  query_offset  corpus_doc  corpus_offset  match_len  multiplicity
+```
+
+with `multiplicity` the EXACT interval width (so `--max-seeds`, `--limit` and
+`--anchor-max-per-seed` are OUTPUT CAPS, never support thresholds), a documented
+tie order `(query_offset, corpus_offset, match_len, multiplicity)` that makes two
+runs byte-identical, and `corpus_doc` from member m15 or `-` when the container has
+none. See [RESULTS_SEEDS_WARM.md](RESULTS_SEEDS_WARM.md) for the layer table
+(scan 1.24 ms/window with zero locates; anchor locate 9.9 ms/row at `-j 64`;
+document resolve 0.47 ms/row) and the cold-vs-warm rate on both 100 GB heads.
 
 `xsa seeds` answers a different question from `mem`: not "where does this query
 occur" but **"which substrings of this text are specific enough to pin, and
