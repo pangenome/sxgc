@@ -93,8 +93,9 @@ C4. ROUTE SELECTION (decided):
       deliberately: an explicit invocation must be possible for legacy scripts, for
       reproduced commands in papers and journals, and so that "which route?" is never a
       silent inference. `--tape` is idempotent, not deprecated.
-    - `--bin` selects the bin producer: the A/B arm, kept exactly like `--legacy-merge`.
-      `--tape` and `--bin` are mutually exclusive; giving both is an error.
+    - `--bin` selects the bin producer: the A/B arm of the one route (the pre-bin
+      chunk+merge route that used to be the third arm is REMOVED). `--tape` and
+      `--bin` are mutually exclusive; giving both is an error.
     - PROVENANCE: the journal records both the route AND how it was chosen:
           XSA_BUILD_ROUTE route=tape source=default      (no flag given)
           XSA_BUILD_ROUTE route=tape source=explicit

@@ -358,13 +358,9 @@ pub fn mem_command(raw: &[std::ffi::OsString]) {
     if !serve && query.as_ref().is_some_and(|q| q.len() > PAT_LEN_MAX as usize) {
         die(&format!("mem: query must be 1..={PAT_LEN_MAX} bytes"));
     }
-    let reader = Reader::open(container).unwrap_or_else(|e| {
-        die(&format!(
-            "{e}\n  supported: SXI2 v6 lite (members m1,m4,m5,m7,m10,m11)\n  \
-             migration: a legacy container must be rebuilt with `xsa build`;\n  \
-             `xsa mem` replaces `xsa mems` for v6 lite containers."
-        ))
-    });
+    // `Reader::open`'s error IS the refusal (the shape + the rebuild
+    // instruction): there is nothing to add and nothing to fall back to.
+    let reader = Reader::open(container).unwrap_or_else(|e| die(&e));
     // Positions need the corpus sidecars; interval widths do not. Serve mode and
     // --limit 0 never locate, so they never touch a corpus byte.
     let docs = if serve || limit == 0 {

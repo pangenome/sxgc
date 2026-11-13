@@ -899,8 +899,10 @@ rec \x1E rec \x1E … rec \x1E        (one terminal separator terminates; it doe
   dropped). `--patterns` always reads raw 0x1E records, including a leading `>`.
   There is **one orientation only** — no reverse complement is ever searched.
 - **`--ri4` no longer exists** (nor `--sxi`): the container is positional and
-  identifies itself. `--ri4` is refused by name, and so is `--mode` (a lite
-  container has no alphabet).
+  identifies itself. `--ri4` is refused by name, and so is `--mode` (the
+  container has no alphabet). The container must be the ONE supported shape
+  (SXI2 v10 with m15 + m20); anything else is refused with the rebuild
+  instruction — see "One container format" in the README.
 
 ### Verified against a brute-force oracle
 
@@ -993,8 +995,10 @@ document: the tool refuses loudly and early, and each refusal names the knob.
 | `V2_BIN_CAP_OVER_BUDGET: --bin-live-cap <v> cannot fit the phase budget: …` | an explicit `--bin-live-cap` is too large for `--memory-gb` | lower the cap or raise `--memory-gb` |
 | `REMAP_REFUSED histogram total <x> != corpus bytes <n>` / `REMAP_REFUSED not a bijection: code <v> is named twice` | the corpus-derived remap did not validate | stop; regression |
 | `BUNDLE_TOOL_MISMATCH <name>: <path> sha256=<a> expected=<b>` | the extracted stage cache is corrupt or stale | `rm -rf ~/.cache/xsa/<manifest-sha256>` and re-run |
-| `--bin-live-cap is a bin-pipeline flag` / `<knob> needs --phrase-radix` / `CROSS_V2_PRODUCERS=<v> is INERT under the bin shape (…)` | a knob belongs to a different route | drop it, or select that route |
-| `--chunks is INERT under the bin pipeline (the default; the producer sweeps the corpus itself, there is no chunk phase); drop the flag, or pass --legacy-merge for the chunk+merge route` ✔ | same: `--chunks/--chunk-mb/--kway/--fanin` are legacy-merge only | drop them |
+| `<knob> needs --phrase-radix` / `CROSS_V2_PRODUCERS=<v> is INERT under the bin shape (…)` | a knob does nothing without its arm | drop it, or arm it |
+| `--legacy-merge is REMOVED: the pre-bin chunk front end + k-way merge walk no longer exists …` ✔ | a flag from the deleted chunk+merge route | drop it: `xsa build` is the bin/tape pipeline |
+| `--chunks belonged to the chunk front end + k-way merge walk, which this build does not have: that route is REMOVED …` ✔ (same for `--chunk-mb`, `--kway`, `--fanin`) | knobs of the deleted route | drop them |
+| `--docs-map is REQUIRED: the one container format carries m15 (document starts), and a container without it is not queryable by any xsa command …` | a build without a document map would publish an unopenable container | pass `--docs-map DIR` (pile map) or `--docs-map PREFIX` (CORPUS V2 pair) |
 | `unknown option <x>` | the tape route accepts `--input --scratch --tape --bin --threads --memory-gb --plan-only --skip-fit-check --with-chi --chi-expect --finish-as-gb --wit-ram-gb --snap-1e --remap --stripe` (`--with-lcp-runs`, `--no-lcp-runs`, `--scratch-budget-gb`, `--finish-as-gb`; `--allow-infeasible` is the alias of `--skip-fit-check`; the `--bin-*` and `--phrase-*` arms are ignored/tuned per route) | — |
 
 **The tape route has a minimum corpus size (~1.1 MB).** The band size is bounded by
@@ -1016,14 +1020,14 @@ pointer to `xsa build --tape --input`; tiny tape inputs remain unsupported.
 | message (verbatim) | means | change |
 |---|---|---|
 | `query: --ri4/--sxi are gone; the container is positional and identifies itself` ✔ | old CLI shape | `xsa query <container> --patterns <file>` |
-| `query: --mode is not accepted for a lite container: … no reverse complement` ✔ | DNA-style orientation does not exist on a byte index | drop `--mode` |
-| `<file>: unrecognised file (magic 49742069) is not a queryable index` ✔ | you passed text or an unrelated file | pass the `.sxi2` |
+| `query: --mode is not accepted: the container carries no alphabet, and patterns are raw bytes … no reverse complement` ✔ | DNA-style orientation does not exist on a byte index | drop `--mode` |
+| `<file>: unrecognised file (magic 49742069). this build serves exactly ONE container format: SXI2 v10 with m15 (document starts) and m20 (context trie) … rebuild with `xsa build`.` ✔ | you passed text or an unrelated file | pass the `.sxi2` |
 | `<path>: record <i> is empty; the 0x1E contract has no empty record (and no escaping: a bare 0x1E is always a record boundary)` ✔ | `a\x1Eb\x1E\x1Ec\x1E` — two separators in a row | remove the empty record |
 | `<path>: 0x1E record file holds no record (0 bytes)` ✔ | empty pattern file | — |
 | `<path>: record <i> is <k> bytes, over the 65536-byte pattern limit` ✔ | a 70,000-byte "pattern" | split it (a pattern is a read, not an assembly) |
 | `query: --counts is a tsv option; --output jsonl already reports a count per id` ✔ | flag conflict, refused before any work | pick one |
 | `query: unknown option <x>` | unrecognized option | use positional patterns or one pattern file; use `--` for leading hyphens |
-| `<path>: <e> … supported: SXI2 v6 lite …` | a legacy/`.ri4` container | rebuild it with `xsa build`; `query-legacy` is deprecated and ~1e6× slower per pattern |
+| `<path>: SXI2 v6 container (an older shape: below the supported one) … this build serves exactly ONE container format: SXI2 v10 … rebuild with `xsa build`.` | an artifact in an older shape (`.ri4`, SXI1, SXI2 v2..v9) — UNSUPPORTED | rebuild it from the corpus with `xsa build --docs-map …`. There is no converter and no flag that reads it |
 
 ### Native-stage refusals you can still see through `xsa build`
 
@@ -1164,10 +1168,8 @@ default output is the single longest MEM, `--all-mems` reports every one, `-k N`
 caps that list. Empty queries are refused. Framed `--serve` mode answers the
 longest MEM only, with the frame layout documented in SERVING.md.
 
-`xsa mem` **supersedes `xsa mems` for SXI2 v6 lite containers**: `mems` goes
-through the phi-era reader and fails on them with `SXI: invalid header`. Use
-`xsa mem` (or `xsa mems` only for the archived legacy artifacts it was written
-for).
+`xsa mem` is the only MEM surface: `xsa mems` was part of the phi-era readers
+and is REMOVED (with `--sxi LESS`-style `.ri4` inputs and `witness-build`).
 
 Gates: `tools/binbwt/tests/mem_gate.py` (X1 independent mmap brute force via
 `tools/binbwt/tests/mem_oracle.c`, X2 edge cases, X3 document spot checks) and
@@ -1192,8 +1194,8 @@ A **seed** is an exact substring of the *text you pass in* (not of the corpus: t
 text is normally an article or a fragment of the pile) that is at the same time
 **specific** (long) and **recurring** (multiplicity inside a band). No embeddings,
 no tokenizer, no vectors: the only primitive is the FM-index interval, so seeds
-are cheap, exact and deterministic. `xsa seeds` reuses the same SXI2 v6 lite
-kernel as `xsa branches` and `xsa mem` and reads no member they did not need.
+are cheap, exact and deterministic. `xsa seeds` reuses the same query kernel as
+`xsa branches` and `xsa mem` and reads no member they did not need.
 
 `--target-mult T` (default 50) is the driving parameter: the seed LENGTH is
 solved for, because multiplicity is **non-increasing in length** (a longer match

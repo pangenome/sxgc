@@ -13,7 +13,7 @@ permutation and backward search; returned bytes are original corpus bytes.
 No byte is used as an absent-result sentinel. The corpus is a single byte
 sequence: document separator 0x1E is an ordinary searchable byte.
 
-This v6 lite container has no move/psi member. Its sparse m11 anchors contain
+The container (SXI2 v10, the ONE supported shape) has no move/psi member. Its sparse m11 anchors contain
 the SA coordinate at the tail of every 1024th BWT run. For intervals of at most
 64 rows, this implementation walks LF to an anchor for each occurrence, then
 reads `corpus[SA[row] + context.len()]`. Cost is O(context length rank steps +
@@ -149,10 +149,9 @@ xsa mem corpus.sxi2 --serve -j 32
 ```
 
 `xsa mem` answers maximal exact matches (MEMs) of a byte query from the same
-SXI2 v6 lite kernel, using no container member that `branches` did not already
-need. It **supersedes the legacy `xsa mems` for v6 lite containers**:
-`mems` routes through the phi-era reader and refuses these containers by name
-("SXI: invalid header").
+query kernel, using no container member that `branches` did not already need.
+It is the ONLY MEM surface: `xsa mems` (the phi-era reader, `.ri4`/`--sxi`
+inputs) is REMOVED, and the retired name refuses by name.
 
 A match `query[a..b)` (half-open) is **maximal** when it occurs and cannot be
 extended *within the query*:
@@ -498,7 +497,7 @@ document resolve 0.47 ms/row) and the cold-vs-warm rate on both 100 GB heads.
 occur" but **"which substrings of this text are specific enough to pin, and
 recurring enough to be a neighbourhood"**. The text is an article or a fragment
 that is NOT the corpus. There is no embedding, no tokenizer and no vector - the
-only primitive is the FM-index interval, over the same v6 lite kernel (members
+only primitive is the FM-index interval, over the same query kernel (members
 m1,m4,m11, no member `branches` and `mem` did not already need). Nothing is
 materialized to disc: the text is read through a windowed mmap (or one bounded
 buffer for stdin), no text is ever written anywhere, and there is no per-suffix

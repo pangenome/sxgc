@@ -886,7 +886,10 @@ pub(super) fn done(scratch: &Path, container: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
     #[test]
-    fn legacy_route_cannot_install_tape_recovery() {
+    fn the_removed_merge_route_cannot_install_tape_recovery() {
+        // The pre-bin chunk+merge route is GONE, so a --tape run can never be
+        // mis-tagged as a merge run: the flag refuses by name before any recovery
+        // marker could be installed.
         let args = [
             "--tape",
             "--legacy-merge",
@@ -896,9 +899,7 @@ mod tests {
             "scratch",
         ]
         .map(String::from);
-        assert!(parse_chain(&args)
-            .unwrap_err()
-            .contains("mutually exclusive"));
+        assert!(parse_chain(&args).unwrap_err().contains("REMOVED"));
     }
     #[test]
     fn exact_field_refusal() {

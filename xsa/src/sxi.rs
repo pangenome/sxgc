@@ -24,10 +24,6 @@ fn u64at(b: &[u8], o: usize) -> u64 {
 pub(crate) fn header_run_count(b: &[u8]) -> u64 { u64at(b, 24) }
 /// IEEE CRC32 of a byte slice (the container's member/header checksum).
 pub fn crc32_of(b: &[u8]) -> u32 { !crc(!0, b) }
-/// One CRC32 step, so a writer that streams a member can checksum it while it
-/// copies it (the v9 context-trie container appender). Start at `!0`, fold every
-/// chunk, publish `!v`.
-pub fn crc_step(v: u32, b: &[u8]) -> u32 { crc(v, b) }
 fn crc(mut v: u32, b: &[u8]) -> u32 {
     static TABLE: std::sync::OnceLock<[u32; 256]> = std::sync::OnceLock::new();
     let table = TABLE.get_or_init(|| {
@@ -93,51 +89,48 @@ impl Container {
         }
         rd(&mut f, &mut b[4..]);
         let version = u32at(&b,4);
-        need((&b[..4]==b"SXI1" && version==1) || (&b[..4]==b"SXI2" && (2..=10).contains(&version)), "unsupported version");
-        // v7 = the INCREMENTAL (streaming) layout: member bytes are appended in
-        // stream order and the member directory is a TRAILING section at
-        // length-40*count. Everything else about the container is v6's.
-        // v8 = v7 + m14 (LCP over runs); v9 = v8 + m20 (the context trie);
-        // v10 = v9 + m15 (the document starts). The layout stays v7's; the
-        // flags declare the extra members (bits 7/8/9 = 128/256/512).
-        let tail_dir = version >= 7;
+        // FORWARD-ONLY: the same one-shape gate the query kernel applies. A file
+        // that is not SXI2 v10 never becomes a Container, so no caller of this
+        // reader can paper over an older shape. The message is the crate's ONE
+        // refusal (crate::qlite::refuse), so `stats`, `sxi-info` and every other
+        // export path refuse in the same words.
+        if &b[..4] != b"SXI2" || version != 10 {
+            die(&crate::qlite::refuse(path, &crate::qlite::describe_format(path)));
+        }
+        // The member directory is a TRAILING section at length-40*count: member
+        // bytes are appended in stream order and this is the only layout the
+        // supported shape has.
+        let tail_dir = true;
         let n = u64at(&b, 8);
         let k = u64at(&b, 16);
         let r = header_run_count(&b);
         let count = u32at(&b, 32);
         let hs = u32at(&b, 36);
         let flags = u64at(&b, 48);
-        need(flags & 64 == 0, "missing member m5 (chi): this full validator/export reader requires chi; use the qlite query reader");
+        need(flags & 64 == 0, "missing member m5 (chi): this full validator/export reader requires chi");
         need(
             n > 0 && n < u64::MAX && r > 0 && r <= n && k <= n && r <= (u64::MAX - 2048) / 8,
             "invalid n/k/r",
         );
-        need(version != 2 || r <= u32::MAX as u64, "SXI2 v2 run ID width");
-        // v6 is the pile "lite" member set: the phi and escape members (8, 9)
-        // are gone, LF starts are derived from member 1 (member 10 is a
-        // zero-byte declaration), and locate runs on member 11's 1/1024 run
-        // tails. The block-compressed lite shape carries m12 (the m1 block
-        // directory) and m13 (sampled locate) too, and v8+ may add m14, m20
-        // and m15: the directory holds 5..=10 entries, mirroring the qlite
-        // reader's own law.
-        let lite = version >= 6;
+        // The supported shape's member set: m1, m4, m5, m6|m7, m10, m11, m12,
+        // m13, m15, m20 and the optional m14 - 9..=11 directory slots, with the
+        // two members the query surface is built on DECLARED by their flags
+        // (bit 8 = m20, bit 9 = m15). Anything else is refused, not tolerated.
         need(
-            (if lite {(5..=10).contains(&count)}
-                else if version==1 {(5..=7).contains(&count)} else {(7..=9).contains(&count)})
-                && hs == 64 + 40 * count
+            (9..=11).contains(&count) && hs == 64 + 40 * count
                 && u64at(&b, 40) == length
-                && (flags & !(1 | 8 | 16 | 32 | 128 | 256 | 512) == 0
-                    || (!lite && (flags <= 1 || (8..=15).contains(&flags) || (24..=31).contains(&flags))))
+                && flags & !(1 | 8 | 16 | 32 | 128 | 256 | 512) == 0
+                && flags & 256 != 0 && flags & 512 != 0
                 && u32at(&b, 60) == 0,
-            "invalid header",
+            "invalid header (not the supported SXI2 v10 shape: m15+m20 declared, 9..=11 members)",
         );
         let expected = u32at(&b, 56);
         b[56..60].fill(0);
         let mut hc = crc(!0, &b);
         let mut members = Vec::new();
-        if tail_dir {
+        {
             // The 40-byte entries live at the END of the file; the 64-byte header
-            // keeps declaring header+directory bytes (hs) for compatibility, but
+            // keeps declaring header+directory bytes (hs), but
             // the physical position is derived from the length the header carries.
             let dir_off = u64at(&b, 40).checked_sub(40 * count as u64)
                 .unwrap_or_else(|| die("SXI: v7 directory offset underflow"));
@@ -156,19 +149,12 @@ impl Container {
                 count: u64at(&d, 24),
                 checksum: u32at(&d, 32),
             };
-            let expected_id=if version==1 {
-                if i==5 && count==6 && m.id==7 {7} else {i+1}
-            } else if version==2 {
-                let optional=count-7;
-                if i<5 {i+1} else if i<5+optional {
-                    if optional==1 && m.id==7 {7} else {i+1}
-                } else {8+i-(5+optional)}
-            } else if lite {
-                // THE MODERN LITE SHAPE: the directory is SORTED BY ID, so the
-                // extension members follow m13 in ID order - 14 (LCP over
-                // runs), 15 (document starts), 20 (context trie) - each present
-                // iff its flag bit is set (128/512/256). The 6/7 optionality is
-                // inferred from the count exactly as before.
+            // THE ONE SHAPE's member order: the directory is SORTED BY ID, so
+            // the extension members follow m13 in ID order - 14 (LCP over runs,
+            // optional), 15 (document starts), 20 (context trie) - each present
+            // iff its flag bit is set (128/512/256). The m6/m7 split is the one
+            // remaining optionality and is inferred from the count.
+            let expected_id = {
                 let ext = u64::from(flags & 128 != 0)
                     + u64::from(flags & 256 != 0)
                     + u64::from(flags & 512 != 0);
@@ -184,17 +170,20 @@ impl Container {
                 if flags & 128 != 0 { ids.push(14); }
                 if flags & 512 != 0 { ids.push(15); }
                 if flags & 256 != 0 { ids.push(20); }
-                need(ids.len() == count as usize, "lite member count vs flags");
+                need(ids.len() == count as usize, "member count vs flags");
                 ids[i as usize]
-            } else {
-                let optional=count-7;
-                if i<3 {[1,4,5][i as usize]} else if i<3+optional {
-                    if optional==1 && flags&16!=0 {7} else {6+i-3}
-                } else {8+i-(3+optional)}
             };
-            let expected_codec=if version>=7 {match m.id {1=>116,5=>105,10=>110,11=>111,12=>112,13=>115,_=>m.id}}
-                else if version>=3 {match m.id {1=>101,5=>105,8=>if version==5 {119} else if version==6 {if m.codec==119 {119} else {120}} else {118},9=>109,10=>110,11=>111,_=>m.id}}
-                else if version==2 {match m.id {1=>101,5=>105,8=>108,9=>109,_=>m.id}} else {m.id};
+            // THE ONE SHAPE's codecs. A member whose codec is not this shape's is
+            // a different shape, not a variant to be sniffed.
+            let expected_codec = match m.id {
+                1 => 116,
+                5 => 105,
+                10 => 110,
+                11 => 111,
+                12 => 112,
+                13 => 115,
+                _ => m.id,
+            };
             need(m.id==expected_id && m.codec==expected_codec && u32at(&d,36)==0,
                 &format!("unsupported/duplicate member: slot {i} has id {} codec {} (expected id {expected_id} codec {expected_codec}), version {version} count {count} flags {flags}",
                     m.id, m.codec));
@@ -311,121 +300,21 @@ impl Container {
             need((1..=64).contains(&w) && r <= u64::MAX / w && bits == r * w && bits <= u64::MAX - 63
                 && tail.bytes == 9 + ((bits + 63) / 64) * 8,"packed tail size");
         }
-        // Validate every independent member even on the header-only sweep path.
-        if version>=2 {
-            let t_runs=std::time::Instant::now();
-            let (frequencies,heads,lengths)=super::sxi2::runs(path,c.member(1),n,r);
-            super::trace_since("sxi.runs-decode",t_runs);
-            let t_phi=std::time::Instant::now();
-            if lite {super::sxi2::LiteAnchors::load(path,&c);}
-            else {super::sxi2::Phi::load(path,&c,&frequencies);}
-            super::trace_since("sxi.phi-or-anchors",t_phi);
-            if version>=3 {
-                let t_lf=std::time::Instant::now();
-                super::sxi2::LfMap::load(path,&c,&heads,&lengths,&frequencies);
-                super::trace_since("sxi.lf-starts",t_lf);
-            }
-        } else {
-            at(&mut f, c.member(1).offset);
-            let mut cb = [0; 2048];rd(&mut f,&mut cb);
-            let mut chars=BufReader::new(File::open(path).unwrap());at(&mut chars,c.member(1).offset+2048);
-            at(&mut f,c.member(1).offset+2048+r);
-            let mut totals=[0u64;256];let mut sum=0u64;
-            for _ in 0..r {let mut ch=[0];let mut len=[0;4];rd(&mut chars,&mut ch);rd(&mut f,&mut len);
-                let len=u32at(&len,0) as u64;need(len>0&&len<=n-sum,"run length");sum+=len;totals[ch[0] as usize]+=len;}
-            need(sum==n,"run sum");sum=0;for(i,t)in totals.iter().enumerate(){need(u64at(&cb,8*i)==sum,"C table");sum+=t;}
-        }
-        if version<3 {
-            at(&mut f, c.member(3).offset);
-            let mut x = [0; 8];
-            for _ in 0..r {rd(&mut f, &mut x);need(u64at(&x, 0) < n, "head range");}
-            // Packed words are streamed with a 128-bit reservoir, not expanded.
-            at(&mut f, c.member(2).offset + 9);
-            let mut reservoir = 0u128;let mut available = 0u32;
-            for _ in 0..r {
-                if available < w as u32 {rd(&mut f, &mut x);reservoir |= (u64at(&x, 0) as u128) << available;available += 64;}
-                let value = reservoir & ((1u128 << w) - 1);
-                need(value < (n as u128), "tail range");reservoir >>= w;available -= w as u32;
-            }
-        }
-        if c.members.iter().any(|m| m.id == 6) {
-            let m = c.member(6);
-            at(&mut f, m.offset);
-            let mut bytes = vec![0; m.bytes as usize]; rd(&mut f, &mut bytes);
-            let records = super::product::names(&bytes, n).unwrap_or_else(|e| die(&e));
-            need(flags & 8 == 0 || records.len() as u64 == k, "record count mismatch");
-            c.k = records.len() as u64;
-        }
-        let t_anc=std::time::Instant::now();
-        c.anchors(path);
-        super::trace_since("sxi.anchors",t_anc);
+        // The phi-era member validators (the run decode, Phi, the LF starts map,
+        // the packed head/tail samples and the names record count) are GONE: they
+        // decoded the whole run stream on every open (385 s on a 10 GB container,
+        // tools/binbwt/RESULTS_QUERY_PROFILE.md) and none of them describes the
+        // supported shape. What remains below is what the shape actually has: the
+        // chi set (m5) decoded once as the law check, and the member CRCs above.
         let t_chi=std::time::Instant::now();
         c.write_chi(path, &mut std::io::sink());
         super::trace_since("sxi.chi-decode",t_chi);
         Some(c)
     }
-    pub fn anchors(&self, path: &str) -> super::Anchors {
-        let mut f = BufReader::new(File::open(path).unwrap());
-        at(&mut f, self.member(4).offset);
-        let mut b = [0; 12];
-        rd(&mut f, &mut b);
-        need(
-            u32at(&b, 0) == 0x434e4158 && u64at(&b, 4) == self.member(4).count,
-            "anchor header",
-        );
-        let mut rows = Vec::new();
-        let mut s = Vec::new();
-        for _ in 0..self.member(4).count {
-            let mut e = [0; 16];
-            rd(&mut f, &mut e);
-            let row = u64at(&e, 0);
-            let v = u64at(&e, 8);
-            need(
-                row < self.n && v < self.n && rows.last().map_or(true, |&p| p < row),
-                "anchor value/order",
-            );
-            rows.push(row);
-            s.push(v);
-        }
-        super::Anchors { rows, s }
-    }
+    /// Export m5 (chi) as the u64 LE stream. One codec: the supported shape's
+    /// EF-encoded set. The delta-varint arm belonged to the shapes before it.
     pub fn write_chi(&self, path: &str, out: &mut impl Write) {
-        let m = self.member(5);
-        if self.version>=2 {super::sxi2::chi(path,m,self.n,out);return;}
-        let mut f = BufReader::new(File::open(path).unwrap());
-        at(&mut f, m.offset);
-        let mut used = 0;
-        let mut prev = 0u64;
-        for i in 0..m.count {
-            let mut d = 0u64;
-            let mut shift = 0;
-            loop {
-                need(used < m.bytes, "truncated chi varint");
-                let mut b = [0];
-                rd(&mut f, &mut b);
-                used += 1;
-                let payload = (b[0] & 127) as u64;
-                need(
-                    shift < 64 && (shift < 63 || payload <= 1),
-                    "chi varint overflow",
-                );
-                d |= payload << shift;
-                if b[0] & 128 == 0 {
-                    need(shift == 0 || payload != 0, "noncanonical chi varint");
-                    break;
-                }
-                shift += 7;
-            }
-            need(i == 0 || d > 0, "duplicate chi");
-            let value = prev
-                .checked_add(d)
-                .unwrap_or_else(|| die("SXI: chi overflow"));
-            need(value <= self.n, "chi range");
-            out.write_all(&value.to_le_bytes())
-                .unwrap_or_else(|e| die(&format!("write chi: {e}")));
-            prev = value;
-        }
-        need(used == m.bytes, "trailing chi bytes");
+        super::sxi2::chi(path, self.member(5), self.n, out);
     }
 }
 pub fn command(args: &[String]) {

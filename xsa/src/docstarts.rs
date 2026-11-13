@@ -135,18 +135,23 @@ pub struct DocStarts {
 }
 
 impl DocStarts {
-    /// From a container member: `None` = the container carries no m15 (the
-    /// feature is OFF; the caller's refusal then names the version). A present
-    /// but invalid member is a hard error, never a silent None.
-    pub fn from_container(reader: &qlite::Reader) -> Option<DocStarts> {
-        let m = reader.members.iter().find(|m| m.id == M15)?;
-        Some(Self::parse(
+    /// From a container member. m15 is REQUIRED by the one container shape, so
+    /// this cannot fail on a container a reader accepted; a container that
+    /// reaches here without it is a broken invariant and dies loudly (there is
+    /// no `None` arm and no degraded mode to fall into).
+    pub fn from_container(reader: &qlite::Reader) -> DocStarts {
+        let m = reader
+            .members
+            .iter()
+            .find(|m| m.id == M15)
+            .unwrap_or_else(|| die(&qlite::member_required(&reader.path, M15, "document starts")));
+        Self::parse(
             Backing::Map(reader.map_arc()),
             m.offset as usize,
             m.bytes as u64,
             reader.version,
             reader.n,
-        ))
+        )
     }
 
     /// From an XSEP v1 `seps.bin` (the `--docs DIR` sidecar). The map must
@@ -633,6 +638,11 @@ pub enum Source {
     DocsMap(String),
     /// `--doc-starts FILE`: a raw little-endian u64 array.
     DocStartsFile(String),
+    /// `--docs-map PREFIX` where PREFIX names the CORPUS V2 sidecar pair: the
+    /// starts come out of `PREFIX.starts` (XCS2 v1), decoded by corpusv2 and
+    /// streamed like any other source, so both `--docs-map` arms embed m15 and
+    /// both produce the one container shape.
+    CorpusV2(String),
 }
 
 /// A streaming, fully validated starts source. Prefix semantics: with
@@ -650,6 +660,8 @@ pub struct StartsIter {
 enum SourceKind {
     Xsep(Arc<memmap2::Mmap>),
     Raw(Arc<memmap2::Mmap>),
+    /// the CORPUS V2 `.starts` table, already decoded into absolute starts
+    Mem(Arc<Vec<u64>>),
 }
 
 enum SourceState {
@@ -716,6 +728,20 @@ impl StartsIter {
                     docs_declared: Some(docs),
                 }
             }
+            Source::CorpusV2(prefix) => {
+                let (docs, _bytes, starts) =
+                    crate::corpusv2::read_starts(Path::new(&format!("{prefix}.starts")));
+                need(
+                    starts.len() as u64 == docs,
+                    "corpusv2 starts table disagrees with its own doc_count",
+                );
+                StartsIter {
+                    kind: SourceKind::Mem(Arc::new(starts)),
+                    limit,
+                    state: SourceState::Raw { i: 0 },
+                    docs_declared: Some(docs),
+                }
+            }
             Source::DocStartsFile(path) => {
                 let file = File::open(path)
                     .unwrap_or_else(|e| die(&format!("DOCSTARTS: open {path}: {e}")));
@@ -746,17 +772,25 @@ impl Iterator for StartsIter {
         match &mut self.state {
             SourceState::Done => None,
             SourceState::Raw { i } => {
-                let map = match &self.kind {
-                    SourceKind::Raw(m) => m,
+                let at = *i;
+                let start = match &self.kind {
+                    SourceKind::Raw(m) => {
+                        if at >= (m.len() / 8) as u64 {
+                            self.state = SourceState::Done;
+                            return None;
+                        }
+                        u64_at(m, 8 * at as usize)
+                    }
+                    SourceKind::Mem(v) => match v.get(at as usize) {
+                        Some(&s) => s,
+                        None => {
+                            self.state = SourceState::Done;
+                            return None;
+                        }
+                    },
                     _ => die("DOCSTARTS: raw source state mismatch"),
                 };
-                let at = *i;
-                if at >= (map.len() / 8) as u64 {
-                    self.state = SourceState::Done;
-                    return None;
-                }
                 *i += 1;
-                let start = u64_at(map, 8 * at as usize);
                 if let Some(limit) = self.limit {
                     if start >= limit {
                         self.state = SourceState::Done;
@@ -819,19 +853,19 @@ pub struct EmbedStats {
     pub seconds: f64,
 }
 
-/// Append m15 to a container. Versions 7..=9 (trailing directory) append IN
-/// PLACE (no container byte is copied); version 6 (head directory) REQUIRES
-/// `out` and streams a copy to it in the v7+ layout. Both end as SXI2 v10 with
-/// flag bit 9 set. Version 10+ with m15 already present is refused.
-pub fn embed(
-    path: &str,
-    source: &Source,
-    stride: u64,
-    out: Option<&str>,
-) -> EmbedStats {
+/// Append m15 to the container the BUILD is still assembling.
+///
+/// The input is the finish stage's container, joined in place by the driver: m20
+/// first (see `ctx::append_m20`), then m15 here, so the file between the finish
+/// and this call is v7/v8/v9 with no m15 - a half-built container, which is why
+/// this opens it through `qlite::open_partial` (the builder's door) and NOT
+/// through the query gate. The FINAL state (v10, m15 + the run-stream members)
+/// is certified by `qlite::Reader::open` immediately after, below: a build that
+/// did not land the one shape cannot exit 0.
+pub fn embed(path: &str, source: &Source, stride: u64) -> EmbedStats {
     let t0 = std::time::Instant::now();
-    let reader = qlite::Reader::open(path).unwrap_or_else(|e| die(&format!("DOCSTARTS: {e}")));
-    if reader.members.iter().any(|m| m.id == M15) {
+    let reader = qlite::open_partial(path).unwrap_or_else(|e| die(&format!("DOCSTARTS: {e}")));
+    if reader.member(M15).is_some() {
         die(&format!(
             "DOCSTARTS: {path} is SXI2 v{} and already carries member m15 (document starts); \
              refusing to append a second one",
@@ -845,7 +879,7 @@ pub fn embed(
         // the map's own declared doc_count: the honest expectation is the
         // documents that START inside the text, counted in an INDEPENDENT pass
         // over the same validated deltas, so a truncated stream still dies.
-        Source::DocsMap(_) => {
+        Source::DocsMap(_) | Source::CorpusV2(_) => {
             let mut probe = StartsIter::open(source, Some(text_len));
             let mut c = 0u64;
             while probe.next().is_some() {
@@ -864,66 +898,37 @@ pub fn embed(
             let b = std::fs::read(p).unwrap_or_else(|e| die(&format!("DOCSTARTS: {e}")));
             u64_at(&b, 24)
         }
+        Source::CorpusV2(prefix) => {
+            let (_, bytes, _) = crate::corpusv2::read_starts(Path::new(&format!("{prefix}.starts")));
+            bytes
+        }
         // a raw starts file has no separate corpus notion: the starts are
         // this text's, by construction of the caller's file
         Source::DocStartsFile(_) => text_len,
     };
-    let s = if reader.version >= 7 {
-        need(
-            out.is_none(),
-            "--out is only needed for a v6 container (head directory); this one has a trailing \
-             directory and is appended in place",
-        );
-        append_in_place(&reader, &encoded, path);
-        EmbedStats {
-            docs: encoded.docs,
-            member_bytes: encoded.bytes.len() as u64,
-            gaps_bytes: encoded.gaps_bytes,
-            plain_u64_bytes: encoded.plain_u64_bytes,
-            stride: encoded.stride,
-            text_len,
-            corpus_bytes,
-            in_place: true,
-            seconds: t0.elapsed().as_secs_f64(),
-        }
-    } else if reader.version == 6 {
-        let out = out.unwrap_or_else(|| {
-            die(&format!(
-                "DOCSTARTS: {path} is SXI2 v6 (head member directory); appending in place would \
-                 rewrite the whole file - pass --out NEW.sxi2 for the copy route"
-            ))
-        });
-        append_copy(&reader, &encoded, out);
-        EmbedStats {
-            docs: encoded.docs,
-            member_bytes: encoded.bytes.len() as u64,
-            gaps_bytes: encoded.gaps_bytes,
-            plain_u64_bytes: encoded.plain_u64_bytes,
-            stride: encoded.stride,
-            text_len,
-            corpus_bytes,
-            in_place: false,
-            seconds: t0.elapsed().as_secs_f64(),
-        }
-    } else {
-        die(&format!(
-            "DOCSTARTS: {path} is SXI2 v{}, not a lite container (want 6..=9)",
-            reader.version
-        ))
+    append_in_place(&reader, &encoded, path);
+    let s = EmbedStats {
+        docs: encoded.docs,
+        member_bytes: encoded.bytes.len() as u64,
+        gaps_bytes: encoded.gaps_bytes,
+        plain_u64_bytes: encoded.plain_u64_bytes,
+        stride: encoded.stride,
+        text_len,
+        corpus_bytes,
+        in_place: true,
+        seconds: t0.elapsed().as_secs_f64(),
     };
-    // THE MEMBER MUST BE READABLE FROM THE PUBLISHED CONTAINER: reopen, load
-    // through the full validator, and sample it. A payload that lands wrong is
-    // a wrong product, not a wash.
-    let published = if s.in_place { path.to_string() } else { out.unwrap().to_string() };
-    let check = qlite::Reader::open(&published).unwrap_or_else(|e| die(&format!("DOCSTARTS: reopen {published}: {e}")));
+    // THE MEMBER MUST BE READABLE FROM THE PUBLISHED CONTAINER: reopen it through
+    // the QUERY GATE - the same door every query uses - and sample it. A payload
+    // that lands wrong is a wrong product, not a wash.
+    let check = qlite::Reader::open(path).unwrap_or_else(|e| die(&format!("DOCSTARTS: reopen {path}: {e}")));
     if check.version != VERSION || check.flags & FLAG == 0 {
         die(&format!(
-            "DOCSTARTS: {published} reopens as SXI2 v{} flags={:#x}, want v{VERSION} with bit {FLAG} set",
+            "DOCSTARTS: {path} reopens as SXI2 v{} flags={:#x}, want v{VERSION} with bit {FLAG} set",
             check.version, check.flags
         ));
     }
-    let ds = DocStarts::from_container(&check)
-        .unwrap_or_else(|| die("DOCSTARTS: the published container has no m15 after the append"));
+    let ds = DocStarts::from_container(&check);
     need(ds.docs == s.docs, "published member doc_count disagrees with the encode");
     // one round trip through rank/select at the text's ends
     if s.docs > 0 {
@@ -938,7 +943,7 @@ pub fn embed(
 /// In-place append for the trailing-directory layout (v7+), after the m20
 /// appender's own pattern: truncate to the members' end, write m15, rewrite
 /// the directory with one more entry, patch the header (version 10, flag bit).
-fn append_in_place(reader: &qlite::Reader, encoded: &Encoded, path: &str) {
+fn append_in_place(reader: &qlite::Partial, encoded: &Encoded, path: &str) {
     use std::os::unix::fs::FileExt;
     let count = reader.members.len();
     let length = std::fs::metadata(path).unwrap().len();
@@ -997,109 +1002,6 @@ fn append_in_place(reader: &qlite::Reader, encoded: &Encoded, path: &str) {
     f.sync_all().unwrap_or_else(|e| die(&format!("DOCSTARTS: fsync {path}: {e}")));
 }
 
-/// The copy route for a v6 container (head directory): stream every member to a
-/// NEW file in the trailing-directory layout, then m15, then the directory.
-/// No byte of the source is modified.
-fn append_copy(reader: &qlite::Reader, encoded: &Encoded, out: &str) {
-    use std::io::{BufWriter, Write};
-    use std::os::unix::fs::FileExt;
-    need(
-        std::fs::symlink_metadata(out).is_err(),
-        &format!("DOCSTARTS: output {out} exists; refusing to overwrite"),
-    );
-    let mut spans: Vec<(u64, u64, sxi::Member)> =
-        reader.members.iter().map(|m| (m.offset, m.bytes, m.clone())).collect();
-    spans.sort_unstable_by_key(|(o, _, _)| *o);
-    let mut crcb = vec![0u8; 1 << 20];
-    let tmp = format!("{out}.partial");
-    let wfile = std::fs::OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(&tmp)
-        .unwrap_or_else(|e| die(&format!("DOCSTARTS: create {tmp}: {e}")));
-    let mut w = BufWriter::with_capacity(1 << 20, wfile);
-    // RESERVE the 64-byte header: the member copy must start at file offset 64,
-    // and a fresh BufWriter writes from 0. The placeholder is overwritten by the
-    // header patch below (write_all_at at 0), but without it the first member's
-    // bytes would land in the header area and be destroyed by that patch.
-    w.write_all(&[0u8; 64])
-        .unwrap_or_else(|e| die(&format!("DOCSTARTS: reserve header: {e}")));
-    let mut members: Vec<(u32, u32, u64, u64, u64, u32)> = Vec::new(); // id, codec, off, bytes, count, crc
-    let mut wpos = 64u64;
-    let mut off = 64u64;
-    for (soff, bytes, m) in &spans {
-        off = (off + 7) / 8 * 8;
-        if off != wpos {
-            w.write_all(&vec![0u8; (off - wpos) as usize])
-                .unwrap_or_else(|e| die(&format!("DOCSTARTS: pad: {e}")));
-            wpos = off;
-        }
-        let mut left = *bytes as usize;
-        let mut at = *soff as usize;
-        let mut v = !0u32;
-        while left > 0 {
-            let z = left.min(crcb.len());
-            crcb[..z].copy_from_slice(&reader.map()[at..at + z]);
-            v = sxi::crc_step(v, &crcb[..z]);
-            w.write_all(&crcb[..z]).unwrap_or_else(|e| die(&format!("DOCSTARTS: copy member m{}: {e}", m.id)));
-            at += z;
-            left -= z;
-            wpos += z as u64;
-        }
-        // member bytes are copied verbatim: their CRCs are re-derived AND
-        // compared, so a copy error can never publish.
-        if !v != m.checksum {
-            die(&format!(
-                "DOCSTARTS: member m{} CRC changed during the copy (source checksum corruption?)",
-                m.id
-            ));
-        }
-        members.push((m.id, m.codec, off, *bytes, m.count, m.checksum));
-        off += bytes;
-    }
-    off = (off + 7) / 8 * 8;
-    if off != wpos {
-        w.write_all(&vec![0u8; (off - wpos) as usize])
-            .unwrap_or_else(|e| die(&format!("DOCSTARTS: pad: {e}")));
-    }
-    w.write_all(&encoded.bytes).unwrap_or_else(|e| die(&format!("DOCSTARTS: write m15: {e}")));
-    members.push((M15, M15, off, encoded.bytes.len() as u64, encoded.docs, sxi::crc32_of(&encoded.bytes)));
-    members.sort_unstable_by_key(|m| m.0);
-    let mut dir = Vec::with_capacity(40 * members.len());
-    for &(id, codec, moff, bytes, count, crc) in &members {
-        dir.extend_from_slice(&id.to_le_bytes());
-        dir.extend_from_slice(&codec.to_le_bytes());
-        dir.extend_from_slice(&moff.to_le_bytes());
-        dir.extend_from_slice(&bytes.to_le_bytes());
-        dir.extend_from_slice(&count.to_le_bytes());
-        dir.extend_from_slice(&crc.to_le_bytes());
-        // THE ENTRY IS 40 BYTES: 36 of fields + 4 of pad (the trailing directory
-        // the reader walks is 40-byte entries; 36 would skew every offset after
-        // the first and misalign the directory itself)
-        dir.extend_from_slice(&[0u8; 4]);
-    }
-    w.write_all(&dir).unwrap_or_else(|e| die(&format!("DOCSTARTS: write directory: {e}")));
-    w.flush().unwrap_or_else(|e| die(&format!("DOCSTARTS: flush: {e}")));
-    let new_len = off + encoded.bytes.len() as u64 + dir.len() as u64;
-    // header: copy the source's 64 bytes, patch version/count/hs/length/flags
-    let mut h = [0u8; 64];
-    h.copy_from_slice(&reader.map()[..64]);
-    h[4..8].copy_from_slice(&VERSION.to_le_bytes());
-    h[32..36].copy_from_slice(&(members.len() as u32).to_le_bytes());
-    h[36..40].copy_from_slice(&((64 + 40 * members.len()) as u32).to_le_bytes());
-    h[40..48].copy_from_slice(&new_len.to_le_bytes());
-    let flags = u64::from_le_bytes(h[48..56].try_into().unwrap()) | FLAG;
-    h[48..56].copy_from_slice(&flags.to_le_bytes());
-    h[56..60].fill(0);
-    let mut hc = h.to_vec();
-    hc.extend_from_slice(&dir);
-    let crc = sxi::crc32_of(&hc);
-    h[56..60].copy_from_slice(&crc.to_le_bytes());
-    w.get_ref().write_all_at(&h, 0).unwrap_or_else(|e| die(&format!("DOCSTARTS: patch header: {e}")));
-    w.get_ref().sync_all().unwrap_or_else(|e| die(&format!("DOCSTARTS: fsync {tmp}: {e}")));
-    drop(w);
-    std::fs::rename(&tmp, out).unwrap_or_else(|e| die(&format!("DOCSTARTS: rename {tmp} -> {out}: {e}")));
-}
 
 /// One journal line, exactly the shape the consumer's D2.5 asked for.
 pub fn journal_line(s: &EmbedStats) -> String {
@@ -1263,14 +1165,7 @@ fn verify_command(args: &[String]) {
     let container = container.unwrap_or_else(|| die("DOCSTARTS verify: need a container"));
     let map = map.unwrap_or_else(|| die("DOCSTARTS verify: need --docs-map DIR (the seps.bin oracle)"));
     let reader = qlite::Reader::open(&container).unwrap_or_else(|e| die(&format!("DOCSTARTS: {e}")));
-    let ds = DocStarts::from_container(&reader).unwrap_or_else(|| {
-        die(&format!(
-            "DOCSTARTS: {container} is SXI2 v{} and carries no member m15 (document starts); \
-             this is the feature-OFF arm - build with `xsa build --docs-map DIR` or embed with \
-             `xsa docstarts embed`",
-            reader.version
-        ))
-    });
+    let ds = DocStarts::from_container(&reader);
     let oracle = XsepOracle::open(&map);
     // An explicit --range-end is honoured up to the text end; the DEFAULT range
     // is a 10 GB window from --range-start (the gate driver can then sweep the
@@ -1445,12 +1340,7 @@ fn probe_command(args: &[String]) {
     let container = container.unwrap_or_else(|| die("DOCSTARTS probe: need a container"));
     let positions = positions.unwrap_or_else(|| die("DOCSTARTS probe: need --positions FILE"));
     let reader = qlite::Reader::open(&container).unwrap_or_else(|e| die(&format!("DOCSTARTS: {e}")));
-    let ds = DocStarts::from_container(&reader).unwrap_or_else(|| {
-        die(&format!(
-            "DOCSTARTS: {container} is SXI2 v{} and carries no member m15 (document starts)",
-            reader.version
-        ))
-    });
+    let ds = DocStarts::from_container(&reader);
     let data = std::fs::read(&positions).unwrap_or_else(|e| die(&format!("DOCSTARTS: {e}")));
     need(data.len() % 8 == 0, "--positions file is not a whole u64 array");
     for chunk in data.chunks_exact(8) {
@@ -1462,74 +1352,40 @@ fn probe_command(args: &[String]) {
 
 fn info_command(container: &str) {
     let reader = qlite::Reader::open(container).unwrap_or_else(|e| die(&format!("DOCSTARTS: {e}")));
-    match DocStarts::from_container(&reader) {
-        Some(ds) => {
-            let m = reader.member(M15);
-            println!(
-                "DOCSTARTS container={container} version={} present=true docs={} bytes={} \
-                 ratio_vs_n={:.9} encoding={} sample_stride={} text_len={} plain_u64_bytes={}",
-                reader.version,
-                ds.docs,
-                m.bytes,
-                m.bytes as f64 / ds.text_len.max(1) as f64,
-                ENCODING_NAME,
-                ds.stride,
-                ds.text_len,
-                8 * ds.docs,
-            );
-        }
-        None => {
-            println!(
-                "DOCSTARTS container={container} version={} present=false \
-                 reason=no-member-m15 (the feature is OFF; build with `xsa build --docs-map DIR` \
-                 or embed with `xsa docstarts embed`)",
-                reader.version
-            );
-        }
-    }
+    // m15 is part of the one container shape: a container that opens HAS it, so
+    // there is nothing to report as absent.
+    let ds = DocStarts::from_container(&reader);
+    let m = reader.member(M15);
+    // `present=true` stays in the line ON PURPOSE: the field is part of the
+    // output contract scripts parse, and under the one container shape it is a
+    // CONSTANT (a container that opens has m15) rather than a variable.
+    println!(
+        "DOCSTARTS container={container} version={} present=true docs={} bytes={} \
+         ratio_vs_n={:.9} encoding={} sample_stride={} text_len={} plain_u64_bytes={}",
+        reader.version,
+        ds.docs,
+        m.bytes,
+        m.bytes as f64 / ds.text_len.max(1) as f64,
+        ENCODING_NAME,
+        ds.stride,
+        ds.text_len,
+        8 * ds.docs,
+    );
 }
 
-fn embed_command(args: &[String]) {
-    let mut container: Option<String> = None;
-    let mut map: Option<String> = None;
-    let mut starts_file: Option<String> = None;
-    let mut out: Option<String> = None;
-    let stride = SAMPLE_STRIDE;
-    let mut i = 0usize;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--docs-map" => {
-                i += 1;
-                map = Some(args.get(i).cloned().unwrap_or_else(|| die("DOCSTARTS: --docs-map needs a directory")));
-            }
-            "--doc-starts" => {
-                i += 1;
-                starts_file = Some(args.get(i).cloned().unwrap_or_else(|| die("DOCSTARTS: --doc-starts needs a file")));
-            }
-            "--out" => {
-                i += 1;
-                out = Some(args.get(i).cloned().unwrap_or_else(|| die("DOCSTARTS: --out needs a file")));
-            }
-            other => {
-                if other.starts_with('-') {
-                    die(&format!("DOCSTARTS embed: unknown option '{other}'"));
-                }
-                if container.replace(other.to_string()).is_some() {
-                    die("DOCSTARTS embed: one container only");
-                }
-            }
-        }
-        i += 1;
-    }
-    let container = container.unwrap_or_else(|| die("DOCSTARTS embed: need a container"));
-    let source = match (map, starts_file) {
-        (Some(d), None) => Source::DocsMap(d),
-        (None, Some(f)) => Source::DocStartsFile(f),
-        (Some(_), Some(_)) => die("DOCSTARTS embed: --docs-map and --doc-starts are mutually exclusive"),
-        (None, None) => die("DOCSTARTS embed: need --docs-map DIR or --doc-starts FILE"),
-    };
-    let stats = embed(&container, &source, stride, out.as_deref());
-    println!("{}", journal_line(&stats));
+/// FORWARD-ONLY: `xsa docstarts embed` is GONE as a command.
+///
+/// It appended m15 to a container that did NOT have it, and the one container
+/// shape carries the member: `xsa build --docs-map` embeds it in the same run
+/// that writes the container, so the post-hoc door had no legal input left.
+/// `embed()` itself stays: it is the in-build JOIN (called once, by
+/// `chain::run_v2_tail`, through the builder's door).
+fn embed_command(_args: &[String]) -> ! {
+    die(
+        "xsa docstarts embed: REMOVED. m15 (document starts) is part of the one container shape \
+         and is embedded by `xsa build --docs-map DIR` (or PREFIX, the CORPUS V2 pair). An \
+         existing container must be REBUILT with its map, not patched.",
+    )
 }
 
 pub fn command(args: &[String]) {
@@ -1544,12 +1400,12 @@ pub fn command(args: &[String]) {
             info_command(&args[1]);
         }
         _ => die(&format!(
-            "usage: xsa docstarts embed|verify|probe|info ...\n  \
-             xsa docstarts embed <container> (--docs-map DIR | --doc-starts FILE) [--out FILE]\n  \
+            "usage: xsa docstarts verify|probe|info ...\n  \
              xsa docstarts verify <container> --docs-map DIR [--samples N] [--range-start B]\n        \
              [--range-end B] [--seed S]\n  \
              xsa docstarts probe <container> --positions FILE\n  \
              xsa docstarts info <container>\n  \
+             (m15 is embedded by `xsa build --docs-map`; there is no post-hoc append)\n  \
              got: {args:?}"
         )),
     }
