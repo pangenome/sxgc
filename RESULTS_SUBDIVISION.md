@@ -159,7 +159,12 @@ Full logs: `/mnt/nvme2n1/erikg/SUBDIV-GATES/all.out` and
 `/mnt/nvme2n1/erikg/SUBDIV-GATES/runs/*/run.log`. Reproduce with
 `WORK=<scratch root> bash gates/subdiv_gates.sh all`.
 
-### G1 fixture parity — 7 fixtures, 44,040,199 rows
+All nine gates in ONE run of `gates/subdiv_gates.sh all` with the final
+binary (`scatter_sort` sha256 `665426745f96aa698352fe91c26a2580952f0bb52d95998e682bedaf11c8a26a`),
+base arm `6cf19f2` (sha256 `6ce8ed2a…`). Full log:
+`/mnt/nvme2n1/erikg/SUBDIV-GATES/final2.out`.
+
+### G1 fixture parity — 7 fixtures, 44,040,199 rows (borrow arm = 6cf19f2)
 
 ```
 SUBDIV_G1 fixture=docsep rows=6291457 bands=92 base_sha=539522013cbe992a586ab44930b083d267eb53aee13d24b66213b13f2967e510 new_sha=539522013cbe992a586ab44930b083d267eb53aee13d24b66213b13f2967e510 equal=1 band_vectors_differ_in=6 sa_check=SA_CHECK_PASS
@@ -170,11 +175,11 @@ SUBDIV_G1 fixture=period2 rows=6291457 bands=91 base_sha=9eec1a23e34595bcc5322f4
 SUBDIV_G1 fixture=r0 rows=6291457 bands=91 base_sha=d3c09c42badedb94ba175cdfa82636f92754e541f5cb0c8f9d77ea673521853b new_sha=d3c09c42badedb94ba175cdfa82636f92754e541f5cb0c8f9d77ea673521853b equal=1 band_vectors_differ_in=7 sa_check=SA_CHECK_PASS
 SUBDIV_G1 fixture=single rows=6291457 bands=91 base_sha=75ce36eb394cc6c3f9db00d96cd3b42aa4d172812f025bd9160b665eb96ae331 new_sha=75ce36eb394cc6c3f9db00d96cd3b42aa4d172812f025bd9160b665eb96ae331 equal=1 band_vectors_differ_in=3 sa_check=SA_CHECK_PASS
 SUBDIV_G1_PASS fixtures=7 rows=44040199 (band stream byte-identical, sa_check PASS on every one)
-SUBDIV_NO_SURVIVORS checked=14 runs tags='g1_base_docsep g1_new_docsep g1_base_eofrun g1_new_eofrun g1_base_internsep g1_new_internsep g1_base_mixed g1_new_mixed g1_base_period2 g1_new_period2 g1_base_r0 g1_new_r0 g1_base_single g1_new_single '
-SUBDIV_NO_SURVIVORS checked=10 runs tags='g6_local_docsep g6_global_docsep g6_local_internsep g6_global_internsep g6_local_mixed g6_global_mixed g6_local_eofrun g6_global_eofrun g6_local_r0 g6_global_r0 '
+SUBDIV_NO_SURVIVORS checked=38 runs tags='g1_base_docsep g1_new_docsep g1_base_eofrun g1_new_eofrun g1_base_internsep g1_new_internsep g1_base_mixed g1_new_mixed g1_base_period2 g1_new_period2 g1_base_r0 g1_new_r0 g1_base_single g1_new_single g2_docsep g2_eofrun g2_internsep g2_mixed g2_period2 g2_r0 g2_single g6_local_docsep g6_global_docsep g6_local_internsep g6_global_internsep g6_local_mixed g6_global_mixed g6_local_eofrun g6_global_eofrun g6_local_r0 g6_global_r0 g7_a_docsep g7_b_docsep g7_a_mixed g7_b_mixed g8 g9 g5 '
+SUBDIV_NO_SURVIVORS checked=43 runs tags='g1_base_docsep g1_new_docsep g1_base_eofrun g1_new_eofrun g1_base_internsep g1_new_internsep g1_base_mixed g1_new_mixed g1_base_period2 g1_new_period2 g1_base_r0 g1_new_r0 g1_base_single g1_new_single g2_docsep g2_eofrun g2_internsep g2_mixed g2_period2 g2_r0 g2_single g6_local_docsep g6_global_docsep g6_local_internsep g6_global_internsep g6_local_mixed g6_global_mixed g6_local_eofrun g6_global_eofrun g6_local_r0 g6_global_r0 g7_a_docsep g7_b_docsep g7_a_mixed g7_b_mixed g8 g9 g5 g3_10gb g3_100gb g3_forced_global g4_100gb_local g4_100gb_global '
 ```
 
-### G2 brute-force SA oracle — 7 cases
+### G2 brute-force SA oracle — 7 adversarial cases
 
 ```
 SUBDIV_ORACLE corpus_n=6291456 entries=6291457 expected=6291457 mismatches=0 first_bad_rank=18446744073709551615 got=18446744073709551615 want=18446744073709551615
@@ -194,59 +199,71 @@ SUBDIV_ORACLE_PASS rows=6291457 mismatches=0 (brute-force sort, virtual END rank
 SUBDIV_G2_PASS cases=7 (EOF run, doc-boundary 0x1E, internal 0x1E, r=0 tails, mixed families, periodic run, single-symbol run)
 ```
 
-### G3 read accounting
+### G3 read accounting — the same class at 10 GB and at the 100 GB head, and the forced-global arm
 
 ```
 SS_SUBDIV_EXACT wave=0 class=<root> depth=1 rows_exact=6422835 rows_est=6422800 rows_err=0.0000 pages_exact=512 coverage_exact=0.000128 coverage_est=0.000128 page_fraction_exact=1.0000 page_fraction_est=1.0000 bytes_read=542113792 rule=exact_from_the_class_full_position_list
 SS_SUBDIV_EXACT wave=1 class=\x20 depth=2 rows_exact=25428847 rows_est=25491490 rows_err=-0.0025 pages_exact=512 coverage_exact=0.000128 coverage_est=0.000128 page_fraction_exact=1.0000 page_fraction_est=1.0000 bytes_read=542113792 rule=exact_from_the_class_full_position_list
 SS_SUBDIV_EXACT wave=2 class=\x20 depth=2 rows_exact=23786304 rows_est=23722422 rows_err=0.0027 pages_exact=512 coverage_exact=0.000128 coverage_est=0.000128 page_fraction_exact=1.0000 page_fraction_est=1.0000 bytes_read=541065216 rule=exact_from_the_class_full_position_list
+SUBDIV_NO_SURVIVORS checked=38 runs tags='g1_base_docsep g1_new_docsep g1_base_eofrun g1_new_eofrun g1_base_internsep g1_new_internsep g1_base_mixed g1_new_mixed g1_base_period2 g1_new_period2 g1_base_r0 g1_new_r0 g1_base_single g1_new_single g2_docsep g2_eofrun g2_internsep g2_mixed g2_period2 g2_r0 g2_single g6_local_docsep g6_global_docsep g6_local_internsep g6_global_internsep g6_local_mixed g6_global_mixed g6_local_eofrun g6_global_eofrun g6_local_r0 g6_global_r0 g7_a_docsep g7_b_docsep g7_a_mixed g7_b_mixed g8 g9 g5 '
+SS_SUBDIV_CLASS_ONLY key='Harper Reed' wave_depth=1 bytes=[48,76) rows_est=472025678 coverage=0.002384 page_fraction=0.9999 strategy=local note=emitted_stream_covers_this_class_only
 SS_PLAN waves=1 local=31 global=0 cache_depth=128 cache_misses=0 stalls=0 saturated=30 samples=4000000 stride=2500 corpus_reads=0 corpus_read_calls=0 rule=answer_from_prefix_cache
 SS_SCATTER pass=1 waves=[0,1) waves_n=1 bytes_read=10000000000 positions=472025678 position_bytes=3776205424 rows_est=472025678 wall=1.02 rule=one_sweep_per_position_window
 SS_SUBDIV_EXACT wave=0 class=<root> depth=1 rows_exact=472025678 rows_est=472025678 rows_err=0.0000 pages_exact=9632 coverage_exact=0.002408 coverage_est=0.002384 page_fraction_exact=1.0100 page_fraction_est=0.9999 bytes_read=10122683392 rule=exact_from_the_class_full_position_list
 SUBDIV_G3_SCALE dir=/mnt/nvme2n1/erikg/SUBDIV-GATES/runs/g3_10gb n=10000000001 class_bytes_read=10122683392 pages_exact=9632 bound=9730MiB within=1 bytes_per_page=1.002 n_fraction=1.012268
+SS_SUBDIV_CLASS_ONLY key='Harper Reed' wave_depth=1 bytes=[69,91) rows_est=2918585840 coverage=0.016753 page_fraction=0.7027 strategy=local note=emitted_stream_covers_this_class_only
 SS_PLAN waves=1 local=48 global=0 cache_depth=128 cache_misses=0 stalls=0 saturated=0 samples=4000000 stride=25000 corpus_reads=0 corpus_read_calls=0 rule=answer_from_prefix_cache
-SS_SCATTER pass=1 waves=[0,1) waves_n=1 bytes_read=100000000000 positions=2918585840 position_bytes=23348686720 rows_est=2918585840 wall=5.97 rule=one_sweep_per_position_window
+SS_SCATTER pass=1 waves=[0,1) waves_n=1 bytes_read=100000000000 positions=2918585840 position_bytes=23348686720 rows_est=2918585840 wall=7.65 rule=one_sweep_per_position_window
 SS_SUBDIV_EXACT wave=0 class=<root> depth=1 rows_exact=2918585840 rows_est=2918585840 rows_err=0.0000 pages_exact=95462 coverage_exact=0.023866 coverage_est=0.016753 page_fraction_exact=1.0010 page_fraction_est=0.7027 bytes_read=100133169152 rule=exact_from_the_class_full_position_list
 SUBDIV_G3_SCALE dir=/mnt/nvme2n1/erikg/SUBDIV-GATES/runs/g3_100gb n=100000000001 class_bytes_read=100133169152 pages_exact=95462 bound=95560MiB within=1 bytes_per_page=1.000 n_fraction=1.001332
 SUBDIV_G3_GLOBAL dir=/mnt/nvme2n1/erikg/SUBDIV-GATES/runs/g3_forced_global classes=1 sweeps=1 (each class exactly one)
 SUBDIV_G3_PASS (PLAN corpus_reads=0; local bytes_read <= the class's own page footprint at BOTH scales)
 SS_SCATTER pass=1 waves=[0,1) waves_n=1 bytes_
-SS_SCATTER pass=1 waves=[0,1) waves_n=1 bytes_read=100000000000 positions=2528840272 position_bytes=20230722176 rows_est=2525225000 wall=12.39 rule=one_sweep_per_position_window
+SS_SUBDIV_CLASS_ONLY key=' e' wave_depth=2 bytes=[101,109) rows_est=2525225000 coverage=0.015634 page_fraction=0.6557 strategy=local note=emitted_stream_covers_this_class_only
+SS_SCATTER pass=1 waves=[0,1) waves_n=1 bytes_read=100000000000 positions=2528840272 position_bytes=20230722176 rows_est=2525225000 wall=13.43 rule=one_sweep_per_position_window
+SS_SUBDIV_CLASS_ONLY key=' e' wave_depth=2 bytes=[101,109) rows_est=2525225000 coverage=0.015634 page_fraction=0.6557 strategy=global note=emitted_stream_covers_this_class_only
+SUBDIV_NO_SURVIVORS checked=43 runs tags='g1_base_docsep g1_new_docsep g1_base_eofrun g1_new_eofrun g1_base_internsep g1_new_internsep g1_base_mixed g1_new_mixed g1_base_period2 g1_new_period2 g1_base_r0 g1_new_r0 g1_base_single g1_new_single g2_docsep g2_eofrun g2_internsep g2_mixed g2_period2 g2_r0 g2_single g6_local_docsep g6_global_docsep g6_local_internsep g6_global_internsep g6_local_mixed g6_global_mixed g6_local_eofrun g6_global_eofrun g6_local_r0 g6_global_r0 g7_a_docsep g7_b_docsep g7_a_mixed g7_b_mixed g8 g9 g5 g3_10gb g3_100gb g3_forced_global g4_100gb_local g4_100gb_global '
 ```
 
 ### G4 the 100 GB head's space wave through both arms
 
 ```
-SS_SUBDIV_CLASS_ONLY key='Harper Reed' wave_depth=1 bytes=[48,76) rows_est=472025678 coverage=0.002384 page_fraction=0.9999 strategy=local note=emitted_stream_covers_this_class_only
-SS_SUBDIV_CLASS_ONLY key='Harper Reed' wave_depth=1 bytes=[69,91) rows_est=2918585840 coverage=0.016753 page_fraction=0.7027 strategy=local note=emitted_stream_covers_this_class_only
+SUBDIV_NO_SURVIVORS checked=38 runs tags='g1_base_docsep g1_new_docsep g1_base_eofrun g1_new_eofrun g1_base_internsep g1_new_internsep g1_base_mixed g1_new_mixed g1_base_period2 g1_new_period2 g1_base_r0 g1_new_r0 g1_base_single g1_new_single g2_docsep g2_eofrun g2_internsep g2_mixed g2_period2 g2_r0 g2_single g6_local_docsep g6_global_docsep g6_local_internsep g6_global_internsep g6_local_mixed g6_global_mixed g6_local_eofrun g6_global_eofrun g6_local_r0 g6_global_r0 g7_a_docsep g7_b_docsep g7_a_mixed g7_b_mixed g8 g9 g5 '
+SS_SCATTER pass=1 waves=[0,1) waves_n=1 bytes_read=10000000000 positions=472025678 position_bytes=3776205424 rows_est=472025678 wall=1.02 rule=one_sweep_per_position_window
+SS_SCATTER pass=1 waves=[0,1) waves_n=1 bytes_read=100000000000 positions=2918585840 position_bytes=23348686720 rows_est=2918585840 wall=7.65 rule=one_sweep_per_position_window
+SS_SCATTER pass=1 waves=[0,1) waves_n=1 bytes_
 SS_SUBDIV_CLASS_ONLY key=' e' wave_depth=2 bytes=[101,109) rows_est=2525225000 coverage=0.015634 page_fraction=0.6557 strategy=local note=emitted_stream_covers_this_class_only
+SS_SCATTER pass=1 waves=[0,1) waves_n=1 bytes_read=100000000000 positions=2528840272 position_bytes=20230722176 rows_est=2525225000 wall=13.43 rule=one_sweep_per_position_window
 SS_SUBDIV_CLASS_ONLY key=' e' wave_depth=2 bytes=[101,109) rows_est=2525225000 coverage=0.015634 page_fraction=0.6557 strategy=global note=emitted_stream_covers_this_class_only
 SUBDIV_G4 class_rows_est=2525225000 local_sha=fc87fab90227c2608008adab915669a0016938634a01cf05315fa332abb8a8d2 global_sha=fc87fab90227c2608008adab915669a0016938634a01cf05315fa332abb8a8d2 equal=1
-SUBDIV_G4_WALL local: SS_DONE n=100000000001 waves=1 ties=909530626 sample_s=0.02 waves_s=383.39 total_s=398.50 | global: SS_DONE n=100000000001 waves=1 ties=909530626 sample_s=0.02 waves_s=326.32 total_s=329.16
+SUBDIV_G4_WALL local: SS_DONE n=100000000001 waves=1 ties=909530626 sample_s=0.02 waves_s=404.31 total_s=420.55 | global: SS_DONE n=100000000001 waves=1 ties=909530626 sample_s=0.02 waves_s=357.34 total_s=360.17
 SUBDIV_G4_PASS
+SUBDIV_NO_SURVIVORS checked=43 runs tags='g1_base_docsep g1_new_docsep g1_base_eofrun g1_new_eofrun g1_base_internsep g1_new_internsep g1_base_mixed g1_new_mixed g1_base_period2 g1_new_period2 g1_base_r0 g1_new_r0 g1_base_single g1_new_single g2_docsep g2_eofrun g2_internsep g2_mixed g2_period2 g2_r0 g2_single g6_local_docsep g6_global_docsep g6_local_internsep g6_global_internsep g6_local_mixed g6_global_mixed g6_local_eofrun g6_global_eofrun g6_local_r0 g6_global_r0 g7_a_docsep g7_b_docsep g7_a_mixed g7_b_mixed g8 g9 g5 g3_10gb g3_100gb g3_forced_global g4_100gb_local g4_100gb_global '
 ```
 
-### G5 refusal
+### G5 refusal — a class the census cannot prove
 
 ```
+SUBDIV_NO_SURVIVORS checked=38 runs tags='g1_base_docsep g1_new_docsep g1_base_eofrun g1_new_eofrun g1_base_internsep g1_new_internsep g1_base_mixed g1_new_mixed g1_base_period2 g1_new_period2 g1_base_r0 g1_new_r0 g1_base_single g1_new_single g2_docsep g2_eofrun g2_internsep g2_mixed g2_period2 g2_r0 g2_single g6_local_docsep g6_global_docsep g6_local_internsep g6_global_internsep g6_local_mixed g6_global_mixed g6_local_eofrun g6_global_eofrun g6_local_r0 g6_global_r0 g7_a_docsep g7_b_docsep g7_a_mixed g7_b_mixed g8 g9 g5 '
 SS_WAVE_POINT_MASS_PROOF depth=2 class_rows_sampled=1258291 tail_slice_rows=0 mismatches=2 wall=0.00 (one corpus pass, the only one this branch ever costs)
 SS_WAVE_POINT_MASS depth=2 class_rows=1258291 wave_goal=298841 trailing_run_rows=0 provable=0
 SS_WAVE_BORROW class_rows=1258291 bytes_per_row=41 arena_gb=0.048 disk_gb=0.048 mem_cap_gb=0.009 path=refuse
 SUBDIV_G5 rc=2 refused=1
 SUBDIV_G5_PASS (numbers above; levers are --memory-gb and a wider prefix cache; a merge is never a path)
+SUBDIV_NO_SURVIVORS checked=43 runs tags='g1_base_docsep g1_new_docsep g1_base_eofrun g1_new_eofrun g1_base_internsep g1_new_internsep g1_base_mixed g1_new_mixed g1_base_period2 g1_new_period2 g1_base_r0 g1_new_r0 g1_base_single g1_new_single g2_docsep g2_eofrun g2_internsep g2_mixed g2_period2 g2_r0 g2_single g6_local_docsep g6_global_docsep g6_local_internsep g6_global_internsep g6_local_mixed g6_global_mixed g6_local_eofrun g6_global_eofrun g6_local_r0 g6_global_r0 g7_a_docsep g7_b_docsep g7_a_mixed g7_b_mixed g8 g9 g5 g3_10gb g3_100gb g3_forced_global g4_100gb_local g4_100gb_global '
 ```
 
-### G6 strategy equivalence — 5 fixtures
+### G6 strategy equivalence — 5 fixtures, forced local vs forced global
 
 ```
-SUBDIV_NO_SURVIVORS checked=14 runs tags='g1_base_docsep g1_new_docsep g1_base_eofrun g1_new_eofrun g1_base_internsep g1_new_internsep g1_base_mixed g1_new_mixed g1_base_period2 g1_new_period2 g1_base_r0 g1_new_r0 g1_base_single g1_new_single '
 SUBDIV_G6 fixture=docsep local_sha=539522013cbe992a586ab44930b083d267eb53aee13d24b66213b13f2967e510 global_sha=539522013cbe992a586ab44930b083d267eb53aee13d24b66213b13f2967e510 equal=1 coverage_est_vs_exact_max_rel_err=0.000000 classes=31
 SUBDIV_G6 fixture=internsep local_sha=d5f5f42053018920b2127aea9094244abce212ac9803098210c59dc0d2a1b84e global_sha=d5f5f42053018920b2127aea9094244abce212ac9803098210c59dc0d2a1b84e equal=1 coverage_est_vs_exact_max_rel_err=0.000000 classes=32
 SUBDIV_G6 fixture=mixed local_sha=2b1c5fa341a19945e299a04528b18b6a9a5701cb424e76c4e1bbf540742d3741 global_sha=2b1c5fa341a19945e299a04528b18b6a9a5701cb424e76c4e1bbf540742d3741 equal=1 coverage_est_vs_exact_max_rel_err=0.000000 classes=20
 SUBDIV_G6 fixture=eofrun local_sha=c095ccfe31081aedd0d2f27061aac3f9d197e67cd11cf54d78e8c22b97c98986 global_sha=c095ccfe31081aedd0d2f27061aac3f9d197e67cd11cf54d78e8c22b97c98986 equal=1 coverage_est_vs_exact_max_rel_err=0.000000 classes=30
 SUBDIV_G6 fixture=r0 local_sha=d3c09c42badedb94ba175cdfa82636f92754e541f5cb0c8f9d77ea673521853b global_sha=d3c09c42badedb94ba175cdfa82636f92754e541f5cb0c8f9d77ea673521853b equal=1 coverage_est_vs_exact_max_rel_err=0.000000 classes=30
 SUBDIV_G6_PASS fixtures=5 (byte-identical band streams under forced local and forced global)
-SUBDIV_NO_SURVIVORS checked=10 runs tags='g6_local_docsep g6_global_docsep g6_local_internsep g6_global_internsep g6_local_mixed g6_global_mixed g6_local_eofrun g6_global_eofrun g6_local_r0 g6_global_r0 '
+SUBDIV_NO_SURVIVORS checked=38 runs tags='g1_base_docsep g1_new_docsep g1_base_eofrun g1_new_eofrun g1_base_internsep g1_new_internsep g1_base_mixed g1_new_mixed g1_base_period2 g1_new_period2 g1_base_r0 g1_new_r0 g1_base_single g1_new_single g2_docsep g2_eofrun g2_internsep g2_mixed g2_period2 g2_r0 g2_single g6_local_docsep g6_global_docsep g6_local_internsep g6_global_internsep g6_local_mixed g6_global_mixed g6_local_eofrun g6_global_eofrun g6_local_r0 g6_global_r0 g7_a_docsep g7_b_docsep g7_a_mixed g7_b_mixed g8 g9 g5 '
+SUBDIV_NO_SURVIVORS checked=43 runs tags='g1_base_docsep g1_new_docsep g1_base_eofrun g1_new_eofrun g1_base_internsep g1_new_internsep g1_base_mixed g1_new_mixed g1_base_period2 g1_new_period2 g1_base_r0 g1_new_r0 g1_base_single g1_new_single g2_docsep g2_eofrun g2_internsep g2_mixed g2_period2 g2_r0 g2_single g6_local_docsep g6_global_docsep g6_local_internsep g6_global_internsep g6_local_mixed g6_global_mixed g6_local_eofrun g6_global_eofrun g6_local_r0 g6_global_r0 g7_a_docsep g7_b_docsep g7_a_mixed g7_b_mixed g8 g9 g5 g3_10gb g3_100gb g3_forced_global g4_100gb_local g4_100gb_global '
 ```
 
 ### G7 survey reproducibility — 2 corpora × 2 runs
@@ -258,9 +275,11 @@ SUBDIV_G7 fixture=mixed line_a='SS_SURVEY samples=6291456 stride=1 prefix_bytes=
 SUBDIV_G7 fixture=mixed line_b='SS_SURVEY samples=6291456 stride=1 prefix_bytes=85 run_cap=255 pages=6291456 chunks=256 chunk_bytes=24576 blob_bytes=585629696 sha256=22b20ec38a4e40a29deaa9f5649c7a5a579633d6d148bdeedb7da0cf343d0cb1 bytes_read=6291456 rule=one_pass_all_top_level_bins'
 SUBDIV_G7 distinct_shas_across_the_two_fixtures=2 (2 = the sha tracks the corpus, so it is not a constant)
 SUBDIV_G7_PASS surveys=2
+SUBDIV_NO_SURVIVORS checked=38 runs tags='g1_base_docsep g1_new_docsep g1_base_eofrun g1_new_eofrun g1_base_internsep g1_new_internsep g1_base_mixed g1_new_mixed g1_base_period2 g1_new_period2 g1_base_r0 g1_new_r0 g1_base_single g1_new_single g2_docsep g2_eofrun g2_internsep g2_mixed g2_period2 g2_r0 g2_single g6_local_docsep g6_global_docsep g6_local_internsep g6_global_internsep g6_local_mixed g6_global_mixed g6_local_eofrun g6_global_eofrun g6_local_r0 g6_global_r0 g7_a_docsep g7_b_docsep g7_a_mixed g7_b_mixed g8 g9 g5 '
+SUBDIV_NO_SURVIVORS checked=43 runs tags='g1_base_docsep g1_new_docsep g1_base_eofrun g1_new_eofrun g1_base_internsep g1_new_internsep g1_base_mixed g1_new_mixed g1_base_period2 g1_new_period2 g1_base_r0 g1_new_r0 g1_base_single g1_new_single g2_docsep g2_eofrun g2_internsep g2_mixed g2_period2 g2_r0 g2_single g6_local_docsep g6_global_docsep g6_local_internsep g6_global_internsep g6_local_mixed g6_global_mixed g6_local_eofrun g6_global_eofrun g6_local_r0 g6_global_r0 g7_a_docsep g7_b_docsep g7_a_mixed g7_b_mixed g8 g9 g5 g3_10gb g3_100gb g3_forced_global g4_100gb_local g4_100gb_global '
 ```
 
-### G8 plan == reality — 512 MB slice, stride 119
+### G8 plan == reality — a 512 MB slice (stride 119), 31 classes
 
 ```
 SS_SUBDIV_EXACT wave=0 class=<root> depth=1 rows_exact=6422835 rows_est=6422800 rows_err=0.0000 pages_exact=512 coverage_exact=0.000128 coverage_est=0.000128 page_fraction_exact=1.0000 page_fraction_est=1.0000 bytes_read=542113792 rule=exact_from_the_class_full_position_list
@@ -282,12 +301,6 @@ SUBDIV_G9_PASS (PLAN corpus_reads=0 cache_misses=0; every local descent stayed i
 SS_PLAN waves=1 local=31 global=0 cache_depth=128 cache_misses=0 stalls=0 saturated=30 samples=4000000 stride=2500 corpus_reads=0 corpus_read_calls=0 rule=answer_from_prefix_cache
 SS_PLAN waves=1 local=48 global=0 cache_depth=128 cache_misses=0 stalls=0 saturated=0 samples=4000000 stride=25000 corpus_reads=0 corpus_read_calls=0 rule=answer_from_prefix_cache
 ```
-
-
-(`SUBDIV_NO_SURVIVORS` lines that read `checked=0 tags=''` were removed: they come
-from gates that invoke the sorter directly rather than through `run_sorter`, and a
-check that examined nothing is not evidence. G1 shows `checked=14`, G6 `checked=10`,
-G7 `checked=4` - the scoped check itself was verified on three gates.)
 
 ## Commands that were run
 
