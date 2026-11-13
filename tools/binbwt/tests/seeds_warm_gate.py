@@ -78,6 +78,23 @@ def read_tsv(path):
             })
     return header, rows
 
+def read_tsv_payload(data):
+    rows = []
+    for line in data.split(b"\n"):
+        if not line or line.startswith(b"#"):
+            continue
+        cols = line.decode().split("\t")
+        if cols[0] == "window_id":
+            continue
+        wid, qoff, doc, coff, mlen, mult = cols
+        rows.append({
+            "window_id": int(wid), "query_offset": int(qoff),
+            "corpus_doc": None if doc == "-" else int(doc),
+            "corpus_offset": int(coff), "match_len": int(mlen),
+            "multiplicity": int(mult),
+        })
+    return rows
+
 def decode_frames(path):
     """Serve frames -> the same row dicts, plus the frame-level counts."""
     data = open(path, "rb").read()
@@ -351,6 +368,67 @@ def main():
         print(f"  rchar 1 window={r1} 4 windows={r4} ratio={r4 / max(r1, 1):.2f} "
               f"positions={pos4} bytes_per_row={per_pos:.0f} container={container_bytes} "
               f"frac_container={r4 / container_bytes:.4f}")
+
+    # ---------------------------------------------------------------- W6
+    print("W6 the declared-window round trip, the anchors-all mode, and the refusals")
+    text_path = os.path.join(out, "whole.bin")
+    open(text_path, "wb").write(corpus[:200000])
+    declared = os.path.join(out, "declared.jsonl")
+    r_decl = run(args.xsa, ["seeds", args.container, text_path, "--windows-out", declared,
+                            "--window-len", "4096", "--window-stride", "4096"])
+    n_decl = [l for l in r_decl.stderr.decode().splitlines() if l.startswith("SEEDS_WINDOWS_DECLARED")]
+    check(len(n_decl) == 1, "no SEEDS_WINDOWS_DECLARED line")
+    recs = [json.loads(l) for l in open(declared) if l.strip()]
+    check(len(recs) > 0 and all(set(r) == {"doc", "base", "start", "len"} for r in recs),
+          "the declared window set is not the consult schema")
+    check(all(recs[i]["start"] + recs[i]["len"] == recs[i + 1]["start"]
+              for i in range(len(recs) - 1)), "the declared windows do not tile the text")
+    # replay the DECLARED boundaries (not a re-derivation): the same rows come back
+    r_replay = run(args.xsa, ["seeds", args.container, "--windows", declared,
+                              "--corpus", text_path, "-j", str(args.jobs)])
+    rows_replay = read_tsv_payload(r_replay.stdout)
+    check(len(rows_replay) > 0, "replaying the declared window set answered no rows")
+    # --anchor-max-per-seed 0 = every occurrence, and the row set grows
+    r_all = run(args.xsa, ["seeds", args.container, "--windows", wins_jsonl,
+                           "--corpus", args.corpus, "-j", str(args.jobs),
+                           "--anchor-max-per-seed", "0"])
+    rows_all = read_tsv_payload(r_all.stdout)
+    check(len(rows_all) >= len(rows_wins),
+          f"--anchor-max-per-seed 0 gave {len(rows_all)} rows, fewer than the capped {len(rows_wins)}")
+    # binary XSWIN001 windows answer the same rows as the JSONL ones
+    bin_path = os.path.join(out, "wins.bin")
+    with open(bin_path, "wb") as f:
+        # the FIRST 32-byte record is the header and carries the magic in its
+        # first 8 bytes (`xsa consult`'s layout, reused verbatim)
+        f.write(b"XSWIN001".ljust(32, b"\x00"))
+        for i, o in enumerate(offs):
+            f.write(struct.pack("<QQQII", i, 0, o, args.window_len, 0xFFFFFFFF))
+    r_bin = run(args.xsa, ["seeds", args.container, "--windows", bin_path, "--corpus",
+                           args.corpus, "--windows-bin", "-j", str(args.jobs)])
+    check(read_tsv_payload(r_bin.stdout) == rows_wins,
+          "the XSWIN001 binary window set and the JSONL one answer different rows")
+    # ---- refusals, by name
+    def refused(argv, stdin=b"", needle=""):
+        r = run(args.xsa, argv, stdin=stdin, allow_fail=True)
+        ok = r.returncode != 0 and needle.encode() in r.stderr
+        check(ok, f"{argv[:2]} was not refused with '{needle}' (rc={r.returncode})")
+        return ok
+    refused(["seeds", args.container, "--serve", "-j", "1"], stdin=struct.pack("<I", 0),
+            needle="zero-length window")
+    refused(["seeds", args.container, "--serve", "-j", "1"], stdin=b"\x02\x00\x00",
+            needle="request frame")
+    refused(["seeds", args.container, text_path, "--serve"], needle="--serve reads its query text")
+    refused(["seeds", args.container, "--serve", "-j", "1", "--jsonl"], stdin=b"",
+            needle="anchor TABLE")
+    badwin = os.path.join(out, "bad.jsonl")
+    with open(badwin, "w") as f:
+        f.write(json.dumps({"doc": 0, "base": 0, "start": len(corpus) - 10, "len": 100}) + "\n")
+    refused(["seeds", args.container, "--windows", badwin, "--corpus", args.corpus, "-j", "1"],
+            needle="leaves the")
+    refused(["seeds", args.container, text_path, "--windows", wins_jsonl],
+            needle="positional text argument does not apply")
+    print("  declared windows replayed, every-occurrence mode larger, XSWIN001 == JSONL, "
+          "6 refusals by name")
 
     # ---------------------------------------------------------------- summary
     if bad:

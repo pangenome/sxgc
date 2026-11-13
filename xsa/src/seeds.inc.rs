@@ -2096,17 +2096,48 @@ fn seeds_served(
 
 const SEEDS_USAGE: &str = "usage:\n  \
     xsa seeds <container> <text-file|-> [--target-mult T] [--max-len L] [--min-len m] \
-    [--max-seeds K] [--stride S] [--skip-markup] [--docs DIR] [--limit N] [--jsonl] \
-    [--nearest]\n  \
+[--max-seeds K] [--stride S] [--skip-markup] [--docs DIR] [--limit N] [--jsonl] [--nearest]\n  \
     xsa seeds <container> <text-file|-> --max-mult M [--min-mult m] ...   (band mode)\n  \
-  Emits exact substrings of the text that are SPECIFIC and RECURRING: at every window \
-  position the seed LENGTH is solved so the multiplicity lands on --target-mult (default 50).\n  \
-  The default is a CONTINUOUS scan of the whole text (one window per byte, \
-  windows=<text bytes>); --stride S samples every S-th position instead. --max-seeds K \
-  (default 64) selects K of the accepted seeds after the scan, evenly spaced across the \
-  document. --max-len default 64, --min-len default 12, --limit default 8 sample \
-  positions. --skip-markup drops windows overlapping {{template}}, <!--comment-->, \
-  <ref>, <gallery>, <math> or {| ... |} scaffolding (OFF by default).";
+    xsa seeds <container> --serve -j N [--rss-gb G] [--cache-gb G]   (frames on stdin/stdout)\n  \
+    xsa seeds <container> --windows FILE --corpus FILE [--windows-bin] -j N   (declared windows)\n  \
+    xsa seeds <container> <text-file> --anchors [-j N]   (the anchor table, one window)\n  \
+    xsa seeds <container> <text-file> --windows-out FILE --window-len L [--window-stride S]\n  \
+  EMITS exact substrings of the text that are SPECIFIC and RECURRING: at every window \
+position the seed LENGTH is solved so the multiplicity lands on --target-mult (default 50).\n  \
+THE THREE INPUT FORMS run the SAME scan and answer the same rows: one text file (one window), \
+a DECLARED window set (--windows), or framed stdin (--serve). The served forms open the \
+container, audit it and resolve member m15 ONCE and then answer window after window in one \
+process, which is the difference between a cold per-invocation command and an index that is \
+resident for the whole transcript.\n  \
+WINDOW PLACEMENT. --flow: the default is a CONTINUOUS scan of the text (one window per byte, \
+windows=<text bytes>); --stride S samples every S-th POSITION inside a window (an opt-in \
+sampler for the pre-fix behaviour, journaled as such). Neither has anything to do with where a \
+WINDOW begins: in the served forms a window boundary is DECLARED - by one u32-length-prefixed \
+frame on stdin, or by one record of the --windows file (XSWIN001 binary or the JSONL schema \
+doc, base, start, len of `xsa consult`), never inferred from content. A window that leaves the \
+corpus, or whose byte range cannot be resolved, is refused by name. --windows-out DECLARES a \
+window set over a text file (--window-len L, --window-stride S) so a later run can REPLAY it.\n  \
+THE ANCHOR TABLE (--anchors, and the only output of the served forms) is the chain-ready set \
+of anchor rows, one per reported occurrence:\n  \
+    window_id  query_offset  corpus_doc  corpus_offset  match_len  multiplicity\n  \
+corpus_doc comes from the container's member m15 (the document START of the located offset) and \
+is '-' when the container carries no m15 - a docid is never guessed. TIE ORDER: rows are sorted \
+by (query_offset, corpus_offset, match_len, multiplicity), so two runs - and any -j - produce a \
+byte-identical table. Serve mode sends the same table as fixed-width frames (u64 window_id, u32 \
+rows, u32 seeds, then rows of u32 query_offset, u32 match_len, u64 multiplicity, u64 \
+corpus_offset, u64 corpus_doc with all-ones = absent), one u32-length-prefixed frame per window.\n  \
+CAPS ARE NOT SUPPORT THRESHOLDS. --max-seeds K, --limit N and --anchor-max-per-seed M are \
+OUTPUT CAPS: they bound how many seeds are reported, how many sample positions a classic row \
+carries, and how many anchor ROWS a seed contributes. The multiplicity reported is always the \
+exact BWT interval width of the seed, so a capped table still tells you the true support \
+(--anchor-max-per-seed 0 reports EVERY occurrence, one locate per occurrence).\n  \
+--max-len default 64, --min-len default 12, --limit default 8, --anchor-max-per-seed default \
+8, --max-seeds default 64. --skip-markup drops windows overlapping {{template}}, \
+<!--comment-->, <ref>, <gallery>, <math> or {| ... |} scaffolding (OFF by default). --rss-gb G \
+caps this process's resident set and sizes the decoded-block arena (an eighth of G) that the \
+locate walks read through; --cache-gb G pins the arena alone. -j N sizes the thread pool the \
+locate layer runs on (-j 1 is the serial baseline). See RESULTS_SEEDS_WARM.md for the layer \
+cost table.";
 
 #[cfg(test)]
 mod seeds_tests {
