@@ -2634,6 +2634,21 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
                     batch.windows_after = windows_done;
                     batch.windows_bytes_after = after;
                     cur = None;
+                    // THE BATCH ENDS WITH THE WINDOW. The commit cursor
+                    // discipline (below) journals a chunk only at a batch
+                    // whose LAST item ends a window, so that positions_done
+                    // and the whole-window cursors describe the SAME prefix;
+                    // filling the rest of the batch from the NEXT window left
+                    // the window-end flag on a middle item, where the writer
+                    // never saw it - and one window whose length is not a
+                    // multiple of BATCH_POSITIONS shifted the alignment for
+                    // every window after it, silently stopping all commits
+                    // (a killed run then had no committed prefix to resume;
+                    // found by the chi gates' crash-resume smoke, present in
+                    // the pre-change binary too). Ending the batch here makes
+                    // every window end a batch end: the commit fires at the
+                    // first window end past --chunk-rows, always.
+                    break;
                 } else {
                     cur = Some((w, k + 1, after));
                 }

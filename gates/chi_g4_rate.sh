@@ -37,8 +37,8 @@ run() { # tag out
 }
 
 echo "=== G4: run 1 (cold) then run 2 (warm), --rss-gb 8, -j $JOBS"
-run cold "$WORK/rate1.rows"
-run warm "$WORK/rate2.rows"
+run cold "$WORK/cold.rows"
+run warm "$WORK/warm.rows"
 cmp -s "$WORK/rate1.rows" "$WORK/rate2.rows" \
   && echo "G4_DETERMINISM two_runs_identical=1" \
   || fail "the two runs differ (determinism broken)"
