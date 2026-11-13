@@ -357,32 +357,24 @@ pub fn branches_command(raw: &[std::ffi::OsString]) {
     }
     let reader = Reader::open(container).unwrap_or_else(|e| die(&e));
     // ---- THE NO-CROSS LAW, SERVE SIDE -------------------------------------------
-    // Default: exact boundary-aware answers via member m15 (or the --docs DIR
-    // sidecar) + the corpus (content bytes are corpus bytes; the container does
-    // not store them). Refusals name --cross-doc, the explicit opt-in to the
-    // legacy conflated answer.
+    // The default answer is exact and boundary-aware, from the container's own
+    // member m15 plus the corpus (content bytes are corpus bytes; the container
+    // does not store them). m15 is REQUIRED by the one container shape, so there
+    // is no "no structure" arm: without the member the reader refuses the file
+    // outright. `--cross-doc` stays a SEMANTIC opt-in (the conflated
+    // crossing-inclusive answer) - it is not a format fallback.
     let ds_owned = if cross_doc {
         None
     } else {
-        crate::docstarts::DocStarts::from_container(&reader).or_else(|| {
-            docs.as_deref().map(|dir| {
-                crate::docstarts::DocStarts::from_xsep(
-                    std::path::Path::new(dir),
-                    reader.n - 1,
-                )
-            })
-        })
+        Some(crate::docstarts::DocStarts::from_container(&reader))
     };
-    let corpus_file_bnd = if cross_doc {
-        None
-    } else if ds_owned.is_some() {
+    let corpus_file_bnd = if ds_owned.is_some() {
         let path = corpus_path.clone().unwrap_or_else(|| {
-            die(&format!(
-                "branches: this container carries member m15, so the DEFAULT is the exact \
-                 boundary-aware histogram - which reads the corpus for each occurrence's content \
-                 byte. Pass --corpus FILE (the container's text), or --cross-doc to opt in to the \
-                 legacy conflated answer"
-            ));
+            die(
+                "branches: the boundary-aware histogram (the default) reads the corpus for each \
+                 occurrence's content byte. Pass --corpus FILE (the container's text), or \
+                 --cross-doc for the conflated crossing-inclusive answer",
+            );
         });
         let f = File::open(&path).unwrap_or_else(|e| die(&format!("branches: open {path}: {e}")));
         let len = f.metadata().map(|m| m.len()).unwrap_or_else(|e| die(&e.to_string()));
@@ -394,23 +386,8 @@ pub fn branches_command(raw: &[std::ffi::OsString]) {
         }
         Some(f)
     } else {
-        corpus_path.is_some().then(|| {
-            // no structure: a corpus alone cannot classify boundaries; opened
-            // only so the refusal below can name both fixes precisely
-            File::open(corpus_path.as_deref().unwrap()).ok()
-        }).flatten()
+        None
     };
-    if !cross_doc && ds_owned.is_none() {
-        die(&format!(
-            "branches: this container (SXI2 v{}) carries no member m15, so a boundary-aware \
-             answer is IMPOSSIBLE here: the legacy answer CONFLATES cross-boundary continuations \
-             with content (an occurrence that ends a document counts the next document's first \
-             byte as a content branch). Refusing rather than returning it silently. Build with \
-             --docs-map DIR (or `xsa docstarts embed`) and pass --corpus FILE for the default, or \
-             pass --cross-doc to opt in to the conflated answer",
-            reader.version
-        ));
-    }
     let bnd_owned = match (&ds_owned, &corpus_file_bnd) {
         (Some(ds), Some(f)) => Some(BranchBoundary { ds, corpus: f, cap: boundary_cap }),
         _ => None,

@@ -187,15 +187,13 @@ struct Options {
     snap_1e: bool,
     memory_gb: u64,
     threads: u32,
-    chunks: u32,
-    kway: u32,
     plan_only: bool,
-    /// THE DEFAULT (auto-radix): the bin pipeline - one `xsa build`, the
+    /// THE ONE ROUTE (auto-radix): the bin pipeline - one `xsa build`, the
     /// multi-pass reader, the rolling window files, target-size recursive bins
-    /// and the ordered stitch. `bin_pipeline == !legacy_merge`.
+    /// and the ordered stitch. It is not a choice any more: the pre-bin
+    /// chunk+merge route is GONE (forward-only), so this is `true` always and
+    /// exists only so the tail's shape checks stay readable.
     bin_pipeline: bool,
-    /// `--legacy-merge`: the pre-bin route (chunk front end + k-way merge walk).
-    legacy_merge: bool,
     /// `--v2-pipeline` was passed. It is ACCEPTED AND IGNORED (the bin pipeline
     /// is the default now); the journal records that it was seen and ignored so
     /// a log can never pretend the flag still selects a route.
@@ -299,8 +297,6 @@ struct Options {
     /// journaled as DISC_CHECK_SKIPPED basis=operator peak=<n> free=<m>.
     skip_fit_check: bool,
     remap: Option<PathBuf>,
-    chunk_mb: Option<u32>,
-    fanin: bool,
     /// `--docs-map` (see `DocsMapArg`): the flag is RESOLVED AT PARSE TIME by
     /// the argument's shape, so a plan and a run can never disagree about which
     /// of the two published contracts it names.
@@ -377,10 +373,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     let mut snap_1e = false;
     let mut memory_gb = 24u64;
     let mut threads = 48u32;
-    let mut chunks = 32u32;
-    let mut kway = 2u32;
     let mut plan_only = false;
-    let mut legacy_merge = false;
     let mut v2_flag_given = false;
     let mut with_chi = true;
     let mut with_lcp_runs = false;
@@ -407,11 +400,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     let mut bin_shape_given = false;
     let mut no_resume = false;
     let mut remap = None;
-    let mut chunk_mb = None;
-    let mut fanin = false;
     let mut docs_map: Option<DocsMapArg> = None;
-    let mut chunks_given = false;
-    let mut kway_given = false;
     let mut i = 0;
     while i < args.len() {
         let flag = &args[i];
@@ -460,37 +449,28 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
                 i += 1;
                 threads = parse_u32(args.get(i), "--threads")?;
             }
-            "--chunks" => {
-                i += 1;
-                chunks = parse_u32(args.get(i), "--chunks")?;
-                chunks_given = true;
-                if chunks == 0 {
-                    return Err("--chunks must be positive".into());
-                }
-            }
-            "--chunk-mb" => {
-                i += 1;
-                let v = parse_u32(args.get(i), "--chunk-mb")?;
-                if v == 0 {
-                    return Err("--chunk-mb must be positive".into());
-                }
-                chunk_mb = Some(v);
-            }
-            "--fanin" => fanin = true,
-            "--kway" => {
-                i += 1;
-                kway = parse_u32(args.get(i), "--kway")?;
-                kway_given = true;
-                if kway < 2 {
-                    return Err("--kway must be >= 2 (the pairwise arity)".into());
-                }
+            // FORWARD-ONLY: --chunks / --chunk-mb / --fanin / --kway belonged to
+            // the chunk front end + k-way merge walk, which is GONE. They are
+            // refused by NAME (not "unknown option") so a script written for the
+            // merge route learns why, and it is not told to try a flag.
+            "--chunks" | "--chunk-mb" | "--fanin" | "--kway" => {
+                return Err(format!(
+                    "{flag} belonged to the chunk front end + k-way merge walk, which this build \
+                     does not have: that route is REMOVED. `xsa build` is the bin/tape pipeline \
+                     (the producer sweeps the corpus itself); drop {flag}"
+                ));
             }
             "--plan-only" => plan_only = true,
-            // AUTO-RADIX (operator-directed): the bin pipeline is the DEFAULT and
-            // --v2-pipeline is ACCEPTED AND IGNORED, journalled as such. The
-            // pre-bin chunk+merge route is behind --legacy-merge.
+            // AUTO-RADIX (operator-directed): the bin pipeline is the ONLY route
+            // and --v2-pipeline is ACCEPTED AND IGNORED, journalled as such.
             "--v2-pipeline" => v2_flag_given = true,
-            "--legacy-merge" => legacy_merge = true,
+            // The pre-bin chunk+merge route is GONE; its flag is refused by name.
+            "--legacy-merge" => {
+                return Err("--legacy-merge is REMOVED: the pre-bin chunk front end + k-way merge \
+                            walk no longer exists. The bin pipeline (the default) and --tape are \
+                            the only routes; drop --legacy-merge"
+                    .into())
+            }
             "--with-chi" => with_chi = true,
             "--no-chi" => with_chi = false,
             // m14: the LCP over runs. DEFAULT OFF (a measured 0.256 n for a thin
@@ -668,65 +648,22 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     }
     let input = input.ok_or("need --input <corpus>")?;
     let scratch = scratch.ok_or("need --scratch <dir>")?;
-    let bin_pipeline = !legacy_merge;
-    // NO SILENT MISCONFIGURATION: the chunk/k-way/fan-in knobs do not exist on
-    // the bin route (the producer sweeps the corpus itself), so explicitly
-    // passing one is refused rather than ignored.
-    if bin_pipeline {
-        if chunks_given {
-            return Err("--chunks is INERT under the bin pipeline (the default; the producer sweeps the corpus itself, there is no chunk phase); drop the flag, or pass --legacy-merge for the chunk+merge route".into());
-        }
-        if chunk_mb.is_some() {
-            return Err("--chunk-mb is INERT under the bin pipeline (the default; no chunk phase); drop the flag, or pass --legacy-merge".into());
-        }
-        if kway_given {
-            return Err("--kway is INERT under the bin pipeline (the default; bins are ordered by their own construction, there is no k-way walk); drop the flag, or pass --legacy-merge".into());
-        }
-        if fanin {
-            return Err("--fanin is INERT under the bin pipeline (the default; there is nothing to fan in); drop the flag, or pass --legacy-merge".into());
-        }
-        if let Some(wit) = wit_ram_gb {
-            let eff = finish_as_gb.unwrap_or(memory_gb);
-            if wit > eff {
-                return Err(format!("--wit-ram-gb {wit} exceeds the finish's effective AS cap {eff} GiB (--memory-gb {memory_gb} unless --finish-as-gb overrides it)"));
-            }
+    // THE ONE ROUTE. There is no route selector left: the bin pipeline is what
+    // `xsa build` is, and --tape selects its producer, not a different route.
+    let bin_pipeline = true;
+    if let Some(wit) = wit_ram_gb {
+        let eff = finish_as_gb.unwrap_or(memory_gb);
+        if wit > eff {
+            return Err(format!("--wit-ram-gb {wit} exceeds the finish's effective AS cap {eff} GiB (--memory-gb {memory_gb} unless --finish-as-gb overrides it)"));
         }
     }
-    if chunk_mb.is_some() && chunks_given {
-        return Err("--chunk-mb and --chunks are mutually exclusive (chunk-mb derives the count)".into());
-    }
-    if fanin && chunk_mb.is_none() {
-        return Err("--fanin requires --chunk-mb N (the fixed chunk size)".into());
-    }
-    if tape && legacy_merge { return Err("--tape and --legacy-merge are mutually exclusive".into()); }
     if tape && bin_shape_given {
         return Err("--tape and --bin are mutually exclusive: they are two shapes (a band sorter vs the \
                     bin producer), and the fit check prices exactly one of them. Pass one".into());
     }
-    if bin_shape_given && legacy_merge {
-        return Err("--bin and --legacy-merge are mutually exclusive (--bin is the bin shape, which is also \
-                    the default; --legacy-merge is the chunk+merge route)".into());
-    }
     if no_resume && !tape { return Err("--no-resume requires --tape".into()); }
     if tape && !with_chi && chi_expect.is_some() {
         return Err("--chi-expect requires --with-chi on the tape route (missing member m5)".into());
-    }
-    if legacy_merge {
-        if chi_expect.is_some() {
-            return Err("--chi-expect is a bin-pipeline flag (drop --legacy-merge)".into());
-        }
-        if wit_ram_gb.is_some() {
-            return Err("--wit-ram-gb is a bin-pipeline flag (drop --legacy-merge)".into());
-        }
-        if bin_live_cap.is_some() {
-            return Err("--bin-live-cap is a bin-pipeline flag (drop --legacy-merge)".into());
-        }
-        if bin_target_size.is_some() {
-            return Err("--bin-target-size is a bin-pipeline flag (drop --legacy-merge)".into());
-        }
-        if phrase.enabled || !phrase.knobs.is_empty() {
-            return Err("--phrase-radix is a bin-pipeline flag (drop --legacy-merge: the merge route has no bin tree to certify)".into());
-        }
     }
     if !phrase.enabled && !phrase.knobs.is_empty() {
         return Err(format!("{} needs --phrase-radix (the dictionary is off by default and its knobs do nothing without it)", phrase.knobs[0].0));
@@ -734,12 +671,12 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     if phrase.enabled {
         validate_phrase(&phrase)?;
     }
-    Ok(Options { input, scratch, snap_1e, memory_gb, threads, chunks, kway, plan_only,
-                 bin_pipeline, legacy_merge, v2_flag_given, chi_expect, with_chi, with_lcp_runs, wit_ram_gb,
+    Ok(Options { input, scratch, snap_1e, memory_gb, threads, plan_only,
+                 bin_pipeline, v2_flag_given, chi_expect, with_chi, with_lcp_runs, wit_ram_gb,
                  finish_as_gb, bin_live_cap, bin_target_size, bin_entropy_min, phrase, stripes, scratch_free_pct,
                  scratch_budget_gb, skip_fit_check, tape, no_resume,
                  trie, trie_depth, trie_min_support, trie_docs_min_support, trie_asked, docs_map,
-                 remap, chunk_mb, fanin })
+                 remap })
 }
 
 /// Last byte of a file (the snap-boundary probe).
@@ -1695,6 +1632,21 @@ fn run_selftest(options: SelftestOptions) -> Result<(), String> {
 const SELFTEST_MEMORY_KB: u64 = 24 * 1048576;
 
 fn run_chain(options: Options) -> Result<(), String> {
+    // FORWARD-ONLY: --docs-map is REQUIRED. The one container shape carries m15
+    // (the document starts), and every query command's no-cross law is built on
+    // it: a container without the member is not queryable, so a build without a
+    // map would spend the whole run producing an artifact no xsa command can
+    // open. Both shapes of the argument embed it (a DIR's seps.bin, a PREFIX's
+    // `.starts`). Checked HERE - before any plan, phase or scratch byte - so the
+    // refusal costs nothing.
+    if options.docs_map.is_none() {
+        return Err("--docs-map is REQUIRED: the one container format carries m15 (document \
+                    starts), and a container without it is not queryable by any xsa command. \
+                    Pass --docs-map DIR (a `xsa corpus --pile-map --out DIR` sidecar) or \
+                    --docs-map PREFIX (a CORPUS V2 pair: PREFIX.starts + PREFIX.docs)"
+            .into());
+    }
+
     if options.tape && !options.plan_only { recovery::install()?; }
     let tools = bundle_tools()?;
     // Absolute paths everywhere: phases run with cwd inside the scratch tree.
@@ -1727,26 +1679,13 @@ fn run_chain(options: Options) -> Result<(), String> {
     // journal's FIRST entry (same plan file = same build = provenance);
     // --plan-only prints it and exits. The old DF_GATE refusal becomes this
     // richer contract: infeasible plans are refused WITH the alternatives.
-    // Fixed chunk size (--chunk-mb) derives the chunk count by arithmetic
-    // (document-aligned boundaries land near, not at, the target).
     let corpus_bytes = fs::metadata(&input).map_err(|e| format!("stat {}: {e}", input.display()))?.len();
-    let chunks = match options.chunk_mb {
-        Some(mb) => {
-            let target = mb as u64 * 1048576;
-            (((corpus_bytes + target - 1) / target).max(1)) as u32
-        }
-        None => options.chunks,
-    };
+    // THE PLAN. One model: the bin shape's. `model` (the chunk+merge pricing) and
+    // `model_fanin` (the k-way fan-in pricing) went with the route they priced.
     let survey = super::plan::survey(&input, &scratch, &options.stripes)?;
-    let mut build_plan = if options.bin_pipeline {
-        super::plan::model_v2(survey, chunks, options.kway, options.threads, options.memory_gb,
-                              options.scratch_free_pct, options.bin_live_cap,
-                              options.bin_target_size)
-    } else if options.fanin {
-        super::plan::model_fanin(survey, chunks, options.kway, options.threads, options.memory_gb, options.scratch_free_pct)
-    } else {
-        super::plan::model(survey, chunks, options.kway, options.threads, options.memory_gb, options.scratch_free_pct)
-    };
+    let mut build_plan = super::plan::model_v2(survey, options.threads, options.memory_gb,
+                                               options.scratch_free_pct, options.bin_live_cap,
+                                               options.bin_target_size);
     if options.bin_pipeline {
         // The chunk-knob surface of the MERGE pipeline is gone from this route:
         // the bin shape has no chunk set, no segment spools and no k-way walk.
@@ -1963,32 +1902,17 @@ fn run_chain(options: Options) -> Result<(), String> {
         journal.line(&format!("KNOB CROSS_POS_MODE={} (plan-picked)", build_plan.pos_mode));
     }
     }
-    // Fan-in shape: fixed chunks + repeated k-way fan-in. Consume inputs
-    // (raw chunks and per-level intermediates) and reclaim them as the build
-    // advances, so the peak disc stays ~ one level's live set instead of the
-    // whole input history (the flat shape's 48n pile-killer).
-    if options.fanin {
-        if std::env::var_os("CROSS_DELETE_CONSUMED").is_none() {
-            std::env::set_var("CROSS_DELETE_CONSUMED", "1");
-            journal.line("KNOB CROSS_DELETE_CONSUMED=1 (fan-in: delete inputs as consumed)");
-        }
-    }
     // Preflight: disc gate before anything is written (the plan-first
     // verdicts above carry the fit + hygiene contract; this is the belt).
     disc_preflight(&scratch, options.scratch_free_pct)?;
-    // The chunk count / k-way arity are NOT part of the bin shape; the journal
-    // prints them as "-" there so a log can never be read as if a chunk set or
-    // a k-way walk existed on this route.
-    let (chunks_note, kway_note) = if options.bin_pipeline {
-        ("-".to_string(), "-".to_string())
-    } else {
-        (chunks.to_string(), options.kway.to_string())
-    };
+    // The chunk count / k-way arity are NOT part of the bin shape (there is no
+    // chunk set and no k-way walk on any route that still exists), so the journal
+    // prints them as "-": a log can never be read as if they existed.
     journal.line(&format!(
         "XSA_BUILD START input={} scratch={} memory_gb={} threads={} chunks={} kway={} remap={} pipeline={}",
         input.display(), scratch.display(), options.memory_gb, options.threads,
-        chunks_note, kway_note, if options.remap.is_some() { "provided" } else { "derived-from-corpus" },
-        if options.bin_pipeline { "v2bin" } else if options.fanin { "v1-fanin" } else { "v1" }
+        "-", "-", if options.remap.is_some() { "provided" } else { "derived-from-corpus" },
+        "v2bin"
     ));
     let corpus_dir = options.input.parent().filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new(".")).canonicalize()
@@ -2027,11 +1951,10 @@ fn run_chain(options: Options) -> Result<(), String> {
     // AND IGNORED - journalled here, in the plan's own log, so no run can be
     // mistaken for one that was configured by it.
     if options.v2_flag_given {
-        journal.line(if options.legacy_merge {
-            "NOTE --v2-pipeline ACCEPTED AND IGNORED: --legacy-merge was also given, and the merge route wins (the bin pipeline is the default since auto-radix)"
-        } else {
-            "NOTE --v2-pipeline ACCEPTED AND IGNORED: the bin pipeline is the DEFAULT (auto-radix) - the flag no longer selects a route; pass --legacy-merge for the chunk+merge route"
-        });
+        journal.line(
+            "NOTE --v2-pipeline ACCEPTED AND IGNORED: the bin pipeline is the ONLY route \
+ (auto-radix) - the flag no longer selects anything, and the chunk+merge route it once \
+ selected is REMOVED");
     }
     // Snap preflight: the demonstrated refusal fires before any phase runs.
     let n = if options.tape && !options.snap_1e {
@@ -2159,83 +2082,13 @@ fn run_chain(options: Options) -> Result<(), String> {
         return Ok(());
     }
 
-    // 1. chunk front end (libsais, document-aligned cyclic BWT chunks).
-    // PILE-WEEK (pile-week-v1): concurrent per-chunk sorts (the boundary
-    // scan stays serial and byte-identical; each worker is ~12x its chunk
-    // bytes of RAM, so the count is bounded by the memory cap).
-    let mut chunk_env: Vec<(String, String)> = Vec::new();
-    if let Some(w) = std::env::var_os("CHUNK_WORKERS") {
-        journal.line(&format!("KNOB CHUNK_WORKERS={} (operator-passed)", w.to_string_lossy()));
-        chunk_env.push(("CHUNK_WORKERS".to_string(), w.to_string_lossy().to_string()));
-    }
-    {
-        let running = spawn_phase(&mut journal, &scratch, "chunk", memory_kb, tools.join("chunk_frontend").to_str().unwrap(), &[
-            s(&input.to_string_lossy()), chunks.to_string(),
-            s(&scratch.join("chunks").to_string_lossy()), s(&remap_path.to_string_lossy()),
-        ], &chunk_env)?;
-        join_phase(&mut journal, &scratch, running)?;
-    }
-    journal.line(&require_log_contains(&scratch, "chunk", "CHUNKS_PASS")?);
-
-    // 2. externalized merge tree (delete-as-consumed scratch, --emit-pf).
-    // Sample peak disc through the merge: with delete-as-you-go the fan-in
-    // peak is mid-merge, not at a phase boundary.
-    let merge_sampler = DiscSampler::start(scratch.clone(), Duration::from_secs(2));
-    run_phase(&mut journal, &scratch, "merge", memory_kb, tools.join("cross_lcp_merge").to_str().unwrap(), &[
-        "--tree".into(), s(&scratch.join("chunks").to_string_lossy()), chunks.to_string(),
-        n.to_string(), frag.clone(),
-        "--threads".into(), options.threads.to_string(),
-        "--kway".into(), options.kway.to_string(),
-        "--work".into(), s(&scratch.join("mwork").to_string_lossy()),
-        "--emit-pf".into(),
-    ])?;
-    let merge_peak_disc = merge_sampler.peak_bytes();
-    journal.line(&format!("MERGE_PEAK_DISC_USED_BYTES {merge_peak_disc} (sampled every 2s during the merge)"));
-    let pairs = count_log_contains(&scratch, "merge", "CROSS_PAIR");
-    let kways = count_log_contains(&scratch, "merge", "CROSS_KWAY");
-    journal.line(&format!("MERGE cross_pairs={pairs} cross_kway_nodes={kways} kway={}", options.kway));
-    journal.line(&require_log_contains(&scratch, "merge", "CROSS_PF_EMIT")?);
-
-    // 3. external adopt finish: endpoints + slim consume the pf side streams.
-    run_phase(&mut journal, &scratch, "endpoints", memory_kb, tools.join("rpfbwt_endpoints").to_str().unwrap(), &[
-        frag.clone(), s(&finish.join("frag.ri4").to_string_lossy()),
-        s(&finish.join("frag.head_sa").to_string_lossy()),
-        "--pf-text".into(), format!("{frag}.pftext"),
-        "--pf-checkpoints".into(), format!("{frag}.pfck"),
-    ])?;
-    journal.line(&require_log_contains(&scratch, "endpoints", "ENDPOINT_PASS")?);
-    run_phase(&mut journal, &scratch, "slim", memory_kb, tools.join("slim_dump").to_str().unwrap(), &[
-        "--slim".into(), "--resolve-ri4".into(),
-        "--ri4".into(), s(&finish.join("frag.ri4").to_string_lossy()),
-        "--head-sa".into(), s(&finish.join("frag.head_sa").to_string_lossy()),
-        "-t".into(), options.threads.to_string(),
-        "--pf-text".into(), format!("{frag}.pftext"),
-        "--pf-checkpoints".into(), format!("{frag}.pfck"),
-        "-o".into(), s(&finish.join("frag.agg").to_string_lossy()),
-    ])?;
-
-    // 4. streamed chi sweep (this same xsa binary).
-    let xsa = std::env::current_exe().map_err(|e| format!("current exe: {e}"))?;
-    // If the binary was replaced mid-run (cargo rebuild), /proc/self/exe
-    // resolves to a deleted inode and the re-exec would fail with 127.
-    // Fall back to the invocation path (argv[0]): the gate then runs the
-    // binary currently at that path end-to-end.
-    let xsa = if xsa.to_string_lossy().ends_with(" (deleted)") {
-        std::env::args().next().map(PathBuf::from).filter(|p| p.is_file())
-            .ok_or_else(|| "sweep launcher: this binary was replaced during the run; re-invoke by path".to_string())?
-    } else { xsa };
-    run_phase(&mut journal, &scratch, "sweep", memory_kb, xsa.to_str().unwrap(), &[
-        "chi-rspace".into(), "--stream-agg".into(),
-        "--ri4".into(), s(&finish.join("frag.ri4").to_string_lossy()),
-        "--agg".into(), s(&finish.join("frag.agg").to_string_lossy()),
-        "-o".into(), s(&finish.join("frag.sA").to_string_lossy()),
-    ])?;
-    let chi = require_log_contains(&scratch, "sweep", "chi = ")?;
-    let peak_disc = tree_bytes(&scratch);
-    journal.line(&format!("PEAK_DISC_USED_BYTES {peak_disc} (scratch tree after finish)"));
-    journal.line(&format!("XSA_BUILD_DONE {chi}"));
-    outcome.success = true;
-    Ok(())
+    // THERE IS NO SECOND ROUTE. The pre-bin chunk front end + k-way merge walk
+    // (chunk_frontend + cross_lcp_merge --tree, then the four-file adopt) is
+    // REMOVED: it produced the shapes before the one container format, and its
+    // flags are refused by name in `parse_chain`. A run that reaches here has
+    // always taken the bin front door above; this tail is unreachable and exists
+    // only so the compiler can see that every path returns.
+    unreachable!("chain: the bin front door returns; the chunk+merge route is removed")
 }
 
 /// Collect every file under `root` whose name is in `names` (the v2 tree
@@ -2773,7 +2626,9 @@ headline=LCP-over-runs",
         // THE MEMBER MUST BE READABLE FROM THE PUBLISHED CONTAINER, and its ratio
         // must hold the budget. Both are checked on the container, not on the tap's
         // own claim: a payload that lands wrong is a wrong product, not a wash.
-        let reader = super::qlite::Reader::open(&container.to_string_lossy())
+        // The BUILDER's door again: the container is v10-with-m20 but has no m15
+        // yet, so the query gate would (correctly) refuse it until the m15 join.
+        let reader = super::qlite::open_partial(&container.to_string_lossy())
             .map_err(|e| format!("trie join: reopen container: {e}"))?;
         let m = reader.member_bytes(super::ctx::TRIE_CODEC)
             .ok_or("trie join: the published container has no m20 after the append")?;
@@ -2806,40 +2661,75 @@ headline=LCP-over-runs",
         journal.line("CONTEXT_TRIE_POLICY present=false reason=--no-trie (the product container is \
 byte-identical to a build without this feature)");
     }
-    // ---- EMBED m15 (the document starts) IF --docs-map WAS GIVEN ------------
-    // Runs AFTER the m20 join on purpose: append_m20 refuses a container that
-    // already carries m15 (appending m20 would rewrite the version as 9 and
-    // strand the member), so the order is m20 first, m15 second. Idempotent on
-    // a resumed run: a container that already carries m15 is verified against
-    // the map instead of being appended twice.
-    if let Some(DocsMapArg::PileMap(map)) = &options.docs_map {
-        let map = map.to_string_lossy().into_owned();
-        let container_s = container.to_string_lossy().into_owned();
-        let reader = super::qlite::Reader::open(&container_s)
+    // ---- EMBED m15 (the document starts): the SECOND half of the one shape ----
+    // Runs AFTER the m20 join: `append_m20` refuses a container that already
+    // carries m15 (m20's join rewrites the version as 9, which would strand the
+    // member), so the order is m20 first, m15 second.
+    //
+    // `--docs-map` is REQUIRED (refused in parse_chain), and BOTH of its arms
+    // embed m15: a DIR (the XSEP pile map) and a PREFIX (the CORPUS V2 pair,
+    // whose `.starts` table is streamed the same way). Without the member the
+    // container would not be openable by any xsa command, so a build that did not
+    // land it cannot exit 0.
+    //
+    // The reopen below uses the BUILDER'S DOOR (`open_partial`), not the query
+    // gate: at this point the file is still the finish's v7/v8/v9 with m20 and no
+    // m15 - a half-built container, which the gate rightly refuses. The gate runs
+    // once, after the join, at the CERTIFICATION below.
+    let source = match &options.docs_map {
+        Some(DocsMapArg::PileMap(map)) => {
+            super::docstarts::Source::DocsMap(map.to_string_lossy().into_owned())
+        }
+        Some(DocsMapArg::CorpusV2(prefix)) => {
+            super::docstarts::Source::CorpusV2(prefix.to_string_lossy().into_owned())
+        }
+        None => unreachable!("parse_chain requires --docs-map"),
+    };
+    let container_s = container.to_string_lossy().into_owned();
+    {
+        let reader = super::qlite::open_partial(&container_s)
             .map_err(|e| format!("docstarts join: reopen container: {e}"))?;
-        if reader.members.iter().any(|m| m.id == super::docstarts::M15) {
-            let ds = super::docstarts::DocStarts::from_container(&reader)
+        if reader.member(super::docstarts::M15).is_some() {
+            let bytes = reader
+                .member_bytes(super::docstarts::M15)
                 .ok_or("docstarts join: m15 present but not loadable")?;
             journal.line(&format!(
-                "DOCSTARTS_JOIN member=m15 present=true already=1 docs={} stride={} \
- (a resumed run: the member is verified by loading it, never appended twice)",
-                ds.docs, ds.stride));
+                "DOCSTARTS_JOIN member=m15 present=true already=1 bytes={} \
+ (a resumed run: the member is verified by parsing it, never appended twice)",
+                bytes.len()));
         } else {
+            drop(reader);
             let stats = super::docstarts::embed(
                 &container_s,
-                &super::docstarts::Source::DocsMap(map.clone()),
+                &source,
                 super::docstarts::SAMPLE_STRIDE,
-                None,
             );
             journal.line(&format!(
                 "DOCSTARTS_JOIN member=m15 present=true already=0 {} \
  (directory rewritten in place after the m20 join: no container byte copied)",
                 super::docstarts::journal_line(&stats)));
         }
-    } else {
-        journal.line("DOCSTARTS_POLICY present=false reason=no-docs-map (the product container is \
-byte-identical to a build without this feature; document boundaries stay \
-METADATA the caller supplies - never inferred from content bytes)");
+    }
+    // ---- THE CERTIFICATION: the published container IS the one shape ----------
+    // The query gate is the arbiter, not the builder's own claim: reopen through
+    // `qlite::Reader::open` and require v10 with m15 declared. A build whose
+    // output no xsa command can open is a failed build, and it says so here.
+    {
+        let r = super::qlite::Reader::open(&container_s).map_err(|e| {
+            format!(
+                "CONTAINER_NOT_QUERYABLE: the build produced a container the query gate refuses:\
+                 {e}"
+            )
+        })?;
+        journal.line(&format!(
+            "CONTAINER_CERTIFIED format=sxi2-v10 version={} n={} runs={} members={} m15={} m20={}",
+            r.version,
+            r.n,
+            r.r,
+            r.members.iter().map(|m| format!("m{}", m.id)).collect::<Vec<_>>().join(","),
+            r.member_bytes(super::docstarts::M15).map(|b| b.len()).unwrap_or(0),
+            r.member_bytes(super::ctx::TRIE_CODEC).map(|b| b.len()).unwrap_or(0),
+        ));
     }
     // XSA_KILL_AT=after_rename: EVERY phase has exited with rc=0, so the finish
     // has linked the container into its final name (it links only after fsync)
@@ -3362,23 +3252,20 @@ mod tests {
         // Two shapes are two processes: refuse rather than silently pick one.
         let err = parse_chain(&v2_args(&["--tape", "--bin"])).unwrap_err();
         assert!(err.contains("--tape and --bin are mutually exclusive"), "{err}");
+        // There is no third route to contradict --bin: --legacy-merge is REMOVED
+        // and refuses by name before any shape arbitration can happen.
         let err = parse_chain(&["--input", "/tmp/c", "--scratch", "/tmp/s", "--legacy-merge",
                                 "--bin"]
                               .iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap_err();
-        assert!(err.contains("--bin and --legacy-merge are mutually exclusive"), "{err}");
+        assert!(err.contains("--legacy-merge is REMOVED"), "{err}");
     }
 
     #[test]
-    fn bin_live_cap_is_a_bin_pipeline_flag_and_is_carried() {
+    fn bin_live_cap_is_carried() {
         let options = parse_chain(&v2_args(&["--bin-live-cap", "250000000"])).unwrap();
         assert_eq!(options.bin_live_cap, Some(250_000_000));
         let default = parse_chain(&v2_args(&[])).unwrap();
         assert_eq!(default.bin_live_cap, None, "absent = the plan picks from --memory-gb");
-        // On the LEGACY route the flag does not exist (it is a bin-pipeline knob).
-        let err = parse_chain(&["--input", "/tmp/c", "--scratch", "/tmp/s", "--legacy-merge",
-                                "--bin-live-cap", "7"]
-                              .iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap_err();
-        assert!(err.contains("--bin-live-cap is a bin-pipeline flag"), "{err}");
     }
 
     #[test]
@@ -3408,21 +3295,6 @@ mod tests {
     }
 
     #[test]
-    fn phrase_radix_is_refused_on_the_legacy_route() {
-        let legacy = |extra: &[&str]| {
-            let mut args: Vec<String> = ["--input", "/tmp/c", "--scratch", "/tmp/s",
-                                        "--legacy-merge"]
-                .iter().map(|s| s.to_string()).collect();
-            args.extend(extra.iter().map(|s| s.to_string()));
-            args
-        };
-        let err = parse_chain(&legacy(&["--phrase-radix"])).unwrap_err();
-        assert!(err.contains("--phrase-radix is a bin-pipeline flag"), "{err}");
-        let err = parse_chain(&legacy(&["--phrase-min-freq", "4"])).unwrap_err();
-        assert!(err.contains("--phrase-radix is a bin-pipeline flag"), "{err}");
-    }
-
-    #[test]
     fn phrase_knobs_are_validated_with_the_producers_own_constraints() {
         let bad = |extra: &[&str]| {
             let mut a: Vec<String> = vec!["--phrase-radix".into()];
@@ -3442,17 +3314,13 @@ mod tests {
     }
 
     #[test]
-    fn bin_target_size_is_carried_and_refused_on_the_legacy_route() {
+    fn bin_target_size_is_carried() {
         let options = parse_chain(&v2_args(&["--bin-target-size", "1048576"])).unwrap();
         assert_eq!(options.bin_target_size, Some(1_048_576));
         assert_eq!(parse_chain(&v2_args(&[])).unwrap().bin_target_size, None,
                    "absent = the producer's measured automatic default");
         let err = parse_chain(&v2_args(&["--bin-target-size", "1"])).unwrap_err();
         assert!(err.contains("--bin-target-size must be >= 2"), "{err}");
-        let err = parse_chain(&["--input", "/tmp/c", "--scratch", "/tmp/s", "--legacy-merge",
-                                "--bin-target-size", "1048576"]
-                              .iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap_err();
-        assert!(err.contains("--bin-target-size is a bin-pipeline flag"), "{err}");
     }
 
     #[test]
@@ -3463,7 +3331,7 @@ mod tests {
         let plain: Vec<String> = ["--input", "/tmp/c", "--scratch", "/tmp/s"]
             .iter().map(|s| s.to_string()).collect();
         let options = parse_chain(&plain).unwrap();
-        assert!(options.bin_pipeline && !options.legacy_merge);
+        assert!(options.bin_pipeline, "the bin pipeline is the only route");
         assert!(!options.v2_flag_given);
         let with_flag = parse_chain(&v2_args(&[])).unwrap();
         assert!(with_flag.bin_pipeline, "--v2-pipeline still means the bin pipeline");
@@ -3474,37 +3342,25 @@ mod tests {
         assert_eq!(with_flag.memory_gb, options.memory_gb);
         assert_eq!(with_flag.bin_live_cap, options.bin_live_cap);
         assert_eq!(with_flag.bin_target_size, options.bin_target_size);
-        // --legacy-merge is the ONLY way back to the chunk+merge route.
-        let legacy = parse_chain(&["--input", "/tmp/c", "--scratch", "/tmp/s",
-                                   "--legacy-merge"]
-                                 .iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap();
-        assert!(legacy.legacy_merge && !legacy.bin_pipeline);
+        // --legacy-merge (the chunk+merge route) is REMOVED and says so by name
+        // instead of "unknown option": a script must learn why, and not be told
+        // to try a flag that also does not exist.
+        let err = parse_chain(&["--input", "/tmp/c", "--scratch", "/tmp/s",
+                                "--legacy-merge"]
+                              .iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap_err();
+        assert!(err.contains("--legacy-merge is REMOVED"), "{err}");
     }
 
     #[test]
-    fn legacy_merge_is_the_only_route_that_takes_the_chunk_knobs() {
-        let legacy = parse_chain(&["--input", "/tmp/c", "--scratch", "/tmp/s", "--legacy-merge",
-                                   "--chunks", "32", "--kway", "4"]
-                                 .iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap();
-        assert!(legacy.legacy_merge);
-        assert_eq!(legacy.chunks, 32);
-        assert_eq!(legacy.kway, 4);
-    }
-
-    #[test]
-    fn v2_refuses_the_inert_chunk_knobs_loudly() {
-        // The bin shape is one sweep -> bins -> stitch: a chunk/k-way/fan-in
-        // knob would silently misconfigure the run, so each is refused - on the
-        // DEFAULT route (v2_args passes --v2-pipeline, which is now a no-op that
-        // must not change any of this).
-        for (extra, needle) in [
-            (&["--chunks", "32"][..], "--chunks is INERT"),
-            (&["--chunk-mb", "512"][..], "--chunk-mb is INERT"),
-            (&["--kway", "8"][..], "--kway is INERT"),
-            (&["--fanin"][..], "--fanin is INERT"),
-        ] {
-            let err = parse_chain(&v2_args(extra)).unwrap_err();
-            assert!(err.contains(needle), "expected {needle:?} in {err:?}");
+    fn the_chunk_and_kway_knobs_of_the_removed_route_are_refused_by_name() {
+        // The chunk front end and the k-way merge walk are GONE. Their knobs are
+        // refused with a message that names the removed route - not "unknown
+        // option", and never a pointer to a flag that would also not work.
+        for knob in ["--chunks", "--chunk-mb", "--fanin", "--kway"] {
+            let args: Vec<String> = ["--input", "/tmp/c", "--scratch", "/tmp/s", knob]
+                .iter().map(|s| s.to_string()).collect();
+            let err = parse_chain(&args).unwrap_err();
+            assert!(err.contains("REMOVED"), "expected a removal notice for {knob}: {err}");
         }
     }
 

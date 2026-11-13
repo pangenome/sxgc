@@ -230,12 +230,9 @@ pub fn fanout_command(raw: &[std::ffi::OsString]) {
         );
     }
 
-    let reader = Reader::open(container).unwrap_or_else(|e| {
-        die(&format!(
-            "{e}\n  supported: SXI2 v6 lite (members m1,m4,m5,m7,m10,m11)\n  \
-             migration: a legacy container must be rebuilt with `xsa build`."
-        ))
-    });
+    // `Reader::open`'s error IS the refusal (the shape + the rebuild
+    // instruction): there is nothing to add and nothing to fall back to.
+    let reader = Reader::open(container).unwrap_or_else(|e| die(&e));
     // Document frequency IS the denominator of the weight: without sidecars there
     // is no D and no titles, so this command refuses instead of ranking offsets.
     let docs = discover_documents(container, docs.as_deref(), reader.n).unwrap_or_else(|| {

@@ -435,6 +435,21 @@ pub fn refuse(path: &str, what: &str) -> String {
     )
 }
 
+/// The refusal for a command whose ANSWER is carried by a member this container
+/// does not have. Same words as `refuse` (the shape + the rebuild instruction),
+/// plus the one line that says why THIS command cannot answer without it.
+pub fn member_required(path: &str, id: u32, why: &str) -> String {
+    refuse(path, &format!("this container carries no member m{id} ({why})"))
+}
+
+/// The refusal every trie-reading command uses when the container has no m20.
+/// `xsa build --no-trie` is an explicit product arm, so the container is legal;
+/// the answer is not available, and the command says so instead of degrading to
+/// a slower or marked mode.
+pub fn trie_required(path: &str) -> String {
+    member_required(path, 20, "the context trie; this command reads it and has no other arm")
+}
+
 /// What the file is, for the refusal message. The phrase is PREFIX-FREE (no
 /// path): `refuse` puts the path in front of it, so a refusal reads as one
 /// sentence about one file.
@@ -487,7 +502,6 @@ impl Reader {
         // follows its payload. It is not a compatibility arm - it is the layout
         // of the one shape, so it is spelled as a constant here rather than
         // derived from a version the reader no longer spans.
-        let tail_dir = true;
         let _ = version;
         let u32at = |o: usize| u32::from_le_bytes(h[o..o + 4].try_into().unwrap());
         let u64at = |o: usize| u64::from_le_bytes(h[o..o + 8].try_into().unwrap());
@@ -593,7 +607,13 @@ impl Reader {
         // must be there, and their flags must say so. There is no "absent ->
         // degrade" arm anywhere below this line, because a container that fails
         // here never becomes a Reader at all.
-        for id in [1u32, 10, 11, 12, 13, 15, 20] {
+        // m15 is REQUIRED: every query command's no-cross law is structural, and
+        // a container without the document starts cannot classify a match at all.
+        // m20 (the context trie) is required by the commands that READ it - they
+        // refuse by name at their own door (qlite::trie_required) - because
+        // `xsa build --no-trie` is an explicit product arm whose container must
+        // still answer query/search/consult/seeds/mem/branches.
+        for id in [1u32, 10, 11, 12, 13, 15] {
             if !members.iter().any(|m| m.id == id) {
                 return Err(refuse(
                     path,
@@ -603,13 +623,11 @@ impl Reader {
         }
         // The flags are the container's own declaration; a member the flags do
         // not announce is a corrupt directory, not a shape we could read.
-        for (bit, id) in [(256u64, 20u32), (512, 15)] {
-            if flags & bit == 0 {
-                return Err(refuse(
-                    path,
-                    &format!("v10 container whose flags {flags:#x} do not declare m{id} (bit {bit})"),
-                ));
-            }
+        if flags & 512 == 0 {
+            return Err(refuse(
+                path,
+                &format!("v10 container whose flags {flags:#x} do not declare m15 (bit 512)"),
+            ));
         }
         Ok(Reader {
             path: path.to_string(),
@@ -3719,6 +3737,100 @@ impl Reader {
     /// The mapping as an Arc, so a member parser (m15: document starts) can
     /// hold it beyond this reader's borrow and nothing per-document is copied.
     pub fn map_arc(&self) -> std::sync::Arc<Mmap> { self.map.clone() }
+}
+
+/// ------------------------------------------------------------ THE BUILDER'S DOOR
+///
+/// `xsa build` does NOT assemble the container in one write. The finish stage
+/// streams it, and the driver then JOINS two members in place, each a directory
+/// rewrite: m20 (the context trie, built concurrently by `ctx-tap`) and m15 (the
+/// document starts, from `--docs-map`). Between the finish and the first join the
+/// file on disc is a HALF-BUILT container: v7/v8/v9 with no m15.
+///
+/// That file is not queryable and `Reader::open` refuses it - correctly. The join
+/// code still has to look at it, so this door exists: header + trailing directory,
+/// no mmap of the run stream, no block cache, no kernel, no query. It accepts
+/// v7..=v10 and NOTHING else, it is `pub(crate)` to the build path only, and it
+/// proves the final state through `Reader::open` after the last join (see
+/// `chain::run_v2_tail`), which is where the one shape is actually certified.
+///
+/// A query cannot be built on a `Partial`: it has no `Index`, no `Ctx`, no `Index`.
+pub struct Partial {
+    pub path: String,
+    pub version: u32,
+    pub flags: u64,
+    pub n: u64,
+    pub members: Vec<sxi::Member>,
+    map: Arc<Mmap>,
+}
+
+impl Partial {
+    pub fn member(&self, id: u32) -> Option<&sxi::Member> {
+        self.members.iter().find(|m| m.id == id)
+    }
+    pub fn member_bytes(&self, id: u32) -> Option<&[u8]> {
+        let m = self.member(id)?;
+        Some(&self.map[m.offset as usize..(m.offset + m.bytes) as usize])
+    }
+    pub fn map(&self) -> &[u8] {
+        &self.map
+    }
+}
+
+/// Open a container the BUILD is still assembling. v7..=v10 only: the layouts
+/// before v7 are not this build's output and are not joined in place.
+pub fn open_partial(path: &str) -> Result<Partial, String> {
+    let f = File::open(path).map_err(|e| format!("open {path}: {e}"))?;
+    let map = unsafe { Mmap::map(&f) }.map_err(|e| format!("mmap {path}: {e}"))?;
+    if map.len() < 64 {
+        return Err(format!("{path}: too short for an SXI header"));
+    }
+    let h = &map[..64];
+    let version = u32::from_le_bytes(h[4..8].try_into().unwrap());
+    if &h[..4] != b"SXI2" || !(7..=10).contains(&version) {
+        return Err(refuse(
+            path,
+            &format!("{}, and a build join can only extend a v7..=v10 container", describe_format(path)),
+        ));
+    }
+    let u32at = |o: usize| u32::from_le_bytes(h[o..o + 4].try_into().unwrap());
+    let u64at = |o: usize| u64::from_le_bytes(h[o..o + 8].try_into().unwrap());
+    let (n, r) = (u64at(8), u64at(24));
+    let count = u32at(32);
+    let length = u64at(40);
+    if length != map.len() as u64 {
+        return Err(format!(
+            "{path}: header length {length} != file length {} (truncated or trailing bytes)",
+            map.len()
+        ));
+    }
+    if !(9..=11).contains(&count) {
+        return Err(format!("{path}: directory holds {count} members; a build join expects 9..=11"));
+    }
+    let dir_off = length as usize - 40 * count as usize;
+    if dir_off < 64 || dir_off % 8 != 0 {
+        return Err(format!("{path}: directory offset {dir_off} is not valid"));
+    }
+    let mut members = Vec::with_capacity(count as usize);
+    for i in 0..count as usize {
+        let d = &map[dir_off + 40 * i..dir_off + 40 * (i + 1)];
+        let m = sxi::Member {
+            id: u32::from_le_bytes(d[0..4].try_into().unwrap()),
+            codec: u32::from_le_bytes(d[4..8].try_into().unwrap()),
+            offset: u64::from_le_bytes(d[8..16].try_into().unwrap()),
+            bytes: u64::from_le_bytes(d[16..24].try_into().unwrap()),
+            count: u64::from_le_bytes(d[24..32].try_into().unwrap()),
+            checksum: u32::from_le_bytes(d[32..36].try_into().unwrap()),
+        };
+        if m.offset > length || m.bytes > length - m.offset {
+            return Err(format!("{path}: member {} out of bounds", m.id));
+        }
+        members.push(m);
+    }
+    if r == 0 || r > n {
+        return Err(format!("{path}: invalid n={n} R={r}"));
+    }
+    Ok(Partial { path: path.to_string(), version, flags: u64at(48), n, members, map: Arc::new(map) })
 }
 
 impl Index {

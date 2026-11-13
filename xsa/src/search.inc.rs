@@ -84,19 +84,11 @@ pub fn search_command(raw: &[std::ffi::OsString]) {
     let container = container.unwrap();
     let reader = Reader::open(&container).unwrap_or_else(|e| search_die(&e.to_string()));
     let index = Index::open(reader, 1).unwrap_or_else(|e| search_die(&e.to_string()));
-    // THE STRUCTURE: member m15. Without it the default is REFUSED - never a
-    // silently crossing-inclusive match list.
+    // THE STRUCTURE: member m15, always present (it is part of the one container
+    // shape). The default classification is the no-cross law; `--cross-doc` is a
+    // SEMANTIC opt-in to the crossing-inclusive list, not a format fallback.
     let ds = crate::docstarts::DocStarts::from_container(&index.reader);
-    if ds.is_none() && !cross_doc {
-        search_die(&format!(
-            "this container is SXI2 v{} and carries no member m15, so a match cannot be \
-             boundary-classified: the crossing-inclusive (legacy) list is the only answer that \
-             exists here. Build with --docs-map DIR (or `xsa docstarts embed`) for the no-cross \
-             default, or pass --cross-doc to opt in to the crossing-inclusive list",
-            index.reader.version
-        ));
-    }
-    let ds_ref = ds.as_ref();
+    let ds_ref = &ds;
     let text_len = index.reader.n - 1;
 
     // the corpus, for optional per-match byte verification
@@ -189,10 +181,7 @@ pub fn search_command(raw: &[std::ffi::OsString]) {
             let (pos, _) = cx.locate_steps(row);
             let last = pos + plen - 1;
             // THE EXACT PREDICATE: crossing <=> rank(pos) != rank(last)
-            let crossing = match ds_ref {
-                Some(ds) => !(last < ds.text_len && ds.rank_start(last).1 <= pos),
-                None => false, // only reachable under --cross-doc
-            };
+            let crossing = !(last < ds_ref.text_len && ds_ref.rank_start(last).1 <= pos);
             if let Some(f) = &corpus_file {
                 use std::os::unix::fs::FileExt as _;
                 let mut buf = vec![0u8; plen as usize];
@@ -233,7 +222,7 @@ pub fn search_command(raw: &[std::ffi::OsString]) {
          excluded_cross_doc={excluded_total} matches_kept={kept_total} verified={verified} \
          wall_s={:.3} law=no_match_may_cross_a_document_boundary",
         if cross_doc { "cross-doc" } else { "no-cross-default" },
-        if ds_ref.is_some() { "member-m15" } else { "absent" },
+        "member-m15",
         pats.len(),
         absent,
         refused,

@@ -4,7 +4,7 @@
 // that is NOT the corpus, emit substrings of T that are simultaneously SPECIFIC
 // (long) and RECURRING (multiplicity inside a band). No embeddings, no
 // tokenizer, no vector: the only primitive is the FM-index interval, i.e.
-// backward search over the same v6 lite kernel `branches` and `mem` use.
+// backward search over the same query kernel `branches` and `mem` use.
 //
 // THE ONE MONOTONICITY THIS FILE IS BUILT ON. For a fixed text offset i, let
 // `mult(i, m)` be the number of corpus occurrences of `T[i..i+m)`. Prefix
@@ -1071,12 +1071,9 @@ pub fn seeds_command(raw: &[std::ffi::OsString]) {
         die("seeds: --window-len/--window-stride only apply with --windows-out FILE");
     }
 
-    let reader = Reader::open(container).unwrap_or_else(|e| {
-        die(&format!(
-            "{e}\n  supported: SXI2 v6 lite (members m1,m4,m5,m7,m10,m11)\n  \
-             migration: a legacy container must be rebuilt with `xsa build`."
-        ))
-    });
+    // `Reader::open`'s error IS the refusal (the shape + the rebuild
+    // instruction): there is nothing to add and nothing to fall back to.
+    let reader = Reader::open(container).unwrap_or_else(|e| die(&e));
     // ---- ANCHOR MODE, one window: the whole text is window 0. Same scan, same
     // output selection, same tie order and same pipeline as the served forms, so
     // the three paths agree row for row.
@@ -1088,10 +1085,7 @@ pub fn seeds_command(raw: &[std::ffi::OsString]) {
             );
         }
         let ds = crate::docstarts::DocStarts::from_container(&reader);
-        let docs_id = match &ds {
-            Some(d) => format!("m15:{}", d.docs),
-            None => "absent".to_string(),
-        };
+        let docs_id = format!("m15:{}", ds.docs);
         if limit_given {
             die(
                 "seeds: --limit is the SAMPLE-POSITION cap of the classic hit list, not an anchor \
@@ -1125,7 +1119,7 @@ pub fn seeds_command(raw: &[std::ffi::OsString]) {
             &index,
             &mut cx,
             &sigma,
-            ds.as_ref(),
+            Some(&ds),
             0,
             text,
             &params,
@@ -1874,12 +1868,9 @@ fn seeds_served(
     let rchar0 = proc_io("rchar");
     let syscr0 = proc_io("syscr");
     let jobs = if jobs == 0 { 1 } else { jobs };
-    let reader = Reader::open(container).unwrap_or_else(|e| {
-        die(&format!(
-            "{e}\n  supported: SXI2 v6 lite (members m1,m4,m5,m7,m10,m11)\n  \
-             migration: a legacy container must be rebuilt with `xsa build`."
-        ))
-    });
+    // `Reader::open`'s error IS the refusal (the shape + the rebuild
+    // instruction): there is nothing to add and nothing to fall back to.
+    let reader = Reader::open(container).unwrap_or_else(|e| die(&e));
     let n = reader.n;
     let text_len = n.saturating_sub(1);
     // The locate layer is parallel ACROSS THE POSITIONS OF A WINDOW (see
@@ -1900,14 +1891,11 @@ fn seeds_served(
     } else {
         None
     };
-    // THE DOCUMENT STRUCTURE, resolved ONCE from the container's m15. No m15 =
-    // the doc field is absent for every row (marked, never guessed), and that is
-    // journaled rather than silently produced.
+    // THE DOCUMENT STRUCTURE, resolved ONCE from the container's m15. m15 is
+    // REQUIRED by the one container shape, so every row's doc field is exact -
+    // there is no "absent, never guessed" arm to fall into.
     let ds = crate::docstarts::DocStarts::from_container(&reader);
-    let docs_id = match &ds {
-        Some(d) => format!("m15:{}", d.docs),
-        None => "absent".to_string(),
-    };
+    let docs_id = format!("m15:{}", ds.docs);
     let index = seeds_open_index(reader, jobs, rss_gb, cache_gb);
     let sigma = index.reader.sigma;
     // THE OPEN IS THE ONLY VERIFICATION, and it has already happened: the m1 audit
@@ -1943,7 +1931,7 @@ fn seeds_served(
         seeds_loop(
             &index,
             &sigma,
-            ds.as_ref(),
+            Some(&ds),
             p,
             pool.as_ref(),
             move || {
@@ -1983,11 +1971,11 @@ fn seeds_served(
             "window_id\tquery_offset\tcorpus_doc\tcorpus_offset\tmatch_len\tmultiplicity"
         )
         .unwrap();
-        let ds_ref = ds.as_ref();
+        let ds_ref = &ds;
         let totals = seeds_loop(
             &index,
             &sigma,
-            ds_ref,
+            Some(ds_ref),
             p,
             pool.as_ref(),
             move || -> Option<Vec<u8>> {
@@ -1995,29 +1983,20 @@ fn seeds_served(
                 // The window's byte range, resolved the way consult resolves it and
                 // REFUSED when it cannot be resolved (never inferred).
                 let (base, whole_doc) = if w.base == BASE_ABSENT {
-                    match ds_ref {
-                        Some(d) => {
-                            if w.doc >= d.docs {
-                                die(&format!(
-                                    "seeds: window doc={} is past the container's {} documents \
-                                     (m15)",
-                                    w.doc, d.docs
-                                ));
-                            }
-                            (d.select(w.doc), w.whole_doc)
-                        }
-                        None => die(
-                            "seeds: a window record declares no base and this container carries \
-                             no m15, so its byte range cannot be resolved; give base+start+len in \
-                             the window record",
-                        ),
+                    let d = ds_ref;
+                    if w.doc >= d.docs {
+                        die(&format!(
+                            "seeds: window doc={} is past the container's {} documents (m15)",
+                            w.doc, d.docs
+                        ));
                     }
+                    (d.select(w.doc), w.whole_doc)
                 } else {
                     (w.base, false)
                 };
                 let len = if whole_doc {
                     // the whole document: to the next start (or the text end)
-                    let d = ds_ref.unwrap();
+                    let d = ds_ref;
                     let end = if w.doc + 1 < d.docs { d.select(w.doc + 1) } else { d.text_len };
                     end.checked_sub(base).unwrap_or_else(|| {
                         die("seeds: whole-document window has a start past its end")

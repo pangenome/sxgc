@@ -1,8 +1,11 @@
-//! SXI2 member codecs. All bit counts are exact; unused high bits are zero.
+//! SXI2 member codecs of the ONE container shape.
+//!
+//! What remains is exactly what the supported shape needs: m5 (chi) exported as a
+//! u64 LE stream. The phi/escape/LF-start/anchor codecs that used to live here are
+//! gone with the shapes that carried their members.
 use super::{die, sxi};
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom, Write};
-use std::sync::Arc;
 
 fn need(ok: bool, msg: &str) {
     if !ok { die(&format!("SXI2: {msg}")); }
@@ -10,20 +13,6 @@ fn need(ok: bool, msg: &str) {
 fn u64le(b: &[u8]) -> u64 { u64::from_le_bytes(b.try_into().unwrap()) }
 fn get_u64(f: &mut impl Read) -> u64 {
     let mut b = [0; 8]; f.read_exact(&mut b).unwrap_or_else(|e| die(&e.to_string())); u64le(&b)
-}
-fn bit(data: &[u8], i: u64) -> u8 { (data[(i / 8) as usize] >> (i % 8)) & 1 }
-fn padding(data: &[u8], bits: u64) {
-    if bits % 8 != 0 && !data.is_empty() {
-        need(data[data.len() - 1] >> (bits % 8) == 0, "nonzero bit padding");
-    }
-}
-fn packed_bits(data: &[u8], pos: u64, width: u32) -> u64 {
-    if width==0 {return 0;}
-    let p=(pos/8) as usize;let shift=pos%8;
-    let bytes=((shift+width as u64+7)/8) as usize;
-    let mut raw=0u128;
-    for k in 0..bytes {raw|=(data[p+k] as u128)<<(8*k);}
-    ((raw>>shift)&((1u128<<width)-1)) as u64
 }
 struct DiskBits { f: BufReader<File>, bits: u64, pos: u64, byte: u8 }
 impl DiskBits {

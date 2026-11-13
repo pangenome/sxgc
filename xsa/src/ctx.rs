@@ -1642,27 +1642,6 @@ fn doc_of_stride(rank: &[u32], text: &[u8], pos: u64, stride: usize) -> u32 {
 
 // ------------------------------------------------------------------- the build
 
-pub struct BuildArgs {
-    pub sxi: String,
-    pub text: String,
-    pub out: String,
-    pub depth: usize,
-    pub min_support: u64,
-    pub threads: usize,
-    pub docs: bool,
-    /// stop after this many rows (a fixture-scale check of the pass itself)
-    pub limit_rows: Option<u64>,
-    /// decoded m1 block arena (MB): the LF walk is random over runs, so the arena
-    /// IS the speed of the reconstruction. 0 = the query default (64 MB).
-    pub cache_mb: u64,
-    /// keep the reconstructed suffix array here and reuse it (the walk is the cost)
-    pub sa_cache: String,
-    /// store the document summary only for nodes with at least this many
-    /// occurrences (below it `project` answers from seek + the document map)
-    pub docs_min_support: u64,
-    /// decode every run once before the LF walk (build-time memory, 5 B/run)
-    pub dense: bool,
-}
 
 /// `XSA_CTX_SA_PROBE=<steps>`: time a single-threaded LF walk and report its
 /// rate, so the price of the ordered stream is measured, not guessed.
@@ -2377,220 +2356,6 @@ pub fn tap_selftest() {
     println!("TAP_SELFTEST_DONE cases={cases} cut_cases={cut_cases} note=\"band stream == suffix array, member bytes identical; the cut arm proves the same for the boundary-aware build\"");
 }
 
-pub fn build(a: &BuildArgs) {
-    let t_all = std::time::Instant::now();
-    let reader = qlite::Reader::open(&a.sxi).unwrap_or_else(|e| die(&format!("ctx-build: {e}")));
-    let idx = if a.cache_mb > 0 {
-        qlite::Index::open_with_cache(reader, a.threads, (a.cache_mb << 20) as usize)
-    } else {
-        qlite::Index::open(reader, a.threads)
-    }
-    .unwrap_or_else(|e| die(&format!("ctx-build: {e}")));
-    let n = idx.reader.n;
-    let tfile = std::fs::File::open(&a.text).unwrap_or_else(|e| die(&format!("open {}: {e}", a.text)));
-    let flen = tfile.metadata().unwrap().len();
-    need(flen + 1 == n,
-        &format!("corpus {} is {flen} bytes but the container has n={n} rows: a lite container's n is the corpus length + 1 (one END row)", a.text));
-    let text = unsafe { Mmap::map(&tfile) }.unwrap_or_else(|e| die(&format!("mmap {}: {e}", a.text)));
-    let corpus_len = flen;
-    let rows = a.limit_rows.unwrap_or(n).min(n);
-    // A container that ALREADY carries m20 must be refused BY NAME: write_container
-    // copies every old member verbatim and then appends m20, so the output would
-    // carry two members with the same id and every reader would silently pick one.
-    need(idx.reader.member_bytes(TRIE_CODEC).is_none(),
-        &format!("ctx-build: {} already carries m20 (the context trie). Build from the container WITHOUT it \
-                  (the --no-trie arm), or read the existing member with `xsa trie-info`", a.sxi));
-
-    if let Ok(v) = std::env::var("XSA_CTX_SA_PROBE") {
-        let steps: u64 = v.parse().unwrap_or_else(|_| die("XSA_CTX_SA_PROBE: integer"));
-        sa_probe(&idx, steps, std::env::var("XSA_CTX_SA_STATELESS").is_ok());
-        return;
-    }
-    // 1. the ordered stream: the suffix array, from one parallel LF cycle (or from
-    //    the cache a previous run wrote - the walk is the expensive part, the sweep
-    //    is cheap, and the curve needs many sweeps of one stream).
-    let t_sa = std::time::Instant::now();
-    let (sa, sa_steps, sa_mode, dense_mem) = load_or_build_sa(&idx, a.threads, &a.sa_cache, a.dense);
-    let sa_wall = t_sa.elapsed().as_secs_f64();
-
-    // 2. document ranks (original bytes) — built ONLY for the boundary-unaware
-    //    arm; the aware arm takes container document ids from member m15.
-    let t_doc = std::time::Instant::now();
-    // THE NO-CROSS LAW, POST-HOC ARM: the container's own member m15 (when present)
-    // is the boundary oracle, so a `ctx-build` over a v10 container produces the
-    // same boundary-aware member the in-build tap produced from the same map.
-    let starts = match crate::docstarts::DocStarts::from_container(&idx.reader) {
-        Some(ds) => {
-            need(ds.text_len + 1 == n,
-                "ctx-build: member m15 text_len does not match the container's n");
-            eprintln!("CONTEXT_TRIE_BOUNDARY aware=1 source=member-m15 docs={}", ds.docs);
-            OwnedStarts::Table(ds)
-        }
-        None => {
-            eprintln!(
-                "CONTEXT_TRIE_BOUNDARY aware=0 source=absent \
-                 note=\"no member m15: the trie is built boundary-unaware and boundary-sensitive \
-                 queries against it are refused; embed the starts (xsa build --docs-map DIR, or \
-                 xsa docstarts embed) and rebuild to make the no-cross law structural\""
-            );
-            OwnedStarts::None
-        }
-    };
-    let ranks = if a.docs && !starts.is_some() { doc_ranks(&text) } else { Vec::new() };
-    let doc_wall = t_doc.elapsed().as_secs_f64();
-
-    // 3. the sweep
-    let t_sweep = std::time::Instant::now();
-    let stream_mem = sa.len() as u64 + dense_mem;
-    let (payload, reads, cols) = sweep(&sa, &text, &ranks, &starts, corpus_len, n, rows, a.depth, a.min_support, a.docs, a.docs_min_support, (sa_mode, stream_mem));
-    let sweep_wall = t_sweep.elapsed().as_secs_f64();
-
-    // 4. write the container: the old members, then m20, then a v9 directory.
-    let (bytes, member_off) = write_container(&a.sxi, &a.out, &payload, n, &idx.reader);
-    // the BUDGET is the member, not the container: m20 on top of an existing index
-    let ratio = member_off as f64 / n as f64;
-    let trie = Trie::load(&payload);
-    eprintln!(
-        "CONTEXT_TRIE depth={} min_support={} nodes={} edges={} bytes={} ratio_vs_n={:.6} docs_summary=exact<=8+hll13pct",
-        trie.depth, trie.min_support, trie.nodes, trie.edges, member_off, ratio
-    );
-    let bn = member_off as f64 / trie.nodes.max(1) as f64;
-    let be = member_off as f64 / trie.edges.max(1) as f64;
-    eprintln!(
-        "CONTEXT_TRIE_COLUMNS node_fixed={} node_edge_delta={} node_count={} edge_code={} edge_child={} \
-         edge_count={} doc_ndocs={} doc_top={} doc_first={} doc_ids={} head={HEAD} bytes_per_node={bn:.1} bytes_per_edge={be:.1}",
-        cols[0], cols[1], cols[2], cols[3], cols[4], cols[5], cols[6], cols[7], cols[8], cols[9]
-    );
-    eprintln!(
-        "CONTEXT_TRIE_SOURCE mode={} rows={} n={} sa_bytes={} dense_bytes={} stream_mem_gb={:.1} note=\"0=kernel-lf 1=dense-lf 2=sa-cache 3=in-build\"",
-        match sa_mode { 0 => "kernel-lf", 1 => "dense-lf", 2 => "sa-cache-reuse", _ => "in-build" },
-        sa_steps, n, sa.len(), dense_mem, stream_mem as f64 / (1u64 << 30) as f64
-    );
-    let pass = ratio <= 0.05;
-    eprintln!("CONTEXT_TRIE_BUDGET ratio_vs_n={ratio:.6} target<=0.05 pass={}", u8::from(pass));
-    eprintln!(
-        "CONTEXT_TRIE_BUILD rows={rows} sa_steps={sa_steps} sa_wall={sa_wall:.1}s doc_wall={doc_wall:.1}s \
-         sweep_wall={sweep_wall:.1}s prefix_reads={reads} total_wall={:.1}s threads={} container_out={bytes} member_off={member_off}",
-        t_all.elapsed().as_secs_f64(),
-        a.threads
-    );
-}
-
-/// Write `out` = the input container's members verbatim, plus m20, with a v9
-/// header and a trailing directory. Old containers stay readable: this only ADDS a
-/// member and a version.
-fn write_container(inp: &str, out: &str, payload: &[u8], n: u64, reader: &qlite::Reader) -> (u64, u64) {
-    use std::os::unix::fs::FileExt;
-    let src = std::fs::File::open(inp).unwrap_or_else(|e| die(&format!("open {inp}: {e}")));
-    let map = reader.map();
-    match std::fs::symlink_metadata(out) {
-        Ok(_) => die(&format!("ctx-build: output exists: {out}")),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => die(&format!("ctx-build: inspect {out}: {e}")),
-    }
-    let tmp = format!("{out}.partial");
-    let f = std::fs::File::create(&tmp).unwrap_or_else(|e| die(&format!("create {tmp}: {e}")));
-    let mut w = BufWriter::with_capacity(1 << 22, &f);
-    let mut members: Vec<(u64, u64, u64, u32, u64, u64)> = Vec::new(); // id, codec, off, crc, bytes, count
-    let mut off = 64u64;
-    let mut wpos = 64u64;
-    let mut hdr = [0u8; 64];
-    hdr[..4].copy_from_slice(b"SXI2");
-    let old = &map[..64];
-    hdr[4..16].copy_from_slice(&old[4..16]); // version (patched below), n, k(lo)
-    hdr[16..24].copy_from_slice(&old[16..24]);
-    hdr[24..32].copy_from_slice(&old[24..32]); // r
-    hdr[48..56].copy_from_slice(&old[48..56]);
-    let flags = u64::from_le_bytes(old[48..56].try_into().unwrap()) | FLAG_TRIE;
-    hdr[48..56].copy_from_slice(&flags.to_le_bytes());
-    let old_count = u32::from_le_bytes(old[32..36].try_into().unwrap()) as usize;
-    let count = old_count + 1;
-    hdr[32..36].copy_from_slice(&(count as u32).to_le_bytes());
-    hdr[36..40].copy_from_slice(&((64 + 40 * count) as u32).to_le_bytes());
-    w.write_all(&hdr).unwrap();
-    // copy every old member in PHYSICAL order, keeping its id and codec
-    let mut spans: Vec<(u64, u64, u32, u32, u64)> = reader
-        .members
-        .iter()
-        .map(|m| (m.offset, m.bytes, m.id, m.codec, m.count))
-        .collect();
-    spans.sort_unstable();
-    let mut crcs: Vec<u32> = Vec::new();
-    let mut crcb = vec![0u8; 1 << 20];
-    for &(soff, bytes, id, codec, cnt) in &spans {
-        off = (off + 7) / 8 * 8;
-        if off != wpos {
-            w.write_all(&vec![0u8; (off - wpos) as usize]).unwrap();
-            wpos = off;
-        }
-        let mut v = !0u32;
-        let mut left = bytes as usize;
-        let mut at = soff as usize;
-        while left > 0 {
-            let z = left.min(crcb.len());
-            crcb[..z].copy_from_slice(&map[at..at + z]);
-            v = sxi::crc_step(v, &crcb[..z]);
-            w.write_all(&crcb[..z]).unwrap();
-            at += z;
-            left -= z;
-            wpos += z as u64;
-        }
-        crcs.push(!v);
-        members.push((id as u64, codec as u64, off, !v, bytes, cnt));
-        off += bytes;
-    }
-    // m20
-    off = (off + 7) / 8 * 8;
-    if off != wpos {
-        w.write_all(&vec![0u8; (off - wpos) as usize]).unwrap();
-        wpos = off;
-    }
-    w.write_all(payload).unwrap();
-    wpos += payload.len() as u64;
-    let member_off = payload.len() as u64;
-    let crc = sxi::crc32_of(payload);
-    members.push((TRIE_CODEC as u64, TRIE_CODEC as u64, off, crc, member_off, n));
-    off += member_off;
-    // trailing directory, sorted by id
-    members.sort_unstable_by_key(|m| m.0);
-    let mut dir = Vec::with_capacity(40 * members.len());
-    for &(id, codec, moff, mcrc, mbytes, mcount) in &members {
-        let mut d = [0u8; 40];
-        put(&mut d[0..], id as u64, 4);
-        put(&mut d[4..], codec as u64, 4);
-        put(&mut d[8..], moff, 8);
-        put(&mut d[16..], mbytes, 8);
-        put(&mut d[24..], mcount, 8);
-        put(&mut d[32..], mcrc as u64, 4);
-        dir.extend_from_slice(&d);
-    }
-    w.write_all(&dir).unwrap();
-    let length = off + dir.len() as u64;
-    w.flush().unwrap();
-    drop(w);
-    // patch the header: version, length, CRC. The version law: the output now
-    // carries m20 (v9); if the input carried m15 (v10) the output KEEPS v10 -
-    // writing 9 would strand m15 in a container whose version no longer
-    // declares it.
-    let new_version: u32 = if reader.members.iter().any(|m| m.id == 15) { 10 } else { 9 };
-    let mut h2 = [0u8; 64];
-    h2.copy_from_slice(&hdr);
-    h2[4..8].copy_from_slice(&new_version.to_le_bytes());
-    h2[40..48].copy_from_slice(&length.to_le_bytes());
-    h2[56..60].fill(0);
-    let mut hc = vec![0u8; 64];
-    hc.copy_from_slice(&h2);
-    hc.extend_from_slice(&dir);
-    let crc = sxi::crc32_of(&hc);
-    h2[56..60].copy_from_slice(&crc.to_le_bytes());
-    f.write_all_at(&h2, 0).unwrap();
-    f.sync_all().unwrap();
-    drop(f);
-    std::fs::rename(&tmp, out).unwrap_or_else(|e| die(&format!("rename {tmp} -> {out}: {e}")));
-    let _ = src;
-    (length, member_off)
-}
-
 /// Append the m20 payload to a container that is ALREADY WRITTEN, IN PLACE.
 ///
 /// The finish phase streams the container; the trie is built concurrently by a
@@ -2603,12 +2368,15 @@ fn write_container(inp: &str, out: &str, payload: &[u8], n: u64, reader: &qlite:
 /// the route to the payload differs, which the member itself records (source).
 pub fn append_m20(path: &str, payload: &[u8], n: u64) -> u64 {
     use std::os::unix::fs::FileExt;
-    let reader = qlite::Reader::open(path).unwrap_or_else(|e| die(&format!("trie append: {e}")));
+    // THE BUILDER'S DOOR: the input is the finish stage's half-built container
+    // (v7/v8, no m20, no m15), which the query gate rightly refuses. The join
+    // must not require a readable container - the FINAL state is what the gate
+    // certifies (see chain's CONTAINER_CERTIFIED, after the m15 join).
+    let reader = qlite::open_partial(path).unwrap_or_else(|e| die(&format!("trie append: {e}")));
     need(reader.member_bytes(TRIE_CODEC).is_none(),
         &format!("trie append: {path} already carries m20"));
     need(reader.members.iter().all(|m| m.id != 15),
-        &format!("trie append: {path} carries member m15 (document starts; SXI2 v{}); appending m20 \n             here would rewrite the version as 9 and strand m15 - build with --trie and \n             --docs-map in one `xsa build`, or embed m15 after m20",
-            reader.version));
+        &format!("trie append: {path} already carries member m15 (document starts); m15 is joined \n             AFTER m20 by the build driver - there is no second trie join"));
     let count = reader.members.len();
     let length = std::fs::metadata(path).unwrap().len();
     let dir_start = length - 40 * count as u64;
@@ -2648,7 +2416,10 @@ pub fn append_m20(path: &str, payload: &[u8], n: u64) -> u64 {
     let old = reader.map()[..64].to_vec();
     let mut h = [0u8; 64];
     h.copy_from_slice(&old);
-    put(&mut h[4..], 9, 4);
+    // The version law of a forward-only product: the join writes the version the
+    // ONE shape has, so a container is never momentarily declared as an older
+    // shape it no longer is.
+    put(&mut h[4..], u64::from(crate::docstarts::VERSION), 4);
     put(&mut h[32..], entries.len() as u64, 4);
     put(&mut h[36..], (64 + 40 * entries.len()) as u64, 4);
     put(&mut h[40..], new_len, 8);
@@ -2732,9 +2503,13 @@ fn parse_context(s: &str) -> Vec<u8> {
 }
 
 fn load_trie<'a>(reader: &'a qlite::Reader) -> Trie<'a> {
-    let m = reader.member_bytes(TRIE_CODEC).unwrap_or_else(|| {
-        die("this container has no context trie (member m20); build one with `xsa ctx-build`")
-    });
+    // No m20 = this command has nothing to read, and it says so in the crate's
+    // one refusal (the shape + `rebuild with xsa build`) instead of falling back
+    // to a slower or conflated arm. `xsa build --no-trie` is a legal build arm,
+    // so this is a REFUSAL on a legal container, not a format error.
+    let m = reader
+        .member_bytes(TRIE_CODEC)
+        .unwrap_or_else(|| die(&qlite::trie_required(&reader.path)));
     Trie::load(m)
 }
 
@@ -2772,57 +2547,15 @@ fn trie_boundary_gate(trie: &Trie, cross_doc: bool, what: &str) {
 
 pub fn command(cmd: &str, args: &[String]) {
     match cmd {
-        "ctx-build" => {
-            let mut a = BuildArgs {
-                sxi: String::new(),
-                text: String::new(),
-                out: String::new(),
-                depth: 8,
-                min_support: 1_000,
-                threads: 16,
-                docs: true,
-                limit_rows: None,
-                cache_mb: 0,
-                sa_cache: String::new(),
-                docs_min_support: 1000,
-                dense: true,
-            };
-            let mut i = 0;
-            while i < args.len() {
-                let f = args[i].as_str();
-                let mut val = |what: &str| -> String {
-                    i += 1;
-                    args.get(i).cloned().unwrap_or_else(|| die(&format!("{what} needs a value")))
-                };
-                match f {
-                    "--sxi" => a.sxi = val("--sxi"),
-                    "--text" => a.text = val("--text"),
-                    "-o" | "--out" => a.out = val("--out"),
-                    "--depth" => a.depth = val("--depth").parse().unwrap_or_else(|_| die("--depth: integer")),
-                    "--min-support" => {
-                        a.min_support = val("--min-support").parse().unwrap_or_else(|_| die("--min-support: integer"))
-                    }
-                    "--threads" => a.threads = val("--threads").parse().unwrap_or_else(|_| die("--threads: integer")),
-                    "--cache-mb" => a.cache_mb = val("--cache-mb").parse().unwrap_or_else(|_| die("--cache-mb: integer")),
-                    "--sa-cache" => a.sa_cache = val("--sa-cache"),
-                    "--docs-min-support" => {
-                        a.docs_min_support = val("--docs-min-support").parse().unwrap_or_else(|_| die("--docs-min-support: integer"))
-                    }
-                    "--rows" => {
-                        a.limit_rows = Some(val("--rows").parse().unwrap_or_else(|_| die("--rows: integer")))
-                    }
-                    "--no-docs" => a.docs = false,
-                    "--dense" => a.dense = true,
-                    "--no-dense" => a.dense = false,
-                    other => die(&format!("ctx-build: unknown option {other}")),
-                }
-                i += 1;
-            }
-            need(!a.sxi.is_empty() && !a.text.is_empty() && !a.out.is_empty(),
-                "usage: xsa ctx-build --sxi <in.sxi2> --text <corpus> --out <out.sxi2> \
-                 [--depth D] [--min-support K] [--threads N] [--no-docs] [--rows N]");
-            build(&a);
-        }
+        // FORWARD-ONLY: `ctx-build` (build m20 into a container that lacks it) is
+        // GONE. Its input was a container WITHOUT m20, and the one container shape
+        // carries it: the member is built IN-BUILD by `xsa build` (the ctx-tap
+        // phase + `append_m20`), so the post-hoc arm had nothing left to run on.
+        "ctx-build" => die(
+            "xsa ctx-build: REMOVED. m20 (the context trie) is part of the one container shape \
+             and is built in-band by `xsa build`; there is no container without it to build from. \
+             Read the member with `xsa trie-info` / `trie-stat` / `branch-of`.",
+        ),
         "branch-of" if args.iter().any(|a| a == "--batch") => batch("branch-of", args),
         "relax" if args.iter().any(|a| a == "--batch") => batch("relax", args),
         "branch-of" => {
@@ -3004,16 +2737,9 @@ fn verify(args: &[String]) {
     // member and is refused), and an unaware member against the legacy conflated
     // scan (only under --cross-doc, per the gate above).
     let starts = if trie.boundary_aware == 1 {
-        match crate::docstarts::DocStarts::from_container(&reader) {
-            Some(ds) => {
-                need(ds.text_len + 1 == trie.n, "ctx-verify: member m15 text_len disagrees with n");
-                OwnedStarts::Table(ds)
-            }
-            None => die(
-                "ctx-verify: the m20 member says boundary_aware=1 but the container carries no \
-                 member m15: an aware trie without its starts table cannot be verified (or trusted)",
-            ),
-        }
+        let ds = crate::docstarts::DocStarts::from_container(&reader);
+        need(ds.text_len + 1 == trie.n, "ctx-verify: member m15 text_len disagrees with n");
+        OwnedStarts::Table(ds)
     } else {
         OwnedStarts::None
     };

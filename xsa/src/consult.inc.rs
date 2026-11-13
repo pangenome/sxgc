@@ -1653,7 +1653,7 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
         }
         ds
     });
-    if let (Some(a), Some(b)) = (&docs_from_member, &docs_from_sidecar) {
+    if let (a, Some(b)) = (&docs_from_member, &docs_from_sidecar) {
         let n = a.docs.min(b.docs);
         if n == 0 {
             die("consult: document structure with zero documents");
@@ -1692,15 +1692,14 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
             }
         }
     }
-    let member_present = docs_from_member.is_some();
+    // THE STRUCTURE IS NEVER ABSENT: m15 is part of the one container shape, so
+    // the only choice is WHICH authority answers - the container's own member by
+    // default, or an explicit `--docs DIR` override (a superset map), which is
+    // then cross-checked against the member above. `--docs` is a semantic
+    // override, not a fallback for a structure-less container.
     let sidecar_present = docs_from_sidecar.is_some();
-    let docs = docs_from_sidecar.or(docs_from_member);
-    let docs_source = match (sidecar_present, member_present) {
-        (true, true) => "sidecar+member-cross-checked",
-        (true, false) => "sidecar",
-        (false, true) => "member-m15",
-        (false, false) => "absent",
-    };
+    let docs = docs_from_sidecar.or(Some(docs_from_member));
+    let docs_source = if sidecar_present { "sidecar+member-cross-checked" } else { "member-m15" };
     if let Some(ds) = docs.as_ref() {
         eprintln!(
             "CONSULT_NOTE docs_source={} docs={} text_bytes={} map_corpus_bytes={} \
@@ -1713,9 +1712,6 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
         );
     }
     let docs_ref = docs.as_ref();
-    if doc_restrict && docs_ref.is_none() {
-        die("consult: --doc-restrict needs a document structure (member m15 or --docs DIR)");
-    }
     if doc_restrict_cap == 0 {
         die("consult: --doc-restrict-cap must be at least 1");
     }
@@ -1730,33 +1726,21 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
     }
     // THE BOUNDARY-AWARE TRIE (m20): contexts within its depth answer from the
     // member itself - exact, any width, no locate - when the member was built
-    // boundary-aware. An UNAWARE member is not consulted for the default (its
-    // counts conflate crossing occurrences) and is named in the journal.
-    let trie_member: Option<&[u8]> = index.reader.member_bytes(crate::ctx::TRIE_CODEC);
-    let trie_owned = trie_member.map(crate::ctx::Trie::load);
-    let trie_ref = trie_owned.as_ref();
-    let trie_arm = match trie_ref {
-        Some(t) if t.boundary_aware == 1 => format!("m20-depth{}-aware", t.depth),
-        Some(_) => "m20-unaware".to_string(),
-        None => "absent".to_string(),
+    // boundary-aware. A container WITHOUT m20 has no such arm, and consult does
+    // not silently become the slower zero-trie mode: it REFUSES by name (the
+    // member, the one shape, the rebuild instruction). An UNAWARE member is
+    // refused by `trie_boundary_gate` unless `--cross-doc` says otherwise.
+    let trie_member: &[u8] = index
+        .reader
+        .member_bytes(crate::ctx::TRIE_CODEC)
+        .unwrap_or_else(|| die(&crate::qlite::trie_required(&index.reader.path)));
+    let trie_owned = crate::ctx::Trie::load(trie_member);
+    let trie_ref = &trie_owned;
+    let trie_arm = if trie_owned.boundary_aware == 1 {
+        format!("m20-depth{}-aware", trie_owned.depth)
+    } else {
+        "m20-unaware".to_string()
     };
-    if boundary_strict && docs_ref.is_none() {
-        die(&format!(
-            "consult: --boundary-strict was asked for, but there is no document structure to be \
-             exact WITH: the container is SXI2 v{} and carries no member m15, and no --docs DIR was \
-             given. Every row would be the conflated answer. Build with --docs-map DIR (or `xsa \
-             docstarts embed`), pass --docs DIR, or drop --boundary-strict",
-            index.reader.version,
-        ));
-    }
-    if docs_ref.is_none() && !cross_doc {
-        eprintln!(
-            "CONSULT_NOTE boundary=absent: every row of this run is marked boundary_exact=0 \
-             (the conflated histogram: a match or branch count MAY cross a document boundary). \
-             Give a structure (member m15 via --docs-map at build time, or --docs DIR) for the \
-             no-cross default, or pass --cross-doc to acknowledge it",
-        );
-    }
 
     let mut src = WindowSource::open(&windows_path, binary);
     if start.windows_bytes_done > 0 {
@@ -1886,10 +1870,10 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
     let sep_framing_for_threads = sep_framing_verified;
     let rows_v4_for_threads = rows_v4;
     let docs_for_threads: Option<&crate::docstarts::DocStarts> = docs_ref;
-    let trie_for_threads: Option<&crate::ctx::Trie<'_>> = match trie_ref {
-        Some(t) if t.boundary_aware == 1 => Some(t),
-        _ => None,
-    };
+    // The trie arm is used only when the member is boundary-aware; an unaware
+    // member under --cross-doc is the CONFLATED arm and gets no trie help.
+    let trie_for_threads: Option<&crate::ctx::Trie<'_>> =
+        if trie_ref.boundary_aware == 1 { Some(trie_ref) } else { None };
     let start_seq = start.seq;
     let start_positions = start.positions_done;
     let journal_for_writer = journal_path.clone();
