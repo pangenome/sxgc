@@ -1659,7 +1659,7 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
             die("consult: document structure with zero documents");
         }
         let mut state = 0x9E37_79B9_7F4A_7C15u64;
-        let mut mix = |state: &mut u64| {
+        let mix = |state: &mut u64| {
             *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
             let mut z = *state;
             z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
@@ -2586,7 +2586,7 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
                 };
                 let avail = off - w.base;
                 let want = avail.min(u64::from(left));
-                let mut ctx_len = want as usize;
+                let ctx_len = want as usize;
                 let ctx_off = batch.bytes.len() as u32;
                 if ctx_len > 0 {
                     let at = batch.bytes.len();
@@ -2745,7 +2745,7 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
     // CONSULT_LAYERS receipt; the zero-locate raw layers are the χ-proportional
     // mass - width1 + tforced + forced + rawfork). The p50 comes from the
     // log2-nanosecond histogram's cdf.
-    let mut ledger = ChiLedger {
+    let ledger = ChiLedger {
         rows: chi_rows,
         nanos: chi_nanos,
         hist: chi_hist,

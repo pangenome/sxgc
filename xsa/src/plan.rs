@@ -1499,7 +1499,7 @@ pub fn model_v2(
     // The window files are IN the tree (scratch tree, bounded, unlinked as
     // built): the all-phase disc peak has to carry them next to whatever else is
     // live at that moment.
-    let window_file_mb = window_file_gb * 1024.0;
+    let _window_file_mb = window_file_gb * 1024.0;
     let free_pct = 100u32.saturating_sub(survey.scratch_used_percent);
     let hygiene_ok = true; // DEPRECATED: no percentage-of-device policy. The gate is the absolute peak-vs-free check above.
     let tree_target_ok = V2_TREE_PEAK_PER_N <= V2_TREE_TARGET_PER_N;

@@ -2017,10 +2017,10 @@ fn run_chain(options: Options) -> Result<(), String> {
         None => memory_kb,
     };
     let merged = scratch.join("merged");
-    let finish = scratch.join("finish");
+    let _finish = scratch.join("finish");
     let prefix = merged.join("frag");
     let frag = prefix.to_str().ok_or("scratch path is not UTF-8")?.to_string();
-    let s = |path: &str| path.to_string();
+    let _s = |path: &str| path.to_string();
 
     // V2 FRONT DOOR (THE BIN SHAPE): bin-bwt (sweep -> 256 byte-bins ->
     // ordered stitch) as the producer, the decomposed fused finish as the

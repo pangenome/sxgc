@@ -1256,7 +1256,7 @@ pub fn seeds_command(raw: &[std::ffi::OsString]) {
                 "gave_up_len": if s.gave_up == 0 { serde_json::Value::Null } else { serde_json::json!(s.gave_up) },
                 "gave_up_mult": if s.gave_up == 0 { serde_json::Value::Null } else { serde_json::json!(s.gave_up_mult) },
             });
-            if let Some(d) = &docs {
+            if let Some(_d) = &docs {
                 let list: Vec<_> = docinfo
                     .iter()
                     .zip(positions.iter())
@@ -1854,7 +1854,7 @@ where
 /// from and in the answer's encoding.
 fn seeds_served(
     container: &str,
-    docs_dir: Option<&str>,
+    _docs_dir: Option<&str>,
     p: &SeedParams,
     serve: bool,
     windows_path: Option<&str>,

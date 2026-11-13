@@ -56,7 +56,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufWriter, ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};

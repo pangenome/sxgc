@@ -48,7 +48,7 @@
 //! stated, never presented as exact). A document is a run of bytes delimited by
 //! 0x1E, counted in the ORIGINAL corpus bytes.
 
-use std::io::{BufWriter, Write};
+use std::io::Write;
 
 use memmap2::Mmap;
 
@@ -2835,7 +2835,7 @@ fn verify(args: &[String]) {
             }
         };
         // classify one verified occurrence at `p` of context `c` under the law
-        let mut classify = |p: usize, c: &[u8]| -> Option<u16> {
+        let classify = |p: usize, c: &[u8]| -> Option<u16> {
             let q = p + c.len();
             if q == clen {
                 return Some(END);
@@ -2979,7 +2979,7 @@ fn curve(args: &[String]) {
     for &d in &depths {
         for &k in &supports {
             let t0 = std::time::Instant::now();
-            let (payload, _, cols) = sweep(&sa, &corpus, &ranks, &OwnedStarts::None, flen, n, n, d, k, docs, docs_min_support, (0, sa.len() as u64));
+            let (payload, _, _cols) = sweep(&sa, &corpus, &ranks, &OwnedStarts::None, flen, n, n, d, k, docs, docs_min_support, (0, sa.len() as u64));
             let trie = Trie::load(&payload);
             let ratio = payload.len() as f64 / n as f64;
             let per_node = payload.len() as f64 / trie.nodes.max(1) as f64;
@@ -3485,7 +3485,7 @@ pub fn selftest() {
             }
         }
         for table in &tables {
-            let oracle = OwnedStarts::Plain { starts: table.clone(), text_len: n };
+            let _oracle = OwnedStarts::Plain { starts: table.clone(), text_len: n };
             for &depth in &[1usize, 2, 3, 5, 8, 32] {
                 for &k in &[1u64, 2, 3, 1000] {
                     let order = suffix_order(t);

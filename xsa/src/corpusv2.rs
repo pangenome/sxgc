@@ -690,7 +690,7 @@ fn bin_paths(prefix: &Path) -> (PathBuf, PathBuf) {
 /// directory's MANIFEST.json must not exist (one manifest per directory).
 fn claim_output(prefix: &Path, want_order: bool) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
     let (starts, docs, order, manifest) = corpus_paths(prefix);
-    let mut paths = vec![starts.clone(), docs.clone(), manifest.clone(), order.clone()];
+    let paths = vec![starts.clone(), docs.clone(), manifest.clone(), order.clone()];
     for p in &paths {
         if p.exists() {
             die(&format!(

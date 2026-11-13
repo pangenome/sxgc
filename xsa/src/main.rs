@@ -28,7 +28,7 @@ mod corpusv2;
 mod docstarts;
 
 use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::process::exit;
 
 fn die(msg: &str) -> ! {

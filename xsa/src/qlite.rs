@@ -3336,7 +3336,7 @@ pub fn command(args: &[std::ffi::OsString], byte_certificate: bool) {
     // positions and says nothing about the search kernel).
     let (mut worst_us, mut low_sum_us, mut nlow_us, mut high) = (0.0f64, 0.0f64, 0u64, 0u64);
     let (mut low_steps, mut low_max_steps, mut low_occ) = (0u64, 0u64, 0u64);
-    let mut clamped_hits = 0u64;
+    let _clamped_hits = 0u64;
     for (pid, hit) in results.iter().enumerate() {
         assert_count(hit.occurrences, index.n(), patterns[pid].len());
         let us = hit.search_us + hit.locate_us * hit.positions.len() as f64;
