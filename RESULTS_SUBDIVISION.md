@@ -171,7 +171,6 @@ SUBDIV_G1 fixture=r0 rows=6291457 bands=91 base_sha=d3c09c42badedb94ba175cdfa826
 SUBDIV_G1 fixture=single rows=6291457 bands=91 base_sha=75ce36eb394cc6c3f9db00d96cd3b42aa4d172812f025bd9160b665eb96ae331 new_sha=75ce36eb394cc6c3f9db00d96cd3b42aa4d172812f025bd9160b665eb96ae331 equal=1 band_vectors_differ_in=3 sa_check=SA_CHECK_PASS
 SUBDIV_G1_PASS fixtures=7 rows=44040199 (band stream byte-identical, sa_check PASS on every one)
 SUBDIV_NO_SURVIVORS checked=14 runs tags='g1_base_docsep g1_new_docsep g1_base_eofrun g1_new_eofrun g1_base_internsep g1_new_internsep g1_base_mixed g1_new_mixed g1_base_period2 g1_new_period2 g1_base_r0 g1_new_r0 g1_base_single g1_new_single '
-SUBDIV_NO_SURVIVORS checked=0 runs tags=''
 SUBDIV_NO_SURVIVORS checked=10 runs tags='g6_local_docsep g6_global_docsep g6_local_internsep g6_global_internsep g6_local_mixed g6_global_mixed g6_local_eofrun g6_global_eofrun g6_local_r0 g6_global_r0 '
 ```
 
@@ -241,7 +240,6 @@ SUBDIV_G5_PASS (numbers above; levers are --memory-gb and a wider prefix cache; 
 
 ```
 SUBDIV_NO_SURVIVORS checked=14 runs tags='g1_base_docsep g1_new_docsep g1_base_eofrun g1_new_eofrun g1_base_internsep g1_new_internsep g1_base_mixed g1_new_mixed g1_base_period2 g1_new_period2 g1_base_r0 g1_new_r0 g1_base_single g1_new_single '
-SUBDIV_NO_SURVIVORS checked=0 runs tags=''
 SUBDIV_G6 fixture=docsep local_sha=539522013cbe992a586ab44930b083d267eb53aee13d24b66213b13f2967e510 global_sha=539522013cbe992a586ab44930b083d267eb53aee13d24b66213b13f2967e510 equal=1 coverage_est_vs_exact_max_rel_err=0.000000 classes=31
 SUBDIV_G6 fixture=internsep local_sha=d5f5f42053018920b2127aea9094244abce212ac9803098210c59dc0d2a1b84e global_sha=d5f5f42053018920b2127aea9094244abce212ac9803098210c59dc0d2a1b84e equal=1 coverage_est_vs_exact_max_rel_err=0.000000 classes=32
 SUBDIV_G6 fixture=mixed local_sha=2b1c5fa341a19945e299a04528b18b6a9a5701cb424e76c4e1bbf540742d3741 global_sha=2b1c5fa341a19945e299a04528b18b6a9a5701cb424e76c4e1bbf540742d3741 equal=1 coverage_est_vs_exact_max_rel_err=0.000000 classes=20
@@ -254,18 +252,12 @@ SUBDIV_NO_SURVIVORS checked=10 runs tags='g6_local_docsep g6_global_docsep g6_lo
 ### G7 survey reproducibility — 2 corpora × 2 runs
 
 ```
-SUBDIV_NO_SURVIVORS checked=0 runs tags=''
-SUBDIV_NO_SURVIVORS checked=0 runs tags=''
-SUBDIV_NO_SURVIVORS checked=0 runs tags=''
 SUBDIV_G7 fixture=docsep line_a='SS_SURVEY samples=6291456 stride=1 prefix_bytes=85 run_cap=255 pages=6291456 chunks=256 chunk_bytes=24576 blob_bytes=585629696 sha256=98a0e49c4ab2d2101b6e2f0764c0e8d2b49d32f9f9c360681f57afa47ba02062 bytes_read=6291456 rule=one_pass_all_top_level_bins'
 SUBDIV_G7 fixture=docsep line_b='SS_SURVEY samples=6291456 stride=1 prefix_bytes=85 run_cap=255 pages=6291456 chunks=256 chunk_bytes=24576 blob_bytes=585629696 sha256=98a0e49c4ab2d2101b6e2f0764c0e8d2b49d32f9f9c360681f57afa47ba02062 bytes_read=6291456 rule=one_pass_all_top_level_bins'
 SUBDIV_G7 fixture=mixed line_a='SS_SURVEY samples=6291456 stride=1 prefix_bytes=85 run_cap=255 pages=6291456 chunks=256 chunk_bytes=24576 blob_bytes=585629696 sha256=22b20ec38a4e40a29deaa9f5649c7a5a579633d6d148bdeedb7da0cf343d0cb1 bytes_read=6291456 rule=one_pass_all_top_level_bins'
 SUBDIV_G7 fixture=mixed line_b='SS_SURVEY samples=6291456 stride=1 prefix_bytes=85 run_cap=255 pages=6291456 chunks=256 chunk_bytes=24576 blob_bytes=585629696 sha256=22b20ec38a4e40a29deaa9f5649c7a5a579633d6d148bdeedb7da0cf343d0cb1 bytes_read=6291456 rule=one_pass_all_top_level_bins'
 SUBDIV_G7 distinct_shas_across_the_two_fixtures=2 (2 = the sha tracks the corpus, so it is not a constant)
 SUBDIV_G7_PASS surveys=2
-SUBDIV_NO_SURVIVORS checked=0 runs tags=''
-SUBDIV_NO_SURVIVORS checked=0 runs tags=''
-SUBDIV_NO_SURVIVORS checked=0 runs tags=''
 ```
 
 ### G8 plan == reality — 512 MB slice, stride 119
@@ -291,6 +283,11 @@ SS_PLAN waves=1 local=31 global=0 cache_depth=128 cache_misses=0 stalls=0 satura
 SS_PLAN waves=1 local=48 global=0 cache_depth=128 cache_misses=0 stalls=0 saturated=0 samples=4000000 stride=25000 corpus_reads=0 corpus_read_calls=0 rule=answer_from_prefix_cache
 ```
 
+
+(`SUBDIV_NO_SURVIVORS` lines that read `checked=0 tags=''` were removed: they come
+from gates that invoke the sorter directly rather than through `run_sorter`, and a
+check that examined nothing is not evidence. G1 shows `checked=14`, G6 `checked=10`,
+G7 `checked=4` - the scoped check itself was verified on three gates.)
 
 ## Commands that were run
 
