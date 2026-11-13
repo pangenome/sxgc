@@ -1289,7 +1289,8 @@ int main(int argc, char** argv) {
         u64 posLo, posHi;             // point-mass slice; the whole range otherwise
         bool sliced;
         u64 rowsEst;                  // the plan's row estimate for this class
-        double cov;                   // coverage estimate (spec §2)
+        double cov;                   // the spec's coverage number (journaled)
+        double pageFrac;              // the same pages as a fraction of the corpus (the DECISION)
         unsigned strat;               // SS_STRAT_LOCAL / SS_STRAT_GLOBAL
         bool leaf;
     };
@@ -1319,7 +1320,8 @@ int main(int argc, char** argv) {
     plan.s = &S;
     plan.perm.resize(S.samples);
     for (u64 i = 0; i < S.samples; ++i) plan.perm[i] = u32(i);
-    u64 subdivLocal = 0, subdivGlobal = 0, subdivLeaves = 0;
+    u64 subdivLocal = 0, subdivGlobal = 0, subdivLeaves = 0, subdivLocalRows = 0;
+    u64 subdivSaturated = 0;
     {
         auto intern = [&](const std::vector<u8>& pre) -> Wave {
             Wave W{};
@@ -1328,47 +1330,63 @@ int main(int argc, char** argv) {
             preArena.insert(preArena.end(), pre.begin(), pre.end());
             W.depth = u64(pre.size()) + 1;
             W.bLo = 0; W.bHi = 256; W.posLo = 0; W.posHi = N; W.sliced = false;
-            W.rowsEst = 0; W.cov = 0.0; W.strat = SS_STRAT_LOCAL; W.leaf = false;
+            W.rowsEst = 0; W.cov = 0.0; W.pageFrac = 0.0; W.strat = SS_STRAT_LOCAL; W.leaf = false;
             return W;
         };
         // THE STRATEGY LINE (spec §3): coverage < 0.25 -> local, else global.
         // It is a COST decision and the two arms are byte-identical by
         // construction (the same bytes against the same fence prefixes), so the
         // override can never change what is produced - only what it costs.
-        double curParentCov = 0.0;
         auto emitWave = [&](const std::vector<u8>& pre, unsigned b0, unsigned b1, u64 rows,
-                            size_t lo, size_t hi) {
+                            size_t lo, size_t hi, double curParentCov) {
             Wave W = intern(pre);
             W.bLo = b0; W.bHi = b1;
             W.rowsEst = rows;
             W.cov = plan.coverage(lo, hi);
+            W.pageFrac = plan.page_fraction(lo, hi);
             W.strat = (subdiv_strategy == "local") ? unsigned(SS_STRAT_LOCAL)
                     : (subdiv_strategy == "global") ? unsigned(SS_STRAT_GLOBAL)
-                    : (W.cov < SS_COVERAGE_LOCAL_BELOW ? unsigned(SS_STRAT_LOCAL)
-                                                       : unsigned(SS_STRAT_GLOBAL));
+                    : (W.pageFrac < SS_COVERAGE_LOCAL_BELOW ? unsigned(SS_STRAT_LOCAL)
+                                                            : unsigned(SS_STRAT_GLOBAL));
             wl.push_back(W);
             maxClassRows = std::max(maxClassRows, rows);
             ++depthHist[W.depth];
-            if (W.strat == SS_STRAT_LOCAL) ++subdivLocal; else ++subdivGlobal;
+            if (W.strat == SS_STRAT_LOCAL) { ++subdivLocal; subdivLocalRows += rows; }
+            else ++subdivGlobal;
             // THE STALL DETECTOR (spec §3): coverage that refuses to fall as the
             // prefix deepens. The response is the cheap pricing lever - one
             // sequential pass for this class - never more passes per level, never
             // a merge.
-            const bool stalled = curParentCov > 0.5 && W.cov > 0.9 * curParentCov;
+            // TWO NUMBERS, TWO LINES. A saturated footprint (>= 0.9 of the corpus)
+            // is journaled for every wave, because at pile density it is the normal
+            // case and hiding it would be the lie. The STALL - the shape the spec
+            // names, "coverage refuses to FALL as the prefix deepens" - is only
+            // claimed when the descent has actually taken steps (depth >= 3) and the
+            // footprint did not fall across them.
+            if (W.pageFrac >= 0.9) {
+                ++subdivSaturated;
+                std::fprintf(stderr,
+                    "SS_SUBDIV_COVERAGE_SATURATED wave=%zu depth=%" PRIu64 " page_fraction=%.4f"
+                    " rows=%" PRIu64 " class=%s note=the_class_footprint_is_the_corpus\n",
+                    wl.size() - 1, W.depth, W.pageFrac, rows,
+                    prefix_label(preArena.data() + W.preOff, W.preLen).c_str());
+            }
+            const bool stalled = W.depth >= 3 && curParentCov >= 0.9 && W.pageFrac >= 0.9;
             if (stalled) {
                 ++planStalls;
                 std::fprintf(stderr,
-                    "SS_SUBDIV_COVERAGE_STALL passes=%" PRIu64 " coverage=%.4f rows=%" PRIu64
-                    " parent_coverage=%.4f class=%s lever=global-pricing\n",
-                    W.depth, W.cov, rows, curParentCov,
+                    "SS_SUBDIV_COVERAGE_STALL passes=%" PRIu64 " coverage=%.4f page_fraction=%.4f"
+                    " rows=%" PRIu64 " parent_coverage=%.4f class=%s lever=global-pricing"
+                    " note=never_more_passes_never_a_merge\n",
+                    W.depth, W.cov, W.pageFrac, rows, curParentCov,
                     prefix_label(preArena.data() + W.preOff, W.preLen).c_str());
                 wl.back().strat = SS_STRAT_GLOBAL;
-                if (W.strat == SS_STRAT_LOCAL) { --subdivLocal; ++subdivGlobal; }
+                if (W.strat == SS_STRAT_LOCAL) { --subdivLocal; --subdivLocalRows; subdivLocalRows += rows; ++subdivGlobal; }
             }
             std::fprintf(stderr,
                 "SS_WAVE_PLAN wave=%zu depth=%" PRIu64 " bytes=[%u,%u) rows=%" PRIu64
-                " coverage=%.4f strategy=%s leaf=0 class=%s\n",
-                wl.size() - 1, W.depth, b0, b1, rows, W.cov,
+                " coverage=%.6f page_fraction=%.4f strategy=%s leaf=0 class=%s\n",
+                wl.size() - 1, W.depth, b0, b1, rows, W.cov, W.pageFrac,
                 W.strat == SS_STRAT_LOCAL ? "local" : "global",
                 prefix_label(preArena.data() + W.preOff, W.preLen).c_str());
         };
@@ -1385,7 +1403,8 @@ int main(int argc, char** argv) {
         // may be emitted highest-first.
         // Anything else fails loud (raise the wave budget, or make the prefix cache
         // wider - never publish an unproved order).
-        auto emitPointMass = [&](const std::vector<u8>& pre, unsigned c, u64 depth, u64 rows) {
+        auto emitPointMass = [&](const std::vector<u8>& pre, unsigned c, u64 depth, u64 rows,
+                                 size_t lo, size_t hi) {
             auto match_off = [&](u64 p, u64 k) -> unsigned {
                 if (p + k >= FILE_N) return SENTINEL_SYMBOL;
                 return REMAP ? REMAP[T[p + k]] : T[p + k];
@@ -1523,7 +1542,7 @@ int main(int argc, char** argv) {
                         rows, budget.bytes_per_row,
                         double(needBytes) / double(1u << 30), double(diskBytes) / double(1u << 30),
                         double(memCapBytes) / double(1u << 30), waveGoal);
-                    emitWave(pre, c, c + 1, rows, 0, 0);
+                    emitWave(pre, c, c + 1, rows, lo, hi, 0.0);
                     return;
                 }
                 std::fprintf(stderr,
@@ -1558,7 +1577,8 @@ int main(int argc, char** argv) {
                 W.bLo = c; W.bHi = c + 1;
                 W.posLo = lo2; W.posHi = hi2; W.sliced = true;
                 W.rowsEst = hi2 - lo2;
-                W.cov = plan.coverage(0, 0);
+                W.cov = plan.coverage(lo, hi);
+                W.pageFrac = plan.page_fraction(lo, hi);
                 W.strat = SS_STRAT_GLOBAL;   // a slice has no position file: one sweep
                 wl.push_back(W);
                 maxClassRows = std::max(maxClassRows, hi2 - lo2);
@@ -1600,7 +1620,11 @@ int main(int argc, char** argv) {
                 const unsigned x = byte_at(a), y = byte_at(b);
                 return x != y ? x < y : a < b;
             });
-            double curParentCov = parentCov;
+            // THE CHILDREN's stall reference is THIS node's page fraction (not the
+            // grandparent's): "coverage refuses to fall" is a statement about a step.
+            // It is passed EXPLICITLY: capturing it by reference looked right and was
+            // not - the recursive call overwrote it and the detector never fired.
+            const double nodeFrac = plan.page_fraction(lo, hi);
             // THE NODE'S OWN ROW COUNT, from the same census the children come from:
             // this is what makes "does the next byte make progress?" answerable.
             u64 nodeRows = 0;
@@ -1624,7 +1648,7 @@ int main(int argc, char** argv) {
                     // no sampled position still owns rows, and a range that skipped it
                     // would drop them ("scatter row coverage != n" - the first version
                     // of this recursion did exactly that).
-                    if (runOpen && runLo < c) emitWave(pre, runLo, c, runRows, runIdx, a);
+                    if (runOpen && runLo < c) emitWave(pre, runLo, c, runRows, runIdx, a, nodeFrac);
                     runOpen = false; runRows = 0;
                     // NO DEPTH CAP, AND NO INFINITE DESCENT EITHER. The descent
                     // stops for a DATA reason, never an implementation constant:
@@ -1639,16 +1663,16 @@ int main(int argc, char** argv) {
                     //     all-'Z' tail descended 1290 levels. Both cases belong to the
                     //     point-mass branch, which proves its order or refuses.
                     if (a == lo && b == hi || rows * 1000 > nodeRows * 999) {
-                        emitPointMass(pre, c, off + 1, rows);
+                        emitPointMass(pre, c, off + 1, rows, a, b);
                     } else {
                         pre.push_back(u8(c));
-                        descend(a, b, pre, false, curParentCov);
+                        descend(a, b, pre, false, nodeFrac);
                         pre.pop_back();
                     }
                     runOpen = true; runLo = c + 1; runIdx = b;
                 } else {
                     if (runOpen && runRows + rows > waveGoal) {
-                        if (runLo < c) emitWave(pre, runLo, c, runRows, runIdx, a);   // never above the goal
+                        if (runLo < c) emitWave(pre, runLo, c, runRows, runIdx, a, nodeFrac);   // never above the goal
                         runLo = c; runRows = 0; runIdx = a;
                     }
                     runOpen = true;
@@ -1656,34 +1680,40 @@ int main(int argc, char** argv) {
                 }
                 a = b;
             }
-            if (runOpen && runLo < 256) emitWave(pre, runLo, 256, runRows, runIdx, hi);
+            if (runOpen && runLo < 256) emitWave(pre, runLo, 256, runRows, runIdx, hi, nodeFrac);
         };
         std::vector<u8> rootPre;
         if (!plan.perm.empty()) descend(0, plan.perm.size(), rootPre, true, 0.0);
-        else emitWave(rootPre, 0, 256, 0, 0, 0);
+        else emitWave(rootPre, 0, 256, 0, 0, 0, 0.0);
     }
     waves = wl.size();
     if (subdiv_class_given) {
-        // The class is the wave whose key range CONTAINS the requested key: the
+        // The class is the wave whose KEY RANGE contains the requested key. The
         // wave list is an exact partition of the key space, so exactly one wave
-        // owns any key that the corpus can produce.
+        // owns any key. A wave's range is [pre+(bLo), pre+(bHi)) under the
+        // dollar rule (a key that ends inside the range is smaller than it).
         std::vector<u8> key(subdiv_class.begin(), subdiv_class.end());
         if (REMAP) for (auto& b : key) b = REMAP[b];
+        auto cmp_marker = [&](const Wave& W, unsigned b) -> int {
+            const u8* pre = W.preLen ? preArena.data() + W.preOff : nullptr;
+            for (u32 i = 0; i < W.preLen; ++i) {
+                if (i >= key.size()) return -1;             // key ends inside a longer prefix
+                if (key[i] != pre[i]) return key[i] < pre[i] ? -1 : 1;
+            }
+            if (b < 256) {
+                if (key.size() <= W.preLen) return -1;      // shorter is smaller
+                const unsigned kb = key[W.preLen];
+                if (kb != b) return kb < b ? -1 : 1;
+                return 0;
+            }
+            return -1;                                      // below the unbounded end
+        };
         long long keep = -1;
         for (size_t i = 0; i < wl.size() && keep < 0; ++i) {
             const Wave& W = wl[i];
-            const u8* p = W.preLen ? preArena.data() + W.preOff : nullptr;
-            // keys below this wave's range end and not below the previous one's
-            bool before = false;
-            if (key.size() < W.depth) {
-                before = std::lexicographical_compare(key.begin(), key.end(), p, p + W.preLen);
-                if (!before && unsigned(key[W.preLen]) < W.bLo) before = true;
-            } else if (W.preLen) {
-                before = std::lexicographical_compare(key.begin(), key.begin() + W.preLen, p, p + W.preLen);
-            } else {
-                before = unsigned(key[0]) < W.bLo;
-            }
-            if (!before) keep = (long long)i;
+            if (cmp_marker(W, W.bLo) < 0) continue;                       // key below this wave
+            if (cmp_marker(W, W.bHi) >= 0) continue;                      // key at/above its end
+            keep = (long long)i;
         }
         if (keep < 0) die("--subdiv-class: no wave of the plan owns key '" + subdiv_class + "'");
         Wave W = wl[size_t(keep)];
@@ -1691,16 +1721,18 @@ int main(int argc, char** argv) {
         waves = 1;
         std::fprintf(stderr,
             "SS_SUBDIV_CLASS_ONLY key='%s' wave_depth=%" PRIu64 " bytes=[%u,%u) rows_est=%" PRIu64
-            " coverage=%.6f strategy=%s note=emitted_stream_covers_this_class_only\n",
-            subdiv_class.c_str(), W.depth, W.bLo, W.bHi, W.rowsEst, W.cov,
+            " coverage=%.6f page_fraction=%.4f strategy=%s note=emitted_stream_covers_this_class_only\n",
+            subdiv_class.c_str(), W.depth, W.bLo, W.bHi, W.rowsEst, W.cov, W.pageFrac,
             W.strat == SS_STRAT_LOCAL ? "local" : "global");
     }
     std::fprintf(stderr,
         "SS_PLAN waves=%" PRIu64 " local=%" PRIu64 " global=%" PRIu64 " cache_depth=%u"
-        " cache_misses=%" PRIu64 " stalls=%" PRIu64 " samples=%zu stride=%" PRIu64
+        " cache_misses=%" PRIu64 " stalls=%" PRIu64 " saturated=%" PRIu64
+        " samples=%zu stride=%" PRIu64
         " corpus_reads=%" PRIu64 " corpus_read_calls=%" PRIu64
         " rule=answer_from_prefix_cache\n",
-        waves, subdivLocal, subdivGlobal, S.P, planCacheMisses, planStalls, S.samples, stride,
+        waves, subdivLocal, subdivGlobal, S.P, planCacheMisses, planStalls, subdivSaturated,
+        S.samples, stride,
         PLAN_CORPUS_BYTES.load(), PLAN_CORPUS_CALLS.load());
     std::fprintf(stderr, "SS_WAVES count=%" PRIu64 " (recursive prefix-class waves)\n", waves);
 
@@ -1731,9 +1763,10 @@ int main(int argc, char** argv) {
         std::fprintf(stderr,
             "SS_SUBDIV_POSBUDGET position_budget_bytes=%" PRIu64 " window_rows=%" PRIu64
             " bytes_per_row=%zu local_waves=%" PRIu64 " global_waves=%" PRIu64
-            " projected_passes=%" PRIu64 " rule=ceil(local_rows*8/budget)\n",
-            posBudget, windowRows, sizeof(u64), subdivLocal, subdivGlobal,
-            u64(subdivLocal ? 1u : 0u));
+            " local_rows_est=%" PRIu64 " projected_passes=%" PRIu64
+            " rule=ceil(local_rows*8/position_budget)\n",
+            posBudget, windowRows, sizeof(u64), subdivLocal, subdivGlobal, subdivLocalRows,
+            (subdivLocalRows + windowRows - 1) / std::max<u64>(1, windowRows));
         auto scatter_window = [&](size_t wa, size_t wb) {
             const double ts = now_sec();
             const u64 nw = wb - wa;
@@ -2281,13 +2314,15 @@ int main(int argc, char** argv) {
         // it with the number that failed, if it fails.
         for (size_t i = 0; i < plan.size(); ++i) {
             const double bandCov = double(plan[i].pages) * double(stride) / double(FILE_N);
-            const bool covOk = bandCov <= leafCovCap;
+            const double bandPageFrac = double(plan[i].pages) * double(SS_SURVEY_PAGE) /
+                                        double(FILE_N);
+            const bool covOk = bandPageFrac <= leafCovCap;
             std::fprintf(stderr,
                 "SS_SUBDIV_LEAF wave=%" PRIu64 " band=%zu rows_est=%" PRIu64 " samples=%" PRIu64
-                " pages=%" PRIu64 " page_footprint_bytes=%" PRIu64 " coverage=%.4f cap=%.4f ok=%d"
-                " depth=%" PRIu64 "\n",
+                " pages=%" PRIu64 " page_footprint_bytes=%" PRIu64 " coverage=%.6f"
+                " page_fraction=%.4f cap=%.4f ok=%d depth=%" PRIu64 "\n",
                 w, i, plan[i].samples * stride, plan[i].samples, plan[i].pages,
-                plan[i].pages * SS_SURVEY_PAGE, bandCov, leafCovCap, int(covOk),
+                plan[i].pages * SS_SURVEY_PAGE, bandCov, bandPageFrac, leafCovCap, int(covOk),
                 plan[i].first.depth);
             if (covOk) ++subdivLeaves;
         }
@@ -2496,15 +2531,18 @@ int main(int argc, char** argv) {
                     exactPages += thrPages[t];
                 }
                 const double exactCov = double(exactPages) * double(stride) / double(FILE_N);
+                const double exactPageFrac = double(exactPages) * double(SS_SURVEY_PAGE) /
+                                             double(FILE_N);
                 std::fprintf(stderr,
                     "SS_SUBDIV_EXACT wave=%" PRIu64 " class=%s depth=%" PRIu64
                     " rows_exact=%" PRIu64 " rows_est=%" PRIu64 " rows_err=%.4f"
                     " pages_exact=%" PRIu64 " coverage_exact=%.6f coverage_est=%.6f"
+                    " page_fraction_exact=%.4f page_fraction_est=%.4f"
                     " bytes_read=%" PRIu64 " rule=exact_from_the_class_full_position_list\n",
                     w, prefix_label(W.preLen ? preArena.data() + W.preOff : nullptr, W.preLen).c_str(),
                     W.depth, exactRows, W.rowsEst,
                     W.rowsEst ? double(exactRows) / double(W.rowsEst) - 1.0 : 0.0,
-                    exactPages, exactCov, W.cov, classLocalBytes);
+                    exactPages, exactCov, W.cov, exactPageFrac, W.pageFrac, classLocalBytes);
                 // The parts are consumed: freeing them is what keeps the position
                 // column bounded (the next window reuses the disk).
                 for (u64 t = 0; t < nparts; ++t) {
@@ -2525,10 +2563,10 @@ int main(int argc, char** argv) {
         else { ++globalClasses; globalBytes += classGlobalBytes; }
         std::fprintf(stderr,
             "SS_SUBDIV_STRATEGY class=%s wave=%" PRIu64 " depth=%" PRIu64 " rows=%" PRIu64
-            " coverage=%.4f strategy=%s bytes_read=%" PRIu64 " passes=%d bands=%" PRIu64
+            " coverage=%.6f page_fraction=%.4f strategy=%s bytes_read=%" PRIu64 " passes=%d bands=%" PRIu64
             " rule=both_arms_route_the_same_bytes_against_the_same_fences\n",
             prefix_label(W.preLen ? preArena.data() + W.preOff : nullptr, W.preLen).c_str(),
-            w, W.depth, W.rowsEst, W.cov, usedLocal ? "local" : "global",
+            w, W.depth, W.rowsEst, W.cov, W.pageFrac, usedLocal ? "local" : "global",
             usedLocal ? classLocalBytes : classGlobalBytes, usedLocal ? 0 : 1, nbands);
 
         std::vector<std::vector<Row>> tailBands(nbands);

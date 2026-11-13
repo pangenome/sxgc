@@ -270,7 +270,16 @@ struct Plan {
     inline u64 est_rows(u64 sample_count, u64 stride) const { return sample_count * stride; }
 
     // coverage(class) = #distinct 1 MiB pages among sampled class positions x stride / n
+    // (the spec's formula, journaled verbatim) and the same count expressed in the
+    // unit the sort pays for - the PAGE BYTES as a fraction of the corpus. The two
+    // are the same number when stride == 1 MiB and differ by 1MiB/stride otherwise,
+    // and only the second one can express "these rows touch a quarter of the
+    // corpus", so the DECISIONS use it and both are journaled. Measured at the
+    // 100 GB head: the wave that touches every page has coverage=0.0239 by the
+    // spec's formula and page_fraction=1.00 - a threshold of 0.25 on the first
+    // would make every strategy decision vacuous.
     double coverage(size_t lo, size_t hi) const;
+    double page_fraction(size_t lo, size_t hi) const;
     // children(class, depth): the 256 child counts at the class's next offset.
     void children(size_t lo, size_t hi, u64 off, u64 stride, u64* counts) const;
     // The cached digit of sample `i` at offset `off`; false past the cache.
@@ -293,6 +302,21 @@ double Plan::coverage(size_t lo, size_t hi) const {
     for (size_t i = 0; i < pg.size(); ++i)
         if (i == 0 || pg[i] != pg[i - 1]) ++distinct;
     return double(distinct) * double(s->stride) / double(s->n);
+}
+
+double Plan::page_fraction(size_t lo, size_t hi) const {
+    if (lo >= hi || !s->n) return 0.0;
+    u64 distinct = 0;
+    {
+        std::vector<u32> pg;
+        pg.reserve(hi - lo);
+        for (size_t i = lo; i < hi; ++i) pg.push_back(s->page[size_t(perm[i])]);
+        std::sort(pg.begin(), pg.end());
+        for (size_t i = 0; i < pg.size(); ++i)
+            if (i == 0 || pg[i] != pg[i - 1]) ++distinct;
+    }
+    const double bytes = double(distinct) * double(SS_SURVEY_PAGE);
+    return bytes / double(s->n);
 }
 
 void Plan::children(size_t lo, size_t hi, u64 off, u64 stride, u64* counts) const {

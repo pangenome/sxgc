@@ -27,6 +27,8 @@ BUDGET_GB=${BUDGET_GB:-96}
 SCRATCH_GB=${SCRATCH_GB:-250}
 FIXBYTES=${FIXBYTES:-6291456}
 SUBDIV_KEY=${SUBDIV_KEY:-Harper Reed}
+SPACE_KEY=${SPACE_KEY:-" e"}      # a key inside the space class's tree (a 1-byte " "
+                                  # is a strict prefix of every " "-wave, i.e. ambiguous)
 STAGE=$WORK/stage
 FX=$WORK/fixtures
 LOG=$WORK/logs
@@ -36,11 +38,20 @@ CXX=${CXX:-g++}
 CFLAGS="-O2 -std=c++17 -pthread"
 
 fail() { echo "SUBDIV_GATE_FAIL: $*" >&2; exit 3; }
+# THE SURVIVOR CHECK IS SCOPED TO THIS GATE'S OWN RUNS: several gates (and the
+# operator's other lanes) can run the same binary name, and a check that searched
+# by name alone would fail on somebody else's work.
+RUN_TAGS=""
 no_survivors() {
-  local pids
-  pids=$(pgrep -x scatter_sort || true)
-  [ -z "$pids" ] || { echo "SUBDIV_SURVIVORS: $pids"; fail "a stage process survived"; }
-  echo "SUBDIV_NO_SURVIVORS checked=scatter_sort"
+  local bad=""
+  for tag in $RUN_TAGS; do
+    local hits
+    hits=$(pgrep -af "scatter_sort" | grep -F -- "$WORK/runs/$tag/scratch" || true)
+    [ -z "$hits" ] || bad="$bad
+$hits"
+  done
+  [ -z "$bad" ] || { echo "SUBDIV_SURVIVORS:$bad" >&2; fail "a stage process survived its timeout"; }
+  echo "SUBDIV_NO_SURVIVORS checked=$(echo $RUN_TAGS | wc -w) runs tags='$RUN_TAGS'"
 }
 
 build() {
@@ -69,6 +80,7 @@ fixtures() {
 run_sorter() {
   local bin=$1 tag=$2 corpus=$3; shift 3
   local d=$WORK/runs/$tag
+  RUN_TAGS="$RUN_TAGS $tag"
   rm -rf "$d"; mkdir -p "$d/scratch"
   echo "SUBDIV_RUN tag=$tag corpus=$corpus bytes=$(stat -c %s "$corpus") extra='$*'" >&2
   setsid timeout --kill-after=10 "${RUN_TIMEOUT:-7200}" "$bin" \
@@ -98,6 +110,7 @@ g1() {
   local n=0 rows=0
   for f in "$FX"/*.txt; do
     local name; name=$(basename "$f" .txt)
+    [ "$name" = refuse ] && continue     # the refusal fixture is G5's, it must NOT sort
     local a b
     a=$(run_sorter "$STAGE/base_scatter_sort" "g1_base_$name" "$f" \
         --threads 2 --par-bands 1 --budget-bytes 2000000000 --memory-gb 2 \
@@ -125,6 +138,7 @@ g2() {
   local n=0
   for f in "$FX"/*.txt; do
     local name; name=$(basename "$f" .txt)
+    [ "$name" = refuse ] && continue     # G5's fixture: proven to refuse, not to sort
     local d; d=$(run_sorter "$STAGE/scatter_sort" "g2_$name" "$f" \
         --threads 2 --par-bands 1 --budget-bytes 2000000000 --memory-gb 2 \
         --scratch-budget-bytes 20000000000)
@@ -143,13 +157,13 @@ g3() {
   d10=$(run_sorter "$STAGE/scatter_sort" g3_10gb "$TEN_GB" \
       --threads "$THREADS" --budget-bytes "$((BUDGET_GB*1000000000))" --memory-gb "$BUDGET_GB" \
       --scratch-budget-bytes "$((SCRATCH_GB*1000000000))" --subdiv-class="$SUBDIV_KEY" \
-      --subdiv-position-budget-bytes=20000000000)
+      --subdiv-strategy=local --subdiv-position-budget-bytes=20000000000)
   d100=$(run_sorter "$STAGE/scatter_sort" g3_100gb "$HUNDRED_GB" \
       --threads "$THREADS" --budget-bytes "$((BUDGET_GB*1000000000))" --memory-gb "$BUDGET_GB" \
       --scratch-budget-bytes "$((SCRATCH_GB*1000000000))" --subdiv-class="$SUBDIV_KEY" \
-      --subdiv-position-budget-bytes=20000000000)
+      --subdiv-strategy=local --subdiv-position-budget-bytes=20000000000)
   for d in "$d10" "$d100"; do
-    grep -E "SS_PLAN |SS_SCATTER |SS_SUBDIV_CLASS_ONLY |SS_SUBDIV_STRATEGY|SS_SUBDIV_EXACT" "$d/run.log" | head -8
+    grep -E "SS_PLAN |SS_SCATTER |SS_SUBDIV_CLASS_ONLY |SS_SUBDIV_STRATEGY|SS_SUBDIV_EXACT" "$d/run.log" | head -8 || true
     grep -q "corpus_reads=0 " "$d/run.log" || fail "G3: PLAN touched the corpus in $d"
     # local bytes_read must be the class's OWN page footprint, not n: the exact
     # page count comes from the descent's own position walk.
@@ -158,8 +172,10 @@ g3() {
     pages=$(grep -o 'SS_SUBDIV_EXACT .*pages_exact=[0-9]*' "$d/run.log" | grep -o 'pages_exact=[0-9]*' | cut -d= -f2 | head -1)
     n=$(grep -o '^SS_START n=[0-9]*' "$d/run.log" | cut -d= -f2)
     [ -n "$bytes" ] && [ -n "$pages" ] || fail "G3: missing counters in $d"
-    local bound=$(( (pages + 2) * 1048576 ))
-    echo "SUBDIV_G3_SCALE dir=$d n=$n class_bytes_read=$bytes pages_exact=$pages bound=$((pages+2))MiB within=$([ "$bytes" -le "$bound" ] && echo 1 || echo 0) n_fraction=$(awk -v b="$bytes" -v n="$n" 'BEGIN{printf "%.6f", b/n}')"
+    # Each of the --threads scan ranges may round its edges up to a page, and two
+    # ranges can share an edge page, so the honest bound is pages + threads pages.
+    local bound=$(( (pages + THREADS + 2) * 1048576 ))
+    echo "SUBDIV_G3_SCALE dir=$d n=$n class_bytes_read=$bytes pages_exact=$pages bound=$((pages+THREADS+2))MiB within=$([ "$bytes" -le "$bound" ] && echo 1 || echo 0) bytes_per_page=$(awk -v b="$bytes" -v p="$pages" 'BEGIN{ if (p) printf "%.3f", b/(p*1048576); else print 0 }') n_fraction=$(awk -v b="$bytes" -v n="$n" 'BEGIN{printf "%.6f", b/n}')"
     [ "$bytes" -le "$bound" ] || fail "G3: local bytes_read exceeded the class's own page footprint in $d"
   done
   # the global arm is exactly ONE sweep per class, never one per level
@@ -173,7 +189,7 @@ g3() {
   echo "SUBDIV_G3_GLOBAL dir=$dg classes=$classes sweeps=$slices (each class exactly one)"
   [ "$slices" = "$classes" ] || fail "G3: the forced-global arm did not do exactly one sweep per class"
   echo "SUBDIV_G3_PASS (PLAN corpus_reads=0; local bytes_read <= the class's own page footprint at BOTH scales)"
-  grep -o 'SS_SCATTER pass=[0-9]* [^r]*' "$d100/run.log" | head -3
+  grep -o 'SS_SCATTER pass=[0-9]* [^r]*' "$d100/run.log" | head -3 || true
 }
 
 # --------------------------------------------------------------------------- G4
@@ -182,19 +198,19 @@ g4() {
   local dl dg
   dl=$(run_sorter "$STAGE/scatter_sort" g4_100gb_local "$HUNDRED_GB" \
       --threads "$THREADS" --budget-bytes "$((BUDGET_GB*1000000000))" --memory-gb "$BUDGET_GB" \
-      --scratch-budget-bytes "$((SCRATCH_GB*1000000000))" --subdiv-class=' ' --subdiv-strategy=local \
+      --scratch-budget-bytes "$((SCRATCH_GB*1000000000))" --subdiv-class="$SPACE_KEY" --subdiv-strategy=local \
       --subdiv-position-budget-bytes=40000000000)
   dg=$(run_sorter "$STAGE/scatter_sort" g4_100gb_global "$HUNDRED_GB" \
       --threads "$THREADS" --budget-bytes "$((BUDGET_GB*1000000000))" --memory-gb "$BUDGET_GB" \
-      --scratch-budget-bytes "$((SCRATCH_GB*1000000000))" --subdiv-class=' ' --subdiv-strategy=global \
+      --scratch-budget-bytes "$((SCRATCH_GB*1000000000))" --subdiv-class="$SPACE_KEY" --subdiv-strategy=global \
       --subdiv-position-budget-bytes=40000000000)
   local sl sg rows wl wg
   sl=$(band_stream_sha "$dl"); sg=$(band_stream_sha "$dg")
   rows=$(grep -o 'SS_SUBDIV_CLASS_ONLY .*rows_est=[0-9]*' "$dl/run.log" | grep -o 'rows_est=[0-9]*' | cut -d= -f2 | head -1)
   wl=$(grep -o 'SS_DONE .*total_s=[0-9.]*' "$dl/run.log" | tail -1)
   wg=$(grep -o 'SS_DONE .*total_s=[0-9.]*' "$dg/run.log" | tail -1)
-  grep -E "SS_SUBDIV_CLASS_ONLY |SS_SUBDIV_STRATEGY|SS_SCATTER |SS_DONE" "$dl/run.log" | head -6
-  grep -E "SS_SUBDIV_CLASS_ONLY |SS_SUBDIV_STRATEGY|SS_SCATTER |SS_DONE" "$dg/run.log" | head -6
+  grep -E "SS_SUBDIV_CLASS_ONLY |SS_SUBDIV_STRATEGY|SS_SCATTER |SS_DONE" "$dl/run.log" | head -6 || true
+  grep -E "SS_SUBDIV_CLASS_ONLY |SS_SUBDIV_STRATEGY|SS_SCATTER |SS_DONE" "$dg/run.log" | head -6 || true
   echo "SUBDIV_G4 class_rows_est=$rows local_sha=$sl global_sha=$sg equal=$([ "$sl" = "$sg" ] && echo 1 || echo 0)"
   echo "SUBDIV_G4_WALL local: $wl | global: $wg"
   [ "$sl" = "$sg" ] || fail "G4: the two arms produced different band streams at 100 GB"
@@ -213,8 +229,8 @@ g5() {
   local rc=$?
   set -e
   no_survivors
-  grep -E "SS_WAVE_POINT_MASS_PROOF|SS_WAVE_POINT_MASS depth|SS_WAVE_BORROW|SS_SUBDIV_COVERAGE_STALL" "$d/run.log" | head -4
-  grep -E "scatter_sort: SS_WAVE_POINT_MASS" "$d/run.log" | head -2
+  grep -E "SS_WAVE_POINT_MASS_PROOF|SS_WAVE_POINT_MASS depth|SS_WAVE_BORROW|SS_SUBDIV_COVERAGE_STALL" "$d/run.log" | head -4 || true
+  grep -E "scatter_sort: SS_WAVE_POINT_MASS" "$d/run.log" | head -2 || true
   echo "SUBDIV_G5 rc=$rc refused=$([ $rc -eq 2 ] && echo 1 || echo 0)"
   [ "$rc" -eq 2 ] || fail "G5: the unprovable class did NOT refuse"
   grep -q "NO MERGE is a path here" "$d/run.log" || fail "G5: the refusal does not say no merge"
@@ -293,8 +309,8 @@ g8() {
   fi
   local d; d=$(run_sorter "$STAGE/scatter_sort" g8 "$slice" \
       --threads 8 --par-bands 2 --budget-bytes 8000000000 --memory-gb 8 \
-      --scratch-budget-bytes 60000000000)
-  grep -o 'SS_SUBDIV_EXACT .*' "$d/run.log" | head -3
+      --scratch-budget-bytes 60000000000 --subdiv-strategy=local)
+  grep -o 'SS_SUBDIV_EXACT .*' "$d/run.log" | head -3 || true
   awk '/SS_SUBDIV_EXACT/ {
          for (i = 1; i <= NF; ++i) {
            if ($i ~ /^rows_err=/)   { split($i, a, "="); e = a[2]; if (e < 0) e = -e;
@@ -318,9 +334,12 @@ g8() {
 # --------------------------------------------------------------------------- G9
 g9() {
   echo "== G9 no census reads: PLAN corpus reads == 0, DESCENT reads are window reads"
+  # forced LOCAL: the page-bound assertion is about the local arm, and on a small
+  # fixture every class's page_fraction is 1.0 so `auto` would pick global and the
+  # check would be vacuous (it printed classes=0 the first time).
   local d; d=$(run_sorter "$STAGE/scatter_sort" g9 "$FX/internsep.txt" \
       --threads 2 --par-bands 1 --budget-bytes 2000000000 --memory-gb 2 \
-      --scratch-budget-bytes 20000000000)
+      --scratch-budget-bytes 20000000000 --subdiv-strategy=local)
   local line
   line=$(grep '^SS_PLAN ' "$d/run.log")
   echo "SUBDIV_G9 plan: $line"
