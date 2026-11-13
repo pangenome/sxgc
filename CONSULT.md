@@ -167,6 +167,28 @@ Record size is `40 + 9*nsym + 24` bytes. Pairs are ordered **count descending,
 byte ascending** (the same order `xsa branches` emits). Everything is
 little-endian. Nothing is compressed and nothing is buffered on the side.
 
+**Version 4** (`--rows-v4`, OPT-IN — the default output stays v3 and
+byte-identical, because downstream experiments are hash-bound to the row
+bytes): every record is preceded by a 1-byte `kind`, and a **FORCED** row — an
+answer from the width-1 or one-step-verification layers, a single pair
+`(cont, width-eof)` — drops its 9-byte pair and takes flag **bit 6**:
+
+```
+header:  "XSACONS1" (8 B) | u32 version = 4 | u32 reserved = 0
+row:     u8  kind         0 = FULL (the v3 record verbatim)
+                           1 = FORCED:
+         u16 ctxlen | u16 flags (bit0 eof, bit1 truncated, bit2 excluded,
+                                  bit3 restricted, bit4 boundary_exact=0,
+                                  bit6 forced) |
+         u64 doc | u64 off | u64 width | u64 eof | u8 cont |
+         u64 docid | u64 base | u64 depth
+```
+
+A FORCED record is 62 bytes where the v3 form of the same row is 73; the pair
+decodes to `(cont, width - eof)` by construction (`width > eof` always).
+`--resume` refuses to continue a v4 file with a v3 run and vice versa (the
+kind byte changes every record boundary).
+
 *Reading the map to the emender's `FLAGSHIPSPARSE2` row* (`flagship_cache.py`,
 `ROW = <HBBH`, `PAIR = <BQ`): `context_bytes = ctxlen`, `eof = eof`,
 `censored = (ctxlen > 0)`, `pairs = [(byte,count)]` exactly as above,
@@ -279,25 +301,85 @@ to the document that owns it: an occurrence ending at that framing byte is the
 END branch, and an internal `0x1E` (446 in the first 10 GB) is CONTENT — the
 distinction is the whole point, and it is metadata that makes it, never bytes.
 
-**How the default answers, in layers** (all exact where they answer):
+**How the default answers, in layers** (all exact where they answer — the
+χ-proportional cascade; zero-locate layers answer by pure rank arithmetic):
 
 1. **The boundary-aware trie** (member m20 with `boundary_aware=1`): a context
    within the trie's depth whose node is materialised is answered from the
    member itself — O(depth), any width, no locate. The trie enforces the law BY
    CONSTRUCTION, so this layer has no conflated cases at all.
-2. **Exact enumeration**: every occurrence in the context's interval is located
-   (one sampled-SA LF walk each) and classified by the law (two m15
-   rank/selects per occurrence, one corpus pread per content branch). Bounded
-   by `--boundary-cap` (default 8192).
-3. **The marked fallback**: a context wider than the cap AND deeper than the
-   trie has no cheap exact algorithm (the boundary correction is a join
-   between the match set and the doc-start metadata; rank arithmetic cannot
-   see it — the proper fix is a future reversed-document-tail member at
-   roughly 1% of the corpus, priced in MEMORY_OPS.md). Such a row carries the
-   legacy conflated histogram with **flag bit 4 set** (`boundary_exact=0`) so a
-   consumer can filter per row, and every run journals
-   `BOUNDARY_INEXACT rows=<n> total=<n> ratio=<f>`. On Pile text at full spine
-   depth this arm is empty; it exists for the short-context ramp.
+2. **WIDTH-1**: one backward search of the full context (the existing rank
+   machinery, zero locate). A raw width of 1 means the ONLY occurrence in
+   the whole text is the query's own (the spine is real text cut at the
+   document base), and the own occurrence is always an in-document content
+   continuation (`off < doc_next`, `off < text_len`) — a crossing or END
+   occurrence would be a SECOND one. The row is `{(own, 1)}`, `eof=0`, no
+   matter what the container's framing is. **88.1% of the rehearsal census.**
+3. **The zero-locate raw layers** — THE SEPARATOR-FRAMING LAW: on a corpus
+   whose every in-text document start `d` is immediately preceded by one
+   `0x1E` byte (the Pile's own framing — `xsa corpus --pile-map` builds
+   exactly this), a context that contains NO `0x1E` byte cannot touch a
+   boundary at all: a CROSSING occurrence would need a document start `d`
+   inside `(pos, at-1]`, and `corpus[d-1] = 0x1E` would then have to equal
+   `C[d-1-pos]`; an END-branch occurrence (its continuation at a document
+   start) would need `C[ctxlen-1] = 0x1E`; and the framing byte at a
+   document's content end is a CONTENT byte of the document that owns it.
+   With `C` 0x1E-free every occurrence is therefore in-document content or
+   the one structural text end — exactly the raw backward-search
+   classification — so **the no-cross histogram IS the raw histogram, at
+   any width, with zero locate**. The law is verified EXHAUSTIVELY at open
+   (`CONSULT_SEPFRAMING`: one 1-byte pread per in-text document start,
+   16,119,766 of them in ~2 s warm on the rehearsal corpus); a container
+   that fails it (adversarial fixtures whose boundaries sit mid-content,
+   any map not built by the pile framing) keeps the exact enumeration for
+   EVERY row — exactness is never traded for speed. A spine that carries an
+   internal `0x1E` (content bytes of its own document; 446 documents in the
+   first 10 GB have one) gets no proof, so it falls through conservatively.
+   Under the law:
+   - **SINGLE-CHILD SHORT-CIRCUIT**: the trie node of the context's LAST
+     ≤depth bytes with exactly one child forces the byte — a fork can never
+     widen going deeper, because every occurrence of the full context is a
+     non-crossing occurrence of that suffix at the SAME continuation
+     offset. The own occurrence is always one of the node's counted content
+     children, so the single child must be the position's own byte; a
+     disagreement dies as a corrupt member. ~8 node walks instead of a
+     2×ctxlen rank chain.
+   - **ONE-STEP VERIFICATION**: candidate `b` = the query's own continuation
+     from the window; append and search once. `width(C·b) == width(C) -
+     eof` means every occurrence continues with `b` — the row is
+     `{(b, W-eof)}`, zero locate. A narrowing means fork, conservatively.
+     NOTE the trap this avoids: the equality can hold while a CROSSING
+     occurrence hides inside (a crossing row that continues with the same
+     byte), so the equality alone is never trusted — it is trusted only
+     together with the framing proof, and the adversarial gate constructs
+     exactly that trap both ways (unframed corpus, and a framed corpus
+     whose 0x1E-carrying spine hides a junction match).
+   - **RAW FORK**: the raw extension-count histogram (the full one-sided
+     right-extension by rank arithmetic — the same machinery
+     `xsa branches` uses), exact at any width within `--boundary-cap`.
+4. **Exact enumeration**: every occurrence in the context's interval is
+   located (one sampled-SA LF walk each) and classified by the law (two m15
+   rank/selects per occurrence, one corpus pread per content branch).
+   Bounded by `--boundary-cap` (default 8192).
+5. **The marked fallback**: a context wider than the cap AND deeper than
+   the trie keeps the conflated answer with **flag bit 4 set**
+   (`boundary_exact=0`) — the bytes stay what they were before the
+   rewrite (the raw layers stay capped ON PURPOSE: a too-wide row must keep
+   today's marked bytes, downstream experiments are hash-bound to them).
+   Every run journals `BOUNDARY_INEXACT rows=<n> total=<n> ratio=<f>`.
+
+Measured on the rehearsal census (682,496 banked rows): 88.1% width-1,
+10.6% single-branch — the forced mass — answered by layers 2–3 with zero
+locate; the whole fork mass answers by the raw histogram (the law covers
+any width, so forks need no locates either); only 0x1E-carrying spines
+(~0.1% at the Pile's internal-separator rate) and the marked tail
+enumerate. Consult's cost is now proportional to χ (the fork skeleton),
+not to n: the 13.7 positions/s locate-bound baseline became 3,285/s
+measured (240×) coexisting with the live pile build, at `--rss-gb 8`.
+
+Every row is charged to a layer with its nanosecond cost into a bounded
+log2 histogram; the journal closes with `CONSULT_LAYERS` (rows / ns / p50
+per layer) and `CHI_ZEROLOCATE` (the zero-locate mass share).
 
 `--cross-doc` opts the WHOLE run back into the legacy conflated answer (every
 row marked, journaled); `--boundary-strict` converts the marked fallback into a
@@ -443,6 +525,34 @@ python3 gates/structdocs_fixtures.py xsa/target/release/xsa XSA-ADADF48 /tmp/g23
 `RESULTS_STRUCTURAL_DOCS.md` (commit and shas there); the pre-lane A1/A234
 receipt above was made at commit `80d2951` with binary sha256
 `a7c289c61955d57061bfb8ea31e2513d836b95cc6e037813a70affa8c8b97c65`.
+
+### The χ-proportional gates (G1–G4, RESULTS_CHI_CONSULT.md)
+
+```sh
+bash gates/chi_g3_law.sh xsa/target/release/xsa XSA-BASE /tmp/chi-g3
+#   G3 THE LAW: adversarial fixtures (same-byte crossing traps, END-adjacent,
+#   internal-0x1E, widths 2-4) against the brute-force law oracle AND byte
+#   parity with the pre-change binary. XSA-BASE is the pre-change binary
+#   (built from the base commit of this branch).
+bash gates/chi_g1_parity.sh xsa/target/release/xsa XSA-BASE \
+        /mnt/nvme2n1/erikg/chi-consult/g10g/pf-10gb.sxi2 \
+        /mnt/nvme2n1/erikg/pf-10gb.txt /tmp/map10g /tmp/chi-g1 16
+#   G1 PARITY: the same window set through the pre-change binary and the chi
+#   binary on the 10 GB full-stack container — every row byte-identical,
+#   forced rows equal the old path's single-pair histograms, the opt-in v4
+#   file decoding back to exactly the same rows.
+bash gates/chi_g2_census.sh xsa/target/release/xsa \
+        /mnt/nvme2n1/erikg/PILE100-REHEARSAL/pile-head100.sxi2 \
+        /mnt/nvme2n1/erikg/pile-head100.txt /tmp/chi-g2 16
+#   G2 CENSUS: the full rehearsal window set; the banked 682,496-row prefix
+#   byte-for-byte (fork and marked rows must match); the measured layer mix
+#   next to the census (88.1/10.6/0.7/0.5).
+bash gates/chi_g4_rate.sh xsa/target/release/xsa \
+        /mnt/nvme2n1/erikg/PILE100-REHEARSAL/pile-head100.sxi2 \
+        /mnt/nvme2n1/erikg/pile-head100.txt /tmp/chi-g4 16
+#   G4 RATE: cold + warm at --rss-gb 8, per-layer p50s, aggregate positions/s
+#   against the 13.7/s locate-bound baseline (>=100x asserted).
+```
 
 ## 7. Throughput, and what it is measured on
 
