@@ -1,7 +1,18 @@
+> **FORWARD-ONLY, READ THIS FIRST (2026-11).** This document is the *historical*
+> record of the SXI container family: every layout below (SXI1, `.ri4` v4, SXI2
+> v2..v9, the phi arm) describes an artifact that **this build cannot read**.
+> Exactly ONE shape is supported and served: what `xsa build` emits today,
+> **SXI2 v10** — m1 (codec 116, trailing block directory) with m12/m13, m11,
+> m5, **m15** (document starts) and **m20** (the context trie). Any other file is
+> refused by name with `rebuild with `xsa build``; there is no second reader, no
+> degraded mode and no `--legacy-*` flag. The older layouts are retained here as
+> the record of what was measured (and of what the banked SHAs refer to), not as
+> a compatibility promise. The family may still gain members; that is additive.
+
 # SXI1, internal version 1
 
-All integers are little endian. Readers detect magic, independent of suffix;
-`.ri4` v4 remains supported. Fresh source construction is described in
+All integers are little endian. (`.ri4` v4 is NOT readable any more — see the
+banner above.) Fresh source construction is described in
 [SXI_BUILD.md](SXI_BUILD.md); checked seam-repair evidence is in
 [sxi_logs/sep-convention/repair2/ACCEPTANCE.md](sxi_logs/sep-convention/repair2/ACCEPTANCE.md).
 
@@ -230,11 +241,9 @@ member m5 (chi). The legacy C++ SXI1 conversion/validation reader also
 requires chi for its own format, but does not accept SXI2 v6 in either arm. The qlite
 reader does not use it: exact count and locate use m1, m10, m11 and the blocked
 run directories m12/m13. Qlite checks the chi absence flag against the directory.
-The legacy `product::Engine` (MEMs/serve) also reads the chi count for metadata;
-`witness::build` decodes chi to map its positions onto BWT run edges for the
-`--first --witness-index` query arm, while `forks::load_chi` uses the set for
-fork witness extraction. These paths all open through `sxi::Container`, so
-they fail at open when m5 is absent.
+The phi-era consumers of chi (`product::Engine` for MEMs/serve, `witness::build`,
+`forks::load_chi`) are GONE with the phi-era readers: they opened through
+`sxi::Container` on shapes this build no longer serves.
 The claims checker consumes LCE claims and source text, **not chi**; it checks
 inputs to the sweep. Witness sample checks and bridge exports require chi and
 are refused with `--no-chi`. An absent chi is not an empty, complete chi set.
@@ -457,12 +466,16 @@ BEFORE the sweep and never patched, which is why nblocks/rNorm are left zero: a
 patched member would need its CRC recomputed over the whole member. The reader
 derives `nblocks = ceil(count/block_runs)` and `rNorm = count`.
 
-### Reader compatibility
+### Reader compatibility (forward-only)
 
-`xsa query` opens v6 (codec 102/114/116) and v7. `sxi::Container` (the full
-validator/exporter) opens v1..v7. Old readers reject v7 rather than misreading it.
-The v6 layout remains reachable for A/B with `XSA_CONTAINER_STREAM=0` (or
-`xsa_finish --container-legacy`).
+`xsa query` (and every other command) opens exactly ONE shape: **SXI2 v10** with
+m15 and m20 declared, m1 codec 116 and the members m1,m10,m11,m12,m13,m15
+(m14 optional; m20 required by the trie-reading commands). `sxi::Container` —
+the header/validator reader behind `stats` and `sxi-info` — applies the same gate.
+Every other version is refused with `rebuild with `xsa build``. The v6/v7 A/B
+arms (`XSA_CONTAINER_STREAM=0`, `xsa_finish --container-legacy`) still exist in
+the *writer* for reproducing historical measurements, but their output is not
+readable by this build.
 
 ### Durability and deletion (finish side)
 

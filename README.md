@@ -27,9 +27,32 @@ xsa branch-of pile.sxi2 "the qu" --batch         # trie-backed continuation bran
 xsa search pile.sxi2 --pattern " function " --corpus
                                                   # every occurrence, boundary law enforced,
                                                   # --exclude-source to leave a document out
-xsa mems  --sxi hprc.sxi --reads r.fq.gz -j 32    # streaming MEMs: (name, offset, strand)
-xsa serve --sxi hprc.sxi                          # HTTP: /query /ms /batch /stats
+xsa mem    pile.sxi2 "the quick brown fox"          # maximal exact matches (widths + positions)
 ```
+
+### One container format, and nothing else
+
+FORWARD-ONLY. We are the only consumer of this container family, so exactly ONE
+shape is supported: what `xsa build` emits today, **SXI2 v10** — the
+block-compressed run stream (m1 with its m12/m13 directories), the locate
+anchors (m11), χ (m5), the document starts (**m15**) and the context trie
+(**m20**). Every command refuses any other file **by name**, prints the rebuild
+instruction, and there is no second reader, no degraded mode and no
+`--legacy-*` escape hatch:
+
+```
+$ xsa query /mnt/old/pile.sxi2 --count "the "
+xsa: error: /mnt/old/pile.sxi2: SXI2 v6 container (an older shape: below the supported one)
+  this build serves exactly ONE container format: SXI2 v10 with m15 (document starts) and m20 (context trie)
+  rebuild with `xsa build`.
+```
+
+Artifacts in older shapes (`.ri4`, SXI1, SXI2 v2..v9) are **unsupported**: they
+are not readable, not convertible in place and not repaired by any flag. Rebuild
+them from the corpus with `xsa build --docs-map …`. The banked SHAs in git stay
+as historical records of what was measured; they do not imply the ability to read
+those files. The family may still gain members over time — that is additive, and
+needs no reader change.
 
 `xsa build` is ONE entry and one journal. It reads the corpus through the
 machine below (native AGC reader on the pangenome route — no materialized text,
@@ -55,7 +78,7 @@ no sidecars:
 | contexts at positions | `xsa consult` | ~5,000 positions/s, ≤8 GB RSS hard cap, deterministic shas, kill-resumable |
 | continuation branches of a context | `xsa branch-of [--batch]` | 4.7 µs/query; ~148k/s per core batched; 59.5% coverage at depth 8 / MS 1000, 0.035n bytes |
 | every occurrence, law-enforced | `xsa search` | crossings excluded by default; `--exclude-source` width-1, verified both directions |
-| streaming MEMs | `xsa mems` | 23k queries/s |
+| maximal exact matches | `xsa mem` | interval widths + bounded positions |
 | branch enumeration | `xsa branches` | 22k contexts/s |
 
 **THE LAW at query time: no match crosses a document boundary.** True by
@@ -116,9 +139,10 @@ walk, and no per-suffix position column anywhere in the product path
    publishes the lite container and deletes the rlebwt. Its own work is
    **118.9 s/GB** after decomposition (211.8 s/GB before).
 
-`--legacy-merge` still runs the pre-bin route (chunk front end → k-way merge
-tree → adopt finish) for A/B; it is not the document. `--v2-pipeline` is accepted
-and ignored: the bin machine *is* the default pipeline now.
+There is ONE route. The pre-bin chunk+merge front end is gone (its flags
+`--legacy-merge`, `--chunks`, `--chunk-mb`, `--fanin`, `--kway` are refused by
+name), and `--v2-pipeline` is accepted and ignored: the bin machine *is* the
+pipeline, and `--tape` selects its producer, not a different route.
 
 ### The measured pile arithmetic — tape era (1.3079 TB, N = 1,307,910,802,540)
 
@@ -214,7 +238,8 @@ build). `paper/FACTS.md` maps every claim to its artifact.
 
 ## Repository map
 
-- `xsa/` — the tool (Rust): build, mems, query, serve, stats; `cargo install`-able.
+- `xsa/` — the tool (Rust): build, query, search, consult, seeds, mem, branches,
+  stats; `cargo install`-able.
   `xsa/src/plan.rs` holds the versioned, gate-measured model constants;
   `xsa/src/chain.rs` is the one entry (bin pipeline by default).
 - `bit6/` — the C++ stage tools: `binbwt_slice.h` (the bin machine: count →

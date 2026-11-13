@@ -3804,8 +3804,11 @@ pub fn open_partial(path: &str) -> Result<Partial, String> {
             map.len()
         ));
     }
-    if !(9..=11).contains(&count) {
-        return Err(format!("{path}: directory holds {count} members; a build join expects 9..=11"));
+    // 8 = the finish's own member set (m1,m4,m5,m7,m10,m11,m12,m13: no m20 and
+    // no m15 yet), 9 = +m20, 10 = +m15, 11 = +m14. Anything outside is not this
+    // build's own half-built file.
+    if !(8..=11).contains(&count) {
+        return Err(format!("{path}: directory holds {count} members; a build join expects 8..=11"));
     }
     let dir_off = length as usize - 40 * count as usize;
     if dir_off < 64 || dir_off % 8 != 0 {

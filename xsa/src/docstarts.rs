@@ -1356,8 +1356,11 @@ fn info_command(container: &str) {
     // there is nothing to report as absent.
     let ds = DocStarts::from_container(&reader);
     let m = reader.member(M15);
+    // `present=true` stays in the line ON PURPOSE: the field is part of the
+    // output contract scripts parse, and under the one container shape it is a
+    // CONSTANT (a container that opens has m15) rather than a variable.
     println!(
-        "DOCSTARTS container={container} version={} docs={} bytes={} \
+        "DOCSTARTS container={container} version={} present=true docs={} bytes={} \
          ratio_vs_n={:.9} encoding={} sample_stride={} text_len={} plain_u64_bytes={}",
         reader.version,
         ds.docs,
