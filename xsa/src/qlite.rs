@@ -1,23 +1,34 @@
-//! Native query kernel for the one published container: **SXI2 v6 lite**.
+//! Native query kernel for the ONE published container: **SXI2 v10**.
 //!
-//! Why this module exists: the legacy `Ri4` reader treats `sxi::Container::open`
-//! (a *validation* entry point) as a *loader*. On a 10 GB v6 container that is
-//! 385 s of fixed cost before the first answer — the whole run stream decoded
-//! twice, the LF-start array materialised twice (~28 GB each), the chi set
-//! decoded into a sink, every member byte CRC'd, and a 256-way `Vec<u64>`
+//! FORWARD-ONLY. This module reads exactly one container shape - the one `xsa
+//! build` emits today (SXI2 v10: m1 in the trailing-directory block codec, the
+//! m12/m13 run directories, the m11 locate anchors, m15 document starts and m20
+//! the context trie). Anything else is refused at `Reader::open` by name, with
+//! the rebuild instruction and no alternative. There is no second reader, no
+//! `--legacy-*` flag and no degraded mode: the shapes that preceded this one
+//! belong to git history, not to this binary.
+//!
+//! Why this module exists: the retired phi-era `Ri4` reader treated
+//! `sxi::Container::open` (a *validation* entry point) as a *loader*. On a 10 GB
+//! container that was 385 s of fixed cost before the first answer — the whole run
+//! stream decoded twice, the LF-start array materialised twice (~28 GB each), the
+//! chi set decoded into a sink, every member byte CRC'd, and a 256-way `Vec<u64>`
 //! transpose (`cruns`, 28 GB of scattered appends) — see
-//! `tools/binbwt/RESULTS_QUERY_PROFILE.md`. None of it is phi: a v6 container
-//! has no m8.
+//! `tools/binbwt/RESULTS_QUERY_PROFILE.md`. That reader is gone; nothing here
+//! needs a per-run column.
 //!
 //! This module answers from the members the query actually needs, and nothing
 //! else:
 //!
 //! | member | role |
 //! |---|---|
-//! | m1  | RLBWT runs (codec 101: canonical-Huffman heads + gamma lengths) and the C table |
+//! | m1  | RLBWT runs (codec 116: block-compressed blocks + trailing block directory) and the C table |
 //! | m5  | chi witness set — **not read**: exact matching never needs it |
-//! | m10 | LF starts — **declared, zero bytes** in v6 ("derived"); we derive them |
+//! | m10 | LF starts — **declared, zero bytes** ("derived"); we derive them |
 //! | m11 | locate anchors: the tail SA of every 1024th run |
+//! | m12, m13 | run starts and the per-symbol run directory (the two-level bisects) |
+//! | m15 | document starts — the no-cross law's structure (never optional here) |
+//! | m20 | the context trie (consult/seeds' top-of-tree arm) |
 //! | m4, m7 | record anchors (empty here) and the byte permutation |
 //!
 //! Cost model: NOTHING per run is materialised. The only per-run state a query
@@ -34,7 +45,7 @@
 //! - m11 anchors are read one cell at a time out of the mapping, never as a
 //!   column.
 //!
-//! A materialising reader (the previous revision) built `heads`/`rlen`/`seen`
+//! A materialising reader (an earlier revision) built `heads`/`rlen`/`seen`
 //! at 13 B/run: 408 GB for the pile's 31,381,597,694 runs. That reader could
 //! answer `--count` (rank steps only) and could NOT locate on a 100 GB
 //! container - it refused at open rather than be OOM-killed. There is no budget
@@ -42,10 +53,9 @@
 //! `decoded_bytes` is 0 at every scale and `--limit` works on the pile.
 //!
 //! There is no `--ri4`/`--sxi`/`--mode`: the container tells us what it is, and
-//! anything that is not a v6 lite container is refused by name (see
-//! `describe_format`).
+//! anything that is not the supported shape is refused by name (see `refuse`).
 //!
-//! ORIENTATION: a v6 lite container has **no alphabet**. Its text is a byte
+//! ORIENTATION: the container has **no alphabet**. Its text is a byte
 //! string and its patterns are raw byte strings, so there is exactly ONE
 //! orientation to search (the pattern as given). There is no reverse-complement
 //! pass and no strand bookkeeping anywhere in this module: on a byte index a
@@ -380,8 +390,9 @@ impl Gamma {
 
 // ------------------------------------------------------- container (mmap only)
 
-/// A v6 lite container opened for reading: header + directory + mmap. No
-/// member is decoded, no member CRC is verified (see `--verify`).
+/// THE opened container: header + directory + mmap, restricted by
+/// `Reader::open` to the one supported shape. No member is decoded here and no
+/// member CRC is verified (see `--verify`).
 pub struct Reader {
     pub path: String,
     pub n: u64,
@@ -396,40 +407,61 @@ pub struct Reader {
     file: File,
 }
 
-/// What the file is, for the refusal message.
+// ------------------------------------------------------------ THE ONE FORMAT
+//
+// FORWARD-ONLY (the operator's law, 2026-11): we are the only consumer of this
+// container family, so there is exactly ONE supported shape - the one `xsa
+// build` emits today. Opening anything else is a REFUSAL that names the file and
+// prints the rebuild instruction. There is no second reader, no degraded mode
+// and no `--legacy-*` flag that brings one back: a container that predates this
+// shape is UNSUPPORTED, and the fix is to rebuild it, not to read it.
+//
+// The family may still gain members (`xsa build` writes more of them over time);
+// that is ADDITIVE and needs no reader change. What is fixed is the shape a
+// reader accepts.
+
+/// The supported container shape, spelled the same way in every refusal.
+pub const SUPPORTED_SHAPE: &str = "SXI2 v10 with m15 (document starts) and m20 (context trie)";
+
+/// THE refusal: every path that cannot serve a container returns exactly this.
+/// `what` is the one-line reason (what the file is, or which part of the one
+/// shape it is missing); the shape and the rebuild instruction are appended so
+/// the message is actionable on its own and never suggests a fallback.
+pub fn refuse(path: &str, what: &str) -> String {
+    format!(
+        "{path}: {what}\n  \
+         this build serves exactly ONE container format: {SUPPORTED_SHAPE}\n  \
+         rebuild with `xsa build`."
+    )
+}
+
+/// What the file is, for the refusal message. The phrase is PREFIX-FREE (no
+/// path): `refuse` puts the path in front of it, so a refusal reads as one
+/// sentence about one file.
 pub fn describe_format(path: &str) -> String {
     let f = match File::open(path) {
         Ok(f) => f,
-        Err(e) => return format!("{path}: cannot open ({e})"),
+        Err(e) => return format!("cannot open ({e})"),
     };
     let map = match unsafe { Mmap::map(&f) } {
         Ok(m) => m,
-        Err(e) => return format!("{path}: cannot mmap ({e})"),
+        Err(e) => return format!("cannot mmap ({e})"),
     };
     if map.len() < 64 {
-        return format!("{path}: {} bytes, too short for any index header", map.len());
+        return format!("{} bytes, too short for any index header", map.len());
     }
     let magic = &map[..4];
     let version = u32::from_le_bytes(map[4..8].try_into().unwrap());
     match magic {
-        b"SXI2" if version == 6 => format!("{path}: SXI2 v6 lite container"),
-        b"SXI2" if version == 7 => format!("{path}: SXI2 v7 lite container (incremental layout)"),
-        b"SXI2" if version == 8 => {
-            format!("{path}: SXI2 v8 lite container (incremental layout + m14 LCP over runs)")
-        }
-        b"SXI2" if version == 9 => {
-            format!("{path}: SXI2 v9 lite container (incremental layout + m20 context trie)")
-        }
-        b"SXI2" if version == 10 => {
-            format!(
-                "{path}: SXI2 v10 lite container (incremental layout + m15 document starts)"
-            )
-        }
-        b"SXI2" => format!("{path}: SXI2 v{version} (phi-era container)"),
-        b"SXI1" => format!("{path}: SXI1 v{version} container"),
-        b"ISXR" => format!("{path}: .ri4 v{version} flat index"),
+        b"SXI2" if version == 10 => "SXI2 v10 container, but not the supported member set".to_string(),
+        // v6..v9 are the shapes from BEFORE the document starts existed. They
+        // stay NAMED - a refusal must be able to say what the file is - and
+        // nothing more: no member of the family below v10 is readable here.
+        b"SXI2" => format!("SXI2 v{version} container (an older shape: below the supported one)"),
+        b"SXI1" => format!("SXI1 v{version} container"),
+        b"ISXR" => format!(".ri4 v{version} flat index"),
         _ => format!(
-            "{path}: unrecognised file (magic {:02x}{:02x}{:02x}{:02x})",
+            "unrecognised file (magic {:02x}{:02x}{:02x}{:02x})",
             magic[0], magic[1], magic[2], magic[3]
         ),
     }
@@ -443,23 +475,20 @@ impl Reader {
             return Err(format!("{path}: too short for an SXI header"));
         }
         let h = &map[..64];
-        if &h[..4] != b"SXI2" {
-            return Err(format!("{} is not a queryable index", describe_format(path)));
-        }
         let version = u32::from_le_bytes(h[4..8].try_into().unwrap());
-        // v7 is the INCREMENTAL layout: the member directory is a trailing
-        // section at length-40*count and m1's per-block directory follows its
-        // payload. v6 stays readable: same members, directory at 64.
-        let tail_dir = version >= 7;
-        // v8 = v7's incremental layout + member m14 (the LCP over runs);
-        // v9 = v8 + member m20 (the context trie); v10 = v9 + member m15 (the
-        // document starts). The LAYOUT is v7's verbatim (trailing member
-        // directory, m1 codec 116) for all four: the version says only "there
-        // are more members, and the flags declare them", so a reader that
-        // needs neither m14 nor m20 nor m15 needs nothing else.
-        if !(6..=10).contains(&version) {
-            return Err(format!("{} is not a queryable index", describe_format(path)));
+        // THE GATE. One magic, one version, and (below) one member set. This is
+        // the ONLY place a container becomes readable, so no caller can reach a
+        // degraded mode: there is no mode.
+        if &h[..4] != b"SXI2" || version != 10 {
+            return Err(refuse(path, &describe_format(path)));
         }
+        // v7's incremental layout IS the supported layout: the member directory
+        // is a trailing section at length-40*count and m1's per-block directory
+        // follows its payload. It is not a compatibility arm - it is the layout
+        // of the one shape, so it is spelled as a constant here rather than
+        // derived from a version the reader no longer spans.
+        let tail_dir = true;
+        let _ = version;
         let u32at = |o: usize| u32::from_le_bytes(h[o..o + 4].try_into().unwrap());
         let u64at = |o: usize| u64::from_le_bytes(h[o..o + 8].try_into().unwrap());
         let (n, r) = (u64at(8), u64at(24));
@@ -473,13 +502,19 @@ impl Reader {
                 map.len()
             ));
         }
-        // 10 slots is the block-compressed lite shape with m14, m20 and m15
-        // (m1,m4,m5,m7,m10,m11,m12,m13,+14|20|15); anything outside 5..=10 is not
-        // a lite container. v6..v9 containers hold 5..=9 members and stay
-        // readable.
-        if !(5..=10).contains(&count) || hs != 64 + 40 * count as usize {
-            return Err(format!(
-                "{path}: v6 directory must hold 5-10 members (found {count})"
+        // THE MEMBER LAW. The supported shape's directory holds the run stream
+        // and its two directories (m1, m12, m13), the locate anchors (m11), chi
+        // (m5), the record/byte members (m4, m6|m7), the empty LF declaration
+        // (m10) and the two members the whole query surface is built on: m15
+        // (document starts) and m20 (the context trie). m14 (LCP over runs) is
+        // the one OPTIONAL member: `xsa build --with-lcp-runs` adds it, and the
+        // shape stays supported either way. 9..=11 slots is the arithmetic of
+        // that statement (10 + the optional m14 + the m6/m7 split).
+        if !(9..=11).contains(&count) || hs != 64 + 40 * count as usize {
+            return Err(refuse(
+                path,
+                &format!("directory holds {count} members ({hs} header+directory bytes); the \
+                          supported shape holds 9..=11"),
             ));
         }
         if n == 0 || r == 0 || r > n {
@@ -488,11 +523,11 @@ impl Reader {
         // Header+directory CRC: 64 + 40*members bytes. Cheap, and the only
         // checksum that can be verified without reading the whole file.
         let expected = u32at(56);
-        // v7: the 40-byte entries live at the tail; the CRC covers the 64-byte
+        // The 40-byte entries live at the tail; the CRC covers the 64-byte
         // header followed by those entries, in that order.
-        let dir_off = if tail_dir { length as usize - 40 * count as usize } else { 64 };
-        if tail_dir && (dir_off < 64 || dir_off % 8 != 0) {
-            return Err(format!("{path}: v7 directory offset {dir_off} is not valid"));
+        let dir_off = length as usize - 40 * count as usize;
+        if dir_off < 64 || dir_off % 8 != 0 {
+            return Err(format!("{path}: directory offset {dir_off} is not valid"));
         }
         let mut head = map[..64].to_vec();
         head.extend_from_slice(&map[dir_off..dir_off + 40 * count as usize]);
@@ -522,7 +557,7 @@ impl Reader {
             let mut spans: Vec<(u64, u64)> = members.iter().map(|m| (m.offset, m.bytes)).collect();
             spans.sort_unstable();
             // v7 reserves only the fixed 64-byte header; the directory is trailing.
-            let mut prev = if tail_dir { 64 } else { hs as u64 };
+            let mut prev = 64u64;
             for (off, bytes) in spans {
                 let aligned = (prev + 7) / 8 * 8;
                 if off != aligned {
@@ -530,7 +565,7 @@ impl Reader {
                 }
                 prev = off + bytes;
             }
-            let members_end = if tail_dir { dir_off as u64 } else { length };
+            let members_end = dir_off as u64;
             if prev != members_end {
                 return Err(format!("{path}: members do not reach end of the member region"));
             }
@@ -554,9 +589,26 @@ impl Reader {
         if (flags & 64 != 0) != !chi_present || (!chi_present && flags & 1 != 0) {
             return Err(format!("{path}: chi flag/member mismatch: missing member m5 (chi) must be declared by flag 64 with chi-complete cleared"));
         }
-        for id in [1u32, 10, 11] {
+        // THE MEMBER LAW (cont.): the two members the query surface is BUILT on
+        // must be there, and their flags must say so. There is no "absent ->
+        // degrade" arm anywhere below this line, because a container that fails
+        // here never becomes a Reader at all.
+        for id in [1u32, 10, 11, 12, 13, 15, 20] {
             if !members.iter().any(|m| m.id == id) {
-                return Err(format!("{path}: v6 lite container is missing member {id}"));
+                return Err(refuse(
+                    path,
+                    &format!("v10 container without member m{id}"),
+                ));
+            }
+        }
+        // The flags are the container's own declaration; a member the flags do
+        // not announce is a corrupt directory, not a shape we could read.
+        for (bit, id) in [(256u64, 20u32), (512, 15)] {
+            if flags & bit == 0 {
+                return Err(refuse(
+                    path,
+                    &format!("v10 container whose flags {flags:#x} do not declare m{id} (bit {bit})"),
+                ));
             }
         }
         Ok(Reader {
@@ -1006,33 +1058,33 @@ impl Index {
         let r = reader.r;
         let n = reader.n;
 
-        // ---- the format declaration: old containers are refused by shape, not
-        // decoded and hoped over.
+        // ---- THE ONE SHAPE (cont.): m1 must be the trailing-directory block
+        // stream the supported shape uses. Codecs 102/114 were the shapes before
+        // the trailing directory; they are not read here, and the refusal says
+        // what to do about it (rebuild), never what to try instead.
         let m1 = reader.member(1);
         // captured here: `reader` is moved into the index below, so the m1 borrow
         // must not survive past this point.
         let (m1_codec, m1_off, m1_bytes) = (m1.codec, m1.offset, m1.bytes);
-        if ![102, 114, 116].contains(&m1.codec) {
-            return Err(format!(
-                "{}: m1 codec {} is not 102/114/116 (block-compressed) - this is a pre-block-compression\n  \
-                 v6 lite container: one sequential Huffman+gamma run stream with no restart\n  \
-                 directory, so run k needs runs 0..k. Rebuild it with `xsa build --tape`.",
-                reader.path, m1.codec
+        if m1.codec != 116 {
+            return Err(refuse(
+                &reader.path,
+                &format!("m1 codec {} is not 116 (the block-compressed run stream with a \
+                          trailing block directory)", m1.codec),
             ));
         }
         if reader.flags & 32 == 0 {
-            return Err(format!(
-                "{}: header flags {:#x} do not declare the block-compressed m1 + run directories\n  \
-                 (bit 32); rebuild with `xsa build --tape`.",
-                reader.path, reader.flags
+            return Err(refuse(
+                &reader.path,
+                &format!("header flags {:#x} do not declare the block-compressed m1 + run \
+                          directories (bit 32)", reader.flags),
             ));
         }
         for id in [12u32, 13] {
             if !reader.members.iter().any(|m| m.id == id) {
-                return Err(format!(
-                    "{}: missing run directory member m{id}; the block-compressed format needs m12\n  \
-                     (run starts) and m13 (per-symbol run directory) - rebuild with `xsa build --tape`.",
-                    reader.path
+                return Err(refuse(
+                    &reader.path,
+                    &format!("missing run directory member m{id}"),
                 ));
             }
         }
@@ -2705,8 +2757,8 @@ fn parse(raw: &[std::ffi::OsString]) -> Args {
             // nothing to switch. Refusing it by name is cheaper than silently
             // ignoring it and letting a caller believe half its work was done.
             "--mode" => die(
-                "query: --mode is not accepted for a lite container: a lite container has no \
-                 alphabet; patterns are raw bytes\n  \
+                "query: --mode is not accepted: the container carries no alphabet, and patterns \
+                 are raw bytes\n  \
                  a byte-string index has exactly one orientation, so there is no dna/text mode \
                  and no reverse complement",
             ),
@@ -3017,15 +3069,9 @@ pub fn command(args: &[std::ffi::OsString], byte_certificate: bool) {
         die("query: --corpus belongs to `xsa verify` (use `xsa verify <container> --corpus FILE ...`)");
     }
     let t_open0 = Instant::now();
-    let reader = match Reader::open(&a.container) {
-        Ok(r) => r,
-        Err(e) => die(&format!(
-            "{e}\n  supported: SXI2 v6 lite (members m1,m4,m5,m7,m10,m11)\n  \
-             migration: a legacy container must be rebuilt with `xsa build` (v6 lite is the\n  \
-             only published query format); the phi-era readers live behind the deprecated\n  \
-             `xsa query-legacy`, which is ~1e6x slower per pattern and takes minutes to open."
-        )),
-    };
+    // `Reader::open`'s error IS the refusal (it names the file, the shape and the
+    // rebuild instruction); there is nothing to add and nothing to fall back to.
+    let reader = Reader::open(&a.container).unwrap_or_else(|e| die(&e));
     let docs = if a.count { None } else { discover_documents(&a.container, a.docs.as_deref(), reader.n) };
     let corpus = a.context.map(|_| docs.as_ref().unwrap_or_else(|| die("query: --context requires matching document sidecars and corpus.bin (--docs DIR)"))
         .context_corpus().unwrap_or_else(|e| die(&e)));
@@ -3034,9 +3080,9 @@ pub fn command(args: &[std::ffi::OsString], byte_certificate: bool) {
     // OPEN IS MMAP-ONLY: header, directory, header CRC and the 256-byte remap.
     // Nothing in the run stream, the chi set or the anchors is decoded here, so
     // `decoded_bytes` is 0 and no stage has run. This is the line that makes the
-    // 405 s legacy open auditable against the 1 ms it costs now.
+    // 405 s phi-era open auditable against the 1 ms it costs now.
     eprintln!(
-        "QLITE_OPEN container={} format=sxi2-v6-lite magic=SXI2 version={} \
+        "QLITE_OPEN container={} format=sxi2-v10 magic=SXI2 version={} \
          mmap_ms={open_ms:.2} decoded_bytes=0 stages=none n={} runs={} members={} end_symbol=none \
          orientation=none alphabet=none",
         reader.path,
@@ -3046,7 +3092,7 @@ pub fn command(args: &[std::ffi::OsString], byte_certificate: bool) {
         members.join(",")
     );
     eprintln!(
-        "SQLITE_QUERY_OPEN format=sxi2-v6-lite mmap_ms={open_ms:.2} decoded_bytes=0 stages=none"
+        "SQLITE_QUERY_OPEN format=sxi2-v10 mmap_ms={open_ms:.2} decoded_bytes=0 stages=none"
     );
     if a.verify {
         if let Err(e) = reader.verify_members() {
@@ -3641,7 +3687,7 @@ include!("stateless.inc.rs");
 //
 // One LF step, exposed for the CONTEXT_TRIE builder (`xsa/src/ctx.rs`). The
 // builder needs the SUFFIX ARRAY (row -> text position) once, and the cheapest
-// exact way to obtain it from a v6/v7 lite container is the LF cycle: LF maps
+// exact way to obtain it from the container is the LF cycle: LF maps
 // row i to the row whose position is i-1, so ONE cycle from any row visits every
 // row exactly once and yields SA[row] for all of them at one LF step per row.
 // That is the "minimal extra pass" the trie costs when it is built outside the
