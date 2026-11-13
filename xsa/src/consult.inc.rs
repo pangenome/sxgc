@@ -49,6 +49,16 @@ const CONSULT_MAGIC: &[u8; 8] = b"XSACONS1";
 /// context that is a suffix of the text), and flag bit 4 (16) marks a row whose
 /// histogram is the boundary-UNAWARE conflated answer (see CONSULT.md §5).
 const CONSULT_VERSION: u32 = 3;
+/// Opt-in row-layout version (`--rows-v4`): every row is preceded by a 1-byte
+/// KIND, and a FORCED row (the width-1 / one-step-verification answers: one
+/// continuation byte, no locate) is encoded WITHOUT its 9-byte branch pair —
+/// the pair is (kind-1 `cont`, width−eof) by construction. The DEFAULT output
+/// stays v3 and byte-identical to today (downstream experiments are hash-bound
+/// to the row bytes); v4 is the compact opt-in the χ-proportional consult
+/// makes possible (see CONSULT.md §LAYERING).
+const CONSULT_VERSION_V4: u32 = 4;
+const ROW_KIND_FULL: u8 = 0;
+const ROW_KIND_FORCED: u8 = 1;
 /// Binary `--windows` batch magic (the first 32-byte record is a header).
 const WIN_MAGIC: &[u8; 8] = b"XSWIN001";
 const WIN_RECORD_BYTES: usize = 32;
@@ -93,9 +103,190 @@ const CONSULT_CORPUS_WINDOW: u64 = 64 << 20;
 const BATCH_POSITIONS: usize = 64;
 /// A binary window record whose `left` field is this means "use --left".
 const LEFT_USE_DEFAULT: u32 = 0xFFFF_FFFF;
+/// THE SEPARATOR-FRAMING LAW (see CONSULT.md §LAYERING): on a corpus whose
+/// every document start d >= 1 is immediately preceded by one 0x1E byte (the
+/// Pile's own framing — verified EXHAUSTIVELY at open, never assumed), a
+/// context that contains NO 0x1E byte cannot touch a document boundary:
+/// a CROSSING occurrence would need a doc start d inside (pos, at-1], and
+/// text[d-1] = 0x1E would then have to equal C[d-1-pos]; an END-branch
+/// occurrence (at a doc start) would need C[ctxlen-1] = 0x1E. With C
+/// 0x1E-free both are impossible, so EVERY occurrence is either in-document
+/// content or the one structural text end — exactly the raw backward-search
+/// classification. The no-cross histogram IS the raw histogram, zero locate,
+/// at ANY width (still capped so the marked fallback's bytes stay what they
+/// are today).
+const SEP_FRAMING: u8 = 0x1E;
 
 fn gb(n: u64) -> f64 {
     n as f64 / (1u64 << 30) as f64
+}
+
+// ------------------------------------------------------- the χ layer ledger
+
+/// One answer layer of the χ-proportional consult (the journal's CONSULT_LAYERS
+/// line and G4's per-layer cost table). The layers are ordered by the decision
+/// cascade in the worker: EMPTY and ABSENT answer without touching the index;
+/// TRIE answers from the member; WIDTH1, TFORCED, FORCED and RAWFORK are the
+/// ZERO-LOCATE raw layers (the χ-proportional mass); ENUM is the exact
+/// m15-crossing-filtered enumeration; MARKED and CONFLATED are the conflated
+/// fallbacks (marked in the row); RESTRICT is the --doc-restrict arm.
+const CHI_LAYERS: usize = 11;
+const CHI_LAYER_NAMES: [&str; CHI_LAYERS] = [
+    "empty", "trie", "absent", "width1", "tforced", "forced", "rawfork", "enum", "marked",
+    "conflated", "restrict",
+];
+const CHI_EMPTY: usize = 0;
+const CHI_TRIE: usize = 1;
+const CHI_ABSENT: usize = 2;
+const CHI_WIDTH1: usize = 3;
+const CHI_TFORCED: usize = 4;
+const CHI_FORCED: usize = 5;
+const CHI_RAWFORK: usize = 6;
+const CHI_ENUM: usize = 7;
+const CHI_MARKED: usize = 8;
+const CHI_CONFLATED: usize = 9;
+const CHI_RESTRICT: usize = 10;
+/// Log2 nanosecond buckets per layer (exact cdf p50, O(1) memory per worker:
+/// the memory law forbids anything that grows with positions consumed).
+const CHI_HIST_BUCKETS: usize = 40;
+
+/// Per-worker layer ledger: rows, nanoseconds and a log2-ns histogram.
+struct ChiLedger {
+    rows: [u64; CHI_LAYERS],
+    nanos: [u64; CHI_LAYERS],
+    hist: [u64; CHI_LAYERS * CHI_HIST_BUCKETS],
+}
+
+impl ChiLedger {
+    fn new() -> ChiLedger {
+        ChiLedger {
+            rows: [0; CHI_LAYERS],
+            nanos: [0; CHI_LAYERS],
+            hist: [0; CHI_LAYERS * CHI_HIST_BUCKETS],
+        }
+    }
+    /// Charge one answered row to a layer.
+    #[inline]
+    fn charge(&mut self, layer: usize, ns: u64) {
+        self.rows[layer] += 1;
+        self.nanos[layer] += ns;
+        // bucket k holds ns in [2^k, 2^(k+1)); bucket 0 also holds ns < 1.
+        let b = (64 - ns.leading_zeros() as usize).min(CHI_HIST_BUCKETS - 1);
+        self.hist[layer * CHI_HIST_BUCKETS + b] += 1;
+    }
+    /// The p50 of the observed per-row costs, from the log2 histogram's cdf
+    /// (the geometric mid of the bucket the median falls into).
+    fn p50_ns(&self, layer: usize) -> f64 {
+        let n = self.rows[layer];
+        if n == 0 {
+            return 0.0;
+        }
+        let half = n / 2;
+        let mut acc = 0u64;
+        for b in 0..CHI_HIST_BUCKETS {
+            acc += self.hist[layer * CHI_HIST_BUCKETS + b];
+            if acc > half {
+                if b == 0 {
+                    return 0.5;
+                }
+                let lo = (1u64 << (b - 1)) as f64;
+                let hi = if b >= 63 { f64::INFINITY } else { (1u64 << b) as f64 };
+                return (lo * hi).sqrt();
+            }
+        }
+        0.0
+    }
+}
+
+/// Verify THE SEPARATOR-FRAMING LAW for this container+corpus pair: every
+/// document start d with 1 <= start(d) < text_len must have corpus[start(d)-1]
+/// == 0x1E. EXHAUSTIVE (a sample cannot authorize the zero-locate raw layers:
+/// one unframed boundary anywhere would let a crossing occurrence hide inside
+/// a forced row), parallel over `threads` handles, one 1-byte pread per document
+/// start. Returns (docs checked, violations, first violation's doc start,
+/// seconds). The caller journals the result and DISABLES the raw layers for the
+/// whole run when the law does not hold (exactness is never traded for speed).
+fn verify_sep_framing(
+    corpus_path: &str,
+    ds: &crate::docstarts::DocStarts,
+    text_len: u64,
+    threads: usize,
+) -> (u64, u64, u64, f64) {
+    use std::os::unix::fs::FileExt as _;
+    let started = Instant::now();
+    // doc ids whose start is a real in-text boundary: 1 <= start < text_len
+    // (start == text_len is inert: `at == text_len` is classified eof BEFORE
+    // the doc-start test, and no occurrence can reach past the text end).
+    let per = (ds.docs + threads as u64 - 1) / threads.max(1) as u64;
+    let mut checked = 0u64;
+    let mut violations = 0u64;
+    let mut first_bad = 0u64;
+    std::thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(threads);
+        for t in 0..threads {
+            let lo = t as u64 * per;
+            let hi = ((t as u64 + 1) * per).min(ds.docs);
+            if lo >= hi {
+                continue;
+            }
+            let f = std::fs::File::open(corpus_path)
+                .unwrap_or_else(|e| die(&format!("consult: open corpus {corpus_path}: {e}")));
+            handles.push(scope.spawn(move || {
+                let mut buf = [0u8; 1];
+                let mut n = 0u64;
+                let mut bad = 0u64;
+                let mut first = 0u64;
+                for d in lo..hi {
+                    if d == 0 {
+                        continue;
+                    }
+                    let s = ds.select(d);
+                    if s >= text_len {
+                        continue; // a superset map's tail: not this container's text
+                    }
+                    f.read_exact_at(&mut buf, s - 1)
+                        .unwrap_or_else(|e| die(&format!("consult: framing read at {}: {e}", s - 1)));
+                    n += 1;
+                    if buf[0] != SEP_FRAMING {
+                        bad += 1;
+                        if first == 0 {
+                            first = s;
+                        }
+                    }
+                }
+                (n, bad, first)
+            }));
+        }
+        for h in handles {
+            let (n, bad, first) =
+                h.join().unwrap_or_else(|_| die("consult: framing verify died"));
+            checked += n;
+            violations += bad;
+            if first_bad == 0 {
+                first_bad = first;
+            }
+        }
+    });
+    (checked, violations, first_bad, started.elapsed().as_secs_f64())
+}
+
+/// The width of `context || c` for ONE candidate byte, by the same pure rank
+/// arithmetic `extension_counts` uses per candidate: start at c's own interval
+/// (the C table answers rank(c,0) and rank(c,n) for free) and prepend the
+/// context right to left. Zero locate, zero corpus read.
+fn extension_width(cx: &mut Ctx<'_>, sym: u8, work: &[u8]) -> u64 {
+    let base = cx.idx.c[sym as usize];
+    let mut a = base;
+    let mut z = base + cx.idx.total[sym as usize];
+    for &p in work {
+        if a == z {
+            return 0; // this byte is absent after this context prefix
+        }
+        let pb = cx.idx.c[p as usize];
+        a = pb + cx.rank(p, a);
+        z = pb + cx.rank(p, z);
+    }
+    z - a
 }
 
 /// This process's resident set in bytes (`/proc/self/statm` field 2).
@@ -953,6 +1144,10 @@ struct ConsultDone {
     excluded: u64,
     restricted: u64,
     inexact: u64,
+    /// the χ layer ledger of this batch (rows, nanos, histogram)
+    chi_rows: [u64; CHI_LAYERS],
+    chi_nanos: [u64; CHI_LAYERS],
+    chi_hist: [u64; CHI_LAYERS * CHI_HIST_BUCKETS],
 }
 
 /// Encode one position's row (layout in CONSULT.md). Little-endian throughout.
@@ -967,7 +1162,64 @@ fn encode_consult_row(
     restricted: bool,
     boundary_exact: bool,
 ) {
+    encode_consult_row_v(out, it, ctxlen, width, eof, branches, excluded, restricted, boundary_exact, false, false)
+}
+
+/// The row encoder. `v4` prefixes every record with a 1-byte KIND
+/// (CONSULT_VERSION_V4, `--rows-v4`); a `forced` row whose single pair is
+/// exactly (cont, width - eof) takes the compact FORCED kind and the flag's
+/// bit 6 — no 9-byte pair on disc for the 98.7% zero-locate mass. The DEFAULT
+/// (v3) output is byte-identical to today: no kind byte, no bit 6.
+#[allow(clippy::too_many_arguments)]
+fn encode_consult_row_v(
+    out: &mut Vec<u8>,
+    it: &ConsultItem,
+    ctxlen: u16,
+    width: u64,
+    eof: u64,
+    branches: &[(u8, u64)],
+    excluded: bool,
+    restricted: bool,
+    boundary_exact: bool,
+    v4: bool,
+    forced: bool,
+) {
+    if v4
+        && forced
+        && branches.len() == 1
+        && width > eof
+        && branches[0].1 == width - eof
+    {
+        // KIND 1 (FORCED): ctxlen u16, flags u16, doc u64, off u64, width u64,
+        // eof u64, cont u8, then the v2 tail. 62 bytes; the v3 form of the same
+        // row is 73. The pair decodes to (cont, width - eof) by construction.
+        let before = out.len();
+        let flags: u16 = (if eof != 0 { 1 } else { 0 })
+            | (if it.truncated { 2 } else { 0 })
+            | (if excluded { 4 } else { 0 })
+            | (if restricted { 8 } else { 0 })
+            | (if boundary_exact { 0 } else { 16 })
+            // bit 6 exists ONLY in v4 forced records: "this row's answer was
+            // proven forced (the width-1 or one-step-verification layer)"
+            | 64;
+        out.push(ROW_KIND_FORCED);
+        out.extend_from_slice(&ctxlen.to_le_bytes());
+        out.extend_from_slice(&flags.to_le_bytes());
+        out.extend_from_slice(&it.doc.to_le_bytes());
+        out.extend_from_slice(&it.off.to_le_bytes());
+        out.extend_from_slice(&width.to_le_bytes());
+        out.extend_from_slice(&eof.to_le_bytes());
+        out.push(branches[0].0);
+        out.extend_from_slice(&it.docid.to_le_bytes());
+        out.extend_from_slice(&it.base.to_le_bytes());
+        out.extend_from_slice(&(it.off - it.base).to_le_bytes());
+        debug_assert_eq!(out.len() - before, 62);
+        return;
+    }
     let before = out.len();
+    if v4 {
+        out.push(ROW_KIND_FULL);
+    }
     let flags: u16 = (if eof != 0 { 1 } else { 0 })
         | (if it.truncated { 2 } else { 0 })
         | (if excluded { 4 } else { 0 })
@@ -996,7 +1248,7 @@ fn encode_consult_row(
     // 24-byte v2 tail, which is what the reader in CONSULT.md is written against
     debug_assert_eq!(
         out.len() - before,
-        ROW_FIXED_BYTES + 9 * branches.len() + ROW_TAIL_BYTES
+        ROW_FIXED_BYTES + 9 * branches.len() + ROW_TAIL_BYTES + if v4 { 1 } else { 0 }
     );
 }
 
@@ -1042,6 +1294,9 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
     let mut cross_doc = false;
     let mut boundary_cap = BOUNDARY_CAP_DEFAULT;
     let mut boundary_strict = false;
+    // opt-in row file v4: the compact FORCED row kind (see CONSULT.md). The
+    // default output stays v3, byte-identical to today.
+    let mut rows_v4 = false;
     let mut i = 0usize;
     while i < args.len() {
         let a = args[i].as_str();
@@ -1118,6 +1373,7 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
                 });
             }
             "--boundary-strict" => boundary_strict = true,
+            "--rows-v4" => rows_v4 = true,
             "--doc-restrict-cap" => {
                 let v = val!("--doc-restrict-cap");
                 doc_restrict_cap = v.parse().unwrap_or_else(|_| {
@@ -1178,6 +1434,7 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
         }
     };
     let journal_path = format!("{output}.journal");
+    let row_version = if rows_v4 { CONSULT_VERSION_V4 } else { CONSULT_VERSION };
 
     // ---------------- resume: discard the torn tail, verify the committed prefix
     let mut start = ConsultCommit {
@@ -1223,6 +1480,27 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
             out_file
                 .set_len(commit.output_bytes)
                 .unwrap_or_else(|e| die(&format!("consult: truncate {output}: {e}")));
+        }
+        out_file.seek(std::io::SeekFrom::Start(0))
+            .unwrap_or_else(|e| die(&format!("consult: seek {output}: {e}")));
+        // THE ROW VERSION IS A RESUME INVARIANT: a v3 tail cannot continue a v4
+        // file (the kind byte changes every record length) and vice versa.
+        {
+            let mut head = [0u8; 16];
+            out_file.read_exact(&mut head).unwrap_or_else(|e| {
+                die(&format!("consult: read header of {output}: {e}"))
+            });
+            if &head[..8] != CONSULT_MAGIC {
+                die(&format!("consult: {output} does not carry the {CONSULT_MAGIC:?} magic"));
+            }
+            let v = u32::from_le_bytes(head[8..12].try_into().unwrap());
+            if v != row_version {
+                die(&format!(
+                    "consult: --resume: {output} is a row file v{v} but this run writes v{row_version} \
+                 (pass or drop --rows-v4 to match); the row kinds differ, so the files cannot be \
+                 continued into each other",
+                ));
+            }
         }
         out_file
             .seek(std::io::SeekFrom::Start(0))
@@ -1293,7 +1571,7 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
         let _ = std::fs::remove_file(&journal_path);
         let mut header = Vec::with_capacity(out_header_len as usize);
         header.extend_from_slice(CONSULT_MAGIC);
-        header.extend_from_slice(&CONSULT_VERSION.to_le_bytes());
+        header.extend_from_slice(&row_version.to_le_bytes());
         header.extend_from_slice(&0u32.to_le_bytes()); // reserved
         out_file
             .write_all(&header)
@@ -1485,6 +1763,34 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
         src.seek_to(start.windows_bytes_done);
     }
 
+    // ---------------- THE SEPARATOR-FRAMING LAW, verified per run
+    // The zero-locate raw layers (width1/forced/rawfork below) are authorized
+    // ONLY when every in-text document start is preceded by one 0x1E byte —
+    // verified EXHAUSTIVELY here (a sample cannot authorize it: one unframed
+    // boundary anywhere would let a crossing occurrence hide inside a forced
+    // row). Containers without the property (adversarial fixtures whose
+    // boundaries sit mid-content, HPRC-style maps, ...) keep the exact
+    // m15-crossing-filtered enumeration for every row: exactness is never
+    // traded for speed. Journaled either way.
+    let mut sep_framing_verified = false;
+    // (checked, violations, first_bad_start, seconds) for the journal receipt
+    let mut sep_framing_receipt = (0u64, 0u64, 0u64, 0f64);
+    if let Some(ds) = docs_ref {
+        if !cross_doc {
+            sep_framing_receipt = verify_sep_framing(&corpus_path, ds, text_len, jobs);
+            sep_framing_verified = sep_framing_receipt.1 == 0 && sep_framing_receipt.0 > 0;
+            eprintln!(
+                "CONSULT_SEPFRAMING checked={} violations={} verified={} seconds={:.3} \
+                 (the zero-locate raw layers are {})",
+                sep_framing_receipt.0,
+                sep_framing_receipt.1,
+                u8::from(sep_framing_verified),
+                sep_framing_receipt.3,
+                if sep_framing_verified { "ARMED" } else { "OFF — every row enumerates exactly" }
+            );
+        }
+    }
+
     let mut journal = ConsultJournal::open_append(&journal_path);
     if start.seq == 0 {
         journal.line(&format!(
@@ -1493,8 +1799,8 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
              chunk_rows={} left_default={} windows={} windows_bytes={} windows_format={} \
              batch_positions={} arena_bytes={} cache_bytes={} index_rss_cap_bytes={} \
              docs_source={} docs={} exclude_source={} doc_restrict={} doc_restrict_cap={} \
-             boundary_mode={} boundary_cap={} boundary_strict={} trie={} law=no_match_may_cross_a_document_boundary \
-             spine_cut=document_base",
+             boundary_mode={} boundary_cap={} boundary_strict={} trie={} sep_framing_verified={} \
+             law=no_match_may_cross_a_document_boundary spine_cut=document_base",
             container,
             std::fs::metadata(&container).map(|m| m.len()).unwrap_or(0),
             index_n,
@@ -1503,7 +1809,7 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
             corpus.len,
             text_len,
             output,
-            CONSULT_VERSION,
+            row_version,
             jobs,
             cap_bytes,
             rss_gb,
@@ -1525,6 +1831,20 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
             boundary_cap,
             u8::from(boundary_strict),
             trie_arm,
+            u8::from(sep_framing_verified),
+        ));
+    }
+    // THE SEPFRAMING receipt rides right after the open line
+    if docs_ref.is_some() && !cross_doc {
+        let (checked, violations, first_bad, secs) = sep_framing_receipt;
+        let mut j = ConsultJournal::open_append(&journal_path);
+        j.line(&format!(
+            "CONSULT_SEPFRAMING framing_byte=0x1e checked={} violations={} first_bad_start={} \
+             verified={} seconds={secs:.3} \
+             law=raw_equals_boundary_when_context_has_no_framing_byte \
+             note=\"verified=0 disables the zero-locate raw layers for the whole run; every row then \
+             takes the exact m15-crossing-filtered enumeration\"",
+            checked, violations, first_bad, u8::from(sep_framing_verified)
         ));
     }
     eprintln!(
@@ -1563,6 +1883,8 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
     let boundary_cap_for_threads = boundary_cap;
     let cross_doc_for_threads = cross_doc;
     let boundary_strict_for_threads = boundary_strict;
+    let sep_framing_for_threads = sep_framing_verified;
+    let rows_v4_for_threads = rows_v4;
     let docs_for_threads: Option<&crate::docstarts::DocStarts> = docs_ref;
     let trie_for_threads: Option<&crate::ctx::Trie<'_>> = match trie_ref {
         Some(t) if t.boundary_aware == 1 => Some(t),
@@ -1574,7 +1896,22 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
     let journal_for_threads = journal_path.clone();
     let output_for_threads = output.clone();
 
-    let mut totals = (0u64, 0u64, 0u64, 0u64, String::new(), 0u64, 0u64, 0u64, 0u64, 0u64, 0u64);
+    let mut totals = (
+        0u64,
+        0u64,
+        0u64,
+        0u64,
+        String::new(),
+        0u64,
+        0u64,
+        0u64,
+        0u64,
+        0u64,
+        0u64,
+        [0u64; CHI_LAYERS],
+        [0u64; CHI_LAYERS],
+        [0u64; CHI_LAYERS * CHI_HIST_BUCKETS],
+    );
     std::thread::scope(|scope| {
         // ---- writer: owns the output file, the chunk commits and the sha ledger
         let writer = scope.spawn(move || {
@@ -1597,10 +1934,20 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
             let mut excluded_rows = 0u64;
             let mut restricted_rows = 0u64;
             let mut boundary_inexact_rows = 0u64;
+            let mut chi_rows = [0u64; CHI_LAYERS];
+            let mut chi_nanos = [0u64; CHI_LAYERS];
+            let mut chi_hist = [0u64; CHI_LAYERS * CHI_HIST_BUCKETS];
             while let Ok(d) = res_rx.recv() {
                 excluded_rows += d.excluded;
                 restricted_rows += d.restricted;
                 boundary_inexact_rows += d.inexact;
+                for i in 0..CHI_LAYERS {
+                    chi_rows[i] += d.chi_rows[i];
+                    chi_nanos[i] += d.chi_nanos[i];
+                }
+                for i in 0..CHI_LAYERS * CHI_HIST_BUCKETS {
+                    chi_hist[i] += d.chi_hist[i];
+                }
                 order.insert(d.seq0, d);
                 while let Some(d) = order.remove(&next_seq0) {
                     if d.rows > 0 {
@@ -1713,6 +2060,9 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
                 excluded_rows,
                 restricted_rows,
                 boundary_inexact_rows,
+                chi_rows,
+                chi_nanos,
+                chi_hist,
             )
         });
 
@@ -1733,12 +2083,15 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
                 let mut excluded_rows = 0u64;
                 let mut restricted_rows = 0u64;
                 let mut boundary_inexact_rows = 0u64;
+                let mut work: Vec<u8> = Vec::with_capacity(CTX_MAX as usize);
                 while let Ok(batch) = rx.recv() {
                     out.clear();
+                    let mut bl = ChiLedger::new();
                     let excl0 = excluded_rows;
                     let restr0 = restricted_rows;
                     let inex0 = boundary_inexact_rows;
                     for it in &batch.items {
+                        let t0 = Instant::now();
                         let lo = it.ctx_off as usize;
                         let ctx = &batch.bytes[lo..lo + it.ctx_len as usize];
                         if ctx.is_empty() {
@@ -1748,7 +2101,8 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
                             // its answer (c14_branch_serve.select: `if k else
                             // dict(width=0, eof=0, branches=[])`). A zero-length
                             // match cannot cross anything: the row is exact.
-                            encode_consult_row(&mut out, it, 0, 0, 0, &[], false, false, true);
+                            encode_consult_row_v(&mut out, it, 0, 0, 0, &[], false, false, true, rows_v4_for_threads, false);
+                            bl.charge(CHI_EMPTY, t0.elapsed().as_nanos() as u64);
                             continue;
                         }
                         if it.restrict {
@@ -1768,7 +2122,8 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
                             if excluded {
                                 excluded_rows += 1;
                             }
-                            encode_consult_row(&mut out, it, it.ctx_len, width, eof, &pairs, excluded, true, true);
+                            encode_consult_row_v(&mut out, it, it.ctx_len, width, eof, &pairs, excluded, true, true, rows_v4_for_threads, false);
+                            bl.charge(CHI_RESTRICT, t0.elapsed().as_nanos() as u64);
                             continue;
                         }
                         // THE NO-CROSS DEFAULT, in layers. `--cross-doc` is the
@@ -1777,6 +2132,13 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
                         // structure lets it be, and MARKED (boundary_exact=0)
                         // wherever it cannot be - never silent, never fatal
                         // (except under --boundary-strict).
+                        //
+                        // THE χ-PROPORTIONAL CASCADE: layer 1 answers from the
+                        // trie member; the raw layers (width1 / forced / rawfork)
+                        // answer by pure rank arithmetic with ZERO LOCATE under
+                        // the separator-framing law; everything else falls to
+                        // the exact m15-crossing-filtered enumeration.
+                        let mut marked_case = false; // this row's conflated fallback is the MARKED arm
                         if !cross_doc_for_threads {
                             if let Some(ds) = docs_for_threads {
                                 // layer 1: the boundary-aware trie answers any
@@ -1788,11 +2150,203 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
                                         if excluded {
                                             excluded_rows += 1;
                                         }
-                                        encode_consult_row(&mut out, it, it.ctx_len, width, eof, &pairs, excluded, false, true);
+                                        encode_consult_row_v(&mut out, it, it.ctx_len, width, eof, &pairs, excluded, false, true, rows_v4_for_threads, false);
+                                        bl.charge(CHI_TRIE, t0.elapsed().as_nanos() as u64);
                                         continue;
                                     }
                                 }
-                                // layer 2: exact enumeration within the cap
+                                // THE RAW LAYERS need the interval: one backward
+                                // search of the full context (the existing rank
+                                // machinery, zero locate).
+                                work.clear();
+                                work.extend(
+                                    ctx.iter().rev().map(|&b| cx.idx.reader.sigma[b as usize]),
+                                );
+                                let (l, r) = cx.search(&work);
+                                let w = r - l;
+                                if w == 0 {
+                                    // ABSENT: the context matches nowhere in the
+                                    // text (an alphabet-absent byte empties the
+                                    // interval too). Empty histogram, exact -
+                                    // the same row the enumeration layer emits.
+                                    encode_consult_row_v(&mut out, it, it.ctx_len, 0, 0, &[], false, false, true, rows_v4_for_threads, false);
+                                    bl.charge(CHI_ABSENT, t0.elapsed().as_nanos() as u64);
+                                    continue;
+                                }
+                                if w == 1 {
+                                    // WIDTH-1 SHORT-CIRCUIT: the only raw
+                                    // occurrence IS the query's own (the spine
+                                    // is real text cut at the document base),
+                                    // and the own is always an in-document
+                                    // content continuation (off < doc_next and
+                                    // off < text_len) - a crossing or END
+                                    // occurrence would be a SECOND one. Raw
+                                    // width 1 cannot hide either. Zero locate.
+                                    let (width, excluded) = if it.excl {
+                                        excluded_rows += 1;
+                                        (0, true)
+                                    } else {
+                                        (1, false)
+                                    };
+                                    let pairs1: [(u8, u64); 1] = [(it.own, 1)];
+                                    let branches: &[(u8, u64)] = if excluded { &[] } else { &pairs1 };
+                                    if strict {
+                                        // the PRE-exclusion raw answer: the row IS the
+                                        // raw histogram here (width-1 proof), so the
+                                        // serve-path recomputation must agree with it
+                                        consult_strict_check(&mut cx, cand_ref, ctx, (1, 0), &pairs1);
+                                    }
+                                    encode_consult_row_v(&mut out, it, it.ctx_len, width, 0, branches, excluded, false, true, rows_v4_for_threads, true);
+                                    bl.charge(CHI_WIDTH1, t0.elapsed().as_nanos() as u64);
+                                    continue;
+                                }
+                                // THE SEPARATOR-FRAMING LAW arms the zero-locate
+                                // raw layers: a 0x1E-free context on a container
+                                // whose every in-text document start follows a
+                                // 0x1E byte cannot touch a boundary, so the
+                                // no-cross histogram IS the raw histogram
+                                // (verified at open; see CONSULT_SEPFRAMING).
+                                // The cap stays so a too-wide row keeps today's
+                                // MARKED bytes.
+                                if sep_framing_for_threads
+                                    && !ctx.contains(&SEP_FRAMING)
+                                    && w <= boundary_cap_for_threads
+                                {
+                                    let eof_raw = u64::from(
+                                        ctx.len() <= corpus_tail_ref.len()
+                                            && *ctx
+                                                == corpus_tail_ref
+                                                    [corpus_tail_ref.len() - ctx.len()..],
+                                    );
+                                    // LAYER 2 (single-child short-circuit): the
+                                    // trie node of the context's LAST <=depth
+                                    // bytes. A fork can never widen going
+                                    // deeper: every occurrence of the full
+                                    // context is a non-crossing occurrence of
+                                    // that suffix at the SAME continuation
+                                    // offset, so one child forces the byte with
+                                    // ~8 node walks instead of a 2*ctxlen rank
+                                    // chain. The own occurrence (in-document,
+                                    // spine cut at the base) is always one of
+                                    // the node's counted content children, so
+                                    // the single child's byte must be `own` - a
+                                    // disagreement is a corrupt member.
+                                    let mut tforced = false;
+                                    if let Some(trie) = trie_for_threads {
+                                        let d = (trie.depth as usize).min(ctx.len());
+                                        if let Some(node) = trie.find(&ctx[ctx.len() - d..]) {
+                                            let kids = trie.children(node);
+                                            if kids.len() == 1 {
+                                                match kids[0].byte() {
+                                                    // an END-only node cannot carry
+                                                    // the own's content continuation;
+                                                    // no verdict, use the chain
+                                                    None => {}
+                                                    Some(b) => {
+                                                        if b != it.own {
+                                                            die(&format!(
+                                                                "consult: TRIE DISAGREEMENT at \
+                                                                 position {}: the depth-{} node of the \
+                                                                 context has one child, byte {}, but the \
+                                                                 position's own continuation is {} - the \
+                                                                 member and the corpus disagree",
+                                                                it.off, d, b, it.own
+                                                            ));
+                                                        }
+                                                        tforced = true;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    // LAYER 3 (one-step verification): candidate
+                                    // b = the query's own continuation, from the
+                                    // window; append and search once. Equality
+                                    // means EVERY raw occurrence continues with b;
+                                    // narrowing means fork (conservative: a
+                                    // boundary-touching row inside falls through
+                                    // to the exact enumeration below).
+                                    let forced = if tforced {
+                                        true
+                                    } else {
+                                        let sb = cx.idx.reader.sigma[it.own as usize];
+                                        extension_width(&mut cx, sb, &work) == w - eof_raw
+                                    };
+                                    if forced {
+                                        let count = w - eof_raw;
+                                        if strict {
+                                            // the PRE-exclusion raw answer (same position in
+                                            // the cascade as the conflated arm's check)
+                                            let pre: [(u8, u64); 1] = [(it.own, count)];
+                                            consult_strict_check(
+                                                &mut cx,
+                                                cand_ref,
+                                                ctx,
+                                                (w, eof_raw),
+                                                &pre,
+                                            );
+                                        }
+                                        let (width, excluded, branches): (u64, bool, Vec<(u8, u64)>) =
+                                            if it.excl {
+                                                excluded_rows += 1;
+                                                if count == 1 {
+                                                    (w - 1, true, Vec::new())
+                                                } else {
+                                                    (w - 1, true, vec![(it.own, count - 1)])
+                                                }
+                                            } else {
+                                                (w, false, vec![(it.own, count)])
+                                            };
+                                        encode_consult_row_v(
+                                            &mut out,
+                                            it,
+                                            it.ctx_len,
+                                            width,
+                                            eof_raw,
+                                            &branches,
+                                            excluded,
+                                            false,
+                                            true,
+                                            rows_v4_for_threads,
+                                            true,
+                                        );
+                                        bl.charge(
+                                            if tforced { CHI_TFORCED } else { CHI_FORCED },
+                                            t0.elapsed().as_nanos() as u64,
+                                        );
+                                        continue;
+                                    }
+                                    // RAW FORK: the raw histogram IS the boundary
+                                    // histogram (the framing law), so the full
+                                    // extension-count histogram answers exactly,
+                                    // zero locate, at any width within the cap.
+                                    let (mut width, eof) =
+                                        consult_answer(&mut cx, cand_ref, ctx, &corpus_tail_ref, &mut pairs);
+                                    if strict {
+                                        consult_strict_check(&mut cx, cand_ref, ctx, (width, eof), &pairs);
+                                    }
+                                    let mut excluded = false;
+                                    if it.excl {
+                                        if let Some(slot) = pairs.iter().position(|&(b, _)| b == it.own) {
+                                            if pairs[slot].1 > 0 {
+                                                pairs[slot].1 -= 1;
+                                                if pairs[slot].1 == 0 {
+                                                    pairs.swap_remove(slot);
+                                                }
+                                                width -= 1;
+                                                excluded = true;
+                                            }
+                                        }
+                                        if excluded {
+                                            pairs.sort_unstable_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+                                            excluded_rows += 1;
+                                        }
+                                    }
+                                    encode_consult_row_v(&mut out, it, it.ctx_len, width, eof, &pairs, excluded, false, true, rows_v4_for_threads, false);
+                                    bl.charge(CHI_RAWFORK, t0.elapsed().as_nanos() as u64);
+                                    continue;
+                                }
+                                // layer 5: exact enumeration within the cap
                                 let (width, eof, excluded, too_wide) = boundary_answer(
                                     &mut cx,
                                     &corpus_file,
@@ -1807,7 +2361,8 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
                                     if excluded {
                                         excluded_rows += 1;
                                     }
-                                    encode_consult_row(&mut out, it, it.ctx_len, width, eof, &pairs, excluded, false, true);
+                                    encode_consult_row_v(&mut out, it, it.ctx_len, width, eof, &pairs, excluded, false, true, rows_v4_for_threads, false);
+                                    bl.charge(CHI_ENUM, t0.elapsed().as_nanos() as u64);
                                     continue;
                                 }
                                 // zone (c): wider than the cap AND deeper than the
@@ -1825,6 +2380,7 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
                                         it.off, ctx.len(), boundary_cap_for_threads
                                     ));
                                 }
+                                marked_case = true;
                             } else if boundary_strict_for_threads {
                                 // refused at open; unreachable per-worker
                                 die("consult: --boundary-strict without a document structure");
@@ -1861,7 +2417,11 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
                             }
                         }
                         boundary_inexact_rows += 1;
-                        encode_consult_row(&mut out, it, it.ctx_len, width, eof, &pairs, excluded, false, false);
+                        encode_consult_row_v(&mut out, it, it.ctx_len, width, eof, &pairs, excluded, false, false, rows_v4_for_threads, false);
+                        bl.charge(
+                            if marked_case { CHI_MARKED } else { CHI_CONFLATED },
+                            t0.elapsed().as_nanos() as u64,
+                        );
                     }
                     let done = ConsultDone {
                         seq0: batch.seq0,
@@ -1873,6 +2433,9 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
                         excluded: excluded_rows - excl0,
                         restricted: restricted_rows - restr0,
                         inexact: boundary_inexact_rows - inex0,
+                        chi_rows: bl.rows,
+                        chi_nanos: bl.nanos,
+                        chi_hist: bl.hist,
                     };
                     if tx.send(done).is_err() {
                         die("consult: writer closed before the last batch");
@@ -2169,7 +2732,7 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
         let w = writer
             .join()
             .unwrap_or_else(|_| die("consult: the writer panicked"));
-        totals = (w.0, w.1, w.2, w.3, w.4, w.5, w.6, w.7, w.8, w.9, w.10);
+        totals = (w.0, w.1, w.2, w.3, w.4, w.5, w.6, w.7, w.8, w.9, w.10, w.11, w.12, w.13);
         // the producer's receipts ride out through these
         eprintln!(
             "CONSULT_PRODUCER corpus_bytes_read={} backpressure_events={} throttled_ms={} \
@@ -2178,7 +2741,42 @@ pub fn consult_command(raw: &[std::ffi::OsString]) {
         );
     });
 
-    let (positions_done, windows_done, windows_bytes_done, output_bytes, digest, seq, writer_max_rss, commits, excluded_rows, restricted_rows, boundary_inexact_rows) = totals;
+    let (positions_done, windows_done, windows_bytes_done, output_bytes, digest, seq, writer_max_rss, commits, excluded_rows, restricted_rows, boundary_inexact_rows, chi_rows, chi_nanos, chi_hist) = totals;
+    // THE χ LAYER LEDGER: rows and per-row cost per answer layer (the journal's
+    // CONSULT_LAYERS receipt; the zero-locate raw layers are the χ-proportional
+    // mass - width1 + tforced + forced + rawfork). The p50 comes from the
+    // log2-nanosecond histogram's cdf.
+    let mut ledger = ChiLedger {
+        rows: chi_rows,
+        nanos: chi_nanos,
+        hist: chi_hist,
+    };
+    let mut layers_line = String::from("CONSULT_LAYERS");
+    for (i, name) in CHI_LAYER_NAMES.iter().enumerate() {
+        layers_line.push_str(&format!(
+            " {}_rows={} {}_ns={} {}_p50_us={:.1}",
+            name,
+            ledger.rows[i],
+            name,
+            ledger.nanos[i],
+            name,
+            ledger.p50_ns(i) / 1000.0
+        ));
+    }
+    let zero_locate = ledger.rows[CHI_WIDTH1]
+        + ledger.rows[CHI_TFORCED]
+        + ledger.rows[CHI_FORCED]
+        + ledger.rows[CHI_RAWFORK];
+    {
+        let mut j = ConsultJournal::open_append(&journal_path);
+        j.line(&layers_line);
+        j.line(&format!(
+            "CHI_ZEROLOCATE rows={} of {} ({:.2}%) layers=width1+tforced+forced+rawfork",
+            zero_locate,
+            positions_done,
+            100.0 * zero_locate as f64 / positions_done.max(1) as f64
+        ));
+    }
     let seconds = started.elapsed().as_secs_f64();
     let peak = consult_peak_rss_bytes().unwrap_or(writer_max_rss).max(writer_max_rss);
     let (hits, misses, decodes, drops) = index.cache_stats();
@@ -2348,5 +2946,134 @@ mod consult_tests {
         // `die` exits the process, so that path is exercised by the crash gate,
         // not from inside the test harness.)
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Write a minimal XSEP v1 sidecar (seps.bin) with the given doc starts and
+    /// stride, and return the DocStarts built from it.
+    fn xsep_dir(starts: &[u64], stride: u64, text_len: u64) -> (std::path::PathBuf, crate::docstarts::DocStarts) {
+        let dir = std::env::temp_dir().join(format!("consult-xsep-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let docs = starts.len() as u64;
+        let anchors = docs.div_ceil(stride);
+        let mut b = Vec::new();
+        b.extend_from_slice(b"XSEP");
+        b.extend_from_slice(&1u32.to_le_bytes());
+        b.extend_from_slice(&0u32.to_le_bytes()); // reserved
+        b.extend_from_slice(&(stride as u32).to_le_bytes());
+        b.extend_from_slice(&docs.to_le_bytes());
+        b.extend_from_slice(&text_len.to_le_bytes()); // corpus_bytes (>= text_len)
+        b.extend_from_slice(&anchors.to_le_bytes());
+        b.extend_from_slice(&0u64.to_le_bytes()); // base: the first doc starts at 0
+        for (i, &s) in starts.iter().enumerate() {
+            let d = if i == 0 { s } else { s - starts[i - 1] };
+            b.extend_from_slice(&(d as u32).to_le_bytes());
+        }
+        for (k, &s) in starts.iter().enumerate() {
+            if k as u64 % stride == 0 {
+                b.extend_from_slice(&s.to_le_bytes());
+            }
+        }
+        std::fs::write(dir.join("seps.bin"), &b).unwrap();
+        let ds = crate::docstarts::DocStarts::from_xsep(&dir, text_len);
+        (dir, ds)
+    }
+
+    /// THE SEPARATOR-FRAMING LAW'S VERIFIER: a corpus whose every doc start
+    /// follows one 0x1E verifies clean; one unframed boundary is reported and
+    /// fails the whole run's authorization (verified=0 disables the raw layers).
+    #[test]
+    fn sep_framing_verification_is_exhaustive_and_loud() {
+        // docs at 0, 5, 11, 20 over a 24-byte text; framing 0x1E at 4, 10, 19
+        let starts = [0u64, 5, 11, 20];
+        let (dir, ds) = xsep_dir(&starts, 64, 24);
+        let cpath = dir.join("corpus");
+        let framed = {
+            let mut t = b"hell".to_vec();
+            t.push(0x1E);
+            t.extend_from_slice(b"world");
+            t.push(0x1E);
+            t.extend_from_slice(b"01234567");
+            t.push(0x1E);
+            t.extend_from_slice(b"tail"); // text is 24 bytes
+            t
+        };
+        assert_eq!(framed.len(), 24);
+        std::fs::write(&cpath, &framed).unwrap();
+        let (checked, bad, first, _) =
+            verify_sep_framing(&cpath.to_string_lossy(), &ds, 24, 4);
+        assert_eq!((checked, bad), (3, 0), "all in-text doc starts checked, no violations");
+
+        // one unframed boundary: byte 10 is 'X' instead of 0x1E
+        let mut unframed = framed.clone();
+        unframed[10] = b'X';
+        let upath = dir.join("corpus_bad");
+        std::fs::write(&upath, &unframed).unwrap();
+        let (checked, bad, first, _) =
+            verify_sep_framing(&upath.to_string_lossy(), &ds, 24, 4);
+        assert_eq!((checked, bad, first), (3, 1, 11), "the violation is found and named");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The v4 FORCED row is the compact form of exactly the v3 single-pair row:
+    /// same fields, the pair implied as (cont, width - eof), and flag bit 6 set
+    /// ONLY in v4 (the v3 bytes stay today's bytes).
+    #[test]
+    fn v4_forced_row_is_the_compact_v3_row() {
+        let it = item(7, 1_000_000_000_001, 1_000_000_000_000, 12);
+        // v3: 40 fixed + 9 + 24 = 73 bytes, flags 0 (nothing set: not truncated,
+        // no eof, exact, not excluded/restricted)
+        let mut v3 = Vec::new();
+        encode_consult_row_v(&mut v3, &it, 1024, 42, 0, &[(b'x', 42)], false, false, true, false, true);
+        assert_eq!(v3.len(), ROW_FIXED_BYTES + 9 + ROW_TAIL_BYTES);
+        assert_eq!(u16::from_le_bytes(v3[6..8].try_into().unwrap()), 0);
+        // v4 FORCED: 1 kind + 61 = 62 bytes, no pair on disc, bit 6 set
+        let mut v4 = Vec::new();
+        encode_consult_row_v(&mut v4, &it, 1024, 42, 0, &[(b'x', 42)], false, false, true, true, true);
+        assert_eq!(v4.len(), 62);
+        assert_eq!(v4[0], ROW_KIND_FORCED);
+        assert_eq!(u16::from_le_bytes(v4[3..5].try_into().unwrap()), 64);
+        assert_eq!(v4[5 + 8 + 8 + 8 + 8], b'x'); // the cont byte
+        // decode the v4 forced record and compare every field against the v3 row
+        let ctxlen = u16::from_le_bytes(v4[1..3].try_into().unwrap());
+        let flags = u16::from_le_bytes(v4[3..5].try_into().unwrap());
+        let doc = u64::from_le_bytes(v4[5..13].try_into().unwrap());
+        let off = u64::from_le_bytes(v4[13..21].try_into().unwrap());
+        let width = u64::from_le_bytes(v4[21..29].try_into().unwrap());
+        let eof = u64::from_le_bytes(v4[29..37].try_into().unwrap());
+        let cont = v4[37];
+        assert_eq!((ctxlen, flags & !64, doc, off, width, eof, cont),
+                   (1024, 0, 7, 1_000_000_000_001, 42, 0, b'x'));
+        // the v3 row's own fields must agree
+        assert_eq!(u16::from_le_bytes(v3[4..6].try_into().unwrap()), ctxlen);
+        assert_eq!(u16::from_le_bytes(v3[6..8].try_into().unwrap()), flags & !64);
+        assert_eq!(u64::from_le_bytes(v3[8..16].try_into().unwrap()), doc);
+        assert_eq!(u64::from_le_bytes(v3[16..24].try_into().unwrap()), off);
+        assert_eq!(u64::from_le_bytes(v3[24..32].try_into().unwrap()), width);
+        assert_eq!(u64::from_le_bytes(v3[32..40].try_into().unwrap()), eof);
+        assert_eq!(v3[40], cont);
+        assert_eq!(u64::from_le_bytes(v3[41..49].try_into().unwrap()), width - eof);
+        // a v4 row that is NOT forced-shape (multi-pair) keeps the FULL kind and
+        // the v3 body; a v3 row never carries bit 6
+        let mut v4f = Vec::new();
+        encode_consult_row_v(&mut v4f, &it, 8, 5, 0, &[(b'a', 3), (b'b', 2)], false, false, true, true, true);
+        assert_eq!(v4f[0], ROW_KIND_FULL);
+        assert_eq!(v4f.len(), 1 + ROW_FIXED_BYTES + 18 + ROW_TAIL_BYTES);
+        assert_eq!(u16::from_le_bytes(v4f[7..9].try_into().unwrap()) & 64, 0);
+    }
+
+    /// The layer ledger's log2 histogram yields sane p50s.
+    #[test]
+    fn chi_ledger_p50_follows_the_samples() {
+        let mut l = ChiLedger::new();
+        for _ in 0..3 {
+            l.charge(CHI_WIDTH1, 1_000); // 1us
+        }
+        for _ in 0..1 {
+            l.charge(CHI_WIDTH1, 8_000); // 8us
+        }
+        let p = l.p50_ns(CHI_WIDTH1);
+        assert!(p >= 500.0 && p <= 2_000.0, "p50 in the 1us bucket, got {p}");
+        assert_eq!(l.p50_ns(CHI_FORCED), 0.0, "an empty layer has no p50");
+        assert_eq!(l.rows[CHI_WIDTH1], 4);
     }
 }
