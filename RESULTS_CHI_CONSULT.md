@@ -91,11 +91,14 @@ are cheap too): old 6,715/s, new 7,061/s — G1's job is parity, and it is total
 ### G2 — CENSUS RE-DERIVATION (100 GB rehearsal, full window set)
 
 `--rss-gb 8`, `-j 16`, the live pile build (96 threads) on the same box.
+Final binary (the receipts below are the second, coherent invocation; the
+first run of the same gate produced the same rows_sha256).
 
 ```
-CONSULT_DONE positions=6667438 seconds=1088.4 positions_per_s=6125.9
-              peak_rss_gb=7.999  boundary_exact_rows=6652592 (99.78% exact)
-CONSULT_SEPFRAMING checked=16119766 violations=0 verified=1 seconds=7.1
+CONSULT_DONE positions=6667438 seconds=1044.1 positions_per_s=6385.7
+              peak_rss_gb=8.000  boundary_exact_rows=6652592 (99.78% exact)
+              commits=101 (a commit every ~65k positions)
+CONSULT_SEPFRAMING checked=16119766 violations=0 verified=1 seconds=7.3
 G2_PREFIX rows=682496 width1=601293(diffs=0) single=72347(diffs=0)
                        fork=6924(diffs=0) marked=1932(diffs=0)
 G2_PREFIX_OK fork_rows=6924 marked_rows=1932 byte_identical=1
@@ -104,7 +107,7 @@ G2_CENSUS_TARGET width1=88.1 single_branch=10.6 wide_histogram=0.7 forks=0.5
 CHI_ZEROLOCATE rows=6605827 of 6667438 (99.08%)
 G2_LAYERS width1=5962110 trie=43372 tforced=13702 forced=593043
           rawfork=36972 marked=14846 enum=0
-G2_CENSUS_OK banked_prefix_compared=682496 byte_identical=1 rate=6125.9/s
+G2_CENSUS_OK banked_prefix_compared=682496 byte_identical=1 rate=6385.7/s
 ```
 
 **Every one of the 682,496 banked rows is byte-identical** — width-1,
@@ -182,10 +185,13 @@ to the fork skeleton. The old path's locate ledger for the banked prefix was
 4.94M locates (601k width-1 + 1.35M single-branch + 2.99M fork-dominated);
 the new path spends zero.
 
-**Walls:** G2's full-set run 1,088 s at `-j 16` coexisting with the live pile
-build (96 threads) and the 10 GB gate container build (32 threads); the
-framing verification 7.1 s (16.1M single-byte preads, cold pages) at open,
-1.8 s warm. Peak RSS 8.00 GB — the cap held, 1,819 governor drop epochs.
+**Walls (what else ran on the box):** every 100 GB gate ran at `-j 16`
+coexisting with the live 96-thread pile build (the box's load average was
+~20 throughout); the G2 final run 1,044 s, G4's cold 1,058 s / warm 1,080 s
+(the earlier receipts ranged 6,083–6,386 positions/s across invocations —
+~5% scheduling variance, all >445× the baseline). The framing verification
+is 7–9 s cold (16.1M single-byte preads over 100 GB) and 1.8 s warm. Peak RSS
+8.00 GB in every run — the cap held, 2,364–2,799 governor drop epochs.
 
 ## Residual risks
 
