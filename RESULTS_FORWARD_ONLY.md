@@ -189,7 +189,7 @@ container).
 
 ### F2 — THE CURRENT CONTAINER STILL WORKS (byte identity, pre vs post binary)
 
-`gates/forward_only_f2.sh BINARY CONTAINER CORPUS OUTDIR [JOBS]` runs 9 commands
+`gates/forward_only_f2.sh BINARY CONTAINER CORPUS OUTDIR [JOBS]` runs 8 commands
 and sha256-manifests every output; the same script ran against `/tmp/pre-xsa`
 (built from `origin/main`) and against this branch's binary.
 
@@ -213,8 +213,9 @@ $ diff /tmp/f2-pre/MANIFEST.sha256 /tmp/f2-post/MANIFEST.sha256 && echo IDENTICA
 F2 IDENTICAL: 8/8 files byte-identical
 ```
 
-8 comparisons, all byte-identical (the 9th command is `search_jsonl`, counted
-above; the manifest is the record). The counts themselves are the pre-existing
+8 commands, 8 outputs, all byte-identical, and the task's six probe classes are
+all covered (query --count, search, consult, branch-of, seeds, docstarts — the
+last with both `probe` and `info`). The counts themselves are the pre-existing
 verified numbers: **704,942,163** for `"the "` and **55** for `"Harper Reed"`.
 
 ### F3 — THE OLD CONTAINER IS REFUSED (7 commands)
