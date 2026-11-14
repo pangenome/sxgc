@@ -953,6 +953,10 @@ fn scratch_bytes_excluding(scratch: &Path, container: &Path) -> (u64, u64) {
 /// while holding a lock the finish needs (the shared checkpoint journal's flock,
 /// which exists only on a resumed build). The controller therefore also resumes
 /// when live scratch has not moved for STALL_S while paused, and journals why.
+/// The disk the sorter itself keeps free (it refuses a window without it); the
+/// governor prices the same margin so its ceiling and the sorter's guard agree.
+const GOVERNOR_MARGIN_BYTES: u64 = 50u64 << 30;
+
 struct Backpressure {
     budget_bytes: u64,
     /// The number the operator sets is a SCRATCH budget: the container being built
@@ -976,6 +980,13 @@ struct Backpressure {
     resumes: u64,
     paused_ms_total: u128,
     peak_bytes: u64,
+    /// THE POSITION WINDOW IS THE ONE SCRATCH TERM THE FINISH CANNOT DRAIN. The
+    /// sorter writes a window of position files (<= its --subdiv-position-budget)
+    /// and frees it itself when the window's waves are descended, so it is scratch
+    /// that no consumer can release: pausing the producer cannot lower it. The
+    /// governor therefore prices it as a DECLARED, DECLARED-BY-THE-PRODUCER term
+    /// (the same knob the sorter reads) instead of discovering it as a stall.
+    pos_budget_bytes: u64,
     last_sample: Instant,
     last_live: u64,
     paused_since: Instant,
@@ -984,14 +995,42 @@ struct Backpressure {
 
 impl Backpressure {
     fn new(scratch: &Path, budget_bytes: u64, container: &Path, producers: Vec<(String, u32)>) -> Backpressure {
+        // THE SAME KNOB THE SORTER READS, so the governor and the producer cannot
+        // disagree about how much position scratch is legitimate. Default: a fifth of
+        // the scratch budget (scatter_sort's own default for the window).
+        let pos_budget_bytes = std::env::var("XSA_SUBDIV_POSITION_BUDGET_BYTES").ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or_else(|| std::cmp::max(256u64 << 20, budget_bytes / 5));
         Backpressure {
             budget_bytes, output_bytes: 0, container: container.to_path_buf(),
             pause_at: budget_bytes, resume_at: budget_bytes / 10 * 9, floor_bytes: 0,
             scratch: scratch.to_path_buf(), producers, paused: false,
             pauses: 0, resumes: 0, paused_ms_total: 0, peak_bytes: 0,
+            pos_budget_bytes,
             last_sample: Instant::now(), last_live: 0, paused_since: Instant::now(),
             paused_live_at: 0,
         }
+    }
+    /// the live-scratch ceiling the governor will FAIL at (never merely report):
+    /// the tapes' budget + the producer's declared position window + the margin the
+    /// sorter keeps free itself (50 GB).
+    fn ceiling_bytes(&self) -> u64 {
+        self.budget_bytes
+            .saturating_add(self.pos_budget_bytes)
+            .saturating_add(GOVERNOR_MARGIN_BYTES)
+    }
+    /// WHAT THE GOVERNOR SAW AND WHAT IT WILL DO, once, at the start of the build.
+    fn announce(&self, journal: &mut Journal) {
+        let gb = |v: u64| v as f64 / (1u64 << 30) as f64;
+        journal.line(&format!(
+            "SCRATCH_GOVERNOR budget_gb={:.3} pos_budget_gb={:.3} ceiling_gb={:.3} margin_gb={:.3} \
+             pause_at_gb={:.3} resume_at_gb={:.3} producers={} \
+             accounting=the_whole_scratch_tree_incl_subdiv_pos_excl_the_container \
+             rule=pause_on_the_budget,ratchet_never_past_the_ceiling,fail_past_the_ceiling",
+            gb(self.budget_bytes), gb(self.pos_budget_bytes), gb(self.ceiling_bytes()),
+            gb(GOVERNOR_MARGIN_BYTES), gb(self.pause_at), gb(self.resume_at),
+            self.producers.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>().join(",")));
     }
     /// SIGSTOP/SIGCONT a whole process group. `kill` is used with the group id
     /// negated; a group that has already exited answers ESRCH, which is not an
@@ -1019,8 +1058,29 @@ impl Backpressure {
         if live > self.peak_bytes { self.peak_bytes = live; }
         let gb = |v: u64| v as f64 / (1u64 << 30) as f64;
         journal.line(&format!(
-            "SCRATCH_SAMPLE live_gb={:.3} output_gb={:.3} budget_gb={:.3} peak_gb={:.3} paused={} allocated_bytes=1",
-            gb(live), gb(output), gb(self.budget_bytes), gb(self.peak_bytes), u8::from(self.paused)));
+            "SCRATCH_SAMPLE live_gb={:.3} output_gb={:.3} budget_gb={:.3} peak_gb={:.3} paused={} allocated_bytes=1 \
+             pos_budget_gb={:.3} ceiling_gb={:.3}",
+            gb(live), gb(output), gb(self.budget_bytes), gb(self.peak_bytes), u8::from(self.paused),
+            gb(self.pos_budget_bytes), gb(self.ceiling_bytes())));
+        // THE HARD CEILING. The only scratch the finish cannot drain is the
+        // producer's position window, and that is capped by the producer's own
+        // budget; past (budget + window + margin) something is wrong and the box is
+        // about to fill. Stop the producers and FAIL with the numbers - a full disc
+        // corrupts every other lane on this machine.
+        if live > self.ceiling_bytes() {
+            for (tag, pgid) in self.producers.clone() {
+                let _ = self.signal_group(pgid, "KILL");
+                journal.line(&format!("SCRATCH_GOVERNOR signal=KILL phase={tag} pgid={pgid}"));
+            }
+            return Err(format!(
+                "SCRATCH_GOVERNOR_CEILING_EXCEEDED live_bytes={} ceiling_bytes={} \
+                 budget_bytes={} pos_budget_bytes={} margin_bytes={} live_gb={:.3} ceiling_gb={:.3} \
+                 levers=XSA_SUBDIV_POSITION_BUDGET_BYTES (smaller window), --scratch-budget-gb \
+                 (bigger tape budget), or a scratch filesystem with room. The producers were \
+                 killed instead of filling the disc",
+                live, self.ceiling_bytes(), self.budget_bytes, self.pos_budget_bytes,
+                GOVERNOR_MARGIN_BYTES, gb(live), gb(self.ceiling_bytes())));
+        }
         if !self.paused {
             if live >= self.pause_at {
                 for (tag, pgid) in self.producers.clone() {
@@ -1050,8 +1110,21 @@ impl Backpressure {
             let stalled = self.paused_since.elapsed() >= STALL_S && live + (live / 100) >= self.paused_live_at;
             if stalled && live > self.floor_bytes { self.floor_bytes = live; }
             if stalled && live + (1u64 << 30) > self.pause_at {
-                self.pause_at = live + (1u64 << 30) / 2;
+                // The residual is scratch the consumer cannot release (the
+                // producer's OWN position window, which it frees when the window's
+                // waves are descended). Raising the threshold is right - a pause
+                // that can never drain must not deadlock the build - but it may never
+                // be raised past the ceiling: past that the build FAILS (above).
+                let want = live.saturating_add((1u64 << 30) / 2);
+                let capped = want.min(self.ceiling_bytes());
+                self.pause_at = capped;
                 self.resume_at = self.pause_at / 10 * 9;
+                journal.line(&format!(
+                    "SCRATCH_GOVERNOR ratchet pause_at_gb={:.3} resume_at_gb={:.3} live_gb={:.3} \
+                     requested_gb={:.3} ceiling_gb={:.3} capped={} \
+                     why=residual_is_the_producers_position_window_not_a_drain",
+                    gb(capped), gb(self.resume_at), gb(live), gb(want),
+                    gb(self.ceiling_bytes()), u8::from(capped < want)));
             }
             if drained || stalled {
                 for (tag, pgid) in self.producers.clone() {
@@ -2548,7 +2621,9 @@ headline=LCP-over-runs",
         if let Some(emit) = emit_running.as_ref() {
             producers.push(("emit-tape".to_string(), emit.child.id()));
         }
-        Backpressure::new(scratch, budget_bytes, &container, producers)
+        let mut bp = Backpressure::new(scratch, budget_bytes, &container, producers);
+        bp.announce(journal);
+        bp
     };
     let mut phases = vec![producer_running, finish_running];
     if let Some(emit) = emit_running { phases.push(emit); }

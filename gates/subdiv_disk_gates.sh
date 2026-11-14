@@ -131,8 +131,29 @@ d1() {
 }
 
 # COMMON flags for the corpus-scale arms: identical for every arm (same plan shape).
+# STRATEGY=local forces the local arm, the only arm that uses a position window.
+# It matters at small scale: at 10 GB the plan's own choice is ALL-GLOBAL
+# (page_fraction ~ 1 for every class), so an auto run never creates a window and a
+# peak gate over it would be vacuous - the vacuous pass this project calls a bug.
+# Every window gate therefore runs BOTH arms.
+STRATEGY=${STRATEGY:-auto}
 corpus_args() { echo --threads "$THREADS" --budget-bytes "$BUDGET" --memory-gb "$MEM_GB" \
-                    --scratch-budget-bytes "$((SCRATCH_GB * 1000000000))"; }
+                    --scratch-budget-bytes "$((SCRATCH_GB * 1000000000))" \
+                    --subdiv-strategy "$STRATEGY"; }
+
+# P6: a clean exit, checked on every corpus-scale run: the sorter's own done line,
+# nothing left in subdiv_pos, and (with tape bands) the producer's done marker.
+clean_check() {
+  local d=$1 tag=$2
+  grep -q '^SS_DONE' "$d/run.log" || fail "P6 $tag: no SS_DONE line (the run did not finish cleanly)"
+  local left bytes
+  left=$(posdir_of "$d"); bytes=$(posbytes_of "$d")
+  [ "$left" = 0 ] && [ "$bytes" = 0 ] || fail "P6 $tag: subdiv_pos holds $left files / $bytes bytes at exit"
+  local done_line scratch_bytes
+  done_line=$(grep -o '^SS_DONE .*' "$d/run.log" | tail -1)
+  scratch_bytes=$(du -sb "$d/scratch" 2>/dev/null | cut -f1)
+  echo "SUBDIV_DISK_P6 tag=$tag position_files_left=0 position_bytes_left=0 scratch_bytes_after_exit=${scratch_bytes:-0} $done_line"
+}
 
 # --------------------------------------------------------------------------- D2
 d2() {
@@ -150,27 +171,48 @@ d2() {
   [ "$peak" -le "$budget_plus_slack" ] || fail "D2 peak $peak > $budget_plus_slack"
   [ "$left" = 0 ] && [ "$bytes" = 0 ] || fail "D2 subdiv_pos not drained ($left files, $bytes bytes)"
   [ -f "$b/out.sa" ] || fail "D2 no output"
+  local lrows proj waves_j want
+  lrows=$(grep -o 'local_rows_est=[0-9]*' "$b/run.log" | head -1 | cut -d= -f2)
+  proj=$(grep -o 'projected_passes=[0-9]*' "$b/run.log" | head -1 | cut -d= -f2)
+  waves_j=$(grep -o 'local_waves=[0-9]*' "$b/run.log" | head -1 | cut -d= -f2)
+  want=$(( (lrows * 8 + PEAK_BUDGET - 1) / PEAK_BUDGET ))
+  echo "SUBDIV_DISK_D2_SWEEPS local_rows_measured=$lrows local_waves=$waves_j pos_budget=$PEAK_BUDGET ceil_local_rows_x8_over_budget=$want projected_passes_journaled=$proj measured_scatter_sweeps=$passes windows=$wins"
+  [ "$wins" -gt 0 ] || fail "D2 the plan produced no local wave: no window to measure (set STRATEGY=local)"
+  clean_check "$b" d2_new
   echo "SUBDIV_DISK_D2_PASS (peak is the budget, not the corpus; subdiv_pos empty at exit)"
 }
 
 # --------------------------------------------------------------------------- D3
 d3() {
-  echo "== D3 same order: this build vs a fresh pre-fix build, same flags, corpus=$CORPUS"
-  local a b sa sb
-  a=$(run_sorter "$STAGE/base_scatter_sort" d3_base "$CORPUS" $(corpus_args) --subdiv-position-budget-bytes "$PEAK_BUDGET")
-  b=$(run_sorter "$STAGE/scatter_sort" d3_new "$CORPUS" $(corpus_args) --subdiv-position-budget-bytes "$PEAK_BUDGET")
-  sa=$(sha_of "$a"); sb=$(sha_of "$b")
-  echo "SUBDIV_DISK_D3 base_sha=$sa new_sha=$sb equal=$([ "$sa" = "$sb" ] && echo 1 || echo 0) rows=$(( ($(stat -c %s "$b/out.sa") - 48) / 8 )) base_wall_s=$(cat "$a/wall_s") new_wall_s=$(cat "$b/wall_s")"
-  [ "$sa" = "$sb" ] || fail "D3 containers differ"
-  "$STAGE/sa_check" --corpus "$CORPUS" --sa "$b/out.sa" --dollar 1 > "$LOG/d3_sacheck.log" 2>&1 || fail "D3 sa_check"
+  echo "== D3 same order: this build vs a fresh pre-fix build, same flags, corpus=$CORPUS, arms=auto+local"
+  local arm
+  for arm in auto local; do
+    STRATEGY=$arm
+    local a b sa sb lw sgw wins
+    a=$(run_sorter "$STAGE/base_scatter_sort" "d3_base_$arm" "$CORPUS" $(corpus_args) --subdiv-position-budget-bytes "$PEAK_BUDGET")
+    b=$(run_sorter "$STAGE/scatter_sort" "d3_new_$arm" "$CORPUS" $(corpus_args) --subdiv-position-budget-bytes "$PEAK_BUDGET")
+    sa=$(sha_of "$a"); sb=$(sha_of "$b")
+    lw=$(grep -o 'local_waves=[0-9]*' "$b/run.log" | head -1)
+    sgw=$(grep -o 'corpus_sweeps_scatter=[0-9]*' "$b/run.log" | head -1)
+    wins=$(wins_of "$b")
+    echo "SUBDIV_DISK_D3 arm=$arm base_sha=$sa new_sha=$sb equal=$([ "$sa" = "$sb" ] && echo 1 || echo 0) rows=$(( ($(stat -c %s "$b/out.sa") - 48) / 8 )) base_wall_s=$(cat "$a/wall_s") new_wall_s=$(cat "$b/wall_s") $lw $sgw windows=$wins"
+    [ "$sa" = "$sb" ] || fail "D3 containers differ ($arm)"
+    if [ "$arm" = local ]; then
+      [ "$wins" -gt 0 ] || fail "D3 the forced-local arm created no position window: the gate would be vacuous"
+      "$STAGE/sa_check" --corpus "$CORPUS" --sa "$b/out.sa" --dollar 1 > "$LOG/d3_sacheck.log" 2>&1 || fail "D3 sa_check"
+      echo "$sb" > "$LOG/d3_local_sha"
+      clean_check "$b" d3_new_local
+    fi
+  done
   echo "SUBDIV_DISK_D3_PASS"
 }
 
 # --------------------------------------------------------------------------- D4
 d4() {
   echo "== D4 budget-bounded peak: same corpus, pos_budget=$TIGHT_BUDGET (vs $PEAK_BUDGET for D2)"
+  STRATEGY=local
   local b sa_ref
-  sa_ref=$(sha_of "$WORK/runs/d3_new")
+  sa_ref=$(cat "$LOG/d3_local_sha" 2>/dev/null || sha_of "$WORK/runs/d3_new_local")
   b=$(run_sorter "$STAGE/scatter_sort" d4_tight "$CORPUS" $(corpus_args) --subdiv-position-budget-bytes "$TIGHT_BUDGET")
   local peak wins passes wall left sb ceiling
   peak=$(peak_of "$b"); wins=$(wins_of "$b"); passes=$(passes_of "$b"); wall=$(cat "$b/wall_s")
@@ -180,6 +222,7 @@ d4() {
   [ "$sb" = "$sa_ref" ] || fail "D4 container differs from D3's"
   [ "$peak" -le "$ceiling" ] || fail "D4 peak $peak > $ceiling"
   [ "$left" = 0 ] || fail "D4 subdiv_pos not drained"
+  clean_check "$b" d4_tight
   echo "SUBDIV_DISK_D4_PASS (the budget bounds the peak; the bytes are unchanged)"
 }
 
