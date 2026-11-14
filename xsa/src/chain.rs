@@ -327,7 +327,7 @@ struct Options {
     /// build may never touch, because the box is shared and a full filesystem
     /// corrupts every other lane on it. DEFAULT: max(10% of the filesystem, 500
     /// GB), read with statvfs at plan time (journaled as `reserve=`).
-    scratch_reserve_gb: Option<u64>,
+    scratch_reserve_gb: Option<f64>,
     /// The TAPE producer route: scatter_sort emits key-ordered bands into
     /// --tape-bands, cross_lcp_merge consumes them, xsa_finish follows. One
     /// binary, three children, no external scripts.
@@ -437,7 +437,7 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     // (see disc_verdict / tree_ok). A percentage-of-device rule is opt-in.
     let mut scratch_free_pct = 0u32;
     let mut scratch_budget_gb: Option<f64> = None;
-    let mut scratch_reserve_gb: Option<u64> = None;
+    let mut scratch_reserve_gb: Option<f64> = None;
     // THE OVERRIDE OF THE ABSOLUTE PEAK-VS-FREE CHECK, and of nothing else.
     let mut skip_fit_check = false;
     let mut tape = false;
@@ -476,9 +476,13 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
             // Absent = max(10% of the scratch filesystem, 500 GB) from statvfs.
             "--scratch-reserve-gb" => {
                 i += 1;
+                // DECIMAL GB (like --scratch-budget-gb): the reserve is subtracted
+                // from the measured free space, so a fixture can push the ceiling
+                // down to a few tens of MB and exercise the pause/kill ordering
+                // without needing a small filesystem.
                 let v = value(args.get(i), "--scratch-reserve-gb")?
-                    .parse::<u64>().map_err(|_| "--scratch-reserve-gb: integer expected".to_string())?;
-                if v == 0 {
+                    .parse::<f64>().map_err(|_| "--scratch-reserve-gb: number expected".to_string())?;
+                if !(v > 0.0) || !v.is_finite() {
                     return Err("--scratch-reserve-gb must be positive (omit it for the default: \
                                 max(10% of the scratch filesystem, 500 GB))".into());
                 }
@@ -1000,6 +1004,33 @@ const GOVERNOR_OTHER_BUDGET_BYTES: u64 = GOVERNOR_MARGIN_BYTES;
 /// allowed to run to the filesystem's edge.
 const OVERRUN_KILL_SAMPLES: u32 = 3;
 
+/// THE ONLY pid_t THIS MODULE MAY EVER HAND TO kill(2): the group id, negated.
+///
+/// pgid 0 (`kill(0, ..)` = the CALLER'S group) and pgid 1 (`kill(-1, ..)` = EVERY
+/// PROCESS OF THE USER) are refused rather than reinterpreted: both are special
+/// targets that the governor never means, and refusing them is what makes the
+/// 1,000,000..1,999,999 range safe (the inherited `kill -STOP -1257815` spelling
+/// truncated that spec to -1 and froze the box).
+fn group_target(pgid: u32) -> Result<i32, String> {
+    if pgid <= 1 {
+        return Err(format!("signal_group: refusing pgid={pgid}: kill(0) is the caller's \
+                            group and kill(-1) is every process of the user"));
+    }
+    if pgid > i32::MAX as u32 {
+        return Err(format!("signal_group: pgid={pgid} does not fit pid_t"));
+    }
+    Ok(-(pgid as i64) as i32)
+}
+
+fn signal_number(sig: &str) -> Result<i32, String> {
+    match sig {
+        "STOP" => Ok(19),     // SIGSTOP
+        "CONT" => Ok(18),     // SIGCONT
+        "KILL" => Ok(9),      // SIGKILL
+        other => Err(format!("signal_group: unknown signal {other}")),
+    }
+}
+
 struct Backpressure {
     /// The per-term budgets, ONE table (scratchgov::Budgets): what the pipeline
     /// INTENDS to use, term by term, each with its own source.
@@ -1024,6 +1055,7 @@ struct Backpressure {
     free_at_start: u64,
     fs_total: u64,
     reserve: u64,
+    reserve_clamped: u8,
     /// The intent bound the pause is anchored on: `min(ceiling, knob_arm)`. The
     /// pause is 90% of it, the resume 85%. It can never exceed the ceiling.
     pause_basis: u64,
@@ -1047,6 +1079,9 @@ struct Backpressure {
     /// ceiling: it fills the same filesystem).
     output_bytes: u64,
     last_sample: Instant,
+    /// The previous sample's live bytes: an audit is only meaningful when the tree
+    /// stopped moving between two samples (`quiescent`).
+    prev_live: u64,
     last_live: u64,
     paused_since: Instant,
     paused_live_at: u64,
@@ -1054,19 +1089,27 @@ struct Backpressure {
     /// every sample (the S1 gate). Off by default (a second walk plus `du`).
     audit: bool,
     audit_samples: u64,
+    audit_complete_samples: u64,
     audit_worst_delta_pct: f64,
+    audit_partial_samples: u64,
+    audit_partial_worst_pct: f64,
     audit_unknown_paths: u64,
     audit_failed: u64,
 }
 
 impl Backpressure {
     fn new(scratch: &Path, budget_bytes: u64, container: &Path, producers: Vec<(String, u32)>,
-           n: u64, tape: bool, reserve_gb: Option<u64>) -> Result<Backpressure, String> {
+           n: u64, tape: bool, reserve_gb: Option<f64>) -> Result<Backpressure, String> {
         // ---- THE FILESYSTEM ARM: what the BOX can afford, read at plan time ---
         let fs = scratchgov::fs_space(scratch)?;
-        let reserve = match reserve_gb {
-            Some(gb) => gb.saturating_mul(1 << 30),
-            None => scratchgov::default_reserve(fs.total),
+        let (reserve, reserve_clamped) = match reserve_gb {
+            Some(gb) => (((gb * (1u64 << 30) as f64) as u64), 0u8),
+            None => {
+                let r = scratchgov::default_reserve(fs.total);
+                // The literal rule, and whether the half-the-filesystem clamp bit.
+                let literal = std::cmp::max(fs.total / 10, 500u64 << 30);
+                (r, u8::from(r < literal))
+            }
         };
         // ---- THE KNOB ARM: what the pipeline INTENDS to use, term by term ------
         // THE SAME KNOB THE SORTER READS, so the governor and the producer cannot
@@ -1099,13 +1142,15 @@ impl Backpressure {
         let container_budget = (1.5 * super::plan::V2_CONTAINER_PER_N * n as f64) as u64;
         let other = GOVERNOR_OTHER_BUDGET_BYTES;
         let budgets = scratchgov::Budgets {
-            bytes: [pos_budget_bytes, bands, pieces, merged, container_budget, other],
+            // IN scratchgov::Term::idx() ORDER: pos, bands, merged, pieces, container,
+            // other (the order every journal line prints them in).
+            bytes: [pos_budget_bytes, bands, merged, pieces, container_budget, other],
             sources: [
                 "XSA_SUBDIV_POSITION_BUDGET_BYTES|default=max(256MB,budget/5)",
                 "scratch_budget x TAPE_BAND_SHARE_PCT",
-                "scratch_budget x TAPE_PIECE_SHARE_PCT",
                 if tape { "measured 0.364n(pfck2)+0.283n(chi bitmap) x n" }
                 else { "plan V2_TREE_PEAK_PER_N x n" },
+                "scratch_budget x TAPE_PIECE_SHARE_PCT",
                 "measured 0.468n(container) x 1.5 x n",
                 "GOVERNOR_OTHER_BUDGET_BYTES",
             ],
@@ -1118,17 +1163,19 @@ impl Backpressure {
             budgets, budget_bytes, pos_budget_bytes, container: container.to_path_buf(),
             scratch: scratch.to_path_buf(), producers,
             ceiling: c.bytes, ceiling_arm: c.arm, fs_arm: c.fs_arm, knob_arm: c.knob_arm,
-            slack: c.slack, free_at_start: fs.free, fs_total: fs.total, reserve,
+            slack: c.slack, free_at_start: fs.free, fs_total: fs.total, reserve, reserve_clamped,
             pause_basis,
             pause_at: pause_basis / 10 * 9,
             resume_at: pause_basis / 100 * 85,
             floor_bytes: 0, paused: false, pauses: 0, resumes: 0, paused_ms_total: 0,
             peak_bytes: 0, peak_terms: [0; 6], samples: 0, overrun_samples: 0, overruns: 0,
             last_terms: [0; 6], output_bytes: 0,
-            last_sample: Instant::now(), last_live: 0, paused_since: Instant::now(),
+            last_sample: Instant::now(), prev_live: 0, last_live: 0, paused_since: Instant::now(),
             paused_live_at: 0,
             audit: std::env::var("XSA_SCRATCH_AUDIT").map(|v| v == "1").unwrap_or(false),
-            audit_samples: 0, audit_worst_delta_pct: 0.0, audit_unknown_paths: 0, audit_failed: 0,
+            audit_samples: 0, audit_complete_samples: 0, audit_worst_delta_pct: 0.0,
+            audit_partial_samples: 0, audit_partial_worst_pct: 0.0,
+            audit_unknown_paths: 0, audit_failed: 0,
         })
     }
     /// WHAT THE GOVERNOR SAW AND WHAT IT WILL DO, once, at the start of the build.
@@ -1139,16 +1186,19 @@ impl Backpressure {
         journal.line(&format!(
             "SCRATCH_GOVERNOR budget_gb={:.3} pos_budget_gb={:.3} ceiling={} ceiling_gb={:.3} \
              arm={} free_at_start={} free_at_start_gb={:.3} fs_total={} reserve={} reserve_gb={:.3} \
-             fs_arm={} fs_arm_gb={:.3} knob_arm={} knob_arm_gb={:.3} slack={} slack_gb={:.3} \
-             pause_basis_gb={:.3} pause_at={} pause_at_gb={:.3} resume_at={} resume_at_gb={:.3} \
+             reserve_clamped={} fs_arm={} fs_arm_gb={:.3} term_sum={} knob_arm={} knob_arm_gb={:.3} \
+             slack={} slack_gb={:.3} pause_basis_gb={:.3} pause_at={} pause_at_gb={:.3} \
+             resume_at={} resume_at_gb={:.3} \
              kill_after_samples={} producers={} \
              accounting=every_byte_under_scratch_in_six_terms_incl_the_container \
-             rule=fs_arm=free_at_start-reserve;knob_arm=sum(term_budgets)+slack;ceiling=min(fs_arm,knob_arm);\
-pause_at=90pct_of_min(ceiling,knob_arm);resume_at=85pct;kill_only_after_{}_overrun_samples",
+             rule=fs_arm=free_at_start-reserve;knob_arm=term_sum+slack;ceiling=min(fs_arm,knob_arm);\
+pause_basis=min(ceiling,term_sum);pause_at=90pct_of_pause_basis;resume_at=85pct;\
+kill_only_after_{}_overrun_samples",
             gb(self.budget_bytes), gb(self.pos_budget_bytes), self.ceiling, gb(self.ceiling),
             self.ceiling_arm.as_str(), self.free_at_start, gb(self.free_at_start),
-            self.fs_total, self.reserve, gb(self.reserve), self.fs_arm, gb(self.fs_arm),
-            self.knob_arm, gb(self.knob_arm), self.slack, gb(self.slack),
+            self.fs_total, self.reserve, gb(self.reserve), self.reserve_clamped,
+            self.fs_arm, gb(self.fs_arm), self.budgets.sum(), self.knob_arm, gb(self.knob_arm),
+            self.slack, gb(self.slack),
             gb(self.pause_basis), self.pause_at, gb(self.pause_at), self.resume_at, gb(self.resume_at),
             OVERRUN_KILL_SAMPLES,
             self.producers.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>().join(","),
@@ -1160,18 +1210,31 @@ with the same table)", self.budgets.journal(), self.knob_arm));
             journal.line(&format!("SCRATCH_TERM name={} rule={}", t.journal_key(), t.rule()));
         }
     }
-    /// SIGSTOP/SIGCONT a whole process group. `kill` is used with the group id
-    /// negated; a group that has already exited answers ESRCH, which is not an
+    /// SIGSTOP/SIGCONT/KILL a whole process group, BY SYSCALL, with the group id
+    /// negated. A group that has already exited answers ESRCH, which is not an
     /// error for this purpose (the exit path reports it).
+    ///
+    /// DO NOT SHELL OUT TO `kill(1)` FOR THIS. procps-ng 4.0.4 parses a negative
+    /// pid spec by keeping only its FIRST DIGIT: `kill -STOP -1257815` issues
+    /// `kill(-1, SIGSTOP)`, i.e. STOP EVERY PROCESS OF THE USER (measured on this
+    /// box with `strace -e kill /usr/bin/kill -0 -1257815` -> `kill(-1, 0)`; -2449516
+    /// -> `kill(-2, ..)`, -9876543 -> `kill(-9, ..)`). The inherited form of this
+    /// function had that bug: with a phase pgid in 1000000..1999999 it froze the
+    /// whole box - the pile build included - and `-KILL` in the same form was a
+    /// `kill(-1, SIGKILL)` waiting for the first overrun. The syscall has no parser
+    /// to fool. (`kill -s STOP -- -<pgid>` is the safe SHELL spelling if a shell is
+    /// ever needed; it is not used here.)
     fn signal_group(&self, pgid: u32, sig: &str) -> Result<(), String> {
-        let out = Command::new("kill").arg(format!("-{sig}")).arg(format!("-{pgid}"))
-            .output().map_err(|e| format!("spawn kill: {e}"))?;
-        if !out.status.success() {
-            let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
-            if err.contains("No such process") { return Ok(()); }
-            return Err(format!("kill -{sig} -{pgid}: {err}"));
+        let signum = signal_number(sig)?;
+        let pid = group_target(pgid)?;
+        unsafe {
+            extern "C" { fn kill(pid: i32, signal: i32) -> i32; }
+            if kill(pid, signum) == 0 { return Ok(()); }
+            let e = std::io::Error::last_os_error();
+            // ESRCH: the group is already gone. Not an error here.
+            if e.raw_os_error() == Some(3) { return Ok(()); }
+            return Err(format!("kill({pid}, SIG{sig}): {e}"));
         }
-        Ok(())
     }
     fn stop_producers(&mut self, journal: &mut Journal) -> Result<(), String> {
         for (tag, pgid) in self.producers.clone() {
@@ -1226,7 +1289,15 @@ with the same table)", self.budgets.journal(), self.knob_arm));
                 s.unknown_paths, s.unknown_bytes,
                 s.unknown_examples.join(",")));
         }
-        if self.audit { self.audit_sample(&s, journal); }
+        // THE AUDIT RUNS ONLY ON A QUIESCENT TREE: `du` walks the tree in its own
+        // order, so on a tree that is growing and shrinking at band granularity
+        // neither its total nor a bracket of two ledger samples around it is a
+        // comparison of the same bytes. Two consecutive identical ledger samples
+        // are the observation that the tree is still, which is the only moment the
+        // identity sum(terms)==du can be tested at all.
+        let quiescent = self.samples > 1 && live == self.prev_live;
+        if self.audit && quiescent { self.audit_sample(&s, journal); }
+        self.prev_live = live;
         self.enforce(journal)
     }
     /// THE S1 ORACLE, IN THE PRODUCT: `du` on the same tree, immediately bracketed
@@ -1236,29 +1307,51 @@ with the same table)", self.budgets.journal(), self.knob_arm));
     fn audit_sample(&mut self, before: &scratchgov::Sample, journal: &mut Journal) {
         self.audit_samples += 1;
         self.audit_unknown_paths += before.unknown_paths;
+        // `du` cannot read a tree that is being written: a file unlinked between
+        // its readdir and its stat makes it exit non-zero with a partial total.
+        // The PARTIAL total is still a usable oracle for a bracketed comparison,
+        // so it is accepted (marked complete=0) and only an UNPARSABLE du counts
+        // as a failure.
         let out = Command::new("du").arg("-s").arg("--block-size=1").arg(&self.scratch).output();
-        let du_bytes = out.ok().filter(|o| o.status.success())
-            .and_then(|o| String::from_utf8_lossy(&o.stdout).split_whitespace().next()
-                .and_then(|v| v.parse::<u64>().ok()));
+        let (du_bytes, complete) = match out {
+            Ok(o) => (String::from_utf8_lossy(&o.stdout).split_whitespace().next()
+                        .and_then(|v| v.parse::<u64>().ok()), u8::from(o.status.success())),
+            Err(_) => (None, 0),
+        };
         let Some(du) = du_bytes else {
             self.audit_failed += 1;
             journal.line("SCRATCH_AUDIT_TERMS du_bytes=unavailable ok=0 (du failed; the ledger is unaffected)");
             return;
         };
+        if complete == 1 { self.audit_complete_samples += 1; }
         let after = scratchgov::sample(&self.scratch);
-        let lo = before.live();
-        let hi = after.live();
+        // The tree GROWS and SHRINKS while du walks it (a piece is consumed, the
+        // container partial is renamed), so the honest bracket is the interval
+        // between the two ledger samples, in either direction.
+        let lo = std::cmp::min(before.live(), after.live());
+        let hi = std::cmp::max(before.live(), after.live());
         let bracketed = lo <= du && du <= hi;
         let delta_pct = if bracketed { 0.0 } else {
             let nearest = if du < lo { lo } else { hi };
             100.0 * (du as f64 - nearest as f64).abs() / (du.max(1) as f64)
         };
-        if delta_pct > self.audit_worst_delta_pct { self.audit_worst_delta_pct = delta_pct; }
+        // A COMPLETE `du` is a consistent read of a still tree: it is held to 1%.
+        // A PARTIAL one raced a concurrent unlink (a consumed band, a renamed
+        // container) and can miss or over-see the files that changed under it; it
+        // is journaled, counted, and held to a looser 5% so nothing pathological
+        // hides behind the exemption.
+        let limit = if complete == 1 { 1.0 } else { 5.0 };
+        if complete == 1 {
+            if delta_pct > self.audit_worst_delta_pct { self.audit_worst_delta_pct = delta_pct; }
+        } else {
+            self.audit_partial_samples += 1;
+            if delta_pct > self.audit_partial_worst_pct { self.audit_partial_worst_pct = delta_pct; }
+        }
         journal.line(&format!(
             "SCRATCH_AUDIT_TERMS samples={} du_bytes={} ledger_before={} ledger_after={} \
-             bracketed={} delta_pct={:.4} {} unknown_paths={} ok={}",
-            self.audit_samples, du, lo, hi, u8::from(bracketed), delta_pct,
-            before.terms_line(), before.unknown_paths, u8::from(delta_pct <= 1.0)));
+             bracketed={} du_complete={} delta_pct={:.4} {} unknown_paths={} ok={}",
+            self.audit_samples, du, before.live(), after.live(), u8::from(bracketed), complete,
+            delta_pct, before.terms_line(), before.unknown_paths, u8::from(delta_pct <= limit)));
     }
     /// THE THREE RESPONSES, IN ORDER: pause at 90% of the intent bound, resume at
     /// 85%, and KILL only for a hard overrun past the ceiling that the pause did
@@ -1379,9 +1472,13 @@ with the same table)", self.budgets.journal(), self.knob_arm));
         let gb = |v: u64| v as f64 / (1u64 << 30) as f64;
         if self.audit {
             journal.line(&format!(
-                "SCRATCH_AUDIT_SUMMARY samples={} worst_delta_pct={:.4} unknown_paths_seen={} \
-                 du_failures={} rule=sum(journaled terms)==du(t) within 1pct",
-                self.audit_samples, self.audit_worst_delta_pct,
+                "SCRATCH_AUDIT_SUMMARY samples={} complete={} worst_delta_pct={:.4} \
+                 partial={} partial_worst_pct={:.4} unknown_paths_seen={} du_failures={} \
+                 quiescent_only=1 rule=sum(journaled terms)==du(t) within 1pct, audited at every \
+sampled moment at which two consecutive samples agreed (a moving tree cannot be read \
+consistently by du; partial reads are held to 5pct)",
+                self.audit_samples, self.audit_complete_samples, self.audit_worst_delta_pct,
+                self.audit_partial_samples, self.audit_partial_worst_pct,
                 self.audit_unknown_paths, self.audit_failed));
         }
         journal.line(&format!(
@@ -3332,6 +3429,34 @@ pub fn command(args: &[String]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// THE SIGNAL TARGET, UNIT-TESTED (gate S6). `kill -<SIG> -<pgid>` through
+    /// procps-ng 4.0.4 keeps only the FIRST DIGIT of a negative pid spec, so
+    /// `kill -STOP -1257815` became `kill(-1, SIGSTOP)` - every process of the
+    /// user - and `kill -KILL -1257815` would have been `kill(-1, SIGKILL)`. That
+    /// is what froze this box (and the pile build) twice. The syscall form has no
+    /// parser: every pgid maps to exactly one sign-correct pid_t, and the two
+    /// special targets are refused.
+    #[test]
+    fn signal_group_target_is_sign_correct_and_never_special() {
+        let mut checked = 0;
+        for pgid in [2u32, 3, 9, 999_999, 1_000_000, 1_257_815, 1_999_999, 2_000_000, 9_876_543] {
+            let pid = group_target(pgid).expect("a real process group");
+            assert!(pid < 0, "pgid {pgid} must address a GROUP: {pid}");
+            assert_eq!(pid as i64, -(pgid as i64),
+                "pgid {pgid} must be negated WHOLE - the bug kept only the first digit");
+            assert_ne!(pid, -1, "pgid {pgid} must never become kill(-1, ..)");
+            checked += 1;
+        }
+        // kill(0) is the caller's own group, kill(-1) is every process of the user.
+        assert!(group_target(0).is_err());
+        assert!(group_target(1).is_err());
+        assert_eq!(signal_number("STOP").unwrap(), 19);
+        assert_eq!(signal_number("CONT").unwrap(), 18);
+        assert_eq!(signal_number("KILL").unwrap(), 9);
+        assert!(signal_number("TERM").is_err(), "only the three governor signals are ever sent");
+        eprintln!("SIGNAL_TARGET examined={checked} special_refused=2 signals=3");
+    }
 
     #[test]
     fn scratch_success_cleans_owned_files_and_failure_retains() {

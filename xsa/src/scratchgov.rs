@@ -44,6 +44,7 @@
 //! equals the tree. `unknown_paths=0` is a gate (S1): a new file family must be
 //! GIVEN a term, not discovered in a kill.
 
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -129,16 +130,20 @@ pub fn classify(rel: &Path) -> Option<Term> {
     }
     if comps.len() == 1 {
         let name = rel.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-        // THE PRODUCT: the container and its two in-flight spellings. It is on
-        // this filesystem and it must be in the ceiling (incident B's missing
-        // term), even though the tape budget itself excludes it.
-        if name.ends_with(".sxi2") || name.ends_with(".sxi2.partial") || name.ends_with(".sxi2.part") {
-            return Some(Term::Container);
-        }
+        // The two in-flight spellings of a published file (`X.partial`, `X.part`)
+        // are the SAME family as the published name: the finish renames, and the
+        // ctx-tap writes `trie-m20.bin.partial` before it renames. Classifying the
+        // transient spelling separately is how a family goes unaccounted.
+        let base = name.strip_suffix(".partial").or_else(|| name.strip_suffix(".part"))
+            .unwrap_or(name.as_str()).to_string();
+        // THE PRODUCT: the container and its in-flight spellings. It is on this
+        // filesystem and it must be in the ceiling (incident B's missing term),
+        // even though the tape budget itself excludes it.
+        if base.ends_with(".sxi2") { return Some(Term::Container); }
         let named = ["remap-256.bin", "checkpoint.journal", "trie-m20.bin", "stop.requested",
                      "xsa-build.log", "caller.txt"];
-        if named.contains(&name.as_str()) { return Some(Term::Other); }
-        if name.ends_with(".log") || name.ends_with(".time") { return Some(Term::Other); }
+        if named.contains(&base.as_str()) { return Some(Term::Other); }
+        if base.ends_with(".log") || base.ends_with(".time") { return Some(Term::Other); }
     }
     None
 }
@@ -192,8 +197,15 @@ fn alloc_len(md: &fs::Metadata) -> u64 {
 /// Walk the tree ONCE and classify EVERY path with `classify`. This is the only
 /// sampler in the build: the journal's terms, the live total and the ceiling's
 /// arithmetic all come from this one function.
+///
+/// HARD LINKS ARE COUNTED ONCE (dev+ino), exactly as `du` counts them: the finish
+/// links the container beside itself for the in-place m20/m15 rewrite, so for a
+/// moment two names hold one inode. Counting both would over-state the disk
+/// footprint by a whole container and break the S1 identity with `du`.
 pub fn sample(root: &Path) -> Sample {
     const MAX_EXAMPLES: usize = 6;
+    use std::os::unix::fs::MetadataExt;
+    let mut seen: HashSet<(u64, u64)> = HashSet::new();
     let mut s = Sample::default();
     let mut stack: Vec<PathBuf> = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -210,6 +222,7 @@ pub fn sample(root: &Path) -> Sample {
             if !md.is_file() { continue; }
             s.files += 1;
             let len = alloc_len(&md);
+            if md.nlink() > 1 && !seen.insert((md.dev(), md.ino())) { continue; }
             match classify(path.strip_prefix(root).unwrap_or(&path)) {
                 Some(t) => s.bytes[t.idx()] += len,
                 None => {
@@ -303,8 +316,13 @@ pub fn derive_ceiling(free_at_start: u64, reserve: u64, budgets: &[u64; 6], meas
 /// space the build may never touch - the box is shared, a full filesystem
 /// corrupts every other lane, and 500 GB is the smallest headline number the
 /// sorter's own 50 GB `SS_SUBDIV_SCRATCH_MARGIN_BYTES` is a tenth of.
+///
+/// CLAMPED TO HALF THE FILESYSTEM: on a 100 GB scratch device the literal 500 GB
+/// floor would be a ceiling of ZERO, i.e. a build that cannot take its first
+/// byte. The clamp is journaled (`reserve_clamped=1`) and it never touches the
+/// big device the rule was written for (10% of it is already the larger arm).
 pub fn default_reserve(fs_total: u64) -> u64 {
-    std::cmp::max(fs_total / 10, 500u64 << 30)
+    std::cmp::max(fs_total / 10, 500u64 << 30).min(fs_total / 2)
 }
 
 /// The allowance for the term budgets' own estimation error (the plan's rates
@@ -493,6 +511,9 @@ mod tests {
             ("remap-256.bin", Some(Term::Other)),
             ("checkpoint.journal", Some(Term::Other)),
             ("trie-m20.bin", Some(Term::Other)),
+            ("trie-m20.bin.partial", Some(Term::Other)),
+            ("trie-m20.bin.part", Some(Term::Other)),
+            ("order-tape.log.partial", Some(Term::Other)),
             ("finish-v2.log", Some(Term::Other)),
             ("finish-v2.time", Some(Term::Other)),
             ("xsa-build.log", Some(Term::Other)),
@@ -529,6 +550,23 @@ mod tests {
         assert!(s.live() >= 8192 * 3 + 65536, "{}", s.live());
         assert!(s.term(Term::Pieces) > 0 && s.term(Term::Pos) > 0 && s.term(Term::Container) > 0);
         assert_eq!(s.live(), s.bytes.iter().sum::<u64>());
+    }
+
+    /// A second NAME for one inode occupies one inode of space: the finish links
+    /// the container beside itself for the in-place member rewrite, so this is the
+    /// exact case that must not double-count (S1 compares against `du`, which
+    /// de-duplicates hard links).
+    #[test]
+    fn hard_links_are_counted_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("a.sxi2"), vec![7u8; 65536]).unwrap();
+        fs::hard_link(root.join("a.sxi2"), root.join("a.sxi2.partial")).unwrap();
+        let s = sample(root);
+        eprintln!("HARDLINK {}", s.terms_line());
+        assert_eq!(s.files, 2, "both names are visited");
+        assert!(s.term(Term::Container) < 65536 * 2, "one inode, one charge: {}", s.term(Term::Container));
+        assert!(s.term(Term::Container) >= 65536);
     }
 
     #[test]
