@@ -1142,7 +1142,7 @@ impl Governor {
     /// is a refusal with the numbers, not a hope.
     fn plan(scratch: &Path, waves_dir: &Path, budget_bytes: u64, container: &Path,
             n: u64, tape: bool, reserve_gb: Option<f64>, target_gb: Option<f64>,
-            journal: &mut Journal) -> Result<Governor, String> {
+            emit: &mut dyn FnMut(&str)) -> Result<Governor, String> {
         let fs = scratchgov::fs_space(scratch)?;
         let (reserve, reserve_clamped) = match reserve_gb {
             Some(gb) => (((gb * (1u64 << 30) as f64) as u64), 0u8),
@@ -1208,7 +1208,7 @@ impl Governor {
         );
         let gb = |v: u64| v as f64 / (1u64 << 30) as f64;
         // THE BOUND LINE: every input, so a reader can recompute it (gate R2).
-        journal.line(&format!(
+        emit(&format!(
             "SCRATCH_BOUND projected_live_peak={} projected_live_peak_gb={:.3} max_live={}              max_live_gb={:.3} free_after_peak={} free_after_peak_gb={:.3} term_sum={} term_sum_gb={:.3} slack={} \
              slack_gb={:.3} free_at_start={} free_at_start_gb={:.3} fs_total={} reserve={} \
              reserve_gb={:.3} reserve_clamped={} fs_available={} fs_available_gb={:.3} \
@@ -1222,12 +1222,12 @@ ceiling=min(max_live,fs_available,targetx{}pct);target=min(max_live,--scratch-ta
             fs_available, gb(fs_available), target, gb(target), GOVERNOR_CEILING_OF_TARGET_PCT,
             ceiling, gb(ceiling), u8::from(max_live <= fs_available),
             max_live.saturating_sub(fs_available), GOVERNOR_CEILING_OF_TARGET_PCT));
-        journal.line(&format!("SCRATCH_TERMS {} term_sum={} max_live={} (the ONE table: every family \
+        emit(&format!("SCRATCH_TERMS {} term_sum={} max_live={} (the ONE table: every family \
 the pipeline writes under --scratch belongs to exactly one term; the sampler classifies every path \
 with the same table and the bound is their sum)",
             budgets.journal(), term_sum, max_live));
         for t in scratchgov::TERMS {
-            journal.line(&format!("SCRATCH_TERM name={} rule={}", t.journal_key(), t.rule()));
+            emit(&format!("SCRATCH_TERM name={} rule={}", t.journal_key(), t.rule()));
         }
         if max_live > fs_available {
             // THE REFUSAL, WITH THE TERM TABLE AND THE LEVERS. Nothing has been
@@ -2245,6 +2245,22 @@ fn run_chain(options: Options) -> Result<(), String> {
         // --plan-only PORTS the plan; it never starts a phase and never refuses
         // (the refusal is the real run's, below). The verdicts are printed either
         // way, so a preflight cannot look like a pass when it is not.
+        //
+        // THE GOVERNOR'S BOUND IS PART OF THE PLAN: it is computed and PRINTED here
+        // with the same function, the same table and the same numbers the run will
+        // enforce, so "will it fit?" is answerable before an expensive census.
+        let free_bytes = super::plan::disc_free_bytes(&scratch)
+            .ok_or_else(|| format!("df failed for {}", scratch.display()))?;
+        let sb = super::plan::scratch_budget(options.scratch_budget_gb, options.memory_gb, free_bytes);
+        let container = scratch.join(format!("{}.sxi2",
+            input.file_stem().and_then(|stem| stem.to_str()).filter(|stem| !stem.is_empty())
+                .unwrap_or("pile")));
+        match Governor::plan(&scratch, &scratch.join("waves-tape"), sb.bytes, &container,
+                             corpus_bytes, options.tape, options.scratch_reserve_gb,
+                             options.scratch_target_gb, &mut |l| println!("{l}")) {
+            Ok(_) => println!("SCRATCH_BOUND_PLAN_ONLY fits=1 (the run enforces the same number)"),
+            Err(e) => println!("SCRATCH_BOUND_PLAN_ONLY fits=0 refusal={e}"),
+        }
         print!("{}", build_plan.render());
         return Ok(());
     }
@@ -2725,7 +2741,7 @@ supervisor process; base ulimit -v {memory_kb} KiB. A run ends when it exits, fa
     let waves_dir = scratch.join("waves-tape");
     let gov = Governor::plan(scratch, &waves_dir, budget_bytes, &container, n,
                              options.tape, options.scratch_reserve_gb,
-                             options.scratch_target_gb, journal)?;
+                             options.scratch_target_gb, &mut |l| journal.line(l))?;
     // THE FIRST SCRATCH DIRECTORY EXISTS ONLY NOW: everything above is pricing.
     for dir in ["merged"] {
         fs::create_dir_all(scratch.join(dir)).map_err(|e| format!("create {dir}: {e}"))?;

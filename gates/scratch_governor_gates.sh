@@ -32,7 +32,7 @@
 #   THREADS/MEM/SCRATCH_GB/RUN_TIMEOUT
 #   S4_*: corpus, map, pos budget, threads, memory, finish-as, scratch budget
 #
-# Every product run is wrapped in `setsid timeout --kill-after=10 N`; every gate
+# Every product run is wrapped in `setsid --wait timeout --kill-after=10 N`; every gate
 # asserts that no stage process survived ITS OWN scratch directory. No gate
 # signals a process it did not spawn.
 set -u
@@ -65,7 +65,9 @@ mkdir -p "$STAGE" "$FX" "$LOG"
 fail() { echo "SCRATCH_GOVERNOR_GATE_FAIL: $*" >&2; exit 3; }
 say() { echo "$*"; }
 
-RUN_TAGFILE=$WORK/.run_tags
+# PER INVOCATION: a gate that is running concurrently must never inspect (or
+# report on) another gate's runs.
+RUN_TAGFILE=$WORK/.run_tags.$$
 : > "$RUN_TAGFILE"
 
 no_survivors() {
@@ -112,7 +114,7 @@ run_build() {
   rm -rf "$d"; mkdir -p "$d"
   local t0; t0=$(date +%s)
   say "SCRATCH_GOVERNOR_RUN tag=$tag bin=$bin corpus_bytes=$(stat -c %s "$corpus") budget_gb=$budget_gb threads=$threads mem_gb=$mem extra='$*'" >&2
-  setsid timeout --kill-after=10 "$RUN_TIMEOUT" "$bin" build --tape \
+  setsid --wait timeout --kill-after=10 "$RUN_TIMEOUT" "$bin" build --tape \
       --input "$corpus" --scratch "$d/scratch" --docs-map "$map" \
       --threads "$threads" --memory-gb "$mem" --scratch-budget-gb "$budget_gb" \
       --trie-min-support 50 --trie-docs-min-support 50 \
@@ -130,7 +132,7 @@ run_strace() {
   rm -rf "$d"; mkdir -p "$d"
   local t0; t0=$(date +%s)
   say "SCRATCH_GOVERNOR_RUN tag=$tag strace=1 corpus_bytes=$(stat -c %s "$corpus") budget_gb=$budget_gb extra='$*'" >&2
-  setsid timeout --kill-after=10 "$RUN_TIMEOUT" strace -f -qq \
+  setsid --wait timeout --kill-after=10 "$RUN_TIMEOUT" strace -f -qq \
       -e trace=kill,tkill,tgkill,execve -o "$d/strace.log" \
       "$X" build --tape --input "$corpus" --scratch "$d/scratch" --docs-map "$map" \
       --threads "$threads" --memory-gb "$mem" --scratch-budget-gb "$budget_gb" \
@@ -300,7 +302,7 @@ r3() {
   local sd=$WORK/runs/r3_sorter
   rm -rf "$sd"; mkdir -p "$sd/scratch"
   printf 'position_budget_bytes=56623104\n' > "$sd/scratch/geometry.ctl"
-  setsid timeout --kill-after=10 "$RUN_TIMEOUT" "$STAGE/scatter_sort" \
+  setsid --wait timeout --kill-after=10 "$RUN_TIMEOUT" "$STAGE/scatter_sort" \
       --corpus "$FX/r3/out.bin" --out "$sd/out.sa" --scratch "$sd/scratch" \
       --threads "$THREADS" --par-bands 1 --budget-bytes 2000000000 --memory-gb "$MEM" \
       --scratch-budget-bytes 268435456 --subdiv-strategy=local --subdiv-position-budget-bytes=67108864 \
@@ -404,12 +406,19 @@ s4_arm() {
   say "S4_BOX arm=$arm start=$(date -u +%FT%TZ) load=$(cut -d' ' -f1-3 /proc/loadavg) other_heavy=$(pgrep -c -f 'scatter_sort|xsa_finish|cross_lcp_merge|ctx-tap' || true) free_gb=$(df --output=avail -BG "$WORK" | tail -1 | tr -dc 0-9)"
   say "S4_RUN arm=$arm bin=$bin sha256=$(sha256sum "$bin" | cut -d' ' -f1) corpus=$S4_CORPUS bytes=$(stat -c %s "$S4_CORPUS") map=$S4_MAP pos_budget=$S4_POS_BUDGET threads=$S4_THREADS mem_gb=$S4_MEM finish_as_gb=$S4_FINISH_AS_GB scratch_budget_gb=$S4_SCRATCH_GB extra='$S4_EXTRA'"
   local t0; t0=$(date +%s)
+  # --trie-depth would RE-ENABLE a trie that --no-trie turned off (the parser sets
+  # trie=true for --trie-depth), so the two are mutually exclusive on the command
+  # line. S4 runs --no-trie by default because the in-build trie fails identically
+  # on BOTH binaries at 100 GB ("children are not in ascending byte order"), which
+  # is a pre-existing defect outside the governor's scope.
+  local trie_args=()
+  case "$S4_EXTRA" in *--no-trie*) ;; *) trie_args=(--trie-depth 8 --trie-min-support 1000) ;; esac
   env XSA_SUBDIV_POSITION_BUDGET_BYTES="$S4_POS_BUDGET" \
-    setsid timeout --kill-after=10 "$S4_TIMEOUT" "$bin" build --tape \
+    setsid --wait timeout --kill-after=10 "$S4_TIMEOUT" "$bin" build --tape \
       --input "$S4_CORPUS" --scratch "$d/scratch" --docs-map "$S4_MAP" \
       --threads "$S4_THREADS" --memory-gb "$S4_MEM" --finish-as-gb "$S4_FINISH_AS_GB" \
-      --scratch-budget-gb "$S4_SCRATCH_GB" $S4_EXTRA \
-      --trie-depth 8 --trie-min-support 1000 > "$d/build.log" 2>&1
+      --scratch-budget-gb "$S4_SCRATCH_GB" ${trie_args[@]+"${trie_args[@]}"} $S4_EXTRA \
+      > "$d/build.log" 2>&1
   echo $? > "$d/rc"
   local t1; t1=$(date +%s); echo $((t1 - t0)) > "$d/wall_s"
   say "S4_DONE arm=$arm rc=$(cat "$d/rc") wall_s=$(cat "$d/wall_s") end=$(date -u +%FT%TZ) load_end=$(cut -d' ' -f1-3 /proc/loadavg)"
@@ -422,7 +431,10 @@ s4() {
   [ -x "$STAGE/mainbin/xsa-main" ] || fail "S4: no main binary at $BASE_BIN"
   say "S4_PLAN parallel=${S4_PARALLEL:-0} extra='$S4_EXTRA'"
   local r1 r2
-  if [ "${S4_PARALLEL:-0}" = 1 ]; then
+  if [ "${S4_SKIP_RUN:-0}" = 1 ]; then
+    say "S4_SKIP_RUN=1: reporting the existing runs, not building"
+    r1=0; r2=0
+  elif [ "${S4_PARALLEL:-0}" = 1 ]; then
     s4_arm ours & local p1=$!
     s4_arm main & local p2=$!
     wait $p1; r1=$?
