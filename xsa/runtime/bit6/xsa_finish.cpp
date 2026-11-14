@@ -64,6 +64,13 @@
 #include <filesystem>
 
 static constexpr uint64_t INF = UINT64_MAX;
+// THE COOPERATIVE STOP FLAG: the driver writes <scratch>/stop.requested; every wait
+// loop below polls it and exits 75 at its own boundary. NO SIGNALS are involved.
+static std::string G_STOP_FLAG;
+static const std::string& stopFlagPath() { return G_STOP_FLAG; }
+static void setStopFlagFromPieceDir(const std::string& pieceDir) {
+    G_STOP_FLAG = pieceDir + "/../../stop.requested";   // <scratch>/merged/frag.pieces
+}
 static double tnow() {
     return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
@@ -1238,6 +1245,10 @@ struct PieceSource {
         while (fd < 0) {
             read_terminal();
             if (terminal && band > finalBand) return;
+            if (::access(stopFlagPath().c_str(), F_OK) == 0) {
+                std::fprintf(stderr, "STOP_OBSERVED phase=finish-v2 waiting_for=band_progress waited_s=%.3f\n", waited);
+                ::_exit(75);
+            }
             if (!finish_spool::enabled() && pollTimeout != 0 && waited > pollTimeout) pf_fail("timeout waiting for band progress " + path);
             std::this_thread::sleep_for(std::chrono::milliseconds(20)); waited += .02;
             fd = ::open(path.c_str(), O_RDONLY);
@@ -1310,6 +1321,10 @@ struct PieceSource {
         if (bandCounts.at(band) < B) {
             double waited = 0;
             while (!read_terminal()) {
+                if (::access(stopFlagPath().c_str(), F_OK) == 0) {
+                    std::fprintf(stderr, "STOP_OBSERVED phase=finish-v2 waiting_for=terminal waited_s=%.3f\n", waited);
+                    ::_exit(75);
+                }
                 if (!finish_spool::enabled() && pollTimeout != 0 && waited > pollTimeout) pf_fail("timeout waiting for terminal assertion");
                 std::this_thread::sleep_for(std::chrono::milliseconds(20)); waited += .02;
             }
@@ -1363,6 +1378,7 @@ struct PieceSource {
     void load_idx() {
         std::string path = prefix + ".runcols.idx";
         dir = prefix + ".pieces";
+        setStopFlagFromPieceDir(dir);
         int fd = ::open(path.c_str(), O_RDONLY);
         double waited = 0;
         while (fd < 0) {
@@ -1375,6 +1391,10 @@ struct PieceSource {
                          fields[2]>0 && fields[2]<=(1u<<26) && fields[3]>0,"stream start dimensions");
                 n=fields[0]; w=fields[1]; depth=fields[2]; window=fields[3]; R=n; streaming=true;
                 return;
+            }
+            if (::access(stopFlagPath().c_str(), F_OK) == 0) {
+                std::fprintf(stderr, "STOP_OBSERVED phase=finish-v2 waiting_for=runcols_idx waited_s=%.3f\n", waited);
+                ::_exit(75);
             }
             if (!finish_spool::enabled() && pollTimeout != 0 && waited > pollTimeout) pf_fail("timeout waiting for the merge's runcols idx");
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -1403,6 +1423,7 @@ struct PieceSource {
         pf_check(acc == R, "idx shard counts != R");
         ::close(fd);
         dir = prefix + ".pieces";
+        setStopFlagFromPieceDir(dir);
         fprintf(stderr, "XSA_FINISH_IDX shards=%u runs=%llu n=%llu w=%u band=%llu\n",
                 S, (unsigned long long)R, (unsigned long long)n, w, (unsigned long long)B);
     }
@@ -1486,6 +1507,10 @@ struct PieceSource {
                 if (::access((dir + "/../../stop.requested").c_str(), F_OK) == 0) {
                     std::fprintf(stderr, "STOP_OBSERVED phase=finish-v2 at_band=%llu waited_s=%.3f\n",
                                  (unsigned long long)band, waited);
+                    ::_exit(75);
+                }
+                if (::access(stopFlagPath().c_str(), F_OK) == 0) {
+                    std::fprintf(stderr, "STOP_OBSERVED phase=finish-v2 waiting_for=piece waited_s=%.3f\n", waited);
                     ::_exit(75);
                 }
                 if (!finish_spool::enabled() && pollTimeout != 0 && waited > pollTimeout) pf_fail("timeout waiting for piece " + name);

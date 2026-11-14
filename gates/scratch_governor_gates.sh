@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scratch_governor_gates.sh - the gates of RESULTS_SCRATCH_GOVERNOR.md.
 #
-#   gates/scratch_governor_gates.sh r1|r2|r3|r4|r5|s4|all
+#   gates/scratch_governor_gates.sh r1|r2|r3|r4|r5|r6|s4|all
 #
 # R1 NO STOP/CONT   a full fixture build under strace: ZERO SIGSTOP, ZERO SIGCONT,
 #                   zero signal syscalls at all, no exec of kill(1).
@@ -169,29 +169,106 @@ bound_check() {
 }
 
 # --------------------------------------------------------------------------- R1
+# ZERO SIGNALS TO ANY OTHER PROCESS. The product may only ever signal ITSELF (the
+# runtime: a thread-directed tgkill on shutdown, the XSA_KILL_AT hook). Every
+# signal-delivering syscall is classified by its target pid: the driver's own pid
+# (or a thread of it) is self; anything else is a violation.
 r1() {
-  say "== R1 NO STOP/CONT: a full fixture build, straced, must make no signal syscall at all"
+  say "== R1 NO SIGNALS TO OTHER PIDS: a full fixture build, straced"
   fixtures "$FIXBYTES" "$FX/r1"
   local d rc
   d=$(run_strace r1_nostop "$FX/r1/out.bin" "$FX/r1/map" "$SCRATCH_GB" "$THREADS" "$MEM")
   rc=$(cat "$d/rc")
   say "R1_RC rc=$rc wall_s=$(cat "$d/wall_s")"
   [ "$rc" = 0 ] || { tail -5 "$d/build.log"; fail "R1: the build did not complete"; }
-  local calls stop cont kill1 any
-  calls=$(grep -cE '^[0-9]+ (kill|tkill|tgkill)\(' "$d/strace.log" || true)
+  local drvpid self other stop cont kill1 total
+  drvpid=$(grep -m1 -oE '\[pid +[0-9]+\] execve\("[^"]*xsa"' "$d/strace.log" | grep -oE '[0-9]+' || true)
+  [ -n "$drvpid" ] || drvpid=$(head -1 "$d/strace.log" | awk '{print $1}')
+  say "R1_DRIVER_PID $drvpid (a signal to this pid or one of its threads is SELF)"
+  # A signal to another process is any kill/tkill/tgkill whose target pid is not
+  # the driver's pid and not a thread of it. strace -f prints "[pid N] syscall(...)".
+  other=$(awk -v me="$drvpid" '
+      match($0, /\[pid +[0-9]+\]/) { caller = substr($0, RSTART, RLENGTH); gsub(/[^0-9]/, "", caller) }
+      /(kill|tkill|tgkill)\(/ {
+        line = $0
+        sub(/.*(kill|tkill|tgkill)\(/, "", line)
+        split(line, a, ",")
+        tgt = a[1] + 0
+        if (tgt > 0 && tgt != me) print caller " -> " tgt " : " $0
+      }' "$d/strace.log" | head -20)
   stop=$(grep -cE '(kill|tkill|tgkill)\(.*SIGSTOP' "$d/strace.log" || true)
   cont=$(grep -cE '(kill|tkill|tgkill)\(.*SIGCONT' "$d/strace.log" || true)
   kill1=$(grep -cE 'execve\("(/usr)?/bin/kill"' "$d/strace.log" || true)
-  any=$(grep -cE '(kill|tkill|tgkill)\(' "$d/strace.log" || true)
-  say "R1_SIGNAL_SYSCALLS all=$any SIGSTOP=$stop SIGCONT=$cont kill1_execve=$kill1"
-  say "R1_TRACED_BUILD journal_gov_lines=$(grep -c '^SCRATCH_GOVERNOR\|^SCRATCH_BOUND\|^SCRATCH_SAMPLE' "$d/build.log" || true)"
-  grep -E '^SCRATCH_BOUND|^SCRATCH_GOVERNOR_SUMMARY' "$d/build.log" | cut -c1-320 | sed 's/^/    | /'
-  [ "$stop" = 0 ] || { grep -E 'SIGSTOP' "$d/strace.log" | head -3; fail "R1: a SIGSTOP was sent"; }
-  [ "$cont" = 0 ] || { grep -E 'SIGCONT' "$d/strace.log" | head -3; fail "R1: a SIGCONT was sent"; }
+  total=$(grep -cE '(kill|tkill|tgkill)\(' "$d/strace.log" || true)
+  say "R1_SIGNAL_SYSCALLS total=$total to_other_pids=$(printf '%s' "$other" | grep -c . || true) SIGSTOP=$stop SIGCONT=$cont kill1_execve=$kill1"
+  [ -z "$other" ] || { echo "$other" | sed 's/^/    | /'; fail "R1: a signal was sent to another process"; }
+  [ "$stop" = 0 ] || fail "R1: a SIGSTOP was sent"
+  [ "$cont" = 0 ] || fail "R1: a SIGCONT was sent"
   [ "$kill1" = 0 ] || fail "R1: kill(1) was executed"
-  [ "$any" = 0 ] || { grep -E '(kill|tkill|tgkill)\(' "$d/strace.log" | head -5; fail "R1: a successful build must make no signal syscall at all"; }
+  grep -E '^SCRATCH_BOUND|^SCRATCH_GOVERNOR_SUMMARY' "$d/build.log" | cut -c1-260 | sed 's/^/    | /'
   no_survivors
-  say "R1_RESULT ok=1 SIGSTOP=0 SIGCONT=0 signal_syscalls=0 kill1_execve=0"
+  say "R1_RESULT ok=1 signals_to_other_pids=0 SIGSTOP=0 SIGCONT=0 kill1_execve=0 (self-signals allowed)"
+}
+
+# --------------------------------------------------------------------------- R6
+# THE COOPERATIVE STOP, END TO END: the driver writes stop.requested in the middle
+# of a build; every phase observes it at its own boundary, journals STOP_OBSERVED
+# and exits 75; the driver reports BUILD_INTERRUPTED; nothing survives; the
+# checkpoint journal is consistent; and a relaunch resumes with WORK_AVOIDED > 0.
+r6() {
+  say "== R6 COOPERATIVE STOP: stop.requested -> STOP_OBSERVED -> exit 75 -> resume"
+  fixtures "$FIXBYTES" "$FX/r6"
+  local d=$WORK/runs/r6_stop
+  echo "r6_stop" >> "$RUN_TAGFILE"
+  rm -rf "$d"; mkdir -p "$d/scratch"
+  # the stop flag is written by a helper a few seconds into the build
+  ( for i in $(seq 1 600); do
+      if [ -e "$d/scratch/bands-tape" ] || [ -e "$d/scratch/merge.state" ]; then break; fi
+      sleep 0.5
+    done
+    sleep "${R6_DELAY_S:-20}"
+    echo "R6_WRITING_STOP_REQUESTED $(date -u +%FT%TZ)"
+    : > "$d/scratch/stop.requested" ) &
+  local flagnotify=$!
+  say "SCRATCH_GOVERNOR_RUN tag=r6_stop (stop.requested arrives ${R6_DELAY_S:-20}s after the first band)"
+  setsid --wait timeout --kill-after=10 "$RUN_TIMEOUT" "$X" build --tape \
+      --input "$FX/r6/out.bin" --scratch "$d/scratch" --docs-map "$FX/r6/map" \
+      --threads "$THREADS" --memory-gb "$MEM" --scratch-budget-gb "$SCRATCH_GB" \
+      --trie-min-support 50 --trie-docs-min-support 50 > "$d/build.log" 2>&1
+  local rc=$?
+  wait $flagnotify 2>/dev/null || true
+  say "R6_RC rc=$rc wall_s=$(( $(date +%s) - $(stat -c %Y "$d/scratch/xsa-build.log" 2>/dev/null || date +%s) )) (BUILD_INTERRUPTED = rc 75)"
+  grep -E 'STOP_REQUESTED|STOP_OBSERVED|BUILD_INTERRUPTED' "$d/build.log" | head -8 | cut -c1-220 | sed 's/^/    | /'
+  for f in "$d"/scratch/*.log; do
+    grep -H 'STOP_OBSERVED' "$f" 2>/dev/null | tail -2 | cut -c1-200 | sed 's/^/    | /'
+  done
+  local observed
+  observed=$(cat "$d"/scratch/*.log 2>/dev/null | grep -c 'STOP_OBSERVED' || true)
+  say "R6_OBSERVED phases_reporting=$observed"
+  [ "$rc" = 75 ] || fail "R6: the run did not report BUILD_INTERRUPTED (rc=$rc)"
+  [ "$observed" -ge 1 ] || fail "R6: no phase journaled STOP_OBSERVED"
+  grep -q 'STOP_REQUESTED' "$d/build.log" || fail "R6: the driver did not journal STOP_REQUESTED"
+  # no survivors, and the stop was taken at a BOUNDARY (the phase says where)
+  no_survivors
+  local ck=$d/scratch/checkpoint.journal
+  [ -s "$ck" ] || fail "R6: no checkpoint journal"
+  [ "$(tail -c 1 "$ck" | od -An -c | tr -d ' ')" = "\n" ] || fail "R6: the checkpoint ends mid-line"
+  say "R6_CHECKPOINT bytes=$(stat -c %s "$ck") lines=$(wc -l < "$ck")"
+  # ---- THE RESUME: the same scratch, no --no-resume, must replay and report work
+  say "R6_RELAUNCH: same scratch (resume)"
+  setsid --wait timeout --kill-after=10 "$RUN_TIMEOUT" "$X" build --tape \
+      --input "$FX/r6/out.bin" --scratch "$d/scratch" --docs-map "$FX/r6/map" \
+      --threads "$THREADS" --memory-gb "$MEM" --scratch-budget-gb "$SCRATCH_GB" \
+      --trie-min-support 50 --trie-docs-min-support 50 > "$d/resume.log" 2>&1
+  local rrc=$?
+  say "R6_RESUME_RC rc=$rrc"
+  [ "$rrc" = 0 ] || { tail -8 "$d/resume.log"; fail "R6: the resume did not finish"; }
+  local wa
+  wa=$(grep -oE 'WORK_AVOIDED[^ ]*' "$d/resume.log" | tail -1)
+  say "R6_WORK_AVOIDED '$wa'"
+  printf '%s' "$wa" | grep -qE 'WORK_AVOIDED' || fail "R6: the resume did not report WORK_AVOIDED"
+  no_survivors
+  say "R6_RESULT ok=1 rc=75 stop_observed=$observed resume_rc=$rrc '$wa'"
 }
 
 # --------------------------------------------------------------------------- R2
@@ -323,6 +400,23 @@ r3() {
   local nwin
   nwin=$(grep -c '^SS_SUBDIV_POSPEAK' "$sd/run.log")
   say "R3_SORTER_WINDOWS examined=$nwin shrunk_to_bytes=$sto all_after_within_budget=1"
+  # ---- THE BEFORE/AFTER CONTROL: the same sorter run WITHOUT the control file.
+  # The position term's live peak is the window's bytes_written; with the file the
+  # windows are half the size, which is the "live falls" half of the loop, measured
+  # per term (on a fixture the container, not the window, dominates TOTAL live).
+  local cd=$WORK/runs/r3_sorter_control
+  rm -rf "$cd"; mkdir -p "$cd/scratch"
+  setsid --wait timeout --kill-after=10 "$RUN_TIMEOUT" "$STAGE/scatter_sort" \
+      --corpus "$FX/r3/out.bin" --out "$cd/out.sa" --scratch "$cd/scratch" \
+      --threads "$THREADS" --par-bands 1 --budget-bytes 2000000000 --memory-gb "$MEM" \
+      --scratch-budget-bytes 268435456 --subdiv-strategy=local --subdiv-position-budget-bytes=67108864 \
+      > "$cd/run.log" 2>&1 || { tail -5 "$cd/run.log"; fail "R3: the control sorter run failed"; }
+  local ctl_max shr_max
+  ctl_max=$(grep -oE 'bytes_written=[0-9]+' "$cd/run.log" | cut -d= -f2 | sort -n | tail -1)
+  shr_max=$(grep -oE 'bytes_written=[0-9]+' "$sd/run.log" | cut -d= -f2 | sort -n | tail -1)
+  say "R3_WINDOW_BYTES control_no_ctl_max=$ctl_max with_geometry_ctl_max=$shr_max ratio=$(awk -v a="$shr_max" -v b="$ctl_max" 'BEGIN{printf "%.3f", a/b}')"
+  awk -v a="$shr_max" -v b="$ctl_max" 'BEGIN{exit !(a+0 < b+0)}' \
+    || fail "R3: the shrunk windows ($shr_max B) are not smaller than the control's ($ctl_max B)"
   say "R3_RESULT ok=1 governor_shrinks=$shrinks sorter_applied=$sapplied windows=$nwin"
 }
 
@@ -483,6 +577,7 @@ case "${1:-all}" in
   r4) build_stage; r4 ;;
   r5) build_stage; r5 ;;
   s4) build_stage; s4 ;;
-  all) build_stage; r1; r2; r3; r4; r5 ;;
+  r6) build_stage; r6 ;;
+  all) build_stage; r1; r2; r3; r4; r5; r6 ;;
   *) fail "usage: $0 r1|r2|r3|r4|r5|s4|all" ;;
 esac

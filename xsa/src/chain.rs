@@ -1726,9 +1726,22 @@ fn join_pipeline_flow(journal: &mut Journal, scratch: &Path,
             if exited {
                 let mut phase = slot.take().unwrap();
                 let status = phase.child.wait().map_err(|e| e.to_string())?;
-                if status.code() == Some(75) && recovery::signal() != 0 {
+                // rc 75 IS THE COOPERATIVE STOP: a phase that observed
+                // <scratch>/stop.requested (written by this driver when a phase
+                // failed, when the ceiling was breached, or by an operator's stop
+                // request) journals STOP_OBSERVED and exits 75. No signal is
+                // involved, so the flag file - not the driver's signal state - is
+                // what tells the two paths apart.
+                let cooperative = status.code() == Some(75) && scratch.join("stop.requested").exists();
+                if status.code() == Some(75) && (recovery::signal() != 0 || cooperative) {
                     phase.armed = false;
-                    if phase.tag == "emit-tape" || phase.tag == "ctx-tap" {
+                    journal.line(&format!(
+                        "PHASE {tag} STOP_OBSERVED rc=75 cooperative={} (the phase exited at its own boundary)",
+                        u8::from(cooperative), tag = phase.tag));
+                    let observed = fs::read_to_string(&phase.log_path).ok()
+                        .and_then(|t| t.lines().rev().find(|l| l.starts_with("STOP_OBSERVED")).map(|l| l.to_string()));
+                    if let Some(line) = observed { journal.line(&line); }
+                    if cooperative {
                         recovery::interrupted(scratch)?;
                         return Err("BUILD_INTERRUPTED".into());
                     }

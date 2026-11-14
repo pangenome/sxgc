@@ -2260,6 +2260,17 @@ int main(int argc, char** argv) {
         bool said = false;
         double nextDiagnostic = bandWaitDeadlineS;
         while (::access(path.c_str(), F_OK) != 0) {
+            // COOPERATIVE STOP inside the WAIT: the driver writes
+            // <scratch>/stop.requested, and a wait on a consumer that has itself
+            // stopped must end at the next poll rather than at the 6000 s
+            // no-progress die. This is the sorter's per-consumer-marker boundary.
+            if (!tapeBands.empty() &&
+                ::access((tapeBands + "/../stop.requested").c_str(), F_OK) == 0) {
+                std::fprintf(stderr, "STOP_OBSERVED phase=order-tape waiting_on=%s wall_s=%.3f\n",
+                             what, now_sec() - t0);
+                marker(tapeBands + "/producer.interrupted");
+                ::_exit(75);
+            }
             const double waitedS = now_sec() - t0;
             if (!said && waitedS > 2.0) {
                 said = true;
