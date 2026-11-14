@@ -26,6 +26,7 @@ mod corpus;
 mod pilemap;
 mod corpusv2;
 mod docstarts;
+mod names;
 
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -401,6 +402,7 @@ fn main() {
              / `branches` / `lcp` read it.",
             qlite::SUPPORTED_SHAPE
         )),
+        Some("names") => names::command(&args[1..]),
         Some("corpus") => corpus::command(&args[1..]),
         Some("-h") | Some("--help") | None => usage(),
         Some(other) => die(&format!("unknown subcommand '{}' (try --help)", other)),

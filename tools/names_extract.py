@@ -20,9 +20,9 @@ import struct
 import sys
 import time
 
-MAP = '/mnt/nvme2n1/erikg/pilemap_full'
-CORPUS = '/mnt/nvme2n1/erikg/pile.txt'
-OUT_DIR = '/mnt/nvme2n1/erikg/pilemap_full'
+MAP = os.environ.get('NAMES_MAP', '/mnt/nvme2n1/erikg/pilemap_full')
+CORPUS = os.environ.get('NAMES_CORPUS', '/mnt/nvme2n1/erikg/pile.txt')
+OUT_DIR = MAP
 OUT = os.path.join(OUT_DIR, 'names.partial')
 HEAD = 2048
 RULED = {'Wikipedia (en)', 'ArXiv', 'PubMed Abstracts', 'StackExchange',
