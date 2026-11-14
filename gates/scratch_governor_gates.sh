@@ -426,7 +426,7 @@ r4() {
   fixtures "$FIXBYTES_SMALL" "$FX/r4"
   local d rc
   # A tiny live target makes the ceiling 125% of it, which this fixture exceeds:
-  # the shrink fires first, then the hard fail.
+  # the shrink fires first, then the hard fail, then the phases stop cooperatively.
   d=$(run_strace r4_hardfail "$FX/r4/out.bin" "$FX/r4/map" "$SCRATCH_GB" "$THREADS" "$MEM" \
       --scratch-target-gb 0.35)
   rc=$(cat "$d/rc")
@@ -437,19 +437,34 @@ r4() {
   grep -E '^SCRATCH_CEILING_EXCEEDED' "$d/build.log" | cut -c1-1000 | sed 's/^/    | /'
   grep -E '^SCRATCH_GOVERNOR_HARD_FAIL' "$d/build.log" | cut -c1-500 | sed 's/^/    | /'
   grep -E '^SCRATCH_GEOMETRY action=shrink' "$d/build.log" | head -2 | cut -c1-200 | sed 's/^/    | /'
-  # THE SHUTDOWN: per-pid SIGTERM (and later SIGKILL), never a group signal, never STOP.
-  local stop cont group ters kills
+  # THE SHUTDOWN IS COOPERATIVE: the driver writes stop.requested, the phases
+  # observe it and exit 75, and NO SIGNAL is sent to anything (not even our own
+  # children). The strace must show zero kill/tkill/tgkill to another pid.
+  local drvpid other stop cont group ters
+  drvpid=$(grep -m1 -oE '\[pid +[0-9]+\] execve\("[^"]*xsa"' "$d/strace.log" | grep -oE '[0-9]+' || true)
+  [ -n "$drvpid" ] || drvpid=$(head -1 "$d/strace.log" | awk '{print $1}')
+  other=$(awk -v me="$drvpid" '
+      /(kill|tkill|tgkill)\(/ {
+        line = $0
+        sub(/.*(kill|tkill|tgkill)\(/, "", line)
+        split(line, a, ",")
+        if (a[1] + 0 > 0 && a[1] + 0 != me) print $0
+      }' "$d/strace.log" | head -10)
   stop=$(grep -cE '(kill|tkill|tgkill)\(.*SIGSTOP' "$d/strace.log" || true)
   cont=$(grep -cE '(kill|tkill|tgkill)\(.*SIGCONT' "$d/strace.log" || true)
   group=$(grep -cE 'kill\(-[0-9]+,' "$d/strace.log" || true)
   ters=$(grep -cE 'kill\([0-9]+, SIGTERM' "$d/strace.log" || true)
-  kills=$(grep -cE 'kill\([0-9]+, SIGKILL|tkill\(|tgkill\(' "$d/strace.log" || true)
-  say "R4_SIGNALS SIGSTOP=$stop SIGCONT=$cont group_signals=$group per_pid_SIGTERM=$ters other_kills=$kills"
-  grep -oE 'kill\([0-9-]+, SIG[A-Z]+\)?' "$d/strace.log" | sort | uniq -c | sed 's/^/    | /'
-  [ "$stop" = 0 ] || fail "R4: a SIGSTOP was sent"
-  [ "$cont" = 0 ] || fail "R4: a SIGCONT was sent"
-  [ "$group" = 0 ] || fail "R4: a process-group signal was sent"
-  [ "$ters" -ge 1 ] || fail "R4: the shutdown did not use per-pid SIGTERM"
+  say "R4_SIGNALS SIGSTOP=$stop SIGCONT=$cont group_signals=$group SIGTERM=$ters to_other_pids=$(printf '%s' "$other" | grep -c . || true)"
+  [ -z "$other" ] || { echo "$other" | sed 's/^/    | /'; fail "R4: a signal was sent to another process"; }
+  [ "$stop" = 0 ] && [ "$cont" = 0 ] && [ "$group" = 0 ] && [ "$ters" = 0 ] \
+    || fail "R4: the shutdown sent a signal (SIGSTOP=$stop SIGCONT=$cont group=$group SIGTERM=$ters)"
+  # THE COOPERATIVE STOP IS OBSERVED BY THE PHASES
+  local observed
+  observed=$(cat "$d"/scratch/*.log 2>/dev/null | grep -c 'STOP_OBSERVED' || true)
+  say "R4_STOP_OBSERVED phases_reporting=$observed"
+  grep -h 'STOP_OBSERVED' "$d"/scratch/*.log 2>/dev/null | head -4 | cut -c1-200 | sed 's/^/    | /'
+  [ "$observed" -ge 1 ] || fail "R4: no phase journaled STOP_OBSERVED (the stop did not reach the phases)"
+  grep -q 'STOP_REQUESTED' "$d/build.log" || fail "R4: the driver did not journal STOP_REQUESTED"
   # THE CHECKPOINT JOURNAL IS CONSISTENT: it exists, is non-empty, every line is a
   # whole line (the file ends with a newline), and the last record parses.
   local ck=$d/scratch/checkpoint.journal
@@ -458,7 +473,7 @@ r4() {
   say "R4_CHECKPOINT bytes=$(stat -c %s "$ck") lines=$(wc -l < "$ck") ends_with_newline=1"
   tail -2 "$ck" | cut -c1-200 | sed 's/^/    | /'
   no_survivors
-  say "R4_RESULT ok=1 SIGSTOP=0 SIGCONT=0 group_signals=0 per_pid_SIGTERM=$ters"
+  say "R4_RESULT ok=1 signals_to_other_pids=0 SIGSTOP=0 SIGCONT=0 group_signals=0 SIGTERM=0 stop_observed=$observed"
 }
 
 # --------------------------------------------------------------------------- R5
