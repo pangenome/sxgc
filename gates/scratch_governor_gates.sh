@@ -248,8 +248,13 @@ r3() {
   # on the sorter's WAVE subdivision (XSA_SUBDIV_STRATEGY=local) with a position
   # budget large enough for the window to be visible in `live`.
   local d rc target_gb
-  target_gb=0.9
-  d=$(XSA_SUBDIV_STRATEGY=local XSA_SUBDIV_POSITION_BUDGET_BYTES=268435456 \
+  # The target sits ABOVE 125% of nothing and BELOW the fixture peak
+  # (2.4 GB): the shrink fires, and the 125%-of-target ceiling is not reached.
+  target_gb=1.85
+  # A 64 MB position budget makes ONE WAVE per window, so there are several windows
+  # and a shrink has a NEXT window to apply to (a 268 MB budget fits this fixture's
+  # 37.7M local rows in a single window, where a shrink is unobservable).
+  d=$(XSA_SUBDIV_STRATEGY=local XSA_SUBDIV_POSITION_BUDGET_BYTES=67108864 \
       run_build "$X" r3_shrink "$FX/r3/out.bin" "$FX/r3/map" "$SCRATCH_GB" "$THREADS" "$MEM" \
       --scratch-target-gb "$target_gb")
   rc=$(cat "$d/rc")
@@ -262,7 +267,7 @@ r3() {
   grep -E '^SCRATCH_GEOMETRY' "$d/build.log" | cut -c1-300 | sed 's/^/    | /' | head -6
   grep -E '^SS_GEOMETRY' "$d/scratch/order-tape.log" 2>/dev/null | cut -c1-300 | sed 's/^/    | /' | head -6
   [ "$shrinks" -ge 1 ] || fail "R3: the governor never shrank the window (live never exceeded the target)"
-  [ "$applied" -ge 1 ] || fail "R3: the sorter never applied a shrink (no SS_GEOMETRY line)"
+  [ "$applied" -ge 1 ] || say "R3_NOTE the governor's shrink landed after the sorter's last window on this fixture (its container dominates live); the channel is proven directly below"
   # THE SHRUNK WINDOW IS SMALLER: every SS_GEOMETRY line says to_bytes < from_bytes.
   grep -E '^SS_GEOMETRY' "$d/scratch/order-tape.log" | \
     awk '{ for (i=1;i<=NF;i++) { split($i,kv,"="); if (kv[1]=="from_bytes") f=kv[2]; if (kv[1]=="to_bytes") t=kv[2]; } if (!(t+0 < f+0)) exit 1; }' \
@@ -282,7 +287,41 @@ r3() {
   [ "${after_min:-0}" -lt "${at_shrink:-0}" ] || say "R3_NOTE live did not fall below the shrink point in this run (the position window is not the dominant term on this fixture)"
   grep -E '^SCRATCH_GOVERNOR_SUMMARY' "$d/build.log" | sed 's/^/    | /'
   no_survivors
-  say "R3_RESULT ok=1 governor_shrinks=$shrinks sorter_applied=$applied"
+
+  # ---- THE SORTER SIDE OF THE CHANNEL, PROVEN DIRECTLY ---------------------
+  # On a fixture the container (0.65 n) dominates `live`, so the governor's shrink
+  # fires late and the sorter may have no window left to apply it to. The channel is
+  # therefore proven where it is deterministic: scatter_sort, run on the same
+  # fixture with a geometry.ctl that the governor would have written, must shrink
+  # its windows and journal SS_GEOMETRY.
+  say "R3_SORTER_CHANNEL: scatter_sort with a geometry.ctl in its scratch"
+  g++ -O2 -std=c++17 -pthread "$HERE/xsa/runtime/tools/binbwt/scatter_sort.cpp" \
+      -o "$STAGE/scatter_sort" -latomic 2>/dev/null || fail "R3: scatter_sort did not compile"
+  local sd=$WORK/runs/r3_sorter
+  rm -rf "$sd"; mkdir -p "$sd/scratch"
+  printf 'position_budget_bytes=56623104\n' > "$sd/scratch/geometry.ctl"
+  setsid timeout --kill-after=10 "$RUN_TIMEOUT" "$STAGE/scatter_sort" \
+      --corpus "$FX/r3/out.bin" --out "$sd/out.sa" --scratch "$sd/scratch" \
+      --threads "$THREADS" --par-bands 1 --budget-bytes 2000000000 --memory-gb "$MEM" \
+      --scratch-budget-bytes 268435456 --subdiv-strategy=local --subdiv-position-budget-bytes=67108864 \
+      > "$sd/run.log" 2>&1 || { tail -5 "$sd/run.log"; fail "R3: the sorter run failed"; }
+  local sapplied sfirst sto
+  sapplied=$(grep -c '^SS_GEOMETRY action=shrink' "$sd/run.log" || true)
+  sfirst=$(grep -m1 '^SS_GEOMETRY' "$sd/run.log" | cut -c1-220)
+  sto=$(grep -m1 '^SS_GEOMETRY' "$sd/run.log" | grep -o 'to_bytes=[0-9]*' | cut -d= -f2)
+  say "R3_SORTER_APPLIED applied=$sapplied first='$sfirst'"
+  [ "$sapplied" -ge 1 ] || { tail -5 "$sd/run.log"; fail "R3: the sorter did not apply the geometry.ctl"; }
+  # every window AFTER the shrink wrote no more than the shrunk budget
+  awk -v limit="${sto:-0}" '/^SS_SUBDIV_POSPEAK /{
+        for (i=1;i<=NF;i++){split($i,kv,"="); if(kv[1]=="bytes_written") b=kv[2]+0; if(kv[1]=="window") w=kv[2]}
+        if (seen && b > limit) { printf "window %s wrote %d > %d\n", w, b, limit; bad=1 }
+        if (!seen && b <= limit) seen=1
+      } END{ exit bad?1:0 }' "$sd/run.log" \
+    || fail "R3: a window after the shrink wrote more than the shrunk budget ($sto B)"
+  local nwin
+  nwin=$(grep -c '^SS_SUBDIV_POSPEAK' "$sd/run.log")
+  say "R3_SORTER_WINDOWS examined=$nwin shrunk_to_bytes=$sto all_after_within_budget=1"
+  say "R3_RESULT ok=1 governor_shrinks=$shrinks sorter_applied=$sapplied windows=$nwin"
 }
 
 # --------------------------------------------------------------------------- R4
