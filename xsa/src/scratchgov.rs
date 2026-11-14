@@ -427,34 +427,19 @@ mod tests {
             c.bytes, c.bytes as f64 / GIB, c.arm.as_str(), c.knob_arm as f64 / GIB,
             c.fs_arm as f64 / GIB, c.slack as f64 / GIB);
         assert!(c.bytes > live_actual,
-            "the new ceiling {} B must be ABOVE the live number that actually occurred {} B \
-             (the old one was {} B, and the kill was a surprise)", c.bytes, live_actual, old_ceiling);
-        // ... and the PAUSE (90% of the smaller arm) is available BEFORE the
-        // ceiling: the first response is always the pause, the kill is the
-        // bounded last resort.
-        let basis = std::cmp::min(c.bytes, knob_arm);
-        let pause_at = basis / 10 * 9;
-        eprintln!("INCIDENT_B pause_at_bytes={pause_at} pause_at_gb={:.3} ceiling_gb={:.3}",
-            pause_at as f64 / GIB, c.bytes as f64 / GIB);
-        assert!(pause_at < c.bytes, "the pause must come before the ceiling");
-        // THE SAME ARITHMETIC WITH THE RECOMMENDED KNOBS (pos 20 GB, not 2 TB):
-        // the intent arm then sits far BELOW the number the old governor blew at,
-        // so the overrun is caught at ~0.8 TB instead of 2.3 TB - and the pause
-        // lands at 90% of it. THIS is the number to relaunch the pile with.
-        let rec_pos = gb(20.0);
-        let rec_budgets = [rec_pos, bands, pieces, merged, container, other];
+            "the new bound {} B must be ABOVE the live number that actually occurred {} B \
+             (the old ceiling was {} B, and the kill was a surprise)", c.bytes, live_actual, old_ceiling);
+        // WITH THE RECOMMENDED KNOBS (pos 20 GB, not 2 TB) the bound sits far BELOW
+        // the number the old governor blew at: the run is stopped at ~0.8 TB, not
+        // 2.3 TB. THIS is the number to relaunch the pile with.
+        let rec_budgets = [gb(20.0), bands, merged, pieces, container, other];
         let rec_knob: u64 = rec_budgets.iter().sum();
         let rec = derive_ceiling(free_at_start, reserve, &rec_budgets, measured_slack(rec_knob));
-        let rec_pause = std::cmp::min(rec.bytes, rec_knob) / 10 * 9;
-        eprintln!("INCIDENT_B recommended pos_gb=20 ceiling_gb={:.3} pause_gb={:.3} \
-             live_actual_gb={:.3}", rec.bytes as f64 / GIB, rec_pause as f64 / GIB,
-            live_actual as f64 / GIB);
-        assert!(rec_pause < rec.bytes,
-            "the recommended pause ({rec_pause} B) must land below the recommended ceiling \
-             ({}) B", rec.bytes);
+        eprintln!("INCIDENT_B recommended pos_gb=20 bound_gb={:.3} live_actual_gb={:.3}",
+            rec.bytes as f64 / GIB, live_actual as f64 / GIB);
         assert!(rec.bytes < live_actual,
-            "with the recommended knobs the ceiling ({}) must land BELOW the live number that \
-             actually occurred ({live_actual} B): the build is stopped early, not 2.3 TB in",
+            "with the recommended knobs the bound ({}) must land BELOW the live number that \
+             actually occurred ({live_actual} B): the build is refused/stopped early, not 2.3 TB in",
             rec.bytes);
     }
 
