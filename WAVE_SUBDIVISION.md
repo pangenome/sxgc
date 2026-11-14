@@ -134,3 +134,28 @@ wearing a proof's clothes.
 * Any merge, anywhere, for any reason. The refusal says so today and it stays.
 * Removing the one-wave borrow path for a provably single-symbol tail run.
 * Changing the container format, the tape band protocol, or the intake.
+
+## CORRECTION (2026-11-14): the LIFETIME of a window's position files
+
+§"Positions" above says a bin's positions are held in rolling files, ascending, so
+every level is a linear walk. That is the data shape and it is correct. What the
+implementation got wrong is the **lifetime**: `scatter_sort.cpp` wrote every
+window's position files before the wave loop descended the first of them, so the
+peak was `local_rows × 8 B` — ~10.5 TB at the pile, a corpus number that no
+position budget could lower — and the pile run filled its filesystem at 7.6 TB of
+`subdiv_pos` against a 250 GB scratch budget.
+
+The rule the implementation now enforces (`fix/subdiv-window-disk`):
+
+* a window's positions are written **immediately before** that window's waves are
+  descended, and unlinked **after the window's last wave** — one window live at a
+  time, measured and journaled as `SS_SUBDIV_POSPEAK window= bytes_written=
+  bytes_at_descent= bytes_after_unlink= peak_total=`;
+* a window may not exceed `--subdiv-position-budget-bytes`: `waveGoal` is capped at
+  `budget × 95 % / 8` so no local wave can need more than a window holds, and the
+  writer counts the bytes it writes and refuses to exceed the budget;
+* before a window is written, `statvfs` must show the window plus a margin free on
+  the scratch filesystem, or the run DIES with free/needed/margin in the message.
+
+The gates that measure this (P1–P6) are in `RESULTS_SUBDIV_DISK.md`, together with
+the depth-first-within-a-window optimisation that remains a follow-up.

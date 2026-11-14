@@ -339,6 +339,19 @@ scatter passes at the pile (N = 1.307 TB); 20 GB (the floor the gate script ran
 with) ⇒ 524 passes. The disk is free to ~8 TB on the pile box, and the position
 files of one window are unlinked as soon as the window's waves are descended.
 
+> **CORRECTION (2026-11-14, `fix/subdiv-window-disk`).** The last clause above was
+> FALSE in the code this document describes: the unlink existed, but the scatter
+> loop wrote **every** window's position files before the wave loop descended the
+> first one, so the peak was `local_rows × 8 B` ≈ 10.5 TB at the pile — a corpus
+> number, independent of the budget — and the pile run died with a full filesystem
+> at 8.2 TB live scratch. What is true now: the wave loop sows a window immediately
+> before its waves are descended and unlinks it after the window's last wave, the
+> window is hard-capped at the position budget (planned to 95 % because `rowsEst`
+> is a sample estimate; the writer counts bytes and dies past the budget), and
+> `statvfs` refuses a window that does not fit the scratch filesystem plus its
+> margin. `SS_SUBDIV_POSPEAK peak_total=` is the number that proves it: peak =
+> one window, not the column. See `RESULTS_SUBDIV_DISK.md`.
+
 ## Residual risks
 
 1. **A dense class costs the corpus.** `page_fraction ≈ 1` at pile density, so the
