@@ -193,16 +193,17 @@ SS_SUBDIV_POSPEAK window=[4,5) waves_n=1 bytes_written=18245565160 bytes_at_desc
                    bytes_after_unlink=0 peak_total=18615853848 peak_window=2 budget_bytes=20000000000
 ```
 
-**The number the fix is about.** After 13 windows the forced-local arm had written
-**186.62 GB** of position files in total (sum of `bytes_written` over the windows,
-from the journal) and `peak_total` had stopped at **19.07 GB**, i.e. at ONE window:
+**The number the fix is about.** By handoff the forced-local arm (still running:
+16 of 59 waves) had written **239.9 GB** of position files in total (sum of
+`bytes_written` over the windows, from the journal) and `peak_total` had stopped at
+**19.07 GB**, i.e. at ONE window:
 
 ```
-windows_drained=13  sum(bytes_written)=186.62 GB  peak_total=19.065 GB  budget=20 GB
+windows_drained=16  sum(bytes_written)=239.9 GB  peak_total=19.065 GB  budget=20 GB
 ```
 
-The pre-fix code held the running sum — 186.62 GB here, and `local_rows x 8` =
-800 GB for this corpus in the limit — live on disc. Now the second window's peak
+The pre-fix code held the running sum — 239.9 GB here and climbing, `local_rows x 8`
+= 800 GB for this corpus in the limit — live on disc. Now the second window's peak
 does not contain the first window's bytes: every window line carries
 `bytes_after_unlink=0`, i.e. the column was empty again before the next window was
 sown. The product's own strategy at the same scale (auto, `local=6 global=53`)
