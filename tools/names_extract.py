@@ -1,12 +1,17 @@
-"""names.bin: per-document extracted titles for the full pile.
+"""names.bin — per-document extracted titles for the full pile.
 
-One sequential pass over pile.txt (idle I/O priority), order-preserving and
-deterministic. Output format = XTIT v1 (same as titles.bin): payload, then
-u32 offsets, then u16 lengths. Metadata only — the text is never materialized;
-each document contributes at most a short title string.
+Format XNAM v1 (new artifact; titles.bin/XTIT is untouched):
+    [0..4)    b"XNAM"
+    [4..8)    u32 version = 1
+    [8..12)   u32 doc_count
+    [12..20)  u64 payload_bytes
+    payload:  concatenated UTF-8 titles (empty string = no title)
+    u64 offsets[doc_count]   (offset into payload)
+    u32 lengths[doc_count]
 
-For sets with no extractable title (Pile-CC, OpenWebText2, Github, ...), the
-entry is EMPTY (length 0): callers fall back to titles.bin's pile_set_name.
+One sequential-ish pass over pile.txt: for each document in a RULED set, one
+pread of at most HEAD bytes at its start; every other document costs no read at
+all. Metadata only — never a text-sized artifact. Deterministic: no timestamps.
 """
 import array
 import json
@@ -20,11 +25,12 @@ CORPUS = '/mnt/nvme2n1/erikg/pile.txt'
 OUT_DIR = '/mnt/nvme2n1/erikg/pilemap_full'
 OUT = os.path.join(OUT_DIR, 'names.partial')
 HEAD = 2048
-CHUNK = 1 << 24
+RULED = {'Wikipedia (en)', 'ArXiv', 'PubMed Abstracts', 'StackExchange',
+         'HackerNews', 'Enron Emails'}
 
+t0 = time.time()
 b = open(f'{MAP}/seps.bin', 'rb').read()
 docs = struct.unpack_from('<Q', b, 16)[0]
-tpay = struct.unpack_from('<Q', b, 8 + 16)[0] if False else None
 deltas_off, anchors_off = 48, 48 + 4 * docs
 deltas = array.array('I')
 deltas.frombytes(b[deltas_off:deltas_off + 4 * docs])
@@ -35,23 +41,28 @@ tb = open(f'{MAP}/titles.bin', 'rb').read()
 tdocs = struct.unpack_from('<I', tb, 8)[0]
 tpayload = struct.unpack_from('<Q', tb, 12)[0]
 tob, tlb = 20 + tpayload, 20 + tpayload + 4 * tdocs
-t_off = array.array('I')
-t_off.frombytes(tb[tob:tob + 4 * tdocs])
-t_len = array.array('H')
-t_len.frombytes(tb[tlb:tlb + 2 * tdocs])
-pay = tb[20:20 + tpayload]
+t_off = array.array('I'); t_off.frombytes(tb[tob:tob + 4 * tdocs])
+t_len = array.array('H'); t_len.frombytes(tb[tlb:tlb + 2 * tdocs])
+tpay = tb[20:20 + tpayload]
 
-def setname(d):
-    o, l = t_off[d], t_len[d]
-    return pay[o:o + l].decode()
+# document starts from the delta column (shift=1: delta[0] is a pad)
+starts = array.array('Q', bytes(8 * docs))
+s = 0
+for i in range(docs):
+    starts[i] = s
+    s += deltas[i + 1] if i + 1 < docs else 0
+corpus_len = os.path.getsize(CORPUS)
+print(f'starts built: {docs:,} docs, corpus {corpus_len:,} B '
+      f'({time.time() - t0:.0f}s)', flush=True)
 
-def extract(s, head):
+
+def extract(sn, head):
     lines = head.split(b'\n')
     first = next((l for l in lines if l.strip()), b'')
     t = first.decode('utf-8', 'replace').strip()
-    if s == 'Wikipedia (en)' and 2 < len(t) <= 200:
+    if sn == 'Wikipedia (en)' and 2 < len(t) <= 200:
         return t
-    if s == 'ArXiv':
+    if sn == 'ArXiv':
         for l in lines[:30]:
             ls = l.decode('utf-8', 'replace').strip()
             if ls.startswith('title:'):
@@ -59,9 +70,9 @@ def extract(s, head):
                 if 3 <= len(v) <= 300 and any(c.isalpha() for c in v):
                     return v
         return None
-    if s == 'PubMed Abstracts' and 10 < len(t) <= 300:
+    if sn == 'PubMed Abstracts' and 10 < len(t) <= 300:
         return t
-    if s == 'StackExchange':
+    if sn == 'StackExchange':
         seen_q = False
         for l in lines[:6]:
             ls = l.decode('utf-8', 'replace').strip()
@@ -73,9 +84,9 @@ def extract(s, head):
             if seen_q and 3 <= len(ls) <= 240:
                 return ls
         return None
-    if s == 'HackerNews' and ' - ' in t:
+    if sn == 'HackerNews' and ' - ' in t:
         return t.rsplit(' - ', 1)[0].strip()
-    if s == 'Enron Emails':
+    if sn == 'Enron Emails':
         for l in lines[:24]:
             ls = l.decode('utf-8', 'replace').strip()
             if ls.lower().startswith('subject:') and len(ls) > 9:
@@ -83,85 +94,39 @@ def extract(s, head):
         return None
     return None
 
-# document starts, one pass over the deltas
-t0 = time.time()
-starts = array.array('Q', [0]) * docs
-s = 0
-for i in range(docs):
-    starts[i] = s
-    s += deltas[i + 1] if i + 1 < docs else 0
-corpus_len = s + deltas[docs - 1] if docs else 0
-# last doc length: to the corpus end (record text + separator)
-corpus_len = os.path.getsize(CORPUS)
-print(f"starts built: {docs:,} docs, corpus {corpus_len:,} B "
-      f"(walk {(time.time()-t0):.0f}s)", flush=True)
-
-RULED = {'Wikipedia (en)', 'ArXiv', 'PubMed Abstracts', 'StackExchange',
-         'HackerNews', 'Enron Emails'}
 
 payload = bytearray()
-offsets = array.array('I')
-lengths = array.array('H')
-stats = {}
-f = open(CORPUS, 'rb')
-doc = 0
-buf = b''
-buf_start = 0  # file offset of buf[0]
-pos = 0
+offsets = array.array('Q')
+lengths = array.array('I')
 per_set = {}
-t0 = time.time()
-while doc < docs:
+fd = os.open(CORPUS, os.O_RDONLY)
+t1 = time.time()
+for doc in range(docs):
     dstart = starts[doc]
     dnext = starts[doc + 1] if doc + 1 < docs else corpus_len
-    dlen = dnext - 1 - dstart  # text bytes (separator at dnext-1)
-    take = min(HEAD, dlen)
-    # read until the file cursor has covered the head region
-    while pos < dstart + take:
-        c = f.read(CHUNK)
-        if not c:
-            break
-        buf += c
-        pos += len(c)
-    # drop bytes of earlier docs still in buf
-    skip = dstart - buf_start
-    if skip > 0:
-        if skip >= len(buf):
-            buf = b''
-        else:
-            buf = buf[skip:]
-        buf_start = dstart
-    sn = setname(doc)
-    title = extract(sn, buf[:take]) if sn in RULED else None
+    dlen = dnext - 1 - dstart                      # text bytes (separator at dnext-1)
+    o, l = t_off[doc], t_len[doc]
+    sn = tpay[o:o + l].decode()
+    title = None
+    if sn in RULED and dlen > 0:
+        take = min(HEAD, dlen)
+        title = extract(sn, os.pread(fd, take, dstart))
+    offsets.append(len(payload))
     if title is not None:
         e = title.encode('utf-8', 'replace')[:1024]
-        offsets.append(len(payload))
         lengths.append(len(e))
         payload += e
     else:
-        offsets.append(len(payload))
         lengths.append(0)
     got, tot = per_set.get(sn, (0, 0))
     per_set[sn] = (got + (1 if title else 0), tot + 1)
-    # advance past the remainder of this document
-    if dlen > take:
-        rest = dlen - take
-        if len(buf) >= rest + take:
-            buf = buf[take + rest:]
-            buf_start = dstart + dlen
-        else:
-            f.seek(dstart + dlen)
-            pos = dstart + dlen
-            buf = b''
-            buf_start = dstart + dlen
-    else:
-        buf = buf[take:]
-        buf_start = dstart + take
-    doc += 1
-    if doc % 10_000_000 == 0:
-        print(f"  {doc:,} docs, payload {len(payload):,} B, "
-              f"{(time.time()-t0)/60:.0f} min", flush=True)
+    if (doc + 1) % 10_000_000 == 0:
+        el = time.time() - t1
+        print(f'  {doc + 1:,} docs, payload {len(payload):,} B, {el / 60:.0f} min '
+              f'({(doc + 1) / el / 1000:.0f}k docs/s)', flush=True)
+os.close(fd)
 
-header = b'XTIT' + struct.pack('<I', 1) + struct.pack('<I', docs) \
+header = b'XNAM' + struct.pack('<I', 1) + struct.pack('<I', docs) \
     + struct.pack('<Q', len(payload))
 with open(OUT, 'wb') as o:
     o.write(header)
@@ -171,9 +136,9 @@ with open(OUT, 'wb') as o:
     o.flush()
     os.fsync(o.fileno())
 os.rename(OUT, os.path.join(OUT_DIR, 'names.bin'))
-n_named = sum(1 for l in lengths if l > 0)
-print(f"names.bin written: {docs:,} docs, {n_named:,} titled "
-      f"({100*n_named/docs:.1f}%), {len(payload):,} B payload", flush=True)
+named = sum(1 for v in lengths if v)
+print(f'names.bin: {docs:,} docs, {named:,} titled ({100 * named / docs:.1f}%), '
+      f'{len(payload):,} B payload, {(time.time() - t1) / 60:.0f} min', flush=True)
 for sname in sorted(per_set):
     g, t = per_set[sname]
-    print(f"  {sname:20s} {100*g/max(1,t):5.1f}% of {t:,}")
+    print(f'  {sname:20s} {100 * g / max(1, t):5.1f}% of {t:,}')
