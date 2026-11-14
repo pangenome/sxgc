@@ -193,13 +193,39 @@ SS_SUBDIV_POSPEAK window=[4,5) waves_n=1 bytes_written=18245565160 bytes_at_desc
                    bytes_after_unlink=0 peak_total=18615853848 peak_window=2 budget_bytes=20000000000
 ```
 
-**The number the fix is about.** By the end of window 4 the run had written
-9.67 + 18.42 + 18.62 + 16.11 + 18.25 = **81.07 GB** of position files. The pre-fix
-code held all 81.07 GB live (and would have kept growing to `local_rows x 8` =
-800 GB at this corpus). `peak_total` stopped at **18.62 GB = one window**, and the
-second window's peak (18.42 GB) does not contain the first window's 9.67 GB — every
-window's `bytes_after_unlink=0` says the column was empty again before the next
-window was sown.
+**The number the fix is about.** After 13 windows the forced-local arm had written
+**186.62 GB** of position files in total (sum of `bytes_written` over the windows,
+from the journal) and `peak_total` had stopped at **19.07 GB**, i.e. at ONE window:
+
+```
+windows_drained=13  sum(bytes_written)=186.62 GB  peak_total=19.065 GB  budget=20 GB
+```
+
+The pre-fix code held the running sum — 186.62 GB here, and `local_rows x 8` =
+800 GB for this corpus in the limit — live on disc. Now the second window's peak
+does not contain the first window's bytes: every window line carries
+`bytes_after_unlink=0`, i.e. the column was empty again before the next window was
+sown. The product's own strategy at the same scale (auto, `local=6 global=53`)
+shows the same shape on its smaller windows:
+
+```
+SS_SUBDIV_POSPEAK window=[22,23) bytes_written=2962767632 bytes_after_unlink=0 peak_total=2962767632
+SS_SUBDIV_POSPEAK window=[27,28) bytes_written=1770961672 bytes_after_unlink=0 peak_total=2962767632
+```
+
+Both 100 GB arms were still running when this was written (they are 6–12 h runs of
+1e11 rows; the sweeps and windows above are complete windows, not projections). The
+final numbers are read the same way, and the harness can re-derive the verdict from
+a finished run directory without re-running it:
+
+```
+bash gates/subdiv_disk_gates.sh verify <run-dir> <reference-sha> <pos_budget>
+```
+
+(heads-up for the 2 TB budget arm: it was started, journaled its plan
+`SS_SUBDIV_WAVEGOAL ... binding=band-plan wave_goal=2926829260` and was stopped
+after two waves because it duplicated the 20 GB arm's shape while competing with it
+for the box.)
 
 P1 (peak ≤ budget) ✓ 18.62 GB ≤ 20 GB. P2 (sweep arithmetic) ✓
 `projected_passes=43` = `ceil(99,964,889,630 x 8 / 19e9)` = `ceil(local_rows x 8 /
