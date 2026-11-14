@@ -1811,8 +1811,9 @@ int main(int argc, char** argv) {
     // `waveGoal` above is capped at posBudget/8, so no single local wave can carry
     // more positions than one window may hold (a wave that big is split into
     // key-ordered children by the plan - the only order-safe shrink).
-    const u64 posBudget = pos_budget_bytes ? pos_budget_bytes
+    u64 posBudget = pos_budget_bytes ? pos_budget_bytes
                         : std::max<u64>(256ull << 20, scratch_budget_bytes / 5);
+    const u64 posBudgetDeclared = posBudget;   // the plan's number, for the journal
     u64 scatterPasses = 0, scatterBytes = 0, scatterRows = 0;
     u64 localClasses = 0, globalClasses = 0, localBytes = 0, globalBytes = 0, globalPasses = 0;
     u64 classLocalBytes = 0, classGlobalBytes = 0;
@@ -1830,7 +1831,7 @@ int main(int argc, char** argv) {
     //     writer counts the bytes it actually wrote and DIES past posBudget;
     //   * FILESYSTEM: statvfs on the scratch filesystem before every window, and the
     //     run DIES with the numbers rather than filling a shared box's disc.
-    const u64 windowRows = std::max<u64>(1, (posBudget * SS_POS_SAFETY_PCT / 100) / sizeof(u64));
+    u64 windowRows = std::max<u64>(1, (posBudget * SS_POS_SAFETY_PCT / 100) / sizeof(u64));
     // THE STATVFS MARGIN IS A KNOB because on a real build the CONTAINER grows
     // while the windows are written: the pile relaunch sets 200 GB so the sorter
     // never eats the headroom the finish needs. Default 50 GB.
@@ -2066,7 +2067,50 @@ int main(int argc, char** argv) {
         // order, the band numbering, prev_wave_last and the producer-state
         // publication - is IDENTICAL to the un-interleaved one; only the moment the
         // positions are written moved.
+        // ---- B. ADAPTIVE GEOMETRY: the governor may SHRINK the next window -----
+        // The driver samples live scratch and, when it is over its target, writes
+        // `position_budget_bytes=N` into <scratch>/geometry.ctl. The sorter re-reads
+        // that file before EVERY window, so the NEXT window is smaller than the
+        // last: a control loop on our own sizes (no signals, no process control).
+        // The product is unchanged by construction - the window only decides how
+        // many consecutive waves are seeded by one sweep; the band stream, its
+        // order and its numbering are byte-identical. It never GROWS (the plan's
+        // budget is the maximum) and never goes below ONE wave (the plan caps each
+        // wave at pos_budget/8, so a window can always hold a single wave).
+        const u64 maxLocalWaveRows = [&] {
+            u64 m = 1;
+            for (size_t i = 0; i < wl.size(); ++i) {
+                if (wl[i].strat == SS_STRAT_LOCAL && !wl[i].sliced && wl[i].rowsEst > m) m = wl[i].rowsEst;
+            }
+            return m;
+        }();
+        auto refreshGeometry = [&]() {
+            const std::string ctl = scratch + "/geometry.ctl";
+            int fd = ::open(ctl.c_str(), O_RDONLY | O_CLOEXEC);
+            if (fd < 0) return;
+            char buf[256];
+            const ssize_t got = ::read(fd, buf, sizeof buf - 1);
+            ::close(fd);
+            if (got <= 0) return;
+            buf[got] = 0;
+            u64 want = 0;
+            const char* k = std::strstr(buf, "position_budget_bytes=");
+            if (k) want = std::strtoull(k + 23, nullptr, 10);
+            if (want == 0 || want >= posBudget) return;
+            // one wave must always fit the window, or the window cannot be opened
+            const u64 floorBytes = maxLocalWaveRows * sizeof(u64) * 100 / SS_POS_SAFETY_PCT;
+            const u64 eff = std::max<u64>(want, floorBytes);
+            if (eff >= posBudget) return;
+            std::fprintf(stderr,
+                "SS_GEOMETRY action=shrink source=control_file file=%s declared_bytes=%" PRIu64
+                " from_bytes=%" PRIu64 " to_bytes=%" PRIu64 " floor_bytes=%" PRIu64
+                " max_wave_rows=%" PRIu64 " rule=next_window_only,product_unchanged\n",
+                ctl.c_str(), posBudgetDeclared, posBudget, eff, floorBytes, maxLocalWaveRows);
+            posBudget = eff;
+            windowRows = std::max<u64>(1, (posBudget * SS_POS_SAFETY_PCT / 100) / sizeof(u64));
+        };
         posOpenWindow = [&](size_t w) -> size_t {
+            refreshGeometry();
             size_t w1 = w;
             u64 rows = 0;
             while (w1 < waves && wl[w1].strat == SS_STRAT_LOCAL && !wl[w1].sliced) {

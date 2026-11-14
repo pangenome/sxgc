@@ -458,6 +458,54 @@ mod tests {
             rec.bytes);
     }
 
+    /// THE THIRD CASE, from the pile 30 minutes after the second incident (main's
+    /// binary, 2026-11-14 ~14:30):
+    ///
+    ///   pos_budget 100 GB, --scratch-budget-gb 250, margin 50 (constant)
+    ///   ceiling = 422,122,547,200 B = pos + budget + margin (the merged term absent)
+    ///   live    = 423,759,282,176 B = positions + bands + merged 339 GB
+    ///   over by 1,636,734,976 B, killed at t+57 min right after the first position
+    ///   window opened.
+    ///
+    /// The merged-fragment term alone (339 GB, growing toward the container) broke
+    /// it, by a hair. The fix must predict it.
+    #[test]
+    fn third_incident_the_merged_term_alone_is_what_breaks_it() {
+        let pos = 100_000_000_000u64;                  // 100 GB, decimal (the knob)
+        let tape_budget = 250u64 << 30;                // --scratch-budget-gb 250
+        let margin = 50u64 << 30;
+        let merged = 339_000_000_000u64;               // measured fragment family
+        let container = 0u64;                          // not yet published
+        let bands = tape_budget * super::super::plan::TAPE_BAND_SHARE_PCT / 100;
+        let pieces = tape_budget - bands;
+        let old_ceiling = pos + tape_budget + margin;  // 422,122,547,200
+        assert_eq!(old_ceiling, 422_122_547_200,
+            "the old formula must reproduce the journaled ceiling exactly");
+        let live_actual = 423_759_282_176u64;
+        let budgets = [pos, bands, merged, pieces, container, margin];
+        let knob_arm: u64 = budgets.iter().sum();
+        let slack = measured_slack(knob_arm);
+        let free_at_start = (5700u64) << 30;           // 5.7 TB free at the pile
+        let reserve = default_reserve(14u64 << 40);
+        let c = derive_ceiling(free_at_start, reserve, &budgets, slack);
+        eprintln!(
+            "INCIDENT_3 old_ceiling_bytes={old_ceiling} live_actual_bytes={live_actual} \
+             over_by_bytes={} new_ceiling_bytes={} new_ceiling_gb={:.3} arm={} knob_arm_gb={:.3} \
+             fs_arm_gb={:.3} slack_gb={:.3}",
+            live_actual - old_ceiling, c.bytes, c.bytes as f64 / GIB, c.arm.as_str(),
+            c.knob_arm as f64 / GIB, c.fs_arm as f64 / GIB, c.slack as f64 / GIB);
+        assert!(c.bytes > live_actual,
+            "the new ceiling {} B must be ABOVE the live number that occurred {} B (the old one, \
+             {} B, was below it: that is the surprise)", c.bytes, live_actual, old_ceiling);
+        // THE PRINTED NUMBER IS THE CONTRACT: with the target at its default the
+        // runtime ceiling IS the projected live peak, so the plan's number and the
+        // runtime's number are the same number.
+        assert_eq!(c.bytes, c.knob_arm,
+            "with the default target the ceiling IS the projected live peak (term_sum + slack)");
+        assert_eq!(c.knob_arm, knob_arm + slack);
+        assert_eq!(c.arm, Arm::Knobs, "5.7 TB free - reserve is not the binding arm here");
+    }
+
     /// Incident A: the CONSTRAINT SHAPE, not a specific number. The position
     /// budget is 2 TB and the box has 8.2 TB free: whatever the terms are, the
     /// ceiling must be BELOW the 8,189 GB the untended build reached, and it
