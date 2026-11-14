@@ -1,9 +1,16 @@
 # The scratch governor: the ceiling arithmetic, the box-freeze, and the numbers
 
-Branch `fix/scratch-ceiling` (from `origin/main` `4e275f6`). **The process-stop
-backpressure is deleted from the product.** What replaces it is decided before the
-run or by our own geometry, and the only process control left is a graceful per-pid
-shutdown.
+Branch `fix/scratch-ceiling` (from `origin/main` `4e275f6`).
+
+> **xsa sends no signals; it writes two files and reads exit codes.**
+>
+> `<scratch>/stop.requested` stops the run (every phase observes it at its own
+> boundary, journals `STOP_OBSERVED` and exits 75);
+> `<scratch>/waves-tape/geometry.ctl` throttles it (the sorter re-reads it before
+> every position window). Nothing else is ever done to another process. The
+> process-stop backpressure that used to be the safety mechanism is **deleted**,
+> because it was the thing that froze this box twice and it could not have helped
+> the case that filled the disc.
 
 ```
 xsa/src/scratchgov.rs                     the ONE term table, the ONE sampler, the pure bound
@@ -81,7 +88,7 @@ processes in state `T`.
 
 ---
 
-## 1. The pause is DELETED, and why
+## 1. The pause is DELETED (and the per-pid shutdown after it), and why
 
 1. **A paused producer cannot free what it is being paused for.** The position
    window is written AND consumed inside the sorter; pausing the sorter pauses the
@@ -98,9 +105,26 @@ processes in state `T`.
    `peak_gb=0.548` accounting excluded the 4.0 GB container entirely.
 
 `signal_group`, `stop_producers`, `continue_producers`, the pause/resume thresholds
-and the stall ratchet are gone. There is no SIGSTOP and no SIGCONT anywhere in the
-product (`grep -rn SIGSTOP xsa/src` finds only the comments that record why), and
-the only signal a phase ever receives is the shutdown in §3.
+and the stall ratchet are gone. So is the per-pid SIGTERM/SIGKILL shutdown that came
+next: **the product sends no signal to any process, not even its own children.** The
+cooperative channel that already existed on both ends is now the only control:
+
+| direction | channel | contract |
+|---|---|---|
+| stop | driver writes `<scratch>/stop.requested` (`recovery::write_stop_flag`) | each phase polls it at its own boundary, journals `STOP_OBSERVED phase=… <where>` and exits **75**; the driver waits (**no timeout**), journals each rc and the phase's own line, and owns the restart/resume decision |
+| throttle | driver writes `<scratch>/waves-tape/geometry.ctl` | the sorter re-reads `position_budget_bytes=` before **every** position window (`SS_GEOMETRY`) |
+
+The boundaries, and their granularity (residual risk §8.2):
+
+| phase | boundary | granularity |
+|---|---|---|
+| `order-tape` (scatter_sort) | top of the wave loop, **and inside `waitMarker`** (the band/`.consumed`/`.lcp.consumed` waits) | one wave; one 10 ms poll inside a wait |
+| `emit-tape` (cross_lcp_merge) | before reading each band | one band |
+| `finish-v2` (xsa_finish) | the four wait loops: band progress, terminal, runcols idx, the piece it is waiting for | one poll (20 ms) |
+| `ctx-tap` | after each band it consumes | one band |
+
+`grep -rn "kill(\|SIGSTOP\|SIGTERM" xsa/src xsa/runtime/tools xsa/runtime/bit6` finds
+only comments and the `XSA_KILL_AT` hook, which exits the driver itself.
 
 ---
 
@@ -160,13 +184,15 @@ The product cannot change: the window only decides how many consecutive waves on
 sweep seeds. The band stream, its order and its numbering are byte-identical
 (gate R5 re-proves the container).
 
-### C. HARD FAIL, and a graceful shutdown
+### C. HARD FAIL, and a COOPERATIVE stop
 
 Past the ceiling the build fails with the numbers (term breakdown, current and peak
-per term, target, max_live, free disk, reserve, shrinks, levers) and the phases are
-shut down **through their own child handles**: the pids are found by READING
-`/proc` (pgrp or session), each gets SIGTERM, and any survivor gets SIGKILL after a
-5 s grace. **No process-group signal, no SIGSTOP, ever.**
+per term, target, max_live, free disk, reserve, shrinks, levers); the driver journals
+`STOP_REQUESTED`, writes `<scratch>/stop.requested`, and **waits for every phase to
+exit at its own boundary** (exit 75). No signal is sent — not to a group, not to our
+own children. If a phase never observes the flag, that is a bug in that phase (the
+boundaries and their granularity are in §1 and §8.2), not something to paper over
+with a signal.
 
 ---
 
@@ -203,22 +229,21 @@ Binary under test `sha256=21cc2237…8c31d` (branch `fix/scratch-ceiling`); refe
 binary `sha256=85924aeb…d16420`, built once from origin/main at the branch point
 (`git archive 4e275f6`).
 
-### R1 NO STOP/CONT — zero signal syscalls in a full build
+### R1 NO SIGNALS TO OTHER PIDS — a full build sends zero
 
-512 MB fixture under `strace -f -e trace=kill,tkill,tgkill,execve`:
+512 MB fixture under `strace -f -e trace=kill,tkill,tgkill,execve`, every signal
+syscall classified by its target pid (a signal to the driver's own pid or one of its
+threads is SELF and allowed):
 
 ```
-R1_RC rc=0 wall_s=753
-R1_SIGNAL_SYSCALLS all=0 SIGSTOP=0 SIGCONT=0 kill1_execve=0
-SCRATCH_GOVERNOR_SUMMARY max_live_gb=59.425 target_gb=59.425 ceiling_gb=59.425
-  peak_gb=4.356 peak_bytes=4677591040 samples=362 shrinks=0
-  final_pos_budget_bytes=268435456 process_control=none
-R1_RESULT ok=1 SIGSTOP=0 SIGCONT=0 signal_syscalls=0 kill1_execve=0
+R1_RC rc=0
+R1_SIGNAL_SYSCALLS total=0 to_other_pids=0 SIGSTOP=0 SIGCONT=0 kill1_execve=0
+R1_RESULT ok=1 signals_to_other_pids=0 SIGSTOP=0 SIGCONT=0 kill1_execve=0 (self-signals allowed)
 ```
 
-**N = 0 signal syscalls** (kill/tkill/tgkill) in the whole process tree of a
-successful build, and no `kill(1)` execve. On the old binary this same build pauses
-(R5 below shows `pauses=1`).
+**N = 0 signal syscalls of any kind** in the whole process tree of a successful
+build, and no `kill(1)` execve. The same check runs inside R4 on the failure path
+(`SIGTERM=0` there too) and R6 on the stop path.
 
 ### R2 PLAN-TIME REFUSAL — nothing written
 
@@ -264,40 +289,49 @@ R3_ARITHMETIC ok=1 max_live=63243136047 fs_available=5081558766388 ceiling=24830
 R3_DECISIONS governor_shrinks=4
 SCRATCH_GEOMETRY action=shrink iteration=1 live=2211835904 target=1986422374
    from_bytes=67108864 to_bytes=50331648 floor_bytes=8388608
-R3_LIVE at_shrink=2211835904 min_after=1727877120 fell=1
+R3_LIVE at_shrink=2211835904 min_after=1727877120 fell=1   (one run; another run 2.212 GB -> 2.212 GB, fell=0)
 R3_SORTER_APPLIED applied=1 from_bytes=67108864 to_bytes=26464050 floor_bytes=26464050
    max_wave_rows=3487485
 R3_SORTER_WINDOWS examined=115 shrunk_to_bytes=26464050 all_after_within_budget=1
+R3_WINDOW_BYTES control_no_ctl_max=58739656 with_geometry_ctl_max=25140848 ratio=0.428
 R3_RESULT ok=1 governor_shrinks=4 sorter_applied=1 windows=115
 ```
 
-Four shrink decisions, live fell from 2.212 GB to 1.728 GB, the sorter applied the
-control file (67,108,864 → 26,464,050 B, the one-wave floor), and **all 115 windows
-after the shrink wrote within the shrunk budget**.
+Four shrink decisions (live 2.212 GB > target 1.85 GB); the sorter applied the
+control file (67,108,864 → 26,464,050 B, the one-wave floor) and **all 115 windows
+after the shrink wrote within the shrunk budget**; and the position term's live peak
+fell from **58,739,656 B (no control file) to 25,140,848 B (with it), ratio 0.428** —
+that is the "live falls" half measured per term, because on a fixture the container
+(0.65 n), not the window, dominates total live.
 
-### R4 HARD FAIL IS GRACEFUL — numbers, per-pid shutdown, no STOP
+### R4 HARD FAIL IS GRACEFUL — numbers, cooperative stop, zero signals
 
-256 MB fixture, `--scratch-target-gb 0.35` (so the ceiling is 125 % of it):
+256 MB fixture, `--scratch-target-gb 0.35` (the ceiling is 125 % of it):
 
 ```
-R4_RC rc=1 wall_s=67
-R4_ARITHMETIC ok=1 max_live=63444462639 fs_available=5090169127732 ceiling=469762047
+R4_RC rc=1
+R4_ARITHMETIC ok=1 max_live=63444462639 fs_available=5071170536244 ceiling=469762047
    fits=1 target=375809638
-SCRATCH_GOVERNOR_HARD_FAIL why=live_over_ceiling live=483110912 live_gb=0.450
-   ceiling=469762047 over_by=13348865 target=375809638 max_live=63444462639
-   term_pos=0 term_bands=175591424 term_merged=132104192 term_pieces=39583744
-   term_container=134086656 term_other=1744896 action=request_stop+terminate_per_pid
-SCRATCH_GEOMETRY action=shrink iteration=1 live=400134144 … to_bytes=201326592
-SCRATCH_GEOMETRY action=shrink iteration=2 live=388505600 … to_bytes=150994944
-R4_SIGNALS SIGSTOP=0 SIGCONT=0 group_signals=0 per_pid_SIGTERM=12 other_kills=0
-R4_CHECKPOINT bytes=216943 lines=1416 ends_with_newline=1
-    | PIECE_DURABLE idx=1414 shard=0 … sha=153ed964…
-R4_RESULT ok=1 SIGSTOP=0 SIGCONT=0 group_signals=0 per_pid_SIGTERM=12
+SCRATCH_GOVERNOR_HARD_FAIL why=live_over_ceiling live=493355008 live_gb=0.459
+   ceiling=469762047 over_by=23592961 target=375809638 max_live=63444462639
+   term_pos=0 term_bands=188932096 term_merged=132104192 term_pieces=… term_container=…
+   term_other=… action=cooperative_stop (write stop.requested, wait for exit 75, NO SIGNAL)
+SCRATCH_GEOMETRY action=shrink iteration=1 live=432975872 … to_bytes=201326592
+SCRATCH_GEOMETRY action=shrink iteration=2 live=387219456 … to_bytes=150994944
+R4_SIGNALS SIGSTOP=0 SIGCONT=0 group_signals=0 SIGTERM=0 to_other_pids=0
+R4_STOP_OBSERVED phases_reporting=4
+    | STOP_OBSERVED phase=ctx-tap at_band=937
+    | STOP_OBSERVED phase=emit-tape at_band=943
+    | STOP_OBSERVED phase=finish-v2 waiting_for=band_progress waited_s=0.000
+    | STOP_OBSERVED phase=order-tape waiting_on=band.consumed wall_s=0.000
+R4_CHECKPOINT bytes=213247 lines=1392 ends_with_newline=1
+R4_RESULT ok=1 signals_to_other_pids=0 SIGSTOP=0 SIGCONT=0 group_signals=0 SIGTERM=0 stop_observed=4
 ```
 
-Over by 13,348,865 B with the full term breakdown, 2 adaptive shrinks first,
-**0 SIGSTOP, 0 SIGCONT, 0 process-group signals**, 12 per-pid SIGTERMs, no survivors,
-and the checkpoint journal left consistent (1416 whole lines, ending in a newline).
+Over by 23,592,961 B with the full term breakdown, 2 adaptive shrinks first, **zero
+signals of any kind — SIGTERM to our own children included —, all four phases
+stopped at their own boundaries**, no survivors, and the checkpoint journal left
+consistent.
 
 ### R5 NO REGRESSION — byte-identical container, N bands compared
 
@@ -322,6 +356,33 @@ main: SCRATCH_BACKPRESSURE_SUMMARY … peak_gb=0.548 pauses=1 resumes=1 paused_m
 
 the same build, the same 4.0 GB container: the old accounting under-reported live
 scratch by the whole product, and the pause fired and did nothing.
+
+### R6 COOPERATIVE STOP — the flag, the boundaries, the resume
+
+`stop.requested` arrives 20 s into a 512 MB build:
+
+```
+R6_WRITING_STOP_REQUESTED 2026-11-14T18:42:47Z
+R6_RC rc=75 (BUILD_INTERRUPTED)
+PHASE emit-tape STOP_OBSERVED rc=75 cooperative=1 (the phase exited at its own boundary)
+STOP_OBSERVED phase=emit-tape at_band=434
+STOP_OBSERVED phase=order-tape waiting_on=band.consumed wall_s=0.000
+STOP_OBSERVED phase=finish-v2 waiting_for=band_progress waited_s=0.000
+STOP_OBSERVED phase=ctx-tap at_band=434
+R6_OBSERVED phases_reporting=6
+R6_CHECKPOINT bytes=98679 lines=646
+R6_RESUME_RC rc=0
+RESUME_STATE spools_present=12 spools_missing=1 recomputed=1 pieces_present=4 resume=true
+WORK_AVOIDED_SUMMARY performed=1608355330 total=2145234433 avoided_frac=0.250266 phases=4
+   per_phase=remap=1.000000 sort=0.000000 emit=0.000000 finish=0.000000
+R6_RESULT ok=1 rc=75 stop_observed=6 resume_rc=0 'WORK_AVOIDED_SUMMARY'
+```
+
+Every phase observes the flag, journals **where** it did (a wave/band/piece boundary —
+`waiting_on=band.consumed`, `at_band=434`, `waiting_for=band_progress` — never an
+arbitrary instruction), the driver reports `BUILD_INTERRUPTED`, nothing survives, the
+checkpoint is 646 whole lines, and the relaunch resumes with **WORK_AVOIDED
+avoided_frac=0.250266** (the remap phase fully avoided).
 
 ### S5 THE ARITHMETIC, against all three incidents (unit tests)
 
@@ -350,11 +411,62 @@ INCIDENT_3 old_ceiling_bytes=422122547200 live_actual_bytes=423759282176 over_by
 
 ---
 
-## 5. S4: the 100 GB head, both arms
+## 5. S4: the 100 GB head — the plan-time bound at scale (and why it is OPEN)
 
-<!-- S4-TABLE -->
+Command (both arms, identical flags):
 
----
+```
+XSA_SUBDIV_POSITION_BUDGET_BYTES=20000000000 xsa build --tape
+  --input pile-head100.txt --docs-map pilemap100 --threads 96 --memory-gb 96
+  --finish-as-gb 400 --scratch-budget-gb 100 --no-trie
+```
+
+**The plan-time bound at 100 GB, printed before the run** (ours; `fits=1`):
+
+```
+SCRATCH_BOUND projected_live_peak=331759337280 projected_live_peak_gb=308.975
+  max_live=331759337280 free_after_peak=6382275059904 free_after_peak_gb=5943.957
+  term_sum=315961273600 term_sum_gb=294.262 slack=15798063680 slack_gb=14.713
+  free_at_start=6714034397184 free_at_start_gb=6252.717 reserve=1536085441740
+  reserve_gb=1430.591 fs_available=… target=331759337280 ceiling=331759337280 fits=1
+SCRATCH_TERMS budget_pos=20000000000 budget_bands=64424509440
+  budget_merged=846217825583 budget_pieces=42949672960 budget_container=918416480184
+  budget_other=53687091200
+```
+
+(the merged/container budgets there are the **pile** rates applied to n = 1e11, i.e.
+`0.647 n` and `0.702 n`; on the pile corpus they are the 846 GB / 918 GB of §7.)
+
+**The measured peak and the model error** (451 samples, 2 h of the build):
+
+```
+PEAK_SAMPLE term_pos=0 term_bands=67717607424 term_merged=36363657216 term_pieces=4096
+  term_container=4096 term_other=204800 live=104081477632 live_gb=96.933
+  target=331759337280 ceiling=331759337280
+peak_gb=96.933   max_live_gb=308.975   model_error_fraction = -0.686
+```
+
+The bound is **conservative by 3.2x** at 100 GB, and that is the honest reading of the
+term table: bands+pieces (100 GB of budget) + merged (0.647 n = 64.7 GB) + container
+(0.702 n = 70 GB) + pos (20 GB) + other (50 GB) are counted at their *maxima
+simultaneously*, while the tape route's measured tree peak is `0.789 n` = 79 GB
+(`plan::TAPE_DISC_MEASURED_PER_N`) rising to 104 GB with the 20 GB position window. A
+bound that is 3x too high protects the box at the cost of headroom (§8.3).
+
+**Status: OPEN.** Neither arm produced a container, for reasons that are not the
+governor's:
+
+1. The in-build trie fails identically on BOTH binaries at this scale:
+   `xsa: error: CONTEXT_TRIE: builder: children are not in ascending byte order (the
+   suffix stream is not sorted)`, band 374, `total_rows=1,209,029,218` — hence
+   `--no-trie`.
+2. Two concurrent 100 GB arms (`--finish-as-gb 400` each) were **killed at 7,058 s
+   with rc=137 by the kernel** (both at the same wall second, `load_end=4.50`): the
+   two finishes together exceed the box's RAM. They must be run SEQUENTIALLY, which
+   is the next step; the term table, the bound and the timer above are from that run.
+
+Until that sequential pair completes, the *byte-identity at 100 GB* claim is not made:
+R5 proves container identity at 512 MB (5519 bands).
 
 ## 6. The knobs (and their help text)
 
@@ -370,8 +482,10 @@ Journal lines: `SCRATCH_BOUND` / `SCRATCH_BOUND_REFUSED` / `SCRATCH_BOUND_PLAN_O
 `SCRATCH_TERMS`, `SCRATCH_TERM`, `SCRATCH_SAMPLE` (`term_pos= … term_other= live=
 target= ceiling=`), `SCRATCH_LEDGER_UNKNOWN`, `SCRATCH_GEOMETRY` (+ the sorter's
 `SS_GEOMETRY`), `SCRATCH_GOVERNOR_HARD_FAIL`, `SCRATCH_CEILING_EXCEEDED`,
-`SCRATCH_AUDIT_TERMS`, `SCRATCH_AUDIT_SUMMARY`, `SCRATCH_GOVERNOR_SUMMARY`.
-The old `SCRATCH_BACKPRESSURE*` lines are gone with the mechanism.
+`SCRATCH_AUDIT_TERMS`, `SCRATCH_AUDIT_SUMMARY`, `SCRATCH_GOVERNOR_SUMMARY`, and on
+the stop path `STOP_REQUESTED` / `PHASE <tag> STOP_OBSERVED rc=75 cooperative=1` plus
+the phase's own `STOP_OBSERVED phase=… <where>` line. The old `SCRATCH_BACKPRESSURE*`
+lines are gone with the mechanism.
 
 ---
 
@@ -414,22 +528,47 @@ both verdicts (`XSA_PLAN_RAM` and `SCRATCH_BOUND`) before anything runs.
 
 ## 8. Residual risks and open items
 
-1. **The in-build trie fails at 100 GB on BOTH binaries** (`CONTEXT_TRIE: builder:
-   children are not in ascending byte order (the suffix stream is not sorted)` at
-   band 374, `total_rows=1,209,029,218`), so S4 runs `--no-trie`. This is a
-   pre-existing defect of the sorter/tap pair, outside the governor's scope, and it
-   does not affect the term table or the bound.
-2. **`term_merged` and `term_container` are extrapolations** of measured per-n rates
-   (0.364 n pfck2 is exact at the pile from incident B; 0.283 n chi and 0.468 n
-   container are 1 GB-fixture ratios). They are 1.78x/1.5x allowances, and a breach
-   is journaled, but a corpus whose finish state is superlinear moves the bound up.
-3. **The audit only compares on a quiescent tree** (`du` cannot read a tree being
-   written): the S1/R1 comparisons are the moments at which two consecutive samples
-   agreed.
-4. **The adaptive shrink acts on the position window only.** The band count is fixed
-   by the plan (the arena is allocated once), and its window is already bounded by
-   construction; the piece window is the emitter's, set at spawn.
-5. `XSA_SUBDIV_STRATEGY=local` (a sorter debug knob) made one 512 MB fixture run
-   crawl in the finish's LCP-repair pass until its timeout — unrelated to this patch
-   (the same flags completed in 303 s twice), but a gate that relies on it should
-   stay opt-in.
+**1. S4 (100 GB) is open.** See §5: the trie defect (both binaries) and an OOM kill
+of two concurrent arms. The plan-time bound and the term table at 100 GB are recorded;
+the sequential pair is the next step. No 100 GB byte-identity claim is made.
+
+**2. The stop boundaries have granularity.** A phase stops at its *natural* boundary,
+so the latency between `stop.requested` and exit is:
+* `order-tape`: one wave (seconds to minutes at the pile), or one 10 ms poll when it is
+  inside `waitMarker` (band/`.consumed`/`.lcp.consumed` waits) — the wait case is the
+  common one at the pile;
+* `emit-tape`: one band;
+* `finish-v2`: one 20 ms poll (it is always inside a wait loop);
+* `ctx-tap`: one band.
+
+The one path that can still take a *long* time is the scatter sweep inside a local
+wave window (`SS_SCATTER`, one full corpus pass, ~200 s at the pile per window): the
+sorter does not poll inside it. That pass allocates no new scratch (it writes the
+window it is already sized for), so it cannot grow live; it only delays the stop. This
+is named as a residual risk rather than papered over with a signal.
+
+**3. The bound is a BOUND, not a forecast** (measured 3.2x conservative at 100 GB,
+§5). The term budgets are per-term maxima that do not co-occur. Tightening it needs
+measured co-occurrence factors per route; until then the box is protected and the
+headroom is spent.
+
+**4. `term_merged` and `term_container` are extrapolations** of measured per-n rates
+(0.364 n pfck2 is exact at the pile from incident B; 0.283 n chi and 0.468 n container
+are 1 GB-fixture ratios). They are 1.78x/1.5x allowances, and a breach is journaled,
+but a corpus whose finish state is superlinear moves the bound up.
+
+**5. The audit only compares on a quiescent tree** (`du` cannot read a tree being
+written): the comparisons are the moments at which two consecutive samples agreed.
+
+**6. The adaptive shrink acts on the position window only.** The band count is fixed
+by the plan (the arena is allocated once) and its window is bounded by construction;
+the piece window is the emitter's, set at spawn.
+
+**7. The sorter's own no-progress die (6000 s)** is now also reachable through a
+cooperative stop that somebody else initiated: if a *consumer* stops and the sorter is
+waiting on it, `waitMarker` sees `stop.requested` and exits 75 within 10 ms (§1), which
+is what R6 proves; the 6000 s die remains for genuine consumer death without a flag.
+
+**8. `XSA_SUBDIV_STRATEGY=local`** (a sorter debug knob) made one 512 MB fixture run
+crawl in the finish's LCP-repair pass until its timeout — unrelated to this patch, but
+a gate that relies on it stays opt-in.

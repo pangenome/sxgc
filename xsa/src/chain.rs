@@ -145,8 +145,9 @@ pub const USAGE: &str = "usage:
     C. HARD FAIL past min(max_live, free_at_start - reserve, 125% of the target),
        with the numbers; the phases are then stopped COOPERATIVELY: the driver
        writes <scratch>/stop.requested and each phase observes it at its own
-       boundary, journals STOP_OBSERVED and exits 75 (no signal is sent).
-    THERE IS NO SIGSTOP/SIGCONT BACKPRESSURE AND NO PROCESS-GROUP SIGNAL: a paused
+       boundary, journals STOP_OBSERVED and exits 75 (no signal is sent - see the
+       table of boundaries in RESULTS_SCRATCH_GOVERNOR.md 1).
+    THERE IS NO SIGNAL PATH IN THIS PRODUCT AT ALL: a paused
     producer cannot free what it is paused for (the position window is written and
     consumed inside the sorter), the band window is bounded by construction, and
     the external process-control surface froze this box twice. The governor only
@@ -1069,9 +1070,12 @@ impl DiscSampler {
 //     anything happened. The recorded evidence says it NEVER ONCE ACTED: a peak of
 //     7.185 GB against a 6.000 GB budget with `paused=1`.
 //
-// So: no SIGSTOP, no SIGCONT, no process-group signal, no kill(1). The only
-// process control left in the product is per-pid SIGTERM/SIGKILL on a phase that
-// is being shut down (`RunningPhase::terminate`).
+// So: NO SIGNALS AT ALL. Not SIGSTOP, not SIGCONT, not a process-group signal, not
+// kill(1), and not even SIGTERM/SIGKILL to our own children. The product writes two
+// files and reads exit codes: `<scratch>/stop.requested` stops a run (each phase
+// observes it at its own boundary, journals STOP_OBSERVED, exits 75) and
+// `<scratch>/waves-tape/geometry.ctl` throttles it. `RunningPhase::terminate` only
+// writes the flag and waits.
 const GOVERNOR_MARGIN_BYTES: u64 = 50u64 << 30;
 /// The `term_other` budget: journalled, logged, timed, remap-spooled, trie-payload
 /// bytes. 50 GB is the sorter's own `XSA_SUBDIV_SCRATCH_MARGIN_BYTES` default and
