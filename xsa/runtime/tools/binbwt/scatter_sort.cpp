@@ -54,6 +54,7 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <sys/resource.h>
 #include <unistd.h>
 #include <dirent.h>
@@ -485,6 +486,14 @@ static constexpr u64 SS_PIECE_WINDOW_MIN = 64;
 // the next byte) goes to the point-mass branch, which must prove its order from
 // the corpus or refuse.
 static constexpr u64 SS_WAVE_TARGET_PCT = 80;     // plan to target x 0.8 (the band planner's rule)
+// THE POSITION WINDOW's two constants. SAFETY_PCT plans the window BELOW the
+// budget because rowsEst is a sample estimate (G8 measured <= 0.74 % error at 512
+// MB): a window planned at 95 % of the budget cannot overrun it on estimate error,
+// and the writer still counts bytes and dies past the budget (SS_SUBDIV_POSPEAK).
+// MARGIN_BYTES is the statvfs headroom: the sorter never writes a window unless the
+// scratch filesystem has the window PLUS this margin free.
+static constexpr u64 SS_POS_SAFETY_PCT = 95;
+static constexpr u64 SS_SCRATCH_MARGIN_BYTES = 50ull << 30;   // 50 GB
 static constexpr u64 SS_ROWS_FLOOR = 65536;       // one fold band: below this the budget is broken
 static constexpr u64 SS_BUDGET_RATIO_MAX = 90;    // the exit assertion: owned RSS <= 90% of the envelope
 
@@ -1337,7 +1346,27 @@ int main(int argc, char** argv) {
     // assertions below carry an EXPLICIT exemption for exactly these bands.
     u64 borrowWaves = 0, borrowMaxRows = 0, borrowRows = 0;
     const u64 memCapBytes = (u64)((memory_gb > 0 ? memory_gb : ram_gb) * 1e9);
-    const u64 waveGoal = std::max<u64>(1, rows_per_wave * SS_WAVE_TARGET_PCT / 100);
+    // ============ FIX #2: THE POSITION BUDGET CAPS A WAVE, NOT JUST A WINDOW ============
+    // A local wave's positions are written as ONE list of 8 B per row, so a wave is
+    // the smallest thing the position column can hold. A budget smaller than one wave
+    // would therefore be unenforceable - the window loop would have to write past it.
+    // The plan is where that is decided: capping waveGoal at posBudget/8 makes every
+    // local wave fit a window BY CONSTRUCTION, and the descent below refuses (dies)
+    // rather than write a window past the budget. The cost is honest and already the
+    // documented one: a smaller budget means MORE waves and more corpus passes
+    // (ceil(local_rows x 8 / budget)), never a different band stream - the plan's
+    // children are consecutive in key order, so splitting a class finer changes how
+    // the same bytes are cut, not their order (G6 measures exactly that).
+    const u64 posBudgetPlan = pos_budget_bytes ? pos_budget_bytes
+                            : std::max<u64>(256ull << 20, scratch_budget_bytes / 5);
+    const u64 waveGoalPos = std::max<u64>(1, (posBudgetPlan * SS_POS_SAFETY_PCT / 100) / sizeof(u64));
+    const u64 waveGoal = std::min(std::max<u64>(1, rows_per_wave * SS_WAVE_TARGET_PCT / 100), waveGoalPos);
+    std::fprintf(stderr,
+        "SS_SUBDIV_WAVEGOAL wave_goal=%" PRIu64 " band_goal=%" PRIu64
+        " position_budget_bytes=%" PRIu64 " position_goal_rows=%" PRIu64 " binding=%s"
+        " rule=no_local_wave_may_carry_more_positions_than_one_window_holds\n",
+        waveGoal, std::max<u64>(1, rows_per_wave * SS_WAVE_TARGET_PCT / 100), posBudgetPlan,
+        waveGoalPos, waveGoal == waveGoalPos ? "position-budget" : "band-plan");
     // THE LEAF CRITERION'S SECOND TERM (spec §3): coverage <= small_fraction.
     const double leafCovCap = double(leaf_coverage_pct) / 100.0;
     // THE PLAN, in memory, zero corpus reads for depths <= the prefix cache.
@@ -1778,21 +1807,130 @@ int main(int argc, char** argv) {
         const std::string cmd = "mkdir -p '" + posDir + "'";
         if (std::system(cmd.c_str()) != 0) die("subdiv position dir prep failed");
     }
+    // THE ONE DEFINITION OF THE POSITION BUDGET, and the plan already used it:
+    // `waveGoal` above is capped at posBudget/8, so no single local wave can carry
+    // more positions than one window may hold (a wave that big is split into
+    // key-ordered children by the plan - the only order-safe shrink).
     const u64 posBudget = pos_budget_bytes ? pos_budget_bytes
                         : std::max<u64>(256ull << 20, scratch_budget_bytes / 5);
     u64 scatterPasses = 0, scatterBytes = 0, scatterRows = 0;
     u64 localClasses = 0, globalClasses = 0, localBytes = 0, globalBytes = 0, globalPasses = 0;
     u64 classLocalBytes = 0, classGlobalBytes = 0;
-    {
-        const u64 windowRows = std::max<u64>(1, posBudget / sizeof(u64));
-        std::fprintf(stderr,
-            "SS_SUBDIV_POSBUDGET position_budget_bytes=%" PRIu64 " window_rows=%" PRIu64
-            " bytes_per_row=%zu local_waves=%" PRIu64 " global_waves=%" PRIu64
+    // ============ THE PEAK, MEASURED, AND THE TWO GUARDS ============
+    // THE DEFECT THIS REPLACES (measured at the pile, 2026-11: FOUR windows of 2 TB
+    // each held 7.6 TB and the filesystem hit 100 % after 2 h): the scatter loop
+    // used to write EVERY window's position files before the wave loop descended
+    // the FIRST one, so the peak was localRows x 8 B = 10.5 TB - a corpus number,
+    // not a budget number. Now a window's positions are written immediately before
+    // that window's waves are descended and unlinked right after the window's last
+    // wave, so what is live is ONE window. The peak is therefore an ASSERTION, not
+    // a hope, and it has two hard stops:
+    //   * POSITION BUDGET: the window's position bytes may not exceed posBudget. The
+    //     window is built from rowsEst to SS_POS_SAFETY_PCT of the budget and the
+    //     writer counts the bytes it actually wrote and DIES past posBudget;
+    //   * FILESYSTEM: statvfs on the scratch filesystem before every window, and the
+    //     run DIES with the numbers rather than filling a shared box's disc.
+    const u64 windowRows = std::max<u64>(1, (posBudget * SS_POS_SAFETY_PCT / 100) / sizeof(u64));
+    const u64 posMarginBytes = SS_SCRATCH_MARGIN_BYTES;   // statvfs headroom, journaled
+    u64 posWinWritten = 0;         // bytes THIS window's scatter wrote
+    u64 posWinWa = 0, posWinWb = 0;  // the window currently on disc
+    u64 posPeakTotal = 0;          // max bytes EVER live in subdiv_pos
+    u64 posPeakWindow = 0;         // the wave that window's peak belonged to
+    u64 posAtDescent = 0;          // live bytes when the window's first wave descended
+    u64 posWindowsDrained = 0;
+    // THE SCATTER's window opener, defined with the scatter lambda below and CALLED
+    // by the wave loop (see the interleave note there). posWindowEnd is the first
+    // wave whose positions are NOT on disc: waves < posWindowEnd belong to the
+    // window that is live now.
+    std::function<size_t(size_t)> posOpenWindow;
+    u64 posWindowEnd = 0;
+    bool posWindowOpen = false;
+    // EXACT, and cheap: one stat per part file (a window holds at most
+    // waves x scan-threads of them). Used for the accounting so no counter can
+    // drift away from the disc it claims to describe.
+    auto posDirBytes = [&]() -> u64 {
+        DIR* d = ::opendir(posDir.c_str());
+        if (!d) die("opendir " + posDir);
+        u64 bytes = 0;
+        struct dirent* e;
+        while ((e = ::readdir(d)) != nullptr) {
+            if (e->d_name[0] == '.' && (e->d_name[1] == 0 ||
+                (e->d_name[1] == '.' && e->d_name[2] == 0))) continue;
+            struct stat st{};
+            const std::string p = posDir + "/" + e->d_name;
+            if (::stat(p.c_str(), &st) == 0 && S_ISREG(st.st_mode)) bytes += u64(st.st_size);
+        }
+        ::closedir(d);
+        return bytes;
+    };
+    auto posUnlinkWindow = [&](size_t wa, size_t wb) {
+        u64 gone = 0, held = 0;
+        for (size_t i = wa; i < wb; ++i)
+            for (u64 t = 0; t < std::max<u64>(1, threads); ++t) {
+                char name[512];
+                std::snprintf(name, sizeof name, "%s/w%zu.p%05" PRIu64, posDir.c_str(), i, t);
+                struct stat st{};
+                if (::stat(name, &st) != 0) continue;
+                held += u64(st.st_size);
+                if (::unlink(name) == 0) gone += u64(st.st_size);
+                else die(std::string("unlink position part ") + name);
+            }
+        return std::pair<u64,u64>(gone, held);
+    };
+    // THE BUDGET AS A HARD GUARD, not a target: rowsEst is a SAMPLE estimate, so the
+    // window is planned to SS_POS_SAFETY_PCT and the bytes are counted as written.
+    auto pos_budget_die = [&](const char* what, u64 actual) {
+        die(std::string("position window exceeded --subdiv-position-budget-bytes (") + what +
+            "): window=[" + std::to_string(posWinWa) + "," + std::to_string(posWinWb) +
+            ") position_bytes=" + std::to_string(actual) + " budget_bytes=" + std::to_string(posBudget) +
+            " target_bytes=" + std::to_string(posBudget * SS_POS_SAFETY_PCT / 100) +
+            " (window_rows=" + std::to_string(windowRows) +
+            "). The plan's rowsEst underestimated the window by more than " +
+            std::to_string(100 - int(SS_POS_SAFETY_PCT)) +
+            "%: lower XSA_SUBDIV_POSITION_BUDGET_BYTES is not the lever (it is already the cap),"
+            " raise it so the window has room, or lower --budget-bytes so the wave goal shrinks"
+            " and the plan cuts smaller waves. Nothing is written past the cap");
+    };
+    // THE SCATTER LAMBDAS ARE MAIN-SCOPE ON PURPOSE (see the note at their end).
+    std::fprintf(stderr,
+        "SS_SUBDIV_POSBUDGET position_budget_bytes=%" PRIu64 " window_rows=%" PRIu64
+            " bytes_per_row=%zu safety_pct=%" PRIu64 " window_target_bytes=%" PRIu64
+            " scratch_margin_bytes=%" PRIu64
+            " local_waves=%" PRIu64 " global_waves=%" PRIu64
             " local_rows_est=%" PRIu64 " projected_passes=%" PRIu64
-            " rule=ceil(local_rows*8/position_budget)\n",
-            posBudget, windowRows, sizeof(u64), subdivLocal, subdivGlobal, subdivLocalRows,
+            " rule=ceil(local_rows*8/position_budget);peak_is_one_window_not_the_corpus\n",
+            posBudget, windowRows, sizeof(u64), SS_POS_SAFETY_PCT,
+            posBudget * SS_POS_SAFETY_PCT / 100, posMarginBytes,
+            subdivLocal, subdivGlobal, subdivLocalRows,
             (subdivLocalRows + windowRows - 1) / std::max<u64>(1, windowRows));
         auto scatter_window = [&](size_t wa, size_t wb) {
+            posWinWa = wa; posWinWb = wb; posWinWritten = 0;
+            // ---- GUARD 1: THE FILESYSTEM, BEFORE A SINGLE BYTE IS WRITTEN ----
+            // A full disc corrupts unrelated work on this shared box; refusing is
+            // the only acceptable failure mode.
+            {
+                u64 need = 0;
+                for (size_t i = wa; i < wb; ++i) need += std::max<u64>(1, wl[i].rowsEst) * sizeof(u64);
+                struct statvfs vfs{};
+                if (::statvfs(posDir.c_str(), &vfs) != 0) die("statvfs " + posDir);
+                const u64 freeb = u64(vfs.f_bavail) * u64(vfs.f_frsize);
+                std::fprintf(stderr,
+                    "SS_SUBDIV_POSSPACE window=[%zu,%zu) free_bytes=%" PRIu64
+                    " needed_bytes=%" PRIu64 " margin_bytes=%" PRIu64 " budget_bytes=%" PRIu64
+                    " ok=%d\n", wa, wb, freeb, need, posMarginBytes, posBudget,
+                    int(freeb >= need + posMarginBytes));
+                if (freeb < need + posMarginBytes)
+                    die("subdiv position window does not fit the scratch filesystem: free_bytes=" +
+                        std::to_string(freeb) + " needed_bytes=" + std::to_string(need) +
+                        " (the window's rowsEst x " + std::to_string(sizeof(u64)) +
+                        ") margin_bytes=" + std::to_string(posMarginBytes) +
+                        " window=[" + std::to_string(wa) + "," + std::to_string(wb) +
+                        ") scratch_dir=" + posDir +
+                        ". THE KNOBS: free space, or lower --subdiv-position-budget-bytes"
+                        " (XSA_SUBDIV_POSITION_BUDGET_BYTES) so each window is smaller"
+                        " (more corpus passes), or point --scratch at a filesystem with room."
+                        " Refusing to fill the disc");
+            }
             const double ts = now_sec();
             const u64 nw = wb - wa;
             // THE FAST FILTER: the union of the window's waves, reduced to the
@@ -1819,6 +1957,9 @@ int main(int argc, char** argv) {
             std::vector<u64> curW(nt, ~0ull);
             std::vector<std::string> err(nt);
             std::atomic<u64> rowsOut{0};
+            // THE BYTES THIS WINDOW HAS WRITTEN, counted at the write itself so the
+            // budget check below cannot be fooled by a stat() that has not caught up.
+            std::atomic<u64> bytesOut{0};
             auto flushp = [&](u64 t, u64 i) {
                 auto& v = pb[t][i];
                 if (v.empty()) return;
@@ -1832,6 +1973,11 @@ int main(int argc, char** argv) {
                     curFd[t] = f; curW[t] = i; made[t][i] = 1;
                     noteFdPeak();
                 }
+                // GUARD 2: THE POSITION BUDGET, on the bytes actually written. A
+                // budget that is only a planning target is not a budget.
+                const u64 after = bytesOut.fetch_add(u64(v.size()) * sizeof(u64)) +
+                                  u64(v.size()) * sizeof(u64);
+                if (after > posBudget) pos_budget_die("at write", after);
                 posfile_write(curFd[t], v.data(), v.size());
                 v.clear();
             };
@@ -1900,26 +2046,45 @@ int main(int argc, char** argv) {
                 [&] { u64 r = 0; for (size_t i = wa; i < wb; ++i) r += wl[i].rowsEst; return r; }(),
                 now_sec() - ts);
         };
-        size_t w0 = 0;
-        while (w0 < waves) {
-            if (wl[w0].strat != SS_STRAT_LOCAL || wl[w0].sliced) { ++w0; continue; }
-            size_t w1 = w0;
+        // ============ THE WINDOW IS SOWN LAZILY, BY THE EMIT LOOP ============
+        // The window loop used to live HERE, i.e. every window's positions were
+        // written before the wave loop descended the first one. It is now
+        // `posOpenWindow`, called from the wave loop the moment it reaches a local
+        // wave with no window on disc. Waves are in key order and a window is a
+        // consecutive range of them, so the emit order - and therefore the band
+        // order, the band numbering, prev_wave_last and the producer-state
+        // publication - is IDENTICAL to the un-interleaved one; only the moment the
+        // positions are written moved.
+        posOpenWindow = [&](size_t w) -> size_t {
+            size_t w1 = w;
             u64 rows = 0;
             while (w1 < waves && wl[w1].strat == SS_STRAT_LOCAL && !wl[w1].sliced) {
                 const u64 add = std::max<u64>(1, wl[w1].rowsEst);
-                if (w1 > w0 && rows + add > windowRows) break;
+                if (w1 > w && rows + add > windowRows) break;
                 rows += add;
                 ++w1;
             }
-            scatter_window(w0, w1);
-            w0 = w1;
-        }
-        std::fprintf(stderr,
-            "SS_SUBDIV_SCATTER passes=%" PRIu64 " bytes_read=%" PRIu64 " positions=%" PRIu64
-            " position_budget_bytes=%" PRIu64 " window_rows=%" PRIu64
-            " rule=the_only_repeated_global_pass_and_it_is_the_position_column\n",
-            scatterPasses, scatterBytes, scatterRows, posBudget, windowRows);
-    }
+            if (w1 == w) {
+                // A single wave that will not fit a window is a PLAN failure: the plan
+                // caps every wave's rowsEst at posBudget/8 (waveGoal). Stop here rather
+                // than write past the budget.
+                die("subdiv: one local wave is larger than the position window: wave=" +
+                    std::to_string(w) + " rows_est=" + std::to_string(wl[w].rowsEst) +
+                    " window_rows=" + std::to_string(windowRows) +
+                    " position_budget_bytes=" + std::to_string(posBudget) +
+                    " - the plan should have split it (waveGoal is capped at posBudget/8)");
+            }
+            scatter_window(w, w1);
+            posWinWritten = posDirBytes();
+            if (posWinWritten > posBudget) pos_budget_die("at window close", posWinWritten);
+            posAtDescent = posWinWritten;
+            if (posAtDescent > posPeakTotal) { posPeakTotal = posAtDescent; posPeakWindow = w; }
+            return w1;
+        };
+    // NOTE: both lambdas above live in MAIN's scope (no enclosing block): a
+    // posOpenWindow that captured `scatter_window` by reference across a block
+    // boundary is a dangling capture, and ASAN caught it as
+    // "stack-use-after-scope ... 'scatter_window'" on the `mixed` fixture.
 
     std::unique_ptr<Pool> pool(new Pool((unsigned)std::max<u64>(1, threads)));
     std::string cmd = "mkdir -p '" + scratch + "'";
@@ -2229,6 +2394,19 @@ int main(int argc, char** argv) {
         if (!tapeBands.empty() && ::access((tapeBands + "/../stop.requested").c_str(), F_OK) == 0) {
             marker(tapeBands + "/producer.interrupted");
             ::_exit(75);
+        }
+        // ================= THE INTERLEAVE =================
+        // A LOCAL wave needs its position list on disc, so the scatter pass must run
+        // before its descent - and ONLY before it. Sowing the window here, at the
+        // wave that needs it, is what bounds the peak to ONE window: the previous
+        // window's files were unlinked at the end of its last wave (below), so the
+        // live position bytes are this window's and no others'. Waves are in key
+        // order and a window is a consecutive run of local waves, so this changes
+        // NOTHING about the emitted order: the wave loop, globalBand, prev_wave_last
+        // and the producer-state publications all advance exactly as before.
+        if (wl[w].strat == SS_STRAT_LOCAL && !wl[w].sliced && w >= posWindowEnd) {
+            posWindowEnd = posOpenWindow(size_t(w));
+            posWindowOpen = true;
         }
 
         const double tw = now_sec();
@@ -3110,6 +3288,33 @@ int main(int argc, char** argv) {
             for (u64 b = 0; b < nbands; ++b) waitBandConsumed(globalBand + b);
             globalBand += nbands;
         }
+        // ============ THE WINDOW IS FREED HERE, AND THE PEAK IS JOURNALED ============
+        // The last wave of the window has been emitted, so its position files have no
+        // further reader: unlink them and MEASURE what is left. The per-wave unlink in
+        // the local arm already frees each wave's parts as it descends; this sweep is
+        // the window's own receipt (and it catches a wave that fell back to the global
+        // arm and so never unlinked its parts).
+        if (posWindowOpen && w + 1 == posWindowEnd) {
+            const auto swept = posUnlinkWindow(size_t(posWinWa), size_t(posWinWb));
+            const u64 after = posDirBytes();
+            ++posWindowsDrained;
+            std::fprintf(stderr,
+                "SS_SUBDIV_POSPEAK window=[%" PRIu64 ",%" PRIu64 ") waves_n=%" PRIu64
+                " bytes_written=%" PRIu64 " bytes_at_descent=%" PRIu64
+                " bytes_after_unlink=%" PRIu64 " peak_total=%" PRIu64 " peak_window=%" PRIu64
+                " budget_bytes=%" PRIu64 " freed_now=%" PRIu64 " windows_drained=%" PRIu64
+                " rule=one_window_live_the_peak_is_the_budget_not_the_corpus\n",
+                posWinWa, posWinWb, posWinWb - posWinWa, posWinWritten, posAtDescent,
+                after, posPeakTotal, posPeakWindow, posBudget, swept.first,
+                posWindowsDrained);
+            if (after != 0)
+                die("subdiv position window did not drain: window_after_unlink_bytes=" +
+                    std::to_string(after) + " dir=" + posDir +
+                    " (position files survived their window; the peak would grow with the corpus)");
+            if (posAtDescent > posBudget)
+                pos_budget_die("at drain", posAtDescent);
+            posWindowOpen = false;
+        }
         emitted += wave_rows;
         if (false) for (u64 b = 0; b < nbands; ++b) {
             char oname[512];
@@ -3165,6 +3370,17 @@ int main(int argc, char** argv) {
         }
     }
 
+    // THE SCATTER'S RECEIPT, now that the emit loop has sown every window. The peak
+    // fields are the number the operator sized the disc from: peak_total is the
+    // largest ONE window, never the sum over windows.
+    std::fprintf(stderr,
+        "SS_SUBDIV_SCATTER passes=%" PRIu64 " bytes_read=%" PRIu64 " positions=%" PRIu64
+        " position_budget_bytes=%" PRIu64 " window_rows=%" PRIu64
+        " windows=%" PRIu64 " peak_total=%" PRIu64 " peak_window=%" PRIu64
+        " position_dir_final_bytes=%" PRIu64
+        " rule=the_only_repeated_global_pass_and_it_is_the_position_column\n",
+        scatterPasses, scatterBytes, scatterRows, posBudget, windowRows,
+        posWindowsDrained, posPeakTotal, posPeakWindow, posDirBytes());
     if (emitted != N && !subdiv_class_given) die("scatter row coverage != n");
     if (emitted != N && subdiv_class_given)
         std::fprintf(stderr,
