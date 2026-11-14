@@ -28,6 +28,8 @@ use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+// THE SCRATCH LEDGER: one classifier, one sampler, six terms (see the module).
+use super::scratchgov;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -99,7 +101,103 @@ pub const USAGE: &str = "usage:
                      never trims, extends or otherwise transforms the input.
   --remap PATH       validated corpus-derived 256-byte bijective remap override.
   --finish-as-gb N   finish phase address-space cap (default --memory-gb).
-  --wit-ram-gb N     finish witness RAM budget (default --memory-gb / 2).";
+  --wit-ram-gb N     finish witness RAM budget (default --memory-gb / 2).
+  --scratch-budget-gb N
+                     the WAVE budget: the band window (60%) and the piece window
+                     (40%) are SIZED from it, and it is the term_bands+term_pieces
+                     arm of the scratch ceiling.
+  --scratch-reserve-gb N
+                     space the build may NEVER touch on the scratch filesystem:
+                     the plan-time bound is free_at_start - reserve, read with
+                     statvfs at plan time and journaled as reserve=. DEFAULT:
+                     max(10% of the filesystem, 500 GB), clamped to half of it. The
+                     box is shared and a full filesystem corrupts every other lane.
+  --scratch-target-gb F
+                     THE LIVE TARGET the geometry controller aims at. DEFAULT: the
+                     plan's max_live (inert). Lower it and the governor shrinks the
+                     NEXT position window when live exceeds it, and fails past 125%
+                     of it: a real bound, not a suggestion.
+
+  THE SCRATCH GOVERNOR (one ledger, one plan-time bound, one live target):
+    every byte under --scratch belongs to exactly ONE term, and the sampler
+    classifies every path with the same table it journals:
+      term_pos       the rolling position windows (waves-tape/subdiv_pos on the
+                     tape route, merged/binbwt-windows on the bin route): the one
+                     term no consumer can drain, so it is a declared budget
+                     (XSA_SUBDIV_POSITION_BUDGET_BYTES, default max(256 MB,
+                     budget/5), the same knob the sorter reads).
+      term_bands     the sorter's band parts (bands-tape/) and wave spool.
+      term_merged    the finish's merged-stream family (merged/frag.*: rlebwt, the
+                     pfck2 grid, the chi bitmap, the bit planes, the spool).
+      term_pieces    the in-flight piece window (merged/frag.pieces/).
+      term_container the PRODUCT partial (X.sxi2, .partial, .part) - inside the
+                     bound: it fills the same filesystem.
+      term_other     journals, logs, timing, remap spool, checkpoint journal, the
+                     in-build trie payload; a family the table does not know is
+                     counted as unknown (folded in, journaled by name).
+    A. PLAN-TIME BOUND: max_live = sum(term budgets) + slack must fit
+       free_at_start - reserve, or the build is REFUSED before a byte is written
+       (SCRATCH_BOUND / SCRATCH_BOUND_REFUSED, with the term table and the levers).
+    B. ADAPTIVE GEOMETRY: if live exceeds --scratch-target-gb (default: max_live)
+       the governor SHRINKS THE NEXT POSITION WINDOW (writes
+       waves-tape/geometry.ctl, which the sorter re-reads per window) and journals
+       SCRATCH_GEOMETRY action=shrink with the resulting live. Product unchanged.
+    C. HARD FAIL past min(max_live, free_at_start - reserve, 125% of the target),
+       with the numbers; the phases are then stopped COOPERATIVELY: the driver
+       writes <scratch>/stop.requested and each phase observes it at its own
+       boundary, journals STOP_OBSERVED and exits 75 (no signal is sent - see the
+       table of boundaries in RESULTS_SCRATCH_GOVERNOR.md 1).
+    THERE IS NO SIGNAL PATH IN THIS PRODUCT AT ALL: a paused
+    producer cannot free what it is paused for (the position window is written and
+    consumed inside the sorter), the band window is bounded by construction, and
+    the external process-control surface froze this box twice. The governor only
+    ever changes OUR OWN sizes, and the only child control left is a graceful
+    shutdown. Journal: SCRATCH_BOUND, SCRATCH_TERMS, SCRATCH_TERM, SCRATCH_SAMPLE
+    (term_pos= .. term_other= live= target= ceiling=), SCRATCH_GEOMETRY,
+    SCRATCH_GOVERNOR_HARD_FAIL, SCRATCH_GOVERNOR_SUMMARY.
+    XSA_SCRATCH_AUDIT=1 adds SCRATCH_AUDIT_TERMS: the journaled term sum against
+    `du` on the same tree on every quiescent sample (the S1/R1 oracle, in-product).
+  --snap-1e          require a final 0x1E document boundary and journal SHA256;
+                     never trims, extends or otherwise transforms the input.
+  --remap PATH       validated corpus-derived 256-byte bijective remap override.
+  --finish-as-gb N   finish phase address-space cap (default --memory-gb).
+  --wit-ram-gb N     finish witness RAM budget (default --memory-gb / 2).
+  --scratch-budget-gb N
+                     the WAVE budget: the band window (60%) and the piece window
+                     (40%) are SIZED from it, and it is the term_bands+term_pieces
+                     arm of the scratch ceiling.
+  --scratch-reserve-gb N
+                     space the build may NEVER touch on the scratch filesystem:
+                     the ceiling's FILESYSTEM arm is free_at_start - reserve, read
+                     with statvfs at plan time and journaled as reserve=. DEFAULT:
+                     max(10% of the filesystem, 500 GB). The box is shared and a
+                     full filesystem corrupts every other lane on it.
+
+  THE SCRATCH GOVERNOR (one ledger, one ceiling, both journaled):
+    every byte under --scratch belongs to exactly ONE term, and the sampler
+    classifies every path with the same table it journals:
+      term_pos       the rolling position windows (waves-tape/subdiv_pos on the
+                     tape route, merged/binbwt-windows on the bin route): the one
+                     term no consumer can drain, so it is a declared budget
+                     (XSA_SUBDIV_POSITION_BUDGET_BYTES, default max(256 MB,
+                     budget/5), the same knob the sorter reads).
+      term_bands     the sorter's band parts (bands-tape/) and wave spool.
+      term_merged    the finish's merged-stream family (merged/frag.*: rlebwt, the
+                     pfck2 grid, the chi bitmap, the bit planes, the spool).
+      term_pieces    the in-flight piece window (merged/frag.pieces/).
+      term_container the PRODUCT partial (X.sxi2, .partial, .part) - inside the
+                     ceiling: it fills the same filesystem.
+      term_other     journals, logs, timing, remap spool, checkpoint journal, the
+                     in-build trie payload; a family the table does not know is
+                     counted as unknown (folded in, journaled by name).
+    ceiling = min(free_at_start - reserve, sum(term budgets) + measured_slack)
+    pause at 90% of min(ceiling, sum(term budgets)), resume at 85%; past the
+    ceiling the producers are PAUSED first and KILLED only after 3 samples (6 s)
+    of sustained overrun. Journal lines: SCRATCH_GOVERNOR, SCRATCH_TERMS,
+    SCRATCH_TERM, SCRATCH_SAMPLE (term_pos= .. term_other= live= ceiling=),
+    SCRATCH_BACKPRESSURE, SCRATCH_OVERRUN, SCRATCH_BACKPRESSURE_SUMMARY.
+    XSA_SCRATCH_AUDIT=1 adds SCRATCH_AUDIT_TERMS: the journaled term sum against
+    `du` on the same tree on every sample (the S1 gate's oracle, in the product).";
 
 
 /// THE LEGACY FIXED REMAP IS GONE. A universal table cannot be order preserving
@@ -279,12 +377,24 @@ struct Options {
     phrase: PhraseOptions,
     stripes: Vec<String>,
     scratch_free_pct: u32,
-    /// `--scratch-budget-gb N`: THE FLOW-CONTROL BUDGET. The driver measures live
-    /// scratch and, when the next wave/piece would exceed it, PAUSES the producer
-    /// (SIGSTOP on its process group) while the finish drains. Pausing is the
-    /// mechanism: nothing is killed and no work is dropped. Absent = derived
+    /// `--scratch-budget-gb N`: THE WAVE BUDGET. It SIZES the two in-flight
+    /// windows (band 60 %, pieces 40 %) and it is the `term_bands + term_pieces`
+    /// arm of the plan-time bound. There is no pause: the governor prices the run
+    /// before it starts, shrinks its own position window when live overruns the
+    /// target, and fails past the ceiling. Absent = derived
     /// (min(0.8 x free, 2 x the band window)).
     scratch_budget_gb: Option<f64>,
+    /// `--scratch-target-gb F`: THE LIVE TARGET the geometry controller aims at.
+    /// Default: the plan's `max_live` (the sum of the term budgets), i.e. inert.
+    /// Setting it lower makes the governor shrink the NEXT position window when
+    /// live exceeds it (`SCRATCH_GEOMETRY action=shrink`) and fail past 125 % of
+    /// it (`SCRATCH_CEILING_EXCEEDED`) - a real bound, not a suggestion.
+    scratch_target_gb: Option<f64>,
+    /// `--scratch-reserve-gb N`: the CEILING's filesystem reserve - space the
+    /// build may never touch, because the box is shared and a full filesystem
+    /// corrupts every other lane on it. DEFAULT: max(10% of the filesystem, 500
+    /// GB), read with statvfs at plan time (journaled as `reserve=`).
+    scratch_reserve_gb: Option<f64>,
     /// The TAPE producer route: scatter_sort emits key-ordered bands into
     /// --tape-bands, cross_lcp_merge consumes them, xsa_finish follows. One
     /// binary, three children, no external scripts.
@@ -394,6 +504,8 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     // (see disc_verdict / tree_ok). A percentage-of-device rule is opt-in.
     let mut scratch_free_pct = 0u32;
     let mut scratch_budget_gb: Option<f64> = None;
+    let mut scratch_reserve_gb: Option<f64> = None;
+    let mut scratch_target_gb: Option<f64> = None;
     // THE OVERRIDE OF THE ABSOLUTE PEAK-VS-FREE CHECK, and of nothing else.
     let mut skip_fit_check = false;
     let mut tape = false;
@@ -427,6 +539,37 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
                     .parse::<f64>().map_err(|_| "--scratch-budget-gb: number expected".to_string())?;
                 if !(v > 0.0) || !v.is_finite() { return Err("--scratch-budget-gb must be positive".into()); }
                 scratch_budget_gb = Some(v);
+            }
+            // THE CEILING'S FILESYSTEM ARM: the reserve the build may never touch.
+            // Absent = max(10% of the scratch filesystem, 500 GB) from statvfs.
+            "--scratch-reserve-gb" => {
+                i += 1;
+                // DECIMAL GB (like --scratch-budget-gb): the reserve is subtracted
+                // from the measured free space, so a fixture can push the ceiling
+                // down to a few tens of MB and exercise the pause/kill ordering
+                // without needing a small filesystem.
+                let v = value(args.get(i), "--scratch-reserve-gb")?
+                    .parse::<f64>().map_err(|_| "--scratch-reserve-gb: number expected".to_string())?;
+                if !(v > 0.0) || !v.is_finite() {
+                    return Err("--scratch-reserve-gb must be positive (omit it for the default: \
+                                max(10% of the scratch filesystem, 500 GB))".into());
+                }
+                if scratch_reserve_gb.replace(v).is_some() {
+                    return Err("specify --scratch-reserve-gb only once".into());
+                }
+            }
+            // THE LIVE TARGET of the geometry controller (default: the plan's
+            // max_live). Decimal GB, like --scratch-budget-gb.
+            "--scratch-target-gb" => {
+                i += 1;
+                let v = value(args.get(i), "--scratch-target-gb")?
+                    .parse::<f64>().map_err(|_| "--scratch-target-gb: number expected".to_string())?;
+                if !(v > 0.0) || !v.is_finite() {
+                    return Err("--scratch-target-gb must be positive (omit it for the plan's max_live)".into());
+                }
+                if scratch_target_gb.replace(v).is_some() {
+                    return Err("specify --scratch-target-gb only once".into());
+                }
             }
             "--snap-1e" => snap_1e = true,
             "--tape" => tape = true,
@@ -674,7 +817,8 @@ fn parse_chain(args: &[String]) -> Result<Options, String> {
     Ok(Options { input, scratch, snap_1e, memory_gb, threads, plan_only,
                  bin_pipeline, v2_flag_given, chi_expect, with_chi, with_lcp_runs, wit_ram_gb,
                  finish_as_gb, bin_live_cap, bin_target_size, bin_entropy_min, phrase, stripes, scratch_free_pct,
-                 scratch_budget_gb, skip_fit_check, tape, no_resume,
+                 scratch_budget_gb, scratch_reserve_gb, scratch_target_gb, skip_fit_check,
+                 tape, no_resume,
                  trie, trie_depth, trie_min_support, trie_docs_min_support, trie_asked, docs_map,
                  remap })
 }
@@ -894,282 +1038,437 @@ impl DiscSampler {
     }
 }
 
-/// Live SCRATCH bytes and the PRODUCT's bytes, measured separately. Anything on
-/// the container's own path (`X`, `X.partial`, `X.part`) is the output.
-fn scratch_bytes_excluding(scratch: &Path, container: &Path) -> (u64, u64) {
-    let mut scratch_bytes = 0u64;
-    let mut output_bytes = 0u64;
-    let mut stack = vec![scratch.to_path_buf()];
-    let mut outs: Vec<std::ffi::OsString> = Vec::new();
-    let mut names: Vec<std::ffi::OsString> = Vec::new();
-    if let (Some(dir), Some(name)) = (container.parent(), container.file_name()) {
-        let mut partial = name.to_os_string();
-        partial.push(".partial");
-        let mut part = name.to_os_string();
-        part.push(".part");
-        names = vec![name.to_os_string(), partial, part];
-        outs.clone_from(&names);
-        let _ = dir;
-    }
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = fs::read_dir(&dir) else { continue };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            match entry.file_type() {
-                Ok(t) if t.is_dir() => stack.push(path),
-                Ok(t) if t.is_file() => {
-                    // ALLOCATED bytes, not apparent size: the chi bitmap is a sparse
-                    // n/8 mapping (164 GB apparent at the Pile) whose untouched pages
-                    // occupy nothing, and a budget that counted apparent size would
-                    // refuse a run that is using a fraction of that.
-                    use std::os::unix::fs::MetadataExt;
-                    let len = entry.metadata()
-                        .map(|m| m.blocks().saturating_mul(512).max(if m.len() == 0 { 0 } else { 4096 }))
-                        .unwrap_or(0);
-                    let is_output = path.parent() == container.parent()
-                        && path.file_name().map(|n| outs.iter().any(|o| o == n)).unwrap_or(false);
-                    if is_output { output_bytes += len; } else { scratch_bytes += len; }
-                }
-                _ => {}
-            }
-        }
-    }
-    (scratch_bytes, output_bytes)
-}
-
-// ---------------------------------------------------------------- FLOW CONTROL
-/// THE DELIVERABLE: live scratch is a MEASURED quantity, and the producer is
-/// PAUSED (never killed, never failed) while the finish drains. Without this the
-/// only lever on peak scratch is the band window, and the finish's inputs grow
-/// with the corpus.
-///
-/// Mechanism: SIGSTOP/SIGCONT on the producer's PROCESS GROUP (spawn_phase puts
-/// every phase in its own group). A stopped group executes no instructions, so
-/// this is a real pause: no busy loop, no dropped work, no state to reconstruct.
-/// The finish is never stopped - it is the drain. Visibility is the 2 s sampling
-/// interval, well inside the 5 s requirement.
-///
-/// The one way a pause could stall instead of draining is a producer stopped
-/// while holding a lock the finish needs (the shared checkpoint journal's flock,
-/// which exists only on a resumed build). The controller therefore also resumes
-/// when live scratch has not moved for STALL_S while paused, and journals why.
-/// The disk the sorter itself keeps free (it refuses a window without it); the
-/// governor prices the same margin so its ceiling and the sorter's guard agree.
+// ------------------------------------------------------------- THE GOVERNOR
+// THREE THINGS, IN THIS ORDER, AND NO PROCESS CONTROL AT ALL:
+//
+//   A. PLAN-TIME BOUND. Every live term is priced before a byte is written
+//      (`scratchgov`: one table, one sampler, six terms) and the run is REFUSED
+//      if the sum does not fit `free_at_start - reserve`, with the term table and
+//      the knobs that would fix it. This is the part that was wrong twice.
+//   B. ADAPTIVE GEOMETRY. If the sampler sees live > target, the governor SHRINKS
+//      THE NEXT POSITION WINDOW (it writes `waves-tape/geometry.ctl`, which the
+//      sorter re-reads before opening a window) and journals the decision and the
+//      resulting live. A control loop on OUR OWN SIZES, not on other processes.
+//   C. HARD FAIL. If live still exceeds the ceiling, the build fails with the
+//      numbers and the phases are shut down through their own child handles
+//      (SIGTERM, then SIGKILL, per pid, never a process-group signal).
+//
+// WHY THERE IS NO SIGSTOP/SIGCONT BACKPRESSURE ANY MORE (the point of the whole
+// incident, 2026-11-14):
+//
+//  1. A PAUSED PRODUCER CANNOT FREE WHAT IT IS BEING PAUSED FOR. The position
+//     window is written AND consumed inside the sorter; pausing the sorter pauses
+//     the descent that unlinks those files. In the case that actually filled the
+//     disc (incident A) the pause was structurally incapable of helping.
+//  2. It only ever helps for BANDS, whose consumer is a different process - and
+//     the band window is bounded BY CONSTRUCTION (60% of --scratch-budget-gb), so
+//     the pause was a second, weaker copy of a bound that already exists.
+//  3. It costs an external process-control surface (the `kill -<SIG> -<pgid>`
+//     spelling froze every process of the user, twice), deadlock risk (a producer
+//     stopped mid-write into a pipe whose consumer waits), stopped processes
+//     holding RAM and fds, and a journal that reported success whether or not
+//     anything happened. The recorded evidence says it NEVER ONCE ACTED: a peak of
+//     7.185 GB against a 6.000 GB budget with `paused=1`.
+//
+// So: NO SIGNALS AT ALL. Not SIGSTOP, not SIGCONT, not a process-group signal, not
+// kill(1), and not even SIGTERM/SIGKILL to our own children. The product writes two
+// files and reads exit codes: `<scratch>/stop.requested` stops a run (each phase
+// observes it at its own boundary, journals STOP_OBSERVED, exits 75) and
+// `<scratch>/waves-tape/geometry.ctl` throttles it. `RunningPhase::terminate` only
+// writes the flag and waits.
 const GOVERNOR_MARGIN_BYTES: u64 = 50u64 << 30;
+/// The `term_other` budget: journalled, logged, timed, remap-spooled, trie-payload
+/// bytes. 50 GB is the sorter's own `XSA_SUBDIV_SCRATCH_MARGIN_BYTES` default and
+/// the in-build m20 payload is 0.023 n at 100 GB (2.3 GB) / ~0.035 n measured
+/// ratio at the pile (42 GB) - i.e. inside it, and a breach is journaled by name.
+const GOVERNOR_OTHER_BUDGET_BYTES: u64 = GOVERNOR_MARGIN_BYTES;
+/// The hard-fail ceiling as a percentage of the live TARGET: with the default
+/// target (= the plan's max_live) this is inert (the ceiling is max_live); it is
+/// what makes an operator-set `--scratch-target-gb` a real bound rather than a
+/// suggestion.
+const GOVERNOR_CEILING_OF_TARGET_PCT: u64 = 125;
+/// The floor of an adaptive shrink: the plan caps every local wave at
+/// `pos_budget/8` (`scatter_sort`'s waveGoal), so a window can always be shrunk to
+/// an eighth of the declared budget and still hold one wave.
+const GOVERNOR_POS_SHRINK_FLOOR_DIV: u64 = 8;
+/// The geometry control file, inside the sorter's own `--scratch`.
+const GEOMETRY_CTL: &str = "geometry.ctl";
+/// The sampling interval: the whole point of the loop is to see the growth before
+/// it reaches the ceiling (2 s, as before).
+const SAMPLE_SECS: u64 = 2;
 
-struct Backpressure {
+struct Governor {
+    /// The per-term budgets, ONE table (scratchgov::Budgets): what the pipeline
+    /// INTENDS to use, term by term, each with its own source.
+    budgets: scratchgov::Budgets,
     budget_bytes: u64,
-    /// The number the operator sets is a SCRATCH budget: the container being built
-    /// is the PRODUCT, not scratch, and it is counted separately (`output_gb`) and
-    /// reported on every line. The plan's fit check already prices it as its own
-    /// term, so folding it into the scratch budget here would double-count it and
-    /// make a 6 GB budget impossible on a 10 GB corpus whose container is 5.2 GB.
-    output_bytes: u64,
-    container: PathBuf,
-    /// Raised when the drain cannot reach the budget (the residual scratch the
-    /// finish cannot release without more producer input). Measured, journaled,
-    /// never assumed.
-    pause_at: u64,
-    resume_at: u64,
-    floor_bytes: u64,
-    scratch: PathBuf,
-    /// tag -> process group id, for the phases that PRODUCE scratch.
-    producers: Vec<(String, u32)>,
-    paused: bool,
-    pauses: u64,
-    resumes: u64,
-    paused_ms_total: u128,
-    peak_bytes: u64,
-    /// THE POSITION WINDOW IS THE ONE SCRATCH TERM THE FINISH CANNOT DRAIN. The
-    /// sorter writes a window of position files (<= its --subdiv-position-budget)
-    /// and frees it itself when the window's waves are descended, so it is scratch
-    /// that no consumer can release: pausing the producer cannot lower it. The
-    /// governor therefore prices it as a DECLARED, DECLARED-BY-THE-PRODUCER term
-    /// (the same knob the sorter reads) instead of discovering it as a stall.
     pos_budget_bytes: u64,
-    last_sample: Instant,
+    /// The position budget as it stands after the adaptive shrinks.
+    pos_budget_effective: u64,
+    container: PathBuf,
+    scratch: PathBuf,
+    /// The sorter's own scratch directory: where `geometry.ctl` is written.
+    waves_dir: PathBuf,
+    /// B: the live target the geometry controller aims at (default: max_live).
+    target: u64,
+    /// C: the ceiling the build FAILS at.
+    ceiling: u64,
+    /// A: the plan-time bound: sum(term budgets) + measured slack.
+    max_live: u64,
+    slack: u64,
+    free_at_start: u64,
+    fs_total: u64,
+    reserve: u64,
+    reserve_clamped: u8,
+    /// `free_at_start - reserve`: what the box can afford.
+    fs_available: u64,
+    peak_bytes: u64,
+    peak_terms: [u64; 6],
     last_live: u64,
-    paused_since: Instant,
-    paused_live_at: u64,
+    last_terms: [u64; 6],
+    samples: u64,
+    shrinks: u64,
+    floor_journaled: bool,
+    output_bytes: u64,
+    prev_live: u64,
+    last_sample: Instant,
+    audit: bool,
+    audit_samples: u64,
+    audit_complete_samples: u64,
+    audit_worst_delta_pct: f64,
+    audit_partial_samples: u64,
+    audit_partial_worst_pct: f64,
+    audit_unknown_paths: u64,
+    audit_failed: u64,
 }
 
-impl Backpressure {
-    fn new(scratch: &Path, budget_bytes: u64, container: &Path, producers: Vec<(String, u32)>) -> Backpressure {
+impl Governor {
+    /// A. THE PLAN-TIME BOUND. Computed from the term table and statvfs, journaled
+    /// and REFUSED before any phase is spawned: `max_live > free_at_start - reserve`
+    /// is a refusal with the numbers, not a hope.
+    fn plan(scratch: &Path, waves_dir: &Path, budget_bytes: u64, container: &Path,
+            n: u64, tape: bool, reserve_gb: Option<f64>, target_gb: Option<f64>,
+            emit: &mut dyn FnMut(&str)) -> Result<Governor, String> {
+        let fs = scratchgov::fs_space(scratch)?;
+        let (reserve, reserve_clamped) = match reserve_gb {
+            Some(gb) => (((gb * (1u64 << 30) as f64) as u64), 0u8),
+            None => {
+                let r = scratchgov::default_reserve(fs.total);
+                let literal = std::cmp::max(fs.total / 10, 500u64 << 30);
+                (r, u8::from(r < literal))
+            }
+        };
         // THE SAME KNOB THE SORTER READS, so the governor and the producer cannot
-        // disagree about how much position scratch is legitimate. Default: a fifth of
-        // the scratch budget (scatter_sort's own default for the window).
+        // disagree about how much position scratch is legitimate. Default: a fifth
+        // of the scratch budget (scatter_sort's own default for the window).
         let pos_budget_bytes = std::env::var("XSA_SUBDIV_POSITION_BUDGET_BYTES").ok()
             .and_then(|v| v.trim().parse::<u64>().ok())
             .filter(|v| *v > 0)
             .unwrap_or_else(|| std::cmp::max(256u64 << 20, budget_bytes / 5));
-        Backpressure {
-            budget_bytes, output_bytes: 0, container: container.to_path_buf(),
-            pause_at: budget_bytes, resume_at: budget_bytes / 10 * 9, floor_bytes: 0,
-            scratch: scratch.to_path_buf(), producers, paused: false,
-            pauses: 0, resumes: 0, paused_ms_total: 0, peak_bytes: 0,
-            pos_budget_bytes,
-            last_sample: Instant::now(), last_live: 0, paused_since: Instant::now(),
-            paused_live_at: 0,
+        // The tape budget SIZES the two in-flight windows (plan::tape_band_plan):
+        // 60% band parts, 40% pieces. That is its whole contract.
+        let bands = budget_bytes.saturating_mul(super::plan::TAPE_BAND_SHARE_PCT) / 100;
+        let pieces = budget_bytes.saturating_sub(bands);
+        // THE MERGED FRAGMENT FAMILY (incident B's missing term). On the tape route
+        // the finish's merged-stream families are the pfck2 suffix-hash grid plus
+        // the sparse chi bitmap: measured at the pile as 443 GB = 0.364 n, exactly
+        // plan::V2_PFCK_PER_N, so the budget is pfck2 + chi (0.647 n), a 1.78x
+        // allowance on the measured family. On the bin route the same directory
+        // also carries frag.rlebwt (1.546 n), so the plan's measured output-side
+        // tree peak (V2_TREE_PEAK_PER_N, 1.975 n) is the bound there.
+        let merged_per_n = if tape {
+            super::plan::V2_PFCK_PER_N + super::plan::V2_CHI_PER_N
+        } else {
+            super::plan::V2_TREE_PEAK_PER_N
+        };
+        let merged = (merged_per_n * n as f64) as u64;
+        // THE PRODUCT PARTIAL, WITH HEADROOM: the measured 0.468 n, x1.5 for the
+        // optional members (m14 costs 0.256 n; the trie and m15 ride along).
+        let container_budget = (1.5 * super::plan::V2_CONTAINER_PER_N * n as f64) as u64;
+        let other = GOVERNOR_OTHER_BUDGET_BYTES;
+        let budgets = scratchgov::Budgets {
+            // IN scratchgov::Term::idx() ORDER: pos, bands, merged, pieces, container,
+            // other (the order every journal line prints them in).
+            bytes: [pos_budget_bytes, bands, merged, pieces, container_budget, other],
+            sources: [
+                "XSA_SUBDIV_POSITION_BUDGET_BYTES|default=max(256MB,budget/5)",
+                "scratch_budget x TAPE_BAND_SHARE_PCT",
+                if tape { "measured 0.364n(pfck2)+0.283n(chi bitmap) x n" }
+                else { "plan V2_TREE_PEAK_PER_N x n" },
+                "scratch_budget x TAPE_PIECE_SHARE_PCT",
+                "measured 0.468n(container) x 1.5 x n",
+                "GOVERNOR_OTHER_BUDGET_BYTES",
+            ],
+        };
+        let term_sum = budgets.sum();
+        let slack = scratchgov::measured_slack(term_sum);
+        let max_live = term_sum.saturating_add(slack);
+        let fs_available = fs.free.saturating_sub(reserve);
+        let target = match target_gb {
+            Some(gb) => std::cmp::min(max_live, (gb * (1u64 << 30) as f64) as u64),
+            None => max_live,
+        };
+        let ceiling = std::cmp::min(
+            std::cmp::min(max_live, fs_available),
+            target.saturating_mul(GOVERNOR_CEILING_OF_TARGET_PCT) / 100,
+        );
+        let gb = |v: u64| v as f64 / (1u64 << 30) as f64;
+        // THE BOUND LINE: every input, so a reader can recompute it (gate R2).
+        emit(&format!(
+            "SCRATCH_BOUND projected_live_peak={} projected_live_peak_gb={:.3} max_live={}              max_live_gb={:.3} free_after_peak={} free_after_peak_gb={:.3} term_sum={} term_sum_gb={:.3} slack={} \
+             slack_gb={:.3} free_at_start={} free_at_start_gb={:.3} fs_total={} reserve={} \
+             reserve_gb={:.3} reserve_clamped={} fs_available={} fs_available_gb={:.3} \
+             target={} target_gb={:.3} target_ceiling_rate_pct={} ceiling={} ceiling_gb={:.3} \
+             fits={} deficit_bytes={} rule=projected_live_peak=max_live=sum(term_budgets)+slack;fits=projected_live_peak<=free_at_start-reserve (the plan REFUSES otherwise);runtime_ceiling=the same projected_live_peak when it fits (the printed number is the contract);\
+ceiling=min(max_live,fs_available,targetx{}pct);target=min(max_live,--scratch-target-gb)",
+            max_live, gb(max_live), max_live, gb(max_live),
+            fs.free.saturating_sub(max_live), gb(fs.free.saturating_sub(max_live)),
+            term_sum, gb(term_sum), slack, gb(slack),
+            fs.free, gb(fs.free), fs.total, reserve, gb(reserve), reserve_clamped,
+            fs_available, gb(fs_available), target, gb(target), GOVERNOR_CEILING_OF_TARGET_PCT,
+            ceiling, gb(ceiling), u8::from(max_live <= fs_available),
+            max_live.saturating_sub(fs_available), GOVERNOR_CEILING_OF_TARGET_PCT));
+        emit(&format!("SCRATCH_TERMS {} term_sum={} max_live={} (the ONE table: every family \
+the pipeline writes under --scratch belongs to exactly one term; the sampler classifies every path \
+with the same table and the bound is their sum)",
+            budgets.journal(), term_sum, max_live));
+        for t in scratchgov::TERMS {
+            emit(&format!("SCRATCH_TERM name={} rule={}", t.journal_key(), t.rule()));
         }
+        if max_live > fs_available {
+            // THE REFUSAL, WITH THE TERM TABLE AND THE LEVERS. Nothing has been
+            // written yet: this runs before the first `spawn_phase`.
+            let rows: Vec<String> = scratchgov::TERMS.iter()
+                .map(|t| format!("{}={} ({})", t.journal_key(), budgets.bytes[t.idx()],
+                    budgets.sources[t.idx()]))
+                .collect();
+            return Err(format!(
+                "SCRATCH_BOUND_REFUSED: the PROJECTED LIVE PEAK {} B ({:.3} GiB) does not fit the \
+                 filesystem: free_disk={} B ({:.3} GiB), reserve={} B ({:.3} GiB), free_minus_reserve={} B \
+                 ({:.3} GiB), deficit={} B ({:.3} GiB). TERMS: {} | term_sum={} slack={}. LEVERS: \
+                 --scratch-budget-gb (smaller band+piece window), \
+                 XSA_SUBDIV_POSITION_BUDGET_BYTES (smaller position window), --scratch-reserve-gb \
+                 (smaller reserve: currently {:.3} GiB), or a scratch filesystem with room. \
+                 NOTHING WAS WRITTEN",
+                max_live, gb(max_live), fs.free, gb(fs.free), reserve, gb(reserve),
+                fs_available, gb(fs_available), max_live - fs_available,
+                gb(max_live - fs_available), rows.join(" "), term_sum, slack, gb(reserve)));
+        }
+        Ok(Governor {
+            budgets, budget_bytes, pos_budget_bytes, pos_budget_effective: pos_budget_bytes,
+            container: container.to_path_buf(), scratch: scratch.to_path_buf(),
+            waves_dir: waves_dir.to_path_buf(),
+            target, ceiling, max_live, slack, free_at_start: fs.free, fs_total: fs.total,
+            reserve, reserve_clamped, fs_available,
+            peak_bytes: 0, peak_terms: [0; 6], last_live: 0, last_terms: [0; 6],
+            samples: 0, shrinks: 0, floor_journaled: false, output_bytes: 0, prev_live: 0,
+            last_sample: Instant::now(),
+            audit: std::env::var("XSA_SCRATCH_AUDIT").map(|v| v == "1").unwrap_or(false),
+            audit_samples: 0, audit_complete_samples: 0, audit_worst_delta_pct: 0.0,
+            audit_partial_samples: 0, audit_partial_worst_pct: 0.0,
+            audit_unknown_paths: 0, audit_failed: 0,
+        })
     }
-    /// the live-scratch ceiling the governor will FAIL at (never merely report):
-    /// the tapes' budget + the producer's declared position window + the margin the
-    /// sorter keeps free itself (50 GB).
-    fn ceiling_bytes(&self) -> u64 {
-        self.budget_bytes
-            .saturating_add(self.pos_budget_bytes)
-            .saturating_add(GOVERNOR_MARGIN_BYTES)
-    }
-    /// WHAT THE GOVERNOR SAW AND WHAT IT WILL DO, once, at the start of the build.
+    /// WHAT THE GOVERNOR BOUND AND WHAT IT WILL DO, once, at the start of the build.
     fn announce(&self, journal: &mut Journal) {
         let gb = |v: u64| v as f64 / (1u64 << 30) as f64;
         journal.line(&format!(
-            "SCRATCH_GOVERNOR budget_gb={:.3} pos_budget_gb={:.3} ceiling_gb={:.3} margin_gb={:.3} \
-             pause_at_gb={:.3} resume_at_gb={:.3} producers={} \
-             accounting=the_whole_scratch_tree_incl_subdiv_pos_excl_the_container \
-             rule=pause_on_the_budget,ratchet_never_past_the_ceiling,fail_past_the_ceiling",
-            gb(self.budget_bytes), gb(self.pos_budget_bytes), gb(self.ceiling_bytes()),
-            gb(GOVERNOR_MARGIN_BYTES), gb(self.pause_at), gb(self.resume_at),
-            self.producers.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>().join(",")));
+            "SCRATCH_GOVERNOR budget_gb={:.3} pos_budget_gb={:.3} max_live={} max_live_gb={:.3} \
+             target={} target_gb={:.3} ceiling={} ceiling_gb={:.3} free_at_start={} reserve={} \
+             sampling_s={} \
+             accounting=every_byte_under_scratch_in_six_terms_incl_the_container \
+             process_control=none (NO SIGSTOP, NO SIGCONT, NO process-group signal, NO kill(1)) \
+             rule=refuse_at_plan_time,shrink_the_next_position_window_when_live>target,fail_past_the_ceiling",
+            gb(self.budget_bytes), gb(self.pos_budget_bytes), self.max_live, gb(self.max_live),
+            self.target, gb(self.target), self.ceiling, gb(self.ceiling),
+            self.free_at_start, self.reserve, SAMPLE_SECS));
     }
-    /// SIGSTOP/SIGCONT a whole process group. `kill` is used with the group id
-    /// negated; a group that has already exited answers ESRCH, which is not an
-    /// error for this purpose (the exit path reports it).
-    ///
-    /// The `kill -<sig> -<pgid>` form is a procps-ng 4.0.4 parse bug: it keeps
-    /// only the FIRST DIGIT of a negative pid spec, so `-STOP -1257815` issued
-    /// `kill(-1, SIGSTOP)` and SIGSTOPped every process of the user (the
-    /// 2026-11-09 ~23:00 and 2026-11-14 09:38:45 box freezes; `-KILL -1257815`
-    /// would have been `kill(-1, SIGKILL)`). The explicit `-s <sig> -- -<pgid>`
-    /// form is unambiguous and verified on procps 4.0.4.
-    fn signal_group(&self, pgid: u32, sig: &str) -> Result<(), String> {
-        let out = Command::new("kill").arg("-s").arg(sig).arg("--").arg(format!("-{pgid}"))
-            .output().map_err(|e| format!("spawn kill: {e}"))?;
-        if !out.status.success() {
-            let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
-            if err.contains("No such process") { return Ok(()); }
-            return Err(format!("kill -s {sig} -- -{pgid}: {err}"));
+    /// C's shutdown: write the flag the phases poll (`stop.requested`) and let
+    /// `RunningPhase::terminate` (write the flag, then WAIT - no signal) do the rest.
+    fn hard_fail(&mut self, journal: &mut Journal, why: &str, live: u64) -> Result<(), String> {
+        let gb = |v: u64| v as f64 / (1u64 << 30) as f64;
+        let mut terms = Vec::new();
+        for t in scratchgov::TERMS {
+            terms.push(format!("{}={}", t.journal_key(), self.last_terms[t.idx()]));
         }
+        let mut peaks = Vec::new();
+        for t in scratchgov::TERMS {
+            peaks.push(format!("{}={}", t.journal_key(), self.peak_terms[t.idx()]));
+        }
+        journal.line(&format!(
+            "SCRATCH_GOVERNOR_HARD_FAIL why={why} live={} live_gb={:.3} ceiling={} ceiling_gb={:.3} \
+             over_by={} target={} max_live={} {} (current) {} (peaks) action=cooperative_stop (write stop.requested, wait for exit 75, NO SIGNAL)",
+            live, gb(live), self.ceiling, gb(self.ceiling), live.saturating_sub(self.ceiling),
+            self.target, self.max_live, terms.join(" "), peaks.join(" ")));
+        // The graceful flag the tools poll (`stop.requested`), then the caller's
+        // RunningPhase drops shut each phase down through its own child handle.
+        let _ = recovery::request_stop(&self.scratch);
+        Err(format!(
+            "SCRATCH_CEILING_EXCEEDED live_bytes={} ceiling_bytes={} over_by_bytes={} live_gb={:.3} \
+             ceiling_gb={:.3} target_bytes={} max_live_bytes={} free_at_start={} reserve={} \
+             fs_available={} pos_budget_bytes={} pos_budget_shrinks={} terms={} peak_terms={} \
+             levers=XSA_SUBDIV_POSITION_BUDGET_BYTES (smaller position window), --scratch-budget-gb \
+             (smaller band+piece window), --scratch-target-gb (lower the live target), \
+             --scratch-reserve-gb, or a scratch filesystem with room. The build was STOPPED without \
+             filling the disc: the driver wrote stop.requested and every phase exited at its own \
+             boundary (this product sends NO SIGNALS AT ALL)",
+            live, self.ceiling, live.saturating_sub(self.ceiling), gb(live), gb(self.ceiling),
+            self.target, self.max_live, self.free_at_start, self.reserve, self.fs_available,
+            self.pos_budget_effective, self.shrinks, terms.join(" "), peaks.join(" ")))
+    }
+    /// B: write the geometry control file the sorter re-reads before opening a
+    /// window. Atomic (tmp + rename) so the sorter never reads a half line.
+    fn publish_geometry(&self, budget: u64, journal: &mut Journal) -> Result<(), String> {
+        let path = self.waves_dir.join(GEOMETRY_CTL);
+        let tmp = self.waves_dir.join(format!("{GEOMETRY_CTL}.tmp"));
+        let body = format!("position_budget_bytes={budget}\n");
+        std::fs::write(&tmp, body.as_bytes())
+            .map_err(|e| format!("write {}: {e}", tmp.display()))?;
+        std::fs::rename(&tmp, &path).map_err(|e| format!("rename {}: {e}", path.display()))?;
+        journal.line(&format!("SCRATCH_GEOMETRY file={} position_budget_bytes={budget}",
+            path.display()));
         Ok(())
     }
-    /// Called from the pipeline's wait loop. Returns nothing; journals every
-    /// transition with the measured live and budget.
+    /// Called from the pipeline's wait loop. Samples the ledger, journals the term
+    /// breakdown, shrinks the next window when live is over target, and fails past
+    /// the ceiling.
     fn observe(&mut self, journal: &mut Journal) -> Result<(), String> {
-        const SAMPLE: Duration = Duration::from_secs(2);
-        const STALL_S: Duration = Duration::from_secs(30);
+        const SAMPLE: Duration = Duration::from_secs(SAMPLE_SECS);
         if self.last_sample.elapsed() < SAMPLE { return Ok(()); }
         self.last_sample = Instant::now();
-        let (live, output) = scratch_bytes_excluding(&self.scratch, &self.container);
-        self.output_bytes = output;
+        let s = scratchgov::sample(&self.scratch);
+        let live = s.live();
+        self.output_bytes = s.term(scratchgov::Term::Container);
         self.last_live = live;
+        self.last_terms = s.bytes;
+        self.samples += 1;
         if live > self.peak_bytes { self.peak_bytes = live; }
+        s.raise_peaks(&mut self.peak_terms);
         let gb = |v: u64| v as f64 / (1u64 << 30) as f64;
         journal.line(&format!(
-            "SCRATCH_SAMPLE live_gb={:.3} output_gb={:.3} budget_gb={:.3} peak_gb={:.3} paused={} allocated_bytes=1 \
-             pos_budget_gb={:.3} ceiling_gb={:.3}",
-            gb(live), gb(output), gb(self.budget_bytes), gb(self.peak_bytes), u8::from(self.paused),
-            gb(self.pos_budget_bytes), gb(self.ceiling_bytes())));
-        // THE HARD CEILING. The only scratch the finish cannot drain is the
-        // producer's position window, and that is capped by the producer's own
-        // budget; past (budget + window + margin) something is wrong and the box is
-        // about to fill. Stop the producers and FAIL with the numbers - a full disc
-        // corrupts every other lane on this machine.
-        if live > self.ceiling_bytes() {
-            for (tag, pgid) in self.producers.clone() {
-                let _ = self.signal_group(pgid, "KILL");
-                journal.line(&format!("SCRATCH_GOVERNOR signal=KILL phase={tag} pgid={pgid}"));
-            }
-            return Err(format!(
-                "SCRATCH_GOVERNOR_CEILING_EXCEEDED live_bytes={} ceiling_bytes={} \
-                 budget_bytes={} pos_budget_bytes={} margin_bytes={} live_gb={:.3} ceiling_gb={:.3} \
-                 levers=XSA_SUBDIV_POSITION_BUDGET_BYTES (smaller window), --scratch-budget-gb \
-                 (bigger tape budget), or a scratch filesystem with room. The producers were \
-                 killed instead of filling the disc",
-                live, self.ceiling_bytes(), self.budget_bytes, self.pos_budget_bytes,
-                GOVERNOR_MARGIN_BYTES, gb(live), gb(self.ceiling_bytes())));
+            "SCRATCH_SAMPLE {} live_gb={:.3} live={} target={} target_gb={:.3} ceiling={} \
+             ceiling_gb={:.3} max_live={} peak_gb={:.3} output_gb={:.3} budget_gb={:.3} \
+             pos_budget_gb={:.3} pos_budget_effective={} shrinks={} stopped=0 allocated_bytes=1 \
+             free_at_start={} reserve={} slack={} files={} dirs={} unknown_paths={} process_control=none",
+            s.terms_line(), gb(live), live, self.target, gb(self.target), self.ceiling,
+            gb(self.ceiling), self.max_live, gb(self.peak_bytes), gb(self.output_bytes),
+            gb(self.budget_bytes), gb(self.pos_budget_bytes), self.pos_budget_effective,
+            self.shrinks, self.free_at_start, self.reserve, self.slack, s.files, s.dirs,
+            s.unknown_paths));
+        if s.unknown_paths > 0 {
+            // A family the table does not name is still COUNTED (folded into
+            // `term_other`, so `live` is still the whole tree) but it is named
+            // here: the ledger must be extended, not discovered in a kill.
+            journal.line(&format!(
+                "SCRATCH_LEDGER_UNKNOWN paths={} bytes={} examples={} action=folded_into_term_other",
+                s.unknown_paths, s.unknown_bytes, s.unknown_examples.join(",")));
         }
-        if !self.paused {
-            if live >= self.pause_at {
-                for (tag, pgid) in self.producers.clone() {
-                    self.signal_group(pgid, "STOP")?;
-                    journal.line(&format!("SCRATCH_BACKPRESSURE signal=STOP phase={tag} pgid={pgid}"));
-                }
-                self.paused = true;
-                self.pauses += 1;
-                self.paused_since = Instant::now();
-                self.paused_live_at = live;
+        let quiescent = self.samples > 1 && live == self.prev_live;
+        if self.audit && quiescent { self.audit_sample(&s, journal); }
+        self.prev_live = live;
+        // ---- C. THE HARD FAIL (checked first: it is the box's last word) ------
+        if live > self.ceiling {
+            return self.hard_fail(journal, "live_over_ceiling", live);
+        }
+        // ---- B. ADAPTIVE GEOMETRY: shrink the NEXT position window -----------
+        if live > self.target {
+            let floor = std::cmp::max(1, self.pos_budget_bytes / GOVERNOR_POS_SHRINK_FLOOR_DIV);
+            let want = std::cmp::max(self.pos_budget_effective * 3 / 4, floor);
+            if want < self.pos_budget_effective {
+                let from = self.pos_budget_effective;
+                self.publish_geometry(want, journal)?;
+                self.pos_budget_effective = want;
+                self.shrinks += 1;
                 journal.line(&format!(
-                    "SCRATCH_BACKPRESSURE state=pause live_gb={:.3} budget_gb={:.3} peak_gb={:.3} pauses={} resumes={} \
-                     output_gb={:.3} pause_at_gb={:.3} action=producer_stopped consumer=drains",
-                    gb(live), gb(self.budget_bytes), gb(self.peak_bytes), self.pauses, self.resumes,
-                    gb(output), gb(self.pause_at)));
-            }
-        } else {
-            // Drain target: 90% of the budget, so the producer does not start a
-            // wave that immediately re-trips the limit.
-            // `drained`: the budget is met. `floor`: the drain has stopped making
-            // progress while still above it - the residual is scratch the finish
-            // cannot release without producer input (or, on a resumed build, a
-            // producer stopped inside the shared journal's flock). The floor is
-            // MEASURED and becomes the new pause threshold, so the controller
-            // settles instead of thrashing; it is journaled every time it moves.
-            let drained = live <= self.resume_at;
-            let stalled = self.paused_since.elapsed() >= STALL_S && live + (live / 100) >= self.paused_live_at;
-            if stalled && live > self.floor_bytes { self.floor_bytes = live; }
-            if stalled && live + (1u64 << 30) > self.pause_at {
-                // The residual is scratch the consumer cannot release (the
-                // producer's OWN position window, which it frees when the window's
-                // waves are descended). Raising the threshold is right - a pause
-                // that can never drain must not deadlock the build - but it may never
-                // be raised past the ceiling: past that the build FAILS (above).
-                let want = live.saturating_add((1u64 << 30) / 2);
-                let capped = want.min(self.ceiling_bytes());
-                self.pause_at = capped;
-                self.resume_at = self.pause_at / 10 * 9;
+                    "SCRATCH_GEOMETRY action=shrink iteration={} live={} live_gb={:.3} target={} \
+                     ceiling={} from_bytes={} to_bytes={} floor_bytes={} why=live_over_target \
+                     rule=next_window_only,product_unchanged",
+                    self.shrinks, live, gb(live), self.target, self.ceiling, from, want, floor));
+            } else if !self.floor_journaled {
+                self.floor_journaled = true;
                 journal.line(&format!(
-                    "SCRATCH_GOVERNOR ratchet pause_at_gb={:.3} resume_at_gb={:.3} live_gb={:.3} \
-                     requested_gb={:.3} ceiling_gb={:.3} capped={} \
-                     why=residual_is_the_producers_position_window_not_a_drain",
-                    gb(capped), gb(self.resume_at), gb(live), gb(want),
-                    gb(self.ceiling_bytes()), u8::from(capped < want)));
-            }
-            if drained || stalled {
-                for (tag, pgid) in self.producers.clone() {
-                    self.signal_group(pgid, "CONT")?;
-                    journal.line(&format!("SCRATCH_BACKPRESSURE signal=CONT phase={tag} pgid={pgid}"));
-                }
-                self.paused = false;
-                self.resumes += 1;
-                self.paused_ms_total += self.paused_since.elapsed().as_millis();
-                journal.line(&format!(
-                    "SCRATCH_BACKPRESSURE state=resume live_gb={:.3} budget_gb={:.3} peak_gb={:.3} pauses={} resumes={} \
-                     output_gb={:.3} why={} paused_ms={} floor_gb={:.3} pause_at_gb={:.3}",
-                    gb(live), gb(self.budget_bytes), gb(self.peak_bytes), self.pauses, self.resumes,
-                    gb(output), if stalled { "drain_floor" } else { "drained" },
-                    self.paused_since.elapsed().as_millis(), gb(self.floor_bytes), gb(self.pause_at)));
+                    "SCRATCH_GEOMETRY action=at_floor iteration=0 live={} live_gb={:.3} target={} \
+                     floor_bytes={} note=the position window is already at pos_budget/{}: the next \
+                     increase must come from the finish draining or the bands in flight ending \
+                     (the ceiling above is the remaining bound)",
+                    live, gb(live), self.target, floor, GOVERNOR_POS_SHRINK_FLOOR_DIV));
             }
         }
         Ok(())
     }
-    fn finish(mut self, journal: &mut Journal) -> Result<(), String> {
-        if self.paused {
-            for (tag, pgid) in self.producers.clone() {
-                self.signal_group(pgid, "CONT")?;
-                journal.line(&format!("SCRATCH_BACKPRESSURE signal=CONT phase={tag} pgid={pgid}"));
-            }
-            self.paused_ms_total += self.paused_since.elapsed().as_millis();
-            self.paused = false;
-            self.resumes += 1;
+    /// THE S1 ORACLE, IN THE PRODUCT: `du` on the same tree, immediately bracketed
+    /// by two ledger samples. The journaled term sum must equal `du` within 1%;
+    /// a `du` reading that falls between the two samples counts as exact (the tree
+    /// moved while `du` walked it).
+    fn audit_sample(&mut self, before: &scratchgov::Sample, journal: &mut Journal) {
+        self.audit_samples += 1;
+        self.audit_unknown_paths += before.unknown_paths;
+        // `du` cannot read a tree that is being written: a file unlinked between
+        // its readdir and its stat makes it exit non-zero with a partial total.
+        // The PARTIAL total is still a usable oracle for a bracketed comparison,
+        // so it is accepted (marked complete=0) and only an UNPARSABLE du counts
+        // as a failure.
+        let out = Command::new("du").arg("-s").arg("--block-size=1").arg(&self.scratch).output();
+        let (du_bytes, complete) = match out {
+            Ok(o) => (String::from_utf8_lossy(&o.stdout).split_whitespace().next()
+                        .and_then(|v| v.parse::<u64>().ok()), u8::from(o.status.success())),
+            Err(_) => (None, 0),
+        };
+        let Some(du) = du_bytes else {
+            self.audit_failed += 1;
+            journal.line("SCRATCH_AUDIT_TERMS du_bytes=unavailable ok=0 (du failed; the ledger is unaffected)");
+            return;
+        };
+        if complete == 1 { self.audit_complete_samples += 1; }
+        let after = scratchgov::sample(&self.scratch);
+        // The tree GROWS and SHRINKS while du walks it (a piece is consumed, the
+        // container partial is renamed), so the honest bracket is the interval
+        // between the two ledger samples, in either direction.
+        let lo = std::cmp::min(before.live(), after.live());
+        let hi = std::cmp::max(before.live(), after.live());
+        let bracketed = lo <= du && du <= hi;
+        let delta_pct = if bracketed { 0.0 } else {
+            let nearest = if du < lo { lo } else { hi };
+            100.0 * (du as f64 - nearest as f64).abs() / (du.max(1) as f64)
+        };
+        // A COMPLETE `du` is a consistent read of a still tree: it is held to 1%.
+        // A PARTIAL one raced a concurrent unlink and is held to a looser 5%.
+        let limit = if complete == 1 { 1.0 } else { 5.0 };
+        if complete == 1 {
+            if delta_pct > self.audit_worst_delta_pct { self.audit_worst_delta_pct = delta_pct; }
+        } else {
+            self.audit_partial_samples += 1;
+            if delta_pct > self.audit_partial_worst_pct { self.audit_partial_worst_pct = delta_pct; }
         }
         journal.line(&format!(
-            "SCRATCH_BACKPRESSURE_SUMMARY budget_gb={:.3} peak_gb={:.3} floor_gb={:.3} pauses={} resumes={} \
-             paused_ms={} last_live_bytes={} output_gb={:.3} accounting=scratch_excludes_container",
-            self.budget_bytes as f64 / (1u64 << 30) as f64,
-            self.peak_bytes as f64 / (1u64 << 30) as f64,
-            self.floor_bytes as f64 / (1u64 << 30) as f64,
-            self.pauses, self.resumes, self.paused_ms_total, self.last_live,
-            self.output_bytes as f64 / (1u64 << 30) as f64));
-        Ok(())
+            "SCRATCH_AUDIT_TERMS samples={} du_bytes={} ledger_before={} ledger_after={} \
+             bracketed={} du_complete={} delta_pct={:.4} {} unknown_paths={} ok={}",
+            self.audit_samples, du, before.live(), after.live(), u8::from(bracketed), complete,
+            delta_pct, before.terms_line(), before.unknown_paths, u8::from(delta_pct <= limit)));
+    }
+    fn finish(self, journal: &mut Journal) {
+        let gb = |v: u64| v as f64 / (1u64 << 30) as f64;
+        if self.audit {
+            journal.line(&format!(
+                "SCRATCH_AUDIT_SUMMARY samples={} complete={} worst_delta_pct={:.4} \
+                 partial={} partial_worst_pct={:.4} unknown_paths_seen={} du_failures={} \
+                 quiescent_only=1 rule=sum(journaled terms)==du(t) within 1pct, audited at every \
+sampled moment at which two consecutive samples agreed (a moving tree cannot be read \
+consistently by du; partial reads are held to 5pct)",
+                self.audit_samples, self.audit_complete_samples, self.audit_worst_delta_pct,
+                self.audit_partial_samples, self.audit_partial_worst_pct,
+                self.audit_unknown_paths, self.audit_failed));
+        }
+        journal.line(&format!(
+            "SCRATCH_GOVERNOR_SUMMARY max_live_gb={:.3} target_gb={:.3} ceiling_gb={:.3} \
+             peak_gb={:.3} peak_bytes={} samples={} shrinks={} final_pos_budget_bytes={} \
+             budget_gb={:.3} output_gb={:.3} passive=1 process_control=none peak_terms={}",
+            gb(self.max_live), gb(self.target), gb(self.ceiling), gb(self.peak_bytes),
+            self.peak_bytes, self.samples, self.shrinks, self.pos_budget_effective,
+            gb(self.budget_bytes), gb(self.output_bytes),
+            scratchgov::TERMS.iter()
+                .map(|t| format!("{}={}", t.journal_key(), self.peak_terms[t.idx()]))
+                .collect::<Vec<_>>().join(",")));
     }
 }
 
@@ -1293,16 +1592,24 @@ struct RunningPhase {
 }
 
 impl RunningPhase {
+    /// SHUT ONE PHASE DOWN WITH THE COOPERATIVE CHANNEL, NEVER A SIGNAL: write
+    /// `<scratch>/stop.requested`, then WAIT for the phase to observe it at its own
+    /// boundary, journal STOP_OBSERVED and exit 75. There is no timeout here by
+    /// design: a phase that never observes the flag is a BUG IN THAT PHASE (the
+    /// boundaries are listed in RESULTS_SCRATCH_GOVERNOR.md), and papering over it
+    /// with a signal is exactly what froze this box twice.
     fn terminate(&mut self) {
         if !self.armed { return; }
-        // Every wrapper and native descendant shares this private group.
-        // Child::kill alone kills /usr/bin/time and leaves the real consumer
-        // polling the same scratch path, where it can steal a later run's pieces.
-        unsafe {
-            extern "C" { fn kill(pid: i32, signal: i32) -> i32; }
-            kill(-(self.child.id() as i32), 9);
-        }
-        let _ = self.child.wait();
+        let scratch = self.log_path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+        let requested = recovery::write_stop_flag(&scratch).is_ok();
+        let status = self.child.wait();
+        let rc = status.as_ref().ok().and_then(|s| s.code());
+        let observed = fs::read_to_string(&self.log_path).ok()
+            .and_then(|t| t.lines().rev().find(|l| l.starts_with("STOP_OBSERVED")).map(|l| l.to_string()));
+        eprintln!(
+            "STOP_REQUESTED flag_written={} phase={} rc={} stop_observed={} line={}",
+            u8::from(requested), self.tag, rc.map(|c| c.to_string()).unwrap_or_else(|| "signal".into()),
+            u8::from(observed.is_some()), observed.unwrap_or_else(|| "-".into()));
         self.armed = false;
     }
 }
@@ -1403,7 +1710,7 @@ fn join_pipeline(journal: &mut Journal, scratch: &Path,
 }
 
 fn join_pipeline_flow(journal: &mut Journal, scratch: &Path,
-                      phases: Vec<RunningPhase>, mut flow: Option<Backpressure>) -> Result<(), String> {
+                      phases: Vec<RunningPhase>, mut flow: Option<Governor>) -> Result<(), String> {
     let mut pending: Vec<Option<RunningPhase>> = phases.into_iter().map(Some).collect();
     // XSA_KILL_AT: STATE-triggered ordering hooks (`mid_band`, `after_rename`).
     // They fire on an observable ordering state, never on a clock: with the
@@ -1423,9 +1730,22 @@ fn join_pipeline_flow(journal: &mut Journal, scratch: &Path,
             if exited {
                 let mut phase = slot.take().unwrap();
                 let status = phase.child.wait().map_err(|e| e.to_string())?;
-                if status.code() == Some(75) && recovery::signal() != 0 {
+                // rc 75 IS THE COOPERATIVE STOP: a phase that observed
+                // <scratch>/stop.requested (written by this driver when a phase
+                // failed, when the ceiling was breached, or by an operator's stop
+                // request) journals STOP_OBSERVED and exits 75. No signal is
+                // involved, so the flag file - not the driver's signal state - is
+                // what tells the two paths apart.
+                let cooperative = status.code() == Some(75) && scratch.join("stop.requested").exists();
+                if status.code() == Some(75) && (recovery::signal() != 0 || cooperative) {
                     phase.armed = false;
-                    if phase.tag == "emit-tape" || phase.tag == "ctx-tap" {
+                    journal.line(&format!(
+                        "PHASE {tag} STOP_OBSERVED rc=75 cooperative={} (the phase exited at its own boundary)",
+                        u8::from(cooperative), tag = phase.tag));
+                    let observed = fs::read_to_string(&phase.log_path).ok()
+                        .and_then(|t| t.lines().rev().find(|l| l.starts_with("STOP_OBSERVED")).map(|l| l.to_string()));
+                    if let Some(line) = observed { journal.line(&line); }
+                    if cooperative {
                         recovery::interrupted(scratch)?;
                         return Err("BUILD_INTERRUPTED".into());
                     }
@@ -1452,7 +1772,7 @@ fn join_pipeline_flow(journal: &mut Journal, scratch: &Path,
             std::thread::sleep(Duration::from_millis(100));
         }
     }
-    if let Some(f) = flow.take() { f.finish(journal)?; }
+    if let Some(f) = flow.take() { f.finish(journal); }
     if recovery::signal() != 0 && scratch.join("checkpoint.journal").exists() {
         recovery::interrupted(scratch)?;
         return Err("BUILD_INTERRUPTED".into());
@@ -1911,6 +2231,22 @@ fn run_chain(options: Options) -> Result<(), String> {
         // --plan-only PORTS the plan; it never starts a phase and never refuses
         // (the refusal is the real run's, below). The verdicts are printed either
         // way, so a preflight cannot look like a pass when it is not.
+        //
+        // THE GOVERNOR'S BOUND IS PART OF THE PLAN: it is computed and PRINTED here
+        // with the same function, the same table and the same numbers the run will
+        // enforce, so "will it fit?" is answerable before an expensive census.
+        let free_bytes = super::plan::disc_free_bytes(&scratch)
+            .ok_or_else(|| format!("df failed for {}", scratch.display()))?;
+        let sb = super::plan::scratch_budget(options.scratch_budget_gb, options.memory_gb, free_bytes);
+        let container = scratch.join(format!("{}.sxi2",
+            input.file_stem().and_then(|stem| stem.to_str()).filter(|stem| !stem.is_empty())
+                .unwrap_or("pile")));
+        match Governor::plan(&scratch, &scratch.join("waves-tape"), sb.bytes, &container,
+                             corpus_bytes, options.tape, options.scratch_reserve_gb,
+                             options.scratch_target_gb, &mut |l| println!("{l}")) {
+            Ok(_) => println!("SCRATCH_BOUND_PLAN_ONLY fits=1 (the run enforces the same number)"),
+            Err(e) => println!("SCRATCH_BOUND_PLAN_ONLY fits=0 refusal={e}"),
+        }
         print!("{}", build_plan.render());
         return Ok(());
     }
@@ -2076,13 +2412,11 @@ fn run_chain(options: Options) -> Result<(), String> {
     journal.line(&format!(
         "CORPUS_PRESENT_BYTES count={} hex={} container_source=m7+m1 rule=nonzero-symbol-with-positive-count end_symbol=0",
         remap_facts.present, remap_facts.present_bytes_hex));
-    // The v2 bin shape has NO chunk set, no merge work directory and no
-    // finish side-stream directory: only the merged/ prefix (rlebwt + pieces)
-    // exists, and the tree rules assert nothing else is left behind.
-    let dirs: &[&str] = if options.bin_pipeline { &["merged"] } else { &["chunks", "merged", "mwork", "finish"] };
-    for dir in dirs {
-        fs::create_dir_all(scratch.join(dir)).map_err(|e| format!("create {dir}: {e}"))?;
-    }
+    // The v2 bin shape has NO chunk set, no merge work directory and no finish
+    // side-stream directory: only the merged/ prefix (rlebwt + pieces) exists, and
+    // the tree rules assert nothing else is left behind. The directory itself is
+    // created in run_v2_tail AFTER the plan-time bound: a refused run must not
+    // leave a single directory behind.
     // Provenance: every bundled stage is hash-verified by bundle::resolve()
     // already; journal the sha256 of the stages this build will actually
     // execute, so a journal attests WHICH binaries ran (the bin reports' rule).
@@ -2384,6 +2718,20 @@ supervisor process; base ulimit -v {memory_kb} KiB. A run ends when it exits, fa
 
     let container = scratch.join(format!("{}.sxi2",
         input.file_stem().and_then(|stem| stem.to_str()).filter(|stem| !stem.is_empty()).unwrap_or("pile")));
+    // ---- A. THE PLAN-TIME BOUND, REFUSED BEFORE ANY SCRATCH EXISTS ------------
+    // THE WHOLE POINT OF THE LAST TWO INCIDENTS: every term the run will write is
+    // priced here, from the same table the sampler uses, against
+    // `free_at_start - reserve`; a run that does not fit is refused BEFORE a phase
+    // exists and before a single scratch directory is created (nothing to stop,
+    // nothing to clean, no half-written scratch).
+    let waves_dir = scratch.join("waves-tape");
+    let gov = Governor::plan(scratch, &waves_dir, budget_bytes, &container, n,
+                             options.tape, options.scratch_reserve_gb,
+                             options.scratch_target_gb, &mut |l| journal.line(l))?;
+    // THE FIRST SCRATCH DIRECTORY EXISTS ONLY NOW: everything above is pricing.
+    for dir in ["merged"] {
+        fs::create_dir_all(scratch.join(dir)).map_err(|e| format!("create {dir}: {e}"))?;
+    }
     let wit_ram_bytes = options.wit_ram_gb.unwrap_or(options.memory_gb / 2).saturating_mul(1 << 30);
     journal.line(&format!(
         "V2_WITNESS ram_budget_bytes={wit_ram_bytes} (witnesses beyond the budget spill as sorted varint-delta disc runs; the product is unchanged)"));
@@ -2620,18 +2968,11 @@ headline=LCP-over-runs",
     // The finish's inputs and the producer's windows are the two terms that grow
     // with the corpus. The budget is a MEASURED live-scratch ceiling: when it is
     // reached the producer is paused so the finish can absorb its backlog.
-    let flow = {
-        // The PRODUCER STAGE = the sorter AND the emitter: the emitter's output is
-        // the piece stream that grows scratch, so pausing only the sorter would
-        // let it keep converting an already-written band window into pieces.
-        let mut producers = vec![(producer_label.to_string(), producer_running.child.id())];
-        if let Some(emit) = emit_running.as_ref() {
-            producers.push(("emit-tape".to_string(), emit.child.id()));
-        }
-        let mut bp = Backpressure::new(scratch, budget_bytes, &container, producers);
-        bp.announce(journal);
-        bp
-    };
+    // THE GOVERNOR, BOUND AT PLAN TIME (see run_v2_tail's first act, below): the
+    // phases are already spawned here, so the bound was computed and REFUSED before
+    // the first spawn; this is the same Governor object, announcing itself.
+    let mut flow = gov;
+    flow.announce(journal);
     let mut phases = vec![producer_running, finish_running];
     if let Some(emit) = emit_running { phases.push(emit); }
     // ---- THE CONTEXT TRIE, BUILT IN-BUILD (a fourth phase, a CONSUMER) ------
@@ -3101,6 +3442,37 @@ pub fn command(args: &[String]) {
 mod tests {
     use super::*;
 
+    /// R1/R6, IN THE UNIT TESTS: the cooperative channel is a FILE and an EXIT CODE.
+    /// A phase that polls `<scratch>/stop.requested` exits 75 when the driver writes
+    /// it, and the driver's `terminate()` (which sends NO signal) reaps it and can
+    /// quote the phase's own STOP_OBSERVED line.
+    #[test]
+    fn cooperative_stop_is_a_file_and_an_exit_code() {
+        let dir = std::env::temp_dir().join(format!("xsa-coop-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let mut journal = Journal::open(&dir.join("journal")).unwrap();
+        // A phase that behaves like the sorter at a wave boundary: poll, journal,
+        // exit 75.
+        let script = format!(
+            "i=0; while [ $i -lt 400 ]; do if [ -e {d}/stop.requested ]; then              echo 'STOP_OBSERVED phase=test at_wave=7' >&2; exit 75; fi;              i=$((i+1)); sleep 0.02; done; exit 9",
+            d = dir.display());
+        let mut phase = spawn_phase(&mut journal, &dir, "coop", SELFTEST_MEMORY_KB,
+            "bash", &["-c".into(), script], &[]).unwrap();
+        std::thread::sleep(Duration::from_millis(150));
+        assert!(phase.child.try_wait().unwrap().is_none(), "the phase must still be running");
+        let t0 = Instant::now();
+        phase.terminate();               // writes stop.requested, waits, NO SIGNAL
+        let log = fs::read_to_string(&phase.log_path).unwrap();
+        eprintln!("COOP_STOP reaped_in_ms={} observed={} log_tail={}",
+            t0.elapsed().as_millis(),
+            log.contains("STOP_OBSERVED phase=test at_wave=7"),
+            log.lines().last().unwrap_or("-"));
+        assert!(log.contains("STOP_OBSERVED"), "the phase must journal its boundary: {log}");
+        assert!(t0.elapsed() < Duration::from_secs(10), "the stop must be observed promptly");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn scratch_success_cleans_owned_files_and_failure_retains() {
         for success in [false, true] {
@@ -3166,37 +3538,39 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
+    /// A FAILED STAGE STOPS ITS PEERS COOPERATIVELY - no signal is sent to anyone.
+    /// The peers poll `<scratch>/stop.requested` (the driver writes it when a stage
+    /// fails), journal STOP_OBSERVED at their boundary and exit 75; the pipeline
+    /// reports the FAILING stage's rc and reaps every peer.
     #[test]
-    fn pipeline_detects_each_failed_stage_and_kills_waiting_peers() {
+    fn pipeline_stops_peers_cooperatively_when_a_stage_fails() {
         let _serial = PROCESS_TEST_LOCK.lock().unwrap();
         for failed in 0..3 {
             let dir = std::env::temp_dir().join(format!("xsa-peer-{}-{failed}", std::process::id()));
+            let _ = fs::remove_dir_all(&dir);
             fs::create_dir_all(&dir).unwrap();
             let mut journal = Journal::open(&dir.join("journal")).unwrap();
             let mut phases = Vec::new();
-            let mut peer_groups = Vec::new();
             for i in 0..3 {
-                let script = if i == failed { "sleep 0.2; exit 7" } else { "exec sleep 60" };
-                let phase = spawn_phase(&mut journal, &dir, &format!("stage-{i}"),
-                    SELFTEST_MEMORY_KB, "bash", &["-c".into(), script.into()], &[]).unwrap();
-                if i != failed { peer_groups.push(phase.child.id()); }
-                phases.push(phase);
+                let script = if i == failed { "sleep 0.2; exit 7".to_string() } else {
+                    format!("i=0; while [ $i -lt 3000 ]; do if [ -e {d}/stop.requested ]; then \
+                             echo STOP_OBSERVED phase=stage-{i} at_wave=1 >&2; exit 75; fi; \
+                             i=$((i+1)); sleep 0.01; done; exit 9", d = dir.display())
+                };
+                phases.push(spawn_phase(&mut journal, &dir, &format!("stage-{i}"),
+                    SELFTEST_MEMORY_KB, "bash", &["-c".into(), script], &[]).unwrap());
             }
             let start = std::time::Instant::now();
             let error = join_pipeline(&mut journal, &dir, phases).unwrap_err();
             assert!(error.contains(&format!("stage-{failed} FAILED (rc 7)")), "{error}");
-            assert!(start.elapsed() < Duration::from_secs(10));
-            for group in peer_groups {
-                // Wrappers are reaped by RunningPhase::drop; descendants may
-                // briefly be zombies awaiting init, but none may still run.
-                for entry in fs::read_dir("/proc").unwrap().flatten() {
-                    let Ok(stat) = fs::read_to_string(entry.path().join("stat")) else { continue; };
-                    let Some((_, fields)) = stat.rsplit_once(") ") else { continue; };
-                    let fields: Vec<_> = fields.split_whitespace().collect();
-                    if fields.get(2).and_then(|p| p.parse::<u32>().ok()) == Some(group) {
-                        assert_eq!(fields[0], "Z", "live descendant after failed pipeline: {stat}");
-                    }
-                }
+            let elapsed = start.elapsed();
+            eprintln!("COOP_PEERS failed_stage={failed} reaped_in_ms={} err={error}", elapsed.as_millis());
+            assert!(elapsed < Duration::from_secs(20), "peers must observe the flag promptly: {elapsed:?}");
+            // every peer journaled its boundary (i.e. it was stopped by the FLAG)
+            for i in 0..3 {
+                if i == failed { continue; }
+                let log = fs::read_to_string(dir.join(format!("stage-{i}.log"))).unwrap_or_default();
+                assert!(log.contains("STOP_OBSERVED"), "peer {i} did not observe the flag: {log}");
             }
             fs::remove_dir_all(dir).unwrap();
         }

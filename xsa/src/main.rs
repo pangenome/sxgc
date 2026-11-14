@@ -20,6 +20,7 @@ mod ctx;
 mod lcpruns;
 mod build;
 mod chain;
+mod scratchgov;
 mod bundle;
 mod plan;
 mod corpus;

@@ -838,6 +838,19 @@ pub(super) fn prepare(
     Ok(Prepared { complete: false, remap: facts })
 }
 
+/// THE COOPERATIVE STOP FLAG, UNCONDITIONALLY. The driver has no signal path: it
+/// writes this file and every phase observes it at its own boundary, journals
+/// STOP_OBSERVED and exits 75 (the sorter at a wave, the emitter at a band, the
+/// finish at the piece it is waiting for, the trie tap at a band). A phase that
+/// never observes it is a bug in that phase (documented as a residual risk).
+pub(super) fn write_stop_flag(scratch: &Path) -> Result<(), String> {
+    let path = scratch.join("stop.requested");
+    if path.exists() { return Ok(()); }
+    let f = File::create(&path).map_err(|e| format!("create {}: {e}", path.display()))?;
+    f.sync_all().map_err(|e| format!("fsync {}: {e}", path.display()))?;
+    Ok(())
+}
+
 pub(super) fn request_stop(scratch: &Path) -> Result<(), String> {
     if signal() != 0
         && scratch.join("checkpoint.journal").exists()

@@ -2105,6 +2105,13 @@ pub fn tap(a: &TapArgs) {
         fed += f;
         reads += r;
         eprintln!("TRIE_TAP_BAND band={band} rows={f} total_rows={fed}");
+        // COOPERATIVE STOP, at the TAP's band boundary: <scratch>/stop.requested is
+        // written by the driver; this phase journals STOP_OBSERVED and exits 75.
+        // NO SIGNALS (see the governor's header in chain.rs).
+        if std::path::Path::new(&format!("{}/../stop.requested", a.bands)).exists() {
+            eprintln!("STOP_OBSERVED phase=ctx-tap at_band={band}");
+            std::process::exit(75);
+        }
         std::fs::remove_file(&path).unwrap_or_else(|e| die(&format!("ctx-tap: unlink {path}: {e}")));
         std::fs::write(format!("{}/band_{band}.consumed", a.bands), b"trie-tap\n")
             .unwrap_or_else(|e| die(&format!("ctx-tap: stamp consumed band {band}: {e}")));
