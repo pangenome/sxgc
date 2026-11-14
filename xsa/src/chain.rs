@@ -1035,13 +1035,20 @@ impl Backpressure {
     /// SIGSTOP/SIGCONT a whole process group. `kill` is used with the group id
     /// negated; a group that has already exited answers ESRCH, which is not an
     /// error for this purpose (the exit path reports it).
+    ///
+    /// The `kill -<sig> -<pgid>` form is a procps-ng 4.0.4 parse bug: it keeps
+    /// only the FIRST DIGIT of a negative pid spec, so `-STOP -1257815` issued
+    /// `kill(-1, SIGSTOP)` and SIGSTOPped every process of the user (the
+    /// 2026-11-09 ~23:00 and 2026-11-14 09:38:45 box freezes; `-KILL -1257815`
+    /// would have been `kill(-1, SIGKILL)`). The explicit `-s <sig> -- -<pgid>`
+    /// form is unambiguous and verified on procps 4.0.4.
     fn signal_group(&self, pgid: u32, sig: &str) -> Result<(), String> {
-        let out = Command::new("kill").arg(format!("-{sig}")).arg(format!("-{pgid}"))
+        let out = Command::new("kill").arg("-s").arg(sig).arg("--").arg(format!("-{pgid}"))
             .output().map_err(|e| format!("spawn kill: {e}"))?;
         if !out.status.success() {
             let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
             if err.contains("No such process") { return Ok(()); }
-            return Err(format!("kill -{sig} -{pgid}: {err}"));
+            return Err(format!("kill -s {sig} -- -{pgid}: {err}"));
         }
         Ok(())
     }
