@@ -143,8 +143,9 @@ pub const USAGE: &str = "usage:
        waves-tape/geometry.ctl, which the sorter re-reads per window) and journals
        SCRATCH_GEOMETRY action=shrink with the resulting live. Product unchanged.
     C. HARD FAIL past min(max_live, free_at_start - reserve, 125% of the target),
-       with the numbers; the phases are then shut down through their own child
-       handles (per-pid SIGTERM then SIGKILL).
+       with the numbers; the phases are then stopped COOPERATIVELY: the driver
+       writes <scratch>/stop.requested and each phase observes it at its own
+       boundary, journals STOP_OBSERVED and exits 75 (no signal is sent).
     THERE IS NO SIGSTOP/SIGCONT BACKPRESSURE AND NO PROCESS-GROUP SIGNAL: a paused
     producer cannot free what it is paused for (the position window is written and
     consumed inside the sorter), the band window is bounded by construction, and
@@ -375,10 +376,11 @@ struct Options {
     phrase: PhraseOptions,
     stripes: Vec<String>,
     scratch_free_pct: u32,
-    /// `--scratch-budget-gb N`: THE FLOW-CONTROL BUDGET. The driver measures live
-    /// scratch and, when the next wave/piece would exceed it, PAUSES the producer
-    /// (SIGSTOP on its process group) while the finish drains. Pausing is the
-    /// mechanism: nothing is killed and no work is dropped. Absent = derived
+    /// `--scratch-budget-gb N`: THE WAVE BUDGET. It SIZES the two in-flight
+    /// windows (band 60 %, pieces 40 %) and it is the `term_bands + term_pieces`
+    /// arm of the plan-time bound. There is no pause: the governor prices the run
+    /// before it starts, shrinks its own position window when live overruns the
+    /// target, and fails past the ceiling. Absent = derived
     /// (min(0.8 x free, 2 x the band window)).
     scratch_budget_gb: Option<f64>,
     /// `--scratch-target-gb F`: THE LIVE TARGET the geometry controller aims at.
@@ -1277,8 +1279,8 @@ with the same table and the bound is their sum)",
             self.target, gb(self.target), self.ceiling, gb(self.ceiling),
             self.free_at_start, self.reserve, SAMPLE_SECS));
     }
-    /// C's shutdown: ask the phases to stop through the flag they poll, and let
-    /// `RunningPhase::terminate` (per-pid SIGTERM, then SIGKILL) do the rest.
+    /// C's shutdown: write the flag the phases poll (`stop.requested`) and let
+    /// `RunningPhase::terminate` (write the flag, then WAIT - no signal) do the rest.
     fn hard_fail(&mut self, journal: &mut Journal, why: &str, live: u64) -> Result<(), String> {
         let gb = |v: u64| v as f64 / (1u64 << 30) as f64;
         let mut terms = Vec::new();
@@ -1291,7 +1293,7 @@ with the same table and the bound is their sum)",
         }
         journal.line(&format!(
             "SCRATCH_GOVERNOR_HARD_FAIL why={why} live={} live_gb={:.3} ceiling={} ceiling_gb={:.3} \
-             over_by={} target={} max_live={} {} (current) {} (peaks) action=request_stop+terminate_per_pid",
+             over_by={} target={} max_live={} {} (current) {} (peaks) action=cooperative_stop (write stop.requested, wait for exit 75, NO SIGNAL)",
             live, gb(live), self.ceiling, gb(self.ceiling), live.saturating_sub(self.ceiling),
             self.target, self.max_live, terms.join(" "), peaks.join(" ")));
         // The graceful flag the tools poll (`stop.requested`), then the caller's
@@ -1304,7 +1306,8 @@ with the same table and the bound is their sum)",
              levers=XSA_SUBDIV_POSITION_BUDGET_BYTES (smaller position window), --scratch-budget-gb \
              (smaller band+piece window), --scratch-target-gb (lower the live target), \
              --scratch-reserve-gb, or a scratch filesystem with room. The build was STOPPED without \
-             filling the disc; no process was ever SIGSTOPped (this product has no STOP path)",
+             filling the disc: the driver wrote stop.requested and every phase exited at its own \
+             boundary (this product sends NO SIGNALS AT ALL)",
             live, self.ceiling, live.saturating_sub(self.ceiling), gb(live), gb(self.ceiling),
             self.target, self.max_live, self.free_at_start, self.reserve, self.fs_available,
             self.pos_budget_effective, self.shrinks, terms.join(" "), peaks.join(" ")))
@@ -1584,59 +1587,25 @@ struct RunningPhase {
     armed: bool,
 }
 
-/// Every pid in `session` (field 6 of /proc/<pid>/stat), i.e. the phase's own
-/// children, found by READING /proc - never by signalling a process group.
-fn pids_in_session(session: u32) -> Vec<u32> {
-    let mut out = Vec::new();
-    let Ok(rd) = std::fs::read_dir("/proc") else { return out };
-    for entry in rd.flatten() {
-        let name = entry.file_name();
-        let Some(pid) = name.to_str().and_then(|n| n.parse::<u32>().ok()) else { continue };
-        let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else { continue };
-        // `pid (comm) state ppid pgrp session ...` - comm may contain spaces and
-        // parentheses, so parse AFTER the LAST ')'.
-        let Some((_, rest)) = stat.rsplit_once(") ") else { continue };
-        let fields: Vec<&str> = rest.split_whitespace().collect();
-        // state=0 ppid=1 pgrp=2 session=3 ...
-        let pgrp = fields.get(2).and_then(|v| v.parse::<u32>().ok());
-        let sess = fields.get(3).and_then(|v| v.parse::<u32>().ok());
-        if pgrp == Some(session) || sess == Some(session) {
-            out.push(pid);
-        }
-    }
-    out
-}
-
 impl RunningPhase {
-    /// SHUT ONE PHASE DOWN THROUGH ITS OWN CHILD HANDLE: SIGTERM to the phase's
-    /// child and to each of its own children (found in /proc by session), then
-    /// SIGKILL to whatever is left after a bounded grace. NO PROCESS-GROUP SIGNAL
-    /// AND NO SIGSTOP ANYWHERE: the product has no group-control surface left (see
-    /// the governor's header).
+    /// SHUT ONE PHASE DOWN WITH THE COOPERATIVE CHANNEL, NEVER A SIGNAL: write
+    /// `<scratch>/stop.requested`, then WAIT for the phase to observe it at its own
+    /// boundary, journal STOP_OBSERVED and exit 75. There is no timeout here by
+    /// design: a phase that never observes the flag is a BUG IN THAT PHASE (the
+    /// boundaries are listed in RESULTS_SCRATCH_GOVERNOR.md), and papering over it
+    /// with a signal is exactly what froze this box twice.
     fn terminate(&mut self) {
         if !self.armed { return; }
-        const SIGTERM: i32 = 15;
-        const SIGKILL: i32 = 9;
-        extern "C" { fn kill(pid: i32, signal: i32) -> i32; }
-        let session = self.child.id();
-        let pids = pids_in_session(session);
-        for pid in &pids {
-            if *pid == std::process::id() { continue; }
-            unsafe { kill(*pid as i32, SIGTERM); }
-        }
-        // The child handle's own SIGTERM (it may not be in the session list yet).
-        unsafe { kill(session as i32, SIGTERM); }
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while Instant::now() < deadline {
-            if self.child.try_wait().map(|s| s.is_some()).unwrap_or(true) { break; }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        for pid in pids_in_session(session) {
-            if pid == std::process::id() { continue; }
-            unsafe { kill(pid as i32, SIGKILL); }
-        }
-        let _ = self.child.kill();      // per-pid, via the Child handle
-        let _ = self.child.wait();
+        let scratch = self.log_path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+        let requested = recovery::write_stop_flag(&scratch).is_ok();
+        let status = self.child.wait();
+        let rc = status.as_ref().ok().and_then(|s| s.code());
+        let observed = fs::read_to_string(&self.log_path).ok()
+            .and_then(|t| t.lines().rev().find(|l| l.starts_with("STOP_OBSERVED")).map(|l| l.to_string()));
+        eprintln!(
+            "STOP_REQUESTED flag_written={} phase={} rc={} stop_observed={} line={}",
+            u8::from(requested), self.tag, rc.map(|c| c.to_string()).unwrap_or_else(|| "signal".into()),
+            u8::from(observed.is_some()), observed.unwrap_or_else(|| "-".into()));
         self.armed = false;
     }
 }
@@ -3456,29 +3425,35 @@ pub fn command(args: &[String]) {
 mod tests {
     use super::*;
 
-    /// R1, IN THE UNIT TESTS: the ONLY process control left is per-pid SIGTERM /
-    /// SIGKILL on a phase that is being shut down, and the shutdown finds its pids
-    /// by READING /proc. The product has NO SIGSTOP, NO SIGCONT, NO process-group
-    /// signal and no `kill(1)` - the `kill -STOP -<pgid>` spelling kept only the
-    /// first digit of the group id and froze every process of the user (twice).
+    /// R1/R6, IN THE UNIT TESTS: the cooperative channel is a FILE and an EXIT CODE.
+    /// A phase that polls `<scratch>/stop.requested` exits 75 when the driver writes
+    /// it, and the driver's `terminate()` (which sends NO signal) reaps it and can
+    /// quote the phase's own STOP_OBSERVED line.
     #[test]
-    fn per_pid_shutdown_finds_and_stops_a_phase_without_a_group_signal() {
-        use std::os::unix::process::CommandExt;
-        let mut child = Command::new("bash").arg("-c").arg("sleep 30 & sleep 30")
-            .process_group(0).spawn().expect("spawn");
-        let id = child.id();
-        std::thread::sleep(Duration::from_millis(300));
-        let pids = pids_in_session(id);
-        eprintln!("PIDS_IN_SESSION session={id} found={} pids={pids:?}", pids.len());
-        assert!(pids.contains(&id), "the phase's own pid must be discovered: {pids:?}");
-        assert!(pids.len() >= 2, "the phase's child must be discovered too: {pids:?}");
-        extern "C" { fn kill(pid: i32, signal: i32) -> i32; }
-        // SIGTERM per pid, then the child handle itself. Never kill(-pgid, ..).
-        for pid in &pids { unsafe { kill(*pid as i32, 15); } }
-        unsafe { kill(id as i32, 15); }
-        let status = child.wait().expect("wait");
-        eprintln!("PER_PID_SHUTDOWN status={status:?} (no group signal, no STOP)");
-        assert!(pids_in_session(id).is_empty(), "nothing of the phase may survive");
+    fn cooperative_stop_is_a_file_and_an_exit_code() {
+        let dir = std::env::temp_dir().join(format!("xsa-coop-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let mut journal = Journal::open(&dir.join("journal")).unwrap();
+        // A phase that behaves like the sorter at a wave boundary: poll, journal,
+        // exit 75.
+        let script = format!(
+            "i=0; while [ $i -lt 400 ]; do if [ -e {d}/stop.requested ]; then              echo 'STOP_OBSERVED phase=test at_wave=7' >&2; exit 75; fi;              i=$((i+1)); sleep 0.02; done; exit 9",
+            d = dir.display());
+        let mut phase = spawn_phase(&mut journal, &dir, "coop", SELFTEST_MEMORY_KB,
+            "bash", &["-c".into(), script], &[]).unwrap();
+        std::thread::sleep(Duration::from_millis(150));
+        assert!(phase.child.try_wait().unwrap().is_none(), "the phase must still be running");
+        let t0 = Instant::now();
+        phase.terminate();               // writes stop.requested, waits, NO SIGNAL
+        let log = fs::read_to_string(&phase.log_path).unwrap();
+        eprintln!("COOP_STOP reaped_in_ms={} observed={} log_tail={}",
+            t0.elapsed().as_millis(),
+            log.contains("STOP_OBSERVED phase=test at_wave=7"),
+            log.lines().last().unwrap_or("-"));
+        assert!(log.contains("STOP_OBSERVED"), "the phase must journal its boundary: {log}");
+        assert!(t0.elapsed() < Duration::from_secs(10), "the stop must be observed promptly");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -3546,37 +3521,39 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
+    /// A FAILED STAGE STOPS ITS PEERS COOPERATIVELY - no signal is sent to anyone.
+    /// The peers poll `<scratch>/stop.requested` (the driver writes it when a stage
+    /// fails), journal STOP_OBSERVED at their boundary and exit 75; the pipeline
+    /// reports the FAILING stage's rc and reaps every peer.
     #[test]
-    fn pipeline_detects_each_failed_stage_and_kills_waiting_peers() {
+    fn pipeline_stops_peers_cooperatively_when_a_stage_fails() {
         let _serial = PROCESS_TEST_LOCK.lock().unwrap();
         for failed in 0..3 {
             let dir = std::env::temp_dir().join(format!("xsa-peer-{}-{failed}", std::process::id()));
+            let _ = fs::remove_dir_all(&dir);
             fs::create_dir_all(&dir).unwrap();
             let mut journal = Journal::open(&dir.join("journal")).unwrap();
             let mut phases = Vec::new();
-            let mut peer_groups = Vec::new();
             for i in 0..3 {
-                let script = if i == failed { "sleep 0.2; exit 7" } else { "exec sleep 60" };
-                let phase = spawn_phase(&mut journal, &dir, &format!("stage-{i}"),
-                    SELFTEST_MEMORY_KB, "bash", &["-c".into(), script.into()], &[]).unwrap();
-                if i != failed { peer_groups.push(phase.child.id()); }
-                phases.push(phase);
+                let script = if i == failed { "sleep 0.2; exit 7".to_string() } else {
+                    format!("i=0; while [ $i -lt 3000 ]; do if [ -e {d}/stop.requested ]; then \
+                             echo STOP_OBSERVED phase=stage-{i} at_wave=1 >&2; exit 75; fi; \
+                             i=$((i+1)); sleep 0.01; done; exit 9", d = dir.display())
+                };
+                phases.push(spawn_phase(&mut journal, &dir, &format!("stage-{i}"),
+                    SELFTEST_MEMORY_KB, "bash", &["-c".into(), script], &[]).unwrap());
             }
             let start = std::time::Instant::now();
             let error = join_pipeline(&mut journal, &dir, phases).unwrap_err();
             assert!(error.contains(&format!("stage-{failed} FAILED (rc 7)")), "{error}");
-            assert!(start.elapsed() < Duration::from_secs(10));
-            for group in peer_groups {
-                // Wrappers are reaped by RunningPhase::drop; descendants may
-                // briefly be zombies awaiting init, but none may still run.
-                for entry in fs::read_dir("/proc").unwrap().flatten() {
-                    let Ok(stat) = fs::read_to_string(entry.path().join("stat")) else { continue; };
-                    let Some((_, fields)) = stat.rsplit_once(") ") else { continue; };
-                    let fields: Vec<_> = fields.split_whitespace().collect();
-                    if fields.get(2).and_then(|p| p.parse::<u32>().ok()) == Some(group) {
-                        assert_eq!(fields[0], "Z", "live descendant after failed pipeline: {stat}");
-                    }
-                }
+            let elapsed = start.elapsed();
+            eprintln!("COOP_PEERS failed_stage={failed} reaped_in_ms={} err={error}", elapsed.as_millis());
+            assert!(elapsed < Duration::from_secs(20), "peers must observe the flag promptly: {elapsed:?}");
+            // every peer journaled its boundary (i.e. it was stopped by the FLAG)
+            for i in 0..3 {
+                if i == failed { continue; }
+                let log = fs::read_to_string(dir.join(format!("stage-{i}.log"))).unwrap_or_default();
+                assert!(log.contains("STOP_OBSERVED"), "peer {i} did not observe the flag: {log}");
             }
             fs::remove_dir_all(dir).unwrap();
         }

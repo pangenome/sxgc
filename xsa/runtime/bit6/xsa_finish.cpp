@@ -1480,6 +1480,14 @@ struct PieceSource {
             double waited = 0;
             int fd = ::open(name.c_str(), O_RDONLY);
             while (fd < 0) {
+                // COOPERATIVE STOP, at the FINISH's natural boundary: the piece it
+                // is waiting for. The driver writes <scratch>/stop.requested; the
+                // phase journals STOP_OBSERVED and exits 75. NO SIGNALS.
+                if (::access((dir + "/../../stop.requested").c_str(), F_OK) == 0) {
+                    std::fprintf(stderr, "STOP_OBSERVED phase=finish-v2 at_band=%llu waited_s=%.3f\n",
+                                 (unsigned long long)band, waited);
+                    ::_exit(75);
+                }
                 if (!finish_spool::enabled() && pollTimeout != 0 && waited > pollTimeout) pf_fail("timeout waiting for piece " + name);
                 std::this_thread::sleep_for(std::chrono::milliseconds(20));
                 waited += 0.02;

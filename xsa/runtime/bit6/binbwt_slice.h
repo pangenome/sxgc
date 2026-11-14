@@ -3942,6 +3942,15 @@ static void tape_emit(const std::string& prefix, CorpusText& text, bool dollar,
                     int cf = ::open(bandPath(readBand, ".consumed").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
                     require(cf >= 0, "tape bands: publish consumed"); ::close(cf);
                 }
+                // COOPERATIVE STOP: the driver writes <scratch>/stop.requested and
+                // this phase exits 75 at its next BAND boundary. NO SIGNALS: the
+                // channel is a file and an exit code (see the governor's header in
+                // xsa/src/chain.rs).
+                if (::access((dir + "/../stop.requested").c_str(), F_OK) == 0) {
+                    std::fprintf(stderr, "STOP_OBSERVED phase=emit-tape at_band=%llu\n",
+                                 (unsigned long long)readBand);
+                    ::_exit(75);
+                }
                 std::fprintf(stderr, "TAPE_BAND_READ band=%llu rows=%llu released_before_publish=1 trie_tap=%d\n",
                     (unsigned long long)readBand, (unsigned long long)readRows, int(trieTap));
                 // AN EMPTY BAND IS ACKED, NOT IGNORED. Its producer is blocked on
