@@ -489,42 +489,55 @@ lines are gone with the mechanism.
 
 ---
 
-## 7. The recommended knobs for the next pile relaunch
+## 7. The recommended knobs for the next pile relaunch — measured, not estimated
 
-Pile: `pile.txt` N = 1,307,910,802,540; scratch filesystem 14 TB.
+Pile: `pile.txt` N = 1,307,910,802,540 (1.31 TB); scratch filesystem 14 TB, 6,103 GiB
+free at plan time.
 
 ```
-XSA_SUBDIV_POSITION_BUDGET_BYTES=20000000000     # 20 GB, freed per window
---memory-gb 96 --threads 96                      # the RAM law's envelope
+XSA_SUBDIV_POSITION_BUDGET_BYTES=20000000000     # 20 GB position window, freed per window
+--memory-gb 256 --threads 96                     # the envelope the pile run already uses
 --finish-as-gb 400
---scratch-budget-gb 100                          # feasible at this envelope (XSA_PLAN_RAM)
---scratch-reserve-gb <default: 1430 GB here>     # 10 % of the 14 TB scratch
+--scratch-budget-gb 100                          # feasible: XSA_PLAN_RAM says the arena is
+                                                 # 103.0 GiB of the 128.0 GiB envelope
+--scratch-reserve-gb <default: 1430.591 GiB>     # 10 % of the 14 TB scratch
 --docs-map pilemap_full                          # exact-corpus map
 ```
 
-The bound those numbers print (the same arithmetic the run enforces):
+**`xsa build ... --plan-only` on the pile corpus, verbatim:**
 
 ```
-projected_live_peak = 20(pos) + 60(bands) + 40(pieces) + 846(merged 0.647n) + 918(container 0.702n) + 50(other)
-                    = 1,934 GB   term_sum
-slack               = 5 % -> 97 GB
-projected_live_peak = 2,031 GB
-free_at_start - reserve = 5,700 - 1,430 = 4,270 GB   (at 5.7 TB free)
-fits                = 1        (2,031 <= 4,270)
-ceiling             = 2,031 GB (the printed number IS the runtime contract)
+SCRATCH_BOUND projected_live_peak=2042704593537 projected_live_peak_gb=1902.417
+  max_live=2042704593537 free_after_peak=4510268124543 free_after_peak_gb=4200.515
+  term_sum=1945432946226 term_sum_gb=1811.826 slack=97271647311 slack_gb=90.591
+  free_at_start=6552972718080 free_at_start_gb=6102.931 fs_total=15360854417408
+  reserve=1536085441740 reserve_gb=1430.591 reserve_clamped=0 fs_available=5016887276340
+  target=2042704593537 target_gb=1902.417 ceiling=2042704593537 ceiling_gb=1902.417
+  fits=1 deficit_bytes=0
+SCRATCH_TERMS budget_pos=20000000000 budget_bands=64424509440 budget_merged=846218289243
+  budget_pieces=42949672960 budget_container=918153383383 budget_other=53687091200
+SCRATCH_BOUND_PLAN_ONLY fits=1 (the run enforces the same number)
+XSA_PLAN_DISC FEASIBLE shape=tape: peak 100.0 GiB (107374182400 B) = 0.082n fits 6102.9 GiB free
+XSA_PLAN_RAM FEASIBLE shape=tape: the band arena is 103.0 GiB = 96 bands in flight x 4092003
+  rows x 90 B/row + 0.5 GiB fixed + 6.4 GiB staging = peak RSS 109.83 GiB, 85 % of the
+  128.00 GiB envelope (--memory-gb 256, the bound is 90 %)
 ```
 
-**The peak it holds to: 2,031 GB**, against a working peak of ~1,050 GB (the
-measured tape tree peak `0.789 n` = 1,032 GB plus a ≤20 GB position window) — 2×
-headroom. For comparison: incident B was killed at 2,325 GB by a ceiling of 2,162 GB;
-incident B' at 423.8 GB by 422.1 GB. With these numbers the same builds are *priced
-at plan time* and stopped at a number printed before the census.
+**The peak those knobs hold to: 1,902.417 GiB = 2,042,704,593,537 B (1.90 TiB).** That
+is the number the run prints and the number the runtime enforces, with **4200.5 GiB of
+free disk left after the peak**, against a working peak of ~1,032 GB (the measured tape
+tree peak `0.789 n`, `plan::TAPE_DISC_MEASURED_PER_N`) — i.e. the bound is 1.84x the
+working peak and the box keeps 4.1 TiB in reserve for every other lane.
 
-`--scratch-budget-gb` must satisfy the plan's RAM law (the sorter holds the band
-window: `--memory-gb 96` allows ~100 GB of budget). `xsa build --plan-only` prints
-both verdicts (`XSA_PLAN_RAM` and `SCRATCH_BOUND`) before anything runs.
+For comparison with the incidents: B was killed at 2,325 GB by a ceiling of 2,162 GB;
+B' at 423.8 GB by 422.1 GB; A ran to 8,189 GB with no ceiling at all. With these
+knobs the same builds are **priced before the census** (fits/has the numbers), stopped
+at a printed number, and stopped *cooperatively* — no signal, ever.
 
----
+If the operator wants a tighter ceiling, the honest levers are
+`XSA_SUBDIV_POSITION_BUDGET_BYTES` (pos is only 20 GB of the 1.9 TiB) and the merged /
+container allowances, which are the two big terms (846 GB + 918 GB, both measured-rate
+extrapolations, §8.4) — not the wave budget.
 
 ## 8. Residual risks and open items
 
