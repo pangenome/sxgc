@@ -158,13 +158,166 @@ SUBDIV_DISK_D5_PASS (refused with free/needed/margin instead of filling the disc
 
 `subdiv_pos` held **zero** files: the guard is reached before the first write.
 
-### D2/P1–P3 100 GB head, pos_budget 20 GB
+### D2/P1–P3 100 GB head (`pile-head100.txt`, N = 1e11 + 1), pos_budget 20 GB
 
-<!--P1-->
+Two arms of the same binary: the product's own strategy (auto) and the forced-local
+arm (the only one whose windows appear early — at 100 GB the plan's own choice is
+`local=6 global=53`, and those 6 local classes are the deep sparse ones, i.e. late in
+the run). Walls below were taken with TWO other 100 GB sorter arms running on the
+same box (96 + 96 threads), so they are loaded-box numbers, not solo numbers.
 
-### D3/D4/P5–P6 10 GB, both arms, pre-fix vs post-fix
+```
+# the product's own strategy (auto): the plan, and the sweep arithmetic it implies
+SS_PLAN waves=59 local=6 global=53 cache_depth=128 ... corpus_reads=0
+SS_SUBDIV_WAVEGOAL wave_goal=2375000000 band_goal=2926829260 position_budget_bytes=20000000000
+                   position_goal_rows=2375000000 binding=position-budget
+SS_SUBDIV_POSBUDGET position_budget_bytes=20000000000 window_rows=2375000000 bytes_per_row=8
+                   safety_pct=95 window_target_bytes=19000000000000
+                   scratch_margin_bytes=53687091200 local_waves=6 global_waves=53
+                   local_rows_est=2602888457 projected_passes=2
 
-<!--P5-->
+# the forced-local arm (--subdiv-strategy=local): every window, measured
+SS_PLAN waves=59 local=59 global=0 ...
+SS_SUBDIV_POSBUDGET ... local_waves=59 local_rows_est=99964889630 projected_passes=43
+SS_SUBDIV_POSSPACE window=[0,1) free_bytes=8504708698112 needed_bytes=9670885936
+                   margin_bytes=53687091200 budget_bytes=20000000000 ok=1
+SS_SCATTER pass=1 waves=[0,1) waves_n=1 bytes_read=100000000000 positions=1209029212
+           position_bytes=9672233696 rows_est=1208860742 wall=7.62
+SS_SUBDIV_POSPEAK window=[0,1) waves_n=1 bytes_written=9672233696 bytes_at_descent=9672233696
+                   bytes_after_unlink=0 peak_total=9672233696 peak_window=0 budget_bytes=20000000000
+SS_SUBDIV_POSPEAK window=[1,2) waves_n=1 bytes_written=18420133464 bytes_at_descent=18420133464
+                   bytes_after_unlink=0 peak_total=18420133464 peak_window=1 budget_bytes=20000000000
+SS_SUBDIV_POSPEAK window=[3,4) waves_n=1 bytes_written=16110831392 bytes_at_descent=16110831392
+                   bytes_after_unlink=0 peak_total=18615853848 peak_window=2 budget_bytes=20000000000
+SS_SUBDIV_POSPEAK window=[4,5) waves_n=1 bytes_written=18245565160 bytes_at_descent=18245565160
+                   bytes_after_unlink=0 peak_total=18615853848 peak_window=2 budget_bytes=20000000000
+```
+
+**The number the fix is about.** By the end of window 4 the run had written
+9.67 + 18.42 + 18.62 + 16.11 + 18.25 = **81.07 GB** of position files. The pre-fix
+code held all 81.07 GB live (and would have kept growing to `local_rows x 8` =
+800 GB at this corpus). `peak_total` stopped at **18.62 GB = one window**, and the
+second window's peak (18.42 GB) does not contain the first window's 9.67 GB — every
+window's `bytes_after_unlink=0` says the column was empty again before the next
+window was sown.
+
+P1 (peak ≤ budget) ✓ 18.62 GB ≤ 20 GB. P2 (sweep arithmetic) ✓
+`projected_passes=43` = `ceil(99,964,889,630 x 8 / 19e9)` = `ceil(local_rows x 8 /
+pos_budget)`; measured `SS_SCATTER passes` advances one per window (`pass=1` for
+window `[0,1)`, `bytes_read=100000000000` = exactly one corpus sweep). P3 (no
+re-scatter inside a window) ✓ `window_fallback_sweeps=0`: the only corpus sweeps are
+the windows themselves (`corpus_sweeps_scatter == windows`) plus the plan's own
+global classes.
+
+The knob's shape, journaled end to end — the plan's wave goal is capped by the
+position budget only when the budget is the binding term:
+
+| pos_budget | wave_goal (journaled) | binding | local_rows_est | projected / measured passes |
+|---|---|---|---|---|
+| 20 GB (100 GB head) | 2,375,000,000 | `position-budget` | 2,602,888,457 (auto) | 2 |
+| 20 GB, forced local | 2,375,000,000 | `position-budget` | 99,964,889,630 | 43 projected, 1 per window measured |
+| 2 TB (relaunch value, journaled then stopped) | 2,926,829,260 | `band-plan` | 1,020,716,573 | 1 |
+
+At 2 TB the wave goal is the band plan's own number again: the position budget
+stops shaping the plan, which is the relaunch's regime.
+
+
+### D3/P5 10 GB (`pf-10gb.txt`, N = 1e10 + 1), both arms, pre-fix vs post-fix
+
+Walls below were taken with two 100 GB sorter arms running on the same box
+(loaded-box numbers; the pre-fix binary has no interleave and the post-fix one does,
+so a wall comparison here is not a speed claim — it is a correctness gate).
+
+```
+SUBDIV_DISK_D3 arm=auto  base_sha=a37dbe2a3d1fbb99ec2bf17f821fdb0d284c0279b92d89a5de7a5cc5c6efc3db
+                new_sha=a37dbe2a3d1fbb99ec2bf17f821fdb0d284c0279b92d89a5de7a5cc5c6efc3db equal=1
+                rows=10000000001 base_wall_s=625 new_wall_s=732 local_waves=0 corpus_sweeps_scatter=0 windows=0
+SUBDIV_DISK_D3 arm=local base_sha=a37dbe2a3d1fbb99ec2bf17f821fdb0d284c0279b92d89a5de7a5cc5c6efc3db
+                new_sha=a37dbe2a3d1fbb99ec2bf17f821fdb0d284c0279b92d89a5de7a5cc5c6efc3db equal=1
+                rows=10000000001 base_wall_s=532 new_wall_s=795 local_waves=31 corpus_sweeps_scatter=5 windows=5
+SUBDIV_DISK_D3_PASS
+```
+
+The same container sha in all four runs — and identical to the *forced-local* arm,
+which is the arm that materialises 5 position windows — so the interleave is
+byte-neutral at 1e10 rows. The `local` arm's receipt:
+
+```
+SS_PLAN waves=31 local=31 global=0 ...
+SS_SUBDIV_POSBUDGET ... local_waves=31 local_rows_est=9996450373 projected_passes=5
+SS_SUBDIV_POSPEAK window=[0,6)   waves_n=6 bytes_written=17990550904 bytes_after_unlink=0 peak_total=17990550904
+SS_SUBDIV_POSPEAK window=[6,13)  waves_n=7 bytes_written=18791362512 bytes_after_unlink=0 peak_total=18791362512
+SS_SUBDIV_POSPEAK window=[13,20) waves_n=7 bytes_written=16160821504 bytes_after_unlink=0 peak_total=18791362512
+SS_SUBDIV_SWEEPS corpus_sweeps_scatter=5 corpus_sweeps_global_arm=0 total_corpus_sweeps=5
+                 windows=5 window_fallback_sweeps=0 local_waves=31 global_waves=0
+SS_SUBDIV_SCATTER passes=5 bytes_read=50000000000 positions=9999999977 windows=5
+                  peak_total=18791362512 peak_window=6 position_dir_final_bytes=0
+```
+
+`positions=9,999,999,977` x 8 B = **80.0 GB of position files written**, peak live
+**18.79 GB**, final directory **0 bytes**. P2's arithmetic is exact here:
+`local_rows_est x 8 / 19e9 = 4.2` → `projected_passes=5`, measured 5. P3: 5 sweep
+windows, 0 fallback sweeps inside them.
+
+### D4 — the budget bounds the peak, the bytes are unchanged (1 GB budget)
+
+Same 10 GB corpus, same binary, `--subdiv-policy` unchanged, position budget 1 GB
+(vs 20 GB in the D3 local arm). The plan responds by cutting MORE waves, which is
+the whole mechanism:
+
+```
+SS_PLAN waves=131 local=123 global=8 ...      (was waves=31 local=31 at a 20 GB budget)
+SS_SUBDIV_WAVEGOAL wave_goal=118750000 band_goal=2926829260 binding=position-budget
+SS_SUBDIV_POSBUDGET position_budget_bytes=1000000000 window_rows=118750000
+                   window_target_bytes=950000000 local_rows_est=10890416153 projected_passes=92
+SS_SUBDIV_SWEEPS corpus_sweeps_scatter=100 corpus_sweeps_global_arm=8 total_corpus_sweeps=108
+                 windows=100 window_fallback_sweeps=0 local_waves=123 global_waves=8
+SS_SUBDIV_SCATTER passes=100 bytes_read=1000000000000 positions=9106058419
+                  position_budget_bytes=1000000000 windows=100 peak_total=959979976
+                  peak_window=9 position_dir_final_bytes=0
+VERIFY pos_budget=1000000000 peak_total=959979976 budget_ceiling=1050000000 windows=100
+       scatter_passes=100 position_files_left=0 position_bytes_left=0
+       container_sha=a37dbe2a... equal=1
+VERIFY_DONE SS_DONE n=10000000001 waves=131 ties=1979147430 waves_s=1357.11 total_s=1365.13
+VERIFY_PASS
+```
+
+* **P1** peak_total = **0.96 GB ≤ 1 GB** (budget ceiling with 5 % slack 1.05 GB) while
+  the run wrote 9,106,058,419 x 8 B = **72.8 GB** of position files through 100
+  windows; every window's `bytes_after_unlink=0`.
+* **P2** 100 windows = 100 corpus sweeps of 10 GB = 1.0 TB read, one sweep per
+  window, matching `ceil(local_rows x 8 / 0.95 GB) = 92` projected vs 100 measured
+  (the plan cut more waves than the projection assumed, so a few windows hold one
+  small wave each — the count is the plan's, the rule is unchanged).
+* **P3** `window_fallback_sweeps=0`: the 8 global-arm sweeps are the plan's own
+  sliced (point-mass tail) classes, not re-scans of a window.
+* **P5** container sha **identical** to the 20 GB arm and to the pre-fix binary's:
+  the budget changed how many windows there are, and nothing about the bytes.
+* **P6** `SS_DONE`, `subdiv_pos` 0 files / 0 bytes, the whole scratch tree 0 bytes
+  after exit, no survivors.
+
+The 1 GB peak is the proof that the peak tracks the BUDGET and not the corpus: the
+same corpus at a 20 GB budget peaked at 18.79 GB, at 1 GB it peaks at 0.96 GB, and
+the container is the same file in both cases.
+
+### The governor's own numbers (a full `xsa build --tape` fixture, 64 MB)
+
+`gates/forward_only_f6_build.sh` (fixture corpus + independent docs map, so this is
+the real pipeline, not the sorter alone) — the Rust change is exercised end to end
+and the container certifies:
+
+```
+SCRATCH_GOVERNOR budget_gb=8.000 pos_budget_gb=1.600 ceiling_gb=59.600 margin_gb=50.000
+  pause_at_gb=8.000 resume_at_gb=7.200 producers=order-tape,emit-tape
+  accounting=the_whole_scratch_tree_incl_subdiv_pos_excl_the_container
+  rule=pause_on_the_budget,ratchet_never_past_the_ceiling,fail_past_the_ceiling
+SCRATCH_SAMPLE live_gb=0.022 output_gb=0.000 budget_gb=8.000 peak_gb=0.022 paused=0
+  allocated_bytes=1 pos_budget_gb=1.600 ceiling_gb=59.600
+CONTAINER_CERTIFIED format=sxi2-v10 version=10 n=64004096 runs=63673072
+  members=m1,m4,m5,m7,m10,m11,m12,m13,m15,m20
+F6_PASS (query, mem, branch_of, trie_info, docstarts, stats, consult, seeds,
+         build-without-docs-map refused, build-no-trie)
+```
 
 ## 5. The relaunch
 

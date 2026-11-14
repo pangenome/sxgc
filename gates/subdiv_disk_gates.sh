@@ -261,7 +261,30 @@ d5() {
   echo "SUBDIV_DISK_D5_PASS (refused with free/needed/margin instead of filling the disc)"
 }
 
+# ------------------------------------------------------------------------- verify
+# Re-derive a corpus-scale verdict from an EXISTING run directory (no re-run): the
+# journal is the evidence, so a gate can be re-checked without spending the wall
+# clock again. usage: verify <run-dir> <reference-sha> <pos_budget>
+verify() {
+  local d=$1 ref=$2 budget=$3
+  local peak wins passes left bytes sb done_line sweeps
+  peak=$(peak_of "$d"); wins=$(wins_of "$d"); passes=$(passes_of "$d")
+  left=$(posdir_of "$d"); bytes=$(posbytes_of "$d"); sb=$(sha_of "$d")
+  done_line=$(grep -o '^SS_DONE .*' "$d/run.log" | tail -1)
+  sweeps=$(grep -o 'SS_SUBDIV_SWEEPS .*' "$d/run.log" | tail -1 | sed 's/ rule=.*//')
+  echo "VERIFY dir=$d pos_budget=$budget peak_total=$peak budget_ceiling=$(( budget + budget / 20 )) windows=$wins scatter_passes=$passes position_files_left=$left position_bytes_left=$bytes container_sha=$sb reference_sha=$ref equal=$([ "$sb" = "$ref" ] && echo 1 || echo 0)"
+  echo "VERIFY_SWEEPS $sweeps"
+  echo "VERIFY_DONE $done_line"
+  [ -n "$done_line" ] || fail "verify: no SS_DONE"
+  [ "$sb" = "$ref" ] || fail "verify: container differs"
+  [ "$peak" -le $(( budget + budget / 20 )) ] || fail "verify: peak above the budget"
+  [ "$left" = 0 ] && [ "$bytes" = 0 ] || fail "verify: subdiv_pos not drained"
+  [ "$wins" = "$passes" ] || fail "verify: windows != scatter passes"
+  echo "VERIFY_PASS"
+}
+
 case "${1:-all}" in
+  verify) verify "$2" "$3" "$4" ;;
   d1) build; fixtures; d1; no_survivors ;;
   d2) build; d2; no_survivors ;;
   d3) build; d3; no_survivors ;;
