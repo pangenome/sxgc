@@ -1831,13 +1831,24 @@ int main(int argc, char** argv) {
     //   * FILESYSTEM: statvfs on the scratch filesystem before every window, and the
     //     run DIES with the numbers rather than filling a shared box's disc.
     const u64 windowRows = std::max<u64>(1, (posBudget * SS_POS_SAFETY_PCT / 100) / sizeof(u64));
-    const u64 posMarginBytes = SS_SCRATCH_MARGIN_BYTES;   // statvfs headroom, journaled
+    // THE STATVFS MARGIN IS A KNOB because on a real build the CONTAINER grows
+    // while the windows are written: the pile relaunch sets 200 GB so the sorter
+    // never eats the headroom the finish needs. Default 50 GB.
+    const u64 posMarginBytes = [&] {
+        const char* e = ::getenv("XSA_SUBDIV_SCRATCH_MARGIN_BYTES");
+        return (e && *e) ? std::strtoull(e, nullptr, 10) : SS_SCRATCH_MARGIN_BYTES;
+    }();   // statvfs headroom, journaled
     u64 posWinWritten = 0;         // bytes THIS window's scatter wrote
     u64 posWinWa = 0, posWinWb = 0;  // the window currently on disc
     u64 posPeakTotal = 0;          // max bytes EVER live in subdiv_pos
     u64 posPeakWindow = 0;         // the wave that window's peak belonged to
     u64 posAtDescent = 0;          // live bytes when the window's first wave descended
     u64 posWindowsDrained = 0;
+    // P3: corpus-wide sweeps INSIDE a window. A wave of a window whose position
+    // files exist must be descended from them (the local arm); a wave that falls
+    // back to the global arm costs a whole corpus sweep, so it is counted and
+    // journaled rather than hidden in the pass total.
+    u64 posFallbackSweeps = 0;
     // THE SCATTER's window opener, defined with the scatter lambda below and CALLED
     // by the wave loop (see the interleave note there). posWindowEnd is the first
     // wave whose positions are NOT on disc: waves < posWindowEnd belong to the
@@ -2762,6 +2773,7 @@ int main(int argc, char** argv) {
             ++globalPasses;
         }
         const double tScan = now_sec() - tw;
+        if (!usedLocal && posWindowOpen && w < posWindowEnd) ++posFallbackSweeps;
         if (usedLocal) { ++localClasses; localBytes += classLocalBytes; }
         else { ++globalClasses; globalBytes += classGlobalBytes; }
         std::fprintf(stderr,
@@ -3370,6 +3382,20 @@ int main(int argc, char** argv) {
         }
     }
 
+    // P3: THE SWEEP LEDGER. corpus_sweeps must be exactly (one per window) + (the
+    // plan's own global-arm classes), and a wave INSIDE a window must never need a
+    // sweep of its own - it has position files, so the local arm answers it.
+    std::fprintf(stderr,
+        "SS_SUBDIV_SWEEPS corpus_sweeps_scatter=%" PRIu64 " corpus_sweeps_global_arm=%" PRIu64
+        " total_corpus_sweeps=%" PRIu64 " windows=%" PRIu64 " window_fallback_sweeps=%" PRIu64
+        " local_waves=%" PRIu64 " global_waves=%" PRIu64
+        " rule=one_sweep_per_window_plus_the_plan\'s_own_global_classes,none_inside_a_window\n",
+        scatterPasses, globalPasses, scatterPasses + globalPasses, posWindowsDrained,
+        posFallbackSweeps, localClasses, globalClasses);
+    if (scatterPasses != posWindowsDrained)
+        die("subdiv sweep ledger disagrees with the window count: scatter_passes=" +
+            std::to_string(scatterPasses) + " windows_drained=" + std::to_string(posWindowsDrained) +
+            " - a window was swept twice");
     // THE SCATTER'S RECEIPT, now that the emit loop has sown every window. The peak
     // fields are the number the operator sized the disc from: peak_total is the
     // largest ONE window, never the sum over windows.
